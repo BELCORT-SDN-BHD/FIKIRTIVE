@@ -98,3 +98,16 @@ h1, h2, h3 {
 .mention[data-entity-type="LOCATION"]  { background: color-mix(in srgb, var(--hue-location) 18%, transparent);  color: var(--hue-location); }
 .mention[data-entity-type="PRODUCT"]   { background: color-mix(in srgb, var(--hue-product) 18%, transparent);   color: var(--hue-product); }
 .mention[data-entity-type="BRAND"]     { background: color-mix(in srgb, var(--hue-brand) 18%, transparent);     color: var(--hue-brand); }
+
+/* alias chips share the entity hue but read as labels, not @mentions: outlined, not filled */
+.alias-chip {
+  border-radius: var(--radius-sm);
+  padding: 0.1rem 0.45rem;
+  font-size: 0.75rem;
+  white-space: nowrap;
+  border: 1px solid;
+}
+.alias-chip[data-entity-type="CHARACTER"] { border-color: color-mix(in srgb, var(--hue-character) 45%, transparent); color: var(--hue-character); }
+.alias-chip[data-entity-type="LOCATION"]  { border-color: color-mix(in srgb, var(--hue-location) 45%, transparent);  color: var(--hue-location); }
+.alias-chip[data-entity-type="PRODUCT"]   { border-color: color-mix(in srgb, var(--hue-product) 45%, transparent);   color: var(--hue-product); }
+.alias-chip[data-entity-type="BRAND"]     { border-color: color-mix(in srgb, var(--hue-brand) 45%, transparent);     color: var(--hue-brand); }

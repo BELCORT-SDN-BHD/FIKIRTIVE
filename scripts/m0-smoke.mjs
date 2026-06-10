@@ -44,7 +44,7 @@ step("fixtures ready");
 
 // --- 1. empty workbench ---
 await page.goto(BASE);
-await page.getByText("Entity Library").waitFor();
+await page.getByText("Subjects", { exact: true }).waitFor();
 await snap("01-empty.png");
 step("workbench loads (empty states visible)");
 
@@ -81,6 +81,12 @@ await page.getByRole("button", { name: "Save prompt" }).click();
 await page.locator('[aria-label="Shot board"] .mention', { hasText: "@Maya" }).first().waitFor({ timeout: 15000 });
 await snap("04-prompt-saved.png");
 step("prompt saved — chips visible on shot card");
+
+// --- 4b. persisted-doc round trip: chips must survive a reload ---
+// (catches serialization bugs that strip mention attrs on the way to the DB)
+await page.reload();
+await page.locator(".composer .mention", { hasText: "@Maya" }).first().waitFor({ timeout: 15000 });
+step("saved doc round-trips — chips intact after reload");
 
 // --- 5. copy resolved prompt ---
 await page.getByRole("button", { name: "Copy resolved prompt" }).click();

@@ -26,15 +26,13 @@ export function Workbench({
   );
   const selectedShot = shots.find((s) => s.id === selectedShotId) ?? null;
 
-  // switching shots replaces the composer — never silently drop unsaved edits
+  // switching shots OR navigating away replaces the composer — never silently
+  // drop unsaved edits (sidebar rows and top-nav links leave this page)
   const [composerDirty, setComposerDirty] = useState(false);
+  const confirmLeave = () =>
+    !composerDirty || confirm("Discard unsaved prompt changes on the current shot?");
   function selectShot(id: string) {
-    if (
-      composerDirty &&
-      id !== selectedShotId &&
-      !confirm("Discard unsaved prompt changes on the current shot?")
-    )
-      return;
+    if (id !== selectedShotId && !confirmLeave()) return;
     setSelectedShotId(id);
   }
 
@@ -48,14 +46,14 @@ export function Workbench({
         Artlio works best on a desktop browser — this view is read-only.
       </div>
 
-      <TopBar project={project} projects={projects} />
+      <TopBar project={project} projects={projects} confirmLeave={confirmLeave} />
 
       <div className="flex flex-1 min-h-0 max-lg:pointer-events-none">
         <nav
           aria-label="Entity library"
           className="w-72 shrink-0 border-r border-edge bg-surface overflow-y-auto max-lg:hidden"
         >
-          <EntitySidebar entities={entities} />
+          <EntitySidebar entities={entities} confirmLeave={confirmLeave} />
         </nav>
 
         <main className="flex-1 min-w-0 flex flex-col overflow-y-auto">

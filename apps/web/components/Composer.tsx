@@ -22,6 +22,8 @@ interface MentionItem {
   id: string;
   name: string;
   type: EntityDTO["type"];
+  /** alias the query matched, when it wasn't the name itself */
+  aka?: string;
 }
 interface MentionListHandle {
   onKeyDown: (props: SuggestionKeyDownProps) => boolean;
@@ -90,7 +92,10 @@ const MentionList = forwardRef<MentionListHandle, SuggestionProps<MentionItem>>(
                 style={{ background: HUES[item.type] }}
                 aria-hidden
               />
-              <span className="truncate">{item.name}</span>
+              <span className="truncate">
+                {item.name}
+                {item.aka && <span className="text-faint"> · aka {item.aka}</span>}
+              </span>
               <span className="ml-auto font-mono text-[10px] text-faint uppercase">
                 {item.type.toLowerCase()}
               </span>
@@ -184,11 +189,18 @@ export function Composer({
       }).configure({
         HTMLAttributes: { class: "mention" },
         suggestion: {
-          items: ({ query }: { query: string }) =>
-            entitiesRef.current
-              .filter((e) => e.name.toLowerCase().includes(query.toLowerCase()))
+          items: ({ query }: { query: string }) => {
+            const q = query.toLowerCase();
+            return entitiesRef.current
+              .map((e) => {
+                if (e.name.toLowerCase().includes(q)) return { e, aka: undefined };
+                const alias = e.aliases.find((a) => a.toLowerCase().includes(q));
+                return alias ? { e, aka: alias } : null;
+              })
+              .filter((m): m is { e: EntityDTO; aka: string | undefined } => m !== null)
               .slice(0, 8)
-              .map((e) => ({ id: e.id, name: e.name, type: e.type })),
+              .map(({ e, aka }) => ({ id: e.id, name: e.name, type: e.type, aka }));
+          },
           render: () => {
             let component: ReactRenderer<MentionListHandle> | null = null;
             let popup: HTMLDivElement | null = null;
@@ -251,6 +263,15 @@ export function Composer({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [shotId]);
 
+  // refresh/close with unsaved edits → browser-native confirm (client-side
+  // navigation is guarded separately via confirmLeave in Workbench)
+  useEffect(() => {
+    if (!dirty) return;
+    const warn = (e: BeforeUnloadEvent) => e.preventDefault();
+    window.addEventListener("beforeunload", warn);
+    return () => window.removeEventListener("beforeunload", warn);
+  }, [dirty]);
+
   const byId = new Map(entities.map((e) => [e.id, e]));
 
   async function doSave(): Promise<boolean> {
@@ -258,7 +279,8 @@ export function Composer({
     const json = editor.getJSON() as DocNode;
     const { ids, text } = resolveDoc(json, byId);
     try {
-      const res = await saveShotPrompt(shot.id, json, text, ids);
+      // stringified: React Flight drops ProseMirror's null-prototype attrs objects
+      const res = await saveShotPrompt(shot.id, JSON.stringify(json), text, ids);
       if (res && "error" in res) {
         setSaveError(true);
         return false;

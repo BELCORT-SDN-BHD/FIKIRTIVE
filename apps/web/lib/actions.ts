@@ -67,7 +67,7 @@ export async function createProject(name: string) {
     data: { id: newId(), ownerId: FOUNDER_OWNER_ID, name: name.trim() || "Untitled Project" },
   });
   await logAction("project.create", project.id, { name: project.name });
-  revalidatePath("/");
+  revalidatePath("/", "layout");
   return { id: project.id };
 }
 
@@ -90,7 +90,7 @@ export async function createEntity(formData: FormData) {
     });
   }
   await logAction("entity.create", null, { entityId: entity.id, name, type, refCount: files.length });
-  revalidatePath("/");
+  revalidatePath("/", "layout");
   return { id: entity.id };
 }
 
@@ -106,7 +106,53 @@ export async function updateEntity(
   const { count } = await prisma.entity.updateMany({ where: { id: entityId, ...OWNED }, data });
   if (count === 0) return { error: "Entity not found." };
   await logAction("entity.update", null, { entityId, fields: Object.keys(data) });
-  revalidatePath("/");
+  revalidatePath("/", "layout");
+  return { ok: true };
+}
+
+/**
+ * Aliases mutate as server-side deltas, never client-supplied full arrays —
+ * a stale tab replacing the whole array would silently erase edits made
+ * elsewhere (lost-update).
+ */
+export async function addEntityAlias(entityId: string, alias: string) {
+  const clean = alias.trim();
+  if (!clean) return { error: "Alias is empty." };
+  const entity = await prisma.entity.findFirst({ where: { id: entityId, ...OWNED } });
+  if (!entity) return { error: "Entity not found." };
+  if (!entity.aliases.includes(clean)) {
+    await prisma.entity.update({
+      where: { id: entityId },
+      data: { aliases: [...entity.aliases, clean] },
+    });
+  }
+  await logAction("entity.update", null, { entityId, addAlias: clean });
+  revalidatePath("/", "layout");
+  return { ok: true };
+}
+
+export async function removeEntityAlias(entityId: string, alias: string) {
+  const entity = await prisma.entity.findFirst({ where: { id: entityId, ...OWNED } });
+  if (!entity) return { error: "Entity not found." };
+  await prisma.entity.update({
+    where: { id: entityId },
+    data: { aliases: entity.aliases.filter((a) => a !== alias) },
+  });
+  await logAction("entity.update", null, { entityId, removeAlias: alias });
+  revalidatePath("/", "layout");
+  return { ok: true };
+}
+
+/** Remove one reference image from an entity (soft — asset row is a tombstone). */
+export async function softDeleteReferenceImage(refImageId: string) {
+  const ref = await prisma.referenceImage.findFirst({ where: { id: refImageId, ...OWNED } });
+  if (!ref) return { error: "Reference image not found." };
+  await prisma.referenceImage.update({
+    where: { id: refImageId },
+    data: { deletedAt: new Date() },
+  });
+  await logAction("entity.update", null, { entityId: ref.entityId, refImageId, action: "ref-delete" });
+  revalidatePath("/", "layout");
   return { ok: true };
 }
 
@@ -127,7 +173,7 @@ export async function addReferenceImages(entityId: string, formData: FormData) {
     });
   }
   await logAction("entity.update", null, { entityId, addedRefs: files.length });
-  revalidatePath("/");
+  revalidatePath("/", "layout");
   return { ok: true };
 }
 
@@ -139,7 +185,7 @@ export async function softDeleteEntity(entityId: string) {
   });
   if (count === 0) return { error: "Entity not found." };
   await logAction("entity.update", null, { entityId, action: "soft-delete", shotRefsAtDelete: refCount });
-  revalidatePath("/");
+  revalidatePath("/", "layout");
   // History stays intact (snapshots); shots referencing it show a stale chip until edited.
   return { ok: true, shotRefs: refCount };
 }
@@ -160,7 +206,7 @@ export async function createShot(projectId: string) {
         data: { id: newId(), ownerId: FOUNDER_OWNER_ID, projectId, number: (last?.number ?? 0) + 1 },
       });
       await logAction("shot.create", projectId, { shotId: shot.id, number: shot.number });
-      revalidatePath("/");
+      revalidatePath("/", "layout");
       return { id: shot.id, number: shot.number };
     } catch (e) {
       if (attempt === 2) throw e;
@@ -173,20 +219,29 @@ export async function createShot(projectId: string) {
  * Persist the composer doc. promptDoc (Tiptap JSON, chips = entity IDs) is the
  * source of truth; promptText is the resolved plain-text cache; ShotEntityRef
  * is a derived index rebuilt on every save (schema comment).
+ *
+ * The doc crosses the wire as a JSON STRING, not an object: ProseMirror builds
+ * node attrs with Object.create(null), and React Flight silently DROPS
+ * null-prototype objects when serializing server-action arguments — chips
+ * arrived as bare {"type":"mention"} and lost their entity IDs. Strings have
+ * no such semantics.
  */
 export async function saveShotPrompt(
   shotId: string,
-  promptDoc: unknown,
+  promptDocJson: string,
   promptText: string,
   entityIds: string[],
 ) {
   const shot = await prisma.shot.findFirst({ where: { id: shotId, ...OWNED } });
   if (!shot) return { error: "Shot not found." };
   const uniqueIds = [...new Set(entityIds)];
-  // Re-materialize the RSC-deserialized doc: React 19 hands server actions
-  // lazy reference proxies that throw on symbol access (Symbol.toStringTag),
-  // which Prisma's input cloning probes. JSON round-trip yields plain objects.
-  const doc = JSON.parse(JSON.stringify(promptDoc)) as object;
+  let doc: object;
+  try {
+    doc = JSON.parse(promptDocJson) as object;
+    if (typeof doc !== "object" || doc === null) throw new Error("not an object");
+  } catch {
+    return { error: "Malformed prompt document." };
+  }
   await prisma.$transaction([
     prisma.shot.update({
       where: { id: shotId },
@@ -200,7 +255,7 @@ export async function saveShotPrompt(
       : []),
   ]);
   await logAction("shot.update", shot.projectId, { shotId, entityIds: uniqueIds });
-  revalidatePath("/");
+  revalidatePath("/", "layout");
   return { ok: true };
 }
 
@@ -209,7 +264,7 @@ export async function updateShotTitle(shotId: string, title: string) {
   if (!shot) return { error: "Shot not found." };
   await prisma.shot.update({ where: { id: shotId }, data: { title: title.trim() } });
   await logAction("shot.update", shot.projectId, { shotId, field: "title" });
-  revalidatePath("/");
+  revalidatePath("/", "layout");
   return { ok: true };
 }
 
@@ -219,7 +274,7 @@ export async function updateShotStatus(shotId: string, status: string) {
   if (!shot) return { error: "Shot not found." };
   await prisma.shot.update({ where: { id: shotId }, data: { status: status as ShotStatus } });
   await logAction("shot.update", shot.projectId, { shotId, status });
-  revalidatePath("/");
+  revalidatePath("/", "layout");
   return { ok: true };
 }
 
@@ -236,7 +291,7 @@ export async function softDeleteShot(shotId: string) {
     prisma.shotEntityRef.deleteMany({ where: { shotId } }),
   ]);
   await logAction("shot.update", shot.projectId, { shotId, action: "soft-delete" });
-  revalidatePath("/");
+  revalidatePath("/", "layout");
   return { ok: true };
 }
 
@@ -308,7 +363,7 @@ export async function uploadCandidates(projectId: string, formData: FormData) {
       },
     });
   });
-  revalidatePath("/");
+  revalidatePath("/", "layout");
   return { ok: true, count: files.length };
 }
 
@@ -341,7 +396,7 @@ export async function attachGeneration(generationId: string, shotId: string) {
     }
   }
   await logAction("generation.attach", gen.projectId, { generationId, shotId });
-  revalidatePath("/");
+  revalidatePath("/", "layout");
   return { ok: true };
 }
 
@@ -367,7 +422,7 @@ export async function detachGeneration(generationId: string) {
       : []),
   ]);
   await logAction("generation.detach", gen.projectId, { generationId, shotId });
-  revalidatePath("/");
+  revalidatePath("/", "layout");
   return { ok: true };
 }
 
@@ -380,6 +435,6 @@ export async function softDeleteGeneration(generationId: string) {
     data: { deletedAt: new Date() },
   });
   await logAction("generation.discard", gen.projectId, { generationId });
-  revalidatePath("/");
+  revalidatePath("/", "layout");
   return { ok: true };
 }

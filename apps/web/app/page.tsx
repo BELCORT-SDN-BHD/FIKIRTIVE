@@ -1,5 +1,4 @@
-import { storageKey } from "@artlio/core";
-import { storage, kindOf } from "@/lib/storage";
+import { kindOf } from "@/lib/storage";
 import {
   ensureDefaultProject,
   getProjects,
@@ -7,14 +6,11 @@ import {
   getShots,
   getCandidates,
 } from "@/lib/data";
-import type { EntityDTO, GenerationDTO, ProjectDTO, ShotDTO } from "@/lib/types";
+import { assetUrl, toEntityDTO } from "@/lib/dto";
+import type { GenerationDTO, ProjectDTO, ShotDTO } from "@/lib/types";
 import { Workbench } from "@/components/Workbench";
 
 export const dynamic = "force-dynamic";
-
-function assetUrl(ownerId: string, contentHash: string, ext: string) {
-  return storage.url(storageKey(ownerId, contentHash, ext));
-}
 
 export default async function Page({
   searchParams,
@@ -32,19 +28,7 @@ export default async function Page({
     getCandidates(project.id),
   ]);
 
-  const entityDTOs: EntityDTO[] = entities.map((e) => ({
-    id: e.id,
-    type: e.type,
-    name: e.name,
-    notes: e.notes,
-    negativeConstraints: e.negativeConstraints,
-    refs: e.referenceImages.map((r) => ({
-      id: r.id,
-      url: assetUrl(r.asset.ownerId, r.asset.contentHash, r.asset.ext),
-      kind: kindOf(r.asset.ext),
-    })),
-    usageCount: e._count.shotRefs,
-  }));
+  const entityDTOs = entities.map(toEntityDTO);
 
   const toGenDTO = (g: (typeof candidates)[number]): GenerationDTO => ({
     id: g.id,

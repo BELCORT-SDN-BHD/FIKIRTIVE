@@ -17,6 +17,7 @@ export interface EntityDTO {
   id: string;
   type: EntityTypeDTO;
   name: string;
+  aliases: string[]; // alternate names the @mention search also matches
   notes: string;
   negativeConstraints: string;
   refs: RefImageDTO[];
