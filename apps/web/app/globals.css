@@ -1,26 +1,100 @@
 @import "tailwindcss";
 
+/*
+ * INTERIM token kit (design doc D8 — marked replaceable; final visual pass
+ * happens in Claude Design after M0 UX validation). Dark gray-blue base,
+ * single amber action color, 4 low-saturation entity hues.
+ */
 :root {
-  --background: #ffffff;
-  --foreground: #171717;
+  --bg: #0e1014; /* canvas */
+  --surface: #151920; /* panels */
+  --raised: #1c212b; /* cards, inputs */
+  --border: #262d3a;
+  --text: #e8eaf0;
+  --text-dim: #8a93a6;
+  --text-faint: #5a6275;
+  --accent: #e0723c; /* the ONE action color */
+  --accent-soft: rgba(224, 114, 60, 0.14);
+
+  /* entity hues — low saturation by design */
+  --hue-character: #d98e73;
+  --hue-location: #6fae9e;
+  --hue-product: #c9a86a;
+  --hue-brand: #8a9bb4;
+
+  --radius-sm: 6px;
+  --radius-lg: 12px;
 }
 
 @theme inline {
-  --color-background: var(--background);
-  --color-foreground: var(--foreground);
-  --font-sans: var(--font-geist-sans);
-  --font-mono: var(--font-geist-mono);
-}
-
-@media (prefers-color-scheme: dark) {
-  :root {
-    --background: #0a0a0a;
-    --foreground: #ededed;
-  }
+  --color-bg: var(--bg);
+  --color-surface: var(--surface);
+  --color-raised: var(--raised);
+  --color-edge: var(--border);
+  --color-ink: var(--text);
+  --color-dim: var(--text-dim);
+  --color-faint: var(--text-faint);
+  --color-accent: var(--accent);
+  --color-accent-soft: var(--accent-soft);
+  --color-character: var(--hue-character);
+  --color-location: var(--hue-location);
+  --color-product: var(--hue-product);
+  --color-brand: var(--hue-brand);
+  --font-sans: var(--font-body);
+  --font-display: var(--font-heading);
+  --font-mono: var(--font-meta);
+  --radius-sm: 6px;
+  --radius-lg: 12px;
 }
 
 body {
-  background: var(--background);
-  color: var(--foreground);
-  font-family: Arial, Helvetica, sans-serif;
+  background: var(--bg);
+  color: var(--text);
+  font-family: var(--font-body), system-ui, sans-serif;
 }
+
+h1, h2, h3 {
+  font-family: var(--font-heading), system-ui, sans-serif;
+}
+
+/* a11y: visible focus ring everywhere (design doc D9) */
+:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after {
+    animation-duration: 0.01ms !important;
+    transition-duration: 0.01ms !important;
+  }
+}
+
+/* ---- Tiptap composer ---- */
+.composer .tiptap {
+  min-height: 5.5rem;
+  outline: none;
+  font-size: 0.95rem;
+  line-height: 1.7;
+}
+
+.composer .tiptap p.is-editor-empty:first-child::before {
+  content: attr(data-placeholder);
+  color: var(--text-faint);
+  float: left;
+  height: 0;
+  pointer-events: none;
+}
+
+/* entity chips inside the composer — chips store IDs, label is display cache */
+.mention {
+  border-radius: var(--radius-sm);
+  padding: 0.1rem 0.45rem;
+  font-weight: 600;
+  font-size: 0.875em;
+  white-space: nowrap;
+}
+.mention[data-entity-type="CHARACTER"] { background: color-mix(in srgb, var(--hue-character) 18%, transparent); color: var(--hue-character); }
+.mention[data-entity-type="LOCATION"]  { background: color-mix(in srgb, var(--hue-location) 18%, transparent);  color: var(--hue-location); }
+.mention[data-entity-type="PRODUCT"]   { background: color-mix(in srgb, var(--hue-product) 18%, transparent);   color: var(--hue-product); }
+.mention[data-entity-type="BRAND"]     { background: color-mix(in srgb, var(--hue-brand) 18%, transparent);     color: var(--hue-brand); }

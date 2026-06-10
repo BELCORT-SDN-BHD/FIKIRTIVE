@@ -24,11 +24,12 @@ templates/      ComfyUI template bundles + registry.json (file registry until M0
 
 ```bash
 pnpm install
-docker compose up -d postgres     # local Postgres 17
+docker compose up -d postgres     # local Postgres 16
 cp .env.example packages/db/.env  # default local DATABASE_URL works as-is
 pnpm db:migrate                   # prisma migrate dev
 pnpm dev                          # web :3000 + worker (watch mode)
 pnpm test && pnpm typecheck
+node scripts/m0-smoke.mjs         # full-journey browser smoke (BASE_URL=… to override :3000)
 ```
 
 ## Deploy (Railway, two services from this repo)

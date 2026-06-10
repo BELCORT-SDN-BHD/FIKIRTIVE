@@ -27,9 +27,24 @@ function buildClient(): PrismaClient {
 
 const globalForPrisma = globalThis as unknown as { __artlioPrisma?: PrismaClient };
 
-export const prisma: PrismaClient = globalForPrisma.__artlioPrisma ?? buildClient();
+let moduleClient: PrismaClient | undefined;
 
-// Cache only in development — the hot-reload pool leak this guards against only
-// exists under `next dev`; caching under NODE_ENV=test would leak pools across
-// vitest worker threads.
-if (process.env.NODE_ENV === "development") globalForPrisma.__artlioPrisma = prisma;
+// globalThis cache only in development — the hot-reload pool leak this guards
+// against only exists under `next dev`; caching under NODE_ENV=test would leak
+// pools across vitest worker threads.
+function getClient(): PrismaClient {
+  if (process.env.NODE_ENV === "development") {
+    return (globalForPrisma.__artlioPrisma ??= buildClient());
+  }
+  return (moduleClient ??= buildClient());
+}
+
+// Lazy proxy: `next build` imports this module while collecting page data with
+// no DATABASE_URL present — the connection must not be built until first use.
+export const prisma: PrismaClient = new Proxy({} as PrismaClient, {
+  get(_target, prop) {
+    const client = getClient();
+    const value = Reflect.get(client, prop, client);
+    return typeof value === "function" ? (value as () => unknown).bind(client) : value;
+  },
+});

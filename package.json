@@ -2,9 +2,17 @@
   "name": "artlio",
   "private": true,
   "packageManager": "pnpm@10.0.0",
-  "engines": { "node": ">=22" },
+  "engines": {
+    "node": ">=22"
+  },
   "pnpm": {
-    "onlyBuiltDependencies": ["@prisma/engines", "esbuild", "prisma", "sharp", "unrs-resolver"]
+    "onlyBuiltDependencies": [
+      "@prisma/engines",
+      "esbuild",
+      "prisma",
+      "sharp",
+      "unrs-resolver"
+    ]
   },
   "scripts": {
     "dev": "pnpm --parallel --filter ./apps/* dev",
@@ -13,5 +21,9 @@
     "test": "pnpm -r test",
     "db:generate": "pnpm --filter @artlio/db generate",
     "db:migrate": "pnpm --filter @artlio/db migrate:dev"
+  },
+  "devDependencies": {
+    "@playwright/test": "^1.60.0",
+    "playwright": "^1.60.0"
   }
 }

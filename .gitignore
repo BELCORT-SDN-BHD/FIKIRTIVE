@@ -13,3 +13,6 @@ coverage/
 playwright-report/
 test-results/
 .turbo/
+
+# local dev storage (LocalDiskStorage adapter)
+.data/
