@@ -1,0 +1,18 @@
+# Local dev Postgres — mirrors Neon (prod) closely enough for migrations.
+# Usage: docker compose up -d postgres
+services:
+  postgres:
+    # 16-alpine matches what's already pulled locally; schema uses no PG17 features.
+    # Production is Neon (managed, current major).
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_USER: artlio
+      POSTGRES_PASSWORD: artlio
+      POSTGRES_DB: artlio
+    ports:
+      - "5432:5432"
+    volumes:
+      - artlio-pg:/var/lib/postgresql/data
+
+volumes:
+  artlio-pg:

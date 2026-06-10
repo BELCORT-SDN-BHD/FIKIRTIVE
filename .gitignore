@@ -1,0 +1,15 @@
+node_modules/
+.next/
+dist/
+packages/db/generated/
+build/
+*.tsbuildinfo
+.env
+.env.local
+.env*.local
+.DS_Store
+.gstack/
+coverage/
+playwright-report/
+test-results/
+.turbo/

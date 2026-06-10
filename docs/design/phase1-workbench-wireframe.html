@@ -1,0 +1,107 @@
+<!DOCTYPE html>
+<html lang="zh">
+<head>
+<meta charset="UTF-8">
+<title>Artlio — Phase 1 Wireframe</title>
+<!-- 设计决策：故意做成粗糙线框，只表达布局与交互结构，不表达视觉风格 -->
+<!-- 核心交互：@mention 实体芯片是主角，其余一切围绕它 -->
+<style>
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body { font-family: -apple-system, "PingFang SC", sans-serif; background: #fafafa; color: #333; padding: 16px; }
+  .frame { border: 2px solid #999; border-radius: 6px; max-width: 1240px; margin: 0 auto; background: #fff; }
+  .titlebar { border-bottom: 1px solid #ccc; padding: 8px 14px; font-size: 12px; color: #888; display: flex; justify-content: space-between; }
+  .layout { display: grid; grid-template-columns: 230px 1fr; min-height: 640px; }
+  /* 左栏：实体库 */
+  .sidebar { border-right: 1px solid #ccc; padding: 12px; }
+  .sidebar h3 { font-size: 11px; text-transform: uppercase; letter-spacing: 1px; color: #999; margin: 14px 0 6px; }
+  .entity { display: flex; align-items: center; gap: 8px; padding: 5px 6px; border: 1px dashed #bbb; border-radius: 4px; margin-bottom: 5px; font-size: 13px; }
+  .thumb { width: 26px; height: 26px; border: 1px solid #999; border-radius: 4px; background: repeating-linear-gradient(45deg,#eee,#eee 4px,#ddd 4px,#ddd 8px); flex-shrink: 0; }
+  .thumb.round { border-radius: 50%; }
+  .warn-dot { margin-left: auto; font-size: 10px; color: #b00; }
+  .add-btn { font-size: 12px; color: #777; border: 1px dashed #bbb; border-radius: 4px; padding: 4px; text-align: center; margin-top: 4px; }
+  /* 主区 */
+  .main { display: flex; flex-direction: column; }
+  .composer { padding: 18px; border-bottom: 1px solid #ccc; }
+  .composer-label { font-size: 11px; color: #999; margin-bottom: 6px; }
+  .composer-box { border: 2px solid #777; border-radius: 8px; padding: 14px; font-size: 15px; line-height: 2.1; }
+  .chip { display: inline-flex; align-items: center; gap: 5px; border: 1.5px solid #555; border-radius: 999px; padding: 1px 10px 1px 3px; font-size: 13px; background: #f0f0f0; white-space: nowrap; }
+  .chip .mini { width: 18px; height: 18px; border-radius: 50%; border: 1px solid #888; background: repeating-linear-gradient(45deg,#e8e8e8,#e8e8e8 3px,#d5d5d5 3px,#d5d5d5 6px); }
+  .chip.product { border-style: double; }
+  .copilot { margin-top: 12px; border: 1px dashed #999; border-radius: 6px; padding: 10px 12px; font-size: 13px; background: #f7f7f7; }
+  .copilot b { font-size: 11px; text-transform: uppercase; letter-spacing: 1px; color: #777; display: block; margin-bottom: 6px; }
+  .copilot .item { padding: 3px 0; }
+  .copilot .act { border: 1px solid #888; border-radius: 4px; padding: 1px 8px; font-size: 12px; margin-left: 8px; background: #fff; }
+  /* 镜头板 */
+  .shotboard { padding: 14px 18px; border-bottom: 1px solid #ccc; }
+  .section-title { font-size: 11px; text-transform: uppercase; letter-spacing: 1px; color: #999; margin-bottom: 8px; }
+  .shots { display: flex; gap: 10px; overflow-x: auto; }
+  .shot { border: 1px solid #aaa; border-radius: 6px; width: 168px; flex-shrink: 0; }
+  .shot .preview { height: 80px; background: repeating-linear-gradient(45deg,#f0f0f0,#f0f0f0 6px,#e2e2e2 6px,#e2e2e2 12px); border-bottom: 1px solid #ccc; display: flex; align-items: center; justify-content: center; color: #aaa; font-size: 11px; }
+  .shot .meta { padding: 7px 8px; font-size: 11px; }
+  .shot .meta .num { font-weight: 700; font-size: 12px; }
+  .shot .chips { margin-top: 4px; display: flex; gap: 3px; flex-wrap: wrap; }
+  .tag { border: 1px solid #999; border-radius: 999px; padding: 0 6px; font-size: 10px; background: #f3f3f3; }
+  .status { float: right; font-size: 10px; border: 1px solid #888; border-radius: 3px; padding: 0 5px; }
+  /* 历史 */
+  .history { padding: 14px 18px; flex: 1; }
+  .hrow { display: flex; align-items: center; gap: 10px; padding: 6px 0; border-bottom: 1px dotted #ccc; font-size: 12px; }
+  .hthumb { width: 52px; height: 30px; border: 1px solid #aaa; border-radius: 3px; background: repeating-linear-gradient(-45deg,#eee,#eee 5px,#ddd 5px,#ddd 10px); flex-shrink: 0; }
+  .vstack { font-size: 10px; color: #888; border: 1px solid #bbb; border-radius: 3px; padding: 0 5px; }
+  .note { max-width: 1240px; margin: 10px auto 0; font-size: 12px; color: #999; }
+</style>
+</head>
+<body>
+<div class="frame">
+  <div class="titlebar"><span>Artlio — 工作台（阶段一线框）</span><span>项目：Aurora 香水夏季案 ▾</span></div>
+  <div class="layout">
+    <div class="sidebar">
+      <h3>角色 Characters</h3>
+      <div class="entity"><div class="thumb round"></div>Maya（女主）</div>
+      <div class="entity"><div class="thumb round"></div>老练调香师</div>
+      <h3>地点 Locations</h3>
+      <div class="entity"><div class="thumb"></div>霓虹小巷 NeonAlley</div>
+      <div class="entity"><div class="thumb"></div>清晨花田</div>
+      <h3>产品 Products</h3>
+      <div class="entity"><div class="thumb"></div>Aurora 香水瓶<span class="warn-dot">⚠ 缺侧视图</span></div>
+      <h3>品牌 Brand</h3>
+      <div class="entity"><div class="thumb"></div>Logo / 色板 / 禁用规则</div>
+      <div class="add-btn">＋ 新建实体（拖图进来即可）</div>
+    </div>
+    <div class="main">
+      <div class="composer">
+        <div class="composer-label">PROMPT 编辑器 — 输入 @ 呼出实体</div>
+        <div class="composer-box">
+          <span class="chip"><span class="mini"></span>@Maya</span> 在
+          <span class="chip"><span class="mini"></span>@霓虹小巷</span> 中行走，手里拿着
+          <span class="chip product"><span class="mini"></span>@Aurora香水瓶</span>，
+          雨后湿润的路面反光，慢镜头跟拍 ▏
+        </div>
+        <div class="copilot">
+          <b>Copilot — 生成前检查（需要你批准才会执行）</b>
+          <div class="item">⚠ @Aurora香水瓶 缺少侧视图参考，跟拍镜头可能漂移 <span class="act">补传参考图</span> <span class="act">忽略</span></div>
+          <div class="item">✓ @Maya 服装与 Shot 02 一致（白色风衣）</div>
+          <div class="item">建议：本镜头适合 I2V，用 Shot 02 尾帧作 first frame <span class="act">采用</span></div>
+        </div>
+      </div>
+      <div class="shotboard">
+        <div class="section-title">镜头板 Shot Board</div>
+        <div class="shots">
+          <div class="shot"><div class="preview">[ 成片帧 ]</div><div class="meta"><span class="num">Shot 01</span><span class="status">✓ 完成</span><div class="chips"><span class="tag">@Maya</span><span class="tag">@花田</span></div></div></div>
+          <div class="shot"><div class="preview">[ 成片帧 ]</div><div class="meta"><span class="num">Shot 02</span><span class="status">✓ 完成</span><div class="chips"><span class="tag">@Maya</span><span class="tag">@霓虹小巷</span></div></div></div>
+          <div class="shot"><div class="preview">[ 生成中… ]</div><div class="meta"><span class="num">Shot 03</span><span class="status">⟳ 生成中</span><div class="chips"><span class="tag">@Maya</span><span class="tag">@香水瓶</span></div></div></div>
+          <div class="shot"><div class="preview">[ 空 ]</div><div class="meta"><span class="num">Shot 04</span><span class="status">草稿</span><div class="chips"><span class="tag">@调香师</span></div></div></div>
+          <div class="shot" style="border-style:dashed;"><div class="preview">＋ 新镜头</div><div class="meta">&nbsp;</div></div>
+        </div>
+      </div>
+      <div class="history">
+        <div class="section-title">生成历史 Generation History（每条产出回链 prompt + 实体 + 参考图）</div>
+        <div class="hrow"><div class="hthumb"></div>Shot 03 · v4 <span class="vstack">4 个版本</span> · I2V · first frame ← Shot 02 v2 尾帧 · 2 分钟前</div>
+        <div class="hrow"><div class="hthumb"></div>Shot 02 · v2 ★ 已采用 <span class="vstack">2 个版本</span> · @Maya @霓虹小巷 · 昨天</div>
+        <div class="hrow"><div class="hthumb"></div>Shot 01 · v7 ★ 已采用 <span class="vstack">7 个版本</span> · @Maya @花田 · 昨天</div>
+      </div>
+    </div>
+  </div>
+</div>
+<div class="note">线框说明：灰色斜纹 = 图片占位。这只表达布局和交互结构（@芯片是主角），不代表最终视觉风格。</div>
+</body>
+</html>

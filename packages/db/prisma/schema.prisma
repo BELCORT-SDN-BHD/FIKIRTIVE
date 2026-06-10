@@ -1,0 +1,225 @@
+// Artlio schema — implements design doc D14 (dual identity: ULID PK + content-hash
+// storage key), D21 (soft delete + 30-day window + refcount sweep), E4-pre
+// (recipe-ready structured generation fields), A3 lesson (owner_id reserved on
+// every business table from day 1; single owner "founder" until multi-user).
+//
+//   Entity ─< ReferenceImage >─ Asset            Asset ─< Generation
+//   Project ─< Shot ─< ShotEntityRef >─ Entity   Shot ─< Generation (nullable: 候选区)
+//
+// IDs are app-supplied ULIDs (via @artlio/core newId()). History rows
+// (Generation) are immutable: entitySnapshot freezes names + ref hashes at
+// generation time, so renames/deletes never corrupt provenance.
+
+generator client {
+  provider = "prisma-client"
+  output   = "../generated/prisma"
+}
+
+datasource db {
+  provider = "postgresql"
+}
+
+enum EntityType {
+  CHARACTER
+  LOCATION
+  PRODUCT
+  BRAND
+}
+
+// 镜头状态机（最小四态，design doc 阶段一定义）
+enum ShotStatus {
+  DRAFT
+  EXPORTED
+  ATTACHED
+  FINAL
+}
+
+enum AssetSource {
+  UPLOAD
+  MODAL
+  IMPORT
+}
+
+model Project {
+  id        String    @id
+  ownerId   String    @default("founder")
+  name      String
+  createdAt DateTime  @default(now())
+  updatedAt DateTime  @updatedAt
+  deletedAt DateTime?
+
+  shots       Shot[]
+  generations Generation[]
+
+  @@index([ownerId, deletedAt])
+}
+
+// 实体跨项目复用（属于 owner 而非 project）—— journey step 7
+model Entity {
+  id                  String     @id
+  ownerId             String     @default("founder")
+  type                EntityType
+  name                String
+  aliases             String[]   @default([])
+  notes               String     @default("")
+  negativeConstraints String     @default("")
+  promptTokens        String[]   @default([])
+  createdAt           DateTime   @default(now())
+  updatedAt           DateTime   @updatedAt
+  deletedAt           DateTime?
+
+  referenceImages ReferenceImage[]
+  shotRefs        ShotEntityRef[]
+
+  @@index([ownerId, type, deletedAt])
+}
+
+model ReferenceImage {
+  id       String    @id
+  ownerId  String    @default("founder")
+  entityId String
+  assetId  String
+  position Int       @default(0)
+  note     String    @default("")
+  // 视角标签：阶段二的视角级缺图检查用（CEO 评审 D12 计数制裁决预留）
+  viewTag  String?
+  createdAt DateTime  @default(now())
+  deletedAt DateTime?
+
+  entity Entity @relation(fields: [entityId], references: [id])
+  asset  Asset  @relation(fields: [assetId], references: [id])
+
+  @@index([entityId, deletedAt])
+  @@index([assetId])
+}
+
+// 内容寻址资产：storage key 永远由 u/<ownerId>/<contentHash>.<ext> 推导，
+// 数据库永不存路径（D14）。同 hash 仅存一份（去重），删除走引用计数清扫（D21）。
+// 清扫合同：sweep 只删 R2 blob，Asset 行永存为墓碑（Generation FK Restrict 使行删除永不可行——这是设计而非缺陷）。
+model Asset {
+  id               String      @id
+  ownerId          String      @default("founder")
+  contentHash      String
+  ext              String
+  mime             String
+  sizeBytes        BigInt
+  originalFilename String      @default("")
+  source           AssetSource @default(UPLOAD)
+  width            Int?
+  height           Int?
+  durationS        Float?
+  createdAt        DateTime    @default(now())
+  deletedAt        DateTime?
+
+  referenceImages ReferenceImage[]
+  generations     Generation[]
+
+  @@unique([ownerId, contentHash])
+  @@index([ownerId, deletedAt])
+  @@index([deletedAt]) // 跨 owner 的 30 天清扫扫描
+}
+
+model Shot {
+  id          String     @id
+  projectId   String
+  ownerId     String     @default("founder")
+  number      Int
+  title       String     @default("")
+  description String     @default("")
+  status      ShotStatus @default(DRAFT)
+  // Tiptap 结构化文档：芯片只存实体 ID（label 仅显示缓存，D12 设计裁决）
+  promptDoc   Json?
+  createdAt   DateTime   @default(now())
+  updatedAt   DateTime   @updatedAt
+  deletedAt   DateTime?
+
+  project     Project         @relation(fields: [projectId], references: [id])
+  entityRefs  ShotEntityRef[]
+  generations Generation[]
+
+  @@unique([projectId, number])
+  @@index([projectId, status, deletedAt])
+}
+
+// promptDoc 芯片的派生索引：实体使用计数（"14 镜引用"）与删除前引用检查用。
+// 保存镜头时重建，不是真相源（真相源是 promptDoc）。
+model ShotEntityRef {
+  shotId   String
+  entityId String
+  ownerId  String @default("founder")
+
+  shot   Shot   @relation(fields: [shotId], references: [id])
+  entity Entity @relation(fields: [entityId], references: [id])
+
+  @@id([shotId, entityId])
+  @@index([entityId])
+}
+
+// 生成历史：不可变（永不物理删，deletedAt 仅作隐藏/候选区移除）。
+// 可变字段白名单：shotId, version, attachedAt, deletedAt —— 其余字段写入后冻结。
+// E4-pre：prompt/模型/参数/实体引用分字段存储而非整段文本 —— 配方功能阶段二直接站上来。
+model Generation {
+  id             String      @id
+  ownerId        String      @default("founder")
+  projectId      String
+  shotId         String? // null = 候选区"未挂载"
+  assetId        String
+  source         AssetSource
+  promptText     String      @default("")
+  // 模板/模型标识（阶段一=模板 slug@version；阶段二=模型注册表条目）
+  modelRef       String      @default("")
+  params         Json?
+  // 不可变快照：生成当时的实体名 + 参考图内容哈希（改名/删除不破历史）。
+  // 必填：无实体引用时存 {"entities":[]} —— 可空会诱使写入端遗忘。
+  entitySnapshot Json
+  // 同一镜头下的版本序号（v1, v2, …）
+  version        Int         @default(1)
+  attachedAt     DateTime?
+  createdAt      DateTime    @default(now())
+  deletedAt      DateTime?
+
+  project Project @relation(fields: [projectId], references: [id])
+  shot    Shot?   @relation(fields: [shotId], references: [id], onDelete: Restrict)
+  asset   Asset   @relation(fields: [assetId], references: [id])
+
+  @@index([projectId, shotId, deletedAt])
+  @@index([ownerId, shotId, deletedAt, createdAt]) // 候选区查询：shotId IS NULL，按时间倒序
+  @@unique([shotId, version]) // NULL shotId（候选区）不受约束——Postgres NULLs distinct
+  @@index([assetId])
+}
+
+// ComfyUI 模板注册表（SOP v1.1 A3.5 文件版 registry.json 的站内镜像；
+// M0 启动时导入，阶段二起成为真相源）
+model TemplateBundle {
+  id            String   @id
+  ownerId       String   @default("founder")
+  slug          String
+  version       Int
+  versionHash   String   @unique // workflow_api.json 原始字节 SHA-256
+  displayName   String
+  slots         Json // SlotBinding[]（@artlio/core）
+  // zip 位置永远由哈希推导：bundles/<zipHash>.zip（D14：不存路径）
+  zipHash       String   @unique
+  modalEndpoint String?
+  gpu           String?
+  costUsdPerRun Float?
+  deprecatedAt  DateTime?
+  createdAt     DateTime  @default(now())
+  updatedAt     DateTime  @updatedAt
+
+  @@unique([slug, version])
+  @@index([ownerId, slug])
+}
+
+// 升级门埋点（D23）：实质动作事件，系统自动记录，3 项目计数门的数据源
+model ActionEvent {
+  id        String   @id
+  ownerId   String   @default("founder")
+  projectId String?
+  type      String // entity.create | entity.update | shot.create | shot.update | generation.attach | bundle.export
+  payload   Json?
+  createdAt DateTime @default(now())
+
+  @@index([ownerId, createdAt])
+  @@index([projectId, type])
+}
