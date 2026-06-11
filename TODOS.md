@@ -53,3 +53,5 @@
 - [ ] **示例项目（onboarding 素材）**（S→CC:S，依赖：邀请外部用户前；来源：design-review D11）
   - What: 一套预置示例项目（Aurora 香水案数据集），空态提供"Load sample project"。
   - Why: 外部新用户的零门槛初体验；阶段一唯一用户是创始人，不需要。
+
+- [ ] 上锁触发器：首个烧钱端点（剪辑渲染 tracer / API 生成）上线前 → Railway 设 AUTH_ENABLED=true + RESEND_API_KEY（resend.com 1 分钟注册）。代码已就绪（cefe9e3），零改动。
