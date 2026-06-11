@@ -55,10 +55,15 @@ await page.getByRole("dialog").waitFor();
 await page.locator('[role="dialog"] .al-input-wrap input').first().fill("Aurora Bottle");
 await page.getByRole("tab", { name: "Generate refs" }).click();
 await page.getByRole("button", { name: "Create & generate refs →" }).click();
+// drawer is keyed by entity id — wait for it to remount onto the new product
+// ("Generate references" now also shows for entities-with-refs, so anchor on
+// the unique name instead)
+await page.waitForFunction(
+  () => document.querySelector('aside input[aria-label="Element name"]')?.value === "Aurora Bottle",
+  { timeout: 15000 },
+);
 await page.locator("aside").getByText("Generate references").waitFor({ timeout: 15000 });
-const created = await page.locator('aside input[aria-label="Element name"]').inputValue();
-if (created !== "Aurora Bottle") throw new Error(`detail shows "${created}"`);
-step("product created via Generate door → drawer shows reference prompt");
+step("product created via Generate door → drawer shows generation control");
 await page.screenshot({ path: path.join(SHOTS, "10-generate-door.png") });
 
 // --- 4. search matches alias ---

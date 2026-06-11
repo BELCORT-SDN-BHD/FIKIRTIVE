@@ -1,6 +1,8 @@
 "use client";
 
 import { useEffect, useRef, useState, useTransition } from "react";
+import { useRouter } from "next/navigation";
+import { REFGEN_PRICE_USD_PER_IMAGE } from "@artlio/core";
 import type { EntityDTO, EntityTypeDTO } from "@/lib/types";
 import {
   createEntity,
@@ -11,6 +13,7 @@ import {
   softDeleteReferenceImage,
   softDeleteEntity,
 } from "@/lib/actions";
+import { startRefGen, getRefGenJobs } from "@/lib/refgen-actions";
 import { Badge, Button, Dialog, IcImage, IconButton, IcPlus, IcX, Input, MediaCard, MonoLabel, SegmentedControl } from "./ds";
 
 const TYPE_META: Record<EntityTypeDTO, { label: string; singular: string; color: string }> = {
@@ -370,30 +373,96 @@ function buildReferencePrompt(entity: EntityDTO): string {
 }
 
 function GenerateRefsBlock({ entity }: { entity: EntityDTO }) {
-  const [copied, setCopied] = useState<"idle" | "ok" | "failed">("idle");
-  const prompt = buildReferencePrompt(entity);
+  const router = useRouter();
+  const { pending, error, run } = useAction();
+  const [prompt, setPrompt] = useState(() => buildReferencePrompt(entity));
+  const [count, setCount] = useState(4);
+  const [job, setJob] = useState<{ status: string; progress: number; error: string } | null>(null);
+
+  const conditioned = entity.refs.length > 0;
+  const busy = pending || job?.status === "QUEUED" || job?.status === "GENERATING";
+
+  // poll the active job; on DONE pull the new refs, on FAILED surface the error
+  useEffect(() => {
+    if (!job || (job.status !== "QUEUED" && job.status !== "GENERATING")) return;
+    let alive = true;
+    const tick = setInterval(async () => {
+      const jobs = await getRefGenJobs(entity.id);
+      const latest = jobs[0];
+      if (!alive || !latest) return;
+      setJob({ status: latest.status, progress: latest.progress, error: latest.error });
+      if (latest.status === "DONE") {
+        clearInterval(tick);
+        router.refresh(); // server re-fetches the entity with its new images
+      } else if (latest.status === "FAILED") {
+        clearInterval(tick);
+      }
+    }, 2000);
+    return () => {
+      alive = false;
+      clearInterval(tick);
+    };
+  }, [job, entity.id, router]);
+
+  function generate() {
+    run(
+      () => startRefGen({ entityId: entity.id, prompt, count, model: "seedream" }),
+      (res) => {
+        if (res && "id" in res) setJob({ status: "QUEUED", progress: 0, error: "" });
+      },
+    );
+  }
+
+  const cost = (count * REFGEN_PRICE_USD_PER_IMAGE).toFixed(2);
   return (
-    <div className="al-panel al-panel-flat" style={{ padding: 12, display: "flex", flexDirection: "column", gap: 8, borderRadius: "var(--radius-md)" }}>
-      <MonoLabel>Generate references</MonoLabel>
-      <p style={{ font: "var(--text-small)", color: "var(--fg-2)", margin: 0, userSelect: "all" }}>{prompt}</p>
-      <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
-        <Button size="sm" onClick={async () => {
-          try {
-            await navigator.clipboard.writeText(prompt);
-            setCopied("ok");
-          } catch {
-            setCopied("failed");
-          }
-          setTimeout(() => setCopied("idle"), 2200);
-        }}>
-          {copied === "ok" ? "Copied ✓" : "Copy prompt"}
-        </Button>
-        <span style={{ font: "var(--text-caption)", color: "var(--fg-3)" }}>
-          {copied === "failed"
-            ? "Clipboard blocked — click the text above to select it, then copy."
-            : "Render in ComfyUI, then add the images below."}
-        </span>
+    <div className="al-panel al-panel-flat" style={{ padding: 12, display: "flex", flexDirection: "column", gap: 10, borderRadius: "var(--radius-md)" }}>
+      <div style={{ display: "flex", alignItems: "center" }}>
+        <MonoLabel>Generate references</MonoLabel>
+        <span style={{ flex: 1 }} />
+        {conditioned && (
+          <span style={{ font: "var(--text-caption)", color: "var(--fg-3)" }}>
+            using {entity.refs.length} image{entity.refs.length > 1 ? "s" : ""} as reference
+          </span>
+        )}
       </div>
+      <textarea
+        value={prompt}
+        onChange={(e) => setPrompt(e.target.value)}
+        disabled={busy}
+        rows={3}
+        aria-label="Generation prompt"
+        style={{
+          width: "100%", background: "rgba(255,255,255,.05)", border: "1px solid var(--line-2)",
+          borderRadius: "var(--radius-md)", padding: "9px 12px", color: "var(--fg-1)",
+          font: "var(--text-small)", resize: "vertical", outline: "none",
+        }}
+      />
+      <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
+        <label style={{ font: "var(--text-caption)", color: "var(--fg-3)", display: "flex", alignItems: "center", gap: 6 }}>
+          count
+          <select
+            value={count}
+            onChange={(e) => setCount(Number(e.target.value))}
+            disabled={busy}
+            aria-label="Number of images"
+            style={{ background: "rgba(255,255,255,.05)", border: "1px solid var(--line-2)", borderRadius: 6, color: "var(--fg-1)", padding: "3px 6px", font: "var(--text-caption)" }}
+          >
+            {[1, 2, 4, 6].map((n) => <option key={n} value={n}>{n}</option>)}
+          </select>
+        </label>
+        <Button size="sm" onClick={generate} disabled={busy || prompt.trim().length === 0}>
+          {busy
+            ? job?.status === "GENERATING" ? `Generating… ${job.progress}%` : "Generating…"
+            : `Generate ${count} (~$${cost})`}
+        </Button>
+        <span style={{ flex: 1 }} />
+        <span style={{ font: "var(--text-caption)", color: "var(--fg-3)" }}>Seedream</span>
+      </div>
+      {(error || job?.status === "FAILED") && (
+        <p role="alert" style={{ font: "var(--text-caption)", color: "var(--danger)", margin: 0 }}>
+          {error ?? job?.error ?? "Generation failed."} — try again.
+        </p>
+      )}
     </div>
   );
 }
@@ -515,26 +584,30 @@ function EntityDetail({ entity, onClose }: { entity: EntityDTO; onClose: () => v
             </button>
           </div>
         ) : (
-          <div className="thumb-strip">
-            {entity.refs.map((r) => (
-              <span key={r.id} style={{ position: "relative" }} className="group">
-                {/* eslint-disable-next-line @next/next/no-img-element */}
-                <img className="ref-thumb" src={r.url} alt="" />
-                <button
-                  aria-label="Remove reference image"
-                  disabled={refAct.pending}
-                  onClick={() => refAct.run(() => softDeleteReferenceImage(r.id))}
-                  style={{
-                    position: "absolute", top: 2, right: 2, width: 18, height: 18,
-                    borderRadius: 99, border: "none", cursor: "pointer",
-                    background: "rgba(6,8,11,.75)", color: "var(--fg-2)", fontSize: 11,
-                    display: "inline-flex", alignItems: "center", justifyContent: "center",
-                  }}
-                >
-                  ×
-                </button>
-              </span>
-            ))}
+          <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
+            <div className="thumb-strip">
+              {entity.refs.map((r) => (
+                <span key={r.id} style={{ position: "relative" }} className="group">
+                  {/* eslint-disable-next-line @next/next/no-img-element */}
+                  <img className="ref-thumb" src={r.url} alt="" />
+                  <button
+                    aria-label="Remove reference image"
+                    disabled={refAct.pending}
+                    onClick={() => refAct.run(() => softDeleteReferenceImage(r.id))}
+                    style={{
+                      position: "absolute", top: 2, right: 2, width: 18, height: 18,
+                      borderRadius: 99, border: "none", cursor: "pointer",
+                      background: "rgba(6,8,11,.75)", color: "var(--fg-2)", fontSize: 11,
+                      display: "inline-flex", alignItems: "center", justifyContent: "center",
+                    }}
+                  >
+                    ×
+                  </button>
+                </span>
+              ))}
+            </div>
+            {/* generate MORE — conditioned on the images above (e.g. a logo → a garment) */}
+            <GenerateRefsBlock entity={entity} />
           </div>
         )}
         <input

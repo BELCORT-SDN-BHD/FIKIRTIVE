@@ -1,4 +1,4 @@
-import { INGEST_QUEUE, RENDER_QUEUE } from "@artlio/core";
+import { INGEST_QUEUE, RENDER_QUEUE, REFGEN_QUEUE } from "@artlio/core";
 
 /** Queue names — single source for web (producers) and worker (consumers). */
 export const QUEUES = {
@@ -8,4 +8,6 @@ export const QUEUES = {
   sweep: "sweep",
   /** Editor render pipeline: artlioEdit → ffmpeg → asset. */
   render: RENDER_QUEUE,
+  /** Phase 2 reference generation: prompt → provider → GENERATED refs. */
+  refgen: REFGEN_QUEUE,
 } as const;

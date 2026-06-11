@@ -13,6 +13,7 @@
   "dependencies": {
     "@artlio/core": "workspace:*",
     "@artlio/db": "workspace:*",
+    "@artlio/generation": "workspace:*",
     "@artlio/storage": "workspace:^",
     "execa": "^9.6.0",
     "pg-boss": "12.18.2"

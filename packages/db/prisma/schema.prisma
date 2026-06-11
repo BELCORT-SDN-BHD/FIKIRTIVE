@@ -39,6 +39,7 @@ enum AssetSource {
   MODAL
   IMPORT
   RENDER
+  GENERATED // Phase 2: reference images produced by a generation provider (fal/mock)
 }
 
 model Project {
@@ -246,6 +247,40 @@ model RenderJob {
 
   @@index([projectId, createdAt])
   @@index([status, updatedAt]) // 滞留 RENDERING 行的清扫扫描
+}
+
+enum GenStatus {
+  QUEUED
+  GENERATING
+  DONE
+  FAILED
+}
+
+// Phase 2 引导式参考图生成（首个收费点）—— 异步任务，镜像 RenderJob 形态。
+// 产物=GENERATED 资产 + 挂到实体的 ReferenceImage。条件输入（logo 等）由
+// worker 从实体已有 refs 推导，不入此表（D19 信任边界，合同里也无该字段）。
+model RefGenJob {
+  id             String    @id
+  ownerId        String    @default("founder")
+  entityId       String
+  prompt         String
+  model          String    @default("seedream")
+  count          Int
+  status         GenStatus @default(QUEUED)
+  /// 0-100，worker 按已落地图片数回写
+  progress       Int       @default(0)
+  /// DONE 时产出的 GENERATED 资产（内容寻址，可多张）
+  outputAssetIds String[]  @default([])
+  error          String    @default("")
+  queueJobId     String    @default("")
+  attempts       Int       @default(0)
+  startedAt      DateTime?
+  finishedAt     DateTime?
+  createdAt      DateTime  @default(now())
+  updatedAt      DateTime  @updatedAt
+
+  @@index([entityId, createdAt])
+  @@index([status, updatedAt]) // 滞留 GENERATING 行的清扫扫描
 }
 
 // ── Auth.js v5 标准模型（D18：邮箱魔法链接）────────────────────────────
