@@ -8,7 +8,7 @@
  */
 import { useState, useRef, useEffect } from "react";
 import { useRouter } from "next/navigation";
-import { Button, MonoLabel, IcPlus, IcRetry, IcSparkle } from "@/components/ds";
+import { Button, MonoLabel, IcPlus, IcRetry, IcSparkle, IcPlay } from "@/components/ds";
 import { addShot, setShotPromptText } from "@/lib/studio-actions";
 import { startGen, getGenJob } from "@/lib/gen-actions";
 
@@ -33,14 +33,14 @@ function ShotCard({ projectId, shot }: { projectId: string; shot: StudioShot }) 
     if (prompt !== shot.prompt) setShotPromptText(shot.id, prompt, shot.entityIds);
   }
 
-  function generate() {
+  function run(kind: "image" | "video") {
     const text = prompt.trim();
     if (!text || busy) return;
     setError(null);
     setBusy(true);
     (async () => {
       await setShotPromptText(shot.id, text, shot.entityIds);
-      const res = await startGen({ projectId, shotId: shot.id, prompt: text, entityIds: shot.entityIds, count: 1, model: "seedream" });
+      const res = await startGen({ projectId, shotId: shot.id, prompt: text, entityIds: shot.entityIds, count: 1, kind, model: kind === "video" ? "kling" : "seedream" });
       if ("error" in res) { setError(res.error); setBusy(false); return; }
       poll.current = setInterval(async () => {
         const job = await getGenJob(res.id);
@@ -53,21 +53,31 @@ function ShotCard({ projectId, shot }: { projectId: string; shot: StudioShot }) 
 
   return (
     <div className="al-mediacard" style={{ width: 240, flex: "none", cursor: "default" }}>
-      <div style={{ position: "relative", aspectRatio: "16 / 10", background: shot.imageUrl ? "#000" : "var(--glass-1)" }}>
+      <div style={{ position: "relative", aspectRatio: "16 / 10", background: (shot.imageUrl || shot.videoUrl) ? "#000" : "var(--glass-1)" }}>
         <span style={{ position: "absolute", top: 8, left: 8, font: "var(--text-mono-meta)", color: "var(--fg-2)", zIndex: 2 }}>▦ {shot.number}</span>
-        {shot.imageUrl && (
+        {shot.videoUrl ? (
+          <video src={shot.videoUrl} muted loop autoPlay playsInline style={{ position: "absolute", inset: 0, width: "100%", height: "100%", objectFit: "cover" }} />
+        ) : shot.imageUrl ? (
           // eslint-disable-next-line @next/next/no-img-element
           <img src={shot.imageUrl} alt="" style={{ position: "absolute", inset: 0, width: "100%", height: "100%", objectFit: "cover" }} />
-        )}
+        ) : null}
+        {shot.videoUrl && <span style={{ position: "absolute", top: 8, right: 8, font: "var(--text-mono-meta)", color: "var(--fg-1)", background: "rgba(6,8,11,.6)", padding: "1px 6px", borderRadius: 4, zIndex: 2 }}>▶ video</span>}
         {busy && (
           <span style={{ position: "absolute", inset: 0, display: "grid", placeItems: "center", background: "rgba(6,8,11,.55)", font: "var(--text-caption)", color: "var(--fg-2)" }}>generating…</span>
         )}
       </div>
       <div style={{ padding: 10, display: "flex", flexDirection: "column", gap: 8 }}>
-        <Button size="sm" full disabled={busy || prompt.trim().length === 0} onClick={generate}
-          icon={shot.imageUrl ? <IcRetry size={13} /> : <IcSparkle size={13} />}>
-          {busy ? "Generating…" : shot.imageUrl ? "Regenerate" : "Generate"}
-        </Button>
+        <div style={{ display: "flex", gap: 6 }}>
+          <Button size="sm" full disabled={busy || prompt.trim().length === 0} onClick={() => run("image")}
+            icon={shot.imageUrl || shot.videoUrl ? <IcRetry size={13} /> : <IcSparkle size={13} />}>
+            {busy ? "…" : shot.imageUrl || shot.videoUrl ? "Image" : "Generate"}
+          </Button>
+          {(shot.imageUrl || shot.videoUrl) && (
+            <Button size="sm" variant="glass" full disabled={busy} onClick={() => run("video")} icon={<IcPlay size={12} />}>
+              Animate
+            </Button>
+          )}
+        </div>
         <textarea value={prompt} onChange={(e) => setPrompt(e.target.value)} onBlur={saveText} disabled={busy}
           rows={2} aria-label={`Shot ${shot.number} prompt`} placeholder="Describe this shot…"
           style={{ width: "100%", background: "rgba(255,255,255,.05)", border: "1px solid var(--line-2)", borderRadius: "var(--radius-sm)", padding: "7px 9px", color: "var(--fg-1)", font: "var(--text-small)", resize: "none", outline: "none" }} />

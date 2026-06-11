@@ -9,7 +9,12 @@
  * bytes; the worker stores them content-addressed (same as any asset).
  */
 import { deflateSync, crc32 } from "node:zlib";
-import type { GenerationProvider, GenerationRequest, GeneratedImage } from "@artlio/core";
+import type { GenerationProvider, GenerationRequest, GeneratedImage, VideoRequest, GeneratedVideo } from "@artlio/core";
+
+/** A tiny valid 1s mp4 (256×160 solid) the mock returns for i2v — real enough
+ *  for ffprobe/the editor, no network. */
+const MOCK_MP4_B64 =
+  "AAAAIGZ0eXBpc29tAAACAGlzb21pc28yYXZjMW1wNDEAAAPjbW9vdgAAAGxtdmhkAAAAAAAAAAAAAAAAAAAD6AAABI8AAQAAAQAAAAAAAAAAAAAAAAEAAAAAAAAAAAAAAAAAAAABAAAAAAAAAAAAAAAAAABAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAgAAAw10cmFrAAAAXHRraGQAAAADAAAAAAAAAAAAAAABAAAAAAAABI8AAAAAAAAAAAAAAAAAAAAAAAEAAAAAAAAAAAAAAAAAAAABAAAAAAAAAAAAAAAAAABAAAAAAQAAAACgAAAAAAAkZWR0cwAAABxlbHN0AAAAAAAAAAEAAASPAAAIAAABAAAAAAKFbWRpYQAAACBtZGhkAAAAAAAAAAAAAAAAAAAwAAAAOABVxAAAAAAALWhkbHIAAAAAAAAAAHZpZGUAAAAAAAAAAAAAAABWaWRlb0hhbmRsZXIAAAACMG1pbmYAAAAUdm1oZAAAAAEAAAAAAAAAAAAAACRkaW5mAAAAHGRyZWYAAAAAAAAAAQAAAAx1cmwgAAAAAQAAAfBzdGJsAAAAwHN0c2QAAAAAAAAAAQAAALBhdmMxAAAAAAAAAAEAAAAAAAAAAAAAAAAAAAAAAQAAoABIAAAASAAAAAAAAAABFUxhdmM2Mi4yOC4xMDAgbGlieDI2NAAAAAAAAAAAAAAAGP//AAAANmF2Y0MBZAAL/+EAGWdkAAus2UEBWwEQAAADABAAAAMBgPFCmWABAAZo6+PLIsD9+PgAAAAAEHBhc3AAAAABAAAAAQAAABRidHJ0AAAAAAAAGY0AAAAAAAAAGHN0dHMAAAAAAAAAAQAAAA4AAAQAAAAAFHN0c3MAAAAAAAAAAQAAAAEAAACAY3R0cwAAAAAAAAAOAAAAAQAACAAAAAABAAAUAAAAAAEAAAgAAAAAAQAAAAAAAAABAAAEAAAAAAEAABQAAAAAAQAACAAAAAABAAAAAAAAAAEAAAQAAAAAAQAAFAAAAAABAAAIAAAAAAEAAAAAAAAAAQAABAAAAAABAAAIAAAAABxzdHNjAAAAAAAAAAEAAAABAAAADgAAAAEAAABMc3RzegAAAAAAAAAAAAAADgAAAu8AAAAQAAAADQAAAA0AAAANAAAAFgAAAA8AAAANAAAADQAAABYAAAAPAAAADQAAAA0AAAAWAAAAFHN0Y28AAAAAAAAAAQAABBMAAABidWR0YQAAAFptZXRhAAAAAAAAACFoZGxyAAAAAAAAAABtZGlyYXBwbAAAAAAAAAAAAAAAAC1pbHN0AAAAJal0b28AAAAdZGF0YQAAAAEAAAAATGF2ZjYyLjEyLjEwMAAAAAhmcmVlAAADwm1kYXQAAAKuBgX//6rcRem95tlIt5Ys2CDZI+7veDI2NCAtIGNvcmUgMTY1IHIzMjIyIGIzNTYwNWEgLSBILjI2NC9NUEVHLTQgQVZDIGNvZGVjIC0gQ29weWxlZnQgMjAwMy0yMDI1IC0gaHR0cDovL3d3dy52aWRlb2xhbi5vcmcveDI2NC5odG1sIC0gb3B0aW9uczogY2FiYWM9MSByZWY9MyBkZWJsb2NrPTE6MDowIGFuYWx5c2U9MHgzOjB4MTEzIG1lPWhleCBzdWJtZT03IHBzeT0xIHBzeV9yZD0xLjAwOjAuMDAgbWl4ZWRfcmVmPTEgbWVfcmFuZ2U9MTYgY2hyb21hX21lPTEgdHJlbGxpcz0xIDh4OGRjdD0xIGNxbT0wIGRlYWR6b25lPTIxLDExIGZhc3RfcHNraXA9MSBjaHJvbWFfcXBfb2Zmc2V0PS0yIHRocmVhZHM9NSBsb29rYWhlYWRfdGhyZWFkcz0xIHNsaWNlZF90aHJlYWRzPTAgbnI9MCBkZWNpbWF0ZT0xIGludGVybGFjZWQ9MCBibHVyYXlfY29tcGF0PTAgY29uc3RyYWluZWRfaW50cmE9MCBiZnJhbWVzPTMgYl9weXJhbWlkPTIgYl9hZGFwdD0xIGJfYmlhcz0wIGRpcmVjdD0xIHdlaWdodGI9MSBvcGVuX2dvcD0wIHdlaWdodHA9MiBrZXlpbnQ9MjUwIGtleWludF9taW49MTIgc2NlbmVjdXQ9NDAgaW50cmFfcmVmcmVzaD0wIHJjX2xvb2thaGVhZD00MCByYz1jcmYgbWJ0cmVlPTEgY3JmPTIzLjAgcWNvbXA9MC42MCBxcG1pbj0wIHFwbWF4PTY5IHFwc3RlcD00IGlwX3JhdGlvPTEuNDAgYXE9MToxLjAwAIAAAAA5ZYiEABD//ubA+ZZafwbc99R1oDqSugXdc8hvTiAZchoeXRuHJPHxZ4eKLPkYKAAABrAIdBw/PCh5AAAADEGaJGxBD/6qVQAEDAAAAAlBnkJ4hv8AC2kAAAAJAZ5hdEM/AA3oAAAACQGeY2pDPwAN6QAAABJBmmhJqEFomUwIf//+qZYAD7kAAAALQZ6GRREsN/8AC2kAAAAJAZ6ldEM/AA3pAAAACQGep2pDPwAN6AAAABJBmqxJqEFsmUwIb//+p4QAHzAAAAALQZ7KRRUsN/8AC2kAAAAJAZ7pdEM/AA3oAAAACQGe62pDPwAN6AAAABJBmu1JqEFsmUwIZ//+nhAAekE=";
 
 /* ---------------- mock (deterministic, offline) ---------------- */
 
@@ -66,6 +71,11 @@ export class MockProvider implements GenerationProvider {
       ext: "png",
     }));
   }
+  async generateVideo(_req: VideoRequest): Promise<GeneratedVideo> {
+    // a real, decodable 1s mp4 — content is the same for every mock i2v
+    // (dedup is fine for tests; real fal returns distinct clips)
+    return { bytes: new Uint8Array(Buffer.from(MOCK_MP4_B64, "base64")), ext: "mp4" };
+  }
 }
 
 function hashSeed(s: string): number {
@@ -78,6 +88,14 @@ function hashSeed(s: string): number {
 }
 
 /* ---------------- fal (prod, real money) ---------------- */
+
+/** Mark an error raised AFTER the provider has already been billed (the fal
+ *  sync POST returned ok, then parsing/downloading the result failed). The
+ *  worker must terminal-fail on these — a retry would POST again and double-
+ *  charge. Pre-charge failures (POST !ok, network) stay unmarked and retry. */
+export function chargedError(message: string): Error {
+  return Object.assign(new Error(message), { charged: true as const });
+}
 
 /** fal model ids — text-to-image vs image-conditioned edit. v1: Seedream,
  *  the $0.035 workhorse from the provider research. */
@@ -116,22 +134,61 @@ export class FalProvider implements GenerationProvider {
       }),
     });
     if (!res.ok) {
+      // pre-charge failure (the model never ran) — safe for the worker to retry
       const detail = await res.text().catch(() => "");
       throw new Error(`fal ${modelId} → ${res.status}: ${detail.slice(0, 300)}`);
     }
-    const data = (await res.json()) as { images?: { url: string; content_type?: string }[] };
-    const images = data.images ?? [];
-    if (images.length === 0) throw new Error(`fal ${modelId} returned no images`);
+    // res.ok ⇒ the sync endpoint ran the model: we've been billed. A failure
+    // past here must terminal-fail (chargedError), never retry-and-re-charge.
+    try {
+      const data = (await res.json()) as { images?: { url: string; content_type?: string }[] };
+      const images = data.images ?? [];
+      if (images.length === 0) throw new Error("returned no images");
+      // download each result so the worker can store it content-addressed
+      return await Promise.all(
+        images.map(async (img) => {
+          const r = await fetch(img.url);
+          if (!r.ok) throw new Error(`result download → ${r.status}`);
+          const ext = EXT_BY_CONTENT_TYPE[img.content_type ?? ""] ?? extFromUrl(img.url) ?? "png";
+          return { bytes: new Uint8Array(await r.arrayBuffer()), ext };
+        }),
+      );
+    } catch (e) {
+      throw chargedError(`fal ${modelId} billed but result unusable: ${e instanceof Error ? e.message : String(e)}`);
+    }
+  }
 
-    // download each result so the worker can store it content-addressed
-    return Promise.all(
-      images.map(async (img) => {
-        const r = await fetch(img.url);
-        if (!r.ok) throw new Error(`fal result download → ${r.status}`);
-        const ext = EXT_BY_CONTENT_TYPE[img.content_type ?? ""] ?? extFromUrl(img.url) ?? "png";
-        return { bytes: new Uint8Array(await r.arrayBuffer()), ext };
+  async generateVideo(req: VideoRequest): Promise<GeneratedVideo> {
+    // v1 i2v = Kling on fal (provider research). image_url is a presigned R2
+    // GET fal fetches; the sync endpoint blocks until the clip is ready.
+    const modelId = "fal-ai/kling-video/v2.5-turbo/pro/image-to-video";
+    const res = await fetch(`https://fal.run/${modelId}`, {
+      method: "POST",
+      headers: { Authorization: `Key ${this.apiKey}`, "Content-Type": "application/json" },
+      body: JSON.stringify({
+        prompt: req.prompt,
+        image_url: req.imageUrl,
+        duration: String(Math.max(5, Math.round(req.durationSeconds))),
       }),
-    );
+    });
+    if (!res.ok) {
+      // pre-charge failure (the model never ran) — safe for the worker to retry
+      const detail = await res.text().catch(() => "");
+      throw new Error(`fal ${modelId} → ${res.status}: ${detail.slice(0, 300)}`);
+    }
+    // res.ok ⇒ the sync endpoint ran the model: we've been billed. A failure
+    // past here must terminal-fail (chargedError), never retry-and-re-charge.
+    try {
+      const data = (await res.json()) as { video?: { url: string; content_type?: string } };
+      const url = data.video?.url;
+      if (!url) throw new Error("returned no video url");
+      const r = await fetch(url);
+      if (!r.ok) throw new Error(`video download → ${r.status}`);
+      const ext = extFromUrl(url) ?? "mp4";
+      return { bytes: new Uint8Array(await r.arrayBuffer()), ext };
+    } catch (e) {
+      throw chargedError(`fal ${modelId} billed but result unusable: ${e instanceof Error ? e.message : String(e)}`);
+    }
   }
 }
 

@@ -14,12 +14,20 @@ import { z } from "zod";
 
 export const GEN_MODELS = ["seedream"] as const;
 export type GenModel = (typeof GEN_MODELS)[number];
+/** v1 i2v model menu (fal). */
+export const GEN_VIDEO_MODELS = ["kling"] as const;
+export type GenVideoModel = (typeof GEN_VIDEO_MODELS)[number];
+
+export const GEN_KINDS = ["image", "video"] as const;
+export type GenKind = (typeof GEN_KINDS)[number];
 
 export const MAX_GEN_COUNT = 4;
 export const MAX_GEN_PROMPT = 2000;
 export const MAX_GEN_ENTITIES = 8;
-/** Per-image price hint (fal Seedream) shown before spend. */
+export const GEN_VIDEO_SECONDS = 5;
+/** Price hints shown before spend (fal). */
 export const GEN_PRICE_USD_PER_IMAGE = 0.035;
+export const GEN_PRICE_USD_PER_VIDEO = 0.35; // ~5s i2v
 
 export const genRequest = z
   .object({
@@ -29,7 +37,8 @@ export const genRequest = z
     prompt: z.string().trim().min(1).max(MAX_GEN_PROMPT),
     entityIds: z.array(z.string().min(1).max(64)).max(MAX_GEN_ENTITIES).default([]),
     count: z.number().int().min(1).max(MAX_GEN_COUNT),
-    model: z.enum(GEN_MODELS).default("seedream"),
+    kind: z.enum(GEN_KINDS).default("image"),
+    model: z.string().min(1).max(40).default("seedream"),
   })
   .strict();
 export type GenRequest = z.infer<typeof genRequest>;

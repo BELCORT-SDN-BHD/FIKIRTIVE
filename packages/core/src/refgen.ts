@@ -79,6 +79,21 @@ export interface GeneratedImage {
   ext: string;
 }
 
+/** What the worker hands a provider to animate an image into a clip (i2v).
+ *  imageUrl is a short-lived presigned GET the provider fetches. */
+export interface VideoRequest {
+  prompt: string;
+  imageUrl: string;
+  durationSeconds: number;
+  model: string;
+}
+
+/** One generated clip, already downloaded by the provider. */
+export interface GeneratedVideo {
+  bytes: Uint8Array;
+  ext: string;
+}
+
 export interface GenerationProvider {
   /** Stable id for logs/audit (e.g. "mock", "fal:seedream"). */
   readonly name: string;
@@ -86,4 +101,6 @@ export interface GenerationProvider {
    *  pg-boss retry/DLQ handles it (no partial-success contract — all or the
    *  job retries). */
   generate(req: GenerationRequest): Promise<GeneratedImage[]>;
+  /** Image-to-video: animate one image into a clip. Throws on failure. */
+  generateVideo(req: VideoRequest): Promise<GeneratedVideo>;
 }

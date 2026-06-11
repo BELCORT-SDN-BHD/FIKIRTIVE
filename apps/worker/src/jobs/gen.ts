@@ -18,6 +18,7 @@ import {
   storageKey,
   newId,
   GEN_RETRY_LIMIT,
+  GEN_VIDEO_SECONDS,
   MAX_CONDITIONING_IMAGES,
   type GenJobData,
   type GenModel,
@@ -26,7 +27,9 @@ import { storage } from "../storage.js";
 import { provider } from "../generation.js";
 
 const mimeForExt = (ext: string) =>
-  ext === "png" ? "image/png" : ext === "webp" ? "image/webp" : "image/jpeg";
+  ext === "png" ? "image/png" : ext === "webp" ? "image/webp"
+    : ext === "mp4" ? "video/mp4" : ext === "webm" ? "video/webm" : ext === "mov" ? "video/quicktime"
+    : "image/jpeg";
 
 export async function handleGen(data: GenJobData, retryCount: number): Promise<void> {
   const job = await prisma.genJob.findUnique({ where: { id: data.genJobId } });
@@ -34,7 +37,13 @@ export async function handleGen(data: GenJobData, retryCount: number): Promise<v
     console.error(`[gen] job ${data.genJobId} missing — dropping`);
     return;
   }
-  if (job.status === "DONE") return;
+  // DONE and FAILED are terminal: a redelivered or stale queue message must
+  // never reprocess (and possibly re-spend on) a job that already settled.
+  if (job.status === "DONE" || job.status === "FAILED") return;
+
+  // flips true the instant the paid provider call returns — any failure AFTER
+  // this point must terminal-fail, never retry (a retry would re-spend).
+  let spent = false;
 
   try {
     const project = await prisma.project.findFirst({ where: { id: job.projectId, ownerId: job.ownerId, deletedAt: null } });
@@ -43,9 +52,11 @@ export async function handleGen(data: GenJobData, retryCount: number): Promise<v
       return;
     }
     if (job.shotId) {
-      const shot = await prisma.shot.findFirst({ where: { id: job.shotId, ownerId: job.ownerId, deletedAt: null } });
+      // scope the shot to THIS job's project — a job must not animate (or spend
+      // on) a shot/source image belonging to another project.
+      const shot = await prisma.shot.findFirst({ where: { id: job.shotId, projectId: job.projectId, ownerId: job.ownerId, deletedAt: null } });
       if (!shot) {
-        await prisma.genJob.update({ where: { id: job.id }, data: { status: "FAILED", error: "shot gone before generation ran", finishedAt: new Date() } });
+        await prisma.genJob.update({ where: { id: job.id }, data: { status: "FAILED", error: "shot gone or not in this project before generation ran", finishedAt: new Date() } });
         return;
       }
     }
@@ -56,7 +67,25 @@ export async function handleGen(data: GenJobData, retryCount: number): Promise<v
       return;
     }
 
-    await prisma.genJob.update({ where: { id: job.id }, data: { status: "GENERATING", startedAt: new Date(), attempts: { increment: 1 } } });
+    // Atomic spend claim: QUEUED → GENERATING in a single conditional update.
+    // Only one delivery can win the transition, so concurrent or duplicate
+    // deliveries can never both reach the provider. Losing the claim means
+    // either another delivery already owns the job, or a prior attempt reached
+    // GENERATING and died (a hard crash — a *caught* provider error resets
+    // status→QUEUED, which re-claims safely). A lost claim MAY mean a paid call
+    // already happened, so fail the stuck GENERATING row closed rather than risk
+    // a double charge — but only GENERATING, never clobbering a winner's DONE.
+    const claim = await prisma.genJob.updateMany({
+      where: { id: job.id, status: "QUEUED" },
+      data: { status: "GENERATING", startedAt: new Date(), attempts: { increment: 1 } },
+    });
+    if (claim.count === 0) {
+      await prisma.genJob.updateMany({
+        where: { id: job.id, status: "GENERATING" },
+        data: { status: "FAILED", error: "duplicate delivery or interrupted after a possible paid call — not retrying, to avoid a double charge", finishedAt: new Date() },
+      });
+      return;
+    }
 
     // resolve conditioning from the @mentioned entities' refs
     const refs = job.entityIds.length
@@ -86,8 +115,31 @@ export async function handleGen(data: GenJobData, retryCount: number): Promise<v
       entities: entities.map((e) => ({ id: e.id, name: e.name, type: e.type, refHashes: e.referenceImages.map((r) => r.asset.contentHash) })),
     };
 
-    // THE paid call (image) — exactly once per job
-    const images = await provider.generate({ prompt: job.prompt, inputImageUrls, count: job.count, model: job.model as GenModel });
+    // THE paid call — exactly once per job. Image: t2i/edit. Video (i2v):
+    // animate the shot's latest IMAGE generation into a clip.
+    let outputs: { bytes: Uint8Array; ext: string }[];
+    if (job.kind === "VIDEO") {
+      const sourceGen = job.shotId
+        ? await prisma.generation.findFirst({
+            where: { shotId: job.shotId, deletedAt: null, asset: { ext: { in: ["png", "jpg", "jpeg", "webp"] } } },
+            orderBy: { version: "desc" }, include: { asset: true },
+          })
+        : null;
+      if (!sourceGen) {
+        // permanent user error (no still yet), not a transient failure — fail
+        // closed so a retry can't later find a fresh image and spend on it.
+        await prisma.genJob.update({ where: { id: job.id }, data: { status: "FAILED", error: "no source image to animate — generate an image for this shot first", finishedAt: new Date() } });
+        return;
+      }
+      const imageUrl = await storage.presignedGet(storageKey(sourceGen.asset.ownerId, sourceGen.asset.contentHash, sourceGen.asset.ext), 3600);
+      const isMockV = provider.name === "mock";
+      if (!isMockV && !imageUrl) throw new Error("source image unreachable — refusing to spend on i2v");
+      const video = await provider.generateVideo({ prompt: job.prompt, imageUrl: imageUrl ?? "", durationSeconds: GEN_VIDEO_SECONDS, model: job.model });
+      outputs = [video];
+    } else {
+      outputs = await provider.generate({ prompt: job.prompt, inputImageUrls, count: job.count, model: job.model as GenModel });
+    }
+    spent = true; // the paid call has returned — past here, a failure must not retry
 
     // store + create a Generation per output. version: next per shot, else 1.
     let nextVersion = 1;
@@ -97,7 +149,7 @@ export async function handleGen(data: GenJobData, retryCount: number): Promise<v
     }
     const generationIds: string[] = [];
     const assetIds: string[] = [];
-    for (const img of images) {
+    for (const img of outputs) {
       const { contentHash } = await storage.put(job.ownerId, img.bytes, img.ext);
       const asset = await prisma.asset.upsert({
         where: { ownerId_contentHash: { ownerId: job.ownerId, contentHash } },
@@ -126,7 +178,12 @@ export async function handleGen(data: GenJobData, retryCount: number): Promise<v
     console.log(`[gen] ${job.id}: DONE → ${generationIds.length} generations via ${provider.name}`);
   } catch (err) {
     const message = err instanceof Error ? err.message.slice(0, 500) : String(err).slice(0, 500);
-    const final = retryCount >= GEN_RETRY_LIMIT;
+    // a failure after the paid call is terminal — retrying would re-spend.
+    // `spent` covers post-provider failures here; `charged` covers a failure
+    // INSIDE the adapter after fal already billed (it ran the model, then the
+    // result parse/download threw). Only a genuinely pre-charge throw retries.
+    const charged = typeof err === "object" && err !== null && (err as { charged?: unknown }).charged === true;
+    const final = spent || charged || retryCount >= GEN_RETRY_LIMIT;
     console.error(`[gen] ${job.id}: ${final ? "FAILED" : "retrying"} — ${message}`);
     await prisma.genJob.update({
       where: { id: job.id },
