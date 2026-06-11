@@ -14,7 +14,8 @@ import Mention from "@tiptap/extension-mention";
 import { Placeholder } from "@tiptap/extensions";
 import type { SuggestionKeyDownProps, SuggestionProps } from "@tiptap/suggestion";
 import type { EntityDTO, ShotDTO } from "@/lib/types";
-import { saveShotPrompt, createShot } from "@/lib/actions";
+import { saveShotPrompt } from "@/lib/actions";
+import { Button, Chip } from "./ds";
 
 /* ---------- mention dropdown ---------- */
 
@@ -66,40 +67,32 @@ const MentionList = forwardRef<MentionListHandle, SuggestionProps<MentionItem>>(
     }));
 
     return (
-      <div
-        className="bg-raised border border-edge rounded-[var(--radius-sm)] shadow-xl py-1 min-w-52 text-sm"
-        role="listbox"
-        aria-label="Entity suggestions"
-      >
+      <div className="pop-menu" style={{ position: "static", minWidth: 220 }} role="listbox" aria-label="Entity suggestions">
         {props.items.length === 0 ? (
-          <p className="px-3 py-1.5 text-dim text-xs">
-            No matching entities — create one in the library.
+          <p style={{ font: "var(--text-small)", color: "var(--fg-3)", padding: "7px 11px", margin: 0 }}>
+            No matching elements — create one in the Library.
           </p>
         ) : (
           props.items.map((item, i) => (
-            <button
+            <div
               key={item.id}
               role="option"
               aria-selected={i === selected}
-              className={`w-full flex items-center gap-2 px-3 py-1.5 text-left ${
-                i === selected ? "bg-accent-soft" : ""
-              }`}
+              className={`pop-item${i === selected ? " active" : ""}`}
               onMouseEnter={() => setSelected(i)}
               onClick={() => pick(i)}
             >
-              <span
-                className="w-2 h-2 rounded-full shrink-0"
-                style={{ background: HUES[item.type] }}
-                aria-hidden
-              />
-              <span className="truncate">
-                {item.name}
-                {item.aka && <span className="text-faint"> · aka {item.aka}</span>}
+              <span style={{ width: 8, height: 8, borderRadius: 99, background: HUES[item.type], flex: "none" }} aria-hidden />
+              <span className="pop-item-main">
+                <span className="pop-item-label">
+                  {item.name}
+                  {item.aka && <span style={{ color: "var(--fg-3)", fontWeight: 400 }}> · aka {item.aka}</span>}
+                </span>
               </span>
-              <span className="ml-auto font-mono text-[10px] text-faint uppercase">
+              <span style={{ font: "var(--text-mono-label)", letterSpacing: "0.08em", textTransform: "uppercase", color: "var(--fg-3)" }}>
                 {item.type.toLowerCase()}
               </span>
-            </button>
+            </div>
           ))
         )}
       </div>
@@ -132,24 +125,17 @@ function resolveDoc(doc: DocNode, byId: Map<string, EntityDTO>) {
   return { ids: [...new Set(ids)], text: text.trim() };
 }
 
-const HUE_VARS: Record<EntityDTO["type"], string> = {
-  CHARACTER: "var(--hue-character)",
-  LOCATION: "var(--hue-location)",
-  PRODUCT: "var(--hue-product)",
-  BRAND: "var(--hue-brand)",
-};
-
-/** Top band of the composer shell: who's in this shot, with reference health. */
+/** Top band of the prompt bar: who's in this shot, with reference health. */
 function MentionBand({ ids, byId }: { ids: string[]; byId: Map<string, EntityDTO> }) {
   if (ids.length === 0) return null;
   return (
-    <div className="flex flex-wrap gap-1.5 px-4 pt-3" aria-label="Entities in this prompt">
+    <div className="al-promptbar-row" aria-label="Elements in this prompt">
       {ids.map((id) => {
         const e = byId.get(id);
         if (!e) {
           return (
-            <span key={id} className="glass-chip rounded-[var(--radius-pill,999px)] px-2 py-0.5 text-xs text-danger line-through">
-              deleted entity
+            <span key={id} className="al-badge al-badge-danger" style={{ textDecoration: "line-through" }}>
+              deleted element
             </span>
           );
         }
@@ -157,22 +143,21 @@ function MentionBand({ ids, byId }: { ids: string[]; byId: Map<string, EntityDTO
         return (
           <span
             key={id}
-            className="glass-chip rounded-full pl-0.5 pr-2 py-0.5 flex items-center gap-1.5 text-xs"
-            style={{ color: HUE_VARS[e.type] }}
+            className="al-badge"
+            style={{ color: HUES[e.type], paddingLeft: cover ? 4 : 10 }}
             title={e.refs.length === 0 ? `${e.name} has no reference images yet` : `${e.name} · ${e.refs.length} refs`}
           >
             {cover ? (
               // eslint-disable-next-line @next/next/no-img-element
-              <img src={cover.url} alt="" className="w-5 h-5 rounded-full object-cover" />
-            ) : (
-              <span className="w-5 h-5 rounded-full flex items-center justify-center text-[10px] font-semibold"
-                style={{ background: `color-mix(in srgb, ${HUE_VARS[e.type]} 20%, transparent)` }} aria-hidden>
-                {e.name.slice(0, 1).toUpperCase()}
-              </span>
-            )}
+              <img src={cover.url} alt="" style={{ width: 18, height: 18, borderRadius: 99, objectFit: "cover" }} />
+            ) : null}
             {e.name}
             {e.refs.length === 0 && (
-              <span className="w-1.5 h-1.5 rounded-full bg-warning" title="No reference images" aria-label="No reference images" />
+              <span
+                style={{ width: 5, height: 5, borderRadius: 99, background: "var(--warning)", display: "inline-block" }}
+                title="No reference images"
+                aria-label="No reference images"
+              />
             )}
           </span>
         );
@@ -181,21 +166,15 @@ function MentionBand({ ids, byId }: { ids: string[]; byId: Map<string, EntityDTO
   );
 }
 
-/* ---------- composer ---------- */
+/* ---------- composer (prototype prompt-bar dock) ---------- */
 
 export function Composer({
   shot,
-  shots,
   entities,
-  projectId,
-  onSelectShot,
   onDirtyChange,
 }: {
-  shot: ShotDTO | null;
-  shots: ShotDTO[];
+  shot: ShotDTO;
   entities: EntityDTO[];
-  projectId: string;
-  onSelectShot: (id: string) => void;
   onDirtyChange: (dirty: boolean) => void;
 }) {
   const [pending, startTransition] = useTransition();
@@ -213,17 +192,16 @@ export function Composer({
   const entitiesRef = useRef(entities);
   entitiesRef.current = entities;
 
-  const shotId = shot?.id ?? null;
+  const shotId = shot.id;
   const editor = useEditor({
     immediatelyRender: false, // SSR: render editor client-side only
-    // P1 audit fix: one long-lived editor shares undo history across shots —
-    // Ctrl+Z after switching restores shot A's doc into shot B. Recreating the
-    // editor per shot (deps below) gives each shot its own history.
-    content: (shot?.promptDoc as never) ?? "",
+    // one long-lived editor would share undo history across shots (P1 audit
+    // fix): recreating per shot gives each its own history
+    content: (shot.promptDoc as never) ?? "",
     extensions: [
       StarterKit,
       Placeholder.configure({
-        placeholder: "Type @ to mention an entity… e.g. @Maya in @NeonAlley holding @AuroraBottle",
+        placeholder: "Describe the shot — use @ to add elements, e.g. “@Maya walking in the park”",
       }),
       Mention.extend({
         addAttributes() {
@@ -260,18 +238,17 @@ export function Composer({
               const rect = clientRect?.();
               if (!popup || !rect) return;
               popup.style.left = `${rect.left}px`;
-              popup.style.top = `${rect.bottom + 6}px`;
+              // dock sits at the bottom — open the menu UPWARD above the caret
+              popup.style.top = "auto";
+              popup.style.bottom = `${window.innerHeight - rect.top + 8}px`;
             };
             return {
               onStart(props: SuggestionProps<MentionItem>) {
                 dismissed = false;
-                component = new ReactRenderer(MentionList, {
-                  props,
-                  editor: props.editor,
-                });
+                component = new ReactRenderer(MentionList, { props, editor: props.editor });
                 popup = document.createElement("div");
                 popup.style.position = "fixed";
-                popup.style.zIndex = "50";
+                popup.style.zIndex = "60";
                 popup.appendChild(component.element);
                 document.body.appendChild(popup);
                 position(props.clientRect);
@@ -286,7 +263,6 @@ export function Composer({
                   if (popup) popup.style.display = "none";
                   return true;
                 }
-                // after Esc, stop intercepting — Enter etc. behave like normal typing
                 if (dismissed) return false;
                 return component?.ref?.onKeyDown(props) ?? false;
               },
@@ -307,19 +283,18 @@ export function Composer({
       setCopyBlocked(null);
       setMentionedIds(resolveDoc(editor.getJSON() as DocNode, new Map()).ids);
     },
-  }, [shotId]); // fresh editor (and undo history) per shot
+  }, [shotId]);
 
   // recreated editor starts clean
   useEffect(() => {
     setDirty(false);
     setSaveError(false);
     setCopyBlocked(null);
-    setMentionedIds(shot?.entityIds ?? []);
+    setMentionedIds(shot.entityIds ?? []);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [shotId]);
 
-  // refresh/close with unsaved edits → browser-native confirm (client-side
-  // navigation is guarded separately via confirmLeave in Workbench)
+  // refresh/close with unsaved edits → browser-native confirm
   useEffect(() => {
     if (!dirty) return;
     const warn = (e: BeforeUnloadEvent) => e.preventDefault();
@@ -330,7 +305,7 @@ export function Composer({
   const byId = new Map(entities.map((e) => [e.id, e]));
 
   async function doSave(): Promise<boolean> {
-    if (!editor || !shot) return false;
+    if (!editor) return false;
     const json = editor.getJSON() as DocNode;
     const { ids, text } = resolveDoc(json, byId);
     try {
@@ -356,14 +331,14 @@ export function Composer({
 
   function copyResolved() {
     if (!editor) return;
-    // referential integrity, loudly (LTX's silent @tag breakage is its most
-    // hated bug): every mention must resolve to a live entity with ≥1 ref
+    // referential integrity, loudly: every mention must resolve to a live
+    // entity with ≥1 reference (LTX's silent @tag breakage is its most hated bug)
     const { ids } = resolveDoc(editor.getJSON() as DocNode, byId);
     const deleted = ids.filter((id) => !byId.get(id));
     const refless = ids.map((id) => byId.get(id)).filter((e): e is EntityDTO => !!e && e.refs.length === 0);
     if (deleted.length > 0) {
       setCopyBlocked(
-        "This prompt mentions an entity that no longer exists (marked in the strip above the text) — delete that chip from the prompt, then copy again.",
+        "This prompt mentions an element that no longer exists (marked above the text) — delete that chip from the prompt, then copy again.",
       );
       return;
     }
@@ -375,7 +350,7 @@ export function Composer({
     }
     startTransition(async () => {
       // copied prompt must match the provenance a later upload records — save first
-      if (dirty && shot) {
+      if (dirty) {
         const ok = await doSave();
         if (!ok) return;
       }
@@ -387,91 +362,51 @@ export function Composer({
   }
 
   return (
-    <section className="p-4 border-b border-edge" aria-label="Prompt composer">
-      <div className="flex items-center gap-3 mb-2">
-        <h2 className="mono-label text-faint">Prompt</h2>
-        {shot && (
-          <span className="font-mono text-xs text-faint">
-            Shot {String(shot.number).padStart(2, "0")}
-            {shot.title ? ` · ${shot.title}` : ""}
-          </span>
-        )}
-        {dirty && <span className="font-mono text-[10px] text-warning">unsaved</span>}
-      </div>
-
-      {!shot ? (
-        <div className="composer glass rounded-[var(--radius-lg)] p-4 text-sm text-dim">
-          {shots.length === 0 ? (
-            <>
-              Every prompt belongs to a shot.{" "}
-              <button
-                className="text-ink font-semibold underline underline-offset-3"
-                onClick={() =>
-                  startTransition(async () => {
-                    const res = await createShot(projectId);
-                    if ("id" in res && res.id) onSelectShot(res.id);
-                  })
-                }
-                disabled={pending}
-              >
-                Add Shot 01
-              </button>{" "}
-              to start writing.
-            </>
-          ) : (
-            <>Select a shot on the board below to edit its prompt.</>
-          )}
-        </div>
-      ) : (
-        <>
-          {/* three-band shell: entities on top, text in the middle, actions below.
-              The shell is the stable part — Phase 2 only swaps footer contents. */}
-          <div className="composer glass rounded-[var(--radius-lg)] focus-within:border-edge-strong">
-            <MentionBand ids={mentionedIds} byId={byId} />
-            <div className="px-4 py-3">
-              <EditorContent editor={editor} />
-            </div>
-            <div className="flex items-center gap-2 px-3 pb-3">
-              <button
-                onClick={save}
-                disabled={pending || !dirty}
-                className="btn-primary text-sm px-3.5 py-1.5"
-              >
-                {pending ? "Saving…" : "Save prompt"}
-              </button>
-              <button
-                onClick={copyResolved}
-                className="glass-chip rounded-[var(--radius-md)] text-sm px-3.5 py-1.5 text-dim hover:text-ink hover-bright"
-              >
-                {copied ? "Copied ✓" : "Copy resolved prompt"}
-              </button>
-              <span
-                className="ml-auto glass-chip rounded-full px-2.5 py-1 mono-label text-faint"
-                title="Where this prompt gets rendered. Phase 2 adds your own templates and API targets here."
-              >
-                Target · ComfyUI manual
-              </span>
-            </div>
-          </div>
-          {saveError && (
-            <p className="text-xs text-danger mt-2" role="alert">
-              Save failed — check your connection and{" "}
-              <button className="underline" onClick={save}>
-                retry
-              </button>
-              .
-            </p>
-          )}
-          {copyBlocked && (
-            <p className="text-xs text-warning mt-2" role="alert">
-              {copyBlocked}
-            </p>
-          )}
-          <p className="text-xs text-faint mt-2">
-            @ mentions stay linked when entities are renamed
+    <div className="composer-dock">
+      <div className="composer-wrap">
+        {(saveError || copyBlocked) && (
+          <p
+            role="alert"
+            style={{
+              font: "var(--text-small)",
+              color: saveError ? "var(--danger)" : "var(--warning)",
+              margin: "0 4px 8px",
+            }}
+          >
+            {saveError ? (
+              <>
+                Save failed — check your connection and{" "}
+                <button onClick={save} style={{ background: "none", border: "none", color: "inherit", textDecoration: "underline", cursor: "pointer", padding: 0, font: "inherit" }}>
+                  retry
+                </button>
+                .
+              </>
+            ) : (
+              copyBlocked
+            )}
           </p>
-        </>
-      )}
-    </section>
+        )}
+        <div className="al-promptbar">
+          <MentionBand ids={mentionedIds} byId={byId} />
+          <EditorContent editor={editor} />
+          <div className="al-promptbar-row">
+            <Chip mono interactive={false} title="Where this prompt gets rendered. Phase 2 adds your own templates and API targets here.">
+              Target · ComfyUI manual
+            </Chip>
+            <span className="mono-label">
+              Shot {String(shot.number).padStart(2, "0")}
+              {dirty ? " · unsaved" : ""}
+            </span>
+            <span className="al-promptbar-spacer" />
+            <Button variant="glass" size="sm" onClick={copyResolved}>
+              {copied ? "Copied ✓" : "Copy resolved prompt"}
+            </Button>
+            <Button size="sm" onClick={save} disabled={pending || !dirty}>
+              {pending ? "Saving…" : "Save prompt"}
+            </Button>
+          </div>
+        </div>
+      </div>
+    </div>
   );
 }

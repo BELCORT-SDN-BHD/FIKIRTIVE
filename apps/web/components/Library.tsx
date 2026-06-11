@@ -11,6 +11,7 @@ import {
   softDeleteReferenceImage,
   softDeleteEntity,
 } from "@/lib/actions";
+import { Badge, Button, Dialog, IcImage, IconButton, IcPlus, IcX, Input, MediaCard, MonoLabel, SegmentedControl } from "./ds";
 
 const TYPE_META: Record<EntityTypeDTO, { label: string; singular: string; color: string }> = {
   CHARACTER: { label: "Characters", singular: "Character", color: "var(--hue-character)" },
@@ -56,48 +57,55 @@ export function Library({
   initialSelectedId: string | null;
 }) {
   const [selectedId, setSelectedId] = useState<string | null>(initialSelectedId);
-  const [creating, setCreating] = useState<EntityTypeDTO | null>(null);
+  const [creating, setCreating] = useState(false);
+  const [createType, setCreateType] = useState<EntityTypeDTO>("CHARACTER");
   const [query, setQuery] = useState("");
   const selected = entities.find((e) => e.id === selectedId) ?? null;
 
   function select(id: string | null) {
     setSelectedId(id);
-    setCreating(null);
     // keep the URL shareable without a server roundtrip
     window.history.replaceState(null, "", id ? `/library?e=${id}` : "/library");
   }
 
   function openCreate(type: EntityTypeDTO) {
-    setSelectedId(null);
-    setCreating(type);
-    window.history.replaceState(null, "", "/library"); // drop stale ?e=
+    setCreateType(type);
+    setCreating(true);
   }
 
   const q = query.trim().toLowerCase();
   const matches = (e: EntityDTO) =>
-    !q ||
-    e.name.toLowerCase().includes(q) ||
-    e.aliases.some((a) => a.toLowerCase().includes(q));
+    !q || e.name.toLowerCase().includes(q) || e.aliases.some((a) => a.toLowerCase().includes(q));
 
   return (
     <div className="flex flex-1 min-h-0">
-      <main className="flex-1 min-w-0 overflow-y-auto">
-        <div className="max-w-5xl mx-auto p-6 flex flex-col gap-8">
-          <div className="flex items-end gap-4 flex-wrap">
+      <div className="screen">
+        <div className="screen-pad">
+          <div style={{ display: "flex", alignItems: "center", gap: 14, margin: "10px 0 6px" }}>
             <div>
-              <h1 className="font-display text-xl font-semibold">Subject Library</h1>
-              <p className="text-sm text-dim mt-1">
-                Everything @mentionable lives here — shared across all projects.
+              <h1 style={{ font: "var(--text-display)", letterSpacing: "var(--tracking-display)", color: "var(--fg-1)", margin: 0 }}>
+                Elements
+              </h1>
+              <p style={{ font: "var(--text-body)", color: "var(--fg-2)", margin: "6px 0 0", maxWidth: 480 }}>
+                Lock a character, place or product once, then reference it in any prompt with @ — across every project.
               </p>
             </div>
-            <input
-              type="search"
-              value={query}
-              onChange={(e) => setQuery(e.target.value)}
-              placeholder="Search names & aliases…"
-              aria-label="Search entities"
-              className="ml-auto bg-raised border border-edge rounded-[var(--radius-sm)] text-sm px-3 py-1.5 w-64"
-            />
+            <span style={{ flex: 1 }} />
+            <Button icon={<IcPlus />} onClick={() => openCreate("CHARACTER")}>
+              New element
+            </Button>
+          </div>
+
+          <div className="filters-row" style={{ marginTop: 20 }}>
+            <span className="al-input-wrap" style={{ maxWidth: 280, flex: 1 }}>
+              <input
+                type="search"
+                value={query}
+                onChange={(e) => setQuery(e.target.value)}
+                placeholder="Search names & aliases…"
+                aria-label="Search elements"
+              />
+            </span>
           </div>
 
           {TYPE_ORDER.map((type) => {
@@ -105,246 +113,247 @@ export function Library({
             const group = entities.filter((e) => e.type === type).filter(matches);
             const total = entities.filter((e) => e.type === type).length;
             return (
-              <section key={type} aria-label={meta.label}>
-                <div className="flex items-center gap-2 mb-3">
-                  <span
-                    className="inline-block w-2.5 h-2.5 rounded-full"
-                    style={{ background: meta.color }}
-                    aria-hidden
-                  />
-                  <h2 className="mono-label">
-                    {meta.label}
-                  </h2>
-                  <span className="font-mono text-xs text-faint">{total}</span>
-                  <button
-                    className="ml-auto text-sm text-dim hover:text-ink"
-                    onClick={() => openCreate(type)}
-                  >
+              <section key={type} aria-label={meta.label} style={{ marginBottom: 30 }}>
+                <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 12 }}>
+                  <span style={{ width: 9, height: 9, borderRadius: 99, background: meta.color, display: "inline-block" }} aria-hidden />
+                  <MonoLabel>{meta.label}</MonoLabel>
+                  <span style={{ font: "var(--text-mono-meta)", color: "var(--fg-3)" }}>{total}</span>
+                  <span style={{ flex: 1 }} />
+                  <Button variant="ghost" size="sm" onClick={() => openCreate(type)}>
                     + New {meta.singular.toLowerCase()}
-                  </button>
+                  </Button>
                 </div>
 
                 {total === 0 ? (
-                  <button
-                    className="w-full border border-dashed border-edge rounded-[var(--radius-lg)] p-5 text-left text-sm text-dim hover:border-faint"
-                    onClick={() => openCreate(type)}
-                  >
-                    {EMPTY_HINTS[type]}{" "}
-                    <span className="text-ink underline underline-offset-3">Create your first {meta.singular.toLowerCase()} →</span>
+                  <button className="drop-zone" onClick={() => openCreate(type)}>
+                    <span className="drop-zone-tile">
+                      <IcPlus size={18} />
+                    </span>
+                    <span>
+                      {EMPTY_HINTS[type]}{" "}
+                      <span style={{ color: "var(--fg-1)", textDecoration: "underline", textUnderlineOffset: 3 }}>
+                        Create your first {meta.singular.toLowerCase()} →
+                      </span>
+                    </span>
                   </button>
                 ) : group.length === 0 ? (
-                  <p className="text-xs text-faint">No {meta.label.toLowerCase()} match “{query}”.</p>
+                  <p style={{ font: "var(--text-small)", color: "var(--fg-3)" }}>
+                    No {meta.label.toLowerCase()} match “{query}”.
+                  </p>
                 ) : (
-                  <div className="grid gap-3 [grid-template-columns:repeat(auto-fill,minmax(160px,1fr))]">
-                    {group.map((e) => (
-                      <EntityCard
-                        key={e.id}
-                        entity={e}
-                        color={meta.color}
-                        selected={e.id === selectedId}
-                        onClick={() => select(e.id)}
-                      />
-                    ))}
+                  <div className="card-grid">
+                    {group.map((e) => {
+                      const cover = e.refs.find((r) => r.kind === "image");
+                      return (
+                        <div key={e.id} className="fade-rise">
+                          <MediaCard
+                            ratio="1:1"
+                            src={cover?.url ?? null}
+                            selected={e.id === selectedId}
+                            onClick={() => select(e.id === selectedId ? null : e.id)}
+                            title={`@${e.name}`}
+                            meta={`${e.type} · ${e.refs.length} SOURCES${e.usageCount > 0 ? ` · ${e.usageCount} SHOTS` : ""}`}
+                            footer={
+                              e.refs.length === 0 ? (
+                                <Badge mono tone="warning" dot>
+                                  No refs yet
+                                </Badge>
+                              ) : (
+                                <Badge mono>Locked</Badge>
+                              )
+                            }
+                          />
+                        </div>
+                      );
+                    })}
                   </div>
                 )}
               </section>
             );
           })}
         </div>
-      </main>
+      </div>
 
-      {(selected || creating) && (
+      {selected && (
         <aside
-          aria-label={selected ? "Entity detail" : "New entity"}
-          className="w-96 shrink-0 border-l border-edge bg-surface overflow-y-auto"
+          aria-label="Element detail"
+          style={{ width: 384, flex: "none", borderLeft: "1px solid var(--line-2)", overflowY: "auto" }}
           onKeyDown={(e) => {
             if (e.key === "Escape") select(null);
           }}
         >
-          {selected ? (
-            <EntityDetail key={selected.id} entity={selected} onClose={() => select(null)} />
-          ) : creating ? (
-            <CreatePanel
-              type={creating}
-              onClose={() => setCreating(null)}
-              onCreated={(id) => select(id)}
-            />
-          ) : null}
+          <EntityDetail key={selected.id} entity={selected} onClose={() => select(null)} />
         </aside>
       )}
+
+      <CreateDialog
+        open={creating}
+        type={createType}
+        onType={setCreateType}
+        onClose={() => setCreating(false)}
+        onCreated={(id) => {
+          setCreating(false);
+          select(id);
+        }}
+      />
     </div>
   );
 }
 
-function EntityCard({
-  entity,
-  color,
-  selected,
-  onClick,
-}: {
-  entity: EntityDTO;
-  color: string;
-  selected: boolean;
-  onClick: () => void;
-}) {
-  const cover = entity.refs.find((r) => r.kind === "image");
-  return (
-    <button
-      onClick={onClick}
-      className={`bg-raised border rounded-[var(--radius-lg)] overflow-hidden text-left transition-colors ${
-        selected ? "border-accent" : "border-edge hover:border-faint"
-      }`}
-      aria-pressed={selected}
-    >
-      <div className="aspect-square bg-surface flex items-center justify-center overflow-hidden">
-        {cover ? (
-          // eslint-disable-next-line @next/next/no-img-element
-          <img src={cover.url} alt="" className="w-full h-full object-cover" />
-        ) : (
-          <span
-            className="text-2xl font-display font-semibold"
-            style={{ color }}
-            aria-hidden
-          >
-            {entity.name.slice(0, 1).toUpperCase()}
-          </span>
-        )}
-      </div>
-      <div className="p-2">
-        <p className="text-sm font-medium truncate">{entity.name}</p>
-        <p className="font-mono text-[10px] text-faint mt-0.5 flex items-center gap-1">
-          {entity.refs.length === 0 ? (
-            <span className="text-warning flex items-center gap-1">
-              <span className="w-1.5 h-1.5 rounded-full bg-warning" aria-hidden />
-              no refs yet
-            </span>
-          ) : (
-            <span>{entity.refs.length} ref{entity.refs.length === 1 ? "" : "s"}</span>
-          )}
-          <span>· {entity.usageCount > 0 ? `${entity.usageCount} shot${entity.usageCount > 1 ? "s" : ""}` : "unused"}</span>
-        </p>
-      </div>
-    </button>
-  );
-}
+/* ---------- create dialog (prototype "Create element" + two doors) ---------- */
 
-/**
- * Two-door creation (Higgsfield pattern, founder-ratified): every entity can
- * be born from uploaded photos OR from a generated reference set. Phase 1's
- * Generate door is the manual ComfyUI loop (copy prompt → render → drop back);
- * Phase 2 wires a real engine behind the same door.
- */
-function CreatePanel({
+function CreateDialog({
+  open,
   type,
+  onType,
   onClose,
   onCreated,
 }: {
+  open: boolean;
   type: EntityTypeDTO;
+  onType: (t: EntityTypeDTO) => void;
   onClose: () => void;
   onCreated: (id: string) => void;
 }) {
-  const meta = TYPE_META[type];
-  const { pending, error, run } = useAction();
-  const formRef = useRef<HTMLFormElement>(null);
+  const { pending, error, setError, run } = useAction();
+  const [name, setName] = useState("");
   const [door, setDoor] = useState<"upload" | "generate">("upload");
+  const [files, setFiles] = useState<File[]>([]);
+  const fileRef = useRef<HTMLInputElement>(null);
 
-  function submit(e: React.FormEvent<HTMLFormElement>) {
-    e.preventDefault();
-    const fd = new FormData(e.currentTarget);
+  useEffect(() => {
+    if (open) {
+      setName("");
+      setFiles([]);
+      setDoor("upload");
+      setError(null);
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [open]);
+
+  function save() {
+    const clean = name.trim().replace(/^@/, "");
+    if (!clean) {
+      setError("Name the element first.");
+      return;
+    }
+    if (door === "upload" && files.length === 0) {
+      setError("Add at least one source image, or switch to Generate.");
+      return;
+    }
+    const fd = new FormData();
+    fd.set("name", clean);
     fd.set("type", type);
-    if (door === "generate") fd.delete("files"); // refs come from the generate loop next
+    if (door === "upload") for (const f of files) fd.append("files", f);
     run(
       () => createEntity(fd),
       (res) => {
-        formRef.current?.reset();
-        if (res && "id" in res) onCreated(res.id); // detail opens with the generate block
+        if (res && "id" in res && res.id) onCreated(res.id);
       },
     );
   }
 
-  const doorBtn = (active: boolean) =>
-    `flex-1 rounded-[var(--radius-md)] p-3 text-left border transition-colors ${
-      active ? "glass-chip border-edge-strong text-ink" : "border-edge text-dim hover:text-ink hover-bright"
-    }`;
-
   return (
-    <div className="p-4 flex flex-col gap-3">
-      <div className="flex items-center gap-2">
-        <span className="inline-block w-2.5 h-2.5 rounded-full" style={{ background: meta.color }} aria-hidden />
-        <h2 className="mono-label">New {meta.singular}</h2>
-        <button className="ml-auto text-dim hover:text-ink text-sm" onClick={onClose} aria-label="Close">
-          ✕
-        </button>
-      </div>
+    <Dialog
+      open={open}
+      title="Create element"
+      onClose={onClose}
+      actions={[
+        <Button key="c" variant="ghost" onClick={onClose}>Cancel</Button>,
+        <Button key="s" onClick={save} disabled={pending}>
+          {pending ? "Creating…" : door === "generate" ? "Create & generate refs →" : "Save element"}
+        </Button>,
+      ]}
+    >
+      <div style={{ display: "flex", flexDirection: "column", gap: 16 }}>
+        <SegmentedControl
+          full
+          options={TYPE_ORDER.map((t) => ({ value: t, label: TYPE_META[t].singular }))}
+          value={type}
+          onChange={onType}
+        />
+        <Input
+          label="Name"
+          placeholder={type === "CHARACTER" ? "maya" : TYPE_META[type].singular.toLowerCase()}
+          prefix="@"
+          value={name}
+          autoFocus
+          onChange={(e) => {
+            setName(e.target.value);
+            setError(null);
+          }}
+          hint="Reference it in prompts as @name."
+        />
 
-      <form ref={formRef} className="flex flex-col gap-3" onSubmit={submit}>
-        {/* @ hard-prefix: the name typed here is exactly the handle mentioned later */}
-        <span className="flex items-center bg-raised border border-edge rounded-[var(--radius-md)] px-3 focus-within:border-edge-strong">
-          <span className="text-faint" aria-hidden>@</span>
-          <input
-            name="name"
-            required
-            autoFocus
-            placeholder={meta.singular === "Character" ? "Maya" : `${meta.singular}Name`}
-            className="flex-1 min-w-0 bg-transparent text-sm px-1.5 py-2 outline-none"
-            disabled={pending}
-          />
-        </span>
-        <p className="text-[11px] text-faint -mt-1.5">Reference it in prompts as @name.</p>
-
-        <div className="flex gap-2" role="radiogroup" aria-label="How to add reference images">
-          <button type="button" role="radio" aria-checked={door === "upload"}
-            className={doorBtn(door === "upload")} onClick={() => setDoor("upload")}>
-            <span className="block text-sm font-medium">Upload</span>
-            <span className="block text-[11px] text-faint mt-0.5">Drag in photos you already have</span>
-          </button>
-          <button type="button" role="radio" aria-checked={door === "generate"}
-            className={doorBtn(door === "generate")} onClick={() => setDoor("generate")}>
-            <span className="block text-sm font-medium">Generate</span>
-            <span className="block text-[11px] text-faint mt-0.5">Build refs from a prompt — e.g. a shirt with your logo</span>
-          </button>
-        </div>
+        <SegmentedControl
+          full
+          options={[
+            { value: "upload", label: "Upload images" },
+            { value: "generate", label: "Generate refs" },
+          ]}
+          value={door}
+          onChange={(d) => setDoor(d)}
+        />
 
         {door === "upload" ? (
-          <label className="text-xs text-dim">
-            Reference images
+          <div>
+            <div style={{ font: "var(--text-small)", fontWeight: 500, color: "var(--fg-2)", marginBottom: 7 }}>
+              Source images
+            </div>
+            <button
+              className="drop-zone"
+              style={{ flexDirection: "column", alignItems: "center", gap: 10, padding: "22px 18px", textAlign: "center" }}
+              onClick={() => fileRef.current?.click()}
+              type="button"
+            >
+              <span className="drop-zone-tile">
+                <IcImage size={18} />
+              </span>
+              <span>
+                Drag up to 10 images from different angles, or{" "}
+                <span style={{ color: "var(--fg-1)", textDecoration: "underline", textUnderlineOffset: 3 }}>browse</span>
+              </span>
+              <span style={{ font: "var(--text-caption)", color: "var(--fg-4)" }}>JPG, PNG, HEIC, WebP, AVIF</span>
+            </button>
             <input
+              ref={fileRef}
               type="file"
-              name="files"
               multiple
               accept="image/*"
-              className="block mt-1 text-xs text-dim file:mr-2 file:text-xs file:bg-raised file:border file:border-edge file:rounded-[var(--radius-sm)] file:px-2 file:py-1 file:text-dim"
-              disabled={pending}
+              className="hidden"
+              aria-label="Source images"
+              onChange={(e) => {
+                const list = e.target.files ? [...e.target.files] : [];
+                setFiles((f) => [...f, ...list].slice(0, 10));
+                setError(null);
+              }}
             />
-            <span className="block mt-1 text-[11px] text-faint">
-              3–12 images from different angles work best.
-            </span>
-          </label>
+            {files.length > 0 && (
+              <div className="thumb-strip" style={{ marginTop: 10 }}>
+                {files.map((f, i) => (
+                  // eslint-disable-next-line @next/next/no-img-element
+                  <img key={i} className="ref-thumb" src={URL.createObjectURL(f)} alt="" />
+                ))}
+              </div>
+            )}
+          </div>
         ) : (
-          <p className="text-xs text-dim glass-chip rounded-[var(--radius-md)] p-2.5">
-            After creating, you&apos;ll get a ready-made reference prompt to render
-            in ComfyUI — drop the results straight back in.
+          <p style={{ font: "var(--text-small)", color: "var(--fg-2)", margin: 0 }}>
+            After creating, you&apos;ll get a ready-made reference prompt (e.g. a product shot set
+            with your logo) to render in ComfyUI — drop the results straight back in.
           </p>
         )}
 
-        {error && (
-          <p className="text-xs text-danger" role="alert">
-            {error} — adjust and try again.
-          </p>
-        )}
-        <button type="submit" disabled={pending} className="btn-primary text-sm py-2">
-          {pending
-            ? "Creating…"
-            : door === "generate"
-              ? "Create & generate refs →"
-              : `Create ${meta.singular.toLowerCase()}`}
-        </button>
-      </form>
-    </div>
+        {error ? (
+          <div role="alert" style={{ font: "var(--text-small)", color: "var(--danger)" }}>{error}</div>
+        ) : null}
+      </div>
+    </Dialog>
   );
 }
 
-/** Phase-1 Generate door: a curated reference prompt for the founder's ComfyUI. */
+/* ---------- detail drawer ---------- */
+
 function buildReferencePrompt(entity: EntityDTO): string {
   const subject = `${entity.name}${entity.notes ? `, ${entity.notes}` : ""}`;
   const negative = entity.negativeConstraints ? ` Avoid: ${entity.negativeConstraints}.` : "";
@@ -364,25 +373,22 @@ function GenerateRefsBlock({ entity }: { entity: EntityDTO }) {
   const [copied, setCopied] = useState<"idle" | "ok" | "failed">("idle");
   const prompt = buildReferencePrompt(entity);
   return (
-    <div className="glass-chip rounded-[var(--radius-md)] p-3 flex flex-col gap-2">
-      <span className="mono-label text-faint">Generate references</span>
-      <p className="text-xs text-dim leading-relaxed select-all">{prompt}</p>
-      <div className="flex items-center gap-2">
-        <button
-          className="btn-primary text-xs px-2.5 py-1.5"
-          onClick={async () => {
-            try {
-              await navigator.clipboard.writeText(prompt);
-              setCopied("ok");
-            } catch {
-              setCopied("failed"); // clipboard blocked — text above is select-all
-            }
-            setTimeout(() => setCopied("idle"), 2200);
-          }}
-        >
+    <div className="al-panel al-panel-flat" style={{ padding: 12, display: "flex", flexDirection: "column", gap: 8, borderRadius: "var(--radius-md)" }}>
+      <MonoLabel>Generate references</MonoLabel>
+      <p style={{ font: "var(--text-small)", color: "var(--fg-2)", margin: 0, userSelect: "all" }}>{prompt}</p>
+      <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
+        <Button size="sm" onClick={async () => {
+          try {
+            await navigator.clipboard.writeText(prompt);
+            setCopied("ok");
+          } catch {
+            setCopied("failed");
+          }
+          setTimeout(() => setCopied("idle"), 2200);
+        }}>
           {copied === "ok" ? "Copied ✓" : "Copy prompt"}
-        </button>
-        <span className="text-[11px] text-faint">
+        </Button>
+        <span style={{ font: "var(--text-caption)", color: "var(--fg-3)" }}>
           {copied === "failed"
             ? "Clipboard blocked — click the text above to select it, then copy."
             : "Render in ComfyUI, then add the images below."}
@@ -405,31 +411,28 @@ function EntityDetail({ entity, onClose }: { entity: EntityDTO; onClose: () => v
   const [negative, setNegative] = useState(entity.negativeConstraints);
   const [aliasInput, setAliasInput] = useState("");
   const fileRef = useRef<HTMLInputElement>(null);
-  const closeRef = useRef<HTMLButtonElement>(null);
 
-  // move focus into the drawer on open; Escape (handled on the aside) closes
-  useEffect(() => {
-    closeRef.current?.focus();
-  }, []);
+  const textareaStyle: React.CSSProperties = {
+    width: "100%", background: "rgba(255,255,255,.05)", border: "1px solid var(--line-2)",
+    borderRadius: "var(--radius-md)", padding: "10px 14px", color: "var(--fg-1)",
+    font: "var(--text-body)", resize: "vertical", outline: "none",
+  };
 
   return (
-    <div className="p-4 flex flex-col gap-4">
-      <div className="flex items-center gap-2">
-        <span className="inline-block w-2.5 h-2.5 rounded-full" style={{ background: meta.color }} aria-hidden />
-        <span className="font-mono text-[10px] text-faint uppercase">{meta.singular}</span>
-        <span className="font-mono text-[10px] text-faint ml-auto">
+    <div style={{ padding: 18, display: "flex", flexDirection: "column", gap: 16 }}>
+      <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+        <span style={{ width: 9, height: 9, borderRadius: 99, background: meta.color, display: "inline-block" }} aria-hidden />
+        <MonoLabel>{meta.singular}</MonoLabel>
+        <span style={{ flex: 1 }} />
+        <span style={{ font: "var(--text-mono-meta)", color: "var(--fg-3)" }}>
           {entity.usageCount > 0
             ? `mentioned in ${entity.usageCount} shot${entity.usageCount > 1 ? "s" : ""}`
             : "not mentioned yet"}
         </span>
-        <button
-          ref={closeRef}
-          className="text-dim hover:text-ink text-sm"
-          onClick={onClose}
-          aria-label="Close"
-        >
-          ✕
-        </button>
+        {/* autoFocus: move focus into the drawer on open; Escape (on the aside) closes */}
+        <IconButton label="Close" size="sm" onClick={onClose} autoFocus>
+          <IcX />
+        </IconButton>
       </div>
 
       <input
@@ -439,95 +442,98 @@ function EntityDetail({ entity, onClose }: { entity: EntityDTO; onClose: () => v
           if (!name.trim()) return setName(entity.name); // empty would no-op server-side — revert
           if (name !== entity.name) fieldAct.run(() => updateEntity(entity.id, { name }));
         }}
-        aria-label="Entity name"
-        className="bg-transparent font-display text-lg font-semibold outline-none border-b border-transparent focus:border-edge pb-1"
+        aria-label="Element name"
+        style={{
+          background: "none", border: "none", outline: "none", color: "var(--fg-1)",
+          font: "var(--text-title)", letterSpacing: "var(--tracking-tight)", padding: 0,
+        }}
       />
 
       {/* aliases — the @mention search matches these too */}
       <div>
-        <h3 className="text-xs font-mono text-faint uppercase mb-1.5">Aliases</h3>
-        <div className="flex flex-wrap gap-1.5">
+        <MonoLabel style={{ display: "block", marginBottom: 7 }}>Aliases</MonoLabel>
+        <div style={{ display: "flex", flexWrap: "wrap", gap: 6, alignItems: "center" }}>
           {entity.aliases.map((a) => (
             <span key={a} className="alias-chip" data-entity-type={entity.type}>
               {a}
               <button
-                className="ml-1 opacity-60 hover:opacity-100"
                 aria-label={`Remove alias ${a}`}
                 disabled={aliasAct.pending}
                 onClick={() => aliasAct.run(() => removeEntityAlias(entity.id, a))}
+                style={{ background: "none", border: "none", color: "inherit", opacity: 0.6, cursor: "pointer", padding: "0 0 0 4px" }}
               >
                 ×
               </button>
             </span>
           ))}
-          <input
-            value={aliasInput}
-            onChange={(e) => setAliasInput(e.target.value)}
-            onKeyDown={(e) => {
-              if (e.key === "Enter") {
-                e.preventDefault();
-                const alias = aliasInput.trim();
-                if (!alias) return;
-                setAliasInput("");
-                aliasAct.run(() => addEntityAlias(entity.id, alias));
-              }
-            }}
-            placeholder="+ alias ⏎"
-            aria-label="Add alias (press Enter)"
-            className="bg-raised border border-edge rounded-[var(--radius-sm)] text-xs px-2 py-1 w-24"
-            disabled={aliasAct.pending}
-          />
+          <span className="al-input-wrap" style={{ width: 110 }}>
+            <input
+              value={aliasInput}
+              onChange={(e) => setAliasInput(e.target.value)}
+              onKeyDown={(e) => {
+                if (e.key === "Enter") {
+                  e.preventDefault();
+                  const alias = aliasInput.trim();
+                  if (!alias) return;
+                  setAliasInput("");
+                  aliasAct.run(() => addEntityAlias(entity.id, alias));
+                }
+              }}
+              placeholder="+ alias ⏎"
+              aria-label="Add alias (press Enter)"
+              disabled={aliasAct.pending}
+              style={{ padding: "6px 0", fontSize: 12 }}
+            />
+          </span>
         </div>
         {aliasAct.error && (
-          <p className="text-xs text-danger mt-1" role="alert">
-            {aliasAct.error}
-          </p>
+          <p role="alert" style={{ font: "var(--text-caption)", color: "var(--danger)", margin: "6px 0 0" }}>{aliasAct.error}</p>
         )}
-        <p className="text-[11px] text-faint mt-1">
+        <p style={{ font: "var(--text-caption)", color: "var(--fg-3)", margin: "6px 0 0" }}>
           Nicknames the @ search should also match — e.g. “the girl”, “MAYA”.
         </p>
       </div>
 
       {/* reference images */}
       <div>
-        <div className="flex items-center mb-1.5">
-          <h3 className="text-xs font-mono text-faint uppercase">
-            References · {entity.refs.length}
-          </h3>
-          <button
-            className="ml-auto text-xs text-dim hover:text-ink disabled:opacity-50"
-            disabled={refAct.pending}
-            onClick={() => fileRef.current?.click()}
-          >
+        <div style={{ display: "flex", alignItems: "center", marginBottom: 7 }}>
+          <MonoLabel>References · {entity.refs.length}</MonoLabel>
+          <span style={{ flex: 1 }} />
+          <Button variant="ghost" size="sm" disabled={refAct.pending} onClick={() => fileRef.current?.click()}>
             {refAct.pending ? "Working…" : "+ Add"}
-          </button>
+          </Button>
         </div>
         {entity.refs.length === 0 ? (
-          <div className="flex flex-col gap-2">
+          <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
             <GenerateRefsBlock entity={entity} />
-            <button
-              className="w-full border border-dashed border-edge rounded-[var(--radius-lg)] p-4 text-xs text-dim hover:border-faint text-left"
-              onClick={() => fileRef.current?.click()}
-            >
-              Or add 3–12 images you already have (front / side / ¾ angles) so
-              generations stay on-model. <span className="text-ink underline underline-offset-3">Upload →</span>
+            <button className="drop-zone" onClick={() => fileRef.current?.click()} type="button">
+              <span className="drop-zone-tile"><IcImage size={16} /></span>
+              <span>
+                Or add 3–12 images you already have (front / side / ¾ angles).{" "}
+                <span style={{ color: "var(--fg-1)", textDecoration: "underline", textUnderlineOffset: 3 }}>Upload →</span>
+              </span>
             </button>
           </div>
         ) : (
-          <div className="grid grid-cols-3 gap-1.5">
+          <div className="thumb-strip">
             {entity.refs.map((r) => (
-              <div key={r.id} className="relative group aspect-square">
+              <span key={r.id} style={{ position: "relative" }} className="group">
                 {/* eslint-disable-next-line @next/next/no-img-element */}
-                <img src={r.url} alt="" className="w-full h-full object-cover rounded-[var(--radius-sm)]" />
+                <img className="ref-thumb" src={r.url} alt="" />
                 <button
-                  className="absolute top-1 right-1 bg-bg/80 rounded-full w-5 h-5 text-xs opacity-0 group-hover:opacity-100 focus:opacity-100"
                   aria-label="Remove reference image"
                   disabled={refAct.pending}
                   onClick={() => refAct.run(() => softDeleteReferenceImage(r.id))}
+                  style={{
+                    position: "absolute", top: 2, right: 2, width: 18, height: 18,
+                    borderRadius: 99, border: "none", cursor: "pointer",
+                    background: "rgba(6,8,11,.75)", color: "var(--fg-2)", fontSize: 11,
+                    display: "inline-flex", alignItems: "center", justifyContent: "center",
+                  }}
                 >
                   ×
                 </button>
-              </div>
+              </span>
             ))}
           </div>
         )}
@@ -537,6 +543,7 @@ function EntityDetail({ entity, onClose }: { entity: EntityDTO; onClose: () => v
           multiple
           accept="image/*"
           className="hidden"
+          aria-label="Add reference images"
           onChange={(e) => {
             const files = e.target.files;
             if (!files?.length) return;
@@ -550,14 +557,12 @@ function EntityDetail({ entity, onClose }: { entity: EntityDTO; onClose: () => v
           }}
         />
         {refAct.error && (
-          <p className="text-xs text-danger mt-1" role="alert">
-            {refAct.error}
-          </p>
+          <p role="alert" style={{ font: "var(--text-caption)", color: "var(--danger)", margin: "6px 0 0" }}>{refAct.error}</p>
         )}
       </div>
 
-      <label className="text-xs font-mono text-faint uppercase">
-        Notes
+      <label className="al-field">
+        <span className="al-field-label">Notes</span>
         <textarea
           value={notes}
           onChange={(e) => setNotes(e.target.value)}
@@ -566,12 +571,12 @@ function EntityDetail({ entity, onClose }: { entity: EntityDTO; onClose: () => v
           }}
           placeholder="Style cues, wardrobe, lighting, materials…"
           rows={3}
-          className="mt-1 w-full bg-raised border border-edge rounded-[var(--radius-sm)] text-sm px-2 py-1.5 resize-y font-sans normal-case"
+          style={textareaStyle}
         />
       </label>
 
-      <label className="text-xs font-mono text-faint uppercase">
-        Negative constraints
+      <label className="al-field">
+        <span className="al-field-label">Negative constraints</span>
         <textarea
           value={negative}
           onChange={(e) => setNegative(e.target.value)}
@@ -581,41 +586,42 @@ function EntityDetail({ entity, onClose }: { entity: EntityDTO; onClose: () => v
           }}
           placeholder="What must never appear — e.g. glasses, beard, modern cars…"
           rows={2}
-          className="mt-1 w-full bg-raised border border-edge rounded-[var(--radius-sm)] text-sm px-2 py-1.5 resize-y font-sans normal-case"
+          style={textareaStyle}
         />
       </label>
 
       {fieldAct.error && (
-        <p className="text-xs text-danger" role="alert">
+        <p role="alert" style={{ font: "var(--text-small)", color: "var(--danger)", margin: 0 }}>
           {fieldAct.error} — your edit was not saved; change the field again to retry.
         </p>
       )}
 
-      <button
-        className="self-start text-xs text-faint hover:text-ink disabled:opacity-50"
-        disabled={dangerAct.pending}
-        onClick={() => {
-          if (
-            entity.usageCount > 0 &&
-            !confirm(
-              `"${entity.name}" is mentioned in ${entity.usageCount} shot(s). ` +
-                "History snapshots stay intact, but prompt chips will go stale. Delete anyway?",
+      <div>
+        <Button
+          variant="danger"
+          size="sm"
+          disabled={dangerAct.pending}
+          onClick={() => {
+            if (
+              entity.usageCount > 0 &&
+              !confirm(
+                `"${entity.name}" is mentioned in ${entity.usageCount} shot(s). ` +
+                  "History snapshots stay intact, but prompt chips will go stale. Delete anyway?",
+              )
             )
-          )
-            return;
-          dangerAct.run(
-            () => softDeleteEntity(entity.id),
-            () => onClose(),
-          );
-        }}
-      >
-        Delete {meta.singular.toLowerCase()}
-      </button>
-      {dangerAct.error && (
-        <p className="text-xs text-danger" role="alert">
-          {dangerAct.error}
-        </p>
-      )}
+              return;
+            dangerAct.run(
+              () => softDeleteEntity(entity.id),
+              () => onClose(),
+            );
+          }}
+        >
+          Delete {meta.singular.toLowerCase()}
+        </Button>
+        {dangerAct.error && (
+          <p role="alert" style={{ font: "var(--text-small)", color: "var(--danger)", margin: "8px 0 0" }}>{dangerAct.error}</p>
+        )}
+      </div>
     </div>
   );
 }

@@ -1,5 +1,6 @@
-// M0 full-journey smoke: entity library → shot board → @composer → candidate
-// upload → manual attach → history. Screenshots to ~/.gstack/projects/artlio/m0-smoke/
+// M0 full-journey smoke: elements dialog → shot board → @composer dock →
+// candidate upload → attach via pop menu → history filters → detach.
+// Screenshots to ~/.gstack/projects/artlio/m0-smoke/
 // Expects a fresh DB (re-runs collide with leftover entities):
 //   docker exec artlio-postgres-1 psql -U artlio -d artlio -c 'TRUNCATE "ActionEvent","Generation","ShotEntityRef","Shot","ReferenceImage","Asset","Entity","TemplateBundle","Project" CASCADE;'
 import { chromium } from "playwright";
@@ -26,7 +27,7 @@ page.on("console", (m) => {
 const snap = (name) => page.screenshot({ path: path.join(SHOTS, name), fullPage: false });
 const step = (msg) => console.log(`✓ ${msg}`);
 
-// --- fixture images: render colored canvases and screenshot them ---
+// --- fixture images ---
 async function makeImage(file, color, label, w = 1280, h = 720) {
   const p = await ctx.newPage();
   await p.setViewportSize({ width: w, height: h });
@@ -44,30 +45,40 @@ step("fixtures ready");
 
 // --- 1. empty workbench ---
 await page.goto(BASE);
-await page.getByText("Subjects", { exact: true }).waitFor();
+await page.getByText("Shot board", { exact: true }).waitFor();
+await page.getByText("Plan the film shot by shot").waitFor();
 await snap("01-empty.png");
-step("workbench loads (empty states visible)");
+step("workbench loads (empty hero visible)");
 
-// --- 2. create entities ---
-async function createEntity(name, type, img) {
-  await page.fill('nav input[name="name"]', name);
-  await page.selectOption('nav select[name="type"]', type);
-  await page.setInputFiles('nav input[name="files"]', img);
-  await page.getByRole("button", { name: "Create entity" }).click();
-  await page.locator("nav").getByText(name, { exact: true }).waitFor({ timeout: 15000 });
+// --- 2. create elements via the Library dialog ---
+async function createElement(name, typeLabel, img) {
+  await page.getByRole("button", { name: "New element", exact: true }).click();
+  await page.getByRole("dialog").waitFor();
+  await page.getByRole("tab", { name: typeLabel, exact: true }).click();
+  await page.locator('[role="dialog"] .al-input-wrap input').first().fill(name);
+  await page.setInputFiles('[role="dialog"] input[type="file"]', img);
+  await page.locator('[role="dialog"] .thumb-strip img').first().waitFor();
+  await page.getByRole("button", { name: "Save element" }).click();
+  // dialog closes, detail drawer opens for the new element
+  await page.locator('aside input[aria-label="Element name"]').waitFor({ timeout: 15000 });
 }
-await createEntity("Maya", "CHARACTER", "/tmp/ref-maya.png");
-await createEntity("Neon Alley", "LOCATION", "/tmp/ref-alley.png");
-await snap("02-entities.png");
-step("entities created with reference images");
+await page.goto(BASE + "/library");
+await page.getByText("Elements", { exact: true }).first().waitFor();
+await createElement("Maya", "Character", "/tmp/ref-maya.png");
+await createElement("Neon Alley", "Location", "/tmp/ref-alley.png");
+await page.getByText("@Maya", { exact: true }).waitFor();
+await page.getByText("@Neon Alley", { exact: true }).waitFor();
+await snap("02-elements.png");
+step("elements created with reference images (dialog flow)");
 
-// --- 3. first shot via composer guide ---
-await page.getByRole("button", { name: "Add Shot 01", exact: true }).click();
+// --- 3. first shot ---
+await page.goto(BASE);
+await page.getByRole("button", { name: "Add Shot 01" }).click();
 await page.getByText("SHOT 01", { exact: true }).waitFor({ timeout: 15000 });
 step("shot 01 created");
 
-// --- 4. @composer: mention both entities ---
-const editor = page.locator(".composer .tiptap");
+// --- 4. @composer dock: mention both elements ---
+const editor = page.locator(".al-promptbar .tiptap");
 await editor.click();
 await page.keyboard.type("Cinematic dolly shot of @May", { delay: 25 });
 await page.locator('[aria-label="Entity suggestions"] [role="option"]').first().waitFor({ timeout: 5000 });
@@ -78,14 +89,13 @@ await page.locator('[aria-label="Entity suggestions"] [role="option"]').first().
 await page.keyboard.press("Enter");
 await page.keyboard.type("at night, heavy rain", { delay: 25 });
 await page.getByRole("button", { name: "Save prompt" }).click();
-await page.locator('[aria-label="Shot board"] .mention', { hasText: "@Maya" }).first().waitFor({ timeout: 15000 });
+await page.locator(".scene-grid .mention", { hasText: "@Maya" }).first().waitFor({ timeout: 15000 });
 await snap("04-prompt-saved.png");
-step("prompt saved — chips visible on shot card");
+step("prompt saved — element chips visible on shot card");
 
 // --- 4b. persisted-doc round trip: chips must survive a reload ---
-// (catches serialization bugs that strip mention attrs on the way to the DB)
 await page.reload();
-await page.locator(".composer .mention", { hasText: "@Maya" }).first().waitFor({ timeout: 15000 });
+await page.locator(".al-promptbar .mention", { hasText: "@Maya" }).first().waitFor({ timeout: 15000 });
 step("saved doc round-trips — chips intact after reload");
 
 // --- 5. copy resolved prompt ---
@@ -97,26 +107,28 @@ if (!clip.includes("Maya") || !clip.includes("Neon Alley"))
 step(`resolved prompt copies clean: "${clip.slice(0, 60)}…"`);
 
 // --- 6. upload candidate ---
-await page.setInputFiles('aside input[type="file"]', "/tmp/render-1.png");
-await page.locator("aside li").first().waitFor({ timeout: 20000 });
+await page.setInputFiles('input[aria-label="Upload renders"]', "/tmp/render-1.png");
+await page.locator(".card-grid .al-mediacard").first().waitFor({ timeout: 20000 });
 await snap("05-candidate.png");
-step("candidate uploaded (carries shot prompt + entities)");
+step("candidate uploaded (carries shot prompt + elements)");
 
-// --- 7. attach via dropdown ---
-await page.locator('aside select[aria-label="Attach to shot"]').selectOption({ index: 1 });
-await page.locator("aside").getByText("v1").waitFor({ timeout: 15000 });
+// --- 7. attach via pop menu ---
+await page.getByRole("button", { name: "Attach to shot…" }).click();
+await page.locator(".pop-item", { hasText: "Shot 01" }).click();
+await page.locator(".scene-grid .al-mediacard-media img").first().waitFor({ timeout: 15000 });
+step("candidate attached → shot card thumbnail");
+
+// --- 8. shot status auto-moved + history filter shows v1 ---
+await page.locator(".scene-grid").getByText("ATTACHED", { exact: true }).waitFor({ timeout: 15000 });
+await page.getByRole("button", { name: /^Shot 01 · 1$/ }).click();
+await page.locator(".card-grid .al-mediacard-chip", { hasText: "V1" }).waitFor({ timeout: 15000 });
 await snap("06-attached.png");
-step("candidate attached → history v1");
+step("shot status ATTACHED · history shows V1");
 
-// --- 8. shot card reflects ATTACHED + thumbnail ---
-const status = await page.locator('main select[aria-label="Shot status"]').inputValue();
-if (status !== "ATTACHED") throw new Error(`shot status is ${status}, expected ATTACHED`);
-step("shot status auto-moved to ATTACHED");
-
-// --- 9. detach back to candidates ---
-await page.getByRole("button", { name: "Detach → candidates" }).click();
-await page.locator('aside select[aria-label="Attach to shot"]').waitFor({ timeout: 15000 });
-step("detach returns generation to candidate zone");
+// --- 9. detach back to unattached ---
+await page.getByRole("button", { name: "Detach → unattached" }).click();
+await page.getByRole("button", { name: /^Unattached · 1$/ }).waitFor({ timeout: 15000 });
+step("detach returns generation to unattached");
 await snap("07-final.png");
 
 const fatal = errors.filter(

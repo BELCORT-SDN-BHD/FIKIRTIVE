@@ -23,7 +23,7 @@ export default async function LibraryPage({
       >
         Artlio works best on a desktop browser — this view is read-only.
       </div>
-      <AppShell view="library">
+      <AppShell view="library" title="Elements">
         <div className="flex flex-1 min-h-0 max-lg:pointer-events-none">
           <Library entities={entities.map(toEntityDTO)} initialSelectedId={e ?? null} />
         </div>
