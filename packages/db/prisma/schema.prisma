@@ -211,6 +211,34 @@ model TemplateBundle {
   @@index([ownerId, slug])
 }
 
+// 剪辑渲染任务（编辑器切片合同的一半；另一半是 @artlio/core 的 artlioEdit zod）。
+// 三保险第一式：行先于 pg-boss 派发持久化——队列丢失永远不孤儿化一次渲染。
+// editJson 在写入前必须过 artlioEdit.parse（web 端校验，worker 端复验）。
+enum RenderStatus {
+  QUEUED
+  RENDERING
+  DONE
+  FAILED
+}
+
+model RenderJob {
+  id            String       @id
+  ownerId       String       @default("founder")
+  projectId     String
+  editJson      Json
+  status        RenderStatus @default(QUEUED)
+  /// 0-100，worker 从 ffmpeg -progress 回写
+  progress      Int          @default(0)
+  /// DONE 时指向产出 MP4 的 Asset（内容寻址，与所有媒体同一套语义）
+  outputAssetId String?
+  error         String       @default("")
+  createdAt     DateTime     @default(now())
+  updatedAt     DateTime     @updatedAt
+
+  @@index([projectId, createdAt])
+  @@index([status])
+}
+
 // ── Auth.js v5 标准模型（D18：邮箱魔法链接）────────────────────────────
 // 业务表的 ownerId 仍恒为 "founder"：登录只是门禁，不是多租户（A3 预留不变）。
 model User {
