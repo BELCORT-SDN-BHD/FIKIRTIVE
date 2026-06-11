@@ -42,7 +42,7 @@ export async function getEntities() {
 export async function getShots(projectId: string) {
   return prisma.shot.findMany({
     where: { projectId, ...notDeleted },
-    orderBy: { number: "asc" },
+    orderBy: [{ scene: "asc" }, { number: "asc" }],
     include: {
       entityRefs: { include: { entity: true } },
       generations: {

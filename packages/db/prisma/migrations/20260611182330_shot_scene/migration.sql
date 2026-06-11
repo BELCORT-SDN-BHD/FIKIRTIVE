@@ -1,0 +1,2 @@
+-- AlterTable
+ALTER TABLE "Shot" ADD COLUMN     "scene" INTEGER NOT NULL DEFAULT 1;

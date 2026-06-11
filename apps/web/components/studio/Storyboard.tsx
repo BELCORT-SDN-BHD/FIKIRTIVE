@@ -8,26 +8,48 @@
  */
 import { useState, useRef, useEffect } from "react";
 import { useRouter } from "next/navigation";
-import { Button, MonoLabel, IcPlus, IcRetry, IcSparkle, IcPlay } from "@/components/ds";
-import { addShot, setShotPromptText } from "@/lib/studio-actions";
+import { Button, MonoLabel, IcPlus, IcRetry, IcSparkle, IcPlay, IcX, IcChevronDown } from "@/components/ds";
+import { addShot, setShotPromptText, deleteShot, moveShot, addScene } from "@/lib/studio-actions";
 import { startGen, getGenJob } from "@/lib/gen-actions";
+import { GEN_PRICE_USD_PER_IMAGE, GEN_PRICE_USD_PER_VIDEO } from "@artlio/core";
+
+/** cost hint shown before a spend (small figures keep 3 decimals so $0.035
+ *  isn't rounded up to $0.04). */
+const usd = (n: number) => "~$" + (n < 0.1 ? n.toFixed(3) : n.toFixed(2));
 
 export type StudioShot = {
   id: string;
-  number: number;
+  number: number; // within-scene display index (1..N)
+  scene: number;
   prompt: string;
   entityIds: string[];
   imageUrl: string | null;
   videoUrl: string | null;
 };
 
-function ShotCard({ projectId, shot }: { projectId: string; shot: StudioShot }) {
+function ShotCard({ projectId, shot, index, total }: { projectId: string; shot: StudioShot; index: number; total: number }) {
   const router = useRouter();
   const [prompt, setPrompt] = useState(shot.prompt);
   const [busy, setBusy] = useState(false);
+  const [acting, setActing] = useState(false); // delete / reorder in flight
   const [error, setError] = useState<string | null>(null);
   const poll = useRef<ReturnType<typeof setInterval> | null>(null);
   useEffect(() => () => { if (poll.current) clearInterval(poll.current); }, []);
+
+  function remove() {
+    if (acting || busy) return;
+    setActing(true);
+    (async () => {
+      const res = await deleteShot(shot.id);
+      if (res && "error" in res) { setError(res.error); setActing(false); return; }
+      router.refresh(); // card unmounts on success
+    })();
+  }
+  function move(dir: "left" | "right") {
+    if (acting || busy) return;
+    setActing(true);
+    (async () => { await moveShot(shot.id, dir); setActing(false); router.refresh(); })();
+  }
 
   function saveText() {
     if (prompt !== shot.prompt) setShotPromptText(shot.id, prompt, shot.entityIds);
@@ -67,17 +89,32 @@ function ShotCard({ projectId, shot }: { projectId: string; shot: StudioShot }) 
         )}
       </div>
       <div style={{ padding: 10, display: "flex", flexDirection: "column", gap: 8 }}>
+        <div style={{ display: "flex", alignItems: "center", gap: 2 }}>
+          <button className="al-iconbtn al-iconbtn-sm" aria-label="Move shot earlier" disabled={acting || busy || index === 0} onClick={() => move("left")}>
+            <IcChevronDown size={12} style={{ transform: "rotate(90deg)" }} />
+          </button>
+          <button className="al-iconbtn al-iconbtn-sm" aria-label="Move shot later" disabled={acting || busy || index === total - 1} onClick={() => move("right")}>
+            <IcChevronDown size={12} style={{ transform: "rotate(-90deg)" }} />
+          </button>
+          <span style={{ flex: 1 }} />
+          <button className="al-iconbtn al-iconbtn-sm" aria-label="Delete shot" disabled={acting || busy} onClick={remove}>
+            <IcX size={12} />
+          </button>
+        </div>
         <div style={{ display: "flex", gap: 6 }}>
-          <Button size="sm" full disabled={busy || prompt.trim().length === 0} onClick={() => run("image")}
+          <Button size="sm" full disabled={busy || acting || prompt.trim().length === 0} onClick={() => run("image")}
             icon={shot.imageUrl || shot.videoUrl ? <IcRetry size={13} /> : <IcSparkle size={13} />}>
             {busy ? "…" : shot.imageUrl || shot.videoUrl ? "Image" : "Generate"}
           </Button>
           {(shot.imageUrl || shot.videoUrl) && (
-            <Button size="sm" variant="glass" full disabled={busy} onClick={() => run("video")} icon={<IcPlay size={12} />}>
+            <Button size="sm" variant="glass" full disabled={busy || acting} onClick={() => run("video")} icon={<IcPlay size={12} />}>
               Animate
             </Button>
           )}
         </div>
+        <p style={{ font: "var(--text-caption)", color: "var(--fg-3)", margin: 0 }}>
+          {shot.imageUrl || shot.videoUrl ? `Image ${usd(GEN_PRICE_USD_PER_IMAGE)} · Animate ${usd(GEN_PRICE_USD_PER_VIDEO)}` : `Generate ${usd(GEN_PRICE_USD_PER_IMAGE)}`}
+        </p>
         <textarea value={prompt} onChange={(e) => setPrompt(e.target.value)} onBlur={saveText} disabled={busy}
           rows={2} aria-label={`Shot ${shot.number} prompt`} placeholder="Describe this shot…"
           style={{ width: "100%", background: "rgba(255,255,255,.05)", border: "1px solid var(--line-2)", borderRadius: "var(--radius-sm)", padding: "7px 9px", color: "var(--fg-1)", font: "var(--text-small)", resize: "none", outline: "none" }} />
@@ -91,10 +128,17 @@ export function Storyboard({ projectId, shots }: { projectId: string; shots: Stu
   const router = useRouter();
   const [adding, setAdding] = useState(false);
 
-  function add() {
+  function add(scene?: number) {
     setAdding(true);
-    (async () => { await addShot(projectId); setAdding(false); router.refresh(); })();
+    (async () => { await addShot(projectId, scene); setAdding(false); router.refresh(); })();
   }
+  function addNewScene() {
+    setAdding(true);
+    (async () => { await addScene(projectId); setAdding(false); router.refresh(); })();
+  }
+
+  // shots arrive ordered [scene, number]; group into scenes for display
+  const scenes = [...new Set(shots.map((s) => s.scene))].sort((a, b) => a - b);
 
   return (
     <div className="screen">
@@ -102,7 +146,7 @@ export function Storyboard({ projectId, shots }: { projectId: string; shots: Stu
         <div style={{ display: "flex", alignItems: "center", gap: 10, margin: "8px 0 20px" }}>
           <h1 style={{ font: "var(--text-display)", color: "var(--fg-1)", margin: 0 }}>Storyboard</h1>
           <span style={{ flex: 1 }} />
-          <Button size="sm" icon={<IcPlus />} onClick={add} disabled={adding}>{adding ? "Adding…" : "Add shot"}</Button>
+          <Button size="sm" icon={<IcPlus />} onClick={() => add()} disabled={adding}>{adding ? "Adding…" : "Add shot"}</Button>
         </div>
 
         {shots.length === 0 ? (
@@ -112,19 +156,27 @@ export function Storyboard({ projectId, shots }: { projectId: string; shots: Stu
               <p style={{ font: "var(--text-body)", color: "var(--fg-2)", margin: "6px 0 18px", maxWidth: 420 }}>
                 Add a shot, write what happens (use @ to bring in your elements), then generate. Planning is free — you only spend when you generate.
               </p>
-              <Button icon={<IcPlus />} onClick={add} disabled={adding}>Add the first shot</Button>
+              <Button icon={<IcPlus />} onClick={() => add(1)} disabled={adding}>Add the first shot</Button>
             </div>
           </div>
         ) : (
-          <section>
-            <div style={{ marginBottom: 12 }}><MonoLabel>Scene 1</MonoLabel></div>
-            <div style={{ display: "flex", gap: 14, flexWrap: "wrap" }}>
-              {shots.map((s) => <ShotCard key={s.id} projectId={projectId} shot={s} />)}
-              <button className="drop-zone" style={{ width: 48, alignSelf: "stretch", minHeight: 150 }} aria-label="Add shot" onClick={add}>
-                <IcPlus size={18} />
-              </button>
-            </div>
-          </section>
+          <>
+            {scenes.map((sc, si) => {
+              const group = shots.filter((s) => s.scene === sc);
+              return (
+                <section key={sc} style={{ marginBottom: 26 }}>
+                  <div style={{ marginBottom: 12 }}><MonoLabel>Scene {si + 1}</MonoLabel></div>
+                  <div style={{ display: "flex", gap: 14, flexWrap: "wrap" }}>
+                    {group.map((s, i) => <ShotCard key={s.id} projectId={projectId} shot={s} index={i} total={group.length} />)}
+                    <button className="drop-zone" style={{ width: 48, alignSelf: "stretch", minHeight: 150 }} aria-label={`Add shot to scene ${si + 1}`} onClick={() => add(sc)} disabled={adding}>
+                      <IcPlus size={18} />
+                    </button>
+                  </div>
+                </section>
+              );
+            })}
+            <Button size="sm" variant="glass" icon={<IcPlus />} onClick={addNewScene} disabled={adding}>Add scene</Button>
+          </>
         )}
       </div>
     </div>

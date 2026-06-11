@@ -129,6 +129,8 @@ model Shot {
   projectId   String
   ownerId     String     @default("founder")
   number      Int
+  // 场景分组（storyboard 多场景）：同一 scene 内按 number 排序；number 仍全局唯一
+  scene       Int        @default(1)
   title       String     @default("")
   description String     @default("")
   status      ShotStatus @default(DRAFT)

@@ -19,12 +19,17 @@ export default async function StudioPage({ searchParams }: { searchParams: Promi
   const shots = await getShots(project.id);
 
   // storyboard shots: prompt + latest generation image (for the card)
+  // shots arrive ordered [scene asc, number asc]; number is a within-scene
+  // display index (1..N per scene), decoupled from the stored global number.
+  const sceneIdx: Record<number, number> = {};
   const storyboardShots = shots.map((s) => {
     const latest = s.generations[0];
     const img = latest ? storageKeyToSrc(storageKey(latest.asset.ownerId, latest.asset.contentHash, latest.asset.ext)) : null;
+    sceneIdx[s.scene] = (sceneIdx[s.scene] ?? 0) + 1;
     return {
       id: s.id,
-      number: s.number,
+      number: sceneIdx[s.scene],
+      scene: s.scene,
       prompt: s.description ?? "",
       entityIds: s.entityRefs.map((r) => r.entityId),
       imageUrl: img && IMAGE_EXTS.has(latest!.asset.ext.toLowerCase()) ? img : null,
