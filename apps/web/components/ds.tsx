@@ -67,6 +67,8 @@ export const IcUndo = mkIcon(<><path d="M9 14 4 9l5-5" /><path d="M4 9h11a6 6 0 
 export const IcRedo = mkIcon(<><path d="m15 14 5-5-5-5" /><path d="M20 9H9a6 6 0 0 0 0 12h3" /></>);
 export const IcExport = mkIcon(<><path d="M12 3v12" /><path d="m7 8 5-5 5 5" /><path d="M5 21h14a2 2 0 0 0 2-2v-4" /></>);
 export const IcUsers = mkIcon(<><path d="M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2" /><circle cx="9" cy="7" r="4" /><path d="M22 21v-2a4 4 0 0 0-3-3.87" /><path d="M16 3.13a4 4 0 0 1 0 7.75" /></>);
+export const IcRetry = mkIcon(<><path d="M3 12a9 9 0 1 0 9-9 9.75 9.75 0 0 0-6.74 2.74L3 8" /><path d="M3 3v5h5" /></>);
+export const IcPlay = mkIcon(<path d="m6 3 14 9-14 9V3Z" />);
 
 /* ---------------- primitives ---------------- */
 export function MonoLabel({ children, style }: { children: React.ReactNode; style?: React.CSSProperties }) {

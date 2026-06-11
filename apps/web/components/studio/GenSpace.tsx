@@ -10,7 +10,9 @@
  * Mock-first; engine wires later.
  */
 import { useState } from "react";
-import { Button, MonoLabel, IcPlus, IcImage, IcFilm } from "@/components/ds";
+import { Button, MonoLabel, IcPlus, IcImage, IcFilm, IcChevronDown, IcRetry, IcX } from "@/components/ds";
+
+const Caret = () => <IcChevronDown size={13} style={{ marginLeft: 2, color: "var(--fg-3)" }} />;
 
 const SESSIONS = [
   { title: "Woman Drinking Coffee", ago: "2 minutes ago", tint: "linear-gradient(135deg,#3a2f2a,#5a4438)", active: true },
@@ -31,7 +33,7 @@ export function GenSpace() {
         {/* session workspace */}
         <div style={{ flex: 1, overflow: "auto", padding: "16px 28px 40px" }}>
           <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 4 }}>
-            <Button variant="glass" size="sm">Shot navigator ▾</Button>
+            <Button variant="glass" size="sm" icon={null}>Shot navigator<Caret /></Button>
           </div>
           <h1 style={{ font: "var(--text-title)", color: "var(--fg-1)", margin: "10px 0 18px" }}>Woman Drinking Coffee</h1>
 
@@ -42,7 +44,7 @@ export function GenSpace() {
                 <span>· {r.meta}</span>
                 <span style={{ flex: 1 }} />
                 <span>{r.ago}</span>
-                <span>↻ ✕</span>
+                <span style={{ display: "inline-flex", alignItems: "center", gap: 8 }}><IcRetry size={13} /><IcX size={13} /></span>
               </div>
               <div style={{ position: "relative", width: 280, aspectRatio: "16 / 10", borderRadius: "var(--radius-md)", background: r.tint, border: "1px solid var(--line-2)" }}>
                 <span style={{ position: "absolute", bottom: 7, left: 8, font: "var(--text-mono-meta)", color: "var(--fg-1)" }}>{r.dur}</span>
@@ -91,11 +93,11 @@ export function GenSpace() {
               <button role="tab" aria-selected={mode === "video"} className={`al-seg-item${mode === "video" ? " al-seg-item-active" : ""}`} onClick={() => setMode("video")}>Video</button>
               <button role="tab" aria-selected={mode === "v2v"} className={`al-seg-item${mode === "v2v" ? " al-seg-item-active" : ""}`} onClick={() => setMode("v2v")}>Video to Video</button>
             </div>
-            <button className="al-chip al-chip-mono">Kling video ▾</button>
+            <button className="al-chip al-chip-mono">Kling video<Caret /></button>
             <button className="al-chip al-chip-mono">8 Sec</button>
             <button className="al-chip al-chip-mono">1080p</button>
             <button className="al-chip al-chip-mono">16:9</button>
-            <button className="al-chip al-chip-mono">More ▾</button>
+            <button className="al-chip al-chip-mono">More<Caret /></button>
             <span className="al-promptbar-spacer" />
             <Button>Generate</Button>
           </div>

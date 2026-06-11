@@ -9,7 +9,9 @@
  * Mock-first; engine + the script→beats parse wire later.
  */
 import { useState } from "react";
-import { Button, Chip, MonoLabel, IcPlus } from "@/components/ds";
+import { Button, Chip, MonoLabel, IcPlus, IcRetry, IcPlay, IcSparkle, IcChevronDown, IcFilm } from "@/components/ds";
+
+const Caret = () => <IcChevronDown size={13} style={{ marginLeft: 2, color: "var(--fg-3)" }} />;
 
 type Shot = { n: number; prompt: React.ReactNode; hasImage?: boolean; tint?: string };
 type Scene = { title: string; shots: Shot[] };
@@ -43,9 +45,11 @@ function ShotCard({ shot }: { shot: Shot }) {
   return (
     <div className="al-mediacard" style={{ width: 232, flex: "none", cursor: "default" }}>
       <div style={{ position: "relative", aspectRatio: "16 / 10", background: shot.tint ?? "var(--glass-1)" }}>
-        <span style={{ position: "absolute", top: 8, left: 8, font: "var(--text-mono-meta)", color: "var(--fg-2)" }}>▤ {shot.n}</span>
+        <span style={{ position: "absolute", top: 8, left: 8, display: "inline-flex", alignItems: "center", gap: 5, font: "var(--text-mono-meta)", color: "var(--fg-2)" }}>
+          <IcFilm size={12} />{shot.n}
+        </span>
         <button style={{ position: "absolute", top: "50%", left: "50%", transform: "translate(-50%,-50%)" }}
-          className="al-chip al-chip-mono" aria-label="Retry">↻ Retry</button>
+          className="al-chip al-chip-mono" aria-label="Retry"><IcRetry size={13} />Retry</button>
         {shot.hasImage && (
           <span aria-hidden style={{ position: "absolute", bottom: 7, left: "50%", transform: "translateX(-50%)", display: "flex", gap: 4 }}>
             <span style={{ width: 5, height: 5, borderRadius: 99, background: "var(--fg-1)" }} />
@@ -56,11 +60,11 @@ function ShotCard({ shot }: { shot: Shot }) {
       <div style={{ padding: 10, display: "flex", flexDirection: "column", gap: 8 }}>
         {shot.hasImage ? (
           <div style={{ display: "flex", gap: 6 }}>
-            <Button size="sm" full>✦ Edit image</Button>
-            <Button size="sm" variant="glass" full>▷ Generate video</Button>
+            <Button size="sm" full icon={<IcSparkle size={13} />}>Edit</Button>
+            <Button size="sm" variant="glass" full icon={<IcPlay size={12} />}>Video</Button>
           </div>
         ) : (
-          <Button size="sm" variant="glass" full>✦ Create image in Gen space</Button>
+          <Button size="sm" variant="glass" full icon={<IcSparkle size={13} />}>Create in Gen space</Button>
         )}
         <p style={{ font: "var(--text-small)", color: "var(--fg-2)", margin: 0, lineHeight: 1.4 }}>{shot.prompt}</p>
       </div>
@@ -95,13 +99,13 @@ export function Storyboard() {
         <div className="screen-pad" style={{ maxWidth: 920 }}>
           <div style={{ display: "flex", alignItems: "center", gap: 26, margin: "14px 0 28px" }}>
             <label style={{ display: "flex", flexDirection: "column", gap: 6 }}>
-              <MonoLabel>Aspect ratio</MonoLabel><Chip>▭ 16:9 ▾</Chip>
+              <MonoLabel>Aspect ratio</MonoLabel><Chip>16:9<Caret /></Chip>
             </label>
             <label style={{ display: "flex", flexDirection: "column", gap: 6 }}>
-              <MonoLabel>Model</MonoLabel><Chip>Aperture 2 ▾</Chip>
+              <MonoLabel>Model</MonoLabel><Chip>Aperture 2<Caret /></Chip>
             </label>
             <label style={{ display: "flex", flexDirection: "column", gap: 6 }}>
-              <MonoLabel>Style</MonoLabel><Chip>No style ▾</Chip>
+              <MonoLabel>Style</MonoLabel><Chip>No style<Caret /></Chip>
             </label>
           </div>
           <h1 style={{ font: "var(--text-title)", color: "var(--fg-1)", margin: "0 0 14px", textAlign: "center" }}>Start with your story</h1>
@@ -128,8 +132,8 @@ export function Storyboard() {
     <div className="screen">
       <div className="screen-pad">
         <div style={{ display: "flex", alignItems: "center", gap: 10, margin: "8px 0 20px" }}>
-          <Chip>▭ 16:9 ▾</Chip>
-          <Chip>Aperture 2 ▾</Chip>
+          <Chip>16:9<Caret /></Chip>
+          <Chip>Aperture 2<Caret /></Chip>
           <span style={{ flex: 1 }} />
           <Button variant="glass" size="sm" onClick={() => setBuilt(false)}>← Story</Button>
           <Button size="sm" icon={<IcPlus />}>Add scene</Button>

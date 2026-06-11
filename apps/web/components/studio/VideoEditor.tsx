@@ -9,7 +9,7 @@
  * editor (Shotstack + ffmpeg render) wires in behind this shell. Mock-first.
  */
 import { useState } from "react";
-import { Button, MonoLabel, IcImage, IcFilm } from "@/components/ds";
+import { Button, MonoLabel, IcImage, IcFilm, IcChevronDown, IcExport, IcPlay } from "@/components/ds";
 
 const RAIL = [
   { key: "media", label: "Media", Icon: IcImage },
@@ -42,7 +42,7 @@ export function VideoEditor() {
           <div style={{ display: "flex", alignItems: "center" }}>
             <MonoLabel>My assets</MonoLabel>
             <span style={{ flex: 1 }} />
-            <span style={{ font: "var(--text-caption)", color: "var(--fg-3)" }}>All projects ▾</span>
+            <span style={{ display: "inline-flex", alignItems: "center", font: "var(--text-caption)", color: "var(--fg-3)" }}>All projects<IcChevronDown size={12} style={{ marginLeft: 2 }} /></span>
           </div>
           {tab === "transitions" ? (
             <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 8 }}>
@@ -62,7 +62,7 @@ export function VideoEditor() {
                 ))}
               </div>
               <span style={{ flex: 1 }} />
-              <Button variant="glass" full>↑ Upload</Button>
+              <Button variant="glass" full icon={<IcExport size={14} />}>Upload</Button>
             </>
           )}
         </div>
@@ -83,7 +83,7 @@ export function VideoEditor() {
       {/* timeline */}
       <div style={{ borderTop: "1px solid var(--line-2)", padding: "12px 18px", display: "flex", flexDirection: "column", gap: 10, minHeight: 120 }}>
         <div style={{ display: "flex", alignItems: "center", gap: 12, font: "var(--text-mono-meta)", color: "var(--fg-3)" }}>
-          <button className="al-iconbtn al-iconbtn-md" aria-label="Play">▶</button>
+          <button className="al-iconbtn al-iconbtn-md" aria-label="Play"><IcPlay size={13} /></button>
           <span>00 : 00 : 00 / 00 : 00 : 00</span>
           <span style={{ flex: 1 }} />
           <Button variant="glass" size="sm">Add clip</Button>

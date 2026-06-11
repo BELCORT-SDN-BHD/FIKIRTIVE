@@ -1,6 +1,6 @@
 "use client";
 /** Assets surface (Artlio Studio design) — cross-project media library. Mock. */
-import { Button, Chip, IcFolder, IcImage, MonoLabel } from "@/components/ds";
+import { Button, Chip, IcFolder, IcImage, IcChevronDown, MonoLabel } from "@/components/ds";
 
 export function Assets() {
   return (
@@ -17,7 +17,7 @@ export function Assets() {
           <Chip icon={<IcImage size={14} />}>All media</Chip>
           <Chip>Favorites</Chip>
           <span style={{ flex: 1 }} />
-          <Chip>Date modified ▾</Chip>
+          <Chip>Date modified<IcChevronDown size={13} style={{ marginLeft: 2, color: "var(--fg-3)" }} /></Chip>
         </div>
 
         <div style={{ display: "grid", placeItems: "center", minHeight: "52vh", textAlign: "center" }}>

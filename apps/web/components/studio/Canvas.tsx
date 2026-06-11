@@ -2,7 +2,7 @@
 /** Canvas surface (Artlio Studio design) — infinite freeform board. Mock.
  *  (Note: Canvas was deprioritized; kept as a nav slot pending the founder's
  *  call. Built as a faithful placeholder.) */
-import { Button } from "@/components/ds";
+import { Button, IcChevronDown } from "@/components/ds";
 
 const TOOLS = ["▱", "✋", "T", "▢", "▣"]; // cursor / hand / text / frame / image
 
@@ -47,7 +47,7 @@ export function Canvas() {
           <div className="al-promptbar-row">
             <button className="al-chip al-chip-mono">Aperture 2</button>
             <button className="al-chip al-chip-mono">16:9</button>
-            <button className="al-chip al-chip-mono">Text to image ▾</button>
+            <button className="al-chip al-chip-mono">Text to image<IcChevronDown size={13} style={{ marginLeft: 2, color: "var(--fg-3)" }} /></button>
             <span className="al-promptbar-spacer" />
             <Button>Generate</Button>
           </div>
