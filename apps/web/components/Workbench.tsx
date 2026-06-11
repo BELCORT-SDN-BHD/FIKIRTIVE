@@ -442,8 +442,11 @@ function UploadZone({
           res = { error: outcome.failures[0]?.reason ?? "Upload failed." };
         } else {
           res = await finalizeCandidateUploads(projectId, promptText, entityIds, { files: outcome.files });
-          if (res && "ok" in res && outcome.failures.length > 0) {
-            res = { error: `${outcome.failures.length} file(s) failed: ${outcome.failures[0].reason}` };
+          // both pre-finalize (upload/hash) and finalize-time (size/storage)
+          // failures must reach the user even when some files landed
+          if (res && "ok" in res) {
+            const failed = [...outcome.failures, ...res.failures];
+            if (failed.length > 0) res = { error: `${failed.length} file(s) failed: ${failed[0].reason}` };
           }
         }
       } else {

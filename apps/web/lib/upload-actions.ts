@@ -27,6 +27,7 @@ import {
   UPLOAD_SINGLE_MAX_BYTES,
   UPLOAD_PART_BYTES,
   UPLOAD_URL_TTL_SECONDS,
+  expectedPartLength,
   type AuthorizeUploadResult,
 } from "@artlio/core";
 import { storage, FOUNDER_OWNER_ID } from "@/lib/storage";
@@ -53,9 +54,11 @@ export async function signUploadPart(raw: unknown): Promise<{ url: string } | { 
   if (!storage.supportsDirectUpload) return { error: "Direct upload is not available on this storage driver." };
   const parsed = signPartInput.safeParse(raw);
   if (!parsed.success) return { error: "Malformed part-signing request." };
-  const { sha256, ext, uploadId, partNumber } = parsed.data;
+  const { sha256, ext, sizeBytes, uploadId, partNumber } = parsed.data;
+  const partLength = expectedPartLength(sizeBytes, partNumber);
+  if (partLength === null) return { error: "Part number out of range for the declared size." };
   const key = storageKey(FOUNDER_OWNER_ID, sha256, ext);
-  return { url: await storage.signPart(key, uploadId, partNumber, UPLOAD_URL_TTL_SECONDS) };
+  return { url: await storage.signPart(key, uploadId, partNumber, partLength, UPLOAD_URL_TTL_SECONDS) };
 }
 
 export async function abortDirectUpload(raw: unknown): Promise<{ ok: true } | { error: string }> {
@@ -123,7 +126,18 @@ export async function finalizeCandidateUploads(
     for (const { file } of verified) {
       const asset = await tx.asset.upsert({
         where: { ownerId_contentHash: { ownerId: FOUNDER_OWNER_ID, contentHash: file.sha256 } },
-        update: { deletedAt: null }, // re-upload inside the 30-day window resurrects
+        // resurrect AND realign to the object we just HEAD-verified: a prior
+        // row for the same content could carry a different ext (the key is
+        // <hash>.<ext>, but uniqueness is owner+hash) or a swept tombstone
+        // key — pointing the row at the verified object keeps ext/mime/size
+        // honest (codex round).
+        update: {
+          deletedAt: null,
+          ext: file.ext,
+          mime: mimeOf(file.ext),
+          sizeBytes: BigInt(file.sizeBytes),
+          originalFilename: file.originalFilename,
+        },
         create: {
           id: newId(),
           ownerId: FOUNDER_OWNER_ID,
@@ -161,13 +175,17 @@ export async function finalizeCandidateUploads(
   });
 
   // hash re-verification + metadata probe for EVERY direct upload — the
-  // claimed sha256 named the key, the worker proves it (D19). Dispatch is
-  // best-effort: the upload must never fail on queue hiccups.
+  // claimed sha256 named the key, the worker PROVES it (D19 rule 3). Unlike
+  // the legacy path (where the server hashed the bytes it stored, so the hash
+  // is already trusted), here the hash is a client claim and this dispatch is
+  // load-bearing. If it fails the rows still exist but unverified — logged at
+  // error level for the reconciliation sweep to re-dispatch (proper fix:
+  // Asset.verifiedAt + hide-until-verified, deferred while single-tenant).
   try {
     const boss = await getBoss();
     for (const id of assetIds) await boss.send(INGEST_QUEUE, { assetId: id });
   } catch (e) {
-    console.warn("[upload] ingest dispatch skipped:", e instanceof Error ? e.message : e);
+    console.error("[upload] UNVERIFIED — ingest dispatch failed for", assetIds, ":", e instanceof Error ? e.message : e);
   }
   revalidatePath("/", "layout");
   return { ok: true, count: verified.length, failures };

@@ -52,30 +52,41 @@ export async function handleIngest(data: IngestJobData): Promise<void> {
     console.error(`[ingest] asset ${data.assetId} missing — dropping`);
     return;
   }
+  if (asset.deletedAt) {
+    // already removed/swept (or a prior mismatch) — nothing to verify, and
+    // its object may be gone (would falsely throw the read below)
+    return;
+  }
   const key = storageKey(asset.ownerId, asset.contentHash, asset.ext);
 
   // D19 hash re-verification: the key's hash segment is a client claim until
-  // proven here. Mismatch = corrupted or forged upload → remove both sides.
-  try {
-    const actualHash = await sha256Stream(await storage.readStream(key));
-    if (actualHash !== asset.contentHash) {
-      console.error(
-        `[ingest] HASH MISMATCH ${asset.id}: key claims ${asset.contentHash}, bytes are ${actualHash} — deleting`,
-      );
-      await storage.deleteObject(key);
-      await prisma.asset.update({ where: { id: asset.id }, data: { deletedAt: new Date() } });
-      await prisma.actionEvent.create({
+  // proven here. This is load-bearing security, not best-effort — a read
+  // failure must THROW so pg-boss retries with backoff (a swallowed failure
+  // would let a forged same-size upload survive). Only a CONFIRMED mismatch
+  // deletes; transient storage errors bubble up to the queue.
+  const actualHash = await sha256Stream(await storage.readStream(key));
+  if (actualHash !== asset.contentHash) {
+    console.error(
+      `[ingest] HASH MISMATCH ${asset.id}: key claims ${asset.contentHash}, bytes are ${actualHash} — deleting`,
+    );
+    await storage.deleteObject(key);
+    await prisma.$transaction([
+      prisma.asset.update({ where: { id: asset.id }, data: { deletedAt: new Date() } }),
+      // candidates pointing at the forged blob must vanish too — read paths
+      // include the asset without re-checking asset.deletedAt (codex round)
+      prisma.generation.updateMany({
+        where: { assetId: asset.id, deletedAt: null },
+        data: { deletedAt: new Date() },
+      }),
+      prisma.actionEvent.create({
         data: {
           id: newId(),
           ownerId: asset.ownerId,
           type: "asset.hash_mismatch",
           payload: { assetId: asset.id, claimed: asset.contentHash, actual: actualHash },
         },
-      });
-      return;
-    }
-  } catch {
-    console.error(`[ingest] blob for ${asset.id} unreachable — skipping`);
+      }),
+    ]);
     return;
   }
 

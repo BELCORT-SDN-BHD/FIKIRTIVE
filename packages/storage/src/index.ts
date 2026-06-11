@@ -69,7 +69,7 @@ export interface Storage {
      supportsDirectUpload) ---- */
   presignedPut(key: string, contentLength: number, expiresSeconds?: number): Promise<string>;
   createMultipart(key: string): Promise<string>;
-  signPart(key: string, uploadId: string, partNumber: number, expiresSeconds?: number): Promise<string>;
+  signPart(key: string, uploadId: string, partNumber: number, contentLength: number, expiresSeconds?: number): Promise<string>;
   completeMultipart(key: string, uploadId: string, parts: UploadPartReceipt[]): Promise<void>;
   abortMultipart(key: string, uploadId: string): Promise<void>;
 }
@@ -263,9 +263,13 @@ export class R2Storage implements Storage {
 
   async presignedPut(key: string, contentLength: number, expiresSeconds = 3600): Promise<string> {
     const { ext } = parseStorageKey(key);
-    // ContentType + ContentLength ride inside the signature: the browser's
-    // PUT must carry exactly these headers or R2 rejects it (first line of
-    // the D19 size defense; finalize's HEAD re-check is the authoritative one)
+    // Three constraints ride inside the signature so the browser's PUT can't
+    // deviate: ContentType + ContentLength pin type and size (the edge
+    // rejects a wrong-length body — finalize's HEAD is the authoritative
+    // re-check), and IfNoneMatch:"*" makes the URL single-shot — once bytes
+    // land it can't be replayed with different content before its TTL
+    // (codex round: closes the post-verification replay-overwrite hole;
+    // legit dedup never reaches here, authorize returns "exists" first).
     return getSignedUrl(
       this.client,
       new PutObjectCommand({
@@ -273,6 +277,7 @@ export class R2Storage implements Storage {
         Key: key,
         ContentType: mimeOf(ext),
         ContentLength: contentLength,
+        IfNoneMatch: "*",
       }),
       { expiresIn: expiresSeconds },
     );
@@ -291,8 +296,17 @@ export class R2Storage implements Storage {
     return res.UploadId;
   }
 
-  async signPart(key: string, uploadId: string, partNumber: number, expiresSeconds = 3600): Promise<string> {
+  async signPart(
+    key: string,
+    uploadId: string,
+    partNumber: number,
+    contentLength: number,
+    expiresSeconds = 3600,
+  ): Promise<string> {
     parseStorageKey(key);
+    // sign the exact part length so a client can't upload oversized parts and
+    // abandon the upload to leak storage (codex round; symmetric with the
+    // single-PUT ContentLength). Uppy sends exactly this many bytes per part.
     return getSignedUrl(
       this.client,
       new UploadPartCommand({
@@ -300,6 +314,7 @@ export class R2Storage implements Storage {
         Key: key,
         UploadId: uploadId,
         PartNumber: partNumber,
+        ContentLength: contentLength,
       }),
       { expiresIn: expiresSeconds },
     );
@@ -307,16 +322,31 @@ export class R2Storage implements Storage {
 
   async completeMultipart(key: string, uploadId: string, parts: UploadPartReceipt[]): Promise<void> {
     parseStorageKey(key);
-    await this.client.send(
-      new CompleteMultipartUploadCommand({
-        Bucket: this.cfg.bucket,
-        Key: key,
-        UploadId: uploadId,
-        MultipartUpload: {
-          Parts: parts.map((p) => ({ PartNumber: p.partNumber, ETag: p.etag })),
-        },
-      }),
-    );
+    try {
+      await this.client.send(
+        new CompleteMultipartUploadCommand({
+          Bucket: this.cfg.bucket,
+          Key: key,
+          UploadId: uploadId,
+          // IfNoneMatch:"*" makes completion refuse to overwrite an existing
+          // object — same single-shot guarantee as the single-PUT path
+          IfNoneMatch: "*",
+          MultipartUpload: {
+            Parts: parts.map((p) => ({ PartNumber: p.partNumber, ETag: p.etag })),
+          },
+        }),
+      );
+    } catch (err) {
+      // object already there (concurrent same-content upload won the race):
+      // content-addressed, so the bytes are identical — treat as success
+      const name = (err as { name?: string })?.name ?? "";
+      const status = (err as { $metadata?: { httpStatusCode?: number } })?.$metadata?.httpStatusCode;
+      if (name === "PreconditionFailed" || status === 412) {
+        await this.abortMultipart(key, uploadId); // release the now-redundant parts
+        return;
+      }
+      throw err;
+    }
   }
 
   async abortMultipart(key: string, uploadId: string): Promise<void> {

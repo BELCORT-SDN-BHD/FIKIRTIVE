@@ -100,9 +100,14 @@ const claimedHash = createHash("sha256").update(randomBytes(1024)).digest("hex")
 const owner = "founder";
 const forgedKey = storageKey(owner, claimedHash, "png");
 {
-  // plant the object exactly as a lying client would: presigned PUT
+  // plant the object exactly as a lying client would: presigned PUT carries
+  // the signed Content-Type + If-None-Match:* headers (single-shot write)
   const url = await storage.presignedPut(forgedKey, realBytes.length, 300);
-  const res = await fetch(url, { method: "PUT", body: realBytes, headers: { "Content-Type": "image/png" } });
+  const res = await fetch(url, {
+    method: "PUT",
+    body: realBytes,
+    headers: { "Content-Type": "image/png", "If-None-Match": "*" },
+  });
   if (res.status !== 200) throw new Error(`forged PUT failed: ${res.status}`);
 }
 const forged = await prisma.asset.create({
@@ -117,6 +122,19 @@ const forged = await prisma.asset.create({
     source: "UPLOAD",
   },
 });
+// replay defense (codex round #1): the single-shot URL can't overwrite the
+// object it just created — If-None-Match:* makes the second PUT fail
+{
+  const replayUrl = await storage.presignedPut(forgedKey, realBytes.length, 300);
+  const replay = await fetch(replayUrl, {
+    method: "PUT",
+    body: randomBytes(realBytes.length), // same length, different bytes
+    headers: { "Content-Type": "image/png", "If-None-Match": "*" },
+  });
+  if (replay.status === 200) throw new Error("REPLAY SUCCEEDED — If-None-Match not enforced");
+  step(`replay overwrite rejected (${replay.status}) — single-shot URL holds`);
+}
+
 const boss = new PgBoss({ connectionString: DB, supervise: false, schedule: false, max: 2 });
 await boss.start();
 await boss.send(INGEST_QUEUE, { assetId: forged.id });

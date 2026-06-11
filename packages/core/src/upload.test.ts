@@ -7,6 +7,7 @@ import {
   finalizeUploadsInput,
   uploadPart,
   expectedPartCount,
+  expectedPartLength,
   UPLOAD_MAX_BYTES,
   UPLOAD_SINGLE_MAX_BYTES,
   UPLOAD_PART_BYTES,
@@ -182,5 +183,19 @@ describe("size invariants", () => {
     expect(expectedPartCount(1)).toBe(1);
     expect(expectedPartCount(UPLOAD_PART_BYTES)).toBe(1);
     expect(expectedPartCount(UPLOAD_PART_BYTES + 1)).toBe(2);
+  });
+
+  it("expectedPartLength fills full parts then the remainder, and bounds range", () => {
+    const size = UPLOAD_PART_BYTES * 2 + 100; // 3 parts: full, full, 100
+    expect(expectedPartLength(size, 1)).toBe(UPLOAD_PART_BYTES);
+    expect(expectedPartLength(size, 2)).toBe(UPLOAD_PART_BYTES);
+    expect(expectedPartLength(size, 3)).toBe(100);
+    expect(expectedPartLength(size, 4)).toBeNull(); // past the last part
+    expect(expectedPartLength(size, 0)).toBeNull();
+    // a single full-sized part has no remainder
+    expect(expectedPartLength(UPLOAD_PART_BYTES, 1)).toBe(UPLOAD_PART_BYTES);
+    // the part lengths sum back to the file size
+    const total = [1, 2, 3].reduce((a, p) => a + (expectedPartLength(size, p) ?? 0), 0);
+    expect(total).toBe(size);
   });
 });

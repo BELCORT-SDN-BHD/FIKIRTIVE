@@ -55,6 +55,17 @@ export function expectedPartCount(sizeBytes: number): number {
   return Math.ceil(sizeBytes / UPLOAD_PART_BYTES);
 }
 
+/** Exact byte length part `partNumber` (1-indexed) must carry for `sizeBytes`
+ *  — every part is UPLOAD_PART_BYTES except the last (the remainder). Signing
+ *  this as ContentLength bounds each part (codex round: stops oversized parts
+ *  leaking storage on abandoned uploads). Returns null if the part is out of
+ *  range for the claimed size. */
+export function expectedPartLength(sizeBytes: number, partNumber: number): number | null {
+  const count = expectedPartCount(sizeBytes);
+  if (partNumber < 1 || partNumber > count) return null;
+  return partNumber < count ? UPLOAD_PART_BYTES : sizeBytes - (count - 1) * UPLOAD_PART_BYTES;
+}
+
 /** ContentType always derives from the allow-listed ext — never from client
  *  input (a stored text/html ContentType on an image key would defeat the
  *  download/nosniff posture of presigned serving). */

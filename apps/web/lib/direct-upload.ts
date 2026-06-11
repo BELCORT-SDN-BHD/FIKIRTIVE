@@ -110,13 +110,14 @@ export async function uploadFilesDirect(
     shouldUseMultipart: (f) => (f.size ?? 0) > UPLOAD_SINGLE_MAX_BYTES,
     getChunkSize: () => UPLOAD_PART_BYTES,
 
-    // single PUT — URL was signed at authorize time with ContentType+Length
+    // single PUT — URL was signed with ContentType + ContentLength +
+    // IfNoneMatch, so the browser must echo exactly those headers
     getUploadParameters: (f) => {
       const meta = f.meta as unknown as FileMeta;
       return {
         method: "PUT" as const,
         url: meta.singleUrl!,
-        headers: { "Content-Type": mimeOf(meta.ext) },
+        headers: { "Content-Type": mimeOf(meta.ext), "If-None-Match": "*" },
       };
     },
 
