@@ -18,6 +18,21 @@ page.on("pageerror", (e) => errors.push(`pageerror: ${e.message}`));
 page.on("console", (m) => { if (m.type() === "error") errors.push(`console: ${m.text()}`); });
 const step = (m) => console.log(`✓ ${m}`);
 
+// --- auth prelude: magic-link login via the dev link file ---
+async function login(page) {
+  const fs = await import("node:fs/promises");
+  await page.goto(BASE + "/login");
+  await page.locator('input[type="email"]').fill("tools@belcort.com");
+  await page.getByRole("button", { name: "Send magic link" }).click();
+  await page.getByText("Check your inbox").waitFor({ timeout: 20000 });
+  const url = (await fs.readFile(".data/last-magic-link.txt", "utf8")).trim();
+  await page.goto(url);
+  await page.waitForURL((u) => !u.pathname.startsWith("/login"), { timeout: 20000 });
+}
+
+await login(page);
+step("signed in via magic link");
+
 // --- 1. library renders: cards + actionable empty sections ---
 await page.goto(BASE + "/library");
 await page.getByText("@Maya", { exact: true }).waitFor();

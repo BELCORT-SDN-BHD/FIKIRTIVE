@@ -211,6 +211,50 @@ model TemplateBundle {
   @@index([ownerId, slug])
 }
 
+// ── Auth.js v5 标准模型（D18：邮箱魔法链接）────────────────────────────
+// 业务表的 ownerId 仍恒为 "founder"：登录只是门禁，不是多租户（A3 预留不变）。
+model User {
+  id            String    @id @default(cuid())
+  name          String?
+  email         String    @unique
+  emailVerified DateTime?
+  image         String?
+  accounts      Account[]
+  sessions      Session[]
+}
+
+model Account {
+  userId            String
+  type              String
+  provider          String
+  providerAccountId String
+  refresh_token     String?
+  access_token      String?
+  expires_at        Int?
+  token_type        String?
+  scope             String?
+  id_token          String?
+  session_state     String?
+  user              User    @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@id([provider, providerAccountId])
+}
+
+model Session {
+  sessionToken String   @id
+  userId       String
+  expires      DateTime
+  user         User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+}
+
+model VerificationToken {
+  identifier String
+  token      String
+  expires    DateTime
+
+  @@id([identifier, token])
+}
+
 // 升级门埋点（D23）：实质动作事件，系统自动记录，3 项目计数门的数据源
 model ActionEvent {
   id        String   @id
