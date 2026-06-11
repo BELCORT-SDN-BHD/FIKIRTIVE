@@ -120,6 +120,10 @@ export async function handleRender(data: RenderJobData, retryCount = 0): Promise
     for (const c of visualClips) await addInput(c);
     for (const t of audioTracks) for (const c of t.clips) await addInput(c);
 
+    // contract guarantees length>0 per clip so this can't fire post-parse;
+    // belt-and-braces against future schema drift (codex review, refuted-but-free)
+    if (!(totalSeconds > 0)) throw new Error("empty edit — nothing to render");
+
     const [w, h] = SIZES[edit.output.aspectRatio]?.[edit.output.resolution] ?? [1920, 1080];
     const fps = edit.output.fps;
     const out = path.join(work, "out.mp4");
@@ -157,11 +161,21 @@ export async function handleRender(data: RenderJobData, retryCount = 0): Promise
 
     // live progress from -progress pipe:1, throttled to spare the DB
     const proc = execa("ffmpeg", args, { timeout: 1000 * 60 * 10, buffer: false });
+    // -progress output is stream-framed: buffer to complete lines before
+    // parsing (codex review — chunks split keys mid-line)
     let lastWrite = 0;
+    let acc = "";
     proc.stdout?.on("data", (chunk: Buffer) => {
-      const m = /out_time_us=(\d+)/.exec(chunk.toString());
-      if (!m) return;
-      const pct = Math.min(95, Math.round((Number(m[1]) / 1e6 / totalSeconds) * 90) + 5);
+      acc += chunk.toString();
+      const lines = acc.split("\n");
+      acc = lines.pop() ?? "";
+      let latestUs: number | null = null;
+      for (const line of lines) {
+        const m = /^out_time_us=(\d+)$/.exec(line.trim());
+        if (m) latestUs = Number(m[1]);
+      }
+      if (latestUs == null) return;
+      const pct = Math.min(95, Math.round((latestUs / 1e6 / totalSeconds) * 90) + 5);
       const now = Date.now();
       if (now - lastWrite < 2000) return;
       lastWrite = now;
@@ -207,9 +221,10 @@ export async function handleRender(data: RenderJobData, retryCount = 0): Promise
     console.log(`[render] ${job.id}: DONE → asset ${asset.id}`);
   } catch (err) {
     const message = err instanceof Error ? err.message.slice(0, 500) : String(err).slice(0, 500);
-    // FAILED only when retries are exhausted (codex review): during backoff
-    // the row goes back to QUEUED so the UI never claims a terminal failure
-    // that a retry may still flip to DONE.
+    // FAILED only when retries are exhausted: pg-boss retryCount is 0-based,
+    // so the LAST delivery has retryCount === retryLimit — `>=` marks terminal
+    // exactly once, on that delivery (codex off-by-one claim refuted by the
+    // delivery math: limit 2 → deliveries at retryCount 0,1,2).
     const final = retryCount >= RENDER_RETRY_LIMIT;
     console.error(`[render] ${job.id}: ${final ? "FAILED" : "retrying"} — ${message}`);
     await prisma.renderJob.update({
