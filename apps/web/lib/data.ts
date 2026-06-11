@@ -63,6 +63,17 @@ export async function getCandidates(projectId: string) {
   });
 }
 
+/** All generated media in a project (attached + candidates) for the Assets
+ *  library — each row carries its asset and, if attached, its shot. */
+export async function getProjectMedia(projectId: string) {
+  return prisma.generation.findMany({
+    where: { ownerId: FOUNDER_OWNER_ID, projectId, ...notDeleted },
+    orderBy: { createdAt: "desc" },
+    include: { asset: true, shot: { select: { id: true, number: true, scene: true } } },
+  });
+}
+
 export type EntityWithRefs = Awaited<ReturnType<typeof getEntities>>[number];
 export type ShotWithDetail = Awaited<ReturnType<typeof getShots>>[number];
 export type CandidateGen = Awaited<ReturnType<typeof getCandidates>>[number];
+export type ProjectMedia = Awaited<ReturnType<typeof getProjectMedia>>[number];

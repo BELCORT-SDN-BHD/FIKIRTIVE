@@ -1,4 +1,4 @@
-import { ensureDefaultProject, getProjects, getShots, getEntities } from "@/lib/data";
+import { ensureDefaultProject, getProjects, getShots, getEntities, getProjectMedia } from "@/lib/data";
 import { toEntityDTO } from "@/lib/dto";
 import { artlioEdit, storageKey, storageKeyToSrc, type ArtlioEdit } from "@artlio/core";
 import { Studio } from "@/components/studio/Studio";
@@ -56,12 +56,34 @@ export default async function StudioPage({ searchParams }: { searchParams: Promi
   const savedParse = project.editJson ? artlioEdit.safeParse(project.editJson) : null;
   const savedEdit = savedParse?.success ? savedParse.data : null;
 
+  // Assets library DTOs (client-safe — no BigInt): all generated media, newest first
+  const media = (await getProjectMedia(project.id)).map((g) => {
+    const ext = g.asset.ext.toLowerCase();
+    return {
+      id: g.id,
+      src: storageKeyToSrc(storageKey(g.asset.ownerId, g.asset.contentHash, ext)),
+      kind: VIDEO_EXTS.has(ext) ? ("video" as const) : ("image" as const),
+      prompt: g.promptText ?? "",
+      attached: g.shotId != null,
+    };
+  });
+  // shot picker labels for "add to shot", matching the board's Scene N · Shot M
+  const sceneDisplay: Record<number, number> = {};
+  [...new Set(shots.map((s) => s.scene))].sort((a, b) => a - b).forEach((sc, i) => { sceneDisplay[sc] = i + 1; });
+  const withinScene: Record<number, number> = {};
+  const shotOptions = shots.map((s) => {
+    withinScene[s.scene] = (withinScene[s.scene] ?? 0) + 1;
+    return { id: s.id, label: `Scene ${sceneDisplay[s.scene]} · Shot ${withinScene[s.scene]}` };
+  });
+
   return (
     <Studio
       project={{ id: project.id, name: project.name }}
       projects={projects.map((x) => ({ id: x.id, name: x.name }))}
       entities={entities.map(toEntityDTO)}
       shots={storyboardShots}
+      media={media}
+      shotOptions={shotOptions}
       boardEdit={boardEdit}
       savedEdit={savedEdit}
       attachedCount={clips.length}

@@ -436,6 +436,26 @@ export async function detachGeneration(generationId: string) {
   return { ok: true };
 }
 
+/** Soft-delete a generation from the Assets library. If it was a shot's last
+ *  live render, the shot drops back to DRAFT (same "last one out" rule). */
+export async function deleteGeneration(generationId: string): Promise<{ ok: true } | { error: string }> {
+  const gen = await prisma.generation.findFirst({ where: { id: generationId, ...OWNED } });
+  if (!gen) return { error: "Generation not found." };
+  const shotId = gen.shotId;
+  const remaining = shotId
+    ? await prisma.generation.count({ where: { shotId, deletedAt: null, id: { not: generationId } } })
+    : 0;
+  await prisma.$transaction([
+    prisma.generation.update({ where: { id: generationId }, data: { deletedAt: new Date() } }),
+    ...(shotId && remaining === 0
+      ? [prisma.shot.updateMany({ where: { id: shotId, status: "ATTACHED" }, data: { status: "DRAFT" } })]
+      : []),
+  ]);
+  await logAction("generation.delete", gen.projectId, { generationId, shotId });
+  revalidatePath("/", "layout");
+  return { ok: true };
+}
+
 // ---------- editor (phase-③ tracer: contract → queue → worker → asset) ----------
 
 /** Persist the working cut (replaces the phase-② localStorage mock). */

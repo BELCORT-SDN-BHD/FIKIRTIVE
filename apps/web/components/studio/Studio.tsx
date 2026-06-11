@@ -13,13 +13,15 @@ import { Canvas } from "./Canvas";
 import { Storyboard, type StudioShot } from "./Storyboard";
 import { VideoEditorSurface } from "./VideoEditor";
 import { Elements } from "./Elements";
-import { Assets } from "./Assets";
+import { Assets, type MediaItem, type ShotOption } from "./Assets";
 
 export function Studio({
   project,
   projects,
   entities,
   shots,
+  media,
+  shotOptions,
   boardEdit,
   savedEdit,
   attachedCount,
@@ -28,6 +30,8 @@ export function Studio({
   projects: ProjectDTO[];
   entities: EntityDTO[];
   shots: StudioShot[];
+  media: MediaItem[];
+  shotOptions: ShotOption[];
   boardEdit: ArtlioEdit | null;
   savedEdit: ArtlioEdit | null;
   attachedCount: number;
@@ -41,7 +45,7 @@ export function Studio({
       case "storyboard": return <Storyboard projectId={project.id} shots={shots} />;
       case "editor": return <VideoEditorSurface projectId={project.id} boardEdit={boardEdit} savedEdit={savedEdit} attachedCount={attachedCount} />;
       case "elements": return <Elements entities={entities} />;
-      case "assets": return <Assets />;
+      case "assets": return <Assets media={media} shotOptions={shotOptions} />;
       default:
         return (
           <div className="screen"><div className="screen-pad" style={{ display: "grid", placeItems: "center", minHeight: "60vh", textAlign: "center" }}>
