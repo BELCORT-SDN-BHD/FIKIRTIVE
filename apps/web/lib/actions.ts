@@ -455,7 +455,9 @@ export async function saveProjectEdit(projectId: string, editJsonString: string)
   return { ok: true };
 }
 
-/** Export: persist the job row FIRST, then dispatch (triple-insurance rule). */
+/** Export: persist the job row FIRST, then dispatch (triple-insurance rule).
+ *  The cut snapshot and Project.editJson are written in ONE transaction, so
+ *  "export renders what is saved" holds by construction (codex review). */
 export async function startRender(projectId: string, editJsonString: string) {
   const project = await prisma.project.findFirst({ where: { id: projectId, ...OWNED } });
   if (!project) return { error: "Project not found." };
@@ -465,9 +467,20 @@ export async function startRender(projectId: string, editJsonString: string) {
   } catch {
     return { error: "That cut is out of contract — fix the flagged clip first." };
   }
-  const job = await prisma.renderJob.create({
-    data: { id: newId(), ownerId: FOUNDER_OWNER_ID, projectId, editJson: edit },
+  // server-side in-flight guard (codex review): double-clicks and duplicate
+  // tabs must not stack identical renders
+  const active = await prisma.renderJob.findFirst({
+    where: { projectId, ownerId: FOUNDER_OWNER_ID, status: { in: ["QUEUED", "RENDERING"] } },
   });
+  if (active) {
+    return { error: "A render is already running for this project — wait for it to finish below." };
+  }
+  const [, job] = await prisma.$transaction([
+    prisma.project.update({ where: { id: projectId }, data: { editJson: edit } }),
+    prisma.renderJob.create({
+      data: { id: newId(), ownerId: FOUNDER_OWNER_ID, projectId, editJson: edit },
+    }),
+  ]);
   try {
     const boss = await getBoss();
     const queueJobId = await boss.send(RENDER_QUEUE, { renderJobId: job.id } satisfies RenderJobData);

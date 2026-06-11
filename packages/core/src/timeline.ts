@@ -195,6 +195,17 @@ export const renderJobData = z.object({
 export type RenderJobData = z.infer<typeof renderJobData>;
 
 export const RENDER_QUEUE = "render";
+export const RENDER_DLQ = `${RENDER_QUEUE}.dlq`;
+export const RENDER_RETRY_LIMIT = 2;
+/** Shared by BOTH sides (codex review): whoever boots first creates the queue
+ *  with identical policy, so dispatch never races worker startup. */
+export const RENDER_QUEUE_POLICY = {
+  retryLimit: RENDER_RETRY_LIMIT,
+  retryDelay: 20,
+  retryBackoff: true,
+  expireInSeconds: 60 * 15, // > ffmpeg timeout so jobs never expire mid-render
+  deadLetter: RENDER_DLQ,
+} as const;
 
 /** RenderJob.status lifecycle (DB enum mirrors this) */
 export const RENDER_STATUSES = ["QUEUED", "RENDERING", "DONE", "FAILED"] as const;

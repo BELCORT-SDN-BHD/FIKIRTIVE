@@ -20,6 +20,7 @@ import {
   newId,
   srcToStorageKey,
   storageKey,
+  RENDER_RETRY_LIMIT,
   type ArtlioEdit,
   type RenderJobData,
 } from "@artlio/core";
@@ -43,7 +44,7 @@ function clipArgs(edit: ArtlioEdit, clip: ArtlioEdit["timeline"]["tracks"][numbe
   return [...pre, "-t", String(clip.length), "-i", file];
 }
 
-export async function handleRender(data: RenderJobData): Promise<void> {
+export async function handleRender(data: RenderJobData, retryCount = 0): Promise<void> {
   const job = await prisma.renderJob.findUnique({ where: { id: data.renderJobId } });
   if (!job) {
     console.error(`[render] job row ${data.renderJobId} missing — dropping`);
@@ -143,12 +144,18 @@ export async function handleRender(data: RenderJobData): Promise<void> {
     console.log(`[render] ${job.id}: DONE → asset ${asset.id}`);
   } catch (err) {
     const message = err instanceof Error ? err.message.slice(0, 500) : String(err).slice(0, 500);
-    console.error(`[render] ${job.id}: FAILED — ${message}`);
+    // FAILED only when retries are exhausted (codex review): during backoff
+    // the row goes back to QUEUED so the UI never claims a terminal failure
+    // that a retry may still flip to DONE.
+    const final = retryCount >= RENDER_RETRY_LIMIT;
+    console.error(`[render] ${job.id}: ${final ? "FAILED" : "retrying"} — ${message}`);
     await prisma.renderJob.update({
       where: { id: job.id },
-      data: { status: "FAILED", error: message, finishedAt: new Date() },
+      data: final
+        ? { status: "FAILED", error: message, finishedAt: new Date() }
+        : { status: "QUEUED", error: message, progress: 0 },
     });
-    throw err; // let pg-boss retry policy decide
+    throw err; // pg-boss owns the retry schedule
   } finally {
     await rm(work, { recursive: true, force: true });
   }

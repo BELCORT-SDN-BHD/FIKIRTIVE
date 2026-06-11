@@ -1,5 +1,6 @@
 import "server-only";
 import { PgBoss } from "pg-boss";
+import { RENDER_DLQ, RENDER_QUEUE, RENDER_QUEUE_POLICY } from "@artlio/core";
 
 /**
  * Send-only pg-boss handle for the web side (producers). Same lazy-singleton
@@ -12,9 +13,22 @@ const globalForBoss = globalThis as unknown as { __artlioBoss?: Promise<PgBoss> 
 async function buildBoss(): Promise<PgBoss> {
   const url = process.env.DATABASE_URL_POOLED || process.env.DATABASE_URL;
   if (!url) throw new Error("DATABASE_URL (or DATABASE_URL_POOLED) is not set");
-  const boss = new PgBoss({ connectionString: url, schema: "pgboss" });
+  const boss = new PgBoss({
+    connectionString: url,
+    schema: "pgboss",
+    // producer handle (codex review): no maintenance loops or cron scheduling
+    // in the web process — the worker owns supervision and schema migration.
+    // Deploy-order rule (launch checklist) guarantees the worker migrates first.
+    supervise: false,
+    schedule: false,
+    migrate: false,
+    max: 2,
+  });
   boss.on("error", (err) => console.error("[web:pg-boss]", err));
   await boss.start();
+  // idempotent, same policy as the worker: dispatch never races worker boot
+  await boss.createQueue(RENDER_DLQ);
+  await boss.createQueue(RENDER_QUEUE, { ...RENDER_QUEUE_POLICY });
   return boss;
 }
 
