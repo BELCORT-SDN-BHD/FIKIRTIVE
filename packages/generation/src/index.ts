@@ -159,16 +159,20 @@ export class FalProvider implements GenerationProvider {
   }
 
   async generateVideo(req: VideoRequest): Promise<GeneratedVideo> {
-    // v1 i2v = Kling on fal (provider research). image_url is a presigned R2
+    // Kling on fal: a source frame → image-to-video (Storyboard Animate);
+    // no frame → text-to-video (Gen space). image_url (i2v) is a presigned R2
     // GET fal fetches; the sync endpoint blocks until the clip is ready.
-    const modelId = "fal-ai/kling-video/v2.5-turbo/pro/image-to-video";
+    const i2v = req.imageUrl.length > 0;
+    const modelId = i2v
+      ? "fal-ai/kling-video/v2.5-turbo/pro/image-to-video"
+      : "fal-ai/kling-video/v2.5-turbo/pro/text-to-video";
     const res = await fetch(`https://fal.run/${modelId}`, {
       method: "POST",
       headers: { Authorization: `Key ${this.apiKey}`, "Content-Type": "application/json" },
       body: JSON.stringify({
         prompt: req.prompt,
-        image_url: req.imageUrl,
         duration: String(Math.max(5, Math.round(req.durationSeconds))),
+        ...(i2v ? { image_url: req.imageUrl } : {}),
       }),
     });
     if (!res.ok) {
