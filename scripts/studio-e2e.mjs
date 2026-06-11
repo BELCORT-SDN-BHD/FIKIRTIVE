@@ -23,10 +23,10 @@ await page.waitForTimeout(1500);
 console.log("✓ signed in, /studio loaded");
 
 const surfaces = [
-  { nav: "Gen space", expect: "Start with some image storming" },
+  { nav: "Gen space", expect: "Woman Drinking Coffee" },
   { nav: "Canvas", expect: "Loose ideas live here" },
   { nav: "Storyboard", expect: "Start with your story" },
-  { nav: "Video editor", expect: "Cut your first sequence" },
+  { nav: "Video editor", expect: "Let’s start editing" },
   { nav: "Elements", expect: "Lock a character or object once" },
   { nav: "Assets", expect: "Your library is empty" },
 ];
