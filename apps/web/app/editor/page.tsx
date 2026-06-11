@@ -1,6 +1,5 @@
 import { ensureDefaultProject, getProjects, getShots } from "@/lib/data";
-import { AppShell } from "@/components/AppShell";
-import { Editor } from "@/components/Editor";
+import { EditorShell } from "@/components/EditorShell";
 import type { ArtlioEdit } from "@artlio/core";
 import { storageKeyToSrc, storageKey } from "@artlio/core";
 
@@ -33,7 +32,8 @@ export default async function EditorPage({
   for (const shot of shots) {
     const latest = shot.generations[0]; // version desc, attached only
     if (!latest) continue;
-    const ext = latest.asset.ext;
+    // ingest lowercases extensions at both write sites; normalize anyway
+    const ext = latest.asset.ext.toLowerCase();
     const isVideo = VIDEO_EXTS.has(ext);
     if (!isVideo && !IMAGE_EXTS.has(ext)) continue;
     const length = isVideo ? MOCK_VIDEO_SECONDS : MOCK_IMAGE_SECONDS;
@@ -48,33 +48,25 @@ export default async function EditorPage({
     cursor += length;
   }
 
-  const initialEdit: ArtlioEdit = {
-    timeline: {
-      background: "#000000",
-      tracks: clips.length > 0 ? [{ clips }] : [{ clips: [] } as never],
-    },
-    output: { format: "mp4", resolution: "1080", aspectRatio: "16:9", fps: 25 },
-  };
+  const initialEdit: ArtlioEdit | null =
+    clips.length > 0
+      ? {
+          timeline: { background: "#000000", tracks: [{ clips }] },
+          output: { format: "mp4", resolution: "1080", aspectRatio: "16:9", fps: 25 },
+        }
+      : null;
 
   return (
     <div className="flex flex-col h-dvh">
       <div className="lg:hidden bg-accent-soft text-ink text-sm px-4 py-2 text-center" role="status">
         Artlio works best on a desktop browser — this view is read-only.
       </div>
-      <AppShell
-        view="editor"
-        title="Editor"
+      <EditorShell
         project={{ id: project.id, name: project.name }}
         projects={projects.map((x) => ({ id: x.id, name: x.name }))}
-      >
-        <div className="flex flex-col flex-1 min-h-0 max-lg:pointer-events-none">
-          <Editor
-            projectId={project.id}
-            initialEdit={clips.length > 0 ? initialEdit : null}
-            attachedCount={clips.length}
-          />
-        </div>
-      </AppShell>
+        initialEdit={initialEdit}
+        attachedCount={clips.length}
+      />
     </div>
   );
 }

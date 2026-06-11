@@ -55,3 +55,4 @@
   - Why: 外部新用户的零门槛初体验；阶段一唯一用户是创始人，不需要。
 
 - [ ] 上锁触发器：首个烧钱端点（剪辑渲染 tracer / API 生成）上线前 → Railway 设 AUTH_ENABLED=true + RESEND_API_KEY（resend.com 1 分钟注册）。代码已就绪（cefe9e3），零改动。
+- [ ] Shotstack Studio Controls 无 teardown API（已向前兼容 dispose?.()）——SDK 升级时检查是否已加，或给上游提 issue
