@@ -55,6 +55,29 @@ export function expectedPartCount(sizeBytes: number): number {
   return Math.ceil(sizeBytes / UPLOAD_PART_BYTES);
 }
 
+/** ContentType always derives from the allow-listed ext — never from client
+ *  input (a stored text/html ContentType on an image key would defeat the
+ *  download/nosniff posture of presigned serving). */
+export function mimeOf(ext: string): string {
+  const map: Record<string, string> = {
+    png: "image/png", jpg: "image/jpeg", jpeg: "image/jpeg", webp: "image/webp",
+    gif: "image/gif", avif: "image/avif", mp4: "video/mp4", mov: "video/quicktime",
+    webm: "video/webm", mkv: "video/x-matroska", mp3: "audio/mpeg", wav: "audio/wav",
+    m4a: "audio/mp4", aac: "audio/aac", ogg: "audio/ogg", flac: "audio/flac",
+  };
+  return map[ext] ?? "application/octet-stream";
+}
+
+/** Allow-listed extension from a filename, or null when not uploadable —
+ *  shared by the browser (early rejection with a clear message) and the
+ *  server (authoritative check via the zod schemas above). */
+export function uploadExtFromFilename(name: string): string | null {
+  const dot = name.lastIndexOf(".");
+  if (dot < 0) return null;
+  const ext = name.slice(dot + 1).toLowerCase();
+  return UPLOAD_EXTS.includes(ext) ? ext : null;
+}
+
 const sha256Hex = z
   .string()
   .regex(/^[0-9a-f]{64}$/, { message: "sha256 must be 64 lowercase hex chars" });

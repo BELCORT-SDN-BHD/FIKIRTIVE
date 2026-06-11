@@ -13,7 +13,7 @@ process.env.DATABASE_URL = DB;
 const BASE = process.env.BASE_URL ?? "http://localhost:3100";
 
 // 1. pick an image asset from the smoke run
-const asset = await prisma.asset.findFirst({ where: { ext: "png" }, orderBy: { createdAt: "desc" } });
+const asset = await prisma.asset.findFirst({ where: { ext: "png", deletedAt: null }, orderBy: { createdAt: "desc" } });
 if (!asset) throw new Error("no png asset — run m0 smoke first");
 const project = await prisma.project.findFirst({ orderBy: { createdAt: "desc" } });
 const src = storageKeyToSrc(storageKey(asset.ownerId, asset.contentHash, asset.ext));

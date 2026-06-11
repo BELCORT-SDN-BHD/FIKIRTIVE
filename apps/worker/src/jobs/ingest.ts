@@ -1,13 +1,16 @@
 /**
- * Ingest: probe media metadata into the Asset row (duration, dimensions).
- * Minimal T5 slice — the editor needs REAL durations (kills the last mock).
- * Thumbnails/last-frame land later on this same skeleton.
+ * Ingest: hash re-verification + media metadata probe into the Asset row.
  *
- * Idempotent by construction: probing twice writes the same values.
+ * Hash re-check (T4b, D19 rule 3): direct uploads name their own key with a
+ * client-claimed sha256 — the worker streams the stored bytes, re-hashes,
+ * and deletes mismatches (object + soft-deleted row). The claimed hash is a
+ * fast-path hint only; this hash is truth.
+ *
+ * Idempotent by construction: hashing and probing twice write the same values.
  */
 import { execa } from "execa";
 import { prisma } from "@artlio/db";
-import { storageKey } from "@artlio/core";
+import { storageKey, sha256Stream, newId } from "@artlio/core";
 import { storage } from "../storage.js";
 
 export interface IngestJobData {
@@ -49,9 +52,36 @@ export async function handleIngest(data: IngestJobData): Promise<void> {
     console.error(`[ingest] asset ${data.assetId} missing — dropping`);
     return;
   }
+  const key = storageKey(asset.ownerId, asset.contentHash, asset.ext);
+
+  // D19 hash re-verification: the key's hash segment is a client claim until
+  // proven here. Mismatch = corrupted or forged upload → remove both sides.
+  try {
+    const actualHash = await sha256Stream(await storage.readStream(key));
+    if (actualHash !== asset.contentHash) {
+      console.error(
+        `[ingest] HASH MISMATCH ${asset.id}: key claims ${asset.contentHash}, bytes are ${actualHash} — deleting`,
+      );
+      await storage.deleteObject(key);
+      await prisma.asset.update({ where: { id: asset.id }, data: { deletedAt: new Date() } });
+      await prisma.actionEvent.create({
+        data: {
+          id: newId(),
+          ownerId: asset.ownerId,
+          type: "asset.hash_mismatch",
+          payload: { assetId: asset.id, claimed: asset.contentHash, actual: actualHash },
+        },
+      });
+      return;
+    }
+  } catch {
+    console.error(`[ingest] blob for ${asset.id} unreachable — skipping`);
+    return;
+  }
+
   let file: string;
   try {
-    file = await storage.ffmpegInput(storageKey(asset.ownerId, asset.contentHash, asset.ext));
+    file = await storage.ffmpegInput(key);
   } catch {
     console.error(`[ingest] blob for ${asset.id} unreachable — skipping`);
     return;

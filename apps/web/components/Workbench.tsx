@@ -48,12 +48,14 @@ export function Workbench({
   entities,
   shots,
   candidates,
+  directUpload,
 }: {
   project: ProjectDTO;
   projects: ProjectDTO[];
   entities: EntityDTO[];
   shots: ShotDTO[];
   candidates: GenerationDTO[];
+  directUpload: boolean;
 }) {
   const [selectedShotId, setSelectedShotId] = useState<string | null>(shots[0]?.id ?? null);
   const selectedShot = shots.find((s) => s.id === selectedShotId) ?? null;
@@ -168,7 +170,7 @@ export function Workbench({
                 </Chip>
               </div>
 
-              <UploadZone projectId={project.id} selectedShot={selectedShot} />
+              <UploadZone projectId={project.id} selectedShot={selectedShot} direct={directUpload} />
 
               {historyItems.length === 0 ? (
                 <p style={{ font: "var(--text-small)", color: "var(--fg-2)", margin: "14px 4px" }}>
@@ -406,27 +408,60 @@ function GenerationCard({
   );
 }
 
-function UploadZone({ projectId, selectedShot }: { projectId: string; selectedShot: ShotDTO | null }) {
+function UploadZone({
+  projectId,
+  selectedShot,
+  direct,
+}: {
+  projectId: string;
+  selectedShot: ShotDTO | null;
+  direct: boolean;
+}) {
   const inputRef = useRef<HTMLInputElement>(null);
   const { pending, error, run } = useAction();
   const [dragOver, setDragOver] = useState(false);
+  const [progress, setProgress] = useState<Map<string, number> | null>(null);
 
   function upload(files: FileList | File[]) {
     const list = [...files];
     if (list.length === 0) return;
-    const fd = new FormData();
-    for (const f of list) fd.append("files", f);
-    // associate provenance with the shot being worked on (prompt + entities)
-    if (selectedShot) {
-      fd.set("promptText", selectedShot.promptText);
-      for (const id of selectedShot.entityIds) fd.append("entityIds", id);
-    }
+    const promptText = selectedShot?.promptText ?? "";
+    const entityIds = selectedShot?.entityIds ?? [];
     run(async () => {
-      const res = await uploadCandidates(projectId, fd);
+      let res;
+      if (direct) {
+        // browser → R2 presigned upload; this server never sees the bytes
+        const { uploadFilesDirect } = await import("@/lib/direct-upload");
+        const { finalizeCandidateUploads } = await import("@/lib/upload-actions");
+        setProgress(new Map(list.map((f) => [f.name, 0])));
+        const outcome = await uploadFilesDirect(list, (name, pct) =>
+          setProgress((prev) => new Map(prev ?? []).set(name, pct)),
+        );
+        setProgress(null);
+        if (outcome.files.length === 0) {
+          res = { error: outcome.failures[0]?.reason ?? "Upload failed." };
+        } else {
+          res = await finalizeCandidateUploads(projectId, promptText, entityIds, { files: outcome.files });
+          if (res && "ok" in res && outcome.failures.length > 0) {
+            res = { error: `${outcome.failures.length} file(s) failed: ${outcome.failures[0].reason}` };
+          }
+        }
+      } else {
+        const fd = new FormData();
+        for (const f of list) fd.append("files", f);
+        // associate provenance with the shot being worked on (prompt + entities)
+        fd.set("promptText", promptText);
+        for (const id of entityIds) fd.append("entityIds", id);
+        res = await uploadCandidates(projectId, fd);
+      }
       if (inputRef.current) inputRef.current.value = "";
       return res;
     });
   }
+
+  const overallPct = progress
+    ? Math.round([...progress.values()].reduce((a, b) => a + b, 0) / Math.max(1, progress.size))
+    : null;
 
   return (
     <>
@@ -452,7 +487,9 @@ function UploadZone({ projectId, selectedShot }: { projectId: string; selectedSh
         </span>
         <span>
           {pending
-            ? "Uploading…"
+            ? overallPct !== null
+              ? `Uploading ${progress!.size} file${progress!.size > 1 ? "s" : ""}… ${overallPct}%`
+              : "Uploading…"
             : dragOver
               ? "Drop to add renders"
               : (
@@ -470,7 +507,7 @@ function UploadZone({ projectId, selectedShot }: { projectId: string; selectedSh
         ref={inputRef}
         type="file"
         multiple
-        accept="image/*,video/*"
+        accept="image/*,video/*,audio/*"
         className="hidden"
         aria-label="Upload renders"
         onChange={(e) => e.target.files && upload(e.target.files)}

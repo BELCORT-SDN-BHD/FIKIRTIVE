@@ -28,11 +28,4 @@ export function kindOf(ext: string): "image" | "video" | "other" {
   return "other";
 }
 
-export function mimeOf(ext: string): string {
-  const map: Record<string, string> = {
-    png: "image/png", jpg: "image/jpeg", jpeg: "image/jpeg", webp: "image/webp",
-    gif: "image/gif", avif: "image/avif", mp4: "video/mp4", mov: "video/quicktime",
-    webm: "video/webm", mkv: "video/x-matroska", mp3: "audio/mpeg", wav: "audio/wav",
-  };
-  return map[ext] ?? "application/octet-stream";
-}
+export { mimeOf } from "@artlio/storage";

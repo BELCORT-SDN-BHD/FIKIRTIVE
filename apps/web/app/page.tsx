@@ -1,4 +1,4 @@
-import { kindOf } from "@/lib/storage";
+import { kindOf, storage } from "@/lib/storage";
 import {
   ensureDefaultProject,
   getProjects,
@@ -61,6 +61,7 @@ export default async function Page({
       entities={entityDTOs}
       shots={shotDTOs}
       candidates={candidates.map(toGenDTO)}
+      directUpload={storage.supportsDirectUpload}
     />
   );
 }

@@ -181,7 +181,7 @@ export async function handleRender(data: RenderJobData, retryCount = 0): Promise
 
     // store the output with the same content-addressed semantics as every asset
     const bytes = await readFile(out);
-    const { contentHash } = await storage.put(job.ownerId, bytes, "mp4", "video/mp4");
+    const { contentHash } = await storage.put(job.ownerId, bytes, "mp4");
     const asset = await prisma.asset.upsert({
       where: { ownerId_contentHash: { ownerId: job.ownerId, contentHash } },
       update: { deletedAt: null },

@@ -16,6 +16,7 @@ import {
 import type { EntityType, ShotStatus } from "@artlio/db";
 import { storage, extFromFilename, mimeOf, FOUNDER_OWNER_ID } from "./storage";
 import { getBoss } from "./queue";
+import { buildEntitySnapshot } from "./entity-snapshot";
 
 /**
  * M0 server actions. Conventions:
@@ -45,7 +46,8 @@ async function ingestFile(file: File) {
   const ext = extFromFilename(file.name);
   const bytes = new Uint8Array(await file.arrayBuffer());
   // content-addressed blobs are idempotent — safe outside the DB transaction
-  const { contentHash } = await storage.put(FOUNDER_OWNER_ID, bytes, ext, file.type || mimeOf(ext));
+  // ContentType derives from ext inside the driver — client file.type is untrusted
+  const { contentHash } = await storage.put(FOUNDER_OWNER_ID, bytes, ext);
   return {
     contentHash,
     create: {
@@ -307,23 +309,6 @@ export async function softDeleteShot(shotId: string) {
 }
 
 // ---------- generations (candidate zone + manual attach) ----------
-
-/** Frozen provenance written into every Generation (schema: required, never null). */
-async function buildEntitySnapshot(entityIds: string[]) {
-  if (entityIds.length === 0) return { entities: [] };
-  const entities = await prisma.entity.findMany({
-    where: { id: { in: entityIds }, ownerId: FOUNDER_OWNER_ID },
-    include: { referenceImages: { where: { deletedAt: null }, include: { asset: true } } },
-  });
-  return {
-    entities: entities.map((e) => ({
-      id: e.id,
-      name: e.name,
-      type: e.type,
-      refHashes: e.referenceImages.map((r) => r.asset.contentHash),
-    })),
-  };
-}
 
 /**
  * M0 manual flow: user generates in ComfyUI with the copied prompt, then drops
