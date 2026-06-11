@@ -27,9 +27,18 @@ export async function startRefGen(raw: unknown): Promise<{ id: string } | { erro
   if (!entity) return { error: "Element not found." };
 
   // one generation in flight per entity — double-clicks and duplicate tabs
-  // must not stack (and stack spend); same guard shape as startRender
+  // must not stack (and stack spend); same guard shape as startRender. Only
+  // RECENT active jobs block: a job stuck QUEUED/GENERATING past the queue's
+  // expiry (worker died mid-run, codex P2) is treated as abandoned so the
+  // founder isn't locked out while pg-boss re-delivers/expires it.
+  const STALE_MS = 15 * 60 * 1000;
   const active = await prisma.refGenJob.findFirst({
-    where: { entityId, ownerId: FOUNDER_OWNER_ID, status: { in: ["QUEUED", "GENERATING"] } },
+    where: {
+      entityId,
+      ownerId: FOUNDER_OWNER_ID,
+      status: { in: ["QUEUED", "GENERATING"] },
+      updatedAt: { gte: new Date(Date.now() - STALE_MS) },
+    },
   });
   if (active) return { error: "A generation is already running for this element — wait for it to finish." };
 

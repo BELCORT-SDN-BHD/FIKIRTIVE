@@ -91,15 +91,42 @@ const logoHash = await runGen({ withLogo: true });
 if (plainHash === logoHash) throw new Error("conditioning had no effect on output (mock seed ignored inputs)");
 step("conditioning changes the generated output (logo ref fed to provider)");
 
-// idempotency: re-delivering the same DONE job must not double-attach
+// idempotency: re-delivering the same DONE job must not double-attach (resume
+// path — job has outputAssetIds, so the provider is NOT re-called)
 {
   const done = await prisma.refGenJob.findFirst({ where: { status: "DONE" }, orderBy: { createdAt: "desc" } });
   const before = await prisma.referenceImage.count({ where: { entityId: done.entityId, deletedAt: null } });
+  const genBefore = await prisma.asset.count({ where: { source: "GENERATED", deletedAt: null } });
   await boss.send(REFGEN_QUEUE, { refGenJobId: done.id });
   await new Promise((r) => setTimeout(r, 4000));
   const after = await prisma.referenceImage.count({ where: { entityId: done.entityId, deletedAt: null } });
+  const genAfter = await prisma.asset.count({ where: { source: "GENERATED", deletedAt: null } });
   if (after !== before) throw new Error(`re-delivery double-attached: ${before}→${after}`);
-  step("re-delivering a DONE job is a no-op (idempotent attach)");
+  if (genAfter !== genBefore) throw new Error(`re-delivery re-spent: ${genBefore}→${genAfter} GENERATED assets`);
+  step("re-delivering a DONE job re-attaches without re-spending (resume path)");
+}
+
+// money-safety: a job whose entity was deleted before it ran must terminal-
+// fail WITHOUT calling the provider (no GENERATED asset created)
+{
+  const e = await prisma.entity.create({ data: { id: newId(), ownerId: OWNER, type: "PRODUCT", name: "Doomed" } });
+  const job = await prisma.refGenJob.create({
+    data: { id: newId(), ownerId: OWNER, entityId: e.id, prompt: "wasted spend", count: 4, model: "seedream" },
+  });
+  await prisma.entity.update({ where: { id: e.id }, data: { deletedAt: new Date() } });
+  const genBefore = await prisma.asset.count({ where: { source: "GENERATED", deletedAt: null } });
+  await boss.send(REFGEN_QUEUE, { refGenJobId: job.id });
+  let row;
+  for (let i = 0; i < 15; i++) {
+    await new Promise((r) => setTimeout(r, 1000));
+    row = await prisma.refGenJob.findUnique({ where: { id: job.id } });
+    if (row.status === "FAILED" || row.status === "DONE") break;
+  }
+  if (row.status !== "FAILED") throw new Error(`deleted-entity job ended ${row.status}, expected FAILED`);
+  if (row.outputAssetIds.length !== 0) throw new Error("deleted-entity job produced outputs (spent!)");
+  const genAfter = await prisma.asset.count({ where: { source: "GENERATED", deletedAt: null } });
+  if (genAfter !== genBefore) throw new Error(`deleted-entity job spent: ${genBefore}→${genAfter}`);
+  step("deleted-entity job terminal-fails without spending (validate-before-spend)");
 }
 
 await boss.stop();
