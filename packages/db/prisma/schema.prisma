@@ -232,11 +232,16 @@ model RenderJob {
   /// DONE 时指向产出 MP4 的 Asset（内容寻址，与所有媒体同一套语义）
   outputAssetId String?
   error         String       @default("")
+  /// 队列侧关联（codex 审核补全：可审计的重试与对账）
+  queueJobId    String       @default("")
+  attempts      Int          @default(0)
+  startedAt     DateTime?
+  finishedAt    DateTime?
   createdAt     DateTime     @default(now())
   updatedAt     DateTime     @updatedAt
 
   @@index([projectId, createdAt])
-  @@index([status])
+  @@index([status, updatedAt]) // 滞留 RENDERING 行的清扫扫描
 }
 
 // ── Auth.js v5 标准模型（D18：邮箱魔法链接）────────────────────────────
