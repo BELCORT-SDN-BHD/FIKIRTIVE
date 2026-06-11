@@ -377,7 +377,9 @@ function GenerateRefsBlock({ entity }: { entity: EntityDTO }) {
   const { pending, error, run } = useAction();
   const [prompt, setPrompt] = useState(() => buildReferencePrompt(entity));
   const [count, setCount] = useState(4);
-  const [job, setJob] = useState<{ status: string; progress: number; error: string } | null>(null);
+  const [job, setJob] = useState<{ status: string; error: string } | null>(null);
+  const [elapsed, setElapsed] = useState(0);
+  const startMs = useRef(0);
 
   const conditioned = entity.refs.length > 0;
   const busy = pending || job?.status === "QUEUED" || job?.status === "GENERATING";
@@ -390,12 +392,13 @@ function GenerateRefsBlock({ entity }: { entity: EntityDTO }) {
       const jobs = await getRefGenJobs(entity.id);
       const latest = jobs[0];
       if (!alive || !latest) return;
-      setJob({ status: latest.status, progress: latest.progress, error: latest.error });
       if (latest.status === "DONE") {
         clearInterval(tick);
+        setJob({ status: "DONE", error: "" });
         router.refresh(); // server re-fetches the entity with its new images
       } else if (latest.status === "FAILED") {
         clearInterval(tick);
+        setJob({ status: "FAILED", error: latest.error });
       }
     }, 2000);
     return () => {
@@ -404,11 +407,21 @@ function GenerateRefsBlock({ entity }: { entity: EntityDTO }) {
     };
   }, [job, entity.id, router]);
 
+  // fal has no sub-call progress signal (it returns all images at once), so
+  // show a live elapsed timer instead of a frozen-looking 0%
+  useEffect(() => {
+    if (!busy) return;
+    const t = setInterval(() => setElapsed(Math.round((Date.now() - startMs.current) / 1000)), 1000);
+    return () => clearInterval(t);
+  }, [busy]);
+
   function generate() {
+    startMs.current = Date.now();
+    setElapsed(0);
     run(
       () => startRefGen({ entityId: entity.id, prompt, count, model: "seedream" }),
       (res) => {
-        if (res && "id" in res) setJob({ status: "QUEUED", progress: 0, error: "" });
+        if (res && "id" in res) setJob({ status: "QUEUED", error: "" });
       },
     );
   }
@@ -451,13 +464,16 @@ function GenerateRefsBlock({ entity }: { entity: EntityDTO }) {
           </select>
         </label>
         <Button size="sm" onClick={generate} disabled={busy || prompt.trim().length === 0}>
-          {busy
-            ? job?.status === "GENERATING" ? `Generating… ${job.progress}%` : "Generating…"
-            : `Generate ${count} (~$${cost})`}
+          {busy ? `Generating ${count}… ${elapsed}s` : `Generate ${count} (~$${cost})`}
         </Button>
         <span style={{ flex: 1 }} />
         <span style={{ font: "var(--text-caption)", color: "var(--fg-3)" }}>Seedream</span>
       </div>
+      {busy && (
+        <p style={{ font: "var(--text-caption)", color: "var(--fg-3)", margin: 0 }}>
+          Working with Seedream — {count} image{count > 1 ? "s" : ""} usually takes {count <= 2 ? "20–40s" : "about a minute"}. They appear here when ready.
+        </p>
+      )}
       {(error || job?.status === "FAILED") && (
         <p role="alert" style={{ font: "var(--text-caption)", color: "var(--danger)", margin: 0 }}>
           {error ?? job?.error ?? "Generation failed."} — try again.
