@@ -110,9 +110,16 @@ export async function handleGen(data: GenJobData, retryCount: number): Promise<v
           id: newId(), ownerId: job.ownerId, projectId: job.projectId, shotId: job.shotId ?? null,
           assetId: asset.id, source: "GENERATED", promptText: job.prompt, modelRef: job.model,
           entitySnapshot, version: job.shotId ? nextVersion++ : 1,
+          // a shot generation IS the shot's render (attached); a candidate (no
+          // shotId) lands unattached for the board
+          attachedAt: job.shotId ? new Date() : null,
         },
       });
       generationIds.push(gen.id);
+    }
+    // mark the shot rendered so the editor picks up its latest generation
+    if (job.shotId) {
+      await prisma.shot.update({ where: { id: job.shotId }, data: { status: "ATTACHED" } });
     }
     await prisma.genJob.update({ where: { id: job.id }, data: { generationIds, status: "DONE", progress: 100, finishedAt: new Date(), error: "" } });
     void assetIds; // metadata probe (ingest) is a follow-up; images default to 3s in the editor

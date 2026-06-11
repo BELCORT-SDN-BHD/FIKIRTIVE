@@ -1,18 +1,65 @@
-import { getEntities, getProjects } from "@/lib/data";
+import { ensureDefaultProject, getProjects, getShots, getEntities } from "@/lib/data";
 import { toEntityDTO } from "@/lib/dto";
+import { artlioEdit, storageKey, storageKeyToSrc, type ArtlioEdit } from "@artlio/core";
 import { Studio } from "@/components/studio/Studio";
 
 export const dynamic = "force-dynamic";
 export const metadata = { title: "Studio · Artlio" };
 
-// Redesign-shell route. Elements + Gen space are wired to real data; other
-// surfaces are mock until their engine slice lands.
-export default async function StudioPage() {
-  const [entities, projects] = await Promise.all([getEntities(), getProjects()]);
+const VIDEO_EXTS = new Set(["mp4", "mov", "webm", "mkv"]);
+const IMAGE_EXTS = new Set(["png", "jpg", "jpeg", "webp", "gif", "avif"]);
+const IMAGE_SECONDS = 3;
+const FALLBACK_VIDEO_SECONDS = 5;
+
+export default async function StudioPage({ searchParams }: { searchParams: Promise<{ p?: string }> }) {
+  const { p } = await searchParams;
+  const defaultProject = await ensureDefaultProject();
+  const [projects, entities] = await Promise.all([getProjects(), getEntities()]);
+  const project = projects.find((x) => x.id === p) ?? defaultProject;
+  const shots = await getShots(project.id);
+
+  // storyboard shots: prompt + latest generation image (for the card)
+  const storyboardShots = shots.map((s) => {
+    const latest = s.generations[0];
+    const img = latest ? storageKeyToSrc(storageKey(latest.asset.ownerId, latest.asset.contentHash, latest.asset.ext)) : null;
+    return {
+      id: s.id,
+      number: s.number,
+      prompt: s.description ?? "",
+      entityIds: s.entityRefs.map((r) => r.entityId),
+      imageUrl: img && IMAGE_EXTS.has(latest!.asset.ext.toLowerCase()) ? img : null,
+      videoUrl: img && VIDEO_EXTS.has(latest!.asset.ext.toLowerCase()) ? img : null,
+    };
+  });
+
+  // boardEdit for the editor (each shot's latest generation, in order)
+  const clips: ArtlioEdit["timeline"]["tracks"][number]["clips"] = [];
+  let cursor = 0;
+  for (const shot of shots) {
+    const latest = shot.generations[0];
+    if (!latest) continue;
+    const ext = latest.asset.ext.toLowerCase();
+    const isVideo = VIDEO_EXTS.has(ext);
+    if (!isVideo && !IMAGE_EXTS.has(ext)) continue;
+    const length = isVideo ? (latest.asset.durationS ?? FALLBACK_VIDEO_SECONDS) : IMAGE_SECONDS;
+    clips.push({ asset: { type: isVideo ? "video" : "image", src: storageKeyToSrc(storageKey(latest.asset.ownerId, latest.asset.contentHash, ext)) }, start: cursor, length });
+    cursor += length;
+  }
+  const boardEdit: ArtlioEdit | null = clips.length > 0
+    ? { timeline: { background: "#000000", tracks: [{ clips }] }, output: { format: "mp4", resolution: "1080", aspectRatio: "16:9", fps: 25 } }
+    : null;
+  const savedParse = project.editJson ? artlioEdit.safeParse(project.editJson) : null;
+  const savedEdit = savedParse?.success ? savedParse.data : null;
+
   return (
     <Studio
+      project={{ id: project.id, name: project.name }}
+      projects={projects.map((x) => ({ id: x.id, name: x.name }))}
       entities={entities.map(toEntityDTO)}
-      projectId={projects[0]?.id ?? null}
+      shots={storyboardShots}
+      boardEdit={boardEdit}
+      savedEdit={savedEdit}
+      attachedCount={clips.length}
     />
   );
 }

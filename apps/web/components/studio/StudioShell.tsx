@@ -5,9 +5,12 @@
  * Mock-first: nav switches a local `view` state; routes/engine wire later.
  */
 import { useState } from "react";
+import { useRouter } from "next/navigation";
+import type { ProjectDTO } from "@/lib/types";
+import { createProject } from "@/lib/actions";
 import {
   Wordmark, IcFolder, IcSparkle, IcCanvas, IcStoryboard, IcFilm, IcAt, IcAssets, IcPlans, IcUser,
-  IcUndo, IcRedo, IcExport, IcUsers, Button,
+  IcUndo, IcRedo, IcExport, IcUsers, Button, PopMenu, Dialog, Input,
 } from "@/components/ds";
 
 export type StudioView =
@@ -34,12 +37,41 @@ const TITLES: Record<StudioView, string> = {
 export function StudioShell({
   view,
   onNavigate,
+  project,
+  projects,
   children,
 }: {
   view: StudioView;
   onNavigate: (v: StudioView) => void;
+  project?: ProjectDTO;
+  projects?: ProjectDTO[];
   children: React.ReactNode;
 }) {
+  const router = useRouter();
+  const [projectMenu, setProjectMenu] = useState(false);
+  const [naming, setNaming] = useState(false);
+  const [name, setName] = useState("");
+  const [creating, setCreating] = useState(false);
+
+  const projectItems = [
+    ...(projects ?? []).map((p) => ({ value: p.id, label: p.name })),
+    { value: "__new__", label: "+ New project", desc: "Start a fresh project" },
+  ];
+  function switchProject(id: string) {
+    if (id === "__new__") { setNaming(true); return; }
+    router.push(`/studio?p=${id}`);
+  }
+  function submitNew() {
+    const t = name.trim();
+    if (!t) return;
+    setCreating(true);
+    (async () => {
+      const res = await createProject(t);
+      setCreating(false); setNaming(false); setName("");
+      if ("id" in res) router.push(`/studio?p=${res.id}`);
+    })();
+  }
+
   return (
     <div className="app">
       <nav className="sidenav max-lg:hidden" aria-label="Main">
@@ -47,10 +79,15 @@ export function StudioShell({
           <Wordmark />
         </div>
 
-        <button className="sidenav-project" aria-haspopup="listbox">
-          <IcFolder size={15} style={{ color: "var(--fg-3)", flexShrink: 0 }} />
-          <span className="sidenav-project-name">Untitled project</span>
-        </button>
+        <span style={{ position: "relative", display: "block" }}>
+          <button className="sidenav-project" aria-haspopup="listbox" aria-expanded={projectMenu}
+            onClick={() => setProjectMenu(!projectMenu)}>
+            <IcFolder size={15} style={{ color: "var(--fg-3)", flexShrink: 0 }} />
+            <span className="sidenav-project-name">{project?.name ?? "Untitled project"}</span>
+          </button>
+          <PopMenu open={projectMenu} onClose={() => setProjectMenu(false)} side="down" heading="Projects"
+            items={projectItems} value={project?.id} onSelect={switchProject} width={240} />
+        </span>
 
         <div className="nav-group">
           {PRIMARY.map(({ view: v, label, Icon }) => (
@@ -106,6 +143,15 @@ export function StudioShell({
 
         {children}
       </div>
+
+      <Dialog open={naming} title="New project" onClose={() => setNaming(false)}
+        actions={[
+          <Button key="c" variant="ghost" onClick={() => setNaming(false)}>Cancel</Button>,
+          <Button key="s" onClick={submitNew} disabled={creating}>{creating ? "Creating…" : "Create project"}</Button>,
+        ]}>
+        <Input label="Name" placeholder="Neon Alley spec spot" value={name} autoFocus
+          onChange={(e) => setName(e.target.value)} onKeyDown={(e) => { if (e.key === "Enter") submitNew(); }} disabled={creating} />
+      </Dialog>
     </div>
   );
 }

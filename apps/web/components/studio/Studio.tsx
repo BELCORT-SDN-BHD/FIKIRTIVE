@@ -1,49 +1,59 @@
 "use client";
 /**
- * Studio prototype root (redesign-shell branch). Holds the active-surface
- * state and renders the shell + the active surface. Elements is now wired to
- * real data (the existing Library engine); the rest are mock until wired.
+ * Studio prototype root (redesign-shell). Threads real data to the wired
+ * surfaces (Elements, Gen space, Storyboard, Video editor); Canvas/Assets are
+ * still mock.
  */
 import { useState } from "react";
-import type { EntityDTO } from "@/lib/types";
+import type { EntityDTO, ProjectDTO } from "@/lib/types";
+import type { ArtlioEdit } from "@artlio/core";
 import { StudioShell, type StudioView } from "./StudioShell";
 import { GenSpace } from "./GenSpace";
 import { Canvas } from "./Canvas";
-import { Storyboard } from "./Storyboard";
-import { VideoEditor } from "./VideoEditor";
+import { Storyboard, type StudioShot } from "./Storyboard";
+import { VideoEditorSurface } from "./VideoEditor";
 import { Elements } from "./Elements";
 import { Assets } from "./Assets";
 
-function Placeholder({ label }: { label: string }) {
-  return (
-    <div className="screen">
-      <div className="screen-pad" style={{ display: "grid", placeItems: "center", minHeight: "60vh", textAlign: "center" }}>
-        <div>
-          <h1 style={{ font: "var(--text-display)", color: "var(--fg-1)", margin: 0 }}>{label}</h1>
-          <p style={{ font: "var(--text-body)", color: "var(--fg-3)", margin: "8px 0 0" }}>Coming soon.</p>
-        </div>
-      </div>
-    </div>
-  );
-}
-
-export function Studio({ entities, projectId }: { entities: EntityDTO[]; projectId: string | null }) {
+export function Studio({
+  project,
+  projects,
+  entities,
+  shots,
+  boardEdit,
+  savedEdit,
+  attachedCount,
+}: {
+  project: ProjectDTO;
+  projects: ProjectDTO[];
+  entities: EntityDTO[];
+  shots: StudioShot[];
+  boardEdit: ArtlioEdit | null;
+  savedEdit: ArtlioEdit | null;
+  attachedCount: number;
+}) {
   const [view, setView] = useState<StudioView>("genspace");
 
   function surface() {
     switch (view) {
-      case "genspace": return <GenSpace projectId={projectId} />;
+      case "genspace": return <GenSpace projectId={project.id} />;
       case "canvas": return <Canvas />;
-      case "storyboard": return <Storyboard />;
-      case "editor": return <VideoEditor />;
+      case "storyboard": return <Storyboard projectId={project.id} shots={shots} />;
+      case "editor": return <VideoEditorSurface projectId={project.id} boardEdit={boardEdit} savedEdit={savedEdit} attachedCount={attachedCount} />;
       case "elements": return <Elements entities={entities} />;
       case "assets": return <Assets />;
-      default: return <Placeholder label={view[0].toUpperCase() + view.slice(1)} />;
+      default:
+        return (
+          <div className="screen"><div className="screen-pad" style={{ display: "grid", placeItems: "center", minHeight: "60vh", textAlign: "center" }}>
+            <div><h1 style={{ font: "var(--text-display)", color: "var(--fg-1)", margin: 0 }}>{view[0].toUpperCase() + view.slice(1)}</h1>
+            <p style={{ font: "var(--text-body)", color: "var(--fg-3)", margin: "8px 0 0" }}>Coming soon.</p></div>
+          </div></div>
+        );
     }
   }
 
   return (
-    <StudioShell view={view} onNavigate={setView}>
+    <StudioShell view={view} onNavigate={setView} project={project} projects={projects}>
       {surface()}
     </StudioShell>
   );
