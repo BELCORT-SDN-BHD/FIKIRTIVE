@@ -19,7 +19,11 @@ export async function GET(
     // Range/206 natively and the proxy wall has already run by this point
     const presigned = await storage.presignedGet(joined);
     if (presigned) {
-      return NextResponse.redirect(presigned, { status: 302 });
+      // the signed URL must not linger in caches or leak via referrers
+      return NextResponse.redirect(presigned, {
+        status: 302,
+        headers: { "Cache-Control": "private, no-store", "Referrer-Policy": "no-referrer" },
+      });
     }
     const bytes = await storage.get(joined);
     const total = bytes.byteLength;

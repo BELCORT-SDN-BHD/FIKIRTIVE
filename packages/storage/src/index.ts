@@ -19,7 +19,13 @@ import { parseStorageKey, storageKey } from "@artlio/core";
 
 export interface Storage {
   /** Content-addressed write. Returns the hash + derived key (dedup by content). */
+  /** Single-shot, in-memory put — right for uploads and render outputs
+   *  (≤ tens of MB). Large-file streaming is T4b's job (Uppy presigned
+   *  multipart, browser→R2 direct; the server never holds those bytes). */
   put(ownerId: string, bytes: Uint8Array, ext: string, mime?: string): Promise<{ contentHash: string; key: string }>;
+  /** Whole-object read into memory — small objects only. In r2 mode no code
+   *  path calls this today (reads go via presigned URLs); revisit with a
+   *  streaming variant before adding one. */
   get(key: string): Promise<Uint8Array>;
   /** Browser-reachable URL for <img>/<video>. App-relative: /files/<key>. */
   url(key: string): string;
@@ -83,6 +89,9 @@ export interface R2Config {
   accessKeyId: string;
   secretAccessKey: string;
   bucket: string;
+  /** default true (MinIO needs it; R2 accepts it). Set false if a custom
+   *  domain / virtual-host endpoint ever requires it. */
+  forcePathStyle?: boolean;
 }
 
 export class R2Storage implements Storage {
@@ -92,8 +101,8 @@ export class R2Storage implements Storage {
       region: "auto",
       endpoint: cfg.endpoint,
       credentials: { accessKeyId: cfg.accessKeyId, secretAccessKey: cfg.secretAccessKey },
-      // MinIO needs path-style; R2 accepts it too — one client for both
-      forcePathStyle: true,
+      // MinIO needs path-style; R2 accepts it too — overridable via config
+      forcePathStyle: cfg.forcePathStyle ?? true,
     });
   }
 
@@ -102,9 +111,17 @@ export class R2Storage implements Storage {
     const key = storageKey(ownerId, contentHash, ext);
     try {
       await this.client.send(new HeadObjectCommand({ Bucket: this.cfg.bucket, Key: key }));
-      return { contentHash, key }; // dedup: same content already stored
-    } catch {
-      /* not present — upload */
+      // Dedup best-effort, not a lock: two concurrent writers can both miss
+      // Head and both Put — harmless, keys are content-addressed so the bytes
+      // are identical and last-write metadata wins (mime derives from ext).
+      return { contentHash, key };
+    } catch (err) {
+      // only a missing object means "upload"; auth/network/bucket errors
+      // must surface, not silently fall through to a misleading Put
+      const status = (err as { $metadata?: { httpStatusCode?: number } })?.$metadata?.httpStatusCode;
+      const name = (err as { name?: string })?.name ?? "";
+      const notFound = status === 404 || name === "NotFound" || name === "NoSuchKey";
+      if (!notFound) throw err;
     }
     await this.client.send(
       new PutObjectCommand({
@@ -131,19 +148,30 @@ export class R2Storage implements Storage {
 
   async ffmpegInput(key: string): Promise<string> {
     parseStorageKey(key);
-    // long enough for a full render; D10: ffmpeg range-reads presigned URLs
+    // long enough for a full render; D10: ffmpeg range-reads presigned URLs.
+    // Worker-only — never log argv containing this URL.
     return this.presignedGetUrl(key, 60 * 60);
   }
 
   async presignedGet(key: string, expiresSeconds = 300): Promise<string> {
-    parseStorageKey(key);
-    return this.presignedGetUrl(key, expiresSeconds);
+    const { ext } = parseStorageKey(key);
+    // response-header overrides ride inside the signature: conservative
+    // caching, and anything non-renderable downloads instead of executing
+    const renderable = /^(png|jpg|jpeg|webp|gif|avif|mp4|mov|webm|mkv|mp3|wav|m4a|aac|ogg|flac)$/.test(ext);
+    return this.presignedGetUrl(key, expiresSeconds, {
+      ResponseCacheControl: "private, no-store",
+      ...(renderable ? {} : { ResponseContentDisposition: "attachment" }),
+    });
   }
 
-  private presignedGetUrl(key: string, expiresIn: number): Promise<string> {
+  private presignedGetUrl(
+    key: string,
+    expiresIn: number,
+    overrides: { ResponseCacheControl?: string; ResponseContentDisposition?: string } = {},
+  ): Promise<string> {
     return getSignedUrl(
       this.client,
-      new GetObjectCommand({ Bucket: this.cfg.bucket, Key: key }),
+      new GetObjectCommand({ Bucket: this.cfg.bucket, Key: key, ...overrides }),
       { expiresIn },
     );
   }
@@ -168,6 +196,7 @@ export function createStorage(localRoot: string): Storage {
       accessKeyId: R2_ACCESS_KEY_ID,
       secretAccessKey: R2_SECRET_ACCESS_KEY,
       bucket: R2_BUCKET,
+      forcePathStyle: process.env.R2_FORCE_PATH_STYLE !== "false",
     });
   }
   return new LocalDiskStorage(localRoot);

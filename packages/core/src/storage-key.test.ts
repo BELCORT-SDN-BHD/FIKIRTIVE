@@ -43,3 +43,17 @@ describe("sha256", () => {
     );
   });
 });
+
+// codex review (T4a): traversal/encoding hardening proofs
+describe("storageKey hardening", () => {
+  it("rejects traversal and separator smuggling", () => {
+    expect(() => storageKey("../evil", "a".repeat(64), "png")).toThrow();
+    expect(() => storageKey("founder", "a".repeat(64), "png/../../x")).toThrow();
+    expect(() => storageKey("founder", "a".repeat(64), "p%2Fg")).toThrow();
+    expect(() => parseStorageKey("u/founder/../" + "a".repeat(64) + ".png")).toThrow();
+  });
+  it("rejects empty and oversized extensions", () => {
+    expect(() => storageKey("founder", "a".repeat(64), "")).toThrow();
+    expect(() => storageKey("founder", "a".repeat(64), "verylongext")).toThrow();
+  });
+});
