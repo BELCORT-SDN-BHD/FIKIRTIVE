@@ -15,6 +15,12 @@ export async function GET(
   const joined = key.join("/");
   try {
     const { ext } = parseStorageKey(joined); // rejects traversal/malformed keys
+    // r2 driver: hand the client a short-lived presigned GET — R2 serves
+    // Range/206 natively and the proxy wall has already run by this point
+    const presigned = await storage.presignedGet(joined);
+    if (presigned) {
+      return NextResponse.redirect(presigned, { status: 302 });
+    }
     const bytes = await storage.get(joined);
     const total = bytes.byteLength;
     const headers: Record<string, string> = {

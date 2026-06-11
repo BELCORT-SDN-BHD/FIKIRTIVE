@@ -5,15 +5,10 @@
  *
  * Idempotent by construction: probing twice writes the same values.
  */
-import path from "node:path";
-import { access } from "node:fs/promises";
 import { execa } from "execa";
 import { prisma } from "@artlio/db";
 import { storageKey } from "@artlio/core";
-
-// same resolution as the render job / apps/web storage (cwd = app dir → repo/.data)
-const LOCAL_ROOT =
-  process.env.ARTLIO_DATA_DIR ?? path.join(process.cwd(), "..", "..", ".data", "storage");
+import { storage } from "../storage.js";
 
 export interface IngestJobData {
   assetId: string;
@@ -54,12 +49,11 @@ export async function handleIngest(data: IngestJobData): Promise<void> {
     console.error(`[ingest] asset ${data.assetId} missing — dropping`);
     return;
   }
-  const file = path.join(LOCAL_ROOT, storageKey(asset.ownerId, asset.contentHash, asset.ext));
+  let file: string;
   try {
-    await access(file);
+    file = await storage.ffmpegInput(storageKey(asset.ownerId, asset.contentHash, asset.ext));
   } catch {
-    // T4 note: in prod the blob lives in R2 — this branch downloads first.
-    console.error(`[ingest] blob for ${asset.id} not on local store — skipping (tracer scope)`);
+    console.error(`[ingest] blob for ${asset.id} unreachable — skipping`);
     return;
   }
   const probe = await probeFile(file);

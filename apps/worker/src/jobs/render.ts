@@ -13,29 +13,23 @@
  * Storage note (tracer scope): shared local .data store — prod activation
  * lands with T4 R2 (web/worker are separate containers, no shared disk).
  */
-import { createHash } from "node:crypto";
-import { mkdir, readFile, writeFile, access, rm } from "node:fs/promises";
+import { mkdir, readFile, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { execa } from "execa";
 import { prisma } from "@artlio/db";
+import { storage } from "../storage.js";
 import {
   artlioEdit,
   editDuration,
   newId,
   srcToStorageKey,
-  storageKey,
   RENDER_RETRY_LIMIT,
   type ArtlioEdit,
   type ArtlioClip,
   type RenderJobData,
 } from "@artlio/core";
 import { probeFile } from "./ingest.js";
-
-// same resolution as apps/web/lib/storage.ts (both run with cwd = their app
-// dir → repo/.data); ARTLIO_DATA_DIR overrides for anything else
-const LOCAL_ROOT =
-  process.env.ARTLIO_DATA_DIR ?? path.join(process.cwd(), "..", "..", ".data", "storage");
 
 const SIZES: Record<string, Record<string, [number, number]>> = {
   "16:9": { sd: [854, 480], hd: [1280, 720], "1080": [1920, 1080] },
@@ -111,8 +105,8 @@ export async function handleRender(data: RenderJobData, retryCount = 0): Promise
     // source once for audio-stream presence
     const planned: PlannedInput[] = [];
     const addInput = async (clip: ArtlioClip) => {
-      const file = path.join(LOCAL_ROOT, srcToStorageKey(clip.asset.src));
-      await access(file); // missing source = loud failure, not a black frame
+      // local: validated file path · r2: presigned URL (ffmpeg range-reads it)
+      const file = await storage.ffmpegInput(srcToStorageKey(clip.asset.src));
       const probe = clip.asset.type === "image" ? { hasAudio: false } : await probeFile(file);
       planned.push({ clip, file, index: planned.length, hasAudio: probe.hasAudio });
     };
@@ -187,15 +181,7 @@ export async function handleRender(data: RenderJobData, retryCount = 0): Promise
 
     // store the output with the same content-addressed semantics as every asset
     const bytes = await readFile(out);
-    const contentHash = createHash("sha256").update(bytes).digest("hex");
-    const key = storageKey(job.ownerId, contentHash, "mp4");
-    const dest = path.join(LOCAL_ROOT, key);
-    await mkdir(path.dirname(dest), { recursive: true });
-    try {
-      await access(dest); // dedup
-    } catch {
-      await writeFile(dest, bytes);
-    }
+    const { contentHash } = await storage.put(job.ownerId, bytes, "mp4", "video/mp4");
     const asset = await prisma.asset.upsert({
       where: { ownerId_contentHash: { ownerId: job.ownerId, contentHash } },
       update: { deletedAt: null },

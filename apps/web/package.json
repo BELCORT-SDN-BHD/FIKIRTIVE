@@ -13,6 +13,7 @@
   "dependencies": {
     "@artlio/core": "workspace:*",
     "@artlio/db": "workspace:*",
+    "@artlio/storage": "workspace:^",
     "@auth/prisma-adapter": "^2.11.2",
     "@shotstack/shotstack-studio": "^2.11.5",
     "@tiptap/extension-mention": "^3.26.0",

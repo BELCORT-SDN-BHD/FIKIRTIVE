@@ -45,7 +45,7 @@ async function ingestFile(file: File) {
   const ext = extFromFilename(file.name);
   const bytes = new Uint8Array(await file.arrayBuffer());
   // content-addressed blobs are idempotent — safe outside the DB transaction
-  const { contentHash } = await storage.put(FOUNDER_OWNER_ID, bytes, ext);
+  const { contentHash } = await storage.put(FOUNDER_OWNER_ID, bytes, ext, file.type || mimeOf(ext));
   return {
     contentHash,
     create: {
