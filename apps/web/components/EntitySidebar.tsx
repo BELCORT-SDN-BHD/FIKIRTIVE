@@ -39,13 +39,13 @@ export function EntitySidebar({
   return (
     <div className="p-3 flex flex-col gap-4">
       <div className="flex items-center">
-        <h2 className="font-display text-sm font-semibold text-dim uppercase tracking-wider">
+        <h2 className="mono-label text-faint">
           Subjects
         </h2>
         <Link
           href="/library"
           onClick={guard}
-          className="ml-auto text-xs text-dim hover:text-accent"
+          className="ml-auto text-xs text-dim hover:text-ink"
         >
           Manage in Library →
         </Link>
@@ -56,7 +56,7 @@ export function EntitySidebar({
       {entities.length === 0 ? (
         <p className="text-sm text-dim leading-relaxed">
           Create your first entity above — characters, locations, products and
-          brands become <span className="text-accent">@mentionable</span> in
+          brands become <span className="text-ink underline underline-offset-3">@mentionable</span> in
           your shot prompts.
         </p>
       ) : (
@@ -94,7 +94,7 @@ export function EntitySidebar({
           {q && entities.filter(matches).length === 0 && (
             <p className="text-xs text-faint">
               Nothing matches “{query}” —{" "}
-              <Link href="/library" onClick={guard} className="text-accent">
+              <Link href="/library" onClick={guard} className="text-ink underline underline-offset-3">
                 create it in the Library
               </Link>
               .
@@ -133,13 +133,17 @@ function NewEntityForm() {
       className="bg-raised border border-edge rounded-[var(--radius-lg)] p-3 flex flex-col gap-2"
     >
       <div className="flex gap-2">
-        <input
-          name="name"
-          required
-          placeholder="New entity name"
-          className="flex-1 min-w-0 bg-surface border border-edge rounded-[var(--radius-sm)] text-sm px-2 py-1.5"
-          disabled={pending}
-        />
+        {/* @ hard-prefix: what you type at creation is exactly what you mention later */}
+        <span className="flex-1 min-w-0 flex items-center bg-surface border border-edge rounded-[var(--radius-sm)] px-2 focus-within:border-edge-strong">
+          <span className="text-faint text-sm" aria-hidden>@</span>
+          <input
+            name="name"
+            required
+            placeholder="NewEntityName"
+            className="flex-1 min-w-0 bg-transparent text-sm px-1 py-1.5 outline-none"
+            disabled={pending}
+          />
+        </span>
         <select
           name="type"
           aria-label="Entity type"
@@ -162,14 +166,14 @@ function NewEntityForm() {
         disabled={pending}
       />
       {error && (
-        <p className="text-xs text-accent" role="alert">
+        <p className="text-xs text-danger" role="alert">
           {error} — adjust and try again.
         </p>
       )}
       <button
         type="submit"
         disabled={pending}
-        className="bg-accent text-[#1a0e06] font-semibold text-sm rounded-[var(--radius-sm)] py-1.5 disabled:opacity-50"
+        className="btn-primary text-sm py-1.5"
       >
         {pending ? "Creating…" : "Create entity"}
       </button>
@@ -212,6 +216,13 @@ function EntityRow({
           </span>
         )}
         <span className="flex-1 min-w-0 truncate text-sm">{entity.name}</span>
+        {entity.refs.length === 0 && (
+          <span
+            className="w-1.5 h-1.5 rounded-full bg-warning shrink-0"
+            title="No reference images yet"
+            aria-label="No reference images yet"
+          />
+        )}
         <span className="font-mono text-xs text-faint shrink-0">
           {entity.usageCount > 0
             ? `${entity.usageCount} shot${entity.usageCount > 1 ? "s" : ""}`

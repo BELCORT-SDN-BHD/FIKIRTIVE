@@ -25,7 +25,7 @@ export function CandidatePanel({
   return (
     <div className="p-3 flex flex-col gap-5">
       <section aria-label="Candidate zone">
-        <h2 className="font-display text-sm font-semibold text-dim uppercase tracking-wider mb-2">
+        <h2 className="mono-label text-faint mb-2">
           Candidates
         </h2>
         <UploadZone projectId={projectId} selectedShot={selectedShot} entities={entities} />
@@ -44,7 +44,7 @@ export function CandidatePanel({
       </section>
 
       <section aria-label="Shot history">
-        <h2 className="font-display text-sm font-semibold text-dim uppercase tracking-wider mb-2">
+        <h2 className="mono-label text-faint mb-2">
           History
           {selectedShot && (
             <span className="font-mono text-xs text-faint normal-case tracking-normal ml-2">
@@ -145,7 +145,7 @@ function UploadZone({
         onChange={(e) => e.target.files && upload(e.target.files)}
       />
       {error && (
-        <p className="text-xs text-accent mt-1" role="alert">
+        <p className="text-xs text-danger mt-1" role="alert">
           {error} — try again.
         </p>
       )}
@@ -224,7 +224,7 @@ function CandidateCard({ gen, shots }: { gen: GenerationDTO; shots: ShotDTO[] })
           ))}
         </select>
         <button
-          className="text-xs text-faint hover:text-accent disabled:opacity-50"
+          className="text-xs text-faint hover:text-ink disabled:opacity-50"
           disabled={pending}
           onClick={() => run(() => softDeleteGeneration(gen.id))}
         >
@@ -232,7 +232,7 @@ function CandidateCard({ gen, shots }: { gen: GenerationDTO; shots: ShotDTO[] })
         </button>
       </div>
       {error && (
-        <p className="text-[11px] text-accent" role="alert">
+        <p className="text-[11px] text-danger" role="alert">
           {error}
         </p>
       )}
@@ -246,7 +246,7 @@ function HistoryCard({ gen }: { gen: GenerationDTO }) {
   return (
     <li className="bg-raised border border-edge rounded-[var(--radius-lg)] p-2 flex flex-col gap-1.5">
       <div className="flex items-center">
-        <span className="font-mono text-[10px] bg-accent-soft text-accent rounded-full px-2 py-0.5">
+        <span className="font-mono text-[10px] bg-accent-soft text-ink rounded-full px-2 py-0.5">
           v{gen.version}
         </span>
         {/* locale rendering differs between server and client — suppress the diff */}
@@ -268,7 +268,7 @@ function HistoryCard({ gen }: { gen: GenerationDTO }) {
         <p className="text-[11px] text-dim line-clamp-2">{gen.promptText}</p>
       )}
       {error && (
-        <p className="text-[11px] text-accent" role="alert">
+        <p className="text-[11px] text-danger" role="alert">
           {error}
         </p>
       )}

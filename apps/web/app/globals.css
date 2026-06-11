@@ -1,72 +1,202 @@
 @import "tailwindcss";
 
 /*
- * INTERIM token kit (design doc D8 — marked replaceable; final visual pass
- * happens in Claude Design after M0 UX validation). Dark gray-blue base,
- * single amber action color, 4 low-saturation entity hues.
+ * "Vapor" design language — adopted from the founder's Claude Design system
+ * (claude.ai/design handoff, 2026-06-11). Cool near-black, monochrome white
+ * accent, luminous glass. Replaces the INTERIM token kit.
+ * Entity hues stay: they are functional color (wayfinding), not chrome.
  */
 :root {
-  --bg: #0e1014; /* canvas */
-  --surface: #151920; /* panels */
-  --raised: #1c212b; /* cards, inputs */
-  --border: #262d3a;
-  --text: #e8eaf0;
-  --text-dim: #8a93a6;
-  --text-faint: #5a6275;
-  --accent: #e0723c; /* the ONE action color */
-  --accent-soft: rgba(224, 114, 60, 0.14);
+  /* base neutrals */
+  --bg-0: #0a0c10;
+  --bg-1: #11141a;
+  --bg-2: #161b23;
+  --fg-1: #f6f7f9;
+  --fg-2: rgba(246, 247, 249, 0.62);
+  --fg-3: rgba(246, 247, 249, 0.55);
+  --fg-4: rgba(246, 247, 249, 0.26);
 
-  /* entity hues — low saturation by design */
+  /* glass layers */
+  --glass-1: linear-gradient(180deg, rgba(255, 255, 255, 0.1), rgba(255, 255, 255, 0.04));
+  --glass-2: linear-gradient(180deg, rgba(255, 255, 255, 0.15), rgba(255, 255, 255, 0.07));
+  --glass-flat: rgba(255, 255, 255, 0.07);
+  --glass-hover: rgba(255, 255, 255, 0.1);
+  --line-1: rgba(255, 255, 255, 0.16);
+  --line-2: rgba(255, 255, 255, 0.09);
+
+  /* accent: monochrome white */
+  --accent: #f6f7f9;
+  --on-accent: #0a0c10;
+  --accent-soft: rgba(246, 247, 249, 0.1);
+
+  /* status tints */
+  --positive: #7ee2a8;
+  --warning: #ffd27e;
+  --danger: #ff9090;
+
+  /* entity hues (functional, low saturation) */
   --hue-character: #d98e73;
   --hue-location: #6fae9e;
   --hue-product: #c9a86a;
   --hue-brand: #8a9bb4;
 
-  --radius-sm: 6px;
-  --radius-lg: 12px;
+  /* glass optics */
+  --backdrop-glass: blur(36px) saturate(1.4);
+  --backdrop-glass-light: blur(20px) saturate(1.2);
+  --shadow-glass: 0 12px 40px rgba(0, 0, 0, 0.5);
+  --shadow-pop: 0 24px 80px rgba(0, 0, 0, 0.6);
+  --inset-light: inset 0 1px 0 rgba(255, 255, 255, 0.12);
+  --glow-accent: 0 2px 16px rgba(246, 247, 249, 0.18);
+  --ring-focus: 0 0 0 3px rgba(246, 247, 249, 0.5);
+
+  /* motion: one easing, three durations */
+  --ease-out: cubic-bezier(0.22, 1, 0.36, 1);
+  --dur-fast: 120ms;
+  --dur-base: 220ms;
+  --dur-slow: 420ms;
+
+  /* radii — generous, lens-like */
+  --radius-sm: 10px;
+  --radius-md: 14px;
+  --radius-lg: 20px;
+  --radius-xl: 28px;
+  --radius-pill: 999px;
+
+  /* ambient backdrop */
+  --ambient: radial-gradient(1000px 500px at 50% -15%, rgba(190, 205, 225, 0.13), transparent 60%),
+    radial-gradient(800px 600px at 95% 100%, rgba(150, 165, 190, 0.08), transparent 55%);
 }
 
 @theme inline {
-  --color-bg: var(--bg);
-  --color-surface: var(--surface);
-  --color-raised: var(--raised);
-  --color-edge: var(--border);
-  --color-ink: var(--text);
-  --color-dim: var(--text-dim);
-  --color-faint: var(--text-faint);
+  --color-bg: var(--bg-0);
+  --color-surface: var(--bg-1);
+  --color-raised: var(--bg-2);
+  --color-edge: var(--line-2);
+  --color-edge-strong: var(--line-1);
+  --color-ink: var(--fg-1);
+  --color-dim: var(--fg-2);
+  --color-faint: var(--fg-3);
+  --color-ghost: var(--fg-4);
   --color-accent: var(--accent);
+  --color-onaccent: var(--on-accent);
   --color-accent-soft: var(--accent-soft);
+  --color-positive: var(--positive);
+  --color-warning: var(--warning);
+  --color-danger: var(--danger);
   --color-character: var(--hue-character);
   --color-location: var(--hue-location);
   --color-product: var(--hue-product);
   --color-brand: var(--hue-brand);
   --font-sans: var(--font-body);
-  --font-display: var(--font-heading);
+  --font-display: var(--font-body); /* Vapor: one family, weight does the work */
   --font-mono: var(--font-meta);
-  --radius-sm: 6px;
-  --radius-lg: 12px;
+  --radius-sm: 10px;
+  --radius-md: 14px;
+  --radius-lg: 20px;
+  --radius-xl: 28px;
 }
 
 body {
-  background: var(--bg);
-  color: var(--text);
+  background: var(--bg-0);
+  color: var(--fg-1);
+  font-family: var(--font-body), "Helvetica Neue", system-ui, sans-serif;
+  font-size: 14px;
+  line-height: 1.55;
+}
+
+/* ambient glow layer — glass must never sit over flat black */
+.ambient-layer {
+  position: fixed;
+  inset: 0;
+  background: var(--ambient);
+  pointer-events: none;
+  z-index: 0;
+}
+
+h1,
+h2,
+h3 {
   font-family: var(--font-body), system-ui, sans-serif;
+  font-weight: 600;
+  letter-spacing: -0.02em;
 }
 
-h1, h2, h3 {
-  font-family: var(--font-heading), system-ui, sans-serif;
+/* ---- glass recipe: fill + blur + hairline + inner top light + shadow ---- */
+.glass {
+  background: var(--glass-1);
+  -webkit-backdrop-filter: var(--backdrop-glass-light);
+  backdrop-filter: var(--backdrop-glass-light);
+  border: 1px solid var(--line-1);
+  box-shadow: var(--shadow-glass), var(--inset-light);
+}
+.glass-raised {
+  background: var(--glass-2);
+  -webkit-backdrop-filter: var(--backdrop-glass);
+  backdrop-filter: var(--backdrop-glass);
+  border: 1px solid var(--line-1);
+  box-shadow: var(--shadow-pop), var(--inset-light);
+}
+.glass-chip {
+  background: var(--glass-flat);
+  -webkit-backdrop-filter: var(--backdrop-glass-light);
+  backdrop-filter: var(--backdrop-glass-light);
+  border: 1px solid var(--line-2);
+  box-shadow: var(--inset-light);
 }
 
-/* a11y: visible focus ring everywhere (design doc D9) */
+/* one white primary action per view */
+.btn-primary {
+  background: var(--accent);
+  color: var(--on-accent);
+  font-weight: 600;
+  border-radius: var(--radius-md);
+  box-shadow: var(--glow-accent);
+  transition: transform var(--dur-fast) var(--ease-out), opacity var(--dur-fast) var(--ease-out);
+}
+.btn-primary:active {
+  transform: scale(0.985);
+}
+.btn-primary:disabled {
+  opacity: 0.4;
+}
+
+/* hover: brighter, never darker */
+.hover-bright {
+  transition: background var(--dur-fast) var(--ease-out), border-color var(--dur-fast) var(--ease-out);
+}
+.hover-bright:hover {
+  background: var(--glass-hover);
+  border-color: var(--line-1);
+}
+
+/* a11y: white focus ring */
 :focus-visible {
-  outline: 2px solid var(--accent);
+  /* transparent outline keeps a system indicator in forced-colors mode */
+  outline: 2px solid transparent;
   outline-offset: 2px;
+  box-shadow: var(--ring-focus);
 }
 
 @media (prefers-reduced-motion: reduce) {
-  *, *::before, *::after {
+  *,
+  *::before,
+  *::after {
     animation-duration: 0.01ms !important;
     transition-duration: 0.01ms !important;
+  }
+}
+
+.fade-rise {
+  animation: fadeRise var(--dur-base) var(--ease-out);
+}
+@keyframes fadeRise {
+  from {
+    opacity: 0;
+    transform: translateY(10px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
   }
 }
 
@@ -78,9 +208,18 @@ h1, h2, h3 {
   line-height: 1.7;
 }
 
+/* the focus cue lives on the glass card, not the inner contenteditable */
+.composer .tiptap:focus-visible {
+  box-shadow: none;
+  outline: none;
+}
+.composer:focus-within {
+  border-color: rgba(255, 255, 255, 0.3);
+}
+
 .composer .tiptap p.is-editor-empty:first-child::before {
   content: attr(data-placeholder);
-  color: var(--text-faint);
+  color: var(--fg-3);
   float: left;
   height: 0;
   pointer-events: none;
@@ -111,3 +250,12 @@ h1, h2, h3 {
 .alias-chip[data-entity-type="LOCATION"]  { border-color: color-mix(in srgb, var(--hue-location) 45%, transparent);  color: var(--hue-location); }
 .alias-chip[data-entity-type="PRODUCT"]   { border-color: color-mix(in srgb, var(--hue-product) 45%, transparent);   color: var(--hue-product); }
 .alias-chip[data-entity-type="BRAND"]     { border-color: color-mix(in srgb, var(--hue-brand) 45%, transparent);     color: var(--hue-brand); }
+
+/* mono metadata labels: UPPERCASE, wide tracking */
+.mono-label {
+  font-family: var(--font-meta), Menlo, monospace;
+  font-size: 11px;
+  font-weight: 500;
+  text-transform: uppercase;
+  letter-spacing: 0.12em;
+}

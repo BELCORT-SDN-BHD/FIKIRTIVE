@@ -17,7 +17,7 @@ export default function Error({
       </p>
       <button
         onClick={reset}
-        className="bg-accent text-[#1a0e06] font-semibold text-sm rounded-[var(--radius-sm)] px-4 py-2"
+        className="btn-primary text-sm px-4 py-2"
       >
         Reload workbench
       </button>

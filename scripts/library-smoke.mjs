@@ -44,7 +44,7 @@ await page.screenshot({ path: path.join(SHOTS, "09-detail.png") });
 
 // --- 3. create a product from the empty-section CTA ---
 await page.getByRole("button", { name: "+ New product" }).click();
-await page.locator('aside input[placeholder="Product name"]').fill("Aurora Bottle");
+await page.locator('aside input[placeholder="ProductName"]').fill("Aurora Bottle");
 await page.setInputFiles('aside input[type="file"]', "/tmp/ref-bottle.png");
 await page.getByRole("button", { name: "Create product" }).click();
 await page.locator('aside input[aria-label="Entity name"]').waitFor({ timeout: 20000 });

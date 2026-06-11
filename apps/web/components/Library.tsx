@@ -112,12 +112,12 @@ export function Library({
                     style={{ background: meta.color }}
                     aria-hidden
                   />
-                  <h2 className="font-display text-sm font-semibold uppercase tracking-wider">
+                  <h2 className="mono-label">
                     {meta.label}
                   </h2>
                   <span className="font-mono text-xs text-faint">{total}</span>
                   <button
-                    className="ml-auto text-sm text-dim hover:text-accent"
+                    className="ml-auto text-sm text-dim hover:text-ink"
                     onClick={() => openCreate(type)}
                   >
                     + New {meta.singular.toLowerCase()}
@@ -130,7 +130,7 @@ export function Library({
                     onClick={() => openCreate(type)}
                   >
                     {EMPTY_HINTS[type]}{" "}
-                    <span className="text-accent">Create your first {meta.singular.toLowerCase()} →</span>
+                    <span className="text-ink underline underline-offset-3">Create your first {meta.singular.toLowerCase()} →</span>
                   </button>
                 ) : group.length === 0 ? (
                   <p className="text-xs text-faint">No {meta.label.toLowerCase()} match “{query}”.</p>
@@ -212,15 +212,28 @@ function EntityCard({
       </div>
       <div className="p-2">
         <p className="text-sm font-medium truncate">{entity.name}</p>
-        <p className="font-mono text-[10px] text-faint mt-0.5">
-          {entity.refs.length} ref{entity.refs.length === 1 ? "" : "s"} ·{" "}
-          {entity.usageCount > 0 ? `${entity.usageCount} shot${entity.usageCount > 1 ? "s" : ""}` : "unused"}
+        <p className="font-mono text-[10px] text-faint mt-0.5 flex items-center gap-1">
+          {entity.refs.length === 0 ? (
+            <span className="text-warning flex items-center gap-1">
+              <span className="w-1.5 h-1.5 rounded-full bg-warning" aria-hidden />
+              no refs yet
+            </span>
+          ) : (
+            <span>{entity.refs.length} ref{entity.refs.length === 1 ? "" : "s"}</span>
+          )}
+          <span>· {entity.usageCount > 0 ? `${entity.usageCount} shot${entity.usageCount > 1 ? "s" : ""}` : "unused"}</span>
         </p>
       </div>
     </button>
   );
 }
 
+/**
+ * Two-door creation (Higgsfield pattern, founder-ratified): every entity can
+ * be born from uploaded photos OR from a generated reference set. Phase 1's
+ * Generate door is the manual ComfyUI loop (copy prompt → render → drop back);
+ * Phase 2 wires a real engine behind the same door.
+ */
 function CreatePanel({
   type,
   onClose,
@@ -233,66 +246,148 @@ function CreatePanel({
   const meta = TYPE_META[type];
   const { pending, error, run } = useAction();
   const formRef = useRef<HTMLFormElement>(null);
+  const [door, setDoor] = useState<"upload" | "generate">("upload");
+
+  function submit(e: React.FormEvent<HTMLFormElement>) {
+    e.preventDefault();
+    const fd = new FormData(e.currentTarget);
+    fd.set("type", type);
+    if (door === "generate") fd.delete("files"); // refs come from the generate loop next
+    run(
+      () => createEntity(fd),
+      (res) => {
+        formRef.current?.reset();
+        if (res && "id" in res) onCreated(res.id); // detail opens with the generate block
+      },
+    );
+  }
+
+  const doorBtn = (active: boolean) =>
+    `flex-1 rounded-[var(--radius-md)] p-3 text-left border transition-colors ${
+      active ? "glass-chip border-edge-strong text-ink" : "border-edge text-dim hover:text-ink hover-bright"
+    }`;
 
   return (
     <div className="p-4 flex flex-col gap-3">
       <div className="flex items-center gap-2">
         <span className="inline-block w-2.5 h-2.5 rounded-full" style={{ background: meta.color }} aria-hidden />
-        <h2 className="font-display text-sm font-semibold uppercase tracking-wider">
-          New {meta.singular}
-        </h2>
+        <h2 className="mono-label">New {meta.singular}</h2>
         <button className="ml-auto text-dim hover:text-ink text-sm" onClick={onClose} aria-label="Close">
           ✕
         </button>
       </div>
-      <form
-        ref={formRef}
-        className="flex flex-col gap-3"
-        onSubmit={(e) => {
-          e.preventDefault();
-          const fd = new FormData(e.currentTarget);
-          fd.set("type", type);
-          run(
-            () => createEntity(fd),
-            (res) => {
-              formRef.current?.reset();
-              if (res && "id" in res) onCreated(res.id);
-            },
-          );
-        }}
-      >
-        <input
-          name="name"
-          required
-          autoFocus
-          placeholder={`${meta.singular} name`}
-          className="bg-raised border border-edge rounded-[var(--radius-sm)] text-sm px-3 py-2"
-          disabled={pending}
-        />
-        <label className="text-xs text-dim">
-          Reference images
+
+      <form ref={formRef} className="flex flex-col gap-3" onSubmit={submit}>
+        {/* @ hard-prefix: the name typed here is exactly the handle mentioned later */}
+        <span className="flex items-center bg-raised border border-edge rounded-[var(--radius-md)] px-3 focus-within:border-edge-strong">
+          <span className="text-faint" aria-hidden>@</span>
           <input
-            type="file"
-            name="files"
-            multiple
-            accept="image/*"
-            className="block mt-1 text-xs text-dim file:mr-2 file:text-xs file:bg-raised file:border file:border-edge file:rounded-[var(--radius-sm)] file:px-2 file:py-1 file:text-dim"
+            name="name"
+            required
+            autoFocus
+            placeholder={meta.singular === "Character" ? "Maya" : `${meta.singular}Name`}
+            className="flex-1 min-w-0 bg-transparent text-sm px-1.5 py-2 outline-none"
             disabled={pending}
           />
-        </label>
+        </span>
+        <p className="text-[11px] text-faint -mt-1.5">Reference it in prompts as @name.</p>
+
+        <div className="flex gap-2" role="radiogroup" aria-label="How to add reference images">
+          <button type="button" role="radio" aria-checked={door === "upload"}
+            className={doorBtn(door === "upload")} onClick={() => setDoor("upload")}>
+            <span className="block text-sm font-medium">Upload</span>
+            <span className="block text-[11px] text-faint mt-0.5">Drag in photos you already have</span>
+          </button>
+          <button type="button" role="radio" aria-checked={door === "generate"}
+            className={doorBtn(door === "generate")} onClick={() => setDoor("generate")}>
+            <span className="block text-sm font-medium">Generate</span>
+            <span className="block text-[11px] text-faint mt-0.5">Build refs from a prompt — e.g. a shirt with your logo</span>
+          </button>
+        </div>
+
+        {door === "upload" ? (
+          <label className="text-xs text-dim">
+            Reference images
+            <input
+              type="file"
+              name="files"
+              multiple
+              accept="image/*"
+              className="block mt-1 text-xs text-dim file:mr-2 file:text-xs file:bg-raised file:border file:border-edge file:rounded-[var(--radius-sm)] file:px-2 file:py-1 file:text-dim"
+              disabled={pending}
+            />
+            <span className="block mt-1 text-[11px] text-faint">
+              3–12 images from different angles work best.
+            </span>
+          </label>
+        ) : (
+          <p className="text-xs text-dim glass-chip rounded-[var(--radius-md)] p-2.5">
+            After creating, you&apos;ll get a ready-made reference prompt to render
+            in ComfyUI — drop the results straight back in.
+          </p>
+        )}
+
         {error && (
-          <p className="text-xs text-accent" role="alert">
+          <p className="text-xs text-danger" role="alert">
             {error} — adjust and try again.
           </p>
         )}
-        <button
-          type="submit"
-          disabled={pending}
-          className="bg-accent text-[#1a0e06] font-semibold text-sm rounded-[var(--radius-sm)] py-2 disabled:opacity-50"
-        >
-          {pending ? "Creating…" : `Create ${meta.singular.toLowerCase()}`}
+        <button type="submit" disabled={pending} className="btn-primary text-sm py-2">
+          {pending
+            ? "Creating…"
+            : door === "generate"
+              ? "Create & generate refs →"
+              : `Create ${meta.singular.toLowerCase()}`}
         </button>
       </form>
+    </div>
+  );
+}
+
+/** Phase-1 Generate door: a curated reference prompt for the founder's ComfyUI. */
+function buildReferencePrompt(entity: EntityDTO): string {
+  const subject = `${entity.name}${entity.notes ? `, ${entity.notes}` : ""}`;
+  const negative = entity.negativeConstraints ? ` Avoid: ${entity.negativeConstraints}.` : "";
+  switch (entity.type) {
+    case "CHARACTER":
+      return `Character reference sheet of ${subject}. Front view, side profile, and three-quarter view, neutral expression, plain studio background, soft even lighting, consistent identity across all views.${negative}`;
+    case "LOCATION":
+      return `Location reference set of ${subject}. Wide establishing shot, alternate angle, and close detail shot, consistent architecture, time of day and lighting across all views.${negative}`;
+    case "PRODUCT":
+      return `Product reference set of ${subject}. Clean studio shots from front, side and three-quarter angles on a neutral background, consistent materials, proportions and branding.${negative}`;
+    case "BRAND":
+      return `Brand style frames for ${subject}. Logo treatment on light and dark backgrounds, color palette swatch, and texture detail, consistent visual identity.${negative}`;
+  }
+}
+
+function GenerateRefsBlock({ entity }: { entity: EntityDTO }) {
+  const [copied, setCopied] = useState<"idle" | "ok" | "failed">("idle");
+  const prompt = buildReferencePrompt(entity);
+  return (
+    <div className="glass-chip rounded-[var(--radius-md)] p-3 flex flex-col gap-2">
+      <span className="mono-label text-faint">Generate references</span>
+      <p className="text-xs text-dim leading-relaxed select-all">{prompt}</p>
+      <div className="flex items-center gap-2">
+        <button
+          className="btn-primary text-xs px-2.5 py-1.5"
+          onClick={async () => {
+            try {
+              await navigator.clipboard.writeText(prompt);
+              setCopied("ok");
+            } catch {
+              setCopied("failed"); // clipboard blocked — text above is select-all
+            }
+            setTimeout(() => setCopied("idle"), 2200);
+          }}
+        >
+          {copied === "ok" ? "Copied ✓" : "Copy prompt"}
+        </button>
+        <span className="text-[11px] text-faint">
+          {copied === "failed"
+            ? "Clipboard blocked — click the text above to select it, then copy."
+            : "Render in ComfyUI, then add the images below."}
+        </span>
+      </div>
     </div>
   );
 }
@@ -384,7 +479,7 @@ function EntityDetail({ entity, onClose }: { entity: EntityDTO; onClose: () => v
           />
         </div>
         {aliasAct.error && (
-          <p className="text-xs text-accent mt-1" role="alert">
+          <p className="text-xs text-danger mt-1" role="alert">
             {aliasAct.error}
           </p>
         )}
@@ -400,7 +495,7 @@ function EntityDetail({ entity, onClose }: { entity: EntityDTO; onClose: () => v
             References · {entity.refs.length}
           </h3>
           <button
-            className="ml-auto text-xs text-dim hover:text-accent disabled:opacity-50"
+            className="ml-auto text-xs text-dim hover:text-ink disabled:opacity-50"
             disabled={refAct.pending}
             onClick={() => fileRef.current?.click()}
           >
@@ -408,13 +503,16 @@ function EntityDetail({ entity, onClose }: { entity: EntityDTO; onClose: () => v
           </button>
         </div>
         {entity.refs.length === 0 ? (
-          <button
-            className="w-full border border-dashed border-edge rounded-[var(--radius-lg)] p-4 text-xs text-dim hover:border-faint text-left"
-            onClick={() => fileRef.current?.click()}
-          >
-            No references yet — add 3–12 images (front / side / ¾ angles) so
-            generations stay on-model. <span className="text-accent">Upload →</span>
-          </button>
+          <div className="flex flex-col gap-2">
+            <GenerateRefsBlock entity={entity} />
+            <button
+              className="w-full border border-dashed border-edge rounded-[var(--radius-lg)] p-4 text-xs text-dim hover:border-faint text-left"
+              onClick={() => fileRef.current?.click()}
+            >
+              Or add 3–12 images you already have (front / side / ¾ angles) so
+              generations stay on-model. <span className="text-ink underline underline-offset-3">Upload →</span>
+            </button>
+          </div>
         ) : (
           <div className="grid grid-cols-3 gap-1.5">
             {entity.refs.map((r) => (
@@ -452,7 +550,7 @@ function EntityDetail({ entity, onClose }: { entity: EntityDTO; onClose: () => v
           }}
         />
         {refAct.error && (
-          <p className="text-xs text-accent mt-1" role="alert">
+          <p className="text-xs text-danger mt-1" role="alert">
             {refAct.error}
           </p>
         )}
@@ -488,13 +586,13 @@ function EntityDetail({ entity, onClose }: { entity: EntityDTO; onClose: () => v
       </label>
 
       {fieldAct.error && (
-        <p className="text-xs text-accent" role="alert">
+        <p className="text-xs text-danger" role="alert">
           {fieldAct.error} — your edit was not saved; change the field again to retry.
         </p>
       )}
 
       <button
-        className="self-start text-xs text-faint hover:text-accent disabled:opacity-50"
+        className="self-start text-xs text-faint hover:text-ink disabled:opacity-50"
         disabled={dangerAct.pending}
         onClick={() => {
           if (
@@ -514,7 +612,7 @@ function EntityDetail({ entity, onClose }: { entity: EntityDTO; onClose: () => v
         Delete {meta.singular.toLowerCase()}
       </button>
       {dangerAct.error && (
-        <p className="text-xs text-accent" role="alert">
+        <p className="text-xs text-danger" role="alert">
           {dangerAct.error}
         </p>
       )}

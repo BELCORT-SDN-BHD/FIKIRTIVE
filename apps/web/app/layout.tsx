@@ -1,10 +1,10 @@
 import type { Metadata } from "next";
-import { Space_Grotesk, Schibsted_Grotesk, JetBrains_Mono } from "next/font/google";
+import { Hanken_Grotesk, Geist_Mono } from "next/font/google";
 import "./globals.css";
 
-const heading = Space_Grotesk({ variable: "--font-heading", subsets: ["latin"] });
-const body = Schibsted_Grotesk({ variable: "--font-body", subsets: ["latin"] });
-const meta = JetBrains_Mono({ variable: "--font-meta", subsets: ["latin"] });
+// Vapor type system: Hanken Grotesk for everything, Geist Mono for metadata
+const body = Hanken_Grotesk({ variable: "--font-body", subsets: ["latin"] });
+const meta = Geist_Mono({ variable: "--font-meta", subsets: ["latin"] });
 
 export const metadata: Metadata = {
   title: "Artlio",
@@ -17,11 +17,11 @@ export default function RootLayout({
   children: React.ReactNode;
 }>) {
   return (
-    <html
-      lang="en"
-      className={`${heading.variable} ${body.variable} ${meta.variable} h-full antialiased`}
-    >
-      <body className="min-h-full flex flex-col">{children}</body>
+    <html lang="en" className={`${body.variable} ${meta.variable} h-full antialiased`}>
+      <body className="min-h-full flex flex-col">
+        <div className="ambient-layer" aria-hidden />
+        <div className="relative z-10 flex flex-col min-h-dvh">{children}</div>
+      </body>
     </html>
   );
 }

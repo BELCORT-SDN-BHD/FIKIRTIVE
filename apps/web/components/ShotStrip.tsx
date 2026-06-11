@@ -13,8 +13,8 @@ import {
 const STATUS_META: Record<ShotStatusDTO, { label: string; className: string }> = {
   DRAFT: { label: "Draft", className: "text-faint border-edge" },
   EXPORTED: { label: "Exported", className: "text-brand border-brand/40" },
-  ATTACHED: { label: "Attached", className: "text-accent border-accent/40" },
-  FINAL: { label: "Final", className: "text-location border-location/40" },
+  ATTACHED: { label: "Attached", className: "text-ink border-edge-strong" },
+  FINAL: { label: "Final", className: "text-positive border-positive/40" },
 };
 
 export function ShotStrip({
@@ -41,7 +41,7 @@ export function ShotStrip({
 
   return (
     <section className="p-4 flex-1" aria-label="Shot board">
-      <h2 className="font-display text-sm font-semibold text-dim uppercase tracking-wider mb-3">
+      <h2 className="mono-label text-faint mb-3">
         Shot Board
       </h2>
 
@@ -54,7 +54,7 @@ export function ShotStrip({
           <button
             onClick={addShot}
             disabled={pending}
-            className="bg-accent text-[#1a0e06] font-semibold text-sm rounded-[var(--radius-sm)] px-4 py-2 disabled:opacity-50"
+            className="btn-primary text-sm px-4 py-2"
           >
             {pending ? "Adding…" : "+ Add Shot 01"}
           </button>
@@ -198,12 +198,12 @@ function ShotCard({
       </div>
 
       {error && (
-        <p className="text-xs text-accent" role="alert">
+        <p className="text-xs text-danger" role="alert">
           {error}
         </p>
       )}
       <button
-        className="self-end text-[11px] text-faint hover:text-accent disabled:opacity-50"
+        className="self-end text-[11px] text-faint hover:text-ink disabled:opacity-50"
         disabled={pending}
         onClick={(e) => {
           e.stopPropagation();

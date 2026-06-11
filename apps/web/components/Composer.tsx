@@ -132,6 +132,55 @@ function resolveDoc(doc: DocNode, byId: Map<string, EntityDTO>) {
   return { ids: [...new Set(ids)], text: text.trim() };
 }
 
+const HUE_VARS: Record<EntityDTO["type"], string> = {
+  CHARACTER: "var(--hue-character)",
+  LOCATION: "var(--hue-location)",
+  PRODUCT: "var(--hue-product)",
+  BRAND: "var(--hue-brand)",
+};
+
+/** Top band of the composer shell: who's in this shot, with reference health. */
+function MentionBand({ ids, byId }: { ids: string[]; byId: Map<string, EntityDTO> }) {
+  if (ids.length === 0) return null;
+  return (
+    <div className="flex flex-wrap gap-1.5 px-4 pt-3" aria-label="Entities in this prompt">
+      {ids.map((id) => {
+        const e = byId.get(id);
+        if (!e) {
+          return (
+            <span key={id} className="glass-chip rounded-[var(--radius-pill,999px)] px-2 py-0.5 text-xs text-danger line-through">
+              deleted entity
+            </span>
+          );
+        }
+        const cover = e.refs.find((r) => r.kind === "image");
+        return (
+          <span
+            key={id}
+            className="glass-chip rounded-full pl-0.5 pr-2 py-0.5 flex items-center gap-1.5 text-xs"
+            style={{ color: HUE_VARS[e.type] }}
+            title={e.refs.length === 0 ? `${e.name} has no reference images yet` : `${e.name} · ${e.refs.length} refs`}
+          >
+            {cover ? (
+              // eslint-disable-next-line @next/next/no-img-element
+              <img src={cover.url} alt="" className="w-5 h-5 rounded-full object-cover" />
+            ) : (
+              <span className="w-5 h-5 rounded-full flex items-center justify-center text-[10px] font-semibold"
+                style={{ background: `color-mix(in srgb, ${HUE_VARS[e.type]} 20%, transparent)` }} aria-hidden>
+                {e.name.slice(0, 1).toUpperCase()}
+              </span>
+            )}
+            {e.name}
+            {e.refs.length === 0 && (
+              <span className="w-1.5 h-1.5 rounded-full bg-warning" title="No reference images" aria-label="No reference images" />
+            )}
+          </span>
+        );
+      })}
+    </div>
+  );
+}
+
 /* ---------- composer ---------- */
 
 export function Composer({
@@ -153,6 +202,8 @@ export function Composer({
   const [dirty, setDirtyState] = useState(false);
   const [copied, setCopied] = useState(false);
   const [saveError, setSaveError] = useState(false);
+  const [copyBlocked, setCopyBlocked] = useState<string | null>(null);
+  const [mentionedIds, setMentionedIds] = useState<string[]>([]);
   const setDirty = (d: boolean) => {
     setDirtyState(d);
     onDirtyChange(d);
@@ -250,9 +301,11 @@ export function Composer({
         },
       }),
     ],
-    onUpdate: () => {
+    onUpdate: ({ editor }) => {
       setDirty(true);
       setSaveError(false);
+      setCopyBlocked(null);
+      setMentionedIds(resolveDoc(editor.getJSON() as DocNode, new Map()).ids);
     },
   }, [shotId]); // fresh editor (and undo history) per shot
 
@@ -260,6 +313,8 @@ export function Composer({
   useEffect(() => {
     setDirty(false);
     setSaveError(false);
+    setCopyBlocked(null);
+    setMentionedIds(shot?.entityIds ?? []);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [shotId]);
 
@@ -301,6 +356,23 @@ export function Composer({
 
   function copyResolved() {
     if (!editor) return;
+    // referential integrity, loudly (LTX's silent @tag breakage is its most
+    // hated bug): every mention must resolve to a live entity with ≥1 ref
+    const { ids } = resolveDoc(editor.getJSON() as DocNode, byId);
+    const deleted = ids.filter((id) => !byId.get(id));
+    const refless = ids.map((id) => byId.get(id)).filter((e): e is EntityDTO => !!e && e.refs.length === 0);
+    if (deleted.length > 0) {
+      setCopyBlocked(
+        "This prompt mentions an entity that no longer exists (marked in the strip above the text) — delete that chip from the prompt, then copy again.",
+      );
+      return;
+    }
+    if (refless.length > 0) {
+      setCopyBlocked(
+        `${refless.map((e) => e.name).join(", ")} ${refless.length === 1 ? "has" : "have"} no reference images yet — add or generate some in the Library so the render stays on-model.`,
+      );
+      return;
+    }
     startTransition(async () => {
       // copied prompt must match the provenance a later upload records — save first
       if (dirty && shot) {
@@ -317,25 +389,23 @@ export function Composer({
   return (
     <section className="p-4 border-b border-edge" aria-label="Prompt composer">
       <div className="flex items-center gap-3 mb-2">
-        <h2 className="font-display text-sm font-semibold text-dim uppercase tracking-wider">
-          Prompt
-        </h2>
+        <h2 className="mono-label text-faint">Prompt</h2>
         {shot && (
           <span className="font-mono text-xs text-faint">
             Shot {String(shot.number).padStart(2, "0")}
             {shot.title ? ` · ${shot.title}` : ""}
           </span>
         )}
-        {dirty && <span className="font-mono text-[10px] text-accent">unsaved</span>}
+        {dirty && <span className="font-mono text-[10px] text-warning">unsaved</span>}
       </div>
 
       {!shot ? (
-        <div className="composer bg-raised border border-edge rounded-[var(--radius-lg)] p-4 text-sm text-dim">
+        <div className="composer glass rounded-[var(--radius-lg)] p-4 text-sm text-dim">
           {shots.length === 0 ? (
             <>
               Every prompt belongs to a shot.{" "}
               <button
-                className="text-accent font-semibold"
+                className="text-ink font-semibold underline underline-offset-3"
                 onClick={() =>
                   startTransition(async () => {
                     const res = await createShot(projectId);
@@ -354,11 +424,37 @@ export function Composer({
         </div>
       ) : (
         <>
-          <div className="composer bg-raised border border-edge rounded-[var(--radius-lg)] px-4 py-3 focus-within:border-accent">
-            <EditorContent editor={editor} />
+          {/* three-band shell: entities on top, text in the middle, actions below.
+              The shell is the stable part — Phase 2 only swaps footer contents. */}
+          <div className="composer glass rounded-[var(--radius-lg)] focus-within:border-edge-strong">
+            <MentionBand ids={mentionedIds} byId={byId} />
+            <div className="px-4 py-3">
+              <EditorContent editor={editor} />
+            </div>
+            <div className="flex items-center gap-2 px-3 pb-3">
+              <button
+                onClick={save}
+                disabled={pending || !dirty}
+                className="btn-primary text-sm px-3.5 py-1.5"
+              >
+                {pending ? "Saving…" : "Save prompt"}
+              </button>
+              <button
+                onClick={copyResolved}
+                className="glass-chip rounded-[var(--radius-md)] text-sm px-3.5 py-1.5 text-dim hover:text-ink hover-bright"
+              >
+                {copied ? "Copied ✓" : "Copy resolved prompt"}
+              </button>
+              <span
+                className="ml-auto glass-chip rounded-full px-2.5 py-1 mono-label text-faint"
+                title="Where this prompt gets rendered. Phase 2 adds your own templates and API targets here."
+              >
+                Target · ComfyUI manual
+              </span>
+            </div>
           </div>
           {saveError && (
-            <p className="text-xs text-accent mt-2" role="alert">
+            <p className="text-xs text-danger mt-2" role="alert">
               Save failed — check your connection and{" "}
               <button className="underline" onClick={save}>
                 retry
@@ -366,24 +462,14 @@ export function Composer({
               .
             </p>
           )}
-          <div className="flex items-center gap-2 mt-2">
-            <button
-              onClick={save}
-              disabled={pending || !dirty}
-              className="bg-accent text-[#1a0e06] font-semibold text-sm rounded-[var(--radius-sm)] px-3 py-1.5 disabled:opacity-40"
-            >
-              {pending ? "Saving…" : "Save prompt"}
-            </button>
-            <button
-              onClick={copyResolved}
-              className="border border-edge text-sm rounded-[var(--radius-sm)] px-3 py-1.5 text-dim hover:text-ink"
-            >
-              {copied ? "Copied ✓" : "Copy resolved prompt"}
-            </button>
-            <span className="ml-auto text-xs text-faint">
-              @ mentions stay linked when entities are renamed
-            </span>
-          </div>
+          {copyBlocked && (
+            <p className="text-xs text-warning mt-2" role="alert">
+              {copyBlocked}
+            </p>
+          )}
+          <p className="text-xs text-faint mt-2">
+            @ mentions stay linked when entities are renamed
+          </p>
         </>
       )}
     </section>

@@ -16,3 +16,7 @@ test-results/
 
 # local dev storage (LocalDiskStorage adapter)
 .data/
+
+# Railway CLI agent artifacts
+.agents/
+.railway/
