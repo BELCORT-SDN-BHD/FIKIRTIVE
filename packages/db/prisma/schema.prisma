@@ -283,6 +283,39 @@ model RefGenJob {
   @@index([status, updatedAt]) // 滞留 GENERATING 行的清扫扫描
 }
 
+enum GenKind {
+  IMAGE
+  VIDEO
+}
+
+// 镜头/会话生成任务（redesign Gen space）—— 产出 Generation 候选，镜像 RefGenJob。
+// 条件输入由 worker 从 entityIds 推导（D19）。
+model GenJob {
+  id            String    @id
+  ownerId       String    @default("founder")
+  projectId     String
+  shotId        String?
+  prompt        String
+  entityIds     String[]  @default([])
+  kind          GenKind   @default(IMAGE)
+  model         String    @default("seedream")
+  count         Int       @default(1)
+  status        GenStatus @default(QUEUED)
+  progress      Int       @default(0)
+  /// DONE 时产出的 Generation 行（可多个）
+  generationIds String[]  @default([])
+  error         String    @default("")
+  queueJobId    String    @default("")
+  attempts      Int       @default(0)
+  startedAt     DateTime?
+  finishedAt    DateTime?
+  createdAt     DateTime  @default(now())
+  updatedAt     DateTime  @updatedAt
+
+  @@index([projectId, createdAt])
+  @@index([status, updatedAt])
+}
+
 // ── Auth.js v5 标准模型（D18：邮箱魔法链接）────────────────────────────
 // 业务表的 ownerId 仍恒为 "founder"：登录只是门禁，不是多租户（A3 预留不变）。
 model User {

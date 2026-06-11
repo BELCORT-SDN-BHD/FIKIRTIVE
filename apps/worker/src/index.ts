@@ -13,14 +13,19 @@ import { QUEUES } from "./queues.js";
 import { handleIngest, type IngestJobData } from "./jobs/ingest.js";
 import { handleRender } from "./jobs/render.js";
 import { handleRefGen } from "./jobs/refgen.js";
+import { handleGen } from "./jobs/gen.js";
 import {
   RENDER_DLQ,
   RENDER_QUEUE_POLICY,
   REFGEN_QUEUE,
   REFGEN_DLQ,
   REFGEN_QUEUE_POLICY,
+  GEN_QUEUE,
+  GEN_DLQ,
+  GEN_QUEUE_POLICY,
   type RenderJobData,
   type RefGenJobData,
+  type GenJobData,
 } from "@artlio/core";
 
 // Long-lived worker prefers the DIRECT url — a persistent process gains nothing
@@ -54,6 +59,8 @@ async function main(): Promise<void> {
   await boss.createQueue(QUEUES.render, { ...RENDER_QUEUE_POLICY });
   await boss.createQueue(REFGEN_DLQ);
   await boss.createQueue(REFGEN_QUEUE, { ...REFGEN_QUEUE_POLICY, expireInSeconds: 60 * 10 });
+  await boss.createQueue(GEN_DLQ);
+  await boss.createQueue(GEN_QUEUE, { ...GEN_QUEUE_POLICY, expireInSeconds: 60 * 10 });
 
   await boss.work<IngestJobData>(QUEUES.ingest, { batchSize: 1 }, async ([job]) => {
     if (!job) return;
@@ -82,6 +89,17 @@ async function main(): Promise<void> {
       console.log(`[worker] refgen job ${job.id} start (try ${job.retryCount + 1})`, job.data);
       await handleRefGen(job.data, job.retryCount);
       console.log(`[worker] refgen job ${job.id} done`);
+    },
+  );
+
+  await boss.work<GenJobData>(
+    GEN_QUEUE,
+    { batchSize: 1, includeMetadata: true },
+    async ([job]) => {
+      if (!job) return;
+      console.log(`[worker] gen job ${job.id} start (try ${job.retryCount + 1})`, job.data);
+      await handleGen(job.data, job.retryCount);
+      console.log(`[worker] gen job ${job.id} done`);
     },
   );
 

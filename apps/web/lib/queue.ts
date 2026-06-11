@@ -1,6 +1,6 @@
 import "server-only";
 import { PgBoss } from "pg-boss";
-import { RENDER_DLQ, RENDER_QUEUE, RENDER_QUEUE_POLICY, REFGEN_DLQ, REFGEN_QUEUE, REFGEN_QUEUE_POLICY } from "@artlio/core";
+import { RENDER_DLQ, RENDER_QUEUE, RENDER_QUEUE_POLICY, REFGEN_DLQ, REFGEN_QUEUE, REFGEN_QUEUE_POLICY, GEN_DLQ, GEN_QUEUE, GEN_QUEUE_POLICY } from "@artlio/core";
 
 /**
  * Send-only pg-boss handle for the web side (producers). Same lazy-singleton
@@ -31,6 +31,8 @@ async function buildBoss(): Promise<PgBoss> {
   await boss.createQueue(RENDER_QUEUE, { ...RENDER_QUEUE_POLICY });
   await boss.createQueue(REFGEN_DLQ);
   await boss.createQueue(REFGEN_QUEUE, { ...REFGEN_QUEUE_POLICY });
+  await boss.createQueue(GEN_DLQ);
+  await boss.createQueue(GEN_QUEUE, { ...GEN_QUEUE_POLICY });
   return boss;
 }
 

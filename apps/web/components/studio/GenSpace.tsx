@@ -9,23 +9,55 @@
  * cost shows before generate; failures never charge (pricing research).
  * Mock-first; engine wires later.
  */
-import { useState } from "react";
+import { useState, useEffect, useRef } from "react";
 import { Button, MonoLabel, IcPlus, IcImage, IcFilm, IcChevronDown, IcRetry, IcX } from "@/components/ds";
+import { GEN_PRICE_USD_PER_IMAGE } from "@artlio/core";
+import { startGen, getGenJob } from "@/lib/gen-actions";
 
 const Caret = () => <IcChevronDown size={13} style={{ marginLeft: 2, color: "var(--fg-3)" }} />;
 
 const SESSIONS = [
-  { title: "Woman Drinking Coffee", ago: "2 minutes ago", tint: "linear-gradient(135deg,#3a2f2a,#5a4438)", active: true },
-  { title: "Woman On Street", ago: "1 minute ago", tint: "linear-gradient(135deg,#2a2f3a,#3a4a5a)" },
+  { title: "This session", ago: "now", tint: "linear-gradient(135deg,#3a2f2a,#5a4438)", active: true },
 ];
 
-const RESULTS = [
-  { prompt: "Maria sips from the coffee", meta: "Seedream · Audio · 1080p · 25 fps", ago: "2m", dur: "00:08", tint: "linear-gradient(135deg,#3a2f2a,#6a5040)" },
-  { prompt: "Maria sips from the coffee and cries", meta: "Kling video · Retake", ago: "1m", dur: "00:08", tint: "linear-gradient(135deg,#332a2e,#5a3a44)" },
-];
+type Result = { prompt: string; meta: string; urls: string[]; pending?: boolean };
 
-export function GenSpace() {
+export function GenSpace({ projectId }: { projectId: string | null }) {
   const [mode, setMode] = useState<"video" | "v2v">("video");
+  const [prompt, setPrompt] = useState("a cinematic portrait, soft window light");
+  const [count] = useState(1);
+  const [results, setResults] = useState<Result[]>([]);
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const pollTimer = useRef<ReturnType<typeof setInterval> | null>(null);
+  useEffect(() => () => { if (pollTimer.current) clearInterval(pollTimer.current); }, []);
+
+  function generate() {
+    const text = prompt.trim();
+    if (!text || !projectId || busy) return;
+    setError(null);
+    setBusy(true);
+    const placeholder: Result = { prompt: text, meta: "Seedream · generating…", urls: [], pending: true };
+    setResults((r) => [placeholder, ...r]);
+    (async () => {
+      const res = await startGen({ projectId, prompt: text, entityIds: [], count, model: "seedream" });
+      if ("error" in res) { setError(res.error); setBusy(false); setResults((r) => r.filter((x) => x !== placeholder)); return; }
+      pollTimer.current = setInterval(async () => {
+        const job = await getGenJob(res.id);
+        if (!job) return;
+        if (job.status === "DONE") {
+          if (pollTimer.current) clearInterval(pollTimer.current);
+          setBusy(false);
+          setResults((r) => r.map((x) => x === placeholder ? { prompt: text, meta: `Seedream · ${job.urls.length} image`, urls: job.urls } : x));
+        } else if (job.status === "FAILED") {
+          if (pollTimer.current) clearInterval(pollTimer.current);
+          setBusy(false);
+          setError(job.error || "Generation failed.");
+          setResults((r) => r.filter((x) => x !== placeholder));
+        }
+      }, 2000);
+    })();
+  }
 
   return (
     <>
@@ -35,19 +67,35 @@ export function GenSpace() {
           <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 4 }}>
             <Button variant="glass" size="sm" icon={null}>Shot navigator<Caret /></Button>
           </div>
-          <h1 style={{ font: "var(--text-title)", color: "var(--fg-1)", margin: "10px 0 18px" }}>Woman Drinking Coffee</h1>
+          <h1 style={{ font: "var(--text-title)", color: "var(--fg-1)", margin: "10px 0 18px" }}>Gen space</h1>
 
-          {RESULTS.map((r, i) => (
+          {error && <p role="alert" style={{ font: "var(--text-small)", color: "var(--danger)", margin: "0 0 14px" }}>{error}</p>}
+
+          {results.length === 0 && !busy && (
+            <p style={{ font: "var(--text-body)", color: "var(--fg-3)", margin: "8px 0" }}>
+              Describe a shot below and hit Generate — results land here.
+            </p>
+          )}
+
+          {results.map((r, i) => (
             <div key={i} style={{ marginBottom: 22 }}>
               <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 8, font: "var(--text-mono-meta)", color: "var(--fg-3)" }}>
                 <span style={{ color: "var(--fg-2)" }}>{r.prompt}</span>
                 <span>· {r.meta}</span>
                 <span style={{ flex: 1 }} />
-                <span>{r.ago}</span>
-                <span style={{ display: "inline-flex", alignItems: "center", gap: 8 }}><IcRetry size={13} /><IcX size={13} /></span>
+                {!r.pending && <span style={{ display: "inline-flex", alignItems: "center", gap: 8 }}><IcRetry size={13} /><IcX size={13} /></span>}
               </div>
-              <div style={{ position: "relative", width: 280, aspectRatio: "16 / 10", borderRadius: "var(--radius-md)", background: r.tint, border: "1px solid var(--line-2)" }}>
-                <span style={{ position: "absolute", bottom: 7, left: 8, font: "var(--text-mono-meta)", color: "var(--fg-1)" }}>{r.dur}</span>
+              <div style={{ display: "flex", gap: 12, flexWrap: "wrap" }}>
+                {r.pending ? (
+                  <div style={{ width: 280, aspectRatio: "16 / 10", borderRadius: "var(--radius-md)", background: "var(--glass-1)", border: "1px solid var(--line-2)", display: "grid", placeItems: "center", font: "var(--text-caption)", color: "var(--fg-3)" }}>
+                    generating…
+                  </div>
+                ) : (
+                  r.urls.map((u) => (
+                    // eslint-disable-next-line @next/next/no-img-element
+                    <img key={u} src={u} alt="" style={{ width: 280, aspectRatio: "16 / 10", objectFit: "cover", borderRadius: "var(--radius-md)", border: "1px solid var(--line-2)" }} />
+                  ))
+                )}
               </div>
             </div>
           ))}
@@ -83,24 +131,27 @@ export function GenSpace() {
             <button className="al-iconbtn al-iconbtn-md" aria-label="Add video reference"><IcFilm size={16} /></button>
             <button className="al-iconbtn al-iconbtn-md" aria-label="Add control reference"><IcPlus size={16} /></button>
             <span className="al-promptbar-spacer" />
-            <span style={{ font: "var(--text-caption)", color: "var(--fg-3)" }}>~12 CR</span>
+            <span style={{ font: "var(--text-caption)", color: "var(--fg-3)" }}>~${(count * GEN_PRICE_USD_PER_IMAGE).toFixed(2)}</span>
           </div>
           <div className="al-input-wrap" style={{ border: "none", background: "none", padding: 0 }}>
-            <input placeholder="Describe the shot — subject, camera, light…" aria-label="Describe the shot" defaultValue="Maria sips from the coffee" />
+            <input placeholder="Describe the shot — subject, camera, light…" aria-label="Describe the shot"
+              value={prompt} onChange={(e) => setPrompt(e.target.value)} disabled={busy}
+              onKeyDown={(e) => { if (e.key === "Enter") generate(); }} />
           </div>
           <div className="al-promptbar-row">
             <div className="al-seg" role="tablist">
-              <button role="tab" aria-selected={mode === "video"} className={`al-seg-item${mode === "video" ? " al-seg-item-active" : ""}`} onClick={() => setMode("video")}>Video</button>
-              <button role="tab" aria-selected={mode === "v2v"} className={`al-seg-item${mode === "v2v" ? " al-seg-item-active" : ""}`} onClick={() => setMode("v2v")}>Video to Video</button>
+              <button role="tab" aria-selected={mode === "video"} className={`al-seg-item${mode === "video" ? " al-seg-item-active" : ""}`} onClick={() => setMode("video")}>Photo</button>
+              <button role="tab" aria-selected={mode === "v2v"} className={`al-seg-item${mode === "v2v" ? " al-seg-item-active" : ""}`} onClick={() => setMode("v2v")}>Video</button>
             </div>
-            <button className="al-chip al-chip-mono">Kling video<Caret /></button>
-            <button className="al-chip al-chip-mono">8 Sec</button>
-            <button className="al-chip al-chip-mono">1080p</button>
+            <button className="al-chip al-chip-mono">Seedream<Caret /></button>
+            <button className="al-chip al-chip-mono">1024px</button>
             <button className="al-chip al-chip-mono">16:9</button>
-            <button className="al-chip al-chip-mono">More<Caret /></button>
             <span className="al-promptbar-spacer" />
-            <Button>Generate</Button>
+            <Button onClick={generate} disabled={busy || !projectId || prompt.trim().length === 0}>
+              {busy ? "Generating…" : "Generate"}
+            </Button>
           </div>
+          {!projectId && <p style={{ font: "var(--text-caption)", color: "var(--fg-3)", margin: 0 }}>Create a project first (in the old Workbench) to generate here.</p>}
         </div>
       </div>
     </>

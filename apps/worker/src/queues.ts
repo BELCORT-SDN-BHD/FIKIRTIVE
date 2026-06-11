@@ -1,4 +1,4 @@
-import { INGEST_QUEUE, RENDER_QUEUE, REFGEN_QUEUE } from "@artlio/core";
+import { INGEST_QUEUE, RENDER_QUEUE, REFGEN_QUEUE, GEN_QUEUE } from "@artlio/core";
 
 /** Queue names — single source for web (producers) and worker (consumers). */
 export const QUEUES = {
@@ -10,4 +10,6 @@ export const QUEUES = {
   render: RENDER_QUEUE,
   /** Phase 2 reference generation: prompt → provider → GENERATED refs. */
   refgen: REFGEN_QUEUE,
+  /** Redesign shot/session generation: prompt → provider → Generation candidate. */
+  gen: GEN_QUEUE,
 } as const;

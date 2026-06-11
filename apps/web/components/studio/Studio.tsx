@@ -27,12 +27,12 @@ function Placeholder({ label }: { label: string }) {
   );
 }
 
-export function Studio({ entities }: { entities: EntityDTO[] }) {
+export function Studio({ entities, projectId }: { entities: EntityDTO[]; projectId: string | null }) {
   const [view, setView] = useState<StudioView>("genspace");
 
   function surface() {
     switch (view) {
-      case "genspace": return <GenSpace />;
+      case "genspace": return <GenSpace projectId={projectId} />;
       case "canvas": return <Canvas />;
       case "storyboard": return <Storyboard />;
       case "editor": return <VideoEditor />;
