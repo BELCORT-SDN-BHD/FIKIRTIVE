@@ -14,6 +14,7 @@ export {
   srcToStorageKey,
   storageKeyToSrc,
   RENDER_QUEUE,
+  INGEST_QUEUE,
   RENDER_DLQ,
   RENDER_RETRY_LIMIT,
   RENDER_QUEUE_POLICY,

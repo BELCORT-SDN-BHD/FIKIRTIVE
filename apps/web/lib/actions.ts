@@ -8,6 +8,7 @@ import {
   newId,
   storageKey,
   storageKeyToSrc,
+  INGEST_QUEUE,
   RENDER_QUEUE,
   type ArtlioEdit,
   type RenderJobData,
@@ -373,6 +374,20 @@ export async function uploadCandidates(projectId: string, formData: FormData) {
       },
     });
   });
+  // best-effort metadata probe (real durations for the editor) — the upload
+  // itself must never fail on queue hiccups
+  try {
+    const boss = await getBoss();
+    const assets = await prisma.asset.findMany({
+      where: { ownerId: FOUNDER_OWNER_ID, contentHash: { in: ingested.map((i) => i.contentHash) } },
+      select: { id: true, durationS: true },
+    });
+    for (const a of assets) {
+      if (a.durationS == null) await boss.send(INGEST_QUEUE, { assetId: a.id });
+    }
+  } catch (e) {
+    console.warn("[upload] ingest dispatch skipped:", e instanceof Error ? e.message : e);
+  }
   revalidatePath("/", "layout");
   return { ok: true, count: files.length };
 }

@@ -8,10 +8,11 @@ export const dynamic = "force-dynamic";
 export const metadata = { title: "Editor · Artlio" };
 
 /** Initial cut = every shot's latest attached render in board order.
- *  MOCK durations (videos 5s, images 3s) until worker ffprobe lands in the
- *  meat phase — the only mock left standing, scoped and labeled. */
-const MOCK_VIDEO_SECONDS = 5;
-const MOCK_IMAGE_SECONDS = 3;
+ *  Video lengths come from the ingest probe (Asset.durationS); the fallback
+ *  covers assets uploaded before the probe ran. Image length is a product
+ *  default (images have no inherent duration). */
+const FALLBACK_VIDEO_SECONDS = 5;
+const IMAGE_SECONDS = 3;
 
 const VIDEO_EXTS = new Set(["mp4", "mov", "webm", "mkv"]);
 const IMAGE_EXTS = new Set(["png", "jpg", "jpeg", "webp", "gif", "avif"]);
@@ -36,7 +37,9 @@ export default async function EditorPage({
     const ext = latest.asset.ext.toLowerCase();
     const isVideo = VIDEO_EXTS.has(ext);
     if (!isVideo && !IMAGE_EXTS.has(ext)) continue;
-    const length = isVideo ? MOCK_VIDEO_SECONDS : MOCK_IMAGE_SECONDS;
+    const length = isVideo
+      ? (latest.asset.durationS ?? FALLBACK_VIDEO_SECONDS)
+      : IMAGE_SECONDS;
     clips.push({
       asset: {
         type: isVideo ? "video" : "image",

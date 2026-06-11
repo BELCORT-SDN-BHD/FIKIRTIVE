@@ -195,6 +195,8 @@ export const renderJobData = z.object({
 export type RenderJobData = z.infer<typeof renderJobData>;
 
 export const RENDER_QUEUE = "render";
+/** metadata probe queue (worker-owned; web dispatches best-effort) */
+export const INGEST_QUEUE = "ingest";
 export const RENDER_DLQ = `${RENDER_QUEUE}.dlq`;
 export const RENDER_RETRY_LIMIT = 2;
 /** Shared by BOTH sides (codex review): whoever boots first creates the queue

@@ -1,12 +1,17 @@
 /**
- * Render handler (editor slice, phase-③ tracer skeleton — kept and hardened,
- * never thrown away). Dumbest possible cut for now: normalize every clip to
- * the output size/fps and hard-concat. Trim/transitions/audio layer onto
- * THIS skeleton in the meat phase by extending buildFfmpegArgs only.
+ * Render handler (editor slice — tracer skeleton grown into the meat phase).
+ * Contract → ffmpeg mapping:
+ *   clip.asset.trim          → -ss BEFORE -i (fast keyframe seek, D10 rule)
+ *   clip.length              → -t per input (applies to audio streams too)
+ *   transition in/out (fade) → per-clip fade/afade to black over `duration`
+ *   clip.fit                 → contain: scale(decrease)+pad · crop: scale(increase)+crop
+ *   asset.volume             → volume filter; clip audio delayed to its
+ *                              timeline `start`, mixed with amix
+ *   output                   → scale + SAR + fps normalize, libx264/aac
+ * Progress: ffmpeg -progress pipe:1 → RenderJob.progress (throttled).
  *
- * Storage note (tracer scope): reads/writes the shared local .data store —
- * end-to-end is LOCAL until T4 moves blobs to R2 (in prod, web and worker
- * are separate containers with no shared disk).
+ * Storage note (tracer scope): shared local .data store — prod activation
+ * lands with T4 R2 (web/worker are separate containers, no shared disk).
  */
 import { createHash } from "node:crypto";
 import { mkdir, readFile, writeFile, access, rm } from "node:fs/promises";
@@ -22,8 +27,10 @@ import {
   storageKey,
   RENDER_RETRY_LIMIT,
   type ArtlioEdit,
+  type ArtlioClip,
   type RenderJobData,
 } from "@artlio/core";
+import { probeFile } from "./ingest.js";
 
 // same resolution as apps/web/lib/storage.ts (both run with cwd = their app
 // dir → repo/.data); ARTLIO_DATA_DIR overrides for anything else
@@ -36,12 +43,44 @@ const SIZES: Record<string, Record<string, [number, number]>> = {
   "1:1": { sd: [480, 480], hd: [720, 720], "1080": [1080, 1080] },
 };
 
-function clipArgs(edit: ArtlioEdit, clip: ArtlioEdit["timeline"]["tracks"][number]["clips"][number], file: string): string[] {
-  // seek BEFORE -i: fast keyframe seek on presigned/range sources (D10 rule)
+interface PlannedInput {
+  clip: ArtlioClip;
+  file: string;
+  index: number;
+  hasAudio: boolean;
+}
+
+function inputArgs(p: PlannedInput): string[] {
   const pre: string[] = [];
-  if (clip.asset.type === "image") pre.push("-loop", "1");
-  if (clip.asset.trim && clip.asset.type !== "image") pre.push("-ss", String(clip.asset.trim));
-  return [...pre, "-t", String(clip.length), "-i", file];
+  if (p.clip.asset.type === "image") pre.push("-loop", "1");
+  if (p.clip.asset.trim && p.clip.asset.type !== "image") pre.push("-ss", String(p.clip.asset.trim));
+  return [...pre, "-t", String(p.clip.length), "-i", p.file];
+}
+
+/** video chain for one visual clip: normalize + fit + fades, local time base */
+function videoChain(p: PlannedInput, w: number, h: number, fps: number): string {
+  const fit = p.clip.fit ?? "contain";
+  const scale =
+    fit === "crop"
+      ? `scale=${w}:${h}:force_original_aspect_ratio=increase,crop=${w}:${h}`
+      : `scale=${w}:${h}:force_original_aspect_ratio=decrease,pad=${w}:${h}:(ow-iw)/2:(oh-ih)/2`;
+  const filters = [scale, "setsar=1", `fps=${fps}`];
+  const t = p.clip.transition;
+  if (t?.in) filters.push(`fade=t=in:st=0:d=${t.duration}`);
+  if (t?.out) filters.push(`fade=t=out:st=${Math.max(0, p.clip.length - t.duration)}:d=${t.duration}`);
+  return `[${p.index}:v]${filters.join(",")}[v${p.index}]`;
+}
+
+/** audio chain for one sounded clip: volume + fades, then delay to timeline start */
+function audioChain(p: PlannedInput): string {
+  const vol = p.clip.asset.volume ?? 1;
+  const filters = [`volume=${vol}`];
+  const t = p.clip.transition;
+  if (t?.in) filters.push(`afade=t=in:st=0:d=${t.duration}`);
+  if (t?.out) filters.push(`afade=t=out:st=${Math.max(0, p.clip.length - t.duration)}:d=${t.duration}`);
+  const delayMs = Math.round(p.clip.start * 1000);
+  filters.push(`adelay=${delayMs}:all=1`);
+  return `[${p.index}:a]${filters.join(",")}[a${p.index}]`;
 }
 
 export async function handleRender(data: RenderJobData, retryCount = 0): Promise<void> {
@@ -54,61 +93,83 @@ export async function handleRender(data: RenderJobData, retryCount = 0): Promise
 
   await prisma.renderJob.update({
     where: { id: job.id },
-    data: { status: "RENDERING", progress: 10, startedAt: new Date(), attempts: { increment: 1 } },
+    data: { status: "RENDERING", progress: 5, startedAt: new Date(), attempts: { increment: 1 } },
   });
 
   const work = path.join(tmpdir(), `artlio-render-${job.id}`);
   try {
     // contract police: the worker NEVER trusts stored JSON blindly
     const edit = artlioEdit.parse(job.editJson);
-    const visual = edit.timeline.tracks.find((t) =>
-      t.clips.some((c) => c.asset.type !== "audio"),
-    );
-    if (!visual) throw new Error("no visual track in edit");
-    const clips = [...visual.clips].sort((a, b) => a.start - b.start);
+    const totalSeconds = editDuration(edit);
+    const visualTrack = edit.timeline.tracks.find((t) => t.clips.some((c) => c.asset.type !== "audio"));
+    if (!visualTrack) throw new Error("no visual track in edit");
+    const audioTracks = edit.timeline.tracks.filter((t) => t !== visualTrack);
 
     await mkdir(work, { recursive: true });
 
-    // resolve sources from the shared content-addressed store
-    const inputs: string[] = [];
-    for (const c of clips) {
-      const file = path.join(LOCAL_ROOT, srcToStorageKey(c.asset.src));
+    // plan all inputs (visual first, then audio-track clips), probing each
+    // source once for audio-stream presence
+    const planned: PlannedInput[] = [];
+    const addInput = async (clip: ArtlioClip) => {
+      const file = path.join(LOCAL_ROOT, srcToStorageKey(clip.asset.src));
       await access(file); // missing source = loud failure, not a black frame
-      inputs.push(file);
-    }
+      const probe = clip.asset.type === "image" ? { hasAudio: false } : await probeFile(file);
+      planned.push({ clip, file, index: planned.length, hasAudio: probe.hasAudio });
+    };
+    const visualClips = [...visualTrack.clips].sort((a, b) => a.start - b.start);
+    for (const c of visualClips) await addInput(c);
+    for (const t of audioTracks) for (const c of t.clips) await addInput(c);
 
     const [w, h] = SIZES[edit.output.aspectRatio]?.[edit.output.resolution] ?? [1920, 1080];
     const fps = edit.output.fps;
     const out = path.join(work, "out.mp4");
 
-    // normalize every clip (scale+pad to frame, SAR, fps) then concat (video-only tracer)
-    const args: string[] = ["-y"];
-    for (let i = 0; i < clips.length; i++) args.push(...clipArgs(edit, clips[i]!, inputs[i]!));
-    const norm = clips
-      .map(
-        (_, i) =>
-          `[${i}:v]scale=${w}:${h}:force_original_aspect_ratio=decrease,pad=${w}:${h}:(ow-iw)/2:(oh-ih)/2,setsar=1,fps=${fps}[v${i}]`,
-      )
-      .join(";");
-    const concatIn = clips.map((_, i) => `[v${i}]`).join("");
-    args.push(
-      "-filter_complex",
-      `${norm};${concatIn}concat=n=${clips.length}:v=1:a=0[v]`,
-      "-map",
-      "[v]",
-      "-c:v",
-      "libx264",
-      "-pix_fmt",
-      "yuv420p",
-      "-movflags",
-      "+faststart",
-      out,
+    const visualPlanned = planned.filter((p) => p.clip.asset.type !== "audio");
+    const sounded = planned.filter(
+      (p) => p.hasAudio && (p.clip.asset.volume ?? 1) > 0,
     );
 
-    console.log(`[render] ${job.id}: ffmpeg ${clips.length} clips → ${w}x${h}@${fps}`);
-    await prisma.renderJob.update({ where: { id: job.id }, data: { progress: 30 } });
-    await execa("ffmpeg", args, { timeout: 1000 * 60 * 10 });
-    await prisma.renderJob.update({ where: { id: job.id }, data: { progress: 80 } });
+    const graph: string[] = [];
+    for (const p of visualPlanned) graph.push(videoChain(p, w, h, fps));
+    const concatIn = visualPlanned.map((p) => `[v${p.index}]`).join("");
+    graph.push(`${concatIn}concat=n=${visualPlanned.length}:v=1:a=0[v]`);
+
+    let mapAudio = false;
+    if (sounded.length > 0) {
+      for (const p of sounded) graph.push(audioChain(p));
+      const mixIn = sounded.map((p) => `[a${p.index}]`).join("");
+      graph.push(
+        `${mixIn}amix=inputs=${sounded.length}:duration=longest:normalize=0,atrim=0:${totalSeconds}[a]`,
+      );
+      mapAudio = true;
+    }
+
+    const args: string[] = ["-y"];
+    for (const p of planned) args.push(...inputArgs(p));
+    args.push("-filter_complex", graph.join(";"), "-map", "[v]");
+    if (mapAudio) args.push("-map", "[a]", "-c:a", "aac", "-b:a", "192k");
+    args.push("-c:v", "libx264", "-pix_fmt", "yuv420p", "-movflags", "+faststart");
+    args.push("-progress", "pipe:1", "-nostats", out);
+
+    console.log(
+      `[render] ${job.id}: ffmpeg ${visualPlanned.length} visual + ${sounded.length} audio → ${w}x${h}@${fps}, ${totalSeconds}s`,
+    );
+
+    // live progress from -progress pipe:1, throttled to spare the DB
+    const proc = execa("ffmpeg", args, { timeout: 1000 * 60 * 10, buffer: false });
+    let lastWrite = 0;
+    proc.stdout?.on("data", (chunk: Buffer) => {
+      const m = /out_time_us=(\d+)/.exec(chunk.toString());
+      if (!m) return;
+      const pct = Math.min(95, Math.round((Number(m[1]) / 1e6 / totalSeconds) * 90) + 5);
+      const now = Date.now();
+      if (now - lastWrite < 2000) return;
+      lastWrite = now;
+      prisma.renderJob
+        .update({ where: { id: job.id }, data: { progress: pct } })
+        .catch(() => {});
+    });
+    await proc;
 
     // store the output with the same content-addressed semantics as every asset
     const bytes = await readFile(out);
@@ -133,7 +194,9 @@ export async function handleRender(data: RenderJobData, retryCount = 0): Promise
         sizeBytes: BigInt(bytes.byteLength),
         originalFilename: `render-${job.id}.mp4`,
         source: "RENDER",
-        durationS: editDuration(edit),
+        width: w,
+        height: h,
+        durationS: totalSeconds,
       },
     });
 
