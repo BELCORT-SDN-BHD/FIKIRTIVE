@@ -9,7 +9,7 @@ import { useRouter } from "next/navigation";
 import type { ProjectDTO } from "@/lib/types";
 import { createProject } from "@/lib/actions";
 import {
-  Wordmark, IcFolder, IcSparkle, IcCanvas, IcStoryboard, IcFilm, IcAt, IcAssets, IcPlans, IcUser,
+  Wordmark, IcFolder, IcSparkle, IcStoryboard, IcFilm, IcAt, IcAssets, IcPlans, IcUser,
   IcUndo, IcRedo, IcExport, IcUsers, Button, PopMenu, Dialog, Input,
 } from "@/components/ds";
 
@@ -18,7 +18,7 @@ export type StudioView =
 
 const PRIMARY: { view: StudioView; label: string; Icon: typeof IcSparkle }[] = [
   { view: "genspace", label: "Gen space", Icon: IcSparkle },
-  { view: "canvas", label: "Canvas", Icon: IcCanvas },
+  // Canvas (freeform board) is deferred — hidden from nav until it's built.
   { view: "storyboard", label: "Storyboard", Icon: IcStoryboard },
   { view: "editor", label: "Video editor", Icon: IcFilm },
   { view: "elements", label: "Elements", Icon: IcAt },
@@ -133,7 +133,9 @@ export function StudioShell({
             <button className="al-iconbtn al-iconbtn-ghost al-iconbtn-md" aria-label="Redo"><IcRedo size={17} /></button>
             <span className="al-tooltip" role="tooltip">Redo<span className="al-tooltip-shortcut">⇧⌘Z</span></span>
           </span>
-          <Button variant="glass" size="sm" icon={<IcExport size={15} />}>Export</Button>
+          {view !== "editor" && (
+            <Button variant="glass" size="sm" icon={<IcExport size={15} />} onClick={() => onNavigate("editor")}>Export</Button>
+          )}
           <span className="avatar-stack">
             <span className="al-avatar al-avatar-sm al-avatar-ring" title="Tessa Bright"><span>TB</span></span>
             <span className="al-avatar al-avatar-sm al-avatar-ring" title="Marcus Oda"><span>MO</span></span>
