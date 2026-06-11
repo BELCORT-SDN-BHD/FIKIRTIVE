@@ -4,4 +4,6 @@ export const QUEUES = {
   ingest: "ingest",
   /** D21 sweeper: purge soft-deleted assets past the 30-day window when refcount = 0. */
   sweep: "sweep",
+  /** Editor render pipeline (phase-③ tracer): artlioEdit → ffmpeg → asset. */
+  render: "render",
 } as const;

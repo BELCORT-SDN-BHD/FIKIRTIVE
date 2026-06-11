@@ -38,12 +38,16 @@ enum AssetSource {
   UPLOAD
   MODAL
   IMPORT
+  RENDER
 }
 
 model Project {
   id        String    @id
   ownerId   String    @default("founder")
   name      String
+  /// 编辑器的工作中剪辑（artlioEdit 规范化后的 JSON）——阶段③ tracer 落地，
+  /// 取代 localStorage mock；导出时快照进 RenderJob.editJson
+  editJson  Json?
   createdAt DateTime  @default(now())
   updatedAt DateTime  @updatedAt
   deletedAt DateTime?

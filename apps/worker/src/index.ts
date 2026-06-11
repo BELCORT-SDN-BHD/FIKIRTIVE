@@ -11,6 +11,8 @@
 import { PgBoss } from "pg-boss";
 import { QUEUES } from "./queues.js";
 import { handleIngest, type IngestJobData } from "./jobs/ingest.js";
+import { handleRender } from "./jobs/render.js";
+import type { RenderJobData } from "@artlio/core";
 
 // Long-lived worker prefers the DIRECT url — a persistent process gains nothing
 // from PgBouncer and the direct path avoids pooler quirks (audit P3).
@@ -39,12 +41,27 @@ async function main(): Promise<void> {
     deadLetter: `${QUEUES.ingest}.dlq`,
   });
   await boss.createQueue(QUEUES.sweep);
+  await boss.createQueue(`${QUEUES.render}.dlq`);
+  await boss.createQueue(QUEUES.render, {
+    retryLimit: 2,
+    retryDelay: 20,
+    retryBackoff: true,
+    expireInSeconds: 60 * 15, // a cut render should never exceed the ffmpeg timeout
+    deadLetter: `${QUEUES.render}.dlq`,
+  });
 
   await boss.work<IngestJobData>(QUEUES.ingest, { batchSize: 1 }, async ([job]) => {
     if (!job) return;
     console.log(`[worker] ingest job ${job.id} start`, job.data);
     await handleIngest(job.data);
     console.log(`[worker] ingest job ${job.id} done`);
+  });
+
+  await boss.work<RenderJobData>(QUEUES.render, { batchSize: 1 }, async ([job]) => {
+    if (!job) return;
+    console.log(`[worker] render job ${job.id} start`, job.data);
+    await handleRender(job.data);
+    console.log(`[worker] render job ${job.id} done`);
   });
 
   // Heartbeat: the status panel's "worker alive" signal (appendix A).

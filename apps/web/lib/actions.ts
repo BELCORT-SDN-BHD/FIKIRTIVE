@@ -2,9 +2,19 @@
 
 import { revalidatePath } from "next/cache";
 import { prisma } from "@artlio/db";
-import { newId } from "@artlio/core";
+import {
+  artlioEdit,
+  editDuration,
+  newId,
+  storageKey,
+  storageKeyToSrc,
+  RENDER_QUEUE,
+  type ArtlioEdit,
+  type RenderJobData,
+} from "@artlio/core";
 import type { EntityType, ShotStatus } from "@artlio/db";
 import { storage, extFromFilename, mimeOf, FOUNDER_OWNER_ID } from "./storage";
+import { getBoss } from "./queue";
 
 /**
  * M0 server actions. Conventions:
@@ -424,6 +434,82 @@ export async function detachGeneration(generationId: string) {
   await logAction("generation.detach", gen.projectId, { generationId, shotId });
   revalidatePath("/", "layout");
   return { ok: true };
+}
+
+// ---------- editor (phase-③ tracer: contract → queue → worker → asset) ----------
+
+/** Persist the working cut (replaces the phase-② localStorage mock). */
+export async function saveProjectEdit(projectId: string, editJsonString: string) {
+  const project = await prisma.project.findFirst({ where: { id: projectId, ...OWNED } });
+  if (!project) return { error: "Project not found." };
+  let edit: ArtlioEdit;
+  try {
+    // canonicalizing parse — only the parsed value is ever persisted
+    edit = artlioEdit.parse(JSON.parse(editJsonString));
+  } catch {
+    return { error: "That cut is out of contract — fix the flagged clip first." };
+  }
+  await prisma.project.update({ where: { id: projectId }, data: { editJson: edit } });
+  await logAction("edit.save", projectId, { seconds: Math.round(editDuration(edit)) });
+  revalidatePath("/", "layout");
+  return { ok: true };
+}
+
+/** Export: persist the job row FIRST, then dispatch (triple-insurance rule). */
+export async function startRender(projectId: string, editJsonString: string) {
+  const project = await prisma.project.findFirst({ where: { id: projectId, ...OWNED } });
+  if (!project) return { error: "Project not found." };
+  let edit: ArtlioEdit;
+  try {
+    edit = artlioEdit.parse(JSON.parse(editJsonString));
+  } catch {
+    return { error: "That cut is out of contract — fix the flagged clip first." };
+  }
+  const job = await prisma.renderJob.create({
+    data: { id: newId(), ownerId: FOUNDER_OWNER_ID, projectId, editJson: edit },
+  });
+  try {
+    const boss = await getBoss();
+    const queueJobId = await boss.send(RENDER_QUEUE, { renderJobId: job.id } satisfies RenderJobData);
+    await prisma.renderJob.update({
+      where: { id: job.id },
+      data: { queueJobId: queueJobId ?? "" },
+    });
+  } catch (e) {
+    // row survives (reconciliation can re-dispatch); surface the failure loudly
+    const message = e instanceof Error ? e.message.slice(0, 300) : "queue unavailable";
+    await prisma.renderJob.update({
+      where: { id: job.id },
+      data: { status: "FAILED", error: `dispatch failed: ${message}` },
+    });
+    return { error: "Could not reach the render queue — is the worker database up?" };
+  }
+  await logAction("render.start", projectId, { renderJobId: job.id });
+  revalidatePath("/", "layout");
+  return { id: job.id };
+}
+
+/** Poll target for the editor's render strip. */
+export async function getRenderJobs(projectId: string) {
+  const jobs = await prisma.renderJob.findMany({
+    where: { projectId, ownerId: FOUNDER_OWNER_ID },
+    orderBy: { createdAt: "desc" },
+    take: 5,
+  });
+  const assetIds = jobs.map((j) => j.outputAssetId).filter((x): x is string => !!x);
+  const assets = await prisma.asset.findMany({ where: { id: { in: assetIds } } });
+  const byId = new Map(assets.map((a) => [a.id, a]));
+  return jobs.map((j) => {
+    const asset = j.outputAssetId ? byId.get(j.outputAssetId) : null;
+    return {
+      id: j.id,
+      status: j.status,
+      progress: j.progress,
+      error: j.error,
+      createdAt: j.createdAt.toISOString(),
+      url: asset ? storageKeyToSrc(storageKey(asset.ownerId, asset.contentHash, asset.ext)) : null,
+    };
+  });
 }
 
 /** Hide from candidate zone. The row is a tombstone; the sweeper handles blobs. */

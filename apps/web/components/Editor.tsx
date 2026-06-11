@@ -3,21 +3,18 @@
 import { useEffect, useRef, useState } from "react";
 import Link from "next/link";
 import { artlioEdit, type ArtlioEdit } from "@artlio/core";
+import { getRenderJobs, saveProjectEdit, startRender } from "@/lib/actions";
 import { Button, Chip, EmptyHero, MonoLabel } from "./ds";
 
 /**
- * Phase ② (mock + UI): Shotstack Studio embedded as the assembly-cut editor.
- * The Studio session IS the UI; our contract (artlioEdit) polices everything
- * read back from it — getEdit() snapshots are parsed canonically before any
- * persistence, and a debounced validator flags out-of-contract edits as you
- * work (codex review: don't let visible state silently diverge).
+ * Assembly-cut editor: Shotstack Studio session policed by the artlioEdit
+ * contract — getEdit() snapshots are parsed canonically before any
+ * persistence, and a debounced validator flags out-of-contract edits live.
  *
- * MOCK persistence: localStorage per project. Dies when the phase-③ tracer
- * lands (RenderJob row + server persistence replace it). Export is therefore
- * "Validate cut" here — the real Export button ships WITH the pipeline, so no
- * teaser chrome.
+ * Phase-③ tracer: persistence is the SERVER (Project.editJson via
+ * saveProjectEdit; the phase-② localStorage mock is dead per process rule 1),
+ * and Export is real — RenderJob row → pg-boss → worker ffmpeg → asset.
  */
-const editKey = (projectId: string) => `artlio:edit:${projectId}`;
 
 interface StudioEdit {
   getEdit: () => unknown;
@@ -30,21 +27,26 @@ type StudioHandles = {
 
 export function Editor({
   projectId,
-  initialEdit,
+  boardEdit,
+  savedEdit,
   attachedCount,
   onDirtyChange,
 }: {
   projectId: string;
-  initialEdit: ArtlioEdit | null;
+  /** rebuilt from the shot board every load */
+  boardEdit: ArtlioEdit | null;
+  /** the persisted working cut (Project.editJson), wins when present */
+  savedEdit: ArtlioEdit | null;
   attachedCount: number;
   onDirtyChange: (dirty: boolean) => void;
 }) {
   const studioRef = useRef<HTMLDivElement>(null);
   const timelineRef = useRef<HTMLDivElement>(null);
   const handles = useRef<StudioHandles | null>(null);
+  const initialEdit = savedEdit ?? boardEdit;
   const [status, setStatus] = useState<"loading" | "ready" | "failed">("loading");
   const [dirty, setDirtyState] = useState(false);
-  const [loadedFrom, setLoadedFrom] = useState<"board" | "saved" | "quarantined">("board");
+  const loadedFrom: "board" | "saved" = savedEdit ? "saved" : "board";
   const [notice, setNotice] = useState<{ tone: "ok" | "warn"; text: string } | null>(null);
   const [liveIssue, setLiveIssue] = useState<string | null>(null);
   const setDirty = (d: boolean) => {
@@ -77,24 +79,7 @@ export function Editor({
         );
         if (disposed) return;
 
-        // saved local cut wins over the shot-board mock (MOCK: localStorage).
-        // A saved cut that no longer parses is QUARANTINED, not deleted —
-        // contract evolution must not silently eat work (codex review).
-        let template: unknown = initialEdit;
-        let from: typeof loadedFrom = "board";
-        const raw = localStorage.getItem(editKey(projectId));
-        if (raw) {
-          try {
-            template = artlioEdit.parse(JSON.parse(raw));
-            from = "saved";
-          } catch {
-            localStorage.setItem(`${editKey(projectId)}:quarantine-${Date.now()}`, raw);
-            localStorage.removeItem(editKey(projectId));
-            from = "quarantined";
-          }
-        }
-
-        const edit = new Edit(template as never);
+        const edit = new Edit(initialEdit as never);
         const canvas = new Canvas(edit);
         partials.push(canvas);
         const ui = UIController.create(edit, canvas);
@@ -139,7 +124,6 @@ export function Editor({
         });
 
         handles.current = { edit: edit as unknown as StudioEdit, dispose: teardown };
-        setLoadedFrom(from);
         setStatus("ready");
       } catch (e) {
         console.error("[editor] studio failed to load", e);
@@ -171,34 +155,94 @@ export function Editor({
     return { edit: result.data };
   }
 
-  function saveCut() {
+  const [busy, setBusy] = useState(false);
+
+  async function saveCut(): Promise<boolean> {
     const { edit, error } = snapshot();
-    if (error) return setNotice({ tone: "warn", text: `Out of contract: ${error}` });
-    localStorage.setItem(editKey(projectId), JSON.stringify(edit)); // MOCK persistence
-    setDirty(false);
-    setLoadedFrom("saved");
-    setNotice({ tone: "ok", text: "Cut saved locally." });
-    setTimeout(() => setNotice(null), 2200);
+    if (error) {
+      setNotice({ tone: "warn", text: `Out of contract: ${error}` });
+      return false;
+    }
+    setBusy(true);
+    try {
+      const res = await saveProjectEdit(projectId, JSON.stringify(edit));
+      if (res && "error" in res && res.error) {
+        setNotice({ tone: "warn", text: res.error });
+        return false;
+      }
+      setDirty(false);
+      setNotice({ tone: "ok", text: "Cut saved." });
+      setTimeout(() => setNotice(null), 2200);
+      return true;
+    } catch {
+      setNotice({ tone: "warn", text: "Save failed — check your connection and retry." });
+      return false;
+    } finally {
+      setBusy(false);
+    }
   }
 
-  function validateCut() {
+  async function exportCut() {
+    // export always renders what is SAVED — save first if dirty
+    if (dirty) {
+      const ok = await saveCut();
+      if (!ok) return;
+    }
     const { edit, error } = snapshot();
     if (error) return setNotice({ tone: "warn", text: `Out of contract: ${error}` });
-    const secs = Math.round(
-      edit!.timeline.tracks.flatMap((t) => t.clips).reduce((m, c) => Math.max(m, c.start + c.length), 0),
-    );
-    setNotice({
-      tone: "ok",
-      text: `Valid cut — ${secs}s, ready for the render pipeline (ships next slice).`,
-    });
-    setTimeout(() => setNotice(null), 3500);
+    setBusy(true);
+    try {
+      const res = await startRender(projectId, JSON.stringify(edit));
+      if (res && "error" in res && res.error) setNotice({ tone: "warn", text: res.error });
+      else {
+        setNotice({ tone: "ok", text: "Render queued — progress below." });
+        setTimeout(() => setNotice(null), 2600);
+        setJobsTick((t) => t + 1); // poll immediately
+      }
+    } catch {
+      setNotice({ tone: "warn", text: "Export failed — check your connection and retry." });
+    } finally {
+      setBusy(false);
+    }
   }
 
-  function resetToBoard() {
-    if (!confirm("Discard the locally saved cut and rebuild from the shot board?")) return;
-    localStorage.removeItem(editKey(projectId));
-    location.reload(); // simplest correct re-init for the mock phase
+  async function resetToBoard() {
+    if (!boardEdit) return;
+    if (!confirm("Replace the saved cut with a fresh one built from the shot board?")) return;
+    setBusy(true);
+    try {
+      const res = await saveProjectEdit(projectId, JSON.stringify(boardEdit));
+      if (res && "error" in res && res.error) setNotice({ tone: "warn", text: res.error });
+      else location.reload();
+    } finally {
+      setBusy(false);
+    }
   }
+
+  // ---- render jobs strip (polls while anything is active) ----
+  type JobRow = Awaited<ReturnType<typeof getRenderJobs>>[number];
+  const [jobs, setJobs] = useState<JobRow[]>([]);
+  const [jobsTick, setJobsTick] = useState(0);
+  useEffect(() => {
+    let stop = false;
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    const poll = async () => {
+      try {
+        const rows = await getRenderJobs(projectId);
+        if (stop) return;
+        setJobs(rows);
+        const active = rows.some((r) => r.status === "QUEUED" || r.status === "RENDERING");
+        timer = setTimeout(poll, active ? 2500 : 15000);
+      } catch {
+        if (!stop) timer = setTimeout(poll, 10000);
+      }
+    };
+    poll();
+    return () => {
+      stop = true;
+      clearTimeout(timer);
+    };
+  }, [projectId, jobsTick]);
 
   if (!initialEdit) {
     return (
@@ -226,9 +270,10 @@ export function Editor({
             ? "saved cut loaded"
             : `${attachedCount} clip${attachedCount === 1 ? "" : "s"} from the board`}
         </span>
-        {loadedFrom === "saved" && (
+        {loadedFrom === "saved" && boardEdit && (
           <button
             onClick={resetToBoard}
+            disabled={busy}
             style={{
               font: "var(--text-caption)", color: "var(--fg-2)", background: "none",
               border: "none", cursor: "pointer", textDecoration: "underline", textUnderlineOffset: 3,
@@ -243,11 +288,6 @@ export function Editor({
             Out of contract: {liveIssue}
           </span>
         )}
-        {loadedFrom === "quarantined" && !notice && (
-          <span role="status" style={{ font: "var(--text-small)", color: "var(--warning)" }}>
-            A saved cut no longer matched the contract — it was quarantined, this cut is rebuilt from the board.
-          </span>
-        )}
         {notice && (
           <span
             role="status"
@@ -260,11 +300,11 @@ export function Editor({
         <Chip mono interactive={false} title="The render target. Phase 2 adds your own templates and APIs.">
           Target · worker ffmpeg
         </Chip>
-        <Button variant="glass" size="sm" onClick={validateCut} disabled={status !== "ready"}>
-          Validate cut
+        <Button variant="glass" size="sm" onClick={saveCut} disabled={status !== "ready" || !dirty || busy}>
+          {busy ? "Working…" : "Save cut"}
         </Button>
-        <Button size="sm" onClick={saveCut} disabled={status !== "ready" || !dirty}>
-          Save cut
+        <Button size="sm" onClick={exportCut} disabled={status !== "ready" || busy || !!liveIssue}>
+          Export MP4
         </Button>
       </div>
 
@@ -293,6 +333,39 @@ export function Editor({
               border: "1px solid var(--line-2)",
             }}
           />
+          {jobs.length > 0 && (
+            <div style={{ display: "flex", flexDirection: "column", gap: 6, marginTop: 12 }} aria-label="Renders">
+              <MonoLabel>Renders</MonoLabel>
+              {jobs.map((j) => (
+                <div key={j.id} className="glass-chip" style={{ display: "flex", alignItems: "center", gap: 10, borderRadius: "var(--radius-md)", padding: "8px 12px" }}>
+                  <span className="mono-label" style={{ color: j.status === "FAILED" ? "var(--danger)" : j.status === "DONE" ? "var(--positive)" : "var(--fg-2)" }}>
+                    {j.status}
+                  </span>
+                  {(j.status === "QUEUED" || j.status === "RENDERING") && (
+                    <span style={{ flex: 1, height: 4, borderRadius: 99, background: "rgba(255,255,255,.08)", overflow: "hidden" }} aria-label={`progress ${j.progress}%`}>
+                      <span style={{ display: "block", height: "100%", width: `${j.progress}%`, background: "linear-gradient(90deg, rgba(255,255,255,.55), #fff)", transition: "width .4s var(--ease-out)" }} />
+                    </span>
+                  )}
+                  {j.status === "FAILED" && (
+                    <span style={{ flex: 1, font: "var(--text-small)", color: "var(--danger)", whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }} title={j.error}>
+                      {j.error || "render failed"} — fix the cut and export again
+                    </span>
+                  )}
+                  {j.status === "DONE" && j.url && (
+                    <>
+                      <span style={{ flex: 1 }} />
+                      <a href={j.url} download style={{ font: "var(--text-small)", color: "var(--fg-1)", textDecoration: "underline", textUnderlineOffset: 3 }}>
+                        Download MP4
+                      </a>
+                    </>
+                  )}
+                  <span style={{ font: "var(--text-mono-meta)", color: "var(--fg-4)" }} suppressHydrationWarning>
+                    {new Date(j.createdAt).toLocaleTimeString("en-US", { hour: "2-digit", minute: "2-digit" })}
+                  </span>
+                </div>
+              ))}
+            </div>
+          )}
         </>
       )}
     </div>

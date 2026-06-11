@@ -11,12 +11,14 @@ import { Editor } from "./Editor";
 export function EditorShell({
   project,
   projects,
-  initialEdit,
+  boardEdit,
+  savedEdit,
   attachedCount,
 }: {
   project: ProjectDTO;
   projects: ProjectDTO[];
-  initialEdit: ArtlioEdit | null;
+  boardEdit: ArtlioEdit | null;
+  savedEdit: ArtlioEdit | null;
   attachedCount: number;
 }) {
   const [dirty, setDirty] = useState(false);
@@ -34,7 +36,8 @@ export function EditorShell({
       <div className="flex flex-col flex-1 min-h-0 max-lg:pointer-events-none">
         <Editor
           projectId={project.id}
-          initialEdit={initialEdit}
+          boardEdit={boardEdit}
+          savedEdit={savedEdit}
           attachedCount={attachedCount}
           onDirtyChange={setDirty}
         />

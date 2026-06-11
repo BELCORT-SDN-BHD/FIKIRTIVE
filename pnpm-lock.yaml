@@ -50,6 +50,9 @@ importers:
       next-auth:
         specifier: 5.0.0-beta.31
         version: 5.0.0-beta.31(next@16.2.9(@babel/core@7.29.7)(@playwright/test@1.60.0)(react-dom@19.2.4(react@19.2.4))(react@19.2.4))(react@19.2.4)
+      pg-boss:
+        specifier: 12.18.2
+        version: 12.18.2
       react:
         specifier: 19.2.4
         version: 19.2.4

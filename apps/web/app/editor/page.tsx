@@ -1,15 +1,15 @@
 import { ensureDefaultProject, getProjects, getShots } from "@/lib/data";
 import { EditorShell } from "@/components/EditorShell";
 import type { ArtlioEdit } from "@artlio/core";
-import { storageKeyToSrc, storageKey } from "@artlio/core";
+import { artlioEdit, storageKeyToSrc, storageKey } from "@artlio/core";
 
 export const dynamic = "force-dynamic";
 
 export const metadata = { title: "Editor · Artlio" };
 
-/** MOCK (phase ②, dies with the phase-③ tracer): initial cut = every shot's
- *  latest attached render in board order. Real durations arrive with ffprobe
- *  in the worker; until then videos default 5s, images 3s. */
+/** Initial cut = every shot's latest attached render in board order.
+ *  MOCK durations (videos 5s, images 3s) until worker ffprobe lands in the
+ *  meat phase — the only mock left standing, scoped and labeled. */
 const MOCK_VIDEO_SECONDS = 5;
 const MOCK_IMAGE_SECONDS = 3;
 
@@ -48,13 +48,17 @@ export default async function EditorPage({
     cursor += length;
   }
 
-  const initialEdit: ArtlioEdit | null =
+  const boardEdit: ArtlioEdit | null =
     clips.length > 0
       ? {
           timeline: { background: "#000000", tracks: [{ clips }] },
           output: { format: "mp4", resolution: "1080", aspectRatio: "16:9", fps: 25 },
         }
       : null;
+
+  // the persisted working cut wins; stored canonical, re-checked anyway
+  const savedParse = project.editJson ? artlioEdit.safeParse(project.editJson) : null;
+  const savedEdit = savedParse?.success ? savedParse.data : null;
 
   return (
     <div className="flex flex-col h-dvh">
@@ -64,7 +68,8 @@ export default async function EditorPage({
       <EditorShell
         project={{ id: project.id, name: project.name }}
         projects={projects.map((x) => ({ id: x.id, name: x.name }))}
-        initialEdit={initialEdit}
+        boardEdit={boardEdit}
+        savedEdit={savedEdit}
         attachedCount={clips.length}
       />
     </div>
