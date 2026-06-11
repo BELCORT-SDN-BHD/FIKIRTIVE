@@ -44,6 +44,30 @@ export const IcFilm = mkIcon(<>
   <path d="M3 16.5h4" /><path d="M17 7.5h4" /><path d="M17 16.5h4" />
 </>);
 
+/* redesign-shell nav icons (Artlio Studio design, paths from the prototype) */
+export const IcSparkle = mkIcon(<>
+  <path d="M9.937 15.5A2 2 0 0 0 8.5 14.063l-6.135-1.582a.5.5 0 0 1 0-.962L8.5 9.936A2 2 0 0 0 9.937 8.5l1.582-6.135a.5.5 0 0 1 .963 0L14.063 8.5A2 2 0 0 0 15.5 9.937l6.135 1.581a.5.5 0 0 1 0 .964L15.5 14.063a2 2 0 0 0-1.437 1.437l-1.582 6.135a.5.5 0 0 1-.963 0z" />
+  <path d="M20 3v4" /><path d="M22 5h-4" />
+</>);
+export const IcCanvas = mkIcon(<>
+  <path d="M22 6H2" /><path d="M22 18H2" /><path d="M6 2v20" /><path d="M18 2v20" />
+</>);
+export const IcStoryboard = mkIcon(<>
+  <path d="M20.2 6 3 11l-.9-2.4c-.3-1.1.3-2.2 1.3-2.5l13.5-4c1.1-.3 2.2.3 2.5 1.3Z" />
+  <path d="m6.2 5.3 3.1 3.9" /><path d="m12.4 3.4 3.1 4" />
+  <path d="M3 11h18v8a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2Z" />
+</>);
+export const IcAssets = mkIcon(<>
+  <path d="m12 2 9 5-9 5-9-5 9-5Z" /><path d="m3 12 9 5 9-5" /><path d="m3 17 9 5 9-5" />
+</>);
+export const IcPlans = mkIcon(<>
+  <rect x="2" y="5" width="20" height="14" rx="2" /><path d="M2 10h20" />
+</>);
+export const IcUndo = mkIcon(<><path d="M9 14 4 9l5-5" /><path d="M4 9h11a6 6 0 0 1 0 12h-3" /></>);
+export const IcRedo = mkIcon(<><path d="m15 14 5-5-5-5" /><path d="M20 9H9a6 6 0 0 0 0 12h3" /></>);
+export const IcExport = mkIcon(<><path d="M12 3v12" /><path d="m7 8 5-5 5 5" /><path d="M5 21h14a2 2 0 0 0 2-2v-4" /></>);
+export const IcUsers = mkIcon(<><path d="M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2" /><circle cx="9" cy="7" r="4" /><path d="M22 21v-2a4 4 0 0 0-3-3.87" /><path d="M16 3.13a4 4 0 0 1 0 7.75" /></>);
+
 /* ---------------- primitives ---------------- */
 export function MonoLabel({ children, style }: { children: React.ReactNode; style?: React.CSSProperties }) {
   return <span className="mono-label" style={style}>{children}</span>;
