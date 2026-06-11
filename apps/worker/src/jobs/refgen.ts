@@ -5,11 +5,12 @@
  *
  * This is a PAID call (fal in prod), so the money-safety invariants matter:
  *
- *  - exactly-once spend (codex P1): the provider runs only when the job has
- *    no recorded outputs. outputAssetIds is written BEFORE attaching, so a
- *    crash during attach resumes from stored assets instead of re-calling
- *    fal. The only re-spend window is a crash between fal's return and that
- *    write — bounded by the retry limit, worst case one extra generation.
+ *  - exactly-once spend (codex review): an atomic QUEUED→GENERATING claim
+ *    lets only one delivery reach the provider; outputAssetIds is written
+ *    BEFORE attaching so a crash during attach resumes from stored assets.
+ *    A failure AFTER fal bills (res.ok, then parse/download/db) is terminal —
+ *    the adapter marks it `charged` and the catch refuses to retry-and-re-
+ *    charge; a lost claim (concurrent or crashed delivery) fails closed.
  *  - validate before spend (codex P1): the entity is re-loaded owned + live
  *    before the provider is called; a deleted/forged target terminal-fails
  *    without spending.
@@ -44,10 +45,16 @@ export async function handleRefGen(data: RefGenJobData, retryCount: number): Pro
     console.error(`[refgen] job ${data.refGenJobId} missing — dropping`);
     return;
   }
-  if (job.status === "DONE") {
-    console.log(`[refgen] ${job.id} already DONE — skipping`);
+  // DONE and FAILED are terminal: a redelivered or stale queue message must
+  // never reprocess (and possibly re-spend on) a settled job.
+  if (job.status === "DONE" || job.status === "FAILED") {
+    console.log(`[refgen] ${job.id} already ${job.status} — skipping`);
     return;
   }
+
+  // flips true the instant the paid provider call returns — any failure AFTER
+  // this point must terminal-fail, never retry (a retry would re-spend).
+  let spent = false;
 
   try {
     // re-validate the target before any spend (codex P1): a job whose entity
@@ -76,10 +83,24 @@ export async function handleRefGen(data: RefGenJobData, retryCount: number): Pro
       return;
     }
 
-    await prisma.refGenJob.update({
-      where: { id: job.id },
+    // Atomic spend claim: QUEUED → GENERATING in a single conditional update,
+    // so concurrent or duplicate deliveries can never both reach the provider.
+    // A lost claim means another delivery owns the job, or a prior attempt
+    // reached GENERATING and died (a hard crash — a *caught* provider error
+    // resets status→QUEUED, which re-claims safely). It MAY mean a paid call
+    // already happened, so fail the stuck GENERATING row closed (never
+    // clobbering a winner's DONE) rather than risk a double charge.
+    const claim = await prisma.refGenJob.updateMany({
+      where: { id: job.id, status: "QUEUED" },
       data: { status: "GENERATING", startedAt: new Date(), attempts: { increment: 1 } },
     });
+    if (claim.count === 0) {
+      await prisma.refGenJob.updateMany({
+        where: { id: job.id, status: "GENERATING" },
+        data: { status: "FAILED", error: "duplicate delivery or interrupted after a possible paid call — not retrying, to avoid a double charge", finishedAt: new Date() },
+      });
+      return;
+    }
 
     // resolve conditioning from the entity's existing refs → presigned GETs
     const refs = await prisma.referenceImage.findMany({
@@ -104,13 +125,14 @@ export async function handleRefGen(data: RefGenJobData, retryCount: number): Pro
       );
     }
 
-    // THE paid call — happens exactly once per job (guarded above)
+    // THE paid call — happens exactly once per job (claimed above)
     const images = await provider.generate({
       prompt: job.prompt,
       inputImageUrls,
       count: job.count,
       model: job.model as RefGenModel,
     });
+    spent = true; // the paid call has returned — past here, a failure must not retry
 
     // store every output FIRST and record them on the job — this is the
     // commit point past which a retry resumes instead of re-spending
@@ -145,9 +167,13 @@ export async function handleRefGen(data: RefGenJobData, retryCount: number): Pro
     console.log(`[refgen] ${job.id}: DONE → ${outputAssetIds.length} images via ${provider.name}`);
   } catch (err) {
     const message = err instanceof Error ? err.message.slice(0, 500) : String(err).slice(0, 500);
-    // terminal only when retries are exhausted (same delivery math as render:
-    // limit 2 → deliveries at retryCount 0,1,2; `>=` marks terminal once)
-    const final = retryCount >= REFGEN_RETRY_LIMIT;
+    // a failure after the paid call is terminal — retrying would re-spend.
+    // `spent` covers post-provider failures here; `charged` covers a failure
+    // INSIDE the adapter after fal already billed (it ran the model, then the
+    // result parse/download threw). Only a genuinely pre-charge throw retries,
+    // up to the budget (limit 2 → deliveries at retryCount 0,1,2; `>=` once).
+    const charged = typeof err === "object" && err !== null && (err as { charged?: unknown }).charged === true;
+    const final = spent || charged || retryCount >= REFGEN_RETRY_LIMIT;
     console.error(`[refgen] ${job.id}: ${final ? "FAILED" : "retrying"} — ${message}`);
     await prisma.refGenJob.update({
       where: { id: job.id },
