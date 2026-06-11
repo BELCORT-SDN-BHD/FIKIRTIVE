@@ -38,6 +38,11 @@ export const IcCheck = mkIcon(<path d="M20 6 9 17l-5-5" />);
 export const IcChevronDown = mkIcon(<path d="m6 9 6 6 6-6" />);
 export const IcX = mkIcon(<><path d="M18 6 6 18" /><path d="m6 6 12 12" /></>);
 export const IcUser = mkIcon(<><circle cx="12" cy="8" r="5" /><path d="M20 21a8 8 0 0 0-16 0" /></>);
+export const IcFilm = mkIcon(<>
+  <rect x="3" y="3" width="18" height="18" rx="2" />
+  <path d="M7 3v18" /><path d="M17 3v18" /><path d="M3 7.5h4" /><path d="M3 12h18" />
+  <path d="M3 16.5h4" /><path d="M17 7.5h4" /><path d="M17 16.5h4" />
+</>);
 
 /* ---------------- primitives ---------------- */
 export function MonoLabel({ children, style }: { children: React.ReactNode; style?: React.CSSProperties }) {

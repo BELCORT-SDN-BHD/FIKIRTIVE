@@ -5,7 +5,7 @@ import { useRouter } from "next/navigation";
 import { useEffect, useState, useTransition } from "react";
 import type { ProjectDTO } from "@/lib/types";
 import { createProject } from "@/lib/actions";
-import { Badge, Dialog, IcAt, IcClapper, IcFolder, Input, PopMenu, Wordmark, Button } from "./ds";
+import { Badge, Dialog, IcAt, IcClapper, IcFilm, IcFolder, Input, PopMenu, Wordmark, Button } from "./ds";
 
 const LAST_PROJECT_KEY = "artlio:lastProject";
 
@@ -23,7 +23,7 @@ export function AppShell({
   topbar,
   children,
 }: {
-  view: "workbench" | "library";
+  view: "workbench" | "library" | "editor";
   title: string;
   confirmLeave?: () => boolean;
   project?: ProjectDTO;
@@ -109,6 +109,12 @@ export function AppShell({
             <IcClapper size={17} />
             <span className="lbl">Workbench</span>
           </Link>
+          <Link href={project ? `/editor?p=${project.id}` : "/editor"} onClick={guard}
+            className={`navitem${view === "editor" ? " active" : ""}`}
+            aria-current={view === "editor" ? "page" : undefined}>
+            <IcFilm size={17} />
+            <span className="lbl">Editor</span>
+          </Link>
         </div>
         <div className="nav-grouplabel">
           <span className="mono-label">Workspace</span>
@@ -150,6 +156,11 @@ export function AppShell({
             className={`text-sm px-2 py-1 rounded-[var(--radius-sm)] ${view === "workbench" ? "text-ink" : "text-dim"}`}
             aria-current={view === "workbench" ? "page" : undefined}>
             Workbench
+          </Link>
+          <Link href="/editor" onClick={guard}
+            className={`text-sm px-2 py-1 rounded-[var(--radius-sm)] ${view === "editor" ? "text-ink" : "text-dim"}`}
+            aria-current={view === "editor" ? "page" : undefined}>
+            Editor
           </Link>
           <Link href="/library" onClick={guard}
             className={`text-sm px-2 py-1 rounded-[var(--radius-sm)] ${view === "library" ? "text-ink" : "text-dim"}`}
