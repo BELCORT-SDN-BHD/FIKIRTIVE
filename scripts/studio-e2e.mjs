@@ -27,7 +27,7 @@ const surfaces = [
   { nav: "Canvas", expect: "Loose ideas live here" },
   { nav: "Storyboard", expect: "Start with your story" },
   { nav: "Video editor", expect: "Let’s start editing" },
-  { nav: "Elements", expect: "Lock a character or object once" },
+  { nav: "Elements", expect: "Lock a character" },
   { nav: "Assets", expect: "Your library is empty" },
 ];
 let pass = 0;

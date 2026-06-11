@@ -55,9 +55,14 @@ function useAction() {
 export function Library({
   entities,
   initialSelectedId,
+  routeSync = true,
 }: {
   entities: EntityDTO[];
   initialSelectedId: string | null;
+  /** Sync selection to the /library URL. Off when embedded in the Studio
+   *  shell (the route is /studio there — a /library replaceState would make a
+   *  post-action revalidation navigate away). */
+  routeSync?: boolean;
 }) {
   const [selectedId, setSelectedId] = useState<string | null>(initialSelectedId);
   const [creating, setCreating] = useState(false);
@@ -67,6 +72,7 @@ export function Library({
 
   function select(id: string | null) {
     setSelectedId(id);
+    if (!routeSync) return;
     // keep the URL shareable without a server roundtrip
     window.history.replaceState(null, "", id ? `/library?e=${id}` : "/library");
   }

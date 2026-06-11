@@ -1,10 +1,11 @@
 "use client";
 /**
  * Studio prototype root (redesign-shell branch). Holds the active-surface
- * state and renders the shell + the active surface. Mock-first — engine wiring
- * comes after the shell is signed off.
+ * state and renders the shell + the active surface. Elements is now wired to
+ * real data (the existing Library engine); the rest are mock until wired.
  */
 import { useState } from "react";
+import type { EntityDTO } from "@/lib/types";
 import { StudioShell, type StudioView } from "./StudioShell";
 import { GenSpace } from "./GenSpace";
 import { Canvas } from "./Canvas";
@@ -26,22 +27,24 @@ function Placeholder({ label }: { label: string }) {
   );
 }
 
-const SURFACES: Record<StudioView, React.ReactNode> = {
-  genspace: <GenSpace />,
-  canvas: <Canvas />,
-  storyboard: <Storyboard />,
-  editor: <VideoEditor />,
-  elements: <Elements />,
-  assets: <Assets />,
-  plans: <Placeholder label="Plans" />,
-  account: <Placeholder label="Account" />,
-};
-
-export function Studio() {
+export function Studio({ entities }: { entities: EntityDTO[] }) {
   const [view, setView] = useState<StudioView>("genspace");
+
+  function surface() {
+    switch (view) {
+      case "genspace": return <GenSpace />;
+      case "canvas": return <Canvas />;
+      case "storyboard": return <Storyboard />;
+      case "editor": return <VideoEditor />;
+      case "elements": return <Elements entities={entities} />;
+      case "assets": return <Assets />;
+      default: return <Placeholder label={view[0].toUpperCase() + view.slice(1)} />;
+    }
+  }
+
   return (
     <StudioShell view={view} onNavigate={setView}>
-      {SURFACES[view]}
+      {surface()}
     </StudioShell>
   );
 }
