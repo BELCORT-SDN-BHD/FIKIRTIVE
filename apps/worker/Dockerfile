@@ -10,14 +10,17 @@ FROM base AS build
 WORKDIR /repo
 COPY pnpm-workspace.yaml package.json pnpm-lock.yaml ./
 COPY packages/core/package.json packages/core/
+COPY packages/storage/package.json packages/storage/
 COPY packages/db/package.json packages/db/
 COPY apps/worker/package.json apps/worker/
 RUN pnpm install --frozen-lockfile --filter @artlio/worker...
 COPY tsconfig.base.json ./
 COPY packages/core packages/core
+COPY packages/storage packages/storage
 COPY packages/db packages/db
 COPY apps/worker apps/worker
 RUN pnpm --filter @artlio/core build \
+  && pnpm --filter @artlio/storage build \
   && pnpm --filter @artlio/db build \
   && pnpm --filter @artlio/worker build
 
