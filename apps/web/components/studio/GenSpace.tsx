@@ -14,6 +14,7 @@ import { Button, MonoLabel, IcPlus, IcImage, IcChevronDown, IcRetry, IcX } from 
 import { GEN_PRICE_USD_PER_IMAGE, GEN_PRICE_USD_PER_VIDEO } from "@artlio/core";
 import { startGen, getGenJob } from "@/lib/gen-actions";
 import { uploadReference } from "@/lib/actions";
+import { CAMERA_PRESETS } from "./camera";
 
 const Caret = () => <IcChevronDown size={13} style={{ marginLeft: 2, color: "var(--fg-3)" }} />;
 const isVideoUrl = (u: string) => /\.(mp4|webm|mov|mkv)(\?|$)/i.test(u);
@@ -28,6 +29,7 @@ export function GenSpace({ projectId }: { projectId: string | null }) {
   const [kind, setKind] = useState<"image" | "video">("image");
   const [prompt, setPrompt] = useState("a cinematic portrait, soft window light");
   const [count] = useState(1);
+  const [camera, setCamera] = useState(""); // camera-motion preset (video)
   const isVideo = kind === "video";
   const [results, setResults] = useState<Result[]>([]);
   const [busy, setBusy] = useState(false);
@@ -64,12 +66,13 @@ export function GenSpace({ projectId }: { projectId: string | null }) {
   function generate() {
     const text = prompt.trim();
     if (!text || !projectId || busy) return;
+    const fullPrompt = isVideo && camera ? `${text}, ${camera}` : text; // camera motion → prompt
     setError(null);
     setBusy(true);
     const placeholder: Result = { prompt: text, meta: `${isVideo ? "Kling" : "Seedream"} · generating…`, urls: [], pending: true };
     setResults((r) => [placeholder, ...r]);
     (async () => {
-      const res = await startGen({ projectId, prompt: text, entityIds: [], count: isVideo ? 1 : count, kind, model: isVideo ? "kling" : "seedream", sourceGenerationId: isVideo && refImg ? refImg.id : undefined, tailGenerationId: isVideo && refImg && tailImg ? tailImg.id : undefined });
+      const res = await startGen({ projectId, prompt: fullPrompt, entityIds: [], count: isVideo ? 1 : count, kind, model: isVideo ? "kling" : "seedream", sourceGenerationId: isVideo && refImg ? refImg.id : undefined, tailGenerationId: isVideo && refImg && tailImg ? tailImg.id : undefined });
       if ("error" in res) { setError(res.error); setBusy(false); setResults((r) => r.filter((x) => x !== placeholder)); return; }
       pollTimer.current = setInterval(async () => {
         const job = await getGenJob(res.id);
@@ -212,6 +215,12 @@ export function GenSpace({ projectId }: { projectId: string | null }) {
               <button role="tab" aria-selected={isVideo} className={`al-seg-item${isVideo ? " al-seg-item-active" : ""}`} onClick={() => setKind("video")}>Video</button>
             </div>
             <button className="al-chip al-chip-mono">{isVideo ? "Kling" : "Seedream"}<Caret /></button>
+            {isVideo && (
+              <select aria-label="Camera motion" value={camera} onChange={(e) => setCamera(e.target.value)}
+                style={{ background: "var(--glass-1)", border: "1px solid var(--line-2)", borderRadius: 999, color: camera ? "var(--fg-1)" : "var(--fg-2)", font: "var(--text-mono-meta)", padding: "5px 9px", cursor: "pointer", outline: "none" }}>
+                {CAMERA_PRESETS.map(([val, label]) => <option key={val} value={val}>{label}</option>)}
+              </select>
+            )}
             <button className="al-chip al-chip-mono">1024px</button>
             <button className="al-chip al-chip-mono">16:9</button>
             <span className="al-promptbar-spacer" />

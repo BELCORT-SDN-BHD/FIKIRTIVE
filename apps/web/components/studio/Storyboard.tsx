@@ -12,6 +12,7 @@ import { Button, MonoLabel, IcPlus, IcRetry, IcSparkle, IcPlay, IcX, IcChevronDo
 import { addShot, setShotPromptText, deleteShot, moveShot, addScene } from "@/lib/studio-actions";
 import { startGen, getGenJob } from "@/lib/gen-actions";
 import { GEN_PRICE_USD_PER_IMAGE, GEN_PRICE_USD_PER_VIDEO } from "@artlio/core";
+import { CAMERA_PRESETS } from "./camera";
 
 /** cost hint shown before a spend (small figures keep 3 decimals so $0.035
  *  isn't rounded up to $0.04). */
@@ -30,6 +31,7 @@ export type StudioShot = {
 function ShotCard({ projectId, shot, index, total }: { projectId: string; shot: StudioShot; index: number; total: number }) {
   const router = useRouter();
   const [prompt, setPrompt] = useState(shot.prompt);
+  const [camera, setCamera] = useState(""); // camera-motion preset for Animate
   const [busy, setBusy] = useState(false);
   const [acting, setActing] = useState(false); // delete / reorder in flight
   const [error, setError] = useState<string | null>(null);
@@ -62,7 +64,8 @@ function ShotCard({ projectId, shot, index, total }: { projectId: string; shot: 
     setBusy(true);
     (async () => {
       await setShotPromptText(shot.id, text, shot.entityIds);
-      const res = await startGen({ projectId, shotId: shot.id, prompt: text, entityIds: shot.entityIds, count: 1, kind, model: kind === "video" ? "kling" : "seedream" });
+      const fullPrompt = kind === "video" && camera ? `${text}, ${camera}` : text; // camera motion → prompt
+      const res = await startGen({ projectId, shotId: shot.id, prompt: fullPrompt, entityIds: shot.entityIds, count: 1, kind, model: kind === "video" ? "kling" : "seedream" });
       if ("error" in res) { setError(res.error); setBusy(false); return; }
       poll.current = setInterval(async () => {
         const job = await getGenJob(res.id);
@@ -112,6 +115,12 @@ function ShotCard({ projectId, shot, index, total }: { projectId: string; shot: 
             </Button>
           )}
         </div>
+        {(shot.imageUrl || shot.videoUrl) && (
+          <select aria-label="Camera motion" value={camera} onChange={(e) => setCamera(e.target.value)} disabled={busy || acting}
+            style={{ width: "100%", background: "rgba(255,255,255,.05)", border: "1px solid var(--line-2)", borderRadius: "var(--radius-sm)", padding: "5px 8px", color: camera ? "var(--fg-1)" : "var(--fg-3)", font: "var(--text-caption)", cursor: "pointer", outline: "none" }}>
+            {CAMERA_PRESETS.map(([val, label]) => <option key={val} value={val}>{label}</option>)}
+          </select>
+        )}
         <p style={{ font: "var(--text-caption)", color: "var(--fg-3)", margin: 0 }}>
           {shot.imageUrl || shot.videoUrl ? `Image ${usd(GEN_PRICE_USD_PER_IMAGE)} · Animate ${usd(GEN_PRICE_USD_PER_VIDEO)}` : `Generate ${usd(GEN_PRICE_USD_PER_IMAGE)}`}
         </p>
