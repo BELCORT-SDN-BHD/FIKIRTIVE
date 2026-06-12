@@ -142,7 +142,7 @@ const VIDEO_CFG: Record<GenVideoModel, VideoCfg> = {
   },
   "ltx-2": {
     t2v: "fal-ai/ltx-2/text-to-video", i2v: "fal-ai/ltx-2/image-to-video",
-    imageParam: "image_url", audio: true, duration: "6",
+    imageParam: "image_url", audio: true, duration: 6, // LTX wants an integer (6/8/10), not "6"
   },
   "kling-2.6": {
     t2v: "fal-ai/kling-video/v2.6/pro/text-to-video",
