@@ -9,7 +9,8 @@
  * bytes; the worker stores them content-addressed (same as any asset).
  */
 import { deflateSync, crc32 } from "node:zlib";
-import type { GenerationProvider, GenerationRequest, GeneratedImage, VideoRequest, GeneratedVideo } from "@artlio/core";
+import type { GenerationProvider, GenerationRequest, GeneratedImage, VideoRequest, GeneratedVideo, CoworkProvider, CoworkPlan } from "@artlio/core";
+import { coworkPlan, COWORK_MAX_SCENES, COWORK_MAX_SHOTS_PER_SCENE } from "@artlio/core";
 
 /** A tiny valid 1s mp4 (256×160 solid) the mock returns for i2v — real enough
  *  for ffprobe/the editor, no network. */
@@ -217,4 +218,70 @@ export function createGenerationProvider(): GenerationProvider {
     return new FalProvider(key);
   }
   return new MockProvider();
+}
+
+/* ---------------- cowork (the agent) ---------------- */
+
+/** Deterministic, offline storyboard draft — proves the cowork scaffolding at
+ *  $0. A classic 5-beat shot list seeded with the user's idea. */
+export class MockCoworkProvider implements CoworkProvider {
+  readonly name = "mock";
+  async planStoryboard(idea: string): Promise<CoworkPlan> {
+    const subject = idea.trim().replace(/\s+/g, " ").slice(0, 140);
+    const beats = [
+      "establishing wide shot",
+      "medium shot introducing the subject",
+      "close-up on a telling detail",
+      "an emotional beat / reaction",
+      "closing wide shot",
+    ];
+    return { scenes: [{ title: "Scene 1", shots: beats.map((b) => ({ prompt: `${b} — ${subject}, cinematic lighting` })) }] };
+  }
+}
+
+function extractJson(text: string): unknown {
+  const start = text.indexOf("{");
+  const end = text.lastIndexOf("}");
+  if (start < 0 || end < start) throw new Error("cowork: no JSON object in the LLM output");
+  return JSON.parse(text.slice(start, end + 1));
+}
+
+/** Real cowork — a fal-hosted LLM via the OpenAI-compatible OpenRouter endpoint
+ *  (reuses FAL_KEY; routes to Claude). The LLM output is untrusted, so it's
+ *  parsed + validated/capped by coworkPlan. */
+export class FalCoworkProvider implements CoworkProvider {
+  readonly name = "fal:llm";
+  constructor(private apiKey: string) {}
+  async planStoryboard(idea: string): Promise<CoworkPlan> {
+    const system =
+      `You are a film director's assistant. Break the user's idea into a concise storyboard. ` +
+      `Respond with ONLY a JSON object, no prose: {"scenes":[{"title":"string","shots":[{"prompt":"string"}]}]}. ` +
+      `Each shot "prompt" is a vivid, self-contained visual description (subject, framing, camera, lighting, mood) for an image generator — not dialogue. ` +
+      `At most ${COWORK_MAX_SCENES} scenes and ${COWORK_MAX_SHOTS_PER_SCENE} shots per scene. Keep it tight and shootable.`;
+    const res = await fetch("https://fal.run/openrouter/router/openai/v1/chat/completions", {
+      method: "POST",
+      headers: { Authorization: `Key ${this.apiKey}`, "Content-Type": "application/json" },
+      body: JSON.stringify({
+        model: "anthropic/claude-3.5-sonnet",
+        messages: [
+          { role: "system", content: system },
+          { role: "user", content: idea },
+        ],
+      }),
+    });
+    if (!res.ok) {
+      const detail = await res.text().catch(() => "");
+      throw new Error(`fal llm → ${res.status}: ${detail.slice(0, 300)}`);
+    }
+    const data = (await res.json()) as { choices?: { message?: { content?: string } }[] };
+    const raw = data.choices?.[0]?.message?.content ?? "";
+    return coworkPlan.parse(extractJson(raw)) as CoworkPlan;
+  }
+}
+
+/** Real cowork when FAL_KEY is present (the web action calls the LLM directly),
+ *  else the deterministic mock — so local dev is $0 and can't accidentally spend. */
+export function createCoworkProvider(): CoworkProvider {
+  const key = process.env.FAL_KEY;
+  return key ? new FalCoworkProvider(key) : new MockCoworkProvider();
 }

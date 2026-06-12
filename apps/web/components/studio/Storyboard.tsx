@@ -10,6 +10,7 @@ import { useState, useRef, useEffect } from "react";
 import { useRouter } from "next/navigation";
 import { Button, MonoLabel, IcPlus, IcRetry, IcSparkle, IcPlay, IcX, IcChevronDown } from "@/components/ds";
 import { addShot, setShotPromptText, deleteShot, moveShot, addScene } from "@/lib/studio-actions";
+import { coworkDraftStoryboard } from "@/lib/cowork-actions";
 import { startGen, getGenJob } from "@/lib/gen-actions";
 import { GEN_PRICE_USD_PER_IMAGE, GEN_PRICE_USD_PER_VIDEO } from "@artlio/core";
 import { CAMERA_PRESETS } from "./camera";
@@ -136,6 +137,23 @@ function ShotCard({ projectId, shot, index, total }: { projectId: string; shot: 
 export function Storyboard({ projectId, shots }: { projectId: string; shots: StudioShot[] }) {
   const router = useRouter();
   const [adding, setAdding] = useState(false);
+  const [idea, setIdea] = useState("");
+  const [drafting, setDrafting] = useState(false);
+  const [coworkErr, setCoworkErr] = useState<string | null>(null);
+
+  function draft() {
+    const text = idea.trim();
+    if (!text || drafting) return;
+    setCoworkErr(null);
+    setDrafting(true);
+    (async () => {
+      const res = await coworkDraftStoryboard({ projectId, idea: text });
+      setDrafting(false);
+      if ("error" in res) { setCoworkErr(res.error); return; }
+      setIdea("");
+      router.refresh();
+    })();
+  }
 
   function add(scene?: number) {
     setAdding(true);
@@ -156,6 +174,22 @@ export function Storyboard({ projectId, shots }: { projectId: string; shots: Stu
           <h1 style={{ font: "var(--text-display)", color: "var(--fg-1)", margin: 0 }}>Storyboard</h1>
           <span style={{ flex: 1 }} />
           <Button size="sm" icon={<IcPlus />} onClick={() => add()} disabled={adding}>{adding ? "Adding…" : "Add shot"}</Button>
+        </div>
+
+        {/* Artlio cowork — describe a film, it drafts the scenes & shots */}
+        <div style={{ display: "flex", flexDirection: "column", gap: 6, margin: "0 0 22px" }}>
+          <div style={{ display: "flex", gap: 8, alignItems: "center", padding: "8px 8px 8px 12px", background: "var(--glass-1)", border: "1px solid var(--line-1)", borderRadius: "var(--radius-md)" }}>
+            <IcSparkle size={16} style={{ color: "var(--fg-2)", flex: "none" }} />
+            <input value={idea} onChange={(e) => setIdea(e.target.value)} disabled={drafting}
+              onKeyDown={(e) => { if (e.key === "Enter") draft(); }}
+              aria-label="Ask cowork"
+              placeholder="Ask cowork — describe your film and it'll draft the scenes & shots…"
+              style={{ flex: 1, background: "none", border: "none", color: "var(--fg-1)", font: "var(--text-body)", outline: "none", minWidth: 0 }} />
+            <Button size="sm" icon={<IcSparkle size={13} />} disabled={drafting || idea.trim().length === 0} onClick={draft}>
+              {drafting ? "Drafting…" : "Draft"}
+            </Button>
+          </div>
+          {coworkErr && <p role="alert" style={{ font: "var(--text-caption)", color: "var(--danger)", margin: 0 }}>{coworkErr}</p>}
         </div>
 
         {shots.length === 0 ? (
