@@ -8,12 +8,12 @@
  */
 import { useState, useRef, useEffect } from "react";
 import { useRouter } from "next/navigation";
-import { Button, MonoLabel, IcPlus, IcRetry, IcSparkle, IcPlay, IcX, IcChevronDown } from "@/components/ds";
-import { addShot, deleteShot, moveShot, addScene } from "@/lib/studio-actions";
-import { saveShotPrompt } from "@/lib/actions";
+import { Button, MonoLabel, IcPlus, IcImage, IcRetry, IcSparkle, IcPlay, IcX, IcChevronDown } from "@/components/ds";
+import { addShot, deleteShot, moveShot, addScene, setShotFrame } from "@/lib/studio-actions";
+import { saveShotPrompt, uploadReference } from "@/lib/actions";
 import { coworkDraftStoryboard } from "@/lib/cowork-actions";
 import { startGen, getGenJob } from "@/lib/gen-actions";
-import { GEN_PRICE_USD_PER_IMAGE, GEN_VIDEO_MODELS, GEN_VIDEO_MODEL_INFO, videoDefaults, videoPriceUsd, type GenVideoModel } from "@artlio/core";
+import { GEN_PRICE_USD_PER_IMAGE, GEN_VIDEO_MODELS, GEN_VIDEO_MODEL_INFO, GEN_VIDEO_MODEL_OPTIONS, videoDefaults, videoPriceUsd, type GenVideoModel } from "@artlio/core";
 import type { EntityDTO } from "@/lib/types";
 import { MentionInput } from "@/components/MentionInput";
 import { Lightbox } from "@/components/Lightbox";
@@ -21,7 +21,9 @@ import { CAMERA_PRESETS } from "./camera";
 
 const usd = (n: number) => "~$" + n.toFixed(2);
 const EMPTY_DOC = { type: "doc", content: [{ type: "paragraph" }] };
+const POLL_CAP = 120; // ~4 min at 2s — a stuck job must not pin the card or invite a re-spend
 
+export type Frame = { id: string; src: string };
 export type StudioShot = {
   id: string;
   number: number; // within-scene display index (1..N)
@@ -31,6 +33,9 @@ export type StudioShot = {
   promptDoc?: unknown; // Tiptap JSON — seeds the @mention editor
   imageUrl: string | null;
   videoUrl: string | null;
+  hasStill: boolean;        // has a png/jpg/jpeg/webp still the worker can animate (legacy fallback)
+  firstFrame: Frame | null; // i2v start keyframe (explicit segment model)
+  lastFrame: Frame | null;  // optional i2v end keyframe (tail interpolation)
 };
 
 function ShotCard({ projectId, shot, index, total, entities }: { projectId: string; shot: StudioShot; index: number; total: number; entities: EntityDTO[] }) {
@@ -41,16 +46,30 @@ function ShotCard({ projectId, shot, index, total, entities }: { projectId: stri
   const [dirty, setDirty] = useState(false);
   const [camera, setCamera] = useState("");
   const [videoModel, setVideoModel] = useState<GenVideoModel>("kling");
+  const [seconds, setSeconds] = useState(() => videoDefaults("kling").seconds);
   const vd = videoDefaults(videoModel);
-  const animatePrice = videoPriceUsd(videoModel, { seconds: vd.seconds, resolution: vd.resolution, audio: vd.audio, count: 1 });
-  const [busy, setBusy] = useState(false);
-  const [acting, setActing] = useState(false);
+  const opts = GEN_VIDEO_MODEL_OPTIONS[videoModel];
+  const info = GEN_VIDEO_MODEL_INFO[videoModel];
+  const animatePrice = videoPriceUsd(videoModel, { seconds, resolution: vd.resolution, audio: vd.audio, count: 1 });
+  const [busy, setBusy] = useState(false);                                  // Animate (video) in flight
+  const [slotBusy, setSlotBusy] = useState<"first" | "last" | null>(null);   // a keyframe op in flight
+  const [acting, setActing] = useState(false);                              // move/delete in flight
   const [error, setError] = useState<string | null>(null);
   const [zoom, setZoom] = useState<{ src: string; kind: "image" | "video" } | null>(null); // click-to-enlarge
+  const firstInput = useRef<HTMLInputElement | null>(null);
+  const lastInput = useRef<HTMLInputElement | null>(null);
   const poll = useRef<ReturnType<typeof setInterval> | null>(null);
-  useEffect(() => () => { if (poll.current) clearInterval(poll.current); }, []);
+  const slotPolls = useRef<Set<ReturnType<typeof setInterval>>>(new Set());
+  useEffect(() => () => { if (poll.current) clearInterval(poll.current); slotPolls.current.forEach((t) => clearInterval(t)); }, []);
 
-  const hasRender = !!(shot.imageUrl || shot.videoUrl);
+  // a segment animates from its start frame; a legacy shot with no explicit frame
+  // falls back (worker-side) to its latest png/jpg/jpeg/webp still (hasStill), so
+  // Animate is enabled only when a real i2v source actually exists (never a video-only
+  // or gif/avif shot, which would pass validation then fail before spend).
+  const canAnimate = !!shot.firstFrame || shot.hasStill;
+  const tailReady = !!(shot.lastFrame && info.tail); // end-frame interpolation will actually be sent
+  const previewVideo = shot.videoUrl;
+  const previewImage = shot.firstFrame?.src ?? shot.imageUrl ?? null; // explicit start frame wins the preview
   const empty = text.trim().length === 0;
   // recreate (re-seed) the editor only when the SERVER prompt changes — a stale
   // editor must never silently overwrite a newer server value (and re-spend on it)
@@ -64,6 +83,8 @@ function ShotCard({ projectId, shot, index, total, entities }: { projectId: stri
     setText(shot.prompt); setIds(shot.entityIds); setDoc(shot.promptDoc);
   }, [docKey, dirty, seeded, shot.prompt, shot.entityIds, shot.promptDoc]);
 
+  function pickModel(m: GenVideoModel) { setVideoModel(m); setSeconds(videoDefaults(m).seconds); }
+
   async function persist(): Promise<boolean> {
     if (!dirty) return true;
     const res = await saveShotPrompt(shot.id, JSON.stringify(doc ?? EMPTY_DOC), text.trim(), ids);
@@ -73,7 +94,7 @@ function ShotCard({ projectId, shot, index, total, entities }: { projectId: stri
   }
 
   function remove() {
-    if (acting || busy) return;
+    if (acting || busy || slotBusy) return;
     setActing(true);
     (async () => {
       const res = await deleteShot(shot.id);
@@ -82,7 +103,7 @@ function ShotCard({ projectId, shot, index, total, entities }: { projectId: stri
     })();
   }
   function move(dir: "left" | "right") {
-    if (acting || busy) return;
+    if (acting || busy || slotBusy) return;
     setActing(true);
     (async () => {
       const res = await moveShot(shot.id, dir);
@@ -92,71 +113,181 @@ function ShotCard({ projectId, shot, index, total, entities }: { projectId: stri
     })();
   }
 
-  function run(kind: "image" | "video") {
-    if (empty || busy) return;
+  // Generate a keyframe from the prompt — a candidate image (no shotId, so it never
+  // becomes the shot's render), then record it in the slot. Failures never charge.
+  function genFrame(slot: "first" | "last") {
+    if (empty || busy || slotBusy) return;
+    setError(null); setSlotBusy(slot);
+    (async () => {
+      if (!(await persist())) { setSlotBusy(null); return; }
+      const res = await startGen({ projectId, prompt: text.trim(), entityIds: ids, count: 1, kind: "image", model: "seedream" });
+      if ("error" in res) { setError(res.error); setSlotBusy(null); return; }
+      let n = 0;
+      const t = setInterval(async () => {
+        n += 1;
+        const job = await getGenJob(res.id);
+        // a poll-cap timeout stays a "don't re-run" message — the job may still be
+        // running/charged, so re-generating could double-spend
+        if (!job) { if (n > POLL_CAP) { clearInterval(t); slotPolls.current.delete(t); setSlotBusy(null); setError("Status unknown — reload to check (don't re-run, you may have been charged)."); } return; }
+        if (job.status === "DONE") {
+          clearInterval(t); slotPolls.current.delete(t);
+          const genId = job.generationIds[0];
+          if (!genId) { setSlotBusy(null); setError("Generation produced no image."); return; }
+          const r = await setShotFrame(shot.id, slot, genId);
+          setSlotBusy(null);
+          if (r && "error" in r) { setError(r.error); return; }
+          router.refresh();
+        } else if (job.status === "FAILED") {
+          clearInterval(t); slotPolls.current.delete(t);
+          setSlotBusy(null); setError(job.error || "Generation failed (you were not charged).");
+        } else if (n > POLL_CAP) {
+          clearInterval(t); slotPolls.current.delete(t);
+          setSlotBusy(null); setError("Still generating — reload to check (don't re-run, you may have been charged).");
+        }
+      }, 2000);
+      slotPolls.current.add(t);
+    })();
+  }
+  function uploadFrame(slot: "first" | "last", file: File) {
+    if (busy || slotBusy) return;
+    setError(null); setSlotBusy(slot);
+    (async () => {
+      const fd = new FormData(); fd.append("files", file);
+      const up = await uploadReference(projectId, fd);
+      if ("error" in up) { setError(up.error); setSlotBusy(null); return; }
+      const r = await setShotFrame(shot.id, slot, up.id);
+      setSlotBusy(null);
+      if (r && "error" in r) { setError(r.error); return; }
+      router.refresh();
+    })();
+  }
+  function clearFrame(slot: "first" | "last") {
+    if (busy || slotBusy) return;
+    setSlotBusy(slot);
+    (async () => {
+      const r = await setShotFrame(shot.id, slot, null);
+      setSlotBusy(null);
+      if (r && "error" in r) { setError(r.error); return; }
+      router.refresh();
+    })();
+  }
+
+  function animate() {
+    if (!canAnimate || empty || busy || slotBusy) return;
     setError(null);
     setBusy(true);
     (async () => {
       if (!(await persist())) { setBusy(false); return; }
       const t = text.trim();
-      const fullPrompt = kind === "video" && camera ? `${t}, ${camera}` : t;
-      const res = await startGen({ projectId, shotId: shot.id, prompt: fullPrompt, entityIds: ids, count: 1, kind, model: kind === "video" ? videoModel : "seedream" });
+      const fullPrompt = camera ? `${t}, ${camera}` : t;
+      const res = await startGen({
+        projectId, shotId: shot.id, prompt: fullPrompt, entityIds: ids, count: 1, kind: "video", model: videoModel,
+        sourceGenerationId: shot.firstFrame?.id ?? undefined,
+        tailGenerationId: tailReady ? shot.lastFrame!.id : undefined,
+        durationSeconds: seconds,
+        resolution: opts.resolutions.length ? vd.resolution : undefined,
+        audio: opts.audioToggle ? vd.audio : undefined,
+      });
       if ("error" in res) { setError(res.error); setBusy(false); return; }
+      let n = 0;
       poll.current = setInterval(async () => {
+        n += 1;
         const job = await getGenJob(res.id);
-        if (!job) return;
+        if (!job) { if (n > POLL_CAP) { if (poll.current) clearInterval(poll.current); setBusy(false); setError("Status unknown — reload to check (don't re-run, you may have been charged)."); } return; }
         if (job.status === "DONE") { if (poll.current) clearInterval(poll.current); setBusy(false); router.refresh(); }
         else if (job.status === "FAILED") { if (poll.current) clearInterval(poll.current); setBusy(false); setError(job.error || "Generation failed (you were not charged)."); }
+        else if (n > POLL_CAP) { if (poll.current) clearInterval(poll.current); setBusy(false); setError("Still animating — reload to check (don't re-run, you may have been charged)."); }
       }, 2000);
     })();
   }
 
+  // one keyframe slot — a square thumbnail (gen-from-prompt / upload / clear).
+  // Last frame is optional and accented; defining it as a plain JSX-returning
+  // function (not a component) keeps the <img> from remounting on every render.
+  const renderSlot = (slot: "first" | "last") => {
+    const frame = slot === "first" ? shot.firstFrame : shot.lastFrame;
+    const inputRef = slot === "first" ? firstInput : lastInput;
+    const accent = slot === "last";
+    const isBusy = slotBusy === slot;
+    return (
+      <div style={{ flex: 1, minWidth: 0 }}>
+        <div style={{ position: "relative", aspectRatio: "1 / 1", borderRadius: "var(--radius-sm)", overflow: "hidden", border: `1px solid ${accent ? "rgba(120,160,255,.45)" : "var(--line-2)"}`, background: "var(--glass-1)", display: "grid", placeItems: "center" }}>
+          {frame ? (
+            <>
+              {/* eslint-disable-next-line @next/next/no-img-element */}
+              <img src={frame.src} alt={`${slot} frame`} title="Click to enlarge" onClick={() => setZoom({ src: frame.src, kind: "image" })} style={{ position: "absolute", inset: 0, width: "100%", height: "100%", objectFit: "cover", cursor: "zoom-in" }} />
+              <button onClick={() => clearFrame(slot)} aria-label={`Clear ${slot} frame`} disabled={busy || !!slotBusy} style={{ position: "absolute", top: 3, right: 3, width: 16, height: 16, display: "grid", placeItems: "center", borderRadius: "50%", background: "rgba(6,8,11,.7)", border: "1px solid var(--line-2)", color: "var(--fg-1)", cursor: "pointer", padding: 0, zIndex: 2 }}><IcX size={9} /></button>
+            </>
+          ) : isBusy ? (
+            <span style={{ font: "var(--text-caption)", color: "var(--fg-3)" }}>…</span>
+          ) : (
+            <div style={{ display: "flex", flexDirection: "column", gap: 5, alignItems: "center" }}>
+              <button className="al-iconbtn al-iconbtn-sm" aria-label={`Generate ${slot} frame from prompt`} title={empty ? "Write a prompt first" : "Generate from prompt"} disabled={empty || busy || !!slotBusy} onClick={() => genFrame(slot)}><IcSparkle size={13} /></button>
+              <button className="al-iconbtn al-iconbtn-sm" aria-label={`Upload ${slot} frame`} title="Upload an image" disabled={busy || !!slotBusy} onClick={() => inputRef.current?.click()}><IcImage size={13} /></button>
+            </div>
+          )}
+        </div>
+        <p style={{ font: "var(--text-caption)", color: accent ? "rgba(150,180,255,.85)" : "var(--fg-3)", margin: "3px 0 0", textAlign: "center" }}>{slot === "first" ? "Start" : "End · optional"}</p>
+      </div>
+    );
+  };
+
   return (
     <div className="al-mediacard" style={{ width: 240, flex: "none", cursor: "default" }}>
-      <div style={{ position: "relative", aspectRatio: "16 / 10", background: hasRender ? "#000" : "var(--glass-1)" }}>
+      <div style={{ position: "relative", aspectRatio: "16 / 10", background: (previewVideo || previewImage) ? "#000" : "var(--glass-1)" }}>
         <span style={{ position: "absolute", top: 8, left: 8, font: "var(--text-mono-meta)", color: "var(--fg-2)", zIndex: 2 }}>▦ {shot.number}</span>
-        {shot.videoUrl ? (
-          <video src={shot.videoUrl} muted loop autoPlay playsInline title="Click to enlarge" onClick={() => setZoom({ src: shot.videoUrl!, kind: "video" })} style={{ position: "absolute", inset: 0, width: "100%", height: "100%", objectFit: "cover", cursor: "zoom-in" }} />
-        ) : shot.imageUrl ? (
+        {previewVideo ? (
+          <video src={previewVideo} muted loop autoPlay playsInline title="Click to enlarge" onClick={() => setZoom({ src: previewVideo, kind: "video" })} style={{ position: "absolute", inset: 0, width: "100%", height: "100%", objectFit: "cover", cursor: "zoom-in" }} />
+        ) : previewImage ? (
           // eslint-disable-next-line @next/next/no-img-element
-          <img src={shot.imageUrl} alt="" title="Click to enlarge" onClick={() => setZoom({ src: shot.imageUrl!, kind: "image" })} style={{ position: "absolute", inset: 0, width: "100%", height: "100%", objectFit: "cover", cursor: "zoom-in" }} />
-        ) : null}
-        {shot.videoUrl && <span style={{ position: "absolute", top: 8, right: 8, font: "var(--text-mono-meta)", color: "var(--fg-1)", background: "rgba(6,8,11,.6)", padding: "1px 6px", borderRadius: 4, zIndex: 2 }}>▶ video</span>}
-        {busy && <span style={{ position: "absolute", inset: 0, display: "grid", placeItems: "center", background: "rgba(6,8,11,.55)", font: "var(--text-caption)", color: "var(--fg-2)" }}>generating…</span>}
+          <img src={previewImage} alt="" title="Click to enlarge" onClick={() => setZoom({ src: previewImage, kind: "image" })} style={{ position: "absolute", inset: 0, width: "100%", height: "100%", objectFit: "cover", cursor: "zoom-in" }} />
+        ) : (
+          <span style={{ position: "absolute", inset: 0, display: "grid", placeItems: "center", padding: 12, textAlign: "center", font: "var(--text-caption)", color: "var(--fg-3)" }}>Set a start frame below</span>
+        )}
+        {previewVideo && <span style={{ position: "absolute", top: 8, right: 8, font: "var(--text-mono-meta)", color: "var(--fg-1)", background: "rgba(6,8,11,.6)", padding: "1px 6px", borderRadius: 4, zIndex: 2 }}>▶ video</span>}
+        {busy && <span style={{ position: "absolute", inset: 0, display: "grid", placeItems: "center", background: "rgba(6,8,11,.55)", font: "var(--text-caption)", color: "var(--fg-2)" }}>animating…</span>}
       </div>
       <div style={{ padding: 10, display: "flex", flexDirection: "column", gap: 8 }}>
         <div style={{ display: "flex", alignItems: "center", gap: 2 }}>
-          <button className="al-iconbtn al-iconbtn-sm" aria-label="Move shot earlier" disabled={acting || busy || index === 0} onClick={() => move("left")}>
+          <button className="al-iconbtn al-iconbtn-sm" aria-label="Move shot earlier" disabled={acting || busy || !!slotBusy || index === 0} onClick={() => move("left")}>
             <IcChevronDown size={12} style={{ transform: "rotate(90deg)" }} />
           </button>
-          <button className="al-iconbtn al-iconbtn-sm" aria-label="Move shot later" disabled={acting || busy || index === total - 1} onClick={() => move("right")}>
+          <button className="al-iconbtn al-iconbtn-sm" aria-label="Move shot later" disabled={acting || busy || !!slotBusy || index === total - 1} onClick={() => move("right")}>
             <IcChevronDown size={12} style={{ transform: "rotate(-90deg)" }} />
           </button>
           <span style={{ flex: 1 }} />
-          <button className="al-iconbtn al-iconbtn-sm" aria-label="Delete shot" disabled={acting || busy} onClick={remove}><IcX size={12} /></button>
+          <button className="al-iconbtn al-iconbtn-sm" aria-label="Delete shot" disabled={acting || busy || !!slotBusy} onClick={remove}><IcX size={12} /></button>
         </div>
-        <div style={{ display: "flex", gap: 6 }}>
-          <Button size="sm" full disabled={busy || acting || empty} onClick={() => run("image")} icon={hasRender ? <IcRetry size={13} /> : <IcSparkle size={13} />}>
-            {busy ? "…" : hasRender ? "Image" : "Generate"}
-          </Button>
-          {hasRender && (
-            <Button size="sm" variant="glass" full disabled={busy || acting || empty} onClick={() => run("video")} icon={<IcPlay size={12} />}>Animate</Button>
-          )}
+
+        {/* keyframes — the segment's start frame → optional end frame (image-to-video) */}
+        <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
+          {renderSlot("first")}
+          <IcPlay size={11} style={{ color: "var(--fg-3)", flex: "none", marginTop: -12 }} />
+          {renderSlot("last")}
         </div>
-        {hasRender && (
-          <select aria-label="Camera motion" value={camera} onChange={(e) => setCamera(e.target.value)} disabled={busy || acting}
-            style={{ width: "100%", background: "#11151b", border: "1px solid var(--line-2)", borderRadius: "var(--radius-sm)", padding: "5px 8px", color: camera ? "var(--fg-1)" : "var(--fg-3)", font: "var(--text-caption)", cursor: "pointer", outline: "none" }}>
-            {CAMERA_PRESETS.map(([val, label]) => <option key={val} value={val} style={{ background: "#11151b" }}>{label}</option>)}
-          </select>
+        {shot.lastFrame && !info.tail && (
+          <p style={{ font: "var(--text-caption)", color: "var(--fg-3)", margin: 0 }}>End frame is ignored by {info.label} — pick a model that supports one.</p>
         )}
-        {hasRender && (
-          <select aria-label="Animate model" value={videoModel} onChange={(e) => setVideoModel(e.target.value as GenVideoModel)} disabled={busy || acting}
-            style={{ width: "100%", background: "#11151b", border: "1px solid var(--line-2)", borderRadius: "var(--radius-sm)", padding: "5px 8px", color: "var(--fg-1)", font: "var(--text-caption)", cursor: "pointer", outline: "none" }}>
+
+        <Button size="sm" full disabled={busy || acting || !!slotBusy || !canAnimate || empty} onClick={animate} icon={previewVideo ? <IcRetry size={13} /> : <IcPlay size={12} />}>
+          {busy ? "Animating…" : previewVideo ? "Re-animate" : "Animate"}
+        </Button>
+        <div style={{ display: "flex", gap: 6 }}>
+          <select aria-label="Animate model" value={videoModel} onChange={(e) => pickModel(e.target.value as GenVideoModel)} disabled={busy || acting || !!slotBusy}
+            style={{ flex: 1, minWidth: 0, background: "#11151b", border: "1px solid var(--line-2)", borderRadius: "var(--radius-sm)", padding: "5px 8px", color: "var(--fg-1)", font: "var(--text-caption)", cursor: "pointer", outline: "none" }}>
             {GEN_VIDEO_MODELS.map((m) => <option key={m} value={m} style={{ background: "#11151b" }}>{GEN_VIDEO_MODEL_INFO[m].label}{GEN_VIDEO_MODEL_INFO[m].sound ? " · sound" : ""}</option>)}
           </select>
-        )}
+          <select aria-label="Duration in seconds" value={seconds} onChange={(e) => setSeconds(Number(e.target.value))} disabled={busy || acting || !!slotBusy}
+            style={{ flex: "none", background: "#11151b", border: "1px solid var(--line-2)", borderRadius: "var(--radius-sm)", padding: "5px 8px", color: "var(--fg-1)", font: "var(--text-caption)", cursor: "pointer", outline: "none" }}>
+            {opts.durations.map((s) => <option key={s} value={s} style={{ background: "#11151b" }}>{s}s</option>)}
+          </select>
+        </div>
+        <select aria-label="Camera motion" value={camera} onChange={(e) => setCamera(e.target.value)} disabled={busy || acting || !!slotBusy}
+          style={{ width: "100%", background: "#11151b", border: "1px solid var(--line-2)", borderRadius: "var(--radius-sm)", padding: "5px 8px", color: camera ? "var(--fg-1)" : "var(--fg-3)", font: "var(--text-caption)", cursor: "pointer", outline: "none" }}>
+          {CAMERA_PRESETS.map(([val, label]) => <option key={val} value={val} style={{ background: "#11151b" }}>{label}</option>)}
+        </select>
         <p style={{ font: "var(--text-caption)", color: "var(--fg-3)", margin: 0 }}>
-          {hasRender ? `Image ${usd(GEN_PRICE_USD_PER_IMAGE)} · Animate ${usd(animatePrice)} (${vd.seconds}s${vd.audio ? ", audio" : ""})` : `Generate ${usd(GEN_PRICE_USD_PER_IMAGE)}`}
+          Animate {usd(animatePrice)} · {seconds}s{vd.audio ? ", audio" : ""}{tailReady ? ", end frame" : ""} · each frame {usd(GEN_PRICE_USD_PER_IMAGE)}
         </p>
         <div style={{ width: "100%", background: "rgba(255,255,255,.05)", border: "1px solid var(--line-2)", borderRadius: "var(--radius-sm)", padding: "6px 9px" }}>
           <MentionInput entities={entities} initialDoc={shot.promptDoc} docKey={seeded}
@@ -166,6 +297,8 @@ function ShotCard({ projectId, shot, index, total, entities }: { projectId: stri
         </div>
         {error && <p role="alert" style={{ font: "var(--text-caption)", color: "var(--danger)", margin: 0 }}>{error}</p>}
       </div>
+      <input ref={firstInput} type="file" accept="image/png,image/jpeg,image/webp" hidden onChange={(e) => { const f = e.target.files?.[0]; e.target.value = ""; if (f) uploadFrame("first", f); }} />
+      <input ref={lastInput} type="file" accept="image/png,image/jpeg,image/webp" hidden onChange={(e) => { const f = e.target.files?.[0]; e.target.value = ""; if (f) uploadFrame("last", f); }} />
       {zoom && <Lightbox src={zoom.src} kind={zoom.kind} onClose={() => setZoom(null)} />}
     </div>
   );

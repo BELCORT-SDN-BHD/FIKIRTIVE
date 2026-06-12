@@ -136,6 +136,10 @@ model Shot {
   status      ShotStatus @default(DRAFT)
   // Tiptap 结构化文档：芯片只存实体 ID（label 仅显示缓存，D12 设计裁决）
   promptDoc   Json?
+  // 段模型（storyboard segment，布局 A）：首帧/尾帧的 Generation id（图）；
+  // Animate 用首帧作 i2v source、尾帧作 tail（可选）。存 id 不建关系（避免与 generations 关系歧义）。
+  firstFrameGenerationId String?
+  lastFrameGenerationId  String?
   createdAt   DateTime   @default(now())
   updatedAt   DateTime   @updatedAt
   deletedAt   DateTime?

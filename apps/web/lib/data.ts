@@ -1,7 +1,21 @@
 import "server-only";
 import { prisma } from "@artlio/db";
-import { newId } from "@artlio/core";
+import { newId, storageKey, storageKeyToSrc } from "@artlio/core";
 import { FOUNDER_OWNER_ID } from "./storage";
+
+const THUMB_VIDEO_EXTS = new Set(["mp4", "mov", "webm", "mkv"]);
+/** Resolve generation ids → { src, kind } thumbnails (segment frame slots). */
+export async function getGenerationThumbs(ids: string[]): Promise<Record<string, { src: string; kind: "image" | "video" }>> {
+  const clean = [...new Set(ids.filter(Boolean))];
+  if (!clean.length) return {};
+  const gens = await prisma.generation.findMany({ where: { id: { in: clean }, ownerId: FOUNDER_OWNER_ID, deletedAt: null }, include: { asset: true } });
+  const out: Record<string, { src: string; kind: "image" | "video" }> = {};
+  for (const g of gens) {
+    const ext = g.asset.ext.toLowerCase();
+    out[g.id] = { src: storageKeyToSrc(storageKey(g.asset.ownerId, g.asset.contentHash, ext)), kind: THUMB_VIDEO_EXTS.has(ext) ? "video" : "image" };
+  }
+  return out;
+}
 
 /** All M0 queries are owner-scoped and exclude soft-deleted rows (D21). */
 const notDeleted = { deletedAt: null } as const;

@@ -106,3 +106,22 @@ export async function setShotPromptText(shotId: string, text: string, entityIds:
   revalidatePath("/", "layout");
   return { ok: true };
 }
+
+/** Attach (or clear, with null) a segment's first/last frame image — the i2v
+ *  keyframes. The generation must be an owned image in the shot's project (D19). */
+export async function setShotFrame(shotId: string, slot: "first" | "last", generationId: string | null): Promise<{ ok: true } | { error: string }> {
+  const shot = await prisma.shot.findFirst({ where: { id: shotId, ...OWNED } });
+  if (!shot) return { error: "Shot not found." };
+  if (generationId) {
+    const gen = await prisma.generation.findFirst({
+      where: { id: generationId, projectId: shot.projectId, ...OWNED, asset: { ext: { in: ["png", "jpg", "jpeg", "webp"] } } },
+    });
+    if (!gen) return { error: "Frame image not found in this project." };
+  }
+  await prisma.shot.update({
+    where: { id: shotId },
+    data: slot === "first" ? { firstFrameGenerationId: generationId } : { lastFrameGenerationId: generationId },
+  });
+  revalidatePath("/", "layout");
+  return { ok: true };
+}

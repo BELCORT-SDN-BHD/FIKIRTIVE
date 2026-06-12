@@ -81,5 +81,5 @@ export async function getGenJob(jobId: string) {
     });
     urls = gens.map((g) => storageKeyToSrc(storageKey(g.asset.ownerId, g.asset.contentHash, g.asset.ext)));
   }
-  return { id: job.id, status: job.status, progress: job.progress, error: job.error, urls };
+  return { id: job.id, status: job.status, progress: job.progress, error: job.error, urls, generationIds: job.generationIds };
 }

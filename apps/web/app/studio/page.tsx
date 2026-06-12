@@ -1,4 +1,4 @@
-import { ensureDefaultProject, getProjects, getShots, getEntities, getProjectMedia, getCandidates } from "@/lib/data";
+import { ensureDefaultProject, getProjects, getShots, getEntities, getProjectMedia, getCandidates, getGenerationThumbs } from "@/lib/data";
 import { buildBoardEdit } from "@/lib/edit";
 import { toEntityDTO } from "@/lib/dto";
 import { artlioEdit, storageKey, storageKeyToSrc } from "@artlio/core";
@@ -24,6 +24,9 @@ export const metadata = { title: "Studio · Artlio" };
 
 const VIDEO_EXTS = new Set(["mp4", "mov", "webm", "mkv"]);
 const IMAGE_EXTS = new Set(["png", "jpg", "jpeg", "webp", "gif", "avif"]);
+// the worker's i2v fallback only animates these still formats — a gif/avif (or a
+// video-only shot) is NOT an animatable source, so Animate must gate on this set
+const ANIMATABLE_STILL_EXTS = new Set(["png", "jpg", "jpeg", "webp"]);
 
 export default async function StudioPage({ searchParams }: { searchParams: Promise<{ p?: string; view?: string }> }) {
   const { p, view } = await searchParams;
@@ -37,6 +40,10 @@ export default async function StudioPage({ searchParams }: { searchParams: Promi
   if (p && !projects.some((x) => x.id === p)) redirect(initialView ? `/studio?view=${initialView}` : "/studio");
   const project = projects.find((x) => x.id === p) ?? defaultProject;
   const shots = await getShots(project.id);
+  // resolve each segment's first/last keyframe thumbnails (the i2v slots)
+  const frameThumbs = await getGenerationThumbs(
+    shots.flatMap((s) => [s.firstFrameGenerationId, s.lastFrameGenerationId].filter((x): x is string => !!x)),
+  );
 
   // storyboard shots: prompt + latest generation image (for the card)
   // shots arrive ordered [scene asc, number asc]; number is a within-scene
@@ -45,6 +52,8 @@ export default async function StudioPage({ searchParams }: { searchParams: Promi
   const storyboardShots = shots.map((s) => {
     const latest = s.generations[0];
     const img = latest ? storageKeyToSrc(storageKey(latest.asset.ownerId, latest.asset.contentHash, latest.asset.ext)) : null;
+    // does this shot have a still the worker could animate (legacy generate→animate)?
+    const hasStill = s.generations.some((g) => ANIMATABLE_STILL_EXTS.has(g.asset.ext.toLowerCase()));
     sceneIdx[s.scene] = (sceneIdx[s.scene] ?? 0) + 1;
     return {
       id: s.id,
@@ -55,6 +64,9 @@ export default async function StudioPage({ searchParams }: { searchParams: Promi
       promptDoc: s.promptDoc ?? undefined, // seeds the @mention editor
       imageUrl: img && IMAGE_EXTS.has(latest!.asset.ext.toLowerCase()) ? img : null,
       videoUrl: img && VIDEO_EXTS.has(latest!.asset.ext.toLowerCase()) ? img : null,
+      hasStill,
+      firstFrame: s.firstFrameGenerationId && frameThumbs[s.firstFrameGenerationId] ? { id: s.firstFrameGenerationId, src: frameThumbs[s.firstFrameGenerationId].src } : null,
+      lastFrame: s.lastFrameGenerationId && frameThumbs[s.lastFrameGenerationId] ? { id: s.lastFrameGenerationId, src: frameThumbs[s.lastFrameGenerationId].src } : null,
     };
   });
 
