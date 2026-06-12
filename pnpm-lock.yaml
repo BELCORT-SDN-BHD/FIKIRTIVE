@@ -23,9 +23,6 @@ importers:
       '@artlio/db':
         specifier: workspace:*
         version: link:../../packages/db
-      '@artlio/generation':
-        specifier: workspace:*
-        version: link:../../packages/generation
       '@artlio/storage':
         specifier: workspace:^
         version: link:../../packages/storage

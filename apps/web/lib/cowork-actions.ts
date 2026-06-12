@@ -8,7 +8,7 @@
 import { revalidatePath } from "next/cache";
 import { prisma } from "@artlio/db";
 import { coworkRequest, newId, FOUNDER_OWNER_ID } from "@artlio/core";
-import { createCoworkProvider } from "@artlio/generation";
+import { createCoworkProvider } from "./cowork-provider";
 
 const OWNED = { ownerId: FOUNDER_OWNER_ID, deletedAt: null } as const;
 const provider = createCoworkProvider();
