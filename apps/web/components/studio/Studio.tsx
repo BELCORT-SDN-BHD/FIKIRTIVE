@@ -26,6 +26,7 @@ export function Studio({
   boardEdit,
   savedEdit,
   attachedCount,
+  initialView,
 }: {
   project: ProjectDTO;
   projects: ProjectDTO[];
@@ -37,8 +38,9 @@ export function Studio({
   boardEdit: ArtlioEdit | null;
   savedEdit: ArtlioEdit | null;
   attachedCount: number;
+  initialView?: StudioView;
 }) {
-  const [view, setView] = useState<StudioView>("genspace");
+  const [view, setView] = useState<StudioView>(initialView ?? "genspace");
 
   function surface() {
     switch (view) {

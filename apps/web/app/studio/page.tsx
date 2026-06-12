@@ -1,8 +1,13 @@
-import { ensureDefaultProject, getProjects, getShots, getEntities, getProjectMedia } from "@/lib/data";
+import { ensureDefaultProject, getProjects, getShots, getEntities, getProjectMedia, getCandidates } from "@/lib/data";
+import { buildBoardEdit } from "@/lib/edit";
 import { toEntityDTO } from "@/lib/dto";
-import { artlioEdit, storageKey, storageKeyToSrc, type ArtlioEdit } from "@artlio/core";
+import { artlioEdit, storageKey, storageKeyToSrc } from "@artlio/core";
 import { auth } from "@/auth";
 import { Studio } from "@/components/studio/Studio";
+import type { StudioView } from "@/components/studio/StudioShell";
+
+/** Views that can be deep-linked via ?view= (e.g. /studio?view=elements). */
+const STUDIO_VIEWS = new Set(["genspace", "storyboard", "editor", "elements", "assets", "plans", "account"]);
 
 /** Initials + label for the topbar avatar, from the signed-in user. */
 function userBadge(name: string | null | undefined, email: string | null | undefined) {
@@ -18,11 +23,10 @@ export const metadata = { title: "Studio · Artlio" };
 
 const VIDEO_EXTS = new Set(["mp4", "mov", "webm", "mkv"]);
 const IMAGE_EXTS = new Set(["png", "jpg", "jpeg", "webp", "gif", "avif"]);
-const IMAGE_SECONDS = 3;
-const FALLBACK_VIDEO_SECONDS = 5;
 
-export default async function StudioPage({ searchParams }: { searchParams: Promise<{ p?: string }> }) {
-  const { p } = await searchParams;
+export default async function StudioPage({ searchParams }: { searchParams: Promise<{ p?: string; view?: string }> }) {
+  const { p, view } = await searchParams;
+  const initialView = view && STUDIO_VIEWS.has(view) ? (view as StudioView) : undefined;
   const session = await auth();
   const user = userBadge(session?.user?.name, session?.user?.email);
   const defaultProject = await ensureDefaultProject();
@@ -49,22 +53,10 @@ export default async function StudioPage({ searchParams }: { searchParams: Promi
     };
   });
 
-  // boardEdit for the editor (each shot's latest generation, in order)
-  const clips: ArtlioEdit["timeline"]["tracks"][number]["clips"] = [];
-  let cursor = 0;
-  for (const shot of shots) {
-    const latest = shot.generations[0];
-    if (!latest) continue;
-    const ext = latest.asset.ext.toLowerCase();
-    const isVideo = VIDEO_EXTS.has(ext);
-    if (!isVideo && !IMAGE_EXTS.has(ext)) continue;
-    const length = isVideo ? (latest.asset.durationS ?? FALLBACK_VIDEO_SECONDS) : IMAGE_SECONDS;
-    clips.push({ asset: { type: isVideo ? "video" : "image", src: storageKeyToSrc(storageKey(latest.asset.ownerId, latest.asset.contentHash, ext)) }, start: cursor, length });
-    cursor += length;
-  }
-  const boardEdit: ArtlioEdit | null = clips.length > 0
-    ? { timeline: { background: "#000000", tracks: [{ clips }] }, output: { format: "mp4", resolution: "1080", aspectRatio: "16:9", fps: 25 } }
-    : null;
+  // boardEdit for the editor — attached shot renders in order, plus any unattached
+  // Gen-space video clips (so generated footage is available to cut, not just shots)
+  const candidates = await getCandidates(project.id);
+  const { edit: boardEdit, clipCount } = buildBoardEdit(shots, candidates);
   const savedParse = project.editJson ? artlioEdit.safeParse(project.editJson) : null;
   const savedEdit = savedParse?.success ? savedParse.data : null;
 
@@ -99,7 +91,8 @@ export default async function StudioPage({ searchParams }: { searchParams: Promi
       shotOptions={shotOptions}
       boardEdit={boardEdit}
       savedEdit={savedEdit}
-      attachedCount={clips.length}
+      attachedCount={clipCount}
+      initialView={initialView}
     />
   );
 }

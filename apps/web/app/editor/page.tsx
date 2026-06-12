@@ -1,21 +1,11 @@
-import { ensureDefaultProject, getProjects, getShots } from "@/lib/data";
+import { ensureDefaultProject, getProjects, getShots, getCandidates } from "@/lib/data";
+import { buildBoardEdit } from "@/lib/edit";
 import { EditorShell } from "@/components/EditorShell";
-import type { ArtlioEdit } from "@artlio/core";
-import { artlioEdit, storageKeyToSrc, storageKey } from "@artlio/core";
+import { artlioEdit } from "@artlio/core";
 
 export const dynamic = "force-dynamic";
 
 export const metadata = { title: "Editor · Artlio" };
-
-/** Initial cut = every shot's latest attached render in board order.
- *  Video lengths come from the ingest probe (Asset.durationS); the fallback
- *  covers assets uploaded before the probe ran. Image length is a product
- *  default (images have no inherent duration). */
-const FALLBACK_VIDEO_SECONDS = 5;
-const IMAGE_SECONDS = 3;
-
-const VIDEO_EXTS = new Set(["mp4", "mov", "webm", "mkv"]);
-const IMAGE_EXTS = new Set(["png", "jpg", "jpeg", "webp", "gif", "avif"]);
 
 export default async function EditorPage({
   searchParams,
@@ -26,38 +16,9 @@ export default async function EditorPage({
   const defaultProject = await ensureDefaultProject();
   const projects = await getProjects();
   const project = projects.find((x) => x.id === p) ?? defaultProject;
-  const shots = await getShots(project.id);
-
-  const clips: ArtlioEdit["timeline"]["tracks"][number]["clips"] = [];
-  let cursor = 0;
-  for (const shot of shots) {
-    const latest = shot.generations[0]; // version desc, attached only
-    if (!latest) continue;
-    // ingest lowercases extensions at both write sites; normalize anyway
-    const ext = latest.asset.ext.toLowerCase();
-    const isVideo = VIDEO_EXTS.has(ext);
-    if (!isVideo && !IMAGE_EXTS.has(ext)) continue;
-    const length = isVideo
-      ? (latest.asset.durationS ?? FALLBACK_VIDEO_SECONDS)
-      : IMAGE_SECONDS;
-    clips.push({
-      asset: {
-        type: isVideo ? "video" : "image",
-        src: storageKeyToSrc(storageKey(latest.asset.ownerId, latest.asset.contentHash, ext)),
-      },
-      start: cursor,
-      length,
-    });
-    cursor += length;
-  }
-
-  const boardEdit: ArtlioEdit | null =
-    clips.length > 0
-      ? {
-          timeline: { background: "#000000", tracks: [{ clips }] },
-          output: { format: "mp4", resolution: "1080", aspectRatio: "16:9", fps: 25 },
-        }
-      : null;
+  // initial cut = attached shot renders (board order) + unattached Gen-space clips
+  const [shots, candidates] = await Promise.all([getShots(project.id), getCandidates(project.id)]);
+  const { edit: boardEdit, clipCount } = buildBoardEdit(shots, candidates);
 
   // the persisted working cut wins; stored canonical, re-checked anyway
   const savedParse = project.editJson ? artlioEdit.safeParse(project.editJson) : null;
@@ -73,7 +34,7 @@ export default async function EditorPage({
         projects={projects.map((x) => ({ id: x.id, name: x.name }))}
         boardEdit={boardEdit}
         savedEdit={savedEdit}
-        attachedCount={clips.length}
+        attachedCount={clipCount}
       />
     </div>
   );

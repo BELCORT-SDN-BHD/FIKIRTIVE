@@ -250,10 +250,10 @@ export function Editor({
         <div className="screen-pad" style={{ display: "flex", justifyContent: "center", paddingTop: 70 }}>
           <EmptyHero
             title="Nothing to cut yet"
-            desc="The editor starts from your shot board — attach a render to a shot and it lands here as a clip."
+            desc="Generate a clip in Gen space (or a shot in the Storyboard) and it lands here — then trim, reorder, and export."
           >
-            <Link href={`/?p=${projectId}`}>
-              <Button>Go to the workbench</Button>
+            <Link href={`/studio?p=${projectId}`}>
+              <Button>Go to Gen space</Button>
             </Link>
           </EmptyHero>
         </div>
