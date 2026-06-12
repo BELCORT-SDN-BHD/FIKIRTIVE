@@ -2,6 +2,7 @@ import { ensureDefaultProject, getProjects, getShots, getEntities, getProjectMed
 import { buildBoardEdit } from "@/lib/edit";
 import { toEntityDTO } from "@/lib/dto";
 import { artlioEdit, storageKey, storageKeyToSrc } from "@artlio/core";
+import { redirect } from "next/navigation";
 import { auth } from "@/auth";
 import { Studio } from "@/components/studio/Studio";
 import type { StudioView } from "@/components/studio/StudioShell";
@@ -31,6 +32,9 @@ export default async function StudioPage({ searchParams }: { searchParams: Promi
   const user = userBadge(session?.user?.name, session?.user?.email);
   const defaultProject = await ensureDefaultProject();
   const [projects, entities] = await Promise.all([getProjects(), getEntities()]);
+  // a ?p that matches no owned project (stale/deleted link) → drop it and land on
+  // the default, rather than silently showing the oldest project as if intended
+  if (p && !projects.some((x) => x.id === p)) redirect(initialView ? `/studio?view=${initialView}` : "/studio");
   const project = projects.find((x) => x.id === p) ?? defaultProject;
   const shots = await getShots(project.id);
 

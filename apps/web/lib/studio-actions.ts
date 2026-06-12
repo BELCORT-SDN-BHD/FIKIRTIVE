@@ -38,7 +38,14 @@ export async function addShot(projectId: string, scene?: number): Promise<{ id: 
 export async function deleteShot(shotId: string): Promise<{ ok: true } | { error: string }> {
   const shot = await prisma.shot.findFirst({ where: { id: shotId, ...OWNED } });
   if (!shot) return { error: "Shot not found." };
-  await prisma.shot.update({ where: { id: shotId }, data: { deletedAt: new Date() } });
+  // detach the shot's renders (→ candidates, re-attachable) and clear its entity
+  // refs in one tx, so deleting a shot never orphans generated media or leaves
+  // generations pointing at a dead shot (which Assets would still show "In a shot").
+  await prisma.$transaction([
+    prisma.generation.updateMany({ where: { shotId, deletedAt: null }, data: { shotId: null, attachedAt: null } }),
+    prisma.shotEntityRef.deleteMany({ where: { shotId } }),
+    prisma.shot.update({ where: { id: shotId }, data: { deletedAt: new Date() } }),
+  ]);
   revalidatePath("/", "layout");
   return { ok: true };
 }

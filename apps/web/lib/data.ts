@@ -69,7 +69,7 @@ export async function getProjectMedia(projectId: string) {
   return prisma.generation.findMany({
     where: { ownerId: FOUNDER_OWNER_ID, projectId, ...notDeleted },
     orderBy: { createdAt: "desc" },
-    include: { asset: true, shot: { select: { id: true, number: true, scene: true } } },
+    include: { asset: true }, // the Assets DTO derives `attached` from the scalar shotId
   });
 }
 

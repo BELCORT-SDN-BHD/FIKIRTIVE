@@ -4,6 +4,7 @@ import { redirect } from "next/navigation";
  *  Elements surface (the same fully-engined Library). Redirect old /library links
  *  straight to that view, so there's a single UI and no "am I on the old version?"
  *  confusion. (Per-entity ?e deep-links land on the Elements list, not a selection.) */
-export default function LibraryPage() {
-  redirect("/studio?view=elements");
+export default async function LibraryPage({ searchParams }: { searchParams: Promise<{ p?: string }> }) {
+  const { p } = await searchParams;
+  redirect(`/studio?view=elements${p ? `&p=${encodeURIComponent(p)}` : ""}`);
 }

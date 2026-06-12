@@ -270,7 +270,7 @@ function CreateDialog({
       actions={[
         <Button key="c" variant="ghost" onClick={onClose}>Cancel</Button>,
         <Button key="s" onClick={save} disabled={pending}>
-          {pending ? "Creating…" : door === "generate" ? "Create & generate refs →" : "Save element"}
+          {pending ? "Creating…" : door === "generate" ? "Create element →" : "Save element"}
         </Button>,
       ]}
     >
@@ -319,16 +319,16 @@ function CreateDialog({
                 <IcImage size={18} />
               </span>
               <span>
-                Drag up to 10 images from different angles, or{" "}
+                Add up to 10 images from different angles —{" "}
                 <span style={{ color: "var(--fg-1)", textDecoration: "underline", textUnderlineOffset: 3 }}>browse</span>
               </span>
-              <span style={{ font: "var(--text-caption)", color: "var(--fg-4)" }}>JPG, PNG, HEIC, WebP, AVIF</span>
+              <span style={{ font: "var(--text-caption)", color: "var(--fg-4)" }}>JPG, PNG, WebP</span>
             </button>
             <input
               ref={fileRef}
               type="file"
               multiple
-              accept="image/*"
+              accept="image/png,image/jpeg,image/webp"
               className="hidden"
               aria-label="Source images"
               onChange={(e) => {
@@ -349,7 +349,7 @@ function CreateDialog({
         ) : (
           <p style={{ font: "var(--text-small)", color: "var(--fg-2)", margin: 0 }}>
             After creating, you&apos;ll get a ready-made reference prompt (e.g. a product shot set
-            with your logo) to render in ComfyUI — drop the results straight back in.
+            with your logo). Generate the images right here, or copy the prompt into your own pipeline.
           </p>
         )}
 
@@ -636,7 +636,7 @@ function EntityDetail({ entity, onClose }: { entity: EntityDTO; onClose: () => v
           ref={fileRef}
           type="file"
           multiple
-          accept="image/*"
+          accept="image/png,image/jpeg,image/webp"
           className="hidden"
           aria-label="Add reference images"
           onChange={(e) => {

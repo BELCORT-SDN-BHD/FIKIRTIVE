@@ -1,3 +1,4 @@
+import { redirect } from "next/navigation";
 import { ensureDefaultProject, getProjects, getShots, getCandidates } from "@/lib/data";
 import { buildBoardEdit } from "@/lib/edit";
 import { EditorShell } from "@/components/EditorShell";
@@ -15,6 +16,7 @@ export default async function EditorPage({
   const { p } = await searchParams;
   const defaultProject = await ensureDefaultProject();
   const projects = await getProjects();
+  if (p && !projects.some((x) => x.id === p)) redirect("/editor"); // stale link → clean default
   const project = projects.find((x) => x.id === p) ?? defaultProject;
   // initial cut = attached shot renders (board order) + unattached Gen-space clips
   const [shots, candidates] = await Promise.all([getShots(project.id), getCandidates(project.id)]);
