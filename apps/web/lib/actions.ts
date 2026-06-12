@@ -17,6 +17,8 @@ import type { EntityType, ShotStatus } from "@artlio/db";
 import { storage, extFromFilename, mimeOf, FOUNDER_OWNER_ID } from "./storage";
 import { getBoss } from "./queue";
 import { buildEntitySnapshot } from "./entity-snapshot";
+import { buildBoardEdit, transitionFor } from "./edit";
+import { getShots, getCandidates } from "./data";
 
 /**
  * M0 server actions. Conventions:
@@ -515,6 +517,60 @@ export async function saveProjectEdit(projectId: string, editJsonString: string)
   await logAction("edit.save", projectId, { seconds: Math.round(editDuration(edit)) });
   revalidatePath("/", "layout");
   return { ok: true };
+}
+
+const BLANK_CUT = (): ArtlioEdit => ({
+  timeline: { background: "#000000", tracks: [{ clips: [] }] },
+  output: { format: "mp4", resolution: "1080", aspectRatio: "16:9", fps: 25 },
+});
+
+/** Extract a finished storyboard segment into the editor: append its rendered
+ *  video (with the segment's fade) to the END of the working cut's visual track,
+ *  then persist. Base = the saved cut if any, else a fresh board cut, else blank.
+ *  De-duped by src — a segment already on the timeline reports added:false and
+ *  changes nothing (the board cut already carries every attached render). */
+export async function addSegmentToCut(shotId: string): Promise<{ ok: true; added: boolean } | { error: string }> {
+  const shot = await prisma.shot.findFirst({ where: { id: shotId, ...OWNED }, select: { id: true, projectId: true, transition: true } });
+  if (!shot) return { error: "Shot not found." };
+  // the segment's render = its latest attached video, scoped to shot + owner +
+  // project (defense in depth — the schema doesn't enforce gen.projectId == shot's)
+  const vid = await prisma.generation.findFirst({
+    where: { shotId: shot.id, projectId: shot.projectId, ownerId: FOUNDER_OWNER_ID, deletedAt: null, asset: { ext: { in: ["mp4", "mov", "webm", "mkv"] } } },
+    orderBy: { version: "desc" }, include: { asset: true },
+  });
+  if (!vid) return { error: "Animate this segment first — there's no video to add yet." };
+  const src = storageKeyToSrc(storageKey(vid.asset.ownerId, vid.asset.contentHash, vid.asset.ext.toLowerCase()));
+  const seconds = vid.asset.durationS ?? 5;
+
+  const project = await prisma.project.findFirst({ where: { id: shot.projectId, ...OWNED } });
+  if (!project) return { error: "Project not found." };
+
+  // base = the VALID saved cut; on a missing/corrupt saved cut, rebuild from the
+  // board (never silently blank over an existing-but-invalid cut). This is a
+  // read-modify-write; concurrent appends/saves are last-writer-wins, same as
+  // saveProjectEdit — app-wide editJson concurrency is tracked separately.
+  const saved = project.editJson ? artlioEdit.safeParse(project.editJson) : null;
+  let base: ArtlioEdit;
+  if (saved?.success) {
+    base = saved.data;
+  } else {
+    const [shots, candidates] = await Promise.all([getShots(shot.projectId), getCandidates(shot.projectId)]);
+    base = buildBoardEdit(shots, candidates).edit ?? BLANK_CUT();
+  }
+  const track0 = base.timeline.tracks[0];
+  if (!track0) return { error: "That cut has no visual track." };
+  // already on the timeline (e.g. the board cut already includes it) → no-op
+  if (track0.clips.some((c) => c.asset.src === src)) return { ok: true, added: false };
+
+  const end = track0.clips.reduce((m, c) => Math.max(m, c.start + c.length), 0);
+  const tr = transitionFor(shot.transition, seconds);
+  track0.clips.push({ asset: { type: "video", src }, start: end, length: seconds, ...(tr ? { transition: tr } : {}) });
+  const parsed = artlioEdit.safeParse(base); // canonicalize before persisting (saveProjectEdit discipline)
+  if (!parsed.success) return { error: "Adding that segment would put the cut out of contract." };
+  await prisma.project.update({ where: { id: project.id }, data: { editJson: parsed.data } });
+  await logAction("edit.addSegment", project.id, { shotId, seconds: Math.round(seconds) });
+  revalidatePath("/", "layout");
+  return { ok: true, added: true };
 }
 
 /** Export: persist the job row FIRST, then dispatch (triple-insurance rule).

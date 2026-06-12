@@ -67,6 +67,7 @@ export default async function StudioPage({ searchParams }: { searchParams: Promi
       hasStill,
       firstFrame: s.firstFrameGenerationId && frameThumbs[s.firstFrameGenerationId] ? { id: s.firstFrameGenerationId, src: frameThumbs[s.firstFrameGenerationId].src } : null,
       lastFrame: s.lastFrameGenerationId && frameThumbs[s.lastFrameGenerationId] ? { id: s.lastFrameGenerationId, src: frameThumbs[s.lastFrameGenerationId].src } : null,
+      transition: (s.transition === "in" || s.transition === "out" || s.transition === "both" ? s.transition : null) as "in" | "out" | "both" | null,
     };
   });
 

@@ -9,8 +9,8 @@
 import { useState, useRef, useEffect } from "react";
 import { useRouter } from "next/navigation";
 import { Button, MonoLabel, IcPlus, IcImage, IcRetry, IcSparkle, IcPlay, IcX, IcChevronDown } from "@/components/ds";
-import { addShot, deleteShot, moveShot, addScene, setShotFrame } from "@/lib/studio-actions";
-import { saveShotPrompt, uploadReference } from "@/lib/actions";
+import { addShot, deleteShot, moveShot, addScene, setShotFrame, setShotTransition } from "@/lib/studio-actions";
+import { saveShotPrompt, uploadReference, addSegmentToCut } from "@/lib/actions";
 import { coworkDraftStoryboard } from "@/lib/cowork-actions";
 import { startGen, getGenJob } from "@/lib/gen-actions";
 import { GEN_PRICE_USD_PER_IMAGE, GEN_VIDEO_MODELS, GEN_VIDEO_MODEL_INFO, GEN_VIDEO_MODEL_OPTIONS, videoDefaults, videoPriceUsd, type GenVideoModel } from "@artlio/core";
@@ -36,6 +36,7 @@ export type StudioShot = {
   hasStill: boolean;        // has a png/jpg/jpeg/webp still the worker can animate (legacy fallback)
   firstFrame: Frame | null; // i2v start keyframe (explicit segment model)
   lastFrame: Frame | null;  // optional i2v end keyframe (tail interpolation)
+  transition: "in" | "out" | "both" | null; // segment fade → flows into the editor cut
 };
 
 function ShotCard({ projectId, shot, index, total, entities }: { projectId: string; shot: StudioShot; index: number; total: number; entities: EntityDTO[] }) {
@@ -55,6 +56,7 @@ function ShotCard({ projectId, shot, index, total, entities }: { projectId: stri
   const [slotBusy, setSlotBusy] = useState<"first" | "last" | null>(null);   // a keyframe op in flight
   const [acting, setActing] = useState(false);                              // move/delete in flight
   const [error, setError] = useState<string | null>(null);
+  const [addingToCut, setAddingToCut] = useState(false); // "Add to editor" in flight
   const [zoom, setZoom] = useState<{ src: string; kind: "image" | "video" } | null>(null); // click-to-enlarge
   const firstInput = useRef<HTMLInputElement | null>(null);
   const lastInput = useRef<HTMLInputElement | null>(null);
@@ -201,6 +203,28 @@ function ShotCard({ projectId, shot, index, total, entities }: { projectId: stri
     })();
   }
 
+  // segment fade — persisted on the shot; flows into the editor cut via buildBoardEdit
+  function changeTransition(v: string) {
+    const next = v === "in" || v === "out" || v === "both" ? v : null;
+    setError(null);
+    (async () => {
+      const r = await setShotTransition(shot.id, next);
+      if (r && "error" in r) { setError(r.error); return; }
+      router.refresh();
+    })();
+  }
+
+  // extract the finished segment's video into the editor cut, then jump to it
+  function addToEditor() {
+    if (addingToCut || busy || !!slotBusy) return;
+    setError(null); setAddingToCut(true);
+    (async () => {
+      const res = await addSegmentToCut(shot.id);
+      if ("error" in res) { setError(res.error); setAddingToCut(false); return; }
+      router.push(`/studio?p=${projectId}&view=editor`); // navigating away — leave the flag set
+    })();
+  }
+
   // one keyframe slot — a square thumbnail (gen-from-prompt / upload / clear).
   // Last frame is optional and accented; defining it as a plain JSX-returning
   // function (not a component) keeps the <img> from remounting on every render.
@@ -272,6 +296,11 @@ function ShotCard({ projectId, shot, index, total, entities }: { projectId: stri
         <Button size="sm" full disabled={busy || acting || !!slotBusy || !canAnimate || empty} onClick={animate} icon={previewVideo ? <IcRetry size={13} /> : <IcPlay size={12} />}>
           {busy ? "Animating…" : previewVideo ? "Re-animate" : "Animate"}
         </Button>
+        {previewVideo && (
+          <Button size="sm" variant="glass" full disabled={addingToCut || busy || !!slotBusy} onClick={addToEditor}>
+            {addingToCut ? "Adding…" : "→ Add to editor"}
+          </Button>
+        )}
         <div style={{ display: "flex", gap: 6 }}>
           <select aria-label="Animate model" value={videoModel} onChange={(e) => pickModel(e.target.value as GenVideoModel)} disabled={busy || acting || !!slotBusy}
             style={{ flex: 1, minWidth: 0, background: "#11151b", border: "1px solid var(--line-2)", borderRadius: "var(--radius-sm)", padding: "5px 8px", color: "var(--fg-1)", font: "var(--text-caption)", cursor: "pointer", outline: "none" }}>
@@ -285,6 +314,13 @@ function ShotCard({ projectId, shot, index, total, entities }: { projectId: stri
         <select aria-label="Camera motion" value={camera} onChange={(e) => setCamera(e.target.value)} disabled={busy || acting || !!slotBusy}
           style={{ width: "100%", background: "#11151b", border: "1px solid var(--line-2)", borderRadius: "var(--radius-sm)", padding: "5px 8px", color: camera ? "var(--fg-1)" : "var(--fg-3)", font: "var(--text-caption)", cursor: "pointer", outline: "none" }}>
           {CAMERA_PRESETS.map(([val, label]) => <option key={val} value={val} style={{ background: "#11151b" }}>{label}</option>)}
+        </select>
+        <select aria-label="Segment transition" value={shot.transition ?? ""} onChange={(e) => changeTransition(e.target.value)} disabled={busy || acting || !!slotBusy}
+          style={{ width: "100%", background: "#11151b", border: "1px solid var(--line-2)", borderRadius: "var(--radius-sm)", padding: "5px 8px", color: shot.transition ? "var(--fg-1)" : "var(--fg-3)", font: "var(--text-caption)", cursor: "pointer", outline: "none" }}>
+          <option value="" style={{ background: "#11151b" }}>No transition</option>
+          <option value="in" style={{ background: "#11151b" }}>Fade in</option>
+          <option value="out" style={{ background: "#11151b" }}>Fade out</option>
+          <option value="both" style={{ background: "#11151b" }}>Fade in + out</option>
         </select>
         <p style={{ font: "var(--text-caption)", color: "var(--fg-3)", margin: 0 }}>
           Animate {usd(animatePrice)} · {seconds}s{vd.audio ? ", audio" : ""}{tailReady ? ", end frame" : ""} · each frame {usd(GEN_PRICE_USD_PER_IMAGE)}

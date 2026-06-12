@@ -19,13 +19,17 @@ import { Button, Chip, EmptyHero, MonoLabel } from "./ds";
 interface StudioEdit {
   getEdit: () => unknown;
   addClip: (trackIdx: number, clip: unknown) => Promise<void>;
-  events: { on: (e: string, cb: () => void) => (() => void) | void };
+  updateClip: (trackIdx: number, clipIdx: number, updates: unknown) => Promise<void>;
+  events: { on: (e: string, cb: (payload?: unknown) => void) => (() => void) | void };
 }
 type StudioHandles = {
   edit: StudioEdit;
   dispose: () => void;
 };
 type EditorClip = { id: string; src: string; kind: "image" | "video"; seconds: number };
+/** The selected clip, as the SDK's clip:selected event reports it (subset we edit). */
+type SelClip = { asset?: { type?: string; src?: string; volume?: number }; transition?: { in?: string; out?: string } };
+type Selection = { trackIndex: number; clipIndex: number; clip: SelClip };
 
 /** A blank cut so the editor (and its Assets panel) renders for an empty project
  *  that still has media to drop in — the artlioEdit contract (≥1 clip) is only
@@ -34,6 +38,11 @@ const EMPTY_EDIT: ArtlioEdit = {
   timeline: { background: "#000000", tracks: [{ clips: [] }] },
   output: { format: "mp4", resolution: "1080", aspectRatio: "16:9", fps: 25 },
 };
+
+// right Inspector (selected-clip transition + audio) styles
+const inspRow: React.CSSProperties = { display: "flex", alignItems: "center", gap: 8, font: "var(--text-caption)", color: "var(--fg-1)", cursor: "pointer" };
+const inspHint: React.CSSProperties = { font: "var(--text-caption)", color: "var(--fg-3)", margin: 0 };
+const inspMute: React.CSSProperties = { font: "var(--text-caption)", color: "var(--fg-2)", background: "var(--glass-1)", border: "1px solid var(--line-2)", borderRadius: "var(--radius-sm)", padding: "5px 8px", cursor: "pointer" };
 
 export function Editor({
   projectId,
@@ -63,6 +72,9 @@ export function Editor({
     setDirtyState(d);
     onDirtyChange(d);
   };
+
+  // the timeline-selected clip, for the right Inspector (transition + audio)
+  const [selected, setSelected] = useState<Selection | null>(null);
 
   // editor Assets panel: the project's generated media, clickable to add to the cut
   const [media, setMedia] = useState<EditorClip[]>([]);
@@ -157,6 +169,14 @@ export function Editor({
           },
         });
 
+        // selection → right Inspector (transition + audio for the picked clip)
+        const offSel = edit.events.on("clip:selected", (ref) => {
+          const r = ref as unknown as Selection | undefined;
+          if (r && typeof r.trackIndex === "number") setSelected({ trackIndex: r.trackIndex, clipIndex: r.clipIndex, clip: r.clip ?? {} });
+        });
+        const offClear = edit.events.on("selection:cleared", () => setSelected(null));
+        partials.push({ dispose: () => { if (typeof offSel === "function") offSel(); if (typeof offClear === "function") offClear(); } });
+
         handles.current = { edit: edit as unknown as StudioEdit, dispose: teardown };
         setStatus("ready");
       } catch (e) {
@@ -168,6 +188,7 @@ export function Editor({
 
     return () => {
       disposed = true;
+      setSelected(null);
       handles.current?.dispose();
       handles.current = null;
       teardown(); // covers a cancelled init that never reached handles
@@ -201,6 +222,43 @@ export function Editor({
     } catch (e) {
       console.error("[editor] addClip failed", e);
     }
+  }
+
+  // Inspector: patch the selected clip via the SDK, then re-read the AUTHORITATIVE
+  // edit and reflect that — never an optimistic guess. The SDK may not honor
+  // `transition: undefined` as a delete, so the panel must show what was actually
+  // applied (else a stale checkbox lies about the cut).
+  function syncSelectedFromEdit(trackIndex: number, clipIndex: number) {
+    const h = handles.current;
+    if (!h) return;
+    const cur = h.edit.getEdit() as ArtlioEdit;
+    const real = cur.timeline.tracks[trackIndex]?.clips[clipIndex];
+    if (real) setSelected({ trackIndex, clipIndex, clip: real as SelClip });
+  }
+  async function applyTransition(nextIn: boolean, nextOut: boolean) {
+    const h = handles.current;
+    if (!h || status !== "ready" || !selected) return;
+    const { trackIndex, clipIndex } = selected;
+    const transition = nextIn || nextOut ? { in: nextIn ? "fade" : undefined, out: nextOut ? "fade" : undefined } : undefined;
+    try {
+      await h.edit.updateClip(trackIndex, clipIndex, { transition });
+      syncSelectedFromEdit(trackIndex, clipIndex);
+    } catch (e) { console.error("[editor] set transition failed", e); }
+  }
+  async function applyVolume(v: number) {
+    const h = handles.current;
+    if (!h || status !== "ready" || !selected) return;
+    const { trackIndex, clipIndex } = selected;
+    // patch volume onto the REAL asset (preserve type/src/trim) — rebuilding from
+    // the selection snapshot could replace it with a partial and break export
+    const cur = h.edit.getEdit() as ArtlioEdit;
+    const real = cur.timeline.tracks[trackIndex]?.clips[clipIndex];
+    if (!real) return;
+    const asset = { ...real.asset, volume: v };
+    try {
+      await h.edit.updateClip(trackIndex, clipIndex, { asset });
+      syncSelectedFromEdit(trackIndex, clipIndex);
+    } catch (e) { console.error("[editor] set volume failed", e); }
   }
 
   const [busy, setBusy] = useState(false);
@@ -440,6 +498,40 @@ export function Editor({
             </div>
           )}
           </div>
+          {selected && (() => {
+            const type = selected.clip.asset?.type;
+            const isVisual = type === "video" || type === "image";
+            const hasAudio = type === "video"; // generated videos carry native sound; images are silent
+            const fadeIn = !!selected.clip.transition?.in;
+            const fadeOut = !!selected.clip.transition?.out;
+            const volume = selected.clip.asset?.volume ?? 1;
+            return (
+              <aside style={{ width: 210, flex: "none", display: "flex", flexDirection: "column", border: "1px solid var(--line-2)", borderRadius: "var(--radius-lg)", overflow: "hidden", maxHeight: "100%" }}>
+                <div style={{ padding: "9px 12px", borderBottom: "1px solid var(--line-2)", flex: "none" }}><MonoLabel>Clip</MonoLabel></div>
+                <div style={{ flex: 1, overflow: "auto", padding: 12, display: "flex", flexDirection: "column", gap: 16 }}>
+                  {isVisual && (
+                    <section style={{ display: "flex", flexDirection: "column", gap: 8 }}>
+                      <MonoLabel>Transition</MonoLabel>
+                      <label style={inspRow}><input type="checkbox" checked={fadeIn} onChange={(e) => applyTransition(e.target.checked, fadeOut)} /> Fade in</label>
+                      <label style={inspRow}><input type="checkbox" checked={fadeOut} onChange={(e) => applyTransition(fadeIn, e.target.checked)} /> Fade out</label>
+                      <p style={inspHint}>0.5s fade to / from black.</p>
+                    </section>
+                  )}
+                  {hasAudio && (
+                    <section style={{ display: "flex", flexDirection: "column", gap: 8 }}>
+                      <MonoLabel>Audio</MonoLabel>
+                      <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+                        <input type="range" min={0} max={100} value={Math.round(volume * 100)} onChange={(e) => applyVolume(Number(e.target.value) / 100)} style={{ flex: 1 }} aria-label="Clip volume" />
+                        <span style={{ font: "var(--text-mono-meta)", color: "var(--fg-3)", width: 34, textAlign: "right" }}>{Math.round(volume * 100)}%</span>
+                      </div>
+                      <button onClick={() => applyVolume(volume > 0 ? 0 : 1)} style={inspMute}>{volume > 0 ? "Mute clip" : "Unmute clip"}</button>
+                    </section>
+                  )}
+                  {!isVisual && !hasAudio && <p style={inspHint}>This clip has no editable transition or audio.</p>}
+                </div>
+              </aside>
+            );
+          })()}
         </div>
       )}
     </div>

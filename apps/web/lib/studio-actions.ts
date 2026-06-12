@@ -125,3 +125,16 @@ export async function setShotFrame(shotId: string, slot: "first" | "last", gener
   revalidatePath("/", "layout");
   return { ok: true };
 }
+
+const SHOT_TRANSITIONS = ["in", "out", "both"] as const;
+export type ShotTransition = (typeof SHOT_TRANSITIONS)[number];
+/** Set (or clear, with null) a segment's fade transition. It flows into the
+ *  editor's board cut via buildBoardEdit → clip.transition (storyboard→editor). */
+export async function setShotTransition(shotId: string, transition: ShotTransition | null): Promise<{ ok: true } | { error: string }> {
+  if (transition !== null && !SHOT_TRANSITIONS.includes(transition)) return { error: "Unknown transition." };
+  const shot = await prisma.shot.findFirst({ where: { id: shotId, ...OWNED }, select: { id: true } });
+  if (!shot) return { error: "Shot not found." };
+  await prisma.shot.update({ where: { id: shotId }, data: { transition } });
+  revalidatePath("/", "layout");
+  return { ok: true };
+}

@@ -140,6 +140,8 @@ model Shot {
   // Animate 用首帧作 i2v source、尾帧作 tail（可选）。存 id 不建关系（避免与 generations 关系歧义）。
   firstFrameGenerationId String?
   lastFrameGenerationId  String?
+  // 段转场（③C）：null=无；"in"/"out"/"both" → buildBoardEdit 映射成 clip.transition 的 fade（0.5s 默认）
+  transition  String?
   createdAt   DateTime   @default(now())
   updatedAt   DateTime   @updatedAt
   deletedAt   DateTime?

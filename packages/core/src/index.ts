@@ -13,6 +13,8 @@ export {
   editDuration,
   srcToStorageKey,
   storageKeyToSrc,
+  TRANSITION_DEFAULT_SECONDS,
+  TRANSITION_MAX_SECONDS,
   RENDER_QUEUE,
   INGEST_QUEUE,
   RENDER_DLQ,

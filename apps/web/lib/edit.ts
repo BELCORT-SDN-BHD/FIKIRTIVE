@@ -1,5 +1,5 @@
 import "server-only";
-import { storageKey, storageKeyToSrc, type ArtlioEdit } from "@artlio/core";
+import { storageKey, storageKeyToSrc, TRANSITION_DEFAULT_SECONDS, type ArtlioEdit } from "@artlio/core";
 import type { ShotWithDetail, CandidateGen } from "./data";
 
 const VIDEO_EXTS = new Set(["mp4", "mov", "webm", "mkv"]);
@@ -19,6 +19,18 @@ function toClip(asset: AssetRow, isVideo: boolean, start: number): Clip {
   };
 }
 
+/** Map a storyboard segment's transition ("in"/"out"/"both") to a clip fade.
+ *  Skipped when the clip is too short for the fade (contract: length ≥ 2×dur),
+ *  so a board cut can never validate out-of-contract on export. */
+export function transitionFor(t: string | null, length: number): Clip["transition"] {
+  if (!t || length < TRANSITION_DEFAULT_SECONDS * 2) return undefined;
+  return {
+    in: t === "in" || t === "both" ? ("fade" as const) : undefined,
+    out: t === "out" || t === "both" ? ("fade" as const) : undefined,
+    duration: TRANSITION_DEFAULT_SECONDS,
+  };
+}
+
 /** Initial cut for the editor: each shot's latest attached render in board order,
  *  then any unattached Gen-space *video* clips (candidates not yet on a shot) so
  *  anything you generated is available to cut. A persisted savedEdit still wins
@@ -33,6 +45,8 @@ export function buildBoardEdit(shots: ShotWithDetail[], candidates: CandidateGen
     const isVideo = VIDEO_EXTS.has(ext);
     if (!isVideo && !IMAGE_EXTS.has(ext)) continue;
     const c = toClip(latest.asset, isVideo, cursor);
+    const tr = transitionFor(shot.transition, c.length);
+    if (tr) c.transition = tr;
     clips.push(c);
     cursor += c.length;
   }
