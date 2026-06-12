@@ -111,6 +111,9 @@ export const genRequest = z
     count: z.number().int().min(1).max(MAX_GEN_COUNT),
     kind: z.enum(GEN_KINDS).default("image"),
     model: z.string().min(1).max(40).default("seedream"),
+    // stable double-submit key for shot-bound gens (frame:<shotId>:<slot> /
+    // animate:<shotId>) — startGen reuses an in-flight job with the same key
+    idempotencyKey: z.string().min(1).max(80).nullish(),
     // video controls (optional overrides; absent → the model's videoDefaults).
     // Each is validated against the chosen model's option set in the refine below.
     durationSeconds: z.number().int().min(1).max(60).nullish(),

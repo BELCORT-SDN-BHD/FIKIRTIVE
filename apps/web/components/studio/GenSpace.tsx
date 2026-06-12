@@ -326,7 +326,7 @@ export function GenSpace({ projectId, entities }: { projectId: string; entities:
           <input ref={tailInput} type="file" accept="image/png,image/jpeg,image/webp" hidden onChange={onTailFile} />
           <div className="al-input-wrap" style={{ border: "none", background: "none", padding: 0 }}>
             <div style={{ flex: 1, minWidth: 0 }}>
-              <MentionInput entities={entities} placeholder="Describe the shot — use @ for elements (⌘↵ to generate)"
+              <MentionInput entities={entities} placeholder="Describe the shot — use @ to add elements (⌘↵ to generate)"
                 onChange={(t, i) => { setPrompt(t); setPromptIds(i); }} onSubmit={generate} />
             </div>
           </div>

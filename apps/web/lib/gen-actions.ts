@@ -24,10 +24,21 @@ const OWNED = { ownerId: FOUNDER_OWNER_ID, deletedAt: null } as const;
 export async function startGen(raw: unknown): Promise<{ id: string } | { error: string }> {
   const parsed = genRequest.safeParse(raw);
   if (!parsed.success) return { error: "That generation request is out of bounds." };
-  const { projectId, shotId, sourceGenerationId, tailGenerationId, prompt, entityIds, count, kind, model, durationSeconds, resolution, aspectRatio, fps, audio } = parsed.data;
+  const { projectId, shotId, sourceGenerationId, tailGenerationId, prompt, entityIds, count, kind, model, durationSeconds, resolution, aspectRatio, fps, audio, idempotencyKey } = parsed.data;
 
   const project = await prisma.project.findFirst({ where: { id: projectId, ...OWNED } });
   if (!project) return { error: "Project not found." };
+
+  // double-submit guard (fast path): a reload re-sends the same stable key, so
+  // reuse the in-flight job instead of starting (and paying for) a 2nd one. The
+  // partial-unique index on the create below is the race-proof backstop.
+  if (idempotencyKey) {
+    const active = await prisma.genJob.findFirst({
+      where: { ownerId: FOUNDER_OWNER_ID, projectId, idempotencyKey, status: { in: ["QUEUED", "GENERATING"] } },
+      orderBy: { createdAt: "desc" }, select: { id: true },
+    });
+    if (active) return { id: active.id };
+  }
 
   // resolve the per-model video controls to concrete values (defaults fill any the
   // composer didn't override) so the worker has everything it needs to spend once.
@@ -43,16 +54,32 @@ export async function startGen(raw: unknown): Promise<{ id: string } | { error: 
     };
   }
 
-  const job = await prisma.genJob.create({
-    data: {
-      id: newId(), ownerId: FOUNDER_OWNER_ID, projectId, shotId: shotId ?? null,
-      sourceGenerationId: sourceGenerationId ?? null,
-      tailGenerationId: tailGenerationId ?? null,
-      prompt, entityIds, count: kind === "video" ? 1 : count, model,
-      kind: kind === "video" ? "VIDEO" : "IMAGE",
-      ...(videoOptions ? { videoOptions } : {}),
-    },
-  });
+  let job: { id: string };
+  try {
+    job = await prisma.genJob.create({
+      data: {
+        id: newId(), ownerId: FOUNDER_OWNER_ID, projectId, shotId: shotId ?? null,
+        sourceGenerationId: sourceGenerationId ?? null,
+        tailGenerationId: tailGenerationId ?? null,
+        prompt, entityIds, count: kind === "video" ? 1 : count, model,
+        kind: kind === "video" ? "VIDEO" : "IMAGE",
+        idempotencyKey: idempotencyKey ?? null,
+        ...(videoOptions ? { videoOptions } : {}),
+      },
+      select: { id: true },
+    });
+  } catch (e) {
+    // partial-unique index race: a concurrent same-key submit won the insert →
+    // return ITS active job instead of creating (and paying for) a duplicate
+    if (idempotencyKey && typeof e === "object" && e !== null && (e as { code?: string }).code === "P2002") {
+      const active = await prisma.genJob.findFirst({
+        where: { ownerId: FOUNDER_OWNER_ID, projectId, idempotencyKey, status: { in: ["QUEUED", "GENERATING"] } },
+        orderBy: { createdAt: "desc" }, select: { id: true },
+      });
+      if (active) return { id: active.id };
+    }
+    throw e;
+  }
   try {
     const boss = await getBoss();
     const queueJobId = await boss.send(GEN_QUEUE, { genJobId: job.id } satisfies GenJobData);

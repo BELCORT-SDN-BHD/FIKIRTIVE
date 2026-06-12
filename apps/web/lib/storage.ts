@@ -19,7 +19,7 @@ export function extFromFilename(name: string): string {
   return /^[a-z0-9]{1,8}$/.test(ext) ? ext : "bin";
 }
 
-const VIDEO_EXTS = new Set(["mp4", "mov", "webm", "mkv", "avi"]);
+const VIDEO_EXTS = new Set(["mp4", "mov", "webm", "mkv"]); // mirror the editor contract's EXT_BY_TYPE.video (no avi — unsupported downstream)
 const IMAGE_EXTS = new Set(["png", "jpg", "jpeg", "webp", "gif", "avif"]);
 
 export function kindOf(ext: string): "image" | "video" | "other" {

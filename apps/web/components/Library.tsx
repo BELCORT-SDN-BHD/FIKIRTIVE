@@ -31,6 +31,22 @@ const EMPTY_HINTS: Record<EntityTypeDTO, string> = {
   BRAND: "Logos, palettes, style frames — anything that keeps output on-brand.",
 };
 
+const MAX_REF_BYTES = 10 * 1024 * 1024; // 10 MB per source image
+const MAX_REF_FILES = 10;
+/** Keep only image files within the size/count budget; report why any were dropped
+ *  (shared by the click-picker and drag-drop on both the create dialog and drawer). */
+function acceptImages(incoming: File[], existing: number): { files: File[]; error: string | null } {
+  const room = Math.max(0, MAX_REF_FILES - existing);
+  const images = incoming.filter((f) => /^image\/(png|jpe?g|webp)$/.test(f.type));
+  const sized = images.filter((f) => f.size <= MAX_REF_BYTES);
+  const files = sized.slice(0, room);
+  let error: string | null = null;
+  if (images.length < incoming.length) error = "Only PNG, JPG or WebP images.";
+  else if (sized.length < images.length) error = `Each image must be ≤ 10 MB — ${images.length - sized.length} too large.`;
+  else if (files.length < images.length) error = `Up to ${MAX_REF_FILES} images per element.`;
+  return { files, error };
+}
+
 function useAction() {
   const [pending, startTransition] = useTransition();
   const [error, setError] = useState<string | null>(null);
@@ -313,16 +329,23 @@ function CreateDialog({
               className="drop-zone"
               style={{ flexDirection: "column", alignItems: "center", gap: 10, padding: "22px 18px", textAlign: "center" }}
               onClick={() => fileRef.current?.click()}
+              onDragOver={(e) => e.preventDefault()}
+              onDrop={(e) => {
+                e.preventDefault();
+                const r = acceptImages([...e.dataTransfer.files], files.length);
+                setError(r.error);
+                if (r.files.length) setFiles((f) => [...f, ...r.files].slice(0, MAX_REF_FILES));
+              }}
               type="button"
             >
               <span className="drop-zone-tile">
                 <IcImage size={18} />
               </span>
               <span>
-                Add up to 10 images from different angles —{" "}
+                Drop or add up to 10 images from different angles —{" "}
                 <span style={{ color: "var(--fg-1)", textDecoration: "underline", textUnderlineOffset: 3 }}>browse</span>
               </span>
-              <span style={{ font: "var(--text-caption)", color: "var(--fg-4)" }}>JPG, PNG, WebP</span>
+              <span style={{ font: "var(--text-caption)", color: "var(--fg-4)" }}>JPG, PNG, WebP · ≤ 10 MB each</span>
             </button>
             <input
               ref={fileRef}
@@ -333,8 +356,9 @@ function CreateDialog({
               aria-label="Source images"
               onChange={(e) => {
                 const list = e.target.files ? [...e.target.files] : [];
-                setFiles((f) => [...f, ...list].slice(0, 10));
-                setError(null);
+                const r = acceptImages(list, files.length);
+                setError(r.error);
+                if (r.files.length) setFiles((f) => [...f, ...r.files].slice(0, MAX_REF_FILES));
               }}
             />
             {files.length > 0 && (
@@ -420,6 +444,20 @@ function GenerateRefsBlock({ entity }: { entity: EntityDTO }) {
     const t = setInterval(() => setElapsed(Math.round((Date.now() - startMs.current) / 1000)), 1000);
     return () => clearInterval(t);
   }, [busy]);
+
+  // resume an in-flight refgen if the drawer was closed + reopened — job state is
+  // local, so a remount would otherwise show no progress for a still-running gen
+  useEffect(() => {
+    let alive = true;
+    getRefGenJobs(entity.id).then((jobs) => {
+      const latest = jobs[0];
+      if (alive && latest && (latest.status === "QUEUED" || latest.status === "GENERATING")) {
+        startMs.current = Date.now();
+        setJob({ status: latest.status, error: "" });
+      }
+    }).catch(() => {});
+    return () => { alive = false; };
+  }, [entity.id]);
 
   function generate() {
     startMs.current = Date.now();
@@ -509,6 +547,21 @@ function EntityDetail({ entity, onClose }: { entity: EntityDTO; onClose: () => v
     font: "var(--text-body)", resize: "vertical", outline: "none",
   };
 
+  // shared by the click-picker and drag-drop: size/count-guard then upload.
+  // Surface any reason files were dropped, but still upload the accepted subset.
+  function uploadFiles(list: File[]) {
+    const r = acceptImages(list, entity.refs.length);
+    if (r.error) refAct.setError(r.error);
+    if (!r.files.length) return;
+    const fd = new FormData();
+    for (const f of r.files) fd.append("files", f);
+    refAct.run(async () => {
+      const res = await addReferenceImages(entity.id, fd);
+      if (fileRef.current) fileRef.current.value = "";
+      return res;
+    });
+  }
+
   return (
     <div style={{ padding: 18, display: "flex", flexDirection: "column", gap: 16 }}>
       <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
@@ -597,10 +650,12 @@ function EntityDetail({ entity, onClose }: { entity: EntityDTO; onClose: () => v
         {entity.refs.length === 0 ? (
           <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
             <GenerateRefsBlock entity={entity} />
-            <button className="drop-zone" onClick={() => fileRef.current?.click()} type="button">
+            <button className="drop-zone" onClick={() => fileRef.current?.click()} type="button"
+              onDragOver={(e) => e.preventDefault()}
+              onDrop={(e) => { e.preventDefault(); uploadFiles([...e.dataTransfer.files]); }}>
               <span className="drop-zone-tile"><IcImage size={16} /></span>
               <span>
-                Or add 3–12 images you already have (front / side / ¾ angles).{" "}
+                Or drop / add 3–12 images you already have (front / side / ¾ angles).{" "}
                 <span style={{ color: "var(--fg-1)", textDecoration: "underline", textUnderlineOffset: 3 }}>Upload →</span>
               </span>
             </button>
@@ -639,17 +694,7 @@ function EntityDetail({ entity, onClose }: { entity: EntityDTO; onClose: () => v
           accept="image/png,image/jpeg,image/webp"
           className="hidden"
           aria-label="Add reference images"
-          onChange={(e) => {
-            const files = e.target.files;
-            if (!files?.length) return;
-            const fd = new FormData();
-            for (const f of files) fd.append("files", f);
-            refAct.run(async () => {
-              const res = await addReferenceImages(entity.id, fd);
-              if (fileRef.current) fileRef.current.value = "";
-              return res;
-            });
-          }}
+          onChange={(e) => uploadFiles([...(e.target.files ?? [])])}
         />
         {refAct.error && (
           <p role="alert" style={{ font: "var(--text-caption)", color: "var(--danger)", margin: "6px 0 0" }}>{refAct.error}</p>

@@ -88,10 +88,23 @@ export async function createProject(name: string) {
 
 // ---------- entities ----------
 
+const REF_MAX_BYTES = 10 * 1024 * 1024; // 10 MB per source image
+const REF_MAX_FILES = 10;
+const REF_MIME = new Set(["image/png", "image/jpeg", "image/webp"]);
+/** Server-side ref-image gate (the client acceptImages is UX only — direct or
+ *  stale calls must not bypass it): png/jpg/webp, ≤10MB, within remaining room. */
+function acceptRefFiles(formData: FormData, existing: number): File[] {
+  const room = Math.max(0, REF_MAX_FILES - existing);
+  return formData
+    .getAll("files")
+    .filter((f): f is File => f instanceof File && f.size > 0 && f.size <= REF_MAX_BYTES && REF_MIME.has(f.type))
+    .slice(0, room);
+}
+
 export async function createEntity(formData: FormData) {
   const name = String(formData.get("name") ?? "").trim();
   const type = String(formData.get("type") ?? "");
-  const files = formData.getAll("files").filter((f): f is File => f instanceof File && f.size > 0);
+  const files = acceptRefFiles(formData, 0);
   if (!name) return { error: "Name is required." };
   if (!ENTITY_TYPES.has(type)) return { error: "Unknown entity type." };
 
@@ -174,8 +187,9 @@ export async function softDeleteReferenceImage(refImageId: string) {
 export async function addReferenceImages(entityId: string, formData: FormData) {
   const entity = await prisma.entity.findFirst({ where: { id: entityId, ...OWNED } });
   if (!entity) return { error: "Entity not found." };
-  const files = formData.getAll("files").filter((f): f is File => f instanceof File && f.size > 0);
-  if (files.length === 0) return { error: "No files received." };
+  const existing = await prisma.referenceImage.count({ where: { entityId, deletedAt: null } });
+  const files = acceptRefFiles(formData, existing);
+  if (files.length === 0) return { error: "No valid images — PNG, JPG or WebP, ≤ 10 MB, up to 10 per element." };
   const last = await prisma.referenceImage.findFirst({
     where: { entityId, deletedAt: null },
     orderBy: { position: "desc" },
@@ -542,35 +556,44 @@ export async function addSegmentToCut(shotId: string): Promise<{ ok: true; added
   const src = storageKeyToSrc(storageKey(vid.asset.ownerId, vid.asset.contentHash, vid.asset.ext.toLowerCase()));
   const seconds = vid.asset.durationS ?? 5;
 
-  const project = await prisma.project.findFirst({ where: { id: shot.projectId, ...OWNED } });
-  if (!project) return { error: "Project not found." };
+  // Optimistic concurrency: read editJson + updatedAt, append, then write ONLY if
+  // updatedAt is unchanged (Prisma auto-bumps it on every write). A concurrent
+  // save/append bumps it → our conditional update matches 0 rows → retry on the
+  // fresh value, so neither write is silently lost (last-writer-wins is gone).
+  for (let attempt = 0; attempt < 4; attempt++) {
+    const project = await prisma.project.findFirst({ where: { id: shot.projectId, ...OWNED } });
+    if (!project) return { error: "Project not found." };
 
-  // base = the VALID saved cut; on a missing/corrupt saved cut, rebuild from the
-  // board (never silently blank over an existing-but-invalid cut). This is a
-  // read-modify-write; concurrent appends/saves are last-writer-wins, same as
-  // saveProjectEdit — app-wide editJson concurrency is tracked separately.
-  const saved = project.editJson ? artlioEdit.safeParse(project.editJson) : null;
-  let base: ArtlioEdit;
-  if (saved?.success) {
-    base = saved.data;
-  } else {
-    const [shots, candidates] = await Promise.all([getShots(shot.projectId), getCandidates(shot.projectId)]);
-    base = buildBoardEdit(shots, candidates).edit ?? BLANK_CUT();
+    // base = the VALID saved cut; on a missing/corrupt saved cut, rebuild from the
+    // board (never silently blank over an existing-but-invalid cut)
+    const saved = project.editJson ? artlioEdit.safeParse(project.editJson) : null;
+    let base: ArtlioEdit;
+    if (saved?.success) {
+      base = saved.data;
+    } else {
+      const [shots, candidates] = await Promise.all([getShots(shot.projectId), getCandidates(shot.projectId)]);
+      base = buildBoardEdit(shots, candidates).edit ?? BLANK_CUT();
+    }
+    const track0 = base.timeline.tracks[0];
+    if (!track0) return { error: "That cut has no visual track." };
+    // already on the timeline (e.g. the board cut already includes it) → no-op
+    if (track0.clips.some((c) => c.asset.src === src)) return { ok: true, added: false };
+
+    const end = track0.clips.reduce((m, c) => Math.max(m, c.start + c.length), 0);
+    const tr = transitionFor(shot.transition, seconds);
+    track0.clips.push({ asset: { type: "video", src }, start: end, length: seconds, ...(tr ? { transition: tr } : {}) });
+    const parsed = artlioEdit.safeParse(base); // canonicalize before persisting (saveProjectEdit discipline)
+    if (!parsed.success) return { error: "Adding that segment would put the cut out of contract." };
+
+    const res = await prisma.project.updateMany({ where: { id: project.id, updatedAt: project.updatedAt }, data: { editJson: parsed.data } });
+    if (res.count === 1) {
+      await logAction("edit.addSegment", project.id, { shotId, seconds: Math.round(seconds) });
+      revalidatePath("/", "layout");
+      return { ok: true, added: true };
+    }
+    // a concurrent write landed between our read and write — re-read and retry
   }
-  const track0 = base.timeline.tracks[0];
-  if (!track0) return { error: "That cut has no visual track." };
-  // already on the timeline (e.g. the board cut already includes it) → no-op
-  if (track0.clips.some((c) => c.asset.src === src)) return { ok: true, added: false };
-
-  const end = track0.clips.reduce((m, c) => Math.max(m, c.start + c.length), 0);
-  const tr = transitionFor(shot.transition, seconds);
-  track0.clips.push({ asset: { type: "video", src }, start: end, length: seconds, ...(tr ? { transition: tr } : {}) });
-  const parsed = artlioEdit.safeParse(base); // canonicalize before persisting (saveProjectEdit discipline)
-  if (!parsed.success) return { error: "Adding that segment would put the cut out of contract." };
-  await prisma.project.update({ where: { id: project.id }, data: { editJson: parsed.data } });
-  await logAction("edit.addSegment", project.id, { shotId, seconds: Math.round(seconds) });
-  revalidatePath("/", "layout");
-  return { ok: true, added: true };
+  return { error: "The cut changed while adding — please try again." };
 }
 
 /** Export: persist the job row FIRST, then dispatch (triple-insurance rule).

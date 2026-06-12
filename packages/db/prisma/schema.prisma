@@ -310,6 +310,9 @@ model GenJob {
   tailGenerationId   String?
   prompt        String
   entityIds     String[]  @default([])
+  // 双提交幂等：shot 绑定生成的稳定键（"frame:<shotId>:<slot>" / "animate:<shotId>"）。
+  // startGen 命中同键的在途(QUEUED/GENERATING)任务则复用，重载再点不二次扣费。
+  idempotencyKey String?
   kind          GenKind   @default(IMAGE)
   model         String    @default("seedream")
   count         Int       @default(1)
@@ -332,6 +335,9 @@ model GenJob {
 
   @@index([projectId, createdAt])
   @@index([status, updatedAt])
+  // 幂等去重靠迁移里的 PARTIAL UNIQUE 索引（active 键唯一，Prisma 无法在 schema 表达
+  // 条件唯一，故只在 migration.sql 里建）：同一 (owner, project, idempotencyKey) 同时
+  // 只能有一个 QUEUED/GENERATING 任务 → 并发同键提交 DB 层挡住，不会双扣。
 }
 
 // ── Auth.js v5 标准模型（D18：邮箱魔法链接）────────────────────────────

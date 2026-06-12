@@ -129,7 +129,7 @@ function ShotCard({ projectId, shot, index, total, entities }: { projectId: stri
     setError(null); setSlotBusy(slot);
     (async () => {
       if (!(await persist())) { setSlotBusy(null); return; }
-      const res = await startGen({ projectId, prompt: text.trim(), entityIds: ids, count: 1, kind: "image", model: "seedream" });
+      const res = await startGen({ projectId, prompt: text.trim(), entityIds: ids, count: 1, kind: "image", model: "seedream", idempotencyKey: `frame:${shot.id}:${slot}` });
       if ("error" in res) { setError(res.error); setSlotBusy(null); return; }
       let n = 0;
       const t = setInterval(async () => {
@@ -196,6 +196,7 @@ function ShotCard({ projectId, shot, index, total, entities }: { projectId: stri
         durationSeconds: seconds,
         resolution: opts.resolutions.length ? vd.resolution : undefined,
         audio: opts.audioToggle ? audioOn : undefined,
+        idempotencyKey: `animate:${shot.id}`,
       });
       if ("error" in res) { setError(res.error); setBusy(false); return; }
       let n = 0;
@@ -339,7 +340,7 @@ function ShotCard({ projectId, shot, index, total, entities }: { projectId: stri
         </p>
         <div style={{ width: "100%", background: "rgba(255,255,255,.05)", border: "1px solid var(--line-2)", borderRadius: "var(--radius-sm)", padding: "6px 9px" }}>
           <MentionInput entities={entities} initialDoc={shot.promptDoc} docKey={seeded}
-            placeholder="Describe this shot — use @ for elements"
+            placeholder="Describe this shot — use @ to add elements"
             onChange={(t, i, d) => { setText(t); setIds(i); setDoc(d); setDirty(true); }}
             onBlur={() => { if (dirty) void persist(); }} />
         </div>
