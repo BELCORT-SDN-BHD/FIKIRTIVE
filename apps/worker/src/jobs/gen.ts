@@ -166,7 +166,15 @@ export async function handleGen(data: GenJobData, retryCount: number): Promise<v
         tailImageUrl = (await storage.presignedGet(storageKey(tail.asset.ownerId, tail.asset.contentHash, tail.asset.ext), 3600)) ?? "";
         if (provider.name !== "mock" && !tailImageUrl) throw new Error("last-frame image unreachable — refusing to spend on i2v");
       }
-      const video = await provider.generateVideo({ prompt: job.prompt, imageUrl, tailImageUrl: tailImageUrl || undefined, durationSeconds: GEN_VIDEO_SECONDS, model: job.model });
+      // per-model controls chosen in the composer (resolved + stored at enqueue);
+      // fall back to the legacy fixed duration if an older job has none.
+      const vo = job.videoOptions as { seconds?: number; resolution?: string; aspectRatio?: string; fps?: number; audio?: boolean } | null;
+      const video = await provider.generateVideo({
+        prompt: job.prompt, imageUrl, tailImageUrl: tailImageUrl || undefined,
+        durationSeconds: vo?.seconds ?? GEN_VIDEO_SECONDS,
+        resolution: vo?.resolution, aspectRatio: vo?.aspectRatio, fps: vo?.fps, audio: vo?.audio,
+        model: job.model,
+      });
       outputs = [video];
     } else {
       outputs = await provider.generate({ prompt: job.prompt, inputImageUrls, count: job.count, model: job.model as GenModel });

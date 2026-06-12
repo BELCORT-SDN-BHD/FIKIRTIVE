@@ -13,7 +13,9 @@ import {
   FOUNDER_OWNER_ID,
   storageKey,
   storageKeyToSrc,
+  videoDefaults,
   type GenJobData,
+  type GenVideoModel,
 } from "@artlio/core";
 import { getBoss } from "./queue";
 
@@ -22,10 +24,24 @@ const OWNED = { ownerId: FOUNDER_OWNER_ID, deletedAt: null } as const;
 export async function startGen(raw: unknown): Promise<{ id: string } | { error: string }> {
   const parsed = genRequest.safeParse(raw);
   if (!parsed.success) return { error: "That generation request is out of bounds." };
-  const { projectId, shotId, sourceGenerationId, tailGenerationId, prompt, entityIds, count, kind, model } = parsed.data;
+  const { projectId, shotId, sourceGenerationId, tailGenerationId, prompt, entityIds, count, kind, model, durationSeconds, resolution, aspectRatio, fps, audio } = parsed.data;
 
   const project = await prisma.project.findFirst({ where: { id: projectId, ...OWNED } });
   if (!project) return { error: "Project not found." };
+
+  // resolve the per-model video controls to concrete values (defaults fill any the
+  // composer didn't override) so the worker has everything it needs to spend once.
+  let videoOptions;
+  if (kind === "video") {
+    const d = videoDefaults(model as GenVideoModel);
+    videoOptions = {
+      seconds: durationSeconds ?? d.seconds,
+      resolution: resolution ?? d.resolution,
+      aspectRatio: aspectRatio ?? d.aspectRatio,
+      fps: fps ?? d.fps,
+      audio: audio ?? d.audio,
+    };
+  }
 
   const job = await prisma.genJob.create({
     data: {
@@ -34,6 +50,7 @@ export async function startGen(raw: unknown): Promise<{ id: string } | { error: 
       tailGenerationId: tailGenerationId ?? null,
       prompt, entityIds, count: kind === "video" ? 1 : count, model,
       kind: kind === "video" ? "VIDEO" : "IMAGE",
+      ...(videoOptions ? { videoOptions } : {}),
     },
   });
   try {

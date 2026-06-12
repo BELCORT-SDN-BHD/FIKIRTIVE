@@ -307,6 +307,8 @@ model GenJob {
   kind          GenKind   @default(IMAGE)
   model         String    @default("seedream")
   count         Int       @default(1)
+  /// 视频生成的每模型设置（duration/resolution/aspectRatio/fps/audio）；worker 传给 provider
+  videoOptions  Json?
   status        GenStatus @default(QUEUED)
   progress      Int       @default(0)
   /// DONE 时产出的 Generation 行（可多个）

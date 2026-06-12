@@ -113,62 +113,73 @@ const EXT_BY_CONTENT_TYPE: Record<string, string> = {
 };
 
 /** Per-model fal video wiring (the model-neutral table — mirrors LTX Studio's
- *  lineup). Each model's `duration` is the fixed snap of our ~5s request to its
- *  own nearest valid value (Kling 5s, Veo 6s, Seedance 5s, LTX 6s); the price
- *  hint in @artlio/core matches. `audio` → send generate_audio. End frame (tail):
- *  Kling/Seedance take it on the same i2v endpoint via `tailParam` next to
- *  `imageParam`; Veo uses a separate first→last endpoint (first_frame_url /
- *  last_frame_url); a model with neither has no end-frame support. All return
- *  { video: { url } }. Param names verified against each model's fal API page. */
+ *  lineup). Endpoints + the param NAMES each model uses (verified against each
+ *  model's fal API page). `imageParam` = i2v source frame. End frame (tail):
+ *  Kling/Seedance take it on the i2v endpoint via `tailParam`; Veo uses a separate
+ *  first→last endpoint (first_frame_url/last_frame_url); a model with neither has
+ *  none. Optional controls (`audioParam`/`resolutionParam`/`aspectParam`/`fpsParam`)
+ *  are sent only when the model has the param AND the request provides a value —
+ *  so each model carries exactly its real settings. `durationUnit` = how the chosen
+ *  seconds are encoded: "str"=Kling "5", "s"=Veo "6s", "num"=Seedance/LTX 6. All
+ *  return { video: { url } }. Allowed values per control live in @artlio/core's
+ *  GEN_VIDEO_MODEL_OPTIONS. */
 type VideoCfg = {
   t2v: string;
   i2v: string;
   firstLast?: string;
   imageParam: string;
   tailParam?: string;
-  audio: boolean;
-  duration: string | number;
+  audioParam?: string;       // omit = always silent (Kling 2.5)
+  resolutionParam?: string;
+  aspectParam?: string;
+  fpsParam?: string;
+  durationUnit: "str" | "s" | "num";
 };
+
+const GA = "generate_audio", RES = "resolution", ASP = "aspect_ratio";
 
 const VIDEO_CFG: Record<GenVideoModel, VideoCfg> = {
   "kling": {
     t2v: "fal-ai/kling-video/v2.5-turbo/pro/text-to-video",
     i2v: "fal-ai/kling-video/v2.5-turbo/pro/image-to-video",
-    imageParam: "image_url", tailParam: "tail_image_url", audio: false, duration: "5",
+    imageParam: "image_url", tailParam: "tail_image_url", durationUnit: "str", // silent
   },
   "veo3.1-lite": {
     t2v: "fal-ai/veo3.1/lite", i2v: "fal-ai/veo3.1/lite/image-to-video",
-    imageParam: "image_url", audio: true, duration: "6s",
+    imageParam: "image_url", audioParam: GA, resolutionParam: RES, aspectParam: ASP, durationUnit: "s",
   },
   "ltx-2": {
     t2v: "fal-ai/ltx-2/text-to-video", i2v: "fal-ai/ltx-2/image-to-video",
-    imageParam: "image_url", audio: true, duration: 6, // LTX wants an integer (6/8/10), not "6"
+    imageParam: "image_url", audioParam: GA, resolutionParam: RES, fpsParam: "fps", durationUnit: "num",
   },
   "kling-2.6": {
     t2v: "fal-ai/kling-video/v2.6/pro/text-to-video",
     i2v: "fal-ai/kling-video/v2.6/pro/image-to-video",
-    imageParam: "start_image_url", tailParam: "end_image_url", audio: true, duration: "5",
+    imageParam: "start_image_url", tailParam: "end_image_url", audioParam: GA, durationUnit: "str",
   },
   "kling-3": {
     t2v: "fal-ai/kling-video/v3/pro/text-to-video",
     i2v: "fal-ai/kling-video/v3/pro/image-to-video",
-    imageParam: "start_image_url", tailParam: "end_image_url", audio: true, duration: "5",
+    imageParam: "start_image_url", tailParam: "end_image_url", audioParam: GA, durationUnit: "str",
   },
   "veo3.1-fast": {
     t2v: "fal-ai/veo3.1/fast", i2v: "fal-ai/veo3.1/fast/image-to-video",
     firstLast: "fal-ai/veo3.1/fast/first-last-frame-to-video",
-    imageParam: "image_url", audio: true, duration: "6s",
+    imageParam: "image_url", audioParam: GA, resolutionParam: RES, aspectParam: ASP, durationUnit: "s",
   },
   "seedance-2-fast": {
-    // ByteDance's own fal namespace (no fal-ai/ prefix — unlike Seedream)
+    // ByteDance's own fal namespace (no fal-ai/ prefix — unlike Seedream).
+    // durationUnit "num" (integer) is verified by a real spend test — fal accepts
+    // the int despite the schema page rendering the enum as strings. Don't "fix"
+    // it to "str" without re-testing.
     t2v: "bytedance/seedance-2.0/fast/text-to-video",
     i2v: "bytedance/seedance-2.0/fast/image-to-video",
-    imageParam: "image_url", tailParam: "end_image_url", audio: true, duration: 5,
+    imageParam: "image_url", tailParam: "end_image_url", audioParam: GA, resolutionParam: RES, aspectParam: ASP, durationUnit: "num",
   },
   "veo3.1": {
     t2v: "fal-ai/veo3.1", i2v: "fal-ai/veo3.1/image-to-video",
     firstLast: "fal-ai/veo3.1/first-last-frame-to-video",
-    imageParam: "image_url", audio: true, duration: "6s",
+    imageParam: "image_url", audioParam: GA, resolutionParam: RES, aspectParam: ASP, durationUnit: "s",
   },
 };
 
@@ -230,8 +241,16 @@ export class FalProvider implements GenerationProvider {
     if (req.tailImageUrl && !i2v) throw new Error("fal: an end frame needs a start image"); // pre-POST, no spend
 
     let modelId: string;
-    const body: Record<string, unknown> = { prompt: req.prompt, duration: cfg.duration };
-    if (cfg.audio) body.generate_audio = true;
+    const duration = cfg.durationUnit === "str" ? String(req.durationSeconds)
+      : cfg.durationUnit === "s" ? `${req.durationSeconds}s`
+      : req.durationSeconds;
+    const body: Record<string, unknown> = { prompt: req.prompt, duration };
+    // optional controls — sent only when the model has the param and the request
+    // provides a value (so each model carries exactly its real settings)
+    if (cfg.audioParam && req.audio != null) body[cfg.audioParam] = req.audio;
+    if (cfg.resolutionParam && req.resolution) body[cfg.resolutionParam] = req.resolution;
+    if (cfg.aspectParam && req.aspectRatio) body[cfg.aspectParam] = req.aspectRatio;
+    if (cfg.fpsParam && req.fps) body[cfg.fpsParam] = req.fps;
     if (req.tailImageUrl) {
       // an end frame was requested — route to the model's tail mechanism
       if (cfg.firstLast) {

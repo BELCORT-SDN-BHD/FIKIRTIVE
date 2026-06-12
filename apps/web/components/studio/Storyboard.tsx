@@ -12,7 +12,7 @@ import { Button, MonoLabel, IcPlus, IcRetry, IcSparkle, IcPlay, IcX, IcChevronDo
 import { addShot, setShotPromptText, deleteShot, moveShot, addScene } from "@/lib/studio-actions";
 import { coworkDraftStoryboard } from "@/lib/cowork-actions";
 import { startGen, getGenJob } from "@/lib/gen-actions";
-import { GEN_PRICE_USD_PER_IMAGE, GEN_VIDEO_MODELS, GEN_VIDEO_MODEL_INFO, type GenVideoModel } from "@artlio/core";
+import { GEN_PRICE_USD_PER_IMAGE, GEN_VIDEO_MODELS, GEN_VIDEO_MODEL_INFO, videoDefaults, videoPriceUsd, type GenVideoModel } from "@artlio/core";
 import { CAMERA_PRESETS } from "./camera";
 
 /** cost hint shown before a spend (small figures keep 3 decimals so $0.035
@@ -33,7 +33,9 @@ function ShotCard({ projectId, shot, index, total }: { projectId: string; shot: 
   const router = useRouter();
   const [prompt, setPrompt] = useState(shot.prompt);
   const [camera, setCamera] = useState(""); // camera-motion preset for Animate
-  const [videoModel, setVideoModel] = useState<GenVideoModel>("kling"); // Animate model: Kling (silent) | Veo 3 Fast (sound)
+  const [videoModel, setVideoModel] = useState<GenVideoModel>("kling"); // Animate model (uses the model's default settings)
+  const vd = videoDefaults(videoModel);
+  const animatePrice = videoPriceUsd(videoModel, { seconds: vd.seconds, resolution: vd.resolution, audio: vd.audio, count: 1 });
   const [busy, setBusy] = useState(false);
   const [acting, setActing] = useState(false); // delete / reorder in flight
   const [error, setError] = useState<string | null>(null);
@@ -130,7 +132,7 @@ function ShotCard({ projectId, shot, index, total }: { projectId: string; shot: 
           </select>
         )}
         <p style={{ font: "var(--text-caption)", color: "var(--fg-3)", margin: 0 }}>
-          {shot.imageUrl || shot.videoUrl ? `Image ${usd(GEN_PRICE_USD_PER_IMAGE)} · Animate ${usd(GEN_VIDEO_MODEL_INFO[videoModel].priceUsd)}` : `Generate ${usd(GEN_PRICE_USD_PER_IMAGE)}`}
+          {shot.imageUrl || shot.videoUrl ? `Image ${usd(GEN_PRICE_USD_PER_IMAGE)} · Animate ${usd(animatePrice)}` : `Generate ${usd(GEN_PRICE_USD_PER_IMAGE)}`}
         </p>
         <textarea value={prompt} onChange={(e) => setPrompt(e.target.value)} onBlur={saveText} disabled={busy}
           rows={2} aria-label={`Shot ${shot.number} prompt`} placeholder="Describe this shot…"

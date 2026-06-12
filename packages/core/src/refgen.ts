@@ -88,6 +88,12 @@ export interface VideoRequest {
   tailImageUrl?: string;
   durationSeconds: number;
   model: string;
+  // per-model controls (resolved from the job; the provider maps each to the
+  // model's fal param). Absent → the model's default.
+  resolution?: string;
+  aspectRatio?: string;
+  fps?: number;
+  audio?: boolean;
 }
 
 /** One generated clip, already downloaded by the provider. */

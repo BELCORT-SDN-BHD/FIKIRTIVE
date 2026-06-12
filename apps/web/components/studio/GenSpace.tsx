@@ -1,17 +1,20 @@
 "use client";
 /**
  * Gen space surface (Artlio Studio + LTX gen-workspace). The generation
- * workbench: per-SESSION (a subject/shot), stacked iterations, a rich composer
- * (reference slots + mode + model/target + duration + resolution + aspect),
- * and a session list. Empty state = presets ("image storming").
+ * workbench: a rich composer (reference slots + mode + model + per-model
+ * duration/More settings + live price) and a results stack.
  *
- * Artlio bindings: the model chip IS the Target (fal models + Artlio cowork);
- * cost shows before generate; failures never charge (pricing research).
- * Mock-first; engine wires later.
+ * Each video model exposes exactly the controls its fal endpoint accepts
+ * (GEN_VIDEO_MODEL_OPTIONS): a seconds dropdown plus a "More" panel of
+ * resolution / aspect / fps / audio / clip-count, whichever apply. Price is
+ * dynamic (videoPriceUsd) and shown before spend; failures never charge.
  */
 import { useState, useEffect, useRef } from "react";
 import { Button, MonoLabel, IcPlus, IcImage, IcChevronDown, IcRetry, IcX } from "@/components/ds";
-import { GEN_PRICE_USD_PER_IMAGE, GEN_VIDEO_MODELS, GEN_VIDEO_MODEL_INFO, type GenVideoModel } from "@artlio/core";
+import {
+  GEN_PRICE_USD_PER_IMAGE, GEN_VIDEO_MODELS, GEN_VIDEO_MODEL_INFO, GEN_VIDEO_MODEL_OPTIONS,
+  videoDefaults, videoPriceUsd, type GenVideoModel,
+} from "@artlio/core";
 import { startGen, getGenJob } from "@/lib/gen-actions";
 import { uploadReference } from "@/lib/actions";
 import { CAMERA_PRESETS } from "./camera";
@@ -25,13 +28,36 @@ const SESSIONS = [
 
 type Result = { prompt: string; meta: string; urls: string[]; pending?: boolean };
 
+/** A labelled segmented control for the "More" settings panel. */
+function SettingRow({ label, options, value, onChange, fmt }: {
+  label: string; options: (string | number)[]; value: string | number;
+  onChange: (v: string | number) => void; fmt?: (o: string | number) => string;
+}) {
+  return (
+    <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
+      <span style={{ font: "var(--text-caption)", color: "var(--fg-3)", width: 70, flex: "none" }}>{label}</span>
+      <div className="al-seg" role="group" aria-label={label}>
+        {options.map((o) => (
+          <button key={String(o)} className={`al-seg-item${value === o ? " al-seg-item-active" : ""}`} onClick={() => onChange(o)}>
+            {fmt ? fmt(o) : String(o)}
+          </button>
+        ))}
+      </div>
+    </div>
+  );
+}
+
 export function GenSpace({ projectId }: { projectId: string | null }) {
   const [kind, setKind] = useState<"image" | "video">("image");
   const [prompt, setPrompt] = useState("a cinematic portrait, soft window light");
-  const [count] = useState(1);
-  const [camera, setCamera] = useState(""); // camera-motion preset (video)
-  const [videoModel, setVideoModel] = useState<GenVideoModel>("kling"); // Kling (silent) | Veo 3 Fast (sound)
+  const [count, setCount] = useState(1);              // batch (video) / num images
+  const [camera, setCamera] = useState("");           // camera-motion preset (video)
+  const [videoModel, setVideoModel] = useState<GenVideoModel>("kling");
+  const [vopts, setVopts] = useState(() => videoDefaults("kling")); // seconds/res/aspect/fps/audio
+  const [showMore, setShowMore] = useState(false);
   const isVideo = kind === "video";
+  const opts = GEN_VIDEO_MODEL_OPTIONS[videoModel];
+  const info = GEN_VIDEO_MODEL_INFO[videoModel];
   const [results, setResults] = useState<Result[]>([]);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -40,8 +66,20 @@ export function GenSpace({ projectId }: { projectId: string | null }) {
   const [uploading, setUploading] = useState(false);
   const fileInput = useRef<HTMLInputElement | null>(null);
   const tailInput = useRef<HTMLInputElement | null>(null);
-  const pollTimer = useRef<ReturnType<typeof setInterval> | null>(null);
-  useEffect(() => () => { if (pollTimer.current) clearInterval(pollTimer.current); }, []);
+  const pollers = useRef<Set<ReturnType<typeof setInterval>>>(new Set());
+  const active = useRef(0); // in-flight jobs this batch — busy clears when it hits 0
+  useEffect(() => () => { pollers.current.forEach((t) => clearInterval(t)); }, []);
+
+  const price = isVideo
+    ? videoPriceUsd(videoModel, { seconds: vopts.seconds, resolution: vopts.resolution, audio: vopts.audio, count })
+    : count * GEN_PRICE_USD_PER_IMAGE;
+
+  function pickModel(m: GenVideoModel) {
+    setVideoModel(m);
+    setVopts(videoDefaults(m));                                  // reset controls to the new model's defaults
+    if (!GEN_VIDEO_MODEL_INFO[m].tail) setTailImg(null);          // model with no end frame
+    setCount((c) => Math.min(c, GEN_VIDEO_MODEL_OPTIONS[m].maxCount));
+  }
 
   function uploadInto(setter: (v: { id: string; src: string }) => void, switchMode: boolean) {
     return (e: React.ChangeEvent<HTMLInputElement>) => {
@@ -64,34 +102,72 @@ export function GenSpace({ projectId }: { projectId: string | null }) {
   const onRefFile = uploadInto(setRefImg, true);
   const onTailFile = uploadInto(setTailImg, false);
 
+  function finishOne() {
+    active.current -= 1;
+    if (active.current <= 0) { active.current = 0; setBusy(false); }
+  }
+
+  // start one job + poll it to completion, updating its own placeholder
+  function runOne(req: Parameters<typeof startGen>[0], placeholder: Result, doneMeta: (n: number) => string) {
+    (async () => {
+      const res = await startGen(req);
+      if ("error" in res) {
+        setError(res.error);
+        setResults((r) => r.filter((x) => x !== placeholder));
+        finishOne();
+        return;
+      }
+      const t = setInterval(async () => {
+        const job = await getGenJob(res.id);
+        if (!job) return;
+        if (job.status === "DONE") {
+          clearInterval(t); pollers.current.delete(t);
+          setResults((r) => r.map((x) => x === placeholder ? { prompt: placeholder.prompt, meta: doneMeta(job.urls.length), urls: job.urls } : x));
+          finishOne();
+        } else if (job.status === "FAILED") {
+          clearInterval(t); pollers.current.delete(t);
+          setError(job.error || "Generation failed.");
+          setResults((r) => r.filter((x) => x !== placeholder));
+          finishOne();
+        }
+      }, 2000);
+      pollers.current.add(t);
+    })();
+  }
+
   function generate() {
     const text = prompt.trim();
     if (!text || !projectId || busy) return;
     const fullPrompt = isVideo && camera ? `${text}, ${camera}` : text; // camera motion → prompt
     setError(null);
+    setShowMore(false);
     setBusy(true);
-    const modelLabel = isVideo ? GEN_VIDEO_MODEL_INFO[videoModel].label : "Seedream";
-    const placeholder: Result = { prompt: text, meta: `${modelLabel} · generating…`, urls: [], pending: true };
-    setResults((r) => [placeholder, ...r]);
-    (async () => {
-      // last frame is a Kling-only feature (Veo 3 has no tail) — only send it for Kling
-      const res = await startGen({ projectId, prompt: fullPrompt, entityIds: [], count: isVideo ? 1 : count, kind, model: isVideo ? videoModel : "seedream", sourceGenerationId: isVideo && refImg ? refImg.id : undefined, tailGenerationId: isVideo && refImg && tailImg && GEN_VIDEO_MODEL_INFO[videoModel].tail ? tailImg.id : undefined });
-      if ("error" in res) { setError(res.error); setBusy(false); setResults((r) => r.filter((x) => x !== placeholder)); return; }
-      pollTimer.current = setInterval(async () => {
-        const job = await getGenJob(res.id);
-        if (!job) return;
-        if (job.status === "DONE") {
-          if (pollTimer.current) clearInterval(pollTimer.current);
-          setBusy(false);
-          setResults((r) => r.map((x) => x === placeholder ? { prompt: text, meta: isVideo ? `${modelLabel} · video` : `Seedream · ${job.urls.length} image`, urls: job.urls } : x));
-        } else if (job.status === "FAILED") {
-          if (pollTimer.current) clearInterval(pollTimer.current);
-          setBusy(false);
-          setError(job.error || "Generation failed.");
-          setResults((r) => r.filter((x) => x !== placeholder));
-        }
-      }, 2000);
-    })();
+    if (isVideo) {
+      // fal video has no num_videos — a batch of N is N independent one-clip jobs
+      // (each keeps the worker's exactly-once spend). Only send a control the model has.
+      const n = Math.max(1, Math.min(count, opts.maxCount));
+      active.current = n;
+      const sendTail = !!(refImg && tailImg && info.tail);
+      for (let i = 0; i < n; i++) {
+        const placeholder: Result = { prompt: text, meta: `${info.label} · generating…`, urls: [], pending: true };
+        setResults((r) => [placeholder, ...r]);
+        runOne({
+          projectId, prompt: fullPrompt, entityIds: [], count: 1, kind: "video", model: videoModel,
+          sourceGenerationId: refImg ? refImg.id : undefined,
+          tailGenerationId: sendTail ? tailImg!.id : undefined,
+          durationSeconds: vopts.seconds,
+          resolution: opts.resolutions.length ? vopts.resolution : undefined,
+          aspectRatio: opts.aspectRatios.length ? vopts.aspectRatio : undefined,
+          fps: opts.fps.length ? vopts.fps : undefined,
+          audio: opts.audioToggle ? vopts.audio : undefined,
+        }, placeholder, () => `${info.label} · video`);
+      }
+    } else {
+      active.current = 1;
+      const placeholder: Result = { prompt: text, meta: "Seedream · generating…", urls: [], pending: true };
+      setResults((r) => [placeholder, ...r]);
+      runOne({ projectId, prompt: fullPrompt, entityIds: [], count, kind: "image", model: "seedream" }, placeholder, (nn) => `Seedream · ${nn} image`);
+    }
   }
 
   return (
@@ -146,7 +222,7 @@ export function GenSpace({ projectId }: { projectId: string | null }) {
             <button className="al-iconbtn al-iconbtn-md" aria-label="New session"><IcPlus size={16} /></button>
           </div>
           {SESSIONS.map((s) => (
-            <button key={s.title} className={`al-mediacard${s.active ? "" : ""}`} style={{
+            <button key={s.title} className="al-mediacard" style={{
               display: "flex", flexDirection: "row", alignItems: "center", gap: 10, padding: 8, cursor: "pointer",
               border: `1px solid ${s.active ? "rgba(255,255,255,.24)" : "var(--line-2)"}`,
             }}>
@@ -161,7 +237,31 @@ export function GenSpace({ projectId }: { projectId: string | null }) {
       </div>
 
       <div className="composer-dock">
-        <div className="al-promptbar">
+        <div className="al-promptbar" style={{ position: "relative" }}>
+          {/* per-model "More" settings — each control appears only if the model has it */}
+          {isVideo && showMore && (
+            <div style={{ position: "absolute", bottom: "100%", right: 12, marginBottom: 8, background: "#11151b", border: "1px solid var(--line-2)", borderRadius: "var(--radius-md)", padding: 12, display: "flex", flexDirection: "column", gap: 10, minWidth: 250, boxShadow: "0 8px 24px rgba(0,0,0,.45)", zIndex: 20 }}>
+              <div style={{ display: "flex", alignItems: "center" }}>
+                <MonoLabel>More settings</MonoLabel>
+                <span style={{ flex: 1 }} />
+                <button className="al-iconbtn al-iconbtn-sm" onClick={() => setShowMore(false)} aria-label="Close settings"><IcX size={12} /></button>
+              </div>
+              {opts.resolutions.length > 0 && (
+                <SettingRow label="Resolution" options={opts.resolutions} value={vopts.resolution} onChange={(v) => setVopts((o) => ({ ...o, resolution: String(v) }))} />
+              )}
+              {opts.aspectRatios.length > 0 && (
+                <SettingRow label="Aspect" options={opts.aspectRatios} value={vopts.aspectRatio} onChange={(v) => setVopts((o) => ({ ...o, aspectRatio: String(v) }))} />
+              )}
+              {opts.fps.length > 0 && (
+                <SettingRow label="FPS" options={opts.fps} value={vopts.fps} onChange={(v) => setVopts((o) => ({ ...o, fps: Number(v) }))} />
+              )}
+              {opts.audioToggle && (
+                <SettingRow label="Audio" options={["On", "Off"]} value={vopts.audio ? "On" : "Off"} onChange={(v) => setVopts((o) => ({ ...o, audio: v === "On" }))} />
+              )}
+              <SettingRow label="Clips" options={Array.from({ length: opts.maxCount }, (_, i) => i + 1)} value={count} onChange={(v) => setCount(Number(v))} />
+            </div>
+          )}
+
           {/* reference slots */}
           <div className="al-promptbar-row">
             {/* start frame */}
@@ -183,7 +283,7 @@ export function GenSpace({ projectId }: { projectId: string | null }) {
               </button>
             )}
             {/* optional last frame — only with a start, and only for models that support an end frame */}
-            {refImg && GEN_VIDEO_MODEL_INFO[videoModel].tail && (tailImg ? (
+            {refImg && info.tail && (tailImg ? (
               <span style={{ position: "relative", flex: "none" }} title="Last frame (end)">
                 <span style={{ display: "block", width: 30, height: 30, borderRadius: 6, overflow: "hidden", border: "1px solid rgba(120,160,255,.6)" }}>
                   {/* eslint-disable-next-line @next/next/no-img-element */}
@@ -201,9 +301,9 @@ export function GenSpace({ projectId }: { projectId: string | null }) {
               </button>
             ))}
             {uploading && <span style={{ font: "var(--text-caption)", color: "var(--fg-3)" }}>uploading…</span>}
-            {refImg && !uploading && <span style={{ font: "var(--text-caption)", color: "var(--fg-2)" }}>{tailImg ? "→ image-to-video · start → end frame" : "→ image-to-video"}</span>}
+            {refImg && !uploading && <span style={{ font: "var(--text-caption)", color: "var(--fg-2)" }}>{tailImg && info.tail ? "→ image-to-video · start → end frame" : "→ image-to-video"}</span>}
             <span className="al-promptbar-spacer" />
-            <span style={{ font: "var(--text-caption)", color: "var(--fg-3)" }}>~${(isVideo ? GEN_VIDEO_MODEL_INFO[videoModel].priceUsd : count * GEN_PRICE_USD_PER_IMAGE).toFixed(2)}</span>
+            <span style={{ font: "var(--text-caption)", color: "var(--fg-3)" }}>~${price.toFixed(2)}</span>
           </div>
           <input ref={fileInput} type="file" accept="image/png,image/jpeg,image/webp" hidden onChange={onRefFile} />
           <input ref={tailInput} type="file" accept="image/png,image/jpeg,image/webp" hidden onChange={onTailFile} />
@@ -214,26 +314,28 @@ export function GenSpace({ projectId }: { projectId: string | null }) {
           </div>
           <div className="al-promptbar-row">
             <div className="al-seg" role="tablist">
-              <button role="tab" aria-selected={!isVideo} className={`al-seg-item${!isVideo ? " al-seg-item-active" : ""}`} onClick={() => setKind("image")}>Photo</button>
+              <button role="tab" aria-selected={!isVideo} className={`al-seg-item${!isVideo ? " al-seg-item-active" : ""}`} onClick={() => { setKind("image"); setCount(1); setShowMore(false); }}>Photo</button>
               <button role="tab" aria-selected={isVideo} className={`al-seg-item${isVideo ? " al-seg-item-active" : ""}`} onClick={() => setKind("video")}>Video</button>
             </div>
             {isVideo ? (
-              <select aria-label="Video model" value={videoModel}
-                onChange={(e) => { const m = e.target.value as GenVideoModel; setVideoModel(m); if (!GEN_VIDEO_MODEL_INFO[m].tail) setTailImg(null); }}
-                style={{ background: "var(--glass-1)", border: "1px solid var(--line-2)", borderRadius: 999, color: "var(--fg-1)", font: "var(--text-mono-meta)", padding: "5px 9px", cursor: "pointer", outline: "none" }}>
-                {GEN_VIDEO_MODELS.map((m) => <option key={m} value={m}>{GEN_VIDEO_MODEL_INFO[m].label}{GEN_VIDEO_MODEL_INFO[m].sound ? " · sound" : ""}</option>)}
-              </select>
+              <>
+                <select aria-label="Video model" value={videoModel} onChange={(e) => pickModel(e.target.value as GenVideoModel)}
+                  style={{ background: "var(--glass-1)", border: "1px solid var(--line-2)", borderRadius: 999, color: "var(--fg-1)", font: "var(--text-mono-meta)", padding: "5px 9px", cursor: "pointer", outline: "none" }}>
+                  {GEN_VIDEO_MODELS.map((m) => <option key={m} value={m}>{GEN_VIDEO_MODEL_INFO[m].label}{GEN_VIDEO_MODEL_INFO[m].sound ? " · sound" : ""}</option>)}
+                </select>
+                <select aria-label="Duration" value={vopts.seconds} onChange={(e) => setVopts((o) => ({ ...o, seconds: Number(e.target.value) }))}
+                  style={{ background: "var(--glass-1)", border: "1px solid var(--line-2)", borderRadius: 999, color: "var(--fg-1)", font: "var(--text-mono-meta)", padding: "5px 9px", cursor: "pointer", outline: "none" }}>
+                  {opts.durations.map((s) => <option key={s} value={s}>{s} Sec</option>)}
+                </select>
+                <select aria-label="Camera motion" value={camera} onChange={(e) => setCamera(e.target.value)}
+                  style={{ background: "var(--glass-1)", border: "1px solid var(--line-2)", borderRadius: 999, color: camera ? "var(--fg-1)" : "var(--fg-2)", font: "var(--text-mono-meta)", padding: "5px 9px", cursor: "pointer", outline: "none" }}>
+                  {CAMERA_PRESETS.map(([val, label]) => <option key={val} value={val}>{label}</option>)}
+                </select>
+                <button className="al-chip al-chip-mono" aria-expanded={showMore} onClick={() => setShowMore((s) => !s)}>More<Caret /></button>
+              </>
             ) : (
               <button className="al-chip al-chip-mono">Seedream<Caret /></button>
             )}
-            {isVideo && (
-              <select aria-label="Camera motion" value={camera} onChange={(e) => setCamera(e.target.value)}
-                style={{ background: "var(--glass-1)", border: "1px solid var(--line-2)", borderRadius: 999, color: camera ? "var(--fg-1)" : "var(--fg-2)", font: "var(--text-mono-meta)", padding: "5px 9px", cursor: "pointer", outline: "none" }}>
-                {CAMERA_PRESETS.map(([val, label]) => <option key={val} value={val}>{label}</option>)}
-              </select>
-            )}
-            <button className="al-chip al-chip-mono">1024px</button>
-            <button className="al-chip al-chip-mono">16:9</button>
             <span className="al-promptbar-spacer" />
             <Button onClick={generate} disabled={busy || !projectId || prompt.trim().length === 0}>
               {busy ? "Generating…" : "Generate"}
