@@ -11,7 +11,7 @@
  */
 import { useState, useEffect, useRef } from "react";
 import { Button, MonoLabel, IcPlus, IcImage, IcChevronDown, IcRetry, IcX } from "@/components/ds";
-import { GEN_PRICE_USD_PER_IMAGE, GEN_PRICE_USD_PER_VIDEO } from "@artlio/core";
+import { GEN_PRICE_USD_PER_IMAGE, GEN_VIDEO_MODELS, GEN_VIDEO_MODEL_INFO, type GenVideoModel } from "@artlio/core";
 import { startGen, getGenJob } from "@/lib/gen-actions";
 import { uploadReference } from "@/lib/actions";
 import { CAMERA_PRESETS } from "./camera";
@@ -30,6 +30,7 @@ export function GenSpace({ projectId }: { projectId: string | null }) {
   const [prompt, setPrompt] = useState("a cinematic portrait, soft window light");
   const [count] = useState(1);
   const [camera, setCamera] = useState(""); // camera-motion preset (video)
+  const [videoModel, setVideoModel] = useState<GenVideoModel>("kling"); // Kling (silent) | Veo 3 Fast (sound)
   const isVideo = kind === "video";
   const [results, setResults] = useState<Result[]>([]);
   const [busy, setBusy] = useState(false);
@@ -69,10 +70,12 @@ export function GenSpace({ projectId }: { projectId: string | null }) {
     const fullPrompt = isVideo && camera ? `${text}, ${camera}` : text; // camera motion → prompt
     setError(null);
     setBusy(true);
-    const placeholder: Result = { prompt: text, meta: `${isVideo ? "Kling" : "Seedream"} · generating…`, urls: [], pending: true };
+    const modelLabel = isVideo ? GEN_VIDEO_MODEL_INFO[videoModel].label : "Seedream";
+    const placeholder: Result = { prompt: text, meta: `${modelLabel} · generating…`, urls: [], pending: true };
     setResults((r) => [placeholder, ...r]);
     (async () => {
-      const res = await startGen({ projectId, prompt: fullPrompt, entityIds: [], count: isVideo ? 1 : count, kind, model: isVideo ? "kling" : "seedream", sourceGenerationId: isVideo && refImg ? refImg.id : undefined, tailGenerationId: isVideo && refImg && tailImg ? tailImg.id : undefined });
+      // last frame is a Kling-only feature (Veo 3 has no tail) — only send it for Kling
+      const res = await startGen({ projectId, prompt: fullPrompt, entityIds: [], count: isVideo ? 1 : count, kind, model: isVideo ? videoModel : "seedream", sourceGenerationId: isVideo && refImg ? refImg.id : undefined, tailGenerationId: isVideo && refImg && tailImg && videoModel === "kling" ? tailImg.id : undefined });
       if ("error" in res) { setError(res.error); setBusy(false); setResults((r) => r.filter((x) => x !== placeholder)); return; }
       pollTimer.current = setInterval(async () => {
         const job = await getGenJob(res.id);
@@ -80,7 +83,7 @@ export function GenSpace({ projectId }: { projectId: string | null }) {
         if (job.status === "DONE") {
           if (pollTimer.current) clearInterval(pollTimer.current);
           setBusy(false);
-          setResults((r) => r.map((x) => x === placeholder ? { prompt: text, meta: isVideo ? "Kling · video" : `Seedream · ${job.urls.length} image`, urls: job.urls } : x));
+          setResults((r) => r.map((x) => x === placeholder ? { prompt: text, meta: isVideo ? `${modelLabel} · video` : `Seedream · ${job.urls.length} image`, urls: job.urls } : x));
         } else if (job.status === "FAILED") {
           if (pollTimer.current) clearInterval(pollTimer.current);
           setBusy(false);
@@ -179,8 +182,8 @@ export function GenSpace({ projectId }: { projectId: string | null }) {
                 <IcImage size={16} />
               </button>
             )}
-            {/* optional last frame — only with a start */}
-            {refImg && (tailImg ? (
+            {/* optional last frame — only with a start, and Kling only (Veo 3 has no tail frame) */}
+            {refImg && videoModel === "kling" && (tailImg ? (
               <span style={{ position: "relative", flex: "none" }} title="Last frame (end)">
                 <span style={{ display: "block", width: 30, height: 30, borderRadius: 6, overflow: "hidden", border: "1px solid rgba(120,160,255,.6)" }}>
                   {/* eslint-disable-next-line @next/next/no-img-element */}
@@ -200,7 +203,7 @@ export function GenSpace({ projectId }: { projectId: string | null }) {
             {uploading && <span style={{ font: "var(--text-caption)", color: "var(--fg-3)" }}>uploading…</span>}
             {refImg && !uploading && <span style={{ font: "var(--text-caption)", color: "var(--fg-2)" }}>{tailImg ? "→ image-to-video · start → end frame" : "→ image-to-video"}</span>}
             <span className="al-promptbar-spacer" />
-            <span style={{ font: "var(--text-caption)", color: "var(--fg-3)" }}>~${(isVideo ? GEN_PRICE_USD_PER_VIDEO : count * GEN_PRICE_USD_PER_IMAGE).toFixed(2)}</span>
+            <span style={{ font: "var(--text-caption)", color: "var(--fg-3)" }}>~${(isVideo ? GEN_VIDEO_MODEL_INFO[videoModel].priceUsd : count * GEN_PRICE_USD_PER_IMAGE).toFixed(2)}</span>
           </div>
           <input ref={fileInput} type="file" accept="image/png,image/jpeg,image/webp" hidden onChange={onRefFile} />
           <input ref={tailInput} type="file" accept="image/png,image/jpeg,image/webp" hidden onChange={onTailFile} />
@@ -214,7 +217,15 @@ export function GenSpace({ projectId }: { projectId: string | null }) {
               <button role="tab" aria-selected={!isVideo} className={`al-seg-item${!isVideo ? " al-seg-item-active" : ""}`} onClick={() => setKind("image")}>Photo</button>
               <button role="tab" aria-selected={isVideo} className={`al-seg-item${isVideo ? " al-seg-item-active" : ""}`} onClick={() => setKind("video")}>Video</button>
             </div>
-            <button className="al-chip al-chip-mono">{isVideo ? "Kling" : "Seedream"}<Caret /></button>
+            {isVideo ? (
+              <select aria-label="Video model" value={videoModel}
+                onChange={(e) => { const m = e.target.value as GenVideoModel; setVideoModel(m); if (m !== "kling") setTailImg(null); }}
+                style={{ background: "var(--glass-1)", border: "1px solid var(--line-2)", borderRadius: 999, color: "var(--fg-1)", font: "var(--text-mono-meta)", padding: "5px 9px", cursor: "pointer", outline: "none" }}>
+                {GEN_VIDEO_MODELS.map((m) => <option key={m} value={m}>{GEN_VIDEO_MODEL_INFO[m].label}{GEN_VIDEO_MODEL_INFO[m].sound ? " · sound" : ""}</option>)}
+              </select>
+            ) : (
+              <button className="al-chip al-chip-mono">Seedream<Caret /></button>
+            )}
             {isVideo && (
               <select aria-label="Camera motion" value={camera} onChange={(e) => setCamera(e.target.value)}
                 style={{ background: "var(--glass-1)", border: "1px solid var(--line-2)", borderRadius: 999, color: camera ? "var(--fg-1)" : "var(--fg-2)", font: "var(--text-mono-meta)", padding: "5px 9px", cursor: "pointer", outline: "none" }}>

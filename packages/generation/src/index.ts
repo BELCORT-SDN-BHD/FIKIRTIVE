@@ -159,22 +159,48 @@ export class FalProvider implements GenerationProvider {
   }
 
   async generateVideo(req: VideoRequest): Promise<GeneratedVideo> {
-    // Kling on fal: a source frame → image-to-video (Storyboard Animate);
-    // no frame → text-to-video (Gen space). image_url (i2v) is a presigned R2
-    // GET fal fetches; the sync endpoint blocks until the clip is ready.
+    // A source frame → image-to-video (Storyboard Animate); no frame →
+    // text-to-video (Gen space). image_url (i2v) is a presigned R2 GET fal
+    // fetches; the sync endpoint blocks until the clip is ready. Model menu:
+    //   veo3-fast — native scene audio (generate_audio); duration is a fixed
+    //               enum (4s/6s/8s, snap our seconds); NO tail frame.
+    //   kling     — silent, cheap; supports a tail frame (last-frame interp).
+    // Both return { video: { url } }, so the result handling below is shared.
     const i2v = req.imageUrl.length > 0;
-    const modelId = i2v
-      ? "fal-ai/kling-video/v2.5-turbo/pro/image-to-video"
-      : "fal-ai/kling-video/v2.5-turbo/pro/text-to-video";
-    const res = await fetch(`https://fal.run/${modelId}`, {
-      method: "POST",
-      headers: { Authorization: `Key ${this.apiKey}`, "Content-Type": "application/json" },
-      body: JSON.stringify({
+    let modelId: string;
+    let body: Record<string, unknown>;
+    if (req.model === "veo3-fast") {
+      // Veo 3 has no end-frame field — fail BEFORE the paid POST (no spend)
+      // rather than bill for a clip that would silently ignore the tail frame.
+      if (req.tailImageUrl) throw new Error("fal: veo3-fast does not support an end frame");
+      modelId = i2v ? "fal-ai/veo3/fast/image-to-video" : "fal-ai/veo3/fast";
+      const s = Math.round(req.durationSeconds);
+      const duration = s <= 4 ? "4s" : s <= 6 ? "6s" : "8s";
+      body = {
+        prompt: req.prompt,
+        duration,
+        generate_audio: true,
+        ...(i2v ? { image_url: req.imageUrl } : {}),
+      };
+    } else if (req.model === "kling") {
+      modelId = i2v
+        ? "fal-ai/kling-video/v2.5-turbo/pro/image-to-video"
+        : "fal-ai/kling-video/v2.5-turbo/pro/text-to-video";
+      body = {
         prompt: req.prompt,
         duration: String(Math.max(5, Math.round(req.durationSeconds))),
         ...(i2v ? { image_url: req.imageUrl } : {}),
         ...(i2v && req.tailImageUrl ? { tail_image_url: req.tailImageUrl } : {}),
-      }),
+      };
+    } else {
+      // unknown model — fail BEFORE the paid POST (no spend) rather than silently
+      // billing on a fallback. The contract already rejects this; defense in depth.
+      throw new Error(`fal: no video model mapping for ${req.model}`);
+    }
+    const res = await fetch(`https://fal.run/${modelId}`, {
+      method: "POST",
+      headers: { Authorization: `Key ${this.apiKey}`, "Content-Type": "application/json" },
+      body: JSON.stringify(body),
     });
     if (!res.ok) {
       // pre-charge failure (the model never ran) — safe for the worker to retry
