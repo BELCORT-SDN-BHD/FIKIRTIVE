@@ -377,6 +377,48 @@ export async function uploadCandidates(projectId: string, formData: FormData) {
   return { ok: true, count: files.length };
 }
 
+// only the exts the i2v worker can animate (kept in sync with the worker's
+// source-image filter): png / jpg / webp
+const REF_IMAGE_EXTS = new Set(["png", "jpg", "jpeg", "webp"]);
+
+/** Sniff the leading bytes so a non-image renamed `x.png` can't be stored as an
+ *  image (and later waste a paid i2v call). PNG / JPEG / WEBP magic numbers. */
+async function looksLikeImage(file: File): Promise<boolean> {
+  const h = new Uint8Array(await file.slice(0, 12).arrayBuffer());
+  const png = h[0] === 0x89 && h[1] === 0x50 && h[2] === 0x4e && h[3] === 0x47;
+  const jpg = h[0] === 0xff && h[1] === 0xd8 && h[2] === 0xff;
+  const webp = h[0] === 0x52 && h[1] === 0x49 && h[2] === 0x46 && h[3] === 0x46 && h[8] === 0x57 && h[9] === 0x45 && h[10] === 0x42 && h[11] === 0x50;
+  return png || jpg || webp;
+}
+
+/** Upload one image as a candidate Generation and return it, so Gen space can
+ *  use it as an image-to-video source. Mirrors uploadCandidates for a single
+ *  image; the i2v itself is a separate (paid) gen job. */
+export async function uploadReference(projectId: string, formData: FormData): Promise<{ id: string; src: string } | { error: string }> {
+  const project = await prisma.project.findFirst({ where: { id: projectId, ...OWNED } });
+  if (!project) return { error: "Project not found." };
+  const file = formData.getAll("files").find((f): f is File => f instanceof File && f.size > 0);
+  if (!file) return { error: "No image received." };
+  const ext = extFromFilename(file.name);
+  if (!REF_IMAGE_EXTS.has(ext)) return { error: "Reference must be a PNG, JPG, or WEBP image." };
+  if (!(await looksLikeImage(file))) return { error: "That file isn't a valid PNG / JPG / WEBP image." };
+  const item = await ingestFile(file);
+  let genId = "";
+  await prisma.$transaction(async (tx) => {
+    const asset = await tx.asset.upsert({
+      where: { ownerId_contentHash: { ownerId: FOUNDER_OWNER_ID, contentHash: item.contentHash } },
+      update: { deletedAt: null },
+      create: item.create,
+    });
+    const gen = await tx.generation.create({
+      data: { id: newId(), ownerId: FOUNDER_OWNER_ID, projectId, shotId: null, assetId: asset.id, source: "UPLOAD", promptText: "", entitySnapshot: { entities: [] } },
+    });
+    genId = gen.id;
+  });
+  revalidatePath("/", "layout");
+  return { id: genId, src: storageKeyToSrc(storageKey(FOUNDER_OWNER_ID, item.contentHash, ext)) };
+}
+
 /** Manual attach: candidate → shot, next version number, shot goes ATTACHED. */
 export async function attachGeneration(generationId: string, shotId: string) {
   const gen = await prisma.generation.findFirst({ where: { id: generationId, ...OWNED } });

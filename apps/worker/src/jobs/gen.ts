@@ -119,10 +119,22 @@ export async function handleGen(data: GenJobData, retryCount: number): Promise<v
     // animate the shot's latest IMAGE generation into a clip.
     let outputs: { bytes: Uint8Array; ext: string }[];
     if (job.kind === "VIDEO") {
-      // shot-bound video = i2v (animate the shot's latest still); a candidate
-      // video (no shot) = t2v (Gen space), generated from the prompt alone.
+      // i2v source priority: an explicit owned still (Gen space upload→animate)
+      // → the shot's latest still (Storyboard Animate) → none (text-to-video).
+      // The source is always resolved server-side from an owned id (D19).
       let imageUrl = "";
-      if (job.shotId) {
+      let sourceAsset: { ownerId: string; contentHash: string; ext: string } | null = null;
+      if (job.sourceGenerationId) {
+        const src = await prisma.generation.findFirst({
+          where: { id: job.sourceGenerationId, ownerId: job.ownerId, projectId: job.projectId, deletedAt: null, asset: { ext: { in: ["png", "jpg", "jpeg", "webp"] } } },
+          include: { asset: true },
+        });
+        if (!src) {
+          await prisma.genJob.update({ where: { id: job.id }, data: { status: "FAILED", error: "image-to-video source not found (or not an image) in this project", finishedAt: new Date() } });
+          return;
+        }
+        sourceAsset = src.asset;
+      } else if (job.shotId) {
         const sourceGen = await prisma.generation.findFirst({
           where: { shotId: job.shotId, deletedAt: null, asset: { ext: { in: ["png", "jpg", "jpeg", "webp"] } } },
           orderBy: { version: "desc" }, include: { asset: true },
@@ -133,7 +145,10 @@ export async function handleGen(data: GenJobData, retryCount: number): Promise<v
           await prisma.genJob.update({ where: { id: job.id }, data: { status: "FAILED", error: "no source image to animate — generate an image for this shot first", finishedAt: new Date() } });
           return;
         }
-        imageUrl = (await storage.presignedGet(storageKey(sourceGen.asset.ownerId, sourceGen.asset.contentHash, sourceGen.asset.ext), 3600)) ?? "";
+        sourceAsset = sourceGen.asset;
+      }
+      if (sourceAsset) {
+        imageUrl = (await storage.presignedGet(storageKey(sourceAsset.ownerId, sourceAsset.contentHash, sourceAsset.ext), 3600)) ?? "";
         if (provider.name !== "mock" && !imageUrl) throw new Error("source image unreachable — refusing to spend on i2v");
       }
       const video = await provider.generateVideo({ prompt: job.prompt, imageUrl, durationSeconds: GEN_VIDEO_SECONDS, model: job.model });

@@ -34,6 +34,9 @@ export const genRequest = z
     projectId: z.string().min(1).max(64),
     // when set, the result attaches to this shot; else it lands unattached
     shotId: z.string().min(1).max(64).nullish(),
+    // i2v source: a specific owned Generation's image to animate (Gen space
+    // upload→animate). Server-validated owner+project; not a client URL (D19).
+    sourceGenerationId: z.string().min(1).max(64).nullish(),
     prompt: z.string().trim().min(1).max(MAX_GEN_PROMPT),
     entityIds: z.array(z.string().min(1).max(64)).max(MAX_GEN_ENTITIES).default([]),
     count: z.number().int().min(1).max(MAX_GEN_COUNT),
