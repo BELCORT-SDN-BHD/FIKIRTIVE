@@ -3,7 +3,7 @@
 import { useEffect, useRef, useState } from "react";
 import Link from "next/link";
 import { artlioEdit, type ArtlioEdit } from "@artlio/core";
-import { getRenderJobs, saveProjectEdit, startRender } from "@/lib/actions";
+import { getRenderJobs, saveProjectEdit, startRender, getEditorMedia } from "@/lib/actions";
 import { Button, Chip, EmptyHero, MonoLabel } from "./ds";
 
 /**
@@ -18,11 +18,21 @@ import { Button, Chip, EmptyHero, MonoLabel } from "./ds";
 
 interface StudioEdit {
   getEdit: () => unknown;
+  addClip: (trackIdx: number, clip: unknown) => Promise<void>;
   events: { on: (e: string, cb: () => void) => (() => void) | void };
 }
 type StudioHandles = {
   edit: StudioEdit;
   dispose: () => void;
+};
+type EditorClip = { id: string; src: string; kind: "image" | "video"; seconds: number };
+
+/** A blank cut so the editor (and its Assets panel) renders for an empty project
+ *  that still has media to drop in — the artlioEdit contract (≥1 clip) is only
+ *  enforced at export, so an empty timeline edits fine. */
+const EMPTY_EDIT: ArtlioEdit = {
+  timeline: { background: "#000000", tracks: [{ clips: [] }] },
+  output: { format: "mp4", resolution: "1080", aspectRatio: "16:9", fps: 25 },
 };
 
 export function Editor({
@@ -54,6 +64,12 @@ export function Editor({
     onDirtyChange(d);
   };
 
+  // editor Assets panel: the project's generated media, clickable to add to the cut
+  const [media, setMedia] = useState<EditorClip[]>([]);
+  useEffect(() => { getEditorMedia(projectId).then(setMedia).catch(() => {}); }, [projectId]);
+  // start with a blank cut if there's no board/saved cut but there IS media to add
+  const startEdit = initialEdit ?? (media.length > 0 ? EMPTY_EDIT : null);
+
   // refresh/close with an unsaved cut → browser-native confirm (mirrors Composer)
   useEffect(() => {
     if (!dirty) return;
@@ -68,7 +84,7 @@ export function Editor({
   useEffect(() => () => onDirtyChange(false), []);
 
   useEffect(() => {
-    if (!initialEdit) return;
+    if (!startEdit) return;
     let disposed = false;
     // partial teardown for a cancelled init (StrictMode double-effect /
     // project switch): dispose whatever got constructed so far, in order
@@ -92,7 +108,7 @@ export function Editor({
         );
         if (disposed) return;
 
-        const edit = new Edit(initialEdit as never);
+        const edit = new Edit(startEdit as never);
         const canvas = new Canvas(edit);
         partials.push(canvas);
         const ui = UIController.create(edit, canvas);
@@ -152,7 +168,7 @@ export function Editor({
       teardown(); // covers a cancelled init that never reached handles
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [projectId, initialEdit]);
+  }, [projectId, startEdit]);
 
   /** read back the Studio snapshot and canonicalize through the contract */
   function snapshot(): { edit?: ArtlioEdit; error?: string } {
@@ -166,6 +182,20 @@ export function Editor({
       };
     }
     return { edit: result.data };
+  }
+
+  // append a project asset to the visual track (track 0) at the current end
+  async function appendAsset(clip: EditorClip) {
+    const h = handles.current;
+    if (!h || status !== "ready") return;
+    const cur = h.edit.getEdit() as ArtlioEdit;
+    const track0 = cur.timeline.tracks[0]?.clips ?? [];
+    const end = track0.reduce((m, c) => Math.max(m, c.start + c.length), 0);
+    try {
+      await h.edit.addClip(0, { asset: { type: clip.kind, src: clip.src }, start: end, length: clip.seconds });
+    } catch (e) {
+      console.error("[editor] addClip failed", e);
+    }
   }
 
   const [busy, setBusy] = useState(false);
@@ -257,7 +287,7 @@ export function Editor({
     };
   }, [projectId, jobsTick]);
 
-  if (!initialEdit) {
+  if (!startEdit) {
     return (
       <div className="screen">
         <div className="screen-pad" style={{ display: "flex", justifyContent: "center", paddingTop: 70 }}>
@@ -328,7 +358,27 @@ export function Editor({
           </p>
         </div>
       ) : (
-        <>
+        <div style={{ flex: 1, minHeight: 0, display: "flex", gap: 12 }}>
+          {/* Assets panel — click a clip to append it to the cut */}
+          <aside style={{ width: 220, flex: "none", display: "flex", flexDirection: "column", border: "1px solid var(--line-2)", borderRadius: "var(--radius-lg)", overflow: "hidden", maxHeight: "100%" }}>
+            <div style={{ padding: "9px 12px", borderBottom: "1px solid var(--line-2)", flex: "none" }}><MonoLabel>Assets</MonoLabel></div>
+            <div style={{ flex: 1, overflow: "auto", padding: 10, display: "flex", flexDirection: "column", gap: 8 }}>
+              {media.length === 0 ? (
+                <p style={{ font: "var(--text-caption)", color: "var(--fg-3)", margin: 0 }}>No media yet — generate in Gen space, then click a clip here to add it to the cut.</p>
+              ) : media.map((m) => (
+                <button key={m.id} onClick={() => appendAsset(m)} title="Add to the cut" disabled={status !== "ready"}
+                  style={{ position: "relative", border: "1px solid var(--line-2)", borderRadius: "var(--radius-md)", overflow: "hidden", background: "#000", aspectRatio: "16 / 10", cursor: "pointer", padding: 0 }}>
+                  {m.kind === "video"
+                    ? <video src={m.src} muted playsInline preload="metadata" style={{ width: "100%", height: "100%", objectFit: "cover" }} />
+                    // eslint-disable-next-line @next/next/no-img-element
+                    : <img src={m.src} alt="" style={{ width: "100%", height: "100%", objectFit: "cover" }} />}
+                  <span aria-hidden style={{ position: "absolute", top: 4, left: 4, width: 18, height: 18, display: "grid", placeItems: "center", borderRadius: 4, background: "rgba(0,0,0,.6)", color: "#fff", font: "var(--text-mono-meta)" }}>+</span>
+                  <span style={{ position: "absolute", bottom: 4, right: 4, font: "var(--text-mono-meta)", color: "#fff", background: "rgba(0,0,0,.6)", padding: "0 5px", borderRadius: 3 }}>{m.kind === "video" ? `${Math.round(m.seconds)}s` : "img"}</span>
+                </button>
+              ))}
+            </div>
+          </aside>
+          <div style={{ flex: 1, minWidth: 0, display: "flex", flexDirection: "column" }}>
           <div
             ref={studioRef}
             data-shotstack-studio
@@ -384,7 +434,8 @@ export function Editor({
               ))}
             </div>
           )}
-        </>
+          </div>
+        </div>
       )}
     </div>
   );

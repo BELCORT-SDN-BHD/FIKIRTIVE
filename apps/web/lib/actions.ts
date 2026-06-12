@@ -599,3 +599,26 @@ export async function softDeleteGeneration(generationId: string) {
   revalidatePath("/", "layout");
   return { ok: true };
 }
+
+const EDITOR_VIDEO_EXTS = new Set(["mp4", "mov", "webm", "mkv"]);
+/** A project's generated media as timeline-ready clips for the editor's Assets
+ *  panel — click one to append it to the cut. `seconds` drives the clip length. */
+export async function getEditorMedia(projectId: string): Promise<{ id: string; src: string; kind: "image" | "video"; seconds: number }[]> {
+  const project = await prisma.project.findFirst({ where: { id: projectId, ...OWNED } });
+  if (!project) return [];
+  const gens = await prisma.generation.findMany({
+    where: { ownerId: FOUNDER_OWNER_ID, projectId, deletedAt: null },
+    orderBy: { createdAt: "desc" },
+    include: { asset: true },
+  });
+  return gens.map((g) => {
+    const ext = g.asset.ext.toLowerCase();
+    const isVideo = EDITOR_VIDEO_EXTS.has(ext);
+    return {
+      id: g.id,
+      src: storageKeyToSrc(storageKey(g.asset.ownerId, g.asset.contentHash, ext)),
+      kind: isVideo ? ("video" as const) : ("image" as const),
+      seconds: isVideo ? (g.asset.durationS ?? 5) : 3,
+    };
+  });
+}
