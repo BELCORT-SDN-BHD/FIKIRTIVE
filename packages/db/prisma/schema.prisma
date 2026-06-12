@@ -319,6 +319,9 @@ model GenJob {
   progress      Int       @default(0)
   /// DONE 时产出的 Generation 行（可多个）
   generationIds String[]  @default([])
+  /// 钱真相：付费 provider 调用是否已返回（扣过费）。DONE=已交付；FAILED+spent=付了但没存上
+  ///（可审计/对账，避免"失败=没扣费"的误判）。pre-charge 失败时为 false。
+  spent         Boolean   @default(false)
   error         String    @default("")
   queueJobId    String    @default("")
   attempts      Int       @default(0)

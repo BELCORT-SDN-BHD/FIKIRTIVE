@@ -409,7 +409,7 @@ export function Editor({
         <Button variant="glass" size="sm" onClick={saveCut} disabled={status !== "ready" || !dirty || busy}>
           {busy ? "Working…" : "Save cut"}
         </Button>
-        <Button size="sm" onClick={exportCut} disabled={status !== "ready" || busy || !!liveIssue}>
+        <Button size="sm" onClick={exportCut} disabled={status !== "ready" || busy}>
           Export MP4
         </Button>
       </div>

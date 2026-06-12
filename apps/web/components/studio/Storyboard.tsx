@@ -23,6 +23,12 @@ const usd = (n: number) => "~$" + n.toFixed(2);
 const EMPTY_DOC = { type: "doc", content: [{ type: "paragraph" }] };
 const POLL_CAP = 120; // ~4 min at 2s — a stuck job must not pin the card or invite a re-spend
 
+/** Failure copy that never lies about money: a post-charge failure says so. */
+function failMsg(job: { error: string; spent?: boolean }): string {
+  if (job.spent) return `Charged, but saving the result failed${job.error ? `: ${job.error}` : ""} — reload to check; it'll be reconciled.`;
+  return job.error || "Generation failed (you were not charged).";
+}
+
 export type Frame = { id: string; src: string };
 export type StudioShot = {
   id: string;
@@ -141,7 +147,7 @@ function ShotCard({ projectId, shot, index, total, entities }: { projectId: stri
           router.refresh();
         } else if (job.status === "FAILED") {
           clearInterval(t); slotPolls.current.delete(t);
-          setSlotBusy(null); setError(job.error || "Generation failed (you were not charged).");
+          setSlotBusy(null); setError(failMsg(job));
         } else if (n > POLL_CAP) {
           clearInterval(t); slotPolls.current.delete(t);
           setSlotBusy(null); setError("Still generating — reload to check (don't re-run, you may have been charged).");
@@ -197,7 +203,7 @@ function ShotCard({ projectId, shot, index, total, entities }: { projectId: stri
         const job = await getGenJob(res.id);
         if (!job) { if (n > POLL_CAP) { if (poll.current) clearInterval(poll.current); setBusy(false); setError("Status unknown — reload to check (don't re-run, you may have been charged)."); } return; }
         if (job.status === "DONE") { if (poll.current) clearInterval(poll.current); setBusy(false); router.refresh(); }
-        else if (job.status === "FAILED") { if (poll.current) clearInterval(poll.current); setBusy(false); setError(job.error || "Generation failed (you were not charged)."); }
+        else if (job.status === "FAILED") { if (poll.current) clearInterval(poll.current); setBusy(false); setError(failMsg(job)); }
         else if (n > POLL_CAP) { if (poll.current) clearInterval(poll.current); setBusy(false); setError("Still animating — reload to check (don't re-run, you may have been charged)."); }
       }, 2000);
     })();

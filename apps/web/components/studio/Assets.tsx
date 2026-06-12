@@ -8,7 +8,7 @@ import { IcX } from "@/components/ds";
 import { deleteGeneration, attachGeneration } from "@/lib/actions";
 import { Lightbox } from "@/components/Lightbox";
 
-export type MediaItem = { id: string; src: string; kind: "image" | "video"; prompt: string; attached: boolean };
+export type MediaItem = { id: string; src: string; kind: "image" | "video"; prompt: string; attached: boolean; shotLabel?: string | null };
 export type ShotOption = { id: string; label: string };
 
 const FILTERS = [["all", "All"], ["image", "Images"], ["video", "Videos"]] as const;
@@ -96,7 +96,7 @@ export function Assets({ media, shotOptions }: { media: MediaItem[]; shotOptions
                     // eslint-disable-next-line @next/next/no-img-element
                     : <img src={m.src} alt="" title="Click to enlarge" onClick={() => setZoom({ src: m.src, kind: "image" })} style={{ position: "absolute", inset: 0, width: "100%", height: "100%", objectFit: "cover", cursor: "zoom-in" }} />}
                   <span style={{ position: "absolute", top: 8, left: 8, font: "var(--text-mono-meta)", color: "var(--fg-1)", background: "rgba(6,8,11,.6)", padding: "1px 6px", borderRadius: 4 }}>
-                    {m.attached ? "In a shot" : "Candidate"}{m.kind === "video" ? " · video" : ""}
+                    {m.attached ? (m.shotLabel ?? "In a shot") : "Candidate"}{m.kind === "video" ? " · video" : ""}
                   </span>
                   <button className="al-iconbtn al-iconbtn-sm" aria-label={m.attached ? "Delete asset (removes the shot's render)" : "Delete asset"} disabled={busy === m.id}
                     onClick={() => remove(m)}

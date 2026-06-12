@@ -79,7 +79,13 @@ export async function getGenJob(jobId: string) {
       where: { id: { in: job.generationIds } },
       include: { asset: true },
     });
-    urls = gens.map((g) => storageKeyToSrc(storageKey(g.asset.ownerId, g.asset.contentHash, g.asset.ext)));
+    // return urls in the order the worker produced them — findMany order is the
+    // DB's, so a multi-image batch would otherwise come back shuffled
+    const byId = new Map(gens.map((g) => [g.id, g]));
+    urls = job.generationIds
+      .map((gid) => byId.get(gid))
+      .filter((g): g is NonNullable<typeof g> => !!g)
+      .map((g) => storageKeyToSrc(storageKey(g.asset.ownerId, g.asset.contentHash, g.asset.ext)));
   }
-  return { id: job.id, status: job.status, progress: job.progress, error: job.error, urls, generationIds: job.generationIds };
+  return { id: job.id, status: job.status, progress: job.progress, error: job.error, urls, generationIds: job.generationIds, spent: job.spent };
 }

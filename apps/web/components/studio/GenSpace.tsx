@@ -26,6 +26,12 @@ const Caret = () => <IcChevronDown size={13} style={{ marginLeft: 2, color: "var
 const isVideoUrl = (u: string) => /\.(mp4|webm|mov|mkv)(\?|$)/i.test(u);
 const POLL_CAP = 120; // ~4 min at 2s — a stuck job can't pin the composer forever
 
+/** Failure copy that never lies about money: a post-charge failure says so. */
+function failMsg(job: { error: string; spent?: boolean }): string {
+  if (job.spent) return `Charged, but saving the result failed${job.error ? `: ${job.error}` : ""} — reload to check; it'll be reconciled.`;
+  return job.error || "Generation failed (you were not charged).";
+}
+
 // dark, opaque controls so the OS-rendered <option> list is never white-on-white
 const selectStyle: React.CSSProperties = {
   background: "#11151b", border: "1px solid var(--line-2)", borderRadius: 999,
@@ -163,7 +169,7 @@ export function GenSpace({ projectId, entities }: { projectId: string; entities:
         // poll-cap cases stay non-retryable: the job may still be running/charged, so re-running could double-spend
         if (!job) { if (n > POLL_CAP) { clearInterval(t); pollers.current.delete(t); mark({ status: "failed", message: "Status unknown — reload to check (don't re-run, you may have been charged).", retryable: false }); finishOne(); } return; }
         if (job.status === "DONE") { clearInterval(t); pollers.current.delete(t); mark({ status: "done", urls: job.urls }); finishOne(); }
-        else if (job.status === "FAILED") { clearInterval(t); pollers.current.delete(t); mark({ status: "failed", message: job.error || "Generation failed (you were not charged)." }); finishOne(); }
+        else if (job.status === "FAILED") { clearInterval(t); pollers.current.delete(t); mark({ status: "failed", message: failMsg(job) }); finishOne(); }
         else if (n > POLL_CAP) { clearInterval(t); pollers.current.delete(t); mark({ status: "failed", message: "Still running — reload to check (don't re-run, you may have been charged).", retryable: false }); finishOne(); }
       }, 2000);
       pollers.current.add(t);

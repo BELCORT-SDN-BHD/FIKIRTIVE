@@ -63,7 +63,7 @@ export async function handleGen(data: GenJobData, retryCount: number): Promise<v
 
     // resume — already paid + persisted on a prior delivery
     if (job.generationIds.length > 0) {
-      await prisma.genJob.update({ where: { id: job.id }, data: { status: "DONE", progress: 100, finishedAt: new Date(), error: "" } });
+      await prisma.genJob.update({ where: { id: job.id }, data: { status: "DONE", progress: 100, finishedAt: new Date(), error: "", spent: true } });
       return;
     }
 
@@ -213,7 +213,7 @@ export async function handleGen(data: GenJobData, retryCount: number): Promise<v
     if (job.shotId) {
       await prisma.shot.update({ where: { id: job.shotId }, data: { status: "ATTACHED" } });
     }
-    await prisma.genJob.update({ where: { id: job.id }, data: { generationIds, status: "DONE", progress: 100, finishedAt: new Date(), error: "" } });
+    await prisma.genJob.update({ where: { id: job.id }, data: { generationIds, status: "DONE", progress: 100, finishedAt: new Date(), error: "", spent: true } });
     void assetIds; // metadata probe (ingest) is a follow-up; images default to 3s in the editor
     console.log(`[gen] ${job.id}: DONE → ${generationIds.length} generations via ${provider.name}`);
   } catch (err) {
@@ -227,7 +227,9 @@ export async function handleGen(data: GenJobData, retryCount: number): Promise<v
     console.error(`[gen] ${job.id}: ${final ? "FAILED" : "retrying"} — ${message}`);
     await prisma.genJob.update({
       where: { id: job.id },
-      data: final ? { status: "FAILED", error: message, finishedAt: new Date() } : { status: "QUEUED", error: message, progress: 0 },
+      // a post-charge failure records spent=true so "paid but not delivered" is
+      // auditable (the UI/ops can tell it apart from a free pre-charge failure)
+      data: final ? { status: "FAILED", error: message, finishedAt: new Date(), spent: spent || charged } : { status: "QUEUED", error: message, progress: 0 },
     });
     throw err;
   }

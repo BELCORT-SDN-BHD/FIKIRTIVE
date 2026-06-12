@@ -45,6 +45,17 @@ export default async function StudioPage({ searchParams }: { searchParams: Promi
     shots.flatMap((s) => [s.firstFrameGenerationId, s.lastFrameGenerationId].filter((x): x is string => !!x)),
   );
 
+  // renumbered "Scene N · Shot M" label per shot id — shared by the Assets badge
+  // and the "add to shot" picker so both read the same as the board
+  const sceneDisplay: Record<number, number> = {};
+  [...new Set(shots.map((s) => s.scene))].sort((a, b) => a - b).forEach((sc, i) => { sceneDisplay[sc] = i + 1; });
+  const withinScene: Record<number, number> = {};
+  const shotLabelById = new Map<string, string>();
+  for (const s of shots) {
+    withinScene[s.scene] = (withinScene[s.scene] ?? 0) + 1;
+    shotLabelById.set(s.id, `Scene ${sceneDisplay[s.scene]} · Shot ${withinScene[s.scene]}`);
+  }
+
   // storyboard shots: prompt + latest generation image (for the card)
   // shots arrive ordered [scene asc, number asc]; number is a within-scene
   // display index (1..N per scene), decoupled from the stored global number.
@@ -87,16 +98,11 @@ export default async function StudioPage({ searchParams }: { searchParams: Promi
       kind: VIDEO_EXTS.has(ext) ? ("video" as const) : ("image" as const),
       prompt: g.promptText ?? "",
       attached: g.shotId != null,
+      shotLabel: g.shotId ? (shotLabelById.get(g.shotId) ?? null) : null,
     };
   });
-  // shot picker labels for "add to shot", matching the board's Scene N · Shot M
-  const sceneDisplay: Record<number, number> = {};
-  [...new Set(shots.map((s) => s.scene))].sort((a, b) => a - b).forEach((sc, i) => { sceneDisplay[sc] = i + 1; });
-  const withinScene: Record<number, number> = {};
-  const shotOptions = shots.map((s) => {
-    withinScene[s.scene] = (withinScene[s.scene] ?? 0) + 1;
-    return { id: s.id, label: `Scene ${sceneDisplay[s.scene]} · Shot ${withinScene[s.scene]}` };
-  });
+  // shot picker labels for "add to shot" (same Scene N · Shot M as the board)
+  const shotOptions = shots.map((s) => ({ id: s.id, label: shotLabelById.get(s.id)! }));
 
   return (
     <Studio
