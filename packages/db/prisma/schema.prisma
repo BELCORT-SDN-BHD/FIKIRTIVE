@@ -300,6 +300,8 @@ model GenJob {
   // i2v source = a specific owned Generation's image (Gen space upload→animate)；
   // worker 校验 owner+project 后用它的图做 image-to-video（D19：不收客户端 URL）
   sourceGenerationId String?
+  // 可选末帧（last frame）：i2v 在 source→tail 之间补间（Kling tail_image_url）
+  tailGenerationId   String?
   prompt        String
   entityIds     String[]  @default([])
   kind          GenKind   @default(IMAGE)

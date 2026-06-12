@@ -151,7 +151,22 @@ export async function handleGen(data: GenJobData, retryCount: number): Promise<v
         imageUrl = (await storage.presignedGet(storageKey(sourceAsset.ownerId, sourceAsset.contentHash, sourceAsset.ext), 3600)) ?? "";
         if (provider.name !== "mock" && !imageUrl) throw new Error("source image unreachable — refusing to spend on i2v");
       }
-      const video = await provider.generateVideo({ prompt: job.prompt, imageUrl, durationSeconds: GEN_VIDEO_SECONDS, model: job.model });
+      // optional end frame (last-frame i2v): interpolate source→tail. Resolved
+      // server-side from an owned id, and only meaningful with a start image.
+      let tailImageUrl = "";
+      if (job.tailGenerationId && sourceAsset) {
+        const tail = await prisma.generation.findFirst({
+          where: { id: job.tailGenerationId, ownerId: job.ownerId, projectId: job.projectId, deletedAt: null, asset: { ext: { in: ["png", "jpg", "jpeg", "webp"] } } },
+          include: { asset: true },
+        });
+        if (!tail) {
+          await prisma.genJob.update({ where: { id: job.id }, data: { status: "FAILED", error: "last-frame image not found (or not an image) in this project", finishedAt: new Date() } });
+          return;
+        }
+        tailImageUrl = (await storage.presignedGet(storageKey(tail.asset.ownerId, tail.asset.contentHash, tail.asset.ext), 3600)) ?? "";
+        if (provider.name !== "mock" && !tailImageUrl) throw new Error("last-frame image unreachable — refusing to spend on i2v");
+      }
+      const video = await provider.generateVideo({ prompt: job.prompt, imageUrl, tailImageUrl: tailImageUrl || undefined, durationSeconds: GEN_VIDEO_SECONDS, model: job.model });
       outputs = [video];
     } else {
       outputs = await provider.generate({ prompt: job.prompt, inputImageUrls, count: job.count, model: job.model as GenModel });

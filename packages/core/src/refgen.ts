@@ -84,6 +84,8 @@ export interface GeneratedImage {
 export interface VideoRequest {
   prompt: string;
   imageUrl: string;
+  /** optional end frame — i2v interpolates source→tail (Kling tail_image_url). */
+  tailImageUrl?: string;
   durationSeconds: number;
   model: string;
 }

@@ -173,6 +173,7 @@ export class FalProvider implements GenerationProvider {
         prompt: req.prompt,
         duration: String(Math.max(5, Math.round(req.durationSeconds))),
         ...(i2v ? { image_url: req.imageUrl } : {}),
+        ...(i2v && req.tailImageUrl ? { tail_image_url: req.tailImageUrl } : {}),
       }),
     });
     if (!res.ok) {

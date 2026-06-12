@@ -10,7 +10,7 @@
  * Mock-first; engine wires later.
  */
 import { useState, useEffect, useRef } from "react";
-import { Button, MonoLabel, IcPlus, IcImage, IcFilm, IcChevronDown, IcRetry, IcX } from "@/components/ds";
+import { Button, MonoLabel, IcPlus, IcImage, IcChevronDown, IcRetry, IcX } from "@/components/ds";
 import { GEN_PRICE_USD_PER_IMAGE, GEN_PRICE_USD_PER_VIDEO } from "@artlio/core";
 import { startGen, getGenJob } from "@/lib/gen-actions";
 import { uploadReference } from "@/lib/actions";
@@ -32,28 +32,34 @@ export function GenSpace({ projectId }: { projectId: string | null }) {
   const [results, setResults] = useState<Result[]>([]);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const [refImg, setRefImg] = useState<{ id: string; src: string } | null>(null); // i2v source
+  const [refImg, setRefImg] = useState<{ id: string; src: string } | null>(null); // i2v start frame
+  const [tailImg, setTailImg] = useState<{ id: string; src: string } | null>(null); // optional last frame
   const [uploading, setUploading] = useState(false);
   const fileInput = useRef<HTMLInputElement | null>(null);
+  const tailInput = useRef<HTMLInputElement | null>(null);
   const pollTimer = useRef<ReturnType<typeof setInterval> | null>(null);
   useEffect(() => () => { if (pollTimer.current) clearInterval(pollTimer.current); }, []);
 
-  function onRefFile(e: React.ChangeEvent<HTMLInputElement>) {
-    const file = e.target.files?.[0];
-    e.target.value = "";
-    if (!file || !projectId || uploading) return;
-    setError(null);
-    setUploading(true);
-    (async () => {
-      const fd = new FormData();
-      fd.append("files", file);
-      const res = await uploadReference(projectId, fd);
-      setUploading(false);
-      if ("error" in res) { setError(res.error); return; }
-      setRefImg(res);
-      setKind("video"); // a reference image animates → image-to-video
-    })();
+  function uploadInto(setter: (v: { id: string; src: string }) => void, switchMode: boolean) {
+    return (e: React.ChangeEvent<HTMLInputElement>) => {
+      const file = e.target.files?.[0];
+      e.target.value = "";
+      if (!file || !projectId || uploading) return;
+      setError(null);
+      setUploading(true);
+      (async () => {
+        const fd = new FormData();
+        fd.append("files", file);
+        const res = await uploadReference(projectId, fd);
+        setUploading(false);
+        if ("error" in res) { setError(res.error); return; }
+        setter(res);
+        if (switchMode) setKind("video"); // a reference image animates → image-to-video
+      })();
+    };
   }
+  const onRefFile = uploadInto(setRefImg, true);
+  const onTailFile = uploadInto(setTailImg, false);
 
   function generate() {
     const text = prompt.trim();
@@ -63,7 +69,7 @@ export function GenSpace({ projectId }: { projectId: string | null }) {
     const placeholder: Result = { prompt: text, meta: `${isVideo ? "Kling" : "Seedream"} · generating…`, urls: [], pending: true };
     setResults((r) => [placeholder, ...r]);
     (async () => {
-      const res = await startGen({ projectId, prompt: text, entityIds: [], count: isVideo ? 1 : count, kind, model: isVideo ? "kling" : "seedream", sourceGenerationId: isVideo && refImg ? refImg.id : undefined });
+      const res = await startGen({ projectId, prompt: text, entityIds: [], count: isVideo ? 1 : count, kind, model: isVideo ? "kling" : "seedream", sourceGenerationId: isVideo && refImg ? refImg.id : undefined, tailGenerationId: isVideo && refImg && tailImg ? tailImg.id : undefined });
       if ("error" in res) { setError(res.error); setBusy(false); setResults((r) => r.filter((x) => x !== placeholder)); return; }
       pollTimer.current = setInterval(async () => {
         const job = await getGenJob(res.id);
@@ -152,12 +158,15 @@ export function GenSpace({ projectId }: { projectId: string | null }) {
         <div className="al-promptbar">
           {/* reference slots */}
           <div className="al-promptbar-row">
+            {/* start frame */}
             {refImg ? (
-              <span style={{ position: "relative", width: 30, height: 30, borderRadius: 6, overflow: "hidden", border: "1px solid var(--line-2)", flex: "none" }}>
-                {/* eslint-disable-next-line @next/next/no-img-element */}
-                <img src={refImg.src} alt="reference" style={{ width: "100%", height: "100%", objectFit: "cover" }} />
-                <button onClick={() => setRefImg(null)} aria-label="Remove reference"
-                  style={{ position: "absolute", top: 0, right: 0, width: 14, height: 14, display: "grid", placeItems: "center", background: "rgba(6,8,11,.7)", border: "none", color: "var(--fg-1)", cursor: "pointer", padding: 0 }}>
+              <span style={{ position: "relative", flex: "none" }} title="Start frame">
+                <span style={{ display: "block", width: 30, height: 30, borderRadius: 6, overflow: "hidden", border: "1px solid var(--line-2)" }}>
+                  {/* eslint-disable-next-line @next/next/no-img-element */}
+                  <img src={refImg.src} alt="start frame" style={{ width: "100%", height: "100%", objectFit: "cover" }} />
+                </span>
+                <button onClick={() => { setRefImg(null); setTailImg(null); }} aria-label="Remove reference"
+                  style={{ position: "absolute", top: -5, right: -5, width: 15, height: 15, display: "grid", placeItems: "center", borderRadius: "50%", background: "#11151b", border: "1px solid var(--line-2)", color: "var(--fg-1)", cursor: "pointer", padding: 0 }}>
                   <IcX size={9} />
                 </button>
               </span>
@@ -167,14 +176,31 @@ export function GenSpace({ projectId }: { projectId: string | null }) {
                 <IcImage size={16} />
               </button>
             )}
-            <button className="al-iconbtn al-iconbtn-md" aria-label="Add video reference"><IcFilm size={16} /></button>
-            <button className="al-iconbtn al-iconbtn-md" aria-label="Add control reference"><IcPlus size={16} /></button>
+            {/* optional last frame — only with a start */}
+            {refImg && (tailImg ? (
+              <span style={{ position: "relative", flex: "none" }} title="Last frame (end)">
+                <span style={{ display: "block", width: 30, height: 30, borderRadius: 6, overflow: "hidden", border: "1px solid rgba(120,160,255,.6)" }}>
+                  {/* eslint-disable-next-line @next/next/no-img-element */}
+                  <img src={tailImg.src} alt="last frame" style={{ width: "100%", height: "100%", objectFit: "cover" }} />
+                </span>
+                <button onClick={() => setTailImg(null)} aria-label="Remove last frame"
+                  style={{ position: "absolute", top: -5, right: -5, width: 15, height: 15, display: "grid", placeItems: "center", borderRadius: "50%", background: "#11151b", border: "1px solid var(--line-2)", color: "var(--fg-1)", cursor: "pointer", padding: 0 }}>
+                  <IcX size={9} />
+                </button>
+              </span>
+            ) : (
+              <button className="al-iconbtn al-iconbtn-md" aria-label="Add last frame" title="Add an end frame (optional)"
+                onClick={() => !uploading && tailInput.current?.click()} disabled={uploading || !projectId}>
+                <IcPlus size={16} />
+              </button>
+            ))}
             {uploading && <span style={{ font: "var(--text-caption)", color: "var(--fg-3)" }}>uploading…</span>}
-            {refImg && !uploading && <span style={{ font: "var(--text-caption)", color: "var(--fg-2)" }}>→ image-to-video</span>}
+            {refImg && !uploading && <span style={{ font: "var(--text-caption)", color: "var(--fg-2)" }}>{tailImg ? "→ image-to-video · start → end frame" : "→ image-to-video"}</span>}
             <span className="al-promptbar-spacer" />
             <span style={{ font: "var(--text-caption)", color: "var(--fg-3)" }}>~${(isVideo ? GEN_PRICE_USD_PER_VIDEO : count * GEN_PRICE_USD_PER_IMAGE).toFixed(2)}</span>
           </div>
           <input ref={fileInput} type="file" accept="image/png,image/jpeg,image/webp" hidden onChange={onRefFile} />
+          <input ref={tailInput} type="file" accept="image/png,image/jpeg,image/webp" hidden onChange={onTailFile} />
           <div className="al-input-wrap" style={{ border: "none", background: "none", padding: 0 }}>
             <input placeholder="Describe the shot — subject, camera, light…" aria-label="Describe the shot"
               value={prompt} onChange={(e) => setPrompt(e.target.value)} disabled={busy}

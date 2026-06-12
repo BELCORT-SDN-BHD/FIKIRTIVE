@@ -22,7 +22,7 @@ const OWNED = { ownerId: FOUNDER_OWNER_ID, deletedAt: null } as const;
 export async function startGen(raw: unknown): Promise<{ id: string } | { error: string }> {
   const parsed = genRequest.safeParse(raw);
   if (!parsed.success) return { error: "That generation request is out of bounds." };
-  const { projectId, shotId, sourceGenerationId, prompt, entityIds, count, kind, model } = parsed.data;
+  const { projectId, shotId, sourceGenerationId, tailGenerationId, prompt, entityIds, count, kind, model } = parsed.data;
 
   const project = await prisma.project.findFirst({ where: { id: projectId, ...OWNED } });
   if (!project) return { error: "Project not found." };
@@ -31,6 +31,7 @@ export async function startGen(raw: unknown): Promise<{ id: string } | { error: 
     data: {
       id: newId(), ownerId: FOUNDER_OWNER_ID, projectId, shotId: shotId ?? null,
       sourceGenerationId: sourceGenerationId ?? null,
+      tailGenerationId: tailGenerationId ?? null,
       prompt, entityIds, count: kind === "video" ? 1 : count, model,
       kind: kind === "video" ? "VIDEO" : "IMAGE",
     },
