@@ -54,6 +54,19 @@ export function Editor({
     onDirtyChange(d);
   };
 
+  // refresh/close with an unsaved cut → browser-native confirm (mirrors Composer)
+  useEffect(() => {
+    if (!dirty) return;
+    const warn = (e: BeforeUnloadEvent) => e.preventDefault();
+    window.addEventListener("beforeunload", warn);
+    return () => window.removeEventListener("beforeunload", warn);
+  }, [dirty]);
+
+  // leaving the editor (nav away / unmount) → report clean, so re-entry doesn't
+  // prompt on a stale dirty flag (the parent's guard reads this)
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  useEffect(() => () => onDirtyChange(false), []);
+
   useEffect(() => {
     if (!initialEdit) return;
     let disposed = false;
@@ -358,6 +371,11 @@ export function Editor({
                         Download MP4
                       </a>
                     </>
+                  )}
+                  {j.status === "DONE" && !j.url && (
+                    <span style={{ flex: 1, font: "var(--text-small)", color: "var(--fg-3)", whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>
+                      Render finished — file not ready yet, reload to fetch it
+                    </span>
                   )}
                   <span style={{ font: "var(--text-mono-meta)", color: "var(--fg-4)" }} suppressHydrationWarning>
                     {new Date(j.createdAt).toLocaleTimeString("en-US", { hour: "2-digit", minute: "2-digit" })}

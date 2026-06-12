@@ -48,6 +48,7 @@ export default async function StudioPage({ searchParams }: { searchParams: Promi
       scene: s.scene,
       prompt: s.description ?? "",
       entityIds: s.entityRefs.map((r) => r.entityId),
+      promptDoc: s.promptDoc ?? undefined, // seeds the @mention editor
       imageUrl: img && IMAGE_EXTS.has(latest!.asset.ext.toLowerCase()) ? img : null,
       videoUrl: img && VIDEO_EXTS.has(latest!.asset.ext.toLowerCase()) ? img : null,
     };

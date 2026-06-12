@@ -29,9 +29,9 @@ export type RefGenModel = (typeof REFGEN_MODELS)[number];
 export const MAX_REFGEN_COUNT = 6;
 export const MAX_CONDITIONING_IMAGES = 10;
 export const MAX_REFGEN_PROMPT = 2000;
-/** Per-image price hint shown at the point of spend (provider research:
- *  Seedream 5.0 Lite on fal). Display only — billing is a later slice. */
-export const REFGEN_PRICE_USD_PER_IMAGE = 0.035;
+/** Per-image price hint shown at the point of spend (fal Seedream 4.5).
+ *  Display only — billing is a later slice. */
+export const REFGEN_PRICE_USD_PER_IMAGE = 0.04;
 
 /** What the web action accepts. Conditioning is derived server-side from the
  *  entity, so it is deliberately absent here (D19 trust boundary). */

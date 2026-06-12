@@ -16,7 +16,7 @@ export const GEN_MODELS = ["seedream"] as const;
 export type GenModel = (typeof GEN_MODELS)[number];
 /** Video model menu (fal) — mirrors LTX Studio's lineup. Kling 2.5 is the silent,
  *  cheap default; every other model generates native audio. Order = picker order
- *  (silent default first, then sound models cheapest→priciest). */
+ *  (silent default first, then sound models roughly cheapest→priciest). */
 export const GEN_VIDEO_MODELS = [
   "kling", "veo3.1-lite", "ltx-2", "kling-2.6", "kling-3", "veo3.1-fast", "seedance-2-fast", "veo3.1",
 ] as const;
@@ -31,7 +31,7 @@ export const MAX_GEN_ENTITIES = 8;
 export const GEN_VIDEO_SECONDS = 5;
 /** Image price is flat per image; video price is dynamic — see videoPriceUsd
  *  (scales with duration × resolution × audio × count). */
-export const GEN_PRICE_USD_PER_IMAGE = 0.035;
+export const GEN_PRICE_USD_PER_IMAGE = 0.04;
 /** Per-model facts: `label` for the picker, `sound` = generates native audio,
  *  `tail` = supports an end frame. Controls + price live in the two helpers below. */
 export const GEN_VIDEO_MODEL_INFO: Record<GenVideoModel, { label: string; sound: boolean; tail: boolean }> = {
@@ -62,7 +62,7 @@ export type VideoModelOptions = {
 export const GEN_VIDEO_MODEL_OPTIONS: Record<GenVideoModel, VideoModelOptions> = {
   "kling":           { durations: [5, 10],   resolutions: [],                           aspectRatios: [],               fps: [],       audioToggle: false, maxCount: 4 },
   "veo3.1-lite":     { durations: [4, 6, 8],  resolutions: ["720p"],                    aspectRatios: ["16:9", "9:16"], fps: [],       audioToggle: true,  maxCount: 4 },
-  "ltx-2":           { durations: [6, 8, 10], resolutions: ["1080p", "1440p", "2160p"], aspectRatios: [],               fps: [25, 50], audioToggle: true,  maxCount: 4 },
+  "ltx-2":           { durations: [6, 8, 10], resolutions: ["1080p", "1440p", "2160p"], aspectRatios: [],               fps: [],       audioToggle: true,  maxCount: 4 },
   "kling-2.6":       { durations: [5, 10],   resolutions: [],                           aspectRatios: [],               fps: [],       audioToggle: true,  maxCount: 4 },
   "kling-3":         { durations: [5, 10],   resolutions: [],                           aspectRatios: [],               fps: [],       audioToggle: true,  maxCount: 4 },
   "seedance-2-fast": { durations: [5, 10],   resolutions: ["720p"],                    aspectRatios: ["16:9", "9:16"], fps: [],       audioToggle: true,  maxCount: 4 },

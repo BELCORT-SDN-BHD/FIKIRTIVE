@@ -41,13 +41,16 @@ export function Studio({
   initialView?: StudioView;
 }) {
   const [view, setView] = useState<StudioView>(initialView ?? "genspace");
+  // the editor tab reports its unsaved-cut state up so nav/project-switch can guard it
+  const [editorDirty, setEditorDirty] = useState(false);
+  const confirmLeave = () => !editorDirty || confirm("Discard unsaved changes to this cut?");
 
   function surface() {
     switch (view) {
-      case "genspace": return <GenSpace projectId={project.id} />;
+      case "genspace": return <GenSpace projectId={project.id} entities={entities} />;
       case "canvas": return <Canvas />;
-      case "storyboard": return <Storyboard projectId={project.id} shots={shots} />;
-      case "editor": return <VideoEditorSurface projectId={project.id} boardEdit={boardEdit} savedEdit={savedEdit} attachedCount={attachedCount} />;
+      case "storyboard": return <Storyboard projectId={project.id} shots={shots} entities={entities} />;
+      case "editor": return <VideoEditorSurface projectId={project.id} boardEdit={boardEdit} savedEdit={savedEdit} attachedCount={attachedCount} onDirtyChange={setEditorDirty} />;
       case "elements": return <Elements entities={entities} />;
       case "assets": return <Assets media={media} shotOptions={shotOptions} />;
       default:
@@ -61,7 +64,7 @@ export function Studio({
   }
 
   return (
-    <StudioShell view={view} onNavigate={setView} project={project} projects={projects} user={user}>
+    <StudioShell view={view} onNavigate={setView} confirmLeave={confirmLeave} project={project} projects={projects} user={user}>
       {surface()}
     </StudioShell>
   );
