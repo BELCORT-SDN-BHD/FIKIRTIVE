@@ -57,6 +57,10 @@ export const REFGEN_RETRY_LIMIT = 2;
 export const REFGEN_QUEUE_POLICY = {
   retryLimit: REFGEN_RETRY_LIMIT,
   retryBackoff: true,
+  // > the longest fal call so a job never expires mid-flight; both web (dispatch)
+  // and worker (consumer) create the queue with THIS policy, so boot order can't
+  // leave them split (the value used to live only on the worker's createQueue)
+  expireInSeconds: 60 * 10,
   deadLetter: REFGEN_DLQ,
 } as const;
 

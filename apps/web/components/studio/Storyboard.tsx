@@ -54,10 +54,11 @@ function ShotCard({ projectId, shot, index, total, entities }: { projectId: stri
   const [camera, setCamera] = useState("");
   const [videoModel, setVideoModel] = useState<GenVideoModel>("kling");
   const [seconds, setSeconds] = useState(() => videoDefaults("kling").seconds);
+  const [audioOn, setAudioOn] = useState(() => videoDefaults("kling").audio); // per-segment audio (sound models: off is cheaper)
   const vd = videoDefaults(videoModel);
   const opts = GEN_VIDEO_MODEL_OPTIONS[videoModel];
   const info = GEN_VIDEO_MODEL_INFO[videoModel];
-  const animatePrice = videoPriceUsd(videoModel, { seconds, resolution: vd.resolution, audio: vd.audio, count: 1 });
+  const animatePrice = videoPriceUsd(videoModel, { seconds, resolution: vd.resolution, audio: audioOn, count: 1 });
   const [busy, setBusy] = useState(false);                                  // Animate (video) in flight
   const [slotBusy, setSlotBusy] = useState<"first" | "last" | null>(null);   // a keyframe op in flight
   const [acting, setActing] = useState(false);                              // move/delete in flight
@@ -91,7 +92,7 @@ function ShotCard({ projectId, shot, index, total, entities }: { projectId: stri
     setText(shot.prompt); setIds(shot.entityIds); setDoc(shot.promptDoc);
   }, [docKey, dirty, seeded, shot.prompt, shot.entityIds, shot.promptDoc]);
 
-  function pickModel(m: GenVideoModel) { setVideoModel(m); setSeconds(videoDefaults(m).seconds); }
+  function pickModel(m: GenVideoModel) { setVideoModel(m); setSeconds(videoDefaults(m).seconds); setAudioOn(videoDefaults(m).audio); }
 
   async function persist(): Promise<boolean> {
     if (!dirty) return true;
@@ -194,7 +195,7 @@ function ShotCard({ projectId, shot, index, total, entities }: { projectId: stri
         tailGenerationId: tailReady ? shot.lastFrame!.id : undefined,
         durationSeconds: seconds,
         resolution: opts.resolutions.length ? vd.resolution : undefined,
-        audio: opts.audioToggle ? vd.audio : undefined,
+        audio: opts.audioToggle ? audioOn : undefined,
       });
       if ("error" in res) { setError(res.error); setBusy(false); return; }
       let n = 0;
@@ -328,8 +329,13 @@ function ShotCard({ projectId, shot, index, total, entities }: { projectId: stri
           <option value="out" style={{ background: "#11151b" }}>Fade out</option>
           <option value="both" style={{ background: "#11151b" }}>Fade in + out</option>
         </select>
+        {opts.audioToggle && (
+          <label style={{ display: "flex", alignItems: "center", gap: 6, font: "var(--text-caption)", color: "var(--fg-2)", cursor: "pointer" }}>
+            <input type="checkbox" checked={audioOn} onChange={(e) => setAudioOn(e.target.checked)} disabled={busy || acting || !!slotBusy} /> Generate with audio
+          </label>
+        )}
         <p style={{ font: "var(--text-caption)", color: "var(--fg-3)", margin: 0 }}>
-          Animate {usd(animatePrice)} · {seconds}s{vd.audio ? ", audio" : ""}{tailReady ? ", end frame" : ""} · each frame {usd(GEN_PRICE_USD_PER_IMAGE)}
+          Animate {usd(animatePrice)} · {seconds}s{audioOn ? ", audio" : ""}{tailReady ? ", end frame" : ""} · each frame {usd(GEN_PRICE_USD_PER_IMAGE)}
         </p>
         <div style={{ width: "100%", background: "rgba(255,255,255,.05)", border: "1px solid var(--line-2)", borderRadius: "var(--radius-sm)", padding: "6px 9px" }}>
           <MentionInput entities={entities} initialDoc={shot.promptDoc} docKey={seeded}

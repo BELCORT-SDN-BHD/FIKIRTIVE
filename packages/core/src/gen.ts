@@ -158,5 +158,9 @@ export const GEN_RETRY_LIMIT = 2;
 export const GEN_QUEUE_POLICY = {
   retryLimit: GEN_RETRY_LIMIT,
   retryBackoff: true,
+  // > the longest fal call so a job never expires mid-flight; both web (dispatch)
+  // and worker (consumer) create the queue with THIS policy, so boot order can't
+  // leave them split (the value used to live only on the worker's createQueue)
+  expireInSeconds: 60 * 10,
   deadLetter: GEN_DLQ,
 } as const;

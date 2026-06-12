@@ -58,9 +58,9 @@ async function main(): Promise<void> {
   await boss.createQueue(RENDER_DLQ);
   await boss.createQueue(QUEUES.render, { ...RENDER_QUEUE_POLICY });
   await boss.createQueue(REFGEN_DLQ);
-  await boss.createQueue(REFGEN_QUEUE, { ...REFGEN_QUEUE_POLICY, expireInSeconds: 60 * 10 });
+  await boss.createQueue(REFGEN_QUEUE, { ...REFGEN_QUEUE_POLICY });
   await boss.createQueue(GEN_DLQ);
-  await boss.createQueue(GEN_QUEUE, { ...GEN_QUEUE_POLICY, expireInSeconds: 60 * 10 });
+  await boss.createQueue(GEN_QUEUE, { ...GEN_QUEUE_POLICY });
 
   await boss.work<IngestJobData>(QUEUES.ingest, { batchSize: 1 }, async ([job]) => {
     if (!job) return;
