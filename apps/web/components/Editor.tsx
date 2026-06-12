@@ -66,7 +66,12 @@ export function Editor({
 
   // editor Assets panel: the project's generated media, clickable to add to the cut
   const [media, setMedia] = useState<EditorClip[]>([]);
-  useEffect(() => { getEditorMedia(projectId).then(setMedia).catch(() => {}); }, [projectId]);
+  useEffect(() => {
+    let alive = true;
+    setMedia([]); // clear stale media on a project switch (don't show/append another project's clips)
+    getEditorMedia(projectId).then((m) => { if (alive) setMedia(m); }).catch(() => {});
+    return () => { alive = false; };
+  }, [projectId]);
   // start with a blank cut if there's no board/saved cut but there IS media to add
   const startEdit = initialEdit ?? (media.length > 0 ? EMPTY_EDIT : null);
 
