@@ -14,9 +14,12 @@ import { z } from "zod";
 
 export const GEN_MODELS = ["seedream"] as const;
 export type GenModel = (typeof GEN_MODELS)[number];
-/** Video model menu (fal). Kling 2.5 is the silent, cheap default; Veo 3 Fast
- *  generates native scene audio (the model itself produces sound). */
-export const GEN_VIDEO_MODELS = ["kling", "veo3-fast"] as const;
+/** Video model menu (fal) — mirrors LTX Studio's lineup. Kling 2.5 is the silent,
+ *  cheap default; every other model generates native audio. Order = picker order
+ *  (silent default first, then sound models cheapest→priciest). */
+export const GEN_VIDEO_MODELS = [
+  "kling", "veo3.1-lite", "ltx-2", "kling-2.6", "kling-3", "veo3.1-fast", "seedance-2-fast", "veo3.1",
+] as const;
 export type GenVideoModel = (typeof GEN_VIDEO_MODELS)[number];
 
 export const GEN_KINDS = ["image", "video"] as const;
@@ -28,13 +31,20 @@ export const MAX_GEN_ENTITIES = 8;
 export const GEN_VIDEO_SECONDS = 5;
 /** Price hints shown before spend (fal). */
 export const GEN_PRICE_USD_PER_IMAGE = 0.035;
-export const GEN_PRICE_USD_PER_VIDEO = 0.35; // Kling ~5s i2v (silent)
-/** Per-model video facts shown before spend. `priceUsd` is the all-in hint for
- *  one clip at GEN_VIDEO_SECONDS: Kling 2.5 silent ($0.35); Veo 3 Fast snaps
- *  our 5s to a 6s clip with audio at $0.15/s = $0.90. `sound` drives the label. */
-export const GEN_VIDEO_MODEL_INFO: Record<GenVideoModel, { label: string; priceUsd: number; sound: boolean }> = {
-  "kling": { label: "Kling 2.5", priceUsd: GEN_PRICE_USD_PER_VIDEO, sound: false },
-  "veo3-fast": { label: "Veo 3 Fast", priceUsd: 0.9, sound: true },
+export const GEN_PRICE_USD_PER_VIDEO = 0.35; // Kling 2.5 ~5s (silent)
+/** Per-model facts shown before spend + used to gate the end-frame (tail) UI.
+ *  `priceUsd` = all-in hint for one clip at the model's snapped duration (Kling 5s,
+ *  Veo 6s, Seedance 5s, LTX 6s × the model's per-second fal rate, audio included).
+ *  `sound` = native audio; `tail` = supports an end frame (last-frame interp). */
+export const GEN_VIDEO_MODEL_INFO: Record<GenVideoModel, { label: string; priceUsd: number; sound: boolean; tail: boolean }> = {
+  "kling":           { label: "Kling 2.5",         priceUsd: GEN_PRICE_USD_PER_VIDEO, sound: false, tail: true },
+  "veo3.1-lite":     { label: "Veo 3.1 Lite",      priceUsd: 0.30, sound: true, tail: false },
+  "ltx-2":           { label: "LTX-2",             priceUsd: 0.36, sound: true, tail: false },
+  "kling-2.6":       { label: "Kling 2.6 Pro",     priceUsd: 0.70, sound: true, tail: true },
+  "kling-3":         { label: "Kling 3.0 Pro",     priceUsd: 0.84, sound: true, tail: true },
+  "veo3.1-fast":     { label: "Veo 3.1 Fast",      priceUsd: 0.90, sound: true, tail: true },
+  "seedance-2-fast": { label: "Seedance 2.0 Fast", priceUsd: 1.21, sound: true, tail: true },
+  "veo3.1":          { label: "Veo 3.1",           priceUsd: 2.40, sound: true, tail: true },
 };
 
 export const genRequest = z
@@ -61,10 +71,11 @@ export const genRequest = z
     if (!menu.includes(v.model)) {
       ctx.addIssue({ code: z.ZodIssueCode.custom, path: ["model"], message: `model "${v.model}" is not valid for ${v.kind}` });
     }
-    // an end frame (tail) is a Kling-only feature — never enqueue (and later pay
-    // for) a clip whose model would silently ignore the requested end frame.
-    if (v.tailGenerationId && v.model !== "kling") {
-      ctx.addIssue({ code: z.ZodIssueCode.custom, path: ["tailGenerationId"], message: "an end frame is only supported by Kling" });
+    // an end frame (tail) is only valid for a video model that supports it — never
+    // enqueue (and later pay for) a clip whose model would silently ignore it.
+    if (v.tailGenerationId) {
+      const supportsTail = v.kind === "video" && GEN_VIDEO_MODEL_INFO[v.model as GenVideoModel]?.tail === true;
+      if (!supportsTail) ctx.addIssue({ code: z.ZodIssueCode.custom, path: ["tailGenerationId"], message: "this model doesn't support an end frame" });
     }
   });
 export type GenRequest = z.infer<typeof genRequest>;

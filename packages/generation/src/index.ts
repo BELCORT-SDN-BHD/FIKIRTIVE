@@ -9,7 +9,7 @@
  * bytes; the worker stores them content-addressed (same as any asset).
  */
 import { deflateSync, crc32 } from "node:zlib";
-import type { GenerationProvider, GenerationRequest, GeneratedImage, VideoRequest, GeneratedVideo } from "@artlio/core";
+import type { GenerationProvider, GenerationRequest, GeneratedImage, VideoRequest, GeneratedVideo, GenVideoModel } from "@artlio/core";
 
 /** A tiny valid 1s mp4 (256×160 solid) the mock returns for i2v — real enough
  *  for ffprobe/the editor, no network. */
@@ -112,6 +112,66 @@ const EXT_BY_CONTENT_TYPE: Record<string, string> = {
   "image/webp": "webp",
 };
 
+/** Per-model fal video wiring (the model-neutral table — mirrors LTX Studio's
+ *  lineup). Each model's `duration` is the fixed snap of our ~5s request to its
+ *  own nearest valid value (Kling 5s, Veo 6s, Seedance 5s, LTX 6s); the price
+ *  hint in @artlio/core matches. `audio` → send generate_audio. End frame (tail):
+ *  Kling/Seedance take it on the same i2v endpoint via `tailParam` next to
+ *  `imageParam`; Veo uses a separate first→last endpoint (first_frame_url /
+ *  last_frame_url); a model with neither has no end-frame support. All return
+ *  { video: { url } }. Param names verified against each model's fal API page. */
+type VideoCfg = {
+  t2v: string;
+  i2v: string;
+  firstLast?: string;
+  imageParam: string;
+  tailParam?: string;
+  audio: boolean;
+  duration: string | number;
+};
+
+const VIDEO_CFG: Record<GenVideoModel, VideoCfg> = {
+  "kling": {
+    t2v: "fal-ai/kling-video/v2.5-turbo/pro/text-to-video",
+    i2v: "fal-ai/kling-video/v2.5-turbo/pro/image-to-video",
+    imageParam: "image_url", tailParam: "tail_image_url", audio: false, duration: "5",
+  },
+  "veo3.1-lite": {
+    t2v: "fal-ai/veo3.1/lite", i2v: "fal-ai/veo3.1/lite/image-to-video",
+    imageParam: "image_url", audio: true, duration: "6s",
+  },
+  "ltx-2": {
+    t2v: "fal-ai/ltx-2/text-to-video", i2v: "fal-ai/ltx-2/image-to-video",
+    imageParam: "image_url", audio: true, duration: "6",
+  },
+  "kling-2.6": {
+    t2v: "fal-ai/kling-video/v2.6/pro/text-to-video",
+    i2v: "fal-ai/kling-video/v2.6/pro/image-to-video",
+    imageParam: "start_image_url", tailParam: "end_image_url", audio: true, duration: "5",
+  },
+  "kling-3": {
+    t2v: "fal-ai/kling-video/v3/pro/text-to-video",
+    i2v: "fal-ai/kling-video/v3/pro/image-to-video",
+    imageParam: "start_image_url", tailParam: "end_image_url", audio: true, duration: "5",
+  },
+  "veo3.1-fast": {
+    t2v: "fal-ai/veo3.1/fast", i2v: "fal-ai/veo3.1/fast/image-to-video",
+    firstLast: "fal-ai/veo3.1/fast/first-last-frame-to-video",
+    imageParam: "image_url", audio: true, duration: "6s",
+  },
+  "seedance-2-fast": {
+    // ByteDance's own fal namespace (no fal-ai/ prefix — unlike Seedream)
+    t2v: "bytedance/seedance-2.0/fast/text-to-video",
+    i2v: "bytedance/seedance-2.0/fast/image-to-video",
+    imageParam: "image_url", tailParam: "end_image_url", audio: true, duration: 5,
+  },
+  "veo3.1": {
+    t2v: "fal-ai/veo3.1", i2v: "fal-ai/veo3.1/image-to-video",
+    firstLast: "fal-ai/veo3.1/first-last-frame-to-video",
+    imageParam: "image_url", audio: true, duration: "6s",
+  },
+};
+
 export class FalProvider implements GenerationProvider {
   readonly name = "fal:seedream";
   constructor(private apiKey: string) {}
@@ -159,43 +219,41 @@ export class FalProvider implements GenerationProvider {
   }
 
   async generateVideo(req: VideoRequest): Promise<GeneratedVideo> {
+    // Resolve the model's fal wiring. Unknown model → fail BEFORE the paid POST
+    // (no spend); the contract already rejects it, this is defense in depth.
+    const cfg = VIDEO_CFG[req.model as GenVideoModel];
+    if (!cfg) throw new Error(`fal: no video model mapping for ${req.model}`);
     // A source frame → image-to-video (Storyboard Animate); no frame →
     // text-to-video (Gen space). image_url (i2v) is a presigned R2 GET fal
-    // fetches; the sync endpoint blocks until the clip is ready. Model menu:
-    //   veo3-fast — native scene audio (generate_audio); duration is a fixed
-    //               enum (4s/6s/8s, snap our seconds); NO tail frame.
-    //   kling     — silent, cheap; supports a tail frame (last-frame interp).
-    // Both return { video: { url } }, so the result handling below is shared.
+    // fetches; the sync endpoint blocks until the clip is ready.
     const i2v = req.imageUrl.length > 0;
+    if (req.tailImageUrl && !i2v) throw new Error("fal: an end frame needs a start image"); // pre-POST, no spend
+
     let modelId: string;
-    let body: Record<string, unknown>;
-    if (req.model === "veo3-fast") {
-      // Veo 3 has no end-frame field — fail BEFORE the paid POST (no spend)
-      // rather than bill for a clip that would silently ignore the tail frame.
-      if (req.tailImageUrl) throw new Error("fal: veo3-fast does not support an end frame");
-      modelId = i2v ? "fal-ai/veo3/fast/image-to-video" : "fal-ai/veo3/fast";
-      const s = Math.round(req.durationSeconds);
-      const duration = s <= 4 ? "4s" : s <= 6 ? "6s" : "8s";
-      body = {
-        prompt: req.prompt,
-        duration,
-        generate_audio: true,
-        ...(i2v ? { image_url: req.imageUrl } : {}),
-      };
-    } else if (req.model === "kling") {
-      modelId = i2v
-        ? "fal-ai/kling-video/v2.5-turbo/pro/image-to-video"
-        : "fal-ai/kling-video/v2.5-turbo/pro/text-to-video";
-      body = {
-        prompt: req.prompt,
-        duration: String(Math.max(5, Math.round(req.durationSeconds))),
-        ...(i2v ? { image_url: req.imageUrl } : {}),
-        ...(i2v && req.tailImageUrl ? { tail_image_url: req.tailImageUrl } : {}),
-      };
+    const body: Record<string, unknown> = { prompt: req.prompt, duration: cfg.duration };
+    if (cfg.audio) body.generate_audio = true;
+    if (req.tailImageUrl) {
+      // an end frame was requested — route to the model's tail mechanism
+      if (cfg.firstLast) {
+        // Veo: a dedicated first→last endpoint with its own param names
+        modelId = cfg.firstLast;
+        body.first_frame_url = req.imageUrl;
+        body.last_frame_url = req.tailImageUrl;
+      } else if (cfg.tailParam) {
+        // Kling/Seedance: same i2v endpoint, end frame alongside the start
+        modelId = cfg.i2v;
+        body[cfg.imageParam] = req.imageUrl;
+        body[cfg.tailParam] = req.tailImageUrl;
+      } else {
+        // model has no end-frame support — fail before the paid POST (no spend).
+        // The contract already rejects this; defense in depth.
+        throw new Error(`fal: ${req.model} does not support an end frame`);
+      }
+    } else if (i2v) {
+      modelId = cfg.i2v;
+      body[cfg.imageParam] = req.imageUrl;
     } else {
-      // unknown model — fail BEFORE the paid POST (no spend) rather than silently
-      // billing on a fallback. The contract already rejects this; defense in depth.
-      throw new Error(`fal: no video model mapping for ${req.model}`);
+      modelId = cfg.t2v;
     }
     const res = await fetch(`https://fal.run/${modelId}`, {
       method: "POST",

@@ -75,7 +75,7 @@ export function GenSpace({ projectId }: { projectId: string | null }) {
     setResults((r) => [placeholder, ...r]);
     (async () => {
       // last frame is a Kling-only feature (Veo 3 has no tail) — only send it for Kling
-      const res = await startGen({ projectId, prompt: fullPrompt, entityIds: [], count: isVideo ? 1 : count, kind, model: isVideo ? videoModel : "seedream", sourceGenerationId: isVideo && refImg ? refImg.id : undefined, tailGenerationId: isVideo && refImg && tailImg && videoModel === "kling" ? tailImg.id : undefined });
+      const res = await startGen({ projectId, prompt: fullPrompt, entityIds: [], count: isVideo ? 1 : count, kind, model: isVideo ? videoModel : "seedream", sourceGenerationId: isVideo && refImg ? refImg.id : undefined, tailGenerationId: isVideo && refImg && tailImg && GEN_VIDEO_MODEL_INFO[videoModel].tail ? tailImg.id : undefined });
       if ("error" in res) { setError(res.error); setBusy(false); setResults((r) => r.filter((x) => x !== placeholder)); return; }
       pollTimer.current = setInterval(async () => {
         const job = await getGenJob(res.id);
@@ -182,8 +182,8 @@ export function GenSpace({ projectId }: { projectId: string | null }) {
                 <IcImage size={16} />
               </button>
             )}
-            {/* optional last frame — only with a start, and Kling only (Veo 3 has no tail frame) */}
-            {refImg && videoModel === "kling" && (tailImg ? (
+            {/* optional last frame — only with a start, and only for models that support an end frame */}
+            {refImg && GEN_VIDEO_MODEL_INFO[videoModel].tail && (tailImg ? (
               <span style={{ position: "relative", flex: "none" }} title="Last frame (end)">
                 <span style={{ display: "block", width: 30, height: 30, borderRadius: 6, overflow: "hidden", border: "1px solid rgba(120,160,255,.6)" }}>
                   {/* eslint-disable-next-line @next/next/no-img-element */}
@@ -219,7 +219,7 @@ export function GenSpace({ projectId }: { projectId: string | null }) {
             </div>
             {isVideo ? (
               <select aria-label="Video model" value={videoModel}
-                onChange={(e) => { const m = e.target.value as GenVideoModel; setVideoModel(m); if (m !== "kling") setTailImg(null); }}
+                onChange={(e) => { const m = e.target.value as GenVideoModel; setVideoModel(m); if (!GEN_VIDEO_MODEL_INFO[m].tail) setTailImg(null); }}
                 style={{ background: "var(--glass-1)", border: "1px solid var(--line-2)", borderRadius: 999, color: "var(--fg-1)", font: "var(--text-mono-meta)", padding: "5px 9px", cursor: "pointer", outline: "none" }}>
                 {GEN_VIDEO_MODELS.map((m) => <option key={m} value={m}>{GEN_VIDEO_MODEL_INFO[m].label}{GEN_VIDEO_MODEL_INFO[m].sound ? " · sound" : ""}</option>)}
               </select>
