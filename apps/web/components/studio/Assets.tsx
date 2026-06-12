@@ -6,6 +6,7 @@ import { useState } from "react";
 import { useRouter } from "next/navigation";
 import { IcX } from "@/components/ds";
 import { deleteGeneration, attachGeneration } from "@/lib/actions";
+import { Lightbox } from "@/components/Lightbox";
 
 export type MediaItem = { id: string; src: string; kind: "image" | "video"; prompt: string; attached: boolean };
 export type ShotOption = { id: string; label: string };
@@ -17,6 +18,7 @@ export function Assets({ media, shotOptions }: { media: MediaItem[]; shotOptions
   const [filter, setFilter] = useState<"all" | "image" | "video">("all");
   const [busy, setBusy] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [zoom, setZoom] = useState<{ src: string; kind: "image" | "video" } | null>(null); // click-to-enlarge
 
   const shown = media.filter((m) => filter === "all" || m.kind === filter);
 
@@ -90,9 +92,9 @@ export function Assets({ media, shotOptions }: { media: MediaItem[]; shotOptions
               <div key={m.id} className="al-mediacard" style={{ width: 220, flex: "none", cursor: "default" }}>
                 <div style={{ position: "relative", aspectRatio: "16 / 10", background: "#000" }}>
                   {m.kind === "video"
-                    ? <video src={m.src} muted loop autoPlay playsInline preload="metadata" style={{ position: "absolute", inset: 0, width: "100%", height: "100%", objectFit: "cover" }} />
+                    ? <video src={m.src} muted loop autoPlay playsInline preload="metadata" title="Click to enlarge" onClick={() => setZoom({ src: m.src, kind: "video" })} style={{ position: "absolute", inset: 0, width: "100%", height: "100%", objectFit: "cover", cursor: "zoom-in" }} />
                     // eslint-disable-next-line @next/next/no-img-element
-                    : <img src={m.src} alt="" style={{ position: "absolute", inset: 0, width: "100%", height: "100%", objectFit: "cover" }} />}
+                    : <img src={m.src} alt="" title="Click to enlarge" onClick={() => setZoom({ src: m.src, kind: "image" })} style={{ position: "absolute", inset: 0, width: "100%", height: "100%", objectFit: "cover", cursor: "zoom-in" }} />}
                   <span style={{ position: "absolute", top: 8, left: 8, font: "var(--text-mono-meta)", color: "var(--fg-1)", background: "rgba(6,8,11,.6)", padding: "1px 6px", borderRadius: 4 }}>
                     {m.attached ? "In a shot" : "Candidate"}{m.kind === "video" ? " · video" : ""}
                   </span>
@@ -125,6 +127,7 @@ export function Assets({ media, shotOptions }: { media: MediaItem[]; shotOptions
           </div>
         )}
       </div>
+      {zoom && <Lightbox src={zoom.src} kind={zoom.kind} onClose={() => setZoom(null)} />}
     </div>
   );
 }

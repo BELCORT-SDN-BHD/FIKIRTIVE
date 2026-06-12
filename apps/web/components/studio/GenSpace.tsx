@@ -18,6 +18,7 @@ import {
 import { startGen, getGenJob } from "@/lib/gen-actions";
 import { uploadReference } from "@/lib/actions";
 import { MentionInput } from "@/components/MentionInput";
+import { Lightbox } from "@/components/Lightbox";
 import type { EntityDTO } from "@/lib/types";
 import { CAMERA_PRESETS } from "./camera";
 
@@ -84,6 +85,7 @@ export function GenSpace({ projectId, entities }: { projectId: string; entities:
   const [refImg, setRefImg] = useState<{ id: string; src: string } | null>(null);
   const [tailImg, setTailImg] = useState<{ id: string; src: string } | null>(null);
   const [uploading, setUploading] = useState(false);
+  const [zoom, setZoom] = useState<{ src: string; kind: "image" | "video" } | null>(null); // click-to-enlarge
   const fileInput = useRef<HTMLInputElement | null>(null);
   const tailInput = useRef<HTMLInputElement | null>(null);
   const moreBtn = useRef<HTMLButtonElement | null>(null);
@@ -238,10 +240,10 @@ export function GenSpace({ projectId, entities }: { projectId: string; entities:
                   <div style={{ width: 280, aspectRatio: r.aspect, borderRadius: "var(--radius-md)", background: "rgba(255,90,90,.06)", border: "1px solid var(--danger)", display: "grid", placeItems: "center", padding: 12, textAlign: "center", font: "var(--text-caption)", color: "var(--danger)" }}>{r.message}</div>
                 ) : (
                   r.urls.map((u) => isVideoUrl(u) ? (
-                    <video key={u} src={u} muted loop autoPlay playsInline style={{ width: 280, aspectRatio: r.aspect, objectFit: "contain", borderRadius: "var(--radius-md)", border: "1px solid var(--line-2)", background: "#000" }} />
+                    <video key={u} src={u} muted loop autoPlay playsInline title="Click to enlarge" onClick={() => setZoom({ src: u, kind: "video" })} style={{ width: 280, aspectRatio: r.aspect, objectFit: "contain", borderRadius: "var(--radius-md)", border: "1px solid var(--line-2)", background: "#000", cursor: "zoom-in" }} />
                   ) : (
                     // eslint-disable-next-line @next/next/no-img-element
-                    <img key={u} src={u} alt="" style={{ width: 280, aspectRatio: r.aspect, objectFit: "contain", borderRadius: "var(--radius-md)", border: "1px solid var(--line-2)", background: "#000" }} />
+                    <img key={u} src={u} alt="" title="Click to enlarge" onClick={() => setZoom({ src: u, kind: "image" })} style={{ width: 280, aspectRatio: r.aspect, objectFit: "contain", borderRadius: "var(--radius-md)", border: "1px solid var(--line-2)", background: "#000", cursor: "zoom-in" }} />
                   ))
                 )}
               </div>
@@ -355,6 +357,7 @@ export function GenSpace({ projectId, entities }: { projectId: string; entities:
           </div>
         </div>
       </div>
+      {zoom && <Lightbox src={zoom.src} kind={zoom.kind} onClose={() => setZoom(null)} />}
     </>
   );
 }

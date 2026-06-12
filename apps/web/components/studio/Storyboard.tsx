@@ -16,6 +16,7 @@ import { startGen, getGenJob } from "@/lib/gen-actions";
 import { GEN_PRICE_USD_PER_IMAGE, GEN_VIDEO_MODELS, GEN_VIDEO_MODEL_INFO, videoDefaults, videoPriceUsd, type GenVideoModel } from "@artlio/core";
 import type { EntityDTO } from "@/lib/types";
 import { MentionInput } from "@/components/MentionInput";
+import { Lightbox } from "@/components/Lightbox";
 import { CAMERA_PRESETS } from "./camera";
 
 const usd = (n: number) => "~$" + n.toFixed(2);
@@ -45,6 +46,7 @@ function ShotCard({ projectId, shot, index, total, entities }: { projectId: stri
   const [busy, setBusy] = useState(false);
   const [acting, setActing] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [zoom, setZoom] = useState<{ src: string; kind: "image" | "video" } | null>(null); // click-to-enlarge
   const poll = useRef<ReturnType<typeof setInterval> | null>(null);
   useEffect(() => () => { if (poll.current) clearInterval(poll.current); }, []);
 
@@ -114,10 +116,10 @@ function ShotCard({ projectId, shot, index, total, entities }: { projectId: stri
       <div style={{ position: "relative", aspectRatio: "16 / 10", background: hasRender ? "#000" : "var(--glass-1)" }}>
         <span style={{ position: "absolute", top: 8, left: 8, font: "var(--text-mono-meta)", color: "var(--fg-2)", zIndex: 2 }}>▦ {shot.number}</span>
         {shot.videoUrl ? (
-          <video src={shot.videoUrl} muted loop autoPlay playsInline style={{ position: "absolute", inset: 0, width: "100%", height: "100%", objectFit: "cover" }} />
+          <video src={shot.videoUrl} muted loop autoPlay playsInline title="Click to enlarge" onClick={() => setZoom({ src: shot.videoUrl!, kind: "video" })} style={{ position: "absolute", inset: 0, width: "100%", height: "100%", objectFit: "cover", cursor: "zoom-in" }} />
         ) : shot.imageUrl ? (
           // eslint-disable-next-line @next/next/no-img-element
-          <img src={shot.imageUrl} alt="" style={{ position: "absolute", inset: 0, width: "100%", height: "100%", objectFit: "cover" }} />
+          <img src={shot.imageUrl} alt="" title="Click to enlarge" onClick={() => setZoom({ src: shot.imageUrl!, kind: "image" })} style={{ position: "absolute", inset: 0, width: "100%", height: "100%", objectFit: "cover", cursor: "zoom-in" }} />
         ) : null}
         {shot.videoUrl && <span style={{ position: "absolute", top: 8, right: 8, font: "var(--text-mono-meta)", color: "var(--fg-1)", background: "rgba(6,8,11,.6)", padding: "1px 6px", borderRadius: 4, zIndex: 2 }}>▶ video</span>}
         {busy && <span style={{ position: "absolute", inset: 0, display: "grid", placeItems: "center", background: "rgba(6,8,11,.55)", font: "var(--text-caption)", color: "var(--fg-2)" }}>generating…</span>}
@@ -164,6 +166,7 @@ function ShotCard({ projectId, shot, index, total, entities }: { projectId: stri
         </div>
         {error && <p role="alert" style={{ font: "var(--text-caption)", color: "var(--danger)", margin: 0 }}>{error}</p>}
       </div>
+      {zoom && <Lightbox src={zoom.src} kind={zoom.kind} onClose={() => setZoom(null)} />}
     </div>
   );
 }
