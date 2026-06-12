@@ -39,12 +39,14 @@ export function StudioShell({
   onNavigate,
   project,
   projects,
+  user,
   children,
 }: {
   view: StudioView;
   onNavigate: (v: StudioView) => void;
   project?: ProjectDTO;
   projects?: ProjectDTO[];
+  user?: { initials: string; label: string };
   children: React.ReactNode;
 }) {
   const router = useRouter();
@@ -136,10 +138,7 @@ export function StudioShell({
           {view !== "editor" && (
             <Button variant="glass" size="sm" icon={<IcExport size={15} />} onClick={() => onNavigate("editor")}>Export</Button>
           )}
-          <span className="avatar-stack">
-            <span className="al-avatar al-avatar-sm al-avatar-ring" title="Tessa Bright"><span>TB</span></span>
-            <span className="al-avatar al-avatar-sm al-avatar-ring" title="Marcus Oda"><span>MO</span></span>
-          </span>
+          <span className="al-avatar al-avatar-sm al-avatar-ring" title={user?.label ?? "You"}><span>{user?.initials ?? "Y"}</span></span>
           <Button variant="glass" size="sm" icon={<IcUsers size={15} />}>Collaborate</Button>
         </header>
 

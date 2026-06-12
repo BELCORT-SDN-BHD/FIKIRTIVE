@@ -18,6 +18,7 @@ import { Assets, type MediaItem, type ShotOption } from "./Assets";
 export function Studio({
   project,
   projects,
+  user,
   entities,
   shots,
   media,
@@ -28,6 +29,7 @@ export function Studio({
 }: {
   project: ProjectDTO;
   projects: ProjectDTO[];
+  user: { initials: string; label: string };
   entities: EntityDTO[];
   shots: StudioShot[];
   media: MediaItem[];
@@ -57,7 +59,7 @@ export function Studio({
   }
 
   return (
-    <StudioShell view={view} onNavigate={setView} project={project} projects={projects}>
+    <StudioShell view={view} onNavigate={setView} project={project} projects={projects} user={user}>
       {surface()}
     </StudioShell>
   );

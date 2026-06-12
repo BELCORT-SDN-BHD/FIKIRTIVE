@@ -1,7 +1,17 @@
 import { ensureDefaultProject, getProjects, getShots, getEntities, getProjectMedia } from "@/lib/data";
 import { toEntityDTO } from "@/lib/dto";
 import { artlioEdit, storageKey, storageKeyToSrc, type ArtlioEdit } from "@artlio/core";
+import { auth } from "@/auth";
 import { Studio } from "@/components/studio/Studio";
+
+/** Initials + label for the topbar avatar, from the signed-in user. */
+function userBadge(name: string | null | undefined, email: string | null | undefined) {
+  const label = name?.trim() || email || "You";
+  const basis = (name?.trim() || email?.split("@")[0] || "you").replace(/[^a-zA-Z ]/g, " ").trim();
+  const parts = basis.split(/\s+/).filter(Boolean);
+  const initials = (parts.length >= 2 ? parts[0][0] + parts[1][0] : basis.slice(0, 2)).toUpperCase();
+  return { initials: initials || "Y", label };
+}
 
 export const dynamic = "force-dynamic";
 export const metadata = { title: "Studio · Artlio" };
@@ -13,6 +23,8 @@ const FALLBACK_VIDEO_SECONDS = 5;
 
 export default async function StudioPage({ searchParams }: { searchParams: Promise<{ p?: string }> }) {
   const { p } = await searchParams;
+  const session = await auth();
+  const user = userBadge(session?.user?.name, session?.user?.email);
   const defaultProject = await ensureDefaultProject();
   const [projects, entities] = await Promise.all([getProjects(), getEntities()]);
   const project = projects.find((x) => x.id === p) ?? defaultProject;
@@ -80,6 +92,7 @@ export default async function StudioPage({ searchParams }: { searchParams: Promi
     <Studio
       project={{ id: project.id, name: project.name }}
       projects={projects.map((x) => ({ id: x.id, name: x.name }))}
+      user={user}
       entities={entities.map(toEntityDTO)}
       shots={storyboardShots}
       media={media}
