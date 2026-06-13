@@ -534,7 +534,7 @@ export async function saveProjectEdit(projectId: string, editJsonString: string)
 
 const BLANK_CUT = (): ArtlioEdit => ({
   timeline: { background: "#000000", tracks: [{ clips: [] }] },
-  output: { format: "mp4", resolution: "1080", aspectRatio: "16:9", fps: 25 },
+  output: { format: "mp4", resolution: "hd", aspectRatio: "16:9", fps: 25 },
 });
 
 /** Extract a finished storyboard segment into the editor: append its rendered

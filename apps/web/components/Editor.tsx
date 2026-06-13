@@ -36,7 +36,7 @@ type Selection = { trackIndex: number; clipIndex: number; clip: SelClip };
  *  enforced at export, so an empty timeline edits fine. */
 const EMPTY_EDIT: ArtlioEdit = {
   timeline: { background: "#000000", tracks: [{ clips: [] }] },
-  output: { format: "mp4", resolution: "1080", aspectRatio: "16:9", fps: 25 },
+  output: { format: "mp4", resolution: "hd", aspectRatio: "16:9", fps: 25 },
 };
 
 // right Inspector (selected-clip transition + audio) styles

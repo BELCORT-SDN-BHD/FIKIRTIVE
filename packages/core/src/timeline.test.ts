@@ -27,7 +27,7 @@ const validEdit = {
 describe("artlioEdit contract", () => {
   it("accepts a valid two-clip edit with music and applies defaults", () => {
     const parsed = artlioEdit.parse(validEdit);
-    expect(parsed.output.resolution).toBe("1080");
+    expect(parsed.output.resolution).toBe("hd"); // 720p default cap (1080 OOM'd ffmpeg)
     expect(parsed.output.fps).toBe(25);
     expect(parsed.timeline.background).toBe("#000000");
     expect(editDuration(parsed)).toBe(7);

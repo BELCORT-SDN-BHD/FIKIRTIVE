@@ -174,7 +174,7 @@ export const timeline = z
 export const output = z.object({
   format: z.literal("mp4"),
   /** rendered height; width derives from aspectRatio */
-  resolution: z.enum(["sd", "hd", "1080"]).default("1080"),
+  resolution: z.enum(["sd", "hd", "1080"]).default("hd"), // 720p cap (1080 OOM'd ffmpeg); "1080" kept for legacy stored edits, render caps it to hd
   aspectRatio: z.enum(["16:9", "9:16", "1:1"]).default("16:9"),
   fps: z.union([z.literal(25), z.literal(30)]).default(25),
 });

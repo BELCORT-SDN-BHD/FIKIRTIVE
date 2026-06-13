@@ -58,7 +58,7 @@ export function buildBoardEdit(shots: ShotWithDetail[], candidates: CandidateGen
     cursor += c.length;
   }
   const edit: ArtlioEdit | null = clips.length > 0
-    ? { timeline: { background: "#000000", tracks: [{ clips }] }, output: { format: "mp4", resolution: "1080", aspectRatio: "16:9", fps: 25 } }
+    ? { timeline: { background: "#000000", tracks: [{ clips }] }, output: { format: "mp4", resolution: "hd", aspectRatio: "16:9", fps: 25 } }
     : null;
   return { edit, clipCount: clips.length };
 }

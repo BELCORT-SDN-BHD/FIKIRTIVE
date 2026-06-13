@@ -124,7 +124,10 @@ export async function handleRender(data: RenderJobData, retryCount = 0): Promise
     // belt-and-braces against future schema drift (codex review, refuted-but-free)
     if (!(totalSeconds > 0)) throw new Error("empty edit — nothing to render");
 
-    const [w, h] = SIZES[edit.output.aspectRatio]?.[edit.output.resolution] ?? [1920, 1080];
+    // cap render output at HD (720p): a 1080p ffmpeg render OOM-crashed the worker.
+    // 720p is the agreed export quality; legacy 1080 edits still render, just at 720p.
+    const res = edit.output.resolution === "1080" ? "hd" : edit.output.resolution;
+    const [w, h] = SIZES[edit.output.aspectRatio]?.[res] ?? [1280, 720];
     const fps = edit.output.fps;
     const out = path.join(work, "out.mp4");
 
