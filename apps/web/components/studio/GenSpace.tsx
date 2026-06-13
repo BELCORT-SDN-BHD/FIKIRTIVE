@@ -160,17 +160,32 @@ export function GenSpace({ projectId, entities }: { projectId: string; entities:
     setResults((r) => [placeholder, ...r]);
     const mark = (patch: Partial<Result>) => setResults((rs) => rs.map((x) => (x.id === id ? { ...x, ...patch } : x)));
     (async () => {
-      const res = await startGen(req);
+      let res: Awaited<ReturnType<typeof startGen>>;
+      try {
+        res = await startGen(req);
+      } catch (e) {
+        // startGen REJECTED (not a returned {error}, e.g. network/DB) — must never
+        // strand the composer with busy stuck true (#4)
+        mark({ status: "failed", message: e instanceof Error ? e.message.slice(0, 200) : "Couldn't start — try again." });
+        finishOne();
+        return;
+      }
       if ("error" in res) { mark({ status: "failed", message: res.error }); finishOne(); return; }
+      const jobId = res.id;
       let n = 0;
       const t = setInterval(async () => {
         n += 1;
-        const job = await getGenJob(res.id);
         // poll-cap cases stay non-retryable: the job may still be running/charged, so re-running could double-spend
-        if (!job) { if (n > POLL_CAP) { clearInterval(t); pollers.current.delete(t); mark({ status: "failed", message: "Status unknown — reload to check (don't re-run, you may have been charged).", retryable: false }); finishOne(); } return; }
-        if (job.status === "DONE") { clearInterval(t); pollers.current.delete(t); mark({ status: "done", urls: job.urls }); finishOne(); }
-        else if (job.status === "FAILED") { clearInterval(t); pollers.current.delete(t); mark({ status: "failed", message: failMsg(job) }); finishOne(); }
-        else if (n > POLL_CAP) { clearInterval(t); pollers.current.delete(t); mark({ status: "failed", message: "Still running — reload to check (don't re-run, you may have been charged).", retryable: false }); finishOne(); }
+        try {
+          const job = await getGenJob(jobId);
+          if (!job) { if (n > POLL_CAP) { clearInterval(t); pollers.current.delete(t); mark({ status: "failed", message: "Status unknown — reload to check (don't re-run, you may have been charged).", retryable: false }); finishOne(); } return; }
+          if (job.status === "DONE") { clearInterval(t); pollers.current.delete(t); mark({ status: "done", urls: job.urls }); finishOne(); }
+          else if (job.status === "FAILED") { clearInterval(t); pollers.current.delete(t); mark({ status: "failed", message: failMsg(job) }); finishOne(); }
+          else if (n > POLL_CAP) { clearInterval(t); pollers.current.delete(t); mark({ status: "failed", message: "Still running — reload to check (don't re-run, you may have been charged).", retryable: false }); finishOne(); }
+        } catch {
+          // transient poll error (getGenJob threw) — keep polling; the cap ends it
+          if (n > POLL_CAP) { clearInterval(t); pollers.current.delete(t); mark({ status: "failed", message: "Status unknown — reload to check (don't re-run, you may have been charged).", retryable: false }); finishOne(); }
+        }
       }, 2000);
       pollers.current.add(t);
     })();

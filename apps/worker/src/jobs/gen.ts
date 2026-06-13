@@ -18,10 +18,11 @@ import {
   storageKey,
   newId,
   GEN_RETRY_LIMIT,
-  GEN_VIDEO_SECONDS,
+  videoDefaults,
   MAX_CONDITIONING_IMAGES,
   type GenJobData,
   type GenModel,
+  type GenVideoModel,
 } from "@artlio/core";
 import { storage } from "../storage.js";
 import { provider } from "../generation.js";
@@ -31,21 +32,90 @@ const mimeForExt = (ext: string) =>
     : ext === "mp4" ? "video/mp4" : ext === "webm" ? "video/webm" : ext === "mov" ? "video/quicktime"
     : "image/jpeg";
 
+// A GENERATING row older than this is treated as crashed/stale (its worker died or
+// the message was redelivered past queue expiry). Kept ABOVE the realistic fal call
+// time and BELOW the GEN/REFGEN queue expiry (20m), so an actively-running gen is
+// never failed closed by a duplicate delivery, but a truly stuck one eventually is.
+const GEN_STALE_MS = 1000 * 60 * 18;
+
+/** Idempotently attach a job's stored generations to its shot: assign per-shot
+ *  versions to any not-yet-attached one, set shotId+attachedAt, mark the shot
+ *  ATTACHED. Runs on the happy path AND on resume, so a crash between recording
+ *  the outputs and attaching them can never leave an attached render with no
+ *  resume marker (the #2 fix — mirrors refgen's record-before-attach ordering).
+ *  The version allocation retries on the partial-unique (shotId,version) index so
+ *  two concurrent same-shot jobs can't both claim the same version (#6). */
+async function attachToShot(shotId: string, generationIds: string[]): Promise<void> {
+  // shot gone (deleted between gen-start and attach)? leave the outputs as
+  // candidates (reusable) instead of failing the job or pointing at a dead shot.
+  const shot = await prisma.shot.findFirst({ where: { id: shotId, deletedAt: null }, select: { id: true } });
+  if (!shot) return;
+  const gens = await prisma.generation.findMany({
+    where: { id: { in: generationIds }, deletedAt: null },
+    orderBy: { createdAt: "asc" },
+    select: { id: true, shotId: true },
+  });
+  for (const g of gens) {
+    if (g.shotId != null) continue; // already attached (resume) — skip, stays idempotent
+    for (let attempt = 0; ; attempt++) {
+      const last = await prisma.generation.findFirst({ where: { shotId, deletedAt: null }, orderBy: { version: "desc" }, select: { version: true } });
+      try {
+        await prisma.generation.update({ where: { id: g.id }, data: { shotId, attachedAt: new Date(), version: (last?.version ?? 0) + 1 } });
+        break;
+      } catch (e) {
+        // a concurrent same-shot attach took that version → re-read + retry
+        if (attempt < 5 && typeof e === "object" && e !== null && (e as { code?: string }).code === "P2002") continue;
+        throw e;
+      }
+    }
+  }
+  await prisma.shot.updateMany({ where: { id: shotId, deletedAt: null }, data: { status: "ATTACHED" } });
+}
+
+/** attachToShot with a few inline retries, swallowing a persistent failure: the
+ *  outputs stay reusable candidates and the job still finishes DONE rather than
+ *  stranding (a committed requeue could exhaust pg-boss retries). Used by BOTH the
+ *  happy path and resume so they behave identically. */
+async function attachBestEffort(jobId: string, shotId: string, generationIds: string[]): Promise<void> {
+  for (let a = 0; a < 3; a++) {
+    try { await attachToShot(shotId, generationIds); return; }
+    catch (e) { if (a === 2) console.error(`[gen] ${jobId}: attach failed (candidates remain): ${e instanceof Error ? e.message : e}`); }
+  }
+}
+
 export async function handleGen(data: GenJobData, retryCount: number): Promise<void> {
   const job = await prisma.genJob.findUnique({ where: { id: data.genJobId } });
   if (!job) {
     console.error(`[gen] job ${data.genJobId} missing — dropping`);
     return;
   }
-  // DONE and FAILED are terminal: a redelivered or stale queue message must
-  // never reprocess (and possibly re-spend on) a job that already settled.
-  if (job.status === "DONE" || job.status === "FAILED") return;
+  // DONE is terminal/idempotent. FAILED is handled INSIDE the try, AFTER the resume
+  // check, so a committed job (outputs recorded) that a prior delivery wrongly left
+  // FAILED can still finish via attach+DONE without re-spending.
+  if (job.status === "DONE") return;
 
-  // flips true the instant the paid provider call returns — any failure AFTER
-  // this point must terminal-fail, never retry (a retry would re-spend).
+  // flips true the instant the paid provider call returns — a failure after this
+  // but BEFORE the commit point must terminal-fail (a retry would re-spend).
   let spent = false;
+  // flips true once outputs are stored + recorded (generationIds written): past
+  // here a failure is RECOVERABLE — requeue so the resume path re-attaches without
+  // re-spending, never terminal-fail (which would block resume).
+  let committed = false;
 
   try {
+    // RESUME FIRST: outputs already stored + recorded (generationIds) on a prior
+    // delivery → finish the idempotent attach + DONE, never re-spending. Runs BEFORE
+    // the FAILED short-circuit and the project/shot validation, so a deleted shot or
+    // a wrongly-FAILED-but-committed job still completes (attachToShot no-ops if the
+    // shot is gone; the candidate generations remain, reusable) (#2/#3).
+    if (job.generationIds.length > 0) {
+      committed = true; // outputs recorded on a prior delivery — never re-spend; finish best-effort
+      if (job.shotId) await attachBestEffort(job.id, job.shotId, job.generationIds);
+      await prisma.genJob.update({ where: { id: job.id }, data: { status: "DONE", progress: 100, finishedAt: new Date(), error: "", spent: true } });
+      return;
+    }
+    if (job.status === "FAILED") return; // terminal with no recorded outputs — nothing to resume
+
     const project = await prisma.project.findFirst({ where: { id: job.projectId, ownerId: job.ownerId, deletedAt: null } });
     if (!project) {
       await prisma.genJob.update({ where: { id: job.id }, data: { status: "FAILED", error: "project gone before generation ran", finishedAt: new Date() } });
@@ -61,12 +131,6 @@ export async function handleGen(data: GenJobData, retryCount: number): Promise<v
       }
     }
 
-    // resume — already paid + persisted on a prior delivery
-    if (job.generationIds.length > 0) {
-      await prisma.genJob.update({ where: { id: job.id }, data: { status: "DONE", progress: 100, finishedAt: new Date(), error: "", spent: true } });
-      return;
-    }
-
     // Atomic spend claim: QUEUED → GENERATING in a single conditional update.
     // Only one delivery can win the transition, so concurrent or duplicate
     // deliveries can never both reach the provider. Losing the claim means
@@ -80,9 +144,13 @@ export async function handleGen(data: GenJobData, retryCount: number): Promise<v
       data: { status: "GENERATING", startedAt: new Date(), attempts: { increment: 1 } },
     });
     if (claim.count === 0) {
+      // lost the QUEUED→GENERATING claim. If the owning attempt is still RECENT it's
+      // ACTIVELY running (a duplicate delivery) — leave it alone. Only a STALE
+      // GENERATING (the attempt crashed, or was redelivered past expiry) is failed
+      // closed, since re-running a paid job risks a double charge.
       await prisma.genJob.updateMany({
-        where: { id: job.id, status: "GENERATING" },
-        data: { status: "FAILED", error: "duplicate delivery or interrupted after a possible paid call — not retrying, to avoid a double charge", finishedAt: new Date() },
+        where: { id: job.id, status: "GENERATING", startedAt: { lt: new Date(Date.now() - GEN_STALE_MS) } },
+        data: { status: "FAILED", error: "stale GENERATING after a possible paid call — not retrying, to avoid a double charge", finishedAt: new Date() },
       });
       return;
     }
@@ -171,7 +239,7 @@ export async function handleGen(data: GenJobData, retryCount: number): Promise<v
       const vo = job.videoOptions as { seconds?: number; resolution?: string; aspectRatio?: string; fps?: number; audio?: boolean } | null;
       const video = await provider.generateVideo({
         prompt: job.prompt, imageUrl, tailImageUrl: tailImageUrl || undefined,
-        durationSeconds: vo?.seconds ?? GEN_VIDEO_SECONDS,
+        durationSeconds: vo?.seconds ?? videoDefaults(job.model as GenVideoModel).seconds,
         resolution: vo?.resolution, aspectRatio: vo?.aspectRatio, fps: vo?.fps, audio: vo?.audio,
         model: job.model,
       });
@@ -181,40 +249,44 @@ export async function handleGen(data: GenJobData, retryCount: number): Promise<v
     }
     spent = true; // the paid call has returned — past here, a failure must not retry
 
-    // store + create a Generation per output. version: next per shot, else 1.
-    let nextVersion = 1;
-    if (job.shotId) {
-      const last = await prisma.generation.findFirst({ where: { shotId: job.shotId, deletedAt: null }, orderBy: { version: "desc" }, select: { version: true } });
-      nextVersion = (last?.version ?? 0) + 1;
-    }
-    const generationIds: string[] = [];
-    const assetIds: string[] = [];
+    // store every output's bytes in R2 FIRST (content-addressed → reusable on a
+    // retry), THEN create the rows + write the resume marker ATOMICALLY in one
+    // transaction, so a crash can never leave orphan candidate rows without a
+    // marker. The marker (generationIds + spent) is the commit point: past it a
+    // retry RESUMES (re-attaches) instead of re-spending. Attaching to the shot
+    // happens AFTER, so an attached render can never exist without a resume marker
+    // (the #2 fix — mirrors refgen's record-before-attach ordering).
+    const stored: { contentHash: string; ext: string; size: number }[] = [];
     for (const img of outputs) {
       const { contentHash } = await storage.put(job.ownerId, img.bytes, img.ext);
-      const asset = await prisma.asset.upsert({
-        where: { ownerId_contentHash: { ownerId: job.ownerId, contentHash } },
-        update: { deletedAt: null },
-        create: { id: newId(), ownerId: job.ownerId, contentHash, ext: img.ext, mime: mimeForExt(img.ext), sizeBytes: BigInt(img.bytes.byteLength), originalFilename: `gen-${job.id}.${img.ext}`, source: "GENERATED" },
-      });
-      assetIds.push(asset.id);
-      const gen = await prisma.generation.create({
-        data: {
-          id: newId(), ownerId: job.ownerId, projectId: job.projectId, shotId: job.shotId ?? null,
-          assetId: asset.id, source: "GENERATED", promptText: job.prompt, modelRef: job.model,
-          entitySnapshot, version: job.shotId ? nextVersion++ : 1,
-          // a shot generation IS the shot's render (attached); a candidate (no
-          // shotId) lands unattached for the board
-          attachedAt: job.shotId ? new Date() : null,
-        },
-      });
-      generationIds.push(gen.id);
+      stored.push({ contentHash, ext: img.ext, size: img.bytes.byteLength });
     }
-    // mark the shot rendered so the editor picks up its latest generation
-    if (job.shotId) {
-      await prisma.shot.update({ where: { id: job.shotId }, data: { status: "ATTACHED" } });
-    }
-    await prisma.genJob.update({ where: { id: job.id }, data: { generationIds, status: "DONE", progress: 100, finishedAt: new Date(), error: "", spent: true } });
-    void assetIds; // metadata probe (ingest) is a follow-up; images default to 3s in the editor
+    const generationIds = await prisma.$transaction(async (tx) => {
+      const ids: string[] = [];
+      for (const s of stored) {
+        const asset = await tx.asset.upsert({
+          where: { ownerId_contentHash: { ownerId: job.ownerId, contentHash: s.contentHash } },
+          update: { deletedAt: null },
+          create: { id: newId(), ownerId: job.ownerId, contentHash: s.contentHash, ext: s.ext, mime: mimeForExt(s.ext), sizeBytes: BigInt(s.size), originalFilename: `gen-${job.id}.${s.ext}`, source: "GENERATED" },
+        });
+        const gen = await tx.generation.create({
+          data: {
+            id: newId(), ownerId: job.ownerId, projectId: job.projectId, shotId: null,
+            assetId: asset.id, source: "GENERATED", promptText: job.prompt, modelRef: job.model,
+            entitySnapshot, version: 1, attachedAt: null,
+          },
+        });
+        ids.push(gen.id);
+      }
+      await tx.genJob.update({ where: { id: job.id }, data: { generationIds: ids, spent: true } });
+      return ids;
+    });
+    committed = true; // outputs stored + recorded — past here a failure resumes, never re-spends
+    // best-effort attach: if it still fails, the outputs remain as reusable
+    // candidates (visible, manually attachable) and we STILL mark DONE — never leave
+    // the job stuck (a committed requeue could exhaust pg-boss retries) (#2)
+    if (job.shotId) await attachBestEffort(job.id, job.shotId, generationIds);
+    await prisma.genJob.update({ where: { id: job.id }, data: { status: "DONE", progress: 100, finishedAt: new Date(), error: "" } });
     console.log(`[gen] ${job.id}: DONE → ${generationIds.length} generations via ${provider.name}`);
   } catch (err) {
     const message = err instanceof Error ? err.message.slice(0, 500) : String(err).slice(0, 500);
@@ -223,8 +295,11 @@ export async function handleGen(data: GenJobData, retryCount: number): Promise<v
     // INSIDE the adapter after fal already billed (it ran the model, then the
     // result parse/download threw). Only a genuinely pre-charge throw retries.
     const charged = typeof err === "object" && err !== null && (err as { charged?: unknown }).charged === true;
-    const final = spent || charged || retryCount >= GEN_RETRY_LIMIT;
-    console.error(`[gen] ${job.id}: ${final ? "FAILED" : "retrying"} — ${message}`);
+    // a POST-COMMIT failure (outputs stored + recorded) must NOT terminal-fail —
+    // requeue so the resume path re-attaches without re-spending. Only a pre-commit
+    // post-charge failure is terminal (charged, but no resume marker).
+    const final = !committed && (spent || charged || retryCount >= GEN_RETRY_LIMIT);
+    console.error(`[gen] ${job.id}: ${final ? "FAILED" : committed ? "requeue → resume attach" : "retrying"} — ${message}`);
     await prisma.genJob.update({
       where: { id: job.id },
       // a post-charge failure records spent=true so "paid but not delivered" is

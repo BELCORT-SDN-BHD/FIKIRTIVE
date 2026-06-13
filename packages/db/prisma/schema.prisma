@@ -197,7 +197,9 @@ model Generation {
 
   @@index([projectId, shotId, deletedAt])
   @@index([ownerId, shotId, deletedAt, createdAt]) // 候选区查询：shotId IS NULL，按时间倒序
-  @@unique([shotId, version]) // NULL shotId（候选区）不受约束——Postgres NULLs distinct
+  // (shotId, version) 唯一性改由迁移里的 PARTIAL 索引保证（WHERE shotId IS NOT NULL
+  //  AND deletedAt IS NULL）——只约束 LIVE 已附着行，让删除后的版本可被复用。Prisma
+  //  无法表达条件唯一，故不在此声明 @@unique（旧的非部分索引已在迁移里 DROP）。
   @@index([assetId])
 }
 

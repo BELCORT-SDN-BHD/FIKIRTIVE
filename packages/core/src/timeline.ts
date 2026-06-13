@@ -18,7 +18,8 @@ import { z } from "zod";
  * ffmpeg mapping (worker side):
  *   clip.asset.trim       → -ss before -i (seek into source)
  *   clip.length           → -t per input segment
- *   transition fade (dur) → xfade/acrossfade; offset = clip boundary - dur
+ *   transition fade (dur) → per-clip fade=t=in/out to/from black (afade on audio);
+ *                           NOT a cross-fade/overlap between adjacent clips
  *   asset.volume          → volume filter feeding amix
  *   output.resolution     → scale + SAR normalize before concat
  *

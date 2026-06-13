@@ -161,9 +161,10 @@ export const GEN_RETRY_LIMIT = 2;
 export const GEN_QUEUE_POLICY = {
   retryLimit: GEN_RETRY_LIMIT,
   retryBackoff: true,
-  // > the longest fal call so a job never expires mid-flight; both web (dispatch)
-  // and worker (consumer) create the queue with THIS policy, so boot order can't
-  // leave them split (the value used to live only on the worker's createQueue)
-  expireInSeconds: 60 * 10,
+  // > the longest realistic fal call so a still-running gen is never expired +
+  // redelivered (which would let the duplicate-delivery fail-closed wrongly FAIL an
+  // active paid job). Both web (dispatch) and worker (consumer) create the queue
+  // with THIS policy, so boot order can't leave them split.
+  expireInSeconds: 60 * 20,
   deadLetter: GEN_DLQ,
 } as const;

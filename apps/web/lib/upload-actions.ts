@@ -105,8 +105,19 @@ export async function finalizeCandidateUploads(
         continue;
       }
       if (actual !== file.sizeBytes) {
-        await storage.deleteObject(key);
-        console.error(`[upload] SIZE MISMATCH ${key}: claimed ${file.sizeBytes}, stored ${actual} — object deleted`);
+        // NEVER destroy a content-addressed blob that other rows might share: in
+        // "existed" mode we didn't upload it (it pre-existed); in single/multipart
+        // we did, but only reclaim the key if no live Asset references this hash —
+        // a size lie on a deduped hash must not delete real, referenced bytes (#1)
+        const reclaimable =
+          file.upload.mode !== "existed" &&
+          (await prisma.asset.count({ where: { ownerId: FOUNDER_OWNER_ID, contentHash: file.sha256, deletedAt: null } })) === 0;
+        if (reclaimable) {
+          await storage.deleteObject(key);
+          console.error(`[upload] SIZE MISMATCH ${key}: claimed ${file.sizeBytes}, stored ${actual} — object reclaimed`);
+        } else {
+          console.error(`[upload] SIZE MISMATCH ${key}: claimed ${file.sizeBytes}, stored ${actual} — kept (pre-existing or shared content)`);
+        }
         failures.push({ filename: file.originalFilename, reason: "size mismatch — upload rejected" });
         continue;
       }

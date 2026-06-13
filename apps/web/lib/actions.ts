@@ -148,12 +148,9 @@ export async function addEntityAlias(entityId: string, alias: string) {
   if (!clean) return { error: "Alias is empty." };
   const entity = await prisma.entity.findFirst({ where: { id: entityId, ...OWNED } });
   if (!entity) return { error: "Entity not found." };
-  if (!entity.aliases.includes(clean)) {
-    await prisma.entity.update({
-      where: { id: entityId },
-      data: { aliases: [...entity.aliases, clean] },
-    });
-  }
+  // atomic append guarded against dupes — NOT read-modify-write, so two concurrent
+  // adds can't lose one (the prior delta-from-client design left this server race) (#9)
+  await prisma.$executeRaw`UPDATE "Entity" SET "aliases" = array_append("aliases", ${clean}) WHERE "id" = ${entityId} AND "ownerId" = ${FOUNDER_OWNER_ID} AND "deletedAt" IS NULL AND NOT (${clean} = ANY("aliases"))`;
   await logAction("entity.update", null, { entityId, addAlias: clean });
   revalidatePath("/", "layout");
   return { ok: true };
@@ -162,10 +159,8 @@ export async function addEntityAlias(entityId: string, alias: string) {
 export async function removeEntityAlias(entityId: string, alias: string) {
   const entity = await prisma.entity.findFirst({ where: { id: entityId, ...OWNED } });
   if (!entity) return { error: "Entity not found." };
-  await prisma.entity.update({
-    where: { id: entityId },
-    data: { aliases: entity.aliases.filter((a) => a !== alias) },
-  });
+  // atomic remove (same lost-update guard as the add above) (#9)
+  await prisma.$executeRaw`UPDATE "Entity" SET "aliases" = array_remove("aliases", ${alias}) WHERE "id" = ${entityId} AND "ownerId" = ${FOUNDER_OWNER_ID} AND "deletedAt" IS NULL`;
   await logAction("entity.update", null, { entityId, removeAlias: alias });
   revalidatePath("/", "layout");
   return { ok: true };
@@ -505,6 +500,10 @@ export async function deleteGeneration(generationId: string): Promise<{ ok: true
     : 0;
   await prisma.$transaction([
     prisma.generation.update({ where: { id: generationId }, data: { deletedAt: new Date() } }),
+    // clear any segment keyframe pointing at this generation so deleting it can't
+    // leave a Shot with a dangling first/last-frame id (③B cleanup)
+    prisma.shot.updateMany({ where: { firstFrameGenerationId: generationId }, data: { firstFrameGenerationId: null } }),
+    prisma.shot.updateMany({ where: { lastFrameGenerationId: generationId }, data: { lastFrameGenerationId: null } }),
     ...(shotId && remaining === 0
       ? [prisma.shot.updateMany({ where: { id: shotId, status: "ATTACHED" }, data: { status: "DRAFT" } })]
       : []),
@@ -670,10 +669,12 @@ export async function getRenderJobs(projectId: string) {
 export async function softDeleteGeneration(generationId: string) {
   const gen = await prisma.generation.findFirst({ where: { id: generationId, ...OWNED } });
   if (!gen) return { error: "Generation not found." };
-  await prisma.generation.update({
-    where: { id: generationId },
-    data: { deletedAt: new Date() },
-  });
+  await prisma.$transaction([
+    prisma.generation.update({ where: { id: generationId }, data: { deletedAt: new Date() } }),
+    // drop any segment keyframe pointing here (no dangling first/last-frame id) (③B)
+    prisma.shot.updateMany({ where: { firstFrameGenerationId: generationId }, data: { firstFrameGenerationId: null } }),
+    prisma.shot.updateMany({ where: { lastFrameGenerationId: generationId }, data: { lastFrameGenerationId: null } }),
+  ]);
   await logAction("generation.discard", gen.projectId, { generationId });
   revalidatePath("/", "layout");
   return { ok: true };

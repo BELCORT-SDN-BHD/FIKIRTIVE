@@ -214,9 +214,15 @@ export class FalProvider implements GenerationProvider {
     try {
       const data = (await res.json()) as { images?: { url: string; content_type?: string }[] };
       const images = data.images ?? [];
-      if (images.length === 0) throw new Error("returned no images");
-      // download each result so the worker can store it content-addressed
-      return await Promise.all(
+      // we paid for req.count images — a short batch (or none) is a charged failure,
+      // never a silent partial DONE
+      if (images.length !== req.count) throw new Error(`expected ${req.count} images, fal returned ${images.length}`);
+      // download every result. allSettled (NOT Promise.all) so each download is
+      // awaited even if one fails — no leaked response bodies on the first reject —
+      // but a paid batch is all-or-nothing (no partial-success contract): if ANY
+      // result didn't download we fail the whole batch (→ chargedError), so a
+      // paid-for-but-missing output is never silently dropped/unauditable.
+      const settled = await Promise.allSettled(
         images.map(async (img) => {
           const r = await fetch(img.url);
           if (!r.ok) throw new Error(`result download → ${r.status}`);
@@ -224,6 +230,9 @@ export class FalProvider implements GenerationProvider {
           return { bytes: new Uint8Array(await r.arrayBuffer()), ext };
         }),
       );
+      const ok = settled.flatMap((s) => (s.status === "fulfilled" ? [s.value] : []));
+      if (ok.length !== images.length) throw new Error(`only ${ok.length}/${images.length} results downloaded`);
+      return ok;
     } catch (e) {
       throw chargedError(`fal ${modelId} billed but result unusable: ${e instanceof Error ? e.message : String(e)}`);
     }

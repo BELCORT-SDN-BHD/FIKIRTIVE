@@ -30,29 +30,44 @@ export async function coworkDraftStoryboard(
   }
   if (!plan.scenes.length) return { error: "Cowork returned an empty plan — try a more specific idea." };
 
-  // append after existing scenes/numbers (never clobber the user's work)
-  const lastScene = await prisma.shot.findFirst({ where: { projectId, ...OWNED }, orderBy: { scene: "desc" }, select: { scene: true } });
-  const lastNum = await prisma.shot.findFirst({ where: { projectId }, orderBy: { number: "desc" }, select: { number: true } });
-  let scene = lastScene?.scene ?? 0;
-  let number = lastNum?.number ?? 0;
-  let shots = 0;
-  const rows = [];
-  for (const sc of plan.scenes) {
-    scene += 1;
-    for (const sh of sc.shots) {
-      number += 1;
-      shots += 1;
-      rows.push({
-        id: newId(), ownerId: FOUNDER_OWNER_ID, projectId, number, scene,
-        description: sh.prompt,
-        promptDoc: { type: "doc", content: [{ type: "paragraph", content: [{ type: "text", text: sh.prompt }] }] },
-      });
+  // Append after existing scenes/numbers (never clobber the user's work), retried
+  // on a unique collision (@@unique([projectId, number])): a concurrent "Add
+  // shot"/cowork grabbing a number must NOT make this throw past the {error}
+  // contract or roll back the whole draft (#5). Each attempt re-reads fresh.
+  for (let attempt = 0; attempt < 4; attempt++) {
+    const lastScene = await prisma.shot.findFirst({ where: { projectId, ...OWNED }, orderBy: { scene: "desc" }, select: { scene: true } });
+    const lastNum = await prisma.shot.findFirst({ where: { projectId }, orderBy: { number: "desc" }, select: { number: true } });
+    let scene = lastScene?.scene ?? 0;
+    let number = lastNum?.number ?? 0;
+    let shots = 0;
+    const rows = [];
+    for (const sc of plan.scenes) {
+      scene += 1;
+      for (const sh of sc.shots) {
+        number += 1;
+        shots += 1;
+        rows.push({
+          id: newId(), ownerId: FOUNDER_OWNER_ID, projectId, number, scene,
+          description: sh.prompt,
+          promptDoc: { type: "doc", content: [{ type: "paragraph", content: [{ type: "text", text: sh.prompt }] }] },
+        });
+      }
+    }
+    try {
+      // shots + the audit event in ONE transaction: a failure can't leave shots
+      // created while the action returns {error} (or vice versa)
+      await prisma.$transaction([
+        prisma.shot.createMany({ data: rows }),
+        prisma.actionEvent.create({
+          data: { id: newId(), ownerId: FOUNDER_OWNER_ID, projectId, type: "cowork.draft", payload: { scenes: plan.scenes.length, shots, via: provider.name } },
+        }),
+      ]);
+      revalidatePath("/", "layout");
+      return { ok: true, scenes: plan.scenes.length, shots, via: provider.name };
+    } catch (e) {
+      if (attempt < 3 && typeof e === "object" && e !== null && (e as { code?: string }).code === "P2002") continue;
+      return { error: "Couldn't save the draft — please try again." };
     }
   }
-  await prisma.shot.createMany({ data: rows });
-  await prisma.actionEvent.create({
-    data: { id: newId(), ownerId: FOUNDER_OWNER_ID, projectId, type: "cowork.draft", payload: { scenes: plan.scenes.length, shots, via: provider.name } },
-  });
-  revalidatePath("/", "layout");
-  return { ok: true, scenes: plan.scenes.length, shots, via: provider.name };
+  return { error: "Couldn't allocate shot numbers — please try again." };
 }

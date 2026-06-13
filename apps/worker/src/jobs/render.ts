@@ -85,10 +85,16 @@ export async function handleRender(data: RenderJobData, retryCount = 0): Promise
   }
   if (job.status === "DONE") return; // idempotent re-delivery
 
-  await prisma.renderJob.update({
-    where: { id: job.id },
+  // atomic claim: take a QUEUED job, or RE-take a RENDERING one whose attempt is
+  // long past the ffmpeg/expire window (a crashed render — re-rendering is free,
+  // no fal spend). A redelivery while another worker is actively rendering loses
+  // the claim and exits, so it can't start a 2nd ffmpeg or flip DONE→RENDERING (#3).
+  const STALE_MS = 1000 * 60 * 13; // > ffmpeg timeout (10m), < queue expire (15m) so a crashed render is both redelivered AND claimable
+  const claim = await prisma.renderJob.updateMany({
+    where: { id: job.id, OR: [{ status: "QUEUED" }, { status: "RENDERING", startedAt: { lt: new Date(Date.now() - STALE_MS) } }] },
     data: { status: "RENDERING", progress: 5, startedAt: new Date(), attempts: { increment: 1 } },
   });
+  if (claim.count === 0) return; // another delivery owns it (active render or already settled)
 
   const work = path.join(tmpdir(), `artlio-render-${job.id}`);
   try {
@@ -173,8 +179,10 @@ export async function handleRender(data: RenderJobData, retryCount = 0): Promise
       const now = Date.now();
       if (now - lastWrite < 2000) return;
       lastWrite = now;
+      // guard on RENDERING so a late-arriving progress write can't land after the
+      // terminal DONE/100 write and freeze the bar below 100 (#8)
       prisma.renderJob
-        .update({ where: { id: job.id }, data: { progress: pct } })
+        .updateMany({ where: { id: job.id, status: "RENDERING" }, data: { progress: pct } })
         .catch(() => {});
     });
     await proc;
