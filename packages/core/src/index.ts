@@ -30,3 +30,5 @@ export * from "./upload.js";
 export * from "./refgen.js";
 export * from "./gen.js";
 export * from "./cowork.js";
+export * from "./cowork-transport.js";
+export * from "./cowork-skills.js";

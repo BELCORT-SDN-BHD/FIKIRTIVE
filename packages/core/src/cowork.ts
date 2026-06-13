@@ -51,12 +51,15 @@ export const coworkPlan = z.object({
     .max(COWORK_MAX_SCENES),
 });
 
-export interface CoworkProvider {
-  /** Stable id for logs (e.g. "mock", "fal:llm"). */
-  readonly name: string;
-  /** Draft a storyboard from a free-text idea. Throws on provider failure. */
-  planStoryboard(idea: string): Promise<CoworkPlan>;
-  /** Rewrite a rough prompt into a vivid, detailed one, keeping named entities
-   *  EXACTLY intact (so the UI can re-chip them). Throws on provider failure. */
-  enhancePrompt(text: string): Promise<string>;
+/** A model-neutral chat turn. Skills assemble these; the transport ships them. */
+export type ChatMessage = { role: "system" | "user"; content: string };
+
+/** The cowork PORT: a model-neutral transport, one method. It knows nothing
+ *  about storyboards or prompts — only how to turn messages into text. mock
+ *  ($0 deterministic) / fal (OpenRouter→Claude) / self-hosted-later are classes.
+ *  `skillId` is carried so the mock dispatches by identity, never by sniffing
+ *  prompt text; `opts.mockReply` lets a skill supply its $0 canned reply. */
+export interface CoworkTransport {
+  readonly name: string;                                   // "mock" | "fal:llm"
+  chat(skillId: string, messages: ChatMessage[], opts?: { mockReply?: () => string }): Promise<{ text: string }>;
 }
