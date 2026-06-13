@@ -116,8 +116,12 @@ function ShotCard({ projectId, shot, index, total, entities }: { projectId: stri
     if (!t || enhancing || busy || acting || slotBusy) return;
     setError(null);
     setEnhancing(true);
+    // the shot prompt drives the keyframe image (seedream) — tune the rewrite to
+    // that mode (t2i, or i2i when entity refs condition it); server derives mode
     let res: Awaited<ReturnType<typeof enhancePrompt>> | null = null;
-    try { res = await enhancePrompt({ projectId, text: t }); } catch { res = null; }
+    try {
+      res = await enhancePrompt({ projectId, text: t, model: "seedream", kind: "image", conditioned: ids.length > 0 });
+    } catch { res = null; }
     setEnhancing(false);
     if (!res) { setError("Couldn't enhance — please try again."); return; }
     if ("error" in res) { setError(res.error); return; }

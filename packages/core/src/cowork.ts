@@ -6,6 +6,7 @@
  * user would, so anything it does, the user could undo.
  */
 import { z } from "zod";
+import { GEN_KINDS } from "./gen.js";
 
 export const MAX_COWORK_IDEA = 4000;
 export const COWORK_MAX_SCENES = 6;
@@ -25,6 +26,15 @@ export const enhanceRequest = z
   .object({
     projectId: z.string().min(1).max(64),
     text: z.string().trim().min(1).max(MAX_ENHANCE_TEXT),
+    // optional gen-shape (Phase 1): lets the server derive (family, mode) for a
+    // model-aware rewrite. R3 — the client sends SHAPE, the server derives the
+    // mode (never a client mode string). All absent → a family-neutral rewrite
+    // (byte-identical to the pre-Phase-1 behavior).
+    model: z.string().min(1).max(40).optional(),
+    kind: z.enum(GEN_KINDS).optional(),
+    conditioned: z.boolean().optional(),
+    hasSource: z.boolean().optional(),
+    hasTail: z.boolean().optional(),
   })
   .strict();
 export type EnhanceRequest = z.infer<typeof enhanceRequest>;
@@ -53,6 +63,13 @@ export const coworkPlan = z.object({
 
 /** A model-neutral chat turn. Skills assemble these; the transport ships them. */
 export type ChatMessage = { role: "system" | "user"; content: string };
+
+/** Knowledge injected into a skill run by the runner — e.g. the per-(family×mode)
+ *  enhance directive the server resolved (Phase 1). Optional: absent → the skill
+ *  uses its family-neutral base prompt. */
+export interface SkillCtx {
+  directive?: string;
+}
 
 /** The cowork PORT: a model-neutral transport, one method. It knows nothing
  *  about storyboards or prompts — only how to turn messages into text. mock

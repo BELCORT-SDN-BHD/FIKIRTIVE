@@ -11,7 +11,9 @@ import { prisma } from "@artlio/db";
 import {
   coworkRequest, enhanceRequest, MAX_ENHANCE_TEXT, newId, FOUNDER_OWNER_ID,
   createTransport, runSkill, draftStoryboardSkill, enhancePromptSkill,
+  modelFamily, deriveMode,
 } from "@artlio/core";
+import { getEnhanceDirective } from "./cowork-knowledge";
 
 const OWNED = { ownerId: FOUNDER_OWNER_ID, deletedAt: null } as const;
 const transport = createTransport();
@@ -83,18 +85,30 @@ export async function enhancePrompt(
 ): Promise<{ ok: true; text: string; via: string } | { error: string }> {
   const parsed = enhanceRequest.safeParse(raw);
   if (!parsed.success) return { error: "Write a prompt first, then ✨ Enhance." };
-  const { projectId, text } = parsed.data;
+  const { projectId, text, model, kind, conditioned, hasSource, hasTail } = parsed.data;
   // owner-domain guard like every paid action (single-tenant today, multi-tenant-ready)
   const project = await prisma.project.findFirst({ where: { id: projectId, ...OWNED } });
   if (!project) return { error: "Project not found." };
+
+  // Phase 1: server-derive (family, mode) from the gen-shape and read the tuned
+  // directive. Best-effort — a knowledge-read hiccup degrades to the family-neutral
+  // base prompt and NEVER blocks Enhance. Mode is server-derived (R3), never a
+  // client mode string.
+  const family = model ? modelFamily(model) : undefined;
+  const mode = family ? deriveMode({ kind: kind ?? "image", conditioned, hasSourceImage: hasSource, hasTailImage: hasTail }) : undefined;
+  let directive: string | undefined;
+  try {
+    if (family && mode) directive = await getEnhanceDirective(family, mode);
+  } catch { /* knowledge read is best-effort — fall back to the base prompt */ }
+
   try {
     // clamp to the downstream generate cap so an over-long rewrite can't fail genRequest
-    const out = (await runSkill(enhancePromptSkill, text, transport)).trim().slice(0, MAX_ENHANCE_TEXT);
+    const out = (await runSkill(enhancePromptSkill, text, transport, { directive })).trim().slice(0, MAX_ENHANCE_TEXT);
     if (!out) return { error: "Enhance came back empty — try again." };
     try {
       // audit the paid LLM call (records usage for the future cost/credit ledger)
       await prisma.actionEvent.create({
-        data: { id: newId(), ownerId: FOUNDER_OWNER_ID, projectId, type: "cowork.enhance", payload: { via: transport.name, chars: out.length } },
+        data: { id: newId(), ownerId: FOUNDER_OWNER_ID, projectId, type: "cowork.enhance", payload: { via: transport.name, chars: out.length, family: family ?? null, mode: mode ?? null, directiveApplied: !!directive } },
       });
     } catch { /* audit is best-effort — never lose a paid result on a log-write hiccup */ }
     return { ok: true, text: out, via: transport.name };

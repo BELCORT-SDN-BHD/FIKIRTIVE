@@ -14,13 +14,15 @@ import {
   type ChatMessage,
   type CoworkPlan,
   type CoworkTransport,
+  type SkillCtx,
 } from "./cowork.js";
 
 /** A cowork skill: knowledge + message assembly + parse + $0 mock reply. Both
- *  current skills take a single string input (idea / text); output varies. */
+ *  current skills take a single string input (idea / text); output varies. The
+ *  optional `ctx` carries runner-injected knowledge (the enhance directive). */
 export interface CoworkSkill<O> {
   readonly id: string;
-  buildMessages(input: string): ChatMessage[];
+  buildMessages(input: string, ctx?: SkillCtx): ChatMessage[];
   parse(text: string): O;
   /** Deterministic, offline reply the MockTransport returns (parsed like a real
    *  one) — keeps the $0 dev contract while the transport stays skill-agnostic. */
@@ -28,9 +30,10 @@ export interface CoworkSkill<O> {
 }
 
 /** The generic spine: assemble → transport.chat → parse. The skill's mockReply
- *  is handed to the transport so the mock dispatches by identity, not by text. */
-export async function runSkill<O>(skill: CoworkSkill<O>, input: string, transport: CoworkTransport): Promise<O> {
-  const { text } = await transport.chat(skill.id, skill.buildMessages(input), { mockReply: () => skill.mockReply(input) });
+ *  is handed to the transport so the mock dispatches by identity, not by text.
+ *  `ctx` (e.g. the resolved directive) flows into buildMessages. */
+export async function runSkill<O>(skill: CoworkSkill<O>, input: string, transport: CoworkTransport, ctx?: SkillCtx): Promise<O> {
+  const { text } = await transport.chat(skill.id, skill.buildMessages(input, ctx), { mockReply: () => skill.mockReply(input) });
   return skill.parse(text);
 }
 
@@ -83,9 +86,14 @@ const ENHANCE_SYSTEM =
 /** Rewrite a rough prompt into a vivid one, keeping named entities verbatim. */
 export const enhancePromptSkill: CoworkSkill<string> = {
   id: "enhancePrompt",
-  buildMessages(text: string): ChatMessage[] {
+  buildMessages(text: string, ctx?: SkillCtx): ChatMessage[] {
+    // Phase 1: the server-resolved per-(family×mode) directive is appended to the
+    // base prompt. Absent/blank → the base prompt byte-for-byte (parity). The
+    // i2v "describe motion not scene" rule rides in the directive text, not code.
+    const directive = ctx?.directive?.trim();
+    const system = directive ? `${ENHANCE_SYSTEM}\n\nModel-specific guidance for this generation: ${directive}` : ENHANCE_SYSTEM;
     return [
-      { role: "system", content: ENHANCE_SYSTEM },
+      { role: "system", content: system },
       { role: "user", content: text },
     ];
   },

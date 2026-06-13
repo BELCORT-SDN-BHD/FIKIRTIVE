@@ -95,4 +95,33 @@ describe("enhancePromptSkill", () => {
       "a cat, cinematic lighting, shallow depth of field, rich detail, dynamic composition",
     );
   });
+
+  it("buildMessages: a directive (Phase 1) is appended to the system prompt", () => {
+    const msgs = enhancePromptSkill.buildMessages("a cat", { directive: "Use natural language, not tag soup." });
+    expect(msgs[0]).toEqual({
+      role: "system",
+      content: `${ENHANCE_SYSTEM}\n\nModel-specific guidance for this generation: Use natural language, not tag soup.`,
+    });
+    expect(msgs[1]).toEqual({ role: "user", content: "a cat" });
+  });
+
+  it("buildMessages: no/blank directive → byte-identical base prompt (parity)", () => {
+    expect(enhancePromptSkill.buildMessages("a cat")[0]?.content).toBe(ENHANCE_SYSTEM);
+    expect(enhancePromptSkill.buildMessages("a cat", {})[0]?.content).toBe(ENHANCE_SYSTEM);
+    expect(enhancePromptSkill.buildMessages("a cat", { directive: "   " })[0]?.content).toBe(ENHANCE_SYSTEM);
+  });
+
+  it("mock path ignores the directive (mock doesn't read messages)", async () => {
+    expect(await runSkill(enhancePromptSkill, "a cat", fakeMock, { directive: "anything" })).toBe(
+      "a cat, cinematic lighting, shallow depth of field, rich detail, dynamic composition",
+    );
+  });
+});
+
+describe("draftStoryboardSkill ctx", () => {
+  it("buildMessages ignores ctx (storyboard has no per-model knowledge)", () => {
+    const a = draftStoryboardSkill.buildMessages("an idea");
+    const b = draftStoryboardSkill.buildMessages("an idea", { directive: "X" });
+    expect(a).toEqual(b);
+  });
 });

@@ -138,8 +138,19 @@ export function GenSpace({ projectId, entities }: { projectId: string; entities:
     if (!text || enhancing || busy) return;
     setError(null);
     setEnhancing(true);
+    // send the gen-shape so the server can tune the rewrite to (family, mode);
+    // the server derives the mode (R3) — we pass shape, not a mode string
     let res: Awaited<ReturnType<typeof enhancePrompt>> | null = null;
-    try { res = await enhancePrompt({ projectId, text }); } catch { res = null; }
+    try {
+      res = await enhancePrompt({
+        projectId, text,
+        model: isVideo ? videoModel : "seedream",
+        kind,
+        conditioned: promptIds.length > 0,
+        hasSource: !!refImg,
+        hasTail: !!tailImg,
+      });
+    } catch { res = null; }
     setEnhancing(false);
     if (!res) { setError("Couldn't enhance — please try again."); return; }
     if ("error" in res) { setError(res.error); return; }
