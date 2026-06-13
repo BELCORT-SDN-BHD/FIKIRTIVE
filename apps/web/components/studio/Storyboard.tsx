@@ -17,6 +17,7 @@ import { startGen, getGenJob } from "@/lib/gen-actions";
 import { GEN_PRICE_USD_PER_IMAGE, GEN_VIDEO_MODELS, GEN_VIDEO_MODEL_INFO, GEN_VIDEO_MODEL_OPTIONS, videoDefaults, videoPriceUsd, type GenVideoModel } from "@artlio/core";
 import type { EntityDTO } from "@/lib/types";
 import { MentionInput, buildMentionDoc } from "@/components/MentionInput";
+import { setDnd, getDnd, hasDnd } from "@/lib/dnd";
 import { Lightbox } from "@/components/Lightbox";
 import { CAMERA_PRESETS } from "./camera";
 
@@ -65,6 +66,7 @@ function ShotCard({ projectId, shot, index, total, entities }: { projectId: stri
   const animatePrice = videoPriceUsd(videoModel, { seconds, resolution: vd.resolution, audio: audioOn, count: 1 });
   const [busy, setBusy] = useState(false);                                  // Animate (video) in flight
   const [slotBusy, setSlotBusy] = useState<"first" | "last" | null>(null);   // a keyframe op in flight
+  const [dropSlot, setDropSlot] = useState<"first" | "last" | null>(null);   // a candidate being dragged over a slot
   const [acting, setActing] = useState(false);                              // move/delete in flight
   const [error, setError] = useState<string | null>(null);
   const [addingToCut, setAddingToCut] = useState(false); // "Add to editor" in flight
@@ -270,7 +272,23 @@ function ShotCard({ projectId, shot, index, total, entities }: { projectId: stri
     const isBusy = slotBusy === slot;
     return (
       <div style={{ flex: 1, minWidth: 0 }}>
-        <div style={{ position: "relative", aspectRatio: "1 / 1", borderRadius: "var(--radius-sm)", overflow: "hidden", border: `1px solid ${accent ? "rgba(120,160,255,.45)" : "var(--line-2)"}`, background: "var(--glass-1)", display: "grid", placeItems: "center" }}>
+        <div data-dnd={`slot-${slot}`}
+          onDragOver={(e) => { if (hasDnd(e.dataTransfer, "candidate-frame") && !busy && !slotBusy) { e.preventDefault(); setDropSlot(slot); } }}
+          onDragLeave={() => setDropSlot(null)}
+          onDrop={(e) => {
+            e.preventDefault(); setDropSlot(null);
+            const payload = getDnd(e.dataTransfer);
+            if (payload?.kind !== "candidate-frame" || busy || slotBusy) return;
+            setError(null); setSlotBusy(slot);
+            (async () => {
+              try {
+                const r = await setShotFrame(shot.id, slot, payload.generationId);
+                if (r && "error" in r) setError(r.error); else router.refresh();
+              } catch { setError("Couldn't attach that frame — try again."); }
+              finally { setSlotBusy(null); }
+            })();
+          }}
+          style={{ position: "relative", aspectRatio: "1 / 1", borderRadius: "var(--radius-sm)", overflow: "hidden", border: `1px solid ${dropSlot === slot ? "rgba(120,160,255,.9)" : accent ? "rgba(120,160,255,.45)" : "var(--line-2)"}`, background: "var(--glass-1)", display: "grid", placeItems: "center" }}>
           {frame ? (
             <>
               {/* eslint-disable-next-line @next/next/no-img-element */}
@@ -381,7 +399,7 @@ function ShotCard({ projectId, shot, index, total, entities }: { projectId: stri
   );
 }
 
-export function Storyboard({ projectId, shots, entities }: { projectId: string; shots: StudioShot[]; entities: EntityDTO[] }) {
+export function Storyboard({ projectId, shots, entities, candidates }: { projectId: string; shots: StudioShot[]; entities: EntityDTO[]; candidates: { id: string; src: string }[] }) {
   const router = useRouter();
   const [adding, setAdding] = useState(false);
   const [actionErr, setActionErr] = useState<string | null>(null);
@@ -449,6 +467,18 @@ export function Storyboard({ projectId, shots, entities }: { projectId: string; 
           {coworkErr && <p role="alert" style={{ font: "var(--text-caption)", color: "var(--danger)", margin: 0 }}>{coworkErr}</p>}
           {coworkOk && <p style={{ font: "var(--text-caption)", color: "var(--fg-2)", margin: 0 }}>{coworkOk}</p>}
         </div>
+
+        {candidates.length > 0 && (
+          <div data-dnd="candidate-strip" style={{ position: "sticky", top: 0, zIndex: 5, display: "flex", gap: 6, overflowX: "auto", padding: "8px 0", marginBottom: 14, background: "var(--glass-1)", borderBottom: "1px solid var(--line-2)" }}>
+            {candidates.map((c) => (
+              // eslint-disable-next-line @next/next/no-img-element
+              <img key={c.id} src={c.src} alt="" draggable data-dnd="candidate"
+                onDragStart={(e) => setDnd(e.dataTransfer, { kind: "candidate-frame", generationId: c.id })}
+                title="Drag onto a shot's Start or End frame"
+                style={{ width: 64, height: 40, objectFit: "cover", borderRadius: 4, flex: "none", cursor: "grab", border: "1px solid var(--line-2)" }} />
+            ))}
+          </div>
+        )}
 
         {shots.length === 0 ? (
           <div style={{ display: "grid", placeItems: "center", minHeight: "50vh", textAlign: "center" }}>

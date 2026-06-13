@@ -86,6 +86,11 @@ export default async function StudioPage({ searchParams }: { searchParams: Promi
   // Gen-space video clips (so generated footage is available to cut, not just shots)
   const candidates = await getCandidates(project.id);
   const { edit: boardEdit, clipCount } = buildBoardEdit(shots, candidates);
+  // image candidates for the Storyboard drag-to-attach strip (drop onto a shot's frame slot)
+  const FRAME_IMG_EXTS = new Set(["png", "jpg", "jpeg", "webp"]);
+  const frameCandidates = candidates
+    .filter((c) => FRAME_IMG_EXTS.has(c.asset.ext.toLowerCase()))
+    .map((c) => ({ id: c.id, src: storageKeyToSrc(storageKey(c.asset.ownerId, c.asset.contentHash, c.asset.ext.toLowerCase())) }));
   const savedParse = project.editJson ? artlioEdit.safeParse(project.editJson) : null;
   const savedEdit = savedParse?.success ? savedParse.data : null;
 
@@ -112,6 +117,7 @@ export default async function StudioPage({ searchParams }: { searchParams: Promi
       entities={entities.map(toEntityDTO)}
       shots={storyboardShots}
       media={media}
+      frameCandidates={frameCandidates}
       shotOptions={shotOptions}
       boardEdit={boardEdit}
       savedEdit={savedEdit}

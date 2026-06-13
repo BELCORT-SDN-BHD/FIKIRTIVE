@@ -4,6 +4,7 @@ import { useEffect, useRef, useState } from "react";
 import Link from "next/link";
 import { artlioEdit, type ArtlioEdit } from "@artlio/core";
 import { getRenderJobs, saveProjectEdit, startRender, getEditorMedia } from "@/lib/actions";
+import { setDnd, getDnd, hasDnd } from "@/lib/dnd";
 import { Button, Chip, EmptyHero, MonoLabel } from "./ds";
 
 /**
@@ -78,6 +79,7 @@ export function Editor({
 
   // editor Assets panel: the project's generated media, clickable to add to the cut
   const [media, setMedia] = useState<EditorClip[]>([]);
+  const [dropping, setDropping] = useState(false); // dragging an Assets item over the timeline
   useEffect(() => {
     let alive = true;
     // eslint-disable-next-line react-hooks/set-state-in-effect -- clear stale media on a project switch (don't show/append another project's clips)
@@ -430,7 +432,8 @@ export function Editor({
               {media.length === 0 ? (
                 <p style={{ font: "var(--text-caption)", color: "var(--fg-3)", margin: 0 }}>No media yet — generate in Gen space, then click a clip here to add it to the cut.</p>
               ) : media.map((m) => (
-                <button key={m.id} onClick={() => appendAsset(m)} title="Add to the cut" disabled={status !== "ready"}
+                <button key={m.id} onClick={() => appendAsset(m)} title="Add to the cut, or drag onto the timeline" disabled={status !== "ready"}
+                  draggable onDragStart={(e) => setDnd(e.dataTransfer, { kind: "editor-clip", src: m.src, clipKind: m.kind, seconds: m.seconds })}
                   style={{ position: "relative", border: "1px solid var(--line-2)", borderRadius: "var(--radius-md)", overflow: "hidden", background: "#000", aspectRatio: "16 / 10", cursor: "pointer", padding: 0 }}>
                   {m.kind === "video"
                     ? <video src={m.src} muted playsInline preload="metadata" style={{ width: "100%", height: "100%", objectFit: "cover" }} />
@@ -452,12 +455,22 @@ export function Editor({
           <div
             ref={timelineRef}
             data-shotstack-timeline
+            data-dnd="timeline"
+            onDragOver={(e) => { if (hasDnd(e.dataTransfer, "editor-clip") && status === "ready") { e.preventDefault(); setDropping(true); } }}
+            onDragLeave={() => setDropping(false)}
+            onDrop={(e) => {
+              e.preventDefault(); setDropping(false);
+              const payload = getDnd(e.dataTransfer);
+              if (payload?.kind === "editor-clip" && handles.current && status === "ready") {
+                void appendAsset({ id: "", src: payload.src, kind: payload.clipKind, seconds: payload.seconds });
+              }
+            }}
             style={{
               height: 280,
               overflow: "hidden",
               marginTop: 12,
               borderRadius: "var(--radius-lg)",
-              border: "1px solid var(--line-2)",
+              border: `1px solid ${dropping ? "rgba(120,160,255,.7)" : "var(--line-2)"}`,
             }}
           />
           {jobs.length > 0 && (

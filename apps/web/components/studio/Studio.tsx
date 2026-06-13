@@ -22,6 +22,7 @@ export function Studio({
   entities,
   shots,
   media,
+  frameCandidates,
   shotOptions,
   boardEdit,
   savedEdit,
@@ -34,6 +35,7 @@ export function Studio({
   entities: EntityDTO[];
   shots: StudioShot[];
   media: MediaItem[];
+  frameCandidates: { id: string; src: string }[];
   shotOptions: ShotOption[];
   boardEdit: ArtlioEdit | null;
   savedEdit: ArtlioEdit | null;
@@ -49,7 +51,7 @@ export function Studio({
     switch (view) {
       case "genspace": return <GenSpace projectId={project.id} entities={entities} />;
       case "canvas": return <Canvas />;
-      case "storyboard": return <Storyboard projectId={project.id} shots={shots} entities={entities} />;
+      case "storyboard": return <Storyboard projectId={project.id} shots={shots} entities={entities} candidates={frameCandidates} />;
       case "editor": return <VideoEditorSurface projectId={project.id} boardEdit={boardEdit} savedEdit={savedEdit} attachedCount={attachedCount} onDirtyChange={setEditorDirty} />;
       case "elements": return <Elements entities={entities} />;
       case "assets": return <Assets media={media} shotOptions={shotOptions} />;
