@@ -80,14 +80,14 @@ model Entity {
 }
 
 model ReferenceImage {
-  id       String    @id
-  ownerId  String    @default("founder")
-  entityId String
-  assetId  String
-  position Int       @default(0)
-  note     String    @default("")
+  id        String    @id
+  ownerId   String    @default("founder")
+  entityId  String
+  assetId   String
+  position  Int       @default(0)
+  note      String    @default("")
   // 视角标签：阶段二的视角级缺图检查用（CEO 评审 D12 计数制裁决预留）
-  viewTag  String?
+  viewTag   String?
   createdAt DateTime  @default(now())
   deletedAt DateTime?
 
@@ -125,26 +125,26 @@ model Asset {
 }
 
 model Shot {
-  id          String     @id
-  projectId   String
-  ownerId     String     @default("founder")
-  number      Int
+  id                     String     @id
+  projectId              String
+  ownerId                String     @default("founder")
+  number                 Int
   // 场景分组（storyboard 多场景）：同一 scene 内按 number 排序；number 仍全局唯一
-  scene       Int        @default(1)
-  title       String     @default("")
-  description String     @default("")
-  status      ShotStatus @default(DRAFT)
+  scene                  Int        @default(1)
+  title                  String     @default("")
+  description            String     @default("")
+  status                 ShotStatus @default(DRAFT)
   // Tiptap 结构化文档：芯片只存实体 ID（label 仅显示缓存，D12 设计裁决）
-  promptDoc   Json?
+  promptDoc              Json?
   // 段模型（storyboard segment，布局 A）：首帧/尾帧的 Generation id（图）；
   // Animate 用首帧作 i2v source、尾帧作 tail（可选）。存 id 不建关系（避免与 generations 关系歧义）。
   firstFrameGenerationId String?
   lastFrameGenerationId  String?
   // 段转场（③C）：null=无；"in"/"out"/"both" → buildBoardEdit 映射成 clip.transition 的 fade（0.5s 默认）
-  transition  String?
-  createdAt   DateTime   @default(now())
-  updatedAt   DateTime   @updatedAt
-  deletedAt   DateTime?
+  transition             String?
+  createdAt              DateTime   @default(now())
+  updatedAt              DateTime   @updatedAt
+  deletedAt              DateTime?
 
   project     Project         @relation(fields: [projectId], references: [id])
   entityRefs  ShotEntityRef[]
@@ -206,15 +206,15 @@ model Generation {
 // ComfyUI 模板注册表（SOP v1.1 A3.5 文件版 registry.json 的站内镜像；
 // M0 启动时导入，阶段二起成为真相源）
 model TemplateBundle {
-  id            String   @id
-  ownerId       String   @default("founder")
+  id            String    @id
+  ownerId       String    @default("founder")
   slug          String
   version       Int
-  versionHash   String   @unique // workflow_api.json 原始字节 SHA-256
+  versionHash   String    @unique // workflow_api.json 原始字节 SHA-256
   displayName   String
   slots         Json // SlotBinding[]（@artlio/core）
   // zip 位置永远由哈希推导：bundles/<zipHash>.zip（D14：不存路径）
-  zipHash       String   @unique
+  zipHash       String    @unique
   modalEndpoint String?
   gpu           String?
   costUsdPerRun Float?
@@ -301,45 +301,45 @@ enum GenKind {
 // 镜头/会话生成任务（redesign Gen space）—— 产出 Generation 候选，镜像 RefGenJob。
 // 条件输入由 worker 从 entityIds 推导（D19）。
 model GenJob {
-  id            String    @id
-  ownerId       String    @default("founder")
-  projectId     String
-  shotId        String?
+  id                 String    @id
+  ownerId            String    @default("founder")
+  projectId          String
+  shotId             String?
   // i2v source = a specific owned Generation's image (Gen space upload→animate)；
   // worker 校验 owner+project 后用它的图做 image-to-video（D19：不收客户端 URL）
   sourceGenerationId String?
   // 可选末帧（last frame）：i2v 在 source→tail 之间补间（Kling tail_image_url）
   tailGenerationId   String?
-  prompt        String
-  entityIds     String[]  @default([])
+  prompt             String
+  entityIds          String[]  @default([])
   // 双提交幂等：shot 绑定生成的稳定键（"frame:<shotId>:<slot>" / "animate:<shotId>"）。
   // startGen 命中同键的在途(QUEUED/GENERATING)任务则复用，重载再点不二次扣费。
-  idempotencyKey String?
-  kind          GenKind   @default(IMAGE)
-  model         String    @default("seedream")
-  count         Int       @default(1)
+  idempotencyKey     String?
+  kind               GenKind   @default(IMAGE)
+  model              String    @default("seedream")
+  count              Int       @default(1)
   /// 视频生成的每模型设置（duration/resolution/aspectRatio/fps/audio）；worker 传给 provider
-  videoOptions  Json?
-  status        GenStatus @default(QUEUED)
-  progress      Int       @default(0)
+  videoOptions       Json?
+  status             GenStatus @default(QUEUED)
+  progress           Int       @default(0)
   /// DONE 时产出的 Generation 行（可多个）
-  generationIds String[]  @default([])
+  generationIds      String[]  @default([])
   /// 钱真相：付费 provider 调用是否已返回（扣过费）。DONE=已交付；FAILED+spent=付了但没存上
   ///（可审计/对账，避免"失败=没扣费"的误判）。pre-charge 失败时为 false。
-  spent         Boolean   @default(false)
-  error         String    @default("")
-  queueJobId    String    @default("")
-  attempts      Int       @default(0)
-  startedAt     DateTime?
-  finishedAt    DateTime?
-  createdAt     DateTime  @default(now())
-  updatedAt     DateTime  @updatedAt
-
-  @@index([projectId, createdAt])
-  @@index([status, updatedAt])
+  spent              Boolean   @default(false)
+  error              String    @default("")
+  queueJobId         String    @default("")
+  attempts           Int       @default(0)
+  startedAt          DateTime?
+  finishedAt         DateTime?
+  createdAt          DateTime  @default(now())
+  updatedAt          DateTime  @updatedAt
   // 幂等去重靠迁移里的 PARTIAL UNIQUE 索引（active 键唯一，Prisma 无法在 schema 表达
   // 条件唯一，故只在 migration.sql 里建）：同一 (owner, project, idempotencyKey) 同时
   // 只能有一个 QUEUED/GENERATING 任务 → 并发同键提交 DB 层挡住，不会双扣。
+
+  @@index([projectId, createdAt])
+  @@index([status, updatedAt])
 }
 
 // ── Auth.js v5 标准模型（D18：邮箱魔法链接）────────────────────────────
@@ -397,4 +397,46 @@ model ActionEvent {
 
   @@index([ownerId, createdAt])
   @@index([projectId, type])
+}
+
+// cowork 知识库（Phase 0B）：per-(model family × generation mode) 的提示词指令，
+// 由 founder 在 /admin/directives 实时编辑，无需重新部署。enhancePrompt skill
+// 按 (family, mode) 读取并注入（注入是 Phase 1）。directive 为空 → skill 退回
+// family-neutral 基础提示词。rules 是闭合结构（Guardian/Coach 读取，避免二次迁移）。
+model ModelDirective {
+  id         String   @id
+  ownerId    String   @default("founder")
+  family     String // "seedream" | "kling" | "veo" | "seedance" | "ltx"
+  mode       String // "t2i" | "i2i" | "t2v" | "i2v" | "i2v-tail"
+  directive  String   @default("") // the injectable snippet; "" → family-neutral base
+  rules      Json? // closed shape: { maxConcurrentMotions?, noTagCommas?, i2vMotionNotScene?, pitfalls?[] }
+  notes      String   @default("") // founder's rationale / source
+  confidence String   @default("untested") // "high" | "medium" | "low" | "untested"
+  enabled    Boolean  @default(true) // off → skill ignores it (family-neutral base)
+  source     String   @default("research") // "research" | "founder" | "vision-v2"
+  updatedAt  DateTime @updatedAt
+  createdAt  DateTime @default(now())
+
+  revisions ModelDirectiveRevision[]
+
+  @@unique([ownerId, family, mode]) // the lookup key; one directive per cell
+  @@index([ownerId, family])
+}
+
+// 指令编辑历史（R6）：每次 save 写一行快照，用于回滚（比 ActionEvent 更结构化）。
+model ModelDirectiveRevision {
+  id          String   @id
+  directiveId String
+  ownerId     String   @default("founder")
+  directive   String
+  rules       Json?
+  confidence  String
+  enabled     Boolean
+  source      String
+  editedBy    String   @default("") // the admin email at save time
+  createdAt   DateTime @default(now())
+
+  parent ModelDirective @relation(fields: [directiveId], references: [id], onDelete: Cascade)
+
+  @@index([directiveId, createdAt])
 }

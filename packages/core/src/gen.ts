@@ -25,6 +25,47 @@ export type GenVideoModel = (typeof GEN_VIDEO_MODELS)[number];
 export const GEN_KINDS = ["image", "video"] as const;
 export type GenKind = (typeof GEN_KINDS)[number];
 
+/** The prompt-research FAMILIES the knowledge base keys on. Version-specific
+ *  model ids (kling-2.6, kling-3) collapse to one family so the founder tunes
+ *  one directive per family, not one per model. */
+export const MODEL_FAMILIES = ["seedream", "kling", "veo", "seedance", "ltx"] as const;
+export type ModelFamily = (typeof MODEL_FAMILIES)[number];
+
+/** The generation MODES the knowledge base keys on alongside family. */
+export const GEN_MODES = ["t2i", "i2i", "t2v", "i2v", "i2v-tail"] as const;
+export type GenMode = (typeof GEN_MODES)[number];
+
+/** Map a (version-specific) model id → its research family, by prefix so a
+ *  future version bump (kling-4) inherits the family automatically. An unknown
+ *  id returns undefined (the skill falls back to a family-neutral base prompt) —
+ *  NEVER throws. seedream/seedance both start "seed" but the full prefixes
+ *  disambiguate. */
+export function modelFamily(modelId: string): ModelFamily | undefined {
+  if (modelId.startsWith("seedream")) return "seedream";
+  if (modelId.startsWith("kling")) return "kling";
+  if (modelId.startsWith("veo")) return "veo";
+  if (modelId.startsWith("seedance")) return "seedance";
+  if (modelId.startsWith("ltx")) return "ltx";
+  return undefined;
+}
+
+/** Derive the generation MODE from a server-resolved request shape — the other
+ *  axis the knowledge base keys on. PURE: the caller resolves the booleans from
+ *  owned DB state first (R3 — the server is authoritative, never a client mode
+ *  string). Mirrors the worker's branching: image + conditioning refs → i2i
+ *  (edit), image alone → t2i; video + start frame → i2v (+ end frame → i2v-tail),
+ *  video alone → t2v. (An end frame without a start is meaningless → t2v.) */
+export function deriveMode(input: {
+  kind: GenKind;
+  conditioned?: boolean;
+  hasSourceImage?: boolean;
+  hasTailImage?: boolean;
+}): GenMode {
+  if (input.kind === "image") return input.conditioned ? "i2i" : "t2i";
+  if (input.hasSourceImage) return input.hasTailImage ? "i2v-tail" : "i2v";
+  return "t2v";
+}
+
 export const MAX_GEN_COUNT = 4;
 export const MAX_GEN_PROMPT = 2000;
 export const MAX_GEN_ENTITIES = 8;

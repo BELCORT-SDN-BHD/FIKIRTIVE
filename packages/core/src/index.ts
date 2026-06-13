@@ -32,3 +32,4 @@ export * from "./gen.js";
 export * from "./cowork.js";
 export * from "./cowork-transport.js";
 export * from "./cowork-skills.js";
+export * from "./cowork-directives.js";

@@ -27,7 +27,9 @@ function rateLimit(email: string) {
   attempts.set(email, recent);
 }
 
-function allowed(email: string | null | undefined): boolean {
+/** Deny-by-default allowlist check (AUTH_ALLOWED_EMAILS). Exported so admin
+ *  handlers can re-assert it inside the handler (R7), not just at login. */
+export function allowed(email: string | null | undefined): boolean {
   if (!email) return false;
   const list = (process.env.AUTH_ALLOWED_EMAILS ?? "")
     .split(",")
