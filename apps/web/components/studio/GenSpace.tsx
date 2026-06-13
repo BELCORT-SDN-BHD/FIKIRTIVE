@@ -10,14 +10,15 @@
  * (videoPriceUsd) and shown before spend; failures never charge.
  */
 import { useState, useEffect, useRef } from "react";
-import { Button, IcPlus, IcImage, IcChevronDown, IcRetry, IcX } from "@/components/ds";
+import { Button, IcPlus, IcImage, IcChevronDown, IcRetry, IcX, IcSparkle } from "@/components/ds";
 import {
   GEN_PRICE_USD_PER_IMAGE, MAX_GEN_COUNT, GEN_VIDEO_MODELS, GEN_VIDEO_MODEL_INFO,
   GEN_VIDEO_MODEL_OPTIONS, videoDefaults, videoPriceUsd, type GenVideoModel,
 } from "@artlio/core";
 import { startGen, getGenJob } from "@/lib/gen-actions";
 import { uploadReference } from "@/lib/actions";
-import { MentionInput } from "@/components/MentionInput";
+import { enhancePrompt } from "@/lib/cowork-actions";
+import { MentionInput, buildMentionDoc } from "@/components/MentionInput";
 import { Lightbox } from "@/components/Lightbox";
 import type { EntityDTO } from "@/lib/types";
 import { CAMERA_PRESETS } from "./camera";
@@ -77,6 +78,9 @@ export function GenSpace({ projectId, entities }: { projectId: string; entities:
   const [kind, setKind] = useState<"image" | "video">("image");
   const [prompt, setPrompt] = useState("");
   const [promptIds, setPromptIds] = useState<string[]>([]); // @mentioned entity ids
+  const [composerKey, setComposerKey] = useState(0);        // bump to re-seed the editor after ✨ Enhance
+  const [seedDoc, setSeedDoc] = useState<unknown>(undefined);
+  const [enhancing, setEnhancing] = useState(false);
   const [count, setCount] = useState(1);              // batch (video) / num images
   const [camera, setCamera] = useState("");           // camera-motion preset (video)
   const [videoModel, setVideoModel] = useState<GenVideoModel>("kling");
@@ -124,6 +128,25 @@ export function GenSpace({ projectId, entities }: { projectId: string; entities:
     setVopts(videoDefaults(m));
     if (!GEN_VIDEO_MODEL_INFO[m].tail) setTailImg(null);
     setCount((c) => Math.min(c, GEN_VIDEO_MODEL_OPTIONS[m].maxCount));
+  }
+
+  // ✨ Enhance — rewrite the composer's rough prompt into a vivid one (mock $0 in
+  // dev, fal LLM in prod), then re-seed the editor, re-chipping any @-named
+  // entities so the wedge survives. promptIds is preserved for generation.
+  async function enhance() {
+    const text = prompt.trim();
+    if (!text || enhancing || busy) return;
+    setError(null);
+    setEnhancing(true);
+    let res: Awaited<ReturnType<typeof enhancePrompt>> | null = null;
+    try { res = await enhancePrompt({ projectId, text }); } catch { res = null; }
+    setEnhancing(false);
+    if (!res) { setError("Couldn't enhance — please try again."); return; }
+    if ("error" in res) { setError(res.error); return; }
+    const mentioned = entities.filter((e) => promptIds.includes(e.id));
+    setPrompt(res.text);
+    setSeedDoc(buildMentionDoc(res.text, mentioned));
+    setComposerKey((k) => k + 1);
   }
 
   function uploadInto(setter: (v: { id: string; src: string }) => void, switchMode: boolean) {
@@ -341,7 +364,8 @@ export function GenSpace({ projectId, entities }: { projectId: string; entities:
           <input ref={tailInput} type="file" accept="image/png,image/jpeg,image/webp" hidden onChange={onTailFile} />
           <div className="al-input-wrap" style={{ border: "none", background: "none", padding: 0 }}>
             <div style={{ flex: 1, minWidth: 0 }}>
-              <MentionInput entities={entities} placeholder="Describe the shot — use @ to add elements (⌘↵ to generate)"
+              <MentionInput entities={entities} docKey={String(composerKey)} initialDoc={seedDoc} disabled={enhancing}
+                placeholder="Describe the shot — use @ to add elements (⌘↵ to generate)"
                 onChange={(t, i) => { setPrompt(t); setPromptIds(i); }} onSubmit={generate} />
             </div>
           </div>
@@ -372,6 +396,7 @@ export function GenSpace({ projectId, entities }: { projectId: string; entities:
               </>
             )}
             <span className="al-promptbar-spacer" />
+            <button className="al-chip al-chip-mono" onClick={enhance} disabled={enhancing || busy || prompt.trim().length === 0} title="Rewrite the prompt into a vivid, detailed one" aria-label="Enhance prompt"><IcSparkle size={13} />{enhancing ? " Enhancing…" : " Enhance"}</button>
             <Button onClick={generate} disabled={busy || prompt.trim().length === 0}>
               {busy ? "Generating…" : "Generate"}
             </Button>

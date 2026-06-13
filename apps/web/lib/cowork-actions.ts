@@ -7,7 +7,7 @@
  */
 import { revalidatePath } from "next/cache";
 import { prisma } from "@artlio/db";
-import { coworkRequest, newId, FOUNDER_OWNER_ID } from "@artlio/core";
+import { coworkRequest, enhanceRequest, MAX_ENHANCE_TEXT, newId, FOUNDER_OWNER_ID } from "@artlio/core";
 import { createCoworkProvider } from "./cowork-provider";
 
 const OWNED = { ownerId: FOUNDER_OWNER_ID, deletedAt: null } as const;
@@ -70,4 +70,32 @@ export async function coworkDraftStoryboard(
     }
   }
   return { error: "Couldn't allocate shot numbers — please try again." };
+}
+
+/** "✨ Enhance" — rewrite the composer's rough prompt into a vivid one. Pure
+ *  transform (no DB write); mock in dev ($0), fal LLM in prod. The UI re-chips
+ *  any @-named entities the model kept intact. */
+export async function enhancePrompt(
+  raw: unknown,
+): Promise<{ ok: true; text: string; via: string } | { error: string }> {
+  const parsed = enhanceRequest.safeParse(raw);
+  if (!parsed.success) return { error: "Write a prompt first, then ✨ Enhance." };
+  const { projectId, text } = parsed.data;
+  // owner-domain guard like every paid action (single-tenant today, multi-tenant-ready)
+  const project = await prisma.project.findFirst({ where: { id: projectId, ...OWNED } });
+  if (!project) return { error: "Project not found." };
+  try {
+    // clamp to the downstream generate cap so an over-long rewrite can't fail genRequest
+    const out = (await provider.enhancePrompt(text)).trim().slice(0, MAX_ENHANCE_TEXT);
+    if (!out) return { error: "Enhance came back empty — try again." };
+    try {
+      // audit the paid LLM call (records usage for the future cost/credit ledger)
+      await prisma.actionEvent.create({
+        data: { id: newId(), ownerId: FOUNDER_OWNER_ID, projectId, type: "cowork.enhance", payload: { via: provider.name, chars: out.length } },
+      });
+    } catch { /* audit is best-effort — never lose a paid result on a log-write hiccup */ }
+    return { ok: true, text: out, via: provider.name };
+  } catch (e) {
+    return { error: `Couldn't enhance that — ${e instanceof Error ? e.message.slice(0, 140) : "please try again"}.` };
+  }
 }

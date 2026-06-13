@@ -19,6 +19,16 @@ export const coworkRequest = z
   .strict();
 export type CoworkRequest = z.infer<typeof coworkRequest>;
 
+export const MAX_ENHANCE_TEXT = 2000;
+/** "✨ Enhance" — rewrite a rough shot prompt into a vivid, detailed one. */
+export const enhanceRequest = z
+  .object({
+    projectId: z.string().min(1).max(64),
+    text: z.string().trim().min(1).max(MAX_ENHANCE_TEXT),
+  })
+  .strict();
+export type EnhanceRequest = z.infer<typeof enhanceRequest>;
+
 /** A drafted storyboard: scenes, each with ordered shots (a prompt per shot). */
 export interface CoworkPlan {
   scenes: { title: string; shots: { prompt: string }[] }[];
@@ -46,4 +56,7 @@ export interface CoworkProvider {
   readonly name: string;
   /** Draft a storyboard from a free-text idea. Throws on provider failure. */
   planStoryboard(idea: string): Promise<CoworkPlan>;
+  /** Rewrite a rough prompt into a vivid, detailed one, keeping named entities
+   *  EXACTLY intact (so the UI can re-chip them). Throws on provider failure. */
+  enhancePrompt(text: string): Promise<string>;
 }

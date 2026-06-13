@@ -23,6 +23,8 @@ const HUES: Record<EntityDTO["type"], string> = {
 
 const MentionList = forwardRef<MentionListHandle, SuggestionProps<MentionItem>>(function MentionList(props, ref) {
   const [selected, setSelected] = useState(0);
+  // reset the highlight to the top whenever the suggestion list changes (intentional)
+  // eslint-disable-next-line react-hooks/set-state-in-effect
   useEffect(() => setSelected(0), [props.items]);
   const pick = (i: number) => { const item = props.items[i]; if (item) props.command({ id: item.id, label: item.name, entityType: item.type }); };
   useImperativeHandle(ref, () => ({
@@ -69,23 +71,65 @@ export function resolveDoc(doc: DocNode, byId: Map<string, EntityDTO>): { ids: s
   return { ids: [...new Set(ids)], text: text.trim() };
 }
 
-export function MentionInput({ entities, initialDoc, docKey, placeholder, onChange, onSubmit, onBlur }: {
+/** Build a Tiptap doc from plain text, converting the first occurrence of each
+ *  given entity's name into a mention chip — lets "✨ Enhance" rewrite the prompt
+ *  text while keeping the @-bindings (the wedge). Case-insensitive; longest names
+ *  first so "Maya Lin" wins over "Maya". */
+export function buildMentionDoc(
+  text: string,
+  mentioned: { id: string; name: string; type: EntityDTO["type"] }[],
+): { type: "doc"; content: unknown[] } {
+  type Tok = { kind: "text"; text: string } | { kind: "mention"; attrs: { id: string; label: string; entityType: string } };
+  const esc = (s: string) => s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+  let toks: Tok[] = [{ kind: "text", text }];
+  for (const e of [...mentioned].sort((a, b) => b.name.length - a.name.length)) {
+    // word-boundary match so a short name doesn't chip inside a larger word ("Ann" in "annular")
+    let re: RegExp;
+    try { re = new RegExp(`(?<![\\p{L}\\p{N}])${esc(e.name)}(?![\\p{L}\\p{N}])`, "iu"); }
+    catch { re = new RegExp(esc(e.name), "i"); }
+    const out: Tok[] = [];
+    let placed = false;
+    for (const t of toks) {
+      if (placed || t.kind !== "text") { out.push(t); continue; }
+      const m = re.exec(t.text);
+      if (!m) { out.push(t); continue; }
+      const i = m.index, len = m[0].length;
+      const before = t.text.slice(0, i), hit = t.text.slice(i, i + len), after = t.text.slice(i + len);
+      if (before) out.push({ kind: "text", text: before });
+      out.push({ kind: "mention", attrs: { id: e.id, label: hit, entityType: e.type } });
+      if (after) out.push({ kind: "text", text: after });
+      placed = true;
+    }
+    toks = out;
+  }
+  const content = toks
+    .filter((t) => t.kind !== "text" || t.text.length > 0)
+    .map((t) => (t.kind === "text" ? { type: "text", text: t.text } : { type: "mention", attrs: t.attrs }));
+  return { type: "doc", content: [{ type: "paragraph", content }] };
+}
+
+export function MentionInput({ entities, initialDoc, docKey, placeholder, disabled, onChange, onSubmit, onBlur }: {
   entities: EntityDTO[];
   initialDoc?: unknown;       // Tiptap JSON to seed (e.g. a shot's saved promptDoc)
   docKey?: string;            // change to force a re-seed (server resync) — e.g. shot id + a content hash
   placeholder?: string;
+  disabled?: boolean;         // lock the editor (e.g. while ✨ Enhance is in flight)
   onChange: (text: string, ids: string[], doc: unknown) => void;
   onSubmit?: () => void;      // Cmd/Ctrl+Enter
   onBlur?: () => void;        // editor lost focus (e.g. save the prompt)
 }) {
   const entitiesRef = useRef(entities);
-  entitiesRef.current = entities;
   const onSubmitRef = useRef(onSubmit);
-  onSubmitRef.current = onSubmit;
   const onChangeRef = useRef(onChange);
-  onChangeRef.current = onChange;
   const onBlurRef = useRef(onBlur);
-  onBlurRef.current = onBlur;
+  // keep latest props in refs so the Tiptap editor's stable callbacks read fresh
+  // values without being recreated — written in an effect, not during render
+  useEffect(() => {
+    entitiesRef.current = entities;
+    onSubmitRef.current = onSubmit;
+    onChangeRef.current = onChange;
+    onBlurRef.current = onBlur;
+  });
 
   const editor = useEditor({
     immediatelyRender: false,
@@ -104,6 +148,7 @@ export function MentionInput({ entities, initialDoc, docKey, placeholder, onChan
             },
           };
         },
+      // eslint-disable-next-line react-hooks/refs -- the suggestion/keydown/update callbacks read latest-value refs; they fire on user interaction (post-render), never during render
       }).configure({
         HTMLAttributes: { class: "mention" },
         suggestion: {
@@ -168,6 +213,8 @@ export function MentionInput({ entities, initialDoc, docKey, placeholder, onChan
     // recreate (and re-seed) when the shot changes OR the server doc changes —
     // a stale editor must never silently overwrite a newer server prompt.
   }, [docKey]);
+
+  useEffect(() => { editor?.setEditable(!disabled); }, [editor, disabled]);
 
   return <EditorContent editor={editor} className="mention-input" />;
 }

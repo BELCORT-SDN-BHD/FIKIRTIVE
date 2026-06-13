@@ -8,7 +8,7 @@ import "server-only";
  * changes (model-neutral by design).
  */
 import type { CoworkProvider, CoworkPlan } from "@artlio/core";
-import { coworkPlan, COWORK_MAX_SCENES, COWORK_MAX_SHOTS_PER_SCENE } from "@artlio/core";
+import { coworkPlan, COWORK_MAX_SCENES, COWORK_MAX_SHOTS_PER_SCENE, MAX_ENHANCE_TEXT } from "@artlio/core";
 
 /** Deterministic, offline storyboard draft — proves the scaffolding at $0. */
 export class MockCoworkProvider implements CoworkProvider {
@@ -23,6 +23,12 @@ export class MockCoworkProvider implements CoworkProvider {
       "closing wide shot",
     ];
     return { scenes: [{ title: "Scene 1", shots: beats.map((b) => ({ prompt: `${b} — ${subject}, cinematic lighting` })) }] };
+  }
+  async enhancePrompt(text: string): Promise<string> {
+    // deterministic, offline — proves the scaffolding at $0; keeps the original
+    // text (and any @-named entities) verbatim, only appends cinematic qualifiers
+    const base = text.trim().replace(/\s+/g, " ");
+    return `${base}, cinematic lighting, shallow depth of field, rich detail, dynamic composition`;
   }
 }
 
@@ -61,6 +67,31 @@ export class FalCoworkProvider implements CoworkProvider {
     }
     const data = (await res.json()) as { choices?: { message?: { content?: string } }[] };
     return coworkPlan.parse(extractJson(data.choices?.[0]?.message?.content ?? "")) as CoworkPlan;
+  }
+  async enhancePrompt(text: string): Promise<string> {
+    const system =
+      `You rewrite a short shot description into ONE vivid, detailed prompt for an image/video generator. ` +
+      `Add subject specificity, framing, camera, lighting, and mood. Keep every named subject/entity EXACTLY as written (verbatim). ` +
+      `Return ONLY the rewritten prompt — no quotes, no preamble, no options, no markdown.`;
+    const res = await fetch("https://fal.run/openrouter/router/openai/v1/chat/completions", {
+      method: "POST",
+      headers: { Authorization: `Key ${this.apiKey}`, "Content-Type": "application/json" },
+      body: JSON.stringify({
+        model: "anthropic/claude-sonnet-4.5",
+        messages: [
+          { role: "system", content: system },
+          { role: "user", content: text },
+        ],
+      }),
+    });
+    if (!res.ok) {
+      const detail = await res.text().catch(() => "");
+      throw new Error(`fal llm → ${res.status}: ${detail.slice(0, 300)}`);
+    }
+    const data = (await res.json()) as { choices?: { message?: { content?: string } }[] };
+    const out = (data.choices?.[0]?.message?.content ?? "").trim();
+    if (!out) throw new Error("cowork: empty enhancement from the LLM");
+    return out.slice(0, MAX_ENHANCE_TEXT);
   }
 }
 

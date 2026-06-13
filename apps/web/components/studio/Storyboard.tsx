@@ -11,11 +11,12 @@ import { useRouter } from "next/navigation";
 import { Button, MonoLabel, IcPlus, IcImage, IcRetry, IcSparkle, IcPlay, IcX, IcChevronDown } from "@/components/ds";
 import { addShot, deleteShot, moveShot, addScene, setShotFrame, setShotTransition } from "@/lib/studio-actions";
 import { saveShotPrompt, uploadReference, addSegmentToCut } from "@/lib/actions";
+import { enhancePrompt } from "@/lib/cowork-actions";
 import { coworkDraftStoryboard } from "@/lib/cowork-actions";
 import { startGen, getGenJob } from "@/lib/gen-actions";
 import { GEN_PRICE_USD_PER_IMAGE, GEN_VIDEO_MODELS, GEN_VIDEO_MODEL_INFO, GEN_VIDEO_MODEL_OPTIONS, videoDefaults, videoPriceUsd, type GenVideoModel } from "@artlio/core";
 import type { EntityDTO } from "@/lib/types";
-import { MentionInput } from "@/components/MentionInput";
+import { MentionInput, buildMentionDoc } from "@/components/MentionInput";
 import { Lightbox } from "@/components/Lightbox";
 import { CAMERA_PRESETS } from "./camera";
 
@@ -51,6 +52,9 @@ function ShotCard({ projectId, shot, index, total, entities }: { projectId: stri
   const [ids, setIds] = useState<string[]>(shot.entityIds);
   const [doc, setDoc] = useState<unknown>(shot.promptDoc);
   const [dirty, setDirty] = useState(false);
+  const [enhancing, setEnhancing] = useState(false);
+  const [enhanceDoc, setEnhanceDoc] = useState<unknown>(null); // ✨ Enhance re-seed (separate from server-sync)
+  const [enhanceNonce, setEnhanceNonce] = useState(0);
   const [camera, setCamera] = useState("");
   const [videoModel, setVideoModel] = useState<GenVideoModel>("kling");
   const [seconds, setSeconds] = useState(() => videoDefaults("kling").seconds);
@@ -88,8 +92,9 @@ function ShotCard({ projectId, shot, index, total, entities }: { projectId: stri
   // background refresh can't silently overwrite (and re-spend on) the wrong text
   useEffect(() => {
     if (dirty || docKey === seeded) return;
+    // eslint-disable-next-line react-hooks/set-state-in-effect -- guarded server-prompt sync; the guard above prevents overwriting/re-spending on unsaved edits
     setSeeded(docKey);
-    setText(shot.prompt); setIds(shot.entityIds); setDoc(shot.promptDoc);
+    setText(shot.prompt); setIds(shot.entityIds); setDoc(shot.promptDoc); setEnhanceDoc(null);
   }, [docKey, dirty, seeded, shot.prompt, shot.entityIds, shot.promptDoc]);
 
   function pickModel(m: GenVideoModel) { setVideoModel(m); setSeconds(videoDefaults(m).seconds); setAudioOn(videoDefaults(m).audio); }
@@ -100,6 +105,28 @@ function ShotCard({ projectId, shot, index, total, entities }: { projectId: stri
     if (res && "error" in res) { setError(res.error ?? "Couldn't save the prompt."); return false; }
     setDirty(false);
     return true;
+  }
+
+  // ✨ Enhance — rewrite this shot's rough prompt into a vivid one (mock $0 dev,
+  // fal LLM prod), then re-seed the card editor re-chipping @-named entities.
+  async function enhance() {
+    const t = text.trim();
+    if (!t || enhancing || busy || acting || slotBusy) return;
+    setError(null);
+    setEnhancing(true);
+    let res: Awaited<ReturnType<typeof enhancePrompt>> | null = null;
+    try { res = await enhancePrompt({ projectId, text: t }); } catch { res = null; }
+    setEnhancing(false);
+    if (!res) { setError("Couldn't enhance — please try again."); return; }
+    if ("error" in res) { setError(res.error); return; }
+    const built = buildMentionDoc(res.text, entities.filter((e) => ids.includes(e.id)));
+    setText(res.text); setDoc(built);
+    setEnhanceDoc(built); setEnhanceNonce((n) => n + 1);
+    // persist now — the Enhance click already blurred the editor (before this content
+    // existed), so the onBlur save would miss it and a refresh would lose the rewrite (Codex round 2)
+    const saved = await saveShotPrompt(shot.id, JSON.stringify(built), res.text.trim(), ids);
+    if (saved && "error" in saved) { setError(saved.error ?? "Couldn't save the enhanced prompt."); setDirty(true); return; }
+    setDirty(false);
   }
 
   function remove() {
@@ -339,11 +366,12 @@ function ShotCard({ projectId, shot, index, total, entities }: { projectId: stri
           Animate {usd(animatePrice)} · {seconds}s{audioOn ? ", audio" : ""}{tailReady ? ", end frame" : ""} · each frame {usd(GEN_PRICE_USD_PER_IMAGE)}
         </p>
         <div style={{ width: "100%", background: "rgba(255,255,255,.05)", border: "1px solid var(--line-2)", borderRadius: "var(--radius-sm)", padding: "6px 9px" }}>
-          <MentionInput entities={entities} initialDoc={shot.promptDoc} docKey={seeded}
+          <MentionInput entities={entities} initialDoc={enhanceDoc ?? shot.promptDoc} docKey={`${seeded}|e${enhanceNonce}`} disabled={enhancing}
             placeholder="Describe this shot — use @ to add elements"
             onChange={(t, i, d) => { setText(t); setIds(i); setDoc(d); setDirty(true); }}
             onBlur={() => { if (dirty) void persist(); }} />
         </div>
+        <button className="al-chip al-chip-mono" onClick={enhance} disabled={enhancing || busy || acting || !!slotBusy || empty} title="Rewrite the prompt into a vivid, detailed one" aria-label="Enhance prompt" style={{ alignSelf: "flex-start" }}><IcSparkle size={12} />{enhancing ? " Enhancing…" : " Enhance"}</button>
         {error && <p role="alert" style={{ font: "var(--text-caption)", color: "var(--danger)", margin: 0 }}>{error}</p>}
       </div>
       <input ref={firstInput} type="file" accept="image/png,image/jpeg,image/webp" hidden onChange={(e) => { const f = e.target.files?.[0]; e.target.value = ""; if (f) uploadFrame("first", f); }} />
