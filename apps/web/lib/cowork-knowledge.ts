@@ -7,7 +7,7 @@ import "server-only";
  * dwarfed by the paid LLM call, so freshness costs nothing.
  */
 import { prisma } from "@artlio/db";
-import { FOUNDER_OWNER_ID, type ModelFamily, type GenMode } from "@artlio/core";
+import { FOUNDER_OWNER_ID, modelDirectiveRules, type ModelFamily, type GenMode, type ModelDirectiveRules } from "@artlio/core";
 
 /** The enhance read: the directive text ONLY when the cell exists, is enabled,
  *  and is non-empty; otherwise undefined → the skill uses its family-neutral
@@ -45,4 +45,33 @@ export async function listDirectives(): Promise<DirectiveRow[]> {
       notes: true, confidence: true, enabled: true, source: true, updatedAt: true,
     },
   });
+}
+
+/** Guardian's cast-severity read (R6 fresh): the founder-tuned multi-character
+ *  handling for (family, mode). undefined → no rule (Guardian won't block on
+ *  multi-character; "LTX warns, Kling does not" is data, not code). */
+export async function getCastRule(family: ModelFamily, mode: GenMode): Promise<"warn" | "block" | undefined> {
+  const row = await prisma.modelDirective.findUnique({
+    where: { ownerId_family_mode: { ownerId: FOUNDER_OWNER_ID, family, mode } },
+    select: { rules: true, enabled: true },
+  });
+  if (!row || !row.enabled) return undefined;
+  const parsed = modelDirectiveRules.safeParse(row.rules);
+  return parsed.success ? parsed.data.castSeverity : undefined;
+}
+
+/** All enabled cells' parsed rules, keyed family→mode — threaded to the composer
+ *  so promptCoach lints offline at $0 (no per-keystroke server round-trip). */
+export async function getRulesMap(): Promise<Record<string, Record<string, ModelDirectiveRules>>> {
+  const rows = await prisma.modelDirective.findMany({
+    where: { ownerId: FOUNDER_OWNER_ID, enabled: true },
+    select: { family: true, mode: true, rules: true },
+  });
+  const map: Record<string, Record<string, ModelDirectiveRules>> = {};
+  for (const r of rows) {
+    const parsed = modelDirectiveRules.safeParse(r.rules);
+    if (!parsed.success) continue;
+    (map[r.family] ??= {})[r.mode] = parsed.data;
+  }
+  return map;
 }

@@ -6,7 +6,7 @@
  */
 import { useState } from "react";
 import type { EntityDTO, ProjectDTO } from "@/lib/types";
-import type { ArtlioEdit } from "@artlio/core";
+import type { ArtlioEdit, ModelDirectiveRules } from "@artlio/core";
 import { StudioShell, type StudioView } from "./StudioShell";
 import { GenSpace } from "./GenSpace";
 import { Canvas } from "./Canvas";
@@ -27,6 +27,7 @@ export function Studio({
   boardEdit,
   savedEdit,
   attachedCount,
+  rulesMap,
   initialView,
 }: {
   project: ProjectDTO;
@@ -40,6 +41,7 @@ export function Studio({
   boardEdit: ArtlioEdit | null;
   savedEdit: ArtlioEdit | null;
   attachedCount: number;
+  rulesMap: Record<string, Record<string, ModelDirectiveRules>>;
   initialView?: StudioView;
 }) {
   const [view, setView] = useState<StudioView>(initialView ?? "genspace");
@@ -49,7 +51,7 @@ export function Studio({
 
   function surface() {
     switch (view) {
-      case "genspace": return <GenSpace projectId={project.id} entities={entities} />;
+      case "genspace": return <GenSpace projectId={project.id} entities={entities} rulesMap={rulesMap} onGoToElements={() => setView("elements")} />;
       case "canvas": return <Canvas />;
       case "storyboard": return <Storyboard projectId={project.id} shots={shots} entities={entities} candidates={frameCandidates} />;
       case "editor": return <VideoEditorSurface projectId={project.id} boardEdit={boardEdit} savedEdit={savedEdit} attachedCount={attachedCount} onDirtyChange={setEditorDirty} />;

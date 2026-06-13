@@ -9,11 +9,12 @@
  * resolution / aspect / audio / clip-count, whichever apply. Price is dynamic
  * (videoPriceUsd) and shown before spend; failures never charge.
  */
-import { useState, useEffect, useRef } from "react";
+import { useState, useEffect, useRef, useMemo } from "react";
 import { Button, IcPlus, IcImage, IcChevronDown, IcRetry, IcX, IcSparkle } from "@/components/ds";
 import {
   GEN_PRICE_USD_PER_IMAGE, MAX_GEN_COUNT, GEN_VIDEO_MODELS, GEN_VIDEO_MODEL_INFO,
   GEN_VIDEO_MODEL_OPTIONS, videoDefaults, videoPriceUsd, type GenVideoModel,
+  modelFamily, deriveMode, lintPrompt, castFindings, type ModelDirectiveRules,
 } from "@artlio/core";
 import { startGen, getGenJob } from "@/lib/gen-actions";
 import { uploadReference } from "@/lib/actions";
@@ -74,13 +75,15 @@ function SettingRow({ label, options, value, onChange }: {
   );
 }
 
-export function GenSpace({ projectId, entities }: { projectId: string; entities: EntityDTO[] }) {
+export function GenSpace({ projectId, entities, rulesMap, onGoToElements }: { projectId: string; entities: EntityDTO[]; rulesMap: Record<string, Record<string, ModelDirectiveRules>>; onGoToElements: () => void }) {
   const [kind, setKind] = useState<"image" | "video">("image");
   const [prompt, setPrompt] = useState("");
   const [promptIds, setPromptIds] = useState<string[]>([]); // @mentioned entity ids
   const [composerKey, setComposerKey] = useState(0);        // bump to re-seed the editor after ✨ Enhance
   const [seedDoc, setSeedDoc] = useState<unknown>(undefined);
   const [enhancing, setEnhancing] = useState(false);
+  const [coachOpen, setCoachOpen] = useState(false);   // promptCoach pill collapsed by default
+  const [showBlock, setShowBlock] = useState(false);   // Guardian assist-bar (shown on a blocked Generate attempt)
   const [count, setCount] = useState(1);              // batch (video) / num images
   const [camera, setCamera] = useState("");           // camera-motion preset (video)
   const [videoModel, setVideoModel] = useState<GenVideoModel>("kling");
@@ -122,6 +125,27 @@ export function GenSpace({ projectId, entities }: { projectId: string; entities:
   const price = isVideo
     ? videoPriceUsd(videoModel, { seconds: vopts.seconds, resolution: vopts.resolution, audio: vopts.audio, count })
     : count * GEN_PRICE_USD_PER_IMAGE;
+
+  // promptCoach ($0, offline): hints tuned to the (family, mode) being generated
+  // for — read from the founder-curated rules threaded at page load
+  const coachHints = useMemo(() => {
+    const family = modelFamily(isVideo ? videoModel : "seedream");
+    const mode = deriveMode({ kind, conditioned: promptIds.length > 0, hasSourceImage: !!refImg, hasTailImage: !!tailImg });
+    const rules = family ? rulesMap[family]?.[mode] : undefined;
+    const characterCount = entities.filter((e) => promptIds.includes(e.id) && e.type === "CHARACTER").length;
+    return lintPrompt({ text: prompt, mode, rules, characterCount });
+  }, [isVideo, videoModel, kind, promptIds, refImg, tailImg, prompt, entities, rulesMap]);
+
+  // consistencyGuardian (client mirror): the same pure castFindings the server
+  // runs, computed from the entities already threaded — instant pre-warn, no
+  // round-trip. The server checkCast in startGen stays the money backstop.
+  const blockers = useMemo(() => {
+    const family = modelFamily(isVideo ? videoModel : "seedream");
+    const mode = deriveMode({ kind, conditioned: promptIds.length > 0, hasSourceImage: !!refImg, hasTailImage: !!tailImg });
+    const castRule = family ? rulesMap[family]?.[mode]?.castSeverity : undefined;
+    const mentioned = entities.filter((e) => promptIds.includes(e.id)).map((e) => ({ id: e.id, name: e.name, type: e.type, liveRefCount: e.refs.length }));
+    return castFindings({ requestedEntityIds: promptIds, entities: mentioned, castRule });
+  }, [isVideo, videoModel, kind, promptIds, refImg, tailImg, entities, rulesMap]);
 
   function pickModel(m: GenVideoModel) {
     setVideoModel(m);
@@ -228,6 +252,11 @@ export function GenSpace({ projectId, entities }: { projectId: string; entities:
   function generate() {
     const text = prompt.trim();
     if (!text || busy) return;
+    // Guardian: a blocked attempt reveals the amber assist-bar and spends $0
+    // (the server backstop would block too). Generate stays live so the button
+    // is never a dead grey — we intercept on click and show the fix.
+    if (blockers.length > 0) { setShowBlock(true); setError(null); return; }
+    setShowBlock(false);
     setError(null);
     setShowMore(false);
     setBusy(true);
@@ -380,6 +409,45 @@ export function GenSpace({ projectId, entities }: { projectId: string; entities:
                 onChange={(t, i) => { setPrompt(t); setPromptIds(i); }} onSubmit={generate} />
             </div>
           </div>
+          {coachHints.length > 0 && (
+            <div style={{ padding: "4px 2px 0" }}>
+              <button type="button" onClick={() => setCoachOpen((o) => !o)} aria-expanded={coachOpen}
+                style={{ display: "inline-flex", alignItems: "center", gap: 6, font: "var(--text-caption)", color: "var(--fg-2)", background: "none", border: "none", cursor: "pointer", padding: "2px 0" }}>
+                <span aria-hidden style={{ width: 6, height: 6, borderRadius: 99, flex: "none", background: coachHints.some((h) => h.tone === "warn") ? "var(--warning)" : "var(--fg-3)" }} />
+                {coachHints.length} {coachHints.length === 1 ? "tip" : "tips"} for {isVideo ? info.label : "Seedream"}
+                <span aria-hidden style={{ transform: coachOpen ? "rotate(180deg)" : "none", display: "inline-flex" }}><IcChevronDown size={12} /></span>
+              </button>
+              {coachOpen && (
+                <div style={{ display: "grid", gap: 5, padding: "6px 0 2px" }}>
+                  {coachHints.map((h) => (
+                    <div key={h.id} style={{ display: "flex", alignItems: "flex-start", gap: 6, font: "var(--text-caption)", color: h.tone === "warn" ? "var(--warning)" : "var(--fg-2)" }}>
+                      <span aria-hidden style={{ marginTop: 5, width: 6, height: 6, borderRadius: 99, flex: "none", background: h.tone === "warn" ? "var(--warning)" : "var(--fg-3)" }} />
+                      <span>{h.message}</span>
+                    </div>
+                  ))}
+                </div>
+              )}
+            </div>
+          )}
+          {showBlock && blockers.length > 0 && (
+            <div role="alert" style={{ margin: "8px 0 0", padding: "10px 12px", borderRadius: 10, background: "rgba(255,210,126,.08)", border: "1px solid rgba(255,210,126,.25)" }}>
+              <div style={{ display: "flex", alignItems: "flex-start", gap: 8 }}>
+                <span aria-hidden style={{ color: "var(--warning)", marginTop: 1, flex: "none", display: "inline-flex" }}>
+                  <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M12 9v4" /><path d="M10.363 3.591 2.257 17.125a1.914 1.914 0 0 0 1.636 2.871h16.214a1.914 1.914 0 0 0 1.636-2.871L13.637 3.591a1.914 1.914 0 0 0-3.274 0z" /><path d="M12 16h.01" /></svg>
+                </span>
+                <div style={{ flex: 1, minWidth: 0 }}>
+                  {blockers.length > 1 && <div style={{ font: "var(--text-caption)", color: "var(--warning)", fontWeight: 500, marginBottom: 6 }}>{blockers.length} things to fix before generating</div>}
+                  <div style={{ display: "grid", gap: 4 }}>
+                    {blockers.map((b, i) => <div key={i} style={{ font: "var(--text-small)", color: "var(--warning)", lineHeight: 1.5 }}>{b.message}</div>)}
+                  </div>
+                  {blockers.some((b) => b.kind === "character-no-refs") && (
+                    <button type="button" className="al-chip al-chip-mono" onClick={onGoToElements} style={{ marginTop: 8 }}><IcPlus size={12} /> Add a reference in Elements</button>
+                  )}
+                </div>
+                <button type="button" aria-label="Dismiss" onClick={() => setShowBlock(false)} style={{ flex: "none", background: "none", border: "none", color: "var(--fg-3)", cursor: "pointer", padding: 2, display: "inline-flex" }}><IcX size={13} /></button>
+              </div>
+            </div>
+          )}
           <div className="al-promptbar-row">
             <div className="al-seg" role="tablist">
               <button role="tab" aria-selected={!isVideo} className={`al-seg-item${!isVideo ? " al-seg-item-active" : ""}`} disabled={busy} onClick={() => { setKind("image"); setCount(1); setCamera(""); setShowMore(false); }}>Photo</button>

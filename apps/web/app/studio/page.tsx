@@ -1,4 +1,5 @@
 import { ensureDefaultProject, getProjects, getShots, getEntities, getProjectMedia, getCandidates, getGenerationThumbs } from "@/lib/data";
+import { getRulesMap } from "@/lib/cowork-knowledge";
 import { buildBoardEdit } from "@/lib/edit";
 import { toEntityDTO } from "@/lib/dto";
 import { artlioEdit, storageKey, storageKeyToSrc } from "@artlio/core";
@@ -108,6 +109,8 @@ export default async function StudioPage({ searchParams }: { searchParams: Promi
   });
   // shot picker labels for "add to shot" (same Scene N · Shot M as the board)
   const shotOptions = shots.map((s) => ({ id: s.id, label: shotLabelById.get(s.id)! }));
+  // promptCoach rules (family→mode→rules) — threaded so the composer lints at $0
+  const rulesMap = await getRulesMap();
 
   return (
     <Studio
@@ -122,6 +125,7 @@ export default async function StudioPage({ searchParams }: { searchParams: Promi
       boardEdit={boardEdit}
       savedEdit={savedEdit}
       attachedCount={clipCount}
+      rulesMap={rulesMap}
       initialView={initialView}
     />
   );

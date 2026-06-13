@@ -18,6 +18,7 @@ import {
   type GenVideoModel,
 } from "@artlio/core";
 import { getBoss } from "./queue";
+import { checkCast } from "./cowork-guardian";
 
 const OWNED = { ownerId: FOUNDER_OWNER_ID, deletedAt: null } as const;
 
@@ -52,6 +53,18 @@ export async function startGen(raw: unknown): Promise<{ id: string } | { error: 
       fps: fps ?? d.fps,
       audio: audio ?? d.audio,
     };
+  }
+
+  // consistencyGuardian (Phase 2): block obvious money-wasters BEFORE the spend
+  // commit (a CHARACTER with no refs, a deleted @mention, a cross-project i2v
+  // frame). Fail-OPEN — checkCast returns null on its own faults — and additive
+  // only: it never loosens the existing gate.
+  const block = await checkCast({ projectId, entityIds, sourceGenerationId, tailGenerationId, model, kind });
+  if (block) {
+    try {
+      await prisma.actionEvent.create({ data: { id: newId(), ownerId: FOUNDER_OWNER_ID, projectId, type: "gen.guardian-block", payload: { findings: block.report.findings } } });
+    } catch { /* audit best-effort — a log hiccup must not swallow the block */ }
+    return { error: block.error };
   }
 
   let job: { id: string };
