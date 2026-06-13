@@ -248,6 +248,7 @@ function CreateDialog({
 
   useEffect(() => {
     if (open) {
+      // eslint-disable-next-line react-hooks/set-state-in-effect -- reset the dialog fields each time it opens (intentional)
       setName("");
       setFiles([]);
       setDoor("upload");

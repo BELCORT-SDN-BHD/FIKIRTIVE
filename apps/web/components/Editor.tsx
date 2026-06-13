@@ -80,7 +80,8 @@ export function Editor({
   const [media, setMedia] = useState<EditorClip[]>([]);
   useEffect(() => {
     let alive = true;
-    setMedia([]); // clear stale media on a project switch (don't show/append another project's clips)
+    // eslint-disable-next-line react-hooks/set-state-in-effect -- clear stale media on a project switch (don't show/append another project's clips)
+    setMedia([]);
     getEditorMedia(projectId).then((m) => { if (alive) setMedia(m); }).catch(() => {});
     return () => { alive = false; };
   }, [projectId]);

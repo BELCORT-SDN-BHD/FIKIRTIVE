@@ -1,8 +1,8 @@
 "use client";
 /**
  * Studio prototype root (redesign-shell). Threads real data to the wired
- * surfaces (Elements, Gen space, Storyboard, Video editor); Canvas/Assets are
- * still mock.
+ * surfaces (Elements, Gen space, Storyboard, Video editor, Assets); Canvas is
+ * the only mock surface.
  */
 import { useState } from "react";
 import type { EntityDTO, ProjectDTO } from "@/lib/types";

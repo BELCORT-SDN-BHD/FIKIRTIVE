@@ -41,6 +41,7 @@ export function AppShell({
   useEffect(() => {
     if (project) localStorage.setItem(LAST_PROJECT_KEY, project.id);
     const p = localStorage.getItem(LAST_PROJECT_KEY);
+    // eslint-disable-next-line react-hooks/set-state-in-effect -- restore last-project link from localStorage post-mount (client-only)
     if (p) setWorkbenchHref(`/?p=${p}`);
   }, [project]);
 
