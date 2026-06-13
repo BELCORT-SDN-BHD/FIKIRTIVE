@@ -5,6 +5,31 @@ Date: 2026-06-09
 Primary wedge: Agency and brand campaign production  
 Expansion path: AI short film and series production  
 
+---
+
+> ⚠️ **优先级与现状对照（2026-06-13 加注）**
+>
+> 本 PRD 是 **Draft v1（2026-06-09）= 长期愿景 / 成熟形态地图**。其后一天经评审定案的**设计文档**
+> （`winnin-master-design-20260610`，approved 8/10）才是 **V1 实际范围、用户、技术栈的准据**；两者冲突**以设计文档为准**。
+> 当前已上线的产品（@mention 参考层 + LTX 式 Studio 壳，单租户、创始人自用）与本 PRD 正文有实质偏差。
+> 下表是 9 条主要 delta，避免把 PRD 正文误读成"当前真相"；PRD 正文保留作长期地图。完整待办见 `docs/backlog.md`。
+
+## PRD ↔ 实际构建 对照（delta，2026-06-13）
+
+| # | 主题 | PRD 正文说 | 实际构建 | 建议 |
+|---|------|-----------|---------|------|
+| 1 | 定位 | 面向广告公司/自由职业者的 agentic 制作工作室（brief→concepts→storyboard→client review→export） | 模型中立的 @mention 实体/参考层 + LTX 式 Studio 壳，首个用户=创始人本人 | 顶部优先级横幅（已加）；正文留作成熟地图 |
+| 2 | 核心楔子 | 未提 @mention / 参考控制层 | **@mention 实体参考层就是 P1 楔子和魔法时刻**（Tiptap，芯片存 ID，跨模型一致） | 加一节描述 @mention 层 + EntityType 分类 |
+| 3 | 数据模型 | §12 约 40 张表（organizations/users/clients/brand_kits…多租户） | 精简 ~15 模型、单租户（ownerId 全预留但写死 "founder"）；内容寻址 + 软删 + 不可变快照 | 替换/重注 §12 为实际已落地 schema |
+| 4 | 视频模型 | §10.9 抽象 Model Router + 通用 model_registry 表 | 8 个具体 fal 模型，写在 per-model 适配表（packages/generation） | 重写 §10.9 为 per-model 适配 + 能力标签，列 8 模型 |
+| 5 | Cowork/Copilot | §11 单个 Copilot 编排 11 个命名技能 | "cowork" 现=1 个窄技能：一句话起分镜（CoworkProvider，可换自有模型） | 用实际 cowork 单技能 + 固定 workflow + 人审设计替换 §11 |
+| 6 | 编辑器范围 | §7.1 完整 NLE 不在 P1 | 已上线最小编辑器：1 视觉轨+≤2 音轨、fade、ffmpeg 渲染 + Premiere-XML 逃生口 | 更新 §7 分期：编辑器存在但刻意最小，非 7 轨 NLE |
+| 7 | Credit/计费 | §10.16/§17 完整 credit 账本 + 5 档定价 | 未接通；Plans 页是 "Coming soon" 占位；只有 per-job spent 标志 | 标注 §10.16/§17 为"验证门后延后"（Gate 0 / D23 之后） |
+| 8 | 技术栈 | §13 仅列"建议"（Next.js OR Remix；Prisma OR Drizzle…） | 全部定案并上线：Next.js 16 / pnpm monorepo / Railway 双服务 / Neon / R2 / pg-boss / Tiptap v3 / Prisma 7 | 用定案架构替换 §13（或指向设计文档决策表） |
+| 9 | 护城河 & 验证门 | 未明确"自有模型+cowork=护城河"，也无项目计数升级门 | 护城河=自有模型(Modal/ComfyUI)+cowork；解锁靠 D23(3 真实项目)+Gate 0(≥3 创作者观察) | 加护城河定义 + 验证门（见 docs/backlog.md A/B 组） |
+
+---
+
 ## How To Use This PRD
 
 This PRD is the master product map. Use it to align on what Artlio is, what the first commercial wedge is, how the AI system should work, how the data model should be structured, and how the product should be built phase by phase.

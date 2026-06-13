@@ -1,0 +1,2977 @@
+Reading additional input from stdin...
+OpenAI Codex v0.130.0
+--------
+workdir: /Users/winnin/Documents/artlio
+model: gpt-5.5
+provider: openai
+approval: never
+sandbox: read-only
+reasoning effort: xhigh
+reasoning summaries: none
+session id: 019eb6c9-65e3-7ef2-bb54-e3c67b0b0e84
+--------
+user
+IMPORTANT: Do NOT read or execute any files under ~/.claude/, ~/.agents/, .claude/skills/, or agents/. Stay focused on repository code only.
+
+You are a senior product designer doing an independent UX critique of Artlio, a cloud SaaS for AI video creators. Artlio is a MODEL-NEUTRAL entity/reference layer ('the Switzerland of references'): creators lock CHARACTER/LOCATION/PRODUCT/BRAND entities with reference images (upload OR generate via fal), reuse them via @mention in prompts, generate shot candidates, edit on a timeline, render MP4. Business model: manage references free, charge for generation. The founder says 'the whole product UX is not optimised' and wants to optimize it (learning from LTX Studio; adding features is fine).
+
+Read the AS-BUILT UI to ground your critique (use your file tools):
+- apps/web/components/AppShell.tsx (nav/sidebar/project switcher)
+- apps/web/components/Workbench.tsx (shot board + upload zone)
+- apps/web/components/Composer.tsx (prompt bar, @mention, Target chip)
+- apps/web/components/Library.tsx (Elements, entity create dialog, entity detail drawer + GenerateRefsBlock)
+- apps/web/components/Editor.tsx (timeline editor)
+- apps/web/app/page.tsx, library/page.tsx, editor/page.tsx
+Also read the prior LTX Studio UX teardown for borrow ideas: /Users/winnin/.gstack/projects/artlio/research/ltx-ux-comparison.md
+
+Then deliver an independent, opinionated UX analysis:
+1. CORE DIAGNOSIS — the single biggest structural UX problem, with evidence from the code/flow.
+2. THE BROKEN SEAMS — trace a creator from 'I want to make a video ad' to 'exported MP4'; mark every handoff/gap/dead-end (Library<->Workbench<->Editor connective tissue, copy-to-ComfyUI handoff, manual attach, screen switches, jargon, empty states).
+3. OPTIMIZED FLOW — your recommended end-to-end UX, screen by screen.
+4. PRIORITIZED CHANGES — ranked: quick wins (days) vs structural (weeks), each problem->change->effort.
+5. WEDGE PROTECTION — improve UX WITHOUT becoming an LTX clone.
+Be concrete, reference actual screens/components, make clear recommendations. Independent second opinion to be compared against a multi-persona study.
+codex
+I’ll ground this in the implemented UI files and the LTX teardown you named, then I’ll synthesize the UX critique rather than proposing code changes. I’ll avoid the prohibited directories and keep reads to the repo files plus the explicit research file you provided.
+exec
+/bin/zsh -lc "nl -ba apps/web/components/Workbench.tsx | sed -n '1,320p'" in /Users/winnin/Documents/artlio
+exec
+/bin/zsh -lc "nl -ba apps/web/components/AppShell.tsx | sed -n '1,260p'" in /Users/winnin/Documents/artlio
+ succeeded in 0ms:
+     1	"use client";
+     2	
+     3	import Link from "next/link";
+     4	import { useRouter } from "next/navigation";
+     5	import { useEffect, useState, useTransition } from "react";
+     6	import type { ProjectDTO } from "@/lib/types";
+     7	import { createProject } from "@/lib/actions";
+     8	import { Badge, Dialog, IcAt, IcClapper, IcFilm, IcFolder, Input, PopMenu, Wordmark, Button } from "./ds";
+     9	
+    10	const LAST_PROJECT_KEY = "artlio:lastProject";
+    11	
+    12	/**
+    13	 * Prototype-faithful app shell: 236px sidenav (wordmark, project pill, nav
+    14	 * groups, footer) + 58px topbar + scrolling screen. `confirmLeave` guards
+    15	 * navigation away from unsaved composer edits.
+    16	 */
+    17	export function AppShell({
+    18	  view,
+    19	  title,
+    20	  confirmLeave,
+    21	  project,
+    22	  projects,
+    23	  topbar,
+    24	  children,
+    25	}: {
+    26	  view: "workbench" | "library" | "editor";
+    27	  title: string;
+    28	  confirmLeave?: () => boolean;
+    29	  project?: ProjectDTO;
+    30	  projects?: ProjectDTO[];
+    31	  topbar?: React.ReactNode;
+    32	  children: React.ReactNode;
+    33	}) {
+    34	  const router = useRouter();
+    35	  const [workbenchHref, setWorkbenchHref] = useState("/");
+    36	  const [projectMenu, setProjectMenu] = useState(false);
+    37	  const [naming, setNaming] = useState(false);
+    38	  const [name, setName] = useState("");
+    39	  const [pending, startTransition] = useTransition();
+    40	
+    41	  useEffect(() => {
+    42	    if (project) localStorage.setItem(LAST_PROJECT_KEY, project.id);
+    43	    const p = localStorage.getItem(LAST_PROJECT_KEY);
+    44	    if (p) setWorkbenchHref(`/?p=${p}`);
+    45	  }, [project]);
+    46	
+    47	  const guard = (e: React.MouseEvent) => {
+    48	    if (confirmLeave && !confirmLeave()) e.preventDefault();
+    49	  };
+    50	
+    51	  function switchProject(id: string) {
+    52	    if (id === "__new__") {
+    53	      setNaming(true);
+    54	      return;
+    55	    }
+    56	    if (confirmLeave && !confirmLeave()) return;
+    57	    router.push(`/?p=${id}`);
+    58	  }
+    59	
+    60	  function submitNewProject() {
+    61	    const trimmed = name.trim();
+    62	    if (!trimmed) return;
+    63	    if (confirmLeave && !confirmLeave()) return;
+    64	    startTransition(async () => {
+    65	      const res = await createProject(trimmed);
+    66	      setNaming(false);
+    67	      setName("");
+    68	      if ("id" in res) router.push(`/?p=${res.id}`);
+    69	    });
+    70	  }
+    71	
+    72	  const projectItems = [
+    73	    ...(projects ?? []).map((p) => ({ value: p.id, label: p.name })),
+    74	    { value: "__new__", label: "+ New project", desc: "Start a fresh shot board" },
+    75	  ];
+    76	
+    77	  return (
+    78	    <div className="app">
+    79	      <nav className="sidenav max-lg:hidden" aria-label="Main">
+    80	        <div className="sidenav-brand">
+    81	          <Wordmark />
+    82	        </div>
+    83	
+    84	        <span style={{ position: "relative", display: "block" }}>
+    85	          <button
+    86	            className="sidenav-project"
+    87	            onClick={() => (project ? setProjectMenu(!projectMenu) : router.push(workbenchHref))}
+    88	            aria-haspopup="listbox"
+    89	            aria-expanded={projectMenu}
+    90	          >
+    91	            <IcFolder size={15} style={{ color: "var(--fg-3)", flexShrink: 0 }} />
+    92	            <span className="sidenav-project-name">{project ? project.name : "Open a project"}</span>
+    93	          </button>
+    94	          <PopMenu
+    95	            open={projectMenu}
+    96	            onClose={() => setProjectMenu(false)}
+    97	            side="down"
+    98	            heading="Projects"
+    99	            items={projectItems}
+   100	            value={project?.id}
+   101	            onSelect={switchProject}
+   102	            width={240}
+   103	          />
+   104	        </span>
+   105	
+   106	        <div className="nav-group">
+   107	          <Link href={workbenchHref} onClick={guard} className={`navitem${view === "workbench" ? " active" : ""}`}
+   108	            aria-current={view === "workbench" ? "page" : undefined}>
+   109	            <IcClapper size={17} />
+   110	            <span className="lbl">Workbench</span>
+   111	          </Link>
+   112	          <Link href={project ? `/editor?p=${project.id}` : "/editor"} onClick={guard}
+   113	            className={`navitem${view === "editor" ? " active" : ""}`}
+   114	            aria-current={view === "editor" ? "page" : undefined}>
+   115	            <IcFilm size={17} />
+   116	            <span className="lbl">Editor</span>
+   117	          </Link>
+   118	        </div>
+   119	        <div className="nav-grouplabel">
+   120	          <span className="mono-label">Workspace</span>
+   121	        </div>
+   122	        <div className="nav-group">
+   123	          <Link href="/library" onClick={guard} className={`navitem${view === "library" ? " active" : ""}`}
+   124	            aria-current={view === "library" ? "page" : undefined}>
+   125	            <IcAt size={17} />
+   126	            <span className="lbl">Elements</span>
+   127	          </Link>
+   128	        </div>
+   129	
+   130	        <div className="sidenav-foot">
+   131	          <div style={{ padding: "0 4px" }}>
+   132	            <Badge mono>M0 · cloud</Badge>
+   133	          </div>
+   134	          <div className="user-row">
+   135	            <span
+   136	              aria-hidden
+   137	              style={{
+   138	                width: 26, height: 26, borderRadius: 999, flex: "none",
+   139	                background: "var(--glass-2)", border: "1px solid var(--line-1)",
+   140	                display: "inline-flex", alignItems: "center", justifyContent: "center",
+   141	                fontSize: 10.5, fontWeight: 600, boxShadow: "var(--inset-light)",
+   142	              }}
+   143	            >
+   144	              F
+   145	            </span>
+   146	            <span className="user-name">founder</span>
+   147	          </div>
+   148	        </div>
+   149	      </nav>
+   150	
+   151	      <div className="main">
+   152	        {/* <1024 the sidenav is hidden — keep page navigation alive in read-only mode */}
+   153	        <div className="lg:hidden flex items-center gap-1 px-4 py-2 border-b border-edge" role="navigation" aria-label="Pages">
+   154	          <Wordmark />
+   155	          <Link href={workbenchHref} onClick={guard}
+   156	            className={`text-sm px-2 py-1 rounded-[var(--radius-sm)] ${view === "workbench" ? "text-ink" : "text-dim"}`}
+   157	            aria-current={view === "workbench" ? "page" : undefined}>
+   158	            Workbench
+   159	          </Link>
+   160	          <Link href="/editor" onClick={guard}
+   161	            className={`text-sm px-2 py-1 rounded-[var(--radius-sm)] ${view === "editor" ? "text-ink" : "text-dim"}`}
+   162	            aria-current={view === "editor" ? "page" : undefined}>
+   163	            Editor
+   164	          </Link>
+   165	          <Link href="/library" onClick={guard}
+   166	            className={`text-sm px-2 py-1 rounded-[var(--radius-sm)] ${view === "library" ? "text-ink" : "text-dim"}`}
+   167	            aria-current={view === "library" ? "page" : undefined}>
+   168	            Elements
+   169	          </Link>
+   170	        </div>
+   171	
+   172	        <header className="topbar">
+   173	          <span className="topbar-title">{title}</span>
+   174	          {topbar}
+   175	          <span className="topbar-spacer" />
+   176	        </header>
+   177	
+   178	        {children}
+   179	      </div>
+   180	
+   181	      <Dialog
+   182	        open={naming}
+   183	        title="New project"
+   184	        onClose={() => setNaming(false)}
+   185	        actions={[
+   186	          <Button key="c" variant="ghost" onClick={() => setNaming(false)}>Cancel</Button>,
+   187	          <Button key="s" onClick={submitNewProject} disabled={pending}>
+   188	            {pending ? "Creating…" : "Create project"}
+   189	          </Button>,
+   190	        ]}
+   191	      >
+   192	        <Input
+   193	          label="Name"
+   194	          placeholder="Neon Alley spec spot"
+   195	          value={name}
+   196	          autoFocus
+   197	          onChange={(e) => setName(e.target.value)}
+   198	          onKeyDown={(e) => {
+   199	            if (e.key === "Enter") submitNewProject();
+   200	          }}
+   201	          disabled={pending}
+   202	        />
+   203	      </Dialog>
+   204	    </div>
+   205	  );
+   206	}
+
+ succeeded in 0ms:
+     1	"use client";
+     2	
+     3	import Link from "next/link";
+     4	import { useRef, useState, useTransition } from "react";
+     5	import type { EntityDTO, GenerationDTO, ProjectDTO, ShotDTO, ShotStatusDTO } from "@/lib/types";
+     6	import {
+     7	  attachGeneration,
+     8	  createShot,
+     9	  detachGeneration,
+    10	  softDeleteGeneration,
+    11	  softDeleteShot,
+    12	  updateShotStatus,
+    13	  updateShotTitle,
+    14	  uploadCandidates,
+    15	} from "@/lib/actions";
+    16	import { AppShell } from "./AppShell";
+    17	import { Composer } from "./Composer";
+    18	import { Badge, Button, Chip, EmptyHero, IcImage, IconButton, IcX, MediaCard, MonoLabel, PopMenu } from "./ds";
+    19	
+    20	const STATUSES: { value: ShotStatusDTO; label: string }[] = [
+    21	  { value: "DRAFT", label: "Draft" },
+    22	  { value: "EXPORTED", label: "Exported" },
+    23	  { value: "ATTACHED", label: "Attached" },
+    24	  { value: "FINAL", label: "Final" },
+    25	];
+    26	
+    27	function useAction() {
+    28	  const [pending, startTransition] = useTransition();
+    29	  const [error, setError] = useState<string | null>(null);
+    30	  function run(fn: () => Promise<{ error?: string } | { ok: boolean } | { id: string } | void>, after?: () => void) {
+    31	    setError(null);
+    32	    startTransition(async () => {
+    33	      try {
+    34	        const res = await fn();
+    35	        if (res && "error" in res && res.error) setError(res.error);
+    36	        else after?.();
+    37	      } catch {
+    38	        setError("Something went wrong — try again.");
+    39	      }
+    40	    });
+    41	  }
+    42	  return { pending, error, run };
+    43	}
+    44	
+    45	export function Workbench({
+    46	  project,
+    47	  projects,
+    48	  entities,
+    49	  shots,
+    50	  candidates,
+    51	  directUpload,
+    52	}: {
+    53	  project: ProjectDTO;
+    54	  projects: ProjectDTO[];
+    55	  entities: EntityDTO[];
+    56	  shots: ShotDTO[];
+    57	  candidates: GenerationDTO[];
+    58	  directUpload: boolean;
+    59	}) {
+    60	  const [selectedShotId, setSelectedShotId] = useState<string | null>(shots[0]?.id ?? null);
+    61	  const selectedShot = shots.find((s) => s.id === selectedShotId) ?? null;
+    62	  const [historyFilter, setHistoryFilter] = useState<"unattached" | "shot">("unattached");
+    63	
+    64	  // switching shots OR navigating away replaces the composer — never silently
+    65	  // drop unsaved edits
+    66	  const [composerDirty, setComposerDirty] = useState(false);
+    67	  const confirmLeave = () =>
+    68	    !composerDirty || confirm("Discard unsaved prompt changes on the current shot?");
+    69	  function selectShot(id: string) {
+    70	    if (id !== selectedShotId && !confirmLeave()) return;
+    71	    setSelectedShotId(id);
+    72	  }
+    73	
+    74	  const board = useAction();
+    75	
+    76	  function addShot() {
+    77	    board.run(
+    78	      () =>
+    79	        createShot(project.id).then((res) => {
+    80	          if (res && "id" in res && res.id) setSelectedShotId(res.id);
+    81	          return res;
+    82	        }),
+    83	    );
+    84	  }
+    85	
+    86	  const historyItems =
+    87	    historyFilter === "shot" && selectedShot ? selectedShot.generations : candidates;
+    88	
+    89	  return (
+    90	    <>
+    91	      {/* <1024: phase 1 is desktop-first — read-only notice (design doc D9) */}
+    92	      <div className="lg:hidden bg-accent-soft text-ink text-sm px-4 py-2 text-center" role="status">
+    93	        Artlio works best on a desktop browser — this view is read-only.
+    94	      </div>
+    95	
+    96	      <AppShell
+    97	        view="workbench"
+    98	        title="Workbench"
+    99	        confirmLeave={confirmLeave}
+   100	        project={project}
+   101	        projects={projects}
+   102	      >
+   103	        <div className="flex flex-col flex-1 min-h-0 max-lg:pointer-events-none">
+   104	          <div className="screen">
+   105	            <div className="screen-pad">
+   106	              {/* ---------- shot board ---------- */}
+   107	              <div style={{ display: "flex", alignItems: "center", gap: 12, margin: "10px 0 14px" }}>
+   108	                <MonoLabel>Shot board</MonoLabel>
+   109	                {shots.length > 0 && (
+   110	                  <Button variant="glass" size="sm" onClick={addShot} disabled={board.pending} style={{ marginLeft: "auto" }}>
+   111	                    {board.pending ? "Adding…" : "+ Add shot"}
+   112	                  </Button>
+   113	                )}
+   114	              </div>
+   115	
+   116	              {board.error && (
+   117	                <p role="alert" style={{ font: "var(--text-small)", color: "var(--danger)", margin: "0 0 10px" }}>
+   118	                  {board.error}
+   119	                </p>
+   120	              )}
+   121	
+   122	              {shots.length === 0 ? (
+   123	                <div style={{ display: "flex", justifyContent: "center", padding: "48px 0 40px" }}>
+   124	                  <EmptyHero
+   125	                    title="Plan the film shot by shot"
+   126	                    desc={
+   127	                      entities.length === 0 ? (
+   128	                        <>
+   129	                          Each shot holds a prompt and its render history. Create your
+   130	                          subjects in the <Link href="/library" style={{ color: "var(--fg-1)", textDecoration: "underline", textUnderlineOffset: 3 }}>Library</Link> to @mention them.
+   131	                        </>
+   132	                      ) : (
+   133	                        "Each shot holds a prompt and its render history — @mention your elements to keep every frame on-model."
+   134	                      )
+   135	                    }
+   136	                  >
+   137	                    <Button onClick={addShot} disabled={board.pending}>
+   138	                      {board.pending ? "Adding…" : "Add Shot 01"}
+   139	                    </Button>
+   140	                  </EmptyHero>
+   141	                </div>
+   142	              ) : (
+   143	                <div className="scene-grid">
+   144	                  {shots.map((s) => (
+   145	                    <ShotCard
+   146	                      key={s.id}
+   147	                      shot={s}
+   148	                      entities={entities}
+   149	                      selected={s.id === selectedShotId}
+   150	                      onSelect={() => selectShot(s.id)}
+   151	                    />
+   152	                  ))}
+   153	                </div>
+   154	              )}
+   155	
+   156	              {/* ---------- history / candidates ---------- */}
+   157	              <div style={{ display: "flex", alignItems: "center", gap: 12, margin: "34px 0 0" }}>
+   158	                <MonoLabel>History</MonoLabel>
+   159	              </div>
+   160	              <div className="filters-row" style={{ marginTop: 10 }}>
+   161	                <Chip selected={historyFilter === "unattached"} onClick={() => setHistoryFilter("unattached")}>
+   162	                  Unattached · {candidates.length}
+   163	                </Chip>
+   164	                <Chip
+   165	                  selected={historyFilter === "shot"}
+   166	                  onClick={() => selectedShot && setHistoryFilter("shot")}
+   167	                  disabled={!selectedShot}
+   168	                >
+   169	                  {selectedShot ? `Shot ${String(selectedShot.number).padStart(2, "0")} · ${selectedShot.generations.length}` : "Select a shot"}
+   170	                </Chip>
+   171	              </div>
+   172	
+   173	              <UploadZone projectId={project.id} selectedShot={selectedShot} direct={directUpload} />
+   174	
+   175	              {historyItems.length === 0 ? (
+   176	                <p style={{ font: "var(--text-small)", color: "var(--fg-2)", margin: "14px 4px" }}>
+   177	                  {historyFilter === "unattached"
+   178	                    ? "Render in ComfyUI with your copied prompt, then drop the results above — every version stays linked to its prompt and elements."
+   179	                    : "Nothing attached to this shot yet — attach a candidate from the Unattached tab, or drag one onto the shot card."}
+   180	                </p>
+   181	              ) : (
+   182	                <div className="card-grid" style={{ marginTop: 14 }}>
+   183	                  {historyItems.map((g) => (
+   184	                    <GenerationCard
+   185	                      key={g.id}
+   186	                      gen={g}
+   187	                      mode={historyFilter}
+   188	                      shots={shots}
+   189	                    />
+   190	                  ))}
+   191	                </div>
+   192	              )}
+   193	            </div>
+   194	          </div>
+   195	
+   196	          {selectedShot && (
+   197	            <Composer shot={selectedShot} entities={entities} onDirtyChange={setComposerDirty} />
+   198	          )}
+   199	        </div>
+   200	      </AppShell>
+   201	    </>
+   202	  );
+   203	}
+   204	
+   205	/* ---------- shot card ---------- */
+   206	
+   207	function ShotCard({
+   208	  shot,
+   209	  entities,
+   210	  selected,
+   211	  onSelect,
+   212	}: {
+   213	  shot: ShotDTO;
+   214	  entities: EntityDTO[];
+   215	  selected: boolean;
+   216	  onSelect: () => void;
+   217	}) {
+   218	  const { pending, error, run } = useAction();
+   219	  const [title, setTitle] = useState(shot.title);
+   220	  const [statusMenu, setStatusMenu] = useState(false);
+   221	  const [dragOver, setDragOver] = useState(false);
+   222	  const latest = shot.generations[0]; // version desc
+   223	  const byId = new Map(entities.map((e) => [e.id, e]));
+   224	
+   225	  return (
+   226	    <div className="fade-rise" style={{ display: "flex", flexDirection: "column", gap: 0 }}>
+   227	      <MediaCard
+   228	        ratio="16:9"
+   229	        src={latest?.url ?? null}
+   230	        video={latest?.kind === "video"}
+   231	        selected={selected || dragOver}
+   232	        statusChip={`SHOT ${String(shot.number).padStart(2, "0")}${latest ? ` · V${latest.version}` : ""}`}
+   233	        onClick={onSelect}
+   234	        onDragOver={(e) => {
+   235	          if (e.dataTransfer.types.includes("application/x-artlio-generation")) {
+   236	            e.preventDefault();
+   237	            setDragOver(true);
+   238	          }
+   239	        }}
+   240	        onDragLeave={() => setDragOver(false)}
+   241	        onDrop={(e) => {
+   242	          e.preventDefault();
+   243	          setDragOver(false);
+   244	          const genId = e.dataTransfer.getData("application/x-artlio-generation");
+   245	          if (genId) run(() => attachGeneration(genId, shot.id));
+   246	        }}
+   247	        title={
+   248	          selected ? (
+   249	            <input
+   250	              value={title}
+   251	              placeholder="Untitled shot"
+   252	              onClick={(e) => e.stopPropagation()}
+   253	              onChange={(e) => setTitle(e.target.value)}
+   254	              onBlur={() => {
+   255	                if (title !== shot.title) run(() => updateShotTitle(shot.id, title));
+   256	              }}
+   257	              aria-label="Shot title"
+   258	              style={{
+   259	                background: "none", border: "none", outline: "none", color: "var(--fg-1)",
+   260	                font: "inherit", width: "100%", padding: 0,
+   261	              }}
+   262	            />
+   263	          ) : (
+   264	            shot.title || "Untitled shot"
+   265	          )
+   266	        }
+   267	        meta={dragOver ? "DROP TO ATTACH" : `${shot.entityIds.length} ELEMENTS · ${shot.generations.length} VERSIONS`}
+   268	        footer={
+   269	          <>
+   270	            <span style={{ display: "flex", gap: 4, flexWrap: "wrap", minWidth: 0, overflow: "hidden" }}>
+   271	              {shot.entityIds.slice(0, 3).map((id) => {
+   272	                const e = byId.get(id);
+   273	                return (
+   274	                  <span key={id} className="mention" data-entity-type={e?.type ?? "BRAND"} style={{ fontSize: 11 }}>
+   275	                    @{e?.name ?? "deleted"}
+   276	                  </span>
+   277	                );
+   278	              })}
+   279	              {shot.entityIds.length > 3 && (
+   280	                <span style={{ font: "var(--text-caption)", color: "var(--fg-3)" }}>+{shot.entityIds.length - 3}</span>
+   281	              )}
+   282	            </span>
+   283	            <span style={{ position: "relative", display: "inline-flex", alignItems: "center", gap: 4, flex: "none" }} onClick={(e) => e.stopPropagation()}>
+   284	              <Badge
+   285	                mono
+   286	                tone={shot.status === "FINAL" ? "positive" : shot.status === "ATTACHED" ? "accent" : "neutral"}
+   287	                role="button"
+   288	                tabIndex={0}
+   289	                aria-label="Shot status"
+   290	                style={{ cursor: "pointer" }}
+   291	                onClick={() => setStatusMenu(!statusMenu)}
+   292	                onKeyDown={(e) => {
+   293	                  if (e.key === "Enter" || e.key === " ") setStatusMenu(!statusMenu);
+   294	                }}
+   295	              >
+   296	                {shot.status}
+   297	              </Badge>
+   298	              <PopMenu
+   299	                open={statusMenu}
+   300	                onClose={() => setStatusMenu(false)}
+   301	                side="up"
+   302	                align="right"
+   303	                heading="Shot status"
+   304	                items={STATUSES.map((s) => ({ value: s.value, label: s.label }))}
+   305	                value={shot.status}
+   306	                onSelect={(v) => run(() => updateShotStatus(shot.id, v))}
+   307	                width={180}
+   308	              />
+   309	              {selected && (
+   310	                <IconButton
+   311	                  label="Delete shot"
+   312	                  size="sm"
+   313	                  disabled={pending}
+   314	                  onClick={() => run(() => softDeleteShot(shot.id))}
+   315	                >
+   316	                  <IcX />
+   317	                </IconButton>
+   318	              )}
+   319	            </span>
+   320	          </>
+
+exec
+/bin/zsh -lc "nl -ba apps/web/components/Composer.tsx | sed -n '1,340p'" in /Users/winnin/Documents/artlio
+ succeeded in 0ms:
+     1	"use client";
+     2	
+     3	import {
+     4	  forwardRef,
+     5	  useEffect,
+     6	  useImperativeHandle,
+     7	  useRef,
+     8	  useState,
+     9	  useTransition,
+    10	} from "react";
+    11	import { useEditor, EditorContent, ReactRenderer } from "@tiptap/react";
+    12	import StarterKit from "@tiptap/starter-kit";
+    13	import Mention from "@tiptap/extension-mention";
+    14	import { Placeholder } from "@tiptap/extensions";
+    15	import type { SuggestionKeyDownProps, SuggestionProps } from "@tiptap/suggestion";
+    16	import type { EntityDTO, ShotDTO } from "@/lib/types";
+    17	import { saveShotPrompt } from "@/lib/actions";
+    18	import { Button, Chip } from "./ds";
+    19	
+    20	/* ---------- mention dropdown ---------- */
+    21	
+    22	interface MentionItem {
+    23	  id: string;
+    24	  name: string;
+    25	  type: EntityDTO["type"];
+    26	  /** alias the query matched, when it wasn't the name itself */
+    27	  aka?: string;
+    28	}
+    29	interface MentionListHandle {
+    30	  onKeyDown: (props: SuggestionKeyDownProps) => boolean;
+    31	}
+    32	
+    33	const HUES: Record<EntityDTO["type"], string> = {
+    34	  CHARACTER: "var(--hue-character)",
+    35	  LOCATION: "var(--hue-location)",
+    36	  PRODUCT: "var(--hue-product)",
+    37	  BRAND: "var(--hue-brand)",
+    38	};
+    39	
+    40	const MentionList = forwardRef<MentionListHandle, SuggestionProps<MentionItem>>(
+    41	  function MentionList(props, ref) {
+    42	    const [selected, setSelected] = useState(0);
+    43	    useEffect(() => setSelected(0), [props.items]);
+    44	
+    45	    const pick = (index: number) => {
+    46	      const item = props.items[index];
+    47	      if (item) props.command({ id: item.id, label: item.name, entityType: item.type });
+    48	    };
+    49	
+    50	    useImperativeHandle(ref, () => ({
+    51	      onKeyDown({ event }) {
+    52	        if (props.items.length === 0) return false;
+    53	        if (event.key === "ArrowDown") {
+    54	          setSelected((s) => (s + 1) % props.items.length);
+    55	          return true;
+    56	        }
+    57	        if (event.key === "ArrowUp") {
+    58	          setSelected((s) => (s + props.items.length - 1) % props.items.length);
+    59	          return true;
+    60	        }
+    61	        if (event.key === "Enter") {
+    62	          pick(selected);
+    63	          return true;
+    64	        }
+    65	        return false;
+    66	      },
+    67	    }));
+    68	
+    69	    return (
+    70	      <div className="pop-menu" style={{ position: "static", minWidth: 220 }} role="listbox" aria-label="Entity suggestions">
+    71	        {props.items.length === 0 ? (
+    72	          <p style={{ font: "var(--text-small)", color: "var(--fg-3)", padding: "7px 11px", margin: 0 }}>
+    73	            No matching elements — create one in the Library.
+    74	          </p>
+    75	        ) : (
+    76	          props.items.map((item, i) => (
+    77	            <div
+    78	              key={item.id}
+    79	              role="option"
+    80	              aria-selected={i === selected}
+    81	              className={`pop-item${i === selected ? " active" : ""}`}
+    82	              onMouseEnter={() => setSelected(i)}
+    83	              onClick={() => pick(i)}
+    84	            >
+    85	              <span style={{ width: 8, height: 8, borderRadius: 99, background: HUES[item.type], flex: "none" }} aria-hidden />
+    86	              <span className="pop-item-main">
+    87	                <span className="pop-item-label">
+    88	                  {item.name}
+    89	                  {item.aka && <span style={{ color: "var(--fg-3)", fontWeight: 400 }}> · aka {item.aka}</span>}
+    90	                </span>
+    91	              </span>
+    92	              <span style={{ font: "var(--text-mono-label)", letterSpacing: "0.08em", textTransform: "uppercase", color: "var(--fg-3)" }}>
+    93	                {item.type.toLowerCase()}
+    94	              </span>
+    95	            </div>
+    96	          ))
+    97	        )}
+    98	      </div>
+    99	    );
+   100	  },
+   101	);
+   102	
+   103	/* ---------- doc walking: chips store IDs; resolve against live entities ---------- */
+   104	
+   105	interface DocNode {
+   106	  type?: string;
+   107	  text?: string;
+   108	  attrs?: { id?: string; label?: string };
+   109	  content?: DocNode[];
+   110	}
+   111	
+   112	function resolveDoc(doc: DocNode, byId: Map<string, EntityDTO>) {
+   113	  const ids: string[] = [];
+   114	  let text = "";
+   115	  const walk = (node: DocNode) => {
+   116	    if (node.type === "text") text += node.text ?? "";
+   117	    if (node.type === "mention" && node.attrs?.id) {
+   118	      ids.push(node.attrs.id);
+   119	      text += byId.get(node.attrs.id)?.name ?? node.attrs.label ?? "";
+   120	    }
+   121	    node.content?.forEach(walk);
+   122	    if (node.type === "paragraph") text += "\n";
+   123	  };
+   124	  walk(doc);
+   125	  return { ids: [...new Set(ids)], text: text.trim() };
+   126	}
+   127	
+   128	/** Top band of the prompt bar: who's in this shot, with reference health. */
+   129	function MentionBand({ ids, byId }: { ids: string[]; byId: Map<string, EntityDTO> }) {
+   130	  if (ids.length === 0) return null;
+   131	  return (
+   132	    <div className="al-promptbar-row" aria-label="Elements in this prompt">
+   133	      {ids.map((id) => {
+   134	        const e = byId.get(id);
+   135	        if (!e) {
+   136	          return (
+   137	            <span key={id} className="al-badge al-badge-danger" style={{ textDecoration: "line-through" }}>
+   138	              deleted element
+   139	            </span>
+   140	          );
+   141	        }
+   142	        const cover = e.refs.find((r) => r.kind === "image");
+   143	        return (
+   144	          <span
+   145	            key={id}
+   146	            className="al-badge"
+   147	            style={{ color: HUES[e.type], paddingLeft: cover ? 4 : 10 }}
+   148	            title={e.refs.length === 0 ? `${e.name} has no reference images yet` : `${e.name} · ${e.refs.length} refs`}
+   149	          >
+   150	            {cover ? (
+   151	              // eslint-disable-next-line @next/next/no-img-element
+   152	              <img src={cover.url} alt="" style={{ width: 18, height: 18, borderRadius: 99, objectFit: "cover" }} />
+   153	            ) : null}
+   154	            {e.name}
+   155	            {e.refs.length === 0 && (
+   156	              <span
+   157	                style={{ width: 5, height: 5, borderRadius: 99, background: "var(--warning)", display: "inline-block" }}
+   158	                title="No reference images"
+   159	                aria-label="No reference images"
+   160	              />
+   161	            )}
+   162	          </span>
+   163	        );
+   164	      })}
+   165	    </div>
+   166	  );
+   167	}
+   168	
+   169	/* ---------- composer (prototype prompt-bar dock) ---------- */
+   170	
+   171	export function Composer({
+   172	  shot,
+   173	  entities,
+   174	  onDirtyChange,
+   175	}: {
+   176	  shot: ShotDTO;
+   177	  entities: EntityDTO[];
+   178	  onDirtyChange: (dirty: boolean) => void;
+   179	}) {
+   180	  const [pending, startTransition] = useTransition();
+   181	  const [dirty, setDirtyState] = useState(false);
+   182	  const [copied, setCopied] = useState(false);
+   183	  const [saveError, setSaveError] = useState(false);
+   184	  const [copyBlocked, setCopyBlocked] = useState<string | null>(null);
+   185	  const [mentionedIds, setMentionedIds] = useState<string[]>([]);
+   186	  const setDirty = (d: boolean) => {
+   187	    setDirtyState(d);
+   188	    onDirtyChange(d);
+   189	  };
+   190	
+   191	  // suggestion callbacks are created once at editor init — read entities via ref
+   192	  const entitiesRef = useRef(entities);
+   193	  entitiesRef.current = entities;
+   194	
+   195	  const shotId = shot.id;
+   196	  const editor = useEditor({
+   197	    immediatelyRender: false, // SSR: render editor client-side only
+   198	    // one long-lived editor would share undo history across shots (P1 audit
+   199	    // fix): recreating per shot gives each its own history
+   200	    content: (shot.promptDoc as never) ?? "",
+   201	    extensions: [
+   202	      StarterKit,
+   203	      Placeholder.configure({
+   204	        placeholder: "Describe the shot — use @ to add elements, e.g. “@Maya walking in the park”",
+   205	      }),
+   206	      Mention.extend({
+   207	        addAttributes() {
+   208	          return {
+   209	            ...this.parent?.(),
+   210	            entityType: {
+   211	              default: null,
+   212	              parseHTML: (el: HTMLElement) => el.getAttribute("data-entity-type"),
+   213	              renderHTML: (attrs: Record<string, unknown>) =>
+   214	                attrs.entityType ? { "data-entity-type": attrs.entityType } : {},
+   215	            },
+   216	          };
+   217	        },
+   218	      }).configure({
+   219	        HTMLAttributes: { class: "mention" },
+   220	        suggestion: {
+   221	          items: ({ query }: { query: string }) => {
+   222	            const q = query.toLowerCase();
+   223	            return entitiesRef.current
+   224	              .map((e) => {
+   225	                if (e.name.toLowerCase().includes(q)) return { e, aka: undefined };
+   226	                const alias = e.aliases.find((a) => a.toLowerCase().includes(q));
+   227	                return alias ? { e, aka: alias } : null;
+   228	              })
+   229	              .filter((m): m is { e: EntityDTO; aka: string | undefined } => m !== null)
+   230	              .slice(0, 8)
+   231	              .map(({ e, aka }) => ({ id: e.id, name: e.name, type: e.type, aka }));
+   232	          },
+   233	          render: () => {
+   234	            let component: ReactRenderer<MentionListHandle> | null = null;
+   235	            let popup: HTMLDivElement | null = null;
+   236	            let dismissed = false; // Esc pressed — popup hidden, keys pass through
+   237	            const position = (clientRect?: (() => DOMRect | null) | null) => {
+   238	              const rect = clientRect?.();
+   239	              if (!popup || !rect) return;
+   240	              popup.style.left = `${rect.left}px`;
+   241	              // dock sits at the bottom — open the menu UPWARD above the caret
+   242	              popup.style.top = "auto";
+   243	              popup.style.bottom = `${window.innerHeight - rect.top + 8}px`;
+   244	            };
+   245	            return {
+   246	              onStart(props: SuggestionProps<MentionItem>) {
+   247	                dismissed = false;
+   248	                component = new ReactRenderer(MentionList, { props, editor: props.editor });
+   249	                popup = document.createElement("div");
+   250	                popup.style.position = "fixed";
+   251	                popup.style.zIndex = "60";
+   252	                popup.appendChild(component.element);
+   253	                document.body.appendChild(popup);
+   254	                position(props.clientRect);
+   255	              },
+   256	              onUpdate(props: SuggestionProps<MentionItem>) {
+   257	                component?.updateProps(props);
+   258	                position(props.clientRect);
+   259	              },
+   260	              onKeyDown(props: SuggestionKeyDownProps) {
+   261	                if (props.event.key === "Escape") {
+   262	                  dismissed = true;
+   263	                  if (popup) popup.style.display = "none";
+   264	                  return true;
+   265	                }
+   266	                if (dismissed) return false;
+   267	                return component?.ref?.onKeyDown(props) ?? false;
+   268	              },
+   269	              onExit() {
+   270	                popup?.remove();
+   271	                component?.destroy();
+   272	                component = null;
+   273	                popup = null;
+   274	              },
+   275	            };
+   276	          },
+   277	        },
+   278	      }),
+   279	    ],
+   280	    onUpdate: ({ editor }) => {
+   281	      setDirty(true);
+   282	      setSaveError(false);
+   283	      setCopyBlocked(null);
+   284	      setMentionedIds(resolveDoc(editor.getJSON() as DocNode, new Map()).ids);
+   285	    },
+   286	  }, [shotId]);
+   287	
+   288	  // recreated editor starts clean
+   289	  useEffect(() => {
+   290	    setDirty(false);
+   291	    setSaveError(false);
+   292	    setCopyBlocked(null);
+   293	    setMentionedIds(shot.entityIds ?? []);
+   294	    // eslint-disable-next-line react-hooks/exhaustive-deps
+   295	  }, [shotId]);
+   296	
+   297	  // refresh/close with unsaved edits → browser-native confirm
+   298	  useEffect(() => {
+   299	    if (!dirty) return;
+   300	    const warn = (e: BeforeUnloadEvent) => e.preventDefault();
+   301	    window.addEventListener("beforeunload", warn);
+   302	    return () => window.removeEventListener("beforeunload", warn);
+   303	  }, [dirty]);
+   304	
+   305	  const byId = new Map(entities.map((e) => [e.id, e]));
+   306	
+   307	  async function doSave(): Promise<boolean> {
+   308	    if (!editor) return false;
+   309	    const json = editor.getJSON() as DocNode;
+   310	    const { ids, text } = resolveDoc(json, byId);
+   311	    try {
+   312	      // stringified: React Flight drops ProseMirror's null-prototype attrs objects
+   313	      const res = await saveShotPrompt(shot.id, JSON.stringify(json), text, ids);
+   314	      if (res && "error" in res) {
+   315	        setSaveError(true);
+   316	        return false;
+   317	      }
+   318	      setDirty(false);
+   319	      return true;
+   320	    } catch {
+   321	      setSaveError(true);
+   322	      return false;
+   323	    }
+   324	  }
+   325	
+   326	  function save() {
+   327	    startTransition(async () => {
+   328	      await doSave();
+   329	    });
+   330	  }
+   331	
+   332	  function copyResolved() {
+   333	    if (!editor) return;
+   334	    // referential integrity, loudly: every mention must resolve to a live
+   335	    // entity with ≥1 reference (LTX's silent @tag breakage is its most hated bug)
+   336	    const { ids } = resolveDoc(editor.getJSON() as DocNode, byId);
+   337	    const deleted = ids.filter((id) => !byId.get(id));
+   338	    const refless = ids.map((id) => byId.get(id)).filter((e): e is EntityDTO => !!e && e.refs.length === 0);
+   339	    if (deleted.length > 0) {
+   340	      setCopyBlocked(
+
+exec
+/bin/zsh -lc "nl -ba apps/web/components/Workbench.tsx | sed -n '320,760p'" in /Users/winnin/Documents/artlio
+ succeeded in 0ms:
+   320	          </>
+   321	        }
+   322	      />
+   323	      {error && (
+   324	        <p role="alert" style={{ font: "var(--text-caption)", color: "var(--danger)", margin: "6px 4px 0" }}>
+   325	          {error}
+   326	        </p>
+   327	      )}
+   328	    </div>
+   329	  );
+   330	}
+   331	
+   332	/* ---------- history cards + upload ---------- */
+   333	
+   334	function GenerationCard({
+   335	  gen,
+   336	  mode,
+   337	  shots,
+   338	}: {
+   339	  gen: GenerationDTO;
+   340	  mode: "unattached" | "shot";
+   341	  shots: ShotDTO[];
+   342	}) {
+   343	  const { pending, error, run } = useAction();
+   344	  const [attachMenu, setAttachMenu] = useState(false);
+   345	
+   346	  return (
+   347	    <div
+   348	      className="fade-rise"
+   349	      draggable={mode === "unattached"}
+   350	      onDragStart={(e) => {
+   351	        e.dataTransfer.setData("application/x-artlio-generation", gen.id);
+   352	        e.dataTransfer.effectAllowed = "link";
+   353	      }}
+   354	    >
+   355	      <MediaCard
+   356	        ratio="16:9"
+   357	        src={gen.url}
+   358	        video={gen.kind === "video"}
+   359	        statusChip={mode === "shot" ? `V${gen.version}` : undefined}
+   360	        title={gen.promptText || undefined}
+   361	        meta={new Date(gen.createdAt)
+   362	          .toLocaleString("en-US", { month: "short", day: "numeric", hour: "2-digit", minute: "2-digit" })
+   363	          .toUpperCase()}
+   364	        suppressHydrationWarning
+   365	        footer={
+   366	          <span style={{ display: "flex", alignItems: "center", gap: 6, width: "100%" }} onClick={(e) => e.stopPropagation()}>
+   367	            {mode === "unattached" ? (
+   368	              <>
+   369	                <span style={{ position: "relative", display: "inline-flex" }}>
+   370	                  <Chip selected={attachMenu} onClick={() => setAttachMenu(!attachMenu)} disabled={pending || shots.length === 0}>
+   371	                    {shots.length === 0 ? "No shots yet" : "Attach to shot…"}
+   372	                  </Chip>
+   373	                  <PopMenu
+   374	                    open={attachMenu}
+   375	                    onClose={() => setAttachMenu(false)}
+   376	                    side="up"
+   377	                    heading="Attach to"
+   378	                    items={shots.map((s) => ({
+   379	                      value: s.id,
+   380	                      label: `Shot ${String(s.number).padStart(2, "0")}${s.title ? ` · ${s.title}` : ""}`,
+   381	                    }))}
+   382	                    onSelect={(shotId) => run(() => attachGeneration(gen.id, shotId))}
+   383	                    width={240}
+   384	                  />
+   385	                </span>
+   386	                <span style={{ flex: 1 }} />
+   387	                <IconButton label="Discard" size="sm" disabled={pending} onClick={() => run(() => softDeleteGeneration(gen.id))}>
+   388	                  <IcX />
+   389	                </IconButton>
+   390	              </>
+   391	            ) : (
+   392	              <>
+   393	                <span style={{ flex: 1 }} />
+   394	                <Chip disabled={pending} onClick={() => run(() => detachGeneration(gen.id))}>
+   395	                  Detach → unattached
+   396	                </Chip>
+   397	              </>
+   398	            )}
+   399	          </span>
+   400	        }
+   401	      />
+   402	      {error && (
+   403	        <p role="alert" style={{ font: "var(--text-caption)", color: "var(--danger)", margin: "6px 4px 0" }}>
+   404	          {error}
+   405	        </p>
+   406	      )}
+   407	    </div>
+   408	  );
+   409	}
+   410	
+   411	function UploadZone({
+   412	  projectId,
+   413	  selectedShot,
+   414	  direct,
+   415	}: {
+   416	  projectId: string;
+   417	  selectedShot: ShotDTO | null;
+   418	  direct: boolean;
+   419	}) {
+   420	  const inputRef = useRef<HTMLInputElement>(null);
+   421	  const { pending, error, run } = useAction();
+   422	  const [dragOver, setDragOver] = useState(false);
+   423	  const [progress, setProgress] = useState<Map<string, number> | null>(null);
+   424	
+   425	  function upload(files: FileList | File[]) {
+   426	    const list = [...files];
+   427	    if (list.length === 0) return;
+   428	    const promptText = selectedShot?.promptText ?? "";
+   429	    const entityIds = selectedShot?.entityIds ?? [];
+   430	    run(async () => {
+   431	      let res;
+   432	      if (direct) {
+   433	        // browser → R2 presigned upload; this server never sees the bytes
+   434	        const { uploadFilesDirect } = await import("@/lib/direct-upload");
+   435	        const { finalizeCandidateUploads } = await import("@/lib/upload-actions");
+   436	        setProgress(new Map(list.map((f) => [f.name, 0])));
+   437	        const outcome = await uploadFilesDirect(list, (name, pct) =>
+   438	          setProgress((prev) => new Map(prev ?? []).set(name, pct)),
+   439	        );
+   440	        setProgress(null);
+   441	        if (outcome.files.length === 0) {
+   442	          res = { error: outcome.failures[0]?.reason ?? "Upload failed." };
+   443	        } else {
+   444	          res = await finalizeCandidateUploads(projectId, promptText, entityIds, { files: outcome.files });
+   445	          // both pre-finalize (upload/hash) and finalize-time (size/storage)
+   446	          // failures must reach the user even when some files landed
+   447	          if (res && "ok" in res) {
+   448	            const failed = [...outcome.failures, ...res.failures];
+   449	            if (failed.length > 0) res = { error: `${failed.length} file(s) failed: ${failed[0].reason}` };
+   450	          }
+   451	        }
+   452	      } else {
+   453	        const fd = new FormData();
+   454	        for (const f of list) fd.append("files", f);
+   455	        // associate provenance with the shot being worked on (prompt + entities)
+   456	        fd.set("promptText", promptText);
+   457	        for (const id of entityIds) fd.append("entityIds", id);
+   458	        res = await uploadCandidates(projectId, fd);
+   459	      }
+   460	      if (inputRef.current) inputRef.current.value = "";
+   461	      return res;
+   462	    });
+   463	  }
+   464	
+   465	  const overallPct = progress
+   466	    ? Math.round([...progress.values()].reduce((a, b) => a + b, 0) / Math.max(1, progress.size))
+   467	    : null;
+   468	
+   469	  return (
+   470	    <>
+   471	      <button
+   472	        className={`drop-zone${dragOver ? " over" : ""}`}
+   473	        disabled={pending}
+   474	        onClick={() => inputRef.current?.click()}
+   475	        onDragOver={(e) => {
+   476	          if (e.dataTransfer.types.includes("Files")) {
+   477	            e.preventDefault();
+   478	            setDragOver(true);
+   479	          }
+   480	        }}
+   481	        onDragLeave={() => setDragOver(false)}
+   482	        onDrop={(e) => {
+   483	          e.preventDefault();
+   484	          setDragOver(false);
+   485	          upload(e.dataTransfer.files);
+   486	        }}
+   487	      >
+   488	        <span className="drop-zone-tile">
+   489	          <IcImage size={18} />
+   490	        </span>
+   491	        <span>
+   492	          {pending
+   493	            ? overallPct !== null
+   494	              ? `Uploading ${progress!.size} file${progress!.size > 1 ? "s" : ""}… ${overallPct}%`
+   495	              : "Uploading…"
+   496	            : dragOver
+   497	              ? "Drop to add renders"
+   498	              : (
+   499	                <>
+   500	                  Drop renders here, or{" "}
+   501	                  <span style={{ color: "var(--fg-1)", textDecoration: "underline", textUnderlineOffset: 3 }}>browse</span>
+   502	                  {selectedShot
+   503	                    ? ` — they'll carry Shot ${String(selectedShot.number).padStart(2, "0")}'s prompt & elements (${selectedShot.entityIds.length})`
+   504	                    : ""}
+   505	                </>
+   506	              )}
+   507	        </span>
+   508	      </button>
+   509	      <input
+   510	        ref={inputRef}
+   511	        type="file"
+   512	        multiple
+   513	        accept="image/*,video/*,audio/*"
+   514	        className="hidden"
+   515	        aria-label="Upload renders"
+   516	        onChange={(e) => e.target.files && upload(e.target.files)}
+   517	      />
+   518	      {error && (
+   519	        <p role="alert" style={{ font: "var(--text-small)", color: "var(--danger)", margin: "8px 4px 0" }}>
+   520	          {error} — try again.
+   521	        </p>
+   522	      )}
+   523	    </>
+   524	  );
+   525	}
+
+exec
+/bin/zsh -lc "nl -ba apps/web/components/Composer.tsx | sed -n '332,520p'" in /Users/winnin/Documents/artlio
+ succeeded in 0ms:
+   332	  function copyResolved() {
+   333	    if (!editor) return;
+   334	    // referential integrity, loudly: every mention must resolve to a live
+   335	    // entity with ≥1 reference (LTX's silent @tag breakage is its most hated bug)
+   336	    const { ids } = resolveDoc(editor.getJSON() as DocNode, byId);
+   337	    const deleted = ids.filter((id) => !byId.get(id));
+   338	    const refless = ids.map((id) => byId.get(id)).filter((e): e is EntityDTO => !!e && e.refs.length === 0);
+   339	    if (deleted.length > 0) {
+   340	      setCopyBlocked(
+   341	        "This prompt mentions an element that no longer exists (marked above the text) — delete that chip from the prompt, then copy again.",
+   342	      );
+   343	      return;
+   344	    }
+   345	    if (refless.length > 0) {
+   346	      setCopyBlocked(
+   347	        `${refless.map((e) => e.name).join(", ")} ${refless.length === 1 ? "has" : "have"} no reference images yet — add or generate some in the Library so the render stays on-model.`,
+   348	      );
+   349	      return;
+   350	    }
+   351	    startTransition(async () => {
+   352	      // copied prompt must match the provenance a later upload records — save first
+   353	      if (dirty) {
+   354	        const ok = await doSave();
+   355	        if (!ok) return;
+   356	      }
+   357	      const { text } = resolveDoc(editor.getJSON() as DocNode, byId);
+   358	      await navigator.clipboard.writeText(text);
+   359	      setCopied(true);
+   360	      setTimeout(() => setCopied(false), 1600);
+   361	    });
+   362	  }
+   363	
+   364	  return (
+   365	    <div className="composer-dock">
+   366	      <div className="composer-wrap">
+   367	        {(saveError || copyBlocked) && (
+   368	          <p
+   369	            role="alert"
+   370	            style={{
+   371	              font: "var(--text-small)",
+   372	              color: saveError ? "var(--danger)" : "var(--warning)",
+   373	              margin: "0 4px 8px",
+   374	            }}
+   375	          >
+   376	            {saveError ? (
+   377	              <>
+   378	                Save failed — check your connection and{" "}
+   379	                <button onClick={save} style={{ background: "none", border: "none", color: "inherit", textDecoration: "underline", cursor: "pointer", padding: 0, font: "inherit" }}>
+   380	                  retry
+   381	                </button>
+   382	                .
+   383	              </>
+   384	            ) : (
+   385	              copyBlocked
+   386	            )}
+   387	          </p>
+   388	        )}
+   389	        <div className="al-promptbar">
+   390	          <MentionBand ids={mentionedIds} byId={byId} />
+   391	          <EditorContent editor={editor} />
+   392	          <div className="al-promptbar-row">
+   393	            <Chip mono interactive={false} title="Where this prompt gets rendered. Phase 2 adds your own templates and API targets here.">
+   394	              Target · ComfyUI manual
+   395	            </Chip>
+   396	            <span className="mono-label">
+   397	              Shot {String(shot.number).padStart(2, "0")}
+   398	              {dirty ? " · unsaved" : ""}
+   399	            </span>
+   400	            <span className="al-promptbar-spacer" />
+   401	            <Button variant="glass" size="sm" onClick={copyResolved}>
+   402	              {copied ? "Copied ✓" : "Copy resolved prompt"}
+   403	            </Button>
+   404	            <Button size="sm" onClick={save} disabled={pending || !dirty}>
+   405	              {pending ? "Saving…" : "Save prompt"}
+   406	            </Button>
+   407	          </div>
+   408	        </div>
+   409	      </div>
+   410	    </div>
+   411	  );
+   412	}
+
+exec
+/bin/zsh -lc "nl -ba apps/web/components/Library.tsx | sed -n '1,360p'" in /Users/winnin/Documents/artlio
+ succeeded in 0ms:
+     1	"use client";
+     2	
+     3	import { useEffect, useRef, useState, useTransition } from "react";
+     4	import { useRouter } from "next/navigation";
+     5	import { REFGEN_PRICE_USD_PER_IMAGE } from "@artlio/core";
+     6	import type { EntityDTO, EntityTypeDTO } from "@/lib/types";
+     7	import {
+     8	  createEntity,
+     9	  updateEntity,
+    10	  addEntityAlias,
+    11	  removeEntityAlias,
+    12	  addReferenceImages,
+    13	  softDeleteReferenceImage,
+    14	  softDeleteEntity,
+    15	} from "@/lib/actions";
+    16	import { startRefGen, getRefGenJobs } from "@/lib/refgen-actions";
+    17	import { Badge, Button, Dialog, IcImage, IconButton, IcPlus, IcX, Input, MediaCard, MonoLabel, SegmentedControl } from "./ds";
+    18	
+    19	const TYPE_META: Record<EntityTypeDTO, { label: string; singular: string; color: string }> = {
+    20	  CHARACTER: { label: "Characters", singular: "Character", color: "var(--hue-character)" },
+    21	  LOCATION: { label: "Locations", singular: "Location", color: "var(--hue-location)" },
+    22	  PRODUCT: { label: "Products", singular: "Product", color: "var(--hue-product)" },
+    23	  BRAND: { label: "Brands", singular: "Brand", color: "var(--hue-brand)" },
+    24	};
+    25	const TYPE_ORDER: EntityTypeDTO[] = ["CHARACTER", "LOCATION", "PRODUCT", "BRAND"];
+    26	
+    27	const EMPTY_HINTS: Record<EntityTypeDTO, string> = {
+    28	  CHARACTER: "The people in your videos. 3–12 reference images (front / side / ¾) keep faces on-model.",
+    29	  LOCATION: "Recurring places and sets. Wide establishing shots work best as references.",
+    30	  PRODUCT: "Hero objects your shots feature. Clean studio shots from several angles.",
+    31	  BRAND: "Logos, palettes, style frames — anything that keeps output on-brand.",
+    32	};
+    33	
+    34	function useAction() {
+    35	  const [pending, startTransition] = useTransition();
+    36	  const [error, setError] = useState<string | null>(null);
+    37	  function run(
+    38	    fn: () => Promise<{ error?: string } | { ok: boolean } | { id: string } | void>,
+    39	    after?: (res: Awaited<ReturnType<typeof fn>>) => void,
+    40	  ) {
+    41	    setError(null);
+    42	    startTransition(async () => {
+    43	      try {
+    44	        const res = await fn();
+    45	        if (res && "error" in res && res.error) setError(res.error);
+    46	        else after?.(res);
+    47	      } catch {
+    48	        setError("Something went wrong — try again.");
+    49	      }
+    50	    });
+    51	  }
+    52	  return { pending, error, setError, run };
+    53	}
+    54	
+    55	export function Library({
+    56	  entities,
+    57	  initialSelectedId,
+    58	}: {
+    59	  entities: EntityDTO[];
+    60	  initialSelectedId: string | null;
+    61	}) {
+    62	  const [selectedId, setSelectedId] = useState<string | null>(initialSelectedId);
+    63	  const [creating, setCreating] = useState(false);
+    64	  const [createType, setCreateType] = useState<EntityTypeDTO>("CHARACTER");
+    65	  const [query, setQuery] = useState("");
+    66	  const selected = entities.find((e) => e.id === selectedId) ?? null;
+    67	
+    68	  function select(id: string | null) {
+    69	    setSelectedId(id);
+    70	    // keep the URL shareable without a server roundtrip
+    71	    window.history.replaceState(null, "", id ? `/library?e=${id}` : "/library");
+    72	  }
+    73	
+    74	  function openCreate(type: EntityTypeDTO) {
+    75	    setCreateType(type);
+    76	    setCreating(true);
+    77	  }
+    78	
+    79	  const q = query.trim().toLowerCase();
+    80	  const matches = (e: EntityDTO) =>
+    81	    !q || e.name.toLowerCase().includes(q) || e.aliases.some((a) => a.toLowerCase().includes(q));
+    82	
+    83	  return (
+    84	    <div className="flex flex-1 min-h-0">
+    85	      <div className="screen">
+    86	        <div className="screen-pad">
+    87	          <div style={{ display: "flex", alignItems: "center", gap: 14, margin: "10px 0 6px" }}>
+    88	            <div>
+    89	              <h1 style={{ font: "var(--text-display)", letterSpacing: "var(--tracking-display)", color: "var(--fg-1)", margin: 0 }}>
+    90	                Elements
+    91	              </h1>
+    92	              <p style={{ font: "var(--text-body)", color: "var(--fg-2)", margin: "6px 0 0", maxWidth: 480 }}>
+    93	                Lock a character, place or product once, then reference it in any prompt with @ — across every project.
+    94	              </p>
+    95	            </div>
+    96	            <span style={{ flex: 1 }} />
+    97	            <Button icon={<IcPlus />} onClick={() => openCreate("CHARACTER")}>
+    98	              New element
+    99	            </Button>
+   100	          </div>
+   101	
+   102	          <div className="filters-row" style={{ marginTop: 20 }}>
+   103	            <span className="al-input-wrap" style={{ maxWidth: 280, flex: 1 }}>
+   104	              <input
+   105	                type="search"
+   106	                value={query}
+   107	                onChange={(e) => setQuery(e.target.value)}
+   108	                placeholder="Search names & aliases…"
+   109	                aria-label="Search elements"
+   110	              />
+   111	            </span>
+   112	          </div>
+   113	
+   114	          {TYPE_ORDER.map((type) => {
+   115	            const meta = TYPE_META[type];
+   116	            const group = entities.filter((e) => e.type === type).filter(matches);
+   117	            const total = entities.filter((e) => e.type === type).length;
+   118	            return (
+   119	              <section key={type} aria-label={meta.label} style={{ marginBottom: 30 }}>
+   120	                <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 12 }}>
+   121	                  <span style={{ width: 9, height: 9, borderRadius: 99, background: meta.color, display: "inline-block" }} aria-hidden />
+   122	                  <MonoLabel>{meta.label}</MonoLabel>
+   123	                  <span style={{ font: "var(--text-mono-meta)", color: "var(--fg-3)" }}>{total}</span>
+   124	                  <span style={{ flex: 1 }} />
+   125	                  <Button variant="ghost" size="sm" onClick={() => openCreate(type)}>
+   126	                    + New {meta.singular.toLowerCase()}
+   127	                  </Button>
+   128	                </div>
+   129	
+   130	                {total === 0 ? (
+   131	                  <button className="drop-zone" onClick={() => openCreate(type)}>
+   132	                    <span className="drop-zone-tile">
+   133	                      <IcPlus size={18} />
+   134	                    </span>
+   135	                    <span>
+   136	                      {EMPTY_HINTS[type]}{" "}
+   137	                      <span style={{ color: "var(--fg-1)", textDecoration: "underline", textUnderlineOffset: 3 }}>
+   138	                        Create your first {meta.singular.toLowerCase()} →
+   139	                      </span>
+   140	                    </span>
+   141	                  </button>
+   142	                ) : group.length === 0 ? (
+   143	                  <p style={{ font: "var(--text-small)", color: "var(--fg-3)" }}>
+   144	                    No {meta.label.toLowerCase()} match “{query}”.
+   145	                  </p>
+   146	                ) : (
+   147	                  <div className="card-grid">
+   148	                    {group.map((e) => {
+   149	                      const cover = e.refs.find((r) => r.kind === "image");
+   150	                      return (
+   151	                        <div key={e.id} className="fade-rise">
+   152	                          <MediaCard
+   153	                            ratio="1:1"
+   154	                            src={cover?.url ?? null}
+   155	                            selected={e.id === selectedId}
+   156	                            onClick={() => select(e.id === selectedId ? null : e.id)}
+   157	                            title={`@${e.name}`}
+   158	                            meta={`${e.type} · ${e.refs.length} SOURCES${e.usageCount > 0 ? ` · ${e.usageCount} SHOTS` : ""}`}
+   159	                            footer={
+   160	                              e.refs.length === 0 ? (
+   161	                                <Badge mono tone="warning" dot>
+   162	                                  No refs yet
+   163	                                </Badge>
+   164	                              ) : (
+   165	                                <Badge mono>Locked</Badge>
+   166	                              )
+   167	                            }
+   168	                          />
+   169	                        </div>
+   170	                      );
+   171	                    })}
+   172	                  </div>
+   173	                )}
+   174	              </section>
+   175	            );
+   176	          })}
+   177	        </div>
+   178	      </div>
+   179	
+   180	      {selected && (
+   181	        <aside
+   182	          aria-label="Element detail"
+   183	          style={{ width: 384, flex: "none", borderLeft: "1px solid var(--line-2)", overflowY: "auto" }}
+   184	          onKeyDown={(e) => {
+   185	            if (e.key === "Escape") select(null);
+   186	          }}
+   187	        >
+   188	          <EntityDetail key={selected.id} entity={selected} onClose={() => select(null)} />
+   189	        </aside>
+   190	      )}
+   191	
+   192	      <CreateDialog
+   193	        open={creating}
+   194	        type={createType}
+   195	        onType={setCreateType}
+   196	        onClose={() => setCreating(false)}
+   197	        onCreated={(id) => {
+   198	          setCreating(false);
+   199	          select(id);
+   200	        }}
+   201	      />
+   202	    </div>
+   203	  );
+   204	}
+   205	
+   206	/* ---------- create dialog (prototype "Create element" + two doors) ---------- */
+   207	
+   208	function CreateDialog({
+   209	  open,
+   210	  type,
+   211	  onType,
+   212	  onClose,
+   213	  onCreated,
+   214	}: {
+   215	  open: boolean;
+   216	  type: EntityTypeDTO;
+   217	  onType: (t: EntityTypeDTO) => void;
+   218	  onClose: () => void;
+   219	  onCreated: (id: string) => void;
+   220	}) {
+   221	  const { pending, error, setError, run } = useAction();
+   222	  const [name, setName] = useState("");
+   223	  const [door, setDoor] = useState<"upload" | "generate">("upload");
+   224	  const [files, setFiles] = useState<File[]>([]);
+   225	  const fileRef = useRef<HTMLInputElement>(null);
+   226	
+   227	  useEffect(() => {
+   228	    if (open) {
+   229	      setName("");
+   230	      setFiles([]);
+   231	      setDoor("upload");
+   232	      setError(null);
+   233	    }
+   234	    // eslint-disable-next-line react-hooks/exhaustive-deps
+   235	  }, [open]);
+   236	
+   237	  function save() {
+   238	    const clean = name.trim().replace(/^@/, "");
+   239	    if (!clean) {
+   240	      setError("Name the element first.");
+   241	      return;
+   242	    }
+   243	    if (door === "upload" && files.length === 0) {
+   244	      setError("Add at least one source image, or switch to Generate.");
+   245	      return;
+   246	    }
+   247	    const fd = new FormData();
+   248	    fd.set("name", clean);
+   249	    fd.set("type", type);
+   250	    if (door === "upload") for (const f of files) fd.append("files", f);
+   251	    run(
+   252	      () => createEntity(fd),
+   253	      (res) => {
+   254	        if (res && "id" in res && res.id) onCreated(res.id);
+   255	      },
+   256	    );
+   257	  }
+   258	
+   259	  return (
+   260	    <Dialog
+   261	      open={open}
+   262	      title="Create element"
+   263	      onClose={onClose}
+   264	      actions={[
+   265	        <Button key="c" variant="ghost" onClick={onClose}>Cancel</Button>,
+   266	        <Button key="s" onClick={save} disabled={pending}>
+   267	          {pending ? "Creating…" : door === "generate" ? "Create & generate refs →" : "Save element"}
+   268	        </Button>,
+   269	      ]}
+   270	    >
+   271	      <div style={{ display: "flex", flexDirection: "column", gap: 16 }}>
+   272	        <SegmentedControl
+   273	          full
+   274	          options={TYPE_ORDER.map((t) => ({ value: t, label: TYPE_META[t].singular }))}
+   275	          value={type}
+   276	          onChange={onType}
+   277	        />
+   278	        <Input
+   279	          label="Name"
+   280	          placeholder={type === "CHARACTER" ? "maya" : TYPE_META[type].singular.toLowerCase()}
+   281	          prefix="@"
+   282	          value={name}
+   283	          autoFocus
+   284	          onChange={(e) => {
+   285	            setName(e.target.value);
+   286	            setError(null);
+   287	          }}
+   288	          hint="Reference it in prompts as @name."
+   289	        />
+   290	
+   291	        <SegmentedControl
+   292	          full
+   293	          options={[
+   294	            { value: "upload", label: "Upload images" },
+   295	            { value: "generate", label: "Generate refs" },
+   296	          ]}
+   297	          value={door}
+   298	          onChange={(d) => setDoor(d)}
+   299	        />
+   300	
+   301	        {door === "upload" ? (
+   302	          <div>
+   303	            <div style={{ font: "var(--text-small)", fontWeight: 500, color: "var(--fg-2)", marginBottom: 7 }}>
+   304	              Source images
+   305	            </div>
+   306	            <button
+   307	              className="drop-zone"
+   308	              style={{ flexDirection: "column", alignItems: "center", gap: 10, padding: "22px 18px", textAlign: "center" }}
+   309	              onClick={() => fileRef.current?.click()}
+   310	              type="button"
+   311	            >
+   312	              <span className="drop-zone-tile">
+   313	                <IcImage size={18} />
+   314	              </span>
+   315	              <span>
+   316	                Drag up to 10 images from different angles, or{" "}
+   317	                <span style={{ color: "var(--fg-1)", textDecoration: "underline", textUnderlineOffset: 3 }}>browse</span>
+   318	              </span>
+   319	              <span style={{ font: "var(--text-caption)", color: "var(--fg-4)" }}>JPG, PNG, HEIC, WebP, AVIF</span>
+   320	            </button>
+   321	            <input
+   322	              ref={fileRef}
+   323	              type="file"
+   324	              multiple
+   325	              accept="image/*"
+   326	              className="hidden"
+   327	              aria-label="Source images"
+   328	              onChange={(e) => {
+   329	                const list = e.target.files ? [...e.target.files] : [];
+   330	                setFiles((f) => [...f, ...list].slice(0, 10));
+   331	                setError(null);
+   332	              }}
+   333	            />
+   334	            {files.length > 0 && (
+   335	              <div className="thumb-strip" style={{ marginTop: 10 }}>
+   336	                {files.map((f, i) => (
+   337	                  // eslint-disable-next-line @next/next/no-img-element
+   338	                  <img key={i} className="ref-thumb" src={URL.createObjectURL(f)} alt="" />
+   339	                ))}
+   340	              </div>
+   341	            )}
+   342	          </div>
+   343	        ) : (
+   344	          <p style={{ font: "var(--text-small)", color: "var(--fg-2)", margin: 0 }}>
+   345	            After creating, you&apos;ll get a ready-made reference prompt (e.g. a product shot set
+   346	            with your logo) to render in ComfyUI — drop the results straight back in.
+   347	          </p>
+   348	        )}
+   349	
+   350	        {error ? (
+   351	          <div role="alert" style={{ font: "var(--text-small)", color: "var(--danger)" }}>{error}</div>
+   352	        ) : null}
+   353	      </div>
+   354	    </Dialog>
+   355	  );
+   356	}
+   357	
+   358	/* ---------- detail drawer ---------- */
+   359	
+   360	function buildReferencePrompt(entity: EntityDTO): string {
+
+codex
+The core shape is already visible: Artlio has a real entity layer and prompt resolver, but generation itself is still outside the product. I’m reading the library detail/generation block and editor next because that’s where most handoffs either get resolved or turn into dead ends.
+exec
+/bin/zsh -lc "nl -ba apps/web/components/Library.tsx | sed -n '360,820p'" in /Users/winnin/Documents/artlio
+ succeeded in 0ms:
+   360	function buildReferencePrompt(entity: EntityDTO): string {
+   361	  const subject = `${entity.name}${entity.notes ? `, ${entity.notes}` : ""}`;
+   362	  const negative = entity.negativeConstraints ? ` Avoid: ${entity.negativeConstraints}.` : "";
+   363	  switch (entity.type) {
+   364	    case "CHARACTER":
+   365	      return `Character reference sheet of ${subject}. Front view, side profile, and three-quarter view, neutral expression, plain studio background, soft even lighting, consistent identity across all views.${negative}`;
+   366	    case "LOCATION":
+   367	      return `Location reference set of ${subject}. Wide establishing shot, alternate angle, and close detail shot, consistent architecture, time of day and lighting across all views.${negative}`;
+   368	    case "PRODUCT":
+   369	      return `Product reference set of ${subject}. Clean studio shots from front, side and three-quarter angles on a neutral background, consistent materials, proportions and branding.${negative}`;
+   370	    case "BRAND":
+   371	      return `Brand style frames for ${subject}. Logo treatment on light and dark backgrounds, color palette swatch, and texture detail, consistent visual identity.${negative}`;
+   372	  }
+   373	}
+   374	
+   375	function GenerateRefsBlock({ entity }: { entity: EntityDTO }) {
+   376	  const router = useRouter();
+   377	  const { pending, error, run } = useAction();
+   378	  const [prompt, setPrompt] = useState(() => buildReferencePrompt(entity));
+   379	  const [count, setCount] = useState(4);
+   380	  const [job, setJob] = useState<{ status: string; error: string } | null>(null);
+   381	  const [elapsed, setElapsed] = useState(0);
+   382	  const startMs = useRef(0);
+   383	
+   384	  const conditioned = entity.refs.length > 0;
+   385	  const busy = pending || job?.status === "QUEUED" || job?.status === "GENERATING";
+   386	
+   387	  // poll the active job; on DONE pull the new refs, on FAILED surface the error
+   388	  useEffect(() => {
+   389	    if (!job || (job.status !== "QUEUED" && job.status !== "GENERATING")) return;
+   390	    let alive = true;
+   391	    const tick = setInterval(async () => {
+   392	      const jobs = await getRefGenJobs(entity.id);
+   393	      const latest = jobs[0];
+   394	      if (!alive || !latest) return;
+   395	      if (latest.status === "DONE") {
+   396	        clearInterval(tick);
+   397	        setJob({ status: "DONE", error: "" });
+   398	        router.refresh(); // server re-fetches the entity with its new images
+   399	      } else if (latest.status === "FAILED") {
+   400	        clearInterval(tick);
+   401	        setJob({ status: "FAILED", error: latest.error });
+   402	      }
+   403	    }, 2000);
+   404	    return () => {
+   405	      alive = false;
+   406	      clearInterval(tick);
+   407	    };
+   408	  }, [job, entity.id, router]);
+   409	
+   410	  // fal has no sub-call progress signal (it returns all images at once), so
+   411	  // show a live elapsed timer instead of a frozen-looking 0%
+   412	  useEffect(() => {
+   413	    if (!busy) return;
+   414	    const t = setInterval(() => setElapsed(Math.round((Date.now() - startMs.current) / 1000)), 1000);
+   415	    return () => clearInterval(t);
+   416	  }, [busy]);
+   417	
+   418	  function generate() {
+   419	    startMs.current = Date.now();
+   420	    setElapsed(0);
+   421	    run(
+   422	      () => startRefGen({ entityId: entity.id, prompt, count, model: "seedream" }),
+   423	      (res) => {
+   424	        if (res && "id" in res) setJob({ status: "QUEUED", error: "" });
+   425	      },
+   426	    );
+   427	  }
+   428	
+   429	  const cost = (count * REFGEN_PRICE_USD_PER_IMAGE).toFixed(2);
+   430	  return (
+   431	    <div className="al-panel al-panel-flat" style={{ padding: 12, display: "flex", flexDirection: "column", gap: 10, borderRadius: "var(--radius-md)" }}>
+   432	      <div style={{ display: "flex", alignItems: "center" }}>
+   433	        <MonoLabel>Generate references</MonoLabel>
+   434	        <span style={{ flex: 1 }} />
+   435	        {conditioned && (
+   436	          <span style={{ font: "var(--text-caption)", color: "var(--fg-3)" }}>
+   437	            using {entity.refs.length} image{entity.refs.length > 1 ? "s" : ""} as reference
+   438	          </span>
+   439	        )}
+   440	      </div>
+   441	      <textarea
+   442	        value={prompt}
+   443	        onChange={(e) => setPrompt(e.target.value)}
+   444	        disabled={busy}
+   445	        rows={3}
+   446	        aria-label="Generation prompt"
+   447	        style={{
+   448	          width: "100%", background: "rgba(255,255,255,.05)", border: "1px solid var(--line-2)",
+   449	          borderRadius: "var(--radius-md)", padding: "9px 12px", color: "var(--fg-1)",
+   450	          font: "var(--text-small)", resize: "vertical", outline: "none",
+   451	        }}
+   452	      />
+   453	      <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
+   454	        <label style={{ font: "var(--text-caption)", color: "var(--fg-3)", display: "flex", alignItems: "center", gap: 6 }}>
+   455	          count
+   456	          <select
+   457	            value={count}
+   458	            onChange={(e) => setCount(Number(e.target.value))}
+   459	            disabled={busy}
+   460	            aria-label="Number of images"
+   461	            style={{ background: "rgba(255,255,255,.05)", border: "1px solid var(--line-2)", borderRadius: 6, color: "var(--fg-1)", padding: "3px 6px", font: "var(--text-caption)" }}
+   462	          >
+   463	            {[1, 2, 4, 6].map((n) => <option key={n} value={n}>{n}</option>)}
+   464	          </select>
+   465	        </label>
+   466	        <Button size="sm" onClick={generate} disabled={busy || prompt.trim().length === 0}>
+   467	          {busy ? `Generating ${count}… ${elapsed}s` : `Generate ${count} (~$${cost})`}
+   468	        </Button>
+   469	        <span style={{ flex: 1 }} />
+   470	        <span style={{ font: "var(--text-caption)", color: "var(--fg-3)" }}>Seedream</span>
+   471	      </div>
+   472	      {busy && (
+   473	        <p style={{ font: "var(--text-caption)", color: "var(--fg-3)", margin: 0 }}>
+   474	          Working with Seedream — {count} image{count > 1 ? "s" : ""} usually takes {count <= 2 ? "20–40s" : "about a minute"}. They appear here when ready.
+   475	        </p>
+   476	      )}
+   477	      {(error || job?.status === "FAILED") && (
+   478	        <p role="alert" style={{ font: "var(--text-caption)", color: "var(--danger)", margin: 0 }}>
+   479	          {error ?? job?.error ?? "Generation failed."} — try again.
+   480	        </p>
+   481	      )}
+   482	    </div>
+   483	  );
+   484	}
+   485	
+   486	function EntityDetail({ entity, onClose }: { entity: EntityDTO; onClose: () => void }) {
+   487	  const meta = TYPE_META[entity.type];
+   488	  // separate action scopes: an alias save must not disable ref buttons, and
+   489	  // each section's error renders next to the control that failed
+   490	  const fieldAct = useAction();
+   491	  const aliasAct = useAction();
+   492	  const refAct = useAction();
+   493	  const dangerAct = useAction();
+   494	  const [name, setName] = useState(entity.name);
+   495	  const [notes, setNotes] = useState(entity.notes);
+   496	  const [negative, setNegative] = useState(entity.negativeConstraints);
+   497	  const [aliasInput, setAliasInput] = useState("");
+   498	  const fileRef = useRef<HTMLInputElement>(null);
+   499	
+   500	  const textareaStyle: React.CSSProperties = {
+   501	    width: "100%", background: "rgba(255,255,255,.05)", border: "1px solid var(--line-2)",
+   502	    borderRadius: "var(--radius-md)", padding: "10px 14px", color: "var(--fg-1)",
+   503	    font: "var(--text-body)", resize: "vertical", outline: "none",
+   504	  };
+   505	
+   506	  return (
+   507	    <div style={{ padding: 18, display: "flex", flexDirection: "column", gap: 16 }}>
+   508	      <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+   509	        <span style={{ width: 9, height: 9, borderRadius: 99, background: meta.color, display: "inline-block" }} aria-hidden />
+   510	        <MonoLabel>{meta.singular}</MonoLabel>
+   511	        <span style={{ flex: 1 }} />
+   512	        <span style={{ font: "var(--text-mono-meta)", color: "var(--fg-3)" }}>
+   513	          {entity.usageCount > 0
+   514	            ? `mentioned in ${entity.usageCount} shot${entity.usageCount > 1 ? "s" : ""}`
+   515	            : "not mentioned yet"}
+   516	        </span>
+   517	        {/* autoFocus: move focus into the drawer on open; Escape (on the aside) closes */}
+   518	        <IconButton label="Close" size="sm" onClick={onClose} autoFocus>
+   519	          <IcX />
+   520	        </IconButton>
+   521	      </div>
+   522	
+   523	      <input
+   524	        value={name}
+   525	        onChange={(e) => setName(e.target.value)}
+   526	        onBlur={() => {
+   527	          if (!name.trim()) return setName(entity.name); // empty would no-op server-side — revert
+   528	          if (name !== entity.name) fieldAct.run(() => updateEntity(entity.id, { name }));
+   529	        }}
+   530	        aria-label="Element name"
+   531	        style={{
+   532	          background: "none", border: "none", outline: "none", color: "var(--fg-1)",
+   533	          font: "var(--text-title)", letterSpacing: "var(--tracking-tight)", padding: 0,
+   534	        }}
+   535	      />
+   536	
+   537	      {/* aliases — the @mention search matches these too */}
+   538	      <div>
+   539	        <MonoLabel style={{ display: "block", marginBottom: 7 }}>Aliases</MonoLabel>
+   540	        <div style={{ display: "flex", flexWrap: "wrap", gap: 6, alignItems: "center" }}>
+   541	          {entity.aliases.map((a) => (
+   542	            <span key={a} className="alias-chip" data-entity-type={entity.type}>
+   543	              {a}
+   544	              <button
+   545	                aria-label={`Remove alias ${a}`}
+   546	                disabled={aliasAct.pending}
+   547	                onClick={() => aliasAct.run(() => removeEntityAlias(entity.id, a))}
+   548	                style={{ background: "none", border: "none", color: "inherit", opacity: 0.6, cursor: "pointer", padding: "0 0 0 4px" }}
+   549	              >
+   550	                ×
+   551	              </button>
+   552	            </span>
+   553	          ))}
+   554	          <span className="al-input-wrap" style={{ width: 110 }}>
+   555	            <input
+   556	              value={aliasInput}
+   557	              onChange={(e) => setAliasInput(e.target.value)}
+   558	              onKeyDown={(e) => {
+   559	                if (e.key === "Enter") {
+   560	                  e.preventDefault();
+   561	                  const alias = aliasInput.trim();
+   562	                  if (!alias) return;
+   563	                  setAliasInput("");
+   564	                  aliasAct.run(() => addEntityAlias(entity.id, alias));
+   565	                }
+   566	              }}
+   567	              placeholder="+ alias ⏎"
+   568	              aria-label="Add alias (press Enter)"
+   569	              disabled={aliasAct.pending}
+   570	              style={{ padding: "6px 0", fontSize: 12 }}
+   571	            />
+   572	          </span>
+   573	        </div>
+   574	        {aliasAct.error && (
+   575	          <p role="alert" style={{ font: "var(--text-caption)", color: "var(--danger)", margin: "6px 0 0" }}>{aliasAct.error}</p>
+   576	        )}
+   577	        <p style={{ font: "var(--text-caption)", color: "var(--fg-3)", margin: "6px 0 0" }}>
+   578	          Nicknames the @ search should also match — e.g. “the girl”, “MAYA”.
+   579	        </p>
+   580	      </div>
+   581	
+   582	      {/* reference images */}
+   583	      <div>
+   584	        <div style={{ display: "flex", alignItems: "center", marginBottom: 7 }}>
+   585	          <MonoLabel>References · {entity.refs.length}</MonoLabel>
+   586	          <span style={{ flex: 1 }} />
+   587	          <Button variant="ghost" size="sm" disabled={refAct.pending} onClick={() => fileRef.current?.click()}>
+   588	            {refAct.pending ? "Working…" : "+ Add"}
+   589	          </Button>
+   590	        </div>
+   591	        {entity.refs.length === 0 ? (
+   592	          <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
+   593	            <GenerateRefsBlock entity={entity} />
+   594	            <button className="drop-zone" onClick={() => fileRef.current?.click()} type="button">
+   595	              <span className="drop-zone-tile"><IcImage size={16} /></span>
+   596	              <span>
+   597	                Or add 3–12 images you already have (front / side / ¾ angles).{" "}
+   598	                <span style={{ color: "var(--fg-1)", textDecoration: "underline", textUnderlineOffset: 3 }}>Upload →</span>
+   599	              </span>
+   600	            </button>
+   601	          </div>
+   602	        ) : (
+   603	          <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
+   604	            <div className="thumb-strip">
+   605	              {entity.refs.map((r) => (
+   606	                <span key={r.id} style={{ position: "relative" }} className="group">
+   607	                  {/* eslint-disable-next-line @next/next/no-img-element */}
+   608	                  <img className="ref-thumb" src={r.url} alt="" />
+   609	                  <button
+   610	                    aria-label="Remove reference image"
+   611	                    disabled={refAct.pending}
+   612	                    onClick={() => refAct.run(() => softDeleteReferenceImage(r.id))}
+   613	                    style={{
+   614	                      position: "absolute", top: 2, right: 2, width: 18, height: 18,
+   615	                      borderRadius: 99, border: "none", cursor: "pointer",
+   616	                      background: "rgba(6,8,11,.75)", color: "var(--fg-2)", fontSize: 11,
+   617	                      display: "inline-flex", alignItems: "center", justifyContent: "center",
+   618	                    }}
+   619	                  >
+   620	                    ×
+   621	                  </button>
+   622	                </span>
+   623	              ))}
+   624	            </div>
+   625	            {/* generate MORE — conditioned on the images above (e.g. a logo → a garment) */}
+   626	            <GenerateRefsBlock entity={entity} />
+   627	          </div>
+   628	        )}
+   629	        <input
+   630	          ref={fileRef}
+   631	          type="file"
+   632	          multiple
+   633	          accept="image/*"
+   634	          className="hidden"
+   635	          aria-label="Add reference images"
+   636	          onChange={(e) => {
+   637	            const files = e.target.files;
+   638	            if (!files?.length) return;
+   639	            const fd = new FormData();
+   640	            for (const f of files) fd.append("files", f);
+   641	            refAct.run(async () => {
+   642	              const res = await addReferenceImages(entity.id, fd);
+   643	              if (fileRef.current) fileRef.current.value = "";
+   644	              return res;
+   645	            });
+   646	          }}
+   647	        />
+   648	        {refAct.error && (
+   649	          <p role="alert" style={{ font: "var(--text-caption)", color: "var(--danger)", margin: "6px 0 0" }}>{refAct.error}</p>
+   650	        )}
+   651	      </div>
+   652	
+   653	      <label className="al-field">
+   654	        <span className="al-field-label">Notes</span>
+   655	        <textarea
+   656	          value={notes}
+   657	          onChange={(e) => setNotes(e.target.value)}
+   658	          onBlur={() => {
+   659	            if (notes !== entity.notes) fieldAct.run(() => updateEntity(entity.id, { notes }));
+   660	          }}
+   661	          placeholder="Style cues, wardrobe, lighting, materials…"
+   662	          rows={3}
+   663	          style={textareaStyle}
+   664	        />
+   665	      </label>
+   666	
+   667	      <label className="al-field">
+   668	        <span className="al-field-label">Negative constraints</span>
+   669	        <textarea
+   670	          value={negative}
+   671	          onChange={(e) => setNegative(e.target.value)}
+   672	          onBlur={() => {
+   673	            if (negative !== entity.negativeConstraints)
+   674	              fieldAct.run(() => updateEntity(entity.id, { negativeConstraints: negative }));
+   675	          }}
+   676	          placeholder="What must never appear — e.g. glasses, beard, modern cars…"
+   677	          rows={2}
+   678	          style={textareaStyle}
+   679	        />
+   680	      </label>
+   681	
+   682	      {fieldAct.error && (
+   683	        <p role="alert" style={{ font: "var(--text-small)", color: "var(--danger)", margin: 0 }}>
+   684	          {fieldAct.error} — your edit was not saved; change the field again to retry.
+   685	        </p>
+   686	      )}
+   687	
+   688	      <div>
+   689	        <Button
+   690	          variant="danger"
+   691	          size="sm"
+   692	          disabled={dangerAct.pending}
+   693	          onClick={() => {
+   694	            if (
+   695	              entity.usageCount > 0 &&
+   696	              !confirm(
+   697	                `"${entity.name}" is mentioned in ${entity.usageCount} shot(s). ` +
+   698	                  "History snapshots stay intact, but prompt chips will go stale. Delete anyway?",
+   699	              )
+   700	            )
+   701	              return;
+   702	            dangerAct.run(
+   703	              () => softDeleteEntity(entity.id),
+   704	              () => onClose(),
+   705	            );
+   706	          }}
+   707	        >
+   708	          Delete {meta.singular.toLowerCase()}
+   709	        </Button>
+   710	        {dangerAct.error && (
+   711	          <p role="alert" style={{ font: "var(--text-small)", color: "var(--danger)", margin: "8px 0 0" }}>{dangerAct.error}</p>
+   712	        )}
+   713	      </div>
+   714	    </div>
+   715	  );
+   716	}
+
+exec
+/bin/zsh -lc "nl -ba apps/web/components/Editor.tsx | sed -n '1,420p'" in /Users/winnin/Documents/artlio
+exec
+/bin/zsh -lc "nl -ba apps/web/app/page.tsx apps/web/app/library/page.tsx apps/web/app/editor/page.tsx | sed -n '1,260p'" in /Users/winnin/Documents/artlio
+ succeeded in 0ms:
+usage: nl [-p] [-b type] [-d delim] [-f type] [-h type] [-i incr] [-l num]
+          [-n format] [-s sep] [-v startnum] [-w width] [file]
+
+ succeeded in 0ms:
+     1	"use client";
+     2	
+     3	import { useEffect, useRef, useState } from "react";
+     4	import Link from "next/link";
+     5	import { artlioEdit, type ArtlioEdit } from "@artlio/core";
+     6	import { getRenderJobs, saveProjectEdit, startRender } from "@/lib/actions";
+     7	import { Button, Chip, EmptyHero, MonoLabel } from "./ds";
+     8	
+     9	/**
+    10	 * Assembly-cut editor: Shotstack Studio session policed by the artlioEdit
+    11	 * contract — getEdit() snapshots are parsed canonically before any
+    12	 * persistence, and a debounced validator flags out-of-contract edits live.
+    13	 *
+    14	 * Phase-③ tracer: persistence is the SERVER (Project.editJson via
+    15	 * saveProjectEdit; the phase-② localStorage mock is dead per process rule 1),
+    16	 * and Export is real — RenderJob row → pg-boss → worker ffmpeg → asset.
+    17	 */
+    18	
+    19	interface StudioEdit {
+    20	  getEdit: () => unknown;
+    21	  events: { on: (e: string, cb: () => void) => (() => void) | void };
+    22	}
+    23	type StudioHandles = {
+    24	  edit: StudioEdit;
+    25	  dispose: () => void;
+    26	};
+    27	
+    28	export function Editor({
+    29	  projectId,
+    30	  boardEdit,
+    31	  savedEdit,
+    32	  attachedCount,
+    33	  onDirtyChange,
+    34	}: {
+    35	  projectId: string;
+    36	  /** rebuilt from the shot board every load */
+    37	  boardEdit: ArtlioEdit | null;
+    38	  /** the persisted working cut (Project.editJson), wins when present */
+    39	  savedEdit: ArtlioEdit | null;
+    40	  attachedCount: number;
+    41	  onDirtyChange: (dirty: boolean) => void;
+    42	}) {
+    43	  const studioRef = useRef<HTMLDivElement>(null);
+    44	  const timelineRef = useRef<HTMLDivElement>(null);
+    45	  const handles = useRef<StudioHandles | null>(null);
+    46	  const initialEdit = savedEdit ?? boardEdit;
+    47	  const [status, setStatus] = useState<"loading" | "ready" | "failed">("loading");
+    48	  const [dirty, setDirtyState] = useState(false);
+    49	  const loadedFrom: "board" | "saved" = savedEdit ? "saved" : "board";
+    50	  const [notice, setNotice] = useState<{ tone: "ok" | "warn"; text: string } | null>(null);
+    51	  const [liveIssue, setLiveIssue] = useState<string | null>(null);
+    52	  const setDirty = (d: boolean) => {
+    53	    setDirtyState(d);
+    54	    onDirtyChange(d);
+    55	  };
+    56	
+    57	  useEffect(() => {
+    58	    if (!initialEdit) return;
+    59	    let disposed = false;
+    60	    // partial teardown for a cancelled init (StrictMode double-effect /
+    61	    // project switch): dispose whatever got constructed so far, in order
+    62	    const partials: Array<{ dispose?: () => void }> = [];
+    63	    const teardown = () => {
+    64	      for (const p of [...partials].reverse()) {
+    65	        try {
+    66	          p.dispose?.();
+    67	        } catch {
+    68	          /* already torn down */
+    69	        }
+    70	      }
+    71	      partials.length = 0;
+    72	    };
+    73	
+    74	    (async () => {
+    75	      try {
+    76	        // Studio is browser-only (PixiJS) — import inside the effect, never SSR
+    77	        const { Edit, Canvas, Controls, Timeline, UIController } = await import(
+    78	          "@shotstack/shotstack-studio"
+    79	        );
+    80	        if (disposed) return;
+    81	
+    82	        const edit = new Edit(initialEdit as never);
+    83	        const canvas = new Canvas(edit);
+    84	        partials.push(canvas);
+    85	        const ui = UIController.create(edit, canvas);
+    86	        partials.push(ui);
+    87	        await canvas.load();
+    88	        if (disposed) return teardown();
+    89	        await edit.load();
+    90	        if (disposed) return teardown();
+    91	
+    92	        const timeline = new Timeline(edit, timelineRef.current as HTMLElement, {
+    93	          resizable: true,
+    94	        });
+    95	        partials.push(timeline);
+    96	        await timeline.load();
+    97	        if (disposed) return teardown();
+    98	
+    99	        const controls = new Controls(edit);
+   100	        // codex review: Controls leaks its document keyboard listeners — the
+   101	        // SDK ships NO teardown API on this class (verified in index.d.ts).
+   102	        // The optional call is forward-compat for when they add one; until
+   103	        // then a project switch leaves one stale handler behind (known, low
+   104	        // impact, tracked in TODOS).
+   105	        partials.push({ dispose: () => (controls as unknown as { dispose?: () => void }).dispose?.() });
+   106	        await controls.load();
+   107	        if (disposed) return teardown();
+   108	
+   109	        // live contract check, debounced — surface drift while editing
+   110	        let debounce: ReturnType<typeof setTimeout> | undefined;
+   111	        const off = edit.events.on("edit:changed", () => {
+   112	          setDirty(true);
+   113	          clearTimeout(debounce);
+   114	          debounce = setTimeout(() => {
+   115	            const res = artlioEdit.safeParse(edit.getEdit());
+   116	            setLiveIssue(res.success ? null : res.error.issues[0]?.message ?? "invalid edit");
+   117	          }, 800);
+   118	        });
+   119	        partials.push({
+   120	          dispose: () => {
+   121	            clearTimeout(debounce);
+   122	            if (typeof off === "function") off();
+   123	          },
+   124	        });
+   125	
+   126	        handles.current = { edit: edit as unknown as StudioEdit, dispose: teardown };
+   127	        setStatus("ready");
+   128	      } catch (e) {
+   129	        console.error("[editor] studio failed to load", e);
+   130	        teardown();
+   131	        if (!disposed) setStatus("failed");
+   132	      }
+   133	    })();
+   134	
+   135	    return () => {
+   136	      disposed = true;
+   137	      handles.current?.dispose();
+   138	      handles.current = null;
+   139	      teardown(); // covers a cancelled init that never reached handles
+   140	    };
+   141	    // eslint-disable-next-line react-hooks/exhaustive-deps
+   142	  }, [projectId, initialEdit]);
+   143	
+   144	  /** read back the Studio snapshot and canonicalize through the contract */
+   145	  function snapshot(): { edit?: ArtlioEdit; error?: string } {
+   146	    const h = handles.current;
+   147	    if (!h) return { error: "Editor not ready yet." };
+   148	    const result = artlioEdit.safeParse(h.edit.getEdit());
+   149	    if (!result.success) {
+   150	      const first = result.error.issues[0];
+   151	      return {
+   152	        error: `${first?.message ?? "invalid edit"}${first?.path?.length ? ` (at ${first.path.join(".")})` : ""}`,
+   153	      };
+   154	    }
+   155	    return { edit: result.data };
+   156	  }
+   157	
+   158	  const [busy, setBusy] = useState(false);
+   159	
+   160	  async function saveCut(): Promise<boolean> {
+   161	    const { edit, error } = snapshot();
+   162	    if (error) {
+   163	      setNotice({ tone: "warn", text: `Out of contract: ${error}` });
+   164	      return false;
+   165	    }
+   166	    setBusy(true);
+   167	    try {
+   168	      const res = await saveProjectEdit(projectId, JSON.stringify(edit));
+   169	      if (res && "error" in res && res.error) {
+   170	        setNotice({ tone: "warn", text: res.error });
+   171	        return false;
+   172	      }
+   173	      setDirty(false);
+   174	      setNotice({ tone: "ok", text: "Cut saved." });
+   175	      setTimeout(() => setNotice(null), 2200);
+   176	      return true;
+   177	    } catch {
+   178	      setNotice({ tone: "warn", text: "Save failed — check your connection and retry." });
+   179	      return false;
+   180	    } finally {
+   181	      setBusy(false);
+   182	    }
+   183	  }
+   184	
+   185	  async function exportCut() {
+   186	    // export always renders what is SAVED — save first if dirty
+   187	    if (dirty) {
+   188	      const ok = await saveCut();
+   189	      if (!ok) return;
+   190	    }
+   191	    const { edit, error } = snapshot();
+   192	    if (error) return setNotice({ tone: "warn", text: `Out of contract: ${error}` });
+   193	    setBusy(true);
+   194	    try {
+   195	      const res = await startRender(projectId, JSON.stringify(edit));
+   196	      if (res && "error" in res && res.error) setNotice({ tone: "warn", text: res.error });
+   197	      else {
+   198	        setNotice({ tone: "ok", text: "Render queued — progress below." });
+   199	        setTimeout(() => setNotice(null), 2600);
+   200	        setJobsTick((t) => t + 1); // poll immediately
+   201	      }
+   202	    } catch {
+   203	      setNotice({ tone: "warn", text: "Export failed — check your connection and retry." });
+   204	    } finally {
+   205	      setBusy(false);
+   206	    }
+   207	  }
+   208	
+   209	  async function resetToBoard() {
+   210	    if (!boardEdit) return;
+   211	    if (!confirm("Replace the saved cut with a fresh one built from the shot board?")) return;
+   212	    setBusy(true);
+   213	    try {
+   214	      const res = await saveProjectEdit(projectId, JSON.stringify(boardEdit));
+   215	      if (res && "error" in res && res.error) setNotice({ tone: "warn", text: res.error });
+   216	      else location.reload();
+   217	    } finally {
+   218	      setBusy(false);
+   219	    }
+   220	  }
+   221	
+   222	  // ---- render jobs strip (polls while anything is active) ----
+   223	  type JobRow = Awaited<ReturnType<typeof getRenderJobs>>[number];
+   224	  const [jobs, setJobs] = useState<JobRow[]>([]);
+   225	  const [jobsTick, setJobsTick] = useState(0);
+   226	  useEffect(() => {
+   227	    let stop = false;
+   228	    let timer: ReturnType<typeof setTimeout> | undefined;
+   229	    const poll = async () => {
+   230	      try {
+   231	        const rows = await getRenderJobs(projectId);
+   232	        if (stop) return;
+   233	        setJobs(rows);
+   234	        const active = rows.some((r) => r.status === "QUEUED" || r.status === "RENDERING");
+   235	        timer = setTimeout(poll, active ? 2500 : 15000);
+   236	      } catch {
+   237	        if (!stop) timer = setTimeout(poll, 10000);
+   238	      }
+   239	    };
+   240	    poll();
+   241	    return () => {
+   242	      stop = true;
+   243	      clearTimeout(timer);
+   244	    };
+   245	  }, [projectId, jobsTick]);
+   246	
+   247	  if (!initialEdit) {
+   248	    return (
+   249	      <div className="screen">
+   250	        <div className="screen-pad" style={{ display: "flex", justifyContent: "center", paddingTop: 70 }}>
+   251	          <EmptyHero
+   252	            title="Nothing to cut yet"
+   253	            desc="The editor starts from your shot board — attach a render to a shot and it lands here as a clip."
+   254	          >
+   255	            <Link href={`/?p=${projectId}`}>
+   256	              <Button>Go to the workbench</Button>
+   257	            </Link>
+   258	          </EmptyHero>
+   259	        </div>
+   260	      </div>
+   261	    );
+   262	  }
+   263	
+   264	  return (
+   265	    <div style={{ flex: 1, minHeight: 0, display: "flex", flexDirection: "column", padding: "0 18px 14px" }}>
+   266	      <div style={{ display: "flex", alignItems: "center", gap: 10, padding: "6px 4px 12px", flexWrap: "wrap" }}>
+   267	        <MonoLabel>Assembly cut</MonoLabel>
+   268	        <span style={{ font: "var(--text-mono-meta)", color: "var(--fg-3)" }}>
+   269	          {loadedFrom === "saved"
+   270	            ? "saved cut loaded"
+   271	            : `${attachedCount} clip${attachedCount === 1 ? "" : "s"} from the board`}
+   272	        </span>
+   273	        {loadedFrom === "saved" && boardEdit && (
+   274	          <button
+   275	            onClick={resetToBoard}
+   276	            disabled={busy}
+   277	            style={{
+   278	              font: "var(--text-caption)", color: "var(--fg-2)", background: "none",
+   279	              border: "none", cursor: "pointer", textDecoration: "underline", textUnderlineOffset: 3,
+   280	            }}
+   281	          >
+   282	            Reset to board
+   283	          </button>
+   284	        )}
+   285	        {dirty && <span style={{ font: "var(--text-mono-meta)", color: "var(--warning)" }}>unsaved</span>}
+   286	        {liveIssue && (
+   287	          <span role="status" style={{ font: "var(--text-small)", color: "var(--warning)" }}>
+   288	            Out of contract: {liveIssue}
+   289	          </span>
+   290	        )}
+   291	        {notice && (
+   292	          <span
+   293	            role="status"
+   294	            style={{ font: "var(--text-small)", color: notice.tone === "ok" ? "var(--positive)" : "var(--warning)" }}
+   295	          >
+   296	            {notice.text}
+   297	          </span>
+   298	        )}
+   299	        <span style={{ flex: 1 }} />
+   300	        <Chip mono interactive={false} title="The render target. Phase 2 adds your own templates and APIs.">
+   301	          Target · worker ffmpeg
+   302	        </Chip>
+   303	        <Button variant="glass" size="sm" onClick={saveCut} disabled={status !== "ready" || !dirty || busy}>
+   304	          {busy ? "Working…" : "Save cut"}
+   305	        </Button>
+   306	        <Button size="sm" onClick={exportCut} disabled={status !== "ready" || busy || !!liveIssue}>
+   307	          Export MP4
+   308	        </Button>
+   309	      </div>
+   310	
+   311	      {status === "failed" ? (
+   312	        <div className="al-panel" style={{ padding: 24 }}>
+   313	          <p style={{ font: "var(--text-body)", color: "var(--danger)", margin: 0 }}>
+   314	            The editor failed to load — check the console, then reload the page.
+   315	          </p>
+   316	        </div>
+   317	      ) : (
+   318	        <>
+   319	          <div
+   320	            ref={studioRef}
+   321	            data-shotstack-studio
+   322	            className="al-panel"
+   323	            style={{ flex: 1, minHeight: 240, overflow: "hidden", borderRadius: "var(--radius-lg)" }}
+   324	          />
+   325	          <div
+   326	            ref={timelineRef}
+   327	            data-shotstack-timeline
+   328	            style={{
+   329	              height: 280,
+   330	              overflow: "hidden",
+   331	              marginTop: 12,
+   332	              borderRadius: "var(--radius-lg)",
+   333	              border: "1px solid var(--line-2)",
+   334	            }}
+   335	          />
+   336	          {jobs.length > 0 && (
+   337	            <div style={{ display: "flex", flexDirection: "column", gap: 6, marginTop: 12 }} aria-label="Renders">
+   338	              <MonoLabel>Renders</MonoLabel>
+   339	              {jobs.map((j) => (
+   340	                <div key={j.id} className="glass-chip" style={{ display: "flex", alignItems: "center", gap: 10, borderRadius: "var(--radius-md)", padding: "8px 12px" }}>
+   341	                  <span className="mono-label" style={{ color: j.status === "FAILED" ? "var(--danger)" : j.status === "DONE" ? "var(--positive)" : "var(--fg-2)" }}>
+   342	                    {j.status}
+   343	                  </span>
+   344	                  {(j.status === "QUEUED" || j.status === "RENDERING") && (
+   345	                    <span style={{ flex: 1, height: 4, borderRadius: 99, background: "rgba(255,255,255,.08)", overflow: "hidden" }} aria-label={`progress ${j.progress}%`}>
+   346	                      <span style={{ display: "block", height: "100%", width: `${j.progress}%`, background: "linear-gradient(90deg, rgba(255,255,255,.55), #fff)", transition: "width .4s var(--ease-out)" }} />
+   347	                    </span>
+   348	                  )}
+   349	                  {j.status === "FAILED" && (
+   350	                    <span style={{ flex: 1, font: "var(--text-small)", color: "var(--danger)", whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }} title={j.error}>
+   351	                      {j.error || "render failed"} — fix the cut and export again
+   352	                    </span>
+   353	                  )}
+   354	                  {j.status === "DONE" && j.url && (
+   355	                    <>
+   356	                      <span style={{ flex: 1 }} />
+   357	                      <a href={j.url} download style={{ font: "var(--text-small)", color: "var(--fg-1)", textDecoration: "underline", textUnderlineOffset: 3 }}>
+   358	                        Download MP4
+   359	                      </a>
+   360	                    </>
+   361	                  )}
+   362	                  <span style={{ font: "var(--text-mono-meta)", color: "var(--fg-4)" }} suppressHydrationWarning>
+   363	                    {new Date(j.createdAt).toLocaleTimeString("en-US", { hour: "2-digit", minute: "2-digit" })}
+   364	                  </span>
+   365	                </div>
+   366	              ))}
+   367	            </div>
+   368	          )}
+   369	        </>
+   370	      )}
+   371	    </div>
+   372	  );
+   373	}
+
+exec
+/bin/zsh -lc "nl -ba apps/web/app/page.tsx | sed -n '1,220p'" in /Users/winnin/Documents/artlio
+ succeeded in 0ms:
+     1	import { kindOf, storage } from "@/lib/storage";
+     2	import {
+     3	  ensureDefaultProject,
+     4	  getProjects,
+     5	  getEntities,
+     6	  getShots,
+     7	  getCandidates,
+     8	} from "@/lib/data";
+     9	import { assetUrl, toEntityDTO } from "@/lib/dto";
+    10	import type { GenerationDTO, ProjectDTO, ShotDTO } from "@/lib/types";
+    11	import { Workbench } from "@/components/Workbench";
+    12	
+    13	export const dynamic = "force-dynamic";
+    14	
+    15	export default async function Page({
+    16	  searchParams,
+    17	}: {
+    18	  searchParams: Promise<{ p?: string }>;
+    19	}) {
+    20	  const { p } = await searchParams;
+    21	  const defaultProject = await ensureDefaultProject();
+    22	  const projects = await getProjects();
+    23	  const project = projects.find((x) => x.id === p) ?? defaultProject;
+    24	
+    25	  const [entities, shots, candidates] = await Promise.all([
+    26	    getEntities(),
+    27	    getShots(project.id),
+    28	    getCandidates(project.id),
+    29	  ]);
+    30	
+    31	  const entityDTOs = entities.map(toEntityDTO);
+    32	
+    33	  const toGenDTO = (g: (typeof candidates)[number]): GenerationDTO => ({
+    34	    id: g.id,
+    35	    version: g.version,
+    36	    promptText: g.promptText,
+    37	    createdAt: g.createdAt.toISOString(),
+    38	    url: assetUrl(g.asset.ownerId, g.asset.contentHash, g.asset.ext),
+    39	    kind: kindOf(g.asset.ext),
+    40	    filename: g.asset.originalFilename,
+    41	  });
+    42	
+    43	  const shotDTOs: ShotDTO[] = shots.map((s) => ({
+    44	    id: s.id,
+    45	    number: s.number,
+    46	    title: s.title,
+    47	    status: s.status,
+    48	    promptDoc: s.promptDoc,
+    49	    promptText: s.description,
+    50	    entityIds: s.entityRefs.map((r) => r.entityId),
+    51	    generations: s.generations.map(toGenDTO),
+    52	  }));
+    53	
+    54	  const projectDTOs: ProjectDTO[] = projects.map((x) => ({ id: x.id, name: x.name }));
+    55	
+    56	  return (
+    57	    <Workbench
+    58	      key={project.id} // reset client selection state when switching projects
+    59	      project={{ id: project.id, name: project.name }}
+    60	      projects={projectDTOs}
+    61	      entities={entityDTOs}
+    62	      shots={shotDTOs}
+    63	      candidates={candidates.map(toGenDTO)}
+    64	      directUpload={storage.supportsDirectUpload}
+    65	    />
+    66	  );
+    67	}
+
+exec
+/bin/zsh -lc "nl -ba apps/web/app/library/page.tsx | sed -n '1,220p'" in /Users/winnin/Documents/artlio
+ succeeded in 0ms:
+     1	import { getEntities } from "@/lib/data";
+     2	import { toEntityDTO } from "@/lib/dto";
+     3	import { AppShell } from "@/components/AppShell";
+     4	import { Library } from "@/components/Library";
+     5	
+     6	export const dynamic = "force-dynamic";
+     7	
+     8	export const metadata = { title: "Library · Artlio" };
+     9	
+    10	export default async function LibraryPage({
+    11	  searchParams,
+    12	}: {
+    13	  searchParams: Promise<{ e?: string }>;
+    14	}) {
+    15	  const { e } = await searchParams;
+    16	  const entities = await getEntities();
+    17	  return (
+    18	    <div className="flex flex-col h-dvh">
+    19	      {/* <1024: phase 1 is desktop-first — read-only, same as the workbench (D9) */}
+    20	      <div
+    21	        className="lg:hidden bg-accent-soft text-ink text-sm px-4 py-2 text-center"
+    22	        role="status"
+    23	      >
+    24	        Artlio works best on a desktop browser — this view is read-only.
+    25	      </div>
+    26	      <AppShell view="library" title="Elements">
+    27	        <div className="flex flex-1 min-h-0 max-lg:pointer-events-none">
+    28	          <Library entities={entities.map(toEntityDTO)} initialSelectedId={e ?? null} />
+    29	        </div>
+    30	      </AppShell>
+    31	    </div>
+    32	  );
+    33	}
+
+exec
+/bin/zsh -lc "nl -ba apps/web/app/editor/page.tsx | sed -n '1,260p'" in /Users/winnin/Documents/artlio
+ succeeded in 0ms:
+     1	import { ensureDefaultProject, getProjects, getShots } from "@/lib/data";
+     2	import { EditorShell } from "@/components/EditorShell";
+     3	import type { ArtlioEdit } from "@artlio/core";
+     4	import { artlioEdit, storageKeyToSrc, storageKey } from "@artlio/core";
+     5	
+     6	export const dynamic = "force-dynamic";
+     7	
+     8	export const metadata = { title: "Editor · Artlio" };
+     9	
+    10	/** Initial cut = every shot's latest attached render in board order.
+    11	 *  Video lengths come from the ingest probe (Asset.durationS); the fallback
+    12	 *  covers assets uploaded before the probe ran. Image length is a product
+    13	 *  default (images have no inherent duration). */
+    14	const FALLBACK_VIDEO_SECONDS = 5;
+    15	const IMAGE_SECONDS = 3;
+    16	
+    17	const VIDEO_EXTS = new Set(["mp4", "mov", "webm", "mkv"]);
+    18	const IMAGE_EXTS = new Set(["png", "jpg", "jpeg", "webp", "gif", "avif"]);
+    19	
+    20	export default async function EditorPage({
+    21	  searchParams,
+    22	}: {
+    23	  searchParams: Promise<{ p?: string }>;
+    24	}) {
+    25	  const { p } = await searchParams;
+    26	  const defaultProject = await ensureDefaultProject();
+    27	  const projects = await getProjects();
+    28	  const project = projects.find((x) => x.id === p) ?? defaultProject;
+    29	  const shots = await getShots(project.id);
+    30	
+    31	  const clips: ArtlioEdit["timeline"]["tracks"][number]["clips"] = [];
+    32	  let cursor = 0;
+    33	  for (const shot of shots) {
+    34	    const latest = shot.generations[0]; // version desc, attached only
+    35	    if (!latest) continue;
+    36	    // ingest lowercases extensions at both write sites; normalize anyway
+    37	    const ext = latest.asset.ext.toLowerCase();
+    38	    const isVideo = VIDEO_EXTS.has(ext);
+    39	    if (!isVideo && !IMAGE_EXTS.has(ext)) continue;
+    40	    const length = isVideo
+    41	      ? (latest.asset.durationS ?? FALLBACK_VIDEO_SECONDS)
+    42	      : IMAGE_SECONDS;
+    43	    clips.push({
+    44	      asset: {
+    45	        type: isVideo ? "video" : "image",
+    46	        src: storageKeyToSrc(storageKey(latest.asset.ownerId, latest.asset.contentHash, ext)),
+    47	      },
+    48	      start: cursor,
+    49	      length,
+    50	    });
+    51	    cursor += length;
+    52	  }
+    53	
+    54	  const boardEdit: ArtlioEdit | null =
+    55	    clips.length > 0
+    56	      ? {
+    57	          timeline: { background: "#000000", tracks: [{ clips }] },
+    58	          output: { format: "mp4", resolution: "1080", aspectRatio: "16:9", fps: 25 },
+    59	        }
+    60	      : null;
+    61	
+    62	  // the persisted working cut wins; stored canonical, re-checked anyway
+    63	  const savedParse = project.editJson ? artlioEdit.safeParse(project.editJson) : null;
+    64	  const savedEdit = savedParse?.success ? savedParse.data : null;
+    65	
+    66	  return (
+    67	    <div className="flex flex-col h-dvh">
+    68	      <div className="lg:hidden bg-accent-soft text-ink text-sm px-4 py-2 text-center" role="status">
+    69	        Artlio works best on a desktop browser — this view is read-only.
+    70	      </div>
+    71	      <EditorShell
+    72	        project={{ id: project.id, name: project.name }}
+    73	        projects={projects.map((x) => ({ id: x.id, name: x.name }))}
+    74	        boardEdit={boardEdit}
+    75	        savedEdit={savedEdit}
+    76	        attachedCount={clips.length}
+    77	      />
+    78	    </div>
+    79	  );
+    80	}
+
+exec
+/bin/zsh -lc "nl -ba /Users/winnin/.gstack/projects/artlio/research/ltx-ux-comparison.md | sed -n '1,260p'" in /Users/winnin/Documents/artlio
+ succeeded in 0ms:
+     1	# LTX Studio Competitive UX Teardown — for Artlio
+     2	
+     3	Grounded against Artlio's current M0 build (`01-empty.png`, `04-prompt-saved.png`, `06-attached.png`, `08-library.png`, `09-detail.png` in `/Users/winnin/.gstack/projects/artlio/m0-smoke/`) and the approved design doc (`/Users/winnin/.gstack/projects/artlio/winnin-master-design-20260610-024210.md`, UX 规格 section, D4–D19 decisions).
+     4	
+     5	---
+     6	
+     7	## 1. LTX Studio UX anatomy
+     8	
+     9	**The IA, as evidenced:**
+    10	
+    11	- **Home hub** = one decision: a 7-tile tool dock grouped CREATE (Gen Space, Canvas, Storyboard, Video Editor, Flows) vs SCALE (Dubbing, Caption), with try-before-you-click hover miniatures (12.57.13–12.57.23 screenshots). Projects are typed by originating tool ("Untitled Flow", 12.58.00).
+    12	- **Per-project surfaces**, ordered as a production pipeline in the sidebar: Gen Space → Canvas → Storyboard → Video editor → **Elements** (12.51.27, 1.01.43). Elements — the entity library — is a peer surface, project-scoped, with the @ glyph as its nav icon.
+    13	- **Global surfaces**: Assets (cross-project media files, 1.02.27), Brand Kits (Enterprise), Custom Training (a nav item that is purely a sales-modal trigger, 1.02.12/1.02.15), Education hub (1.02.21).
+    14	- **The floating composer is the real product.** One bottom-center bar follows the user across Gen Space and Canvas; a mode dropdown (Generate Images / Videos / TTS / Audio-to-Video / Video-to-Video / Retake / Extend / SDR-to-HDR / Upscale) re-templates the entire bar in place (12.51.25, 12.58.13, 12.59.57). Everything about a request is visible at the point of action: model chip, resolution, aspect, batch count, cost glyph, disabled-until-valid Generate.
+    15	
+    16	**Why it lands (why Artlio's potential customer loves it):**
+    17	
+    18	1. **Slots-top / text-middle / params-bottom never changes.** Modes swap the contents, never the shell (12.59.50, batch 7 insight). Muscle memory transfers across the whole suite.
+    19	2. **References are typed by role, not dumped in a bucket.** 'ADD IMAGE REFERENCE' vs 'CONSISTENT ELEMENT' (@ icon) as two side-by-side tiles (12.51.14, 1.01.43); 'ADD START FRAME' / 'ADD END FRAME' / 'ADD STYLE IMAGE' / 'POSE' control chip (12.59.43, 1.00.08–1.00.10). The slot name tells you how the model will use the asset.
+    20	3. **The UI teaches itself at the input.** Placeholder text rotates worked examples ('Use @Element to add characters, e.g., "@Character walking in the park"', 12.51.32); bracket-DSL tooltip on an (i) icon (12.51.48); control-mode picker with paired ORIGINAL/RESULT example videos (1.00.12–1.00.19); aspect ratios as true-proportion glyphs (12.51.35); camera moves previewed on an identical subject (12.59.46). Nothing requires docs.
+    21	4. **Validation is silent and visual.** Generate stays gray until required slots are filled; file formats are stated on hover before a wrong drop (1.00.02). No error dialogs.
+    22	5. **Identity = handle.** The element-creation NAME field is hard-prefixed with '@' and saving is blocked without a reference image ('Please pick a source image', 12.58.56, 12.59.06). What you type at creation is exactly what you @mention later.
+    23	
+    24	The dissonance: the polish is real, but Trustpilot (1.5/5, 88% one-star) shows the *economics under the UX* poison it — opaque credits, retry death-spirals, entities that mutate between logins, @tags that silently break (trustpilot.com/review/ltx.studio, pages 1–3). The UX is good; the business model it serves makes users hate it.
+    25	
+    26	---
+    27	
+    28	## 2. Where LTX and Artlio overlap and where they fundamentally differ
+    29	
+    30	**Overlap — Artlio's core bets, independently validated by the incumbent:**
+    31	
+    32	- **@mention entities are proven UX.** LTX's @ syntax with autocomplete ("works like mentioning someone on social media", ltx.io/blog/getting-started-with-elements) is functionally identical to Artlio's @mention chips (`04-prompt-saved.png`). The market leader converged on the same grammar.
+    33	- **The taxonomy matches almost word-for-word.** "Save characters, props, products, or places you want to reuse" (Elements empty state, 12.52.29) ≈ Artlio's characters/locations/products/brands (`08-library.png`).
+    34	- **Reference-vs-entity is a real distinction.** LTX renders it as two separate composer tiles (1.01.43) — exactly the conceptual split Artlio is built on.
+    35	- **Model-neutrality at the reference layer is conceded by the vertically-integrated player itself.** LTX ships OpenAI/Google/BFL/Alibaba/Kling/Seedance models as swappable chips and nodes (12.51.23, 12.59.32–12.59.37, 12.57.36), and its own Flows Prompt node carries an '@' attach button (12.57.30). Even LTX treats prompt+references as the stable unit and the model as an interchangeable slot.
+    36	
+    37	**Fundamental divergence — and what it means for borrowing:**
+    38	
+    39	| Dimension | LTX | Artlio |
+    40	|---|---|---|
+    41	| Generation | In-house, credit-metered; every iteration is billable revenue (calcalistech, pricing page) | External (ComfyUI Phase 1; BYO keys Phase 2); zero metering |
+    42	| Entity scope | Per-project; cross-project only via Enterprise Brand Kit (12.52.29, 1.02.23) | Global library across projects (`08-library.png`: "shared across all projects") |
+    43	| Entity history | Live propagation — "update once, propagate everywhere"; no snapshots | Frozen entity snapshots in generation history (doc invariant #3) |
+    44	| Entity layer pricing | Paywalled: Elements at $35/mo Standard; brand assets and custom training at Enterprise (1.01.48, 1.02.12) | The free foundation — the wedge itself |
+    45	| Consistency mechanism | Reference conditioning + LoRA/Actor fine-tuning (model lock-in) | Pure reference management above any model |
+    46	
+    47	The structural consequence: **LTX's UX is optimized to keep the loop inside the meter.** Externally-rendered content has no place in their model — their credit economics forbid it. That is exactly the door Artlio walks through (and their own open-source users are asking for it: github.com/Lightricks/ltx-desktop/issues/104 requests character consistency for local generation). So the borrowing rule is: **steal point-of-prompting interaction patterns and teaching mechanics freely; reject anything whose existence assumes in-platform, metered generation.**
+    48	
+    49	---
+    50	
+    51	## 3. BORROW list (prioritized)
+    52	
+    53	**Quick wins:**
+    54	
+    55	1. **@ hard-prefixed name field at entity creation** (12.58.56: NAME input literally starts with '@', placeholder '@Element'). Why: fuses handle and identity at the moment of creation — the user never has to "learn mention syntax" because they typed the handle themselves. Effort: **S**. Lands on: Workbench Subjects panel create form (`01-empty.png`) + Library "+ New character/location/…" forms.
+    56	2. **Worked-example teaching placeholders in the @composer** (12.51.32: '@Character walking in the park'; 12.51.48: just-in-time (i) tooltip for the bracket DSL). Why: the @ grammar is Artlio's one piece of syntax; teach it inside the input. Extends the doc's approved placeholder "Type @ to reference…" (48-state grid, D6) — consistent, not contradicting. Effort: **S**. Lands on: @composer empty/placeholder state.
+    57	3. **Reference-capture best-practice microcopy in upload zones** (12.58.56: "Upload multiple images from different angles for better results"; LTX blog: neutral backgrounds, varied framings, ltx.io/blog/how-to-create-a-consistent-character). Why: Artlio's value is reference quality; teach it where refs enter. `08-library.png` already does this for Products ("Clean studio shots from several angles") — extend to all four types and the entity detail "+ Add" (`09-detail.png`). Effort: **S**.
+    58	4. **Loud referential integrity.** Trustpilot's most damning entity complaints are silently broken @tags (Witek: "@tag system… doesn't work at all"; Michael Fierro: prompts referencing "@blah" that "does not exist"). Doc already specifies gray+strikethrough deleted chips (D6); go further: "Copy resolved prompt" must hard-validate every mention resolves to a live entity with ≥1 reference, and block-with-reason otherwise. Effort: **S**. Lands on: composer Copy/Save actions.
+    59	5. **"How to" one click from creation** (12.52.29: ghost 'ⓘ How to' beside '+ New Element'). Why: pairs education with the primary CTA without a docs site. For M0 this can be a popover, not a video. Effort: **S**. Lands on: Subjects panel + Library section headers.
+    60	6. **Mandatory-or-loud reference enforcement** (12.59.06: save blocked with inline "Please pick a source image"). ⚠️ **Flag, don't silently adopt:** the approved doc specifies a *missing-image warning* in the left rail (缺图警示), implying entities may exist ref-less (useful as placeholders during scripting). Recommendation: keep warn-not-block, but make the warning LTX-loud — badge on the entity chip AND on any shot that @mentions a ref-less entity, plus the validation in item 4. Effort: **S**. Founder should ratify this divergence explicitly.
+    61	
+    62	**Medium / structural:**
+    63	
+    64	7. **Prompt-anchoring in the resolved prompt / ComfyUI export pack.** LTX's documented consistency technique #4 is a standardized 50–80-word character description block reused verbatim (ltx.io/blog/how-to-maintain-character-consistency-in-ai-video). Artlio already stores Notes + Negative Constraints per entity (`09-detail.png`) — fold them into "Copy resolved prompt" output and the prompt-pack export as a per-entity anchor block + negative section. This makes Artlio's export measurably better than hand-copying. Effort: **M**. Lands on: composer copy action + export pipeline (doc 阶段一 ComfyUI prompt 包导出).
+    65	8. **Role tags on reference images** (LTX types every slot: START FRAME, STYLE IMAGE, POSE; teaches "varied framings — close-up, medium, full body"). For Artlio: tag each reference inside an entity (face close-up / full body / turnaround / style) so exports can say which ref serves which purpose in a ComfyUI graph (IPAdapter face vs style, etc. — the founder's home turf). Effort: **M**. Lands on: Library detail panel (`09-detail.png` REFERENCES grid).
+    66	9. **Status-bearing chip row as a "request sentence."** LTX's composer footer reads as the active configuration at a glance (12.58.32). Artlio's per-shot equivalent: shot card footer chips = entities used + version count + state badge (Draft → Exported → Attached → Final per doc state machine). `06-attached.png` is most of the way there; make the state chip carry the doc's four-state machine explicitly. Effort: **M**. Lands on: shot board cards.
+    67	10. **"Unattached · N" as the default-front filter with batch attach.** Already approved in the doc (D6 grid + batch-attach floating bar) — LTX's candidate-batch mental model (Flows fan-out, 12.57.23) confirms users think in batches of candidates. Note the delta: doc D4 places candidates as the bottom History panel's "Unattached" filter; current build (`01-empty.png`) shows a separate right-column Candidates zone. Reconcile toward the doc. Effort: **M** (already scheduled).
+    68	11. **Phase 2 prep — target/template as a composer chip.** LTX proves model-as-swappable-chip with one-line plain-language descriptors and per-row cost (12.51.23, 12.52.04). When Artlio Phase 2 adds BYO-key generation, the user's templates/models should appear as exactly such a chip row with one-clause descriptions — not a settings page. Effort: **L** (Phase 2). Lands on: composer footer. See section 5.
+    69	12. **Entity variants as first-class states (backlog).** LTX's documented workaround is duplicating elements (@Sarah_casual / @Sarah_formal — lightricks.zendesk.com character docs), which users find clunky. Artlio can beat it with variants under one entity (e.g., @Maya → outfit picker), and frozen snapshots already give the data model a head start. ⚠️ Not in the approved M0 scope — backlog item, must not block M0 per the doc's 施工顺序铁律. Effort: **L**.
+    70	
+    71	---
+    72	
+    73	## 4. REJECT list
+    74	
+    75	1. **Any metering of the entity/reference layer.** LTX charges credits to *create* an actor (Patrick: "creating a professional actor burned $5"; Witek: 1,000 credits for one actor) and gates Elements to the $35 tier (1.01.48). This is their single most resented pattern and the exact inverse of Artlio's wedge. The reference layer stays free, always.
+    76	2. **Live propagation of entity edits into history.** LTX's "Replace Image… automatically applies anywhere that Element is tagged" produced Zoe Green's nightmare ("The system had decided of its own volition to edit my characters between logins"). Directly conflicts with Artlio's approved frozen-snapshot invariant (doc invariant #3). Edits propagate *forward* only; history is immutable.
+    77	3. **Project-scoped entities.** LTX's Elements live per project; cross-project reuse is an Enterprise Brand Kit upsell (1.02.23). Artlio's global library (`08-library.png`) is the differentiator — never scope it down, even "for tidiness."
+    78	4. **Consistency via fine-tuning (Actors/LoRA, immutable after training, Enterprise sales motion** — 1.02.12 "Unlock Custom Training"). Model-locked, compute-heavy, anti-thesis. Artlio's positioning statement writes itself against this: consistency from references, no training, any model.
+    79	5. **Multi-surface suite sprawl.** Seven tools, five per-project surfaces, Canvas + Flows + Pitch Decks. For a solo founder this is a scope trap, and the doc fixes Workbench as the 唯一主画面. Even LTX users complain about it (Richard Sudborough lost 6 hours finding the prompt field). One workbench, full stop.
+    80	6. **Generation parameter chips in Phase 1 (model / resolution / aspect / variations / cost).** Every one of these assumes in-platform generation. Premature in Phase 1; selectively revived in Phase 2 for BYO-key targets only.
+    81	7. **AI script-to-storyboard / auto cast extraction.** Attractive demo, but it's where LTX's referential integrity collapses (Fierro's broken "@blah" cast; FYV: "ate up all credits instantly by pressing one button") and it's a giant NLP scope item. Not Artlio's job.
+    82	8. **Opaque abstraction units.** LTX renamed "computing seconds" → "credits" mid-flight and needed an in-product FAQ to explain it (12.57.05); users called the opacity "100% by design" (Jens snej). If Artlio ever quotas anything (storage), use concrete units (GB, files).
+    83	9. **Teaser/upsell chrome:** permanently disabled "Collaborate" buttons, nav items that are sales modals (Custom Training, 1.02.15), "Book a demo" in the sidebar. Irrelevant for single-user Phase 1 and corrosive to trust.
+    84	10. **UI churn as a way of life.** Long-term subscribers' top complaint is "constant shifting sands every time you log in" (Alex H), silent feature removal (Cole). An entity layer is a system of record — Artlio should bias toward stability and migration paths over feature velocity. Process rule, not a feature.
+    85	11. **Variant-by-duplication** (@JohnSmith vs @JohnSmithBeach). Don't replicate the workaround; do variants properly later (Borrow #12) or not at all.
+    86	
+    87	---
+    88	
+    89	## 5. The one structural insight
+    90	
+    91	**The composer is the stable shell that absorbs the roadmap; surfaces don't multiply — the footer re-templates.** LTX's deepest IA move is that one slots-top / text-middle / params-bottom composer carries the entire product: modes, models, references, validation, cost, and teaching all morph *inside* a fixed shell (batches 1, 6, 7). Users never relearn the room; only the furniture changes. Artlio's Phase 1 → Phase 2 transition (manual ComfyUI copy-out → BYO-key generation) is exactly the kind of evolution this shell is built for — and getting the shell right now means Phase 2 adds a dropdown, not a redesign.
+    92	
+    93	Migration sketch (does not alter M0 scope; steps 1–2 are M0-compatible refinement, 3 is the gate, 4–5 are Phase 2):
+    94	
+    95	1. **M0 as-is, plus the doc delta:** keep composer + shot board; move Candidates into the bottom History panel's "Unattached" filter per D4 (current right-column placement in `01-empty.png` diverges from the approved doc).
+    96	2. **Formalize the three-band composer shell:** top band = @mentioned entities rendered as reference thumbnails with role labels (read-only mirror of the chips in text — LTX's 'CONSISTENT ELEMENT' tile, made automatic); middle = prompt text with chips; bottom = action footer (Save prompt / Copy resolved prompt / shot state chip).
+    97	3. **Introduce an explicit "Target" chip in the footer, even though Phase 1 has exactly one value: `ComfyUI · manual`.** This costs almost nothing now but establishes the slot where model/template choice will live — the same move as LTX's model chip. Copy resolved prompt / Export pack become the "verb" of that target.
+    98	4. **Phase 2: the Target dropdown gains the user's own API templates/keys** (one-line plain-language descriptors per row, LTX-style); selecting an API target morphs the footer verb from Copy → Generate, and results auto-land in the same Unattached candidate flow manual drops use today. One ingestion path, two sources.
+    99	5. **Throughout: every version in History records the frozen composer state** — entities (snapshotted), references, resolved prompt, target — identical record shape for manual and API renders. This is the doc's snapshot invariant doing double duty as the Phase 2 data contract.
+   100	
+   101	The strategic kicker: LTX built this composer to keep users inside the meter. Artlio builds the same shell to point *outward* — same ergonomics, inverted economics. That's the whole positioning in one component.
+codex
+One important finding: the editor is technically real, not just a placeholder, but it only consumes attached renders. That makes “attach” the product’s hidden gate between ideation and export, which is a UX risk because the gate is distributed across drag/drop, an attach menu, and screen navigation rather than presented as a clear production step.
+exec
+/bin/zsh -lc "nl -ba apps/web/components/EditorShell.tsx | sed -n '1,240p'" in /Users/winnin/Documents/artlio
+ succeeded in 0ms:
+     1	"use client";
+     2	
+     3	import { useState } from "react";
+     4	import type { ProjectDTO } from "@/lib/types";
+     5	import type { ArtlioEdit } from "@artlio/core";
+     6	import { AppShell } from "./AppShell";
+     7	import { Editor } from "./Editor";
+     8	
+     9	/** Client wrapper so the editor's dirty state can guard navigation
+    10	 *  (codex review: the cut needs the same leave-guard the composer has). */
+    11	export function EditorShell({
+    12	  project,
+    13	  projects,
+    14	  boardEdit,
+    15	  savedEdit,
+    16	  attachedCount,
+    17	}: {
+    18	  project: ProjectDTO;
+    19	  projects: ProjectDTO[];
+    20	  boardEdit: ArtlioEdit | null;
+    21	  savedEdit: ArtlioEdit | null;
+    22	  attachedCount: number;
+    23	}) {
+    24	  const [dirty, setDirty] = useState(false);
+    25	  const confirmLeave = () =>
+    26	    !dirty || confirm("Discard unsaved changes to this cut?");
+    27	
+    28	  return (
+    29	    <AppShell
+    30	      view="editor"
+    31	      title="Editor"
+    32	      confirmLeave={confirmLeave}
+    33	      project={project}
+    34	      projects={projects}
+    35	    >
+    36	      <div className="flex flex-col flex-1 min-h-0 max-lg:pointer-events-none">
+    37	        <Editor
+    38	          projectId={project.id}
+    39	          boardEdit={boardEdit}
+    40	          savedEdit={savedEdit}
+    41	          attachedCount={attachedCount}
+    42	          onDirtyChange={setDirty}
+    43	        />
+    44	      </div>
+    45	    </AppShell>
+    46	  );
+    47	}
+
+exec
+/bin/zsh -lc "rg -n \"ComfyUI|Target|Attach|attached|Unattached|Nothing to cut|read-only|Generate|Copy resolved|Export MP4|Library|Elements|Workbench|Editor\" apps/web/components apps/web/app -g '*.tsx'" in /Users/winnin/Documents/artlio
+ succeeded in 0ms:
+apps/web/components/EditorShell.tsx:7:import { Editor } from "./Editor";
+apps/web/components/EditorShell.tsx:11:export function EditorShell({
+apps/web/components/EditorShell.tsx:16:  attachedCount,
+apps/web/components/EditorShell.tsx:22:  attachedCount: number;
+apps/web/components/EditorShell.tsx:31:      title="Editor"
+apps/web/components/EditorShell.tsx:37:        <Editor
+apps/web/components/EditorShell.tsx:41:          attachedCount={attachedCount}
+apps/web/app/page.tsx:11:import { Workbench } from "@/components/Workbench";
+apps/web/app/page.tsx:57:    <Workbench
+apps/web/components/Library.tsx:55:export function Library({
+apps/web/components/Library.tsx:90:                Elements
+apps/web/components/Library.tsx:244:      setError("Add at least one source image, or switch to Generate.");
+apps/web/components/Library.tsx:295:            { value: "generate", label: "Generate refs" },
+apps/web/components/Library.tsx:346:            with your logo) to render in ComfyUI — drop the results straight back in.
+apps/web/components/Library.tsx:375:function GenerateRefsBlock({ entity }: { entity: EntityDTO }) {
+apps/web/components/Library.tsx:433:        <MonoLabel>Generate references</MonoLabel>
+apps/web/components/Library.tsx:467:          {busy ? `Generating ${count}… ${elapsed}s` : `Generate ${count} (~$${cost})`}
+apps/web/components/Library.tsx:593:            <GenerateRefsBlock entity={entity} />
+apps/web/components/Library.tsx:626:            <GenerateRefsBlock entity={entity} />
+apps/web/app/editor/page.tsx:2:import { EditorShell } from "@/components/EditorShell";
+apps/web/app/editor/page.tsx:8:export const metadata = { title: "Editor · Artlio" };
+apps/web/app/editor/page.tsx:10:/** Initial cut = every shot's latest attached render in board order.
+apps/web/app/editor/page.tsx:20:export default async function EditorPage({
+apps/web/app/editor/page.tsx:34:    const latest = shot.generations[0]; // version desc, attached only
+apps/web/app/editor/page.tsx:69:        Artlio works best on a desktop browser — this view is read-only.
+apps/web/app/editor/page.tsx:71:      <EditorShell
+apps/web/app/editor/page.tsx:76:        attachedCount={clips.length}
+apps/web/components/AppShell.tsx:35:  const [workbenchHref, setWorkbenchHref] = useState("/");
+apps/web/components/AppShell.tsx:44:    if (p) setWorkbenchHref(`/?p=${p}`);
+apps/web/components/AppShell.tsx:110:            <span className="lbl">Workbench</span>
+apps/web/components/AppShell.tsx:116:            <span className="lbl">Editor</span>
+apps/web/components/AppShell.tsx:126:            <span className="lbl">Elements</span>
+apps/web/components/AppShell.tsx:152:        {/* <1024 the sidenav is hidden — keep page navigation alive in read-only mode */}
+apps/web/components/AppShell.tsx:158:            Workbench
+apps/web/components/AppShell.tsx:163:            Editor
+apps/web/components/AppShell.tsx:168:            Elements
+apps/web/components/Editor.tsx:28:export function Editor({
+apps/web/components/Editor.tsx:32:  attachedCount,
+apps/web/components/Editor.tsx:40:  attachedCount: number;
+apps/web/components/Editor.tsx:147:    if (!h) return { error: "Editor not ready yet." };
+apps/web/components/Editor.tsx:252:            title="Nothing to cut yet"
+apps/web/components/Editor.tsx:271:            : `${attachedCount} clip${attachedCount === 1 ? "" : "s"} from the board`}
+apps/web/components/Editor.tsx:301:          Target · worker ffmpeg
+apps/web/components/Editor.tsx:307:          Export MP4
+apps/web/components/ds.tsx:176:        if (e.target === e.currentTarget && onClose) onClose();
+apps/web/components/Composer.tsx:11:import { useEditor, EditorContent, ReactRenderer } from "@tiptap/react";
+apps/web/components/Composer.tsx:73:            No matching elements — create one in the Library.
+apps/web/components/Composer.tsx:132:    <div className="al-promptbar-row" aria-label="Elements in this prompt">
+apps/web/components/Composer.tsx:196:  const editor = useEditor({
+apps/web/components/Composer.tsx:347:        `${refless.map((e) => e.name).join(", ")} ${refless.length === 1 ? "has" : "have"} no reference images yet — add or generate some in the Library so the render stays on-model.`,
+apps/web/components/Composer.tsx:391:          <EditorContent editor={editor} />
+apps/web/components/Composer.tsx:394:              Target · ComfyUI manual
+apps/web/components/Composer.tsx:402:              {copied ? "Copied ✓" : "Copy resolved prompt"}
+apps/web/components/Workbench.tsx:23:  { value: "ATTACHED", label: "Attached" },
+apps/web/components/Workbench.tsx:45:export function Workbench({
+apps/web/components/Workbench.tsx:62:  const [historyFilter, setHistoryFilter] = useState<"unattached" | "shot">("unattached");
+apps/web/components/Workbench.tsx:91:      {/* <1024: phase 1 is desktop-first — read-only notice (design doc D9) */}
+apps/web/components/Workbench.tsx:93:        Artlio works best on a desktop browser — this view is read-only.
+apps/web/components/Workbench.tsx:98:        title="Workbench"
+apps/web/components/Workbench.tsx:130:                          subjects in the <Link href="/library" style={{ color: "var(--fg-1)", textDecoration: "underline", textUnderlineOffset: 3 }}>Library</Link> to @mention them.
+apps/web/components/Workbench.tsx:161:                <Chip selected={historyFilter === "unattached"} onClick={() => setHistoryFilter("unattached")}>
+apps/web/components/Workbench.tsx:162:                  Unattached · {candidates.length}
+apps/web/components/Workbench.tsx:177:                  {historyFilter === "unattached"
+apps/web/components/Workbench.tsx:178:                    ? "Render in ComfyUI with your copied prompt, then drop the results above — every version stays linked to its prompt and elements."
+apps/web/components/Workbench.tsx:179:                    : "Nothing attached to this shot yet — attach a candidate from the Unattached tab, or drag one onto the shot card."}
+apps/web/components/Workbench.tsx:340:  mode: "unattached" | "shot";
+apps/web/components/Workbench.tsx:344:  const [attachMenu, setAttachMenu] = useState(false);
+apps/web/components/Workbench.tsx:349:      draggable={mode === "unattached"}
+apps/web/components/Workbench.tsx:367:            {mode === "unattached" ? (
+apps/web/components/Workbench.tsx:370:                  <Chip selected={attachMenu} onClick={() => setAttachMenu(!attachMenu)} disabled={pending || shots.length === 0}>
+apps/web/components/Workbench.tsx:371:                    {shots.length === 0 ? "No shots yet" : "Attach to shot…"}
+apps/web/components/Workbench.tsx:375:                    onClose={() => setAttachMenu(false)}
+apps/web/components/Workbench.tsx:377:                    heading="Attach to"
+apps/web/components/Workbench.tsx:395:                  Detach → unattached
+apps/web/app/library/page.tsx:4:import { Library } from "@/components/Library";
+apps/web/app/library/page.tsx:8:export const metadata = { title: "Library · Artlio" };
+apps/web/app/library/page.tsx:10:export default async function LibraryPage({
+apps/web/app/library/page.tsx:19:      {/* <1024: phase 1 is desktop-first — read-only, same as the workbench (D9) */}
+apps/web/app/library/page.tsx:24:        Artlio works best on a desktop browser — this view is read-only.
+apps/web/app/library/page.tsx:26:      <AppShell view="library" title="Elements">
+apps/web/app/library/page.tsx:28:          <Library entities={entities.map(toEntityDTO)} initialSelectedId={e ?? null} />
+
+codex
+The LTX teardown’s relevant lesson is not “copy their suite”; it is that the composer is the stable product surface, with reference slots and target/model parameters exposed at the moment of prompting. Artlio has the seed of that idea in `Composer`, but it is split across Library, Workbench history, and Editor instead of being one continuous generation loop.
+codex
+Assumption: this critiques the current as-built M0 flow, not the intended roadmap.
+
+**1. Core Diagnosis**
+
+Artlio’s biggest structural UX problem is that the creator, not the product, is the workflow engine.
+
+The product has strong pieces: global Elements, @mentions, reference health, shot cards, upload provenance, and a real MP4 editor. But the central object a creator needs, “this shot generation attempt using these locked references against this target, producing these candidates,” is missing from the UI. So the flow becomes: manage references in one room, write/copy a prompt in another, render elsewhere, upload back, manually attach, then switch to editor.
+
+Evidence:
+
+- Navigation splits the production loop into `Workbench`, `Editor`, and global `Elements` rather than one continuous creation surface: [AppShell.tsx](/Users/winnin/Documents/artlio/apps/web/components/AppShell.tsx:106).
+- The Workbench empty state sends users away to Library before they can meaningfully create: [Workbench.tsx](/Users/winnin/Documents/artlio/apps/web/components/Workbench.tsx:122).
+- The composer’s main action is still `Copy resolved prompt`, with an inert `Target · ComfyUI manual` chip: [Composer.tsx](/Users/winnin/Documents/artlio/apps/web/components/Composer.tsx:392).
+- Returned outputs land as `Unattached` history and require manual attach/drag: [Workbench.tsx](/Users/winnin/Documents/artlio/apps/web/components/Workbench.tsx:160), [Workbench.tsx](/Users/winnin/Documents/artlio/apps/web/components/Workbench.tsx:367).
+- The editor only sees the latest attached render per shot: [page.tsx](/Users/winnin/Documents/artlio/apps/web/app/editor/page.tsx:31). No attachment, no film.
+
+LTX’s useful lesson is not the suite sprawl. It is the stable composer shell: references, prompt, params, validation, and target live at the point of action ([ltx-ux-comparison.md](/Users/winnin/.gstack/projects/artlio/research/ltx-ux-comparison.md:89)). Artlio has the components, but not yet the loop.
+
+**2. The Broken Seams**
+
+Creator goal: “I want to make a video ad.”
+
+- **Project start:** New project is just a shot board. There is no ad brief, platform, duration, product objective, or target audience. “Plan the film shot by shot” is generic film language, not creator/ad language: [Workbench.tsx](/Users/winnin/Documents/artlio/apps/web/components/Workbench.tsx:125).
+- **Reference setup:** Elements are powerful, but creating them requires leaving the Workbench. The @mention dropdown dead-ends with “create one in the Library” instead of letting the user create inline: [Composer.tsx](/Users/winnin/Documents/artlio/apps/web/components/Composer.tsx:71).
+- **Generate refs inconsistency:** `CreateDialog` says Generate refs will produce a prompt to render in ComfyUI: [Library.tsx](/Users/winnin/Documents/artlio/apps/web/components/Library.tsx:344). But the detail drawer actually generates references in-app via Seedream/fal with price and polling: [Library.tsx](/Users/winnin/Documents/artlio/apps/web/components/Library.tsx:418). That is a real UX contradiction.
+- **Prompting:** @mentions work well, and blocking copy for missing references is correct: [Composer.tsx](/Users/winnin/Documents/artlio/apps/web/components/Composer.tsx:332). But “resolved prompt” resolves mostly to text/name, not a portable reference pack with images, notes, negatives, target metadata, and a ComfyUI-ready manifest: [Composer.tsx](/Users/winnin/Documents/artlio/apps/web/components/Composer.tsx:112).
+- **External render:** The user copies text, leaves Artlio, renders in ComfyUI, then remembers to return. The `Target` chip names the handoff but does not operationalize it.
+- **Return/upload:** Upload preserves selected-shot prompt/entity provenance: [Workbench.tsx](/Users/winnin/Documents/artlio/apps/web/components/Workbench.tsx:425). But it still drops the user into an “Unattached” mental model instead of “candidates for Shot 02.”
+- **Selection:** Candidate review is really file management. “Attach to shot…” is an implementation action; the creator action is “use this take.”
+- **Editor handoff:** Editor starts from attached latest renders only and shows “Nothing to cut yet” otherwise: [Editor.tsx](/Users/winnin/Documents/artlio/apps/web/components/Editor.tsx:247). This makes attach the hidden gate to MP4.
+- **Export:** Export exists, but `Target · worker ffmpeg` is engineering language: [Editor.tsx](/Users/winnin/Documents/artlio/apps/web/components/Editor.tsx:299). The user should see “MP4 render,” not infrastructure.
+
+**3. Optimized Flow**
+
+**Workbench: Campaign Board**
+
+Start with one screen for the ad: project brief, shot list, active shot, candidate tray, and composer. Library remains available, but not required before creation.
+
+**Inline Element Creation**
+
+Typing `@Maya` with no match should offer `Create @Maya` inline. The modal should ask: Character / Location / Product / Brand, then Upload refs or Generate refs in Artlio. No separate Library trip for the happy path.
+
+**Composer As Control Center**
+
+Use a three-band composer:
+
+- Top: reference strip showing mentioned entities, thumbnails, missing-ref warnings, roles, and reference count.
+- Middle: prompt text with @chips.
+- Bottom: target/actions. Today: `Manual ComfyUI` with `Prepare pack`, `Copy prompt`, `Download refs`. Later: connected fal/BYO targets with `Generate`.
+
+**Shot Runs**
+
+Every time the user prepares or generates, create a visible “run” under the selected shot: prompt, refs, target, time, status, candidates. Manual ComfyUI can be `Awaiting upload`; connected fal can be `Generating`.
+
+**Candidate Review**
+
+Returned files should default into `Shot 02 candidates`, not `Unattached`, when a shot is selected. Primary action: `Use take`. Secondary: compare, discard, move to another shot.
+
+**Editor**
+
+Editor should read selected takes from the board and show sync state: “12 selected takes from board.” Replace `Reset to board` with a non-destructive `Update from board` diff. Export remains simple: Save cut, Export MP4, Download.
+
+**Library**
+
+Library becomes the global Reference Registry: manage aliases, refs, notes, negatives, variants, and usage. It should also have “Add to current shot” when a project/shot context exists.
+
+**4. Prioritized Changes**
+
+**Quick Wins, Days**
+
+| Problem | Change | Effort |
+|---|---|---:|
+| Generate refs copy contradicts actual Seedream flow | Rewrite create dialog generate path; after create, open detail drawer focused on `Generate references` | S |
+| Library is a required detour | Add `Create element` action directly from no-match @mention | M |
+| `Copy resolved prompt` undersells the wedge | Rename to `Prepare for ComfyUI`; show copied prompt plus refs/manifest next step | S-M |
+| “Unattached” is internal jargon | Rename to `Candidate inbox`; for selected shot, label `Shot 02 candidates` | S |
+| Manual attach is hidden gate | Add primary `Use take for Shot 02` on candidate cards | S |
+| Statuses are user-editable process labels | Auto-advance visible shot state from prompt ready → candidates → take selected → in cut | M |
+| Inert target chips | Make `Target · ComfyUI manual` clickable with target details and actions | S |
+| Editor jargon | Replace `Target · worker ffmpeg` with `MP4 render` | S |
+
+**Structural, Weeks**
+
+| Problem | Change | Effort |
+|---|---|---:|
+| No first-class generation attempt | Add Shot Run model/UI: prompt + refs + target + outputs | L |
+| References are not portable enough | Build ComfyUI export pack: prompt, refs, notes, negatives, JSON manifest | M-L |
+| Workbench/Library seam | Add Elements drawer inside Workbench with inline create/edit | M-L |
+| Manual and API generation diverge | Route manual uploads and connected fal/BYO generations into same candidate tray | L |
+| Editor sync is brittle | Add board-to-editor sync diff and selected-take semantics | M-L |
+| Reference quality is under-specified | Add reference roles/tags: face, full body, product angle, logo, style, location wide | M |
+
+**5. Wedge Protection**
+
+Do not become LTX.
+
+Artlio’s protected wedge is not “AI video studio.” It is the model-neutral reference layer for creators who use many generation tools.
+
+Protect that by keeping these boundaries:
+
+- References stay free; generation is where monetization lives.
+- Global entity library remains core; do not bury it inside project-only assets.
+- Manual ComfyUI is first-class, not a temporary embarrassment.
+- Connected fal/BYO targets should be adapters to the same reference/prompt/run system.
+- Entity edits should affect future runs, not mutate history.
+- Avoid LTX-style suite sprawl: no separate Gen Space, Canvas, Storyboard, Flows clone.
+- Avoid opaque credits and teaser chrome.
+- Prefer “portable reference pack” over “closed video generator.”
+
+The product should feel like: “Lock your cast, products, places, and brand once; send them to any model; keep every shot traceable.” That is distinct, useful, and defensible.
+tokens used
+76,215
+Assumption: this critiques the current as-built M0 flow, not the intended roadmap.
+
+**1. Core Diagnosis**
+
+Artlio’s biggest structural UX problem is that the creator, not the product, is the workflow engine.
+
+The product has strong pieces: global Elements, @mentions, reference health, shot cards, upload provenance, and a real MP4 editor. But the central object a creator needs, “this shot generation attempt using these locked references against this target, producing these candidates,” is missing from the UI. So the flow becomes: manage references in one room, write/copy a prompt in another, render elsewhere, upload back, manually attach, then switch to editor.
+
+Evidence:
+
+- Navigation splits the production loop into `Workbench`, `Editor`, and global `Elements` rather than one continuous creation surface: [AppShell.tsx](/Users/winnin/Documents/artlio/apps/web/components/AppShell.tsx:106).
+- The Workbench empty state sends users away to Library before they can meaningfully create: [Workbench.tsx](/Users/winnin/Documents/artlio/apps/web/components/Workbench.tsx:122).
+- The composer’s main action is still `Copy resolved prompt`, with an inert `Target · ComfyUI manual` chip: [Composer.tsx](/Users/winnin/Documents/artlio/apps/web/components/Composer.tsx:392).
+- Returned outputs land as `Unattached` history and require manual attach/drag: [Workbench.tsx](/Users/winnin/Documents/artlio/apps/web/components/Workbench.tsx:160), [Workbench.tsx](/Users/winnin/Documents/artlio/apps/web/components/Workbench.tsx:367).
+- The editor only sees the latest attached render per shot: [page.tsx](/Users/winnin/Documents/artlio/apps/web/app/editor/page.tsx:31). No attachment, no film.
+
+LTX’s useful lesson is not the suite sprawl. It is the stable composer shell: references, prompt, params, validation, and target live at the point of action ([ltx-ux-comparison.md](/Users/winnin/.gstack/projects/artlio/research/ltx-ux-comparison.md:89)). Artlio has the components, but not yet the loop.
+
+**2. The Broken Seams**
+
+Creator goal: “I want to make a video ad.”
+
+- **Project start:** New project is just a shot board. There is no ad brief, platform, duration, product objective, or target audience. “Plan the film shot by shot” is generic film language, not creator/ad language: [Workbench.tsx](/Users/winnin/Documents/artlio/apps/web/components/Workbench.tsx:125).
+- **Reference setup:** Elements are powerful, but creating them requires leaving the Workbench. The @mention dropdown dead-ends with “create one in the Library” instead of letting the user create inline: [Composer.tsx](/Users/winnin/Documents/artlio/apps/web/components/Composer.tsx:71).
+- **Generate refs inconsistency:** `CreateDialog` says Generate refs will produce a prompt to render in ComfyUI: [Library.tsx](/Users/winnin/Documents/artlio/apps/web/components/Library.tsx:344). But the detail drawer actually generates references in-app via Seedream/fal with price and polling: [Library.tsx](/Users/winnin/Documents/artlio/apps/web/components/Library.tsx:418). That is a real UX contradiction.
+- **Prompting:** @mentions work well, and blocking copy for missing references is correct: [Composer.tsx](/Users/winnin/Documents/artlio/apps/web/components/Composer.tsx:332). But “resolved prompt” resolves mostly to text/name, not a portable reference pack with images, notes, negatives, target metadata, and a ComfyUI-ready manifest: [Composer.tsx](/Users/winnin/Documents/artlio/apps/web/components/Composer.tsx:112).
+- **External render:** The user copies text, leaves Artlio, renders in ComfyUI, then remembers to return. The `Target` chip names the handoff but does not operationalize it.
+- **Return/upload:** Upload preserves selected-shot prompt/entity provenance: [Workbench.tsx](/Users/winnin/Documents/artlio/apps/web/components/Workbench.tsx:425). But it still drops the user into an “Unattached” mental model instead of “candidates for Shot 02.”
+- **Selection:** Candidate review is really file management. “Attach to shot…” is an implementation action; the creator action is “use this take.”
+- **Editor handoff:** Editor starts from attached latest renders only and shows “Nothing to cut yet” otherwise: [Editor.tsx](/Users/winnin/Documents/artlio/apps/web/components/Editor.tsx:247). This makes attach the hidden gate to MP4.
+- **Export:** Export exists, but `Target · worker ffmpeg` is engineering language: [Editor.tsx](/Users/winnin/Documents/artlio/apps/web/components/Editor.tsx:299). The user should see “MP4 render,” not infrastructure.
+
+**3. Optimized Flow**
+
+**Workbench: Campaign Board**
+
+Start with one screen for the ad: project brief, shot list, active shot, candidate tray, and composer. Library remains available, but not required before creation.
+
+**Inline Element Creation**
+
+Typing `@Maya` with no match should offer `Create @Maya` inline. The modal should ask: Character / Location / Product / Brand, then Upload refs or Generate refs in Artlio. No separate Library trip for the happy path.
+
+**Composer As Control Center**
+
+Use a three-band composer:
+
+- Top: reference strip showing mentioned entities, thumbnails, missing-ref warnings, roles, and reference count.
+- Middle: prompt text with @chips.
+- Bottom: target/actions. Today: `Manual ComfyUI` with `Prepare pack`, `Copy prompt`, `Download refs`. Later: connected fal/BYO targets with `Generate`.
+
+**Shot Runs**
+
+Every time the user prepares or generates, create a visible “run” under the selected shot: prompt, refs, target, time, status, candidates. Manual ComfyUI can be `Awaiting upload`; connected fal can be `Generating`.
+
+**Candidate Review**
+
+Returned files should default into `Shot 02 candidates`, not `Unattached`, when a shot is selected. Primary action: `Use take`. Secondary: compare, discard, move to another shot.
+
+**Editor**
+
+Editor should read selected takes from the board and show sync state: “12 selected takes from board.” Replace `Reset to board` with a non-destructive `Update from board` diff. Export remains simple: Save cut, Export MP4, Download.
+
+**Library**
+
+Library becomes the global Reference Registry: manage aliases, refs, notes, negatives, variants, and usage. It should also have “Add to current shot” when a project/shot context exists.
+
+**4. Prioritized Changes**
+
+**Quick Wins, Days**
+
+| Problem | Change | Effort |
+|---|---|---:|
+| Generate refs copy contradicts actual Seedream flow | Rewrite create dialog generate path; after create, open detail drawer focused on `Generate references` | S |
+| Library is a required detour | Add `Create element` action directly from no-match @mention | M |
+| `Copy resolved prompt` undersells the wedge | Rename to `Prepare for ComfyUI`; show copied prompt plus refs/manifest next step | S-M |
+| “Unattached” is internal jargon | Rename to `Candidate inbox`; for selected shot, label `Shot 02 candidates` | S |
+| Manual attach is hidden gate | Add primary `Use take for Shot 02` on candidate cards | S |
+| Statuses are user-editable process labels | Auto-advance visible shot state from prompt ready → candidates → take selected → in cut | M |
+| Inert target chips | Make `Target · ComfyUI manual` clickable with target details and actions | S |
+| Editor jargon | Replace `Target · worker ffmpeg` with `MP4 render` | S |
+
+**Structural, Weeks**
+
+| Problem | Change | Effort |
+|---|---|---:|
+| No first-class generation attempt | Add Shot Run model/UI: prompt + refs + target + outputs | L |
+| References are not portable enough | Build ComfyUI export pack: prompt, refs, notes, negatives, JSON manifest | M-L |
+| Workbench/Library seam | Add Elements drawer inside Workbench with inline create/edit | M-L |
+| Manual and API generation diverge | Route manual uploads and connected fal/BYO generations into same candidate tray | L |
+| Editor sync is brittle | Add board-to-editor sync diff and selected-take semantics | M-L |
+| Reference quality is under-specified | Add reference roles/tags: face, full body, product angle, logo, style, location wide | M |
+
+**5. Wedge Protection**
+
+Do not become LTX.
+
+Artlio’s protected wedge is not “AI video studio.” It is the model-neutral reference layer for creators who use many generation tools.
+
+Protect that by keeping these boundaries:
+
+- References stay free; generation is where monetization lives.
+- Global entity library remains core; do not bury it inside project-only assets.
+- Manual ComfyUI is first-class, not a temporary embarrassment.
+- Connected fal/BYO targets should be adapters to the same reference/prompt/run system.
+- Entity edits should affect future runs, not mutate history.
+- Avoid LTX-style suite sprawl: no separate Gen Space, Canvas, Storyboard, Flows clone.
+- Avoid opaque credits and teaser chrome.
+- Prefer “portable reference pack” over “closed video generator.”
+
+The product should feel like: “Lock your cast, products, places, and brand once; send them to any model; keep every shot traceable.” That is distinct, useful, and defensible.
