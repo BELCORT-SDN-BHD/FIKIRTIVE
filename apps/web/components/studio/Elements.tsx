@@ -7,10 +7,10 @@
 import { Library } from "@/components/Library";
 import type { EntityDTO } from "@/lib/types";
 
-export function Elements({ entities }: { entities: EntityDTO[] }) {
+export function Elements({ entities, projectId }: { entities: EntityDTO[]; projectId: string }) {
   return (
     <div className="flex flex-1 min-h-0">
-      <Library entities={entities} initialSelectedId={null} routeSync={false} />
+      <Library entities={entities} initialSelectedId={null} routeSync={false} projectId={projectId} />
     </div>
   );
 }

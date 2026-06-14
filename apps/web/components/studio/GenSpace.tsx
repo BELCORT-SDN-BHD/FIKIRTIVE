@@ -16,13 +16,12 @@ import {
   GEN_VIDEO_MODEL_OPTIONS, videoDefaults, videoPriceUsd, type GenVideoModel,
   modelFamily, deriveMode, lintPrompt, castFindings, type ModelDirectiveRules,
 } from "@artlio/core";
-import { startGen, getGenJob } from "@/lib/gen-actions";
+import { startGen, getGenJob, getRecentGenResults } from "@/lib/gen-actions";
 import { uploadReference } from "@/lib/actions";
 import { enhancePrompt } from "@/lib/cowork-actions";
 import { MentionInput, buildMentionDoc } from "@/components/MentionInput";
 import { Lightbox } from "@/components/Lightbox";
 import type { EntityDTO } from "@/lib/types";
-import { CAMERA_PRESETS } from "./camera";
 
 const Caret = () => <IcChevronDown size={13} style={{ marginLeft: 2, color: "var(--fg-3)" }} />;
 const isVideoUrl = (u: string) => /\.(mp4|webm|mov|mkv)(\?|$)/i.test(u);
@@ -85,7 +84,6 @@ export function GenSpace({ projectId, entities, rulesMap, onGoToElements }: { pr
   const [coachOpen, setCoachOpen] = useState(false);   // promptCoach pill collapsed by default
   const [showBlock, setShowBlock] = useState(false);   // Guardian assist-bar (shown on a blocked Generate attempt)
   const [count, setCount] = useState(1);              // batch (video) / num images
-  const [camera, setCamera] = useState("");           // camera-motion preset (video)
   const [videoModel, setVideoModel] = useState<GenVideoModel>("kling");
   const [vopts, setVopts] = useState(() => videoDefaults("kling")); // seconds/res/aspect/fps/audio
   const [showMore, setShowMore] = useState(false);
@@ -108,7 +106,54 @@ export function GenSpace({ projectId, entities, rulesMap, onGoToElements }: { pr
   const busyRef = useRef(false); // synchronous mirror of `busy`: a same-frame double-click can't be caught by the `busy` STATE (React hasn't re-rendered yet), so it would launch twice and double-spend. The ref flips synchronously, so the 2nd click sees it.
   const enhancingRef = useRef(false); // same synchronous guard for Enhance (also spends fal) — `enhancing` state has the identical double-click race
   const seq = useRef(0);     // stable result ids
-  useEffect(() => () => { pollers.current.forEach((t) => clearInterval(t)); }, []);
+
+  // poll an EXISTING job (a generation that was still running when we navigated back)
+  // and mark its tile — like launch()'s poller but background (no busy/active touch).
+  function resumePoll(jobId: string, resultId: number) {
+    let n = 0;
+    const mark = (patch: Partial<Result>) => setResults((rs) => rs.map((x) => (x.id === resultId ? { ...x, ...patch } : x)));
+    const t = setInterval(async () => {
+      n += 1;
+      try {
+        const job = await getGenJob(jobId);
+        if (!job) { if (n > POLL_CAP) { clearInterval(t); pollers.current.delete(t); mark({ status: "failed", message: "Status unknown — reload to check." }); } return; }
+        if (job.status === "DONE") { clearInterval(t); pollers.current.delete(t); mark({ status: "done", urls: job.urls }); }
+        else if (job.status === "FAILED") { clearInterval(t); pollers.current.delete(t); mark({ status: "failed", message: failMsg(job) }); }
+        else if (n > POLL_CAP) { clearInterval(t); pollers.current.delete(t); mark({ status: "failed", message: "Still running — reload to check." }); }
+      } catch { if (n > POLL_CAP) { clearInterval(t); pollers.current.delete(t); mark({ status: "failed", message: "Status unknown — reload to check." }); } }
+    }, 2000);
+    pollers.current.add(t);
+  }
+
+  // rehydrate the result panel from the DB on mount/project-switch — the list is
+  // client-state, so leaving Gen space (or a reload) drops finished gens from view.
+  // GenSpace isn't keyed by project, so on a ?p= switch we must RESET first (else the
+  // old project's tiles + pollers bleed into the new one). Historical results aren't
+  // replayable (we don't reconstruct the exact request), so retry is off; an in-flight
+  // job (came back while still running) resumes polling.
+  useEffect(() => {
+    let alive = true;
+    pollers.current.forEach((t) => clearInterval(t)); pollers.current.clear();
+    active.current = 0; busyRef.current = false; setBusy(false); seq.current = 0;
+    setResults([]);
+    getRecentGenResults(projectId).then((rows) => {
+      if (!alive || !rows.length || seq.current > 0) return; // user already generated in this project → keep their live results
+      const hydrated: Result[] = rows.map((row, i) => ({
+        id: -(i + 1), // negative ids never collide with new gens (seq starts at 0, counts up)
+        displayPrompt: row.prompt,
+        label: row.kind === "video" ? (GEN_VIDEO_MODEL_INFO[row.model as GenVideoModel]?.label ?? row.model) : "Seedream",
+        status: row.status === "DONE" ? "done" : row.status === "FAILED" ? "failed" : "pending",
+        urls: row.urls,
+        message: row.status === "FAILED" ? (row.error || "Generation failed") : undefined,
+        req: { projectId, prompt: row.prompt, entityIds: [], count: 1, kind: row.kind, model: row.model } as GenReq,
+        aspect: "16 / 9",
+        retryable: false,
+      }));
+      setResults(hydrated);
+      rows.forEach((row, i) => { if (row.status === "QUEUED" || row.status === "GENERATING") resumePoll(row.jobId, -(i + 1)); });
+    }).catch(() => {});
+    return () => { alive = false; pollers.current.forEach((t) => clearInterval(t)); pollers.current.clear(); };
+  }, [projectId]);
 
   // dismiss the More popover on outside click / Escape (mirrors PopMenu/Dialog)
   useEffect(() => {
@@ -135,9 +180,8 @@ export function GenSpace({ projectId, entities, rulesMap, onGoToElements }: { pr
     const mode = deriveMode({ kind, conditioned: promptIds.length > 0, hasSourceImage: !!refImg, hasTailImage: !!tailImg });
     const rules = family ? rulesMap[family]?.[mode] : undefined;
     const characterCount = entities.filter((e) => promptIds.includes(e.id) && e.type === "CHARACTER").length;
-    // the camera preset is appended to the prompt at gen time (generate()), so it counts toward the motion budget
-    return lintPrompt({ text: prompt, mode, rules, characterCount, cameraMotion: isVideo ? camera : undefined });
-  }, [isVideo, videoModel, kind, promptIds, refImg, tailImg, prompt, entities, rulesMap, camera]);
+    return lintPrompt({ text: prompt, mode, rules, characterCount });
+  }, [isVideo, videoModel, kind, promptIds, refImg, tailImg, prompt, entities, rulesMap]);
 
   // consistencyGuardian (client mirror): the same pure castFindings the server
   // runs, computed from the entities already threaded — instant pre-warn, no
@@ -270,7 +314,7 @@ export function GenSpace({ projectId, entities, rulesMap, onGoToElements }: { pr
       // fal video has no num_videos — a batch of N is N independent one-clip jobs
       // (each keeps the worker's exactly-once spend). Only send a control the model has.
       const n = Math.max(1, Math.min(count, opts.maxCount));
-      const fullPrompt = camera ? `${text}, ${camera}` : text;
+      const fullPrompt = text;
       const sendTail = !!(refImg && tailImg && info.tail);
       const aspect = aspectCss(opts.aspectRatios.length ? vopts.aspectRatio : "16:9");
       for (let i = 0; i < n; i++) {
@@ -458,7 +502,7 @@ export function GenSpace({ projectId, entities, rulesMap, onGoToElements }: { pr
           )}
           <div className="al-promptbar-row">
             <div className="al-seg" role="tablist">
-              <button role="tab" aria-selected={!isVideo} className={`al-seg-item${!isVideo ? " al-seg-item-active" : ""}`} disabled={busy} onClick={() => { setKind("image"); setCount(1); setCamera(""); setShowMore(false); }}>Photo</button>
+              <button role="tab" aria-selected={!isVideo} className={`al-seg-item${!isVideo ? " al-seg-item-active" : ""}`} disabled={busy} onClick={() => { setKind("image"); setCount(1); setShowMore(false); }}>Photo</button>
               <button role="tab" aria-selected={isVideo} className={`al-seg-item${isVideo ? " al-seg-item-active" : ""}`} disabled={busy} onClick={() => setKind("video")}>Video</button>
             </div>
             {isVideo ? (
@@ -466,12 +510,13 @@ export function GenSpace({ projectId, entities, rulesMap, onGoToElements }: { pr
                 <select aria-label="Video model" value={videoModel} disabled={busy} onChange={(e) => pickModel(e.target.value as GenVideoModel)} style={selectStyle}>
                   {GEN_VIDEO_MODELS.map((m) => <option key={m} value={m} style={optStyle}>{GEN_VIDEO_MODEL_INFO[m].label}{GEN_VIDEO_MODEL_INFO[m].sound ? " · sound" : ""}</option>)}
                 </select>
-                <select aria-label="Duration" value={vopts.seconds} disabled={busy} onChange={(e) => setVopts((o) => ({ ...o, seconds: Number(e.target.value) }))} style={selectStyle}>
-                  {opts.durations.map((s) => <option key={s} value={s} style={optStyle}>{s} Sec</option>)}
-                </select>
-                <select aria-label="Camera motion" value={camera} disabled={busy} onChange={(e) => setCamera(e.target.value)} style={{ ...selectStyle, color: camera ? "var(--fg-1)" : "var(--fg-2)" }}>
-                  {CAMERA_PRESETS.map(([val, label]) => <option key={val} value={val} style={optStyle}>{label}</option>)}
-                </select>
+                <span className="al-seg" role="radiogroup" aria-label="Duration" style={{ display: "inline-flex" }}>
+                  {opts.durations.map((s) => (
+                    <button key={s} type="button" role="radio" aria-checked={vopts.seconds === s} disabled={busy}
+                      className={`al-seg-item${vopts.seconds === s ? " al-seg-item-active" : ""}`}
+                      onClick={() => setVopts((o) => ({ ...o, seconds: s }))}>{s}s</button>
+                  ))}
+                </span>
                 <button ref={moreBtn} className="al-chip al-chip-mono" aria-expanded={showMore} disabled={busy} onClick={() => setShowMore((s) => !s)}>More<Caret /></button>
               </>
             ) : (

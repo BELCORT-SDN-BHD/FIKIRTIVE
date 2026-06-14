@@ -86,6 +86,17 @@ export async function createProject(name: string) {
   return { id: project.id };
 }
 
+/** Soft-delete a project (sets deletedAt → drops out of getProjects' notDeleted filter).
+ *  Reversible, touches no generated assets/billing — just hides the project + its surfaces. */
+export async function deleteProject(projectId: string): Promise<{ ok: true } | { error: string }> {
+  const project = await prisma.project.findFirst({ where: { id: projectId, ...OWNED }, select: { id: true, name: true } });
+  if (!project) return { error: "Project not found." };
+  await prisma.project.update({ where: { id: project.id }, data: { deletedAt: new Date() } });
+  await logAction("project.delete", project.id, { name: project.name });
+  revalidatePath("/", "layout");
+  return { ok: true };
+}
+
 // ---------- entities ----------
 
 const REF_MAX_BYTES = 10 * 1024 * 1024; // 10 MB per source image

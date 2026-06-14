@@ -55,7 +55,7 @@ export function Studio({
       case "canvas": return <Canvas />;
       case "storyboard": return <Storyboard projectId={project.id} shots={shots} entities={entities} candidates={frameCandidates} />;
       case "editor": return <VideoEditorSurface projectId={project.id} boardEdit={boardEdit} savedEdit={savedEdit} attachedCount={attachedCount} onDirtyChange={setEditorDirty} />;
-      case "elements": return <Elements entities={entities} />;
+      case "elements": return <Elements entities={entities} projectId={project.id} />;
       case "assets": return <Assets media={media} shotOptions={shotOptions} />;
       default:
         return (

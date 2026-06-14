@@ -129,3 +129,32 @@ export async function getGenJob(jobId: string) {
   }
   return { id: job.id, status: job.status, progress: job.progress, error: job.error, urls, generationIds: job.generationIds, spent: job.spent };
 }
+
+/** Recent gen results for a project, newest first. Gen space rehydrates its result
+ *  list from this on mount — the panel is client-state, so navigating to another
+ *  surface (or a reload) would otherwise lose finished generations from view (they
+ *  stay in Assets, but the user expects them in the gen panel too). */
+export async function getRecentGenResults(projectId: string, limit = 12) {
+  const project = await prisma.project.findFirst({ where: { id: projectId, ownerId: FOUNDER_OWNER_ID, deletedAt: null }, select: { id: true } });
+  if (!project) return [];
+  const jobs = await prisma.genJob.findMany({
+    where: { projectId, ownerId: FOUNDER_OWNER_ID },
+    orderBy: { createdAt: "desc" }, take: limit,
+    select: { id: true, status: true, prompt: true, model: true, kind: true, error: true, generationIds: true },
+  });
+  const ids = jobs.flatMap((j) => j.generationIds);
+  const gens = ids.length ? await prisma.generation.findMany({ where: { id: { in: ids }, deletedAt: null }, include: { asset: true } }) : [];
+  const byId = new Map(gens.map((g) => [g.id, g]));
+  return jobs.map((j) => ({
+    jobId: j.id,
+    status: j.status,
+    prompt: j.prompt,
+    model: j.model,
+    kind: j.kind === "VIDEO" ? ("video" as const) : ("image" as const),
+    error: j.error,
+    urls: j.generationIds
+      .map((gid) => byId.get(gid))
+      .filter((g): g is NonNullable<typeof g> => !!g)
+      .map((g) => storageKeyToSrc(storageKey(g.asset.ownerId, g.asset.contentHash, g.asset.ext))),
+  }));
+}

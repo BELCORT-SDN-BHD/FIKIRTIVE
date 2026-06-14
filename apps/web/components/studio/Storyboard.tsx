@@ -19,7 +19,6 @@ import type { EntityDTO } from "@/lib/types";
 import { MentionInput, buildMentionDoc } from "@/components/MentionInput";
 import { setDnd, getDnd, hasDnd } from "@/lib/dnd";
 import { Lightbox } from "@/components/Lightbox";
-import { CAMERA_PRESETS } from "./camera";
 
 const usd = (n: number) => "~$" + n.toFixed(2);
 const EMPTY_DOC = { type: "doc", content: [{ type: "paragraph" }] };
@@ -57,7 +56,6 @@ function ShotCard({ projectId, shot, index, total, entities }: { projectId: stri
   const enhancingRef = useRef(false); // synchronous guard: `enhancing` state can't catch a same-frame double-click → would spend Enhance twice
   const [enhanceDoc, setEnhanceDoc] = useState<unknown>(null); // ✨ Enhance re-seed (separate from server-sync)
   const [enhanceNonce, setEnhanceNonce] = useState(0);
-  const [camera, setCamera] = useState("");
   const [videoModel, setVideoModel] = useState<GenVideoModel>("kling");
   const [seconds, setSeconds] = useState(() => videoDefaults("kling").seconds);
   const [audioOn, setAudioOn] = useState(() => videoDefaults("kling").audio); // per-segment audio (sound models: off is cheaper)
@@ -228,7 +226,7 @@ function ShotCard({ projectId, shot, index, total, entities }: { projectId: stri
     (async () => {
       if (!(await persist())) { setBusy(false); return; }
       const t = text.trim();
-      const fullPrompt = camera ? `${t}, ${camera}` : t;
+      const fullPrompt = t;
       const res = await startGen({
         projectId, shotId: shot.id, prompt: fullPrompt, entityIds: ids, count: 1, kind: "video", model: videoModel,
         sourceGenerationId: shot.firstFrame?.id ?? undefined,
@@ -370,15 +368,14 @@ function ShotCard({ projectId, shot, index, total, entities }: { projectId: stri
             style={{ flex: 1, minWidth: 0, background: "#11151b", border: "1px solid var(--line-2)", borderRadius: "var(--radius-sm)", padding: "5px 8px", color: "var(--fg-1)", font: "var(--text-caption)", cursor: "pointer", outline: "none" }}>
             {GEN_VIDEO_MODELS.map((m) => <option key={m} value={m} style={{ background: "#11151b" }}>{GEN_VIDEO_MODEL_INFO[m].label}{GEN_VIDEO_MODEL_INFO[m].sound ? " · sound" : ""}</option>)}
           </select>
-          <select aria-label="Duration in seconds" value={seconds} onChange={(e) => setSeconds(Number(e.target.value))} disabled={busy || acting || !!slotBusy}
-            style={{ flex: "none", background: "#11151b", border: "1px solid var(--line-2)", borderRadius: "var(--radius-sm)", padding: "5px 8px", color: "var(--fg-1)", font: "var(--text-caption)", cursor: "pointer", outline: "none" }}>
-            {opts.durations.map((s) => <option key={s} value={s} style={{ background: "#11151b" }}>{s}s</option>)}
-          </select>
+          <span className="al-seg" role="radiogroup" aria-label="Duration in seconds" style={{ display: "inline-flex", flex: "none" }}>
+            {opts.durations.map((s) => (
+              <button key={s} type="button" role="radio" aria-checked={seconds === s} disabled={busy || acting || !!slotBusy}
+                className={`al-seg-item${seconds === s ? " al-seg-item-active" : ""}`}
+                onClick={() => setSeconds(s)}>{s}s</button>
+            ))}
+          </span>
         </div>
-        <select aria-label="Camera motion" value={camera} onChange={(e) => setCamera(e.target.value)} disabled={busy || acting || !!slotBusy}
-          style={{ width: "100%", background: "#11151b", border: "1px solid var(--line-2)", borderRadius: "var(--radius-sm)", padding: "5px 8px", color: camera ? "var(--fg-1)" : "var(--fg-3)", font: "var(--text-caption)", cursor: "pointer", outline: "none" }}>
-          {CAMERA_PRESETS.map(([val, label]) => <option key={val} value={val} style={{ background: "#11151b" }}>{label}</option>)}
-        </select>
         <select aria-label="Segment transition" value={shot.transition ?? ""} onChange={(e) => changeTransition(e.target.value)} disabled={busy || acting || !!slotBusy}
           style={{ width: "100%", background: "#11151b", border: "1px solid var(--line-2)", borderRadius: "var(--radius-sm)", padding: "5px 8px", color: shot.transition ? "var(--fg-1)" : "var(--fg-3)", font: "var(--text-caption)", cursor: "pointer", outline: "none" }}>
           <option value="" style={{ background: "#11151b" }}>No transition</option>

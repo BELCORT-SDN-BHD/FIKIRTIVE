@@ -8,7 +8,7 @@
 import { useState } from "react";
 import { useRouter } from "next/navigation";
 import type { ProjectDTO } from "@/lib/types";
-import { createProject } from "@/lib/actions";
+import { createProject, deleteProject } from "@/lib/actions";
 import {
   Wordmark, IcFolder, IcSparkle, IcStoryboard, IcFilm, IcAt, IcAssets, IcPlans, IcUser,
   IcExport, Button, PopMenu, Dialog, Input,
@@ -57,6 +57,8 @@ export function StudioShell({
   const [name, setName] = useState("");
   const [creating, setCreating] = useState(false);
   const [createErr, setCreateErr] = useState<string | null>(null);
+  const [delProject, setDelProject] = useState<{ id: string; name: string } | null>(null); // project pending delete-confirm
+  const [deleting, setDeleting] = useState(false);
   const [mobileNav, setMobileNav] = useState(false);
 
   // only the editor view has unsaved state worth guarding
@@ -69,7 +71,19 @@ export function StudioShell({
   }
 
   const projectItems = [
-    ...(projects ?? []).map((p) => ({ value: p.id, label: p.name })),
+    ...(projects ?? []).map((p) => ({
+      value: p.id,
+      label: (
+        <span style={{ display: "flex", alignItems: "center", gap: 6, width: "100%" }}>
+          <span style={{ flex: 1, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{p.name}</span>
+          <button type="button" aria-label={`Delete ${p.name}`} title="Delete project"
+            onClick={(e) => { e.stopPropagation(); setProjectMenu(false); setMobileNav(false); setDelProject({ id: p.id, name: p.name }); }}
+            style={{ flex: "none", background: "none", border: "none", color: "var(--fg-3)", cursor: "pointer", padding: 2, display: "inline-flex", borderRadius: 4 }}>
+            <svg width="13" height="13" viewBox="0 0 14 14" fill="none" stroke="currentColor" strokeWidth="1.4" strokeLinecap="round" strokeLinejoin="round"><path d="M2.5 3.5h9M5.3 3.5V2.6h3.4v.9M3.9 3.5l.5 8h5.2l.5-8" /></svg>
+          </button>
+        </span>
+      ),
+    })),
     { value: "__new__", label: "+ New project", desc: "Start a fresh project" },
   ];
   function switchProject(id: string) {
@@ -77,6 +91,21 @@ export function StudioShell({
     if (!guard()) return;
     router.push(`/studio?p=${id}&view=${view}`); // preserve the active surface
     setMobileNav(false);
+  }
+  async function confirmDelete() {
+    const target = delProject;
+    if (!target || deleting) return;
+    setDeleting(true);
+    const res = await deleteProject(target.id).catch(() => ({ error: "failed" as const }));
+    setDeleting(false);
+    setDelProject(null);
+    if (res && "error" in res) return; // best-effort — the project stays on failure
+    if (project?.id === target.id) {
+      const next = (projects ?? []).find((p) => p.id !== target.id);
+      router.push(next ? `/studio?p=${next.id}&view=${view}` : "/studio"); // current deleted → jump to another (or default)
+    } else {
+      router.refresh();
+    }
   }
   function submitNew() {
     const t = name.trim();
@@ -141,11 +170,11 @@ export function StudioShell({
 
   return (
     <div className="app">
-      <nav className="sidenav max-lg:hidden" aria-label="Main">{navInner(false)}</nav>
+      <nav className="sidenav nav-rail" aria-label="Main">{navInner(false)}</nav>
 
       {/* mobile drawer — the sidenav is hidden <lg, so the topbar menu opens it here */}
       {mobileNav && (
-        <div className="lg:hidden" style={{ position: "fixed", inset: 0, zIndex: 50, display: "flex" }}>
+        <div className="nav-drawer" style={{ position: "fixed", inset: 0, zIndex: 50 }}>
           <div onClick={() => setMobileNav(false)} style={{ position: "absolute", inset: 0, background: "rgba(0,0,0,.55)" }} />
           <nav className="sidenav" aria-label="Main" style={{ position: "relative", zIndex: 1 }}>{navInner(true)}</nav>
         </div>
@@ -153,7 +182,7 @@ export function StudioShell({
 
       <div className="main">
         <header className="topbar">
-          <button className="al-iconbtn al-iconbtn-ghost al-iconbtn-md lg:hidden" aria-label="Open menu" onClick={() => setMobileNav(true)}>
+          <button className="al-iconbtn al-iconbtn-ghost al-iconbtn-md nav-burger" aria-label="Open menu" onClick={() => setMobileNav(true)}>
             <svg width="18" height="18" viewBox="0 0 18 18" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round"><path d="M2.5 5h13M2.5 9h13M2.5 13h13" /></svg>
           </button>
           <span className="topbar-title">{TITLES[view]}</span>
@@ -175,6 +204,16 @@ export function StudioShell({
         <Input label="Name" placeholder="Neon Alley spec spot" value={name} autoFocus
           onChange={(e) => setName(e.target.value)} onKeyDown={(e) => { if (e.key === "Enter") submitNew(); }} disabled={creating} />
         {createErr && <p role="alert" style={{ font: "var(--text-caption)", color: "var(--danger)", margin: "8px 0 0" }}>{createErr}</p>}
+      </Dialog>
+
+      <Dialog open={!!delProject} title="Delete project?" onClose={() => { if (!deleting) setDelProject(null); }}
+        actions={[
+          <Button key="c" variant="ghost" onClick={() => setDelProject(null)} disabled={deleting}>Cancel</Button>,
+          <Button key="d" variant="danger" onClick={confirmDelete} disabled={deleting}>{deleting ? "Deleting…" : "Delete"}</Button>,
+        ]}>
+        <p style={{ font: "var(--text-body)", color: "var(--fg-2)", margin: 0 }}>
+          Delete <strong style={{ color: "var(--fg-1)" }}>{delProject?.name}</strong>? Its storyboard, shots, and generations are hidden from the studio. Your locked elements and library assets stay.
+        </p>
       </Dialog>
     </div>
   );

@@ -426,3 +426,12 @@ h1, h2, h3 { font-family: var(--font-sans); font-weight: 600; letter-spacing: va
 }
 .al-tooltip-shortcut { margin-left: 6px; color: var(--fg-3); font-family: var(--font-mono); }
 .al-tooltip-wrap:hover .al-tooltip { opacity: 1; transform: translateX(-50%) translateY(0); }
+
+/* Responsive nav. Tailwind's responsive utilities (lg:/max-lg:) live in
+   @layer utilities and lose the cascade to this unlayered design system, so they
+   never applied — the desktop ☰ leaked onto desktop and the sidebar wouldn't
+   collapse on phones. These plain (unlayered) media queries do the collapse: the
+   sidebar rail hides below lg, the mobile ☰ + drawer hide at lg and up. */
+.nav-drawer { display: flex; }
+@media (max-width: 1023px) { .nav-rail { display: none; } }
+@media (min-width: 1024px) { .nav-burger, .nav-drawer { display: none; } }

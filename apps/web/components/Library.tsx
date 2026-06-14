@@ -14,7 +14,8 @@ import {
   softDeleteEntity,
 } from "@/lib/actions";
 import { startRefGen, getRefGenJobs } from "@/lib/refgen-actions";
-import { Badge, Button, Dialog, IcImage, IconButton, IcPlus, IcX, Input, MediaCard, MonoLabel, SegmentedControl } from "./ds";
+import { enhancePrompt } from "@/lib/cowork-actions";
+import { Badge, Button, Dialog, IcImage, IconButton, IcPlus, IcSparkle, IcX, Input, MediaCard, MonoLabel, SegmentedControl } from "./ds";
 
 const TYPE_META: Record<EntityTypeDTO, { label: string; singular: string; color: string }> = {
   CHARACTER: { label: "Characters", singular: "Character", color: "var(--hue-character)" },
@@ -72,6 +73,7 @@ export function Library({
   entities,
   initialSelectedId,
   routeSync = true,
+  projectId,
 }: {
   entities: EntityDTO[];
   initialSelectedId: string | null;
@@ -79,11 +81,16 @@ export function Library({
    *  shell (the route is /studio there — a /library replaceState would make a
    *  post-action revalidation navigate away). */
   routeSync?: boolean;
+  /** Current studio project — lets the reference-gen panel ✨ Enhance (the cowork
+   *  rewrite audits to a project). Absent outside the studio → Enhance hidden. */
+  projectId?: string;
 }) {
   const [selectedId, setSelectedId] = useState<string | null>(initialSelectedId);
   const [creating, setCreating] = useState(false);
   const [createType, setCreateType] = useState<EntityTypeDTO>("CHARACTER");
   const [query, setQuery] = useState("");
+  const [collapsed, setCollapsed] = useState<Set<EntityTypeDTO>>(new Set()); // folded element-type sections (long lists → fewer scrolls)
+  const toggleCollapse = (t: EntityTypeDTO) => setCollapsed((s) => { const n = new Set(s); n.has(t) ? n.delete(t) : n.add(t); return n; });
   const selected = entities.find((e) => e.id === selectedId) ?? null;
 
   function select(id: string | null) {
@@ -137,19 +144,25 @@ export function Library({
             const meta = TYPE_META[type];
             const group = entities.filter((e) => e.type === type).filter(matches);
             const total = entities.filter((e) => e.type === type).length;
+            const isCollapsed = collapsed.has(type);
             return (
               <section key={type} aria-label={meta.label} style={{ marginBottom: 30 }}>
                 <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 12 }}>
-                  <span style={{ width: 9, height: 9, borderRadius: 99, background: meta.color, display: "inline-block" }} aria-hidden />
-                  <MonoLabel>{meta.label}</MonoLabel>
-                  <span style={{ font: "var(--text-mono-meta)", color: "var(--fg-3)" }}>{total}</span>
+                  <button type="button" onClick={() => toggleCollapse(type)} aria-expanded={!isCollapsed}
+                    style={{ display: "flex", alignItems: "center", gap: 8, background: "none", border: "none", padding: 0, cursor: "pointer", color: "inherit" }}>
+                    <svg width="11" height="11" viewBox="0 0 12 12" fill="none" stroke="var(--fg-3)" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round" aria-hidden
+                      style={{ transform: isCollapsed ? "rotate(-90deg)" : "none", transition: "transform var(--dur-fast) var(--ease-out)" }}><path d="M2.5 4.5 6 8l3.5-3.5" /></svg>
+                    <span style={{ width: 9, height: 9, borderRadius: 99, background: meta.color, display: "inline-block" }} aria-hidden />
+                    <MonoLabel>{meta.label}</MonoLabel>
+                    <span style={{ font: "var(--text-mono-meta)", color: "var(--fg-3)" }}>{total}</span>
+                  </button>
                   <span style={{ flex: 1 }} />
                   <Button variant="ghost" size="sm" onClick={() => openCreate(type)}>
                     + New {meta.singular.toLowerCase()}
                   </Button>
                 </div>
 
-                {total === 0 ? (
+                {isCollapsed ? null : total === 0 ? (
                   <button className="drop-zone" onClick={() => openCreate(type)}>
                     <span className="drop-zone-tile">
                       <IcPlus size={18} />
@@ -207,7 +220,7 @@ export function Library({
             if (e.key === "Escape") select(null);
           }}
         >
-          <EntityDetail key={selected.id} entity={selected} onClose={() => select(null)} />
+          <EntityDetail key={selected.id} entity={selected} onClose={() => select(null)} projectId={projectId} />
         </aside>
       )}
 
@@ -403,11 +416,13 @@ function buildReferencePrompt(entity: EntityDTO): string {
   }
 }
 
-function GenerateRefsBlock({ entity }: { entity: EntityDTO }) {
+function GenerateRefsBlock({ entity, projectId }: { entity: EntityDTO; projectId?: string }) {
   const router = useRouter();
   const { pending, error, run } = useAction();
   const [prompt, setPrompt] = useState(() => buildReferencePrompt(entity));
   const [count, setCount] = useState(4);
+  const [enhancing, setEnhancing] = useState(false);
+  const enhancingRef = useRef(false); // synchronous double-click guard for ✨ Enhance (also spends fal)
   const [job, setJob] = useState<{ status: string; error: string } | null>(null);
   const [elapsed, setElapsed] = useState(0);
   const startMs = useRef(0);
@@ -478,6 +493,20 @@ function GenerateRefsBlock({ entity }: { entity: EntityDTO }) {
     );
   }
 
+  // ✨ Enhance the reference prompt (model-aware cowork rewrite, seedream image).
+  // Needs the studio project for the audit; synchronous ref guard = no double-spend.
+  async function enhance() {
+    const t = prompt.trim();
+    if (!t || !projectId || enhancing || busy || enhancingRef.current) return;
+    enhancingRef.current = true;
+    setEnhancing(true);
+    try {
+      const res = await enhancePrompt({ projectId, text: t, model: "seedream", kind: "image", conditioned });
+      if (res && "text" in res) setPrompt(res.text);
+    } catch { /* leave the prompt as-is on a hiccup */ }
+    finally { enhancingRef.current = false; setEnhancing(false); }
+  }
+
   const cost = (count * REFGEN_PRICE_USD_PER_IMAGE).toFixed(2);
   return (
     <div className="al-panel al-panel-flat" style={{ padding: 12, display: "flex", flexDirection: "column", gap: 10, borderRadius: "var(--radius-md)" }}>
@@ -493,7 +522,7 @@ function GenerateRefsBlock({ entity }: { entity: EntityDTO }) {
       <textarea
         value={prompt}
         onChange={(e) => setPrompt(e.target.value)}
-        disabled={busy}
+        disabled={busy || enhancing}
         rows={3}
         aria-label="Generation prompt"
         style={{
@@ -515,7 +544,13 @@ function GenerateRefsBlock({ entity }: { entity: EntityDTO }) {
             {[1, 2, 4, 6].map((n) => <option key={n} value={n}>{n}</option>)}
           </select>
         </label>
-        <Button size="sm" onClick={generate} disabled={busy || prompt.trim().length === 0}>
+        {projectId && (
+          <Button size="sm" variant="ghost" icon={<IcSparkle size={13} />} onClick={enhance}
+            disabled={enhancing || busy || prompt.trim().length === 0} title="Rewrite the reference prompt into a vivid, detailed one">
+            {enhancing ? "Enhancing…" : "Enhance"}
+          </Button>
+        )}
+        <Button size="sm" onClick={generate} disabled={busy || enhancing || prompt.trim().length === 0}>
           {busy ? `Generating ${count}… ${elapsed}s` : `Generate ${count} (~$${cost})`}
         </Button>
         <span style={{ flex: 1 }} />
@@ -535,7 +570,7 @@ function GenerateRefsBlock({ entity }: { entity: EntityDTO }) {
   );
 }
 
-function EntityDetail({ entity, onClose }: { entity: EntityDTO; onClose: () => void }) {
+function EntityDetail({ entity, onClose, projectId }: { entity: EntityDTO; onClose: () => void; projectId?: string }) {
   const meta = TYPE_META[entity.type];
   // separate action scopes: an alias save must not disable ref buttons, and
   // each section's error renders next to the control that failed
@@ -657,7 +692,7 @@ function EntityDetail({ entity, onClose }: { entity: EntityDTO; onClose: () => v
         </div>
         {entity.refs.length === 0 ? (
           <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
-            <GenerateRefsBlock entity={entity} />
+            <GenerateRefsBlock entity={entity} projectId={projectId} />
             <button className="drop-zone" onClick={() => fileRef.current?.click()} type="button"
               onDragOver={(e) => e.preventDefault()}
               onDrop={(e) => { e.preventDefault(); uploadFiles([...e.dataTransfer.files]); }}>
@@ -692,7 +727,7 @@ function EntityDetail({ entity, onClose }: { entity: EntityDTO; onClose: () => v
               ))}
             </div>
             {/* generate MORE — conditioned on the images above (e.g. a logo → a garment) */}
-            <GenerateRefsBlock entity={entity} />
+            <GenerateRefsBlock entity={entity} projectId={projectId} />
           </div>
         )}
         <input
