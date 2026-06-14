@@ -17,6 +17,9 @@ test-results/
 # local dev storage (LocalDiskStorage adapter)
 .data/
 
+# prod test session cookies — secret, must never be committed or shipped to a build
+.prod-session.json
+
 # Railway CLI agent artifacts
 .agents/
 .railway/

@@ -1,0 +1,4 @@
+# Never ship to a Railway build/image:
+.prod-session.json
+.data/
+.git/
