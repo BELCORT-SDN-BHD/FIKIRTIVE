@@ -106,6 +106,7 @@ export function GenSpace({ projectId, entities, rulesMap, onGoToElements }: { pr
   const pollers = useRef<Set<ReturnType<typeof setInterval>>>(new Set());
   const active = useRef(0);  // in-flight jobs — busy clears when it hits 0
   const busyRef = useRef(false); // synchronous mirror of `busy`: a same-frame double-click can't be caught by the `busy` STATE (React hasn't re-rendered yet), so it would launch twice and double-spend. The ref flips synchronously, so the 2nd click sees it.
+  const enhancingRef = useRef(false); // same synchronous guard for Enhance (also spends fal) — `enhancing` state has the identical double-click race
   const seq = useRef(0);     // stable result ids
   useEffect(() => () => { pollers.current.forEach((t) => clearInterval(t)); }, []);
 
@@ -160,7 +161,8 @@ export function GenSpace({ projectId, entities, rulesMap, onGoToElements }: { pr
   // entities so the wedge survives. promptIds is preserved for generation.
   async function enhance() {
     const text = prompt.trim();
-    if (!text || enhancing || busy) return;
+    if (!text || enhancing || busy || enhancingRef.current) return; // enhancingRef catches a same-frame double-click that `enhancing` (state) can't
+    enhancingRef.current = true;
     setError(null);
     setEnhancing(true);
     // send the gen-shape so the server can tune the rewrite to (family, mode);
@@ -176,6 +178,7 @@ export function GenSpace({ projectId, entities, rulesMap, onGoToElements }: { pr
         hasTail: !!tailImg,
       });
     } catch { res = null; }
+    enhancingRef.current = false;
     setEnhancing(false);
     if (!res) { setError("Couldn't enhance — please try again."); return; }
     if ("error" in res) { setError(res.error); return; }

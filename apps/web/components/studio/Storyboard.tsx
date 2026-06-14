@@ -54,6 +54,7 @@ function ShotCard({ projectId, shot, index, total, entities }: { projectId: stri
   const [doc, setDoc] = useState<unknown>(shot.promptDoc);
   const [dirty, setDirty] = useState(false);
   const [enhancing, setEnhancing] = useState(false);
+  const enhancingRef = useRef(false); // synchronous guard: `enhancing` state can't catch a same-frame double-click → would spend Enhance twice
   const [enhanceDoc, setEnhanceDoc] = useState<unknown>(null); // ✨ Enhance re-seed (separate from server-sync)
   const [enhanceNonce, setEnhanceNonce] = useState(0);
   const [camera, setCamera] = useState("");
@@ -113,26 +114,32 @@ function ShotCard({ projectId, shot, index, total, entities }: { projectId: stri
   // fal LLM prod), then re-seed the card editor re-chipping @-named entities.
   async function enhance() {
     const t = text.trim();
-    if (!t || enhancing || busy || acting || slotBusy) return;
+    if (!t || enhancing || busy || acting || slotBusy || enhancingRef.current) return; // enhancingRef catches a same-frame double-click
+    enhancingRef.current = true;
     setError(null);
     setEnhancing(true);
     // the shot prompt drives the keyframe image (seedream) — tune the rewrite to
     // that mode (t2i, or i2i when entity refs condition it); server derives mode
-    let res: Awaited<ReturnType<typeof enhancePrompt>> | null = null;
     try {
-      res = await enhancePrompt({ projectId, text: t, model: "seedream", kind: "image", conditioned: ids.length > 0 });
-    } catch { res = null; }
-    setEnhancing(false);
-    if (!res) { setError("Couldn't enhance — please try again."); return; }
-    if ("error" in res) { setError(res.error); return; }
-    const built = buildMentionDoc(res.text, entities.filter((e) => ids.includes(e.id)));
-    setText(res.text); setDoc(built);
-    setEnhanceDoc(built); setEnhanceNonce((n) => n + 1);
-    // persist now — the Enhance click already blurred the editor (before this content
-    // existed), so the onBlur save would miss it and a refresh would lose the rewrite (Codex round 2)
-    const saved = await saveShotPrompt(shot.id, JSON.stringify(built), res.text.trim(), ids);
-    if (saved && "error" in saved) { setError(saved.error ?? "Couldn't save the enhanced prompt."); setDirty(true); return; }
-    setDirty(false);
+      let res: Awaited<ReturnType<typeof enhancePrompt>> | null = null;
+      try {
+        res = await enhancePrompt({ projectId, text: t, model: "seedream", kind: "image", conditioned: ids.length > 0 });
+      } catch { res = null; }
+      if (!res) { setError("Couldn't enhance — please try again."); return; }
+      if ("error" in res) { setError(res.error); return; }
+      const built = buildMentionDoc(res.text, entities.filter((e) => ids.includes(e.id)));
+      setText(res.text); setDoc(built);
+      setEnhanceDoc(built); setEnhanceNonce((n) => n + 1);
+      // persist now — the Enhance click already blurred the editor (before this content
+      // existed), so the onBlur save would miss it and a refresh would lose the rewrite (Codex round 2)
+      const saved = await saveShotPrompt(shot.id, JSON.stringify(built), res.text.trim(), ids);
+      if (saved && "error" in saved) { setError(saved.error ?? "Couldn't save the enhanced prompt."); setDirty(true); return; }
+      setDirty(false);
+    } finally {
+      // reset across the FULL handler (incl. the saveShotPrompt persist) on every path
+      enhancingRef.current = false;
+      setEnhancing(false);
+    }
   }
 
   function remove() {
@@ -409,21 +416,27 @@ export function Storyboard({ projectId, shots, entities, candidates }: { project
   const [actionErr, setActionErr] = useState<string | null>(null);
   const [idea, setIdea] = useState("");
   const [drafting, setDrafting] = useState(false);
+  const draftingRef = useRef(false); // synchronous guard: `drafting` state can't catch a same-frame double-click → would draft (and spend) twice
   const [coworkErr, setCoworkErr] = useState<string | null>(null);
   const [coworkOk, setCoworkOk] = useState<string | null>(null);
 
   function draft() {
     const text = idea.trim();
-    if (!text || drafting) return;
+    if (!text || drafting || draftingRef.current) return; // draftingRef catches a same-frame double-click
+    draftingRef.current = true;
     setCoworkErr(null); setCoworkOk(null);
     setDrafting(true);
     (async () => {
-      const res = await coworkDraftStoryboard({ projectId, idea: text });
-      setDrafting(false);
-      if ("error" in res) { setCoworkErr(res.error); return; }
-      setIdea("");
-      setCoworkOk(`Drafted ${res.scenes} scene${res.scenes === 1 ? "" : "s"} · ${res.shots} shot${res.shots === 1 ? "" : "s"}.`);
-      router.refresh();
+      try {
+        const res = await coworkDraftStoryboard({ projectId, idea: text });
+        if ("error" in res) { setCoworkErr(res.error); return; }
+        setIdea("");
+        setCoworkOk(`Drafted ${res.scenes} scene${res.scenes === 1 ? "" : "s"} · ${res.shots} shot${res.shots === 1 ? "" : "s"}.`);
+        router.refresh();
+      } finally {
+        draftingRef.current = false; // reset on EVERY path incl. throw (was: stranded the button on a rejection)
+        setDrafting(false);
+      }
     })();
   }
 

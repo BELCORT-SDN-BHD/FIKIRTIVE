@@ -414,6 +414,11 @@ function GenerateRefsBlock({ entity }: { entity: EntityDTO }) {
 
   const conditioned = entity.refs.length > 0;
   const busy = pending || job?.status === "QUEUED" || job?.status === "GENERATING";
+  // synchronous guard: a same-frame double-click fires generate() twice before `busy`
+  // (state) flips, and startRefGen's server active-job check is a non-atomic findFirst+
+  // create (TOCTOU) — so two near-simultaneous calls could both create a paid refGenJob.
+  const submittingRef = useRef(false);
+  useEffect(() => { if (!busy) submittingRef.current = false; }, [busy]); // reset on every completion path (success / error / throw all clear busy)
 
   // poll the active job; on DONE pull the new refs, on FAILED surface the error
   useEffect(() => {
@@ -461,6 +466,8 @@ function GenerateRefsBlock({ entity }: { entity: EntityDTO }) {
   }, [entity.id]);
 
   function generate() {
+    if (busy || submittingRef.current) return; // submittingRef catches a same-frame double-click that `busy` (state) can't
+    submittingRef.current = true;
     startMs.current = Date.now();
     setElapsed(0);
     run(
