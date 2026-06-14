@@ -105,6 +105,7 @@ export function GenSpace({ projectId, entities, rulesMap, onGoToElements }: { pr
   const morePanel = useRef<HTMLDivElement | null>(null);
   const pollers = useRef<Set<ReturnType<typeof setInterval>>>(new Set());
   const active = useRef(0);  // in-flight jobs — busy clears when it hits 0
+  const busyRef = useRef(false); // synchronous mirror of `busy`: a same-frame double-click can't be caught by the `busy` STATE (React hasn't re-rendered yet), so it would launch twice and double-spend. The ref flips synchronously, so the 2nd click sees it.
   const seq = useRef(0);     // stable result ids
   useEffect(() => () => { pollers.current.forEach((t) => clearInterval(t)); }, []);
 
@@ -207,7 +208,7 @@ export function GenSpace({ projectId, entities, rulesMap, onGoToElements }: { pr
 
   function finishOne() {
     active.current -= 1;
-    if (active.current <= 0) { active.current = 0; setBusy(false); }
+    if (active.current <= 0) { active.current = 0; busyRef.current = false; setBusy(false); }
   }
 
   // launch one job (its own tile) + poll it; failures land on the tile, not a shared banner
@@ -251,11 +252,12 @@ export function GenSpace({ projectId, entities, rulesMap, onGoToElements }: { pr
 
   function generate() {
     const text = prompt.trim();
-    if (!text || busy) return;
+    if (!text || busy || busyRef.current) return; // busyRef catches a same-frame double-click that `busy` (state) can't
     // Guardian: a blocked attempt reveals the amber assist-bar and spends $0
     // (the server backstop would block too). Generate stays live so the button
     // is never a dead grey — we intercept on click and show the fix.
     if (blockers.length > 0) { setShowBlock(true); setError(null); return; }
+    busyRef.current = true; // set AFTER the block check so a blocked attempt doesn't strand it
     setShowBlock(false);
     setError(null);
     setShowMore(false);
@@ -284,6 +286,8 @@ export function GenSpace({ projectId, entities, rulesMap, onGoToElements }: { pr
   }
 
   function retry(r: Result) {
+    if (busyRef.current) return; // same double-fire guard as generate() — retry also spends
+    busyRef.current = true;
     setResults((rs) => rs.filter((x) => x.id !== r.id));
     setBusy(true);
     launch(r.displayPrompt, r.label, r.req, r.aspect);
