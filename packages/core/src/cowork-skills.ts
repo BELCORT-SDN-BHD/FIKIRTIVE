@@ -49,7 +49,11 @@ const STORYBOARD_SYSTEM =
   `You are a film director's assistant. Break the user's idea into a concise storyboard. ` +
   `Respond with ONLY a JSON object, no prose: {"scenes":[{"title":"string","shots":[{"prompt":"string"}]}]}. ` +
   `Each shot "prompt" is a vivid, self-contained visual description (subject, framing, camera, lighting, mood) for an image generator — not dialogue. ` +
-  `At most ${COWORK_MAX_SCENES} scenes and ${COWORK_MAX_SHOTS_PER_SCENE} shots per scene. Keep it tight and shootable.`;
+  `At most ${COWORK_MAX_SCENES} scenes and ${COWORK_MAX_SHOTS_PER_SCENE} shots per scene — treat that as a hard ceiling, not a target: use the FEWEST shots that tell the story; most ideas need far fewer. Do not pad. ` +
+  `Every shot must earn its place — no two shots may repeat the same subject + framing + lighting beat; merge or cut redundant beats. ` +
+  `Keep one consistent visual palette and style across all shots unless the idea explicitly calls for contrast; don't drop in a one-off look (e.g. a lone black-and-white shot in a colour film) without a narrative reason. ` +
+  `Order shots so any setup or problem is established before its payoff, unless the idea calls for a cold open. ` +
+  `Keep it tight and shootable.`;
 
 /** Draft a storyboard from a free-text idea. No per-model knowledge. */
 export const draftStoryboardSkill: CoworkSkill<CoworkPlan> = {
@@ -81,6 +85,7 @@ export const draftStoryboardSkill: CoworkSkill<CoworkPlan> = {
 const ENHANCE_SYSTEM =
   `You rewrite a short shot description into ONE vivid, detailed prompt for an image/video generator. ` +
   `Add subject specificity, framing, camera, lighting, and mood. Keep every named subject/entity EXACTLY as written (verbatim). ` +
+  `Elaborate only what the input implies — do NOT invent new physical objects, props, characters, or actions the user didn't mention or clearly imply; when the input is sparse, deepen the described elements (light, framing, texture, mood) rather than adding scene contents. ` +
   `Return ONLY the rewritten prompt — no quotes, no preamble, no options, no markdown.`;
 
 /** Rewrite a rough prompt into a vivid one, keeping named entities verbatim. */

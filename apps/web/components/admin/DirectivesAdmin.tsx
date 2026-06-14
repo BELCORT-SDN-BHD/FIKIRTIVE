@@ -111,7 +111,7 @@ export function DirectivesAdmin({ families, modes, cells }: { families: string[]
     setSeeding(false);
     if (!res) { setSeedMsg("Seed failed — try again."); return; }
     if ("error" in res) { setSeedMsg(res.error); return; }
-    setSeedMsg(res.inserted ? `Inserted ${res.inserted} research default${res.inserted === 1 ? "" : "s"}. Refresh to see them.` : "Already seeded — nothing to insert.");
+    setSeedMsg(res.inserted || res.refreshed ? `Inserted ${res.inserted}, refreshed ${res.refreshed} research default${res.inserted + res.refreshed === 1 ? "" : "s"}. Refresh to see them.` : "Already seeded — in sync.");
   }
 
   return (

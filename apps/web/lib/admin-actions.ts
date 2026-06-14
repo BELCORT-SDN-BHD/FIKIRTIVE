@@ -56,9 +56,12 @@ export async function saveModelDirective(
   return { ok: true };
 }
 
-/** Insert the research seed cells that are still ABSENT — never clobbers a
- *  founder edit (createMany skipDuplicates over the (owner,family,mode) unique). */
-export async function seedResearchDirectives(): Promise<{ ok: true; inserted: number } | { error: string }> {
+/** Sync the research seed: INSERT cells that are still absent, and REFRESH cells
+ *  that are still pristine seed (source "research" AND no founder revision) to the
+ *  current DIRECTIVE_SEED text. Never clobbers a founder edit — a founder save sets
+ *  source!="research" and always writes a revision, so edited cells are skipped.
+ *  This is what lets improved research directives reach prod without a migration. */
+export async function seedResearchDirectives(): Promise<{ ok: true; inserted: number; refreshed: number } | { error: string }> {
   const gate = await requireAdmin();
   if ("error" in gate) return gate;
   try {
@@ -70,11 +73,24 @@ export async function seedResearchDirectives(): Promise<{ ok: true; inserted: nu
       })),
       skipDuplicates: true,
     });
+    // refresh pristine cells (never founder-touched) to the latest seed. The pristine
+    // guard is INSIDE the updateMany WHERE, so it re-checks atomically — a founder save
+    // landing mid-refresh writes a revision, the WHERE stops matching, count is 0, no
+    // clobber. A founder save can keep source="research" (admin UI), so the revision
+    // check (not source) is the load-bearing guard. Updates all seeded fields, not just text.
+    let refreshed = 0;
+    for (const c of DIRECTIVE_SEED) {
+      const upd = await prisma.modelDirective.updateMany({
+        where: { ownerId: FOUNDER_OWNER_ID, family: c.family, mode: c.mode, source: "research", revisions: { none: {} } },
+        data: { directive: c.directive, rules: c.rules ?? undefined, notes: c.notes, confidence: c.confidence },
+      });
+      refreshed += upd.count;
+    }
     await prisma.actionEvent.create({
-      data: { id: newId(), ownerId: FOUNDER_OWNER_ID, type: "directive.seed", payload: { inserted: res.count, via: gate.email } },
+      data: { id: newId(), ownerId: FOUNDER_OWNER_ID, type: "directive.seed", payload: { inserted: res.count, refreshed, via: gate.email } },
     });
     revalidatePath("/admin/directives");
-    return { ok: true, inserted: res.count };
+    return { ok: true, inserted: res.count, refreshed };
   } catch {
     return { error: "Couldn't seed defaults — please try again." };
   }

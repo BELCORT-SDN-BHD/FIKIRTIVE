@@ -77,10 +77,10 @@ export const DIRECTIVE_SEED: DirectiveSeed[] = [
     family: "kling",
     mode: "t2v",
     directive:
-      "Describe one clear primary action. Kling loses subject stability past ~2 concurrent motions, so avoid stacking simultaneous movements; keep the camera move simple and singular.",
+      "Lead with MOTION and CAMERA — say how the subject moves and how the shot moves through time (speed, trajectory, what changes across the clip); keep static scene description brief, since temporal/motion detail is what a video model needs. Describe one clear primary action — Kling loses subject stability past ~2 concurrent motions, so don't stack simultaneous movements; keep the camera move simple and singular.",
     rules: { maxConcurrentMotions: 2 },
     confidence: "untested",
-    notes: "Vision-level claim: Kling destabilizes past ~2 concurrent motions. Untested.",
+    notes: "Vision-level claim: Kling destabilizes past ~2 concurrent motions. Untested. Directive reallocates the prompt budget toward motion+camera for t2v.",
   },
   {
     family: "kling",
@@ -104,18 +104,27 @@ export const DIRECTIVE_SEED: DirectiveSeed[] = [
     family: "ltx",
     mode: "t2v",
     directive:
-      "Prefer a single clear subject. LTX tends to face-merge multiple characters — for multi-character scenes, separate them spatially or generate them in separate shots.",
+      "Lead with MOTION and CAMERA — how the subject moves and how the shot moves through time; keep static scene description brief. Prefer a single clear subject. LTX tends to face-merge multiple characters — for multi-character scenes, separate them spatially or generate them in separate shots, and if multiple people are unavoidable keep each face MINIMAL: distinguish them by position and framing, not by piling on distinct hair, glasses, or beards (fine-grained distinct faces are exactly what makes LTX merge them).",
     rules: { castSeverity: "warn" },
     confidence: "untested",
-    notes: "Vision-level claim: LTX face-merges multiple characters. Untested.",
+    notes: "Vision-level claim: LTX face-merges multiple characters. Untested. Adds a forced-multi-character clause + t2v motion budget.",
   },
   {
     family: "ltx",
     mode: "i2v",
     directive:
-      "Describe MOTION and CAMERA, not the scene (the input image provides it). Keep to a single clear subject — LTX face-merges multiple characters.",
+      "Describe MOTION and CAMERA, not the scene (the input image provides it). Keep to a single clear subject — LTX face-merges multiple characters; if multiple people are unavoidable, keep each face minimal and distinguish them by position and framing, not by distinct hair, glasses, or beards.",
     rules: { i2vMotionNotScene: true, castSeverity: "warn" },
     confidence: "untested",
-    notes: "i2v motion-not-scene + LTX multi-character caution. Untested.",
+    notes: "i2v motion-not-scene + LTX multi-character caution (incl. forced-multi-character). Untested.",
+  },
+  {
+    family: "seedream",
+    mode: "i2i",
+    directive:
+      "Write the prompt as natural, descriptive sentences — name the subject, setting, framing, lighting, and mood in prose. The reference image already supplies the base subject; describe the change/edit you want in sentences, not comma-separated keyword/tag soup. Seedream follows natural language best.",
+    rules: { noTagCommas: true },
+    confidence: "untested",
+    notes: "Seedream's natural-language preference is a family property — applies to i2i as well as t2i (was unseeded → fell back to base prompt and drifted to comma-soup).",
   },
 ];

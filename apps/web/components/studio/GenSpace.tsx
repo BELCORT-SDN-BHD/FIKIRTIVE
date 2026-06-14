@@ -135,8 +135,9 @@ export function GenSpace({ projectId, entities, rulesMap, onGoToElements }: { pr
     const mode = deriveMode({ kind, conditioned: promptIds.length > 0, hasSourceImage: !!refImg, hasTailImage: !!tailImg });
     const rules = family ? rulesMap[family]?.[mode] : undefined;
     const characterCount = entities.filter((e) => promptIds.includes(e.id) && e.type === "CHARACTER").length;
-    return lintPrompt({ text: prompt, mode, rules, characterCount });
-  }, [isVideo, videoModel, kind, promptIds, refImg, tailImg, prompt, entities, rulesMap]);
+    // the camera preset is appended to the prompt at gen time (generate()), so it counts toward the motion budget
+    return lintPrompt({ text: prompt, mode, rules, characterCount, cameraMotion: isVideo ? camera : undefined });
+  }, [isVideo, videoModel, kind, promptIds, refImg, tailImg, prompt, entities, rulesMap, camera]);
 
   // consistencyGuardian (client mirror): the same pure castFindings the server
   // runs, computed from the entities already threaded — instant pre-warn, no

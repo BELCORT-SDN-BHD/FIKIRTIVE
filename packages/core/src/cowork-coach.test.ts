@@ -1,8 +1,9 @@
 import { describe, expect, it } from "vitest";
-import { lintPrompt, looksLikeTagSoup } from "./cowork-coach.js";
+import { lintPrompt, looksLikeTagSoup, countMotionCues } from "./cowork-coach.js";
 import type { ModelDirectiveRules } from "./cowork-directives.js";
 
 const ids = (hs: { id: string }[]) => hs.map((h) => h.id);
+const tone = (hs: { id: string; tone: string }[], id: string) => hs.find((h) => h.id === id)?.tone;
 
 describe("looksLikeTagSoup", () => {
   it("flags many short comma-separated fragments", () => {
@@ -34,6 +35,23 @@ describe("lintPrompt", () => {
     const hs = lintPrompt({ text: "x", mode: "t2v", rules: { maxConcurrentMotions: 2 }, characterCount: 0 });
     expect(ids(hs)).toContain("max-motions");
     expect(hs.find((h) => h.id === "max-motions")?.message).toContain("2");
+    expect(tone(hs, "max-motions")).toBe("info"); // under budget → passive tip
+  });
+
+  it("max-motions ESCALATES to warn when the prompt is over the motion budget", () => {
+    const rules: ModelDirectiveRules = { maxConcurrentMotions: 2 };
+    // subject shifts + particles drift + camera pushes = 3 motion cues > 2
+    const hs = lintPrompt({ text: "the subject shifts as particles drift upward while the camera pushes in", mode: "i2v", rules, characterCount: 0 });
+    expect(tone(hs, "max-motions")).toBe("warn");
+    expect(hs.find((h) => h.id === "max-motions")?.message).toContain("3");
+  });
+
+  it("the camera-motion preset counts toward the motion budget", () => {
+    const rules: ModelDirectiveRules = { maxConcurrentMotions: 2 };
+    // two subject motions in prose, under budget on their own...
+    expect(tone(lintPrompt({ text: "a car drives as a flag waves", mode: "t2v", rules, characterCount: 0 }), "max-motions")).toBe("info");
+    // ...but a third motion from the camera preset tips it over
+    expect(tone(lintPrompt({ text: "a car drives as a flag waves", mode: "t2v", rules, characterCount: 0, cameraMotion: "slow dolly in" }), "max-motions")).toBe("warn");
   });
 
   it("noTagCommas fires only when the text looks like tag soup", () => {
@@ -46,6 +64,33 @@ describe("lintPrompt", () => {
     const rules: ModelDirectiveRules = { castSeverity: "warn" };
     expect(ids(lintPrompt({ text: "x", mode: "t2v", rules, characterCount: 2 }))).toContain("multi-char");
     expect(ids(lintPrompt({ text: "x", mode: "t2v", rules, characterCount: 1 }))).not.toContain("multi-char");
+  });
+
+  it("nudges on PROSE multi-character (no @mention chip) via person cues, info-tone", () => {
+    const rules: ModelDirectiveRules = { castSeverity: "warn" };
+    // "two old friends" typed as prose → characterCount 0, but the person cue fires a softer hint
+    const hs = lintPrompt({ text: "two old friends laughing at a cafe", mode: "t2v", rules, characterCount: 0 });
+    expect(ids(hs)).toContain("multi-char-prose");
+    expect(tone(hs, "multi-char-prose")).toBe("info");
+    // a single-subject prose prompt does NOT trip it
+    expect(ids(lintPrompt({ text: "a lone cyclist on a coastal road", mode: "t2v", rules, characterCount: 0 }))).not.toContain("multi-char-prose");
+    // bare numbers/pronouns must NOT over-fire (Codex guard)
+    expect(ids(lintPrompt({ text: "two red apples on a table", mode: "t2v", rules, characterCount: 0 }))).not.toContain("multi-char-prose");
+    // non-person collectives / idioms must NOT over-fire (group/team/family/couple)
+    for (const t of ["a group of islands", "a team of horses", "the family home", "a couple of apples on a plate"]) {
+      expect(ids(lintPrompt({ text: t, mode: "t2v", rules, characterCount: 0 }))).not.toContain("multi-char-prose");
+    }
+    // and the chip-based warning takes precedence (no double-fire)
+    expect(ids(lintPrompt({ text: "friends", mode: "t2v", rules, characterCount: 2 }))).not.toContain("multi-char-prose");
+  });
+
+  it("countMotionCues counts distinct motion verbs (deduped), whole-word only", () => {
+    expect(countMotionCues("a static portrait")).toBe(0);
+    expect(countMotionCues("the camera pushes in")).toBe(1);
+    expect(countMotionCues("she walks as the camera pans and zooms")).toBe(3);
+    expect(countMotionCues("drifting, drifting, drifting")).toBe(1); // deduped
+    // whole-word boundaries: prefix-colliding NOUNS must NOT count as motion
+    expect(countMotionCues("driftwood and a pullover near the dashboard, a panda and panorama")).toBe(0);
   });
 
   it("pitfalls each become a note", () => {
