@@ -60,11 +60,14 @@ export function lintPrompt(input: {
     hints.push({ id: "i2v-motion", tone: "info", message: "Image-to-video: describe the motion and camera, not the scene — the input image already provides it." });
   }
   if (r.maxConcurrentMotions != null) {
-    // count subject motions in the prompt PLUS the camera preset (itself a motion),
-    // and escalate from a passive tip to an active warning when the prompt is over budget.
+    // count subject motions in the prompt PLUS the camera preset (itself a motion).
+    // Escalate to an active warning ONLY on i2v/i2v-tail — those prompts are short and
+    // motion-only, so the verb count ≈ concurrent motions. For t2v the prompt is scene-
+    // rich (many motion verbs describe ONE action), so the count over-fires — keep the
+    // passive tip there rather than cry wolf.
     const motions = countMotionCues(`${input.text} ${input.cameraMotion ?? ""}`);
-    const over = motions > r.maxConcurrentMotions;
-    hints.push(over
+    const reliableMode = input.mode === "i2v" || input.mode === "i2v-tail";
+    hints.push(reliableMode && motions > r.maxConcurrentMotions
       ? { id: "max-motions", tone: "warn", message: `This looks like ~${motions} concurrent motions — this model is steadiest with ≤${r.maxConcurrentMotions}. Simplify or split the action.` }
       : { id: "max-motions", tone: "info", message: `Steadiest with ≤${r.maxConcurrentMotions} concurrent motions — keep the action simple.` });
   }

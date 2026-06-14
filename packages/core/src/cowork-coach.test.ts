@@ -38,20 +38,26 @@ describe("lintPrompt", () => {
     expect(tone(hs, "max-motions")).toBe("info"); // under budget → passive tip
   });
 
-  it("max-motions ESCALATES to warn when the prompt is over the motion budget", () => {
+  it("max-motions ESCALATES to warn when an i2v prompt is over the motion budget", () => {
     const rules: ModelDirectiveRules = { maxConcurrentMotions: 2 };
-    // subject shifts + particles drift + camera pushes = 3 motion cues > 2
+    // subject shifts + particles drift + camera pushes = 3 motion cues > 2 (i2v: reliable)
     const hs = lintPrompt({ text: "the subject shifts as particles drift upward while the camera pushes in", mode: "i2v", rules, characterCount: 0 });
     expect(tone(hs, "max-motions")).toBe("warn");
     expect(hs.find((h) => h.id === "max-motions")?.message).toContain("3");
   });
 
-  it("the camera-motion preset counts toward the motion budget", () => {
+  it("does NOT warn on t2v even when over budget — verb count over-fires on scene-rich prose", () => {
     const rules: ModelDirectiveRules = { maxConcurrentMotions: 2 };
-    // two subject motions in prose, under budget on their own...
-    expect(tone(lintPrompt({ text: "a car drives as a flag waves", mode: "t2v", rules, characterCount: 0 }), "max-motions")).toBe("info");
+    // a richly-described single car action trips many motion VERBS but is ~1-2 concurrent motions
+    expect(tone(lintPrompt({ text: "the car glides and drifts and races and turns as it drives", mode: "t2v", rules, characterCount: 0 }), "max-motions")).toBe("info");
+  });
+
+  it("the camera-motion preset counts toward the i2v motion budget", () => {
+    const rules: ModelDirectiveRules = { maxConcurrentMotions: 2 };
+    // two subject motions in prose, under budget on their own (i2v: reliable mode)...
+    expect(tone(lintPrompt({ text: "the subject drifts as a flag waves", mode: "i2v", rules, characterCount: 0 }), "max-motions")).toBe("info");
     // ...but a third motion from the camera preset tips it over
-    expect(tone(lintPrompt({ text: "a car drives as a flag waves", mode: "t2v", rules, characterCount: 0, cameraMotion: "slow dolly in" }), "max-motions")).toBe("warn");
+    expect(tone(lintPrompt({ text: "the subject drifts as a flag waves", mode: "i2v", rules, characterCount: 0, cameraMotion: "slow dolly in" }), "max-motions")).toBe("warn");
   });
 
   it("noTagCommas fires only when the text looks like tag soup", () => {
