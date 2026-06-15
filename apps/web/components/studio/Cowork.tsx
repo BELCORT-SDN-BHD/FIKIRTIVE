@@ -6,6 +6,8 @@ import { MentionInput } from "@/components/MentionInput";
 import { GenerateCard } from "./GenerateCard";
 import type { EntityDTO, ChatThreadDTO, ChatMessageDTO } from "@/lib/types";
 
+const isVideoUrl = (u: string) => /\.(mp4|webm|mov|mkv)(\?|$)/i.test(u); // mirrors GenSpace
+
 export function Cowork({ projectId, entities, threads }: {
   projectId: string;
   entities: EntityDTO[];
@@ -89,8 +91,12 @@ export function Cowork({ projectId, entities, threads }: {
               return (
                 <div key={m.id} className="cw-result">
                   {(r?.urls ?? []).map((u, i) => (
-                    // eslint-disable-next-line @next/next/no-img-element
-                    <img key={i} src={u} alt="" />
+                    isVideoUrl(u) ? (
+                      <video key={i} src={u} muted loop autoPlay playsInline />
+                    ) : (
+                      // eslint-disable-next-line @next/next/no-img-element
+                      <img key={i} src={u} alt="" />
+                    )
                   ))}
                 </div>
               );
