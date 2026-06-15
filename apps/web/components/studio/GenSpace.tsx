@@ -131,11 +131,23 @@ export function GenSpace({ projectId, entities, rulesMap, onGoToElements }: { pr
   // old project's tiles + pollers bleed into the new one). Historical results aren't
   // replayable (we don't reconstruct the exact request), so retry is off; an in-flight
   // job (came back while still running) resumes polling.
+  //
+  // Reset the live STATE during render (React's "adjust state when a prop changes"
+  // pattern) instead of synchronously inside the effect — a synchronous setState in an
+  // effect body triggers cascading renders (react-hooks/set-state-in-effect). Doing it
+  // here also guarantees stale tiles vanish even when the new project has zero recent
+  // results, since the async hydrate below early-returns and never calls setResults.
+  const [prevProjectId, setPrevProjectId] = useState(projectId);
+  if (projectId !== prevProjectId) {
+    setPrevProjectId(projectId);
+    setBusy(false);
+    setResults([]);
+  }
   useEffect(() => {
     let alive = true;
-    pollers.current.forEach((t) => clearInterval(t)); pollers.current.clear();
-    active.current = 0; busyRef.current = false; setBusy(false); seq.current = 0;
-    setResults([]);
+    const ps = pollers.current; // ref Set is stable, but copy it for the cleanup (react-hooks/exhaustive-deps)
+    ps.forEach((t) => clearInterval(t)); ps.clear();
+    active.current = 0; busyRef.current = false; seq.current = 0;
     getRecentGenResults(projectId).then((rows) => {
       if (!alive || !rows.length || seq.current > 0) return; // user already generated in this project → keep their live results
       const hydrated: Result[] = rows.map((row, i) => ({
@@ -152,7 +164,7 @@ export function GenSpace({ projectId, entities, rulesMap, onGoToElements }: { pr
       setResults(hydrated);
       rows.forEach((row, i) => { if (row.status === "QUEUED" || row.status === "GENERATING") resumePoll(row.jobId, -(i + 1)); });
     }).catch(() => {});
-    return () => { alive = false; pollers.current.forEach((t) => clearInterval(t)); pollers.current.clear(); };
+    return () => { alive = false; ps.forEach((t) => clearInterval(t)); ps.clear(); };
   }, [projectId]);
 
   // dismiss the More popover on outside click / Escape (mirrors PopMenu/Dialog)
