@@ -338,6 +338,16 @@ h1, h2, h3 { font-family: var(--font-sans); font-weight: 600; letter-spacing: va
 .composer-dock { flex: none; padding: 14px 28px 22px; display: flex; justify-content: center; }
 .composer-wrap { position: relative; width: 100%; max-width: 880px; }
 
+/* ---------- Cowork chat surface ---------- */
+.cw-msg { padding: 9px 13px; border-radius: var(--radius-md); font: var(--text-body); line-height: 1.55; margin-bottom: 10px; max-width: 680px; }
+.cw-user { background: var(--glass-2); border: 1px solid var(--line-1); color: var(--fg-1); align-self: flex-end; margin-left: auto; }
+.cw-agent { background: var(--glass-1); border: 1px solid var(--line-2); color: var(--fg-1); }
+.cw-error { background: rgba(255,90,90,.07); border: 1px solid rgba(255,90,90,.22); color: var(--danger); }
+.cw-plan { margin: 0 0 10px; padding: 8px 12px 8px 28px; border-radius: var(--radius-md); background: var(--glass-1); border: 1px solid var(--line-2); font: var(--text-caption); color: var(--fg-3); display: flex; flex-direction: column; gap: 4px; }
+.cw-result { display: flex; flex-wrap: wrap; gap: 10px; margin-bottom: 14px; }
+.cw-result img { width: 280px; aspect-ratio: 16/9; object-fit: contain; border-radius: var(--radius-md); border: 1px solid var(--line-2); background: #000; }
+.cw-card { padding: 14px 16px; border-radius: var(--radius-md); background: var(--glass-1); border: 1px solid var(--line-2); font: var(--text-body); color: var(--fg-2); margin-bottom: 10px; }
+
 .fade-rise { animation: fade-rise var(--dur-base) var(--ease-out); }
 @keyframes fade-rise { from { opacity: 0; transform: translateY(8px); } to { opacity: 1; transform: none; } }
 @media (prefers-reduced-motion: reduce) { .fade-rise { animation: none; } }
