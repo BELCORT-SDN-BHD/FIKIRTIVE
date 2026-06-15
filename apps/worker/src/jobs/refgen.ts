@@ -74,7 +74,7 @@ export async function handleRefGen(data: RefGenJobData, retryCount: number): Pro
     // exactly-once spend (codex P1): a prior delivery already paid and stored
     // these outputs — just (re-)attach them idempotently and finish
     if (job.outputAssetIds.length > 0) {
-      await attachOutputs(job.entityId, job.ownerId, job.outputAssetIds);
+      await attachOutputs(job.entityId, job.ownerId, job.outputAssetIds, job.variantId);
       await finalizeDone(job.id, job.mode, job.entityId, job.outputAssetIds[0]);
       console.log(`[refgen] ${job.id}: resumed — re-attached ${job.outputAssetIds.length} prior outputs (no re-spend)`);
       return;
@@ -99,10 +99,27 @@ export async function handleRefGen(data: RefGenJobData, retryCount: number): Pro
       return;
     }
 
-    // BASE = text-to-image identity anchor → no conditioning. REFSHEET/VARIANT
-    // resolve conditioning from the entity's existing base-level refs → presigned GETs.
+    // BASE = text-to-image (no conditioning). VARIANT = image-to-image conditioned
+    // on the LOCKED BASE only. REFSHEET = legacy conditioning on the entity's
+    // base-level refs. All "unreachable" throws happen BEFORE the paid call below,
+    // so a missing/unreachable base fails closed with no spend (codex P1).
     const inputImageUrls: string[] = [];
-    if (job.mode !== "BASE") {
+    if (job.mode === "VARIANT") {
+      // re-validate the base at spend time (belt; createVariant validated pre-dispatch).
+      // The base row must exist + be live (real check, always). Reachability of the
+      // presigned URL is only enforced for a real (paid) provider — mock/local-disk
+      // storage can't presign, and the mock provider ignores inputImageUrls anyway.
+      if (!entity.baseAssetId) throw new Error("variant job has no base to condition on");
+      const baseAsset = await prisma.asset.findFirst({
+        where: { id: entity.baseAssetId, ownerId: job.ownerId, deletedAt: null },
+      });
+      if (!baseAsset) throw new Error("variant base asset is missing — refusing to spend");
+      const signed = await storage.presignedGet(storageKey(baseAsset.ownerId, baseAsset.contentHash, baseAsset.ext), 3600);
+      if (signed) inputImageUrls.push(signed);
+      if (provider.name !== "mock" && !signed) {
+        throw new Error("variant base unreachable — refusing to spend on a degraded generation");
+      }
+    } else if (job.mode !== "BASE") {
       const refs = await prisma.referenceImage.findMany({
         where: { entityId: job.entityId, ownerId: job.ownerId, deletedAt: null, variantId: null },
         orderBy: { position: "asc" },
@@ -157,8 +174,8 @@ export async function handleRefGen(data: RefGenJobData, retryCount: number): Pro
     }
     await prisma.refGenJob.update({ where: { id: job.id }, data: { outputAssetIds } });
 
-    // attach (idempotent: skips assets already attached to this entity)
-    await attachOutputs(job.entityId, job.ownerId, outputAssetIds);
+    // attach (idempotent: skips assets already attached to this entity+variant)
+    await attachOutputs(job.entityId, job.ownerId, outputAssetIds, job.variantId);
     await finalizeDone(job.id, job.mode, job.entityId, outputAssetIds[0]);
     console.log(`[refgen] ${job.id}: DONE (${job.mode}) → ${outputAssetIds.length} images via ${provider.name}`);
   } catch (err) {
@@ -205,17 +222,19 @@ async function finalizeDone(
 }
 
 /** Attach generated assets to the entity as ReferenceImages, after any
- *  existing ones. Idempotent: an asset already attached (live) is skipped, so
- *  a resumed/retried job never double-attaches. */
-async function attachOutputs(entityId: string, ownerId: string, assetIds: string[]): Promise<void> {
+ *  existing ones. `variantId` tags them (null = base/entity-level). Idempotent
+ *  within scope: an asset already attached (live) at the SAME (entityId, assetId,
+ *  variantId) is skipped, so a resumed/retried job never double-attaches, while
+ *  the same asset can legitimately exist as both a base ref and a variant ref. */
+async function attachOutputs(entityId: string, ownerId: string, assetIds: string[], variantId: string | null = null): Promise<void> {
   let position = await nextRefPosition(entityId, ownerId);
   for (const assetId of assetIds) {
     const existing = await prisma.referenceImage.findFirst({
-      where: { entityId, assetId, deletedAt: null },
+      where: { entityId, assetId, variantId, deletedAt: null },
     });
     if (existing) continue;
     await prisma.referenceImage.create({
-      data: { id: newId(), ownerId, entityId, assetId, position: position++ },
+      data: { id: newId(), ownerId, entityId, assetId, variantId, position: position++ },
     });
   }
 }
