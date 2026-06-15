@@ -227,6 +227,7 @@ model Generation {
   entitySnapshot Json
   // 同一镜头下的版本序号（v1, v2, …）
   version        Int         @default(1)
+  threadId       String?   // set by the worker (= GenJob.threadId) when a cowork gen produced this; filters it out of candidate/asset/editor views
   attachedAt     DateTime?
   createdAt      DateTime    @default(now())
   deletedAt      DateTime?
