@@ -16,7 +16,7 @@ import { coworkDraftStoryboard } from "@/lib/cowork-actions";
 import { startGen, getGenJob } from "@/lib/gen-actions";
 import { GEN_PRICE_USD_PER_IMAGE, GEN_VIDEO_MODELS, GEN_VIDEO_MODEL_INFO, GEN_VIDEO_MODEL_OPTIONS, videoDefaults, videoPriceUsd, type GenVideoModel } from "@artlio/core";
 import type { EntityDTO } from "@/lib/types";
-import { MentionInput, buildMentionDoc } from "@/components/MentionInput";
+import { MentionInput, buildMentionDoc, resolveDoc } from "@/components/MentionInput";
 import { setDnd, getDnd, hasDnd } from "@/lib/dnd";
 import { Lightbox } from "@/components/Lightbox";
 
@@ -51,6 +51,10 @@ function ShotCard({ projectId, shot, index, total, entities }: { projectId: stri
   const [text, setText] = useState(shot.prompt);
   const [ids, setIds] = useState<string[]>(shot.entityIds);
   const [doc, setDoc] = useState<unknown>(shot.promptDoc);
+  // entityId → @mentioned variant. Seeded from the PERSISTED doc (the mention nodes
+  // carry variantId attrs) so a reloaded shot still conditions on its bound variant —
+  // not just after the user re-edits. byId isn't needed for variant extraction.
+  const [variantSel, setVariantSel] = useState<Record<string, string>>(() => resolveDoc((shot.promptDoc ?? EMPTY_DOC) as Parameters<typeof resolveDoc>[0], new Map()).variantSel);
   const [dirty, setDirty] = useState(false);
   const [enhancing, setEnhancing] = useState(false);
   const enhancingRef = useRef(false); // synchronous guard: `enhancing` state can't catch a same-frame double-click → would spend Enhance twice
@@ -96,6 +100,7 @@ function ShotCard({ projectId, shot, index, total, entities }: { projectId: stri
     // eslint-disable-next-line react-hooks/set-state-in-effect -- guarded server-prompt sync; the guard above prevents overwriting/re-spending on unsaved edits
     setSeeded(docKey);
     setText(shot.prompt); setIds(shot.entityIds); setDoc(shot.promptDoc); setEnhanceDoc(null);
+    setVariantSel(resolveDoc((shot.promptDoc ?? EMPTY_DOC) as Parameters<typeof resolveDoc>[0], new Map()).variantSel);
   }, [docKey, dirty, seeded, shot.prompt, shot.entityIds, shot.promptDoc]);
 
   function pickModel(m: GenVideoModel) { setVideoModel(m); setSeconds(videoDefaults(m).seconds); setAudioOn(videoDefaults(m).audio); }
@@ -125,7 +130,7 @@ function ShotCard({ projectId, shot, index, total, entities }: { projectId: stri
       } catch { res = null; }
       if (!res) { setError("Couldn't enhance — please try again."); return; }
       if ("error" in res) { setError(res.error); return; }
-      const built = buildMentionDoc(res.text, entities.filter((e) => ids.includes(e.id)));
+      const built = buildMentionDoc(res.text, entities.filter((e) => ids.includes(e.id)).map((e) => ({ ...e, variantId: variantSel[e.id] })));
       setText(res.text); setDoc(built);
       setEnhanceDoc(built); setEnhanceNonce((n) => n + 1);
       // persist now — the Enhance click already blurred the editor (before this content
@@ -167,7 +172,7 @@ function ShotCard({ projectId, shot, index, total, entities }: { projectId: stri
     setError(null); setSlotBusy(slot);
     (async () => {
       if (!(await persist())) { setSlotBusy(null); return; }
-      const res = await startGen({ projectId, prompt: text.trim(), entityIds: ids, count: 1, kind: "image", model: "seedream", idempotencyKey: `frame:${shot.id}:${slot}` });
+      const res = await startGen({ projectId, prompt: text.trim(), entityIds: ids, count: 1, kind: "image", model: "seedream", idempotencyKey: `frame:${shot.id}:${slot}`, ...(Object.keys(variantSel).length ? { variantSel } : {}) });
       if ("error" in res) { setError(res.error); setSlotBusy(null); return; }
       let n = 0;
       const t = setInterval(async () => {
@@ -235,6 +240,7 @@ function ShotCard({ projectId, shot, index, total, entities }: { projectId: stri
         resolution: opts.resolutions.length ? vd.resolution : undefined,
         audio: opts.audioToggle ? audioOn : undefined,
         idempotencyKey: `animate:${shot.id}`,
+        ...(Object.keys(variantSel).length ? { variantSel } : {}),
       });
       if ("error" in res) { setError(res.error); setBusy(false); return; }
       let n = 0;
@@ -394,7 +400,7 @@ function ShotCard({ projectId, shot, index, total, entities }: { projectId: stri
         <div style={{ width: "100%", background: "rgba(255,255,255,.05)", border: "1px solid var(--line-2)", borderRadius: "var(--radius-sm)", padding: "6px 9px" }}>
           <MentionInput entities={entities} initialDoc={enhanceDoc ?? shot.promptDoc} docKey={`${seeded}|e${enhanceNonce}`} disabled={enhancing}
             placeholder="Describe this shot — use @ to add elements"
-            onChange={(t, i, d) => { setText(t); setIds(i); setDoc(d); setDirty(true); }}
+            onChange={(t, i, vs, d) => { setText(t); setIds(i); setVariantSel(vs); setDoc(d); setDirty(true); }}
             onBlur={() => { if (dirty) void persist(); }} />
         </div>
         <button className="al-chip al-chip-mono" onClick={enhance} disabled={enhancing || busy || acting || !!slotBusy || empty} title="Rewrite the prompt into a vivid, detailed one" aria-label="Enhance prompt" style={{ alignSelf: "flex-start" }}><IcSparkle size={12} />{enhancing ? " Enhancing…" : " Enhance"}</button>

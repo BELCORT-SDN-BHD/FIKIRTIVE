@@ -78,6 +78,7 @@ export function GenSpace({ projectId, entities, rulesMap, onGoToElements }: { pr
   const [kind, setKind] = useState<"image" | "video">("image");
   const [prompt, setPrompt] = useState("");
   const [promptIds, setPromptIds] = useState<string[]>([]); // @mentioned entity ids
+  const [promptVariantSel, setPromptVariantSel] = useState<Record<string, string>>({}); // entityId → @mentioned variant
   const [composerKey, setComposerKey] = useState(0);        // bump to re-seed the editor after ✨ Enhance
   const [seedDoc, setSeedDoc] = useState<unknown>(undefined);
   const [enhancing, setEnhancing] = useState(false);
@@ -239,7 +240,8 @@ export function GenSpace({ projectId, entities, rulesMap, onGoToElements }: { pr
     setEnhancing(false);
     if (!res) { setError("Couldn't enhance — please try again."); return; }
     if ("error" in res) { setError(res.error); return; }
-    const mentioned = entities.filter((e) => promptIds.includes(e.id));
+    // carry each mention's variant binding into the rebuilt doc so Enhance keeps it
+    const mentioned = entities.filter((e) => promptIds.includes(e.id)).map((e) => ({ ...e, variantId: promptVariantSel[e.id] }));
     setPrompt(res.text);
     setSeedDoc(buildMentionDoc(res.text, mentioned));
     setComposerKey((k) => k + 1);
@@ -322,6 +324,9 @@ export function GenSpace({ projectId, entities, rulesMap, onGoToElements }: { pr
     setError(null);
     setShowMore(false);
     setBusy(true);
+    // only send variantSel when a chip actually bound a variant — keeps old/bare
+    // requests shaped exactly as before (worker reads undefined → base-ref conditioning)
+    const vsel = Object.keys(promptVariantSel).length ? promptVariantSel : undefined;
     if (isVideo) {
       // fal video has no num_videos — a batch of N is N independent one-clip jobs
       // (each keeps the worker's exactly-once spend). Only send a control the model has.
@@ -338,10 +343,11 @@ export function GenSpace({ projectId, entities, rulesMap, onGoToElements }: { pr
           resolution: opts.resolutions.length ? vopts.resolution : undefined,
           aspectRatio: opts.aspectRatios.length ? vopts.aspectRatio : undefined,
           audio: opts.audioToggle ? vopts.audio : undefined,
+          variantSel: vsel,
         }, aspect);
       }
     } else {
-      launch(text, "Seedream", { projectId, prompt: text, entityIds: promptIds, count, kind: "image", model: "seedream" }, "16 / 9");
+      launch(text, "Seedream", { projectId, prompt: text, entityIds: promptIds, count, kind: "image", model: "seedream", variantSel: vsel }, "16 / 9");
     }
   }
 
@@ -470,7 +476,7 @@ export function GenSpace({ projectId, entities, rulesMap, onGoToElements }: { pr
             <div style={{ flex: 1, minWidth: 0 }}>
               <MentionInput entities={entities} docKey={String(composerKey)} initialDoc={seedDoc} disabled={enhancing}
                 placeholder="Describe the shot — use @ to add elements (⌘↵ to generate)"
-                onChange={(t, i) => { setPrompt(t); setPromptIds(i); }} onSubmit={generate} />
+                onChange={(t, i, vs) => { setPrompt(t); setPromptIds(i); setPromptVariantSel(vs); }} onSubmit={generate} />
             </div>
           </div>
           {coachHints.length > 0 && (
