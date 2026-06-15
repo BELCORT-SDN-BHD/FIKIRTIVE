@@ -21,10 +21,22 @@ const OWNED = { ownerId: FOUNDER_OWNER_ID, deletedAt: null } as const;
 export async function startRefGen(raw: unknown): Promise<{ id: string } | { error: string }> {
   const parsed = refGenRequest.safeParse(raw);
   if (!parsed.success) return { error: "That generation request is out of bounds — check the prompt and count." };
-  const { entityId, prompt, count, model } = parsed.data;
+  const { entityId, prompt, count, model, mode, variantId } = parsed.data;
 
   const entity = await prisma.entity.findFirst({ where: { id: entityId, ...OWNED } });
   if (!entity) return { error: "Element not found." };
+
+  // validate-before-spend: a VARIANT generation conditions on the locked base
+  // (i2i), so the base must exist as a live owned asset BEFORE we create a paid
+  // job. A BASE generation has no precondition (it produces the base).
+  if (mode === "VARIANT") {
+    if (!entity.baseAssetId) return { error: "Set a base identity first — variants are generated from it." };
+    const base = await prisma.asset.findFirst({ where: { id: entity.baseAssetId, ownerId: FOUNDER_OWNER_ID, deletedAt: null }, select: { id: true } });
+    if (!base) return { error: "The base image is missing — set a new base before generating variants." };
+  }
+
+  // BASE and VARIANT are single-image; only REFSHEET honors the requested count.
+  const effectiveCount = mode === "REFSHEET" ? count : 1;
 
   // one generation in flight per entity — double-clicks and duplicate tabs
   // must not stack (and stack spend); same guard shape as startRender. Only
@@ -34,16 +46,17 @@ export async function startRefGen(raw: unknown): Promise<{ id: string } | { erro
   const STALE_MS = 15 * 60 * 1000;
   const active = await prisma.refGenJob.findFirst({
     where: {
-      entityId,
       ownerId: FOUNDER_OWNER_ID,
       status: { in: ["QUEUED", "GENERATING"] },
       updatedAt: { gte: new Date(Date.now() - STALE_MS) },
+      // BASE/REFSHEET serialize per entity; VARIANT serializes per variant.
+      ...(mode === "VARIANT" ? { variantId } : { entityId, mode: { not: "VARIANT" } }),
     },
   });
   if (active) return { error: "A generation is already running for this element — wait for it to finish." };
 
   const job = await prisma.refGenJob.create({
-    data: { id: newId(), ownerId: FOUNDER_OWNER_ID, entityId, prompt, count, model },
+    data: { id: newId(), ownerId: FOUNDER_OWNER_ID, entityId, prompt, count: effectiveCount, model, mode, variantId: variantId ?? null },
   });
   try {
     const boss = await getBoss();
@@ -58,7 +71,7 @@ export async function startRefGen(raw: unknown): Promise<{ id: string } | { erro
     return { error: "Could not reach the generation queue — is the worker up?" };
   }
   await prisma.actionEvent.create({
-    data: { id: newId(), ownerId: FOUNDER_OWNER_ID, type: "refgen.start", payload: { jobId: job.id, entityId, count } },
+    data: { id: newId(), ownerId: FOUNDER_OWNER_ID, type: "refgen.start", payload: { jobId: job.id, entityId, count: effectiveCount } },
   });
   revalidatePath("/", "layout");
   return { id: job.id };
