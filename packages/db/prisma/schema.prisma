@@ -365,6 +365,9 @@ model GenJob {
   // 双提交幂等：shot 绑定生成的稳定键（"frame:<shotId>:<slot>" / "animate:<shotId>"）。
   // startGen 命中同键的在途(QUEUED/GENERATING)任务则复用，重载再点不二次扣费。
   idempotencyKey     String?
+  // set when a Cowork gen-card initiated this job (no FK — validated in the action). Lets
+  // getRecentGenResults keep cowork gens out of the GenSpace hydrate (WHERE threadId IS NULL).
+  threadId           String?
   kind               GenKind   @default(IMAGE)
   model              String    @default("seedream")
   count              Int       @default(1)
@@ -489,4 +492,53 @@ model ModelDirectiveRevision {
   parent ModelDirective @relation(fields: [directiveId], references: [id], onDelete: Cascade)
 
   @@index([directiveId, createdAt])
+}
+
+// ── Cowork agent loop (SP1) ─────────────────────────────────────────────────
+enum ChatRole {
+  USER
+  AGENT
+}
+
+enum ChatMessageKind {
+  TEXT
+  PLAN
+  GEN_CARD
+  GEN_RESULT
+  DENIAL
+  TURN_ERROR
+}
+
+model ChatThread {
+  id        String        @id
+  ownerId   String        @default("founder")
+  projectId String
+  title     String        @default("")
+  createdAt DateTime      @default(now())
+  updatedAt DateTime      @updatedAt
+  deletedAt DateTime?
+  messages  ChatMessage[]
+
+  // thread list: a PARTIAL index ON (projectId, ownerId, updatedAt) WHERE deletedAt IS NULL
+  // lives in migration.sql (Prisma can't express the WHERE). The full @@index is intentionally
+  // omitted — the partial covers every live-thread read; deleted threads are never listed.
+}
+
+model ChatMessage {
+  id                 String          @id
+  threadId           String
+  ownerId            String          @default("founder")
+  role               ChatRole
+  kind               ChatMessageKind
+  seq                Int
+  text               String          @default("")
+  payload            Json?
+  genJobId           String?
+  sourceGenerationId String?
+  createdAt          DateTime        @default(now())
+  deletedAt          DateTime?
+
+  thread ChatThread @relation(fields: [threadId], references: [id], onDelete: Restrict)
+
+  @@index([threadId, seq])
 }
