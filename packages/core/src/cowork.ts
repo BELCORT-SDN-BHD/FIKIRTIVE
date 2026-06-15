@@ -109,6 +109,14 @@ export const coworkProposalSchema = z.object({
   variantSel: z.record(z.string().min(1).max(64), z.string().min(1).max(64)).default({}),
 }).strict();
 
+export const coworkGenerateRequest = z.object({
+  cardId: z.string().min(1).max(64),
+  prompt: z.string().trim().min(1).max(MAX_GEN_PROMPT),
+  entityIds: z.array(z.string().min(1).max(64)).max(MAX_GEN_ENTITIES).default([]),
+  variantSel: z.record(z.string().min(1).max(64), z.string().min(1).max(64)).default({}),
+}).strict();
+export type CoworkGenerateRequest = z.infer<typeof coworkGenerateRequest>;
+
 export const coworkTurnSchema = z.object({
   planSteps: z.array(z.string().trim().min(1).transform((s) => s.slice(0, 200))).transform((arr) => arr.slice(0, MAX_PLAN_STEPS)).default([]),
   reply: z.string().trim().min(1).transform((s) => s.slice(0, 2000)),

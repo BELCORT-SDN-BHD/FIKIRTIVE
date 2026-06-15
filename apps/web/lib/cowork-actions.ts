@@ -15,9 +15,11 @@ import {
   coworkTurnRequest, COWORK_MEMORY_TURNS, buildPlannerMessages, parseCoworkTurn,
   mockPlannerReply, suggestModel, GEN_MODELS, GEN_VIDEO_MODELS,
   GEN_PRICE_USD_PER_IMAGE, videoPriceUsd,
+  coworkGenerateRequest, coworkProposalSchema,
   type ChatMessage, type CoworkTurn, type GenVideoModel,
 } from "@artlio/core";
 import { getEnhanceDirective } from "./cowork-knowledge";
+import { startGen } from "./gen-actions";
 
 const OWNED = { ownerId: FOUNDER_OWNER_ID, deletedAt: null } as const;
 const transport = createTransport();
@@ -271,4 +273,71 @@ export async function coworkTurn(raw: unknown): Promise<{ threadId: string } | {
   } catch {
     return { error: "Couldn't reach cowork — please try again." };
   }
+}
+
+export async function coworkGenerate(raw: unknown): Promise<{ id: string } | { error: string }> {
+  const parsed = coworkGenerateRequest.safeParse(raw);
+  if (!parsed.success) return { error: "That card can't be generated." };
+  const { cardId, prompt, entityIds, variantSel } = parsed.data;
+
+  // Load the GEN_CARD server-side — threadId + projectId + the trusted model/params
+  // come from the PERSISTED card, never from the client (anti-spoof).
+  const card = await prisma.chatMessage.findFirst({
+    where: { id: cardId, ownerId: FOUNDER_OWNER_ID, kind: "GEN_CARD", deletedAt: null },
+    select: { id: true, threadId: true, payload: true, genJobId: true, thread: { select: { projectId: true, deletedAt: true, ownerId: true } } },
+  });
+  if (!card || card.thread.deletedAt || card.thread.ownerId !== FOUNDER_OWNER_ID) return { error: "Card not found." };
+
+  // RE-SPEND GUARD (server-side, money-safety #1): a card generates AT MOST ONCE. The
+  // idempotencyKey only dedupes while the job is QUEUED/GENERATING; once it reaches
+  // DONE/FAILED the key no longer blocks, so without this a second call (stale tab,
+  // reload, or a direct server-action invocation) would create a NEW charged job. The
+  // UI disabling the button is not a spend control. Returning the existing id keeps it
+  // idempotent (a benign double-click is a no-op, not an error). To retry, the user
+  // starts a new turn (new card) — never a silent re-charge of the same card.
+  if (card.genJobId) return { id: card.genJobId };
+
+  // re-validate the persisted proposal subset; the model/kind/params are server-trusted
+  const p = (card.payload ?? {}) as Record<string, unknown>;
+  const proposal = coworkProposalSchema.safeParse({ kind: p.kind, desiredAspect: p.desiredAspect, desiredDuration: p.desiredDuration, desiredAudio: p.desiredAudio, structuredPrompt: p.structuredPrompt, entityIds: p.entityIds ?? [], variantSel: p.variantSel ?? {} });
+  if (!proposal.success) return { error: "This card is no longer valid." };
+  const model = typeof p.model === "string" ? p.model : null;
+  const params = (p.params ?? {}) as { aspectRatio?: string; resolution?: string; durationSeconds?: number; audio?: boolean; count?: number };
+  if (!model) return { error: "This card is missing a model." };
+
+  // Build the genRequest SERVER-SIDE. model/kind/count/video-params come from the card;
+  // only the (possibly edited) prompt + refs come from the client. startGen.safeParse +
+  // checkCast remain the SOLE spend gate; effectiveVariantSel drops it for video there.
+  const req = {
+    projectId: card.thread.projectId,
+    threadId: card.threadId,
+    prompt,
+    entityIds,
+    ...(Object.keys(variantSel).length ? { variantSel } : {}),
+    count: proposal.data.kind === "video" ? 1 : (params.count ?? 1),
+    kind: proposal.data.kind,
+    model,
+    ...(proposal.data.kind === "video" ? {
+      durationSeconds: params.durationSeconds ?? null,
+      resolution: params.resolution ?? null,
+      aspectRatio: params.aspectRatio ?? null,
+      audio: params.audio ?? null,
+    } : {}),
+    idempotencyKey: `cowork:${cardId}`, // stable — same card always dedupes; NEVER per-retry
+  };
+
+  const res = await startGen(req); // the ONLY spend path (unmodified logic — safeParse + Guardian)
+  if ("error" in res) return res;
+
+  // Persist the card→job link — this is what the server-side re-spend guard above keys
+  // on, so it is the only remaining re-spend window if it fails. Best-effort (the spend
+  // already happened safely via startGen) but LOG a failure: it leaves the card without
+  // a genJobId, so a subsequent click could create a second job (the idempotencyKey still
+  // dedupes while the first is in flight, narrowing the window).
+  try {
+    await prisma.chatMessage.update({ where: { id: cardId }, data: { genJobId: res.id } });
+  } catch (e) {
+    console.warn(`coworkGenerate: failed to mark card ${cardId} with genJobId ${res.id} (re-spend guard at risk):`, e instanceof Error ? e.message : e);
+  }
+  return res;
 }
