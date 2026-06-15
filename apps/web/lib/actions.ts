@@ -122,12 +122,16 @@ export async function createEntity(formData: FormData) {
   const entity = await prisma.entity.create({
     data: { id: newId(), ownerId: FOUNDER_OWNER_ID, name, type: type as EntityType },
   });
+  let firstAssetId: string | null = null;
   for (const [i, file] of files.entries()) {
     const asset = await assetUpsert(await ingestFile(file));
+    if (i === 0) firstAssetId = asset.id;
     await prisma.referenceImage.create({
       data: { id: newId(), ownerId: FOUNDER_OWNER_ID, entityId: entity.id, assetId: asset.id, position: i },
     });
   }
+  // the first reference becomes the locked base (same invariant as addReferenceImages + the migration backfill)
+  if (firstAssetId) await prisma.entity.update({ where: { id: entity.id }, data: { baseAssetId: firstAssetId } });
   await logAction("entity.create", null, { entityId: entity.id, name, type, refCount: files.length });
   revalidatePath("/", "layout");
   return { id: entity.id };
@@ -206,6 +210,16 @@ export async function addReferenceImages(entityId: string, formData: FormData) {
     await prisma.referenceImage.create({
       data: { id: newId(), ownerId: FOUNDER_OWNER_ID, entityId, assetId: asset.id, position: position++ },
     });
+  }
+  // an entity's base defaults to its first (lowest-position) live reference — so
+  // "Upload photo" locks the base in one step, matching the migration backfill.
+  if (!entity.baseAssetId) {
+    const first = await prisma.referenceImage.findFirst({
+      where: { entityId, deletedAt: null },
+      orderBy: { position: "asc" },
+      select: { assetId: true },
+    });
+    if (first) await prisma.entity.update({ where: { id: entityId }, data: { baseAssetId: first.assetId } });
   }
   await logAction("entity.update", null, { entityId, addedRefs: files.length });
   revalidatePath("/", "layout");

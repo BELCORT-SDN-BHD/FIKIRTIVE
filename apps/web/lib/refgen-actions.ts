@@ -21,21 +21,20 @@ const OWNED = { ownerId: FOUNDER_OWNER_ID, deletedAt: null } as const;
 export async function startRefGen(raw: unknown): Promise<{ id: string } | { error: string }> {
   const parsed = refGenRequest.safeParse(raw);
   if (!parsed.success) return { error: "That generation request is out of bounds — check the prompt and count." };
-  const { entityId, prompt, count, model, mode, variantId } = parsed.data;
+  const { entityId, prompt, count, model, mode } = parsed.data;
 
   const entity = await prisma.entity.findFirst({ where: { id: entityId, ...OWNED } });
   if (!entity) return { error: "Element not found." };
 
-  // validate-before-spend: a VARIANT generation conditions on the locked base
-  // (i2i), so the base must exist as a live owned asset BEFORE we create a paid
-  // job. A BASE generation has no precondition (it produces the base).
-  if (mode === "VARIANT") {
-    if (!entity.baseAssetId) return { error: "Set a base identity first — variants are generated from it." };
-    const base = await prisma.asset.findFirst({ where: { id: entity.baseAssetId, ownerId: FOUNDER_OWNER_ID, deletedAt: null }, select: { id: true } });
-    if (!base) return { error: "The base image is missing — set a new base before generating variants." };
-  }
+  // Phase A fail-closed: VARIANT is not wired end-to-end yet. The worker can't
+  // condition a variant on the base (i2i), the output would be mis-attached
+  // (variantId stays null), and the variant isn't validated to exist — accepting
+  // one would spend on a wrong result. Phase B adds the worker VARIANT path +
+  // full EntityVariant validation, then lifts this gate. No UI issues VARIANT today.
+  if (mode === "VARIANT") return { error: "Variant generation isn't available yet." };
 
-  // BASE and VARIANT are single-image; only REFSHEET honors the requested count.
+  // BASE is single-image; only REFSHEET honors the requested count. (VARIANT is
+  // rejected above; Phase B reintroduces its single-image + per-variant handling.)
   const effectiveCount = mode === "REFSHEET" ? count : 1;
 
   // one generation in flight per entity — double-clicks and duplicate tabs
@@ -49,14 +48,14 @@ export async function startRefGen(raw: unknown): Promise<{ id: string } | { erro
       ownerId: FOUNDER_OWNER_ID,
       status: { in: ["QUEUED", "GENERATING"] },
       updatedAt: { gte: new Date(Date.now() - STALE_MS) },
-      // BASE/REFSHEET serialize per entity; VARIANT serializes per variant.
-      ...(mode === "VARIANT" ? { variantId } : { entityId, mode: { not: "VARIANT" } }),
+      // serialize per entity (BASE/REFSHEET are the only modes reaching here).
+      entityId,
     },
   });
   if (active) return { error: "A generation is already running for this element — wait for it to finish." };
 
   const job = await prisma.refGenJob.create({
-    data: { id: newId(), ownerId: FOUNDER_OWNER_ID, entityId, prompt, count: effectiveCount, model, mode, variantId: variantId ?? null },
+    data: { id: newId(), ownerId: FOUNDER_OWNER_ID, entityId, prompt, count: effectiveCount, model, mode },
   });
   try {
     const boss = await getBoss();

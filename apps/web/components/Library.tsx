@@ -691,7 +691,7 @@ function EntityDetail({ entity, onClose, projectId }: { entity: EntityDTO; onClo
             </span>
             <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
               <Button size="sm" variant="glass" icon={<IcImage size={14} />} disabled={refAct.pending} onClick={() => fileRef.current?.click()}>
-                {baseRef ? "Replace — upload" : "Upload photo"}
+                {baseRef ? "Add photo" : "Upload photo"}
               </Button>
               {projectId && (
                 <Button size="sm" variant="glass" icon={<IcSparkle size={14} />} onClick={() => setGenBase((v) => !v)}>
