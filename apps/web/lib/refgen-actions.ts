@@ -64,6 +64,30 @@ export async function startRefGen(raw: unknown): Promise<{ id: string } | { erro
   return { id: job.id };
 }
 
+/** Pin the entity's locked base to one of its OWN live reference images' assets.
+ *  Validate-before-write: the asset must already be a live ref of this entity
+ *  (no arbitrary asset ids), then set Entity.baseAssetId. No spend. */
+export async function setBaseAsset(entityId: string, assetId: string): Promise<{ ok: true } | { error: string }> {
+  const ref = await prisma.referenceImage.findFirst({
+    where: { entityId, assetId, ...OWNED, variantId: null },
+    select: { id: true },
+  });
+  if (!ref) return { error: "That image is not a base reference of this element." };
+  // updateMany + count: the entity may have been concurrently soft-deleted between
+  // the ref check and here — a bare update({where:{id}}) would throw P2025. ...OWNED
+  // scopes to a live owned row; count===0 means it's gone, not an unhandled throw.
+  const { count } = await prisma.entity.updateMany({
+    where: { id: entityId, ...OWNED },
+    data: { baseAssetId: assetId },
+  });
+  if (count === 0) return { error: "Element not found." };
+  await prisma.actionEvent.create({
+    data: { id: newId(), ownerId: FOUNDER_OWNER_ID, type: "entity.update", payload: { entityId, action: "set-base", assetId } },
+  });
+  revalidatePath("/", "layout");
+  return { ok: true };
+}
+
 /** Poll target for the entity detail's generation block. */
 export async function getRefGenJobs(entityId: string) {
   const jobs = await prisma.refGenJob.findMany({
