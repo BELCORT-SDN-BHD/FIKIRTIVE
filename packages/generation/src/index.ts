@@ -186,16 +186,18 @@ const VIDEO_CFG: Record<GenVideoModel, VideoCfg> = {
     // native audio is always on (not a boolean toggle — the fal audio_url param is for
     // supplying a custom track, so we don't wire audioParam). 480p/720p/1080p tiers.
     t2v: "fal-ai/wan-25-preview/text-to-video", i2v: "fal-ai/wan-25-preview/image-to-video",
-    imageParam: "image_url", resolutionParam: RES, durationUnit: "num",
+    imageParam: "image_url", resolutionParam: RES, durationUnit: "str", // schema: duration is a string enum "5"/"10"
   },
   "pixverse-v6": {
-    // end-frame is a separate /transition endpoint; its param names aren't verified yet,
-    // so tail is off (GEN_VIDEO_MODEL_INFO tail:false) and we don't wire it.
+    // i2v schema (fal OpenAPI): duration=integer, audio toggle="generate_audio_switch",
+    // NO aspect_ratio, NO end_image_url. End-frame is a separate /transition endpoint
+    // (params unverified) so tail is off (GEN_VIDEO_MODEL_INFO tail:false).
     t2v: "fal-ai/pixverse/v6/text-to-video", i2v: "fal-ai/pixverse/v6/image-to-video",
-    imageParam: "image_url", audioParam: GA, resolutionParam: RES, aspectParam: ASP, durationUnit: "str",
+    imageParam: "image_url", audioParam: "generate_audio_switch", resolutionParam: RES, durationUnit: "num",
   },
   "grok-imagine": {
-    t2v: "fal-ai/xai/grok-imagine-video/text-to-video", i2v: "fal-ai/xai/grok-imagine-video/image-to-video",
+    // xAI's own fal namespace (no fal-ai/ prefix — the fal-ai/ id 404s). duration=integer.
+    t2v: "xai/grok-imagine-video/text-to-video", i2v: "xai/grok-imagine-video/image-to-video",
     imageParam: "image_url", resolutionParam: RES, durationUnit: "num", // 480p/720p, no audio/tail
   },
   "hailuo-02": {

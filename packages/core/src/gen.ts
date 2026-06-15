@@ -120,7 +120,7 @@ export const GEN_VIDEO_MODEL_OPTIONS: Record<GenVideoModel, VideoModelOptions> =
   "seedance-2-fast": { durations: [5, 10],   resolutions: ["720p"],                    aspectRatios: ["16:9", "9:16"], fps: [],       audioToggle: true,  maxCount: 4 },
   "veo3.1-fast":     { durations: [4, 6, 8],  resolutions: ["720p", "1080p"],           aspectRatios: ["16:9", "9:16"], fps: [],       audioToggle: true,  maxCount: 4 },
   "veo3.1":          { durations: [4, 6, 8],  resolutions: ["720p", "1080p", "4k"],     aspectRatios: ["16:9", "9:16"], fps: [],       audioToggle: true,  maxCount: 4 },
-  "pixverse-v6":     { durations: [5, 8],    resolutions: ["360p", "540p", "720p", "1080p"], aspectRatios: ["16:9", "9:16", "1:1"], fps: [], audioToggle: true,  maxCount: 4 },
+  "pixverse-v6":     { durations: [5, 8],    resolutions: ["360p", "540p", "720p", "1080p"], aspectRatios: [], fps: [], audioToggle: true,  maxCount: 4 }, // i2v schema has no aspect_ratio
   "grok-imagine":    { durations: [6],       resolutions: ["480p", "720p"],            aspectRatios: [],               fps: [],       audioToggle: false, maxCount: 4 },
   "wan-2.5":         { durations: [5, 10],   resolutions: ["480p", "720p", "1080p"],   aspectRatios: [],               fps: [],       audioToggle: false, maxCount: 4 }, // audio always on
   "hailuo-02":       { durations: [6],       resolutions: [],                          aspectRatios: [],               fps: [],       audioToggle: false, maxCount: 4 }, // fixed 6s @ 1080p
