@@ -1,7 +1,7 @@
-import { ensureDefaultProject, getProjects, getShots, getEntities, getProjectMedia, getCandidates, getGenerationThumbs } from "@/lib/data";
+import { ensureDefaultProject, getProjects, getShots, getEntities, getProjectMedia, getCandidates, getGenerationThumbs, getCoworkThreads, resolveCoworkResultUrls } from "@/lib/data";
 import { getRulesMap } from "@/lib/cowork-knowledge";
 import { buildBoardEdit } from "@/lib/edit";
-import { toEntityDTO } from "@/lib/dto";
+import { toEntityDTO, toChatThreadDTO } from "@/lib/dto";
 import { artlioEdit, storageKey, storageKeyToSrc } from "@artlio/core";
 import { redirect } from "next/navigation";
 import { auth } from "@/auth";
@@ -9,7 +9,7 @@ import { Studio } from "@/components/studio/Studio";
 import type { StudioView } from "@/components/studio/StudioShell";
 
 /** Views that can be deep-linked via ?view= (e.g. /studio?view=elements). */
-const STUDIO_VIEWS = new Set(["genspace", "storyboard", "editor", "elements", "assets", "plans", "account"]);
+const STUDIO_VIEWS = new Set(["genspace", "storyboard", "editor", "elements", "assets", "cowork", "plans", "account"]);
 
 /** Initials + label for the topbar avatar, from the signed-in user. */
 function userBadge(name: string | null | undefined, email: string | null | undefined) {
@@ -40,6 +40,9 @@ export default async function StudioPage({ searchParams }: { searchParams: Promi
   // the default, rather than silently showing the oldest project as if intended
   if (p && !projects.some((x) => x.id === p)) redirect(initialView ? `/studio?view=${initialView}` : "/studio");
   const project = projects.find((x) => x.id === p) ?? defaultProject;
+  const threadRows = await getCoworkThreads(project.id);
+  const coworkUrls = await resolveCoworkResultUrls(threadRows);
+  const threads = threadRows.map((t) => toChatThreadDTO(t, coworkUrls));
   const shots = await getShots(project.id);
   // resolve each segment's first/last keyframe thumbnails (the i2v slots)
   const frameThumbs = await getGenerationThumbs(
@@ -126,6 +129,7 @@ export default async function StudioPage({ searchParams }: { searchParams: Promi
       savedEdit={savedEdit}
       attachedCount={clipCount}
       rulesMap={rulesMap}
+      threads={threads}
       initialView={initialView}
     />
   );

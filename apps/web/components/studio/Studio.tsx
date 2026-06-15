@@ -14,6 +14,8 @@ import { Storyboard, type StudioShot } from "./Storyboard";
 import { VideoEditorSurface } from "./VideoEditor";
 import { Elements } from "./Elements";
 import { Assets, type MediaItem, type ShotOption } from "./Assets";
+import { Cowork } from "./Cowork";
+import type { ChatThreadDTO } from "@/lib/types";
 
 export function Studio({
   project,
@@ -28,6 +30,7 @@ export function Studio({
   savedEdit,
   attachedCount,
   rulesMap,
+  threads,
   initialView,
 }: {
   project: ProjectDTO;
@@ -42,6 +45,7 @@ export function Studio({
   savedEdit: ArtlioEdit | null;
   attachedCount: number;
   rulesMap: Record<string, Record<string, ModelDirectiveRules>>;
+  threads?: ChatThreadDTO[];
   initialView?: StudioView;
 }) {
   const [view, setView] = useState<StudioView>(initialView ?? "genspace");
@@ -57,6 +61,7 @@ export function Studio({
       case "editor": return <VideoEditorSurface projectId={project.id} boardEdit={boardEdit} savedEdit={savedEdit} attachedCount={attachedCount} onDirtyChange={setEditorDirty} />;
       case "elements": return <Elements entities={entities} projectId={project.id} />;
       case "assets": return <Assets media={media} shotOptions={shotOptions} />;
+      case "cowork": return <Cowork projectId={project.id} entities={entities} threads={threads ?? []} />;
       default:
         return (
           <div className="screen"><div className="screen-pad" style={{ display: "grid", placeItems: "center", minHeight: "60vh", textAlign: "center" }}>

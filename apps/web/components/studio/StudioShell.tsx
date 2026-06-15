@@ -15,7 +15,7 @@ import {
 } from "@/components/ds";
 
 export type StudioView =
-  | "genspace" | "canvas" | "storyboard" | "editor" | "elements" | "assets" | "plans" | "account";
+  | "genspace" | "canvas" | "storyboard" | "editor" | "elements" | "assets" | "cowork" | "plans" | "account";
 
 const PRIMARY: { view: StudioView; label: string; Icon: typeof IcSparkle }[] = [
   { view: "genspace", label: "Gen space", Icon: IcSparkle },
@@ -25,13 +25,14 @@ const PRIMARY: { view: StudioView; label: string; Icon: typeof IcSparkle }[] = [
 ];
 const WORKSPACE: { view: StudioView; label: string; Icon: typeof IcSparkle }[] = [
   { view: "assets", label: "Assets", Icon: IcAssets },
+  { view: "cowork", label: "Cowork", Icon: IcSparkle },
   { view: "plans", label: "Plans", Icon: IcPlans },
   { view: "account", label: "Account", Icon: IcUser },
 ];
 
 const TITLES: Record<StudioView, string> = {
   genspace: "Gen space", canvas: "Canvas", storyboard: "Storyboard", editor: "Video editor",
-  elements: "Elements", assets: "Assets", plans: "Plans", account: "Account",
+  elements: "Elements", assets: "Assets", cowork: "Cowork", plans: "Plans", account: "Account",
 };
 
 export function StudioShell({
