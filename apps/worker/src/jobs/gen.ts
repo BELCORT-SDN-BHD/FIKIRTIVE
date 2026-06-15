@@ -170,7 +170,7 @@ export async function handleGen(data: GenJobData, retryCount: number): Promise<v
       // refs, so an entity deleted AFTER the guardian check would otherwise leave live refs
       // the worker would spend on. (Guardian blocks a deleted entity pre-spend; this is the
       // race backstop.)
-      const liveEntity = await prisma.entity.findFirst({ where: { id: entityId, ownerId: job.ownerId, deletedAt: null }, select: { id: true } });
+      const liveEntity = await prisma.entity.findFirst({ where: { id: entityId, ownerId: job.ownerId, deletedAt: null }, select: { id: true, type: true } });
       if (!liveEntity) {
         await prisma.genJob.update({ where: { id: job.id }, data: { status: "FAILED", error: "an @mentioned element was deleted — remove it and try again", finishedAt: new Date() } });
         return;
@@ -193,6 +193,15 @@ export async function handleGen(data: GenJobData, retryCount: number): Promise<v
       });
       if (variantId && found.length === 0) {
         await prisma.genJob.update({ where: { id: job.id }, data: { status: "FAILED", error: "an @mentioned variant has no image to condition on — generate it first, or use the base", finishedAt: new Date() } });
+        return;
+      }
+      // bare mention (no variant) of a CHARACTER whose base refs resolve to zero →
+      // terminal-fail BEFORE the paid call, so an unanchored character can't slip
+      // through to an unconditioned t2i spend when the (fail-OPEN) guardian faults.
+      // Only CHARACTER must be anchored — LOCATION/PRODUCT/BRAND with 0 refs are an
+      // intended t2i, mirroring castFindings' "character-no-refs" rule.
+      if (!variantId && liveEntity.type === "CHARACTER" && found.length === 0) {
+        await prisma.genJob.update({ where: { id: job.id }, data: { status: "FAILED", error: "a @mentioned character has no base reference image — add one first", finishedAt: new Date() } });
         return;
       }
       perEntity.push(found);
