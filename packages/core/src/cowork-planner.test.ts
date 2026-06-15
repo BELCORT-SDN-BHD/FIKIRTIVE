@@ -30,4 +30,8 @@ describe("coworkTurnSchema", () => {
     expect(t.reply).toBe("hi");
     expect(t.proposal).toBeNull();
   });
+  it("truncates an overlong single planStep instead of throwing (coerce-don't-reject boundary)", () => {
+    const t = parseCoworkTurn(JSON.stringify({ planSteps: ["x".repeat(500)], reply: "hi", proposal: null }), refs);
+    expect(t.planSteps[0]?.length).toBe(200);
+  });
 });

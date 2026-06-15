@@ -110,7 +110,7 @@ export const coworkProposalSchema = z.object({
 }).strict();
 
 export const coworkTurnSchema = z.object({
-  planSteps: z.array(z.string().trim().min(1).max(200)).transform((arr) => arr.slice(0, MAX_PLAN_STEPS)).default([]),
+  planSteps: z.array(z.string().trim().min(1).transform((s) => s.slice(0, 200))).transform((arr) => arr.slice(0, MAX_PLAN_STEPS)).default([]),
   reply: z.string().trim().min(1).transform((s) => s.slice(0, 2000)),
   proposal: coworkProposalSchema.nullable().default(null),
 }).strict();

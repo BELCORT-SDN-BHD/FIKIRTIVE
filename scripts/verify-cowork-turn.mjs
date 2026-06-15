@@ -34,7 +34,7 @@ const { newId, FOUNDER_OWNER_ID, mockPlannerReply, parseCoworkTurn, suggestModel
 let failed = false;
 const check = (label, ok, detail) => { console.log(`${ok ? "✓" : "✗"} ${label}`, detail ?? ""); if (!ok) failed = true; };
 
-const created = { projects: [] };
+const created = { projects: [], entities: [], variants: [] };
 try {
   const project = await prisma.project.create({ data: { id: newId(), name: "cowork turn verify" } });
   created.projects.push(project.id);
@@ -90,6 +90,26 @@ try {
   const genJobsAfter = await prisma.genJob.count();
   check("ZERO GenJob created (propose-only — no media spend)", genJobsAfter === genJobsBefore, { before: genJobsBefore, after: genJobsAfter });
 
+  // 4. variant-VALUE membership gate (Codex P1): coworkTurn drops a variantSel value
+  //    that isn't a LIVE variant of its entity, for both planner + fallback paths.
+  //    Replicate loadAvailableRefs's live-variant query + the action's value filter
+  //    against a real entity with one live + one soft-deleted variant.
+  const entity = await prisma.entity.create({ data: { id: newId(), type: "CHARACTER", name: "cowork ghost-variant test" } });
+  created.entities.push(entity.id);
+  const vLive = await prisma.entityVariant.create({ data: { id: newId(), entityId: entity.id, ownerId: FOUNDER_OWNER_ID, name: "Live", handle: "live", prompt: "x" } });
+  const vGone = await prisma.entityVariant.create({ data: { id: newId(), entityId: entity.id, ownerId: FOUNDER_OWNER_ID, name: "Gone", handle: "gone", prompt: "y" } });
+  created.variants.push(vLive.id, vGone.id);
+  await prisma.entityVariant.update({ where: { id: vGone.id }, data: { deletedAt: new Date() } });
+
+  // loadAvailableRefs() returns each entity's LIVE variant ids
+  const liveVariantIds = (await prisma.entityVariant.findMany({ where: { entityId: entity.id, deletedAt: null }, select: { id: true } })).map((v) => v.id);
+  const liveSet = new Set(liveVariantIds);
+  // the action's filter: keep a variantSel value only if it's a live variant of the entity
+  const filterValue = (vid) => (liveSet.has(vid) ? vid : undefined);
+  check("live variant value is kept", filterValue(vLive.id) === vLive.id, { live: vLive.id });
+  check("soft-deleted variant value is dropped", filterValue(vGone.id) === undefined, { deleted: vGone.id });
+  check("ghost (nonexistent) variant value is dropped", filterValue("ghost" + newId()) === undefined);
+
   if (failed) { console.error("\n✗ coworkTurn money-safety verify FAILED"); process.exit(1); }
   console.log("\n✓ coworkTurn: propose-only — thread + card persisted via FK-ordered tx, zero GenJob, $0");
 } finally {
@@ -99,5 +119,7 @@ try {
     await prisma.chatThread.deleteMany({ where: { projectId: id } }).catch(() => {});
     await prisma.project.delete({ where: { id } }).catch(() => {});
   }
+  for (const id of created.variants) await prisma.entityVariant.delete({ where: { id } }).catch(() => {});
+  for (const id of created.entities) await prisma.entity.delete({ where: { id } }).catch(() => {});
   await prisma.$disconnect();
 }

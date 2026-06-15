@@ -23,13 +23,16 @@ const OWNED = { ownerId: FOUNDER_OWNER_ID, deletedAt: null } as const;
 const transport = createTransport();
 
 /** Owner-global entities the planner may reference (Entity has no projectId — it's
- *  owner-scoped like getEntities). Returns the @-ref allow-list passed to the planner. */
-async function loadAvailableRefs(): Promise<{ id: string; name: string; type: string }[]> {
-  return prisma.entity.findMany({
+ *  owner-scoped like getEntities). Returns the @-ref allow-list passed to the planner,
+ *  plus each entity's LIVE variant ids so the action can constrain variantSel VALUES
+ *  (not just keys) to real variants before persisting a card. */
+async function loadAvailableRefs(): Promise<{ id: string; name: string; type: string; variantIds: string[] }[]> {
+  const entities = await prisma.entity.findMany({
     where: { ...OWNED },
-    select: { id: true, name: true, type: true },
+    select: { id: true, name: true, type: true, variants: { where: { deletedAt: null }, select: { id: true } } },
     orderBy: [{ type: "asc" }, { name: "asc" }],
   });
+  return entities.map((e) => ({ id: e.id, name: e.name, type: e.type, variantIds: e.variants.map((v) => v.id) }));
 }
 
 export async function coworkDraftStoryboard(
@@ -190,10 +193,33 @@ export async function coworkTurn(raw: unknown): Promise<{ threadId: string } | {
     }
     if (!turn) turn = { planSteps: [], reply: "I couldn't structure that — could you rephrase?", proposal: null };
 
-    // prefer the user's explicit @mentions when the proposal omitted them
+    // prefer the user's explicit @mentions when the proposal omitted them — but run
+    // the entity ids through the SAME availableRefs allow-list parseCoworkTurn applies
+    // to the planner's refs (coworkTurnRequest only validates shape/length, not
+    // membership), keeping variantSel keys to surviving entities.
     if (turn.proposal && entityIds.length && !turn.proposal.entityIds.length) {
-      turn.proposal.entityIds = entityIds;
-      turn.proposal.variantSel = variantSel;
+      const allowed = new Set(refIds);
+      const ids = entityIds.filter((id) => allowed.has(id));
+      const vsel: Record<string, string> = {};
+      for (const [k, v] of Object.entries(variantSel)) if (ids.includes(k)) vsel[k] = v;
+      turn.proposal.entityIds = ids;
+      turn.proposal.variantSel = vsel;
+    }
+
+    // Final membership gate for variant VALUES (both planner + fallback paths): a
+    // variantSel value must be a LIVE variant OF its entity. parseCoworkTurn/the
+    // fallback only allow-list entity ids + variantSel KEYS, never the variant id
+    // itself — so a real entity paired with a ghost/deleted variant ({e1:"ghost"})
+    // could otherwise reach the persisted card. The card is display-only and the
+    // Guardian re-checks ref-liveness at Generate (Plan-2), but we keep the persisted
+    // proposal trustworthy by dropping unknown variant ids here.
+    if (turn.proposal && Object.keys(turn.proposal.variantSel).length) {
+      const liveVariants = new Map(availableRefs.map((r) => [r.id, new Set(r.variantIds)]));
+      const vsel: Record<string, string> = {};
+      for (const [eid, vid] of Object.entries(turn.proposal.variantSel)) {
+        if (liveVariants.get(eid)?.has(vid)) vsel[eid] = vid;
+      }
+      turn.proposal.variantSel = vsel;
     }
 
     // build the gen-card payload (planner proposes an image keyframe first for video-with-variant per COWORK_PLANNER_SYSTEM)
