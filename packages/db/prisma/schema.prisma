@@ -42,6 +42,15 @@ enum AssetSource {
   GENERATED // Phase 2: reference images produced by a generation provider (fal/mock)
 }
 
+// Phase A redesign: per-mode reference generation. REFSHEET = legacy multi-view
+// (default for pre-existing rows); BASE = single t2i identity anchor; VARIANT =
+// single i2i look conditioned on the base (Phase B).
+enum RefGenMode {
+  REFSHEET
+  BASE
+  VARIANT
+}
+
 model Project {
   id        String    @id
   ownerId   String    @default("founder")
@@ -72,11 +81,38 @@ model Entity {
   createdAt           DateTime   @default(now())
   updatedAt           DateTime   @updatedAt
   deletedAt           DateTime?
+  // locked canonical base image (an Asset id); soft pointer (no FK) — re-validated
+  // live in refgen-actions before any mode=VARIANT spend. Safe from the D21 sweep
+  // while a base-level ReferenceImage points at the same asset.
+  baseAssetId         String?
 
   referenceImages ReferenceImage[]
+  variants        EntityVariant[]
   shotRefs        ShotEntityRef[]
 
   @@index([ownerId, type, deletedAt])
+}
+
+// Phase B: named look/outfit/angle variant of an entity. A thin registry — its
+// image(s) are ReferenceImage rows tagged with variantId. handle uniqueness is a
+// PARTIAL unique index (live rows only) added in migration.sql (Prisma can't
+// express conditional uniqueness).
+model EntityVariant {
+  id        String    @id
+  ownerId   String    @default("founder")
+  entityId  String
+  name      String
+  handle    String
+  prompt    String    @default("")
+  createdAt DateTime  @default(now())
+  updatedAt DateTime  @updatedAt
+  deletedAt DateTime?
+
+  entity          Entity           @relation(fields: [entityId], references: [id], onDelete: Restrict)
+  referenceImages ReferenceImage[]
+
+  @@index([ownerId, deletedAt])
+  @@index([entityId, deletedAt])
 }
 
 model ReferenceImage {
@@ -88,13 +124,17 @@ model ReferenceImage {
   note      String    @default("")
   // 视角标签：阶段二的视角级缺图检查用（CEO 评审 D12 计数制裁决预留）
   viewTag   String?
+  // null = base/entity-level ref; set = belongs to that variant (Phase B)
+  variantId String?
   createdAt DateTime  @default(now())
   deletedAt DateTime?
 
-  entity Entity @relation(fields: [entityId], references: [id])
-  asset  Asset  @relation(fields: [assetId], references: [id])
+  entity  Entity         @relation(fields: [entityId], references: [id])
+  asset   Asset          @relation(fields: [assetId], references: [id])
+  variant EntityVariant? @relation(fields: [variantId], references: [id], onDelete: Restrict)
 
   @@index([entityId, deletedAt])
+  @@index([entityId, variantId, deletedAt])
   @@index([assetId])
 }
 
@@ -270,24 +310,26 @@ enum GenStatus {
 // 产物=GENERATED 资产 + 挂到实体的 ReferenceImage。条件输入（logo 等）由
 // worker 从实体已有 refs 推导，不入此表（D19 信任边界，合同里也无该字段）。
 model RefGenJob {
-  id             String    @id
-  ownerId        String    @default("founder")
+  id             String     @id
+  ownerId        String     @default("founder")
   entityId       String
   prompt         String
-  model          String    @default("seedream")
+  model          String     @default("seedream")
   count          Int
-  status         GenStatus @default(QUEUED)
+  mode           RefGenMode @default(REFSHEET)
+  variantId      String? // set when mode = VARIANT; no FK (validated in app before spend)
+  status         GenStatus  @default(QUEUED)
   /// 0-100，worker 按已落地图片数回写
-  progress       Int       @default(0)
+  progress       Int        @default(0)
   /// DONE 时产出的 GENERATED 资产（内容寻址，可多张）
-  outputAssetIds String[]  @default([])
-  error          String    @default("")
-  queueJobId     String    @default("")
-  attempts       Int       @default(0)
+  outputAssetIds String[]   @default([])
+  error          String     @default("")
+  queueJobId     String     @default("")
+  attempts       Int        @default(0)
   startedAt      DateTime?
   finishedAt     DateTime?
-  createdAt      DateTime  @default(now())
-  updatedAt      DateTime  @updatedAt
+  createdAt      DateTime   @default(now())
+  updatedAt      DateTime   @updatedAt
 
   @@index([entityId, createdAt])
   @@index([status, updatedAt]) // 滞留 GENERATING 行的清扫扫描
@@ -312,6 +354,9 @@ model GenJob {
   tailGenerationId   String?
   prompt             String
   entityIds          String[]  @default([])
+  // Phase C: { [entityId]: variantId } — selected variant per @mentioned entity;
+  // null/absent = base refs for all mentions (backward-compat with old rows)
+  variantSel         Json?
   // 双提交幂等：shot 绑定生成的稳定键（"frame:<shotId>:<slot>" / "animate:<shotId>"）。
   // startGen 命中同键的在途(QUEUED/GENERATING)任务则复用，重载再点不二次扣费。
   idempotencyKey     String?
