@@ -13,9 +13,9 @@ import {
   softDeleteReferenceImage,
   softDeleteEntity,
 } from "@/lib/actions";
-import { startRefGen, getRefGenJobs, setBaseAsset } from "@/lib/refgen-actions";
+import { startRefGen, getRefGenJobs, setBaseAsset, createVariant, regenerateVariant, renameVariant, deleteVariant } from "@/lib/refgen-actions";
 import { enhancePrompt } from "@/lib/cowork-actions";
-import { Badge, Button, Dialog, IcImage, IconButton, IcPlus, IcSparkle, IcX, Input, MediaCard, MonoLabel, SegmentedControl } from "./ds";
+import { Badge, Button, Chip, Dialog, IcImage, IconButton, IcPlus, IcSparkle, IcX, Input, MediaCard, MonoLabel, SegmentedControl } from "./ds";
 
 const TYPE_META: Record<EntityTypeDTO, { label: string; singular: string; color: string }> = {
   CHARACTER: { label: "Characters", singular: "Character", color: "var(--hue-character)" },
@@ -52,7 +52,7 @@ function useAction() {
   const [pending, startTransition] = useTransition();
   const [error, setError] = useState<string | null>(null);
   function run(
-    fn: () => Promise<{ error?: string } | { ok: boolean } | { id: string } | void>,
+    fn: () => Promise<{ error?: string } | { ok: boolean } | { id: string } | { jobId: string } | { variantId: string; jobId: string } | void>,
     after?: (res: Awaited<ReturnType<typeof fn>>) => void,
   ) {
     setError(null);
@@ -402,6 +402,117 @@ function CreateDialog({
 /* ---------- detail drawer ---------- */
 
 
+function VariantsBlock({ entity, projectId }: { entity: EntityDTO; projectId?: string }) {
+  const router = useRouter();
+  const { error, run } = useAction();
+  const [adding, setAdding] = useState(false);
+  const [name, setName] = useState("");
+  const [prompt, setPrompt] = useState("");
+  const [enhancing, setEnhancing] = useState(false);
+  const enhancingRef = useRef(false);
+  const submittingRef = useRef(false); // synchronous double-click guard (paid i2i)
+  const [busy, setBusy] = useState(false);
+  useEffect(() => { if (!busy) submittingRef.current = false; }, [busy]);
+  const chips = REF_TYPE_CONFIG[entity.type].variantChips;
+  const hasBase = !!entity.baseAssetId;
+  const hue = `var(--hue-${entity.type.toLowerCase()})`;
+
+  // poll while any variant is still rendering (refresh to pull finished images)
+  const anyPending = entity.variants.some((v) => v.refs.length === 0);
+  useEffect(() => {
+    if (!anyPending) return;
+    let alive = true;
+    const tick = setInterval(async () => {
+      const jobs = await getRefGenJobs(entity.id);
+      if (!alive) return;
+      if (jobs.some((j) => j.status === "DONE" || j.status === "FAILED")) router.refresh();
+    }, 2500);
+    return () => { alive = false; clearInterval(tick); };
+  }, [anyPending, entity.id, router]);
+
+  function generate() {
+    if (busy || submittingRef.current || !name.trim() || !prompt.trim()) return;
+    submittingRef.current = true; setBusy(true);
+    run(
+      () => createVariant(entity.id, name, prompt),
+      (res) => {
+        setBusy(false);
+        if (res && "variantId" in res) { setName(""); setPrompt(""); setAdding(false); router.refresh(); }
+      },
+    );
+  }
+
+  async function enhance() {
+    const t = prompt.trim();
+    if (!t || !projectId || enhancing || enhancingRef.current) return;
+    enhancingRef.current = true; setEnhancing(true);
+    try {
+      const res = await enhancePrompt({ projectId, text: t, model: "seedream", kind: "image", conditioned: true });
+      if (res && "text" in res) setPrompt(res.text);
+    } catch { /* keep as-is */ }
+    finally { enhancingRef.current = false; setEnhancing(false); }
+  }
+
+  return (
+    <div>
+      <MonoLabel style={{ display: "block", marginBottom: 7 }}>Variants · {entity.variants.length}</MonoLabel>
+      <div className="card-grid" style={{ gridTemplateColumns: "repeat(auto-fill, minmax(116px, 1fr))", gap: 10 }}>
+        {entity.variants.map((v) => (
+          <MediaCard
+            key={v.id}
+            ratio="1:1"
+            src={v.refs[0]?.url ?? null}
+            title={v.name}
+            meta={<span style={{ color: hue }}>@{entity.name.toLowerCase()}:{v.handle}</span>}
+            footer={
+              <span style={{ display: "flex", gap: 6 }}>
+                <button className="al-iconbtn al-iconbtn-sm" aria-label="Regenerate variant" title="Regenerate"
+                  onClick={() => run(() => regenerateVariant(v.id), () => router.refresh())}><IcSparkle size={13} /></button>
+                <button className="al-iconbtn al-iconbtn-sm" aria-label="Rename variant" title="Rename"
+                  onClick={() => { const n = window.prompt("Rename variant", v.name); if (n && n.trim()) run(() => renameVariant(v.id, n), () => router.refresh()); }}>✎</button>
+                <button className="al-iconbtn al-iconbtn-sm" aria-label="Delete variant" title="Delete"
+                  onClick={() => { if (confirm(`Delete variant "${v.name}"?`)) run(() => deleteVariant(v.id), () => router.refresh()); }}><IcX size={13} /></button>
+              </span>
+            }
+          />
+        ))}
+        <button type="button" onClick={() => hasBase && setAdding((a) => !a)} disabled={!hasBase}
+          title={hasBase ? "Add variant" : "Set a base identity first"}
+          className="al-mediacard al-mediacard-1x1"
+          style={{ display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", gap: 6, border: "1px dashed var(--line-2)", cursor: hasBase ? "pointer" : "not-allowed", opacity: hasBase ? 1 : 0.5, color: "var(--fg-3)", background: "transparent" }}>
+          <IcPlus size={20} /><span style={{ font: "var(--text-caption)" }}>{adding ? "Close" : "Add variant"}</span>
+        </button>
+      </div>
+
+      {adding && hasBase && (
+        <div className="al-panel al-panel-flat" style={{ marginTop: 10, padding: 12, display: "flex", flexDirection: "column", gap: 10, borderRadius: "var(--radius-md)" }}>
+          <Input label="Name" value={name} onChange={(e) => setName(e.target.value)} placeholder="e.g. Red dress" />
+          <div style={{ display: "flex", flexWrap: "wrap", gap: 6 }}>
+            {chips.map((c) => (
+              <Chip key={c.key} mono onClick={() => setPrompt((p) => (p ? p + " " : "") + c.scaffold)}>{c.label}</Chip>
+            ))}
+          </div>
+          <textarea value={prompt} onChange={(e) => setPrompt(e.target.value)} disabled={busy || enhancing} rows={2}
+            aria-label="Variant description" placeholder="Describe the change — e.g. wearing an elegant red evening gown"
+            style={{ width: "100%", background: "rgba(255,255,255,.05)", border: "1px solid var(--line-2)", borderRadius: "var(--radius-md)", padding: "9px 12px", color: "var(--fg-1)", font: "var(--text-small)", resize: "vertical", outline: "none" }} />
+          <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+            {projectId && (
+              <Button size="sm" variant="ghost" icon={<IcSparkle size={13} />} onClick={enhance} disabled={enhancing || busy || prompt.trim().length === 0}>
+                {enhancing ? "Enhancing…" : "Enhance"}
+              </Button>
+            )}
+            <span style={{ flex: 1 }} />
+            <Button size="sm" icon={<IcSparkle size={13} />} onClick={generate} disabled={busy || enhancing || !name.trim() || !prompt.trim()}>
+              {busy ? "Generating…" : `Generate variant (~$${REFGEN_PRICE_USD_PER_IMAGE.toFixed(2)})`}
+            </Button>
+          </div>
+          {error && <p role="alert" style={{ font: "var(--text-caption)", color: "var(--danger)", margin: 0 }}>{error} — try again.</p>}
+        </div>
+      )}
+    </div>
+  );
+}
+
 function GenerateRefsBlock({ entity, projectId, mode = "REFSHEET" }: { entity: EntityDTO; projectId?: string; mode?: "REFSHEET" | "BASE" }) {
   const router = useRouter();
   const { pending, error, run } = useAction();
@@ -738,6 +849,9 @@ function EntityDetail({ entity, onClose, projectId }: { entity: EntityDTO; onClo
           </div>
         </div>
       )}
+
+      {/* variants — named i2i looks generated from the locked base */}
+      <VariantsBlock entity={entity} projectId={projectId} />
 
       {/* hidden picker — shared by the base "Upload" button and ref uploads */}
       <input
