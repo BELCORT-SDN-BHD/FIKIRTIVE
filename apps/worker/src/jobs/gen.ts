@@ -83,6 +83,34 @@ async function attachBestEffort(jobId: string, shotId: string, generationIds: st
   }
 }
 
+// D2: the worker is the DURABLE writer of a cowork job's result/error message. Post-commit +
+// best-effort (like attachBestEffort): it can never throw into the completion path, never flip
+// `committed`, never re-spend, never delay DONE. Exactly-once is the partial-unique index
+// ChatMessage(genJobId) WHERE kind IN (GEN_RESULT,TURN_ERROR) — a resume/redelivery re-attempt
+// hits P2002 and is swallowed.
+async function appendCoworkResult(
+  job: { id: string; threadId: string | null; ownerId: string; kind: string; model: string },
+  kind: "GEN_RESULT" | "TURN_ERROR",
+  generationIds: string[],
+  errorText = "",
+): Promise<void> {
+  if (!job.threadId) return;
+  try {
+    const last = await prisma.chatMessage.findFirst({ where: { threadId: job.threadId }, orderBy: { seq: "desc" }, select: { seq: true } });
+    await prisma.chatMessage.create({
+      data: {
+        id: newId(), threadId: job.threadId, ownerId: job.ownerId, role: "AGENT", kind,
+        seq: (last?.seq ?? 0) + 1, text: errorText,
+        genJobId: job.id,
+        payload: { kind: job.kind === "VIDEO" ? "video" : "image", model: job.model, generationIds },
+      },
+    });
+  } catch (e) {
+    if (typeof e === "object" && e !== null && (e as { code?: string }).code === "P2002") return; // already written (resume) → no-op
+    console.warn(`[gen] ${job.id}: ${kind} append failed (non-fatal):`, e instanceof Error ? e.message : e);
+  }
+}
+
 export async function handleGen(data: GenJobData, retryCount: number): Promise<void> {
   const job = await prisma.genJob.findUnique({ where: { id: data.genJobId } });
   if (!job) {
@@ -112,6 +140,7 @@ export async function handleGen(data: GenJobData, retryCount: number): Promise<v
       committed = true; // outputs recorded on a prior delivery — never re-spend; finish best-effort
       if (job.shotId) await attachBestEffort(job.id, job.shotId, job.generationIds);
       await prisma.genJob.update({ where: { id: job.id }, data: { status: "DONE", progress: 100, finishedAt: new Date(), error: "", spent: true } });
+      await appendCoworkResult(job, "GEN_RESULT", job.generationIds); // idempotent — P2002 swallowed if already written
       return;
     }
     if (job.status === "FAILED") return; // terminal with no recorded outputs — nothing to resume
@@ -336,6 +365,7 @@ export async function handleGen(data: GenJobData, retryCount: number): Promise<v
         const gen = await tx.generation.create({
           data: {
             id: newId(), ownerId: job.ownerId, projectId: job.projectId, shotId: null,
+            threadId: job.threadId ?? null, // cowork tag (null for normal studio gens) → keeps it out of candidate/asset views
             assetId: asset.id, source: "GENERATED", promptText: job.prompt, modelRef: job.model,
             entitySnapshot, version: 1, attachedAt: null,
           },
@@ -352,6 +382,7 @@ export async function handleGen(data: GenJobData, retryCount: number): Promise<v
     if (job.shotId) await attachBestEffort(job.id, job.shotId, generationIds);
     await prisma.genJob.update({ where: { id: job.id }, data: { status: "DONE", progress: 100, finishedAt: new Date(), error: "" } });
     console.log(`[gen] ${job.id}: DONE → ${generationIds.length} generations via ${provider.name}`);
+    await appendCoworkResult(job, "GEN_RESULT", generationIds);
   } catch (err) {
     const message = err instanceof Error ? err.message.slice(0, 500) : String(err).slice(0, 500);
     // a failure after the paid call is terminal — retrying would re-spend.
@@ -370,6 +401,8 @@ export async function handleGen(data: GenJobData, retryCount: number): Promise<v
       // auditable (the UI/ops can tell it apart from a free pre-charge failure)
       data: final ? { status: "FAILED", error: message, finishedAt: new Date(), spent: spent || charged } : { status: "QUEUED", error: message, progress: 0 },
     });
+    // user-facing chat text stays generic; the raw provider error is kept in GenJob.error (ops/DB)
+    if (final) await appendCoworkResult(job, "TURN_ERROR", [], "That generation didn't go through — you can try again.");
     throw err;
   }
 }
