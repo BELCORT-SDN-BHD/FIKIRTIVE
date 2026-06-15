@@ -2,7 +2,7 @@
 
 import { useEffect, useRef, useState, useTransition } from "react";
 import { useRouter } from "next/navigation";
-import { REFGEN_PRICE_USD_PER_IMAGE, basePromptFor } from "@artlio/core";
+import { REFGEN_PRICE_USD_PER_IMAGE, basePromptFor, REF_TYPE_CONFIG } from "@artlio/core";
 import type { EntityDTO, EntityTypeDTO } from "@/lib/types";
 import {
   createEntity,
@@ -13,7 +13,7 @@ import {
   softDeleteReferenceImage,
   softDeleteEntity,
 } from "@/lib/actions";
-import { startRefGen, getRefGenJobs } from "@/lib/refgen-actions";
+import { startRefGen, getRefGenJobs, setBaseAsset } from "@/lib/refgen-actions";
 import { enhancePrompt } from "@/lib/cowork-actions";
 import { Badge, Button, Dialog, IcImage, IconButton, IcPlus, IcSparkle, IcX, Input, MediaCard, MonoLabel, SegmentedControl } from "./ds";
 
@@ -402,11 +402,12 @@ function CreateDialog({
 /* ---------- detail drawer ---------- */
 
 
-function GenerateRefsBlock({ entity, projectId }: { entity: EntityDTO; projectId?: string }) {
+function GenerateRefsBlock({ entity, projectId, mode = "REFSHEET" }: { entity: EntityDTO; projectId?: string; mode?: "REFSHEET" | "BASE" }) {
   const router = useRouter();
   const { pending, error, run } = useAction();
   const [prompt, setPrompt] = useState(() => basePromptFor(entity.type, entity));
   const [count, setCount] = useState(4);
+  const single = mode === "BASE"; // BASE = a single t2i identity anchor (no count, no conditioning)
   const [enhancing, setEnhancing] = useState(false);
   const enhancingRef = useRef(false); // synchronous double-click guard for ✨ Enhance (also spends fal)
   const [job, setJob] = useState<{ status: string; error: string } | null>(null);
@@ -472,7 +473,7 @@ function GenerateRefsBlock({ entity, projectId }: { entity: EntityDTO; projectId
     startMs.current = Date.now();
     setElapsed(0);
     run(
-      () => startRefGen({ entityId: entity.id, prompt, count, model: "seedream" }),
+      () => startRefGen({ entityId: entity.id, prompt, count: single ? 1 : count, model: "seedream", mode }),
       (res) => {
         if (res && "id" in res) setJob({ status: "QUEUED", error: "" });
       },
@@ -497,7 +498,7 @@ function GenerateRefsBlock({ entity, projectId }: { entity: EntityDTO; projectId
   return (
     <div className="al-panel al-panel-flat" style={{ padding: 12, display: "flex", flexDirection: "column", gap: 10, borderRadius: "var(--radius-md)" }}>
       <div style={{ display: "flex", alignItems: "center" }}>
-        <MonoLabel>Generate references</MonoLabel>
+        <MonoLabel>{single ? "Generate base" : "Generate references"}</MonoLabel>
         <span style={{ flex: 1 }} />
         {conditioned && (
           <span style={{ font: "var(--text-caption)", color: "var(--fg-3)" }}>
@@ -518,18 +519,20 @@ function GenerateRefsBlock({ entity, projectId }: { entity: EntityDTO; projectId
         }}
       />
       <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
-        <label style={{ font: "var(--text-caption)", color: "var(--fg-3)", display: "flex", alignItems: "center", gap: 6 }}>
-          count
-          <select
-            value={count}
-            onChange={(e) => setCount(Number(e.target.value))}
-            disabled={busy}
-            aria-label="Number of images"
-            style={{ background: "rgba(255,255,255,.05)", border: "1px solid var(--line-2)", borderRadius: 6, color: "var(--fg-1)", padding: "3px 6px", font: "var(--text-caption)" }}
-          >
-            {[1, 2, 4, 6].map((n) => <option key={n} value={n}>{n}</option>)}
-          </select>
-        </label>
+        {!single && (
+          <label style={{ font: "var(--text-caption)", color: "var(--fg-3)", display: "flex", alignItems: "center", gap: 6 }}>
+            count
+            <select
+              value={count}
+              onChange={(e) => setCount(Number(e.target.value))}
+              disabled={busy}
+              aria-label="Number of images"
+              style={{ background: "rgba(255,255,255,.05)", border: "1px solid var(--line-2)", borderRadius: 6, color: "var(--fg-1)", padding: "3px 6px", font: "var(--text-caption)" }}
+            >
+              {[1, 2, 4, 6].map((n) => <option key={n} value={n}>{n}</option>)}
+            </select>
+          </label>
+        )}
         {projectId && (
           <Button size="sm" variant="ghost" icon={<IcSparkle size={13} />} onClick={enhance}
             disabled={enhancing || busy || prompt.trim().length === 0} title="Rewrite the reference prompt into a vivid, detailed one">
@@ -537,7 +540,9 @@ function GenerateRefsBlock({ entity, projectId }: { entity: EntityDTO; projectId
           </Button>
         )}
         <Button size="sm" onClick={generate} disabled={busy || enhancing || prompt.trim().length === 0}>
-          {busy ? `Generating ${count}… ${elapsed}s` : `Generate ${count} (~$${cost})`}
+          {busy
+            ? single ? `Generating… ${elapsed}s` : `Generating ${count}… ${elapsed}s`
+            : single ? `Generate base (~$${REFGEN_PRICE_USD_PER_IMAGE.toFixed(2)})` : `Generate ${count} (~$${cost})`}
         </Button>
         <span style={{ flex: 1 }} />
         <span style={{ font: "var(--text-caption)", color: "var(--fg-3)" }}>Seedream</span>
@@ -569,6 +574,8 @@ function EntityDetail({ entity, onClose, projectId }: { entity: EntityDTO; onClo
   const [negative, setNegative] = useState(entity.negativeConstraints);
   const [aliasInput, setAliasInput] = useState("");
   const fileRef = useRef<HTMLInputElement>(null);
+  const baseRef = entity.refs.find((r) => r.assetId === entity.baseAssetId) ?? null;
+  const [genBase, setGenBase] = useState(false); // toggles the inline t2i base generator
 
   const textareaStyle: React.CSSProperties = {
     width: "100%", background: "rgba(255,255,255,.05)", border: "1px solid var(--line-2)",
@@ -667,68 +674,81 @@ function EntityDetail({ entity, onClose, projectId }: { entity: EntityDTO; onClo
         </p>
       </div>
 
-      {/* reference images */}
+      {/* base identity — the locked anchor every variant is generated from */}
       <div>
-        <div style={{ display: "flex", alignItems: "center", marginBottom: 7 }}>
-          <MonoLabel>References · {entity.refs.length}</MonoLabel>
-          <span style={{ flex: 1 }} />
-          <Button variant="ghost" size="sm" disabled={refAct.pending} onClick={() => fileRef.current?.click()}>
-            {refAct.pending ? "Working…" : "+ Add"}
-          </Button>
-        </div>
-        {entity.refs.length === 0 ? (
-          <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
-            <GenerateRefsBlock entity={entity} projectId={projectId} />
-            <button className="drop-zone" onClick={() => fileRef.current?.click()} type="button"
-              onDragOver={(e) => e.preventDefault()}
-              onDrop={(e) => { e.preventDefault(); uploadFiles([...e.dataTransfer.files]); }}>
-              <span className="drop-zone-tile"><IcImage size={16} /></span>
-              <span>
-                Or drop / add 3–12 images you already have (front / side / ¾ angles).{" "}
-                <span style={{ color: "var(--fg-1)", textDecoration: "underline", textUnderlineOffset: 3 }}>Upload →</span>
-              </span>
-            </button>
+        <MonoLabel style={{ display: "block", marginBottom: 7 }}>Base identity</MonoLabel>
+        <div className="al-panel al-panel-flat" style={{ padding: 12, display: "flex", gap: 14, borderRadius: "var(--radius-md)" }}>
+          <div style={{ width: 96, flex: "none" }}>
+            <MediaCard
+              ratio="1:1"
+              src={baseRef?.url ?? null}
+              statusChip={baseRef ? <Badge tone="accent">locked</Badge> : undefined}
+            />
           </div>
-        ) : (
-          <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
-            <div className="thumb-strip">
-              {entity.refs.map((r) => (
-                <span key={r.id} style={{ position: "relative" }} className="group">
-                  {/* eslint-disable-next-line @next/next/no-img-element */}
-                  <img className="ref-thumb" src={r.url} alt="" />
-                  <button
-                    aria-label="Remove reference image"
-                    disabled={refAct.pending}
-                    onClick={() => refAct.run(() => softDeleteReferenceImage(r.id))}
-                    style={{
-                      position: "absolute", top: 2, right: 2, width: 18, height: 18,
-                      borderRadius: 99, border: "none", cursor: "pointer",
-                      background: "rgba(6,8,11,.75)", color: "var(--fg-2)", fontSize: 11,
-                      display: "inline-flex", alignItems: "center", justifyContent: "center",
-                    }}
-                  >
-                    ×
-                  </button>
-                </span>
-              ))}
+          <div style={{ flex: 1, display: "flex", flexDirection: "column", gap: 8, minWidth: 0 }}>
+            <span style={{ font: "var(--text-small)", color: "var(--fg-2)" }}>
+              {REF_TYPE_CONFIG[entity.type].baseHint}
+            </span>
+            <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
+              <Button size="sm" variant="glass" icon={<IcImage size={14} />} disabled={refAct.pending} onClick={() => fileRef.current?.click()}>
+                {baseRef ? "Replace — upload" : "Upload photo"}
+              </Button>
+              {projectId && (
+                <Button size="sm" variant="glass" icon={<IcSparkle size={14} />} onClick={() => setGenBase((v) => !v)}>
+                  {genBase ? "Close" : baseRef ? "Replace — generate" : "Generate (t2i)"}
+                </Button>
+              )}
             </div>
-            {/* generate MORE — conditioned on the images above (e.g. a logo → a garment) */}
-            <GenerateRefsBlock entity={entity} projectId={projectId} />
+          </div>
+        </div>
+        {genBase && projectId && (
+          <div style={{ marginTop: 8 }}>
+            <GenerateRefsBlock entity={entity} projectId={projectId} mode="BASE" />
           </div>
         )}
-        <input
-          ref={fileRef}
-          type="file"
-          multiple
-          accept="image/png,image/jpeg,image/webp"
-          className="hidden"
-          aria-label="Add reference images"
-          onChange={(e) => uploadFiles([...(e.target.files ?? [])])}
-        />
         {refAct.error && (
           <p role="alert" style={{ font: "var(--text-caption)", color: "var(--danger)", margin: "6px 0 0" }}>{refAct.error}</p>
         )}
       </div>
+
+      {/* additional base-level references (kept) — click one to make it the base */}
+      {entity.refs.length > 0 && (
+        <div>
+          <MonoLabel style={{ display: "block", marginBottom: 7 }}>References · {entity.refs.length}</MonoLabel>
+          <div className="thumb-strip">
+            {entity.refs.map((r) => (
+              <span key={r.id} style={{ position: "relative" }} className="group">
+                {/* eslint-disable-next-line @next/next/no-img-element */}
+                <img className="ref-thumb" src={r.url} alt=""
+                  style={r.assetId === entity.baseAssetId ? { outline: "2px solid var(--accent)", outlineOffset: 1 } : undefined} />
+                {r.assetId !== entity.baseAssetId && (
+                  <button aria-label="Make base" title="Make base" disabled={refAct.pending}
+                    onClick={() => refAct.run(() => setBaseAsset(entity.id, r.assetId))}
+                    style={{ position: "absolute", bottom: 2, left: 2, height: 18, borderRadius: 99, border: "none", cursor: "pointer", background: "rgba(6,8,11,.75)", color: "var(--fg-2)", fontSize: 10, padding: "0 6px" }}>
+                    base
+                  </button>
+                )}
+                <button aria-label="Remove reference image" disabled={refAct.pending}
+                  onClick={() => refAct.run(() => softDeleteReferenceImage(r.id))}
+                  style={{ position: "absolute", top: 2, right: 2, width: 18, height: 18, borderRadius: 99, border: "none", cursor: "pointer", background: "rgba(6,8,11,.75)", color: "var(--fg-2)", fontSize: 11, display: "inline-flex", alignItems: "center", justifyContent: "center" }}>
+                  ×
+                </button>
+              </span>
+            ))}
+          </div>
+        </div>
+      )}
+
+      {/* hidden picker — shared by the base "Upload" button and ref uploads */}
+      <input
+        ref={fileRef}
+        type="file"
+        multiple
+        accept="image/png,image/jpeg,image/webp"
+        className="hidden"
+        aria-label="Add reference images"
+        onChange={(e) => uploadFiles([...(e.target.files ?? [])])}
+      />
 
       <label className="al-field">
         <span className="al-field-label">Notes</span>
