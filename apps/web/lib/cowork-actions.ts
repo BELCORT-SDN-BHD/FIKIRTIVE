@@ -288,14 +288,19 @@ export async function coworkGenerate(raw: unknown): Promise<{ id: string } | { e
   });
   if (!card || card.thread.deletedAt || card.thread.ownerId !== FOUNDER_OWNER_ID) return { error: "Card not found." };
 
-  // RE-SPEND GUARD (server-side, money-safety #1): a card generates AT MOST ONCE. The
-  // idempotencyKey only dedupes while the job is QUEUED/GENERATING; once it reaches
-  // DONE/FAILED the key no longer blocks, so without this a second call (stale tab,
-  // reload, or a direct server-action invocation) would create a NEW charged job. The
-  // UI disabling the button is not a spend control. Returning the existing id keeps it
-  // idempotent (a benign double-click is a no-op, not an error). To retry, the user
-  // starts a new turn (new card) — never a silent re-charge of the same card.
-  if (card.genJobId) return { id: card.genJobId };
+  // RE-SPEND GUARD (server-side, money-safety #1): a card generates AT MOST ONCE. Key the
+  // guard on the DURABLE record — a GenJob carrying this card's stable idempotencyKey,
+  // written ATOMICALLY by startGen's genJob.create — NOT the best-effort card.genJobId
+  // mark below (whose write can fail; startGen's own idempotency only dedupes while the
+  // job is QUEUED/GENERATING, so once the first job is DONE/FAILED an unmarked card could
+  // otherwise be re-charged by a stale tab / reload / direct RPC). If any job for this
+  // card already exists (any status), return it instead of charging again. To retry, the
+  // user starts a new turn (a new card) — never a silent re-charge of the same card.
+  const existingJob = await prisma.genJob.findFirst({
+    where: { ownerId: FOUNDER_OWNER_ID, idempotencyKey: `cowork:${cardId}` },
+    select: { id: true },
+  });
+  if (existingJob) return { id: existingJob.id };
 
   // re-validate the persisted proposal subset; the model/kind/params are server-trusted
   const p = (card.payload ?? {}) as Record<string, unknown>;
@@ -329,15 +334,15 @@ export async function coworkGenerate(raw: unknown): Promise<{ id: string } | { e
   const res = await startGen(req); // the ONLY spend path (unmodified logic — safeParse + Guardian)
   if ("error" in res) return res;
 
-  // Persist the card→job link — this is what the server-side re-spend guard above keys
-  // on, so it is the only remaining re-spend window if it fails. Best-effort (the spend
-  // already happened safely via startGen) but LOG a failure: it leaves the card without
-  // a genJobId, so a subsequent click could create a second job (the idempotencyKey still
-  // dedupes while the first is in flight, narrowing the window).
+  // Persist the card→job link for the UI (reload shows the card as "Generated", disables
+  // its button). This is NOT the spend guard anymore — the guard above keys on the durable
+  // GenJob.idempotencyKey — so a failed mark here cannot reopen a re-spend window; worst
+  // case the button isn't pre-disabled on reload, and a re-click is caught by that guard.
+  // Best-effort (the spend already happened safely via startGen); log a failure.
   try {
     await prisma.chatMessage.update({ where: { id: cardId }, data: { genJobId: res.id } });
   } catch (e) {
-    console.warn(`coworkGenerate: failed to mark card ${cardId} with genJobId ${res.id} (re-spend guard at risk):`, e instanceof Error ? e.message : e);
+    console.warn(`coworkGenerate: failed to mark card ${cardId} with genJobId ${res.id} (UI reload-disable only):`, e instanceof Error ? e.message : e);
   }
   return res;
 }
