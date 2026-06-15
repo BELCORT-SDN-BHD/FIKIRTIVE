@@ -166,6 +166,17 @@ export async function handleGen(data: GenJobData, retryCount: number): Promise<v
     const refs: { asset: { ownerId: string; contentHash: string; ext: string } }[] = [];
     for (const entityId of job.entityIds) {
       const variantId = variantSel[entityId] ?? null;
+      if (variantId) {
+        // the variant must still be live + owned — a soft-delete AFTER the guardian
+        // check must not let us spend. (deleteVariant cascades its refs, so found
+        // would also be empty, but don't rely on that invariant here — verify the
+        // variant directly, mirroring the VARIANT refgen worker.)
+        const liveVariant = await prisma.entityVariant.findFirst({ where: { id: variantId, entityId, ownerId: job.ownerId, deletedAt: null }, select: { id: true } });
+        if (!liveVariant) {
+          await prisma.genJob.update({ where: { id: job.id }, data: { status: "FAILED", error: "an @mentioned variant was deleted — pick another or use the base", finishedAt: new Date() } });
+          return;
+        }
+      }
       const found = await prisma.referenceImage.findMany({
         where: { entityId, variantId, ownerId: job.ownerId, deletedAt: null },
         orderBy: { position: "asc" },

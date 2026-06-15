@@ -76,4 +76,8 @@ describe("genRequest.variantSel", () => {
   it("rejects an over-long variant id (a bad id must never reach the worker)", () => {
     expect(() => genRequest.parse({ ...base, variantSel: { e1: "x".repeat(65) } })).toThrow();
   });
+  it("rejects a variantSel key that isn't an @mentioned entity (inconsistent → no spend)", () => {
+    expect(() => genRequest.parse({ ...base, variantSel: { e2: "v1" } })).toThrow();
+    expect(() => genRequest.parse({ ...base, entityIds: [], variantSel: { e1: "v1" } })).toThrow();
+  });
 });

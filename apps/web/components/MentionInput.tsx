@@ -82,7 +82,10 @@ export function resolveDoc(doc: DocNode, byId: Map<string, EntityDTO>): { ids: s
     if (node.type === "text") text += node.text ?? "";
     if (node.type === "mention" && node.attrs?.id) {
       ids.push(node.attrs.id);
-      if (node.attrs.variantId) variantSel[node.attrs.id] = node.attrs.variantId; // last write wins (one variant per entity per prompt)
+      // last write wins (one variant per entity per prompt): a variant mention binds it,
+      // a later bare mention of the same entity clears it back to base refs.
+      if (node.attrs.variantId) variantSel[node.attrs.id] = node.attrs.variantId;
+      else delete variantSel[node.attrs.id];
       text += byId.get(node.attrs.id)?.name ?? node.attrs.label ?? "";
     }
     node.content?.forEach(walk);

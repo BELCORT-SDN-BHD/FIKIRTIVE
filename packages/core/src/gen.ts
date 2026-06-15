@@ -172,6 +172,15 @@ export const genRequest = z
   // model must match the kind's menu — an unknown video model must never reach
   // the worker and silently spend on a fallback (money safety).
   .superRefine((v, ctx) => {
+    // Phase C: every variantSel key must be an @mentioned entity. A selection for an
+    // entity not in entityIds is an inconsistent request the worker would ignore — and
+    // with an empty entityIds it could still spend as unconditioned t2i. Reject it
+    // before it can be persisted or spent (validate-before-spend).
+    if (v.variantSel) {
+      for (const k of Object.keys(v.variantSel)) {
+        if (!v.entityIds.includes(k)) ctx.addIssue({ code: z.ZodIssueCode.custom, path: ["variantSel"], message: "variantSel references an entity that isn't @mentioned" });
+      }
+    }
     const menu: readonly string[] = v.kind === "video" ? GEN_VIDEO_MODELS : GEN_MODELS;
     if (!menu.includes(v.model)) {
       ctx.addIssue({ code: z.ZodIssueCode.custom, path: ["model"], message: `model "${v.model}" is not valid for ${v.kind}` });

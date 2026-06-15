@@ -90,6 +90,20 @@ try {
   check("CASE 3 deleted-variant gen → FAILED", r3?.status === "FAILED", { status: r3?.status, error: r3?.error });
   check("CASE 3 NO spend (spent=false, no generation rows)", r3?.spent === false && r3?.generationIds.length === 0, { spent: r3?.spent, gens: r3?.generationIds.length });
 
+  // CASE 4 — variant soft-deleted but its ref left LIVE (a delete path that didn't
+  // cascade, or a race): the worker's EntityVariant liveness check must still fail closed.
+  const v3 = await prisma.entityVariant.create({ data: { id: newId(), entityId: entity.id, name: "Green coat", handle: "green-coat", prompt: "green coat" } });
+  const v3job = await prisma.refGenJob.create({ data: { id: newId(), entityId: entity.id, prompt: v3.prompt, count: 1, model: "seedream", mode: "VARIANT", variantId: v3.id } });
+  await handleRefGen({ refGenJobId: v3job.id }, 0);
+  await prisma.entityVariant.update({ where: { id: v3.id }, data: { deletedAt: new Date() } }); // delete variant ONLY, leave ref live
+  const liveRefStillThere = await prisma.referenceImage.findFirst({ where: { entityId: entity.id, variantId: v3.id, deletedAt: null } });
+  const g4 = await prisma.genJob.create({ data: { id: newId(), projectId: project.id, prompt: "@char in green coat", entityIds: [entity.id], variantSel: { [entity.id]: v3.id }, kind: "IMAGE", model: "seedream", count: 1 } });
+  await handleGen({ genJobId: g4.id }, 0);
+  const r4 = await prisma.genJob.findUnique({ where: { id: g4.id } });
+  check("CASE 4 setup: variant deleted but ref still live", !!liveRefStillThere, { ref: !!liveRefStillThere });
+  check("CASE 4 deleted-variant (live ref) gen → FAILED", r4?.status === "FAILED", { status: r4?.status, error: r4?.error });
+  check("CASE 4 NO spend (spent=false, no generation rows)", r4?.spent === false && r4?.generationIds.length === 0, { spent: r4?.spent, gens: r4?.generationIds.length });
+
   if (failed) { console.error("\n✗ Phase C gen worker FAILED an assertion"); process.exit(1); }
   console.log("\n✓ Phase C gen worker: variant-scoped conditioning + snapshot + fail-closed on deleted variant");
 } finally {
