@@ -18,6 +18,7 @@ const IMG_EXTS = ["png", "jpg", "jpeg", "webp"];
 export async function checkCast(req: {
   projectId: string;
   entityIds: string[];
+  variantSel?: Record<string, string>;
   sourceGenerationId?: string | null;
   tailGenerationId?: string | null;
   model: string;
@@ -25,6 +26,24 @@ export async function checkCast(req: {
 }): Promise<{ error: string; report: { findings: CastFinding[] } } | null> {
   try {
     const findings: CastFinding[] = [];
+
+    // variant @mentions (Phase C): each selected variant must be live + owned + have
+    // >=1 live reference image, else conditioning would spend on nothing (the worker
+    // also fail-closes — this is the friendlier pre-spend block). Fail-CLOSED on a
+    // bad variant; a DB fault still falls through to the outer fail-OPEN catch.
+    if (req.variantSel) {
+      for (const [entityId, variantId] of Object.entries(req.variantSel)) {
+        const variant = await prisma.entityVariant.findFirst({
+          where: { id: variantId, entityId, ownerId: FOUNDER_OWNER_ID, deletedAt: null },
+          select: { name: true, _count: { select: { referenceImages: { where: { deletedAt: null } } } } },
+        });
+        if (!variant) {
+          findings.push({ kind: "empty-variant", entityId, message: "An @mentioned variant was deleted — pick another or use the base." });
+        } else if (variant._count.referenceImages === 0) {
+          findings.push({ kind: "empty-variant", entityId, message: `The "${variant.name}" variant has no image yet — generate it first, or use the base.` });
+        }
+      }
+    }
 
     // entity cast checks: CHARACTER-with-no-refs (the big money-saver), a
     // deleted/cross-project @mention, and multi-character on a "block" family

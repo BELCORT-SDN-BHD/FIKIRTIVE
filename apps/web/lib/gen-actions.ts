@@ -59,7 +59,7 @@ export async function startGen(raw: unknown): Promise<{ id: string } | { error: 
   // commit (a CHARACTER with no refs, a deleted @mention, a cross-project i2v
   // frame). Fail-OPEN — checkCast returns null on its own faults — and additive
   // only: it never loosens the existing gate.
-  const block = await checkCast({ projectId, entityIds, sourceGenerationId, tailGenerationId, model, kind });
+  const block = await checkCast({ projectId, entityIds, variantSel, sourceGenerationId, tailGenerationId, model, kind });
   if (block) {
     try {
       await prisma.actionEvent.create({ data: { id: newId(), ownerId: FOUNDER_OWNER_ID, projectId, type: "gen.guardian-block", payload: { findings: block.report.findings } } });

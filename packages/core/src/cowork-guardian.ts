@@ -11,9 +11,11 @@
  * block — promptCoach surfaces that softly in the composer.
  */
 export type CastFinding = {
-  // missing-source is produced by the web checkCast (an i2v start/end frame that
-  // isn't an owned, same-project image), not by the pure castFindings below.
-  kind: "missing-entity" | "character-no-refs" | "multi-char-block" | "missing-source";
+  // missing-source and empty-variant are produced by the web checkCast (which loads
+  // DB state), not by the pure castFindings below. missing-source = an i2v start/end
+  // frame that isn't an owned same-project image; empty-variant = an @mentioned
+  // variant that was deleted or has no live reference image to condition on.
+  kind: "missing-entity" | "character-no-refs" | "multi-char-block" | "missing-source" | "empty-variant";
   entityId?: string;
   message: string;
 };
