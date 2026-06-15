@@ -155,23 +155,38 @@ export async function handleGen(data: GenJobData, retryCount: number): Promise<v
       return;
     }
 
-    // resolve conditioning from the @mentioned entities' refs
-    const refs = job.entityIds.length
-      ? await prisma.referenceImage.findMany({
-          where: { entityId: { in: job.entityIds }, ownerId: job.ownerId, deletedAt: null },
-          orderBy: { position: "asc" },
-          include: { asset: true },
-          take: MAX_CONDITIONING_IMAGES,
-        })
-      : [];
+    // resolve conditioning PER @mentioned entity, scoped to the variant it selected
+    // (Phase C). A bare mention → the entity's base refs (variantId null); a selected
+    // variant → only that variant's refs. A selected variant with zero live refs is a
+    // permanent, user-fixable condition (its images were deleted) → terminal-fail
+    // BEFORE the paid call so a retry can't later find none and we never spend on a
+    // degraded result. (The guardian also blocks this pre-spend; this is the race
+    // backstop for refs deleted between that check and now.)
+    const variantSel = (job.variantSel as Record<string, string> | null) ?? {};
+    const refs: { asset: { ownerId: string; contentHash: string; ext: string } }[] = [];
+    for (const entityId of job.entityIds) {
+      const variantId = variantSel[entityId] ?? null;
+      const found = await prisma.referenceImage.findMany({
+        where: { entityId, variantId, ownerId: job.ownerId, deletedAt: null },
+        orderBy: { position: "asc" },
+        include: { asset: true },
+      });
+      if (variantId && found.length === 0) {
+        await prisma.genJob.update({ where: { id: job.id }, data: { status: "FAILED", error: "an @mentioned variant has no image to condition on — generate it first, or use the base", finishedAt: new Date() } });
+        return;
+      }
+      refs.push(...found);
+    }
+    // cap the AGGREGATE at the model's input limit (was per-query take before the loop)
+    const cappedRefs = refs.slice(0, MAX_CONDITIONING_IMAGES);
     const inputImageUrls: string[] = [];
-    for (const ref of refs) {
+    for (const ref of cappedRefs) {
       const signed = await storage.presignedGet(storageKey(ref.asset.ownerId, ref.asset.contentHash, ref.asset.ext), 3600);
       if (signed) inputImageUrls.push(signed);
     }
     const isMock = provider.name === "mock";
-    if (!isMock && refs.length > 0 && inputImageUrls.length < refs.length) {
-      throw new Error(`conditioning refs unreachable (${inputImageUrls.length}/${refs.length}) — refusing to spend`);
+    if (!isMock && cappedRefs.length > 0 && inputImageUrls.length < cappedRefs.length) {
+      throw new Error(`conditioning refs unreachable (${inputImageUrls.length}/${cappedRefs.length}) — refusing to spend`);
     }
 
     // frozen provenance snapshot (same shape as uploadCandidates)
@@ -180,7 +195,13 @@ export async function handleGen(data: GenJobData, retryCount: number): Promise<v
       include: { referenceImages: { where: { deletedAt: null }, include: { asset: true } } },
     });
     const entitySnapshot = {
-      entities: entities.map((e) => ({ id: e.id, name: e.name, type: e.type, refHashes: e.referenceImages.map((r) => r.asset.contentHash) })),
+      entities: entities.map((e) => {
+        // record WHICH variant conditioned this gen + only that variant's ref hashes
+        // (base = variantId null), so provenance reflects what was actually sent.
+        const variantId = variantSel[e.id] ?? null;
+        const refsForHash = e.referenceImages.filter((r) => r.variantId === variantId);
+        return { id: e.id, name: e.name, type: e.type, variantId, refHashes: refsForHash.map((r) => r.asset.contentHash) };
+      }),
     };
 
     // THE paid call — exactly once per job. Image: t2i/edit. Video (i2v):
