@@ -30,6 +30,13 @@ export async function startGen(raw: unknown): Promise<{ id: string } | { error: 
   const project = await prisma.project.findFirst({ where: { id: projectId, ...OWNED } });
   if (!project) return { error: "Project not found." };
 
+  // variantSel conditions IMAGE generation (which keyframe to anchor on). Video (i2v)
+  // conditions on the source keyframe, not entity refs — the chosen variant is already
+  // baked into that keyframe — so it's not meaningful for video and the worker ignores
+  // it. Drop it for video so a job never persists/claims (in its snapshot) a variant it
+  // didn't actually condition on. The @mention itself still works (name in the prompt).
+  const effectiveVariantSel = kind === "video" ? undefined : variantSel;
+
   // double-submit guard (fast path): a reload re-sends the same stable key, so
   // reuse the in-flight job instead of starting (and paying for) a 2nd one. The
   // partial-unique index on the create below is the race-proof backstop.
@@ -59,7 +66,7 @@ export async function startGen(raw: unknown): Promise<{ id: string } | { error: 
   // commit (a CHARACTER with no refs, a deleted @mention, a cross-project i2v
   // frame). Fail-OPEN — checkCast returns null on its own faults — and additive
   // only: it never loosens the existing gate.
-  const block = await checkCast({ projectId, entityIds, variantSel, sourceGenerationId, tailGenerationId, model, kind });
+  const block = await checkCast({ projectId, entityIds, variantSel: effectiveVariantSel, sourceGenerationId, tailGenerationId, model, kind });
   if (block) {
     try {
       await prisma.actionEvent.create({ data: { id: newId(), ownerId: FOUNDER_OWNER_ID, projectId, type: "gen.guardian-block", payload: { findings: block.report.findings } } });
@@ -79,8 +86,9 @@ export async function startGen(raw: unknown): Promise<{ id: string } | { error: 
         idempotencyKey: idempotencyKey ?? null,
         ...(videoOptions ? { videoOptions } : {}),
         // Phase C: persist the @mention→variant bindings so the worker conditions on
-        // the right variant. Omitted when empty → column stays null (old gens unchanged).
-        ...(variantSel ? { variantSel } : {}),
+        // the right variant. Image-only (effectiveVariantSel drops it for video).
+        // Omitted when empty → column stays null (old/bare/video gens unchanged).
+        ...(effectiveVariantSel ? { variantSel: effectiveVariantSel } : {}),
       },
       select: { id: true },
     });

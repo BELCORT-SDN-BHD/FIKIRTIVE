@@ -104,6 +104,17 @@ try {
   check("CASE 4 deleted-variant (live ref) gen → FAILED", r4?.status === "FAILED", { status: r4?.status, error: r4?.error });
   check("CASE 4 NO spend (spent=false, no generation rows)", r4?.spent === false && r4?.generationIds.length === 0, { spent: r4?.spent, gens: r4?.generationIds.length });
 
+  // CASE 5 — parent ENTITY soft-deleted (softDeleteEntity does NOT cascade refs) → the
+  // worker's entity-liveness check must fail closed even for a bare mention with live refs.
+  await prisma.entity.update({ where: { id: entity.id }, data: { deletedAt: new Date() } });
+  const baseRefStillLive = await prisma.referenceImage.findFirst({ where: { entityId: entity.id, variantId: null, deletedAt: null } });
+  const g5 = await prisma.genJob.create({ data: { id: newId(), projectId: project.id, prompt: "@char standing", entityIds: [entity.id], kind: "IMAGE", model: "seedream", count: 1 } });
+  await handleGen({ genJobId: g5.id }, 0);
+  const r5 = await prisma.genJob.findUnique({ where: { id: g5.id } });
+  check("CASE 5 setup: entity deleted but base ref still live (no cascade)", !!baseRefStillLive, { ref: !!baseRefStillLive });
+  check("CASE 5 deleted-entity gen → FAILED", r5?.status === "FAILED", { status: r5?.status, error: r5?.error });
+  check("CASE 5 NO spend (spent=false, no generation rows)", r5?.spent === false && r5?.generationIds.length === 0, { spent: r5?.spent, gens: r5?.generationIds.length });
+
   if (failed) { console.error("\n✗ Phase C gen worker FAILED an assertion"); process.exit(1); }
   console.log("\n✓ Phase C gen worker: variant-scoped conditioning + snapshot + fail-closed on deleted variant");
 } finally {

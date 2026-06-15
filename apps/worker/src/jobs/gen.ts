@@ -166,6 +166,15 @@ export async function handleGen(data: GenJobData, retryCount: number): Promise<v
     const perEntity: { asset: { ownerId: string; contentHash: string; ext: string } }[][] = [];
     for (const entityId of job.entityIds) {
       const variantId = variantSel[entityId] ?? null;
+      // the parent entity must still be live + owned. softDeleteEntity doesn't cascade to
+      // refs, so an entity deleted AFTER the guardian check would otherwise leave live refs
+      // the worker would spend on. (Guardian blocks a deleted entity pre-spend; this is the
+      // race backstop.)
+      const liveEntity = await prisma.entity.findFirst({ where: { id: entityId, ownerId: job.ownerId, deletedAt: null }, select: { id: true } });
+      if (!liveEntity) {
+        await prisma.genJob.update({ where: { id: job.id }, data: { status: "FAILED", error: "an @mentioned element was deleted — remove it and try again", finishedAt: new Date() } });
+        return;
+      }
       if (variantId) {
         // the variant must still be live + owned — a soft-delete AFTER the guardian
         // check must not let us spend. (deleteVariant cascades its refs, so found
