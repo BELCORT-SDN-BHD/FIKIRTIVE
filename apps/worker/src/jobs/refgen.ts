@@ -80,6 +80,25 @@ export async function handleRefGen(data: RefGenJobData, retryCount: number): Pro
       return;
     }
 
+    // validate-before-spend (VARIANT): the target variant must still be a live,
+    // owned variant of this entity. A variant soft-deleted between enqueue and run
+    // must terminal-fail (no retry) WITHOUT spending — otherwise we'd pay for an
+    // image attached to a hidden/stranded variant.
+    if (job.mode === "VARIANT") {
+      const variant = await prisma.entityVariant.findFirst({
+        where: { id: job.variantId ?? "", entityId: job.entityId, ownerId: job.ownerId, deletedAt: null },
+        select: { id: true },
+      });
+      if (!variant) {
+        console.error(`[refgen] ${job.id}: variant ${job.variantId} gone — failing without spend`);
+        await prisma.refGenJob.update({
+          where: { id: job.id },
+          data: { status: "FAILED", error: "variant was deleted before generation ran", finishedAt: new Date() },
+        });
+        return; // terminal, no throw → no retry, no spend
+      }
+    }
+
     // Atomic spend claim: QUEUED → GENERATING in a single conditional update,
     // so concurrent or duplicate deliveries can never both reach the provider.
     // A lost claim means another delivery owns the job, or a prior attempt

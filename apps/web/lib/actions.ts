@@ -189,6 +189,18 @@ export async function softDeleteReferenceImage(refImageId: string) {
     where: { id: refImageId },
     data: { deletedAt: new Date() },
   });
+  // if we just removed the entity's base ref, repoint baseAssetId to the next live
+  // base-level ref (or null) — otherwise it dangles at an orphaned asset and variant
+  // generation would still condition on a base the user no longer has.
+  const entity = await prisma.entity.findFirst({ where: { id: ref.entityId, ...OWNED }, select: { baseAssetId: true } });
+  if (entity?.baseAssetId === ref.assetId) {
+    const next = await prisma.referenceImage.findFirst({
+      where: { entityId: ref.entityId, deletedAt: null, variantId: null },
+      orderBy: { position: "asc" },
+      select: { assetId: true },
+    });
+    await prisma.entity.updateMany({ where: { id: ref.entityId, ...OWNED }, data: { baseAssetId: next?.assetId ?? null } });
+  }
   await logAction("entity.update", null, { entityId: ref.entityId, refImageId, action: "ref-delete" });
   revalidatePath("/", "layout");
   return { ok: true };

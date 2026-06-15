@@ -404,15 +404,14 @@ function CreateDialog({
 
 function VariantsBlock({ entity, projectId }: { entity: EntityDTO; projectId?: string }) {
   const router = useRouter();
-  const { error, run } = useAction();
+  const { pending, error, run } = useAction(); // pending resets on BOTH success + error
   const [adding, setAdding] = useState(false);
   const [name, setName] = useState("");
   const [prompt, setPrompt] = useState("");
   const [enhancing, setEnhancing] = useState(false);
   const enhancingRef = useRef(false);
   const submittingRef = useRef(false); // synchronous double-click guard (paid i2i)
-  const [busy, setBusy] = useState(false);
-  useEffect(() => { if (!busy) submittingRef.current = false; }, [busy]);
+  useEffect(() => { if (!pending) submittingRef.current = false; }, [pending]);
   const chips = REF_TYPE_CONFIG[entity.type].variantChips;
   const hasBase = !!entity.baseAssetId;
   const hue = `var(--hue-${entity.type.toLowerCase()})`;
@@ -431,12 +430,11 @@ function VariantsBlock({ entity, projectId }: { entity: EntityDTO; projectId?: s
   }, [anyPending, entity.id, router]);
 
   function generate() {
-    if (busy || submittingRef.current || !name.trim() || !prompt.trim()) return;
-    submittingRef.current = true; setBusy(true);
+    if (pending || submittingRef.current || !name.trim() || !prompt.trim()) return;
+    submittingRef.current = true;
     run(
       () => createVariant(entity.id, name, prompt),
       (res) => {
-        setBusy(false);
         if (res && "variantId" in res) { setName(""); setPrompt(""); setAdding(false); router.refresh(); }
       },
     );
@@ -466,11 +464,11 @@ function VariantsBlock({ entity, projectId }: { entity: EntityDTO; projectId?: s
             meta={<span style={{ color: hue }}>@{entity.name.toLowerCase()}:{v.handle}</span>}
             footer={
               <span style={{ display: "flex", gap: 6 }}>
-                <button className="al-iconbtn al-iconbtn-sm" aria-label="Regenerate variant" title="Regenerate"
+                <button className="al-iconbtn al-iconbtn-sm" aria-label="Regenerate variant" title="Regenerate" disabled={pending}
                   onClick={() => run(() => regenerateVariant(v.id), () => router.refresh())}><IcSparkle size={13} /></button>
-                <button className="al-iconbtn al-iconbtn-sm" aria-label="Rename variant" title="Rename"
+                <button className="al-iconbtn al-iconbtn-sm" aria-label="Rename variant" title="Rename" disabled={pending}
                   onClick={() => { const n = window.prompt("Rename variant", v.name); if (n && n.trim()) run(() => renameVariant(v.id, n), () => router.refresh()); }}>✎</button>
-                <button className="al-iconbtn al-iconbtn-sm" aria-label="Delete variant" title="Delete"
+                <button className="al-iconbtn al-iconbtn-sm" aria-label="Delete variant" title="Delete" disabled={pending}
                   onClick={() => { if (confirm(`Delete variant "${v.name}"?`)) run(() => deleteVariant(v.id), () => router.refresh()); }}><IcX size={13} /></button>
               </span>
             }
@@ -492,18 +490,18 @@ function VariantsBlock({ entity, projectId }: { entity: EntityDTO; projectId?: s
               <Chip key={c.key} mono onClick={() => setPrompt((p) => (p ? p + " " : "") + c.scaffold)}>{c.label}</Chip>
             ))}
           </div>
-          <textarea value={prompt} onChange={(e) => setPrompt(e.target.value)} disabled={busy || enhancing} rows={2}
+          <textarea value={prompt} onChange={(e) => setPrompt(e.target.value)} disabled={pending || enhancing} rows={2}
             aria-label="Variant description" placeholder="Describe the change — e.g. wearing an elegant red evening gown"
             style={{ width: "100%", background: "rgba(255,255,255,.05)", border: "1px solid var(--line-2)", borderRadius: "var(--radius-md)", padding: "9px 12px", color: "var(--fg-1)", font: "var(--text-small)", resize: "vertical", outline: "none" }} />
           <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
             {projectId && (
-              <Button size="sm" variant="ghost" icon={<IcSparkle size={13} />} onClick={enhance} disabled={enhancing || busy || prompt.trim().length === 0}>
+              <Button size="sm" variant="ghost" icon={<IcSparkle size={13} />} onClick={enhance} disabled={enhancing || pending || prompt.trim().length === 0}>
                 {enhancing ? "Enhancing…" : "Enhance"}
               </Button>
             )}
             <span style={{ flex: 1 }} />
-            <Button size="sm" icon={<IcSparkle size={13} />} onClick={generate} disabled={busy || enhancing || !name.trim() || !prompt.trim()}>
-              {busy ? "Generating…" : `Generate variant (~$${REFGEN_PRICE_USD_PER_IMAGE.toFixed(2)})`}
+            <Button size="sm" icon={<IcSparkle size={13} />} onClick={generate} disabled={pending || enhancing || !name.trim() || !prompt.trim()}>
+              {pending ? "Generating…" : `Generate variant (~$${REFGEN_PRICE_USD_PER_IMAGE.toFixed(2)})`}
             </Button>
           </div>
           {error && <p role="alert" style={{ font: "var(--text-caption)", color: "var(--danger)", margin: 0 }}>{error} — try again.</p>}
