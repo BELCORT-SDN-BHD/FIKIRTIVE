@@ -56,9 +56,31 @@ export async function startRefGen(raw: unknown): Promise<{ id: string } | { erro
   });
   if (active) return { error: "A generation is already running for this element — wait for it to finish." };
 
-  const job = await prisma.refGenJob.create({
-    data: { id: newId(), ownerId: FOUNDER_OWNER_ID, entityId, prompt, count: effectiveCount, model, mode },
-  });
+  // the findFirst above is the friendly fast path; the partial-unique index
+  // (RefGenJob_active_entity_variant_key) is the race-proof backstop underneath.
+  // Its TOCTOU window: two near-simultaneous submits both pass findFirst and both
+  // reach create — the index lets one win and rejects the other with P2002, which
+  // we catch to return the in-flight job instead of creating (and paying for) a
+  // duplicate. Mirrors startGen's idempotency backstop.
+  let job: { id: string };
+  try {
+    job = await prisma.refGenJob.create({
+      data: { id: newId(), ownerId: FOUNDER_OWNER_ID, entityId, prompt, count: effectiveCount, model, mode },
+      select: { id: true },
+    });
+  } catch (e) {
+    if (typeof e === "object" && e !== null && (e as { code?: string }).code === "P2002") {
+      const dupe = await prisma.refGenJob.findFirst({
+        // variantId null: startRefGen creates only base/REFSHEET (COALESCE→'' in the
+        // index). VARIANT jobs go through dispatchVariantJob and key on variantId.
+        where: { ownerId: FOUNDER_OWNER_ID, entityId, variantId: null, status: { in: ["QUEUED", "GENERATING"] } },
+        orderBy: { createdAt: "desc" },
+        select: { id: true },
+      });
+      if (dupe) return { id: dupe.id };
+    }
+    throw e;
+  }
   try {
     const boss = await getBoss();
     const queueJobId = await boss.send(REFGEN_QUEUE, { refGenJobId: job.id } satisfies RefGenJobData);
@@ -111,9 +133,27 @@ async function dispatchVariantJob(entityId: string, variantId: string, prompt: s
     select: { id: true },
   });
   if (active) return { jobId: active.id };
-  const job = await prisma.refGenJob.create({
-    data: { id: newId(), ownerId: FOUNDER_OWNER_ID, entityId, prompt, count: 1, model: "seedream", mode: "VARIANT", variantId },
-  });
+  // race-proof backstop (same as startRefGen): the findFirst above is the friendly
+  // fast path; the partial-unique index keys on (entity, variantId) so two near-
+  // simultaneous same-variant submits can't both create a paid job — the loser hits
+  // P2002 and we reuse the in-flight job instead of double-spending.
+  let job: { id: string };
+  try {
+    job = await prisma.refGenJob.create({
+      data: { id: newId(), ownerId: FOUNDER_OWNER_ID, entityId, prompt, count: 1, model: "seedream", mode: "VARIANT", variantId },
+      select: { id: true },
+    });
+  } catch (e) {
+    if (typeof e === "object" && e !== null && (e as { code?: string }).code === "P2002") {
+      const dupe = await prisma.refGenJob.findFirst({
+        where: { ownerId: FOUNDER_OWNER_ID, entityId, variantId, status: { in: ["QUEUED", "GENERATING"] } },
+        orderBy: { createdAt: "desc" },
+        select: { id: true },
+      });
+      if (dupe) return { jobId: dupe.id };
+    }
+    throw e;
+  }
   try {
     const boss = await getBoss();
     const queueJobId = await boss.send(REFGEN_QUEUE, { refGenJobId: job.id } satisfies RefGenJobData);

@@ -330,6 +330,11 @@ model RefGenJob {
   finishedAt     DateTime?
   createdAt      DateTime   @default(now())
   updatedAt      DateTime   @updatedAt
+  // 防双扣靠迁移里的 PARTIAL UNIQUE 索引（active 键唯一，Prisma 无法在 schema 表达条件
+  // 唯一，故只在 migration.sql 里建）：同一 (owner, entity, COALESCE(variant,'')) 同时
+  // 只能有一个 QUEUED/GENERATING 任务 → 并发同实体提交 DB 层挡住，不会双扣。base/REFSHEET
+  // 的 variantId 为 null（COALESCE 成 '' → 同实体串行）；Phase B 的 VARIANT 各带自己的
+  // variantId → 不同 variant 并发。startRefGen 捕获 P2002 后复用在途任务（镜像 startGen）。
 
   @@index([entityId, createdAt])
   @@index([status, updatedAt]) // 滞留 GENERATING 行的清扫扫描
