@@ -9,6 +9,7 @@ export type ShotStatusDTO = "DRAFT" | "EXPORTED" | "ATTACHED" | "FINAL";
 
 export interface RefImageDTO {
   id: string;
+  assetId: string; // the underlying Asset id — lets the UI match the base + call setBaseAsset
   url: string;
   kind: "image" | "video" | "other";
 }
@@ -21,6 +22,7 @@ export interface EntityDTO {
   notes: string;
   negativeConstraints: string;
   refs: RefImageDTO[];
+  baseAssetId: string | null; // the locked base — one of refs' assetId, or null
   usageCount: number; // # of shots whose prompt mentions this entity
 }
 
