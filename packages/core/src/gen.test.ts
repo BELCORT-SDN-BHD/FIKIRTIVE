@@ -86,3 +86,12 @@ describe("genRequest.variantSel", () => {
     expect(() => genRequest.parse({ ...base, entityIds: [], variantSel: { e1: "v1" } })).toThrow();
   });
 });
+
+describe("genRequest.threadId", () => {
+  it("genRequest accepts an optional threadId (cowork tag) and rejects an over-long one", () => {
+    const base = { projectId: "p1", prompt: "a cat", count: 1, kind: "image", model: "seedream" };
+    expect(genRequest.safeParse({ ...base, threadId: "t_123" }).success).toBe(true);
+    expect(genRequest.safeParse(base).success).toBe(true); // absent is fine (backward-compat)
+    expect(genRequest.safeParse({ ...base, threadId: "x".repeat(65) }).success).toBe(false);
+  });
+});

@@ -25,7 +25,7 @@ const OWNED = { ownerId: FOUNDER_OWNER_ID, deletedAt: null } as const;
 export async function startGen(raw: unknown): Promise<{ id: string } | { error: string }> {
   const parsed = genRequest.safeParse(raw);
   if (!parsed.success) return { error: "That generation request is out of bounds." };
-  const { projectId, shotId, sourceGenerationId, tailGenerationId, prompt, entityIds, count, kind, model, durationSeconds, resolution, aspectRatio, fps, audio, idempotencyKey, variantSel } = parsed.data;
+  const { projectId, shotId, sourceGenerationId, tailGenerationId, prompt, entityIds, count, kind, model, durationSeconds, resolution, aspectRatio, fps, audio, idempotencyKey, variantSel, threadId } = parsed.data;
 
   const project = await prisma.project.findFirst({ where: { id: projectId, ...OWNED } });
   if (!project) return { error: "Project not found." };
@@ -84,6 +84,7 @@ export async function startGen(raw: unknown): Promise<{ id: string } | { error: 
         prompt, entityIds, count: kind === "video" ? 1 : count, model,
         kind: kind === "video" ? "VIDEO" : "IMAGE",
         idempotencyKey: idempotencyKey ?? null,
+        threadId: threadId ?? null, // cowork tag — keeps this job out of the GenSpace/Assets/Editor views
         ...(videoOptions ? { videoOptions } : {}),
         // Phase C: persist the @mention→variant bindings so the worker conditions on
         // the right variant. Image-only (effectiveVariantSel drops it for video).
@@ -149,7 +150,7 @@ export async function getRecentGenResults(projectId: string, limit = 12) {
   const project = await prisma.project.findFirst({ where: { id: projectId, ownerId: FOUNDER_OWNER_ID, deletedAt: null }, select: { id: true } });
   if (!project) return [];
   const jobs = await prisma.genJob.findMany({
-    where: { projectId, ownerId: FOUNDER_OWNER_ID },
+    where: { projectId, ownerId: FOUNDER_OWNER_ID, threadId: null },
     orderBy: { createdAt: "desc" }, take: limit,
     select: { id: true, status: true, prompt: true, model: true, kind: true, error: true, generationIds: true },
   });

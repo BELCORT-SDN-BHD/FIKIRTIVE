@@ -185,6 +185,10 @@ export const genRequest = z
     // stable double-submit key for shot-bound gens (frame:<shotId>:<slot> /
     // animate:<shotId>) — startGen reuses an in-flight job with the same key
     idempotencyKey: z.string().min(1).max(80).nullish(),
+    // cowork tag: when set, this gen belongs to a Cowork thread — startGen persists it
+    // onto GenJob.threadId so the worker can tag the Generation and the studio views can
+    // filter cowork drafts out. Bounded like the other ids.
+    threadId: z.string().min(1).max(64).nullish(),
     // video controls (optional overrides; absent → the model's videoDefaults).
     // Each is validated against the chosen model's option set in the refine below.
     durationSeconds: z.number().int().min(1).max(60).nullish(),
