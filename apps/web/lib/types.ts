@@ -60,3 +60,22 @@ export interface ProjectDTO {
   id: string;
   name: string;
 }
+
+export interface ChatMessageDTO {
+  id: string;
+  role: "USER" | "AGENT";
+  kind: "TEXT" | "PLAN" | "GEN_CARD" | "GEN_RESULT" | "DENIAL" | "TURN_ERROR";
+  seq: number;
+  text: string;
+  payload: unknown | null;
+  genJobId: string | null;
+  createdAt: string;
+}
+
+export interface ChatThreadDTO {
+  id: string;
+  projectId: string;
+  title: string;
+  updatedAt: string;
+  messages: ChatMessageDTO[];
+}

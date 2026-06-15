@@ -1,8 +1,8 @@
 import "server-only";
-import { storageKey } from "@artlio/core";
+import { storageKey, coworkProposalSchema } from "@artlio/core";
 import { storage, kindOf } from "./storage";
-import type { EntityWithRefs } from "./data";
-import type { EntityDTO } from "./types";
+import type { EntityWithRefs, ChatThreadWithMessages } from "./data";
+import type { EntityDTO, ChatMessageDTO, ChatThreadDTO } from "./types";
 
 export function assetUrl(ownerId: string, contentHash: string, ext: string) {
   return storage.url(storageKey(ownerId, contentHash, ext));
@@ -37,5 +37,55 @@ export function toEntityDTO(e: EntityWithRefs): EntityDTO {
       refs: v.referenceImages.map(refOf),
     })),
     usageCount: e._count.shotRefs,
+  };
+}
+
+export function toChatMessageDTO(
+  m: ChatThreadWithMessages["messages"][number],
+  urlsByJob: Map<string, string[]>,
+): ChatMessageDTO {
+  let payload: unknown | null = null;
+  if (m.kind === "GEN_CARD" && m.payload) {
+    const p = m.payload as Record<string, unknown>;
+    const proposal = coworkProposalSchema.safeParse({
+      kind: p.kind,
+      desiredAspect: p.desiredAspect,
+      desiredDuration: p.desiredDuration,
+      desiredAudio: p.desiredAudio,
+      structuredPrompt: p.structuredPrompt,
+      entityIds: p.entityIds ?? [],
+      variantSel: p.variantSel ?? {},
+    });
+    // malformed → render as plain text (no card)
+    payload = proposal.success ? { ...p, ...proposal.data } : null;
+  } else if (m.kind === "GEN_RESULT") {
+    const p = (m.payload ?? {}) as { kind?: string; model?: string };
+    payload = {
+      kind: p.kind ?? "image",
+      model: p.model ?? "",
+      urls: m.genJobId ? (urlsByJob.get(m.genJobId) ?? []) : [],
+    };
+  } else if (m.kind === "PLAN" && m.payload) {
+    payload = m.payload; // { planSteps }
+  }
+  return {
+    id: m.id,
+    role: m.role as "USER" | "AGENT",
+    kind: m.kind as "TEXT" | "PLAN" | "GEN_CARD" | "GEN_RESULT" | "DENIAL" | "TURN_ERROR",
+    seq: m.seq,
+    text: m.text,
+    payload,
+    genJobId: m.genJobId,
+    createdAt: m.createdAt.toISOString(),
+  };
+}
+
+export function toChatThreadDTO(t: ChatThreadWithMessages, urlsByJob: Map<string, string[]>): ChatThreadDTO {
+  return {
+    id: t.id,
+    projectId: t.projectId,
+    title: t.title,
+    updatedAt: t.updatedAt.toISOString(),
+    messages: t.messages.map((m) => toChatMessageDTO(m, urlsByJob)),
   };
 }

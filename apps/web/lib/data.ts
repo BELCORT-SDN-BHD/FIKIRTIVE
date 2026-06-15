@@ -99,3 +99,48 @@ export type EntityWithRefs = Awaited<ReturnType<typeof getEntities>>[number];
 export type ShotWithDetail = Awaited<ReturnType<typeof getShots>>[number];
 export type CandidateGen = Awaited<ReturnType<typeof getCandidates>>[number];
 export type ProjectMedia = Awaited<ReturnType<typeof getProjectMedia>>[number];
+
+/** Live cowork threads for a project, newest activity first. */
+export async function getCoworkThreads(projectId: string) {
+  return prisma.chatThread.findMany({
+    where: { projectId, ownerId: FOUNDER_OWNER_ID, ...notDeleted },
+    orderBy: { updatedAt: "desc" },
+    include: { messages: { where: notDeleted, orderBy: { seq: "asc" } } },
+  });
+}
+
+/** One owned, live thread with its messages in seq order (deep-link / refetch). */
+export async function getCoworkThread(threadId: string) {
+  return prisma.chatThread.findFirst({
+    where: { id: threadId, ownerId: FOUNDER_OWNER_ID, ...notDeleted },
+    include: { messages: { where: notDeleted, orderBy: { seq: "asc" } } },
+  });
+}
+
+export type ChatThreadWithMessages = NonNullable<Awaited<ReturnType<typeof getCoworkThread>>>;
+
+/** Map of genJobId → ordered image urls for the GEN_RESULT messages in these threads.
+ *  Source of truth = the GenJob's generationIds (the message payload copy is advisory). */
+export async function resolveCoworkResultUrls(threads: { messages: { genJobId: string | null; kind: string }[] }[]) {
+  const jobIds = threads.flatMap((t) =>
+    t.messages.filter((m) => m.kind === "GEN_RESULT" && m.genJobId).map((m) => m.genJobId as string),
+  );
+  const map = new Map<string, string[]>();
+  if (!jobIds.length) return map;
+  const jobs = await prisma.genJob.findMany({ where: { id: { in: jobIds } }, select: { id: true, generationIds: true } });
+  const allGenIds = jobs.flatMap((j) => j.generationIds);
+  const gens = allGenIds.length
+    ? await prisma.generation.findMany({ where: { id: { in: allGenIds } }, include: { asset: true } })
+    : [];
+  const genById = new Map(gens.map((g) => [g.id, g]));
+  for (const j of jobs) {
+    map.set(
+      j.id,
+      j.generationIds
+        .map((gid) => genById.get(gid))
+        .filter((g) => !!g)
+        .map((g) => storageKeyToSrc(storageKey(g.asset.ownerId, g.asset.contentHash, g.asset.ext))),
+    );
+  }
+  return map;
+}
