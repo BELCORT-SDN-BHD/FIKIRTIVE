@@ -50,9 +50,14 @@ export async function checkCast(req: {
     if (req.entityIds.length) {
       const entities = await prisma.entity.findMany({
         where: { id: { in: req.entityIds }, ownerId: FOUNDER_OWNER_ID, deletedAt: null },
-        select: { id: true, name: true, type: true, _count: { select: { referenceImages: { where: { deletedAt: null } } } } },
+        // count BASE refs (variantId null) — a bare mention conditions only on those in
+        // the worker, so a character with refs only under a variant must still count as
+        // unanchored for the no-refs block (else it spends unconditioned).
+        select: { id: true, name: true, type: true, _count: { select: { referenceImages: { where: { deletedAt: null, variantId: null } } } } },
       });
-      const mapped = entities.map((e) => ({ id: e.id, name: e.name, type: e.type, liveRefCount: e._count.referenceImages }));
+      // a variant mention's refs are validated separately above (empty-variant block), so
+      // treat that entity as anchored here — don't let a zero base count wrongly flag it.
+      const mapped = entities.map((e) => ({ id: e.id, name: e.name, type: e.type, liveRefCount: req.variantSel?.[e.id] ? 1 : e._count.referenceImages }));
       const family = modelFamily(req.model);
       const mode = family ? deriveMode({ kind: req.kind, conditioned: true, hasSourceImage: !!req.sourceGenerationId, hasTailImage: !!req.tailGenerationId }) : undefined;
       const castRule = family && mode ? await getCastRule(family, mode) : undefined;

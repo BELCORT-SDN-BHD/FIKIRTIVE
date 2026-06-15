@@ -64,6 +64,15 @@ try {
   const ok = r1 === null && r2 === "empty" && r3 === "missing" && r4 === "missing";
   if (!ok) { console.error("✗ guardian variant decision failed an assertion"); process.exit(1); }
   console.log("✓ Phase C guardian: live variant passes; empty/deleted/bogus all block (fail-closed)");
+
+  // char-no-refs base-count semantics (Codex round 2): an entity whose refs live ONLY
+  // under a variant has zero BASE refs, so a BARE mention must read it as unanchored
+  // (the worker conditions a bare mention on base refs only). Prove the query isolates them.
+  const baseCount = await prisma.referenceImage.count({ where: { entityId: entity.id, variantId: null, deletedAt: null } });
+  const allCount = await prisma.referenceImage.count({ where: { entityId: entity.id, deletedAt: null } });
+  console.log("base refs:", baseCount, "| all refs:", allCount);
+  if (!(baseCount === 0 && allCount > 0)) { console.error("✗ base-ref count did not isolate base from variant refs"); process.exit(1); }
+  console.log("✓ char-no-refs uses BASE count: entity with only variant refs reads 0 base refs (a bare mention would block)");
 } finally {
   // clean up this script's rows (refs → assets → variants → entity), respecting FKs
   for (const id of created.refs) await prisma.referenceImage.delete({ where: { id } }).catch(() => {});

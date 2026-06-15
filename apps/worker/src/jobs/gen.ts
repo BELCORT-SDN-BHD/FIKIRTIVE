@@ -163,7 +163,7 @@ export async function handleGen(data: GenJobData, retryCount: number): Promise<v
     // degraded result. (The guardian also blocks this pre-spend; this is the race
     // backstop for refs deleted between that check and now.)
     const variantSel = (job.variantSel as Record<string, string> | null) ?? {};
-    const refs: { asset: { ownerId: string; contentHash: string; ext: string } }[] = [];
+    const perEntity: { asset: { ownerId: string; contentHash: string; ext: string } }[][] = [];
     for (const entityId of job.entityIds) {
       const variantId = variantSel[entityId] ?? null;
       if (variantId) {
@@ -186,10 +186,24 @@ export async function handleGen(data: GenJobData, retryCount: number): Promise<v
         await prisma.genJob.update({ where: { id: job.id }, data: { status: "FAILED", error: "an @mentioned variant has no image to condition on — generate it first, or use the base", finishedAt: new Date() } });
         return;
       }
-      refs.push(...found);
+      perEntity.push(found);
     }
-    // cap the AGGREGATE at the model's input limit (was per-query take before the loop)
-    const cappedRefs = refs.slice(0, MAX_CONDITIONING_IMAGES);
+    // cap the aggregate at the model's input limit, ROUND-ROBIN across entities so an
+    // early entity with many base refs can't starve a later @mentioned variant of its
+    // conditioning (which would spend without the requested variant). MAX_GEN_ENTITIES(8)
+    // ≤ the cap(10), so round 0 always seats ≥1 ref for every mention that has one.
+    const cappedRefs: { asset: { ownerId: string; contentHash: string; ext: string } }[] = [];
+    for (let round = 0; cappedRefs.length < MAX_CONDITIONING_IMAGES; round++) {
+      let progressed = false;
+      for (const refsForEntity of perEntity) {
+        const ref = refsForEntity[round];
+        if (!ref) continue;
+        cappedRefs.push(ref);
+        progressed = true;
+        if (cappedRefs.length >= MAX_CONDITIONING_IMAGES) break;
+      }
+      if (!progressed) break;
+    }
     const inputImageUrls: string[] = [];
     for (const ref of cappedRefs) {
       const signed = await storage.presignedGet(storageKey(ref.asset.ownerId, ref.asset.contentHash, ref.asset.ext), 3600);
