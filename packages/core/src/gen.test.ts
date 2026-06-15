@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { GEN_VIDEO_MODELS, modelFamily, deriveMode, MODEL_FAMILIES, GEN_MODES } from "./gen.js";
+import { GEN_VIDEO_MODELS, modelFamily, deriveMode, MODEL_FAMILIES, GEN_MODES, genRequest } from "./gen.js";
 
 describe("modelFamily", () => {
   // every shipping video model resolves to a known family (version-agnostic, by prefix)
@@ -64,5 +64,16 @@ describe("deriveMode", () => {
       deriveMode({ kind: "video", hasSourceImage: true, hasTailImage: true }),
     ];
     for (const m of cases) expect(GEN_MODES.includes(m)).toBe(true);
+  });
+});
+
+describe("genRequest.variantSel", () => {
+  const base = { projectId: "p1", prompt: "hi", entityIds: ["e1"], kind: "image", model: "seedream", count: 1 };
+  it("defaults absent and accepts an { entityId: variantId } map", () => {
+    expect(genRequest.parse(base).variantSel).toBeUndefined();
+    expect(genRequest.parse({ ...base, variantSel: { e1: "v1" } }).variantSel).toEqual({ e1: "v1" });
+  });
+  it("rejects an over-long variant id (a bad id must never reach the worker)", () => {
+    expect(() => genRequest.parse({ ...base, variantSel: { e1: "x".repeat(65) } })).toThrow();
   });
 });

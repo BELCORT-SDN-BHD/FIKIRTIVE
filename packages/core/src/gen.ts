@@ -149,6 +149,11 @@ export const genRequest = z
     tailGenerationId: z.string().min(1).max(64).nullish(),
     prompt: z.string().trim().min(1).max(MAX_GEN_PROMPT),
     entityIds: z.array(z.string().min(1).max(64)).max(MAX_GEN_ENTITIES).default([]),
+    // Phase C: { [entityId]: variantId } — which named variant each @mention
+    // selected. Absent → all mentions condition on the entity's base refs
+    // (backward-compat). Both key and value are bounded so a malformed id can
+    // never reach the worker and silently spend on a degraded generation.
+    variantSel: z.record(z.string().min(1).max(64), z.string().min(1).max(64)).optional(),
     count: z.number().int().min(1).max(MAX_GEN_COUNT),
     kind: z.enum(GEN_KINDS).default("image"),
     model: z.string().min(1).max(40).default("seedream"),
