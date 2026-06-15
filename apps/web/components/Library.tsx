@@ -2,7 +2,7 @@
 
 import { useEffect, useRef, useState, useTransition } from "react";
 import { useRouter } from "next/navigation";
-import { REFGEN_PRICE_USD_PER_IMAGE } from "@artlio/core";
+import { REFGEN_PRICE_USD_PER_IMAGE, basePromptFor } from "@artlio/core";
 import type { EntityDTO, EntityTypeDTO } from "@/lib/types";
 import {
   createEntity,
@@ -401,25 +401,11 @@ function CreateDialog({
 
 /* ---------- detail drawer ---------- */
 
-function buildReferencePrompt(entity: EntityDTO): string {
-  const subject = `${entity.name}${entity.notes ? `, ${entity.notes}` : ""}`;
-  const negative = entity.negativeConstraints ? ` Avoid: ${entity.negativeConstraints}.` : "";
-  switch (entity.type) {
-    case "CHARACTER":
-      return `Character reference sheet of ${subject}. Front view, side profile, and three-quarter view, neutral expression, plain studio background, soft even lighting, consistent identity across all views.${negative}`;
-    case "LOCATION":
-      return `Location reference set of ${subject}. Wide establishing shot, alternate angle, and close detail shot, consistent architecture, time of day and lighting across all views.${negative}`;
-    case "PRODUCT":
-      return `Product reference set of ${subject}. Clean studio shots from front, side and three-quarter angles on a neutral background, consistent materials, proportions and branding.${negative}`;
-    case "BRAND":
-      return `Brand style frames for ${subject}. Logo treatment on light and dark backgrounds, color palette swatch, and texture detail, consistent visual identity.${negative}`;
-  }
-}
 
 function GenerateRefsBlock({ entity, projectId }: { entity: EntityDTO; projectId?: string }) {
   const router = useRouter();
   const { pending, error, run } = useAction();
-  const [prompt, setPrompt] = useState(() => buildReferencePrompt(entity));
+  const [prompt, setPrompt] = useState(() => basePromptFor(entity.type, entity));
   const [count, setCount] = useState(4);
   const [enhancing, setEnhancing] = useState(false);
   const enhancingRef = useRef(false); // synchronous double-click guard for ✨ Enhance (also spends fal)

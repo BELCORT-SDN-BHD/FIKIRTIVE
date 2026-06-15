@@ -28,6 +28,7 @@ export {
 } from "./timeline.js";
 export * from "./upload.js";
 export * from "./refgen.js";
+export * from "./ref-config.js";
 export * from "./gen.js";
 export * from "./cowork.js";
 export * from "./cowork-transport.js";
