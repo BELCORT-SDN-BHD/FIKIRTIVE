@@ -83,4 +83,16 @@ describe("FalTransport", () => {
   it("name encodes the transport for the audit `via` field", () => {
     expect(new FalTransport("K").name).toBe("fal:llm");
   });
+
+  it("FalTransport forwards response_format + max_tokens in the request body", async () => {
+    let sentBody: any;
+    const orig = globalThis.fetch;
+    globalThis.fetch = (async (_url: string, init: any) => { sentBody = JSON.parse(init.body); return { ok: true, json: async () => ({ choices: [{ message: { content: "ok" } }] }) }; }) as any;
+    try {
+      const { FalTransport } = await import("./cowork-transport.js");
+      await new FalTransport("k").chat("planner", [{ role: "user", content: "hi" }], { responseFormat: "json_object", maxTokens: 1500 });
+      expect(sentBody.response_format).toEqual({ type: "json_object" });
+      expect(sentBody.max_tokens).toBe(1500);
+    } finally { globalThis.fetch = orig; }
+  });
 });

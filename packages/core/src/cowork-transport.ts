@@ -27,11 +27,16 @@ export class FalTransport implements CoworkTransport {
     private apiKey: string,
     private model = "anthropic/claude-sonnet-4.5",
   ) {}
-  async chat(_skillId: string, messages: ChatMessage[]): Promise<{ text: string }> {
+  async chat(_skillId: string, messages: ChatMessage[], opts?: { responseFormat?: "json_object"; maxTokens?: number }): Promise<{ text: string }> {
     const res = await fetch("https://fal.run/openrouter/router/openai/v1/chat/completions", {
       method: "POST",
       headers: { Authorization: `Key ${this.apiKey}`, "Content-Type": "application/json" },
-      body: JSON.stringify({ model: this.model, messages }),
+      body: JSON.stringify({
+        model: this.model,
+        messages,
+        ...(opts?.responseFormat ? { response_format: { type: opts.responseFormat } } : {}),
+        ...(opts?.maxTokens ? { max_tokens: opts.maxTokens } : {}),
+      }),
     });
     if (!res.ok) {
       const detail = await res.text().catch(() => "");

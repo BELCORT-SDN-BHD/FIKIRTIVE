@@ -62,7 +62,7 @@ export const coworkPlan = z.object({
 });
 
 /** A model-neutral chat turn. Skills assemble these; the transport ships them. */
-export type ChatMessage = { role: "system" | "user"; content: string };
+export type ChatMessage = { role: "system" | "user" | "assistant"; content: string };
 
 /** Knowledge injected into a skill run by the runner — e.g. the per-(family×mode)
  *  enhance directive the server resolved (Phase 1). Optional: absent → the skill
@@ -78,5 +78,9 @@ export interface SkillCtx {
  *  prompt text; `opts.mockReply` lets a skill supply its $0 canned reply. */
 export interface CoworkTransport {
   readonly name: string;                                   // "mock" | "fal:llm"
-  chat(skillId: string, messages: ChatMessage[], opts?: { mockReply?: () => string }): Promise<{ text: string }>;
+  chat(
+    skillId: string,
+    messages: ChatMessage[],
+    opts?: { mockReply?: () => string; responseFormat?: "json_object"; maxTokens?: number },
+  ): Promise<{ text: string }>;
 }
