@@ -39,6 +39,17 @@ export const enhanceRequest = z
   .strict();
 export type EnhanceRequest = z.infer<typeof enhanceRequest>;
 
+/** One propose-only cowork turn: the user's NL text (+ optional @-mention refs and
+ *  per-entity variant selections), against an existing thread or a fresh one. */
+export const coworkTurnRequest = z.object({
+  threadId: z.string().min(1).max(64).optional(), // absent → create a new thread
+  projectId: z.string().min(1).max(64),
+  text: z.string().trim().min(1).max(MAX_COWORK_IDEA),
+  entityIds: z.array(z.string().min(1).max(64)).max(MAX_GEN_ENTITIES).default([]),
+  variantSel: z.record(z.string().min(1).max(64), z.string().min(1).max(64)).default({}),
+}).strict();
+export type CoworkTurnRequest = z.infer<typeof coworkTurnRequest>;
+
 /** A drafted storyboard: scenes, each with ordered shots (a prompt per shot). */
 export interface CoworkPlan {
   scenes: { title: string; shots: { prompt: string }[] }[];
