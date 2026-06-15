@@ -21,7 +21,7 @@
  * Conditioning (D19 trust boundary): the request never carried image URLs —
  * the worker resolves them HERE from the entity's own references.
  */
-import { prisma } from "@artlio/db";
+import { prisma, Prisma, type RefGenMode } from "@artlio/db";
 import {
   storageKey,
   newId,
@@ -75,10 +75,7 @@ export async function handleRefGen(data: RefGenJobData, retryCount: number): Pro
     // these outputs — just (re-)attach them idempotently and finish
     if (job.outputAssetIds.length > 0) {
       await attachOutputs(job.entityId, job.ownerId, job.outputAssetIds);
-      await prisma.refGenJob.update({
-        where: { id: job.id },
-        data: { status: "DONE", progress: 100, finishedAt: new Date(), error: "" },
-      });
+      await finalizeDone(job.id, job.mode, job.entityId, job.outputAssetIds[0]);
       console.log(`[refgen] ${job.id}: resumed — re-attached ${job.outputAssetIds.length} prior outputs (no re-spend)`);
       return;
     }
@@ -102,27 +99,30 @@ export async function handleRefGen(data: RefGenJobData, retryCount: number): Pro
       return;
     }
 
-    // resolve conditioning from the entity's existing refs → presigned GETs
-    const refs = await prisma.referenceImage.findMany({
-      where: { entityId: job.entityId, ownerId: job.ownerId, deletedAt: null },
-      orderBy: { position: "asc" },
-      include: { asset: true },
-      // Seedream edit: inputs + outputs ≤ 15 (codex P2)
-      take: Math.max(0, Math.min(MAX_CONDITIONING_IMAGES, MAX_EDIT_INPUT_PLUS_OUTPUT - job.count)),
-    });
+    // BASE = text-to-image identity anchor → no conditioning. REFSHEET/VARIANT
+    // resolve conditioning from the entity's existing base-level refs → presigned GETs.
     const inputImageUrls: string[] = [];
-    for (const ref of refs) {
-      const key = storageKey(ref.asset.ownerId, ref.asset.contentHash, ref.asset.ext);
-      const signed = await storage.presignedGet(key, 3600);
-      if (signed) inputImageUrls.push(signed);
-    }
-    // a real (paid) provider must not silently degrade a conditioned request
-    // to text-to-image because the refs weren't reachable (codex P1)
-    const isMock = provider.name === "mock";
-    if (!isMock && refs.length > 0 && inputImageUrls.length < refs.length) {
-      throw new Error(
-        `conditioning refs unreachable (${inputImageUrls.length}/${refs.length} signable) — refusing to spend on a degraded generation`,
-      );
+    if (job.mode !== "BASE") {
+      const refs = await prisma.referenceImage.findMany({
+        where: { entityId: job.entityId, ownerId: job.ownerId, deletedAt: null, variantId: null },
+        orderBy: { position: "asc" },
+        include: { asset: true },
+        // Seedream edit: inputs + outputs ≤ 15 (codex P2)
+        take: Math.max(0, Math.min(MAX_CONDITIONING_IMAGES, MAX_EDIT_INPUT_PLUS_OUTPUT - job.count)),
+      });
+      for (const ref of refs) {
+        const key = storageKey(ref.asset.ownerId, ref.asset.contentHash, ref.asset.ext);
+        const signed = await storage.presignedGet(key, 3600);
+        if (signed) inputImageUrls.push(signed);
+      }
+      // a real (paid) provider must not silently degrade a conditioned request
+      // to text-to-image because the refs weren't reachable (codex P1)
+      const isMock = provider.name === "mock";
+      if (!isMock && refs.length > 0 && inputImageUrls.length < refs.length) {
+        throw new Error(
+          `conditioning refs unreachable (${inputImageUrls.length}/${refs.length} signable) — refusing to spend on a degraded generation`,
+        );
+      }
     }
 
     // THE paid call — happens exactly once per job (claimed above)
@@ -159,12 +159,8 @@ export async function handleRefGen(data: RefGenJobData, retryCount: number): Pro
 
     // attach (idempotent: skips assets already attached to this entity)
     await attachOutputs(job.entityId, job.ownerId, outputAssetIds);
-
-    await prisma.refGenJob.update({
-      where: { id: job.id },
-      data: { status: "DONE", progress: 100, finishedAt: new Date(), error: "" },
-    });
-    console.log(`[refgen] ${job.id}: DONE → ${outputAssetIds.length} images via ${provider.name}`);
+    await finalizeDone(job.id, job.mode, job.entityId, outputAssetIds[0]);
+    console.log(`[refgen] ${job.id}: DONE (${job.mode}) → ${outputAssetIds.length} images via ${provider.name}`);
   } catch (err) {
     const message = err instanceof Error ? err.message.slice(0, 500) : String(err).slice(0, 500);
     // a failure after the paid call is terminal — retrying would re-spend.
@@ -183,6 +179,29 @@ export async function handleRefGen(data: RefGenJobData, retryCount: number): Pro
     });
     throw err; // pg-boss owns the retry schedule
   }
+}
+
+/** Flip the job DONE and, for a BASE job, pin Entity.baseAssetId in the SAME
+ *  transaction — so a crash can never leave a DONE base job with a null base
+ *  (it stays resumable until both commit together). */
+async function finalizeDone(
+  jobId: string,
+  mode: RefGenMode,
+  entityId: string,
+  firstAssetId: string | undefined,
+): Promise<void> {
+  const ops: Prisma.PrismaPromise<unknown>[] = [
+    prisma.refGenJob.update({
+      where: { id: jobId },
+      data: { status: "DONE", progress: 100, finishedAt: new Date(), error: "" },
+    }),
+  ];
+  if (mode === "BASE" && firstAssetId) {
+    ops.unshift(
+      prisma.entity.update({ where: { id: entityId }, data: { baseAssetId: firstAssetId } }),
+    );
+  }
+  await prisma.$transaction(ops);
 }
 
 /** Attach generated assets to the entity as ReferenceImages, after any
