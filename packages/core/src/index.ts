@@ -36,3 +36,4 @@ export * from "./cowork-skills.js";
 export * from "./cowork-directives.js";
 export * from "./cowork-coach.js";
 export * from "./cowork-guardian.js";
+export * from "./cowork-route.js";
