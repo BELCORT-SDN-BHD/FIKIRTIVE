@@ -19,6 +19,8 @@ export type GenModel = (typeof GEN_MODELS)[number];
  *  (silent default first, then sound models roughly cheapest→priciest). */
 export const GEN_VIDEO_MODELS = [
   "kling", "veo3.1-lite", "ltx-2", "kling-2.6", "kling-3", "veo3.1-fast", "seedance-2-fast", "veo3.1",
+  // added popular fal models (cheapest→priciest among the new ones)
+  "pixverse-v6", "grok-imagine", "wan-2.5", "hailuo-02", "seedance-2",
 ] as const;
 export type GenVideoModel = (typeof GEN_VIDEO_MODELS)[number];
 
@@ -28,7 +30,7 @@ export type GenKind = (typeof GEN_KINDS)[number];
 /** The prompt-research FAMILIES the knowledge base keys on. Version-specific
  *  model ids (kling-2.6, kling-3) collapse to one family so the founder tunes
  *  one directive per family, not one per model. */
-export const MODEL_FAMILIES = ["seedream", "kling", "veo", "seedance", "ltx"] as const;
+export const MODEL_FAMILIES = ["seedream", "kling", "veo", "seedance", "ltx", "wan", "pixverse", "grok", "hailuo"] as const;
 export type ModelFamily = (typeof MODEL_FAMILIES)[number];
 
 /** The generation MODES the knowledge base keys on alongside family. */
@@ -46,6 +48,10 @@ export function modelFamily(modelId: string): ModelFamily | undefined {
   if (modelId.startsWith("veo")) return "veo";
   if (modelId.startsWith("seedance")) return "seedance";
   if (modelId.startsWith("ltx")) return "ltx";
+  if (modelId.startsWith("wan")) return "wan";
+  if (modelId.startsWith("pixverse")) return "pixverse";
+  if (modelId.startsWith("grok")) return "grok";
+  if (modelId.startsWith("hailuo")) return "hailuo";
   return undefined;
 }
 
@@ -84,6 +90,11 @@ export const GEN_VIDEO_MODEL_INFO: Record<GenVideoModel, { label: string; sound:
   "veo3.1-fast":     { label: "Veo 3.1 Fast",      sound: true, tail: true },
   "seedance-2-fast": { label: "Seedance 2.0 Fast", sound: true, tail: true },
   "veo3.1":          { label: "Veo 3.1",           sound: true, tail: true },
+  "pixverse-v6":     { label: "PixVerse V6",       sound: true,  tail: false }, // /transition end-frame deferred (params unverified)
+  "grok-imagine":    { label: "Grok Imagine",      sound: false, tail: false },
+  "wan-2.5":         { label: "Wan 2.5",           sound: true,  tail: false }, // native audio (not toggleable)
+  "hailuo-02":       { label: "Hailuo 02 Pro",     sound: false, tail: true },
+  "seedance-2":      { label: "Seedance 2.0",      sound: true,  tail: true },
 };
 
 /** Per-model controls — each exposes exactly what its fal endpoint accepts (i2v
@@ -109,6 +120,11 @@ export const GEN_VIDEO_MODEL_OPTIONS: Record<GenVideoModel, VideoModelOptions> =
   "seedance-2-fast": { durations: [5, 10],   resolutions: ["720p"],                    aspectRatios: ["16:9", "9:16"], fps: [],       audioToggle: true,  maxCount: 4 },
   "veo3.1-fast":     { durations: [4, 6, 8],  resolutions: ["720p", "1080p"],           aspectRatios: ["16:9", "9:16"], fps: [],       audioToggle: true,  maxCount: 4 },
   "veo3.1":          { durations: [4, 6, 8],  resolutions: ["720p", "1080p", "4k"],     aspectRatios: ["16:9", "9:16"], fps: [],       audioToggle: true,  maxCount: 4 },
+  "pixverse-v6":     { durations: [5, 8],    resolutions: ["360p", "540p", "720p", "1080p"], aspectRatios: ["16:9", "9:16", "1:1"], fps: [], audioToggle: true,  maxCount: 4 },
+  "grok-imagine":    { durations: [6],       resolutions: ["480p", "720p"],            aspectRatios: [],               fps: [],       audioToggle: false, maxCount: 4 },
+  "wan-2.5":         { durations: [5, 10],   resolutions: ["480p", "720p", "1080p"],   aspectRatios: [],               fps: [],       audioToggle: false, maxCount: 4 }, // audio always on
+  "hailuo-02":       { durations: [6],       resolutions: [],                          aspectRatios: [],               fps: [],       audioToggle: false, maxCount: 4 }, // fixed 6s @ 1080p
+  "seedance-2":      { durations: [5, 10],   resolutions: ["480p", "720p", "1080p"],   aspectRatios: ["16:9", "9:16"], fps: [],       audioToggle: true,  maxCount: 4 },
 };
 
 /** A model's default selections (first of each list; audio on for sound models). */
@@ -129,6 +145,15 @@ function videoRateUsdPerSec(model: GenVideoModel, resolution: string, audio: boo
     case "veo3.1-lite": return resolution === "1080p" ? (audio ? 0.08 : 0.05) : (audio ? 0.05 : 0.03);
     case "veo3.1-fast": return audio ? 0.15 : 0.10;
     case "veo3.1": return resolution === "4k" ? (audio ? 0.60 : 0.40) : (audio ? 0.40 : 0.20);
+    case "pixverse-v6":
+      return resolution === "1080p" ? (audio ? 0.115 : 0.090)
+        : resolution === "720p" ? (audio ? 0.060 : 0.045)
+        : resolution === "540p" ? (audio ? 0.045 : 0.035)
+        : (audio ? 0.035 : 0.025);                                            // 360p
+    case "grok-imagine": return resolution === "720p" ? 0.07 : 0.05;          // 480p; +$0.002/img input fee not in the estimate
+    case "wan-2.5": return resolution === "1080p" ? 0.15 : resolution === "720p" ? 0.10 : 0.05; // 480p; native audio same price
+    case "hailuo-02": return 0.08;                                            // fixed 6s @ 1080p, single rate
+    case "seedance-2": return resolution === "1080p" ? 0.682 : resolution === "720p" ? 0.3024 : 0.134; // 480p≈; token-priced, per-sec est at 16:9
   }
 }
 

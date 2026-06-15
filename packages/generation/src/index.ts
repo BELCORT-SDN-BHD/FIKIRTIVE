@@ -122,18 +122,19 @@ const EXT_BY_CONTENT_TYPE: Record<string, string> = {
  *  so each model carries exactly its real settings. `durationUnit` = how the chosen
  *  seconds are encoded: "str"=Kling "5", "s"=Veo "6s", "num"=Seedance/LTX 6. All
  *  return { video: { url } }. Allowed values per control live in @artlio/core's
- *  GEN_VIDEO_MODEL_OPTIONS. */
+ *  GEN_VIDEO_MODEL_OPTIONS. `durationUnit "none"` = a fixed-length endpoint with NO
+ *  duration param (Hailuo 02 Pro is 6s-only) — the worker omits duration entirely. */
 type VideoCfg = {
   t2v: string;
   i2v: string;
   firstLast?: string;
   imageParam: string;
   tailParam?: string;
-  audioParam?: string;       // omit = always silent (Kling 2.5)
+  audioParam?: string;       // omit = always silent (Kling 2.5) OR audio not toggleable (Wan)
   resolutionParam?: string;
   aspectParam?: string;
   fpsParam?: string;
-  durationUnit: "str" | "s" | "num";
+  durationUnit: "str" | "s" | "num" | "none";
 };
 
 const GA = "generate_audio", RES = "resolution", ASP = "aspect_ratio";
@@ -180,6 +181,34 @@ const VIDEO_CFG: Record<GenVideoModel, VideoCfg> = {
     t2v: "fal-ai/veo3.1", i2v: "fal-ai/veo3.1/image-to-video",
     firstLast: "fal-ai/veo3.1/first-last-frame-to-video",
     imageParam: "image_url", audioParam: GA, resolutionParam: RES, aspectParam: ASP, durationUnit: "s",
+  },
+  "wan-2.5": {
+    // native audio is always on (not a boolean toggle — the fal audio_url param is for
+    // supplying a custom track, so we don't wire audioParam). 480p/720p/1080p tiers.
+    t2v: "fal-ai/wan-25-preview/text-to-video", i2v: "fal-ai/wan-25-preview/image-to-video",
+    imageParam: "image_url", resolutionParam: RES, durationUnit: "num",
+  },
+  "pixverse-v6": {
+    // end-frame is a separate /transition endpoint; its param names aren't verified yet,
+    // so tail is off (GEN_VIDEO_MODEL_INFO tail:false) and we don't wire it.
+    t2v: "fal-ai/pixverse/v6/text-to-video", i2v: "fal-ai/pixverse/v6/image-to-video",
+    imageParam: "image_url", audioParam: GA, resolutionParam: RES, aspectParam: ASP, durationUnit: "str",
+  },
+  "grok-imagine": {
+    t2v: "fal-ai/xai/grok-imagine-video/text-to-video", i2v: "fal-ai/xai/grok-imagine-video/image-to-video",
+    imageParam: "image_url", resolutionParam: RES, durationUnit: "num", // 480p/720p, no audio/tail
+  },
+  "hailuo-02": {
+    // Pro endpoint: fixed 6s @ 1080p — schema has NO duration/resolution params, only
+    // prompt/image_url/end_image_url. End frame via tailParam on the same i2v endpoint.
+    t2v: "fal-ai/minimax/hailuo-02/pro/text-to-video", i2v: "fal-ai/minimax/hailuo-02/pro/image-to-video",
+    imageParam: "image_url", tailParam: "end_image_url", durationUnit: "none",
+  },
+  "seedance-2": {
+    // full tier of seedance-2-fast — ByteDance's own fal namespace (no fal-ai/ prefix).
+    // durationUnit "num" matches the fast variant (verified there by a real spend test).
+    t2v: "bytedance/seedance-2.0/text-to-video", i2v: "bytedance/seedance-2.0/image-to-video",
+    imageParam: "image_url", tailParam: "end_image_url", audioParam: GA, resolutionParam: RES, aspectParam: ASP, durationUnit: "num",
   },
 };
 
@@ -250,10 +279,14 @@ export class FalProvider implements GenerationProvider {
     if (req.tailImageUrl && !i2v) throw new Error("fal: an end frame needs a start image"); // pre-POST, no spend
 
     let modelId: string;
-    const duration = cfg.durationUnit === "str" ? String(req.durationSeconds)
-      : cfg.durationUnit === "s" ? `${req.durationSeconds}s`
-      : req.durationSeconds;
-    const body: Record<string, unknown> = { prompt: req.prompt, duration };
+    const body: Record<string, unknown> = { prompt: req.prompt };
+    // a fixed-length endpoint (durationUnit "none", e.g. Hailuo 02 Pro) takes NO duration
+    // param — sending one can 422. Everyone else encodes the chosen seconds their way.
+    if (cfg.durationUnit !== "none") {
+      body.duration = cfg.durationUnit === "str" ? String(req.durationSeconds)
+        : cfg.durationUnit === "s" ? `${req.durationSeconds}s`
+        : req.durationSeconds;
+    }
     // optional controls — sent only when the model has the param and the request
     // provides a value (so each model carries exactly its real settings)
     if (cfg.audioParam && req.audio != null) body[cfg.audioParam] = req.audio;

@@ -12,8 +12,13 @@ describe("modelFamily", () => {
     "veo3.1": "veo",
     "ltx-2": "ltx",
     "seedance-2-fast": "seedance",
+    "pixverse-v6": "pixverse",
+    "grok-imagine": "grok",
+    "wan-2.5": "wan",
+    "hailuo-02": "hailuo",
+    "seedance-2": "seedance",
   };
-  it("maps all 8 video models to a family", () => {
+  it("maps every video model to a family", () => {
     for (const m of GEN_VIDEO_MODELS) {
       expect(modelFamily(m)).toBe(expected[m]);
     }
