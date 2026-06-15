@@ -6,7 +6,7 @@
  * user would, so anything it does, the user could undo.
  */
 import { z } from "zod";
-import { GEN_KINDS } from "./gen.js";
+import { GEN_KINDS, MAX_GEN_PROMPT, MAX_GEN_ENTITIES } from "./gen.js";
 
 export const MAX_COWORK_IDEA = 4000;
 export const COWORK_MAX_SCENES = 6;
@@ -84,3 +84,23 @@ export interface CoworkTransport {
     opts?: { mockReply?: () => string; responseFormat?: "json_object"; maxTokens?: number },
   ): Promise<{ text: string }>;
 }
+
+export const MAX_PLAN_STEPS = 8;
+export const COWORK_MEMORY_TURNS = 8;
+
+export const coworkProposalSchema = z.object({
+  kind: z.enum(["image", "video"]),
+  desiredAspect: z.string().max(12).optional(),
+  desiredDuration: z.number().int().min(1).max(60).optional(),
+  desiredAudio: z.boolean().optional(),
+  structuredPrompt: z.string().trim().min(1).transform((s) => s.slice(0, MAX_GEN_PROMPT)),
+  entityIds: z.array(z.string().min(1).max(64)).max(MAX_GEN_ENTITIES).default([]),
+  variantSel: z.record(z.string().min(1).max(64), z.string().min(1).max(64)).default({}),
+}).strict();
+
+export const coworkTurnSchema = z.object({
+  planSteps: z.array(z.string().trim().min(1).max(200)).transform((arr) => arr.slice(0, MAX_PLAN_STEPS)).default([]),
+  reply: z.string().trim().min(1).transform((s) => s.slice(0, 2000)),
+  proposal: coworkProposalSchema.nullable().default(null),
+}).strict();
+export type CoworkTurn = z.infer<typeof coworkTurnSchema>;
