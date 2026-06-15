@@ -11,7 +11,7 @@ const ok = { entityId: "01ABC", prompt: "a red hoodie with the logo", count: 4 }
 
 describe("refGenRequest", () => {
   it("accepts a well-formed request and defaults the model", () => {
-    expect(refGenRequest.parse(ok)).toEqual({ ...ok, model: "seedream" });
+    expect(refGenRequest.parse(ok)).toEqual({ ...ok, model: "seedream", mode: "REFSHEET" });
   });
 
   it("trims and bounds the prompt", () => {
@@ -37,6 +37,19 @@ describe("refGenRequest", () => {
 
   it("only ships the documented model menu", () => {
     expect(REFGEN_MODELS).toEqual(["seedream"]);
+  });
+
+  it("defaults mode to REFSHEET and rejects mode/variantId mismatch", () => {
+    expect(refGenRequest.parse(ok).mode).toBe("REFSHEET");
+    expect(refGenRequest.parse({ ...ok, mode: "BASE" }).mode).toBe("BASE");
+    // VARIANT requires a variantId
+    expect(() => refGenRequest.parse({ ...ok, mode: "VARIANT" })).toThrow();
+    expect(refGenRequest.parse({ ...ok, mode: "VARIANT", variantId: "v1" }).variantId).toBe("v1");
+    // a variantId without VARIANT mode is a contract error
+    expect(() => refGenRequest.parse({ ...ok, mode: "BASE", variantId: "v1" })).toThrow();
+    expect(() => refGenRequest.parse({ ...ok, variantId: "v1" })).toThrow();
+    // unknown mode rejected
+    expect(() => refGenRequest.parse({ ...ok, mode: "WHATEVER" })).toThrow();
   });
 });
 

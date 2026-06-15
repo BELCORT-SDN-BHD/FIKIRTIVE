@@ -29,6 +29,11 @@ export type RefGenModel = (typeof REFGEN_MODELS)[number];
 export const MAX_REFGEN_COUNT = 6;
 export const MAX_CONDITIONING_IMAGES = 10;
 export const MAX_REFGEN_PROMPT = 2000;
+
+/** Reference generation modes — REFSHEET legacy multi-view, BASE single t2i
+ *  identity anchor, VARIANT single i2i look from the base. */
+export const REFGEN_MODES = ["REFSHEET", "BASE", "VARIANT"] as const;
+export type RefGenMode = (typeof REFGEN_MODES)[number];
 /** Per-image price hint shown at the point of spend (fal Seedream 4.5).
  *  Display only — billing is a later slice. */
 export const REFGEN_PRICE_USD_PER_IMAGE = 0.04;
@@ -41,8 +46,18 @@ export const refGenRequest = z
     prompt: z.string().trim().min(1).max(MAX_REFGEN_PROMPT),
     count: z.number().int().min(1).max(MAX_REFGEN_COUNT),
     model: z.enum(REFGEN_MODELS).default("seedream"),
+    mode: z.enum(REFGEN_MODES).default("REFSHEET"),
+    variantId: z.string().min(1).max(64).optional(),
   })
-  .strict();
+  .strict()
+  .superRefine((v, ctx) => {
+    // VARIANT ⟺ variantId — a VARIANT job must name its target, and a variantId
+    // is meaningless (and a sign of a confused caller) outside VARIANT mode.
+    if (v.mode === "VARIANT" && !v.variantId)
+      ctx.addIssue({ code: z.ZodIssueCode.custom, message: "VARIANT mode requires a variantId", path: ["variantId"] });
+    if (v.mode !== "VARIANT" && v.variantId)
+      ctx.addIssue({ code: z.ZodIssueCode.custom, message: "variantId only valid in VARIANT mode", path: ["variantId"] });
+  });
 export type RefGenRequest = z.infer<typeof refGenRequest>;
 
 /** pg-boss payload — the row holds the real data, the job just names it
