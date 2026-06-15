@@ -25,7 +25,7 @@ const OWNED = { ownerId: FOUNDER_OWNER_ID, deletedAt: null } as const;
 export async function startGen(raw: unknown): Promise<{ id: string } | { error: string }> {
   const parsed = genRequest.safeParse(raw);
   if (!parsed.success) return { error: "That generation request is out of bounds." };
-  const { projectId, shotId, sourceGenerationId, tailGenerationId, prompt, entityIds, count, kind, model, durationSeconds, resolution, aspectRatio, fps, audio, idempotencyKey } = parsed.data;
+  const { projectId, shotId, sourceGenerationId, tailGenerationId, prompt, entityIds, count, kind, model, durationSeconds, resolution, aspectRatio, fps, audio, idempotencyKey, variantSel } = parsed.data;
 
   const project = await prisma.project.findFirst({ where: { id: projectId, ...OWNED } });
   if (!project) return { error: "Project not found." };
@@ -78,6 +78,9 @@ export async function startGen(raw: unknown): Promise<{ id: string } | { error: 
         kind: kind === "video" ? "VIDEO" : "IMAGE",
         idempotencyKey: idempotencyKey ?? null,
         ...(videoOptions ? { videoOptions } : {}),
+        // Phase C: persist the @mention→variant bindings so the worker conditions on
+        // the right variant. Omitted when empty → column stays null (old gens unchanged).
+        ...(variantSel ? { variantSel } : {}),
       },
       select: { id: true },
     });
