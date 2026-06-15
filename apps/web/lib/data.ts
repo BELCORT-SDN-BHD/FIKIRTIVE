@@ -79,7 +79,7 @@ export async function getShots(projectId: string) {
 /** Candidate zone = generations not yet attached to a shot (design doc: shotId IS NULL). */
 export async function getCandidates(projectId: string) {
   return prisma.generation.findMany({
-    where: { ownerId: FOUNDER_OWNER_ID, projectId, shotId: null, ...notDeleted },
+    where: { ownerId: FOUNDER_OWNER_ID, projectId, shotId: null, threadId: null, ...notDeleted },
     orderBy: { createdAt: "desc" },
     include: { asset: true },
   });
@@ -89,7 +89,7 @@ export async function getCandidates(projectId: string) {
  *  library — each row carries its asset and, if attached, its shot. */
 export async function getProjectMedia(projectId: string) {
   return prisma.generation.findMany({
-    where: { ownerId: FOUNDER_OWNER_ID, projectId, ...notDeleted },
+    where: { ownerId: FOUNDER_OWNER_ID, projectId, threadId: null, ...notDeleted },
     orderBy: { createdAt: "desc" },
     include: { asset: true }, // the Assets DTO derives `attached` from the scalar shotId
   });
