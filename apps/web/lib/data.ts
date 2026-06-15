@@ -43,10 +43,18 @@ export async function getEntities() {
     where: { ownerId: FOUNDER_OWNER_ID, ...notDeleted },
     orderBy: [{ type: "asc" }, { name: "asc" }],
     include: {
+      // base-level refs only (variantId null) — variant refs live under `variants`
       referenceImages: {
-        where: notDeleted,
+        where: { ...notDeleted, variantId: null },
         orderBy: { position: "asc" },
         include: { asset: true },
+      },
+      variants: {
+        where: notDeleted,
+        orderBy: { createdAt: "asc" },
+        include: {
+          referenceImages: { where: notDeleted, orderBy: { position: "asc" }, include: { asset: true } },
+        },
       },
       _count: { select: { shotRefs: true } },
     },

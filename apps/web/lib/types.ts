@@ -14,6 +14,14 @@ export interface RefImageDTO {
   kind: "image" | "video" | "other";
 }
 
+export interface VariantDTO {
+  id: string;
+  name: string;
+  handle: string; // @name:handle
+  prompt: string; // the change description used to (re)generate it
+  refs: RefImageDTO[]; // this variant's generated images (variantId-tagged), position asc
+}
+
 export interface EntityDTO {
   id: string;
   type: EntityTypeDTO;
@@ -21,8 +29,9 @@ export interface EntityDTO {
   aliases: string[]; // alternate names the @mention search also matches
   notes: string;
   negativeConstraints: string;
-  refs: RefImageDTO[];
+  refs: RefImageDTO[]; // base-level refs only (variantId null)
   baseAssetId: string | null; // the locked base — one of refs' assetId, or null
+  variants: VariantDTO[];
   usageCount: number; // # of shots whose prompt mentions this entity
 }
 
