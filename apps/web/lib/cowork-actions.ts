@@ -175,12 +175,14 @@ export async function coworkTurn(raw: unknown): Promise<{ threadId: string } | {
 
     // Resolve the thread. A NEW thread is NOT created here — its create is folded into
     // the persistence $transaction below, so a planner/DB failure can never leave an
-    // empty orphan thread behind. An existing thread must be owned + live.
+    // empty orphan thread behind. An existing thread must be owned + live AND belong to
+    // the claimed project — so a thread from project A can't be paired with project B's
+    // source/refs (the source is validated against `projectId`; this keeps them consistent).
     const isNew = !parsed.data.threadId;
     const threadId = parsed.data.threadId ?? newId();
     if (!isNew) {
-      const t = await prisma.chatThread.findFirst({ where: { id: threadId, ...OWNED }, select: { id: true } });
-      if (!t) return { error: "Conversation not found." };
+      const t = await prisma.chatThread.findFirst({ where: { id: threadId, ...OWNED }, select: { projectId: true } });
+      if (!t || t.projectId !== projectId) return { error: "Conversation not found." };
     }
 
     // bounded, NL-only memory window (assistant/user), oldest-dropped (empty for a new thread)
