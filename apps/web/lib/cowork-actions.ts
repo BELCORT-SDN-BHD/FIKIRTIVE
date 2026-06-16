@@ -314,7 +314,7 @@ export async function coworkTurn(raw: unknown): Promise<{ threadId: string } | {
 export async function coworkGenerate(raw: unknown): Promise<{ id: string } | { error: string }> {
   const parsed = coworkGenerateRequest.safeParse(raw);
   if (!parsed.success) return { error: "That card can't be generated." };
-  const { cardId, prompt, entityIds, variantSel } = parsed.data;
+  const { cardId, prompt, entityIds, variantSel, model: modelOverride, count: countOverride, aspectRatio: aspectOverride, resolution: resolutionOverride, durationSeconds: durationOverride, audio: audioOverride } = parsed.data;
 
   // Load the GEN_CARD server-side — threadId + projectId + the trusted model/params
   // come from the PERSISTED card, never from the client (anti-spoof).
@@ -349,9 +349,14 @@ export async function coworkGenerate(raw: unknown): Promise<{ id: string } | { e
   // being persisted on the card). startGen.checkCast re-validates it at spend (the backstop).
   const sourceGenerationId = typeof p.sourceGenerationId === "string" ? p.sourceGenerationId : null;
 
-  // Build the genRequest SERVER-SIDE. model/kind/count/video-params come from the card;
-  // only the (possibly edited) prompt + refs come from the client. startGen.safeParse +
-  // checkCast remain the SOLE spend gate; effectiveVariantSel drops it for video there.
+  // Build the genRequest SERVER-SIDE. kind + sourceGenerationId stay card-trusted; the
+  // user MAY override model/count/video-params via the editable card (model picker + param
+  // pills) — each override falls back to the card's value when absent. Overrides only WIDEN
+  // what reaches startGen; startGen.safeParse + superRefine + checkCast remain the SOLE,
+  // complete spend gate (model∈the card-kind's menu, every param∈the chosen model's option
+  // set, count≤maxCount → an invalid/mispriced combo is rejected with {error}, no spend).
+  // prompt/entityIds/variantSel still from the client; effectiveVariantSel drops it for video.
+  const chosenModel = modelOverride ?? model;
   const req = {
     projectId: card.thread.projectId,
     threadId: card.threadId,
@@ -359,14 +364,14 @@ export async function coworkGenerate(raw: unknown): Promise<{ id: string } | { e
     entityIds,
     ...(Object.keys(variantSel).length ? { variantSel } : {}),
     ...(sourceGenerationId ? { sourceGenerationId } : {}), // i2v — checkCast re-validates ownership+project
-    count: proposal.data.kind === "video" ? 1 : (params.count ?? 1),
-    kind: proposal.data.kind,
-    model,
+    count: proposal.data.kind === "video" ? 1 : (countOverride ?? params.count ?? 1),
+    kind: proposal.data.kind, // CARD-trusted — never the client (can't flip image↔video)
+    model: chosenModel,
     ...(proposal.data.kind === "video" ? {
-      durationSeconds: params.durationSeconds ?? null,
-      resolution: params.resolution ?? null,
-      aspectRatio: params.aspectRatio ?? null,
-      audio: params.audio ?? null,
+      durationSeconds: durationOverride ?? params.durationSeconds ?? null,
+      resolution: resolutionOverride ?? params.resolution ?? null,
+      aspectRatio: aspectOverride ?? params.aspectRatio ?? null,
+      audio: audioOverride ?? params.audio ?? null,
     } : {}),
     idempotencyKey: `cowork:${cardId}`, // stable — same card always dedupes; NEVER per-retry
   };

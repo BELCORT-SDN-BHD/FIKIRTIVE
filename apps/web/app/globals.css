@@ -368,6 +368,18 @@ h1, h2, h3 { font-family: var(--font-sans); font-weight: 600; letter-spacing: va
 .cw-card-head { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
 .cw-card-model { font: var(--text-mono-meta); color: var(--fg-2); }
 .cw-card-price { font: var(--text-mono-meta); color: var(--fg-3); }
+
+/* P1: editable control surface — model picker + video param pills (Hedra parity) */
+.cw-card-pills { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+.cw-ctrl { display: inline-flex; align-items: center; gap: 6px; }
+.cw-ctrl-label { font: var(--text-caption); color: var(--fg-3); }
+.cw-ctrl-check { gap: 5px; cursor: pointer; }
+.cw-ctrl-check input { accent-color: var(--fg-1); cursor: pointer; }
+.cw-select { font: var(--text-small); color: var(--fg-1); background: rgba(255,255,255,.04); border: 1px solid var(--line-2); border-radius: var(--radius-sm); padding: 4px 8px; cursor: pointer; transition: border-color var(--dur-fast) var(--ease-out); }
+.cw-select:hover { border-color: var(--line-1); }
+.cw-select:focus { outline: none; border-color: var(--line-1); }
+.cw-select:disabled { opacity: .55; cursor: default; }
+.cw-card-model-select { font: var(--text-mono-meta); }
 .cw-card-note { font: var(--text-caption); color: var(--warning); border: 1px solid rgba(255,210,126,.25); border-radius: var(--radius-pill); padding: 1px 7px; cursor: default; }
 .cw-card-input-wrap { border: 1px solid var(--line-2); border-radius: var(--radius-md); padding: 8px 12px; background: rgba(255,255,255,.04); transition: border-color var(--dur-fast) var(--ease-out); }
 .cw-card-input-wrap:focus-within { border-color: var(--line-1); }

@@ -6,7 +6,7 @@
  * user would, so anything it does, the user could undo.
  */
 import { z } from "zod";
-import { GEN_KINDS, MAX_GEN_PROMPT, MAX_GEN_ENTITIES } from "./gen.js";
+import { GEN_KINDS, MAX_GEN_PROMPT, MAX_GEN_ENTITIES, MAX_GEN_COUNT } from "./gen.js";
 
 export const MAX_COWORK_IDEA = 4000;
 export const COWORK_MAX_SCENES = 6;
@@ -119,6 +119,18 @@ export const coworkGenerateRequest = z.object({
   prompt: z.string().trim().min(1).max(MAX_GEN_PROMPT),
   entityIds: z.array(z.string().min(1).max(64)).max(MAX_GEN_ENTITIES).default([]),
   variantSel: z.record(z.string().min(1).max(64), z.string().min(1).max(64)).default({}),
+  // OPTIONAL user overrides (editable card — model picker + param pills). Each absent →
+  // coworkGenerate uses the persisted card's value. These only WIDEN what reaches startGen;
+  // they are NOT trusted — startGen's safeParse + superRefine + checkCast remain the sole,
+  // complete gate (model∈the card-kind's menu, every param∈the chosen model's option set,
+  // count≤maxCount). `kind` and `sourceGenerationId` are NOT here — they stay card-trusted so
+  // an edit can't flip image↔video (dodging pricing/validation) or swap the i2v frame.
+  model: z.string().min(1).max(40).optional(),
+  count: z.number().int().min(1).max(MAX_GEN_COUNT).optional(),
+  aspectRatio: z.string().max(12).optional(),
+  resolution: z.string().max(12).optional(),
+  durationSeconds: z.number().int().min(1).max(60).optional(),
+  audio: z.boolean().optional(),
 }).strict();
 export type CoworkGenerateRequest = z.infer<typeof coworkGenerateRequest>;
 
