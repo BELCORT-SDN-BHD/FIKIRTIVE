@@ -81,8 +81,15 @@ export const coworkPlan = z.object({
     .max(COWORK_MAX_SCENES),
 });
 
-/** A model-neutral chat turn. Skills assemble these; the transport ships them. */
-export type ChatMessage = { role: "system" | "user" | "assistant"; content: string };
+/** One part of a multimodal message content (OpenAI shape). */
+export type ChatContentPart =
+  | { type: "text"; text: string }
+  | { type: "image_url"; image_url: { url: string } };
+
+/** A model-neutral chat turn. `content` is a plain string for the common (text-only)
+ *  case, or an array of parts for image-bearing turns (vision). Skills assemble these;
+ *  the transport ships them. All current callers pass a string and are unaffected. */
+export type ChatMessage = { role: "system" | "user" | "assistant"; content: string | ChatContentPart[] };
 
 /** Knowledge injected into a skill run by the runner — e.g. the per-(family×mode)
  *  enhance directive the server resolved (Phase 1). Optional: absent → the skill
@@ -152,6 +159,13 @@ export type CoworkDeleteThreadRequest = z.infer<typeof coworkDeleteThreadRequest
 export const coworkVaryCardRequest = z.object({ cardId: z.string().min(1).max(64) }).strict();
 export type CoworkVaryCardRequest = z.infer<typeof coworkVaryCardRequest>;
 
+export const MAX_COWORK_BRIEF = 2000;
+export const coworkBriefRequest = z.object({
+  projectId: z.string().min(1).max(64),
+  brief: z.string().max(MAX_COWORK_BRIEF), // empty string allowed = clear the brief
+}).strict();
+export type CoworkBriefRequest = z.infer<typeof coworkBriefRequest>;
+
 export const coworkTurnSchema = z.object({
   planSteps: z.array(z.string().trim().min(1).transform((s) => s.slice(0, 200))).transform((arr) => arr.slice(0, MAX_PLAN_STEPS)).default([]),
   reply: z.string().trim().min(1).transform((s) => s.slice(0, 2000)),
@@ -159,6 +173,10 @@ export const coworkTurnSchema = z.object({
   // SAME planner JSON ($0). Truncating transform mirrors the schema's other coercing
   // fields; absent → coworkTurn falls back to the user's first message.
   title: z.string().trim().min(1).transform((s) => s.slice(0, 80)).optional(),
+  // The agent's auto-maintained per-project creative brief — emitted in the SAME planner
+  // JSON ($0). The planner refines the CURRENT brief (which is injected into its context)
+  // only when it learns durable project direction; absent → no change. ≤600 chars (concise).
+  briefUpdate: z.string().trim().min(1).transform((s) => s.slice(0, 600)).optional(),
   proposal: coworkProposalSchema.nullable().default(null),
 }).strict();
 export type CoworkTurn = z.infer<typeof coworkTurnSchema>;

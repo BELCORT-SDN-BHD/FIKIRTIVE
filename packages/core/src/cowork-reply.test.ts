@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
-import { coworkTurnRequest } from "./cowork.js";
-import { buildPlannerMessages } from "./cowork-planner.js";
+import { coworkTurnRequest, coworkBriefRequest, MAX_COWORK_BRIEF, coworkTurnSchema } from "./cowork.js";
+import { buildPlannerMessages, parseCoworkTurn, mockPlannerReply } from "./cowork-planner.js";
 
 // ── coworkTurnRequest: replyToMessageId field ──────────────────────────────
 
@@ -70,8 +70,8 @@ describe("buildPlannerMessages with quoted", () => {
       quoted: { kind: "message", preview: "I want a cat" },
     });
     const last = msgs[msgs.length - 1];
-    const idx = last?.content.indexOf("[The user is replying");
-    const userIdx = last?.content.indexOf("Make a cat video");
+    const idx = (last?.content as string).indexOf("[The user is replying");
+    const userIdx = (last?.content as string).indexOf("Make a cat video");
     expect(typeof idx).toBe("number");
     expect(typeof userIdx).toBe("number");
     expect((idx as number) < (userIdx as number)).toBe(true);
@@ -101,5 +101,135 @@ describe("buildPlannerMessages with quoted", () => {
     const withoutQuoted = buildPlannerMessages(baseArgs);
     const withUndefined = buildPlannerMessages({ ...baseArgs, quoted: undefined });
     expect(withoutQuoted).toEqual(withUndefined);
+  });
+});
+
+// ── coworkBriefRequest schema ──────────────────────────────────────────────
+
+describe("coworkBriefRequest", () => {
+  it("accepts a valid brief", () => {
+    const r = coworkBriefRequest.safeParse({ projectId: "proj1", brief: "Cinematic noir, always 9:16" });
+    expect(r.success).toBe(true);
+  });
+
+  it("accepts an empty brief (clear the brief)", () => {
+    const r = coworkBriefRequest.safeParse({ projectId: "proj1", brief: "" });
+    expect(r.success).toBe(true);
+    if (r.success) expect(r.data.brief).toBe("");
+  });
+
+  it(`rejects brief longer than MAX_COWORK_BRIEF (${MAX_COWORK_BRIEF} chars)`, () => {
+    const r = coworkBriefRequest.safeParse({ projectId: "proj1", brief: "x".repeat(MAX_COWORK_BRIEF + 1) });
+    expect(r.success).toBe(false);
+  });
+
+  it("rejects extra unknown keys (.strict())", () => {
+    const r = coworkBriefRequest.safeParse({ projectId: "proj1", brief: "ok", extra: "bad" });
+    expect(r.success).toBe(false);
+  });
+});
+
+// ── buildPlannerMessages: brief injection ──────────────────────────────────
+
+describe("buildPlannerMessages with brief", () => {
+  const baseArgs = {
+    userText: "Make a cat video",
+    history: [] as { role: "user" | "assistant"; content: string }[],
+    availableRefs: [],
+    modelSummary: "image: seedream; video: kling",
+  };
+
+  it("with brief, the system message content includes the brief text", () => {
+    const msgs = buildPlannerMessages({ ...baseArgs, brief: "Cinematic noir, always 9:16" });
+    const sys = msgs[0];
+    expect(sys?.role).toBe("system");
+    expect(sys?.content).toContain("Cinematic noir, always 9:16");
+    expect(sys?.content).toContain("Project brief");
+  });
+
+  it("with brief, history + user entries are unchanged", () => {
+    const history = [{ role: "user" as const, content: "earlier" }, { role: "assistant" as const, content: "ok" }];
+    const msgs = buildPlannerMessages({ ...baseArgs, history, brief: "noir" });
+    const historySlice = msgs.slice(1, msgs.length - 1);
+    for (const h of historySlice) expect(h.content).not.toContain("Project brief");
+    const last = msgs[msgs.length - 1];
+    expect(last?.role).toBe("user");
+    expect(last?.content).toBe("Make a cat video");
+  });
+
+  it("without brief, the system message has NO brief block (back-compat)", () => {
+    const msgs = buildPlannerMessages(baseArgs);
+    // The injected block starts with "Project brief (the creative direction…" — distinct
+    // from the static prompt's "PROJECT BRIEF" (all-caps) in the briefUpdate instruction.
+    expect(msgs[0]?.content).not.toContain("Project brief (the creative direction");
+  });
+
+  it("empty-string brief is treated as absent (no brief block)", () => {
+    const msgs = buildPlannerMessages({ ...baseArgs, brief: "" });
+    expect(msgs[0]?.content).not.toContain("Project brief (the creative direction");
+  });
+
+  it("whitespace-only brief is treated as absent (no brief block)", () => {
+    const msgs = buildPlannerMessages({ ...baseArgs, brief: "   " });
+    expect(msgs[0]?.content).not.toContain("Project brief (the creative direction");
+  });
+});
+
+// ── coworkTurnSchema / parseCoworkTurn: briefUpdate field ─────────────────
+
+describe("coworkTurnSchema briefUpdate", () => {
+  const validBase = JSON.stringify({
+    planSteps: ["think", "create"],
+    reply: "Here is my proposal.",
+    proposal: null,
+  });
+
+  it("accepts a turn WITH briefUpdate and truncates it to ≤600 chars", () => {
+    const long = "x".repeat(700);
+    const raw = JSON.stringify({
+      planSteps: ["step1"],
+      reply: "reply here",
+      briefUpdate: long,
+      proposal: null,
+    });
+    const turn = parseCoworkTurn(raw, []);
+    expect(turn.briefUpdate).toBeDefined();
+    expect(turn.briefUpdate!.length).toBe(600);
+  });
+
+  it("accepts a turn WITHOUT briefUpdate (optional — back-compat)", () => {
+    const turn = parseCoworkTurn(validBase, []);
+    expect(turn.briefUpdate).toBeUndefined();
+  });
+
+  it("mock planner reply parses without briefUpdate (verifies optionality)", () => {
+    const raw = mockPlannerReply("make a cinematic cat video");
+    const turn = parseCoworkTurn(raw, []);
+    expect(turn.briefUpdate).toBeUndefined();
+    // other fields are present
+    expect(turn.reply).toBeTruthy();
+    expect(turn.title).toBeTruthy();
+  });
+
+  it("briefUpdate trims whitespace (min(1) + trim)", () => {
+    const raw = JSON.stringify({
+      planSteps: ["step1"],
+      reply: "ok",
+      briefUpdate: "  cinematic noir, always 9:16  ",
+      proposal: null,
+    });
+    const turn = parseCoworkTurn(raw, []);
+    expect(turn.briefUpdate).toBe("cinematic noir, always 9:16");
+  });
+
+  it("rejects briefUpdate that is an empty string after trim (min(1))", () => {
+    const result = coworkTurnSchema.safeParse({
+      planSteps: [],
+      reply: "ok",
+      briefUpdate: "   ",
+      proposal: null,
+    });
+    // min(1) after trim → parse failure
+    expect(result.success).toBe(false);
   });
 });

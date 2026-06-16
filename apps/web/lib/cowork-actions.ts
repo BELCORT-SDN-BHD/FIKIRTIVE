@@ -16,7 +16,7 @@ import {
   mockPlannerReply, suggestModel, GEN_MODELS, GEN_VIDEO_MODELS, GEN_VIDEO_MODEL_OPTIONS,
   GEN_PRICE_USD_PER_IMAGE, videoPriceUsd,
   coworkGenerateRequest, coworkProposalSchema,
-  coworkRenameThreadRequest, coworkDeleteThreadRequest, coworkVaryCardRequest, MAX_GEN_PROMPT,
+  coworkRenameThreadRequest, coworkDeleteThreadRequest, coworkVaryCardRequest, coworkBriefRequest, MAX_GEN_PROMPT,
   type ChatMessage, type CoworkTurn, type GenVideoModel,
 } from "@artlio/core";
 import { getEnhanceDirective } from "./cowork-knowledge";
@@ -166,7 +166,7 @@ function quotedPreview(qm: { kind: string; text: string; payload: unknown }): st
  *  media-generation action and writes no media job. A GEN_CARD payload carries a
  *  DISPLAY-only estimatedPriceUsd; the only spend path is the user clicking Generate
  *  later (Plan-2), which re-derives and runs the unmodified generation action. */
-export async function coworkTurn(raw: unknown): Promise<{ threadId: string } | { error: string }> {
+export async function coworkTurn(raw: unknown): Promise<{ threadId: string; brief?: string } | { error: string }> {
   const parsed = coworkTurnRequest.safeParse(raw);
   if (!parsed.success) return { error: "Say what you'd like to make." };
   const { projectId, text, entityIds, variantSel, sourceGenerationId, replyToMessageId } = parsed.data;
@@ -232,7 +232,7 @@ export async function coworkTurn(raw: unknown): Promise<{ threadId: string } | {
 
     const availableRefs = await loadAvailableRefs(); // owner-global entities {id,name,type}
     const modelSummary = `image: ${GEN_MODELS.join("/")}; video: ${GEN_VIDEO_MODELS.join("/")} (agent picks by capability)`;
-    const messages = buildPlannerMessages({ userText: text, history, availableRefs, modelSummary, quoted: quoted ?? undefined });
+    const messages = buildPlannerMessages({ userText: text, history, availableRefs, modelSummary, quoted: quoted ?? undefined, brief: project.coworkBrief ?? undefined });
 
     // ≤2 LLM calls total (1 + at most 1 retry). mock-$0 in dev.
     const refIds = availableRefs.map((r) => r.id);
@@ -342,8 +342,15 @@ export async function coworkTurn(raw: unknown): Promise<{ threadId: string } | {
     try {
       await prisma.actionEvent.create({ data: { id: newId(), ownerId: FOUNDER_OWNER_ID, projectId, type: "cowork.turn", payload: { via: transport.name, hasCard: !!cardPayload, model: cardPayload?.model ?? null } } });
     } catch { /* audit best-effort */ }
+    if (turn.briefUpdate) {
+      try {
+        await prisma.project.updateMany({ where: { id: projectId, ...OWNED }, data: { coworkBrief: turn.briefUpdate } });
+      } catch { /* best-effort: a brief-write hiccup must never fail the turn */ }
+    }
     revalidatePath("/", "layout");
-    return { threadId };
+    // return the agent's brief refinement so the client keeps its editor in sync (avoids a
+    // stale manual save clobbering a fresher agent-written brief).
+    return { threadId, ...(turn.briefUpdate ? { brief: turn.briefUpdate } : {}) };
   } catch {
     return { error: "Couldn't reach cowork — please try again." };
   }
@@ -510,4 +517,22 @@ export async function coworkVaryCard(raw: unknown): Promise<{ threadId: string }
   } catch {
     return { error: "Couldn't create variations — please try again." };
   }
+}
+
+/** Save (or clear) the per-project creative brief the planner sees every turn.
+ *  Propose-side only — this text is injected into the planner system prompt; it
+ *  does NOT touch coworkGenerate/startGen and creates no media spend. */
+export async function setCoworkBrief(raw: unknown): Promise<{ ok: true } | { error: string }> {
+  const parsed = coworkBriefRequest.safeParse(raw);
+  if (!parsed.success) return { error: "Invalid brief." };
+  const { projectId, brief } = parsed.data;
+  try {
+    const { count } = await prisma.project.updateMany({
+      where: { id: projectId, ...OWNED },
+      data: { coworkBrief: brief.trim() || null },
+    });
+    if (!count) return { error: "Project not found." };
+  } catch { return { error: "Couldn't save the brief — please try again." }; }
+  revalidatePath("/", "layout");
+  return { ok: true };
 }

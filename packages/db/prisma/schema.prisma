@@ -57,7 +57,9 @@ model Project {
   name      String
   /// 编辑器的工作中剪辑（artlioEdit 规范化后的 JSON）——阶段③ tracer 落地，
   /// 取代 localStorage mock；导出时快照进 RenderJob.editJson
-  editJson  Json?
+  editJson     Json?
+  // cowork: human-authored creative brief, injected into the planner's stable head (ProjectBrief).
+  coworkBrief  String?
   createdAt DateTime  @default(now())
   updatedAt DateTime  @updatedAt
   deletedAt DateTime?
@@ -77,6 +79,8 @@ model Entity {
   aliases             String[]   @default([])
   notes               String     @default("")
   negativeConstraints String     @default("")
+  // cowork: reserved — structured see-once description (subject/action/style/...), populated by the Phase-C vision sub-agent.
+  descriptionJson     Json?
   promptTokens        String[]   @default([])
   createdAt           DateTime   @default(now())
   updatedAt           DateTime   @updatedAt
@@ -104,6 +108,8 @@ model EntityVariant {
   name      String
   handle    String
   prompt    String    @default("")
+  // cowork: reserved — per-variant structured description (Phase C).
+  descriptionJson Json?
   createdAt DateTime  @default(now())
   updatedAt DateTime  @updatedAt
   deletedAt DateTime?
@@ -515,6 +521,8 @@ model ChatThread {
   ownerId   String        @default("founder")
   projectId String
   title     String        @default("")
+  // cowork: reserved — folded older-turns summary (generation logic deferred until long sessions).
+  rollingSummary String?
   createdAt DateTime      @default(now())
   updatedAt DateTime      @updatedAt
   deletedAt DateTime?

@@ -32,8 +32,8 @@ export default async function EditorPage({
         Artlio works best on a desktop browser — this view is read-only.
       </div>
       <EditorShell
-        project={{ id: project.id, name: project.name }}
-        projects={projects.map((x) => ({ id: x.id, name: x.name }))}
+        project={{ id: project.id, name: project.name, coworkBrief: project.coworkBrief ?? null }}
+        projects={projects.map((x) => ({ id: x.id, name: x.name, coworkBrief: x.coworkBrief ?? null }))}
         boardEdit={boardEdit}
         savedEdit={savedEdit}
         attachedCount={clipCount}

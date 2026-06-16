@@ -1,11 +1,11 @@
 "use client";
 import { useRef, useState } from "react";
-import { coworkTurn, coworkRenameThread, coworkDeleteThread } from "@/lib/cowork-actions";
+import { coworkTurn, coworkRenameThread, coworkDeleteThread, setCoworkBrief } from "@/lib/cowork-actions";
 import { uploadReference } from "@/lib/actions";
 import { getCoworkThreadClient } from "@/lib/cowork-fetch";
 import { MentionInput } from "@/components/MentionInput";
 import { Lightbox } from "@/components/Lightbox";
-import { IcPlus } from "@/components/ds";
+import { IcPlus, Dialog, Button } from "@/components/ds";
 import { GEN_PRICE_USD_PER_IMAGE, videoPriceUsd, videoDefaults, GEN_VIDEO_MODELS, type GenVideoModel } from "@artlio/core";
 import { GenerateCard } from "./GenerateCard";
 import type { EntityDTO, ChatThreadDTO } from "@/lib/types";
@@ -25,10 +25,11 @@ function resultPriceUsd(kind: string, model: string): number | null {
   return GEN_PRICE_USD_PER_IMAGE;
 }
 
-export function Cowork({ projectId, entities, threads }: {
+export function Cowork({ projectId, entities, threads, brief = "" }: {
   projectId: string;
   entities: EntityDTO[];
   threads: ChatThreadDTO[];
+  brief?: string;
 }) {
   // chatbox sessions: the full thread list (newest-first, with messages) is the
   // client source of truth — switching is pure local state, no per-switch fetch.
@@ -58,6 +59,12 @@ export function Cowork({ projectId, entities, threads }: {
 
   // T3: click-to-enlarge for durable GEN_RESULT media (reuses the Gen-space Lightbox).
   const [zoom, setZoom] = useState<{ src: string; kind: "image" | "video" } | null>(null);
+
+  // Project brief editor state.
+  const [briefOpen, setBriefOpen] = useState(false);
+  const [briefText, setBriefText] = useState(brief);
+  const [briefBusy, setBriefBusy] = useState(false);
+  const [briefErr, setBriefErr] = useState<string | null>(null);
 
   // Re-fetch a thread by id and make it active (shared by send + card revise).
   async function refreshThread(id: string) {
@@ -109,6 +116,9 @@ export function Cowork({ projectId, entities, threads }: {
     try {
       const res = await coworkTurn({ threadId: active?.id, projectId, text, entityIds: ids, variantSel, ...(pendingSource ? { sourceGenerationId: pendingSource.id } : {}), ...(replyTo ? { replyToMessageId: replyTo.id } : {}) });
       if ("error" in res) { setError(res.error); return; }
+      // keep the brief editor in sync when the agent refined the brief this turn (the
+      // dialog is a closed modal during a send, so this never clobbers an open edit).
+      if (res.brief !== undefined) setBriefText(res.brief);
       await refreshThread(res.threadId);
       setText("");
       setIds([]);
@@ -121,6 +131,20 @@ export function Cowork({ projectId, entities, threads }: {
     } finally {
       busyRef.current = false;
       setBusy(false);
+    }
+  }
+
+  async function saveBrief() {
+    setBriefBusy(true);
+    setBriefErr(null);
+    try {
+      const res = await setCoworkBrief({ projectId, brief: briefText });
+      if ("error" in res) { setBriefErr(res.error); return; }
+      setBriefOpen(false);
+    } catch {
+      setBriefErr("Couldn't save — please try again.");
+    } finally {
+      setBriefBusy(false);
     }
   }
 
@@ -169,6 +193,16 @@ export function Cowork({ projectId, entities, threads }: {
       <aside className="cw-rail">
         <button className="cw-rail-new" onClick={newChat}>
           <IcPlus size={15} /> New chat
+        </button>
+        <button
+          className="al-iconbtn al-iconbtn-sm"
+          title="Project brief"
+          aria-label="Edit project brief"
+          style={{ display: "flex", alignItems: "center", gap: 5, width: "100%", justifyContent: "flex-start", padding: "4px 8px", font: "var(--text-small)", color: "var(--fg-3)", borderRadius: 6, margin: "4px 0 0" }}
+          onClick={() => { setBriefText(briefText); setBriefErr(null); setBriefOpen(true); }}
+        >
+          <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.75" strokeLinecap="round" strokeLinejoin="round" aria-hidden><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/><line x1="16" y1="13" x2="8" y2="13"/><line x1="16" y1="17" x2="8" y2="17"/><polyline points="10 9 9 9 8 9"/></svg>
+          Project brief{briefText ? " ·" : ""}
         </button>
         <div className="cw-rail-list">
           {list.map((t) => (
@@ -461,6 +495,30 @@ export function Cowork({ projectId, entities, threads }: {
       </div>
 
       {zoom && <Lightbox src={zoom.src} kind={zoom.kind} onClose={() => setZoom(null)} />}
+
+      <Dialog
+        open={briefOpen}
+        title="Project brief"
+        onClose={() => { if (!briefBusy) setBriefOpen(false); }}
+        actions={[
+          <Button key="cancel" variant="ghost" onClick={() => setBriefOpen(false)} disabled={briefBusy}>Cancel</Button>,
+          <Button key="save" onClick={saveBrief} disabled={briefBusy}>{briefBusy ? "Saving…" : "Save"}</Button>,
+        ]}
+      >
+        <p style={{ font: "var(--text-small)", color: "var(--fg-3)", margin: "0 0 12px" }}>
+          Creative direction the agent honors every turn — tone, style, constraints.
+        </p>
+        <textarea
+          rows={6}
+          maxLength={2000}
+          value={briefText}
+          onChange={(e) => setBriefText(e.target.value)}
+          disabled={briefBusy}
+          placeholder="e.g. Always use a cinematic widescreen look, warm golden-hour tones, no text overlays."
+          style={{ width: "100%", resize: "vertical", font: "var(--text-body)", color: "var(--fg-1)", background: "var(--surface-2)", border: "1px solid var(--border-1)", borderRadius: 8, padding: "8px 10px", boxSizing: "border-box", outline: "none" }}
+        />
+        {briefErr && <p role="alert" style={{ font: "var(--text-caption)", color: "var(--danger)", margin: "8px 0 0" }}>{briefErr}</p>}
+      </Dialog>
     </div>
   );
 }

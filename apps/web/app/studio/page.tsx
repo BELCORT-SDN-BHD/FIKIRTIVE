@@ -117,8 +117,8 @@ export default async function StudioPage({ searchParams }: { searchParams: Promi
 
   return (
     <Studio
-      project={{ id: project.id, name: project.name }}
-      projects={projects.map((x) => ({ id: x.id, name: x.name }))}
+      project={{ id: project.id, name: project.name, coworkBrief: project.coworkBrief ?? null }}
+      projects={projects.map((x) => ({ id: x.id, name: x.name, coworkBrief: x.coworkBrief ?? null }))}
       user={user}
       entities={entities.map(toEntityDTO)}
       shots={storyboardShots}
