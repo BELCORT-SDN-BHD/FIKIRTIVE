@@ -17,13 +17,34 @@ import {
   GEN_PRICE_USD_PER_IMAGE, videoPriceUsd,
   coworkGenerateRequest, coworkProposalSchema,
   coworkRenameThreadRequest, coworkDeleteThreadRequest, coworkVaryCardRequest, coworkBriefRequest, MAX_GEN_PROMPT,
+  coworkVisionConfig, storageKey,
   type ChatMessage, type CoworkTurn, type GenVideoModel,
 } from "@artlio/core";
 import { getEnhanceDirective } from "./cowork-knowledge";
 import { startGen } from "./gen-actions";
+import { storage, mimeOf } from "./storage";
 
 const OWNED = { ownerId: FOUNDER_OWNER_ID, deletedAt: null } as const;
 const transport = createTransport();
+
+/** Phase C vision: resolve one asset to a base64 data-URL for the planner.
+ *  Returns null (and never throws) when the asset is missing, foreign, deleted,
+ *  or exceeds the configured size limit — the caller skips gracefully.
+ *  Used by CT-C2 (coworkTurn image attachment). */
+async function refImageDataUrl(assetId: string): Promise<string | null> {
+  const { maxBytes } = coworkVisionConfig();
+  const asset = await prisma.asset.findFirst({
+    where: { id: assetId, ownerId: FOUNDER_OWNER_ID, deletedAt: null },
+    select: { ownerId: true, contentHash: true, ext: true, sizeBytes: true },
+  });
+  if (!asset) return null; // missing / foreign / deleted → skip
+  if (asset.sizeBytes != null && Number(asset.sizeBytes) > maxBytes) return null; // too big
+  try {
+    const bytes = await storage.get(storageKey(asset.ownerId, asset.contentHash, asset.ext));
+    if (bytes.length > maxBytes) return null;
+    return `data:${mimeOf(asset.ext)};base64,${Buffer.from(bytes).toString("base64")}`;
+  } catch { return null; } // read error → skip; NEVER throw the turn
+}
 
 /** Owner-global entities the planner may reference (Entity has no projectId — it's
  *  owner-scoped like getEntities). Returns the @-ref allow-list passed to the planner,
@@ -232,10 +253,46 @@ export async function coworkTurn(raw: unknown): Promise<{ threadId: string; brie
 
     const availableRefs = await loadAvailableRefs(); // owner-global entities {id,name,type}
     const modelSummary = `image: ${GEN_MODELS.join("/")}; video: ${GEN_VIDEO_MODELS.join("/")} (agent picks by capability)`;
-    const messages = buildPlannerMessages({ userText: text, history, availableRefs, modelSummary, quoted: quoted ?? undefined, brief: project.coworkBrief ?? undefined });
+    const refIds = availableRefs.map((r) => r.id);
+
+    // Phase C (policy C): when vision is on, let the planner SEE the actual pixels of the
+    // refs in play this turn — the @-mentioned entities (their locked base image) and the
+    // i2v source frame — so it writes an image-grounded prompt. Bounded + best-effort.
+    let images: { label: string; dataUrl: string }[] | undefined;
+    const vision = coworkVisionConfig();
+    if (vision.enabled) {
+      // FULLY best-effort: any failure (a DB hiccup in these lookups, a storage read, etc.)
+      // must only DROP this turn's images, NEVER fail the turn — the planner still runs
+      // text-only. So the whole gather is wrapped (refImageDataUrl alone wasn't enough —
+      // the generation/entity queries here could throw into coworkTurn's outer catch).
+      try {
+        const collected: { label: string; dataUrl: string }[] = [];
+        // i2v source frame first (most load-bearing when animating)
+        if (validSource) {
+          const g = await prisma.generation.findFirst({ where: { id: validSource, ...OWNED }, select: { assetId: true } });
+          if (g?.assetId) { const url = await refImageDataUrl(g.assetId); if (url) collected.push({ label: "source frame (to animate)", dataUrl: url }); }
+        }
+        // @-mentioned entities (allow-listed) → their locked base image
+        const inPlay = entityIds.filter((id) => refIds.includes(id)).slice(0, vision.maxImages);
+        if (inPlay.length) {
+          const ents = await prisma.entity.findMany({ where: { id: { in: inPlay }, ...OWNED }, select: { id: true, name: true, type: true, baseAssetId: true } });
+          for (const e of ents) {
+            if (collected.length >= vision.maxImages) break;
+            if (!e.baseAssetId) continue;
+            const url = await refImageDataUrl(e.baseAssetId);
+            if (url) collected.push({ label: `@${e.name} (${e.type.toLowerCase()})`, dataUrl: url });
+          }
+        }
+        if (collected.length) images = collected.slice(0, vision.maxImages);
+      } catch (e) {
+        console.warn("coworkTurn: vision image-gather failed, proceeding text-only:", e instanceof Error ? e.message : e);
+        images = undefined;
+      }
+    }
+
+    const messages = buildPlannerMessages({ userText: text, history, availableRefs, modelSummary, quoted: quoted ?? undefined, brief: project.coworkBrief ?? undefined, images });
 
     // ≤2 LLM calls total (1 + at most 1 retry). mock-$0 in dev.
-    const refIds = availableRefs.map((r) => r.id);
     let turn: CoworkTurn | null = null;
     for (let attempt = 0; attempt < 2 && !turn; attempt++) {
       try {

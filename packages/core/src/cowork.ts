@@ -115,6 +115,21 @@ export interface CoworkTransport {
 export const MAX_PLAN_STEPS = 8;
 export const COWORK_MEMORY_TURNS = 8;
 
+/** Cowork vision (Phase C) config — read from env now; the future admin dashboard will
+ *  make these DB-backed runtime toggles (so keep them read from THIS one place). */
+export function coworkVisionConfig(): { enabled: boolean; policy: "C"; maxImages: number; maxBytes: number } {
+  const enabled = process.env.COWORK_VISION_ENABLED === "true" || process.env.COWORK_VISION_ENABLED === "1";
+  // fail-closed: a finite positive int clamped to a hard ceiling, else the default —
+  // Infinity/0/garbage must never UN-bound the safety caps (esp. once dashboard-tunable).
+  const clampInt = (raw: string | undefined, def: number, max: number): number => {
+    const n = Math.floor(Number(raw));
+    return Number.isFinite(n) && n >= 1 ? Math.min(n, max) : def;
+  };
+  const maxImages = clampInt(process.env.COWORK_VISION_MAX_IMAGES, 3, 8);
+  const maxBytes = clampInt(process.env.COWORK_VISION_MAX_BYTES, 4_000_000, 16_000_000);
+  return { enabled, policy: "C", maxImages, maxBytes };
+}
+
 export const coworkProposalSchema = z.object({
   kind: z.enum(["image", "video"]),
   desiredAspect: z.string().max(12).optional(),

@@ -1,4 +1,4 @@
-import { coworkTurnSchema, MAX_PLAN_STEPS, type ChatMessage, type CoworkTurn } from "./cowork.js";
+import { coworkTurnSchema, MAX_PLAN_STEPS, type ChatContentPart, type ChatMessage, type CoworkTurn } from "./cowork.js";
 
 export { MAX_PLAN_STEPS, coworkTurnSchema };
 
@@ -23,6 +23,7 @@ export function buildPlannerMessages(args: {
   modelSummary: string;          // e.g. "image: seedream; video: kling/veo3.1/... (agent picks)"
   quoted?: { kind: string; preview: string }; // injected into the current turn only (NOT history)
   brief?: string;                // per-project creative brief (injected into system head — cacheable)
+  images?: { label: string; dataUrl: string }[]; // Phase C vision: ref images to attach to the user turn
 }): ChatMessage[] {
   const refsBlock = args.availableRefs.length
     ? `Available @refs (use ONLY these ids): ${args.availableRefs.map((r) => `${r.id}=${r.name}(${r.type})`).join("; ")}`
@@ -33,10 +34,23 @@ export function buildPlannerMessages(args: {
   const userContent = args.quoted
     ? `[The user is replying to an earlier ${args.quoted.kind} message: "${args.quoted.preview}"]\n\n${args.userText}`
     : args.userText;
+  // Phase C vision: when images are supplied, the user turn becomes a multimodal array;
+  // labeled text parts precede each image so the model can correlate label→pixels.
+  // Without images → plain string (back-compat, all existing callers unchanged).
+  const userTurnContent: string | ChatContentPart[] = args.images?.length
+    ? (() => {
+        const parts: ChatContentPart[] = [{ type: "text", text: userContent }];
+        for (const img of args.images) {
+          parts.push({ type: "text", text: `[Reference — ${img.label}]` });
+          parts.push({ type: "image_url", image_url: { url: img.dataUrl } });
+        }
+        return parts;
+      })()
+    : userContent;
   return [
     { role: "system", content: `${COWORK_PLANNER_SYSTEM}\n\n${refsBlock}\nModels available downstream: ${args.modelSummary}${briefBlock}` },
     ...args.history,
-    { role: "user", content: userContent },
+    { role: "user", content: userTurnContent },
   ];
 }
 

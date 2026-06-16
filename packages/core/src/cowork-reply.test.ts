@@ -1,5 +1,5 @@
-import { describe, expect, it } from "vitest";
-import { coworkTurnRequest, coworkBriefRequest, MAX_COWORK_BRIEF, coworkTurnSchema } from "./cowork.js";
+import { afterEach, describe, expect, it } from "vitest";
+import { coworkTurnRequest, coworkBriefRequest, MAX_COWORK_BRIEF, coworkTurnSchema, coworkVisionConfig } from "./cowork.js";
 import { buildPlannerMessages, parseCoworkTurn, mockPlannerReply } from "./cowork-planner.js";
 
 // ── coworkTurnRequest: replyToMessageId field ──────────────────────────────
@@ -231,5 +231,126 @@ describe("coworkTurnSchema briefUpdate", () => {
     });
     // min(1) after trim → parse failure
     expect(result.success).toBe(false);
+  });
+});
+
+// ── coworkVisionConfig ────────────────────────────────────────────────────────
+
+describe("coworkVisionConfig", () => {
+  afterEach(() => {
+    delete process.env.COWORK_VISION_ENABLED;
+    delete process.env.COWORK_VISION_MAX_IMAGES;
+    delete process.env.COWORK_VISION_MAX_BYTES;
+  });
+
+  it("defaults: enabled=false, maxImages=3, maxBytes=4_000_000 when env is unset", () => {
+    const cfg = coworkVisionConfig();
+    expect(cfg.enabled).toBe(false);
+    expect(cfg.maxImages).toBe(3);
+    expect(cfg.maxBytes).toBe(4_000_000);
+    expect(cfg.policy).toBe("C");
+  });
+
+  it('COWORK_VISION_ENABLED="true" → enabled true', () => {
+    process.env.COWORK_VISION_ENABLED = "true";
+    expect(coworkVisionConfig().enabled).toBe(true);
+  });
+
+  it('COWORK_VISION_ENABLED="1" → enabled true', () => {
+    process.env.COWORK_VISION_ENABLED = "1";
+    expect(coworkVisionConfig().enabled).toBe(true);
+  });
+
+  it('COWORK_VISION_ENABLED="false" → enabled false', () => {
+    process.env.COWORK_VISION_ENABLED = "false";
+    expect(coworkVisionConfig().enabled).toBe(false);
+  });
+
+  it("COWORK_VISION_MAX_IMAGES and COWORK_VISION_MAX_BYTES are respected", () => {
+    process.env.COWORK_VISION_MAX_IMAGES = "5";
+    process.env.COWORK_VISION_MAX_BYTES = "1000000";
+    const cfg = coworkVisionConfig();
+    expect(cfg.maxImages).toBe(5);
+    expect(cfg.maxBytes).toBe(1_000_000);
+  });
+});
+
+// ── buildPlannerMessages: images (Phase C vision) ────────────────────────────
+
+describe("buildPlannerMessages with images (Phase C vision)", () => {
+  const baseArgs = {
+    userText: "Make a cat video",
+    history: [] as { role: "user" | "assistant"; content: string }[],
+    availableRefs: [],
+    modelSummary: "image: seedream; video: kling",
+  };
+
+  it("with images: user turn content is an array containing a text part + label + image_url parts", () => {
+    const msgs = buildPlannerMessages({
+      ...baseArgs,
+      images: [{ label: "@Mira (character)", dataUrl: "data:image/png;base64,AAA" }],
+    });
+    const last = msgs[msgs.length - 1];
+    expect(last?.role).toBe("user");
+    expect(Array.isArray(last?.content)).toBe(true);
+    const parts = last!.content as { type: string; text?: string; image_url?: { url: string } }[];
+    expect(parts[0]).toEqual({ type: "text", text: "Make a cat video" });
+    expect(parts[1]).toEqual({ type: "text", text: "[Reference — @Mira (character)]" });
+    expect(parts[2]).toEqual({ type: "image_url", image_url: { url: "data:image/png;base64,AAA" } });
+  });
+
+  it("with images: multiple images each get a label + image_url pair in order", () => {
+    const msgs = buildPlannerMessages({
+      ...baseArgs,
+      images: [
+        { label: "@Mira", dataUrl: "data:image/png;base64,AAA" },
+        { label: "@Location", dataUrl: "data:image/jpeg;base64,BBB" },
+      ],
+    });
+    const last = msgs[msgs.length - 1];
+    const parts = last!.content as { type: string; text?: string; image_url?: { url: string } }[];
+    expect(parts).toHaveLength(5); // text + (label+img) × 2
+    expect(parts[3]).toEqual({ type: "text", text: "[Reference — @Location]" });
+    expect(parts[4]).toEqual({ type: "image_url", image_url: { url: "data:image/jpeg;base64,BBB" } });
+  });
+
+  it("without images: user turn content is the plain string (back-compat)", () => {
+    const msgs = buildPlannerMessages(baseArgs);
+    const last = msgs[msgs.length - 1];
+    expect(typeof last?.content).toBe("string");
+    expect(last?.content).toBe("Make a cat video");
+  });
+
+  it("images=[] (empty array): user turn content is the plain string (back-compat)", () => {
+    const msgs = buildPlannerMessages({ ...baseArgs, images: [] });
+    const last = msgs[msgs.length - 1];
+    expect(typeof last?.content).toBe("string");
+    expect(last?.content).toBe("Make a cat video");
+  });
+
+  it("with images, system and history are NOT altered", () => {
+    const history = [{ role: "user" as const, content: "earlier" }, { role: "assistant" as const, content: "ok" }];
+    const msgs = buildPlannerMessages({
+      ...baseArgs,
+      history,
+      images: [{ label: "@A", dataUrl: "data:image/png;base64,CCC" }],
+    });
+    expect(msgs[0]?.role).toBe("system");
+    expect(typeof msgs[0]?.content).toBe("string");
+    const historySlice = msgs.slice(1, msgs.length - 1);
+    for (const h of historySlice) expect(typeof h.content).toBe("string");
+  });
+
+  it("with both quoted and images: text part includes the quote prefix", () => {
+    const msgs = buildPlannerMessages({
+      ...baseArgs,
+      quoted: { kind: "result", preview: "a cat" },
+      images: [{ label: "@Cat", dataUrl: "data:image/png;base64,DDD" }],
+    });
+    const last = msgs[msgs.length - 1];
+    const parts = last!.content as { type: string; text?: string }[];
+    expect(parts[0]?.type).toBe("text");
+    expect(parts[0]?.text).toContain("[The user is replying to an earlier result message:");
+    expect(parts[0]?.text).toContain("Make a cat video");
   });
 });
