@@ -354,3 +354,108 @@ describe("buildPlannerMessages with images (Phase C vision)", () => {
     expect(parts[0]?.text).toContain("Make a cat video");
   });
 });
+
+// ── coworkTurnSchema: refDescriptions field ───────────────────────────────────
+
+describe("coworkTurnSchema refDescriptions", () => {
+  const base = {
+    planSteps: ["step1"],
+    reply: "Here you go.",
+    proposal: null,
+  };
+
+  it("accepts refDescriptions with a valid @name key", () => {
+    const result = coworkTurnSchema.safeParse({
+      ...base,
+      refDescriptions: { "@Mira": "auburn hair, cream sweater, blue eyes" },
+    });
+    expect(result.success).toBe(true);
+    if (result.success) {
+      expect(result.data.refDescriptions?.["@Mira"]).toBe("auburn hair, cream sweater, blue eyes");
+    }
+  });
+
+  it("truncates a refDescriptions value longer than 600 chars to 600", () => {
+    const long = "x".repeat(700);
+    const result = coworkTurnSchema.safeParse({
+      ...base,
+      refDescriptions: { "@Mira": long },
+    });
+    expect(result.success).toBe(true);
+    if (result.success) {
+      expect(result.data.refDescriptions?.["@Mira"]?.length).toBe(600);
+    }
+  });
+
+  it("accepts a turn WITHOUT refDescriptions (optional — back-compat)", () => {
+    const result = coworkTurnSchema.safeParse(base);
+    expect(result.success).toBe(true);
+    if (result.success) expect(result.data.refDescriptions).toBeUndefined();
+  });
+
+  it("mock planner reply parses without refDescriptions (verifies optionality)", () => {
+    const raw = mockPlannerReply("make a cinematic cat video");
+    const turn = parseCoworkTurn(raw, []);
+    expect(turn.refDescriptions).toBeUndefined();
+    expect(turn.reply).toBeTruthy();
+  });
+
+  it("accepts multiple refs in one turn", () => {
+    const result = coworkTurnSchema.safeParse({
+      ...base,
+      refDescriptions: {
+        "@Mira": "auburn hair, cream sweater",
+        "@Location": "neon-lit Tokyo alley",
+      },
+    });
+    expect(result.success).toBe(true);
+    if (result.success) {
+      expect(Object.keys(result.data.refDescriptions ?? {})).toHaveLength(2);
+    }
+  });
+});
+
+// ── buildPlannerMessages: availableRefs with description ─────────────────────
+
+describe("buildPlannerMessages availableRefs with description", () => {
+  const baseArgs = {
+    userText: "Make a cat video",
+    history: [] as { role: "user" | "assistant"; content: string }[],
+    modelSummary: "image: seedream; video: kling",
+  };
+
+  it("a ref WITH description renders as id=name(type): <desc> in the system message", () => {
+    const msgs = buildPlannerMessages({
+      ...baseArgs,
+      availableRefs: [{ id: "ent_1", name: "Mira", type: "CHARACTER", description: "auburn hair, cream sweater" }],
+    });
+    const sys = msgs[0];
+    expect(sys?.role).toBe("system");
+    expect(sys?.content).toContain("ent_1=Mira(CHARACTER): auburn hair, cream sweater");
+  });
+
+  it("a ref WITHOUT description renders as id=name(type) (no trailing colon)", () => {
+    const msgs = buildPlannerMessages({
+      ...baseArgs,
+      availableRefs: [{ id: "ent_2", name: "Studio", type: "LOCATION" }],
+    });
+    const sys = msgs[0];
+    expect(sys?.content).toContain("ent_2=Studio(LOCATION)");
+    expect(sys?.content).not.toContain("ent_2=Studio(LOCATION):");
+  });
+
+  it("mixed refs: one with description, one without", () => {
+    const msgs = buildPlannerMessages({
+      ...baseArgs,
+      availableRefs: [
+        { id: "ent_1", name: "Mira", type: "CHARACTER", description: "auburn hair" },
+        { id: "ent_2", name: "Studio", type: "LOCATION" },
+      ],
+    });
+    const sys = msgs[0];
+    expect(sys?.content).toContain("ent_1=Mira(CHARACTER): auburn hair");
+    expect(sys?.content).toContain("ent_2=Studio(LOCATION)");
+    // the no-description ref must not have a trailing colon
+    expect(sys?.content).not.toMatch(/ent_2=Studio\(LOCATION\):/);
+  });
+});

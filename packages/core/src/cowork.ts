@@ -192,6 +192,10 @@ export const coworkTurnSchema = z.object({
   // JSON ($0). The planner refines the CURRENT brief (which is injected into its context)
   // only when it learns durable project direction; absent → no change. ≤600 chars (concise).
   briefUpdate: z.string().trim().min(1).transform((s) => s.slice(0, 600)).optional(),
+  // The planner's see-once descriptions of reference images shown to it THIS turn, keyed by
+  // the ref's @name (as labeled in the image). Emitted in the SAME JSON ($0); persisted
+  // once to Entity.descriptionJson and reused on later turns. Each value concise (≤600).
+  refDescriptions: z.record(z.string(), z.string().trim().min(1).transform((s) => s.slice(0, 600))).optional(),
   proposal: coworkProposalSchema.nullable().default(null),
 }).strict();
 export type CoworkTurn = z.infer<typeof coworkTurnSchema>;

@@ -7,7 +7,7 @@
  * scenes so it never clobbers work.
  */
 import { revalidatePath } from "next/cache";
-import { prisma, type Prisma } from "@artlio/db";
+import { prisma, Prisma } from "@artlio/db";
 import {
   coworkRequest, enhanceRequest, MAX_ENHANCE_TEXT, newId, FOUNDER_OWNER_ID,
   createTransport, runSkill, draftStoryboardSkill, enhancePromptSkill,
@@ -49,14 +49,22 @@ async function refImageDataUrl(assetId: string): Promise<string | null> {
 /** Owner-global entities the planner may reference (Entity has no projectId — it's
  *  owner-scoped like getEntities). Returns the @-ref allow-list passed to the planner,
  *  plus each entity's LIVE variant ids so the action can constrain variantSel VALUES
- *  (not just keys) to real variants before persisting a card. */
-async function loadAvailableRefs(): Promise<{ id: string; name: string; type: string; variantIds: string[] }[]> {
+ *  (not just keys) to real variants before persisting a card. Also returns the cached
+ *  see-once visual description (Entity.descriptionJson.text) so buildPlannerMessages
+ *  can embed it in the refs block on turns where no image is sent. */
+async function loadAvailableRefs(): Promise<{ id: string; name: string; type: string; variantIds: string[]; description?: string }[]> {
   const entities = await prisma.entity.findMany({
     where: { ...OWNED },
-    select: { id: true, name: true, type: true, variants: { where: { deletedAt: null }, select: { id: true } } },
+    select: { id: true, name: true, type: true, descriptionJson: true, variants: { where: { deletedAt: null }, select: { id: true } } },
     orderBy: [{ type: "asc" }, { name: "asc" }],
   });
-  return entities.map((e) => ({ id: e.id, name: e.name, type: e.type, variantIds: e.variants.map((v) => v.id) }));
+  return entities.map((e) => ({
+    id: e.id,
+    name: e.name,
+    type: e.type,
+    variantIds: e.variants.map((v) => v.id),
+    description: (e.descriptionJson as { text?: string } | null)?.text || undefined,
+  }));
 }
 
 export async function coworkDraftStoryboard(
@@ -259,6 +267,11 @@ export async function coworkTurn(raw: unknown): Promise<{ threadId: string; brie
     // refs in play this turn — the @-mentioned entities (their locked base image) and the
     // i2v source frame — so it writes an image-grounded prompt. Bounded + best-effort.
     let images: { label: string; dataUrl: string }[] | undefined;
+    // refs whose pixels are ACTUALLY attached this turn → their id. The see-once description
+    // cache (turn.refDescriptions) persists ONLY for entities the planner truly saw, keyed
+    // unambiguously by id (entity names aren't unique → ambiguous names are skipped).
+    const attachedRefIdByName = new Map<string, string>();
+    const ambiguousRefNames = new Set<string>();
     const vision = coworkVisionConfig();
     if (vision.enabled) {
       // FULLY best-effort: any failure (a DB hiccup in these lookups, a storage read, etc.)
@@ -280,7 +293,11 @@ export async function coworkTurn(raw: unknown): Promise<{ threadId: string; brie
             if (collected.length >= vision.maxImages) break;
             if (!e.baseAssetId) continue;
             const url = await refImageDataUrl(e.baseAssetId);
-            if (url) collected.push({ label: `@${e.name} (${e.type.toLowerCase()})`, dataUrl: url });
+            if (url) {
+              collected.push({ label: `@${e.name} (${e.type.toLowerCase()})`, dataUrl: url });
+              if (attachedRefIdByName.has(e.name)) ambiguousRefNames.add(e.name); // dup name → can't map back safely
+              else attachedRefIdByName.set(e.name, e.id);
+            }
           }
         }
         if (collected.length) images = collected.slice(0, vision.maxImages);
@@ -403,6 +420,27 @@ export async function coworkTurn(raw: unknown): Promise<{ threadId: string; brie
       try {
         await prisma.project.updateMany({ where: { id: projectId, ...OWNED }, data: { coworkBrief: turn.briefUpdate } });
       } catch { /* best-effort: a brief-write hiccup must never fail the turn */ }
+    }
+    // See-once: persist the planner's ref descriptions (emitted in the SAME JSON, $0).
+    // Only sets descriptionJson where it is currently null — never overwrites an existing
+    // description (see-once semantics). Owner-scoped. Best-effort: never fails the turn.
+    if (turn.refDescriptions && Object.keys(turn.refDescriptions).length && attachedRefIdByName.size) {
+      try {
+        for (const [rawName, desc] of Object.entries(turn.refDescriptions)) {
+          const name = rawName.replace(/^@/, "");
+          if (ambiguousRefNames.has(name)) continue; // same-named entities → can't disambiguate, skip
+          const id = attachedRefIdByName.get(name);
+          if (!id) continue; // cache ONLY for entities whose pixels were actually shown this turn
+          // sanitize: single line, no control chars — it gets rendered raw into the system prompt
+          // on later turns, so a newline/instruction-like description must not become injectable.
+          const clean = desc.replace(/\p{Cc}/gu, " ").replace(/\s+/g, " ").trim().slice(0, 600);
+          if (!clean) continue;
+          await prisma.entity.updateMany({
+            where: { id, ...OWNED, descriptionJson: { equals: Prisma.DbNull } }, // see-once: null→set only
+            data: { descriptionJson: { text: clean } },
+          });
+        }
+      } catch (e) { console.warn("coworkTurn: refDescriptions persist failed (non-fatal):", e instanceof Error ? e.message : e); }
     }
     revalidatePath("/", "layout");
     // return the agent's brief refinement so the client keeps its editor in sync (avoids a

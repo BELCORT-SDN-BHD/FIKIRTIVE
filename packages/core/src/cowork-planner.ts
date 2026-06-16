@@ -13,20 +13,21 @@ export const COWORK_PLANNER_SYSTEM =
   `For a VIDEO that should feature a specific character variant, propose an IMAGE keyframe first (kind:"image"); video conditions on a source frame, not on entity refs. ` +
   `Write "reply" and "title" in the SAME LANGUAGE as the user's message. The "structuredPrompt", however, MUST be written in English — the image/video generation models are English-tuned — regardless of the user's language. ` +
   `When the proposal references a character/entity (or animates a source frame), the "structuredPrompt" should include concise identity-preservation phrasing (keep the same face, appearance, and wardrobe as the reference) rather than re-describing the character from scratch. ` +
-  `Optionally include "briefUpdate": a concise (≤60 words) refinement of the PROJECT BRIEF capturing durable creative direction you've learned (tone, visual style, recurring constraints like aspect ratio or language, key characters). Refine the existing Project brief shown in your context rather than rewriting it from scratch; emit it ONLY when you have a clear, durable signal — otherwise omit it. The user can edit it anytime.`;
+  `Optionally include "briefUpdate": a concise (≤60 words) refinement of the PROJECT BRIEF capturing durable creative direction you've learned (tone, visual style, recurring constraints like aspect ratio or language, key characters). Refine the existing Project brief shown in your context rather than rewriting it from scratch; emit it ONLY when you have a clear, durable signal — otherwise omit it. The user can edit it anytime. ` +
+  `When reference IMAGES are shown to you this turn, for each one add an entry to "refDescriptions" keyed by its @name (exactly as labeled, e.g. "@Mira") with a concise visual description (appearance, wardrobe, style, distinctive features) — this is cached so future turns recall the look without re-sending the image. Omit "refDescriptions" entirely when no images are shown. Full JSON shape: {"planSteps":[...],"title":"...","reply":"...","briefUpdate"?:"...","refDescriptions"?:{"@Name":"..."},"proposal":null|{...}}.`;
 
 /** Build the planner messages: system + a context block + bounded NL history + the user turn. */
 export function buildPlannerMessages(args: {
   userText: string;
   history: ChatMessage[];        // already windowed + NL-only (assistant/user)
-  availableRefs: { id: string; name: string; type: string }[];
+  availableRefs: { id: string; name: string; type: string; description?: string }[];
   modelSummary: string;          // e.g. "image: seedream; video: kling/veo3.1/... (agent picks)"
   quoted?: { kind: string; preview: string }; // injected into the current turn only (NOT history)
   brief?: string;                // per-project creative brief (injected into system head — cacheable)
   images?: { label: string; dataUrl: string }[]; // Phase C vision: ref images to attach to the user turn
 }): ChatMessage[] {
   const refsBlock = args.availableRefs.length
-    ? `Available @refs (use ONLY these ids): ${args.availableRefs.map((r) => `${r.id}=${r.name}(${r.type})`).join("; ")}`
+    ? `Available @refs (use ONLY these ids): ${args.availableRefs.map((r) => `${r.id}=${r.name}(${r.type})${r.description ? `: ${r.description}` : ""}`).join("; ")}`
     : "Available @refs: none";
   const briefBlock = args.brief && args.brief.trim()
     ? `\n\nProject brief (the creative direction for this project — honor it):\n${args.brief.trim()}`
