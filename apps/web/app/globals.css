@@ -339,6 +339,23 @@ h1, h2, h3 { font-family: var(--font-sans); font-weight: 600; letter-spacing: va
 .composer-wrap { position: relative; width: 100%; max-width: 880px; }
 
 /* ---------- Cowork chat surface ---------- */
+.cw-shell { flex: 1; min-height: 0; display: flex; }
+.cw-main { flex: 1; min-width: 0; display: flex; flex-direction: column; }
+.cw-rail { flex: none; width: 240px; display: flex; flex-direction: column; gap: 8px; padding: 14px 12px; border-right: 1px solid var(--line-2); overflow: hidden; }
+.cw-rail-new { display: flex; align-items: center; justify-content: center; gap: 8px; flex: none; width: 100%; padding: 9px 12px; border-radius: var(--radius-md); border: 1px solid var(--line-1); background: var(--glass-1); color: var(--fg-1); font: var(--text-body-medium); cursor: pointer; transition: background var(--dur-fast) var(--ease-out); }
+.cw-rail-new:hover { background: var(--glass-2); }
+.cw-rail-new:focus-visible { outline: none; box-shadow: var(--ring-focus); }
+.cw-rail-list { flex: 1; min-height: 0; overflow-y: auto; display: flex; flex-direction: column; gap: 2px; }
+.cw-rail-item { display: flex; align-items: center; gap: 6px; padding: 8px 10px; border-radius: var(--radius-sm); cursor: pointer; transition: background var(--dur-fast) var(--ease-out); }
+.cw-rail-item:hover { background: var(--glass-hover); }
+.cw-rail-item-active { background: var(--glass-2); }
+.cw-rail-title { flex: 1; min-width: 0; font: var(--text-small); color: var(--fg-2); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.cw-rail-item-active .cw-rail-title { color: var(--fg-1); }
+.cw-rail-actions { flex: none; display: flex; gap: 2px; opacity: 0; transition: opacity var(--dur-fast) var(--ease-out); }
+.cw-rail-item:hover .cw-rail-actions, .cw-rail-item-active .cw-rail-actions { opacity: 1; }
+.cw-rail-rename { flex: 1; min-width: 0; font: var(--text-small); color: var(--fg-1); background: rgba(255,255,255,.04); border: 1px solid var(--line-1); border-radius: var(--radius-sm); padding: 4px 7px; }
+.cw-rail-rename:focus-visible { outline: none; box-shadow: var(--ring-focus); }
+
 .cw-msg { padding: 9px 13px; border-radius: var(--radius-md); font: var(--text-body); line-height: 1.55; margin-bottom: 10px; max-width: 680px; }
 .cw-user { background: var(--glass-2); border: 1px solid var(--line-1); color: var(--fg-1); align-self: flex-end; margin-left: auto; }
 .cw-agent { background: var(--glass-1); border: 1px solid var(--line-2); color: var(--fg-1); }
