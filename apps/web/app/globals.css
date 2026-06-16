@@ -376,6 +376,21 @@ h1, h2, h3 { font-family: var(--font-sans); font-weight: 600; letter-spacing: va
 .cw-card-result-pending { font: var(--text-caption); color: var(--fg-3); }
 .cw-card-result-error { font: var(--text-small); }
 .cw-card-result-img { width: 280px; aspect-ratio: 16/9; object-fit: contain; border-radius: var(--radius-md); border: 1px solid var(--line-2); background: #000; }
+.cw-card-actions { display: flex; align-items: center; gap: 8px; }
+.cw-card-skipped { font: var(--text-caption); color: var(--fg-3); margin-bottom: 10px; padding: 4px 2px; }
+.cw-card-revise { display: flex; align-items: center; gap: 8px; }
+.cw-card-revise-input { flex: 1; min-width: 0; border: 1px solid var(--line-2); border-radius: var(--radius-md); padding: 7px 11px; background: rgba(255,255,255,.04); color: var(--fg-1); font: var(--text-small); transition: border-color var(--dur-fast) var(--ease-out); }
+.cw-card-revise-input::placeholder { color: var(--fg-3); }
+.cw-card-revise-input:focus { outline: none; border-color: var(--line-1); }
+.cw-card-revise-input:disabled { opacity: .55; cursor: default; }
+
+/* T3: result media — image (click-to-enlarge) / video (controls) + caption row */
+.cw-media { margin: 0; display: flex; flex-direction: column; gap: 4px; }
+.cw-media-frame { position: relative; display: inline-flex; }
+.cw-media-btn { padding: 0; border: none; background: none; cursor: zoom-in; display: inline-flex; }
+.cw-media-frame video { width: 280px; aspect-ratio: 16/9; object-fit: contain; border-radius: var(--radius-md); border: 1px solid var(--line-2); background: #000; }
+.cw-media-cap { font: var(--text-caption); color: var(--fg-3); }
+.cw-media-cap-price { color: var(--fg-2); }
 
 .fade-rise { animation: fade-rise var(--dur-base) var(--ease-out); }
 @keyframes fade-rise { from { opacity: 0; transform: translateY(8px); } to { opacity: 1; transform: none; } }

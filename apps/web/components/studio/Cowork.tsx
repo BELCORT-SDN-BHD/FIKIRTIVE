@@ -3,11 +3,26 @@ import { useRef, useState } from "react";
 import { coworkTurn, coworkRenameThread, coworkDeleteThread } from "@/lib/cowork-actions";
 import { getCoworkThreadClient } from "@/lib/cowork-fetch";
 import { MentionInput } from "@/components/MentionInput";
+import { Lightbox } from "@/components/Lightbox";
 import { IcPlus } from "@/components/ds";
+import { GEN_PRICE_USD_PER_IMAGE, videoPriceUsd, videoDefaults, GEN_VIDEO_MODELS, type GenVideoModel } from "@artlio/core";
 import { GenerateCard } from "./GenerateCard";
 import type { EntityDTO, ChatThreadDTO } from "@/lib/types";
 
 const isVideoUrl = (u: string) => /\.(mp4|webm|mov|mkv)(\?|$)/i.test(u); // mirrors GenSpace
+
+// DISPLAY-ONLY cost re-derived from a GEN_RESULT's {kind, model}. Video price needs
+// per-gen params (seconds/resolution/audio) the result DTO doesn't carry, so we
+// approximate from the model's defaults — hence the "~". Never gates anything.
+function resultPriceUsd(kind: string, model: string): number | null {
+  if (kind === "video") {
+    if (!(GEN_VIDEO_MODELS as readonly string[]).includes(model)) return null;
+    const m = model as GenVideoModel;
+    const d = videoDefaults(m);
+    return videoPriceUsd(m, { seconds: d.seconds, resolution: d.resolution, audio: d.audio, count: 1 });
+  }
+  return GEN_PRICE_USD_PER_IMAGE;
+}
 
 export function Cowork({ projectId, entities, threads }: {
   projectId: string;
@@ -35,6 +50,18 @@ export function Cowork({ projectId, entities, threads }: {
   const [pendingSource, setPendingSource] = useState<string | null>(null);
   const dockRef = useRef<HTMLDivElement>(null);
 
+  // T3: click-to-enlarge for durable GEN_RESULT media (reuses the Gen-space Lightbox).
+  const [zoom, setZoom] = useState<{ src: string; kind: "image" | "video" } | null>(null);
+
+  // Re-fetch a thread by id and make it active (shared by send + card revise).
+  async function refreshThread(id: string) {
+    const fresh = await getCoworkThreadClient(id);
+    if (fresh) {
+      setList((cur) => [fresh, ...cur.filter((t) => t.id !== fresh.id)]);
+      setActiveId(fresh.id);
+    }
+  }
+
   function animateResult(generationId: string) {
     setPendingSource(generationId);
     setError(null);
@@ -54,11 +81,7 @@ export function Cowork({ projectId, entities, threads }: {
     try {
       const res = await coworkTurn({ threadId: active?.id, projectId, text, entityIds: ids, variantSel, ...(pendingSource ? { sourceGenerationId: pendingSource } : {}) });
       if ("error" in res) { setError(res.error); return; }
-      const fresh = await getCoworkThreadClient(res.threadId);
-      if (fresh) {
-        setList((cur) => [fresh, ...cur.filter((t) => t.id !== fresh.id)]);
-        setActiveId(fresh.id);
-      }
+      await refreshThread(res.threadId);
       setText("");
       setIds([]);
       setVariantSel({});
@@ -207,40 +230,61 @@ export function Cowork({ projectId, entities, threads }: {
                     payload={m.payload}
                     entities={entities}
                     alreadyGenerated={!!m.genJobId}
+                    threadId={active!.id}
+                    projectId={projectId}
+                    onRevised={() => { if (active) refreshThread(active.id); }}
                   />
                 );
               }
               if (m.kind === "GEN_RESULT") {
-                const r = m.payload as { kind?: string; urls?: string[]; generationIds?: string[] } | null;
+                const r = m.payload as { kind?: string; model?: string; urls?: string[]; generationIds?: string[] } | null;
                 const urls = r?.urls ?? [];
                 const genIds = r?.generationIds ?? [];
-                const isImage = (r?.kind ?? "image") === "image"; // only image frames are animatable
+                const rKind = r?.kind ?? "image";
+                const model = r?.model ?? "";
+                const isImage = rKind === "image"; // only image frames are animatable
+                const price = resultPriceUsd(rKind, model); // DISPLAY-ONLY
                 return (
                   <div key={m.id} className="cw-result">
                     {urls.map((u, i) => {
                       const gid = genIds[i];
-                      const canAnimate = isImage && !isVideoUrl(u) && !!gid;
+                      const video = isVideoUrl(u);
+                      const kind = video ? "video" : "image";
+                      const canAnimate = isImage && !video && !!gid;
                       return (
-                        <div key={i} style={{ position: "relative", display: "inline-flex" }}>
-                          {isVideoUrl(u) ? (
-                            <video src={u} muted loop autoPlay playsInline />
-                          ) : (
-                            // eslint-disable-next-line @next/next/no-img-element
-                            <img src={u} alt="" />
-                          )}
-                          {canAnimate && (
-                            <button
-                              type="button"
-                              className="al-iconbtn al-iconbtn-sm"
-                              aria-label="Animate this frame"
-                              title="Animate this frame"
-                              onClick={() => animateResult(gid)}
-                              style={{ position: "absolute", top: 6, right: 6, background: "rgba(0,0,0,.55)", color: "#fff" }}
-                            >
-                              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.75" strokeLinecap="round" strokeLinejoin="round" aria-hidden><polygon points="5 3 19 12 5 21 5 3" /></svg>
-                            </button>
-                          )}
-                        </div>
+                        <figure key={i} className="cw-media">
+                          <div className="cw-media-frame">
+                            {video ? (
+                              <video src={u} controls muted loop playsInline />
+                            ) : (
+                              <button
+                                type="button"
+                                className="cw-media-btn"
+                                title="Click to enlarge"
+                                onClick={() => setZoom({ src: u, kind })}
+                              >
+                                {/* eslint-disable-next-line @next/next/no-img-element */}
+                                <img src={u} alt="" />
+                              </button>
+                            )}
+                            {canAnimate && (
+                              <button
+                                type="button"
+                                className="al-iconbtn al-iconbtn-sm"
+                                aria-label="Animate this frame"
+                                title="Animate this frame"
+                                onClick={() => animateResult(gid)}
+                                style={{ position: "absolute", top: 6, right: 6, background: "rgba(0,0,0,.55)", color: "#fff" }}
+                              >
+                                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.75" strokeLinecap="round" strokeLinejoin="round" aria-hidden><polygon points="5 3 19 12 5 21 5 3" /></svg>
+                              </button>
+                            )}
+                          </div>
+                          <figcaption className="cw-media-cap">
+                            {model || kind}
+                            {price != null && <span className="cw-media-cap-price"> · ~${price.toFixed(2)}</span>}
+                          </figcaption>
+                        </figure>
                       );
                     })}
                   </div>
@@ -298,6 +342,8 @@ export function Cowork({ projectId, entities, threads }: {
           </div>
         </div>
       </div>
+
+      {zoom && <Lightbox src={zoom.src} kind={zoom.kind} onClose={() => setZoom(null)} />}
     </div>
   );
 }

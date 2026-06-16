@@ -1,9 +1,10 @@
 "use client";
 import { useEffect, useRef, useState } from "react";
 import { MentionInput, buildMentionDoc } from "@/components/MentionInput";
-import { coworkGenerate } from "@/lib/cowork-actions";
+import { coworkGenerate, coworkTurn } from "@/lib/cowork-actions";
 import { getGenJob } from "@/lib/gen-actions";
 import { GEN_PRICE_USD_PER_IMAGE, videoPriceUsd, type GenVideoModel } from "@artlio/core";
+import { Lightbox } from "@/components/Lightbox";
 import type { EntityDTO } from "@/lib/types";
 
 const POLL_CAP = 120; // ~4 min at 2s — mirrors GenSpace
@@ -14,11 +15,17 @@ export function GenerateCard({
   payload,
   entities,
   alreadyGenerated,
+  threadId,
+  projectId,
+  onRevised,
 }: {
   cardId: string;
   payload: unknown;
   entities: EntityDTO[];
   alreadyGenerated: boolean;
+  threadId: string;
+  projectId: string;
+  onRevised: () => void;
 }) {
   const p = (payload ?? {}) as {
     kind?: "image" | "video";
@@ -71,6 +78,19 @@ export function GenerateCard({
   // GEN_RESULT message (rendered by Cowork.tsx) is the source of truth for the image, so
   // a reloaded already-generated card shows "Generated" without a stuck "Generating…".
   const [showResult, setShowResult] = useState(false);
+
+  // T2: Skip — client-only dismiss (no server call); collapses the card body.
+  const [skipped, setSkipped] = useState(false);
+
+  // T2: "Do it differently" — NL revise. coworkTurn re-plans (propose-only, never
+  // spends); onRevised() lets the parent re-fetch the thread so the new card appears.
+  const [revise, setRevise] = useState("");
+  const [reviseBusy, setReviseBusy] = useState(false);
+  const reviseBusyRef = useRef(false); // synchronous double-submit guard (GenSpace pattern)
+  const [reviseError, setReviseError] = useState<string | undefined>(undefined);
+
+  // T3: click-to-enlarge for the in-card live result (reuses the Gen-space Lightbox).
+  const [zoom, setZoom] = useState<{ src: string; kind: "image" | "video" } | null>(null);
 
   // Hold the interval timer so we can clear it on unmount (leak avoidance).
   const intervalRef = useRef<ReturnType<typeof setInterval> | null>(null);
@@ -173,6 +193,35 @@ export function GenerateCard({
     }
   }
 
+  async function submitRevise() {
+    const feedback = revise.trim();
+    // double-submit guard: reviseBusyRef catches a same-frame re-submit `reviseBusy`
+    // state can't. Propose-only — coworkTurn never spends.
+    if (!feedback || reviseBusy || reviseBusyRef.current) return;
+    reviseBusyRef.current = true;
+    setReviseBusy(true);
+    setReviseError(undefined);
+    try {
+      const res = await coworkTurn({ threadId, projectId, text: feedback });
+      if ("error" in res) {
+        setReviseError(res.error);
+        return;
+      }
+      setRevise("");
+      onRevised(); // parent re-fetches the thread → the re-planned card appears
+    } catch {
+      setReviseError("Couldn't reach cowork — please try again.");
+    } finally {
+      reviseBusyRef.current = false;
+      setReviseBusy(false);
+    }
+  }
+
+  // T2: Skip is a client-only dismiss — the message stays; we just collapse its body.
+  if (skipped) {
+    return <div className="cw-card-skipped">Skipped</div>;
+  }
+
   return (
     <div className="cw-card cw-card-gen">
       {/* Header: model label + display-only price + downgrade note */}
@@ -207,13 +256,49 @@ export function GenerateCard({
         </p>
       )}
 
-      <button
-        className="al-btn al-btn-md al-btn-primary"
-        disabled={busy || generated || !prompt.trim()}
-        onClick={generate}
-      >
-        {generated ? "Generated" : busy ? "Generating…" : "Generate"}
-      </button>
+      <div className="cw-card-actions">
+        <button
+          className="al-btn al-btn-md al-btn-primary"
+          disabled={busy || generated || !prompt.trim()}
+          onClick={generate}
+        >
+          {generated ? "Generated" : busy ? "Generating…" : "Generate"}
+        </button>
+        {/* T2: Skip — client-only dismiss; hidden once generated (nothing to skip). */}
+        {!generated && (
+          <button
+            className="al-btn al-btn-md al-btn-ghost"
+            disabled={busy}
+            onClick={() => setSkipped(true)}
+          >
+            Skip
+          </button>
+        )}
+      </div>
+
+      {/* T2: "Do it differently" — NL revise; coworkTurn re-plans (propose-only). */}
+      {!generated && (
+        <div className="cw-card-revise">
+          <input
+            className="cw-card-revise-input"
+            placeholder="Do it differently — e.g. make it night, wider shot"
+            value={revise}
+            disabled={reviseBusy}
+            onChange={(e) => setRevise(e.target.value)}
+            onKeyDown={(e) => {
+              if (e.key === "Enter") { e.preventDefault(); submitRevise(); }
+            }}
+          />
+          <button
+            className="al-btn al-btn-md al-btn-ghost"
+            disabled={reviseBusy || !revise.trim()}
+            onClick={submitRevise}
+          >
+            {reviseBusy ? "Revising…" : "Revise"}
+          </button>
+        </div>
+      )}
+      {reviseError && <span className="cw-error cw-card-result-error">{reviseError}</span>}
 
       {showResult && (
         <div className="cw-card-result">
@@ -224,16 +309,41 @@ export function GenerateCard({
             <span className="cw-error cw-card-result-error">{resultMessage}</span>
           )}
           {resultStatus === "done" &&
-            resultUrls.map((u, i) => (
-              isVideoUrl(u) ? (
-                <video key={i} src={u} muted loop autoPlay playsInline className="cw-card-result-img" />
-              ) : (
-                // eslint-disable-next-line @next/next/no-img-element
-                <img key={i} src={u} alt="" className="cw-card-result-img" />
-              )
-            ))}
+            resultUrls.map((u, i) => {
+              const kind = isVideoUrl(u) ? "video" : "image";
+              return (
+                <figure key={i} className="cw-media">
+                  {kind === "video" ? (
+                    <video
+                      src={u}
+                      controls
+                      muted
+                      loop
+                      playsInline
+                      className="cw-card-result-img"
+                    />
+                  ) : (
+                    <button
+                      type="button"
+                      className="cw-media-btn"
+                      title="Click to enlarge"
+                      onClick={() => setZoom({ src: u, kind })}
+                    >
+                      {/* eslint-disable-next-line @next/next/no-img-element */}
+                      <img src={u} alt="" className="cw-card-result-img" />
+                    </button>
+                  )}
+                  <figcaption className="cw-media-cap">
+                    {p.model || kind}
+                    {Number.isFinite(price) && <span className="cw-media-cap-price"> · ~${price.toFixed(2)}</span>}
+                  </figcaption>
+                </figure>
+              );
+            })}
         </div>
       )}
+
+      {zoom && <Lightbox src={zoom.src} kind={zoom.kind} onClose={() => setZoom(null)} />}
     </div>
   );
 }
