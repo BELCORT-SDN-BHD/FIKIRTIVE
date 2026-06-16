@@ -117,6 +117,17 @@ export const coworkGenerateRequest = z.object({
 }).strict();
 export type CoworkGenerateRequest = z.infer<typeof coworkGenerateRequest>;
 
+export const coworkRenameThreadRequest = z.object({
+  threadId: z.string().min(1).max(64),
+  title: z.string().trim().min(1).max(120),
+}).strict();
+export type CoworkRenameThreadRequest = z.infer<typeof coworkRenameThreadRequest>;
+
+export const coworkDeleteThreadRequest = z.object({
+  threadId: z.string().min(1).max(64),
+}).strict();
+export type CoworkDeleteThreadRequest = z.infer<typeof coworkDeleteThreadRequest>;
+
 export const coworkTurnSchema = z.object({
   planSteps: z.array(z.string().trim().min(1).transform((s) => s.slice(0, 200))).transform((arr) => arr.slice(0, MAX_PLAN_STEPS)).default([]),
   reply: z.string().trim().min(1).transform((s) => s.slice(0, 2000)),

@@ -16,6 +16,7 @@ import {
   mockPlannerReply, suggestModel, GEN_MODELS, GEN_VIDEO_MODELS,
   GEN_PRICE_USD_PER_IMAGE, videoPriceUsd,
   coworkGenerateRequest, coworkProposalSchema,
+  coworkRenameThreadRequest, coworkDeleteThreadRequest,
   type ChatMessage, type CoworkTurn, type GenVideoModel,
 } from "@artlio/core";
 import { getEnhanceDirective } from "./cowork-knowledge";
@@ -345,4 +346,34 @@ export async function coworkGenerate(raw: unknown): Promise<{ id: string } | { e
     console.warn(`coworkGenerate: failed to mark card ${cardId} with genJobId ${res.id} (UI reload-disable only):`, e instanceof Error ? e.message : e);
   }
   return res;
+}
+
+export async function coworkRenameThread(raw: unknown): Promise<{ ok: true } | { error: string }> {
+  const parsed = coworkRenameThreadRequest.safeParse(raw);
+  if (!parsed.success) return { error: "Give the conversation a title (1-120 chars)." };
+  const { threadId, title } = parsed.data;
+  try {
+    const { count } = await prisma.chatThread.updateMany({
+      where: { id: threadId, ownerId: FOUNDER_OWNER_ID, deletedAt: null },
+      data: { title },
+    });
+    if (!count) return { error: "Conversation not found." };
+  } catch { return { error: "Couldn't rename — please try again." }; } // {error} contract, like the sibling actions
+  revalidatePath("/", "layout");
+  return { ok: true };
+}
+
+export async function coworkDeleteThread(raw: unknown): Promise<{ ok: true } | { error: string }> {
+  const parsed = coworkDeleteThreadRequest.safeParse(raw);
+  if (!parsed.success) return { error: "Invalid request." };
+  const { threadId } = parsed.data;
+  try {
+    const { count } = await prisma.chatThread.updateMany({
+      where: { id: threadId, ownerId: FOUNDER_OWNER_ID, deletedAt: null },
+      data: { deletedAt: new Date() }, // soft-delete: hides from the list; messages + threadId-isolation untouched
+    });
+    if (!count) return { error: "Conversation not found." };
+  } catch { return { error: "Couldn't delete — please try again." }; } // {error} contract, like the sibling actions
+  revalidatePath("/", "layout");
+  return { ok: true };
 }
