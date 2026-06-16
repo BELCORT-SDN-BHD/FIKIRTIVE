@@ -16,7 +16,7 @@ import {
   mockPlannerReply, suggestModel, GEN_MODELS, GEN_VIDEO_MODELS,
   GEN_PRICE_USD_PER_IMAGE, videoPriceUsd,
   coworkGenerateRequest, coworkProposalSchema,
-  coworkRenameThreadRequest, coworkDeleteThreadRequest,
+  coworkRenameThreadRequest, coworkDeleteThreadRequest, MAX_GEN_PROMPT,
   type ChatMessage, type CoworkTurn, type GenVideoModel,
 } from "@artlio/core";
 import { getEnhanceDirective } from "./cowork-knowledge";
@@ -147,7 +147,7 @@ const PLANNER_MAX_TOKENS = 1200;
 export async function coworkTurn(raw: unknown): Promise<{ threadId: string } | { error: string }> {
   const parsed = coworkTurnRequest.safeParse(raw);
   if (!parsed.success) return { error: "Say what you'd like to make." };
-  const { projectId, text, entityIds, variantSel } = parsed.data;
+  const { projectId, text, entityIds, variantSel, sourceGenerationId } = parsed.data;
 
   // Mirror the sibling actions: any DB/transport hiccup returns the {error} contract
   // rather than throwing an unhandled rejection to the client. (Guard early-returns
@@ -155,6 +155,23 @@ export async function coworkTurn(raw: unknown): Promise<{ threadId: string } | {
   try {
     const project = await prisma.project.findFirst({ where: { id: projectId, ...OWNED } });
     if (!project) return { error: "Project not found." };
+
+    // "Animate this result" — the source frame is a server-TRUSTED reference. Validate
+    // it server-side (owned + in THIS project + live) before letting it force a video
+    // proposal; an invalid/foreign/deleted id is silently ignored (treated as no source)
+    // so a stale tab can never error the turn. This is a propose-only gate — startGen's
+    // checkCast re-validates the same frame at spend time (the money backstop).
+    let validSource: string | null = null;
+    if (sourceGenerationId) {
+      // owner + project + live AND an IMAGE asset (i2v animates an image frame) — mirrors
+      // the worker's image-ext fail-close so a non-image source is rejected at turn time,
+      // not just at spend. checkCast + the worker remain the money backstops.
+      const g = await prisma.generation.findFirst({
+        where: { id: sourceGenerationId, ...OWNED, projectId, asset: { ext: { in: ["png", "jpg", "jpeg", "webp"] } } },
+        select: { id: true },
+      });
+      if (g) validSource = g.id;
+    }
 
     // Resolve the thread. A NEW thread is NOT created here — its create is folded into
     // the persistence $transaction below, so a planner/DB failure can never leave an
@@ -225,6 +242,21 @@ export async function coworkTurn(raw: unknown): Promise<{ threadId: string } | {
       turn.proposal.variantSel = vsel;
     }
 
+    // "Animate this result": a valid source frame makes this turn inherently a VIDEO (i2v).
+    // FORCE a video proposal — if the planner returned an image proposal or null, coerce to
+    // a video proposal whose motion prompt is the user's text. Identity comes from the frame,
+    // so we drop refs/variantSel (§134 — the chosen variant is already baked into the
+    // keyframe). suggestModel then sees hasSourceImage:true (keeps empty-aspect i2v models).
+    if (validSource) {
+      if (turn.proposal) {
+        turn.proposal.kind = "video";
+        turn.proposal.entityIds = [];
+        turn.proposal.variantSel = {};
+      } else {
+        turn.proposal = { kind: "video", structuredPrompt: text.slice(0, MAX_GEN_PROMPT), entityIds: [], variantSel: {} };
+      }
+    }
+
     // build the gen-card payload (planner proposes an image keyframe first for video-with-variant per COWORK_PLANNER_SYSTEM)
     let cardPayload: Prisma.InputJsonObject | null = null;
     if (turn.proposal) {
@@ -233,7 +265,7 @@ export async function coworkTurn(raw: unknown): Promise<{ threadId: string } | {
         desiredAspect: turn.proposal.desiredAspect,
         desiredDuration: turn.proposal.desiredDuration,
         desiredAudio: turn.proposal.desiredAudio,
-        hasSourceImage: false, // v1: no canvas source-frame yet (i2v source comes in a later slice)
+        hasSourceImage: !!validSource, // i2v "animate" turn carries an owned source frame
         hasTail: false,
       });
       const price = turn.proposal.kind === "video"
@@ -243,6 +275,7 @@ export async function coworkTurn(raw: unknown): Promise<{ threadId: string } | {
         kind: turn.proposal.kind, model: sm.model, params: sm.params, reason: sm.reason, downgraded: sm.downgraded,
         structuredPrompt: turn.proposal.structuredPrompt, entityIds: turn.proposal.entityIds, variantSel: turn.proposal.variantSel,
         estimatedPriceUsd: price, // DISPLAY-only; the card re-derives on Generate (Plan-2)
+        ...(validSource ? { sourceGenerationId: validSource } : {}), // i2v source frame (server-trusted; re-validated at Generate)
       };
     }
 
@@ -310,6 +343,9 @@ export async function coworkGenerate(raw: unknown): Promise<{ id: string } | { e
   const model = typeof p.model === "string" ? p.model : null;
   const params = (p.params ?? {}) as { aspectRatio?: string; resolution?: string; durationSeconds?: number; audio?: boolean; count?: number };
   if (!model) return { error: "This card is missing a model." };
+  // i2v source frame: server-trusted (it was owner+project validated in coworkTurn before
+  // being persisted on the card). startGen.checkCast re-validates it at spend (the backstop).
+  const sourceGenerationId = typeof p.sourceGenerationId === "string" ? p.sourceGenerationId : null;
 
   // Build the genRequest SERVER-SIDE. model/kind/count/video-params come from the card;
   // only the (possibly edited) prompt + refs come from the client. startGen.safeParse +
@@ -320,6 +356,7 @@ export async function coworkGenerate(raw: unknown): Promise<{ id: string } | { e
     prompt,
     entityIds,
     ...(Object.keys(variantSel).length ? { variantSel } : {}),
+    ...(sourceGenerationId ? { sourceGenerationId } : {}), // i2v — checkCast re-validates ownership+project
     count: proposal.data.kind === "video" ? 1 : (params.count ?? 1),
     kind: proposal.data.kind,
     model,

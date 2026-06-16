@@ -42,7 +42,7 @@ export function toEntityDTO(e: EntityWithRefs): EntityDTO {
 
 export function toChatMessageDTO(
   m: ChatThreadWithMessages["messages"][number],
-  urlsByJob: Map<string, string[]>,
+  urlsByJob: Map<string, { urls: string[]; generationIds: string[] }>,
 ): ChatMessageDTO {
   let payload: unknown | null = null;
   if (m.kind === "GEN_CARD" && m.payload) {
@@ -60,10 +60,12 @@ export function toChatMessageDTO(
     payload = proposal.success ? { ...p, ...proposal.data } : null;
   } else if (m.kind === "GEN_RESULT") {
     const p = (m.payload ?? {}) as { kind?: string; model?: string };
+    const resolved = m.genJobId ? urlsByJob.get(m.genJobId) : undefined;
     payload = {
       kind: p.kind ?? "image",
       model: p.model ?? "",
-      urls: m.genJobId ? (urlsByJob.get(m.genJobId) ?? []) : [],
+      urls: resolved?.urls ?? [],
+      generationIds: resolved?.generationIds ?? [], // "Animate this result" → i2v source-frame
     };
   } else if (m.kind === "PLAN" && m.payload) {
     payload = m.payload; // { planSteps }
@@ -80,7 +82,7 @@ export function toChatMessageDTO(
   };
 }
 
-export function toChatThreadDTO(t: ChatThreadWithMessages, urlsByJob: Map<string, string[]>): ChatThreadDTO {
+export function toChatThreadDTO(t: ChatThreadWithMessages, urlsByJob: Map<string, { urls: string[]; generationIds: string[] }>): ChatThreadDTO {
   return {
     id: t.id,
     projectId: t.projectId,

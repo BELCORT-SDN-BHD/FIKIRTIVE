@@ -47,6 +47,11 @@ export const coworkTurnRequest = z.object({
   text: z.string().trim().min(1).max(MAX_COWORK_IDEA),
   entityIds: z.array(z.string().min(1).max(64)).max(MAX_GEN_ENTITIES).default([]),
   variantSel: z.record(z.string().min(1).max(64), z.string().min(1).max(64)).default({}),
+  // "Animate this result" — a finished result frame to use as the i2v source. A
+  // server-TRUSTED reference: coworkTurn re-validates it (owned + in this project +
+  // live) before forcing a video proposal, and startGen's checkCast re-validates at
+  // spend. Drop/ignore if invalid; never errors the turn.
+  sourceGenerationId: z.string().min(1).max(64).optional(),
 }).strict();
 export type CoworkTurnRequest = z.infer<typeof coworkTurnRequest>;
 

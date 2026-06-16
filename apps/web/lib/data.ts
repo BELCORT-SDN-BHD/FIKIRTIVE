@@ -119,13 +119,15 @@ export async function getCoworkThread(threadId: string) {
 
 export type ChatThreadWithMessages = NonNullable<Awaited<ReturnType<typeof getCoworkThread>>>;
 
-/** Map of genJobId → ordered image urls for the GEN_RESULT messages in these threads.
- *  Source of truth = the GenJob's generationIds (the message payload copy is advisory). */
+/** Map of genJobId → { ordered image urls, generationIds } for the GEN_RESULT messages
+ *  in these threads. urls render the result; generationIds let the UI pass one as the
+ *  i2v source-frame ("Animate this result"). Source of truth = the GenJob's
+ *  generationIds (the message payload copy is advisory). */
 export async function resolveCoworkResultUrls(threads: { messages: { genJobId: string | null; kind: string }[] }[]) {
   const jobIds = threads.flatMap((t) =>
     t.messages.filter((m) => m.kind === "GEN_RESULT" && m.genJobId).map((m) => m.genJobId as string),
   );
-  const map = new Map<string, string[]>();
+  const map = new Map<string, { urls: string[]; generationIds: string[] }>();
   if (!jobIds.length) return map;
   const jobs = await prisma.genJob.findMany({ where: { id: { in: jobIds } }, select: { id: true, generationIds: true } });
   const allGenIds = jobs.flatMap((j) => j.generationIds);
@@ -134,13 +136,13 @@ export async function resolveCoworkResultUrls(threads: { messages: { genJobId: s
     : [];
   const genById = new Map(gens.map((g) => [g.id, g]));
   for (const j of jobs) {
-    map.set(
-      j.id,
-      j.generationIds
-        .map((gid) => genById.get(gid))
-        .filter((g) => !!g)
-        .map((g) => storageKeyToSrc(storageKey(g.asset.ownerId, g.asset.contentHash, g.asset.ext))),
-    );
+    // keep urls + generationIds in the same surviving order (a generation whose row
+    // was deleted drops from BOTH so url[i] ↔ generationIds[i] stays aligned)
+    const live = j.generationIds.map((gid) => genById.get(gid)).filter((g) => !!g);
+    map.set(j.id, {
+      urls: live.map((g) => storageKeyToSrc(storageKey(g.asset.ownerId, g.asset.contentHash, g.asset.ext))),
+      generationIds: live.map((g) => g.id),
+    });
   }
   return map;
 }

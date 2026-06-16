@@ -29,6 +29,19 @@ export function Cowork({ projectId, entities, threads }: {
   const [composerKey, setComposerKey] = useState(0);
   const [error, setError] = useState<string | null>(null);
 
+  // "Animate this result": a finished IMAGE result the user picked as the i2v source
+  // frame. The next send carries it as sourceGenerationId; coworkTurn validates it and
+  // forces a video proposal. Cleared after send (or when dismissed).
+  const [pendingSource, setPendingSource] = useState<string | null>(null);
+  const dockRef = useRef<HTMLDivElement>(null);
+
+  function animateResult(generationId: string) {
+    setPendingSource(generationId);
+    setError(null);
+    // focus the composer so the user can describe the motion right away
+    requestAnimationFrame(() => dockRef.current?.querySelector<HTMLElement>(".ProseMirror")?.focus());
+  }
+
   // inline rename state for the rail
   const [renamingId, setRenamingId] = useState<string | null>(null);
   const [renameText, setRenameText] = useState("");
@@ -39,7 +52,7 @@ export function Cowork({ projectId, entities, threads }: {
     setBusy(true);
     setError(null);
     try {
-      const res = await coworkTurn({ threadId: active?.id, projectId, text, entityIds: ids, variantSel });
+      const res = await coworkTurn({ threadId: active?.id, projectId, text, entityIds: ids, variantSel, ...(pendingSource ? { sourceGenerationId: pendingSource } : {}) });
       if ("error" in res) { setError(res.error); return; }
       const fresh = await getCoworkThreadClient(res.threadId);
       if (fresh) {
@@ -49,6 +62,7 @@ export function Cowork({ projectId, entities, threads }: {
       setText("");
       setIds([]);
       setVariantSel({});
+      setPendingSource(null);
       setComposerKey((k) => k + 1);
     } catch {
       setError("Couldn't reach cowork — please try again.");
@@ -197,17 +211,38 @@ export function Cowork({ projectId, entities, threads }: {
                 );
               }
               if (m.kind === "GEN_RESULT") {
-                const r = m.payload as { urls?: string[] } | null;
+                const r = m.payload as { kind?: string; urls?: string[]; generationIds?: string[] } | null;
+                const urls = r?.urls ?? [];
+                const genIds = r?.generationIds ?? [];
+                const isImage = (r?.kind ?? "image") === "image"; // only image frames are animatable
                 return (
                   <div key={m.id} className="cw-result">
-                    {(r?.urls ?? []).map((u, i) => (
-                      isVideoUrl(u) ? (
-                        <video key={i} src={u} muted loop autoPlay playsInline />
-                      ) : (
-                        // eslint-disable-next-line @next/next/no-img-element
-                        <img key={i} src={u} alt="" />
-                      )
-                    ))}
+                    {urls.map((u, i) => {
+                      const gid = genIds[i];
+                      const canAnimate = isImage && !isVideoUrl(u) && !!gid;
+                      return (
+                        <div key={i} style={{ position: "relative", display: "inline-flex" }}>
+                          {isVideoUrl(u) ? (
+                            <video src={u} muted loop autoPlay playsInline />
+                          ) : (
+                            // eslint-disable-next-line @next/next/no-img-element
+                            <img src={u} alt="" />
+                          )}
+                          {canAnimate && (
+                            <button
+                              type="button"
+                              className="al-iconbtn al-iconbtn-sm"
+                              aria-label="Animate this frame"
+                              title="Animate this frame"
+                              onClick={() => animateResult(gid)}
+                              style={{ position: "absolute", top: 6, right: 6, background: "rgba(0,0,0,.55)", color: "#fff" }}
+                            >
+                              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.75" strokeLinecap="round" strokeLinejoin="round" aria-hidden><polygon points="5 3 19 12 5 21 5 3" /></svg>
+                            </button>
+                          )}
+                        </div>
+                      );
+                    })}
                   </div>
                 );
               }
@@ -221,7 +256,22 @@ export function Cowork({ projectId, entities, threads }: {
           </div>
         </div>
 
-        <div className="composer-dock">
+        <div className="composer-dock" ref={dockRef}>
+          {pendingSource && (
+            <div className="cw-animate-hint" style={{ maxWidth: 880, width: "100%", display: "flex", alignItems: "center", gap: 8, margin: "0 0 8px", font: "var(--text-small)", color: "var(--fg-2)" }}>
+              <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.75" strokeLinecap="round" strokeLinejoin="round" aria-hidden><polygon points="5 3 19 12 5 21 5 3" /></svg>
+              <span style={{ flex: 1, minWidth: 0 }}>Animating this frame — describe the motion.</span>
+              <button
+                type="button"
+                className="al-iconbtn al-iconbtn-sm"
+                aria-label="Cancel animate"
+                title="Cancel"
+                onClick={() => setPendingSource(null)}
+              >
+                <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.75" strokeLinecap="round" strokeLinejoin="round" aria-hidden><path d="M18 6 6 18" /><path d="m6 6 12 12" /></svg>
+              </button>
+            </div>
+          )}
           <div className="al-promptbar" style={{ maxWidth: 880, width: "100%" }}>
             <div className="al-input-wrap" style={{ border: "none", background: "none", padding: 0 }}>
               <div style={{ flex: 1, minWidth: 0 }}>
