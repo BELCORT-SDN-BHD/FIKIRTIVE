@@ -1,7 +1,7 @@
 "use client";
 import { useEffect, useRef, useState } from "react";
 import { MentionInput, buildMentionDoc } from "@/components/MentionInput";
-import { coworkGenerate, coworkTurn } from "@/lib/cowork-actions";
+import { coworkGenerate, coworkTurn, coworkVaryCard } from "@/lib/cowork-actions";
 import { getGenJob } from "@/lib/gen-actions";
 import {
   GEN_PRICE_USD_PER_IMAGE, videoPriceUsd, videoDefaults,
@@ -129,6 +129,11 @@ export function GenerateCard({
   const reviseBusyRef = useRef(false); // synchronous double-submit guard (GenSpace pattern)
   const [reviseError, setReviseError] = useState<string | undefined>(undefined);
 
+  // "Create variations" — clones this card's payload into a new UN-generated card ($0).
+  const [varyBusy, setVaryBusy] = useState(false);
+  const varyBusyRef = useRef(false);
+  const [varyError, setVaryError] = useState<string | undefined>(undefined);
+
   // T3: click-to-enlarge for the in-card live result (reuses the Gen-space Lightbox).
   const [zoom, setZoom] = useState<{ src: string; kind: "image" | "video" } | null>(null);
 
@@ -183,7 +188,10 @@ export function GenerateCard({
               ...(durationSeconds != null ? { durationSeconds } : {}),
               ...(resolution ? { resolution } : {}),
               ...(aspectRatio ? { aspectRatio } : {}),
-              audio,
+              // only send audio for models that actually expose an audio toggle. startGen
+              // rejects audio:false for always-silent models (gen.ts superRefine), so an
+              // unconditional `audio` would make kling/grok/wan/hailuo un-generatable from a card.
+              ...(opts?.audioToggle ? { audio } : {}),
             }
           : {}),
       });
@@ -277,6 +285,26 @@ export function GenerateCard({
     } finally {
       reviseBusyRef.current = false;
       setReviseBusy(false);
+    }
+  }
+
+  async function createVariations() {
+    if (varyBusy || varyBusyRef.current) return;
+    varyBusyRef.current = true;
+    setVaryBusy(true);
+    setVaryError(undefined);
+    try {
+      const res = await coworkVaryCard({ cardId });
+      if ("error" in res) {
+        setVaryError(res.error);
+        return;
+      }
+      onRevised(); // parent re-fetches the thread → the cloned card appears at the bottom
+    } catch {
+      setVaryError("Couldn't create variations — please try again.");
+    } finally {
+      varyBusyRef.current = false;
+      setVaryBusy(false);
     }
   }
 
@@ -415,6 +443,16 @@ export function GenerateCard({
             Skip
           </button>
         )}
+        {/* Create variations — only shown once generated; clones card payload ($0). */}
+        {generated && (
+          <button
+            className="al-btn al-btn-md al-btn-ghost"
+            disabled={varyBusy}
+            onClick={createVariations}
+          >
+            {varyBusy ? "Creating…" : "Create variations"}
+          </button>
+        )}
       </div>
 
       {/* T2: "Do it differently" — NL revise; coworkTurn re-plans (propose-only). */}
@@ -440,6 +478,7 @@ export function GenerateCard({
         </div>
       )}
       {reviseError && <span className="cw-error cw-card-result-error">{reviseError}</span>}
+      {varyError && <span className="cw-error cw-card-result-error">{varyError}</span>}
 
       {showResult && (
         <div className="cw-card-result">

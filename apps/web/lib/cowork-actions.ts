@@ -13,10 +13,10 @@ import {
   createTransport, runSkill, draftStoryboardSkill, enhancePromptSkill,
   modelFamily, deriveMode,
   coworkTurnRequest, COWORK_MEMORY_TURNS, buildPlannerMessages, parseCoworkTurn,
-  mockPlannerReply, suggestModel, GEN_MODELS, GEN_VIDEO_MODELS,
+  mockPlannerReply, suggestModel, GEN_MODELS, GEN_VIDEO_MODELS, GEN_VIDEO_MODEL_OPTIONS,
   GEN_PRICE_USD_PER_IMAGE, videoPriceUsd,
   coworkGenerateRequest, coworkProposalSchema,
-  coworkRenameThreadRequest, coworkDeleteThreadRequest, MAX_GEN_PROMPT,
+  coworkRenameThreadRequest, coworkDeleteThreadRequest, coworkVaryCardRequest, MAX_GEN_PROMPT,
   type ChatMessage, type CoworkTurn, type GenVideoModel,
 } from "@artlio/core";
 import { getEnhanceDirective } from "./cowork-knowledge";
@@ -357,6 +357,12 @@ export async function coworkGenerate(raw: unknown): Promise<{ id: string } | { e
   // set, count≤maxCount → an invalid/mispriced combo is rejected with {error}, no spend).
   // prompt/entityIds/variantSel still from the client; effectiveVariantSel drops it for video.
   const chosenModel = modelOverride ?? model;
+  // Only forward `audio` for video models that actually expose an audio toggle. startGen's
+  // superRefine REJECTS audio:false for always-silent models (kling/grok/wan/hailuo); suggestModel
+  // persists params.audio=false for those, so blindly forwarding it makes them un-generatable.
+  const audioToggle = proposal.data.kind === "video" && (GEN_VIDEO_MODELS as readonly string[]).includes(chosenModel)
+    ? GEN_VIDEO_MODEL_OPTIONS[chosenModel as GenVideoModel].audioToggle
+    : false;
   const req = {
     projectId: card.thread.projectId,
     threadId: card.threadId,
@@ -371,7 +377,7 @@ export async function coworkGenerate(raw: unknown): Promise<{ id: string } | { e
       durationSeconds: durationOverride ?? params.durationSeconds ?? null,
       resolution: resolutionOverride ?? params.resolution ?? null,
       aspectRatio: aspectOverride ?? params.aspectRatio ?? null,
-      audio: audioOverride ?? params.audio ?? null,
+      ...(audioToggle ? { audio: audioOverride ?? params.audio ?? null } : {}),
     } : {}),
     idempotencyKey: `cowork:${cardId}`, // stable — same card always dedupes; NEVER per-retry
   };
@@ -420,4 +426,50 @@ export async function coworkDeleteThread(raw: unknown): Promise<{ ok: true } | {
   } catch { return { error: "Couldn't delete — please try again." }; } // {error} contract, like the sibling actions
   revalidatePath("/", "layout");
   return { ok: true };
+}
+
+/** Create a variation of an existing GEN_CARD — clones its payload verbatim into a new
+ *  UN-generated card on the SAME thread. Zero spend: no startGen, no GenJob, no queue.
+ *  The new card gets a fresh newId() so its cowork:<newCardId> idempotencyKey is
+ *  independent of the original; clicking Generate on it goes through the normal single-spend
+ *  guard keyed on the new card id — no cross-contamination with the original. */
+export async function coworkVaryCard(raw: unknown): Promise<{ threadId: string } | { error: string }> {
+  const parsed = coworkVaryCardRequest.safeParse(raw);
+  if (!parsed.success) return { error: "That card can't be varied." };
+  const { cardId } = parsed.data;
+  try {
+    const card = await prisma.chatMessage.findFirst({
+      where: { id: cardId, ownerId: FOUNDER_OWNER_ID, kind: "GEN_CARD", deletedAt: null },
+      select: { id: true, threadId: true, payload: true, thread: { select: { projectId: true, deletedAt: true, ownerId: true } } },
+    });
+    if (!card || card.thread.deletedAt || card.thread.ownerId !== FOUNDER_OWNER_ID) return { error: "Card not found." };
+
+    // Validate the persisted payload is still a real, complete card (mirrors coworkGenerate).
+    const p = (card.payload ?? {}) as Record<string, unknown>;
+    const proposal = coworkProposalSchema.safeParse({ kind: p.kind, desiredAspect: p.desiredAspect, desiredDuration: p.desiredDuration, desiredAudio: p.desiredAudio, structuredPrompt: p.structuredPrompt, entityIds: p.entityIds ?? [], variantSel: p.variantSel ?? {} });
+    if (!proposal.success) return { error: "This card is no longer valid." };
+    if (typeof p.model !== "string") return { error: "This card is missing a model." };
+
+    // Clone the payload verbatim — same model/params/prompt/refs/source. No seed is pinned,
+    // so re-generating yields a genuinely different output server-side.
+    const clonedPayload = card.payload as Prisma.InputJsonObject;
+
+    const last = await prisma.chatMessage.findFirst({ where: { threadId: card.threadId }, orderBy: { seq: "desc" }, select: { seq: true } });
+    let seq = (last?.seq ?? 0);
+    const rows = [
+      { id: newId(), threadId: card.threadId, ownerId: FOUNDER_OWNER_ID, role: "AGENT" as const, kind: "TEXT" as const, seq: ++seq, text: "Another take — same settings. Generate when you're ready.", payload: undefined },
+      { id: newId(), threadId: card.threadId, ownerId: FOUNDER_OWNER_ID, role: "AGENT" as const, kind: "GEN_CARD" as const, seq: ++seq, text: "", payload: clonedPayload },
+    ];
+    await prisma.$transaction([
+      prisma.chatMessage.createMany({ data: rows }),
+      prisma.chatThread.update({ where: { id: card.threadId }, data: { updatedAt: new Date() } }),
+    ]);
+    try {
+      await prisma.actionEvent.create({ data: { id: newId(), ownerId: FOUNDER_OWNER_ID, projectId: card.thread.projectId, type: "cowork.vary", payload: { fromCardId: cardId } } });
+    } catch { /* audit best-effort */ }
+    revalidatePath("/", "layout");
+    return { threadId: card.threadId };
+  } catch {
+    return { error: "Couldn't create variations — please try again." };
+  }
 }

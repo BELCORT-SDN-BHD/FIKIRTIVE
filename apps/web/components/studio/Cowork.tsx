@@ -1,6 +1,7 @@
 "use client";
 import { useRef, useState } from "react";
 import { coworkTurn, coworkRenameThread, coworkDeleteThread } from "@/lib/cowork-actions";
+import { uploadReference } from "@/lib/actions";
 import { getCoworkThreadClient } from "@/lib/cowork-fetch";
 import { MentionInput } from "@/components/MentionInput";
 import { Lightbox } from "@/components/Lightbox";
@@ -44,10 +45,11 @@ export function Cowork({ projectId, entities, threads }: {
   const [composerKey, setComposerKey] = useState(0);
   const [error, setError] = useState<string | null>(null);
 
-  // "Animate this result": a finished IMAGE result the user picked as the i2v source
-  // frame. The next send carries it as sourceGenerationId; coworkTurn validates it and
-  // forces a video proposal. Cleared after send (or when dismissed).
-  const [pendingSource, setPendingSource] = useState<string | null>(null);
+  // "Animate this result" / uploaded image: the i2v source frame for the next turn.
+  // coworkTurn validates it and forces a video proposal. Cleared after send (or dismiss).
+  const [pendingSource, setPendingSource] = useState<{ id: string; preview?: string } | null>(null);
+  const [uploading, setUploading] = useState(false);
+  const fileInput = useRef<HTMLInputElement>(null);
   const dockRef = useRef<HTMLDivElement>(null);
 
   // T3: click-to-enlarge for durable GEN_RESULT media (reuses the Gen-space Lightbox).
@@ -63,10 +65,32 @@ export function Cowork({ projectId, entities, threads }: {
   }
 
   function animateResult(generationId: string) {
-    setPendingSource(generationId);
+    setPendingSource({ id: generationId });
     setError(null);
     // focus the composer so the user can describe the motion right away
     requestAnimationFrame(() => dockRef.current?.querySelector<HTMLElement>(".ProseMirror")?.focus());
+  }
+
+  function onUploadFile(e: React.ChangeEvent<HTMLInputElement>) {
+    const file = e.target.files?.[0];
+    e.target.value = ""; // allow re-selecting the same file
+    if (!file || uploading) return;
+    setError(null);
+    setUploading(true);
+    (async () => {
+      try {
+        const fd = new FormData();
+        fd.append("files", file);
+        const res = await uploadReference(projectId, fd);
+        if ("error" in res) { setError(res.error); return; }
+        setPendingSource({ id: res.id, preview: res.src });
+        requestAnimationFrame(() => dockRef.current?.querySelector<HTMLElement>(".ProseMirror")?.focus());
+      } catch {
+        setError("Couldn't upload — please try again.");
+      } finally {
+        setUploading(false); // always clears, even if uploadReference throws
+      }
+    })();
   }
 
   // inline rename state for the rail
@@ -74,12 +98,12 @@ export function Cowork({ projectId, entities, threads }: {
   const [renameText, setRenameText] = useState("");
 
   async function send() {
-    if (!text.trim() || busy || busyRef.current) return;
+    if (!text.trim() || busy || busyRef.current || uploading) return;
     busyRef.current = true;
     setBusy(true);
     setError(null);
     try {
-      const res = await coworkTurn({ threadId: active?.id, projectId, text, entityIds: ids, variantSel, ...(pendingSource ? { sourceGenerationId: pendingSource } : {}) });
+      const res = await coworkTurn({ threadId: active?.id, projectId, text, entityIds: ids, variantSel, ...(pendingSource ? { sourceGenerationId: pendingSource.id } : {}) });
       if ("error" in res) { setError(res.error); return; }
       await refreshThread(res.threadId);
       setText("");
@@ -251,6 +275,8 @@ export function Cowork({ projectId, entities, threads }: {
                       const video = isVideoUrl(u);
                       const kind = video ? "video" : "image";
                       const canAnimate = isImage && !video && !!gid;
+                      const ext = u.split("?")[0].split(".").pop() || "bin";
+                      const filename = `artlio-${(genIds[i] ?? String(i)).slice(0, 8)}.${ext}`;
                       return (
                         <figure key={i} className="cw-media">
                           <div className="cw-media-frame">
@@ -267,6 +293,17 @@ export function Cowork({ projectId, entities, threads }: {
                                 <img src={u} alt="" />
                               </button>
                             )}
+                            {/* Download — top-left overlay; plain anchor (no JS spend path) */}
+                            <a
+                              href={u}
+                              download={filename}
+                              className="al-iconbtn al-iconbtn-sm"
+                              title="Download"
+                              aria-label="Download"
+                              style={{ position: "absolute", top: 6, left: 6, background: "rgba(0,0,0,.55)", color: "#fff" }}
+                            >
+                              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.75" strokeLinecap="round" strokeLinejoin="round" aria-hidden><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" x2="12" y1="15" y2="3"/></svg>
+                            </a>
                             {canAnimate && (
                               <button
                                 type="button"
@@ -303,7 +340,13 @@ export function Cowork({ projectId, entities, threads }: {
         <div className="composer-dock" ref={dockRef}>
           {pendingSource && (
             <div className="cw-animate-hint" style={{ maxWidth: 880, width: "100%", display: "flex", alignItems: "center", gap: 8, margin: "0 0 8px", font: "var(--text-small)", color: "var(--fg-2)" }}>
-              <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.75" strokeLinecap="round" strokeLinejoin="round" aria-hidden><polygon points="5 3 19 12 5 21 5 3" /></svg>
+              {pendingSource.preview && (
+                /* eslint-disable-next-line @next/next/no-img-element */
+                <img src={pendingSource.preview} alt="" style={{ width: 44, height: 44, objectFit: "cover", borderRadius: 4, flexShrink: 0 }} />
+              )}
+              {!pendingSource.preview && (
+                <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.75" strokeLinecap="round" strokeLinejoin="round" aria-hidden><polygon points="5 3 19 12 5 21 5 3" /></svg>
+              )}
               <span style={{ flex: 1, minWidth: 0 }}>Animating this frame — describe the motion.</span>
               <button
                 type="button"
@@ -316,6 +359,13 @@ export function Cowork({ projectId, entities, threads }: {
               </button>
             </div>
           )}
+          <input
+            ref={fileInput}
+            type="file"
+            accept="image/png,image/jpeg,image/webp"
+            hidden
+            onChange={onUploadFile}
+          />
           <div className="al-promptbar" style={{ maxWidth: 880, width: "100%" }}>
             <div className="al-input-wrap" style={{ border: "none", background: "none", padding: 0 }}>
               <div style={{ flex: 1, minWidth: 0 }}>
@@ -330,10 +380,20 @@ export function Cowork({ projectId, entities, threads }: {
               </div>
             </div>
             <div className="al-promptbar-row">
+              <button
+                type="button"
+                className="al-iconbtn al-iconbtn-md"
+                aria-label="Upload an image to animate"
+                title="Upload an image to animate"
+                disabled={busy || uploading}
+                onClick={() => fileInput.current?.click()}
+              >
+                <IcPlus size={16} />
+              </button>
               <span className="al-promptbar-spacer" />
               <button
                 className="al-btn al-btn-md al-btn-primary"
-                disabled={busy || !text.trim()}
+                disabled={busy || uploading || !text.trim()}
                 onClick={send}
               >
                 {busy ? "Sending…" : "Send"}
