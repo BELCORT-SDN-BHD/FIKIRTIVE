@@ -20,14 +20,18 @@ export function buildPlannerMessages(args: {
   history: ChatMessage[];        // already windowed + NL-only (assistant/user)
   availableRefs: { id: string; name: string; type: string }[];
   modelSummary: string;          // e.g. "image: seedream; video: kling/veo3.1/... (agent picks)"
+  quoted?: { kind: string; preview: string }; // injected into the current turn only (NOT history)
 }): ChatMessage[] {
   const refsBlock = args.availableRefs.length
     ? `Available @refs (use ONLY these ids): ${args.availableRefs.map((r) => `${r.id}=${r.name}(${r.type})`).join("; ")}`
     : "Available @refs: none";
+  const userContent = args.quoted
+    ? `[The user is replying to an earlier ${args.quoted.kind} message: "${args.quoted.preview}"]\n\n${args.userText}`
+    : args.userText;
   return [
     { role: "system", content: `${COWORK_PLANNER_SYSTEM}\n\n${refsBlock}\nModels available downstream: ${args.modelSummary}` },
     ...args.history,
-    { role: "user", content: args.userText },
+    { role: "user", content: userContent },
   ];
 }
 

@@ -45,6 +45,10 @@ export function Cowork({ projectId, entities, threads }: {
   const [composerKey, setComposerKey] = useState(0);
   const [error, setError] = useState<string | null>(null);
 
+  // "Reply to message" — the message the user wants to quote in the next turn.
+  // Shown as a dismissible chip above the promptbar; cleared after send (or dismiss).
+  const [replyTo, setReplyTo] = useState<{ id: string; label: string } | null>(null);
+
   // "Animate this result" / uploaded image: the i2v source frame for the next turn.
   // coworkTurn validates it and forces a video proposal. Cleared after send (or dismiss).
   const [pendingSource, setPendingSource] = useState<{ id: string; preview?: string } | null>(null);
@@ -103,13 +107,14 @@ export function Cowork({ projectId, entities, threads }: {
     setBusy(true);
     setError(null);
     try {
-      const res = await coworkTurn({ threadId: active?.id, projectId, text, entityIds: ids, variantSel, ...(pendingSource ? { sourceGenerationId: pendingSource.id } : {}) });
+      const res = await coworkTurn({ threadId: active?.id, projectId, text, entityIds: ids, variantSel, ...(pendingSource ? { sourceGenerationId: pendingSource.id } : {}), ...(replyTo ? { replyToMessageId: replyTo.id } : {}) });
       if ("error" in res) { setError(res.error); return; }
       await refreshThread(res.threadId);
       setText("");
       setIds([]);
       setVariantSel({});
       setPendingSource(null);
+      setReplyTo(null);
       setComposerKey((k) => k + 1);
     } catch {
       setError("Couldn't reach cowork — please try again.");
@@ -124,6 +129,7 @@ export function Cowork({ projectId, entities, threads }: {
     setText("");
     setIds([]);
     setVariantSel({});
+    setReplyTo(null);
     setComposerKey((k) => k + 1);
     setError(null);
   }
@@ -230,10 +236,31 @@ export function Cowork({ projectId, entities, threads }: {
             )}
 
             {messages.map((m) => {
+              // Reply icon button — shown unobtrusively on every message row.
+              const replyBtn = (
+                <button
+                  type="button"
+                  className="al-iconbtn al-iconbtn-sm"
+                  aria-label="Reply to this message"
+                  title="Reply"
+                  style={{ opacity: 0.45, flexShrink: 0 }}
+                  onClick={() => {
+                    const label = m.kind === "GEN_CARD" ? "proposal"
+                      : m.kind === "GEN_RESULT" ? "result"
+                      : m.text.slice(0, 60) || m.kind.toLowerCase();
+                    setReplyTo({ id: m.id, label });
+                    requestAnimationFrame(() => dockRef.current?.querySelector<HTMLElement>(".ProseMirror")?.focus());
+                  }}
+                >
+                  <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.75" strokeLinecap="round" strokeLinejoin="round" aria-hidden><path d="M9 17l-5-5 5-5"/><path d="M4 12h11a4 4 0 0 1 4 4v2"/></svg>
+                </button>
+              );
+
               if (m.kind === "TEXT") {
                 return (
-                  <div key={m.id} className={m.role === "USER" ? "cw-msg cw-user" : "cw-msg cw-agent"}>
-                    {m.text}
+                  <div key={m.id} className={m.role === "USER" ? "cw-msg cw-user" : "cw-msg cw-agent"} style={{ display: "flex", alignItems: "flex-start", gap: 4 }}>
+                    <span style={{ flex: 1, minWidth: 0 }}>{m.text}</span>
+                    {replyBtn}
                   </div>
                 );
               }
@@ -241,23 +268,30 @@ export function Cowork({ projectId, entities, threads }: {
                 const steps = (m.payload as { planSteps?: string[] } | null)?.planSteps ?? [];
                 if (!steps.length) return null;
                 return (
-                  <ul key={m.id} className="cw-plan">
-                    {steps.map((s, i) => <li key={i}>{s}</li>)}
-                  </ul>
+                  <div key={m.id} style={{ display: "flex", alignItems: "flex-start", gap: 4 }}>
+                    <ul className="cw-plan" style={{ flex: 1, minWidth: 0, margin: 0 }}>
+                      {steps.map((s, i) => <li key={i}>{s}</li>)}
+                    </ul>
+                    {replyBtn}
+                  </div>
                 );
               }
               if (m.kind === "GEN_CARD") {
                 return (
-                  <GenerateCard
-                    key={m.id}
-                    cardId={m.id}
-                    payload={m.payload}
-                    entities={entities}
-                    alreadyGenerated={!!m.genJobId}
-                    threadId={active!.id}
-                    projectId={projectId}
-                    onRevised={() => { if (active) refreshThread(active.id); }}
-                  />
+                  <div key={m.id} style={{ display: "flex", alignItems: "flex-start", gap: 4 }}>
+                    <div style={{ flex: 1, minWidth: 0 }}>
+                      <GenerateCard
+                        cardId={m.id}
+                        payload={m.payload}
+                        entities={entities}
+                        alreadyGenerated={!!m.genJobId}
+                        threadId={active!.id}
+                        projectId={projectId}
+                        onRevised={() => { if (active) refreshThread(active.id); }}
+                      />
+                    </div>
+                    {replyBtn}
+                  </div>
                 );
               }
               if (m.kind === "GEN_RESULT") {
@@ -269,66 +303,74 @@ export function Cowork({ projectId, entities, threads }: {
                 const isImage = rKind === "image"; // only image frames are animatable
                 const price = resultPriceUsd(rKind, model); // DISPLAY-ONLY
                 return (
-                  <div key={m.id} className="cw-result">
-                    {urls.map((u, i) => {
-                      const gid = genIds[i];
-                      const video = isVideoUrl(u);
-                      const kind = video ? "video" : "image";
-                      const canAnimate = isImage && !video && !!gid;
-                      const ext = u.split("?")[0].split(".").pop() || "bin";
-                      const filename = `artlio-${(genIds[i] ?? String(i)).slice(0, 8)}.${ext}`;
-                      return (
-                        <figure key={i} className="cw-media">
-                          <div className="cw-media-frame">
-                            {video ? (
-                              <video src={u} controls muted loop playsInline />
-                            ) : (
-                              <button
-                                type="button"
-                                className="cw-media-btn"
-                                title="Click to enlarge"
-                                onClick={() => setZoom({ src: u, kind })}
-                              >
-                                {/* eslint-disable-next-line @next/next/no-img-element */}
-                                <img src={u} alt="" />
-                              </button>
-                            )}
-                            {/* Download — top-left overlay; plain anchor (no JS spend path) */}
-                            <a
-                              href={u}
-                              download={filename}
-                              className="al-iconbtn al-iconbtn-sm"
-                              title="Download"
-                              aria-label="Download"
-                              style={{ position: "absolute", top: 6, left: 6, background: "rgba(0,0,0,.55)", color: "#fff" }}
-                            >
-                              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.75" strokeLinecap="round" strokeLinejoin="round" aria-hidden><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" x2="12" y1="15" y2="3"/></svg>
-                            </a>
-                            {canAnimate && (
-                              <button
-                                type="button"
+                  <div key={m.id} style={{ display: "flex", alignItems: "flex-start", gap: 4 }}>
+                    <div className="cw-result" style={{ flex: 1, minWidth: 0 }}>
+                      {urls.map((u, i) => {
+                        const gid = genIds[i];
+                        const video = isVideoUrl(u);
+                        const kind = video ? "video" : "image";
+                        const canAnimate = isImage && !video && !!gid;
+                        const ext = u.split("?")[0].split(".").pop() || "bin";
+                        const filename = `artlio-${(genIds[i] ?? String(i)).slice(0, 8)}.${ext}`;
+                        return (
+                          <figure key={i} className="cw-media">
+                            <div className="cw-media-frame">
+                              {video ? (
+                                <video src={u} controls muted loop playsInline />
+                              ) : (
+                                <button
+                                  type="button"
+                                  className="cw-media-btn"
+                                  title="Click to enlarge"
+                                  onClick={() => setZoom({ src: u, kind })}
+                                >
+                                  {/* eslint-disable-next-line @next/next/no-img-element */}
+                                  <img src={u} alt="" />
+                                </button>
+                              )}
+                              {/* Download — top-left overlay; plain anchor (no JS spend path) */}
+                              <a
+                                href={u}
+                                download={filename}
                                 className="al-iconbtn al-iconbtn-sm"
-                                aria-label="Animate this frame"
-                                title="Animate this frame"
-                                onClick={() => animateResult(gid)}
-                                style={{ position: "absolute", top: 6, right: 6, background: "rgba(0,0,0,.55)", color: "#fff" }}
+                                title="Download"
+                                aria-label="Download"
+                                style={{ position: "absolute", top: 6, left: 6, background: "rgba(0,0,0,.55)", color: "#fff" }}
                               >
-                                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.75" strokeLinecap="round" strokeLinejoin="round" aria-hidden><polygon points="5 3 19 12 5 21 5 3" /></svg>
-                              </button>
-                            )}
-                          </div>
-                          <figcaption className="cw-media-cap">
-                            {model || kind}
-                            {price != null && <span className="cw-media-cap-price"> · ~${price.toFixed(2)}</span>}
-                          </figcaption>
-                        </figure>
-                      );
-                    })}
+                                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.75" strokeLinecap="round" strokeLinejoin="round" aria-hidden><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" x2="12" y1="15" y2="3"/></svg>
+                              </a>
+                              {canAnimate && (
+                                <button
+                                  type="button"
+                                  className="al-iconbtn al-iconbtn-sm"
+                                  aria-label="Animate this frame"
+                                  title="Animate this frame"
+                                  onClick={() => animateResult(gid)}
+                                  style={{ position: "absolute", top: 6, right: 6, background: "rgba(0,0,0,.55)", color: "#fff" }}
+                                >
+                                  <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.75" strokeLinecap="round" strokeLinejoin="round" aria-hidden><polygon points="5 3 19 12 5 21 5 3" /></svg>
+                                </button>
+                              )}
+                            </div>
+                            <figcaption className="cw-media-cap">
+                              {model || kind}
+                              {price != null && <span className="cw-media-cap-price"> · ~${price.toFixed(2)}</span>}
+                            </figcaption>
+                          </figure>
+                        );
+                      })}
+                    </div>
+                    {replyBtn}
                   </div>
                 );
               }
               if (m.kind === "DENIAL" || m.kind === "TURN_ERROR") {
-                return <div key={m.id} className="cw-msg cw-error">{m.text}</div>;
+                return (
+                  <div key={m.id} style={{ display: "flex", alignItems: "flex-start", gap: 4 }}>
+                    <span className="cw-msg cw-error" style={{ flex: 1, minWidth: 0 }}>{m.text}</span>
+                    {replyBtn}
+                  </div>
+                );
               }
               return null;
             })}
@@ -338,6 +380,21 @@ export function Cowork({ projectId, entities, threads }: {
         </div>
 
         <div className="composer-dock" ref={dockRef}>
+          {replyTo && (
+            <div className="cw-animate-hint" style={{ maxWidth: 880, width: "100%", display: "flex", alignItems: "center", gap: 8, margin: "0 0 8px", font: "var(--text-small)", color: "var(--fg-2)" }}>
+              <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.75" strokeLinecap="round" strokeLinejoin="round" aria-hidden><path d="M9 17l-5-5 5-5"/><path d="M4 12h11a4 4 0 0 1 4 4v2"/></svg>
+              <span style={{ flex: 1, minWidth: 0, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>Replying to: {replyTo.label}</span>
+              <button
+                type="button"
+                className="al-iconbtn al-iconbtn-sm"
+                aria-label="Cancel reply"
+                title="Cancel"
+                onClick={() => setReplyTo(null)}
+              >
+                <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.75" strokeLinecap="round" strokeLinejoin="round" aria-hidden><path d="M18 6 6 18" /><path d="m6 6 12 12" /></svg>
+              </button>
+            </div>
+          )}
           {pendingSource && (
             <div className="cw-animate-hint" style={{ maxWidth: 880, width: "100%", display: "flex", alignItems: "center", gap: 8, margin: "0 0 8px", font: "var(--text-small)", color: "var(--fg-2)" }}>
               {pendingSource.preview && (

@@ -52,6 +52,10 @@ export const coworkTurnRequest = z.object({
   // live) before forcing a video proposal, and startGen's checkCast re-validates at
   // spend. Drop/ignore if invalid; never errors the turn.
   sourceGenerationId: z.string().min(1).max(64).optional(),
+  // "Reply to message" — a prior message in the same thread to quote in context.
+  // Server-TRUSTED: coworkTurn re-validates ownership + thread + live before
+  // injecting the quote; invalid/foreign/deleted id is silently ignored.
+  replyToMessageId: z.string().min(1).max(64).optional(),
 }).strict();
 export type CoworkTurnRequest = z.infer<typeof coworkTurnRequest>;
 

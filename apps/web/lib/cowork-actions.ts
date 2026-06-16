@@ -139,6 +139,28 @@ export async function enhancePrompt(
 
 const PLANNER_MAX_TOKENS = 1200;
 
+/** Map a ChatMessageKind to a human-readable word for the planner quote note. */
+function quotedKindLabel(kind: string): string {
+  if (kind === "GEN_CARD") return "generate card";
+  if (kind === "GEN_RESULT") return "result";
+  return "message"; // TEXT, PLAN, DENIAL, TURN_ERROR
+}
+
+/** Build a short (≤200 char) preview of a quoted message. Never dumps full payload JSON. */
+function quotedPreview(qm: { kind: string; text: string; payload: unknown }): string {
+  let s: string;
+  if (qm.kind === "GEN_CARD") {
+    const p = qm.payload as { kind?: string } | null;
+    s = p?.kind ? `${p.kind} proposal` : "proposal";
+  } else if (qm.kind === "GEN_RESULT") {
+    const p = qm.payload as { model?: string; urls?: string[] } | null;
+    s = p?.model ? `${p.model} ×${p.urls?.length ?? 1}` : "result";
+  } else {
+    s = qm.text || "(no text)"; // TEXT, PLAN, DENIAL, TURN_ERROR
+  }
+  return s.slice(0, 200); // universal cap — payload-derived previews must never bloat the planner turn
+}
+
 /** A PROPOSE-ONLY cowork turn: runs the planner (mock $0 in dev, ≤2 LLM calls) and
  *  persists user + agent messages. It NEVER spends — it neither imports nor calls any
  *  media-generation action and writes no media job. A GEN_CARD payload carries a
@@ -147,7 +169,7 @@ const PLANNER_MAX_TOKENS = 1200;
 export async function coworkTurn(raw: unknown): Promise<{ threadId: string } | { error: string }> {
   const parsed = coworkTurnRequest.safeParse(raw);
   if (!parsed.success) return { error: "Say what you'd like to make." };
-  const { projectId, text, entityIds, variantSel, sourceGenerationId } = parsed.data;
+  const { projectId, text, entityIds, variantSel, sourceGenerationId, replyToMessageId } = parsed.data;
 
   // Mirror the sibling actions: any DB/transport hiccup returns the {error} contract
   // rather than throwing an unhandled rejection to the client. (Guard early-returns
@@ -185,6 +207,22 @@ export async function coworkTurn(raw: unknown): Promise<{ threadId: string } | {
       if (!t || t.projectId !== projectId) return { error: "Conversation not found." };
     }
 
+    // "Reply to message" — fetch the quoted message (existing thread only). An
+    // invalid/foreign/deleted/cross-thread id is silently ignored so a stale tab never
+    // errors the turn. New-thread replies are always ignored (the thread doesn't exist yet).
+    let quoted: { kind: string; preview: string } | null = null;
+    let validReplyId: string | null = null; // persisted ONLY when the scoped fetch succeeds (no dangling/foreign refs)
+    if (!isNew && replyToMessageId) {
+      const qm = await prisma.chatMessage.findFirst({
+        where: { id: replyToMessageId, threadId, ownerId: FOUNDER_OWNER_ID, deletedAt: null },
+        select: { kind: true, text: true, payload: true },
+      });
+      if (qm) {
+        quoted = { kind: quotedKindLabel(qm.kind), preview: quotedPreview({ kind: qm.kind, text: qm.text, payload: qm.payload }) };
+        validReplyId = replyToMessageId;
+      }
+    }
+
     // bounded, NL-only memory window (assistant/user), oldest-dropped (empty for a new thread)
     const recent = isNew ? [] : await prisma.chatMessage.findMany({
       where: { threadId, deletedAt: null, kind: { in: ["TEXT", "PLAN"] } },
@@ -194,7 +232,7 @@ export async function coworkTurn(raw: unknown): Promise<{ threadId: string } | {
 
     const availableRefs = await loadAvailableRefs(); // owner-global entities {id,name,type}
     const modelSummary = `image: ${GEN_MODELS.join("/")}; video: ${GEN_VIDEO_MODELS.join("/")} (agent picks by capability)`;
-    const messages = buildPlannerMessages({ userText: text, history, availableRefs, modelSummary });
+    const messages = buildPlannerMessages({ userText: text, history, availableRefs, modelSummary, quoted: quoted ?? undefined });
 
     // ≤2 LLM calls total (1 + at most 1 retry). mock-$0 in dev.
     const refIds = availableRefs.map((r) => r.id);
@@ -288,7 +326,7 @@ export async function coworkTurn(raw: unknown): Promise<{ threadId: string } | {
     const last = isNew ? null : await prisma.chatMessage.findFirst({ where: { threadId }, orderBy: { seq: "desc" }, select: { seq: true } });
     let seq = (last?.seq ?? 0);
     const rows = [
-      { id: newId(), threadId, ownerId: FOUNDER_OWNER_ID, role: "USER" as const, kind: "TEXT" as const, seq: ++seq, text, payload: { entityIds, variantSel } },
+      { id: newId(), threadId, ownerId: FOUNDER_OWNER_ID, role: "USER" as const, kind: "TEXT" as const, seq: ++seq, text, payload: { entityIds, variantSel }, replyToMessageId: validReplyId },
       { id: newId(), threadId, ownerId: FOUNDER_OWNER_ID, role: "AGENT" as const, kind: "PLAN" as const, seq: ++seq, text: "", payload: { planSteps: turn.planSteps } },
       { id: newId(), threadId, ownerId: FOUNDER_OWNER_ID, role: "AGENT" as const, kind: "TEXT" as const, seq: ++seq, text: turn.reply, payload: undefined },
       ...(cardPayload ? [{ id: newId(), threadId, ownerId: FOUNDER_OWNER_ID, role: "AGENT" as const, kind: "GEN_CARD" as const, seq: ++seq, text: "", payload: cardPayload }] : []),

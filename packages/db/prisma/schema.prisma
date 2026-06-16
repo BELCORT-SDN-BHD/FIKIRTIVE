@@ -536,6 +536,7 @@ model ChatMessage {
   payload            Json?
   genJobId           String?
   sourceGenerationId String?
+  replyToMessageId   String?
   createdAt          DateTime        @default(now())
   deletedAt          DateTime?
 

@@ -493,6 +493,37 @@ h1, h2, h3 { font-family: var(--font-sans); font-weight: 600; letter-spacing: va
 .al-tooltip-shortcut { margin-left: 6px; color: var(--fg-3); font-family: var(--font-mono); }
 .al-tooltip-wrap:hover .al-tooltip { opacity: 1; transform: translateX(-50%) translateY(0); }
 
+/* ---------- desktop rail: icon-only collapsed, overlay-expand on hover ---------- */
+/* Rail is fixed so expanding it never reflows .main; .app gains padding-left to
+   reserve the 64px gutter. Labels/wordmark fade+collapse to 0-width so icons are
+   clean at 64px; they fade+expand back on hover. Mobile overrides remove the gutter. */
+.nav-rail { position: fixed; left: 0; top: 0; bottom: 0; width: 64px; z-index: 40; overflow: hidden; background: var(--bg-1); border-right: 1px solid var(--line-2); transition: width var(--dur-base) var(--ease-out); }
+.nav-rail:hover, .nav-rail:focus-within { width: 236px; box-shadow: var(--shadow-pop); }
+/* reserve the collapsed gutter ONLY for the studio shell (which has the .nav-rail);
+   scoped via :has so AppShell's non-collapsing .app is untouched. */
+.app:has(> .nav-rail) { padding-left: 64px; }
+/* Collapsed: hide all text (width→0 so icons don't shift; opacity for visual fade). */
+.nav-rail .sidenav-project-name,
+.nav-rail .navitem span.lbl,
+.nav-rail .nav-grouplabel,
+.nav-rail .user-name { max-width: 0; opacity: 0; overflow: hidden; transition: max-width var(--dur-base) var(--ease-out), opacity var(--dur-base) var(--ease-out); }
+/* Collapsed: hide wordmark text (just the .wordmark span itself — dot stays). */
+.nav-rail .wordmark { max-width: 0; opacity: 0; overflow: hidden; transition: max-width var(--dur-base) var(--ease-out), opacity var(--dur-base) var(--ease-out); }
+/* Expanded: reveal all text. */
+.nav-rail:hover .sidenav-project-name,
+.nav-rail:focus-within .sidenav-project-name,
+.nav-rail:hover .navitem span.lbl,
+.nav-rail:focus-within .navitem span.lbl,
+.nav-rail:hover .nav-grouplabel,
+.nav-rail:focus-within .nav-grouplabel,
+.nav-rail:hover .user-name,
+.nav-rail:focus-within .user-name { max-width: 200px; opacity: 1; }
+.nav-rail:hover .wordmark,
+.nav-rail:focus-within .wordmark { max-width: 160px; opacity: 1; }
+/* Collapsed: center icons within the 64px strip by shrinking padding. */
+.nav-rail .sidenav-brand { padding-left: 10px; min-height: 30px; }
+@media (max-width: 1023px) { .app:has(> .nav-rail) { padding-left: 0; } }
+
 /* Responsive nav. Tailwind's responsive utilities (lg:/max-lg:) live in
    @layer utilities and lose the cascade to this unlayered design system, so they
    never applied — the desktop ☰ leaked onto desktop and the sidebar wouldn't
