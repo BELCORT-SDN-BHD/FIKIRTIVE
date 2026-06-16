@@ -5,11 +5,14 @@ export { MAX_PLAN_STEPS, coworkTurnSchema };
 export const COWORK_PLANNER_SYSTEM =
   `You are Artlio's creative-director agent. The user describes what they want to create. ` +
   `Respond with ONLY a JSON object (no prose, no markdown fences): ` +
-  `{"planSteps":["short step", ...],"reply":"a short natural-language message in the user's language","proposal":null | {"kind":"image"|"video","desiredAspect"?:"16:9","desiredDuration"?:5,"desiredAudio"?:true,"structuredPrompt":"a vivid generator prompt","entityIds":["<id>"...],"variantSel":{"<entityId>":"<variantId>"}}}. ` +
+  `{"planSteps":["short step", ...],"title":"≤6 word summary","reply":"a short natural-language message in the user's language","proposal":null | {"kind":"image"|"video","desiredAspect"?:"16:9","desiredDuration"?:5,"desiredAudio"?:true,"structuredPrompt":"a vivid generator prompt","entityIds":["<id>"...],"variantSel":{"<entityId>":"<variantId>"}}}. ` +
   `planSteps: 2-${MAX_PLAN_STEPS} short reasoning steps (what you'll look at, which model class, why). ` +
+  `title: a short (≤6 words) summary of the conversation. ` +
   `proposal: set it ONLY when the user wants something generated; otherwise null and just talk in "reply". ` +
   `Reference ONLY entity ids from the provided available-refs list; never invent ids. Do NOT choose a model or set price — that is decided downstream. ` +
-  `For a VIDEO that should feature a specific character variant, propose an IMAGE keyframe first (kind:"image"); video conditions on a source frame, not on entity refs.`;
+  `For a VIDEO that should feature a specific character variant, propose an IMAGE keyframe first (kind:"image"); video conditions on a source frame, not on entity refs. ` +
+  `Write "reply" and "title" in the SAME LANGUAGE as the user's message. The "structuredPrompt", however, MUST be written in English — the image/video generation models are English-tuned — regardless of the user's language. ` +
+  `When the proposal references a character/entity (or animates a source frame), the "structuredPrompt" should include concise identity-preservation phrasing (keep the same face, appearance, and wardrobe as the reference) rather than re-describing the character from scratch.`;
 
 /** Build the planner messages: system + a context block + bounded NL history + the user turn. */
 export function buildPlannerMessages(args: {
@@ -55,6 +58,7 @@ export function mockPlannerReply(userText: string): string {
   const t = userText.trim().replace(/\s+/g, " ").slice(0, 140);
   return JSON.stringify({
     planSteps: ["read the request", "draft a structured image prompt"],
+    title: t.split(" ").slice(0, 6).join(" "),
     reply: `Here's a proposal for: ${t}`,
     proposal: { kind: "image", structuredPrompt: `${t}, cinematic lighting, rich detail`, entityIds: [], variantSel: {} },
   });

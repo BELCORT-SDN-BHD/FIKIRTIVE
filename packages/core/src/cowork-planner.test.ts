@@ -34,4 +34,12 @@ describe("coworkTurnSchema", () => {
     const t = parseCoworkTurn(JSON.stringify({ planSteps: ["x".repeat(500)], reply: "hi", proposal: null }), refs);
     expect(t.planSteps[0]?.length).toBe(200);
   });
+  it("accepts and truncates an optional title to 80 chars", () => {
+    const t = parseCoworkTurn(JSON.stringify({ ...ok, title: "y".repeat(120) }), refs);
+    expect(t.title?.length).toBe(80);
+  });
+  it("parses fine with no title (back-compat: title is optional)", () => {
+    const t = parseCoworkTurn(JSON.stringify(ok), refs);
+    expect(t.title).toBeUndefined();
+  });
 });

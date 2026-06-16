@@ -136,6 +136,10 @@ export type CoworkDeleteThreadRequest = z.infer<typeof coworkDeleteThreadRequest
 export const coworkTurnSchema = z.object({
   planSteps: z.array(z.string().trim().min(1).transform((s) => s.slice(0, 200))).transform((arr) => arr.slice(0, MAX_PLAN_STEPS)).default([]),
   reply: z.string().trim().min(1).transform((s) => s.slice(0, 2000)),
+  // Optional LLM auto-title (≤6 words) summarizing the conversation, emitted in the
+  // SAME planner JSON ($0). Truncating transform mirrors the schema's other coercing
+  // fields; absent → coworkTurn falls back to the user's first message.
+  title: z.string().trim().min(1).transform((s) => s.slice(0, 80)).optional(),
   proposal: coworkProposalSchema.nullable().default(null),
 }).strict();
 export type CoworkTurn = z.infer<typeof coworkTurnSchema>;

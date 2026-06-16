@@ -295,7 +295,7 @@ export async function coworkTurn(raw: unknown): Promise<{ threadId: string } | {
     // For a new thread the create MUST precede the messages (FK ChatMessage.threadId →
     // ChatThread, checked per-statement). For an existing thread, just bump updatedAt.
     await prisma.$transaction([
-      ...(isNew ? [prisma.chatThread.create({ data: { id: threadId, ownerId: FOUNDER_OWNER_ID, projectId, title: text.slice(0, 80) } })] : []),
+      ...(isNew ? [prisma.chatThread.create({ data: { id: threadId, ownerId: FOUNDER_OWNER_ID, projectId, title: turn.title ?? text.slice(0, 80) } })] : []),
       prisma.chatMessage.createMany({ data: rows }),
       ...(isNew ? [] : [prisma.chatThread.update({ where: { id: threadId }, data: { updatedAt: new Date() } })]),
     ]);
