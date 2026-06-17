@@ -16,9 +16,9 @@ const NAV = [
   { href: "/admin/knowledge", label: "Knowledge", live: true },
   { href: "/admin/models", label: "Model & provider", live: true },
   { href: "/admin/cost", label: "Cost & usage", live: true },
-  { href: "/admin/audit", label: "Content & audit", live: true },
+  { href: "/admin/content", label: "Content review", live: true },
   { href: "/admin/team", label: "Team & access", live: true },
-  { href: "#", label: "System & queue", live: false },
+  { href: "/admin/system", label: "System & queue", live: true },
 ];
 
 export default async function AdminLayout({ children }: { children: React.ReactNode }) {
