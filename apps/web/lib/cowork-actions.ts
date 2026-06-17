@@ -10,29 +10,30 @@ import { revalidatePath } from "next/cache";
 import { prisma, Prisma } from "@artlio/db";
 import {
   coworkRequest, enhanceRequest, MAX_ENHANCE_TEXT, newId, FOUNDER_OWNER_ID,
-  createTransport, runSkill, draftStoryboardSkill, enhancePromptSkill,
+  runSkill, draftStoryboardSkill, enhancePromptSkill,
   modelFamily, deriveMode,
   coworkTurnRequest, COWORK_MEMORY_TURNS, buildPlannerMessages, parseCoworkTurn,
   mockPlannerReply, suggestModel, GEN_MODELS, GEN_VIDEO_MODELS, GEN_VIDEO_MODEL_OPTIONS,
   GEN_PRICE_USD_PER_IMAGE, videoPriceUsd,
   coworkGenerateRequest, coworkProposalSchema,
   coworkRenameThreadRequest, coworkDeleteThreadRequest, coworkVaryCardRequest, coworkBriefRequest, MAX_GEN_PROMPT,
-  coworkVisionConfig, storageKey,
+  storageKey,
   type ChatMessage, type CoworkTurn, type GenVideoModel,
 } from "@artlio/core";
+import { getTransport, resolveVisionConfig } from "./runtime-config";
 import { getEnhanceDirective } from "./cowork-knowledge";
 import { startGen } from "./gen-actions";
 import { storage, mimeOf } from "./storage";
+import { requireSession } from "./auth-guard";
 
 const OWNED = { ownerId: FOUNDER_OWNER_ID, deletedAt: null } as const;
-const transport = createTransport();
 
 /** Phase C vision: resolve one asset to a base64 data-URL for the planner.
  *  Returns null (and never throws) when the asset is missing, foreign, deleted,
  *  or exceeds the configured size limit — the caller skips gracefully.
  *  Used by CT-C2 (coworkTurn image attachment). */
 async function refImageDataUrl(assetId: string): Promise<string | null> {
-  const { maxBytes } = coworkVisionConfig();
+  const { maxBytes } = await resolveVisionConfig();
   const asset = await prisma.asset.findFirst({
     where: { id: assetId, ownerId: FOUNDER_OWNER_ID, deletedAt: null },
     select: { ownerId: true, contentHash: true, ext: true, sizeBytes: true },
@@ -72,9 +73,11 @@ export async function coworkDraftStoryboard(
 ): Promise<{ ok: true; scenes: number; shots: number; via: string } | { error: string }> {
   const parsed = coworkRequest.safeParse(raw);
   if (!parsed.success) return { error: "Tell cowork what to make (a short description)." };
+  const gate = await requireSession(); if ("error" in gate) return gate;
   const { projectId, idea } = parsed.data;
   const project = await prisma.project.findFirst({ where: { id: projectId, ...OWNED } });
   if (!project) return { error: "Project not found." };
+  const transport = await getTransport();
 
   let plan;
   try {
@@ -134,10 +137,12 @@ export async function enhancePrompt(
 ): Promise<{ ok: true; text: string; via: string } | { error: string }> {
   const parsed = enhanceRequest.safeParse(raw);
   if (!parsed.success) return { error: "Write a prompt first, then ✨ Enhance." };
+  const gate = await requireSession(); if ("error" in gate) return gate;
   const { projectId, text, model, kind, conditioned, hasSource, hasTail } = parsed.data;
   // owner-domain guard like every paid action (single-tenant today, multi-tenant-ready)
   const project = await prisma.project.findFirst({ where: { id: projectId, ...OWNED } });
   if (!project) return { error: "Project not found." };
+  const transport = await getTransport();
 
   // Phase 1: server-derive (family, mode) from the gen-shape and read the tuned
   // directive. Best-effort — a knowledge-read hiccup degrades to the family-neutral
@@ -198,7 +203,9 @@ function quotedPreview(qm: { kind: string; text: string; payload: unknown }): st
 export async function coworkTurn(raw: unknown): Promise<{ threadId: string; brief?: string } | { error: string }> {
   const parsed = coworkTurnRequest.safeParse(raw);
   if (!parsed.success) return { error: "Say what you'd like to make." };
+  const gate = await requireSession(); if ("error" in gate) return gate;
   const { projectId, text, entityIds, variantSel, sourceGenerationId, replyToMessageId } = parsed.data;
+  const transport = await getTransport();
 
   // Mirror the sibling actions: any DB/transport hiccup returns the {error} contract
   // rather than throwing an unhandled rejection to the client. (Guard early-returns
@@ -272,7 +279,7 @@ export async function coworkTurn(raw: unknown): Promise<{ threadId: string; brie
     // unambiguously by id (entity names aren't unique → ambiguous names are skipped).
     const attachedRefIdByName = new Map<string, string>();
     const ambiguousRefNames = new Set<string>();
-    const vision = coworkVisionConfig();
+    const vision = await resolveVisionConfig();
     if (vision.enabled) {
       // FULLY best-effort: any failure (a DB hiccup in these lookups, a storage read, etc.)
       // must only DROP this turn's images, NEVER fail the turn — the planner still runs
@@ -454,6 +461,7 @@ export async function coworkTurn(raw: unknown): Promise<{ threadId: string; brie
 export async function coworkGenerate(raw: unknown): Promise<{ id: string } | { error: string }> {
   const parsed = coworkGenerateRequest.safeParse(raw);
   if (!parsed.success) return { error: "That card can't be generated." };
+  const gate = await requireSession(); if ("error" in gate) return gate;
   const { cardId, prompt, entityIds, variantSel, model: modelOverride, count: countOverride, aspectRatio: aspectOverride, resolution: resolutionOverride, durationSeconds: durationOverride, audio: audioOverride } = parsed.data;
 
   // Load the GEN_CARD server-side — threadId + projectId + the trusted model/params
@@ -472,6 +480,9 @@ export async function coworkGenerate(raw: unknown): Promise<{ id: string } | { e
   // otherwise be re-charged by a stale tab / reload / direct RPC). If any job for this
   // card already exists (any status), return it instead of charging again. To retry, the
   // user starts a new turn (a new card) — never a silent re-charge of the same card.
+  // This read is the friendly fast-path; it is NOT atomic with startGen's insert, so the
+  // race-proof backstop is the DB index GenJob_cowork_idempotency_once (all-status UNIQUE on
+  // cowork:<cardId> keys) — a TOCTOU re-insert is rejected there even after the first is DONE.
   const existingJob = await prisma.genJob.findFirst({
     where: { ownerId: FOUNDER_OWNER_ID, idempotencyKey: `cowork:${cardId}` },
     select: { id: true },
@@ -541,6 +552,7 @@ export async function coworkGenerate(raw: unknown): Promise<{ id: string } | { e
 export async function coworkRenameThread(raw: unknown): Promise<{ ok: true } | { error: string }> {
   const parsed = coworkRenameThreadRequest.safeParse(raw);
   if (!parsed.success) return { error: "Give the conversation a title (1-120 chars)." };
+  const gate = await requireSession(); if ("error" in gate) return gate;
   const { threadId, title } = parsed.data;
   try {
     const { count } = await prisma.chatThread.updateMany({
@@ -556,6 +568,7 @@ export async function coworkRenameThread(raw: unknown): Promise<{ ok: true } | {
 export async function coworkDeleteThread(raw: unknown): Promise<{ ok: true } | { error: string }> {
   const parsed = coworkDeleteThreadRequest.safeParse(raw);
   if (!parsed.success) return { error: "Invalid request." };
+  const gate = await requireSession(); if ("error" in gate) return gate;
   const { threadId } = parsed.data;
   try {
     const { count } = await prisma.chatThread.updateMany({
@@ -576,6 +589,7 @@ export async function coworkDeleteThread(raw: unknown): Promise<{ ok: true } | {
 export async function coworkVaryCard(raw: unknown): Promise<{ threadId: string } | { error: string }> {
   const parsed = coworkVaryCardRequest.safeParse(raw);
   if (!parsed.success) return { error: "That card can't be varied." };
+  const gate = await requireSession(); if ("error" in gate) return gate;
   const { cardId } = parsed.data;
   try {
     const card = await prisma.chatMessage.findFirst({
@@ -620,6 +634,7 @@ export async function coworkVaryCard(raw: unknown): Promise<{ threadId: string }
 export async function setCoworkBrief(raw: unknown): Promise<{ ok: true } | { error: string }> {
   const parsed = coworkBriefRequest.safeParse(raw);
   if (!parsed.success) return { error: "Invalid brief." };
+  const gate = await requireSession(); if ("error" in gate) return gate;
   const { projectId, brief } = parsed.data;
   try {
     const { count } = await prisma.project.updateMany({

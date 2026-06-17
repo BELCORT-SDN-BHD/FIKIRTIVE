@@ -8,6 +8,7 @@
  * silently spend on cowork.
  */
 import type { ChatMessage, CoworkTransport } from "./cowork.js";
+import { createTransportFromConfig } from "./runtime-config.js";
 
 /** $0, offline. Returns the skill's own canned reply — the transport never
  *  inspects messages, so it stays skill-agnostic (the skill owns its mock). */
@@ -83,16 +84,10 @@ export class ModalTransport implements CoworkTransport {
  * silently activate a real provider. Mirrors createGenerationProvider.
  */
 export function createTransport(): CoworkTransport {
-  if (process.env.COWORK_PROVIDER === "fal") {
-    const key = process.env.FAL_KEY;
-    if (!key) throw new Error("COWORK_PROVIDER=fal but FAL_KEY is not set");
-    return new FalTransport(key);
-  }
-  if (process.env.COWORK_PROVIDER === "modal") {
-    const endpoint = process.env.MODAL_LLM_ENDPOINT;
-    const key = process.env.MODAL_LLM_KEY;
-    if (!endpoint || !key) throw new Error("COWORK_PROVIDER=modal but MODAL_LLM_ENDPOINT or MODAL_LLM_KEY is not set");
-    return new ModalTransport(endpoint, key);
-  }
-  return new MockTransport();
+  return createTransportFromConfig({
+    provider: process.env.COWORK_PROVIDER,
+    falKey: process.env.FAL_KEY,
+    modalEndpoint: process.env.MODAL_LLM_ENDPOINT,
+    modalKey: process.env.MODAL_LLM_KEY,
+  });
 }

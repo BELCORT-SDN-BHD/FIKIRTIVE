@@ -7,10 +7,12 @@
 import { revalidatePath } from "next/cache";
 import { prisma } from "@artlio/db";
 import { newId, FOUNDER_OWNER_ID } from "@artlio/core";
+import { requireSession } from "./auth-guard";
 
 const OWNED = { ownerId: FOUNDER_OWNER_ID, deletedAt: null } as const;
 
 export async function addShot(projectId: string, scene?: number): Promise<{ id: string; number: number } | { error: string }> {
+  const gate = await requireSession(); if ("error" in gate) return gate;
   const project = await prisma.project.findFirst({ where: { id: projectId, ...OWNED } });
   if (!project) return { error: "Project not found." };
   // default into the current last scene; "Add scene" passes an explicit next scene
@@ -36,6 +38,7 @@ export async function addShot(projectId: string, scene?: number): Promise<{ id: 
  *  every query filters deletedAt). The number stays retired — reorder swaps
  *  among live shots, and the board renumbers display 1..N. */
 export async function deleteShot(shotId: string): Promise<{ ok: true } | { error: string }> {
+  const gate = await requireSession(); if ("error" in gate) return gate;
   const shot = await prisma.shot.findFirst({ where: { id: shotId, ...OWNED } });
   if (!shot) return { error: "Shot not found." };
   // detach the shot's renders (→ candidates, re-attachable) and clear its entity
@@ -56,6 +59,7 @@ export async function deleteShot(shotId: string): Promise<{ ok: true } | { error
  *  the swap parks one row at a negative temp (never assigned) mid-transaction.
  *  Overlapping moves at worst deadlock → Postgres aborts one → retryable error. */
 export async function moveShot(shotId: string, direction: "left" | "right"): Promise<{ ok: true } | { error: string }> {
+  const gate = await requireSession(); if ("error" in gate) return gate;
   const exists = await prisma.shot.findFirst({ where: { id: shotId, ...OWNED }, select: { id: true } });
   if (!exists) return { error: "Shot not found." };
   try {
@@ -85,6 +89,7 @@ export async function moveShot(shotId: string, direction: "left" | "right"): Pro
 /** Start a new scene with its first shot. Computes the next scene number
  *  server-side (fresh) so a stale client can't collide two scenes into one. */
 export async function addScene(projectId: string): Promise<{ id: string; number: number } | { error: string }> {
+  const gate = await requireSession(); if ("error" in gate) return gate;
   const project = await prisma.project.findFirst({ where: { id: projectId, ...OWNED } });
   if (!project) return { error: "Project not found." };
   const last = await prisma.shot.findFirst({ where: { projectId, ...OWNED }, orderBy: { scene: "desc" }, select: { scene: true } });
@@ -94,6 +99,7 @@ export async function addScene(projectId: string): Promise<{ id: string; number:
 /** Persist a storyboard shot's prompt (plain text + entity refs + a minimal
  *  Tiptap doc for old-Workbench compatibility). */
 export async function setShotPromptText(shotId: string, text: string, entityIds: string[] = []) {
+  const gate = await requireSession(); if ("error" in gate) return gate;
   const shot = await prisma.shot.findFirst({ where: { id: shotId, ...OWNED } });
   if (!shot) return { error: "Shot not found." };
   const ids = [...new Set(entityIds)];
@@ -110,6 +116,7 @@ export async function setShotPromptText(shotId: string, text: string, entityIds:
 /** Attach (or clear, with null) a segment's first/last frame image — the i2v
  *  keyframes. The generation must be an owned image in the shot's project (D19). */
 export async function setShotFrame(shotId: string, slot: "first" | "last", generationId: string | null): Promise<{ ok: true } | { error: string }> {
+  const gate = await requireSession(); if ("error" in gate) return gate;
   const shot = await prisma.shot.findFirst({ where: { id: shotId, ...OWNED } });
   if (!shot) return { error: "Shot not found." };
   if (generationId) {
@@ -131,6 +138,7 @@ export type ShotTransition = (typeof SHOT_TRANSITIONS)[number];
 /** Set (or clear, with null) a segment's fade transition. It flows into the
  *  editor's board cut via buildBoardEdit → clip.transition (storyboard→editor). */
 export async function setShotTransition(shotId: string, transition: ShotTransition | null): Promise<{ ok: true } | { error: string }> {
+  const gate = await requireSession(); if ("error" in gate) return gate;
   if (transition !== null && !SHOT_TRANSITIONS.includes(transition)) return { error: "Unknown transition." };
   const shot = await prisma.shot.findFirst({ where: { id: shotId, ...OWNED }, select: { id: true } });
   if (!shot) return { error: "Shot not found." };

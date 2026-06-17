@@ -7,7 +7,7 @@
  */
 import { revalidatePath } from "next/cache";
 import { prisma } from "@artlio/db";
-import { newId, FOUNDER_OWNER_ID, modelDirectiveInput, DIRECTIVE_SEED } from "@artlio/core";
+import { newId, FOUNDER_OWNER_ID, modelDirectiveInput, DIRECTIVE_SEED, runtimeConfigInput } from "@artlio/core";
 import { auth, allowed } from "@/auth";
 
 /** auth() + allowlist, inside the handler (R7). Returns the admin's email (for
@@ -94,4 +94,30 @@ export async function seedResearchDirectives(): Promise<{ ok: true; inserted: nu
   } catch {
     return { error: "Couldn't seed defaults — please try again." };
   }
+}
+
+/** Write one runtime-config key. requireAdmin (P1a) — P1b will scope provider to
+ *  super-admin. Validates credential presence for a paid provider BEFORE persisting
+ *  so getTransport never builds a throwing transport at request time. Audited. */
+export async function saveRuntimeConfig(raw: unknown): Promise<{ ok: true } | { error: string }> {
+  const gate = await requireAdmin();
+  if ("error" in gate) return gate;
+  const parsed = runtimeConfigInput.safeParse(raw);
+  if (!parsed.success) return { error: "That setting is out of bounds." };
+  const { key, value } = parsed.data;
+  if (key === "cowork_provider" && value.provider === "fal" && !process.env.FAL_KEY) {
+    return { error: "FAL_KEY is not set in this environment — can't switch to fal." };
+  }
+  try {
+    await prisma.$transaction(async (tx) => {
+      await tx.runtimeConfig.upsert({
+        where: { key }, create: { key, valueJson: value, updatedBy: gate.email }, update: { valueJson: value, updatedBy: gate.email },
+      });
+      await tx.actionEvent.create({ data: { id: newId(), ownerId: FOUNDER_OWNER_ID, type: "config.edit", payload: { key, via: gate.email } } });
+    });
+  } catch {
+    return { error: "Couldn't save the setting — please try again." };
+  }
+  revalidatePath("/admin/settings");
+  return { ok: true };
 }

@@ -19,6 +19,7 @@ import { getBoss } from "./queue";
 import { buildEntitySnapshot } from "./entity-snapshot";
 import { buildBoardEdit, transitionFor } from "./edit";
 import { getShots, getCandidates } from "./data";
+import { requireSession } from "./auth-guard";
 
 /**
  * M0 server actions. Conventions:
@@ -78,6 +79,7 @@ function assetUpsert(ingested: Awaited<ReturnType<typeof ingestFile>>) {
 // ---------- projects ----------
 
 export async function createProject(name: string) {
+  const gate = await requireSession(); if ("error" in gate) throw new Error(gate.error);
   const project = await prisma.project.create({
     data: { id: newId(), ownerId: FOUNDER_OWNER_ID, name: name.trim() || "Untitled Project" },
   });
@@ -89,6 +91,7 @@ export async function createProject(name: string) {
 /** Soft-delete a project (sets deletedAt → drops out of getProjects' notDeleted filter).
  *  Reversible, touches no generated assets/billing — just hides the project + its surfaces. */
 export async function deleteProject(projectId: string): Promise<{ ok: true } | { error: string }> {
+  const gate = await requireSession(); if ("error" in gate) return gate;
   const project = await prisma.project.findFirst({ where: { id: projectId, ...OWNED }, select: { id: true, name: true } });
   if (!project) return { error: "Project not found." };
   await prisma.project.update({ where: { id: project.id }, data: { deletedAt: new Date() } });
@@ -113,6 +116,7 @@ function acceptRefFiles(formData: FormData, existing: number): File[] {
 }
 
 export async function createEntity(formData: FormData) {
+  const gate = await requireSession(); if ("error" in gate) throw new Error(gate.error);
   const name = String(formData.get("name") ?? "").trim();
   const type = String(formData.get("type") ?? "");
   const files = acceptRefFiles(formData, 0);
@@ -141,6 +145,7 @@ export async function updateEntity(
   entityId: string,
   fields: { name?: string; notes?: string; negativeConstraints?: string },
 ) {
+  const gate = await requireSession(); if ("error" in gate) return gate;
   const data: Record<string, string> = {};
   if (fields.name !== undefined && fields.name.trim()) data.name = fields.name.trim();
   if (fields.notes !== undefined) data.notes = fields.notes;
@@ -159,6 +164,7 @@ export async function updateEntity(
  * elsewhere (lost-update).
  */
 export async function addEntityAlias(entityId: string, alias: string) {
+  const gate = await requireSession(); if ("error" in gate) return gate;
   const clean = alias.trim();
   if (!clean) return { error: "Alias is empty." };
   const entity = await prisma.entity.findFirst({ where: { id: entityId, ...OWNED } });
@@ -172,6 +178,7 @@ export async function addEntityAlias(entityId: string, alias: string) {
 }
 
 export async function removeEntityAlias(entityId: string, alias: string) {
+  const gate = await requireSession(); if ("error" in gate) return gate;
   const entity = await prisma.entity.findFirst({ where: { id: entityId, ...OWNED } });
   if (!entity) return { error: "Entity not found." };
   // atomic remove (same lost-update guard as the add above) (#9)
@@ -183,6 +190,7 @@ export async function removeEntityAlias(entityId: string, alias: string) {
 
 /** Remove one reference image from an entity (soft — asset row is a tombstone). */
 export async function softDeleteReferenceImage(refImageId: string) {
+  const gate = await requireSession(); if ("error" in gate) return gate;
   const ref = await prisma.referenceImage.findFirst({ where: { id: refImageId, ...OWNED } });
   if (!ref) return { error: "Reference image not found." };
   await prisma.referenceImage.update({
@@ -207,6 +215,7 @@ export async function softDeleteReferenceImage(refImageId: string) {
 }
 
 export async function addReferenceImages(entityId: string, formData: FormData) {
+  const gate = await requireSession(); if ("error" in gate) return gate;
   const entity = await prisma.entity.findFirst({ where: { id: entityId, ...OWNED } });
   if (!entity) return { error: "Entity not found." };
   const existing = await prisma.referenceImage.count({ where: { entityId, deletedAt: null } });
@@ -239,6 +248,7 @@ export async function addReferenceImages(entityId: string, formData: FormData) {
 }
 
 export async function softDeleteEntity(entityId: string) {
+  const gate = await requireSession(); if ("error" in gate) return gate;
   const refCount = await prisma.shotEntityRef.count({ where: { entityId } });
   const { count } = await prisma.entity.updateMany({
     where: { id: entityId, ...OWNED },
@@ -254,6 +264,7 @@ export async function softDeleteEntity(entityId: string) {
 // ---------- shots ----------
 
 export async function createShot(projectId: string) {
+  const gate = await requireSession(); if ("error" in gate) throw new Error(gate.error);
   const project = await prisma.project.findFirst({ where: { id: projectId, ...OWNED } });
   if (!project) return { error: "Project not found." };
   // number = max+1; @@unique([projectId, number]) backstops concurrent creates
@@ -293,6 +304,7 @@ export async function saveShotPrompt(
   promptText: string,
   entityIds: string[],
 ) {
+  const gate = await requireSession(); if ("error" in gate) return gate;
   const shot = await prisma.shot.findFirst({ where: { id: shotId, ...OWNED } });
   if (!shot) return { error: "Shot not found." };
   const uniqueIds = [...new Set(entityIds)];
@@ -321,6 +333,7 @@ export async function saveShotPrompt(
 }
 
 export async function updateShotTitle(shotId: string, title: string) {
+  const gate = await requireSession(); if ("error" in gate) return gate;
   const shot = await prisma.shot.findFirst({ where: { id: shotId, ...OWNED } });
   if (!shot) return { error: "Shot not found." };
   await prisma.shot.update({ where: { id: shotId }, data: { title: title.trim() } });
@@ -330,6 +343,7 @@ export async function updateShotTitle(shotId: string, title: string) {
 }
 
 export async function updateShotStatus(shotId: string, status: string) {
+  const gate = await requireSession(); if ("error" in gate) return gate;
   if (!SHOT_STATUSES.has(status)) return { error: "Unknown shot status." };
   const shot = await prisma.shot.findFirst({ where: { id: shotId, ...OWNED } });
   if (!shot) return { error: "Shot not found." };
@@ -340,6 +354,7 @@ export async function updateShotStatus(shotId: string, status: string) {
 }
 
 export async function softDeleteShot(shotId: string) {
+  const gate = await requireSession(); if ("error" in gate) return gate;
   const shot = await prisma.shot.findFirst({ where: { id: shotId, ...OWNED } });
   if (!shot) return { error: "Shot not found." };
   const attached = await prisma.generation.count({ where: { shotId, deletedAt: null } });
@@ -364,6 +379,7 @@ export async function softDeleteShot(shotId: string) {
  * batch commits atomically — a mid-batch failure leaves nothing half-recorded.
  */
 export async function uploadCandidates(projectId: string, formData: FormData) {
+  const gate = await requireSession(); if ("error" in gate) return gate;
   const project = await prisma.project.findFirst({ where: { id: projectId, ...OWNED } });
   if (!project) return { error: "Project not found." };
   const files = formData.getAll("files").filter((f): f is File => f instanceof File && f.size > 0);
@@ -443,6 +459,7 @@ async function looksLikeImage(file: File): Promise<boolean> {
  *  use it as an image-to-video source. Mirrors uploadCandidates for a single
  *  image; the i2v itself is a separate (paid) gen job. */
 export async function uploadReference(projectId: string, formData: FormData): Promise<{ id: string; src: string } | { error: string }> {
+  const gate = await requireSession(); if ("error" in gate) return gate;
   const project = await prisma.project.findFirst({ where: { id: projectId, ...OWNED } });
   if (!project) return { error: "Project not found." };
   const file = formData.getAll("files").find((f): f is File => f instanceof File && f.size > 0);
@@ -469,6 +486,7 @@ export async function uploadReference(projectId: string, formData: FormData): Pr
 
 /** Manual attach: candidate → shot, next version number, shot goes ATTACHED. */
 export async function attachGeneration(generationId: string, shotId: string) {
+  const gate = await requireSession(); if ("error" in gate) return gate;
   const gen = await prisma.generation.findFirst({ where: { id: generationId, ...OWNED } });
   if (!gen) return { error: "Generation not found." };
   if (gen.shotId) return { error: "Already attached to a shot — detach it first." };
@@ -502,6 +520,7 @@ export async function attachGeneration(generationId: string, shotId: string) {
 
 /** Detach back to the candidate zone (whitelist fields only). */
 export async function detachGeneration(generationId: string) {
+  const gate = await requireSession(); if ("error" in gate) return gate;
   const gen = await prisma.generation.findFirst({ where: { id: generationId, ...OWNED } });
   if (!gen || !gen.shotId) return { error: "Generation is not attached." };
   const shotId = gen.shotId;
@@ -529,6 +548,7 @@ export async function detachGeneration(generationId: string) {
 /** Soft-delete a generation from the Assets library. If it was a shot's last
  *  live render, the shot drops back to DRAFT (same "last one out" rule). */
 export async function deleteGeneration(generationId: string): Promise<{ ok: true } | { error: string }> {
+  const gate = await requireSession(); if ("error" in gate) return gate;
   const gen = await prisma.generation.findFirst({ where: { id: generationId, ...OWNED } });
   if (!gen) return { error: "Generation not found." };
   const shotId = gen.shotId;
@@ -554,6 +574,7 @@ export async function deleteGeneration(generationId: string): Promise<{ ok: true
 
 /** Persist the working cut (replaces the phase-② localStorage mock). */
 export async function saveProjectEdit(projectId: string, editJsonString: string) {
+  const gate = await requireSession(); if ("error" in gate) return gate;
   const project = await prisma.project.findFirst({ where: { id: projectId, ...OWNED } });
   if (!project) return { error: "Project not found." };
   let edit: ArtlioEdit;
@@ -580,6 +601,7 @@ const BLANK_CUT = (): ArtlioEdit => ({
  *  De-duped by src — a segment already on the timeline reports added:false and
  *  changes nothing (the board cut already carries every attached render). */
 export async function addSegmentToCut(shotId: string): Promise<{ ok: true; added: boolean } | { error: string }> {
+  const gate = await requireSession(); if ("error" in gate) return gate;
   const shot = await prisma.shot.findFirst({ where: { id: shotId, ...OWNED }, select: { id: true, projectId: true, transition: true } });
   if (!shot) return { error: "Shot not found." };
   // the segment's render = its latest attached video, scoped to shot + owner +
@@ -636,6 +658,7 @@ export async function addSegmentToCut(shotId: string): Promise<{ ok: true; added
  *  The cut snapshot and Project.editJson are written in ONE transaction, so
  *  "export renders what is saved" holds by construction (codex review). */
 export async function startRender(projectId: string, editJsonString: string) {
+  const gate = await requireSession(); if ("error" in gate) return gate;
   const project = await prisma.project.findFirst({ where: { id: projectId, ...OWNED } });
   if (!project) return { error: "Project not found." };
   let edit: ArtlioEdit;
@@ -681,6 +704,7 @@ export async function startRender(projectId: string, editJsonString: string) {
 
 /** Poll target for the editor's render strip. */
 export async function getRenderJobs(projectId: string) {
+  const gate = await requireSession(); if ("error" in gate) throw new Error(gate.error);
   const jobs = await prisma.renderJob.findMany({
     where: { projectId, ownerId: FOUNDER_OWNER_ID },
     orderBy: { createdAt: "desc" },
@@ -704,6 +728,7 @@ export async function getRenderJobs(projectId: string) {
 
 /** Hide from candidate zone. The row is a tombstone; the sweeper handles blobs. */
 export async function softDeleteGeneration(generationId: string) {
+  const gate = await requireSession(); if ("error" in gate) return gate;
   const gen = await prisma.generation.findFirst({ where: { id: generationId, ...OWNED } });
   if (!gen) return { error: "Generation not found." };
   await prisma.$transaction([
@@ -723,6 +748,7 @@ const EDITOR_IMAGE_EXTS = new Set(["png", "jpg", "jpeg", "webp", "gif", "avif"])
  *  panel — click one to append it to the cut. `seconds` drives the clip length.
  *  Only image/video are returned; audio/unknown assets aren't timeline clips here. */
 export async function getEditorMedia(projectId: string): Promise<{ id: string; src: string; kind: "image" | "video"; seconds: number }[]> {
+  const gate = await requireSession(); if ("error" in gate) throw new Error(gate.error);
   const project = await prisma.project.findFirst({ where: { id: projectId, ...OWNED } });
   if (!project) return [];
   const gens = await prisma.generation.findMany({

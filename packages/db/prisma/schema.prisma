@@ -483,6 +483,16 @@ model ModelDirective {
   @@index([ownerId, family])
 }
 
+/// 运行时配置（OPT-6 P1a）：把散在 env 的开关变成 DB 旋钮（vision caps / COWORK_PROVIDER）。
+/// key 是代码侧固定枚举；valueJson 由 per-key zod 在读/写两侧校验。读取走 read-through，
+/// DB 无值回退 env（见 apps/web/lib/runtime-config.ts）。免重新部署即生效（不缓存）。
+model RuntimeConfig {
+  key       String   @id
+  valueJson Json
+  updatedAt DateTime @updatedAt
+  updatedBy String   @default("")
+}
+
 // 指令编辑历史（R6）：每次 save 写一行快照，用于回滚（比 ActionEvent 更结构化）。
 model ModelDirectiveRevision {
   id          String   @id

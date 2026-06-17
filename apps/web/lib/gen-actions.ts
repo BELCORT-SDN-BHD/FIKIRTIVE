@@ -19,10 +19,12 @@ import {
 } from "@artlio/core";
 import { getBoss } from "./queue";
 import { checkCast } from "./cowork-guardian";
+import { requireSession } from "./auth-guard";
 
 const OWNED = { ownerId: FOUNDER_OWNER_ID, deletedAt: null } as const;
 
 export async function startGen(raw: unknown): Promise<{ id: string } | { error: string }> {
+  const gate = await requireSession(); if ("error" in gate) return gate;
   const parsed = genRequest.safeParse(raw);
   if (!parsed.success) return { error: "That generation request is out of bounds." };
   const { projectId, shotId, sourceGenerationId, tailGenerationId, prompt, entityIds, count, kind, model, durationSeconds, resolution, aspectRatio, fps, audio, idempotencyKey, variantSel, threadId } = parsed.data;
@@ -94,14 +96,20 @@ export async function startGen(raw: unknown): Promise<{ id: string } | { error: 
       select: { id: true },
     });
   } catch (e) {
-    // partial-unique index race: a concurrent same-key submit won the insert →
-    // return ITS active job instead of creating (and paying for) a duplicate
+    // partial-unique index race: a concurrent same-key submit won the insert → return
+    // ITS job instead of creating (and paying for) a duplicate. Scope the lookup to mirror
+    // each key's index: a general (shot-frame) key conflicts only while ACTIVE (active-only
+    // index), so match active — keeping the original behavior and not masking a future unrelated
+    // unique conflict; a cowork:<cardId> key is exactly-once-ever (GenJob_cowork_idempotency_once
+    // is all-status), so match ANY status — a re-insert after the first job is DONE/FAILED must
+    // also return that job, never spend again, never re-throw P2002 to the caller.
     if (idempotencyKey && typeof e === "object" && e !== null && (e as { code?: string }).code === "P2002") {
-      const active = await prisma.genJob.findFirst({
-        where: { ownerId: FOUNDER_OWNER_ID, projectId, idempotencyKey, status: { in: ["QUEUED", "GENERATING"] } },
+      const coworkKey = idempotencyKey.startsWith("cowork:");
+      const existing = await prisma.genJob.findFirst({
+        where: { ownerId: FOUNDER_OWNER_ID, projectId, idempotencyKey, ...(coworkKey ? {} : { status: { in: ["QUEUED", "GENERATING"] } }) },
         orderBy: { createdAt: "desc" }, select: { id: true },
       });
-      if (active) return { id: active.id };
+      if (existing) return { id: existing.id };
     }
     throw e;
   }
@@ -123,6 +131,7 @@ export async function startGen(raw: unknown): Promise<{ id: string } | { error: 
 
 /** Poll a gen job + return its produced generations' image URLs when DONE. */
 export async function getGenJob(jobId: string) {
+  const gate = await requireSession(); if ("error" in gate) throw new Error(gate.error);
   const job = await prisma.genJob.findFirst({ where: { id: jobId, ownerId: FOUNDER_OWNER_ID } });
   if (!job) return null;
   let urls: string[] = [];
@@ -147,6 +156,7 @@ export async function getGenJob(jobId: string) {
  *  surface (or a reload) would otherwise lose finished generations from view (they
  *  stay in Assets, but the user expects them in the gen panel too). */
 export async function getRecentGenResults(projectId: string, limit = 12) {
+  const gate = await requireSession(); if ("error" in gate) throw new Error(gate.error);
   const project = await prisma.project.findFirst({ where: { id: projectId, ownerId: FOUNDER_OWNER_ID, deletedAt: null }, select: { id: true } });
   if (!project) return [];
   const jobs = await prisma.genJob.findMany({

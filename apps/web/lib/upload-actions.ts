@@ -33,10 +33,12 @@ import {
 import { storage, FOUNDER_OWNER_ID } from "@/lib/storage";
 import { getBoss } from "@/lib/queue";
 import { buildEntitySnapshot } from "@/lib/entity-snapshot";
+import { requireSession } from "@/lib/auth-guard";
 
 const OWNED = { ownerId: FOUNDER_OWNER_ID };
 
 export async function authorizeUpload(raw: unknown): Promise<AuthorizeUploadResult | { error: string }> {
+  const gate = await requireSession(); if ("error" in gate) return gate;
   if (!storage.supportsDirectUpload) return { error: "Direct upload is not available on this storage driver." };
   const parsed = authorizeUploadInput.safeParse(raw);
   if (!parsed.success) return { error: "That file can't be uploaded (type or size out of bounds)." };
@@ -51,6 +53,7 @@ export async function authorizeUpload(raw: unknown): Promise<AuthorizeUploadResu
 }
 
 export async function signUploadPart(raw: unknown): Promise<{ url: string } | { error: string }> {
+  const gate = await requireSession(); if ("error" in gate) return gate;
   if (!storage.supportsDirectUpload) return { error: "Direct upload is not available on this storage driver." };
   const parsed = signPartInput.safeParse(raw);
   if (!parsed.success) return { error: "Malformed part-signing request." };
@@ -62,6 +65,7 @@ export async function signUploadPart(raw: unknown): Promise<{ url: string } | { 
 }
 
 export async function abortDirectUpload(raw: unknown): Promise<{ ok: true } | { error: string }> {
+  const gate = await requireSession(); if ("error" in gate) return gate;
   if (!storage.supportsDirectUpload) return { error: "Direct upload is not available on this storage driver." };
   const parsed = abortUploadInput.safeParse(raw);
   if (!parsed.success) return { error: "Malformed abort request." };
@@ -82,6 +86,7 @@ export async function finalizeCandidateUploads(
   entityIds: string[],
   raw: unknown,
 ): Promise<{ ok: true; count: number; failures: { filename: string; reason: string }[] } | { error: string }> {
+  const gate = await requireSession(); if ("error" in gate) return gate;
   const project = await prisma.project.findFirst({ where: { id: projectId, ...OWNED } });
   if (!project) return { error: "Project not found." };
   const parsed = finalizeUploadsInput.safeParse(raw);

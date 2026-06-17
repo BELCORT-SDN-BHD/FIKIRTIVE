@@ -32,6 +32,7 @@ export * from "./ref-config.js";
 export * from "./gen.js";
 export * from "./cowork.js";
 export * from "./cowork-transport.js";
+export * from "./runtime-config.js";
 export * from "./cowork-skills.js";
 export * from "./cowork-directives.js";
 export * from "./cowork-coach.js";

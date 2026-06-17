@@ -532,3 +532,13 @@ h1, h2, h3 { font-family: var(--font-sans); font-weight: 600; letter-spacing: va
 .nav-drawer { display: flex; }
 @media (max-width: 1023px) { .nav-rail { display: none; } }
 @media (min-width: 1024px) { .nav-burger, .nav-drawer { display: none; } }
+
+/* ---------- OPT-6 admin shell (rail + content) ---------- */
+.admin-shell { position: relative; z-index: 1; display: flex; min-height: 100dvh; }
+.admin-nav { flex: none; width: 220px; display: flex; flex-direction: column; gap: 2px; padding: 18px 12px; border-right: 1px solid var(--line-2); }
+.admin-nav-link { display: block; padding: 9px 12px; border-radius: var(--radius-md); font: var(--text-body-medium); color: var(--fg-2); text-decoration: none; transition: background var(--dur-fast) var(--ease-out), color var(--dur-fast) var(--ease-out); }
+.admin-nav-link:hover { background: var(--glass-hover); color: var(--fg-1); }
+.admin-nav-link:focus-visible { outline: none; box-shadow: var(--ring-focus); }
+.admin-nav-link.is-disabled { color: var(--fg-4); cursor: default; }
+.admin-nav-link.is-disabled:hover { background: transparent; color: var(--fg-4); }
+.admin-content { flex: 1; min-width: 0; overflow: auto; }

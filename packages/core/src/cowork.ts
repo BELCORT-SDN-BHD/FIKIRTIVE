@@ -7,6 +7,7 @@
  */
 import { z } from "zod";
 import { GEN_KINDS, MAX_GEN_PROMPT, MAX_GEN_ENTITIES, MAX_GEN_COUNT } from "./gen.js";
+import { clampVisionInts } from "./runtime-config.js";
 
 export const MAX_COWORK_IDEA = 4000;
 export const COWORK_MAX_SCENES = 6;
@@ -124,12 +125,10 @@ export function coworkVisionConfig(): { enabled: boolean; policy: "C"; maxImages
   const enabled = process.env.COWORK_VISION_ENABLED !== "false" && process.env.COWORK_VISION_ENABLED !== "0";
   // fail-closed: a finite positive int clamped to a hard ceiling, else the default —
   // Infinity/0/garbage must never UN-bound the safety caps (esp. once dashboard-tunable).
-  const clampInt = (raw: string | undefined, def: number, max: number): number => {
-    const n = Math.floor(Number(raw));
-    return Number.isFinite(n) && n >= 1 ? Math.min(n, max) : def;
-  };
-  const maxImages = clampInt(process.env.COWORK_VISION_MAX_IMAGES, 3, 8);
-  const maxBytes = clampInt(process.env.COWORK_VISION_MAX_BYTES, 4_000_000, 16_000_000);
+  const { maxImages, maxBytes } = clampVisionInts({
+    maxImages: process.env.COWORK_VISION_MAX_IMAGES,
+    maxBytes: process.env.COWORK_VISION_MAX_BYTES,
+  });
   return { enabled, policy: "C", maxImages, maxBytes };
 }
 
@@ -183,6 +182,21 @@ export const coworkBriefRequest = z.object({
   brief: z.string().max(MAX_COWORK_BRIEF), // empty string allowed = clear the brief
 }).strict();
 export type CoworkBriefRequest = z.infer<typeof coworkBriefRequest>;
+
+/** Admin runtime-config write input (OPT-6 P1a). One discriminated key per setting;
+ *  each value is .strict() so unknown fields are rejected. NOTE: provider has NO
+ *  "modal" — that's P1b (super-admin only). */
+export const runtimeConfigInput = z.discriminatedUnion("key", [
+  z.object({ key: z.literal("vision"), value: z.object({
+    enabled: z.boolean().optional(),
+    maxImages: z.number().int().min(1).max(8).optional(),
+    maxBytes: z.number().int().min(1).max(16_000_000).optional(),
+  }).strict() }),
+  z.object({ key: z.literal("cowork_provider"), value: z.object({
+    provider: z.enum(["mock", "fal"]), // NO "modal" in P1a — that's P1b (super-admin)
+  }).strict() }),
+]);
+export type RuntimeConfigInput = z.infer<typeof runtimeConfigInput>;
 
 export const coworkTurnSchema = z.object({
   planSteps: z.array(z.string().trim().min(1).transform((s) => s.slice(0, 200))).transform((arr) => arr.slice(0, MAX_PLAN_STEPS)).default([]),
