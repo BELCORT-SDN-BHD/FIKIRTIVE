@@ -1,7 +1,7 @@
-import { auth, allowed } from "@/auth";
 import { redirect } from "next/navigation";
 import { prisma } from "@artlio/db";
 import { FOUNDER_OWNER_ID } from "@artlio/core";
+import { requireRole } from "@/lib/auth-guard";
 import { AuditAdmin, type AuditRow } from "@/components/admin/AuditAdmin";
 
 export const dynamic = "force-dynamic";
@@ -15,8 +15,10 @@ const MONEY_GATE_TYPES = [
 ] as const;
 
 export default async function AuditPage({ searchParams }: { searchParams: Promise<{ type?: string }> }) {
-  const session = await auth();
-  if (!allowed(session?.user?.email)) redirect("/login?from=/admin/audit");
+  // §③ Content & audit read = moderator (or super-admin). requireRole re-asserts the
+  // allowlist outer wall + the section→role matrix, and audits a denied read.
+  const gate = await requireRole("content", "read");
+  if ("error" in gate) redirect("/login?from=/admin/audit");
 
   const { type } = await searchParams;
   const active = type && (MONEY_GATE_TYPES as readonly string[]).includes(type) ? type : null;

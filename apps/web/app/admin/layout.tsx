@@ -17,7 +17,7 @@ const NAV = [
   { href: "/admin/models", label: "Model & provider", live: true },
   { href: "/admin/cost", label: "Cost & usage", live: true },
   { href: "/admin/audit", label: "Content & audit", live: true },
-  { href: "#", label: "Team & access", live: false },
+  { href: "/admin/team", label: "Team & access", live: true },
   { href: "#", label: "System & queue", live: false },
 ];
 

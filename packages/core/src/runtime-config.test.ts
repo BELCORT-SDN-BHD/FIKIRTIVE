@@ -51,8 +51,8 @@ describe("runtimeConfigInput", () => {
   it("accepts cowork_provider=fal", () => {
     expect(runtimeConfigInput.safeParse({ key: "cowork_provider", value: { provider: "fal" } }).success).toBe(true);
   });
-  it("REJECTS cowork_provider=modal (not allowed in P1a)", () => {
-    expect(runtimeConfigInput.safeParse({ key: "cowork_provider", value: { provider: "modal" } }).success).toBe(false);
+  it("accepts cowork_provider=modal (P1b unlocks modal — super-admin-gated in saveRuntimeConfig)", () => {
+    expect(runtimeConfigInput.safeParse({ key: "cowork_provider", value: { provider: "modal" } }).success).toBe(true);
   });
   it("REJECTS vision maxImages above the ceiling (>8)", () => {
     expect(runtimeConfigInput.safeParse({ key: "vision", value: { maxImages: 99 } }).success).toBe(false);

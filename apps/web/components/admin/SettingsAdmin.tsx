@@ -3,7 +3,7 @@
  * OPT-6 P1a runtime-config settings (the writable knobs in resolveVisionConfig /
  * getTransport). Mirrors DirectivesAdmin: a client component calling the server
  * action with an object and surfacing {ok}|{error}. Two cards — vision caps and
- * the cowork provider (mock|fal only; modal is P1b). Worker-side env keys aren't
+ * the cowork provider (mock|fal; modal shown to super-admin only, P1b). Worker-side env keys aren't
  * editable here (restart-required), only the DB-backed runtime config.
  */
 import { useState } from "react";
@@ -68,7 +68,7 @@ function VisionCard({ vision }: { vision: Vision }) {
   );
 }
 
-function ProviderCard({ provider }: { provider: string }) {
+function ProviderCard({ provider, canModal }: { provider: string; canModal: boolean }) {
   const [value, setValue] = useState(provider);
   const [saving, setSaving] = useState(false);
   const [msg, setMsg] = useState<{ ok: boolean; text: string } | null>(null);
@@ -100,6 +100,7 @@ function ProviderCard({ provider }: { provider: string }) {
         >
           <option value="mock">mock</option>
           <option value="fal">fal</option>
+          {canModal && <option value="modal">modal (self-hosted)</option>}
         </select>
       </label>
       <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
@@ -112,7 +113,7 @@ function ProviderCard({ provider }: { provider: string }) {
   );
 }
 
-export function SettingsAdmin({ vision, provider }: { vision: Vision; provider: string }) {
+export function SettingsAdmin({ vision, provider, canModal }: { vision: Vision; provider: string; canModal: boolean }) {
   return (
     <main style={{ maxWidth: 760, margin: "0 auto", padding: "32px 24px", display: "grid", gap: 20 }}>
       <header style={{ display: "grid", gap: 4 }}>
@@ -122,7 +123,7 @@ export function SettingsAdmin({ vision, provider }: { vision: Vision; provider: 
         </p>
       </header>
       <VisionCard vision={vision} />
-      <ProviderCard provider={provider} />
+      <ProviderCard provider={provider} canModal={canModal} />
       <p style={{ font: "var(--text-caption)", color: "var(--fg-3)", margin: 0 }}>
         Worker-side keys (GENERATION_PROVIDER, FAL_KEY) are restart-required and not shown here.
       </p>

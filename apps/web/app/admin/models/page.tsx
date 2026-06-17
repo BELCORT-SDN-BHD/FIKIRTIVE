@@ -1,7 +1,7 @@
-import { auth, allowed } from "@/auth";
 import { redirect } from "next/navigation";
 import { GEN_MODELS, GEN_VIDEO_MODELS, REFGEN_MODELS, MODEL_FAMILIES, modelFamily, FOUNDER_OWNER_ID } from "@artlio/core";
 import { prisma } from "@artlio/db";
+import { requireRole } from "@/lib/auth-guard";
 import { listDirectives } from "@/lib/cowork-knowledge";
 import { ModelsAdmin, type ModelRow } from "@/components/admin/ModelsAdmin";
 
@@ -10,8 +10,10 @@ export const dynamic = "force-dynamic";
 export const metadata = { title: "Models · Artlio admin" };
 
 export default async function ModelsPage() {
-  const session = await auth();
-  if (!allowed(session?.user?.email)) redirect("/login?from=/admin/models");
+  // §① Model & provider read = viewer/ops (or super-admin). requireRole re-asserts the
+  // allowlist outer wall + the section→role matrix, and audits a denied read.
+  const gate = await requireRole("model", "read");
+  if ("error" in gate) redirect("/login?from=/admin/models");
 
   // overlay (disabled set) — keyed by modelId
   const overlay = await prisma.modelRegistryOverlay.findMany({ where: { ownerId: FOUNDER_OWNER_ID }, select: { modelId: true, enabled: true, notes: true } });

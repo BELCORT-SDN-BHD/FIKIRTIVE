@@ -1,6 +1,6 @@
 import { redirect } from "next/navigation";
-import { auth, allowed } from "@/auth";
 import { MODEL_FAMILIES, GEN_MODES } from "@artlio/core";
+import { requireRole } from "@/lib/auth-guard";
 import { listDirectives } from "@/lib/cowork-knowledge";
 import { DirectivesAdmin, type AdminCell } from "@/components/admin/DirectivesAdmin";
 
@@ -15,8 +15,10 @@ export const metadata = { title: "Model directives · Artlio admin" };
  * reflects it.
  */
 export default async function AdminDirectivesPage() {
-  const session = await auth();
-  if (!session?.user?.email || !allowed(session.user.email)) redirect("/login?from=/admin/directives");
+  // §⑥ Prompt & knowledge read = viewer/ops (or super-admin). requireRole re-asserts
+  // the allowlist outer wall + the section→role matrix, and audits a denied read.
+  const gate = await requireRole("knowledge", "read");
+  if ("error" in gate) redirect("/login?from=/admin/directives");
 
   const rows = await listDirectives();
   const byKey = new Map(rows.map((r) => [`${r.family}:${r.mode}`, r]));

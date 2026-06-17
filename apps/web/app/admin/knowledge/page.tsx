@@ -1,7 +1,7 @@
-import { auth, allowed } from "@/auth";
 import { redirect } from "next/navigation";
 import { prisma } from "@artlio/db";
 import { COWORK_PLANNER_SYSTEM } from "@artlio/core";
+import { requireRole } from "@/lib/auth-guard";
 import { KnowledgeAdmin } from "@/components/admin/KnowledgeAdmin";
 
 // reads the DB at request time — never prerender
@@ -17,8 +17,10 @@ async function readText(key: string): Promise<string | null> {
 }
 
 export default async function KnowledgePage() {
-  const session = await auth();
-  if (!allowed(session?.user?.email)) redirect("/login?from=/admin/knowledge");
+  // §⑥ Prompt & knowledge read = viewer/ops (or super-admin). requireRole re-asserts
+  // the allowlist outer wall + the section→role matrix, and audits a denied read.
+  const gate = await requireRole("knowledge", "read");
+  if ("error" in gate) redirect("/login?from=/admin/knowledge");
   const plannerSystem = (await readText("planner_system")) ?? COWORK_PLANNER_SYSTEM;
   const briefDefault = (await readText("brief_default")) ?? "";
   const descriptionTemplate = (await readText("description_template")) ?? "";

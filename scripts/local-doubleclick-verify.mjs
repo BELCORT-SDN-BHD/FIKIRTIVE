@@ -1,7 +1,11 @@
-// LOCAL verification of the double-click money-safety fix (GenSpace busyRef guard).
-// Mock providers + local DB → $0, no worker needed: the double-spend is about job
-// CREATION, so we only assert exactly ONE GenJob row is created from a same-frame
-// double-click (the harness Pass 3 caught creating TWO on prod, pre-fix).
+// LOCAL verification of the GenSpace direct-gen double-spend fixes (local DB → $0,
+// no worker needed: the double-spend is about job CREATION, so we assert exactly ONE
+// GenJob row is created). Two distinct gaps:
+//   Phase 1 — same-FRAME double-click (busyRef guard). The harness Pass 3 caught this
+//     creating TWO on prod, pre-fix.
+//   Phase 2 — network retry / double-SUBMIT: the SAME startGen request reaching the
+//     server twice (flaky net / framework re-POST). busyRef can't catch this — only a
+//     stable idempotencyKey on the request can. The keyless GenSpace path was missing it.
 // Run:  node scripts/local-doubleclick-verify.mjs
 import { chromium } from "playwright";
 import { readFile } from "node:fs/promises";
@@ -54,7 +58,54 @@ try {
   }
   if (twoPlus >= 2) fail(`FIX FAILED: double-click still created ${twoPlus} jobs`);
   if (ones < 6) fail("no stable single job — did the click register?");
-  console.log(`✓ FIX VERIFIED (local): same-frame double-click → exactly 1 GenJob created (no double-spend)`);
+  console.log(`✓ Phase 1 (local): same-frame double-click → exactly 1 GenJob (busyRef guard)`);
+
+  // ── Phase 2: network retry / double-SUBMIT (the gap busyRef can't catch) ──
+  // Reload clears busyRef. Fire ONE Generate, capture its startGen server-action POST,
+  // then REPLAY that exact POST once from the page origin — a faithful double-submit.
+  // Keyless → the replay creates a 2nd paid job. Fixed (stable idempotencyKey) → the
+  // server's active-key dedupe returns the in-flight job, so still exactly 1.
+  await page.reload({ waitUntil: "networkidle" });
+  await editor.click();
+  await page.keyboard.type("neon alley reflection at dusk PHASE2");
+
+  let captured = null;
+  page.on("request", (req) => {
+    if (captured || req.method() !== "POST") return;
+    const action = req.headers()["next-action"];
+    const body = req.postData();
+    if (action && body && body.includes("PHASE2")) {
+      captured = { url: req.url(), action, ct: req.headers()["content-type"] || "text/plain;charset=utf-8", body };
+    }
+  });
+
+  const phase2 = await dbNow();
+  await page.getByRole("button", { name: "Generate", exact: true }).click();
+  for (let i = 0; i < 50 && !captured; i++) await page.waitForTimeout(100);
+  if (!captured) fail("phase 2: could not capture the startGen request");
+
+  // Deterministic FIX check: the keyless path sends no key at all.
+  if (!captured.body.includes("idempotencyKey")) {
+    fail("RED: GenSpace startGen carries NO idempotencyKey — a re-submit will double-spend");
+  }
+
+  // Faithful double-submit: replay the captured POST verbatim (same origin → cookies +
+  // Origin auto-attached, so Next runs the action again).
+  await page.evaluate(async ({ url, action, ct, body }) => {
+    await fetch(url, { method: "POST", headers: { "next-action": action, "content-type": ct, accept: "text/x-component" }, body });
+  }, captured);
+
+  let p2ones = 0, p2two = 0;
+  for (let i = 0; i < 15 && p2ones < 5; i++) {
+    const c = await prisma.genJob.count({ where: { projectId, createdAt: { gte: phase2 } } });
+    if (c >= 2) { p2two = c; break; }
+    p2ones = c === 1 ? p2ones + 1 : 0;
+    await page.waitForTimeout(800);
+  }
+  if (p2two >= 2) fail(`FIX FAILED: replayed startGen (network double-submit) created ${p2two} jobs — idempotencyKey not deduping`);
+  if (p2ones < 5) fail("phase 2: no stable single job — did the replay/click register?");
+  console.log("✓ Phase 2 (local): replayed startGen (network double-submit) → exactly 1 GenJob (idempotencyKey dedupes)");
+
   passed = true;
 } catch (e) {
   console.error("✗", e.message);

@@ -1,7 +1,7 @@
-import { auth, allowed } from "@/auth";
 import { redirect } from "next/navigation";
 import { prisma } from "@artlio/db";
 import { FOUNDER_OWNER_ID } from "@artlio/core";
+import { requireRole } from "@/lib/auth-guard";
 import { CostAdmin, type DayRow, type JobRow } from "@/components/admin/CostAdmin";
 
 // reads the DB at request time — never prerender
@@ -11,8 +11,10 @@ export const metadata = { title: "Cost · Artlio admin" };
 const DAY_MS = 24 * 60 * 60 * 1000;
 
 export default async function CostPage() {
-  const session = await auth();
-  if (!allowed(session?.user?.email)) redirect("/login?from=/admin/cost");
+  // §② Cost & usage read = finance (or super-admin). requireRole re-asserts the
+  // allowlist outer wall + the section→role matrix, and audits a denied read.
+  const gate = await requireRole("cost", "read");
+  if ("error" in gate) redirect("/login?from=/admin/cost");
 
   const since = new Date(Date.now() - 30 * DAY_MS);
   // RECORD-ONLY reads: spentUsd is never null-coalesced into a spend decision here.

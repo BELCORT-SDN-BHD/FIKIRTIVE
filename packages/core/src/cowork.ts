@@ -184,8 +184,9 @@ export const coworkBriefRequest = z.object({
 export type CoworkBriefRequest = z.infer<typeof coworkBriefRequest>;
 
 /** Admin runtime-config write input (OPT-6 P1a). One discriminated key per setting;
- *  each value is .strict() so unknown fields are rejected. NOTE: provider has NO
- *  "modal" — that's P1b (super-admin only). */
+ *  each value is .strict() so unknown fields are rejected. NOTE: provider includes
+ *  "modal" (P1b) — but the WRITE is super-admin-only + credential-checked in
+ *  saveRuntimeConfig (the zod schema only bounds the shape, not the authority). */
 export const runtimeConfigInput = z.discriminatedUnion("key", [
   z.object({ key: z.literal("vision"), value: z.object({
     enabled: z.boolean().optional(),
@@ -193,7 +194,7 @@ export const runtimeConfigInput = z.discriminatedUnion("key", [
     maxBytes: z.number().int().min(1).max(16_000_000).optional(),
   }).strict() }),
   z.object({ key: z.literal("cowork_provider"), value: z.object({
-    provider: z.enum(["mock", "fal"]), // NO "modal" in P1a — that's P1b (super-admin)
+    provider: z.enum(["mock", "fal", "modal"]), // P1b unlocks modal — super-admin-gated + credential-checked in saveRuntimeConfig
   }).strict() }),
   // OPT-6 P2 §⑥ knowledge keys — $0 planner text (not spend gates). Bounded length.
   z.object({ key: z.literal("planner_system"), value: z.object({ text: z.string().trim().max(8000) }).strict() }),

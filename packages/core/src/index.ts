@@ -35,6 +35,7 @@ export * from "./cowork.js";
 export * from "./cowork-transport.js";
 export * from "./runtime-config.js";
 export * from "./model-registry.js";
+export * from "./roles.js";
 export * from "./cowork-compose.js";
 export * from "./cowork-skills.js";
 export * from "./cowork-directives.js";

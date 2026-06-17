@@ -417,6 +417,10 @@ model User {
   email         String    @unique
   emailVerified DateTime?
   image         String?
+  /// 操作员 RBAC（OPT-6 P1b）：默认 viewer；值由代码侧 zod 枚举 ROLES 校验（非 PG enum，
+  /// 加第 6 个角色无需迁移）。session callback 把它读进 session.user.role；requireRole 用它。
+  /// allowlist 仍是外墙、永不读 role —— 默认 viewer 锁不了 app，只锁 role-gated 区段。
+  role          String    @default("viewer")
   accounts      Account[]
   sessions      Session[]
 }
