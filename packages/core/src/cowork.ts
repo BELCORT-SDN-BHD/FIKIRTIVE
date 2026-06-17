@@ -118,7 +118,10 @@ export const COWORK_MEMORY_TURNS = 8;
 /** Cowork vision (Phase C) config — read from env now; the future admin dashboard will
  *  make these DB-backed runtime toggles (so keep them read from THIS one place). */
 export function coworkVisionConfig(): { enabled: boolean; policy: "C"; maxImages: number; maxBytes: number } {
-  const enabled = process.env.COWORK_VISION_ENABLED === "true" || process.env.COWORK_VISION_ENABLED === "1";
+  // DEFAULT ON: vision is on unless explicitly disabled. The flag stays as an emergency
+  // off-switch (set COWORK_VISION_ENABLED=false / 0 to turn it off without a redeploy) and
+  // the future dashboard knob — but the operator gets it out of the box, no env var needed.
+  const enabled = process.env.COWORK_VISION_ENABLED !== "false" && process.env.COWORK_VISION_ENABLED !== "0";
   // fail-closed: a finite positive int clamped to a hard ceiling, else the default —
   // Infinity/0/garbage must never UN-bound the safety caps (esp. once dashboard-tunable).
   const clampInt = (raw: string | undefined, def: number, max: number): number => {

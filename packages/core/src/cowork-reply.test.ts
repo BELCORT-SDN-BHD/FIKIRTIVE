@@ -243,12 +243,22 @@ describe("coworkVisionConfig", () => {
     delete process.env.COWORK_VISION_MAX_BYTES;
   });
 
-  it("defaults: enabled=false, maxImages=3, maxBytes=4_000_000 when env is unset", () => {
+  it("defaults: enabled=true (default-on), maxImages=3, maxBytes=4_000_000 when env is unset", () => {
     const cfg = coworkVisionConfig();
-    expect(cfg.enabled).toBe(false);
+    expect(cfg.enabled).toBe(true);
     expect(cfg.maxImages).toBe(3);
     expect(cfg.maxBytes).toBe(4_000_000);
     expect(cfg.policy).toBe("C");
+  });
+
+  it('COWORK_VISION_ENABLED="false" → enabled false (the off-switch)', () => {
+    process.env.COWORK_VISION_ENABLED = "false";
+    expect(coworkVisionConfig().enabled).toBe(false);
+  });
+
+  it('COWORK_VISION_ENABLED="0" → enabled false', () => {
+    process.env.COWORK_VISION_ENABLED = "0";
+    expect(coworkVisionConfig().enabled).toBe(false);
   });
 
   it('COWORK_VISION_ENABLED="true" → enabled true', () => {
