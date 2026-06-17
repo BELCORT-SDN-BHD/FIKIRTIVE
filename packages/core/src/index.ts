@@ -9,12 +9,16 @@ export {
 } from "./template-bundle.js";
 export {
   artlioEdit,
+  betweenClipTransition,
   renderJobData,
   editDuration,
+  renderDuration,
   srcToStorageKey,
   storageKeyToSrc,
   TRANSITION_DEFAULT_SECONDS,
   TRANSITION_MAX_SECONDS,
+  TRANSITION_TYPES,
+  TRANSITION_DIRECTIONS,
   RENDER_QUEUE,
   INGEST_QUEUE,
   RENDER_DLQ,
@@ -23,6 +27,9 @@ export {
   RENDER_STATUSES,
   type ArtlioEdit,
   type ArtlioClip,
+  type BetweenClipTransition,
+  type TransitionType,
+  type TransitionDirection,
   type RenderJobData,
   type RenderStatus,
 } from "./timeline.js";

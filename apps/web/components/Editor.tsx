@@ -31,6 +31,17 @@ type EditorClip = { id: string; src: string; kind: "image" | "video"; seconds: n
 /** The selected clip, as the SDK's clip:selected event reports it (subset we edit). */
 type SelClip = { asset?: { type?: string; src?: string; volume?: number }; transition?: { in?: string; out?: string } };
 type Selection = { trackIndex: number; clipIndex: number; clip: SelClip };
+/** A between-clip transition, mirroring the contract's betweenClipTransition shape.
+ *  Lives in Artlio React state (outside Shotstack) and is merged into the
+ *  ArtlioEdit on save. */
+type UiTransition = { fromClipIndex: number; toClipIndex: number; type: string; durationMs: number; direction?: "left" | "right" | "up" | "down" };
+
+// The LTX-style 7-tile library. "None" = the ABSENCE of an entry (never stored).
+const TRANSITION_TILES = ["None", "Fade", "Slide", "Wipe", "Flip", "Clock Wipe", "Iris"] as const;
+const TILE_TO_TYPE: Record<string, string | null> = {
+  None: null, Fade: "fade", Slide: "slide", Wipe: "wipe", Flip: "flip", "Clock Wipe": "clockwipe", Iris: "iris",
+};
+const DEFAULT_TRANSITION_MS = 500;
 
 /** A blank cut so the editor (and its Assets panel) renders for an empty project
  *  that still has media to drop in — the artlioEdit contract (≥1 clip) is only
@@ -76,6 +87,16 @@ export function Editor({
 
   // the timeline-selected clip, for the right Inspector (transition + audio)
   const [selected, setSelected] = useState<Selection | null>(null);
+
+  // EP1 between-clip transitions live OUTSIDE the Shotstack Edit — Shotstack's
+  // schema has no track-level transition and strips unknown fields, so this
+  // Artlio-owned array is merged into the ArtlioEdit at snapshot()/save time.
+  // Keyed by fromClipIndex on the visual track (track 0).
+  const [transitions, setTransitions] = useState<UiTransition[]>(
+    () => (initialEdit?.timeline.tracks[0] as { transitions?: UiTransition[] } | undefined)?.transitions ?? [],
+  );
+  // the clip boundary the user is editing (the transition AFTER clip N → N+1)
+  const [boundary, setBoundary] = useState<number | null>(null);
 
   // editor Assets panel: the project's generated media, clickable to add to the cut
   const [media, setMedia] = useState<EditorClip[]>([]);
@@ -175,7 +196,12 @@ export function Editor({
         // selection → right Inspector (transition + audio for the picked clip)
         const offSel = edit.events.on("clip:selected", (ref) => {
           const r = ref as unknown as Selection | undefined;
-          if (r && typeof r.trackIndex === "number") setSelected({ trackIndex: r.trackIndex, clipIndex: r.clipIndex, clip: r.clip ?? {} });
+          if (r && typeof r.trackIndex === "number") {
+            setSelected({ trackIndex: r.trackIndex, clipIndex: r.clipIndex, clip: r.clip ?? {} });
+            // a transition lives "after clip N" on the single visual track (track 0);
+            // Shotstack's clipIndex matches our sorted-by-start order there.
+            if (r.trackIndex === 0 && typeof r.clipIndex === "number") setBoundary(r.clipIndex);
+          }
         });
         const offClear = edit.events.on("selection:cleared", () => setSelected(null));
         partials.push({ dispose: () => { if (typeof offSel === "function") offSel(); if (typeof offClear === "function") offClear(); } });
@@ -199,11 +225,24 @@ export function Editor({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [projectId, startEdit]);
 
-  /** read back the Studio snapshot and canonicalize through the contract */
+  /** read back the Studio snapshot, MERGE the Artlio-owned between-clip
+   *  transitions onto the visual track (Shotstack never carries them), then
+   *  canonicalize through the contract. The merge MUST happen before parse —
+   *  getEdit() returns a Shotstack-shaped object that strips the transitions. */
   function snapshot(): { edit?: ArtlioEdit; error?: string } {
     const h = handles.current;
     if (!h) return { error: "Editor not ready yet." };
-    const result = artlioEdit.safeParse(h.edit.getEdit());
+    const raw = h.edit.getEdit() as ArtlioEdit;
+    const merged = {
+      ...raw,
+      timeline: {
+        ...raw.timeline,
+        tracks: raw.timeline.tracks.map((t, i) =>
+          i === 0 && transitions.length > 0 ? { ...t, transitions } : t,
+        ),
+      },
+    };
+    const result = artlioEdit.safeParse(merged);
     if (!result.success) {
       const first = result.error.issues[0];
       return {
@@ -262,6 +301,53 @@ export function Editor({
       await h.edit.updateClip(trackIndex, clipIndex, { asset });
       syncSelectedFromEdit(trackIndex, clipIndex);
     } catch (e) { console.error("[editor] set volume failed", e); }
+  }
+
+  // ---- EP1 between-clip transitions (Artlio state, outside Shotstack) ----
+  // Set or update the transition on the selected boundary. "None" removes it.
+  function setBoundaryTransition(tile: string) {
+    if (boundary == null) return;
+    const type = TILE_TO_TYPE[tile];
+    setTransitions((prev) => {
+      const rest = prev.filter((t) => t.fromClipIndex !== boundary);
+      if (!type) return rest; // "None" = remove the entry
+      const existing = prev.find((t) => t.fromClipIndex === boundary);
+      return [
+        ...rest,
+        { fromClipIndex: boundary, toClipIndex: boundary + 1, type, durationMs: existing?.durationMs ?? DEFAULT_TRANSITION_MS },
+      ];
+    });
+    setDirty(true);
+  }
+  // Adjust the duration (ms) of the transition on the selected boundary.
+  function setBoundaryDuration(durationMs: number) {
+    if (boundary == null) return;
+    setTransitions((prev) => prev.map((t) => (t.fromClipIndex === boundary ? { ...t, durationMs } : t)));
+    setDirty(true);
+  }
+  function clearAllTransitions() {
+    setTransitions([]);
+    setDirty(true);
+  }
+  // Re-lay the visual track so clips tile from 0 (closes a legacy gap so a
+  // transition's gapless-adjacency requirement passes). Pure client-side; the
+  // user then saves. This is the global-gap handling the contract leaves to the
+  // UI — the contract only enforces gaplessness locally, per placed transition.
+  async function closeGaps() {
+    const h = handles.current;
+    if (!h || status !== "ready") return;
+    const cur = h.edit.getEdit() as ArtlioEdit;
+    const t0 = cur.timeline.tracks[0]?.clips ?? [];
+    const ordered = [...t0].sort((a, b) => a.start - b.start);
+    let cursor = 0;
+    for (const c of ordered) {
+      if (Math.abs(c.start - cursor) > 1e-6) {
+        await h.edit.updateClip(0, t0.indexOf(c), { start: cursor }).catch(() => {});
+      }
+      cursor += c.length;
+    }
+    setDirty(true);
+    setNotice({ tone: "ok", text: "Gaps closed — save the cut." });
   }
 
   const [busy, setBusy] = useState(false);
@@ -412,6 +498,11 @@ export function Editor({
         <Button variant="glass" size="sm" onClick={saveCut} disabled={status !== "ready" || !dirty || busy}>
           {busy ? "Working…" : "Save cut"}
         </Button>
+        {notice?.tone === "warn" && /gapless|gap|tile|contiguous/i.test(notice.text) && (
+          <Button variant="glass" size="sm" onClick={closeGaps} disabled={status !== "ready" || busy}>
+            Close gaps
+          </Button>
+        )}
         <Button size="sm" onClick={exportCut} disabled={status !== "ready" || busy}>
           Export MP4
         </Button>
@@ -445,6 +536,48 @@ export function Editor({
               ))}
             </div>
           </aside>
+          {/* Transitions tab — applies to a selected clip boundary; lives outside Shotstack */}
+          <aside style={{ width: 200, flex: "none", display: "flex", flexDirection: "column", border: "1px solid var(--line-2)", borderRadius: "var(--radius-lg)", overflow: "hidden", maxHeight: "100%" }}>
+            <div style={{ padding: "9px 12px", borderBottom: "1px solid var(--line-2)", display: "flex", alignItems: "center", justifyContent: "space-between", flex: "none" }}>
+              <MonoLabel>Transitions</MonoLabel>
+              <button onClick={clearAllTransitions} disabled={transitions.length === 0}
+                style={{ font: "var(--text-mono-meta)", color: "var(--fg-3)", background: "none", border: "none", cursor: transitions.length ? "pointer" : "default", textDecoration: "underline", textUnderlineOffset: 3 }}>
+                Clear all
+              </button>
+            </div>
+            <div style={{ flex: 1, overflow: "auto", padding: 10, display: "flex", flexDirection: "column", gap: 8 }}>
+              {boundary == null ? (
+                <p style={{ font: "var(--text-caption)", color: "var(--fg-3)", margin: 0 }}>Pick a clip on the timeline, then choose a transition for the cut after it.</p>
+              ) : (() => {
+                const active = transitions.find((t) => t.fromClipIndex === boundary);
+                return (
+                  <>
+                    <p style={{ font: "var(--text-caption)", color: "var(--fg-2)", margin: "0 0 2px" }}>Between clip {boundary + 1} and {boundary + 2}</p>
+                    {TRANSITION_TILES.map((tile) => {
+                      const isOn = (TILE_TO_TYPE[tile] ?? null) === (active?.type ?? null);
+                      return (
+                        <button key={tile} onClick={() => setBoundaryTransition(tile)}
+                          style={{ textAlign: "left", font: "var(--text-caption)", color: isOn ? "var(--fg-0)" : "var(--fg-1)", background: isOn ? "var(--glass-2)" : "var(--glass-1)", border: `1px solid ${isOn ? "var(--line-1)" : "var(--line-2)"}`, borderRadius: "var(--radius-sm)", padding: "7px 10px", cursor: "pointer" }}>
+                          {tile}
+                        </button>
+                      );
+                    })}
+                    {active && (
+                      <section style={{ display: "flex", flexDirection: "column", gap: 6, marginTop: 4 }}>
+                        <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between" }}>
+                          <MonoLabel>Duration</MonoLabel>
+                          <span style={{ font: "var(--text-mono-meta)", color: "var(--fg-3)" }}>{(active.durationMs / 1000).toFixed(1)}s</span>
+                        </div>
+                        <input type="range" min={100} max={2000} step={100} value={active.durationMs}
+                          onChange={(e) => setBoundaryDuration(Number(e.target.value))} style={{ width: "100%" }} aria-label="Transition duration" />
+                        <p style={{ font: "var(--text-caption)", color: "var(--fg-3)", margin: 0 }}>Must be ≤ half the shorter adjacent clip.</p>
+                      </section>
+                    )}
+                  </>
+                );
+              })()}
+            </div>
+          </aside>
           <div style={{ flex: 1, minWidth: 0, display: "flex", flexDirection: "column" }}>
           <div
             ref={studioRef}
@@ -452,6 +585,17 @@ export function Editor({
             className="al-panel"
             style={{ flex: 1, minHeight: 240, overflow: "hidden", borderRadius: "var(--radius-lg)" }}
           />
+          {transitions.length > 0 && (
+            <div style={{ display: "flex", gap: 6, flexWrap: "wrap", margin: "10px 0 0", alignItems: "center" }} aria-label="Active transitions">
+              <span style={{ font: "var(--text-mono-meta)", color: "var(--fg-4)" }}>cuts:</span>
+              {[...transitions].sort((a, b) => a.fromClipIndex - b.fromClipIndex).map((t) => (
+                <button key={t.fromClipIndex} onClick={() => setBoundary(t.fromClipIndex)} title="Edit this transition"
+                  style={{ font: "var(--text-mono-meta)", color: boundary === t.fromClipIndex ? "var(--fg-0)" : "var(--fg-2)", background: boundary === t.fromClipIndex ? "var(--glass-2)" : "var(--glass-1)", border: "1px solid var(--line-2)", borderRadius: 99, padding: "2px 8px", cursor: "pointer" }}>
+                  {t.fromClipIndex + 1}↔{t.toClipIndex + 1}: {t.type}{t.direction ? ` ${t.direction}` : ""}
+                </button>
+              ))}
+            </div>
+          )}
           <div
             ref={timelineRef}
             data-shotstack-timeline

@@ -87,6 +87,33 @@ const transition = z.object({
   duration: z.number().finite().gt(0).max(TRANSITION_MAX_SECONDS).default(TRANSITION_DEFAULT_SECONDS),
 });
 
+/** Between-clip transition types (the LTX 7-tile library, minus "None"
+ *  which = the ABSENCE of an entry — never stored). "fade" here is a
+ *  cross-fade between clips, distinct from the legacy per-clip fade-to-black. */
+export const TRANSITION_TYPES = ["cross", "slide", "wipe", "flip", "clockwipe", "iris", "fade"] as const;
+export type TransitionType = (typeof TRANSITION_TYPES)[number];
+
+export const TRANSITION_DIRECTIONS = ["left", "right", "up", "down"] as const;
+export type TransitionDirection = (typeof TRANSITION_DIRECTIONS)[number];
+
+/** A transition is a relationship BETWEEN two gapless-adjacent visual clips.
+ *  It lives on the TRACK (track.transitions[]), NOT on a clip — the editor
+ *  round-trips clips through Shotstack's Edit, whose schema strips unknown clip
+ *  fields, so transition data must not ride on a clip. durationMs is an integer
+ *  in milliseconds (the UI thinks in ms); the worker divides by 1000 for ffmpeg
+ *  seconds (render.ts uses SECONDS). Upper bound mirrors the legacy
+ *  TRANSITION_MAX_SECONDS; the per-pair "≤ half the shorter clip" guard and the
+ *  gapless-adjacency check are on the timeline refine (where clip lengths and
+ *  positions are in scope). */
+export const betweenClipTransition = z.object({
+  fromClipIndex: z.number().int().min(0),
+  toClipIndex: z.number().int().min(0),
+  type: z.enum(TRANSITION_TYPES),
+  durationMs: z.number().int().gt(0).max(TRANSITION_MAX_SECONDS * 1000),
+  direction: z.enum(TRANSITION_DIRECTIONS).optional(),
+});
+export type BetweenClipTransition = z.infer<typeof betweenClipTransition>;
+
 export const clip = z
   .object({
     asset: z.union([visualAsset, audioAsset]),
@@ -114,6 +141,12 @@ export const clip = z
 
 export const track = z.object({
   clips: z.array(clip).min(1).max(MAX_CLIPS_PER_TRACK),
+  /** between-clip transitions (visual track only; validated in timeline.superRefine
+   *  where adjacent clip lengths and positions are in scope). The gapless requirement
+   *  is enforced LOCALLY here — only a transition's two referenced clips must be
+   *  gapless-adjacent; a track with a gap and NO transitions still parses (legacy
+   *  edits may contain gaps). None = the absence of an entry. */
+  transitions: z.array(betweenClipTransition).max(MAX_CLIPS_PER_TRACK).optional(),
 });
 
 function clipsOverlap(clips: z.infer<typeof clip>[]): boolean {
@@ -153,6 +186,7 @@ export const timeline = z
       });
     }
     let end = 0;
+    const EPS = 1e-6;
     tl.tracks.forEach((t, i) => {
       if (clipsOverlap(t.clips)) {
         ctx.addIssue({ code: "custom", message: `track ${i}: clips overlap` });
@@ -160,6 +194,61 @@ export const timeline = z
       const mixed = isVisualTrack(t) && t.clips.some((c) => c.asset.type === "audio");
       if (mixed) {
         ctx.addIssue({ code: "custom", message: `track ${i}: audio clips belong on their own track` });
+      }
+      // between-clip transition validation. The gapless requirement is LOCAL: each
+      // transition's two referenced clips must be gapless-adjacent. A track with a
+      // gap and NO transitions still parses (legacy edits may contain gaps — the
+      // current renderer ignores `start`, so a global gapless reject would make old
+      // edits unloadable). Visual-track only.
+      if (t.transitions && t.transitions.length > 0) {
+        if (!isVisualTrack(t)) {
+          ctx.addIssue({ code: "custom", message: `track ${i}: between-clip transitions are visual-track only` });
+        } else {
+          // transition indices address clips in timeline order (sorted by start)
+          const ordered = [...t.clips].sort((a, b) => a.start - b.start);
+          // each boundary carries AT MOST one transition: renderDuration() sums all
+          // entries but the worker collapses by fromClipIndex into a single xfade, so
+          // a duplicate boundary would double-count the subtracted overlap.
+          const seenFrom = new Set<number>();
+          for (const tr of t.transitions) {
+            if (seenFrom.has(tr.fromClipIndex)) {
+              ctx.addIssue({
+                code: "custom",
+                message: `track ${i}: duplicate transition on boundary ${tr.fromClipIndex}→${tr.fromClipIndex + 1} — each boundary may have at most one transition`,
+              });
+              continue;
+            }
+            seenFrom.add(tr.fromClipIndex);
+            if (tr.toClipIndex !== tr.fromClipIndex + 1) {
+              ctx.addIssue({
+                code: "custom",
+                message: `track ${i}: transition must be between adjacent clips (consecutive fromClipIndex+1==toClipIndex)`,
+              });
+              continue;
+            }
+            const from = ordered[tr.fromClipIndex];
+            const to = ordered[tr.toClipIndex];
+            if (!from || !to) {
+              ctx.addIssue({ code: "custom", message: `track ${i}: transition references a clip index out of range` });
+              continue;
+            }
+            // gapless-adjacent: the later clip starts exactly where the earlier ends
+            if (Math.abs(to.start - (from.start + from.length)) > EPS) {
+              ctx.addIssue({
+                code: "custom",
+                message: `track ${i}: transition requires gapless-adjacent clips (clip ${tr.fromClipIndex} ends at ${from.start + from.length}s but clip ${tr.toClipIndex} starts at ${to.start}s)`,
+              });
+              continue;
+            }
+            const halfShorterMs = (Math.min(from.length, to.length) / 2) * 1000;
+            if (tr.durationMs > halfShorterMs + EPS) {
+              ctx.addIssue({
+                code: "custom",
+                message: `track ${i}: transition ${tr.durationMs}ms too long — must be ≤ half the shorter adjacent clip (${Math.round(halfShorterMs)}ms)`,
+              });
+            }
+          }
+        }
       }
       for (const c of t.clips) end = Math.max(end, c.start + c.length);
     });
@@ -229,4 +318,16 @@ export function editDuration(edit: ArtlioEdit): number {
   for (const t of edit.timeline.tracks)
     for (const c of t.clips) end = Math.max(end, c.start + c.length);
   return end;
+}
+
+/** Rendered OUTPUT duration in seconds: the timeline length minus the time each
+ *  between-clip transition overlaps (clips slide together by the transition).
+ *  Used by the worker for the audio mix length, the -progress total, and the
+ *  stored asset durationS. durationMs is divided by 1000 (contract is ms; the
+ *  worker renders in seconds). */
+export function renderDuration(edit: ArtlioEdit): number {
+  let overlapMs = 0;
+  for (const t of edit.timeline.tracks)
+    for (const tr of t.transitions ?? []) overlapMs += tr.durationMs;
+  return editDuration(edit) - overlapMs / 1000;
 }
