@@ -13,9 +13,10 @@ import Link from "next/link";
 const NAV = [
   { href: "/admin/settings", label: "Settings", live: true },
   { href: "/admin/directives", label: "Prompt & knowledge", live: true },
-  { href: "#", label: "Model & provider", live: false },
-  { href: "#", label: "Cost & usage", live: false },
-  { href: "#", label: "Content & audit", live: false },
+  { href: "/admin/knowledge", label: "Knowledge", live: true },
+  { href: "/admin/models", label: "Model & provider", live: true },
+  { href: "/admin/cost", label: "Cost & usage", live: true },
+  { href: "/admin/audit", label: "Content & audit", live: true },
   { href: "#", label: "Team & access", live: false },
   { href: "#", label: "System & queue", live: false },
 ];

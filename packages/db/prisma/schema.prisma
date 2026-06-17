@@ -330,6 +330,9 @@ model RefGenJob {
   progress       Int        @default(0)
   /// DONE 时产出的 GENERATED 资产（内容寻址，可多张）
   outputAssetIds String[]   @default([])
+  /// 钱真相（OPT-6 P3a，纯记录）：付费 provider 调用提交时由 worker 在同一写入里快照
+  /// （= REFGEN_PRICE_USD_PER_IMAGE * count）。null = 没扣过费。绝不参与任何 spend 判定。
+  spentUsd       Float?
   error          String     @default("")
   queueJobId     String     @default("")
   attempts       Int        @default(0)
@@ -387,6 +390,10 @@ model GenJob {
   /// 钱真相：付费 provider 调用是否已返回（扣过费）。DONE=已交付；FAILED+spent=付了但没存上
   ///（可审计/对账，避免"失败=没扣费"的误判）。pre-charge 失败时为 false。
   spent              Boolean   @default(false)
+  /// 钱真相（OPT-6 P3a，纯记录）：付费调用提交时 worker 在 commit tx 里快照（video=
+  /// videoPriceUsd，image=GEN_PRICE_USD_PER_IMAGE*count），冻结如 Generation.entitySnapshot。
+  /// null = 没扣过费。绝不参与任何 spend 判定。
+  spentUsd           Float?
   error              String    @default("")
   queueJobId         String    @default("")
   attempts           Int       @default(0)
@@ -491,6 +498,23 @@ model RuntimeConfig {
   valueJson Json
   updatedAt DateTime @updatedAt
   updatedBy String   @default("")
+}
+
+/// 模型注册表覆盖层（OPT-6 P2）：能力真相 100% 在 typed catalog（GEN_MODELS /
+/// GEN_VIDEO_MODELS / REFGEN_MODELS）；本表只承载 disable 布尔 + advisory notes。
+/// 一行永远不能新增模型或放宽上限，只能与 typed menu 交集收窄（停掉一个已有模型）。
+/// 校验：modelId 在写入时校验 ∈ 三个 catalog 的并集；未知行在读取侧忽略。
+/// 强制点见 startGen / startRefGen / dispatchVariantJob / worker handleGen+handleRefGen。
+/// 注意 seedream 耦合：GEN_MODELS=REFGEN_MODELS=["seedream"]，停 seedream = 停所有图像生成。
+model ModelRegistryOverlay {
+  id        String   @id
+  ownerId   String   @default("founder")
+  modelId   String
+  enabled   Boolean  @default(true)
+  notes     String   @default("")
+  updatedAt DateTime @updatedAt
+
+  @@unique([ownerId, modelId])
 }
 
 // 指令编辑历史（R6）：每次 save 写一行快照，用于回滚（比 ActionEvent 更结构化）。

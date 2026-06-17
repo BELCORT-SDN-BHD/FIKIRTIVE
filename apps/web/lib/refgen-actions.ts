@@ -13,10 +13,12 @@ import {
   slugify,
   REFGEN_QUEUE,
   FOUNDER_OWNER_ID,
+  isModelDisabled,
   type RefGenJobData,
 } from "@artlio/core";
 import { getBoss } from "./queue";
 import { requireSession } from "./auth-guard";
+import { resolveDisabledModels } from "./model-registry";
 
 const OWNED = { ownerId: FOUNDER_OWNER_ID, deletedAt: null } as const;
 // a job stuck QUEUED/GENERATING past the queue's expiry is treated as abandoned
@@ -38,6 +40,14 @@ export async function startRefGen(raw: unknown): Promise<{ id: string } | { erro
   // one would spend on a wrong result. Phase B adds the worker VARIANT path +
   // full EntityVariant validation, then lifts this gate. No UI issues VARIANT today.
   if (mode === "VARIANT") return { error: "Variant generation isn't available yet." };
+
+  // OPT-6 P2: reject an admin-disabled model before the spend commit (additive
+  // narrowing; refGenRequest.enum stays the authority). seedream is the only
+  // refgen model today, so this is the image-toggle in the reference path.
+  const disabled = await resolveDisabledModels();
+  if (isModelDisabled(model, disabled)) {
+    return { error: "Image generation is currently turned off." };
+  }
 
   // BASE is single-image; only REFSHEET honors the requested count. (VARIANT is
   // rejected above; Phase B reintroduces its single-image + per-variant handling.)
@@ -131,6 +141,12 @@ export async function setBaseAsset(entityId: string, assetId: string): Promise<{
  *  Per-VARIANT active-job guard (NOT per-entity — different variants run concurrently)
  *  prevents stacking spend; an in-flight job for the same variant is reused. */
 async function dispatchVariantJob(entityId: string, variantId: string, prompt: string): Promise<{ jobId: string } | { error: string }> {
+  // OPT-6 P2: the variant path bypasses startRefGen — enforce disable here too.
+  // dispatchVariantJob always uses model:"seedream", so this is the seedream toggle.
+  const disabled = await resolveDisabledModels();
+  if (isModelDisabled("seedream", disabled)) {
+    return { error: "Image generation is currently turned off." };
+  }
   const active = await prisma.refGenJob.findFirst({
     where: { variantId, ownerId: FOUNDER_OWNER_ID, status: { in: ["QUEUED", "GENERATING"] }, updatedAt: { gte: new Date(Date.now() - STALE_MS) } },
     select: { id: true },
@@ -165,6 +181,19 @@ async function dispatchVariantJob(entityId: string, variantId: string, prompt: s
     const message = e instanceof Error ? e.message.slice(0, 300) : "queue unavailable";
     await prisma.refGenJob.update({ where: { id: job.id }, data: { status: "FAILED", error: `dispatch failed: ${message}` } });
     return { error: "Could not reach the generation queue — is the worker up?" };
+  }
+  // audit the paid variant path (M-c): createVariant/regenerateVariant dispatch a
+  // real RefGenJob here but bypass startRefGen, so they emitted no refgen.start —
+  // the money-gate audit would miss it. mode:"VARIANT" distinguishes it. BEST-EFFORT:
+  // the job is already created + queued (paid path committed) above, so an audit-write
+  // failure must NOT throw past this point — else the caller returns an error and a
+  // retry could enqueue a SECOND paid variant job (double-spend). Log + swallow.
+  try {
+    await prisma.actionEvent.create({
+      data: { id: newId(), ownerId: FOUNDER_OWNER_ID, type: "refgen.start", payload: { jobId: job.id, entityId, variantId, count: 1, mode: "VARIANT" } },
+    });
+  } catch (e) {
+    console.warn(`dispatchVariantJob: refgen.start audit write failed for job ${job.id} (non-fatal):`, e instanceof Error ? e.message : e);
   }
   return { jobId: job.id };
 }
@@ -216,7 +245,15 @@ export async function createVariant(entityId: string, name: string, prompt: stri
 
   const dispatched = await dispatchVariantJob(entityId, variantId, cleanPrompt);
   if ("error" in dispatched) return dispatched;
-  await prisma.actionEvent.create({ data: { id: newId(), ownerId: FOUNDER_OWNER_ID, type: "variant.create", payload: { entityId, variantId, jobId: dispatched.jobId } } });
+  // BEST-EFFORT: the paid variant job is already created + queued (dispatchVariantJob),
+  // so an audit-write failure must NOT throw past here — else the caller returns an
+  // error and a retry could create a second suffixed variant + enqueue another paid
+  // job (double-spend). Log + swallow.
+  try {
+    await prisma.actionEvent.create({ data: { id: newId(), ownerId: FOUNDER_OWNER_ID, type: "variant.create", payload: { entityId, variantId, jobId: dispatched.jobId } } });
+  } catch (e) {
+    console.warn(`createVariant: variant.create audit write failed for job ${dispatched.jobId} (non-fatal):`, e instanceof Error ? e.message : e);
+  }
   revalidatePath("/", "layout");
   return { variantId, jobId: dispatched.jobId };
 }

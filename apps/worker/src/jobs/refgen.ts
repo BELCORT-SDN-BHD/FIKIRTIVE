@@ -27,11 +27,14 @@ import {
   newId,
   REFGEN_RETRY_LIMIT,
   MAX_CONDITIONING_IMAGES,
+  refgenSpentUsd,
   type RefGenJobData,
   type RefGenModel,
 } from "@artlio/core";
 import { storage } from "../storage.js";
 import { provider } from "../generation.js";
+import { isModelDisabled } from "@artlio/core";
+import { workerDisabledModels } from "../model-registry.js";
 
 /** fal Seedream edit caps total (inputs + outputs) at 15 images (codex P2). */
 const MAX_EDIT_INPUT_PLUS_OUTPUT = 15;
@@ -75,6 +78,12 @@ export async function handleRefGen(data: RefGenJobData, retryCount: number): Pro
     // these outputs — just (re-)attach them idempotently and finish
     if (job.outputAssetIds.length > 0) {
       await attachOutputs(job.entityId, job.ownerId, job.outputAssetIds, job.variantId);
+      // defensive backfill: a row that recorded outputs before spentUsd existed (or
+      // crashed between the outputAssetIds write and DONE) has the marker but null
+      // spentUsd — reconstruct from the frozen job inputs. No re-spend (paid already).
+      if (job.spentUsd == null) {
+        await prisma.refGenJob.update({ where: { id: job.id }, data: { spentUsd: refgenSpentUsd({ model: job.model, count: job.count }) } });
+      }
       await finalizeDone(job.id, job.mode, job.entityId, job.outputAssetIds[0]);
       console.log(`[refgen] ${job.id}: resumed — re-attached ${job.outputAssetIds.length} prior outputs (no re-spend)`);
       return;
@@ -97,6 +106,17 @@ export async function handleRefGen(data: RefGenJobData, retryCount: number): Pro
         });
         return; // terminal, no throw → no retry, no spend
       }
+    }
+
+    // OPT-6 P2 (highest-trust): fail-without-spend if the model was admin-disabled
+    // after this job was queued. AFTER the resume short-circuit (a committed job
+    // still finishes) and BEFORE the spend claim + provider call. Fail-closed-to-
+    // typed-menu on a DB fault. (Variant jobs always use seedream → this is the
+    // seedream/image toggle for the variant path too.)
+    const disabled = await workerDisabledModels();
+    if (isModelDisabled(job.model, disabled)) {
+      await prisma.refGenJob.update({ where: { id: job.id }, data: { status: "FAILED", error: "this model was turned off before the job ran — not spending", finishedAt: new Date() } });
+      return; // terminal, no throw → no retry, no spend
     }
 
     // Atomic spend claim: QUEUED → GENERATING in a single conditional update,
@@ -191,7 +211,10 @@ export async function handleRefGen(data: RefGenJobData, retryCount: number): Pro
       });
       outputAssetIds.push(asset.id);
     }
-    await prisma.refGenJob.update({ where: { id: job.id }, data: { outputAssetIds } });
+    // record outputs (the resume marker) AND the frozen spend in one update — past
+    // here a retry resumes instead of re-spending, so spentUsd is committed exactly
+    // when money is committed (refgenSpentUsd = REFGEN_PRICE_USD_PER_IMAGE * count).
+    await prisma.refGenJob.update({ where: { id: job.id }, data: { outputAssetIds, spentUsd: refgenSpentUsd({ model: job.model, count: job.count }) } });
 
     // attach (idempotent: skips assets already attached to this entity+variant)
     await attachOutputs(job.entityId, job.ownerId, outputAssetIds, job.variantId);
@@ -209,8 +232,11 @@ export async function handleRefGen(data: RefGenJobData, retryCount: number): Pro
     console.error(`[refgen] ${job.id}: ${final ? "FAILED" : "retrying"} — ${message}`);
     await prisma.refGenJob.update({
       where: { id: job.id },
+      // a post-charge failure records spentUsd so "paid but not delivered" is
+      // auditable (a free pre-charge failure stays spentUsd=null). The QUEUED
+      // requeue path records nothing (a recoverable pre-charge retry).
       data: final
-        ? { status: "FAILED", error: message, finishedAt: new Date() }
+        ? { status: "FAILED", error: message, finishedAt: new Date(), ...((spent || charged) ? { spentUsd: refgenSpentUsd({ model: job.model, count: job.count }) } : {}) }
         : { status: "QUEUED", error: message, progress: 0 },
     });
     throw err; // pg-boss owns the retry schedule

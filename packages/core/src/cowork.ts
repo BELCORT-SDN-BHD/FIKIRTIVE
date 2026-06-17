@@ -195,6 +195,10 @@ export const runtimeConfigInput = z.discriminatedUnion("key", [
   z.object({ key: z.literal("cowork_provider"), value: z.object({
     provider: z.enum(["mock", "fal"]), // NO "modal" in P1a — that's P1b (super-admin)
   }).strict() }),
+  // OPT-6 P2 §⑥ knowledge keys — $0 planner text (not spend gates). Bounded length.
+  z.object({ key: z.literal("planner_system"), value: z.object({ text: z.string().trim().max(8000) }).strict() }),
+  z.object({ key: z.literal("brief_default"), value: z.object({ text: z.string().trim().max(2000) }).strict() }),
+  z.object({ key: z.literal("description_template"), value: z.object({ text: z.string().trim().max(2000) }).strict() }),
 ]);
 export type RuntimeConfigInput = z.infer<typeof runtimeConfigInput>;
 

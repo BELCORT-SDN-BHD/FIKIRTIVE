@@ -7,7 +7,7 @@
  */
 import { revalidatePath } from "next/cache";
 import { prisma } from "@artlio/db";
-import { newId, FOUNDER_OWNER_ID, modelDirectiveInput, DIRECTIVE_SEED, runtimeConfigInput } from "@artlio/core";
+import { newId, FOUNDER_OWNER_ID, modelDirectiveInput, DIRECTIVE_SEED, runtimeConfigInput, isKnownModelId } from "@artlio/core";
 import { auth, allowed } from "@/auth";
 
 /** auth() + allowlist, inside the handler (R7). Returns the admin's email (for
@@ -119,5 +119,35 @@ export async function saveRuntimeConfig(raw: unknown): Promise<{ ok: true } | { 
     return { error: "Couldn't save the setting — please try again." };
   }
   revalidatePath("/admin/settings");
+  return { ok: true };
+}
+
+/** Enable/disable one typed model in the registry overlay. requireAdmin (P1a) —
+ *  P1b scopes section ① to ops. modelId MUST be a known typed model (write-time
+ *  validation — the overlay can never disable a phantom). Audited transactionally.
+ *  NOTE seedream coupling: disabling "seedream" disables ALL image generation
+ *  (gen image + refgen base/sheet/variant) — the UI surfaces this as one toggle. */
+export async function saveModelEnabled(raw: unknown): Promise<{ ok: true } | { error: string }> {
+  const gate = await requireAdmin();
+  if ("error" in gate) return gate;
+  const v = raw as { modelId?: unknown; enabled?: unknown; notes?: unknown };
+  if (typeof v?.modelId !== "string" || !isKnownModelId(v.modelId)) return { error: "Unknown model." };
+  if (typeof v?.enabled !== "boolean") return { error: "Invalid toggle." };
+  const modelId = v.modelId;
+  const enabled = v.enabled;
+  const notes = typeof v?.notes === "string" ? v.notes.slice(0, 1000) : "";
+  try {
+    await prisma.$transaction(async (tx) => {
+      await tx.modelRegistryOverlay.upsert({
+        where: { ownerId_modelId: { ownerId: FOUNDER_OWNER_ID, modelId } },
+        create: { id: newId(), ownerId: FOUNDER_OWNER_ID, modelId, enabled, notes },
+        update: { enabled, notes },
+      });
+      await tx.actionEvent.create({ data: { id: newId(), ownerId: FOUNDER_OWNER_ID, type: "model.toggle", payload: { modelId, enabled, via: gate.email } } });
+    });
+  } catch {
+    return { error: "Couldn't save the model setting — please try again." };
+  }
+  revalidatePath("/admin/models");
   return { ok: true };
 }

@@ -127,4 +127,52 @@ export const DIRECTIVE_SEED: DirectiveSeed[] = [
     confidence: "untested",
     notes: "Seedream's natural-language preference is a family property — applies to i2i as well as t2i (was unseeded → fell back to base prompt and drifted to comma-soup).",
   },
+  {
+    family: "veo",
+    mode: "t2v",
+    directive:
+      "Veo follows rich, cinematic natural-language prompts and renders native audio — describe the SHOT like a director: subject and primary action, then camera move (dolly/pan/orbit and speed), lens feel, lighting, and mood; if you want sound, name it explicitly (dialogue, ambient, score). Keep one clear primary action per clip; Veo handles detail well but a single coherent motion reads cleaner than several competing ones.",
+    confidence: "untested",
+    notes: "Veo 3.1 family: cinematic NL + native audio. Lead with action+camera; name desired audio. Untested.",
+  },
+  {
+    family: "seedance",
+    mode: "t2v",
+    directive:
+      "Seedance leads with MOTION — state how the subject moves and how the camera moves through the clip (trajectory, speed, what changes over time); keep static scene description brief. Prefer one decisive primary action plus one camera move; stacking many simultaneous motions degrades coherence. Audio is generated, so a short ambient/sound cue helps.",
+    confidence: "untested",
+    notes: "Seedance 2.0 family: motion+camera lead, single primary action. Untested.",
+  },
+  {
+    family: "wan",
+    mode: "t2v",
+    directive:
+      "Wan responds to clear motion and camera direction with native (always-on) audio — describe the primary action and the camera move plainly; keep the scene description tight and the motion specific. Don't over-specify many concurrent movements; one clean action + one camera move yields the most stable result.",
+    confidence: "untested",
+    notes: "Wan 2.5 family: native audio (not toggleable), motion+camera lead. Untested.",
+  },
+  {
+    family: "pixverse",
+    mode: "t2v",
+    directive:
+      "PixVerse favors a single clear subject and a well-defined motion — lead with the action and a simple camera move, keep the look description concise. Avoid crowding the frame with multiple moving subjects; a focused single-action clip is more reliable than a busy multi-action one.",
+    confidence: "untested",
+    notes: "PixVerse V6 family: single subject + one clear motion. Untested.",
+  },
+  {
+    family: "grok",
+    mode: "t2v",
+    directive:
+      "Grok Imagine is silent and short — write a punchy, concrete prompt: one subject, one vivid primary action, one simple camera move. Front-load the most important visual; with a brief clip there's no room for multi-beat sequences, so describe a single moment of motion rather than a story.",
+    confidence: "untested",
+    notes: "Grok Imagine family: silent, short clips → single decisive moment. Untested.",
+  },
+  {
+    family: "hailuo",
+    mode: "t2v",
+    directive:
+      "Hailuo renders a fixed short clip — describe one clear subject and a single, well-defined motion with a simple camera move; keep the scene description concise and put the budget on the action. One coherent movement reads far better than several competing ones.",
+    confidence: "untested",
+    notes: "Hailuo 02 family: fixed short clip → one clear motion. Untested.",
+  },
 ];

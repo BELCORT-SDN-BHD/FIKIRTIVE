@@ -17,11 +17,12 @@ import {
   GEN_PRICE_USD_PER_IMAGE, videoPriceUsd,
   coworkGenerateRequest, coworkProposalSchema,
   coworkRenameThreadRequest, coworkDeleteThreadRequest, coworkVaryCardRequest, coworkBriefRequest, MAX_GEN_PROMPT,
-  storageKey,
+  storageKey, composePrompt, isModelDisabled,
   type ChatMessage, type CoworkTurn, type GenVideoModel,
 } from "@artlio/core";
 import { getTransport, resolveVisionConfig } from "./runtime-config";
 import { getEnhanceDirective } from "./cowork-knowledge";
+import { resolveDisabledModels } from "./model-registry";
 import { startGen } from "./gen-actions";
 import { storage, mimeOf } from "./storage";
 import { requireSession } from "./auth-guard";
@@ -381,6 +382,7 @@ export async function coworkTurn(raw: unknown): Promise<{ threadId: string; brie
     // build the gen-card payload (planner proposes an image keyframe first for video-with-variant per COWORK_PLANNER_SYSTEM)
     let cardPayload: Prisma.InputJsonObject | null = null;
     if (turn.proposal) {
+      const disabled = await resolveDisabledModels();
       const sm = suggestModel({
         kind: turn.proposal.kind,
         desiredAspect: turn.proposal.desiredAspect,
@@ -388,6 +390,7 @@ export async function coworkTurn(raw: unknown): Promise<{ threadId: string; brie
         desiredAudio: turn.proposal.desiredAudio,
         hasSourceImage: !!validSource, // i2v "animate" turn carries an owned source frame
         hasTail: false,
+        disabled, // OPT-6 P2: never propose an admin-disabled video model
       });
       const price = turn.proposal.kind === "video"
         ? videoPriceUsd(sm.model as GenVideoModel, { seconds: sm.params.durationSeconds ?? 1, resolution: sm.params.resolution ?? "", audio: !!sm.params.audio, count: sm.params.count })
@@ -508,6 +511,30 @@ export async function coworkGenerate(raw: unknown): Promise<{ id: string } | { e
   // set, count≤maxCount → an invalid/mispriced combo is rejected with {error}, no spend).
   // prompt/entityIds/variantSel still from the client; effectiveVariantSel drops it for video.
   const chosenModel = modelOverride ?? model;
+
+  // OPT-6 P2: re-check the chosen model isn't admin-disabled at SPEND (a card built
+  // before a disable, a model override, or a disabled seedream image must not spend).
+  // The worker (handleGen) is the all-status backstop for an already-queued job.
+  const disabled = await resolveDisabledModels();
+  if (isModelDisabled(chosenModel, disabled)) {
+    return { error: "That model is currently turned off — pick another, or ask an admin to re-enable it." };
+  }
+
+  // OPT-6 P2: deterministic $0 composer (spec §4a) — append the resolved family×mode
+  // directive to the CLIENT prompt, compose ONCE here at the spend side (NOT in
+  // coworkTurn — that double-appends). conditioned = entityIds.length>0 is an advisory
+  // APPROXIMATION (a bare 0-ref LOCATION mention runs t2i at the worker but keys i2i
+  // here) — acceptable because the composer is advisory TEXT, never a spend decision,
+  // matching the Guardian's conditioned:true precedent. Changes ONLY the prompt string.
+  const family = modelFamily(chosenModel);
+  const mode = deriveMode({
+    kind: proposal.data.kind,
+    conditioned: entityIds.length > 0,
+    hasSourceImage: !!sourceGenerationId,
+  });
+  const directive = family ? await getEnhanceDirective(family, mode) : undefined;
+  const composedPrompt = composePrompt({ prompt, directive, maxLen: MAX_GEN_PROMPT });
+
   // Only forward `audio` for video models that actually expose an audio toggle. startGen's
   // superRefine REJECTS audio:false for always-silent models (kling/grok/wan/hailuo); suggestModel
   // persists params.audio=false for those, so blindly forwarding it makes them un-generatable.
@@ -517,7 +544,7 @@ export async function coworkGenerate(raw: unknown): Promise<{ id: string } | { e
   const req = {
     projectId: card.thread.projectId,
     threadId: card.threadId,
-    prompt,
+    prompt: composedPrompt,
     entityIds,
     ...(Object.keys(variantSel).length ? { variantSel } : {}),
     ...(sourceGenerationId ? { sourceGenerationId } : {}), // i2v — checkCast re-validates ownership+project

@@ -14,12 +14,14 @@ import {
   storageKey,
   storageKeyToSrc,
   videoDefaults,
+  isModelDisabled,
   type GenJobData,
   type GenVideoModel,
 } from "@artlio/core";
 import { getBoss } from "./queue";
 import { checkCast } from "./cowork-guardian";
 import { requireSession } from "./auth-guard";
+import { resolveDisabledModels } from "./model-registry";
 
 const OWNED = { ownerId: FOUNDER_OWNER_ID, deletedAt: null } as const;
 
@@ -76,6 +78,15 @@ export async function startGen(raw: unknown): Promise<{ id: string } | { error: 
     return { error: block.error };
   }
 
+  // OPT-6 P2: reject an admin-disabled model BEFORE the spend commit. This is
+  // ADDITIVE narrowing — the typed superRefine above stays the authority over
+  // which (model,params) may spend; this only subtracts a turned-off model.
+  // Fail-closed-to-typed-menu on a DB fault (resolveDisabledModels → empty set).
+  const disabled = await resolveDisabledModels();
+  if (isModelDisabled(model, disabled)) {
+    return { error: "That model is currently turned off — pick another." };
+  }
+
   let job: { id: string };
   try {
     job = await prisma.genJob.create({
@@ -122,9 +133,17 @@ export async function startGen(raw: unknown): Promise<{ id: string } | { error: 
     await prisma.genJob.update({ where: { id: job.id }, data: { status: "FAILED", error: `dispatch failed: ${message}` } });
     return { error: "Could not reach the generation queue — is the worker up?" };
   }
-  await prisma.actionEvent.create({
-    data: { id: newId(), ownerId: FOUNDER_OWNER_ID, projectId, type: "gen.start", payload: { jobId: job.id, shotId: shotId ?? null, count } },
-  });
+  // BEST-EFFORT: the GenJob is already created + queued (paid path committed) above, so
+  // an audit-write failure must NOT throw past here — else the caller returns an error
+  // and a retry (esp. a keyless GenSpace direct gen) could enqueue a SECOND paid job.
+  // Log + swallow. (Keyed callers dedupe on retry; keyless ones must not even reach here.)
+  try {
+    await prisma.actionEvent.create({
+      data: { id: newId(), ownerId: FOUNDER_OWNER_ID, projectId, type: "gen.start", payload: { jobId: job.id, shotId: shotId ?? null, count } },
+    });
+  } catch (e) {
+    console.warn(`startGen: gen.start audit write failed for job ${job.id} (non-fatal):`, e instanceof Error ? e.message : e);
+  }
   revalidatePath("/", "layout");
   return { id: job.id };
 }
