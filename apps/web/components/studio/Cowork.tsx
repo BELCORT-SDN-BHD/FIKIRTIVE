@@ -37,6 +37,12 @@ export function Cowork({ projectId, entities, threads, brief = "" }: {
   const [activeId, setActiveId] = useState<string | null>(threads[0]?.id ?? null);
   const active = list.find((t) => t.id === activeId) ?? null;
   const messages = active?.messages ?? [];
+  // job ids that already have a DURABLE GEN_RESULT message in the thread — used to
+  // suppress a GenerateCard's in-card live preview once the canonical result row
+  // exists, so the same figure never renders twice.
+  const resultJobIds = new Set(
+    messages.filter((m) => m.kind === "GEN_RESULT" && m.genJobId).map((m) => m.genJobId as string),
+  );
 
   const [text, setText] = useState("");
   const [ids, setIds] = useState<string[]>([]);
@@ -107,6 +113,10 @@ export function Cowork({ projectId, entities, threads, brief = "" }: {
   // inline rename state for the rail
   const [renamingId, setRenamingId] = useState<string | null>(null);
   const [renameText, setRenameText] = useState("");
+
+  // delete-conversation confirm — app-owned modal (not a native window.confirm).
+  const [pendingDelete, setPendingDelete] = useState<{ id: string; title: string } | null>(null);
+  const [deleteBusy, setDeleteBusy] = useState(false);
 
   async function send() {
     if (!text.trim() || busy || busyRef.current || uploading) return;
@@ -180,12 +190,22 @@ export function Cowork({ projectId, entities, threads, brief = "" }: {
     if ("error" in res) setError(res.error);
   }
 
-  async function deleteThread(id: string) {
-    if (!window.confirm("Delete this conversation?")) return;
-    const res = await coworkDeleteThread({ threadId: id });
-    if ("error" in res) { setError(res.error); return; }
-    setList((cur) => cur.filter((x) => x.id !== id));
-    if (activeId === id) setActiveId(list.find((x) => x.id !== id)?.id ?? null);
+  async function confirmDelete() {
+    if (!pendingDelete || deleteBusy) return;
+    const id = pendingDelete.id;
+    setDeleteBusy(true);
+    setError(null);
+    try {
+      const res = await coworkDeleteThread({ threadId: id });
+      if ("error" in res) { setError(res.error); return; }
+      setList((cur) => cur.filter((x) => x.id !== id));
+      if (activeId === id) setActiveId(list.find((x) => x.id !== id)?.id ?? null);
+      setPendingDelete(null);
+    } catch {
+      setError("Couldn't delete — please try again.");
+    } finally {
+      setDeleteBusy(false);
+    }
   }
 
   return (
@@ -246,7 +266,7 @@ export function Cowork({ projectId, entities, threads, brief = "" }: {
                       className="al-iconbtn al-iconbtn-sm"
                       aria-label="Delete conversation"
                       title="Delete"
-                      onClick={(e) => { e.stopPropagation(); deleteThread(t.id); }}
+                      onClick={(e) => { e.stopPropagation(); setPendingDelete({ id: t.id, title: t.title }); }}
                     >
                       <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.75" strokeLinecap="round" strokeLinejoin="round" aria-hidden><path d="M3 6h18" /><path d="M8 6V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2" /><path d="M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6" /></svg>
                     </button>
@@ -301,11 +321,17 @@ export function Cowork({ projectId, entities, threads, brief = "" }: {
               if (m.kind === "PLAN") {
                 const steps = (m.payload as { planSteps?: string[] } | null)?.planSteps ?? [];
                 if (!steps.length) return null;
+                // planSteps are the agent's INTERNAL reasoning — keep them available for
+                // transparency but collapsed by default so the thread reads as polished
+                // output, not a debug checklist.
                 return (
                   <div key={m.id} style={{ display: "flex", alignItems: "flex-start", gap: 4 }}>
-                    <ul className="cw-plan" style={{ flex: 1, minWidth: 0, margin: 0 }}>
-                      {steps.map((s, i) => <li key={i}>{s}</li>)}
-                    </ul>
+                    <details className="cw-plan-wrap" style={{ flex: 1, minWidth: 0 }}>
+                      <summary style={{ cursor: "pointer", font: "var(--text-caption)", color: "var(--fg-4)", listStyle: "none", padding: "2px 0" }}>Plan</summary>
+                      <ul className="cw-plan" style={{ margin: "4px 0 0" }}>
+                        {steps.map((s, i) => <li key={i}>{s}</li>)}
+                      </ul>
+                    </details>
                     {replyBtn}
                   </div>
                 );
@@ -319,6 +345,7 @@ export function Cowork({ projectId, entities, threads, brief = "" }: {
                         payload={m.payload}
                         entities={entities}
                         alreadyGenerated={!!m.genJobId}
+                        hasDurableResult={!!m.genJobId && resultJobIds.has(m.genJobId)}
                         threadId={active!.id}
                         projectId={projectId}
                         onRevised={() => { if (active) refreshThread(active.id); }}
@@ -329,13 +356,15 @@ export function Cowork({ projectId, entities, threads, brief = "" }: {
                 );
               }
               if (m.kind === "GEN_RESULT") {
-                const r = m.payload as { kind?: string; model?: string; urls?: string[]; generationIds?: string[] } | null;
+                const r = m.payload as { kind?: string; model?: string; urls?: string[]; generationIds?: string[]; costUsd?: number } | null;
                 const urls = r?.urls ?? [];
                 const genIds = r?.generationIds ?? [];
                 const rKind = r?.kind ?? "image";
                 const model = r?.model ?? "";
                 const isImage = rKind === "image"; // only image frames are animatable
-                const price = resultPriceUsd(rKind, model); // DISPLAY-ONLY
+                // the ACTUAL metered charge when known (frozen ledger value); fall back to a
+                // default-config estimate only for legacy rows that predate costUsd.
+                const price = r?.costUsd ?? resultPriceUsd(rKind, model);
                 return (
                   <div key={m.id} style={{ display: "flex", alignItems: "flex-start", gap: 4 }}>
                     <div className="cw-result" style={{ flex: 1, minWidth: 0 }}>
@@ -518,6 +547,20 @@ export function Cowork({ projectId, entities, threads, brief = "" }: {
           style={{ width: "100%", resize: "vertical", font: "var(--text-body)", color: "var(--fg-1)", background: "var(--surface-2)", border: "1px solid var(--border-1)", borderRadius: 8, padding: "8px 10px", boxSizing: "border-box", outline: "none" }}
         />
         {briefErr && <p role="alert" style={{ font: "var(--text-caption)", color: "var(--danger)", margin: "8px 0 0" }}>{briefErr}</p>}
+      </Dialog>
+
+      <Dialog
+        open={!!pendingDelete}
+        title="Delete conversation"
+        onClose={() => { if (!deleteBusy) setPendingDelete(null); }}
+        actions={[
+          <Button key="cancel" variant="ghost" onClick={() => setPendingDelete(null)} disabled={deleteBusy}>Cancel</Button>,
+          <Button key="delete" variant="danger" onClick={confirmDelete} disabled={deleteBusy}>{deleteBusy ? "Deleting…" : "Delete"}</Button>,
+        ]}
+      >
+        <p style={{ font: "var(--text-body)", color: "var(--fg-2)", margin: 0 }}>
+          Delete “{pendingDelete?.title}”? This can’t be undone.
+        </p>
       </Dialog>
     </div>
   );

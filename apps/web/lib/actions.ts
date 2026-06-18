@@ -578,8 +578,14 @@ export async function deleteGeneration(generationId: string): Promise<{ ok: true
 
 // ---------- editor (phase-③ tracer: contract → queue → worker → asset) ----------
 
-/** Persist the working cut (replaces the phase-② localStorage mock). */
-export async function saveProjectEdit(projectId: string, editJsonString: string) {
+/** Persist the working cut (replaces the phase-② localStorage mock).
+ *  Optimistic concurrency (D1): when the client passes the `baseUpdatedAt` it
+ *  loaded the cut at, we write ONLY if Project.updatedAt is still that value
+ *  (Prisma auto-bumps it on every write) — a concurrent save from another
+ *  tab/device bumps it, our conditional update matches 0 rows, and we report
+ *  `conflict` instead of silently overwriting that work. Omitting baseUpdatedAt
+ *  keeps the old bare write (back-compat: resetToBoard's deliberate replace). */
+export async function saveProjectEdit(projectId: string, editJsonString: string, baseUpdatedAt?: string) {
   const gate = await requireSession(); if ("error" in gate) return gate;
   const project = await prisma.project.findFirst({ where: { id: projectId, ...OWNED } });
   if (!project) return { error: "Project not found." };
@@ -590,10 +596,17 @@ export async function saveProjectEdit(projectId: string, editJsonString: string)
   } catch {
     return { error: "That cut is out of contract — fix the flagged clip first." };
   }
-  await prisma.project.update({ where: { id: projectId }, data: { editJson: edit } });
+  if (baseUpdatedAt) {
+    const res = await prisma.project.updateMany({ where: { id: projectId, updatedAt: new Date(baseUpdatedAt) }, data: { editJson: edit } });
+    if (res.count === 0) return { error: "This cut changed in another tab or device — reload before saving so you don't overwrite that work.", conflict: true as const };
+  } else {
+    await prisma.project.update({ where: { id: projectId }, data: { editJson: edit } });
+  }
   await logAction("edit.save", projectId, { seconds: Math.round(editDuration(edit)) });
   revalidatePath("/", "layout");
-  return { ok: true };
+  // hand back the fresh updatedAt so the client can re-base for its next save
+  const fresh = await prisma.project.findFirst({ where: { id: projectId }, select: { updatedAt: true } });
+  return { ok: true, updatedAt: fresh?.updatedAt?.toISOString() };
 }
 
 const BLANK_CUT = (): ArtlioEdit => ({
@@ -660,9 +673,10 @@ export async function addSegmentToCut(shotId: string): Promise<{ ok: true; added
   return { error: "The cut changed while adding — please try again." };
 }
 
-/** Export: persist the job row FIRST, then dispatch (triple-insurance rule).
- *  The cut snapshot and Project.editJson are written in ONE transaction, so
- *  "export renders what is saved" holds by construction (codex review). */
+/** Export: persist the RenderJob row FIRST, then dispatch (triple-insurance rule).
+ *  The RenderJob carries its own editJson snapshot, so "export renders what is saved"
+ *  holds by construction. Project.editJson is NOT written here — exportCut does a
+ *  GUARDED saveProjectEdit before calling this (D1 optimistic-concurrency). */
 export async function startRender(projectId: string, editJsonString: string) {
   const gate = await requireSession(); if ("error" in gate) return gate;
   const project = await prisma.project.findFirst({ where: { id: projectId, ...OWNED } });
@@ -681,12 +695,15 @@ export async function startRender(projectId: string, editJsonString: string) {
   if (active) {
     return { error: "A render is already running for this project — wait for it to finish below." };
   }
-  const [, job] = await prisma.$transaction([
-    prisma.project.update({ where: { id: projectId }, data: { editJson: edit } }),
-    prisma.renderJob.create({
-      data: { id: newId(), ownerId: FOUNDER_OWNER_ID, projectId, editJson: edit },
-    }),
-  ]);
+  // The RenderJob carries its OWN editJson snapshot, so the worker renders the exact
+  // exported cut without reading Project.editJson. We deliberately DON'T write
+  // Project.editJson here — that bare update bypassed the optimistic-concurrency guard
+  // (D1) and could clobber a newer cut from another tab. exportCut performs a GUARDED
+  // saveProjectEdit BEFORE calling startRender (aborting on a conflict), so the project
+  // is already persisted by the time we get here.
+  const job = await prisma.renderJob.create({
+    data: { id: newId(), ownerId: FOUNDER_OWNER_ID, projectId, editJson: edit },
+  });
   try {
     const boss = await getBoss();
     const queueJobId = await boss.send(RENDER_QUEUE, { renderJobId: job.id } satisfies RenderJobData);

@@ -14,12 +14,15 @@ export function EditorShell({
   boardEdit,
   savedEdit,
   attachedCount,
+  editedAt,
 }: {
   project: ProjectDTO;
   projects: ProjectDTO[];
   boardEdit: ArtlioEdit | null;
   savedEdit: ArtlioEdit | null;
   attachedCount: number;
+  /** Project.updatedAt at load (ISO) — base for optimistic-concurrency saves. */
+  editedAt?: string;
 }) {
   const [dirty, setDirty] = useState(false);
   const confirmLeave = () =>
@@ -39,6 +42,7 @@ export function EditorShell({
           boardEdit={boardEdit}
           savedEdit={savedEdit}
           attachedCount={attachedCount}
+          editedAt={editedAt}
           onDirtyChange={setDirty}
         />
       </div>

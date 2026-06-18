@@ -19,6 +19,7 @@ export function GenerateCard({
   payload,
   entities,
   alreadyGenerated,
+  hasDurableResult = false,
   threadId,
   projectId,
   onRevised,
@@ -27,6 +28,9 @@ export function GenerateCard({
   payload: unknown;
   entities: EntityDTO[];
   alreadyGenerated: boolean;
+  // a canonical GEN_RESULT row for this card already exists in the thread → hide the
+  // in-card live preview so the same figure never renders twice.
+  hasDurableResult?: boolean;
   threadId: string;
   projectId: string;
   onRevised: () => void;
@@ -431,7 +435,14 @@ export function GenerateCard({
           disabled={busy || generated || !prompt.trim()}
           onClick={generate}
         >
-          {generated ? "Generated" : busy ? "Generating…" : "Generate"}
+          {/* Label follows the REAL job status; `generated` stays the anti-respend disable
+              latch (untouched). A live in-flight gen reads "Generating…"; only a confirmed
+              DONE (or a reloaded already-generated card) reads "Generated". */}
+          {generated
+            ? (showResult && resultStatus === "pending" ? "Generating…"
+              : showResult && resultStatus === "failed" ? "Failed"
+              : "Generated")
+            : busy ? "Generating…" : "Generate"}
         </button>
         {/* T2: Skip — client-only dismiss; hidden once generated (nothing to skip). */}
         {!generated && (
@@ -480,7 +491,7 @@ export function GenerateCard({
       {reviseError && <span className="cw-error cw-card-result-error">{reviseError}</span>}
       {varyError && <span className="cw-error cw-card-result-error">{varyError}</span>}
 
-      {showResult && (
+      {showResult && !hasDurableResult && (
         <div className="cw-card-result">
           {resultStatus === "pending" && (
             <span className="cw-card-result-pending">Generating…</span>

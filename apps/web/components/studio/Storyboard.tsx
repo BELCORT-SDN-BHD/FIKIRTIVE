@@ -271,9 +271,14 @@ function ShotCard({ projectId, shot, index, total, entities }: { projectId: stri
     if (addingToCut || busy || !!slotBusy) return;
     setError(null); setAddingToCut(true);
     (async () => {
-      const res = await addSegmentToCut(shot.id);
-      if ("error" in res) { setError(res.error); setAddingToCut(false); return; }
-      router.push(`/studio?p=${projectId}&view=editor`); // navigating away — leave the flag set
+      try {
+        const res = await addSegmentToCut(shot.id);
+        if ("error" in res) { setError(res.error); return; }
+        // the page re-runs with view=editor and Studio's effect switches the surface
+        router.push(`/studio?p=${projectId}&view=editor`);
+      } finally {
+        setAddingToCut(false); // always clear so the button never sticks on "Adding…"
+      }
     })();
   }
 

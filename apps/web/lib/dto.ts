@@ -42,7 +42,7 @@ export function toEntityDTO(e: EntityWithRefs): EntityDTO {
 
 export function toChatMessageDTO(
   m: ChatThreadWithMessages["messages"][number],
-  urlsByJob: Map<string, { urls: string[]; generationIds: string[] }>,
+  urlsByJob: Map<string, { urls: string[]; generationIds: string[]; spentUsd: number | null }>,
 ): ChatMessageDTO {
   let payload: unknown | null = null;
   if (m.kind === "GEN_CARD" && m.payload) {
@@ -66,6 +66,9 @@ export function toChatMessageDTO(
       model: p.model ?? "",
       urls: resolved?.urls ?? [],
       generationIds: resolved?.generationIds ?? [], // "Animate this result" → i2v source-frame
+      // the real metered charge (frozen ledger value) so the caption shows what was actually
+      // billed; null for legacy/failed jobs → the UI falls back to a default-config estimate.
+      ...(typeof resolved?.spentUsd === "number" ? { costUsd: resolved.spentUsd } : {}),
     };
   } else if (m.kind === "PLAN" && m.payload) {
     payload = m.payload; // { planSteps }
@@ -82,7 +85,7 @@ export function toChatMessageDTO(
   };
 }
 
-export function toChatThreadDTO(t: ChatThreadWithMessages, urlsByJob: Map<string, { urls: string[]; generationIds: string[] }>): ChatThreadDTO {
+export function toChatThreadDTO(t: ChatThreadWithMessages, urlsByJob: Map<string, { urls: string[]; generationIds: string[]; spentUsd: number | null }>): ChatThreadDTO {
   return {
     id: t.id,
     projectId: t.projectId,

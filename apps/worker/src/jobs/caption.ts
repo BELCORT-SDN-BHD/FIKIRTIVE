@@ -21,6 +21,7 @@ import path from "node:path";
 import { execa } from "execa";
 import { prisma } from "@artlio/db";
 import { storage } from "../storage.js";
+import { sanitizeError, scrubUrls } from "../redact.js";
 import {
   captionCue,
   CAPTION_RETRY_LIMIT,
@@ -177,17 +178,21 @@ export async function handleCaption(data: CaptionJobData, retryCount = 0): Promi
     });
     console.log(`[caption] ${job.id}: DONE → ${cues.length} cues cached (${job.contentHash.slice(0, 12)}…)`);
   } catch (err) {
-    const message = err instanceof Error ? err.message.slice(0, 500) : String(err).slice(0, 500);
+    // PERSISTED error must never carry the whisper/ffmpeg argv (it contains the
+    // presigned source URL + signature) — it surfaces verbatim in the admin UI.
+    const safe = sanitizeError(err);
     // FAILED only when retries are exhausted (same delivery math as render).
     const final = retryCount >= CAPTION_RETRY_LIMIT;
-    console.error(`[caption] ${job.id}: ${final ? "FAILED" : "retrying"} — ${message}`);
+    console.error(`[caption] ${job.id}: ${final ? "FAILED" : "retrying"} — ${scrubUrls(err instanceof Error ? err.message : String(err)).slice(0, 1000)}`);
     await prisma.captionJob.update({
       where: { id: job.id },
       data: final
-        ? { status: "FAILED", error: message, finishedAt: new Date() }
-        : { status: "QUEUED", error: message, progress: 0 },
+        ? { status: "FAILED", error: safe, finishedAt: new Date() }
+        : { status: "QUEUED", error: safe, progress: 0 },
     });
-    throw err; // pg-boss owns the retry schedule
+    // rethrow a SANITIZED error: pg-boss serializes the thrown error into its own
+    // job.output column, so throwing the raw `err` would re-leak the argv/URL there.
+    throw new Error(safe); // pg-boss owns the retry schedule
   } finally {
     await rm(work, { recursive: true, force: true });
   }

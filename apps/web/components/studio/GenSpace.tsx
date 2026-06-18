@@ -34,6 +34,28 @@ function failMsg(job: { error: string; spent?: boolean }): string {
   return job.error || "Generation failed (you were not charged).";
 }
 
+// Composer draft is component-local state, so leaving Gen space UNMOUNTS GenSpace
+// and the in-progress prompt is lost. Persist it in sessionStorage keyed by project
+// so an unmount/remount within the SAME project restores it; the key isolates one
+// project's draft from another's (the project-switch reset clears the live state).
+type Draft = { prompt: string; promptIds: string[]; promptVariantSel: Record<string, string>; seedDoc: unknown };
+const draftKey = (projectId: string) => `genspace-draft:${projectId}`;
+function readDraft(projectId: string): Draft | null {
+  if (typeof window === "undefined") return null;
+  try {
+    const raw = window.sessionStorage.getItem(draftKey(projectId));
+    return raw ? (JSON.parse(raw) as Draft) : null;
+  } catch { return null; }
+}
+function writeDraft(projectId: string, d: Draft) {
+  if (typeof window === "undefined") return;
+  try { window.sessionStorage.setItem(draftKey(projectId), JSON.stringify(d)); } catch { /* quota/private mode — drop */ }
+}
+function clearDraft(projectId: string) {
+  if (typeof window === "undefined") return;
+  try { window.sessionStorage.removeItem(draftKey(projectId)); } catch { /* ignore */ }
+}
+
 // dark, opaque controls so the OS-rendered <option> list is never white-on-white
 const selectStyle: React.CSSProperties = {
   background: "#11151b", border: "1px solid var(--line-2)", borderRadius: 999,
@@ -77,11 +99,14 @@ function SettingRow({ label, options, value, onChange }: {
 
 export function GenSpace({ projectId, entities, rulesMap, onGoToElements }: { projectId: string; entities: EntityDTO[]; rulesMap: Record<string, Record<string, ModelDirectiveRules>>; onGoToElements: () => void }) {
   const [kind, setKind] = useState<"image" | "video">("image");
-  const [prompt, setPrompt] = useState("");
-  const [promptIds, setPromptIds] = useState<string[]>([]); // @mentioned entity ids
-  const [promptVariantSel, setPromptVariantSel] = useState<Record<string, string>>({}); // entityId → @mentioned variant
+  // lazy-restore the composer draft (prompt + @mentions + editor doc) persisted for
+  // THIS project, so an unmount/remount (navigating away & back) doesn't lose it
+  const restored = useRef(readDraft(projectId)).current;
+  const [prompt, setPrompt] = useState(restored?.prompt ?? "");
+  const [promptIds, setPromptIds] = useState<string[]>(restored?.promptIds ?? []); // @mentioned entity ids
+  const [promptVariantSel, setPromptVariantSel] = useState<Record<string, string>>(restored?.promptVariantSel ?? {}); // entityId → @mentioned variant
   const [composerKey, setComposerKey] = useState(0);        // bump to re-seed the editor after ✨ Enhance
-  const [seedDoc, setSeedDoc] = useState<unknown>(undefined);
+  const [seedDoc, setSeedDoc] = useState<unknown>(restored?.seedDoc); // restored doc re-seeds MentionInput on mount
   const [enhancing, setEnhancing] = useState(false);
   const [coachOpen, setCoachOpen] = useState(false);   // promptCoach pill collapsed by default
   const [showBlock, setShowBlock] = useState(false);   // Guardian assist-bar (shown on a blocked Generate attempt)
@@ -144,6 +169,15 @@ export function GenSpace({ projectId, entities, rulesMap, onGoToElements }: { pr
     setPrevProjectId(projectId);
     setBusy(false);
     setResults([]);
+    // GenSpace isn't remounted on a ?p= switch, so the lazy draft-restore above won't
+    // re-run. Swap the in-memory draft to the NEW project's persisted one (or clear it),
+    // and re-seed the editor (composerKey/seedDoc) so the old project's text can't bleed in.
+    const next = readDraft(projectId);
+    setPrompt(next?.prompt ?? "");
+    setPromptIds(next?.promptIds ?? []);
+    setPromptVariantSel(next?.promptVariantSel ?? {});
+    setSeedDoc(next?.seedDoc);
+    setComposerKey((k) => k + 1);
   }
   useEffect(() => {
     let alive = true;
@@ -168,6 +202,13 @@ export function GenSpace({ projectId, entities, rulesMap, onGoToElements }: { pr
     }).catch(() => {});
     return () => { alive = false; ps.forEach((t) => clearInterval(t)); ps.clear(); };
   }, [projectId]);
+
+  // persist the composer draft for this project on every change, so an unmount/remount
+  // (or reload) restores it; an empty draft removes the key rather than storing blanks.
+  useEffect(() => {
+    if (!prompt && promptIds.length === 0 && seedDoc === undefined) clearDraft(projectId);
+    else writeDraft(projectId, { prompt, promptIds, promptVariantSel, seedDoc });
+  }, [projectId, prompt, promptIds, promptVariantSel, seedDoc]);
 
   // dismiss the More popover on outside click / Escape (mirrors PopMenu/Dialog)
   useEffect(() => {

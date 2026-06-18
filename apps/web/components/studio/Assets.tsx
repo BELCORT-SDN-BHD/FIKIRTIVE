@@ -19,6 +19,7 @@ export function Assets({ media, shotOptions }: { media: MediaItem[]; shotOptions
   const [busy, setBusy] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [zoom, setZoom] = useState<{ src: string; kind: "image" | "video" } | null>(null); // click-to-enlarge
+  const [errored, setErrored] = useState<Set<string>>(new Set()); // image src that 404'd → show glow placeholder, not a broken-image glyph
 
   const shown = media.filter((m) => filter === "all" || m.kind === filter);
 
@@ -93,8 +94,10 @@ export function Assets({ media, shotOptions }: { media: MediaItem[]; shotOptions
                 <div style={{ position: "relative", aspectRatio: "16 / 10", background: "#000" }}>
                   {m.kind === "video"
                     ? <video src={m.src} muted loop autoPlay playsInline preload="metadata" title="Click to enlarge" onClick={() => setZoom({ src: m.src, kind: "video" })} style={{ position: "absolute", inset: 0, width: "100%", height: "100%", objectFit: "cover", cursor: "zoom-in" }} />
-                    // eslint-disable-next-line @next/next/no-img-element
-                    : <img src={m.src} alt="" title="Click to enlarge" onClick={() => setZoom({ src: m.src, kind: "image" })} style={{ position: "absolute", inset: 0, width: "100%", height: "100%", objectFit: "cover", cursor: "zoom-in" }} />}
+                    : errored.has(m.id)
+                      ? <div className="al-mediacard-glow" style={{ position: "absolute", inset: 0 }} />
+                      // eslint-disable-next-line @next/next/no-img-element
+                      : <img src={m.src} alt="" title="Click to enlarge" onClick={() => setZoom({ src: m.src, kind: "image" })} onError={() => setErrored((s) => new Set(s).add(m.id))} style={{ position: "absolute", inset: 0, width: "100%", height: "100%", objectFit: "cover", cursor: "zoom-in" }} />}
                   <span style={{ position: "absolute", top: 8, left: 8, font: "var(--text-mono-meta)", color: "var(--fg-1)", background: "rgba(6,8,11,.6)", padding: "1px 6px", borderRadius: 4 }}>
                     {m.attached ? (m.shotLabel ?? "In a shot") : "Candidate"}{m.kind === "video" ? " · video" : ""}
                   </span>

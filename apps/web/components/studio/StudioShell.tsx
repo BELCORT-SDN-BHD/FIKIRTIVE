@@ -10,7 +10,7 @@ import { useRouter } from "next/navigation";
 import type { ProjectDTO } from "@/lib/types";
 import { createProject, deleteProject } from "@/lib/actions";
 import {
-  Wordmark, IcFolder, IcSparkle, IcStoryboard, IcFilm, IcAt, IcAssets, IcPlans, IcUser,
+  Wordmark, IcFolder, IcSparkle, IcStoryboard, IcFilm, IcAt, IcAssets,
   IcExport, Button, PopMenu, Dialog, Input,
 } from "@/components/ds";
 
@@ -26,8 +26,9 @@ const PRIMARY: { view: StudioView; label: string; Icon: typeof IcSparkle }[] = [
 const WORKSPACE: { view: StudioView; label: string; Icon: typeof IcSparkle }[] = [
   { view: "assets", label: "Assets", Icon: IcAssets },
   { view: "cowork", label: "Cowork", Icon: IcSparkle },
-  { view: "plans", label: "Plans", Icon: IcPlans },
-  { view: "account", label: "Account", Icon: IcUser },
+  // Plans/Account have no surface yet (Studio falls through to "Coming soon."), so
+  // they're hidden until built rather than routing users to a dead-end. The StudioView
+  // type + ?view= deep-link handling keep them so the entries can return in one line.
 ];
 
 const TITLES: Record<StudioView, string> = {

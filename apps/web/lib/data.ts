@@ -127,9 +127,11 @@ export async function resolveCoworkResultUrls(threads: { messages: { genJobId: s
   const jobIds = threads.flatMap((t) =>
     t.messages.filter((m) => m.kind === "GEN_RESULT" && m.genJobId).map((m) => m.genJobId as string),
   );
-  const map = new Map<string, { urls: string[]; generationIds: string[] }>();
+  // spentUsd = the ACTUAL metered charge frozen at spend (same oracle as the cost ledger),
+  // surfaced so the result card shows what was really billed — not a default-config estimate.
+  const map = new Map<string, { urls: string[]; generationIds: string[]; spentUsd: number | null }>();
   if (!jobIds.length) return map;
-  const jobs = await prisma.genJob.findMany({ where: { id: { in: jobIds } }, select: { id: true, generationIds: true } });
+  const jobs = await prisma.genJob.findMany({ where: { id: { in: jobIds } }, select: { id: true, generationIds: true, spentUsd: true } });
   const allGenIds = jobs.flatMap((j) => j.generationIds);
   const gens = allGenIds.length
     ? await prisma.generation.findMany({ where: { id: { in: allGenIds } }, include: { asset: true } })
@@ -142,6 +144,7 @@ export async function resolveCoworkResultUrls(threads: { messages: { genJobId: s
     map.set(j.id, {
       urls: live.map((g) => storageKeyToSrc(storageKey(g.asset.ownerId, g.asset.contentHash, g.asset.ext))),
       generationIds: live.map((g) => g.id),
+      spentUsd: j.spentUsd ?? null,
     });
   }
   return map;

@@ -36,6 +36,7 @@ export default async function EditorPage({
       </div>
       <EditorShell
         project={{ id: project.id, name: project.name, coworkBrief: project.coworkBrief ?? null }}
+        editedAt={project.updatedAt.toISOString()}
         projects={projects.map((x) => ({ id: x.id, name: x.name, coworkBrief: x.coworkBrief ?? null }))}
         boardEdit={boardEdit}
         savedEdit={savedEdit}

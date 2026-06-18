@@ -182,9 +182,12 @@ export const genRequest = z
     count: z.number().int().min(1).max(MAX_GEN_COUNT),
     kind: z.enum(GEN_KINDS).default("image"),
     model: z.string().min(1).max(40).default("seedream"),
-    // stable double-submit key for shot-bound gens (frame:<shotId>:<slot> /
-    // animate:<shotId>) — startGen reuses an in-flight job with the same key
-    idempotencyKey: z.string().min(1).max(80).nullish(),
+    // REQUIRED double-submit key — every spend request must carry one so it ALWAYS
+    // flows through the dedup machinery (startGen pre-check + the partial-unique index);
+    // a keyless request could otherwise bypass dedup and double-charge. Callers:
+    // frame:<shotId>:<slot> / animate:<shotId> (stable, shot-bound), cowork:<cardId>
+    // (exactly-once-ever), or a per-click newId (GenSpace). Never omit it.
+    idempotencyKey: z.string().min(1).max(80),
     // cowork tag: when set, this gen belongs to a Cowork thread — startGen persists it
     // onto GenJob.threadId so the worker can tag the Generation and the studio views can
     // filter cowork drafts out. Bounded like the other ids.

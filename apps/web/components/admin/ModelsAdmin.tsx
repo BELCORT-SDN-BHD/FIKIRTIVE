@@ -32,7 +32,7 @@ function ModelToggle({ row }: { row: ModelRow }) {
       <span style={{ font: "var(--text-body)", color: "var(--fg-1)", minWidth: 160 }}>{row.id}</span>
       <span style={{ font: "var(--text-mono-meta)", color: "var(--fg-3)", minWidth: 90 }}>{row.family}</span>
       <label style={{ display: "flex", alignItems: "center", gap: 6, font: "var(--text-caption)", color: "var(--fg-2)" }}>
-        <input type="checkbox" checked={enabled} disabled={saving} onChange={(e) => toggle(e.target.checked)} />
+        <input type="checkbox" aria-label={`${row.id} enabled`} checked={enabled} disabled={saving} onChange={(e) => toggle(e.target.checked)} />
         <span>{enabled ? "enabled" : "disabled"}</span>
       </label>
       {msg && <span style={{ font: "var(--text-caption)", color: msg.ok ? "#3fb950" : "#e5484d", marginLeft: "auto" }}>{msg.text}</span>}

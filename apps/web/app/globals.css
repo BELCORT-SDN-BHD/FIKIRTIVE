@@ -362,7 +362,7 @@ h1, h2, h3 { font-family: var(--font-sans); font-weight: 600; letter-spacing: va
 .cw-error { background: rgba(255,90,90,.07); border: 1px solid rgba(255,90,90,.22); color: var(--danger); }
 .cw-plan { margin: 0 0 10px; padding: 8px 12px 8px 28px; border-radius: var(--radius-md); background: var(--glass-1); border: 1px solid var(--line-2); font: var(--text-caption); color: var(--fg-3); display: flex; flex-direction: column; gap: 4px; }
 .cw-result { display: flex; flex-wrap: wrap; gap: 10px; margin-bottom: 14px; }
-.cw-result img { width: 280px; aspect-ratio: 16/9; object-fit: contain; border-radius: var(--radius-md); border: 1px solid var(--line-2); background: #000; }
+.cw-result img { width: 320px; height: auto; border-radius: var(--radius-md); border: 1px solid var(--line-2); }
 .cw-card { padding: 14px 16px; border-radius: var(--radius-md); background: var(--glass-1); border: 1px solid var(--line-2); font: var(--text-body); color: var(--fg-2); margin-bottom: 10px; }
 .cw-card-gen { display: flex; flex-direction: column; gap: 10px; }
 .cw-card-head { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
@@ -387,7 +387,7 @@ h1, h2, h3 { font-family: var(--font-sans); font-weight: 600; letter-spacing: va
 .cw-card-result { display: flex; flex-wrap: wrap; gap: 10px; margin-top: 4px; }
 .cw-card-result-pending { font: var(--text-caption); color: var(--fg-3); }
 .cw-card-result-error { font: var(--text-small); }
-.cw-card-result-img { width: 280px; aspect-ratio: 16/9; object-fit: contain; border-radius: var(--radius-md); border: 1px solid var(--line-2); background: #000; }
+.cw-card-result-img { width: 320px; height: auto; display: block; border-radius: var(--radius-md); border: 1px solid var(--line-2); }
 .cw-card-actions { display: flex; align-items: center; gap: 8px; }
 .cw-card-skipped { font: var(--text-caption); color: var(--fg-3); margin-bottom: 10px; padding: 4px 2px; }
 .cw-card-revise { display: flex; align-items: center; gap: 8px; }
@@ -400,7 +400,7 @@ h1, h2, h3 { font-family: var(--font-sans); font-weight: 600; letter-spacing: va
 .cw-media { margin: 0; display: flex; flex-direction: column; gap: 4px; }
 .cw-media-frame { position: relative; display: inline-flex; }
 .cw-media-btn { padding: 0; border: none; background: none; cursor: zoom-in; display: inline-flex; }
-.cw-media-frame video { width: 280px; aspect-ratio: 16/9; object-fit: contain; border-radius: var(--radius-md); border: 1px solid var(--line-2); background: #000; }
+.cw-media-frame video { width: 320px; height: auto; display: block; border-radius: var(--radius-md); border: 1px solid var(--line-2); }
 .cw-media-cap { font: var(--text-caption); color: var(--fg-3); }
 .cw-media-cap-price { color: var(--fg-2); }
 

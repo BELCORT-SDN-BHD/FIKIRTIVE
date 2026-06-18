@@ -71,11 +71,44 @@ const inspRow: React.CSSProperties = { display: "flex", alignItems: "center", ga
 const inspHint: React.CSSProperties = { font: "var(--text-caption)", color: "var(--fg-3)", margin: 0 };
 const inspMute: React.CSSProperties = { font: "var(--text-caption)", color: "var(--fg-2)", background: "var(--glass-1)", border: "1px solid var(--line-2)", borderRadius: "var(--radius-sm)", padding: "5px 8px", cursor: "pointer" };
 
+// LTX-style left icon rail: the panel order + accessible labels, and the per-panel
+// collapse button shared across panel headers ("‹" sets the active panel to null).
+const RAIL_ITEMS = [
+  { id: "assets", label: "Assets" },
+  { id: "transitions", label: "Transitions" },
+  { id: "sound", label: "Sound" },
+  { id: "captions", label: "Captions" },
+  { id: "text", label: "Text" },
+  { id: "clip", label: "Clip" },
+] as const;
+const collapseBtn: React.CSSProperties = { font: "var(--text-body)", lineHeight: 1, color: "var(--fg-3)", background: "none", border: "none", cursor: "pointer", padding: "0 2px" };
+
+/** Minimal mono-aesthetic rail glyphs — small inline SVG, no new dependency.
+ *  currentColor inherits the rail button's active/disabled color. */
+function RailIcon({ id }: { id: (typeof RAIL_ITEMS)[number]["id"] }) {
+  const p = { width: 18, height: 18, viewBox: "0 0 24 24", fill: "none", stroke: "currentColor", strokeWidth: 1.6, strokeLinecap: "round" as const, strokeLinejoin: "round" as const, "aria-hidden": true };
+  switch (id) {
+    case "assets": // stacked media tiles
+      return <svg {...p}><rect x="3" y="5" width="13" height="11" rx="1.5" /><path d="M8 19h13V8" /><path d="M3 13l3.5-3 3 2.5L13 9l3 3.5" /></svg>;
+    case "transitions": // two halves with a seam
+      return <svg {...p}><rect x="3" y="5" width="18" height="14" rx="1.5" /><path d="M12 5v14" /><path d="M9 12h-3M18 12h-3" /></svg>;
+    case "sound": // speaker + wave
+      return <svg {...p}><path d="M4 9v6h4l5 4V5L8 9H4z" /><path d="M16.5 9.5a4 4 0 0 1 0 5" /></svg>;
+    case "captions": // CC box
+      return <svg {...p}><rect x="3" y="5" width="18" height="14" rx="2" /><path d="M9 10.5a2 2 0 0 0-2 2 2 2 0 0 0 2 2M16 10.5a2 2 0 0 0-2 2 2 2 0 0 0 2 2" /></svg>;
+    case "text": // capital T
+      return <svg {...p}><path d="M5 6h14M12 6v12" /></svg>;
+    case "clip": // inspector / sliders
+      return <svg {...p}><path d="M4 7h10M18 7h2M4 12h2M10 12h10M4 17h12M18 17h2" /><circle cx="16" cy="7" r="2" /><circle cx="8" cy="12" r="2" /><circle cx="16" cy="17" r="2" /></svg>;
+  }
+}
+
 export function Editor({
   projectId,
   boardEdit,
   savedEdit,
   attachedCount,
+  editedAt,
   onDirtyChange,
 }: {
   projectId: string;
@@ -84,6 +117,8 @@ export function Editor({
   /** the persisted working cut (Project.editJson), wins when present */
   savedEdit: ArtlioEdit | null;
   attachedCount: number;
+  /** Project.updatedAt at load (ISO) — base for optimistic-concurrency saves. */
+  editedAt?: string;
   onDirtyChange: (dirty: boolean) => void;
 }) {
   const studioRef = useRef<HTMLDivElement>(null);
@@ -102,6 +137,11 @@ export function Editor({
 
   // the timeline-selected clip, for the right Inspector (transition + audio)
   const [selected, setSelected] = useState<Selection | null>(null);
+  // LTX-style left rail: exactly one tool panel open at a time (or none, so the
+  // preview + timeline get the full width). Assets is the approved default.
+  const [activePanel, setActivePanel] = useState<
+    "assets" | "transitions" | "sound" | "captions" | "text" | "clip" | null
+  >("assets");
 
   // EP1 between-clip transitions live OUTSIDE the Shotstack Edit — Shotstack's
   // schema has no track-level transition and strips unknown fields, so this
@@ -219,6 +259,12 @@ export function Editor({
   // set just before an INTENTIONAL location.reload() (resetToBoard) so the dirty
   // beforeunload guard doesn't prompt — we're deliberately reloading after a save.
   const intentionalReload = useRef(false);
+  // D1 optimistic concurrency: the Project.updatedAt this session is editing FROM.
+  // Seeded from the loaded prop; advanced to the server's fresh updatedAt after each
+  // successful save so repeated saves in one session don't false-conflict against
+  // their own prior write. A save with a stale base (another tab/device wrote since)
+  // matches 0 rows server-side → conflict, surfaced via setNotice (no auto-overwrite).
+  const baseUpdatedAtRef = useRef(editedAt);
 
   // editor Assets panel: the project's generated media, clickable to add to the cut
   const [media, setMedia] = useState<EditorClip[]>([]);
@@ -267,6 +313,15 @@ export function Editor({
     return () => window.removeEventListener("keydown", onKey, true);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [selected, status]);
+
+  // Auto-open the Clip panel when a clip becomes selected on the timeline (keyed
+  // on the selection identity, not the object). We DON'T force it back when the
+  // clip is deselected — whatever panel the user has open simply stays.
+  useEffect(() => {
+    // eslint-disable-next-line react-hooks/set-state-in-effect -- surface the inspector for the newly-selected clip (one-shot sync off the SDK clip:selected event)
+    if (selected) setActivePanel("clip");
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- key on selection IDENTITY, not the object, so it fires once per selection change
+  }, [selected?.trackIndex, selected?.clipIndex]);
 
   // leaving the editor (nav away / unmount) → report clean, so re-entry doesn't
   // prompt on a stale dirty flag (the parent's guard reads this)
@@ -1164,11 +1219,14 @@ export function Editor({
   async function persistEdit(edit: ArtlioEdit): Promise<boolean> {
     setBusy(true);
     try {
-      const res = await saveProjectEdit(projectId, JSON.stringify(edit));
+      const res = await saveProjectEdit(projectId, JSON.stringify(edit), baseUpdatedAtRef.current);
       if (res && "error" in res && res.error) {
-        setNotice({ tone: "warn", text: res.error });
+        setNotice({ tone: "warn", text: res.error }); // conflict message included — never auto-overwrite
         return false;
       }
+      // re-base on the server's fresh updatedAt so the next save in this session
+      // doesn't conflict against our own write
+      if (res && "updatedAt" in res && res.updatedAt) baseUpdatedAtRef.current = res.updatedAt;
       setDirty(false);
       return true;
     } catch {
@@ -1225,10 +1283,11 @@ export function Editor({
       flushNative(); // commit any pending native edit to history + cancel the observer timer
       const { edit, error } = snapshot();
       if (error || !edit) { setNotice({ tone: "warn", text: error ? `Out of contract: ${error}` : "Editor not ready yet." }); return; }
-      if (dirty) {
-        const ok = await persistEdit(edit);
-        if (!ok) return;
-      }
+      // Always save (guarded) BEFORE rendering — startRender no longer writes
+      // Project.editJson, and the guarded save aborts the export if another tab/device
+      // changed the cut, so we never render or overwrite a stale snapshot (D1).
+      const ok = await persistEdit(edit);
+      if (!ok) return;
       setBusy(true);
       try {
         const res = await startRender(projectId, JSON.stringify(edit));
@@ -1397,9 +1456,28 @@ export function Editor({
         </div>
       ) : (
         <div style={{ flex: 1, minHeight: 0, display: "flex", gap: 12 }}>
+          {/* LTX-style icon rail — one button per tool panel; click toggles the
+              single open panel. The Clip button needs a selected clip. */}
+          <nav aria-label="Editor tools" style={{ width: 50, flex: "none", display: "flex", flexDirection: "column", gap: 6, padding: 6, border: "1px solid var(--line-2)", borderRadius: "var(--radius-lg)", background: "var(--glass-1)", maxHeight: "100%" }}>
+            {RAIL_ITEMS.map((item) => {
+              const isActive = activePanel === item.id;
+              const isDisabled = item.id === "clip" && !selected;
+              return (
+                <button key={item.id} aria-label={item.label} title={item.label} aria-pressed={isActive} disabled={isDisabled}
+                  onClick={() => setActivePanel((p) => (p === item.id ? null : item.id))}
+                  style={{ width: 38, height: 38, display: "grid", placeItems: "center", borderRadius: "var(--radius-md)", border: `1px solid ${isActive ? "var(--line-1)" : "transparent"}`, background: isActive ? "var(--glass-2)" : "transparent", color: isDisabled ? "var(--fg-4)" : isActive ? "var(--fg-0)" : "var(--fg-2)", cursor: isDisabled ? "default" : "pointer" }}>
+                  <RailIcon id={item.id} />
+                </button>
+              );
+            })}
+          </nav>
           {/* Assets panel — click a clip to append it to the cut */}
+          {activePanel === "assets" && (
           <aside style={{ width: 220, flex: "none", display: "flex", flexDirection: "column", border: "1px solid var(--line-2)", borderRadius: "var(--radius-lg)", overflow: "hidden", maxHeight: "100%" }}>
-            <div style={{ padding: "9px 12px", borderBottom: "1px solid var(--line-2)", flex: "none" }}><MonoLabel>Assets</MonoLabel></div>
+            <div style={{ padding: "9px 12px", borderBottom: "1px solid var(--line-2)", display: "flex", alignItems: "center", justifyContent: "space-between", flex: "none" }}>
+              <MonoLabel>Assets</MonoLabel>
+              <button onClick={() => setActivePanel(null)} aria-label="Collapse panel" title="Collapse panel" style={collapseBtn}>‹</button>
+            </div>
             <div style={{ flex: 1, overflow: "auto", padding: 10, display: "flex", flexDirection: "column", gap: 8 }}>
               {/* EP4: audio lives in the Sound aside; Assets shows only visual media. */}
               {media.filter((m) => m.kind !== "audio").length === 0 ? (
@@ -1418,14 +1496,19 @@ export function Editor({
               ))}
             </div>
           </aside>
+          )}
           {/* Transitions tab — applies to a selected clip boundary; lives outside Shotstack */}
+          {activePanel === "transitions" && (
           <aside style={{ width: 200, flex: "none", display: "flex", flexDirection: "column", border: "1px solid var(--line-2)", borderRadius: "var(--radius-lg)", overflow: "hidden", maxHeight: "100%" }}>
             <div style={{ padding: "9px 12px", borderBottom: "1px solid var(--line-2)", display: "flex", alignItems: "center", justifyContent: "space-between", flex: "none" }}>
               <MonoLabel>Transitions</MonoLabel>
-              <button onClick={clearAllTransitions} disabled={transitions.length === 0}
-                style={{ font: "var(--text-mono-meta)", color: "var(--fg-3)", background: "none", border: "none", cursor: transitions.length ? "pointer" : "default", textDecoration: "underline", textUnderlineOffset: 3 }}>
-                Clear all
-              </button>
+              <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+                <button onClick={clearAllTransitions} disabled={transitions.length === 0}
+                  style={{ font: "var(--text-mono-meta)", color: "var(--fg-3)", background: "none", border: "none", cursor: transitions.length ? "pointer" : "default", textDecoration: "underline", textUnderlineOffset: 3 }}>
+                  Clear all
+                </button>
+                <button onClick={() => setActivePanel(null)} aria-label="Collapse panel" title="Collapse panel" style={collapseBtn}>‹</button>
+              </div>
             </div>
             <div style={{ flex: 1, overflow: "auto", padding: 10, display: "flex", flexDirection: "column", gap: 8 }}>
               {boundary == null ? (
@@ -1460,14 +1543,19 @@ export function Editor({
               })()}
             </div>
           </aside>
+          )}
           {/* Sound tab — audio assets, upload, place on an audio track, ducking */}
+          {activePanel === "sound" && (
           <aside style={{ width: 200, flex: "none", display: "flex", flexDirection: "column", border: "1px solid var(--line-2)", borderRadius: "var(--radius-lg)", overflow: "hidden", maxHeight: "100%" }}>
             <div style={{ padding: "9px 12px", borderBottom: "1px solid var(--line-2)", display: "flex", alignItems: "center", justifyContent: "space-between", flex: "none" }}>
               <MonoLabel>Sound</MonoLabel>
-              <label style={{ font: "var(--text-mono-meta)", color: "var(--fg-3)", cursor: "pointer", textDecoration: "underline", textUnderlineOffset: 3 }}>
-                {uploadingAudio ? "Uploading…" : "Upload"}
-                <input type="file" accept="audio/*" multiple hidden disabled={uploadingAudio} onChange={(e) => uploadAudio(e.target.files)} />
-              </label>
+              <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+                <label style={{ font: "var(--text-mono-meta)", color: "var(--fg-3)", cursor: "pointer", textDecoration: "underline", textUnderlineOffset: 3 }}>
+                  {uploadingAudio ? "Uploading…" : "Upload"}
+                  <input type="file" accept="audio/*" multiple hidden disabled={uploadingAudio} onChange={(e) => uploadAudio(e.target.files)} />
+                </label>
+                <button onClick={() => setActivePanel(null)} aria-label="Collapse panel" title="Collapse panel" style={collapseBtn}>‹</button>
+              </div>
             </div>
             <div style={{ flex: 1, overflow: "auto", padding: 10, display: "flex", flexDirection: "column", gap: 8 }}>
               {media.filter((m) => m.kind === "audio").length === 0 ? (
@@ -1522,15 +1610,20 @@ export function Editor({
               })()}
             </div>
           </aside>
-          {/* Captions + static text — Artlio state, merged into the timeline (one level
-              up, never on a clip). Burn-in happens on the worker's $0 render path. */}
+          )}
+          {/* Captions — Artlio state, merged into the timeline (one level up, never
+              on a clip). Burn-in happens on the worker's $0 render path. */}
+          {activePanel === "captions" && (
           <aside style={{ width: 210, flex: "none", display: "flex", flexDirection: "column", border: "1px solid var(--line-2)", borderRadius: "var(--radius-lg)", overflow: "hidden", maxHeight: "100%" }}>
             <div style={{ padding: "9px 12px", borderBottom: "1px solid var(--line-2)", display: "flex", alignItems: "center", justifyContent: "space-between", flex: "none" }}>
               <MonoLabel>Captions</MonoLabel>
-              <button onClick={clearAllCaptions} disabled={captions.length === 0}
-                style={{ font: "var(--text-mono-meta)", color: "var(--fg-3)", background: "none", border: "none", cursor: captions.length ? "pointer" : "default", textDecoration: "underline", textUnderlineOffset: 3 }}>
-                Clear all
-              </button>
+              <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+                <button onClick={clearAllCaptions} disabled={captions.length === 0}
+                  style={{ font: "var(--text-mono-meta)", color: "var(--fg-3)", background: "none", border: "none", cursor: captions.length ? "pointer" : "default", textDecoration: "underline", textUnderlineOffset: 3 }}>
+                  Clear all
+                </button>
+                <button onClick={() => setActivePanel(null)} aria-label="Collapse panel" title="Collapse panel" style={collapseBtn}>‹</button>
+              </div>
             </div>
             <div style={{ flex: 1, overflow: "auto", padding: 10, display: "flex", flexDirection: "column", gap: 10 }}>
               <Button variant="glass" size="sm" onClick={generateCaptions} disabled={status !== "ready" || capBusy}>
@@ -1561,13 +1654,24 @@ export function Editor({
                   </section>
                 ))
               )}
-              <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginTop: 4 }}>
-                <MonoLabel>Text</MonoLabel>
+            </div>
+          </aside>
+          )}
+          {/* Text — positioned static text overlays, same Artlio-state round-trip as
+              captions (merged into the timeline one level up). */}
+          {activePanel === "text" && (
+          <aside style={{ width: 210, flex: "none", display: "flex", flexDirection: "column", border: "1px solid var(--line-2)", borderRadius: "var(--radius-lg)", overflow: "hidden", maxHeight: "100%" }}>
+            <div style={{ padding: "9px 12px", borderBottom: "1px solid var(--line-2)", display: "flex", alignItems: "center", justifyContent: "space-between", flex: "none" }}>
+              <MonoLabel>Text</MonoLabel>
+              <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
                 <button onClick={addOverlay} disabled={status !== "ready"}
                   style={{ font: "var(--text-mono-meta)", color: "var(--fg-2)", background: "none", border: "none", cursor: status === "ready" ? "pointer" : "default", textDecoration: "underline", textUnderlineOffset: 3 }}>
                   Add text
                 </button>
+                <button onClick={() => setActivePanel(null)} aria-label="Collapse panel" title="Collapse panel" style={collapseBtn}>‹</button>
               </div>
+            </div>
+            <div style={{ flex: 1, overflow: "auto", padding: 10, display: "flex", flexDirection: "column", gap: 10 }}>
               {overlays.length === 0 ? (
                 <p style={{ font: "var(--text-caption)", color: "var(--fg-3)", margin: 0 }}>Add a positioned, styled static text overlay.</p>
               ) : (
@@ -1607,6 +1711,7 @@ export function Editor({
               )}
             </div>
           </aside>
+          )}
           <div style={{ flex: 1, minWidth: 0, display: "flex", flexDirection: "column" }}>
           {approxPreview && (() => {
             const vts = currentMergedEdit()?.timeline.tracks.find((t) => t.clips.some((c) => c.asset.type !== "audio"));
@@ -1691,16 +1796,20 @@ export function Editor({
             </div>
           )}
           </div>
-          {selected && (() => {
-            const type = selected.clip.asset?.type;
-            const isVisual = type === "video" || type === "image";
-            const hasAudio = type === "video" || type === "audio"; // EP4: audio-track clips expose volume too; images are silent
-            const fadeIn = !!selected.clip.transition?.in;
-            const fadeOut = !!selected.clip.transition?.out;
-            const volume = selected.clip.asset?.volume ?? 1;
-            return (
-              <aside style={{ width: 210, flex: "none", display: "flex", flexDirection: "column", border: "1px solid var(--line-2)", borderRadius: "var(--radius-lg)", overflow: "hidden", maxHeight: "100%" }}>
-                <div style={{ padding: "9px 12px", borderBottom: "1px solid var(--line-2)", flex: "none" }}><MonoLabel>Clip</MonoLabel></div>
+          {activePanel === "clip" && (
+            <aside style={{ width: 210, flex: "none", display: "flex", flexDirection: "column", border: "1px solid var(--line-2)", borderRadius: "var(--radius-lg)", overflow: "hidden", maxHeight: "100%" }}>
+              <div style={{ padding: "9px 12px", borderBottom: "1px solid var(--line-2)", display: "flex", alignItems: "center", justifyContent: "space-between", flex: "none" }}>
+                <MonoLabel>Clip</MonoLabel>
+                <button onClick={() => setActivePanel(null)} aria-label="Collapse panel" title="Collapse panel" style={collapseBtn}>‹</button>
+              </div>
+              {selected ? (() => {
+                const type = selected.clip.asset?.type;
+                const isVisual = type === "video" || type === "image";
+                const hasAudio = type === "video" || type === "audio"; // EP4: audio-track clips expose volume too; images are silent
+                const fadeIn = !!selected.clip.transition?.in;
+                const fadeOut = !!selected.clip.transition?.out;
+                const volume = selected.clip.asset?.volume ?? 1;
+                return (
                 <div style={{ flex: 1, overflow: "auto", padding: 12, display: "flex", flexDirection: "column", gap: 16 }}>
                   {isVisual && (
                     <section style={{ display: "flex", flexDirection: "column", gap: 8 }}>
@@ -1722,9 +1831,14 @@ export function Editor({
                   )}
                   {!isVisual && !hasAudio && <p style={inspHint}>This clip has no editable transition or audio.</p>}
                 </div>
-              </aside>
-            );
-          })()}
+                );
+              })() : (
+                <div style={{ flex: 1, overflow: "auto", padding: 12 }}>
+                  <p style={inspHint}>Select a clip on the timeline.</p>
+                </div>
+              )}
+            </aside>
+          )}
         </div>
       )}
     </div>

@@ -154,7 +154,7 @@ export function Library({
                       style={{ transform: isCollapsed ? "rotate(-90deg)" : "none", transition: "transform var(--dur-fast) var(--ease-out)" }}><path d="M2.5 4.5 6 8l3.5-3.5" /></svg>
                     <span style={{ width: 9, height: 9, borderRadius: 99, background: meta.color, display: "inline-block" }} aria-hidden />
                     <MonoLabel>{meta.label}</MonoLabel>
-                    <span style={{ font: "var(--text-mono-meta)", color: "var(--fg-3)" }}>{total}</span>
+                    <span style={{ font: "var(--text-mono-meta)", color: "var(--fg-3)" }}>{q ? `${group.length} / ${total}` : total}</span>
                   </button>
                   <span style={{ flex: 1 }} />
                   <Button variant="ghost" size="sm" onClick={() => openCreate(type)}>

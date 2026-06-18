@@ -4,7 +4,8 @@
  * surfaces (Elements, Gen space, Storyboard, Video editor, Assets); Canvas is
  * the only mock surface.
  */
-import { useState } from "react";
+import { useState, useEffect } from "react";
+import { useRouter } from "next/navigation";
 import type { EntityDTO, ProjectDTO } from "@/lib/types";
 import type { ArtlioEdit, ModelDirectiveRules } from "@artlio/core";
 import { StudioShell, type StudioView } from "./StudioShell";
@@ -29,6 +30,7 @@ export function Studio({
   boardEdit,
   savedEdit,
   attachedCount,
+  editedAt,
   rulesMap,
   threads,
   initialView,
@@ -44,21 +46,34 @@ export function Studio({
   boardEdit: ArtlioEdit | null;
   savedEdit: ArtlioEdit | null;
   attachedCount: number;
+  /** Project.updatedAt at load (ISO) — base for the editor's optimistic-concurrency saves (D1). */
+  editedAt?: string;
   rulesMap: Record<string, Record<string, ModelDirectiveRules>>;
   threads?: ChatThreadDTO[];
   initialView?: StudioView;
 }) {
+  const router = useRouter();
   const [view, setView] = useState<StudioView>(initialView ?? "genspace");
+  // the route is the single source of truth: a soft router.push(?view=X) (project
+  // switch, Add-to-editor) re-runs the page and passes a new initialView prop, so
+  // follow it to actually switch the surface (a useState initializer never re-runs)
+  useEffect(() => { setView(initialView ?? "genspace"); }, [initialView]);
   // the editor tab reports its unsaved-cut state up so nav/project-switch can guard it
   const [editorDirty, setEditorDirty] = useState(false);
   const confirmLeave = () => !editorDirty || confirm("Discard unsaved changes to this cut?");
+  // nav clicks flip local view AND keep the URL truthful (preserving the active
+  // project) so deep-links/refresh land on the same surface — same pattern as switchProject
+  function navigate(v: StudioView) {
+    setView(v);
+    router.replace(`/studio?p=${project.id}&view=${v}`);
+  }
 
   function surface() {
     switch (view) {
-      case "genspace": return <GenSpace projectId={project.id} entities={entities} rulesMap={rulesMap} onGoToElements={() => setView("elements")} />;
+      case "genspace": return <GenSpace projectId={project.id} entities={entities} rulesMap={rulesMap} onGoToElements={() => navigate("elements")} />;
       case "canvas": return <Canvas />;
       case "storyboard": return <Storyboard projectId={project.id} shots={shots} entities={entities} candidates={frameCandidates} />;
-      case "editor": return <VideoEditorSurface key={project.id} projectId={project.id} boardEdit={boardEdit} savedEdit={savedEdit} attachedCount={attachedCount} onDirtyChange={setEditorDirty} />;
+      case "editor": return <VideoEditorSurface key={project.id} projectId={project.id} boardEdit={boardEdit} savedEdit={savedEdit} attachedCount={attachedCount} editedAt={editedAt} onDirtyChange={setEditorDirty} />;
       case "elements": return <Elements entities={entities} projectId={project.id} />;
       case "assets": return <Assets media={media} shotOptions={shotOptions} />;
       case "cowork": return <Cowork key={project.id} projectId={project.id} entities={entities} threads={threads ?? []} brief={project.coworkBrief ?? ""} />;
@@ -73,7 +88,7 @@ export function Studio({
   }
 
   return (
-    <StudioShell view={view} onNavigate={setView} confirmLeave={confirmLeave} project={project} projects={projects} user={user}>
+    <StudioShell view={view} onNavigate={navigate} confirmLeave={confirmLeave} project={project} projects={projects} user={user}>
       {surface()}
     </StudioShell>
   );

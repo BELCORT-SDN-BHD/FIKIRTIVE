@@ -73,7 +73,7 @@ describe("deriveMode", () => {
 });
 
 describe("genRequest.variantSel", () => {
-  const base = { projectId: "p1", prompt: "hi", entityIds: ["e1"], kind: "image", model: "seedream", count: 1 };
+  const base = { projectId: "p1", prompt: "hi", entityIds: ["e1"], kind: "image", model: "seedream", count: 1, idempotencyKey: "k1" };
   it("defaults absent and accepts an { entityId: variantId } map", () => {
     expect(genRequest.parse(base).variantSel).toBeUndefined();
     expect(genRequest.parse({ ...base, variantSel: { e1: "v1" } }).variantSel).toEqual({ e1: "v1" });
@@ -89,9 +89,31 @@ describe("genRequest.variantSel", () => {
 
 describe("genRequest.threadId", () => {
   it("genRequest accepts an optional threadId (cowork tag) and rejects an over-long one", () => {
-    const base = { projectId: "p1", prompt: "a cat", count: 1, kind: "image", model: "seedream" };
+    const base = { projectId: "p1", prompt: "a cat", count: 1, kind: "image", model: "seedream", idempotencyKey: "k1" };
     expect(genRequest.safeParse({ ...base, threadId: "t_123" }).success).toBe(true);
-    expect(genRequest.safeParse(base).success).toBe(true); // absent is fine (backward-compat)
+    expect(genRequest.safeParse(base).success).toBe(true); // threadId absent is fine (cowork-only tag)
     expect(genRequest.safeParse({ ...base, threadId: "x".repeat(65) }).success).toBe(false);
+  });
+});
+
+describe("genRequest.idempotencyKey", () => {
+  // every spend request MUST carry a key so it always flows through dedup
+  // (startGen pre-check + partial-unique index) — a keyless request could
+  // bypass dedup and double-charge.
+  const base = { projectId: "p1", prompt: "a cat", count: 1, kind: "image", model: "seedream" };
+  it("rejects a missing key (no keyless spend path)", () => {
+    expect(genRequest.safeParse(base).success).toBe(false);
+  });
+  it("rejects a null key (the old .nullish() bypass is gone)", () => {
+    expect(genRequest.safeParse({ ...base, idempotencyKey: null }).success).toBe(false);
+  });
+  it("rejects an empty key", () => {
+    expect(genRequest.safeParse({ ...base, idempotencyKey: "" }).success).toBe(false);
+  });
+  it("accepts a valid key", () => {
+    expect(genRequest.safeParse({ ...base, idempotencyKey: "cowork:c1" }).success).toBe(true);
+  });
+  it("rejects an over-long key (>80, a bad id must never reach the worker)", () => {
+    expect(genRequest.safeParse({ ...base, idempotencyKey: "x".repeat(81) }).success).toBe(false);
   });
 });

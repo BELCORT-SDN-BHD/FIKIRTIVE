@@ -14,12 +14,15 @@ export function VideoEditorSurface({
   boardEdit,
   savedEdit,
   attachedCount,
+  editedAt,
   onDirtyChange,
 }: {
   projectId: string;
   boardEdit: ArtlioEdit | null;
   savedEdit: ArtlioEdit | null;
   attachedCount: number;
+  /** Project.updatedAt at load (ISO) — base for optimistic-concurrency saves (D1). */
+  editedAt?: string;
   onDirtyChange: (dirty: boolean) => void;
 }) {
   return (
@@ -33,6 +36,7 @@ export function VideoEditorSurface({
           boardEdit={boardEdit}
           savedEdit={savedEdit}
           attachedCount={attachedCount}
+          editedAt={editedAt}
           onDirtyChange={onDirtyChange}
         />
       </div>

@@ -129,6 +129,7 @@ export default async function StudioPage({ searchParams }: { searchParams: Promi
       boardEdit={boardEdit}
       savedEdit={savedEdit}
       attachedCount={clipCount}
+      editedAt={project.updatedAt.toISOString()}
       rulesMap={rulesMap}
       threads={threads}
       initialView={initialView}

@@ -26,6 +26,7 @@ import {
   type GenVideoModel,
 } from "@artlio/core";
 import { storage } from "../storage.js";
+import { sanitizeError, scrubUrls } from "../redact.js";
 import { provider } from "../generation.js";
 import { isModelDisabled } from "@artlio/core";
 import { workerDisabledModels } from "../model-registry.js";
@@ -40,6 +41,15 @@ const mimeForExt = (ext: string) =>
 // time and BELOW the GEN/REFGEN queue expiry (20m), so an actively-running gen is
 // never failed closed by a duplicate delivery, but a truly stuck one eventually is.
 const GEN_STALE_MS = 1000 * 60 * 18;
+
+// The store+record step after the paid call is FREE and idempotent (content-addressed
+// R2 put + one atomic tx) and the result bytes are already in memory — so a transient
+// R2/DB hiccup is retried IN-PROCESS rather than terminal-failing a job we ALREADY paid
+// for (a terminal FAILED+spent pushes the user to retry, paying a SECOND time). ~4 tries
+// over a few seconds rides out a blip; a persistent outage still falls through to the
+// terminal post-charge path. The provider is NEVER re-called here, so this cannot re-spend.
+const STORE_COMMIT_ATTEMPTS = 4;
+const STORE_COMMIT_BACKOFF_MS = 500;
 
 /** Idempotently attach a job's stored generations to its shot: assign per-shot
  *  versions to any not-yet-attached one, set shotId+attachedAt, mark the shot
@@ -372,32 +382,49 @@ export async function handleGen(data: GenJobData, retryCount: number): Promise<v
     // retry RESUMES (re-attaches) instead of re-spending. Attaching to the shot
     // happens AFTER, so an attached render can never exist without a resume marker
     // (the #2 fix — mirrors refgen's record-before-attach ordering).
-    const stored: { contentHash: string; ext: string; size: number }[] = [];
-    for (const img of outputs) {
-      const { contentHash } = await storage.put(job.ownerId, img.bytes, img.ext);
-      stored.push({ contentHash, ext: img.ext, size: img.bytes.byteLength });
-    }
-    const generationIds = await prisma.$transaction(async (tx) => {
-      const ids: string[] = [];
-      for (const s of stored) {
-        const asset = await tx.asset.upsert({
-          where: { ownerId_contentHash: { ownerId: job.ownerId, contentHash: s.contentHash } },
-          update: { deletedAt: null },
-          create: { id: newId(), ownerId: job.ownerId, contentHash: s.contentHash, ext: s.ext, mime: mimeForExt(s.ext), sizeBytes: BigInt(s.size), originalFilename: `gen-${job.id}.${s.ext}`, source: "GENERATED" },
+    //
+    // Both steps are FREE + idempotent (content-addressed put, atomic tx) and the paid
+    // bytes are in memory, so a transient R2/DB hiccup is RETRIED in-process — never
+    // terminal-failing a paid job (which would make the user retry and pay twice). The
+    // provider is never re-called in this loop, so no retry here can re-spend.
+    let generationIds: string[] = [];
+    for (let attempt = 1; ; attempt++) {
+      try {
+        const stored: { contentHash: string; ext: string; size: number }[] = [];
+        for (const img of outputs) {
+          const { contentHash } = await storage.put(job.ownerId, img.bytes, img.ext);
+          stored.push({ contentHash, ext: img.ext, size: img.bytes.byteLength });
+        }
+        generationIds = await prisma.$transaction(async (tx) => {
+          const ids: string[] = [];
+          for (const s of stored) {
+            const asset = await tx.asset.upsert({
+              where: { ownerId_contentHash: { ownerId: job.ownerId, contentHash: s.contentHash } },
+              update: { deletedAt: null },
+              create: { id: newId(), ownerId: job.ownerId, contentHash: s.contentHash, ext: s.ext, mime: mimeForExt(s.ext), sizeBytes: BigInt(s.size), originalFilename: `gen-${job.id}.${s.ext}`, source: "GENERATED" },
+            });
+            const gen = await tx.generation.create({
+              data: {
+                id: newId(), ownerId: job.ownerId, projectId: job.projectId, shotId: null,
+                threadId: job.threadId ?? null, // cowork tag (null for normal studio gens) → keeps it out of candidate/asset views
+                assetId: asset.id, source: "GENERATED", promptText: job.prompt, modelRef: job.model,
+                entitySnapshot, version: 1, attachedAt: null,
+              },
+            });
+            ids.push(gen.id);
+          }
+          await tx.genJob.update({ where: { id: job.id }, data: { generationIds: ids, spent: true, spentUsd: genSpentUsd({ kind: job.kind, model: job.model, count: job.count, videoOptions: job.videoOptions as { seconds?: number; resolution?: string; audio?: boolean } | null }) } });
+          return ids;
         });
-        const gen = await tx.generation.create({
-          data: {
-            id: newId(), ownerId: job.ownerId, projectId: job.projectId, shotId: null,
-            threadId: job.threadId ?? null, // cowork tag (null for normal studio gens) → keeps it out of candidate/asset views
-            assetId: asset.id, source: "GENERATED", promptText: job.prompt, modelRef: job.model,
-            entitySnapshot, version: 1, attachedAt: null,
-          },
-        });
-        ids.push(gen.id);
+        break; // stored + recorded — the resume marker is written
+      } catch (storeErr) {
+        // exhausted: a persistent R2/DB outage. Re-throw to the terminal post-charge
+        // path (FAILED + spent) — we can't hold the paid bytes forever in one process.
+        if (attempt >= STORE_COMMIT_ATTEMPTS) throw storeErr;
+        console.warn(`[gen] ${job.id}: store/commit attempt ${attempt}/${STORE_COMMIT_ATTEMPTS} failed, retrying (free, no re-charge) — ${storeErr instanceof Error ? storeErr.message : String(storeErr)}`);
+        await new Promise((r) => setTimeout(r, STORE_COMMIT_BACKOFF_MS * attempt));
       }
-      await tx.genJob.update({ where: { id: job.id }, data: { generationIds: ids, spent: true, spentUsd: genSpentUsd({ kind: job.kind, model: job.model, count: job.count, videoOptions: job.videoOptions as { seconds?: number; resolution?: string; audio?: boolean } | null }) } });
-      return ids;
-    });
+    }
     committed = true; // outputs stored + recorded — past here a failure resumes, never re-spends
     // best-effort attach: if it still fails, the outputs remain as reusable
     // candidates (visible, manually attachable) and we STILL mark DONE — never leave
@@ -407,7 +434,9 @@ export async function handleGen(data: GenJobData, retryCount: number): Promise<v
     console.log(`[gen] ${job.id}: DONE → ${generationIds.length} generations via ${provider.name}`);
     await appendCoworkResult(job, "GEN_RESULT", generationIds);
   } catch (err) {
-    const message = err instanceof Error ? err.message.slice(0, 500) : String(err).slice(0, 500);
+    // PERSISTED error surfaces in the admin UI — strip any signed URL / argv a
+    // provider or subprocess error may carry. Full (URL-scrubbed) detail → logs.
+    const message = sanitizeError(err);
     // a failure after the paid call is terminal — retrying would re-spend.
     // `spent` covers post-provider failures here; `charged` covers a failure
     // INSIDE the adapter after fal already billed (it ran the model, then the
@@ -417,7 +446,7 @@ export async function handleGen(data: GenJobData, retryCount: number): Promise<v
     // requeue so the resume path re-attaches without re-spending. Only a pre-commit
     // post-charge failure is terminal (charged, but no resume marker).
     const final = !committed && (spent || charged || retryCount >= GEN_RETRY_LIMIT);
-    console.error(`[gen] ${job.id}: ${final ? "FAILED" : committed ? "requeue → resume attach" : "retrying"} — ${message}`);
+    console.error(`[gen] ${job.id}: ${final ? "FAILED" : committed ? "requeue → resume attach" : "retrying"} — ${scrubUrls(err instanceof Error ? err.message : String(err)).slice(0, 1000)}`);
     await prisma.genJob.update({
       where: { id: job.id },
       // a post-charge failure records spent=true + spentUsd so "paid but not
@@ -427,8 +456,10 @@ export async function handleGen(data: GenJobData, retryCount: number): Promise<v
         ? { status: "FAILED", error: message, finishedAt: new Date(), spent: spent || charged, ...((spent || charged) ? { spentUsd: genSpentUsd({ kind: job.kind, model: job.model, count: job.count, videoOptions: job.videoOptions as { seconds?: number; resolution?: string; audio?: boolean } | null }) } : {}) }
         : { status: "QUEUED", error: message, progress: 0 },
     });
-    // user-facing chat text stays generic; the raw provider error is kept in GenJob.error (ops/DB)
+    // user-facing chat text stays generic; the sanitized provider error is kept in GenJob.error (ops/DB)
     if (final) await appendCoworkResult(job, "TURN_ERROR", [], "That generation didn't go through — you can try again.");
-    throw err;
+    // rethrow SANITIZED: pg-boss serializes the thrown error into its own job.output,
+    // so throwing the raw `err` would re-leak any signed URL/argv it carries there.
+    throw new Error(message);
   }
 }

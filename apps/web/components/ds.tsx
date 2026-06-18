@@ -5,7 +5,7 @@
  * (AL.*) and icon set. DOM structure and classNames match the DS bundle
  * verbatim so the CSS recipes in globals.css render pixel-faithfully.
  */
-import { useEffect, useRef } from "react";
+import { useEffect, useRef, useState } from "react";
 
 /* ---------------- icons (Lucide-style, 1.75 stroke) ---------------- */
 function mkIcon(nodes: React.ReactNode) {
@@ -297,15 +297,19 @@ export function MediaCard({
   style?: React.CSSProperties;
 } & Omit<React.HTMLAttributes<HTMLDivElement>, "title">) {
   const ratioClass = ratio === "9:16" ? " al-mediacard-9x16" : ratio === "1:1" ? " al-mediacard-1x1" : "";
+  const [imgErrored, setImgErrored] = useState(false);
+  // a new src is a fresh image — clear a stale error so a card that once 404'd can
+  // show a valid replacement instead of staying stuck on the glow placeholder.
+  useEffect(() => { setImgErrored(false); }, [src]);
   return (
     <div className={`al-mediacard${ratioClass}${selected ? " al-mediacard-sel" : ""}`} style={style} {...rest}>
       <div className="al-mediacard-media">
-        {src ? (
+        {src && !imgErrored ? (
           video ? (
             <video src={src} muted loop playsInline preload="metadata" />
           ) : (
             // eslint-disable-next-line @next/next/no-img-element
-            <img src={src} alt={typeof title === "string" ? title : ""} />
+            <img key={src} src={src} alt={typeof title === "string" ? title : ""} onError={() => setImgErrored(true)} />
           )
         ) : (
           <div className="al-mediacard-glow" />

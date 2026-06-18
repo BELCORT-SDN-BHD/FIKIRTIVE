@@ -19,6 +19,7 @@ import path from "node:path";
 import { execa } from "execa";
 import { prisma } from "@artlio/db";
 import { storage } from "../storage.js";
+import { sanitizeError, scrubUrls } from "../redact.js";
 import {
   artlioEdit,
   editDuration,
@@ -574,20 +575,25 @@ export async function handleRender(data: RenderJobData, retryCount = 0): Promise
     });
     console.log(`[render] ${job.id}: DONE → asset ${asset.id}`);
   } catch (err) {
-    const message = err instanceof Error ? err.message.slice(0, 500) : String(err).slice(0, 500);
+    // PERSISTED error must never carry the ffmpeg argv (it contains the presigned
+    // -i media URL + X-Amz signature) — it surfaces verbatim in the admin UI. Store
+    // a sanitized summary; keep the full (URL-scrubbed) detail in server logs only.
+    const safe = sanitizeError(err);
     // FAILED only when retries are exhausted: pg-boss retryCount is 0-based,
     // so the LAST delivery has retryCount === retryLimit — `>=` marks terminal
     // exactly once, on that delivery (codex off-by-one claim refuted by the
     // delivery math: limit 2 → deliveries at retryCount 0,1,2).
     const final = retryCount >= RENDER_RETRY_LIMIT;
-    console.error(`[render] ${job.id}: ${final ? "FAILED" : "retrying"} — ${message}`);
+    console.error(`[render] ${job.id}: ${final ? "FAILED" : "retrying"} — ${scrubUrls(err instanceof Error ? err.message : String(err)).slice(0, 1000)}`);
     await prisma.renderJob.update({
       where: { id: job.id },
       data: final
-        ? { status: "FAILED", error: message, finishedAt: new Date() }
-        : { status: "QUEUED", error: message, progress: 0 },
+        ? { status: "FAILED", error: safe, finishedAt: new Date() }
+        : { status: "QUEUED", error: safe, progress: 0 },
     });
-    throw err; // pg-boss owns the retry schedule
+    // rethrow a SANITIZED error: pg-boss serializes the thrown error into its own
+    // job.output column, so throwing the raw `err` would re-leak the argv/URL there.
+    throw new Error(safe); // pg-boss owns the retry schedule
   } finally {
     await rm(work, { recursive: true, force: true });
   }
