@@ -2,7 +2,7 @@
 
 import { useEffect, useRef, useState } from "react";
 import Link from "next/link";
-import { artlioEdit, type ArtlioEdit } from "@artlio/core";
+import { artlioEdit, snapEdit, splitClipAt, rippleDeleteClip, reconcileTransitions, type ArtlioEdit, type ArtlioClip } from "@artlio/core";
 import { getRenderJobs, saveProjectEdit, startRender, getEditorMedia } from "@/lib/actions";
 import { setDnd, getDnd, hasDnd } from "@/lib/dnd";
 import { Button, Chip, EmptyHero, MonoLabel } from "./ds";
@@ -18,9 +18,17 @@ import { Button, Chip, EmptyHero, MonoLabel } from "./ds";
  */
 
 interface StudioEdit {
-  getEdit: () => unknown;
+  /** Serialise the live edit. `includeIds:true` keeps each clip's STABLE SDK id —
+   *  the only reliable identity for reconciling index-based transitions across a
+   *  native reorder/trim (asset.src alone is ambiguous once a split makes two
+   *  same-src halves). The id-free form is what we persist (the contract has no id). */
+  getEdit: (options?: { includeIds?: boolean }) => unknown;
   addClip: (trackIdx: number, clip: unknown) => Promise<void>;
   updateClip: (trackIdx: number, clipIdx: number, updates: unknown) => Promise<void>;
+  /** hot-reload a whole edit config (used to push a custom contract op back) */
+  loadEdit: (edit: unknown) => Promise<void>;
+  /** current transport position in seconds (public field on Edit) */
+  playbackTime: number;
   events: { on: (e: string, cb: (payload?: unknown) => void) => (() => void) | void };
 }
 type StudioHandles = {
@@ -92,11 +100,65 @@ export function Editor({
   // schema has no track-level transition and strips unknown fields, so this
   // Artlio-owned array is merged into the ArtlioEdit at snapshot()/save time.
   // Keyed by fromClipIndex on the visual track (track 0).
-  const [transitions, setTransitions] = useState<UiTransition[]>(
+  const [transitions, setTransitionsState] = useState<UiTransition[]>(
     () => (initialEdit?.timeline.tracks[0] as { transitions?: UiTransition[] } | undefined)?.transitions ?? [],
+  );
+  // The SAME transitions, mirrored in a ref so closures that capture this effect
+  // (the edit:changed listener, currentMergedEdit, commitTransitions) always read
+  // the CURRENT value — never the state captured when the effect mounted. A later
+  // snap reload that re-seeded from stale state would otherwise wipe live
+  // transitions. ALL writes go through setTransitions, which keeps both in sync.
+  const transitionsRef = useRef<UiTransition[]>(transitions);
+  const setTransitions = (next: UiTransition[] | ((prev: UiTransition[]) => UiTransition[])) => {
+    const value = typeof next === "function" ? next(transitionsRef.current) : next;
+    transitionsRef.current = value;
+    setTransitionsState(value);
+  };
+  // the visual track's clip list as it was at the LAST snapshot/reload — the
+  // "before" side for reconcileTransitions when a NATIVE Shotstack edit
+  // (drag-reorder / trim) fires edit:changed. Updated on every reload and after
+  // each reconcile so a sequence of native edits maps incrementally.
+  const prevClipsRef = useRef<ArtlioClip[]>(
+    (initialEdit?.timeline.tracks[0]?.clips as ArtlioClip[] | undefined) ?? [],
   );
   // the clip boundary the user is editing (the transition AFTER clip N → N+1)
   const [boundary, setBoundary] = useState<number | null>(null);
+
+  // EP2 ONE authoritative history. Shotstack's own undo()/redo() is bypassed (its
+  // keyboard handler is preempted, see the capture-phase listener below) — it only
+  // records Shotstack-issued commands and can't see our custom split/ripple ops, so
+  // two stacks = two sources of truth. We keep one. `committedRef` is the last
+  // SETTLED parsed edit; `commitState` is the SINGLE place history grows and is
+  // idempotent (a no-op when the new edit equals committedRef), so the same change
+  // recorded by both an explicit op and the debounced observer counts exactly once.
+  const HISTORY_MAX = 50;
+  const undoStack = useRef<ArtlioEdit[]>([]);
+  const redoStack = useRef<ArtlioEdit[]>([]);
+  const committedRef = useRef<ArtlioEdit | null>(null);
+  const [canUndo, setCanUndo] = useState(false);
+  const [canRedo, setCanRedo] = useState(false);
+  const syncHistoryButtons = () => {
+    setCanUndo(undoStack.current.length > 0);
+    setCanRedo(redoStack.current.length > 0);
+  };
+  // true while OUR loadEdit (split/ripple/undo/redo/snap reload) is driving the
+  // editor, so the debounced edit:changed observer ignores the reload it triggers.
+  // Best-effort only: commitState's idempotency is the real guard against a leak.
+  const selfReload = useRef(false);
+  // the pending edit:changed debounce timer, in a ref so flushNative() (which
+  // settles a native edit synchronously) can CANCEL the redundant late observer
+  // pass before an explicit op reloads — otherwise it could fire mid-loadEdit.
+  const editChangedTimer = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
+  // SERIALIZES editing/persisting commands. Every user command checks it at entry and
+  // bails if set, then holds it across its async body — so no command can interleave at
+  // another's await point (e.g. split running while export awaits save, or ⌘Z twice
+  // fast) and read/commit a half-loaded edit. A synchronous ref (React state lags in
+  // long-lived closures). Distinct from selfReload, which only tells the observer to
+  // ignore OUR loadEdit's edit:changed.
+  const opLock = useRef(false);
+  // set just before an INTENTIONAL location.reload() (resetToBoard) so the dirty
+  // beforeunload guard doesn't prompt — we're deliberately reloading after a save.
+  const intentionalReload = useRef(false);
 
   // editor Assets panel: the project's generated media, clickable to add to the cut
   const [media, setMedia] = useState<EditorClip[]>([]);
@@ -114,10 +176,37 @@ export function Editor({
   // refresh/close with an unsaved cut → browser-native confirm (mirrors Composer)
   useEffect(() => {
     if (!dirty) return;
-    const warn = (e: BeforeUnloadEvent) => e.preventDefault();
+    const warn = (e: BeforeUnloadEvent) => { if (!intentionalReload.current) e.preventDefault(); };
     window.addEventListener("beforeunload", warn);
     return () => window.removeEventListener("beforeunload", warn);
   }, [dirty]);
+
+  // EP2 keyboard: undo/redo + split + ripple-delete. Registered in the CAPTURE
+  // phase on window so it runs BEFORE Shotstack's own document keydown listeners
+  // (Controls binds ⌘Z→its internal undo and Delete/Backspace→a non-ripple delete,
+  // in the bubble phase). For the keys we OWN we stopImmediatePropagation so those
+  // SDK handlers never fire — our single-source history + ripple-delete win. Keys
+  // we don't own (space, arrows, Home/End…) fall through to the SDK untouched.
+  // Skipped while typing in an input/textarea so we never hijack text editing.
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      const el = e.target as HTMLElement | null;
+      if (el && (el.tagName === "INPUT" || el.tagName === "TEXTAREA" || el.isContentEditable)) return;
+      const meta = e.metaKey || e.ctrlKey;
+      const own = () => { e.preventDefault(); e.stopImmediatePropagation(); };
+      if (meta && e.key.toLowerCase() === "z") {
+        own();
+        void (e.shiftKey ? redo() : undo());
+      } else if (!meta && (e.key === "s" || e.key === "S")) {
+        if (selected) { own(); void splitAtPlayhead(); }
+      } else if (!meta && (e.key === "Backspace" || e.key === "Delete")) {
+        if (selected) { own(); void rippleDeleteSelected(); }
+      }
+    };
+    window.addEventListener("keydown", onKey, true);
+    return () => window.removeEventListener("keydown", onKey, true);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [selected, status]);
 
   // leaving the editor (nav away / unmount) → report clean, so re-entry doesn't
   // prompt on a stale dirty flag (the parent's guard reads this)
@@ -176,19 +265,57 @@ export function Editor({
         await controls.load();
         if (disposed) return teardown();
 
-        // live contract check, debounced — surface drift while editing
-        let debounce: ReturnType<typeof setTimeout> | undefined;
+        // live contract check + snap-on-commit, debounced — surface drift while
+        // editing, and after a native trim/move drag re-tile any sub-threshold
+        // gap (snapEdit, contract-time; Shotstack exposes no pixel→time map).
         const off = edit.events.on("edit:changed", () => {
           setDirty(true);
-          clearTimeout(debounce);
-          debounce = setTimeout(() => {
-            const res = artlioEdit.safeParse(edit.getEdit());
-            setLiveIssue(res.success ? null : res.error.issues[0]?.message ?? "invalid edit");
+          if (selfReload.current) return; // our own loadEdit — already committed
+          clearTimeout(editChangedTimer.current);
+          editChangedTimer.current = setTimeout(() => {
+            void (async () => {
+              // a reload or another command is in flight (scheduled before this timer) —
+              // skip; running now would read a half-loaded edit. The command commits its
+              // own result; flushNative also cancels this timer for command-driven changes.
+              if (selfReload.current || opLock.current) return;
+              // hold opLock for the WHOLE observer pass (incl. its own reload's await) so a
+              // user command can't interleave during the snap reload.
+              opLock.current = true;
+              try {
+                // This fires for changes Shotstack owns: native drag-reorder/trim AND
+                // our SDK-routed mutations (addClip / volume / fade). currentMergedEdit
+                // reconciles the index-based transitions against the live clips FIRST
+                // (so a native reorder/trim can't leave a transition on the wrong cut),
+                // then we snap any sub-threshold gap and record ONE history entry.
+                const merged = currentMergedEdit();
+                if (!merged) return;
+                const res = artlioEdit.safeParse(merged);
+                setLiveIssue(res.success ? null : res.error.issues[0]?.message ?? "invalid edit");
+                if (!res.success) return; // transient invalid — don't commit or snap
+                const snapped = snapEdit(res.data);
+                const needsReload =
+                  JSON.stringify(snapped.timeline.tracks) !== JSON.stringify(res.data.timeline.tracks);
+                const settled = needsReload ? snapped : res.data;
+                // single-source history: idempotent vs committedRef, so this records a
+                // native edit but no-ops if an explicit op already committed the change.
+                commitState(settled);
+                if (needsReload) {
+                  selfReload.current = true;
+                  try {
+                    await reloadFromEdit(settled); // push the snapped geometry into Shotstack
+                  } finally {
+                    selfReload.current = false;
+                  }
+                }
+              } finally {
+                opLock.current = false;
+              }
+            })();
           }, 800);
         });
         partials.push({
           dispose: () => {
-            clearTimeout(debounce);
+            clearTimeout(editChangedTimer.current);
             if (typeof off === "function") off();
           },
         });
@@ -207,6 +334,24 @@ export function Editor({
         partials.push({ dispose: () => { if (typeof offSel === "function") offSel(); if (typeof offClear === "function") offClear(); } });
 
         handles.current = { edit: edit as unknown as StudioEdit, dispose: teardown };
+        // baseline the reconcile "before" list from the loaded edit's LIVE clips WITH
+        // stable ids (Shotstack assigns them on load + may canonicalize), so the
+        // first native edit reconciles by the same identity space the live edit uses.
+        prevClipsRef.current =
+          (((edit as unknown as StudioEdit).getEdit({ includeIds: true }) as ArtlioEdit).timeline.tracks[0]
+            ?.clips as ArtlioClip[]) ?? [];
+        // a fresh project/cut starts with no history (don't carry another cut's)
+        undoStack.current = [];
+        redoStack.current = [];
+        committedRef.current = null;
+        // seed committedRef with the loaded state (parsed) so the first real change
+        // pushes the right "before"; null is fine for an empty (sub-contract) cut.
+        {
+          const seed = currentMergedEdit();
+          const seedParsed = seed ? artlioEdit.safeParse(seed) : null;
+          committedRef.current = seedParsed?.success ? seedParsed.data : null;
+        }
+        syncHistoryButtons();
         setStatus("ready");
       } catch (e) {
         console.error("[editor] studio failed to load", e);
@@ -225,23 +370,60 @@ export function Editor({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [projectId, startEdit]);
 
-  /** read back the Studio snapshot, MERGE the Artlio-owned between-clip
-   *  transitions onto the visual track (Shotstack never carries them), then
-   *  canonicalize through the contract. The merge MUST happen before parse —
-   *  getEdit() returns a Shotstack-shaped object that strips the transitions. */
-  function snapshot(): { edit?: ArtlioEdit; error?: string } {
+  /** RECONCILE the index-based transitions against the LIVE clips (by stable id) and
+   *  return the reconciled set. A native Shotstack reorder/trim re-tiles the clips
+   *  but leaves our boundary-INDEXED transitions on the wrong clips; this remaps
+   *  them, dropping any whose pair is no longer a gapless-adjacent, long-enough pair.
+   *  Called from currentMergedEdit so EVERY consumer (save, ops, undo, the observer)
+   *  sees correct indices — never just the debounced path. Advances the baseline. */
+  function reconcileNow(): UiTransition[] {
     const h = handles.current;
-    if (!h) return { error: "Editor not ready yet." };
-    const raw = h.edit.getEdit() as ArtlioEdit;
+    if (!h) return transitionsRef.current;
+    // identity space: clips WITH stable ids (the only reliable match across a native
+    // reorder; asset.src is ambiguous once a split makes two same-src halves).
+    const liveIdClips =
+      ((h.edit.getEdit({ includeIds: true }) as ArtlioEdit).timeline.tracks[0]?.clips as ArtlioClip[] | undefined) ?? [];
+    if (transitionsRef.current.length > 0) {
+      const reconciled = reconcileTransitions(
+        prevClipsRef.current,
+        liveIdClips,
+        transitionsRef.current as never,
+      ) as unknown as UiTransition[];
+      if (JSON.stringify(reconciled) !== JSON.stringify(transitionsRef.current)) {
+        setTransitions(reconciled); // wrapper updates ref synchronously
+      }
+    }
+    prevClipsRef.current = liveIdClips;
+    return transitionsRef.current;
+  }
+
+  /** The live Shotstack edit MERGED with the (reconciled) React transitions, NO
+   *  parse — the object the ops, save, and history all consume. The merge reads the
+   *  id-FREE getEdit() so no SDK id leaks into the persisted contract; transitions
+   *  are reconciled first (reconcileNow) so the indices match the live clips. */
+  function currentMergedEdit(): ArtlioEdit | null {
+    const h = handles.current;
+    if (!h) return null;
+    const live = reconcileNow(); // reconcile BEFORE merging (covers save/op/undo)
+    const raw = h.edit.getEdit() as ArtlioEdit; // id-free — what we persist
+    // UiTransition.type is a loose `string` (the tile→type map); the contract
+    // narrows it at parse time. Consumers always safeParse / feed an op that
+    // re-parses, so cast the pre-parse merge to ArtlioEdit.
     const merged = {
       ...raw,
       timeline: {
         ...raw.timeline,
         tracks: raw.timeline.tracks.map((t, i) =>
-          i === 0 && transitions.length > 0 ? { ...t, transitions } : t,
+          i === 0 && live.length > 0 ? { ...t, transitions: live } : t,
         ),
       },
     };
+    return merged as unknown as ArtlioEdit;
+  }
+
+  function snapshot(): { edit?: ArtlioEdit; error?: string } {
+    const merged = currentMergedEdit();
+    if (!merged) return { error: "Editor not ready yet." };
     const result = artlioEdit.safeParse(merged);
     if (!result.success) {
       const first = result.error.issues[0];
@@ -252,17 +434,153 @@ export function Editor({
     return { edit: result.data };
   }
 
+  /** The SINGLE place history grows. Records the transition committedRef → `next`
+   *  iff they differ (idempotent), so a change recorded by BOTH an explicit op and
+   *  the debounced observer counts exactly once. `next` is always already PARSED, so
+   *  the stacks can never hold an out-of-contract edit (fixes the prior unparsed-push
+   *  bug). Bounded; a new entry clears the redo branch. */
+  function commitState(next: ArtlioEdit): void {
+    const prev = committedRef.current;
+    if (prev && JSON.stringify(prev) === JSON.stringify(next)) return; // no real change
+    if (prev) {
+      undoStack.current.push(prev);
+      if (undoStack.current.length > HISTORY_MAX) undoStack.current.shift();
+    }
+    redoStack.current = [];
+    committedRef.current = next;
+    syncHistoryButtons();
+  }
+
+  /** FLUSH a pending native edit (a drag/trim whose 800ms observer hasn't fired yet)
+   *  into history BEFORE any explicit op acts, and return the current settled, parsed
+   *  baseline. This reconciles the transitions to the live clips (via currentMergedEdit
+   *  → reconcileNow, which also advances prevClipsRef) and records the pending change
+   *  as its OWN history entry — so a native edit followed immediately by a split keeps
+   *  two undo steps, and a transition added after a native reorder is built in the
+   *  CURRENT index space (fixes the two stale-baseline races). Idempotent when nothing
+   *  is pending (commitState no-ops). Returns null (and surfaces the issue) if the live
+   *  edit is momentarily out of contract — the caller must bail. */
+  function flushNative(): ArtlioEdit | null {
+    // never read/commit live Shotstack state while OUR reload is in flight — the edit
+    // is half-loaded. Callers treat null as "busy, try again" and bail. (Re-entrancy
+    // guard: a second command landing during reloadFromEdit's await.)
+    if (selfReload.current) return null;
+    // we're settling the native edit synchronously here — cancel the redundant late
+    // observer pass so it can't fire mid-reload and commit a half-loaded edit.
+    clearTimeout(editChangedTimer.current);
+    const merged = currentMergedEdit(); // reconciles + advances prevClipsRef
+    if (!merged) return null;
+    const res = artlioEdit.safeParse(merged);
+    if (!res.success) {
+      setLiveIssue(res.error.issues[0]?.message ?? "invalid edit");
+      return null;
+    }
+    setLiveIssue(null);
+    commitState(res.data); // record any pending native/SDK change (idempotent if none)
+    return res.data;
+  }
+
+  /** Commit a NEW transitions set. Transitions live in React (not Shotstack) so they
+   *  fire NO edit:changed — the debounced observer can't capture them, so we record
+   *  here explicitly: build the merged edit with `next`, parse, commitState, then
+   *  apply to state. Skips (with a notice) if the result would be out of contract.
+   *  CALLER CONTRACT: call flushNative() first so transitionsRef + prevClipsRef are in
+   *  the current (post-native-edit) index space before `next` is computed. */
+  function commitTransitions(next: UiTransition[]): void {
+    const h = handles.current;
+    if (!h) return;
+    const raw = h.edit.getEdit() as ArtlioEdit;
+    const merged = {
+      ...raw,
+      timeline: {
+        ...raw.timeline,
+        tracks: raw.timeline.tracks.map((t, i) =>
+          i === 0 && next.length > 0 ? { ...t, transitions: next } : t,
+        ),
+      },
+    } as unknown as ArtlioEdit;
+    const parsed = artlioEdit.safeParse(merged);
+    if (!parsed.success) {
+      setNotice({ tone: "warn", text: parsed.error.issues[0]?.message ?? "invalid transition" });
+      return; // don't apply an out-of-contract transition
+    }
+    commitState(parsed.data);
+    setTransitions(next);
+    setDirty(true);
+  }
+
+  /** load a post-op ArtlioEdit into the live editor: hot-reload Shotstack with the
+   *  clips/output, re-seed the React transition state (Shotstack strips track-level
+   *  transitions), and re-baseline prevClipsRef from the LIVE clips' fresh stable ids
+   *  (Shotstack re-ids on loadEdit) so the next native edit reconciles correctly. The
+   *  caller sets selfReload around this so the reload's edit:changed is ignored. */
+  async function reloadFromEdit(next: ArtlioEdit) {
+    const h = handles.current;
+    if (!h) return;
+    await h.edit.loadEdit(next);
+    const nextTransitions = (next.timeline.tracks[0] as { transitions?: UiTransition[] } | undefined)?.transitions ?? [];
+    setTransitions(nextTransitions);
+    prevClipsRef.current =
+      ((h.edit.getEdit({ includeIds: true }) as ArtlioEdit).timeline.tracks[0]?.clips as ArtlioClip[] | undefined) ?? [];
+    setDirty(true);
+  }
+
+  async function undo() {
+    if (opLock.current) return; // another command is in flight — serialize
+    opLock.current = true;
+    try {
+      flushNative(); // a pending native edit becomes its OWN undo step before we pop
+      if (undoStack.current.length === 0) return;
+      const prev = undoStack.current.pop()!;
+      if (committedRef.current) redoStack.current.push(committedRef.current); // already parsed
+      committedRef.current = prev;
+      syncHistoryButtons();
+      selfReload.current = true;
+      try {
+        await reloadFromEdit(prev);
+      } finally {
+        selfReload.current = false;
+      }
+    } finally {
+      opLock.current = false;
+    }
+  }
+  async function redo() {
+    if (opLock.current) return; // another command is in flight — serialize
+    opLock.current = true;
+    try {
+      flushNative(); // a pending native edit clears the redo branch (recorded as new history)
+      if (redoStack.current.length === 0) return; // flush may have just emptied it
+      const next = redoStack.current.pop()!;
+      if (committedRef.current) undoStack.current.push(committedRef.current); // already parsed
+      committedRef.current = next;
+      syncHistoryButtons();
+      selfReload.current = true;
+      try {
+        await reloadFromEdit(next);
+      } finally {
+        selfReload.current = false;
+      }
+    } finally {
+      opLock.current = false;
+    }
+  }
+
   // append a project asset to the visual track (track 0) at the current end
   async function appendAsset(clip: EditorClip) {
     const h = handles.current;
-    if (!h || status !== "ready") return;
+    if (!h || status !== "ready" || opLock.current) return; // serialize: no edits mid-op
     const cur = h.edit.getEdit() as ArtlioEdit;
     const track0 = cur.timeline.tracks[0]?.clips ?? [];
     const end = track0.reduce((m, c) => Math.max(m, c.start + c.length), 0);
+    opLock.current = true;
     try {
       await h.edit.addClip(0, { asset: { type: clip.kind, src: clip.src }, start: end, length: clip.seconds });
+      flushNative(); // commit deterministically now — don't depend on the observer (which we hold off)
     } catch (e) {
       console.error("[editor] addClip failed", e);
+    } finally {
+      opLock.current = false;
     }
   }
 
@@ -279,17 +597,23 @@ export function Editor({
   }
   async function applyTransition(nextIn: boolean, nextOut: boolean) {
     const h = handles.current;
-    if (!h || status !== "ready" || !selected) return;
+    if (!h || status !== "ready" || !selected || opLock.current) return; // serialize: no edits mid-op
     const { trackIndex, clipIndex } = selected;
     const transition = nextIn || nextOut ? { in: nextIn ? "fade" : undefined, out: nextOut ? "fade" : undefined } : undefined;
+    opLock.current = true;
     try {
       await h.edit.updateClip(trackIndex, clipIndex, { transition });
       syncSelectedFromEdit(trackIndex, clipIndex);
-    } catch (e) { console.error("[editor] set transition failed", e); }
+      flushNative(); // commit deterministically now — don't depend on the observer (which we hold off)
+    } catch (e) {
+      console.error("[editor] set transition failed", e);
+    } finally {
+      opLock.current = false;
+    }
   }
   async function applyVolume(v: number) {
     const h = handles.current;
-    if (!h || status !== "ready" || !selected) return;
+    if (!h || status !== "ready" || !selected || opLock.current) return; // serialize: no edits mid-op
     const { trackIndex, clipIndex } = selected;
     // patch volume onto the REAL asset (preserve type/src/trim) — rebuilding from
     // the selection snapshot could replace it with a partial and break export
@@ -297,37 +621,119 @@ export function Editor({
     const real = cur.timeline.tracks[trackIndex]?.clips[clipIndex];
     if (!real) return;
     const asset = { ...real.asset, volume: v };
+    opLock.current = true;
     try {
       await h.edit.updateClip(trackIndex, clipIndex, { asset });
       syncSelectedFromEdit(trackIndex, clipIndex);
-    } catch (e) { console.error("[editor] set volume failed", e); }
+      flushNative(); // commit deterministically now — don't depend on the observer (which we hold off)
+    } catch (e) {
+      console.error("[editor] set volume failed", e);
+    } finally {
+      opLock.current = false;
+    }
   }
 
   // ---- EP1 between-clip transitions (Artlio state, outside Shotstack) ----
   // Set or update the transition on the selected boundary. "None" removes it.
   function setBoundaryTransition(tile: string) {
     if (boundary == null) return;
+    if (opLock.current) return; // another command is in flight — serialize
+    if (!flushNative()) return; // reconcile to current indices + record any pending native edit
     const type = TILE_TO_TYPE[tile];
-    setTransitions((prev) => {
-      const rest = prev.filter((t) => t.fromClipIndex !== boundary);
-      if (!type) return rest; // "None" = remove the entry
+    const prev = transitionsRef.current; // now reconciled to the live clip order
+    const rest = prev.filter((t) => t.fromClipIndex !== boundary);
+    let next: UiTransition[];
+    if (!type) {
+      next = rest; // "None" = remove the entry
+    } else {
       const existing = prev.find((t) => t.fromClipIndex === boundary);
-      return [
+      next = [
         ...rest,
         { fromClipIndex: boundary, toClipIndex: boundary + 1, type, durationMs: existing?.durationMs ?? DEFAULT_TRANSITION_MS },
       ];
-    });
-    setDirty(true);
+    }
+    commitTransitions(next); // state-only change → record history explicitly
   }
   // Adjust the duration (ms) of the transition on the selected boundary.
   function setBoundaryDuration(durationMs: number) {
     if (boundary == null) return;
-    setTransitions((prev) => prev.map((t) => (t.fromClipIndex === boundary ? { ...t, durationMs } : t)));
-    setDirty(true);
+    if (opLock.current) return; // another command is in flight — serialize
+    if (!flushNative()) return; // reconcile to current indices + record any pending native edit
+    const next = transitionsRef.current.map((t) => (t.fromClipIndex === boundary ? { ...t, durationMs } : t));
+    commitTransitions(next); // state-only change → record history explicitly
   }
   function clearAllTransitions() {
-    setTransitions([]);
-    setDirty(true);
+    if (transitionsRef.current.length === 0) return; // nothing to clear → no history entry
+    if (opLock.current) return; // another command is in flight — serialize
+    if (!flushNative()) return; // reconcile to current indices + record any pending native edit
+    commitTransitions([]); // state-only change → record history explicitly
+  }
+
+  // ---- EP2 editing-feel gestures (pure contract ops + reload) ----
+  // Split the selected visual clip at the transport playhead.
+  async function splitAtPlayhead() {
+    if (opLock.current) return; // another command is in flight — serialize
+    const h = handles.current;
+    if (!h || status !== "ready" || !selected || selected.trackIndex !== 0) {
+      setNotice({ tone: "warn", text: "Select a clip on the video track, move the playhead into it, then split." });
+      return;
+    }
+    opLock.current = true;
+    try {
+      const at = h.edit.playbackTime; // seconds on the timeline
+      // flush any pending native edit into history FIRST (its own undo step) and get the
+      // settled, reconciled baseline; compute the split from THAT, not a stale snapshot.
+      const base = flushNative();
+      if (!base) { setNotice({ tone: "warn", text: "The cut isn't valid yet — fix it before splitting." }); return; }
+      // compute the next edit (may throw → no history change), then record + reload.
+      // The op re-parses, so `next` is always in contract; selfReload keeps its
+      // reload's edit:changed from double-recording.
+      const next = splitClipAt(base, selected.trackIndex, selected.clipIndex, at);
+      commitState(next);
+      selfReload.current = true;
+      try {
+        await reloadFromEdit(next);
+      } finally {
+        selfReload.current = false;
+      }
+      setNotice({ tone: "ok", text: "Clip split at the playhead." });
+    } catch (e) {
+      setNotice({ tone: "warn", text: e instanceof Error ? e.message : "Couldn't split there." });
+    } finally {
+      opLock.current = false;
+    }
+  }
+
+  // Ripple-delete the selected visual clip (remove + close the gap).
+  async function rippleDeleteSelected() {
+    if (opLock.current) return; // another command is in flight — serialize
+    const h = handles.current;
+    if (!h || status !== "ready" || !selected || selected.trackIndex !== 0) {
+      setNotice({ tone: "warn", text: "Select a clip on the video track to ripple-delete it." });
+      return;
+    }
+    opLock.current = true;
+    try {
+      // flush any pending native edit into history FIRST (its own undo step) and get the
+      // settled, reconciled baseline; compute the ripple-delete from THAT.
+      const base = flushNative();
+      if (!base) { setNotice({ tone: "warn", text: "The cut isn't valid yet — fix it before removing a clip." }); return; }
+      const next = rippleDeleteClip(base, selected.trackIndex, selected.clipIndex);
+      commitState(next);
+      selfReload.current = true;
+      try {
+        await reloadFromEdit(next);
+      } finally {
+        selfReload.current = false;
+      }
+      setSelected(null);
+      setBoundary(null);
+      setNotice({ tone: "ok", text: "Clip removed; the gap was closed." });
+    } catch (e) {
+      setNotice({ tone: "warn", text: e instanceof Error ? e.message : "Couldn't remove that clip." });
+    } finally {
+      opLock.current = false;
+    }
   }
   // Re-lay the visual track so clips tile from 0 (closes a legacy gap so a
   // transition's gapless-adjacency requirement passes). Pure client-side; the
@@ -335,29 +741,36 @@ export function Editor({
   // UI — the contract only enforces gaplessness locally, per placed transition.
   async function closeGaps() {
     const h = handles.current;
-    if (!h || status !== "ready") return;
+    if (!h || status !== "ready" || opLock.current) return; // serialize: no edits mid-op
     const cur = h.edit.getEdit() as ArtlioEdit;
     const t0 = cur.timeline.tracks[0]?.clips ?? [];
     const ordered = [...t0].sort((a, b) => a.start - b.start);
-    let cursor = 0;
-    for (const c of ordered) {
-      if (Math.abs(c.start - cursor) > 1e-6) {
-        await h.edit.updateClip(0, t0.indexOf(c), { start: cursor }).catch(() => {});
+    // is there any gap to close? (don't push a no-op history entry)
+    let probe = 0;
+    const hasGap = ordered.some((c) => { const g = Math.abs(c.start - probe) > 1e-6; probe += c.length; return g; });
+    if (!hasGap) { setNotice({ tone: "ok", text: "No gaps to close." }); return; }
+    // Shotstack-routed (updateClip) → the debounced observer records it via commitState
+    opLock.current = true;
+    try {
+      let cursor = 0;
+      for (const c of ordered) {
+        if (Math.abs(c.start - cursor) > 1e-6) {
+          await h.edit.updateClip(0, t0.indexOf(c), { start: cursor }).catch(() => {});
+        }
+        cursor += c.length;
       }
-      cursor += c.length;
+      flushNative(); // commit deterministically now — don't depend on the observer (which we hold off)
+      setNotice({ tone: "ok", text: "Gaps closed — save the cut." });
+    } finally {
+      opLock.current = false;
     }
-    setDirty(true);
-    setNotice({ tone: "ok", text: "Gaps closed — save the cut." });
   }
 
   const [busy, setBusy] = useState(false);
 
-  async function saveCut(): Promise<boolean> {
-    const { edit, error } = snapshot();
-    if (error) {
-      setNotice({ tone: "warn", text: `Out of contract: ${error}` });
-      return false;
-    }
+  /** persist a PRE-VALIDATED edit. Unlocked — the caller (saveCut/exportCut) already
+   *  holds opLock and took the snapshot, so this never re-reads live Shotstack state. */
+  async function persistEdit(edit: ArtlioEdit): Promise<boolean> {
     setBusy(true);
     try {
       const res = await saveProjectEdit(projectId, JSON.stringify(edit));
@@ -366,8 +779,6 @@ export function Editor({
         return false;
       }
       setDirty(false);
-      setNotice({ tone: "ok", text: "Cut saved." });
-      setTimeout(() => setNotice(null), 2200);
       return true;
     } catch {
       setNotice({ tone: "warn", text: "Save failed — check your connection and retry." });
@@ -377,40 +788,79 @@ export function Editor({
     }
   }
 
-  async function exportCut() {
-    // export always renders what is SAVED — save first if dirty
-    if (dirty) {
-      const ok = await saveCut();
-      if (!ok) return;
-    }
-    const { edit, error } = snapshot();
-    if (error) return setNotice({ tone: "warn", text: `Out of contract: ${error}` });
-    setBusy(true);
+  async function saveCut(): Promise<boolean> {
+    if (opLock.current) { setNotice({ tone: "warn", text: "Editor is updating — try saving again in a moment." }); return false; }
+    opLock.current = true;
     try {
-      const res = await startRender(projectId, JSON.stringify(edit));
-      if (res && "error" in res && res.error) setNotice({ tone: "warn", text: res.error });
-      else {
-        setNotice({ tone: "ok", text: "Render queued — progress below." });
-        setTimeout(() => setNotice(null), 2600);
-        setJobsTick((t) => t + 1); // poll immediately
+      flushNative(); // commit any pending native edit to history + cancel the observer timer
+      const { edit, error } = snapshot(); // snapshot under the lock — never half-loaded
+      if (error || !edit) {
+        setNotice({ tone: "warn", text: error ? `Out of contract: ${error}` : "Editor not ready yet." });
+        return false;
       }
-    } catch {
-      setNotice({ tone: "warn", text: "Export failed — check your connection and retry." });
+      const ok = await persistEdit(edit);
+      if (ok) {
+        setNotice({ tone: "ok", text: "Cut saved." });
+        setTimeout(() => setNotice(null), 2200);
+      }
+      return ok;
     } finally {
-      setBusy(false);
+      opLock.current = false;
+    }
+  }
+
+  async function exportCut() {
+    if (opLock.current) { setNotice({ tone: "warn", text: "Editor is updating — try exporting again in a moment." }); return; }
+    opLock.current = true;
+    try {
+      // commit any pending native edit, then snapshot ONCE under the lock and save+render
+      // that EXACT edit — no re-read after an await (which could pick up a half-loaded edit).
+      // Export renders what is SAVED, so persist first when dirty.
+      flushNative(); // commit any pending native edit to history + cancel the observer timer
+      const { edit, error } = snapshot();
+      if (error || !edit) { setNotice({ tone: "warn", text: error ? `Out of contract: ${error}` : "Editor not ready yet." }); return; }
+      if (dirty) {
+        const ok = await persistEdit(edit);
+        if (!ok) return;
+      }
+      setBusy(true);
+      try {
+        const res = await startRender(projectId, JSON.stringify(edit));
+        if (res && "error" in res && res.error) setNotice({ tone: "warn", text: res.error });
+        else {
+          setNotice({ tone: "ok", text: "Render queued — progress below." });
+          setTimeout(() => setNotice(null), 2600);
+          setJobsTick((t) => t + 1); // poll immediately
+        }
+      } catch {
+        setNotice({ tone: "warn", text: "Export failed — check your connection and retry." });
+      } finally {
+        setBusy(false);
+      }
+    } finally {
+      opLock.current = false;
     }
   }
 
   async function resetToBoard() {
     if (!boardEdit) return;
+    if (opLock.current) { setNotice({ tone: "warn", text: "Editor is updating — try again in a moment." }); return; }
     if (!confirm("Replace the saved cut with a fresh one built from the shot board?")) return;
+    opLock.current = true; // serialize with save/export/edits — a single last-writer race otherwise
     setBusy(true);
     try {
       const res = await saveProjectEdit(projectId, JSON.stringify(boardEdit));
       if (res && "error" in res && res.error) setNotice({ tone: "warn", text: res.error });
-      else location.reload();
+      else {
+        // we just persisted boardEdit; the live editor still shows the old cut, so
+        // suppress the dirty unload prompt for this intentional reload.
+        intentionalReload.current = true;
+        setDirty(false);
+        location.reload();
+      }
     } finally {
       setBusy(false);
+      opLock.current = false;
     }
   }
 
@@ -497,6 +947,18 @@ export function Editor({
         </Chip>
         <Button variant="glass" size="sm" onClick={saveCut} disabled={status !== "ready" || !dirty || busy}>
           {busy ? "Working…" : "Save cut"}
+        </Button>
+        <Button variant="glass" size="sm" onClick={undo} disabled={status !== "ready" || !canUndo || busy} title="Undo (⌘Z)">
+          Undo
+        </Button>
+        <Button variant="glass" size="sm" onClick={redo} disabled={status !== "ready" || !canRedo || busy} title="Redo (⇧⌘Z)">
+          Redo
+        </Button>
+        <Button variant="glass" size="sm" onClick={splitAtPlayhead} disabled={status !== "ready" || !selected || busy} title="Split selected clip at the playhead (S)">
+          Split
+        </Button>
+        <Button variant="glass" size="sm" onClick={rippleDeleteSelected} disabled={status !== "ready" || !selected || busy} title="Ripple-delete selected clip (⌫)">
+          Ripple delete
         </Button>
         {notice?.tone === "warn" && /gapless|gap|tile|contiguous/i.test(notice.text) && (
           <Button variant="glass" size="sm" onClick={closeGaps} disabled={status !== "ready" || busy}>

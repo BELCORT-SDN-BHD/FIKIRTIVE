@@ -33,6 +33,19 @@ export {
   type RenderJobData,
   type RenderStatus,
 } from "./timeline.js";
+export {
+  splitClipAt,
+  rippleDeleteClip,
+  moveClip,
+  snapEdit,
+  reindexTransitionsAfterSplit,
+  reindexTransitionsAfterDelete,
+  reindexTransitionsAfterMove,
+  reconcileTransitions,
+  dropTransitionsTooShort,
+  MIN_CLIP_SECONDS,
+  SNAP_THRESHOLD_SECONDS,
+} from "./timeline-ops.js";
 export * from "./upload.js";
 export * from "./refgen.js";
 export * from "./ref-config.js";
