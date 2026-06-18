@@ -14,6 +14,7 @@ import { handleIngest, type IngestJobData } from "./jobs/ingest.js";
 import { handleRender } from "./jobs/render.js";
 import { handleRefGen } from "./jobs/refgen.js";
 import { handleGen } from "./jobs/gen.js";
+import { handleCaption } from "./jobs/caption.js";
 import {
   RENDER_DLQ,
   RENDER_QUEUE_POLICY,
@@ -23,9 +24,12 @@ import {
   GEN_QUEUE,
   GEN_DLQ,
   GEN_QUEUE_POLICY,
+  CAPTION_DLQ,
+  CAPTION_QUEUE_POLICY,
   type RenderJobData,
   type RefGenJobData,
   type GenJobData,
+  type CaptionJobData,
 } from "@artlio/core";
 
 // Long-lived worker prefers the DIRECT url — a persistent process gains nothing
@@ -61,6 +65,8 @@ async function main(): Promise<void> {
   await boss.createQueue(REFGEN_QUEUE, { ...REFGEN_QUEUE_POLICY });
   await boss.createQueue(GEN_DLQ);
   await boss.createQueue(GEN_QUEUE, { ...GEN_QUEUE_POLICY });
+  await boss.createQueue(CAPTION_DLQ);
+  await boss.createQueue(QUEUES.caption, { ...CAPTION_QUEUE_POLICY });
 
   await boss.work<IngestJobData>(QUEUES.ingest, { batchSize: 1 }, async ([job]) => {
     if (!job) return;
@@ -100,6 +106,19 @@ async function main(): Promise<void> {
       console.log(`[worker] gen job ${job.id} start (try ${job.retryCount + 1})`, job.data);
       await handleGen(job.data, job.retryCount);
       console.log(`[worker] gen job ${job.id} done`);
+    },
+  );
+
+  // $0 caption job ($0 — whisper.cpp only, NEVER fal): SEPARATE queue from render
+  // so a slow transcribe never blocks a render.
+  await boss.work<CaptionJobData>(
+    QUEUES.caption,
+    { batchSize: 1, includeMetadata: true },
+    async ([job]) => {
+      if (!job) return;
+      console.log(`[worker] caption job ${job.id} start (try ${job.retryCount + 1})`, job.data);
+      await handleCaption(job.data, job.retryCount);
+      console.log(`[worker] caption job ${job.id} done`);
     },
   );
 

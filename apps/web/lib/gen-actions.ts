@@ -14,15 +14,19 @@ import {
   storageKey,
   storageKeyToSrc,
   videoDefaults,
+  isModelDisabled,
   type GenJobData,
   type GenVideoModel,
 } from "@artlio/core";
 import { getBoss } from "./queue";
 import { checkCast } from "./cowork-guardian";
+import { requireSession } from "./auth-guard";
+import { resolveDisabledModels } from "./model-registry";
 
 const OWNED = { ownerId: FOUNDER_OWNER_ID, deletedAt: null } as const;
 
 export async function startGen(raw: unknown): Promise<{ id: string } | { error: string }> {
+  const gate = await requireSession(); if ("error" in gate) return gate;
   const parsed = genRequest.safeParse(raw);
   if (!parsed.success) return { error: "That generation request is out of bounds." };
   const { projectId, shotId, sourceGenerationId, tailGenerationId, prompt, entityIds, count, kind, model, durationSeconds, resolution, aspectRatio, fps, audio, idempotencyKey, variantSel, threadId } = parsed.data;
@@ -74,6 +78,15 @@ export async function startGen(raw: unknown): Promise<{ id: string } | { error: 
     return { error: block.error };
   }
 
+  // OPT-6 P2: reject an admin-disabled model BEFORE the spend commit. This is
+  // ADDITIVE narrowing — the typed superRefine above stays the authority over
+  // which (model,params) may spend; this only subtracts a turned-off model.
+  // Fail-closed-to-typed-menu on a DB fault (resolveDisabledModels → empty set).
+  const disabled = await resolveDisabledModels();
+  if (isModelDisabled(model, disabled)) {
+    return { error: "That model is currently turned off — pick another." };
+  }
+
   let job: { id: string };
   try {
     job = await prisma.genJob.create({
@@ -94,14 +107,20 @@ export async function startGen(raw: unknown): Promise<{ id: string } | { error: 
       select: { id: true },
     });
   } catch (e) {
-    // partial-unique index race: a concurrent same-key submit won the insert →
-    // return ITS active job instead of creating (and paying for) a duplicate
+    // partial-unique index race: a concurrent same-key submit won the insert → return
+    // ITS job instead of creating (and paying for) a duplicate. Scope the lookup to mirror
+    // each key's index: a general (shot-frame) key conflicts only while ACTIVE (active-only
+    // index), so match active — keeping the original behavior and not masking a future unrelated
+    // unique conflict; a cowork:<cardId> key is exactly-once-ever (GenJob_cowork_idempotency_once
+    // is all-status), so match ANY status — a re-insert after the first job is DONE/FAILED must
+    // also return that job, never spend again, never re-throw P2002 to the caller.
     if (idempotencyKey && typeof e === "object" && e !== null && (e as { code?: string }).code === "P2002") {
-      const active = await prisma.genJob.findFirst({
-        where: { ownerId: FOUNDER_OWNER_ID, projectId, idempotencyKey, status: { in: ["QUEUED", "GENERATING"] } },
+      const coworkKey = idempotencyKey.startsWith("cowork:");
+      const existing = await prisma.genJob.findFirst({
+        where: { ownerId: FOUNDER_OWNER_ID, projectId, idempotencyKey, ...(coworkKey ? {} : { status: { in: ["QUEUED", "GENERATING"] } }) },
         orderBy: { createdAt: "desc" }, select: { id: true },
       });
-      if (active) return { id: active.id };
+      if (existing) return { id: existing.id };
     }
     throw e;
   }
@@ -114,15 +133,24 @@ export async function startGen(raw: unknown): Promise<{ id: string } | { error: 
     await prisma.genJob.update({ where: { id: job.id }, data: { status: "FAILED", error: `dispatch failed: ${message}` } });
     return { error: "Could not reach the generation queue — is the worker up?" };
   }
-  await prisma.actionEvent.create({
-    data: { id: newId(), ownerId: FOUNDER_OWNER_ID, projectId, type: "gen.start", payload: { jobId: job.id, shotId: shotId ?? null, count } },
-  });
+  // BEST-EFFORT: the GenJob is already created + queued (paid path committed) above, so
+  // an audit-write failure must NOT throw past here — else the caller returns an error
+  // and a retry (esp. a keyless GenSpace direct gen) could enqueue a SECOND paid job.
+  // Log + swallow. (Keyed callers dedupe on retry; keyless ones must not even reach here.)
+  try {
+    await prisma.actionEvent.create({
+      data: { id: newId(), ownerId: FOUNDER_OWNER_ID, projectId, type: "gen.start", payload: { jobId: job.id, shotId: shotId ?? null, count } },
+    });
+  } catch (e) {
+    console.warn(`startGen: gen.start audit write failed for job ${job.id} (non-fatal):`, e instanceof Error ? e.message : e);
+  }
   revalidatePath("/", "layout");
   return { id: job.id };
 }
 
 /** Poll a gen job + return its produced generations' image URLs when DONE. */
 export async function getGenJob(jobId: string) {
+  const gate = await requireSession(); if ("error" in gate) throw new Error(gate.error);
   const job = await prisma.genJob.findFirst({ where: { id: jobId, ownerId: FOUNDER_OWNER_ID } });
   if (!job) return null;
   let urls: string[] = [];
@@ -147,6 +175,7 @@ export async function getGenJob(jobId: string) {
  *  surface (or a reload) would otherwise lose finished generations from view (they
  *  stay in Assets, but the user expects them in the gen panel too). */
 export async function getRecentGenResults(projectId: string, limit = 12) {
+  const gate = await requireSession(); if ("error" in gate) throw new Error(gate.error);
   const project = await prisma.project.findFirst({ where: { id: projectId, ownerId: FOUNDER_OWNER_ID, deletedAt: null }, select: { id: true } });
   if (!project) return [];
   const jobs = await prisma.genJob.findMany({

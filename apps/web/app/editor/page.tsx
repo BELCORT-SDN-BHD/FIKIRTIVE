@@ -3,6 +3,7 @@ import { ensureDefaultProject, getProjects, getShots, getCandidates } from "@/li
 import { buildBoardEdit } from "@/lib/edit";
 import { EditorShell } from "@/components/EditorShell";
 import { artlioEdit } from "@artlio/core";
+import { auth, allowed } from "@/auth";
 
 export const dynamic = "force-dynamic";
 
@@ -14,6 +15,8 @@ export default async function EditorPage({
   searchParams: Promise<{ p?: string }>;
 }) {
   const { p } = await searchParams;
+  const session = await auth();
+  if (!allowed(session?.user?.email)) redirect("/login");
   const defaultProject = await ensureDefaultProject();
   const projects = await getProjects();
   if (p && !projects.some((x) => x.id === p)) redirect("/editor"); // stale link → clean default
@@ -32,8 +35,8 @@ export default async function EditorPage({
         Artlio works best on a desktop browser — this view is read-only.
       </div>
       <EditorShell
-        project={{ id: project.id, name: project.name }}
-        projects={projects.map((x) => ({ id: x.id, name: x.name }))}
+        project={{ id: project.id, name: project.name, coworkBrief: project.coworkBrief ?? null }}
+        projects={projects.map((x) => ({ id: x.id, name: x.name, coworkBrief: x.coworkBrief ?? null }))}
         boardEdit={boardEdit}
         savedEdit={savedEdit}
         attachedCount={clipCount}

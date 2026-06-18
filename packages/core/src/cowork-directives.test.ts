@@ -5,7 +5,7 @@ import {
   modelDirectiveInput,
   modelDirectiveRules,
 } from "./cowork-directives.js";
-import { MODEL_FAMILIES, GEN_MODES } from "./gen.js";
+import { MODEL_FAMILIES, GEN_MODES, GEN_VIDEO_MODELS, modelFamily } from "./gen.js";
 
 describe("DIRECTIVE_SEED", () => {
   it("every cell has a valid family/mode and an in-bounds directive", () => {
@@ -47,6 +47,23 @@ describe("DIRECTIVE_SEED", () => {
         source: "research",
       });
       expect(parsed.family).toBe(c.family);
+    }
+  });
+});
+
+describe("DIRECTIVE_SEED video-family coverage (OPT-6 P2)", () => {
+  it("every family a video model routes to has at least one seeded cell", () => {
+    const seededFamilies = new Set(DIRECTIVE_SEED.map((c) => c.family));
+    const routedFamilies = new Set(
+      (GEN_VIDEO_MODELS as readonly string[]).map((m) => modelFamily(m)).filter((f): f is NonNullable<typeof f> => !!f),
+    );
+    const missing = [...routedFamilies].filter((f) => !seededFamilies.has(f));
+    expect(missing).toEqual([]); // veo, seedance, wan, pixverse, grok, hailuo must all be covered
+  });
+  it("each new video-family seed targets a real video mode (t2v/i2v) with non-empty text", () => {
+    for (const c of DIRECTIVE_SEED) {
+      expect(c.directive.trim().length).toBeGreaterThan(0);
+      expect(["t2i", "i2i", "t2v", "i2v", "i2v-tail"]).toContain(c.mode);
     }
   });
 });

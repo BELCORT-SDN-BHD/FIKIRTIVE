@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { storage, mimeOf, kindOf } from "@/lib/storage";
 import { parseStorageKey } from "@artlio/core";
+import { auth, allowed } from "@/auth";
 
 /**
  * Dev file serving for LocalDiskStorage. R2 presigned GETs replace this in T4.
@@ -11,12 +12,16 @@ export async function GET(
   req: NextRequest,
   ctx: { params: Promise<{ key: string[] }> },
 ) {
+  const session = await auth();
+  if (!allowed(session?.user?.email)) {
+    return NextResponse.redirect(new URL("/login", req.url), { status: 302 });
+  }
   const { key } = await ctx.params; // Next 16: params are async
   const joined = key.join("/");
   try {
     const { ext } = parseStorageKey(joined); // rejects traversal/malformed keys
     // r2 driver: hand the client a short-lived presigned GET — R2 serves
-    // Range/206 natively and the proxy wall has already run by this point
+    // Range/206 natively
     const presigned = await storage.presignedGet(joined);
     if (presigned) {
       // the signed URL must not linger in caches or leak via referrers

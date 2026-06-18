@@ -7,35 +7,66 @@
  * scenes so it never clobbers work.
  */
 import { revalidatePath } from "next/cache";
-import { prisma, type Prisma } from "@artlio/db";
+import { prisma, Prisma } from "@artlio/db";
 import {
   coworkRequest, enhanceRequest, MAX_ENHANCE_TEXT, newId, FOUNDER_OWNER_ID,
-  createTransport, runSkill, draftStoryboardSkill, enhancePromptSkill,
+  runSkill, draftStoryboardSkill, enhancePromptSkill,
   modelFamily, deriveMode,
   coworkTurnRequest, COWORK_MEMORY_TURNS, buildPlannerMessages, parseCoworkTurn,
-  mockPlannerReply, suggestModel, GEN_MODELS, GEN_VIDEO_MODELS,
+  mockPlannerReply, suggestModel, GEN_MODELS, GEN_VIDEO_MODELS, GEN_VIDEO_MODEL_OPTIONS,
   GEN_PRICE_USD_PER_IMAGE, videoPriceUsd,
   coworkGenerateRequest, coworkProposalSchema,
-  coworkRenameThreadRequest, coworkDeleteThreadRequest, MAX_GEN_PROMPT,
+  coworkRenameThreadRequest, coworkDeleteThreadRequest, coworkVaryCardRequest, coworkBriefRequest, MAX_GEN_PROMPT,
+  storageKey, composePrompt, isModelDisabled,
   type ChatMessage, type CoworkTurn, type GenVideoModel,
 } from "@artlio/core";
+import { getTransport, resolveVisionConfig } from "./runtime-config";
 import { getEnhanceDirective } from "./cowork-knowledge";
+import { resolveDisabledModels } from "./model-registry";
 import { startGen } from "./gen-actions";
+import { storage, mimeOf } from "./storage";
+import { requireSession } from "./auth-guard";
 
 const OWNED = { ownerId: FOUNDER_OWNER_ID, deletedAt: null } as const;
-const transport = createTransport();
+
+/** Phase C vision: resolve one asset to a base64 data-URL for the planner.
+ *  Returns null (and never throws) when the asset is missing, foreign, deleted,
+ *  or exceeds the configured size limit — the caller skips gracefully.
+ *  Used by CT-C2 (coworkTurn image attachment). */
+async function refImageDataUrl(assetId: string): Promise<string | null> {
+  const { maxBytes } = await resolveVisionConfig();
+  const asset = await prisma.asset.findFirst({
+    where: { id: assetId, ownerId: FOUNDER_OWNER_ID, deletedAt: null },
+    select: { ownerId: true, contentHash: true, ext: true, sizeBytes: true },
+  });
+  if (!asset) return null; // missing / foreign / deleted → skip
+  if (asset.sizeBytes != null && Number(asset.sizeBytes) > maxBytes) return null; // too big
+  try {
+    const bytes = await storage.get(storageKey(asset.ownerId, asset.contentHash, asset.ext));
+    if (bytes.length > maxBytes) return null;
+    return `data:${mimeOf(asset.ext)};base64,${Buffer.from(bytes).toString("base64")}`;
+  } catch { return null; } // read error → skip; NEVER throw the turn
+}
 
 /** Owner-global entities the planner may reference (Entity has no projectId — it's
  *  owner-scoped like getEntities). Returns the @-ref allow-list passed to the planner,
  *  plus each entity's LIVE variant ids so the action can constrain variantSel VALUES
- *  (not just keys) to real variants before persisting a card. */
-async function loadAvailableRefs(): Promise<{ id: string; name: string; type: string; variantIds: string[] }[]> {
+ *  (not just keys) to real variants before persisting a card. Also returns the cached
+ *  see-once visual description (Entity.descriptionJson.text) so buildPlannerMessages
+ *  can embed it in the refs block on turns where no image is sent. */
+async function loadAvailableRefs(): Promise<{ id: string; name: string; type: string; variantIds: string[]; description?: string }[]> {
   const entities = await prisma.entity.findMany({
     where: { ...OWNED },
-    select: { id: true, name: true, type: true, variants: { where: { deletedAt: null }, select: { id: true } } },
+    select: { id: true, name: true, type: true, descriptionJson: true, variants: { where: { deletedAt: null }, select: { id: true } } },
     orderBy: [{ type: "asc" }, { name: "asc" }],
   });
-  return entities.map((e) => ({ id: e.id, name: e.name, type: e.type, variantIds: e.variants.map((v) => v.id) }));
+  return entities.map((e) => ({
+    id: e.id,
+    name: e.name,
+    type: e.type,
+    variantIds: e.variants.map((v) => v.id),
+    description: (e.descriptionJson as { text?: string } | null)?.text || undefined,
+  }));
 }
 
 export async function coworkDraftStoryboard(
@@ -43,9 +74,11 @@ export async function coworkDraftStoryboard(
 ): Promise<{ ok: true; scenes: number; shots: number; via: string } | { error: string }> {
   const parsed = coworkRequest.safeParse(raw);
   if (!parsed.success) return { error: "Tell cowork what to make (a short description)." };
+  const gate = await requireSession(); if ("error" in gate) return gate;
   const { projectId, idea } = parsed.data;
   const project = await prisma.project.findFirst({ where: { id: projectId, ...OWNED } });
   if (!project) return { error: "Project not found." };
+  const transport = await getTransport();
 
   let plan;
   try {
@@ -105,10 +138,12 @@ export async function enhancePrompt(
 ): Promise<{ ok: true; text: string; via: string } | { error: string }> {
   const parsed = enhanceRequest.safeParse(raw);
   if (!parsed.success) return { error: "Write a prompt first, then ✨ Enhance." };
+  const gate = await requireSession(); if ("error" in gate) return gate;
   const { projectId, text, model, kind, conditioned, hasSource, hasTail } = parsed.data;
   // owner-domain guard like every paid action (single-tenant today, multi-tenant-ready)
   const project = await prisma.project.findFirst({ where: { id: projectId, ...OWNED } });
   if (!project) return { error: "Project not found." };
+  const transport = await getTransport();
 
   // Phase 1: server-derive (family, mode) from the gen-shape and read the tuned
   // directive. Best-effort — a knowledge-read hiccup degrades to the family-neutral
@@ -139,15 +174,39 @@ export async function enhancePrompt(
 
 const PLANNER_MAX_TOKENS = 1200;
 
+/** Map a ChatMessageKind to a human-readable word for the planner quote note. */
+function quotedKindLabel(kind: string): string {
+  if (kind === "GEN_CARD") return "generate card";
+  if (kind === "GEN_RESULT") return "result";
+  return "message"; // TEXT, PLAN, DENIAL, TURN_ERROR
+}
+
+/** Build a short (≤200 char) preview of a quoted message. Never dumps full payload JSON. */
+function quotedPreview(qm: { kind: string; text: string; payload: unknown }): string {
+  let s: string;
+  if (qm.kind === "GEN_CARD") {
+    const p = qm.payload as { kind?: string } | null;
+    s = p?.kind ? `${p.kind} proposal` : "proposal";
+  } else if (qm.kind === "GEN_RESULT") {
+    const p = qm.payload as { model?: string; urls?: string[] } | null;
+    s = p?.model ? `${p.model} ×${p.urls?.length ?? 1}` : "result";
+  } else {
+    s = qm.text || "(no text)"; // TEXT, PLAN, DENIAL, TURN_ERROR
+  }
+  return s.slice(0, 200); // universal cap — payload-derived previews must never bloat the planner turn
+}
+
 /** A PROPOSE-ONLY cowork turn: runs the planner (mock $0 in dev, ≤2 LLM calls) and
  *  persists user + agent messages. It NEVER spends — it neither imports nor calls any
  *  media-generation action and writes no media job. A GEN_CARD payload carries a
  *  DISPLAY-only estimatedPriceUsd; the only spend path is the user clicking Generate
  *  later (Plan-2), which re-derives and runs the unmodified generation action. */
-export async function coworkTurn(raw: unknown): Promise<{ threadId: string } | { error: string }> {
+export async function coworkTurn(raw: unknown): Promise<{ threadId: string; brief?: string } | { error: string }> {
   const parsed = coworkTurnRequest.safeParse(raw);
   if (!parsed.success) return { error: "Say what you'd like to make." };
-  const { projectId, text, entityIds, variantSel, sourceGenerationId } = parsed.data;
+  const gate = await requireSession(); if ("error" in gate) return gate;
+  const { projectId, text, entityIds, variantSel, sourceGenerationId, replyToMessageId } = parsed.data;
+  const transport = await getTransport();
 
   // Mirror the sibling actions: any DB/transport hiccup returns the {error} contract
   // rather than throwing an unhandled rejection to the client. (Guard early-returns
@@ -185,6 +244,22 @@ export async function coworkTurn(raw: unknown): Promise<{ threadId: string } | {
       if (!t || t.projectId !== projectId) return { error: "Conversation not found." };
     }
 
+    // "Reply to message" — fetch the quoted message (existing thread only). An
+    // invalid/foreign/deleted/cross-thread id is silently ignored so a stale tab never
+    // errors the turn. New-thread replies are always ignored (the thread doesn't exist yet).
+    let quoted: { kind: string; preview: string } | null = null;
+    let validReplyId: string | null = null; // persisted ONLY when the scoped fetch succeeds (no dangling/foreign refs)
+    if (!isNew && replyToMessageId) {
+      const qm = await prisma.chatMessage.findFirst({
+        where: { id: replyToMessageId, threadId, ownerId: FOUNDER_OWNER_ID, deletedAt: null },
+        select: { kind: true, text: true, payload: true },
+      });
+      if (qm) {
+        quoted = { kind: quotedKindLabel(qm.kind), preview: quotedPreview({ kind: qm.kind, text: qm.text, payload: qm.payload }) };
+        validReplyId = replyToMessageId;
+      }
+    }
+
     // bounded, NL-only memory window (assistant/user), oldest-dropped (empty for a new thread)
     const recent = isNew ? [] : await prisma.chatMessage.findMany({
       where: { threadId, deletedAt: null, kind: { in: ["TEXT", "PLAN"] } },
@@ -194,10 +269,55 @@ export async function coworkTurn(raw: unknown): Promise<{ threadId: string } | {
 
     const availableRefs = await loadAvailableRefs(); // owner-global entities {id,name,type}
     const modelSummary = `image: ${GEN_MODELS.join("/")}; video: ${GEN_VIDEO_MODELS.join("/")} (agent picks by capability)`;
-    const messages = buildPlannerMessages({ userText: text, history, availableRefs, modelSummary });
+    const refIds = availableRefs.map((r) => r.id);
+
+    // Phase C (policy C): when vision is on, let the planner SEE the actual pixels of the
+    // refs in play this turn — the @-mentioned entities (their locked base image) and the
+    // i2v source frame — so it writes an image-grounded prompt. Bounded + best-effort.
+    let images: { label: string; dataUrl: string }[] | undefined;
+    // refs whose pixels are ACTUALLY attached this turn → their id. The see-once description
+    // cache (turn.refDescriptions) persists ONLY for entities the planner truly saw, keyed
+    // unambiguously by id (entity names aren't unique → ambiguous names are skipped).
+    const attachedRefIdByName = new Map<string, string>();
+    const ambiguousRefNames = new Set<string>();
+    const vision = await resolveVisionConfig();
+    if (vision.enabled) {
+      // FULLY best-effort: any failure (a DB hiccup in these lookups, a storage read, etc.)
+      // must only DROP this turn's images, NEVER fail the turn — the planner still runs
+      // text-only. So the whole gather is wrapped (refImageDataUrl alone wasn't enough —
+      // the generation/entity queries here could throw into coworkTurn's outer catch).
+      try {
+        const collected: { label: string; dataUrl: string }[] = [];
+        // i2v source frame first (most load-bearing when animating)
+        if (validSource) {
+          const g = await prisma.generation.findFirst({ where: { id: validSource, ...OWNED }, select: { assetId: true } });
+          if (g?.assetId) { const url = await refImageDataUrl(g.assetId); if (url) collected.push({ label: "source frame (to animate)", dataUrl: url }); }
+        }
+        // @-mentioned entities (allow-listed) → their locked base image
+        const inPlay = entityIds.filter((id) => refIds.includes(id)).slice(0, vision.maxImages);
+        if (inPlay.length) {
+          const ents = await prisma.entity.findMany({ where: { id: { in: inPlay }, ...OWNED }, select: { id: true, name: true, type: true, baseAssetId: true } });
+          for (const e of ents) {
+            if (collected.length >= vision.maxImages) break;
+            if (!e.baseAssetId) continue;
+            const url = await refImageDataUrl(e.baseAssetId);
+            if (url) {
+              collected.push({ label: `@${e.name} (${e.type.toLowerCase()})`, dataUrl: url });
+              if (attachedRefIdByName.has(e.name)) ambiguousRefNames.add(e.name); // dup name → can't map back safely
+              else attachedRefIdByName.set(e.name, e.id);
+            }
+          }
+        }
+        if (collected.length) images = collected.slice(0, vision.maxImages);
+      } catch (e) {
+        console.warn("coworkTurn: vision image-gather failed, proceeding text-only:", e instanceof Error ? e.message : e);
+        images = undefined;
+      }
+    }
+
+    const messages = buildPlannerMessages({ userText: text, history, availableRefs, modelSummary, quoted: quoted ?? undefined, brief: project.coworkBrief ?? undefined, images });
 
     // ≤2 LLM calls total (1 + at most 1 retry). mock-$0 in dev.
-    const refIds = availableRefs.map((r) => r.id);
     let turn: CoworkTurn | null = null;
     for (let attempt = 0; attempt < 2 && !turn; attempt++) {
       try {
@@ -262,6 +382,7 @@ export async function coworkTurn(raw: unknown): Promise<{ threadId: string } | {
     // build the gen-card payload (planner proposes an image keyframe first for video-with-variant per COWORK_PLANNER_SYSTEM)
     let cardPayload: Prisma.InputJsonObject | null = null;
     if (turn.proposal) {
+      const disabled = await resolveDisabledModels();
       const sm = suggestModel({
         kind: turn.proposal.kind,
         desiredAspect: turn.proposal.desiredAspect,
@@ -269,6 +390,7 @@ export async function coworkTurn(raw: unknown): Promise<{ threadId: string } | {
         desiredAudio: turn.proposal.desiredAudio,
         hasSourceImage: !!validSource, // i2v "animate" turn carries an owned source frame
         hasTail: false,
+        disabled, // OPT-6 P2: never propose an admin-disabled video model
       });
       const price = turn.proposal.kind === "video"
         ? videoPriceUsd(sm.model as GenVideoModel, { seconds: sm.params.durationSeconds ?? 1, resolution: sm.params.resolution ?? "", audio: !!sm.params.audio, count: sm.params.count })
@@ -288,7 +410,7 @@ export async function coworkTurn(raw: unknown): Promise<{ threadId: string } | {
     const last = isNew ? null : await prisma.chatMessage.findFirst({ where: { threadId }, orderBy: { seq: "desc" }, select: { seq: true } });
     let seq = (last?.seq ?? 0);
     const rows = [
-      { id: newId(), threadId, ownerId: FOUNDER_OWNER_ID, role: "USER" as const, kind: "TEXT" as const, seq: ++seq, text, payload: { entityIds, variantSel } },
+      { id: newId(), threadId, ownerId: FOUNDER_OWNER_ID, role: "USER" as const, kind: "TEXT" as const, seq: ++seq, text, payload: { entityIds, variantSel }, replyToMessageId: validReplyId },
       { id: newId(), threadId, ownerId: FOUNDER_OWNER_ID, role: "AGENT" as const, kind: "PLAN" as const, seq: ++seq, text: "", payload: { planSteps: turn.planSteps } },
       { id: newId(), threadId, ownerId: FOUNDER_OWNER_ID, role: "AGENT" as const, kind: "TEXT" as const, seq: ++seq, text: turn.reply, payload: undefined },
       ...(cardPayload ? [{ id: newId(), threadId, ownerId: FOUNDER_OWNER_ID, role: "AGENT" as const, kind: "GEN_CARD" as const, seq: ++seq, text: "", payload: cardPayload }] : []),
@@ -304,8 +426,36 @@ export async function coworkTurn(raw: unknown): Promise<{ threadId: string } | {
     try {
       await prisma.actionEvent.create({ data: { id: newId(), ownerId: FOUNDER_OWNER_ID, projectId, type: "cowork.turn", payload: { via: transport.name, hasCard: !!cardPayload, model: cardPayload?.model ?? null } } });
     } catch { /* audit best-effort */ }
+    if (turn.briefUpdate) {
+      try {
+        await prisma.project.updateMany({ where: { id: projectId, ...OWNED }, data: { coworkBrief: turn.briefUpdate } });
+      } catch { /* best-effort: a brief-write hiccup must never fail the turn */ }
+    }
+    // See-once: persist the planner's ref descriptions (emitted in the SAME JSON, $0).
+    // Only sets descriptionJson where it is currently null — never overwrites an existing
+    // description (see-once semantics). Owner-scoped. Best-effort: never fails the turn.
+    if (turn.refDescriptions && Object.keys(turn.refDescriptions).length && attachedRefIdByName.size) {
+      try {
+        for (const [rawName, desc] of Object.entries(turn.refDescriptions)) {
+          const name = rawName.replace(/^@/, "");
+          if (ambiguousRefNames.has(name)) continue; // same-named entities → can't disambiguate, skip
+          const id = attachedRefIdByName.get(name);
+          if (!id) continue; // cache ONLY for entities whose pixels were actually shown this turn
+          // sanitize: single line, no control chars — it gets rendered raw into the system prompt
+          // on later turns, so a newline/instruction-like description must not become injectable.
+          const clean = desc.replace(/\p{Cc}/gu, " ").replace(/\s+/g, " ").trim().slice(0, 600);
+          if (!clean) continue;
+          await prisma.entity.updateMany({
+            where: { id, ...OWNED, descriptionJson: { equals: Prisma.DbNull } }, // see-once: null→set only
+            data: { descriptionJson: { text: clean } },
+          });
+        }
+      } catch (e) { console.warn("coworkTurn: refDescriptions persist failed (non-fatal):", e instanceof Error ? e.message : e); }
+    }
     revalidatePath("/", "layout");
-    return { threadId };
+    // return the agent's brief refinement so the client keeps its editor in sync (avoids a
+    // stale manual save clobbering a fresher agent-written brief).
+    return { threadId, ...(turn.briefUpdate ? { brief: turn.briefUpdate } : {}) };
   } catch {
     return { error: "Couldn't reach cowork — please try again." };
   }
@@ -314,7 +464,8 @@ export async function coworkTurn(raw: unknown): Promise<{ threadId: string } | {
 export async function coworkGenerate(raw: unknown): Promise<{ id: string } | { error: string }> {
   const parsed = coworkGenerateRequest.safeParse(raw);
   if (!parsed.success) return { error: "That card can't be generated." };
-  const { cardId, prompt, entityIds, variantSel } = parsed.data;
+  const gate = await requireSession(); if ("error" in gate) return gate;
+  const { cardId, prompt, entityIds, variantSel, model: modelOverride, count: countOverride, aspectRatio: aspectOverride, resolution: resolutionOverride, durationSeconds: durationOverride, audio: audioOverride } = parsed.data;
 
   // Load the GEN_CARD server-side — threadId + projectId + the trusted model/params
   // come from the PERSISTED card, never from the client (anti-spoof).
@@ -332,6 +483,9 @@ export async function coworkGenerate(raw: unknown): Promise<{ id: string } | { e
   // otherwise be re-charged by a stale tab / reload / direct RPC). If any job for this
   // card already exists (any status), return it instead of charging again. To retry, the
   // user starts a new turn (a new card) — never a silent re-charge of the same card.
+  // This read is the friendly fast-path; it is NOT atomic with startGen's insert, so the
+  // race-proof backstop is the DB index GenJob_cowork_idempotency_once (all-status UNIQUE on
+  // cowork:<cardId> keys) — a TOCTOU re-insert is rejected there even after the first is DONE.
   const existingJob = await prisma.genJob.findFirst({
     where: { ownerId: FOUNDER_OWNER_ID, idempotencyKey: `cowork:${cardId}` },
     select: { id: true },
@@ -349,24 +503,59 @@ export async function coworkGenerate(raw: unknown): Promise<{ id: string } | { e
   // being persisted on the card). startGen.checkCast re-validates it at spend (the backstop).
   const sourceGenerationId = typeof p.sourceGenerationId === "string" ? p.sourceGenerationId : null;
 
-  // Build the genRequest SERVER-SIDE. model/kind/count/video-params come from the card;
-  // only the (possibly edited) prompt + refs come from the client. startGen.safeParse +
-  // checkCast remain the SOLE spend gate; effectiveVariantSel drops it for video there.
+  // Build the genRequest SERVER-SIDE. kind + sourceGenerationId stay card-trusted; the
+  // user MAY override model/count/video-params via the editable card (model picker + param
+  // pills) — each override falls back to the card's value when absent. Overrides only WIDEN
+  // what reaches startGen; startGen.safeParse + superRefine + checkCast remain the SOLE,
+  // complete spend gate (model∈the card-kind's menu, every param∈the chosen model's option
+  // set, count≤maxCount → an invalid/mispriced combo is rejected with {error}, no spend).
+  // prompt/entityIds/variantSel still from the client; effectiveVariantSel drops it for video.
+  const chosenModel = modelOverride ?? model;
+
+  // OPT-6 P2: re-check the chosen model isn't admin-disabled at SPEND (a card built
+  // before a disable, a model override, or a disabled seedream image must not spend).
+  // The worker (handleGen) is the all-status backstop for an already-queued job.
+  const disabled = await resolveDisabledModels();
+  if (isModelDisabled(chosenModel, disabled)) {
+    return { error: "That model is currently turned off — pick another, or ask an admin to re-enable it." };
+  }
+
+  // OPT-6 P2: deterministic $0 composer (spec §4a) — append the resolved family×mode
+  // directive to the CLIENT prompt, compose ONCE here at the spend side (NOT in
+  // coworkTurn — that double-appends). conditioned = entityIds.length>0 is an advisory
+  // APPROXIMATION (a bare 0-ref LOCATION mention runs t2i at the worker but keys i2i
+  // here) — acceptable because the composer is advisory TEXT, never a spend decision,
+  // matching the Guardian's conditioned:true precedent. Changes ONLY the prompt string.
+  const family = modelFamily(chosenModel);
+  const mode = deriveMode({
+    kind: proposal.data.kind,
+    conditioned: entityIds.length > 0,
+    hasSourceImage: !!sourceGenerationId,
+  });
+  const directive = family ? await getEnhanceDirective(family, mode) : undefined;
+  const composedPrompt = composePrompt({ prompt, directive, maxLen: MAX_GEN_PROMPT });
+
+  // Only forward `audio` for video models that actually expose an audio toggle. startGen's
+  // superRefine REJECTS audio:false for always-silent models (kling/grok/wan/hailuo); suggestModel
+  // persists params.audio=false for those, so blindly forwarding it makes them un-generatable.
+  const audioToggle = proposal.data.kind === "video" && (GEN_VIDEO_MODELS as readonly string[]).includes(chosenModel)
+    ? GEN_VIDEO_MODEL_OPTIONS[chosenModel as GenVideoModel].audioToggle
+    : false;
   const req = {
     projectId: card.thread.projectId,
     threadId: card.threadId,
-    prompt,
+    prompt: composedPrompt,
     entityIds,
     ...(Object.keys(variantSel).length ? { variantSel } : {}),
     ...(sourceGenerationId ? { sourceGenerationId } : {}), // i2v — checkCast re-validates ownership+project
-    count: proposal.data.kind === "video" ? 1 : (params.count ?? 1),
-    kind: proposal.data.kind,
-    model,
+    count: proposal.data.kind === "video" ? 1 : (countOverride ?? params.count ?? 1),
+    kind: proposal.data.kind, // CARD-trusted — never the client (can't flip image↔video)
+    model: chosenModel,
     ...(proposal.data.kind === "video" ? {
-      durationSeconds: params.durationSeconds ?? null,
-      resolution: params.resolution ?? null,
-      aspectRatio: params.aspectRatio ?? null,
-      audio: params.audio ?? null,
+      durationSeconds: durationOverride ?? params.durationSeconds ?? null,
+      resolution: resolutionOverride ?? params.resolution ?? null,
+      aspectRatio: aspectOverride ?? params.aspectRatio ?? null,
+      ...(audioToggle ? { audio: audioOverride ?? params.audio ?? null } : {}),
     } : {}),
     idempotencyKey: `cowork:${cardId}`, // stable — same card always dedupes; NEVER per-retry
   };
@@ -390,6 +579,7 @@ export async function coworkGenerate(raw: unknown): Promise<{ id: string } | { e
 export async function coworkRenameThread(raw: unknown): Promise<{ ok: true } | { error: string }> {
   const parsed = coworkRenameThreadRequest.safeParse(raw);
   if (!parsed.success) return { error: "Give the conversation a title (1-120 chars)." };
+  const gate = await requireSession(); if ("error" in gate) return gate;
   const { threadId, title } = parsed.data;
   try {
     const { count } = await prisma.chatThread.updateMany({
@@ -405,6 +595,7 @@ export async function coworkRenameThread(raw: unknown): Promise<{ ok: true } | {
 export async function coworkDeleteThread(raw: unknown): Promise<{ ok: true } | { error: string }> {
   const parsed = coworkDeleteThreadRequest.safeParse(raw);
   if (!parsed.success) return { error: "Invalid request." };
+  const gate = await requireSession(); if ("error" in gate) return gate;
   const { threadId } = parsed.data;
   try {
     const { count } = await prisma.chatThread.updateMany({
@@ -413,6 +604,72 @@ export async function coworkDeleteThread(raw: unknown): Promise<{ ok: true } | {
     });
     if (!count) return { error: "Conversation not found." };
   } catch { return { error: "Couldn't delete — please try again." }; } // {error} contract, like the sibling actions
+  revalidatePath("/", "layout");
+  return { ok: true };
+}
+
+/** Create a variation of an existing GEN_CARD — clones its payload verbatim into a new
+ *  UN-generated card on the SAME thread. Zero spend: no startGen, no GenJob, no queue.
+ *  The new card gets a fresh newId() so its cowork:<newCardId> idempotencyKey is
+ *  independent of the original; clicking Generate on it goes through the normal single-spend
+ *  guard keyed on the new card id — no cross-contamination with the original. */
+export async function coworkVaryCard(raw: unknown): Promise<{ threadId: string } | { error: string }> {
+  const parsed = coworkVaryCardRequest.safeParse(raw);
+  if (!parsed.success) return { error: "That card can't be varied." };
+  const gate = await requireSession(); if ("error" in gate) return gate;
+  const { cardId } = parsed.data;
+  try {
+    const card = await prisma.chatMessage.findFirst({
+      where: { id: cardId, ownerId: FOUNDER_OWNER_ID, kind: "GEN_CARD", deletedAt: null },
+      select: { id: true, threadId: true, payload: true, thread: { select: { projectId: true, deletedAt: true, ownerId: true } } },
+    });
+    if (!card || card.thread.deletedAt || card.thread.ownerId !== FOUNDER_OWNER_ID) return { error: "Card not found." };
+
+    // Validate the persisted payload is still a real, complete card (mirrors coworkGenerate).
+    const p = (card.payload ?? {}) as Record<string, unknown>;
+    const proposal = coworkProposalSchema.safeParse({ kind: p.kind, desiredAspect: p.desiredAspect, desiredDuration: p.desiredDuration, desiredAudio: p.desiredAudio, structuredPrompt: p.structuredPrompt, entityIds: p.entityIds ?? [], variantSel: p.variantSel ?? {} });
+    if (!proposal.success) return { error: "This card is no longer valid." };
+    if (typeof p.model !== "string") return { error: "This card is missing a model." };
+
+    // Clone the payload verbatim — same model/params/prompt/refs/source. No seed is pinned,
+    // so re-generating yields a genuinely different output server-side.
+    const clonedPayload = card.payload as Prisma.InputJsonObject;
+
+    const last = await prisma.chatMessage.findFirst({ where: { threadId: card.threadId }, orderBy: { seq: "desc" }, select: { seq: true } });
+    let seq = (last?.seq ?? 0);
+    const rows = [
+      { id: newId(), threadId: card.threadId, ownerId: FOUNDER_OWNER_ID, role: "AGENT" as const, kind: "TEXT" as const, seq: ++seq, text: "Another take — same settings. Generate when you're ready.", payload: undefined },
+      { id: newId(), threadId: card.threadId, ownerId: FOUNDER_OWNER_ID, role: "AGENT" as const, kind: "GEN_CARD" as const, seq: ++seq, text: "", payload: clonedPayload },
+    ];
+    await prisma.$transaction([
+      prisma.chatMessage.createMany({ data: rows }),
+      prisma.chatThread.update({ where: { id: card.threadId }, data: { updatedAt: new Date() } }),
+    ]);
+    try {
+      await prisma.actionEvent.create({ data: { id: newId(), ownerId: FOUNDER_OWNER_ID, projectId: card.thread.projectId, type: "cowork.vary", payload: { fromCardId: cardId } } });
+    } catch { /* audit best-effort */ }
+    revalidatePath("/", "layout");
+    return { threadId: card.threadId };
+  } catch {
+    return { error: "Couldn't create variations — please try again." };
+  }
+}
+
+/** Save (or clear) the per-project creative brief the planner sees every turn.
+ *  Propose-side only — this text is injected into the planner system prompt; it
+ *  does NOT touch coworkGenerate/startGen and creates no media spend. */
+export async function setCoworkBrief(raw: unknown): Promise<{ ok: true } | { error: string }> {
+  const parsed = coworkBriefRequest.safeParse(raw);
+  if (!parsed.success) return { error: "Invalid brief." };
+  const gate = await requireSession(); if ("error" in gate) return gate;
+  const { projectId, brief } = parsed.data;
+  try {
+    const { count } = await prisma.project.updateMany({
+      where: { id: projectId, ...OWNED },
+      data: { coworkBrief: brief.trim() || null },
+    });
+    if (!count) return { error: "Project not found." };
+  } catch { return { error: "Couldn't save the brief — please try again." }; }
   revalidatePath("/", "layout");
   return { ok: true };
 }

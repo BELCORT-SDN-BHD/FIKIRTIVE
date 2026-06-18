@@ -20,12 +20,15 @@ import {
   GEN_RETRY_LIMIT,
   videoDefaults,
   MAX_CONDITIONING_IMAGES,
+  genSpentUsd,
   type GenJobData,
   type GenModel,
   type GenVideoModel,
 } from "@artlio/core";
 import { storage } from "../storage.js";
 import { provider } from "../generation.js";
+import { isModelDisabled } from "@artlio/core";
+import { workerDisabledModels } from "../model-registry.js";
 
 const mimeForExt = (ext: string) =>
   ext === "png" ? "image/png" : ext === "webp" ? "image/webp"
@@ -139,11 +142,31 @@ export async function handleGen(data: GenJobData, retryCount: number): Promise<v
     if (job.generationIds.length > 0) {
       committed = true; // outputs recorded on a prior delivery — never re-spend; finish best-effort
       if (job.shotId) await attachBestEffort(job.id, job.shotId, job.generationIds);
-      await prisma.genJob.update({ where: { id: job.id }, data: { status: "DONE", progress: 100, finishedAt: new Date(), error: "", spent: true } });
+      await prisma.genJob.update({
+        where: { id: job.id },
+        data: {
+          status: "DONE", progress: 100, finishedAt: new Date(), error: "", spent: true,
+          // defensive backfill: a row committed before spentUsd existed (or a partial
+          // write) has the marker but null spentUsd — reconstruct from the frozen job
+          // inputs. Never overwrites a value the commit tx already froze.
+          ...(job.spentUsd == null ? { spentUsd: genSpentUsd({ kind: job.kind, model: job.model, count: job.count, videoOptions: job.videoOptions as { seconds?: number; resolution?: string; audio?: boolean } | null }) } : {}),
+        },
+      });
       await appendCoworkResult(job, "GEN_RESULT", job.generationIds); // idempotent — P2002 swallowed if already written
       return;
     }
     if (job.status === "FAILED") return; // terminal with no recorded outputs — nothing to resume
+
+    // OPT-6 P2 (highest-trust): a job whose model was admin-disabled AFTER it was
+    // queued must FAIL WITHOUT SPENDING. Runs AFTER the resume short-circuit (a
+    // committed job still finishes — its money already spent) and BEFORE the spend
+    // claim + provider call. Fail-closed-to-typed-menu: a DB fault → empty set →
+    // the job proceeds (the typed gate that admitted it is the authority).
+    const disabled = await workerDisabledModels();
+    if (isModelDisabled(job.model, disabled)) {
+      await prisma.genJob.update({ where: { id: job.id }, data: { status: "FAILED", error: "this model was turned off before the job ran — not spending", finishedAt: new Date() } });
+      return; // terminal, no throw → no retry, no spend
+    }
 
     const project = await prisma.project.findFirst({ where: { id: job.projectId, ownerId: job.ownerId, deletedAt: null } });
     if (!project) {
@@ -372,7 +395,7 @@ export async function handleGen(data: GenJobData, retryCount: number): Promise<v
         });
         ids.push(gen.id);
       }
-      await tx.genJob.update({ where: { id: job.id }, data: { generationIds: ids, spent: true } });
+      await tx.genJob.update({ where: { id: job.id }, data: { generationIds: ids, spent: true, spentUsd: genSpentUsd({ kind: job.kind, model: job.model, count: job.count, videoOptions: job.videoOptions as { seconds?: number; resolution?: string; audio?: boolean } | null }) } });
       return ids;
     });
     committed = true; // outputs stored + recorded — past here a failure resumes, never re-spends
@@ -397,9 +420,12 @@ export async function handleGen(data: GenJobData, retryCount: number): Promise<v
     console.error(`[gen] ${job.id}: ${final ? "FAILED" : committed ? "requeue → resume attach" : "retrying"} — ${message}`);
     await prisma.genJob.update({
       where: { id: job.id },
-      // a post-charge failure records spent=true so "paid but not delivered" is
-      // auditable (the UI/ops can tell it apart from a free pre-charge failure)
-      data: final ? { status: "FAILED", error: message, finishedAt: new Date(), spent: spent || charged } : { status: "QUEUED", error: message, progress: 0 },
+      // a post-charge failure records spent=true + spentUsd so "paid but not
+      // delivered" is auditable (told apart from a free pre-charge failure, which
+      // stays spent=false / spentUsd=null). The QUEUED requeue path records neither.
+      data: final
+        ? { status: "FAILED", error: message, finishedAt: new Date(), spent: spent || charged, ...((spent || charged) ? { spentUsd: genSpentUsd({ kind: job.kind, model: job.model, count: job.count, videoOptions: job.videoOptions as { seconds?: number; resolution?: string; audio?: boolean } | null }) } : {}) }
+        : { status: "QUEUED", error: message, progress: 0 },
     });
     // user-facing chat text stays generic; the raw provider error is kept in GenJob.error (ops/DB)
     if (final) await appendCoworkResult(job, "TURN_ERROR", [], "That generation didn't go through — you can try again.");

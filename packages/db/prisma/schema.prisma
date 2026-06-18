@@ -57,7 +57,9 @@ model Project {
   name      String
   /// 编辑器的工作中剪辑（artlioEdit 规范化后的 JSON）——阶段③ tracer 落地，
   /// 取代 localStorage mock；导出时快照进 RenderJob.editJson
-  editJson  Json?
+  editJson     Json?
+  // cowork: human-authored creative brief, injected into the planner's stable head (ProjectBrief).
+  coworkBrief  String?
   createdAt DateTime  @default(now())
   updatedAt DateTime  @updatedAt
   deletedAt DateTime?
@@ -77,6 +79,8 @@ model Entity {
   aliases             String[]   @default([])
   notes               String     @default("")
   negativeConstraints String     @default("")
+  // cowork: reserved — structured see-once description (subject/action/style/...), populated by the Phase-C vision sub-agent.
+  descriptionJson     Json?
   promptTokens        String[]   @default([])
   createdAt           DateTime   @default(now())
   updatedAt           DateTime   @updatedAt
@@ -104,6 +108,8 @@ model EntityVariant {
   name      String
   handle    String
   prompt    String    @default("")
+  // cowork: reserved — per-variant structured description (Phase C).
+  descriptionJson Json?
   createdAt DateTime  @default(now())
   updatedAt DateTime  @updatedAt
   deletedAt DateTime?
@@ -300,6 +306,41 @@ model RenderJob {
   @@index([status, updatedAt]) // 滞留 RENDERING 行的清扫扫描
 }
 
+model CaptionJob {
+  id            String       @id
+  ownerId       String       @default("founder")
+  projectId     String
+  /// the visual-track asset being transcribed (content-addressed) + its hash
+  assetId       String
+  contentHash   String
+  status        RenderStatus @default(QUEUED)
+  progress      Int          @default(0)
+  error         String       @default("")
+  queueJobId    String       @default("")
+  attempts      Int          @default(0)
+  startedAt     DateTime?
+  finishedAt    DateTime?
+  createdAt     DateTime     @default(now())
+  updatedAt     DateTime     @updatedAt
+
+  @@index([projectId, createdAt])
+  @@index([status, updatedAt])
+}
+
+/// Cached whisper.cpp transcript, keyed by (contentHash, model). Deterministic
+/// for fixed (audio bytes, model, flags) → cache is always valid; a re-render or
+/// re-request reuses it for $0 + 0 CPU. cuesJson = CaptionCue[] (the editable seed).
+model Transcript {
+  id          String   @id
+  ownerId     String   @default("founder")
+  contentHash String
+  model       String
+  cuesJson    Json
+  createdAt   DateTime @default(now())
+
+  @@unique([contentHash, model])
+}
+
 enum GenStatus {
   QUEUED
   GENERATING
@@ -324,6 +365,9 @@ model RefGenJob {
   progress       Int        @default(0)
   /// DONE 时产出的 GENERATED 资产（内容寻址，可多张）
   outputAssetIds String[]   @default([])
+  /// 钱真相（OPT-6 P3a，纯记录）：付费 provider 调用提交时由 worker 在同一写入里快照
+  /// （= REFGEN_PRICE_USD_PER_IMAGE * count）。null = 没扣过费。绝不参与任何 spend 判定。
+  spentUsd       Float?
   error          String     @default("")
   queueJobId     String     @default("")
   attempts       Int        @default(0)
@@ -381,6 +425,10 @@ model GenJob {
   /// 钱真相：付费 provider 调用是否已返回（扣过费）。DONE=已交付；FAILED+spent=付了但没存上
   ///（可审计/对账，避免"失败=没扣费"的误判）。pre-charge 失败时为 false。
   spent              Boolean   @default(false)
+  /// 钱真相（OPT-6 P3a，纯记录）：付费调用提交时 worker 在 commit tx 里快照（video=
+  /// videoPriceUsd，image=GEN_PRICE_USD_PER_IMAGE*count），冻结如 Generation.entitySnapshot。
+  /// null = 没扣过费。绝不参与任何 spend 判定。
+  spentUsd           Float?
   error              String    @default("")
   queueJobId         String    @default("")
   attempts           Int       @default(0)
@@ -404,6 +452,10 @@ model User {
   email         String    @unique
   emailVerified DateTime?
   image         String?
+  /// 操作员 RBAC（OPT-6 P1b）：默认 viewer；值由代码侧 zod 枚举 ROLES 校验（非 PG enum，
+  /// 加第 6 个角色无需迁移）。session callback 把它读进 session.user.role；requireRole 用它。
+  /// allowlist 仍是外墙、永不读 role —— 默认 viewer 锁不了 app，只锁 role-gated 区段。
+  role          String    @default("viewer")
   accounts      Account[]
   sessions      Session[]
 }
@@ -477,6 +529,33 @@ model ModelDirective {
   @@index([ownerId, family])
 }
 
+/// 运行时配置（OPT-6 P1a）：把散在 env 的开关变成 DB 旋钮（vision caps / COWORK_PROVIDER）。
+/// key 是代码侧固定枚举；valueJson 由 per-key zod 在读/写两侧校验。读取走 read-through，
+/// DB 无值回退 env（见 apps/web/lib/runtime-config.ts）。免重新部署即生效（不缓存）。
+model RuntimeConfig {
+  key       String   @id
+  valueJson Json
+  updatedAt DateTime @updatedAt
+  updatedBy String   @default("")
+}
+
+/// 模型注册表覆盖层（OPT-6 P2）：能力真相 100% 在 typed catalog（GEN_MODELS /
+/// GEN_VIDEO_MODELS / REFGEN_MODELS）；本表只承载 disable 布尔 + advisory notes。
+/// 一行永远不能新增模型或放宽上限，只能与 typed menu 交集收窄（停掉一个已有模型）。
+/// 校验：modelId 在写入时校验 ∈ 三个 catalog 的并集；未知行在读取侧忽略。
+/// 强制点见 startGen / startRefGen / dispatchVariantJob / worker handleGen+handleRefGen。
+/// 注意 seedream 耦合：GEN_MODELS=REFGEN_MODELS=["seedream"]，停 seedream = 停所有图像生成。
+model ModelRegistryOverlay {
+  id        String   @id
+  ownerId   String   @default("founder")
+  modelId   String
+  enabled   Boolean  @default(true)
+  notes     String   @default("")
+  updatedAt DateTime @updatedAt
+
+  @@unique([ownerId, modelId])
+}
+
 // 指令编辑历史（R6）：每次 save 写一行快照，用于回滚（比 ActionEvent 更结构化）。
 model ModelDirectiveRevision {
   id          String   @id
@@ -515,6 +594,8 @@ model ChatThread {
   ownerId   String        @default("founder")
   projectId String
   title     String        @default("")
+  // cowork: reserved — folded older-turns summary (generation logic deferred until long sessions).
+  rollingSummary String?
   createdAt DateTime      @default(now())
   updatedAt DateTime      @updatedAt
   deletedAt DateTime?
@@ -536,6 +617,7 @@ model ChatMessage {
   payload            Json?
   genJobId           String?
   sourceGenerationId String?
+  replyToMessageId   String?
   createdAt          DateTime        @default(now())
   deletedAt          DateTime?
 

@@ -4,7 +4,7 @@ import { buildBoardEdit } from "@/lib/edit";
 import { toEntityDTO, toChatThreadDTO } from "@/lib/dto";
 import { artlioEdit, storageKey, storageKeyToSrc } from "@artlio/core";
 import { redirect } from "next/navigation";
-import { auth } from "@/auth";
+import { auth, allowed } from "@/auth";
 import { Studio } from "@/components/studio/Studio";
 import type { StudioView } from "@/components/studio/StudioShell";
 
@@ -33,6 +33,7 @@ export default async function StudioPage({ searchParams }: { searchParams: Promi
   const { p, view } = await searchParams;
   const initialView = view && STUDIO_VIEWS.has(view) ? (view as StudioView) : undefined;
   const session = await auth();
+  if (!allowed(session?.user?.email)) redirect("/login");
   const user = userBadge(session?.user?.name, session?.user?.email);
   const defaultProject = await ensureDefaultProject();
   const [projects, entities] = await Promise.all([getProjects(), getEntities()]);
@@ -117,8 +118,8 @@ export default async function StudioPage({ searchParams }: { searchParams: Promi
 
   return (
     <Studio
-      project={{ id: project.id, name: project.name }}
-      projects={projects.map((x) => ({ id: x.id, name: x.name }))}
+      project={{ id: project.id, name: project.name, coworkBrief: project.coworkBrief ?? null }}
+      projects={projects.map((x) => ({ id: x.id, name: x.name, coworkBrief: x.coworkBrief ?? null }))}
       user={user}
       entities={entities.map(toEntityDTO)}
       shots={storyboardShots}

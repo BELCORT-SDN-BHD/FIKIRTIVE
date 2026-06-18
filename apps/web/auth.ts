@@ -2,7 +2,7 @@ import NextAuth from "next-auth";
 import Resend from "next-auth/providers/resend";
 import { PrismaAdapter } from "@auth/prisma-adapter";
 import { prisma } from "@artlio/db";
-import { newId } from "@artlio/core";
+import { newId, isRole } from "@artlio/core";
 
 /**
  * D18: email magic-link auth, founder-only via allowlist.
@@ -32,6 +32,20 @@ function rateLimit(email: string) {
 export function allowed(email: string | null | undefined): boolean {
   if (!email) return false;
   const list = (process.env.AUTH_ALLOWED_EMAILS ?? "")
+    .split(",")
+    .map((e) => e.trim().toLowerCase())
+    .filter(Boolean);
+  return list.includes(email.toLowerCase());
+}
+
+/** Dedicated founder list (OPT-6 P1b) — distinct from AUTH_ALLOWED_EMAILS. These
+ *  emails are seeded to super-admin on sign-in (and one-time-backfilled in the P1b
+ *  migration). The allowlist (allowed()) stays the outer app wall and never reads
+ *  role, so a default-viewer can't lock the team out of the app, only out of
+ *  role-gated sections. */
+function isFounderAdmin(email: string | null | undefined): boolean {
+  if (!email) return false;
+  const list = (process.env.FOUNDER_ADMIN_EMAILS ?? "")
     .split(",")
     .map((e) => e.trim().toLowerCase())
     .filter(Boolean);
@@ -89,9 +103,27 @@ export const { handlers, auth, signIn, signOut } = NextAuth({
       void email;
       return allowed(user?.email);
     },
+    // OPT-6 P1b: DB session strategy passes the fresh User row as `user`. Copy its
+    // role onto session.user.role so requireRole/UI read it. Garbage/missing → viewer
+    // (deny-by-default; never throw — a session read must not 500).
+    session({ session, user }) {
+      session.user.role = isRole(user?.role) ? user.role : "viewer";
+      return session;
+    },
   },
   events: {
     async signIn({ user }) {
+      // OPT-6 P1b PART (b): self-healing founder super-admin on every sign-in.
+      // Idempotent + promote-only: a founder is always (re)set to super-admin; a
+      // non-founder is never touched here (their role is managed via the Team UI).
+      if (isFounderAdmin(user.email) && user.email) {
+        await prisma.user
+          .updateMany({
+            where: { email: user.email, role: { not: "super-admin" } },
+            data: { role: "super-admin" },
+          })
+          .catch(() => {}); // best-effort — never block sign-in on a role write
+      }
       await prisma.actionEvent.create({
         data: {
           id: newId(),

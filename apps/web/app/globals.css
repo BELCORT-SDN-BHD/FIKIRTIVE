@@ -368,6 +368,18 @@ h1, h2, h3 { font-family: var(--font-sans); font-weight: 600; letter-spacing: va
 .cw-card-head { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
 .cw-card-model { font: var(--text-mono-meta); color: var(--fg-2); }
 .cw-card-price { font: var(--text-mono-meta); color: var(--fg-3); }
+
+/* P1: editable control surface — model picker + video param pills (Hedra parity) */
+.cw-card-pills { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+.cw-ctrl { display: inline-flex; align-items: center; gap: 6px; }
+.cw-ctrl-label { font: var(--text-caption); color: var(--fg-3); }
+.cw-ctrl-check { gap: 5px; cursor: pointer; }
+.cw-ctrl-check input { accent-color: var(--fg-1); cursor: pointer; }
+.cw-select { font: var(--text-small); color: var(--fg-1); background: rgba(255,255,255,.04); border: 1px solid var(--line-2); border-radius: var(--radius-sm); padding: 4px 8px; cursor: pointer; transition: border-color var(--dur-fast) var(--ease-out); }
+.cw-select:hover { border-color: var(--line-1); }
+.cw-select:focus { outline: none; border-color: var(--line-1); }
+.cw-select:disabled { opacity: .55; cursor: default; }
+.cw-card-model-select { font: var(--text-mono-meta); }
 .cw-card-note { font: var(--text-caption); color: var(--warning); border: 1px solid rgba(255,210,126,.25); border-radius: var(--radius-pill); padding: 1px 7px; cursor: default; }
 .cw-card-input-wrap { border: 1px solid var(--line-2); border-radius: var(--radius-md); padding: 8px 12px; background: rgba(255,255,255,.04); transition: border-color var(--dur-fast) var(--ease-out); }
 .cw-card-input-wrap:focus-within { border-color: var(--line-1); }
@@ -481,6 +493,37 @@ h1, h2, h3 { font-family: var(--font-sans); font-weight: 600; letter-spacing: va
 .al-tooltip-shortcut { margin-left: 6px; color: var(--fg-3); font-family: var(--font-mono); }
 .al-tooltip-wrap:hover .al-tooltip { opacity: 1; transform: translateX(-50%) translateY(0); }
 
+/* ---------- desktop rail: icon-only collapsed, overlay-expand on hover ---------- */
+/* Rail is fixed so expanding it never reflows .main; .app gains padding-left to
+   reserve the 64px gutter. Labels/wordmark fade+collapse to 0-width so icons are
+   clean at 64px; they fade+expand back on hover. Mobile overrides remove the gutter. */
+.nav-rail { position: fixed; left: 0; top: 0; bottom: 0; width: 64px; z-index: 40; overflow: hidden; background: var(--bg-1); border-right: 1px solid var(--line-2); transition: width var(--dur-base) var(--ease-out); }
+.nav-rail:hover, .nav-rail:focus-within { width: 236px; box-shadow: var(--shadow-pop); }
+/* reserve the collapsed gutter ONLY for the studio shell (which has the .nav-rail);
+   scoped via :has so AppShell's non-collapsing .app is untouched. */
+.app:has(> .nav-rail) { padding-left: 64px; }
+/* Collapsed: hide all text (width→0 so icons don't shift; opacity for visual fade). */
+.nav-rail .sidenav-project-name,
+.nav-rail .navitem span.lbl,
+.nav-rail .nav-grouplabel,
+.nav-rail .user-name { max-width: 0; opacity: 0; overflow: hidden; transition: max-width var(--dur-base) var(--ease-out), opacity var(--dur-base) var(--ease-out); }
+/* Collapsed: hide wordmark text (just the .wordmark span itself — dot stays). */
+.nav-rail .wordmark { max-width: 0; opacity: 0; overflow: hidden; transition: max-width var(--dur-base) var(--ease-out), opacity var(--dur-base) var(--ease-out); }
+/* Expanded: reveal all text. */
+.nav-rail:hover .sidenav-project-name,
+.nav-rail:focus-within .sidenav-project-name,
+.nav-rail:hover .navitem span.lbl,
+.nav-rail:focus-within .navitem span.lbl,
+.nav-rail:hover .nav-grouplabel,
+.nav-rail:focus-within .nav-grouplabel,
+.nav-rail:hover .user-name,
+.nav-rail:focus-within .user-name { max-width: 200px; opacity: 1; }
+.nav-rail:hover .wordmark,
+.nav-rail:focus-within .wordmark { max-width: 160px; opacity: 1; }
+/* Collapsed: center icons within the 64px strip by shrinking padding. */
+.nav-rail .sidenav-brand { padding-left: 10px; min-height: 30px; }
+@media (max-width: 1023px) { .app:has(> .nav-rail) { padding-left: 0; } }
+
 /* Responsive nav. Tailwind's responsive utilities (lg:/max-lg:) live in
    @layer utilities and lose the cascade to this unlayered design system, so they
    never applied — the desktop ☰ leaked onto desktop and the sidebar wouldn't
@@ -489,3 +532,13 @@ h1, h2, h3 { font-family: var(--font-sans); font-weight: 600; letter-spacing: va
 .nav-drawer { display: flex; }
 @media (max-width: 1023px) { .nav-rail { display: none; } }
 @media (min-width: 1024px) { .nav-burger, .nav-drawer { display: none; } }
+
+/* ---------- OPT-6 admin shell (rail + content) ---------- */
+.admin-shell { position: relative; z-index: 1; display: flex; min-height: 100dvh; }
+.admin-nav { flex: none; width: 220px; display: flex; flex-direction: column; gap: 2px; padding: 18px 12px; border-right: 1px solid var(--line-2); }
+.admin-nav-link { display: block; padding: 9px 12px; border-radius: var(--radius-md); font: var(--text-body-medium); color: var(--fg-2); text-decoration: none; transition: background var(--dur-fast) var(--ease-out), color var(--dur-fast) var(--ease-out); }
+.admin-nav-link:hover { background: var(--glass-hover); color: var(--fg-1); }
+.admin-nav-link:focus-visible { outline: none; box-shadow: var(--ring-focus); }
+.admin-nav-link.is-disabled { color: var(--fg-4); cursor: default; }
+.admin-nav-link.is-disabled:hover { background: transparent; color: var(--fg-4); }
+.admin-content { flex: 1; min-width: 0; overflow: auto; }

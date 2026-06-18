@@ -59,6 +59,7 @@ export interface ShotDTO {
 export interface ProjectDTO {
   id: string;
   name: string;
+  coworkBrief: string | null;
 }
 
 export interface ChatMessageDTO {

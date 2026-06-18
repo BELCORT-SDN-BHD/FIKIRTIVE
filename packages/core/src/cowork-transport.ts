@@ -8,6 +8,7 @@
  * silently spend on cowork.
  */
 import type { ChatMessage, CoworkTransport } from "./cowork.js";
+import { createTransportFromConfig } from "./runtime-config.js";
 
 /** $0, offline. Returns the skill's own canned reply — the transport never
  *  inspects messages, so it stays skill-agnostic (the skill owns its mock). */
@@ -47,16 +48,46 @@ export class FalTransport implements CoworkTransport {
   }
 }
 
+/** Self-hosted planner — an OpenAI-compatible endpoint (e.g. a llama.cpp/vLLM
+ *  server on Modal). Same envelope as FalTransport; the only differences are the
+ *  endpoint URL and a Bearer auth header. Multimodal `content` and the JSON-mode
+ *  hint forward verbatim. Wired into createTransport in a later task. */
+export class ModalTransport implements CoworkTransport {
+  readonly name = "modal";
+  constructor(private endpoint: string, private apiKey: string, private model = "local") {}
+  async chat(_skillId: string, messages: ChatMessage[], opts?: { responseFormat?: "json_object"; maxTokens?: number }): Promise<{ text: string }> {
+    const res = await fetch(`${this.endpoint.replace(/\/$/, "")}/v1/chat/completions`, {
+      method: "POST",
+      headers: { Authorization: `Bearer ${this.apiKey}`, "Content-Type": "application/json" },
+      body: JSON.stringify({
+        model: this.model,
+        messages,
+        ...(opts?.responseFormat ? { response_format: { type: opts.responseFormat } } : {}),
+        ...(opts?.maxTokens ? { max_tokens: opts.maxTokens } : {}),
+      }),
+    });
+    if (!res.ok) {
+      const detail = await res.text().catch(() => "");
+      throw new Error(`modal llm → ${res.status}: ${detail.slice(0, 300)}`);
+    }
+    const data = (await res.json()) as { choices?: { message?: { content?: string } }[] };
+    return { text: data.choices?.[0]?.message?.content ?? "" };
+  }
+}
+
 /**
- * COWORK_PROVIDER=fal needs FAL_KEY. Anything else (incl. unset) is the mock —
- * safe by default so a misconfigured prod can't silently burn money on cowork,
- * and dev/tracer never touch the network. Mirrors createGenerationProvider.
+ * Planner LLM backend by COWORK_PROVIDER:
+ *   "fal"   → FalTransport (needs FAL_KEY) — fal→OpenRouter→Claude
+ *   "modal" → ModalTransport (needs MODAL_LLM_ENDPOINT + MODAL_LLM_KEY) — self-hosted OpenAI-compatible endpoint
+ *   anything else / unset → MockTransport ($0, offline)
+ * Default-mock is a money-safety invariant: a stray FAL_KEY/MODAL_LLM_KEY must never
+ * silently activate a real provider. Mirrors createGenerationProvider.
  */
 export function createTransport(): CoworkTransport {
-  if (process.env.COWORK_PROVIDER === "fal") {
-    const key = process.env.FAL_KEY;
-    if (!key) throw new Error("COWORK_PROVIDER=fal but FAL_KEY is not set");
-    return new FalTransport(key);
-  }
-  return new MockTransport();
+  return createTransportFromConfig({
+    provider: process.env.COWORK_PROVIDER,
+    falKey: process.env.FAL_KEY,
+    modalEndpoint: process.env.MODAL_LLM_ENDPOINT,
+    modalKey: process.env.MODAL_LLM_KEY,
+  });
 }

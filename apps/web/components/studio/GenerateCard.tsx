@@ -1,9 +1,13 @@
 "use client";
 import { useEffect, useRef, useState } from "react";
 import { MentionInput, buildMentionDoc } from "@/components/MentionInput";
-import { coworkGenerate, coworkTurn } from "@/lib/cowork-actions";
+import { coworkGenerate, coworkTurn, coworkVaryCard } from "@/lib/cowork-actions";
 import { getGenJob } from "@/lib/gen-actions";
-import { GEN_PRICE_USD_PER_IMAGE, videoPriceUsd, type GenVideoModel } from "@artlio/core";
+import {
+  GEN_PRICE_USD_PER_IMAGE, videoPriceUsd, videoDefaults,
+  GEN_MODELS, GEN_VIDEO_MODELS, GEN_VIDEO_MODEL_INFO, GEN_VIDEO_MODEL_OPTIONS,
+  type GenVideoModel,
+} from "@artlio/core";
 import { Lightbox } from "@/components/Lightbox";
 import type { EntityDTO } from "@/lib/types";
 
@@ -38,6 +42,7 @@ export function GenerateCard({
     params?: {
       durationSeconds?: number;
       resolution?: string;
+      aspectRatio?: string;
       audio?: boolean;
       count?: number;
     };
@@ -64,6 +69,41 @@ export function GenerateCard({
   const [ids, setIds] = useState<string[]>(p.entityIds ?? []);
   const [variantSel, setVariantSel] = useState<Record<string, string>>(p.variantSel ?? {});
 
+  // Editable control surface (Hedra parity). The chosen model + video params start from
+  // the card's persisted values; the user may change them before Generate. These are
+  // DISPLAY/INTENT only — startGen re-validates everything (model∈menu, params∈option set,
+  // count≤max) at spend, so an invalid combo is rejected, never charged.
+  const isVideo = p.kind === "video";
+  // The card-kind's model menu — the user edits WITHIN the kind (can't flip image↔video).
+  const modelMenu: readonly string[] = isVideo ? GEN_VIDEO_MODELS : GEN_MODELS;
+  const modelLabel = (m: string): string => (isVideo ? GEN_VIDEO_MODEL_INFO[m as GenVideoModel]?.label ?? m : "Seedream");
+
+  const [model, setModel] = useState<string>(p.model && modelMenu.includes(p.model) ? p.model : (modelMenu[0] ?? ""));
+  // video params (snapped to the chosen model's option set; image cards don't use these)
+  const [aspectRatio, setAspectRatio] = useState<string>(p.params?.aspectRatio ?? "");
+  const [resolution, setResolution] = useState<string>(p.params?.resolution ?? "");
+  const [durationSeconds, setDurationSeconds] = useState<number | undefined>(p.params?.durationSeconds);
+  const [audio, setAudio] = useState<boolean>(!!p.params?.audio);
+
+  // The chosen model's option set drives which pills are offered (mirrors genRequest.superRefine
+  // client-side — the server still re-validates). Empty list → that control is hidden.
+  const opts = isVideo ? GEN_VIDEO_MODEL_OPTIONS[model as GenVideoModel] : undefined;
+
+  // On model change: re-snap every param to the NEW model's option set, defaulting to its
+  // videoDefaults and dropping params the new model doesn't expose — so only valid values
+  // are ever sent (and the live price re-derives from the new selection).
+  function chooseModel(next: string) {
+    setModel(next);
+    if (isVideo && (GEN_VIDEO_MODELS as readonly string[]).includes(next)) {
+      const d = videoDefaults(next as GenVideoModel);
+      const o = GEN_VIDEO_MODEL_OPTIONS[next as GenVideoModel];
+      setAspectRatio(o.aspectRatios.length ? d.aspectRatio : "");
+      setResolution(o.resolutions.length ? d.resolution : "");
+      setDurationSeconds(o.durations.length ? d.seconds : undefined);
+      setAudio(d.audio);
+    }
+  }
+
   // generated=true disables the Generate button — UI-side re-spend guard
   const [generated, setGenerated] = useState(alreadyGenerated);
   const [busy, setBusy] = useState(false);
@@ -89,6 +129,11 @@ export function GenerateCard({
   const reviseBusyRef = useRef(false); // synchronous double-submit guard (GenSpace pattern)
   const [reviseError, setReviseError] = useState<string | undefined>(undefined);
 
+  // "Create variations" — clones this card's payload into a new UN-generated card ($0).
+  const [varyBusy, setVaryBusy] = useState(false);
+  const varyBusyRef = useRef(false);
+  const [varyError, setVaryError] = useState<string | undefined>(undefined);
+
   // T3: click-to-enlarge for the in-card live result (reuses the Gen-space Lightbox).
   const [zoom, setZoom] = useState<{ src: string; kind: "image" | "video" } | null>(null);
 
@@ -101,15 +146,23 @@ export function GenerateCard({
   }, []);
 
   // Price is DISPLAY-ONLY — Generate is never gated on it; the real charge is server-side.
-  const price =
-    p.kind === "video"
-      ? videoPriceUsd((p.model ?? "") as GenVideoModel, {
-          seconds: p.params?.durationSeconds ?? 1,
-          resolution: p.params?.resolution ?? "",
-          audio: !!p.params?.audio,
-          count: 1,
-        })
-      : (p.params?.count ?? 1) * GEN_PRICE_USD_PER_IMAGE;
+  // Re-derived LIVE from the CHOSEN model/params (re-runs on every edit). The true charge is
+  // the chosen valid model's rate, which the user sees here before clicking Generate.
+  const price = isVideo
+    ? videoPriceUsd(model as GenVideoModel, {
+        seconds: durationSeconds ?? videoDefaults(model as GenVideoModel).seconds,
+        resolution,
+        audio,
+        count: 1,
+      })
+    : (p.params?.count ?? 1) * GEN_PRICE_USD_PER_IMAGE;
+
+  // Per-model price at its defaults — shown in the model picker so the user can compare cost.
+  function modelDefaultPrice(m: string): number {
+    if (!isVideo) return (p.params?.count ?? 1) * GEN_PRICE_USD_PER_IMAGE;
+    const d = videoDefaults(m as GenVideoModel);
+    return videoPriceUsd(m as GenVideoModel, { seconds: d.seconds, resolution: d.resolution, audio: d.audio, count: 1 });
+  }
 
   async function generate() {
     // UI-side re-spend guard: busy AND generated both block.
@@ -123,7 +176,25 @@ export function GenerateCard({
     setResultMessage(undefined);
 
     try {
-      const res = await coworkGenerate({ cardId, prompt, entityIds: ids, variantSel });
+      const res = await coworkGenerate({
+        cardId,
+        prompt,
+        entityIds: ids,
+        variantSel,
+        // editable overrides (Hedra parity) — startGen re-validates all of these at spend.
+        model,
+        ...(isVideo
+          ? {
+              ...(durationSeconds != null ? { durationSeconds } : {}),
+              ...(resolution ? { resolution } : {}),
+              ...(aspectRatio ? { aspectRatio } : {}),
+              // only send audio for models that actually expose an audio toggle. startGen
+              // rejects audio:false for always-silent models (gen.ts superRefine), so an
+              // unconditional `audio` would make kling/grok/wan/hailuo un-generatable from a card.
+              ...(opts?.audioToggle ? { audio } : {}),
+            }
+          : {}),
+      });
       if ("error" in res) {
         setResultStatus("failed");
         setResultMessage(res.error);
@@ -217,6 +288,26 @@ export function GenerateCard({
     }
   }
 
+  async function createVariations() {
+    if (varyBusy || varyBusyRef.current) return;
+    varyBusyRef.current = true;
+    setVaryBusy(true);
+    setVaryError(undefined);
+    try {
+      const res = await coworkVaryCard({ cardId });
+      if ("error" in res) {
+        setVaryError(res.error);
+        return;
+      }
+      onRevised(); // parent re-fetches the thread → the cloned card appears at the bottom
+    } catch {
+      setVaryError("Couldn't create variations — please try again.");
+    } finally {
+      varyBusyRef.current = false;
+      setVaryBusy(false);
+    }
+  }
+
   // T2: Skip is a client-only dismiss — the message stays; we just collapse its body.
   if (skipped) {
     return <div className="cw-card-skipped">Skipped</div>;
@@ -224,9 +315,23 @@ export function GenerateCard({
 
   return (
     <div className="cw-card cw-card-gen">
-      {/* Header: model label + display-only price + downgrade note */}
+      {/* Header: model picker + live display-only price + downgrade note */}
       <div className="cw-card-head">
-        <span className="cw-card-model">{p.model}</span>
+        <label className="cw-ctrl">
+          <span className="cw-ctrl-label">Model</span>
+          <select
+            className="cw-select cw-card-model-select"
+            value={model}
+            disabled={busy || generated}
+            onChange={(e) => chooseModel(e.target.value)}
+          >
+            {modelMenu.map((m) => (
+              <option key={m} value={m}>
+                {modelLabel(m)} · ~${modelDefaultPrice(m).toFixed(2)}
+              </option>
+            ))}
+          </select>
+        </label>
         <span className="cw-card-price">{Number.isFinite(price) ? `~$${price.toFixed(2)}` : "—"}</span>
         {p.downgraded && (
           <span className="cw-card-note" title={p.reason ?? ""}>
@@ -234,6 +339,70 @@ export function GenerateCard({
           </span>
         )}
       </div>
+
+      {/* Param pills (video only) — each sourced from the CHOSEN model's option set, so only
+          valid values are offered (mirrors genRequest.superRefine; the server re-validates).
+          A control with an empty option list is hidden (the model doesn't expose it). */}
+      {isVideo && opts && (
+        <div className="cw-card-pills">
+          {opts.aspectRatios.length > 0 && (
+            <label className="cw-ctrl">
+              <span className="cw-ctrl-label">Aspect</span>
+              <select
+                className="cw-select"
+                value={aspectRatio}
+                disabled={busy || generated}
+                onChange={(e) => setAspectRatio(e.target.value)}
+              >
+                {opts.aspectRatios.map((a) => (
+                  <option key={a} value={a}>{a}</option>
+                ))}
+              </select>
+            </label>
+          )}
+          {opts.resolutions.length > 0 && (
+            <label className="cw-ctrl">
+              <span className="cw-ctrl-label">Resolution</span>
+              <select
+                className="cw-select"
+                value={resolution}
+                disabled={busy || generated}
+                onChange={(e) => setResolution(e.target.value)}
+              >
+                {opts.resolutions.map((r) => (
+                  <option key={r} value={r}>{r}</option>
+                ))}
+              </select>
+            </label>
+          )}
+          {opts.durations.length > 0 && (
+            <label className="cw-ctrl">
+              <span className="cw-ctrl-label">Duration</span>
+              <select
+                className="cw-select"
+                value={durationSeconds ?? ""}
+                disabled={busy || generated}
+                onChange={(e) => setDurationSeconds(Number(e.target.value))}
+              >
+                {opts.durations.map((d) => (
+                  <option key={d} value={d}>{d}s</option>
+                ))}
+              </select>
+            </label>
+          )}
+          {opts.audioToggle && (
+            <label className="cw-ctrl cw-ctrl-check">
+              <input
+                type="checkbox"
+                checked={audio}
+                disabled={busy || generated}
+                onChange={(e) => setAudio(e.target.checked)}
+              />
+              <span className="cw-ctrl-label">Audio</span>
+            </label>
+          )}
+        </div>
+      )}
 
       {/* Editable prompt via MentionInput — locked once generated */}
       <div className="cw-card-input-wrap">
@@ -274,6 +443,16 @@ export function GenerateCard({
             Skip
           </button>
         )}
+        {/* Create variations — only shown once generated; clones card payload ($0). */}
+        {generated && (
+          <button
+            className="al-btn al-btn-md al-btn-ghost"
+            disabled={varyBusy}
+            onClick={createVariations}
+          >
+            {varyBusy ? "Creating…" : "Create variations"}
+          </button>
+        )}
       </div>
 
       {/* T2: "Do it differently" — NL revise; coworkTurn re-plans (propose-only). */}
@@ -299,6 +478,7 @@ export function GenerateCard({
         </div>
       )}
       {reviseError && <span className="cw-error cw-card-result-error">{reviseError}</span>}
+      {varyError && <span className="cw-error cw-card-result-error">{varyError}</span>}
 
       {showResult && (
         <div className="cw-card-result">
@@ -334,7 +514,7 @@ export function GenerateCard({
                     </button>
                   )}
                   <figcaption className="cw-media-cap">
-                    {p.model || kind}
+                    {modelLabel(model) || kind}
                     {Number.isFinite(price) && <span className="cw-media-cap-price"> · ~${price.toFixed(2)}</span>}
                   </figcaption>
                 </figure>

@@ -34,6 +34,14 @@ export const MAX_TRIM_SECONDS = 60 * 60 * 4; // seek ≤ 4 h into a source
 export const TRANSITION_MAX_SECONDS = 2;
 export const TRANSITION_DEFAULT_SECONDS = 0.5;
 
+export const MAX_CAPTIONS = 500;
+export const MAX_OVERLAYS = 50;
+export const MAX_CAPTION_CHARS = 500;
+export const MAX_OVERLAY_CHARS = 200;
+export const MAX_FONT_PX = 200;
+export const OVERLAY_POSITIONS = ["top", "center", "bottom"] as const;
+export type OverlayPosition = (typeof OVERLAY_POSITIONS)[number];
+
 /** extension allow-list per asset type — a mismatch is a contract violation */
 export const EXT_BY_TYPE = {
   video: ["mp4", "mov", "webm", "mkv"],
@@ -87,6 +95,75 @@ const transition = z.object({
   duration: z.number().finite().gt(0).max(TRANSITION_MAX_SECONDS).default(TRANSITION_DEFAULT_SECONDS),
 });
 
+/** Between-clip transition types (the LTX 7-tile library, minus "None"
+ *  which = the ABSENCE of an entry — never stored). "fade" here is a
+ *  cross-fade between clips, distinct from the legacy per-clip fade-to-black. */
+export const TRANSITION_TYPES = ["cross", "slide", "wipe", "flip", "clockwipe", "iris", "fade"] as const;
+export type TransitionType = (typeof TRANSITION_TYPES)[number];
+
+export const TRANSITION_DIRECTIONS = ["left", "right", "up", "down"] as const;
+export type TransitionDirection = (typeof TRANSITION_DIRECTIONS)[number];
+
+/** Audio-track role for auto-ducking (EP4). "music" = a bed ducked UNDER any
+ *  "voice" signal (the voice audio track + native visual-clip dialogue) via
+ *  ffmpeg sidechaincompress. Absent on every legacy edit and any edit that
+ *  doesn't opt in → the worker uses a flat amix (no ducking). Roles are
+ *  visual-track-illegal (a role describes an audio bed/voice, not picture). */
+export const AUDIO_ROLES = ["voice", "music"] as const;
+export type AudioRole = (typeof AUDIO_ROLES)[number];
+
+/** A transition is a relationship BETWEEN two gapless-adjacent visual clips.
+ *  It lives on the TRACK (track.transitions[]), NOT on a clip — the editor
+ *  round-trips clips through Shotstack's Edit, whose schema strips unknown clip
+ *  fields, so transition data must not ride on a clip. durationMs is an integer
+ *  in milliseconds (the UI thinks in ms); the worker divides by 1000 for ffmpeg
+ *  seconds (render.ts uses SECONDS). Upper bound mirrors the legacy
+ *  TRANSITION_MAX_SECONDS; the per-pair "≤ half the shorter clip" guard and the
+ *  gapless-adjacency check are on the timeline refine (where clip lengths and
+ *  positions are in scope). */
+export const betweenClipTransition = z.object({
+  fromClipIndex: z.number().int().min(0),
+  toClipIndex: z.number().int().min(0),
+  type: z.enum(TRANSITION_TYPES),
+  durationMs: z.number().int().gt(0).max(TRANSITION_MAX_SECONDS * 1000),
+  direction: z.enum(TRANSITION_DIRECTIONS).optional(),
+});
+export type BetweenClipTransition = z.infer<typeof betweenClipTransition>;
+
+/** A caption cue is a TIMELINE-time-addressed text window (absolute, integer ms),
+ *  NOT clip-relative — it can span clip boundaries. Lives on timeline.captions[]
+ *  (NOT on a clip: Shotstack strips unknown clip fields; burn-in is on the final
+ *  composited stream). The worker converts startMs→RENDERED time (transitions
+ *  shrink the timeline) and builds an ASS file for ffmpeg subtitles=. */
+export const captionCue = z.object({
+  startMs: z.number().int().min(0).max(MAX_TIMELINE_SECONDS * 1000),
+  lengthMs: z.number().int().gt(0).max(MAX_CLIP_SECONDS * 1000),
+  text: z.string().min(1).max(MAX_CAPTION_CHARS),
+});
+export type CaptionCue = z.infer<typeof captionCue>;
+
+/** A static text overlay (timeline-time-addressed, integer ms). Static only —
+ *  animated text is deferred. Worker → drawtext with enable='between(t,...)'
+ *  in RENDERED time. Lives on timeline.textOverlays[] (same reason as captions). */
+export const overlayStyle = z.object({
+  fontSize: z.number().int().min(8).max(MAX_FONT_PX).default(48),
+  color: z
+    .string()
+    .regex(/^#[0-9a-fA-F]{6}$/)
+    .default("#ffffff"),
+});
+export const textOverlay = z.object({
+  startMs: z.number().int().min(0).max(MAX_TIMELINE_SECONDS * 1000),
+  lengthMs: z.number().int().gt(0).max(MAX_CLIP_SECONDS * 1000),
+  text: z.string().min(1).max(MAX_OVERLAY_CHARS),
+  position: z.enum(OVERLAY_POSITIONS).default("bottom"),
+  // thunk (not a literal {}) so the default carries overlayStyle's own bounded
+  // nested defaults (fontSize:48, color:#ffffff) AND typechecks under zod v4 +
+  // tsc (a literal {} fails strict typing — the input type requires both fields).
+  style: overlayStyle.default(() => overlayStyle.parse({})),
+});
+export type TextOverlay = z.infer<typeof textOverlay>;
+
 export const clip = z
   .object({
     asset: z.union([visualAsset, audioAsset]),
@@ -114,6 +191,16 @@ export const clip = z
 
 export const track = z.object({
   clips: z.array(clip).min(1).max(MAX_CLIPS_PER_TRACK),
+  /** between-clip transitions (visual track only; validated in timeline.superRefine
+   *  where adjacent clip lengths and positions are in scope). The gapless requirement
+   *  is enforced LOCALLY here — only a transition's two referenced clips must be
+   *  gapless-adjacent; a track with a gap and NO transitions still parses (legacy
+   *  edits may contain gaps). None = the absence of an entry. */
+  transitions: z.array(betweenClipTransition).max(MAX_CLIPS_PER_TRACK).optional(),
+  /** audio-track role for ducking (EP4); audio tracks only. None = the absence
+   *  of an entry → flat mix. Validated in timeline.superRefine (track
+   *  composition + the ≤1-music-track rule are in scope there). */
+  audioRole: z.enum(AUDIO_ROLES).optional(),
 });
 
 function clipsOverlap(clips: z.infer<typeof clip>[]): boolean {
@@ -136,6 +223,8 @@ export const timeline = z
       .regex(/^#[0-9a-fA-F]{6}$/)
       .default("#000000"),
     tracks: z.array(track).min(1).max(3),
+    captions: z.array(captionCue).max(MAX_CAPTIONS).optional(),
+    textOverlays: z.array(textOverlay).max(MAX_OVERLAYS).optional(),
   })
   .superRefine((tl, ctx) => {
     const visual = tl.tracks.filter(isVisualTrack).length;
@@ -153,6 +242,7 @@ export const timeline = z
       });
     }
     let end = 0;
+    const EPS = 1e-6;
     tl.tracks.forEach((t, i) => {
       if (clipsOverlap(t.clips)) {
         ctx.addIssue({ code: "custom", message: `track ${i}: clips overlap` });
@@ -161,13 +251,93 @@ export const timeline = z
       if (mixed) {
         ctx.addIssue({ code: "custom", message: `track ${i}: audio clips belong on their own track` });
       }
+      // audioRole is audio-track only; the count guard (≤1 music) is below the loop
+      if (t.audioRole && isVisualTrack(t)) {
+        ctx.addIssue({ code: "custom", message: `track ${i}: audioRole is for audio tracks only (a visual track has no bed/voice role)` });
+      }
+      // between-clip transition validation. The gapless requirement is LOCAL: each
+      // transition's two referenced clips must be gapless-adjacent. A track with a
+      // gap and NO transitions still parses (legacy edits may contain gaps — the
+      // current renderer ignores `start`, so a global gapless reject would make old
+      // edits unloadable). Visual-track only.
+      if (t.transitions && t.transitions.length > 0) {
+        if (!isVisualTrack(t)) {
+          ctx.addIssue({ code: "custom", message: `track ${i}: between-clip transitions are visual-track only` });
+        } else {
+          // transition indices address clips in timeline order (sorted by start)
+          const ordered = [...t.clips].sort((a, b) => a.start - b.start);
+          // each boundary carries AT MOST one transition: renderDuration() sums all
+          // entries but the worker collapses by fromClipIndex into a single xfade, so
+          // a duplicate boundary would double-count the subtracted overlap.
+          const seenFrom = new Set<number>();
+          for (const tr of t.transitions) {
+            if (seenFrom.has(tr.fromClipIndex)) {
+              ctx.addIssue({
+                code: "custom",
+                message: `track ${i}: duplicate transition on boundary ${tr.fromClipIndex}→${tr.fromClipIndex + 1} — each boundary may have at most one transition`,
+              });
+              continue;
+            }
+            seenFrom.add(tr.fromClipIndex);
+            if (tr.toClipIndex !== tr.fromClipIndex + 1) {
+              ctx.addIssue({
+                code: "custom",
+                message: `track ${i}: transition must be between adjacent clips (consecutive fromClipIndex+1==toClipIndex)`,
+              });
+              continue;
+            }
+            const from = ordered[tr.fromClipIndex];
+            const to = ordered[tr.toClipIndex];
+            if (!from || !to) {
+              ctx.addIssue({ code: "custom", message: `track ${i}: transition references a clip index out of range` });
+              continue;
+            }
+            // gapless-adjacent: the later clip starts exactly where the earlier ends
+            if (Math.abs(to.start - (from.start + from.length)) > EPS) {
+              ctx.addIssue({
+                code: "custom",
+                message: `track ${i}: transition requires gapless-adjacent clips (clip ${tr.fromClipIndex} ends at ${from.start + from.length}s but clip ${tr.toClipIndex} starts at ${to.start}s)`,
+              });
+              continue;
+            }
+            const halfShorterMs = (Math.min(from.length, to.length) / 2) * 1000;
+            if (tr.durationMs > halfShorterMs + EPS) {
+              ctx.addIssue({
+                code: "custom",
+                message: `track ${i}: transition ${tr.durationMs}ms too long — must be ≤ half the shorter adjacent clip (${Math.round(halfShorterMs)}ms)`,
+              });
+            }
+          }
+        }
+      }
       for (const c of t.clips) end = Math.max(end, c.start + c.length);
     });
+    const musicTracks = tl.tracks.filter((t) => !isVisualTrack(t) && t.audioRole === "music").length;
+    if (musicTracks > 1) {
+      ctx.addIssue({ code: "custom", message: `at most one music track may duck (got ${musicTracks}) — mark only the bed as "music"` });
+    }
     if (end > MAX_TIMELINE_SECONDS) {
       ctx.addIssue({
         code: "custom",
         message: `timeline runs ${Math.round(end)}s — cap is ${MAX_TIMELINE_SECONDS}s`,
       });
+    }
+    // caption/overlay bounds-in-context: every window must fit inside the timeline
+    // ([0, editDuration]). `end` is the max clip end (= editDuration) computed above.
+    const limit = end; // editDuration is in scope as `end`
+    for (const c of tl.captions ?? []) {
+      if (c.startMs / 1000 + c.lengthMs / 1000 > limit + EPS)
+        ctx.addIssue({
+          code: "custom",
+          message: `caption window ends past the timeline (${(c.startMs + c.lengthMs) / 1000}s > ${limit}s)`,
+        });
+    }
+    for (const o of tl.textOverlays ?? []) {
+      if (o.startMs / 1000 + o.lengthMs / 1000 > limit + EPS)
+        ctx.addIssue({
+          code: "custom",
+          message: `text overlay window ends past the timeline (${(o.startMs + o.lengthMs) / 1000}s > ${limit}s)`,
+        });
     }
   });
 
@@ -214,6 +384,22 @@ export const RENDER_QUEUE_POLICY = {
 export const RENDER_STATUSES = ["QUEUED", "RENDERING", "DONE", "FAILED"] as const;
 export type RenderStatus = (typeof RENDER_STATUSES)[number];
 
+/** $0 caption job: extract audio → whisper.cpp → cached transcript. SEPARATE
+ *  queue from render so a slow transcribe never blocks a render. The payload
+ *  holds ONLY the row id; the row holds the real data. */
+export const captionJobData = z.object({ captionJobId: z.string().min(1).max(64) });
+export type CaptionJobData = z.infer<typeof captionJobData>;
+export const CAPTION_QUEUE = "caption";
+export const CAPTION_DLQ = `${CAPTION_QUEUE}.dlq`;
+export const CAPTION_RETRY_LIMIT = 2;
+export const CAPTION_QUEUE_POLICY = {
+  retryLimit: CAPTION_RETRY_LIMIT,
+  retryDelay: 20,
+  retryBackoff: true,
+  expireInSeconds: 60 * 15, // > whisper timeout (10m) so a job never expires mid-transcribe
+  deadLetter: CAPTION_DLQ,
+} as const;
+
 /** strip the /files/ prefix → storage key (worker side) */
 export function srcToStorageKey(src: string): string {
   return src.replace(/^\/files\//, "");
@@ -229,4 +415,16 @@ export function editDuration(edit: ArtlioEdit): number {
   for (const t of edit.timeline.tracks)
     for (const c of t.clips) end = Math.max(end, c.start + c.length);
   return end;
+}
+
+/** Rendered OUTPUT duration in seconds: the timeline length minus the time each
+ *  between-clip transition overlaps (clips slide together by the transition).
+ *  Used by the worker for the audio mix length, the -progress total, and the
+ *  stored asset durationS. durationMs is divided by 1000 (contract is ms; the
+ *  worker renders in seconds). */
+export function renderDuration(edit: ArtlioEdit): number {
+  let overlapMs = 0;
+  for (const t of edit.timeline.tracks)
+    for (const tr of t.transitions ?? []) overlapMs += tr.durationMs;
+  return editDuration(edit) - overlapMs / 1000;
 }

@@ -15,6 +15,7 @@ import {
   GEN_PRICE_USD_PER_IMAGE, MAX_GEN_COUNT, GEN_VIDEO_MODELS, GEN_VIDEO_MODEL_INFO,
   GEN_VIDEO_MODEL_OPTIONS, videoDefaults, videoPriceUsd, type GenVideoModel,
   modelFamily, deriveMode, lintPrompt, castFindings, type ModelDirectiveRules,
+  newId,
 } from "@artlio/core";
 import { startGen, getGenJob, getRecentGenResults } from "@/lib/gen-actions";
 import { uploadReference } from "@/lib/actions";
@@ -327,6 +328,10 @@ export function GenSpace({ projectId, entities, rulesMap, onGoToElements }: { pr
     // only send variantSel when a chip actually bound a variant — keeps old/bare
     // requests shaped exactly as before (worker reads undefined → base-ref conditioning)
     const vsel = Object.keys(promptVariantSel).length ? promptVariantSel : undefined;
+    // money-safety: a stable per-click key so a network retry / double-SUBMIT of the SAME
+    // startGen request dedupes server-side (active-key index) instead of paying twice.
+    // busyRef already stops a same-frame double-CLICK; this covers the re-submit it can't.
+    const idem = newId();
     if (isVideo) {
       // fal video has no num_videos — a batch of N is N independent one-clip jobs
       // (each keeps the worker's exactly-once spend). Only send a control the model has.
@@ -344,10 +349,11 @@ export function GenSpace({ projectId, entities, rulesMap, onGoToElements }: { pr
           aspectRatio: opts.aspectRatios.length ? vopts.aspectRatio : undefined,
           audio: opts.audioToggle ? vopts.audio : undefined,
           variantSel: vsel,
+          idempotencyKey: `${idem}:${i}`, // each clip in the batch is its own independent job
         }, aspect);
       }
     } else {
-      launch(text, "Seedream", { projectId, prompt: text, entityIds: promptIds, count, kind: "image", model: "seedream", variantSel: vsel }, "16 / 9");
+      launch(text, "Seedream", { projectId, prompt: text, entityIds: promptIds, count, kind: "image", model: "seedream", variantSel: vsel, idempotencyKey: idem }, "16 / 9");
     }
   }
 

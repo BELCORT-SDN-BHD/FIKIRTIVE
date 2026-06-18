@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { suggestModel } from "./cowork-route.js";
-import { GEN_VIDEO_MODEL_OPTIONS, GEN_VIDEO_MODEL_INFO, type GenVideoModel } from "./gen.js";
+import { GEN_VIDEO_MODELS, GEN_VIDEO_MODEL_OPTIONS, GEN_VIDEO_MODEL_INFO, type GenVideoModel } from "./gen.js";
 
 describe("suggestModel", () => {
   it("image → seedream with count default", () => {
@@ -54,5 +54,33 @@ describe("suggestModel", () => {
     const r = suggestModel({ kind: "video", desiredAspect: "21:9" }); // no model exposes 21:9 → empty pool → full-list fallback
     expect(r.downgraded).toBe(true);
     expect(r.params.aspectRatio).not.toBe("21:9");
+  });
+  it("excludes a disabled model from the candidate pool (additive narrowing)", () => {
+    // whatever the cheapest t2v pick is, disabling it must force a different model
+    const free = suggestModel({ kind: "video" });
+    const narrowed = suggestModel({ kind: "video", disabled: new Set([free.model]) });
+    expect(narrowed.model).not.toBe(free.model);
+    expect((GEN_VIDEO_MODELS as readonly string[]).includes(narrowed.model)).toBe(true);
+  });
+  it("when the capability filter empties the pool, falls back to an ENABLED model — never a disabled one", () => {
+    // 21:9 is exposed by no model → capability filter empties the pool → empty-pool
+    // fallback. Disabling that fallback's pick must NOT resurrect it (old code fell
+    // back to the FULL menu and would return the disabled model).
+    const fallbackPick = suggestModel({ kind: "video", desiredAspect: "21:9" }).model;
+    const r = suggestModel({ kind: "video", desiredAspect: "21:9", disabled: new Set([fallbackPick]) });
+    expect(r.model).not.toBe(fallbackPick); // a disabled model is never returned…
+    expect((GEN_VIDEO_MODELS as readonly string[]).includes(r.model)).toBe(true); // …and it's still a typed model
+  });
+  it("disabling the natural pick returns a different ENABLED model", () => {
+    const natural = suggestModel({ kind: "video" });
+    const narrowed = suggestModel({ kind: "video", disabled: new Set([natural.model]) });
+    expect(narrowed.model).not.toBe(natural.model);
+    expect((GEN_VIDEO_MODELS as readonly string[]).includes(narrowed.model)).toBe(true);
+  });
+  it("only the degenerate all-disabled case falls back to the full typed menu (returns a value, blocked downstream)", () => {
+    const allDisabled = new Set(GEN_VIDEO_MODELS as readonly string[]);
+    expect(() => suggestModel({ kind: "video", disabled: allDisabled })).not.toThrow();
+    const r = suggestModel({ kind: "video", disabled: allDisabled });
+    expect((GEN_VIDEO_MODELS as readonly string[]).includes(r.model)).toBe(true); // still a typed model (spend gate rejects)
   });
 });

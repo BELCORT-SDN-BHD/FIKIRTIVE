@@ -9,29 +9,75 @@ export {
 } from "./template-bundle.js";
 export {
   artlioEdit,
+  betweenClipTransition,
+  captionCue,
+  textOverlay,
+  overlayStyle,
   renderJobData,
   editDuration,
+  renderDuration,
   srcToStorageKey,
   storageKeyToSrc,
   TRANSITION_DEFAULT_SECONDS,
   TRANSITION_MAX_SECONDS,
+  TRANSITION_TYPES,
+  TRANSITION_DIRECTIONS,
+  AUDIO_ROLES,
+  MAX_CAPTIONS,
+  MAX_OVERLAYS,
+  MAX_CAPTION_CHARS,
+  MAX_OVERLAY_CHARS,
+  MAX_FONT_PX,
+  OVERLAY_POSITIONS,
   RENDER_QUEUE,
   INGEST_QUEUE,
   RENDER_DLQ,
   RENDER_RETRY_LIMIT,
   RENDER_QUEUE_POLICY,
   RENDER_STATUSES,
+  captionJobData,
+  CAPTION_QUEUE,
+  CAPTION_DLQ,
+  CAPTION_RETRY_LIMIT,
+  CAPTION_QUEUE_POLICY,
   type ArtlioEdit,
   type ArtlioClip,
+  type BetweenClipTransition,
+  type CaptionCue,
+  type TextOverlay,
+  type OverlayPosition,
+  type TransitionType,
+  type TransitionDirection,
+  type AudioRole,
   type RenderJobData,
   type RenderStatus,
+  type CaptionJobData,
 } from "./timeline.js";
+export { editToFcpXml } from "./nle-export.js";
+export {
+  splitClipAt,
+  rippleDeleteClip,
+  moveClip,
+  snapEdit,
+  reindexTransitionsAfterSplit,
+  reindexTransitionsAfterDelete,
+  reindexTransitionsAfterMove,
+  reconcileTransitions,
+  dropTransitionsTooShort,
+  MIN_CLIP_SECONDS,
+  SNAP_THRESHOLD_SECONDS,
+} from "./timeline-ops.js";
 export * from "./upload.js";
 export * from "./refgen.js";
 export * from "./ref-config.js";
 export * from "./gen.js";
+export * from "./spend.js";
 export * from "./cowork.js";
 export * from "./cowork-transport.js";
+export * from "./runtime-config.js";
+export * from "./model-registry.js";
+export * from "./roles.js";
+export * from "./cowork-compose.js";
 export * from "./cowork-skills.js";
 export * from "./cowork-directives.js";
 export * from "./cowork-coach.js";
