@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import {
   artlioEdit,
+  AUDIO_ROLES,
   betweenClipTransition,
   editDuration,
   renderDuration,
@@ -298,5 +299,51 @@ describe("renderDuration", () => {
     const parsed = artlioEdit.parse(e);
     // 12s − (0.5 + 1.0) = 10.5s
     expect(renderDuration(parsed)).toBeCloseTo(10.5, 6);
+  });
+});
+
+describe("track.audioRole (ducking opt-in)", () => {
+  it("AUDIO_ROLES is exactly voice + music", () => {
+    expect([...AUDIO_ROLES].sort()).toEqual(["music", "voice"]);
+  });
+
+  it("accepts audioRole on an audio track", () => {
+    const e = cloneEdit();
+    e.timeline.tracks[1].audioRole = "music"; // track[1] is the audio track
+    const parsed = artlioEdit.parse(e);
+    expect((parsed.timeline.tracks[1] as any).audioRole).toBe("music");
+  });
+
+  it("rejects audioRole on a visual track", () => {
+    const e = cloneEdit();
+    e.timeline.tracks[0].audioRole = "voice"; // track[0] is visual
+    expect(() => artlioEdit.parse(e)).toThrow(/audio track|visual/i);
+  });
+
+  it("rejects more than one music track", () => {
+    const e = cloneEdit();
+    // add a 2nd audio track and mark both music (timeline allows ≤2 audio tracks)
+    e.timeline.tracks[1].audioRole = "music";
+    e.timeline.tracks.push({ clips: [{ asset: { type: "audio", src: SRC.replace(".mp4", ".mp3") }, start: 0, length: 4 }], audioRole: "music" });
+    expect(() => artlioEdit.parse(e)).toThrow(/one music|single music/i);
+  });
+
+  it("accepts one music + one voice audio track", () => {
+    const e = cloneEdit();
+    e.timeline.tracks[1].audioRole = "voice";
+    e.timeline.tracks.push({ clips: [{ asset: { type: "audio", src: SRC.replace(".mp4", ".mp3") }, start: 0, length: 4 }], audioRole: "music" });
+    expect(() => artlioEdit.parse(e)).not.toThrow();
+  });
+
+  it("still parses a legacy edit with NO audioRole (backward-compat)", () => {
+    expect(() => artlioEdit.parse(validEdit)).not.toThrow();
+    expect((artlioEdit.parse(validEdit).timeline.tracks[1] as any).audioRole).toBeUndefined();
+  });
+
+  it("parses output presets (resolution/aspectRatio/fps)", () => {
+    const e = cloneEdit();
+    e.output = { format: "mp4", resolution: "1080", aspectRatio: "9:16", fps: 30 };
+    const parsed = artlioEdit.parse(e);
+    expect(parsed.output).toEqual({ format: "mp4", resolution: "1080", aspectRatio: "9:16", fps: 30 });
   });
 });

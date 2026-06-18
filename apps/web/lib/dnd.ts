@@ -4,7 +4,7 @@
 // `DataTransfer.types` during dragover but blocks `getData()` until `drop`, so the
 // kind has to live in the MIME, not the payload, for the hover highlight.
 export type DndPayload =
-  | { kind: "editor-clip"; src: string; clipKind: "image" | "video"; seconds: number }
+  | { kind: "editor-clip"; src: string; clipKind: "image" | "video" | "audio"; seconds: number }
   | { kind: "candidate-frame"; generationId: string };
 
 const MIME: Record<DndPayload["kind"], string> = {
@@ -26,7 +26,7 @@ function parse(raw: string | undefined, kind: DndPayload["kind"]): DndPayload | 
   const o = v as Record<string, unknown>;
   if (kind === "editor-clip") {
     if (o.kind === "editor-clip" && typeof o.src === "string" &&
-        (o.clipKind === "image" || o.clipKind === "video") &&
+        (o.clipKind === "image" || o.clipKind === "video" || o.clipKind === "audio") &&
         typeof o.seconds === "number" && Number.isFinite(o.seconds)) {
       return { kind: "editor-clip", src: o.src, clipKind: o.clipKind, seconds: o.seconds };
     }

@@ -28,6 +28,7 @@ import {
   RENDER_RETRY_LIMIT,
   type ArtlioEdit,
   type ArtlioClip,
+  type AudioRole,
   type BetweenClipTransition,
   type TransitionDirection,
   type RenderJobData,
@@ -47,6 +48,10 @@ interface PlannedInput {
   file: string;
   index: number;
   hasAudio: boolean;
+  /** which kind of track this clip came from (EP4 ducking partitions by this) */
+  trackKind: "visual" | "audio";
+  /** the owning audio track's role, if any (EP4); undefined on visual clips */
+  audioRole?: AudioRole;
 }
 
 function inputArgs(p: PlannedInput): string[] {
@@ -286,6 +291,66 @@ function audioChain(
   return `[${p.index}:a]${filters.join(",")}[a${p.index}]`;
 }
 
+/** Build the audio mix filtergraph from the per-clip [a${index}] labels.
+ *  Default path: a flat amix of all sounded clips (the EP1 behavior).
+ *  Ducking path (EP4): sounded clips split into THREE groups — bed (music-role
+ *  audio track), voice (a voice-role audio track's clips OR any native visual-clip
+ *  audio), and neutral (an audio track with NO role). If a music bed AND ≥1 voice
+ *  source both have sounded clips, the bed is compressed UNDER the voice via
+ *  sidechaincompress, then re-mixed with the dry voice and any neutral tracks (a
+ *  neutral track rides flat — it neither ducks nor is ducked). sidechaincompress is in the
+ *  worker's Debian-trixie ffmpeg 7.x (node:22-trixie-slim + apt-get ffmpeg,
+ *  Dockerfile L4-5; same family as the EP1 xfade/acrossfade). The final node
+ *  ALWAYS ends with ,aresample=async=1:first_pts=0,atrim=0:${renderSeconds}[a]
+ *  so the downstream -map [a] is unchanged (the load-bearing EP1 invariant).
+ *  normalize=0 is kept on every amix (avoids a volume bump). Returns the lines
+ *  to append + true if audio should be mapped. */
+function buildAudioMix(sounded: PlannedInput[], renderSeconds: number): { lines: string[]; mapAudio: boolean } {
+  if (sounded.length === 0) return { lines: [], mapAudio: false };
+  const lab = (p: PlannedInput) => `[a${p.index}]`;
+  const tail = `aresample=async=1:first_pts=0,atrim=0:${renderSeconds}[a]`;
+
+  // partition into THREE groups (EP4 P2): only a music bed under an explicit
+  // voice trigger ducks. An UN-roled audio track is NEUTRAL — it never ducks the
+  // bed and is never a sidechain key; it just rides flat in the final mix.
+  //   voice   = native visual-clip audio OR an audio track with audioRole "voice"
+  //   bed     = an audio track with audioRole "music" (the ducked layer)
+  //   neutral = an audio track with NO audioRole (undefined)
+  const isMusic = (p: PlannedInput) => p.trackKind === "audio" && p.audioRole === "music";
+  const isVoice = (p: PlannedInput) =>
+    p.trackKind === "visual" || (p.trackKind === "audio" && p.audioRole === "voice");
+  const bed = sounded.filter(isMusic);
+  const voice = sounded.filter(isVoice);
+  const neutral = sounded.filter((p) => !isMusic(p) && !isVoice(p));
+  const duckable = bed.length > 0 && voice.length > 0;
+
+  if (!duckable) {
+    // flat mix (EP1 behavior) — covers every legacy edit and any non-ducked edit
+    const mixIn = sounded.map(lab).join("");
+    return {
+      lines: [`${mixIn}amix=inputs=${sounded.length}:duration=longest:normalize=0,${tail}`],
+      mapAudio: true,
+    };
+  }
+
+  const lines: string[] = [];
+  // 1) sub-mix the voice sources → [vmix]
+  const voiceIn = voice.map(lab).join("");
+  lines.push(`${voiceIn}amix=inputs=${voice.length}:duration=longest:normalize=0[vmix]`);
+  // 2) sub-mix the bed sources → [bmix]
+  const bedIn = bed.map(lab).join("");
+  lines.push(`${bedIn}amix=inputs=${bed.length}:duration=longest:normalize=0[bmix]`);
+  // 3) duck the bed under the voice. The voice is the SIDECHAIN trigger; it must
+  //    be split because we also need it dry in the final mix. asplit duplicates it.
+  lines.push(`[vmix]asplit=2[vkey][vout]`);
+  lines.push(`[bmix][vkey]sidechaincompress=threshold=0.05:ratio=8:attack=20:release=300[duck]`);
+  // 4) final mix: dry voice + ducked bed + any neutral tracks → [a] (load-bearing tail).
+  //    neutral rides flat (it neither ducks nor is ducked).
+  const finalIn = `[vout][duck]${neutral.map(lab).join("")}`;
+  lines.push(`${finalIn}amix=inputs=${2 + neutral.length}:duration=longest:normalize=0,${tail}`);
+  return { lines, mapAudio: true };
+}
+
 export async function handleRender(data: RenderJobData, retryCount = 0): Promise<void> {
   const job = await prisma.renderJob.findUnique({ where: { id: data.renderJobId } });
   if (!job) {
@@ -319,15 +384,15 @@ export async function handleRender(data: RenderJobData, retryCount = 0): Promise
     // plan all inputs (visual first, then audio-track clips), probing each
     // source once for audio-stream presence
     const planned: PlannedInput[] = [];
-    const addInput = async (clip: ArtlioClip) => {
+    const addInput = async (clip: ArtlioClip, trackKind: "visual" | "audio", audioRole?: AudioRole) => {
       // local: validated file path · r2: presigned URL (ffmpeg range-reads it)
       const file = await storage.ffmpegInput(srcToStorageKey(clip.asset.src));
       const probe = clip.asset.type === "image" ? { hasAudio: false } : await probeFile(file);
-      planned.push({ clip, file, index: planned.length, hasAudio: probe.hasAudio });
+      planned.push({ clip, file, index: planned.length, hasAudio: probe.hasAudio, trackKind, audioRole });
     };
     const visualClips = [...visualTrack.clips].sort((a, b) => a.start - b.start);
-    for (const c of visualClips) await addInput(c);
-    for (const t of audioTracks) for (const c of t.clips) await addInput(c);
+    for (const c of visualClips) await addInput(c, "visual");
+    for (const t of audioTracks) for (const c of t.clips) await addInput(c, "audio", t.audioRole);
 
     // contract guarantees length>0 per clip so this can't fire post-parse;
     // belt-and-braces against future schema drift (codex review, refuted-but-free)
@@ -363,6 +428,19 @@ export async function handleRender(data: RenderJobData, retryCount = 0): Promise
         throw new Error(`transition ${durS}s ≥ an adjacent clip length — would push xfade offset past a boundary`);
       }
     }
+
+    // belt-and-braces (contract enforces ≤1 music track; guard against drift).
+    // Ducking needs at least one bed clip AND one voice source, else it falls
+    // back to the flat mix — buildAudioMix handles that, but assert the partition
+    // can never produce an empty amix input list.
+    const musicSounded = sounded.filter((p) => p.trackKind === "audio" && p.audioRole === "music");
+    const musicTrackCount = new Set(
+      planned.filter((p) => p.trackKind === "audio" && p.audioRole === "music").map((p) => p.audioRole),
+    ).size;
+    if (musicTrackCount > 1) {
+      throw new Error("more than one music-role audio track — ducking is ambiguous");
+    }
+    void musicSounded; // partition recomputed inside buildAudioMix; this only asserts the cap
 
     const renderSeconds = renderDuration(edit);
 
@@ -420,15 +498,11 @@ export async function handleRender(data: RenderJobData, retryCount = 0): Promise
       vLabel = next;
     });
 
-    let mapAudio = false;
     if (sounded.length > 0) {
       for (const p of sounded) graph.push(audioChain(p, visualPlanned, transitions));
-      const mixIn = sounded.map((p) => `[a${p.index}]`).join("");
-      graph.push(
-        `${mixIn}amix=inputs=${sounded.length}:duration=longest:normalize=0,aresample=async=1:first_pts=0,atrim=0:${renderSeconds}[a]`,
-      );
-      mapAudio = true;
     }
+    const { lines: mixLines, mapAudio } = buildAudioMix(sounded, renderSeconds);
+    for (const line of mixLines) graph.push(line);
 
     const args: string[] = ["-y"];
     for (const p of planned) args.push(...inputArgs(p));
@@ -437,8 +511,12 @@ export async function handleRender(data: RenderJobData, retryCount = 0): Promise
     args.push("-c:v", "libx264", "-pix_fmt", "yuv420p", "-movflags", "+faststart");
     args.push("-progress", "pipe:1", "-nostats", out);
 
+    // matches buildAudioMix's duckable test (bed = music; voice = visual native
+    // audio OR a voice-role audio track; a neutral un-roled track does NOT duck).
+    const ducked = sounded.some((p) => p.trackKind === "audio" && p.audioRole === "music") &&
+      sounded.some((p) => p.trackKind === "visual" || (p.trackKind === "audio" && p.audioRole === "voice"));
     console.log(
-      `[render] ${job.id}: ffmpeg ${visualPlanned.length} visual (${transitions.length} transitions) + ${sounded.length} audio → ${w}x${h}@${fps}, ${renderSeconds}s`,
+      `[render] ${job.id}: ffmpeg ${visualPlanned.length} visual (${transitions.length} transitions) + ${sounded.length} audio${ducked ? " (ducking)" : ""} → ${w}x${h}@${fps}, ${renderSeconds}s`,
     );
 
     // live progress from -progress pipe:1, throttled to spare the DB

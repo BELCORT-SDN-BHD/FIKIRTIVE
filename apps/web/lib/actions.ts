@@ -829,10 +829,11 @@ export async function softDeleteGeneration(generationId: string) {
 
 const EDITOR_VIDEO_EXTS = new Set(["mp4", "mov", "webm", "mkv"]);
 const EDITOR_IMAGE_EXTS = new Set(["png", "jpg", "jpeg", "webp", "gif", "avif"]);
+const EDITOR_AUDIO_EXTS = new Set(["mp3", "wav", "m4a", "aac", "ogg", "flac"]); // EXT_BY_TYPE.audio
 /** A project's generated media as timeline-ready clips for the editor's Assets
  *  panel — click one to append it to the cut. `seconds` drives the clip length.
- *  Only image/video are returned; audio/unknown assets aren't timeline clips here. */
-export async function getEditorMedia(projectId: string): Promise<{ id: string; src: string; kind: "image" | "video"; seconds: number }[]> {
+ *  image/video go on the visual track; audio (EP4) goes on its own audio track. */
+export async function getEditorMedia(projectId: string): Promise<{ id: string; src: string; kind: "image" | "video" | "audio"; seconds: number }[]> {
   const gate = await requireSession(); if ("error" in gate) throw new Error(gate.error);
   const project = await prisma.project.findFirst({ where: { id: projectId, ...OWNED } });
   if (!project) return [];
@@ -844,12 +845,16 @@ export async function getEditorMedia(projectId: string): Promise<{ id: string; s
   return gens.flatMap((g) => {
     const ext = g.asset.ext.toLowerCase();
     const isVideo = EDITOR_VIDEO_EXTS.has(ext);
-    if (!isVideo && !EDITOR_IMAGE_EXTS.has(ext)) return []; // skip audio/unknown
+    const isImage = EDITOR_IMAGE_EXTS.has(ext);
+    const isAudio = EDITOR_AUDIO_EXTS.has(ext);
+    if (!isVideo && !isImage && !isAudio) return []; // skip unknown
+    const kind = isVideo ? ("video" as const) : isImage ? ("image" as const) : ("audio" as const);
     return [{
       id: g.id,
       src: storageKeyToSrc(storageKey(g.asset.ownerId, g.asset.contentHash, ext)),
-      kind: isVideo ? ("video" as const) : ("image" as const),
-      seconds: isVideo ? (g.asset.durationS ?? 5) : 3,
+      kind,
+      // audio + video carry durationS; images get a 3s still default
+      seconds: kind === "image" ? 3 : (g.asset.durationS ?? 5),
     }];
   });
 }

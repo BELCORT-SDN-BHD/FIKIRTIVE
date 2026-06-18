@@ -22,6 +22,7 @@ export {
   TRANSITION_MAX_SECONDS,
   TRANSITION_TYPES,
   TRANSITION_DIRECTIONS,
+  AUDIO_ROLES,
   MAX_CAPTIONS,
   MAX_OVERLAYS,
   MAX_CAPTION_CHARS,
@@ -47,10 +48,12 @@ export {
   type OverlayPosition,
   type TransitionType,
   type TransitionDirection,
+  type AudioRole,
   type RenderJobData,
   type RenderStatus,
   type CaptionJobData,
 } from "./timeline.js";
+export { editToFcpXml } from "./nle-export.js";
 export {
   splitClipAt,
   rippleDeleteClip,

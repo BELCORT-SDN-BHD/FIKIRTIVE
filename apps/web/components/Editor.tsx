@@ -2,8 +2,10 @@
 
 import { useEffect, useRef, useState } from "react";
 import Link from "next/link";
-import { artlioEdit, snapEdit, splitClipAt, rippleDeleteClip, reconcileTransitions, OVERLAY_POSITIONS, type ArtlioEdit, type ArtlioClip, type CaptionCue, type TextOverlay } from "@artlio/core";
+import { artlioEdit, snapEdit, splitClipAt, rippleDeleteClip, reconcileTransitions, editToFcpXml, OVERLAY_POSITIONS, type ArtlioEdit, type ArtlioClip, type CaptionCue, type TextOverlay, type AudioRole } from "@artlio/core";
 import { getRenderJobs, saveProjectEdit, startRender, getEditorMedia, startCaption, getCaptionJob, getTranscript } from "@/lib/actions";
+import { uploadFilesDirect } from "@/lib/direct-upload";
+import { finalizeCandidateUploads } from "@/lib/upload-actions";
 import { setDnd, getDnd, hasDnd } from "@/lib/dnd";
 import { Button, Chip, EmptyHero, MonoLabel } from "./ds";
 
@@ -35,7 +37,7 @@ type StudioHandles = {
   edit: StudioEdit;
   dispose: () => void;
 };
-type EditorClip = { id: string; src: string; kind: "image" | "video"; seconds: number };
+type EditorClip = { id: string; src: string; kind: "image" | "video" | "audio"; seconds: number };
 /** The selected clip, as the SDK's clip:selected event reports it (subset we edit). */
 type SelClip = { asset?: { type?: string; src?: string; volume?: number }; transition?: { in?: string; out?: string } };
 type Selection = { trackIndex: number; clipIndex: number; clip: SelClip };
@@ -145,6 +147,30 @@ export function Editor({
     overlaysRef.current = value;
     setOverlaysState(value);
   };
+  // EP4 ducking: per-track audioRole ("voice"/"music"), keyed by track index. Lives
+  // OUTSIDE Shotstack (its Edit strips unknown track fields, same as transitions) so
+  // it must be re-merged into the ArtlioEdit in currentMergedEdit/commit helpers and
+  // re-seeded in reloadFromEdit. Mirrored in a ref so closures read the CURRENT map.
+  const seedRoles = (edit: ArtlioEdit | null | undefined): Record<number, AudioRole> => {
+    const out: Record<number, AudioRole> = {};
+    edit?.timeline.tracks.forEach((t, i) => { if (t.audioRole) out[i] = t.audioRole; });
+    return out;
+  };
+  const [audioRoles, setAudioRolesState] = useState<Record<number, AudioRole>>(() => seedRoles(initialEdit));
+  const audioRolesRef = useRef<Record<number, AudioRole>>(audioRoles);
+  const setAudioRoles = (next: Record<number, AudioRole>) => {
+    audioRolesRef.current = next;
+    setAudioRolesState(next);
+  };
+  // EP4 output presets live in React (like transitions, outside Shotstack) and are
+  // merged into the persisted ArtlioEdit. Seeded from the loaded edit's output.
+  const [output, setOutput] = useState<ArtlioEdit["output"]>(
+    () => initialEdit?.output ?? EMPTY_EDIT.output,
+  );
+  // EP4 approx preview (sequential <video> of the visual track, no effects) + audio
+  // upload spinner. Both UI-only; no contract/Shotstack/spend interaction.
+  const [approxPreview, setApproxPreview] = useState(false);
+  const [uploadingAudio, setUploadingAudio] = useState(false);
   // caption-generate flow state (async dispatch + poll, all $0)
   const [capBusy, setCapBusy] = useState(false);
   const [capNote, setCapNote] = useState<string | null>(null);
@@ -448,11 +474,16 @@ export function Editor({
     // [] is ever persisted, matching the transitions/None rule).
     const merged = {
       ...raw,
+      output, // EP4: the Output control is the source of truth, not Shotstack's
       timeline: {
         ...raw.timeline,
-        tracks: raw.timeline.tracks.map((t, i) =>
-          i === 0 && live.length > 0 ? { ...t, transitions: live } : t,
-        ),
+        tracks: raw.timeline.tracks.map((t, i) => {
+          // EP4: re-attach the React-held audioRole (Shotstack strips it). Only when
+          // set, so absence round-trips as a flat mix (matches the transitions rule).
+          const role = audioRolesRef.current[i];
+          const withRole = role ? { ...t, audioRole: role } : t;
+          return i === 0 && live.length > 0 ? { ...withRole, transitions: live } : withRole;
+        }),
         ...(captionsRef.current.length > 0 ? { captions: captionsRef.current } : {}),
         ...(overlaysRef.current.length > 0 ? { textOverlays: overlaysRef.current } : {}),
       },
@@ -531,11 +562,16 @@ export function Editor({
     const raw = h.edit.getEdit() as ArtlioEdit;
     const merged = {
       ...raw,
+      output, // EP4: preserve the chosen output presets (Shotstack doesn't carry them)
       timeline: {
         ...raw.timeline,
-        tracks: raw.timeline.tracks.map((t, i) =>
-          i === 0 && next.length > 0 ? { ...t, transitions: next } : t,
-        ),
+        tracks: raw.timeline.tracks.map((t, i) => {
+          // EP4: re-attach the React-held audioRole — editing a transition must not
+          // drop a track's ducking role (it lives in React state, stripped by Shotstack).
+          const role = audioRolesRef.current[i];
+          const withRole = role ? { ...t, audioRole: role } : t;
+          return i === 0 && next.length > 0 ? { ...withRole, transitions: next } : withRole;
+        }),
         // preserve the timeline-level Artlio arrays — editing a transition must not
         // drop captions/overlays from the committed edit (they live in React state).
         ...(captionsRef.current.length > 0 ? { captions: captionsRef.current } : {}),
@@ -565,11 +601,16 @@ export function Editor({
     const raw = h.edit.getEdit() as ArtlioEdit;
     const merged = {
       ...raw,
+      output, // EP4: preserve the chosen output presets (Shotstack doesn't carry them)
       timeline: {
         ...raw.timeline,
-        tracks: raw.timeline.tracks.map((t, i) =>
-          i === 0 && live.length > 0 ? { ...t, transitions: live } : t,
-        ),
+        tracks: raw.timeline.tracks.map((t, i) => {
+          // EP4: re-attach the React-held audioRole — editing a caption/overlay must
+          // not drop a track's ducking role (lives in React state, stripped by Shotstack).
+          const role = audioRolesRef.current[i];
+          const withRole = role ? { ...t, audioRole: role } : t;
+          return i === 0 && live.length > 0 ? { ...withRole, transitions: live } : withRole;
+        }),
         ...(nextCaptions.length > 0 ? { captions: nextCaptions } : {}),
         ...(nextOverlays.length > 0 ? { textOverlays: nextOverlays } : {}),
       },
@@ -583,6 +624,47 @@ export function Editor({
     setCaptions(nextCaptions);
     setOverlays(nextOverlays);
     setDirty(true);
+  }
+
+  /** Commit a NEW output preset (aspect/resolution/fps). The Output control lives in
+   *  React (Shotstack doesn't carry our presets), so a change fires NO edit:changed —
+   *  record here explicitly (same state-only pattern as commitTransitions/captions):
+   *  build the merged edit with `next` output, parse, commitState, then setOutput. This
+   *  makes output changes undoable + serialized, restored by undo/redo as their own
+   *  history step. Preserves the React-held transitions/audioRoles/captions/overlays. */
+  function commitOutput(next: ArtlioEdit["output"]): void {
+    const h = handles.current;
+    if (!h) return;
+    const live = reconcileNow();
+    const raw = h.edit.getEdit() as ArtlioEdit;
+    const merged = {
+      ...raw,
+      output: next,
+      timeline: {
+        ...raw.timeline,
+        tracks: raw.timeline.tracks.map((t, i) => {
+          const role = audioRolesRef.current[i];
+          const withRole = role ? { ...t, audioRole: role } : t;
+          return i === 0 && live.length > 0 ? { ...withRole, transitions: live } : withRole;
+        }),
+        ...(captionsRef.current.length > 0 ? { captions: captionsRef.current } : {}),
+        ...(overlaysRef.current.length > 0 ? { textOverlays: overlaysRef.current } : {}),
+      },
+    } as unknown as ArtlioEdit;
+    const parsed = artlioEdit.safeParse(merged);
+    if (!parsed.success) {
+      setNotice({ tone: "warn", text: parsed.error.issues[0]?.message ?? "invalid output preset" });
+      return;
+    }
+    commitState(parsed.data);
+    setOutput(next);
+    setDirty(true);
+  }
+  // Apply an output-preset change through the state-only commit path so it's undoable.
+  function changeOutput(patch: Partial<ArtlioEdit["output"]>): void {
+    if (opLock.current) return; // another command is in flight — serialize
+    if (!flushNative()) return; // reconcile + record any pending native edit first
+    commitOutput({ ...output, ...patch });
   }
 
   /** load a post-op ArtlioEdit into the live editor: hot-reload Shotstack with the
@@ -600,6 +682,10 @@ export function Editor({
     // undo/redo and any reload restore captions/overlays — not just transitions.
     setCaptions((next.timeline as { captions?: UiCaption[] }).captions ?? []);
     setOverlays((next.timeline as { textOverlays?: UiOverlay[] }).textOverlays ?? []);
+    // EP4: re-seed per-track audioRole + the output presets (Shotstack strips both) so
+    // undo/redo and any reload restore the ducking roles and output — not just captions.
+    setAudioRoles(seedRoles(next));
+    setOutput(next.output);
     prevClipsRef.current =
       ((h.edit.getEdit({ includeIds: true }) as ArtlioEdit).timeline.tracks[0]?.clips as ArtlioClip[] | undefined) ?? [];
     setDirty(true);
@@ -659,6 +745,105 @@ export function Editor({
       flushNative(); // commit deterministically now — don't depend on the observer (which we hold off)
     } catch (e) {
       console.error("[editor] addClip failed", e);
+    } finally {
+      opLock.current = false;
+    }
+  }
+
+  // EP4: place an audio asset on its OWN audio track (the contract forbids audio
+  // on the visual track). Build the next edit in JS — append at the end of an
+  // existing audio track, or CREATE a new one if there's room (≤3 tracks total,
+  // ≤2 audio). `target` "new" FORCES a fresh audio track (so a user can put music
+  // on its own track for the voice+music ducking workflow); "auto" appends to the
+  // first audio track if one exists, else creates the first. Push via reloadFromEdit
+  // (the EP2 op pattern): the SDK's addClip targets an existing index and can't
+  // create an audio track.
+  async function appendAudioAsset(clip: EditorClip, target: "auto" | "new" = "auto") {
+    const h = handles.current;
+    if (!h || status !== "ready" || opLock.current) return;
+    if (!flushNative()) return; // settle pending native edits + reconcile first
+    opLock.current = true;
+    try {
+      const base = currentMergedEdit();
+      if (!base) return;
+      const tracks = base.timeline.tracks.map((t) => ({ ...t, clips: [...t.clips] }));
+      const isAudio = (t: { clips: { asset: { type: string } }[] }) => t.clips.length > 0 && t.clips.every((c) => c.asset.type === "audio");
+      const idx = target === "new" ? -1 : tracks.findIndex(isAudio);
+      const newClip = { asset: { type: "audio" as const, src: clip.src }, start: 0, length: clip.seconds };
+      if (idx >= 0) {
+        const end = tracks[idx]!.clips.reduce((m, c) => Math.max(m, c.start + c.length), 0);
+        tracks[idx]!.clips.push({ ...newClip, start: end });
+      } else {
+        const audioCount = tracks.filter(isAudio).length;
+        if (tracks.length >= 3 || audioCount >= 2) {
+          setNotice({ tone: "warn", text: "No room for another audio track (max 2)." });
+          return;
+        }
+        tracks.push({ clips: [newClip] });
+      }
+      const next = { ...base, timeline: { ...base.timeline, tracks } };
+      const parsed = artlioEdit.safeParse(next);
+      if (!parsed.success) {
+        setNotice({ tone: "warn", text: parsed.error.issues[0]?.message ?? "Could not place audio." });
+        return;
+      }
+      commitState(parsed.data);
+      selfReload.current = true;
+      try { await reloadFromEdit(parsed.data); } finally { selfReload.current = false; }
+    } catch (e) {
+      console.error("[editor] appendAudioAsset failed", e);
+    } finally {
+      opLock.current = false;
+    }
+  }
+
+  // EP4 audio upload: reuses the EXISTING $0 ingest path (direct PUT → finalize →
+  // UPLOAD Generation + INGEST probe). No fal/generation/spend path. After finalize
+  // the new audio shows up in the Sound list (getEditorMedia now surfaces audio).
+  async function uploadAudio(files: FileList | null) {
+    if (!files || files.length === 0) return;
+    setUploadingAudio(true);
+    try {
+      const outcome = await uploadFilesDirect(Array.from(files), () => {});
+      const res = await finalizeCandidateUploads(projectId, "", [], outcome.files);
+      if ("error" in res) { setNotice({ tone: "warn", text: res.error }); return; }
+      const fresh = await getEditorMedia(projectId);
+      setMedia(fresh);
+      setNotice({ tone: "ok", text: `Uploaded ${res.count} audio file${res.count === 1 ? "" : "s"} — find it in Sound.` });
+    } catch (e) {
+      setNotice({ tone: "warn", text: e instanceof Error ? e.message : "Upload failed." });
+    } finally {
+      setUploadingAudio(false);
+    }
+  }
+
+  // EP4 ducking: toggle whether an audio track is the "music" bed ducked under
+  // voice (or marked "voice"). Sets the React-held audioRole for the track index,
+  // rebuilds + reloads the edit so it's undoable + persisted. Contract enforces
+  // ≤1 music track; an out-of-contract choice is rejected with a notice.
+  async function setAudioTrackRole(trackIndex: number, role: AudioRole | undefined) {
+    const h = handles.current;
+    if (!h || status !== "ready" || opLock.current) return;
+    if (!flushNative()) return;
+    opLock.current = true;
+    try {
+      const nextRoles = { ...audioRolesRef.current };
+      if (role) nextRoles[trackIndex] = role; else delete nextRoles[trackIndex];
+      const base = currentMergedEdit();
+      if (!base) return;
+      const tracks = base.timeline.tracks.map((t, i) => {
+        if (i !== trackIndex) return t;
+        const copy = { ...t };
+        if (role) copy.audioRole = role; else delete copy.audioRole; // clearing = the absence of an entry (flat mix)
+        return copy;
+      });
+      const next = { ...base, timeline: { ...base.timeline, tracks } };
+      const parsed = artlioEdit.safeParse(next);
+      if (!parsed.success) { setNotice({ tone: "warn", text: parsed.error.issues[0]?.message ?? "Invalid role." }); return; }
+      setAudioRoles(nextRoles); // update the ref BEFORE reload so currentMergedEdit re-merges it
+      commitState(parsed.data);
+      selfReload.current = true;
+      try { await reloadFromEdit(parsed.data); } finally { selfReload.current = false; }
     } finally {
       opLock.current = false;
     }
@@ -1015,6 +1200,21 @@ export function Editor({
     }
   }
 
+  // EP4: pure client-side FCP7 XML export — snapshot the merged edit, run the pure
+  // editToFcpXml transform, download as a Blob. NO render/generation/spend path.
+  function exportXml() {
+    const snap = snapshot();
+    if (snap.error || !snap.edit) { setNotice({ tone: "warn", text: snap.error ?? "Fix the cut first." }); return; }
+    const xml = editToFcpXml(snap.edit, { sequenceName: "Artlio cut" });
+    const blob = new Blob([xml], { type: "application/xml" });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url; a.download = "artlio-cut.xml";
+    document.body.appendChild(a); a.click(); a.remove();
+    URL.revokeObjectURL(url);
+    setNotice({ tone: "ok", text: "Exported FCP7 XML — import into Premiere/Resolve, re-link media by filename." });
+  }
+
   async function exportCut() {
     if (opLock.current) { setNotice({ tone: "warn", text: "Editor is updating — try exporting again in a moment." }); return; }
     opLock.current = true;
@@ -1171,6 +1371,19 @@ export function Editor({
             Close gaps
           </Button>
         )}
+        <select value={output.aspectRatio} onChange={(e) => changeOutput({ aspectRatio: e.target.value as ArtlioEdit["output"]["aspectRatio"] })} aria-label="Aspect ratio" style={{ font: "var(--text-caption)" }}>
+          <option value="16:9">16:9</option><option value="9:16">9:16</option><option value="1:1">1:1</option>
+        </select>
+        <select value={output.resolution} onChange={(e) => changeOutput({ resolution: e.target.value as ArtlioEdit["output"]["resolution"] })} aria-label="Resolution" style={{ font: "var(--text-caption)" }}>
+          <option value="sd">SD</option><option value="hd">HD 720</option><option value="1080">1080 (renders at 720 — beta)</option>
+        </select>
+        <select value={output.fps} onChange={(e) => changeOutput({ fps: Number(e.target.value) as ArtlioEdit["output"]["fps"] })} aria-label="FPS" style={{ font: "var(--text-caption)" }}>
+          <option value={25}>25fps</option><option value={30}>30fps</option>
+        </select>
+        <label style={{ font: "var(--text-caption)", color: "var(--fg-2)", display: "flex", alignItems: "center", gap: 4 }}>
+          <input type="checkbox" checked={approxPreview} onChange={(e) => setApproxPreview(e.target.checked)} /> Approx preview (no effects)
+        </label>
+        <Button variant="glass" size="sm" onClick={exportXml} disabled={status !== "ready" || busy} title="Export FCP7 XML for Premiere/Resolve">Export XML</Button>
         <Button size="sm" onClick={exportCut} disabled={status !== "ready" || busy}>
           Export MP4
         </Button>
@@ -1188,9 +1401,10 @@ export function Editor({
           <aside style={{ width: 220, flex: "none", display: "flex", flexDirection: "column", border: "1px solid var(--line-2)", borderRadius: "var(--radius-lg)", overflow: "hidden", maxHeight: "100%" }}>
             <div style={{ padding: "9px 12px", borderBottom: "1px solid var(--line-2)", flex: "none" }}><MonoLabel>Assets</MonoLabel></div>
             <div style={{ flex: 1, overflow: "auto", padding: 10, display: "flex", flexDirection: "column", gap: 8 }}>
-              {media.length === 0 ? (
+              {/* EP4: audio lives in the Sound aside; Assets shows only visual media. */}
+              {media.filter((m) => m.kind !== "audio").length === 0 ? (
                 <p style={{ font: "var(--text-caption)", color: "var(--fg-3)", margin: 0 }}>No media yet — generate in Gen space, then click a clip here to add it to the cut.</p>
-              ) : media.map((m) => (
+              ) : media.filter((m) => m.kind !== "audio").map((m) => (
                 <button key={m.id} onClick={() => appendAsset(m)} title="Add to the cut, or drag onto the timeline" disabled={status !== "ready"}
                   draggable onDragStart={(e) => setDnd(e.dataTransfer, { kind: "editor-clip", src: m.src, clipKind: m.kind, seconds: m.seconds })}
                   style={{ position: "relative", border: "1px solid var(--line-2)", borderRadius: "var(--radius-md)", overflow: "hidden", background: "#000", aspectRatio: "16 / 10", cursor: "pointer", padding: 0 }}>
@@ -1242,6 +1456,68 @@ export function Editor({
                       </section>
                     )}
                   </>
+                );
+              })()}
+            </div>
+          </aside>
+          {/* Sound tab — audio assets, upload, place on an audio track, ducking */}
+          <aside style={{ width: 200, flex: "none", display: "flex", flexDirection: "column", border: "1px solid var(--line-2)", borderRadius: "var(--radius-lg)", overflow: "hidden", maxHeight: "100%" }}>
+            <div style={{ padding: "9px 12px", borderBottom: "1px solid var(--line-2)", display: "flex", alignItems: "center", justifyContent: "space-between", flex: "none" }}>
+              <MonoLabel>Sound</MonoLabel>
+              <label style={{ font: "var(--text-mono-meta)", color: "var(--fg-3)", cursor: "pointer", textDecoration: "underline", textUnderlineOffset: 3 }}>
+                {uploadingAudio ? "Uploading…" : "Upload"}
+                <input type="file" accept="audio/*" multiple hidden disabled={uploadingAudio} onChange={(e) => uploadAudio(e.target.files)} />
+              </label>
+            </div>
+            <div style={{ flex: 1, overflow: "auto", padding: 10, display: "flex", flexDirection: "column", gap: 8 }}>
+              {media.filter((m) => m.kind === "audio").length === 0 ? (
+                <p style={{ font: "var(--text-caption)", color: "var(--fg-3)", margin: 0 }}>No audio yet — upload a track, or generate audio in Gen space.</p>
+              ) : (() => {
+                // there's room for a SECOND audio track (so music can sit on its own
+                // track for the voice+music ducking workflow) when an audio track
+                // already exists AND the contract caps still allow another (≤2 audio,
+                // ≤3 tracks total). When so, each asset offers an "＋ new track" action.
+                const t = currentMergedEdit()?.timeline.tracks ?? [];
+                const audioCount = t.filter((tr) => tr.clips.length > 0 && tr.clips.every((c) => c.asset.type === "audio")).length;
+                const canAddTrack = audioCount >= 1 && audioCount < 2 && t.length < 3;
+                return media.filter((m) => m.kind === "audio").map((m) => (
+                  <div key={m.id} style={{ display: "flex", alignItems: "center", gap: 6 }}>
+                    <button onClick={() => appendAudioAsset(m)} disabled={status !== "ready"}
+                      title="Add to the first audio track, or drag onto the timeline"
+                      draggable onDragStart={(e) => setDnd(e.dataTransfer, { kind: "editor-clip", src: m.src, clipKind: "audio", seconds: m.seconds })}
+                      style={{ flex: 1, display: "flex", alignItems: "center", gap: 8, textAlign: "left", font: "var(--text-caption)", color: "var(--fg-1)", background: "var(--glass-1)", border: "1px solid var(--line-2)", borderRadius: "var(--radius-sm)", padding: "7px 10px", cursor: "pointer", minWidth: 0 }}>
+                      <span aria-hidden>♪</span>
+                      <span style={{ flex: 1, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{Math.round(m.seconds)}s clip</span>
+                      <span aria-hidden style={{ color: "var(--fg-3)" }}>+</span>
+                    </button>
+                    {canAddTrack && (
+                      <button onClick={() => appendAudioAsset(m, "new")} disabled={status !== "ready"}
+                        title="Place on a NEW audio track (for separate voice + music)"
+                        style={{ flex: "none", font: "var(--text-mono-meta)", color: "var(--fg-3)", background: "transparent", border: "1px solid var(--line-2)", borderRadius: "var(--radius-sm)", padding: "5px 6px", cursor: "pointer", whiteSpace: "nowrap" }}>
+                        ＋ track
+                      </button>
+                    )}
+                  </div>
+                ));
+              })()}
+              {/* Ducking: list audio tracks with a music/voice toggle */}
+              {(() => {
+                const tracks = currentMergedEdit()?.timeline.tracks ?? [];
+                const audioTracks = tracks.map((t, i) => ({ t, i })).filter(({ t }) => t.clips.length > 0 && t.clips.every((c) => c.asset.type === "audio"));
+                if (audioTracks.length === 0) return null;
+                return (
+                  <section style={{ marginTop: 8, display: "flex", flexDirection: "column", gap: 6 }}>
+                    <MonoLabel>Ducking</MonoLabel>
+                    {audioTracks.map(({ t, i }) => (
+                      <div key={i} style={{ display: "flex", alignItems: "center", gap: 6, font: "var(--text-caption)" }}>
+                        <span style={{ flex: 1 }}>Track {i + 1}</span>
+                        <select value={t.audioRole ?? ""} onChange={(e) => setAudioTrackRole(i, (e.target.value || undefined) as AudioRole | undefined)} aria-label={`Track ${i + 1} role`} style={{ font: "var(--text-caption)" }}>
+                          <option value="">none</option><option value="voice">voice</option><option value="music">music (duck)</option>
+                        </select>
+                      </div>
+                    ))}
+                    <p style={{ font: "var(--text-caption)", color: "var(--fg-3)", margin: 0 }}>Mark the bed “music” to dip it under voice.</p>
+                  </section>
                 );
               })()}
             </div>
@@ -1332,6 +1608,11 @@ export function Editor({
             </div>
           </aside>
           <div style={{ flex: 1, minWidth: 0, display: "flex", flexDirection: "column" }}>
+          {approxPreview && (() => {
+            const vts = currentMergedEdit()?.timeline.tracks.find((t) => t.clips.some((c) => c.asset.type !== "audio"));
+            const clips = vts ? [...vts.clips].sort((a, b) => a.start - b.start) : [];
+            return <ApproxPreview clips={clips} />;
+          })()}
           <div
             ref={studioRef}
             data-shotstack-studio
@@ -1359,7 +1640,8 @@ export function Editor({
               e.preventDefault(); setDropping(false);
               const payload = getDnd(e.dataTransfer);
               if (payload?.kind === "editor-clip" && handles.current && status === "ready") {
-                void appendAsset({ id: "", src: payload.src, kind: payload.clipKind, seconds: payload.seconds });
+                if (payload.clipKind === "audio") void appendAudioAsset({ id: "", src: payload.src, kind: "audio", seconds: payload.seconds });
+                else void appendAsset({ id: "", src: payload.src, kind: payload.clipKind, seconds: payload.seconds });
               }
             }}
             style={{
@@ -1412,7 +1694,7 @@ export function Editor({
           {selected && (() => {
             const type = selected.clip.asset?.type;
             const isVisual = type === "video" || type === "image";
-            const hasAudio = type === "video"; // generated videos carry native sound; images are silent
+            const hasAudio = type === "video" || type === "audio"; // EP4: audio-track clips expose volume too; images are silent
             const fadeIn = !!selected.clip.transition?.in;
             const fadeOut = !!selected.clip.transition?.out;
             const volume = selected.clip.asset?.volume ?? 1;
@@ -1445,6 +1727,56 @@ export function Editor({
           })()}
         </div>
       )}
+    </div>
+  );
+}
+
+/** EP4 approximate preview: a sequential HTML5 <video> playthrough of the VISUAL
+ *  track only. NO transitions, captions, overlays, or audio ducking are simulated
+ *  (the label says so) — it's a cheap, $0, dependency-free "does my cut roughly
+ *  play back-to-back" check. Read-only: it never touches the contract or Shotstack.
+ *  Honors trim (as currentTime) + length, advancing on time and looping at the end. */
+function ApproxPreview({ clips }: { clips: ArtlioClip[] }) {
+  const [idx, setIdx] = useState(0);
+  const ref = useRef<HTMLVideoElement | null>(null);
+  // Clamp during render (no reset effect) so a clip-list change can't index out of
+  // range — avoids a setState-in-effect cascade and keeps the player honest.
+  const safeIdx = clips.length > 0 ? idx % clips.length : 0;
+  const cur = clips[safeIdx];
+  const isImage = cur?.asset.type === "image";
+  useEffect(() => {
+    if (!cur) return;
+    const advance = () => setIdx((i) => (i + 1) % Math.max(1, clips.length));
+    // IMAGE clip: <img> has no playback — hold it for clip.length, then advance.
+    if (isImage) {
+      const timer = setTimeout(advance, Math.max(0, cur.length) * 1000);
+      return () => clearTimeout(timer);
+    }
+    // VIDEO clip: seek to trim, play, advance when the used portion (trim+length)
+    // is reached — and on natural 'ended' (a source shorter than trim+length).
+    const v = ref.current; if (!v) return;
+    const trim = cur.asset.trim ?? 0;
+    const onMeta = () => { v.currentTime = trim; void v.play().catch(() => {}); };
+    const onTime = () => { if (v.currentTime >= trim + cur.length) advance(); };
+    v.addEventListener("loadedmetadata", onMeta);
+    v.addEventListener("timeupdate", onTime);
+    v.addEventListener("ended", advance);
+    return () => {
+      v.removeEventListener("loadedmetadata", onMeta);
+      v.removeEventListener("timeupdate", onTime);
+      v.removeEventListener("ended", advance);
+    };
+  }, [cur, clips.length, isImage]);
+  if (!cur) return <p style={{ font: "var(--text-caption)", color: "var(--fg-3)" }}>No visual clips to preview.</p>;
+  return (
+    <div style={{ marginBottom: 8 }}>
+      {isImage ? (
+        // eslint-disable-next-line @next/next/no-img-element
+        <img src={cur.asset.src} alt="" style={{ width: "100%", borderRadius: "var(--radius-md)", background: "#000", display: "block" }} />
+      ) : (
+        <video ref={ref} src={cur.asset.src} playsInline controls style={{ width: "100%", borderRadius: "var(--radius-md)", background: "#000" }} />
+      )}
+      <p style={{ font: "var(--text-mono-meta)", color: "var(--fg-4)", margin: "4px 0 0" }}>Approx clip {safeIdx + 1}/{clips.length} — transitions, captions &amp; ducking not shown.</p>
     </div>
   );
 }

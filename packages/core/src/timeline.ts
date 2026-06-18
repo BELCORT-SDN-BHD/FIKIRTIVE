@@ -104,6 +104,14 @@ export type TransitionType = (typeof TRANSITION_TYPES)[number];
 export const TRANSITION_DIRECTIONS = ["left", "right", "up", "down"] as const;
 export type TransitionDirection = (typeof TRANSITION_DIRECTIONS)[number];
 
+/** Audio-track role for auto-ducking (EP4). "music" = a bed ducked UNDER any
+ *  "voice" signal (the voice audio track + native visual-clip dialogue) via
+ *  ffmpeg sidechaincompress. Absent on every legacy edit and any edit that
+ *  doesn't opt in → the worker uses a flat amix (no ducking). Roles are
+ *  visual-track-illegal (a role describes an audio bed/voice, not picture). */
+export const AUDIO_ROLES = ["voice", "music"] as const;
+export type AudioRole = (typeof AUDIO_ROLES)[number];
+
 /** A transition is a relationship BETWEEN two gapless-adjacent visual clips.
  *  It lives on the TRACK (track.transitions[]), NOT on a clip — the editor
  *  round-trips clips through Shotstack's Edit, whose schema strips unknown clip
@@ -189,6 +197,10 @@ export const track = z.object({
    *  gapless-adjacent; a track with a gap and NO transitions still parses (legacy
    *  edits may contain gaps). None = the absence of an entry. */
   transitions: z.array(betweenClipTransition).max(MAX_CLIPS_PER_TRACK).optional(),
+  /** audio-track role for ducking (EP4); audio tracks only. None = the absence
+   *  of an entry → flat mix. Validated in timeline.superRefine (track
+   *  composition + the ≤1-music-track rule are in scope there). */
+  audioRole: z.enum(AUDIO_ROLES).optional(),
 });
 
 function clipsOverlap(clips: z.infer<typeof clip>[]): boolean {
@@ -238,6 +250,10 @@ export const timeline = z
       const mixed = isVisualTrack(t) && t.clips.some((c) => c.asset.type === "audio");
       if (mixed) {
         ctx.addIssue({ code: "custom", message: `track ${i}: audio clips belong on their own track` });
+      }
+      // audioRole is audio-track only; the count guard (≤1 music) is below the loop
+      if (t.audioRole && isVisualTrack(t)) {
+        ctx.addIssue({ code: "custom", message: `track ${i}: audioRole is for audio tracks only (a visual track has no bed/voice role)` });
       }
       // between-clip transition validation. The gapless requirement is LOCAL: each
       // transition's two referenced clips must be gapless-adjacent. A track with a
@@ -296,6 +312,10 @@ export const timeline = z
       }
       for (const c of t.clips) end = Math.max(end, c.start + c.length);
     });
+    const musicTracks = tl.tracks.filter((t) => !isVisualTrack(t) && t.audioRole === "music").length;
+    if (musicTracks > 1) {
+      ctx.addIssue({ code: "custom", message: `at most one music track may duck (got ${musicTracks}) — mark only the bed as "music"` });
+    }
     if (end > MAX_TIMELINE_SECONDS) {
       ctx.addIssue({
         code: "custom",
