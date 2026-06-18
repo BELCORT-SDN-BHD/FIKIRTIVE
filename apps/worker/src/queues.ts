@@ -1,4 +1,4 @@
-import { INGEST_QUEUE, RENDER_QUEUE, REFGEN_QUEUE, GEN_QUEUE } from "@artlio/core";
+import { INGEST_QUEUE, RENDER_QUEUE, REFGEN_QUEUE, GEN_QUEUE, CAPTION_QUEUE } from "@artlio/core";
 
 /** Queue names — single source for web (producers) and worker (consumers). */
 export const QUEUES = {
@@ -12,4 +12,6 @@ export const QUEUES = {
   refgen: REFGEN_QUEUE,
   /** Redesign shot/session generation: prompt → provider → Generation candidate. */
   gen: GEN_QUEUE,
+  /** $0 caption job: extract audio → whisper.cpp → cached transcript (NEVER fal). */
+  caption: CAPTION_QUEUE,
 } as const;

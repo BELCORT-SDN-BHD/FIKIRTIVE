@@ -34,6 +34,14 @@ export const MAX_TRIM_SECONDS = 60 * 60 * 4; // seek ≤ 4 h into a source
 export const TRANSITION_MAX_SECONDS = 2;
 export const TRANSITION_DEFAULT_SECONDS = 0.5;
 
+export const MAX_CAPTIONS = 500;
+export const MAX_OVERLAYS = 50;
+export const MAX_CAPTION_CHARS = 500;
+export const MAX_OVERLAY_CHARS = 200;
+export const MAX_FONT_PX = 200;
+export const OVERLAY_POSITIONS = ["top", "center", "bottom"] as const;
+export type OverlayPosition = (typeof OVERLAY_POSITIONS)[number];
+
 /** extension allow-list per asset type — a mismatch is a contract violation */
 export const EXT_BY_TYPE = {
   video: ["mp4", "mov", "webm", "mkv"],
@@ -114,6 +122,40 @@ export const betweenClipTransition = z.object({
 });
 export type BetweenClipTransition = z.infer<typeof betweenClipTransition>;
 
+/** A caption cue is a TIMELINE-time-addressed text window (absolute, integer ms),
+ *  NOT clip-relative — it can span clip boundaries. Lives on timeline.captions[]
+ *  (NOT on a clip: Shotstack strips unknown clip fields; burn-in is on the final
+ *  composited stream). The worker converts startMs→RENDERED time (transitions
+ *  shrink the timeline) and builds an ASS file for ffmpeg subtitles=. */
+export const captionCue = z.object({
+  startMs: z.number().int().min(0).max(MAX_TIMELINE_SECONDS * 1000),
+  lengthMs: z.number().int().gt(0).max(MAX_CLIP_SECONDS * 1000),
+  text: z.string().min(1).max(MAX_CAPTION_CHARS),
+});
+export type CaptionCue = z.infer<typeof captionCue>;
+
+/** A static text overlay (timeline-time-addressed, integer ms). Static only —
+ *  animated text is deferred. Worker → drawtext with enable='between(t,...)'
+ *  in RENDERED time. Lives on timeline.textOverlays[] (same reason as captions). */
+export const overlayStyle = z.object({
+  fontSize: z.number().int().min(8).max(MAX_FONT_PX).default(48),
+  color: z
+    .string()
+    .regex(/^#[0-9a-fA-F]{6}$/)
+    .default("#ffffff"),
+});
+export const textOverlay = z.object({
+  startMs: z.number().int().min(0).max(MAX_TIMELINE_SECONDS * 1000),
+  lengthMs: z.number().int().gt(0).max(MAX_CLIP_SECONDS * 1000),
+  text: z.string().min(1).max(MAX_OVERLAY_CHARS),
+  position: z.enum(OVERLAY_POSITIONS).default("bottom"),
+  // thunk (not a literal {}) so the default carries overlayStyle's own bounded
+  // nested defaults (fontSize:48, color:#ffffff) AND typechecks under zod v4 +
+  // tsc (a literal {} fails strict typing — the input type requires both fields).
+  style: overlayStyle.default(() => overlayStyle.parse({})),
+});
+export type TextOverlay = z.infer<typeof textOverlay>;
+
 export const clip = z
   .object({
     asset: z.union([visualAsset, audioAsset]),
@@ -169,6 +211,8 @@ export const timeline = z
       .regex(/^#[0-9a-fA-F]{6}$/)
       .default("#000000"),
     tracks: z.array(track).min(1).max(3),
+    captions: z.array(captionCue).max(MAX_CAPTIONS).optional(),
+    textOverlays: z.array(textOverlay).max(MAX_OVERLAYS).optional(),
   })
   .superRefine((tl, ctx) => {
     const visual = tl.tracks.filter(isVisualTrack).length;
@@ -258,6 +302,23 @@ export const timeline = z
         message: `timeline runs ${Math.round(end)}s — cap is ${MAX_TIMELINE_SECONDS}s`,
       });
     }
+    // caption/overlay bounds-in-context: every window must fit inside the timeline
+    // ([0, editDuration]). `end` is the max clip end (= editDuration) computed above.
+    const limit = end; // editDuration is in scope as `end`
+    for (const c of tl.captions ?? []) {
+      if (c.startMs / 1000 + c.lengthMs / 1000 > limit + EPS)
+        ctx.addIssue({
+          code: "custom",
+          message: `caption window ends past the timeline (${(c.startMs + c.lengthMs) / 1000}s > ${limit}s)`,
+        });
+    }
+    for (const o of tl.textOverlays ?? []) {
+      if (o.startMs / 1000 + o.lengthMs / 1000 > limit + EPS)
+        ctx.addIssue({
+          code: "custom",
+          message: `text overlay window ends past the timeline (${(o.startMs + o.lengthMs) / 1000}s > ${limit}s)`,
+        });
+    }
   });
 
 export const output = z.object({
@@ -302,6 +363,22 @@ export const RENDER_QUEUE_POLICY = {
 /** RenderJob.status lifecycle (DB enum mirrors this) */
 export const RENDER_STATUSES = ["QUEUED", "RENDERING", "DONE", "FAILED"] as const;
 export type RenderStatus = (typeof RENDER_STATUSES)[number];
+
+/** $0 caption job: extract audio → whisper.cpp → cached transcript. SEPARATE
+ *  queue from render so a slow transcribe never blocks a render. The payload
+ *  holds ONLY the row id; the row holds the real data. */
+export const captionJobData = z.object({ captionJobId: z.string().min(1).max(64) });
+export type CaptionJobData = z.infer<typeof captionJobData>;
+export const CAPTION_QUEUE = "caption";
+export const CAPTION_DLQ = `${CAPTION_QUEUE}.dlq`;
+export const CAPTION_RETRY_LIMIT = 2;
+export const CAPTION_QUEUE_POLICY = {
+  retryLimit: CAPTION_RETRY_LIMIT,
+  retryDelay: 20,
+  retryBackoff: true,
+  expireInSeconds: 60 * 15, // > whisper timeout (10m) so a job never expires mid-transcribe
+  deadLetter: CAPTION_DLQ,
+} as const;
 
 /** strip the /files/ prefix → storage key (worker side) */
 export function srcToStorageKey(src: string): string {

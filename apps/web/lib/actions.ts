@@ -4,13 +4,19 @@ import { revalidatePath } from "next/cache";
 import { prisma } from "@artlio/db";
 import {
   artlioEdit,
+  captionCue,
   editDuration,
   newId,
+  parseStorageKey,
+  srcToStorageKey,
   storageKey,
   storageKeyToSrc,
   INGEST_QUEUE,
   RENDER_QUEUE,
+  CAPTION_QUEUE,
   type ArtlioEdit,
+  type CaptionCue,
+  type CaptionJobData,
   type RenderJobData,
 } from "@artlio/core";
 import type { EntityType, ShotStatus } from "@artlio/db";
@@ -724,6 +730,85 @@ export async function getRenderJobs(projectId: string) {
       url: asset ? storageKeyToSrc(storageKey(asset.ownerId, asset.contentHash, asset.ext)) : null,
     };
   });
+}
+
+/** Resolve a timeline clip's `/files/...` src to the OWNED Asset row behind it.
+ *  The editor identifies a clip only by src (a content-addressed storage key); the
+ *  caption job needs a real Asset.id + contentHash. Returns null when the src is
+ *  malformed or the asset isn't owned (forged src can't reach another owner). */
+async function ownedAssetFromSrc(src: string): Promise<{ id: string; contentHash: string } | null> {
+  let contentHash: string;
+  try {
+    contentHash = parseStorageKey(srcToStorageKey(src)).contentHash;
+  } catch {
+    return null;
+  }
+  const asset = await prisma.asset.findFirst({
+    where: { ownerId: FOUNDER_OWNER_ID, contentHash, deletedAt: null },
+    select: { id: true, contentHash: true },
+  });
+  return asset;
+}
+
+/** $0 captions: dispatch the whisper.cpp caption job for one visual-track clip.
+ *  Persists the CaptionJob row FIRST, then dispatches (same triple-insurance rule
+ *  as startRender). Whisper + ffmpeg only — NO spend path. `src` is the clip's
+ *  content-addressed source (the only identifier the editor has for a clip); the
+ *  real Asset.id/contentHash are resolved server-side so the worker can read it. */
+export async function startCaption(projectId: string, src: string) {
+  const gate = await requireSession(); if ("error" in gate) return gate;
+  const project = await prisma.project.findFirst({ where: { id: projectId, ...OWNED } });
+  if (!project) return { error: "Project not found." };
+  const asset = await ownedAssetFromSrc(src);
+  if (!asset) return { error: "That clip isn't in your media — generate it first." };
+  // in-flight guard: don't stack identical caption jobs for the same asset
+  const active = await prisma.captionJob.findFirst({
+    where: { projectId, ownerId: FOUNDER_OWNER_ID, assetId: asset.id, status: { in: ["QUEUED", "RENDERING"] } },
+  });
+  if (active) return { error: "Captions are already being generated for this clip — wait for it to finish." };
+  const job = await prisma.captionJob.create({
+    data: { id: newId(), ownerId: FOUNDER_OWNER_ID, projectId, assetId: asset.id, contentHash: asset.contentHash },
+  });
+  try {
+    const boss = await getBoss();
+    const queueJobId = await boss.send(CAPTION_QUEUE, { captionJobId: job.id } satisfies CaptionJobData);
+    await prisma.captionJob.update({ where: { id: job.id }, data: { queueJobId: queueJobId ?? "" } });
+  } catch (e) {
+    const message = e instanceof Error ? e.message.slice(0, 300) : "queue unavailable";
+    await prisma.captionJob.update({
+      where: { id: job.id },
+      data: { status: "FAILED", error: `dispatch failed: ${message}` },
+    });
+    return { error: "Could not reach the caption queue — is the worker database up?" };
+  }
+  await logAction("caption.start", projectId, { captionJobId: job.id, assetId: asset.id });
+  revalidatePath("/", "layout");
+  return { id: job.id };
+}
+
+/** Poll target for the editor's caption-generate flow. */
+export async function getCaptionJob(jobId: string) {
+  const gate = await requireSession(); if ("error" in gate) throw new Error(gate.error);
+  const job = await prisma.captionJob.findFirst({ where: { id: jobId, ownerId: FOUNDER_OWNER_ID } });
+  if (!job) return null;
+  return { id: job.id, status: job.status, progress: job.progress, error: job.error };
+}
+
+/** Read the cached whisper transcript for a clip → the editable CaptionCue[] seed
+ *  the UI folds into timeline.captions after the caption job finishes. Returns []
+ *  when no transcript is cached yet (or the cached transcript is empty). */
+export async function getTranscript(projectId: string, src: string): Promise<CaptionCue[]> {
+  const gate = await requireSession(); if ("error" in gate) throw new Error(gate.error);
+  const project = await prisma.project.findFirst({ where: { id: projectId, ...OWNED } });
+  if (!project) return [];
+  const asset = await ownedAssetFromSrc(src);
+  if (!asset) return [];
+  const transcript = await prisma.transcript.findUnique({
+    where: { contentHash_model: { contentHash: asset.contentHash, model: "base.en" } },
+  });
+  if (!transcript) return [];
+  const parsed = captionCue.array().safeParse(transcript.cuesJson);
+  return parsed.success ? parsed.data : [];
 }
 
 /** Hide from candidate zone. The row is a tombstone; the sweeper handles blobs. */

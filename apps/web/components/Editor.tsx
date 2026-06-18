@@ -2,8 +2,8 @@
 
 import { useEffect, useRef, useState } from "react";
 import Link from "next/link";
-import { artlioEdit, snapEdit, splitClipAt, rippleDeleteClip, reconcileTransitions, type ArtlioEdit, type ArtlioClip } from "@artlio/core";
-import { getRenderJobs, saveProjectEdit, startRender, getEditorMedia } from "@/lib/actions";
+import { artlioEdit, snapEdit, splitClipAt, rippleDeleteClip, reconcileTransitions, OVERLAY_POSITIONS, type ArtlioEdit, type ArtlioClip, type CaptionCue, type TextOverlay } from "@artlio/core";
+import { getRenderJobs, saveProjectEdit, startRender, getEditorMedia, startCaption, getCaptionJob, getTranscript } from "@/lib/actions";
 import { setDnd, getDnd, hasDnd } from "@/lib/dnd";
 import { Button, Chip, EmptyHero, MonoLabel } from "./ds";
 
@@ -43,6 +43,11 @@ type Selection = { trackIndex: number; clipIndex: number; clip: SelClip };
  *  Lives in Artlio React state (outside Shotstack) and is merged into the
  *  ArtlioEdit on save. */
 type UiTransition = { fromClipIndex: number; toClipIndex: number; type: string; durationMs: number; direction?: "left" | "right" | "up" | "down" };
+/** Captions + static text overlays live in Artlio React state (outside Shotstack)
+ *  and are merged into the timeline (one level up, NOT on a track) at save — same
+ *  round-trip as transitions, since the Shotstack Edit strips unknown fields. */
+type UiCaption = CaptionCue;
+type UiOverlay = TextOverlay;
 
 // The LTX-style 7-tile library. "None" = the ABSENCE of an entry (never stored).
 const TRANSITION_TILES = ["None", "Fade", "Slide", "Wipe", "Flip", "Clock Wipe", "Iris"] as const;
@@ -114,6 +119,35 @@ export function Editor({
     transitionsRef.current = value;
     setTransitionsState(value);
   };
+
+  // EP3 captions + static text overlays — SAME outside-Shotstack pattern as
+  // transitions, but TIMELINE-level (siblings of tracks, not on a track/clip):
+  // burn-in is on the final composited stream, and Shotstack strips unknown
+  // fields, so they live in Artlio state and are merged into the ArtlioEdit at
+  // currentMergedEdit(). A ref mirrors each so currentMergedEdit reads the CURRENT
+  // value (never the value captured when the load effect mounted). ALL writes go
+  // through the setter, which keeps ref + state in sync.
+  const [captions, setCaptionsState] = useState<UiCaption[]>(
+    () => (initialEdit?.timeline.captions as UiCaption[] | undefined) ?? [],
+  );
+  const captionsRef = useRef<UiCaption[]>(captions);
+  const setCaptions = (next: UiCaption[] | ((prev: UiCaption[]) => UiCaption[])) => {
+    const value = typeof next === "function" ? next(captionsRef.current) : next;
+    captionsRef.current = value;
+    setCaptionsState(value);
+  };
+  const [overlays, setOverlaysState] = useState<UiOverlay[]>(
+    () => (initialEdit?.timeline.textOverlays as UiOverlay[] | undefined) ?? [],
+  );
+  const overlaysRef = useRef<UiOverlay[]>(overlays);
+  const setOverlays = (next: UiOverlay[] | ((prev: UiOverlay[]) => UiOverlay[])) => {
+    const value = typeof next === "function" ? next(overlaysRef.current) : next;
+    overlaysRef.current = value;
+    setOverlaysState(value);
+  };
+  // caption-generate flow state (async dispatch + poll, all $0)
+  const [capBusy, setCapBusy] = useState(false);
+  const [capNote, setCapNote] = useState<string | null>(null);
   // the visual track's clip list as it was at the LAST snapshot/reload — the
   // "before" side for reconcileTransitions when a NATIVE Shotstack edit
   // (drag-reorder / trim) fires edit:changed. Updated on every reload and after
@@ -409,6 +443,9 @@ export function Editor({
     // UiTransition.type is a loose `string` (the tile→type map); the contract
     // narrows it at parse time. Consumers always safeParse / feed an op that
     // re-parses, so cast the pre-parse merge to ArtlioEdit.
+    // Captions/overlays fold in ONE level up (timeline-level, never on a track) —
+    // and only when non-empty, so "absence = feature unused" round-trips (no empty
+    // [] is ever persisted, matching the transitions/None rule).
     const merged = {
       ...raw,
       timeline: {
@@ -416,6 +453,8 @@ export function Editor({
         tracks: raw.timeline.tracks.map((t, i) =>
           i === 0 && live.length > 0 ? { ...t, transitions: live } : t,
         ),
+        ...(captionsRef.current.length > 0 ? { captions: captionsRef.current } : {}),
+        ...(overlaysRef.current.length > 0 ? { textOverlays: overlaysRef.current } : {}),
       },
     };
     return merged as unknown as ArtlioEdit;
@@ -497,6 +536,10 @@ export function Editor({
         tracks: raw.timeline.tracks.map((t, i) =>
           i === 0 && next.length > 0 ? { ...t, transitions: next } : t,
         ),
+        // preserve the timeline-level Artlio arrays — editing a transition must not
+        // drop captions/overlays from the committed edit (they live in React state).
+        ...(captionsRef.current.length > 0 ? { captions: captionsRef.current } : {}),
+        ...(overlaysRef.current.length > 0 ? { textOverlays: overlaysRef.current } : {}),
       },
     } as unknown as ArtlioEdit;
     const parsed = artlioEdit.safeParse(merged);
@@ -506,6 +549,39 @@ export function Editor({
     }
     commitState(parsed.data);
     setTransitions(next);
+    setDirty(true);
+  }
+
+  /** Commit NEW captions/overlays. Like commitTransitions, these live in React (not
+   *  Shotstack) so they fire NO edit:changed — record here explicitly so each edit
+   *  is undoable + persisted. Builds the merged edit with the staged arrays (folded
+   *  TIMELINE-level, only when non-empty), parses, commitState, then applies to
+   *  state. Skips (with a notice) if the result would be out of contract. Reads the
+   *  CURRENT reconciled transitions so a caption edit never drops a live transition. */
+  function commitCaptionsOverlays(nextCaptions: UiCaption[], nextOverlays: UiOverlay[]): void {
+    const h = handles.current;
+    if (!h) return;
+    const live = reconcileNow();
+    const raw = h.edit.getEdit() as ArtlioEdit;
+    const merged = {
+      ...raw,
+      timeline: {
+        ...raw.timeline,
+        tracks: raw.timeline.tracks.map((t, i) =>
+          i === 0 && live.length > 0 ? { ...t, transitions: live } : t,
+        ),
+        ...(nextCaptions.length > 0 ? { captions: nextCaptions } : {}),
+        ...(nextOverlays.length > 0 ? { textOverlays: nextOverlays } : {}),
+      },
+    } as unknown as ArtlioEdit;
+    const parsed = artlioEdit.safeParse(merged);
+    if (!parsed.success) {
+      setNotice({ tone: "warn", text: parsed.error.issues[0]?.message ?? "invalid caption/text" });
+      return; // don't apply an out-of-contract caption/overlay
+    }
+    commitState(parsed.data);
+    setCaptions(nextCaptions);
+    setOverlays(nextOverlays);
     setDirty(true);
   }
 
@@ -520,6 +596,10 @@ export function Editor({
     await h.edit.loadEdit(next);
     const nextTransitions = (next.timeline.tracks[0] as { transitions?: UiTransition[] } | undefined)?.transitions ?? [];
     setTransitions(nextTransitions);
+    // re-seed the timeline-level Artlio state too (Shotstack doesn't carry these) so
+    // undo/redo and any reload restore captions/overlays — not just transitions.
+    setCaptions((next.timeline as { captions?: UiCaption[] }).captions ?? []);
+    setOverlays((next.timeline as { textOverlays?: UiOverlay[] }).textOverlays ?? []);
     prevClipsRef.current =
       ((h.edit.getEdit({ includeIds: true }) as ArtlioEdit).timeline.tracks[0]?.clips as ArtlioClip[] | undefined) ?? [];
     setDirty(true);
@@ -667,6 +747,132 @@ export function Editor({
     if (opLock.current) return; // another command is in flight — serialize
     if (!flushNative()) return; // reconcile to current indices + record any pending native edit
     commitTransitions([]); // state-only change → record history explicitly
+  }
+
+  // ---- EP3 captions + static text overlays (Artlio state, outside Shotstack) ----
+  // Generate captions for the selected (or first) visual clip: dispatch the $0
+  // whisper caption job, poll to DONE, then seed timeline.captions from the cached
+  // transcript. NO spend — the job runs ffmpeg + whisper only.
+  async function generateCaptions() {
+    if (capBusy) return;
+    const h = handles.current;
+    if (!h || status !== "ready") return;
+    const cur = h.edit.getEdit() as ArtlioEdit;
+    const clips = cur.timeline.tracks[0]?.clips ?? [];
+    // prefer the selected clip on the video track; else the first visual clip
+    const picked =
+      (selected?.trackIndex === 0 ? clips[selected.clipIndex] : undefined) ?? clips[0];
+    const src = picked?.asset.src;
+    if (!src) { setCapNote("Add a video clip to the timeline first."); return; }
+    // capture the clip window NOW (whisper transcribes the asset from 0 = ASSET-LOCAL
+    // time, but timeline.captions[] is ABSOLUTE timeline time). Map at seed time using
+    // this clip's placement: visible asset range = [trim, trim+length]; timeline =
+    // clip.start + (assetTime - trim). Captured here so a later native edit can't shift it.
+    const clipStart = picked!.start;
+    const clipLen = picked!.length;
+    const clipTrim = picked!.asset.trim ?? 0;
+    setCapBusy(true);
+    setCapNote("Transcribing…");
+    try {
+      const started = await startCaption(projectId, src);
+      if ("error" in started) { setCapNote(started.error); return; }
+      const jobId = started.id;
+      // poll until terminal (caption job reuses RenderStatus: QUEUED/RENDERING/DONE/FAILED)
+      let done = false;
+      for (let i = 0; i < 200 && !done; i++) {
+        await new Promise((r) => setTimeout(r, 2000));
+        const job = await getCaptionJob(jobId);
+        if (!job) { setCapNote("Caption job vanished — try again."); return; }
+        if (job.status === "FAILED") { setCapNote(job.error || "Caption job failed."); return; }
+        if (job.status === "DONE") done = true;
+      }
+      if (!done) { setCapNote("Captions are taking a while — reopen the panel to check."); return; }
+      const cues = await getTranscript(projectId, src);
+      if (cues.length === 0) { setCapNote("No speech detected in this clip."); return; }
+      // map asset-local cues → absolute timeline time within this clip's visible window
+      const winEnd = clipTrim + clipLen;
+      // FLOOR of the clip end (ms): cap every cue's end here so independent rounding of
+      // start/length can never push a cue past editDuration (the clip end is ≤ editDuration),
+      // which would make the contract reject + silently drop the whole caption set.
+      const clipEndMsFloor = Math.floor((clipStart + clipLen) * 1000);
+      const EPS = 0.001;
+      const mapped: UiCaption[] = [];
+      for (const c of cues) {
+        const s = c.startMs / 1000;            // asset-local seconds
+        const e = (c.startMs + c.lengthMs) / 1000;
+        const vs = Math.max(s, clipTrim);      // clip to the visible [trim, trim+length] window
+        const ve = Math.min(e, winEnd);
+        if (ve - vs <= EPS) continue;          // cue not visible in this clip → drop
+        const startMs = Math.round((clipStart + (vs - clipTrim)) * 1000);
+        // derive end from a CAPPED integer, then lengthMs = end − start (never round both
+        // independently — that can overshoot the timeline end by a millisecond).
+        const endMs = Math.min(Math.round((clipStart + (ve - clipTrim)) * 1000), clipEndMsFloor);
+        if (endMs - startMs < 1) continue;     // too short after clamping → drop
+        mapped.push({ startMs, lengthMs: endMs - startMs, text: c.text });
+      }
+      if (mapped.length === 0) { setCapNote("No speech in this clip's visible range."); return; }
+      // keep captions OUTSIDE this clip's timeline window [clip.start, clip.end) (so
+      // re-generating one clip doesn't wipe captions on other clips), replace the inside.
+      const clipStartMs = Math.round(clipStart * 1000);
+      const clipEndMs = Math.round((clipStart + clipLen) * 1000);
+      const kept = captionsRef.current.filter(
+        (c) => c.startMs + c.lengthMs <= clipStartMs || c.startMs >= clipEndMs,
+      );
+      const nextCaps = [...kept, ...mapped].sort((a, b) => a.startMs - b.startMs);
+      commitCaptionsOverlays(nextCaps, overlaysRef.current);
+      setCapNote(`Added ${mapped.length} caption${mapped.length === 1 ? "" : "s"}.`);
+    } catch {
+      setCapNote("Couldn't generate captions — check your connection and retry.");
+    } finally {
+      setCapBusy(false);
+    }
+  }
+  // Patch one caption cue (text or timing); state-only → recorded explicitly.
+  function patchCaption(index: number, patch: Partial<UiCaption>) {
+    if (opLock.current) return; // serialize with other commands
+    if (!flushNative()) return; // reconcile + record any pending native edit first
+    const next = captionsRef.current.map((c, i) => (i === index ? { ...c, ...patch } : c));
+    commitCaptionsOverlays(next, overlaysRef.current);
+  }
+  function removeCaption(index: number) {
+    if (opLock.current) return;
+    if (!flushNative()) return;
+    const next = captionsRef.current.filter((_, i) => i !== index);
+    commitCaptionsOverlays(next, overlaysRef.current);
+  }
+  function clearAllCaptions() {
+    if (captionsRef.current.length === 0) return; // nothing to clear → no history entry
+    if (opLock.current) return;
+    if (!flushNative()) return;
+    commitCaptionsOverlays([], overlaysRef.current);
+  }
+  // Add a default static text overlay → timeline.textOverlays[].
+  function addOverlay() {
+    if (opLock.current) return;
+    if (!flushNative()) return;
+    const next = [
+      ...overlaysRef.current,
+      { startMs: 0, lengthMs: 2000, text: "Text", position: "bottom" as const, style: { fontSize: 48, color: "#ffffff" } },
+    ];
+    commitCaptionsOverlays(captionsRef.current, next);
+  }
+  function patchOverlay(index: number, patch: Partial<UiOverlay>) {
+    if (opLock.current) return;
+    if (!flushNative()) return;
+    const next = overlaysRef.current.map((o, i) => (i === index ? { ...o, ...patch } : o));
+    commitCaptionsOverlays(captionsRef.current, next);
+  }
+  function patchOverlayStyle(index: number, patch: Partial<UiOverlay["style"]>) {
+    if (opLock.current) return;
+    if (!flushNative()) return;
+    const next = overlaysRef.current.map((o, i) => (i === index ? { ...o, style: { ...o.style, ...patch } } : o));
+    commitCaptionsOverlays(captionsRef.current, next);
+  }
+  function removeOverlay(index: number) {
+    if (opLock.current) return;
+    if (!flushNative()) return;
+    const next = overlaysRef.current.filter((_, i) => i !== index);
+    commitCaptionsOverlays(captionsRef.current, next);
   }
 
   // ---- EP2 editing-feel gestures (pure contract ops + reload) ----
@@ -1038,6 +1244,91 @@ export function Editor({
                   </>
                 );
               })()}
+            </div>
+          </aside>
+          {/* Captions + static text — Artlio state, merged into the timeline (one level
+              up, never on a clip). Burn-in happens on the worker's $0 render path. */}
+          <aside style={{ width: 210, flex: "none", display: "flex", flexDirection: "column", border: "1px solid var(--line-2)", borderRadius: "var(--radius-lg)", overflow: "hidden", maxHeight: "100%" }}>
+            <div style={{ padding: "9px 12px", borderBottom: "1px solid var(--line-2)", display: "flex", alignItems: "center", justifyContent: "space-between", flex: "none" }}>
+              <MonoLabel>Captions</MonoLabel>
+              <button onClick={clearAllCaptions} disabled={captions.length === 0}
+                style={{ font: "var(--text-mono-meta)", color: "var(--fg-3)", background: "none", border: "none", cursor: captions.length ? "pointer" : "default", textDecoration: "underline", textUnderlineOffset: 3 }}>
+                Clear all
+              </button>
+            </div>
+            <div style={{ flex: 1, overflow: "auto", padding: 10, display: "flex", flexDirection: "column", gap: 10 }}>
+              <Button variant="glass" size="sm" onClick={generateCaptions} disabled={status !== "ready" || capBusy}>
+                {capBusy ? "Generating…" : "Generate captions"}
+              </Button>
+              {capNote && <p style={{ font: "var(--text-caption)", color: "var(--fg-3)", margin: 0 }}>{capNote}</p>}
+              {captions.length === 0 ? (
+                <p style={{ font: "var(--text-caption)", color: "var(--fg-3)", margin: 0 }}>Transcribe the selected (or first) video clip into editable, burned-in captions.</p>
+              ) : (
+                captions.map((c, i) => (
+                  <section key={i} style={{ display: "flex", flexDirection: "column", gap: 5, paddingBottom: 8, borderBottom: "1px solid var(--line-2)" }}>
+                    <input value={c.text} onChange={(e) => patchCaption(i, { text: e.target.value })} aria-label={`Caption ${i + 1} text`}
+                      style={{ font: "var(--text-caption)", color: "var(--fg-0)", background: "var(--glass-1)", border: "1px solid var(--line-2)", borderRadius: "var(--radius-sm)", padding: "5px 7px" }} />
+                    <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
+                      <label style={{ font: "var(--text-mono-meta)", color: "var(--fg-3)", display: "flex", alignItems: "center", gap: 3, flex: 1 }}>
+                        start
+                        <input type="number" min={0} step={0.1} value={(c.startMs / 1000).toFixed(1)} onChange={(e) => patchCaption(i, { startMs: Math.max(0, Math.round(Number(e.target.value) * 1000)) })}
+                          aria-label={`Caption ${i + 1} start (s)`} style={{ width: 52, font: "var(--text-mono-meta)", color: "var(--fg-1)", background: "var(--glass-1)", border: "1px solid var(--line-2)", borderRadius: "var(--radius-sm)", padding: "3px 4px" }} />s
+                      </label>
+                      <label style={{ font: "var(--text-mono-meta)", color: "var(--fg-3)", display: "flex", alignItems: "center", gap: 3, flex: 1 }}>
+                        len
+                        <input type="number" min={0.1} step={0.1} value={(c.lengthMs / 1000).toFixed(1)} onChange={(e) => patchCaption(i, { lengthMs: Math.max(1, Math.round(Number(e.target.value) * 1000)) })}
+                          aria-label={`Caption ${i + 1} length (s)`} style={{ width: 52, font: "var(--text-mono-meta)", color: "var(--fg-1)", background: "var(--glass-1)", border: "1px solid var(--line-2)", borderRadius: "var(--radius-sm)", padding: "3px 4px" }} />s
+                      </label>
+                      <button onClick={() => removeCaption(i)} title="Remove caption"
+                        style={{ font: "var(--text-mono-meta)", color: "var(--fg-3)", background: "none", border: "none", cursor: "pointer" }}>✕</button>
+                    </div>
+                  </section>
+                ))
+              )}
+              <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginTop: 4 }}>
+                <MonoLabel>Text</MonoLabel>
+                <button onClick={addOverlay} disabled={status !== "ready"}
+                  style={{ font: "var(--text-mono-meta)", color: "var(--fg-2)", background: "none", border: "none", cursor: status === "ready" ? "pointer" : "default", textDecoration: "underline", textUnderlineOffset: 3 }}>
+                  Add text
+                </button>
+              </div>
+              {overlays.length === 0 ? (
+                <p style={{ font: "var(--text-caption)", color: "var(--fg-3)", margin: 0 }}>Add a positioned, styled static text overlay.</p>
+              ) : (
+                overlays.map((o, i) => (
+                  <section key={i} style={{ display: "flex", flexDirection: "column", gap: 5, paddingBottom: 8, borderBottom: "1px solid var(--line-2)" }}>
+                    <input value={o.text} onChange={(e) => patchOverlay(i, { text: e.target.value })} aria-label={`Overlay ${i + 1} text`}
+                      style={{ font: "var(--text-caption)", color: "var(--fg-0)", background: "var(--glass-1)", border: "1px solid var(--line-2)", borderRadius: "var(--radius-sm)", padding: "5px 7px" }} />
+                    <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
+                      <select value={o.position} onChange={(e) => patchOverlay(i, { position: e.target.value as UiOverlay["position"] })} aria-label={`Overlay ${i + 1} position`}
+                        style={{ flex: 1, font: "var(--text-mono-meta)", color: "var(--fg-1)", background: "var(--glass-1)", border: "1px solid var(--line-2)", borderRadius: "var(--radius-sm)", padding: "3px 4px" }}>
+                        {OVERLAY_POSITIONS.map((p) => <option key={p} value={p}>{p}</option>)}
+                      </select>
+                      <input type="color" value={o.style.color} onChange={(e) => patchOverlayStyle(i, { color: e.target.value })} aria-label={`Overlay ${i + 1} color`}
+                        style={{ width: 28, height: 24, padding: 0, border: "1px solid var(--line-2)", borderRadius: "var(--radius-sm)", background: "var(--glass-1)", cursor: "pointer" }} />
+                      <button onClick={() => removeOverlay(i)} title="Remove overlay"
+                        style={{ font: "var(--text-mono-meta)", color: "var(--fg-3)", background: "none", border: "none", cursor: "pointer" }}>✕</button>
+                    </div>
+                    <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
+                      <label style={{ font: "var(--text-mono-meta)", color: "var(--fg-3)", display: "flex", alignItems: "center", gap: 3, flex: 1 }}>
+                        start
+                        <input type="number" min={0} step={0.1} value={(o.startMs / 1000).toFixed(1)} onChange={(e) => patchOverlay(i, { startMs: Math.max(0, Math.round(Number(e.target.value) * 1000)) })}
+                          aria-label={`Overlay ${i + 1} start (s)`} style={{ width: 48, font: "var(--text-mono-meta)", color: "var(--fg-1)", background: "var(--glass-1)", border: "1px solid var(--line-2)", borderRadius: "var(--radius-sm)", padding: "3px 4px" }} />s
+                      </label>
+                      <label style={{ font: "var(--text-mono-meta)", color: "var(--fg-3)", display: "flex", alignItems: "center", gap: 3, flex: 1 }}>
+                        len
+                        <input type="number" min={0.1} step={0.1} value={(o.lengthMs / 1000).toFixed(1)} onChange={(e) => patchOverlay(i, { lengthMs: Math.max(1, Math.round(Number(e.target.value) * 1000)) })}
+                          aria-label={`Overlay ${i + 1} length (s)`} style={{ width: 48, font: "var(--text-mono-meta)", color: "var(--fg-1)", background: "var(--glass-1)", border: "1px solid var(--line-2)", borderRadius: "var(--radius-sm)", padding: "3px 4px" }} />s
+                      </label>
+                      <label style={{ font: "var(--text-mono-meta)", color: "var(--fg-3)", display: "flex", alignItems: "center", gap: 3 }}>
+                        px
+                        <input type="number" min={8} max={200} step={1} value={o.style.fontSize} onChange={(e) => patchOverlayStyle(i, { fontSize: Math.max(8, Math.min(200, Math.round(Number(e.target.value)))) })}
+                          aria-label={`Overlay ${i + 1} font size`} style={{ width: 44, font: "var(--text-mono-meta)", color: "var(--fg-1)", background: "var(--glass-1)", border: "1px solid var(--line-2)", borderRadius: "var(--radius-sm)", padding: "3px 4px" }} />
+                      </label>
+                    </div>
+                  </section>
+                ))
+              )}
             </div>
           </aside>
           <div style={{ flex: 1, minWidth: 0, display: "flex", flexDirection: "column" }}>

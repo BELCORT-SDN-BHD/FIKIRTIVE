@@ -13,7 +13,7 @@
  * Storage note (tracer scope): shared local .data store — prod activation
  * lands with T4 R2 (web/worker are separate containers, no shared disk).
  */
-import { mkdir, readFile, rm } from "node:fs/promises";
+import { mkdir, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { execa } from "execa";
@@ -31,6 +31,8 @@ import {
   type BetweenClipTransition,
   type TransitionDirection,
   type RenderJobData,
+  type CaptionCue,
+  type TextOverlay,
 } from "@artlio/core";
 import { probeFile } from "./ingest.js";
 
@@ -98,12 +100,13 @@ function transitionToXfade(tr: BetweenClipTransition): string {
   }
 }
 
-/** Map a clip's start from EDIT time to RENDERED time: subtract the total
- *  transition overlap that occurs strictly BEFORE this clip on the visual track.
- *  Audio-track clips (not on the visual track) shift by the full overlap that
- *  precedes their edit-time start. */
-function renderedStartSeconds(
-  clip: ArtlioClip,
+/** Map an EDIT-time timeline position (seconds) to RENDERED time: subtract the
+ *  total visual-track transition overlap that occurs strictly BEFORE that
+ *  position. Transitions shrink the timeline, so any timeline-addressed feature
+ *  (clip starts, captions, overlays) must shift by the overlap accumulated up to
+ *  its edit-time position. */
+function renderedTimelineSeconds(
+  editSeconds: number,
   visualPlanned: PlannedInput[],
   transitions: BetweenClipTransition[],
 ): number {
@@ -116,12 +119,127 @@ function renderedStartSeconds(
     accAtStart += byFrom.get(i - 1) ?? 0;
     overlapAtEditStart.push({ editStart: visualPlanned[i]!.clip.start, overlap: accAtStart });
   }
-  // pick the overlap for the last boundary at or before this clip's edit start
+  // pick the overlap for the last boundary at or before this edit-time position
   let overlapBefore = 0;
   for (const e of overlapAtEditStart) {
-    if (e.editStart <= clip.start + 1e-6) overlapBefore = e.overlap;
+    if (e.editStart <= editSeconds + 1e-6) overlapBefore = e.overlap;
   }
-  return Math.max(0, clip.start - overlapBefore);
+  return Math.max(0, editSeconds - overlapBefore);
+}
+
+/** Map a clip's start from EDIT time to RENDERED time (thin wrapper over
+ *  renderedTimelineSeconds at the clip's edit-time start). */
+function renderedStartSeconds(
+  clip: ArtlioClip,
+  visualPlanned: PlannedInput[],
+  transitions: BetweenClipTransition[],
+): number {
+  return renderedTimelineSeconds(clip.start, visualPlanned, transitions);
+}
+
+// --- EP3 burn-in (captions ASS + static text drawtext) — $0, no network ---
+
+/** Baked by the Dockerfile's fonts-dejavu-core (Task 5). Module const so it's
+ *  swappable; ASS subtitles= also resolves fonts via fontconfig. */
+const DRAWTEXT_FONT = "/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf";
+
+/** ASS timestamps are H:MM:SS.cs (centiseconds). */
+function assTime(seconds: number): string {
+  const s = Math.max(0, seconds);
+  const h = Math.floor(s / 3600);
+  const m = Math.floor((s % 3600) / 60);
+  const sec = Math.floor(s % 60);
+  const cs = Math.round((s - Math.floor(s)) * 100);
+  const cs2 = cs >= 100 ? 99 : cs; // round-up guard
+  return `${h}:${String(m).padStart(2, "0")}:${String(sec).padStart(2, "0")}.${String(cs2).padStart(2, "0")}`;
+}
+
+/** Escape ASS dialogue text: newlines → \N, strip the override-block opener so
+ *  caption text can't inject ASS style tags. */
+function escapeAssText(text: string): string {
+  return text.replace(/\r?\n/g, "\\N").replace(/[{}]/g, "");
+}
+
+/** Escape a value for use inside an ffmpeg -filter_complex argument. ffmpeg
+ *  splits filters on ',' and ';', options on ':', and treats '\' specially;
+ *  drawtext text additionally interprets '%' (strftime) and "'" terminates a
+ *  quoted value. Order matters: backslash first. */
+function escapeForFilter(value: string): string {
+  return value
+    .replace(/\\/g, "\\\\")
+    .replace(/'/g, "\\'")
+    .replace(/:/g, "\\:")
+    .replace(/,/g, "\\,")
+    .replace(/;/g, "\\;")
+    .replace(/%/g, "\\%");
+}
+
+/** Build an ASS subtitle file (one default bottom style scaled to height) from
+ *  the contract captions, converting each window to RENDERED time. Returns the
+ *  written path, or null when there are no captions. */
+async function buildAssFile(
+  captions: CaptionCue[],
+  work: string,
+  w: number,
+  h: number,
+  visualPlanned: PlannedInput[],
+  transitions: BetweenClipTransition[],
+): Promise<string | null> {
+  if (captions.length === 0) return null;
+  const fontSize = Math.max(16, Math.round(h * 0.05)); // ~5% of frame height
+  const lines = [
+    "[Script Info]",
+    "ScriptType: v4.00+",
+    `PlayResX: ${w}`,
+    `PlayResY: ${h}`,
+    "[V4+ Styles]",
+    "Format: Name, Fontname, Fontsize, PrimaryColour, OutlineColour, BackColour, Bold, BorderStyle, Outline, Shadow, Alignment, MarginL, MarginR, MarginV, Encoding",
+    `Style: Default,DejaVu Sans,${fontSize},&H00FFFFFF,&H00000000,&H80000000,0,1,2,1,2,40,40,${Math.round(h * 0.06)},1`,
+    "[Events]",
+    "Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text",
+  ];
+  for (const c of captions) {
+    const startR = renderedTimelineSeconds(c.startMs / 1000, visualPlanned, transitions);
+    const endR = renderedTimelineSeconds((c.startMs + c.lengthMs) / 1000, visualPlanned, transitions);
+    if (endR <= startR) continue;
+    lines.push(`Dialogue: 0,${assTime(startR)},${assTime(endR)},Default,,0,0,0,,${escapeAssText(c.text)}`);
+  }
+  const assPath = path.join(work, "captions.ass");
+  await writeFile(assPath, lines.join("\n"), "utf8");
+  return assPath;
+}
+
+/** One drawtext filter node for a static text overlay, chaining prevLabel →
+ *  nextLabel. Timing in RENDERED time via enable='between(t,...)'. */
+function drawtextNode(
+  overlay: TextOverlay,
+  prevLabel: string,
+  nextLabel: string,
+  visualPlanned: PlannedInput[],
+  transitions: BetweenClipTransition[],
+): string {
+  const startR = renderedTimelineSeconds(overlay.startMs / 1000, visualPlanned, transitions);
+  const endR = renderedTimelineSeconds((overlay.startMs + overlay.lengthMs) / 1000, visualPlanned, transitions);
+  const y =
+    overlay.position === "top"
+      ? "(h*0.08)"
+      : overlay.position === "center"
+        ? "(h-text_h)/2"
+        : "(h-text_h-h*0.08)"; // bottom
+  const text = escapeForFilter(overlay.text);
+  const opts = [
+    `fontfile=${escapeForFilter(DRAWTEXT_FONT)}`,
+    `text='${text}'`,
+    `fontsize=${overlay.style.fontSize}`,
+    `fontcolor=${overlay.style.color}`,
+    "x=(w-text_w)/2",
+    `y=${y}`,
+    "box=1",
+    "boxcolor=black@0.4",
+    "boxborderw=8",
+    `enable='between(t,${startR},${endR})'`,
+  ];
+  return `${prevLabel}drawtext=${opts.join(":")}${nextLabel}`;
 }
 
 /** audio chain for one sounded clip: resample + volume + legacy afade, then
@@ -283,6 +401,24 @@ export async function handleRender(data: RenderJobData, retryCount = 0): Promise
       }
       vLabel = acc;
     }
+
+    // EP3 burn-in: append captions (ASS subtitles=) + static text overlays
+    // (drawtext) onto the SINGLE final composited video stream — AFTER the
+    // xfade/concat chain set vLabel, BEFORE -map. This NEVER touches the
+    // per-clip [v${index}] labels, the offset/accEnd math, renderSeconds, or the
+    // audio amix. Timing is in RENDERED time. $0 — no network/spend path.
+    const captions = edit.timeline.captions ?? [];
+    const overlays = edit.timeline.textOverlays ?? [];
+    const assPath = await buildAssFile(captions, work, w, h, visualPlanned, transitions);
+    if (assPath) {
+      graph.push(`${vLabel}subtitles=${escapeForFilter(assPath)}[vsub]`);
+      vLabel = "[vsub]";
+    }
+    overlays.forEach((overlay, i) => {
+      const next = `[vtxt${i}]`;
+      graph.push(drawtextNode(overlay, vLabel, next, visualPlanned, transitions));
+      vLabel = next;
+    });
 
     let mapAudio = false;
     if (sounded.length > 0) {

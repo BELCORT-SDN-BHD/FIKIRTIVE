@@ -306,6 +306,41 @@ model RenderJob {
   @@index([status, updatedAt]) // 滞留 RENDERING 行的清扫扫描
 }
 
+model CaptionJob {
+  id            String       @id
+  ownerId       String       @default("founder")
+  projectId     String
+  /// the visual-track asset being transcribed (content-addressed) + its hash
+  assetId       String
+  contentHash   String
+  status        RenderStatus @default(QUEUED)
+  progress      Int          @default(0)
+  error         String       @default("")
+  queueJobId    String       @default("")
+  attempts      Int          @default(0)
+  startedAt     DateTime?
+  finishedAt    DateTime?
+  createdAt     DateTime     @default(now())
+  updatedAt     DateTime     @updatedAt
+
+  @@index([projectId, createdAt])
+  @@index([status, updatedAt])
+}
+
+/// Cached whisper.cpp transcript, keyed by (contentHash, model). Deterministic
+/// for fixed (audio bytes, model, flags) → cache is always valid; a re-render or
+/// re-request reuses it for $0 + 0 CPU. cuesJson = CaptionCue[] (the editable seed).
+model Transcript {
+  id          String   @id
+  ownerId     String   @default("founder")
+  contentHash String
+  model       String
+  cuesJson    Json
+  createdAt   DateTime @default(now())
+
+  @@unique([contentHash, model])
+}
+
 enum GenStatus {
   QUEUED
   GENERATING
