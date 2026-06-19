@@ -1,6 +1,5 @@
 import { redirect } from "next/navigation";
 import { prisma } from "@artlio/db";
-import { FOUNDER_OWNER_ID } from "@artlio/core";
 import { requireRole } from "@/lib/auth-guard";
 import { SystemAdmin, type StatusCounts, type FailedRow } from "@/components/admin/SystemAdmin";
 
@@ -27,32 +26,36 @@ export default async function SystemPage() {
   const gate = await requireRole("system", "read");
   if ("error" in gate) redirect("/login?from=/admin/system");
 
+  // async server component, rendered once per request — request-time Date.now() is
+  // the intended behavior, not a re-render purity hazard.
+  // eslint-disable-next-line react-hooks/purity
   const todayStart = new Date(Date.now() - DAY_MS);
 
   // READ-ONLY: summarize the app job tables (no pg-boss internal-schema coupling).
   // groupBy status per table = the "is anything stuck" view; recent FAILED = what's broken.
   const [genGroups, refGenGroups, renderGroups, genFailed, refGenFailed, renderFailed, genSpend, refGenSpend] = await Promise.all([
-    prisma.genJob.groupBy({ by: ["status"], where: { ownerId: FOUNDER_OWNER_ID }, _count: { _all: true } }),
-    prisma.refGenJob.groupBy({ by: ["status"], where: { ownerId: FOUNDER_OWNER_ID }, _count: { _all: true } }),
-    prisma.renderJob.groupBy({ by: ["status"], where: { ownerId: FOUNDER_OWNER_ID }, _count: { _all: true } }),
+    // P3: platform-wide (staff-gated by requireRole) — aggregate across ALL orgs, not just founder.
+    prisma.genJob.groupBy({ by: ["status"], _count: { _all: true } }),
+    prisma.refGenJob.groupBy({ by: ["status"], _count: { _all: true } }),
+    prisma.renderJob.groupBy({ by: ["status"], _count: { _all: true } }),
     prisma.genJob.findMany({
-      where: { ownerId: FOUNDER_OWNER_ID, status: "FAILED" },
+      where: { status: "FAILED" },
       orderBy: { finishedAt: "desc" }, take: 15,
       select: { id: true, kind: true, model: true, error: true, finishedAt: true, updatedAt: true },
     }),
     prisma.refGenJob.findMany({
-      where: { ownerId: FOUNDER_OWNER_ID, status: "FAILED" },
+      where: { status: "FAILED" },
       orderBy: { finishedAt: "desc" }, take: 15,
       select: { id: true, mode: true, model: true, error: true, finishedAt: true, updatedAt: true },
     }),
     prisma.renderJob.findMany({
-      where: { ownerId: FOUNDER_OWNER_ID, status: "FAILED" },
+      where: { status: "FAILED" },
       orderBy: { finishedAt: "desc" }, take: 15,
       select: { id: true, error: true, finishedAt: true, updatedAt: true },
     }),
     // RECORD-ONLY: today's spend is the frozen spentUsd ledger summed — never a spend decision.
-    prisma.genJob.aggregate({ where: { ownerId: FOUNDER_OWNER_ID, spentUsd: { not: null }, finishedAt: { gte: todayStart } }, _sum: { spentUsd: true } }),
-    prisma.refGenJob.aggregate({ where: { ownerId: FOUNDER_OWNER_ID, spentUsd: { not: null }, finishedAt: { gte: todayStart } }, _sum: { spentUsd: true } }),
+    prisma.genJob.aggregate({ where: { spentUsd: { not: null }, finishedAt: { gte: todayStart } }, _sum: { spentUsd: true } }),
+    prisma.refGenJob.aggregate({ where: { spentUsd: { not: null }, finishedAt: { gte: todayStart } }, _sum: { spentUsd: true } }),
   ]);
 
   const genCounts = countsByStatus(genGroups, GEN_STATUSES);

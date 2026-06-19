@@ -94,6 +94,32 @@ export async function refundReservation(tx: Tx, args: { orgId: string; refId: st
 
 export type CreditGrantSource = "ADMIN" | "BETA" | "PROMO" | "PURCHASE" | "SYSTEM";
 
+/** Positive GRANT applied INSIDE the caller's transaction — so the grant is ATOMIC with
+ *  whatever else the caller writes (e.g. the org-bootstrap org+membership). This closes the
+ *  "org committed but grant failed → user stuck at 0 credits" gap that a separate grantCredits()
+ *  call after the org tx would leave. Tx-safe + idempotent: createMany(skipDuplicates) =
+ *  INSERT … ON CONFLICT DO NOTHING on the (orgId, idempotencyKey) unique, so a replay /
+ *  concurrent winner yields count===0 and NO account change — and it never THROWS inside the
+ *  PG tx (a caught P2002 would leave the whole transaction aborted, silently rolling back the
+ *  caller's org/membership writes). Positive amounts only. */
+export async function grantCreditsTx(
+  tx: Tx,
+  args: { orgId: string; amount: number; reason?: string; source?: CreditGrantSource; createdBy?: string; idempotencyKey: string },
+): Promise<void> {
+  const { orgId, amount, reason = "", source = "SYSTEM", createdBy = "", idempotencyKey } = args;
+  if (amount <= 0) return;
+  const { count } = await tx.creditLedger.createMany({
+    data: [{ id: randomUUID(), orgId, balanceDelta: amount, reservedDelta: 0, kind: "GRANT", source, reason, createdBy, idempotencyKey }],
+    skipDuplicates: true,
+  });
+  if (count === 0) return; // already granted (idempotent replay or concurrent winner) → no double-apply
+  await tx.creditAccount.upsert({
+    where: { orgId },
+    create: { orgId, balance: amount, reserved: 0 },
+    update: { balance: { increment: amount } },
+  });
+}
+
 /** Admin/system GRANT (positive) or ADJUST (signed). Opens its own transaction. Idempotent
  *  via (orgId, idempotencyKey) — a replay returns { duplicate: true } without double-granting.
  *  A future Stripe purchase reuses this verbatim with source="PURCHASE". */

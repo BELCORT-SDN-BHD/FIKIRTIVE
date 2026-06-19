@@ -10,7 +10,6 @@ import {
   genRequest,
   newId,
   GEN_QUEUE,
-  FOUNDER_OWNER_ID,
   storageKey,
   storageKeyToSrc,
   videoDefaults,
@@ -21,13 +20,13 @@ import {
 } from "@artlio/core";
 import { getBoss } from "./queue";
 import { checkCast } from "./cowork-guardian";
-import { requireSession } from "./auth-guard";
+import { requireOwner } from "./auth-guard";
 import { resolveDisabledModels } from "./model-registry";
 
-const OWNED = { ownerId: FOUNDER_OWNER_ID, deletedAt: null } as const;
-
 export async function startGen(raw: unknown): Promise<{ id: string } | { error: string }> {
-  const gate = await requireSession(); if ("error" in gate) return gate;
+  const gate = await requireOwner(); if ("error" in gate) return gate;
+  const { ownerId } = gate;
+  const OWNED = { ownerId, deletedAt: null } as const;
   const parsed = genRequest.safeParse(raw);
   if (!parsed.success) return { error: "That generation request is out of bounds." };
   const { projectId, shotId, sourceGenerationId, tailGenerationId, prompt, entityIds, count, kind, model, durationSeconds, resolution, aspectRatio, fps, audio, idempotencyKey, variantSel, threadId } = parsed.data;
@@ -47,7 +46,7 @@ export async function startGen(raw: unknown): Promise<{ id: string } | { error: 
   // partial-unique index on the create below is the race-proof backstop.
   if (idempotencyKey) {
     const active = await prisma.genJob.findFirst({
-      where: { ownerId: FOUNDER_OWNER_ID, projectId, idempotencyKey, status: { in: ["QUEUED", "GENERATING"] } },
+      where: { ownerId, projectId, idempotencyKey, status: { in: ["QUEUED", "GENERATING"] } },
       orderBy: { createdAt: "desc" }, select: { id: true },
     });
     if (active) return { id: active.id };
@@ -71,10 +70,10 @@ export async function startGen(raw: unknown): Promise<{ id: string } | { error: 
   // commit (a CHARACTER with no refs, a deleted @mention, a cross-project i2v
   // frame). Fail-OPEN — checkCast returns null on its own faults — and additive
   // only: it never loosens the existing gate.
-  const block = await checkCast({ projectId, entityIds, variantSel: effectiveVariantSel, sourceGenerationId, tailGenerationId, model, kind });
+  const block = await checkCast({ ownerId, projectId, entityIds, variantSel: effectiveVariantSel, sourceGenerationId, tailGenerationId, model, kind });
   if (block) {
     try {
-      await prisma.actionEvent.create({ data: { id: newId(), ownerId: FOUNDER_OWNER_ID, projectId, type: "gen.guardian-block", payload: { findings: block.report.findings } } });
+      await prisma.actionEvent.create({ data: { id: newId(), ownerId, projectId, type: "gen.guardian-block", payload: { findings: block.report.findings } } });
     } catch { /* audit best-effort — a log hiccup must not swallow the block */ }
     return { error: block.error };
   }
@@ -107,7 +106,7 @@ export async function startGen(raw: unknown): Promise<{ id: string } | { error: 
     job = await prisma.$transaction(async (tx) => {
       const created = await tx.genJob.create({
         data: {
-          id: newId(), ownerId: FOUNDER_OWNER_ID, projectId, shotId: shotId ?? null,
+          id: newId(), ownerId, projectId, shotId: shotId ?? null,
           sourceGenerationId: sourceGenerationId ?? null,
           tailGenerationId: tailGenerationId ?? null,
           prompt, entityIds, count: kind === "video" ? 1 : count, model,
@@ -122,7 +121,7 @@ export async function startGen(raw: unknown): Promise<{ id: string } | { error: 
         },
         select: { id: true },
       });
-      await reserveCredits(tx, { orgId: FOUNDER_OWNER_ID, refId: created.id, cost });
+      await reserveCredits(tx, { orgId: ownerId, refId: created.id, cost });
       return created;
     });
   } catch (e) {
@@ -141,7 +140,7 @@ export async function startGen(raw: unknown): Promise<{ id: string } | { error: 
     if (idempotencyKey && typeof e === "object" && e !== null && (e as { code?: string }).code === "P2002") {
       const coworkKey = idempotencyKey.startsWith("cowork:");
       const existing = await prisma.genJob.findFirst({
-        where: { ownerId: FOUNDER_OWNER_ID, projectId, idempotencyKey, ...(coworkKey ? {} : { status: { in: ["QUEUED", "GENERATING"] } }) },
+        where: { ownerId, projectId, idempotencyKey, ...(coworkKey ? {} : { status: { in: ["QUEUED", "GENERATING"] } }) },
         orderBy: { createdAt: "desc" }, select: { id: true },
       });
       if (existing) return { id: existing.id };
@@ -159,7 +158,7 @@ export async function startGen(raw: unknown): Promise<{ id: string } | { error: 
     const message = e instanceof Error ? e.message.slice(0, 300) : "queue unavailable";
     await prisma.$transaction(async (tx) => {
       await tx.genJob.update({ where: { id: job.id }, data: { status: "FAILED", error: `dispatch failed: ${message}` } });
-      await refundReservation(tx, { orgId: FOUNDER_OWNER_ID, refId: job.id });
+      await refundReservation(tx, { orgId: ownerId, refId: job.id });
     });
     return { error: "Could not reach the generation queue — is the worker up?" };
   }
@@ -177,7 +176,7 @@ export async function startGen(raw: unknown): Promise<{ id: string } | { error: 
   // Log + swallow. (Keyed callers dedupe on retry; keyless ones must not even reach here.)
   try {
     await prisma.actionEvent.create({
-      data: { id: newId(), ownerId: FOUNDER_OWNER_ID, projectId, type: "gen.start", payload: { jobId: job.id, shotId: shotId ?? null, count } },
+      data: { id: newId(), ownerId, projectId, type: "gen.start", payload: { jobId: job.id, shotId: shotId ?? null, count } },
     });
   } catch (e) {
     console.warn(`startGen: gen.start audit write failed for job ${job.id} (non-fatal):`, e instanceof Error ? e.message : e);
@@ -188,13 +187,14 @@ export async function startGen(raw: unknown): Promise<{ id: string } | { error: 
 
 /** Poll a gen job + return its produced generations' image URLs when DONE. */
 export async function getGenJob(jobId: string) {
-  const gate = await requireSession(); if ("error" in gate) throw new Error(gate.error);
-  const job = await prisma.genJob.findFirst({ where: { id: jobId, ownerId: FOUNDER_OWNER_ID } });
+  const gate = await requireOwner(); if ("error" in gate) throw new Error(gate.error);
+  const { ownerId } = gate;
+  const job = await prisma.genJob.findFirst({ where: { id: jobId, ownerId } });
   if (!job) return null;
   let urls: string[] = [];
   if (job.generationIds.length) {
     const gens = await prisma.generation.findMany({
-      where: { id: { in: job.generationIds }, ownerId: FOUNDER_OWNER_ID },
+      where: { id: { in: job.generationIds }, ownerId },
       include: { asset: true },
     });
     // return urls in the order the worker produced them — findMany order is the
@@ -213,16 +213,17 @@ export async function getGenJob(jobId: string) {
  *  surface (or a reload) would otherwise lose finished generations from view (they
  *  stay in Assets, but the user expects them in the gen panel too). */
 export async function getRecentGenResults(projectId: string, limit = 12) {
-  const gate = await requireSession(); if ("error" in gate) throw new Error(gate.error);
-  const project = await prisma.project.findFirst({ where: { id: projectId, ownerId: FOUNDER_OWNER_ID, deletedAt: null }, select: { id: true } });
+  const gate = await requireOwner(); if ("error" in gate) throw new Error(gate.error);
+  const { ownerId } = gate;
+  const project = await prisma.project.findFirst({ where: { id: projectId, ownerId, deletedAt: null }, select: { id: true } });
   if (!project) return [];
   const jobs = await prisma.genJob.findMany({
-    where: { projectId, ownerId: FOUNDER_OWNER_ID, threadId: null },
+    where: { projectId, ownerId, threadId: null },
     orderBy: { createdAt: "desc" }, take: limit,
     select: { id: true, status: true, prompt: true, model: true, kind: true, error: true, generationIds: true },
   });
   const ids = jobs.flatMap((j) => j.generationIds);
-  const gens = ids.length ? await prisma.generation.findMany({ where: { id: { in: ids }, ownerId: FOUNDER_OWNER_ID, deletedAt: null }, include: { asset: true } }) : [];
+  const gens = ids.length ? await prisma.generation.findMany({ where: { id: { in: ids }, ownerId, deletedAt: null }, include: { asset: true } }) : [];
   const byId = new Map(gens.map((g) => [g.id, g]));
   return jobs.map((j) => ({
     jobId: j.id,

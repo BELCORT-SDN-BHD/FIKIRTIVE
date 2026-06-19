@@ -21,12 +21,12 @@ import {
   type RenderJobData,
 } from "@artlio/core";
 import type { EntityType, ShotStatus } from "@artlio/db";
-import { storage, extFromFilename, mimeOf, FOUNDER_OWNER_ID } from "./storage";
+import { storage, extFromFilename, mimeOf } from "./storage";
 import { getBoss } from "./queue";
 import { buildEntitySnapshot } from "./entity-snapshot";
 import { buildBoardEdit, transitionFor } from "./edit";
 import { getShots, getCandidates } from "./data";
-import { requireSession } from "./auth-guard";
+import { requireOwner } from "./auth-guard";
 
 /**
  * M0 server actions. Conventions:
@@ -40,29 +40,27 @@ import { requireSession } from "./auth-guard";
  *    render inline recovery per the state-grid contract
  */
 
-const OWNED = { ownerId: FOUNDER_OWNER_ID, deletedAt: null } as const;
-
 const ENTITY_TYPES = new Set(["CHARACTER", "LOCATION", "PRODUCT", "BRAND"]);
 const SHOT_STATUSES = new Set(["DRAFT", "EXPORTED", "ATTACHED", "FINAL"]);
 
-async function logAction(type: string, projectId: string | null, payload?: object) {
+async function logAction(ownerId: string, type: string, projectId: string | null, payload?: object) {
   await prisma.actionEvent.create({
-    data: { id: newId(), ownerId: FOUNDER_OWNER_ID, projectId, type, payload: payload ?? {} },
+    data: { id: newId(), ownerId, projectId, type, payload: payload ?? {} },
   });
 }
 
 /** Hash + store bytes; returns the row data for a later transactional upsert. */
-async function ingestFile(file: File) {
+async function ingestFile(ownerId: string, file: File) {
   const ext = extFromFilename(file.name);
   const bytes = new Uint8Array(await file.arrayBuffer());
   // content-addressed blobs are idempotent — safe outside the DB transaction
   // ContentType derives from ext inside the driver — client file.type is untrusted
-  const { contentHash } = await storage.put(FOUNDER_OWNER_ID, bytes, ext);
+  const { contentHash } = await storage.put(ownerId, bytes, ext);
   return {
     contentHash,
     create: {
       id: newId(),
-      ownerId: FOUNDER_OWNER_ID,
+      ownerId,
       contentHash,
       ext,
       mime: file.type || mimeOf(ext),
@@ -73,10 +71,10 @@ async function ingestFile(file: File) {
   };
 }
 
-function assetUpsert(ingested: Awaited<ReturnType<typeof ingestFile>>) {
+function assetUpsert(ownerId: string, ingested: Awaited<ReturnType<typeof ingestFile>>) {
   return prisma.asset.upsert({
     where: {
-      ownerId_contentHash: { ownerId: FOUNDER_OWNER_ID, contentHash: ingested.contentHash },
+      ownerId_contentHash: { ownerId, contentHash: ingested.contentHash },
     },
     update: { deletedAt: null }, // re-upload inside the 30-day window resurrects
     create: ingested.create,
@@ -86,11 +84,12 @@ function assetUpsert(ingested: Awaited<ReturnType<typeof ingestFile>>) {
 // ---------- projects ----------
 
 export async function createProject(name: string) {
-  const gate = await requireSession(); if ("error" in gate) throw new Error(gate.error);
+  const gate = await requireOwner(); if ("error" in gate) throw new Error(gate.error);
+  const { ownerId } = gate;
   const project = await prisma.project.create({
-    data: { id: newId(), ownerId: FOUNDER_OWNER_ID, name: name.trim() || "Untitled Project" },
+    data: { id: newId(), ownerId, name: name.trim() || "Untitled Project" },
   });
-  await logAction("project.create", project.id, { name: project.name });
+  await logAction(ownerId, "project.create", project.id, { name: project.name });
   revalidatePath("/", "layout");
   return { id: project.id };
 }
@@ -98,11 +97,12 @@ export async function createProject(name: string) {
 /** Soft-delete a project (sets deletedAt → drops out of getProjects' notDeleted filter).
  *  Reversible, touches no generated assets/billing — just hides the project + its surfaces. */
 export async function deleteProject(projectId: string): Promise<{ ok: true } | { error: string }> {
-  const gate = await requireSession(); if ("error" in gate) return gate;
-  const project = await prisma.project.findFirst({ where: { id: projectId, ...OWNED }, select: { id: true, name: true } });
+  const gate = await requireOwner(); if ("error" in gate) return gate;
+  const { ownerId } = gate;
+  const project = await prisma.project.findFirst({ where: { id: projectId, ownerId, deletedAt: null }, select: { id: true, name: true } });
   if (!project) return { error: "Project not found." };
   await prisma.project.update({ where: { id: project.id }, data: { deletedAt: new Date() } });
-  await logAction("project.delete", project.id, { name: project.name });
+  await logAction(ownerId, "project.delete", project.id, { name: project.name });
   revalidatePath("/", "layout");
   return { ok: true };
 }
@@ -123,7 +123,8 @@ function acceptRefFiles(formData: FormData, existing: number): File[] {
 }
 
 export async function createEntity(formData: FormData) {
-  const gate = await requireSession(); if ("error" in gate) throw new Error(gate.error);
+  const gate = await requireOwner(); if ("error" in gate) throw new Error(gate.error);
+  const { ownerId } = gate;
   const name = String(formData.get("name") ?? "").trim();
   const type = String(formData.get("type") ?? "");
   const files = acceptRefFiles(formData, 0);
@@ -131,19 +132,19 @@ export async function createEntity(formData: FormData) {
   if (!ENTITY_TYPES.has(type)) return { error: "Unknown entity type." };
 
   const entity = await prisma.entity.create({
-    data: { id: newId(), ownerId: FOUNDER_OWNER_ID, name, type: type as EntityType },
+    data: { id: newId(), ownerId, name, type: type as EntityType },
   });
   let firstAssetId: string | null = null;
   for (const [i, file] of files.entries()) {
-    const asset = await assetUpsert(await ingestFile(file));
+    const asset = await assetUpsert(ownerId, await ingestFile(ownerId, file));
     if (i === 0) firstAssetId = asset.id;
     await prisma.referenceImage.create({
-      data: { id: newId(), ownerId: FOUNDER_OWNER_ID, entityId: entity.id, assetId: asset.id, position: i },
+      data: { id: newId(), ownerId, entityId: entity.id, assetId: asset.id, position: i },
     });
   }
   // the first reference becomes the locked base (same invariant as addReferenceImages + the migration backfill)
   if (firstAssetId) await prisma.entity.update({ where: { id: entity.id }, data: { baseAssetId: firstAssetId } });
-  await logAction("entity.create", null, { entityId: entity.id, name, type, refCount: files.length });
+  await logAction(ownerId, "entity.create", null, { entityId: entity.id, name, type, refCount: files.length });
   revalidatePath("/", "layout");
   return { id: entity.id };
 }
@@ -152,15 +153,16 @@ export async function updateEntity(
   entityId: string,
   fields: { name?: string; notes?: string; negativeConstraints?: string },
 ) {
-  const gate = await requireSession(); if ("error" in gate) return gate;
+  const gate = await requireOwner(); if ("error" in gate) return gate;
+  const { ownerId } = gate;
   const data: Record<string, string> = {};
   if (fields.name !== undefined && fields.name.trim()) data.name = fields.name.trim();
   if (fields.notes !== undefined) data.notes = fields.notes;
   if (fields.negativeConstraints !== undefined) data.negativeConstraints = fields.negativeConstraints;
   if (Object.keys(data).length === 0) return { ok: true };
-  const { count } = await prisma.entity.updateMany({ where: { id: entityId, ...OWNED }, data });
+  const { count } = await prisma.entity.updateMany({ where: { id: entityId, ownerId, deletedAt: null }, data });
   if (count === 0) return { error: "Entity not found." };
-  await logAction("entity.update", null, { entityId, fields: Object.keys(data) });
+  await logAction(ownerId, "entity.update", null, { entityId, fields: Object.keys(data) });
   revalidatePath("/", "layout");
   return { ok: true };
 }
@@ -171,34 +173,37 @@ export async function updateEntity(
  * elsewhere (lost-update).
  */
 export async function addEntityAlias(entityId: string, alias: string) {
-  const gate = await requireSession(); if ("error" in gate) return gate;
+  const gate = await requireOwner(); if ("error" in gate) return gate;
+  const { ownerId } = gate;
   const clean = alias.trim();
   if (!clean) return { error: "Alias is empty." };
-  const entity = await prisma.entity.findFirst({ where: { id: entityId, ...OWNED } });
+  const entity = await prisma.entity.findFirst({ where: { id: entityId, ownerId, deletedAt: null } });
   if (!entity) return { error: "Entity not found." };
   // atomic append guarded against dupes — NOT read-modify-write, so two concurrent
   // adds can't lose one (the prior delta-from-client design left this server race) (#9)
-  await prisma.$executeRaw`UPDATE "Entity" SET "aliases" = array_append("aliases", ${clean}) WHERE "id" = ${entityId} AND "ownerId" = ${FOUNDER_OWNER_ID} AND "deletedAt" IS NULL AND NOT (${clean} = ANY("aliases"))`;
-  await logAction("entity.update", null, { entityId, addAlias: clean });
+  await prisma.$executeRaw`UPDATE "Entity" SET "aliases" = array_append("aliases", ${clean}) WHERE "id" = ${entityId} AND "ownerId" = ${ownerId} AND "deletedAt" IS NULL AND NOT (${clean} = ANY("aliases"))`;
+  await logAction(ownerId, "entity.update", null, { entityId, addAlias: clean });
   revalidatePath("/", "layout");
   return { ok: true };
 }
 
 export async function removeEntityAlias(entityId: string, alias: string) {
-  const gate = await requireSession(); if ("error" in gate) return gate;
-  const entity = await prisma.entity.findFirst({ where: { id: entityId, ...OWNED } });
+  const gate = await requireOwner(); if ("error" in gate) return gate;
+  const { ownerId } = gate;
+  const entity = await prisma.entity.findFirst({ where: { id: entityId, ownerId, deletedAt: null } });
   if (!entity) return { error: "Entity not found." };
   // atomic remove (same lost-update guard as the add above) (#9)
-  await prisma.$executeRaw`UPDATE "Entity" SET "aliases" = array_remove("aliases", ${alias}) WHERE "id" = ${entityId} AND "ownerId" = ${FOUNDER_OWNER_ID} AND "deletedAt" IS NULL`;
-  await logAction("entity.update", null, { entityId, removeAlias: alias });
+  await prisma.$executeRaw`UPDATE "Entity" SET "aliases" = array_remove("aliases", ${alias}) WHERE "id" = ${entityId} AND "ownerId" = ${ownerId} AND "deletedAt" IS NULL`;
+  await logAction(ownerId, "entity.update", null, { entityId, removeAlias: alias });
   revalidatePath("/", "layout");
   return { ok: true };
 }
 
 /** Remove one reference image from an entity (soft — asset row is a tombstone). */
 export async function softDeleteReferenceImage(refImageId: string) {
-  const gate = await requireSession(); if ("error" in gate) return gate;
-  const ref = await prisma.referenceImage.findFirst({ where: { id: refImageId, ...OWNED } });
+  const gate = await requireOwner(); if ("error" in gate) return gate;
+  const { ownerId } = gate;
+  const ref = await prisma.referenceImage.findFirst({ where: { id: refImageId, ownerId, deletedAt: null } });
   if (!ref) return { error: "Reference image not found." };
   await prisma.referenceImage.update({
     where: { id: refImageId },
@@ -207,62 +212,64 @@ export async function softDeleteReferenceImage(refImageId: string) {
   // if we just removed the entity's base ref, repoint baseAssetId to the next live
   // base-level ref (or null) — otherwise it dangles at an orphaned asset and variant
   // generation would still condition on a base the user no longer has.
-  const entity = await prisma.entity.findFirst({ where: { id: ref.entityId, ...OWNED }, select: { baseAssetId: true } });
+  const entity = await prisma.entity.findFirst({ where: { id: ref.entityId, ownerId, deletedAt: null }, select: { baseAssetId: true } });
   if (entity?.baseAssetId === ref.assetId) {
     const next = await prisma.referenceImage.findFirst({
-      where: { ownerId: FOUNDER_OWNER_ID, entityId: ref.entityId, deletedAt: null, variantId: null },
+      where: { ownerId, entityId: ref.entityId, deletedAt: null, variantId: null },
       orderBy: { position: "asc" },
       select: { assetId: true },
     });
-    await prisma.entity.updateMany({ where: { id: ref.entityId, ...OWNED }, data: { baseAssetId: next?.assetId ?? null } });
+    await prisma.entity.updateMany({ where: { id: ref.entityId, ownerId, deletedAt: null }, data: { baseAssetId: next?.assetId ?? null } });
   }
-  await logAction("entity.update", null, { entityId: ref.entityId, refImageId, action: "ref-delete" });
+  await logAction(ownerId, "entity.update", null, { entityId: ref.entityId, refImageId, action: "ref-delete" });
   revalidatePath("/", "layout");
   return { ok: true };
 }
 
 export async function addReferenceImages(entityId: string, formData: FormData) {
-  const gate = await requireSession(); if ("error" in gate) return gate;
-  const entity = await prisma.entity.findFirst({ where: { id: entityId, ...OWNED } });
+  const gate = await requireOwner(); if ("error" in gate) return gate;
+  const { ownerId } = gate;
+  const entity = await prisma.entity.findFirst({ where: { id: entityId, ownerId, deletedAt: null } });
   if (!entity) return { error: "Entity not found." };
   const existing = await prisma.referenceImage.count({ where: { entityId, deletedAt: null } });
   const files = acceptRefFiles(formData, existing);
   if (files.length === 0) return { error: "No valid images — PNG, JPG or WebP, ≤ 10 MB, up to 10 per element." };
   const last = await prisma.referenceImage.findFirst({
-    where: { ownerId: FOUNDER_OWNER_ID, entityId, deletedAt: null },
+    where: { ownerId, entityId, deletedAt: null },
     orderBy: { position: "desc" },
   });
   let position = (last?.position ?? -1) + 1;
   for (const file of files) {
-    const asset = await assetUpsert(await ingestFile(file));
+    const asset = await assetUpsert(ownerId, await ingestFile(ownerId, file));
     await prisma.referenceImage.create({
-      data: { id: newId(), ownerId: FOUNDER_OWNER_ID, entityId, assetId: asset.id, position: position++ },
+      data: { id: newId(), ownerId, entityId, assetId: asset.id, position: position++ },
     });
   }
   // an entity's base defaults to its first (lowest-position) live reference — so
   // "Upload photo" locks the base in one step, matching the migration backfill.
   if (!entity.baseAssetId) {
     const first = await prisma.referenceImage.findFirst({
-      where: { ownerId: FOUNDER_OWNER_ID, entityId, deletedAt: null },
+      where: { ownerId, entityId, deletedAt: null },
       orderBy: { position: "asc" },
       select: { assetId: true },
     });
     if (first) await prisma.entity.update({ where: { id: entityId }, data: { baseAssetId: first.assetId } });
   }
-  await logAction("entity.update", null, { entityId, addedRefs: files.length });
+  await logAction(ownerId, "entity.update", null, { entityId, addedRefs: files.length });
   revalidatePath("/", "layout");
   return { ok: true };
 }
 
 export async function softDeleteEntity(entityId: string) {
-  const gate = await requireSession(); if ("error" in gate) return gate;
+  const gate = await requireOwner(); if ("error" in gate) return gate;
+  const { ownerId } = gate;
   const refCount = await prisma.shotEntityRef.count({ where: { entityId } });
   const { count } = await prisma.entity.updateMany({
-    where: { id: entityId, ...OWNED },
+    where: { id: entityId, ownerId, deletedAt: null },
     data: { deletedAt: new Date() },
   });
   if (count === 0) return { error: "Entity not found." };
-  await logAction("entity.update", null, { entityId, action: "soft-delete", shotRefsAtDelete: refCount });
+  await logAction(ownerId, "entity.update", null, { entityId, action: "soft-delete", shotRefsAtDelete: refCount });
   revalidatePath("/", "layout");
   // History stays intact (snapshots); shots referencing it show a stale chip until edited.
   return { ok: true, shotRefs: refCount };
@@ -271,20 +278,21 @@ export async function softDeleteEntity(entityId: string) {
 // ---------- shots ----------
 
 export async function createShot(projectId: string) {
-  const gate = await requireSession(); if ("error" in gate) throw new Error(gate.error);
-  const project = await prisma.project.findFirst({ where: { id: projectId, ...OWNED } });
+  const gate = await requireOwner(); if ("error" in gate) throw new Error(gate.error);
+  const { ownerId } = gate;
+  const project = await prisma.project.findFirst({ where: { id: projectId, ownerId, deletedAt: null } });
   if (!project) return { error: "Project not found." };
   // number = max+1; @@unique([projectId, number]) backstops concurrent creates
   for (let attempt = 0; attempt < 3; attempt++) {
     const last = await prisma.shot.findFirst({
-      where: { ownerId: FOUNDER_OWNER_ID, projectId },
+      where: { ownerId, projectId },
       orderBy: { number: "desc" },
     });
     try {
       const shot = await prisma.shot.create({
-        data: { id: newId(), ownerId: FOUNDER_OWNER_ID, projectId, number: (last?.number ?? 0) + 1 },
+        data: { id: newId(), ownerId, projectId, number: (last?.number ?? 0) + 1 },
       });
-      await logAction("shot.create", projectId, { shotId: shot.id, number: shot.number });
+      await logAction(ownerId, "shot.create", projectId, { shotId: shot.id, number: shot.number });
       revalidatePath("/", "layout");
       return { id: shot.id, number: shot.number };
     } catch (e) {
@@ -311,10 +319,18 @@ export async function saveShotPrompt(
   promptText: string,
   entityIds: string[],
 ) {
-  const gate = await requireSession(); if ("error" in gate) return gate;
-  const shot = await prisma.shot.findFirst({ where: { id: shotId, ...OWNED } });
+  const gate = await requireOwner(); if ("error" in gate) return gate;
+  const { ownerId } = gate;
+  const shot = await prisma.shot.findFirst({ where: { id: shotId, ownerId, deletedAt: null } });
   if (!shot) return { error: "Shot not found." };
   const uniqueIds = [...new Set(entityIds)];
+  // IDOR guard: every @-referenced entity MUST belong to the caller's org. Without this a
+  // caller could link (and then read via getShots' entityRefs.entity include) a FOREIGN
+  // tenant's entity by passing its id. Reject the whole save if any id isn't owned.
+  if (uniqueIds.length) {
+    const owned = await prisma.entity.count({ where: { id: { in: uniqueIds }, ownerId, deletedAt: null } });
+    if (owned !== uniqueIds.length) return { error: "One or more referenced entities were not found." };
+  }
   let doc: object;
   try {
     doc = JSON.parse(promptDocJson) as object;
@@ -327,42 +343,45 @@ export async function saveShotPrompt(
       where: { id: shotId },
       data: { promptDoc: doc, description: promptText },
     }),
-    prisma.shotEntityRef.deleteMany({ where: { shotId } }),
+    prisma.shotEntityRef.deleteMany({ where: { shotId, ownerId } }),
     ...(uniqueIds.length
       ? [prisma.shotEntityRef.createMany({
-          data: uniqueIds.map((entityId) => ({ shotId, entityId, ownerId: FOUNDER_OWNER_ID })),
+          data: uniqueIds.map((entityId) => ({ shotId, entityId, ownerId })),
         })]
       : []),
   ]);
-  await logAction("shot.update", shot.projectId, { shotId, entityIds: uniqueIds });
+  await logAction(ownerId, "shot.update", shot.projectId, { shotId, entityIds: uniqueIds });
   revalidatePath("/", "layout");
   return { ok: true };
 }
 
 export async function updateShotTitle(shotId: string, title: string) {
-  const gate = await requireSession(); if ("error" in gate) return gate;
-  const shot = await prisma.shot.findFirst({ where: { id: shotId, ...OWNED } });
+  const gate = await requireOwner(); if ("error" in gate) return gate;
+  const { ownerId } = gate;
+  const shot = await prisma.shot.findFirst({ where: { id: shotId, ownerId, deletedAt: null } });
   if (!shot) return { error: "Shot not found." };
   await prisma.shot.update({ where: { id: shotId }, data: { title: title.trim() } });
-  await logAction("shot.update", shot.projectId, { shotId, field: "title" });
+  await logAction(ownerId, "shot.update", shot.projectId, { shotId, field: "title" });
   revalidatePath("/", "layout");
   return { ok: true };
 }
 
 export async function updateShotStatus(shotId: string, status: string) {
-  const gate = await requireSession(); if ("error" in gate) return gate;
+  const gate = await requireOwner(); if ("error" in gate) return gate;
+  const { ownerId } = gate;
   if (!SHOT_STATUSES.has(status)) return { error: "Unknown shot status." };
-  const shot = await prisma.shot.findFirst({ where: { id: shotId, ...OWNED } });
+  const shot = await prisma.shot.findFirst({ where: { id: shotId, ownerId, deletedAt: null } });
   if (!shot) return { error: "Shot not found." };
   await prisma.shot.update({ where: { id: shotId }, data: { status: status as ShotStatus } });
-  await logAction("shot.update", shot.projectId, { shotId, status });
+  await logAction(ownerId, "shot.update", shot.projectId, { shotId, status });
   revalidatePath("/", "layout");
   return { ok: true };
 }
 
 export async function softDeleteShot(shotId: string) {
-  const gate = await requireSession(); if ("error" in gate) return gate;
-  const shot = await prisma.shot.findFirst({ where: { id: shotId, ...OWNED } });
+  const gate = await requireOwner(); if ("error" in gate) return gate;
+  const { ownerId } = gate;
+  const shot = await prisma.shot.findFirst({ where: { id: shotId, ownerId, deletedAt: null } });
   if (!shot) return { error: "Shot not found." };
   const attached = await prisma.generation.count({ where: { shotId, deletedAt: null } });
   if (attached > 0) {
@@ -371,9 +390,9 @@ export async function softDeleteShot(shotId: string) {
   await prisma.$transaction([
     prisma.shot.update({ where: { id: shotId }, data: { deletedAt: new Date() } }),
     // derived index — drop with the shot so entity usage counts stay honest
-    prisma.shotEntityRef.deleteMany({ where: { shotId } }),
+    prisma.shotEntityRef.deleteMany({ where: { shotId, ownerId } }),
   ]);
-  await logAction("shot.update", shot.projectId, { shotId, action: "soft-delete" });
+  await logAction(ownerId, "shot.update", shot.projectId, { shotId, action: "soft-delete" });
   revalidatePath("/", "layout");
   return { ok: true };
 }
@@ -386,23 +405,24 @@ export async function softDeleteShot(shotId: string) {
  * batch commits atomically — a mid-batch failure leaves nothing half-recorded.
  */
 export async function uploadCandidates(projectId: string, formData: FormData) {
-  const gate = await requireSession(); if ("error" in gate) return gate;
-  const project = await prisma.project.findFirst({ where: { id: projectId, ...OWNED } });
+  const gate = await requireOwner(); if ("error" in gate) return gate;
+  const { ownerId } = gate;
+  const project = await prisma.project.findFirst({ where: { id: projectId, ownerId, deletedAt: null } });
   if (!project) return { error: "Project not found." };
   const files = formData.getAll("files").filter((f): f is File => f instanceof File && f.size > 0);
   if (files.length === 0) return { error: "No files received." };
   const promptText = String(formData.get("promptText") ?? "");
   const entityIds = formData.getAll("entityIds").map(String).filter(Boolean);
-  const entitySnapshot = await buildEntitySnapshot(entityIds);
+  const entitySnapshot = await buildEntitySnapshot(ownerId, entityIds);
 
   const ingested: Awaited<ReturnType<typeof ingestFile>>[] = [];
-  for (const file of files) ingested.push(await ingestFile(file));
+  for (const file of files) ingested.push(await ingestFile(ownerId, file));
 
   await prisma.$transaction(async (tx) => {
     for (const item of ingested) {
       const asset = await tx.asset.upsert({
         where: {
-          ownerId_contentHash: { ownerId: FOUNDER_OWNER_ID, contentHash: item.contentHash },
+          ownerId_contentHash: { ownerId, contentHash: item.contentHash },
         },
         update: { deletedAt: null },
         create: item.create,
@@ -410,7 +430,7 @@ export async function uploadCandidates(projectId: string, formData: FormData) {
       await tx.generation.create({
         data: {
           id: newId(),
-          ownerId: FOUNDER_OWNER_ID,
+          ownerId,
           projectId,
           shotId: null,
           assetId: asset.id,
@@ -423,7 +443,7 @@ export async function uploadCandidates(projectId: string, formData: FormData) {
     await tx.actionEvent.create({
       data: {
         id: newId(),
-        ownerId: FOUNDER_OWNER_ID,
+        ownerId,
         projectId,
         type: "generation.upload",
         payload: { count: ingested.length, entityIds },
@@ -435,7 +455,7 @@ export async function uploadCandidates(projectId: string, formData: FormData) {
   try {
     const boss = await getBoss();
     const assets = await prisma.asset.findMany({
-      where: { ownerId: FOUNDER_OWNER_ID, contentHash: { in: ingested.map((i) => i.contentHash) } },
+      where: { ownerId, contentHash: { in: ingested.map((i) => i.contentHash) } },
       select: { id: true, durationS: true },
     });
     for (const a of assets) {
@@ -466,45 +486,47 @@ async function looksLikeImage(file: File): Promise<boolean> {
  *  use it as an image-to-video source. Mirrors uploadCandidates for a single
  *  image; the i2v itself is a separate (paid) gen job. */
 export async function uploadReference(projectId: string, formData: FormData): Promise<{ id: string; src: string } | { error: string }> {
-  const gate = await requireSession(); if ("error" in gate) return gate;
-  const project = await prisma.project.findFirst({ where: { id: projectId, ...OWNED } });
+  const gate = await requireOwner(); if ("error" in gate) return gate;
+  const { ownerId } = gate;
+  const project = await prisma.project.findFirst({ where: { id: projectId, ownerId, deletedAt: null } });
   if (!project) return { error: "Project not found." };
   const file = formData.getAll("files").find((f): f is File => f instanceof File && f.size > 0);
   if (!file) return { error: "No image received." };
   const ext = extFromFilename(file.name);
   if (!REF_IMAGE_EXTS.has(ext)) return { error: "Reference must be a PNG, JPG, or WEBP image." };
   if (!(await looksLikeImage(file))) return { error: "That file isn't a valid PNG / JPG / WEBP image." };
-  const item = await ingestFile(file);
+  const item = await ingestFile(ownerId, file);
   let genId = "";
   await prisma.$transaction(async (tx) => {
     const asset = await tx.asset.upsert({
-      where: { ownerId_contentHash: { ownerId: FOUNDER_OWNER_ID, contentHash: item.contentHash } },
+      where: { ownerId_contentHash: { ownerId, contentHash: item.contentHash } },
       update: { deletedAt: null },
       create: item.create,
     });
     const gen = await tx.generation.create({
-      data: { id: newId(), ownerId: FOUNDER_OWNER_ID, projectId, shotId: null, assetId: asset.id, source: "UPLOAD", promptText: "", entitySnapshot: { entities: [] } },
+      data: { id: newId(), ownerId, projectId, shotId: null, assetId: asset.id, source: "UPLOAD", promptText: "", entitySnapshot: { entities: [] } },
     });
     genId = gen.id;
   });
   revalidatePath("/", "layout");
-  return { id: genId, src: storageKeyToSrc(storageKey(FOUNDER_OWNER_ID, item.contentHash, ext)) };
+  return { id: genId, src: storageKeyToSrc(storageKey(ownerId, item.contentHash, ext)) };
 }
 
 /** Manual attach: candidate → shot, next version number, shot goes ATTACHED. */
 export async function attachGeneration(generationId: string, shotId: string) {
-  const gate = await requireSession(); if ("error" in gate) return gate;
-  const gen = await prisma.generation.findFirst({ where: { id: generationId, ...OWNED } });
+  const gate = await requireOwner(); if ("error" in gate) return gate;
+  const { ownerId } = gate;
+  const gen = await prisma.generation.findFirst({ where: { id: generationId, ownerId, deletedAt: null } });
   if (!gen) return { error: "Generation not found." };
   if (gen.shotId) return { error: "Already attached to a shot — detach it first." };
-  const shot = await prisma.shot.findFirst({ where: { id: shotId, ...OWNED } });
+  const shot = await prisma.shot.findFirst({ where: { id: shotId, ownerId, deletedAt: null } });
   if (!shot) return { error: "Shot not found." };
   if (shot.projectId !== gen.projectId) {
     return { error: "That shot belongs to a different project." };
   }
   for (let attempt = 0; attempt < 3; attempt++) {
     const top = await prisma.generation.findFirst({
-      where: { ownerId: FOUNDER_OWNER_ID, shotId },
+      where: { ownerId, shotId },
       orderBy: { version: "desc" },
     });
     try {
@@ -520,15 +542,16 @@ export async function attachGeneration(generationId: string, shotId: string) {
       if (attempt === 2) throw e; // @@unique([shotId, version]) race — retry
     }
   }
-  await logAction("generation.attach", gen.projectId, { generationId, shotId });
+  await logAction(ownerId, "generation.attach", gen.projectId, { generationId, shotId });
   revalidatePath("/", "layout");
   return { ok: true };
 }
 
 /** Detach back to the candidate zone (whitelist fields only). */
 export async function detachGeneration(generationId: string) {
-  const gate = await requireSession(); if ("error" in gate) return gate;
-  const gen = await prisma.generation.findFirst({ where: { id: generationId, ...OWNED } });
+  const gate = await requireOwner(); if ("error" in gate) return gate;
+  const { ownerId } = gate;
+  const gen = await prisma.generation.findFirst({ where: { id: generationId, ownerId, deletedAt: null } });
   if (!gen || !gen.shotId) return { error: "Generation is not attached." };
   const shotId = gen.shotId;
   const remaining = await prisma.generation.count({
@@ -542,12 +565,12 @@ export async function detachGeneration(generationId: string) {
     // last one out turns the ATTACHED badge off (manual EXPORTED/FINAL stays)
     ...(remaining === 0
       ? [prisma.shot.updateMany({
-          where: { id: shotId, status: "ATTACHED" },
+          where: { id: shotId, ownerId, status: "ATTACHED" },
           data: { status: "DRAFT" },
         })]
       : []),
   ]);
-  await logAction("generation.detach", gen.projectId, { generationId, shotId });
+  await logAction(ownerId, "generation.detach", gen.projectId, { generationId, shotId });
   revalidatePath("/", "layout");
   return { ok: true };
 }
@@ -555,8 +578,9 @@ export async function detachGeneration(generationId: string) {
 /** Soft-delete a generation from the Assets library. If it was a shot's last
  *  live render, the shot drops back to DRAFT (same "last one out" rule). */
 export async function deleteGeneration(generationId: string): Promise<{ ok: true } | { error: string }> {
-  const gate = await requireSession(); if ("error" in gate) return gate;
-  const gen = await prisma.generation.findFirst({ where: { id: generationId, ...OWNED } });
+  const gate = await requireOwner(); if ("error" in gate) return gate;
+  const { ownerId } = gate;
+  const gen = await prisma.generation.findFirst({ where: { id: generationId, ownerId, deletedAt: null } });
   if (!gen) return { error: "Generation not found." };
   const shotId = gen.shotId;
   const remaining = shotId
@@ -566,13 +590,13 @@ export async function deleteGeneration(generationId: string): Promise<{ ok: true
     prisma.generation.update({ where: { id: generationId }, data: { deletedAt: new Date() } }),
     // clear any segment keyframe pointing at this generation so deleting it can't
     // leave a Shot with a dangling first/last-frame id (③B cleanup)
-    prisma.shot.updateMany({ where: { firstFrameGenerationId: generationId }, data: { firstFrameGenerationId: null } }),
-    prisma.shot.updateMany({ where: { lastFrameGenerationId: generationId }, data: { lastFrameGenerationId: null } }),
+    prisma.shot.updateMany({ where: { firstFrameGenerationId: generationId, ownerId }, data: { firstFrameGenerationId: null } }),
+    prisma.shot.updateMany({ where: { lastFrameGenerationId: generationId, ownerId }, data: { lastFrameGenerationId: null } }),
     ...(shotId && remaining === 0
-      ? [prisma.shot.updateMany({ where: { id: shotId, status: "ATTACHED" }, data: { status: "DRAFT" } })]
+      ? [prisma.shot.updateMany({ where: { id: shotId, ownerId, status: "ATTACHED" }, data: { status: "DRAFT" } })]
       : []),
   ]);
-  await logAction("generation.delete", gen.projectId, { generationId, shotId });
+  await logAction(ownerId, "generation.delete", gen.projectId, { generationId, shotId });
   revalidatePath("/", "layout");
   return { ok: true };
 }
@@ -587,8 +611,9 @@ export async function deleteGeneration(generationId: string): Promise<{ ok: true
  *  `conflict` instead of silently overwriting that work. Omitting baseUpdatedAt
  *  keeps the old bare write (back-compat: resetToBoard's deliberate replace). */
 export async function saveProjectEdit(projectId: string, editJsonString: string, baseUpdatedAt?: string) {
-  const gate = await requireSession(); if ("error" in gate) return gate;
-  const project = await prisma.project.findFirst({ where: { id: projectId, ...OWNED } });
+  const gate = await requireOwner(); if ("error" in gate) return gate;
+  const { ownerId } = gate;
+  const project = await prisma.project.findFirst({ where: { id: projectId, ownerId, deletedAt: null } });
   if (!project) return { error: "Project not found." };
   let edit: ArtlioEdit;
   try {
@@ -598,15 +623,15 @@ export async function saveProjectEdit(projectId: string, editJsonString: string,
     return { error: "That cut is out of contract — fix the flagged clip first." };
   }
   if (baseUpdatedAt) {
-    const res = await prisma.project.updateMany({ where: { id: projectId, updatedAt: new Date(baseUpdatedAt) }, data: { editJson: edit } });
+    const res = await prisma.project.updateMany({ where: { id: projectId, ownerId, updatedAt: new Date(baseUpdatedAt) }, data: { editJson: edit } });
     if (res.count === 0) return { error: "This cut changed in another tab or device — reload before saving so you don't overwrite that work.", conflict: true as const };
   } else {
     await prisma.project.update({ where: { id: projectId }, data: { editJson: edit } });
   }
-  await logAction("edit.save", projectId, { seconds: Math.round(editDuration(edit)) });
+  await logAction(ownerId, "edit.save", projectId, { seconds: Math.round(editDuration(edit)) });
   revalidatePath("/", "layout");
   // hand back the fresh updatedAt so the client can re-base for its next save
-  const fresh = await prisma.project.findFirst({ where: { id: projectId, ownerId: FOUNDER_OWNER_ID }, select: { updatedAt: true } });
+  const fresh = await prisma.project.findFirst({ where: { id: projectId, ownerId }, select: { updatedAt: true } });
   return { ok: true, updatedAt: fresh?.updatedAt?.toISOString() };
 }
 
@@ -621,13 +646,14 @@ const BLANK_CUT = (): ArtlioEdit => ({
  *  De-duped by src — a segment already on the timeline reports added:false and
  *  changes nothing (the board cut already carries every attached render). */
 export async function addSegmentToCut(shotId: string): Promise<{ ok: true; added: boolean } | { error: string }> {
-  const gate = await requireSession(); if ("error" in gate) return gate;
-  const shot = await prisma.shot.findFirst({ where: { id: shotId, ...OWNED }, select: { id: true, projectId: true, transition: true } });
+  const gate = await requireOwner(); if ("error" in gate) return gate;
+  const { ownerId } = gate;
+  const shot = await prisma.shot.findFirst({ where: { id: shotId, ownerId, deletedAt: null }, select: { id: true, projectId: true, transition: true } });
   if (!shot) return { error: "Shot not found." };
   // the segment's render = its latest attached video, scoped to shot + owner +
   // project (defense in depth — the schema doesn't enforce gen.projectId == shot's)
   const vid = await prisma.generation.findFirst({
-    where: { shotId: shot.id, projectId: shot.projectId, ownerId: FOUNDER_OWNER_ID, deletedAt: null, asset: { ext: { in: ["mp4", "mov", "webm", "mkv"] } } },
+    where: { shotId: shot.id, projectId: shot.projectId, ownerId, deletedAt: null, asset: { ext: { in: ["mp4", "mov", "webm", "mkv"] } } },
     orderBy: { version: "desc" }, include: { asset: true },
   });
   if (!vid) return { error: "Animate this segment first — there's no video to add yet." };
@@ -639,7 +665,7 @@ export async function addSegmentToCut(shotId: string): Promise<{ ok: true; added
   // save/append bumps it → our conditional update matches 0 rows → retry on the
   // fresh value, so neither write is silently lost (last-writer-wins is gone).
   for (let attempt = 0; attempt < 4; attempt++) {
-    const project = await prisma.project.findFirst({ where: { id: shot.projectId, ...OWNED } });
+    const project = await prisma.project.findFirst({ where: { id: shot.projectId, ownerId, deletedAt: null } });
     if (!project) return { error: "Project not found." };
 
     // base = the VALID saved cut; on a missing/corrupt saved cut, rebuild from the
@@ -649,7 +675,7 @@ export async function addSegmentToCut(shotId: string): Promise<{ ok: true; added
     if (saved?.success) {
       base = saved.data;
     } else {
-      const [shots, candidates] = await Promise.all([getShots(shot.projectId), getCandidates(shot.projectId)]);
+      const [shots, candidates] = await Promise.all([getShots(ownerId, shot.projectId), getCandidates(ownerId, shot.projectId)]);
       base = buildBoardEdit(shots, candidates).edit ?? BLANK_CUT();
     }
     const track0 = base.timeline.tracks[0];
@@ -663,9 +689,9 @@ export async function addSegmentToCut(shotId: string): Promise<{ ok: true; added
     const parsed = artlioEdit.safeParse(base); // canonicalize before persisting (saveProjectEdit discipline)
     if (!parsed.success) return { error: "Adding that segment would put the cut out of contract." };
 
-    const res = await prisma.project.updateMany({ where: { id: project.id, updatedAt: project.updatedAt }, data: { editJson: parsed.data } });
+    const res = await prisma.project.updateMany({ where: { id: project.id, ownerId, updatedAt: project.updatedAt }, data: { editJson: parsed.data } });
     if (res.count === 1) {
-      await logAction("edit.addSegment", project.id, { shotId, seconds: Math.round(seconds) });
+      await logAction(ownerId, "edit.addSegment", project.id, { shotId, seconds: Math.round(seconds) });
       revalidatePath("/", "layout");
       return { ok: true, added: true };
     }
@@ -679,8 +705,9 @@ export async function addSegmentToCut(shotId: string): Promise<{ ok: true; added
  *  holds by construction. Project.editJson is NOT written here — exportCut does a
  *  GUARDED saveProjectEdit before calling this (D1 optimistic-concurrency). */
 export async function startRender(projectId: string, editJsonString: string) {
-  const gate = await requireSession(); if ("error" in gate) return gate;
-  const project = await prisma.project.findFirst({ where: { id: projectId, ...OWNED } });
+  const gate = await requireOwner(); if ("error" in gate) return gate;
+  const { ownerId } = gate;
+  const project = await prisma.project.findFirst({ where: { id: projectId, ownerId, deletedAt: null } });
   if (!project) return { error: "Project not found." };
   let edit: ArtlioEdit;
   try {
@@ -691,7 +718,7 @@ export async function startRender(projectId: string, editJsonString: string) {
   // server-side in-flight guard (codex review): double-clicks and duplicate
   // tabs must not stack identical renders
   const active = await prisma.renderJob.findFirst({
-    where: { projectId, ownerId: FOUNDER_OWNER_ID, status: { in: ["QUEUED", "RENDERING"] } },
+    where: { projectId, ownerId, status: { in: ["QUEUED", "RENDERING"] } },
   });
   if (active) {
     return { error: "A render is already running for this project — wait for it to finish below." };
@@ -703,7 +730,7 @@ export async function startRender(projectId: string, editJsonString: string) {
   // saveProjectEdit BEFORE calling startRender (aborting on a conflict), so the project
   // is already persisted by the time we get here.
   const job = await prisma.renderJob.create({
-    data: { id: newId(), ownerId: FOUNDER_OWNER_ID, projectId, editJson: edit },
+    data: { id: newId(), ownerId, projectId, editJson: edit },
   });
   try {
     const boss = await getBoss();
@@ -721,21 +748,22 @@ export async function startRender(projectId: string, editJsonString: string) {
     });
     return { error: "Could not reach the render queue — is the worker database up?" };
   }
-  await logAction("render.start", projectId, { renderJobId: job.id });
+  await logAction(ownerId, "render.start", projectId, { renderJobId: job.id });
   revalidatePath("/", "layout");
   return { id: job.id };
 }
 
 /** Poll target for the editor's render strip. */
 export async function getRenderJobs(projectId: string) {
-  const gate = await requireSession(); if ("error" in gate) throw new Error(gate.error);
+  const gate = await requireOwner(); if ("error" in gate) throw new Error(gate.error);
+  const { ownerId } = gate;
   const jobs = await prisma.renderJob.findMany({
-    where: { projectId, ownerId: FOUNDER_OWNER_ID },
+    where: { projectId, ownerId },
     orderBy: { createdAt: "desc" },
     take: 5,
   });
   const assetIds = jobs.map((j) => j.outputAssetId).filter((x): x is string => !!x);
-  const assets = await prisma.asset.findMany({ where: { id: { in: assetIds }, ownerId: FOUNDER_OWNER_ID } });
+  const assets = await prisma.asset.findMany({ where: { id: { in: assetIds }, ownerId } });
   const byId = new Map(assets.map((a) => [a.id, a]));
   return jobs.map((j) => {
     const asset = j.outputAssetId ? byId.get(j.outputAssetId) : null;
@@ -754,17 +782,17 @@ export async function getRenderJobs(projectId: string) {
  *  The editor identifies a clip only by src (a content-addressed storage key); the
  *  caption job needs a real Asset.id + contentHash. Returns null when the src is
  *  malformed or the asset isn't owned (forged src can't reach another owner). */
-async function ownedAssetFromSrc(src: string): Promise<{ id: string; contentHash: string } | null> {
+async function ownedAssetFromSrc(ownerId: string, src: string): Promise<{ id: string; contentHash: string } | null> {
   let contentHash: string;
   try {
     const key = srcToStorageKey(src);
-    if (!keyOwnerMatches(key, FOUNDER_OWNER_ID)) return null; // forged/other-owner src
+    if (!keyOwnerMatches(key, ownerId)) return null; // forged/other-owner src
     contentHash = parseStorageKey(key).contentHash;
   } catch {
     return null;
   }
   const asset = await prisma.asset.findFirst({
-    where: { ownerId: FOUNDER_OWNER_ID, contentHash, deletedAt: null },
+    where: { ownerId, contentHash, deletedAt: null },
     select: { id: true, contentHash: true },
   });
   return asset;
@@ -776,18 +804,19 @@ async function ownedAssetFromSrc(src: string): Promise<{ id: string; contentHash
  *  content-addressed source (the only identifier the editor has for a clip); the
  *  real Asset.id/contentHash are resolved server-side so the worker can read it. */
 export async function startCaption(projectId: string, src: string) {
-  const gate = await requireSession(); if ("error" in gate) return gate;
-  const project = await prisma.project.findFirst({ where: { id: projectId, ...OWNED } });
+  const gate = await requireOwner(); if ("error" in gate) return gate;
+  const { ownerId } = gate;
+  const project = await prisma.project.findFirst({ where: { id: projectId, ownerId, deletedAt: null } });
   if (!project) return { error: "Project not found." };
-  const asset = await ownedAssetFromSrc(src);
+  const asset = await ownedAssetFromSrc(ownerId, src);
   if (!asset) return { error: "That clip isn't in your media — generate it first." };
   // in-flight guard: don't stack identical caption jobs for the same asset
   const active = await prisma.captionJob.findFirst({
-    where: { projectId, ownerId: FOUNDER_OWNER_ID, assetId: asset.id, status: { in: ["QUEUED", "RENDERING"] } },
+    where: { projectId, ownerId, assetId: asset.id, status: { in: ["QUEUED", "RENDERING"] } },
   });
   if (active) return { error: "Captions are already being generated for this clip — wait for it to finish." };
   const job = await prisma.captionJob.create({
-    data: { id: newId(), ownerId: FOUNDER_OWNER_ID, projectId, assetId: asset.id, contentHash: asset.contentHash },
+    data: { id: newId(), ownerId, projectId, assetId: asset.id, contentHash: asset.contentHash },
   });
   try {
     const boss = await getBoss();
@@ -801,15 +830,16 @@ export async function startCaption(projectId: string, src: string) {
     });
     return { error: "Could not reach the caption queue — is the worker database up?" };
   }
-  await logAction("caption.start", projectId, { captionJobId: job.id, assetId: asset.id });
+  await logAction(ownerId, "caption.start", projectId, { captionJobId: job.id, assetId: asset.id });
   revalidatePath("/", "layout");
   return { id: job.id };
 }
 
 /** Poll target for the editor's caption-generate flow. */
 export async function getCaptionJob(jobId: string) {
-  const gate = await requireSession(); if ("error" in gate) throw new Error(gate.error);
-  const job = await prisma.captionJob.findFirst({ where: { id: jobId, ownerId: FOUNDER_OWNER_ID } });
+  const gate = await requireOwner(); if ("error" in gate) throw new Error(gate.error);
+  const { ownerId } = gate;
+  const job = await prisma.captionJob.findFirst({ where: { id: jobId, ownerId } });
   if (!job) return null;
   return { id: job.id, status: job.status, progress: job.progress, error: job.error };
 }
@@ -818,10 +848,11 @@ export async function getCaptionJob(jobId: string) {
  *  the UI folds into timeline.captions after the caption job finishes. Returns []
  *  when no transcript is cached yet (or the cached transcript is empty). */
 export async function getTranscript(projectId: string, src: string): Promise<CaptionCue[]> {
-  const gate = await requireSession(); if ("error" in gate) throw new Error(gate.error);
-  const project = await prisma.project.findFirst({ where: { id: projectId, ...OWNED } });
+  const gate = await requireOwner(); if ("error" in gate) throw new Error(gate.error);
+  const { ownerId } = gate;
+  const project = await prisma.project.findFirst({ where: { id: projectId, ownerId, deletedAt: null } });
   if (!project) return [];
-  const asset = await ownedAssetFromSrc(src);
+  const asset = await ownedAssetFromSrc(ownerId, src);
   if (!asset) return [];
   // Owner-gated by ownedAssetFromSrc above (verifies the caller owns an asset with this
   // contentHash + the src key-owner matches), so the content-addressed transcript lookup
@@ -839,16 +870,17 @@ export async function getTranscript(projectId: string, src: string): Promise<Cap
 
 /** Hide from candidate zone. The row is a tombstone; the sweeper handles blobs. */
 export async function softDeleteGeneration(generationId: string) {
-  const gate = await requireSession(); if ("error" in gate) return gate;
-  const gen = await prisma.generation.findFirst({ where: { id: generationId, ...OWNED } });
+  const gate = await requireOwner(); if ("error" in gate) return gate;
+  const { ownerId } = gate;
+  const gen = await prisma.generation.findFirst({ where: { id: generationId, ownerId, deletedAt: null } });
   if (!gen) return { error: "Generation not found." };
   await prisma.$transaction([
     prisma.generation.update({ where: { id: generationId }, data: { deletedAt: new Date() } }),
     // drop any segment keyframe pointing here (no dangling first/last-frame id) (③B)
-    prisma.shot.updateMany({ where: { firstFrameGenerationId: generationId }, data: { firstFrameGenerationId: null } }),
-    prisma.shot.updateMany({ where: { lastFrameGenerationId: generationId }, data: { lastFrameGenerationId: null } }),
+    prisma.shot.updateMany({ where: { firstFrameGenerationId: generationId, ownerId }, data: { firstFrameGenerationId: null } }),
+    prisma.shot.updateMany({ where: { lastFrameGenerationId: generationId, ownerId }, data: { lastFrameGenerationId: null } }),
   ]);
-  await logAction("generation.discard", gen.projectId, { generationId });
+  await logAction(ownerId, "generation.discard", gen.projectId, { generationId });
   revalidatePath("/", "layout");
   return { ok: true };
 }
@@ -860,11 +892,12 @@ const EDITOR_AUDIO_EXTS = new Set(["mp3", "wav", "m4a", "aac", "ogg", "flac"]); 
  *  panel — click one to append it to the cut. `seconds` drives the clip length.
  *  image/video go on the visual track; audio (EP4) goes on its own audio track. */
 export async function getEditorMedia(projectId: string): Promise<{ id: string; src: string; kind: "image" | "video" | "audio"; seconds: number }[]> {
-  const gate = await requireSession(); if ("error" in gate) throw new Error(gate.error);
-  const project = await prisma.project.findFirst({ where: { id: projectId, ...OWNED } });
+  const gate = await requireOwner(); if ("error" in gate) throw new Error(gate.error);
+  const { ownerId } = gate;
+  const project = await prisma.project.findFirst({ where: { id: projectId, ownerId, deletedAt: null } });
   if (!project) return [];
   const gens = await prisma.generation.findMany({
-    where: { ownerId: FOUNDER_OWNER_ID, projectId, deletedAt: null },
+    where: { ownerId, projectId, deletedAt: null },
     orderBy: { createdAt: "desc" },
     include: { asset: true },
   });

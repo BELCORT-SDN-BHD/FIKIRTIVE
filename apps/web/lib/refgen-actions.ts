@@ -12,22 +12,22 @@ import {
   newId,
   slugify,
   REFGEN_QUEUE,
-  FOUNDER_OWNER_ID,
   isModelDisabled,
   pricedRefgenCredits,
   type RefGenJobData,
 } from "@artlio/core";
 import { getBoss } from "./queue";
-import { requireSession } from "./auth-guard";
+import { requireOwner } from "./auth-guard";
 import { resolveDisabledModels } from "./model-registry";
 
-const OWNED = { ownerId: FOUNDER_OWNER_ID, deletedAt: null } as const;
 // a job stuck QUEUED/GENERATING past the queue's expiry is treated as abandoned
 // (worker died mid-run) so a new generation isn't blocked forever.
 const STALE_MS = 15 * 60 * 1000;
 
 export async function startRefGen(raw: unknown): Promise<{ id: string } | { error: string }> {
-  const gate = await requireSession(); if ("error" in gate) return gate;
+  const gate = await requireOwner(); if ("error" in gate) return gate;
+  const { ownerId } = gate;
+  const OWNED = { ownerId, deletedAt: null } as const;
   const parsed = refGenRequest.safeParse(raw);
   if (!parsed.success) return { error: "That generation request is out of bounds — check the prompt and count." };
   const { entityId, prompt, count, model, mode } = parsed.data;
@@ -60,7 +60,7 @@ export async function startRefGen(raw: unknown): Promise<{ id: string } | { erro
   // (worker died mid-run) is treated as abandoned so the founder isn't locked out.
   const active = await prisma.refGenJob.findFirst({
     where: {
-      ownerId: FOUNDER_OWNER_ID,
+      ownerId,
       status: { in: ["QUEUED", "GENERATING"] },
       updatedAt: { gte: new Date(Date.now() - STALE_MS) },
       // serialize per entity (BASE/REFSHEET are the only modes reaching here).
@@ -85,10 +85,10 @@ export async function startRefGen(raw: unknown): Promise<{ id: string } | { erro
     // stale-claim branch refunds it — never double-charged.)
     job = await prisma.$transaction(async (tx) => {
       const created = await tx.refGenJob.create({
-        data: { id: newId(), ownerId: FOUNDER_OWNER_ID, entityId, prompt, count: effectiveCount, model, mode },
+        data: { id: newId(), ownerId, entityId, prompt, count: effectiveCount, model, mode },
         select: { id: true },
       });
-      await reserveCredits(tx, { orgId: FOUNDER_OWNER_ID, refId: created.id, cost });
+      await reserveCredits(tx, { orgId: ownerId, refId: created.id, cost });
       return created;
     });
   } catch (e) {
@@ -99,7 +99,7 @@ export async function startRefGen(raw: unknown): Promise<{ id: string } | { erro
       const dupe = await prisma.refGenJob.findFirst({
         // variantId null: startRefGen creates only base/REFSHEET (COALESCE→'' in the
         // index). VARIANT jobs go through dispatchVariantJob and key on variantId.
-        where: { ownerId: FOUNDER_OWNER_ID, entityId, variantId: null, status: { in: ["QUEUED", "GENERATING"] } },
+        where: { ownerId, entityId, variantId: null, status: { in: ["QUEUED", "GENERATING"] } },
         orderBy: { createdAt: "desc" },
         select: { id: true },
       });
@@ -117,7 +117,7 @@ export async function startRefGen(raw: unknown): Promise<{ id: string } | { erro
     const message = e instanceof Error ? e.message.slice(0, 300) : "queue unavailable";
     await prisma.$transaction(async (tx) => {
       await tx.refGenJob.update({ where: { id: job.id }, data: { status: "FAILED", error: `dispatch failed: ${message}` } });
-      await refundReservation(tx, { orgId: FOUNDER_OWNER_ID, refId: job.id });
+      await refundReservation(tx, { orgId: ownerId, refId: job.id });
     });
     return { error: "Could not reach the generation queue — is the worker up?" };
   }
@@ -129,7 +129,7 @@ export async function startRefGen(raw: unknown): Promise<{ id: string } | { erro
     console.warn(`startRefGen: queueJobId persist failed for job ${job.id} (non-fatal):`, e instanceof Error ? e.message : e);
   }
   await prisma.actionEvent.create({
-    data: { id: newId(), ownerId: FOUNDER_OWNER_ID, type: "refgen.start", payload: { jobId: job.id, entityId, count: effectiveCount } },
+    data: { id: newId(), ownerId, type: "refgen.start", payload: { jobId: job.id, entityId, count: effectiveCount } },
   });
   revalidatePath("/", "layout");
   return { id: job.id };
@@ -139,7 +139,9 @@ export async function startRefGen(raw: unknown): Promise<{ id: string } | { erro
  *  Validate-before-write: the asset must already be a live ref of this entity
  *  (no arbitrary asset ids), then set Entity.baseAssetId. No spend. */
 export async function setBaseAsset(entityId: string, assetId: string): Promise<{ ok: true } | { error: string }> {
-  const gate = await requireSession(); if ("error" in gate) return gate;
+  const gate = await requireOwner(); if ("error" in gate) return gate;
+  const { ownerId } = gate;
+  const OWNED = { ownerId, deletedAt: null } as const;
   const ref = await prisma.referenceImage.findFirst({
     where: { entityId, assetId, ...OWNED, variantId: null },
     select: { id: true },
@@ -154,7 +156,7 @@ export async function setBaseAsset(entityId: string, assetId: string): Promise<{
   });
   if (count === 0) return { error: "Element not found." };
   await prisma.actionEvent.create({
-    data: { id: newId(), ownerId: FOUNDER_OWNER_ID, type: "entity.update", payload: { entityId, action: "set-base", assetId } },
+    data: { id: newId(), ownerId, type: "entity.update", payload: { entityId, action: "set-base", assetId } },
   });
   revalidatePath("/", "layout");
   return { ok: true };
@@ -163,7 +165,7 @@ export async function setBaseAsset(entityId: string, assetId: string): Promise<{
 /** Dispatch a VARIANT i2i job for an existing variant (shared by create + regenerate).
  *  Per-VARIANT active-job guard (NOT per-entity — different variants run concurrently)
  *  prevents stacking spend; an in-flight job for the same variant is reused. */
-async function dispatchVariantJob(entityId: string, variantId: string, prompt: string): Promise<{ jobId: string } | { error: string }> {
+async function dispatchVariantJob(ownerId: string, entityId: string, variantId: string, prompt: string): Promise<{ jobId: string } | { error: string }> {
   // OPT-6 P2: the variant path bypasses startRefGen — enforce disable here too.
   // dispatchVariantJob always uses model:"seedream", so this is the seedream toggle.
   const disabled = await resolveDisabledModels();
@@ -171,7 +173,7 @@ async function dispatchVariantJob(entityId: string, variantId: string, prompt: s
     return { error: "Image generation is currently turned off." };
   }
   const active = await prisma.refGenJob.findFirst({
-    where: { variantId, ownerId: FOUNDER_OWNER_ID, status: { in: ["QUEUED", "GENERATING"] }, updatedAt: { gte: new Date(Date.now() - STALE_MS) } },
+    where: { variantId, ownerId, status: { in: ["QUEUED", "GENERATING"] }, updatedAt: { gte: new Date(Date.now() - STALE_MS) } },
     select: { id: true },
   });
   if (active) return { jobId: active.id };
@@ -186,10 +188,10 @@ async function dispatchVariantJob(entityId: string, variantId: string, prompt: s
     // RESERVE atomically with the insert (rolls back on over-balance → out-of-credits).
     job = await prisma.$transaction(async (tx) => {
       const created = await tx.refGenJob.create({
-        data: { id: newId(), ownerId: FOUNDER_OWNER_ID, entityId, prompt, count: 1, model: "seedream", mode: "VARIANT", variantId },
+        data: { id: newId(), ownerId, entityId, prompt, count: 1, model: "seedream", mode: "VARIANT", variantId },
         select: { id: true },
       });
-      await reserveCredits(tx, { orgId: FOUNDER_OWNER_ID, refId: created.id, cost });
+      await reserveCredits(tx, { orgId: ownerId, refId: created.id, cost });
       return created;
     });
   } catch (e) {
@@ -198,7 +200,7 @@ async function dispatchVariantJob(entityId: string, variantId: string, prompt: s
     }
     if (typeof e === "object" && e !== null && (e as { code?: string }).code === "P2002") {
       const dupe = await prisma.refGenJob.findFirst({
-        where: { ownerId: FOUNDER_OWNER_ID, entityId, variantId, status: { in: ["QUEUED", "GENERATING"] } },
+        where: { ownerId, entityId, variantId, status: { in: ["QUEUED", "GENERATING"] } },
         orderBy: { createdAt: "desc" },
         select: { id: true },
       });
@@ -216,7 +218,7 @@ async function dispatchVariantJob(entityId: string, variantId: string, prompt: s
     const message = e instanceof Error ? e.message.slice(0, 300) : "queue unavailable";
     await prisma.$transaction(async (tx) => {
       await tx.refGenJob.update({ where: { id: job.id }, data: { status: "FAILED", error: `dispatch failed: ${message}` } });
-      await refundReservation(tx, { orgId: FOUNDER_OWNER_ID, refId: job.id });
+      await refundReservation(tx, { orgId: ownerId, refId: job.id });
     });
     return { error: "Could not reach the generation queue — is the worker up?" };
   }
@@ -233,7 +235,7 @@ async function dispatchVariantJob(entityId: string, variantId: string, prompt: s
   // retry could enqueue a SECOND paid variant job (double-spend). Log + swallow.
   try {
     await prisma.actionEvent.create({
-      data: { id: newId(), ownerId: FOUNDER_OWNER_ID, type: "refgen.start", payload: { jobId: job.id, entityId, variantId, count: 1, mode: "VARIANT" } },
+      data: { id: newId(), ownerId, type: "refgen.start", payload: { jobId: job.id, entityId, variantId, count: 1, mode: "VARIANT" } },
     });
   } catch (e) {
     console.warn(`dispatchVariantJob: refgen.start audit write failed for job ${job.id} (non-fatal):`, e instanceof Error ? e.message : e);
@@ -264,7 +266,9 @@ async function withUniqueHandle(name: string, write: (handle: string) => Promise
  *  is created first (handle de-collided via the partial unique index) — a duplicate
  *  double-submit fails cleanly with no job; only after it commits do we dispatch. */
 export async function createVariant(entityId: string, name: string, prompt: string): Promise<{ variantId: string; jobId: string } | { error: string }> {
-  const gate = await requireSession(); if ("error" in gate) return gate;
+  const gate = await requireOwner(); if ("error" in gate) return gate;
+  const { ownerId } = gate;
+  const OWNED = { ownerId, deletedAt: null } as const;
   const cleanName = name.trim();
   const cleanPrompt = prompt.trim();
   if (!cleanName) return { error: "Give the variant a name." };
@@ -274,26 +278,26 @@ export async function createVariant(entityId: string, name: string, prompt: stri
   const entity = await prisma.entity.findFirst({ where: { id: entityId, ...OWNED }, select: { id: true, baseAssetId: true } });
   if (!entity) return { error: "Element not found." };
   if (!entity.baseAssetId) return { error: "Set a base identity first — variants are generated from it." };
-  const base = await prisma.asset.findFirst({ where: { id: entity.baseAssetId, ownerId: FOUNDER_OWNER_ID, deletedAt: null }, select: { id: true } });
+  const base = await prisma.asset.findFirst({ where: { id: entity.baseAssetId, ownerId, deletedAt: null }, select: { id: true } });
   if (!base) return { error: "The base image is missing — set a new base before generating variants." };
 
   const variantId = await withUniqueHandle(cleanName, async (handle) => {
     const v = await prisma.entityVariant.create({
-      data: { id: newId(), ownerId: FOUNDER_OWNER_ID, entityId, name: cleanName, handle, prompt: cleanPrompt },
+      data: { id: newId(), ownerId, entityId, name: cleanName, handle, prompt: cleanPrompt },
       select: { id: true },
     });
     return v.id;
   });
   if (!variantId) return { error: "Couldn't find a free name for that variant — try a different name." };
 
-  const dispatched = await dispatchVariantJob(entityId, variantId, cleanPrompt);
+  const dispatched = await dispatchVariantJob(ownerId, entityId, variantId, cleanPrompt);
   if ("error" in dispatched) return dispatched;
   // BEST-EFFORT: the paid variant job is already created + queued (dispatchVariantJob),
   // so an audit-write failure must NOT throw past here — else the caller returns an
   // error and a retry could create a second suffixed variant + enqueue another paid
   // job (double-spend). Log + swallow.
   try {
-    await prisma.actionEvent.create({ data: { id: newId(), ownerId: FOUNDER_OWNER_ID, type: "variant.create", payload: { entityId, variantId, jobId: dispatched.jobId } } });
+    await prisma.actionEvent.create({ data: { id: newId(), ownerId, type: "variant.create", payload: { entityId, variantId, jobId: dispatched.jobId } } });
   } catch (e) {
     console.warn(`createVariant: variant.create audit write failed for job ${dispatched.jobId} (non-fatal):`, e instanceof Error ? e.message : e);
   }
@@ -304,14 +308,16 @@ export async function createVariant(entityId: string, name: string, prompt: stri
 /** Re-run a variant's generation (reuses its stored prompt). Per-variant guard
  *  (in dispatchVariantJob) prevents stacking spend. */
 export async function regenerateVariant(variantId: string): Promise<{ jobId: string } | { error: string }> {
-  const gate = await requireSession(); if ("error" in gate) return gate;
+  const gate = await requireOwner(); if ("error" in gate) return gate;
+  const { ownerId } = gate;
+  const OWNED = { ownerId, deletedAt: null } as const;
   const variant = await prisma.entityVariant.findFirst({
     where: { id: variantId, ...OWNED },
     select: { id: true, entityId: true, prompt: true, entity: { select: { baseAssetId: true } } },
   });
   if (!variant) return { error: "Variant not found." };
   if (!variant.entity.baseAssetId) return { error: "The base image is missing — set a new base before regenerating." };
-  const dispatched = await dispatchVariantJob(variant.entityId, variantId, variant.prompt);
+  const dispatched = await dispatchVariantJob(ownerId, variant.entityId, variantId, variant.prompt);
   if ("error" in dispatched) return dispatched;
   revalidatePath("/", "layout");
   return dispatched;
@@ -319,7 +325,9 @@ export async function regenerateVariant(variantId: string): Promise<{ jobId: str
 
 /** Rename a variant (re-derives the handle, de-collided via the unique index). */
 export async function renameVariant(variantId: string, name: string): Promise<{ ok: true } | { error: string }> {
-  const gate = await requireSession(); if ("error" in gate) return gate;
+  const gate = await requireOwner(); if ("error" in gate) return gate;
+  const { ownerId } = gate;
+  const OWNED = { ownerId, deletedAt: null } as const;
   const cleanName = name.trim();
   if (!cleanName) return { error: "Give the variant a name." };
   const exists = await prisma.entityVariant.findFirst({ where: { id: variantId, ...OWNED }, select: { id: true } });
@@ -337,15 +345,17 @@ export async function renameVariant(variantId: string, name: string): Promise<{ 
 /** Soft-delete a variant AND its tagged reference images (D21; onDelete:Restrict
  *  blocks a hard delete, so the app owns the cascade). */
 export async function deleteVariant(variantId: string): Promise<{ ok: true } | { error: string }> {
-  const gate = await requireSession(); if ("error" in gate) return gate;
+  const gate = await requireOwner(); if ("error" in gate) return gate;
+  const { ownerId } = gate;
+  const OWNED = { ownerId, deletedAt: null } as const;
   const variant = await prisma.entityVariant.findFirst({ where: { id: variantId, ...OWNED }, select: { id: true, entityId: true } });
   if (!variant) return { error: "Variant not found." };
   const now = new Date();
   await prisma.$transaction([
-    prisma.referenceImage.updateMany({ where: { variantId, ownerId: FOUNDER_OWNER_ID, deletedAt: null }, data: { deletedAt: now } }),
+    prisma.referenceImage.updateMany({ where: { variantId, ownerId, deletedAt: null }, data: { deletedAt: now } }),
     prisma.entityVariant.updateMany({ where: { id: variantId, ...OWNED }, data: { deletedAt: now } }),
   ]);
-  await prisma.actionEvent.create({ data: { id: newId(), ownerId: FOUNDER_OWNER_ID, type: "variant.delete", payload: { entityId: variant.entityId, variantId } } });
+  await prisma.actionEvent.create({ data: { id: newId(), ownerId, type: "variant.delete", payload: { entityId: variant.entityId, variantId } } });
   revalidatePath("/", "layout");
   return { ok: true };
 }
@@ -353,9 +363,10 @@ export async function deleteVariant(variantId: string): Promise<{ ok: true } | {
 /** Poll target for the entity detail's generation block. Optional variant scope:
  *  pass a variantId to see only that variant's jobs, or null for base/refsheet jobs. */
 export async function getRefGenJobs(entityId: string, variantId?: string | null) {
-  const gate = await requireSession(); if ("error" in gate) throw new Error(gate.error);
+  const gate = await requireOwner(); if ("error" in gate) throw new Error(gate.error);
+  const { ownerId } = gate;
   const jobs = await prisma.refGenJob.findMany({
-    where: { entityId, ownerId: FOUNDER_OWNER_ID, ...(variantId !== undefined ? { variantId } : {}) },
+    where: { entityId, ownerId, ...(variantId !== undefined ? { variantId } : {}) },
     orderBy: { createdAt: "desc" },
     take: 3,
   });

@@ -10,9 +10,10 @@
  */
 import { PrismaPg } from "@prisma/adapter-pg";
 import { PrismaClient } from "../generated/prisma/client.js";
+import { withTenantGuard } from "./tenant-guard.js";
 
 export * from "../generated/prisma/client.js";
-export { reserveCredits, settleCredits, refundReservation, grantCredits, InsufficientCredits, type CreditGrantSource } from "./credits.js";
+export { reserveCredits, settleCredits, refundReservation, grantCredits, grantCreditsTx, InsufficientCredits, type CreditGrantSource } from "./credits.js";
 
 function buildClient(): PrismaClient {
   // `||` not `??`: empty-string env vars (common in .env templates) must fall through.
@@ -23,7 +24,10 @@ function buildClient(): PrismaClient {
     // pg-boss owns its own schema; Prisma stays on public (eng review D9)
     { schema: "public" },
   );
-  return new PrismaClient({ adapter });
+  // P3: tenant-guard backstop — warns (prod) / throws (test) on a tenant read with no
+  // ownerId filter. Additive; never alters results. The explicit per-site filters + the
+  // 2-org isolation test remain the primary guarantee.
+  return withTenantGuard(new PrismaClient({ adapter }));
 }
 
 const globalForPrisma = globalThis as unknown as { __artlioPrisma?: PrismaClient };

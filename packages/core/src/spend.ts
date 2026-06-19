@@ -86,3 +86,8 @@ export function pricedRefgenCredits(job: RefGenSpendInput): number {
 export function displayCredits(internal: number): number {
   return internal / INTERNAL_PER_DISPLAY;
 }
+
+/** Beta: a new org's one-time CreditAccount seed (internal credits, 1 = $0.01).
+ *  1000 DISPLAYED credits = 1000 × INTERNAL_PER_DISPLAY internal. Granted idempotently
+ *  in the org-bootstrap path (requireOwner + events.signIn) under key "signup:<orgId>". */
+export const BETA_INITIAL_GRANT_CREDITS = 1000 * INTERNAL_PER_DISPLAY;

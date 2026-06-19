@@ -30,20 +30,19 @@ import {
   expectedPartLength,
   type AuthorizeUploadResult,
 } from "@artlio/core";
-import { storage, FOUNDER_OWNER_ID } from "@/lib/storage";
+import { storage } from "@/lib/storage";
 import { getBoss } from "@/lib/queue";
 import { buildEntitySnapshot } from "@/lib/entity-snapshot";
-import { requireSession } from "@/lib/auth-guard";
-
-const OWNED = { ownerId: FOUNDER_OWNER_ID };
+import { requireOwner } from "@/lib/auth-guard";
 
 export async function authorizeUpload(raw: unknown): Promise<AuthorizeUploadResult | { error: string }> {
-  const gate = await requireSession(); if ("error" in gate) return gate;
+  const gate = await requireOwner(); if ("error" in gate) return gate;
+  const { ownerId } = gate;
   if (!storage.supportsDirectUpload) return { error: "Direct upload is not available on this storage driver." };
   const parsed = authorizeUploadInput.safeParse(raw);
   if (!parsed.success) return { error: "That file can't be uploaded (type or size out of bounds)." };
   const { sha256, ext, sizeBytes } = parsed.data;
-  const key = storageKey(FOUNDER_OWNER_ID, sha256, ext);
+  const key = storageKey(ownerId, sha256, ext);
   if (await storage.exists(key)) return { kind: "exists" };
   if (sizeBytes <= UPLOAD_SINGLE_MAX_BYTES) {
     return { kind: "single", url: await storage.presignedPut(key, sizeBytes, UPLOAD_URL_TTL_SECONDS) };
@@ -53,24 +52,26 @@ export async function authorizeUpload(raw: unknown): Promise<AuthorizeUploadResu
 }
 
 export async function signUploadPart(raw: unknown): Promise<{ url: string } | { error: string }> {
-  const gate = await requireSession(); if ("error" in gate) return gate;
+  const gate = await requireOwner(); if ("error" in gate) return gate;
+  const { ownerId } = gate;
   if (!storage.supportsDirectUpload) return { error: "Direct upload is not available on this storage driver." };
   const parsed = signPartInput.safeParse(raw);
   if (!parsed.success) return { error: "Malformed part-signing request." };
   const { sha256, ext, sizeBytes, uploadId, partNumber } = parsed.data;
   const partLength = expectedPartLength(sizeBytes, partNumber);
   if (partLength === null) return { error: "Part number out of range for the declared size." };
-  const key = storageKey(FOUNDER_OWNER_ID, sha256, ext);
+  const key = storageKey(ownerId, sha256, ext);
   return { url: await storage.signPart(key, uploadId, partNumber, partLength, UPLOAD_URL_TTL_SECONDS) };
 }
 
 export async function abortDirectUpload(raw: unknown): Promise<{ ok: true } | { error: string }> {
-  const gate = await requireSession(); if ("error" in gate) return gate;
+  const gate = await requireOwner(); if ("error" in gate) return gate;
+  const { ownerId } = gate;
   if (!storage.supportsDirectUpload) return { error: "Direct upload is not available on this storage driver." };
   const parsed = abortUploadInput.safeParse(raw);
   if (!parsed.success) return { error: "Malformed abort request." };
   const { sha256, ext, uploadId } = parsed.data;
-  await storage.abortMultipart(storageKey(FOUNDER_OWNER_ID, sha256, ext), uploadId);
+  await storage.abortMultipart(storageKey(ownerId, sha256, ext), uploadId);
   return { ok: true };
 }
 
@@ -86,19 +87,20 @@ export async function finalizeCandidateUploads(
   entityIds: string[],
   raw: unknown,
 ): Promise<{ ok: true; count: number; failures: { filename: string; reason: string }[] } | { error: string }> {
-  const gate = await requireSession(); if ("error" in gate) return gate;
-  const project = await prisma.project.findFirst({ where: { id: projectId, ...OWNED } });
+  const gate = await requireOwner(); if ("error" in gate) return gate;
+  const { ownerId } = gate;
+  const project = await prisma.project.findFirst({ where: { id: projectId, ownerId } });
   if (!project) return { error: "Project not found." };
   const parsed = finalizeUploadsInput.safeParse(raw);
   if (!parsed.success) return { error: "Malformed finalize request." };
 
-  const entitySnapshot = await buildEntitySnapshot(entityIds.map(String).filter(Boolean));
+  const entitySnapshot = await buildEntitySnapshot(ownerId, entityIds.map(String).filter(Boolean));
 
   const failures: { filename: string; reason: string }[] = [];
   const verified: { key: string; file: (typeof parsed.data.files)[number] }[] = [];
 
   for (const file of parsed.data.files) {
-    const key = storageKey(FOUNDER_OWNER_ID, file.sha256, file.ext);
+    const key = storageKey(ownerId, file.sha256, file.ext);
     try {
       if (file.upload.mode === "multipart") {
         await storage.completeMultipart(key, file.upload.uploadId, file.upload.parts);
@@ -116,7 +118,7 @@ export async function finalizeCandidateUploads(
         // a size lie on a deduped hash must not delete real, referenced bytes (#1)
         const reclaimable =
           file.upload.mode !== "existed" &&
-          (await prisma.asset.count({ where: { ownerId: FOUNDER_OWNER_ID, contentHash: file.sha256, deletedAt: null } })) === 0;
+          (await prisma.asset.count({ where: { ownerId, contentHash: file.sha256, deletedAt: null } })) === 0;
         if (reclaimable) {
           await storage.deleteObject(key);
           console.error(`[upload] SIZE MISMATCH ${key}: claimed ${file.sizeBytes}, stored ${actual} — object reclaimed`);
@@ -141,7 +143,7 @@ export async function finalizeCandidateUploads(
   await prisma.$transaction(async (tx) => {
     for (const { file } of verified) {
       const asset = await tx.asset.upsert({
-        where: { ownerId_contentHash: { ownerId: FOUNDER_OWNER_ID, contentHash: file.sha256 } },
+        where: { ownerId_contentHash: { ownerId, contentHash: file.sha256 } },
         // resurrect AND realign to the object we just HEAD-verified: a prior
         // row for the same content could carry a different ext (the key is
         // <hash>.<ext>, but uniqueness is owner+hash) or a swept tombstone
@@ -156,7 +158,7 @@ export async function finalizeCandidateUploads(
         },
         create: {
           id: newId(),
-          ownerId: FOUNDER_OWNER_ID,
+          ownerId,
           contentHash: file.sha256,
           ext: file.ext,
           mime: mimeOf(file.ext),
@@ -169,7 +171,7 @@ export async function finalizeCandidateUploads(
       await tx.generation.create({
         data: {
           id: newId(),
-          ownerId: FOUNDER_OWNER_ID,
+          ownerId,
           projectId,
           shotId: null,
           assetId: asset.id,
@@ -182,7 +184,7 @@ export async function finalizeCandidateUploads(
     await tx.actionEvent.create({
       data: {
         id: newId(),
-        ownerId: FOUNDER_OWNER_ID,
+        ownerId,
         projectId,
         type: "generation.upload",
         payload: { count: verified.length, entityIds, direct: true },

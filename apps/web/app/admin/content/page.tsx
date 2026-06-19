@@ -1,6 +1,6 @@
 import { redirect } from "next/navigation";
 import { prisma } from "@artlio/db";
-import { FOUNDER_OWNER_ID, storageKey, storageKeyToSrc } from "@artlio/core";
+import { storageKey, storageKeyToSrc } from "@artlio/core";
 import { requireRole } from "@/lib/auth-guard";
 import { ContentAdmin, type GenRow, type BlockRow } from "@/components/admin/ContentAdmin";
 
@@ -21,12 +21,12 @@ export default async function ContentPage() {
   // signal. NO enforcement here — the real fal-safety gate is a separate deferred task.
   const [gens, blocks] = await Promise.all([
     prisma.generation.findMany({
-      where: { ownerId: FOUNDER_OWNER_ID, deletedAt: null },
+      where: { deletedAt: null },
       orderBy: { createdAt: "desc" }, take: 60,
       include: { asset: true, project: { select: { name: true } } },
     }),
     prisma.actionEvent.findMany({
-      where: { ownerId: FOUNDER_OWNER_ID, type: "gen.guardian-block" },
+      where: { type: "gen.guardian-block" },
       orderBy: { createdAt: "desc" }, take: 50,
       select: { id: true, projectId: true, payload: true, createdAt: true },
     }),

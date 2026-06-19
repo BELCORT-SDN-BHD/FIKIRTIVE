@@ -1,6 +1,5 @@
 import { redirect } from "next/navigation";
 import { prisma } from "@artlio/db";
-import { FOUNDER_OWNER_ID } from "@artlio/core";
 import { requireRole } from "@/lib/auth-guard";
 import { CostAdmin, type DayRow, type JobRow } from "@/components/admin/CostAdmin";
 
@@ -16,16 +15,19 @@ export default async function CostPage() {
   const gate = await requireRole("cost", "read");
   if ("error" in gate) redirect("/login?from=/admin/cost");
 
+  // async server component, rendered once per request — request-time Date.now() is
+  // the intended behavior, not a re-render purity hazard.
+  // eslint-disable-next-line react-hooks/purity
   const since = new Date(Date.now() - 30 * DAY_MS);
   // RECORD-ONLY reads: spentUsd is never null-coalesced into a spend decision here.
   const [genJobs, refGenJobs] = await Promise.all([
     prisma.genJob.findMany({
-      where: { ownerId: FOUNDER_OWNER_ID, spentUsd: { not: null }, finishedAt: { gte: since } },
+      where: { spentUsd: { not: null }, finishedAt: { gte: since } },
       select: { id: true, kind: true, model: true, count: true, status: true, spentUsd: true, finishedAt: true },
       orderBy: { finishedAt: "desc" },
     }),
     prisma.refGenJob.findMany({
-      where: { ownerId: FOUNDER_OWNER_ID, spentUsd: { not: null }, finishedAt: { gte: since } },
+      where: { spentUsd: { not: null }, finishedAt: { gte: since } },
       select: { id: true, mode: true, model: true, count: true, status: true, spentUsd: true, finishedAt: true },
       orderBy: { finishedAt: "desc" },
     }),

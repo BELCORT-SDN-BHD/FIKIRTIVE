@@ -2,8 +2,10 @@
 /**
  * Admin actions for the cowork knowledge base (Phase 0B). R7: every handler
  * re-asserts auth() + the email allowlist INSIDE the handler, independent of the
- * opt-in middleware wall (proxy.ts / AUTH_ENABLED). Single-tenant: any
- * allowlisted session is the founder, so all writes use FOUNDER_OWNER_ID.
+ * opt-in middleware wall (proxy.ts / AUTH_ENABLED).
+ * P3: admin actions write PLATFORM CONFIG + audit stamped to the FOUNDER org (the acting
+ * context for platform staff). They are cross-tenant by design and EXCLUDED from the
+ * requireOwner() tenant scoping — gated by User.role (requireRole), never Membership.role.
  */
 import { revalidatePath } from "next/cache";
 import { prisma } from "@artlio/db";

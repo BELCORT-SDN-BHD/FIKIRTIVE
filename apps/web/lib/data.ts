@@ -1,14 +1,13 @@
 import "server-only";
 import { prisma } from "@artlio/db";
 import { newId, storageKey, storageKeyToSrc } from "@artlio/core";
-import { FOUNDER_OWNER_ID } from "./storage";
 
 const THUMB_VIDEO_EXTS = new Set(["mp4", "mov", "webm", "mkv"]);
 /** Resolve generation ids → { src, kind } thumbnails (segment frame slots). */
-export async function getGenerationThumbs(ids: string[]): Promise<Record<string, { src: string; kind: "image" | "video" }>> {
+export async function getGenerationThumbs(ownerId: string, ids: string[]): Promise<Record<string, { src: string; kind: "image" | "video" }>> {
   const clean = [...new Set(ids.filter(Boolean))];
   if (!clean.length) return {};
-  const gens = await prisma.generation.findMany({ where: { id: { in: clean }, ownerId: FOUNDER_OWNER_ID, deletedAt: null }, include: { asset: true } });
+  const gens = await prisma.generation.findMany({ where: { id: { in: clean }, ownerId, deletedAt: null }, include: { asset: true } });
   const out: Record<string, { src: string; kind: "image" | "video" }> = {};
   for (const g of gens) {
     const ext = g.asset.ext.toLowerCase();
@@ -20,27 +19,27 @@ export async function getGenerationThumbs(ids: string[]): Promise<Record<string,
 /** All M0 queries are owner-scoped and exclude soft-deleted rows (D21). */
 const notDeleted = { deletedAt: null } as const;
 
-export async function ensureDefaultProject() {
+export async function ensureDefaultProject(ownerId: string) {
   const existing = await prisma.project.findFirst({
-    where: { ownerId: FOUNDER_OWNER_ID, ...notDeleted },
+    where: { ownerId, ...notDeleted },
     orderBy: { createdAt: "asc" },
   });
   if (existing) return existing;
   return prisma.project.create({
-    data: { id: newId(), ownerId: FOUNDER_OWNER_ID, name: "My First Project" },
+    data: { id: newId(), ownerId, name: "My First Project" },
   });
 }
 
-export async function getProjects() {
+export async function getProjects(ownerId: string) {
   return prisma.project.findMany({
-    where: { ownerId: FOUNDER_OWNER_ID, ...notDeleted },
+    where: { ownerId, ...notDeleted },
     orderBy: { createdAt: "asc" },
   });
 }
 
-export async function getEntities() {
+export async function getEntities(ownerId: string) {
   return prisma.entity.findMany({
-    where: { ownerId: FOUNDER_OWNER_ID, ...notDeleted },
+    where: { ownerId, ...notDeleted },
     orderBy: [{ type: "asc" }, { name: "asc" }],
     include: {
       // base-level refs only (variantId null) — variant refs live under `variants`
@@ -61,9 +60,9 @@ export async function getEntities() {
   });
 }
 
-export async function getShots(projectId: string) {
+export async function getShots(ownerId: string, projectId: string) {
   return prisma.shot.findMany({
-    where: { ownerId: FOUNDER_OWNER_ID, projectId, ...notDeleted },
+    where: { ownerId, projectId, ...notDeleted },
     orderBy: [{ scene: "asc" }, { number: "asc" }],
     include: {
       entityRefs: { include: { entity: true } },
@@ -77,9 +76,9 @@ export async function getShots(projectId: string) {
 }
 
 /** Candidate zone = generations not yet attached to a shot (design doc: shotId IS NULL). */
-export async function getCandidates(projectId: string) {
+export async function getCandidates(ownerId: string, projectId: string) {
   return prisma.generation.findMany({
-    where: { ownerId: FOUNDER_OWNER_ID, projectId, shotId: null, threadId: null, ...notDeleted },
+    where: { ownerId, projectId, shotId: null, threadId: null, ...notDeleted },
     orderBy: { createdAt: "desc" },
     include: { asset: true },
   });
@@ -87,9 +86,9 @@ export async function getCandidates(projectId: string) {
 
 /** All generated media in a project (attached + candidates) for the Assets
  *  library — each row carries its asset and, if attached, its shot. */
-export async function getProjectMedia(projectId: string) {
+export async function getProjectMedia(ownerId: string, projectId: string) {
   return prisma.generation.findMany({
-    where: { ownerId: FOUNDER_OWNER_ID, projectId, threadId: null, ...notDeleted },
+    where: { ownerId, projectId, threadId: null, ...notDeleted },
     orderBy: { createdAt: "desc" },
     include: { asset: true }, // the Assets DTO derives `attached` from the scalar shotId
   });
@@ -101,18 +100,18 @@ export type CandidateGen = Awaited<ReturnType<typeof getCandidates>>[number];
 export type ProjectMedia = Awaited<ReturnType<typeof getProjectMedia>>[number];
 
 /** Live cowork threads for a project, newest activity first. */
-export async function getCoworkThreads(projectId: string) {
+export async function getCoworkThreads(ownerId: string, projectId: string) {
   return prisma.chatThread.findMany({
-    where: { projectId, ownerId: FOUNDER_OWNER_ID, ...notDeleted },
+    where: { projectId, ownerId, ...notDeleted },
     orderBy: { updatedAt: "desc" },
     include: { messages: { where: notDeleted, orderBy: { seq: "asc" } } },
   });
 }
 
 /** One owned, live thread with its messages in seq order (deep-link / refetch). */
-export async function getCoworkThread(threadId: string) {
+export async function getCoworkThread(ownerId: string, threadId: string) {
   return prisma.chatThread.findFirst({
-    where: { id: threadId, ownerId: FOUNDER_OWNER_ID, ...notDeleted },
+    where: { id: threadId, ownerId, ...notDeleted },
     include: { messages: { where: notDeleted, orderBy: { seq: "asc" } } },
   });
 }
@@ -123,7 +122,10 @@ export type ChatThreadWithMessages = NonNullable<Awaited<ReturnType<typeof getCo
  *  in these threads. urls render the result; generationIds let the UI pass one as the
  *  i2v source-frame ("Animate this result"). Source of truth = the GenJob's
  *  generationIds (the message payload copy is advisory). */
-export async function resolveCoworkResultUrls(threads: { messages: { genJobId: string | null; kind: string }[] }[]) {
+export async function resolveCoworkResultUrls(
+  ownerId: string,
+  threads: { messages: { genJobId: string | null; kind: string }[] }[],
+) {
   const jobIds = threads.flatMap((t) =>
     t.messages.filter((m) => m.kind === "GEN_RESULT" && m.genJobId).map((m) => m.genJobId as string),
   );
@@ -131,10 +133,10 @@ export async function resolveCoworkResultUrls(threads: { messages: { genJobId: s
   // surfaced so the result card shows what was really billed — not a default-config estimate.
   const map = new Map<string, { urls: string[]; generationIds: string[]; spentUsd: number | null }>();
   if (!jobIds.length) return map;
-  const jobs = await prisma.genJob.findMany({ where: { id: { in: jobIds }, ownerId: FOUNDER_OWNER_ID }, select: { id: true, generationIds: true, spentUsd: true } });
+  const jobs = await prisma.genJob.findMany({ where: { id: { in: jobIds }, ownerId }, select: { id: true, generationIds: true, spentUsd: true } });
   const allGenIds = jobs.flatMap((j) => j.generationIds);
   const gens = allGenIds.length
-    ? await prisma.generation.findMany({ where: { id: { in: allGenIds }, ownerId: FOUNDER_OWNER_ID }, include: { asset: true } })
+    ? await prisma.generation.findMany({ where: { id: { in: allGenIds }, ownerId }, include: { asset: true } })
     : [];
   const genById = new Map(gens.map((g) => [g.id, g]));
   for (const j of jobs) {

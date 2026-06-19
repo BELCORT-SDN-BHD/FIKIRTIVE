@@ -5,6 +5,7 @@ import { toEntityDTO, toChatThreadDTO } from "@/lib/dto";
 import { artlioEdit, storageKey, storageKeyToSrc } from "@artlio/core";
 import { redirect } from "next/navigation";
 import { auth, allowed } from "@/auth";
+import { requireOwner } from "@/lib/auth-guard";
 import { Studio } from "@/components/studio/Studio";
 import type { StudioView } from "@/components/studio/StudioShell";
 
@@ -33,20 +34,22 @@ export default async function StudioPage({ searchParams }: { searchParams: Promi
   const { p, view } = await searchParams;
   const initialView = view && STUDIO_VIEWS.has(view) ? (view as StudioView) : undefined;
   const session = await auth();
-  if (!allowed(session?.user?.email)) redirect("/login");
+  const owner = await requireOwner();
+  if ("error" in owner) redirect("/login");
+  const { ownerId } = owner;
   const user = userBadge(session?.user?.name, session?.user?.email);
-  const defaultProject = await ensureDefaultProject();
-  const [projects, entities] = await Promise.all([getProjects(), getEntities()]);
+  const defaultProject = await ensureDefaultProject(ownerId);
+  const [projects, entities] = await Promise.all([getProjects(ownerId), getEntities(ownerId)]);
   // a ?p that matches no owned project (stale/deleted link) → drop it and land on
   // the default, rather than silently showing the oldest project as if intended
   if (p && !projects.some((x) => x.id === p)) redirect(initialView ? `/studio?view=${initialView}` : "/studio");
   const project = projects.find((x) => x.id === p) ?? defaultProject;
-  const threadRows = await getCoworkThreads(project.id);
-  const coworkUrls = await resolveCoworkResultUrls(threadRows);
+  const threadRows = await getCoworkThreads(ownerId, project.id);
+  const coworkUrls = await resolveCoworkResultUrls(ownerId, threadRows);
   const threads = threadRows.map((t) => toChatThreadDTO(t, coworkUrls));
-  const shots = await getShots(project.id);
+  const shots = await getShots(ownerId, project.id);
   // resolve each segment's first/last keyframe thumbnails (the i2v slots)
-  const frameThumbs = await getGenerationThumbs(
+  const frameThumbs = await getGenerationThumbs(ownerId,
     shots.flatMap((s) => [s.firstFrameGenerationId, s.lastFrameGenerationId].filter((x): x is string => !!x)),
   );
 
@@ -89,7 +92,7 @@ export default async function StudioPage({ searchParams }: { searchParams: Promi
 
   // boardEdit for the editor — attached shot renders in order, plus any unattached
   // Gen-space video clips (so generated footage is available to cut, not just shots)
-  const candidates = await getCandidates(project.id);
+  const candidates = await getCandidates(ownerId, project.id);
   const { edit: boardEdit, clipCount } = buildBoardEdit(shots, candidates);
   // image candidates for the Storyboard drag-to-attach strip (drop onto a shot's frame slot)
   const FRAME_IMG_EXTS = new Set(["png", "jpg", "jpeg", "webp"]);
@@ -100,7 +103,7 @@ export default async function StudioPage({ searchParams }: { searchParams: Promi
   const savedEdit = savedParse?.success ? savedParse.data : null;
 
   // Assets library DTOs (client-safe — no BigInt): all generated media, newest first
-  const media = (await getProjectMedia(project.id)).map((g) => {
+  const media = (await getProjectMedia(ownerId, project.id)).map((g) => {
     const ext = g.asset.ext.toLowerCase();
     return {
       id: g.id,

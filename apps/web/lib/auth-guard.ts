@@ -1,7 +1,7 @@
 import "server-only";
-import { auth, allowed } from "@/auth";
-import { prisma } from "@artlio/db";
-import { newId, FOUNDER_OWNER_ID, roleAllows, isRole, type Section, type Action, type Role } from "@artlio/core";
+import { auth, allowed, isFounderAdmin } from "@/auth";
+import { prisma, grantCreditsTx } from "@artlio/db";
+import { newId, FOUNDER_OWNER_ID, BETA_INITIAL_GRANT_CREDITS, roleAllows, isRole, type Section, type Action, type Role } from "@artlio/core";
 
 /** In-handler auth (R7): re-assert auth()+allowlist INSIDE every action, not just
  *  at the opt-in proxy wall. Returns the email or an {error} the caller returns
@@ -34,4 +34,89 @@ export async function requireRole(
     return { error: "You don't have access to this." };
   }
   return { email, role };
+}
+
+/** P3 — the authoritative, FAIL-CLOSED session→ownerId resolver. EVERY tenant-data and
+ *  spend site uses this instead of the FOUNDER_OWNER_ID constant. Contract (spec §6.3):
+ *   - no session / off-allowlist  → { error } (the allowlist stays the outer invite gate)
+ *   - founder-admin email         → "founder" (the ONLY path that may EVER return "founder")
+ *   - any other allowlisted user  → their active org; if none, SYNCHRONOUSLY bootstrap a
+ *     personal Organization + Membership(owner) + CreditAccount(beta grant), idempotently,
+ *     and return the new org id
+ *   - if bootstrap can't complete → { error } (NEVER fall back to "founder" or any default —
+ *     that would silently hand a new user the founder's data + credits)
+ *  Idempotent. Identical under next-auth and Better Auth (P4 doesn't touch it). */
+export async function requireOwner(): Promise<{ email: string; ownerId: string } | { error: string }> {
+  const session = await auth();
+  const email = session?.user?.email;
+  if (!email || !allowed(email)) return { error: "Not authorized." };
+
+  // Only a founder-admin session may ever resolve to the founder org.
+  if (isFounderAdmin(email)) return { email, ownerId: FOUNDER_OWNER_ID };
+
+  // The user row exists (DB-session strategy created it at sign-in). Find their active org.
+  const user = await prisma.user.findUnique({ where: { email }, select: { id: true } });
+  if (!user) return { error: "Not authorized." }; // no user row → cannot scope; fail closed
+
+  // A non-founder must NEVER resolve to the founder org, even via a stray Membership row
+  // (data error / future bug) — exclude it explicitly so the contract holds by construction.
+  const existing = await prisma.membership.findFirst({
+    where: { userId: user.id, deletedAt: null, status: "active", orgId: { not: FOUNDER_OWNER_ID } },
+    orderBy: { createdAt: "asc" },
+    select: { orgId: true },
+  });
+  if (existing) return { email, ownerId: existing.orgId };
+
+  // No membership yet → bootstrap a personal org synchronously.
+  const ownerId = await bootstrapPersonalOrg(user.id, email);
+  if (!ownerId) return { error: "Could not set up your workspace — please retry." };
+  return { email, ownerId };
+}
+
+/** Create (idempotently) a personal Organization + Membership(owner) + CreditAccount with the
+ *  one-time beta grant. Returns the org id, or null if it can't complete (NEVER "founder").
+ *
+ *  CONCURRENCY-IDEMPOTENT: the org id is DETERMINISTIC (`org_<userId>`), so two simultaneous
+ *  callers (two tabs, or events.signIn racing the first request) converge on the SAME org
+ *  instead of creating two orgs + double-granting. The org/membership writes are upserts (the
+ *  loser of the race no-ops), and the beta grant is attempted EVERY call but dedupes on the
+ *  stable key "signup:<orgId>" (grantCredits is ledger-first idempotent) — so a grant that
+ *  failed after a prior commit is retried on the next call. `org_<userId>` is charset-safe for
+ *  storageKey (/[^0-9A-Za-z_-]/) because the next-auth user id is. Shared by requireOwner
+ *  (authoritative) and events.signIn (convergence). */
+export async function bootstrapPersonalOrg(userId: string, email: string): Promise<string | null> {
+  const orgId = `org_${userId}`; // deterministic → concurrent callers converge on ONE org
+  try {
+    await prisma.$transaction(async (tx) => {
+      await tx.organization.upsert({ where: { id: orgId }, create: { id: orgId, name: email }, update: {} });
+      await tx.membership.upsert({
+        where: { userId_orgId: { userId, orgId } },
+        create: { id: newId(), userId, orgId, role: "owner" },
+        update: { deletedAt: null, status: "active" }, // revive a previously-deactivated membership
+      });
+      // carry the active org so a future multi-org switcher needs no auth-table migration
+      await tx.user.update({ where: { id: userId }, data: { activeOrgId: orgId } });
+      // Beta grant ATOMIC with the org/membership writes (grantCreditsTx runs in THIS tx): if it
+      // fails the whole tx rolls back — no "org exists but 0 credits" limbo — and the next request
+      // re-runs bootstrap cleanly. Idempotent on "signup:<orgId>" (createMany skipDuplicates), so a
+      // replay or concurrent winner no-ops. Credit writes stay inside the credit service.
+      await grantCreditsTx(tx, {
+        orgId,
+        amount: BETA_INITIAL_GRANT_CREDITS,
+        source: "BETA",
+        reason: "beta signup grant",
+        idempotencyKey: `signup:${orgId}`,
+      });
+    });
+    return orgId;
+  } catch (e) {
+    // A concurrent creator may have won the org pk / membership upsert mid-tx (P2002), aborting
+    // this tx. Re-read the deterministic org; if it now exists, use it. Otherwise fail closed.
+    const m = await prisma.membership
+      .findFirst({ where: { userId, orgId, deletedAt: null, status: "active" }, select: { orgId: true } })
+      .catch(() => null);
+    if (m) return m.orgId;
+    console.error("bootstrapPersonalOrg failed:", e instanceof Error ? e.message : e);
+    return null; // NEVER return "founder" or a default
+  }
 }

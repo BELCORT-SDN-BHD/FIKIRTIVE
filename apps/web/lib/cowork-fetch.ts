@@ -2,12 +2,13 @@
 import { getCoworkThread, resolveCoworkResultUrls } from "./data";
 import { toChatThreadDTO } from "./dto";
 import type { ChatThreadDTO } from "./types";
-import { requireSession } from "./auth-guard";
+import { requireOwner } from "./auth-guard";
 
 export async function getCoworkThreadClient(threadId: string): Promise<ChatThreadDTO | null> {
-  const gate = await requireSession(); if ("error" in gate) throw new Error(gate.error);
-  const t = await getCoworkThread(threadId);
+  const owner = await requireOwner(); if ("error" in owner) throw new Error(owner.error);
+  const { ownerId } = owner;
+  const t = await getCoworkThread(ownerId, threadId);
   if (!t) return null;
-  const urls = await resolveCoworkResultUrls([t]);
+  const urls = await resolveCoworkResultUrls(ownerId, [t]);
   return toChatThreadDTO(t, urls);
 }

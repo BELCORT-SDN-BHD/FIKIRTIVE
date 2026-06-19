@@ -4,6 +4,7 @@ import { buildBoardEdit } from "@/lib/edit";
 import { EditorShell } from "@/components/EditorShell";
 import { artlioEdit } from "@artlio/core";
 import { auth, allowed } from "@/auth";
+import { requireOwner } from "@/lib/auth-guard";
 
 export const dynamic = "force-dynamic";
 
@@ -16,13 +17,15 @@ export default async function EditorPage({
 }) {
   const { p } = await searchParams;
   const session = await auth();
-  if (!allowed(session?.user?.email)) redirect("/login");
-  const defaultProject = await ensureDefaultProject();
-  const projects = await getProjects();
+  const owner = await requireOwner();
+  if ("error" in owner) redirect("/login");
+  const { ownerId } = owner;
+  const defaultProject = await ensureDefaultProject(ownerId);
+  const projects = await getProjects(ownerId);
   if (p && !projects.some((x) => x.id === p)) redirect("/editor"); // stale link → clean default
   const project = projects.find((x) => x.id === p) ?? defaultProject;
   // initial cut = attached shot renders (board order) + unattached Gen-space clips
-  const [shots, candidates] = await Promise.all([getShots(project.id), getCandidates(project.id)]);
+  const [shots, candidates] = await Promise.all([getShots(ownerId, project.id), getCandidates(ownerId, project.id)]);
   const { edit: boardEdit, clipCount } = buildBoardEdit(shots, candidates);
 
   // the persisted working cut wins; stored canonical, re-checked anyway

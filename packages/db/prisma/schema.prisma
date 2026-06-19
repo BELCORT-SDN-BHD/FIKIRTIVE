@@ -53,7 +53,7 @@ enum RefGenMode {
 
 model Project {
   id        String    @id
-  ownerId   String    @default("founder")
+  ownerId   String
   organization Organization @relation(fields: [ownerId], references: [id])
   name      String
   /// 编辑器的工作中剪辑（artlioEdit 规范化后的 JSON）——阶段③ tracer 落地，
@@ -74,7 +74,7 @@ model Project {
 // 实体跨项目复用（属于 owner 而非 project）—— journey step 7
 model Entity {
   id                  String     @id
-  ownerId             String     @default("founder")
+  ownerId             String
   organization Organization @relation(fields: [ownerId], references: [id])
   type                EntityType
   name                String
@@ -105,7 +105,7 @@ model Entity {
 // express conditional uniqueness).
 model EntityVariant {
   id        String    @id
-  ownerId   String    @default("founder")
+  ownerId   String
   organization Organization @relation(fields: [ownerId], references: [id])
   entityId  String
   name      String
@@ -126,7 +126,7 @@ model EntityVariant {
 
 model ReferenceImage {
   id        String    @id
-  ownerId   String    @default("founder")
+  ownerId   String
   organization Organization @relation(fields: [ownerId], references: [id])
   entityId  String
   assetId   String
@@ -153,7 +153,7 @@ model ReferenceImage {
 // 清扫合同：sweep 只删 R2 blob，Asset 行永存为墓碑（Generation FK Restrict 使行删除永不可行——这是设计而非缺陷）。
 model Asset {
   id               String      @id
-  ownerId          String      @default("founder")
+  ownerId          String
   organization Organization @relation(fields: [ownerId], references: [id])
   contentHash      String
   ext              String
@@ -178,7 +178,7 @@ model Asset {
 model Shot {
   id                     String     @id
   projectId              String
-  ownerId                String     @default("founder")
+  ownerId                String
   organization Organization @relation(fields: [ownerId], references: [id])
   number                 Int
   // 场景分组（storyboard 多场景）：同一 scene 内按 number 排序；number 仍全局唯一
@@ -211,7 +211,7 @@ model Shot {
 model ShotEntityRef {
   shotId   String
   entityId String
-  ownerId  String @default("founder")
+  ownerId  String
   organization Organization @relation(fields: [ownerId], references: [id])
 
   shot   Shot   @relation(fields: [shotId], references: [id])
@@ -226,7 +226,7 @@ model ShotEntityRef {
 // E4-pre：prompt/模型/参数/实体引用分字段存储而非整段文本 —— 配方功能阶段二直接站上来。
 model Generation {
   id             String      @id
-  ownerId        String      @default("founder")
+  ownerId        String
   organization Organization @relation(fields: [ownerId], references: [id])
   projectId      String
   shotId         String? // null = 候选区"未挂载"
@@ -262,7 +262,7 @@ model Generation {
 // M0 启动时导入，阶段二起成为真相源）
 model TemplateBundle {
   id            String    @id
-  ownerId       String    @default("founder")
+  ownerId       String
   organization Organization @relation(fields: [ownerId], references: [id])
   slug          String
   version       Int
@@ -294,7 +294,7 @@ enum RenderStatus {
 
 model RenderJob {
   id            String       @id
-  ownerId       String       @default("founder")
+  ownerId       String
   organization Organization @relation(fields: [ownerId], references: [id])
   projectId     String
   editJson      Json
@@ -318,7 +318,7 @@ model RenderJob {
 
 model CaptionJob {
   id            String       @id
-  ownerId       String       @default("founder")
+  ownerId       String
   organization Organization @relation(fields: [ownerId], references: [id])
   projectId     String
   /// the visual-track asset being transcribed (content-addressed) + its hash
@@ -343,7 +343,7 @@ model CaptionJob {
 /// re-request reuses it for $0 + 0 CPU. cuesJson = CaptionCue[] (the editable seed).
 model Transcript {
   id          String   @id
-  ownerId     String   @default("founder")
+  ownerId     String
   organization Organization @relation(fields: [ownerId], references: [id])
   contentHash String
   model       String
@@ -365,7 +365,7 @@ enum GenStatus {
 // worker 从实体已有 refs 推导，不入此表（D19 信任边界，合同里也无该字段）。
 model RefGenJob {
   id             String     @id
-  ownerId        String     @default("founder")
+  ownerId        String
   organization Organization @relation(fields: [ownerId], references: [id])
   entityId       String
   prompt         String
@@ -407,7 +407,7 @@ enum GenKind {
 // 条件输入由 worker 从 entityIds 推导（D19）。
 model GenJob {
   id                 String    @id
-  ownerId            String    @default("founder")
+  ownerId            String
   organization Organization @relation(fields: [ownerId], references: [id])
   projectId          String
   shotId             String?
@@ -625,7 +625,7 @@ model CreditLedger {
 // 升级门埋点（D23）：实质动作事件，系统自动记录，3 项目计数门的数据源
 model ActionEvent {
   id        String   @id
-  ownerId   String   @default("founder")
+  ownerId   String
   organization Organization @relation(fields: [ownerId], references: [id])
   projectId String?
   type      String // entity.create | entity.update | shot.create | shot.update | generation.attach | bundle.export
@@ -642,7 +642,7 @@ model ActionEvent {
 // family-neutral 基础提示词。rules 是闭合结构（Guardian/Coach 读取，避免二次迁移）。
 model ModelDirective {
   id         String   @id
-  ownerId    String   @default("founder")
+  ownerId    String
   organization Organization @relation(fields: [ownerId], references: [id])
   family     String // "seedream" | "kling" | "veo" | "seedance" | "ltx"
   mode       String // "t2i" | "i2i" | "t2v" | "i2v" | "i2v-tail"
@@ -679,7 +679,7 @@ model RuntimeConfig {
 /// 注意 seedream 耦合：GEN_MODELS=REFGEN_MODELS=["seedream"]，停 seedream = 停所有图像生成。
 model ModelRegistryOverlay {
   id        String   @id
-  ownerId   String   @default("founder")
+  ownerId   String
   organization Organization @relation(fields: [ownerId], references: [id])
   modelId   String
   enabled   Boolean  @default(true)
@@ -693,7 +693,7 @@ model ModelRegistryOverlay {
 model ModelDirectiveRevision {
   id          String   @id
   directiveId String
-  ownerId     String   @default("founder")
+  ownerId     String
   organization Organization @relation(fields: [ownerId], references: [id])
   directive   String
   rules       Json?
@@ -725,7 +725,7 @@ enum ChatMessageKind {
 
 model ChatThread {
   id        String        @id
-  ownerId   String        @default("founder")
+  ownerId   String
   organization Organization @relation(fields: [ownerId], references: [id])
   projectId String
   title     String        @default("")
@@ -744,7 +744,7 @@ model ChatThread {
 model ChatMessage {
   id                 String          @id
   threadId           String
-  ownerId            String          @default("founder")
+  ownerId            String
   organization Organization @relation(fields: [ownerId], references: [id])
   role               ChatRole
   kind               ChatMessageKind

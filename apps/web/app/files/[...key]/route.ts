@@ -1,7 +1,8 @@
 import { NextRequest, NextResponse } from "next/server";
-import { storage, mimeOf, kindOf, FOUNDER_OWNER_ID } from "@/lib/storage";
+import { storage, mimeOf, kindOf } from "@/lib/storage";
 import { parseStorageKey, keyOwnerMatches } from "@artlio/core";
 import { auth, allowed } from "@/auth";
+import { requireOwner } from "@/lib/auth-guard";
 
 /**
  * Dev file serving for LocalDiskStorage. R2 presigned GETs replace this in T4.
@@ -16,11 +17,15 @@ export async function GET(
   if (!allowed(session?.user?.email)) {
     return NextResponse.redirect(new URL("/login", req.url), { status: 302 });
   }
+  // P3: resolve the caller's org and reject any key not in their namespace.
+  const owner = await requireOwner();
+  if ("error" in owner) {
+    return NextResponse.redirect(new URL("/login", req.url), { status: 302 });
+  }
   const { key } = await ctx.params; // Next 16: params are async
   const joined = key.join("/");
-  // Cross-tenant guard: the key's owner namespace must match the caller's owner.
-  // P0 single-tenant owner = FOUNDER_OWNER_ID; P3 replaces with requireOwner().
-  if (!keyOwnerMatches(joined, FOUNDER_OWNER_ID)) {
+  // Cross-tenant guard: the key's owner namespace must match the resolved owner.
+  if (!keyOwnerMatches(joined, owner.ownerId)) {
     return new NextResponse("Not found", { status: 404 });
   }
   try {

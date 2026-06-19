@@ -10,12 +10,13 @@ import "server-only";
  * only ever ADDS blocks; it can't loosen the existing money-safety.
  */
 import { prisma } from "@artlio/db";
-import { FOUNDER_OWNER_ID, modelFamily, deriveMode, castFindings, type CastFinding } from "@artlio/core";
+import { modelFamily, deriveMode, castFindings, type CastFinding } from "@artlio/core";
 import { getCastRule } from "./cowork-knowledge";
 
 const IMG_EXTS = ["png", "jpg", "jpeg", "webp"];
 
 export async function checkCast(req: {
+  ownerId: string;
   projectId: string;
   entityIds: string[];
   variantSel?: Record<string, string>;
@@ -34,7 +35,7 @@ export async function checkCast(req: {
     if (req.variantSel) {
       for (const [entityId, variantId] of Object.entries(req.variantSel)) {
         const variant = await prisma.entityVariant.findFirst({
-          where: { id: variantId, entityId, ownerId: FOUNDER_OWNER_ID, deletedAt: null },
+          where: { id: variantId, entityId, ownerId: req.ownerId, deletedAt: null },
           select: { name: true, _count: { select: { referenceImages: { where: { deletedAt: null } } } } },
         });
         if (!variant) {
@@ -49,7 +50,7 @@ export async function checkCast(req: {
     // deleted/cross-project @mention, and multi-character on a "block" family
     if (req.entityIds.length) {
       const entities = await prisma.entity.findMany({
-        where: { id: { in: req.entityIds }, ownerId: FOUNDER_OWNER_ID, deletedAt: null },
+        where: { id: { in: req.entityIds }, ownerId: req.ownerId, deletedAt: null },
         // count BASE refs (variantId null) — a bare mention conditions only on those in
         // the worker, so a character with refs only under a variant must still count as
         // unanchored for the no-refs block (else it spends unconditioned).
@@ -76,7 +77,7 @@ export async function checkCast(req: {
       if (req.sourceGenerationId && req.tailGenerationId) frames.push([req.tailGenerationId, "end frame"]);
       for (const [id, label] of frames) {
         const gen = await prisma.generation.findFirst({
-          where: { id, ownerId: FOUNDER_OWNER_ID, projectId: req.projectId, deletedAt: null, asset: { ext: { in: IMG_EXTS } } },
+          where: { id, ownerId: req.ownerId, projectId: req.projectId, deletedAt: null, asset: { ext: { in: IMG_EXTS } } },
           select: { id: true },
         });
         if (!gen) findings.push({ kind: "missing-source", message: `The ${label} image isn't an owned image in this project — pick another.` });

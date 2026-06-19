@@ -43,7 +43,7 @@ export function allowed(email: string | null | undefined): boolean {
  *  migration). The allowlist (allowed()) stays the outer app wall and never reads
  *  role, so a default-viewer can't lock the team out of the app, only out of
  *  role-gated sections. */
-function isFounderAdmin(email: string | null | undefined): boolean {
+export function isFounderAdmin(email: string | null | undefined): boolean {
   if (!email) return false;
   const list = (process.env.FOUNDER_ADMIN_EMAILS ?? "")
     .split(",")
@@ -136,6 +136,17 @@ export const { handlers, auth, signIn, signOut } = NextAuth({
             update: {},
           })
           .catch(() => {}); // best-effort — never block sign-in on a membership write
+      }
+      // closed-beta P3: converge a NON-founder's personal org early (best-effort). This is
+      // ONLY a convergence path — requireOwner() is the authoritative, fail-closed resolver
+      // and re-bootstraps on demand if this never ran. NEVER blocks sign-in.
+      if (!isFounderAdmin(user.email) && user.id && user.email) {
+        try {
+          const { bootstrapPersonalOrg } = await import("@/lib/auth-guard");
+          await bootstrapPersonalOrg(user.id, user.email);
+        } catch (e) {
+          console.warn("[auth] signIn personal-org bootstrap failed (non-fatal):", e instanceof Error ? e.message : e);
+        }
       }
       await prisma.actionEvent.create({
         data: {

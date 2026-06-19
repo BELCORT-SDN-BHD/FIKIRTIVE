@@ -9,7 +9,7 @@
 import { revalidatePath } from "next/cache";
 import { prisma, Prisma } from "@artlio/db";
 import {
-  coworkRequest, enhanceRequest, MAX_ENHANCE_TEXT, newId, FOUNDER_OWNER_ID,
+  coworkRequest, enhanceRequest, MAX_ENHANCE_TEXT, newId,
   runSkill, draftStoryboardSkill, enhancePromptSkill,
   modelFamily, deriveMode,
   coworkTurnRequest, COWORK_MEMORY_TURNS, buildPlannerMessages, parseCoworkTurn,
@@ -25,18 +25,16 @@ import { getEnhanceDirective } from "./cowork-knowledge";
 import { resolveDisabledModels } from "./model-registry";
 import { startGen } from "./gen-actions";
 import { storage, mimeOf } from "./storage";
-import { requireSession } from "./auth-guard";
-
-const OWNED = { ownerId: FOUNDER_OWNER_ID, deletedAt: null } as const;
+import { requireOwner } from "./auth-guard";
 
 /** Phase C vision: resolve one asset to a base64 data-URL for the planner.
  *  Returns null (and never throws) when the asset is missing, foreign, deleted,
  *  or exceeds the configured size limit — the caller skips gracefully.
  *  Used by CT-C2 (coworkTurn image attachment). */
-async function refImageDataUrl(assetId: string): Promise<string | null> {
+async function refImageDataUrl(ownerId: string, assetId: string): Promise<string | null> {
   const { maxBytes } = await resolveVisionConfig();
   const asset = await prisma.asset.findFirst({
-    where: { id: assetId, ownerId: FOUNDER_OWNER_ID, deletedAt: null },
+    where: { id: assetId, ownerId, deletedAt: null },
     select: { ownerId: true, contentHash: true, ext: true, sizeBytes: true },
   });
   if (!asset) return null; // missing / foreign / deleted → skip
@@ -54,9 +52,9 @@ async function refImageDataUrl(assetId: string): Promise<string | null> {
  *  (not just keys) to real variants before persisting a card. Also returns the cached
  *  see-once visual description (Entity.descriptionJson.text) so buildPlannerMessages
  *  can embed it in the refs block on turns where no image is sent. */
-async function loadAvailableRefs(): Promise<{ id: string; name: string; type: string; variantIds: string[]; description?: string }[]> {
+async function loadAvailableRefs(ownerId: string): Promise<{ id: string; name: string; type: string; variantIds: string[]; description?: string }[]> {
   const entities = await prisma.entity.findMany({
-    where: { ...OWNED },
+    where: { ownerId, deletedAt: null },
     select: { id: true, name: true, type: true, descriptionJson: true, variants: { where: { deletedAt: null }, select: { id: true } } },
     orderBy: [{ type: "asc" }, { name: "asc" }],
   });
@@ -74,8 +72,10 @@ export async function coworkDraftStoryboard(
 ): Promise<{ ok: true; scenes: number; shots: number; via: string } | { error: string }> {
   const parsed = coworkRequest.safeParse(raw);
   if (!parsed.success) return { error: "Tell cowork what to make (a short description)." };
-  const gate = await requireSession(); if ("error" in gate) return gate;
+  const gate = await requireOwner(); if ("error" in gate) return gate;
+  const { ownerId } = gate;
   const { projectId, idea } = parsed.data;
+  const OWNED = { ownerId, deletedAt: null } as const;
   const project = await prisma.project.findFirst({ where: { id: projectId, ...OWNED } });
   if (!project) return { error: "Project not found." };
   const transport = await getTransport();
@@ -94,7 +94,7 @@ export async function coworkDraftStoryboard(
   // contract or roll back the whole draft (#5). Each attempt re-reads fresh.
   for (let attempt = 0; attempt < 4; attempt++) {
     const lastScene = await prisma.shot.findFirst({ where: { projectId, ...OWNED }, orderBy: { scene: "desc" }, select: { scene: true } });
-    const lastNum = await prisma.shot.findFirst({ where: { projectId }, orderBy: { number: "desc" }, select: { number: true } });
+    const lastNum = await prisma.shot.findFirst({ where: { projectId, ownerId }, orderBy: { number: "desc" }, select: { number: true } });
     let scene = lastScene?.scene ?? 0;
     let number = lastNum?.number ?? 0;
     let shots = 0;
@@ -105,7 +105,7 @@ export async function coworkDraftStoryboard(
         number += 1;
         shots += 1;
         rows.push({
-          id: newId(), ownerId: FOUNDER_OWNER_ID, projectId, number, scene,
+          id: newId(), ownerId, projectId, number, scene,
           description: sh.prompt,
           promptDoc: { type: "doc", content: [{ type: "paragraph", content: [{ type: "text", text: sh.prompt }] }] },
         });
@@ -117,7 +117,7 @@ export async function coworkDraftStoryboard(
       await prisma.$transaction([
         prisma.shot.createMany({ data: rows }),
         prisma.actionEvent.create({
-          data: { id: newId(), ownerId: FOUNDER_OWNER_ID, projectId, type: "cowork.draft", payload: { scenes: plan.scenes.length, shots, via: transport.name } },
+          data: { id: newId(), ownerId, projectId, type: "cowork.draft", payload: { scenes: plan.scenes.length, shots, via: transport.name } },
         }),
       ]);
       revalidatePath("/", "layout");
@@ -138,10 +138,11 @@ export async function enhancePrompt(
 ): Promise<{ ok: true; text: string; via: string } | { error: string }> {
   const parsed = enhanceRequest.safeParse(raw);
   if (!parsed.success) return { error: "Write a prompt first, then ✨ Enhance." };
-  const gate = await requireSession(); if ("error" in gate) return gate;
+  const gate = await requireOwner(); if ("error" in gate) return gate;
+  const { ownerId } = gate;
   const { projectId, text, model, kind, conditioned, hasSource, hasTail } = parsed.data;
-  // owner-domain guard like every paid action (single-tenant today, multi-tenant-ready)
-  const project = await prisma.project.findFirst({ where: { id: projectId, ...OWNED } });
+  // owner-domain guard like every paid action
+  const project = await prisma.project.findFirst({ where: { id: projectId, ownerId, deletedAt: null } });
   if (!project) return { error: "Project not found." };
   const transport = await getTransport();
 
@@ -163,7 +164,7 @@ export async function enhancePrompt(
     try {
       // audit the paid LLM call (records usage for the future cost/credit ledger)
       await prisma.actionEvent.create({
-        data: { id: newId(), ownerId: FOUNDER_OWNER_ID, projectId, type: "cowork.enhance", payload: { via: transport.name, chars: out.length, family: family ?? null, mode: mode ?? null, directiveApplied: !!directive } },
+        data: { id: newId(), ownerId, projectId, type: "cowork.enhance", payload: { via: transport.name, chars: out.length, family: family ?? null, mode: mode ?? null, directiveApplied: !!directive } },
       });
     } catch { /* audit is best-effort — never lose a paid result on a log-write hiccup */ }
     return { ok: true, text: out, via: transport.name };
@@ -204,7 +205,8 @@ function quotedPreview(qm: { kind: string; text: string; payload: unknown }): st
 export async function coworkTurn(raw: unknown): Promise<{ threadId: string; brief?: string } | { error: string }> {
   const parsed = coworkTurnRequest.safeParse(raw);
   if (!parsed.success) return { error: "Say what you'd like to make." };
-  const gate = await requireSession(); if ("error" in gate) return gate;
+  const gate = await requireOwner(); if ("error" in gate) return gate;
+  const { ownerId } = gate;
   const { projectId, text, entityIds, variantSel, sourceGenerationId, replyToMessageId } = parsed.data;
   const transport = await getTransport();
 
@@ -212,6 +214,7 @@ export async function coworkTurn(raw: unknown): Promise<{ threadId: string; brie
   // rather than throwing an unhandled rejection to the client. (Guard early-returns
   // below still surface their specific messages — a `return` inside try isn't caught.)
   try {
+    const OWNED = { ownerId, deletedAt: null } as const;
     const project = await prisma.project.findFirst({ where: { id: projectId, ...OWNED } });
     if (!project) return { error: "Project not found." };
 
@@ -251,7 +254,7 @@ export async function coworkTurn(raw: unknown): Promise<{ threadId: string; brie
     let validReplyId: string | null = null; // persisted ONLY when the scoped fetch succeeds (no dangling/foreign refs)
     if (!isNew && replyToMessageId) {
       const qm = await prisma.chatMessage.findFirst({
-        where: { id: replyToMessageId, threadId, ownerId: FOUNDER_OWNER_ID, deletedAt: null },
+        where: { id: replyToMessageId, threadId, ownerId, deletedAt: null },
         select: { kind: true, text: true, payload: true },
       });
       if (qm) {
@@ -262,12 +265,12 @@ export async function coworkTurn(raw: unknown): Promise<{ threadId: string; brie
 
     // bounded, NL-only memory window (assistant/user), oldest-dropped (empty for a new thread)
     const recent = isNew ? [] : await prisma.chatMessage.findMany({
-      where: { threadId, deletedAt: null, kind: { in: ["TEXT", "PLAN"] } },
+      where: { threadId, ownerId, deletedAt: null, kind: { in: ["TEXT", "PLAN"] } },
       orderBy: { seq: "desc" }, take: COWORK_MEMORY_TURNS * 2, select: { role: true, text: true },
     });
     const history: ChatMessage[] = recent.reverse().map((m) => ({ role: m.role === "AGENT" ? "assistant" : "user", content: m.text }));
 
-    const availableRefs = await loadAvailableRefs(); // owner-global entities {id,name,type}
+    const availableRefs = await loadAvailableRefs(ownerId); // owner-global entities {id,name,type}
     const modelSummary = `image: ${GEN_MODELS.join("/")}; video: ${GEN_VIDEO_MODELS.join("/")} (agent picks by capability)`;
     const refIds = availableRefs.map((r) => r.id);
 
@@ -291,7 +294,7 @@ export async function coworkTurn(raw: unknown): Promise<{ threadId: string; brie
         // i2v source frame first (most load-bearing when animating)
         if (validSource) {
           const g = await prisma.generation.findFirst({ where: { id: validSource, ...OWNED }, select: { assetId: true } });
-          if (g?.assetId) { const url = await refImageDataUrl(g.assetId); if (url) collected.push({ label: "source frame (to animate)", dataUrl: url }); }
+          if (g?.assetId) { const url = await refImageDataUrl(ownerId, g.assetId); if (url) collected.push({ label: "source frame (to animate)", dataUrl: url }); }
         }
         // @-mentioned entities (allow-listed) → their locked base image
         const inPlay = entityIds.filter((id) => refIds.includes(id)).slice(0, vision.maxImages);
@@ -300,7 +303,7 @@ export async function coworkTurn(raw: unknown): Promise<{ threadId: string; brie
           for (const e of ents) {
             if (collected.length >= vision.maxImages) break;
             if (!e.baseAssetId) continue;
-            const url = await refImageDataUrl(e.baseAssetId);
+            const url = await refImageDataUrl(ownerId, e.baseAssetId);
             if (url) {
               collected.push({ label: `@${e.name} (${e.type.toLowerCase()})`, dataUrl: url });
               if (attachedRefIdByName.has(e.name)) ambiguousRefNames.add(e.name); // dup name → can't map back safely
@@ -407,24 +410,24 @@ export async function coworkTurn(raw: unknown): Promise<{ threadId: string; brie
     // before the tx (TOCTOU); for single-founder v1 concurrent turns on one thread
     // don't happen, and (threadId, seq) is a plain index — a collision would only
     // affect display order, never spend. Revisit if cowork goes multi-tenant.
-    const last = isNew ? null : await prisma.chatMessage.findFirst({ where: { threadId }, orderBy: { seq: "desc" }, select: { seq: true } });
+    const last = isNew ? null : await prisma.chatMessage.findFirst({ where: { threadId, ownerId }, orderBy: { seq: "desc" }, select: { seq: true } });
     let seq = (last?.seq ?? 0);
     const rows = [
-      { id: newId(), threadId, ownerId: FOUNDER_OWNER_ID, role: "USER" as const, kind: "TEXT" as const, seq: ++seq, text, payload: { entityIds, variantSel }, replyToMessageId: validReplyId },
-      { id: newId(), threadId, ownerId: FOUNDER_OWNER_ID, role: "AGENT" as const, kind: "PLAN" as const, seq: ++seq, text: "", payload: { planSteps: turn.planSteps } },
-      { id: newId(), threadId, ownerId: FOUNDER_OWNER_ID, role: "AGENT" as const, kind: "TEXT" as const, seq: ++seq, text: turn.reply, payload: undefined },
-      ...(cardPayload ? [{ id: newId(), threadId, ownerId: FOUNDER_OWNER_ID, role: "AGENT" as const, kind: "GEN_CARD" as const, seq: ++seq, text: "", payload: cardPayload }] : []),
+      { id: newId(), threadId, ownerId, role: "USER" as const, kind: "TEXT" as const, seq: ++seq, text, payload: { entityIds, variantSel }, replyToMessageId: validReplyId },
+      { id: newId(), threadId, ownerId, role: "AGENT" as const, kind: "PLAN" as const, seq: ++seq, text: "", payload: { planSteps: turn.planSteps } },
+      { id: newId(), threadId, ownerId, role: "AGENT" as const, kind: "TEXT" as const, seq: ++seq, text: turn.reply, payload: undefined },
+      ...(cardPayload ? [{ id: newId(), threadId, ownerId, role: "AGENT" as const, kind: "GEN_CARD" as const, seq: ++seq, text: "", payload: cardPayload }] : []),
     ];
 
     // For a new thread the create MUST precede the messages (FK ChatMessage.threadId →
     // ChatThread, checked per-statement). For an existing thread, just bump updatedAt.
     await prisma.$transaction([
-      ...(isNew ? [prisma.chatThread.create({ data: { id: threadId, ownerId: FOUNDER_OWNER_ID, projectId, title: turn.title ?? text.slice(0, 80) } })] : []),
+      ...(isNew ? [prisma.chatThread.create({ data: { id: threadId, ownerId, projectId, title: turn.title ?? text.slice(0, 80) } })] : []),
       prisma.chatMessage.createMany({ data: rows }),
       ...(isNew ? [] : [prisma.chatThread.update({ where: { id: threadId }, data: { updatedAt: new Date() } })]),
     ]);
     try {
-      await prisma.actionEvent.create({ data: { id: newId(), ownerId: FOUNDER_OWNER_ID, projectId, type: "cowork.turn", payload: { via: transport.name, hasCard: !!cardPayload, model: cardPayload?.model ?? null } } });
+      await prisma.actionEvent.create({ data: { id: newId(), ownerId, projectId, type: "cowork.turn", payload: { via: transport.name, hasCard: !!cardPayload, model: cardPayload?.model ?? null } } });
     } catch { /* audit best-effort */ }
     if (turn.briefUpdate) {
       try {
@@ -464,16 +467,17 @@ export async function coworkTurn(raw: unknown): Promise<{ threadId: string; brie
 export async function coworkGenerate(raw: unknown): Promise<{ id: string } | { error: string }> {
   const parsed = coworkGenerateRequest.safeParse(raw);
   if (!parsed.success) return { error: "That card can't be generated." };
-  const gate = await requireSession(); if ("error" in gate) return gate;
+  const gate = await requireOwner(); if ("error" in gate) return gate;
+  const { ownerId } = gate;
   const { cardId, prompt, entityIds, variantSel, model: modelOverride, count: countOverride, aspectRatio: aspectOverride, resolution: resolutionOverride, durationSeconds: durationOverride, audio: audioOverride } = parsed.data;
 
   // Load the GEN_CARD server-side — threadId + projectId + the trusted model/params
   // come from the PERSISTED card, never from the client (anti-spoof).
   const card = await prisma.chatMessage.findFirst({
-    where: { id: cardId, ownerId: FOUNDER_OWNER_ID, kind: "GEN_CARD", deletedAt: null },
+    where: { id: cardId, ownerId, kind: "GEN_CARD", deletedAt: null },
     select: { id: true, threadId: true, payload: true, genJobId: true, thread: { select: { projectId: true, deletedAt: true, ownerId: true } } },
   });
-  if (!card || card.thread.deletedAt || card.thread.ownerId !== FOUNDER_OWNER_ID) return { error: "Card not found." };
+  if (!card || card.thread.deletedAt || card.thread.ownerId !== ownerId) return { error: "Card not found." };
 
   // RE-SPEND GUARD (server-side, money-safety #1): a card generates AT MOST ONCE. Key the
   // guard on the DURABLE record — a GenJob carrying this card's stable idempotencyKey,
@@ -487,7 +491,7 @@ export async function coworkGenerate(raw: unknown): Promise<{ id: string } | { e
   // race-proof backstop is the DB index GenJob_cowork_idempotency_once (all-status UNIQUE on
   // cowork:<cardId> keys) — a TOCTOU re-insert is rejected there even after the first is DONE.
   const existingJob = await prisma.genJob.findFirst({
-    where: { ownerId: FOUNDER_OWNER_ID, idempotencyKey: `cowork:${cardId}` },
+    where: { ownerId, idempotencyKey: `cowork:${cardId}` },
     select: { id: true },
   });
   if (existingJob) return { id: existingJob.id };
@@ -579,11 +583,12 @@ export async function coworkGenerate(raw: unknown): Promise<{ id: string } | { e
 export async function coworkRenameThread(raw: unknown): Promise<{ ok: true } | { error: string }> {
   const parsed = coworkRenameThreadRequest.safeParse(raw);
   if (!parsed.success) return { error: "Give the conversation a title (1-120 chars)." };
-  const gate = await requireSession(); if ("error" in gate) return gate;
+  const gate = await requireOwner(); if ("error" in gate) return gate;
+  const { ownerId } = gate;
   const { threadId, title } = parsed.data;
   try {
     const { count } = await prisma.chatThread.updateMany({
-      where: { id: threadId, ownerId: FOUNDER_OWNER_ID, deletedAt: null },
+      where: { id: threadId, ownerId, deletedAt: null },
       data: { title },
     });
     if (!count) return { error: "Conversation not found." };
@@ -595,11 +600,12 @@ export async function coworkRenameThread(raw: unknown): Promise<{ ok: true } | {
 export async function coworkDeleteThread(raw: unknown): Promise<{ ok: true } | { error: string }> {
   const parsed = coworkDeleteThreadRequest.safeParse(raw);
   if (!parsed.success) return { error: "Invalid request." };
-  const gate = await requireSession(); if ("error" in gate) return gate;
+  const gate = await requireOwner(); if ("error" in gate) return gate;
+  const { ownerId } = gate;
   const { threadId } = parsed.data;
   try {
     const { count } = await prisma.chatThread.updateMany({
-      where: { id: threadId, ownerId: FOUNDER_OWNER_ID, deletedAt: null },
+      where: { id: threadId, ownerId, deletedAt: null },
       data: { deletedAt: new Date() }, // soft-delete: hides from the list; messages + threadId-isolation untouched
     });
     if (!count) return { error: "Conversation not found." };
@@ -616,14 +622,15 @@ export async function coworkDeleteThread(raw: unknown): Promise<{ ok: true } | {
 export async function coworkVaryCard(raw: unknown): Promise<{ threadId: string } | { error: string }> {
   const parsed = coworkVaryCardRequest.safeParse(raw);
   if (!parsed.success) return { error: "That card can't be varied." };
-  const gate = await requireSession(); if ("error" in gate) return gate;
+  const gate = await requireOwner(); if ("error" in gate) return gate;
+  const { ownerId } = gate;
   const { cardId } = parsed.data;
   try {
     const card = await prisma.chatMessage.findFirst({
-      where: { id: cardId, ownerId: FOUNDER_OWNER_ID, kind: "GEN_CARD", deletedAt: null },
+      where: { id: cardId, ownerId, kind: "GEN_CARD", deletedAt: null },
       select: { id: true, threadId: true, payload: true, thread: { select: { projectId: true, deletedAt: true, ownerId: true } } },
     });
-    if (!card || card.thread.deletedAt || card.thread.ownerId !== FOUNDER_OWNER_ID) return { error: "Card not found." };
+    if (!card || card.thread.deletedAt || card.thread.ownerId !== ownerId) return { error: "Card not found." };
 
     // Validate the persisted payload is still a real, complete card (mirrors coworkGenerate).
     const p = (card.payload ?? {}) as Record<string, unknown>;
@@ -635,18 +642,18 @@ export async function coworkVaryCard(raw: unknown): Promise<{ threadId: string }
     // so re-generating yields a genuinely different output server-side.
     const clonedPayload = card.payload as Prisma.InputJsonObject;
 
-    const last = await prisma.chatMessage.findFirst({ where: { threadId: card.threadId }, orderBy: { seq: "desc" }, select: { seq: true } });
+    const last = await prisma.chatMessage.findFirst({ where: { threadId: card.threadId, ownerId }, orderBy: { seq: "desc" }, select: { seq: true } });
     let seq = (last?.seq ?? 0);
     const rows = [
-      { id: newId(), threadId: card.threadId, ownerId: FOUNDER_OWNER_ID, role: "AGENT" as const, kind: "TEXT" as const, seq: ++seq, text: "Another take — same settings. Generate when you're ready.", payload: undefined },
-      { id: newId(), threadId: card.threadId, ownerId: FOUNDER_OWNER_ID, role: "AGENT" as const, kind: "GEN_CARD" as const, seq: ++seq, text: "", payload: clonedPayload },
+      { id: newId(), threadId: card.threadId, ownerId, role: "AGENT" as const, kind: "TEXT" as const, seq: ++seq, text: "Another take — same settings. Generate when you're ready.", payload: undefined },
+      { id: newId(), threadId: card.threadId, ownerId, role: "AGENT" as const, kind: "GEN_CARD" as const, seq: ++seq, text: "", payload: clonedPayload },
     ];
     await prisma.$transaction([
       prisma.chatMessage.createMany({ data: rows }),
       prisma.chatThread.update({ where: { id: card.threadId }, data: { updatedAt: new Date() } }),
     ]);
     try {
-      await prisma.actionEvent.create({ data: { id: newId(), ownerId: FOUNDER_OWNER_ID, projectId: card.thread.projectId, type: "cowork.vary", payload: { fromCardId: cardId } } });
+      await prisma.actionEvent.create({ data: { id: newId(), ownerId, projectId: card.thread.projectId, type: "cowork.vary", payload: { fromCardId: cardId } } });
     } catch { /* audit best-effort */ }
     revalidatePath("/", "layout");
     return { threadId: card.threadId };
@@ -661,11 +668,12 @@ export async function coworkVaryCard(raw: unknown): Promise<{ threadId: string }
 export async function setCoworkBrief(raw: unknown): Promise<{ ok: true } | { error: string }> {
   const parsed = coworkBriefRequest.safeParse(raw);
   if (!parsed.success) return { error: "Invalid brief." };
-  const gate = await requireSession(); if ("error" in gate) return gate;
+  const gate = await requireOwner(); if ("error" in gate) return gate;
+  const { ownerId } = gate;
   const { projectId, brief } = parsed.data;
   try {
     const { count } = await prisma.project.updateMany({
-      where: { id: projectId, ...OWNED },
+      where: { id: projectId, ownerId, deletedAt: null },
       data: { coworkBrief: brief.trim() || null },
     });
     if (!count) return { error: "Project not found." };
