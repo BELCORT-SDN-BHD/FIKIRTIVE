@@ -2,3 +2,7 @@
 .prod-session.json
 .data/
 .git/
+# dev tooling (codegraph index/socket + agent config) — useless at runtime, just bloats the upload
+.codegraph/
+.claude/
+.mcp.json

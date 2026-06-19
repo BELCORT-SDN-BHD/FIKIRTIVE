@@ -9,3 +9,7 @@ node_modules
 docs
 .gstack
 *.md
+# dev tooling — never ship to the runtime image (5MB codegraph index + a unix socket; agent config)
+.codegraph/
+.claude/
+.mcp.json

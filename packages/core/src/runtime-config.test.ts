@@ -1,6 +1,21 @@
 import { describe, it, expect } from "vitest";
-import { clampVisionInts, createTransportFromConfig, mergeVisionConfig } from "./runtime-config.js";
+import { clampVisionInts, createTransportFromConfig, mergeVisionConfig, effectiveCoworkProvider } from "./runtime-config.js";
 import { runtimeConfigInput } from "./cowork.js";
+
+describe("effectiveCoworkProvider (beta $0 lock)", () => {
+  it("DB provider wins over env when paid is allowed", () => {
+    expect(effectiveCoworkProvider({ dbProvider: "fal", envProvider: "modal", paidAllowed: true })).toBe("fal");
+  });
+  it("falls back to env when no DB provider", () => {
+    expect(effectiveCoworkProvider({ dbProvider: undefined, envProvider: "fal", paidAllowed: true })).toBe("fal");
+  });
+  it("FORCES mock (undefined) when paid is NOT allowed — even if db/env say fal", () => {
+    expect(effectiveCoworkProvider({ dbProvider: "fal", envProvider: "fal", paidAllowed: false })).toBeUndefined();
+  });
+  it("defaults to locked: undefined paidAllowed === not allowed", () => {
+    expect(effectiveCoworkProvider({ dbProvider: "fal", envProvider: undefined })).toBeUndefined();
+  });
+});
 
 describe("clampVisionInts", () => {
   it("clamps finite ints to [1,max], else default", () => {

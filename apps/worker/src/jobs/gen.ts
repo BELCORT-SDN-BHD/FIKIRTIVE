@@ -13,7 +13,7 @@
  * Conditioning = the @mentioned entities' reference images, resolved here from
  * the job's entityIds (D19 trust boundary).
  */
-import { prisma } from "@artlio/db";
+import { prisma, settleCredits, refundReservation } from "@artlio/db";
 import {
   storageKey,
   newId,
@@ -124,6 +124,18 @@ async function appendCoworkResult(
   }
 }
 
+/** Terminal-fail a job that NEVER delivered AND release its credit hold, atomically.
+ *  Used by every pre-commit fail-closed branch (no outputs recorded) so a merchant is
+ *  never charged for a generation they didn't receive. refundReservation is idempotent
+ *  and no-ops when there's no open reservation (a historical/pre-credits job) or the
+ *  job was already settled — so this is always safe to call. */
+async function failClosedWithRefund(jobId: string, ownerId: string, error: string): Promise<void> {
+  await prisma.$transaction(async (tx) => {
+    await tx.genJob.update({ where: { id: jobId }, data: { status: "FAILED", error, finishedAt: new Date() } });
+    await refundReservation(tx, { orgId: ownerId, refId: jobId });
+  });
+}
+
 export async function handleGen(data: GenJobData, retryCount: number): Promise<void> {
   const job = await prisma.genJob.findUnique({ where: { id: data.genJobId } });
   if (!job) {
@@ -134,6 +146,10 @@ export async function handleGen(data: GenJobData, retryCount: number): Promise<v
   // check, so a committed job (outputs recorded) that a prior delivery wrongly left
   // FAILED can still finish via attach+DONE without re-spending.
   if (job.status === "DONE") return;
+
+  // P2: the worker SETTLES the held charge at the commit point and REFUNDS it on every
+  // terminal failure. settle/refund read the released amount FROM the RESERVE ledger row
+  // (startGen wrote it), so the worker never recomputes a price → release == reserve always.
 
   // flips true the instant the paid provider call returns — a failure after this
   // but BEFORE the commit point must terminal-fail (a retry would re-spend).
@@ -152,15 +168,21 @@ export async function handleGen(data: GenJobData, retryCount: number): Promise<v
     if (job.generationIds.length > 0) {
       committed = true; // outputs recorded on a prior delivery — never re-spend; finish best-effort
       if (job.shotId) await attachBestEffort(job.id, job.shotId, job.generationIds);
-      await prisma.genJob.update({
-        where: { id: job.id },
-        data: {
-          status: "DONE", progress: 100, finishedAt: new Date(), error: "", spent: true,
-          // defensive backfill: a row committed before spentUsd existed (or a partial
-          // write) has the marker but null spentUsd — reconstruct from the frozen job
-          // inputs. Never overwrites a value the commit tx already froze.
-          ...(job.spentUsd == null ? { spentUsd: genSpentUsd({ kind: job.kind, model: job.model, count: job.count, videoOptions: job.videoOptions as { seconds?: number; resolution?: string; audio?: boolean } | null }) } : {}),
-        },
+      await prisma.$transaction(async (tx) => {
+        await tx.genJob.update({
+          where: { id: job.id },
+          data: {
+            status: "DONE", progress: 100, finishedAt: new Date(), error: "", spent: true,
+            // defensive backfill: a row committed before spentUsd existed (or a partial
+            // write) has the marker but null spentUsd — reconstruct from the frozen job
+            // inputs. Never overwrites a value the commit tx already froze.
+            ...(job.spentUsd == null ? { spentUsd: genSpentUsd({ kind: job.kind, model: job.model, count: job.count, videoOptions: job.videoOptions as { seconds?: number; resolution?: string; audio?: boolean } | null }) } : {}),
+          },
+        });
+        // settle the hold (idempotent: P2002 no-op if a prior delivery's commit tx
+        // already settled; no-op if there was no reservation). Outputs exist → the
+        // generation succeeded → the charge becomes permanent.
+        await settleCredits(tx, { orgId: job.ownerId, refId: job.id });
       });
       await appendCoworkResult(job, "GEN_RESULT", job.generationIds); // idempotent — P2002 swallowed if already written
       return;
@@ -174,13 +196,13 @@ export async function handleGen(data: GenJobData, retryCount: number): Promise<v
     // the job proceeds (the typed gate that admitted it is the authority).
     const disabled = await workerDisabledModels();
     if (isModelDisabled(job.model, disabled)) {
-      await prisma.genJob.update({ where: { id: job.id }, data: { status: "FAILED", error: "this model was turned off before the job ran — not spending", finishedAt: new Date() } });
+      await failClosedWithRefund(job.id, job.ownerId, "this model was turned off before the job ran — not spending");
       return; // terminal, no throw → no retry, no spend
     }
 
     const project = await prisma.project.findFirst({ where: { id: job.projectId, ownerId: job.ownerId, deletedAt: null } });
     if (!project) {
-      await prisma.genJob.update({ where: { id: job.id }, data: { status: "FAILED", error: "project gone before generation ran", finishedAt: new Date() } });
+      await failClosedWithRefund(job.id, job.ownerId, "project gone before generation ran");
       return;
     }
     if (job.shotId) {
@@ -188,7 +210,7 @@ export async function handleGen(data: GenJobData, retryCount: number): Promise<v
       // on) a shot/source image belonging to another project.
       const shot = await prisma.shot.findFirst({ where: { id: job.shotId, projectId: job.projectId, ownerId: job.ownerId, deletedAt: null } });
       if (!shot) {
-        await prisma.genJob.update({ where: { id: job.id }, data: { status: "FAILED", error: "shot gone or not in this project before generation ran", finishedAt: new Date() } });
+        await failClosedWithRefund(job.id, job.ownerId, "shot gone or not in this project before generation ran");
         return;
       }
     }
@@ -210,9 +232,15 @@ export async function handleGen(data: GenJobData, retryCount: number): Promise<v
       // ACTIVELY running (a duplicate delivery) — leave it alone. Only a STALE
       // GENERATING (the attempt crashed, or was redelivered past expiry) is failed
       // closed, since re-running a paid job risks a double charge.
-      await prisma.genJob.updateMany({
-        where: { id: job.id, status: "GENERATING", startedAt: { lt: new Date(Date.now() - GEN_STALE_MS) } },
-        data: { status: "FAILED", error: "stale GENERATING after a possible paid call — not retrying, to avoid a double charge", finishedAt: new Date() },
+      await prisma.$transaction(async (tx) => {
+        const staled = await tx.genJob.updateMany({
+          where: { id: job.id, status: "GENERATING", startedAt: { lt: new Date(Date.now() - GEN_STALE_MS) } },
+          data: { status: "FAILED", error: "stale GENERATING after a possible paid call — not retrying, to avoid a double charge", finishedAt: new Date() },
+        });
+        // refund only if WE just failed it closed (count>0) — never touch the hold of an
+        // actively-running winner. The merchant didn't get a result; the founder absorbs
+        // any real fal cost on the possibly-paid call.
+        if (staled.count > 0) await refundReservation(tx, { orgId: job.ownerId, refId: job.id });
       });
       return;
     }
@@ -234,7 +262,7 @@ export async function handleGen(data: GenJobData, retryCount: number): Promise<v
       // race backstop.)
       const liveEntity = await prisma.entity.findFirst({ where: { id: entityId, ownerId: job.ownerId, deletedAt: null }, select: { id: true, type: true } });
       if (!liveEntity) {
-        await prisma.genJob.update({ where: { id: job.id }, data: { status: "FAILED", error: "an @mentioned element was deleted — remove it and try again", finishedAt: new Date() } });
+        await failClosedWithRefund(job.id, job.ownerId, "an @mentioned element was deleted — remove it and try again");
         return;
       }
       if (variantId) {
@@ -244,7 +272,7 @@ export async function handleGen(data: GenJobData, retryCount: number): Promise<v
         // variant directly, mirroring the VARIANT refgen worker.)
         const liveVariant = await prisma.entityVariant.findFirst({ where: { id: variantId, entityId, ownerId: job.ownerId, deletedAt: null }, select: { id: true } });
         if (!liveVariant) {
-          await prisma.genJob.update({ where: { id: job.id }, data: { status: "FAILED", error: "an @mentioned variant was deleted — pick another or use the base", finishedAt: new Date() } });
+          await failClosedWithRefund(job.id, job.ownerId, "an @mentioned variant was deleted — pick another or use the base");
           return;
         }
       }
@@ -254,7 +282,7 @@ export async function handleGen(data: GenJobData, retryCount: number): Promise<v
         include: { asset: true },
       });
       if (variantId && found.length === 0) {
-        await prisma.genJob.update({ where: { id: job.id }, data: { status: "FAILED", error: "an @mentioned variant has no image to condition on — generate it first, or use the base", finishedAt: new Date() } });
+        await failClosedWithRefund(job.id, job.ownerId, "an @mentioned variant has no image to condition on — generate it first, or use the base");
         return;
       }
       // bare mention (no variant) of a CHARACTER whose base refs resolve to zero →
@@ -263,7 +291,7 @@ export async function handleGen(data: GenJobData, retryCount: number): Promise<v
       // Only CHARACTER must be anchored — LOCATION/PRODUCT/BRAND with 0 refs are an
       // intended t2i, mirroring castFindings' "character-no-refs" rule.
       if (!variantId && liveEntity.type === "CHARACTER" && found.length === 0) {
-        await prisma.genJob.update({ where: { id: job.id }, data: { status: "FAILED", error: "a @mentioned character has no base reference image — add one first", finishedAt: new Date() } });
+        await failClosedWithRefund(job.id, job.ownerId, "a @mentioned character has no base reference image — add one first");
         return;
       }
       perEntity.push(found);
@@ -324,7 +352,7 @@ export async function handleGen(data: GenJobData, retryCount: number): Promise<v
           include: { asset: true },
         });
         if (!src) {
-          await prisma.genJob.update({ where: { id: job.id }, data: { status: "FAILED", error: "image-to-video source not found (or not an image) in this project", finishedAt: new Date() } });
+          await failClosedWithRefund(job.id, job.ownerId, "image-to-video source not found (or not an image) in this project");
           return;
         }
         sourceAsset = src.asset;
@@ -336,7 +364,7 @@ export async function handleGen(data: GenJobData, retryCount: number): Promise<v
         if (!sourceGen) {
           // permanent user error (no still yet) — fail closed so a retry can't
           // later find a fresh image and spend on it.
-          await prisma.genJob.update({ where: { id: job.id }, data: { status: "FAILED", error: "no source image to animate — generate an image for this shot first", finishedAt: new Date() } });
+          await failClosedWithRefund(job.id, job.ownerId, "no source image to animate — generate an image for this shot first");
           return;
         }
         sourceAsset = sourceGen.asset;
@@ -354,7 +382,7 @@ export async function handleGen(data: GenJobData, retryCount: number): Promise<v
           include: { asset: true },
         });
         if (!tail) {
-          await prisma.genJob.update({ where: { id: job.id }, data: { status: "FAILED", error: "last-frame image not found (or not an image) in this project", finishedAt: new Date() } });
+          await failClosedWithRefund(job.id, job.ownerId, "last-frame image not found (or not an image) in this project");
           return;
         }
         tailImageUrl = (await storage.presignedGet(storageKey(tail.asset.ownerId, tail.asset.contentHash, tail.asset.ext), 3600)) ?? "";
@@ -414,6 +442,9 @@ export async function handleGen(data: GenJobData, retryCount: number): Promise<v
             ids.push(gen.id);
           }
           await tx.genJob.update({ where: { id: job.id }, data: { generationIds: ids, spent: true, spentUsd: genSpentUsd({ kind: job.kind, model: job.model, count: job.count, videoOptions: job.videoOptions as { seconds?: number; resolution?: string; audio?: boolean } | null }) } });
+          // SETTLE the hold atomically with the resume marker — the generation succeeded,
+          // so the reserved charge becomes permanent in the SAME tx that commits outputs.
+          await settleCredits(tx, { orgId: job.ownerId, refId: job.id });
           return ids;
         });
         break; // stored + recorded — the resume marker is written
@@ -447,15 +478,25 @@ export async function handleGen(data: GenJobData, retryCount: number): Promise<v
     // post-charge failure is terminal (charged, but no resume marker).
     const final = !committed && (spent || charged || retryCount >= GEN_RETRY_LIMIT);
     console.error(`[gen] ${job.id}: ${final ? "FAILED" : committed ? "requeue → resume attach" : "retrying"} — ${scrubUrls(err instanceof Error ? err.message : String(err)).slice(0, 1000)}`);
-    await prisma.genJob.update({
-      where: { id: job.id },
-      // a post-charge failure records spent=true + spentUsd so "paid but not
-      // delivered" is auditable (told apart from a free pre-charge failure, which
-      // stays spent=false / spentUsd=null). The QUEUED requeue path records neither.
-      data: final
-        ? { status: "FAILED", error: message, finishedAt: new Date(), spent: spent || charged, ...((spent || charged) ? { spentUsd: genSpentUsd({ kind: job.kind, model: job.model, count: job.count, videoOptions: job.videoOptions as { seconds?: number; resolution?: string; audio?: boolean } | null }) } : {}) }
-        : { status: "QUEUED", error: message, progress: 0 },
-    });
+    if (final) {
+      // terminal fail → release the hold (the merchant got no result; the founder
+      // absorbs any real fal cost on a paid-but-undelivered call). A `final` failure
+      // is by definition pre-commit (committed → final is false), so settle never ran;
+      // and the finalizer unique index makes refund safe even against a racing settle.
+      // A post-charge failure still records spent=true + spentUsd so "paid but not
+      // delivered" stays auditable (told apart from a free pre-charge failure).
+      await prisma.$transaction(async (tx) => {
+        await tx.genJob.update({
+          where: { id: job.id },
+          data: { status: "FAILED", error: message, finishedAt: new Date(), spent: spent || charged, ...((spent || charged) ? { spentUsd: genSpentUsd({ kind: job.kind, model: job.model, count: job.count, videoOptions: job.videoOptions as { seconds?: number; resolution?: string; audio?: boolean } | null }) } : {}) },
+        });
+        await refundReservation(tx, { orgId: job.ownerId, refId: job.id });
+      });
+    } else {
+      // recoverable pre-charge retry — requeue and keep the hold (the resume path
+      // settles it on success, or a later terminal failure refunds it).
+      await prisma.genJob.update({ where: { id: job.id }, data: { status: "QUEUED", error: message, progress: 0 } });
+    }
     // user-facing chat text stays generic; the sanitized provider error is kept in GenJob.error (ops/DB)
     if (final) await appendCoworkResult(job, "TURN_ERROR", [], "That generation didn't go through — you can try again.");
     // rethrow SANITIZED: pg-boss serializes the thrown error into its own job.output,

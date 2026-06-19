@@ -8,6 +8,7 @@
  * own `pgboss` schema (excluded from Prisma migrations), generous
  * expireInSeconds for multi-GB jobs, idempotent handlers (content-hash keys).
  */
+import * as Sentry from "@sentry/node";
 import { PgBoss } from "pg-boss";
 import { QUEUES } from "./queues.js";
 import { handleIngest, type IngestJobData } from "./jobs/ingest.js";
@@ -40,12 +41,38 @@ if (!connectionString) {
   process.exit(1);
 }
 
+// Minimal error monitoring (closed-beta P0). No-op unless SENTRY_DSN is set.
+if (process.env.SENTRY_DSN) {
+  Sentry.init({ dsn: process.env.SENTRY_DSN, tracesSampleRate: 0, environment: process.env.NODE_ENV });
+}
+// Non-fatal capture (e.g. pg-boss errors) — log + report, keep running.
+const captureError = (err: unknown) => { if (process.env.SENTRY_DSN) Sentry.captureException(err); };
+// Fatal capture: a worker in an unknown state should crash (Railway restarts it) — the
+// SAME default Node behavior, but flushed to Sentry first. (Adding a handler otherwise
+// suppresses Node's default crash-on-fatal, which would leave a wedged process running.)
+const fatal = (label: string) => (err: unknown) => {
+  console.error(`[worker] ${label}:`, err);
+  if (!process.env.SENTRY_DSN) { process.exit(1); return; }
+  Sentry.captureException(err);
+  void Sentry.flush(2000).catch(() => {}).finally(() => process.exit(1));
+};
+process.on("unhandledRejection", fatal("unhandledRejection"));
+process.on("uncaughtException", fatal("uncaughtException"));
+
+// Report UNEXPECTED job errors (provider/store/parse failures that throw) to Sentry, then
+// rethrow so pg-boss still owns retry/fail bookkeeping. Expected "return-style" terminal
+// FAILEDs (deleted project/shot/entity, etc.) don't throw and correctly stay out of Sentry.
+async function runHandler<T>(fn: () => Promise<T>): Promise<T> {
+  try { return await fn(); }
+  catch (err) { captureError(err); throw err; }
+}
+
 const boss = new PgBoss({
   connectionString,
   schema: "pgboss",
 });
 
-boss.on("error", (err) => console.error("[worker] pg-boss error:", err));
+boss.on("error", (err) => { console.error("[worker] pg-boss error:", err); captureError(err); });
 
 async function main(): Promise<void> {
   await boss.start();
@@ -71,7 +98,7 @@ async function main(): Promise<void> {
   await boss.work<IngestJobData>(QUEUES.ingest, { batchSize: 1 }, async ([job]) => {
     if (!job) return;
     console.log(`[worker] ingest job ${job.id} start`, job.data);
-    await handleIngest(job.data);
+    await runHandler(() => handleIngest(job.data));
     console.log(`[worker] ingest job ${job.id} done`);
   });
 
@@ -82,7 +109,7 @@ async function main(): Promise<void> {
     async ([job]) => {
       if (!job) return;
       console.log(`[worker] render job ${job.id} start (try ${job.retryCount + 1})`, job.data);
-      await handleRender(job.data, job.retryCount);
+      await runHandler(() => handleRender(job.data, job.retryCount));
       console.log(`[worker] render job ${job.id} done`);
     },
   );
@@ -93,7 +120,7 @@ async function main(): Promise<void> {
     async ([job]) => {
       if (!job) return;
       console.log(`[worker] refgen job ${job.id} start (try ${job.retryCount + 1})`, job.data);
-      await handleRefGen(job.data, job.retryCount);
+      await runHandler(() => handleRefGen(job.data, job.retryCount));
       console.log(`[worker] refgen job ${job.id} done`);
     },
   );
@@ -104,7 +131,7 @@ async function main(): Promise<void> {
     async ([job]) => {
       if (!job) return;
       console.log(`[worker] gen job ${job.id} start (try ${job.retryCount + 1})`, job.data);
-      await handleGen(job.data, job.retryCount);
+      await runHandler(() => handleGen(job.data, job.retryCount));
       console.log(`[worker] gen job ${job.id} done`);
     },
   );
@@ -117,7 +144,7 @@ async function main(): Promise<void> {
     async ([job]) => {
       if (!job) return;
       console.log(`[worker] caption job ${job.id} start (try ${job.retryCount + 1})`, job.data);
-      await handleCaption(job.data, job.retryCount);
+      await runHandler(() => handleCaption(job.data, job.retryCount));
       console.log(`[worker] caption job ${job.id} done`);
     },
   );

@@ -19,6 +19,7 @@
     "build": "pnpm -r build",
     "typecheck": "pnpm -r typecheck",
     "lint": "pnpm -r lint",
+    "lint:tenancy": "bash scripts/check-no-raw-prisma.sh",
     "test": "pnpm -r test",
     "db:generate": "pnpm --filter @artlio/db generate",
     "db:migrate": "pnpm --filter @artlio/db migrate:dev"

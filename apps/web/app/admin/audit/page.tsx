@@ -12,6 +12,7 @@ const MONEY_GATE_TYPES = [
   "gen.start", "gen.guardian-block", "refgen.start",
   "cowork.turn", "cowork.enhance", "cowork.draft",
   "config.edit", "model.toggle", "directive.edit",
+  "credits.grant",
 ] as const;
 
 export default async function AuditPage({ searchParams }: { searchParams: Promise<{ type?: string }> }) {

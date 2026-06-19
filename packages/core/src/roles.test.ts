@@ -5,8 +5,8 @@ describe("ROLES / SECTIONS", () => {
   it("has exactly the 5 spec roles", () => {
     expect([...ROLES]).toEqual(["super-admin", "ops", "finance", "moderator", "viewer"]);
   });
-  it("has exactly the 6 spec sections", () => {
-    expect([...SECTIONS]).toEqual(["model", "cost", "content", "team", "system", "knowledge"]);
+  it("has exactly the 7 spec sections (closed-beta P2 adds credits)", () => {
+    expect([...SECTIONS]).toEqual(["model", "cost", "content", "team", "system", "knowledge", "credits"]);
   });
 });
 
@@ -52,6 +52,15 @@ describe("roleAllows — derives from SECTION_MATRIX, denies by default, super-a
     expect(roleAllows("finance", "cost", "read")).toBe(true);
     expect(roleAllows("finance", "cost", "mutate")).toBe(false); // mutate is null for cost
     expect(roleAllows("finance", "model", "mutate")).toBe(false);
+  });
+  it("finance reads AND mutates credits (grants are a financial action); others denied", () => {
+    expect(roleAllows("finance", "credits", "read")).toBe(true);
+    expect(roleAllows("finance", "credits", "mutate")).toBe(true);
+    expect(roleAllows("super-admin", "credits", "mutate")).toBe(true); // supersede
+    for (const r of ["ops", "moderator", "viewer"] as Role[]) {
+      expect(roleAllows(r, "credits", "read")).toBe(false);
+      expect(roleAllows(r, "credits", "mutate")).toBe(false);
+    }
   });
   it("moderator reads + mutates content, nothing else operational-mutate", () => {
     expect(roleAllows("moderator", "content", "read")).toBe(true);

@@ -21,7 +21,7 @@
  * Conditioning (D19 trust boundary): the request never carried image URLs —
  * the worker resolves them HERE from the entity's own references.
  */
-import { prisma, Prisma, type RefGenMode } from "@artlio/db";
+import { prisma, Prisma, settleCredits, refundReservation, type RefGenMode } from "@artlio/db";
 import {
   storageKey,
   newId,
@@ -39,8 +39,23 @@ import { workerDisabledModels } from "../model-registry.js";
 /** fal Seedream edit caps total (inputs + outputs) at 15 images (codex P2). */
 const MAX_EDIT_INPUT_PLUS_OUTPUT = 15;
 
+// A GENERATING row older than this is treated as crashed/stale (mirrors gen.ts GEN_STALE_MS):
+// kept above the realistic provider call time and below the queue expiry, so an actively-
+// running gen is never failed-closed by a duplicate delivery, but a truly stuck one is.
+const REFGEN_STALE_MS = 1000 * 60 * 18;
+
 const mimeForExt = (ext: string) =>
   ext === "png" ? "image/png" : ext === "webp" ? "image/webp" : "image/jpeg";
+
+/** Terminal-fail a refgen job that NEVER delivered AND release its credit hold, atomically.
+ *  refundReservation is idempotent and no-ops when there's no open reservation (historical
+ *  job) or it was already settled — so every pre-commit fail-closed branch can call this. */
+async function failClosedRefund(jobId: string, ownerId: string, error: string): Promise<void> {
+  await prisma.$transaction(async (tx) => {
+    await tx.refGenJob.update({ where: { id: jobId }, data: { status: "FAILED", error, finishedAt: new Date() } });
+    await refundReservation(tx, { orgId: ownerId, refId: jobId });
+  });
+}
 
 export async function handleRefGen(data: RefGenJobData, retryCount: number): Promise<void> {
   const job = await prisma.refGenJob.findUnique({ where: { id: data.refGenJobId } });
@@ -55,6 +70,10 @@ export async function handleRefGen(data: RefGenJobData, retryCount: number): Pro
     return;
   }
 
+  // P2: the worker SETTLES the held charge at the commit point and REFUNDS it on every
+  // terminal failure. settle/refund read the released amount FROM the RESERVE ledger row
+  // (startRefGen/dispatchVariantJob wrote it) → release == reserve, never recomputed.
+
   // flips true the instant the paid provider call returns — any failure AFTER
   // this point must terminal-fail, never retry (a retry would re-spend).
   let spent = false;
@@ -67,10 +86,7 @@ export async function handleRefGen(data: RefGenJobData, retryCount: number): Pro
     });
     if (!entity) {
       console.error(`[refgen] ${job.id}: entity ${job.entityId} gone — failing without spend`);
-      await prisma.refGenJob.update({
-        where: { id: job.id },
-        data: { status: "FAILED", error: "element was deleted before generation ran", finishedAt: new Date() },
-      });
+      await failClosedRefund(job.id, job.ownerId, "element was deleted before generation ran");
       return; // terminal, no throw → no retry, no spend
     }
 
@@ -84,6 +100,9 @@ export async function handleRefGen(data: RefGenJobData, retryCount: number): Pro
       if (job.spentUsd == null) {
         await prisma.refGenJob.update({ where: { id: job.id }, data: { spentUsd: refgenSpentUsd({ model: job.model, count: job.count }) } });
       }
+      // settle the hold (idempotent: P2002 no-op if the original commit already settled;
+      // no-op if there was no reservation). Outputs exist → the charge is permanent.
+      await prisma.$transaction(async (tx) => { await settleCredits(tx, { orgId: job.ownerId, refId: job.id }); });
       await finalizeDone(job.id, job.mode, job.entityId, job.outputAssetIds[0]);
       console.log(`[refgen] ${job.id}: resumed — re-attached ${job.outputAssetIds.length} prior outputs (no re-spend)`);
       return;
@@ -100,10 +119,7 @@ export async function handleRefGen(data: RefGenJobData, retryCount: number): Pro
       });
       if (!variant) {
         console.error(`[refgen] ${job.id}: variant ${job.variantId} gone — failing without spend`);
-        await prisma.refGenJob.update({
-          where: { id: job.id },
-          data: { status: "FAILED", error: "variant was deleted before generation ran", finishedAt: new Date() },
-        });
+        await failClosedRefund(job.id, job.ownerId, "variant was deleted before generation ran");
         return; // terminal, no throw → no retry, no spend
       }
     }
@@ -115,7 +131,7 @@ export async function handleRefGen(data: RefGenJobData, retryCount: number): Pro
     // seedream/image toggle for the variant path too.)
     const disabled = await workerDisabledModels();
     if (isModelDisabled(job.model, disabled)) {
-      await prisma.refGenJob.update({ where: { id: job.id }, data: { status: "FAILED", error: "this model was turned off before the job ran — not spending", finishedAt: new Date() } });
+      await failClosedRefund(job.id, job.ownerId, "this model was turned off before the job ran — not spending");
       return; // terminal, no throw → no retry, no spend
     }
 
@@ -131,9 +147,18 @@ export async function handleRefGen(data: RefGenJobData, retryCount: number): Pro
       data: { status: "GENERATING", startedAt: new Date(), attempts: { increment: 1 } },
     });
     if (claim.count === 0) {
-      await prisma.refGenJob.updateMany({
-        where: { id: job.id, status: "GENERATING" },
-        data: { status: "FAILED", error: "duplicate delivery or interrupted after a possible paid call — not retrying, to avoid a double charge", finishedAt: new Date() },
+      // Only fail-closed a STALE GENERATING row (the owning attempt crashed or was
+      // redelivered past expiry). A RECENT GENERATING is an actively-running winner (a
+      // duplicate delivery) — leave it ALONE, so we never clobber + refund a job that is
+      // about to commit (delivered-but-refunded). Mirrors gen.ts's stale cutoff.
+      await prisma.$transaction(async (tx) => {
+        const staled = await tx.refGenJob.updateMany({
+          where: { id: job.id, status: "GENERATING", startedAt: { lt: new Date(Date.now() - REFGEN_STALE_MS) } },
+          data: { status: "FAILED", error: "stale GENERATING after a possible paid call — not retrying, to avoid a double charge", finishedAt: new Date() },
+        });
+        // refund only if WE just failed it closed (count>0) — never touch an active
+        // winner's hold. The merchant got no result; the founder absorbs any fal cost.
+        if (staled.count > 0) await refundReservation(tx, { orgId: job.ownerId, refId: job.id });
       });
       return;
     }
@@ -214,7 +239,12 @@ export async function handleRefGen(data: RefGenJobData, retryCount: number): Pro
     // record outputs (the resume marker) AND the frozen spend in one update — past
     // here a retry resumes instead of re-spending, so spentUsd is committed exactly
     // when money is committed (refgenSpentUsd = REFGEN_PRICE_USD_PER_IMAGE * count).
-    await prisma.refGenJob.update({ where: { id: job.id }, data: { outputAssetIds, spentUsd: refgenSpentUsd({ model: job.model, count: job.count }) } });
+    // SETTLE the credit hold atomically with the resume marker — the generation
+    // succeeded, so the reserved charge becomes permanent in the same commit.
+    await prisma.$transaction(async (tx) => {
+      await tx.refGenJob.update({ where: { id: job.id }, data: { outputAssetIds, spentUsd: refgenSpentUsd({ model: job.model, count: job.count }) } });
+      await settleCredits(tx, { orgId: job.ownerId, refId: job.id });
+    });
 
     // attach (idempotent: skips assets already attached to this entity+variant)
     await attachOutputs(job.entityId, job.ownerId, outputAssetIds, job.variantId);
@@ -230,15 +260,25 @@ export async function handleRefGen(data: RefGenJobData, retryCount: number): Pro
     const charged = typeof err === "object" && err !== null && (err as { charged?: unknown }).charged === true;
     const final = spent || charged || retryCount >= REFGEN_RETRY_LIMIT;
     console.error(`[refgen] ${job.id}: ${final ? "FAILED" : "retrying"} — ${message}`);
-    await prisma.refGenJob.update({
-      where: { id: job.id },
-      // a post-charge failure records spentUsd so "paid but not delivered" is
-      // auditable (a free pre-charge failure stays spentUsd=null). The QUEUED
-      // requeue path records nothing (a recoverable pre-charge retry).
-      data: final
-        ? { status: "FAILED", error: message, finishedAt: new Date(), ...((spent || charged) ? { spentUsd: refgenSpentUsd({ model: job.model, count: job.count }) } : {}) }
-        : { status: "QUEUED", error: message, progress: 0 },
-    });
+    if (final) {
+      // terminal fail → release the hold (the merchant got no result; the founder
+      // absorbs any real fal cost). refundReservation no-ops if the commit tx already
+      // settled (a post-commit attach/finalize failure) — so a produced-but-unattached
+      // generation stays charged, while a pre-commit failure is fully refunded.
+      // A post-charge failure still records spentUsd so "paid but not delivered" stays
+      // auditable (a free pre-charge failure leaves spentUsd null).
+      await prisma.$transaction(async (tx) => {
+        await tx.refGenJob.update({
+          where: { id: job.id },
+          data: { status: "FAILED", error: message, finishedAt: new Date(), ...((spent || charged) ? { spentUsd: refgenSpentUsd({ model: job.model, count: job.count }) } : {}) },
+        });
+        await refundReservation(tx, { orgId: job.ownerId, refId: job.id });
+      });
+    } else {
+      // recoverable pre-charge retry — requeue and keep the hold (settled on success,
+      // refunded if a later delivery terminal-fails).
+      await prisma.refGenJob.update({ where: { id: job.id }, data: { status: "QUEUED", error: message, progress: 0 } });
+    }
     throw err; // pg-boss owns the retry schedule
   }
 }

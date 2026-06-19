@@ -12,6 +12,7 @@ import { PrismaPg } from "@prisma/adapter-pg";
 import { PrismaClient } from "../generated/prisma/client.js";
 
 export * from "../generated/prisma/client.js";
+export { reserveCredits, settleCredits, refundReservation, grantCredits, InsufficientCredits, type CreditGrantSource } from "./credits.js";
 
 function buildClient(): PrismaClient {
   // `||` not `??`: empty-string env vars (common in .env templates) must fall through.

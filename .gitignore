@@ -23,3 +23,6 @@ test-results/
 # Railway CLI agent artifacts
 .agents/
 .railway/
+
+# codegraph local index
+.codegraph/

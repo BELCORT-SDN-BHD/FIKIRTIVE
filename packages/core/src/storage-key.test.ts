@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { parseStorageKey, storageKey } from "./storage-key.js";
+import { FOUNDER_OWNER_ID, parseStorageKey, storageKey, keyOwnerMatches } from "./storage-key.js";
 import { sha256Bytes } from "./hash.js";
 import { newId } from "./ids.js";
 
@@ -41,6 +41,28 @@ describe("sha256", () => {
     expect(sha256Bytes(new Uint8Array())).toBe(
       "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
     );
+  });
+});
+
+describe("FOUNDER_OWNER_ID (R2-orphan guard)", () => {
+  // The founder org is seeded (P1) with id === this literal. R2 keys u/founder/<hash>
+  // are derived from it; changing this value orphans every existing blob. DO NOT CHANGE.
+  it("is exactly the literal 'founder'", () => {
+    expect(FOUNDER_OWNER_ID).toBe("founder");
+  });
+});
+
+describe("keyOwnerMatches (cross-tenant /files guard)", () => {
+  const hash = "b".repeat(64);
+  it("true when the key's owner equals the caller", () => {
+    expect(keyOwnerMatches(`u/founder/${hash}.png`, "founder")).toBe(true);
+  });
+  it("false when the key belongs to another owner", () => {
+    expect(keyOwnerMatches(`u/other/${hash}.png`, "founder")).toBe(false);
+  });
+  it("false for a malformed / traversal key", () => {
+    expect(keyOwnerMatches("../../etc/passwd", "founder")).toBe(false);
+    expect(keyOwnerMatches("u/founder/notahash.png", "founder")).toBe(false);
   });
 });
 

@@ -2,7 +2,7 @@ import NextAuth from "next-auth";
 import Resend from "next-auth/providers/resend";
 import { PrismaAdapter } from "@auth/prisma-adapter";
 import { prisma } from "@artlio/db";
-import { newId, isRole } from "@artlio/core";
+import { newId, isRole, FOUNDER_OWNER_ID } from "@artlio/core";
 
 /**
  * D18: email magic-link auth, founder-only via allowlist.
@@ -123,6 +123,19 @@ export const { handlers, auth, signIn, signOut } = NextAuth({
             data: { role: "super-admin" },
           })
           .catch(() => {}); // best-effort — never block sign-in on a role write
+      }
+      // closed-beta P1 (DORMANT until P3): ensure the founder's Membership in the seeded
+      // "founder" org exists. Idempotent (@@unique([userId, orgId])), best-effort, NEVER
+      // blocks sign-in. Only the founder maps to the "founder" org; other users get their
+      // own org in P3. Nothing reads Membership yet — this just seeds it early.
+      if (isFounderAdmin(user.email) && user.id) {
+        await prisma.membership
+          .upsert({
+            where: { userId_orgId: { userId: user.id, orgId: FOUNDER_OWNER_ID } },
+            create: { id: newId(), userId: user.id, orgId: FOUNDER_OWNER_ID, role: "owner" },
+            update: {},
+          })
+          .catch(() => {}); // best-effort — never block sign-in on a membership write
       }
       await prisma.actionEvent.create({
         data: {

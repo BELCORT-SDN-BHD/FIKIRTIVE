@@ -63,7 +63,7 @@ export async function getEntities() {
 
 export async function getShots(projectId: string) {
   return prisma.shot.findMany({
-    where: { projectId, ...notDeleted },
+    where: { ownerId: FOUNDER_OWNER_ID, projectId, ...notDeleted },
     orderBy: [{ scene: "asc" }, { number: "asc" }],
     include: {
       entityRefs: { include: { entity: true } },
@@ -131,10 +131,10 @@ export async function resolveCoworkResultUrls(threads: { messages: { genJobId: s
   // surfaced so the result card shows what was really billed — not a default-config estimate.
   const map = new Map<string, { urls: string[]; generationIds: string[]; spentUsd: number | null }>();
   if (!jobIds.length) return map;
-  const jobs = await prisma.genJob.findMany({ where: { id: { in: jobIds } }, select: { id: true, generationIds: true, spentUsd: true } });
+  const jobs = await prisma.genJob.findMany({ where: { id: { in: jobIds }, ownerId: FOUNDER_OWNER_ID }, select: { id: true, generationIds: true, spentUsd: true } });
   const allGenIds = jobs.flatMap((j) => j.generationIds);
   const gens = allGenIds.length
-    ? await prisma.generation.findMany({ where: { id: { in: allGenIds } }, include: { asset: true } })
+    ? await prisma.generation.findMany({ where: { id: { in: allGenIds }, ownerId: FOUNDER_OWNER_ID }, include: { asset: true } })
     : [];
   const genById = new Map(gens.map((g) => [g.id, g]));
   for (const j of jobs) {

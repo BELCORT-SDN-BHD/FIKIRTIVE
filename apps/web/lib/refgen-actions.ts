@@ -6,7 +6,7 @@
  * calls the provider, and attaches generated ReferenceImages to the entity.
  */
 import { revalidatePath } from "next/cache";
-import { prisma } from "@artlio/db";
+import { prisma, reserveCredits, refundReservation, InsufficientCredits } from "@artlio/db";
 import {
   refGenRequest,
   newId,
@@ -14,6 +14,7 @@ import {
   REFGEN_QUEUE,
   FOUNDER_OWNER_ID,
   isModelDisabled,
+  pricedRefgenCredits,
   type RefGenJobData,
 } from "@artlio/core";
 import { getBoss } from "./queue";
@@ -74,13 +75,26 @@ export async function startRefGen(raw: unknown): Promise<{ id: string } | { erro
   // reach create — the index lets one win and rejects the other with P2002, which
   // we catch to return the in-flight job instead of creating (and paying for) a
   // duplicate. Mirrors startGen's idempotency backstop.
+  // P2 charge — reserved atomically with the insert; settled/refunded by the worker.
+  const cost = pricedRefgenCredits({ model, count: effectiveCount });
   let job: { id: string };
   try {
-    job = await prisma.refGenJob.create({
-      data: { id: newId(), ownerId: FOUNDER_OWNER_ID, entityId, prompt, count: effectiveCount, model, mode },
-      select: { id: true },
+    // RESERVE in the SAME tx as the insert: an over-balance reserve throws and rolls
+    // back the whole tx (no job, no queue, no spend) → friendly out-of-credits. (A stale
+    // abandoned job that this new gen skipped past keeps its hold until the worker's
+    // stale-claim branch refunds it — never double-charged.)
+    job = await prisma.$transaction(async (tx) => {
+      const created = await tx.refGenJob.create({
+        data: { id: newId(), ownerId: FOUNDER_OWNER_ID, entityId, prompt, count: effectiveCount, model, mode },
+        select: { id: true },
+      });
+      await reserveCredits(tx, { orgId: FOUNDER_OWNER_ID, refId: created.id, cost });
+      return created;
     });
   } catch (e) {
+    if (e instanceof InsufficientCredits) {
+      return { error: "You've used up your beta credits — reply and we'll top you up." };
+    }
     if (typeof e === "object" && e !== null && (e as { code?: string }).code === "P2002") {
       const dupe = await prisma.refGenJob.findFirst({
         // variantId null: startRefGen creates only base/REFSHEET (COALESCE→'' in the
@@ -93,17 +107,26 @@ export async function startRefGen(raw: unknown): Promise<{ id: string } | { erro
     }
     throw e;
   }
+  // ONLY the enqueue is in this try: if the message was never sent, terminal-fail AND release
+  // the hold (else it leaks). Status is still QUEUED, so no running worker to clobber.
+  let queueJobId: string | null = null;
   try {
     const boss = await getBoss();
-    const queueJobId = await boss.send(REFGEN_QUEUE, { refGenJobId: job.id } satisfies RefGenJobData);
-    await prisma.refGenJob.update({ where: { id: job.id }, data: { queueJobId: queueJobId ?? "" } });
+    queueJobId = await boss.send(REFGEN_QUEUE, { refGenJobId: job.id } satisfies RefGenJobData);
   } catch (e) {
     const message = e instanceof Error ? e.message.slice(0, 300) : "queue unavailable";
-    await prisma.refGenJob.update({
-      where: { id: job.id },
-      data: { status: "FAILED", error: `dispatch failed: ${message}` },
+    await prisma.$transaction(async (tx) => {
+      await tx.refGenJob.update({ where: { id: job.id }, data: { status: "FAILED", error: `dispatch failed: ${message}` } });
+      await refundReservation(tx, { orgId: FOUNDER_OWNER_ID, refId: job.id });
     });
     return { error: "Could not reach the generation queue — is the worker up?" };
+  }
+  // BEST-EFFORT: the job is ALREADY enqueued — a queueJobId (tracking) persist failure must
+  // NOT terminal-fail/refund a job the worker will process (delivered-but-refunded leak).
+  try {
+    await prisma.refGenJob.update({ where: { id: job.id }, data: { queueJobId: queueJobId ?? "" } });
+  } catch (e) {
+    console.warn(`startRefGen: queueJobId persist failed for job ${job.id} (non-fatal):`, e instanceof Error ? e.message : e);
   }
   await prisma.actionEvent.create({
     data: { id: newId(), ownerId: FOUNDER_OWNER_ID, type: "refgen.start", payload: { jobId: job.id, entityId, count: effectiveCount } },
@@ -156,13 +179,23 @@ async function dispatchVariantJob(entityId: string, variantId: string, prompt: s
   // fast path; the partial-unique index keys on (entity, variantId) so two near-
   // simultaneous same-variant submits can't both create a paid job — the loser hits
   // P2002 and we reuse the in-flight job instead of double-spending.
+  // P2 charge — variant gens are always a single seedream image.
+  const cost = pricedRefgenCredits({ model: "seedream", count: 1 });
   let job: { id: string };
   try {
-    job = await prisma.refGenJob.create({
-      data: { id: newId(), ownerId: FOUNDER_OWNER_ID, entityId, prompt, count: 1, model: "seedream", mode: "VARIANT", variantId },
-      select: { id: true },
+    // RESERVE atomically with the insert (rolls back on over-balance → out-of-credits).
+    job = await prisma.$transaction(async (tx) => {
+      const created = await tx.refGenJob.create({
+        data: { id: newId(), ownerId: FOUNDER_OWNER_ID, entityId, prompt, count: 1, model: "seedream", mode: "VARIANT", variantId },
+        select: { id: true },
+      });
+      await reserveCredits(tx, { orgId: FOUNDER_OWNER_ID, refId: created.id, cost });
+      return created;
     });
   } catch (e) {
+    if (e instanceof InsufficientCredits) {
+      return { error: "You've used up your beta credits — reply and we'll top you up." };
+    }
     if (typeof e === "object" && e !== null && (e as { code?: string }).code === "P2002") {
       const dupe = await prisma.refGenJob.findFirst({
         where: { ownerId: FOUNDER_OWNER_ID, entityId, variantId, status: { in: ["QUEUED", "GENERATING"] } },
@@ -173,14 +206,24 @@ async function dispatchVariantJob(entityId: string, variantId: string, prompt: s
     }
     throw e;
   }
+  // ONLY the enqueue in this try (see startRefGen — same leak guard): a true send failure
+  // terminal-fails + refunds; the queueJobId persist below is best-effort.
+  let queueJobId: string | null = null;
   try {
     const boss = await getBoss();
-    const queueJobId = await boss.send(REFGEN_QUEUE, { refGenJobId: job.id } satisfies RefGenJobData);
-    await prisma.refGenJob.update({ where: { id: job.id }, data: { queueJobId: queueJobId ?? "" } });
+    queueJobId = await boss.send(REFGEN_QUEUE, { refGenJobId: job.id } satisfies RefGenJobData);
   } catch (e) {
     const message = e instanceof Error ? e.message.slice(0, 300) : "queue unavailable";
-    await prisma.refGenJob.update({ where: { id: job.id }, data: { status: "FAILED", error: `dispatch failed: ${message}` } });
+    await prisma.$transaction(async (tx) => {
+      await tx.refGenJob.update({ where: { id: job.id }, data: { status: "FAILED", error: `dispatch failed: ${message}` } });
+      await refundReservation(tx, { orgId: FOUNDER_OWNER_ID, refId: job.id });
+    });
     return { error: "Could not reach the generation queue — is the worker up?" };
+  }
+  try {
+    await prisma.refGenJob.update({ where: { id: job.id }, data: { queueJobId: queueJobId ?? "" } });
+  } catch (e) {
+    console.warn(`dispatchVariantJob: queueJobId persist failed for job ${job.id} (non-fatal):`, e instanceof Error ? e.message : e);
   }
   // audit the paid variant path (M-c): createVariant/regenerateVariant dispatch a
   // real RefGenJob here but bypass startRefGen, so they emitted no refgen.start —

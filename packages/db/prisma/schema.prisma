@@ -54,6 +54,7 @@ enum RefGenMode {
 model Project {
   id        String    @id
   ownerId   String    @default("founder")
+  organization Organization @relation(fields: [ownerId], references: [id])
   name      String
   /// 编辑器的工作中剪辑（artlioEdit 规范化后的 JSON）——阶段③ tracer 落地，
   /// 取代 localStorage mock；导出时快照进 RenderJob.editJson
@@ -74,6 +75,7 @@ model Project {
 model Entity {
   id                  String     @id
   ownerId             String     @default("founder")
+  organization Organization @relation(fields: [ownerId], references: [id])
   type                EntityType
   name                String
   aliases             String[]   @default([])
@@ -104,6 +106,7 @@ model Entity {
 model EntityVariant {
   id        String    @id
   ownerId   String    @default("founder")
+  organization Organization @relation(fields: [ownerId], references: [id])
   entityId  String
   name      String
   handle    String
@@ -124,6 +127,7 @@ model EntityVariant {
 model ReferenceImage {
   id        String    @id
   ownerId   String    @default("founder")
+  organization Organization @relation(fields: [ownerId], references: [id])
   entityId  String
   assetId   String
   position  Int       @default(0)
@@ -150,6 +154,7 @@ model ReferenceImage {
 model Asset {
   id               String      @id
   ownerId          String      @default("founder")
+  organization Organization @relation(fields: [ownerId], references: [id])
   contentHash      String
   ext              String
   mime             String
@@ -174,6 +179,7 @@ model Shot {
   id                     String     @id
   projectId              String
   ownerId                String     @default("founder")
+  organization Organization @relation(fields: [ownerId], references: [id])
   number                 Int
   // 场景分组（storyboard 多场景）：同一 scene 内按 number 排序；number 仍全局唯一
   scene                  Int        @default(1)
@@ -206,6 +212,7 @@ model ShotEntityRef {
   shotId   String
   entityId String
   ownerId  String @default("founder")
+  organization Organization @relation(fields: [ownerId], references: [id])
 
   shot   Shot   @relation(fields: [shotId], references: [id])
   entity Entity @relation(fields: [entityId], references: [id])
@@ -220,6 +227,7 @@ model ShotEntityRef {
 model Generation {
   id             String      @id
   ownerId        String      @default("founder")
+  organization Organization @relation(fields: [ownerId], references: [id])
   projectId      String
   shotId         String? // null = 候选区"未挂载"
   assetId        String
@@ -255,6 +263,7 @@ model Generation {
 model TemplateBundle {
   id            String    @id
   ownerId       String    @default("founder")
+  organization Organization @relation(fields: [ownerId], references: [id])
   slug          String
   version       Int
   versionHash   String    @unique // workflow_api.json 原始字节 SHA-256
@@ -286,6 +295,7 @@ enum RenderStatus {
 model RenderJob {
   id            String       @id
   ownerId       String       @default("founder")
+  organization Organization @relation(fields: [ownerId], references: [id])
   projectId     String
   editJson      Json
   status        RenderStatus @default(QUEUED)
@@ -309,6 +319,7 @@ model RenderJob {
 model CaptionJob {
   id            String       @id
   ownerId       String       @default("founder")
+  organization Organization @relation(fields: [ownerId], references: [id])
   projectId     String
   /// the visual-track asset being transcribed (content-addressed) + its hash
   assetId       String
@@ -333,6 +344,7 @@ model CaptionJob {
 model Transcript {
   id          String   @id
   ownerId     String   @default("founder")
+  organization Organization @relation(fields: [ownerId], references: [id])
   contentHash String
   model       String
   cuesJson    Json
@@ -354,6 +366,7 @@ enum GenStatus {
 model RefGenJob {
   id             String     @id
   ownerId        String     @default("founder")
+  organization Organization @relation(fields: [ownerId], references: [id])
   entityId       String
   prompt         String
   model          String     @default("seedream")
@@ -395,6 +408,7 @@ enum GenKind {
 model GenJob {
   id                 String    @id
   ownerId            String    @default("founder")
+  organization Organization @relation(fields: [ownerId], references: [id])
   projectId          String
   shotId             String?
   // i2v source = a specific owned Generation's image (Gen space upload→animate)；
@@ -456,8 +470,10 @@ model User {
   /// 加第 6 个角色无需迁移）。session callback 把它读进 session.user.role；requireRole 用它。
   /// allowlist 仍是外墙、永不读 role —— 默认 viewer 锁不了 app，只锁 role-gated 区段。
   role          String    @default("viewer")
+  activeOrgId   String? // RESERVED NOW (future multi-org switcher; avoids an auth-table migration later)
   accounts      Account[]
   sessions      Session[]
+  memberships   Membership[] // NEW: per-org membership (per-tenant RBAC lives here)
 }
 
 model Account {
@@ -492,10 +508,125 @@ model VerificationToken {
   @@id([identifier, token])
 }
 
+// ── Org-as-tenant root (closed-beta foundation P1) ─────────────────────────────
+// An Organization IS the tenant. Every business table's existing `ownerId` is an FK
+// to Organization.id. The founder org is SEEDED (in the migration) with the literal
+// id "founder" so all existing ownerId="founder" rows + R2 keys (u/founder/<hash>)
+// are valid with ZERO backfill. New orgs get ULID ids. DORMANT until P3 (the app
+// still resolves ownerId via the FOUNDER_OWNER_ID constant).
+model Organization {
+  id        String    @id // ULID for new orgs; literal "founder" for the seed (== FOUNDER_OWNER_ID). NEVER change.
+  name      String    @default("")
+  slug      String?   @unique // future tenant routing; nullable now
+  deletedAt DateTime? // RESERVED NOW (account closure / GDPR erasure)
+  createdAt DateTime  @default(now())
+  updatedAt DateTime  @updatedAt
+
+  memberships Membership[]
+  creditAccount CreditAccount?
+  creditLedger  CreditLedger[]
+  // business back-relations (one per owner-scoped table; required by Prisma):
+  projects                Project[]
+  entities                Entity[]
+  entityVariants          EntityVariant[]
+  referenceImages         ReferenceImage[]
+  assets                  Asset[]
+  shots                   Shot[]
+  shotEntityRefs          ShotEntityRef[]
+  generations             Generation[]
+  templateBundles         TemplateBundle[]
+  renderJobs              RenderJob[]
+  captionJobs             CaptionJob[]
+  transcripts             Transcript[]
+  refGenJobs              RefGenJob[]
+  genJobs                 GenJob[]
+  actionEvents            ActionEvent[]
+  modelDirectives         ModelDirective[]
+  modelRegistryOverlays   ModelRegistryOverlay[]
+  modelDirectiveRevisions ModelDirectiveRevision[]
+  chatThreads             ChatThread[]
+  chatMessages            ChatMessage[]
+}
+
+// User <-> Organization join, carrying the per-org role. role/status are code-validated
+// Strings (ORG_ROLES / "active"|"suspended"|"revoked"), NOT PG enums. RESERVED columns
+// (status/deletedAt/invitedBy) are unused in beta but free to add now.
+model Membership {
+  id        String    @id // ULID
+  userId    String
+  orgId     String
+  role      String    @default("owner") // ORG_ROLES: owner|admin|member (NOT User.role)
+  status    String    @default("active") // RESERVED: active|suspended|revoked
+  invitedBy String? // RESERVED (future invites)
+  deletedAt DateTime? // RESERVED (revocation audit)
+  createdAt DateTime  @default(now())
+
+  user User         @relation(fields: [userId], references: [id], onDelete: Cascade)
+  org  Organization @relation(fields: [orgId], references: [id], onDelete: Cascade)
+
+  @@unique([userId, orgId])
+  @@index([orgId, role])
+  @@index([userId])
+}
+
+// ── Credits ledger (closed-beta foundation P2) — the per-org spend cap (M1) ────────
+// CreditAccount = hot mutable counters (Int INTERNAL credits, 1 = $0.01); balance can
+// never go negative (the reserve is a conditional UPDATE). CreditLedger = append-only
+// audit with TWO signed deltas so balance/reserved fully reconstruct from it
+// (balance == Σ balanceDelta, reserved == Σ reservedDelta per org). The charge is a
+// deterministic pricedCredits value, so reserve == settle (no variable delta). Worker
+// writes (RESERVE/SETTLE/REFUND) are exactly-once via a partial-unique (orgId,refId,kind)
+// index added in the migration. A future Stripe purchase is one more GRANT row
+// (source=PURCHASE) — zero re-migration.
+model CreditAccount {
+  orgId     String   @id // == Organization.id (== ownerId)
+  balance   Int      @default(0) // spendable now (internal credits); never negative
+  reserved  Int      @default(0) // held in-flight
+  updatedAt DateTime @updatedAt
+  org Organization @relation(fields: [orgId], references: [id], onDelete: Cascade)
+}
+
+enum CreditTxnKind {
+  GRANT
+  RESERVE
+  SETTLE
+  REFUND
+  ADJUST
+}
+
+enum CreditTxnSource {
+  ADMIN
+  BETA
+  PROMO
+  PURCHASE // reserved for future Stripe
+  SYSTEM
+}
+
+model CreditLedger {
+  id                    String          @id // ULID
+  orgId                 String
+  balanceDelta          Int // signed Δ to CreditAccount.balance
+  reservedDelta         Int // signed Δ to CreditAccount.reserved
+  kind                  CreditTxnKind
+  source                CreditTxnSource @default(SYSTEM)
+  reason                String          @default("")
+  refId                 String? // GenJob.id / RefGenJob.id (1:1 with one job/reservation); null for GRANT/ADJUST
+  stripePaymentIntentId String? // reserved for future Stripe
+  idempotencyKey        String // "grant:<uuid>" | "signup:<orgId>" | "stripe:<eventId>" | "reserve:<refId>" etc.
+  createdBy             String          @default("")
+  createdAt             DateTime        @default(now())
+
+  org Organization @relation(fields: [orgId], references: [id], onDelete: Cascade)
+
+  @@unique([orgId, idempotencyKey])
+  @@index([orgId, createdAt])
+}
+
 // 升级门埋点（D23）：实质动作事件，系统自动记录，3 项目计数门的数据源
 model ActionEvent {
   id        String   @id
   ownerId   String   @default("founder")
+  organization Organization @relation(fields: [ownerId], references: [id])
   projectId String?
   type      String // entity.create | entity.update | shot.create | shot.update | generation.attach | bundle.export
   payload   Json?
@@ -512,6 +643,7 @@ model ActionEvent {
 model ModelDirective {
   id         String   @id
   ownerId    String   @default("founder")
+  organization Organization @relation(fields: [ownerId], references: [id])
   family     String // "seedream" | "kling" | "veo" | "seedance" | "ltx"
   mode       String // "t2i" | "i2i" | "t2v" | "i2v" | "i2v-tail"
   directive  String   @default("") // the injectable snippet; "" → family-neutral base
@@ -548,6 +680,7 @@ model RuntimeConfig {
 model ModelRegistryOverlay {
   id        String   @id
   ownerId   String   @default("founder")
+  organization Organization @relation(fields: [ownerId], references: [id])
   modelId   String
   enabled   Boolean  @default(true)
   notes     String   @default("")
@@ -561,6 +694,7 @@ model ModelDirectiveRevision {
   id          String   @id
   directiveId String
   ownerId     String   @default("founder")
+  organization Organization @relation(fields: [ownerId], references: [id])
   directive   String
   rules       Json?
   confidence  String
@@ -592,6 +726,7 @@ enum ChatMessageKind {
 model ChatThread {
   id        String        @id
   ownerId   String        @default("founder")
+  organization Organization @relation(fields: [ownerId], references: [id])
   projectId String
   title     String        @default("")
   // cowork: reserved — folded older-turns summary (generation logic deferred until long sessions).
@@ -610,6 +745,7 @@ model ChatMessage {
   id                 String          @id
   threadId           String
   ownerId            String          @default("founder")
+  organization Organization @relation(fields: [ownerId], references: [id])
   role               ChatRole
   kind               ChatMessageKind
   seq                Int

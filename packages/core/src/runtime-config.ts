@@ -36,6 +36,20 @@ export function mergeVisionConfig(
   return { enabled, policy: "C", maxImages, maxBytes };
 }
 
+/** Resolve the EFFECTIVE cowork planner provider, with a beta money-safety lock.
+ *  DB provider overrides env, BUT when paid providers are not allowed (the beta
+ *  default), any paid provider (fal/modal) is forced to undefined → MockTransport
+ *  ($0). This caps cowork LLM spend that the credits ledger does not cover. */
+export function effectiveCoworkProvider(args: {
+  dbProvider?: string;
+  envProvider?: string;
+  paidAllowed?: boolean;
+}): string | undefined {
+  const resolved = args.dbProvider ?? args.envProvider;
+  if (!args.paidAllowed) return undefined; // locked → mock
+  return resolved;
+}
+
 export interface TransportConfig { provider?: string; falKey?: string; modalEndpoint?: string; modalKey?: string; }
 
 export function createTransportFromConfig(cfg: TransportConfig): CoworkTransport {

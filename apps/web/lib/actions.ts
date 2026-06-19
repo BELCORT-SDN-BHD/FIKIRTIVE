@@ -8,6 +8,7 @@ import {
   editDuration,
   newId,
   parseStorageKey,
+  keyOwnerMatches,
   srcToStorageKey,
   storageKey,
   storageKeyToSrc,
@@ -209,7 +210,7 @@ export async function softDeleteReferenceImage(refImageId: string) {
   const entity = await prisma.entity.findFirst({ where: { id: ref.entityId, ...OWNED }, select: { baseAssetId: true } });
   if (entity?.baseAssetId === ref.assetId) {
     const next = await prisma.referenceImage.findFirst({
-      where: { entityId: ref.entityId, deletedAt: null, variantId: null },
+      where: { ownerId: FOUNDER_OWNER_ID, entityId: ref.entityId, deletedAt: null, variantId: null },
       orderBy: { position: "asc" },
       select: { assetId: true },
     });
@@ -228,7 +229,7 @@ export async function addReferenceImages(entityId: string, formData: FormData) {
   const files = acceptRefFiles(formData, existing);
   if (files.length === 0) return { error: "No valid images — PNG, JPG or WebP, ≤ 10 MB, up to 10 per element." };
   const last = await prisma.referenceImage.findFirst({
-    where: { entityId, deletedAt: null },
+    where: { ownerId: FOUNDER_OWNER_ID, entityId, deletedAt: null },
     orderBy: { position: "desc" },
   });
   let position = (last?.position ?? -1) + 1;
@@ -242,7 +243,7 @@ export async function addReferenceImages(entityId: string, formData: FormData) {
   // "Upload photo" locks the base in one step, matching the migration backfill.
   if (!entity.baseAssetId) {
     const first = await prisma.referenceImage.findFirst({
-      where: { entityId, deletedAt: null },
+      where: { ownerId: FOUNDER_OWNER_ID, entityId, deletedAt: null },
       orderBy: { position: "asc" },
       select: { assetId: true },
     });
@@ -276,7 +277,7 @@ export async function createShot(projectId: string) {
   // number = max+1; @@unique([projectId, number]) backstops concurrent creates
   for (let attempt = 0; attempt < 3; attempt++) {
     const last = await prisma.shot.findFirst({
-      where: { projectId },
+      where: { ownerId: FOUNDER_OWNER_ID, projectId },
       orderBy: { number: "desc" },
     });
     try {
@@ -503,7 +504,7 @@ export async function attachGeneration(generationId: string, shotId: string) {
   }
   for (let attempt = 0; attempt < 3; attempt++) {
     const top = await prisma.generation.findFirst({
-      where: { shotId },
+      where: { ownerId: FOUNDER_OWNER_ID, shotId },
       orderBy: { version: "desc" },
     });
     try {
@@ -605,7 +606,7 @@ export async function saveProjectEdit(projectId: string, editJsonString: string,
   await logAction("edit.save", projectId, { seconds: Math.round(editDuration(edit)) });
   revalidatePath("/", "layout");
   // hand back the fresh updatedAt so the client can re-base for its next save
-  const fresh = await prisma.project.findFirst({ where: { id: projectId }, select: { updatedAt: true } });
+  const fresh = await prisma.project.findFirst({ where: { id: projectId, ownerId: FOUNDER_OWNER_ID }, select: { updatedAt: true } });
   return { ok: true, updatedAt: fresh?.updatedAt?.toISOString() };
 }
 
@@ -734,7 +735,7 @@ export async function getRenderJobs(projectId: string) {
     take: 5,
   });
   const assetIds = jobs.map((j) => j.outputAssetId).filter((x): x is string => !!x);
-  const assets = await prisma.asset.findMany({ where: { id: { in: assetIds } } });
+  const assets = await prisma.asset.findMany({ where: { id: { in: assetIds }, ownerId: FOUNDER_OWNER_ID } });
   const byId = new Map(assets.map((a) => [a.id, a]));
   return jobs.map((j) => {
     const asset = j.outputAssetId ? byId.get(j.outputAssetId) : null;
@@ -756,7 +757,9 @@ export async function getRenderJobs(projectId: string) {
 async function ownedAssetFromSrc(src: string): Promise<{ id: string; contentHash: string } | null> {
   let contentHash: string;
   try {
-    contentHash = parseStorageKey(srcToStorageKey(src)).contentHash;
+    const key = srcToStorageKey(src);
+    if (!keyOwnerMatches(key, FOUNDER_OWNER_ID)) return null; // forged/other-owner src
+    contentHash = parseStorageKey(key).contentHash;
   } catch {
     return null;
   }
@@ -820,6 +823,12 @@ export async function getTranscript(projectId: string, src: string): Promise<Cap
   if (!project) return [];
   const asset = await ownedAssetFromSrc(src);
   if (!asset) return [];
+  // Owner-gated by ownedAssetFromSrc above (verifies the caller owns an asset with this
+  // contentHash + the src key-owner matches), so the content-addressed transcript lookup
+  // is reachable only for content the caller possesses — not a cross-tenant leak. Transcript
+  // is a GLOBAL content-addressed cache (@@unique([contentHash, model])); whether to make it
+  // per-org is a P3 schema decision (a per-org filter here without changing that unique would
+  // break a second org's write). Left global+gated for P0 (no schema change).
   const transcript = await prisma.transcript.findUnique({
     where: { contentHash_model: { contentHash: asset.contentHash, model: "base.en" } },
   });

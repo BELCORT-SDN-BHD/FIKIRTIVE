@@ -2,7 +2,7 @@ import "server-only";
 import { prisma } from "@artlio/db";
 import {
   coworkVisionConfig, mergeVisionConfig, createTransportFromConfig,
-  MockTransport, type CoworkTransport,
+  effectiveCoworkProvider, MockTransport, type CoworkTransport,
 } from "@artlio/core";
 
 /** Config keys = a fixed code-side enum (the only writable keys). */
@@ -32,7 +32,14 @@ export async function resolveVisionConfig(): Promise<{ enabled: boolean; policy:
  *  fail-closed catch → Mock. Resolve ONCE per action and reuse the instance. */
 export async function getTransport(): Promise<CoworkTransport> {
   const db = await readConfig(CONFIG_KEYS.coworkProvider);
-  const provider = (typeof db?.provider === "string" ? db.provider : undefined) ?? process.env.COWORK_PROVIDER;
+  // beta money-safety: paid planner (fal/modal) is LOCKED unless explicitly opted in,
+  // so cowork LLM spend the credits ledger doesn't cover can't run. DB provider still
+  // overrides env, but both are forced to mock when paid is not allowed.
+  const provider = effectiveCoworkProvider({
+    dbProvider: typeof db?.provider === "string" ? db.provider : undefined,
+    envProvider: process.env.COWORK_PROVIDER,
+    paidAllowed: process.env.COWORK_PAID_PROVIDERS_ALLOWED === "true",
+  });
   try {
     return createTransportFromConfig({
       provider,

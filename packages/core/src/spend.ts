@@ -49,3 +49,40 @@ export interface RefGenSpendInput {
 export function refgenSpentUsd(job: RefGenSpendInput): number {
   return REFGEN_PRICE_USD_PER_IMAGE * job.count;
 }
+
+// ── Credit pricing (closed-beta P2) ─────────────────────────────────────────────
+// The CREDIT ledger is the spend cap (M1). Two distinct numbers:
+//  - pricedGenCredits / pricedRefgenCredits = the CHARGE we debit the user, deterministic,
+//    in INTERNAL credits (1 internal credit = $0.01), with margin. RESERVE and SETTLE both
+//    use this exact value → reserve == settle, no variable delta.
+//  - genSpentUsd / refgenSpentUsd (above) = the true fal COST, record-only. Margin = the gap.
+
+/** Internal credit accounting unit: 1 internal credit = $0.01. balance/ledger are internal. */
+export const CREDITS_PER_USD = 100;
+/** Display denomination: 1 user-facing credit = 10 internal = $0.10. Charges are whole
+ *  displayed credits (×10 internal) so per-action costs read as small round numbers. */
+export const INTERNAL_PER_DISPLAY = 10;
+const USD_PER_DISPLAY_CREDIT = 0.1;
+
+/** Displayed credits from a USD amount: round UP to the $0.10 unit, min 1 (never
+ *  under-charge, never zero). */
+function displayedFromUsd(usd: number): number {
+  return Math.max(1, Math.ceil(usd / USD_PER_DISPLAY_CREDIT));
+}
+
+/** DETERMINISTIC charge in INTERNAL credits for a gen job. Image = 1 displayed credit
+ *  PER image (flat — the clean unit, ~2.5x margin over the ~$0.04 true cost). Video =
+ *  true cost rounded up to the $0.10 displayed unit (always >= cost). */
+export function pricedGenCredits(job: GenSpendInput): number {
+  if (job.kind === "VIDEO") return displayedFromUsd(genSpentUsd(job)) * INTERNAL_PER_DISPLAY;
+  return job.count * INTERNAL_PER_DISPLAY; // 1 displayed credit per image
+}
+/** DETERMINISTIC charge in INTERNAL credits for a refgen job: 1 displayed credit per image. */
+export function pricedRefgenCredits(job: RefGenSpendInput): number {
+  return job.count * INTERNAL_PER_DISPLAY;
+}
+/** Internal credits → user-facing displayed credits (view seam only — never feed this
+ *  back into the ledger/balance, which are always internal). */
+export function displayCredits(internal: number): number {
+  return internal / INTERNAL_PER_DISPLAY;
+}

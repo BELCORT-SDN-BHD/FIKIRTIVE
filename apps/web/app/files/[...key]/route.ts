@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
-import { storage, mimeOf, kindOf } from "@/lib/storage";
-import { parseStorageKey } from "@artlio/core";
+import { storage, mimeOf, kindOf, FOUNDER_OWNER_ID } from "@/lib/storage";
+import { parseStorageKey, keyOwnerMatches } from "@artlio/core";
 import { auth, allowed } from "@/auth";
 
 /**
@@ -18,6 +18,11 @@ export async function GET(
   }
   const { key } = await ctx.params; // Next 16: params are async
   const joined = key.join("/");
+  // Cross-tenant guard: the key's owner namespace must match the caller's owner.
+  // P0 single-tenant owner = FOUNDER_OWNER_ID; P3 replaces with requireOwner().
+  if (!keyOwnerMatches(joined, FOUNDER_OWNER_ID)) {
+    return new NextResponse("Not found", { status: 404 });
+  }
   try {
     const { ext } = parseStorageKey(joined); // rejects traversal/malformed keys
     // r2 driver: hand the client a short-lived presigned GET — R2 serves
