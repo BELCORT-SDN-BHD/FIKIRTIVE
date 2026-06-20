@@ -113,9 +113,15 @@ export function TenantDetail({ detail }: { detail: Detail }) {
         <h1 style={{ font: "var(--text-display)", color: "var(--fg-1)", margin: 0 }}>
           {ownerEmail || name || orgId}
         </h1>
-        <div style={{ display: "flex", gap: 16, alignItems: "center" }}>
+        <div style={{ display: "flex", gap: 16, alignItems: "center", flexWrap: "wrap" }}>
           <span style={{ font: "var(--text-mono-meta)", color: "var(--fg-4)" }}>{orgId}</span>
           <span style={{ font: "var(--text-body)", color: statusColor(status) }}>{status}</span>
+          <Link
+            href={`/admin/content?orgId=${orgId}`}
+            style={{ font: "var(--text-mono-meta)", padding: "3px 8px", borderRadius: 6, background: "var(--bg-2)", color: "var(--fg-1)", textDecoration: "none", marginLeft: "auto" }}
+          >
+            View content →
+          </Link>
         </div>
       </header>
 

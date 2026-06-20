@@ -28,6 +28,7 @@ function statusColor(status: string): string {
 
 export function TenantsAdmin({ tenants, invited }: { tenants: TenantRow[]; invited: InvitedRow[] }) {
   const pendingInvited = invited.filter((r) => r.status === "invited");
+  const revokedInvited = invited.filter((r) => r.status === "revoked");
   const router = useRouter();
 
   const [inviteEmail, setInviteEmail] = useState("");
@@ -137,6 +138,20 @@ export function TenantsAdmin({ tenants, invited }: { tenants: TenantRow[]; invit
             </button>
           </div>
         ))}
+        {revokedInvited.length > 0 && (
+          <>
+            <h3 style={{ font: "var(--text-caption)", color: "var(--fg-4)", margin: "12px 0 4px", textTransform: "uppercase", letterSpacing: "0.05em" }}>Revoked</h3>
+            {revokedInvited.map((r, i) => (
+              <div
+                key={`revoked-${r.email}-${i}`}
+                style={{ display: "flex", alignItems: "center", gap: 16, padding: "4px 0", borderBottom: "1px solid var(--line-2)" }}
+              >
+                <span style={{ font: "var(--text-caption)", color: "var(--fg-4)", flex: "2 1 0", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{r.email}</span>
+                <span style={{ font: "var(--text-caption)", color: "var(--fg-4)", flex: "1 1 0" }}>by {r.invitedBy}</span>
+              </div>
+            ))}
+          </>
+        )}
       </section>
     </main>
   );

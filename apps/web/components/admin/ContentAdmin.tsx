@@ -15,9 +15,15 @@ export type GenRow = {
 };
 export type BlockRow = { id: string; projectId: string | null; payload: string; createdAt: string };
 
-export function ContentAdmin({ gens, blocks }: { gens: GenRow[]; blocks: BlockRow[] }) {
+export function ContentAdmin({ gens, blocks, filterOrgId }: { gens: GenRow[]; blocks: BlockRow[]; filterOrgId?: string }) {
   return (
     <main style={{ maxWidth: 980, margin: "0 auto", padding: "32px 24px", display: "grid", gap: 20 }}>
+      {filterOrgId && (
+        <div style={{ display: "flex", alignItems: "center", gap: 10, padding: "8px 12px", borderRadius: 8, background: "var(--bg-2)", border: "1px solid var(--line-1)" }}>
+          <span style={{ font: "var(--text-caption)", color: "var(--fg-2)" }}>Filtered to merchant <code style={{ font: "var(--text-mono-meta)" }}>{filterOrgId}</code></span>
+          <Link href="/admin/content" style={{ font: "var(--text-mono-meta)", color: "var(--fg-3)", textDecoration: "none", marginLeft: "auto" }}>Show all</Link>
+        </div>
+      )}
       <header style={{ display: "grid", gap: 4 }}>
         <h1 style={{ font: "var(--text-display)", color: "var(--fg-1)", margin: 0 }}>Content review</h1>
         <p style={{ font: "var(--text-body)", color: "var(--fg-3)", margin: 0 }}>
