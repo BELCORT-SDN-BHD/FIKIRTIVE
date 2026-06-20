@@ -162,10 +162,12 @@ export function StudioShell({
       </div>
 
       <div className="sidenav-foot">
-        <div className="user-row">
-          <span className="al-avatar al-avatar-sm" title={user?.label ?? "You"}><span>{user?.initials ?? "Y"}</span></span>
+        <button type="button" className={`user-row${view === "account" ? " active" : ""}`}
+          onClick={() => go("account")} aria-current={view === "account" ? "page" : undefined}
+          title="Account" style={{ background: "none", border: "none", padding: 0, width: "100%", cursor: "pointer", textAlign: "left", color: "inherit", font: "inherit" }}>
+          <span className="al-avatar al-avatar-sm"><span>{user?.initials ?? "Y"}</span></span>
           <span className="user-name">{user?.label ?? "You"}</span>
-        </div>
+        </button>
       </div>
     </>
   );
@@ -192,7 +194,9 @@ export function StudioShell({
           {view !== "editor" && (
             <Button variant="glass" size="sm" icon={<IcExport size={15} />} onClick={() => go("editor")}>Open editor</Button>
           )}
-          <span className="al-avatar al-avatar-sm al-avatar-ring" title={user?.label ?? "You"}><span>{user?.initials ?? "Y"}</span></span>
+          <button type="button" className="al-avatar al-avatar-sm al-avatar-ring" onClick={() => go("account")}
+            aria-label="Account" aria-current={view === "account" ? "page" : undefined}
+            title={user?.label ?? "You"} style={{ border: "none", padding: 0, cursor: "pointer" }}><span>{user?.initials ?? "Y"}</span></button>
         </header>
 
         {children}

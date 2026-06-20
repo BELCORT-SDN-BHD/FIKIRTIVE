@@ -1,5 +1,5 @@
 "use client";
-import { useRef, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { coworkTurn, coworkRenameThread, coworkDeleteThread, setCoworkBrief } from "@/lib/cowork-actions";
 import { uploadReference } from "@/lib/actions";
 import { getCoworkThreadClient } from "@/lib/cowork-fetch";
@@ -31,12 +31,34 @@ export function Cowork({ projectId, entities, threads, brief = "" }: {
   threads: ChatThreadDTO[];
   brief?: string;
 }) {
-  // chatbox sessions: the full thread list (newest-first, with messages) is the
-  // client source of truth — switching is pure local state, no per-switch fetch.
+  // chatbox sessions: the thread list is metadata-only (newest-first); each thread's
+  // messages lazy-load on select (scale audit 2026-06-20). The server eager-loaded the
+  // most-recent thread (threads[0]) so it opens with content; the rest fetch on demand.
   const [list, setList] = useState<ChatThreadDTO[]>(threads);
   const [activeId, setActiveId] = useState<string | null>(threads[0]?.id ?? null);
+  // thread ids whose messages are loaded (threads[0] arrives pre-loaded from the server).
+  const [loaded, setLoaded] = useState<Set<string>>(() => new Set(threads[0] ? [threads[0].id] : []));
+  const [loadingThread, setLoadingThread] = useState(false);
   const active = list.find((t) => t.id === activeId) ?? null;
   const messages = active?.messages ?? [];
+
+  // Lazy-load the active thread's messages the first time it's selected. Pre-loaded
+  // threads (threads[0], or any refreshed after a turn) are in `loaded` and skip this.
+  useEffect(() => {
+    // already loaded, or no active thread (e.g. "New chat") → ensure the spinner is clear
+    // even if a previous thread's fetch was abandoned mid-flight.
+    if (!activeId || loaded.has(activeId)) { setLoadingThread(false); return; }
+    let live = true;
+    setLoadingThread(true);
+    getCoworkThreadClient(activeId)
+      .then((fresh) => {
+        if (!live || !fresh) return;
+        setList((cur) => cur.map((t) => (t.id === fresh.id ? fresh : t)));
+        setLoaded((cur) => new Set(cur).add(fresh.id));
+      })
+      .finally(() => { if (live) setLoadingThread(false); });
+    return () => { live = false; };
+  }, [activeId, loaded]);
   // job ids that already have a DURABLE GEN_RESULT message in the thread — used to
   // suppress a GenerateCard's in-card live preview once the canonical result row
   // exists, so the same figure never renders twice.
@@ -77,6 +99,7 @@ export function Cowork({ projectId, entities, threads, brief = "" }: {
     const fresh = await getCoworkThreadClient(id);
     if (fresh) {
       setList((cur) => [fresh, ...cur.filter((t) => t.id !== fresh.id)]);
+      setLoaded((cur) => new Set(cur).add(fresh.id)); // now has messages → skip lazy-load
       setActiveId(fresh.id);
     }
   }
@@ -283,7 +306,10 @@ export function Cowork({ projectId, entities, threads, brief = "" }: {
           <div className="screen-pad">
             <h1 style={{ font: "var(--text-title)", color: "var(--fg-1)", margin: "10px 0 18px" }}>Cowork</h1>
 
-            {messages.length === 0 && !busy && (
+            {loadingThread && messages.length === 0 && (
+              <p style={{ font: "var(--text-body)", color: "var(--fg-3)", margin: "8px 0" }}>Loading…</p>
+            )}
+            {messages.length === 0 && !busy && !loadingThread && (
               <p style={{ font: "var(--text-body)", color: "var(--fg-3)", margin: "8px 0" }}>
                 Describe what you&apos;d like to create and hit Send.
               </p>

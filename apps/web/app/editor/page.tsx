@@ -1,5 +1,5 @@
 import { redirect } from "next/navigation";
-import { ensureDefaultProject, getProjects, getShots, getCandidates } from "@/lib/data";
+import { ensureDefaultProject, getProjects, getShots, getLooseVideoClips } from "@/lib/data";
 import { buildBoardEdit } from "@/lib/edit";
 import { EditorShell } from "@/components/EditorShell";
 import { artlioEdit } from "@artlio/core";
@@ -25,8 +25,8 @@ export default async function EditorPage({
   if (p && !projects.some((x) => x.id === p)) redirect("/editor"); // stale link → clean default
   const project = projects.find((x) => x.id === p) ?? defaultProject;
   // initial cut = attached shot renders (board order) + unattached Gen-space clips
-  const [shots, candidates] = await Promise.all([getShots(ownerId, project.id), getCandidates(ownerId, project.id)]);
-  const { edit: boardEdit, clipCount } = buildBoardEdit(shots, candidates);
+  const [shots, looseClips] = await Promise.all([getShots(ownerId, project.id), getLooseVideoClips(ownerId, project.id)]);
+  const { edit: boardEdit, clipCount } = buildBoardEdit(shots, looseClips);
 
   // the persisted working cut wins; stored canonical, re-checked anyway
   const savedParse = project.editJson ? artlioEdit.safeParse(project.editJson) : null;

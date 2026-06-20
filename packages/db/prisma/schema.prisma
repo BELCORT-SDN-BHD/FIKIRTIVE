@@ -204,6 +204,9 @@ model Shot {
 
   @@unique([projectId, number])
   @@index([projectId, status, deletedAt])
+  // 扩容覆盖索引（scale audit 2026-06-20）：getShots 按 [scene asc, number asc] 排序，
+  // 让 WHERE(ownerId,projectId,deletedAt)+ORDER BY(scene,number) 全走索引。
+  @@index([ownerId, projectId, deletedAt, scene, number], map: "Shot_order_idx")
 }
 
 // promptDoc 芯片的派生索引：实体使用计数（"14 镜引用"）与删除前引用检查用。
@@ -252,6 +255,10 @@ model Generation {
 
   @@index([projectId, shotId, deletedAt])
   @@index([ownerId, shotId, deletedAt, createdAt]) // 候选区查询：shotId IS NULL，按时间倒序
+  // 扩容覆盖索引（scale audit 2026-06-20）：getProjectMedia 与 getCandidates 是每次
+  // studio/editor 渲染的热查询，等值列在前、createdAt 排序列在后，让 WHERE+ORDER BY 全走索引。
+  @@index([ownerId, projectId, threadId, deletedAt, createdAt, id], map: "Generation_media_idx") // getMediaPage: 资产库 keyset 分页（id 是 createdAt 并列的 tiebreak，让 ORDER BY createdAt,id 全走索引）
+  @@index([ownerId, projectId, shotId, threadId, deletedAt, createdAt], map: "Generation_candidates_idx") // getCandidates: 候选区（shotId/threadId IS NULL）
   // (shotId, version) 唯一性改由迁移里的 PARTIAL 索引保证（WHERE shotId IS NOT NULL
   //  AND deletedAt IS NULL）——只约束 LIVE 已附着行，让删除后的版本可被复用。Prisma
   //  无法表达条件唯一，故不在此声明 @@unique（旧的非部分索引已在迁移里 DROP）。

@@ -66,6 +66,12 @@ export async function getShots(ownerId: string, projectId: string) {
     orderBy: [{ scene: "asc" }, { number: "asc" }],
     include: {
       entityRefs: { include: { entity: true } },
+      // NOT capped: studio/page.tsx reads generations[0] (latest preview) AND scans
+      // ALL versions for an animatable still (hasStill → Animate gate). A `take` cap
+      // would wrongly disable Animate when a still is buried under newer videos, so the
+      // per-shot version list stays unbounded (bounded in practice by regeneration count;
+      // the worker's still lookup is also uncapped). Project-wide hot paths are capped via
+      // getProjectMedia/getCandidates instead. (scale audit 2026-06-20)
       generations: {
         where: notDeleted,
         orderBy: { version: "desc" },
@@ -75,36 +81,121 @@ export async function getShots(ownerId: string, projectId: string) {
   });
 }
 
-/** Candidate zone = generations not yet attached to a shot (design doc: shotId IS NULL). */
-export async function getCandidates(ownerId: string, projectId: string) {
+const LOOSE_VIDEO_EXTS = ["mp4", "mov", "webm", "mkv"];
+const FRAME_IMG_EXTS = ["png", "jpg", "jpeg", "webp"];
+
+/** Loose VIDEO candidates (unattached, not cowork-produced) for the editor's initial cut,
+ *  newest first. Type-filtered in the DB so the editor gets ALL its loose videos up to a
+ *  sane ceiling — not "videos that happen to fall in the recent N mixed candidates". An
+ *  auto-built timeline tops out at a usable length; the complete library is the paginated
+ *  Assets surface. ext is stored lowercase (extFromFilename + the worker's own
+ *  `ext: { in: [...] }` filter), so the in-list is safe. (scale audit 2026-06-20) */
+export async function getLooseVideoClips(ownerId: string, projectId: string, take = 120) {
   return prisma.generation.findMany({
-    where: { ownerId, projectId, shotId: null, threadId: null, ...notDeleted },
+    where: { ownerId, projectId, shotId: null, threadId: null, ...notDeleted, asset: { ext: { in: LOOSE_VIDEO_EXTS } } },
     orderBy: { createdAt: "desc" },
+    take,
     include: { asset: true },
   });
 }
 
-/** All generated media in a project (attached + candidates) for the Assets
- *  library — each row carries its asset and, if attached, its shot. */
-export async function getProjectMedia(ownerId: string, projectId: string) {
+/** Loose IMAGE candidates for the Storyboard drag-to-attach strip, newest first. Bounded
+ *  recent window — a horizontal drag strip isn't a library; the complete set is the
+ *  paginated Assets surface. (scale audit 2026-06-20) */
+export async function getFrameCandidates(ownerId: string, projectId: string, take = 120) {
   return prisma.generation.findMany({
-    where: { ownerId, projectId, threadId: null, ...notDeleted },
+    where: { ownerId, projectId, shotId: null, threadId: null, ...notDeleted, asset: { ext: { in: FRAME_IMG_EXTS } } },
     orderBy: { createdAt: "desc" },
-    include: { asset: true }, // the Assets DTO derives `attached` from the scalar shotId
+    take,
+    include: { asset: true },
   });
+}
+
+const MEDIA_VIDEO_EXTS = new Set(["mp4", "mov", "webm", "mkv"]);
+
+/** One Assets-library row (client-safe — no BigInt). Shape matches Assets.MediaItem. */
+export type MediaPageItem = { id: string; src: string; kind: "image" | "video"; prompt: string; attached: boolean; shotLabel: string | null };
+/** A keyset page of media. `nextCursor` ("<iso>|<id>") feeds the next call; null = end. */
+export type MediaPage = { items: MediaPageItem[]; nextCursor: string | null; hasMore: boolean };
+
+/** "Scene N · Shot M" label per shot id (lightweight: no generations include). Mirrors
+ *  the badge/picker labels the board uses. Shared by the initial load + load-more. */
+async function shotLabelMap(ownerId: string, projectId: string): Promise<Map<string, string>> {
+  const shots = await prisma.shot.findMany({
+    where: { ownerId, projectId, ...notDeleted },
+    orderBy: [{ scene: "asc" }, { number: "asc" }],
+    select: { id: true, scene: true },
+  });
+  const sceneDisplay: Record<number, number> = {};
+  [...new Set(shots.map((s) => s.scene))].sort((a, b) => a - b).forEach((sc, i) => { sceneDisplay[sc] = i + 1; });
+  const withinScene: Record<number, number> = {};
+  const m = new Map<string, string>();
+  for (const s of shots) {
+    withinScene[s.scene] = (withinScene[s.scene] ?? 0) + 1;
+    m.set(s.id, `Scene ${sceneDisplay[s.scene]} · Shot ${withinScene[s.scene]}`);
+  }
+  return m;
+}
+
+/** One keyset page of a project's media (attached + candidates) for the Assets library,
+ *  newest first. Cursor = "<createdAt-iso>|<id>" (id breaks createdAt ties so no row is
+ *  skipped or repeated across pages). Bounded by `take` → scales to any library size; the
+ *  Assets surface appends pages via the loadMoreMedia action. (scale audit 2026-06-20) */
+export async function getMediaPage(
+  ownerId: string,
+  projectId: string,
+  cursor?: string | null,
+  take = 60,
+): Promise<MediaPage> {
+  let cursorWhere = {};
+  if (cursor) {
+    const sep = cursor.lastIndexOf("|");
+    const at = new Date(cursor.slice(0, sep));
+    const id = cursor.slice(sep + 1);
+    if (!Number.isNaN(at.getTime()) && id) {
+      cursorWhere = { OR: [{ createdAt: { lt: at } }, { createdAt: at, id: { lt: id } }] };
+    }
+  }
+  const rows = await prisma.generation.findMany({
+    where: { ownerId, projectId, threadId: null, ...notDeleted, ...cursorWhere },
+    orderBy: [{ createdAt: "desc" }, { id: "desc" }],
+    take: take + 1, // over-fetch one to learn hasMore without a count()
+    include: { asset: true },
+  });
+  const hasMore = rows.length > take;
+  const page = hasMore ? rows.slice(0, take) : rows;
+  const labels = await shotLabelMap(ownerId, projectId);
+  const items: MediaPageItem[] = page.map((g) => {
+    const ext = g.asset.ext.toLowerCase();
+    return {
+      id: g.id,
+      src: storageKeyToSrc(storageKey(g.asset.ownerId, g.asset.contentHash, ext)),
+      kind: MEDIA_VIDEO_EXTS.has(ext) ? "video" : "image",
+      prompt: g.promptText ?? "",
+      attached: g.shotId != null,
+      shotLabel: g.shotId ? (labels.get(g.shotId) ?? null) : null,
+    };
+  });
+  const last = page[page.length - 1];
+  const nextCursor = hasMore && last ? `${last.createdAt.toISOString()}|${last.id}` : null;
+  return { items, nextCursor, hasMore };
 }
 
 export type EntityWithRefs = Awaited<ReturnType<typeof getEntities>>[number];
 export type ShotWithDetail = Awaited<ReturnType<typeof getShots>>[number];
-export type CandidateGen = Awaited<ReturnType<typeof getCandidates>>[number];
-export type ProjectMedia = Awaited<ReturnType<typeof getProjectMedia>>[number];
+export type CandidateGen = Awaited<ReturnType<typeof getLooseVideoClips>>[number];
 
-/** Live cowork threads for a project, newest activity first. */
+/** Cowork thread LIST (metadata only), newest activity first. No eager messages —
+ *  the rail shows title + time, and each thread's messages lazy-load on select via
+ *  getCoworkThreadClient. This keeps the studio page load O(threads) instead of
+ *  O(threads × all messages), so a chatty project never blows up the render. All
+ *  threads are returned (metadata is light + the partial updatedAt index serves it),
+ *  so none become unreachable. (scale audit 2026-06-20) */
 export async function getCoworkThreads(ownerId: string, projectId: string) {
   return prisma.chatThread.findMany({
     where: { projectId, ownerId, ...notDeleted },
     orderBy: { updatedAt: "desc" },
-    include: { messages: { where: notDeleted, orderBy: { seq: "asc" } } },
+    select: { id: true, projectId: true, title: true, updatedAt: true },
   });
 }
 

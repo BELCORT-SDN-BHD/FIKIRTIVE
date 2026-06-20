@@ -4,7 +4,7 @@
  * surfaces (Elements, Gen space, Storyboard, Video editor, Assets); Canvas is
  * the only mock surface.
  */
-import { useState, useEffect } from "react";
+import { useState } from "react";
 import { useRouter } from "next/navigation";
 import type { EntityDTO, ProjectDTO } from "@/lib/types";
 import type { ArtlioEdit, ModelDirectiveRules } from "@artlio/core";
@@ -16,6 +16,7 @@ import { VideoEditorSurface } from "./VideoEditor";
 import { Elements } from "./Elements";
 import { Assets, type MediaItem, type ShotOption } from "./Assets";
 import { Cowork } from "./Cowork";
+import { Account } from "./Account";
 import type { ChatThreadDTO } from "@/lib/types";
 
 export function Studio({
@@ -25,6 +26,8 @@ export function Studio({
   entities,
   shots,
   media,
+  mediaCursor,
+  mediaHasMore,
   frameCandidates,
   shotOptions,
   boardEdit,
@@ -41,6 +44,8 @@ export function Studio({
   entities: EntityDTO[];
   shots: StudioShot[];
   media: MediaItem[];
+  mediaCursor: string | null;
+  mediaHasMore: boolean;
   frameCandidates: { id: string; src: string }[];
   shotOptions: ShotOption[];
   boardEdit: ArtlioEdit | null;
@@ -56,8 +61,13 @@ export function Studio({
   const [view, setView] = useState<StudioView>(initialView ?? "genspace");
   // the route is the single source of truth: a soft router.push(?view=X) (project
   // switch, Add-to-editor) re-runs the page and passes a new initialView prop, so
-  // follow it to actually switch the surface (a useState initializer never re-runs)
-  useEffect(() => { setView(initialView ?? "genspace"); }, [initialView]);
+  // follow it to actually switch the surface (a useState initializer never re-runs).
+  // Sync during render (React's prop-change pattern) rather than in an effect.
+  const [prevInitialView, setPrevInitialView] = useState(initialView);
+  if (initialView !== prevInitialView) {
+    setPrevInitialView(initialView);
+    setView(initialView ?? "genspace");
+  }
   // the editor tab reports its unsaved-cut state up so nav/project-switch can guard it
   const [editorDirty, setEditorDirty] = useState(false);
   const confirmLeave = () => !editorDirty || confirm("Discard unsaved changes to this cut?");
@@ -75,8 +85,9 @@ export function Studio({
       case "storyboard": return <Storyboard projectId={project.id} shots={shots} entities={entities} candidates={frameCandidates} />;
       case "editor": return <VideoEditorSurface key={project.id} projectId={project.id} boardEdit={boardEdit} savedEdit={savedEdit} attachedCount={attachedCount} editedAt={editedAt} onDirtyChange={setEditorDirty} />;
       case "elements": return <Elements entities={entities} projectId={project.id} />;
-      case "assets": return <Assets media={media} shotOptions={shotOptions} />;
+      case "assets": return <Assets projectId={project.id} media={media} mediaCursor={mediaCursor} mediaHasMore={mediaHasMore} shotOptions={shotOptions} />;
       case "cowork": return <Cowork key={project.id} projectId={project.id} entities={entities} threads={threads ?? []} brief={project.coworkBrief ?? ""} />;
+      case "account": return <Account />;
       default:
         return (
           <div className="screen"><div className="screen-pad" style={{ display: "grid", placeItems: "center", minHeight: "60vh", textAlign: "center" }}>

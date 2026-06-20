@@ -74,8 +74,9 @@ describe("2-org isolation — org B can never read org A", () => {
     expect(await data.getShots(orgB, aProjectId)).toEqual([]);
   });
   it("candidates/media: B's reads on A's project return []", async () => {
-    expect(await data.getCandidates(orgB, aProjectId)).toEqual([]);
-    expect(await data.getProjectMedia(orgB, aProjectId)).toEqual([]);
+    expect(await data.getLooseVideoClips(orgB, aProjectId)).toEqual([]);
+    expect(await data.getFrameCandidates(orgB, aProjectId)).toEqual([]);
+    expect((await data.getMediaPage(orgB, aProjectId)).items).toEqual([]);
   });
   it("threads: B's getCoworkThread on A's thread id is null", async () => {
     expect(await data.getCoworkThread(orgB, aThreadId)).toBeNull();

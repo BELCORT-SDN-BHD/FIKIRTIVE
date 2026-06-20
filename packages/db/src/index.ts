@@ -20,7 +20,12 @@ function buildClient(): PrismaClient {
   const url = process.env.DATABASE_URL_POOLED || process.env.DATABASE_URL;
   if (!url) throw new Error("DATABASE_URL (or DATABASE_URL_POOLED) is not set");
   const adapter = new PrismaPg(
-    { connectionString: url },
+    // Explicit pool ceiling per process. node-postgres defaults Pool.max to 10; with N
+    // horizontally-scaled web/worker replicas that is N×10 connections against Neon's
+    // budget. Tune DB_POOL_MAX per (replica-count × max) ≤ Neon pooled limit. Going
+    // through the Neon -pooler (PgBouncer) endpoint multiplexes, so this app-side max is
+    // the real cap to size. (scale audit 2026-06-20)
+    { connectionString: url, max: Number(process.env.DB_POOL_MAX) || 10 },
     // pg-boss owns its own schema; Prisma stays on public (eng review D9)
     { schema: "public" },
   );

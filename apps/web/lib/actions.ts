@@ -25,7 +25,7 @@ import { storage, extFromFilename, mimeOf } from "./storage";
 import { getBoss } from "./queue";
 import { buildEntitySnapshot } from "./entity-snapshot";
 import { buildBoardEdit, transitionFor } from "./edit";
-import { getShots, getCandidates } from "./data";
+import { getShots, getLooseVideoClips, getMediaPage, type MediaPage } from "./data";
 import { requireOwner } from "./auth-guard";
 
 /**
@@ -675,8 +675,8 @@ export async function addSegmentToCut(shotId: string): Promise<{ ok: true; added
     if (saved?.success) {
       base = saved.data;
     } else {
-      const [shots, candidates] = await Promise.all([getShots(ownerId, shot.projectId), getCandidates(ownerId, shot.projectId)]);
-      base = buildBoardEdit(shots, candidates).edit ?? BLANK_CUT();
+      const [shots, looseClips] = await Promise.all([getShots(ownerId, shot.projectId), getLooseVideoClips(ownerId, shot.projectId)]);
+      base = buildBoardEdit(shots, looseClips).edit ?? BLANK_CUT();
     }
     const track0 = base.timeline.tracks[0];
     if (!track0) return { error: "That cut has no visual track." };
@@ -916,4 +916,14 @@ export async function getEditorMedia(projectId: string): Promise<{ id: string; s
       seconds: kind === "image" ? 3 : (g.asset.durationS ?? 5),
     }];
   });
+}
+
+/** Assets library "load more" (scale audit 2026-06-20). Fail-closed + tenant-scoped:
+ *  getMediaPage filters by the resolved ownerId, so a forged projectId from another org
+ *  returns an empty page (no leak). cursor = "<iso>|<id>" from the previous page. */
+export async function loadMoreMedia(projectId: string, cursor?: string | null): Promise<MediaPage | { error: string }> {
+  const owner = await requireOwner();
+  if ("error" in owner) return { error: owner.error };
+  if (typeof projectId !== "string" || !projectId) return { error: "Invalid request." };
+  return getMediaPage(owner.ownerId, projectId, cursor ?? null);
 }

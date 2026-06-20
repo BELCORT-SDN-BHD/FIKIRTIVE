@@ -1,7 +1,7 @@
-import { ensureDefaultProject, getProjects, getShots, getEntities, getProjectMedia, getCandidates, getGenerationThumbs, getCoworkThreads, resolveCoworkResultUrls } from "@/lib/data";
+import { ensureDefaultProject, getProjects, getShots, getEntities, getMediaPage, getLooseVideoClips, getFrameCandidates, getGenerationThumbs, getCoworkThreads, getCoworkThread, resolveCoworkResultUrls } from "@/lib/data";
 import { getRulesMap } from "@/lib/cowork-knowledge";
 import { buildBoardEdit } from "@/lib/edit";
-import { toEntityDTO, toChatThreadDTO } from "@/lib/dto";
+import { toEntityDTO, toChatThreadDTO, toChatThreadMetaDTO } from "@/lib/dto";
 import { artlioEdit, storageKey, storageKeyToSrc } from "@artlio/core";
 import { redirect } from "next/navigation";
 import { auth, allowed } from "@/auth";
@@ -44,9 +44,19 @@ export default async function StudioPage({ searchParams }: { searchParams: Promi
   // the default, rather than silently showing the oldest project as if intended
   if (p && !projects.some((x) => x.id === p)) redirect(initialView ? `/studio?view=${initialView}` : "/studio");
   const project = projects.find((x) => x.id === p) ?? defaultProject;
+  // Cowork: thread LIST is metadata only (no eager messages → page load stays O(threads)).
+  // Eager-load just the most-recent thread (the one Cowork opens to) so its chat shows
+  // immediately; every other thread's messages lazy-load on select via getCoworkThreadClient.
   const threadRows = await getCoworkThreads(ownerId, project.id);
-  const coworkUrls = await resolveCoworkResultUrls(ownerId, threadRows);
-  const threads = threadRows.map((t) => toChatThreadDTO(t, coworkUrls));
+  let threads = threadRows.map(toChatThreadMetaDTO);
+  if (threadRows[0]) {
+    const activeFull = await getCoworkThread(ownerId, threadRows[0].id);
+    if (activeFull) {
+      const coworkUrls = await resolveCoworkResultUrls(ownerId, [activeFull]);
+      const activeDto = toChatThreadDTO(activeFull, coworkUrls);
+      threads = threads.map((t) => (t.id === activeDto.id ? activeDto : t));
+    }
+  }
   const shots = await getShots(ownerId, project.id);
   // resolve each segment's first/last keyframe thumbnails (the i2v slots)
   const frameThumbs = await getGenerationThumbs(ownerId,
@@ -92,28 +102,17 @@ export default async function StudioPage({ searchParams }: { searchParams: Promi
 
   // boardEdit for the editor — attached shot renders in order, plus any unattached
   // Gen-space video clips (so generated footage is available to cut, not just shots)
-  const candidates = await getCandidates(ownerId, project.id);
-  const { edit: boardEdit, clipCount } = buildBoardEdit(shots, candidates);
+  const looseClips = await getLooseVideoClips(ownerId, project.id);
+  const { edit: boardEdit, clipCount } = buildBoardEdit(shots, looseClips);
   // image candidates for the Storyboard drag-to-attach strip (drop onto a shot's frame slot)
-  const FRAME_IMG_EXTS = new Set(["png", "jpg", "jpeg", "webp"]);
-  const frameCandidates = candidates
-    .filter((c) => FRAME_IMG_EXTS.has(c.asset.ext.toLowerCase()))
+  const frameCandidates = (await getFrameCandidates(ownerId, project.id))
     .map((c) => ({ id: c.id, src: storageKeyToSrc(storageKey(c.asset.ownerId, c.asset.contentHash, c.asset.ext.toLowerCase())) }));
   const savedParse = project.editJson ? artlioEdit.safeParse(project.editJson) : null;
   const savedEdit = savedParse?.success ? savedParse.data : null;
 
-  // Assets library DTOs (client-safe — no BigInt): all generated media, newest first
-  const media = (await getProjectMedia(ownerId, project.id)).map((g) => {
-    const ext = g.asset.ext.toLowerCase();
-    return {
-      id: g.id,
-      src: storageKeyToSrc(storageKey(g.asset.ownerId, g.asset.contentHash, ext)),
-      kind: VIDEO_EXTS.has(ext) ? ("video" as const) : ("image" as const),
-      prompt: g.promptText ?? "",
-      attached: g.shotId != null,
-      shotLabel: g.shotId ? (shotLabelById.get(g.shotId) ?? null) : null,
-    };
-  });
+  // Assets library DTOs (client-safe — no BigInt): first keyset page, newest first.
+  // The Assets surface appends further pages via the loadMoreMedia action (scales to any size).
+  const mediaPage = await getMediaPage(ownerId, project.id);
   // shot picker labels for "add to shot" (same Scene N · Shot M as the board)
   const shotOptions = shots.map((s) => ({ id: s.id, label: shotLabelById.get(s.id)! }));
   // promptCoach rules (family→mode→rules) — threaded so the composer lints at $0
@@ -126,7 +125,9 @@ export default async function StudioPage({ searchParams }: { searchParams: Promi
       user={user}
       entities={entities.map(toEntityDTO)}
       shots={storyboardShots}
-      media={media}
+      media={mediaPage.items}
+      mediaCursor={mediaPage.nextCursor}
+      mediaHasMore={mediaPage.hasMore}
       frameCandidates={frameCandidates}
       shotOptions={shotOptions}
       boardEdit={boardEdit}

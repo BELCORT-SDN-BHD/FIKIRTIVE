@@ -2,10 +2,10 @@
 /** Assets surface — the project's real media library. Every generated image and
  *  video lands here: preview, delete, and (for unattached candidates) attach to
  *  a shot. Free to browse; nothing here spends. */
-import { useState } from "react";
+import { useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 import { IcX } from "@/components/ds";
-import { deleteGeneration, attachGeneration } from "@/lib/actions";
+import { deleteGeneration, attachGeneration, loadMoreMedia } from "@/lib/actions";
 import { Lightbox } from "@/components/Lightbox";
 
 export type MediaItem = { id: string; src: string; kind: "image" | "video"; prompt: string; attached: boolean; shotLabel?: string | null };
@@ -13,7 +13,7 @@ export type ShotOption = { id: string; label: string };
 
 const FILTERS = [["all", "All"], ["image", "Images"], ["video", "Videos"]] as const;
 
-export function Assets({ media, shotOptions }: { media: MediaItem[]; shotOptions: ShotOption[] }) {
+export function Assets({ projectId, media, mediaCursor, mediaHasMore, shotOptions }: { projectId: string; media: MediaItem[]; mediaCursor: string | null; mediaHasMore: boolean; shotOptions: ShotOption[] }) {
   const router = useRouter();
   const [filter, setFilter] = useState<"all" | "image" | "video">("all");
   const [busy, setBusy] = useState<string | null>(null);
@@ -21,7 +21,47 @@ export function Assets({ media, shotOptions }: { media: MediaItem[]; shotOptions
   const [zoom, setZoom] = useState<{ src: string; kind: "image" | "video" } | null>(null); // click-to-enlarge
   const [errored, setErrored] = useState<Set<string>>(new Set()); // image src that 404'd → show glow placeholder, not a broken-image glyph
 
-  const shown = media.filter((m) => filter === "all" || m.kind === filter);
+  // Keyset-paginated library: start from the server's first page, append more on demand.
+  // The server component hands a fresh first page on every project switch / router.refresh()
+  // (new array identity) — resync state to it then, which also drops a just-deleted row.
+  const [items, setItems] = useState<MediaItem[]>(media);
+  const [cursor, setCursor] = useState<string | null>(mediaCursor);
+  const [hasMore, setHasMore] = useState(mediaHasMore);
+  const [loadingMore, setLoadingMore] = useState(false);
+  // bumped on every resync (project switch / router.refresh after delete-attach) so an
+  // in-flight load-more from the previous page can't append stale rows into the new list.
+  const epochRef = useRef(0);
+  const [prevMedia, setPrevMedia] = useState(media);
+  if (media !== prevMedia) {
+    setPrevMedia(media);
+    setItems(media);
+    setCursor(mediaCursor);
+    setHasMore(mediaHasMore);
+    epochRef.current++;
+  }
+
+  function loadMore() {
+    if (loadingMore || !cursor) return;
+    setError(null);
+    setLoadingMore(true);
+    const myEpoch = epochRef.current;
+    (async () => {
+      try {
+        const res = await loadMoreMedia(projectId, cursor);
+        if (myEpoch !== epochRef.current) return; // list resynced mid-flight → drop this page
+        if (res && "error" in res) { setError(res.error ?? "Couldn't load more."); return; }
+        setItems((cur) => [...cur, ...res.items]);
+        setCursor(res.nextCursor);
+        setHasMore(res.hasMore);
+      } catch {
+        if (myEpoch === epochRef.current) setError("Couldn't load more — please try again.");
+      } finally {
+        if (myEpoch === epochRef.current) setLoadingMore(false);
+      }
+    })();
+  }
+
+  const shown = items.filter((m) => filter === "all" || m.kind === filter);
 
   function remove(m: MediaItem) {
     if (busy) return;
@@ -65,7 +105,7 @@ export function Assets({ media, shotOptions }: { media: MediaItem[]; shotOptions
           <h1 style={{ font: "var(--text-display)", letterSpacing: "var(--tracking-display)", color: "var(--fg-1)", margin: 0 }}>Assets</h1>
           <span style={{ flex: 1 }} />
           <span style={{ font: "var(--text-mono-meta)", color: "var(--fg-3)" }}>
-            {filter === "all" ? `${media.length} item${media.length === 1 ? "" : "s"}` : `${shown.length} of ${media.length}`}
+            {filter === "all" ? `${items.length}${hasMore ? "+" : ""} item${items.length === 1 ? "" : "s"}` : `${shown.length} of ${items.length}${hasMore ? "+" : ""}`}
           </span>
         </div>
 
@@ -81,7 +121,7 @@ export function Assets({ media, shotOptions }: { media: MediaItem[]; shotOptions
         {shown.length === 0 ? (
           <div style={{ display: "grid", placeItems: "center", minHeight: "48vh", textAlign: "center" }}>
             <div>
-              <h2 style={{ font: "var(--text-title)", color: "var(--fg-1)", margin: 0 }}>{media.length === 0 ? "Your library is empty" : "Nothing in this filter"}</h2>
+              <h2 style={{ font: "var(--text-title)", color: "var(--fg-1)", margin: 0 }}>{items.length === 0 ? "Your library is empty" : "Nothing in this filter"}</h2>
               <p style={{ font: "var(--text-body)", color: "var(--fg-2)", margin: "6px 0 0", maxWidth: 420 }}>
                 Everything you generate in this project — images and videos — is stored here.
               </p>
@@ -127,6 +167,14 @@ export function Assets({ media, shotOptions }: { media: MediaItem[]; shotOptions
                 </div>
               </div>
             ))}
+          </div>
+        )}
+
+        {hasMore && (
+          <div style={{ display: "grid", placeItems: "center", margin: "22px 0 4px" }}>
+            <button className="al-btn al-btn-glass al-btn-md" onClick={loadMore} disabled={loadingMore}>
+              {loadingMore ? "Loading…" : "Load more"}
+            </button>
           </div>
         )}
       </div>
