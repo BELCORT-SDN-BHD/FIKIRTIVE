@@ -15,10 +15,11 @@ export const ROLES = ["super-admin", "ops", "finance", "moderator", "viewer"] as
 export type Role = (typeof ROLES)[number];
 export const roleSchema = z.enum(ROLES);
 
-/** The 7 admin sections (spec §6 / §3 matrix). `credits` added in closed-beta P2:
+/** The 8 admin sections (spec §6 / §3 matrix). `credits` added in closed-beta P2:
  *  the cost section is read-only reporting; credits is the WRITE capability (admin grants
- *  / balance adjustments), gated to finance (+ super-admin). */
-export const SECTIONS = ["model", "cost", "content", "team", "system", "knowledge", "credits"] as const;
+ *  / balance adjustments), gated to finance (+ super-admin). `tenants` added in P3:
+ *  tenant management (org listing / isolation controls) — super-admin only. */
+export const SECTIONS = ["model", "cost", "content", "team", "system", "knowledge", "credits", "tenants"] as const;
 export type Section = (typeof SECTIONS)[number];
 
 export type Action = "read" | "mutate";
@@ -40,6 +41,7 @@ export const SECTION_MATRIX: Record<Section, Record<Action, ReadonlySet<Role>>> 
   system:    { read: new Set(["viewer", "ops"]), mutate: new Set(["ops"]) },        // ⑤ System & queue health
   knowledge: { read: new Set(["viewer", "ops"]), mutate: new Set(["ops"]) },        // ⑥ Prompt & knowledge
   credits:   { read: new Set(["finance"]),       mutate: new Set(["finance"]) },    // ⑦ Credits — grants/adjustments (finance; super-admin via supersede)
+  tenants:   { read: new Set(),                  mutate: new Set() },               // ⑧ Tenant management — super-admin only
 };
 
 /** Deny-by-default capability check, DERIVED from the single SECTION_MATRIX. The only

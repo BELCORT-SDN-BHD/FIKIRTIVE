@@ -33,6 +33,7 @@ const gen = await import("@/lib/gen-actions");
 const refgen = await import("@/lib/refgen-actions");
 const { GET: filesGET } = await import("@/app/files/[...key]/route");
 const { storageKey } = await import("@artlio/core");
+const tenantAdmin = await import("@/lib/tenant-admin");
 
 async function asUser(email: string) { mockAuth.mockResolvedValue({ user: { email } }); }
 async function ensureUser(email: string) {
@@ -117,6 +118,23 @@ describe("2-org isolation — org B can never read org A", () => {
     const { keyOwnerMatches } = await import("@artlio/core");
     const key = storageKey(orgA, aAssetHash, "png");
     expect(keyOwnerMatches(key, orgA)).toBe(true);
+  });
+  it("tenant-admin: getTenantDetail(orgB) returns orgB's own data, not A's", async () => {
+    // Seed orgB's credit account so getTenantDetail has real data to return
+    await prisma.creditAccount.upsert({
+      where: { orgId: orgB },
+      update: { balance: 1230, reserved: 0 },
+      create: { orgId: orgB, balance: 1230, reserved: 0 },
+    });
+    const detail = await tenantAdmin.getTenantDetail(orgB);
+    expect(detail).not.toBeNull();
+    // scoped to orgB — ownerEmail belongs to orgB, not A
+    expect(detail!.orgId).toBe(orgB);
+    expect(detail!.ownerEmail).toBe(B_EMAIL);
+    // balance is orgB's own (1230 internal → 123 displayed), not orgA's
+    expect(detail!.balance).toBe(123);
+    // genCount is orgB's own generation count (0 — no gens seeded for B)
+    expect(detail!.genCount).toBe(0);
   });
 });
 

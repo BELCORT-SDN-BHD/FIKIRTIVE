@@ -5,8 +5,8 @@ describe("ROLES / SECTIONS", () => {
   it("has exactly the 5 spec roles", () => {
     expect([...ROLES]).toEqual(["super-admin", "ops", "finance", "moderator", "viewer"]);
   });
-  it("has exactly the 7 spec sections (closed-beta P2 adds credits)", () => {
-    expect([...SECTIONS]).toEqual(["model", "cost", "content", "team", "system", "knowledge", "credits"]);
+  it("has exactly the 8 spec sections (P2 adds credits, P3 adds tenants)", () => {
+    expect([...SECTIONS]).toEqual(["model", "cost", "content", "team", "system", "knowledge", "credits", "tenants"]);
   });
 });
 
@@ -83,5 +83,16 @@ describe("roleAllows — derives from SECTION_MATRIX, denies by default, super-a
     expect(isRole("root")).toBe(false);
     expect(isRole("")).toBe(false);
     expect(isRole(undefined as unknown as string)).toBe(false);
+  });
+});
+
+describe("tenants section (super-admin only)", () => {
+  it("only super-admin may read/mutate tenants", () => {
+    expect(roleAllows("super-admin", "tenants", "read")).toBe(true);
+    expect(roleAllows("super-admin", "tenants", "mutate")).toBe(true);
+    for (const r of ["ops", "finance", "moderator", "viewer"] as const) {
+      expect(roleAllows(r, "tenants", "read")).toBe(false);
+      expect(roleAllows(r, "tenants", "mutate")).toBe(false);
+    }
   });
 });

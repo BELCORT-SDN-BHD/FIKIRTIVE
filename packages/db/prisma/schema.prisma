@@ -532,6 +532,8 @@ model Organization {
   memberships Membership[]
   creditAccount CreditAccount?
   creditLedger  CreditLedger[]
+
+  @@index([deletedAt, createdAt], map: "Organization_list_idx")
   // business back-relations (one per owner-scoped table; required by Prisma):
   projects                Project[]
   entities                Entity[]
@@ -574,6 +576,16 @@ model Membership {
   @@unique([userId, orgId])
   @@index([orgId, role])
   @@index([userId])
+}
+
+// DB-backed invite allowlist (closed-beta admin P1). email is lowercased at write
+// (mirrors the env ALLOWED_EMAILS normalization so comparisons are case-insensitive by convention).
+model AllowedEmail {
+  email     String   @id // LOWERCASED at write + compare (mirrors env allowlist normalization)
+  status    String   @default("invited") // invited | active | revoked
+  invitedBy String // operator email (audit)
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
 }
 
 // ── Credits ledger (closed-beta foundation P2) — the per-org spend cap (M1) ────────
