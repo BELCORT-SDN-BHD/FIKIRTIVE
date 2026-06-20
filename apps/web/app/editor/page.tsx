@@ -3,7 +3,7 @@ import { ensureDefaultProject, getProjects, getShots, getLooseVideoClips } from 
 import { buildBoardEdit } from "@/lib/edit";
 import { EditorShell } from "@/components/EditorShell";
 import { artlioEdit } from "@artlio/core";
-import { auth, allowed } from "@/auth";
+import { auth } from "@/auth";
 import { requireOwner } from "@/lib/auth-guard";
 
 export const dynamic = "force-dynamic";

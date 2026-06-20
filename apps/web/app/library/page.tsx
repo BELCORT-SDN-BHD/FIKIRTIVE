@@ -7,7 +7,7 @@ import { auth, allowed } from "@/auth";
  *  confusion. (Per-entity ?e deep-links land on the Elements list, not a selection.) */
 export default async function LibraryPage({ searchParams }: { searchParams: Promise<{ p?: string }> }) {
   const session = await auth();
-  if (!allowed(session?.user?.email)) redirect("/login");
+  if (!(await allowed(session?.user?.email))) redirect("/login");
   const { p } = await searchParams;
   redirect(`/studio?view=elements${p ? `&p=${encodeURIComponent(p)}` : ""}`);
 }

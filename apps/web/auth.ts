@@ -3,6 +3,7 @@ import Resend from "next-auth/providers/resend";
 import { PrismaAdapter } from "@auth/prisma-adapter";
 import { prisma } from "@artlio/db";
 import { newId, isRole, FOUNDER_OWNER_ID } from "@artlio/core";
+import { isAllowedEmail } from "@/lib/allowlist";
 
 /**
  * D18: email magic-link auth, founder-only via allowlist.
@@ -27,15 +28,11 @@ function rateLimit(email: string) {
   attempts.set(email, recent);
 }
 
-/** Deny-by-default allowlist check (AUTH_ALLOWED_EMAILS). Exported so admin
- *  handlers can re-assert it inside the handler (R7), not just at login. */
-export function allowed(email: string | null | undefined): boolean {
-  if (!email) return false;
-  const list = (process.env.AUTH_ALLOWED_EMAILS ?? "")
-    .split(",")
-    .map((e) => e.trim().toLowerCase())
-    .filter(Boolean);
-  return list.includes(email.toLowerCase());
+/** Deny-by-default allowlist check (env ∪ DB). Exported so admin handlers can
+ *  re-assert it inside the handler (R7), not just at login. Async: awaiting is
+ *  REQUIRED — a bare `!allowed(email)` check would always be falsy (Promise). */
+export async function allowed(email: string | null | undefined): Promise<boolean> {
+  return isAllowedEmail(email);
 }
 
 /** Dedicated founder list (OPT-6 P1b) — distinct from AUTH_ALLOWED_EMAILS. These
@@ -99,9 +96,9 @@ export const { handlers, auth, signIn, signOut } = NextAuth({
   },
   callbacks: {
     // deny-by-default allowlist — the link is never even sent otherwise
-    signIn({ user, email }) {
+    async signIn({ user, email }) {
       void email;
-      return allowed(user?.email);
+      return await allowed(user?.email);
     },
     // OPT-6 P1b: DB session strategy passes the fresh User row as `user`. Copy its
     // role onto session.user.role so requireRole/UI read it. Garbage/missing → viewer

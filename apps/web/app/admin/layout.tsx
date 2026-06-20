@@ -25,7 +25,7 @@ const NAV = [
 
 export default async function AdminLayout({ children }: { children: React.ReactNode }) {
   const session = await auth();
-  if (!allowed(session?.user?.email)) redirect("/login");
+  if (!(await allowed(session?.user?.email))) redirect("/login");
   return (
     <div className="admin-shell">
       <nav className="admin-nav">

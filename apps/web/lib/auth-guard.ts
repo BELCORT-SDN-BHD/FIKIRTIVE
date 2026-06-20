@@ -9,7 +9,7 @@ import { newId, FOUNDER_OWNER_ID, BETA_INITIAL_GRANT_CREDITS, roleAllows, isRole
 export async function requireSession(): Promise<{ email: string } | { error: string }> {
   const session = await auth();
   const email = session?.user?.email;
-  if (!email || !allowed(email)) return { error: "Not authorized." };
+  if (!email || !(await allowed(email))) return { error: "Not authorized." };
   return { email };
 }
 
@@ -24,7 +24,7 @@ export async function requireRole(
 ): Promise<{ email: string; role: Role } | { error: string }> {
   const session = await auth();
   const email = session?.user?.email;
-  if (!email || !allowed(email)) return { error: "Not authorized." };
+  if (!email || !(await allowed(email))) return { error: "Not authorized." };
   const role: Role = isRole(session.user?.role) ? session.user.role : "viewer";
   if (!roleAllows(role, section, action)) {
     // denied-attempt audit (best-effort — never let the audit write change the deny)
@@ -49,7 +49,7 @@ export async function requireRole(
 export async function requireOwner(): Promise<{ email: string; ownerId: string } | { error: string }> {
   const session = await auth();
   const email = session?.user?.email;
-  if (!email || !allowed(email)) return { error: "Not authorized." };
+  if (!email || !(await allowed(email))) return { error: "Not authorized." };
 
   // Only a founder-admin session may ever resolve to the founder org.
   if (isFounderAdmin(email)) return { email, ownerId: FOUNDER_OWNER_ID };
@@ -58,16 +58,16 @@ export async function requireOwner(): Promise<{ email: string; ownerId: string }
   const user = await prisma.user.findUnique({ where: { email }, select: { id: true } });
   if (!user) return { error: "Not authorized." }; // no user row → cannot scope; fail closed
 
-  // A non-founder must NEVER resolve to the founder org, even via a stray Membership row
-  // (data error / future bug) — exclude it explicitly so the contract holds by construction.
+  // Find the user's non-founder membership regardless of status OR deletedAt, so a
+  // suspended/revoked member is denied even if their row was soft-deleted (defense-in-depth).
   const existing = await prisma.membership.findFirst({
-    where: { userId: user.id, deletedAt: null, status: "active", orgId: { not: FOUNDER_OWNER_ID } },
+    where: { userId: user.id, orgId: { not: FOUNDER_OWNER_ID } },
     orderBy: { createdAt: "asc" },
-    select: { orgId: true },
+    select: { orgId: true, status: true, deletedAt: true },
   });
-  if (existing) return { email, ownerId: existing.orgId };
-
-  // No membership yet → bootstrap a personal org synchronously.
+  if (existing && (existing.status === "suspended" || existing.status === "revoked")) return { error: "Your access is suspended." };
+  if (existing && !existing.deletedAt) return { email, ownerId: existing.orgId };
+  // none, or a soft-deleted non-suspended membership (account reopening) → bootstrap
   const ownerId = await bootstrapPersonalOrg(user.id, email);
   if (!ownerId) return { error: "Could not set up your workspace — please retry." };
   return { email, ownerId };
@@ -92,7 +92,12 @@ export async function bootstrapPersonalOrg(userId: string, email: string): Promi
       await tx.membership.upsert({
         where: { userId_orgId: { userId, orgId } },
         create: { id: newId(), userId, orgId, role: "owner" },
-        update: { deletedAt: null, status: "active" }, // revive a previously-deactivated membership
+        update: {},
+      });
+      // revive a soft-deleted membership ONLY if it isn't suspended/revoked
+      await tx.membership.updateMany({
+        where: { userId, orgId, status: { notIn: ["suspended", "revoked"] } },
+        data: { deletedAt: null },
       });
       // carry the active org so a future multi-org switcher needs no auth-table migration
       await tx.user.update({ where: { id: userId }, data: { activeOrgId: orgId } });

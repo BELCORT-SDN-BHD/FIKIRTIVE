@@ -4,7 +4,7 @@ import { buildBoardEdit } from "@/lib/edit";
 import { toEntityDTO, toChatThreadDTO, toChatThreadMetaDTO } from "@/lib/dto";
 import { artlioEdit, storageKey, storageKeyToSrc } from "@artlio/core";
 import { redirect } from "next/navigation";
-import { auth, allowed } from "@/auth";
+import { auth } from "@/auth";
 import { requireOwner } from "@/lib/auth-guard";
 import { Studio } from "@/components/studio/Studio";
 import type { StudioView } from "@/components/studio/StudioShell";

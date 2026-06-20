@@ -14,7 +14,7 @@ export async function GET(
   ctx: { params: Promise<{ key: string[] }> },
 ) {
   const session = await auth();
-  if (!allowed(session?.user?.email)) {
+  if (!(await allowed(session?.user?.email))) {
     return NextResponse.redirect(new URL("/login", req.url), { status: 302 });
   }
   // P3: resolve the caller's org and reject any key not in their namespace.

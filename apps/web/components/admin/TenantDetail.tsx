@@ -1,12 +1,16 @@
 "use client";
 /**
- * Read-only detail view for a single merchant org (/admin/tenants/[orgId]).
+ * Detail view for a single merchant org (/admin/tenants/[orgId]).
  * Shows: header (owner email + orgId + status), stats row (balance, reserved,
- * true cost, projects, gens), credit ledger (last 25), recent audit log (last 25).
+ * true cost, projects, gens), controls (grant credits, suspend/resume, cut sessions),
+ * credit ledger (last 25), recent audit log (last 25).
  * Matches admin house style (CSS vars, card pattern from CreditsAdmin.tsx).
  */
+import { useState, useRef } from "react";
+import { useRouter } from "next/navigation";
 import Link from "next/link";
 import type { TenantDetail as Detail } from "@/lib/tenant-admin";
+import { grantTenantCredits, setMembershipStatus, cutTenantSessions } from "@/lib/tenant-actions";
 
 const BADGE_COLORS: Record<string, string> = {
   active: "var(--fg-2)",
@@ -28,6 +32,70 @@ function fmtUsd(n: number): string {
 
 export function TenantDetail({ detail }: { detail: Detail }) {
   const { orgId, name, ownerEmail, status, balance, reserved, spentUsd, projectCount, genCount, ledger, audit } = detail;
+  const router = useRouter();
+
+  // Grant credits state
+  const [grantAmount, setGrantAmount] = useState("");
+  const [grantReason, setGrantReason] = useState("");
+  const [grantBusy, setGrantBusy] = useState(false);
+  const [grantMsg, setGrantMsg] = useState<{ ok: boolean; text: string } | null>(null);
+  const grantBusyRef = useRef(false); // synchronous double-submit guard (state hasn't re-rendered yet on 2nd click)
+
+  // Suspend/resume state
+  const [statusBusy, setStatusBusy] = useState(false);
+  const [statusMsg, setStatusMsg] = useState<{ ok: boolean; text: string } | null>(null);
+
+  // Cut sessions state
+  const [cutBusy, setCutBusy] = useState(false);
+  const [cutMsg, setCutMsg] = useState<{ ok: boolean; text: string } | null>(null);
+
+  async function submitGrant(e: React.FormEvent) {
+    e.preventDefault();
+    if (grantBusyRef.current) return; // synchronous double-submit guard
+    grantBusyRef.current = true;
+    try {
+      const displayedAmount = Number(grantAmount);
+      if (!Number.isInteger(displayedAmount) || displayedAmount === 0) {
+        setGrantMsg({ ok: false, text: "Enter a non-zero whole number of credits (negative to deduct)." });
+        return;
+      }
+      setGrantBusy(true);
+      setGrantMsg(null);
+      const res = await grantTenantCredits({ orgId, displayedAmount, reason: grantReason, idempotencyKey: `admin-tenant-grant:${crypto.randomUUID()}` });
+      setGrantBusy(false);
+      if ("error" in res) { setGrantMsg({ ok: false, text: res.error }); return; }
+      setGrantMsg({ ok: true, text: `Applied ${displayedAmount > 0 ? "+" : ""}${displayedAmount} credits.` });
+      setGrantAmount("");
+      setGrantReason("");
+      router.refresh();
+    } finally {
+      grantBusyRef.current = false;
+    }
+  }
+
+  async function toggleStatus() {
+    const isSuspended = status === "suspended";
+    const nextStatus = isSuspended ? "active" : "suspended";
+    if (!isSuspended && !confirm(`Suspend this tenant? They will be locked out immediately.`)) return;
+    setStatusBusy(true);
+    setStatusMsg(null);
+    const res = await setMembershipStatus(orgId, nextStatus);
+    setStatusBusy(false);
+    if ("error" in res) { setStatusMsg({ ok: false, text: res.error }); return; }
+    setStatusMsg({ ok: true, text: `Status set to ${nextStatus}.` });
+    router.refresh();
+  }
+
+  async function cutSessions() {
+    if (!confirm("Sign this merchant out now? All their active sessions will be deleted.")) return;
+    setCutBusy(true);
+    setCutMsg(null);
+    const res = await cutTenantSessions(orgId);
+    setCutBusy(false);
+    if ("error" in res) { setCutMsg({ ok: false, text: res.error }); return; }
+    setCutMsg({ ok: true, text: `Signed out ${res.cut} session${res.cut === 1 ? "" : "s"}.` });
+    router.refresh();
+  }
 
   return (
     <main style={{ maxWidth: 860, margin: "0 auto", padding: "32px 24px", display: "grid", gap: 20 }}>
@@ -77,6 +145,47 @@ export function TenantDetail({ detail }: { detail: Detail }) {
         <div style={{ display: "grid", gap: 2 }}>
           <span style={{ font: "var(--text-mono-meta)", color: "var(--fg-3)" }}>GENS</span>
           <span style={{ font: "var(--text-display)", color: "var(--fg-1)" }}>{genCount}</span>
+        </div>
+      </section>
+
+      {/* Controls */}
+      <section style={{ display: "grid", gap: 10, padding: 16, border: "1px solid var(--line-1)", borderRadius: 12, background: "var(--bg-1)" }}>
+        <h2 style={{ font: "var(--text-title)", color: "var(--fg-1)", margin: 0 }}>Controls</h2>
+
+        {/* Grant credits form */}
+        <form onSubmit={submitGrant} style={{ display: "grid", gap: 8 }}>
+          <span style={{ font: "var(--text-caption)", color: "var(--fg-3)" }}>Grant / adjust credits (1 credit = $0.10; negative to deduct)</span>
+          <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
+            <input
+              type="number" step="1" inputMode="numeric" value={grantAmount} onChange={(e) => setGrantAmount(e.target.value)}
+              placeholder="e.g. 500" required
+              style={{ font: "var(--text-body)", color: "var(--fg-1)", background: "var(--bg-2)", border: "1px solid var(--line-1)", borderRadius: 8, padding: "6px 10px", width: 120 }}
+            />
+            <input
+              type="text" maxLength={500} value={grantReason} onChange={(e) => setGrantReason(e.target.value)}
+              placeholder="Reason (optional)"
+              style={{ font: "var(--text-body)", color: "var(--fg-1)", background: "var(--bg-2)", border: "1px solid var(--line-1)", borderRadius: 8, padding: "6px 10px", flex: "1 1 160px" }}
+            />
+            <button type="submit" disabled={grantBusy}
+              style={{ font: "var(--text-body)", color: "var(--bg-1)", background: "var(--fg-1)", border: "none", borderRadius: 8, padding: "6px 16px", cursor: grantBusy ? "default" : "pointer", opacity: grantBusy ? 0.6 : 1, whiteSpace: "nowrap" }}>
+              {grantBusy ? "Applying…" : "Grant"}
+            </button>
+          </div>
+          {grantMsg && <span style={{ font: "var(--text-caption)", color: grantMsg.ok ? "var(--fg-2)" : "#e5484d" }}>{grantMsg.text}</span>}
+        </form>
+
+        {/* Suspend / Resume + Cut sessions */}
+        <div style={{ display: "flex", gap: 10, flexWrap: "wrap", alignItems: "center", paddingTop: 4 }}>
+          <button onClick={toggleStatus} disabled={statusBusy}
+            style={{ font: "var(--text-body)", color: status === "suspended" ? "var(--bg-1)" : "#fff", background: status === "suspended" ? "var(--fg-2)" : "#e5484d", border: "none", borderRadius: 8, padding: "6px 16px", cursor: statusBusy ? "default" : "pointer", opacity: statusBusy ? 0.6 : 1 }}>
+            {statusBusy ? "…" : status === "suspended" ? "Resume" : "Suspend"}
+          </button>
+          <button onClick={cutSessions} disabled={cutBusy}
+            style={{ font: "var(--text-body)", color: "var(--fg-1)", background: "var(--bg-2)", border: "1px solid var(--line-1)", borderRadius: 8, padding: "6px 16px", cursor: cutBusy ? "default" : "pointer", opacity: cutBusy ? 0.6 : 1 }}>
+            {cutBusy ? "Signing out…" : "Sign this merchant out now"}
+          </button>
+          {statusMsg && <span style={{ font: "var(--text-caption)", color: statusMsg.ok ? "var(--fg-2)" : "#e5484d" }}>{statusMsg.text}</span>}
+          {cutMsg && <span style={{ font: "var(--text-caption)", color: cutMsg.ok ? "var(--fg-2)" : "#e5484d" }}>{cutMsg.text}</span>}
         </div>
       </section>
 
