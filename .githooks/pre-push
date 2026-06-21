@@ -1,0 +1,14 @@
+#!/bin/sh
+# Artlio pre-push gate.
+# Pushing to main = auto-deploy on Railway (web + worker) + auto-migrate — there is
+# NO human gate between this push and production. So block a push that doesn't typecheck.
+# Typecheck-only to stay fast; full tests/build run via the /artlio-ship ritual.
+# Genuine emergency bypass:  git push --no-verify
+echo "[pre-push] typecheck across workspace (pnpm -r typecheck)…"
+if ! pnpm -r typecheck; then
+  echo ""
+  echo "[pre-push] BLOCKED — typecheck failed. A bad push auto-deploys to prod."
+  echo "[pre-push] Fix the type errors, or bypass deliberately with:  git push --no-verify"
+  exit 1
+fi
+echo "[pre-push] typecheck passed — pushing."

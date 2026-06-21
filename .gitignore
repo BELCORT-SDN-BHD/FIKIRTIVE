@@ -27,3 +27,10 @@ test-results/
 # codegraph local index
 .codegraph/
 .gbrain-source
+
+# working drafts / scratch (underscore-prefixed) — kept on disk, out of git
+_*.md
+
+# tool-local staging (gstack / superpowers) — not project artifacts
+.out-of-scope/
+.superpowers/
