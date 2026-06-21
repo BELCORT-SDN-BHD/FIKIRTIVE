@@ -101,7 +101,7 @@ export function GenSpace({ projectId, entities, rulesMap, onGoToElements }: { pr
   const [kind, setKind] = useState<"image" | "video">("image");
   // lazy-restore the composer draft (prompt + @mentions + editor doc) persisted for
   // THIS project, so an unmount/remount (navigating away & back) doesn't lose it
-  const restored = useRef(readDraft(projectId)).current;
+  const [restored] = useState(() => readDraft(projectId));
   const [prompt, setPrompt] = useState(restored?.prompt ?? "");
   const [promptIds, setPromptIds] = useState<string[]>(restored?.promptIds ?? []); // @mentioned entity ids
   const [promptVariantSel, setPromptVariantSel] = useState<Record<string, string>>(restored?.promptVariantSel ?? {}); // entityId → @mentioned variant

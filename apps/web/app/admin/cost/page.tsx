@@ -5,7 +5,7 @@ import { CostAdmin, type DayRow, type JobRow } from "@/components/admin/CostAdmi
 
 // reads the DB at request time — never prerender
 export const dynamic = "force-dynamic";
-export const metadata = { title: "Cost · Artlio admin" };
+export const metadata = { title: "Cost · Fikirtive admin" };
 
 const DAY_MS = 24 * 60 * 60 * 1000;
 

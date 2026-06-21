@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { REF_TYPE_CONFIG, basePromptFor, slugify, type RefEntityType } from "./ref-config.js";
 
-const TYPES: RefEntityType[] = ["CHARACTER", "LOCATION", "PRODUCT", "BRAND"];
+const TYPES: RefEntityType[] = ["CHARACTER", "LOCATION", "PRODUCT", "BRANDMARK"];
 
 describe("slugify", () => {
   it("lowercases, dashes non-alnum, trims, and falls back", () => {

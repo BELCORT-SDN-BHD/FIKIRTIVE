@@ -21,15 +21,15 @@ const TYPE_META: Record<EntityTypeDTO, { label: string; singular: string; color:
   CHARACTER: { label: "Characters", singular: "Character", color: "var(--hue-character)" },
   LOCATION: { label: "Locations", singular: "Location", color: "var(--hue-location)" },
   PRODUCT: { label: "Products", singular: "Product", color: "var(--hue-product)" },
-  BRAND: { label: "Brands", singular: "Brand", color: "var(--hue-brand)" },
+  BRANDMARK: { label: "Brandmarks", singular: "Brandmark", color: "var(--hue-brand)" },
 };
-const TYPE_ORDER: EntityTypeDTO[] = ["CHARACTER", "LOCATION", "PRODUCT", "BRAND"];
+const TYPE_ORDER: EntityTypeDTO[] = ["CHARACTER", "LOCATION", "PRODUCT", "BRANDMARK"];
 
 const EMPTY_HINTS: Record<EntityTypeDTO, string> = {
   CHARACTER: "The people in your videos. 3–12 reference images (front / side / ¾) keep faces on-model.",
   LOCATION: "Recurring places and sets. Wide establishing shots work best as references.",
   PRODUCT: "Hero objects your shots feature. Clean studio shots from several angles.",
-  BRAND: "Logos, palettes, style frames — anything that keeps output on-brand.",
+  BRANDMARK: "Logos, palettes, style frames — anything that keeps output on-brand.",
 };
 
 const MAX_REF_BYTES = 10 * 1024 * 1024; // 10 MB per source image
@@ -90,7 +90,7 @@ export function Library({
   const [createType, setCreateType] = useState<EntityTypeDTO>("CHARACTER");
   const [query, setQuery] = useState("");
   const [collapsed, setCollapsed] = useState<Set<EntityTypeDTO>>(new Set()); // folded element-type sections (long lists → fewer scrolls)
-  const toggleCollapse = (t: EntityTypeDTO) => setCollapsed((s) => { const n = new Set(s); n.has(t) ? n.delete(t) : n.add(t); return n; });
+  const toggleCollapse = (t: EntityTypeDTO) => setCollapsed((s) => { const n = new Set(s); if (n.has(t)) n.delete(t); else n.add(t); return n; });
   const selected = entities.find((e) => e.id === selectedId) ?? null;
 
   function select(id: string | null) {

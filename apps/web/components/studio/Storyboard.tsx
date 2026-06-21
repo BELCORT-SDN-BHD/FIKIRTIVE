@@ -484,8 +484,8 @@ export function Storyboard({ projectId, shots, entities, candidates }: { project
           <div style={{ display: "flex", gap: 8, alignItems: "center", padding: "8px 8px 8px 12px", background: "var(--glass-1)", border: "1px solid var(--line-1)", borderRadius: "var(--radius-md)" }}>
             <IcSparkle size={16} style={{ color: "var(--fg-2)", flex: "none" }} />
             <input value={idea} onChange={(e) => setIdea(e.target.value)} disabled={drafting}
-              onKeyDown={(e) => { if (e.key === "Enter") draft(); }} aria-label="Ask cowork"
-              placeholder="Ask cowork — describe your film and it'll draft the scenes & shots…"
+              onKeyDown={(e) => { if (e.key === "Enter") draft(); }} aria-label="Ask Otto"
+              placeholder="Ask Otto — describe your film and it'll draft the scenes & shots…"
               style={{ flex: 1, background: "none", border: "none", color: "var(--fg-1)", font: "var(--text-body)", outline: "none", minWidth: 0 }} />
             <Button size="sm" icon={<IcSparkle size={13} />} disabled={drafting || idea.trim().length === 0} onClick={draft}>{drafting ? "Drafting…" : "Draft"}</Button>
           </div>

@@ -21,7 +21,7 @@ interface MentionItem { id: string; name: string; type: EntityDTO["type"]; aka?:
 interface MentionListHandle { onKeyDown: (props: SuggestionKeyDownProps) => boolean }
 
 const HUES: Record<EntityDTO["type"], string> = {
-  CHARACTER: "var(--hue-character)", LOCATION: "var(--hue-location)", PRODUCT: "var(--hue-product)", BRAND: "var(--hue-brand)",
+  CHARACTER: "var(--hue-character)", LOCATION: "var(--hue-location)", PRODUCT: "var(--hue-product)", BRANDMARK: "var(--hue-brand)",
 };
 
 const MentionList = forwardRef<MentionListHandle, SuggestionProps<MentionItem>>(function MentionList(props, ref) {
@@ -167,8 +167,9 @@ export function MentionInput({ entities, initialDoc, docKey, placeholder, disabl
             ...this.parent?.(),
             entityType: {
               default: null,
-              parseHTML: (el: HTMLElement) => el.getAttribute("data-entity-type"),
-              renderHTML: (attrs: Record<string, unknown>) => (attrs.entityType ? { "data-entity-type": attrs.entityType } : {}),
+              // legacy promptDocs stored "BRAND"; the EntityType is now BRANDMARK — normalize in and out
+              parseHTML: (el: HTMLElement) => { const t = el.getAttribute("data-entity-type"); return t === "BRAND" ? "BRANDMARK" : t; },
+              renderHTML: (attrs: Record<string, unknown>) => { const t = attrs.entityType === "BRAND" ? "BRANDMARK" : attrs.entityType; return t ? { "data-entity-type": t } : {}; },
             },
             variantId: {
               default: null,

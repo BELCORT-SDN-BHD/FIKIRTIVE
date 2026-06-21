@@ -160,7 +160,7 @@ export function Cowork({ projectId, entities, threads, brief = "" }: {
       setReplyTo(null);
       setComposerKey((k) => k + 1);
     } catch {
-      setError("Couldn't reach cowork — please try again.");
+      setError("Couldn't reach Otto — please try again.");
     } finally {
       busyRef.current = false;
       setBusy(false);
@@ -304,7 +304,7 @@ export function Cowork({ projectId, entities, threads, brief = "" }: {
       <div className="cw-main">
         <div className="screen">
           <div className="screen-pad">
-            <h1 style={{ font: "var(--text-title)", color: "var(--fg-1)", margin: "10px 0 18px" }}>Cowork</h1>
+            <h1 style={{ font: "var(--text-title)", color: "var(--fg-1)", margin: "10px 0 18px" }}>Otto</h1>
 
             {loadingThread && messages.length === 0 && (
               <p style={{ font: "var(--text-body)", color: "var(--fg-3)", margin: "8px 0" }}>Loading…</p>
@@ -400,7 +400,7 @@ export function Cowork({ projectId, entities, threads, brief = "" }: {
                         const kind = video ? "video" : "image";
                         const canAnimate = isImage && !video && !!gid;
                         const ext = u.split("?")[0].split(".").pop() || "bin";
-                        const filename = `artlio-${(genIds[i] ?? String(i)).slice(0, 8)}.${ext}`;
+                        const filename = `fikirtive-${(genIds[i] ?? String(i)).slice(0, 8)}.${ext}`;
                         return (
                           <figure key={i} className="cw-media">
                             <div className="cw-media-frame">

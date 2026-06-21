@@ -23,7 +23,7 @@ enum EntityType {
   CHARACTER
   LOCATION
   PRODUCT
-  BRAND
+  BRANDMARK
 }
 
 // 镜头状态机（最小四态，design doc 阶段一定义）

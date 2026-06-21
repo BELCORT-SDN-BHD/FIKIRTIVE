@@ -91,7 +91,7 @@ function ProviderCard({ provider, canModal }: { provider: string; canModal: bool
 
   return (
     <section style={{ display: "grid", gap: 12, padding: 16, border: "1px solid var(--line-1)", borderRadius: 12, background: "var(--bg-1)" }}>
-      <h2 style={{ font: "var(--text-title)", color: "var(--fg-1)", margin: 0 }}>Cowork provider</h2>
+      <h2 style={{ font: "var(--text-title)", color: "var(--fg-1)", margin: 0 }}>Otto provider</h2>
       <label style={{ display: "flex", alignItems: "center", gap: 10, font: "var(--text-caption)", color: "var(--fg-2)" }}>
         <span style={{ minWidth: 90 }}>provider</span>
         <select
@@ -119,7 +119,7 @@ export function SettingsAdmin({ vision, provider, canModal }: { vision: Vision; 
       <header style={{ display: "grid", gap: 4 }}>
         <h1 style={{ font: "var(--text-display)", color: "var(--fg-1)", margin: 0 }}>Settings</h1>
         <p style={{ font: "var(--text-body)", color: "var(--fg-3)", margin: 0 }}>
-          Runtime config — takes effect on the next cowork turn (no redeploy).
+          Runtime config — takes effect on the next Otto turn (no redeploy).
         </p>
       </header>
       <VisionCard vision={vision} />

@@ -8,7 +8,7 @@ import { requireOwner } from "@/lib/auth-guard";
 
 export const dynamic = "force-dynamic";
 
-export const metadata = { title: "Editor · Artlio" };
+export const metadata = { title: "Editor · Fikirtive" };
 
 export default async function EditorPage({
   searchParams,
@@ -35,7 +35,7 @@ export default async function EditorPage({
   return (
     <div className="flex flex-col h-dvh">
       <div className="lg:hidden bg-accent-soft text-ink text-sm px-4 py-2 text-center" role="status">
-        Artlio works best on a desktop browser — this view is read-only.
+        Fikirtive works best on a desktop browser — this view is read-only.
       </div>
       <EditorShell
         project={{ id: project.id, name: project.name, coworkBrief: project.coworkBrief ?? null }}

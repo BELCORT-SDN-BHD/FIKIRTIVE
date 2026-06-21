@@ -5,7 +5,7 @@ import { TenantsAdmin } from "@/components/admin/TenantsAdmin";
 
 // reads the DB at request time — never prerender
 export const dynamic = "force-dynamic";
-export const metadata = { title: "Tenants · Artlio admin" };
+export const metadata = { title: "Tenants · Fikirtive admin" };
 
 export default async function TenantsPage() {
   const gate = await requireRole("tenants", "read");

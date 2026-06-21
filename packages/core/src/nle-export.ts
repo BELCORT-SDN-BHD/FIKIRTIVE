@@ -31,7 +31,7 @@ export function editToFcpXml(edit: ArtlioEdit, opts?: { sequenceName?: string })
   const fps = edit.output.fps;
   const res = edit.output.resolution;
   const [width, height] = SIZES[edit.output.aspectRatio]?.[res] ?? [1280, 720];
-  const name = xmlEscape(opts?.sequenceName ?? "Artlio cut");
+  const name = xmlEscape(opts?.sequenceName ?? "Fikirtive cut");
   const sec = (s: number) => Math.round(s * fps); // seconds → frames
 
   const dropped: string[] = [];
@@ -81,8 +81,8 @@ export function editToFcpXml(edit: ArtlioEdit, opts?: { sequenceName?: string })
 
   const comment =
     dropped.length > 0
-      ? `<!-- Artlio FCP7 export (lossy): the following were DROPPED and must be re-created in the NLE: ${dropped.join(", ")}. Re-link media by filename on import. -->`
-      : `<!-- Artlio FCP7 export (lossy interchange). Re-link media by filename on import. -->`;
+      ? `<!-- Fikirtive FCP7 export (lossy): the following were DROPPED and must be re-created in the NLE: ${dropped.join(", ")}. Re-link media by filename on import. -->`
+      : `<!-- Fikirtive FCP7 export (lossy interchange). Re-link media by filename on import. -->`;
 
   return [
     `<?xml version="1.0" encoding="UTF-8"?>`,

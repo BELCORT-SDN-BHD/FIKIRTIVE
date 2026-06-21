@@ -4,7 +4,7 @@ import { getTenantDetail } from "@/lib/tenant-admin";
 import { TenantDetail } from "@/components/admin/TenantDetail";
 
 export const dynamic = "force-dynamic";
-export const metadata = { title: "Tenant · Artlio admin" };
+export const metadata = { title: "Tenant · Fikirtive admin" };
 
 export default async function TenantDetailPage({ params }: { params: Promise<{ orgId: string }> }) {
   const gate = await requireRole("tenants", "read");

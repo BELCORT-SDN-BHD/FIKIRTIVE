@@ -455,14 +455,14 @@ h1, h2, h3 { font-family: var(--font-sans); font-weight: 600; letter-spacing: va
 .mention[data-entity-type="CHARACTER"] { background: color-mix(in srgb, var(--hue-character) 18%, transparent); color: var(--hue-character); }
 .mention[data-entity-type="LOCATION"]  { background: color-mix(in srgb, var(--hue-location) 18%, transparent);  color: var(--hue-location); }
 .mention[data-entity-type="PRODUCT"]   { background: color-mix(in srgb, var(--hue-product) 18%, transparent);   color: var(--hue-product); }
-.mention[data-entity-type="BRAND"]     { background: color-mix(in srgb, var(--hue-brand) 18%, transparent);     color: var(--hue-brand); }
+.mention[data-entity-type="BRANDMARK"] { background: color-mix(in srgb, var(--hue-brand) 18%, transparent);     color: var(--hue-brand); }
 
 /* alias chips: outlined, not filled — labels, not @mentions */
 .alias-chip { border-radius: var(--radius-sm); padding: 0.1rem 0.45rem; font-size: 0.75rem; white-space: nowrap; border: 1px solid; }
 .alias-chip[data-entity-type="CHARACTER"] { border-color: color-mix(in srgb, var(--hue-character) 45%, transparent); color: var(--hue-character); }
 .alias-chip[data-entity-type="LOCATION"]  { border-color: color-mix(in srgb, var(--hue-location) 45%, transparent);  color: var(--hue-location); }
 .alias-chip[data-entity-type="PRODUCT"]   { border-color: color-mix(in srgb, var(--hue-product) 45%, transparent);   color: var(--hue-product); }
-.alias-chip[data-entity-type="BRAND"]     { border-color: color-mix(in srgb, var(--hue-brand) 45%, transparent);     color: var(--hue-brand); }
+.alias-chip[data-entity-type="BRANDMARK"] { border-color: color-mix(in srgb, var(--hue-brand) 45%, transparent);     color: var(--hue-brand); }
 
 /* ── redesign shell additions (Artlio Studio design) ───────────────── */
 .al-avatar {

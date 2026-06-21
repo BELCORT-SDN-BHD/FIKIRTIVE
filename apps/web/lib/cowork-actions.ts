@@ -84,9 +84,9 @@ export async function coworkDraftStoryboard(
   try {
     plan = await runSkill(draftStoryboardSkill, idea, transport);
   } catch (e) {
-    return { error: `Cowork couldn't draft that — ${e instanceof Error ? e.message.slice(0, 140) : "please try again"}.` };
+    return { error: `Otto couldn't draft that — ${e instanceof Error ? e.message.slice(0, 140) : "please try again"}.` };
   }
-  if (!plan.scenes.length) return { error: "Cowork returned an empty plan — try a more specific idea." };
+  if (!plan.scenes.length) return { error: "Otto returned an empty plan — try a more specific idea." };
 
   // Append after existing scenes/numbers (never clobber the user's work), retried
   // on a unique collision (@@unique([projectId, number])): a concurrent "Add

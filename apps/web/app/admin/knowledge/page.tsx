@@ -6,7 +6,7 @@ import { KnowledgeAdmin } from "@/components/admin/KnowledgeAdmin";
 
 // reads the DB at request time — never prerender
 export const dynamic = "force-dynamic";
-export const metadata = { title: "Knowledge · Artlio admin" };
+export const metadata = { title: "Knowledge · Fikirtive admin" };
 
 async function readText(key: string): Promise<string | null> {
   try {

@@ -78,7 +78,7 @@ export function MonoLabel({ children, style }: { children: React.ReactNode; styl
 export function Wordmark() {
   return (
     <span className="wordmark">
-      artlio<span className="wordmark-dot" />
+      fikirtive<span className="wordmark-dot" />
     </span>
   );
 }
@@ -299,8 +299,13 @@ export function MediaCard({
   const ratioClass = ratio === "9:16" ? " al-mediacard-9x16" : ratio === "1:1" ? " al-mediacard-1x1" : "";
   const [imgErrored, setImgErrored] = useState(false);
   // a new src is a fresh image — clear a stale error so a card that once 404'd can
-  // show a valid replacement instead of staying stuck on the glow placeholder.
-  useEffect(() => { setImgErrored(false); }, [src]);
+  // show a valid replacement instead of staying stuck on the glow placeholder. Reset
+  // during render (React's prop-change pattern) rather than in an effect — no extra paint.
+  const [prevSrc, setPrevSrc] = useState(src);
+  if (src !== prevSrc) {
+    setPrevSrc(src);
+    setImgErrored(false);
+  }
   return (
     <div className={`al-mediacard${ratioClass}${selected ? " al-mediacard-sel" : ""}`} style={style} {...rest}>
       <div className="al-mediacard-media">

@@ -6,7 +6,7 @@ import { TeamAdmin, type TeamRow } from "@/components/admin/TeamAdmin";
 
 // reads the DB at request time — never prerender
 export const dynamic = "force-dynamic";
-export const metadata = { title: "Team & access · Artlio admin" };
+export const metadata = { title: "Team & access · Fikirtive admin" };
 
 export default async function TeamPage() {
   // §④ Team & access is super-admin-only (matrix). requireRole audits a denied read.

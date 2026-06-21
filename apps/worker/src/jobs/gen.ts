@@ -288,7 +288,7 @@ export async function handleGen(data: GenJobData, retryCount: number): Promise<v
       // bare mention (no variant) of a CHARACTER whose base refs resolve to zero →
       // terminal-fail BEFORE the paid call, so an unanchored character can't slip
       // through to an unconditioned t2i spend when the (fail-OPEN) guardian faults.
-      // Only CHARACTER must be anchored — LOCATION/PRODUCT/BRAND with 0 refs are an
+      // Only CHARACTER must be anchored — LOCATION/PRODUCT/BRANDMARK with 0 refs are an
       // intended t2i, mirroring castFindings' "character-no-refs" rule.
       if (!variantId && liveEntity.type === "CHARACTER" && found.length === 0) {
         await failClosedWithRefund(job.id, job.ownerId, "a @mentioned character has no base reference image — add one first");

@@ -6,7 +6,7 @@ import { ContentAdmin, type GenRow, type BlockRow } from "@/components/admin/Con
 
 // reads the DB at request time — never prerender
 export const dynamic = "force-dynamic";
-export const metadata = { title: "Content · Artlio admin" };
+export const metadata = { title: "Content · Fikirtive admin" };
 
 // renders Generation.asset → src exactly like getRecentGenResults / getGenerationThumbs
 const VIDEO_EXTS = new Set(["mp4", "mov", "webm", "mkv"]);

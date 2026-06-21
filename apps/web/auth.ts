@@ -53,7 +53,7 @@ export const { handlers, auth, signIn, signOut } = NextAuth({
   adapter: PrismaAdapter(prisma),
   providers: [
     Resend({
-      from: process.env.AUTH_EMAIL_FROM ?? "Artlio <onboarding@resend.dev>",
+      from: process.env.AUTH_EMAIL_FROM ?? "Fikirtive <onboarding@resend.dev>",
       async sendVerificationRequest({ identifier, url, provider }) {
         rateLimit(identifier);
         if (!process.env.RESEND_API_KEY) {
@@ -79,8 +79,8 @@ export const { handlers, auth, signIn, signOut } = NextAuth({
           body: JSON.stringify({
             from: provider.from,
             to: identifier,
-            subject: "Sign in to Artlio",
-            text: `Sign in to Artlio:\n${url}\n\nIf you didn't request this, ignore this email.`,
+            subject: "Sign in to Fikirtive",
+            text: `Sign in to Fikirtive:\n${url}\n\nIf you didn't request this, ignore this email.`,
           }),
         });
         if (!res.ok) {

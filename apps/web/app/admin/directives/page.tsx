@@ -5,7 +5,7 @@ import { listDirectives } from "@/lib/cowork-knowledge";
 import { DirectivesAdmin, type AdminCell } from "@/components/admin/DirectivesAdmin";
 
 export const dynamic = "force-dynamic";
-export const metadata = { title: "Model directives · Artlio admin" };
+export const metadata = { title: "Model directives · Fikirtive admin" };
 
 /**
  * cowork knowledge-base admin (Phase 0B). R7: the page re-asserts auth() + the
@@ -46,7 +46,7 @@ export default async function AdminDirectivesPage() {
       <header style={{ display: "grid", gap: 4 }}>
         <h1 style={{ font: "var(--text-display)", color: "var(--fg-1)", margin: 0 }}>Model directives</h1>
         <p style={{ font: "var(--text-body)", color: "var(--fg-3)", margin: 0 }}>
-          Per-(family × mode) prompt knowledge the cowork skills read. Edit a cell and the next ✨ Enhance reflects it (no redeploy). Seeded cells are research-grade and <strong>untested</strong> — sharpen them as you verify.
+          Per-(family × mode) prompt knowledge the Otto skills read. Edit a cell and the next ✨ Enhance reflects it (no redeploy). Seeded cells are research-grade and <strong>untested</strong> — sharpen them as you verify.
         </p>
       </header>
       <DirectivesAdmin families={[...MODEL_FAMILIES]} modes={[...GEN_MODES]} cells={cells} />

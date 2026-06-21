@@ -3,7 +3,7 @@ import { auth, signIn } from "@/auth";
 
 export const dynamic = "force-dynamic";
 
-export const metadata = { title: "Sign in · Artlio" };
+export const metadata = { title: "Sign in · Fikirtive" };
 
 const ERRORS: Record<string, string> = {
   AccessDenied: "This email isn't on the allowlist.",
@@ -46,7 +46,7 @@ export default async function LoginPage({
     >
       <div className="glass-raised fade-rise" style={{ width: "min(400px, 100%)", padding: 28 }}>
         <span className="wordmark" style={{ marginBottom: 6, display: "inline-flex" }}>
-          artlio<span className="wordmark-dot" />
+          fikirtive<span className="wordmark-dot" />
         </span>
         <p style={{ font: "var(--text-body)", color: "var(--fg-2)", margin: "8px 0 20px" }}>
           {sent

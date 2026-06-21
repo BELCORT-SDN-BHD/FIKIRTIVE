@@ -7,7 +7,7 @@ const body = Hanken_Grotesk({ variable: "--font-body", subsets: ["latin"] });
 const meta = Geist_Mono({ variable: "--font-meta", subsets: ["latin"] });
 
 export const metadata: Metadata = {
-  title: "Artlio",
+  title: "Fikirtive",
   description: "Model-neutral entity asset layer for AI video creators",
 };
 

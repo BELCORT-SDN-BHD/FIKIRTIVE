@@ -7,7 +7,7 @@ import { ModelsAdmin, type ModelRow } from "@/components/admin/ModelsAdmin";
 
 // reads the DB at request time — never prerender
 export const dynamic = "force-dynamic";
-export const metadata = { title: "Models · Artlio admin" };
+export const metadata = { title: "Models · Fikirtive admin" };
 
 export default async function ModelsPage() {
   // §① Model & provider read = viewer/ops (or super-admin). requireRole re-asserts the

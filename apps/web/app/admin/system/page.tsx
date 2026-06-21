@@ -5,7 +5,7 @@ import { SystemAdmin, type StatusCounts, type FailedRow } from "@/components/adm
 
 // reads the DB at request time — never prerender
 export const dynamic = "force-dynamic";
-export const metadata = { title: "System · Artlio admin" };
+export const metadata = { title: "System · Fikirtive admin" };
 
 const DAY_MS = 24 * 60 * 60 * 1000;
 

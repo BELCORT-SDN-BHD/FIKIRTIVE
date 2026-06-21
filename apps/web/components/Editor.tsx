@@ -1263,11 +1263,11 @@ export function Editor({
   function exportXml() {
     const snap = snapshot();
     if (snap.error || !snap.edit) { setNotice({ tone: "warn", text: snap.error ?? "Fix the cut first." }); return; }
-    const xml = editToFcpXml(snap.edit, { sequenceName: "Artlio cut" });
+    const xml = editToFcpXml(snap.edit, { sequenceName: "Fikirtive cut" });
     const blob = new Blob([xml], { type: "application/xml" });
     const url = URL.createObjectURL(blob);
     const a = document.createElement("a");
-    a.href = url; a.download = "artlio-cut.xml";
+    a.href = url; a.download = "fikirtive-cut.xml";
     document.body.appendChild(a); a.click(); a.remove();
     URL.revokeObjectURL(url);
     setNotice({ tone: "ok", text: "Exported FCP7 XML — import into Premiere/Resolve, re-link media by filename." });

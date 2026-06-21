@@ -6,7 +6,7 @@ import { CreditsAdmin, type LedgerRow } from "@/components/admin/CreditsAdmin";
 
 // reads the DB at request time — never prerender
 export const dynamic = "force-dynamic";
-export const metadata = { title: "Credits · Artlio admin" };
+export const metadata = { title: "Credits · Fikirtive admin" };
 
 export default async function CreditsPage() {
   // §⑦ Credits read = finance (or super-admin). requireRole re-asserts the allowlist

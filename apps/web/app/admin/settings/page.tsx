@@ -6,7 +6,7 @@ import { SettingsAdmin } from "@/components/admin/SettingsAdmin";
 
 // reads the DB at request time — never prerender
 export const dynamic = "force-dynamic";
-export const metadata = { title: "Settings · Artlio admin" };
+export const metadata = { title: "Settings · Fikirtive admin" };
 
 export default async function SettingsPage() {
   // §① Model & provider read = viewer/ops (or super-admin). requireRole re-asserts the

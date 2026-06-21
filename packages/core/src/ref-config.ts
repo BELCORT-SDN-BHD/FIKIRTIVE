@@ -3,7 +3,7 @@
  * taxonomy, plus handle slugification. One place to add a future entity type.
  * Pure (no DB / React) so it is unit-tested and reusable by web + worker.
  */
-export type RefEntityType = "CHARACTER" | "LOCATION" | "PRODUCT" | "BRAND";
+export type RefEntityType = "CHARACTER" | "LOCATION" | "PRODUCT" | "BRANDMARK";
 
 export interface VariantChip {
   key: string;
@@ -49,7 +49,7 @@ export const REF_TYPE_CONFIG: Record<RefEntityType, RefTypeConfig> = {
       { key: "packaging", label: "Packaging", scaffold: "with " },
     ],
   },
-  BRAND: {
+  BRANDMARK: {
     baseHint: "One primary logo lockup — the canonical mark.",
     baseShot: (s) => `Primary logo lockup for ${s}, centered on a plain background, crisp edges, consistent visual identity`,
     variantChips: [

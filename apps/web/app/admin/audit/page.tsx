@@ -5,7 +5,7 @@ import { requireRole } from "@/lib/auth-guard";
 import { AuditAdmin, type AuditRow } from "@/components/admin/AuditAdmin";
 
 export const dynamic = "force-dynamic";
-export const metadata = { title: "Audit · Artlio admin" };
+export const metadata = { title: "Audit · Fikirtive admin" };
 
 // the money-gate taxonomy this viewer surfaces (the spend-relevant ActionEvent types)
 const MONEY_GATE_TYPES = [

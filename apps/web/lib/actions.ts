@@ -40,7 +40,7 @@ import { requireOwner } from "./auth-guard";
  *    render inline recovery per the state-grid contract
  */
 
-const ENTITY_TYPES = new Set(["CHARACTER", "LOCATION", "PRODUCT", "BRAND"]);
+const ENTITY_TYPES = new Set(["CHARACTER", "LOCATION", "PRODUCT", "BRANDMARK"]);
 const SHOT_STATUSES = new Set(["DRAFT", "EXPORTED", "ATTACHED", "FINAL"]);
 
 async function logAction(ownerId: string, type: string, projectId: string | null, payload?: object) {

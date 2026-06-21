@@ -4,7 +4,7 @@
  * these shapes; file locations become browser URLs here (DB stores no paths).
  */
 
-export type EntityTypeDTO = "CHARACTER" | "LOCATION" | "PRODUCT" | "BRAND";
+export type EntityTypeDTO = "CHARACTER" | "LOCATION" | "PRODUCT" | "BRANDMARK";
 export type ShotStatusDTO = "DRAFT" | "EXPORTED" | "ATTACHED" | "FINAL";
 
 export interface RefImageDTO {

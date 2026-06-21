@@ -285,7 +285,7 @@ export function GenerateCard({
       setRevise("");
       onRevised(); // parent re-fetches the thread → the re-planned card appears
     } catch {
-      setReviseError("Couldn't reach cowork — please try again.");
+      setReviseError("Couldn't reach Otto — please try again.");
     } finally {
       reviseBusyRef.current = false;
       setReviseBusy(false);

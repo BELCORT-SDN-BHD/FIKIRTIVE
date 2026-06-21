@@ -22,7 +22,7 @@ function userBadge(name: string | null | undefined, email: string | null | undef
 }
 
 export const dynamic = "force-dynamic";
-export const metadata = { title: "Studio · Artlio" };
+export const metadata = { title: "Studio · Fikirtive" };
 
 const VIDEO_EXTS = new Set(["mp4", "mov", "webm", "mkv"]);
 const IMAGE_EXTS = new Set(["png", "jpg", "jpeg", "webp", "gif", "avif"]);
