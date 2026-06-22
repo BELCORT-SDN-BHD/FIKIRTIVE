@@ -1,4 +1,4 @@
-import { auth, allowed } from "@/auth";
+import { auth, allowed, isFounderAdmin } from "@/auth";
 import { redirect } from "next/navigation";
 import Link from "next/link";
 
@@ -26,6 +26,12 @@ const NAV = [
 export default async function AdminLayout({ children }: { children: React.ReactNode }) {
   const session = await auth();
   if (!(await allowed(session?.user?.email))) redirect("/login");
+  // Closed-beta: /admin is founder-only. The allowlist (allowed()) admits every beta
+  // merchant, and the default User.role is "viewer" — which SECTION_MATRIX grants read on
+  // model/system/knowledge. Without this gate a merchant could open /admin/system and see
+  // platform-wide spend + every org's queue. Lock to the founder until real staff roles
+  // are provisioned; expand to a staff check (founder-org membership) when that happens.
+  if (!isFounderAdmin(session?.user?.email)) redirect("/");
   return (
     <div className="admin-shell">
       <nav className="admin-nav">
