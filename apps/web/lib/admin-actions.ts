@@ -122,7 +122,10 @@ export async function saveRuntimeConfig(raw: unknown): Promise<{ ok: true } | { 
   } catch {
     return { error: "Couldn't save the setting — please try again." };
   }
+  // saveRuntimeConfig backs both surfaces (settings: vision/provider; knowledge: planner prompt),
+  // so revalidate both — otherwise a save from /admin/knowledge only busted /admin/settings.
   revalidatePath("/admin/settings");
+  revalidatePath("/admin/knowledge");
   return { ok: true };
 }
 
