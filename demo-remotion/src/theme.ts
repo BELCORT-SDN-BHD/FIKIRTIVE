@@ -1,4 +1,4 @@
-// Artlio design tokens (mirrored from apps/web/app/globals.css) so the brand /
+// Fikirtive design tokens (mirrored from apps/web/app/globals.css) so the brand /
 // title / caption scenes match the real product exactly.
 export const T = {
   bg0: "#0a0c10",

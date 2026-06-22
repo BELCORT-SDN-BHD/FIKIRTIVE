@@ -53,7 +53,7 @@ const Walkthrough: React.FC = () => (
     </Sequence>
 
     <Sequence from={s(SCENES.close.from)} durationInFrames={s(SCENES.close.dur)}>
-      <Intro tagline="Your entities. Every model. One film." sub="Artlio" />
+      <Intro tagline="Your entities. Every model. One film." sub="Fikirtive" />
     </Sequence>
   </AbsoluteFill>
 );

@@ -61,8 +61,14 @@ export function toChatMessageDTO(
   } else if (m.kind === "GEN_RESULT") {
     const p = (m.payload ?? {}) as { kind?: string; model?: string };
     const resolved = m.genJobId ? urlsByJob.get(m.genJobId) : undefined;
+    // kind is always written by the worker (gen.ts); a missing/invalid value signals payload
+    // corruption — surface it instead of silently coercing (e.g. a video result → "image").
+    const kind: "image" | "video" = p.kind === "video" || p.kind === "image" ? p.kind : "image";
+    if (p.kind !== "image" && p.kind !== "video") {
+      console.warn(`dto GEN_RESULT: invalid kind=${JSON.stringify(p.kind)} genJobId=${m.genJobId ?? "?"} → defaulting to image`);
+    }
     payload = {
-      kind: p.kind ?? "image",
+      kind,
       model: p.model ?? "",
       urls: resolved?.urls ?? [],
       generationIds: resolved?.generationIds ?? [], // "Animate this result" → i2v source-frame

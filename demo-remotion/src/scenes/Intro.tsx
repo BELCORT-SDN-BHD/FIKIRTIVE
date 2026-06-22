@@ -1,7 +1,7 @@
 import { AbsoluteFill, interpolate, spring, useCurrentFrame, useVideoConfig } from "remotion";
 import { T } from "../theme";
 
-/** Brand promise scene: the Artlio wordmark + tagline, calm confident reveal. */
+/** Brand promise scene: the Fikirtive wordmark + tagline, calm confident reveal. */
 export const Intro: React.FC<{ tagline?: string; sub?: string }> = ({
   tagline = "The entity layer for AI video.",
   sub = "Lock your characters, places and products once — reference them across every model.",
@@ -35,7 +35,7 @@ export const Intro: React.FC<{ tagline?: string; sub?: string }> = ({
             textShadow: `0 0 ${40 * glow}px rgba(246,247,249,${0.22 * glow})`,
           }}
         >
-          Artlio
+          Fikirtive
         </div>
         <div
           style={{
