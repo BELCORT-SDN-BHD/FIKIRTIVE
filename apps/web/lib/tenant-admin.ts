@@ -78,12 +78,18 @@ export async function listTenants(): Promise<{ tenants: TenantRow[]; invited: In
     };
   });
 
-  const invited: InvitedRow[] = invitedRows.map((r) => ({
-    email: r.email,
-    status: r.status,
-    invitedBy: r.invitedBy,
-    createdAt: r.createdAt.toISOString(),
-  }));
+  // Once a merchant signs in they own a tenant org (above). Their AllowedEmail row stays
+  // 'invited' (sign-in doesn't flip it), so drop already-active emails from the invite list
+  // — otherwise a signed-in merchant lingers under "Invited (not yet signed in)".
+  const activeEmails = new Set(tenants.map((t) => t.ownerEmail.toLowerCase()).filter(Boolean));
+  const invited: InvitedRow[] = invitedRows
+    .filter((r) => !activeEmails.has(r.email.toLowerCase()))
+    .map((r) => ({
+      email: r.email,
+      status: r.status,
+      invitedBy: r.invitedBy,
+      createdAt: r.createdAt.toISOString(),
+    }));
 
   return { tenants, invited };
 }
