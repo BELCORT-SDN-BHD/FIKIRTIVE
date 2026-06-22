@@ -407,3 +407,29 @@ it("turn budget = maxSteps * floor", () => {
 - `withLlmBudget` (1.7) is the single chokepoint for "no paid-LLM bypass" — every new LLM call in the future must go through it; add a lint/grep CI check if practical.
 - The `generate` tool must NEVER import the fal provider or `reserveCredits` directly (1.5) — only `startGen`. A reviewer should reject any such shortcut.
 - Mock provider must cover the Otto model too (local QA = zero spend) — confirm the SDK can be pointed at a fake model in test (a stub `LanguageModel`), or gate Otto behind the mock in the test harness (Task 1.10).
+
+---
+
+## Phase 0 results — GO (run 2026-06-22, throwaway `/tmp/otto-spike`, live Sonnet calls)
+
+**Verdict: GO.** All critical unknowns resolved; the one "negative" finding (SDK is not exactly-once) is exactly what the design already accounts for.
+
+**Verified versions (Node ≥22; tested on v23):** `@openai/agents@0.11.8`, `@openai/agents-extensions@0.11.8`, `@ai-sdk/anthropic@3.0.85`, `ai@6.0.208`, `zod@4.4.3`. These satisfy the adapter's peer deps (`ai ^6`, `@ai-sdk/provider ^2||^3`, `zod ^4`).
+
+**0.1 (adapter + usage) — GO, with corrections:**
+- **Adapter import path is `@openai/agents-extensions/ai-sdk` (subpath), export `aisdk`** — NOT top-level `@openai/agents-extensions`, NOT `aisdk(...)` from the package root. Wiring: `import { Agent, run, tool, RunState } from "@openai/agents"; import { aisdk } from "@openai/agents-extensions/ai-sdk"; import { anthropic } from "@ai-sdk/anthropic"; const model = aisdk(anthropic("claude-sonnet-4-6"));`
+- **Per-call usage IS exposed:** `result.state.usage` (aggregate) carries `inputTokens`/`outputTokens`/`totalTokens` PLUS `requestUsageEntries[]` (per-model-call) AND `inputTokensDetails.{cached_tokens,cache_write_tokens}`. → §6 `settle actual` reads `result.state.usage.requestUsageEntries`; cache-aware settlement is possible (charge cached input at the ~0.1× rate). `result.context.usage` was null — use `result.state.usage`.
+
+**0.2 (RunState pause / rehydrate / single-use) — GO, confirms the design:**
+- `needsApproval: true` parks the turn as a `RunToolApprovalItem`; **the tool does NOT execute before approval** (verified: `exec.log` empty at park). This is the structural propose-only guarantee.
+- `RunState`: serialize via `state.toString()` (~12KB, contains `$schemaVersion`), rehydrate via `await RunState.fromString(agent, str)`; approve via `state.getInterruptions()` → `state.approve(it)` → `run(agent, state)`.
+- **Cross-process rehydrate + approve + run works** (fresh process resumed and executed once) → worker auto-resume (§8) is viable; the worker imports `@artlio/otto` and runs `run(agent, RunState.fromString(...))`.
+- ⚠️ **The SDK is NOT exactly-once:** replaying the SAME saved pre-approval state in two fresh processes executed the tool TWICE. → Exactly-once MUST come from our DB layer, never the SDK approval. Confirms guardrail #3 / Option 1: GEN spend stays a server action behind the all-status `cowork:<cardId>` index; Otto-LLM reserve keyed on a stable per-turn `refId` (DB unique). The plan already assumes this — no change, but it is now empirically load-bearing, not theoretical.
+
+**0.3 (worker resume) — GO:** a plain Node process (no web globals) imported the agent and ran a turn from a serialized `RunState`. The worker can host the §8 auto-resume.
+
+**0.4 (variable settle) — GO (code-verified, build in Phase 1 Task 1.3):** `credits.ts` exposes `reserveCredits` (atomic conditional decrement `WHERE balance >= cost`), `settleCredits`, `refundReservation`; `CreditTxnKind = GRANT/RESERVE/SETTLE/REFUND/ADJUST`; finalizer `(orgId,refId,kind)` unique. Variable settle (settle ≤ reserved + release remainder, idempotent on `(orgId,refId)`) is implementable by reusing SETTLE + an atomic release update — **no new enum** (confirmed by the Codex review against the file).
+
+**Deployment gotcha to bake into Phase 2:** `@ai-sdk/anthropic` reads `ANTHROPIC_BASE_URL` and appends `/messages`. The Claude Code dev environment sets `ANTHROPIC_BASE_URL=https://api.anthropic.com` (no `/v1`), which 404s. On Railway, **leave `ANTHROPIC_BASE_URL` unset** (provider defaults to `https://api.anthropic.com/v1`) or set it WITH `/v1`. The local QA stack / dev shell must override it the same way the spike did.
+
+**Cost note (corrects the earlier calculator):** real Opus 4.8 = $5 in / $25 out per 1M (cached input ~$0.50/1M); Sonnet 4.6 = $3/$15. The §6 floor formula should pull these from the model registry and apply the cache-read rate to the cached portion of the input — Otto's stable prefix (instructions + brief + refs) should sit in the cached span.
