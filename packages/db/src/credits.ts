@@ -44,30 +44,43 @@ export async function reserveCredits(tx: Tx, args: { orgId: string; refId: strin
   });
 }
 
-/** SETTLE the held charge for a successfully-committed job: release the hold (the balance
- *  was already decremented at reserve, so net total drops by the reserved amount). MUST run
- *  in the worker's commit $transaction. The release amount is read FROM THE RESERVE ROW
- *  (reservedDelta), never recomputed — so settle == reserve by construction, immune to any
- *  pricing-code drift while a job is in flight. Safe no-op if no RESERVE exists (a job
- *  created before credits). Mutual exclusion with REFUND + double-settle idempotency are
- *  BOTH enforced by DB unique indexes (CreditLedger_finalizer_once on (orgId,refId) WHERE
- *  kind IN (SETTLE,REFUND), and the (orgId,idempotencyKey) unique): the losing/duplicate
- *  finalizer's insert hits P2002 and no-ops BEFORE any account mutation. */
-export async function settleCredits(tx: Tx, args: { orgId: string; refId: string }): Promise<void> {
-  const { orgId, refId } = args;
+/** SETTLE the held charge for a successfully-committed job. MUST run in the worker's commit
+ *  $transaction. The held amount B is read FROM THE RESERVE ROW (reservedDelta), never
+ *  recomputed — immune to pricing-code drift while a job is in flight.
+ *
+ *  When `actualInternal` is omitted (GEN path): A = B, so `balanceDelta = 0` and
+ *  `balance increment = 0` — byte-identical net effect to the original settleCredits.
+ *  When `actualInternal` is supplied (Otto-LLM settle): A = clamp(trunc(actualInternal), 0, B),
+ *  `balanceDelta = B - A` (the unspent portion is refunded back to balance),
+ *  `reservedDelta = -B` (the whole hold is cleared). This lets the post-call token cost be
+ *  less than the reserved turn budget while keeping every ledger invariant intact.
+ *
+ *  Safe no-op if no RESERVE exists (pre-credits job). Mutual exclusion with REFUND +
+ *  double-settle idempotency are BOTH enforced by DB unique indexes
+ *  (CreditLedger_finalizer_once on (orgId,refId) WHERE kind IN (SETTLE,REFUND), and the
+ *  (orgId,idempotencyKey) unique): the losing/duplicate finalizer's insert hits P2002 and
+ *  no-ops BEFORE any account mutation.
+ *
+ *  Invariants preserved: balance == Σ balanceDelta, reserved == Σ reservedDelta (per org).
+ *  Never charges more than reserved; never drives balance or reserved negative. */
+export async function settleCredits(tx: Tx, args: { orgId: string; refId: string; actualInternal?: number }): Promise<void> {
+  const { orgId, refId, actualInternal } = args;
   const reserve = await tx.creditLedger.findFirst({ where: { orgId, refId, kind: "RESERVE" }, select: { reservedDelta: true } });
   if (!reserve) return; // no reservation (historical/pre-credits job) → nothing to settle
-  const amount = reserve.reservedDelta; // the exact held amount (+cost); release == reserve, always
+  const B = reserve.reservedDelta; // the exact held amount (+cost)
+  // A = actual charge; clamp to [0, B] so we never charge more than reserved and never go negative.
+  const A = actualInternal === undefined ? B : Math.min(Math.max(0, Math.trunc(actualInternal)), B);
   // createMany(skipDuplicates) = INSERT … ON CONFLICT DO NOTHING — NOT try/catch: a caught
   // unique-violation would still leave the WHOLE Postgres transaction aborted, silently rolling
   // back the caller's job-status write (e.g. the resume DONE update). count===0 ⇒ already settled
   // (resume) OR a REFUND won the finalizer race ⇒ no-op, no account change.
   const { count } = await tx.creditLedger.createMany({
-    data: [{ id: randomUUID(), orgId, balanceDelta: 0, reservedDelta: -amount, kind: "SETTLE", source: "SYSTEM", refId, idempotencyKey: `settle:${refId}` }],
+    data: [{ id: randomUUID(), orgId, balanceDelta: B - A, reservedDelta: -B, kind: "SETTLE", source: "SYSTEM", refId, idempotencyKey: `settle:${refId}` }],
     skipDuplicates: true,
   });
   if (count === 0) return;
-  await tx.creditAccount.update({ where: { orgId }, data: { reserved: { decrement: amount } } });
+  // balance += (B - A): the unspent portion is refunded; reserved -= B: the full hold is cleared.
+  await tx.creditAccount.update({ where: { orgId }, data: { balance: { increment: B - A }, reserved: { decrement: B } } });
 }
 
 /** REFUND a reservation on terminal failure: full release (balance restored, hold cleared)
