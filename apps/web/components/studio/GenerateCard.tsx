@@ -23,6 +23,7 @@ export function GenerateCard({
   threadId,
   projectId,
   onRevised,
+  simple = false,
 }: {
   cardId: string;
   payload: unknown;
@@ -34,6 +35,9 @@ export function GenerateCard({
   threadId: string;
   projectId: string;
   onRevised: () => void;
+  /** Simple mode: hide model picker + param pills. The card keeps its persisted model
+   *  and params (set by suggestModel in coworkTurn) but doesn't expose them to the user. */
+  simple?: boolean;
 }) {
   const p = (payload ?? {}) as {
     kind?: "image" | "video";
@@ -319,35 +323,39 @@ export function GenerateCard({
 
   return (
     <div className="cw-card cw-card-gen">
-      {/* Header: model picker + live display-only price + downgrade note */}
-      <div className="cw-card-head">
-        <label className="cw-ctrl">
-          <span className="cw-ctrl-label">Model</span>
-          <select
-            className="cw-select cw-card-model-select"
-            value={model}
-            disabled={busy || generated}
-            onChange={(e) => chooseModel(e.target.value)}
-          >
-            {modelMenu.map((m) => (
-              <option key={m} value={m}>
-                {modelLabel(m)} · ~${modelDefaultPrice(m).toFixed(2)}
-              </option>
-            ))}
-          </select>
-        </label>
-        <span className="cw-card-price">{Number.isFinite(price) ? `~$${price.toFixed(2)}` : "—"}</span>
-        {p.downgraded && (
-          <span className="cw-card-note" title={p.reason ?? ""}>
-            adjusted
-          </span>
-        )}
-      </div>
+      {/* Header: model picker + live display-only price + downgrade note.
+          Hidden in simple mode — the persisted model (from suggestModel) runs unchanged. */}
+      {!simple && (
+        <div className="cw-card-head">
+          <label className="cw-ctrl">
+            <span className="cw-ctrl-label">Model</span>
+            <select
+              className="cw-select cw-card-model-select"
+              value={model}
+              disabled={busy || generated}
+              onChange={(e) => chooseModel(e.target.value)}
+            >
+              {modelMenu.map((m) => (
+                <option key={m} value={m}>
+                  {modelLabel(m)} · ~${modelDefaultPrice(m).toFixed(2)}
+                </option>
+              ))}
+            </select>
+          </label>
+          <span className="cw-card-price">{Number.isFinite(price) ? `~$${price.toFixed(2)}` : "—"}</span>
+          {p.downgraded && (
+            <span className="cw-card-note" title={p.reason ?? ""}>
+              adjusted
+            </span>
+          )}
+        </div>
+      )}
 
-      {/* Param pills (video only) — each sourced from the CHOSEN model's option set, so only
-          valid values are offered (mirrors genRequest.superRefine; the server re-validates).
-          A control with an empty option list is hidden (the model doesn't expose it). */}
-      {isVideo && opts && (
+      {/* Param pills (video only) — hidden in simple mode (persisted params from coworkTurn run unchanged).
+          In power-user mode: each sourced from the CHOSEN model's option set, so only valid values are
+          offered (mirrors genRequest.superRefine; the server re-validates). A control with an empty option
+          list is hidden (the model doesn't expose it). */}
+      {!simple && isVideo && opts && (
         <div className="cw-card-pills">
           {opts.aspectRatios.length > 0 && (
             <label className="cw-ctrl">
@@ -524,10 +532,13 @@ export function GenerateCard({
                       <img src={u} alt="" className="cw-card-result-img" />
                     </button>
                   )}
-                  <figcaption className="cw-media-cap">
-                    {modelLabel(model) || kind}
-                    {Number.isFinite(price) && <span className="cw-media-cap-price"> · ~${price.toFixed(2)}</span>}
-                  </figcaption>
+                  {/* Model id + raw cost are studio-only; the merchant surface hides them. */}
+                  {!simple && (
+                    <figcaption className="cw-media-cap">
+                      {modelLabel(model) || kind}
+                      {Number.isFinite(price) && <span className="cw-media-cap-price"> · ~${price.toFixed(2)}</span>}
+                    </figcaption>
+                  )}
                 </figure>
               );
             })}

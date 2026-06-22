@@ -1,5 +1,5 @@
 "use client";
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { coworkTurn, coworkRenameThread, coworkDeleteThread, setCoworkBrief } from "@/lib/cowork-actions";
 import { uploadReference } from "@/lib/actions";
 import { getCoworkThreadClient } from "@/lib/cowork-fetch";
@@ -8,6 +8,7 @@ import { Lightbox } from "@/components/Lightbox";
 import { IcPlus, Dialog, Button } from "@/components/ds";
 import { GEN_PRICE_USD_PER_IMAGE, videoPriceUsd, videoDefaults, GEN_VIDEO_MODELS, type GenVideoModel } from "@artlio/core";
 import { GenerateCard } from "./GenerateCard";
+import { PostedResult } from "./PostedResult";
 import type { EntityDTO, ChatThreadDTO } from "@/lib/types";
 
 const isVideoUrl = (u: string) => /\.(mp4|webm|mov|mkv)(\?|$)/i.test(u); // mirrors GenSpace
@@ -25,12 +26,18 @@ function resultPriceUsd(kind: string, model: string): number | null {
   return GEN_PRICE_USD_PER_IMAGE;
 }
 
-export function Cowork({ projectId, entities, threads, brief = "" }: {
+export function Cowork({ projectId, entities, threads, brief = "", simple = false, recordedOutcomes = [] }: {
   projectId: string;
   entities: EntityDTO[];
   threads: ChatThreadDTO[];
   brief?: string;
+  /** Simple mode: hide the thread rail, project brief button, and PLAN messages.
+   *  Shows only the chat + generate cards + media results + Animate. */
+  simple?: boolean;
+  /** generationIds already answered (simple mode) — their capture control shows "logged". */
+  recordedOutcomes?: string[];
 }) {
+  const recordedSet = useMemo(() => new Set(recordedOutcomes), [recordedOutcomes]);
   // chatbox sessions: the thread list is metadata-only (newest-first); each thread's
   // messages lazy-load on select (scale audit 2026-06-20). The server eager-loaded the
   // most-recent thread (threads[0]) so it opens with content; the rest fetch on demand.
@@ -232,86 +239,93 @@ export function Cowork({ projectId, entities, threads, brief = "" }: {
   }
 
   return (
-    <div className="cw-shell">
-      <aside className="cw-rail">
-        <button className="cw-rail-new" onClick={newChat}>
-          <IcPlus size={15} /> New chat
-        </button>
-        <button
-          className="al-iconbtn al-iconbtn-sm"
-          title="Project brief"
-          aria-label="Edit project brief"
-          style={{ display: "flex", alignItems: "center", gap: 5, width: "100%", justifyContent: "flex-start", padding: "4px 8px", font: "var(--text-small)", color: "var(--fg-3)", borderRadius: 6, margin: "4px 0 0" }}
-          onClick={() => { setBriefText(briefText); setBriefErr(null); setBriefOpen(true); }}
-        >
-          <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.75" strokeLinecap="round" strokeLinejoin="round" aria-hidden><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/><line x1="16" y1="13" x2="8" y2="13"/><line x1="16" y1="17" x2="8" y2="17"/><polyline points="10 9 9 9 8 9"/></svg>
-          Project brief{briefText ? " ·" : ""}
-        </button>
-        <div className="cw-rail-list">
-          {list.map((t) => (
-            <div
-              key={t.id}
-              className={`cw-rail-item${t.id === activeId ? " cw-rail-item-active" : ""}`}
-              onClick={() => selectThread(t.id)}
-            >
-              {renamingId === t.id ? (
-                <input
-                  className="cw-rail-rename"
-                  autoFocus
-                  value={renameText}
-                  onChange={(e) => setRenameText(e.target.value)}
-                  onClick={(e) => e.stopPropagation()}
-                  onBlur={() => commitRename(t.id)}
-                  onKeyDown={(e) => {
-                    if (e.key === "Enter") { e.preventDefault(); commitRename(t.id); }
-                    if (e.key === "Escape") { e.preventDefault(); setRenamingId(null); }
-                  }}
-                />
-              ) : (
-                <>
-                  <span
-                    className="cw-rail-title"
-                    onDoubleClick={(e) => { e.stopPropagation(); startRename(t.id, t.title); }}
-                    title={t.title}
-                  >
-                    {t.title}
-                  </span>
-                  <span className="cw-rail-actions">
-                    <button
-                      className="al-iconbtn al-iconbtn-sm"
-                      aria-label="Rename conversation"
-                      title="Rename"
-                      onClick={(e) => { e.stopPropagation(); startRename(t.id, t.title); }}
+    <div className={simple ? "cw-shell cw-shell-simple" : "cw-shell"}>
+      {/* Thread rail — hidden in simple mode (single-thread merchant surface) */}
+      {!simple && (
+        <aside className="cw-rail">
+          <button className="cw-rail-new" onClick={newChat}>
+            <IcPlus size={15} /> New chat
+          </button>
+          <button
+            className="al-iconbtn al-iconbtn-sm"
+            title="Project brief"
+            aria-label="Edit project brief"
+            style={{ display: "flex", alignItems: "center", gap: 5, width: "100%", justifyContent: "flex-start", padding: "4px 8px", font: "var(--text-small)", color: "var(--fg-3)", borderRadius: 6, margin: "4px 0 0" }}
+            onClick={() => { setBriefText(briefText); setBriefErr(null); setBriefOpen(true); }}
+          >
+            <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.75" strokeLinecap="round" strokeLinejoin="round" aria-hidden><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/><line x1="16" y1="13" x2="8" y2="13"/><line x1="16" y1="17" x2="8" y2="17"/><polyline points="10 9 9 9 8 9"/></svg>
+            Project brief{briefText ? " ·" : ""}
+          </button>
+          <div className="cw-rail-list">
+            {list.map((t) => (
+              <div
+                key={t.id}
+                className={`cw-rail-item${t.id === activeId ? " cw-rail-item-active" : ""}`}
+                onClick={() => selectThread(t.id)}
+              >
+                {renamingId === t.id ? (
+                  <input
+                    className="cw-rail-rename"
+                    autoFocus
+                    value={renameText}
+                    onChange={(e) => setRenameText(e.target.value)}
+                    onClick={(e) => e.stopPropagation()}
+                    onBlur={() => commitRename(t.id)}
+                    onKeyDown={(e) => {
+                      if (e.key === "Enter") { e.preventDefault(); commitRename(t.id); }
+                      if (e.key === "Escape") { e.preventDefault(); setRenamingId(null); }
+                    }}
+                  />
+                ) : (
+                  <>
+                    <span
+                      className="cw-rail-title"
+                      onDoubleClick={(e) => { e.stopPropagation(); startRename(t.id, t.title); }}
+                      title={t.title}
                     >
-                      <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.75" strokeLinecap="round" strokeLinejoin="round" aria-hidden><path d="M12 20h9" /><path d="M16.5 3.5a2.12 2.12 0 0 1 3 3L7 19l-4 1 1-4Z" /></svg>
-                    </button>
-                    <button
-                      className="al-iconbtn al-iconbtn-sm"
-                      aria-label="Delete conversation"
-                      title="Delete"
-                      onClick={(e) => { e.stopPropagation(); setPendingDelete({ id: t.id, title: t.title }); }}
-                    >
-                      <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.75" strokeLinecap="round" strokeLinejoin="round" aria-hidden><path d="M3 6h18" /><path d="M8 6V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2" /><path d="M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6" /></svg>
-                    </button>
-                  </span>
-                </>
-              )}
-            </div>
-          ))}
-        </div>
-      </aside>
+                      {t.title}
+                    </span>
+                    <span className="cw-rail-actions">
+                      <button
+                        className="al-iconbtn al-iconbtn-sm"
+                        aria-label="Rename conversation"
+                        title="Rename"
+                        onClick={(e) => { e.stopPropagation(); startRename(t.id, t.title); }}
+                      >
+                        <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.75" strokeLinecap="round" strokeLinejoin="round" aria-hidden><path d="M12 20h9" /><path d="M16.5 3.5a2.12 2.12 0 0 1 3 3L7 19l-4 1 1-4Z" /></svg>
+                      </button>
+                      <button
+                        className="al-iconbtn al-iconbtn-sm"
+                        aria-label="Delete conversation"
+                        title="Delete"
+                        onClick={(e) => { e.stopPropagation(); setPendingDelete({ id: t.id, title: t.title }); }}
+                      >
+                        <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.75" strokeLinecap="round" strokeLinejoin="round" aria-hidden><path d="M3 6h18" /><path d="M8 6V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2" /><path d="M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6" /></svg>
+                      </button>
+                    </span>
+                  </>
+                )}
+              </div>
+            ))}
+          </div>
+        </aside>
+      )}
 
       <div className="cw-main">
         <div className="screen">
           <div className="screen-pad">
-            <h1 style={{ font: "var(--text-title)", color: "var(--fg-1)", margin: "10px 0 18px" }}>Otto</h1>
+            <h1 style={{ font: "var(--text-title)", color: "var(--fg-1)", margin: "10px 0 18px" }}>
+            {simple ? "Make a video" : "Otto"}
+          </h1>
 
             {loadingThread && messages.length === 0 && (
               <p style={{ font: "var(--text-body)", color: "var(--fg-3)", margin: "8px 0" }}>Loading…</p>
             )}
             {messages.length === 0 && !busy && !loadingThread && (
               <p style={{ font: "var(--text-body)", color: "var(--fg-3)", margin: "8px 0" }}>
-                Describe what you&apos;d like to create and hit Send.
+                {simple
+                  ? "Upload a product photo or @mention a brand element, then describe the video you want."
+                  : "Describe what you’d like to create and hit Send."}
               </p>
             )}
 
@@ -345,6 +359,8 @@ export function Cowork({ projectId, entities, threads, brief = "" }: {
                 );
               }
               if (m.kind === "PLAN") {
+                // Hidden in simple mode — internal planning steps are not merchant-relevant.
+                if (simple) return null;
                 const steps = (m.payload as { planSteps?: string[] } | null)?.planSteps ?? [];
                 if (!steps.length) return null;
                 // planSteps are the agent's INTERNAL reasoning — keep them available for
@@ -375,6 +391,7 @@ export function Cowork({ projectId, entities, threads, brief = "" }: {
                         threadId={active!.id}
                         projectId={projectId}
                         onRevised={() => { if (active) refreshThread(active.id); }}
+                        simple={simple}
                       />
                     </div>
                     {replyBtn}
@@ -441,13 +458,17 @@ export function Cowork({ projectId, entities, threads, brief = "" }: {
                                 </button>
                               )}
                             </div>
-                            <figcaption className="cw-media-cap">
-                              {model || kind}
-                              {price != null && <span className="cw-media-cap-price"> · ~${price.toFixed(2)}</span>}
-                            </figcaption>
+                            {/* Model id + raw cost are studio-only; the merchant surface hides them. */}
+                            {!simple && (
+                              <figcaption className="cw-media-cap">
+                                {model || kind}
+                                {price != null && <span className="cw-media-cap-price"> · ~${price.toFixed(2)}</span>}
+                              </figcaption>
+                            )}
                           </figure>
                         );
                       })}
+                      {simple && genIds[0] && <PostedResult generationId={genIds[0]} recorded={recordedSet.has(genIds[0])} />}
                     </div>
                     {replyBtn}
                   </div>

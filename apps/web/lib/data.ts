@@ -1,6 +1,7 @@
 import "server-only";
 import { prisma } from "@artlio/db";
 import { newId, storageKey, storageKeyToSrc } from "@artlio/core";
+import { requireOwner } from "./auth-guard";
 
 const THUMB_VIDEO_EXTS = new Set(["mp4", "mov", "webm", "mkv"]);
 /** Resolve generation ids → { src, kind } thumbnails (segment frame slots). */
@@ -241,4 +242,31 @@ export async function resolveCoworkResultUrls(
     });
   }
   return map;
+}
+
+export async function getRecentOutcomes() {
+  const gate = await requireOwner(); if ("error" in gate) return [];
+  const { ownerId } = gate;
+  const rows = await prisma.actionEvent.findMany({
+    where: { ownerId, type: "generation.outcome" }, orderBy: { createdAt: "desc" }, take: 50,
+  });
+  return rows.map((r) => {
+    const p = (r.payload ?? {}) as { generationId?: string; posted?: boolean; result?: string };
+    return { generationId: p.generationId ?? "", posted: !!p.posted, result: p.result ?? "", at: r.createdAt.toISOString() };
+  });
+}
+
+/** generationIds this owner has already recorded an outcome for — so Simple Mode shows
+ *  "logged" instead of re-prompting (and re-appending a conflicting outcome) on results
+ *  that were already answered in a past session. */
+export async function getRecordedOutcomeGenerationIds(ownerId: string): Promise<string[]> {
+  const rows = await prisma.actionEvent.findMany({
+    where: { ownerId, type: "generation.outcome" }, select: { payload: true },
+  });
+  const ids = new Set<string>();
+  for (const r of rows) {
+    const gid = (r.payload as { generationId?: string } | null)?.generationId;
+    if (gid) ids.add(gid);
+  }
+  return [...ids];
 }

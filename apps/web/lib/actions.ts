@@ -83,6 +83,26 @@ function assetUpsert(ownerId: string, ingested: Awaited<ReturnType<typeof ingest
 
 // ---------- projects ----------
 
+/** Idempotent: returns the owner's oldest non-deleted project, or creates one named
+ *  "My Videos" if none exist. Used by the /m (Simple Mode) route. Never throws — the
+ *  caller surfaces any auth failure via the {error} contract. */
+export async function getOrCreateDefaultProject(): Promise<{ id: string } | { error: string }> {
+  const gate = await requireOwner(); if ("error" in gate) return gate;
+  const { ownerId } = gate;
+  const existing = await prisma.project.findFirst({
+    where: { ownerId, deletedAt: null },
+    orderBy: { createdAt: "asc" },
+    select: { id: true },
+  });
+  if (existing) return { id: existing.id };
+  const project = await prisma.project.create({
+    data: { id: newId(), ownerId, name: "My Videos" },
+  });
+  await logAction(ownerId, "project.create", project.id, { name: project.name, via: "simple-mode" });
+  revalidatePath("/", "layout");
+  return { id: project.id };
+}
+
 export async function createProject(name: string) {
   const gate = await requireOwner(); if ("error" in gate) throw new Error(gate.error);
   const { ownerId } = gate;
@@ -926,4 +946,19 @@ export async function loadMoreMedia(projectId: string, cursor?: string | null): 
   if ("error" in owner) return { error: owner.error };
   if (typeof projectId !== "string" || !projectId) return { error: "Invalid request." };
   return getMediaPage(owner.ownerId, projectId, cursor ?? null);
+}
+
+/** Append-only performance signal on a generated video. Generation is immutable
+ *  (whitelist only) → record via ActionEvent. Read back by agent / Brand Brain. */
+export async function recordGenerationOutcome(generationId: string, posted: boolean, result: string) {
+  const gate = await requireOwner(); if ("error" in gate) return gate;
+  const { ownerId } = gate;
+  const clean = result.trim().slice(0, 280);
+  const gen = await prisma.generation.findFirst({
+    where: { id: generationId, ownerId, deletedAt: null }, select: { id: true, projectId: true },
+  });
+  if (!gen) return { error: "Generation not found." };
+  await logAction(ownerId, "generation.outcome", gen.projectId, { generationId, posted, result: clean });
+  revalidatePath("/", "layout");
+  return { ok: true };
 }
