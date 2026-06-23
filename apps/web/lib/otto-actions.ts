@@ -182,7 +182,16 @@ export async function ottoTurn(raw: unknown): Promise<
 
     try {
       agentResult = await withLlmBudget(
-        { orgId: ownerId, refId, model: OTTO_DEFAULT_MODEL, paid: true, maxSteps: OTTO_MAX_STEPS },
+        {
+          orgId: ownerId,
+          refId,
+          model: OTTO_DEFAULT_MODEL,
+          paid: true,
+          maxSteps: OTTO_MAX_STEPS,
+          usageOnError: (e) => (e instanceof MaxTurnsExceededError && (e as { state?: { usage?: unknown } }).state?.usage)
+            ? mapOttoUsage((e as { state: { usage: Parameters<typeof mapOttoUsage>[0] } }).state.usage)
+            : null,
+        },
         async () => {
           const r = await run(otto, runInput, { context: ctx, maxTurns: OTTO_MAX_STEPS });
           return { result: r, usage: mapOttoUsage(r.state.usage) };
@@ -190,8 +199,7 @@ export async function ottoTurn(raw: unknown): Promise<
       );
     } catch (e) {
       if (e instanceof MaxTurnsExceededError) {
-        // Graceful degrade — withLlmBudget already refunded the reservation on throw
-        // NOTE: tokens used before the maxTurns error are not charged (under-charge edge case)
+        // Graceful degrade — withLlmBudget already settled actual usage (or refunded if no usage)
         const degradeText = "I got a bit tangled up — try asking again.";
         await prisma.chatMessage.create({
           data: {
@@ -396,7 +404,16 @@ export async function ottoApprove(raw: unknown): Promise<
 
     try {
       agentResult = await withLlmBudget(
-        { orgId: ownerId, refId, model: OTTO_DEFAULT_MODEL, paid: true, maxSteps: OTTO_MAX_STEPS },
+        {
+          orgId: ownerId,
+          refId,
+          model: OTTO_DEFAULT_MODEL,
+          paid: true,
+          maxSteps: OTTO_MAX_STEPS,
+          usageOnError: (e) => (e instanceof MaxTurnsExceededError && (e as { state?: { usage?: unknown } }).state?.usage)
+            ? mapOttoUsage((e as { state: { usage: Parameters<typeof mapOttoUsage>[0] } }).state.usage)
+            : null,
+        },
         async () => {
           // Resuming with the approved state — generate.execute runs → ctx.startGen → spend
           const r = await run(otto, state, { context: ctx, maxTurns: OTTO_MAX_STEPS });

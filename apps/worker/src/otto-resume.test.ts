@@ -17,6 +17,7 @@ import { describe, it, expect, vi, beforeEach } from "vitest";
 const mocks = vi.hoisted(() => {
   // prisma mock
   const chatThreadFindFirst = vi.fn();
+  const chatThreadUpdateMany = vi.fn();
   const genJobUpdateMany = vi.fn();
   const chatMessageFindFirst = vi.fn();
   const chatMessageCreate = vi.fn();
@@ -27,6 +28,7 @@ const mocks = vi.hoisted(() => {
     chatThread: {
       findFirst: chatThreadFindFirst,
       update: chatThreadUpdate,
+      updateMany: chatThreadUpdateMany,
     },
     genJob: {
       updateMany: genJobUpdateMany,
@@ -82,6 +84,7 @@ const mocks = vi.hoisted(() => {
     otto,
     newId,
     chatThreadFindFirst,
+    chatThreadUpdateMany,
     genJobUpdateMany,
     chatMessageFindFirst,
     chatMessageCreate,
@@ -169,6 +172,9 @@ beforeEach(() => {
 
   // Default: chatThread.update resolves
   mocks.chatThreadUpdate.mockResolvedValue({});
+
+  // Default: chatThread.updateMany (CAS) returns count=1 (CAS wins)
+  mocks.chatThreadUpdateMany.mockResolvedValue({ count: 1 });
 
   // Default: $transaction runs all ops (accept array of promises)
   mocks.$transaction.mockImplementation(async (ops: unknown) => {
@@ -266,8 +272,11 @@ describe("Test #4 — happy verdict path", () => {
     // run was called (inside withLlmBudget)
     expect(mocks.run).toHaveBeenCalledOnce();
 
-    // $transaction called for persist (verdict + ottoState)
-    expect(mocks.$transaction).toHaveBeenCalledOnce();
+    // CAS: chatThread.updateMany must be called for the state write
+    expect(mocks.chatThreadUpdateMany).toHaveBeenCalledOnce();
+    const [casArgs] = mocks.chatThreadUpdateMany.mock.calls[0] as [{ where: { id: string; ownerId: string; ottoState: string }; data: { ottoState: string } }];
+    expect(casArgs.data.ottoState).toBe("new-serialized-state");
+    expect(casArgs.where.ottoState).toBe("prior-state"); // CAS: matches the priorOttoState read
 
     // Verify chatMessage.create was called (verdict message)
     expect(mocks.chatMessageCreate).toHaveBeenCalledOnce();
@@ -275,11 +284,6 @@ describe("Test #4 — happy verdict path", () => {
     expect(createArgs.data.role).toBe("AGENT");
     expect(createArgs.data.kind).toBe("TEXT");
     expect(createArgs.data.text).toBe(verdictText);
-
-    // Verify chatThread.update was called with new state
-    expect(mocks.chatThreadUpdate).toHaveBeenCalledOnce();
-    const [updateArgs] = mocks.chatThreadUpdate.mock.calls[0] as [{ where: { id: string }; data: { ottoState: string } }];
-    expect(updateArgs.data.ottoState).toBe("new-serialized-state");
   });
 
   it("the run input includes the injection message appended to history", async () => {
@@ -347,9 +351,9 @@ describe("Test #6 — interrupted verdict (Otto parked a generate)", () => {
 
     await resumeOttoAfterGen(JOB);
 
-    // Paused state persisted via chatThread.update
-    expect(mocks.chatThreadUpdate).toHaveBeenCalledOnce();
-    const [updateArgs] = mocks.chatThreadUpdate.mock.calls[0] as [{ where: { id: string }; data: { ottoState: string } }];
+    // Paused state persisted via CAS chatThread.updateMany
+    expect(mocks.chatThreadUpdateMany).toHaveBeenCalledOnce();
+    const [updateArgs] = mocks.chatThreadUpdateMany.mock.calls[0] as [{ where: { id: string; ottoState: string }; data: { ottoState: string } }];
     expect(updateArgs.data.ottoState).toBe("paused-state");
 
     // Assistant text before interruption was persisted
@@ -358,12 +362,53 @@ describe("Test #6 — interrupted verdict (Otto parked a generate)", () => {
     expect(createArgs.data.text).toBe(assistantText);
     expect(createArgs.data.role).toBe("AGENT");
 
-    // $transaction NOT used (interruption path uses separate update + create, not $transaction)
-    // (or if implementation batches it in $transaction, check it was called — either is fine
-    // as long as paused state is persisted and no generation spend occurs)
-
     // Verify startGen is NOT in the context passed to run
     const [_agent, _input, runOptions] = mocks.run.mock.calls[0] as [unknown, unknown, { context: { startGen?: unknown } }];
     expect(runOptions.context.startGen).toBeUndefined();
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Test #7: CAS — compare-and-swap on ottoState write (Fix 4 / P2-b)
+// ---------------------------------------------------------------------------
+describe("Test #7 — CAS verdict write (Fix 4 / P2-b)", () => {
+  it("when chatThread.updateMany returns count=0 (thread moved on), verdict message is NOT created", async () => {
+    // CAS misses — a concurrent turn already updated the state
+    mocks.chatThreadUpdateMany.mockResolvedValue({ count: 0 });
+
+    const runResult = makeRunResult({ text: "Done! How does it look?" });
+    mocks.run.mockResolvedValue(runResult);
+
+    await resumeOttoAfterGen(JOB);
+
+    // CAS attempted
+    expect(mocks.chatThreadUpdateMany).toHaveBeenCalledOnce();
+
+    // Verdict message must NOT be created
+    expect(mocks.chatMessageCreate).not.toHaveBeenCalled();
+  });
+
+  it("when chatThread.updateMany returns count=1 (CAS wins), verdict message IS created", async () => {
+    mocks.chatThreadUpdateMany.mockResolvedValue({ count: 1 });
+
+    const verdictText = "Looks great! Want any changes?";
+    mocks.run.mockResolvedValue(makeRunResult({ text: verdictText }));
+
+    await resumeOttoAfterGen(JOB);
+
+    expect(mocks.chatThreadUpdateMany).toHaveBeenCalledOnce();
+    expect(mocks.chatMessageCreate).toHaveBeenCalledOnce();
+    const [createArgs] = mocks.chatMessageCreate.mock.calls[0] as [{ data: { text: string } }];
+    expect(createArgs.data.text).toBe(verdictText);
+  });
+
+  it("CAS uses priorOttoState as the where condition", async () => {
+    mocks.chatThreadFindFirst.mockResolvedValue({ ottoState: "specific-prior-state" });
+    mocks.run.mockResolvedValue(makeRunResult());
+
+    await resumeOttoAfterGen(JOB);
+
+    const [casArgs] = mocks.chatThreadUpdateMany.mock.calls[0] as [{ where: { ottoState: string } }];
+    expect(casArgs.where.ottoState).toBe("specific-prior-state");
   });
 });

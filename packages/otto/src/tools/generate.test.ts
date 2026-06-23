@@ -338,6 +338,64 @@ describe("Test 6 — owner scope", () => {
 });
 
 // ---------------------------------------------------------------------------
+// Test 6b: thread/project scope — Fix 1 (P1-a)
+// ---------------------------------------------------------------------------
+
+describe("Test 6b — thread/project scope (Fix 1 / P1-a)", () => {
+  beforeEach(async () => {
+    vi.clearAllMocks();
+    const p = await getPrisma();
+    p.genJob.findFirst.mockResolvedValue(null);
+    p.chatMessage.update.mockResolvedValue({});
+  });
+
+  it("card.threadId !== ctx.threadId → error, no startGen call", async () => {
+    const p = await getPrisma();
+    // Card belongs to a different thread than ctx
+    p.chatMessage.findFirst.mockResolvedValue({
+      ...makeCard(),
+      threadId: "thread-OTHER",
+    });
+
+    const ctx = makeCtx({ threadId: "thread-test" });
+    const result = await executeGenerate({ cardId: CARD_ID }, { context: ctx });
+
+    expect(result).toHaveProperty("error");
+    const startGenMock = ctx.startGen as ReturnType<typeof vi.fn>;
+    expect(startGenMock).not.toHaveBeenCalled();
+  });
+
+  it("card.thread.projectId !== ctx.projectId → error, no startGen call", async () => {
+    const p = await getPrisma();
+    // Card belongs to a different project
+    p.chatMessage.findFirst.mockResolvedValue({
+      ...makeCard(),
+      thread: { projectId: "proj-OTHER", deletedAt: null, ownerId: ORG_ID },
+    });
+
+    const ctx = makeCtx({ projectId: "proj-test" });
+    const result = await executeGenerate({ cardId: CARD_ID }, { context: ctx });
+
+    expect(result).toHaveProperty("error");
+    const startGenMock = ctx.startGen as ReturnType<typeof vi.fn>;
+    expect(startGenMock).not.toHaveBeenCalled();
+  });
+
+  it("card with matching threadId and projectId → startGen called (happy path)", async () => {
+    const p = await getPrisma();
+    // Card matches both ctx.threadId and ctx.projectId
+    p.chatMessage.findFirst.mockResolvedValue(makeCard());
+
+    const ctx = makeCtx({ threadId: "thread-test", projectId: "proj-test" });
+    const result = await executeGenerate({ cardId: CARD_ID }, { context: ctx });
+
+    expect(result).not.toHaveProperty("error");
+    const startGenMock = ctx.startGen as ReturnType<typeof vi.fn>;
+    expect(startGenMock).toHaveBeenCalledTimes(1);
+  });
+});
+
+// ---------------------------------------------------------------------------
 // Test 7: disabled model → error, startGen NOT called
 // ---------------------------------------------------------------------------
 

@@ -222,6 +222,90 @@ describe("Test #7 — actualCostInternal pure math", () => {
 });
 
 // ---------------------------------------------------------------------------
+// Test #7b: actualCostInternal — NaN/clamp guards (Fix 2 / P2-a)
+// ---------------------------------------------------------------------------
+describe("Test #7b — actualCostInternal NaN/clamp guards", () => {
+  const prices = llmPricesFor(MODEL);
+
+  it("cached > input clamps to input (never negative nonCachedInput)", () => {
+    // cached=1500 > input=1000 → should clamp cached to 1000, nonCached=0
+    const usage = { inputTokens: 1000, outputTokens: 100, cachedInputTokens: 1500 };
+    const result = actualCostInternal(usage, prices, MARGIN);
+    // nonCached=0, cached=1000, output=100 — result is non-negative integer
+    expect(result).toBeGreaterThanOrEqual(0);
+    expect(Number.isInteger(result)).toBe(true);
+    // Must equal the clamped calculation
+    const expectedUsd = 0 * prices.inputPerToken + 1000 * prices.cachedInputPerToken + 100 * prices.outputPerToken;
+    expect(result).toBe(Math.ceil(expectedUsd * MARGIN * CREDITS_PER_USD));
+  });
+
+  it("NaN usage fields → 0 (not NaN into ledger)", () => {
+    const usage = { inputTokens: NaN, outputTokens: NaN, cachedInputTokens: NaN };
+    const result = actualCostInternal(usage, prices, MARGIN);
+    expect(result).toBe(0);
+    expect(Number.isFinite(result)).toBe(true);
+  });
+
+  it("undefined/null-like usage fields → 0", () => {
+    // undefined cachedInputTokens (omitted) — already tested; ensure inputTokens=0 edge too
+    const usage = { inputTokens: 0, outputTokens: 0, cachedInputTokens: undefined };
+    const result = actualCostInternal(usage, prices, MARGIN);
+    expect(result).toBe(0);
+  });
+
+  it("negative inputTokens → clamped to 0, result non-negative", () => {
+    const usage = { inputTokens: -500, outputTokens: 100 };
+    const result = actualCostInternal(usage, prices, MARGIN);
+    expect(result).toBeGreaterThanOrEqual(0);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Test #9: withLlmBudget — usageOnError (Fix 3 / P1-c)
+// ---------------------------------------------------------------------------
+describe("Test #9 — withLlmBudget usageOnError", () => {
+  it("usageOnError returns usage on throw → settleCredits called, refundReservation NOT called", async () => {
+    const errUsage = { inputTokens: 500, outputTokens: 50 };
+    const boom = new Error("maxTurns hit");
+    const fn = vi.fn().mockRejectedValue(boom);
+    const usageOnError = vi.fn().mockReturnValue(errUsage);
+
+    await expect(withLlmBudget(makeArgs({ usageOnError }), fn)).rejects.toBe(boom);
+
+    expect(mocks.reserveCredits).toHaveBeenCalledTimes(1);
+    expect(mocks.settleCredits).toHaveBeenCalledTimes(1);
+    expect(mocks.refundReservation).not.toHaveBeenCalled();
+
+    const prices = llmPricesFor(MODEL);
+    const expectedActual = actualCostInternal(errUsage, prices, MARGIN);
+    const settleCall = mocks.settleCredits.mock.calls[0] as [unknown, { orgId: string; refId: string; actualInternal: number }];
+    expect(settleCall[1].actualInternal).toBe(expectedActual);
+    expect(usageOnError).toHaveBeenCalledWith(boom);
+  });
+
+  it("usageOnError returns null on throw → refundReservation called (existing behavior)", async () => {
+    const boom = new Error("something else");
+    const fn = vi.fn().mockRejectedValue(boom);
+    const usageOnError = vi.fn().mockReturnValue(null);
+
+    await expect(withLlmBudget(makeArgs({ usageOnError }), fn)).rejects.toBe(boom);
+
+    expect(mocks.refundReservation).toHaveBeenCalledTimes(1);
+    expect(mocks.settleCredits).not.toHaveBeenCalled();
+  });
+
+  it("no usageOnError (undefined) on throw → refundReservation called (backward-compat)", async () => {
+    const boom = new Error("plain throw");
+    const fn = vi.fn().mockRejectedValue(boom);
+
+    await expect(withLlmBudget(makeArgs(), fn)).rejects.toBe(boom);
+
+    expect(mocks.refundReservation).toHaveBeenCalledTimes(1);
+    expect(mocks.settleCredits).not.toHaveBeenCalled();
+  });
+});
+
+// ---------------------------------------------------------------------------
 // Test #8: source audit — enhancePrompt + coworkDraftStoryboard use withLlmBudget
 // ---------------------------------------------------------------------------
 describe("Test #8 — bypass audit: withLlmBudget wraps the model call in cowork-actions", () => {

@@ -66,13 +66,13 @@ export function actualCostInternal(
   prices: LlmPrices,
   margin: number,
 ): number {
-  const cached = usage.cachedInputTokens ?? 0;
-  const nonCachedInput = usage.inputTokens - cached;
-  const usd =
-    nonCachedInput * prices.inputPerToken +
-    cached * prices.cachedInputPerToken +
-    usage.outputTokens * prices.outputPerToken;
-  return Math.ceil(usd * margin * CREDITS_PER_USD);
+  const input = Math.max(0, Number(usage.inputTokens) || 0);
+  const output = Math.max(0, Number(usage.outputTokens) || 0);
+  const cached = Math.min(Math.max(0, Number(usage.cachedInputTokens) || 0), input); // cached ⊆ input
+  const nonCachedInput = input - cached;
+  const usd = nonCachedInput * prices.inputPerToken + cached * prices.cachedInputPerToken + output * prices.outputPerToken;
+  const result = Math.ceil(usd * margin * CREDITS_PER_USD);
+  return Number.isFinite(result) ? Math.max(0, result) : 0;
 }
 
 /**
@@ -91,6 +91,7 @@ export async function withLlmBudget<T>(
     paid: boolean;
     margin?: number;
     maxSteps?: number;
+    usageOnError?: (e: unknown) => TokenUsage | null;
   },
   fn: () => Promise<{ result: T; usage?: TokenUsage }>,
 ): Promise<T> {
@@ -112,14 +113,22 @@ export async function withLlmBudget<T>(
     reserveCredits(tx, { orgId: args.orgId, refId: args.refId, cost: reserve }),
   );
 
-  // Invariant #3: refund the whole reservation if fn throws.
+  // Invariant #3: refund the whole reservation if fn throws (unless usageOnError yields actual usage).
   let out: { result: T; usage?: TokenUsage };
   try {
     out = await fn();
   } catch (e) {
-    await prisma.$transaction((tx) =>
-      refundReservation(tx, { orgId: args.orgId, refId: args.refId }),
-    );
+    const errUsage = args.usageOnError?.(e) ?? null;
+    if (errUsage) {
+      const actualInternal = actualCostInternal(errUsage, prices, margin);
+      await prisma.$transaction((tx) =>
+        settleCredits(tx, { orgId: args.orgId, refId: args.refId, actualInternal }),
+      );
+    } else {
+      await prisma.$transaction((tx) =>
+        refundReservation(tx, { orgId: args.orgId, refId: args.refId }),
+      );
+    }
     throw e;
   }
 

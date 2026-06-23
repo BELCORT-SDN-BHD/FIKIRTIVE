@@ -80,6 +80,8 @@ export async function executeGenerate(
   if (!card || card.thread.deletedAt || card.thread.ownerId !== ctx.orgId) {
     return { error: "Card not found." };
   }
+  if (card.threadId !== ctx.threadId) return { error: "Card not found." };
+  if (card.thread.projectId !== ctx.projectId) return { error: "Card not found." };
 
   // Step 3: exactly-once re-spend guard (load-bearing — Phase 0 proved SDK approval is NOT
   // exactly-once; this DB check + the GenJob_cowork_idempotency_once unique index are the

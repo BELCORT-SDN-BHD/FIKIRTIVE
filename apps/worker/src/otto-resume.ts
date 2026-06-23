@@ -33,6 +33,7 @@ export async function resumeOttoAfterGen(job: {
     select: { ottoState: true },
   });
   if (!thread?.ottoState) return;
+  const priorOttoState = thread.ottoState;
 
   // At-most-once claim: atomic update where ottoVerdictAt IS NULL.
   // Redelivery or concurrent winner → count=0 → return immediately.
@@ -72,7 +73,16 @@ export async function resumeOttoAfterGen(job: {
 
     try {
       agentResult = await withLlmBudget(
-        { orgId: job.ownerId, refId, model: OTTO_DEFAULT_MODEL, paid: true, maxSteps: OTTO_MAX_STEPS },
+        {
+          orgId: job.ownerId,
+          refId,
+          model: OTTO_DEFAULT_MODEL,
+          paid: true,
+          maxSteps: OTTO_MAX_STEPS,
+          usageOnError: (e) => (e instanceof MaxTurnsExceededError && (e as { state?: { usage?: unknown } }).state?.usage)
+            ? mapOttoUsage((e as { state: { usage: Parameters<typeof mapOttoUsage>[0] } }).state.usage)
+            : null,
+        },
         async () => {
           const r = await run(otto, runInput, { context: ctx, maxTurns: OTTO_MAX_STEPS });
           return { result: r, usage: mapOttoUsage(r.state.usage) };
@@ -119,6 +129,15 @@ export async function resumeOttoAfterGen(job: {
     // Handle interruption (Otto parked a generate → no startGen → will park here)
     // Persist paused state + any assistant text produced before the interruption.
     if (Array.isArray(result.interruptions) && result.interruptions.length > 0) {
+      // CAS: only write if no concurrent turn moved the state on
+      const { count: casCount } = await prisma.chatThread.updateMany({
+        where: { id: job.threadId, ownerId: job.ownerId, ottoState: priorOttoState },
+        data: { ottoState: newOttoState, updatedAt: new Date() },
+      });
+      if (casCount === 0) {
+        console.log(`[otto-resume] ${job.id}: CAS miss (interruption) — thread moved on, skipping`);
+        return;
+      }
       const assistantText = extractText(result);
       if (assistantText) {
         await prisma.chatMessage.create({
@@ -133,33 +152,31 @@ export async function resumeOttoAfterGen(job: {
           },
         });
       }
-      await prisma.chatThread.update({
-        where: { id: job.threadId },
-        data: { ottoState: newOttoState, updatedAt: new Date() },
-      });
       console.log(`[otto-resume] ${job.id}: parked (generate interrupted) — persisted paused state`);
       return;
     }
 
-    // Completed — persist verdict AGENT/TEXT message + new ottoState
+    // Completed — CAS the ottoState write; only persist verdict message if we won
     const verdictText = extractText(result);
-    await prisma.$transaction([
-      prisma.chatThread.update({
-        where: { id: job.threadId },
-        data: { ottoState: newOttoState, updatedAt: new Date() },
-      }),
-      prisma.chatMessage.create({
-        data: {
-          id: newId(),
-          threadId: job.threadId,
-          ownerId: job.ownerId,
-          role: "AGENT",
-          kind: "TEXT",
-          seq: ++seq,
-          text: verdictText,
-        },
-      }),
-    ]);
+    const { count: casCount } = await prisma.chatThread.updateMany({
+      where: { id: job.threadId, ownerId: job.ownerId, ottoState: priorOttoState },
+      data: { ottoState: newOttoState, updatedAt: new Date() },
+    });
+    if (casCount === 0) {
+      console.log(`[otto-resume] ${job.id}: CAS miss — thread moved on, skipping verdict`);
+      return;
+    }
+    await prisma.chatMessage.create({
+      data: {
+        id: newId(),
+        threadId: job.threadId,
+        ownerId: job.ownerId,
+        role: "AGENT",
+        kind: "TEXT",
+        seq: ++seq,
+        text: verdictText,
+      },
+    });
     console.log(`[otto-resume] ${job.id}: verdict persisted`);
   } catch (e) {
     // Best-effort: never throw to handleGen

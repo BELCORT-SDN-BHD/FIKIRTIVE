@@ -117,14 +117,20 @@ vi.mock("@artlio/db", () => ({
   },
 }));
 
-vi.mock("@artlio/otto", () => ({
-  otto: { name: "Otto" },
-  withLlmBudget: mockWithLlmBudget,
-  OTTO_DEFAULT_MODEL: "claude-sonnet-4-6",
-  run: mockRun,
-  RunState: MockRunState,
-  MaxTurnsExceededError: MockMaxTurnsExceededError,
-}));
+// Spread the REAL module so pure helpers (mapOttoUsage, OTTO_DEFAULT_MODEL, prices)
+// stay real — only the heavy / non-deterministic exports are mocked. MaxTurnsExceededError
+// stays mocked so a thrown MockMaxTurnsExceededError matches `instanceof` in the SUT.
+vi.mock("@artlio/otto", async (importOriginal) => {
+  const actual = (await importOriginal()) as Record<string, unknown>;
+  return {
+    ...actual,
+    otto: { name: "Otto" },
+    withLlmBudget: mockWithLlmBudget,
+    run: mockRun,
+    RunState: MockRunState,
+    MaxTurnsExceededError: MockMaxTurnsExceededError,
+  };
+});
 
 // ── Import SUT after mocks ───────────────────────────────────────────────────
 
