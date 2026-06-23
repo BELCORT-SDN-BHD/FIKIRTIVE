@@ -9,6 +9,10 @@
 import { coworkProposalSchema } from "./cowork.js";
 import { GEN_VIDEO_MODELS, GEN_VIDEO_MODEL_OPTIONS, type GenVideoModel } from "./gen.js";
 
+/** The assembled genRequest object that `buildGenRequestFromCard` returns on success.
+ *  Exported for use in OttoContext.startGen (packages/otto cannot import apps/*). */
+export type GenRequestInput = Record<string, unknown>;
+
 export function buildGenRequestFromCard(args: {
   cardPayload: unknown;
   projectId: string;

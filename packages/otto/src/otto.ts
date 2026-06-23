@@ -5,6 +5,7 @@ import { anthropic } from "@ai-sdk/anthropic";
 import { OTTO_OUTPUT_CAP_TOKENS } from "@artlio/core";
 import type { OttoContext } from "./context.js";
 import { propose } from "./tools/propose.js";
+import { generate } from "./tools/generate.js";
 import { updateBrief } from "./tools/update-brief.js";
 import { describeRefs } from "./tools/describe-refs.js";
 import { setTitle } from "./tools/set-title.js";
@@ -25,6 +26,6 @@ export const otto = new Agent<OttoContext>({
   instructions: ottoInstructions,
   model: aisdk(anthropic(OTTO_DEFAULT_MODEL)),
   modelSettings: { maxTokens: OTTO_OUTPUT_CAP_TOKENS },
-  tools: [propose, updateBrief, describeRefs, setTitle],
+  tools: [propose, generate, updateBrief, describeRefs, setTitle],
   // maxTurns is a run() option, not an Agent constructor option — passed by the caller in Tasks 1.8/1.9
 });

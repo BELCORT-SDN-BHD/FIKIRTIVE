@@ -85,5 +85,5 @@ export * from "./cowork-coach.js";
 export * from "./cowork-guardian.js";
 export * from "./cowork-route.js";
 export { COWORK_PLANNER_SYSTEM, buildPlannerMessages, parseCoworkTurn, mockPlannerReply } from "./cowork-planner.js";
-export { buildGenRequestFromCard } from "./gen-from-card.js";
+export { buildGenRequestFromCard, type GenRequestInput } from "./gen-from-card.js";
 export * from "./otto-budget.js";
