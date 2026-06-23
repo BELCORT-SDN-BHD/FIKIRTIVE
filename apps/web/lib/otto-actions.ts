@@ -31,11 +31,15 @@ import {
   coworkTurnRequest,
   OTTO_MAX_STEPS,
 } from "@artlio/core";
-import { otto, withLlmBudget, OTTO_DEFAULT_MODEL, run, RunState, MaxTurnsExceededError } from "@artlio/otto";
-import type { OttoContext, TokenUsage, AgentInputItem } from "@artlio/otto";
+import { otto, withLlmBudget, OTTO_DEFAULT_MODEL, run, RunState, MaxTurnsExceededError, mapOttoUsage } from "@artlio/otto";
+import type { OttoContext, AgentInputItem } from "@artlio/otto";
 import { requireOwner } from "./auth-guard";
 import { resolveDisabledModels } from "./model-registry";
 import { startGen } from "./gen-actions";
+
+// mapOttoUsage re-exported from @artlio/otto so existing callers that import
+// it from this module continue to work (the canonical source is @artlio/otto).
+export { mapOttoUsage } from "@artlio/otto";
 
 // ---------------------------------------------------------------------------
 // buildOttoContext — exported for 1.8b reuse
@@ -61,32 +65,6 @@ export async function buildOttoContext({
     disabledModels,
     sourceGenerationId: sourceGenerationId ?? null,
     startGen,
-  };
-}
-
-// ---------------------------------------------------------------------------
-// mapOttoUsage — map SDK Usage to withLlmBudget's TokenUsage
-// ---------------------------------------------------------------------------
-
-export function mapOttoUsage(usage: {
-  inputTokens: number;
-  outputTokens: number;
-  requestUsageEntries?: Array<{
-    inputTokens: number;
-    outputTokens: number;
-    inputTokensDetails: Record<string, number>;
-  }>;
-}): TokenUsage {
-  let cachedInputTokens = 0;
-  if (usage.requestUsageEntries) {
-    for (const entry of usage.requestUsageEntries) {
-      cachedInputTokens += entry.inputTokensDetails?.cached_tokens ?? 0;
-    }
-  }
-  return {
-    inputTokens: usage.inputTokens,
-    outputTokens: usage.outputTokens,
-    cachedInputTokens: cachedInputTokens > 0 ? cachedInputTokens : undefined,
   };
 }
 

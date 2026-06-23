@@ -30,6 +30,7 @@ import { sanitizeError, scrubUrls } from "../redact.js";
 import { provider } from "../generation.js";
 import { isModelDisabled } from "@artlio/core";
 import { workerDisabledModels } from "../model-registry.js";
+import { resumeOttoAfterGen } from "../otto-resume.js";
 
 const mimeForExt = (ext: string) =>
   ext === "png" ? "image/png" : ext === "webp" ? "image/webp"
@@ -185,6 +186,7 @@ export async function handleGen(data: GenJobData, retryCount: number): Promise<v
         await settleCredits(tx, { orgId: job.ownerId, refId: job.id });
       });
       await appendCoworkResult(job, "GEN_RESULT", job.generationIds); // idempotent — P2002 swallowed if already written
+      await resumeOttoAfterGen(job); // best-effort; at-most-once via ottoVerdictAt claim
       return;
     }
     if (job.status === "FAILED") return; // terminal with no recorded outputs — nothing to resume
@@ -464,6 +466,7 @@ export async function handleGen(data: GenJobData, retryCount: number): Promise<v
     await prisma.genJob.update({ where: { id: job.id }, data: { status: "DONE", progress: 100, finishedAt: new Date(), error: "" } });
     console.log(`[gen] ${job.id}: DONE → ${generationIds.length} generations via ${provider.name}`);
     await appendCoworkResult(job, "GEN_RESULT", generationIds);
+    await resumeOttoAfterGen(job); // best-effort; at-most-once via ottoVerdictAt claim
   } catch (err) {
     // PERSISTED error surfaces in the admin UI — strip any signed URL / argv a
     // provider or subprocess error may carry. Full (URL-scrubbed) detail → logs.

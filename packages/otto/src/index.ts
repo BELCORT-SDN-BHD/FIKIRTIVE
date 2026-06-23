@@ -5,7 +5,7 @@ export { updateBrief } from "./tools/update-brief.js";
 export { describeRefs, sanitizeRefDescription } from "./tools/describe-refs.js";
 export { setTitle } from "./tools/set-title.js";
 export type { OttoContext } from "./context.js";
-export { withLlmBudget, actualCostInternal } from "./meter.js";
+export { withLlmBudget, actualCostInternal, mapOttoUsage } from "./meter.js";
 export type { TokenUsage } from "./meter.js";
 // Re-export SDK primitives needed by web callers (Task 1.8)
 export { run, RunState, MaxTurnsExceededError } from "@openai/agents";

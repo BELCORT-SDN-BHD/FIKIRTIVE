@@ -455,6 +455,9 @@ model GenJob {
   attempts           Int       @default(0)
   startedAt          DateTime?
   finishedAt         DateTime?
+  /// At-most-once Otto verdict claim: set atomically by the worker after gen DONE.
+  /// null = not yet claimed; non-null = claimed (or redelivery — skip).
+  ottoVerdictAt      DateTime?
   createdAt          DateTime  @default(now())
   updatedAt          DateTime  @updatedAt
   // 幂等去重靠迁移里的 PARTIAL UNIQUE 索引（active 键唯一，Prisma 无法在 schema 表达

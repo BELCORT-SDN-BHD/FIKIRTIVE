@@ -14,6 +14,7 @@
     "@artlio/core": "workspace:*",
     "@artlio/db": "workspace:*",
     "@artlio/generation": "workspace:*",
+    "@artlio/otto": "workspace:*",
     "@artlio/storage": "workspace:^",
     "@sentry/node": "^10.58.0",
     "execa": "^9.6.0",

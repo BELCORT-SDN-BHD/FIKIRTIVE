@@ -29,6 +29,32 @@ export type TokenUsage = {
 };
 
 /**
+ * mapOttoUsage — map an OpenAI Agents SDK RunResult usage object to withLlmBudget's TokenUsage.
+ * Pure helper shared by apps/web (ottoTurn) and apps/worker (resumeOttoAfterGen).
+ */
+export function mapOttoUsage(usage: {
+  inputTokens: number;
+  outputTokens: number;
+  requestUsageEntries?: Array<{
+    inputTokens: number;
+    outputTokens: number;
+    inputTokensDetails: Record<string, number>;
+  }>;
+}): TokenUsage {
+  let cachedInputTokens = 0;
+  if (usage.requestUsageEntries) {
+    for (const entry of usage.requestUsageEntries) {
+      cachedInputTokens += entry.inputTokensDetails?.cached_tokens ?? 0;
+    }
+  }
+  return {
+    inputTokens: usage.inputTokens,
+    outputTokens: usage.outputTokens,
+    cachedInputTokens: cachedInputTokens > 0 ? cachedInputTokens : undefined,
+  };
+}
+
+/**
  * Pure helper: compute actual internal-credit cost from real token usage.
  *
  * Cached tokens are a SUBSET of inputTokens, priced at the cheaper cached rate.
