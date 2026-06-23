@@ -1,0 +1,31 @@
+{
+  "name": "@artlio/otto",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "default": "./dist/index.js"
+    }
+  },
+  "scripts": {
+    "build": "tsc -p tsconfig.json && node -e \"require('fs').copyFileSync('src/instructions.md','dist/instructions.md')\"",
+    "typecheck": "tsc -p tsconfig.json --noEmit",
+    "test": "vitest run"
+  },
+  "dependencies": {
+    "@openai/agents": "^0.11.8",
+    "@openai/agents-extensions": "^0.11.8",
+    "@ai-sdk/anthropic": "^3.0.85",
+    "ai": "^6.0.208",
+    "@artlio/core": "workspace:*",
+    "@artlio/db": "workspace:*",
+    "zod": "^4.4.3"
+  },
+  "devDependencies": {
+    "@types/node": "^22",
+    "typescript": "^5.9.0",
+    "vitest": "^3.2.0"
+  }
+}

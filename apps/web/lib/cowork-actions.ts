@@ -13,11 +13,12 @@ import {
   runSkill, draftStoryboardSkill, enhancePromptSkill,
   modelFamily, deriveMode,
   coworkTurnRequest, COWORK_MEMORY_TURNS, buildPlannerMessages, parseCoworkTurn,
-  mockPlannerReply, suggestModel, GEN_MODELS, GEN_VIDEO_MODELS, GEN_VIDEO_MODEL_OPTIONS,
+  mockPlannerReply, suggestModel, GEN_MODELS, GEN_VIDEO_MODELS,
   GEN_PRICE_USD_PER_IMAGE, videoPriceUsd,
   coworkGenerateRequest, coworkProposalSchema,
   coworkRenameThreadRequest, coworkDeleteThreadRequest, coworkVaryCardRequest, coworkBriefRequest, MAX_GEN_PROMPT,
   storageKey, composePrompt, isModelDisabled,
+  buildGenRequestFromCard,
   type ChatMessage, type CoworkTurn, type GenVideoModel,
 } from "@artlio/core";
 import { getTransport, resolveVisionConfig } from "./runtime-config";
@@ -539,30 +540,29 @@ export async function coworkGenerate(raw: unknown): Promise<{ id: string } | { e
   const directive = family ? await getEnhanceDirective(family, mode) : undefined;
   const composedPrompt = composePrompt({ prompt, directive, maxLen: MAX_GEN_PROMPT });
 
-  // Only forward `audio` for video models that actually expose an audio toggle. startGen's
-  // superRefine REJECTS audio:false for always-silent models (kling/grok/wan/hailuo); suggestModel
-  // persists params.audio=false for those, so blindly forwarding it makes them un-generatable.
-  const audioToggle = proposal.data.kind === "video" && (GEN_VIDEO_MODELS as readonly string[]).includes(chosenModel)
-    ? GEN_VIDEO_MODEL_OPTIONS[chosenModel as GenVideoModel].audioToggle
-    : false;
-  const req = {
+  // Build the request via the pure core builder (same logic, extracted for reuse by the Otto
+  // generate tool). The builder re-derives proposal/model/params/sourceGenerationId from
+  // card.payload — the early-return guards above (lines ~502-509) mean this will always
+  // return ok:true here, but we handle ok:false for defense-in-depth.
+  const built = buildGenRequestFromCard({
+    cardPayload: card.payload,
     projectId: card.thread.projectId,
     threadId: card.threadId,
+    cardId,
     prompt: composedPrompt,
     entityIds,
-    ...(Object.keys(variantSel).length ? { variantSel } : {}),
-    ...(sourceGenerationId ? { sourceGenerationId } : {}), // i2v — checkCast re-validates ownership+project
-    count: proposal.data.kind === "video" ? 1 : (countOverride ?? params.count ?? 1),
-    kind: proposal.data.kind, // CARD-trusted — never the client (can't flip image↔video)
-    model: chosenModel,
-    ...(proposal.data.kind === "video" ? {
-      durationSeconds: durationOverride ?? params.durationSeconds ?? null,
-      resolution: resolutionOverride ?? params.resolution ?? null,
-      aspectRatio: aspectOverride ?? params.aspectRatio ?? null,
-      ...(audioToggle ? { audio: audioOverride ?? params.audio ?? null } : {}),
-    } : {}),
-    idempotencyKey: `cowork:${cardId}`, // stable — same card always dedupes; NEVER per-retry
-  };
+    variantSel,
+    overrides: {
+      model: modelOverride,
+      count: countOverride,
+      durationSeconds: durationOverride,
+      resolution: resolutionOverride,
+      aspectRatio: aspectOverride,
+      audio: audioOverride,
+    },
+  });
+  if (!built.ok) return { error: built.error };
+  const req = built.req;
 
   const res = await startGen(req); // the ONLY spend path (unmodified logic — safeParse + Guardian)
   if ("error" in res) return res;
