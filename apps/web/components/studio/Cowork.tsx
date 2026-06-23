@@ -1,6 +1,7 @@
 "use client";
 import { useEffect, useMemo, useRef, useState } from "react";
-import { coworkTurn, coworkRenameThread, coworkDeleteThread, setCoworkBrief } from "@/lib/cowork-actions";
+import { coworkRenameThread, coworkDeleteThread, setCoworkBrief } from "@/lib/cowork-actions";
+import { ottoTurn } from "@/lib/otto-client-actions";
 import { uploadReference } from "@/lib/actions";
 import { getCoworkThreadClient } from "@/lib/cowork-fetch";
 import { MentionInput } from "@/components/MentionInput";
@@ -81,6 +82,10 @@ export function Cowork({ projectId, entities, threads, brief = "", simple = fals
   const [composerKey, setComposerKey] = useState(0);
   const [error, setError] = useState<string | null>(null);
 
+  // Transient session state: cardIds for which Otto requested approval (needs_approval).
+  // Lost on full page reload — the manual Generate button on the card remains available.
+  const [pendingApprovalCardIds, setPendingApprovalCardIds] = useState<Set<string>>(new Set());
+
   // "Reply to message" — the message the user wants to quote in the next turn.
   // Shown as a dismissible chip above the promptbar; cleared after send (or dismiss).
   const [replyTo, setReplyTo] = useState<{ id: string; label: string } | null>(null);
@@ -154,12 +159,19 @@ export function Cowork({ projectId, entities, threads, brief = "", simple = fals
     setBusy(true);
     setError(null);
     try {
-      const res = await coworkTurn({ threadId: active?.id, projectId, text, entityIds: ids, variantSel, ...(pendingSource ? { sourceGenerationId: pendingSource.id } : {}), ...(replyTo ? { replyToMessageId: replyTo.id } : {}) });
+      const res = await ottoTurn({ threadId: active?.id, projectId, text, entityIds: ids, variantSel, ...(pendingSource ? { sourceGenerationId: pendingSource.id } : {}), ...(replyTo ? { replyToMessageId: replyTo.id } : {}) });
       if ("error" in res) { setError(res.error); return; }
-      // keep the brief editor in sync when the agent refined the brief this turn (the
-      // dialog is a closed modal during a send, so this never clobbers an open edit).
-      if (res.brief !== undefined) setBriefText(res.brief);
+      // ottoTurn does NOT return brief — the updateBrief tool persists server-side.
+      // The brief editor state (briefText) is left intact; no sync needed here.
       await refreshThread(res.threadId);
+      // Record any cards Otto parked for approval (transient — lost on reload).
+      if (res.status === "needs_approval" && res.pendingCardIds?.length) {
+        setPendingApprovalCardIds((cur) => {
+          const next = new Set(cur);
+          res.pendingCardIds!.forEach((id) => next.add(id));
+          return next;
+        });
+      }
       setText("");
       setIds([]);
       setVariantSel({});
@@ -392,6 +404,14 @@ export function Cowork({ projectId, entities, threads, brief = "", simple = fals
                         projectId={projectId}
                         onRevised={() => { if (active) refreshThread(active.id); }}
                         simple={simple}
+                        pendingApproval={pendingApprovalCardIds.has(m.id)}
+                        onApproved={() => {
+                          setPendingApprovalCardIds((cur) => {
+                            const next = new Set(cur);
+                            next.delete(m.id);
+                            return next;
+                          });
+                        }}
                       />
                     </div>
                     {replyBtn}

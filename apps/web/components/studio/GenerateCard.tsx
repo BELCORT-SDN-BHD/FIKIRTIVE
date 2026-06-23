@@ -2,6 +2,7 @@
 import { useEffect, useRef, useState } from "react";
 import { MentionInput, buildMentionDoc } from "@/components/MentionInput";
 import { coworkGenerate, coworkTurn, coworkVaryCard } from "@/lib/cowork-actions";
+import { ottoApprove } from "@/lib/otto-client-actions";
 import { getGenJob } from "@/lib/gen-actions";
 import {
   GEN_PRICE_USD_PER_IMAGE, videoPriceUsd, videoDefaults,
@@ -24,6 +25,8 @@ export function GenerateCard({
   projectId,
   onRevised,
   simple = false,
+  pendingApproval = false,
+  onApproved,
 }: {
   cardId: string;
   payload: unknown;
@@ -38,6 +41,12 @@ export function GenerateCard({
   /** Simple mode: hide model picker + param pills. The card keeps its persisted model
    *  and params (set by suggestModel in coworkTurn) but doesn't expose them to the user. */
   simple?: boolean;
+  /** Otto approval path: when true, show an "Approve & Generate" button that calls
+   *  ottoApprove. Coexists with the existing manual Generate button (both paths use the
+   *  same server idempotency key `cowork:<cardId>`). Transient — lost on full reload. */
+  pendingApproval?: boolean;
+  /** Called after a successful ottoApprove so Cowork can drop the card from its pending set. */
+  onApproved?: () => void;
 }) {
   const p = (payload ?? {}) as {
     kind?: "image" | "video";
@@ -272,6 +281,97 @@ export function GenerateCard({
     }
   }
 
+  // Approve & Generate — calls ottoApprove (Otto money path), then polls the same way
+  // generate() does. The existing Generate button (coworkGenerate) is unchanged — both
+  // coexist; the server idempotency key `cowork:<cardId>` ensures at-most-one generation.
+  async function approve() {
+    if (busy || busyRef.current || generated) return;
+    busyRef.current = true;
+    setBusy(true);
+    setShowResult(true);
+    setResultStatus("pending");
+    setResultUrls([]);
+    setResultMessage(undefined);
+
+    try {
+      const res = await ottoApprove({ threadId, cardId });
+      if ("error" in res) {
+        setResultStatus("failed");
+        setResultMessage(res.error);
+        return;
+      }
+
+      // Mark generated now (same as generate()) — anti-respend latch.
+      setGenerated(true);
+      onApproved?.();
+
+      // If the resume already produced a job id, poll it; otherwise the result
+      // will land as a durable GEN_RESULT message on thread refresh (acceptable v1).
+      const jobId = ("genJobId" in res && res.genJobId) ? res.genJobId : null;
+      if (!jobId) {
+        // No job id yet (chained approval / degraded) — the thread refresh via
+        // onRevised is not available here; the durable GEN_RESULT will appear on
+        // next thread load. Mark done-ish so the card doesn't hang on "Generating…".
+        setResultStatus("done");
+        return;
+      }
+
+      let n = 0;
+      const t = setInterval(async () => {
+        n += 1;
+        try {
+          const job = await getGenJob(jobId);
+          if (!job) {
+            if (n > POLL_CAP) {
+              clearInterval(t);
+              intervalRef.current = null;
+              setResultStatus("failed");
+              setResultMessage(
+                "Status unknown — reload to check (don't re-run, you may have been charged).",
+              );
+            }
+            return;
+          }
+          if (job.status === "DONE") {
+            clearInterval(t);
+            intervalRef.current = null;
+            setResultStatus("done");
+            setResultUrls(job.urls);
+          } else if (job.status === "FAILED") {
+            clearInterval(t);
+            intervalRef.current = null;
+            setResultStatus("failed");
+            setResultMessage(
+              job.spent
+                ? `Charged, but saving the result failed${job.error ? `: ${job.error}` : ""} — reload to check; it'll be reconciled.`
+                : job.error || "Generation failed (you were not charged).",
+            );
+          } else if (n > POLL_CAP) {
+            clearInterval(t);
+            intervalRef.current = null;
+            setResultStatus("failed");
+            setResultMessage(
+              "Still running — reload to check (don't re-run, you may have been charged).",
+            );
+          }
+        } catch {
+          if (n > POLL_CAP) {
+            clearInterval(t);
+            intervalRef.current = null;
+            setResultStatus("failed");
+            setResultMessage(
+              "Status unknown — reload to check (don't re-run, you may have been charged).",
+            );
+          }
+        }
+      }, 2000);
+      intervalRef.current = t;
+    } finally {
+      busyRef.current = false;
+      setBusy(false);
+    }
+  }
+
   async function submitRevise() {
     const feedback = revise.trim();
     // double-submit guard: reviseBusyRef catches a same-frame re-submit `reviseBusy`
@@ -438,6 +538,18 @@ export function GenerateCard({
       )}
 
       <div className="cw-card-actions">
+        {/* Approve & Generate — Otto approval path. Additive: coexists with the manual
+            Generate button below. Both paths share the server idempotency key `cowork:<cardId>`. */}
+        {pendingApproval && !generated && (
+          <button
+            className="al-btn al-btn-md al-btn-primary"
+            disabled={busy}
+            onClick={approve}
+            style={{ background: "var(--accent-2, var(--accent))", order: -1 }}
+          >
+            {busy ? "Generating…" : "Approve & Generate"}
+          </button>
+        )}
         <button
           className="al-btn al-btn-md al-btn-primary"
           disabled={busy || generated || !prompt.trim()}
