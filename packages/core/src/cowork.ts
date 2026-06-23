@@ -99,18 +99,31 @@ export interface SkillCtx {
   directive?: string;
 }
 
+/** Token usage reported back from a real LLM call.
+ *  `cachedInputTokens` is a SUBSET of `inputTokens` (the portion served from the
+ *  provider's prompt cache at a cheaper rate). Optional — absent when the transport
+ *  doesn't have usage data (e.g. MockTransport). */
+export interface LlmUsage {
+  inputTokens: number;
+  outputTokens: number;
+  cachedInputTokens?: number;
+}
+
 /** The cowork PORT: a model-neutral transport, one method. It knows nothing
  *  about storyboards or prompts — only how to turn messages into text. mock
  *  ($0 deterministic) / fal (OpenRouter→Claude) / self-hosted-later are classes.
  *  `skillId` is carried so the mock dispatches by identity, never by sniffing
- *  prompt text; `opts.mockReply` lets a skill supply its $0 canned reply. */
+ *  prompt text; `opts.mockReply` lets a skill supply its $0 canned reply.
+ *
+ *  The `usage` field in the return is OPTIONAL and absent for mock ($0) calls.
+ *  Existing callers that only read `.text` are unaffected. */
 export interface CoworkTransport {
   readonly name: string;                                   // "mock" | "fal:llm"
   chat(
     skillId: string,
     messages: ChatMessage[],
     opts?: { mockReply?: () => string; responseFormat?: "json_object"; maxTokens?: number },
-  ): Promise<{ text: string }>;
+  ): Promise<{ text: string; usage?: LlmUsage }>;
 }
 
 export const MAX_PLAN_STEPS = 8;

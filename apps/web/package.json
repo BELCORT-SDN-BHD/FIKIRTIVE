@@ -13,6 +13,7 @@
   "dependencies": {
     "@artlio/core": "workspace:*",
     "@artlio/db": "workspace:*",
+    "@artlio/otto": "workspace:*",
     "@artlio/storage": "workspace:^",
     "@auth/prisma-adapter": "2.11.2",
     "@sentry/node": "^10.58.0",

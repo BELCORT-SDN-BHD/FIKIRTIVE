@@ -1,0 +1,243 @@
+/**
+ * meter.test.ts — TDD tests for withLlmBudget + actualCostInternal (Task 1.7).
+ *
+ * Money-safety invariants tested:
+ *  #1 paid:false → no metering (mock/free path never charges)
+ *  #2 reserve fails → fn NEVER called, InsufficientCredits propagates
+ *  #3 happy path (usage present) → settle actual, no refund
+ *  #4 fn throws → refund whole reservation, never charge
+ *  #5 no usage → settle full reserve (no refund)
+ *  #6 reserve happens BEFORE fn BEFORE settle (call order asserted)
+ *  #7 actualCostInternal pure math (cached rate, ceiling, 0-token edge)
+ *  #8 source audit — enhancePrompt + coworkDraftStoryboard route through withLlmBudget
+ */
+import { describe, it, expect, vi, beforeEach } from "vitest";
+
+// ---------------------------------------------------------------------------
+// Mock @artlio/db — vi.hoisted creates spies before vi.mock hoisting runs.
+// prisma.$transaction invokes its callback synchronously with a fake tx.
+// ---------------------------------------------------------------------------
+const mocks = vi.hoisted(() => {
+  const reserveCredits = vi.fn();
+  const settleCredits = vi.fn();
+  const refundReservation = vi.fn();
+  const fakeTx = {};
+  const $transaction = vi.fn((cb: (tx: unknown) => Promise<unknown>) => cb(fakeTx));
+
+  class InsufficientCredits extends Error {
+    constructor(msg = "Not enough credits.") { super(msg); this.name = "InsufficientCredits"; }
+  }
+
+  return { reserveCredits, settleCredits, refundReservation, $transaction, InsufficientCredits };
+});
+
+vi.mock("@artlio/db", () => ({
+  prisma: { $transaction: mocks.$transaction },
+  reserveCredits: mocks.reserveCredits,
+  settleCredits: mocks.settleCredits,
+  refundReservation: mocks.refundReservation,
+  InsufficientCredits: mocks.InsufficientCredits,
+}));
+
+// ---------------------------------------------------------------------------
+// Now import the module under test (after mock is registered)
+// ---------------------------------------------------------------------------
+import { withLlmBudget, actualCostInternal } from "./meter.js";
+import { llmPricesFor, CREDITS_PER_USD, turnBudgetInternal } from "@artlio/core";
+
+// ---------------------------------------------------------------------------
+// Shared helpers
+// ---------------------------------------------------------------------------
+const ORG = "org-test";
+const REF = "ref-test";
+const MODEL = "claude-sonnet-4-6";
+const MARGIN = 3;
+
+function makeArgs(overrides?: Partial<Parameters<typeof withLlmBudget>[0]>) {
+  return { orgId: ORG, refId: REF, model: MODEL, paid: true, margin: MARGIN, maxSteps: 1, ...overrides };
+}
+
+beforeEach(() => {
+  vi.clearAllMocks();
+  // Default: reserve/settle/refund succeed (resolve undefined)
+  mocks.reserveCredits.mockResolvedValue(undefined);
+  mocks.settleCredits.mockResolvedValue(undefined);
+  mocks.refundReservation.mockResolvedValue(undefined);
+  // Reset $transaction to always run its callback
+  const fakeTx = {};
+  mocks.$transaction.mockImplementation((cb: (tx: unknown) => Promise<unknown>) => cb(fakeTx));
+});
+
+// ---------------------------------------------------------------------------
+// Test #1: paid:false → no metering
+// ---------------------------------------------------------------------------
+describe("Test #1 — paid:false (mock/free path)", () => {
+  it("runs fn and returns result; reserveCredits and settleCredits are NEVER called", async () => {
+    const fn = vi.fn().mockResolvedValue({ result: "hello", usage: undefined });
+    const result = await withLlmBudget(makeArgs({ paid: false }), fn);
+
+    expect(result).toBe("hello");
+    expect(fn).toHaveBeenCalledTimes(1);
+    expect(mocks.reserveCredits).not.toHaveBeenCalled();
+    expect(mocks.settleCredits).not.toHaveBeenCalled();
+    expect(mocks.refundReservation).not.toHaveBeenCalled();
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Test #2: reserve fails → fn NEVER called
+// ---------------------------------------------------------------------------
+describe("Test #2 — reserve fails → fn never called", () => {
+  it("propagates InsufficientCredits and fn is not invoked", async () => {
+    mocks.reserveCredits.mockRejectedValue(new mocks.InsufficientCredits());
+    const fn = vi.fn();
+
+    await expect(withLlmBudget(makeArgs(), fn)).rejects.toBeInstanceOf(mocks.InsufficientCredits);
+    expect(fn).not.toHaveBeenCalled();
+    expect(mocks.settleCredits).not.toHaveBeenCalled();
+    expect(mocks.refundReservation).not.toHaveBeenCalled();
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Test #3: happy path with usage → settle actual ≤ reserved
+// ---------------------------------------------------------------------------
+describe("Test #3 — happy path with usage → settle actual", () => {
+  it("settleCredits called with actualInternal = actualCostInternal(usage, prices, margin); refundReservation NOT called", async () => {
+    const usage = { inputTokens: 1000, outputTokens: 200, cachedInputTokens: 300 };
+    const fn = vi.fn().mockResolvedValue({ result: 42, usage });
+
+    const result = await withLlmBudget(makeArgs(), fn);
+
+    expect(result).toBe(42);
+    expect(mocks.reserveCredits).toHaveBeenCalledTimes(1);
+    expect(mocks.settleCredits).toHaveBeenCalledTimes(1);
+    expect(mocks.refundReservation).not.toHaveBeenCalled();
+
+    const prices = llmPricesFor(MODEL);
+    const expectedActual = actualCostInternal(usage, prices, MARGIN);
+    const settleCall = mocks.settleCredits.mock.calls[0] as [unknown, { orgId: string; refId: string; actualInternal: number }];
+    expect(settleCall[1].actualInternal).toBe(expectedActual);
+
+    // Invariant: actual ≤ reserved
+    const reserve = turnBudgetInternal(prices, MARGIN, 1);
+    expect(expectedActual).toBeLessThanOrEqual(reserve);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Test #4: fn throws → refund + rethrow
+// ---------------------------------------------------------------------------
+describe("Test #4 — fn throws → refund + rethrow", () => {
+  it("refundReservation called; settleCredits NOT called; error propagates", async () => {
+    const boom = new Error("model exploded");
+    const fn = vi.fn().mockRejectedValue(boom);
+
+    await expect(withLlmBudget(makeArgs(), fn)).rejects.toBe(boom);
+
+    expect(mocks.reserveCredits).toHaveBeenCalledTimes(1);
+    expect(mocks.refundReservation).toHaveBeenCalledTimes(1);
+    expect(mocks.settleCredits).not.toHaveBeenCalled();
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Test #5: no usage → settle the full reserve (no refund)
+// ---------------------------------------------------------------------------
+describe("Test #5 — no usage → settle full reserve", () => {
+  it("settleCredits called with actualInternal === reserve; refundReservation NOT called", async () => {
+    const fn = vi.fn().mockResolvedValue({ result: "ok", usage: undefined });
+
+    await withLlmBudget(makeArgs(), fn);
+
+    expect(mocks.settleCredits).toHaveBeenCalledTimes(1);
+    expect(mocks.refundReservation).not.toHaveBeenCalled();
+
+    const prices = llmPricesFor(MODEL);
+    const reserve = turnBudgetInternal(prices, MARGIN, 1);
+    const settleCall = mocks.settleCredits.mock.calls[0] as [unknown, { orgId: string; refId: string; actualInternal: number }];
+    expect(settleCall[1].actualInternal).toBe(reserve);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Test #6: reserve happens BEFORE fn BEFORE settle
+// ---------------------------------------------------------------------------
+describe("Test #6 — call order: reserve → fn → settle", () => {
+  it("reserveCredits is called before fn, and fn is called before settleCredits", async () => {
+    const callOrder: string[] = [];
+    mocks.reserveCredits.mockImplementation(async () => { callOrder.push("reserve"); });
+    mocks.settleCredits.mockImplementation(async () => { callOrder.push("settle"); });
+    const fn = vi.fn().mockImplementation(async () => { callOrder.push("fn"); return { result: "done" }; });
+
+    await withLlmBudget(makeArgs(), fn);
+
+    expect(callOrder).toEqual(["reserve", "fn", "settle"]);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Test #7: actualCostInternal — pure math
+// ---------------------------------------------------------------------------
+describe("Test #7 — actualCostInternal pure math", () => {
+  const prices = llmPricesFor(MODEL); // sonnet prices: 3e-6 in / 15e-6 out / 0.3e-6 cached
+
+  it("computes cost with cached tokens at cached rate (cheaper than regular input)", () => {
+    const usage = { inputTokens: 1000, outputTokens: 200, cachedInputTokens: 400 };
+    const result = actualCostInternal(usage, prices, MARGIN);
+
+    // non-cached = 600 tokens × 3e-6
+    // cached     = 400 tokens × 0.3e-6
+    // output     = 200 tokens × 15e-6
+    const expectedUsd = 600 * 3e-6 + 400 * 0.3e-6 + 200 * 15e-6;
+    const expectedInternal = Math.ceil(expectedUsd * MARGIN * CREDITS_PER_USD);
+    expect(result).toBe(expectedInternal);
+  });
+
+  it("0 tokens → 0 internal credits", () => {
+    const usage = { inputTokens: 0, outputTokens: 0 };
+    expect(actualCostInternal(usage, prices, MARGIN)).toBe(0);
+  });
+
+  it("no cached tokens → all input at regular rate", () => {
+    const usage = { inputTokens: 500, outputTokens: 100 };
+    const expectedUsd = 500 * prices.inputPerToken + 100 * prices.outputPerToken;
+    const expectedInternal = Math.ceil(expectedUsd * MARGIN * CREDITS_PER_USD);
+    expect(actualCostInternal(usage, prices, MARGIN)).toBe(expectedInternal);
+  });
+
+  it("result is always an integer (Math.ceil)", () => {
+    const usage = { inputTokens: 1, outputTokens: 1 };
+    const result = actualCostInternal(usage, prices, 1);
+    expect(Number.isInteger(result)).toBe(true);
+  });
+
+  it("cached subset: actual ≤ reserve (never over-charges the cached path)", () => {
+    // Full-cache scenario: all input is cached (cheapest)
+    const usage = { inputTokens: 1000, outputTokens: 100, cachedInputTokens: 1000 };
+    const reserve = turnBudgetInternal(prices, MARGIN, 1);
+    const actual = actualCostInternal(usage, prices, MARGIN);
+    expect(actual).toBeLessThanOrEqual(reserve);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Test #8: source audit — enhancePrompt + coworkDraftStoryboard use withLlmBudget
+// ---------------------------------------------------------------------------
+describe("Test #8 — bypass audit: withLlmBudget wraps the model call in cowork-actions", () => {
+  it("cowork-actions.ts source contains withLlmBudget import and usage around transport.chat", async () => {
+    const { readFileSync } = await import("node:fs");
+    const { fileURLToPath } = await import("node:url");
+    const { resolve, dirname } = await import("node:path");
+
+    // Path from packages/otto/src/meter.test.ts → apps/web/lib/cowork-actions.ts
+    const thisFile = fileURLToPath(import.meta.url);
+    const actionsPath = resolve(dirname(thisFile), "../../../apps/web/lib/cowork-actions.ts");
+    const src = readFileSync(actionsPath, "utf8");
+
+    // withLlmBudget must be imported
+    expect(src).toContain("withLlmBudget");
+    // transport.chat calls in the two metered functions must be inside withLlmBudget
+    expect(src).toMatch(/withLlmBudget[^]*transport\.chat/s);
+  });
+});

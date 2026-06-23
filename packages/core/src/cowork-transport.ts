@@ -28,7 +28,7 @@ export class FalTransport implements CoworkTransport {
     private apiKey: string,
     private model = "anthropic/claude-sonnet-4.5",
   ) {}
-  async chat(_skillId: string, messages: ChatMessage[], opts?: { responseFormat?: "json_object"; maxTokens?: number }): Promise<{ text: string }> {
+  async chat(_skillId: string, messages: ChatMessage[], opts?: { responseFormat?: "json_object"; maxTokens?: number }): Promise<{ text: string; usage?: import("./cowork.js").LlmUsage }> {
     const res = await fetch("https://fal.run/openrouter/router/openai/v1/chat/completions", {
       method: "POST",
       headers: { Authorization: `Key ${this.apiKey}`, "Content-Type": "application/json" },
@@ -43,8 +43,16 @@ export class FalTransport implements CoworkTransport {
       const detail = await res.text().catch(() => "");
       throw new Error(`fal llm → ${res.status}: ${detail.slice(0, 300)}`);
     }
-    const data = (await res.json()) as { choices?: { message?: { content?: string } }[] };
-    return { text: data.choices?.[0]?.message?.content ?? "" };
+    const data = (await res.json()) as {
+      choices?: { message?: { content?: string } }[];
+      usage?: { prompt_tokens?: number; completion_tokens?: number; prompt_tokens_details?: { cached_tokens?: number } };
+    };
+    const text = data.choices?.[0]?.message?.content ?? "";
+    const u = data.usage;
+    const usage: import("./cowork.js").LlmUsage | undefined = u
+      ? { inputTokens: u.prompt_tokens ?? 0, outputTokens: u.completion_tokens ?? 0, cachedInputTokens: u.prompt_tokens_details?.cached_tokens }
+      : undefined;
+    return { text, usage };
   }
 }
 
@@ -55,7 +63,7 @@ export class FalTransport implements CoworkTransport {
 export class ModalTransport implements CoworkTransport {
   readonly name = "modal";
   constructor(private endpoint: string, private apiKey: string, private model = "local") {}
-  async chat(_skillId: string, messages: ChatMessage[], opts?: { responseFormat?: "json_object"; maxTokens?: number }): Promise<{ text: string }> {
+  async chat(_skillId: string, messages: ChatMessage[], opts?: { responseFormat?: "json_object"; maxTokens?: number }): Promise<{ text: string; usage?: import("./cowork.js").LlmUsage }> {
     const res = await fetch(`${this.endpoint.replace(/\/$/, "")}/v1/chat/completions`, {
       method: "POST",
       headers: { Authorization: `Bearer ${this.apiKey}`, "Content-Type": "application/json" },
@@ -70,8 +78,16 @@ export class ModalTransport implements CoworkTransport {
       const detail = await res.text().catch(() => "");
       throw new Error(`modal llm → ${res.status}: ${detail.slice(0, 300)}`);
     }
-    const data = (await res.json()) as { choices?: { message?: { content?: string } }[] };
-    return { text: data.choices?.[0]?.message?.content ?? "" };
+    const data = (await res.json()) as {
+      choices?: { message?: { content?: string } }[];
+      usage?: { prompt_tokens?: number; completion_tokens?: number; prompt_tokens_details?: { cached_tokens?: number } };
+    };
+    const text = data.choices?.[0]?.message?.content ?? "";
+    const u = data.usage;
+    const usage: import("./cowork.js").LlmUsage | undefined = u
+      ? { inputTokens: u.prompt_tokens ?? 0, outputTokens: u.completion_tokens ?? 0, cachedInputTokens: u.prompt_tokens_details?.cached_tokens }
+      : undefined;
+    return { text, usage };
   }
 }
 

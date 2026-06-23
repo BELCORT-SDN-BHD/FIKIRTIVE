@@ -10,7 +10,7 @@ import { revalidatePath } from "next/cache";
 import { prisma, Prisma } from "@artlio/db";
 import {
   coworkRequest, enhanceRequest, MAX_ENHANCE_TEXT, newId,
-  runSkill, draftStoryboardSkill, enhancePromptSkill,
+  draftStoryboardSkill, enhancePromptSkill,
   modelFamily, deriveMode,
   coworkTurnRequest, COWORK_MEMORY_TURNS, buildPlannerMessages, parseCoworkTurn,
   mockPlannerReply, suggestModel, GEN_MODELS, GEN_VIDEO_MODELS,
@@ -27,6 +27,8 @@ import { resolveDisabledModels } from "./model-registry";
 import { startGen } from "./gen-actions";
 import { storage, mimeOf } from "./storage";
 import { requireOwner } from "./auth-guard";
+import { withLlmBudget } from "@artlio/otto";
+import { OTTO_DEFAULT_MODEL } from "@artlio/otto";
 
 /** Phase C vision: resolve one asset to a base64 data-URL for the planner.
  *  Returns null (and never throws) when the asset is missing, foreign, deleted,
@@ -80,10 +82,21 @@ export async function coworkDraftStoryboard(
   const project = await prisma.project.findFirst({ where: { id: projectId, ...OWNED } });
   if (!project) return { error: "Project not found." };
   const transport = await getTransport();
+  const paid = transport.name !== "mock";
+  const draftRefId = `draft:${newId()}`;
 
   let plan;
   try {
-    plan = await runSkill(draftStoryboardSkill, idea, transport);
+    const messages = draftStoryboardSkill.buildMessages(idea);
+    const chatOpts = { mockReply: () => draftStoryboardSkill.mockReply(idea) };
+    const rawText = await withLlmBudget(
+      { orgId: ownerId, refId: draftRefId, model: OTTO_DEFAULT_MODEL, paid, maxSteps: 1 },
+      async () => {
+        const r = await transport.chat(draftStoryboardSkill.id, messages, chatOpts);
+        return { result: r.text, usage: r.usage };
+      },
+    );
+    plan = draftStoryboardSkill.parse(rawText);
   } catch (e) {
     return { error: `Otto couldn't draft that — ${e instanceof Error ? e.message.slice(0, 140) : "please try again"}.` };
   }
@@ -146,6 +159,8 @@ export async function enhancePrompt(
   const project = await prisma.project.findFirst({ where: { id: projectId, ownerId, deletedAt: null } });
   if (!project) return { error: "Project not found." };
   const transport = await getTransport();
+  const paid = transport.name !== "mock";
+  const enhanceRefId = `enhance:${newId()}`;
 
   // Phase 1: server-derive (family, mode) from the gen-shape and read the tuned
   // directive. Best-effort — a knowledge-read hiccup degrades to the family-neutral
@@ -159,8 +174,17 @@ export async function enhancePrompt(
   } catch { /* knowledge read is best-effort — fall back to the base prompt */ }
 
   try {
+    const skillCtx = { directive };
+    const messages = enhancePromptSkill.buildMessages(text, skillCtx);
+    const chatOpts = { mockReply: () => enhancePromptSkill.mockReply(text) };
     // clamp to the downstream generate cap so an over-long rewrite can't fail genRequest
-    const out = (await runSkill(enhancePromptSkill, text, transport, { directive })).trim().slice(0, MAX_ENHANCE_TEXT);
+    const out = (await withLlmBudget(
+      { orgId: ownerId, refId: enhanceRefId, model: OTTO_DEFAULT_MODEL, paid, maxSteps: 1 },
+      async () => {
+        const r = await transport.chat(enhancePromptSkill.id, messages, chatOpts);
+        return { result: r.text, usage: r.usage };
+      },
+    )).trim().slice(0, MAX_ENHANCE_TEXT);
     if (!out) return { error: "Enhance came back empty — try again." };
     try {
       // audit the paid LLM call (records usage for the future cost/credit ledger)
