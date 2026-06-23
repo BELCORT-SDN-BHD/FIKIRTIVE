@@ -14,7 +14,7 @@ vi.mock("@/auth", () => ({ signOut: vi.fn() }));
 // "is not a function", so this also guards the read-only contract by construction.
 const findUnique = vi.fn();
 const findMany = vi.fn();
-vi.mock("@artlio/db", () => ({
+vi.mock("@fikirtive/db", () => ({
   prisma: { creditAccount: { findUnique }, creditLedger: { findMany } },
 }));
 

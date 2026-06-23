@@ -1,7 +1,7 @@
 /**
  * Credit service (closed-beta P2) — the ONLY writer of CreditAccount/CreditLedger.
  * The per-org credits ledger IS the spend cap (M1). Charges are deterministic
- * (pricedGenCredits/pricedRefgenCredits in @artlio/core), so RESERVE == SETTLE: there
+ * (pricedGenCredits/pricedRefgenCredits in @fikirtive/core), so RESERVE == SETTLE: there
  * is no variable actual-cost reconciliation. Every worker write is exactly-once via the
  * partial-unique (orgId, refId, kind) index — a resume/redelivery no-ops.
  *

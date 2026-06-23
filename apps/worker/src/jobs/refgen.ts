@@ -21,7 +21,7 @@
  * Conditioning (D19 trust boundary): the request never carried image URLs —
  * the worker resolves them HERE from the entity's own references.
  */
-import { prisma, Prisma, settleCredits, refundReservation, type RefGenMode } from "@artlio/db";
+import { prisma, Prisma, settleCredits, refundReservation, type RefGenMode } from "@fikirtive/db";
 import {
   storageKey,
   newId,
@@ -30,10 +30,10 @@ import {
   refgenSpentUsd,
   type RefGenJobData,
   type RefGenModel,
-} from "@artlio/core";
+} from "@fikirtive/core";
 import { storage } from "../storage.js";
 import { provider } from "../generation.js";
-import { isModelDisabled } from "@artlio/core";
+import { isModelDisabled } from "@fikirtive/core";
 import { workerDisabledModels } from "../model-registry.js";
 
 /** fal Seedream edit caps total (inputs + outputs) at 15 images (codex P2). */

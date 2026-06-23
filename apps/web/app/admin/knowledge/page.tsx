@@ -1,6 +1,6 @@
 import { redirect } from "next/navigation";
-import { prisma } from "@artlio/db";
-import { COWORK_PLANNER_SYSTEM } from "@artlio/core";
+import { prisma } from "@fikirtive/db";
+import { COWORK_PLANNER_SYSTEM } from "@fikirtive/core";
 import { requireRole } from "@/lib/auth-guard";
 import { KnowledgeAdmin } from "@/components/admin/KnowledgeAdmin";
 

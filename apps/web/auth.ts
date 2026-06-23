@@ -1,8 +1,8 @@
 import NextAuth from "next-auth";
 import Resend from "next-auth/providers/resend";
 import { PrismaAdapter } from "@auth/prisma-adapter";
-import { prisma } from "@artlio/db";
-import { newId, isRole, FOUNDER_OWNER_ID } from "@artlio/core";
+import { prisma } from "@fikirtive/db";
+import { newId, isRole, FOUNDER_OWNER_ID } from "@fikirtive/core";
 import { isAllowedEmail } from "@/lib/allowlist";
 
 /**

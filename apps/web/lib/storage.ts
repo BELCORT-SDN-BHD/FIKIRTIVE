@@ -1,11 +1,11 @@
 import "server-only";
 import path from "node:path";
-import { createStorage } from "@artlio/storage";
-import { FOUNDER_OWNER_ID } from "@artlio/core";
+import { createStorage } from "@fikirtive/storage";
+import { FOUNDER_OWNER_ID } from "@fikirtive/core";
 
 /**
  * Web's storage handle — driver picked by env (STORAGE_DRIVER=r2 in prod,
- * local disk in dev). Key scheme and semantics live in @artlio/storage.
+ * local disk in dev). Key scheme and semantics live in @fikirtive/storage.
  */
 const LOCAL_ROOT = path.join(process.cwd(), "..", "..", ".data", "storage");
 
@@ -28,4 +28,4 @@ export function kindOf(ext: string): "image" | "video" | "other" {
   return "other";
 }
 
-export { mimeOf } from "@artlio/storage";
+export { mimeOf } from "@fikirtive/storage";

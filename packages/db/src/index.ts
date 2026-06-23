@@ -35,7 +35,7 @@ function buildClient(): PrismaClient {
   return withTenantGuard(new PrismaClient({ adapter }));
 }
 
-const globalForPrisma = globalThis as unknown as { __artlioPrisma?: PrismaClient };
+const globalForPrisma = globalThis as unknown as { __fikirtivePrisma?: PrismaClient };
 
 let moduleClient: PrismaClient | undefined;
 
@@ -44,7 +44,7 @@ let moduleClient: PrismaClient | undefined;
 // pools across vitest worker threads.
 function getClient(): PrismaClient {
   if (process.env.NODE_ENV === "development") {
-    return (globalForPrisma.__artlioPrisma ??= buildClient());
+    return (globalForPrisma.__fikirtivePrisma ??= buildClient());
   }
   return (moduleClient ??= buildClient());
 }

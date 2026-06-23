@@ -7,7 +7,7 @@
 import { useState } from "react";
 import { useRouter } from "next/navigation";
 import type { EntityDTO, ProjectDTO } from "@/lib/types";
-import type { ArtlioEdit, ModelDirectiveRules } from "@artlio/core";
+import type { FikirtiveEdit, ModelDirectiveRules } from "@fikirtive/core";
 import { StudioShell, type StudioView } from "./StudioShell";
 import { GenSpace } from "./GenSpace";
 import { Canvas } from "./Canvas";
@@ -48,8 +48,8 @@ export function Studio({
   mediaHasMore: boolean;
   frameCandidates: { id: string; src: string }[];
   shotOptions: ShotOption[];
-  boardEdit: ArtlioEdit | null;
-  savedEdit: ArtlioEdit | null;
+  boardEdit: FikirtiveEdit | null;
+  savedEdit: FikirtiveEdit | null;
   attachedCount: number;
   /** Project.updatedAt at load (ISO) — base for the editor's optimistic-concurrency saves (D1). */
   editedAt?: string;

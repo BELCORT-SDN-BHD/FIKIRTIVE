@@ -1,4 +1,4 @@
-# Artlio web — same base/pattern as apps/worker/Dockerfile (no ffmpeg needed).
+# Fikirtive web — same base/pattern as apps/worker/Dockerfile (no ffmpeg needed).
 FROM node:22-trixie-slim AS base
 RUN corepack enable
 
@@ -10,18 +10,18 @@ COPY packages/storage/package.json packages/storage/
 COPY packages/db/package.json packages/db/
 COPY packages/otto/package.json packages/otto/
 COPY apps/web/package.json apps/web/
-RUN pnpm install --frozen-lockfile --filter @artlio/web...
+RUN pnpm install --frozen-lockfile --filter @fikirtive/web...
 COPY tsconfig.base.json ./
 COPY packages/core packages/core
 COPY packages/storage packages/storage
 COPY packages/db packages/db
 COPY packages/otto packages/otto
 COPY apps/web apps/web
-RUN pnpm --filter @artlio/core build \
-  && pnpm --filter @artlio/storage build \
-  && pnpm --filter @artlio/db build \
-  && pnpm --filter @artlio/otto build \
-  && pnpm --filter @artlio/web build
+RUN pnpm --filter @fikirtive/core build \
+  && pnpm --filter @fikirtive/storage build \
+  && pnpm --filter @fikirtive/db build \
+  && pnpm --filter @fikirtive/otto build \
+  && pnpm --filter @fikirtive/web build
 
 FROM base AS runtime
 ENV NODE_ENV=production
@@ -29,4 +29,4 @@ WORKDIR /repo
 COPY --from=build /repo ./
 # Runs as root (not USER node): the Railway volume at /repo/.data is mounted
 # root-owned, and LocalDiskStorage must write there until T4 moves files to R2.
-CMD ["pnpm", "--filter", "@artlio/web", "start"]
+CMD ["pnpm", "--filter", "@fikirtive/web", "start"]

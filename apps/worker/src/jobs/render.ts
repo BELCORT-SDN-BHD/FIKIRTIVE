@@ -17,25 +17,25 @@ import { mkdir, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { execa } from "execa";
-import { prisma } from "@artlio/db";
+import { prisma } from "@fikirtive/db";
 import { storage } from "../storage.js";
 import { sanitizeError, scrubUrls } from "../redact.js";
 import {
-  artlioEdit,
+  fikirtiveEdit,
   editDuration,
   renderDuration,
   newId,
   srcToStorageKey,
   RENDER_RETRY_LIMIT,
-  type ArtlioEdit,
-  type ArtlioClip,
+  type FikirtiveEdit,
+  type FikirtiveClip,
   type AudioRole,
   type BetweenClipTransition,
   type TransitionDirection,
   type RenderJobData,
   type CaptionCue,
   type TextOverlay,
-} from "@artlio/core";
+} from "@fikirtive/core";
 import { probeFile } from "./ingest.js";
 
 const SIZES: Record<string, Record<string, [number, number]>> = {
@@ -45,7 +45,7 @@ const SIZES: Record<string, Record<string, [number, number]>> = {
 };
 
 interface PlannedInput {
-  clip: ArtlioClip;
+  clip: FikirtiveClip;
   file: string;
   index: number;
   hasAudio: boolean;
@@ -80,7 +80,7 @@ function videoChain(p: PlannedInput, w: number, h: number, fps: number): string 
   return `[${p.index}:v]${filters.join(",")}[v${p.index}]`;
 }
 
-/** Map an Artlio between-clip transition to an ffmpeg xfade `transition=` value.
+/** Map an Fikirtive between-clip transition to an ffmpeg xfade `transition=` value.
  *  All values verified present in the worker's ffmpeg build (Debian trixie 7.x).
  *  Directional types default to "left" when no direction is given. Flip has no
  *  native xfade — we approximate it with `vertopen` (a vertical card-flip-ish
@@ -136,7 +136,7 @@ function renderedTimelineSeconds(
 /** Map a clip's start from EDIT time to RENDERED time (thin wrapper over
  *  renderedTimelineSeconds at the clip's edit-time start). */
 function renderedStartSeconds(
-  clip: ArtlioClip,
+  clip: FikirtiveClip,
   visualPlanned: PlannedInput[],
   transitions: BetweenClipTransition[],
 ): number {
@@ -371,10 +371,10 @@ export async function handleRender(data: RenderJobData, retryCount = 0): Promise
   });
   if (claim.count === 0) return; // another delivery owns it (active render or already settled)
 
-  const work = path.join(tmpdir(), `artlio-render-${job.id}`);
+  const work = path.join(tmpdir(), `fikirtive-render-${job.id}`);
   try {
     // contract police: the worker NEVER trusts stored JSON blindly
-    const edit = artlioEdit.parse(job.editJson);
+    const edit = fikirtiveEdit.parse(job.editJson);
     const totalSeconds = editDuration(edit);
     const visualTrack = edit.timeline.tracks.find((t) => t.clips.some((c) => c.asset.type !== "audio"));
     if (!visualTrack) throw new Error("no visual track in edit");
@@ -385,7 +385,7 @@ export async function handleRender(data: RenderJobData, retryCount = 0): Promise
     // plan all inputs (visual first, then audio-track clips), probing each
     // source once for audio-stream presence
     const planned: PlannedInput[] = [];
-    const addInput = async (clip: ArtlioClip, trackKind: "visual" | "audio", audioRole?: AudioRole) => {
+    const addInput = async (clip: FikirtiveClip, trackKind: "visual" | "audio", audioRole?: AudioRole) => {
       // local: validated file path · r2: presigned URL (ffmpeg range-reads it)
       const file = await storage.ffmpegInput(srcToStorageKey(clip.asset.src));
       const probe = clip.asset.type === "image" ? { hasAudio: false } : await probeFile(file);

@@ -6,7 +6,7 @@
  * calls the provider, and attaches generated ReferenceImages to the entity.
  */
 import { revalidatePath } from "next/cache";
-import { prisma, reserveCredits, refundReservation, InsufficientCredits } from "@artlio/db";
+import { prisma, reserveCredits, refundReservation, InsufficientCredits } from "@fikirtive/db";
 import {
   refGenRequest,
   newId,
@@ -15,7 +15,7 @@ import {
   isModelDisabled,
   pricedRefgenCredits,
   type RefGenJobData,
-} from "@artlio/core";
+} from "@fikirtive/core";
 import { getBoss } from "./queue";
 import { requireOwner } from "./auth-guard";
 import { resolveDisabledModels } from "./model-registry";

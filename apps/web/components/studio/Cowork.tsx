@@ -7,7 +7,7 @@ import { getCoworkThreadClient } from "@/lib/cowork-fetch";
 import { MentionInput } from "@/components/MentionInput";
 import { Lightbox } from "@/components/Lightbox";
 import { IcPlus, Dialog, Button } from "@/components/ds";
-import { GEN_PRICE_USD_PER_IMAGE, videoPriceUsd, videoDefaults, GEN_VIDEO_MODELS, type GenVideoModel } from "@artlio/core";
+import { GEN_PRICE_USD_PER_IMAGE, videoPriceUsd, videoDefaults, GEN_VIDEO_MODELS, type GenVideoModel } from "@fikirtive/core";
 import { GenerateCard } from "./GenerateCard";
 import { PostedResult } from "./PostedResult";
 import type { EntityDTO, ChatThreadDTO } from "@/lib/types";

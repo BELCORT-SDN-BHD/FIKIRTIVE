@@ -1,6 +1,6 @@
 "use client";
 /**
- * Gen space surface (Artlio Studio + LTX gen-workspace). The generation
+ * Gen space surface (Fikirtive Studio + LTX gen-workspace). The generation
  * workbench: a rich composer (reference slots + mode + model + per-model
  * duration/More settings + live price) and a results stack.
  *
@@ -16,7 +16,7 @@ import {
   GEN_VIDEO_MODEL_OPTIONS, videoDefaults, videoPriceUsd, type GenVideoModel,
   modelFamily, deriveMode, lintPrompt, castFindings, type ModelDirectiveRules,
   newId,
-} from "@artlio/core";
+} from "@fikirtive/core";
 import { startGen, getGenJob, getRecentGenResults } from "@/lib/gen-actions";
 import { uploadReference } from "@/lib/actions";
 import { enhancePrompt } from "@/lib/cowork-actions";

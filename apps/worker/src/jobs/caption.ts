@@ -19,7 +19,7 @@ import { mkdir, readFile, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { execa } from "execa";
-import { prisma } from "@artlio/db";
+import { prisma } from "@fikirtive/db";
 import { storage } from "../storage.js";
 import { sanitizeError, scrubUrls } from "../redact.js";
 import {
@@ -30,7 +30,7 @@ import {
   storageKey,
   type CaptionJobData,
   type CaptionCue,
-} from "@artlio/core";
+} from "@fikirtive/core";
 import { probeFile } from "./ingest.js";
 
 const WHISPER_MODEL_PATH = process.env.WHISPER_MODEL_PATH ?? "/opt/whisper/models/ggml-base.en.bin";
@@ -84,7 +84,7 @@ export async function handleCaption(data: CaptionJobData, retryCount = 0): Promi
   });
   if (claim.count === 0) return; // another delivery owns it (active transcribe or settled)
 
-  const work = path.join(tmpdir(), `artlio-caption-${job.id}`);
+  const work = path.join(tmpdir(), `fikirtive-caption-${job.id}`);
   try {
     await mkdir(work, { recursive: true });
 

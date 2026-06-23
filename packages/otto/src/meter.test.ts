@@ -14,7 +14,7 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
 
 // ---------------------------------------------------------------------------
-// Mock @artlio/db — vi.hoisted creates spies before vi.mock hoisting runs.
+// Mock @fikirtive/db — vi.hoisted creates spies before vi.mock hoisting runs.
 // prisma.$transaction invokes its callback synchronously with a fake tx.
 // ---------------------------------------------------------------------------
 const mocks = vi.hoisted(() => {
@@ -31,7 +31,7 @@ const mocks = vi.hoisted(() => {
   return { reserveCredits, settleCredits, refundReservation, $transaction, InsufficientCredits };
 });
 
-vi.mock("@artlio/db", () => ({
+vi.mock("@fikirtive/db", () => ({
   prisma: { $transaction: mocks.$transaction },
   reserveCredits: mocks.reserveCredits,
   settleCredits: mocks.settleCredits,
@@ -43,7 +43,7 @@ vi.mock("@artlio/db", () => ({
 // Now import the module under test (after mock is registered)
 // ---------------------------------------------------------------------------
 import { withLlmBudget, actualCostInternal } from "./meter.js";
-import { llmPricesFor, CREDITS_PER_USD, turnBudgetInternal } from "@artlio/core";
+import { llmPricesFor, CREDITS_PER_USD, turnBudgetInternal } from "@fikirtive/core";
 
 // ---------------------------------------------------------------------------
 // Shared helpers

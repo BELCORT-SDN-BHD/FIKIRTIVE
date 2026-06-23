@@ -14,7 +14,7 @@
  *    re-hashes the stream and deletes mismatches (see worker/jobs/ingest)
  */
 import { revalidatePath } from "next/cache";
-import { prisma } from "@artlio/db";
+import { prisma } from "@fikirtive/db";
 import {
   authorizeUploadInput,
   signPartInput,
@@ -29,7 +29,7 @@ import {
   UPLOAD_URL_TTL_SECONDS,
   expectedPartLength,
   type AuthorizeUploadResult,
-} from "@artlio/core";
+} from "@fikirtive/core";
 import { storage } from "@/lib/storage";
 import { getBoss } from "@/lib/queue";
 import { buildEntitySnapshot } from "@/lib/entity-snapshot";

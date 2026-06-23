@@ -1,9 +1,9 @@
 import "server-only";
-import { prisma } from "@artlio/db";
+import { prisma } from "@fikirtive/db";
 import {
   coworkVisionConfig, mergeVisionConfig, createTransportFromConfig,
   effectiveCoworkProvider, MockTransport, type CoworkTransport,
-} from "@artlio/core";
+} from "@fikirtive/core";
 
 /** Config keys = a fixed code-side enum (the only writable keys). */
 export const CONFIG_KEYS = { vision: "vision", coworkProvider: "cowork_provider" } as const;

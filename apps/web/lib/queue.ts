@@ -1,6 +1,6 @@
 import "server-only";
 import { PgBoss } from "pg-boss";
-import { RENDER_DLQ, RENDER_QUEUE, RENDER_QUEUE_POLICY, REFGEN_DLQ, REFGEN_QUEUE, REFGEN_QUEUE_POLICY, GEN_DLQ, GEN_QUEUE, GEN_QUEUE_POLICY, CAPTION_DLQ, CAPTION_QUEUE, CAPTION_QUEUE_POLICY } from "@artlio/core";
+import { RENDER_DLQ, RENDER_QUEUE, RENDER_QUEUE_POLICY, REFGEN_DLQ, REFGEN_QUEUE, REFGEN_QUEUE_POLICY, GEN_DLQ, GEN_QUEUE, GEN_QUEUE_POLICY, CAPTION_DLQ, CAPTION_QUEUE, CAPTION_QUEUE_POLICY } from "@fikirtive/core";
 
 /**
  * Send-only pg-boss handle for the web side (producers). Same lazy-singleton
@@ -8,7 +8,7 @@ import { RENDER_DLQ, RENDER_QUEUE, RENDER_QUEUE_POLICY, REFGEN_DLQ, REFGEN_QUEUE
  * build collects pages with no DATABASE_URL), and dev hot-reload reuses one
  * instance via globalThis. The worker owns queue creation; senders only send.
  */
-const globalForBoss = globalThis as unknown as { __artlioBoss?: Promise<PgBoss> };
+const globalForBoss = globalThis as unknown as { __fikirtiveBoss?: Promise<PgBoss> };
 
 async function buildBoss(): Promise<PgBoss> {
   const url = process.env.DATABASE_URL_POOLED || process.env.DATABASE_URL;
@@ -42,7 +42,7 @@ let moduleBoss: Promise<PgBoss> | undefined;
 
 export function getBoss(): Promise<PgBoss> {
   if (process.env.NODE_ENV === "development") {
-    return (globalForBoss.__artlioBoss ??= buildBoss());
+    return (globalForBoss.__fikirtiveBoss ??= buildBoss());
   }
   return (moduleBoss ??= buildBoss());
 }

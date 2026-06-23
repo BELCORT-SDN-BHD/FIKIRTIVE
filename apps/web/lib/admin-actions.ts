@@ -8,8 +8,8 @@
  * requireOwner() tenant scoping — gated by User.role (requireRole), never Membership.role.
  */
 import { revalidatePath } from "next/cache";
-import { prisma } from "@artlio/db";
-import { newId, FOUNDER_OWNER_ID, modelDirectiveInput, DIRECTIVE_SEED, runtimeConfigInput, isKnownModelId, roleSchema } from "@artlio/core";
+import { prisma } from "@fikirtive/db";
+import { newId, FOUNDER_OWNER_ID, modelDirectiveInput, DIRECTIVE_SEED, runtimeConfigInput, isKnownModelId, roleSchema } from "@fikirtive/core";
 import { requireRole } from "./auth-guard";
 
 /** Upsert one (family, mode) directive cell + append a revision snapshot (R6) +

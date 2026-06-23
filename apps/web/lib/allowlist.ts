@@ -1,5 +1,5 @@
 import "server-only";
-import { prisma } from "@artlio/db";
+import { prisma } from "@fikirtive/db";
 
 function envList(s: string | undefined): string[] {
   return (s ?? "").split(",").map((x) => x.trim().toLowerCase()).filter(Boolean);

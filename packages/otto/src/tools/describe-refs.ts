@@ -15,7 +15,7 @@
 import { tool } from "@openai/agents";
 import type { RunContext } from "@openai/agents";
 import { z } from "zod";
-import { prisma, Prisma } from "@artlio/db";
+import { prisma, Prisma } from "@fikirtive/db";
 import type { OttoContext } from "../context.js";
 import { sanitizeRefDescription } from "./describe-refs.helpers.js";
 

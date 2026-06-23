@@ -1,5 +1,5 @@
 {
-  "name": "artlio",
+  "name": "fikirtive",
   "private": true,
   "packageManager": "pnpm@10.0.0",
   "engines": {
@@ -21,8 +21,8 @@
     "lint": "pnpm -r lint",
     "lint:tenancy": "bash scripts/check-no-raw-prisma.sh",
     "test": "pnpm -r test",
-    "db:generate": "pnpm --filter @artlio/db generate",
-    "db:migrate": "pnpm --filter @artlio/db migrate:dev"
+    "db:generate": "pnpm --filter @fikirtive/db generate",
+    "db:migrate": "pnpm --filter @fikirtive/db migrate:dev"
   },
   "devDependencies": {
     "@playwright/test": "^1.60.0",

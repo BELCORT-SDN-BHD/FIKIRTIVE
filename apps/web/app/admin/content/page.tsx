@@ -1,6 +1,6 @@
 import { redirect } from "next/navigation";
-import { prisma } from "@artlio/db";
-import { storageKey, storageKeyToSrc } from "@artlio/core";
+import { prisma } from "@fikirtive/db";
+import { storageKey, storageKeyToSrc } from "@fikirtive/core";
 import { requireRole } from "@/lib/auth-guard";
 import { ContentAdmin, type GenRow, type BlockRow } from "@/components/admin/ContentAdmin";
 

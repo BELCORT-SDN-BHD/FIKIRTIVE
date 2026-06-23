@@ -9,8 +9,8 @@
  * Idempotent by construction: hashing and probing twice write the same values.
  */
 import { execa } from "execa";
-import { prisma } from "@artlio/db";
-import { storageKey, sha256Stream, newId } from "@artlio/core";
+import { prisma } from "@fikirtive/db";
+import { storageKey, sha256Stream, newId } from "@fikirtive/core";
 import { storage } from "../storage.js";
 
 export interface IngestJobData {

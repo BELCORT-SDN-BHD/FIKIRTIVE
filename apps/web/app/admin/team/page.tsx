@@ -1,6 +1,6 @@
 import { redirect } from "next/navigation";
-import { prisma } from "@artlio/db";
-import { ROLES } from "@artlio/core";
+import { prisma } from "@fikirtive/db";
+import { ROLES } from "@fikirtive/core";
 import { requireRole } from "@/lib/auth-guard";
 import { TeamAdmin, type TeamRow } from "@/components/admin/TeamAdmin";
 

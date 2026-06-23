@@ -13,7 +13,7 @@
  * Conditioning = the @mentioned entities' reference images, resolved here from
  * the job's entityIds (D19 trust boundary).
  */
-import { prisma, settleCredits, refundReservation } from "@artlio/db";
+import { prisma, settleCredits, refundReservation } from "@fikirtive/db";
 import {
   storageKey,
   newId,
@@ -24,11 +24,11 @@ import {
   type GenJobData,
   type GenModel,
   type GenVideoModel,
-} from "@artlio/core";
+} from "@fikirtive/core";
 import { storage } from "../storage.js";
 import { sanitizeError, scrubUrls } from "../redact.js";
 import { provider } from "../generation.js";
-import { isModelDisabled } from "@artlio/core";
+import { isModelDisabled } from "@fikirtive/core";
 import { workerDisabledModels } from "../model-registry.js";
 import { resumeOttoAfterGen } from "../otto-resume.js";
 

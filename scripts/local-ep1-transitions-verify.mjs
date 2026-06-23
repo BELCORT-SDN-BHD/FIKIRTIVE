@@ -2,7 +2,7 @@
 // OPT-4 EP1 transitions — $0 local ffmpeg render-verify.
 //
 // For each transition type (the 7-tile library) this script:
-//   1. builds an ArtlioEdit and parses it through the REAL @artlio/core contract
+//   1. builds an FikirtiveEdit and parses it through the REAL @fikirtive/core contract
 //      (proves the contract accepts a track-level transition),
 //   2. computes renderDuration() from the SAME core helper the worker uses,
 //   3. replicates the worker's EXACT filtergraph (apps/worker/src/jobs/render.ts:
@@ -27,12 +27,12 @@ const run = promisify(execFile);
 const root = new URL("..", import.meta.url);
 
 // REAL contract + render-duration math (the worker imports the same symbols).
-const { artlioEdit, renderDuration, TRANSITION_TYPES } = await import(
+const { fikirtiveEdit, renderDuration, TRANSITION_TYPES } = await import(
   new URL("packages/core/dist/index.js", root)
 );
 
 // ---- mirror apps/worker/src/jobs/render.ts (keep in sync) -------------------
-// transitionToXfade(): Artlio transition type → ffmpeg xfade transition= value.
+// transitionToXfade(): Fikirtive transition type → ffmpeg xfade transition= value.
 function transitionToXfade(type, direction) {
   const dir = direction ?? "left";
   switch (type) {
@@ -170,7 +170,7 @@ function makeEdit(lengths, transitions) {
     start += len;
     return c;
   });
-  return artlioEdit.parse({
+  return fikirtiveEdit.parse({
     timeline: { background: "#000000", tracks: [{ clips, transitions }] },
     output: { format: "mp4", resolution: "sd", aspectRatio: "16:9", fps: 25 },
   });

@@ -3,7 +3,7 @@
  * `session` callback receives the fresh User row (AdapterUser); we copy role onto
  * session.user.role so requireRole + the admin UI can read it type-safely.
  */
-import type { Role } from "@artlio/core";
+import type { Role } from "@fikirtive/core";
 
 declare module "next-auth" {
   // augment the base User — next-auth's AdapterUser extends this, so the DB-session

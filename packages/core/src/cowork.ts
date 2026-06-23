@@ -1,5 +1,5 @@
 /**
- * Artlio cowork — the agent (the product's differentiator). v1 skill: draft a
+ * Fikirtive cowork — the agent (the product's differentiator). v1 skill: draft a
  * storyboard from an idea. The provider port mirrors the generation provider:
  * a mock for dev ($0, deterministic) and a real LLM for prod (fal, reusing
  * FAL_KEY). cowork manipulates the project through the SAME server actions a

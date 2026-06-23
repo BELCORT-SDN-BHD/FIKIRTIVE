@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
-import { FOUNDER_OWNER_ID } from "@artlio/core";
+import { FOUNDER_OWNER_ID } from "@fikirtive/core";
 
 // Unit test (no DB): mock prisma so the invariants — founder exclusion, org→owner join,
 // internal→displayed credit mapping, newest-first ordering, guard-exempt groupBy shape —
@@ -22,7 +22,7 @@ const refGenJobAggregate = vi.fn();
 const projectCount = vi.fn();
 const actionEventFindMany = vi.fn();
 
-vi.mock("@artlio/db", () => ({
+vi.mock("@fikirtive/db", () => ({
   prisma: {
     organization: { findMany: organizationFindMany, findFirst: organizationFindFirst },
     membership: { findMany: membershipFindMany, findFirst: membershipFindFirst },

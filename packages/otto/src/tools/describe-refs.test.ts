@@ -4,9 +4,9 @@ import { executeDescribeRefs } from "./describe-refs.js";
 import type { OttoContext } from "../context.js";
 
 // ---------------------------------------------------------------------------
-// Mock @artlio/db
+// Mock @fikirtive/db
 // ---------------------------------------------------------------------------
-vi.mock("@artlio/db", () => ({
+vi.mock("@fikirtive/db", () => ({
   prisma: {
     entity: {
       findMany: vi.fn(),
@@ -85,7 +85,7 @@ describe("executeDescribeRefs — mock DB", () => {
 
   beforeEach(async () => {
     vi.clearAllMocks();
-    const db = await import("@artlio/db");
+    const db = await import("@fikirtive/db");
     mockPrisma = db.prisma as unknown as typeof mockPrisma;
     (mockPrisma.entity.updateMany as ReturnType<typeof vi.fn>).mockResolvedValue({ count: 1 });
   });

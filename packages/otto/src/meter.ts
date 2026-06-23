@@ -14,13 +14,13 @@ import {
   ottoLlmMargin,
   turnBudgetInternal,
   type LlmPrices,
-} from "@artlio/core";
+} from "@fikirtive/core";
 import {
   prisma,
   reserveCredits,
   settleCredits,
   refundReservation,
-} from "@artlio/db";
+} from "@fikirtive/db";
 
 export type TokenUsage = {
   inputTokens: number;

@@ -2,7 +2,7 @@
 
 import { useEffect, useRef, useState } from "react";
 import Link from "next/link";
-import { artlioEdit, snapEdit, splitClipAt, rippleDeleteClip, reconcileTransitions, editToFcpXml, OVERLAY_POSITIONS, type ArtlioEdit, type ArtlioClip, type CaptionCue, type TextOverlay, type AudioRole } from "@artlio/core";
+import { fikirtiveEdit, snapEdit, splitClipAt, rippleDeleteClip, reconcileTransitions, editToFcpXml, OVERLAY_POSITIONS, type FikirtiveEdit, type FikirtiveClip, type CaptionCue, type TextOverlay, type AudioRole } from "@fikirtive/core";
 import { getRenderJobs, saveProjectEdit, startRender, getEditorMedia, startCaption, getCaptionJob, getTranscript } from "@/lib/actions";
 import { uploadFilesDirect } from "@/lib/direct-upload";
 import { finalizeCandidateUploads } from "@/lib/upload-actions";
@@ -10,7 +10,7 @@ import { setDnd, getDnd, hasDnd } from "@/lib/dnd";
 import { Button, Chip, EmptyHero, MonoLabel } from "./ds";
 
 /**
- * Assembly-cut editor: Shotstack Studio session policed by the artlioEdit
+ * Assembly-cut editor: Shotstack Studio session policed by the fikirtiveEdit
  * contract — getEdit() snapshots are parsed canonically before any
  * persistence, and a debounced validator flags out-of-contract edits live.
  *
@@ -42,10 +42,10 @@ type EditorClip = { id: string; src: string; kind: "image" | "video" | "audio"; 
 type SelClip = { asset?: { type?: string; src?: string; volume?: number }; transition?: { in?: string; out?: string } };
 type Selection = { trackIndex: number; clipIndex: number; clip: SelClip };
 /** A between-clip transition, mirroring the contract's betweenClipTransition shape.
- *  Lives in Artlio React state (outside Shotstack) and is merged into the
- *  ArtlioEdit on save. */
+ *  Lives in Fikirtive React state (outside Shotstack) and is merged into the
+ *  FikirtiveEdit on save. */
 type UiTransition = { fromClipIndex: number; toClipIndex: number; type: string; durationMs: number; direction?: "left" | "right" | "up" | "down" };
-/** Captions + static text overlays live in Artlio React state (outside Shotstack)
+/** Captions + static text overlays live in Fikirtive React state (outside Shotstack)
  *  and are merged into the timeline (one level up, NOT on a track) at save — same
  *  round-trip as transitions, since the Shotstack Edit strips unknown fields. */
 type UiCaption = CaptionCue;
@@ -59,9 +59,9 @@ const TILE_TO_TYPE: Record<string, string | null> = {
 const DEFAULT_TRANSITION_MS = 500;
 
 /** A blank cut so the editor (and its Assets panel) renders for an empty project
- *  that still has media to drop in — the artlioEdit contract (≥1 clip) is only
+ *  that still has media to drop in — the fikirtiveEdit contract (≥1 clip) is only
  *  enforced at export, so an empty timeline edits fine. */
-const EMPTY_EDIT: ArtlioEdit = {
+const EMPTY_EDIT: FikirtiveEdit = {
   timeline: { background: "#000000", tracks: [{ clips: [] }] },
   output: { format: "mp4", resolution: "hd", aspectRatio: "16:9", fps: 25 },
 };
@@ -113,9 +113,9 @@ export function Editor({
 }: {
   projectId: string;
   /** rebuilt from the shot board every load */
-  boardEdit: ArtlioEdit | null;
+  boardEdit: FikirtiveEdit | null;
   /** the persisted working cut (Project.editJson), wins when present */
-  savedEdit: ArtlioEdit | null;
+  savedEdit: FikirtiveEdit | null;
   attachedCount: number;
   /** Project.updatedAt at load (ISO) — base for optimistic-concurrency saves. */
   editedAt?: string;
@@ -145,7 +145,7 @@ export function Editor({
 
   // EP1 between-clip transitions live OUTSIDE the Shotstack Edit — Shotstack's
   // schema has no track-level transition and strips unknown fields, so this
-  // Artlio-owned array is merged into the ArtlioEdit at snapshot()/save time.
+  // Fikirtive-owned array is merged into the FikirtiveEdit at snapshot()/save time.
   // Keyed by fromClipIndex on the visual track (track 0).
   const [transitions, setTransitionsState] = useState<UiTransition[]>(
     () => (initialEdit?.timeline.tracks[0] as { transitions?: UiTransition[] } | undefined)?.transitions ?? [],
@@ -165,7 +165,7 @@ export function Editor({
   // EP3 captions + static text overlays — SAME outside-Shotstack pattern as
   // transitions, but TIMELINE-level (siblings of tracks, not on a track/clip):
   // burn-in is on the final composited stream, and Shotstack strips unknown
-  // fields, so they live in Artlio state and are merged into the ArtlioEdit at
+  // fields, so they live in Fikirtive state and are merged into the FikirtiveEdit at
   // currentMergedEdit(). A ref mirrors each so currentMergedEdit reads the CURRENT
   // value (never the value captured when the load effect mounted). ALL writes go
   // through the setter, which keeps ref + state in sync.
@@ -189,9 +189,9 @@ export function Editor({
   };
   // EP4 ducking: per-track audioRole ("voice"/"music"), keyed by track index. Lives
   // OUTSIDE Shotstack (its Edit strips unknown track fields, same as transitions) so
-  // it must be re-merged into the ArtlioEdit in currentMergedEdit/commit helpers and
+  // it must be re-merged into the FikirtiveEdit in currentMergedEdit/commit helpers and
   // re-seeded in reloadFromEdit. Mirrored in a ref so closures read the CURRENT map.
-  const seedRoles = (edit: ArtlioEdit | null | undefined): Record<number, AudioRole> => {
+  const seedRoles = (edit: FikirtiveEdit | null | undefined): Record<number, AudioRole> => {
     const out: Record<number, AudioRole> = {};
     edit?.timeline.tracks.forEach((t, i) => { if (t.audioRole) out[i] = t.audioRole; });
     return out;
@@ -203,8 +203,8 @@ export function Editor({
     setAudioRolesState(next);
   };
   // EP4 output presets live in React (like transitions, outside Shotstack) and are
-  // merged into the persisted ArtlioEdit. Seeded from the loaded edit's output.
-  const [output, setOutput] = useState<ArtlioEdit["output"]>(
+  // merged into the persisted FikirtiveEdit. Seeded from the loaded edit's output.
+  const [output, setOutput] = useState<FikirtiveEdit["output"]>(
     () => initialEdit?.output ?? EMPTY_EDIT.output,
   );
   // EP4 approx preview (sequential <video> of the visual track, no effects) + audio
@@ -218,8 +218,8 @@ export function Editor({
   // "before" side for reconcileTransitions when a NATIVE Shotstack edit
   // (drag-reorder / trim) fires edit:changed. Updated on every reload and after
   // each reconcile so a sequence of native edits maps incrementally.
-  const prevClipsRef = useRef<ArtlioClip[]>(
-    (initialEdit?.timeline.tracks[0]?.clips as ArtlioClip[] | undefined) ?? [],
+  const prevClipsRef = useRef<FikirtiveClip[]>(
+    (initialEdit?.timeline.tracks[0]?.clips as FikirtiveClip[] | undefined) ?? [],
   );
   // the clip boundary the user is editing (the transition AFTER clip N → N+1)
   const [boundary, setBoundary] = useState<number | null>(null);
@@ -232,9 +232,9 @@ export function Editor({
   // idempotent (a no-op when the new edit equals committedRef), so the same change
   // recorded by both an explicit op and the debounced observer counts exactly once.
   const HISTORY_MAX = 50;
-  const undoStack = useRef<ArtlioEdit[]>([]);
-  const redoStack = useRef<ArtlioEdit[]>([]);
-  const committedRef = useRef<ArtlioEdit | null>(null);
+  const undoStack = useRef<FikirtiveEdit[]>([]);
+  const redoStack = useRef<FikirtiveEdit[]>([]);
+  const committedRef = useRef<FikirtiveEdit | null>(null);
   const [canUndo, setCanUndo] = useState(false);
   const [canRedo, setCanRedo] = useState(false);
   const syncHistoryButtons = () => {
@@ -404,7 +404,7 @@ export function Editor({
                 // then we snap any sub-threshold gap and record ONE history entry.
                 const merged = currentMergedEdit();
                 if (!merged) return;
-                const res = artlioEdit.safeParse(merged);
+                const res = fikirtiveEdit.safeParse(merged);
                 setLiveIssue(res.success ? null : res.error.issues[0]?.message ?? "invalid edit");
                 if (!res.success) return; // transient invalid — don't commit or snap
                 const snapped = snapEdit(res.data);
@@ -453,8 +453,8 @@ export function Editor({
         // stable ids (Shotstack assigns them on load + may canonicalize), so the
         // first native edit reconciles by the same identity space the live edit uses.
         prevClipsRef.current =
-          (((edit as unknown as StudioEdit).getEdit({ includeIds: true }) as ArtlioEdit).timeline.tracks[0]
-            ?.clips as ArtlioClip[]) ?? [];
+          (((edit as unknown as StudioEdit).getEdit({ includeIds: true }) as FikirtiveEdit).timeline.tracks[0]
+            ?.clips as FikirtiveClip[]) ?? [];
         // a fresh project/cut starts with no history (don't carry another cut's)
         undoStack.current = [];
         redoStack.current = [];
@@ -463,7 +463,7 @@ export function Editor({
         // pushes the right "before"; null is fine for an empty (sub-contract) cut.
         {
           const seed = currentMergedEdit();
-          const seedParsed = seed ? artlioEdit.safeParse(seed) : null;
+          const seedParsed = seed ? fikirtiveEdit.safeParse(seed) : null;
           committedRef.current = seedParsed?.success ? seedParsed.data : null;
         }
         syncHistoryButtons();
@@ -497,7 +497,7 @@ export function Editor({
     // identity space: clips WITH stable ids (the only reliable match across a native
     // reorder; asset.src is ambiguous once a split makes two same-src halves).
     const liveIdClips =
-      ((h.edit.getEdit({ includeIds: true }) as ArtlioEdit).timeline.tracks[0]?.clips as ArtlioClip[] | undefined) ?? [];
+      ((h.edit.getEdit({ includeIds: true }) as FikirtiveEdit).timeline.tracks[0]?.clips as FikirtiveClip[] | undefined) ?? [];
     if (transitionsRef.current.length > 0) {
       const reconciled = reconcileTransitions(
         prevClipsRef.current,
@@ -516,14 +516,14 @@ export function Editor({
    *  parse — the object the ops, save, and history all consume. The merge reads the
    *  id-FREE getEdit() so no SDK id leaks into the persisted contract; transitions
    *  are reconciled first (reconcileNow) so the indices match the live clips. */
-  function currentMergedEdit(): ArtlioEdit | null {
+  function currentMergedEdit(): FikirtiveEdit | null {
     const h = handles.current;
     if (!h) return null;
     const live = reconcileNow(); // reconcile BEFORE merging (covers save/op/undo)
-    const raw = h.edit.getEdit() as ArtlioEdit; // id-free — what we persist
+    const raw = h.edit.getEdit() as FikirtiveEdit; // id-free — what we persist
     // UiTransition.type is a loose `string` (the tile→type map); the contract
     // narrows it at parse time. Consumers always safeParse / feed an op that
-    // re-parses, so cast the pre-parse merge to ArtlioEdit.
+    // re-parses, so cast the pre-parse merge to FikirtiveEdit.
     // Captions/overlays fold in ONE level up (timeline-level, never on a track) —
     // and only when non-empty, so "absence = feature unused" round-trips (no empty
     // [] is ever persisted, matching the transitions/None rule).
@@ -543,13 +543,13 @@ export function Editor({
         ...(overlaysRef.current.length > 0 ? { textOverlays: overlaysRef.current } : {}),
       },
     };
-    return merged as unknown as ArtlioEdit;
+    return merged as unknown as FikirtiveEdit;
   }
 
-  function snapshot(): { edit?: ArtlioEdit; error?: string } {
+  function snapshot(): { edit?: FikirtiveEdit; error?: string } {
     const merged = currentMergedEdit();
     if (!merged) return { error: "Editor not ready yet." };
-    const result = artlioEdit.safeParse(merged);
+    const result = fikirtiveEdit.safeParse(merged);
     if (!result.success) {
       const first = result.error.issues[0];
       return {
@@ -564,7 +564,7 @@ export function Editor({
    *  the debounced observer counts exactly once. `next` is always already PARSED, so
    *  the stacks can never hold an out-of-contract edit (fixes the prior unparsed-push
    *  bug). Bounded; a new entry clears the redo branch. */
-  function commitState(next: ArtlioEdit): void {
+  function commitState(next: FikirtiveEdit): void {
     const prev = committedRef.current;
     if (prev && JSON.stringify(prev) === JSON.stringify(next)) return; // no real change
     if (prev) {
@@ -585,7 +585,7 @@ export function Editor({
    *  CURRENT index space (fixes the two stale-baseline races). Idempotent when nothing
    *  is pending (commitState no-ops). Returns null (and surfaces the issue) if the live
    *  edit is momentarily out of contract — the caller must bail. */
-  function flushNative(): ArtlioEdit | null {
+  function flushNative(): FikirtiveEdit | null {
     // never read/commit live Shotstack state while OUR reload is in flight — the edit
     // is half-loaded. Callers treat null as "busy, try again" and bail. (Re-entrancy
     // guard: a second command landing during reloadFromEdit's await.)
@@ -595,7 +595,7 @@ export function Editor({
     clearTimeout(editChangedTimer.current);
     const merged = currentMergedEdit(); // reconciles + advances prevClipsRef
     if (!merged) return null;
-    const res = artlioEdit.safeParse(merged);
+    const res = fikirtiveEdit.safeParse(merged);
     if (!res.success) {
       setLiveIssue(res.error.issues[0]?.message ?? "invalid edit");
       return null;
@@ -614,7 +614,7 @@ export function Editor({
   function commitTransitions(next: UiTransition[]): void {
     const h = handles.current;
     if (!h) return;
-    const raw = h.edit.getEdit() as ArtlioEdit;
+    const raw = h.edit.getEdit() as FikirtiveEdit;
     const merged = {
       ...raw,
       output, // EP4: preserve the chosen output presets (Shotstack doesn't carry them)
@@ -627,13 +627,13 @@ export function Editor({
           const withRole = role ? { ...t, audioRole: role } : t;
           return i === 0 && next.length > 0 ? { ...withRole, transitions: next } : withRole;
         }),
-        // preserve the timeline-level Artlio arrays — editing a transition must not
+        // preserve the timeline-level Fikirtive arrays — editing a transition must not
         // drop captions/overlays from the committed edit (they live in React state).
         ...(captionsRef.current.length > 0 ? { captions: captionsRef.current } : {}),
         ...(overlaysRef.current.length > 0 ? { textOverlays: overlaysRef.current } : {}),
       },
-    } as unknown as ArtlioEdit;
-    const parsed = artlioEdit.safeParse(merged);
+    } as unknown as FikirtiveEdit;
+    const parsed = fikirtiveEdit.safeParse(merged);
     if (!parsed.success) {
       setNotice({ tone: "warn", text: parsed.error.issues[0]?.message ?? "invalid transition" });
       return; // don't apply an out-of-contract transition
@@ -653,7 +653,7 @@ export function Editor({
     const h = handles.current;
     if (!h) return;
     const live = reconcileNow();
-    const raw = h.edit.getEdit() as ArtlioEdit;
+    const raw = h.edit.getEdit() as FikirtiveEdit;
     const merged = {
       ...raw,
       output, // EP4: preserve the chosen output presets (Shotstack doesn't carry them)
@@ -669,8 +669,8 @@ export function Editor({
         ...(nextCaptions.length > 0 ? { captions: nextCaptions } : {}),
         ...(nextOverlays.length > 0 ? { textOverlays: nextOverlays } : {}),
       },
-    } as unknown as ArtlioEdit;
-    const parsed = artlioEdit.safeParse(merged);
+    } as unknown as FikirtiveEdit;
+    const parsed = fikirtiveEdit.safeParse(merged);
     if (!parsed.success) {
       setNotice({ tone: "warn", text: parsed.error.issues[0]?.message ?? "invalid caption/text" });
       return; // don't apply an out-of-contract caption/overlay
@@ -687,11 +687,11 @@ export function Editor({
    *  build the merged edit with `next` output, parse, commitState, then setOutput. This
    *  makes output changes undoable + serialized, restored by undo/redo as their own
    *  history step. Preserves the React-held transitions/audioRoles/captions/overlays. */
-  function commitOutput(next: ArtlioEdit["output"]): void {
+  function commitOutput(next: FikirtiveEdit["output"]): void {
     const h = handles.current;
     if (!h) return;
     const live = reconcileNow();
-    const raw = h.edit.getEdit() as ArtlioEdit;
+    const raw = h.edit.getEdit() as FikirtiveEdit;
     const merged = {
       ...raw,
       output: next,
@@ -705,8 +705,8 @@ export function Editor({
         ...(captionsRef.current.length > 0 ? { captions: captionsRef.current } : {}),
         ...(overlaysRef.current.length > 0 ? { textOverlays: overlaysRef.current } : {}),
       },
-    } as unknown as ArtlioEdit;
-    const parsed = artlioEdit.safeParse(merged);
+    } as unknown as FikirtiveEdit;
+    const parsed = fikirtiveEdit.safeParse(merged);
     if (!parsed.success) {
       setNotice({ tone: "warn", text: parsed.error.issues[0]?.message ?? "invalid output preset" });
       return;
@@ -716,24 +716,24 @@ export function Editor({
     setDirty(true);
   }
   // Apply an output-preset change through the state-only commit path so it's undoable.
-  function changeOutput(patch: Partial<ArtlioEdit["output"]>): void {
+  function changeOutput(patch: Partial<FikirtiveEdit["output"]>): void {
     if (opLock.current) return; // another command is in flight — serialize
     if (!flushNative()) return; // reconcile + record any pending native edit first
     commitOutput({ ...output, ...patch });
   }
 
-  /** load a post-op ArtlioEdit into the live editor: hot-reload Shotstack with the
+  /** load a post-op FikirtiveEdit into the live editor: hot-reload Shotstack with the
    *  clips/output, re-seed the React transition state (Shotstack strips track-level
    *  transitions), and re-baseline prevClipsRef from the LIVE clips' fresh stable ids
    *  (Shotstack re-ids on loadEdit) so the next native edit reconciles correctly. The
    *  caller sets selfReload around this so the reload's edit:changed is ignored. */
-  async function reloadFromEdit(next: ArtlioEdit) {
+  async function reloadFromEdit(next: FikirtiveEdit) {
     const h = handles.current;
     if (!h) return;
     await h.edit.loadEdit(next);
     const nextTransitions = (next.timeline.tracks[0] as { transitions?: UiTransition[] } | undefined)?.transitions ?? [];
     setTransitions(nextTransitions);
-    // re-seed the timeline-level Artlio state too (Shotstack doesn't carry these) so
+    // re-seed the timeline-level Fikirtive state too (Shotstack doesn't carry these) so
     // undo/redo and any reload restore captions/overlays — not just transitions.
     setCaptions((next.timeline as { captions?: UiCaption[] }).captions ?? []);
     setOverlays((next.timeline as { textOverlays?: UiOverlay[] }).textOverlays ?? []);
@@ -742,7 +742,7 @@ export function Editor({
     setAudioRoles(seedRoles(next));
     setOutput(next.output);
     prevClipsRef.current =
-      ((h.edit.getEdit({ includeIds: true }) as ArtlioEdit).timeline.tracks[0]?.clips as ArtlioClip[] | undefined) ?? [];
+      ((h.edit.getEdit({ includeIds: true }) as FikirtiveEdit).timeline.tracks[0]?.clips as FikirtiveClip[] | undefined) ?? [];
     setDirty(true);
   }
 
@@ -791,7 +791,7 @@ export function Editor({
   async function appendAsset(clip: EditorClip) {
     const h = handles.current;
     if (!h || status !== "ready" || opLock.current) return; // serialize: no edits mid-op
-    const cur = h.edit.getEdit() as ArtlioEdit;
+    const cur = h.edit.getEdit() as FikirtiveEdit;
     const track0 = cur.timeline.tracks[0]?.clips ?? [];
     const end = track0.reduce((m, c) => Math.max(m, c.start + c.length), 0);
     opLock.current = true;
@@ -837,7 +837,7 @@ export function Editor({
         tracks.push({ clips: [newClip] });
       }
       const next = { ...base, timeline: { ...base.timeline, tracks } };
-      const parsed = artlioEdit.safeParse(next);
+      const parsed = fikirtiveEdit.safeParse(next);
       if (!parsed.success) {
         setNotice({ tone: "warn", text: parsed.error.issues[0]?.message ?? "Could not place audio." });
         return;
@@ -893,7 +893,7 @@ export function Editor({
         return copy;
       });
       const next = { ...base, timeline: { ...base.timeline, tracks } };
-      const parsed = artlioEdit.safeParse(next);
+      const parsed = fikirtiveEdit.safeParse(next);
       if (!parsed.success) { setNotice({ tone: "warn", text: parsed.error.issues[0]?.message ?? "Invalid role." }); return; }
       setAudioRoles(nextRoles); // update the ref BEFORE reload so currentMergedEdit re-merges it
       commitState(parsed.data);
@@ -911,7 +911,7 @@ export function Editor({
   function syncSelectedFromEdit(trackIndex: number, clipIndex: number) {
     const h = handles.current;
     if (!h) return;
-    const cur = h.edit.getEdit() as ArtlioEdit;
+    const cur = h.edit.getEdit() as FikirtiveEdit;
     const real = cur.timeline.tracks[trackIndex]?.clips[clipIndex];
     if (real) setSelected({ trackIndex, clipIndex, clip: real as SelClip });
   }
@@ -937,7 +937,7 @@ export function Editor({
     const { trackIndex, clipIndex } = selected;
     // patch volume onto the REAL asset (preserve type/src/trim) — rebuilding from
     // the selection snapshot could replace it with a partial and break export
-    const cur = h.edit.getEdit() as ArtlioEdit;
+    const cur = h.edit.getEdit() as FikirtiveEdit;
     const real = cur.timeline.tracks[trackIndex]?.clips[clipIndex];
     if (!real) return;
     const asset = { ...real.asset, volume: v };
@@ -953,7 +953,7 @@ export function Editor({
     }
   }
 
-  // ---- EP1 between-clip transitions (Artlio state, outside Shotstack) ----
+  // ---- EP1 between-clip transitions (Fikirtive state, outside Shotstack) ----
   // Set or update the transition on the selected boundary. "None" removes it.
   function setBoundaryTransition(tile: string) {
     if (boundary == null) return;
@@ -989,7 +989,7 @@ export function Editor({
     commitTransitions([]); // state-only change → record history explicitly
   }
 
-  // ---- EP3 captions + static text overlays (Artlio state, outside Shotstack) ----
+  // ---- EP3 captions + static text overlays (Fikirtive state, outside Shotstack) ----
   // Generate captions for the selected (or first) visual clip: dispatch the $0
   // whisper caption job, poll to DONE, then seed timeline.captions from the cached
   // transcript. NO spend — the job runs ffmpeg + whisper only.
@@ -997,7 +997,7 @@ export function Editor({
     if (capBusy) return;
     const h = handles.current;
     if (!h || status !== "ready") return;
-    const cur = h.edit.getEdit() as ArtlioEdit;
+    const cur = h.edit.getEdit() as FikirtiveEdit;
     const clips = cur.timeline.tracks[0]?.clips ?? [];
     // prefer the selected clip on the video track; else the first visual clip
     const picked =
@@ -1188,7 +1188,7 @@ export function Editor({
   async function closeGaps() {
     const h = handles.current;
     if (!h || status !== "ready" || opLock.current) return; // serialize: no edits mid-op
-    const cur = h.edit.getEdit() as ArtlioEdit;
+    const cur = h.edit.getEdit() as FikirtiveEdit;
     const t0 = cur.timeline.tracks[0]?.clips ?? [];
     const ordered = [...t0].sort((a, b) => a.start - b.start);
     // is there any gap to close? (don't push a no-op history entry)
@@ -1216,7 +1216,7 @@ export function Editor({
 
   /** persist a PRE-VALIDATED edit. Unlocked — the caller (saveCut/exportCut) already
    *  holds opLock and took the snapshot, so this never re-reads live Shotstack state. */
-  async function persistEdit(edit: ArtlioEdit): Promise<boolean> {
+  async function persistEdit(edit: FikirtiveEdit): Promise<boolean> {
     setBusy(true);
     try {
       const res = await saveProjectEdit(projectId, JSON.stringify(edit), baseUpdatedAtRef.current);
@@ -1430,13 +1430,13 @@ export function Editor({
             Close gaps
           </Button>
         )}
-        <select value={output.aspectRatio} onChange={(e) => changeOutput({ aspectRatio: e.target.value as ArtlioEdit["output"]["aspectRatio"] })} aria-label="Aspect ratio" style={{ font: "var(--text-caption)" }}>
+        <select value={output.aspectRatio} onChange={(e) => changeOutput({ aspectRatio: e.target.value as FikirtiveEdit["output"]["aspectRatio"] })} aria-label="Aspect ratio" style={{ font: "var(--text-caption)" }}>
           <option value="16:9">16:9</option><option value="9:16">9:16</option><option value="1:1">1:1</option>
         </select>
-        <select value={output.resolution} onChange={(e) => changeOutput({ resolution: e.target.value as ArtlioEdit["output"]["resolution"] })} aria-label="Resolution" style={{ font: "var(--text-caption)" }}>
+        <select value={output.resolution} onChange={(e) => changeOutput({ resolution: e.target.value as FikirtiveEdit["output"]["resolution"] })} aria-label="Resolution" style={{ font: "var(--text-caption)" }}>
           <option value="sd">SD</option><option value="hd">HD 720</option><option value="1080">1080 (renders at 720 — beta)</option>
         </select>
-        <select value={output.fps} onChange={(e) => changeOutput({ fps: Number(e.target.value) as ArtlioEdit["output"]["fps"] })} aria-label="FPS" style={{ font: "var(--text-caption)" }}>
+        <select value={output.fps} onChange={(e) => changeOutput({ fps: Number(e.target.value) as FikirtiveEdit["output"]["fps"] })} aria-label="FPS" style={{ font: "var(--text-caption)" }}>
           <option value={25}>25fps</option><option value={30}>30fps</option>
         </select>
         <label style={{ font: "var(--text-caption)", color: "var(--fg-2)", display: "flex", alignItems: "center", gap: 4 }}>
@@ -1611,7 +1611,7 @@ export function Editor({
             </div>
           </aside>
           )}
-          {/* Captions — Artlio state, merged into the timeline (one level up, never
+          {/* Captions — Fikirtive state, merged into the timeline (one level up, never
               on a clip). Burn-in happens on the worker's $0 render path. */}
           {activePanel === "captions" && (
           <aside style={{ width: 210, flex: "none", display: "flex", flexDirection: "column", border: "1px solid var(--line-2)", borderRadius: "var(--radius-lg)", overflow: "hidden", maxHeight: "100%" }}>
@@ -1657,7 +1657,7 @@ export function Editor({
             </div>
           </aside>
           )}
-          {/* Text — positioned static text overlays, same Artlio-state round-trip as
+          {/* Text — positioned static text overlays, same Fikirtive-state round-trip as
               captions (merged into the timeline one level up). */}
           {activePanel === "text" && (
           <aside style={{ width: 210, flex: "none", display: "flex", flexDirection: "column", border: "1px solid var(--line-2)", borderRadius: "var(--radius-lg)", overflow: "hidden", maxHeight: "100%" }}>
@@ -1850,7 +1850,7 @@ export function Editor({
  *  (the label says so) — it's a cheap, $0, dependency-free "does my cut roughly
  *  play back-to-back" check. Read-only: it never touches the contract or Shotstack.
  *  Honors trim (as currentTime) + length, advancing on time and looping at the end. */
-function ApproxPreview({ clips }: { clips: ArtlioClip[] }) {
+function ApproxPreview({ clips }: { clips: FikirtiveClip[] }) {
   const [idx, setIdx] = useState(0);
   const ref = useRef<HTMLVideoElement | null>(null);
   // Clamp during render (no reset effect) so a clip-list change can't index out of

@@ -2,7 +2,7 @@ import { redirect } from "next/navigation";
 import { ensureDefaultProject, getProjects, getShots, getLooseVideoClips } from "@/lib/data";
 import { buildBoardEdit } from "@/lib/edit";
 import { EditorShell } from "@/components/EditorShell";
-import { artlioEdit } from "@artlio/core";
+import { fikirtiveEdit } from "@fikirtive/core";
 import { auth } from "@/auth";
 import { requireOwner } from "@/lib/auth-guard";
 
@@ -29,7 +29,7 @@ export default async function EditorPage({
   const { edit: boardEdit, clipCount } = buildBoardEdit(shots, looseClips);
 
   // the persisted working cut wins; stored canonical, re-checked anyway
-  const savedParse = project.editJson ? artlioEdit.safeParse(project.editJson) : null;
+  const savedParse = project.editJson ? fikirtiveEdit.safeParse(project.editJson) : null;
   const savedEdit = savedParse?.success ? savedParse.data : null;
 
   return (

@@ -1,5 +1,5 @@
-import { prisma } from "@artlio/db";
-import { FOUNDER_OWNER_ID, knownDisabledSet } from "@artlio/core";
+import { prisma } from "@fikirtive/db";
+import { FOUNDER_OWNER_ID, knownDisabledSet } from "@fikirtive/core";
 
 /** Worker-side admin-disabled model ids. EMPTY set on any DB fault — fail-closed-
  *  to-typed-menu: a config-read hiccup must never fail a legitimate already-queued

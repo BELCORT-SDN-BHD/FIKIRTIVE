@@ -1,7 +1,7 @@
 /**
  * propose.helpers — pure, DB-free helpers for the propose tool.
  *
- * ZERO imports from @artlio/db or @openai/agents — fully unit-testable
+ * ZERO imports from @fikirtive/db or @openai/agents — fully unit-testable
  * without any mocking. DB and SDK wiring live in propose.ts.
  */
 import { z } from "zod";
@@ -13,7 +13,7 @@ import {
   displayCredits,
   CREDITS_PER_USD,
   type GenVideoModel,
-} from "@artlio/core";
+} from "@fikirtive/core";
 import type { OttoContext } from "../context.js";
 
 // ---------------------------------------------------------------------------

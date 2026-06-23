@@ -2,7 +2,7 @@ import { ensureDefaultProject, getProjects, getShots, getEntities, getMediaPage,
 import { getRulesMap } from "@/lib/cowork-knowledge";
 import { buildBoardEdit } from "@/lib/edit";
 import { toEntityDTO, toChatThreadDTO, toChatThreadMetaDTO } from "@/lib/dto";
-import { artlioEdit, storageKey, storageKeyToSrc } from "@artlio/core";
+import { fikirtiveEdit, storageKey, storageKeyToSrc } from "@fikirtive/core";
 import { redirect } from "next/navigation";
 import { auth } from "@/auth";
 import { requireOwner } from "@/lib/auth-guard";
@@ -107,7 +107,7 @@ export default async function StudioPage({ searchParams }: { searchParams: Promi
   // image candidates for the Storyboard drag-to-attach strip (drop onto a shot's frame slot)
   const frameCandidates = (await getFrameCandidates(ownerId, project.id))
     .map((c) => ({ id: c.id, src: storageKeyToSrc(storageKey(c.asset.ownerId, c.asset.contentHash, c.asset.ext.toLowerCase())) }));
-  const savedParse = project.editJson ? artlioEdit.safeParse(project.editJson) : null;
+  const savedParse = project.editJson ? fikirtiveEdit.safeParse(project.editJson) : null;
   const savedEdit = savedParse?.success ? savedParse.data : null;
 
   // Assets library DTOs (client-safe — no BigInt): first keyset page, newest first.

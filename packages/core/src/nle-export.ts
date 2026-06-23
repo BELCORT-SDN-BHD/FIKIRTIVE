@@ -1,4 +1,4 @@
-import type { ArtlioEdit, ArtlioClip } from "./timeline.js";
+import type { FikirtiveEdit, FikirtiveClip } from "./timeline.js";
 
 /** Frame size per aspect×resolution — mirrors the worker SIZES table
  *  (render.ts:39–43). The XML export uses the TRUE selected resolution (an NLE
@@ -18,16 +18,16 @@ function xmlEscape(s: string): string {
     .replace(/'/g, "&apos;");
 }
 
-const isAudioTrack = (clips: ArtlioClip[]) => clips.every((c) => c.asset.type === "audio");
+const isAudioTrack = (clips: FikirtiveClip[]) => clips.every((c) => c.asset.type === "audio");
 
-/** Serialize an ArtlioEdit to FCP7 XML (xmeml v5) — imports into Premiere Pro and
+/** Serialize an FikirtiveEdit to FCP7 XML (xmeml v5) — imports into Premiere Pro and
  *  DaVinci Resolve. LOSSY by design (any NLE interchange is): between-clip
  *  transitions, audio ducking, and captions/overlays are DROPPED and listed in a
  *  top-of-file comment. Hard cuts + clip in/out/start/end (frame-accurate from
  *  trim/length/start × fps) + per-clip media references are preserved. Media is
  *  referenced by app-relative src in <pathurl>; the user re-links on import.
  *  Pure: no I/O, no spend. */
-export function editToFcpXml(edit: ArtlioEdit, opts?: { sequenceName?: string }): string {
+export function editToFcpXml(edit: FikirtiveEdit, opts?: { sequenceName?: string }): string {
   const fps = edit.output.fps;
   const res = edit.output.resolution;
   const [width, height] = SIZES[edit.output.aspectRatio]?.[res] ?? [1280, 720];
@@ -43,7 +43,7 @@ export function editToFcpXml(edit: ArtlioEdit, opts?: { sequenceName?: string })
   if ((tl.textOverlays?.length ?? 0) > 0) dropped.push("text overlays");
 
   let fileSeq = 0;
-  const clipItem = (c: ArtlioClip, trackKind: "video" | "audio"): string => {
+  const clipItem = (c: FikirtiveClip, trackKind: "video" | "audio"): string => {
     const inF = sec(c.asset.trim ?? 0);
     const startF = sec(c.start);
     const lenF = sec(c.length);

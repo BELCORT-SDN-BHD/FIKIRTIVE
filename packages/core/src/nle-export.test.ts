@@ -1,12 +1,12 @@
 import { describe, expect, it } from "vitest";
 import { editToFcpXml } from "./nle-export.js";
-import type { ArtlioEdit } from "./timeline.js";
+import type { FikirtiveEdit } from "./timeline.js";
 
 const HASH = "a".repeat(64);
 const SRC = `/files/u/founder/${HASH}.mp4`;
 const ASRC = `/files/u/founder/${HASH}.mp3`;
 
-const edit: ArtlioEdit = {
+const edit: FikirtiveEdit = {
   timeline: {
     background: "#000000",
     tracks: [
@@ -49,7 +49,7 @@ describe("editToFcpXml", () => {
   });
 
   it("does not throw on an edit with between-clip transitions (they're dropped)", () => {
-    const e: ArtlioEdit = structuredClone(edit);
+    const e: FikirtiveEdit = structuredClone(edit);
     (e.timeline.tracks[0] as any).transitions = [{ fromClipIndex: 0, toClipIndex: 1, type: "cross", durationMs: 500 }];
     expect(() => editToFcpXml(e)).not.toThrow();
   });

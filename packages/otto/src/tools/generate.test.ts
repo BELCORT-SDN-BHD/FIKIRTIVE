@@ -1,7 +1,7 @@
 /**
  * generate.test.ts — money-machine tests for the generate tool
  *
- * Tests #1–9 from the Task 1.5 brief. Mock @artlio/db and inject a mock ctx.startGen.
+ * Tests #1–9 from the Task 1.5 brief. Mock @fikirtive/db and inject a mock ctx.startGen.
  * Every money-safety property is asserted independently.
  */
 import { describe, it, expect, vi, beforeEach } from "vitest";
@@ -10,9 +10,9 @@ import { generate, generateInput, executeGenerate } from "./generate.js";
 import type { OttoContext } from "../context.js";
 
 // ---------------------------------------------------------------------------
-// Mock @artlio/db — no real DB
+// Mock @fikirtive/db — no real DB
 // ---------------------------------------------------------------------------
-vi.mock("@artlio/db", () => ({
+vi.mock("@fikirtive/db", () => ({
   prisma: {
     chatMessage: {
       findFirst: vi.fn(),
@@ -78,7 +78,7 @@ function makeCard(payloadOverrides?: Record<string, unknown>) {
 // ---------------------------------------------------------------------------
 
 async function getPrisma() {
-  const db = await import("@artlio/db");
+  const db = await import("@fikirtive/db");
   return db.prisma as unknown as {
     chatMessage: {
       findFirst: ReturnType<typeof vi.fn>;

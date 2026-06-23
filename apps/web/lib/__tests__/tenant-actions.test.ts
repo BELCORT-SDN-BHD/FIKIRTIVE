@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
-import { FOUNDER_OWNER_ID, INTERNAL_PER_DISPLAY } from "@artlio/core";
+import { FOUNDER_OWNER_ID, INTERNAL_PER_DISPLAY } from "@fikirtive/core";
 
 // Unit test (no DB): mock requireRole + prisma + next/cache so invariants —
 // gate-first fail-closed, founder exclusion, status validation, email normalization,
@@ -27,7 +27,7 @@ class MockInsufficientCredits extends Error {
   }
 }
 
-vi.mock("@artlio/db", () => ({
+vi.mock("@fikirtive/db", () => ({
   prisma: {
     membership: { updateMany: membershipUpdateMany, findMany: membershipFindMany },
     session: { deleteMany: sessionDeleteMany },

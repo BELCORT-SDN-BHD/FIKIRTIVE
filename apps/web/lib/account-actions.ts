@@ -6,8 +6,8 @@
  * idempotent spend path. Tenant scoping is via requireOwner() (the fail-closed
  * session→ownerId resolver), so a user only ever sees their own org's balance.
  */
-import { prisma } from "@artlio/db";
-import { displayCredits, CREDITS_PER_USD, FOUNDER_OWNER_ID } from "@artlio/core";
+import { prisma } from "@fikirtive/db";
+import { displayCredits, CREDITS_PER_USD, FOUNDER_OWNER_ID } from "@fikirtive/core";
 import { requireOwner } from "./auth-guard";
 import { signOut } from "@/auth";
 

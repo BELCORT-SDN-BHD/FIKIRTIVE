@@ -2,7 +2,7 @@
  * otto-actions.test.ts — Unit tests for ottoTurn + mapOttoUsage (Task 1.8a)
  *                         and ottoApprove (Task 1.8b)
  *
- * Mocks: @artlio/otto `run`/`RunState`/`MaxTurnsExceededError`, @artlio/db prisma,
+ * Mocks: @fikirtive/otto `run`/`RunState`/`MaxTurnsExceededError`, @fikirtive/db prisma,
  * requireOwner, withLlmBudget, resolveDisabledModels, revalidatePath.
  * No real DB needed.
  */
@@ -97,7 +97,7 @@ vi.mock("next/cache", () => ({ revalidatePath: vi.fn() }));
 vi.mock("@/lib/model-registry", () => ({ resolveDisabledModels: mockResolveDisabledModels }));
 vi.mock("@/lib/gen-actions", () => ({ startGen: mockStartGen }));
 
-vi.mock("@artlio/db", () => ({
+vi.mock("@fikirtive/db", () => ({
   prisma: {
     project: { findFirst: mockProjectFindFirst },
     generation: { findFirst: mockGenerationFindFirst },
@@ -120,7 +120,7 @@ vi.mock("@artlio/db", () => ({
 // Spread the REAL module so pure helpers (mapOttoUsage, OTTO_DEFAULT_MODEL, prices)
 // stay real — only the heavy / non-deterministic exports are mocked. MaxTurnsExceededError
 // stays mocked so a thrown MockMaxTurnsExceededError matches `instanceof` in the SUT.
-vi.mock("@artlio/otto", async (importOriginal) => {
+vi.mock("@fikirtive/otto", async (importOriginal) => {
   const actual = (await importOriginal()) as Record<string, unknown>;
   return {
     ...actual,

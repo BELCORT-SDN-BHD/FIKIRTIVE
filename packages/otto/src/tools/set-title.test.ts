@@ -3,9 +3,9 @@ import { executeSetTitle } from "./set-title.js";
 import type { OttoContext } from "../context.js";
 
 // ---------------------------------------------------------------------------
-// Mock @artlio/db
+// Mock @fikirtive/db
 // ---------------------------------------------------------------------------
-vi.mock("@artlio/db", () => ({
+vi.mock("@fikirtive/db", () => ({
   prisma: {
     chatThread: {
       updateMany: vi.fn(),
@@ -43,7 +43,7 @@ describe("executeSetTitle — mock DB", () => {
 
   beforeEach(async () => {
     vi.clearAllMocks();
-    const db = await import("@artlio/db");
+    const db = await import("@fikirtive/db");
     mockPrisma = db.prisma as unknown as typeof mockPrisma;
     (mockPrisma.chatThread.updateMany as ReturnType<typeof vi.fn>).mockResolvedValue({ count: 1 });
   });

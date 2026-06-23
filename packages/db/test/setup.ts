@@ -1,5 +1,5 @@
 /**
- * Vitest setup for @artlio/db integration tests.
+ * Vitest setup for @fikirtive/db integration tests.
  *
  * Safety guard: refuses to run unless DATABASE_URL points to a *_test database.
  * beforeEach: truncates money tables so each test starts clean.

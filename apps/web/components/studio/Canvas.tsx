@@ -1,5 +1,5 @@
 "use client";
-/** Canvas surface (Artlio Studio design) — infinite freeform board. Mock.
+/** Canvas surface (Fikirtive Studio design) — infinite freeform board. Mock.
  *  (Note: Canvas was deprioritized; kept as a nav slot pending the founder's
  *  call. Built as a faithful placeholder.) */
 import { Button, IcChevronDown } from "@/components/ds";

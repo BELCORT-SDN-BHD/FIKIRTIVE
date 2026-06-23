@@ -1,6 +1,6 @@
 import { redirect } from "next/navigation";
-import { GEN_MODELS, GEN_VIDEO_MODELS, REFGEN_MODELS, MODEL_FAMILIES, modelFamily, FOUNDER_OWNER_ID } from "@artlio/core";
-import { prisma } from "@artlio/db";
+import { GEN_MODELS, GEN_VIDEO_MODELS, REFGEN_MODELS, MODEL_FAMILIES, modelFamily, FOUNDER_OWNER_ID } from "@fikirtive/core";
+import { prisma } from "@fikirtive/db";
 import { requireRole } from "@/lib/auth-guard";
 import { listDirectives } from "@/lib/cowork-knowledge";
 import { ModelsAdmin, type ModelRow } from "@/components/admin/ModelsAdmin";

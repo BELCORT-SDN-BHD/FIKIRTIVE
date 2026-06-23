@@ -9,7 +9,7 @@
  * bytes; the worker stores them content-addressed (same as any asset).
  */
 import { deflateSync, crc32 } from "node:zlib";
-import type { GenerationProvider, GenerationRequest, GeneratedImage, VideoRequest, GeneratedVideo, GenVideoModel } from "@artlio/core";
+import type { GenerationProvider, GenerationRequest, GeneratedImage, VideoRequest, GeneratedVideo, GenVideoModel } from "@fikirtive/core";
 
 /** A tiny valid 1s mp4 (256×160 solid) the mock returns for i2v — real enough
  *  for ffprobe/the editor, no network. */
@@ -121,7 +121,7 @@ const EXT_BY_CONTENT_TYPE: Record<string, string> = {
  *  are sent only when the model has the param AND the request provides a value —
  *  so each model carries exactly its real settings. `durationUnit` = how the chosen
  *  seconds are encoded: "str"=Kling "5", "s"=Veo "6s", "num"=Seedance/LTX 6. All
- *  return { video: { url } }. Allowed values per control live in @artlio/core's
+ *  return { video: { url } }. Allowed values per control live in @fikirtive/core's
  *  GEN_VIDEO_MODEL_OPTIONS. `durationUnit "none"` = a fixed-length endpoint with NO
  *  duration param (Hailuo 02 Pro is 6s-only) — the worker omits duration entirely. */
 type VideoCfg = {

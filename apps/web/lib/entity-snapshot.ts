@@ -1,5 +1,5 @@
 import "server-only";
-import { prisma } from "@artlio/db";
+import { prisma } from "@fikirtive/db";
 
 /** Frozen provenance written into every Generation (schema: required, never
  *  null). Shared by the legacy upload action and the direct-upload finalize. */

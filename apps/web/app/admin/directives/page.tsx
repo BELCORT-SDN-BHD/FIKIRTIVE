@@ -1,5 +1,5 @@
 import { redirect } from "next/navigation";
-import { MODEL_FAMILIES, GEN_MODES } from "@artlio/core";
+import { MODEL_FAMILIES, GEN_MODES } from "@fikirtive/core";
 import { requireRole } from "@/lib/auth-guard";
 import { listDirectives } from "@/lib/cowork-knowledge";
 import { DirectivesAdmin, type AdminCell } from "@/components/admin/DirectivesAdmin";

@@ -8,7 +8,7 @@ import {
   GEN_PRICE_USD_PER_IMAGE, videoPriceUsd, videoDefaults,
   GEN_MODELS, GEN_VIDEO_MODELS, GEN_VIDEO_MODEL_INFO, GEN_VIDEO_MODEL_OPTIONS,
   type GenVideoModel,
-} from "@artlio/core";
+} from "@fikirtive/core";
 import { Lightbox } from "@/components/Lightbox";
 import type { EntityDTO } from "@/lib/types";
 

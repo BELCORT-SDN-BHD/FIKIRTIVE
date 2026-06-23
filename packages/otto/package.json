@@ -1,5 +1,5 @@
 {
-  "name": "@artlio/otto",
+  "name": "@fikirtive/otto",
   "version": "0.0.0",
   "private": true,
   "type": "module",
@@ -19,8 +19,8 @@
     "@openai/agents-extensions": "^0.11.8",
     "@ai-sdk/anthropic": "^3.0.85",
     "ai": "^6.0.208",
-    "@artlio/core": "workspace:*",
-    "@artlio/db": "workspace:*",
+    "@fikirtive/core": "workspace:*",
+    "@fikirtive/db": "workspace:*",
     "zod": "^4.4.3"
   },
   "devDependencies": {

@@ -9,7 +9,7 @@ export {
   type BundleManifest,
 } from "./template-bundle.js";
 export {
-  artlioEdit,
+  fikirtiveEdit,
   betweenClipTransition,
   captionCue,
   textOverlay,
@@ -41,8 +41,8 @@ export {
   CAPTION_DLQ,
   CAPTION_RETRY_LIMIT,
   CAPTION_QUEUE_POLICY,
-  type ArtlioEdit,
-  type ArtlioClip,
+  type FikirtiveEdit,
+  type FikirtiveClip,
   type BetweenClipTransition,
   type CaptionCue,
   type TextOverlay,

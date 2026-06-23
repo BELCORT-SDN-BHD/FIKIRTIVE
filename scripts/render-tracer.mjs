@@ -5,7 +5,7 @@ import { createRequire } from "node:module";
 const require = createRequire(new URL("../apps/worker/package.json", import.meta.url));
 const { PgBoss } = await import(require.resolve("pg-boss"));
 const { prisma } = await import("../packages/db/dist/src/index.js");
-const { artlioEdit, RENDER_QUEUE, RENDER_DLQ, RENDER_QUEUE_POLICY, storageKeyToSrc, storageKey, newId } =
+const { fikirtiveEdit, RENDER_QUEUE, RENDER_DLQ, RENDER_QUEUE_POLICY, storageKeyToSrc, storageKey, newId } =
   await import("../packages/core/dist/index.js");
 
 const DB = process.env.DATABASE_URL ?? "postgresql://artlio:artlio@localhost:5432/artlio";
@@ -20,7 +20,7 @@ const src = storageKeyToSrc(storageKey(asset.ownerId, asset.contentHash, asset.e
 console.log(`✓ asset ${asset.id} → ${src}`);
 
 // 2. minimal valid edit: one 2s image clip with fade in/out
-const edit = artlioEdit.parse({
+const edit = fikirtiveEdit.parse({
   timeline: { tracks: [{ clips: [{
     asset: { type: "image", src },
     start: 0, length: 2,

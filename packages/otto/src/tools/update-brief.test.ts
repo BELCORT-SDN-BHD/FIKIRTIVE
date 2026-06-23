@@ -3,9 +3,9 @@ import { executeUpdateBrief } from "./update-brief.js";
 import type { OttoContext } from "../context.js";
 
 // ---------------------------------------------------------------------------
-// Mock @artlio/db so execute tests never hit a real DB.
+// Mock @fikirtive/db so execute tests never hit a real DB.
 // ---------------------------------------------------------------------------
-vi.mock("@artlio/db", () => ({
+vi.mock("@fikirtive/db", () => ({
   prisma: {
     project: {
       updateMany: vi.fn(),
@@ -44,7 +44,7 @@ describe("executeUpdateBrief — mock DB", () => {
 
   beforeEach(async () => {
     vi.clearAllMocks();
-    const db = await import("@artlio/db");
+    const db = await import("@fikirtive/db");
     mockPrisma = db.prisma as unknown as typeof mockPrisma;
     (mockPrisma.project.updateMany as ReturnType<typeof vi.fn>).mockResolvedValue({ count: 1 });
   });

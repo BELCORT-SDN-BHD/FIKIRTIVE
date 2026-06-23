@@ -1,5 +1,5 @@
 /**
- * Artlio worker — long-lived pg-boss consumer (eng review D6/D9).
+ * Fikirtive worker — long-lived pg-boss consumer (eng review D6/D9).
  *
  *   Postgres (pgboss schema) ──▶ ingest queue ──▶ hash verify → ffprobe → thumbs
  *                            └─▶ sweep queue  ──▶ D21 refcount purge (cron)
@@ -31,7 +31,7 @@ import {
   type RefGenJobData,
   type GenJobData,
   type CaptionJobData,
-} from "@artlio/core";
+} from "@fikirtive/core";
 
 // Long-lived worker prefers the DIRECT url — a persistent process gains nothing
 // from PgBouncer and the direct path avoids pooler quirks (audit P3).

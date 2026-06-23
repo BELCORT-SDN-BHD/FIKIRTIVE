@@ -1,6 +1,6 @@
 import "server-only";
-import { prisma } from "@artlio/db";
-import { displayCredits, FOUNDER_OWNER_ID } from "@artlio/core";
+import { prisma } from "@fikirtive/db";
+import { displayCredits, FOUNDER_OWNER_ID } from "@fikirtive/core";
 
 export type TenantRow = {
   orgId: string;

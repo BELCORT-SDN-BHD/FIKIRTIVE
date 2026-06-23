@@ -1,8 +1,8 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
 
-// Mock @artlio/db prisma BEFORE importing allowlist
+// Mock @fikirtive/db prisma BEFORE importing allowlist
 const mockFindUnique = vi.fn();
-vi.mock("@artlio/db", () => ({
+vi.mock("@fikirtive/db", () => ({
   prisma: {
     allowedEmail: {
       findUnique: mockFindUnique,

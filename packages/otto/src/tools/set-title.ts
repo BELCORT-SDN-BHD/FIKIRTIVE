@@ -10,7 +10,7 @@
 import { tool } from "@openai/agents";
 import type { RunContext } from "@openai/agents";
 import { z } from "zod";
-import { prisma } from "@artlio/db";
+import { prisma } from "@fikirtive/db";
 import type { OttoContext } from "../context.js";
 
 // ---------------------------------------------------------------------------

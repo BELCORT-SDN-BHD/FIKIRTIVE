@@ -1,5 +1,5 @@
 import path from "node:path";
-import { createStorage } from "@artlio/storage";
+import { createStorage } from "@fikirtive/storage";
 
 /** Worker's storage handle — same env-driven factory as the web side.
  *  Local dev: cwd = apps/worker → repo/.data (matches apps/web). */

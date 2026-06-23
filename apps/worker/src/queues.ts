@@ -1,4 +1,4 @@
-import { INGEST_QUEUE, RENDER_QUEUE, REFGEN_QUEUE, GEN_QUEUE, CAPTION_QUEUE } from "@artlio/core";
+import { INGEST_QUEUE, RENDER_QUEUE, REFGEN_QUEUE, GEN_QUEUE, CAPTION_QUEUE } from "@fikirtive/core";
 
 /** Queue names — single source for web (producers) and worker (consumers). */
 export const QUEUES = {
@@ -6,7 +6,7 @@ export const QUEUES = {
   ingest: INGEST_QUEUE,
   /** D21 sweeper: purge soft-deleted assets past the 30-day window when refcount = 0. */
   sweep: "sweep",
-  /** Editor render pipeline: artlioEdit → ffmpeg → asset. */
+  /** Editor render pipeline: fikirtiveEdit → ffmpeg → asset. */
   render: RENDER_QUEUE,
   /** Phase 2 reference generation: prompt → provider → GENERATED refs. */
   refgen: REFGEN_QUEUE,

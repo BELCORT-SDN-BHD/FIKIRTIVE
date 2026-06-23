@@ -26,7 +26,7 @@ import {
   AbortMultipartUploadCommand,
 } from "@aws-sdk/client-s3";
 import { getSignedUrl } from "@aws-sdk/s3-request-presigner";
-import { parseStorageKey, storageKey, mimeOf } from "@artlio/core";
+import { parseStorageKey, storageKey, mimeOf } from "@fikirtive/core";
 
 export { mimeOf };
 

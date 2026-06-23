@@ -2,7 +2,7 @@
 
 import { useEffect, useRef, useState, useTransition } from "react";
 import { useRouter } from "next/navigation";
-import { REFGEN_PRICE_USD_PER_IMAGE, basePromptFor, REF_TYPE_CONFIG } from "@artlio/core";
+import { REFGEN_PRICE_USD_PER_IMAGE, basePromptFor, REF_TYPE_CONFIG } from "@fikirtive/core";
 import type { EntityDTO, EntityTypeDTO } from "@/lib/types";
 import {
   createEntity,

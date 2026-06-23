@@ -18,7 +18,7 @@ import {
   UPLOAD_PART_BYTES,
   type FinalizedUpload,
   type UploadPart,
-} from "@artlio/core";
+} from "@fikirtive/core";
 import { authorizeUpload, signUploadPart, abortDirectUpload } from "./upload-actions";
 
 export interface DirectUploadFailure {

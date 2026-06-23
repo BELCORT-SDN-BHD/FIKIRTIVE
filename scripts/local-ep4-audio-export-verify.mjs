@@ -21,7 +21,7 @@
 //        (b) DUCKED-vs-FLAT (corroboration): the full ducking mix has a LOWER
 //            voice-window RMS than a FLAT amix of the same inputs — proving the
 //            sidechaincompress engaged (a flat sum would not attenuate the bed).
-//   2. XML ROUND-TRIP — editToFcpXml() (the REAL @artlio/core dist) on a music
+//   2. XML ROUND-TRIP — editToFcpXml() (the REAL @fikirtive/core dist) on a music
 //      fixture: assert the string is well-formed XML, carries the right rate +
 //      frame size, has frame-accurate <in>/<out>/<start>/<end>, one clipitem per
 //      visual+audio clip, and the lossy-export comment lists dropped ducking.
@@ -31,7 +31,7 @@
 // $0. GENERATION_PROVIDER must be unset or "mock" (no generation call is made
 // either way — this script only shells ffmpeg/ffprobe against local lavfi
 // sources). Build core first so the dist import resolves:
-//   pnpm --filter @artlio/core build && node scripts/local-ep4-audio-export-verify.mjs
+//   pnpm --filter @fikirtive/core build && node scripts/local-ep4-audio-export-verify.mjs
 //
 // NOTE (deviation from plan skeleton): the plan's skeleton imports `execa`, but
 // execa is not hoisted to the repo root (it's a transitive worker dep). EP1's
@@ -47,8 +47,8 @@ const run = promisify(execFile);
 const root = new URL("..", import.meta.url);
 
 // REAL contract + render-duration math + XML serializer (the worker imports the
-// same @artlio/core symbols).
-const { artlioEdit, renderDuration, editToFcpXml } = await import(
+// same @fikirtive/core symbols).
+const { fikirtiveEdit, renderDuration, editToFcpXml } = await import(
   new URL("packages/core/dist/index.js", root)
 );
 
@@ -292,7 +292,7 @@ async function checkDucking(work) {
 
 function checkXmlRoundTrip() {
   const HASH = "a".repeat(64);
-  const fixture = artlioEdit.parse({
+  const fixture = fikirtiveEdit.parse({
     timeline: {
       background: "#000000",
       tracks: [

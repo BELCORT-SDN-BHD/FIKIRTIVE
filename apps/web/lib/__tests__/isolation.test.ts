@@ -27,12 +27,12 @@ beforeAll(() => {
 });
 
 const { requireOwner } = await import("@/lib/auth-guard");
-const { prisma } = await import("@artlio/db");
+const { prisma } = await import("@fikirtive/db");
 const data = await import("@/lib/data");
 const gen = await import("@/lib/gen-actions");
 const refgen = await import("@/lib/refgen-actions");
 const { GET: filesGET } = await import("@/app/files/[...key]/route");
-const { storageKey } = await import("@artlio/core");
+const { storageKey } = await import("@fikirtive/core");
 const tenantAdmin = await import("@/lib/tenant-admin");
 
 async function asUser(email: string) { mockAuth.mockResolvedValue({ user: { email } }); }
@@ -115,7 +115,7 @@ describe("2-org isolation — org B can never read org A", () => {
     expect(res.status).toBe(404);
   });
   it("/files: A's own key passes the owner guard (control — not vacuously 404ing)", async () => {
-    const { keyOwnerMatches } = await import("@artlio/core");
+    const { keyOwnerMatches } = await import("@fikirtive/core");
     const key = storageKey(orgA, aAssetHash, "png");
     expect(keyOwnerMatches(key, orgA)).toBe(true);
   });

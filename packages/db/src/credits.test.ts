@@ -1,5 +1,5 @@
 /**
- * Integration tests for the @artlio/db credit service.
+ * Integration tests for the @fikirtive/db credit service.
  * Runs against a real Postgres DB (must be a *_test database — enforced by setup.ts).
  *
  * TDD cases from otto-task-1.3-brief.md.

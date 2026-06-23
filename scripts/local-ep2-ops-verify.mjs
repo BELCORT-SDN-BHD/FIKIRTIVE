@@ -10,9 +10,9 @@ import { promisify } from "node:util";
 const run = promisify(execFile);
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 
-// import from the BUILT core (run `pnpm --filter @artlio/core build` first)
+// import from the BUILT core (run `pnpm --filter @fikirtive/core build` first)
 const core = await import(path.join(root, "packages/core/dist/index.js"));
-const { artlioEdit, splitClipAt, rippleDeleteClip, moveClip, snapEdit, reconcileTransitions, MIN_CLIP_SECONDS } = core;
+const { fikirtiveEdit, splitClipAt, rippleDeleteClip, moveClip, snapEdit, reconcileTransitions, MIN_CLIP_SECONDS } = core;
 
 const HASH = "a".repeat(64);
 const SRC = `/files/u/founder/${HASH}.mp4`;
@@ -35,7 +35,7 @@ function randomEdit() {
     const durationMs = Math.max(100, Math.min(2000, Math.floor(half * 1000)));
     transitions.push({ fromClipIndex: b, toClipIndex: b + 1, type: "cross", durationMs });
   }
-  return artlioEdit.parse({
+  return fikirtiveEdit.parse({
     timeline: {
       tracks: [
         { clips, transitions },
@@ -49,7 +49,7 @@ function randomEdit() {
 function assertConsistent(edit, label) {
   // re-parse must not throw (covers gapless-pair + adjacency + duplicate-boundary
   // + ≤half + overlap + min-clip guards)
-  artlioEdit.parse(edit);
+  fikirtiveEdit.parse(edit);
   const t0 = edit.timeline.tracks[0];
   const ordered = [...t0.clips].sort((a, b) => a.start - b.start);
   for (const tr of t0.transitions ?? []) {
@@ -108,7 +108,7 @@ for (let i = 0; i < ITER; i++) {
     const perturbed = structuredClone(e);
     delete perturbed.timeline.tracks[0].transitions;
     perturbed.timeline.tracks[0].clips.forEach((c, idx) => { if (idx > 0) c.start += 0.05; });
-    const snapped = snapEdit(artlioEdit.parse(perturbed));
+    const snapped = snapEdit(fikirtiveEdit.parse(perturbed));
     assertConsistent(snapped, "snap");
     // a near-tiled track must come back exactly tiled-from-0 (every gap closed)
     let cur = 0;
@@ -134,7 +134,7 @@ for (let i = 0; i < ITER; i++) {
       return placed;
     });
     const reconciled = reconcileTransitions(prevClips, nextClips, t0.transitions ?? []);
-    const merged = artlioEdit.parse({
+    const merged = fikirtiveEdit.parse({
       ...e,
       timeline: {
         ...e.timeline,

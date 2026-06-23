@@ -8,8 +8,8 @@ export type DndPayload =
   | { kind: "candidate-frame"; generationId: string };
 
 const MIME: Record<DndPayload["kind"], string> = {
-  "editor-clip": "application/x-artlio-editor-clip",
-  "candidate-frame": "application/x-artlio-candidate-frame",
+  "editor-clip": "application/x-fikirtive-editor-clip",
+  "candidate-frame": "application/x-fikirtive-candidate-frame",
 };
 
 export function setDnd(dt: DataTransfer | null, p: DndPayload): void {

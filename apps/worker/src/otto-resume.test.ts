@@ -93,17 +93,17 @@ const mocks = vi.hoisted(() => {
   };
 });
 
-vi.mock("@artlio/db", () => ({
+vi.mock("@fikirtive/db", () => ({
   prisma: mocks.prisma,
   newId: mocks.newId,
 }));
 
-vi.mock("@artlio/core", () => ({
+vi.mock("@fikirtive/core", () => ({
   newId: mocks.newId,
   OTTO_MAX_STEPS: 10,
 }));
 
-vi.mock("@artlio/otto", () => ({
+vi.mock("@fikirtive/otto", () => ({
   otto: mocks.otto,
   withLlmBudget: mocks.withLlmBudget,
   OTTO_DEFAULT_MODEL: "claude-sonnet-4-6",

@@ -14,7 +14,7 @@ import { saveShotPrompt, uploadReference, addSegmentToCut } from "@/lib/actions"
 import { enhancePrompt } from "@/lib/cowork-actions";
 import { coworkDraftStoryboard } from "@/lib/cowork-actions";
 import { startGen, getGenJob } from "@/lib/gen-actions";
-import { GEN_PRICE_USD_PER_IMAGE, GEN_VIDEO_MODELS, GEN_VIDEO_MODEL_INFO, GEN_VIDEO_MODEL_OPTIONS, videoDefaults, videoPriceUsd, type GenVideoModel } from "@artlio/core";
+import { GEN_PRICE_USD_PER_IMAGE, GEN_VIDEO_MODELS, GEN_VIDEO_MODEL_INFO, GEN_VIDEO_MODEL_OPTIONS, videoDefaults, videoPriceUsd, type GenVideoModel } from "@fikirtive/core";
 import type { EntityDTO } from "@/lib/types";
 import { MentionInput, buildMentionDoc, resolveDoc } from "@/components/MentionInput";
 import { setDnd, getDnd, hasDnd } from "@/lib/dnd";
@@ -479,7 +479,7 @@ export function Storyboard({ projectId, shots, entities, candidates }: { project
         </div>
         {actionErr && <p role="alert" style={{ font: "var(--text-caption)", color: "var(--danger)", margin: "-12px 0 14px" }}>{actionErr}</p>}
 
-        {/* Artlio cowork — describe a film, it drafts the scenes & shots */}
+        {/* Fikirtive cowork — describe a film, it drafts the scenes & shots */}
         <div style={{ display: "flex", flexDirection: "column", gap: 6, margin: "0 0 22px" }}>
           <div style={{ display: "flex", gap: 8, alignItems: "center", padding: "8px 8px 8px 12px", background: "var(--glass-1)", border: "1px solid var(--line-1)", borderRadius: "var(--radius-md)" }}>
             <IcSparkle size={16} style={{ color: "var(--fg-2)", flex: "none" }} />

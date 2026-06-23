@@ -1,6 +1,6 @@
 /**
  * describe-refs.helpers — pure, DB-free helper.
- * No imports from @artlio/db or @openai/agents — fully unit-testable without mocking.
+ * No imports from @fikirtive/db or @openai/agents — fully unit-testable without mocking.
  */
 
 /**

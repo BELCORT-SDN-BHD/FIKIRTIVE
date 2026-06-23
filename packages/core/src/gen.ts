@@ -102,7 +102,7 @@ export const GEN_VIDEO_MODEL_INFO: Record<GenVideoModel, { label: string; sound:
  *  i2v). Empty array = no such control. `audioToggle` false = always silent
  *  (Kling 2.5). Lists are default-first. `maxCount` = batch ceiling (we enqueue N
  *  one-clip jobs — fal video has no num_videos param). Add a model: one entry
- *  here + one in @artlio/generation's VIDEO_CFG. */
+ *  here + one in @fikirtive/generation's VIDEO_CFG. */
 export type VideoModelOptions = {
   durations: number[];
   resolutions: string[];

@@ -7,7 +7,7 @@
  * navigation, and is read-only on small screens (same as the /editor route).
  */
 import { Editor } from "@/components/Editor";
-import type { ArtlioEdit } from "@artlio/core";
+import type { FikirtiveEdit } from "@fikirtive/core";
 
 export function VideoEditorSurface({
   projectId,
@@ -18,8 +18,8 @@ export function VideoEditorSurface({
   onDirtyChange,
 }: {
   projectId: string;
-  boardEdit: ArtlioEdit | null;
-  savedEdit: ArtlioEdit | null;
+  boardEdit: FikirtiveEdit | null;
+  savedEdit: FikirtiveEdit | null;
   attachedCount: number;
   /** Project.updatedAt at load (ISO) — base for optimistic-concurrency saves (D1). */
   editedAt?: string;

@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-const { prisma } = await import("@artlio/db");
+const { prisma } = await import("@fikirtive/db");
 
 describe("tenant-guard backstop (NODE_ENV=test → throws)", () => {
   it("throws on a tenant findMany with no ownerId filter", async () => {

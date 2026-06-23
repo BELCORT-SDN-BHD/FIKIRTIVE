@@ -1,5 +1,5 @@
 import { redirect } from "next/navigation";
-import { prisma } from "@artlio/db";
+import { prisma } from "@fikirtive/db";
 import { requireRole } from "@/lib/auth-guard";
 import { CostAdmin, type DayRow, type JobRow } from "@/components/admin/CostAdmin";
 

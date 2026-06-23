@@ -1,6 +1,6 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
 vi.mock("@/lib/auth-guard", () => ({ requireOwner: vi.fn() }));
-vi.mock("@artlio/db", () => ({ prisma: {
+vi.mock("@fikirtive/db", () => ({ prisma: {
   generation: { findFirst: vi.fn() },
   actionEvent: { create: vi.fn(), findMany: vi.fn() },
 } }));
@@ -9,7 +9,7 @@ vi.mock("next/cache", () => ({ revalidatePath: vi.fn() }));
 import { recordGenerationOutcome } from "@/lib/actions";
 import { getRecentOutcomes } from "@/lib/data";
 import { requireOwner } from "@/lib/auth-guard";
-import { prisma } from "@artlio/db";
+import { prisma } from "@fikirtive/db";
 beforeEach(() => vi.clearAllMocks());
 
 describe("recordGenerationOutcome", () => {

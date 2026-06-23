@@ -3,7 +3,7 @@ import {
   GEN_PRICE_USD_PER_IMAGE,
   displayCredits,
   CREDITS_PER_USD,
-} from "@artlio/core";
+} from "@fikirtive/core";
 // I1: pure-helper tests import from propose.helpers — no DB mock needed for these
 import { buildProposeCard } from "./propose.helpers.js";
 // executePropose (DB-side) still imported from propose.ts
@@ -11,9 +11,9 @@ import { executePropose } from "./propose.js";
 import type { OttoContext } from "../context.js";
 
 // ---------------------------------------------------------------------------
-// Mock @artlio/db so execute tests never hit a real DB.
+// Mock @fikirtive/db so execute tests never hit a real DB.
 // ---------------------------------------------------------------------------
-vi.mock("@artlio/db", () => ({
+vi.mock("@fikirtive/db", () => ({
   prisma: {
     entity: {
       findMany: vi.fn(),
@@ -169,7 +169,7 @@ describe("executePropose — mock DB", () => {
 
   beforeEach(async () => {
     vi.clearAllMocks();
-    const db = await import("@artlio/db");
+    const db = await import("@fikirtive/db");
     mockPrisma = db.prisma as unknown as typeof mockPrisma;
 
     // default mock state: no entities, last seq = 5

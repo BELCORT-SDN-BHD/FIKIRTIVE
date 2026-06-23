@@ -1,6 +1,6 @@
 import { redirect } from "next/navigation";
-import { prisma } from "@artlio/db";
-import { FOUNDER_OWNER_ID } from "@artlio/core";
+import { prisma } from "@fikirtive/db";
+import { FOUNDER_OWNER_ID } from "@fikirtive/core";
 import { requireRole } from "@/lib/auth-guard";
 import { AuditAdmin, type AuditRow } from "@/components/admin/AuditAdmin";
 

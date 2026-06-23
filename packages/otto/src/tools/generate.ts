@@ -23,8 +23,8 @@
 import { z } from "zod";
 import { tool } from "@openai/agents";
 import type { RunContext } from "@openai/agents";
-import { isModelDisabled, buildGenRequestFromCard } from "@artlio/core";
-import { prisma } from "@artlio/db";
+import { isModelDisabled, buildGenRequestFromCard } from "@fikirtive/core";
+import { prisma } from "@fikirtive/db";
 import type { OttoContext } from "../context.js";
 
 // ---------------------------------------------------------------------------

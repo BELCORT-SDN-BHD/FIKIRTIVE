@@ -5,8 +5,8 @@
  * minimal Tiptap doc so the old Workbench stays compatible) and entity refs.
  */
 import { revalidatePath } from "next/cache";
-import { prisma } from "@artlio/db";
-import { newId } from "@artlio/core";
+import { prisma } from "@fikirtive/db";
+import { newId } from "@fikirtive/core";
 import { requireOwner } from "./auth-guard";
 
 export async function addShot(projectId: string, scene?: number): Promise<{ id: string; number: number } | { error: string }> {

@@ -350,13 +350,13 @@ export const output = z.object({
 });
 
 /** The whole document the editor saves and the worker renders.
- *  ALWAYS persist artlioEdit.parse(input) — the parsed value is the contract. */
-export const artlioEdit = z.object({
+ *  ALWAYS persist fikirtiveEdit.parse(input) — the parsed value is the contract. */
+export const fikirtiveEdit = z.object({
   timeline,
   output,
 });
-export type ArtlioEdit = z.infer<typeof artlioEdit>;
-export type ArtlioClip = z.infer<typeof clip>;
+export type FikirtiveEdit = z.infer<typeof fikirtiveEdit>;
+export type FikirtiveClip = z.infer<typeof clip>;
 
 /** pg-boss job payload — the job row is persisted BEFORE dispatch (the
  *  Modal triple-insurance pattern reused): queue loss never orphans a render. */
@@ -410,7 +410,7 @@ export function storageKeyToSrc(key: string): string {
 }
 
 /** total timeline duration in seconds (max end across tracks) */
-export function editDuration(edit: ArtlioEdit): number {
+export function editDuration(edit: FikirtiveEdit): number {
   let end = 0;
   for (const t of edit.timeline.tracks)
     for (const c of t.clips) end = Math.max(end, c.start + c.length);
@@ -422,7 +422,7 @@ export function editDuration(edit: ArtlioEdit): number {
  *  Used by the worker for the audio mix length, the -progress total, and the
  *  stored asset durationS. durationMs is divided by 1000 (contract is ms; the
  *  worker renders in seconds). */
-export function renderDuration(edit: ArtlioEdit): number {
+export function renderDuration(edit: FikirtiveEdit): number {
   let overlapMs = 0;
   for (const t of edit.timeline.tracks)
     for (const tr of t.transitions ?? []) overlapMs += tr.durationMs;

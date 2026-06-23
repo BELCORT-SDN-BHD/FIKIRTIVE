@@ -1,6 +1,6 @@
 import "server-only";
-import { prisma } from "@artlio/db";
-import { newId, storageKey, storageKeyToSrc } from "@artlio/core";
+import { prisma } from "@fikirtive/db";
+import { newId, storageKey, storageKeyToSrc } from "@fikirtive/core";
 import { requireOwner } from "./auth-guard";
 
 const THUMB_VIDEO_EXTS = new Set(["mp4", "mov", "webm", "mkv"]);

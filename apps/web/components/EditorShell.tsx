@@ -2,7 +2,7 @@
 
 import { useState } from "react";
 import type { ProjectDTO } from "@/lib/types";
-import type { ArtlioEdit } from "@artlio/core";
+import type { FikirtiveEdit } from "@fikirtive/core";
 import { AppShell } from "./AppShell";
 import { Editor } from "./Editor";
 
@@ -18,8 +18,8 @@ export function EditorShell({
 }: {
   project: ProjectDTO;
   projects: ProjectDTO[];
-  boardEdit: ArtlioEdit | null;
-  savedEdit: ArtlioEdit | null;
+  boardEdit: FikirtiveEdit | null;
+  savedEdit: FikirtiveEdit | null;
   attachedCount: number;
   /** Project.updatedAt at load (ISO) — base for optimistic-concurrency saves. */
   editedAt?: string;

@@ -1,7 +1,7 @@
 import "server-only";
 import { auth, allowed, isFounderAdmin } from "@/auth";
-import { prisma, grantCreditsTx } from "@artlio/db";
-import { newId, FOUNDER_OWNER_ID, BETA_INITIAL_GRANT_CREDITS, roleAllows, isRole, type Section, type Action, type Role } from "@artlio/core";
+import { prisma, grantCreditsTx } from "@fikirtive/db";
+import { newId, FOUNDER_OWNER_ID, BETA_INITIAL_GRANT_CREDITS, roleAllows, isRole, type Section, type Action, type Role } from "@fikirtive/core";
 
 /** In-handler auth (R7): re-assert auth()+allowlist INSIDE every action, not just
  *  at the opt-in proxy wall. Returns the email or an {error} the caller returns

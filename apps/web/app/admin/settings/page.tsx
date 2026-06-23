@@ -1,6 +1,6 @@
 import { redirect } from "next/navigation";
 import { resolveVisionConfig } from "@/lib/runtime-config";
-import { prisma } from "@artlio/db";
+import { prisma } from "@fikirtive/db";
 import { requireRole } from "@/lib/auth-guard";
 import { SettingsAdmin } from "@/components/admin/SettingsAdmin";
 

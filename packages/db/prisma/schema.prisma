@@ -1,4 +1,4 @@
-// Artlio schema — implements design doc D14 (dual identity: ULID PK + content-hash
+// Fikirtive schema — implements design doc D14 (dual identity: ULID PK + content-hash
 // storage key), D21 (soft delete + 30-day window + refcount sweep), E4-pre
 // (recipe-ready structured generation fields), A3 lesson (owner_id reserved on
 // every business table from day 1; single owner "founder" until multi-user).
@@ -6,7 +6,7 @@
 //   Entity ─< ReferenceImage >─ Asset            Asset ─< Generation
 //   Project ─< Shot ─< ShotEntityRef >─ Entity   Shot ─< Generation (nullable: 候选区)
 //
-// IDs are app-supplied ULIDs (via @artlio/core newId()). History rows
+// IDs are app-supplied ULIDs (via @fikirtive/core newId()). History rows
 // (Generation) are immutable: entitySnapshot freezes names + ref hashes at
 // generation time, so renames/deletes never corrupt provenance.
 
@@ -56,7 +56,7 @@ model Project {
   ownerId   String
   organization Organization @relation(fields: [ownerId], references: [id])
   name      String
-  /// 编辑器的工作中剪辑（artlioEdit 规范化后的 JSON）——阶段③ tracer 落地，
+  /// 编辑器的工作中剪辑（fikirtiveEdit 规范化后的 JSON）——阶段③ tracer 落地，
   /// 取代 localStorage mock；导出时快照进 RenderJob.editJson
   editJson     Json?
   // cowork: human-authored creative brief, injected into the planner's stable head (ProjectBrief).
@@ -275,7 +275,7 @@ model TemplateBundle {
   version       Int
   versionHash   String    @unique // workflow_api.json 原始字节 SHA-256
   displayName   String
-  slots         Json // SlotBinding[]（@artlio/core）
+  slots         Json // SlotBinding[]（@fikirtive/core）
   // zip 位置永远由哈希推导：bundles/<zipHash>.zip（D14：不存路径）
   zipHash       String    @unique
   modalEndpoint String?
@@ -289,9 +289,9 @@ model TemplateBundle {
   @@index([ownerId, slug])
 }
 
-// 剪辑渲染任务（编辑器切片合同的一半；另一半是 @artlio/core 的 artlioEdit zod）。
+// 剪辑渲染任务（编辑器切片合同的一半；另一半是 @fikirtive/core 的 fikirtiveEdit zod）。
 // 三保险第一式：行先于 pg-boss 派发持久化——队列丢失永远不孤儿化一次渲染。
-// editJson 在写入前必须过 artlioEdit.parse（web 端校验，worker 端复验）。
+// editJson 在写入前必须过 fikirtiveEdit.parse（web 端校验，worker 端复验）。
 enum RenderStatus {
   QUEUED
   RENDERING

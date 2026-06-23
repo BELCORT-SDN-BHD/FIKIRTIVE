@@ -6,8 +6,8 @@ import "server-only";
  * takes effect on the very next Enhance across every process. The point-read is
  * dwarfed by the paid LLM call, so freshness costs nothing.
  */
-import { prisma } from "@artlio/db";
-import { FOUNDER_OWNER_ID, modelDirectiveRules, type ModelFamily, type GenMode, type ModelDirectiveRules } from "@artlio/core";
+import { prisma } from "@fikirtive/db";
+import { FOUNDER_OWNER_ID, modelDirectiveRules, type ModelFamily, type GenMode, type ModelDirectiveRules } from "@fikirtive/core";
 
 /** The enhance read: the directive text ONLY when the cell exists, is enabled,
  *  and is non-empty; otherwise undefined → the skill uses its family-neutral

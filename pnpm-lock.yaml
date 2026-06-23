@@ -17,21 +17,21 @@ importers:
 
   apps/web:
     dependencies:
-      '@artlio/core':
-        specifier: workspace:*
-        version: link:../../packages/core
-      '@artlio/db':
-        specifier: workspace:*
-        version: link:../../packages/db
-      '@artlio/otto':
-        specifier: workspace:*
-        version: link:../../packages/otto
-      '@artlio/storage':
-        specifier: workspace:^
-        version: link:../../packages/storage
       '@auth/prisma-adapter':
         specifier: 2.11.2
         version: 2.11.2(@prisma/client@7.8.0(prisma@7.8.0(@types/react-dom@19.2.3(@types/react@19.2.17))(@types/react@19.2.17)(react-dom@19.2.4(react@19.2.4))(react@19.2.4)(typescript@5.9.3))(typescript@5.9.3))
+      '@fikirtive/core':
+        specifier: workspace:*
+        version: link:../../packages/core
+      '@fikirtive/db':
+        specifier: workspace:*
+        version: link:../../packages/db
+      '@fikirtive/otto':
+        specifier: workspace:*
+        version: link:../../packages/otto
+      '@fikirtive/storage':
+        specifier: workspace:^
+        version: link:../../packages/storage
       '@sentry/node':
         specifier: ^10.58.0
         version: 10.58.0
@@ -111,19 +111,19 @@ importers:
 
   apps/worker:
     dependencies:
-      '@artlio/core':
+      '@fikirtive/core':
         specifier: workspace:*
         version: link:../../packages/core
-      '@artlio/db':
+      '@fikirtive/db':
         specifier: workspace:*
         version: link:../../packages/db
-      '@artlio/generation':
+      '@fikirtive/generation':
         specifier: workspace:*
         version: link:../../packages/generation
-      '@artlio/otto':
+      '@fikirtive/otto':
         specifier: workspace:*
         version: link:../../packages/otto
-      '@artlio/storage':
+      '@fikirtive/storage':
         specifier: workspace:^
         version: link:../../packages/storage
       '@sentry/node':
@@ -201,7 +201,7 @@ importers:
 
   packages/generation:
     dependencies:
-      '@artlio/core':
+      '@fikirtive/core':
         specifier: workspace:*
         version: link:../core
     devDependencies:
@@ -217,10 +217,10 @@ importers:
       '@ai-sdk/anthropic':
         specifier: ^3.0.85
         version: 3.0.85(zod@4.4.3)
-      '@artlio/core':
+      '@fikirtive/core':
         specifier: workspace:*
         version: link:../core
-      '@artlio/db':
+      '@fikirtive/db':
         specifier: workspace:*
         version: link:../db
       '@openai/agents':
@@ -248,15 +248,15 @@ importers:
 
   packages/storage:
     dependencies:
-      '@artlio/core':
-        specifier: workspace:*
-        version: link:../core
       '@aws-sdk/client-s3':
         specifier: ^3.700.0
         version: 3.1066.0
       '@aws-sdk/s3-request-presigner':
         specifier: ^3.700.0
         version: 3.1066.0
+      '@fikirtive/core':
+        specifier: workspace:*
+        version: link:../core
     devDependencies:
       '@types/node':
         specifier: ^22
@@ -7232,7 +7232,7 @@ snapshots:
       '@next/eslint-plugin-next': 16.2.9
       eslint: 9.39.4(jiti@2.7.0)
       eslint-import-resolver-node: 0.3.10
-      eslint-import-resolver-typescript: 3.10.1(eslint-plugin-import@2.32.0(@typescript-eslint/parser@8.61.0(eslint@9.39.4(jiti@2.7.0))(typescript@5.9.3))(eslint@9.39.4(jiti@2.7.0)))(eslint@9.39.4(jiti@2.7.0))
+      eslint-import-resolver-typescript: 3.10.1(eslint-plugin-import@2.32.0)(eslint@9.39.4(jiti@2.7.0))
       eslint-plugin-import: 2.32.0(@typescript-eslint/parser@8.61.0(eslint@9.39.4(jiti@2.7.0))(typescript@5.9.3))(eslint-import-resolver-typescript@3.10.1)(eslint@9.39.4(jiti@2.7.0))
       eslint-plugin-jsx-a11y: 6.10.2(eslint@9.39.4(jiti@2.7.0))
       eslint-plugin-react: 7.37.5(eslint@9.39.4(jiti@2.7.0))
@@ -7255,7 +7255,7 @@ snapshots:
     transitivePeerDependencies:
       - supports-color
 
-  eslint-import-resolver-typescript@3.10.1(eslint-plugin-import@2.32.0(@typescript-eslint/parser@8.61.0(eslint@9.39.4(jiti@2.7.0))(typescript@5.9.3))(eslint@9.39.4(jiti@2.7.0)))(eslint@9.39.4(jiti@2.7.0)):
+  eslint-import-resolver-typescript@3.10.1(eslint-plugin-import@2.32.0)(eslint@9.39.4(jiti@2.7.0)):
     dependencies:
       '@nolyfill/is-core-module': 1.0.39
       debug: 4.4.3
@@ -7270,14 +7270,14 @@ snapshots:
     transitivePeerDependencies:
       - supports-color
 
-  eslint-module-utils@2.13.0(@typescript-eslint/parser@8.61.0(eslint@9.39.4(jiti@2.7.0))(typescript@5.9.3))(eslint-import-resolver-node@0.3.10)(eslint-import-resolver-typescript@3.10.1(eslint-plugin-import@2.32.0(@typescript-eslint/parser@8.61.0(eslint@9.39.4(jiti@2.7.0))(typescript@5.9.3))(eslint@9.39.4(jiti@2.7.0)))(eslint@9.39.4(jiti@2.7.0)))(eslint@9.39.4(jiti@2.7.0)):
+  eslint-module-utils@2.13.0(@typescript-eslint/parser@8.61.0(eslint@9.39.4(jiti@2.7.0))(typescript@5.9.3))(eslint-import-resolver-node@0.3.10)(eslint-import-resolver-typescript@3.10.1)(eslint@9.39.4(jiti@2.7.0)):
     dependencies:
       debug: 3.2.7
     optionalDependencies:
       '@typescript-eslint/parser': 8.61.0(eslint@9.39.4(jiti@2.7.0))(typescript@5.9.3)
       eslint: 9.39.4(jiti@2.7.0)
       eslint-import-resolver-node: 0.3.10
-      eslint-import-resolver-typescript: 3.10.1(eslint-plugin-import@2.32.0(@typescript-eslint/parser@8.61.0(eslint@9.39.4(jiti@2.7.0))(typescript@5.9.3))(eslint@9.39.4(jiti@2.7.0)))(eslint@9.39.4(jiti@2.7.0))
+      eslint-import-resolver-typescript: 3.10.1(eslint-plugin-import@2.32.0)(eslint@9.39.4(jiti@2.7.0))
     transitivePeerDependencies:
       - supports-color
 
@@ -7292,7 +7292,7 @@ snapshots:
       doctrine: 2.1.0
       eslint: 9.39.4(jiti@2.7.0)
       eslint-import-resolver-node: 0.3.10
-      eslint-module-utils: 2.13.0(@typescript-eslint/parser@8.61.0(eslint@9.39.4(jiti@2.7.0))(typescript@5.9.3))(eslint-import-resolver-node@0.3.10)(eslint-import-resolver-typescript@3.10.1(eslint-plugin-import@2.32.0(@typescript-eslint/parser@8.61.0(eslint@9.39.4(jiti@2.7.0))(typescript@5.9.3))(eslint@9.39.4(jiti@2.7.0)))(eslint@9.39.4(jiti@2.7.0)))(eslint@9.39.4(jiti@2.7.0))
+      eslint-module-utils: 2.13.0(@typescript-eslint/parser@8.61.0(eslint@9.39.4(jiti@2.7.0))(typescript@5.9.3))(eslint-import-resolver-node@0.3.10)(eslint-import-resolver-typescript@3.10.1)(eslint@9.39.4(jiti@2.7.0))
       hasown: 2.0.4
       is-core-module: 2.16.2
       is-glob: 4.0.3

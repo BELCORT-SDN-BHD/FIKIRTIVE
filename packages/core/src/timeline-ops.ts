@@ -1,4 +1,4 @@
-import { artlioEdit, type ArtlioEdit, type ArtlioClip, type BetweenClipTransition } from "./timeline.js";
+import { fikirtiveEdit, type FikirtiveEdit, type FikirtiveClip, type BetweenClipTransition } from "./timeline.js";
 
 /** A split/trim can never produce a clip shorter than this (avoids zero/negative
  *  length and clips too short for a fade). Below the smallest sane edit unit. */
@@ -47,7 +47,7 @@ export function reindexTransitionsAfterSplit(
  *  the timeline.superRefine tolerance. */
 export function dropTransitionsTooShort(
   transitions: BetweenClipTransition[],
-  clips: ArtlioClip[],
+  clips: FikirtiveClip[],
 ): BetweenClipTransition[] {
   const ordered = [...clips].sort((a, b) => a.start - b.start);
   const EPS = 1e-6;
@@ -111,7 +111,7 @@ export function reindexTransitionsAfterMove(
  *
  *  - SDK clip `id` (the Editor reads clips with getEdit({includeIds:true}), and
  *    getClip/moveClipById confirm clips carry stable ids — not part of the
- *    artlioEdit contract, so read loosely) → `id:<id>`, the only TRUE identity.
+ *    fikirtiveEdit contract, so read loosely) → `id:<id>`, the only TRUE identity.
  *  - else, a UNIQUE `asset.src` in the list → `src:<src>`: src alone identifies
  *    the clip, so a pure trim/reorder still tracks it.
  *  - else (DUPLICATE src AND no id) → `null` = NON-matchable. Occurrence index is
@@ -121,7 +121,7 @@ export function reindexTransitionsAfterMove(
  *    so reconcile DROPS the transition rather than mis-attach it. (A split makes
  *    two same-src halves, so this is the common ambiguous case; the Editor avoids
  *    it entirely by always reading real ids.) */
-function clipIdentities(clips: ArtlioClip[]): (string | null)[] {
+function clipIdentities(clips: FikirtiveClip[]): (string | null)[] {
   const ordered = [...clips].sort((a, b) => a.start - b.start);
   // count srcs among the id-LESS clips, to spot ambiguous duplicates
   const srcCount = new Map<string, number>();
@@ -147,8 +147,8 @@ function clipIdentities(clips: ArtlioClip[]): (string | null)[] {
  *  Transitions stay stored index-based (the contract has no clip id); this only
  *  remaps old→new indices. Both clip lists are addressed in timeline order. */
 export function reconcileTransitions(
-  prevClips: ArtlioClip[],
-  nextClips: ArtlioClip[],
+  prevClips: FikirtiveClip[],
+  nextClips: FikirtiveClip[],
   transitions: BetweenClipTransition[],
 ): BetweenClipTransition[] {
   if (transitions.length === 0) return [];
@@ -174,9 +174,9 @@ export function reconcileTransitions(
  *  half shorter than `2 * duration` must shrink the fade rather than throw at parse
  *  (Codex P2). The half is >= MIN_CLIP_SECONDS, so the clamped duration stays > 0. */
 function fitFade(
-  fade: NonNullable<ArtlioClip["transition"]>,
+  fade: NonNullable<FikirtiveClip["transition"]>,
   halfLen: number,
-): NonNullable<ArtlioClip["transition"]> {
+): NonNullable<FikirtiveClip["transition"]> {
   const maxDuration = halfLen / 2;
   return fade.duration > maxDuration ? { ...fade, duration: maxDuration } : fade;
 }
@@ -189,13 +189,13 @@ function fitFade(
  *  longer satisfy the transition's duration (the EP1 "≤ half the shorter clip"
  *  guard) is DROPPED so the result is always parse-valid — never shift-then-throw.
  *  Throws only if the split point isn't strictly inside the clip or either half
- *  would be < MIN_CLIP_SECONDS. The result re-parses through artlioEdit. */
+ *  would be < MIN_CLIP_SECONDS. The result re-parses through fikirtiveEdit. */
 export function splitClipAt(
-  edit: ArtlioEdit,
+  edit: FikirtiveEdit,
   trackIndex: number,
   clipIndex: number,
   atSeconds: number,
-): ArtlioEdit {
+): FikirtiveEdit {
   const track = edit.timeline.tracks[trackIndex];
   if (!track) throw new Error(`split: track ${trackIndex} out of range`);
   // operate in timeline (sorted-by-start) order so indices match the contract
@@ -213,13 +213,13 @@ export function splitClipAt(
     throw new Error(`split: each half must be ≥ ${MIN_CLIP_SECONDS}s (got ${headLen}s / ${tailLen}s — too short)`);
   }
 
-  const head: ArtlioClip = {
+  const head: FikirtiveClip = {
     ...structuredClone(clip),
     length: headLen,
     // head keeps its trim and any legacy fade-IN; drop a legacy fade-OUT (moves to tail)
     transition: clip.transition?.in ? fitFade({ ...clip.transition, out: undefined }, headLen) : undefined,
   };
-  const tail: ArtlioClip = {
+  const tail: FikirtiveClip = {
     ...structuredClone(clip),
     start: atSeconds,
     length: tailLen,
@@ -239,18 +239,18 @@ export function splitClipAt(
   );
 
   const nextTrack = { ...track, clips: nextClips, transitions: nextTransitions.length ? nextTransitions : undefined };
-  const nextEdit: ArtlioEdit = {
+  const nextEdit: FikirtiveEdit = {
     ...edit,
     timeline: { ...edit.timeline, tracks: edit.timeline.tracks.map((t, i) => (i === trackIndex ? nextTrack : t)) },
   };
-  return artlioEdit.parse(nextEdit); // canonicalize + enforce EP1 guards
+  return fikirtiveEdit.parse(nextEdit); // canonicalize + enforce EP1 guards
 }
 
 /** Remove the clip at `clipIndex` (timeline order) on track `trackIndex` and
  *  shift every downstream clip's start LEFT by the removed length (close the
  *  gap). Transitions touching the removed clip are dropped; later ones decrement.
  *  Throws if it would empty the track (the contract requires ≥1 clip). Re-parses. */
-export function rippleDeleteClip(edit: ArtlioEdit, trackIndex: number, clipIndex: number): ArtlioEdit {
+export function rippleDeleteClip(edit: FikirtiveEdit, trackIndex: number, clipIndex: number): FikirtiveEdit {
   const track = edit.timeline.tracks[trackIndex];
   if (!track) throw new Error(`ripple-delete: track ${trackIndex} out of range`);
   if (track.clips.length <= 1) throw new Error(`ripple-delete: cannot remove the last clip on a track (≥1 required)`);
@@ -265,18 +265,18 @@ export function rippleDeleteClip(edit: ArtlioEdit, trackIndex: number, clipIndex
   const nextTransitions = reindexTransitionsAfterDelete(track.transitions ?? [], clipIndex);
 
   const nextTrack = { ...track, clips: nextClips, transitions: nextTransitions.length ? nextTransitions : undefined };
-  const nextEdit: ArtlioEdit = {
+  const nextEdit: FikirtiveEdit = {
     ...edit,
     timeline: { ...edit.timeline, tracks: edit.timeline.tracks.map((t, i) => (i === trackIndex ? nextTrack : t)) },
   };
-  return artlioEdit.parse(nextEdit);
+  return fikirtiveEdit.parse(nextEdit);
 }
 
 /** Move the clip at timeline position `fromIndex` to `toIndex` on track
  *  `trackIndex`, then RE-TILE the track gapless from 0 (starts = cumulative
  *  length). Transitions are re-indexed by clip identity — one survives only if
  *  its two clips stay consecutive in the new order. Returns a re-parsed edit. */
-export function moveClip(edit: ArtlioEdit, trackIndex: number, fromIndex: number, toIndex: number): ArtlioEdit {
+export function moveClip(edit: FikirtiveEdit, trackIndex: number, fromIndex: number, toIndex: number): FikirtiveEdit {
   const track = edit.timeline.tracks[trackIndex];
   if (!track) throw new Error(`move: track ${trackIndex} out of range`);
   const ordered = [...track.clips].sort((a, b) => a.start - b.start);
@@ -303,11 +303,11 @@ export function moveClip(edit: ArtlioEdit, trackIndex: number, fromIndex: number
   const nextTransitions = reindexTransitionsAfterMove(track.transitions ?? [], oldIds, newIds);
 
   const nextTrack = { ...track, clips: nextClips, transitions: nextTransitions.length ? nextTransitions : undefined };
-  const nextEdit: ArtlioEdit = {
+  const nextEdit: FikirtiveEdit = {
     ...edit,
     timeline: { ...edit.timeline, tracks: edit.timeline.tracks.map((t, i) => (i === trackIndex ? nextTrack : t)) },
   };
-  return artlioEdit.parse(nextEdit);
+  return fikirtiveEdit.parse(nextEdit);
 }
 
 /** Default snap threshold (seconds): an edge within this of a target snaps to it. */
@@ -318,7 +318,7 @@ export const SNAP_THRESHOLD_SECONDS = 0.15;
  *  `threshold` of being perfectly tiled-from-0, re-tile it exactly (close tiny
  *  gaps, pin the first start to 0). A gap LARGER than threshold is left alone (a
  *  deliberate gap, not a snap miss). Audio tracks are untouched. Re-parses. */
-export function snapEdit(edit: ArtlioEdit, threshold = SNAP_THRESHOLD_SECONDS): ArtlioEdit {
+export function snapEdit(edit: FikirtiveEdit, threshold = SNAP_THRESHOLD_SECONDS): FikirtiveEdit {
   const tracks = edit.timeline.tracks.map((track) => {
     const isVisual = track.clips.some((c) => c.asset.type !== "audio");
     if (!isVisual) return track;
@@ -343,5 +343,5 @@ export function snapEdit(edit: ArtlioEdit, threshold = SNAP_THRESHOLD_SECONDS): 
     });
     return { ...track, clips };
   });
-  return artlioEdit.parse({ ...edit, timeline: { ...edit.timeline, tracks } });
+  return fikirtiveEdit.parse({ ...edit, timeline: { ...edit.timeline, tracks } });
 }

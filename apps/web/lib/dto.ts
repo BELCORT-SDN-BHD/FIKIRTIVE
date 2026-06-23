@@ -1,5 +1,5 @@
 import "server-only";
-import { storageKey, coworkProposalSchema } from "@artlio/core";
+import { storageKey, coworkProposalSchema } from "@fikirtive/core";
 import { storage, kindOf } from "./storage";
 import type { EntityWithRefs, ChatThreadWithMessages } from "./data";
 import type { EntityDTO, ChatMessageDTO, ChatThreadDTO } from "./types";

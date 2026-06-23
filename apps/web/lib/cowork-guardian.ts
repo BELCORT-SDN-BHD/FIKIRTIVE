@@ -9,8 +9,8 @@ import "server-only";
  * NEVER block a legit render — it returns null and the existing gate stands. It
  * only ever ADDS blocks; it can't loosen the existing money-safety.
  */
-import { prisma } from "@artlio/db";
-import { modelFamily, deriveMode, castFindings, type CastFinding } from "@artlio/core";
+import { prisma } from "@fikirtive/db";
+import { modelFamily, deriveMode, castFindings, type CastFinding } from "@fikirtive/core";
 import { getCastRule } from "./cowork-knowledge";
 
 const IMG_EXTS = ["png", "jpg", "jpeg", "webp"];

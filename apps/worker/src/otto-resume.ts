@@ -13,10 +13,10 @@
  *  - A throw AFTER the claim is swallowed (best-effort). withLlmBudget refunds the reservation
  *    on throw, so no credit charge on failure.
  */
-import { prisma } from "@artlio/db";
-import { newId, OTTO_MAX_STEPS } from "@artlio/core";
-import { otto, withLlmBudget, OTTO_DEFAULT_MODEL, run, RunState, MaxTurnsExceededError, mapOttoUsage } from "@artlio/otto";
-import type { OttoContext } from "@artlio/otto";
+import { prisma } from "@fikirtive/db";
+import { newId, OTTO_MAX_STEPS } from "@fikirtive/core";
+import { otto, withLlmBudget, OTTO_DEFAULT_MODEL, run, RunState, MaxTurnsExceededError, mapOttoUsage } from "@fikirtive/otto";
+import type { OttoContext } from "@fikirtive/otto";
 
 export async function resumeOttoAfterGen(job: {
   id: string;

@@ -1,5 +1,5 @@
 import { Agent } from "@openai/agents";
-import { OTTO_OUTPUT_CAP_TOKENS } from "@artlio/core";
+import { OTTO_OUTPUT_CAP_TOKENS } from "@fikirtive/core";
 import type { OttoContext } from "./context.js";
 import { ottoInstructions } from "./instructions.js";
 import { ottoModel, OTTO_DEFAULT_MODEL } from "./model.js";

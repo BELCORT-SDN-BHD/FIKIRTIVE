@@ -13,7 +13,7 @@ const eslintConfig = defineConfig([
     rules: {
       "no-restricted-imports": ["warn", {
         paths: [{
-          name: "@artlio/db",
+          name: "@fikirtive/db",
           importNames: ["prisma"],
           message: "Owner-scoped models should go through the tenant-scoped data layer (P3 scoped client). See docs/superpowers/specs/2026-06-19-closed-beta-saas-foundation-design.md §4.",
         }],

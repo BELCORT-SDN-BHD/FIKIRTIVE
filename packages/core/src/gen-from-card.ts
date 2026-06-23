@@ -2,7 +2,7 @@
  * Pure builder: card payload → genRequest input.
  *
  * Extracted from `coworkGenerate` (apps/web/lib/cowork-actions.ts lines 545–565).
- * This file MUST remain pure — no @artlio/db, no apps/* imports, no Prisma.
+ * This file MUST remain pure — no @fikirtive/db, no apps/* imports, no Prisma.
  * The logic is behavior-identical to the original: same field order, same
  * spread/conditional patterns, same fallback chain.
  */

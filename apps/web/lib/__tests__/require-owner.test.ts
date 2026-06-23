@@ -38,8 +38,8 @@ afterEach(() => { mockAuth.mockReset(); });
 
 // import AFTER the mock + env are in place
 const { requireOwner } = await import("@/lib/auth-guard");
-const { prisma } = await import("@artlio/db");
-const { FOUNDER_OWNER_ID } = await import("@artlio/core");
+const { prisma } = await import("@fikirtive/db");
+const { FOUNDER_OWNER_ID } = await import("@fikirtive/core");
 
 async function ensureUser(email: string): Promise<string> {
   const id = `usr_${randomUUID()}`;

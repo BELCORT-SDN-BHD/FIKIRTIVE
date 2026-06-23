@@ -5,7 +5,7 @@
  * provider, and writes Generation candidates (optionally bound to a shot).
  */
 import { revalidatePath } from "next/cache";
-import { prisma, reserveCredits, refundReservation, InsufficientCredits } from "@artlio/db";
+import { prisma, reserveCredits, refundReservation, InsufficientCredits } from "@fikirtive/db";
 import {
   genRequest,
   newId,
@@ -17,7 +17,7 @@ import {
   pricedGenCredits,
   type GenJobData,
   type GenVideoModel,
-} from "@artlio/core";
+} from "@fikirtive/core";
 import { getBoss } from "./queue";
 import { checkCast } from "./cowork-guardian";
 import { requireOwner } from "./auth-guard";

@@ -1,9 +1,9 @@
 "use server";
 
 import { revalidatePath } from "next/cache";
-import { prisma } from "@artlio/db";
+import { prisma } from "@fikirtive/db";
 import {
-  artlioEdit,
+  fikirtiveEdit,
   captionCue,
   editDuration,
   newId,
@@ -15,12 +15,12 @@ import {
   INGEST_QUEUE,
   RENDER_QUEUE,
   CAPTION_QUEUE,
-  type ArtlioEdit,
+  type FikirtiveEdit,
   type CaptionCue,
   type CaptionJobData,
   type RenderJobData,
-} from "@artlio/core";
-import type { EntityType, ShotStatus } from "@artlio/db";
+} from "@fikirtive/core";
+import type { EntityType, ShotStatus } from "@fikirtive/db";
 import { storage, extFromFilename, mimeOf } from "./storage";
 import { getBoss } from "./queue";
 import { buildEntitySnapshot } from "./entity-snapshot";
@@ -635,10 +635,10 @@ export async function saveProjectEdit(projectId: string, editJsonString: string,
   const { ownerId } = gate;
   const project = await prisma.project.findFirst({ where: { id: projectId, ownerId, deletedAt: null } });
   if (!project) return { error: "Project not found." };
-  let edit: ArtlioEdit;
+  let edit: FikirtiveEdit;
   try {
     // canonicalizing parse — only the parsed value is ever persisted
-    edit = artlioEdit.parse(JSON.parse(editJsonString));
+    edit = fikirtiveEdit.parse(JSON.parse(editJsonString));
   } catch {
     return { error: "That cut is out of contract — fix the flagged clip first." };
   }
@@ -655,7 +655,7 @@ export async function saveProjectEdit(projectId: string, editJsonString: string,
   return { ok: true, updatedAt: fresh?.updatedAt?.toISOString() };
 }
 
-const BLANK_CUT = (): ArtlioEdit => ({
+const BLANK_CUT = (): FikirtiveEdit => ({
   timeline: { background: "#000000", tracks: [{ clips: [] }] },
   output: { format: "mp4", resolution: "hd", aspectRatio: "16:9", fps: 25 },
 });
@@ -690,8 +690,8 @@ export async function addSegmentToCut(shotId: string): Promise<{ ok: true; added
 
     // base = the VALID saved cut; on a missing/corrupt saved cut, rebuild from the
     // board (never silently blank over an existing-but-invalid cut)
-    const saved = project.editJson ? artlioEdit.safeParse(project.editJson) : null;
-    let base: ArtlioEdit;
+    const saved = project.editJson ? fikirtiveEdit.safeParse(project.editJson) : null;
+    let base: FikirtiveEdit;
     if (saved?.success) {
       base = saved.data;
     } else {
@@ -706,7 +706,7 @@ export async function addSegmentToCut(shotId: string): Promise<{ ok: true; added
     const end = track0.clips.reduce((m, c) => Math.max(m, c.start + c.length), 0);
     const tr = transitionFor(shot.transition, seconds);
     track0.clips.push({ asset: { type: "video", src }, start: end, length: seconds, ...(tr ? { transition: tr } : {}) });
-    const parsed = artlioEdit.safeParse(base); // canonicalize before persisting (saveProjectEdit discipline)
+    const parsed = fikirtiveEdit.safeParse(base); // canonicalize before persisting (saveProjectEdit discipline)
     if (!parsed.success) return { error: "Adding that segment would put the cut out of contract." };
 
     const res = await prisma.project.updateMany({ where: { id: project.id, ownerId, updatedAt: project.updatedAt }, data: { editJson: parsed.data } });
@@ -729,9 +729,9 @@ export async function startRender(projectId: string, editJsonString: string) {
   const { ownerId } = gate;
   const project = await prisma.project.findFirst({ where: { id: projectId, ownerId, deletedAt: null } });
   if (!project) return { error: "Project not found." };
-  let edit: ArtlioEdit;
+  let edit: FikirtiveEdit;
   try {
-    edit = artlioEdit.parse(JSON.parse(editJsonString));
+    edit = fikirtiveEdit.parse(JSON.parse(editJsonString));
   } catch {
     return { error: "That cut is out of contract — fix the flagged clip first." };
   }

@@ -1,5 +1,5 @@
 import "server-only";
-import { storageKey, storageKeyToSrc, TRANSITION_DEFAULT_SECONDS, type ArtlioEdit } from "@artlio/core";
+import { storageKey, storageKeyToSrc, TRANSITION_DEFAULT_SECONDS, type FikirtiveEdit } from "@fikirtive/core";
 import type { ShotWithDetail, CandidateGen } from "./data";
 
 const VIDEO_EXTS = new Set(["mp4", "mov", "webm", "mkv"]);
@@ -7,7 +7,7 @@ const IMAGE_EXTS = new Set(["png", "jpg", "jpeg", "webp", "gif", "avif"]);
 const IMAGE_SECONDS = 3;          // images have no inherent duration — product default
 const FALLBACK_VIDEO_SECONDS = 5; // covers assets ingested before the probe ran
 
-type Clip = ArtlioEdit["timeline"]["tracks"][number]["clips"][number];
+type Clip = FikirtiveEdit["timeline"]["tracks"][number]["clips"][number];
 type AssetRow = { ownerId: string; contentHash: string; ext: string; durationS: number | null };
 
 function toClip(asset: AssetRow, isVideo: boolean, start: number): Clip {
@@ -35,7 +35,7 @@ export function transitionFor(t: string | null, length: number): Clip["transitio
  *  then any unattached Gen-space *video* clips (candidates not yet on a shot) so
  *  anything you generated is available to cut. A persisted savedEdit still wins
  *  over this in the editor. Returns the edit (null if empty) + the clip count. */
-export function buildBoardEdit(shots: ShotWithDetail[], candidates: CandidateGen[]): { edit: ArtlioEdit | null; clipCount: number } {
+export function buildBoardEdit(shots: ShotWithDetail[], candidates: CandidateGen[]): { edit: FikirtiveEdit | null; clipCount: number } {
   const clips: Clip[] = [];
   let cursor = 0;
   for (const shot of shots) {
@@ -57,7 +57,7 @@ export function buildBoardEdit(shots: ShotWithDetail[], candidates: CandidateGen
     clips.push(c);
     cursor += c.length;
   }
-  const edit: ArtlioEdit | null = clips.length > 0
+  const edit: FikirtiveEdit | null = clips.length > 0
     ? { timeline: { background: "#000000", tracks: [{ clips }] }, output: { format: "mp4", resolution: "hd", aspectRatio: "16:9", fps: 25 } }
     : null;
   return { edit, clipCount: clips.length };

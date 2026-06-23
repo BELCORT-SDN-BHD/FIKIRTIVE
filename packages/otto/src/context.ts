@@ -1,4 +1,4 @@
-import type { GenRequestInput } from "@artlio/core";
+import type { GenRequestInput } from "@fikirtive/core";
 
 /** Per-run context the caller (web route / worker) supplies to `run(otto, input, { context })`.
  *  It is re-derived FRESH every run from the verified session — it is NOT persisted in RunState,

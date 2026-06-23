@@ -10,7 +10,7 @@ import {
   snapEdit,
   MIN_CLIP_SECONDS,
 } from "./timeline-ops.js";
-import { artlioEdit, type ArtlioClip, type ArtlioEdit, type BetweenClipTransition } from "./timeline.js";
+import { fikirtiveEdit, type FikirtiveClip, type FikirtiveEdit, type BetweenClipTransition } from "./timeline.js";
 
 const t = (from: number, type = "cross", durationMs = 500): BetweenClipTransition => ({
   fromClipIndex: from,
@@ -100,8 +100,8 @@ describe("reconcileTransitions", () => {
   // its two original clips stay a gapless-adjacent, long-enough pair in the new
   // timeline order; otherwise it's dropped. Prefers a clip `id`, else asset.src +
   // occurrence index.
-  const C = (start: number, length: number, src: string, id?: string): ArtlioClip =>
-    ({ asset: { type: "video", src, ...(id ? {} : {}) }, start, length, ...(id ? { id } : {}) }) as unknown as ArtlioClip;
+  const C = (start: number, length: number, src: string, id?: string): FikirtiveClip =>
+    ({ asset: { type: "video", src, ...(id ? {} : {}) }, start, length, ...(id ? { id } : {}) }) as unknown as FikirtiveClip;
   const S1 = "/files/u/founder/" + "a".repeat(64) + ".mp4";
   const S2 = "/files/u/founder/" + "b".repeat(64) + ".mp4";
   const S3 = "/files/u/founder/" + "c".repeat(64) + ".mp4";
@@ -180,8 +180,8 @@ describe("reconcileTransitions", () => {
 const HASH = "a".repeat(64);
 const SRC = `/files/u/founder/${HASH}.mp4`;
 // a gapless 2-clip visual edit + an audio track, mirroring contract validEdit.
-const baseEdit = (): ArtlioEdit =>
-  artlioEdit.parse({
+const baseEdit = (): FikirtiveEdit =>
+  fikirtiveEdit.parse({
     timeline: {
       tracks: [
         {
@@ -231,7 +231,7 @@ describe("splitClipAt", () => {
 
   it("keeps a transition before the split and re-numbers one after", () => {
     // build [c0,c1,c2] gapless with transitions 0->1 and 1->2; split clip 1.
-    const e = artlioEdit.parse({
+    const e = fikirtiveEdit.parse({
       timeline: {
         tracks: [
           {
@@ -274,14 +274,14 @@ describe("splitClipAt", () => {
     const out = splitClipAt(baseEdit(), 0, 0, 3.9);
     expect(out.timeline.tracks[0]!.clips).toHaveLength(3);
     expect(out.timeline.tracks[0]!.transitions ?? []).toEqual([]); // invalidated → dropped
-    expect(() => artlioEdit.parse(out)).not.toThrow();
+    expect(() => fikirtiveEdit.parse(out)).not.toThrow();
   });
 
   it("keeps a transition the split leaves long enough (only drops the invalidated one)", () => {
     // build [c0,c1,c2] gapless, transitions 0->1 (into c1's head, untouched by a
     // c1 tail-split) and 1->2 (c1 tail -> c2). Split c1 near its tail so the 1->2
     // pair becomes too short and is dropped, but 0->1 survives.
-    const e = artlioEdit.parse({
+    const e = fikirtiveEdit.parse({
       timeline: {
         tracks: [
           {
@@ -304,7 +304,7 @@ describe("splitClipAt", () => {
     expect(out.timeline.tracks[0]!.transitions).toEqual([
       { fromClipIndex: 0, toClipIndex: 1, type: "cross", durationMs: 500 }, // survives
     ]);
-    expect(() => artlioEdit.parse(out)).not.toThrow();
+    expect(() => fikirtiveEdit.parse(out)).not.toThrow();
   });
 
   it("rejects an out-of-range atSeconds or clipIndex", () => {
@@ -314,14 +314,14 @@ describe("splitClipAt", () => {
 
   it("returns an edit that re-parses clean (incl. EP1 guards)", () => {
     const out = splitClipAt(baseEdit(), 0, 1, 7);
-    expect(() => artlioEdit.parse(out)).not.toThrow();
+    expect(() => fikirtiveEdit.parse(out)).not.toThrow();
   });
 
   it("clamps a legacy per-clip fade the split leaves too short, never throwing — Codex P2", () => {
     // a 4s clip with a 0.5s fade-IN; split at 0.6s → head 0.6s. The contract needs
     // length ≥ fade*2 (≥ 1.0s for a 0.5s fade), so the head's fade must shrink to
     // ≤ 0.3s instead of failing parse. The tail (3.4s) carries no fade here.
-    const e = artlioEdit.parse({
+    const e = fikirtiveEdit.parse({
       timeline: {
         tracks: [
           { clips: [{ asset: { type: "video", src: SRC }, start: 0, length: 4, transition: { in: "fade", duration: 0.5 } }] },
@@ -336,7 +336,7 @@ describe("splitClipAt", () => {
     expect(head.length).toBeCloseTo(0.6, 6);
     expect(head.transition?.in).toBe("fade");
     expect(head.transition?.duration).toBeLessThanOrEqual(0.3 + 1e-9);
-    expect(() => artlioEdit.parse(out)).not.toThrow();
+    expect(() => fikirtiveEdit.parse(out)).not.toThrow();
   });
 
   it("does not mutate the input edit", () => {
@@ -358,7 +358,7 @@ describe("rippleDeleteClip", () => {
   });
 
   it("closes the gap so the track stays gapless", () => {
-    const e = artlioEdit.parse({
+    const e = fikirtiveEdit.parse({
       timeline: {
         tracks: [
           {
@@ -379,7 +379,7 @@ describe("rippleDeleteClip", () => {
   });
 
   it("drops transitions touching the deleted clip and decrements later ones", () => {
-    const e = artlioEdit.parse({
+    const e = fikirtiveEdit.parse({
       timeline: {
         tracks: [
           {
@@ -407,7 +407,7 @@ describe("rippleDeleteClip", () => {
   });
 
   it("rejects deleting the last remaining clip on a track (min 1 clip)", () => {
-    const e = artlioEdit.parse({
+    const e = fikirtiveEdit.parse({
       timeline: { tracks: [{ clips: [{ asset: { type: "video", src: SRC }, start: 0, length: 4 }] }] },
       output: { format: "mp4" },
     });
@@ -418,14 +418,14 @@ describe("rippleDeleteClip", () => {
     const e = baseEdit();
     const before = JSON.stringify(e);
     const out = rippleDeleteClip(e, 0, 0);
-    expect(() => artlioEdit.parse(out)).not.toThrow();
+    expect(() => fikirtiveEdit.parse(out)).not.toThrow();
     expect(JSON.stringify(e)).toBe(before);
   });
 });
 
 describe("moveClip", () => {
-  const threeClip = (): ArtlioEdit =>
-    artlioEdit.parse({
+  const threeClip = (): FikirtiveEdit =>
+    fikirtiveEdit.parse({
       timeline: {
         tracks: [
           {
@@ -466,7 +466,7 @@ describe("moveClip", () => {
   it("is a no-op (re-parse-valid) when from === to", () => {
     const out = moveClip(threeClip(), 0, 1, 1);
     expect(out.timeline.tracks[0]!.clips.map((c) => c.asset.trim)).toEqual([0, 1, 2]);
-    expect(() => artlioEdit.parse(out)).not.toThrow();
+    expect(() => fikirtiveEdit.parse(out)).not.toThrow();
   });
 
   it("rejects out-of-range indices", () => {
@@ -485,7 +485,7 @@ describe("moveClip", () => {
 describe("snapEdit", () => {
   it("closes a sub-threshold gap by re-tiling the visual track", () => {
     // [0..4] then a 0.05s gap [4.05..8.05] — within 0.15 threshold → re-tiled to [4..8].
-    const e = artlioEdit.parse({
+    const e = fikirtiveEdit.parse({
       timeline: {
         tracks: [
           {
@@ -504,7 +504,7 @@ describe("snapEdit", () => {
   });
 
   it("snaps a near-zero first start to exactly 0", () => {
-    const e = artlioEdit.parse({
+    const e = fikirtiveEdit.parse({
       timeline: { tracks: [{ clips: [{ asset: { type: "video", src: SRC }, start: 0.03, length: 4 }] }] },
       output: { format: "mp4" },
     });
@@ -514,7 +514,7 @@ describe("snapEdit", () => {
   it("leaves an already-tiled track unchanged and re-parses valid", () => {
     const out = snapEdit(baseEdit());
     expect(out.timeline.tracks[0]!.clips.map((c) => c.start)).toEqual([0, 4]);
-    expect(() => artlioEdit.parse(out)).not.toThrow();
+    expect(() => fikirtiveEdit.parse(out)).not.toThrow();
   });
 
   it("preserves transitions (re-tiling keeps gapless pairs valid)", () => {
@@ -543,7 +543,7 @@ describe("fuzz: random op sequences stay parse-valid + transitions consistent", 
     };
   }
 
-  function randomEdit(rand: () => number): ArtlioEdit {
+  function randomEdit(rand: () => number): FikirtiveEdit {
     const n = 2 + Math.floor(rand() * 5); // 2..6 visual clips
     const clips: unknown[] = [];
     let start = 0;
@@ -562,7 +562,7 @@ describe("fuzz: random op sequences stay parse-valid + transitions consistent", 
       }
     }
     const total = start;
-    return artlioEdit.parse({
+    return fikirtiveEdit.parse({
       timeline: {
         tracks: [
           { clips, ...(transitions.length ? { transitions } : {}) },
@@ -574,7 +574,7 @@ describe("fuzz: random op sequences stay parse-valid + transitions consistent", 
   }
 
   // assert each transition references a gapless-adjacent pair in timeline order.
-  function transitionsConsistent(edit: ArtlioEdit): void {
+  function transitionsConsistent(edit: FikirtiveEdit): void {
     for (const track of edit.timeline.tracks) {
       const trs = track.transitions ?? [];
       if (trs.length === 0) continue;
@@ -651,7 +651,7 @@ describe("fuzz: random op sequences stay parse-valid + transitions consistent", 
               edit.timeline.tracks[0]!.transitions ?? [],
             );
             const total = cursor;
-            edit = artlioEdit.parse({
+            edit = fikirtiveEdit.parse({
               ...edit,
               timeline: {
                 ...edit.timeline,
@@ -669,7 +669,7 @@ describe("fuzz: random op sequences stay parse-valid + transitions consistent", 
           // a throw must NOT corrupt `edit` (ops are pure → input unchanged).
         }
         // INVARIANT after every op: the edit re-parses + transitions consistent.
-        expect(() => artlioEdit.parse(edit)).not.toThrow();
+        expect(() => fikirtiveEdit.parse(edit)).not.toThrow();
         transitionsConsistent(edit);
       }
     }

@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { storage, mimeOf, kindOf } from "@/lib/storage";
-import { parseStorageKey, keyOwnerMatches } from "@artlio/core";
+import { parseStorageKey, keyOwnerMatches } from "@fikirtive/core";
 import { auth, allowed } from "@/auth";
 import { requireOwner } from "@/lib/auth-guard";
 

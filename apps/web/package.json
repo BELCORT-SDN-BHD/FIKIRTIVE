@@ -1,5 +1,5 @@
 {
-  "name": "@artlio/web",
+  "name": "@fikirtive/web",
   "version": "0.1.0",
   "private": true,
   "scripts": {
@@ -11,10 +11,10 @@
     "test": "vitest run"
   },
   "dependencies": {
-    "@artlio/core": "workspace:*",
-    "@artlio/db": "workspace:*",
-    "@artlio/otto": "workspace:*",
-    "@artlio/storage": "workspace:^",
+    "@fikirtive/core": "workspace:*",
+    "@fikirtive/db": "workspace:*",
+    "@fikirtive/otto": "workspace:*",
+    "@fikirtive/storage": "workspace:^",
     "@auth/prisma-adapter": "2.11.2",
     "@sentry/node": "^10.58.0",
     "@shotstack/shotstack-studio": "^2.11.5",

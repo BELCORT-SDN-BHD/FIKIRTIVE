@@ -9,8 +9,8 @@
  */
 import { tool } from "@openai/agents";
 import type { RunContext } from "@openai/agents";
-import { newId } from "@artlio/core";
-import { prisma } from "@artlio/db";
+import { newId } from "@fikirtive/core";
+import { prisma } from "@fikirtive/db";
 import type { OttoContext } from "../context.js";
 import {
   proposeInput,

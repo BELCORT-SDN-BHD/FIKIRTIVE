@@ -1,13 +1,13 @@
 "use server";
 /**
- * Artlio cowork actions. v1 skills: draft a storyboard from an idea, and ✨
+ * Fikirtive cowork actions. v1 skills: draft a storyboard from an idea, and ✨
  * Enhance a prompt — each runs through the model-neutral cowork transport (mock
  * in dev, fal LLM in prod) and the per-skill runner. Drafting creates shots with
  * the SAME shot model a user's "Add shot" would, appended after any existing
  * scenes so it never clobbers work.
  */
 import { revalidatePath } from "next/cache";
-import { prisma, Prisma } from "@artlio/db";
+import { prisma, Prisma } from "@fikirtive/db";
 import {
   coworkRequest, enhanceRequest, MAX_ENHANCE_TEXT, newId,
   draftStoryboardSkill, enhancePromptSkill,
@@ -20,15 +20,15 @@ import {
   storageKey, composePrompt, isModelDisabled,
   buildGenRequestFromCard,
   type ChatMessage, type CoworkTurn, type GenVideoModel,
-} from "@artlio/core";
+} from "@fikirtive/core";
 import { getTransport, resolveVisionConfig } from "./runtime-config";
 import { getEnhanceDirective } from "./cowork-knowledge";
 import { resolveDisabledModels } from "./model-registry";
 import { startGen } from "./gen-actions";
 import { storage, mimeOf } from "./storage";
 import { requireOwner } from "./auth-guard";
-import { withLlmBudget } from "@artlio/otto";
-import { OTTO_DEFAULT_MODEL } from "@artlio/otto";
+import { withLlmBudget } from "@fikirtive/otto";
+import { OTTO_DEFAULT_MODEL } from "@fikirtive/otto";
 
 /** Phase C vision: resolve one asset to a base64 data-URL for the planner.
  *  Returns null (and never throws) when the asset is missing, foreign, deleted,

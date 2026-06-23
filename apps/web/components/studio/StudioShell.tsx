@@ -1,6 +1,6 @@
 "use client";
 /**
- * Redesign shell (Artlio Studio design) — the LTX-shaped surface frame.
+ * Redesign shell (Fikirtive Studio design) — the LTX-shaped surface frame.
  * Reuses the Vapor design system (.sidenav/.navitem/.topbar/.al-*). Nav is local
  * view-state; ?view= seeds the initial surface (deep-linkable). On <lg the sidenav
  * collapses into a topbar-triggered drawer so the app stays navigable on phones.

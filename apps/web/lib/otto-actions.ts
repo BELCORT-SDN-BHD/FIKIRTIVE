@@ -25,21 +25,21 @@
  */
 import "server-only";
 import { revalidatePath } from "next/cache";
-import { prisma } from "@artlio/db";
+import { prisma } from "@fikirtive/db";
 import {
   newId,
   coworkTurnRequest,
   OTTO_MAX_STEPS,
-} from "@artlio/core";
-import { otto, withLlmBudget, OTTO_DEFAULT_MODEL, run, RunState, MaxTurnsExceededError, mapOttoUsage } from "@artlio/otto";
-import type { OttoContext, AgentInputItem } from "@artlio/otto";
+} from "@fikirtive/core";
+import { otto, withLlmBudget, OTTO_DEFAULT_MODEL, run, RunState, MaxTurnsExceededError, mapOttoUsage } from "@fikirtive/otto";
+import type { OttoContext, AgentInputItem } from "@fikirtive/otto";
 import { requireOwner } from "./auth-guard";
 import { resolveDisabledModels } from "./model-registry";
 import { startGen } from "./gen-actions";
 
-// mapOttoUsage re-exported from @artlio/otto so existing callers that import
-// it from this module continue to work (the canonical source is @artlio/otto).
-export { mapOttoUsage } from "@artlio/otto";
+// mapOttoUsage re-exported from @fikirtive/otto so existing callers that import
+// it from this module continue to work (the canonical source is @fikirtive/otto).
+export { mapOttoUsage } from "@fikirtive/otto";
 
 /**
  * Safe one-line error summary for server logs. Logs name/message/statusCode only —

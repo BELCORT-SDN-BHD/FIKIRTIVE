@@ -7,8 +7,8 @@
  * to the internal ledger unit here. grantCredits (the service) is the only account writer.
  */
 import { revalidatePath } from "next/cache";
-import { prisma, grantCredits, InsufficientCredits } from "@artlio/db";
-import { newId, FOUNDER_OWNER_ID, INTERNAL_PER_DISPLAY } from "@artlio/core";
+import { prisma, grantCredits, InsufficientCredits } from "@fikirtive/db";
+import { newId, FOUNDER_OWNER_ID, INTERNAL_PER_DISPLAY } from "@fikirtive/core";
 import { requireRole } from "./auth-guard";
 
 export async function grantCreditsAction(raw: unknown): Promise<{ ok: true; duplicate?: boolean } | { error: string }> {
