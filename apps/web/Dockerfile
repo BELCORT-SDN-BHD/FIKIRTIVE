@@ -8,16 +8,19 @@ COPY pnpm-workspace.yaml package.json pnpm-lock.yaml ./
 COPY packages/core/package.json packages/core/
 COPY packages/storage/package.json packages/storage/
 COPY packages/db/package.json packages/db/
+COPY packages/otto/package.json packages/otto/
 COPY apps/web/package.json apps/web/
 RUN pnpm install --frozen-lockfile --filter @artlio/web...
 COPY tsconfig.base.json ./
 COPY packages/core packages/core
 COPY packages/storage packages/storage
 COPY packages/db packages/db
+COPY packages/otto packages/otto
 COPY apps/web apps/web
 RUN pnpm --filter @artlio/core build \
   && pnpm --filter @artlio/storage build \
   && pnpm --filter @artlio/db build \
+  && pnpm --filter @artlio/otto build \
   && pnpm --filter @artlio/web build
 
 FROM base AS runtime

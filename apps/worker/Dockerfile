@@ -29,6 +29,7 @@ COPY packages/core/package.json packages/core/
 COPY packages/storage/package.json packages/storage/
 COPY packages/generation/package.json packages/generation/
 COPY packages/db/package.json packages/db/
+COPY packages/otto/package.json packages/otto/
 COPY apps/worker/package.json apps/worker/
 RUN pnpm install --frozen-lockfile --filter @artlio/worker...
 COPY tsconfig.base.json ./
@@ -36,11 +37,13 @@ COPY packages/core packages/core
 COPY packages/storage packages/storage
 COPY packages/generation packages/generation
 COPY packages/db packages/db
+COPY packages/otto packages/otto
 COPY apps/worker apps/worker
 RUN pnpm --filter @artlio/core build \
   && pnpm --filter @artlio/storage build \
   && pnpm --filter @artlio/generation build \
   && pnpm --filter @artlio/db build \
+  && pnpm --filter @artlio/otto build \
   && pnpm --filter @artlio/worker build
 
 FROM base AS runtime
