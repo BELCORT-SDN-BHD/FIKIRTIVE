@@ -18,6 +18,7 @@ const NAV = [
   { href: "/admin/cost", label: "Cost & usage", live: true },
   { href: "/admin/credits", label: "Credits", live: true },
   { href: "/admin/content", label: "Content review", live: true },
+  { href: "/admin/conversations", label: "Otto conversations", live: true },
   { href: "/admin/team", label: "Team & access", live: true },
   { href: "/admin/tenants", label: "Tenants", live: true },
   { href: "/admin/system", label: "System & queue", live: true },
