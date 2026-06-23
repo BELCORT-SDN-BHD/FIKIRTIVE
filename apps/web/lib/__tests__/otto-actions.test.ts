@@ -1,5 +1,6 @@
 /**
  * otto-actions.test.ts — Unit tests for ottoTurn + mapOttoUsage (Task 1.8a)
+ *                         and ottoApprove (Task 1.8b)
  *
  * Mocks: @artlio/otto `run`/`RunState`/`MaxTurnsExceededError`, @artlio/db prisma,
  * requireOwner, withLlmBudget, resolveDisabledModels, revalidatePath.
@@ -20,6 +21,7 @@ const {
   mockChatThreadUpdate,
   mockChatMessageFindFirst,
   mockChatMessageCreate,
+  mockGenJobFindFirst,
   mockTransaction,
   mockRun,
   mockRunStateFromString,
@@ -27,9 +29,13 @@ const {
   mockWithLlmBudget,
   MockRunState,
   MockMaxTurnsExceededError,
+  mockApprove,
+  mockGetInterruptions,
 } = vi.hoisted(() => {
   const mockRunStateToString = vi.fn(() => '{"mocked":"state"}');
   const mockRunStateFromString = vi.fn();
+  const mockApprove = vi.fn();
+  const mockGetInterruptions = vi.fn(() => [] as unknown[]);
 
   class MockRunState {
     history: unknown[];
@@ -44,7 +50,8 @@ const {
     }
     toString() { return mockRunStateToString(); }
     static fromString = mockRunStateFromString;
-    getInterruptions() { return []; }
+    getInterruptions() { return mockGetInterruptions(); }
+    approve(item: unknown, opts?: unknown) { return mockApprove(item, opts); }
   }
 
   class MockMaxTurnsExceededError extends Error {
@@ -70,6 +77,7 @@ const {
     mockChatThreadUpdate: vi.fn(),
     mockChatMessageFindFirst: vi.fn(),
     mockChatMessageCreate: vi.fn(),
+    mockGenJobFindFirst: vi.fn(),
     mockTransaction: vi.fn(),
     mockRun: vi.fn(),
     mockRunStateFromString,
@@ -77,6 +85,8 @@ const {
     mockWithLlmBudget,
     MockRunState,
     MockMaxTurnsExceededError,
+    mockApprove,
+    mockGetInterruptions,
   };
 });
 
@@ -100,6 +110,9 @@ vi.mock("@artlio/db", () => ({
       findFirst: mockChatMessageFindFirst,
       create: mockChatMessageCreate,
     },
+    genJob: {
+      findFirst: mockGenJobFindFirst,
+    },
     $transaction: mockTransaction,
   },
 }));
@@ -115,7 +128,7 @@ vi.mock("@artlio/otto", () => ({
 
 // ── Import SUT after mocks ───────────────────────────────────────────────────
 
-const { ottoTurn, mapOttoUsage, buildOttoContext } = await import("@/lib/otto-actions");
+const { ottoTurn, mapOttoUsage, buildOttoContext, ottoApprove } = await import("@/lib/otto-actions");
 
 // ── Shared fixtures ──────────────────────────────────────────────────────────
 
@@ -405,5 +418,198 @@ describe("mapOttoUsage", () => {
     const stateUsage = { inputTokens: 300, outputTokens: 150 };
     const result = mapOttoUsage(stateUsage);
     expect(result).toEqual({ inputTokens: 300, outputTokens: 150, cachedInputTokens: undefined });
+  });
+});
+
+// ── ottoApprove tests (Task 1.8b) ─────────────────────────────────────────────
+
+const CARD_ID = "card_xyz123";
+const APPROVE_THREAD_ID = "thread_approve_abc";
+
+/** Build a mock RunToolApprovalItem-like object for `generate` with the given cardId */
+function makeApprovalItem(cardId: string, toolName = "generate") {
+  return {
+    type: "tool_approval_item" as const,
+    name: toolName,
+    arguments: JSON.stringify({ cardId }),
+    rawItem: { name: toolName, arguments: JSON.stringify({ cardId }) },
+  };
+}
+
+function setupApproveHappyPath(approvalItem = makeApprovalItem(CARD_ID)) {
+  mockRequireOwner.mockResolvedValue(GATE);
+  mockResolveDisabledModels.mockResolvedValue(new Set());
+
+  // Thread with paused ottoState
+  mockChatThreadFindFirst.mockResolvedValue({
+    id: APPROVE_THREAD_ID,
+    projectId: PROJECT_ID,
+    ottoState: '{"paused":"state"}',
+  });
+
+  // Rehydrated state has the pending interruption
+  const mockState = new MockRunState();
+  mockGetInterruptions.mockReturnValue([approvalItem]);
+  mockRunStateFromString.mockResolvedValue(mockState);
+
+  // No existing genJob (first approve)
+  mockGenJobFindFirst.mockResolvedValue(null);
+
+  // Resume run returns completed result
+  const completedResult = makeMockResult({ finalOutput: "Generation started!" });
+  mockRun.mockResolvedValue(completedResult);
+
+  // withLlmBudget calls through
+  mockWithLlmBudget.mockImplementation(async (_args: unknown, fn: () => Promise<{ result: unknown; usage?: unknown }>) => {
+    const out = await fn();
+    return (out as { result: unknown }).result;
+  });
+
+  mockChatMessageFindFirst.mockResolvedValue({ seq: 5 });
+  mockChatMessageCreate.mockResolvedValue({});
+  mockChatThreadUpdate.mockResolvedValue({});
+  mockTransaction.mockImplementation(async (ops: unknown[]) => {
+    for (const op of ops) {
+      if (op !== null && typeof op === "object" && "then" in op && typeof (op as { then?: unknown }).then === "function") {
+        await (op as Promise<unknown>);
+      }
+    }
+  });
+}
+
+// Test 1.8b-1: happy approve → resumes via ctx.startGen, inside withLlmBudget
+describe("ottoApprove — happy path (approve → resume → spend via startGen)", () => {
+  it("calls state.approve then run() inside withLlmBudget; persists result", async () => {
+    setupApproveHappyPath();
+
+    let runCalledInsideBudget = false;
+    mockWithLlmBudget.mockImplementation(async (_args: unknown, fn: () => Promise<{ result: unknown; usage?: unknown }>) => {
+      const out = await fn();
+      runCalledInsideBudget = mockRun.mock.calls.length > 0;
+      return (out as { result: unknown }).result;
+    });
+
+    const res = await ottoApprove({ threadId: APPROVE_THREAD_ID, cardId: CARD_ID });
+
+    expect(res).toMatchObject({ ok: true, status: "done" });
+
+    // state.approve was called with the matching interruption
+    expect(mockApprove).toHaveBeenCalledWith(expect.objectContaining({ name: "generate" }), undefined);
+
+    // run() was called (resume)
+    expect(mockRun).toHaveBeenCalled();
+
+    // resume happened inside withLlmBudget
+    expect(mockWithLlmBudget).toHaveBeenCalledWith(
+      expect.objectContaining({ orgId: OWNER_ID, paid: true }),
+      expect.any(Function),
+    );
+    expect(runCalledInsideBudget).toBe(true);
+
+    // ottoState persisted
+    expect(mockChatThreadUpdate).toHaveBeenCalledWith(
+      expect.objectContaining({ data: expect.objectContaining({ ottoState: expect.any(String) }) }),
+    );
+  });
+});
+
+// Test 1.8b-2: cardId mismatch → reject, no approve, no spend
+describe("ottoApprove — cardId mismatch → reject", () => {
+  it("returns {error} when pending generate has a different cardId, approve NOT called", async () => {
+    setupApproveHappyPath(makeApprovalItem("card_DIFFERENT"));
+    // We're approving CARD_ID but the pending interruption is for card_DIFFERENT
+
+    const res = await ottoApprove({ threadId: APPROVE_THREAD_ID, cardId: CARD_ID });
+
+    expect(res).toMatchObject({ error: expect.any(String) });
+    expect(mockApprove).not.toHaveBeenCalled();
+    expect(mockRun).not.toHaveBeenCalled();
+  });
+});
+
+// Test 1.8b-3: double-approve / already-generated → returns existing job benignly
+describe("ottoApprove — double-approve (already generated)", () => {
+  it("returns existing job benignly when no pending interruption but genJob exists", async () => {
+    mockRequireOwner.mockResolvedValue(GATE);
+    mockChatThreadFindFirst.mockResolvedValue({
+      id: APPROVE_THREAD_ID,
+      projectId: PROJECT_ID,
+      ottoState: '{"paused":"state"}',
+    });
+
+    const mockState = new MockRunState();
+    // No pending interruptions (already approved/resolved)
+    mockGetInterruptions.mockReturnValue([]);
+    mockRunStateFromString.mockResolvedValue(mockState);
+
+    // Existing genJob found
+    mockGenJobFindFirst.mockResolvedValue({ id: "job_existing_123", status: "QUEUED" });
+
+    const res = await ottoApprove({ threadId: APPROVE_THREAD_ID, cardId: CARD_ID });
+
+    expect(res).toMatchObject({ ok: true, genJobId: "job_existing_123", status: "QUEUED" });
+    // No second spend — approve and run must NOT be called
+    expect(mockApprove).not.toHaveBeenCalled();
+    expect(mockRun).not.toHaveBeenCalled();
+  });
+});
+
+// Test 1.8b-4: owner scope — thread not owned → {error}
+describe("ottoApprove — owner scope", () => {
+  it("returns {error} when thread is not found for this owner", async () => {
+    mockRequireOwner.mockResolvedValue(GATE);
+    mockChatThreadFindFirst.mockResolvedValue(null); // not found / not owned
+
+    const res = await ottoApprove({ threadId: "thread_not_mine", cardId: CARD_ID });
+
+    expect(res).toMatchObject({ error: expect.any(String) });
+    expect(mockRunStateFromString).not.toHaveBeenCalled();
+    expect(mockApprove).not.toHaveBeenCalled();
+    expect(mockRun).not.toHaveBeenCalled();
+  });
+});
+
+// Test 1.8b-5: no ottoState → {error: "Nothing to approve."}
+describe("ottoApprove — no ottoState", () => {
+  it("returns {error: 'Nothing to approve.'} when thread has null ottoState", async () => {
+    mockRequireOwner.mockResolvedValue(GATE);
+    mockChatThreadFindFirst.mockResolvedValue({
+      id: APPROVE_THREAD_ID,
+      projectId: PROJECT_ID,
+      ottoState: null,
+    });
+
+    const res = await ottoApprove({ threadId: APPROVE_THREAD_ID, cardId: CARD_ID });
+
+    expect(res).toEqual({ error: "Nothing to approve." });
+    expect(mockRunStateFromString).not.toHaveBeenCalled();
+  });
+});
+
+// Test 1.8b-6: resume metered — run happens inside withLlmBudget
+describe("ottoApprove — resume metered", () => {
+  it("wraps resume run() in withLlmBudget with correct args", async () => {
+    setupApproveHappyPath();
+
+    const budgetCallArgs: unknown[] = [];
+    let runCalledInsideBudget = false;
+    mockWithLlmBudget.mockImplementation(async (args: unknown, fn: () => Promise<{ result: unknown; usage?: unknown }>) => {
+      budgetCallArgs.push(args);
+      const out = await fn();
+      runCalledInsideBudget = mockRun.mock.calls.length > 0;
+      return (out as { result: unknown }).result;
+    });
+
+    await ottoApprove({ threadId: APPROVE_THREAD_ID, cardId: CARD_ID });
+
+    // withLlmBudget called once (the resume turn metering)
+    expect(mockWithLlmBudget).toHaveBeenCalledOnce();
+    expect(budgetCallArgs[0]).toMatchObject({
+      orgId: OWNER_ID,
+      paid: true,
+      refId: expect.stringContaining("otto-approve"),
+    });
+    // run() was called inside the budget callback
+    expect(runCalledInsideBudget).toBe(true);
   });
 });
