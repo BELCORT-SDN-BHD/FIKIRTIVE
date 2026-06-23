@@ -41,6 +41,19 @@ import { startGen } from "./gen-actions";
 // it from this module continue to work (the canonical source is @artlio/otto).
 export { mapOttoUsage } from "@artlio/otto";
 
+/**
+ * Safe one-line error summary for server logs. Logs name/message/statusCode only —
+ * NOT the raw error, whose AI SDK provider fields (e.g. requestBodyValues) can carry
+ * the full prompt, user text, and context into logs.
+ */
+function errSummary(e: unknown): string {
+  if (!e || typeof e !== "object") return String(e);
+  const x = e as { name?: unknown; message?: unknown; statusCode?: unknown };
+  return [x.name, x.message, x.statusCode != null ? `status=${x.statusCode}` : null]
+    .filter(Boolean)
+    .join(" | ") || String(e);
+}
+
 // ---------------------------------------------------------------------------
 // buildOttoContext — exported for 1.8b reuse
 // ---------------------------------------------------------------------------
@@ -307,7 +320,10 @@ export async function ottoTurn(raw: unknown): Promise<
 
     revalidatePath("/", "layout");
     return { threadId, status: "done", reply: replyText };
-  } catch {
+  } catch (e) {
+    // Log the real cause server-side: the generic client message hides it, and a swallowed
+    // error here once masked an Anthropic 529 for hours. The client message stays generic.
+    console.error("[ottoTurn] failed:", errSummary(e));
     return { error: "Couldn't reach Otto — please try again." };
   }
 }
@@ -560,7 +576,8 @@ export async function ottoApprove(raw: unknown): Promise<
       reply: replyText,
       ...(genJob ? { genJobId: genJob.id } : {}),
     };
-  } catch {
+  } catch (e) {
+    console.error("[ottoApprove] failed:", errSummary(e));
     return { error: "Couldn't approve — please try again." };
   }
 }
