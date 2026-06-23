@@ -750,6 +750,8 @@ model ChatThread {
   title     String        @default("")
   // cowork: reserved — folded older-turns summary (generation logic deferred until long sessions).
   rollingSummary String?
+  // otto: serialized RunState (JSON string) for multi-turn continuation. Nullable — existing threads have none.
+  ottoState String?
   createdAt DateTime      @default(now())
   updatedAt DateTime      @updatedAt
   deletedAt DateTime?
