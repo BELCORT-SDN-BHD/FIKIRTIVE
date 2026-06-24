@@ -19,6 +19,7 @@ const {
   mockChatThreadFindFirst,
   mockChatThreadCreate,
   mockChatThreadUpdate,
+  mockChatThreadUpdateMany,
   mockChatMessageFindFirst,
   mockChatMessageCreate,
   mockGenJobFindFirst,
@@ -75,6 +76,7 @@ const {
     mockChatThreadFindFirst: vi.fn(),
     mockChatThreadCreate: vi.fn(),
     mockChatThreadUpdate: vi.fn(),
+    mockChatThreadUpdateMany: vi.fn(),
     mockChatMessageFindFirst: vi.fn(),
     mockChatMessageCreate: vi.fn(),
     mockGenJobFindFirst: vi.fn(),
@@ -105,6 +107,7 @@ vi.mock("@fikirtive/db", () => ({
       findFirst: mockChatThreadFindFirst,
       create: mockChatThreadCreate,
       update: mockChatThreadUpdate,
+      updateMany: mockChatThreadUpdateMany,
     },
     chatMessage: {
       findFirst: mockChatMessageFindFirst,
@@ -190,6 +193,7 @@ function setupHappyPath() {
 
 beforeEach(() => {
   vi.clearAllMocks();
+  mockChatThreadUpdateMany.mockResolvedValue({ count: 1 });
 });
 
 // ── Test 1: new thread ────────────────────────────────────────────────────────
@@ -512,8 +516,8 @@ describe("ottoApprove — happy path (approve → resume → spend via startGen)
     );
     expect(runCalledInsideBudget).toBe(true);
 
-    // ottoState persisted
-    expect(mockChatThreadUpdate).toHaveBeenCalledWith(
+    // ottoState persisted via CAS updateMany
+    expect(mockChatThreadUpdateMany).toHaveBeenCalledWith(
       expect.objectContaining({ data: expect.objectContaining({ ottoState: expect.any(String) }) }),
     );
   });
@@ -617,5 +621,28 @@ describe("ottoApprove — resume metered", () => {
     });
     // run() was called inside the budget callback
     expect(runCalledInsideBudget).toBe(true);
+  });
+});
+
+// ── Test CAS: stale ottoState ─────────────────────────────────────────────────
+
+describe("ottoTurn — CAS miss → stale", () => {
+  it("returns 'stale' when ottoState moved on (CAS miss), no AGENT message written", async () => {
+    mockRequireOwner.mockResolvedValue({ ownerId: "o1" });
+    mockResolveDisabledModels.mockResolvedValue(new Set());
+    mockProjectFindFirst.mockResolvedValue({ id: "p1", ownerId: "o1" });
+    mockChatThreadFindFirst.mockResolvedValue({ projectId: "p1", ottoState: '{"prior":"x"}' });
+    mockChatMessageFindFirst.mockResolvedValue({ seq: 2 });
+    mockRunStateFromString.mockResolvedValue(new MockRunState([{ role: "user", content: "hi" }]));
+    mockRun.mockResolvedValue({ state: new MockRunState(), newItems: [], finalOutput: "ok", interruptions: [] });
+    mockChatThreadUpdateMany.mockResolvedValue({ count: 0 }); // someone else wrote first
+    mockWithLlmBudget.mockImplementation(async (_args: unknown, fn: () => Promise<{ result: unknown; usage?: unknown }>) => {
+      const out = await fn();
+      return (out as { result: unknown }).result;
+    });
+    mockChatMessageCreate.mockResolvedValue({});
+    const res = await ottoTurn({ threadId: "t1", projectId: "p1", text: "hi", entityIds: [], variantSel: {} });
+    expect(res).toEqual({ threadId: "t1", status: "stale" });
+    expect(mockChatMessageCreate).not.toHaveBeenCalledWith(expect.objectContaining({ data: expect.objectContaining({ role: "AGENT", kind: "TEXT" }) }));
   });
 });
