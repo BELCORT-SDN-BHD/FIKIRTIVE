@@ -61,6 +61,9 @@ model Project {
   editJson     Json?
   // cowork: human-authored creative brief, injected into the planner's stable head (ProjectBrief).
   coworkBrief  String?
+  // v1 additive: nullable soft-refs for future agency layer (no FK, no backfill)
+  brandId      String?
+  campaignId   String?
   createdAt DateTime  @default(now())
   updatedAt DateTime  @updatedAt
   deletedAt DateTime?
@@ -84,6 +87,8 @@ model Entity {
   // cowork: reserved — structured see-once description (subject/action/style/...), populated by the Phase-C vision sub-agent.
   descriptionJson     Json?
   promptTokens        String[]   @default([])
+  // v1 additive: nullable soft-ref for future agency layer (no FK, no backfill)
+  brandId             String?
   createdAt           DateTime   @default(now())
   updatedAt           DateTime   @updatedAt
   deletedAt           DateTime?
@@ -136,6 +141,8 @@ model ReferenceImage {
   viewTag   String?
   // null = base/entity-level ref; set = belongs to that variant (Phase B)
   variantId String?
+  // v1 additive: nullable soft-ref for future agency layer (no FK, no backfill)
+  brandId   String?
   createdAt DateTime  @default(now())
   deletedAt DateTime?
 
@@ -164,6 +171,8 @@ model Asset {
   width            Int?
   height           Int?
   durationS        Float?
+  // v1 additive: nullable soft-ref for future agency layer (no FK, no backfill)
+  brandId          String?
   createdAt        DateTime    @default(now())
   deletedAt        DateTime?
 
@@ -245,6 +254,8 @@ model Generation {
   // 同一镜头下的版本序号（v1, v2, …）
   version        Int         @default(1)
   threadId       String?   // set by the worker (= GenJob.threadId) when a cowork gen produced this; filters it out of candidate/asset/editor views
+  // v1 additive: nullable soft-ref for GenerationBatch grouping (no FK, no backfill)
+  batchId        String?
   attachedAt     DateTime?
   createdAt      DateTime    @default(now())
   deletedAt      DateTime?
@@ -434,6 +445,8 @@ model GenJob {
   // set when a Cowork gen-card initiated this job (no FK — validated in the action). Lets
   // getRecentGenResults keep cowork gens out of the GenSpace hydrate (WHERE threadId IS NULL).
   threadId           String?
+  // v1 additive: nullable soft-ref for GenerationBatch grouping (no FK, no backfill)
+  batchId            String?
   kind               GenKind   @default(IMAGE)
   model              String    @default("seedream")
   count              Int       @default(1)
@@ -558,6 +571,8 @@ model Organization {
   modelDirectiveRevisions ModelDirectiveRevision[]
   chatThreads             ChatThread[]
   chatMessages            ChatMessage[]
+  memories                Memory[]
+  generationBatches       GenerationBatch[]
 }
 
 // User <-> Organization join, carrying the per-org role. role/status are code-validated
@@ -634,6 +649,8 @@ model CreditLedger {
   reason                String          @default("")
   refId                 String? // GenJob.id / RefGenJob.id (1:1 with one job/reservation); null for GRANT/ADJUST
   stripePaymentIntentId String? // reserved for future Stripe
+  // v1 additive: nullable soft-ref for future agency layer (no FK, no backfill)
+  brandId               String?
   idempotencyKey        String // "grant:<uuid>" | "signup:<orgId>" | "stripe:<eventId>" | "reserve:<refId>" etc.
   createdBy             String          @default("")
   createdAt             DateTime        @default(now())
@@ -784,4 +801,42 @@ model ChatMessage {
   thread ChatThread @relation(fields: [threadId], references: [id], onDelete: Restrict)
 
   @@index([threadId, seq])
+}
+
+// ── v1 additive: brand memory + generation batch ──────────────────────────────
+
+// Brand-memory notes: editable owner-scoped notes (voice, product facts, etc.)
+// that Otto reads as context. brandId is nullable — null = not yet scoped to an
+// agency brand (v1 ships with brandId=null; the agency layer adds scoping via the
+// existing column, no future migration needed).
+model Memory {
+  id        String    @id
+  ownerId   String
+  organization Organization @relation(fields: [ownerId], references: [id])
+  brandId   String?
+  category  String
+  content   String
+  source    String    // 'otto' | 'user'
+  pinned    Boolean   @default(false)
+  createdAt DateTime  @default(now())
+  updatedAt DateTime  @updatedAt
+  deletedAt DateTime?
+
+  @@index([ownerId, brandId, deletedAt])
+}
+
+// Generation batch: groups multiple GenJob outputs into a single "batch" proposal
+// (the ad-pack grouping table). projectId is nullable — batches can be cross-project.
+model GenerationBatch {
+  id        String    @id
+  ownerId   String
+  organization Organization @relation(fields: [ownerId], references: [id])
+  projectId String?
+  name      String
+  status    String    @default("active")
+  createdAt DateTime  @default(now())
+  updatedAt DateTime  @updatedAt
+  deletedAt DateTime?
+
+  @@index([ownerId, projectId, deletedAt])
 }
