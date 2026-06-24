@@ -23,6 +23,9 @@ const {
   mockChatMessageFindFirst,
   mockChatMessageCreate,
   mockGenJobFindFirst,
+  mockEntityFindMany,
+  mockMemoryFindMany,
+  mockGetBrandContextText,
   mockTransaction,
   mockRun,
   mockRunStateFromString,
@@ -80,6 +83,9 @@ const {
     mockChatMessageFindFirst: vi.fn(),
     mockChatMessageCreate: vi.fn(),
     mockGenJobFindFirst: vi.fn(),
+    mockEntityFindMany: vi.fn(),
+    mockMemoryFindMany: vi.fn(),
+    mockGetBrandContextText: vi.fn(),
     mockTransaction: vi.fn(),
     mockRun: vi.fn(),
     mockRunStateFromString,
@@ -98,6 +104,7 @@ vi.mock("@/lib/auth-guard", () => ({ requireOwner: mockRequireOwner }));
 vi.mock("next/cache", () => ({ revalidatePath: vi.fn() }));
 vi.mock("@/lib/model-registry", () => ({ resolveDisabledModels: mockResolveDisabledModels }));
 vi.mock("@/lib/gen-actions", () => ({ startGen: mockStartGen }));
+vi.mock("@/lib/memory-actions", () => ({ getBrandContextText: mockGetBrandContextText }));
 
 vi.mock("@fikirtive/db", () => ({
   prisma: {
@@ -115,6 +122,12 @@ vi.mock("@fikirtive/db", () => ({
     },
     genJob: {
       findFirst: mockGenJobFindFirst,
+    },
+    entity: {
+      findMany: mockEntityFindMany,
+    },
+    memory: {
+      findMany: mockMemoryFindMany,
     },
     $transaction: mockTransaction,
   },
@@ -194,6 +207,9 @@ function setupHappyPath() {
 beforeEach(() => {
   vi.clearAllMocks();
   mockChatThreadUpdateMany.mockResolvedValue({ count: 1 });
+  // Default: no brand context, no entities (best-effort baseline)
+  mockGetBrandContextText.mockResolvedValue("");
+  mockEntityFindMany.mockResolvedValue([]);
 });
 
 // ── Test 1: new thread ────────────────────────────────────────────────────────
@@ -742,5 +758,48 @@ describe("ottoApprove — interruption CAS miss → stale, no orphan AGENT messa
     expect(mockChatMessageCreate).not.toHaveBeenCalledWith(
       expect.objectContaining({ data: expect.objectContaining({ role: "AGENT" }) }),
     );
+  });
+});
+
+// ── Task 4: dynamic context seam — brand memory + entities injected ───────────
+
+describe("ottoTurn — injects brand context + refs as a system message", () => {
+  it("includes brand memory text and entity name in the leading system message passed to run()", async () => {
+    mockRequireOwner.mockResolvedValue({ ownerId: "o1" });
+    mockResolveDisabledModels.mockResolvedValue(new Set());
+    mockProjectFindFirst.mockResolvedValue({ id: "p1", ownerId: "o1" });
+    mockGenerationFindFirst.mockResolvedValue(null);
+    mockChatThreadCreate.mockResolvedValue({});
+    mockChatMessageCreate.mockResolvedValue({});
+    mockChatMessageFindFirst.mockResolvedValue(null);
+    mockChatThreadUpdateMany.mockResolvedValue({ count: 1 });
+
+    // Brand context returns a memory entry
+    mockGetBrandContextText.mockResolvedValue("voice: warm, family tone");
+    // Entity loader returns one entity
+    mockEntityFindMany.mockResolvedValue([{ id: "e1", name: "CocoCandy", type: "PRODUCT" }]);
+
+    mockRun.mockResolvedValue(makeMockResult());
+    mockWithLlmBudget.mockImplementation(async (_args: unknown, fn: () => Promise<{ result: unknown; usage?: unknown }>) => {
+      const out = await fn();
+      return (out as { result: unknown }).result;
+    });
+    mockTransaction.mockImplementation(async (ops: unknown[]) => {
+      for (const op of ops) {
+        if (op !== null && typeof op === "object" && "then" in op && typeof (op as { then?: unknown }).then === "function") {
+          await (op as Promise<unknown>);
+        }
+      }
+    });
+
+    await ottoTurn({ projectId: "p1", text: "make an ad", entityIds: [], variantSel: {} });
+
+    // run() was called — inspect the input (2nd arg)
+    expect(mockRun).toHaveBeenCalled();
+    const runInput = mockRun.mock.calls[0][1] as unknown[];
+    const sys = (runInput as Array<{ role: string; content: string }>).find((m) => m.role === "system");
+    expect(sys).toBeDefined();
+    expect(sys!.content).toContain("warm, family tone");
+    expect(sys!.content).toContain("CocoCandy");
   });
 });

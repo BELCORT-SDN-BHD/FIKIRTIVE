@@ -36,6 +36,7 @@ import type { OttoContext, AgentInputItem } from "@fikirtive/otto";
 import { requireOwner } from "./auth-guard";
 import { resolveDisabledModels } from "./model-registry";
 import { startGen } from "./gen-actions";
+import { getBrandContextText } from "./memory-actions";
 
 // mapOttoUsage re-exported from @fikirtive/otto so existing callers that import
 // it from this module continue to work (the canonical source is @fikirtive/otto).
@@ -55,6 +56,40 @@ function errSummary(e: unknown): string {
 }
 
 // ---------------------------------------------------------------------------
+// loadAvailableRefsForAgent — owner-scoped entity loader for the agent context
+// ---------------------------------------------------------------------------
+
+/** Returns the slim { id, name, type } shape the agent context needs.
+ *  Best-effort: returns [] on any error so context injection never fails the turn. */
+async function loadAvailableRefsForAgent(ownerId: string): Promise<{ id: string; name: string; type: string }[]> {
+  try {
+    const entities = await prisma.entity.findMany({
+      where: { ownerId, deletedAt: null },
+      select: { id: true, name: true, type: true },
+      orderBy: [{ type: "asc" }, { name: "asc" }],
+    });
+    return entities.map((e) => ({ id: e.id, name: e.name, type: e.type }));
+  } catch {
+    return [];
+  }
+}
+
+// ---------------------------------------------------------------------------
+// buildContextSystemMessage — compose the injected system message from OttoContext
+// ---------------------------------------------------------------------------
+
+function buildContextSystemMessage(ctx: OttoContext): AgentInputItem | null {
+  const parts: string[] = [];
+  if (ctx.brandContext) parts.push(`What you know about the user's brand:\n${ctx.brandContext}`);
+  if (ctx.availableRefs?.length) {
+    parts.push(
+      `Reusable items you can @-reference (use the id with tools): ${ctx.availableRefs.map((r) => `@${r.name} [${r.type}, id=${r.id}]`).join(", ")}`,
+    );
+  }
+  return parts.length ? ({ role: "system", content: parts.join("\n\n") } as AgentInputItem) : null;
+}
+
+// ---------------------------------------------------------------------------
 // buildOttoContext — exported for 1.8b reuse
 // ---------------------------------------------------------------------------
 
@@ -70,6 +105,10 @@ export async function buildOttoContext({
   sourceGenerationId?: string | null;
 }): Promise<OttoContext> {
   const disabledModels = Array.from(await resolveDisabledModels());
+  const [brandContext, availableRefs] = await Promise.all([
+    getBrandContextText(ownerId, null).catch(() => ""),
+    loadAvailableRefsForAgent(ownerId),
+  ]);
   return {
     orgId: ownerId,
     userId: ownerId,
@@ -78,6 +117,8 @@ export async function buildOttoContext({
     disabledModels,
     sourceGenerationId: sourceGenerationId ?? null,
     startGen,
+    brandContext,
+    availableRefs,
   };
 }
 
@@ -180,13 +221,15 @@ export async function ottoTurn(raw: unknown): Promise<
     // Build context
     const ctx = await buildOttoContext({ ownerId, projectId, threadId, sourceGenerationId: validSource });
 
-    // Build run input: rehydrate prior state (multi-turn) or start fresh
-    let runInput: string | AgentInputItem[];
+    // Build run input: rehydrate prior state (multi-turn) or start fresh;
+    // prepend a system message with brand context + available refs when present.
+    const sys = buildContextSystemMessage(ctx);
+    let runInput: AgentInputItem[];
     if (priorOttoState) {
       const priorState = await RunState.fromString(otto, priorOttoState);
-      runInput = [...priorState.history, { role: "user", content: text } as AgentInputItem];
+      runInput = [...(sys ? [sys] : []), ...priorState.history, { role: "user", content: text } as AgentInputItem];
     } else {
-      runInput = text;
+      runInput = [...(sys ? [sys] : []), { role: "user", content: text } as AgentInputItem];
     }
 
     // Run agent, metered

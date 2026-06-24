@@ -20,4 +20,8 @@ export interface OttoContext {
    *  $0 tools never touch it. It is `startGen` from apps/web (unchanged) — which does its own
    *  requireOwner() + genRequest validation + reserve + GenJob insert + enqueue. */
   startGen?: (req: GenRequestInput) => Promise<{ id: string } | { error: string }>;
+  /** Compiled brand memory text for THIS run (injected as a system message at run assembly). */
+  brandContext?: string;
+  /** The owner's reusable entities the agent may @-reference (name + type only; ids for tools). */
+  availableRefs?: { id: string; name: string; type: string }[];
 }
