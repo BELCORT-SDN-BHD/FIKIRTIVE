@@ -272,7 +272,21 @@ export async function ottoTurn(raw: unknown): Promise<
         }
       }
 
-      // Persist any assistant text produced before the interruption
+      // CAS: only write paused ottoState if no concurrent turn moved it (existing thread only)
+      if (!isNew) {
+        const { count: casCount } = await prisma.chatThread.updateMany({
+          where: { id: threadId, ownerId, ottoState: priorOttoState },
+          data: { ottoState: newOttoState, updatedAt: new Date() },
+        });
+        if (casCount === 0) { revalidatePath("/", "layout"); return { threadId, status: "stale" }; }
+      } else {
+        await prisma.chatThread.update({
+          where: { id: threadId },
+          data: { ottoState: newOttoState, updatedAt: new Date() },
+        });
+      }
+
+      // CAS won (or new thread) — persist any assistant text produced before the interruption
       const assistantText = extractText(result);
       if (assistantText) {
         await prisma.chatMessage.create({
@@ -285,20 +299,6 @@ export async function ottoTurn(raw: unknown): Promise<
             seq: ++seq,
             text: assistantText,
           },
-        });
-      }
-
-      // CAS: only write paused ottoState if no concurrent turn moved it (existing thread only)
-      if (!isNew) {
-        const { count: casCount } = await prisma.chatThread.updateMany({
-          where: { id: threadId, ownerId, ottoState: priorOttoState },
-          data: { ottoState: newOttoState, updatedAt: new Date() },
-        });
-        if (casCount === 0) { revalidatePath("/", "layout"); return { threadId, status: "stale" }; }
-      } else {
-        await prisma.chatThread.update({
-          where: { id: threadId },
-          data: { ottoState: newOttoState, updatedAt: new Date() },
         });
       }
 
@@ -538,6 +538,14 @@ export async function ottoApprove(raw: unknown): Promise<
         }
       }
 
+      // CAS: only write paused ottoState if no concurrent turn moved it
+      const { count: casInterrupt } = await prisma.chatThread.updateMany({
+        where: { id: threadId, ownerId, ottoState: priorOttoState },
+        data: { ottoState: newOttoState, updatedAt: new Date() },
+      });
+      if (casInterrupt === 0) { revalidatePath("/", "layout"); return { ok: true, status: "stale" }; }
+
+      // CAS won — persist any assistant text produced before the interruption
       const assistantText = extractText(result);
       if (assistantText) {
         const seq = await prisma.chatMessage.findFirst({
@@ -557,13 +565,6 @@ export async function ottoApprove(raw: unknown): Promise<
           },
         });
       }
-
-      // CAS: only write paused ottoState if no concurrent turn moved it
-      const { count: casInterrupt } = await prisma.chatThread.updateMany({
-        where: { id: threadId, ownerId, ottoState: priorOttoState },
-        data: { ottoState: newOttoState, updatedAt: new Date() },
-      });
-      if (casInterrupt === 0) { revalidatePath("/", "layout"); return { ok: true, status: "stale" }; }
 
       revalidatePath("/", "layout");
       return { ok: true, status: "needs_approval", pendingCardIds };

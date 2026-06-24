@@ -646,3 +646,101 @@ describe("ottoTurn — CAS miss → stale", () => {
     expect(mockChatMessageCreate).not.toHaveBeenCalledWith(expect.objectContaining({ data: expect.objectContaining({ role: "AGENT", kind: "TEXT" }) }));
   });
 });
+
+// ── Test CAS: interruption path CAS miss writes no orphan message ─────────────
+
+describe("ottoTurn — interruption CAS miss → stale, no orphan AGENT message", () => {
+  it("returns stale and does NOT write an AGENT chatMessage when CAS misses on interruption path", async () => {
+    mockRequireOwner.mockResolvedValue({ ownerId: "o1" });
+    mockResolveDisabledModels.mockResolvedValue(new Set());
+    mockProjectFindFirst.mockResolvedValue({ id: "p1", ownerId: "o1" });
+    mockChatThreadFindFirst.mockResolvedValue({ projectId: "p1", ottoState: '{"prior":"x"}' });
+    mockChatMessageFindFirst.mockResolvedValue({ seq: 2 });
+    mockRunStateFromString.mockResolvedValue(new MockRunState([{ role: "user", content: "hi" }]));
+
+    // run() returns a generate interruption (not completed)
+    const interruptionItem = {
+      rawItem: { name: "generate" },
+      arguments: JSON.stringify({ cardId: "card_orphan_test" }),
+      type: "tool_approval_item",
+    };
+    mockRun.mockResolvedValue({
+      state: new MockRunState(),
+      newItems: [],
+      finalOutput: "some text before park",
+      interruptions: [interruptionItem],
+    });
+
+    // CAS misses — another turn already moved the state
+    mockChatThreadUpdateMany.mockResolvedValue({ count: 0 });
+
+    mockWithLlmBudget.mockImplementation(async (_args: unknown, fn: () => Promise<{ result: unknown; usage?: unknown }>) => {
+      const out = await fn();
+      return (out as { result: unknown }).result;
+    });
+    mockChatMessageCreate.mockResolvedValue({});
+
+    const res = await ottoTurn({ threadId: "t1", projectId: "p1", text: "hi", entityIds: [], variantSel: {} });
+
+    // Must return stale, not needs_approval
+    expect(res).toEqual({ threadId: "t1", status: "stale" });
+
+    // No AGENT message must have been written (the orphan guard)
+    expect(mockChatMessageCreate).not.toHaveBeenCalledWith(
+      expect.objectContaining({ data: expect.objectContaining({ role: "AGENT" }) }),
+    );
+  });
+});
+
+describe("ottoApprove — interruption CAS miss → stale, no orphan AGENT message", () => {
+  it("returns stale and does NOT write an AGENT chatMessage when CAS misses on chained interruption path", async () => {
+    mockRequireOwner.mockResolvedValue(GATE);
+    mockResolveDisabledModels.mockResolvedValue(new Set());
+
+    mockChatThreadFindFirst.mockResolvedValue({
+      id: APPROVE_THREAD_ID,
+      projectId: PROJECT_ID,
+      ottoState: '{"paused":"state"}',
+    });
+
+    const approvalItem = makeApprovalItem(CARD_ID);
+    const mockState = new MockRunState();
+    mockGetInterruptions.mockReturnValue([approvalItem]);
+    mockRunStateFromString.mockResolvedValue(mockState);
+
+    mockGenJobFindFirst.mockResolvedValue(null);
+
+    // Resume produces another interruption (chained approval)
+    const chainedInterruption = {
+      rawItem: { name: "generate" },
+      arguments: JSON.stringify({ cardId: "card_chained" }),
+      type: "tool_approval_item",
+    };
+    mockRun.mockResolvedValue({
+      state: new MockRunState(),
+      newItems: [],
+      finalOutput: "intermediate text",
+      interruptions: [chainedInterruption],
+    });
+
+    // CAS misses
+    mockChatThreadUpdateMany.mockResolvedValue({ count: 0 });
+
+    mockWithLlmBudget.mockImplementation(async (_args: unknown, fn: () => Promise<{ result: unknown; usage?: unknown }>) => {
+      const out = await fn();
+      return (out as { result: unknown }).result;
+    });
+    mockChatMessageCreate.mockResolvedValue({});
+    mockChatMessageFindFirst.mockResolvedValue({ seq: 5 });
+
+    const res = await ottoApprove({ threadId: APPROVE_THREAD_ID, cardId: CARD_ID });
+
+    // Must return stale, not needs_approval
+    expect(res).toEqual({ ok: true, status: "stale" });
+
+    // No AGENT message must have been written (the orphan guard)
+    expect(mockChatMessageCreate).not.toHaveBeenCalledWith(
+      expect.objectContaining({ data: expect.objectContaining({ role: "AGENT" }) }),
+    );
+  });
+});
