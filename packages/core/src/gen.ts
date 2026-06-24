@@ -248,6 +248,10 @@ export const GEN_RETRY_LIMIT = 2;
 export const GEN_QUEUE_POLICY = {
   retryLimit: GEN_RETRY_LIMIT,
   retryBackoff: true,
+  // base seconds for the retry backoff. WITHOUT this, pg-boss defaults retry_delay=0, which
+  // makes `retryBackoff` a silent no-op (start_after = now()) — a failed paid gen would retry
+  // INSTANTLY (hammering fal on a transient 5xx). With it, retries are spaced (30s, then grows).
+  retryDelay: 30,
   // > the longest realistic fal call so a still-running gen is never expired +
   // redelivered (which would let the duplicate-delivery fail-closed wrongly FAIL an
   // active paid job). Both web (dispatch) and worker (consumer) create the queue

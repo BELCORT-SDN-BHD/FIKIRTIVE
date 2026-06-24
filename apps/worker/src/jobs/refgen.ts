@@ -63,13 +63,6 @@ export async function handleRefGen(data: RefGenJobData, retryCount: number): Pro
     console.error(`[refgen] job ${data.refGenJobId} missing — dropping`);
     return;
   }
-  // DONE and FAILED are terminal: a redelivered or stale queue message must
-  // never reprocess (and possibly re-spend on) a settled job.
-  if (job.status === "DONE" || job.status === "FAILED") {
-    console.log(`[refgen] ${job.id} already ${job.status} — skipping`);
-    return;
-  }
-
   // P2: the worker SETTLES the held charge at the commit point and REFUNDS it on every
   // terminal failure. settle/refund read the released amount FROM the RESERVE ledger row
   // (startRefGen/dispatchVariantJob wrote it) → release == reserve, never recomputed.
@@ -77,26 +70,25 @@ export async function handleRefGen(data: RefGenJobData, retryCount: number): Pro
   // flips true the instant the paid provider call returns — any failure AFTER
   // this point must terminal-fail, never retry (a retry would re-spend).
   let spent = false;
+  // flips true once outputs are stored + recorded + settled (the commit tx below): past here a
+  // failure is RECOVERABLE — requeue so a redelivery RESUMES (re-attaches) without re-spending,
+  // never terminal-fail (which would leave a CHARGED job shown FAILED + free the active-job
+  // guard, letting a user retry pay again). Mirrors gen.ts's `committed`.
+  let committed = false;
 
   try {
-    // re-validate the target before any spend (codex P1): a job whose entity
-    // was deleted/never-existed must terminal-fail, not generate into the void
-    const entity = await prisma.entity.findFirst({
-      where: { id: job.entityId, ownerId: job.ownerId, deletedAt: null },
-    });
-    if (!entity) {
-      console.error(`[refgen] ${job.id}: entity ${job.entityId} gone — failing without spend`);
-      await failClosedRefund(job.id, job.ownerId, "element was deleted before generation ran");
-      return; // terminal, no throw → no retry, no spend
-    }
-
-    // exactly-once spend (codex P1): a prior delivery already paid and stored
-    // these outputs — just (re-)attach them idempotently and finish
+    // RESUME FIRST (mirror gen.ts): a prior delivery already paid + stored these outputs →
+    // re-attach idempotently, settle (no-op), finalize, finish — NEVER re-spending and WITHOUT
+    // re-running pre-spend validation. This MUST precede BOTH the terminal short-circuit and the
+    // entity check: the outputs are already paid, so (a) a job that recorded them but never
+    // finalized (a crash, or a late stale-FAILED redelivery) self-heals to DONE here, and (b) a
+    // since-deleted entity must NOT flip an already-settled job to FAILED.
     if (job.outputAssetIds.length > 0) {
+      committed = true; // outputs recorded on a prior delivery — never re-spend; finish best-effort
       await attachOutputs(job.entityId, job.ownerId, job.outputAssetIds, job.variantId);
-      // defensive backfill: a row that recorded outputs before spentUsd existed (or
-      // crashed between the outputAssetIds write and DONE) has the marker but null
-      // spentUsd — reconstruct from the frozen job inputs. No re-spend (paid already).
+      // defensive backfill: a row that recorded outputs before spentUsd existed (or crashed
+      // between the outputAssetIds write and DONE) has the marker but null spentUsd — reconstruct
+      // from the frozen job inputs. No re-spend (paid already).
       if (job.spentUsd == null) {
         await prisma.refGenJob.update({ where: { id: job.id }, data: { spentUsd: refgenSpentUsd({ model: job.model, count: job.count }) } });
       }
@@ -106,6 +98,25 @@ export async function handleRefGen(data: RefGenJobData, retryCount: number): Pro
       await finalizeDone(job.id, job.mode, job.entityId, job.outputAssetIds[0]);
       console.log(`[refgen] ${job.id}: resumed — re-attached ${job.outputAssetIds.length} prior outputs (no re-spend)`);
       return;
+    }
+
+    // DONE/FAILED with NO recorded outputs is terminal — nothing to do (the resume above
+    // already handled any job that DID record outputs). A redelivered/stale message must
+    // never reprocess (and possibly re-spend on) a settled-or-failed job with no marker.
+    if (job.status === "DONE" || job.status === "FAILED") {
+      console.log(`[refgen] ${job.id} already ${job.status} — skipping`);
+      return;
+    }
+
+    // re-validate the target before any spend (codex P1): a job whose entity
+    // was deleted/never-existed must terminal-fail, not generate into the void
+    const entity = await prisma.entity.findFirst({
+      where: { id: job.entityId, ownerId: job.ownerId, deletedAt: null },
+    });
+    if (!entity) {
+      console.error(`[refgen] ${job.id}: entity ${job.entityId} gone — failing without spend`);
+      await failClosedRefund(job.id, job.ownerId, "element was deleted before generation ran");
+      return; // terminal, no throw → no retry, no spend
     }
 
     // validate-before-spend (VARIANT): the target variant must still be a live,
@@ -241,10 +252,27 @@ export async function handleRefGen(data: RefGenJobData, retryCount: number): Pro
     // when money is committed (refgenSpentUsd = REFGEN_PRICE_USD_PER_IMAGE * count).
     // SETTLE the credit hold atomically with the resume marker — the generation
     // succeeded, so the reserved charge becomes permanent in the same commit.
-    await prisma.$transaction(async (tx) => {
-      await tx.refGenJob.update({ where: { id: job.id }, data: { outputAssetIds, spentUsd: refgenSpentUsd({ model: job.model, count: job.count }) } });
+    // CONDITIONAL commit (mirror gen.ts): write the resume marker + settle ONLY if we still
+    // own the GENERATING claim. A redelivery that expired our in-flight fal call (>20min hang)
+    // may have already taken the stale branch above → FAILED + refunded this job. If so this
+    // matches 0 rows: do NOT settle (the REFUND already won the finalizer index) and do NOT
+    // attach/deliver — discard. The stored assets become orphans (content-addressed, reusable,
+    // harmless); the founder absorbed the fal cost and the merchant stays refunded (no free
+    // delivery, no DONE-vs-REFUND mismatch). Returning false signals discard.
+    const committedRefgen = await prisma.$transaction(async (tx) => {
+      const marked = await tx.refGenJob.updateMany({
+        where: { id: job.id, status: "GENERATING" },
+        data: { outputAssetIds, spentUsd: refgenSpentUsd({ model: job.model, count: job.count }) },
+      });
+      if (marked.count === 0) return false;
       await settleCredits(tx, { orgId: job.ownerId, refId: job.id });
+      return true;
     });
+    if (!committedRefgen) {
+      console.warn(`[refgen] ${job.id}: redelivery already failed+refunded this job mid-flight — discarding the (orphan) outputs, not attaching. Founder absorbed the fal cost.`);
+      return;
+    }
+    committed = true; // outputs recorded + settled — past here a failure RESUMES, never re-spends
 
     // attach (idempotent: skips assets already attached to this entity+variant)
     await attachOutputs(job.entityId, job.ownerId, outputAssetIds, job.variantId);
@@ -258,15 +286,17 @@ export async function handleRefGen(data: RefGenJobData, retryCount: number): Pro
     // result parse/download threw). Only a genuinely pre-charge throw retries,
     // up to the budget (limit 2 → deliveries at retryCount 0,1,2; `>=` once).
     const charged = typeof err === "object" && err !== null && (err as { charged?: unknown }).charged === true;
-    const final = spent || charged || retryCount >= REFGEN_RETRY_LIMIT;
-    console.error(`[refgen] ${job.id}: ${final ? "FAILED" : "retrying"} — ${message}`);
+    // a POST-COMMIT failure (outputs recorded + settled) must NOT terminal-fail — requeue so a
+    // redelivery RESUMES (re-attaches) without re-spending. Terminal-failing it would leave a
+    // CHARGED job shown FAILED + free the active-job guard, letting a user retry pay a SECOND
+    // time. Only a pre-commit failure (committed === false) is terminal.
+    const final = !committed && (spent || charged || retryCount >= REFGEN_RETRY_LIMIT);
+    console.error(`[refgen] ${job.id}: ${final ? "FAILED" : committed ? "requeue → resume attach" : "retrying"} — ${message}`);
     if (final) {
-      // terminal fail → release the hold (the merchant got no result; the founder
-      // absorbs any real fal cost). refundReservation no-ops if the commit tx already
-      // settled (a post-commit attach/finalize failure) — so a produced-but-unattached
-      // generation stays charged, while a pre-commit failure is fully refunded.
-      // A post-charge failure still records spentUsd so "paid but not delivered" stays
-      // auditable (a free pre-charge failure leaves spentUsd null).
+      // terminal fail → release the hold (the merchant got no result; the founder absorbs any
+      // real fal cost). `final` is by definition pre-commit (committed → final is false), so
+      // settle never ran; the finalizer index makes refund safe even against a racing settle.
+      // A post-charge failure still records spentUsd so "paid but not delivered" stays auditable.
       await prisma.$transaction(async (tx) => {
         await tx.refGenJob.update({
           where: { id: job.id },
@@ -275,8 +305,8 @@ export async function handleRefGen(data: RefGenJobData, retryCount: number): Pro
         await refundReservation(tx, { orgId: job.ownerId, refId: job.id });
       });
     } else {
-      // recoverable pre-charge retry — requeue and keep the hold (settled on success,
-      // refunded if a later delivery terminal-fails).
+      // recoverable: a pre-charge retry (keep the hold), OR a post-commit failure (committed:
+      // already settled) — either way requeue so the resume path re-attaches without re-spending.
       await prisma.refGenJob.update({ where: { id: job.id }, data: { status: "QUEUED", error: message, progress: 0 } });
     }
     throw err; // pg-boss owns the retry schedule

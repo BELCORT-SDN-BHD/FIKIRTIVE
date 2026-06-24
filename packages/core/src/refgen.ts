@@ -72,6 +72,9 @@ export const REFGEN_RETRY_LIMIT = 2;
 export const REFGEN_QUEUE_POLICY = {
   retryLimit: REFGEN_RETRY_LIMIT,
   retryBackoff: true,
+  // base seconds for the retry backoff (see GEN_QUEUE_POLICY): without it pg-boss defaults
+  // retry_delay=0 and `retryBackoff` is a silent no-op → a failed paid refgen retries instantly.
+  retryDelay: 30,
   // > the longest realistic fal call so a still-running job is never expired +
   // redelivered (which would let the duplicate-delivery fail-closed wrongly FAIL an
   // active paid job). Both web (dispatch) and worker (consumer) create the queue

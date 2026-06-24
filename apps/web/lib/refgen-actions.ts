@@ -128,9 +128,17 @@ export async function startRefGen(raw: unknown): Promise<{ id: string } | { erro
   } catch (e) {
     console.warn(`startRefGen: queueJobId persist failed for job ${job.id} (non-fatal):`, e instanceof Error ? e.message : e);
   }
-  await prisma.actionEvent.create({
-    data: { id: newId(), ownerId, type: "refgen.start", payload: { jobId: job.id, entityId, count: effectiveCount } },
-  });
+  // BEST-EFFORT (mirror dispatchVariantJob): the job is already reserved + enqueued, so an
+  // audit-write failure must NOT throw past here — else the caller returns an error and a
+  // retry, once this job has left the active QUEUED/GENERATING dedup window, would enqueue a
+  // SECOND paid job (delivered-but-double-charged). Log + swallow.
+  try {
+    await prisma.actionEvent.create({
+      data: { id: newId(), ownerId, type: "refgen.start", payload: { jobId: job.id, entityId, count: effectiveCount } },
+    });
+  } catch (e) {
+    console.warn(`startRefGen: refgen.start audit write failed for job ${job.id} (non-fatal):`, e instanceof Error ? e.message : e);
+  }
   revalidatePath("/", "layout");
   return { id: job.id };
 }
@@ -262,9 +270,10 @@ async function withUniqueHandle(name: string, write: (handle: string) => Promise
 }
 
 /** Create a named variant and kick off its i2i generation from the locked base.
- *  Validate-before-spend: the entity must have a live owned base. The EntityVariant
- *  is created first (handle de-collided via the partial unique index) — a duplicate
- *  double-submit fails cleanly with no job; only after it commits do we dispatch. */
+ *  Validate-before-spend: the entity must have a live owned base. An accidental
+ *  same-(name,prompt) double-submit whose first job is still in-flight is deduped
+ *  (reused, NOT a suffixed twin + second charge); only after the EntityVariant
+ *  commits do we dispatch the paid job. */
 export async function createVariant(entityId: string, name: string, prompt: string): Promise<{ variantId: string; jobId: string } | { error: string }> {
   const gate = await requireOwner(); if ("error" in gate) return gate;
   const { ownerId } = gate;
@@ -280,6 +289,33 @@ export async function createVariant(entityId: string, name: string, prompt: stri
   if (!entity.baseAssetId) return { error: "Set a base identity first — variants are generated from it." };
   const base = await prisma.asset.findFirst({ where: { id: entity.baseAssetId, ownerId, deletedAt: null }, select: { id: true } });
   if (!base) return { error: "The base image is missing — set a new base before generating variants." };
+
+  // Dedup an accidental double-submit: withUniqueHandle de-collides the HANDLE by suffixing
+  // ("<name>-2"), so two rapid clicks of the SAME name would otherwise create two variants +
+  // two paid jobs. An identical (name, prompt) live variant of this entity that still has an
+  // in-flight job is the same intent → reuse it. A DELIBERATE re-create after the first job
+  // finishes still makes a fresh variant (no active job matches).
+  // NOTE this is a findFirst check, NOT atomic: it closes the common SEQUENTIAL double-click
+  // (the 2nd click sees the 1st's already-committed job) but two TRULY-CONCURRENT submits could
+  // both pass it before either commits. That residual is bounded — an extra deletable variant,
+  // never an unbounded drain; a full close would need a per-click idempotency key + unique index.
+  const activeVariantJobs = await prisma.refGenJob.findMany({
+    // mirror dispatchVariantJob's active guard: a stale (abandoned/dead) job is NOT a live
+    // in-flight duplicate — without the freshness window we could hand back an abandoned jobId.
+    where: { entityId, ownerId, mode: "VARIANT", variantId: { not: null }, status: { in: ["QUEUED", "GENERATING"] }, updatedAt: { gte: new Date(Date.now() - STALE_MS) } },
+    orderBy: { createdAt: "desc" },
+    select: { id: true, variantId: true },
+  });
+  if (activeVariantJobs.length) {
+    const variantIds = activeVariantJobs.map((j) => j.variantId).filter((v): v is string => !!v);
+    const twin = await prisma.entityVariant.findFirst({
+      where: { id: { in: variantIds }, entityId, ownerId, deletedAt: null, name: cleanName, prompt: cleanPrompt },
+      orderBy: { createdAt: "desc" },
+      select: { id: true },
+    });
+    const job = twin ? activeVariantJobs.find((j) => j.variantId === twin.id) : undefined;
+    if (twin && job) return { variantId: twin.id, jobId: job.id };
+  }
 
   const variantId = await withUniqueHandle(cleanName, async (handle) => {
     const v = await prisma.entityVariant.create({

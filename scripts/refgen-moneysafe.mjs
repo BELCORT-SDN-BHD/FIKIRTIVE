@@ -35,13 +35,16 @@ await boss.createQueue(REFGEN_QUEUE, { ...REFGEN_QUEUE_POLICY }).catch(() => {})
 {
   const e = await prisma.entity.create({ data: { id: newId(), ownerId: OWNER, type: "PRODUCT", name: "Interrupted" } });
   const before = await genCount();
+  // startedAt must be > REFGEN_STALE_MS (18m) ago so the redelivered GENERATING row is treated
+  // as STALE and failed-closed. (A recent GENERATING row is intentionally left alone — it may be
+  // an active winner — so the original `new Date()` here predated the 18m stale cutoff.)
   const ghost = await prisma.refGenJob.create({
-    data: { id: newId(), ownerId: OWNER, entityId: e.id, prompt: "x", count: 4, model: "seedream", status: "GENERATING", startedAt: new Date(), attempts: 1 },
+    data: { id: newId(), ownerId: OWNER, entityId: e.id, prompt: "x", count: 4, model: "seedream", status: "GENERATING", startedAt: new Date(Date.now() - 1000 * 60 * 19), attempts: 1 },
   });
   await boss.send(REFGEN_QUEUE, { refGenJobId: ghost.id });
   const row = await settle(ghost.id);
   if (row.status !== "FAILED") throw new Error(`crash-resume ended ${row.status}, expected FAILED`);
-  if (!/interrupted/i.test(row.error)) throw new Error(`crash-resume error not the guard: "${row.error}"`);
+  if (!/stale|double charge|not retrying/i.test(row.error)) throw new Error(`crash-resume error not the stale guard: "${row.error}"`);
   if (row.outputAssetIds.length !== 0) throw new Error("crash-resume produced outputs (spent!)");
   if ((await genCount()) !== before) throw new Error("crash-resume re-spent (new GENERATED asset)");
   step(`crash-after-spend: GENERATING redelivery fails closed, no re-spend`);

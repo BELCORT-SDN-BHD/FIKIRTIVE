@@ -43,6 +43,12 @@ const mimeForExt = (ext: string) =>
 // never failed closed by a duplicate delivery, but a truly stuck one eventually is.
 const GEN_STALE_MS = 1000 * 60 * 18;
 
+// Thrown INSIDE the commit transaction to roll it back (discarding the just-created,
+// user-visible Asset+Generation rows) when a redelivery has already FAILED+refunded the job
+// mid-flight. A plain `return` would commit those rows = a free delivery. The store/commit
+// retry loop recognizes this exact instance and discards instead of retrying or failing.
+const REDELIVERY_DISCARD = new Error("redelivery-already-failed-and-refunded");
+
 // The store+record step after the paid call is FREE and idempotent (content-addressed
 // R2 put + one atomic tx) and the result bytes are already in memory — so a transient
 // R2/DB hiccup is retried IN-PROCESS rather than terminal-failing a job we ALREADY paid
@@ -443,7 +449,19 @@ export async function handleGen(data: GenJobData, retryCount: number): Promise<v
             });
             ids.push(gen.id);
           }
-          await tx.genJob.update({ where: { id: job.id }, data: { generationIds: ids, spent: true, spentUsd: genSpentUsd({ kind: job.kind, model: job.model, count: job.count, videoOptions: job.videoOptions as { seconds?: number; resolution?: string; audio?: boolean } | null }) } });
+          // CONDITIONAL commit: write the resume marker + settle ONLY if we still own the
+          // GENERATING claim. A duplicate delivery that expired our in-flight fal call (>20min
+          // hang) may have already taken the stale-claim branch above → FAILED + refunded this
+          // job. If so this matches 0 rows: THROW to ROLL BACK this whole transaction — the
+          // Asset + Generation rows just created are USER-VISIBLE (project media/candidate
+          // queries read Generation), so a plain `return` would COMMIT them = a free delivery.
+          // Rolling back discards them; the founder absorbed the fal cost, the merchant stays
+          // refunded (no free delivery, no DONE-vs-REFUND mismatch). The outer catch handles it.
+          const marked = await tx.genJob.updateMany({
+            where: { id: job.id, status: "GENERATING" },
+            data: { generationIds: ids, spent: true, spentUsd: genSpentUsd({ kind: job.kind, model: job.model, count: job.count, videoOptions: job.videoOptions as { seconds?: number; resolution?: string; audio?: boolean } | null }) },
+          });
+          if (marked.count === 0) throw REDELIVERY_DISCARD;
           // SETTLE the hold atomically with the resume marker — the generation succeeded,
           // so the reserved charge becomes permanent in the SAME tx that commits outputs.
           await settleCredits(tx, { orgId: job.ownerId, refId: job.id });
@@ -451,6 +469,13 @@ export async function handleGen(data: GenJobData, retryCount: number): Promise<v
         });
         break; // stored + recorded — the resume marker is written
       } catch (storeErr) {
+        // a redelivery already FAILED+refunded this job mid-flight: the commit tx threw the
+        // discard sentinel and ROLLED BACK (no Asset/Generation rows persisted). Discard
+        // cleanly — never retry (would re-create) and never terminal-fail (already FAILED).
+        if (storeErr === REDELIVERY_DISCARD) {
+          console.warn(`[gen] ${job.id}: redelivery already failed+refunded this job mid-flight — rolled back outputs, not delivering. Founder absorbed the fal cost.`);
+          return;
+        }
         // exhausted: a persistent R2/DB outage. Re-throw to the terminal post-charge
         // path (FAILED + spent) — we can't hold the paid bytes forever in one process.
         if (attempt >= STORE_COMMIT_ATTEMPTS) throw storeErr;
@@ -463,6 +488,12 @@ export async function handleGen(data: GenJobData, retryCount: number): Promise<v
     // candidates (visible, manually attachable) and we STILL mark DONE — never leave
     // the job stuck (a committed requeue could exhaust pg-boss retries) (#2)
     if (job.shotId) await attachBestEffort(job.id, job.shotId, generationIds);
+    // Unconditional DONE is correct: the conditional MARKER above already discarded (early
+    // return) the only racy ordering (a redelivery FAILED+refunded us BEFORE we committed). In
+    // the reverse ordering (we settled first, a late redelivery then stale-FAILED us) the refund
+    // no-ops against the won SETTLE, and this DONE correctly reasserts DONE over that transient
+    // FAILED — keeping status DONE ⟺ settled. (A conditional DONE here would instead leave a
+    // FAILED+settled+delivered mismatch in that ordering.)
     await prisma.genJob.update({ where: { id: job.id }, data: { status: "DONE", progress: 100, finishedAt: new Date(), error: "" } });
     console.log(`[gen] ${job.id}: DONE → ${generationIds.length} generations via ${provider.name}`);
     await appendCoworkResult(job, "GEN_RESULT", generationIds);
