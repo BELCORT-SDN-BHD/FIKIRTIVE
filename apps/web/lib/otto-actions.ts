@@ -101,11 +101,13 @@ export async function buildOttoContext({
   projectId,
   threadId,
   sourceGenerationId,
+  simpleMode,
 }: {
   ownerId: string;
   projectId: string;
   threadId: string;
   sourceGenerationId?: string | null;
+  simpleMode?: boolean;
 }): Promise<OttoContext> {
   const disabledModels = Array.from(await resolveDisabledModels());
   const [brandContext, availableRefs] = await Promise.all([
@@ -122,6 +124,7 @@ export async function buildOttoContext({
     startGen,
     brandContext,
     availableRefs,
+    simpleMode: simpleMode ?? false,
   };
 }
 
@@ -222,7 +225,7 @@ export async function ottoTurn(raw: unknown): Promise<
     });
 
     // Build context
-    const ctx = await buildOttoContext({ ownerId, projectId, threadId, sourceGenerationId: validSource });
+    const ctx = await buildOttoContext({ ownerId, projectId, threadId, sourceGenerationId: validSource, simpleMode: parsed.data.simple });
 
     // Goal-intent seeding: on a new thread with a goalKey, append the preset's opening
     // to brandContext so buildContextSystemMessage injects it as a system message.
