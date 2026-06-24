@@ -803,3 +803,44 @@ describe("ottoTurn — injects brand context + refs as a system message", () => 
     expect(sys!.content).toContain("CocoCandy");
   });
 });
+
+// ── Task 5: goal-intent seeding ───────────────────────────────────────────────
+
+describe("ottoTurn — goalKey seeds opening on new thread", () => {
+  it("includes the goal preset opening in the system message for a new thread with goalKey", async () => {
+    mockRequireOwner.mockResolvedValue({ ownerId: "o1" });
+    mockResolveDisabledModels.mockResolvedValue(new Set());
+    mockProjectFindFirst.mockResolvedValue({ id: "p1", ownerId: "o1" });
+    mockGenerationFindFirst.mockResolvedValue(null);
+    mockChatThreadCreate.mockResolvedValue({});
+    mockChatMessageCreate.mockResolvedValue({});
+    mockChatMessageFindFirst.mockResolvedValue(null);
+    mockChatThreadUpdateMany.mockResolvedValue({ count: 1 });
+    mockGetBrandContextText.mockResolvedValue("");
+    mockEntityFindMany.mockResolvedValue([]);
+    mockRun.mockResolvedValue(makeMockResult());
+    mockWithLlmBudget.mockImplementation(async (_args: unknown, fn: () => Promise<{ result: unknown; usage?: unknown }>) => {
+      const out = await fn();
+      return (out as { result: unknown }).result;
+    });
+    mockTransaction.mockImplementation(async (ops: unknown[]) => {
+      for (const op of ops) {
+        if (op !== null && typeof op === "object" && "then" in op && typeof (op as { then?: unknown }).then === "function") {
+          await (op as Promise<unknown>);
+        }
+      }
+    });
+
+    // New thread with goalKey = "sell-product"
+    await ottoTurn({ projectId: "p1", text: "help me sell", entityIds: [], variantSel: {}, goalKey: "sell-product" });
+
+    expect(mockRun).toHaveBeenCalled();
+    const runInput = mockRun.mock.calls[0][1] as Array<{ role: string; content: string }>;
+    const sys = runInput.find((m) => m.role === "system");
+    expect(sys).toBeDefined();
+    // The sell-product opening mentions "product"
+    expect(sys!.content).toContain("product");
+    // It contains the goal framing prefix
+    expect(sys!.content).toContain("Goal for this conversation");
+  });
+});

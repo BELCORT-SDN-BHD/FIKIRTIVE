@@ -30,6 +30,8 @@ import {
   newId,
   coworkTurnRequest,
   OTTO_MAX_STEPS,
+  GOAL_PRESETS,
+  isGoalKey,
 } from "@fikirtive/core";
 import { otto, withLlmBudget, OTTO_DEFAULT_MODEL, run, RunState, MaxTurnsExceededError, mapOttoUsage } from "@fikirtive/otto";
 import type { OttoContext, AgentInputItem } from "@fikirtive/otto";
@@ -220,6 +222,14 @@ export async function ottoTurn(raw: unknown): Promise<
 
     // Build context
     const ctx = await buildOttoContext({ ownerId, projectId, threadId, sourceGenerationId: validSource });
+
+    // Goal-intent seeding: on a new thread with a goalKey, append the preset's opening
+    // to brandContext so buildContextSystemMessage injects it as a system message.
+    if (isNew && parsed.data.goalKey && isGoalKey(parsed.data.goalKey)) {
+      ctx.brandContext = [ctx.brandContext, `Goal for this conversation: ${GOAL_PRESETS[parsed.data.goalKey].opening}`]
+        .filter(Boolean)
+        .join("\n\n");
+    }
 
     // Build run input: rehydrate prior state (multi-turn) or start fresh;
     // prepend a system message with brand context + available refs when present.

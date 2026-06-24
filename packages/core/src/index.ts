@@ -88,3 +88,4 @@ export { COWORK_PLANNER_SYSTEM, buildPlannerMessages, parseCoworkTurn, mockPlann
 export { buildGenRequestFromCard, type GenRequestInput } from "./gen-from-card.js";
 export * from "./otto-budget.js";
 export * from "./llm-prices.js";
+export { GOAL_PRESETS, isGoalKey, type GoalKey } from "./goals.js";
