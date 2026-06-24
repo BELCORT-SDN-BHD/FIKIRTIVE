@@ -60,6 +60,8 @@ export const coworkTurnRequest = z.object({
   // Goal tile selection — optional; absent on plain turns + legacy callers (additive, safe).
   // On a NEW thread, ottoTurn seeds the opening with the preset's plain-language framing.
   goalKey: z.enum(["sell-product", "announce-sale", "get-followers", "make-video"]).optional(),
+  // Simple mode — inject plain-language voice block (Task 6). Absent → legacy/pro behavior.
+  simple: z.boolean().optional(),
 }).strict();
 export type CoworkTurnRequest = z.infer<typeof coworkTurnRequest>;
 

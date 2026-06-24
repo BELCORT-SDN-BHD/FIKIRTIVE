@@ -1,4 +1,5 @@
 export { otto, ottoInstructions, OTTO_DEFAULT_MODEL } from "./otto.js";
+export { ottoSimpleModeBlock } from "./instructions.js";
 export { propose } from "./tools/propose.js";
 export { generate } from "./tools/generate.js";
 export { updateBrief } from "./tools/update-brief.js";

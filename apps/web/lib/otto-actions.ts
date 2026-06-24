@@ -33,7 +33,7 @@ import {
   GOAL_PRESETS,
   isGoalKey,
 } from "@fikirtive/core";
-import { otto, withLlmBudget, OTTO_DEFAULT_MODEL, run, RunState, MaxTurnsExceededError, mapOttoUsage } from "@fikirtive/otto";
+import { otto, withLlmBudget, OTTO_DEFAULT_MODEL, run, RunState, MaxTurnsExceededError, mapOttoUsage, ottoSimpleModeBlock } from "@fikirtive/otto";
 import type { OttoContext, AgentInputItem } from "@fikirtive/otto";
 import { requireOwner } from "./auth-guard";
 import { resolveDisabledModels } from "./model-registry";
@@ -88,6 +88,7 @@ function buildContextSystemMessage(ctx: OttoContext): AgentInputItem | null {
       `Reusable items you can @-reference (use the id with tools): ${ctx.availableRefs.map((r) => `@${r.name} [${r.type}, id=${r.id}]`).join(", ")}`,
     );
   }
+  if (ctx.simpleMode) parts.push(ottoSimpleModeBlock);
   return parts.length ? ({ role: "system", content: parts.join("\n\n") } as AgentInputItem) : null;
 }
 

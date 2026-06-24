@@ -24,4 +24,8 @@ export interface OttoContext {
   brandContext?: string;
   /** The owner's reusable entities the agent may @-reference (name + type only; ids for tools). */
   availableRefs?: { id: string; name: string; type: string }[];
+  /** When true, buildContextSystemMessage injects the Simple-mode plain-language block so
+   *  Otto speaks to a beginner without jargon. NOT baked into the shared identity — injected
+   *  only on the simple door path (via buildContextSystemMessage). */
+  simpleMode?: boolean;
 }
