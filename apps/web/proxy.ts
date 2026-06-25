@@ -35,6 +35,6 @@ export default async function proxy(req: NextRequest) {
 
 export const config = {
   // api/better-auth MUST stay excluded — else the sign-in/OAuth-callback endpoints get
-  // walled → infinite redirect / total lockout. api/auth stays excluded for NextAuth rollback.
-  matcher: ["/((?!login|api/auth|api/better-auth|_next/static|_next/image|favicon.ico).*)"],
+  // walled → infinite redirect / total lockout. (NextAuth's api/auth route is retired.)
+  matcher: ["/((?!login|api/better-auth|_next/static|_next/image|favicon.ico).*)"],
 };

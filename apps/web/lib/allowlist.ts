@@ -20,6 +20,14 @@ export async function isAllowedEmail(email: string | null | undefined): Promise<
   }
 }
 
+/** Deny-by-default allowlist check (env ∪ DB) — thin alias of isAllowedEmail. Kept so the
+ *  in-handler re-assertion sites (admin/layout, library, files, auth-guard) keep their
+ *  `allowed(email)` call shape after NextAuth retirement moved this off auth.ts. Async:
+ *  awaiting is REQUIRED — a bare `!allowed(email)` would always be falsy (a Promise). */
+export async function allowed(email: string | null | undefined): Promise<boolean> {
+  return isAllowedEmail(email);
+}
+
 /** Dedicated founder list (OPT-6 P1b) — distinct from AUTH_ALLOWED_EMAILS. Founders
  *  are seeded to super-admin on sign-in. next-auth-free so both auth stacks share it. */
 export function isFounderAdmin(email: string | null | undefined): boolean {

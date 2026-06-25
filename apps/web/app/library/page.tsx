@@ -1,6 +1,6 @@
 import { redirect } from "next/navigation";
 import { auth } from "@/lib/better-auth/compat";
-import { allowed } from "@/auth";
+import { allowed } from "@/lib/allowlist";
 
 /** The old Workbench is retired — element management now lives in the Studio's
  *  Elements surface (the same fully-engined Library). Redirect old /library links

@@ -1,5 +1,5 @@
 import { auth } from "@/lib/better-auth/compat";
-import { allowed, isFounderAdmin } from "@/auth";
+import { allowed, isFounderAdmin } from "@/lib/allowlist";
 import { redirect } from "next/navigation";
 import Link from "next/link";
 
