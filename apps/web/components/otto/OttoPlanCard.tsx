@@ -3,6 +3,7 @@ import React, { useState } from "react";
 import { ClipboardList, Film, Image as ImageIcon, ShieldCheck } from "lucide-react";
 import { Card, Button } from "@/components/fk";
 import { ottoApprove } from "@/lib/otto-client-actions";
+import { coworkGenerate } from "@/lib/cowork-actions";
 import type { EntityDTO } from "@/lib/types";
 
 export interface OttoPlanCardProps {
@@ -22,6 +23,8 @@ type CardPayload = {
   kind?: string;
   structuredPrompt?: string;
   estimatedPriceUsd?: number;
+  entityIds?: string[];
+  variantSel?: Record<string, string>;
 };
 
 /** The plan card — Otto's "Here's what I'll make" with the one total and the approve gate.
@@ -32,6 +35,7 @@ export function OttoPlanCard({
   threadId,
   alreadyGenerated,
   hasDurableResult,
+  pendingApproval,
   onApproved,
   onChangeSomething,
 }: OttoPlanCardProps) {
@@ -50,7 +54,18 @@ export function OttoPlanCard({
     setBusy(true);
     setError(null);
     try {
-      const res = await ottoApprove({ threadId, cardId });
+      // Two spend paths. If Otto PARKED a generate (the turn returned needs_approval),
+      // resume it via ottoApprove. Otherwise this is a freshly PROPOSED card — trigger
+      // generation directly with coworkGenerate. (ottoApprove on a proposed card fails
+      // with "That card isn't awaiting approval", which is why generation never started.)
+      const res = pendingApproval
+        ? await ottoApprove({ threadId, cardId })
+        : await coworkGenerate({
+            cardId,
+            prompt: p.structuredPrompt ?? "",
+            entityIds: Array.isArray(p.entityIds) ? p.entityIds : [],
+            variantSel: p.variantSel && typeof p.variantSel === "object" ? p.variantSel : {},
+          });
       if (res && "error" in res) {
         setError(res.error);
         return;
