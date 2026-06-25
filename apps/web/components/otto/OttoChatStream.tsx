@@ -37,6 +37,13 @@ export interface OttoChatStreamProps {
   onRefresh: () => Promise<void>;
   onThreadUpdate: (thread: ChatThreadDTO) => void;
   onEditByHand: () => void;
+  /** Streaming front door: a first message to auto-send ONCE into a freshly-created
+   *  (empty) thread on mount. The thread row already exists (createEmptyCoworkThread),
+   *  so the route's existing-thread branch handles it. */
+  pendingFirst?: { text: string; goalKey?: string };
+  /** Called right after the pendingFirst message is dispatched, so the parent can
+   *  clear it (prevents a re-send if this thread is remounted later). */
+  onPendingFirstSent?: () => void;
 }
 
 /** The latest user message's text — what the strict route body needs for `text`. */
@@ -58,6 +65,8 @@ export function OttoChatStream({
   thread,
   onThreadUpdate,
   onEditByHand,
+  pendingFirst,
+  onPendingFirstSent,
 }: OttoChatStreamProps) {
   const [text, setText] = useState("");
   /** Latest data-status received for the in-flight turn; reset on each new turn. */
@@ -92,13 +101,16 @@ export function OttoChatStream({
     transport: new DefaultChatTransport<OttoUiMessage>({
       api: "/api/otto/stream",
       prepareSendMessagesRequest: ({ messages, body }) => {
-        const ids = (body ?? {}) as { projectId?: string; threadId?: string };
+        const ids = (body ?? {}) as { projectId?: string; threadId?: string; goalKey?: string };
         return {
           body: {
             projectId: ids.projectId,
             threadId: ids.threadId,
             text: latestUserText(messages),
             simple: true,
+            // goalKey only on the first message of a goal-seeded thread; coworkTurnRequest
+            // accepts it as an optional field, so include it only when present.
+            ...(ids.goalKey ? { goalKey: ids.goalKey } : {}),
           },
         };
       },
@@ -199,6 +211,21 @@ export function OttoChatStream({
   }, [hasWorkingJob, thread.id, pollGaveUp]);
 
   const { scrollRef, contentRef, isAtBottom, scrollToBottom } = useStickToBottom();
+
+  // Streaming front door: auto-send the first message ONCE into the empty thread.
+  // The per-mount ref guards against double-send; onPendingFirstSent clears the
+  // parent's pendingFirst so a later remount (switch away + back) never re-fires.
+  const pendingSentRef = useRef(false);
+  useEffect(() => {
+    if (!pendingFirst || pendingSentRef.current) return;
+    pendingSentRef.current = true;
+    void sendMessage(
+      { text: pendingFirst.text },
+      { body: { projectId, threadId: thread.id, ...(pendingFirst.goalKey ? { goalKey: pendingFirst.goalKey } : {}) } },
+    );
+    onPendingFirstSent?.();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [pendingFirst]);
 
   function submit() {
     const trimmed = text.trim();

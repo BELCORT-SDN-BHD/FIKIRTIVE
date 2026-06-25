@@ -19,6 +19,7 @@ export interface OttoAppProps {
   memory: MemoryRow[];
   ads: AdTile[];
   account: AccountInfo | null;
+  ottoStreamEnabled: boolean;
 }
 
 export type OttoViewKey = "otto" | "stuff" | "memory" | "account";
@@ -33,6 +34,7 @@ export function OttoApp({
   memory,
   ads,
   account,
+  ottoStreamEnabled,
 }: OttoAppProps) {
   const [view, setView] = useState<OttoViewKey>("otto");
   const [threads, setThreads] = useState<ChatThreadDTO[]>(initialThreads);
@@ -83,6 +85,7 @@ export function OttoApp({
           memory={memory}
           ads={ads}
           account={account}
+          ottoStreamEnabled={ottoStreamEnabled}
           onEditByHand={() => setWorkshopOpen(true)}
         />
       </div>

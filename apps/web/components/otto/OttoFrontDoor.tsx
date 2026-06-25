@@ -2,7 +2,7 @@
 import React, { useRef, useState } from "react";
 import { OttoAvatar } from "@/components/fk";
 import { Button } from "@/components/fk";
-import { ottoTurn } from "@/lib/otto-client-actions";
+import { ottoTurn, createEmptyCoworkThread } from "@/lib/otto-client-actions";
 import { getCoworkThreadClient } from "@/lib/cowork-fetch";
 import type { EntityDTO, ChatThreadDTO } from "@/lib/types";
 
@@ -83,9 +83,21 @@ export interface OttoFrontDoorProps {
   entities: EntityDTO[];
   userName: string;
   onThreadStarted: (thread: ChatThreadDTO) => void;
+  /** Founder streaming flag. When true, the first message streams (see onStreamStart). */
+  ottoStreamEnabled?: boolean;
+  /** Streaming path: an empty thread was created; hand its first message up so
+   *  OttoChatStream streams it in on mount. Used only when ottoStreamEnabled. */
+  onStreamStart?: (thread: ChatThreadDTO, pending: { text: string; goalKey?: string }) => void;
 }
 
-export function OttoFrontDoor({ projectId, entities, userName, onThreadStarted }: OttoFrontDoorProps) {
+export function OttoFrontDoor({
+  projectId,
+  entities,
+  userName,
+  onThreadStarted,
+  ottoStreamEnabled,
+  onStreamStart,
+}: OttoFrontDoorProps) {
   const [text, setText] = useState("");
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -107,6 +119,26 @@ export function OttoFrontDoor({ projectId, entities, userName, onThreadStarted }
     setBusy(true);
     setError(null);
     try {
+      // Streaming front door: create an empty thread (no first turn, no spend), then
+      // hand the first message to OttoChatStream which streams it in on mount. The
+      // thread row already exists, so the route's existing-thread branch handles it.
+      if (ottoStreamEnabled && onStreamStart) {
+        const created = await createEmptyCoworkThread({ projectId, title: msgText });
+        if ("error" in created) {
+          setError(created.error);
+          return;
+        }
+        const thread: ChatThreadDTO = {
+          id: created.id,
+          projectId,
+          title: msgText.slice(0, 80),
+          updatedAt: new Date().toISOString(),
+          messages: [],
+        };
+        onStreamStart(thread, { text: msgText, ...(opts.goalKey ? { goalKey: opts.goalKey } : {}) });
+        return;
+      }
+
       const res = await ottoTurn({
         projectId,
         text: msgText,

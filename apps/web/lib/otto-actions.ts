@@ -723,3 +723,40 @@ export async function ottoApprove(raw: unknown): Promise<
     return { error: "Couldn't approve — please try again." };
   }
 }
+
+// ---------------------------------------------------------------------------
+// createEmptyCoworkThread — create an empty thread shell (NO first turn, NO spend)
+// so the streaming front door can stream the first message into a thread that
+// already exists (the stream route's existing-thread branch then handles it:
+// priorOttoState null, seq 0). Owner-scoped + project-validated, mirroring ottoTurn.
+// (Task 6: founder-flagged streaming front door.)
+// ---------------------------------------------------------------------------
+export async function createEmptyCoworkThread(raw: unknown): Promise<{ id: string } | { error: string }> {
+  if (
+    typeof raw !== "object" ||
+    raw === null ||
+    typeof (raw as Record<string, unknown>).projectId !== "string" ||
+    typeof (raw as Record<string, unknown>).title !== "string"
+  ) {
+    return { error: "Invalid request." };
+  }
+  const { projectId, title } = raw as { projectId: string; title: string };
+
+  const gate = await requireOwner();
+  if ("error" in gate) return gate;
+  const { ownerId } = gate;
+
+  try {
+    const project = await prisma.project.findFirst({ where: { id: projectId, ownerId, deletedAt: null } });
+    if (!project) return { error: "Project not found." };
+
+    const id = newId();
+    await prisma.chatThread.create({
+      data: { id, ownerId, projectId, title: title.slice(0, 80) || "New campaign" },
+    });
+    return { id };
+  } catch (e) {
+    console.error("[createEmptyCoworkThread] failed:", errSummary(e));
+    return { error: "Couldn't start a new conversation — please try again." };
+  }
+}
