@@ -93,6 +93,27 @@ export function OttoConversation({
       .map((m) => m.genJobId as string),
   );
 
+  // A job is "working" once its card is approved (genJobId set) but no terminal
+  // message (GEN_RESULT or TURN_ERROR) has landed yet. While any job is working we
+  // poll the thread so the async worker result appears without a manual reload.
+  const terminalJobIds = new Set(
+    messages
+      .filter((m) => (m.kind === "GEN_RESULT" || m.kind === "TURN_ERROR") && m.genJobId)
+      .map((m) => m.genJobId as string),
+  );
+  const hasWorkingJob = messages.some(
+    (m) => m.kind === "GEN_CARD" && m.genJobId && !terminalJobIds.has(m.genJobId),
+  );
+
+  useEffect(() => {
+    if (!hasWorkingJob) return;
+    const t = setInterval(() => {
+      void refreshAndUpdate();
+    }, 2500);
+    return () => clearInterval(t);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [hasWorkingJob, thread.id]);
+
   return (
     <div style={{ flex: 1, display: "flex", flexDirection: "column", overflow: "hidden" }}>
       {/* Header */}
@@ -168,6 +189,25 @@ export function OttoConversation({
                 }}
               >
                 Otto is thinking…
+              </div>
+            </div>
+          )}
+
+          {!busy && hasWorkingJob && (
+            <div style={{ display: "flex", alignItems: "flex-start", gap: "var(--space-3)" }}>
+              <OttoAvatar size={32} state="thinking" />
+              <div
+                style={{
+                  padding: "var(--space-3) var(--space-4)",
+                  background: "var(--surface-card)",
+                  borderRadius: "0 var(--radius-lg) var(--radius-lg) var(--radius-lg)",
+                  border: "1px solid var(--border-subtle)",
+                  fontSize: "var(--text-sm)",
+                  color: "var(--text-muted)",
+                  fontStyle: "italic",
+                }}
+              >
+                Otto is making this — this can take a moment…
               </div>
             </div>
           )}
