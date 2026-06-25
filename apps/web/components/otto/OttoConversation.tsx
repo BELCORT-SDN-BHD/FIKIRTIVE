@@ -51,6 +51,9 @@ export function OttoConversation({
     busyRef.current = true;
     setBusy(true);
     setError(null);
+    // a new turn may queue a new generation — re-arm polling
+    setPollGaveUp(false);
+    pollCountRef.current = 0;
     try {
       const res = await ottoTurn({
         threadId: thread.id,
@@ -107,14 +110,34 @@ export function OttoConversation({
     (m) => m.kind === "GEN_CARD" && m.genJobId && !terminalJobIds.has(m.genJobId),
   );
 
+  // Bound the polling: a worker that fails-closed without writing a terminal message
+  // would otherwise keep hasWorkingJob true forever (poll-forever + a stuck "making
+  // this…" spinner). After ~2 min we stop and show a recoverable fallback.
+  const POLL_MS = 2500;
+  const MAX_POLLS = 48; // ~2 minutes
+  const [pollGaveUp, setPollGaveUp] = useState(false);
+  const pollCountRef = useRef(0);
+
+  // Reset the give-up state whenever we switch threads.
   useEffect(() => {
-    if (!hasWorkingJob) return;
+    setPollGaveUp(false);
+    pollCountRef.current = 0;
+  }, [thread.id]);
+
+  useEffect(() => {
+    if (!hasWorkingJob || pollGaveUp) return;
     const t = setInterval(() => {
+      pollCountRef.current += 1;
+      if (pollCountRef.current >= MAX_POLLS) {
+        setPollGaveUp(true);
+        clearInterval(t);
+        return;
+      }
       void refreshAndUpdate();
-    }, 2500);
+    }, POLL_MS);
     return () => clearInterval(t);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [hasWorkingJob, thread.id]);
+  }, [hasWorkingJob, thread.id, pollGaveUp]);
 
   return (
     <div style={{ flex: 1, display: "flex", flexDirection: "column", overflow: "hidden" }}>
@@ -196,7 +219,7 @@ export function OttoConversation({
             </div>
           )}
 
-          {!busy && hasWorkingJob && (
+          {!busy && hasWorkingJob && !pollGaveUp && (
             <div style={{ display: "flex", alignItems: "flex-start", gap: "var(--space-3)" }}>
               <OttoAvatar size={32} state="thinking" />
               <div
@@ -211,6 +234,35 @@ export function OttoConversation({
                 }}
               >
                 Otto is making this — this can take a moment…
+              </div>
+            </div>
+          )}
+
+          {!busy && hasWorkingJob && pollGaveUp && (
+            <div style={{ display: "flex", alignItems: "flex-start", gap: "var(--space-3)" }}>
+              <OttoAvatar size={32} state="idle" />
+              <div
+                style={{
+                  padding: "var(--space-3) var(--space-4)",
+                  background: "var(--surface-card)",
+                  border: "1px solid var(--border-subtle)",
+                  borderRadius: "0 var(--radius-lg) var(--radius-lg) var(--radius-lg)",
+                  fontSize: "var(--text-sm)",
+                  color: "var(--text-body)",
+                }}
+              >
+                This is taking longer than usual. Your credits are safe — nothing is charged until a result comes back.{" "}
+                <button
+                  type="button"
+                  onClick={() => {
+                    setPollGaveUp(false);
+                    pollCountRef.current = 0;
+                    void refreshAndUpdate();
+                  }}
+                  style={{ background: "none", border: "none", padding: 0, color: "var(--brand)", fontWeight: "var(--weight-semibold)" as React.CSSProperties["fontWeight"], cursor: "pointer", textDecoration: "underline" }}
+                >
+                  Check again
+                </button>
               </div>
             </div>
           )}

@@ -21,7 +21,14 @@ export async function listMyMemory(): Promise<MemoryRow[]> {
   return listMemory(gate.ownerId);
 }
 
-export async function listMemory(ownerId: string, brandId?: string | null): Promise<MemoryRow[]> {
+export async function listMemory(_ownerId?: string, brandId?: string | null): Promise<MemoryRow[]> {
+  // SECURITY: this module is "use server", so every export is a client-invocable
+  // Server Action. Resolve the owner from the SESSION and IGNORE any caller-supplied
+  // id — otherwise a forged ownerId could read another org's brand memory. Server-side
+  // callers already pass their own session ownerId, so behaviour is unchanged for them.
+  const gate = await requireOwner();
+  if ("error" in gate) return [];
+  const ownerId = gate.ownerId;
   const rows = await prisma.memory.findMany({
     where: { ownerId, brandId: brandId ?? null, deletedAt: null },
     orderBy: [{ category: "asc" }, { updatedAt: "desc" }],
@@ -89,7 +96,11 @@ export async function deleteMemory(raw: unknown): Promise<{ ok: true } | { error
 }
 
 /** Compile this owner/brand's memory into a compact plain-text block for Otto's context. */
-export async function getBrandContextText(ownerId: string, brandId?: string | null): Promise<string> {
+export async function getBrandContextText(_ownerId?: string, brandId?: string | null): Promise<string> {
+  // SECURITY: session-scoped, ignore any caller-supplied id (see listMemory above).
+  const gate = await requireOwner();
+  if ("error" in gate) return "";
+  const ownerId = gate.ownerId;
   const rows = await prisma.memory.findMany({
     where: { ownerId, brandId: brandId ?? null, deletedAt: null },
     orderBy: [{ category: "asc" }, { updatedAt: "desc" }],
