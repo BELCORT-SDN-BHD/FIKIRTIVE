@@ -66,21 +66,18 @@ export function TextPart({ role, text, streaming }: TextPartProps) {
 /** A small blinking text caret appended to streaming assistant text. */
 function BlinkingCaret() {
   return (
-    <>
-      <span
-        aria-hidden="true"
-        style={{
-          display: "inline-block",
-          width: "0.5em",
-          marginLeft: "1px",
-          color: "var(--text-muted)",
-          animation: "otto-caret-blink 1s steps(1) infinite",
-        }}
-      >
-        ▋
-      </span>
-      <style>{`@keyframes otto-caret-blink { 50% { opacity: 0; } }`}</style>
-    </>
+    <span
+      aria-hidden="true"
+      style={{
+        display: "inline-block",
+        width: "0.5em",
+        marginLeft: "1px",
+        color: "var(--text-muted)",
+        animation: "otto-caret-blink 1s steps(1) infinite",
+      }}
+    >
+      ▋
+    </span>
   );
 }
 

@@ -117,6 +117,7 @@ export function OttoChatStream({
 
   return (
     <div style={{ flex: 1, display: "flex", flexDirection: "column", overflow: "hidden" }}>
+      <style>{`@keyframes otto-caret-blink { 50% { opacity: 0; } }`}</style>
       {/* Header */}
       <div
         style={{
@@ -227,6 +228,7 @@ export function OttoChatStream({
             <button
               type="button"
               onClick={() => void scrollToBottom()}
+              aria-label="Scroll to bottom"
               style={{
                 pointerEvents: "auto",
                 display: "inline-flex",
