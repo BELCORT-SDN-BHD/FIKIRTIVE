@@ -4,7 +4,7 @@ import { buildBoardEdit } from "@/lib/edit";
 import { toEntityDTO, toChatThreadDTO, toChatThreadMetaDTO } from "@/lib/dto";
 import { fikirtiveEdit, storageKey, storageKeyToSrc } from "@fikirtive/core";
 import { redirect } from "next/navigation";
-import { auth } from "@/auth";
+import { auth } from "@/lib/better-auth/compat";
 import { requireOwner } from "@/lib/auth-guard";
 import { Studio } from "@/components/studio/Studio";
 import type { StudioView } from "@/components/studio/StudioShell";
