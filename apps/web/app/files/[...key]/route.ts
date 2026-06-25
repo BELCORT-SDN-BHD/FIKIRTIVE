@@ -2,7 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { storage, mimeOf, kindOf } from "@/lib/storage";
 import { parseStorageKey, keyOwnerMatches } from "@fikirtive/core";
 import { auth } from "@/lib/better-auth/compat";
-import { allowed } from "@/auth";
+import { allowed } from "@/lib/allowlist";
 import { requireOwner } from "@/lib/auth-guard";
 
 /**

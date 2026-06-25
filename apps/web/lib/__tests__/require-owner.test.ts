@@ -1,15 +1,16 @@
 import { describe, it, expect, beforeAll, afterEach, vi } from "vitest";
 import { randomUUID } from "node:crypto";
 
-// Mock only auth() (the session). allowed()/isFounderAdmin() read env, set below.
-// We inline allowed()/isFounderAdmin() in the factory because importOriginal can't
-// load next-auth (it imports `next/server` without .js — fails in ESM/node outside
-// Next.js bundler). The implementations are identical to auth.ts.
+// requireOwner reads the session via @/lib/better-auth/compat (auth()) and the allowlist
+// via @/lib/allowlist (post NextAuth retirement). Mock both: auth() is controllable per-test;
+// allowed()/isFounderAdmin() are env-driven (inlined, no DB) so the gate logic is exercised
+// without Postgres. allowed() unions FOUNDER_ADMIN_EMAILS ∪ AUTH_ALLOWED_EMAILS like the real one.
 const mockAuth = vi.fn();
-vi.mock("@/auth", () => {
+vi.mock("@/lib/better-auth/compat", () => ({ auth: mockAuth }));
+vi.mock("@/lib/allowlist", () => {
   function allowed(email: string | null | undefined): boolean {
     if (!email) return false;
-    const list = (process.env.AUTH_ALLOWED_EMAILS ?? "")
+    const list = `${process.env.FOUNDER_ADMIN_EMAILS ?? ""},${process.env.AUTH_ALLOWED_EMAILS ?? ""}`
       .split(",")
       .map((e) => e.trim().toLowerCase())
       .filter(Boolean);
@@ -23,7 +24,7 @@ vi.mock("@/auth", () => {
       .filter(Boolean);
     return list.includes(email.toLowerCase());
   }
-  return { auth: mockAuth, allowed, isFounderAdmin };
+  return { allowed, isFounderAdmin, isAllowedEmail: allowed };
 });
 
 const FOUNDER_EMAIL = "founder@artlio.test";

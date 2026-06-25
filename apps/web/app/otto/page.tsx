@@ -1,5 +1,5 @@
 import { redirect } from "next/navigation";
-import { isFounderAdmin } from "@/auth";
+import { isFounderAdmin } from "@/lib/allowlist";
 import { requireOwner } from "@/lib/auth-guard";
 import { getOrCreateDefaultProject } from "@/lib/actions";
 import { getEntities, getCoworkThreads, getCoworkThread, resolveCoworkResultUrls, getMyAds } from "@/lib/data";
