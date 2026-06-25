@@ -8,6 +8,10 @@ export { setTitle } from "./tools/set-title.js";
 export type { OttoContext } from "./context.js";
 export { withLlmBudget, actualCostInternal, mapOttoUsage } from "./meter.js";
 export type { TokenUsage } from "./meter.js";
-// Re-export SDK primitives needed by web callers (Task 1.8)
+// Re-export SDK primitives needed by web callers (Task 1.8 / streaming)
 export { run, RunState, MaxTurnsExceededError } from "@openai/agents";
-export type { AgentInputItem } from "@openai/agents";
+export type {
+  AgentInputItem,
+  RunStreamEvent,
+  StreamedRunResult,
+} from "@openai/agents";
