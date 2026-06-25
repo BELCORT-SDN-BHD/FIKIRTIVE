@@ -450,6 +450,26 @@ export function OttoChatStream({
             hasAssistantText={hasAssistantText}
           />
 
+          {/* Terminal degrade/stale status: shown after an abnormal turn end.
+              Clears automatically when submit() calls setLiveStatus(null). */}
+          {!isBusy && (liveStatus?.kind === "degraded" || liveStatus?.kind === "stale") && (
+            <div style={{ display: "flex", alignItems: "flex-start", gap: "var(--space-3)", ...MSG_ENTER_STYLE }}>
+              <OttoAvatar size={32} state="idle" />
+              <div
+                style={{
+                  padding: "var(--space-3) var(--space-4)",
+                  background: "var(--surface-card)",
+                  borderRadius: "0 var(--radius-lg) var(--radius-lg) var(--radius-lg)",
+                  border: "1px solid var(--border-subtle)",
+                  fontSize: "var(--text-sm)",
+                  color: "var(--text-body)",
+                }}
+              >
+                {liveStatus.text}
+              </div>
+            </div>
+          )}
+
           {/* Async generation in progress: a card was approved (genJobId set) and the
               worker hasn't written a terminal result yet. Ported from OttoConversation. */}
           {!isBusy && hasWorkingJob && !pollGaveUp && (
