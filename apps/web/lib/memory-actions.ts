@@ -13,6 +13,14 @@ export type MemoryRow = {
   updatedAt: Date;
 };
 
+/** Client-callable list: resolves the owner from the session (the client never
+ *  passes an ownerId). Used by the Memory screen to refetch after a mutation. */
+export async function listMyMemory(): Promise<MemoryRow[]> {
+  const gate = await requireOwner();
+  if ("error" in gate) return [];
+  return listMemory(gate.ownerId);
+}
+
 export async function listMemory(ownerId: string, brandId?: string | null): Promise<MemoryRow[]> {
   const rows = await prisma.memory.findMany({
     where: { ownerId, brandId: brandId ?? null, deletedAt: null },

@@ -14,6 +14,7 @@ export interface OttoConversationProps {
   balanceUsd: number;
   onRefresh: () => Promise<void>;
   onThreadUpdate: (thread: ChatThreadDTO) => void;
+  onEditByHand: () => void;
 }
 
 export function OttoConversation({
@@ -23,6 +24,7 @@ export function OttoConversation({
   balanceUsd,
   onRefresh,
   onThreadUpdate,
+  onEditByHand,
 }: OttoConversationProps) {
   const [text, setText] = useState("");
   const [busy, setBusy] = useState(false);
@@ -171,6 +173,7 @@ export function OttoConversation({
                 const ta = document.getElementById("otto-composer") as HTMLTextAreaElement | null;
                 ta?.focus();
               }}
+              onEditByHand={onEditByHand}
             />
           ))}
 
@@ -304,6 +307,7 @@ function MessageRow({
   busy,
   onApproved,
   onChangeRequest,
+  onEditByHand,
 }: {
   message: ChatMessageDTO;
   entities: EntityDTO[];
@@ -314,6 +318,7 @@ function MessageRow({
   busy: boolean;
   onApproved: (cardId: string) => void;
   onChangeRequest: () => void;
+  onEditByHand: () => void;
 }) {
   const isUser = m.role === "USER";
 
@@ -390,7 +395,7 @@ function MessageRow({
       <div style={{ display: "flex", alignItems: "flex-start", gap: "var(--space-3)" }}>
         <OttoAvatar size={32} state="idle" />
         <div style={{ flex: 1, minWidth: 0 }}>
-          <OttoResult payload={r} />
+          <OttoResult payload={r} onEditByHand={onEditByHand} />
         </div>
       </div>
     );

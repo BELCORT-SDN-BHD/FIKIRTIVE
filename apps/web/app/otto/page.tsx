@@ -1,9 +1,10 @@
 import { redirect } from "next/navigation";
 import { requireOwner } from "@/lib/auth-guard";
 import { getOrCreateDefaultProject } from "@/lib/actions";
-import { getEntities, getCoworkThreads, getCoworkThread, resolveCoworkResultUrls } from "@/lib/data";
+import { getEntities, getCoworkThreads, getCoworkThread, resolveCoworkResultUrls, getMyAds } from "@/lib/data";
 import { toEntityDTO, toChatThreadDTO, toChatThreadMetaDTO } from "@/lib/dto";
 import { getMyAccount } from "@/lib/account-actions";
+import { listMemory } from "@/lib/memory-actions";
 import { OttoApp } from "@/components/otto/OttoApp";
 
 export const dynamic = "force-dynamic";
@@ -18,10 +19,12 @@ export default async function OttoPage() {
   if ("error" in projectResult) redirect("/login");
   const { id: projectId } = projectResult;
 
-  const [entities, threadRows, accountResult] = await Promise.all([
+  const [entities, threadRows, accountResult, memory, ads] = await Promise.all([
     getEntities(ownerId),
     getCoworkThreads(ownerId, projectId),
     getMyAccount(),
+    listMemory(ownerId),
+    getMyAds(ownerId, projectId),
   ]);
 
   // Eager-load the most-recent thread so the conversation shows immediately (mirrors /m pattern).
@@ -35,7 +38,8 @@ export default async function OttoPage() {
     }
   }
 
-  const balanceUsd = "error" in accountResult ? 0 : accountResult.balanceUsd;
+  const account = "error" in accountResult ? null : accountResult;
+  const balanceUsd = account?.balanceUsd ?? 0;
   const userName = email.split("@")[0];
 
   return (
@@ -46,6 +50,9 @@ export default async function OttoPage() {
       balanceUsd={balanceUsd}
       userName={userName}
       userEmail={email}
+      memory={memory}
+      ads={ads}
+      account={account}
     />
   );
 }

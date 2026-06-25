@@ -2,8 +2,13 @@
 import React, { useState } from "react";
 import type { OttoViewKey } from "./OttoApp";
 import type { EntityDTO, ChatThreadDTO } from "@/lib/types";
+import type { MemoryRow } from "@/lib/memory-actions";
+import type { AccountInfo } from "@/lib/account-actions";
 import { OttoFrontDoor } from "./OttoFrontDoor";
 import { OttoConversation } from "./OttoConversation";
+import { OttoMemory } from "./OttoMemory";
+import { OttoAccount } from "./OttoAccount";
+import { OttoStuff, type AdTile } from "./OttoStuff";
 import { getCoworkThreadClient } from "@/lib/cowork-fetch";
 
 interface OttoViewProps {
@@ -16,36 +21,10 @@ interface OttoViewProps {
   onActiveThreadChange: (id: string | null) => void;
   balanceUsd: number;
   userName: string;
-}
-
-function ComingSoon({ label }: { label: string }) {
-  return (
-    <div
-      style={{
-        flex: 1,
-        display: "flex",
-        flexDirection: "column",
-        alignItems: "center",
-        justifyContent: "center",
-        color: "var(--text-muted)",
-        gap: "var(--space-3)",
-      }}
-    >
-      <div
-        style={{
-          fontFamily: "var(--font-display)",
-          fontWeight: "var(--weight-bold)",
-          fontSize: "var(--text-xl)",
-          color: "var(--text-strong)",
-        }}
-      >
-        {label}
-      </div>
-      <div style={{ fontSize: "var(--text-base)", color: "var(--text-muted)" }}>
-        Coming soon
-      </div>
-    </div>
-  );
+  memory: MemoryRow[];
+  ads: AdTile[];
+  account: AccountInfo | null;
+  onEditByHand: () => void;
 }
 
 export function OttoView({
@@ -58,6 +37,10 @@ export function OttoView({
   onActiveThreadChange,
   balanceUsd,
   userName,
+  memory,
+  ads,
+  account,
+  onEditByHand,
 }: OttoViewProps) {
   const activeThread = threads.find((t) => t.id === activeThreadId) ?? null;
 
@@ -70,16 +53,24 @@ export function OttoView({
     }
   }
 
-  if (view !== "otto") {
-    const labels: Record<OttoViewKey, string> = {
-      otto: "Otto",
-      stuff: "My stuff",
-      memory: "Brand memory",
-      account: "Account",
-    };
+  if (view === "memory") {
     return (
       <div style={{ flex: 1, display: "flex", flexDirection: "column", overflow: "hidden" }}>
-        <ComingSoon label={labels[view]} />
+        <OttoMemory initialMemory={memory} />
+      </div>
+    );
+  }
+  if (view === "stuff") {
+    return (
+      <div style={{ flex: 1, display: "flex", flexDirection: "column", overflow: "hidden" }}>
+        <OttoStuff entities={entities} ads={ads} />
+      </div>
+    );
+  }
+  if (view === "account") {
+    return (
+      <div style={{ flex: 1, display: "flex", flexDirection: "column", overflow: "hidden" }}>
+        <OttoAccount account={account} />
       </div>
     );
   }
@@ -109,6 +100,7 @@ export function OttoView({
           onThreadUpdate={(updated) => {
             onThreadsChange([updated, ...threads.filter((t) => t.id !== updated.id)]);
           }}
+          onEditByHand={onEditByHand}
         />
       )}
     </div>

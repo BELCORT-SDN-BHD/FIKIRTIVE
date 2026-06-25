@@ -182,6 +182,29 @@ export async function getMediaPage(
   return { items, nextCursor, hasMore };
 }
 
+/** Otto's finished ads: cowork-tagged generations (threadId set), newest first.
+ *  The mirror of getMediaPage for the Otto surface (which excludes threadId-null
+ *  manual-studio gens). Used by My Stuff → Ads. */
+export type AdItem = { id: string; src: string; kind: "image" | "video"; prompt: string; createdAt: string };
+export async function getMyAds(ownerId: string, projectId: string, take = 60): Promise<AdItem[]> {
+  const rows = await prisma.generation.findMany({
+    where: { ownerId, projectId, threadId: { not: null }, ...notDeleted },
+    orderBy: [{ createdAt: "desc" }, { id: "desc" }],
+    take,
+    include: { asset: true },
+  });
+  return rows.map((g) => {
+    const ext = g.asset.ext.toLowerCase();
+    return {
+      id: g.id,
+      src: storageKeyToSrc(storageKey(g.asset.ownerId, g.asset.contentHash, ext)),
+      kind: MEDIA_VIDEO_EXTS.has(ext) ? ("video" as const) : ("image" as const),
+      prompt: g.promptText ?? "",
+      createdAt: g.createdAt.toISOString(),
+    };
+  });
+}
+
 export type EntityWithRefs = Awaited<ReturnType<typeof getEntities>>[number];
 export type ShotWithDetail = Awaited<ReturnType<typeof getShots>>[number];
 export type CandidateGen = Awaited<ReturnType<typeof getLooseVideoClips>>[number];
