@@ -5,8 +5,8 @@ import path from "node:path";
 const DEV_FILE = path.join(process.cwd(), "..", "..", ".data", "last-magic-link.txt");
 
 describe("sendAuthEmail", () => {
-  beforeEach(() => { delete process.env.RESEND_API_KEY; process.env.NODE_ENV = "test"; });
-  afterEach(async () => { await rm(DEV_FILE, { force: true }); vi.restoreAllMocks(); });
+  beforeEach(() => { delete process.env.RESEND_API_KEY; vi.stubEnv("NODE_ENV", "test"); });
+  afterEach(async () => { await rm(DEV_FILE, { force: true }); vi.restoreAllMocks(); vi.unstubAllEnvs(); });
 
   it("writes the link to the dev file when RESEND_API_KEY is unset", async () => {
     const { sendAuthEmail } = await import("@/lib/better-auth/sender");
