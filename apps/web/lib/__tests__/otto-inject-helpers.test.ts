@@ -10,6 +10,7 @@ import {
   proposeCardId,
   injectCardMessage,
   appendDurableResults,
+  syncCardJobIds,
 } from "@/lib/otto-inject-helpers";
 import { threadToUiMessages } from "@/lib/otto-ui-messages";
 import type { ChatThreadDTO, ChatMessageDTO } from "@/lib/types";
@@ -145,6 +146,58 @@ describe("injectCardMessage", () => {
     const fresh = thread([msg({ id: "other", role: "AGENT", kind: "GEN_CARD" })]);
     const out = injectCardMessage(existing, fresh, "card_missing");
     expect(out).toBe(existing);
+  });
+});
+
+describe("syncCardJobIds", () => {
+  it("patches genJobId on an in-memory GEN_CARD that has genJobId=null but durable has a real one", () => {
+    const inMemory = threadToUiMessages(
+      thread([msg({ id: "card_9", role: "AGENT", kind: "GEN_CARD", genJobId: null })]),
+    );
+    const fresh = thread([
+      msg({ id: "card_9", role: "AGENT", kind: "GEN_CARD", genJobId: "job_42" }),
+    ]);
+    const out = syncCardJobIds(inMemory, fresh);
+    expect(out).not.toBe(inMemory); // new array
+    expect(out[0].metadata?.genJobId).toBe("job_42");
+  });
+
+  it("is idempotent — returns the same array reference when nothing changed", () => {
+    const inMemory = threadToUiMessages(
+      thread([msg({ id: "card_9", role: "AGENT", kind: "GEN_CARD", genJobId: "job_42" })]),
+    );
+    const fresh = thread([
+      msg({ id: "card_9", role: "AGENT", kind: "GEN_CARD", genJobId: "job_42" }),
+    ]);
+    const out = syncCardJobIds(inMemory, fresh);
+    expect(out).toBe(inMemory); // same ref
+  });
+
+  it("does not touch non-GEN_CARD messages", () => {
+    const inMemory = threadToUiMessages(
+      thread([
+        msg({ id: "u1", role: "USER", kind: "TEXT", text: "hi" }),
+        msg({ id: "a1", role: "AGENT", kind: "TEXT", text: "hello" }),
+      ]),
+    );
+    const fresh = thread([
+      msg({ id: "u1", role: "USER", kind: "TEXT", text: "hi" }),
+      msg({ id: "a1", role: "AGENT", kind: "TEXT", text: "hello" }),
+    ]);
+    const out = syncCardJobIds(inMemory, fresh);
+    expect(out).toBe(inMemory); // no GEN_CARD → same ref, nothing mutated
+  });
+
+  it("after sync, hasWorkingJob is true for the patched card (was false before)", () => {
+    const inMemory = threadToUiMessages(
+      thread([msg({ id: "card_9", role: "AGENT", kind: "GEN_CARD", genJobId: null })]),
+    );
+    expect(hasWorkingJob(inMemory)).toBe(false); // genJobId=null → not working yet
+    const fresh = thread([
+      msg({ id: "card_9", role: "AGENT", kind: "GEN_CARD", genJobId: "job_42" }),
+    ]);
+    const out = syncCardJobIds(inMemory, fresh);
+    expect(hasWorkingJob(out)).toBe(true); // now arms the poll
   });
 });
 

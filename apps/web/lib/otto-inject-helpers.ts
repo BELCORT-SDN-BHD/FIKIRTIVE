@@ -79,6 +79,33 @@ export function injectCardMessage(
   return [...messages, card];
 }
 
+/** Patch in-memory GEN_CARD genJobIds from the durable thread. After "Make it",
+ *  coworkGenerate sets genJobId on the durable GEN_CARD; without this the in-memory
+ *  copy keeps genJobId=null, hasWorkingJob never flips true, and the result poll
+ *  never arms. Returns a NEW array only if something changed (else the same ref). */
+export function syncCardJobIds(messages: OttoUiMessage[], fresh: ChatThreadDTO): OttoUiMessage[] {
+  // Build a map of durableId → genJobId for GEN_CARDs in the fresh durable thread.
+  const freshJobIds = new Map<string, string | null>();
+  for (const u of threadToUiMessages(fresh)) {
+    if (u.metadata?.kind === "GEN_CARD") {
+      freshJobIds.set(u.metadata.durableId, u.metadata.genJobId);
+    }
+  }
+
+  let changed = false;
+  const patched = messages.map((m) => {
+    const meta = m.metadata;
+    if (meta?.kind !== "GEN_CARD") return m;
+    const freshJobId = freshJobIds.get(meta.durableId);
+    // Only patch when the durable thread has a non-null genJobId that differs from in-memory.
+    if (!freshJobId || freshJobId === meta.genJobId) return m;
+    changed = true;
+    return { ...m, metadata: { ...meta, genJobId: freshJobId } };
+  });
+
+  return changed ? patched : messages;
+}
+
 /**
  * Append worker-output durable messages (GEN_RESULT / TURN_ERROR ONLY) from the
  * polled thread that are not already present in the useChat list, deduped by

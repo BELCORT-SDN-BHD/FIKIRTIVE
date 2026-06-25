@@ -13,6 +13,7 @@ import {
   proposeCardId,
   injectCardMessage,
   appendDurableResults,
+  syncCardJobIds,
 } from "@/lib/otto-inject-helpers";
 import { OttoPlanCard } from "./OttoPlanCard";
 import { OttoResult } from "./OttoResult";
@@ -195,7 +196,7 @@ export function OttoChatStream({
   async function pollAndInjectResults() {
     const fresh = await getCoworkThreadClient(thread.id);
     if (!fresh) return;
-    setMessages((cur) => appendDurableResults(cur, fresh));
+    setMessages((cur) => appendDurableResults(syncCardJobIds(cur, fresh), fresh));
     onThreadUpdate(fresh);
   }
 

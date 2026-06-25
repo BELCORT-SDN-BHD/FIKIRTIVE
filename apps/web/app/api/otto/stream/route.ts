@@ -163,7 +163,7 @@ export async function POST(req: NextRequest): Promise<Response> {
     ctx = await buildOttoContext({ ownerId, projectId, threadId, sourceGenerationId: validSource, simpleMode: parsed.data.simple });
 
     // Goal-intent seeding on a new thread with a goalKey
-    if (isNew && parsed.data.goalKey && isGoalKey(parsed.data.goalKey)) {
+    if (!priorOttoState && parsed.data.goalKey && isGoalKey(parsed.data.goalKey)) {
       ctx.brandContext = [ctx.brandContext, `Goal for this conversation: ${GOAL_PRESETS[parsed.data.goalKey].opening}`]
         .filter(Boolean)
         .join("\n\n");
