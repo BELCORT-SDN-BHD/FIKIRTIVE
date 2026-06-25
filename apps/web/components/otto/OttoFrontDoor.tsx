@@ -90,6 +90,10 @@ export function OttoFrontDoor({ projectId, entities, userName, onThreadStarted }
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
+  // Synchronous latch: two fast clicks / Enter+tile both pass the async `busy` check
+  // before the re-render, and each would start a NEW thread (no threadId). Mirror
+  // OttoConversation.send()'s busyRef guard so the front door can't duplicate campaigns.
+  const startingRef = useRef(false);
 
   const firstName = userName.split(".")[0];
   const greeting = `Hi ${firstName} — what should we make today?`;
@@ -98,7 +102,8 @@ export function OttoFrontDoor({ projectId, entities, userName, onThreadStarted }
     const msgText = opts.goalKey
       ? (GOAL_TILES.find((g) => g.goalKey === opts.goalKey)?.label ?? text.trim())
       : text.trim();
-    if (!msgText || busy) return;
+    if (!msgText || busy || startingRef.current) return;
+    startingRef.current = true;
     setBusy(true);
     setError(null);
     try {
@@ -123,6 +128,7 @@ export function OttoFrontDoor({ projectId, entities, userName, onThreadStarted }
       setError("Couldn't reach Otto — please try again.");
     } finally {
       setBusy(false);
+      startingRef.current = false;
     }
   }
 

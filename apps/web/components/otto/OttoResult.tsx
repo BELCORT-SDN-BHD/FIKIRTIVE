@@ -109,26 +109,9 @@ export function OttoResult({ payload, onEditByHand }: OttoResultProps) {
                 }}
               >
                 <Media url={u} rounded={false} />
-                {i === 0 && (
-                  <span
-                    style={{
-                      position: "absolute",
-                      top: 8,
-                      left: 8,
-                      display: "inline-flex",
-                      alignItems: "center",
-                      gap: 4,
-                      padding: "3px 9px",
-                      borderRadius: 999,
-                      background: "var(--accent)",
-                      color: "#fff",
-                      fontSize: "var(--text-xs)",
-                      fontWeight: "var(--weight-semibold)" as React.CSSProperties["fontWeight"],
-                    }}
-                  >
-                    <Sparkles size={12} /> Otto&rsquo;s pick
-                  </span>
-                )}
+                {/* No "Otto's pick" badge: there is no real curation signal from the backend
+                    (all variants are equal outputs of one prompt). Don't claim a pick we
+                    didn't make — add it back only when GEN_RESULT carries a real pick index. */}
               </button>
             ))}
           </div>

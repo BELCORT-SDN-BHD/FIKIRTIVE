@@ -50,7 +50,9 @@ export function OttoMemory({ initialMemory }: { initialMemory: MemoryRow[] }) {
 
   async function remove(id: string) {
     setMemory((cur) => cur.filter((m) => m.id !== id)); // optimistic
-    await deleteMemory({ id });
+    setError(null);
+    const res = await deleteMemory({ id });
+    if (res && "error" in res) setError(res.error); // surface failure (refresh restores the row)
     await refresh();
   }
 

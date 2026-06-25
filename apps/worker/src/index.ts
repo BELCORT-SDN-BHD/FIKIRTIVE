@@ -155,11 +155,21 @@ async function main(): Promise<void> {
   // Reaper: jobs the worker hung/crashed on (no redelivery → the on-claim stale path
   // never runs) would sit GENERATING forever, holding the credit reservation and spinning
   // the UI. Sweep every 5 min — fail-close + refund + post a terminal message.
-  const reap = () =>
-    reapStaleGenJobs()
-      .then((n) => { if (n) console.log(`[worker] reaped ${n} stale gen job(s)`); })
-      .catch((e) => { console.error("[worker] reaper error:", e); captureError(e); });
-  setInterval(reap, 5 * 60_000);
+  let reaping = false; // re-entrancy guard — a long sweep must not overlap the next tick
+  const reap = async () => {
+    if (reaping) return;
+    reaping = true;
+    try {
+      const n = await reapStaleGenJobs();
+      if (n) console.log(`[worker] reaped ${n} stale gen job(s)`);
+    } catch (e) {
+      console.error("[worker] reaper error:", e);
+      captureError(e);
+    } finally {
+      reaping = false;
+    }
+  };
+  setInterval(() => { void reap(); }, 5 * 60_000);
   void reap(); // also sweep once on startup (clears anything stranded by a prior crash)
 
   console.log("[worker] started — queues:", Object.values(QUEUES).join(", "));

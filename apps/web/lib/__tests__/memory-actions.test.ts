@@ -12,7 +12,7 @@ vi.mock("@fikirtive/db", () => ({ prisma: { memory: { create: mockMemoryCreate, 
 vi.mock("@fikirtive/core", () => ({ newId: () => "m_1" }));
 vi.mock("next/cache", () => ({ revalidatePath: vi.fn() }));
 
-import { addMemory, updateMemory, deleteMemory, getBrandContextText } from "../memory-actions";
+import { addMemory, updateMemory, deleteMemory, getBrandContextText, listMemory, listMyMemory } from "../memory-actions";
 
 beforeEach(() => {
   vi.clearAllMocks();
@@ -128,11 +128,50 @@ describe("getBrandContextText", () => {
     expect(result).toContain("blue");
   });
 
-  it("queries with ownerId and brandId", async () => {
+  it("passes brandId through to the query", async () => {
     mockMemoryFindMany.mockResolvedValue([]);
-    await getBrandContextText("o1", "brand_1");
+    await getBrandContextText(undefined, "brand_1");
     expect(mockMemoryFindMany).toHaveBeenCalledWith(
-      expect.objectContaining({ where: expect.objectContaining({ ownerId: "o1", brandId: "brand_1" }) })
+      expect.objectContaining({ where: expect.objectContaining({ brandId: "brand_1" }) })
     );
+  });
+});
+
+// SECURITY (fix #1): listMemory / getBrandContextText are exported from a "use server"
+// module → client-invocable. They MUST resolve the owner from the session and IGNORE any
+// caller-supplied id. These tests are non-vacuous: the session owner differs from the id
+// passed in, so a regression to `_ownerId ?? gate.ownerId` would FAIL here.
+describe("tenant isolation — caller-supplied ownerId is ignored", () => {
+  it("getBrandContextText queries the SESSION owner, never the forged arg", async () => {
+    mockRequireOwner.mockResolvedValue({ ownerId: "session-org" });
+    mockMemoryFindMany.mockResolvedValue([]);
+    await getBrandContextText("attacker-org", "brand_1");
+    expect(mockMemoryFindMany).toHaveBeenCalledWith(
+      expect.objectContaining({ where: expect.objectContaining({ ownerId: "session-org", brandId: "brand_1" }) })
+    );
+    expect(mockMemoryFindMany.mock.calls[0]![0].where.ownerId).not.toBe("attacker-org");
+  });
+
+  it("listMemory queries the SESSION owner, never the forged arg", async () => {
+    mockRequireOwner.mockResolvedValue({ ownerId: "session-org" });
+    mockMemoryFindMany.mockResolvedValue([]);
+    await listMemory("attacker-org");
+    expect(mockMemoryFindMany.mock.calls[0]![0].where.ownerId).toBe("session-org");
+  });
+
+  it("listMyMemory resolves the owner from the session and returns its rows", async () => {
+    mockRequireOwner.mockResolvedValue({ ownerId: "session-org" });
+    mockMemoryFindMany.mockResolvedValue([{ id: "m1", category: "voice", content: "warm", source: "user", pinned: true, updatedAt: new Date() }]);
+    const rows = await listMyMemory();
+    expect(rows).toHaveLength(1);
+    expect(mockMemoryFindMany.mock.calls[0]![0].where.ownerId).toBe("session-org");
+  });
+
+  it("fail closed: unauthenticated → empty result, no query", async () => {
+    mockRequireOwner.mockResolvedValue({ error: "Not authenticated." });
+    expect(await listMemory("anything")).toEqual([]);
+    expect(await getBrandContextText("anything")).toBe("");
+    expect(await listMyMemory()).toEqual([]);
+    expect(mockMemoryFindMany).not.toHaveBeenCalled();
   });
 });

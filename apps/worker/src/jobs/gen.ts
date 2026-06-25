@@ -42,6 +42,12 @@ const mimeForExt = (ext: string) =>
 // time and BELOW the GEN/REFGEN queue expiry (20m), so an actively-running gen is
 // never failed closed by a duplicate delivery, but a truly stuck one eventually is.
 const GEN_STALE_MS = 1000 * 60 * 18;
+// The PROACTIVE reaper (reapStaleGenJobs) runs on its OWN timer, independent of pg-boss
+// redelivery — so its cutoff must exceed the gen-queue expiry (GEN_QUEUE_POLICY.expireInSeconds
+// = 20m). Otherwise it could fail-close a long (18–20m) fal call that pg-boss still considers
+// alive, refunding the merchant + eating the founder's fal cost. The on-redelivery stale path
+// keeps GEN_STALE_MS (a redelivery already implies the 20m expiry has passed).
+const GEN_REAP_MS = 1000 * 60 * 25;
 
 // Thrown INSIDE the commit transaction to roll it back (discarding the just-created,
 // user-visible Asset+Generation rows) when a redelivery has already FAILED+refunded the job
@@ -157,9 +163,14 @@ async function failClosedWithRefund(
  *  conditional updateMany is the at-most-once claim (a late finisher or another instance wins
  *  instead), so this is safe under concurrency and never clobbers a DONE. */
 export async function reapStaleGenJobs(): Promise<number> {
-  const cutoff = new Date(Date.now() - GEN_STALE_MS);
+  const cutoff = new Date(Date.now() - GEN_REAP_MS);
+  // generationIds isEmpty EXCLUDES a job that has already committed its outputs (the commit
+  // marker writes generationIds while status is briefly still GENERATING, before the DONE
+  // flip). Without this, the reaper could fail-close + post a false "you weren't charged"
+  // TURN_ERROR on a job that WAS charged and DID produce assets, and that terminal message
+  // would win the single-message unique index, swallowing the real GEN_RESULT.
   const stuck = await prisma.genJob.findMany({
-    where: { status: "GENERATING", startedAt: { lt: cutoff } },
+    where: { status: "GENERATING", startedAt: { lt: cutoff }, generationIds: { isEmpty: true } },
     select: { id: true, ownerId: true, threadId: true, kind: true, model: true },
   });
   let reaped = 0;
@@ -167,7 +178,7 @@ export async function reapStaleGenJobs(): Promise<number> {
     let failedClosed = false;
     await prisma.$transaction(async (tx) => {
       const staled = await tx.genJob.updateMany({
-        where: { id: job.id, status: "GENERATING", startedAt: { lt: cutoff } },
+        where: { id: job.id, status: "GENERATING", startedAt: { lt: cutoff }, generationIds: { isEmpty: true } },
         data: { status: "FAILED", error: "stale GENERATING reaped — worker hung or crashed; refunded", finishedAt: new Date() },
       });
       if (staled.count > 0) { await refundReservation(tx, { orgId: job.ownerId, refId: job.id }); failedClosed = true; }
@@ -280,7 +291,9 @@ export async function handleGen(data: GenJobData, retryCount: number): Promise<v
       let failedClosed = false;
       await prisma.$transaction(async (tx) => {
         const staled = await tx.genJob.updateMany({
-          where: { id: job.id, status: "GENERATING", startedAt: { lt: new Date(Date.now() - GEN_STALE_MS) } },
+          // generationIds isEmpty: never fail-close a job that already committed outputs (a
+          // redelivery landing in the commit→DONE window) — its real GEN_RESULT must win.
+          where: { id: job.id, status: "GENERATING", startedAt: { lt: new Date(Date.now() - GEN_STALE_MS) }, generationIds: { isEmpty: true } },
           data: { status: "FAILED", error: "stale GENERATING after a possible paid call — not retrying, to avoid a double charge", finishedAt: new Date() },
         });
         // refund only if WE just failed it closed (count>0) — never touch the hold of an

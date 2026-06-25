@@ -189,6 +189,10 @@ export function OttoConversation({
                   next.delete(cardId);
                   return next;
                 });
+                // a freshly-approved card queues a new job — re-arm polling even if a
+                // prior job had already hit the give-up cap.
+                setPollGaveUp(false);
+                pollCountRef.current = 0;
                 refreshAndUpdate();
               }}
               onChangeRequest={() => {
