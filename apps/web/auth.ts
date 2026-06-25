@@ -3,7 +3,7 @@ import Resend from "next-auth/providers/resend";
 import { PrismaAdapter } from "@auth/prisma-adapter";
 import { prisma } from "@fikirtive/db";
 import { newId, isRole, FOUNDER_OWNER_ID } from "@fikirtive/core";
-import { isAllowedEmail } from "@/lib/allowlist";
+import { isAllowedEmail, isFounderAdmin } from "@/lib/allowlist";
 
 /**
  * D18: email magic-link auth, founder-only via allowlist.
@@ -35,19 +35,8 @@ export async function allowed(email: string | null | undefined): Promise<boolean
   return isAllowedEmail(email);
 }
 
-/** Dedicated founder list (OPT-6 P1b) — distinct from AUTH_ALLOWED_EMAILS. These
- *  emails are seeded to super-admin on sign-in (and one-time-backfilled in the P1b
- *  migration). The allowlist (allowed()) stays the outer app wall and never reads
- *  role, so a default-viewer can't lock the team out of the app, only out of
- *  role-gated sections. */
-export function isFounderAdmin(email: string | null | undefined): boolean {
-  if (!email) return false;
-  const list = (process.env.FOUNDER_ADMIN_EMAILS ?? "")
-    .split(",")
-    .map((e) => e.trim().toLowerCase())
-    .filter(Boolean);
-  return list.includes(email.toLowerCase());
-}
+/** Re-exported from @/lib/allowlist for back-compat (admin/layout + auth-guard import it from @/auth). */
+export { isFounderAdmin };
 
 export const { handlers, auth, signIn, signOut } = NextAuth({
   adapter: PrismaAdapter(prisma),

@@ -33,6 +33,15 @@ afterEach(() => {
   process.env.AUTH_ALLOWED_EMAILS = savedEnv.AUTH_ALLOWED_EMAILS;
 });
 
+describe("isFounderAdmin", () => {
+  it("is true for a founder email (case-insensitive), false otherwise", async () => {
+    const { isFounderAdmin } = await import("@/lib/allowlist");
+    expect(isFounderAdmin("FOUNDER@artlio.test")).toBe(true); // FOUNDER_ADMIN_EMAILS set in beforeEach
+    expect(isFounderAdmin("merchant@artlio.test")).toBe(false);
+    expect(isFounderAdmin(null)).toBe(false);
+  });
+});
+
 describe("isAllowedEmail", () => {
   it("returns false for null email", async () => {
     expect(await isAllowedEmail(null)).toBe(false);

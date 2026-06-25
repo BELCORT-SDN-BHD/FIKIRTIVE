@@ -19,3 +19,14 @@ export async function isAllowedEmail(email: string | null | undefined): Promise<
     return false; // DB outage → fail closed (founder/env checks already passed above)
   }
 }
+
+/** Dedicated founder list (OPT-6 P1b) — distinct from AUTH_ALLOWED_EMAILS. Founders
+ *  are seeded to super-admin on sign-in. next-auth-free so both auth stacks share it. */
+export function isFounderAdmin(email: string | null | undefined): boolean {
+  if (!email) return false;
+  const list = (process.env.FOUNDER_ADMIN_EMAILS ?? "")
+    .split(",")
+    .map((e) => e.trim().toLowerCase())
+    .filter(Boolean);
+  return list.includes(email.toLowerCase());
+}
