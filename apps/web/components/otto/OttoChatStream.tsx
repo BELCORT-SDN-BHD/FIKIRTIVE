@@ -1,11 +1,20 @@
 "use client";
-import React, { useState } from "react";
+import React, { useEffect, useRef, useState } from "react";
 import { useChat } from "@ai-sdk/react";
 import { DefaultChatTransport } from "ai";
 import { useStickToBottom } from "use-stick-to-bottom";
 import { OttoAvatar, Button } from "@/components/fk";
 import { getCoworkThreadClient } from "@/lib/cowork-fetch";
 import { threadToUiMessages, type OttoUiMessage } from "@/lib/otto-ui-messages";
+import {
+  resultJobIds,
+  hasWorkingJob as computeHasWorkingJob,
+  proposeCardId,
+  injectCardMessage,
+  appendDurableResults,
+} from "@/lib/otto-inject-helpers";
+import { OttoPlanCard } from "./OttoPlanCard";
+import { OttoResult } from "./OttoResult";
 import { TextPart } from "./parts/TextPart";
 import { StatusLine } from "./parts/StatusLine";
 import { ReasoningPart } from "./parts/ReasoningPart";
@@ -45,14 +54,27 @@ function latestUserText(messages: OttoUiMessage[]): string {
 
 export function OttoChatStream({
   projectId,
+  entities,
   thread,
   onThreadUpdate,
+  onEditByHand,
 }: OttoChatStreamProps) {
   const [text, setText] = useState("");
   /** Latest data-status received for the in-flight turn; reset on each new turn. */
   const [liveStatus, setLiveStatus] = useState<OttoStatusData | null>(null);
   /** data-error text for the in-flight turn; stays visible after the turn ends. */
   const [streamError, setStreamError] = useState<string | null>(null);
+  /** Card ids the run paused on (needs_approval) — drives OttoPlanCard's parked vs.
+   *  proposed spend path. Mirrors OttoConversation's pendingApprovalCardIds set. */
+  const [pendingApprovalCardIds, setPendingApprovalCardIds] = useState<Set<string>>(new Set());
+
+  // Bounded in-flight poll for the async worker result (ported from OttoConversation):
+  // a GEN_CARD whose genJobId is set but with no terminal GEN_RESULT/TURN_ERROR keeps
+  // hasWorkingJob true; we poll the durable thread and inject the result when it lands.
+  const POLL_MS = 2500;
+  const MAX_POLLS = 48; // ~2 minutes
+  const [pollGaveUp, setPollGaveUp] = useState(false);
+  const pollCountRef = useRef(0);
 
   // useChat constructs its Chat (and captures `transport` + initial `messages`) ONCE.
   // We build both in a one-time useState initializer so they're stable across renders.
@@ -84,17 +106,41 @@ export function OttoChatStream({
     messages: threadToUiMessages(thread),
   }));
 
-  const { messages, sendMessage, status, error } = useChat<OttoUiMessage>({
+  const { messages, setMessages, sendMessage, status, error } = useChat<OttoUiMessage>({
     transport: chatInit.transport,
     messages: chatInit.messages,
     // onData fires for each data-* part as it streams in. We capture data-status
-    // (ephemeral live progress) and data-error (must stay visible — it's the only
-    // user feedback when no assistant message was persisted).
+    // (ephemeral live progress + needs_approval card ids), data-error (must stay
+    // visible — the only user feedback when no assistant message persisted), and
+    // data-tool-propose (a card was proposed mid-turn → fetch the durable thread and
+    // inject the full GEN_CARD so the plan card renders inline promptly).
     onData: (part) => {
       const s = asStatusData(part);
-      if (s) { setLiveStatus(s); return; }
+      if (s) {
+        setLiveStatus(s);
+        // A paused run reports the cards awaiting approval — track them so the plan
+        // card uses the parked (ottoApprove) spend path instead of coworkGenerate.
+        if (s.kind === "needs_approval" && s.pendingCardIds?.length) {
+          setPendingApprovalCardIds((cur) => {
+            const next = new Set(cur);
+            s.pendingCardIds.forEach((id) => next.add(id));
+            return next;
+          });
+        }
+        return;
+      }
       const e = asErrorData(part);
-      if (e) { setStreamError(e.text); }
+      if (e) { setStreamError(e.text); return; }
+      // data-tool-propose: the propose tool persisted a durable GEN_CARD synchronously,
+      // but the stream part carries only { cardId, … }. Fetch the durable thread and
+      // inject the GEN_CARD (full payload) into the message list, deduped by cardId.
+      const cardId = proposeCardId(part);
+      if (cardId) {
+        void (async () => {
+          const fresh = await getCoworkThreadClient(thread.id);
+          if (fresh) setMessages((cur) => injectCardMessage(cur, fresh, cardId));
+        })();
+      }
     },
     onFinish: () => {
       // Sync the parent thread list + make reload authoritative. Non-blocking.
@@ -108,6 +154,50 @@ export function OttoChatStream({
   const isStreaming = status === "streaming";
   const isBusy = status === "submitted" || status === "streaming";
 
+  // Derived from the rendered messages (which carry durable metadata): which jobs
+  // already have a result (so the card shows "making this now" not a dupe result),
+  // and whether any approved job is still working (drives the poll + working state).
+  const jobsWithResult = resultJobIds(messages);
+  const hasWorkingJob = computeHasWorkingJob(messages);
+
+  // Refetch the durable thread and inject any new worker-output messages
+  // (GEN_RESULT / TURN_ERROR) into the useChat list, deduped by durableId. NEVER
+  // re-injects TEXT or GEN_CARD — those already arrived via the stream / card injection.
+  async function pollAndInjectResults() {
+    const fresh = await getCoworkThreadClient(thread.id);
+    if (!fresh) return;
+    setMessages((cur) => appendDurableResults(cur, fresh));
+    onThreadUpdate(fresh);
+  }
+
+  // Reset the give-up state whenever we switch threads (mirror OttoConversation).
+  // Guarded by a prev-id ref so the reset runs only on an actual thread change, not
+  // on the mount render (where the state is already fresh) — avoids a cascading render.
+  const prevThreadIdRef = useRef(thread.id);
+  useEffect(() => {
+    if (prevThreadIdRef.current === thread.id) return;
+    prevThreadIdRef.current = thread.id;
+    setPollGaveUp(false);
+    pollCountRef.current = 0;
+  }, [thread.id]);
+
+  // Bounded poll: a worker that fails-closed without writing a terminal message would
+  // otherwise keep hasWorkingJob true forever. After ~2 min we stop and show "Check again".
+  useEffect(() => {
+    if (!hasWorkingJob || pollGaveUp) return;
+    const t = setInterval(() => {
+      pollCountRef.current += 1;
+      if (pollCountRef.current >= MAX_POLLS) {
+        setPollGaveUp(true);
+        clearInterval(t);
+        return;
+      }
+      void pollAndInjectResults();
+    }, POLL_MS);
+    return () => clearInterval(t);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [hasWorkingJob, thread.id, pollGaveUp]);
+
   const { scrollRef, contentRef, isAtBottom, scrollToBottom } = useStickToBottom();
 
   function submit() {
@@ -117,6 +207,9 @@ export function OttoChatStream({
     // Reset ephemeral stream state for the new turn.
     setLiveStatus(null);
     setStreamError(null);
+    // A new turn may queue a new generation — re-arm polling (mirror OttoConversation).
+    setPollGaveUp(false);
+    pollCountRef.current = 0;
     // Pass the live projectId/threadId via the per-call body; prepareSendMessagesRequest
     // reads them off `body` and shapes the strict route payload.
     void sendMessage({ text: trimmed }, { body: { projectId, threadId: thread.id } });
@@ -179,11 +272,83 @@ export function OttoChatStream({
         >
           {messages.map((m, mi) => {
             const isLastMessage = mi === messages.length - 1;
-            // Render text parts + reasoning parts for each message.
-            // data-status / data-error / data-tool-propose parts are handled
-            // via onData (ephemeral state) and do NOT render inline per-message.
-            // Task 5: swap the text placeholder for the real OttoPlanCard / OttoResult
-            // widget here using m.metadata (kind / payload / genJobId).
+            const kind = m.metadata?.kind;
+
+            // Durable non-TEXT messages render as their REAL widget (the placeholder
+            // text from threadToUiMessages is ignored — metadata carries the payload).
+            // Live-streamed text/reasoning has no durable metadata (kind undefined) and
+            // falls through to the text/reasoning renderer below.
+            if (kind === "GEN_CARD") {
+              const genJobId = m.metadata?.genJobId ?? null;
+              return (
+                <WidgetRow key={m.id}>
+                  <OttoPlanCard
+                    cardId={m.metadata!.durableId}
+                    payload={m.metadata?.payload}
+                    entities={entities}
+                    threadId={thread.id}
+                    projectId={projectId}
+                    alreadyGenerated={!!genJobId}
+                    hasDurableResult={!!genJobId && jobsWithResult.has(genJobId)}
+                    pendingApproval={pendingApprovalCardIds.has(m.metadata!.durableId)}
+                    onApproved={() => {
+                      // Drop from the pending set; re-arm the poll (a freshly-approved
+                      // card queues a new job even if a prior job hit the give-up cap).
+                      setPendingApprovalCardIds((cur) => {
+                        const next = new Set(cur);
+                        next.delete(m.metadata!.durableId);
+                        return next;
+                      });
+                      setPollGaveUp(false);
+                      pollCountRef.current = 0;
+                      void pollAndInjectResults();
+                    }}
+                    onChangeSomething={() => {
+                      const ta = document.getElementById("otto-composer") as HTMLTextAreaElement | null;
+                      ta?.focus();
+                    }}
+                  />
+                </WidgetRow>
+              );
+            }
+
+            if (kind === "GEN_RESULT") {
+              const r = (m.metadata?.payload ?? null) as
+                | { kind?: string; model?: string; urls?: string[]; generationIds?: string[]; costUsd?: number }
+                | null;
+              return (
+                <WidgetRow key={m.id}>
+                  <OttoResult payload={r} onEditByHand={onEditByHand} />
+                </WidgetRow>
+              );
+            }
+
+            if (kind === "DENIAL" || kind === "TURN_ERROR") {
+              return (
+                <div key={m.id} style={{ display: "flex", alignItems: "flex-start", gap: "var(--space-3)" }}>
+                  <OttoAvatar size={32} state="idle" />
+                  <div
+                    style={{
+                      padding: "var(--space-3) var(--space-4)",
+                      background: "var(--error-100)",
+                      color: "var(--error-700)",
+                      borderRadius: "0 var(--radius-lg) var(--radius-lg) var(--radius-lg)",
+                      fontSize: "var(--text-sm)",
+                      lineHeight: "var(--leading-normal)",
+                    }}
+                  >
+                    {/* DENIAL/TURN_ERROR carry their user-facing copy on the durable
+                        message text, which threadToUiMessages put into the text part. */}
+                    {(m.parts.find((p) => p.type === "text") as { text?: string } | undefined)?.text}
+                  </div>
+                </div>
+              );
+            }
+
+            // PLAN messages are internal reasoning — skip in simple mode.
+            if (kind === "PLAN") return null;
+
+            // TEXT (or live-streamed, metadata-less) messages → text + reasoning parts.
             const textParts = m.parts.filter(
               (p): p is { type: "text"; text: string } => p.type === "text",
             );
@@ -215,6 +380,56 @@ export function OttoChatStream({
               in-flight; hides automatically once isBusy is false (replaces the
               static "Otto is thinking…" block from Task 3). */}
           <StatusLine isBusy={isBusy} liveStatus={liveStatus} />
+
+          {/* Async generation in progress: a card was approved (genJobId set) and the
+              worker hasn't written a terminal result yet. Ported from OttoConversation. */}
+          {!isBusy && hasWorkingJob && !pollGaveUp && (
+            <div style={{ display: "flex", alignItems: "flex-start", gap: "var(--space-3)" }}>
+              <OttoAvatar size={32} state="thinking" />
+              <div
+                style={{
+                  padding: "var(--space-3) var(--space-4)",
+                  background: "var(--surface-card)",
+                  borderRadius: "0 var(--radius-lg) var(--radius-lg) var(--radius-lg)",
+                  border: "1px solid var(--border-subtle)",
+                  fontSize: "var(--text-sm)",
+                  color: "var(--text-muted)",
+                  fontStyle: "italic",
+                }}
+              >
+                Otto is making this — this can take a moment…
+              </div>
+            </div>
+          )}
+
+          {!isBusy && hasWorkingJob && pollGaveUp && (
+            <div style={{ display: "flex", alignItems: "flex-start", gap: "var(--space-3)" }}>
+              <OttoAvatar size={32} state="idle" />
+              <div
+                style={{
+                  padding: "var(--space-3) var(--space-4)",
+                  background: "var(--surface-card)",
+                  border: "1px solid var(--border-subtle)",
+                  borderRadius: "0 var(--radius-lg) var(--radius-lg) var(--radius-lg)",
+                  fontSize: "var(--text-sm)",
+                  color: "var(--text-body)",
+                }}
+              >
+                This is taking longer than usual. Your credits are safe — nothing is charged until a result comes back.{" "}
+                <button
+                  type="button"
+                  onClick={() => {
+                    setPollGaveUp(false);
+                    pollCountRef.current = 0;
+                    void pollAndInjectResults();
+                  }}
+                  style={{ background: "none", border: "none", padding: 0, color: "var(--brand)", fontWeight: "var(--weight-semibold)" as React.CSSProperties["fontWeight"], cursor: "pointer", textDecoration: "underline" }}
+                >
+                  Check again
+                </button>
+              </div>
+            </div>
+          )}
 
           {/* data-error: stays visible after the turn ends — it's the only user
               feedback when the route errors before persisting an assistant message
@@ -341,6 +556,17 @@ export function OttoChatStream({
           </div>
         </div>
       </div>
+    </div>
+  );
+}
+
+/** Avatar + flexible body row used for the inline plan card / result widgets
+ *  (mirrors OttoConversation's MessageRow layout for GEN_CARD / GEN_RESULT). */
+function WidgetRow({ children }: { children: React.ReactNode }) {
+  return (
+    <div style={{ display: "flex", alignItems: "flex-start", gap: "var(--space-3)" }}>
+      <OttoAvatar size={32} state="idle" />
+      <div style={{ flex: 1, minWidth: 0 }}>{children}</div>
     </div>
   );
 }
