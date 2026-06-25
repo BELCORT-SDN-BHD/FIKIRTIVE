@@ -1,0 +1,939 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<script src="./support.js"></script>
+</head>
+<body>
+<x-dc>
+<helmet>
+<link rel="stylesheet" href="_ds/fikirtive-design-system-2bb27e26-b466-43a3-8da9-79808d411b55/tokens/fonts.css">
+<link rel="stylesheet" href="_ds/fikirtive-design-system-2bb27e26-b466-43a3-8da9-79808d411b55/tokens/colors.css">
+<link rel="stylesheet" href="_ds/fikirtive-design-system-2bb27e26-b466-43a3-8da9-79808d411b55/tokens/typography.css">
+<link rel="stylesheet" href="_ds/fikirtive-design-system-2bb27e26-b466-43a3-8da9-79808d411b55/tokens/spacing.css">
+<link rel="stylesheet" href="_ds/fikirtive-design-system-2bb27e26-b466-43a3-8da9-79808d411b55/tokens/radius.css">
+<link rel="stylesheet" href="_ds/fikirtive-design-system-2bb27e26-b466-43a3-8da9-79808d411b55/tokens/shadows.css">
+<link rel="stylesheet" href="_ds/fikirtive-design-system-2bb27e26-b466-43a3-8da9-79808d411b55/tokens/motion.css">
+<link rel="stylesheet" href="_ds/fikirtive-design-system-2bb27e26-b466-43a3-8da9-79808d411b55/styles.css">
+<script src="_ds/fikirtive-design-system-2bb27e26-b466-43a3-8da9-79808d411b55/_ds_bundle.js"></script>
+<script src="https://unpkg.com/lucide@latest"></script>
+<style>
+  * { box-sizing: border-box; }
+  html, body { margin: 0; height: 100%; }
+  .otto-scroll::-webkit-scrollbar { width: 10px; }
+  .otto-scroll::-webkit-scrollbar-thumb { background: var(--neutral-300); border-radius: 8px; border: 3px solid var(--cream); }
+  .goal-tile:hover { transform: translateY(-3px); box-shadow: var(--shadow-lg); }
+  .ad-tile:hover { transform: translateY(-3px); }
+  .nav-item:hover { background: var(--surface-sunken); }
+  .cast-tile:hover { transform: translateY(-3px); box-shadow: var(--shadow-lg); }
+  @keyframes ottoIn { from { opacity: 0; transform: translateY(10px); } to { opacity: 1; transform: none; } }
+  .msg-in { animation: ottoIn .32s cubic-bezier(0.34,1.56,0.64,1) both; }
+</style>
+</helmet>
+
+<div style="display:flex; height:100vh; width:100%; background:var(--bg-page); font-family:var(--font-sans); color:var(--text-body); overflow:hidden;">
+
+  <!-- ===== LEFT NAV ===== -->
+  <aside style="width:260px; flex:none; background:var(--surface-card); border-right:1px solid var(--border-subtle); display:flex; flex-direction:column; padding:20px 0;">
+    <div style="display:flex; align-items:center; gap:10px; padding:0 22px 18px;">
+      <img src="assets/logo-mark.svg" height="30" alt="">
+      <span style="font-family:var(--font-display); font-weight:700; font-size:20px; letter-spacing:-0.02em; color:var(--text-strong);">FIKIRTIVE</span>
+    </div>
+
+    <div style="padding:0 12px 10px;">
+      <button class="goal-tile" onClick="{{ onNewCampaign }}" style="width:100%; display:flex; align-items:center; gap:10px; cursor:pointer; border:none; background:var(--brand); color:#fff; font-family:var(--font-sans); font-size:15px; font-weight:700; padding:12px 14px; border-radius:var(--radius-md); box-shadow:var(--shadow-brand-sm); transition:transform .15s var(--ease-spring), box-shadow .15s ease;">
+        <i data-lucide="plus" style="width:19px; height:19px;"></i>
+        <span style="flex:1; text-align:left;">New campaign</span>
+      </button>
+    </div>
+
+    <nav style="display:flex; flex-direction:column; gap:3px; padding:0 12px;">
+      <sc-for list="{{ navItems }}" as="n" hint-placeholder-count="4">
+        <button class="nav-item" onClick="{{ n.onClick }}" style="{{ n.style }}">
+          <i data-lucide="{{ n.icon }}" style="width:20px; height:20px;"></i>
+          <span style="flex:1; text-align:left;">{{ n.label }}</span>
+        </button>
+      </sc-for>
+    </nav>
+
+    <!-- recent conversations -->
+    <div class="otto-scroll" style="flex:1; min-height:0; overflow-y:auto; margin-top:18px; padding:0 12px;">
+      <div style="font-size:12px; font-weight:700; letter-spacing:.05em; text-transform:uppercase; color:var(--text-faint); padding:0 6px 8px;">Recent campaigns</div>
+      <div style="display:flex; flex-direction:column; gap:2px;">
+        <sc-for list="{{ conversations }}" as="c" hint-placeholder-count="5">
+          <button class="nav-item" onClick="{{ c.onOpen }}" style="{{ c.style }}">
+            <span style="width:9px; height:9px; flex:none; border-radius:3px; background:{{ c.dot }};"></span>
+            <span style="flex:1; min-width:0; text-align:left; overflow:hidden; text-overflow:ellipsis; white-space:nowrap;">{{ c.title }}</span>
+          </button>
+        </sc-for>
+      </div>
+    </div>
+
+    <div style="margin:12px 16px; padding:14px 16px; background:var(--surface-sunken); border-radius:var(--radius-lg);">
+      <div style="font-size:12px; color:var(--text-faint); font-weight:600;">Your balance</div>
+      <div style="display:flex; align-items:baseline; gap:8px; margin-top:2px;">
+        <span style="font-family:var(--font-display); font-weight:700; font-size:24px; color:var(--text-strong); letter-spacing:-0.02em;">{{ balanceLabel }}</span>
+        <span style="font-size:13px; color:var(--text-muted);">{{ creditsLabel }}</span>
+      </div>
+    </div>
+
+    <div style="display:flex; align-items:center; gap:11px; padding:14px 20px 0; border-top:1px solid var(--border-subtle); margin:0 0 0;">
+      <span style="width:36px; height:36px; flex:none; border-radius:50%; background:var(--honey-200); color:var(--honey-700); display:flex; align-items:center; justify-content:center; font-weight:700; font-size:15px;">{{ userInitial }}</span>
+      <div style="flex:1; min-width:0;">
+        <div style="font-weight:700; font-size:14px; color:var(--text-strong);">{{ userName }}</div>
+        <div style="font-size:12px; color:var(--text-faint);">Klein's Bakery</div>
+      </div>
+    </div>
+  </aside>
+
+  <!-- ===== MAIN ===== -->
+  <main style="flex:1; min-width:0; position:relative; display:flex; flex-direction:column; overflow:hidden;">
+
+    <!-- ===================== OTTO ROUTE ===================== -->
+    <sc-if value="{{ isOtto }}" hint-placeholder-val="{{ true }}">
+      <div style="flex:1; display:flex; flex-direction:column; min-height:0;">
+
+        <!-- ---- FRONT DOOR ---- -->
+        <sc-if value="{{ showFrontdoor }}" hint-placeholder-val="{{ true }}">
+          <div class="otto-scroll" style="flex:1; overflow-y:auto; display:flex; flex-direction:column;">
+            <div style="margin:auto; width:100%; max-width:720px; padding:40px 32px; display:flex; flex-direction:column; align-items:center;">
+              <div style="display:flex; flex-direction:column; align-items:center; text-align:center; gap:14px;">
+                <x-import component-from-global-scope="FIKIRTIVEDesignSystem_2bb27e.OttoAvatar" size="{{ 76 }}" state="idle" hint-size="76px,76px"></x-import>
+                <h1 style="font-family:var(--font-display); font-weight:700; font-size:38px; letter-spacing:-0.025em; color:var(--text-strong); margin:6px 0 0;">Hi {{ userName }} — what should we make today?</h1>
+                <p style="font-size:18px; line-height:1.5; color:var(--text-muted); max-width:480px; margin:0;">Tell me in your own words, or pick a goal. No experience needed — I'll explain as we go.</p>
+              </div>
+
+              <!-- big composer -->
+              <div style="width:100%; margin-top:28px; background:var(--surface-card); border:1.5px solid var(--border-subtle); border-radius:var(--radius-xl); box-shadow:var(--shadow-md); padding:18px 20px 14px;">
+                <input value="{{ draft }}" onInput="{{ onDraft }}" onKeyDown="{{ onKeyFront }}" placeholder="Tell Otto what you need, like 'promote my new sourdough'…" style="width:100%; border:none; outline:none; background:transparent; font-family:var(--font-sans); font-size:18px; color:var(--text-strong); padding:4px 0;">
+                <div style="display:flex; align-items:center; justify-content:space-between; gap:12px; margin-top:14px;">
+                  <span style="display:flex; align-items:center; gap:7px; font-size:13px; color:var(--text-faint);">
+                    <img src="assets/otto.svg" width="22" height="22" alt="" style="flex:none;"> Otto plans &amp; makes it — you approve before anything costs money
+                  </span>
+                  <x-import component-from-global-scope="FIKIRTIVEDesignSystem_2bb27e.Button" variant="primary" size="md" onClick="{{ onJustTell }}" right-icon="{{ icArrowUp }}" hint-size="auto,44px">Let's go</x-import>
+                </div>
+              </div>
+
+              <!-- quick goal chips -->
+              <div style="display:flex; flex-wrap:wrap; justify-content:center; gap:10px; margin-top:18px;">
+                <sc-for list="{{ goals }}" as="g" hint-placeholder-count="6">
+                  <button class="ad-tile" onClick="{{ g.onClick }}" style="display:flex; align-items:center; gap:9px; cursor:pointer; background:var(--surface-card); border:1px solid var(--border-subtle); border-radius:999px; padding:10px 16px; box-shadow:var(--shadow-sm); font-family:var(--font-sans); transition:transform .15s var(--ease-spring), box-shadow .15s ease;">
+                    <i data-lucide="{{ g.icon }}" style="width:18px; height:18px; color:var(--brand);"></i>
+                    <span style="font-weight:600; font-size:14.5px; color:var(--text-strong);">{{ g.label }}</span>
+                  </button>
+                </sc-for>
+              </div>
+            </div>
+          </div>
+        </sc-if>
+
+        <!-- ---- CONVERSATION ---- -->
+        <sc-if value="{{ showConversation }}" hint-placeholder-val="{{ true }}">
+          <header style="display:flex; align-items:center; justify-content:space-between; gap:16px; padding:16px 28px; border-bottom:1px solid var(--border-subtle); background:rgba(246,245,242,.8); backdrop-filter:blur(8px);">
+            <div style="display:flex; align-items:center; gap:12px;">
+              <button class="nav-item" onClick="{{ onStartOver }}" style="display:flex; align-items:center; gap:6px; border:none; background:transparent; cursor:pointer; color:var(--text-muted); font-family:var(--font-sans); font-size:14px; font-weight:600; padding:7px 10px; border-radius:var(--radius-sm);">
+                <i data-lucide="arrow-left" style="width:18px; height:18px;"></i> Start over
+              </button>
+              <div style="width:1px; height:22px; background:var(--border-subtle);"></div>
+              <span style="font-family:var(--font-display); font-weight:700; font-size:18px; color:var(--text-strong); letter-spacing:-0.01em;">{{ goal }}</span>
+            </div>
+            <div style="display:flex; align-items:center; gap:7px; background:var(--surface-sunken); padding:7px 14px; border-radius:999px;">
+              <i data-lucide="wallet" style="width:16px; height:16px; color:var(--text-muted);"></i>
+              <span style="font-weight:700; font-size:14px; color:var(--text-strong);">{{ balanceLabel }}</span>
+              <span style="font-size:13px; color:var(--text-faint);">· {{ creditsLabel }}</span>
+            </div>
+          </header>
+
+          <div class="otto-scroll" style="flex:1; overflow-y:auto; padding:28px 0;" data-thread="1">
+            <div style="max-width:760px; margin:0 auto; padding:0 28px; display:flex; flex-direction:column; gap:18px;">
+
+              <sc-for list="{{ thread }}" as="m" hint-placeholder-count="2">
+                <sc-if value="{{ m.isOtto }}">
+                  <div class="msg-in" style="display:flex; gap:12px; align-items:flex-end;">
+                    <span style="width:36px; height:36px; flex:none; border-radius:50%; background:var(--coral-50); display:flex; align-items:center; justify-content:center;"><img src="assets/otto.svg" width="26" height="26" alt=""></span>
+                    <div style="background:var(--surface-card); border-radius:4px 20px 20px 20px; box-shadow:var(--shadow-sm); padding:14px 18px; font-size:16px; line-height:1.55; color:var(--text-body); max-width:560px;">{{ m.text }}</div>
+                  </div>
+                </sc-if>
+                <sc-if value="{{ m.isUser }}">
+                  <div class="msg-in" style="display:flex; gap:12px; align-items:flex-end; justify-content:flex-end;">
+                    <div style="background:var(--brand); color:#fff; border-radius:20px 20px 4px 20px; padding:12px 18px; font-size:16px; line-height:1.5; max-width:520px; box-shadow:var(--shadow-brand-sm);">{{ m.text }}</div>
+                    <span style="width:36px; height:36px; flex:none; border-radius:50%; background:var(--honey-200); color:var(--honey-700); display:flex; align-items:center; justify-content:center; font-weight:700; font-size:14px;">{{ userInitial }}</span>
+                  </div>
+                </sc-if>
+              </sc-for>
+
+              <!-- active panel -->
+              <div style="padding-left:48px; display:flex; flex-direction:column; gap:14px;">
+
+                <!-- quick reply chips -->
+                <sc-if value="{{ phaseAsking }}">
+                  <div style="display:flex; flex-wrap:wrap; gap:10px;">
+                    <sc-for list="{{ chips }}" as="c" hint-placeholder-count="3">
+                      <button onClick="{{ c.onPick }}" class="ad-tile" style="cursor:pointer; border:1.5px solid var(--brand-soft); background:var(--surface-card); color:var(--brand-press); border-radius:999px; padding:11px 18px; font-family:var(--font-sans); font-size:15px; font-weight:600; transition:transform .15s var(--ease-spring), background .15s ease;">{{ c.label }}</button>
+                    </sc-for>
+                  </div>
+                </sc-if>
+
+                <!-- PLAN CARD -->
+                <sc-if value="{{ phasePlan }}">
+                  <div style="max-width:480px;">
+                    <x-import component-from-global-scope="FIKIRTIVEDesignSystem_2bb27e.Card" variant="tint" padding="md" hint-size="480px,auto">
+                      <div style="display:flex; align-items:center; gap:9px; margin-bottom:14px;">
+                        <i data-lucide="clipboard-list" style="width:20px; height:20px; color:var(--brand);"></i>
+                        <span style="font-weight:700; font-size:16px; color:var(--text-strong);">Here's what I'll make</span>
+                      </div>
+                      <div style="display:flex; flex-direction:column; gap:9px;">
+                        <sc-for list="{{ planItems }}" as="p" hint-placeholder-count="3">
+                          <div style="display:flex; align-items:center; gap:13px; background:var(--surface-card); border-radius:var(--radius-md); padding:12px 14px;">
+                            <span style="width:40px; height:40px; flex:none; border-radius:12px; background:var(--brand-soft); color:var(--on-brand-soft); display:flex; align-items:center; justify-content:center;"><i data-lucide="{{ p.icon }}" style="width:21px; height:21px;"></i></span>
+                            <div style="flex:1;">
+                              <div style="font-weight:700; font-size:15px; color:var(--text-strong);">{{ p.title }}</div>
+                              <div style="font-size:13px; color:var(--text-muted);">{{ p.sub }}</div>
+                            </div>
+                          </div>
+                        </sc-for>
+                      </div>
+                      <div style="margin-top:16px; padding-top:16px; border-top:1px solid var(--border-subtle);">
+                        <div style="font-family:var(--font-display); font-weight:700; font-size:21px; color:var(--text-strong); letter-spacing:-0.01em;">{{ spendMain }}</div>
+                        <div style="font-size:14px; color:var(--text-muted); margin-top:3px;">{{ afterLine }}</div>
+                      </div>
+                      <div style="display:flex; gap:10px; margin-top:16px;">
+                        <x-import component-from-global-scope="FIKIRTIVEDesignSystem_2bb27e.Button" variant="primary" size="md" onClick="{{ onApprove }}" left-icon="{{ icCheck }}" hint-size="auto,44px">{{ approveLabel }}</x-import>
+                        <x-import component-from-global-scope="FIKIRTIVEDesignSystem_2bb27e.Button" variant="secondary" size="md" onClick="{{ onChangePlan }}" hint-size="auto,44px">Change something</x-import>
+                      </div>
+                      <div style="display:flex; align-items:center; gap:6px; margin-top:12px; font-size:13px; color:var(--text-faint);">
+                        <i data-lucide="shield-check" style="width:15px; height:15px;"></i> Nothing is charged until you approve — and you can always undo.
+                      </div>
+                    </x-import>
+                  </div>
+                </sc-if>
+
+                <!-- WORKING -->
+                <sc-if value="{{ phaseWorking }}">
+                  <div style="max-width:480px;">
+                    <x-import component-from-global-scope="FIKIRTIVEDesignSystem_2bb27e.Card" variant="default" padding="md" hint-size="480px,auto">
+                      <div style="display:flex; align-items:center; gap:12px; margin-bottom:14px;">
+                        <x-import component-from-global-scope="FIKIRTIVEDesignSystem_2bb27e.OttoAvatar" size="{{ 40 }}" state="thinking" hint-size="40px,40px"></x-import>
+                        <div>
+                          <div style="font-weight:700; font-size:15px; color:var(--text-strong);">Otto is on it</div>
+                          <div style="font-size:13.5px; color:var(--text-muted);">{{ workLabel }}</div>
+                        </div>
+                      </div>
+                      <x-import component-from-global-scope="FIKIRTIVEDesignSystem_2bb27e.ProgressBar" value="{{ workPct }}" tone="teal" showValue="{{ true }}" hint-size="100%,14px"></x-import>
+                      <sc-if value="{{ hasNote }}">
+                        <div style="display:flex; align-items:center; gap:8px; margin-top:12px; padding:10px 12px; background:var(--warning-100); border-radius:var(--radius-md); font-size:13.5px; color:var(--warning-700);">
+                          <i data-lucide="refresh-cw" style="width:16px; height:16px; flex:none;"></i> {{ workNote }}
+                        </div>
+                      </sc-if>
+                    </x-import>
+                  </div>
+                </sc-if>
+
+                <!-- AD-PACK CHOOSER -->
+                <sc-if value="{{ phaseChoose }}">
+                  <div style="display:grid; grid-template-columns:repeat(2,1fr); gap:16px; max-width:620px;">
+                    <sc-for list="{{ ads }}" as="a" hint-placeholder-count="4">
+                      <button class="ad-tile" onClick="{{ a.onPick }}" style="cursor:pointer; border:none; padding:0; background:var(--surface-card); border-radius:var(--radius-lg); overflow:hidden; text-align:left; box-shadow:{{ a.cardShadow }}; transition:transform .18s var(--ease-spring); position:relative;">
+                        <sc-if value="{{ a.isPick }}">
+                          <span style="position:absolute; top:12px; left:12px; z-index:2; display:flex; align-items:center; gap:5px; background:var(--accent); color:#fff; font-size:12px; font-weight:700; padding:5px 11px; border-radius:999px; box-shadow:var(--shadow-accent);"><i data-lucide="sparkles" style="width:13px; height:13px;"></i> Otto's pick</span>
+                        </sc-if>
+                        <div style="height:172px; background:{{ a.bg }}; color:{{ a.fg }}; padding:18px; display:flex; flex-direction:column; justify-content:flex-end; gap:4px;">
+                          <div style="font-size:11px; font-weight:700; letter-spacing:.07em; text-transform:uppercase; opacity:.85;">{{ a.kicker }}</div>
+                          <div style="font-family:var(--font-display); font-weight:700; font-size:26px; line-height:1.05; white-space:pre-line; letter-spacing:-0.015em;">{{ a.headline }}</div>
+                          <div style="font-size:13px; opacity:.9; margin-top:2px;">{{ a.sub }}</div>
+                        </div>
+                        <div style="padding:11px 15px; display:flex; align-items:center; gap:7px; font-size:12.5px; color:var(--text-muted);">
+                          <i data-lucide="{{ a.formatIcon }}" style="width:15px; height:15px;"></i>{{ a.format }}
+                        </div>
+                      </button>
+                    </sc-for>
+                  </div>
+                </sc-if>
+
+                <!-- RESULT -->
+                <sc-if value="{{ phaseResult }}">
+                  <div style="max-width:540px;">
+                    <x-import component-from-global-scope="FIKIRTIVEDesignSystem_2bb27e.Card" variant="default" padding="md" hint-size="540px,auto">
+                      <div style="border-radius:var(--radius-lg); overflow:hidden; box-shadow:var(--shadow-md);">
+                        <div style="height:300px; background:{{ chosenAd.bg }}; color:{{ chosenAd.fg }}; padding:28px; display:flex; flex-direction:column; justify-content:flex-end; gap:6px;">
+                          <div style="font-size:13px; font-weight:700; letter-spacing:.07em; text-transform:uppercase; opacity:.85;">{{ chosenAd.kicker }}</div>
+                          <div style="font-family:var(--font-display); font-weight:700; font-size:40px; line-height:1.02; white-space:pre-line; letter-spacing:-0.02em;">{{ chosenAd.headline }}</div>
+                          <div style="font-size:15px; opacity:.9; margin-top:2px;">{{ chosenAd.sub }}</div>
+                        </div>
+                      </div>
+                      <div style="display:flex; align-items:center; gap:7px; margin:14px 0 6px; font-size:12.5px; color:var(--text-faint);">
+                        <i data-lucide="{{ chosenAd.formatIcon }}" style="width:15px; height:15px;"></i>{{ chosenAd.format }}
+                      </div>
+                      <div style="background:var(--surface-sunken); border-radius:var(--radius-md); padding:13px 15px; font-size:14.5px; line-height:1.55; color:var(--text-body);">{{ chosenAd.caption }}</div>
+                      <div style="display:flex; flex-wrap:wrap; gap:10px; margin-top:16px;">
+                        <x-import component-from-global-scope="FIKIRTIVEDesignSystem_2bb27e.Button" variant="primary" size="md" onClick="{{ onDownload }}" left-icon="{{ icDownload }}" hint-size="auto,44px">Download</x-import>
+                        <x-import component-from-global-scope="FIKIRTIVEDesignSystem_2bb27e.Button" variant="soft" size="md" onClick="{{ onCopy }}" left-icon="{{ icCopy }}" hint-size="auto,44px">Copy to post</x-import>
+                        <x-import component-from-global-scope="FIKIRTIVEDesignSystem_2bb27e.Button" variant="secondary" size="md" onClick="{{ onChangeResult }}" hint-size="auto,44px">Ask me to change it</x-import>
+                        <x-import component-from-global-scope="FIKIRTIVEDesignSystem_2bb27e.Button" variant="ghost" size="md" onClick="{{ onEditHand }}" left-icon="{{ icEdit }}" hint-size="auto,44px">Edit by hand</x-import>
+                      </div>
+                    </x-import>
+                  </div>
+                </sc-if>
+
+              </div>
+            </div>
+          </div>
+
+          <!-- composer -->
+          <sc-if value="{{ showComposer }}">
+            <div style="border-top:1px solid var(--border-subtle); padding:16px 28px 18px; background:var(--bg-page);">
+              <div style="max-width:760px; margin:0 auto; background:var(--surface-card); border:1px solid var(--border-subtle); border-radius:var(--radius-xl); box-shadow:var(--shadow-md); padding:12px 14px; display:flex; align-items:center; gap:10px;">
+                <input value="{{ draft }}" onInput="{{ onDraft }}" onKeyDown="{{ onKeyChat }}" placeholder="Tell Otto anything — &ldquo;make it warmer&rdquo;, &ldquo;add a TikTok&rdquo;" style="flex:1; border:none; outline:none; background:transparent; font-family:var(--font-sans); font-size:16px; color:var(--text-strong);">
+                <x-import component-from-global-scope="FIKIRTIVEDesignSystem_2bb27e.Button" variant="primary" size="sm" onClick="{{ onSend }}" right-icon="{{ icArrowUp }}" hint-size="auto,38px">Send</x-import>
+              </div>
+              <p style="max-width:760px; margin:8px auto 0; text-align:center; font-size:12.5px; color:var(--text-faint);">You'll always see and approve anything before it costs money.</p>
+            </div>
+          </sc-if>
+        </sc-if>
+      </div>
+    </sc-if>
+
+    <!-- ===================== MY STUFF ===================== -->
+    <sc-if value="{{ isStuff }}">
+      <div class="otto-scroll" style="flex:1; overflow-y:auto;">
+        <div style="max-width:960px; margin:0 auto; padding:48px 32px 80px;">
+          <h1 style="font-family:var(--font-display); font-weight:700; font-size:32px; letter-spacing:-0.02em; color:var(--text-strong); margin:0 0 6px;">My stuff</h1>
+          <p style="font-size:16px; color:var(--text-muted); margin:0 0 24px;">Everything Otto has made for you, and the people &amp; products it reuses.</p>
+          <div style="margin-bottom:28px;">
+            <x-import component-from-global-scope="FIKIRTIVEDesignSystem_2bb27e.Tabs" items="{{ stuffTabItems }}" value="{{ stuffTab }}" onChange="{{ onStuffTab }}" hint-size="auto,42px"></x-import>
+          </div>
+
+          <sc-if value="{{ stuffCast }}">
+            <div style="display:grid; grid-template-columns:repeat(4,1fr); gap:18px;">
+              <sc-for list="{{ cast }}" as="c" hint-placeholder-count="5">
+                <button class="cast-tile" onClick="{{ c.onClick }}" style="cursor:pointer; text-align:left; border:none; padding:0; background:transparent; transition:transform .18s var(--ease-spring);">
+                  <div style="height:128px; border-radius:var(--radius-lg); background:{{ c.bg }}; color:{{ c.fg }}; display:flex; align-items:center; justify-content:center; box-shadow:var(--shadow-md);"><i data-lucide="{{ c.icon }}" style="width:38px; height:38px;"></i></div>
+                  <div style="margin-top:11px; font-weight:700; font-size:15px; color:var(--text-strong);">{{ c.name }}</div>
+                  <div style="font-size:13px; color:var(--text-faint);">Used in {{ c.used }}</div>
+                </button>
+              </sc-for>
+            </div>
+          </sc-if>
+
+          <sc-if value="{{ stuffAds }}">
+            <div style="display:grid; grid-template-columns:repeat(3,1fr); gap:18px;">
+              <sc-for list="{{ adsAll }}" as="a" hint-placeholder-count="4">
+                <div style="background:var(--surface-card); border-radius:var(--radius-lg); overflow:hidden; box-shadow:var(--shadow-md);">
+                  <div style="height:150px; background:{{ a.bg }}; color:{{ a.fg }}; padding:18px; display:flex; flex-direction:column; justify-content:flex-end;">
+                    <div style="font-size:11px; font-weight:700; letter-spacing:.07em; text-transform:uppercase; opacity:.85;">{{ a.kicker }}</div>
+                    <div style="font-family:var(--font-display); font-weight:700; font-size:22px; line-height:1.08; white-space:pre-line; letter-spacing:-0.01em;">{{ a.headline }}</div>
+                  </div>
+                  <div style="padding:12px 15px; display:flex; align-items:center; justify-content:space-between; gap:10px;">
+                    <span style="font-size:12.5px; color:var(--text-muted); display:flex; align-items:center; gap:6px;"><i data-lucide="{{ a.formatIcon }}" style="width:14px; height:14px;"></i>{{ a.format }}</span>
+                    <x-import component-from-global-scope="FIKIRTIVEDesignSystem_2bb27e.IconButton" variant="soft" size="sm" label="Download" onClick="{{ a.onDownload }}" hint-size="34px,34px"><i data-lucide="download"></i></x-import>
+                  </div>
+                </div>
+              </sc-for>
+            </div>
+          </sc-if>
+        </div>
+      </div>
+    </sc-if>
+
+    <!-- ===================== BRAND MEMORY ===================== -->
+    <sc-if value="{{ isMemory }}">
+      <div class="otto-scroll" style="flex:1; overflow-y:auto;">
+        <div style="max-width:820px; margin:0 auto; padding:48px 32px 80px;">
+          <div style="display:flex; align-items:flex-start; justify-content:space-between; gap:20px; flex-wrap:wrap;">
+            <div>
+              <h1 style="font-family:var(--font-display); font-weight:700; font-size:32px; letter-spacing:-0.02em; color:var(--text-strong); margin:0 0 6px;">What Otto knows about your brand</h1>
+              <p style="font-size:16px; color:var(--text-muted); margin:0; max-width:520px;">Otto remembers this so every ad sounds like you. Read it anytime — and correct anything. The things you add are pinned, so I'll never quietly change them.</p>
+            </div>
+            <div style="display:flex; gap:10px; flex:none;">
+              <x-import component-from-global-scope="FIKIRTIVEDesignSystem_2bb27e.Button" variant="secondary" size="md" onClick="{{ onLearnBrand }}" left-icon="{{ icSparkle }}" hint-size="auto,44px">Otto, learn my brand</x-import>
+              <x-import component-from-global-scope="FIKIRTIVEDesignSystem_2bb27e.Button" variant="primary" size="md" onClick="{{ onToggleAdd }}" left-icon="{{ icPlus }}" hint-size="auto,44px">Add a note</x-import>
+            </div>
+          </div>
+
+          <!-- learn my brand panel -->
+          <sc-if value="{{ memLearnOpen }}">
+            <div style="margin-top:22px;">
+              <x-import component-from-global-scope="FIKIRTIVEDesignSystem_2bb27e.Card" variant="tint" padding="md" hint-size="100%,auto">
+                <div style="display:flex; gap:13px; align-items:flex-start;">
+                  <img src="assets/otto.svg" width="40" height="40" alt="" style="flex:none;">
+                  <div style="flex:1;">
+                    <div style="font-weight:700; font-size:16px; color:var(--text-strong); margin-bottom:4px;">Tell me about your brand</div>
+                    <p style="font-size:14px; color:var(--text-muted); margin:0 0 12px; line-height:1.5;">Paste a bit of your &ldquo;about&rdquo; page or anything you've written about your business. I'll read it and fill in your brand memory — you can fix anything after.</p>
+                    <textarea value="{{ learnText }}" onInput="{{ onLearnText }}" placeholder="Klein's Bakery is a small neighbourhood bakery known for…" style="width:100%; min-height:96px; resize:vertical; border:1.5px solid var(--border-default); border-radius:var(--radius-md); padding:12px 14px; font-family:var(--font-sans); font-size:15px; color:var(--text-strong); outline:none; background:var(--surface-card);"></textarea>
+                    <div style="display:flex; gap:10px; margin-top:12px;">
+                      <x-import component-from-global-scope="FIKIRTIVEDesignSystem_2bb27e.Button" variant="primary" size="md" onClick="{{ onTeach }}" hint-size="auto,44px">Teach Otto</x-import>
+                      <x-import component-from-global-scope="FIKIRTIVEDesignSystem_2bb27e.Button" variant="ghost" size="md" onClick="{{ onLearnBrand }}" hint-size="auto,44px">Cancel</x-import>
+                    </div>
+                    <div style="font-size:13px; color:var(--text-faint); margin-top:10px;">I can't read links yet — paste the words and I'll take it from there.</div>
+                  </div>
+                </div>
+              </x-import>
+            </div>
+          </sc-if>
+
+          <!-- add note form -->
+          <sc-if value="{{ memAdding }}">
+            <div style="margin-top:22px;">
+              <x-import component-from-global-scope="FIKIRTIVEDesignSystem_2bb27e.Card" variant="default" padding="md" hint-size="100%,auto">
+                <div style="font-weight:700; font-size:16px; color:var(--text-strong); margin-bottom:12px;">Add something Otto should remember</div>
+                <div style="font-size:13px; font-weight:700; color:var(--text-faint); text-transform:uppercase; letter-spacing:.04em; margin-bottom:8px;">Which part of your brand?</div>
+                <div style="display:flex; flex-wrap:wrap; gap:8px; margin-bottom:14px;">
+                  <sc-for list="{{ memChips }}" as="mc" hint-placeholder-count="5">
+                    <button onClick="{{ mc.onPick }}" style="cursor:pointer; border:1.5px solid {{ mc.border }}; background:{{ mc.bg }}; color:{{ mc.color }}; border-radius:999px; padding:8px 15px; font-family:var(--font-sans); font-size:14px; font-weight:600;">{{ mc.label }}</button>
+                  </sc-for>
+                </div>
+                <textarea value="{{ memDraft }}" onInput="{{ onMemDraft }}" placeholder="e.g. We always mention free local delivery on orders over $30." style="width:100%; min-height:80px; resize:vertical; border:1.5px solid var(--border-default); border-radius:var(--radius-md); padding:12px 14px; font-family:var(--font-sans); font-size:15px; color:var(--text-strong); outline:none; background:var(--surface-card);"></textarea>
+                <div style="display:flex; gap:10px; margin-top:12px;">
+                  <x-import component-from-global-scope="FIKIRTIVEDesignSystem_2bb27e.Button" variant="primary" size="md" onClick="{{ onAddMemory }}" hint-size="auto,44px">Save note</x-import>
+                  <x-import component-from-global-scope="FIKIRTIVEDesignSystem_2bb27e.Button" variant="ghost" size="md" onClick="{{ onToggleAdd }}" hint-size="auto,44px">Cancel</x-import>
+                </div>
+              </x-import>
+            </div>
+          </sc-if>
+
+          <!-- categories -->
+          <div style="margin-top:28px; display:flex; flex-direction:column; gap:14px;">
+            <sc-for list="{{ memCats }}" as="cat" hint-placeholder-count="5">
+              <div style="background:var(--surface-card); border:1px solid var(--border-subtle); border-radius:var(--radius-xl); box-shadow:var(--shadow-sm); overflow:hidden;">
+                <div style="display:flex; align-items:center; gap:11px; padding:16px 20px; border-bottom:1px solid var(--border-subtle);">
+                  <span style="width:38px; height:38px; flex:none; border-radius:12px; background:var(--brand-tint); color:var(--brand); display:flex; align-items:center; justify-content:center;"><i data-lucide="{{ cat.icon }}" style="width:20px; height:20px;"></i></span>
+                  <span style="font-family:var(--font-display); font-weight:700; font-size:18px; color:var(--text-strong); letter-spacing:-0.01em;">{{ cat.title }}</span>
+                </div>
+                <div>
+                  <sc-for list="{{ cat.items }}" as="it" hint-placeholder-count="2">
+                    <div style="display:flex; align-items:flex-start; gap:14px; padding:15px 20px; border-top:1px solid var(--border-subtle);">
+                      <div style="flex:1;">
+                        <div style="font-size:15.5px; line-height:1.5; color:var(--text-body);">{{ it.text }}</div>
+                        <div style="display:flex; align-items:center; gap:8px; margin-top:7px;">
+                          <span style="display:inline-flex; align-items:center; gap:5px; font-size:12px; font-weight:700; padding:3px 9px; border-radius:999px; background:{{ it.tagBg }}; color:{{ it.tagColor }};"><i data-lucide="{{ it.tagIcon }}" style="width:12px; height:12px;"></i>{{ it.srcLabel }}</span>
+                          <span style="font-size:12.5px; color:var(--text-faint);">· {{ it.when }}</span>
+                        </div>
+                      </div>
+                    </div>
+                  </sc-for>
+                </div>
+              </div>
+            </sc-for>
+          </div>
+        </div>
+      </div>
+    </sc-if>
+
+    <!-- ===================== ACCOUNT ===================== -->
+    <sc-if value="{{ isAccount }}">
+      <div class="otto-scroll" style="flex:1; overflow-y:auto;">
+        <div style="max-width:720px; margin:0 auto; padding:48px 32px 80px;">
+          <h1 style="font-family:var(--font-display); font-weight:700; font-size:32px; letter-spacing:-0.02em; color:var(--text-strong); margin:0 0 24px;">Account</h1>
+
+          <x-import component-from-global-scope="FIKIRTIVEDesignSystem_2bb27e.Card" variant="default" padding="lg" hint-size="100%,auto">
+            <div style="display:flex; align-items:center; justify-content:space-between; gap:20px; flex-wrap:wrap;">
+              <div>
+                <div style="font-size:14px; color:var(--text-muted); font-weight:600;">You have</div>
+                <div style="display:flex; align-items:baseline; gap:10px; margin-top:2px;">
+                  <span style="font-family:var(--font-display); font-weight:700; font-size:44px; color:var(--text-strong); letter-spacing:-0.03em;">{{ balanceLabel }}</span>
+                  <span style="font-size:16px; color:var(--text-muted);">{{ creditsLabel }}</span>
+                </div>
+                <div style="font-size:13.5px; color:var(--text-faint); margin-top:4px;">This is your real balance — Otto always asks before spending any of it.</div>
+              </div>
+              <x-import component-from-global-scope="FIKIRTIVEDesignSystem_2bb27e.Button" variant="primary" size="md" onClick="{{ onAddMoney }}" left-icon="{{ icPlus }}" hint-size="auto,44px">Add money</x-import>
+            </div>
+          </x-import>
+
+          <div style="margin-top:28px;">
+            <div style="font-size:13px; font-weight:700; color:var(--text-faint); text-transform:uppercase; letter-spacing:.04em; margin-bottom:12px;">Where your money went</div>
+            <div style="background:var(--surface-card); border:1px solid var(--border-subtle); border-radius:var(--radius-xl); box-shadow:var(--shadow-sm); overflow:hidden;">
+              <sc-for list="{{ spendHistory }}" as="s" hint-placeholder-count="4">
+                <div style="display:flex; align-items:center; gap:14px; padding:15px 20px; border-top:1px solid var(--border-subtle);">
+                  <span style="width:38px; height:38px; flex:none; border-radius:10px; background:var(--surface-sunken); color:var(--text-muted); display:flex; align-items:center; justify-content:center;"><i data-lucide="{{ s.icon }}" style="width:19px; height:19px;"></i></span>
+                  <div style="flex:1;"><div style="font-weight:600; font-size:15px; color:var(--text-strong);">{{ s.label }}</div><div style="font-size:12.5px; color:var(--text-faint);">{{ s.when }}</div></div>
+                  <span style="font-weight:700; font-size:15px; color:{{ s.amountColor }};">{{ s.amount }}</span>
+                </div>
+              </sc-for>
+            </div>
+          </div>
+
+          <div style="margin-top:28px;">
+            <div style="font-size:13px; font-weight:700; color:var(--text-faint); text-transform:uppercase; letter-spacing:.04em; margin-bottom:12px;">Settings</div>
+            <div style="background:var(--surface-card); border:1px solid var(--border-subtle); border-radius:var(--radius-xl); box-shadow:var(--shadow-sm); overflow:hidden;">
+              <sc-for list="{{ settingsRows }}" as="r" hint-placeholder-count="4">
+                <button class="nav-item" onClick="{{ r.onClick }}" style="width:100%; display:flex; align-items:center; gap:14px; padding:15px 20px; border:none; border-top:1px solid var(--border-subtle); background:transparent; cursor:pointer; text-align:left;">
+                  <span style="width:38px; height:38px; flex:none; border-radius:10px; background:var(--surface-sunken); color:var(--text-muted); display:flex; align-items:center; justify-content:center;"><i data-lucide="{{ r.icon }}" style="width:19px; height:19px;"></i></span>
+                  <span style="flex:1; font-weight:600; font-size:15px; color:var(--text-strong);">{{ r.label }}</span>
+                  <span style="font-size:14px; color:var(--text-muted);">{{ r.value }}</span>
+                  <i data-lucide="chevron-right" style="width:18px; height:18px; color:var(--text-faint);"></i>
+                </button>
+              </sc-for>
+            </div>
+          </div>
+
+          <div style="margin-top:24px;">
+            <x-import component-from-global-scope="FIKIRTIVEDesignSystem_2bb27e.Button" variant="ghost" size="md" onClick="{{ onSignOut }}" left-icon="{{ icSignOut }}" hint-size="auto,44px">Sign out</x-import>
+          </div>
+        </div>
+      </div>
+    </sc-if>
+
+    <!-- ===================== WORKSHOP OVERLAY ===================== -->
+    <sc-if value="{{ workshopOpen }}">
+      <div style="position:absolute; inset:0; z-index:40; background:var(--bg-page); display:flex; flex-direction:column;">
+        <header style="display:flex; align-items:center; justify-content:space-between; gap:16px; padding:16px 28px; border-bottom:1px solid var(--border-subtle); background:var(--surface-card);">
+          <div style="display:flex; align-items:center; gap:12px;">
+            <span style="width:38px; height:38px; border-radius:12px; background:var(--honey-100); color:var(--honey-700); display:flex; align-items:center; justify-content:center;"><i data-lucide="wrench" style="width:20px; height:20px;"></i></span>
+            <div>
+              <div style="font-family:var(--font-display); font-weight:700; font-size:17px; color:var(--text-strong);">Workshop</div>
+              <div style="font-size:13px; color:var(--text-muted);">You've stepped in to change one thing — {{ workshopName }}</div>
+            </div>
+          </div>
+          <x-import component-from-global-scope="FIKIRTIVEDesignSystem_2bb27e.Button" variant="primary" size="md" onClick="{{ onBackOtto }}" left-icon="{{ icArrowLeft }}" hint-size="auto,44px">Back to Otto</x-import>
+        </header>
+        <div style="padding:18px 28px; border-bottom:1px solid var(--border-subtle); background:var(--surface-card);">
+          <x-import component-from-global-scope="FIKIRTIVEDesignSystem_2bb27e.Tabs" items="{{ workshopTabItems }}" value="{{ workshopTool }}" onChange="{{ onWorkshopTool }}" hint-size="auto,42px"></x-import>
+        </div>
+        <div class="otto-scroll" style="flex:1; overflow-y:auto; padding:32px;">
+          <div style="max-width:860px; margin:0 auto;">
+            <div style="display:flex; align-items:center; gap:9px; margin-bottom:16px; padding:11px 15px; background:var(--brand-tint); border-radius:var(--radius-md); font-size:14px; color:var(--brand-press);">
+              <i data-lucide="info" style="width:17px; height:17px;"></i> {{ workshopHint }}
+            </div>
+            <div style="background:var(--surface-card); border:1px solid var(--border-subtle); border-radius:var(--radius-xl); box-shadow:var(--shadow-md); padding:22px;">
+              <div style="border-radius:var(--radius-lg); overflow:hidden; box-shadow:var(--shadow-sm);">
+                <div style="height:280px; background:{{ workshopBg }}; color:{{ workshopFg }}; padding:24px; display:flex; flex-direction:column; justify-content:flex-end; gap:5px;">
+                  <div style="font-family:var(--font-display); font-weight:700; font-size:34px; line-height:1.05; white-space:pre-line; letter-spacing:-0.02em;">{{ workshopHeadline }}</div>
+                </div>
+              </div>
+              <div style="display:flex; gap:8px; margin-top:18px; align-items:center;">
+                <div style="height:60px; flex:1; border-radius:var(--radius-md); background:var(--surface-sunken); display:flex; align-items:center; justify-content:center; color:var(--text-faint); font-size:13px; border:1.5px solid var(--brand); position:relative;"><i data-lucide="square" style="width:18px;"></i><span style="position:absolute; bottom:5px; right:8px; font-size:11px;">scene 1</span></div>
+                <div style="height:60px; flex:1; border-radius:var(--radius-md); background:var(--surface-sunken); display:flex; align-items:center; justify-content:center; color:var(--text-faint); font-size:13px;"><span style="position:absolute;">scene 2</span></div>
+                <div style="height:60px; flex:1; border-radius:var(--radius-md); background:var(--surface-sunken); display:flex; align-items:center; justify-content:center; color:var(--text-faint); font-size:13px;"><span>scene 3</span></div>
+                <x-import component-from-global-scope="FIKIRTIVEDesignSystem_2bb27e.IconButton" variant="soft" size="md" label="Add scene" hint-size="42px,42px"><i data-lucide="plus"></i></x-import>
+              </div>
+              <p style="font-size:14px; color:var(--text-muted); margin:18px 0 0; line-height:1.55;">This is the manual room. Most people never need it — Otto handles everything by chat. But when you want to nudge one exact thing yourself, it's here, and Otto keeps your place in the conversation for when you come back.</p>
+            </div>
+          </div>
+        </div>
+      </div>
+    </sc-if>
+
+  </main>
+
+  <!-- TOAST -->
+  <sc-if value="{{ hasToast }}">
+    <div style="position:fixed; bottom:28px; left:50%; transform:translateX(-50%); z-index:60; background:var(--neutral-900); color:#fff; padding:13px 20px; border-radius:999px; font-size:14.5px; font-weight:600; box-shadow:var(--shadow-xl); display:flex; align-items:center; gap:8px;">
+      <i data-lucide="check-circle-2" style="width:18px; height:18px; color:var(--teal-400);"></i> {{ toast }}
+    </div>
+  </sc-if>
+
+</div>
+</x-dc>
+<script type="text/x-dc" data-dc-script data-props="{&quot;userName&quot;: {&quot;editor&quot;: &quot;text&quot;, &quot;default&quot;: &quot;Rosa&quot;, &quot;tsType&quot;: &quot;string&quot;}, &quot;startCredits&quot;: {&quot;editor&quot;: &quot;int&quot;, &quot;default&quot;: 240, &quot;min&quot;: 0, &quot;max&quot;: 1000, &quot;tsType&quot;: &quot;number&quot;}}">
+class Component extends DCLogic {
+  state = {
+    route: 'otto',
+    started: false,
+    goal: 'Announce a sale',
+    messages: [],
+    qIndex: 0,
+    phase: 'frontdoor',
+    planVariant: 'full',
+    workPct: 0, workLabel: '', workNote: '',
+    chosen: 0,
+    workshop: null,
+    workshopTool: 'video',
+    credits: 240,
+    draft: '',
+    learnText: '',
+    memDraft: '',
+    memCat: 'about',
+    memAdding: false,
+    memLearnOpen: false,
+    stuffTab: 'cast',
+    toast: null,
+    memories: null,
+    activeConvo: null,
+  };
+
+  GREET = {
+    'Announce a sale': "Happy to help you announce a sale! \uD83C\uDF89",
+    'Sell a product': "Let's show off your product! \u2728",
+    'Get more followers': "Let's grow your following.",
+    'Make a video': "A video \u2014 fun! \uD83C\uDFAC",
+    'Fill a slow week': "Let's bring some people in.",
+    'Bring back customers': "Let's win them back. \uD83D\uDC9b",
+    'Just tell Otto': "Got it \u2014 love that idea.",
+  };
+
+  QUESTIONS = [
+    { otto: "First \u2014 what should I feature?", chips: ["The autumn menu", "Our cinnamon rolls \uD83E\uDD50", "A specific product"] },
+    { otto: "Lovely. What's the feeling you want?", chips: ["Cozy & warm", "Fresh & modern", "Fun & playful"] },
+    { otto: "And where should these go?", chips: ["Instagram", "Instagram + TikTok", "Facebook + Instagram"] },
+  ];
+  WRAP = "Great \u2014 I've got everything I need. Here's exactly what I'll make. Take a look before I start.";
+  PRAISE = "Lovely choice! Here it is, ready to go. \uD83C\uDF89 Download it, post it, or ask me to tweak anything.";
+  CHOOSER = "All done! \u2728 Here are four ads I made for you. I'd run the first one \u2014 the pastry is the hero and the words are short. But it's your call.";
+  CHANGE_CHIPS = ["Just the images \u2014 skip the video", "Make it more playful", "Keep it as is"];
+
+  ADS = [
+    { bg: 'linear-gradient(140deg,#FBE7BC,#E7A52C)', fg: '#4C4A44', kicker: 'This weekend', headline: 'Autumn\nis here \uD83C\uDF42', sub: "Klein's Bakery", format: 'Square \u00b7 Instagram', formatIcon: 'square', caption: "Autumn is here \uD83C\uDF42 Our cozy seasonal menu is back \u2014 fresh pastries baked every morning, all weekend long. Come warm up with us. \u2615 #KleinsBakery #AutumnMenu" },
+    { bg: 'linear-gradient(140deg,#DCE4EC,#6E8AA6)', fg: '#1F2E3A', kicker: 'New season', headline: 'Warm up\nwith us', sub: 'Fresh every morning', format: 'Square \u00b7 Instagram', formatIcon: 'square', caption: "New season, same love. \uD83E\uDD50 Our autumn menu just dropped \u2014 swing by this week and treat yourself. #KleinsBakery" },
+    { bg: 'linear-gradient(140deg,#FFE0D6,#FF8160)', fg: '#7D2C19', kicker: 'Just baked', headline: 'Cozy\nseason\nspecials', sub: "Klein's Bakery", format: 'Story \u00b7 vertical', formatIcon: 'rectangle-vertical', caption: "Cozy season specials are here. \uD83C\uDF42 Tap to see what's fresh this week. #KleinsBakery #AutumnMenu" },
+    { bg: 'linear-gradient(140deg,#C9F4E9,#2DD4BF)', fg: '#107569', kicker: '20-second video', headline: 'A taste of\nautumn', sub: 'Tap to watch', format: 'Video \u00b7 20s', formatIcon: 'play', caption: "A little taste of autumn at Klein's. \uD83C\uDFAC Fresh bakes, warm drinks, all week. Come see us. #KleinsBakery" },
+  ];
+
+  defaultMemories() {
+    return {
+      about: { title: 'About your brand', icon: 'store', items: [
+        { text: "You run Klein's Bakery \u2014 a small neighbourhood bakery known for cinnamon rolls and seasonal pastries.", src: 'learned', when: '2 weeks ago' },
+        { text: "Your voice is warm and a little playful \u2014 like a friendly neighbour, never corporate.", src: 'you', when: 'last week' },
+      ]},
+      look: { title: 'Look & feel', icon: 'palette', items: [
+        { text: "Warm colours \u2014 cream, honey, a touch of deep red. A cozy, hand-made feeling.", src: 'learned', when: '2 weeks ago' },
+        { text: "Always show the real food, up close. No stock photos, ever.", src: 'you', when: '5 days ago' },
+      ]},
+      customers: { title: 'Your customers', icon: 'users', items: [
+        { text: "Mostly locals \u2014 families and morning regulars. Many are older and not big on TikTok.", src: 'learned', when: '1 week ago' },
+      ]},
+      dodont: { title: 'Do / Don\u2019t', icon: 'shield-check', items: [
+        { text: "Do mention that everything is baked fresh that morning.", src: 'you', when: '3 days ago' },
+        { text: "Don't discount deeper than 20% \u2014 it's not our style.", src: 'you', when: '3 days ago' },
+      ]},
+      habits: { title: 'Your habits & preferences', icon: 'sliders-horizontal', items: [
+        { text: "You usually post 2\u20133 times a week, and mornings work best.", src: 'learned', when: '4 days ago' },
+        { text: "You prefer square Instagram posts over stories.", src: 'learned', when: 'last week' },
+      ]},
+    };
+  }
+
+  PERSIST_KEY = 'fikirtive-otto-v1';
+  PERSIST_FIELDS = ['route','started','goal','messages','qIndex','phase','planVariant','chosen','credits','memories','stuffTab'];
+
+  loadSaved() {
+    try {
+      const raw = localStorage.getItem(this.PERSIST_KEY);
+      if (!raw) return null;
+      const saved = JSON.parse(raw);
+      // never restore mid-working into a stuck spinner — fall back to the plan
+      if (saved.phase === 'working') saved.phase = 'plan';
+      // transient sub-states shouldn't reopen on reload
+      return saved;
+    } catch (e) { return null; }
+  }
+  persist() {
+    try {
+      const s = this.state;
+      const out = {};
+      this.PERSIST_FIELDS.forEach(k => { out[k] = s[k]; });
+      localStorage.setItem(this.PERSIST_KEY, JSON.stringify(out));
+    } catch (e) {}
+  }
+
+  componentDidMount() {
+    const saved = this.loadSaved();
+    const next = saved ? { ...saved } : {};
+    if (!next.memories) next.memories = this.defaultMemories();
+    if (saved == null && this.props && this.props.startCredits) next.credits = this.props.startCredits;
+    this.setState(next);
+    this.relucide();
+  }
+  componentDidUpdate() { this.persist(); this.relucide(); }
+  relucide() { if (window.lucide) { try { window.lucide.createIcons(); } catch (e) {} } }
+
+  ic(n) { return React.createElement('i', { 'data-lucide': n }); }
+  money(d) { return (d % 1 ? d.toFixed(2) : d.toFixed(0)); }
+  pushMsg(who, text) { this.setState(s => ({ messages: [...s.messages, { who, text }] })); }
+  toastMsg(t) { this.setState({ toast: t }); clearTimeout(this._tt); this._tt = setTimeout(() => this.setState({ toast: null }), 2600); }
+
+  go(route) { this.setState({ route, workshop: null }); }
+
+  startGoal(label, freeText) {
+    this.changing = false;
+    const greet = this.GREET[label] || 'Great choice!';
+    if (freeText) {
+      this.setState({ started: true, goal: label, qIndex: 1, phase: 'asking', planVariant: 'full',
+        messages: [{ who: 'user', text: freeText }, { who: 'otto', text: greet + ' ' + this.QUESTIONS[1].otto }] });
+    } else {
+      this.setState({ started: true, goal: label, qIndex: 0, phase: 'asking', planVariant: 'full',
+        messages: [{ who: 'otto', text: greet + ' ' + this.QUESTIONS[0].otto }] });
+    }
+  }
+
+  answer(text) {
+    if (this.changing) { this.applyChange(text); return; }
+    this.pushMsg('user', text);
+    const next = this.state.qIndex + 1;
+    if (next < this.QUESTIONS.length) {
+      this.setState({ qIndex: next });
+      this.pushMsg('otto', this.QUESTIONS[next].otto);
+    } else {
+      this.pushMsg('otto', this.WRAP);
+      this.setState({ phase: 'plan' });
+    }
+  }
+
+  changePlan() { this.changing = true; this.pushMsg('otto', "Of course \u2014 what would you like to change?"); this.setState({ phase: 'asking' }); }
+  applyChange(text) {
+    this.changing = false;
+    this.pushMsg('user', text);
+    let variant = this.state.planVariant, line;
+    if (/image/i.test(text)) { variant = 'images'; line = "Done \u2014 just the 3 images then, no video. Here's the updated plan."; }
+    else if (/playful/i.test(text)) { line = "You got it \u2014 I'll make it more playful. Same plan, new flavour."; }
+    else { line = "Sure \u2014 here's the plan again whenever you're ready."; }
+    this.pushMsg('otto', line);
+    this.setState({ phase: 'plan', planVariant: variant });
+  }
+
+  approve() {
+    this.pushMsg('otto', "On it! This takes about a minute \u2014 I'll show you options as soon as they're ready. \u2728");
+    this.setState({ phase: 'working', workPct: 8, workLabel: 'Getting started\u2026', workNote: '' });
+    const steps = [
+      [600, { workPct: 22, workLabel: 'Writing your captions\u2026', workNote: '' }],
+      [1700, { workPct: 44, workLabel: 'Making your 3 ad images\u2026', workNote: '' }],
+      [3000, { workPct: 58, workLabel: 'Rendering your video \u2014 scene 2 of 3\u2026', workNote: '' }],
+      [4100, { workPct: 60, workLabel: 'Rendering your video \u2014 scene 2 of 3\u2026', workNote: "Scene 2 didn't work the first time \u2014 you weren't charged for it. Trying again\u2026" }],
+      [5400, { workPct: 84, workLabel: 'Almost there \u2014 final touches\u2026', workNote: '' }],
+      [6600, { workPct: 100, workLabel: 'Done!', workNote: '' }],
+    ];
+    if (this._timers) this._timers.forEach(clearTimeout);
+    this._timers = steps.map(([ms, patch]) => setTimeout(() => { if (this.state.phase === 'working') this.setState(patch); }, ms));
+    this._timers.push(setTimeout(() => {
+      if (this.state.phase !== 'working') return;
+      const cost = this.state.planVariant === 'images' ? 15 : 30;
+      this.setState(s => ({ phase: 'choose', credits: Math.max(0, s.credits - cost) }));
+      this.pushMsg('otto', this.CHOOSER);
+    }, 7300));
+  }
+
+  pickAd(i) { this.setState({ chosen: i, phase: 'result' }); this.pushMsg('otto', this.PRAISE); }
+  changeResult() { this.pushMsg('otto', "Happy to tweak it. Tell me what to change and I'll redo just this one."); this.setState({ phase: 'chat' }); }
+  editByHand() { this.setState({ workshop: { kind: 'ad', ad: this.state.chosen }, workshopTool: 'scenes' }); }
+  backToOtto() { this.setState({ workshop: null }); }
+  openRecent(i) { const c = this.CONVERSATIONS.find(x => x.ad === i) || this.CONVERSATIONS[0]; this.openConversation(c); }
+  startOver() { this.setState({ started: false, phase: 'frontdoor', messages: [], activeConvo: null }); }
+
+  CONVERSATIONS = [
+    { id: 'c1', title: 'Autumn menu launch', goal: 'Announce a sale', ad: 0 },
+    { id: 'c2', title: 'Cinnamon roll promo', goal: 'Sell a product', ad: 2 },
+    { id: 'c3', title: 'Weekend video teaser', goal: 'Make a video', ad: 3 },
+    { id: 'c4', title: 'Warm up with us', goal: 'Get more followers', ad: 1 },
+  ];
+
+  newCampaign() { this.changing = false; this.setState({ route: 'otto', started: false, phase: 'frontdoor', messages: [], workshop: null, activeConvo: null, draft: '' }); }
+  openConversation(c) {
+    this.changing = false;
+    this.setState({
+      route: 'otto', started: true, goal: c.goal, chosen: c.ad, phase: 'result',
+      workshop: null, activeConvo: c.id,
+      messages: [
+        { who: 'user', text: this.GREET[c.goal] ? c.title.toLowerCase() : c.title },
+        { who: 'otto', text: "Here's \u201c" + c.title + "\u201d again \u2014 download it, or ask me to tweak anything. \u2728" },
+      ],
+    });
+  }
+
+  send() {
+    const t = (this.state.draft || '').trim();
+    if (!t) return;
+    this.setState({ draft: '' });
+    if (this.state.phase === 'asking') { this.answer(t); return; }
+    if (this.state.phase === 'chat') { this.pushMsg('user', t); setTimeout(() => { this.pushMsg('otto', "Updated \u2014 take a look. \u2728"); this.setState({ phase: 'result' }); }, 1000); return; }
+    this.pushMsg('user', t);
+    setTimeout(() => this.pushMsg('otto', "On it! Anything else you'd like to change?"), 800);
+  }
+  justTell() { const t = (this.state.draft || '').trim(); this.setState({ draft: '' }); this.startGoal('Just tell Otto', t || false); }
+
+  addMemory() {
+    const t = (this.state.memDraft || '').trim();
+    if (!t) { this.toastMsg('Type a note first \uD83D\uDE42'); return; }
+    const cat = this.state.memCat;
+    this.setState(s => {
+      const m = JSON.parse(JSON.stringify(s.memories));
+      m[cat].items.unshift({ text: t, src: 'you', when: 'just now' });
+      return { memories: m, memDraft: '', memAdding: false };
+    });
+    this.toastMsg('Added to your brand memory');
+  }
+  teach() {
+    const t = (this.state.learnText || '').trim();
+    if (!t) { this.toastMsg('Paste a bit about your brand first \uD83D\uDE42'); return; }
+    this.setState(s => {
+      const m = JSON.parse(JSON.stringify(s.memories));
+      m.about.items.unshift({ text: 'From what you shared: \u201c' + t.slice(0, 90) + (t.length > 90 ? '\u2026' : '') + '\u201d', src: 'learned', when: 'just now' });
+      return { memories: m, learnText: '', memLearnOpen: false };
+    });
+    this.toastMsg("Thanks! I've updated your brand memory");
+  }
+
+  renderVals() {
+    const s = this.state;
+    const userName = (this.props && this.props.userName) || 'Rosa';
+    const userInitial = userName.charAt(0).toUpperCase();
+    const credits = s.credits;
+    const balanceLabel = '$' + this.money(credits / 10);
+    const creditsLabel = credits + ' credits';
+
+    const navDefs = [
+      ['otto', 'Otto', 'message-circle'],
+      ['stuff', 'My stuff', 'folder-heart'],
+      ['memory', 'Brand memory', 'brain'],
+      ['account', 'Account', 'circle-user'],
+    ];
+    const navItems = navDefs.map(([key, label, icon]) => {
+      const active = s.route === key;
+      const style = 'display:flex; align-items:center; gap:12px; width:100%; border:none; cursor:pointer; font-family:var(--font-sans); font-size:15px; font-weight:600; padding:11px 14px; border-radius:var(--radius-md); transition:background .15s ease; '
+        + (active ? 'background:var(--brand-tint); color:var(--brand-press);' : 'background:transparent; color:var(--text-muted);');
+      return { label, icon, style, onClick: () => this.go(key) };
+    });
+
+    const goalDefs = [
+      ['Sell a product', 'shopping-bag', 'Show off one thing you make'],
+      ['Announce a sale', 'tag', 'Get people in this week'],
+      ['Get more followers', 'users', 'Grow your audience'],
+      ['Make a video', 'clapperboard', 'A short clip for social'],
+      ['Fill a slow week', 'calendar-days', "Bring people in when it's quiet"],
+      ['Bring back customers', 'gift', "Win back people you haven't seen"],
+    ];
+    const goals = goalDefs.map(([label, icon, hint]) => ({ label, icon, hint, onClick: () => this.startGoal(label) }));
+
+    const recentAds = [0, 3, 1].map(i => ({ ...this.ADS[i], onClick: () => this.openRecent(i) }));
+
+    const conversations = this.CONVERSATIONS.map(c => {
+      const active = s.activeConvo === c.id;
+      const style = 'display:flex; align-items:center; gap:10px; width:100%; border:none; cursor:pointer; font-family:var(--font-sans); font-size:14px; font-weight:600; padding:9px 12px; border-radius:var(--radius-md); transition:background .15s ease; '
+        + (active ? 'background:var(--brand-tint); color:var(--brand-press);' : 'background:transparent; color:var(--text-muted);');
+      return { title: c.title, style, dot: this.ADS[c.ad].fg, onOpen: () => this.openConversation(c) };
+    });
+
+    const thread = s.messages.map(m => ({ text: m.text, isOtto: m.who === 'otto', isUser: m.who === 'user' }));
+
+    let chips = [];
+    if (s.phase === 'asking') {
+      const src = this.changing ? this.CHANGE_CHIPS : this.QUESTIONS[s.qIndex].chips;
+      chips = src.map(label => ({ label, onPick: () => this.answer(label) }));
+    }
+
+    const planFull = [
+      { icon: 'image', title: '3 ad images', sub: 'your autumn menu, styled warm' },
+      { icon: 'clapperboard', title: '1 short video', sub: '20 seconds, for Instagram & TikTok' },
+      { icon: 'pen-line', title: 'Captions + hashtags', sub: 'written and ready to post' },
+    ];
+    const planImages = [planFull[0], planFull[2]];
+    const planItems = s.planVariant === 'images' ? planImages : planFull;
+    const cost = s.planVariant === 'images' ? 15 : 30;
+    const spendMain = 'About $' + this.money(cost / 10) + " \u2014 that's " + cost + ' of your ' + credits + ' credits.';
+    const afterLine = "You'll have $" + this.money((credits - cost) / 10) + ' left after this.';
+
+    const ads = this.ADS.map((a, i) => ({ ...a, isPick: i === 0, cardShadow: i === 0 ? '0 0 0 3px var(--accent), var(--shadow-md)' : 'var(--shadow-md)', onPick: () => this.pickAd(i) }));
+    const chosenAd = this.ADS[s.chosen];
+
+    const cast = [
+      { name: 'Cinnamon rolls', icon: 'croissant', bg: 'linear-gradient(140deg,#FBE7BC,#E7A52C)', fg: '#8A560C', used: '14 ads' },
+      { name: "Klein's logo", icon: 'badge-check', bg: 'linear-gradient(140deg,#DCE4EC,#6E8AA6)', fg: '#1F2E3A', used: 'every ad' },
+      { name: 'You, Rosa', icon: 'user-round', bg: 'linear-gradient(140deg,#FFE0D6,#FF8160)', fg: '#7D2C19', used: '6 ads' },
+      { name: 'The shopfront', icon: 'store', bg: 'linear-gradient(140deg,#C9F4E9,#2DD4BF)', fg: '#107569', used: '9 ads' },
+      { name: 'Autumn menu board', icon: 'clipboard-list', bg: 'linear-gradient(140deg,#EEF2F6,#BCCAD8)', fg: '#2C3F4F', used: '3 ads' },
+    ].map(c => ({ ...c, onClick: () => this.setState({ workshop: { kind: 'cast', name: c.name }, workshopTool: 'cast' }) }));
+
+    const adsAll = this.ADS.map((a, i) => ({ ...a, onDownload: () => this.toastMsg('Saved to your downloads') }));
+
+    let memCats = [];
+    if (s.memories) {
+      const order = ['about', 'look', 'customers', 'dodont', 'habits'];
+      memCats = order.map(k => {
+        const c = s.memories[k];
+        return { title: c.title, icon: c.icon, items: c.items.map(it => ({
+          text: it.text, when: it.when,
+          srcLabel: it.src === 'you' ? 'You added this' : 'Otto learned this',
+          tagIcon: it.src === 'you' ? 'pin' : 'sparkles',
+          tagBg: it.src === 'you' ? 'var(--honey-100)' : 'var(--teal-100)',
+          tagColor: it.src === 'you' ? 'var(--honey-700)' : 'var(--teal-700)',
+        })) };
+      });
+    }
+    const memChipDefs = [['about', 'About'], ['look', 'Look & feel'], ['customers', 'Customers'], ['dodont', 'Do / Don\u2019t'], ['habits', 'Habits']];
+    const memChips = memChipDefs.map(([key, label]) => {
+      const active = s.memCat === key;
+      return { label, onPick: () => this.setState({ memCat: key }),
+        border: active ? 'var(--brand)' : 'var(--border-default)',
+        bg: active ? 'var(--brand-tint)' : 'var(--surface-card)',
+        color: active ? 'var(--brand-press)' : 'var(--text-muted)' };
+    });
+
+    const spendHistory = [
+      { label: 'Autumn menu \u2014 3 images + a video', amount: '$3.00', when: '2 hours ago', icon: 'sparkles', amountColor: 'var(--text-strong)' },
+      { label: 'Weekend special \u2014 20s video', amount: '$0.90', when: 'Yesterday', icon: 'play', amountColor: 'var(--text-strong)' },
+      { label: 'Instagram post set \u2014 5 images', amount: '$1.50', when: '3 days ago', icon: 'image', amountColor: 'var(--text-strong)' },
+      { label: 'Added money', amount: '+$25.00', when: 'Last week', icon: 'plus', amountColor: 'var(--success-700)' },
+    ];
+    const settingsRows = [
+      { label: 'Email', value: 'rosa@kleinsbakery.com', icon: 'mail' },
+      { label: 'Notifications', value: 'On', icon: 'bell' },
+      { label: 'Connected accounts', value: 'Instagram, TikTok', icon: 'link' },
+      { label: 'How you pay', value: 'Pay as you go', icon: 'wallet' },
+    ].map(r => ({ ...r, onClick: () => this.toastMsg('Settings (demo)') }));
+
+    // workshop
+    const ws = s.workshop;
+    const wsAd = ws && ws.kind === 'ad' ? this.ADS[ws.ad] : this.ADS[s.chosen];
+    const workshopName = ws ? (ws.kind === 'cast' ? ws.name : 'this ad') : '';
+    const toolHints = {
+      video: "Trim, re-order, or swap scenes in your video. Otto made a starting point \u2014 change only what you want.",
+      scenes: "Each scene is a card. Drag to re-order, or tap one to change its picture or words.",
+      manual: "Build something from scratch, step by step \u2014 for when you want full control.",
+      cast: "Update this cast member's reference pictures \u2014 every ad that uses it will refresh.",
+    };
+
+    return {
+      userName, userInitial, balanceLabel, creditsLabel,
+      isOtto: s.route === 'otto', isStuff: s.route === 'stuff', isMemory: s.route === 'memory', isAccount: s.route === 'account',
+      navItems, goals, recentAds, conversations,
+      onNewCampaign: () => this.newCampaign(),
+      showFrontdoor: !s.started, showConversation: s.started,
+      goal: s.goal, thread,
+      phaseAsking: s.phase === 'asking', phasePlan: s.phase === 'plan', phaseWorking: s.phase === 'working',
+      phaseChoose: s.phase === 'choose', phaseResult: s.phase === 'result',
+      showComposer: s.started && s.phase !== 'working',
+      chips, planItems, spendMain, afterLine, approveLabel: 'Approve \u2014 about $' + this.money(cost / 10),
+      workPct: s.workPct, workLabel: s.workLabel, workNote: s.workNote, hasNote: !!s.workNote,
+      ads, chosenAd,
+      onStartOver: () => this.startOver(),
+      onApprove: () => this.approve(), onChangePlan: () => this.changePlan(),
+      onDownload: () => this.toastMsg('Saved to your downloads'),
+      onCopy: () => this.toastMsg('Opening Instagram with your ad ready'),
+      onChangeResult: () => this.changeResult(), onEditHand: () => this.editByHand(),
+      draft: s.draft,
+      onDraft: e => this.setState({ draft: e.target.value }),
+      onKeyChat: e => { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); this.send(); } },
+      onKeyFront: e => { if (e.key === 'Enter') { e.preventDefault(); this.justTell(); } },
+      onSend: () => this.send(), onJustTell: () => this.justTell(),
+      // stuff
+      stuffTabItems: [{ value: 'cast', label: 'Cast' }, { value: 'ads', label: 'Ads' }],
+      stuffTab: s.stuffTab, onStuffTab: v => this.setState({ stuffTab: v }),
+      stuffCast: s.stuffTab === 'cast', stuffAds: s.stuffTab === 'ads', cast, adsAll,
+      // memory
+      memCats, memChips, memAdding: s.memAdding, memLearnOpen: s.memLearnOpen,
+      memDraft: s.memDraft, onMemDraft: e => this.setState({ memDraft: e.target.value }),
+      learnText: s.learnText, onLearnText: e => this.setState({ learnText: e.target.value }),
+      onToggleAdd: () => this.setState({ memAdding: !s.memAdding, memLearnOpen: false }),
+      onLearnBrand: () => this.setState({ memLearnOpen: !s.memLearnOpen, memAdding: false }),
+      onAddMemory: () => this.addMemory(), onTeach: () => this.teach(),
+      // account
+      spendHistory, settingsRows,
+      onAddMoney: () => this.toastMsg('Top-up flow (demo) \uD83D\uDCB3'),
+      onSignOut: () => this.toastMsg("You'd be signed out (demo)"),
+      // workshop
+      workshopOpen: !!ws, workshopName, workshopTool: s.workshopTool,
+      workshopTabItems: [{ value: 'video', label: 'Edit video' }, { value: 'scenes', label: 'Edit scenes' }, { value: 'manual', label: 'Make manually' }, { value: 'cast', label: 'Edit a cast member' }],
+      onWorkshopTool: v => this.setState({ workshopTool: v }), onBackOtto: () => this.backToOtto(),
+      workshopHint: toolHints[s.workshopTool] || '',
+      workshopBg: wsAd.bg, workshopFg: wsAd.fg, workshopHeadline: wsAd.headline,
+      // icons
+      icCheck: this.ic('check'), icArrowUp: this.ic('arrow-up'), icArrowLeft: this.ic('arrow-left'),
+      icDownload: this.ic('download'), icCopy: this.ic('share-2'), icEdit: this.ic('pencil'),
+      icPlus: this.ic('plus'), icSparkle: this.ic('sparkles'), icSignOut: this.ic('log-out'),
+      // toast
+      hasToast: !!s.toast, toast: s.toast,
+    };
+  }
+}
+</script>
+</body>
+</html>
