@@ -206,3 +206,13 @@ rm -f apps/web/app/api/better-auth/[...all]/route.ts
 ```
 
 Result: zero data loss on the live NextAuth path. The NextAuth `Account`, `Session`, `User` tables are completely untouched throughout.
+
+---
+
+## 6. Notes from the final review (for cutover)
+
+The whole-branch review verified the allowlist is fail-closed across all methods (it traced better-auth's internals: every session-issuing path hits `internalAdapter.createSession` → `databaseHooks.session.create.before` → `assertAllowedForUserId`, which throws before any row/cookie is written). Three items to handle **at cutover**, not now:
+
+1. **Proxy runtime compatibility.** Step 3 swaps the proxy wall to `auth.api.getSession({ headers: req.headers })`, which pulls the Better Auth + Prisma (Node) stack into `proxy.ts`. The current proxy runs on the Node runtime, so this should be fine — but confirm there's no `export const runtime = "edge"` on the proxy before flipping, or the Prisma import will fail at the edge.
+2. **Add an OAuth-callback integration test.** The unit tests prove the gate *function* (`assertAllowedForUserId`) is fail-closed; the library wiring that *invokes* it on the OAuth callback was verified by code-trace, not by an automated test. At cutover, add a test that drives a real OAuth-callback session creation against a test DB so the gate behavior is locked in CI.
+3. **Drop the redundant role lookup (optional).** Both `server.ts`'s `customSession` and `compat.ts` call `roleForEmail` → one extra `User`-by-email query per guarded request once live. Since `compat.ts` is the consumer post-cutover, you can drop the `customSession` role enrichment to save the query. Harmless either way.
