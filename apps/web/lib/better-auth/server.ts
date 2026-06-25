@@ -50,10 +50,15 @@ export const auth = betterAuth({
       }
     }),
   },
-  // Convergence after a user row exists (BA's own ba_user); reconnect to the tenant graph by email.
+  // Deny-by-default allowlist gates in databaseHooks — covers ALL methods including OAuth callbacks.
+  // Throwing APIError here aborts the operation and propagates a 403 to the caller.
   databaseHooks: {
     user: {
       create: {
+        // Gate 1: prevents any non-allowlisted email from getting a ba_user row (first sign-up, any method).
+        before: async (user) => {
+          await assertAllowed(user.email);
+        },
         after: async (u) => {
           await convergeIdentity({ email: u.email, name: u.name, image: u.image });
         },
@@ -61,6 +66,13 @@ export const auth = betterAuth({
     },
     session: {
       create: {
+        // Gate 2: prevents a session being issued for any non-allowlisted email — covers repeat sign-ins
+        // and revocation. Runs on every session creation regardless of method (OAuth, magic-link, password).
+        before: async (session, ctx) => {
+          if (!ctx) return;
+          const u = await prisma.betterAuthUser.findUnique({ where: { id: session.userId }, select: { email: true } });
+          await assertAllowed(u?.email);
+        },
         after: async (s) => {
           const u = await prisma.betterAuthUser.findUnique({ where: { id: s.userId }, select: { email: true, name: true, image: true } });
           if (u) await convergeIdentity(u);
