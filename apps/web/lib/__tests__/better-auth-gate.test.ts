@@ -13,18 +13,9 @@ vi.mock("@fikirtive/db", () => ({
 }));
 
 // ---------------------------------------------------------------------------
-// Import the helpers AFTER mocks are in place.
-// We test the two gate functions that the databaseHooks call:
-//   assertAllowedEmail(email)        — used by user.create.before
-//   assertAllowedForUserId(userId)   — extracted helper for session.create.before
-// Since both ultimately delegate to assertAllowed(email) from server.ts, which
-// in turn calls isAllowedEmail() from @/lib/allowlist, we test their behavior
-// by importing isAllowedEmail and assertAllowed-equivalent logic directly.
+// Import the REAL gate functions AFTER mocks are in place.
 // ---------------------------------------------------------------------------
-
-// We test assertAllowed (the local helper in server.ts) by re-creating it here
-// using the real isAllowedEmail from @/lib/allowlist (which is mocked via db above).
-const { isAllowedEmail } = await import("@/lib/allowlist");
+const { assertAllowedEmail, assertAllowedForUserId } = await import("@/lib/better-auth/gate");
 
 const ALLOWED_EMAIL = "founder@artlio.test";
 const BLOCKED_EMAIL = "stranger@example.com";
@@ -43,26 +34,6 @@ afterEach(() => {
   process.env.FOUNDER_ADMIN_EMAILS = savedEnv.FOUNDER_ADMIN_EMAILS;
   process.env.AUTH_ALLOWED_EMAILS = savedEnv.AUTH_ALLOWED_EMAILS;
 });
-
-// ---------------------------------------------------------------------------
-// assertAllowedEmail — mirrors the logic in user.create.before
-// ---------------------------------------------------------------------------
-async function assertAllowedEmail(email: string | null | undefined): Promise<void> {
-  if (!(await isAllowedEmail(email))) {
-    throw new APIError("FORBIDDEN", { message: "This email isn't on the allowlist." });
-  }
-}
-
-// ---------------------------------------------------------------------------
-// assertAllowedForUserId — mirrors the logic in session.create.before
-// ---------------------------------------------------------------------------
-async function assertAllowedForUserId(userId: string): Promise<void> {
-  const u = await (await import("@fikirtive/db")).prisma.betterAuthUser.findUnique({
-    where: { id: userId },
-    select: { email: true },
-  });
-  await assertAllowedEmail(u?.email);
-}
 
 // ---------------------------------------------------------------------------
 // Tests

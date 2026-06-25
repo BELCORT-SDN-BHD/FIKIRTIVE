@@ -3,18 +3,12 @@ import { betterAuth } from "better-auth";
 import { prismaAdapter } from "better-auth/adapters/prisma";
 import { magicLink, customSession } from "better-auth/plugins";
 import { nextCookies } from "better-auth/next-js";
-import { APIError, createAuthMiddleware } from "better-auth/api";
+import { createAuthMiddleware } from "better-auth/api";
 import { prisma } from "@fikirtive/db";
-import { isAllowedEmail } from "@/lib/allowlist";
 import { sendAuthEmail } from "./sender";
 import { roleForEmail } from "./session-role";
 import { convergeIdentity } from "./converge";
-
-async function assertAllowed(email: string | null | undefined) {
-  if (!(await isAllowedEmail(email))) {
-    throw new APIError("FORBIDDEN", { message: "This email isn't on the allowlist." });
-  }
-}
+import { assertAllowedEmail, assertAllowedForUserId } from "./gate";
 
 export const auth = betterAuth({
   baseURL: process.env.BETTER_AUTH_URL,
@@ -46,7 +40,7 @@ export const auth = betterAuth({
     before: createAuthMiddleware(async (ctx) => {
       const email: string | undefined = (ctx.body as Record<string, unknown> | undefined)?.email as string | undefined;
       if (email && (ctx.path?.startsWith("/sign-in") || ctx.path?.startsWith("/sign-up"))) {
-        await assertAllowed(email);
+        await assertAllowedEmail(email);
       }
     }),
   },
@@ -57,7 +51,7 @@ export const auth = betterAuth({
       create: {
         // Gate 1: prevents any non-allowlisted email from getting a ba_user row (first sign-up, any method).
         before: async (user) => {
-          await assertAllowed(user.email);
+          await assertAllowedEmail(user.email);
         },
         after: async (u) => {
           await convergeIdentity({ email: u.email, name: u.name, image: u.image });
@@ -68,10 +62,8 @@ export const auth = betterAuth({
       create: {
         // Gate 2: prevents a session being issued for any non-allowlisted email — covers repeat sign-ins
         // and revocation. Runs on every session creation regardless of method (OAuth, magic-link, password).
-        before: async (session, ctx) => {
-          if (!ctx) return;
-          const u = await prisma.betterAuthUser.findUnique({ where: { id: session.userId }, select: { email: true } });
-          await assertAllowed(u?.email);
+        before: async (session) => {
+          await assertAllowedForUserId(session.userId);
         },
         after: async (s) => {
           const u = await prisma.betterAuthUser.findUnique({ where: { id: s.userId }, select: { email: true, name: true, image: true } });
@@ -84,7 +76,7 @@ export const auth = betterAuth({
     magicLink({
       expiresIn: 60 * 15,
       sendMagicLink: async ({ email, url }) => {
-        await assertAllowed(email);
+        await assertAllowedEmail(email);
         await sendAuthEmail({ to: email, subject: "Sign in to Fikirtive", url, intro: "Sign in to Fikirtive" });
       },
     }),
