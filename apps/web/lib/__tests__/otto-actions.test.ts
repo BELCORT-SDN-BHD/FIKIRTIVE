@@ -150,7 +150,7 @@ vi.mock("@fikirtive/otto", async (importOriginal) => {
 
 // ── Import SUT after mocks ───────────────────────────────────────────────────
 
-const { ottoTurn, mapOttoUsage, buildOttoContext, ottoApprove } = await import("@/lib/otto-actions");
+const { ottoTurn, mapOttoUsage, buildOttoContext, ottoApprove, createEmptyCoworkThread } = await import("@/lib/otto-actions");
 
 // ── Shared fixtures ──────────────────────────────────────────────────────────
 
@@ -883,5 +883,115 @@ describe("ottoTurn — simple-mode injects the plain-language block only when si
     const runInput = mockRun.mock.calls[0][1] as Array<{ role: string; content: string }>;
     const sys = runInput.find((m) => m.role === "system");
     expect(sys === undefined || !sys.content.includes("Talking to a beginner")).toBe(true);
+  });
+});
+
+// ── Task 6: createEmptyCoworkThread ──────────────────────────────────────────
+
+describe("createEmptyCoworkThread — validation", () => {
+  it("returns {error:'Invalid request.'} and makes no prisma calls when projectId is missing", async () => {
+    const res = await createEmptyCoworkThread({ title: "My campaign" });
+    expect(res).toEqual({ error: "Invalid request." });
+    expect(mockProjectFindFirst).not.toHaveBeenCalled();
+    expect(mockChatThreadCreate).not.toHaveBeenCalled();
+  });
+
+  it("returns {error:'Invalid request.'} and makes no prisma calls when title is missing", async () => {
+    const res = await createEmptyCoworkThread({ projectId: "proj_abc" });
+    expect(res).toEqual({ error: "Invalid request." });
+    expect(mockProjectFindFirst).not.toHaveBeenCalled();
+    expect(mockChatThreadCreate).not.toHaveBeenCalled();
+  });
+
+  it("returns {error:'Invalid request.'} when raw is null", async () => {
+    const res = await createEmptyCoworkThread(null);
+    expect(res).toEqual({ error: "Invalid request." });
+    expect(mockProjectFindFirst).not.toHaveBeenCalled();
+    expect(mockChatThreadCreate).not.toHaveBeenCalled();
+  });
+
+  it("returns {error:'Invalid request.'} when projectId is not a string", async () => {
+    const res = await createEmptyCoworkThread({ projectId: 123, title: "My campaign" });
+    expect(res).toEqual({ error: "Invalid request." });
+    expect(mockProjectFindFirst).not.toHaveBeenCalled();
+    expect(mockChatThreadCreate).not.toHaveBeenCalled();
+  });
+});
+
+describe("createEmptyCoworkThread — owner-scoping / cross-tenant", () => {
+  it("returns {error:'Project not found.'} and does NOT create a thread when project is not owned by session owner", async () => {
+    mockRequireOwner.mockResolvedValue(GATE); // GATE.ownerId = OWNER_ID = "owner_abc"
+    mockProjectFindFirst.mockResolvedValue(null); // project not found for this owner
+
+    const res = await createEmptyCoworkThread({ projectId: PROJECT_ID, title: "My campaign" });
+
+    expect(res).toEqual({ error: "Project not found." });
+    expect(mockChatThreadCreate).not.toHaveBeenCalled();
+  });
+
+  it("uses the session ownerId (from requireOwner) — never the ownerId supplied in raw", async () => {
+    // Attacker passes a forged ownerId in raw (the action should ignore it)
+    mockRequireOwner.mockResolvedValue(GATE); // session owner = OWNER_ID
+    mockProjectFindFirst.mockResolvedValue(null); // will be null regardless
+
+    await createEmptyCoworkThread({
+      projectId: PROJECT_ID,
+      title: "Evil title",
+      ownerId: "attacker_owner_xyz", // forged — must be ignored
+    });
+
+    // prisma.project.findFirst must have been called with the SESSION ownerId, not the forged one
+    expect(mockProjectFindFirst).toHaveBeenCalledWith(
+      expect.objectContaining({
+        where: expect.objectContaining({ ownerId: OWNER_ID }),
+      }),
+    );
+    // The forged ownerId must NOT appear in any prisma call
+    expect(mockProjectFindFirst).not.toHaveBeenCalledWith(
+      expect.objectContaining({
+        where: expect.objectContaining({ ownerId: "attacker_owner_xyz" }),
+      }),
+    );
+  });
+});
+
+describe("createEmptyCoworkThread — success", () => {
+  it("creates a chatThread with the gate ownerId + given projectId + title, returns {id}", async () => {
+    mockRequireOwner.mockResolvedValue(GATE);
+    mockProjectFindFirst.mockResolvedValue({ id: PROJECT_ID }); // project found
+    mockChatThreadCreate.mockResolvedValue({});
+
+    const res = await createEmptyCoworkThread({ projectId: PROJECT_ID, title: "Summer sale" });
+
+    // Returns an id
+    expect(res).toEqual({ id: expect.any(String) });
+
+    // chatThread.create called with the gate ownerId (not a forged one), given projectId, and title
+    expect(mockChatThreadCreate).toHaveBeenCalledWith(
+      expect.objectContaining({
+        data: expect.objectContaining({
+          ownerId: OWNER_ID,
+          projectId: PROJECT_ID,
+          title: "Summer sale",
+        }),
+      }),
+    );
+  });
+
+  it("truncates title to 80 chars", async () => {
+    mockRequireOwner.mockResolvedValue(GATE);
+    mockProjectFindFirst.mockResolvedValue({ id: PROJECT_ID });
+    mockChatThreadCreate.mockResolvedValue({});
+
+    const longTitle = "A".repeat(120);
+    await createEmptyCoworkThread({ projectId: PROJECT_ID, title: longTitle });
+
+    expect(mockChatThreadCreate).toHaveBeenCalledWith(
+      expect.objectContaining({
+        data: expect.objectContaining({
+          title: "A".repeat(80),
+        }),
+      }),
+    );
   });
 });

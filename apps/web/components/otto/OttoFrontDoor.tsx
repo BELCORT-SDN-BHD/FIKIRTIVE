@@ -122,6 +122,8 @@ export function OttoFrontDoor({
       // Streaming front door: create an empty thread (no first turn, no spend), then
       // hand the first message to OttoChatStream which streams it in on mount. The
       // thread row already exists, so the route's existing-thread branch handles it.
+      // Note: when ottoStreamEnabled is true, onStreamStart MUST be provided (OttoView
+      // always passes it); if somehow absent the code falls through to the classic ottoTurn path.
       if (ottoStreamEnabled && onStreamStart) {
         const created = await createEmptyCoworkThread({ projectId, title: msgText });
         if ("error" in created) {
