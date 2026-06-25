@@ -10,18 +10,38 @@ import { roleForEmail } from "./session-role";
 import { convergeIdentity } from "./converge";
 import { assertAllowedEmail, assertAllowedForUserId } from "./gate";
 
+// Secret guard — BUILD-SAFE. Do NOT hard-throw at module top level (that can break `next build`
+// before env is wired). better-auth already fails closed without a valid secret; this just warns
+// loudly so a misconfigured prod deploy is obvious in logs.
+if (process.env.NODE_ENV === "production" && (!process.env.BETTER_AUTH_SECRET || process.env.BETTER_AUTH_SECRET.length < 32)) {
+  console.error("[better-auth] FATAL: BETTER_AUTH_SECRET is missing or <32 chars — sessions cannot be signed.");
+}
+
 export const auth = betterAuth({
   baseURL: process.env.BETTER_AUTH_URL,
   basePath: "/api/better-auth",
   secret: process.env.BETTER_AUTH_SECRET,
+  // Belt-and-suspenders: BA already seeds the baseURL origin; this pins it explicitly.
+  trustedOrigins: process.env.BETTER_AUTH_URL ? [new URL(process.env.BETTER_AUTH_URL).origin] : [],
   database: prismaAdapter(prisma, { provider: "postgresql" }),
   // Map BA's four models to the dormant ba_* tables (Task 3).
   user: { modelName: "BetterAuthUser" },
   session: { modelName: "BetterAuthSession" },
-  account: { modelName: "BetterAuthAccount" },
+  // Account linking: only fold an OAuth identity onto an existing local account when the
+  // provider's email is trustworthy (Google's email_verified) AND the local credential is
+  // itself verified — never link onto an unverified local email (account-takeover vector).
+  account: {
+    modelName: "BetterAuthAccount",
+    accountLinking: {
+      enabled: true,
+      trustedProviders: ["google"],     // Google's email_verified claim is trustworthy
+      requireLocalEmailVerified: true,  // never link onto an unverified local credential
+    },
+  },
   verification: { modelName: "BetterAuthVerification" },
   emailAndPassword: {
     enabled: true,
+    // NON-REMOVABLE: better-auth's default is OFF; without this an unverified email+password signup mints a session → account takeover via convergeIdentity. Keep true.
     requireEmailVerification: true,
     sendResetPassword: async ({ user, url }) => {
       await sendAuthEmail({ to: user.email, subject: "Reset your Fikirtive password", url, intro: "Reset your password" });
@@ -54,7 +74,7 @@ export const auth = betterAuth({
           await assertAllowedEmail(user.email);
         },
         after: async (u) => {
-          await convergeIdentity({ email: u.email, name: u.name, image: u.image });
+          await convergeIdentity({ email: u.email, name: u.name, image: u.image, emailVerified: u.emailVerified });
         },
       },
     },
@@ -66,8 +86,8 @@ export const auth = betterAuth({
           await assertAllowedForUserId(session.userId);
         },
         after: async (s) => {
-          const u = await prisma.betterAuthUser.findUnique({ where: { id: s.userId }, select: { email: true, name: true, image: true } });
-          if (u) await convergeIdentity(u);
+          const u = await prisma.betterAuthUser.findUnique({ where: { id: s.userId }, select: { email: true, name: true, image: true, emailVerified: true } });
+          if (u) await convergeIdentity({ email: u.email, name: u.name, image: u.image, emailVerified: u.emailVerified });
         },
       },
     },

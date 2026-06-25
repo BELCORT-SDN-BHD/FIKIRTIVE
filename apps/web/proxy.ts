@@ -1,4 +1,5 @@
-import { auth } from "@/auth";
+import { auth } from "@/lib/better-auth/server";
+import { NextResponse, type NextRequest } from "next/server";
 
 /**
  * Next 16 proxy (the middleware successor; Node runtime by default).
@@ -9,18 +10,11 @@ import { auth } from "@/auth";
  * (editor render tracer, API-key generation), set AUTH_ENABLED=true +
  * RESEND_API_KEY in Railway — no code change needed.
  *
- * When enabled, everything is gated except /login, the auth API, and Next
- * statics — including /files/* (reference images are private).
+ * When enabled, everything is gated except /login, the auth APIs, and Next
+ * statics — including /files/* (reference images are private). The wall is now
+ * Better Auth: it reads the BA session via auth.api.getSession.
  */
-const wall = auth((req) => {
-  if (!req.auth) {
-    const login = new URL("/login", req.nextUrl);
-    login.searchParams.set("from", req.nextUrl.pathname);
-    return Response.redirect(login);
-  }
-});
-
-export default function proxy(req: Parameters<typeof wall>[0], ctx: Parameters<typeof wall>[1]) {
+export default async function proxy(req: NextRequest) {
   // Fail-closed in production: now that money-incurring features (Otto) ship, a prod
   // deploy that simply FORGETS the flag must not serve the app unauthenticated. So in
   // production the wall is ON unless someone EXPLICITLY sets AUTH_ENABLED=false. In dev
@@ -31,9 +25,16 @@ export default function proxy(req: Parameters<typeof wall>[0], ctx: Parameters<t
       ? process.env.AUTH_ENABLED !== "false"
       : process.env.AUTH_ENABLED === "true";
   if (!enabled) return;
-  return wall(req, ctx);
+  const session = await auth.api.getSession({ headers: req.headers });
+  if (!session) {
+    const login = new URL("/login", req.nextUrl);
+    login.searchParams.set("from", req.nextUrl.pathname);
+    return NextResponse.redirect(login);
+  }
 }
 
 export const config = {
-  matcher: ["/((?!login|api/auth|_next/static|_next/image|favicon.ico).*)"],
+  // api/better-auth MUST stay excluded — else the sign-in/OAuth-callback endpoints get
+  // walled → infinite redirect / total lockout. api/auth stays excluded for NextAuth rollback.
+  matcher: ["/((?!login|api/auth|api/better-auth|_next/static|_next/image|favicon.ico).*)"],
 };

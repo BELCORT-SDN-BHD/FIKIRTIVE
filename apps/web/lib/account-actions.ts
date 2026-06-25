@@ -6,10 +6,12 @@
  * idempotent spend path. Tenant scoping is via requireOwner() (the fail-closed
  * session→ownerId resolver), so a user only ever sees their own org's balance.
  */
+import { headers } from "next/headers";
+import { redirect } from "next/navigation";
 import { prisma } from "@fikirtive/db";
 import { displayCredits, CREDITS_PER_USD, FOUNDER_OWNER_ID } from "@fikirtive/core";
 import { requireOwner } from "./auth-guard";
-import { signOut } from "@/auth";
+import { auth } from "@/lib/better-auth/server";
 
 export type AccountActivity = {
   id: string;
@@ -73,7 +75,11 @@ export async function getMyAccount(): Promise<AccountInfo | { error: string }> {
   };
 }
 
-/** Sign the user out and return them to the login screen. */
+/** Sign the user out and return them to the login screen. Better Auth's server
+ *  signOut clears the session cookie (nextCookies plugin writes it on this action's
+ *  response); the redirect then lands on /login. Server-action analog of
+ *  authClient.signOut() (the client method can't run inside a "use server" action). */
 export async function signOutAction(): Promise<void> {
-  await signOut({ redirectTo: "/login" });
+  await auth.api.signOut({ headers: await headers() });
+  redirect("/login");
 }

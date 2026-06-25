@@ -1,5 +1,6 @@
 import "server-only";
-import { auth, allowed, isFounderAdmin } from "@/auth";
+import { auth } from "@/lib/better-auth/compat";
+import { allowed, isFounderAdmin } from "@/auth";
 import { prisma, grantCreditsTx } from "@fikirtive/db";
 import { newId, FOUNDER_OWNER_ID, BETA_INITIAL_GRANT_CREDITS, roleAllows, isRole, type Section, type Action, type Role } from "@fikirtive/core";
 

@@ -1,5 +1,6 @@
 import { redirect } from "next/navigation";
-import { auth, signIn } from "@/auth";
+import { auth } from "@/lib/better-auth/compat";
+import { LoginForm } from "./LoginForm";
 
 export const dynamic = "force-dynamic";
 
@@ -19,18 +20,7 @@ export default async function LoginPage({
 }) {
   const session = await auth();
   if (session) redirect("/");
-  const { sent, error, from } = await searchParams;
-
-  async function sendLink(formData: FormData) {
-    "use server";
-    const email = String(formData.get("email") ?? "").trim();
-    if (!email) return;
-    await signIn("resend", {
-      email,
-      redirect: true,
-      redirectTo: from && from.startsWith("/") ? from : "/",
-    });
-  }
+  const { error, from } = await searchParams;
 
   return (
     <main
@@ -49,9 +39,7 @@ export default async function LoginPage({
           fikirtive<span className="wordmark-dot" />
         </span>
         <p style={{ font: "var(--text-body)", color: "var(--fg-2)", margin: "8px 0 20px" }}>
-          {sent
-            ? "Check your inbox — the sign-in link is on its way."
-            : "Sign in with your email. No passwords."}
+          Sign in with a magic link, Google, or your password.
         </p>
 
         {error && (
@@ -67,40 +55,7 @@ export default async function LoginPage({
           </p>
         )}
 
-        {!sent && (
-          <form action={sendLink} style={{ display: "flex", flexDirection: "column", gap: 14 }}>
-            <label className="al-field">
-              <span className="al-field-label">Email</span>
-              <span className="al-input-wrap">
-                <input
-                  type="email"
-                  name="email"
-                  required
-                  autoFocus
-                  placeholder="you@studio.com"
-                  autoComplete="email"
-                />
-              </span>
-            </label>
-            <button type="submit" className="al-btn al-btn-primary al-btn-md al-btn-full">
-              Send magic link
-            </button>
-          </form>
-        )}
-
-        {sent && (
-          <a
-            href="/login"
-            style={{
-              font: "var(--text-small)",
-              color: "var(--fg-2)",
-              textDecoration: "underline",
-              textUnderlineOffset: 3,
-            }}
-          >
-            Use a different email
-          </a>
-        )}
+        <LoginForm from={from ?? "/"} />
       </div>
     </main>
   );

@@ -3,7 +3,6 @@ import { ensureDefaultProject, getProjects, getShots, getLooseVideoClips } from 
 import { buildBoardEdit } from "@/lib/edit";
 import { EditorShell } from "@/components/EditorShell";
 import { fikirtiveEdit } from "@fikirtive/core";
-import { auth } from "@/auth";
 import { requireOwner } from "@/lib/auth-guard";
 
 export const dynamic = "force-dynamic";
@@ -16,7 +15,6 @@ export default async function EditorPage({
   searchParams: Promise<{ p?: string }>;
 }) {
   const { p } = await searchParams;
-  const session = await auth();
   const owner = await requireOwner();
   if ("error" in owner) redirect("/login");
   const { ownerId } = owner;

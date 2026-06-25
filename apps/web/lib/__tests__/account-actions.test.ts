@@ -6,9 +6,9 @@ import { describe, it, expect, vi, beforeEach } from "vitest";
 // covers the resolver end-to-end against real Postgres.
 const mockRequireOwner = vi.fn();
 vi.mock("@/lib/auth-guard", () => ({ requireOwner: mockRequireOwner }));
-// account-actions imports server `signOut` from "@/auth" (next-auth v5) — stub it so the
-// test never loads next-auth (which imports next/server outside a Next.js runtime).
-vi.mock("@/auth", () => ({ signOut: vi.fn() }));
+// account-actions imports the Better Auth server instance for signOutAction — stub it so the
+// test never constructs the real auth (which pulls in server-only + the prisma adapter).
+vi.mock("@/lib/better-auth/server", () => ({ auth: { api: { signOut: vi.fn() } } }));
 
 // ONLY read methods are provided — a stray write (create/update/upsert) would throw
 // "is not a function", so this also guards the read-only contract by construction.
