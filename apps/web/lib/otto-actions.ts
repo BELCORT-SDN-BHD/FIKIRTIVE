@@ -80,7 +80,7 @@ async function loadAvailableRefsForAgent(ownerId: string): Promise<{ id: string;
 // buildContextSystemMessage — compose the injected system message from OttoContext
 // ---------------------------------------------------------------------------
 
-function buildContextSystemMessage(ctx: OttoContext): AgentInputItem | null {
+export function buildContextSystemMessage(ctx: OttoContext): AgentInputItem | null {
   const parts: string[] = [];
   if (ctx.brandContext) parts.push(`What you know about the user's brand:\n${ctx.brandContext}`);
   if (ctx.availableRefs?.length) {
@@ -126,6 +126,161 @@ export async function buildOttoContext({
     availableRefs,
     simpleMode: simpleMode ?? false,
   };
+}
+
+// ---------------------------------------------------------------------------
+// extractText / finalizeOttoRun — shared post-run persistence
+//
+// finalizeOttoRun is the EXACT post-run persistence ottoTurn performs after a
+// (non-streaming) run completes, lifted verbatim so the streaming route handler
+// (app/api/otto/stream/route.ts) can reuse it WITHOUT duplicating ~100 lines of
+// money-adjacent CAS logic. Behavior is identical:
+//   - interruption branch: CAS-write paused ottoState (existing) / plain update
+//     (new) → stale on count 0 → persist partial assistant text → needs_approval
+//   - completed branch: CAS-write ottoState (existing) / $transaction (new) →
+//     stale on count 0 → persist assistant reply → done
+// The CAS guard `updateMany({ where:{ id, ownerId, ottoState: priorOttoState }})`
+// (count 0 ⇒ stale) is preserved. Does NOT call revalidatePath (caller-owned).
+// ---------------------------------------------------------------------------
+
+/** Extract plain-text output from a RunResult's newItems (best-effort). */
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+export function extractText(r: any): string {
+  if (r.finalOutput != null) return String(r.finalOutput);
+  return (Array.isArray(r.newItems) ? (r.newItems as any[]) : [])
+    .filter((it: any) => it.type === "message_output_item")
+    .map((it: any) => {
+      const content: any[] = it?.rawItem?.content ?? [];
+      return content
+        .filter((c: any) => c.type === "output_text")
+        .map((c: any) => c.text ?? "")
+        .join("");
+    })
+    .join("");
+}
+
+export type FinalizeOttoRunResult =
+  | { status: "needs_approval"; pendingCardIds: string[] }
+  | { status: "done"; reply: string }
+  | { status: "stale" };
+
+/**
+ * Persist a completed/interrupted Otto run, with the SAME CAS + seq semantics as
+ * ottoTurn. `seqAfterUser` is the seq value AFTER the USER message was written;
+ * the assistant message is created at `seqAfterUser + 1`.
+ */
+export async function finalizeOttoRun({
+  ownerId,
+  threadId,
+  isNew,
+  priorOttoState,
+  result,
+  seqAfterUser,
+}: {
+  ownerId: string;
+  threadId: string;
+  isNew: boolean;
+  priorOttoState: string | null;
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  result: any;
+  seqAfterUser: number;
+}): Promise<FinalizeOttoRunResult> {
+  const newOttoState = result.state.toString() as string;
+  let seq = seqAfterUser;
+
+  // Handle interruption (generate tool parked for approval)
+  if (Array.isArray(result.interruptions) && result.interruptions.length > 0) {
+    const pendingCardIds: string[] = [];
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    for (const interruption of result.interruptions as any[]) {
+      // Accept either the SDK `.name` getter or the raw item name (robust to item-shape
+      // differences between RunState.getInterruptions() items and RunResult.interruptions).
+      const nm = (interruption as any).name ?? (interruption.rawItem as any)?.name;
+      if (nm === "generate") {
+        try {
+          const args = JSON.parse(interruption.arguments ?? "{}") as { cardId?: string };
+          if (args.cardId) pendingCardIds.push(args.cardId);
+        } catch {
+          // malformed args — skip
+        }
+      }
+    }
+
+    // CAS: only write paused ottoState if no concurrent turn moved it (existing thread only)
+    if (!isNew) {
+      const { count: casCount } = await prisma.chatThread.updateMany({
+        where: { id: threadId, ownerId, ottoState: priorOttoState },
+        data: { ottoState: newOttoState, updatedAt: new Date() },
+      });
+      if (casCount === 0) return { status: "stale" };
+    } else {
+      await prisma.chatThread.update({
+        where: { id: threadId },
+        data: { ottoState: newOttoState, updatedAt: new Date() },
+      });
+    }
+
+    // CAS won (or new thread) — persist any assistant text produced before the interruption
+    const assistantText = extractText(result);
+    if (assistantText) {
+      await prisma.chatMessage.create({
+        data: {
+          id: newId(),
+          threadId,
+          ownerId,
+          role: "AGENT",
+          kind: "TEXT",
+          seq: ++seq,
+          text: assistantText,
+        },
+      });
+    }
+
+    return { status: "needs_approval", pendingCardIds };
+  }
+
+  // Completed — persist Otto's final reply + ottoState
+  const replyText = extractText(result);
+
+  if (!isNew) {
+    // CAS: only write if no concurrent turn moved the state on
+    const { count: casCount } = await prisma.chatThread.updateMany({
+      where: { id: threadId, ownerId, ottoState: priorOttoState },
+      data: { ottoState: newOttoState, updatedAt: new Date() },
+    });
+    if (casCount === 0) return { status: "stale" };
+    await prisma.chatMessage.create({
+      data: {
+        id: newId(),
+        threadId,
+        ownerId,
+        role: "AGENT",
+        kind: "TEXT",
+        seq: ++seq,
+        text: replyText,
+      },
+    });
+  } else {
+    await prisma.$transaction([
+      prisma.chatThread.update({
+        where: { id: threadId },
+        data: { ottoState: newOttoState, updatedAt: new Date() },
+      }),
+      prisma.chatMessage.create({
+        data: {
+          id: newId(),
+          threadId,
+          ownerId,
+          role: "AGENT",
+          kind: "TEXT",
+          seq: ++seq,
+          text: replyText,
+        },
+      }),
+    ]);
+  }
+
+  return { status: "done", reply: replyText };
 }
 
 // ---------------------------------------------------------------------------
@@ -294,118 +449,15 @@ export async function ottoTurn(raw: unknown): Promise<
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     const result = agentResult as any;
 
-    // Persist the final ottoState
-    const newOttoState = (result.state.toString() as string);
-
-    /** Extract plain-text output from a RunResult's newItems (best-effort). */
-    function extractText(r: any): string {
-      if (r.finalOutput != null) return String(r.finalOutput);
-      return (Array.isArray(r.newItems) ? (r.newItems as any[]) : [])
-        .filter((it: any) => it.type === "message_output_item")
-        .map((it: any) => {
-          const content: any[] = it?.rawItem?.content ?? [];
-          return content
-            .filter((c: any) => c.type === "output_text")
-            .map((c: any) => c.text ?? "")
-            .join("");
-        })
-        .join("");
-    }
-
-    // Handle interruption (generate tool parked for approval)
-    if (Array.isArray(result.interruptions) && result.interruptions.length > 0) {
-      const pendingCardIds: string[] = [];
-      for (const interruption of result.interruptions as any[]) {
-        // Accept either the SDK `.name` getter or the raw item name (robust to item-shape
-        // differences between RunState.getInterruptions() items and RunResult.interruptions).
-        const nm = (interruption as any).name ?? (interruption.rawItem as any)?.name;
-        if (nm === "generate") {
-          try {
-            const args = JSON.parse(interruption.arguments ?? "{}") as { cardId?: string };
-            if (args.cardId) pendingCardIds.push(args.cardId);
-          } catch {
-            // malformed args — skip
-          }
-        }
-      }
-
-      // CAS: only write paused ottoState if no concurrent turn moved it (existing thread only)
-      if (!isNew) {
-        const { count: casCount } = await prisma.chatThread.updateMany({
-          where: { id: threadId, ownerId, ottoState: priorOttoState },
-          data: { ottoState: newOttoState, updatedAt: new Date() },
-        });
-        if (casCount === 0) { revalidatePath("/", "layout"); return { threadId, status: "stale" }; }
-      } else {
-        await prisma.chatThread.update({
-          where: { id: threadId },
-          data: { ottoState: newOttoState, updatedAt: new Date() },
-        });
-      }
-
-      // CAS won (or new thread) — persist any assistant text produced before the interruption
-      const assistantText = extractText(result);
-      if (assistantText) {
-        await prisma.chatMessage.create({
-          data: {
-            id: newId(),
-            threadId,
-            ownerId,
-            role: "AGENT",
-            kind: "TEXT",
-            seq: ++seq,
-            text: assistantText,
-          },
-        });
-      }
-
-      revalidatePath("/", "layout");
-      return { threadId, status: "needs_approval", pendingCardIds };
-    }
-
-    // Completed — persist Otto's final reply + ottoState
-    const replyText = extractText(result);
-
-    if (!isNew) {
-      // CAS: only write if no concurrent turn moved the state on
-      const { count: casCount } = await prisma.chatThread.updateMany({
-        where: { id: threadId, ownerId, ottoState: priorOttoState },
-        data: { ottoState: newOttoState, updatedAt: new Date() },
-      });
-      if (casCount === 0) { revalidatePath("/", "layout"); return { threadId, status: "stale" }; }
-      await prisma.chatMessage.create({
-        data: {
-          id: newId(),
-          threadId,
-          ownerId,
-          role: "AGENT",
-          kind: "TEXT",
-          seq: ++seq,
-          text: replyText,
-        },
-      });
-    } else {
-      await prisma.$transaction([
-        prisma.chatThread.update({
-          where: { id: threadId },
-          data: { ottoState: newOttoState, updatedAt: new Date() },
-        }),
-        prisma.chatMessage.create({
-          data: {
-            id: newId(),
-            threadId,
-            ownerId,
-            role: "AGENT",
-            kind: "TEXT",
-            seq: ++seq,
-            text: replyText,
-          },
-        }),
-      ]);
-    }
-
+    // Persist the run (interruption / completed / stale) with CAS — shared with the
+    // streaming route handler via finalizeOttoRun (identical behavior).
+    const finalized = await finalizeOttoRun({ ownerId, threadId, isNew, priorOttoState, result, seqAfterUser: seq });
     revalidatePath("/", "layout");
-    return { threadId, status: "done", reply: replyText };
+    if (finalized.status === "stale") return { threadId, status: "stale" };
+    if (finalized.status === "needs_approval") {
+      return { threadId, status: "needs_approval", pendingCardIds: finalized.pendingCardIds };
+    }
+    return { threadId, status: "done", reply: finalized.reply };
   } catch (e) {
     // Log the real cause server-side: the generic client message hides it, and a swallowed
     // error here once masked an Anthropic 529 for hours. The client message stays generic.
