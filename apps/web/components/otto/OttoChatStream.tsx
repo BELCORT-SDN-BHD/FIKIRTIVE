@@ -7,6 +7,11 @@ import { OttoAvatar, Button } from "@/components/fk";
 import { getCoworkThreadClient } from "@/lib/cowork-fetch";
 import { threadToUiMessages, type OttoUiMessage } from "@/lib/otto-ui-messages";
 import { TextPart } from "./parts/TextPart";
+import { StatusLine } from "./parts/StatusLine";
+import { ReasoningPart } from "./parts/ReasoningPart";
+import { asStatusData, asErrorData } from "@/lib/otto-status-helpers";
+import type { OttoStatusData } from "@/lib/otto-stream-bridge";
+import type { ReasoningUIPart } from "ai";
 import type { EntityDTO, ChatThreadDTO } from "@/lib/types";
 
 // Re-export the mapping seam so callers/tests can import it from the component too.
@@ -44,6 +49,10 @@ export function OttoChatStream({
   onThreadUpdate,
 }: OttoChatStreamProps) {
   const [text, setText] = useState("");
+  /** Latest data-status received for the in-flight turn; reset on each new turn. */
+  const [liveStatus, setLiveStatus] = useState<OttoStatusData | null>(null);
+  /** data-error text for the in-flight turn; stays visible after the turn ends. */
+  const [streamError, setStreamError] = useState<string | null>(null);
 
   // useChat constructs its Chat (and captures `transport` + initial `messages`) ONCE.
   // We build both in a one-time useState initializer so they're stable across renders.
@@ -78,6 +87,15 @@ export function OttoChatStream({
   const { messages, sendMessage, status, error } = useChat<OttoUiMessage>({
     transport: chatInit.transport,
     messages: chatInit.messages,
+    // onData fires for each data-* part as it streams in. We capture data-status
+    // (ephemeral live progress) and data-error (must stay visible — it's the only
+    // user feedback when no assistant message was persisted).
+    onData: (part) => {
+      const s = asStatusData(part);
+      if (s) { setLiveStatus(s); return; }
+      const e = asErrorData(part);
+      if (e) { setStreamError(e.text); }
+    },
     onFinish: () => {
       // Sync the parent thread list + make reload authoritative. Non-blocking.
       void (async () => {
@@ -96,6 +114,9 @@ export function OttoChatStream({
     const trimmed = text.trim();
     if (!trimmed || isBusy) return;
     setText(""); // clear the composer immediately; sendMessage echoes the user msg
+    // Reset ephemeral stream state for the new turn.
+    setLiveStatus(null);
+    setStreamError(null);
     // Pass the live projectId/threadId via the per-call body; prepareSendMessagesRequest
     // reads them off `body` and shapes the strict route payload.
     void sendMessage({ text: trimmed }, { body: { projectId, threadId: thread.id } });
@@ -158,48 +179,64 @@ export function OttoChatStream({
         >
           {messages.map((m, mi) => {
             const isLastMessage = mi === messages.length - 1;
-            // Only text parts render in Task 3. Non-text parts (reasoning / data) are
-            // ignored here — Task 4 renders the live status line, and Task 5 swaps the
-            // placeholder for the real plan-card / result widget using m.metadata
-            // (kind / payload / genJobId). Task 5: render real widget here.
+            // Render text parts + reasoning parts for each message.
+            // data-status / data-error / data-tool-propose parts are handled
+            // via onData (ephemeral state) and do NOT render inline per-message.
+            // Task 5: swap the text placeholder for the real OttoPlanCard / OttoResult
+            // widget here using m.metadata (kind / payload / genJobId).
             const textParts = m.parts.filter(
               (p): p is { type: "text"; text: string } => p.type === "text",
             );
-            return textParts.map((p, pi) => {
-              const isLastTextPart = pi === textParts.length - 1;
-              const streaming =
-                lastMessageIsStreamingAssistant && isLastMessage && isLastTextPart;
-              return (
-                <TextPart
-                  key={`${m.id}:${pi}`}
-                  role={m.role === "user" ? "user" : "assistant"}
-                  text={p.text}
-                  streaming={streaming}
-                />
-              );
-            });
+            const reasoningParts = m.parts.filter(
+              (p): p is ReasoningUIPart => p.type === "reasoning",
+            );
+            return [
+              ...textParts.map((p, pi) => {
+                const isLastTextPart = pi === textParts.length - 1;
+                const streaming =
+                  lastMessageIsStreamingAssistant && isLastMessage && isLastTextPart;
+                return (
+                  <TextPart
+                    key={`${m.id}:t${pi}`}
+                    role={m.role === "user" ? "user" : "assistant"}
+                    text={p.text}
+                    streaming={streaming}
+                  />
+                );
+              }),
+              ...reasoningParts.map((p, ri) => (
+                // Graceful: only rendered when reasoning arrives; most models omit it.
+                <ReasoningPart key={`${m.id}:r${ri}`} part={p} />
+              )),
+            ];
           })}
 
-          {status === "submitted" && (
-            <div style={{ display: "flex", alignItems: "flex-start", gap: "var(--space-3)" }}>
-              <OttoAvatar size={32} state="thinking" />
-              <div
-                style={{
-                  padding: "var(--space-3) var(--space-4)",
-                  background: "var(--surface-card)",
-                  borderRadius: "0 var(--radius-lg) var(--radius-lg) var(--radius-lg)",
-                  border: "1px solid var(--border-subtle)",
-                  fontSize: "var(--text-sm)",
-                  color: "var(--text-muted)",
-                  fontStyle: "italic",
-                }}
-              >
-                Otto is thinking…
-              </div>
+          {/* Live status line: shows "Otto is thinking…" or the planning text while
+              in-flight; hides automatically once isBusy is false (replaces the
+              static "Otto is thinking…" block from Task 3). */}
+          <StatusLine isBusy={isBusy} liveStatus={liveStatus} />
+
+          {/* data-error: stays visible after the turn ends — it's the only user
+              feedback when the route errors before persisting an assistant message
+              (insufficient_credits / run errors surfaced via data-error parts). */}
+          {streamError && (
+            <div
+              role="alert"
+              style={{
+                padding: "var(--space-3) var(--space-4)",
+                borderRadius: "var(--radius-md)",
+                background: "var(--error-100)",
+                color: "var(--error-700)",
+                fontSize: "var(--text-sm)",
+              }}
+            >
+              {streamError}
             </div>
           )}
 
-          {status === "error" && (
+          {/* useChat transport-level error (network / parse failures distinct from
+              route data-error). Kept as a fallback alongside stream-level errors. */}
+          {status === "error" && !streamError && (
             <div
               role="alert"
               style={{
