@@ -19,7 +19,7 @@ describe("convergeIdentity", () => {
     const { convergeIdentity } = await import("@/lib/better-auth/converge");
     db.user.findUnique.mockResolvedValue(null);
     db.user.create.mockResolvedValue({ id: "usr_1", email: "merchant@x.test" });
-    await convergeIdentity({ email: "merchant@x.test", name: "M" });
+    await convergeIdentity({ email: "merchant@x.test", name: "M", emailVerified: true });
     expect(db.user.create).toHaveBeenCalled();
     expect(mockBootstrap).toHaveBeenCalledWith("usr_1", "merchant@x.test");
     expect(db.actionEvent.create).toHaveBeenCalled();
@@ -27,7 +27,7 @@ describe("convergeIdentity", () => {
   it("self-heals founder super-admin + seeds founder membership, no personal bootstrap", async () => {
     const { convergeIdentity } = await import("@/lib/better-auth/converge");
     db.user.findUnique.mockResolvedValue({ id: "usr_f", email: "founder@x.test" });
-    await convergeIdentity({ email: "founder@x.test" });
+    await convergeIdentity({ email: "founder@x.test", emailVerified: true });
     expect(db.user.updateMany).toHaveBeenCalled();   // promote-only self-heal
     expect(db.membership.upsert).toHaveBeenCalled();  // founder membership seed
     expect(mockBootstrap).not.toHaveBeenCalled();
@@ -35,6 +35,23 @@ describe("convergeIdentity", () => {
   it("never throws when a write fails", async () => {
     const { convergeIdentity } = await import("@/lib/better-auth/converge");
     db.user.findUnique.mockRejectedValue(new Error("db"));
-    await expect(convergeIdentity({ email: "x@x.test" })).resolves.toBeUndefined();
+    await expect(convergeIdentity({ email: "x@x.test", emailVerified: true })).resolves.toBeUndefined();
+  });
+  it("performs NO writes when the identity is unverified (early-return gate)", async () => {
+    const { convergeIdentity } = await import("@/lib/better-auth/converge");
+    await convergeIdentity({ email: "unverified@x.test", emailVerified: false });
+    expect(db.user.findUnique).not.toHaveBeenCalled();
+    expect(db.user.create).not.toHaveBeenCalled();
+    expect(db.user.updateMany).not.toHaveBeenCalled();
+    expect(db.membership.upsert).not.toHaveBeenCalled();
+    expect(db.actionEvent.create).not.toHaveBeenCalled();
+    expect(mockBootstrap).not.toHaveBeenCalled();
+  });
+  it("performs NO writes when emailVerified is omitted (undefined ⇒ falsy)", async () => {
+    const { convergeIdentity } = await import("@/lib/better-auth/converge");
+    await convergeIdentity({ email: "missing-flag@x.test" });
+    expect(db.user.findUnique).not.toHaveBeenCalled();
+    expect(db.actionEvent.create).not.toHaveBeenCalled();
+    expect(mockBootstrap).not.toHaveBeenCalled();
   });
 });

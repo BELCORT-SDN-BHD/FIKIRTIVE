@@ -6,7 +6,8 @@ import { isFounderAdmin } from "@/lib/allowlist";
 /** Convergence on BA sign-in. Mirrors auth.ts events.signIn but keyed off email
  *  (the canonical join key). Idempotent, best-effort, NEVER throws — requireOwner()
  *  remains the authoritative fail-closed resolver. */
-export async function convergeIdentity(input: { email: string; name?: string | null; image?: string | null }): Promise<void> {
+export async function convergeIdentity(input: { email: string; name?: string | null; image?: string | null; emailVerified?: boolean }): Promise<void> {
+  if (!input.emailVerified) return; // never converge (esp. founder super-admin promote) on an unverified identity
   const email = input.email.toLowerCase();
   try {
     // 1. Ensure the canonical User row exists (BA identities reconnect to the tenant graph by email).
