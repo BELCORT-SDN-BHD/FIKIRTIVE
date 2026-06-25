@@ -1,0 +1,55 @@
+/* FIKIRTIVE — Typography tokens
+   One refined grotesk (Hanken Grotesk) across display + body — the premium-SaaS
+   approach (cf. Salesforce / HubSpot / Pencil): clean, tight, medium-heavy weights,
+   not oversized. Mono: JetBrains Mono. */
+:root {
+  --font-display: 'Hanken Grotesk', system-ui, -apple-system, sans-serif;
+  --font-sans:    'Hanken Grotesk', system-ui, -apple-system, sans-serif;
+  --font-mono:    'JetBrains Mono', ui-monospace, 'SFMono-Regular', monospace;
+
+  /* Type scale (1.25-ish, generous) */
+  --text-xs:   0.75rem;   /* 12 */
+  --text-sm:   0.875rem;  /* 14 */
+  --text-base: 1rem;      /* 16 */
+  --text-lg:   1.125rem;  /* 18 */
+  --text-xl:   1.375rem;  /* 22 */
+  --text-2xl:  1.75rem;   /* 28 */
+  --text-3xl:  2.25rem;   /* 36 */
+  --text-4xl:  2.875rem;  /* 46 */
+  --text-5xl:  3.625rem;  /* 58 */
+  --text-6xl:  4.5rem;    /* 72 */
+  --text-7xl:  5.75rem;   /* 92 */
+
+  --weight-regular:  400;
+  --weight-medium:   500;
+  --weight-semibold: 600;
+  --weight-bold:     700;
+  --weight-extrabold:800;
+
+  --leading-tight:   1.08;
+  --leading-snug:    1.2;
+  --leading-normal:  1.5;
+  --leading-relaxed: 1.65;
+
+  --tracking-tight:  -0.025em;
+  --tracking-snug:   -0.015em;
+  --tracking-normal: 0em;
+  --tracking-wide:   0.04em;
+  --tracking-caps:   0.08em;
+
+  /* Semantic type roles */
+  --type-hero-family:  var(--font-display);
+  --type-hero-weight:  var(--weight-bold);
+  --type-hero-leading: var(--leading-tight);
+  --type-hero-tracking:var(--tracking-tight);
+
+  --type-heading-family: var(--font-display);
+  --type-heading-weight: var(--weight-bold);
+
+  --type-body-family:  var(--font-sans);
+  --type-body-weight:  var(--weight-regular);
+  --type-body-leading: var(--leading-relaxed);
+
+  --type-label-weight: var(--weight-semibold);
+  --type-eyebrow-tracking: var(--tracking-caps);
+}

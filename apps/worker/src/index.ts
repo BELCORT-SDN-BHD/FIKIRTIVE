@@ -14,7 +14,7 @@ import { QUEUES } from "./queues.js";
 import { handleIngest, type IngestJobData } from "./jobs/ingest.js";
 import { handleRender } from "./jobs/render.js";
 import { handleRefGen } from "./jobs/refgen.js";
-import { handleGen } from "./jobs/gen.js";
+import { handleGen, reapStaleGenJobs } from "./jobs/gen.js";
 import { handleCaption } from "./jobs/caption.js";
 import {
   RENDER_DLQ,
@@ -151,6 +151,26 @@ async function main(): Promise<void> {
 
   // Heartbeat: the status panel's "worker alive" signal (appendix A).
   setInterval(() => console.log(`[worker] heartbeat ${new Date().toISOString()}`), 60_000);
+
+  // Reaper: jobs the worker hung/crashed on (no redelivery → the on-claim stale path
+  // never runs) would sit GENERATING forever, holding the credit reservation and spinning
+  // the UI. Sweep every 5 min — fail-close + refund + post a terminal message.
+  let reaping = false; // re-entrancy guard — a long sweep must not overlap the next tick
+  const reap = async () => {
+    if (reaping) return;
+    reaping = true;
+    try {
+      const n = await reapStaleGenJobs();
+      if (n) console.log(`[worker] reaped ${n} stale gen job(s)`);
+    } catch (e) {
+      console.error("[worker] reaper error:", e);
+      captureError(e);
+    } finally {
+      reaping = false;
+    }
+  };
+  setInterval(() => { void reap(); }, 5 * 60_000);
+  void reap(); // also sweep once on startup (clears anything stranded by a prior crash)
 
   console.log("[worker] started — queues:", Object.values(QUEUES).join(", "));
 }

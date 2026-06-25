@@ -1,0 +1,33 @@
+<svg width="240" height="240" viewBox="0 0 240 240" fill="none" xmlns="http://www.w3.org/2000/svg" role="img" aria-label="OTTO, the FIKIRTIVE AI agent">
+  <defs>
+    <linearGradient id="ottoBody" x1="40" y1="36" x2="200" y2="210" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#FF8160"></stop>
+      <stop offset="1" stop-color="#ED4F2A"></stop>
+    </linearGradient>
+    <radialGradient id="ottoCheek" cx="0.5" cy="0.5" r="0.5">
+      <stop stop-color="#FF5A8A" stop-opacity="0.55"></stop>
+      <stop offset="1" stop-color="#FF5A8A" stop-opacity="0"></stop>
+    </radialGradient>
+  </defs>
+  
+  <line x1="120" y1="48" x2="120" y2="20" stroke="#14B8A6" stroke-width="9" stroke-linecap="round"></line>
+  <circle cx="120" cy="16" r="13" fill="#2DD4BF"></circle>
+  <circle cx="120" cy="16" r="5" fill="#EAFBF6"></circle>
+  
+  <rect x="34" y="44" width="172" height="160" rx="56" fill="url(#ottoBody)"></rect>
+  
+  <rect x="58" y="74" width="124" height="92" rx="40" fill="#241C17"></rect>
+  
+  <circle cx="100" cy="120" r="15" fill="#FFFBF6"></circle>
+  <circle cx="140" cy="120" r="15" fill="#FFFBF6"></circle>
+  <circle cx="103" cy="123" r="7" fill="#241C17"></circle>
+  <circle cx="143" cy="123" r="7" fill="#241C17"></circle>
+  <circle cx="106" cy="118" r="2.6" fill="#FFFBF6"></circle>
+  <circle cx="146" cy="118" r="2.6" fill="#FFFBF6"></circle>
+  
+  <ellipse cx="74" cy="150" rx="14" ry="9" fill="url(#ottoCheek)"></ellipse>
+  <ellipse cx="166" cy="150" rx="14" ry="9" fill="url(#ottoCheek)"></ellipse>
+  
+  <rect x="78" y="200" width="30" height="16" rx="8" fill="#C63D1D"></rect>
+  <rect x="132" y="200" width="30" height="16" rx="8" fill="#C63D1D"></rect>
+</svg>

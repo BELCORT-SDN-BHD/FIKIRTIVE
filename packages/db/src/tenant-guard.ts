@@ -8,6 +8,7 @@ const TENANT_MODELS = new Set([
   "Project", "Entity", "EntityVariant", "ReferenceImage", "Asset", "Shot", "ShotEntityRef",
   "Generation", "RenderJob", "GenJob", "RefGenJob", "ChatThread", "ChatMessage",
   "CaptionJob", "Transcript",
+  "Memory", "GenerationBatch", // v1 additive
 ]);
 
 // Operations we check (those that take a `where`). findUnique is exempt (unique-key access),

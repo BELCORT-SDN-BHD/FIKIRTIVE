@@ -57,6 +57,11 @@ export const coworkTurnRequest = z.object({
   // Server-TRUSTED: coworkTurn re-validates ownership + thread + live before
   // injecting the quote; invalid/foreign/deleted id is silently ignored.
   replyToMessageId: z.string().min(1).max(64).optional(),
+  // Goal tile selection — optional; absent on plain turns + legacy callers (additive, safe).
+  // On a NEW thread, ottoTurn seeds the opening with the preset's plain-language framing.
+  goalKey: z.enum(["sell-product", "announce-sale", "get-followers", "make-video"]).optional(),
+  // Simple mode — inject plain-language voice block (Task 6). Absent → legacy/pro behavior.
+  simple: z.boolean().optional(),
 }).strict();
 export type CoworkTurnRequest = z.infer<typeof coworkTurnRequest>;
 

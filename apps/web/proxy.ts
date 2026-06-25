@@ -21,7 +21,16 @@ const wall = auth((req) => {
 });
 
 export default function proxy(req: Parameters<typeof wall>[0], ctx: Parameters<typeof wall>[1]) {
-  if (process.env.AUTH_ENABLED !== "true") return;
+  // Fail-closed in production: now that money-incurring features (Otto) ship, a prod
+  // deploy that simply FORGETS the flag must not serve the app unauthenticated. So in
+  // production the wall is ON unless someone EXPLICITLY sets AUTH_ENABLED=false. In dev
+  // it stays opt-in (AUTH_ENABLED=true) so local work needs no login.
+  // (Prod also requires RESEND_API_KEY so magic-link sign-in works behind the wall.)
+  const enabled =
+    process.env.NODE_ENV === "production"
+      ? process.env.AUTH_ENABLED !== "false"
+      : process.env.AUTH_ENABLED === "true";
+  if (!enabled) return;
   return wall(req, ctx);
 }
 

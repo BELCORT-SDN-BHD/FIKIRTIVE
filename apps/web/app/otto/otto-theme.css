@@ -1,0 +1,267 @@
+/* FIKIRTIVE Otto — Light theme (scoped to .fk)
+   Ports all tokens from docs/design/handoff/tokens/*.css.
+   MUST NOT leak into the dark /studio route.
+   Load Hanken Grotesk + JetBrains Mono from Google Fonts (chosen brand typefaces). */
+
+@import url('https://fonts.googleapis.com/css2?family=Hanken+Grotesk:ital,wght@0,400..800;1,400..600&family=JetBrains+Mono:wght@400;500;600&display=swap');
+
+/* ================================================================
+   All tokens live inside .fk so they cannot bleed into globals.css
+   ================================================================ */
+.fk {
+  /* ---- Color: Brand — Slate blue (primary) ---- */
+  --slate-50:  #EEF2F6;
+  --slate-100: #DCE4EC;
+  --slate-200: #BCCAD8;
+  --slate-300: #93A8BE;
+  --slate-400: #6E8AA6;
+  --slate-500: #5B7B9A;
+  --slate-600: #496880;
+  --slate-700: #3A5468;
+  --slate-800: #2C3F4F;
+  --slate-900: #1F2E3A;
+
+  /* ---- Color: Coral — OTTO's character color ---- */
+  --coral-50:  #FFF1EC;
+  --coral-100: #FFE0D6;
+  --coral-200: #FFC4B2;
+  --coral-300: #FFA088;
+  --coral-400: #FF8160;
+  --coral-500: #FF6B47;
+  --coral-600: #ED4F2A;
+  --coral-700: #C63D1D;
+  --coral-800: #9E331B;
+  --coral-900: #7D2C19;
+
+  /* ---- Color: Honey (warm accent / highlight) ---- */
+  --honey-50:  #FFF7E8;
+  --honey-100: #FBE7BC;
+  --honey-200: #F6D188;
+  --honey-300: #EFB94F;
+  --honey-400: #E7A52C;
+  --honey-500: #D6880F;
+  --honey-600: #B06D08;
+  --honey-700: #8A560C;
+
+  /* ---- Color: Teal (cool support / intelligence spark) ---- */
+  --teal-50:  #EAFBF6;
+  --teal-100: #C9F4E9;
+  --teal-200: #94E9D4;
+  --teal-300: #5BD8BE;
+  --teal-400: #2DD4BF;
+  --teal-500: #14B8A6;
+  --teal-600: #0E9384;
+  --teal-700: #107569;
+
+  /* ---- Color: Warm neutrals ---- */
+  --neutral-0:   #FFFFFF;
+  --neutral-50:  #FAFAF8;
+  --neutral-100: #F3F3F0;
+  --neutral-200: #E9E8E4;
+  --neutral-300: #D8D7D1;
+  --neutral-400: #B5B3AC;
+  --neutral-500: #8B8980;
+  --neutral-600: #6A685F;
+  --neutral-700: #4C4A44;
+  --neutral-800: #302E2A;
+  --neutral-900: #1C1B18;
+
+  --cream: #F6F5F2;
+
+  /* ---- Color: Status ---- */
+  --success-100: #D8F5E3;
+  --success-500: #15A86B;
+  --success-700: #0F7A4D;
+  --warning-100: #FFEBCB;
+  --warning-500: #F59E0B;
+  --warning-700: #B45309;
+  --error-100:   #FFE0DD;
+  --error-500:   #E5484D;
+  --error-700:   #B42B30;
+  --info-100:    #DCEBFF;
+  --info-500:    #3B82F6;
+  --info-700:    #1D4ED8;
+
+  /* ---- Semantic color aliases ---- */
+  --bg-page:        var(--cream);
+  --surface-card:   var(--neutral-0);
+  --surface-sunken: var(--neutral-100);
+  --surface-raised: var(--neutral-0);
+  --surface-inverse:var(--neutral-900);
+
+  --text-strong: var(--neutral-900);
+  --text-body:   var(--neutral-800);
+  --text-muted:  var(--neutral-600);
+  --text-faint:  var(--neutral-500);
+  --text-on-brand:   #FFFFFF;
+  --text-on-inverse: var(--neutral-50);
+
+  --border-subtle:  var(--neutral-200);
+  --border-default: var(--neutral-300);
+  --border-strong:  var(--neutral-400);
+
+  --brand:            var(--slate-500);
+  --brand-hover:      var(--slate-600);
+  --brand-press:      var(--slate-700);
+  --brand-soft:       var(--slate-100);
+  --brand-tint:       var(--slate-50);
+  --on-brand-soft:    var(--slate-700);
+  --brand-soft-hover: var(--slate-200);
+
+  --accent:          var(--coral-500);
+  --accent-soft:     var(--coral-100);
+  --highlight:       var(--honey-500);
+  --highlight-soft:  var(--honey-100);
+
+  --focus-ring: var(--slate-400);
+
+  /* ---- Typography ---- */
+  --font-display: 'Hanken Grotesk', system-ui, -apple-system, sans-serif;
+  --font-sans:    'Hanken Grotesk', system-ui, -apple-system, sans-serif;
+  --font-mono:    'JetBrains Mono', ui-monospace, 'SFMono-Regular', monospace;
+
+  --text-xs:   0.75rem;
+  --text-sm:   0.875rem;
+  --text-base: 1rem;
+  --text-lg:   1.125rem;
+  --text-xl:   1.375rem;
+  --text-2xl:  1.75rem;
+  --text-3xl:  2.25rem;
+  --text-4xl:  2.875rem;
+  --text-5xl:  3.625rem;
+  --text-6xl:  4.5rem;
+  --text-7xl:  5.75rem;
+
+  --weight-regular:  400;
+  --weight-medium:   500;
+  --weight-semibold: 600;
+  --weight-bold:     700;
+  --weight-extrabold:800;
+
+  --leading-tight:   1.08;
+  --leading-snug:    1.2;
+  --leading-normal:  1.5;
+  --leading-relaxed: 1.65;
+
+  --tracking-tight:  -0.025em;
+  --tracking-snug:   -0.015em;
+  --tracking-normal: 0em;
+  --tracking-wide:   0.04em;
+  --tracking-caps:   0.08em;
+
+  /* Semantic type roles */
+  --type-hero-family:    var(--font-display);
+  --type-hero-weight:    var(--weight-bold);
+  --type-hero-leading:   var(--leading-tight);
+  --type-hero-tracking:  var(--tracking-tight);
+
+  --type-heading-family: var(--font-display);
+  --type-heading-weight: var(--weight-bold);
+
+  --type-body-family:    var(--font-sans);
+  --type-body-weight:    var(--weight-regular);
+  --type-body-leading:   var(--leading-relaxed);
+
+  --type-label-weight:      var(--weight-semibold);
+  --type-eyebrow-tracking:  var(--tracking-caps);
+
+  /* ---- Spacing (4px base grid) ---- */
+  --space-0:  0;
+  --space-1:  0.25rem;
+  --space-2:  0.5rem;
+  --space-3:  0.75rem;
+  --space-4:  1rem;
+  --space-5:  1.25rem;
+  --space-6:  1.5rem;
+  --space-8:  2rem;
+  --space-10: 2.5rem;
+  --space-12: 3rem;
+  --space-16: 4rem;
+  --space-20: 5rem;
+  --space-24: 6rem;
+  --space-32: 8rem;
+
+  /* Semantic spacing */
+  --gap-inline:    var(--space-2);
+  --gap-control:   var(--space-3);
+  --gap-stack:     var(--space-4);
+  --gap-section:   var(--space-16);
+  --pad-card:      var(--space-6);
+  --pad-control-x: var(--space-4);
+  --pad-control-y: var(--space-3);
+  --container-max: 1200px;
+  --container-pad: var(--space-6);
+
+  /* ---- Radius ---- */
+  --radius-xs:     6px;
+  --radius-sm:     10px;
+  --radius-md:     14px;
+  --radius-lg:     20px;
+  --radius-xl:     28px;
+  --radius-2xl:    36px;
+  --radius-pill:   999px;
+  --radius-circle: 50%;
+
+  /* Semantic radius */
+  --radius-control: var(--radius-md);
+  --radius-card:    var(--radius-xl);
+  --radius-modal:   var(--radius-2xl);
+  --radius-chip:    var(--radius-pill);
+
+  /* ---- Shadows (warm-tinted, not cold gray) ---- */
+  --shadow-color:    24 18 14;
+  --shadow-xs:       0 1px 2px rgba(var(--shadow-color) / 0.06);
+  --shadow-sm:       0 2px 6px rgba(var(--shadow-color) / 0.07), 0 1px 2px rgba(var(--shadow-color) / 0.06);
+  --shadow-md:       0 8px 20px rgba(var(--shadow-color) / 0.08), 0 2px 6px rgba(var(--shadow-color) / 0.06);
+  --shadow-lg:       0 18px 40px rgba(var(--shadow-color) / 0.10), 0 6px 14px rgba(var(--shadow-color) / 0.07);
+  --shadow-xl:       0 30px 70px rgba(var(--shadow-color) / 0.14), 0 10px 24px rgba(var(--shadow-color) / 0.08);
+  --shadow-brand:    0 10px 26px rgba(91 123 154 / 0.34);
+  --shadow-brand-sm: 0 4px 12px rgba(91 123 154 / 0.26);
+  --shadow-accent:   0 10px 26px rgba(255 107 71 / 0.28);
+  --shadow-inset:    inset 0 1px 2px rgba(var(--shadow-color) / 0.06);
+  --ring-focus:      0 0 0 4px rgba(91 123 154 / 0.32);
+
+  /* ---- Motion ---- */
+  --dur-instant: 80ms;
+  --dur-fast:    140ms;
+  --dur-base:    220ms;
+  --dur-slow:    360ms;
+  --dur-slower:  560ms;
+
+  --ease-out:    cubic-bezier(0.22, 1, 0.36, 1);
+  --ease-in-out: cubic-bezier(0.65, 0, 0.35, 1);
+  --ease-spring: cubic-bezier(0.34, 1.56, 0.64, 1);
+
+  --transition-control:
+    color            var(--dur-fast) var(--ease-out),
+    background-color var(--dur-fast) var(--ease-out),
+    border-color     var(--dur-fast) var(--ease-out),
+    box-shadow       var(--dur-fast) var(--ease-out),
+    transform        var(--dur-fast) var(--ease-spring);
+
+  /* ---- Base typography for the .fk container ---- */
+  font-family:   var(--font-sans);
+  font-size:     var(--text-base);
+  font-weight:   var(--weight-regular);
+  line-height:   var(--leading-relaxed);
+  color:         var(--text-body);
+  background-color: var(--bg-page);
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+
+  /* Reset box model for predictable layout */
+  box-sizing: border-box;
+}
+
+.fk *, .fk *::before, .fk *::after {
+  box-sizing: inherit;
+}
+
+/* Reduced motion: respect user preference */
+@media (prefers-reduced-motion: reduce) {
+  .fk * {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+  }
+}

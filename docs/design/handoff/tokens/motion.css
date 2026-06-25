@@ -1,0 +1,19 @@
+/* FIKIRTIVE — Motion tokens. Friendly, lightly springy. Never sluggish. */
+:root {
+  --dur-instant: 80ms;   /* @kind other */
+  --dur-fast:    140ms;  /* @kind other */
+  --dur-base:    220ms;  /* @kind other */
+  --dur-slow:    360ms;  /* @kind other */
+  --dur-slower:  560ms;  /* @kind other */
+
+  --ease-out:    cubic-bezier(0.22, 1, 0.36, 1);   /* @kind other */
+  --ease-in-out: cubic-bezier(0.65, 0, 0.35, 1);   /* @kind other */
+  /* Gentle overshoot — the brand's signature "bounce" for entrances & toggles */
+  --ease-spring: cubic-bezier(0.34, 1.56, 0.64, 1); /* @kind other */
+
+  --transition-control: color var(--dur-fast) var(--ease-out),
+                        background-color var(--dur-fast) var(--ease-out),
+                        border-color var(--dur-fast) var(--ease-out),
+                        box-shadow var(--dur-fast) var(--ease-out),
+                        transform var(--dur-fast) var(--ease-spring);
+}

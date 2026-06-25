@@ -19,9 +19,13 @@ const {
   mockChatThreadFindFirst,
   mockChatThreadCreate,
   mockChatThreadUpdate,
+  mockChatThreadUpdateMany,
   mockChatMessageFindFirst,
   mockChatMessageCreate,
   mockGenJobFindFirst,
+  mockEntityFindMany,
+  mockMemoryFindMany,
+  mockGetBrandContextText,
   mockTransaction,
   mockRun,
   mockRunStateFromString,
@@ -75,9 +79,13 @@ const {
     mockChatThreadFindFirst: vi.fn(),
     mockChatThreadCreate: vi.fn(),
     mockChatThreadUpdate: vi.fn(),
+    mockChatThreadUpdateMany: vi.fn(),
     mockChatMessageFindFirst: vi.fn(),
     mockChatMessageCreate: vi.fn(),
     mockGenJobFindFirst: vi.fn(),
+    mockEntityFindMany: vi.fn(),
+    mockMemoryFindMany: vi.fn(),
+    mockGetBrandContextText: vi.fn(),
     mockTransaction: vi.fn(),
     mockRun: vi.fn(),
     mockRunStateFromString,
@@ -96,6 +104,7 @@ vi.mock("@/lib/auth-guard", () => ({ requireOwner: mockRequireOwner }));
 vi.mock("next/cache", () => ({ revalidatePath: vi.fn() }));
 vi.mock("@/lib/model-registry", () => ({ resolveDisabledModels: mockResolveDisabledModels }));
 vi.mock("@/lib/gen-actions", () => ({ startGen: mockStartGen }));
+vi.mock("@/lib/memory-actions", () => ({ getBrandContextText: mockGetBrandContextText }));
 
 vi.mock("@fikirtive/db", () => ({
   prisma: {
@@ -105,6 +114,7 @@ vi.mock("@fikirtive/db", () => ({
       findFirst: mockChatThreadFindFirst,
       create: mockChatThreadCreate,
       update: mockChatThreadUpdate,
+      updateMany: mockChatThreadUpdateMany,
     },
     chatMessage: {
       findFirst: mockChatMessageFindFirst,
@@ -112,6 +122,12 @@ vi.mock("@fikirtive/db", () => ({
     },
     genJob: {
       findFirst: mockGenJobFindFirst,
+    },
+    entity: {
+      findMany: mockEntityFindMany,
+    },
+    memory: {
+      findMany: mockMemoryFindMany,
     },
     $transaction: mockTransaction,
   },
@@ -190,6 +206,10 @@ function setupHappyPath() {
 
 beforeEach(() => {
   vi.clearAllMocks();
+  mockChatThreadUpdateMany.mockResolvedValue({ count: 1 });
+  // Default: no brand context, no entities (best-effort baseline)
+  mockGetBrandContextText.mockResolvedValue("");
+  mockEntityFindMany.mockResolvedValue([]);
 });
 
 // ── Test 1: new thread ────────────────────────────────────────────────────────
@@ -512,8 +532,8 @@ describe("ottoApprove — happy path (approve → resume → spend via startGen)
     );
     expect(runCalledInsideBudget).toBe(true);
 
-    // ottoState persisted
-    expect(mockChatThreadUpdate).toHaveBeenCalledWith(
+    // ottoState persisted via CAS updateMany
+    expect(mockChatThreadUpdateMany).toHaveBeenCalledWith(
       expect.objectContaining({ data: expect.objectContaining({ ottoState: expect.any(String) }) }),
     );
   });
@@ -617,5 +637,251 @@ describe("ottoApprove — resume metered", () => {
     });
     // run() was called inside the budget callback
     expect(runCalledInsideBudget).toBe(true);
+  });
+});
+
+// ── Test CAS: stale ottoState ─────────────────────────────────────────────────
+
+describe("ottoTurn — CAS miss → stale", () => {
+  it("returns 'stale' when ottoState moved on (CAS miss), no AGENT message written", async () => {
+    mockRequireOwner.mockResolvedValue({ ownerId: "o1" });
+    mockResolveDisabledModels.mockResolvedValue(new Set());
+    mockProjectFindFirst.mockResolvedValue({ id: "p1", ownerId: "o1" });
+    mockChatThreadFindFirst.mockResolvedValue({ projectId: "p1", ottoState: '{"prior":"x"}' });
+    mockChatMessageFindFirst.mockResolvedValue({ seq: 2 });
+    mockRunStateFromString.mockResolvedValue(new MockRunState([{ role: "user", content: "hi" }]));
+    mockRun.mockResolvedValue({ state: new MockRunState(), newItems: [], finalOutput: "ok", interruptions: [] });
+    mockChatThreadUpdateMany.mockResolvedValue({ count: 0 }); // someone else wrote first
+    mockWithLlmBudget.mockImplementation(async (_args: unknown, fn: () => Promise<{ result: unknown; usage?: unknown }>) => {
+      const out = await fn();
+      return (out as { result: unknown }).result;
+    });
+    mockChatMessageCreate.mockResolvedValue({});
+    const res = await ottoTurn({ threadId: "t1", projectId: "p1", text: "hi", entityIds: [], variantSel: {} });
+    expect(res).toEqual({ threadId: "t1", status: "stale" });
+    expect(mockChatMessageCreate).not.toHaveBeenCalledWith(expect.objectContaining({ data: expect.objectContaining({ role: "AGENT", kind: "TEXT" }) }));
+  });
+});
+
+// ── Test CAS: interruption path CAS miss writes no orphan message ─────────────
+
+describe("ottoTurn — interruption CAS miss → stale, no orphan AGENT message", () => {
+  it("returns stale and does NOT write an AGENT chatMessage when CAS misses on interruption path", async () => {
+    mockRequireOwner.mockResolvedValue({ ownerId: "o1" });
+    mockResolveDisabledModels.mockResolvedValue(new Set());
+    mockProjectFindFirst.mockResolvedValue({ id: "p1", ownerId: "o1" });
+    mockChatThreadFindFirst.mockResolvedValue({ projectId: "p1", ottoState: '{"prior":"x"}' });
+    mockChatMessageFindFirst.mockResolvedValue({ seq: 2 });
+    mockRunStateFromString.mockResolvedValue(new MockRunState([{ role: "user", content: "hi" }]));
+
+    // run() returns a generate interruption (not completed)
+    const interruptionItem = {
+      rawItem: { name: "generate" },
+      arguments: JSON.stringify({ cardId: "card_orphan_test" }),
+      type: "tool_approval_item",
+    };
+    mockRun.mockResolvedValue({
+      state: new MockRunState(),
+      newItems: [],
+      finalOutput: "some text before park",
+      interruptions: [interruptionItem],
+    });
+
+    // CAS misses — another turn already moved the state
+    mockChatThreadUpdateMany.mockResolvedValue({ count: 0 });
+
+    mockWithLlmBudget.mockImplementation(async (_args: unknown, fn: () => Promise<{ result: unknown; usage?: unknown }>) => {
+      const out = await fn();
+      return (out as { result: unknown }).result;
+    });
+    mockChatMessageCreate.mockResolvedValue({});
+
+    const res = await ottoTurn({ threadId: "t1", projectId: "p1", text: "hi", entityIds: [], variantSel: {} });
+
+    // Must return stale, not needs_approval
+    expect(res).toEqual({ threadId: "t1", status: "stale" });
+
+    // No AGENT message must have been written (the orphan guard)
+    expect(mockChatMessageCreate).not.toHaveBeenCalledWith(
+      expect.objectContaining({ data: expect.objectContaining({ role: "AGENT" }) }),
+    );
+  });
+});
+
+describe("ottoApprove — interruption CAS miss → stale, no orphan AGENT message", () => {
+  it("returns stale and does NOT write an AGENT chatMessage when CAS misses on chained interruption path", async () => {
+    mockRequireOwner.mockResolvedValue(GATE);
+    mockResolveDisabledModels.mockResolvedValue(new Set());
+
+    mockChatThreadFindFirst.mockResolvedValue({
+      id: APPROVE_THREAD_ID,
+      projectId: PROJECT_ID,
+      ottoState: '{"paused":"state"}',
+    });
+
+    const approvalItem = makeApprovalItem(CARD_ID);
+    const mockState = new MockRunState();
+    mockGetInterruptions.mockReturnValue([approvalItem]);
+    mockRunStateFromString.mockResolvedValue(mockState);
+
+    mockGenJobFindFirst.mockResolvedValue(null);
+
+    // Resume produces another interruption (chained approval)
+    const chainedInterruption = {
+      rawItem: { name: "generate" },
+      arguments: JSON.stringify({ cardId: "card_chained" }),
+      type: "tool_approval_item",
+    };
+    mockRun.mockResolvedValue({
+      state: new MockRunState(),
+      newItems: [],
+      finalOutput: "intermediate text",
+      interruptions: [chainedInterruption],
+    });
+
+    // CAS misses
+    mockChatThreadUpdateMany.mockResolvedValue({ count: 0 });
+
+    mockWithLlmBudget.mockImplementation(async (_args: unknown, fn: () => Promise<{ result: unknown; usage?: unknown }>) => {
+      const out = await fn();
+      return (out as { result: unknown }).result;
+    });
+    mockChatMessageCreate.mockResolvedValue({});
+    mockChatMessageFindFirst.mockResolvedValue({ seq: 5 });
+
+    const res = await ottoApprove({ threadId: APPROVE_THREAD_ID, cardId: CARD_ID });
+
+    // Must return stale, not needs_approval
+    expect(res).toEqual({ ok: true, status: "stale" });
+
+    // No AGENT message must have been written (the orphan guard)
+    expect(mockChatMessageCreate).not.toHaveBeenCalledWith(
+      expect.objectContaining({ data: expect.objectContaining({ role: "AGENT" }) }),
+    );
+  });
+});
+
+// ── Task 4: dynamic context seam — brand memory + entities injected ───────────
+
+describe("ottoTurn — injects brand context + refs as a system message", () => {
+  it("includes brand memory text and entity name in the leading system message passed to run()", async () => {
+    mockRequireOwner.mockResolvedValue({ ownerId: "o1" });
+    mockResolveDisabledModels.mockResolvedValue(new Set());
+    mockProjectFindFirst.mockResolvedValue({ id: "p1", ownerId: "o1" });
+    mockGenerationFindFirst.mockResolvedValue(null);
+    mockChatThreadCreate.mockResolvedValue({});
+    mockChatMessageCreate.mockResolvedValue({});
+    mockChatMessageFindFirst.mockResolvedValue(null);
+    mockChatThreadUpdateMany.mockResolvedValue({ count: 1 });
+
+    // Brand context returns a memory entry
+    mockGetBrandContextText.mockResolvedValue("voice: warm, family tone");
+    // Entity loader returns one entity
+    mockEntityFindMany.mockResolvedValue([{ id: "e1", name: "CocoCandy", type: "PRODUCT" }]);
+
+    mockRun.mockResolvedValue(makeMockResult());
+    mockWithLlmBudget.mockImplementation(async (_args: unknown, fn: () => Promise<{ result: unknown; usage?: unknown }>) => {
+      const out = await fn();
+      return (out as { result: unknown }).result;
+    });
+    mockTransaction.mockImplementation(async (ops: unknown[]) => {
+      for (const op of ops) {
+        if (op !== null && typeof op === "object" && "then" in op && typeof (op as { then?: unknown }).then === "function") {
+          await (op as Promise<unknown>);
+        }
+      }
+    });
+
+    await ottoTurn({ projectId: "p1", text: "make an ad", entityIds: [], variantSel: {} });
+
+    // run() was called — inspect the input (2nd arg)
+    expect(mockRun).toHaveBeenCalled();
+    const runInput = mockRun.mock.calls[0][1] as unknown[];
+    const sys = (runInput as Array<{ role: string; content: string }>).find((m) => m.role === "system");
+    expect(sys).toBeDefined();
+    expect(sys!.content).toContain("warm, family tone");
+    expect(sys!.content).toContain("CocoCandy");
+  });
+});
+
+// ── Task 5: goal-intent seeding ───────────────────────────────────────────────
+
+describe("ottoTurn — goalKey seeds opening on new thread", () => {
+  it("includes the goal preset opening in the system message for a new thread with goalKey", async () => {
+    mockRequireOwner.mockResolvedValue({ ownerId: "o1" });
+    mockResolveDisabledModels.mockResolvedValue(new Set());
+    mockProjectFindFirst.mockResolvedValue({ id: "p1", ownerId: "o1" });
+    mockGenerationFindFirst.mockResolvedValue(null);
+    mockChatThreadCreate.mockResolvedValue({});
+    mockChatMessageCreate.mockResolvedValue({});
+    mockChatMessageFindFirst.mockResolvedValue(null);
+    mockChatThreadUpdateMany.mockResolvedValue({ count: 1 });
+    mockGetBrandContextText.mockResolvedValue("");
+    mockEntityFindMany.mockResolvedValue([]);
+    mockRun.mockResolvedValue(makeMockResult());
+    mockWithLlmBudget.mockImplementation(async (_args: unknown, fn: () => Promise<{ result: unknown; usage?: unknown }>) => {
+      const out = await fn();
+      return (out as { result: unknown }).result;
+    });
+    mockTransaction.mockImplementation(async (ops: unknown[]) => {
+      for (const op of ops) {
+        if (op !== null && typeof op === "object" && "then" in op && typeof (op as { then?: unknown }).then === "function") {
+          await (op as Promise<unknown>);
+        }
+      }
+    });
+
+    // New thread with goalKey = "sell-product"
+    await ottoTurn({ projectId: "p1", text: "help me sell", entityIds: [], variantSel: {}, goalKey: "sell-product" });
+
+    expect(mockRun).toHaveBeenCalled();
+    const runInput = mockRun.mock.calls[0][1] as Array<{ role: string; content: string }>;
+    const sys = runInput.find((m) => m.role === "system");
+    expect(sys).toBeDefined();
+    // The sell-product opening mentions "product"
+    expect(sys!.content).toContain("product");
+    // It contains the goal framing prefix
+    expect(sys!.content).toContain("Goal for this conversation");
+  });
+});
+
+// ── Task 6: simple-mode plain-language voice ──────────────────────────────────
+
+describe("ottoTurn — simple-mode injects the plain-language block only when simple:true", () => {
+  const baseSetup = () => {
+    mockRequireOwner.mockResolvedValue({ ownerId: "o1" });
+    mockResolveDisabledModels.mockResolvedValue(new Set());
+    mockProjectFindFirst.mockResolvedValue({ id: "p1", ownerId: "o1" });
+    mockGenerationFindFirst.mockResolvedValue(null);
+    mockChatThreadCreate.mockResolvedValue({});
+    mockChatMessageCreate.mockResolvedValue({});
+    mockChatMessageFindFirst.mockResolvedValue(null);
+    mockChatThreadUpdateMany.mockResolvedValue({ count: 1 });
+    mockGetBrandContextText.mockResolvedValue("");
+    mockEntityFindMany.mockResolvedValue([]);
+    mockRun.mockResolvedValue(makeMockResult());
+    mockWithLlmBudget.mockImplementation(async (_a: unknown, fn: () => Promise<{ result: unknown; usage?: unknown }>) => (await fn()).result);
+    mockTransaction.mockImplementation(async (ops: unknown[]) => {
+      for (const op of ops) {
+        if (op !== null && typeof op === "object" && "then" in op && typeof (op as { then?: unknown }).then === "function") await (op as Promise<unknown>);
+      }
+    });
+  };
+
+  it("includes the simple-mode block when simple:true", async () => {
+    baseSetup();
+    await ottoTurn({ projectId: "p1", text: "make an ad", entityIds: [], variantSel: {}, simple: true });
+    const runInput = mockRun.mock.calls[0][1] as Array<{ role: string; content: string }>;
+    const sys = runInput.find((m) => m.role === "system");
+    expect(sys).toBeDefined();
+    expect(sys!.content).toContain("Talking to a beginner");
+  });
+
+  it("omits the simple-mode block when simple is not set", async () => {
+    baseSetup();
+    await ottoTurn({ projectId: "p1", text: "make an ad", entityIds: [], variantSel: {} });
+    const runInput = mockRun.mock.calls[0][1] as Array<{ role: string; content: string }>;
+    const sys = runInput.find((m) => m.role === "system");
+    expect(sys === undefined || !sys.content.includes("Talking to a beginner")).toBe(true);
   });
 });
