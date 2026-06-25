@@ -29,4 +29,7 @@ WORKDIR /repo
 COPY --from=build /repo ./
 # Runs as root (not USER node): the Railway volume at /repo/.data is mounted
 # root-owned, and LocalDiskStorage must write there until T4 moves files to R2.
-CMD ["pnpm", "--filter", "@fikirtive/web", "start"]
+# Apply pending DB migrations on every boot BEFORE serving (idempotent — `migrate
+# deploy` only runs un-applied migrations), so a deploy can never serve against an
+# un-migrated schema. The image carries the prisma CLI + the migrations folder.
+CMD ["sh", "-c", "pnpm --filter @fikirtive/db migrate:deploy && pnpm --filter @fikirtive/web start"]
