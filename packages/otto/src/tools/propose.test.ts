@@ -74,6 +74,43 @@ describe("buildProposeCard — pure helper", () => {
     expect(shownPriceDisplay).toBeGreaterThan(0);
   });
 
+  // Ad pack: count>1 scales the image price linearly and freezes the count on the
+  // card (params.count). This is the reserve==settle guarantee — the displayed price
+  // must equal unit × count, the same count the worker generates.
+  it("ad-pack count: image count=4 → params.count 4 and price = unit × 4", () => {
+    const ctx = makeCtx();
+    const { cardPayload } = buildProposeCard(
+      { kind: "image", structuredPrompt: "A sneaker on a plinth", entityIds: [], variantSel: {}, count: 4 },
+      ctx,
+      [],
+    );
+    expect(cardPayload.params.count).toBe(4);
+    expect(cardPayload.estimatedPriceUsd).toBeCloseTo(GEN_PRICE_USD_PER_IMAGE * 4);
+  });
+
+  // count is clamped to the spend bound — an over-cap request never inflates the charge.
+  it("ad-pack count: image count=99 is clamped to MAX_GEN_COUNT (4)", () => {
+    const ctx = makeCtx();
+    const { cardPayload } = buildProposeCard(
+      { kind: "image", structuredPrompt: "A watch, four angles", entityIds: [], variantSel: {}, count: 99 },
+      ctx,
+      [],
+    );
+    expect(cardPayload.params.count).toBe(4);
+    expect(cardPayload.estimatedPriceUsd).toBeCloseTo(GEN_PRICE_USD_PER_IMAGE * 4);
+  });
+
+  // Video ignores count — a clip is always single (price must not scale by count).
+  it("ad-pack count: video ignores count → params.count stays 1", () => {
+    const ctx = makeCtx();
+    const { cardPayload } = buildProposeCard(
+      { kind: "video", structuredPrompt: "A cat walks across a sunlit room", entityIds: [], variantSel: {}, count: 4 },
+      ctx,
+      [],
+    );
+    expect(cardPayload.params.count).toBe(1);
+  });
+
   // Test 2: disabled filtering — M3: non-vacuous assertion
   // First compute what model is chosen with NO disabled models, then assert
   // that disabling THAT specific model makes buildProposeCard pick something different.

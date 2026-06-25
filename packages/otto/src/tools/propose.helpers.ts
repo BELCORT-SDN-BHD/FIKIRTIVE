@@ -10,6 +10,7 @@ import {
   videoPriceUsd,
   GEN_PRICE_USD_PER_IMAGE,
   MAX_GEN_PROMPT,
+  MAX_GEN_COUNT,
   displayCredits,
   CREDITS_PER_USD,
   type GenVideoModel,
@@ -27,6 +28,9 @@ export const proposeInput = z.object({
   desiredAspect: z.string().optional(),
   desiredDuration: z.number().optional(),
   desiredAudio: z.boolean().optional(),
+  // Ad pack: how many image options to offer the user to choose from (images only;
+  // video is always one clip). Clamped server-side to [1, MAX_GEN_COUNT].
+  count: z.number().int().min(1).max(MAX_GEN_COUNT).optional(),
 });
 
 export type ProposeInput = z.infer<typeof proposeInput>;
@@ -72,7 +76,7 @@ export type ProposeCardResult = {
  * @param ownedEntityIds - Entity ids confirmed owned by ctx.orgId (DB lookup done by caller)
  */
 export function buildProposeCard(
-  input: Pick<ProposeInput, "kind" | "structuredPrompt" | "entityIds" | "variantSel" | "desiredAspect" | "desiredDuration" | "desiredAudio">,
+  input: Pick<ProposeInput, "kind" | "structuredPrompt" | "entityIds" | "variantSel" | "desiredAspect" | "desiredDuration" | "desiredAudio" | "count">,
   ctx: OttoContext,
   ownedEntityIds: string[],
 ): ProposeCardResult {
@@ -110,6 +114,15 @@ export function buildProposeCard(
     hasTail: false,
     disabled: new Set(ctx.disabledModels),
   });
+
+  // Step 3.5: ad-pack count — the user can ask for N image options to choose from.
+  // Images only (video stays a single clip). The count lives on the FROZEN card
+  // (params.count) and drives BOTH the displayed price (unit × count, Step 4) and
+  // the worker's image loop, so the reservation equals the settlement for any N.
+  // Clamped to [1, MAX_GEN_COUNT] here; the spend-input validator re-checks the bound.
+  if (kind === "image" && typeof input.count === "number") {
+    sm.params.count = Math.min(Math.max(Math.trunc(input.count), 1), MAX_GEN_COUNT);
+  }
 
   // Step 4: price computation (mirror coworkTurn 398–400)
   const price =

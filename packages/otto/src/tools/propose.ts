@@ -85,7 +85,9 @@ export const propose = tool<typeof proposeInput, OttoContext>({
     "Build a generation proposal (GEN_CARD) the user can approve and generate later. " +
     "Call this when the user wants to create an image or video. " +
     "Provide kind, an English structuredPrompt, and any referenced entity ids. " +
-    "Do NOT pick a model or set a price — those are computed server-side.",
+    "Do NOT pick a model or set a price — those are computed server-side. " +
+    "When the user wants a few options to choose from (an 'ad pack'), pass count (2–4) " +
+    "to offer that many image variants — images only; video is always a single clip.",
   parameters: proposeInput,
   execute: async (input, runContext) => {
     if (!runContext) throw new Error("OttoContext required");
