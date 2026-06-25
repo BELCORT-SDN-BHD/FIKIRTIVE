@@ -1,5 +1,6 @@
 "use client";
 import React, { useEffect, useRef, useState } from "react";
+import { MSG_ENTER_STYLE } from "./parts/motion";
 import { useChat } from "@ai-sdk/react";
 import { DefaultChatTransport } from "ai";
 import { useStickToBottom } from "use-stick-to-bottom";
@@ -45,16 +46,6 @@ export interface OttoChatStreamProps {
    *  clear it (prevents a re-send if this thread is remounted later). */
   onPendingFirstSent?: () => void;
 }
-
-/**
- * Entry animation applied to each new message row.
- * The `otto-msg-enter` keyframe is defined ONCE in this component's <style> block.
- * React's stable key-based reconciliation means this fires exactly once per DOM
- * node — new messages animate in; existing ones are untouched on re-renders.
- */
-const MSG_ENTER_STYLE: React.CSSProperties = {
-  animation: "otto-msg-enter var(--dur-base, 220ms) var(--ease-spring, cubic-bezier(0.34,1.56,0.64,1)) both",
-};
 
 /** The latest user message's text — what the strict route body needs for `text`. */
 function latestUserText(messages: OttoUiMessage[]): string {
@@ -127,6 +118,14 @@ export function OttoChatStream({
     }),
     messages: threadToUiMessages(thread),
   }));
+
+  // Track which message ids were present at mount (seeded from thread history).
+  // Only messages NOT in this set should play the entry animation — messages that
+  // ARRIVE during this session (optimistic echo, streamed replies, injected results).
+  // This component is keyed by thread.id in OttoView, so a thread switch remounts
+  // with a fresh seed — the new thread's history won't waterfall-animate either.
+  const initialIdsRef = useRef<Set<string>>(new Set(chatInit.messages.map((m) => m.id)));
+  const isNewMessage = (id: string) => !initialIdsRef.current.has(id);
 
   const { messages, setMessages, sendMessage, status, error } = useChat<OttoUiMessage>({
     transport: chatInit.transport,
@@ -345,7 +344,7 @@ export function OttoChatStream({
             if (kind === "GEN_CARD") {
               const genJobId = m.metadata?.genJobId ?? null;
               return (
-                <WidgetRow key={m.id}>
+                <WidgetRow key={m.id} animateIn={isNewMessage(m.id)}>
                   <OttoPlanCard
                     cardId={m.metadata!.durableId}
                     payload={m.metadata?.payload}
@@ -381,7 +380,7 @@ export function OttoChatStream({
                 | { kind?: string; model?: string; urls?: string[]; generationIds?: string[]; costUsd?: number }
                 | null;
               return (
-                <WidgetRow key={m.id}>
+                <WidgetRow key={m.id} animateIn={isNewMessage(m.id)}>
                   <OttoResult payload={r} onEditByHand={onEditByHand} />
                 </WidgetRow>
               );
@@ -389,7 +388,7 @@ export function OttoChatStream({
 
             if (kind === "DENIAL" || kind === "TURN_ERROR") {
               return (
-                <div key={m.id} style={{ display: "flex", alignItems: "flex-start", gap: "var(--space-3)", ...MSG_ENTER_STYLE }}>
+                <div key={m.id} style={{ display: "flex", alignItems: "flex-start", gap: "var(--space-3)", ...(isNewMessage(m.id) ? MSG_ENTER_STYLE : undefined) }}>
                   <OttoAvatar size={32} state="idle" />
                   <div
                     style={{
@@ -430,6 +429,7 @@ export function OttoChatStream({
                     role={m.role === "user" ? "user" : "assistant"}
                     text={p.text}
                     streaming={streaming}
+                    animateIn={isNewMessage(m.id)}
                   />
                 );
               }),
@@ -631,9 +631,9 @@ export function OttoChatStream({
 
 /** Avatar + flexible body row used for the inline plan card / result widgets
  *  (mirrors OttoConversation's MessageRow layout for GEN_CARD / GEN_RESULT). */
-function WidgetRow({ children }: { children: React.ReactNode }) {
+function WidgetRow({ children, animateIn }: { children: React.ReactNode; animateIn?: boolean }) {
   return (
-    <div style={{ display: "flex", alignItems: "flex-start", gap: "var(--space-3)", ...MSG_ENTER_STYLE }}>
+    <div style={{ display: "flex", alignItems: "flex-start", gap: "var(--space-3)", ...(animateIn ? MSG_ENTER_STYLE : undefined) }}>
       <OttoAvatar size={32} state="idle" />
       <div style={{ flex: 1, minWidth: 0 }}>{children}</div>
     </div>

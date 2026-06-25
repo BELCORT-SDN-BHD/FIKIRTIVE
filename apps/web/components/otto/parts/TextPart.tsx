@@ -1,6 +1,7 @@
 "use client";
 import React from "react";
 import { OttoAvatar } from "@/components/fk";
+import { MSG_ENTER_STYLE } from "./motion";
 
 export interface TextPartProps {
   /** Whose turn this text belongs to. */
@@ -9,28 +10,20 @@ export interface TextPartProps {
   text: string;
   /** True while this part is actively streaming → render a blinking caret. */
   streaming?: boolean;
+  /** When true, applies the entry animation. Pass false for seeded history messages. */
+  animateIn?: boolean;
 }
-
-/**
- * Entry animation applied to each message bubble's outermost wrapper.
- * The `otto-msg-enter` keyframe is defined ONCE in OttoChatStream's <style> block.
- * Because TextPart gets a stable React key from its caller, this animation fires
- * exactly once per DOM node (on mount) — new messages animate in; existing ones are
- * not re-animated on re-renders.
- */
-const MSG_ENTER_STYLE: React.CSSProperties = {
-  animation: "otto-msg-enter var(--dur-base, 220ms) var(--ease-spring, cubic-bezier(0.34,1.56,0.64,1)) both",
-};
 
 /**
  * One text bubble in the Otto stream. The bubble styles are reused VERBATIM from
  * OttoConversation (user bubble + Otto bubble) so the streaming chat looks identical
  * to the classic chat. While `streaming`, an assistant bubble shows a blinking caret.
  */
-export function TextPart({ role, text, streaming }: TextPartProps) {
+export function TextPart({ role, text, streaming, animateIn }: TextPartProps) {
+  const enterStyle = animateIn ? MSG_ENTER_STYLE : undefined;
   if (role === "user") {
     return (
-      <div style={{ display: "flex", justifyContent: "flex-end", ...MSG_ENTER_STYLE }}>
+      <div style={{ display: "flex", justifyContent: "flex-end", ...enterStyle }}>
         <div
           style={{
             maxWidth: "75%",
@@ -51,7 +44,7 @@ export function TextPart({ role, text, streaming }: TextPartProps) {
   }
 
   return (
-    <div style={{ display: "flex", alignItems: "flex-start", gap: "var(--space-3)", ...MSG_ENTER_STYLE }}>
+    <div style={{ display: "flex", alignItems: "flex-start", gap: "var(--space-3)", ...enterStyle }}>
       <OttoAvatar size={32} state={streaming ? "thinking" : "idle"} />
       <div
         style={{
