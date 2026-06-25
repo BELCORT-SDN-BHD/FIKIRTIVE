@@ -46,6 +46,16 @@ export interface OttoChatStreamProps {
   onPendingFirstSent?: () => void;
 }
 
+/**
+ * Entry animation applied to each new message row.
+ * The `otto-msg-enter` keyframe is defined ONCE in this component's <style> block.
+ * React's stable key-based reconciliation means this fires exactly once per DOM
+ * node — new messages animate in; existing ones are untouched on re-renders.
+ */
+const MSG_ENTER_STYLE: React.CSSProperties = {
+  animation: "otto-msg-enter var(--dur-base, 220ms) var(--ease-spring, cubic-bezier(0.34,1.56,0.64,1)) both",
+};
+
 /** The latest user message's text — what the strict route body needs for `text`. */
 function latestUserText(messages: OttoUiMessage[]): string {
   for (let i = messages.length - 1; i >= 0; i--) {
@@ -166,6 +176,14 @@ export function OttoChatStream({
   const isStreaming = status === "streaming";
   const isBusy = status === "submitted" || status === "streaming";
 
+  // True once the first assistant token has arrived — drives skeleton → real bubble swap.
+  const lastMsg = messages[messages.length - 1];
+  const hasAssistantText =
+    isBusy &&
+    !!lastMsg &&
+    lastMsg.role === "assistant" &&
+    lastMsg.parts.some((p): p is { type: "text"; text: string } => p.type === "text" && p.text.length > 0);
+
   // Derived from the rendered messages (which carry durable metadata): which jobs
   // already have a result (so the card shows "making this now" not a dupe result),
   // and whether any approved job is still working (drives the poll + working state).
@@ -258,7 +276,26 @@ export function OttoChatStream({
 
   return (
     <div style={{ flex: 1, display: "flex", flexDirection: "column", overflow: "hidden" }}>
-      <style>{`@keyframes otto-caret-blink { 50% { opacity: 0; } }`}</style>
+      <style>{`
+        @keyframes otto-caret-blink { 50% { opacity: 0; } }
+        @keyframes otto-shimmer {
+          0%   { background-position: 200% 0; }
+          100% { background-position: -200% 0; }
+        }
+        @keyframes otto-msg-enter {
+          from { opacity: 0; transform: translateY(6px); }
+          to   { opacity: 1; transform: translateY(0); }
+        }
+        @keyframes otto-status-fadein {
+          from { opacity: 0; }
+          to   { opacity: 1; }
+        }
+        @media (prefers-reduced-motion: reduce) {
+          @keyframes otto-shimmer      { from {} to {} }
+          @keyframes otto-msg-enter    { from {} to {} }
+          @keyframes otto-status-fadein { from {} to {} }
+        }
+      `}</style>
       {/* Header */}
       <div
         style={{
@@ -352,7 +389,7 @@ export function OttoChatStream({
 
             if (kind === "DENIAL" || kind === "TURN_ERROR") {
               return (
-                <div key={m.id} style={{ display: "flex", alignItems: "flex-start", gap: "var(--space-3)" }}>
+                <div key={m.id} style={{ display: "flex", alignItems: "flex-start", gap: "var(--space-3)", ...MSG_ENTER_STYLE }}>
                   <OttoAvatar size={32} state="idle" />
                   <div
                     style={{
@@ -406,7 +443,12 @@ export function OttoChatStream({
           {/* Live status line: shows "Otto is thinking…" or the planning text while
               in-flight; hides automatically once isBusy is false (replaces the
               static "Otto is thinking…" block from Task 3). */}
-          <StatusLine isBusy={isBusy} liveStatus={liveStatus} />
+          <StatusLine
+            isBusy={isBusy}
+            liveStatus={liveStatus}
+            chatStatus={status}
+            hasAssistantText={hasAssistantText}
+          />
 
           {/* Async generation in progress: a card was approved (genJobId set) and the
               worker hasn't written a terminal result yet. Ported from OttoConversation. */}
@@ -591,7 +633,7 @@ export function OttoChatStream({
  *  (mirrors OttoConversation's MessageRow layout for GEN_CARD / GEN_RESULT). */
 function WidgetRow({ children }: { children: React.ReactNode }) {
   return (
-    <div style={{ display: "flex", alignItems: "flex-start", gap: "var(--space-3)" }}>
+    <div style={{ display: "flex", alignItems: "flex-start", gap: "var(--space-3)", ...MSG_ENTER_STYLE }}>
       <OttoAvatar size={32} state="idle" />
       <div style={{ flex: 1, minWidth: 0 }}>{children}</div>
     </div>
