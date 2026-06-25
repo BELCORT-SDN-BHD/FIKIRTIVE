@@ -61,21 +61,21 @@ const fakeProvider: ModelProvider = {
   },
 };
 
-/** Minimal agent — model resolved by fakeProvider via Runner config. */
-const minimalAgent = new Agent({
-  name: "FakeStreamAgent",
-  instructions: "Reply hi.",
-});
-
-/** Runner scoped to the fake provider — never hits the network. */
-const runner = new Runner({
-  modelProvider: fakeProvider,
-  tracingDisabled: true,
-  traceIncludeSensitiveData: false,
-});
-
 describe("streaming run contract (fake model)", () => {
   it("yields at least one raw_model_stream_event and state.toString() is non-empty", async () => {
+    /** Minimal agent — model resolved by fakeProvider via Runner config. */
+    const minimalAgent = new Agent({
+      name: "FakeStreamAgent",
+      instructions: "Reply hi.",
+    });
+
+    /** Runner scoped to the fake provider — never hits the network. */
+    const runner = new Runner({
+      modelProvider: fakeProvider,
+      tracingDisabled: true,
+      traceIncludeSensitiveData: false,
+    });
+
     const result = await runner.run(minimalAgent, "hello", {
       stream: true,
     });
