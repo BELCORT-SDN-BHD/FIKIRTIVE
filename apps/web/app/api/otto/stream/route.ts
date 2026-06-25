@@ -50,6 +50,7 @@ import {
   finalizeOttoRun,
 } from "@/lib/otto-actions";
 import { bridgeEvent, OTTO_TEXT_ID, OTTO_REASONING_ID } from "@/lib/otto-stream-bridge";
+import type { OttoStatusData, OttoErrorData } from "@/lib/otto-stream-bridge";
 
 /** Safe one-line error summary for logs (mirrors otto-actions.errSummary). */
 function errSummary(e: unknown): string {
@@ -234,7 +235,7 @@ export async function POST(req: NextRequest): Promise<Response> {
         // Reserve failed (InsufficientCredits): fn NEVER ran → ZERO spend, persist nothing.
         if (e instanceof InsufficientCredits) {
           closeOpenParts();
-          writer.write({ type: "data-error", data: { kind: "insufficient_credits", text: "You're out of credits." } });
+          writer.write({ type: "data-error", data: { kind: "insufficient_credits", text: "You're out of credits." } satisfies OttoErrorData });
           return;
         }
         // MaxTurns: withLlmBudget already settled actual usage (or refunded). Persist the
@@ -245,13 +246,13 @@ export async function POST(req: NextRequest): Promise<Response> {
           await prisma.chatMessage.create({
             data: { id: newId(), threadId, ownerId, role: "AGENT", kind: "TEXT", seq: seqAfterUser + 1, text: degradeText },
           });
-          writer.write({ type: "data-status", data: { kind: "degraded", text: degradeText } });
+          writer.write({ type: "data-status", data: { kind: "degraded", text: degradeText } satisfies OttoStatusData });
           return;
         }
         // Any other run failure: withLlmBudget refunded the reservation. Surface + log.
         console.error("[otto/stream] run failed:", errSummary(e));
         closeOpenParts();
-        writer.write({ type: "data-error", data: { kind: "error", text: "Otto hit a snag — please try again." } });
+        writer.write({ type: "data-error", data: { kind: "error", text: "Otto hit a snag — please try again." } satisfies OttoErrorData });
         return;
       }
 
@@ -262,11 +263,11 @@ export async function POST(req: NextRequest): Promise<Response> {
       const finalized = await finalizeOttoRun({ ownerId, threadId, isNew, priorOttoState, result: agentResult, seqAfterUser });
 
       if (finalized.status === "stale") {
-        writer.write({ type: "data-status", data: { kind: "stale", text: "This conversation moved on — reload to continue." } });
+        writer.write({ type: "data-status", data: { kind: "stale", text: "This conversation moved on — reload to continue." } satisfies OttoStatusData });
       } else if (finalized.status === "needs_approval") {
-        writer.write({ type: "data-status", data: { kind: "needs_approval", pendingCardIds: finalized.pendingCardIds } });
+        writer.write({ type: "data-status", data: { kind: "needs_approval", pendingCardIds: finalized.pendingCardIds } satisfies OttoStatusData });
       } else {
-        writer.write({ type: "data-status", data: { kind: "done", threadId } });
+        writer.write({ type: "data-status", data: { kind: "done", threadId } satisfies OttoStatusData });
       }
     },
   });

@@ -27,15 +27,38 @@
  *               AI SDK's typed extension point, and the client renders it in Task 5.)
  */
 
-// Minimal structural type for the part we emit. We intentionally type the OUTPUT
-// structurally (not as the full UIMessageChunk union) so this module stays free of
-// any `ai` import — keeping it a pure, dependency-light unit. The route handler
-// passes the result straight to writer.write(...), which is typed against the SDK.
+// ---------------------------------------------------------------------------
+// Shared data-* payload types — exported so the route and future client code
+// reference ONE contract instead of ad-hoc inline shapes.
+// ---------------------------------------------------------------------------
+
+/** Payload for the `data-status` stream part. */
+export type OttoStatusData =
+  | { kind: "planning"; text: string }           // propose tool called — live status
+  | { kind: "degraded"; text: string }           // MaxTurnsExceededError — friendly degrade
+  | { kind: "stale"; text: string }              // CAS stale — conversation moved on
+  | { kind: "needs_approval"; pendingCardIds: string[] }  // run paused; cards await approval
+  | { kind: "done"; threadId: string };          // run fully completed
+
+/** Payload for the `data-error` stream part. */
+export type OttoErrorData =
+  | { kind: "insufficient_credits"; text: string }
+  | { kind: "error"; text: string };
+
+/** Payload for the `data-tool-propose` stream part (the propose tool's return value). */
+export type OttoProposeData = unknown;
+
+// ---------------------------------------------------------------------------
+// Minimal structural type for the parts this bridge emits, plus the route's
+// data parts. Intentionally avoids importing `ai` so this module stays pure
+// and dependency-light. The route passes results straight to writer.write(…).
+// ---------------------------------------------------------------------------
 export type OttoStreamPart =
   | { type: "text-delta"; delta: string; id: string }
   | { type: "reasoning-delta"; delta: string; id: string }
-  | { type: "data-status"; data: { text: string } }
-  | { type: "data-tool-propose"; data: unknown };
+  | { type: "data-status"; data: OttoStatusData }
+  | { type: "data-tool-propose"; data: OttoProposeData }
+  | { type: "data-error"; data: OttoErrorData };
 
 // Stable ids so all deltas of one turn coalesce into a single text / reasoning part.
 // The route opens text-start/-end with the SAME id around the event loop.
@@ -86,7 +109,7 @@ export function bridgeEvent(event: unknown): OttoStreamPart | null {
     if (name === "tool_called") {
       // Only the propose tool gets a live status; other $0 tools are silent.
       if (toolNameOf(item) === "propose") {
-        return { type: "data-status", data: { text: "planning your ad…" } };
+        return { type: "data-status", data: { kind: "planning", text: "planning your ad…" } };
       }
       return null;
     }
