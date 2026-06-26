@@ -302,9 +302,15 @@ export function OttoChatStream({
           @keyframes otto-msg-enter    { from {} to {} }
           @keyframes otto-status-fadein { from {} to {} }
         }
+        @media (max-width: 680px) {
+          .otto-chat-scroll { padding: var(--space-4) var(--space-3) !important; }
+          .otto-chat-composer { padding: var(--space-3) var(--space-3) !important; }
+          .otto-chat-header { padding: var(--space-3) var(--space-4) !important; }
+        }
       `}</style>
       {/* Header */}
       <div
+        className="otto-chat-header"
         style={{
           padding: "var(--space-4) var(--space-6)",
           borderBottom: "1px solid var(--border-subtle)",
@@ -335,6 +341,7 @@ export function OttoChatStream({
       {/* Messages (stick-to-bottom scroll region) */}
       <div
         ref={scrollRef}
+        className="otto-chat-scroll"
         style={{ flex: 1, overflow: "auto", padding: "var(--space-6)", position: "relative" }}
       >
         <div
@@ -608,6 +615,7 @@ export function OttoChatStream({
 
       {/* Composer */}
       <div
+        className="otto-chat-composer"
         style={{
           borderTop: "1px solid var(--border-subtle)",
           background: "var(--surface-card)",

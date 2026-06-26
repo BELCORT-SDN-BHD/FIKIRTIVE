@@ -185,7 +185,13 @@ export function OttoFrontDoor({
         overflow: "auto",
       }}
     >
-      <div style={{ width: "100%", maxWidth: 560, display: "flex", flexDirection: "column", alignItems: "center", gap: "var(--space-6)" }}>
+      <style>{`
+        @media (max-width: 480px) {
+          .otto-goal-grid { grid-template-columns: 1fr !important; }
+          .otto-front-door-inner { padding: var(--space-4) var(--space-4) !important; }
+        }
+      `}</style>
+      <div className="otto-front-door-inner" style={{ width: "100%", maxWidth: 560, display: "flex", flexDirection: "column", alignItems: "center", gap: "var(--space-6)" }}>
         {/* Otto avatar + greeting */}
         <div style={{ display: "flex", flexDirection: "column", alignItems: "center", gap: "var(--space-4)", textAlign: "center" }}>
           <OttoAvatar size={76} state={busy ? "thinking" : "idle"} />
@@ -293,6 +299,7 @@ export function OttoFrontDoor({
             Or pick a goal
           </div>
           <div
+            className="otto-goal-grid"
             style={{
               display: "grid",
               gridTemplateColumns: "1fr 1fr",

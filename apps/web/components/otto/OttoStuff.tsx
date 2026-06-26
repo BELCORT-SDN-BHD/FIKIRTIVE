@@ -81,7 +81,12 @@ export function OttoStuff({ entities, ads }: OttoStuffProps) {
   const [tab, setTab] = useState<"cast" | "ads">("cast");
 
   return (
-    <div style={{ flex: 1, overflow: "auto", padding: "var(--space-6)" }}>
+    <div className="otto-stuff-scroll" style={{ flex: 1, overflow: "auto", padding: "var(--space-6)" }}>
+      <style>{`
+        @media (max-width: 680px) {
+          .otto-stuff-scroll { padding: var(--space-4) var(--space-3) !important; }
+        }
+      `}</style>
       <div style={{ maxWidth: 880, margin: "0 auto" }}>
         <h1 style={{ fontFamily: "var(--font-display)", fontWeight: "var(--weight-bold)" as React.CSSProperties["fontWeight"], fontSize: "var(--text-2xl)", color: "var(--text-strong)", margin: "0 0 var(--space-4)" }}>
           My stuff
