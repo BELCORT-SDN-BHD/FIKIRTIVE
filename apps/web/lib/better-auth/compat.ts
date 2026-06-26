@@ -26,5 +26,5 @@ export async function auth(): Promise<NextAuthShapedSession> {
  *  session (`auth()` above drops the session object). Used to block spend + show the banner. */
 export async function isImpersonating(): Promise<boolean> {
   const session = await baAuth.api.getSession({ headers: await headers() });
-  return !!(session?.session as any)?.impersonatedBy;
+  return !!(session?.session as { impersonatedBy?: string | null } | undefined)?.impersonatedBy;
 }
