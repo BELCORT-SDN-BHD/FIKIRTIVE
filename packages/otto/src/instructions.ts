@@ -36,6 +36,7 @@ Do NOT pick a model or set a price — \`propose\` derives them server-side from
 ## Video keyframes
 
 - For a VIDEO featuring a specific character variant, make an IMAGE keyframe first; video conditions on a source frame, not on entity refs.
+- When you make an image keyframe because the user wants a video, pass \`forVideo: true\` to \`propose\` so the card shows the full two-step plan and total (image now, video next).
 
 ## Language
 

@@ -172,6 +172,63 @@ describe("buildProposeCard — pure helper", () => {
     expect((cardPayload as Record<string, unknown>)["sourceGenerationId"]).toBe("gen-abc123");
   });
 
+  // Test forVideo: image with forVideo=true → videoStep.estimatedCredits is positive,
+  // estimatedCredits (image) is unchanged/smaller
+  it("forVideo=true on image → cardPayload.videoStep.estimatedCredits is a positive number, estimatedCredits (image) unchanged", () => {
+    const ctx = makeCtx();
+    const input = {
+      kind: "image" as const,
+      structuredPrompt: "A hero shot of the mascot",
+      entityIds: [],
+      variantSel: {},
+      forVideo: true,
+    };
+    const { cardPayload } = buildProposeCard(input, ctx, []);
+
+    // The image step's real charge is unaffected
+    expect(cardPayload.kind).toBe("image");
+    expect(cardPayload.estimatedCredits).toBe(1); // 1 credit/image unchanged
+
+    // videoStep is set and its estimate is a positive number
+    expect(cardPayload.videoStep).toBeDefined();
+    expect(typeof cardPayload.videoStep!.estimatedCredits).toBe("number");
+    expect(cardPayload.videoStep!.estimatedCredits).toBeGreaterThan(0);
+
+    // The video step estimate should be larger than the image step (video costs more)
+    expect(cardPayload.videoStep!.estimatedCredits).toBeGreaterThan(cardPayload.estimatedCredits);
+  });
+
+  // Test forVideo: image WITHOUT forVideo → videoStep is undefined
+  it("forVideo omitted on image → videoStep is undefined", () => {
+    const ctx = makeCtx();
+    const input = {
+      kind: "image" as const,
+      structuredPrompt: "A product shot",
+      entityIds: [],
+      variantSel: {},
+      // no forVideo
+    };
+    const { cardPayload } = buildProposeCard(input, ctx, []);
+
+    expect(cardPayload.videoStep).toBeUndefined();
+  });
+
+  // Test forVideo: a normal video card is unaffected by the forVideo flag
+  it("forVideo has no effect on a video card — videoStep is undefined and kind stays video", () => {
+    const ctx = makeCtx();
+    const input = {
+      kind: "video" as const,
+      structuredPrompt: "A sweeping aerial shot",
+      entityIds: [],
+      variantSel: {},
+      forVideo: true, // irrelevant on a video card
+    };
+    const { cardPayload } = buildProposeCard(input, ctx, []);
+
+    expect(cardPayload.kind).toBe("video");
+    expect(cardPayload.videoStep).toBeUndefined();
+  });
+
   // Test 5: entityId scoping — foreign ids are dropped silently
   it("entityId scoping: foreign ids dropped, variantSel for dropped ids removed", () => {
     const ctx = makeCtx();

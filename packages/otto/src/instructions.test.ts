@@ -37,3 +37,9 @@ describe("ottoInstructions — brand memory guidance", () => {
     expect(ottoInstructions).toMatch(/one-off/i);
   });
 });
+
+describe("ottoInstructions — video keyframes", () => {
+  it("prompt instructs Otto to pass forVideo:true when making an image keyframe for a video", () => {
+    expect(ottoInstructions).toMatch(/forVideo/);
+  });
+});
