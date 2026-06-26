@@ -90,6 +90,7 @@ export function OttoApp({
           account={account}
           ottoStreamEnabled={ottoStreamEnabled}
           onEditByHand={() => setWorkshopOpen(true)}
+          onViewChange={setView}
         />
       </div>
 
