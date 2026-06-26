@@ -4,6 +4,8 @@ import { storage, kindOf } from "./storage";
 import type { EntityWithRefs, ChatThreadWithMessages } from "./data";
 import type { EntityDTO, ChatMessageDTO, ChatThreadDTO } from "./types";
 
+type EntityWithOttoUsage = EntityWithRefs & { _ottoUsageCount?: number };
+
 export function assetUrl(ownerId: string, contentHash: string, ext: string) {
   return storage.url(storageKey(ownerId, contentHash, ext));
 }
@@ -19,7 +21,7 @@ function refOf(r: { id: string; assetId: string; asset: { ownerId: string; conte
 }
 
 /** Shared Entity → DTO mapping (workbench + library render the same store). */
-export function toEntityDTO(e: EntityWithRefs): EntityDTO {
+export function toEntityDTO(e: EntityWithOttoUsage): EntityDTO {
   return {
     id: e.id,
     type: e.type,
@@ -36,7 +38,7 @@ export function toEntityDTO(e: EntityWithRefs): EntityDTO {
       prompt: v.prompt,
       refs: v.referenceImages.map(refOf),
     })),
-    usageCount: e._count.shotRefs,
+    usageCount: e._count.shotRefs + (e._ottoUsageCount ?? 0),
   };
 }
 
