@@ -2,6 +2,7 @@
 import React from "react";
 import { LogOut, Wallet } from "lucide-react";
 import { Card, Button } from "@/components/fk";
+import { creditsLabel } from "@/lib/credit-format";
 import { signOutAction, type AccountInfo } from "@/lib/account-actions";
 
 function whenLabel(at: string): string {
@@ -34,7 +35,7 @@ export function OttoAccount({ account }: { account: AccountInfo | null }) {
             <Wallet size={18} color="var(--brand)" /> Your credit balance
           </div>
           <div style={{ fontFamily: "var(--font-display)", fontWeight: "var(--weight-bold)" as React.CSSProperties["fontWeight"], fontSize: "var(--text-4xl, 2.5rem)", color: "var(--text-strong)", marginTop: "var(--space-2)" }}>
-            ${account.balanceUsd.toFixed(2)}
+            {creditsLabel(account.balance)}
           </div>
           {account.reserved > 0 && (
             <div style={{ fontSize: "var(--text-sm)", color: "var(--text-faint)", marginTop: 4 }}>
@@ -45,7 +46,7 @@ export function OttoAccount({ account }: { account: AccountInfo | null }) {
 
         {/* Where your money went */}
         <h2 style={{ fontFamily: "var(--font-display)", fontWeight: "var(--weight-semibold)" as React.CSSProperties["fontWeight"], fontSize: "var(--text-lg)", color: "var(--text-strong)", marginTop: "var(--space-6)", marginBottom: "var(--space-3)" }}>
-          Where your money went
+          Where your credits went
         </h2>
         {account.recent.length === 0 ? (
           <div style={{ color: "var(--text-muted)", fontSize: "var(--text-sm)" }}>No activity yet.</div>

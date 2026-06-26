@@ -12,7 +12,7 @@ import {
   MAX_GEN_PROMPT,
   MAX_GEN_COUNT,
   displayCredits,
-  CREDITS_PER_USD,
+  pricedGenCredits,
   type GenVideoModel,
 } from "@fikirtive/core";
 import type { OttoContext } from "../context.js";
@@ -55,6 +55,10 @@ export type CardPayload = {
   entityIds: string[];
   variantSel: Record<string, string>;
   estimatedPriceUsd: number;
+  /** The DISPLAYED charge in credits — the same pricedGenCredits value startGen reserves,
+   *  so the card quote equals what actually leaves the balance. The card shows THIS, not
+   *  estimatedPriceUsd (which is the record-only fal cost, ~2.5x lower). */
+  estimatedCredits: number;
   sourceGenerationId?: string;
 };
 
@@ -135,6 +139,21 @@ export function buildProposeCard(
         })
       : GEN_PRICE_USD_PER_IMAGE * sm.params.count;
 
+  // Step 4.5: the DISPLAYED charge in CREDITS — computed from the SAME pricedGenCredits
+  // value startGen reserves (gen-actions.ts), so the card quote equals what actually
+  // leaves the balance. (estimatedPriceUsd above stays the record-only fal cost.)
+  const estimatedCredits = displayCredits(
+    pricedGenCredits({
+      kind: kind === "video" ? "VIDEO" : "IMAGE",
+      model: sm.model,
+      count: kind === "video" ? 1 : sm.params.count,
+      videoOptions:
+        kind === "video"
+          ? { seconds: sm.params.durationSeconds, resolution: sm.params.resolution, audio: sm.params.audio }
+          : null,
+    }),
+  );
+
   // Step 5: cardPayload (mirror coworkTurn 401–406)
   const cardPayload: CardPayload = {
     kind,
@@ -146,11 +165,12 @@ export function buildProposeCard(
     entityIds,
     variantSel,
     estimatedPriceUsd: price,
+    estimatedCredits,
     ...(ctx.sourceGenerationId ? { sourceGenerationId: ctx.sourceGenerationId } : {}),
   };
 
-  // Step 6: displayed credit amount
-  const shownPriceDisplay = displayCredits(Math.round(price * CREDITS_PER_USD));
+  // Step 6: the credit amount Otto may mention in chat = the real charge (estimatedCredits).
+  const shownPriceDisplay = estimatedCredits;
 
   return { cardPayload, shownPriceDisplay };
 }

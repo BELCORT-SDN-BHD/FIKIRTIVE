@@ -14,6 +14,8 @@ export interface OttoAppProps {
   entities: EntityDTO[];
   threads: ChatThreadDTO[];
   balanceUsd: number;
+  /** Spendable balance in DISPLAYED credits — shown in the nav (product uses credits, not $). */
+  balanceCredits: number;
   userName: string;
   userEmail: string;
   memory: MemoryRow[];
@@ -29,6 +31,7 @@ export function OttoApp({
   entities,
   threads: initialThreads,
   balanceUsd,
+  balanceCredits,
   userName,
   userEmail,
   memory,
@@ -65,7 +68,7 @@ export function OttoApp({
           setView("otto");
           setActiveThreadId(null);
         }}
-        balanceUsd={balanceUsd}
+        balanceCredits={balanceCredits}
         userName={userName}
         userEmail={userEmail}
       />

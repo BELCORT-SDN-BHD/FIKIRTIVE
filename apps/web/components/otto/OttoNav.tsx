@@ -1,5 +1,6 @@
 "use client";
 import React from "react";
+import { creditsLabel } from "@/lib/credit-format";
 import type { OttoViewKey } from "./OttoApp";
 import type { ChatThreadDTO } from "@/lib/types";
 
@@ -70,7 +71,8 @@ export interface OttoNavProps {
   activeThreadId: string | null;
   onSelectThread: (id: string) => void;
   onNewCampaign: () => void;
-  balanceUsd: number;
+  /** Spendable balance in DISPLAYED credits (the product shows credits, never dollars). */
+  balanceCredits: number;
   userName: string;
   userEmail: string;
 }
@@ -82,12 +84,12 @@ export function OttoNav({
   activeThreadId,
   onSelectThread,
   onNewCampaign,
-  balanceUsd,
+  balanceCredits,
   userName,
   userEmail,
 }: OttoNavProps) {
   const initial = userName.slice(0, 1).toUpperCase();
-  const balanceLabel = "$" + balanceUsd.toFixed(2);
+  const balanceLabel = creditsLabel(balanceCredits);
 
   return (
     <nav

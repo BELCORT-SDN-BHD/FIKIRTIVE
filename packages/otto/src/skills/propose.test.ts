@@ -1,9 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
-import {
-  GEN_PRICE_USD_PER_IMAGE,
-  displayCredits,
-  CREDITS_PER_USD,
-} from "@fikirtive/core";
+import { GEN_PRICE_USD_PER_IMAGE } from "@fikirtive/core";
 // I1: pure-helper tests import from propose.helpers — no DB mock needed for these
 import { buildProposeCard } from "./propose.helpers.js";
 // executePropose (DB-side) still imported from propose.ts
@@ -63,12 +59,14 @@ describe("buildProposeCard — pure helper", () => {
     expect(cardPayload.kind).toBe("image");
     expect(cardPayload.model).toBe("seedream");
 
-    // count defaults to 1 for image
+    // count defaults to 1 for image. estimatedPriceUsd stays the record-only fal cost…
     const expectedPrice = GEN_PRICE_USD_PER_IMAGE * 1;
     expect(cardPayload.estimatedPriceUsd).toBeCloseTo(expectedPrice);
 
-    const expectedDisplay = displayCredits(Math.round(expectedPrice * CREDITS_PER_USD));
-    expect(shownPriceDisplay).toBe(expectedDisplay);
+    // …but the CARD now quotes the real charge in credits (pricedGenCredits = 1 credit/image),
+    // the same value startGen reserves — so the quote equals what leaves the balance.
+    expect(cardPayload.estimatedCredits).toBe(1);
+    expect(shownPriceDisplay).toBe(1);
 
     // M1: price must be positive (guards against regression to 0/NaN)
     expect(shownPriceDisplay).toBeGreaterThan(0);
