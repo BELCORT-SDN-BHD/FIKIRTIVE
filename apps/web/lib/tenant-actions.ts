@@ -6,12 +6,46 @@ import { revalidatePath } from "next/cache";
 
 const ORG_STATUS = new Set(["active", "suspended"]);
 
+/** Resolve an org's active members to their Better Auth user ids.
+ *  Membership.userId → User.email → BetterAuthUser.id (the two user tables join by email;
+ *  BetterAuthSession/ban operate on BetterAuthUser.id, a different id space from User.id). */
+async function orgMemberBaUserIds(orgId: string): Promise<string[]> {
+  const members = await prisma.membership.findMany({ where: { orgId, deletedAt: null }, select: { userId: true } });
+  const userIds = members.map((m) => m.userId);
+  if (userIds.length === 0) return [];
+  const users = await prisma.user.findMany({ where: { id: { in: userIds } }, select: { email: true } });
+  // both sides must be lowercase: BetterAuthUser.email is normalized at signup, so we lowercase User.email to match the `in` filter (case-sensitive in Postgres).
+  const emails = users.map((u) => u.email.toLowerCase());
+  if (emails.length === 0) return [];
+  const baUsers = await prisma.betterAuthUser.findMany({ where: { email: { in: emails } }, select: { id: true } });
+  return baUsers.map((u) => u.id);
+}
+
 export async function setMembershipStatus(orgId: string, status: string): Promise<{ ok: true } | { error: string }> {
   const gate = await requireRole("tenants", "mutate"); if ("error" in gate) return gate;
   if (typeof orgId !== "string" || !orgId || orgId === FOUNDER_OWNER_ID) return { error: "Invalid org." };
   if (!ORG_STATUS.has(status)) return { error: "Invalid status." };
-  const { count } = await prisma.membership.updateMany({ where: { orgId }, data: { status } });
-  if (count === 0) return { error: "No memberships for that org." };
+  // Mirror to the Better Auth layer so suspension is immediate + global: ban the members'
+  // BA users (the installed admin plugin's session.create.before hook then blocks re-login)
+  // and cut their live BA sessions. Reactivation lifts the ban. Membership.status stays the
+  // authoritative per-tenant gate (requireOwner consumes it); this is defense-in-depth.
+  const baUserIds = await orgMemberBaUserIds(orgId);
+  // Atomic: flip Membership.status and mirror to the BA auth layer in one transaction, so a
+  // BA-write failure rolls back the status flip (no diverged "suspended but not banned" state).
+  const updated = await prisma.$transaction(async (tx) => {
+    const { count } = await tx.membership.updateMany({ where: { orgId }, data: { status } });
+    if (count === 0) return 0;
+    if (baUserIds.length > 0) {
+      if (status === "suspended") {
+        await tx.betterAuthUser.updateMany({ where: { id: { in: baUserIds } }, data: { banned: true, banReason: `suspended by ${gate.email}` } });
+        await tx.betterAuthSession.deleteMany({ where: { userId: { in: baUserIds } } });
+      } else {
+        await tx.betterAuthUser.updateMany({ where: { id: { in: baUserIds } }, data: { banned: false, banReason: null, banExpires: null } });
+      }
+    }
+    return count;
+  });
+  if (updated === 0) return { error: "No memberships for that org." };
   await prisma.actionEvent.create({ data: { id: newId(), ownerId: FOUNDER_OWNER_ID, type: "tenant.status", payload: { orgId, status, via: gate.email } } }).catch(() => {});
   await prisma.actionEvent.create({ data: { id: newId(), ownerId: orgId, type: "tenant.status", payload: { status, via: gate.email } } }).catch(() => {});
   revalidatePath(`/admin/tenants/${orgId}`); revalidatePath("/admin/tenants");
@@ -21,10 +55,9 @@ export async function setMembershipStatus(orgId: string, status: string): Promis
 export async function cutTenantSessions(orgId: string): Promise<{ ok: true; cut: number } | { error: string }> {
   const gate = await requireRole("tenants", "mutate"); if ("error" in gate) return gate;
   if (typeof orgId !== "string" || !orgId || orgId === FOUNDER_OWNER_ID) return { error: "Invalid org." };
-  const members = await prisma.membership.findMany({ where: { orgId, deletedAt: null }, select: { userId: true } });
-  const userIds = members.map((m) => m.userId);
-  if (userIds.length === 0) return { ok: true, cut: 0 };
-  const { count } = await prisma.session.deleteMany({ where: { userId: { in: userIds } } });
+  const baUserIds = await orgMemberBaUserIds(orgId);
+  if (baUserIds.length === 0) return { ok: true, cut: 0 };
+  const { count } = await prisma.betterAuthSession.deleteMany({ where: { userId: { in: baUserIds } } });
   await prisma.actionEvent.create({ data: { id: newId(), ownerId: FOUNDER_OWNER_ID, type: "tenant.cut", payload: { orgId, cut: count, via: gate.email } } }).catch(() => {});
   await prisma.actionEvent.create({ data: { id: newId(), ownerId: orgId, type: "tenant.cut", payload: { cut: count, via: gate.email } } }).catch(() => {});
   revalidatePath(`/admin/tenants/${orgId}`);

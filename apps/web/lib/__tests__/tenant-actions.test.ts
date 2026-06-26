@@ -13,7 +13,10 @@ vi.mock("next/cache", () => ({ revalidatePath: vi.fn() }));
 // Provide only the prisma methods called by tenant-actions; stray calls throw.
 const membershipUpdateMany = vi.fn();
 const membershipFindMany = vi.fn();
-const sessionDeleteMany = vi.fn();
+const userFindMany = vi.fn();
+const baUserFindMany = vi.fn();
+const baUserUpdateMany = vi.fn();
+const baSessionDeleteMany = vi.fn();
 const allowedEmailUpsert = vi.fn();
 const allowedEmailUpdateMany = vi.fn();
 const actionEventCreate = vi.fn();
@@ -30,10 +33,19 @@ class MockInsufficientCredits extends Error {
 vi.mock("@fikirtive/db", () => ({
   prisma: {
     membership: { updateMany: membershipUpdateMany, findMany: membershipFindMany },
-    session: { deleteMany: sessionDeleteMany },
+    user: { findMany: userFindMany },
+    betterAuthUser: { findMany: baUserFindMany, updateMany: baUserUpdateMany },
+    betterAuthSession: { deleteMany: baSessionDeleteMany },
     allowedEmail: { upsert: allowedEmailUpsert, updateMany: allowedEmailUpdateMany },
     actionEvent: { create: actionEventCreate },
     organization: { findFirst: organizationFindFirst },
+    // run the callback against a tx wired to the same mocks, so existing setMembershipStatus assertions hold
+    $transaction: async (fn: (tx: unknown) => unknown) =>
+      fn({
+        membership: { updateMany: membershipUpdateMany },
+        betterAuthUser: { updateMany: baUserUpdateMany },
+        betterAuthSession: { deleteMany: baSessionDeleteMany },
+      }),
   },
   grantCredits: mockGrantCredits,
   InsufficientCredits: MockInsufficientCredits,
@@ -50,7 +62,10 @@ beforeEach(() => {
   mockRequireRole.mockReset();
   membershipUpdateMany.mockReset();
   membershipFindMany.mockReset();
-  sessionDeleteMany.mockReset();
+  userFindMany.mockReset();
+  baUserFindMany.mockReset();
+  baUserUpdateMany.mockReset();
+  baSessionDeleteMany.mockReset();
   allowedEmailUpsert.mockReset();
   allowedEmailUpdateMany.mockReset();
   actionEventCreate.mockReset();
@@ -87,6 +102,7 @@ describe("setMembershipStatus", () => {
   it("returns error when no memberships matched", async () => {
     mockRequireRole.mockResolvedValue(GATE);
     membershipUpdateMany.mockResolvedValue({ count: 0 });
+    membershipFindMany.mockResolvedValue([]);
     const res = await setMembershipStatus("orgX", "suspended");
     expect(res).toEqual({ error: "No memberships for that org." });
   });
@@ -94,6 +110,7 @@ describe("setMembershipStatus", () => {
   it("updates memberships and returns ok for valid org + status", async () => {
     mockRequireRole.mockResolvedValue(GATE);
     membershipUpdateMany.mockResolvedValue({ count: 2 });
+    membershipFindMany.mockResolvedValue([]);
     const res = await setMembershipStatus("orgX", "suspended");
     expect(res).toEqual({ ok: true });
     expect(membershipUpdateMany).toHaveBeenCalledWith(
@@ -104,14 +121,61 @@ describe("setMembershipStatus", () => {
   it("accepts 'active' as a valid status", async () => {
     mockRequireRole.mockResolvedValue(GATE);
     membershipUpdateMany.mockResolvedValue({ count: 1 });
+    membershipFindMany.mockResolvedValue([]);
     const res = await setMembershipStatus("orgX", "active");
     expect(res).toEqual({ ok: true });
+  });
+
+  it("on suspend: bans the org's BA users and cuts their BA sessions", async () => {
+    mockRequireRole.mockResolvedValue(GATE);
+    membershipUpdateMany.mockResolvedValue({ count: 1 });
+    membershipFindMany.mockResolvedValue([{ userId: "user_0" }]);
+    userFindMany.mockResolvedValue([{ email: "u0@t.test" }]);
+    baUserFindMany.mockResolvedValue([{ id: "ba_0" }]);
+    baSessionDeleteMany.mockResolvedValue({ count: 2 });
+    const res = await setMembershipStatus("orgX", "suspended");
+    expect(res).toEqual({ ok: true });
+    expect(baUserUpdateMany).toHaveBeenCalledWith(
+      expect.objectContaining({ where: { id: { in: ["ba_0"] } }, data: expect.objectContaining({ banned: true, banReason: `suspended by ${GATE.email}` }) })
+    );
+    expect(baSessionDeleteMany).toHaveBeenCalledWith({ where: { userId: { in: ["ba_0"] } } });
+  });
+
+  it("on reactivate: lifts the ban and does NOT cut sessions", async () => {
+    mockRequireRole.mockResolvedValue(GATE);
+    membershipUpdateMany.mockResolvedValue({ count: 1 });
+    membershipFindMany.mockResolvedValue([{ userId: "user_0" }]);
+    userFindMany.mockResolvedValue([{ email: "u0@t.test" }]);
+    baUserFindMany.mockResolvedValue([{ id: "ba_0" }]);
+    const res = await setMembershipStatus("orgX", "active");
+    expect(res).toEqual({ ok: true });
+    expect(baUserUpdateMany).toHaveBeenCalledWith(
+      expect.objectContaining({ where: { id: { in: ["ba_0"] } }, data: expect.objectContaining({ banned: false, banReason: null, banExpires: null }) })
+    );
+    expect(baSessionDeleteMany).not.toHaveBeenCalled();
+  });
+
+  it("skips the auth-layer writes when the org has no BA users", async () => {
+    mockRequireRole.mockResolvedValue(GATE);
+    membershipUpdateMany.mockResolvedValue({ count: 1 });
+    membershipFindMany.mockResolvedValue([]);
+    const res = await setMembershipStatus("orgX", "suspended");
+    expect(res).toEqual({ ok: true });
+    expect(baUserUpdateMany).not.toHaveBeenCalled();
+    expect(baSessionDeleteMany).not.toHaveBeenCalled();
   });
 });
 
 // ── cutTenantSessions ───────────────────────────────────────────────────────
 
 describe("cutTenantSessions", () => {
+  // helper: wire the 3-hop member→email→ba-user resolution
+  function wireMembers(baUserIds: string[]) {
+    membershipFindMany.mockResolvedValue(baUserIds.map((_, i) => ({ userId: `user_${i}` })));
+    userFindMany.mockResolvedValue(baUserIds.map((_, i) => ({ email: `u${i}@t.test` })));
+    baUserFindMany.mockResolvedValue(baUserIds.map((id) => ({ id })));
+  }
+
   it("returns the gate error when requireRole denies", async () => {
     mockRequireRole.mockResolvedValue(GATE_ERROR);
     const res = await cutTenantSessions("orgX");
@@ -131,22 +195,37 @@ describe("cutTenantSessions", () => {
     membershipFindMany.mockResolvedValue([]);
     const res = await cutTenantSessions("orgX");
     expect(res).toEqual({ ok: true, cut: 0 });
-    expect(sessionDeleteMany).not.toHaveBeenCalled();
+    expect(baSessionDeleteMany).not.toHaveBeenCalled();
   });
 
-  it("deletes sessions scoped to the org's member userIds only", async () => {
+  it("returns { ok: true, cut: 0 } when members exist but none have BA accounts", async () => {
     mockRequireRole.mockResolvedValue(GATE);
-    membershipFindMany.mockResolvedValue([
-      { userId: "user_1" },
-      { userId: "user_2" },
-    ]);
-    sessionDeleteMany.mockResolvedValue({ count: 3 });
+    membershipFindMany.mockResolvedValue([{ userId: "user_1" }]);
+    userFindMany.mockResolvedValue([{ email: "u0@t.test" }]);
+    baUserFindMany.mockResolvedValue([]);
+    const res = await cutTenantSessions("orgX");
+    expect(res).toEqual({ ok: true, cut: 0 });
+    expect(baSessionDeleteMany).not.toHaveBeenCalled();
+  });
+
+  it("deletes BetterAuthSession rows scoped to the org's BA user ids", async () => {
+    mockRequireRole.mockResolvedValue(GATE);
+    wireMembers(["ba_1", "ba_2"]);
+    baSessionDeleteMany.mockResolvedValue({ count: 3 });
     const res = await cutTenantSessions("orgX");
     expect(res).toEqual({ ok: true, cut: 3 });
-    // The deleteMany MUST use { userId: { in: [...] } } scoped to those exact users
-    expect(sessionDeleteMany).toHaveBeenCalledWith({
-      where: { userId: { in: ["user_1", "user_2"] } },
+    expect(baSessionDeleteMany).toHaveBeenCalledWith({
+      where: { userId: { in: ["ba_1", "ba_2"] } },
     });
+  });
+
+  it("does NOT touch the legacy Session table (cutover bug fix)", async () => {
+    mockRequireRole.mockResolvedValue(GATE);
+    wireMembers(["ba_1"]);
+    baSessionDeleteMany.mockResolvedValue({ count: 1 });
+    await cutTenantSessions("orgX");
+    // legacy prisma.session is no longer in the mock; if cut still referenced it the call would throw.
+    expect(baSessionDeleteMany).toHaveBeenCalledTimes(1);
   });
 });
 
