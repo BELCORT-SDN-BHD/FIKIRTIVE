@@ -2,9 +2,10 @@
 import React, { useState } from "react";
 import { Download, Copy, Check, Sparkles, ChevronLeft, Wrench } from "lucide-react";
 import { Card, Button } from "@/components/fk";
+import { creditsLabel } from "@/lib/credit-format";
 
 export interface OttoResultProps {
-  payload: { kind?: string; model?: string; urls?: string[]; generationIds?: string[]; costUsd?: number } | null;
+  payload: { kind?: string; model?: string; urls?: string[]; generationIds?: string[]; costUsd?: number; costCredits?: number } | null;
   onEditByHand?: () => void;
 }
 
@@ -148,6 +149,11 @@ export function OttoResult({ payload, onEditByHand }: OttoResultProps) {
             </Button>
           )}
         </div>
+        {typeof payload?.costCredits === "number" && (
+          <div style={{ marginTop: "var(--space-3)", fontSize: "var(--text-sm)", color: "var(--text-muted)" }}>
+            Cost: {creditsLabel(payload.costCredits)}
+          </div>
+        )}
       </Card>
     </div>
   );
