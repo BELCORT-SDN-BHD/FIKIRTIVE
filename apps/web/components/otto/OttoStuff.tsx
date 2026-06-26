@@ -1,8 +1,9 @@
 "use client";
 import React, { useState } from "react";
-import { Download, Users, Images, Pencil, Trash2, Check, X, Search, AlertCircle } from "lucide-react";
+import { Download, Users, Images, Pencil, Trash2, Check, X, Search, AlertCircle, Film, ImageIcon } from "lucide-react";
 import { Tabs, Button, Input } from "@/components/fk";
 import type { EntityDTO } from "@/lib/types";
+import type { AdJobItem } from "@/lib/data";
 import { groupEntitiesByType } from "@/lib/entity-grouping";
 import { updateEntity, softDeleteEntity } from "@/lib/actions";
 import { bustUrl } from "@/lib/media-retry";
@@ -18,6 +19,7 @@ export interface AdTile {
 export interface OttoStuffProps {
   entities: EntityDTO[];
   ads: AdTile[];
+  adJobs: AdJobItem[];
 }
 
 function EntityTile({
@@ -125,6 +127,33 @@ function EntityTile({
   );
 }
 
+function AdJobCard({ job }: { job: AdJobItem }) {
+  const isProcessing = job.status === "processing";
+  const pillBg = isProcessing ? "var(--warning-100, #fef3c7)" : "var(--error-100, #fee2e2)";
+  const pillColor = isProcessing ? "var(--warning-700, #b45309)" : "var(--error-700, #b91c1c)";
+  const pillLabel = isProcessing ? "Processing…" : "Didn't go through";
+  const when = new Date(job.createdAt).toLocaleDateString(undefined, { month: "short", day: "numeric" });
+
+  return (
+    <div style={{ borderRadius: "var(--radius-lg)", border: "1px solid var(--border-subtle)", background: "var(--surface-card)", padding: "var(--space-3)", display: "flex", flexDirection: "column", gap: "var(--space-2)" }}>
+      <div style={{ display: "flex", alignItems: "center", gap: "var(--space-2)" }}>
+        <span style={{ color: "var(--text-faint)" }}>
+          {job.kind === "video" ? <Film size={15} /> : <ImageIcon size={15} />}
+        </span>
+        <span style={{ fontSize: "var(--text-xs)", fontWeight: "var(--weight-medium)" as React.CSSProperties["fontWeight"], padding: "2px 8px", borderRadius: 99, background: pillBg, color: pillColor }}>
+          {pillLabel}
+        </span>
+      </div>
+      {job.prompt && (
+        <div style={{ fontSize: "var(--text-xs)", color: "var(--text-muted)", overflow: "hidden", display: "-webkit-box", WebkitLineClamp: 2, WebkitBoxOrient: "vertical" }}>
+          {job.prompt}
+        </div>
+      )}
+      <div style={{ fontSize: "var(--text-xs)", color: "var(--text-faint)" }}>{when}</div>
+    </div>
+  );
+}
+
 function AdMediaTile({ ad }: { ad: AdTile }) {
   const ext = ad.src.split("?")[0].split(".").pop() || (ad.kind === "video" ? "mp4" : "png");
   const filename = `fikirtive-${ad.id.slice(0, 8)}.${ext}`;
@@ -194,7 +223,7 @@ function AdMediaTile({ ad }: { ad: AdTile }) {
   );
 }
 
-export function OttoStuff({ entities, ads }: OttoStuffProps) {
+export function OttoStuff({ entities, ads, adJobs }: OttoStuffProps) {
   const [tab, setTab] = useState<"cast" | "ads">("cast");
   const [items, setItems] = useState<EntityDTO[]>(entities);
   const [search, setSearch] = useState("");
@@ -280,10 +309,13 @@ export function OttoStuff({ entities, ads }: OttoStuffProps) {
               )}
             </>
           )
-        ) : ads.length === 0 ? (
+        ) : adJobs.length === 0 && ads.length === 0 ? (
           <Empty icon={<Images size={28} />} text="No ads yet. When Otto makes something, it lands here — newest first." />
         ) : (
           <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(200px, 1fr))", gap: "var(--space-4)" }}>
+            {adJobs.map((job) => (
+              <AdJobCard key={job.id} job={job} />
+            ))}
             {ads.map((ad) => (
               <AdMediaTile key={ad.id} ad={ad} />
             ))}
