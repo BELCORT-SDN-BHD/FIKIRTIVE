@@ -76,6 +76,12 @@ export function OttoMemory({ initialMemory, projectId }: { initialMemory: Memory
         if (thread) {
           setChat(threadToBubbles(thread.messages));
         }
+        // Brand memory chat is for saving durable facts, not generating media — this surface
+        // has no approve UI. If Otto parked a paid generation (needs_approval), steer the user
+        // to the main Otto chat instead of silently stranding the parked card here.
+        if ("status" in res && res.status === "needs_approval") {
+          setChatError("Otto wants to make something — open the main Otto chat to review and approve it. Brand memory is just for saving facts about your brand.");
+        }
         await refresh();
       }
     } catch {
