@@ -1,11 +1,10 @@
 "use client";
 import React, { useState } from "react";
-import { Download, Copy, Check, Sparkles, ChevronLeft, Wrench } from "lucide-react";
+import { Download, Copy, Check, Sparkles, ChevronLeft } from "lucide-react";
 import { Card, Button } from "@/components/fk";
 
 export interface OttoResultProps {
   payload: { kind?: string; model?: string; urls?: string[]; generationIds?: string[]; costUsd?: number } | null;
-  onEditByHand?: () => void;
 }
 
 const isVideoUrl = (u: string) => /\.(mp4|webm|mov|mkv)(\?|$)/i.test(u);
@@ -55,7 +54,7 @@ function Media({ url, rounded = true }: { url: string; rounded?: boolean }) {
 
 /** A finished result in the conversation. One asset → show it with Download / Copy.
  *  An ad pack (N variants) → a chooser grid with "Otto's pick"; tap one to settle on it. */
-export function OttoResult({ payload, onEditByHand }: OttoResultProps) {
+export function OttoResult({ payload }: OttoResultProps) {
   const urls = payload?.urls ?? [];
   const genIds = payload?.generationIds ?? [];
   // Single result auto-selects index 0; a pack starts unchosen so the grid shows first.
@@ -140,11 +139,6 @@ export function OttoResult({ payload, onEditByHand }: OttoResultProps) {
           {urls.length > 1 && (
             <Button variant="ghost" size="md" leftIcon={<ChevronLeft size={18} />} onClick={() => setSelected(null)}>
               See all {urls.length} options
-            </Button>
-          )}
-          {onEditByHand && (
-            <Button variant="ghost" size="md" leftIcon={<Wrench size={18} />} onClick={onEditByHand}>
-              Edit by hand
             </Button>
           )}
         </div>

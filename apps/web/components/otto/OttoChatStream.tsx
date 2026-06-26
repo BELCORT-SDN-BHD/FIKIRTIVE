@@ -40,7 +40,6 @@ export interface OttoChatStreamProps {
   balanceUsd: number;
   onRefresh: () => Promise<void>;
   onThreadUpdate: (thread: ChatThreadDTO) => void;
-  onEditByHand: () => void;
   /** Streaming front door: a first message to auto-send ONCE into a freshly-created
    *  (empty) thread on mount. The thread row already exists (createEmptyCoworkThread),
    *  so the route's existing-thread branch handles it. */
@@ -68,7 +67,6 @@ export function OttoChatStream({
   entities,
   thread,
   onThreadUpdate,
-  onEditByHand,
   pendingFirst,
   onPendingFirstSent,
 }: OttoChatStreamProps) {
@@ -396,7 +394,7 @@ export function OttoChatStream({
                 | null;
               return (
                 <WidgetRow key={m.id} animateIn={isNewMessage(m.id)}>
-                  <OttoResult payload={r} onEditByHand={onEditByHand} />
+                  <OttoResult payload={r} />
                 </WidgetRow>
               );
             }
