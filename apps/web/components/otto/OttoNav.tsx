@@ -192,6 +192,16 @@ export function OttoNav({
           <div style={{ display: "flex", flexDirection: "column", gap: "2px" }}>
             {threads.slice(0, 8).map((t) => {
               const isActive = t.id === activeThreadId && view === "otto";
+              const dotColor =
+                t.status === "working" ? "#f59e0b" :
+                t.status === "failed"  ? "#dc2626" :
+                t.status === "done"    ? "#16a34a" :
+                null;
+              const dotLabel =
+                t.status === "working" ? "Processing" :
+                t.status === "failed"  ? "Failed" :
+                t.status === "done"    ? "Done" :
+                null;
               return (
                 <button
                   key={t.id}
@@ -201,7 +211,9 @@ export function OttoNav({
                   }}
                   title={t.title}
                   style={{
-                    display: "block",
+                    display: "flex",
+                    alignItems: "center",
+                    gap: "var(--space-2)",
                     width: "100%",
                     border: "none",
                     background: isActive ? "var(--brand-tint)" : "transparent",
@@ -213,13 +225,26 @@ export function OttoNav({
                     borderRadius: "var(--radius-sm)",
                     cursor: "pointer",
                     textAlign: "left",
-                    overflow: "hidden",
-                    textOverflow: "ellipsis",
-                    whiteSpace: "nowrap",
                     transition: "background var(--dur-fast) var(--ease-out)",
                   }}
                 >
-                  {t.title}
+                  {dotColor && (
+                    <span
+                      aria-label={dotLabel ?? undefined}
+                      title={dotLabel ?? undefined}
+                      style={{
+                        display: "inline-block",
+                        flexShrink: 0,
+                        width: 8,
+                        height: 8,
+                        borderRadius: "50%",
+                        background: dotColor,
+                      }}
+                    />
+                  )}
+                  <span style={{ overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", minWidth: 0 }}>
+                    {t.title}
+                  </span>
                 </button>
               );
             })}

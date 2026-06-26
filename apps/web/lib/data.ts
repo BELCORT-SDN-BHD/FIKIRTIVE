@@ -3,6 +3,7 @@ import { prisma } from "@fikirtive/db";
 import { newId, storageKey, storageKeyToSrc } from "@fikirtive/core";
 import { requireOwner } from "./auth-guard";
 import { tallyEntityUsage } from "./entity-usage";
+import { threadBadgeFromJobStatus } from "./thread-status";
 
 const THUMB_VIDEO_EXTS = new Set(["mp4", "mov", "webm", "mkv"]);
 /** Resolve generation ids → { src, kind } thumbnails (segment frame slots). */
@@ -231,11 +232,30 @@ export type CandidateGen = Awaited<ReturnType<typeof getLooseVideoClips>>[number
  *  threads are returned (metadata is light + the partial updatedAt index serves it),
  *  so none become unreachable. (scale audit 2026-06-20) */
 export async function getCoworkThreads(ownerId: string, projectId: string) {
-  return prisma.chatThread.findMany({
+  const threads = await prisma.chatThread.findMany({
     where: { projectId, ownerId, ...notDeleted },
     orderBy: { updatedAt: "desc" },
     select: { id: true, projectId: true, title: true, updatedAt: true },
   });
+
+  // Attach latest GenJob status per thread for nav status badges (best-effort: never throws).
+  try {
+    const threadIds = threads.map((t) => t.id);
+    const jobs = threadIds.length
+      ? await prisma.genJob.findMany({
+          where: { ownerId, threadId: { in: threadIds } },
+          select: { threadId: true, status: true, updatedAt: true },
+          orderBy: { updatedAt: "desc" },
+        })
+      : [];
+    const latestByThread = new Map<string, string>();
+    for (const j of jobs) {
+      if (j.threadId && !latestByThread.has(j.threadId)) latestByThread.set(j.threadId, j.status);
+    }
+    return threads.map((t) => ({ ...t, _badge: threadBadgeFromJobStatus(latestByThread.get(t.id) ?? null) }));
+  } catch {
+    return threads.map((t) => ({ ...t, _badge: null as null }));
+  }
 }
 
 /** One owned, live thread with its messages in seq order (deep-link / refetch). */
