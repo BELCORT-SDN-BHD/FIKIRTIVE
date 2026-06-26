@@ -230,8 +230,12 @@ export function OttoConversation({
               }}
               onRetry={() => {
                 // Fresh card spawned — re-arm poll and refetch so it appears.
+                // Reset checkAgainUsedRef too: the retried job gets the full two-round
+                // stall budget, not a one-round dead-end from an earlier "Check again".
                 setPollGaveUp(false);
+                setPollTerminal(false);
                 pollCountRef.current = 0;
+                checkAgainUsedRef.current = false;
                 void refreshAndUpdate();
               }}
               onCancelled={() => void refreshAndUpdate()}
@@ -326,7 +330,7 @@ export function OttoConversation({
                   color: "var(--text-body)",
                 }}
               >
-                This didn&rsquo;t recover — if it was charged it&rsquo;s been refunded. Start a new card.
+                This looks stuck. Cancel it on the card to get your credits back, or start a new card.
               </div>
             </div>
           )}
