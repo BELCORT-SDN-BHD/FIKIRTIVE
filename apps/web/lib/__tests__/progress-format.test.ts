@@ -7,6 +7,7 @@ describe("formatElapsed", () => {
   it('returns "1:23" for 83', () => expect(formatElapsed(83)).toBe("1:23"));
   it('returns "0:00" for negative', () => expect(formatElapsed(-3)).toBe("0:00"));
   it('returns "0:00" for NaN', () => expect(formatElapsed(NaN)).toBe("0:00"));
+  it('returns "0:00" for Infinity', () => expect(formatElapsed(Infinity)).toBe("0:00"));
   it('returns "10:00" for 600', () => expect(formatElapsed(600)).toBe("10:00"));
 });
 

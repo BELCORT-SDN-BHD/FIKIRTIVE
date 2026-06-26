@@ -1,6 +1,7 @@
-/** Seconds → "m:ss" (e.g. 5 → "0:05", 83 → "1:23"). Negatives/NaN clamp to "0:00". */
+/** Seconds → "m:ss" (e.g. 5 → "0:05", 83 → "1:23"). Negatives / NaN / non-finite clamp to "0:00". */
 export function formatElapsed(totalSeconds: number): string {
-  const s = Math.max(0, Math.floor(Number(totalSeconds) || 0));
+  const n = Number(totalSeconds);
+  const s = Number.isFinite(n) ? Math.max(0, Math.floor(n)) : 0;
   const m = Math.floor(s / 60);
   const sec = s % 60;
   return `${m}:${String(sec).padStart(2, "0")}`;
