@@ -3,11 +3,11 @@ import { OTTO_OUTPUT_CAP_TOKENS } from "@fikirtive/core";
 import type { OttoContext } from "./context.js";
 import { ottoInstructions } from "./instructions.js";
 import { ottoModel, OTTO_DEFAULT_MODEL } from "./model.js";
-import { propose } from "./tools/propose.js";
-import { generate } from "./tools/generate.js";
-import { updateBrief } from "./tools/update-brief.js";
-import { describeRefs } from "./tools/describe-refs.js";
-import { setTitle } from "./tools/set-title.js";
+import { propose } from "./skills/propose.js";
+import { generate } from "./skills/generate.js";
+import { updateBrief } from "./skills/update-brief.js";
+import { describeRefs } from "./skills/describe-refs.js";
+import { setTitle } from "./skills/set-title.js";
 
 /** Re-exported for credit price lookup (withLlmBudget). Model selection + 529 failover live in ./model.ts. */
 export { OTTO_DEFAULT_MODEL };
