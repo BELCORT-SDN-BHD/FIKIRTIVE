@@ -10,7 +10,7 @@
  * What it CANNOT enforce (#5/#6 — inside execute): fenced by scripts/check-skill-imports.sh + tests.
  */
 import { tool } from "@openai/agents";
-import type { RunContext } from "@openai/agents";
+import type { RunContext, FunctionTool } from "@openai/agents";
 import { z } from "zod";
 import type { OttoContext } from "./context.js";
 
@@ -38,7 +38,7 @@ export interface OttoSkill {
   needsApproval: boolean;
   description: string;
   /** The @openai/agents tool, ready for the agent's `tools` array. */
-  tool: ReturnType<typeof tool>;
+  tool: FunctionTool<OttoContext, any, unknown>;
 }
 
 const IDENTITY_KEYS = ["orgId", "ownerId", "userId"];
@@ -73,7 +73,11 @@ export function defineOttoSkill<P extends z.ZodObject<any>>(spec: OttoSkillSpec<
 
   const needsApproval = deriveNeedsApproval(cost, effect, reach);
 
-  const built = tool<P, OttoContext>({
+  // Use a concrete ZodObject<any> at the SDK boundary: the SDK's ToolOptions does
+  // `Extract<TParameters, ToolInputParametersStrict>`, which TS cannot resolve for a
+  // *free* generic P. The public OttoSkillSpec<P> stays strongly typed for authors;
+  // only this internal call widens to the SDK's object-schema shape.
+  const built = tool<z.ZodObject<any>, OttoContext>({
     name: spec.name,
     description: spec.description,
     parameters: spec.parameters,
