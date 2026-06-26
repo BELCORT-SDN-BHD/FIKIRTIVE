@@ -1,8 +1,10 @@
 "use client";
-import React from "react";
+import React, { useState } from "react";
 import { LogOut, Wallet } from "lucide-react";
 import { Card, Button } from "@/components/fk";
 import { signOutAction, type AccountInfo } from "@/lib/account-actions";
+import { CREDIT_PACKS, type PackKey } from "@/lib/stripe-packs";
+import { createTopupCheckout } from "@/lib/topup-actions";
 
 function whenLabel(at: string): string {
   const d = new Date(at);
@@ -10,6 +12,24 @@ function whenLabel(at: string): string {
 }
 
 export function OttoAccount({ account }: { account: AccountInfo | null }) {
+  const [topupError, setTopupError] = useState<string | null>(null);
+  const [loadingPack, setLoadingPack] = useState<PackKey | null>(null);
+
+  async function handleTopup(key: PackKey) {
+    setTopupError(null);
+    setLoadingPack(key);
+    try {
+      const result = await createTopupCheckout(key);
+      if ("error" in result) {
+        setTopupError(result.error);
+      } else {
+        window.location.href = result.url;
+      }
+    } finally {
+      setLoadingPack(null);
+    }
+  }
+
   if (!account) {
     return (
       <div style={{ flex: 1, display: "flex", alignItems: "center", justifyContent: "center", color: "var(--text-muted)" }}>
@@ -42,6 +62,29 @@ export function OttoAccount({ account }: { account: AccountInfo | null }) {
             </div>
           )}
         </Card>
+
+        {/* Add credits */}
+        <h2 style={{ fontFamily: "var(--font-display)", fontWeight: "var(--weight-semibold)" as React.CSSProperties["fontWeight"], fontSize: "var(--text-lg)", color: "var(--text-strong)", marginTop: "var(--space-6)", marginBottom: "var(--space-3)" }}>
+          Add credits
+        </h2>
+        <div style={{ display: "flex", gap: "var(--space-3)", flexWrap: "wrap" }}>
+          {(Object.values(CREDIT_PACKS) as (typeof CREDIT_PACKS)[PackKey][]).map((pack) => (
+            <Button
+              key={pack.key}
+              variant="secondary"
+              size="md"
+              disabled={loadingPack !== null}
+              onClick={() => handleTopup(pack.key)}
+            >
+              {loadingPack === pack.key ? "Opening…" : `${pack.displayCredits} credits · $${pack.usd}`}
+            </Button>
+          ))}
+        </div>
+        {topupError && (
+          <p style={{ fontSize: "var(--text-sm)", color: "var(--error, #dc2626)", marginTop: "var(--space-2)" }}>
+            {topupError}
+          </p>
+        )}
 
         {/* Where your money went */}
         <h2 style={{ fontFamily: "var(--font-display)", fontWeight: "var(--weight-semibold)" as React.CSSProperties["fontWeight"], fontSize: "var(--text-lg)", color: "var(--text-strong)", marginTop: "var(--space-6)", marginBottom: "var(--space-3)" }}>
