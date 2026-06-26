@@ -12,6 +12,7 @@ import {
   injectCardMessage,
   appendDurableResults,
   syncCardJobIds,
+  deriveCardState,
 } from "@/lib/otto-inject-helpers";
 import { threadToUiMessages } from "@/lib/otto-ui-messages";
 import type { ChatThreadDTO, ChatMessageDTO } from "@/lib/types";
@@ -259,5 +260,39 @@ describe("appendDurableResults", () => {
     const out = appendDurableResults(existing, fresh);
     expect(out).toHaveLength(2);
     expect(out[1].metadata?.kind).toBe("TURN_ERROR");
+  });
+});
+
+describe("deriveCardState", () => {
+  const S = (a: string[]) => new Set(a);
+
+  it("deriveCardState: idle before approval", () => {
+    expect(deriveCardState({ genJobId: null, submitted: false, results: S([]), errors: S([]) })).toBe(
+      "idle",
+    );
+  });
+
+  it("deriveCardState: working after approve even before genJobId lands", () => {
+    expect(deriveCardState({ genJobId: null, submitted: true, results: S([]), errors: S([]) })).toBe(
+      "working",
+    );
+  });
+
+  it("deriveCardState: working while job runs", () => {
+    expect(deriveCardState({ genJobId: "j1", submitted: true, results: S([]), errors: S([]) })).toBe(
+      "working",
+    );
+  });
+
+  it("deriveCardState: done when result landed", () => {
+    expect(deriveCardState({ genJobId: "j1", submitted: false, results: S(["j1"]), errors: S([]) })).toBe(
+      "done",
+    );
+  });
+
+  it("deriveCardState: failed when TURN_ERROR landed (beats working)", () => {
+    expect(deriveCardState({ genJobId: "j1", submitted: true, results: S([]), errors: S(["j1"]) })).toBe(
+      "failed",
+    );
   });
 });
