@@ -265,7 +265,7 @@ git commit -m "feat(auth): isImpersonating() — surface the raw BA session impe
 ### Task 4: Block spend at the 8 web entry points while impersonating
 
 **Files (additive guard only — money-path carve-out):**
-- Modify: `apps/web/lib/gen-actions.ts` (`startGen`), `apps/web/lib/refgen-actions.ts` (`startRefGen`, `setBaseAsset`), `apps/web/lib/cowork-actions.ts` (`coworkDraftStoryboard`, `enhancePrompt`), `apps/web/lib/otto-actions.ts` (`ottoTurn`, `ottoApprove`), `apps/web/app/api/otto/stream/route.ts` (`POST`)
+- Modify: `apps/web/lib/gen-actions.ts` (`startGen`), `apps/web/lib/refgen-actions.ts` (`startRefGen`, `createVariant`, `regenerateVariant` — the two variant entries both reserve via the internal `dispatchVariantJob` helper; NOT `setBaseAsset`, which does no spend), `apps/web/lib/cowork-actions.ts` (`coworkDraftStoryboard`, `enhancePrompt`), `apps/web/lib/otto-actions.ts` (`ottoTurn`, `ottoApprove`), `apps/web/app/api/otto/stream/route.ts` (`POST`)
 - Test: `apps/web/lib/__tests__/impersonation-spend-block.test.ts` (new)
 
 **Interfaces:**
@@ -330,7 +330,7 @@ In each of these files, add (if not already importing) `import { isImpersonating
 
 Apply at:
 - `gen-actions.ts` → `startGen` (after the gate at L27)
-- `refgen-actions.ts` → `startRefGen` (after L28) AND `setBaseAsset` (after L150)
+- `refgen-actions.ts` → `startRefGen`, `createVariant`, AND `regenerateVariant` (each after its `requireOwner()` gate). `createVariant`/`regenerateVariant` reserve only via the internal `dispatchVariantJob` helper — guarding both public entries closes that path. (`setBaseAsset` does NOT spend — do not guard it.)
 - `cowork-actions.ts` → `coworkDraftStoryboard` (after L78) AND `enhancePrompt` (after L155)
 - `otto-actions.ts` → `ottoTurn` (after its `requireOwner` at L300) AND `ottoApprove` (after L498)
 
