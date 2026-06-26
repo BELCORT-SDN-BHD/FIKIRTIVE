@@ -6,6 +6,7 @@
 import { describe, it, expect } from "vitest";
 import {
   resultJobIds,
+  errorJobIds,
   hasWorkingJob,
   proposeCardId,
   injectCardMessage,
@@ -50,6 +51,22 @@ describe("resultJobIds", () => {
     const ids = resultJobIds(ui);
     expect(ids.has("job_1")).toBe(true);
     expect(ids.has("job_2")).toBe(false);
+  });
+});
+
+describe("errorJobIds", () => {
+  it("collects genJobIds with a TURN_ERROR", () => {
+    const ui = threadToUiMessages(
+      thread([
+        msg({ id: "c1", role: "AGENT", kind: "GEN_CARD", genJobId: "job_1" }),
+        msg({ id: "e1", role: "AGENT", kind: "TURN_ERROR", genJobId: "job_1", text: "failed" }),
+        msg({ id: "c2", role: "AGENT", kind: "GEN_CARD", genJobId: "job_2" }),
+      ]),
+    );
+    const ids = errorJobIds(ui);
+    expect(ids.has("job_1")).toBe(true);
+    expect(ids.has("job_2")).toBe(false);
+    expect(ids.size).toBe(1);
   });
 });
 
