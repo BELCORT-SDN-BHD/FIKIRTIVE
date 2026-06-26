@@ -2,6 +2,7 @@ import { describe, it, expect, vi, beforeEach } from "vitest";
 const db = {
   user: { findUnique: vi.fn(), create: vi.fn(), updateMany: vi.fn() },
   membership: { upsert: vi.fn() },
+  betterAuthUser: { updateMany: vi.fn() },
   actionEvent: { create: vi.fn() },
 };
 vi.mock("@fikirtive/db", () => ({ prisma: db }));
@@ -31,6 +32,9 @@ describe("convergeIdentity", () => {
     expect(db.user.updateMany).toHaveBeenCalled();   // promote-only self-heal
     expect(db.membership.upsert).toHaveBeenCalled();  // founder membership seed
     expect(mockBootstrap).not.toHaveBeenCalled();
+    expect(db.betterAuthUser.updateMany).toHaveBeenCalledWith(
+      expect.objectContaining({ where: { email: "founder@x.test" }, data: { role: "super-admin" } })
+    );
   });
   it("never throws when a write fails", async () => {
     const { convergeIdentity } = await import("@/lib/better-auth/converge");

@@ -184,6 +184,8 @@ export async function saveUserRole(raw: unknown): Promise<{ ok: true } | { error
   try {
     await prisma.$transaction(async (tx) => {
       await tx.user.update({ where: { id: target.id }, data: { role } });
+      // mirror onto ba_user.role (the admin plugin's gate reads this column, by email join)
+      if (target.email) await tx.betterAuthUser.updateMany({ where: { email: target.email.toLowerCase() }, data: { role } });
       await tx.actionEvent.create({
         data: { id: newId(), ownerId: FOUNDER_OWNER_ID, type: "rbac.role.set", payload: { targetUserId: target.id, targetEmail: target.email, from: target.role, to: role, via: gate.email } },
       });

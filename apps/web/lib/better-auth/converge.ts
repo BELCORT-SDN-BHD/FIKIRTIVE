@@ -21,6 +21,9 @@ export async function convergeIdentity(input: { email: string; name?: string | n
     // 2. Founder super-admin self-heal (promote-only, idempotent).
     if (isFounderAdmin(email)) {
       await Promise.resolve(prisma.user.updateMany({ where: { email, role: { not: "super-admin" } }, data: { role: "super-admin" } })).catch(() => {});
+      // Mirror the canonical role onto ba_user.role so the admin plugin's hasPermission
+      // recognizes the founder (it reads the raw ba_user.role, not roleForEmail).
+      await Promise.resolve(prisma.betterAuthUser.updateMany({ where: { email }, data: { role: "super-admin" } })).catch(() => {});
       await Promise.resolve(prisma.membership.upsert({
         where: { userId_orgId: { userId: user.id, orgId: FOUNDER_OWNER_ID } },
         create: { id: newId(), userId: user.id, orgId: FOUNDER_OWNER_ID, role: "owner" },
