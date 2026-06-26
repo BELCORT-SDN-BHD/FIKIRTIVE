@@ -10,7 +10,7 @@ import { useState, useRef } from "react";
 import { useRouter } from "next/navigation";
 import Link from "next/link";
 import type { TenantDetail as Detail } from "@/lib/tenant-admin";
-import { grantTenantCredits, setMembershipStatus, cutTenantSessions } from "@/lib/tenant-actions";
+import { grantTenantCredits, setMembershipStatus, cutTenantSessions, impersonateTenant } from "@/lib/tenant-actions";
 
 const BADGE_COLORS: Record<string, string> = {
   active: "var(--fg-2)",
@@ -48,6 +48,10 @@ export function TenantDetail({ detail }: { detail: Detail }) {
   // Cut sessions state
   const [cutBusy, setCutBusy] = useState(false);
   const [cutMsg, setCutMsg] = useState<{ ok: boolean; text: string } | null>(null);
+
+  // Impersonate state
+  const [impersonateBusy, setImpersonateBusy] = useState(false);
+  const [impersonateMsg, setImpersonateMsg] = useState<{ ok: boolean; text: string } | null>(null);
 
   async function submitGrant(e: React.FormEvent) {
     e.preventDefault();
@@ -95,6 +99,16 @@ export function TenantDetail({ detail }: { detail: Detail }) {
     if ("error" in res) { setCutMsg({ ok: false, text: res.error }); return; }
     setCutMsg({ ok: true, text: `Signed out ${res.cut} session${res.cut === 1 ? "" : "s"}.` });
     router.refresh();
+  }
+
+  async function startImpersonating() {
+    if (!confirm(`Impersonate ${ownerEmail || orgId}? You will be signed in as this customer.`)) return;
+    setImpersonateBusy(true);
+    setImpersonateMsg(null);
+    const res = await impersonateTenant(orgId);
+    setImpersonateBusy(false);
+    if ("error" in res) { setImpersonateMsg({ ok: false, text: res.error }); return; }
+    router.push("/");
   }
 
   return (
@@ -190,8 +204,13 @@ export function TenantDetail({ detail }: { detail: Detail }) {
             style={{ font: "var(--text-body)", color: "var(--fg-1)", background: "var(--bg-2)", border: "1px solid var(--line-1)", borderRadius: 8, padding: "6px 16px", cursor: cutBusy ? "default" : "pointer", opacity: cutBusy ? 0.6 : 1 }}>
             {cutBusy ? "Signing out…" : "Sign this merchant out now"}
           </button>
+          <button onClick={startImpersonating} disabled={impersonateBusy}
+            style={{ font: "var(--text-body)", color: "var(--fg-1)", background: "var(--bg-2)", border: "1px solid var(--line-1)", borderRadius: 8, padding: "6px 16px", cursor: impersonateBusy ? "default" : "pointer", opacity: impersonateBusy ? 0.6 : 1 }}>
+            {impersonateBusy ? "Impersonating…" : "Impersonate"}
+          </button>
           {statusMsg && <span style={{ font: "var(--text-caption)", color: statusMsg.ok ? "var(--fg-2)" : "#e5484d" }}>{statusMsg.text}</span>}
           {cutMsg && <span style={{ font: "var(--text-caption)", color: cutMsg.ok ? "var(--fg-2)" : "#e5484d" }}>{cutMsg.text}</span>}
+          {impersonateMsg && <span style={{ font: "var(--text-caption)", color: impersonateMsg.ok ? "var(--fg-2)" : "#e5484d" }}>{impersonateMsg.text}</span>}
         </div>
       </section>
 
