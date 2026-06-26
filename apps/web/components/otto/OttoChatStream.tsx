@@ -197,6 +197,16 @@ export function OttoChatStream({
   const jobsWithError = errorJobIds(messages);
   const hasWorkingJob = computeHasWorkingJob(messages);
 
+  // Map genJobId → cardId so GEN_RESULT widgets can pass sourceCardId to OttoResult
+  // for "Make another" (coworkVaryCard needs the card, not the job).
+  const cardIdByJobId = new Map<string, string>();
+  for (const m of messages) {
+    const meta = m.metadata;
+    if (meta?.kind === "GEN_CARD" && meta.genJobId && meta.durableId) {
+      cardIdByJobId.set(meta.genJobId, meta.durableId);
+    }
+  }
+
   // Refetch the durable thread and inject any new worker-output messages
   // (GEN_RESULT / TURN_ERROR) into the useChat list, deduped by durableId. NEVER
   // re-injects TEXT or GEN_CARD — those already arrived via the stream / card injection.
@@ -400,9 +410,19 @@ export function OttoChatStream({
               const r = (m.metadata?.payload ?? null) as
                 | { kind?: string; model?: string; urls?: string[]; generationIds?: string[]; costUsd?: number }
                 | null;
+              const sourceCardId = m.metadata?.genJobId ? cardIdByJobId.get(m.metadata.genJobId) : undefined;
               return (
                 <WidgetRow key={m.id} animateIn={isNewMessage(m.id)}>
-                  <OttoResult payload={r} onEditByHand={onEditByHand} />
+                  <OttoResult
+                    payload={r}
+                    onEditByHand={onEditByHand}
+                    sourceCardId={sourceCardId}
+                    onMakeAnother={() => {
+                      setPollGaveUp(false);
+                      pollCountRef.current = 0;
+                      void pollAndInjectResults();
+                    }}
+                  />
                 </WidgetRow>
               );
             }

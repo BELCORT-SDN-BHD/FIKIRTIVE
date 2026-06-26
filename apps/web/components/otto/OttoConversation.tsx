@@ -106,6 +106,13 @@ export function OttoConversation({
       .map((m) => m.genJobId as string),
   );
 
+  // Map genJobId → cardId for the "Make another" path on GEN_RESULT widgets.
+  const cardIdByJobId = new Map<string, string>(
+    messages
+      .filter((m) => m.kind === "GEN_CARD" && m.genJobId)
+      .map((m) => [m.genJobId as string, m.id]),
+  );
+
   // A job is "working" once its card is approved (genJobId set) but no terminal
   // message (GEN_RESULT or TURN_ERROR) has landed yet. While any job is working we
   // poll the thread so the async worker result appears without a manual reload.
@@ -190,6 +197,7 @@ export function OttoConversation({
               threadId={thread.id}
               resultJobIds={resultJobIds}
               errorJobIds={errorJobIds}
+              cardIdByJobId={cardIdByJobId}
               submittedCardIds={submittedCardIds}
               pendingApprovalCardIds={pendingApprovalCardIds}
               busy={busy}
@@ -214,6 +222,12 @@ export function OttoConversation({
               }}
               onRetry={() => {
                 // Fresh card spawned — re-arm poll and refetch so it appears.
+                setPollGaveUp(false);
+                pollCountRef.current = 0;
+                void refreshAndUpdate();
+              }}
+              onMakeAnother={() => {
+                // Fresh card spawned via "Make another" — re-arm poll + refetch.
                 setPollGaveUp(false);
                 pollCountRef.current = 0;
                 void refreshAndUpdate();
@@ -378,12 +392,14 @@ function MessageRow({
   threadId,
   resultJobIds,
   errorJobIds,
+  cardIdByJobId,
   submittedCardIds,
   pendingApprovalCardIds,
   busy,
   onApproved,
   onChangeRequest,
   onRetry,
+  onMakeAnother,
   onEditByHand,
 }: {
   message: ChatMessageDTO;
@@ -392,12 +408,14 @@ function MessageRow({
   threadId: string;
   resultJobIds: Set<string>;
   errorJobIds: Set<string>;
+  cardIdByJobId: Map<string, string>;
   submittedCardIds: Set<string>;
   pendingApprovalCardIds: Set<string>;
   busy: boolean;
   onApproved: (cardId: string) => void;
   onChangeRequest: () => void;
   onRetry: () => void;
+  onMakeAnother: () => void;
   onEditByHand: () => void;
 }) {
   const isUser = m.role === "USER";
@@ -476,11 +494,12 @@ function MessageRow({
 
   if (m.kind === "GEN_RESULT") {
     const r = m.payload as { kind?: string; model?: string; urls?: string[]; generationIds?: string[]; costUsd?: number } | null;
+    const sourceCardId = m.genJobId ? cardIdByJobId.get(m.genJobId) : undefined;
     return (
       <div style={{ display: "flex", alignItems: "flex-start", gap: "var(--space-3)" }}>
         <OttoAvatar size={32} state="idle" />
         <div style={{ flex: 1, minWidth: 0 }}>
-          <OttoResult payload={r} onEditByHand={onEditByHand} />
+          <OttoResult payload={r} onEditByHand={onEditByHand} sourceCardId={sourceCardId} onMakeAnother={onMakeAnother} />
         </div>
       </div>
     );

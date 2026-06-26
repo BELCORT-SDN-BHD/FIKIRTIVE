@@ -1,11 +1,16 @@
 "use client";
 import React, { useState } from "react";
-import { Download, Copy, Check, Sparkles, ChevronLeft, Wrench } from "lucide-react";
+import { Download, Copy, Check, Sparkles, ChevronLeft, Wrench, RefreshCw } from "lucide-react";
 import { Card, Button } from "@/components/fk";
+import { coworkVaryCard } from "@/lib/cowork-actions";
 
 export interface OttoResultProps {
   payload: { kind?: string; model?: string; urls?: string[]; generationIds?: string[]; costUsd?: number } | null;
   onEditByHand?: () => void;
+  /** The GEN_CARD id that produced this result — enables "Make another". */
+  sourceCardId?: string;
+  /** Called after a fresh card is spawned so the parent can refetch/re-arm. */
+  onMakeAnother?: () => void;
 }
 
 const isVideoUrl = (u: string) => /\.(mp4|webm|mov|mkv)(\?|$)/i.test(u);
@@ -55,12 +60,29 @@ function Media({ url, rounded = true }: { url: string; rounded?: boolean }) {
 
 /** A finished result in the conversation. One asset → show it with Download / Copy.
  *  An ad pack (N variants) → a chooser grid with "Otto's pick"; tap one to settle on it. */
-export function OttoResult({ payload, onEditByHand }: OttoResultProps) {
+export function OttoResult({ payload, onEditByHand, sourceCardId, onMakeAnother }: OttoResultProps) {
   const urls = payload?.urls ?? [];
   const genIds = payload?.generationIds ?? [];
   // Single result auto-selects index 0; a pack starts unchosen so the grid shows first.
   const [selected, setSelected] = useState<number | null>(urls.length === 1 ? 0 : null);
   const [copied, setCopied] = useState(false);
+  const [makingAnother, setMakingAnother] = useState(false);
+  const [makeAnotherError, setMakeAnotherError] = useState<string | null>(null);
+
+  async function makeAnother() {
+    if (!sourceCardId || makingAnother) return;
+    setMakingAnother(true);
+    setMakeAnotherError(null);
+    try {
+      const res = await coworkVaryCard({ cardId: sourceCardId });
+      if (res && "error" in res) { setMakeAnotherError(res.error); return; }
+      onMakeAnother?.();
+    } catch {
+      setMakeAnotherError("Couldn't queue another — please try again.");
+    } finally {
+      setMakingAnother(false);
+    }
+  }
 
   if (!urls.length) {
     return (
@@ -142,12 +164,22 @@ export function OttoResult({ payload, onEditByHand }: OttoResultProps) {
               See all {urls.length} options
             </Button>
           )}
+          {sourceCardId && (
+            <Button variant="ghost" size="md" leftIcon={<RefreshCw size={18} />} disabled={makingAnother} onClick={makeAnother}>
+              {makingAnother ? "Queuing…" : "Make another"}
+            </Button>
+          )}
           {onEditByHand && (
             <Button variant="ghost" size="md" leftIcon={<Wrench size={18} />} onClick={onEditByHand}>
               Edit by hand
             </Button>
           )}
         </div>
+        {makeAnotherError && (
+          <div role="alert" style={{ marginTop: "var(--space-2)", fontSize: "var(--text-sm)", color: "var(--error-700)" }}>
+            {makeAnotherError}
+          </div>
+        )}
       </Card>
     </div>
   );
