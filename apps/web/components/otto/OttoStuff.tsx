@@ -31,8 +31,20 @@ function EntityTile({ e }: { e: EntityDTO }) {
 
   return (
     <div style={{ borderRadius: "var(--radius-lg)", overflow: "hidden", border: "1px solid var(--border-subtle)", background: "var(--surface-card)", boxShadow: "var(--shadow-sm)" }}>
-      <div style={{ aspectRatio: "1 / 1", background: "var(--surface-sunken)", display: "flex", alignItems: "center", justifyContent: "center" }}>
-        {imgSrc && !imgErrored ? (
+      <div style={{ aspectRatio: "1 / 1", background: "var(--surface-sunken)", display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", gap: "var(--space-2)" }}>
+        {imgErrored ? (
+          <>
+            <AlertCircle size={20} color="var(--text-faint)" />
+            <span style={{ fontSize: "var(--text-xs)", color: "var(--text-muted)" }}>Couldn&apos;t load this</span>
+            <button
+              type="button"
+              onClick={() => { setImgErrored(false); setImgAttempt((a) => a + 1); }}
+              style={{ fontSize: "var(--text-xs)", color: "var(--accent)", background: "none", border: "none", cursor: "pointer", padding: 0, textDecoration: "underline" }}
+            >
+              Reload
+            </button>
+          </>
+        ) : imgSrc ? (
           // eslint-disable-next-line @next/next/no-img-element
           <img key={imgSrc} src={imgSrc} alt={e.name} style={{ width: "100%", height: "100%", objectFit: "cover" }} onError={handleEntityImgError} />
         ) : (

@@ -1,5 +1,5 @@
 "use client";
-import React, { useState, useEffect, useRef } from "react";
+import React, { useState } from "react";
 import { Download, Copy, Check, Sparkles, ChevronLeft, Wrench, AlertCircle } from "lucide-react";
 import { Card, Button } from "@/components/fk";
 import { bustUrl } from "@/lib/media-retry";
@@ -226,10 +226,8 @@ export function OttoResult({ payload, onEditByHand, onTweak }: OttoResultProps) 
 
   // Fix #2 — honest copy state
   const [copyState, setCopyState] = useState<CopyState>("idle");
-  const urlRef = useRef<string | null>(null);
 
   async function copyLink(url: string) {
-    urlRef.current = url;
     const outcome = await attemptCopy(url);
     setCopyState(outcome);
     if (outcome === "copied") {
