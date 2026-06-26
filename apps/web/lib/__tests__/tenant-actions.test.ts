@@ -149,6 +149,16 @@ describe("cutTenantSessions", () => {
     expect(baSessionDeleteMany).not.toHaveBeenCalled();
   });
 
+  it("returns { ok: true, cut: 0 } when members exist but none have BA accounts", async () => {
+    mockRequireRole.mockResolvedValue(GATE);
+    membershipFindMany.mockResolvedValue([{ userId: "user_1" }]);
+    userFindMany.mockResolvedValue([{ email: "u0@t.test" }]);
+    baUserFindMany.mockResolvedValue([]);
+    const res = await cutTenantSessions("orgX");
+    expect(res).toEqual({ ok: true, cut: 0 });
+    expect(baSessionDeleteMany).not.toHaveBeenCalled();
+  });
+
   it("deletes BetterAuthSession rows scoped to the org's BA user ids", async () => {
     mockRequireRole.mockResolvedValue(GATE);
     wireMembers(["ba_1", "ba_2"]);

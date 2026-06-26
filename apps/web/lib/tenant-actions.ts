@@ -14,6 +14,7 @@ async function orgMemberBaUserIds(orgId: string): Promise<string[]> {
   const userIds = members.map((m) => m.userId);
   if (userIds.length === 0) return [];
   const users = await prisma.user.findMany({ where: { id: { in: userIds } }, select: { email: true } });
+  // both sides must be lowercase: BetterAuthUser.email is normalized at signup, so we lowercase User.email to match the `in` filter (case-sensitive in Postgres).
   const emails = users.map((u) => u.email.toLowerCase());
   if (emails.length === 0) return [];
   const baUsers = await prisma.betterAuthUser.findMany({ where: { email: { in: emails } }, select: { id: true } });
