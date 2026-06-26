@@ -1,10 +1,11 @@
 "use client";
 import React, { useState } from "react";
-import { Download, Users, Images, Pencil, Trash2, Check, X, Search } from "lucide-react";
+import { Download, Users, Images, Pencil, Trash2, Check, X, Search, AlertCircle } from "lucide-react";
 import { Tabs, Button, Input } from "@/components/fk";
 import type { EntityDTO } from "@/lib/types";
 import { groupEntitiesByType } from "@/lib/entity-grouping";
 import { updateEntity, softDeleteEntity } from "@/lib/actions";
+import { bustUrl } from "@/lib/media-retry";
 
 export interface AdTile {
   id: string;
@@ -33,6 +34,9 @@ function EntityTile({
   const [editName, setEditName] = useState(e.name);
   const [editError, setEditError] = useState<string | null>(null);
   const [saving, setSaving] = useState(false);
+  const [imgAttempt, setImgAttempt] = useState(0);
+  const [imgErrored, setImgErrored] = useState(false);
+  const imgSrc = baseUrl ? (imgAttempt === 0 ? baseUrl : bustUrl(baseUrl, imgAttempt)) : null;
 
   async function saveRename() {
     const trimmed = editName.trim();
@@ -56,12 +60,29 @@ function EntityTile({
     setEditing(false);
   }
 
+  function handleEntityImgError() {
+    if (imgAttempt < 2) setImgAttempt((a) => a + 1);
+    else setImgErrored(true);
+  }
+
   return (
     <div style={{ borderRadius: "var(--radius-lg)", overflow: "hidden", border: "1px solid var(--border-subtle)", background: "var(--surface-card)", boxShadow: "var(--shadow-sm)" }}>
-      <div style={{ aspectRatio: "1 / 1", background: "var(--surface-sunken)", display: "flex", alignItems: "center", justifyContent: "center", flexDirection: "column", gap: 6 }}>
-        {baseUrl ? (
+      <div style={{ aspectRatio: "1 / 1", background: "var(--surface-sunken)", display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", gap: "var(--space-2)" }}>
+        {imgErrored ? (
+          <>
+            <AlertCircle size={20} color="var(--text-faint)" />
+            <span style={{ fontSize: "var(--text-xs)", color: "var(--text-muted)" }}>Couldn&apos;t load this</span>
+            <button
+              type="button"
+              onClick={() => { setImgErrored(false); setImgAttempt((a) => a + 1); }}
+              style={{ fontSize: "var(--text-xs)", color: "var(--accent)", background: "none", border: "none", cursor: "pointer", padding: 0, textDecoration: "underline" }}
+            >
+              Reload
+            </button>
+          </>
+        ) : imgSrc ? (
           // eslint-disable-next-line @next/next/no-img-element
-          <img src={baseUrl} alt={e.name} style={{ width: "100%", height: "100%", objectFit: "cover" }} />
+          <img key={imgSrc} src={imgSrc} alt={e.name} style={{ width: "100%", height: "100%", objectFit: "cover" }} onError={handleEntityImgError} />
         ) : (
           <>
             <Users size={28} color="var(--text-faint)" />
@@ -107,14 +128,46 @@ function EntityTile({
 function AdMediaTile({ ad }: { ad: AdTile }) {
   const ext = ad.src.split("?")[0].split(".").pop() || (ad.kind === "video" ? "mp4" : "png");
   const filename = `fikirtive-${ad.id.slice(0, 8)}.${ext}`;
-  const altText = ad.prompt?.slice(0, 60) || "Generated ad";
+  const [attempt, setAttempt] = useState(0);
+  const [errored, setErrored] = useState(false);
+  const src = attempt === 0 ? ad.src : bustUrl(ad.src, attempt);
+
+  function handleMediaError() {
+    if (attempt < 2) setAttempt((a) => a + 1);
+    else setErrored(true);
+  }
+
+  const mediaAlt = ad.prompt ? `Generated image: ${ad.prompt}` : "Generated image";
+
   return (
     <div style={{ position: "relative", borderRadius: "var(--radius-lg)", overflow: "hidden", border: "1px solid var(--border-subtle)", background: "var(--surface-sunken)" }}>
-      {ad.kind === "video" ? (
-        <video src={ad.src} controls muted loop playsInline style={{ width: "100%", display: "block" }} aria-label={altText} />
+      {errored ? (
+        <div
+          style={{
+            display: "flex",
+            flexDirection: "column",
+            alignItems: "center",
+            justifyContent: "center",
+            gap: "var(--space-2)",
+            padding: "var(--space-6)",
+            minHeight: 120,
+          }}
+        >
+          <AlertCircle size={20} color="var(--text-faint)" />
+          <span style={{ fontSize: "var(--text-xs)", color: "var(--text-muted)" }}>Couldn&apos;t load this</span>
+          <button
+            type="button"
+            onClick={() => { setErrored(false); setAttempt((a) => a + 1); }}
+            style={{ fontSize: "var(--text-xs)", color: "var(--accent)", background: "none", border: "none", cursor: "pointer", padding: 0, textDecoration: "underline" }}
+          >
+            Reload
+          </button>
+        </div>
+      ) : ad.kind === "video" ? (
+        <video key={src} src={src} controls muted loop playsInline style={{ width: "100%", display: "block" }} onError={handleMediaError} />
       ) : (
         // eslint-disable-next-line @next/next/no-img-element
-        <img src={ad.src} alt={altText} style={{ width: "100%", display: "block" }} />
+        <img key={src} src={src} alt={mediaAlt} style={{ width: "100%", display: "block" }} onError={handleMediaError} />
       )}
       <a
         href={ad.src}
