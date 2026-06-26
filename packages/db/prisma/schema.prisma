@@ -848,6 +848,11 @@ model BetterAuthUser {
   email         String              @unique
   emailVerified Boolean             @default(false)
   image         String?
+  // Better Auth admin plugin fields (default field names — no `schema` override needed).
+  role          String?             // BA gate role; MIRROR of canonical User.role (Phase 2). Unused in Phase 1.
+  banned        Boolean?            @default(false) // session.create.before hook blocks login when true
+  banReason     String?
+  banExpires    DateTime?           // plugin auto-clears an expired ban in the session hook
   createdAt     DateTime            @default(now())
   updatedAt     DateTime            @updatedAt
   sessions      BetterAuthSession[]
@@ -862,6 +867,7 @@ model BetterAuthSession {
   updatedAt DateTime       @updatedAt
   ipAddress String?
   userAgent String?
+  impersonatedBy String?   // admin's BA user id on an impersonation session (Phase 2). Added now to keep one migration.
   userId    String
   user      BetterAuthUser @relation(fields: [userId], references: [id], onDelete: Cascade)
   @@index([userId])
