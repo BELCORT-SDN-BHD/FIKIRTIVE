@@ -34,9 +34,10 @@ export async function createTopupCheckout(priceId: string): Promise<{ url: strin
     return { error: "That pack is unavailable." };
   }
   const credits = Number(price.metadata?.credits);
-  if (!price.active || !credits || credits <= 0) return { error: "That pack is unavailable." };
+  if (!price.active || !credits || credits <= 0 || !Number.isInteger(credits)) return { error: "That pack is unavailable." };
 
   const base = process.env.BETTER_AUTH_URL ?? "";
+  if (!base) return { error: "Checkout is unavailable — please contact support." };
   const session = await stripe.checkout.sessions.create({
     mode: "payment",
     line_items: [{ price: priceId, quantity: 1 }],

@@ -46,6 +46,23 @@ describe("createTopupCheckout", () => {
     expect(sessionsCreate).not.toHaveBeenCalled();
   });
 
+  it("rejects a price with fractional metadata.credits", async () => {
+    mockRequireOwner.mockResolvedValue({ email: "c@t.test", ownerId: "org_1" });
+    pricesRetrieve.mockResolvedValue({ id: "price_frac", active: true, metadata: { credits: "1.5" } });
+    const res = await createTopupCheckout("price_frac");
+    expect("error" in res).toBe(true);
+    expect(sessionsCreate).not.toHaveBeenCalled();
+  });
+
+  it("returns error when BETTER_AUTH_URL is unset", async () => {
+    mockRequireOwner.mockResolvedValue({ email: "c@t.test", ownerId: "org_1" });
+    pricesRetrieve.mockResolvedValue({ id: "price_a", active: true, metadata: { credits: "100" } });
+    process.env.BETTER_AUTH_URL = "";
+    const res = await createTopupCheckout("price_a");
+    expect(res).toEqual({ error: "Checkout is unavailable — please contact support." });
+    expect(sessionsCreate).not.toHaveBeenCalled();
+  });
+
   it("creates a Checkout Session with orgId + credits in client_reference_id/metadata", async () => {
     mockRequireOwner.mockResolvedValue({ email: "c@t.test", ownerId: "org_1" });
     pricesRetrieve.mockResolvedValue({ id: "price_a", active: true, metadata: { credits: "100" } });

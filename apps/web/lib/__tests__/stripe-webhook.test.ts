@@ -55,6 +55,16 @@ describe("stripe webhook", () => {
     expect(grantCredits).not.toHaveBeenCalled();
   });
 
+  it("200 + no grant when credits is fractional (metadata.credits = '1.5')", async () => {
+    constructEvent.mockReturnValue({
+      id: "evt_5", type: "checkout.session.completed",
+      data: { object: { payment_status: "paid", metadata: { orgId: "org_1", credits: "1.5" } } },
+    });
+    const res = await POST(req());
+    expect(res.status).toBe(200);
+    expect(grantCredits).not.toHaveBeenCalled();
+  });
+
   it("200 + no grant for checkout.session.completed with payment_status !== 'paid'", async () => {
     constructEvent.mockReturnValue({
       id: "evt_4", type: "checkout.session.completed",

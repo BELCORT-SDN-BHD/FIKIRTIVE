@@ -22,7 +22,7 @@ export async function POST(req: NextRequest): Promise<Response> {
     if (session.payment_status === "paid") {
       const orgId = typeof session.metadata?.orgId === "string" ? session.metadata.orgId : "";
       const credits = Number(session.metadata?.credits);
-      if (!orgId || !credits || credits <= 0) {
+      if (!orgId || !credits || credits <= 0 || !Number.isInteger(credits)) {
         await prisma.actionEvent.create({ data: { id: newId(), ownerId: "founder", type: "credits.purchase.bad", payload: { eventId: event.id, metadata: session.metadata ?? null } } }).catch(() => {});
         return new Response("ignored: missing metadata", { status: 200 }); // 200 → no retry storm
       }
