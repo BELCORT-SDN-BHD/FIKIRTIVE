@@ -103,6 +103,6 @@ export function toChatThreadDTO(t: ChatThreadWithMessages, urlsByJob: Map<string
 
 /** Thread-LIST DTO: metadata only, empty messages. The rail renders title + time; the
  *  active thread's messages lazy-load via getCoworkThreadClient. (scale audit 2026-06-20) */
-export function toChatThreadMetaDTO(t: { id: string; projectId: string; title: string; updatedAt: Date }): ChatThreadDTO {
-  return { id: t.id, projectId: t.projectId, title: t.title, updatedAt: t.updatedAt.toISOString(), messages: [] };
+export function toChatThreadMetaDTO(t: { id: string; projectId: string; title: string; updatedAt: Date; _badge?: "working" | "failed" | "done" | null }): ChatThreadDTO {
+  return { id: t.id, projectId: t.projectId, title: t.title, updatedAt: t.updatedAt.toISOString(), messages: [], status: t._badge ?? null };
 }
