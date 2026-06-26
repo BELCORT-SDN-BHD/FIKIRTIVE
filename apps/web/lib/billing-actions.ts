@@ -9,7 +9,7 @@ export type CreditPack = { priceId: string; credits: number; amountCents: number
 export async function listCreditPacks(): Promise<CreditPack[]> {
   const res = await stripe.prices.list({ active: true, expand: ["data.product"] });
   return res.data
-    .filter((p) => p.metadata?.credits && Number(p.metadata.credits) > 0 && typeof p.unit_amount === "number")
+    .filter((p) => p.active && p.metadata?.credits && Number(p.metadata.credits) > 0 && typeof p.unit_amount === "number")
     .map((p) => ({
       priceId: p.id,
       credits: Number(p.metadata.credits),
