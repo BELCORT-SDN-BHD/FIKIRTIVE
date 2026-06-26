@@ -22,3 +22,18 @@ describe("ottoInstructions — Honesty & limits", () => {
     expect(ottoInstructions).toMatch(/cannot see/i);
   });
 });
+
+describe("ottoInstructions — brand memory guidance", () => {
+  it("references rememberBrandFact tool", () => {
+    expect(ottoInstructions).toMatch(/rememberBrandFact/);
+  });
+
+  it("includes brand memory section", () => {
+    expect(ottoInstructions).toMatch(/brand memory/i);
+  });
+
+  it("scopes to durable facts (not one-off choices)", () => {
+    expect(ottoInstructions).toMatch(/durable/i);
+    expect(ottoInstructions).toMatch(/one-off/i);
+  });
+});
