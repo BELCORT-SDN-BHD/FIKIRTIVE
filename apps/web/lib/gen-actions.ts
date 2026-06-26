@@ -21,10 +21,12 @@ import {
 import { getBoss } from "./queue";
 import { checkCast } from "./cowork-guardian";
 import { requireOwner } from "./auth-guard";
+import { isImpersonating } from "@/lib/better-auth/compat";
 import { resolveDisabledModels } from "./model-registry";
 
 export async function startGen(raw: unknown): Promise<{ id: string } | { error: string }> {
   const gate = await requireOwner(); if ("error" in gate) return gate;
+  if (await isImpersonating()) return { error: "Paused while impersonating a customer — exit impersonation to do this." };
   const { ownerId } = gate;
   const OWNED = { ownerId, deletedAt: null } as const;
   const parsed = genRequest.safeParse(raw);

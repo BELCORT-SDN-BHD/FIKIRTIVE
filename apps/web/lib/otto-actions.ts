@@ -36,6 +36,7 @@ import {
 import { otto, withLlmBudget, OTTO_DEFAULT_MODEL, run, RunState, MaxTurnsExceededError, mapOttoUsage, ottoSimpleModeBlock } from "@fikirtive/otto";
 import type { OttoContext, AgentInputItem } from "@fikirtive/otto";
 import { requireOwner } from "./auth-guard";
+import { isImpersonating } from "@/lib/better-auth/compat";
 import { resolveDisabledModels } from "./model-registry";
 import { startGen } from "./gen-actions";
 import { getBrandContextText } from "./memory-actions";
@@ -299,6 +300,7 @@ export async function ottoTurn(raw: unknown): Promise<
 
   const gate = await requireOwner();
   if ("error" in gate) return gate;
+  if (await isImpersonating()) return { error: "Paused while impersonating a customer — exit impersonation to do this." };
   const { ownerId } = gate;
 
   const { projectId, text, entityIds, variantSel, sourceGenerationId, replyToMessageId } = parsed.data;
@@ -497,6 +499,7 @@ export async function ottoApprove(raw: unknown): Promise<
   // Tenant scope: identity from requireOwner only, never from input
   const gate = await requireOwner();
   if ("error" in gate) return gate;
+  if (await isImpersonating()) return { error: "Paused while impersonating a customer — exit impersonation to do this." };
   const { ownerId } = gate;
 
   try {

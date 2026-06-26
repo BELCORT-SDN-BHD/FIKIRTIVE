@@ -18,6 +18,7 @@ import {
 } from "@fikirtive/core";
 import { getBoss } from "./queue";
 import { requireOwner } from "./auth-guard";
+import { isImpersonating } from "@/lib/better-auth/compat";
 import { resolveDisabledModels } from "./model-registry";
 
 // a job stuck QUEUED/GENERATING past the queue's expiry is treated as abandoned
@@ -26,6 +27,7 @@ const STALE_MS = 15 * 60 * 1000;
 
 export async function startRefGen(raw: unknown): Promise<{ id: string } | { error: string }> {
   const gate = await requireOwner(); if ("error" in gate) return gate;
+  if (await isImpersonating()) return { error: "Paused while impersonating a customer — exit impersonation to do this." };
   const { ownerId } = gate;
   const OWNED = { ownerId, deletedAt: null } as const;
   const parsed = refGenRequest.safeParse(raw);
@@ -148,6 +150,7 @@ export async function startRefGen(raw: unknown): Promise<{ id: string } | { erro
  *  (no arbitrary asset ids), then set Entity.baseAssetId. No spend. */
 export async function setBaseAsset(entityId: string, assetId: string): Promise<{ ok: true } | { error: string }> {
   const gate = await requireOwner(); if ("error" in gate) return gate;
+  if (await isImpersonating()) return { error: "Paused while impersonating a customer — exit impersonation to do this." };
   const { ownerId } = gate;
   const OWNED = { ownerId, deletedAt: null } as const;
   const ref = await prisma.referenceImage.findFirst({
