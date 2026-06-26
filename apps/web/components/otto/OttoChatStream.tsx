@@ -41,6 +41,8 @@ export interface OttoChatStreamProps {
   onRefresh: () => Promise<void>;
   onThreadUpdate: (thread: ChatThreadDTO) => void;
   onEditByHand: () => void;
+  /** Re-reads the account balance and updates the nav display after a spend event. */
+  onBalanceRefresh?: () => void | Promise<void>;
   /** Streaming front door: a first message to auto-send ONCE into a freshly-created
    *  (empty) thread on mount. The thread row already exists (createEmptyCoworkThread),
    *  so the route's existing-thread branch handles it. */
@@ -69,6 +71,7 @@ export function OttoChatStream({
   thread,
   onThreadUpdate,
   onEditByHand,
+  onBalanceRefresh,
   pendingFirst,
   onPendingFirstSent,
 }: OttoChatStreamProps) {
@@ -176,6 +179,8 @@ export function OttoChatStream({
         const fresh = await getCoworkThreadClient(thread.id);
         if (fresh) onThreadUpdate(fresh);
       })();
+      // A completed turn meters LLM credits — refresh the nav balance display.
+      void onBalanceRefresh?.();
     },
   });
 
@@ -203,8 +208,16 @@ export function OttoChatStream({
   async function pollAndInjectResults() {
     const fresh = await getCoworkThreadClient(thread.id);
     if (!fresh) return;
+    const prevResultCount = messages.filter(
+      (m) => m.metadata?.kind === "GEN_RESULT" || m.metadata?.kind === "TURN_ERROR",
+    ).length;
     setMessages((cur) => appendDurableResults(syncCardJobIds(cur, fresh), fresh));
     onThreadUpdate(fresh);
+    // A new terminal result landed → a generation settled and credits were spent.
+    const freshResultCount = fresh.messages.filter(
+      (m) => m.kind === "GEN_RESULT" || m.kind === "TURN_ERROR",
+    ).length;
+    if (freshResultCount > prevResultCount) void onBalanceRefresh?.();
   }
 
   // Reset the give-up state whenever we switch threads (mirror OttoConversation).
@@ -379,6 +392,8 @@ export function OttoChatStream({
                       });
                       setPollGaveUp(false);
                       pollCountRef.current = 0;
+                      // An approve reserves credits — refresh the nav balance immediately.
+                      void onBalanceRefresh?.();
                       void pollAndInjectResults();
                     }}
                     onChangeSomething={() => {
