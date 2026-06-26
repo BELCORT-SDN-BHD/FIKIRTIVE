@@ -27,6 +27,7 @@ import { resolveDisabledModels } from "./model-registry";
 import { startGen } from "./gen-actions";
 import { storage, mimeOf } from "./storage";
 import { requireOwner } from "./auth-guard";
+import { isImpersonating } from "@/lib/better-auth/compat";
 import { withLlmBudget } from "@fikirtive/otto";
 import { OTTO_DEFAULT_MODEL } from "@fikirtive/otto";
 
@@ -76,6 +77,7 @@ export async function coworkDraftStoryboard(
   const parsed = coworkRequest.safeParse(raw);
   if (!parsed.success) return { error: "Tell cowork what to make (a short description)." };
   const gate = await requireOwner(); if ("error" in gate) return gate;
+  if (await isImpersonating()) return { error: "Paused while impersonating a customer — exit impersonation to do this." };
   const { ownerId } = gate;
   const { projectId, idea } = parsed.data;
   const OWNED = { ownerId, deletedAt: null } as const;
@@ -153,6 +155,7 @@ export async function enhancePrompt(
   const parsed = enhanceRequest.safeParse(raw);
   if (!parsed.success) return { error: "Write a prompt first, then ✨ Enhance." };
   const gate = await requireOwner(); if ("error" in gate) return gate;
+  if (await isImpersonating()) return { error: "Paused while impersonating a customer — exit impersonation to do this." };
   const { ownerId } = gate;
   const { projectId, text, model, kind, conditioned, hasSource, hasTail } = parsed.data;
   // owner-domain guard like every paid action

@@ -44,6 +44,7 @@ import {
 } from "@fikirtive/otto";
 import type { AgentInputItem } from "@fikirtive/otto";
 import { requireOwner } from "@/lib/auth-guard";
+import { isImpersonating } from "@/lib/better-auth/compat";
 import {
   buildOttoContext,
   buildContextSystemMessage,
@@ -76,6 +77,9 @@ export async function POST(req: NextRequest): Promise<Response> {
   // Identity ONLY from the gate, never from input.
   const gate = await requireOwner();
   if ("error" in gate) return Response.json(gate, { status: 401 });
+  if (await isImpersonating()) {
+    return new Response("Paused while impersonating a customer.", { status: 403 });
+  }
   const { ownerId } = gate;
 
   const { projectId, text, entityIds, variantSel, sourceGenerationId, replyToMessageId } = parsed.data;

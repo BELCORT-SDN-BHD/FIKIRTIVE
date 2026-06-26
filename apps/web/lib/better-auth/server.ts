@@ -9,6 +9,7 @@ import { sendAuthEmail } from "./sender";
 import { roleForEmail } from "./session-role";
 import { convergeIdentity } from "./converge";
 import { assertAllowedEmail, assertAllowedForUserId } from "./gate";
+import { ac, superAdminRole } from "./access";
 
 // Secret guard — BUILD-SAFE. Do NOT hard-throw at module top level (that can break `next build`
 // before env is wired). better-auth already fails closed without a valid secret; this just warns
@@ -107,7 +108,12 @@ export const auth = betterAuth({
     // Operator-console engine. Phase 1: installed for the session.create.before ban hook
     // (BetterAuthUser.banned ⇒ login blocked). Its API stays inert (no BA user has an admin
     // role yet); roles/adminRoles + impersonation arrive in Phase 2.
-    admin(),
+    admin({
+      ac,
+      roles: { "super-admin": superAdminRole },
+      adminRoles: ["super-admin"],            // MUST be a key in `roles` or init throws
+      impersonationSessionDuration: 60 * 30,  // 30 min
+    }),
     nextCookies(), // MUST be last.
   ],
 });

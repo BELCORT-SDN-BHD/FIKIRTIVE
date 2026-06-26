@@ -18,6 +18,7 @@ import {
 } from "@fikirtive/core";
 import { getBoss } from "./queue";
 import { requireOwner } from "./auth-guard";
+import { isImpersonating } from "@/lib/better-auth/compat";
 import { resolveDisabledModels } from "./model-registry";
 
 // a job stuck QUEUED/GENERATING past the queue's expiry is treated as abandoned
@@ -26,6 +27,7 @@ const STALE_MS = 15 * 60 * 1000;
 
 export async function startRefGen(raw: unknown): Promise<{ id: string } | { error: string }> {
   const gate = await requireOwner(); if ("error" in gate) return gate;
+  if (await isImpersonating()) return { error: "Paused while impersonating a customer — exit impersonation to do this." };
   const { ownerId } = gate;
   const OWNED = { ownerId, deletedAt: null } as const;
   const parsed = refGenRequest.safeParse(raw);
@@ -276,6 +278,7 @@ async function withUniqueHandle(name: string, write: (handle: string) => Promise
  *  commits do we dispatch the paid job. */
 export async function createVariant(entityId: string, name: string, prompt: string): Promise<{ variantId: string; jobId: string } | { error: string }> {
   const gate = await requireOwner(); if ("error" in gate) return gate;
+  if (await isImpersonating()) return { error: "Paused while impersonating a customer — exit impersonation to do this." };
   const { ownerId } = gate;
   const OWNED = { ownerId, deletedAt: null } as const;
   const cleanName = name.trim();
@@ -345,6 +348,7 @@ export async function createVariant(entityId: string, name: string, prompt: stri
  *  (in dispatchVariantJob) prevents stacking spend. */
 export async function regenerateVariant(variantId: string): Promise<{ jobId: string } | { error: string }> {
   const gate = await requireOwner(); if ("error" in gate) return gate;
+  if (await isImpersonating()) return { error: "Paused while impersonating a customer — exit impersonation to do this." };
   const { ownerId } = gate;
   const OWNED = { ownerId, deletedAt: null } as const;
   const variant = await prisma.entityVariant.findFirst({

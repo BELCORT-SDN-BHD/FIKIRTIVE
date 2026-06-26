@@ -1,4 +1,4 @@
-import { describe, it, expect, vi, beforeEach } from "vitest";
+import { describe, it, expect, vi, beforeEach, type Mock } from "vitest";
 import { FOUNDER_OWNER_ID, INTERNAL_PER_DISPLAY } from "@fikirtive/core";
 
 // Unit test (no DB): mock requireRole + prisma + next/cache so invariants —
@@ -9,6 +9,12 @@ const mockRequireRole = vi.fn();
 vi.mock("@/lib/auth-guard", () => ({ requireRole: mockRequireRole }));
 
 vi.mock("next/cache", () => ({ revalidatePath: vi.fn() }));
+vi.mock("next/headers", () => ({ headers: vi.fn().mockResolvedValue({}) }));
+
+vi.mock("@/lib/allowlist", () => ({ isFounderAdmin: vi.fn() }));
+vi.mock("@/lib/better-auth/server", () => ({
+  auth: { api: { impersonateUser: vi.fn(), stopImpersonating: vi.fn() } },
+}));
 
 // Provide only the prisma methods called by tenant-actions; stray calls throw.
 const membershipUpdateMany = vi.fn();
@@ -51,7 +57,11 @@ vi.mock("@fikirtive/db", () => ({
   InsufficientCredits: MockInsufficientCredits,
 }));
 
-const { setMembershipStatus, cutTenantSessions, inviteTenant, revokeTenantInvite, grantTenantCredits } =
+const { isFounderAdmin } = await import("@/lib/allowlist");
+const { auth } = await import("@/lib/better-auth/server");
+const authApi = auth.api as unknown as { impersonateUser: Mock; stopImpersonating: Mock };
+
+const { setMembershipStatus, cutTenantSessions, inviteTenant, revokeTenantInvite, grantTenantCredits, impersonateTenant, stopImpersonatingTenant } =
   await import("@/lib/tenant-actions");
 
 // A resolved gate value returned by requireRole on success.
@@ -73,6 +83,9 @@ beforeEach(() => {
   mockGrantCredits.mockReset();
   // audit writes are best-effort; default to a resolved promise so .catch(() => {}) works
   actionEventCreate.mockResolvedValue({});
+  (isFounderAdmin as Mock).mockReset();
+  authApi.impersonateUser.mockReset();
+  authApi.stopImpersonating.mockReset();
 });
 
 // ── setMembershipStatus ─────────────────────────────────────────────────────
@@ -486,5 +499,75 @@ describe("grantTenantCredits", () => {
     expect(mockGrantCredits).toHaveBeenCalledWith(
       expect.objectContaining({ amount: -50 * INTERNAL_PER_DISPLAY })
     );
+  });
+});
+
+// ── impersonateTenant ───────────────────────────────────────────────────────
+
+describe("impersonateTenant", () => {
+  it("denies a non-founder even if the role gate passes", async () => {
+    mockRequireRole.mockResolvedValue(GATE);
+    (isFounderAdmin as Mock).mockReturnValue(false);
+    const res = await impersonateTenant("orgX");
+    expect(res).toHaveProperty("error");
+    expect(authApi.impersonateUser).not.toHaveBeenCalled();
+  });
+
+  it("rejects the founder's own org without calling the BA api", async () => {
+    mockRequireRole.mockResolvedValue(GATE);
+    (isFounderAdmin as Mock).mockReturnValue(true);
+    const res = await impersonateTenant(FOUNDER_OWNER_ID);
+    expect(res).toHaveProperty("error");
+    expect(authApi.impersonateUser).not.toHaveBeenCalled();
+  });
+
+  it("returns an error when the org has no resolvable BA owner", async () => {
+    mockRequireRole.mockResolvedValue(GATE);
+    (isFounderAdmin as Mock).mockReturnValue(true);
+    membershipFindMany.mockResolvedValue([]); // no owner
+    const res = await impersonateTenant("orgX");
+    expect(res).toHaveProperty("error");
+    expect(authApi.impersonateUser).not.toHaveBeenCalled();
+  });
+
+  it("founder impersonates the org owner's BA user", async () => {
+    mockRequireRole.mockResolvedValue(GATE);
+    (isFounderAdmin as Mock).mockReturnValue(true);
+    membershipFindMany.mockResolvedValue([{ userId: "user_1" }]);
+    userFindMany.mockResolvedValue([{ email: "owner@t.test" }]);
+    baUserFindMany.mockResolvedValue([{ id: "ba_owner" }]);
+    authApi.impersonateUser.mockResolvedValue({ ok: true });
+    const res = await impersonateTenant("orgX");
+    expect(res).toEqual({ ok: true });
+    expect(authApi.impersonateUser).toHaveBeenCalledWith(
+      expect.objectContaining({ body: { userId: "ba_owner" } })
+    );
+    expect(actionEventCreate).toHaveBeenCalledWith(
+      expect.objectContaining({ data: expect.objectContaining({ type: "impersonate.start" }) })
+    );
+  });
+});
+
+// ── stopImpersonatingTenant ─────────────────────────────────────────────────
+
+describe("stopImpersonatingTenant", () => {
+  it("calls stopImpersonating", async () => {
+    mockRequireRole.mockResolvedValue(GATE);
+    (isFounderAdmin as Mock).mockReturnValue(true);
+    authApi.stopImpersonating.mockResolvedValue({ ok: true });
+    const res = await stopImpersonatingTenant();
+    expect(res).toEqual({ ok: true });
+    expect(authApi.stopImpersonating).toHaveBeenCalled();
+    expect(actionEventCreate).toHaveBeenCalledWith(
+      expect.objectContaining({ data: expect.objectContaining({ type: "impersonate.stop" }) })
+    );
+  });
+
+  it("stopImpersonatingTenant denies a non-founder", async () => {
+    mockRequireRole.mockResolvedValue(GATE);
+    (isFounderAdmin as Mock).mockReturnValue(false);
+    const res = await stopImpersonatingTenant();
+    expect(res).toHaveProperty("error");
+    expect(authApi.stopImpersonating).not.toHaveBeenCalled();
   });
 });

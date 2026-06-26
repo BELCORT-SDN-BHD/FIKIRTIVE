@@ -19,3 +19,18 @@ describe("compat auth()", () => {
     expect(await auth()).toEqual({ user: { email: "a@x.test", name: "A", image: null, role: "ops" } });
   });
 });
+
+describe("isImpersonating", () => {
+  it("true when the raw session has impersonatedBy", async () => {
+    mockGetSession.mockResolvedValue({ user: { email: "x@t.test" }, session: { impersonatedBy: "admin_1" } });
+    const { isImpersonating } = await import("@/lib/better-auth/compat");
+    expect(await isImpersonating()).toBe(true);
+  });
+  it("false when not impersonating / no session", async () => {
+    mockGetSession.mockResolvedValue({ user: { email: "x@t.test" }, session: { impersonatedBy: null } });
+    const { isImpersonating } = await import("@/lib/better-auth/compat");
+    expect(await isImpersonating()).toBe(false);
+    mockGetSession.mockResolvedValue(null);
+    expect(await isImpersonating()).toBe(false);
+  });
+});

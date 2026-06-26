@@ -3,6 +3,9 @@ import { prisma, grantCredits, InsufficientCredits } from "@fikirtive/db";
 import { newId, FOUNDER_OWNER_ID, INTERNAL_PER_DISPLAY } from "@fikirtive/core";
 import { requireRole } from "./auth-guard";
 import { revalidatePath } from "next/cache";
+import { headers } from "next/headers";
+import { auth } from "@/lib/better-auth/server";
+import { isFounderAdmin } from "@/lib/allowlist";
 
 const ORG_STATUS = new Set(["active", "suspended"]);
 
@@ -86,6 +89,47 @@ export async function revokeTenantInvite(emailRaw: unknown): Promise<{ ok: true 
   if (count === 0) return { error: "No such invite." };
   await prisma.actionEvent.create({ data: { id: newId(), ownerId: FOUNDER_OWNER_ID, type: "tenant.revoke", payload: { email, via: gate.email } } }).catch(() => {});
   revalidatePath("/admin/tenants");
+  return { ok: true };
+}
+
+/** Resolve an org's first owner to their Better Auth user id (email join, same id-space rule as
+ *  orgMemberBaUserIds). Returns null if there is no resolvable BA owner. */
+async function ownerBaUserId(orgId: string): Promise<string | null> {
+  const owners = await prisma.membership.findMany({ where: { orgId, role: "owner", deletedAt: null }, select: { userId: true }, take: 1 });
+  if (owners.length === 0) return null;
+  const users = await prisma.user.findMany({ where: { id: { in: owners.map((m) => m.userId) } }, select: { email: true } });
+  if (users.length === 0 || !users[0]?.email) return null;
+  const baUsers = await prisma.betterAuthUser.findMany({ where: { email: { in: [users[0].email.toLowerCase()] } }, select: { id: true } });
+  return baUsers[0]?.id ?? null;
+}
+
+/** Founder-only: become the org owner to debug what they see. Spend is blocked while
+ *  impersonating (the 8 web entry-point guards). Audited. */
+export async function impersonateTenant(orgId: string): Promise<{ ok: true } | { error: string }> {
+  const gate = await requireRole("tenants", "mutate"); if ("error" in gate) return gate;
+  if (!isFounderAdmin(gate.email)) return { error: "Only a founder may impersonate." };
+  if (typeof orgId !== "string" || !orgId || orgId === FOUNDER_OWNER_ID) return { error: "Invalid org." };
+  const baUserId = await ownerBaUserId(orgId);
+  if (!baUserId) return { error: "That tenant has no signed-in owner to impersonate yet." };
+  try {
+    await auth.api.impersonateUser({ body: { userId: baUserId }, headers: await headers() });
+  } catch (e) {
+    return { error: e instanceof Error ? e.message : "Could not start impersonation." };
+  }
+  await prisma.actionEvent.create({ data: { id: newId(), ownerId: FOUNDER_OWNER_ID, type: "impersonate.start", payload: { orgId, baUserId, via: gate.email } } }).catch(() => {});
+  return { ok: true };
+}
+
+/** End impersonation and restore the founder's own session. */
+export async function stopImpersonatingTenant(): Promise<{ ok: true } | { error: string }> {
+  const gate = await requireRole("tenants", "mutate"); if ("error" in gate) return gate;
+  if (!isFounderAdmin(gate.email)) return { error: "Only a founder may do this." };
+  try {
+    await auth.api.stopImpersonating({ headers: await headers() });
+  } catch (e) {
+    return { error: e instanceof Error ? e.message : "Could not stop impersonation." };
+  }
+  await prisma.actionEvent.create({ data: { id: newId(), ownerId: FOUNDER_OWNER_ID, type: "impersonate.stop", payload: { via: gate.email } } }).catch(() => {});
   return { ok: true };
 }
 
