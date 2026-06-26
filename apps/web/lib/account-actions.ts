@@ -37,6 +37,14 @@ const KIND_LABEL: Record<string, string> = {
   SETTLE: "Settled",
 };
 
+/** Otto LLM-turn ledger rows carry an "otto-..." refId (otto-turn/stream/approve/verdict);
+ *  media rows carry the GenJob id. Label the conversation cost distinctly so a chat turn
+ *  doesn't read as "Generation" in the activity feed. */
+function activityLabel(row: { refId: string | null; reason: string | null; kind: string }): string {
+  if (row.refId?.startsWith("otto-")) return "Otto thinking";
+  return row.reason?.trim() || KIND_LABEL[row.kind] || row.kind;
+}
+
 /** Read the signed-in user's own account. Fail-closed: returns {error} for an
  *  unauthenticated/unresolvable session and never reads another org's data. */
 export async function getMyAccount(): Promise<AccountInfo | { error: string }> {
@@ -52,7 +60,7 @@ export async function getMyAccount(): Promise<AccountInfo | { error: string }> {
       where: { orgId: ownerId, balanceDelta: { not: 0 } },
       orderBy: { createdAt: "desc" },
       take: 25,
-      select: { id: true, kind: true, reason: true, balanceDelta: true, createdAt: true },
+      select: { id: true, kind: true, reason: true, refId: true, balanceDelta: true, createdAt: true },
     }),
   ]);
 
@@ -60,7 +68,7 @@ export async function getMyAccount(): Promise<AccountInfo | { error: string }> {
   // balanceDelta != 0 is filtered in the query above (SETTLE is hold-only).
   const recent: AccountActivity[] = ledger.map((l) => ({
     id: l.id,
-    label: l.reason?.trim() || KIND_LABEL[l.kind] || l.kind,
+    label: activityLabel(l),
     delta: displayCredits(l.balanceDelta),
     at: l.createdAt.toISOString(),
   }));

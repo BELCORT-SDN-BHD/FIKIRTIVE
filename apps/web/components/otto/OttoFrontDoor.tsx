@@ -355,7 +355,7 @@ export function OttoFrontDoor({
         >
           {/* eslint-disable-next-line @next/next/no-img-element */}
           <img src="/brand/otto.svg" width={16} height={16} alt="" style={{ display: "inline", verticalAlign: "middle" }} />
-          Otto plans and makes it — you approve before anything costs money.
+          Otto plans and makes it. Chatting uses a little credit; you approve before Otto makes anything.
         </p>
       </div>
     </div>

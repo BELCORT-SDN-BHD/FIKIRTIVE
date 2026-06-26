@@ -255,7 +255,7 @@ export function OttoConversation({
                   color: "var(--text-body)",
                 }}
               >
-                This is taking longer than usual. Your credits are safe — nothing is charged until a result comes back.{" "}
+                This is taking longer than usual. Your credits for this are on hold — if it doesn&rsquo;t finish, they&rsquo;re returned to you automatically.{" "}
                 <button
                   type="button"
                   onClick={() => {

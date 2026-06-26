@@ -41,6 +41,7 @@ export default async function OttoPage() {
 
   const account = "error" in accountResult ? null : accountResult;
   const balanceUsd = account?.balanceUsd ?? 0;
+  const balanceCredits = account?.balance ?? 0; // DISPLAYED credits — the nav shows credits, not $
   const userName = email.split("@")[0];
 
   // Founder-first streaming chat. Temporary flag (deleted in Task 8 once verified).
@@ -52,6 +53,7 @@ export default async function OttoPage() {
       entities={entities.map(toEntityDTO)}
       threads={threads}
       balanceUsd={balanceUsd}
+      balanceCredits={balanceCredits}
       userName={userName}
       userEmail={email}
       memory={memory}

@@ -40,8 +40,10 @@ describe("getMyAccount", () => {
     findUnique.mockResolvedValue({ balance: 9990, reserved: 100 }); // internal credits (1 internal = $0.01)
     // the query filters balanceDelta != 0 in the DB, so the mock returns only balance-moving rows
     findMany.mockResolvedValue([
-      { id: "l1", kind: "GRANT", reason: "beta signup grant", balanceDelta: 10000, createdAt: new Date("2026-06-20T00:00:00Z") },
-      { id: "l2", kind: "RESERVE", reason: "", balanceDelta: -10, createdAt: new Date("2026-06-20T01:00:00Z") },
+      { id: "l1", kind: "GRANT", reason: "beta signup grant", refId: null, balanceDelta: 10000, createdAt: new Date("2026-06-20T00:00:00Z") },
+      { id: "l2", kind: "RESERVE", reason: "", refId: "genjob_abc", balanceDelta: -10, createdAt: new Date("2026-06-20T01:00:00Z") },
+      // an Otto conversation turn — refId "otto-..." → labeled "Otto thinking", not "Generation"
+      { id: "l3", kind: "RESERVE", reason: "", refId: "otto-turn:thread1:3", balanceDelta: -35, createdAt: new Date("2026-06-20T02:00:00Z") },
     ]);
 
     const res = await getMyAccount();
@@ -56,9 +58,10 @@ describe("getMyAccount", () => {
     expect(res.balance).toBe(999); // 9990 internal / 10 = 999 displayed
     expect(res.reserved).toBe(10); // 100 / 10
     expect(res.balanceUsd).toBeCloseTo(99.9); // 9990 / 100
-    expect(res.recent.map((r) => r.id)).toEqual(["l1", "l2"]);
+    expect(res.recent.map((r) => r.id)).toEqual(["l1", "l2", "l3"]);
     expect(res.recent[0]).toMatchObject({ label: "beta signup grant", delta: 1000 });
-    expect(res.recent[1]).toMatchObject({ label: "Generation", delta: -1 });
+    expect(res.recent[1]).toMatchObject({ label: "Generation", delta: -1 }); // media reserve (genjob refId)
+    expect(res.recent[2]).toMatchObject({ label: "Otto thinking", delta: -3.5 }); // otto- refId → conversation cost
   });
 
   it("treats a missing CreditAccount as zero (never throws)", async () => {

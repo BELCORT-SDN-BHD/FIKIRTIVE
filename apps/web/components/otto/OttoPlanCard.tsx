@@ -4,6 +4,7 @@ import { ClipboardList, Film, Image as ImageIcon, ShieldCheck } from "lucide-rea
 import { Card, Button } from "@/components/fk";
 import { ottoApprove } from "@/lib/otto-client-actions";
 import { coworkGenerate } from "@/lib/cowork-actions";
+import { creditsLabel } from "@/lib/credit-format";
 import type { EntityDTO } from "@/lib/types";
 
 export interface OttoPlanCardProps {
@@ -23,6 +24,8 @@ type CardPayload = {
   kind?: string;
   structuredPrompt?: string;
   estimatedPriceUsd?: number;
+  /** The real charge in credits (= what startGen reserves). Shown on the card. */
+  estimatedCredits?: number;
   entityIds?: string[];
   variantSel?: Record<string, string>;
 };
@@ -45,7 +48,13 @@ export function OttoPlanCard({
   const [done, setDone] = useState(alreadyGenerated);
 
   const isVideo = p.kind === "video";
-  const price = typeof p.estimatedPriceUsd === "number" ? p.estimatedPriceUsd : 0;
+  // Show the real charge in CREDITS (= what startGen reserves). New cards carry
+  // estimatedCredits; for older cards fall back to the displayed-credit equivalent
+  // of the (record-only) USD estimate so nothing renders "$0.00".
+  const credits =
+    typeof p.estimatedCredits === "number"
+      ? p.estimatedCredits
+      : Math.max(1, Math.ceil((typeof p.estimatedPriceUsd === "number" ? p.estimatedPriceUsd : 0) / 0.1));
   const desc = p.structuredPrompt || (isVideo ? "A short video" : "An image");
   const settled = done || hasDurableResult;
 
@@ -105,7 +114,7 @@ export function OttoPlanCard({
 
         <div style={{ marginTop: "var(--space-4)", paddingTop: "var(--space-4)", borderTop: "1px solid var(--border-subtle)" }}>
           <div style={{ fontFamily: "var(--font-display)", fontWeight: "var(--weight-bold)" as React.CSSProperties["fontWeight"], fontSize: "var(--text-xl)", color: "var(--text-strong)" }}>
-            About ${price.toFixed(2)}
+            About {creditsLabel(credits)}
           </div>
         </div>
 
@@ -116,7 +125,7 @@ export function OttoPlanCard({
         ) : (
           <div style={{ display: "flex", gap: "var(--space-3)", marginTop: "var(--space-4)" }}>
             <Button variant="primary" size="md" disabled={busy} onClick={approve}>
-              {busy ? "Starting…" : `Make it · $${price.toFixed(2)}`}
+              {busy ? "Starting…" : `Make it · ${creditsLabel(credits)}`}
             </Button>
             <Button variant="secondary" size="md" disabled={busy} onClick={onChangeSomething}>
               Change something
@@ -130,7 +139,7 @@ export function OttoPlanCard({
           </div>
         ) : (
           <div style={{ display: "flex", alignItems: "center", gap: 6, marginTop: "var(--space-3)", fontSize: "var(--text-xs)", color: "var(--text-faint)" }}>
-            <ShieldCheck size={15} /> Nothing is charged until you approve — and you can always undo.
+            <ShieldCheck size={15} /> Otto only makes this after you approve. (Chatting with Otto uses a little credit.)
           </div>
         )}
       </Card>
