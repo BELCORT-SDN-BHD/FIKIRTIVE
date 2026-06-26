@@ -381,9 +381,15 @@ export function OttoChatStream({
                       pollCountRef.current = 0;
                       void pollAndInjectResults();
                     }}
-                    onChangeSomething={() => {
+                    onChangeSomething={(seed) => {
                       const ta = document.getElementById("otto-composer") as HTMLTextAreaElement | null;
-                      ta?.focus();
+                      if (ta) {
+                        // Prefill with the plan prompt so the user edits from it.
+                        const nativeInputValueSetter = Object.getOwnPropertyDescriptor(window.HTMLTextAreaElement.prototype, "value")?.set;
+                        nativeInputValueSetter?.call(ta, seed);
+                        ta.dispatchEvent(new Event("input", { bubbles: true }));
+                        ta.focus();
+                      }
                     }}
                   />
                 </WidgetRow>

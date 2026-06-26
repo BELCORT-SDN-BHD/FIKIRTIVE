@@ -17,7 +17,9 @@ export interface OttoPlanCardProps {
   cardState: CardState;
   pendingApproval: boolean;
   onApproved: () => void;
-  onChangeSomething: () => void;
+  /** Called when the user clicks "Change something". Receives the current
+   *  structuredPrompt as a seed so the caller can prefill the composer. */
+  onChangeSomething: (seed: string) => void;
 }
 
 type CardPayload = {
@@ -44,6 +46,8 @@ export function OttoPlanCard({
   const p = (payload ?? {}) as CardPayload;
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [expanded, setExpanded] = useState(false);
+  const [copyState, setCopyState] = useState<"idle" | "copied" | "no-api">("idle");
 
   const isVideo = p.kind === "video";
   // Show the real charge in CREDITS (= what startGen reserves). New cards carry
@@ -84,6 +88,27 @@ export function OttoPlanCard({
     }
   }
 
+  function handleCopy() {
+    if (!p.structuredPrompt) return;
+    if (!navigator.clipboard) {
+      setCopyState("no-api");
+      return;
+    }
+    navigator.clipboard.writeText(p.structuredPrompt).then(
+      () => {
+        setCopyState("copied");
+        setTimeout(() => setCopyState("idle"), 2000);
+      },
+      () => {
+        setCopyState("no-api");
+      }
+    );
+  }
+
+  function handleChangeSomething() {
+    onChangeSomething(p.structuredPrompt ?? "");
+  }
+
   return (
     <div style={{ maxWidth: 480 }}>
       <Card variant="tint" padding="md">
@@ -94,7 +119,7 @@ export function OttoPlanCard({
           </span>
         </div>
 
-        <div style={{ display: "flex", alignItems: "center", gap: "var(--space-3)", background: "var(--surface-card)", borderRadius: "var(--radius-md)", padding: "12px 14px" }}>
+        <div style={{ display: "flex", alignItems: "flex-start", gap: "var(--space-3)", background: "var(--surface-card)", borderRadius: "var(--radius-md)", padding: "12px 14px" }}>
           <span style={{ width: 40, height: 40, flex: "none", borderRadius: 12, background: "var(--brand-soft)", color: "var(--on-brand-soft)", display: "flex", alignItems: "center", justifyContent: "center" }}>
             {isVideo ? <Film size={21} /> : <ImageIcon size={21} />}
           </span>
@@ -102,9 +127,55 @@ export function OttoPlanCard({
             <div style={{ fontWeight: "var(--weight-bold)" as React.CSSProperties["fontWeight"], fontSize: "var(--text-sm)", color: "var(--text-strong)" }}>
               {isVideo ? "A short video" : "An image"}
             </div>
-            <div style={{ fontSize: "var(--text-xs)", color: "var(--text-muted)", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+            <div
+              style={{
+                fontSize: "var(--text-xs)",
+                color: "var(--text-muted)",
+                ...(expanded
+                  ? { whiteSpace: "pre-wrap", wordBreak: "break-word" }
+                  : { overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }),
+              }}
+            >
               {desc}
             </div>
+            {/* Expand/collapse + copy row — only when there's a real prompt */}
+            {p.structuredPrompt && (
+              <div style={{ display: "flex", alignItems: "center", gap: "var(--space-3)", marginTop: 4 }}>
+                <button
+                  type="button"
+                  onClick={() => setExpanded((v) => !v)}
+                  style={{
+                    background: "none",
+                    border: "none",
+                    padding: 0,
+                    cursor: "pointer",
+                    fontSize: "var(--text-xs)",
+                    color: "var(--text-faint)",
+                    textDecoration: "underline",
+                  }}
+                >
+                  {expanded ? "show less" : "show more"}
+                </button>
+                <button
+                  type="button"
+                  onClick={handleCopy}
+                  style={{
+                    background: "none",
+                    border: "none",
+                    padding: 0,
+                    cursor: "pointer",
+                    fontSize: "var(--text-xs)",
+                    color: copyState === "copied" ? "var(--success-700)" : "var(--text-faint)",
+                  }}
+                >
+                  {copyState === "copied"
+                    ? "Copied"
+                    : copyState === "no-api"
+                    ? "Long-press to copy"
+                    : "Copy"}
+                </button>
+              </div>
+            )}
           </div>
         </div>
 
@@ -120,21 +191,28 @@ export function OttoPlanCard({
               😕 This one didn&rsquo;t come through — and you weren&rsquo;t charged.
             </div>
             <div style={{ display: "flex", gap: "var(--space-3)", marginTop: "var(--space-3)" }}>
-              <Button variant="secondary" size="md" disabled={busy} onClick={onChangeSomething}>
+              <Button variant="secondary" size="md" disabled={busy} onClick={handleChangeSomething}>
                 Change something
               </Button>
             </div>
           </div>
         ) : cardState === "working" || cardState === "done" ? (
-          <div style={{ marginTop: "var(--space-4)", fontSize: "var(--text-sm)", color: "var(--success-700)", fontWeight: "var(--weight-semibold)" as React.CSSProperties["fontWeight"] }}>
-            {cardState === "done" ? "✓ Done" : "✓ On it — making this now."}
+          <div style={{ marginTop: "var(--space-4)" }}>
+            <div style={{ fontSize: "var(--text-sm)", color: "var(--success-700)", fontWeight: "var(--weight-semibold)" as React.CSSProperties["fontWeight"] }}>
+              {cardState === "done" ? "✓ Done" : "✓ On it — making this now."}
+            </div>
+            {/* Spend-traceability line — pure copy, no charge logic. Shows when the card
+                has moved past idle (approved by button click or by typing "ok go ahead"). */}
+            <div style={{ marginTop: "var(--space-2)", fontSize: "var(--text-xs)", color: "var(--text-faint)" }}>
+              ✓ You approved this — it used {creditsLabel(credits)}.
+            </div>
           </div>
         ) : (
           <div style={{ display: "flex", gap: "var(--space-3)", marginTop: "var(--space-4)" }}>
             <Button variant="primary" size="md" disabled={busy} onClick={approve}>
               {busy ? "Starting…" : `Make it · ${creditsLabel(credits)}`}
             </Button>
-            <Button variant="secondary" size="md" disabled={busy} onClick={onChangeSomething}>
+            <Button variant="secondary" size="md" disabled={busy} onClick={handleChangeSomething}>
               Change something
             </Button>
           </div>
