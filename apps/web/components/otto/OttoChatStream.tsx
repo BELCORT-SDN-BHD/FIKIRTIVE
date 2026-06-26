@@ -6,9 +6,12 @@ import { DefaultChatTransport } from "ai";
 import { useStickToBottom } from "use-stick-to-bottom";
 import { OttoAvatar, Button } from "@/components/fk";
 import { getCoworkThreadClient } from "@/lib/cowork-fetch";
+import { coworkGenerate } from "@/lib/cowork-actions";
 import { threadToUiMessages, type OttoUiMessage } from "@/lib/otto-ui-messages";
 import {
   resultJobIds,
+  errorJobIds,
+  deriveCardState,
   hasWorkingJob as computeHasWorkingJob,
   proposeCardId,
   injectCardMessage,
@@ -78,6 +81,10 @@ export function OttoChatStream({
   /** Card ids the run paused on (needs_approval) — drives OttoPlanCard's parked vs.
    *  proposed spend path. Mirrors OttoConversation's pendingApprovalCardIds set. */
   const [pendingApprovalCardIds, setPendingApprovalCardIds] = useState<Set<string>>(new Set());
+  /** Card durableIds for which the user has clicked "Make it" (or "Try again") in this
+   *  session — drives the optimistic "working" state before the genJobId lands from the
+   *  durable thread. Resets on remount (thread switch = component re-key). */
+  const [submittedCardIds, setSubmittedCardIds] = useState<Set<string>>(new Set());
 
   // Bounded in-flight poll for the async worker result (ported from OttoConversation):
   // a GEN_CARD whose genJobId is set but with no terminal GEN_RESULT/TURN_ERROR keeps
@@ -188,6 +195,7 @@ export function OttoChatStream({
   // already have a result (so the card shows "making this now" not a dupe result),
   // and whether any approved job is still working (drives the poll + working state).
   const jobsWithResult = resultJobIds(messages);
+  const jobsWithError = errorJobIds(messages);
   const hasWorkingJob = computeHasWorkingJob(messages);
 
   // Refetch the durable thread and inject any new worker-output messages
@@ -344,28 +352,44 @@ export function OttoChatStream({
             // falls through to the text/reasoning renderer below.
             if (kind === "GEN_CARD") {
               const genJobId = m.metadata?.genJobId ?? null;
+              const durableId = m.metadata!.durableId;
               return (
                 <WidgetRow key={m.id} animateIn={isNewMessage(m.id)}>
                   <OttoPlanCard
-                    cardId={m.metadata!.durableId}
+                    cardId={durableId}
                     payload={m.metadata?.payload}
                     entities={entities}
                     threadId={thread.id}
                     projectId={projectId}
-                    alreadyGenerated={!!genJobId}
-                    hasDurableResult={!!genJobId && jobsWithResult.has(genJobId)}
-                    pendingApproval={pendingApprovalCardIds.has(m.metadata!.durableId)}
+                    cardState={deriveCardState({
+                      genJobId,
+                      submitted: submittedCardIds.has(durableId),
+                      results: jobsWithResult,
+                      errors: jobsWithError,
+                    })}
+                    pendingApproval={pendingApprovalCardIds.has(durableId)}
                     onApproved={() => {
+                      // Record submission so the card flips to "working" optimistically.
+                      setSubmittedCardIds((cur) => new Set(cur).add(durableId));
                       // Drop from the pending set; re-arm the poll (a freshly-approved
                       // card queues a new job even if a prior job hit the give-up cap).
                       setPendingApprovalCardIds((cur) => {
                         const next = new Set(cur);
-                        next.delete(m.metadata!.durableId);
+                        next.delete(durableId);
                         return next;
                       });
                       setPollGaveUp(false);
                       pollCountRef.current = 0;
                       void pollAndInjectResults();
+                    }}
+                    onRetry={() => {
+                      const p = (m.metadata?.payload ?? {}) as { structuredPrompt?: string; entityIds?: string[]; variantSel?: Record<string, string> };
+                      void coworkGenerate({
+                        cardId: durableId,
+                        prompt: p.structuredPrompt ?? "",
+                        entityIds: Array.isArray(p.entityIds) ? p.entityIds : [],
+                        variantSel: p.variantSel && typeof p.variantSel === "object" ? p.variantSel : {},
+                      }).then(() => { setPollGaveUp(false); pollCountRef.current = 0; void pollAndInjectResults(); });
                     }}
                     onChangeSomething={() => {
                       const ta = document.getElementById("otto-composer") as HTMLTextAreaElement | null;

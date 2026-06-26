@@ -5,6 +5,8 @@ import { ottoTurn } from "@/lib/otto-client-actions";
 import { getCoworkThreadClient } from "@/lib/cowork-fetch";
 import { OttoPlanCard } from "./OttoPlanCard";
 import { OttoResult } from "./OttoResult";
+import { coworkGenerate } from "@/lib/cowork-actions";
+import { deriveCardState } from "@/lib/otto-inject-helpers";
 import type { EntityDTO, ChatThreadDTO, ChatMessageDTO } from "@/lib/types";
 
 export interface OttoConversationProps {
@@ -30,6 +32,7 @@ export function OttoConversation({
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [pendingApprovalCardIds, setPendingApprovalCardIds] = useState<Set<string>>(new Set());
+  const [submittedCardIds, setSubmittedCardIds] = useState<Set<string>>(new Set());
   const bottomRef = useRef<HTMLDivElement>(null);
   const busyRef = useRef(false);
 
@@ -95,6 +98,12 @@ export function OttoConversation({
   const resultJobIds = new Set(
     messages
       .filter((m) => m.kind === "GEN_RESULT" && m.genJobId)
+      .map((m) => m.genJobId as string),
+  );
+  // Track which job ids have a TURN_ERROR so the card can show a failed state.
+  const errorJobIds = new Set(
+    messages
+      .filter((m) => m.kind === "TURN_ERROR" && m.genJobId)
       .map((m) => m.genJobId as string),
   );
 
@@ -181,9 +190,13 @@ export function OttoConversation({
               projectId={projectId}
               threadId={thread.id}
               resultJobIds={resultJobIds}
+              errorJobIds={errorJobIds}
+              submittedCardIds={submittedCardIds}
               pendingApprovalCardIds={pendingApprovalCardIds}
               busy={busy}
               onApproved={(cardId) => {
+                // Record submission so the card flips to "working" optimistically.
+                setSubmittedCardIds((cur) => new Set(cur).add(cardId));
                 setPendingApprovalCardIds((cur) => {
                   const next = new Set(cur);
                   next.delete(cardId);
@@ -194,6 +207,15 @@ export function OttoConversation({
                 setPollGaveUp(false);
                 pollCountRef.current = 0;
                 refreshAndUpdate();
+              }}
+              onRetry={(cardId, payload) => {
+                const p = (payload ?? {}) as { structuredPrompt?: string; entityIds?: string[]; variantSel?: Record<string, string> };
+                void coworkGenerate({
+                  cardId,
+                  prompt: p.structuredPrompt ?? "",
+                  entityIds: Array.isArray(p.entityIds) ? p.entityIds : [],
+                  variantSel: p.variantSel && typeof p.variantSel === "object" ? p.variantSel : {},
+                }).then(() => { setPollGaveUp(false); pollCountRef.current = 0; void refreshAndUpdate(); });
               }}
               onChangeRequest={() => {
                 // Focus the composer for a change request
@@ -359,9 +381,12 @@ function MessageRow({
   projectId,
   threadId,
   resultJobIds,
+  errorJobIds,
+  submittedCardIds,
   pendingApprovalCardIds,
   busy,
   onApproved,
+  onRetry,
   onChangeRequest,
   onEditByHand,
 }: {
@@ -370,9 +395,12 @@ function MessageRow({
   projectId: string;
   threadId: string;
   resultJobIds: Set<string>;
+  errorJobIds: Set<string>;
+  submittedCardIds: Set<string>;
   pendingApprovalCardIds: Set<string>;
   busy: boolean;
   onApproved: (cardId: string) => void;
+  onRetry: (cardId: string, payload: unknown) => void;
   onChangeRequest: () => void;
   onEditByHand: () => void;
 }) {
@@ -434,10 +462,15 @@ function MessageRow({
             entities={entities}
             threadId={threadId}
             projectId={projectId}
-            alreadyGenerated={!!m.genJobId}
-            hasDurableResult={!!m.genJobId && resultJobIds.has(m.genJobId)}
+            cardState={deriveCardState({
+              genJobId: m.genJobId,
+              submitted: submittedCardIds.has(m.id),
+              results: resultJobIds,
+              errors: errorJobIds,
+            })}
             pendingApproval={pendingApprovalCardIds.has(m.id)}
             onApproved={() => onApproved(m.id)}
+            onRetry={() => onRetry(m.id, m.payload)}
             onChangeSomething={onChangeRequest}
           />
         </div>
