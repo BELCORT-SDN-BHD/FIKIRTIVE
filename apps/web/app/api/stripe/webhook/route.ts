@@ -26,11 +26,14 @@ export async function POST(req: NextRequest): Promise<Response> {
         await prisma.actionEvent.create({ data: { id: newId(), ownerId: "founder", type: "credits.purchase.bad", payload: { eventId: event.id, metadata: session.metadata ?? null } } }).catch(() => {});
         return new Response("ignored: missing metadata", { status: 200 }); // 200 → no retry storm
       }
+      // Dedup on the Checkout SESSION id, not the event id: one session = one payment = one
+      // grant. session.id stays exactly-once even if Stripe delivers multiple distinct events
+      // for the same completed session, whereas event.id only dedups redeliveries of one event.
       const res = await grantCredits({
         orgId, amount: credits * INTERNAL_PER_DISPLAY, source: "PURCHASE",
-        reason: "stripe top-up", createdBy: "stripe", idempotencyKey: `stripe:${event.id}`,
+        reason: "stripe top-up", createdBy: "stripe", idempotencyKey: `stripe:${session.id}`,
       });
-      await prisma.actionEvent.create({ data: { id: newId(), ownerId: orgId, type: "credits.purchase", payload: { credits, amountTotal: session.amount_total ?? null, paymentIntentId: session.payment_intent ?? null, eventId: event.id, duplicate: "duplicate" in res } } }).catch(() => {});
+      await prisma.actionEvent.create({ data: { id: newId(), ownerId: orgId, type: "credits.purchase", payload: { credits, amountTotal: session.amount_total ?? null, paymentIntentId: session.payment_intent ?? null, sessionId: session.id ?? null, eventId: event.id, duplicate: "duplicate" in res } } }).catch(() => {});
     }
   }
   return new Response("ok", { status: 200 });

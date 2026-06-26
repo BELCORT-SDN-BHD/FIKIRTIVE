@@ -23,13 +23,13 @@ describe("stripe webhook", () => {
   it("grants on checkout.session.completed (paid) with the right args", async () => {
     constructEvent.mockReturnValue({
       id: "evt_1", type: "checkout.session.completed",
-      data: { object: { payment_status: "paid", metadata: { orgId: "org_1", credits: "100" }, payment_intent: "pi_1", amount_total: 1000 } },
+      data: { object: { id: "cs_1", payment_status: "paid", metadata: { orgId: "org_1", credits: "100" }, payment_intent: "pi_1", amount_total: 1000 } },
     });
     grantCredits.mockResolvedValue({ ok: true });
     const res = await POST(req());
     expect(res.status).toBe(200);
     expect(grantCredits).toHaveBeenCalledWith(expect.objectContaining({
-      orgId: "org_1", amount: 100 * 10, source: "PURCHASE", idempotencyKey: "stripe:evt_1",
+      orgId: "org_1", amount: 100 * 10, source: "PURCHASE", idempotencyKey: "stripe:cs_1",
     }));
     expect(actionEventCreate).toHaveBeenCalled();
   });
