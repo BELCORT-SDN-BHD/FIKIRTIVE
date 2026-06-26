@@ -2,6 +2,7 @@ import "server-only";
 import { prisma } from "@fikirtive/db";
 import { newId, storageKey, storageKeyToSrc } from "@fikirtive/core";
 import { requireOwner } from "./auth-guard";
+import { tallyEntityUsage } from "./entity-usage";
 
 const THUMB_VIDEO_EXTS = new Set(["mp4", "mov", "webm", "mkv"]);
 /** Resolve generation ids → { src, kind } thumbnails (segment frame slots). */
@@ -39,7 +40,7 @@ export async function getProjects(ownerId: string) {
 }
 
 export async function getEntities(ownerId: string) {
-  return prisma.entity.findMany({
+  const entities = await prisma.entity.findMany({
     where: { ownerId, ...notDeleted },
     orderBy: [{ type: "asc" }, { name: "asc" }],
     include: {
@@ -59,6 +60,20 @@ export async function getEntities(ownerId: string) {
       _count: { select: { shotRefs: true } },
     },
   });
+
+  // Count DONE Otto gen jobs that referenced each entity (non-legacy usage).
+  let ottoUsage: Record<string, number> = {};
+  try {
+    const ottoJobs = await prisma.genJob.findMany({
+      where: { ownerId, status: "DONE", entityIds: { isEmpty: false } },
+      select: { entityIds: true },
+    });
+    ottoUsage = tallyEntityUsage(ottoJobs);
+  } catch {
+    // Non-critical: fall back to 0 Otto usage rather than throwing.
+  }
+
+  return entities.map((e) => ({ ...e, _ottoUsageCount: ottoUsage[e.id] ?? 0 }));
 }
 
 export async function getShots(ownerId: string, projectId: string) {
