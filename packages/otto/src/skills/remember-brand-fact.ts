@@ -1,5 +1,5 @@
 /**
- * rememberBrandFact — $0 tool
+ * rememberBrandFact — $0 skill
  *
  * Saves a durable brand fact to the Memory table (source: "otto").
  * Spends NO money, creates NO GenJob, calls NO fal/generation code.
@@ -7,8 +7,8 @@
  * Identity comes exclusively from OttoContext (ctx), never from tool input — the
  * model cannot spoof ownerId.
  */
-import { tool } from "@openai/agents";
 import type { RunContext } from "@openai/agents";
+import { defineOttoSkill } from "../skill.js";
 import { z } from "zod";
 import { newId } from "@fikirtive/core";
 import { prisma } from "@fikirtive/db";
@@ -52,19 +52,22 @@ export async function executeRememberBrandFact(
 }
 
 // ---------------------------------------------------------------------------
-// SDK tool definition
+// Skill definition (defineOttoSkill standard): free / write / internal → no approval.
 // ---------------------------------------------------------------------------
 
-export const rememberBrandFact = tool<typeof rememberBrandFactInput, OttoContext>({
+export const rememberBrandFactSkill = defineOttoSkill({
   name: "rememberBrandFact",
+  cost: "free",
+  effect: "write",
+  reach: "internal",
   description:
     "Save ONE durable fact about the user's brand to Brand Memory (their voice, audience, products, rules, or story). " +
     "$0, persists across all future campaigns. " +
     "Call this ONLY when the user clearly tells you to remember something, or states a durable brand fact you should keep — " +
     "never for one-off creative choices or to spam memory. Pick the best category.",
   parameters: rememberBrandFactInput,
-  execute: async (input, runContext) => {
-    if (!runContext) throw new Error("OttoContext required");
-    return executeRememberBrandFact(input, runContext);
-  },
+  execute: executeRememberBrandFact,
 });
+
+// Backward-compatible bare-tool export (keeps existing imports + tests unchanged).
+export const rememberBrandFact = rememberBrandFactSkill.tool;

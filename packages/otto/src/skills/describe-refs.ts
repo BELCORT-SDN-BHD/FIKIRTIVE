@@ -12,8 +12,8 @@
  * as the safety guard instead (a description can't overwrite an existing one and
  * can't cross tenants). A future ctx.shownRefNames guard can tighten this.
  */
-import { tool } from "@openai/agents";
 import type { RunContext } from "@openai/agents";
+import { defineOttoSkill } from "../skill.js";
 import { z } from "zod";
 import { prisma, Prisma } from "@fikirtive/db";
 import type { OttoContext } from "../context.js";
@@ -92,8 +92,11 @@ export async function executeDescribeRefs(
 // SDK tool definition
 // ---------------------------------------------------------------------------
 
-export const describeRefs = tool<typeof describeRefsInput, OttoContext>({
+export const describeRefsSkill = defineOttoSkill({
   name: "describeRefs",
+  cost: "free",
+  effect: "read",
+  reach: "internal",
   description:
     "Cache visual descriptions of reference images shown to you this turn. " +
     "For each reference image, provide its @name and a concise visual description " +
@@ -102,8 +105,7 @@ export const describeRefs = tool<typeof describeRefsInput, OttoContext>({
     "See-once: a description is only written if one does not already exist (never overwrites). " +
     "This is $0.",
   parameters: describeRefsInput,
-  execute: async (input, runContext) => {
-    if (!runContext) throw new Error("OttoContext required");
-    return executeDescribeRefs(input, runContext);
-  },
+  execute: executeDescribeRefs,
 });
+
+export const describeRefs = describeRefsSkill.tool;

@@ -7,8 +7,8 @@
  * Identity comes exclusively from OttoContext (ctx), never from tool input — the
  * model cannot spoof ownerId or projectId.
  */
-import { tool } from "@openai/agents";
 import type { RunContext } from "@openai/agents";
+import { defineOttoSkill } from "../skill.js";
 import { z } from "zod";
 import { prisma } from "@fikirtive/db";
 import type { OttoContext } from "../context.js";
@@ -45,16 +45,18 @@ export async function executeUpdateBrief(
 // SDK tool definition
 // ---------------------------------------------------------------------------
 
-export const updateBrief = tool<typeof updateBriefInput, OttoContext>({
+export const updateBriefSkill = defineOttoSkill({
   name: "updateBrief",
+  cost: "free",
+  effect: "write",
+  reach: "internal",
   description:
     "Refine the project's creative brief with durable creative direction " +
     "(tone, visual style, recurring constraints like aspect ratio or language, key characters). " +
     "Call only when you have a clear, durable signal — ≤60 words. The user can edit it anytime. " +
     "This is $0 and persists across turns.",
   parameters: updateBriefInput,
-  execute: async (input, runContext) => {
-    if (!runContext) throw new Error("OttoContext required");
-    return executeUpdateBrief(input, runContext);
-  },
+  execute: executeUpdateBrief,
 });
+
+export const updateBrief = updateBriefSkill.tool;
