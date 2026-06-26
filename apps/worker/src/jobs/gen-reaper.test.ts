@@ -71,7 +71,7 @@ describe("reapStaleGenJobs — GENERATING branch", () => {
 });
 
 describe("reapStaleGenJobs — QUEUED branch (GEN-6 / P0-11)", () => {
-  it("fail-closes + refunds + posts a TURN_ERROR for a stuck QUEUED job older than 10 min", async () => {
+  it("fail-closes + refunds + posts a TURN_ERROR for a stuck QUEUED job older than 25 min", async () => {
     // first findMany = no GENERATING stuck; second findMany = one QUEUED stuck
     m.genJobFindMany.mockResolvedValueOnce([]).mockResolvedValueOnce([stuckQueuedJob]);
     m.genJobUpdateMany.mockResolvedValue({ count: 1 }); // conditional claim won
@@ -94,7 +94,7 @@ describe("reapStaleGenJobs — QUEUED branch (GEN-6 / P0-11)", () => {
     expect(m.chatMessageCreate).not.toHaveBeenCalled();
   });
 
-  it("does NOT select a QUEUED job newer than 10 min (not returned by findMany)", async () => {
+  it("does NOT select a QUEUED job newer than 25 min (not returned by findMany)", async () => {
     // A fresh QUEUED job is simply not in the result set — the query filters by createdAt.
     // Verify that nothing is reaped when findMany returns empty for both branches.
     m.genJobFindMany.mockResolvedValue([]);

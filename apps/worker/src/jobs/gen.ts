@@ -51,7 +51,13 @@ const GEN_REAP_MS = 1000 * 60 * 25;
 // A job that has sat in QUEUED this long was never claimed by a worker (worker down / message
 // lost). Fail it closed and refund — the credit hold would otherwise leak forever and the
 // cowork chat spins on a stuck "making this…" indefinitely (audit GEN-6 / P0-11).
-const GEN_QUEUED_REAP_MS = 1000 * 60 * 10;
+// Like GEN_REAP_MS, this proactive cutoff MUST exceed the gen-queue expiry (GEN_QUEUE_POLICY
+// .expireInSeconds = 20m) plus retry backoff. A job can legitimately sit QUEUED past a few
+// minutes while the worker is saturated (pg-boss still owns the message and will deliver it)
+// or while a recoverable pre-charge retry is rescheduled (status reset to QUEUED, original
+// createdAt kept). At 10m we fail-closed + refunded jobs pg-boss would still deliver — a false
+// "you weren't charged" that pushes the user to resubmit a duplicate paid job. 25m clears that.
+const GEN_QUEUED_REAP_MS = 1000 * 60 * 25;
 
 // Thrown INSIDE the commit transaction to roll it back (discarding the just-created,
 // user-visible Asset+Generation rows) when a redelivery has already FAILED+refunded the job
