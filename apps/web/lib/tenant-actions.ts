@@ -25,21 +25,27 @@ export async function setMembershipStatus(orgId: string, status: string): Promis
   const gate = await requireRole("tenants", "mutate"); if ("error" in gate) return gate;
   if (typeof orgId !== "string" || !orgId || orgId === FOUNDER_OWNER_ID) return { error: "Invalid org." };
   if (!ORG_STATUS.has(status)) return { error: "Invalid status." };
-  const { count } = await prisma.membership.updateMany({ where: { orgId }, data: { status } });
-  if (count === 0) return { error: "No memberships for that org." };
   // Mirror to the Better Auth layer so suspension is immediate + global: ban the members'
   // BA users (the installed admin plugin's session.create.before hook then blocks re-login)
   // and cut their live BA sessions. Reactivation lifts the ban. Membership.status stays the
   // authoritative per-tenant gate (requireOwner consumes it); this is defense-in-depth.
   const baUserIds = await orgMemberBaUserIds(orgId);
-  if (baUserIds.length > 0) {
-    if (status === "suspended") {
-      await prisma.betterAuthUser.updateMany({ where: { id: { in: baUserIds } }, data: { banned: true, banReason: `suspended by ${gate.email}` } });
-      await prisma.betterAuthSession.deleteMany({ where: { userId: { in: baUserIds } } });
-    } else {
-      await prisma.betterAuthUser.updateMany({ where: { id: { in: baUserIds } }, data: { banned: false, banReason: null, banExpires: null } });
+  // Atomic: flip Membership.status and mirror to the BA auth layer in one transaction, so a
+  // BA-write failure rolls back the status flip (no diverged "suspended but not banned" state).
+  const updated = await prisma.$transaction(async (tx) => {
+    const { count } = await tx.membership.updateMany({ where: { orgId }, data: { status } });
+    if (count === 0) return 0;
+    if (baUserIds.length > 0) {
+      if (status === "suspended") {
+        await tx.betterAuthUser.updateMany({ where: { id: { in: baUserIds } }, data: { banned: true, banReason: `suspended by ${gate.email}` } });
+        await tx.betterAuthSession.deleteMany({ where: { userId: { in: baUserIds } } });
+      } else {
+        await tx.betterAuthUser.updateMany({ where: { id: { in: baUserIds } }, data: { banned: false, banReason: null, banExpires: null } });
+      }
     }
-  }
+    return count;
+  });
+  if (updated === 0) return { error: "No memberships for that org." };
   await prisma.actionEvent.create({ data: { id: newId(), ownerId: FOUNDER_OWNER_ID, type: "tenant.status", payload: { orgId, status, via: gate.email } } }).catch(() => {});
   await prisma.actionEvent.create({ data: { id: newId(), ownerId: orgId, type: "tenant.status", payload: { status, via: gate.email } } }).catch(() => {});
   revalidatePath(`/admin/tenants/${orgId}`); revalidatePath("/admin/tenants");

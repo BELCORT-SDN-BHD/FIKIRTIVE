@@ -39,6 +39,13 @@ vi.mock("@fikirtive/db", () => ({
     allowedEmail: { upsert: allowedEmailUpsert, updateMany: allowedEmailUpdateMany },
     actionEvent: { create: actionEventCreate },
     organization: { findFirst: organizationFindFirst },
+    // run the callback against a tx wired to the same mocks, so existing setMembershipStatus assertions hold
+    $transaction: async (fn: (tx: unknown) => unknown) =>
+      fn({
+        membership: { updateMany: membershipUpdateMany },
+        betterAuthUser: { updateMany: baUserUpdateMany },
+        betterAuthSession: { deleteMany: baSessionDeleteMany },
+      }),
   },
   grantCredits: mockGrantCredits,
   InsufficientCredits: MockInsufficientCredits,
@@ -95,6 +102,7 @@ describe("setMembershipStatus", () => {
   it("returns error when no memberships matched", async () => {
     mockRequireRole.mockResolvedValue(GATE);
     membershipUpdateMany.mockResolvedValue({ count: 0 });
+    membershipFindMany.mockResolvedValue([]);
     const res = await setMembershipStatus("orgX", "suspended");
     expect(res).toEqual({ error: "No memberships for that org." });
   });
@@ -128,7 +136,7 @@ describe("setMembershipStatus", () => {
     const res = await setMembershipStatus("orgX", "suspended");
     expect(res).toEqual({ ok: true });
     expect(baUserUpdateMany).toHaveBeenCalledWith(
-      expect.objectContaining({ where: { id: { in: ["ba_0"] } }, data: expect.objectContaining({ banned: true }) })
+      expect.objectContaining({ where: { id: { in: ["ba_0"] } }, data: expect.objectContaining({ banned: true, banReason: `suspended by ${GATE.email}` }) })
     );
     expect(baSessionDeleteMany).toHaveBeenCalledWith({ where: { userId: { in: ["ba_0"] } } });
   });
@@ -142,7 +150,7 @@ describe("setMembershipStatus", () => {
     const res = await setMembershipStatus("orgX", "active");
     expect(res).toEqual({ ok: true });
     expect(baUserUpdateMany).toHaveBeenCalledWith(
-      expect.objectContaining({ where: { id: { in: ["ba_0"] } }, data: expect.objectContaining({ banned: false }) })
+      expect.objectContaining({ where: { id: { in: ["ba_0"] } }, data: expect.objectContaining({ banned: false, banReason: null, banExpires: null }) })
     );
     expect(baSessionDeleteMany).not.toHaveBeenCalled();
   });
