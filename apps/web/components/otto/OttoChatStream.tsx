@@ -275,8 +275,10 @@ export function OttoChatStream({
     // A new turn may queue a new generation — re-arm polling (mirror OttoConversation).
     setPollGaveUp(false);
     pollCountRef.current = 0;
-    // Capture and clear the attachment before send.
+    // Capture and clear the attachment before send. Revoke the local preview blob URL
+    // (the source is the generationId, not the blob) so repeated attach/send doesn't leak.
     const attachedNow = attached;
+    if (attachedNow?.src.startsWith("blob:")) URL.revokeObjectURL(attachedNow.src);
     setAttached(null);
     // Pass the live projectId/threadId (and optional sourceGenerationId) via the per-call
     // body; prepareSendMessagesRequest reads them off `body` and shapes the strict route payload.
@@ -722,7 +724,11 @@ export function OttoChatStream({
                   <button
                     type="button"
                     aria-label="Remove attached image"
-                    onClick={() => setAttached(null)}
+                    onClick={() => {
+                    if (attached?.src.startsWith("blob:")) URL.revokeObjectURL(attached.src);
+                    setAttached(null);
+                    setAttachError(null);
+                  }}
                     style={{
                       background: "none",
                       border: "none",
