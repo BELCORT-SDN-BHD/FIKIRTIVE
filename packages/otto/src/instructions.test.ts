@@ -21,6 +21,14 @@ describe("ottoInstructions — Honesty & limits", () => {
   it("instructs Otto it cannot see the user's screen or UI", () => {
     expect(ottoInstructions).toMatch(/cannot see/i);
   });
+
+  it("instructs Otto to own capability boundaries and offer alternatives", () => {
+    // names capabilities that Otto can't do yet
+    expect(ottoInstructions).toMatch(/publishing|schedul/i);
+    // instructs honest decline with an offer of what it can do
+    expect(ottoInstructions).toMatch(/say so plainly/i);
+    expect(ottoInstructions).toMatch(/can.*do/i);
+  });
 });
 
 describe("ottoInstructions — brand memory guidance", () => {
