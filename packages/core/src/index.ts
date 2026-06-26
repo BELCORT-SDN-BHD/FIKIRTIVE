@@ -89,3 +89,4 @@ export { buildGenRequestFromCard, type GenRequestInput } from "./gen-from-card.j
 export * from "./otto-budget.js";
 export * from "./llm-prices.js";
 export { GOAL_PRESETS, isGoalKey, type GoalKey } from "./goals.js";
+export * from "./model-config.js";
