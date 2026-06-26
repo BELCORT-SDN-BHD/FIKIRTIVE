@@ -15,6 +15,7 @@
 ## Global Constraints
 
 - **Do NOT modify the money/generation path.** Off-limits files: `apps/web/lib/gen-actions.ts`, `apps/web/lib/cowork-actions.ts` (the `coworkGenerate`/`withLlmBudget` calls), `packages/otto/src/meter.ts`, `apps/worker/*`, and the credit models in `packages/db/prisma/schema.prisma` (`CreditAccount`, `CreditLedger`) and `packages/db/src/credits.ts`. The ONLY credit interaction is calling the existing `grantCredits({ source: "ADMIN", ... })`. The ONLY schema additions are the additive Better-Auth fields in §3.
+  - **Phase-2 carve-out (user-approved 2026-06-26):** the impersonation spend-block adds an *additive early-return guard* (`if (await isImpersonating()) return { error }`) at the top of the web spend entry points — including `gen-actions.startGen`, `refgen-actions` (2 fns), `cowork-actions` (2 sites), `otto-actions` (2 sites), and the otto stream route. This touches money-path files but changes **no** charge/reserve/settle/pricing logic. Worker code, `meter.ts`/`credits.ts` internals, and the credit models stay untouched.
 - **Real money / API keys:** none entered or handled by the implementer. No Stripe build in this spec.
 - **RBAC matrix (`packages/core/src/roles.ts` `SECTION_MATRIX`) is NOT changed.** Existing gates already cover every action (see §8).
 - **Pinned dependency:** `better-auth@1.6.20`. Behaviors below were verified against this version's on-disk source; treat the version's source as authoritative over the public docs where they differ.
@@ -175,10 +176,9 @@ Founder = super-admin passes all. No new sections/roles. If staff (ops/finance) 
 - **Gate:** `requireRole("tenants","mutate")` **and** an explicit `isFounderAdmin(email)` check — founder-only, stricter than the rest. Audit `impersonate.start` / `impersonate.stop`.
 - **Mechanism:** `auth.api.impersonateUser({ body:{ userId } })` creates a target session with `BetterAuthSession.impersonatedBy = <founder id>`, swaps the session cookie, and stashes the founder's original session token in a signed `admin_session` cookie. `auth.api.stopImpersonating()` reverses it. Duration 30 min.
 - **Visible banner:** detect `impersonatedBy` on the current session in the app layout; render "Impersonating <email> — [Stop]".
-- **🔒 Spend block (money-path-safe):** decided restriction = **block spend only** (generation/credit-burning), everything else proceeds; data mutations are auditable/reversible, spend is not.
-  - Problem: `compat.auth()` returns only `{ user }` and drops the session, so `impersonatedBy` is invisible to `auth-guard`.
-  - Fix: surface `impersonatedBy` — add an `isImpersonating()` / `impersonatedBy` helper that reads the raw `auth.api.getSession()` session (not the compat shape). Then in `requireSession()` / `requireOwner()` (`apps/web/lib/auth-guard.ts`), when impersonating, return `{ error }` for spend callers.
-  - **Money path untouched:** `gen-actions.ts` and the cowork generate action already funnel through `requireSession`/`requireOwner`; blocking there covers spend without editing any off-limits file.
+- **🔒 Spend block — RESOLVED (revision 2026-06-26, decided with the user):** restriction = **block spend only** (generation/credit-burning); browsing + non-spend writes proceed.
+  - **Why it can't sit at the guard layer:** code investigation showed `requireSession` is *unused* (dead), and `requireOwner` is the single shared gate for BOTH reads and spend — and reads + spend co-habit the protected files (e.g. `gen-actions.ts` has `startGen` [spend] *and* `getGenJob`/`getRecentGenResults` [reads], both calling bare `requireOwner()`). Blocking at `requireOwner` would also block browsing (defeating impersonation); the credit primitives (`reserveCredits`/`withLlmBudget`) are worker-shared and have no web-session context. So a spend-only block MUST sit at the web spend *entry points*.
+  - **Decision (user-approved):** add a shared `isImpersonating()` helper (in `compat.ts`, reading `auth.api.getSession().session.impersonatedBy` — the raw session compat drops) and an additive early-return guard `if (await isImpersonating()) return { error }` at each web spend entry point. This **deliberately touches the money-path files** (the user explicitly relaxed the no-touch rule for these *additive* guards only — no charge-logic change). The ~7 entry points: `gen-actions.startGen`, `refgen-actions.startRefGen` (+ the 2nd refgen fn), `cowork-actions` (2 `withLlmBudget` sites), `otto-actions` (2 `withLlmBudget` sites), `app/api/otto/stream/route.ts` (the streaming spend).
 - **Note:** the plugin strips impersonation sessions from `list-user-sessions` output; `banUser` cannot target self; impersonating an admin-role target would additionally require the `impersonate-admins` permission (not granted — we only impersonate customers).
 
 ---
@@ -200,9 +200,9 @@ Follow the existing pattern (`apps/web/lib/__tests__/require-owner.test.ts`, `is
 - **operator-actions:** each action (a) denies a non-super-admin / non-finance caller via the gate, (b) performs the correct BA call / Prisma write on success, (c) writes the expected `actionEvent`. `grantTenantCredits` is idempotent on its key.
 - **Ban:** `suspendTenant` flips `Membership.status` and calls `banUser`; a suspended membership makes `requireOwner` return `{ error }` (already covered by isolation tests for `status`).
 - **Role mirror:** `setOperatorRole` writes both `User.role` and `BetterAuthUser.role`; `convergeIdentity` stamps `BetterAuthUser.role` for the founder.
-- **Impersonation (Phase 2):** when the raw session has `impersonatedBy` set, `requireSession`/`requireOwner` deny spend callers; non-spend reads still pass.
+- **Impersonation (Phase 2):** `isImpersonating()` is true when the raw BA session has `impersonatedBy` set; each guarded spend entry point returns `{ error }` (or refuses) while impersonating; non-spend reads/writes still pass.
 - **Boot:** the plugin initializes without throwing (`adminRoles` ⊆ `roles` keys), and the allowlist `user.create.before` gate still runs.
-- **Money path:** the existing gen/cowork/meter tests stay green (no changes there).
+- **Money path:** the spend guards are additive early-returns; the existing gen/cowork/meter charge-logic tests stay green (no charge-logic change).
 
 ---
 
