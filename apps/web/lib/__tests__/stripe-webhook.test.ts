@@ -54,4 +54,14 @@ describe("stripe webhook", () => {
     expect(res.status).toBe(200);
     expect(grantCredits).not.toHaveBeenCalled();
   });
+
+  it("200 + no grant for checkout.session.completed with payment_status !== 'paid'", async () => {
+    constructEvent.mockReturnValue({
+      id: "evt_4", type: "checkout.session.completed",
+      data: { object: { payment_status: "no_payment_required", metadata: { orgId: "org_1", credits: "100" } } },
+    });
+    const res = await POST(req());
+    expect(res.status).toBe(200);
+    expect(grantCredits).not.toHaveBeenCalled();
+  });
 });
