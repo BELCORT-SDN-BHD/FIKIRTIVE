@@ -389,6 +389,7 @@ export function OttoChatStream({
                         nativeInputValueSetter?.call(ta, seed);
                         ta.dispatchEvent(new Event("input", { bubbles: true }));
                         ta.focus();
+                        setText(seed); // mirror OttoConversation — sync React state directly
                       }
                     }}
                   />
