@@ -66,7 +66,7 @@ export function OttoView({
   if (view === "memory") {
     return (
       <div style={{ flex: 1, display: "flex", flexDirection: "column", overflow: "hidden" }}>
-        <OttoMemory initialMemory={memory} />
+        <OttoMemory initialMemory={memory} projectId={projectId} />
       </div>
     );
   }
