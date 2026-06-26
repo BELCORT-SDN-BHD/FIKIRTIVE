@@ -8,6 +8,8 @@ import type { EntityDTO, ChatThreadDTO } from "@/lib/types";
 import type { MemoryRow } from "@/lib/memory-actions";
 import type { AccountInfo } from "@/lib/account-actions";
 import { getMyAccount } from "@/lib/account-actions";
+import { deleteCoworkThread } from "@/lib/otto-actions";
+import { nextActiveThreadId } from "@/lib/thread-list";
 
 const MOBILE_BP = 680;
 
@@ -64,6 +66,25 @@ export function OttoApp({
     if (a && !("error" in a)) setBalanceCredits(a.balance);
   }, []);
 
+  async function handleDeleteThread(id: string) {
+    const snapshot = threads;
+    const snapshotActive = activeThreadId;
+    // Optimistic removal
+    setThreads((prev) => prev.filter((t) => t.id !== id));
+    const newActive = nextActiveThreadId(threads, id, activeThreadId);
+    if (activeThreadId === id) {
+      setActiveThreadId(newActive);
+      if (newActive === null) setView("otto");
+    }
+    const result = await deleteCoworkThread(id);
+    if ("error" in result) {
+      // Restore on failure
+      console.error("[handleDeleteThread] failed:", result.error);
+      setThreads(snapshot);
+      setActiveThreadId(snapshotActive);
+    }
+  }
+
   return (
     <div
       className="fk"
@@ -95,6 +116,7 @@ export function OttoApp({
           setView("otto");
           setActiveThreadId(null);
         }}
+        onDeleteThread={handleDeleteThread}
         balanceCredits={balanceCredits}
         userName={userName}
         userEmail={userEmail}
