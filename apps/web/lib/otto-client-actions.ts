@@ -9,6 +9,7 @@ import {
   ottoTurn as _ottoTurn,
   ottoApprove as _ottoApprove,
   createEmptyCoworkThread as _createEmptyCoworkThread,
+  deleteCoworkThread as _deleteCoworkThread,
 } from "./otto-actions";
 
 export async function ottoTurn(raw: unknown) {
@@ -21,4 +22,8 @@ export async function ottoApprove(raw: unknown) {
 
 export async function createEmptyCoworkThread(raw: unknown) {
   return _createEmptyCoworkThread(raw);
+}
+
+export async function deleteCoworkThread(threadId: string) {
+  return _deleteCoworkThread(threadId);
 }

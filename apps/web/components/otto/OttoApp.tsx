@@ -9,7 +9,7 @@ import type { EntityDTO, ChatThreadDTO } from "@/lib/types";
 import type { MemoryRow } from "@/lib/memory-actions";
 import type { AccountInfo } from "@/lib/account-actions";
 import { getMyAccount } from "@/lib/account-actions";
-import { deleteCoworkThread } from "@/lib/otto-actions";
+import { deleteCoworkThread } from "@/lib/otto-client-actions";
 import { nextActiveThreadId } from "@/lib/thread-list";
 
 const MOBILE_BP = 680;
