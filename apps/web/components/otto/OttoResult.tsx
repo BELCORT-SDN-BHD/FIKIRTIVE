@@ -5,9 +5,10 @@ import { Card, Button } from "@/components/fk";
 import { bustUrl } from "@/lib/media-retry";
 import { readPick, writePick } from "@/lib/result-pick";
 import { coworkVaryCard } from "@/lib/cowork-actions";
+import { creditsLabel } from "@/lib/credit-format";
 
 export interface OttoResultProps {
-  payload: { kind?: string; model?: string; urls?: string[]; generationIds?: string[]; prompt?: string; costUsd?: number } | null;
+  payload: { kind?: string; model?: string; urls?: string[]; generationIds?: string[]; prompt?: string; costUsd?: number; costCredits?: number } | null;
   onTweak?: () => void;
   /** The GEN_CARD id that produced this result — enables "Make another". */
   sourceCardId?: string;
@@ -357,6 +358,11 @@ export function OttoResult({ payload, onTweak, sourceCardId, onMakeAnother }: Ot
         {makeAnotherError && (
           <div role="alert" style={{ marginTop: "var(--space-2)", fontSize: "var(--text-sm)", color: "var(--error-700)" }}>
             {makeAnotherError}
+          </div>
+        )}
+        {typeof payload?.costCredits === "number" && (
+          <div style={{ marginTop: "var(--space-3)", fontSize: "var(--text-sm)", color: "var(--text-muted)" }}>
+            Cost: {creditsLabel(payload.costCredits)}
           </div>
         )}
         {/* Fix #12 — free "how's it look?" nudge */}

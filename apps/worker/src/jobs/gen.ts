@@ -21,6 +21,8 @@ import {
   videoDefaults,
   MAX_CONDITIONING_IMAGES,
   genSpentUsd,
+  pricedGenCredits,
+  displayCredits,
   type GenJobData,
   type GenModel,
   type GenVideoModel,
@@ -129,6 +131,7 @@ async function appendCoworkResult(
   kind: "GEN_RESULT" | "TURN_ERROR",
   generationIds: string[],
   errorText = "",
+  costCredits?: number,
 ): Promise<void> {
   if (!job.threadId) return;
   try {
@@ -138,7 +141,10 @@ async function appendCoworkResult(
         id: newId(), threadId: job.threadId, ownerId: job.ownerId, role: "AGENT", kind,
         seq: (last?.seq ?? 0) + 1, text: errorText,
         genJobId: job.id,
-        payload: { kind: job.kind === "VIDEO" ? "video" : "image", model: job.model, generationIds },
+        payload: {
+          kind: job.kind === "VIDEO" ? "video" : "image", model: job.model, generationIds,
+          ...(kind === "GEN_RESULT" && typeof costCredits === "number" ? { costCredits } : {}),
+        },
       },
     });
   } catch (e) {
@@ -274,7 +280,7 @@ export async function handleGen(data: GenJobData, retryCount: number): Promise<v
         // generation succeeded → the charge becomes permanent.
         await settleCredits(tx, { orgId: job.ownerId, refId: job.id });
       });
-      await appendCoworkResult(job, "GEN_RESULT", job.generationIds); // idempotent — P2002 swallowed if already written
+      await appendCoworkResult(job, "GEN_RESULT", job.generationIds, "", displayCredits(pricedGenCredits({ kind: job.kind as "IMAGE" | "VIDEO", model: job.model, count: job.count, videoOptions: job.videoOptions as { seconds?: number; resolution?: string; audio?: boolean } | null }))); // idempotent — P2002 swallowed if already written
       await resumeOttoAfterGen(job); // best-effort; at-most-once via ottoVerdictAt claim
       return;
     }
@@ -585,7 +591,7 @@ export async function handleGen(data: GenJobData, retryCount: number): Promise<v
     // FAILED+settled+delivered mismatch in that ordering.)
     await prisma.genJob.update({ where: { id: job.id }, data: { status: "DONE", progress: 100, finishedAt: new Date(), error: "" } });
     console.log(`[gen] ${job.id}: DONE → ${generationIds.length} generations via ${provider.name}`);
-    await appendCoworkResult(job, "GEN_RESULT", generationIds);
+    await appendCoworkResult(job, "GEN_RESULT", generationIds, "", displayCredits(pricedGenCredits({ kind: job.kind as "IMAGE" | "VIDEO", model: job.model, count: job.count, videoOptions: job.videoOptions as { seconds?: number; resolution?: string; audio?: boolean } | null })));
     await resumeOttoAfterGen(job); // best-effort; at-most-once via ottoVerdictAt claim
   } catch (err) {
     // PERSISTED error surfaces in the admin UI — strip any signed URL / argv a

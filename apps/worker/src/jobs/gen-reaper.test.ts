@@ -49,7 +49,10 @@ describe("reapStaleGenJobs — GENERATING branch", () => {
     expect(m.refundReservation).toHaveBeenCalledTimes(1);
     expect(m.refundReservation).toHaveBeenCalledWith(expect.anything(), { orgId: "o1", refId: "g1" });
     expect(m.chatMessageCreate).toHaveBeenCalledTimes(1);
-    expect(m.chatMessageCreate.mock.calls[0]![0].data).toMatchObject({ kind: "TURN_ERROR", genJobId: "g1", threadId: "t1" });
+    const created = m.chatMessageCreate.mock.calls[0]![0].data;
+    expect(created).toMatchObject({ kind: "TURN_ERROR", genJobId: "g1", threadId: "t1" });
+    // TURN_ERROR must never carry costCredits — only successful GEN_RESULT does
+    expect(created.payload).not.toHaveProperty("costCredits");
   });
 
   it("does NOT refund or post when the claim is lost (a live winner still owns it)", async () => {
