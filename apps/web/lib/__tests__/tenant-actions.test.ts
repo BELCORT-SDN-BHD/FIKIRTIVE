@@ -13,7 +13,10 @@ vi.mock("next/cache", () => ({ revalidatePath: vi.fn() }));
 // Provide only the prisma methods called by tenant-actions; stray calls throw.
 const membershipUpdateMany = vi.fn();
 const membershipFindMany = vi.fn();
-const sessionDeleteMany = vi.fn();
+const userFindMany = vi.fn();
+const baUserFindMany = vi.fn();
+const baUserUpdateMany = vi.fn();
+const baSessionDeleteMany = vi.fn();
 const allowedEmailUpsert = vi.fn();
 const allowedEmailUpdateMany = vi.fn();
 const actionEventCreate = vi.fn();
@@ -30,7 +33,9 @@ class MockInsufficientCredits extends Error {
 vi.mock("@fikirtive/db", () => ({
   prisma: {
     membership: { updateMany: membershipUpdateMany, findMany: membershipFindMany },
-    session: { deleteMany: sessionDeleteMany },
+    user: { findMany: userFindMany },
+    betterAuthUser: { findMany: baUserFindMany, updateMany: baUserUpdateMany },
+    betterAuthSession: { deleteMany: baSessionDeleteMany },
     allowedEmail: { upsert: allowedEmailUpsert, updateMany: allowedEmailUpdateMany },
     actionEvent: { create: actionEventCreate },
     organization: { findFirst: organizationFindFirst },
@@ -50,7 +55,10 @@ beforeEach(() => {
   mockRequireRole.mockReset();
   membershipUpdateMany.mockReset();
   membershipFindMany.mockReset();
-  sessionDeleteMany.mockReset();
+  userFindMany.mockReset();
+  baUserFindMany.mockReset();
+  baUserUpdateMany.mockReset();
+  baSessionDeleteMany.mockReset();
   allowedEmailUpsert.mockReset();
   allowedEmailUpdateMany.mockReset();
   actionEventCreate.mockReset();
@@ -112,6 +120,13 @@ describe("setMembershipStatus", () => {
 // ── cutTenantSessions ───────────────────────────────────────────────────────
 
 describe("cutTenantSessions", () => {
+  // helper: wire the 3-hop member→email→ba-user resolution
+  function wireMembers(baUserIds: string[]) {
+    membershipFindMany.mockResolvedValue(baUserIds.map((_, i) => ({ userId: `user_${i}` })));
+    userFindMany.mockResolvedValue(baUserIds.map((_, i) => ({ email: `u${i}@t.test` })));
+    baUserFindMany.mockResolvedValue(baUserIds.map((id) => ({ id })));
+  }
+
   it("returns the gate error when requireRole denies", async () => {
     mockRequireRole.mockResolvedValue(GATE_ERROR);
     const res = await cutTenantSessions("orgX");
@@ -131,22 +146,27 @@ describe("cutTenantSessions", () => {
     membershipFindMany.mockResolvedValue([]);
     const res = await cutTenantSessions("orgX");
     expect(res).toEqual({ ok: true, cut: 0 });
-    expect(sessionDeleteMany).not.toHaveBeenCalled();
+    expect(baSessionDeleteMany).not.toHaveBeenCalled();
   });
 
-  it("deletes sessions scoped to the org's member userIds only", async () => {
+  it("deletes BetterAuthSession rows scoped to the org's BA user ids", async () => {
     mockRequireRole.mockResolvedValue(GATE);
-    membershipFindMany.mockResolvedValue([
-      { userId: "user_1" },
-      { userId: "user_2" },
-    ]);
-    sessionDeleteMany.mockResolvedValue({ count: 3 });
+    wireMembers(["ba_1", "ba_2"]);
+    baSessionDeleteMany.mockResolvedValue({ count: 3 });
     const res = await cutTenantSessions("orgX");
     expect(res).toEqual({ ok: true, cut: 3 });
-    // The deleteMany MUST use { userId: { in: [...] } } scoped to those exact users
-    expect(sessionDeleteMany).toHaveBeenCalledWith({
-      where: { userId: { in: ["user_1", "user_2"] } },
+    expect(baSessionDeleteMany).toHaveBeenCalledWith({
+      where: { userId: { in: ["ba_1", "ba_2"] } },
     });
+  });
+
+  it("does NOT touch the legacy Session table (cutover bug fix)", async () => {
+    mockRequireRole.mockResolvedValue(GATE);
+    wireMembers(["ba_1"]);
+    baSessionDeleteMany.mockResolvedValue({ count: 1 });
+    await cutTenantSessions("orgX");
+    // legacy prisma.session is no longer in the mock; if cut still referenced it the call would throw.
+    expect(baSessionDeleteMany).toHaveBeenCalledTimes(1);
   });
 });
 

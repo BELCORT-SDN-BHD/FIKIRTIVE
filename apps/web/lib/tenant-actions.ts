@@ -6,6 +6,20 @@ import { revalidatePath } from "next/cache";
 
 const ORG_STATUS = new Set(["active", "suspended"]);
 
+/** Resolve an org's active members to their Better Auth user ids.
+ *  Membership.userId → User.email → BetterAuthUser.id (the two user tables join by email;
+ *  BetterAuthSession/ban operate on BetterAuthUser.id, a different id space from User.id). */
+async function orgMemberBaUserIds(orgId: string): Promise<string[]> {
+  const members = await prisma.membership.findMany({ where: { orgId, deletedAt: null }, select: { userId: true } });
+  const userIds = members.map((m) => m.userId);
+  if (userIds.length === 0) return [];
+  const users = await prisma.user.findMany({ where: { id: { in: userIds } }, select: { email: true } });
+  const emails = users.map((u) => u.email.toLowerCase());
+  if (emails.length === 0) return [];
+  const baUsers = await prisma.betterAuthUser.findMany({ where: { email: { in: emails } }, select: { id: true } });
+  return baUsers.map((u) => u.id);
+}
+
 export async function setMembershipStatus(orgId: string, status: string): Promise<{ ok: true } | { error: string }> {
   const gate = await requireRole("tenants", "mutate"); if ("error" in gate) return gate;
   if (typeof orgId !== "string" || !orgId || orgId === FOUNDER_OWNER_ID) return { error: "Invalid org." };
@@ -21,10 +35,9 @@ export async function setMembershipStatus(orgId: string, status: string): Promis
 export async function cutTenantSessions(orgId: string): Promise<{ ok: true; cut: number } | { error: string }> {
   const gate = await requireRole("tenants", "mutate"); if ("error" in gate) return gate;
   if (typeof orgId !== "string" || !orgId || orgId === FOUNDER_OWNER_ID) return { error: "Invalid org." };
-  const members = await prisma.membership.findMany({ where: { orgId, deletedAt: null }, select: { userId: true } });
-  const userIds = members.map((m) => m.userId);
-  if (userIds.length === 0) return { ok: true, cut: 0 };
-  const { count } = await prisma.session.deleteMany({ where: { userId: { in: userIds } } });
+  const baUserIds = await orgMemberBaUserIds(orgId);
+  if (baUserIds.length === 0) return { ok: true, cut: 0 };
+  const { count } = await prisma.betterAuthSession.deleteMany({ where: { userId: { in: baUserIds } } });
   await prisma.actionEvent.create({ data: { id: newId(), ownerId: FOUNDER_OWNER_ID, type: "tenant.cut", payload: { orgId, cut: count, via: gate.email } } }).catch(() => {});
   await prisma.actionEvent.create({ data: { id: newId(), ownerId: orgId, type: "tenant.cut", payload: { cut: count, via: gate.email } } }).catch(() => {});
   revalidatePath(`/admin/tenants/${orgId}`);
