@@ -7,6 +7,9 @@ import { useStickToBottom } from "use-stick-to-bottom";
 import { OttoAvatar, Button } from "@/components/fk";
 import { getCoworkThreadClient } from "@/lib/cowork-fetch";
 import { threadToUiMessages, type OttoUiMessage } from "@/lib/otto-ui-messages";
+import { ImageIcon } from "lucide-react";
+import { uploadFilesDirect } from "@/lib/direct-upload";
+import { finalizeCandidateUploads } from "@/lib/upload-actions";
 import {
   resultJobIds,
   errorJobIds,
@@ -84,6 +87,14 @@ export function OttoChatStream({
    *  session — drives the optimistic "working" state before the genJobId lands from the
    *  durable thread. Resets on remount (thread switch = component re-key). */
   const [submittedCardIds, setSubmittedCardIds] = useState<Set<string>>(new Set());
+  /** Image attachment: a generation created from a user-uploaded file, included as
+   *  sourceGenerationId on the next send. Null when no image is attached. */
+  const [attached, setAttached] = useState<{ generationId: string; src: string } | null>(null);
+  /** True while the file is being hashed + uploaded + finalized. */
+  const [uploading, setUploading] = useState(false);
+  /** Upload error message shown near the attach button; clears on next successful attach. */
+  const [attachError, setAttachError] = useState<string | null>(null);
+  const fileInputRef = useRef<HTMLInputElement>(null);
 
   // Bounded in-flight poll for the async worker result (ported from OttoConversation):
   // a GEN_CARD whose genJobId is set but with no terminal GEN_RESULT/TURN_ERROR keeps
@@ -109,7 +120,7 @@ export function OttoChatStream({
     transport: new DefaultChatTransport<OttoUiMessage>({
       api: "/api/otto/stream",
       prepareSendMessagesRequest: ({ messages, body }) => {
-        const ids = (body ?? {}) as { projectId?: string; threadId?: string; goalKey?: string };
+        const ids = (body ?? {}) as { projectId?: string; threadId?: string; goalKey?: string; sourceGenerationId?: string };
         return {
           body: {
             projectId: ids.projectId,
@@ -119,6 +130,7 @@ export function OttoChatStream({
             // goalKey only on the first message of a goal-seeded thread; coworkTurnRequest
             // accepts it as an optional field, so include it only when present.
             ...(ids.goalKey ? { goalKey: ids.goalKey } : {}),
+            ...(ids.sourceGenerationId ? { sourceGenerationId: ids.sourceGenerationId } : {}),
           },
         };
       },
@@ -259,12 +271,51 @@ export function OttoChatStream({
     // Reset ephemeral stream state for the new turn.
     setLiveStatus(null);
     setStreamError(null);
+    setAttachError(null);
     // A new turn may queue a new generation — re-arm polling (mirror OttoConversation).
     setPollGaveUp(false);
     pollCountRef.current = 0;
-    // Pass the live projectId/threadId via the per-call body; prepareSendMessagesRequest
-    // reads them off `body` and shapes the strict route payload.
-    void sendMessage({ text: trimmed }, { body: { projectId, threadId: thread.id } });
+    // Capture and clear the attachment before send.
+    const attachedNow = attached;
+    setAttached(null);
+    // Pass the live projectId/threadId (and optional sourceGenerationId) via the per-call
+    // body; prepareSendMessagesRequest reads them off `body` and shapes the strict route payload.
+    void sendMessage(
+      { text: trimmed },
+      {
+        body: {
+          projectId,
+          threadId: thread.id,
+          ...(attachedNow ? { sourceGenerationId: attachedNow.generationId } : {}),
+        },
+      },
+    );
+  }
+
+  async function handleFilePick(e: React.ChangeEvent<HTMLInputElement>) {
+    const file = e.target.files?.[0];
+    // Reset the input so the same file can be picked again if the user re-attaches.
+    e.target.value = "";
+    if (!file) return;
+    setAttachError(null);
+    setUploading(true);
+    try {
+      const outcome = await uploadFilesDirect([file], () => {});
+      if (outcome.files.length === 0) {
+        setAttachError(outcome.failures[0]?.reason ?? "Upload failed.");
+        return;
+      }
+      const res = await finalizeCandidateUploads(projectId, "", [], outcome.files);
+      if ("error" in res || !res.generationIds?.[0]) {
+        setAttachError("error" in res ? res.error : "Could not attach image.");
+        return;
+      }
+      setAttached({ generationId: res.generationIds[0], src: URL.createObjectURL(file) });
+    } catch (err) {
+      setAttachError(err instanceof Error ? err.message : "Upload failed.");
+    } finally {
+      setUploading(false);
+    }
   }
 
   function handleKeyDown(e: React.KeyboardEvent<HTMLTextAreaElement>) {
@@ -615,6 +666,93 @@ export function OttoChatStream({
         }}
       >
         <div style={{ maxWidth: 680, margin: "0 auto" }}>
+          {/* Hidden file input — triggered by the attach button below */}
+          <input
+            ref={fileInputRef}
+            type="file"
+            accept="image/png,image/jpeg,image/webp"
+            style={{ display: "none" }}
+            onChange={handleFilePick}
+          />
+
+          {/* Thumbnail chip: shown while uploading or when an image is attached */}
+          {(uploading || attached) && (
+            <div
+              style={{
+                display: "flex",
+                alignItems: "center",
+                gap: "var(--space-2)",
+                marginBottom: "var(--space-2)",
+              }}
+            >
+              {uploading ? (
+                <div
+                  style={{
+                    display: "inline-flex",
+                    alignItems: "center",
+                    gap: "var(--space-2)",
+                    padding: "var(--space-1) var(--space-2)",
+                    background: "var(--surface-raised)",
+                    borderRadius: "var(--radius-md)",
+                    border: "1px solid var(--border-subtle)",
+                    fontSize: "var(--text-sm)",
+                    color: "var(--text-muted)",
+                  }}
+                >
+                  attaching…
+                </div>
+              ) : attached ? (
+                <div
+                  style={{
+                    display: "inline-flex",
+                    alignItems: "center",
+                    gap: "var(--space-2)",
+                    padding: "var(--space-1) var(--space-2)",
+                    background: "var(--surface-raised)",
+                    borderRadius: "var(--radius-md)",
+                    border: "1px solid var(--border-subtle)",
+                  }}
+                >
+                  {/* eslint-disable-next-line @next/next/no-img-element */}
+                  <img
+                    src={attached.src}
+                    alt="Attached reference"
+                    style={{ width: 40, height: 40, objectFit: "cover", borderRadius: "var(--radius-sm)" }}
+                  />
+                  <button
+                    type="button"
+                    aria-label="Remove attached image"
+                    onClick={() => setAttached(null)}
+                    style={{
+                      background: "none",
+                      border: "none",
+                      cursor: "pointer",
+                      color: "var(--text-muted)",
+                      lineHeight: 1,
+                      padding: 0,
+                      fontSize: "var(--text-sm)",
+                    }}
+                  >
+                    ×
+                  </button>
+                </div>
+              ) : null}
+            </div>
+          )}
+
+          {/* Attach error */}
+          {attachError && (
+            <div
+              style={{
+                marginBottom: "var(--space-2)",
+                fontSize: "var(--text-sm)",
+                color: "var(--error-700)",
+              }}
+            >
+              {attachError}
+            </div>
+          )}
+
           <div
             style={{
               background: "var(--bg-page)",
@@ -648,11 +786,31 @@ export function OttoChatStream({
             <div
               style={{
                 display: "flex",
-                justifyContent: "flex-end",
+                justifyContent: "space-between",
+                alignItems: "center",
                 padding: "var(--space-2) var(--space-3)",
                 borderTop: "1px solid var(--border-subtle)",
               }}
             >
+              {/* Attach image button */}
+              <button
+                type="button"
+                aria-label="Attach reference image"
+                disabled={isBusy || uploading}
+                onClick={() => fileInputRef.current?.click()}
+                style={{
+                  background: "none",
+                  border: "none",
+                  cursor: isBusy || uploading ? "default" : "pointer",
+                  color: attached ? "var(--brand)" : "var(--text-muted)",
+                  padding: "var(--space-1)",
+                  display: "inline-flex",
+                  alignItems: "center",
+                  opacity: isBusy || uploading ? 0.5 : 1,
+                }}
+              >
+                <ImageIcon size={18} />
+              </button>
               <Button variant="primary" size="sm" disabled={isBusy || !text.trim()} onClick={submit}>
                 {isBusy ? "Sending…" : "Send"}
               </Button>
