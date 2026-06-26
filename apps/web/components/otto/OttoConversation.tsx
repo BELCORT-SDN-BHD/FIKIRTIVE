@@ -16,6 +16,8 @@ export interface OttoConversationProps {
   onRefresh: () => Promise<void>;
   onThreadUpdate: (thread: ChatThreadDTO) => void;
   onEditByHand: () => void;
+  /** Re-reads the account balance and updates the nav display after a spend event. */
+  onBalanceRefresh?: () => void | Promise<void>;
 }
 
 export function OttoConversation({
@@ -26,6 +28,7 @@ export function OttoConversation({
   onRefresh,
   onThreadUpdate,
   onEditByHand,
+  onBalanceRefresh,
 }: OttoConversationProps) {
   const [text, setText] = useState("");
   const [busy, setBusy] = useState(false);
@@ -78,6 +81,8 @@ export function OttoConversation({
       }
       setText("");
       await refreshAndUpdate();
+      // A completed turn meters LLM credits — refresh the nav balance display.
+      void onBalanceRefresh?.();
     } catch {
       setError("Couldn't reach Otto — please try again.");
     } finally {
@@ -205,6 +210,8 @@ export function OttoConversation({
                 // prior job had already hit the give-up cap.
                 setPollGaveUp(false);
                 pollCountRef.current = 0;
+                // An approve reserves credits — refresh the nav balance immediately.
+                void onBalanceRefresh?.();
                 refreshAndUpdate();
               }}
               onChangeRequest={() => {

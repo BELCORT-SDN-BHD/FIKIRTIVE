@@ -1,5 +1,5 @@
 "use client";
-import React, { useState } from "react";
+import React, { useState, useCallback } from "react";
 import "../../app/otto/otto-theme.css";
 import { OttoNav } from "./OttoNav";
 import { OttoView } from "./OttoView";
@@ -8,6 +8,7 @@ import type { AdTile } from "./OttoStuff";
 import type { EntityDTO, ChatThreadDTO } from "@/lib/types";
 import type { MemoryRow } from "@/lib/memory-actions";
 import type { AccountInfo } from "@/lib/account-actions";
+import { getMyAccount } from "@/lib/account-actions";
 
 export interface OttoAppProps {
   projectId: string;
@@ -31,7 +32,7 @@ export function OttoApp({
   entities,
   threads: initialThreads,
   balanceUsd,
-  balanceCredits,
+  balanceCredits: initialBalanceCredits,
   userName,
   userEmail,
   memory,
@@ -45,6 +46,12 @@ export function OttoApp({
     initialThreads[0]?.id ?? null,
   );
   const [workshopOpen, setWorkshopOpen] = useState(false);
+  const [balanceCredits, setBalanceCredits] = useState(initialBalanceCredits);
+
+  const refreshBalance = useCallback(async () => {
+    const a = await getMyAccount();
+    if (a && !("error" in a)) setBalanceCredits(a.balance);
+  }, []);
 
   return (
     <div
@@ -90,6 +97,7 @@ export function OttoApp({
           account={account}
           ottoStreamEnabled={ottoStreamEnabled}
           onEditByHand={() => setWorkshopOpen(true)}
+          onBalanceRefresh={refreshBalance}
         />
       </div>
 
