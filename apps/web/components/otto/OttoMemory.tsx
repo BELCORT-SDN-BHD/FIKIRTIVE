@@ -1,8 +1,9 @@
 "use client";
 import React, { useRef, useState } from "react";
-import { Sparkles, Plus, Pencil, Trash2, Check, X, Send, MessageCircle } from "lucide-react";
+import { Sparkles, Plus, Pencil, Trash2, Check, X, Send, MessageCircle, Globe } from "lucide-react";
 import { Card, Button, Textarea, Badge } from "@/components/fk";
 import { addMemory, updateMemory, deleteMemory, listMyMemory, type MemoryRow } from "@/lib/memory-actions";
+import { researchBrandFromUrl, type ProposedFact } from "@/lib/brand-research";
 import { ottoTurn } from "@/lib/otto-client-actions";
 import { getCoworkThreadClient } from "@/lib/cowork-fetch";
 import { suggestCategory, isNearDup } from "@/lib/memory-suggest";
@@ -77,8 +78,73 @@ export function OttoMemory({ initialMemory, projectId }: { initialMemory: Memory
     });
   }
 
+  // ── Research from URL state ──
+  const [researchUrl, setResearchUrl] = useState("");
+  const [researching, setResearching] = useState(false);
+  const [researchError, setResearchError] = useState<string | null>(null);
+  const [proposedFacts, setProposedFacts] = useState<ProposedFact[]>([]);
+  const [selectedFacts, setSelectedFacts] = useState<Set<number>>(new Set());
+  const [savingFacts, setSavingFacts] = useState(false);
+
   async function refresh() {
     setMemory(await listMyMemory());
+  }
+
+  // ── Research from URL handlers ──
+  async function doResearch() {
+    const url = researchUrl.trim();
+    if (!url || researching) return;
+    setResearching(true);
+    setResearchError(null);
+    setProposedFacts([]);
+    setSelectedFacts(new Set());
+    const res = await researchBrandFromUrl(url);
+    if ("error" in res) {
+      setResearchError(res.error);
+    } else {
+      setProposedFacts(res.facts);
+      // pre-select all facts
+      setSelectedFacts(new Set(res.facts.map((_, i) => i)));
+    }
+    setResearching(false);
+  }
+
+  async function addSelectedFacts() {
+    const toAdd = proposedFacts.filter((_, i) => selectedFacts.has(i));
+    if (!toAdd.length || savingFacts) return;
+    setSavingFacts(true);
+    setResearchError(null);
+    // Save each fact independently; collect the ones that didn't save so a
+    // mid-loop failure can't silently drop facts while the panel clears.
+    const failed: ProposedFact[] = [];
+    for (const fact of toAdd) {
+      try {
+        const res = await addMemory({ category: fact.category, content: fact.content });
+        if (res && "error" in res) failed.push(fact);
+      } catch {
+        failed.push(fact);
+      }
+    }
+    await refresh();
+    if (failed.length) {
+      // Keep the panel open showing only the still-unsaved facts, all pre-selected.
+      setProposedFacts(failed);
+      setSelectedFacts(new Set(failed.map((_, i) => i)));
+      setResearchError("Some couldn't be saved — try again.");
+    } else {
+      setProposedFacts([]);
+      setSelectedFacts(new Set());
+      setResearchUrl("");
+    }
+    setSavingFacts(false);
+  }
+
+  function toggleFact(i: number) {
+    setSelectedFacts((prev) => {
+      const next = new Set(prev);
+      if (next.has(i)) next.delete(i); else next.add(i);
+      return next;
+    });
   }
 
   async function sendChat() {
@@ -174,6 +240,112 @@ export function OttoMemory({ initialMemory, projectId }: { initialMemory: Memory
         <p style={{ fontSize: "var(--text-base)", color: "var(--text-muted)", marginTop: "var(--space-2)", marginBottom: "var(--space-5)" }}>
           Chat with Otto about your brand — what you sell, your style, who it&apos;s for. Otto uses it on every campaign.
         </p>
+
+        {/* ── Research my brand ── */}
+        <Card variant="tint" padding="md" style={{ marginBottom: "var(--space-5)" }}>
+          <div style={{ display: "flex", alignItems: "center", gap: "var(--space-2)", marginBottom: "var(--space-3)" }}>
+            <Globe size={18} color="var(--accent)" />
+            <span style={{ fontWeight: "var(--weight-bold)" as React.CSSProperties["fontWeight"], color: "var(--text-strong)" }}>
+              Research my brand from a URL
+            </span>
+          </div>
+          <p style={{ fontSize: "var(--text-sm)", color: "var(--text-muted)", marginBottom: "var(--space-3)", marginTop: 0 }}>
+            Paste your website and Otto will read it and propose brand facts to add to memory.
+          </p>
+          <div style={{ display: "flex", gap: "var(--space-2)", alignItems: "flex-end" }}>
+            <div style={{ flex: 1 }}>
+              <Textarea
+                value={researchUrl}
+                onChange={(e) => setResearchUrl(e.target.value)}
+                placeholder="https://yourbrand.com"
+                rows={1}
+                disabled={researching}
+              />
+            </div>
+            <Button
+              variant="primary"
+              size="md"
+              leftIcon={<Globe size={16} />}
+              disabled={researching || !researchUrl.trim()}
+              onClick={() => void doResearch()}
+            >
+              {researching ? "Researching…" : "Research"}
+            </Button>
+          </div>
+          <p style={{ fontSize: "var(--text-xs)", color: "var(--text-faint)", marginTop: "var(--space-2)", marginBottom: proposedFacts.length ? "var(--space-3)" : 0 }}>
+            Researching uses a little credit.
+          </p>
+
+          {researchError && (
+            <div role="alert" style={{ color: "var(--error-700)", fontSize: "var(--text-sm)", marginBottom: "var(--space-2)" }}>
+              {researchError}
+            </div>
+          )}
+
+          {proposedFacts.length > 0 && (
+            <div>
+              <p style={{ fontSize: "var(--text-sm)", fontWeight: "var(--weight-semibold)" as React.CSSProperties["fontWeight"], color: "var(--text-strong)", marginBottom: "var(--space-2)", marginTop: 0 }}>
+                Otto found {proposedFacts.length} brand fact{proposedFacts.length !== 1 ? "s" : ""} — select the ones to add:
+              </p>
+              <div style={{ display: "flex", flexDirection: "column", gap: "var(--space-2)", marginBottom: "var(--space-3)" }}>
+                {proposedFacts.map((fact, i) => {
+                  const selected = selectedFacts.has(i);
+                  return (
+                    <button
+                      key={i}
+                      type="button"
+                      onClick={() => toggleFact(i)}
+                      style={{
+                        display: "flex",
+                        alignItems: "flex-start",
+                        gap: "var(--space-2)",
+                        padding: "10px 14px",
+                        borderRadius: 10,
+                        border: selected ? "1.5px solid var(--brand)" : "1.5px solid var(--border-default)",
+                        background: selected ? "var(--surface-raised)" : "var(--surface-card)",
+                        cursor: "pointer",
+                        textAlign: "left",
+                        transition: "var(--transition-control)",
+                      }}
+                    >
+                      <div style={{
+                        width: 18,
+                        height: 18,
+                        borderRadius: 4,
+                        border: selected ? "1.5px solid var(--brand)" : "1.5px solid var(--border-default)",
+                        background: selected ? "var(--brand)" : "transparent",
+                        flex: "none",
+                        marginTop: 1,
+                        display: "flex",
+                        alignItems: "center",
+                        justifyContent: "center",
+                      }}>
+                        {selected && <Check size={12} color="var(--text-on-brand)" />}
+                      </div>
+                      <div>
+                        <div style={{ marginBottom: 4 }}><Badge variant="brand">{fact.category}</Badge></div>
+                        <div style={{ fontSize: "var(--text-sm)", color: "var(--text-body)", lineHeight: "var(--leading-relaxed)" }}>
+                          {fact.content}
+                        </div>
+                      </div>
+                    </button>
+                  );
+                })}
+              </div>
+              <div style={{ display: "flex", justifyContent: "flex-end" }}>
+                <Button
+                  variant="primary"
+                  size="md"
+                  leftIcon={<Plus size={16} />}
+                  disabled={savingFacts || selectedFacts.size === 0}
+                  onClick={() => void addSelectedFacts()}
+                >
+                  {savingFacts ? "Saving…" : `Add ${selectedFacts.size} selected`}
+                </Button>
+              </div>
+            </div>
+          )}
+        </Card>
 
         {/* ── Chat panel ── */}
         <Card variant="tint" padding="md">
