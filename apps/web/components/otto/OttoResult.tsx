@@ -49,10 +49,12 @@ function Media({ url, rounded = true }: { url: string; rounded?: boolean }) {
   return (
     <div style={{ borderRadius: rounded ? "var(--radius-lg)" : 0, overflow: "hidden", background: "var(--surface-sunken)" }}>
       {video ? (
-        <video src={url} controls muted loop playsInline style={{ width: "100%", display: "block" }} />
+        // preload="none" defers network fetch until the user interacts; loading="lazy"
+        // is not a standard video attribute but preload=none covers the same intent.
+        <video src={url} controls muted loop playsInline preload="none" style={{ width: "100%", display: "block" }} />
       ) : (
         // eslint-disable-next-line @next/next/no-img-element
-        <img src={url} alt="" style={{ width: "100%", display: "block" }} />
+        <img src={url} alt="" loading="lazy" style={{ width: "100%", display: "block" }} />
       )}
     </div>
   );

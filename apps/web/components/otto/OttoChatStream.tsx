@@ -91,7 +91,12 @@ export function OttoChatStream({
   const POLL_MS = 2500;
   const MAX_POLLS = 48; // ~2 minutes
   const [pollGaveUp, setPollGaveUp] = useState(false);
+  /** Set to true after the user has clicked "Check again" and the second MAX_POLLS round
+   *  also exhausted — shows a terminal message instead of re-arming indefinitely. */
+  const [pollTerminal, setPollTerminal] = useState(false);
   const pollCountRef = useRef(0);
+  /** Track whether the user has already clicked "Check again" once (armed → gave up → terminal). */
+  const checkAgainUsedRef = useRef(false);
 
   // useChat constructs its Chat (and captures `transport` + initial `messages`) ONCE.
   // We build both in a one-time useState initializer so they're stable across renders.
@@ -225,16 +230,24 @@ export function OttoChatStream({
     if (prevThreadIdRef.current === thread.id) return;
     prevThreadIdRef.current = thread.id;
     setPollGaveUp(false);
+    setPollTerminal(false);
     pollCountRef.current = 0;
+    checkAgainUsedRef.current = false;
   }, [thread.id]);
 
   // Bounded poll: a worker that fails-closed without writing a terminal message would
   // otherwise keep hasWorkingJob true forever. After ~2 min we stop and show "Check again".
+  // If the user clicks "Check again" and we exhaust again, show a terminal message
+  // instead of looping forever (checkAgainUsedRef guards the second exhaustion).
   useEffect(() => {
     if (!hasWorkingJob || pollGaveUp) return;
     const t = setInterval(() => {
       pollCountRef.current += 1;
       if (pollCountRef.current >= MAX_POLLS) {
+        if (checkAgainUsedRef.current) {
+          // Second exhaustion after "Check again" → terminal, stop re-arming.
+          setPollTerminal(true);
+        }
         setPollGaveUp(true);
         clearInterval(t);
         return;
@@ -271,7 +284,9 @@ export function OttoChatStream({
     setStreamError(null);
     // A new turn may queue a new generation — re-arm polling (mirror OttoConversation).
     setPollGaveUp(false);
+    setPollTerminal(false);
     pollCountRef.current = 0;
+    checkAgainUsedRef.current = false;
     // Pass the live projectId/threadId via the per-call body; prepareSendMessagesRequest
     // reads them off `body` and shapes the strict route payload.
     void sendMessage({ text: trimmed }, { body: { projectId, threadId: thread.id } });
@@ -534,7 +549,7 @@ export function OttoChatStream({
             </div>
           )}
 
-          {!isBusy && hasWorkingJob && pollGaveUp && (
+          {!isBusy && hasWorkingJob && pollGaveUp && !pollTerminal && (
             <div style={{ display: "flex", alignItems: "flex-start", gap: "var(--space-3)" }}>
               <OttoAvatar size={32} state="idle" />
               <div
@@ -551,6 +566,7 @@ export function OttoChatStream({
                 <button
                   type="button"
                   onClick={() => {
+                    checkAgainUsedRef.current = true;
                     setPollGaveUp(false);
                     pollCountRef.current = 0;
                     void pollAndInjectResults();
@@ -559,6 +575,24 @@ export function OttoChatStream({
                 >
                   Check again
                 </button>
+              </div>
+            </div>
+          )}
+
+          {!isBusy && hasWorkingJob && pollTerminal && (
+            <div style={{ display: "flex", alignItems: "flex-start", gap: "var(--space-3)" }}>
+              <OttoAvatar size={32} state="idle" />
+              <div
+                style={{
+                  padding: "var(--space-3) var(--space-4)",
+                  background: "var(--surface-card)",
+                  border: "1px solid var(--border-subtle)",
+                  borderRadius: "0 var(--radius-lg) var(--radius-lg) var(--radius-lg)",
+                  fontSize: "var(--text-sm)",
+                  color: "var(--text-body)",
+                }}
+              >
+                This didn&rsquo;t recover — if it was charged it&rsquo;s been refunded. Start a new card.
               </div>
             </div>
           )}

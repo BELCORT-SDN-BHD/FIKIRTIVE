@@ -55,7 +55,9 @@ export function OttoConversation({
     setError(null);
     // a new turn may queue a new generation — re-arm polling
     setPollGaveUp(false);
+    setPollTerminal(false);
     pollCountRef.current = 0;
+    checkAgainUsedRef.current = false;
     try {
       const res = await ottoTurn({
         threadId: thread.id,
@@ -131,12 +133,17 @@ export function OttoConversation({
   const POLL_MS = 2500;
   const MAX_POLLS = 48; // ~2 minutes
   const [pollGaveUp, setPollGaveUp] = useState(false);
+  /** Set to true after "Check again" exhausts a second MAX_POLLS round — terminal message. */
+  const [pollTerminal, setPollTerminal] = useState(false);
   const pollCountRef = useRef(0);
+  const checkAgainUsedRef = useRef(false);
 
   // Reset the give-up state whenever we switch threads.
   useEffect(() => {
     setPollGaveUp(false);
+    setPollTerminal(false);
     pollCountRef.current = 0;
+    checkAgainUsedRef.current = false;
   }, [thread.id]);
 
   useEffect(() => {
@@ -144,6 +151,7 @@ export function OttoConversation({
     const t = setInterval(() => {
       pollCountRef.current += 1;
       if (pollCountRef.current >= MAX_POLLS) {
+        if (checkAgainUsedRef.current) setPollTerminal(true);
         setPollGaveUp(true);
         clearInterval(t);
         return;
@@ -275,7 +283,7 @@ export function OttoConversation({
             </div>
           )}
 
-          {!busy && hasWorkingJob && pollGaveUp && (
+          {!busy && hasWorkingJob && pollGaveUp && !pollTerminal && (
             <div style={{ display: "flex", alignItems: "flex-start", gap: "var(--space-3)" }}>
               <OttoAvatar size={32} state="idle" />
               <div
@@ -292,6 +300,7 @@ export function OttoConversation({
                 <button
                   type="button"
                   onClick={() => {
+                    checkAgainUsedRef.current = true;
                     setPollGaveUp(false);
                     pollCountRef.current = 0;
                     void refreshAndUpdate();
@@ -300,6 +309,24 @@ export function OttoConversation({
                 >
                   Check again
                 </button>
+              </div>
+            </div>
+          )}
+
+          {!busy && hasWorkingJob && pollTerminal && (
+            <div style={{ display: "flex", alignItems: "flex-start", gap: "var(--space-3)" }}>
+              <OttoAvatar size={32} state="idle" />
+              <div
+                style={{
+                  padding: "var(--space-3) var(--space-4)",
+                  background: "var(--surface-card)",
+                  border: "1px solid var(--border-subtle)",
+                  borderRadius: "0 var(--radius-lg) var(--radius-lg) var(--radius-lg)",
+                  fontSize: "var(--text-sm)",
+                  color: "var(--text-body)",
+                }}
+              >
+                This didn&rsquo;t recover — if it was charged it&rsquo;s been refunded. Start a new card.
               </div>
             </div>
           )}
