@@ -8,6 +8,7 @@ import { generate } from "./tools/generate.js";
 import { updateBrief } from "./tools/update-brief.js";
 import { describeRefs } from "./tools/describe-refs.js";
 import { setTitle } from "./tools/set-title.js";
+import { rememberBrandFact } from "./tools/remember-brand-fact.js";
 
 /** Re-exported for credit price lookup (withLlmBudget). Model selection + 529 failover live in ./model.ts. */
 export { OTTO_DEFAULT_MODEL };
@@ -21,6 +22,6 @@ export const otto = new Agent<OttoContext>({
   instructions: ottoInstructions,
   model: ottoModel,
   modelSettings: { maxTokens: OTTO_OUTPUT_CAP_TOKENS },
-  tools: [propose, generate, updateBrief, describeRefs, setTitle],
+  tools: [propose, generate, updateBrief, describeRefs, setTitle, rememberBrandFact],
   // maxTurns is a run() option, not an Agent constructor option — passed by the caller in Tasks 1.8/1.9
 });
