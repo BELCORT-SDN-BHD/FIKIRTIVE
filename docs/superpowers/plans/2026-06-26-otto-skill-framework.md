@@ -941,7 +941,7 @@ set -uo pipefail
 DIR="packages/otto/src/skills"
 
 hard=$(grep -rnE "from \"@fikirtive/generation\"|reserveCredits" "$DIR" --include='*.ts' 2>/dev/null \
-  | grep -v '\.test\.ts' | grep -vE '^\s*\*|//' || true)
+  | grep -v '\.test\.ts' | grep -vE ':\s*(\*|//)' || true)   # anchor after the grep -rn "file:lineno:" prefix
 
 if [ -n "$hard" ]; then
   echo "FAIL: skills/ must not import the fal provider or reserveCredits — route spend through a ctx port:"
@@ -949,7 +949,7 @@ if [ -n "$hard" ]; then
   exit 1
 fi
 
-warn=$(grep -rnE "from \"@fikirtive/db\"" "$DIR" --include='*.ts' 2>/dev/null | grep -v '\.test\.ts' | wc -l | tr -d ' ')
+warn=$(grep -rnE "from \"@fikirtive/db\"" "$DIR" --include='*.ts' 2>/dev/null | grep -v '\.test\.ts' | wc -l | tr -d ' ' || true)
 echo "skill-imports fence: 0 spend/provider bypass (hard-clean); $warn direct-Prisma sites (warn baseline)."
 exit 0
 ```
