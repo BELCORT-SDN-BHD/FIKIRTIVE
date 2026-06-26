@@ -1,11 +1,14 @@
 "use client";
-import React, { useState } from "react";
-import { Download, Copy, Check, Sparkles, ChevronLeft, Wrench } from "lucide-react";
+import React, { useState, useEffect, useRef } from "react";
+import { Download, Copy, Check, Sparkles, ChevronLeft, Wrench, AlertCircle } from "lucide-react";
 import { Card, Button } from "@/components/fk";
+import { bustUrl } from "@/lib/media-retry";
+import { readPick, writePick } from "@/lib/result-pick";
 
 export interface OttoResultProps {
-  payload: { kind?: string; model?: string; urls?: string[]; generationIds?: string[]; costUsd?: number } | null;
+  payload: { kind?: string; model?: string; urls?: string[]; generationIds?: string[]; prompt?: string; costUsd?: number } | null;
   onEditByHand?: () => void;
+  onTweak?: () => void;
 }
 
 const isVideoUrl = (u: string) => /\.(mp4|webm|mov|mkv)(\?|$)/i.test(u);
@@ -39,28 +42,200 @@ function DownloadLink({ url, filename }: { url: string; filename: string }) {
   );
 }
 
-function Media({ url, rounded = true }: { url: string; rounded?: boolean }) {
+/** Fix #1 — media with onError → retry with cache-bust, then show error tile */
+function Media({
+  url,
+  alt,
+  rounded = true,
+}: {
+  url: string;
+  alt: string;
+  rounded?: boolean;
+}) {
   const video = isVideoUrl(url);
+  const [attempt, setAttempt] = useState(0);
+  const [errored, setErrored] = useState(false);
+  const src = attempt === 0 ? url : bustUrl(url, attempt);
+
+  function handleError() {
+    if (attempt < 2) {
+      // Retry up to twice with cache-bust, then show error tile.
+      setAttempt((a) => a + 1);
+    } else {
+      setErrored(true);
+    }
+  }
+
+  if (errored) {
+    return (
+      <div
+        style={{
+          borderRadius: rounded ? "var(--radius-lg)" : 0,
+          background: "var(--surface-sunken)",
+          display: "flex",
+          flexDirection: "column",
+          alignItems: "center",
+          justifyContent: "center",
+          gap: "var(--space-2)",
+          padding: "var(--space-6)",
+          minHeight: 120,
+        }}
+      >
+        <AlertCircle size={22} color="var(--text-faint)" />
+        <span style={{ fontSize: "var(--text-sm)", color: "var(--text-muted)" }}>
+          Couldn&apos;t load this
+        </span>
+        <button
+          type="button"
+          onClick={() => { setErrored(false); setAttempt((a) => a + 1); }}
+          style={{
+            fontSize: "var(--text-sm)",
+            color: "var(--accent)",
+            background: "none",
+            border: "none",
+            cursor: "pointer",
+            padding: 0,
+            textDecoration: "underline",
+          }}
+        >
+          Reload
+        </button>
+      </div>
+    );
+  }
+
   return (
     <div style={{ borderRadius: rounded ? "var(--radius-lg)" : 0, overflow: "hidden", background: "var(--surface-sunken)" }}>
       {video ? (
-        <video src={url} controls muted loop playsInline style={{ width: "100%", display: "block" }} />
+        <video
+          key={src}
+          src={src}
+          controls
+          muted
+          loop
+          playsInline
+          style={{ width: "100%", display: "block" }}
+          onError={handleError}
+        />
       ) : (
         // eslint-disable-next-line @next/next/no-img-element
-        <img src={url} alt="" style={{ width: "100%", display: "block" }} />
+        <img
+          key={src}
+          src={src}
+          alt={alt}
+          style={{ width: "100%", display: "block" }}
+          onError={handleError}
+        />
       )}
     </div>
   );
 }
 
+/** Fix #2 — honest copy: only show "Copied" on real success */
+type CopyState = "idle" | "copied" | "manual";
+
+async function attemptCopy(url: string): Promise<CopyState> {
+  if (!navigator.clipboard?.writeText) return "manual";
+  try {
+    await navigator.clipboard.writeText(url);
+    return "copied";
+  } catch {
+    return "manual";
+  }
+}
+
+/** Fix #12 — "how's it look?" nudge, purely client-side, no Otto turn */
+function ResultNudge({ onTweak }: { onTweak?: () => void }) {
+  const [dismissed, setDismissed] = useState(false);
+  if (dismissed) return null;
+  return (
+    <div
+      style={{
+        marginTop: "var(--space-4)",
+        display: "flex",
+        flexWrap: "wrap",
+        alignItems: "center",
+        gap: "var(--space-3)",
+      }}
+    >
+      <span style={{ fontSize: "var(--text-sm)", color: "var(--text-muted)" }}>
+        Done — happy with it, or want a tweak?
+      </span>
+      <button
+        type="button"
+        onClick={() => setDismissed(true)}
+        style={{
+          fontSize: "var(--text-sm)",
+          color: "var(--text-secondary)",
+          background: "var(--surface-raised)",
+          border: "1px solid var(--border-subtle)",
+          borderRadius: "var(--radius-control)",
+          padding: "4px 12px",
+          cursor: "pointer",
+        }}
+      >
+        Looks great
+      </button>
+      <button
+        type="button"
+        onClick={() => {
+          setDismissed(true);
+          if (onTweak) {
+            onTweak();
+          } else {
+            const el = document.getElementById("otto-composer");
+            if (el) (el as HTMLElement).focus();
+          }
+        }}
+        style={{
+          fontSize: "var(--text-sm)",
+          color: "var(--text-secondary)",
+          background: "var(--surface-raised)",
+          border: "1px solid var(--border-subtle)",
+          borderRadius: "var(--radius-control)",
+          padding: "4px 12px",
+          cursor: "pointer",
+        }}
+      >
+        Tweak it
+      </button>
+    </div>
+  );
+}
+
 /** A finished result in the conversation. One asset → show it with Download / Copy.
- *  An ad pack (N variants) → a chooser grid with "Otto's pick"; tap one to settle on it. */
-export function OttoResult({ payload, onEditByHand }: OttoResultProps) {
+ *  An ad pack (N variants) → a chooser grid; tap one to settle on it. */
+export function OttoResult({ payload, onEditByHand, onTweak }: OttoResultProps) {
   const urls = payload?.urls ?? [];
   const genIds = payload?.generationIds ?? [];
-  // Single result auto-selects index 0; a pack starts unchosen so the grid shows first.
-  const [selected, setSelected] = useState<number | null>(urls.length === 1 ? 0 : null);
-  const [copied, setCopied] = useState(false);
+  const prompt = payload?.prompt ?? "";
+
+  // Fix #3 — variant pick persists via localStorage, keyed by first genId
+  const pickKey = genIds[0] ?? urls[0] ?? "";
+  const [selected, setSelected] = useState<number | null>(() => {
+    if (urls.length === 1) return 0;
+    if (pickKey) return readPick(pickKey);
+    return null;
+  });
+
+  // Keep localStorage in sync when the user picks
+  function pick(i: number) {
+    setSelected(i);
+    if (pickKey) writePick(pickKey, i);
+  }
+
+  // Fix #2 — honest copy state
+  const [copyState, setCopyState] = useState<CopyState>("idle");
+  const urlRef = useRef<string | null>(null);
+
+  async function copyLink(url: string) {
+    urlRef.current = url;
+    const outcome = await attemptCopy(url);
+    setCopyState(outcome);
+    if (outcome === "copied") {
+      setTimeout(() => setCopyState("idle"), 1800);
+    }
+  }
 
   if (!urls.length) {
     return (
@@ -68,16 +243,6 @@ export function OttoResult({ payload, onEditByHand }: OttoResultProps) {
         <div style={{ fontSize: "var(--text-sm)", color: "var(--text-muted)" }}>Your result is ready.</div>
       </Card>
     );
-  }
-
-  async function copyLink(url: string) {
-    try {
-      await navigator.clipboard?.writeText(url);
-      setCopied(true);
-      setTimeout(() => setCopied(false), 1800);
-    } catch {
-      /* clipboard unavailable — no-op */
-    }
   }
 
   // ---- Chooser grid (ad pack, nothing chosen yet) ----
@@ -93,10 +258,12 @@ export function OttoResult({ payload, onEditByHand }: OttoResultProps) {
           </div>
           <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "var(--space-3)" }}>
             {urls.map((u, i) => (
+              // Fix #4 — accessible label on chooser buttons
               <button
                 key={i}
                 type="button"
-                onClick={() => setSelected(i)}
+                aria-label={`Option ${i + 1}`}
+                onClick={() => pick(i)}
                 style={{
                   position: "relative",
                   padding: 0,
@@ -108,7 +275,7 @@ export function OttoResult({ payload, onEditByHand }: OttoResultProps) {
                   transition: "var(--transition-control)",
                 }}
               >
-                <Media url={u} rounded={false} />
+                <Media url={u} alt={prompt ? `Generated image: ${prompt}` : `Option ${i + 1}`} rounded={false} />
                 {/* No "Otto's pick" badge: there is no real curation signal from the backend
                     (all variants are equal outputs of one prompt). Don't claim a pick we
                     didn't make — add it back only when GEN_RESULT carries a real pick index. */}
@@ -123,20 +290,31 @@ export function OttoResult({ payload, onEditByHand }: OttoResultProps) {
   // ---- Chosen result ----
   const url = urls[selected];
   const filename = fileNameFor(url, genIds[selected]);
+  const mediaAlt = prompt ? `Generated image: ${prompt}` : "Generated image";
+
   return (
     <div style={{ maxWidth: 540 }}>
       <Card variant="default" padding="md">
-        <Media url={url} />
+        {/* Fix #4 — meaningful alt via mediaAlt */}
+        <Media url={url} alt={mediaAlt} />
         <div style={{ display: "flex", flexWrap: "wrap", gap: "var(--space-3)", marginTop: "var(--space-4)" }}>
           <DownloadLink url={url} filename={filename} />
-          <Button
-            variant="soft"
-            size="md"
-            leftIcon={copied ? <Check size={18} /> : <Copy size={18} />}
-            onClick={() => copyLink(url)}
-          >
-            {copied ? "Copied" : "Copy to post"}
-          </Button>
+          {/* Fix #2 — honest copy states */}
+          {copyState === "manual" ? (
+            <div style={{ display: "flex", alignItems: "center", gap: 6, fontSize: "var(--text-sm)", color: "var(--text-muted)" }}>
+              <AlertCircle size={15} />
+              <span>Couldn&apos;t copy — long-press the link to copy</span>
+            </div>
+          ) : (
+            <Button
+              variant="soft"
+              size="md"
+              leftIcon={copyState === "copied" ? <Check size={18} /> : <Copy size={18} />}
+              onClick={() => copyLink(url)}
+            >
+              {copyState === "copied" ? "Copied" : "Copy to post"}
+            </Button>
+          )}
           {urls.length > 1 && (
             <Button variant="ghost" size="md" leftIcon={<ChevronLeft size={18} />} onClick={() => setSelected(null)}>
               See all {urls.length} options
@@ -148,6 +326,8 @@ export function OttoResult({ payload, onEditByHand }: OttoResultProps) {
             </Button>
           )}
         </div>
+        {/* Fix #12 — free "how's it look?" nudge */}
+        <ResultNudge onTweak={onTweak} />
       </Card>
     </div>
   );
