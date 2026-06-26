@@ -9,6 +9,18 @@ import type { MemoryRow } from "@/lib/memory-actions";
 import type { AccountInfo } from "@/lib/account-actions";
 import { getMyAccount } from "@/lib/account-actions";
 
+const MOBILE_BP = 680;
+
+function IconMenu() {
+  return (
+    <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden>
+      <line x1="3" x2="21" y1="6" y2="6" />
+      <line x1="3" x2="21" y1="12" y2="12" />
+      <line x1="3" x2="21" y1="18" y2="18" />
+    </svg>
+  );
+}
+
 export interface OttoAppProps {
   projectId: string;
   entities: EntityDTO[];
@@ -45,6 +57,7 @@ export function OttoApp({
     initialThreads[0]?.id ?? null,
   );
   const [balanceCredits, setBalanceCredits] = useState(initialBalanceCredits);
+  const [drawerOpen, setDrawerOpen] = useState(false);
 
   const refreshBalance = useCallback(async () => {
     const a = await getMyAccount();
@@ -62,6 +75,15 @@ export function OttoApp({
         background: "var(--bg-page)",
       }}
     >
+      <style>{`
+        @media (max-width: ${MOBILE_BP}px) {
+          .otto-mobile-topbar { display: flex !important; }
+        }
+        @media (min-width: ${MOBILE_BP + 1}px) {
+          .otto-mobile-topbar { display: none !important; }
+        }
+      `}</style>
+
       {/* Left nav */}
       <OttoNav
         view={view}
@@ -76,10 +98,49 @@ export function OttoApp({
         balanceCredits={balanceCredits}
         userName={userName}
         userEmail={userEmail}
+        drawerOpen={drawerOpen}
+        onDrawerClose={() => setDrawerOpen(false)}
       />
 
       {/* Main content area */}
       <div style={{ flex: 1, minWidth: 0, display: "flex", flexDirection: "column", overflow: "hidden" }}>
+        {/* Mobile top bar — hamburger + logo. Hidden on desktop via CSS. */}
+        <div
+          className="otto-mobile-topbar"
+          style={{
+            display: "none",
+            alignItems: "center",
+            gap: "var(--space-3)",
+            padding: "0 var(--space-4)",
+            height: 52,
+            flexShrink: 0,
+            borderBottom: "1px solid var(--border-subtle)",
+            background: "var(--surface-card)",
+          }}
+        >
+          <button
+            type="button"
+            aria-label="Open menu"
+            onClick={() => setDrawerOpen(true)}
+            style={{
+              display: "inline-flex",
+              alignItems: "center",
+              justifyContent: "center",
+              width: 44,
+              height: 44,
+              border: "none",
+              background: "transparent",
+              color: "var(--text-body)",
+              cursor: "pointer",
+              borderRadius: "var(--radius-md)",
+              flexShrink: 0,
+            }}
+          >
+            <IconMenu />
+          </button>
+          {/* eslint-disable-next-line @next/next/no-img-element */}
+          <img src="/brand/logo-wordmark.svg" alt="Fikirtive" height={22} style={{ display: "block" }} />
+        </div>
         <OttoView
           view={view}
           projectId={projectId}

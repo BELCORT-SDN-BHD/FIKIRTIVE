@@ -152,8 +152,16 @@ export function OttoConversation({
 
   return (
     <div style={{ flex: 1, display: "flex", flexDirection: "column", overflow: "hidden" }}>
+      <style>{`
+        @media (max-width: 680px) {
+          .otto-conv-scroll { padding: var(--space-4) var(--space-3) !important; }
+          .otto-conv-composer { padding: var(--space-3) var(--space-3) !important; }
+          .otto-conv-header { padding: var(--space-3) var(--space-4) !important; }
+        }
+      `}</style>
       {/* Header */}
       <div
+        className="otto-conv-header"
         style={{
           padding: "var(--space-4) var(--space-6)",
           borderBottom: "1px solid var(--border-subtle)",
@@ -182,7 +190,7 @@ export function OttoConversation({
       </div>
 
       {/* Messages */}
-      <div style={{ flex: 1, overflow: "auto", padding: "var(--space-6)" }}>
+      <div className="otto-conv-scroll" style={{ flex: 1, overflow: "auto", padding: "var(--space-6)" }}>
         <div style={{ maxWidth: 680, margin: "0 auto", display: "flex", flexDirection: "column", gap: "var(--space-4)" }}>
           {messages.map((m) => (
             <MessageRow
@@ -314,6 +322,7 @@ export function OttoConversation({
 
       {/* Composer */}
       <div
+        className="otto-conv-composer"
         style={{
           borderTop: "1px solid var(--border-subtle)",
           background: "var(--surface-card)",

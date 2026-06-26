@@ -4,6 +4,8 @@ import { creditsLabel } from "@/lib/credit-format";
 import type { OttoViewKey } from "./OttoApp";
 import type { ChatThreadDTO } from "@/lib/types";
 
+const MOBILE_BP = 680;
+
 interface NavItem {
   key: OttoViewKey;
   label: string;
@@ -75,6 +77,10 @@ export interface OttoNavProps {
   balanceCredits: number;
   userName: string;
   userEmail: string;
+  /** Mobile: whether the drawer is open (controlled by OttoApp). */
+  drawerOpen?: boolean;
+  /** Mobile: called when the drawer should close (backdrop tap or nav action). */
+  onDrawerClose?: () => void;
 }
 
 export function OttoNav({
@@ -87,12 +93,61 @@ export function OttoNav({
   balanceCredits,
   userName,
   userEmail,
+  drawerOpen = false,
+  onDrawerClose,
 }: OttoNavProps) {
   const initial = userName.slice(0, 1).toUpperCase();
   const balanceLabel = creditsLabel(balanceCredits);
 
+  function handleNavAction(fn: () => void) {
+    fn();
+    onDrawerClose?.();
+  }
+
   return (
+    <>
+      <style>{`
+        @media (max-width: ${MOBILE_BP}px) {
+          .otto-nav {
+            position: fixed !important;
+            top: 0;
+            left: 0;
+            bottom: 0;
+            z-index: 200;
+            transform: translateX(-100%);
+            transition: transform 0.22s ease;
+            box-shadow: var(--shadow-xl, 0 8px 32px rgba(0,0,0,.18));
+            width: 280px !important;
+          }
+          .otto-nav.otto-nav--open {
+            transform: translateX(0);
+          }
+          .otto-nav-backdrop {
+            display: block !important;
+          }
+        }
+        @media (min-width: ${MOBILE_BP + 1}px) {
+          .otto-nav-backdrop { display: none !important; }
+        }
+      `}</style>
+      {/* Backdrop — only rendered/visible on mobile when drawer is open */}
+      <div
+        className="otto-nav-backdrop"
+        onClick={onDrawerClose}
+        style={{
+          display: "none",
+          position: "fixed",
+          inset: 0,
+          zIndex: 199,
+          background: "rgba(0,0,0,.35)",
+          opacity: drawerOpen ? 1 : 0,
+          pointerEvents: drawerOpen ? "auto" : "none",
+          transition: "opacity 0.22s ease",
+        }}
+        aria-hidden
+      />
     <nav
+      className={`otto-nav${drawerOpen ? " otto-nav--open" : ""}`}
       style={{
         width: 240,
         flexShrink: 0,
@@ -118,7 +173,7 @@ export function OttoNav({
       {/* New campaign button */}
       <div style={{ padding: "var(--space-4) var(--space-3) var(--space-3)" }}>
         <button
-          onClick={onNewCampaign}
+          onClick={() => handleNavAction(onNewCampaign)}
           style={{
             display: "flex",
             alignItems: "center",
@@ -149,7 +204,7 @@ export function OttoNav({
           return (
             <button
               key={item.key}
-              onClick={() => onViewChange(item.key)}
+              onClick={() => handleNavAction(() => onViewChange(item.key))}
               style={{
                 display: "flex",
                 alignItems: "center",
@@ -207,10 +262,10 @@ export function OttoNav({
               return (
                 <button
                   key={t.id}
-                  onClick={() => {
+                  onClick={() => handleNavAction(() => {
                     onSelectThread(t.id);
                     onViewChange("otto");
-                  }}
+                  })}
                   title={t.title}
                   style={{
                     display: "flex",
@@ -336,6 +391,7 @@ export function OttoNav({
         </div>
       </div>
     </nav>
+    </>
   );
 }
 
