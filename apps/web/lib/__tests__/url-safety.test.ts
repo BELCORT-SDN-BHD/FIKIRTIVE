@@ -32,6 +32,10 @@ describe("assertPublicHttpUrl", () => {
     it("rejects http://127.0.0.5", () => {
       expect(() => assertPublicHttpUrl("http://127.0.0.5")).toThrow();
     });
+
+    it("rejects http://0.0.0.0", () => {
+      expect(() => assertPublicHttpUrl("http://0.0.0.0")).toThrow();
+    });
   });
 
   describe("REJECT: cloud metadata / link-local", () => {

@@ -22,6 +22,9 @@ function isPrivateIPv4(host: string): boolean {
   const ip = parseIPv4(host);
   if (!ip) return false;
   const [a, b] = ip;
+  // 0.0.0.0/8 — "this host" / unspecified (defense-in-depth: 0.0.0.0 is also
+  // caught by the literal check in assertPublicHttpUrl)
+  if (a === 0) return true;
   // 127.0.0.0/8 — loopback
   if (a === 127) return true;
   // 10.0.0.0/8 — private

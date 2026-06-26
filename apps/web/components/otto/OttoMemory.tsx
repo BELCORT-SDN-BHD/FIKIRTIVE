@@ -87,14 +87,29 @@ export function OttoMemory({ initialMemory, projectId }: { initialMemory: Memory
     if (!toAdd.length || savingFacts) return;
     setSavingFacts(true);
     setResearchError(null);
+    // Save each fact independently; collect the ones that didn't save so a
+    // mid-loop failure can't silently drop facts while the panel clears.
+    const failed: ProposedFact[] = [];
     for (const fact of toAdd) {
-      await addMemory({ category: fact.category, content: fact.content });
+      try {
+        const res = await addMemory({ category: fact.category, content: fact.content });
+        if (res && "error" in res) failed.push(fact);
+      } catch {
+        failed.push(fact);
+      }
     }
-    setProposedFacts([]);
-    setSelectedFacts(new Set());
-    setResearchUrl("");
-    setSavingFacts(false);
     await refresh();
+    if (failed.length) {
+      // Keep the panel open showing only the still-unsaved facts, all pre-selected.
+      setProposedFacts(failed);
+      setSelectedFacts(new Set(failed.map((_, i) => i)));
+      setResearchError("Some couldn't be saved — try again.");
+    } else {
+      setProposedFacts([]);
+      setSelectedFacts(new Set());
+      setResearchUrl("");
+    }
+    setSavingFacts(false);
   }
 
   function toggleFact(i: number) {
