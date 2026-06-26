@@ -1,5 +1,6 @@
 "use client";
-import React, { useState } from "react";
+import React, { useState, useEffect } from "react";
+import { formatElapsed, usualSeconds } from "@/lib/progress-format";
 import { ClipboardList, Film, Image as ImageIcon, ShieldCheck } from "lucide-react";
 import { Card, Button } from "@/components/fk";
 import { ottoApprove } from "@/lib/otto-client-actions";
@@ -44,6 +45,14 @@ export function OttoPlanCard({
   const p = (payload ?? {}) as CardPayload;
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [elapsed, setElapsed] = useState(0);
+
+  useEffect(() => {
+    if (cardState !== "working") { setElapsed(0); return; }
+    const start = Date.now();
+    const t = setInterval(() => setElapsed(Math.floor((Date.now() - start) / 1000)), 1000);
+    return () => clearInterval(t);
+  }, [cardState]);
 
   const isVideo = p.kind === "video";
   // Show the real charge in CREDITS (= what startGen reserves). New cards carry
@@ -127,7 +136,7 @@ export function OttoPlanCard({
           </div>
         ) : cardState === "working" || cardState === "done" ? (
           <div style={{ marginTop: "var(--space-4)", fontSize: "var(--text-sm)", color: "var(--success-700)", fontWeight: "var(--weight-semibold)" as React.CSSProperties["fontWeight"] }}>
-            {cardState === "done" ? "✓ Done" : "✓ On it — making this now."}
+            {cardState === "done" ? "✓ Done" : `✓ On it — making this now · ${formatElapsed(elapsed)} · usually ~${usualSeconds(isVideo)}s`}
           </div>
         ) : (
           <div style={{ display: "flex", gap: "var(--space-3)", marginTop: "var(--space-4)" }}>
