@@ -71,4 +71,16 @@ describe("resolveSentEntityIds", () => {
       ])
     ).toEqual(["e2"]);
   });
+
+  it("does not bind @Sun when only @Sunglasses appears (word boundary)", () => {
+    expect(
+      resolveSentEntityIds("use @Sunglasses", [{ id: "e_sun", name: "Sun" }])
+    ).toEqual([]);
+  });
+
+  it("still binds a name followed by punctuation", () => {
+    expect(
+      resolveSentEntityIds("love @Sun, it's great", [{ id: "e_sun", name: "Sun" }])
+    ).toEqual(["e_sun"]);
+  });
 });

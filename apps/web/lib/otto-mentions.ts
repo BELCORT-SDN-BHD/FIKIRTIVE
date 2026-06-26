@@ -34,8 +34,13 @@ export function resolveSentEntityIds(
   text: string,
   picked: { id: string; name: string }[]
 ): string[] {
-  const lower = text.toLowerCase();
   return picked
-    .filter(({ name }) => lower.includes(`@${name.toLowerCase()}`))
+    .filter(({ name }) => {
+      // Word-boundary match so "@Sun" does NOT bind when the text only has "@Sunglasses".
+      // Escape the name (entities can be "C++", "A.B", etc.) and require the next char to
+      // be a non-word char or end-of-string.
+      const esc = name.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+      return new RegExp(`@${esc}(?![\\w])`, "i").test(text);
+    })
     .map(({ id }) => id);
 }
