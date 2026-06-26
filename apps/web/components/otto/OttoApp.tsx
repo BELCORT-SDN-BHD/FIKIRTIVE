@@ -5,6 +5,7 @@ import { OttoNav } from "./OttoNav";
 import { OttoView } from "./OttoView";
 import { OttoWorkshop } from "./OttoWorkshop";
 import type { AdTile } from "./OttoStuff";
+import type { AdJobItem } from "@/lib/data";
 import type { EntityDTO, ChatThreadDTO } from "@/lib/types";
 import type { MemoryRow } from "@/lib/memory-actions";
 import type { AccountInfo } from "@/lib/account-actions";
@@ -18,6 +19,7 @@ export interface OttoAppProps {
   userEmail: string;
   memory: MemoryRow[];
   ads: AdTile[];
+  adJobs: AdJobItem[];
   account: AccountInfo | null;
   ottoStreamEnabled: boolean;
 }
@@ -33,6 +35,7 @@ export function OttoApp({
   userEmail,
   memory,
   ads,
+  adJobs,
   account,
   ottoStreamEnabled,
 }: OttoAppProps) {
@@ -84,6 +87,7 @@ export function OttoApp({
           userName={userName}
           memory={memory}
           ads={ads}
+          adJobs={adJobs}
           account={account}
           ottoStreamEnabled={ottoStreamEnabled}
           onEditByHand={() => setWorkshopOpen(true)}

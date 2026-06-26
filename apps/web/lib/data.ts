@@ -205,6 +205,30 @@ export async function getMyAds(ownerId: string, projectId: string, take = 60): P
   });
 }
 
+/** Otto ad jobs that are still running or failed — shown as status cards in My Stuff → Ads.
+ *  DONE jobs are excluded (they show as finished media via getMyAds). */
+export type AdJobItem = { id: string; kind: "image" | "video"; status: "processing" | "failed"; prompt: string; createdAt: string };
+export async function getMyAdJobs(ownerId: string, projectId: string, take = 30): Promise<AdJobItem[]> {
+  const { adJobStatusFromGenStatus } = await import("./ad-job-status");
+  const rows = await prisma.genJob.findMany({
+    where: { ownerId, projectId, threadId: { not: null }, status: { in: ["QUEUED", "GENERATING", "FAILED"] } },
+    orderBy: { createdAt: "desc" },
+    take,
+    select: { id: true, kind: true, status: true, prompt: true, createdAt: true },
+  });
+  return rows.flatMap((r) => {
+    const status = adJobStatusFromGenStatus(r.status);
+    if (!status) return [];
+    return [{
+      id: r.id,
+      kind: r.kind === "VIDEO" ? ("video" as const) : ("image" as const),
+      status,
+      prompt: r.prompt ?? "",
+      createdAt: r.createdAt.toISOString(),
+    }];
+  });
+}
+
 export type EntityWithRefs = Awaited<ReturnType<typeof getEntities>>[number];
 export type ShotWithDetail = Awaited<ReturnType<typeof getShots>>[number];
 export type CandidateGen = Awaited<ReturnType<typeof getLooseVideoClips>>[number];

@@ -10,6 +10,7 @@ import { OttoChatStream } from "./OttoChatStream";
 import { OttoMemory } from "./OttoMemory";
 import { OttoAccount } from "./OttoAccount";
 import { OttoStuff, type AdTile } from "./OttoStuff";
+import type { AdJobItem } from "@/lib/data";
 import { getCoworkThreadClient } from "@/lib/cowork-fetch";
 
 interface OttoViewProps {
@@ -24,6 +25,7 @@ interface OttoViewProps {
   userName: string;
   memory: MemoryRow[];
   ads: AdTile[];
+  adJobs: AdJobItem[];
   account: AccountInfo | null;
   ottoStreamEnabled: boolean;
   onEditByHand: () => void;
@@ -41,6 +43,7 @@ export function OttoView({
   userName,
   memory,
   ads,
+  adJobs,
   account,
   ottoStreamEnabled,
   onEditByHand,
@@ -73,7 +76,7 @@ export function OttoView({
   if (view === "stuff") {
     return (
       <div style={{ flex: 1, display: "flex", flexDirection: "column", overflow: "hidden" }}>
-        <OttoStuff entities={entities} ads={ads} />
+        <OttoStuff entities={entities} ads={ads} adJobs={adJobs} />
       </div>
     );
   }
