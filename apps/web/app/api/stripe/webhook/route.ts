@@ -16,6 +16,16 @@ export async function POST(req: Request) {
 
   if (event.type === "checkout.session.completed") {
     const session = event.data.object;
+
+    // Only grant once the payment has ACTUALLY settled. checkout.session.completed can fire
+    // for an "unpaid" session when async payment methods are enabled (bank transfer, some
+    // e-wallets) — granting then would hand out credits before money arrives. Card payments
+    // are always "paid" here; for anything else we wait (and would handle
+    // checkout.session.async_payment_succeeded separately if async methods are added).
+    if (session.payment_status !== "paid") {
+      return new Response(null, { status: 200 });
+    }
+
     const { orgId, internalCredits: internalCreditsStr } = session.metadata ?? {};
     const internalCredits = parseInt(internalCreditsStr ?? "", 10);
 
