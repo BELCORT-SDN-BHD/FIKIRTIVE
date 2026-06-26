@@ -2,6 +2,8 @@ import "server-only";
 import { prisma } from "@fikirtive/db";
 import { newId, storageKey, storageKeyToSrc } from "@fikirtive/core";
 import { requireOwner } from "./auth-guard";
+import { tallyEntityUsage } from "./entity-usage";
+import { threadBadgeFromJobStatus } from "./thread-status";
 
 const THUMB_VIDEO_EXTS = new Set(["mp4", "mov", "webm", "mkv"]);
 /** Resolve generation ids → { src, kind } thumbnails (segment frame slots). */
@@ -39,7 +41,7 @@ export async function getProjects(ownerId: string) {
 }
 
 export async function getEntities(ownerId: string) {
-  return prisma.entity.findMany({
+  const entities = await prisma.entity.findMany({
     where: { ownerId, ...notDeleted },
     orderBy: [{ type: "asc" }, { name: "asc" }],
     include: {
@@ -59,6 +61,20 @@ export async function getEntities(ownerId: string) {
       _count: { select: { shotRefs: true } },
     },
   });
+
+  // Count DONE Otto gen jobs that referenced each entity (non-legacy usage).
+  let ottoUsage: Record<string, number> = {};
+  try {
+    const ottoJobs = await prisma.genJob.findMany({
+      where: { ownerId, status: "DONE", entityIds: { isEmpty: false } },
+      select: { entityIds: true },
+    });
+    ottoUsage = tallyEntityUsage(ottoJobs);
+  } catch {
+    // Non-critical: fall back to 0 Otto usage rather than throwing.
+  }
+
+  return entities.map((e) => ({ ...e, _ottoUsageCount: ottoUsage[e.id] ?? 0 }));
 }
 
 export async function getShots(ownerId: string, projectId: string) {
@@ -205,6 +221,30 @@ export async function getMyAds(ownerId: string, projectId: string, take = 60): P
   });
 }
 
+/** Otto ad jobs that are still running or failed — shown as status cards in My Stuff → Ads.
+ *  DONE jobs are excluded (they show as finished media via getMyAds). */
+export type AdJobItem = { id: string; kind: "image" | "video"; status: "processing" | "failed"; prompt: string; createdAt: string };
+export async function getMyAdJobs(ownerId: string, projectId: string, take = 30): Promise<AdJobItem[]> {
+  const { adJobStatusFromGenStatus } = await import("./ad-job-status");
+  const rows = await prisma.genJob.findMany({
+    where: { ownerId, projectId, threadId: { not: null }, status: { in: ["QUEUED", "GENERATING", "FAILED"] } },
+    orderBy: { createdAt: "desc" },
+    take,
+    select: { id: true, kind: true, status: true, prompt: true, createdAt: true },
+  });
+  return rows.flatMap((r) => {
+    const status = adJobStatusFromGenStatus(r.status);
+    if (!status) return [];
+    return [{
+      id: r.id,
+      kind: r.kind === "VIDEO" ? ("video" as const) : ("image" as const),
+      status,
+      prompt: r.prompt ?? "",
+      createdAt: r.createdAt.toISOString(),
+    }];
+  });
+}
+
 export type EntityWithRefs = Awaited<ReturnType<typeof getEntities>>[number];
 export type ShotWithDetail = Awaited<ReturnType<typeof getShots>>[number];
 export type CandidateGen = Awaited<ReturnType<typeof getLooseVideoClips>>[number];
@@ -216,11 +256,30 @@ export type CandidateGen = Awaited<ReturnType<typeof getLooseVideoClips>>[number
  *  threads are returned (metadata is light + the partial updatedAt index serves it),
  *  so none become unreachable. (scale audit 2026-06-20) */
 export async function getCoworkThreads(ownerId: string, projectId: string) {
-  return prisma.chatThread.findMany({
+  const threads = await prisma.chatThread.findMany({
     where: { projectId, ownerId, ...notDeleted },
     orderBy: { updatedAt: "desc" },
     select: { id: true, projectId: true, title: true, updatedAt: true },
   });
+
+  // Attach latest GenJob status per thread for nav status badges (best-effort: never throws).
+  try {
+    const threadIds = threads.map((t) => t.id);
+    const jobs = threadIds.length
+      ? await prisma.genJob.findMany({
+          where: { ownerId, threadId: { in: threadIds } },
+          select: { threadId: true, status: true, updatedAt: true },
+          orderBy: { updatedAt: "desc" },
+        })
+      : [];
+    const latestByThread = new Map<string, string>();
+    for (const j of jobs) {
+      if (j.threadId && !latestByThread.has(j.threadId)) latestByThread.set(j.threadId, j.status);
+    }
+    return threads.map((t) => ({ ...t, _badge: threadBadgeFromJobStatus(latestByThread.get(t.id) ?? null) }));
+  } catch {
+    return threads.map((t) => ({ ...t, _badge: null as null }));
+  }
 }
 
 /** One owned, live thread with its messages in seq order (deep-link / refetch). */

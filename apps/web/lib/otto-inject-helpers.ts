@@ -30,6 +30,33 @@ export function resultJobIds(messages: OttoUiMessage[]): Set<string> {
   return ids;
 }
 
+/** The genJobIds that have a durable TURN_ERROR — so the card can show a failed state. */
+export function errorJobIds(messages: OttoUiMessage[]): Set<string> {
+  const ids = new Set<string>();
+  for (const m of messages) {
+    const meta = m.metadata;
+    if (meta?.kind === "TURN_ERROR" && meta.genJobId) ids.add(meta.genJobId);
+  }
+  return ids;
+}
+
+export type CardState = "idle" | "working" | "done" | "failed";
+
+/** The plan card's lifecycle derived from durable data (never optimistic-only).
+ *  Order matters: a terminal result/error always wins over "working". */
+export function deriveCardState(args: {
+  genJobId: string | null;
+  submitted: boolean;
+  results: Set<string>;
+  errors: Set<string>;
+}): CardState {
+  const { genJobId, submitted, results, errors } = args;
+  if (genJobId && errors.has(genJobId)) return "failed";
+  if (genJobId && results.has(genJobId)) return "done";
+  if (genJobId || submitted) return "working";
+  return "idle";
+}
+
 /** A job is "working" once its GEN_CARD has a genJobId (it was approved/generated)
  *  but no terminal message (GEN_RESULT or TURN_ERROR) has landed for that job yet.
  *  While any job is working the component polls the durable thread for the result. */

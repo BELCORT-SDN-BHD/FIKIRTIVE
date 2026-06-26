@@ -34,7 +34,9 @@
     "react": "19.2.4",
     "react-dom": "19.2.4",
     "server-only": "^0.0.1",
-    "use-stick-to-bottom": "^1.1.6"
+    "stripe": "^22.3.0",
+    "use-stick-to-bottom": "^1.1.6",
+    "zod": "^4.4.3"
   },
   "devDependencies": {
     "@tailwindcss/postcss": "^4",

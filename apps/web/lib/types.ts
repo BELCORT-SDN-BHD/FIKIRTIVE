@@ -79,4 +79,5 @@ export interface ChatThreadDTO {
   title: string;
   updatedAt: string;
   messages: ChatMessageDTO[];
+  status?: "working" | "failed" | "done" | null;
 }

@@ -7,7 +7,7 @@
  * Identity comes exclusively from OttoContext (ctx), never from tool input — the
  * model cannot spoof ownerId, threadId, or projectId.
  */
-import { tool } from "@openai/agents";
+import { defineOttoSkill } from "../skill.js";
 import type { RunContext } from "@openai/agents";
 import { newId } from "@fikirtive/core";
 import { prisma } from "@fikirtive/db";
@@ -73,14 +73,13 @@ export async function executePropose(
 
 // ---------------------------------------------------------------------------
 // SDK tool definition
-// SDK API confirmed from 0.11.8 types:
-//   - tool({ description, parameters (Zod schema), execute(input, runContext?) => Promise<unknown> })
-//   - runContext is RunContext<TContext>; access custom context via runContext.context
-//   - return value is serialised by the SDK as the model-facing output (no toModelOutput needed)
 // ---------------------------------------------------------------------------
 
-export const propose = tool<typeof proposeInput, OttoContext>({
+export const proposeSkill = defineOttoSkill({
   name: "propose",
+  cost: "free",
+  effect: "write",
+  reach: "internal",
   description:
     "Build a generation proposal (GEN_CARD) the user can approve and generate later. " +
     "Call this when the user wants to create an image or video. " +
@@ -89,8 +88,7 @@ export const propose = tool<typeof proposeInput, OttoContext>({
     "When the user wants a few options to choose from (an 'ad pack'), pass count (2–4) " +
     "to offer that many image variants — images only; video is always a single clip.",
   parameters: proposeInput,
-  execute: async (input, runContext) => {
-    if (!runContext) throw new Error("OttoContext required");
-    return executePropose(input, runContext);
-  },
+  execute: executePropose,
 });
+
+export const propose = proposeSkill.tool;

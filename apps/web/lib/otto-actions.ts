@@ -67,7 +67,10 @@ function errSummary(e: unknown): string {
 async function loadAvailableRefsForAgent(ownerId: string): Promise<{ id: string; name: string; type: string }[]> {
   try {
     const entities = await prisma.entity.findMany({
-      where: { ownerId, deletedAt: null },
+      // Only surface entities Otto can actually USE as a visual reference: one with no
+      // reference image can't meaningfully be @-mentioned (nothing to condition on). This
+      // also keeps ref-less test/junk entities out of Otto's @-suggestions (audit STUFF-7).
+      where: { ownerId, deletedAt: null, referenceImages: { some: { deletedAt: null } } },
       select: { id: true, name: true, type: true },
       orderBy: [{ type: "asc" }, { name: "asc" }],
     });
@@ -90,6 +93,16 @@ export function buildContextSystemMessage(ctx: OttoContext): AgentInputItem | nu
     );
   }
   if (ctx.simpleMode) parts.push(ottoSimpleModeBlock);
+  if (ctx.activeJob) {
+    const s = ctx.activeJob.status;
+    const human =
+      s === "DONE" ? "the last generation finished"
+      : s === "FAILED" ? "the last generation FAILED — the user was automatically refunded, so they were NOT charged for it"
+      : s === "GENERATING" ? "a generation is being made right now"
+      : s === "QUEUED" ? "a generation is queued and about to start"
+      : `the last generation status is ${s}`;
+    parts.push(`Current generation status for this conversation: ${human}. Speak about generation progress ONLY based on this.`);
+  }
   return parts.length ? ({ role: "system", content: parts.join("\n\n") } as AgentInputItem) : null;
 }
 
@@ -111,9 +124,14 @@ export async function buildOttoContext({
   simpleMode?: boolean;
 }): Promise<OttoContext> {
   const disabledModels = Array.from(await resolveDisabledModels());
-  const [brandContext, availableRefs] = await Promise.all([
+  const [brandContext, availableRefs, activeJob] = await Promise.all([
     getBrandContextText(ownerId, null).catch(() => ""),
     loadAvailableRefsForAgent(ownerId),
+    prisma.genJob.findFirst({
+      where: { threadId, ownerId },
+      orderBy: { createdAt: "desc" },
+      select: { status: true, kind: true, error: true },
+    }).catch(() => null),
   ]);
   return {
     orgId: ownerId,
@@ -126,6 +144,7 @@ export async function buildOttoContext({
     brandContext,
     availableRefs,
     simpleMode: simpleMode ?? false,
+    activeJob,
   };
 }
 
@@ -761,5 +780,26 @@ export async function createEmptyCoworkThread(raw: unknown): Promise<{ id: strin
   } catch (e) {
     console.error("[createEmptyCoworkThread] failed:", errSummary(e));
     return { error: "Couldn't start a new conversation — please try again." };
+  }
+}
+
+// ---------------------------------------------------------------------------
+// deleteCoworkThread — soft-delete a conversation (owner-scoped)
+// ---------------------------------------------------------------------------
+
+export async function deleteCoworkThread(threadId: string): Promise<{ ok: true } | { error: string }> {
+  const gate = await requireOwner();
+  if ("error" in gate) return gate;
+  const { ownerId } = gate;
+
+  try {
+    await prisma.chatThread.updateMany({
+      where: { id: threadId, ownerId, deletedAt: null },
+      data: { deletedAt: new Date() },
+    });
+    return { ok: true };
+  } catch (e) {
+    console.error("[deleteCoworkThread] failed:", errSummary(e));
+    return { error: "Couldn't delete the conversation — please try again." };
   }
 }

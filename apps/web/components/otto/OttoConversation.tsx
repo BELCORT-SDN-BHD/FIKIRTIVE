@@ -5,6 +5,8 @@ import { ottoTurn } from "@/lib/otto-client-actions";
 import { getCoworkThreadClient } from "@/lib/cowork-fetch";
 import { OttoPlanCard } from "./OttoPlanCard";
 import { OttoResult } from "./OttoResult";
+import { deriveCardState } from "@/lib/otto-inject-helpers";
+import { activeMentionQuery, resolveSentEntityIds } from "@/lib/otto-mentions";
 import type { EntityDTO, ChatThreadDTO, ChatMessageDTO } from "@/lib/types";
 
 export interface OttoConversationProps {
@@ -14,7 +16,8 @@ export interface OttoConversationProps {
   balanceUsd: number;
   onRefresh: () => Promise<void>;
   onThreadUpdate: (thread: ChatThreadDTO) => void;
-  onEditByHand: () => void;
+  /** Re-reads the account balance and updates the nav display after a spend event. */
+  onBalanceRefresh?: () => void | Promise<void>;
 }
 
 export function OttoConversation({
@@ -24,12 +27,16 @@ export function OttoConversation({
   balanceUsd,
   onRefresh,
   onThreadUpdate,
-  onEditByHand,
+  onBalanceRefresh,
 }: OttoConversationProps) {
   const [text, setText] = useState("");
+  const [pickedMentions, setPickedMentions] = useState<{id: string; name: string}[]>([]);
+  const [mentionQuery, setMentionQuery] = useState<string | null>(null);
+  const [mentionHighlight, setMentionHighlight] = useState(0);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [pendingApprovalCardIds, setPendingApprovalCardIds] = useState<Set<string>>(new Set());
+  const [submittedCardIds, setSubmittedCardIds] = useState<Set<string>>(new Set());
   const bottomRef = useRef<HTMLDivElement>(null);
   const busyRef = useRef(false);
 
@@ -45,21 +52,49 @@ export function OttoConversation({
     if (fresh) onThreadUpdate(fresh);
   }
 
+  const mentionSuggestions = mentionQuery !== null
+    ? (entities ?? []).filter(e => e.name.toLowerCase().includes(mentionQuery.toLowerCase())).slice(0, 6)
+    : [];
+
+  const handleTextChange = (e: React.ChangeEvent<HTMLTextAreaElement>) => {
+    const val = e.target.value;
+    setText(val);
+    const caret = e.target.selectionStart ?? val.length;
+    setMentionQuery(activeMentionQuery(val, caret));
+    setMentionHighlight(0);
+  };
+
+  const selectMention = (entity: {id: string; name: string}) => {
+    const textarea = document.getElementById("otto-composer") as HTMLTextAreaElement;
+    const caret = textarea?.selectionStart ?? text.length;
+    const before = text.slice(0, caret);
+    const atIdx = before.lastIndexOf("@");
+    const newText = text.slice(0, atIdx) + `@${entity.name} ` + text.slice(caret);
+    setText(newText);
+    setPickedMentions(prev => prev.some(p => p.id === entity.id) ? prev : [...prev, {id: entity.id, name: entity.name}]);
+    setMentionQuery(null);
+    setMentionHighlight(0);
+    setTimeout(() => textarea?.focus(), 0);
+  };
+
   async function send() {
     const trimmed = text.trim();
     if (!trimmed || busy || busyRef.current) return;
     busyRef.current = true;
     setBusy(true);
     setError(null);
+    const entityIds = resolveSentEntityIds(trimmed, pickedMentions);
     // a new turn may queue a new generation — re-arm polling
     setPollGaveUp(false);
+    setPollTerminal(false);
     pollCountRef.current = 0;
+    checkAgainUsedRef.current = false;
     try {
       const res = await ottoTurn({
         threadId: thread.id,
         projectId,
         text: trimmed,
-        entityIds: [],
+        entityIds,
         variantSel: {},
         simple: true,
       });
@@ -75,7 +110,10 @@ export function OttoConversation({
         });
       }
       setText("");
+      setPickedMentions([]);
       await refreshAndUpdate();
+      // A completed turn meters LLM credits — refresh the nav balance display.
+      void onBalanceRefresh?.();
     } catch {
       setError("Couldn't reach Otto — please try again.");
     } finally {
@@ -85,9 +123,37 @@ export function OttoConversation({
   }
 
   function handleKeyDown(e: React.KeyboardEvent<HTMLTextAreaElement>) {
+    if (mentionSuggestions.length > 0) {
+      if (e.key === "ArrowUp") {
+        e.preventDefault();
+        setMentionHighlight(h => Math.max(0, h - 1));
+        return;
+      }
+      if (e.key === "ArrowDown") {
+        e.preventDefault();
+        setMentionHighlight(h => Math.min(mentionSuggestions.length - 1, h + 1));
+        return;
+      }
+      if (e.key === "Enter" && !e.shiftKey) {
+        e.preventDefault();
+        selectMention(mentionSuggestions[mentionHighlight]);
+        return;
+      }
+      if (e.key === "Tab") {
+        e.preventDefault();
+        selectMention(mentionSuggestions[mentionHighlight]);
+        return;
+      }
+      if (e.key === "Escape") {
+        e.preventDefault();
+        setMentionQuery(null);
+        setMentionHighlight(0);
+        return;
+      }
+    }
     if (e.key === "Enter" && !e.shiftKey) {
       e.preventDefault();
-      send();
+      void send();
     }
   }
 
@@ -96,6 +162,19 @@ export function OttoConversation({
     messages
       .filter((m) => m.kind === "GEN_RESULT" && m.genJobId)
       .map((m) => m.genJobId as string),
+  );
+  // Track which job ids have a TURN_ERROR so the card can show a failed state.
+  const errorJobIds = new Set(
+    messages
+      .filter((m) => m.kind === "TURN_ERROR" && m.genJobId)
+      .map((m) => m.genJobId as string),
+  );
+
+  // Map genJobId → cardId for the "Make another" path on GEN_RESULT widgets.
+  const cardIdByJobId = new Map<string, string>(
+    messages
+      .filter((m) => m.kind === "GEN_CARD" && m.genJobId)
+      .map((m) => [m.genJobId as string, m.id]),
   );
 
   // A job is "working" once its card is approved (genJobId set) but no terminal
@@ -116,12 +195,17 @@ export function OttoConversation({
   const POLL_MS = 2500;
   const MAX_POLLS = 48; // ~2 minutes
   const [pollGaveUp, setPollGaveUp] = useState(false);
+  /** Set to true after "Check again" exhausts a second MAX_POLLS round — terminal message. */
+  const [pollTerminal, setPollTerminal] = useState(false);
   const pollCountRef = useRef(0);
+  const checkAgainUsedRef = useRef(false);
 
   // Reset the give-up state whenever we switch threads.
   useEffect(() => {
     setPollGaveUp(false);
+    setPollTerminal(false);
     pollCountRef.current = 0;
+    checkAgainUsedRef.current = false;
   }, [thread.id]);
 
   useEffect(() => {
@@ -129,6 +213,7 @@ export function OttoConversation({
     const t = setInterval(() => {
       pollCountRef.current += 1;
       if (pollCountRef.current >= MAX_POLLS) {
+        if (checkAgainUsedRef.current) setPollTerminal(true);
         setPollGaveUp(true);
         clearInterval(t);
         return;
@@ -141,8 +226,16 @@ export function OttoConversation({
 
   return (
     <div style={{ flex: 1, display: "flex", flexDirection: "column", overflow: "hidden" }}>
+      <style>{`
+        @media (max-width: 680px) {
+          .otto-conv-scroll { padding: var(--space-4) var(--space-3) !important; }
+          .otto-conv-composer { padding: var(--space-3) var(--space-3) !important; }
+          .otto-conv-header { padding: var(--space-3) var(--space-4) !important; }
+        }
+      `}</style>
       {/* Header */}
       <div
+        className="otto-conv-header"
         style={{
           padding: "var(--space-4) var(--space-6)",
           borderBottom: "1px solid var(--border-subtle)",
@@ -171,7 +264,7 @@ export function OttoConversation({
       </div>
 
       {/* Messages */}
-      <div style={{ flex: 1, overflow: "auto", padding: "var(--space-6)" }}>
+      <div className="otto-conv-scroll" style={{ flex: 1, overflow: "auto", padding: "var(--space-6)" }}>
         <div style={{ maxWidth: 680, margin: "0 auto", display: "flex", flexDirection: "column", gap: "var(--space-4)" }}>
           {messages.map((m) => (
             <MessageRow
@@ -181,9 +274,14 @@ export function OttoConversation({
               projectId={projectId}
               threadId={thread.id}
               resultJobIds={resultJobIds}
+              errorJobIds={errorJobIds}
+              cardIdByJobId={cardIdByJobId}
+              submittedCardIds={submittedCardIds}
               pendingApprovalCardIds={pendingApprovalCardIds}
               busy={busy}
               onApproved={(cardId) => {
+                // Record submission so the card flips to "working" optimistically.
+                setSubmittedCardIds((cur) => new Set(cur).add(cardId));
                 setPendingApprovalCardIds((cur) => {
                   const next = new Set(cur);
                   next.delete(cardId);
@@ -193,14 +291,38 @@ export function OttoConversation({
                 // prior job had already hit the give-up cap.
                 setPollGaveUp(false);
                 pollCountRef.current = 0;
+                // An approve reserves credits — refresh the nav balance immediately.
+                void onBalanceRefresh?.();
                 refreshAndUpdate();
               }}
-              onChangeRequest={() => {
-                // Focus the composer for a change request
+              onChangeRequest={(seed) => {
+                // Prefill the composer with the plan prompt so the user edits from it.
                 const ta = document.getElementById("otto-composer") as HTMLTextAreaElement | null;
-                ta?.focus();
+                if (ta) {
+                  const nativeInputValueSetter = Object.getOwnPropertyDescriptor(window.HTMLTextAreaElement.prototype, "value")?.set;
+                  nativeInputValueSetter?.call(ta, seed);
+                  ta.dispatchEvent(new Event("input", { bubbles: true }));
+                  ta.focus();
+                }
+                setText(seed);
               }}
-              onEditByHand={onEditByHand}
+              onRetry={() => {
+                // Fresh card spawned — re-arm poll and refetch so it appears.
+                // Reset checkAgainUsedRef too: the retried job gets the full two-round
+                // stall budget, not a one-round dead-end from an earlier "Check again".
+                setPollGaveUp(false);
+                setPollTerminal(false);
+                pollCountRef.current = 0;
+                checkAgainUsedRef.current = false;
+                void refreshAndUpdate();
+              }}
+              onCancelled={() => void refreshAndUpdate()}
+              onMakeAnother={() => {
+                // Fresh card spawned via "Make another" — re-arm poll + refetch.
+                setPollGaveUp(false);
+                pollCountRef.current = 0;
+                void refreshAndUpdate();
+              }}
             />
           ))}
 
@@ -242,7 +364,7 @@ export function OttoConversation({
             </div>
           )}
 
-          {!busy && hasWorkingJob && pollGaveUp && (
+          {!busy && hasWorkingJob && pollGaveUp && !pollTerminal && (
             <div style={{ display: "flex", alignItems: "flex-start", gap: "var(--space-3)" }}>
               <OttoAvatar size={32} state="idle" />
               <div
@@ -255,10 +377,11 @@ export function OttoConversation({
                   color: "var(--text-body)",
                 }}
               >
-                This is taking longer than usual. Your credits are safe — nothing is charged until a result comes back.{" "}
+                This is taking longer than usual. Your credits for this are on hold — if it doesn&rsquo;t finish, they&rsquo;re returned to you automatically.{" "}
                 <button
                   type="button"
                   onClick={() => {
+                    checkAgainUsedRef.current = true;
                     setPollGaveUp(false);
                     pollCountRef.current = 0;
                     void refreshAndUpdate();
@@ -267,6 +390,24 @@ export function OttoConversation({
                 >
                   Check again
                 </button>
+              </div>
+            </div>
+          )}
+
+          {!busy && hasWorkingJob && pollTerminal && (
+            <div style={{ display: "flex", alignItems: "flex-start", gap: "var(--space-3)" }}>
+              <OttoAvatar size={32} state="idle" />
+              <div
+                style={{
+                  padding: "var(--space-3) var(--space-4)",
+                  background: "var(--surface-card)",
+                  border: "1px solid var(--border-subtle)",
+                  borderRadius: "0 var(--radius-lg) var(--radius-lg) var(--radius-lg)",
+                  fontSize: "var(--text-sm)",
+                  color: "var(--text-body)",
+                }}
+              >
+                This looks stuck. Cancel it on the card to get your credits back, or start a new card.
               </div>
             </div>
           )}
@@ -292,13 +433,54 @@ export function OttoConversation({
 
       {/* Composer */}
       <div
+        className="otto-conv-composer"
         style={{
           borderTop: "1px solid var(--border-subtle)",
           background: "var(--surface-card)",
           padding: "var(--space-4) var(--space-6)",
         }}
       >
-        <div style={{ maxWidth: 680, margin: "0 auto" }}>
+        <div style={{ maxWidth: 680, margin: "0 auto", position: "relative" }}>
+          {mentionSuggestions.length > 0 && (
+            <div
+              role="listbox"
+              style={{
+                position: "absolute",
+                bottom: "100%",
+                left: 0,
+                marginBottom: 4,
+                width: 256,
+                borderRadius: "var(--radius-lg)",
+                border: "1px solid var(--border-default)",
+                background: "var(--surface-card)",
+                boxShadow: "var(--shadow-lg)",
+                zIndex: 50,
+                overflow: "hidden",
+              }}
+            >
+              {mentionSuggestions.map((e, i) => (
+                <button
+                  key={e.id}
+                  role="option"
+                  aria-selected={i === mentionHighlight}
+                  onMouseDown={(ev) => { ev.preventDefault(); selectMention(e); }}
+                  style={{
+                    display: "block",
+                    width: "100%",
+                    textAlign: "left",
+                    padding: "var(--space-2) var(--space-3)",
+                    fontSize: "var(--text-sm)",
+                    background: i === mentionHighlight ? "var(--bg-muted, var(--surface-raised))" : "transparent",
+                    border: "none",
+                    cursor: "pointer",
+                    color: "var(--text-body)",
+                  }}
+                >
+                  @{e.name}
+                </button>
+              ))}
+            </div>
+          )}
           <div
             style={{
               background: "var(--bg-page)",
@@ -311,7 +493,7 @@ export function OttoConversation({
             <textarea
               id="otto-composer"
               value={text}
-              onChange={(e) => setText(e.target.value)}
+              onChange={handleTextChange}
               onKeyDown={handleKeyDown}
               disabled={busy}
               placeholder="Reply to Otto…"
@@ -359,22 +541,32 @@ function MessageRow({
   projectId,
   threadId,
   resultJobIds,
+  errorJobIds,
+  cardIdByJobId,
+  submittedCardIds,
   pendingApprovalCardIds,
   busy,
   onApproved,
   onChangeRequest,
-  onEditByHand,
+  onRetry,
+  onCancelled,
+  onMakeAnother,
 }: {
   message: ChatMessageDTO;
   entities: EntityDTO[];
   projectId: string;
   threadId: string;
   resultJobIds: Set<string>;
+  errorJobIds: Set<string>;
+  cardIdByJobId: Map<string, string>;
+  submittedCardIds: Set<string>;
   pendingApprovalCardIds: Set<string>;
   busy: boolean;
   onApproved: (cardId: string) => void;
-  onChangeRequest: () => void;
-  onEditByHand: () => void;
+  onChangeRequest: (seed: string) => void;
+  onRetry: () => void;
+  onCancelled: () => void;
+  onMakeAnother: () => void;
 }) {
   const isUser = m.role === "USER";
 
@@ -434,11 +626,18 @@ function MessageRow({
             entities={entities}
             threadId={threadId}
             projectId={projectId}
-            alreadyGenerated={!!m.genJobId}
-            hasDurableResult={!!m.genJobId && resultJobIds.has(m.genJobId)}
+            cardState={deriveCardState({
+              genJobId: m.genJobId,
+              submitted: submittedCardIds.has(m.id),
+              results: resultJobIds,
+              errors: errorJobIds,
+            })}
             pendingApproval={pendingApprovalCardIds.has(m.id)}
+            genJobId={m.genJobId}
             onApproved={() => onApproved(m.id)}
             onChangeSomething={onChangeRequest}
+            onRetry={onRetry}
+            onCancelled={onCancelled}
           />
         </div>
       </div>
@@ -447,11 +646,12 @@ function MessageRow({
 
   if (m.kind === "GEN_RESULT") {
     const r = m.payload as { kind?: string; model?: string; urls?: string[]; generationIds?: string[]; costUsd?: number } | null;
+    const sourceCardId = m.genJobId ? cardIdByJobId.get(m.genJobId) : undefined;
     return (
       <div style={{ display: "flex", alignItems: "flex-start", gap: "var(--space-3)" }}>
         <OttoAvatar size={32} state="idle" />
         <div style={{ flex: 1, minWidth: 0 }}>
-          <OttoResult payload={r} onEditByHand={onEditByHand} />
+          <OttoResult payload={r} sourceCardId={sourceCardId} onMakeAnother={onMakeAnother} />
         </div>
       </div>
     );

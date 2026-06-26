@@ -1,9 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
-import {
-  GEN_PRICE_USD_PER_IMAGE,
-  displayCredits,
-  CREDITS_PER_USD,
-} from "@fikirtive/core";
+import { GEN_PRICE_USD_PER_IMAGE } from "@fikirtive/core";
 // I1: pure-helper tests import from propose.helpers — no DB mock needed for these
 import { buildProposeCard } from "./propose.helpers.js";
 // executePropose (DB-side) still imported from propose.ts
@@ -63,12 +59,14 @@ describe("buildProposeCard — pure helper", () => {
     expect(cardPayload.kind).toBe("image");
     expect(cardPayload.model).toBe("seedream");
 
-    // count defaults to 1 for image
+    // count defaults to 1 for image. estimatedPriceUsd stays the record-only fal cost…
     const expectedPrice = GEN_PRICE_USD_PER_IMAGE * 1;
     expect(cardPayload.estimatedPriceUsd).toBeCloseTo(expectedPrice);
 
-    const expectedDisplay = displayCredits(Math.round(expectedPrice * CREDITS_PER_USD));
-    expect(shownPriceDisplay).toBe(expectedDisplay);
+    // …but the CARD now quotes the real charge in credits (pricedGenCredits = 1 credit/image),
+    // the same value startGen reserves — so the quote equals what leaves the balance.
+    expect(cardPayload.estimatedCredits).toBe(1);
+    expect(shownPriceDisplay).toBe(1);
 
     // M1: price must be positive (guards against regression to 0/NaN)
     expect(shownPriceDisplay).toBeGreaterThan(0);
@@ -172,6 +170,63 @@ describe("buildProposeCard — pure helper", () => {
     expect(cardPayload.entityIds).toEqual([]);
     expect(cardPayload.variantSel).toEqual({});
     expect((cardPayload as Record<string, unknown>)["sourceGenerationId"]).toBe("gen-abc123");
+  });
+
+  // Test forVideo: image with forVideo=true → videoStep.estimatedCredits is positive,
+  // estimatedCredits (image) is unchanged/smaller
+  it("forVideo=true on image → cardPayload.videoStep.estimatedCredits is a positive number, estimatedCredits (image) unchanged", () => {
+    const ctx = makeCtx();
+    const input = {
+      kind: "image" as const,
+      structuredPrompt: "A hero shot of the mascot",
+      entityIds: [],
+      variantSel: {},
+      forVideo: true,
+    };
+    const { cardPayload } = buildProposeCard(input, ctx, []);
+
+    // The image step's real charge is unaffected
+    expect(cardPayload.kind).toBe("image");
+    expect(cardPayload.estimatedCredits).toBe(1); // 1 credit/image unchanged
+
+    // videoStep is set and its estimate is a positive number
+    expect(cardPayload.videoStep).toBeDefined();
+    expect(typeof cardPayload.videoStep!.estimatedCredits).toBe("number");
+    expect(cardPayload.videoStep!.estimatedCredits).toBeGreaterThan(0);
+
+    // The video step estimate should be larger than the image step (video costs more)
+    expect(cardPayload.videoStep!.estimatedCredits).toBeGreaterThan(cardPayload.estimatedCredits);
+  });
+
+  // Test forVideo: image WITHOUT forVideo → videoStep is undefined
+  it("forVideo omitted on image → videoStep is undefined", () => {
+    const ctx = makeCtx();
+    const input = {
+      kind: "image" as const,
+      structuredPrompt: "A product shot",
+      entityIds: [],
+      variantSel: {},
+      // no forVideo
+    };
+    const { cardPayload } = buildProposeCard(input, ctx, []);
+
+    expect(cardPayload.videoStep).toBeUndefined();
+  });
+
+  // Test forVideo: a normal video card is unaffected by the forVideo flag
+  it("forVideo has no effect on a video card — videoStep is undefined and kind stays video", () => {
+    const ctx = makeCtx();
+    const input = {
+      kind: "video" as const,
+      structuredPrompt: "A sweeping aerial shot",
+      entityIds: [],
+      variantSel: {},
+      forVideo: true, // irrelevant on a video card
+    };
+    const { cardPayload } = buildProposeCard(input, ctx, []);
+
+    expect(cardPayload.kind).toBe("video");
+    expect(cardPayload.videoStep).toBeUndefined();
   });
 
   // Test 5: entityId scoping — foreign ids are dropped silently

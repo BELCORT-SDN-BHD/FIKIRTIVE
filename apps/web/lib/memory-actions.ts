@@ -103,7 +103,7 @@ export async function getBrandContextText(_ownerId?: string, brandId?: string | 
   const ownerId = gate.ownerId;
   const rows = await prisma.memory.findMany({
     where: { ownerId, brandId: brandId ?? null, deletedAt: null },
-    orderBy: [{ category: "asc" }, { updatedAt: "desc" }],
+    orderBy: [{ pinned: "desc" }, { updatedAt: "desc" }],
     select: { category: true, content: true },
     take: 100,
   });
@@ -114,8 +114,9 @@ export async function getBrandContextText(_ownerId?: string, brandId?: string | 
     bucket.push(r.content);
     byCat.set(r.category, bucket);
   }
-  return [...byCat.entries()]
+  const text = [...byCat.entries()]
     .map(([cat, items]) => `${cat}: ${items.join("; ")}`)
-    .join("\n")
-    .slice(0, 3000);
+    .join("\n");
+  if (text.length <= 3000) return text;
+  return text.slice(0, 3000) + "\n…(older brand notes not shown)";
 }

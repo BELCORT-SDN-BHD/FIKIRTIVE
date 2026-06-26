@@ -7,8 +7,8 @@
  * Identity comes exclusively from OttoContext (ctx), never from tool input — the
  * model cannot spoof ownerId or threadId.
  */
-import { tool } from "@openai/agents";
 import type { RunContext } from "@openai/agents";
+import { defineOttoSkill } from "../skill.js";
 import { z } from "zod";
 import { prisma } from "@fikirtive/db";
 import type { OttoContext } from "../context.js";
@@ -45,15 +45,18 @@ export async function executeSetTitle(
 // SDK tool definition
 // ---------------------------------------------------------------------------
 
-export const setTitle = tool<typeof setTitleInput, OttoContext>({
+export const setTitleSkill = defineOttoSkill({
   name: "setTitle",
+  cost: "free",
+  effect: "write",
+  reach: "internal",
   description:
     "Set a concise ≤6-word title for the current conversation. " +
     "Call once early in a new conversation when a good title is clear. " +
     "This is $0.",
   parameters: setTitleInput,
-  execute: async (input, runContext) => {
-    if (!runContext) throw new Error("OttoContext required");
-    return executeSetTitle(input, runContext);
-  },
+  execute: executeSetTitle,
 });
+
+// Backward-compatible bare-tool export (keeps existing imports + tests unchanged).
+export const setTitle = setTitleSkill.tool;

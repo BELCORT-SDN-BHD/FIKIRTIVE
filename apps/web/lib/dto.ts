@@ -4,6 +4,8 @@ import { storage, kindOf } from "./storage";
 import type { EntityWithRefs, ChatThreadWithMessages } from "./data";
 import type { EntityDTO, ChatMessageDTO, ChatThreadDTO } from "./types";
 
+type EntityWithOttoUsage = EntityWithRefs & { _ottoUsageCount?: number };
+
 export function assetUrl(ownerId: string, contentHash: string, ext: string) {
   return storage.url(storageKey(ownerId, contentHash, ext));
 }
@@ -19,7 +21,7 @@ function refOf(r: { id: string; assetId: string; asset: { ownerId: string; conte
 }
 
 /** Shared Entity → DTO mapping (workbench + library render the same store). */
-export function toEntityDTO(e: EntityWithRefs): EntityDTO {
+export function toEntityDTO(e: EntityWithOttoUsage): EntityDTO {
   return {
     id: e.id,
     type: e.type,
@@ -36,7 +38,7 @@ export function toEntityDTO(e: EntityWithRefs): EntityDTO {
       prompt: v.prompt,
       refs: v.referenceImages.map(refOf),
     })),
-    usageCount: e._count.shotRefs,
+    usageCount: e._count.shotRefs + (e._ottoUsageCount ?? 0),
   };
 }
 
@@ -59,7 +61,7 @@ export function toChatMessageDTO(
     // malformed → render as plain text (no card)
     payload = proposal.success ? { ...p, ...proposal.data } : null;
   } else if (m.kind === "GEN_RESULT") {
-    const p = (m.payload ?? {}) as { kind?: string; model?: string };
+    const p = (m.payload ?? {}) as { kind?: string; model?: string; costCredits?: number };
     const resolved = m.genJobId ? urlsByJob.get(m.genJobId) : undefined;
     // kind is always written by the worker (gen.ts); a missing/invalid value signals payload
     // corruption — surface it instead of silently coercing (e.g. a video result → "image").
@@ -75,6 +77,10 @@ export function toChatMessageDTO(
       // the real metered charge (frozen ledger value) so the caption shows what was actually
       // billed; null for legacy/failed jobs → the UI falls back to a default-config estimate.
       ...(typeof resolved?.spentUsd === "number" ? { costUsd: resolved.spentUsd } : {}),
+      // Forward the worker-written costCredits (the real charged credits, stored on the
+      // GEN_RESULT payload by appendCoworkResult) so OttoResult can show "Cost: N credits".
+      // Without this the #30 cost line is dead on arrival.
+      ...(typeof p.costCredits === "number" ? { costCredits: p.costCredits } : {}),
     };
   } else if (m.kind === "PLAN" && m.payload) {
     payload = m.payload; // { planSteps }
@@ -103,6 +109,6 @@ export function toChatThreadDTO(t: ChatThreadWithMessages, urlsByJob: Map<string
 
 /** Thread-LIST DTO: metadata only, empty messages. The rail renders title + time; the
  *  active thread's messages lazy-load via getCoworkThreadClient. (scale audit 2026-06-20) */
-export function toChatThreadMetaDTO(t: { id: string; projectId: string; title: string; updatedAt: Date }): ChatThreadDTO {
-  return { id: t.id, projectId: t.projectId, title: t.title, updatedAt: t.updatedAt.toISOString(), messages: [] };
+export function toChatThreadMetaDTO(t: { id: string; projectId: string; title: string; updatedAt: Date; _badge?: "working" | "failed" | "done" | null }): ChatThreadDTO {
+  return { id: t.id, projectId: t.projectId, title: t.title, updatedAt: t.updatedAt.toISOString(), messages: [], status: t._badge ?? null };
 }

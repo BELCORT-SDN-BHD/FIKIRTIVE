@@ -1,7 +1,10 @@
 "use client";
 import React from "react";
+import { creditsLabel } from "@/lib/credit-format";
 import type { OttoViewKey } from "./OttoApp";
 import type { ChatThreadDTO } from "@/lib/types";
+
+const MOBILE_BP = 680;
 
 interface NavItem {
   key: OttoViewKey;
@@ -63,6 +66,14 @@ const NAV_ITEMS: NavItem[] = [
   { key: "account", label: "Account", icon: <IconCircleUser /> },
 ];
 
+function IconX() {
+  return (
+    <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round" aria-hidden>
+      <path d="M18 6 6 18" /><path d="m6 6 12 12" />
+    </svg>
+  );
+}
+
 export interface OttoNavProps {
   view: OttoViewKey;
   onViewChange: (v: OttoViewKey) => void;
@@ -70,9 +81,15 @@ export interface OttoNavProps {
   activeThreadId: string | null;
   onSelectThread: (id: string) => void;
   onNewCampaign: () => void;
-  balanceUsd: number;
+  onDeleteThread: (id: string) => void;
+  /** Spendable balance in DISPLAYED credits (the product shows credits, never dollars). */
+  balanceCredits: number;
   userName: string;
   userEmail: string;
+  /** Mobile: whether the drawer is open (controlled by OttoApp). */
+  drawerOpen?: boolean;
+  /** Mobile: called when the drawer should close (backdrop tap or nav action). */
+  onDrawerClose?: () => void;
 }
 
 export function OttoNav({
@@ -82,15 +99,65 @@ export function OttoNav({
   activeThreadId,
   onSelectThread,
   onNewCampaign,
-  balanceUsd,
+  onDeleteThread,
+  balanceCredits,
   userName,
   userEmail,
+  drawerOpen = false,
+  onDrawerClose,
 }: OttoNavProps) {
   const initial = userName.slice(0, 1).toUpperCase();
-  const balanceLabel = "$" + balanceUsd.toFixed(2);
+  const balanceLabel = creditsLabel(balanceCredits);
+
+  function handleNavAction(fn: () => void) {
+    fn();
+    onDrawerClose?.();
+  }
 
   return (
+    <>
+      <style>{`
+        @media (max-width: ${MOBILE_BP}px) {
+          .otto-nav {
+            position: fixed !important;
+            top: 0;
+            left: 0;
+            bottom: 0;
+            z-index: 200;
+            transform: translateX(-100%);
+            transition: transform 0.22s ease;
+            box-shadow: var(--shadow-xl, 0 8px 32px rgba(0,0,0,.18));
+            width: 280px !important;
+          }
+          .otto-nav.otto-nav--open {
+            transform: translateX(0);
+          }
+          .otto-nav-backdrop {
+            display: block !important;
+          }
+        }
+        @media (min-width: ${MOBILE_BP + 1}px) {
+          .otto-nav-backdrop { display: none !important; }
+        }
+      `}</style>
+      {/* Backdrop — only rendered/visible on mobile when drawer is open */}
+      <div
+        className="otto-nav-backdrop"
+        onClick={onDrawerClose}
+        style={{
+          display: "none",
+          position: "fixed",
+          inset: 0,
+          zIndex: 199,
+          background: "rgba(0,0,0,.35)",
+          opacity: drawerOpen ? 1 : 0,
+          pointerEvents: drawerOpen ? "auto" : "none",
+          transition: "opacity 0.22s ease",
+        }}
+        aria-hidden
+      />
     <nav
+      className={`otto-nav${drawerOpen ? " otto-nav--open" : ""}`}
       style={{
         width: 240,
         flexShrink: 0,
@@ -116,7 +183,7 @@ export function OttoNav({
       {/* New campaign button */}
       <div style={{ padding: "var(--space-4) var(--space-3) var(--space-3)" }}>
         <button
-          onClick={onNewCampaign}
+          onClick={() => handleNavAction(onNewCampaign)}
           style={{
             display: "flex",
             alignItems: "center",
@@ -147,7 +214,7 @@ export function OttoNav({
           return (
             <button
               key={item.key}
-              onClick={() => onViewChange(item.key)}
+              onClick={() => handleNavAction(() => onViewChange(item.key))}
               style={{
                 display: "flex",
                 alignItems: "center",
@@ -192,38 +259,107 @@ export function OttoNav({
           <div style={{ display: "flex", flexDirection: "column", gap: "2px" }}>
             {threads.slice(0, 8).map((t) => {
               const isActive = t.id === activeThreadId && view === "otto";
+              const dotColor =
+                t.status === "working" ? "#f59e0b" :
+                t.status === "failed"  ? "#dc2626" :
+                t.status === "done"    ? "#16a34a" :
+                null;
+              const dotLabel =
+                t.status === "working" ? "Processing" :
+                t.status === "failed"  ? "Failed" :
+                t.status === "done"    ? "Done" :
+                null;
               return (
-                <button
+                <div
                   key={t.id}
-                  onClick={() => {
-                    onSelectThread(t.id);
-                    onViewChange("otto");
-                  }}
-                  title={t.title}
-                  style={{
-                    display: "block",
-                    width: "100%",
-                    border: "none",
-                    background: isActive ? "var(--brand-tint)" : "transparent",
-                    color: isActive ? "var(--brand-press)" : "var(--text-muted)",
-                    fontFamily: "var(--font-sans)",
-                    fontSize: "var(--text-xs)",
-                    fontWeight: isActive ? "var(--weight-semibold)" : "var(--weight-regular)",
-                    padding: "7px var(--space-3)",
-                    borderRadius: "var(--radius-sm)",
-                    cursor: "pointer",
-                    textAlign: "left",
-                    overflow: "hidden",
-                    textOverflow: "ellipsis",
-                    whiteSpace: "nowrap",
-                    transition: "background var(--dur-fast) var(--ease-out)",
-                  }}
+                  className="otto-recent-row"
+                  style={{ position: "relative", display: "flex", alignItems: "center" }}
                 >
-                  {t.title}
-                </button>
+                  <button
+                    onClick={() => handleNavAction(() => {
+                      onSelectThread(t.id);
+                      onViewChange("otto");
+                    })}
+                    title={t.title}
+                    style={{
+                      display: "flex",
+                      alignItems: "center",
+                      gap: "var(--space-2)",
+                      flex: 1,
+                      minWidth: 0,
+                      border: "none",
+                      background: isActive ? "var(--brand-tint)" : "transparent",
+                      color: isActive ? "var(--brand-press)" : "var(--text-muted)",
+                      fontFamily: "var(--font-sans)",
+                      fontSize: "var(--text-xs)",
+                      fontWeight: isActive ? "var(--weight-semibold)" : "var(--weight-regular)",
+                      padding: "7px var(--space-3)",
+                      paddingRight: "var(--space-6)",
+                      borderRadius: "var(--radius-sm)",
+                      cursor: "pointer",
+                      textAlign: "left",
+                      transition: "background var(--dur-fast) var(--ease-out)",
+                    }}
+                  >
+                    {dotColor && (
+                      <span
+                        aria-label={dotLabel ?? undefined}
+                        title={dotLabel ?? undefined}
+                        style={{
+                          display: "inline-block",
+                          flexShrink: 0,
+                          width: 8,
+                          height: 8,
+                          borderRadius: "50%",
+                          background: dotColor,
+                        }}
+                      />
+                    )}
+                    <span style={{ overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", minWidth: 0 }}>
+                      {t.title}
+                    </span>
+                  </button>
+                  <button
+                    className="otto-recent-delete"
+                    aria-label={`Delete ${t.title}`}
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      onDeleteThread(t.id);
+                    }}
+                    style={{
+                      position: "absolute",
+                      right: "var(--space-2)",
+                      display: "flex",
+                      alignItems: "center",
+                      justifyContent: "center",
+                      width: 20,
+                      height: 20,
+                      border: "none",
+                      background: "transparent",
+                      color: "var(--text-faint)",
+                      borderRadius: "var(--radius-sm)",
+                      cursor: "pointer",
+                      padding: 0,
+                      opacity: 0,
+                      transition: "opacity var(--dur-fast) var(--ease-out), background var(--dur-fast) var(--ease-out)",
+                    }}
+                  >
+                    <IconX />
+                  </button>
+                </div>
               );
             })}
           </div>
+          <style>{`
+            .otto-recent-row:hover .otto-recent-delete,
+            .otto-recent-row:focus-within .otto-recent-delete {
+              opacity: 1;
+            }
+            .otto-recent-delete:hover {
+              background: var(--surface-hover, rgba(0,0,0,0.07)) !important;
+              color: var(--text-default) !important;
+            }
+          `}</style>
         </div>
       )}
 
@@ -309,6 +445,7 @@ export function OttoNav({
         </div>
       </div>
     </nav>
+    </>
   );
 }
 

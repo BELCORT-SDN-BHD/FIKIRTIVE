@@ -28,4 +28,7 @@ export interface OttoContext {
    *  Otto speaks to a beginner without jargon. NOT baked into the shared identity — injected
    *  only on the simple door path (via buildContextSystemMessage). */
   simpleMode?: boolean;
+  /** The latest generation's status for THIS thread (best-effort), so Otto speaks truthfully
+   *  about progress instead of guessing. Null/undefined = unknown. */
+  activeJob?: { status: string; kind: string; error?: string | null } | null;
 }

@@ -1,10 +1,10 @@
 export { otto, ottoInstructions, OTTO_DEFAULT_MODEL } from "./otto.js";
 export { ottoSimpleModeBlock } from "./instructions.js";
-export { propose } from "./tools/propose.js";
-export { generate } from "./tools/generate.js";
-export { updateBrief } from "./tools/update-brief.js";
-export { describeRefs, sanitizeRefDescription } from "./tools/describe-refs.js";
-export { setTitle } from "./tools/set-title.js";
+export { propose } from "./skills/propose.js";
+export { generate } from "./skills/generate.js";
+export { updateBrief } from "./skills/update-brief.js";
+export { describeRefs, sanitizeRefDescription } from "./skills/describe-refs.js";
+export { setTitle } from "./skills/set-title.js";
 export type { OttoContext } from "./context.js";
 export { withLlmBudget, actualCostInternal, mapOttoUsage } from "./meter.js";
 export type { TokenUsage } from "./meter.js";
@@ -15,3 +15,7 @@ export type {
   RunStreamEvent,
   StreamedRunResult,
 } from "@openai/agents";
+export { allSkills, skillCatalog } from "./registry.js";
+export type { SkillMeta } from "./registry.js";
+export { defineOttoSkill, deriveNeedsApproval } from "./skill.js";
+export type { OttoSkill, OttoSkillSpec, Cost, Effect, Reach } from "./skill.js";

@@ -7,8 +7,13 @@ import { useStickToBottom } from "use-stick-to-bottom";
 import { OttoAvatar, Button } from "@/components/fk";
 import { getCoworkThreadClient } from "@/lib/cowork-fetch";
 import { threadToUiMessages, type OttoUiMessage } from "@/lib/otto-ui-messages";
+import { ImageIcon } from "lucide-react";
+import { uploadFilesDirect } from "@/lib/direct-upload";
+import { finalizeCandidateUploads } from "@/lib/upload-actions";
 import {
   resultJobIds,
+  errorJobIds,
+  deriveCardState,
   hasWorkingJob as computeHasWorkingJob,
   proposeCardId,
   injectCardMessage,
@@ -21,6 +26,7 @@ import { TextPart } from "./parts/TextPart";
 import { StatusLine } from "./parts/StatusLine";
 import { ReasoningPart } from "./parts/ReasoningPart";
 import { asStatusData, asErrorData } from "@/lib/otto-status-helpers";
+import { activeMentionQuery, resolveSentEntityIds } from "@/lib/otto-mentions";
 import type { OttoStatusData } from "@/lib/otto-stream-bridge";
 import type { ReasoningUIPart } from "ai";
 import type { EntityDTO, ChatThreadDTO } from "@/lib/types";
@@ -38,7 +44,8 @@ export interface OttoChatStreamProps {
   balanceUsd: number;
   onRefresh: () => Promise<void>;
   onThreadUpdate: (thread: ChatThreadDTO) => void;
-  onEditByHand: () => void;
+  /** Re-reads the account balance and updates the nav display after a spend event. */
+  onBalanceRefresh?: () => void | Promise<void>;
   /** Streaming front door: a first message to auto-send ONCE into a freshly-created
    *  (empty) thread on mount. The thread row already exists (createEmptyCoworkThread),
    *  so the route's existing-thread branch handles it. */
@@ -66,18 +73,35 @@ export function OttoChatStream({
   entities,
   thread,
   onThreadUpdate,
-  onEditByHand,
+  onBalanceRefresh,
   pendingFirst,
   onPendingFirstSent,
 }: OttoChatStreamProps) {
   const [text, setText] = useState("");
+  const [pickedMentions, setPickedMentions] = useState<{id: string; name: string}[]>([]);
+  const [mentionQuery, setMentionQuery] = useState<string | null>(null);
+  const [mentionHighlight, setMentionHighlight] = useState(0);
   /** Latest data-status received for the in-flight turn; reset on each new turn. */
   const [liveStatus, setLiveStatus] = useState<OttoStatusData | null>(null);
   /** data-error text for the in-flight turn; stays visible after the turn ends. */
   const [streamError, setStreamError] = useState<string | null>(null);
+  /** data-error kind; "insufficient_credits" drives the Top-up link. */
+  const [streamErrorKind, setStreamErrorKind] = useState<string | null>(null);
   /** Card ids the run paused on (needs_approval) — drives OttoPlanCard's parked vs.
    *  proposed spend path. Mirrors OttoConversation's pendingApprovalCardIds set. */
   const [pendingApprovalCardIds, setPendingApprovalCardIds] = useState<Set<string>>(new Set());
+  /** Card durableIds for which the user has clicked "Make it" (or "Try again") in this
+   *  session — drives the optimistic "working" state before the genJobId lands from the
+   *  durable thread. Resets on remount (thread switch = component re-key). */
+  const [submittedCardIds, setSubmittedCardIds] = useState<Set<string>>(new Set());
+  /** Image attachment: a generation created from a user-uploaded file, included as
+   *  sourceGenerationId on the next send. Null when no image is attached. */
+  const [attached, setAttached] = useState<{ generationId: string; src: string } | null>(null);
+  /** True while the file is being hashed + uploaded + finalized. */
+  const [uploading, setUploading] = useState(false);
+  /** Upload error message shown near the attach button; clears on next successful attach. */
+  const [attachError, setAttachError] = useState<string | null>(null);
+  const fileInputRef = useRef<HTMLInputElement>(null);
 
   // Bounded in-flight poll for the async worker result (ported from OttoConversation):
   // a GEN_CARD whose genJobId is set but with no terminal GEN_RESULT/TURN_ERROR keeps
@@ -85,7 +109,12 @@ export function OttoChatStream({
   const POLL_MS = 2500;
   const MAX_POLLS = 48; // ~2 minutes
   const [pollGaveUp, setPollGaveUp] = useState(false);
+  /** Set to true after the user has clicked "Check again" and the second MAX_POLLS round
+   *  also exhausted — shows a terminal message instead of re-arming indefinitely. */
+  const [pollTerminal, setPollTerminal] = useState(false);
   const pollCountRef = useRef(0);
+  /** Track whether the user has already clicked "Check again" once (armed → gave up → terminal). */
+  const checkAgainUsedRef = useRef(false);
 
   // useChat constructs its Chat (and captures `transport` + initial `messages`) ONCE.
   // We build both in a one-time useState initializer so they're stable across renders.
@@ -103,7 +132,7 @@ export function OttoChatStream({
     transport: new DefaultChatTransport<OttoUiMessage>({
       api: "/api/otto/stream",
       prepareSendMessagesRequest: ({ messages, body }) => {
-        const ids = (body ?? {}) as { projectId?: string; threadId?: string; goalKey?: string };
+        const ids = (body ?? {}) as { projectId?: string; threadId?: string; goalKey?: string; entityIds?: string[]; sourceGenerationId?: string };
         return {
           body: {
             projectId: ids.projectId,
@@ -113,6 +142,8 @@ export function OttoChatStream({
             // goalKey only on the first message of a goal-seeded thread; coworkTurnRequest
             // accepts it as an optional field, so include it only when present.
             ...(ids.goalKey ? { goalKey: ids.goalKey } : {}),
+            ...(ids.entityIds?.length ? { entityIds: ids.entityIds } : {}),
+            ...(ids.sourceGenerationId ? { sourceGenerationId: ids.sourceGenerationId } : {}),
           },
         };
       },
@@ -152,7 +183,7 @@ export function OttoChatStream({
         return;
       }
       const e = asErrorData(part);
-      if (e) { setStreamError(e.text); return; }
+      if (e) { setStreamError(e.text); setStreamErrorKind(e.kind); return; }
       // data-tool-propose: the propose tool persisted a durable GEN_CARD synchronously,
       // but the stream part carries only { cardId, … }. Fetch the durable thread and
       // inject the GEN_CARD (full payload) into the message list, deduped by cardId.
@@ -170,6 +201,8 @@ export function OttoChatStream({
         const fresh = await getCoworkThreadClient(thread.id);
         if (fresh) onThreadUpdate(fresh);
       })();
+      // A completed turn meters LLM credits — refresh the nav balance display.
+      void onBalanceRefresh?.();
     },
   });
 
@@ -188,7 +221,18 @@ export function OttoChatStream({
   // already have a result (so the card shows "making this now" not a dupe result),
   // and whether any approved job is still working (drives the poll + working state).
   const jobsWithResult = resultJobIds(messages);
+  const jobsWithError = errorJobIds(messages);
   const hasWorkingJob = computeHasWorkingJob(messages);
+
+  // Map genJobId → cardId so GEN_RESULT widgets can pass sourceCardId to OttoResult
+  // for "Make another" (coworkVaryCard needs the card, not the job).
+  const cardIdByJobId = new Map<string, string>();
+  for (const m of messages) {
+    const meta = m.metadata;
+    if (meta?.kind === "GEN_CARD" && meta.genJobId && meta.durableId) {
+      cardIdByJobId.set(meta.genJobId, meta.durableId);
+    }
+  }
 
   // Refetch the durable thread and inject any new worker-output messages
   // (GEN_RESULT / TURN_ERROR) into the useChat list, deduped by durableId. NEVER
@@ -196,8 +240,16 @@ export function OttoChatStream({
   async function pollAndInjectResults() {
     const fresh = await getCoworkThreadClient(thread.id);
     if (!fresh) return;
+    const prevResultCount = messages.filter(
+      (m) => m.metadata?.kind === "GEN_RESULT" || m.metadata?.kind === "TURN_ERROR",
+    ).length;
     setMessages((cur) => appendDurableResults(syncCardJobIds(cur, fresh), fresh));
     onThreadUpdate(fresh);
+    // A new terminal result landed → a generation settled and credits were spent.
+    const freshResultCount = fresh.messages.filter(
+      (m) => m.kind === "GEN_RESULT" || m.kind === "TURN_ERROR",
+    ).length;
+    if (freshResultCount > prevResultCount) void onBalanceRefresh?.();
   }
 
   // Reset the give-up state whenever we switch threads (mirror OttoConversation).
@@ -208,16 +260,24 @@ export function OttoChatStream({
     if (prevThreadIdRef.current === thread.id) return;
     prevThreadIdRef.current = thread.id;
     setPollGaveUp(false);
+    setPollTerminal(false);
     pollCountRef.current = 0;
+    checkAgainUsedRef.current = false;
   }, [thread.id]);
 
   // Bounded poll: a worker that fails-closed without writing a terminal message would
   // otherwise keep hasWorkingJob true forever. After ~2 min we stop and show "Check again".
+  // If the user clicks "Check again" and we exhaust again, show a terminal message
+  // instead of looping forever (checkAgainUsedRef guards the second exhaustion).
   useEffect(() => {
     if (!hasWorkingJob || pollGaveUp) return;
     const t = setInterval(() => {
       pollCountRef.current += 1;
       if (pollCountRef.current >= MAX_POLLS) {
+        if (checkAgainUsedRef.current) {
+          // Second exhaustion after "Check again" → terminal, stop re-arming.
+          setPollTerminal(true);
+        }
         setPollGaveUp(true);
         clearInterval(t);
         return;
@@ -248,19 +308,120 @@ export function OttoChatStream({
   function submit() {
     const trimmed = text.trim();
     if (!trimmed || isBusy) return;
+    const entityIds = resolveSentEntityIds(trimmed, pickedMentions);
     setText(""); // clear the composer immediately; sendMessage echoes the user msg
+    setPickedMentions([]);
     // Reset ephemeral stream state for the new turn.
     setLiveStatus(null);
     setStreamError(null);
+    setStreamErrorKind(null);
+    setAttachError(null);
     // A new turn may queue a new generation — re-arm polling (mirror OttoConversation).
     setPollGaveUp(false);
+    setPollTerminal(false);
     pollCountRef.current = 0;
-    // Pass the live projectId/threadId via the per-call body; prepareSendMessagesRequest
+    checkAgainUsedRef.current = false;
+    // Capture and clear the attachment before send. Revoke the local preview blob URL
+    // (the source is the generationId, not the blob) so repeated attach/send doesn't leak.
+    const attachedNow = attached;
+    if (attachedNow?.src.startsWith("blob:")) URL.revokeObjectURL(attachedNow.src);
+    setAttached(null);
+    // Pass the live projectId/threadId, optional @mention entityIds, and optional
+    // sourceGenerationId (attached image) via the per-call body; prepareSendMessagesRequest
     // reads them off `body` and shapes the strict route payload.
-    void sendMessage({ text: trimmed }, { body: { projectId, threadId: thread.id } });
+    void sendMessage(
+      { text: trimmed },
+      {
+        body: {
+          projectId,
+          threadId: thread.id,
+          ...(entityIds.length ? { entityIds } : {}),
+          ...(attachedNow ? { sourceGenerationId: attachedNow.generationId } : {}),
+        },
+      },
+    );
   }
 
+  async function handleFilePick(e: React.ChangeEvent<HTMLInputElement>) {
+    const file = e.target.files?.[0];
+    // Reset the input so the same file can be picked again if the user re-attaches.
+    e.target.value = "";
+    if (!file) return;
+    setAttachError(null);
+    setUploading(true);
+    try {
+      const outcome = await uploadFilesDirect([file], () => {});
+      if (outcome.files.length === 0) {
+        setAttachError(outcome.failures[0]?.reason ?? "Upload failed.");
+        return;
+      }
+      const res = await finalizeCandidateUploads(projectId, "", [], outcome.files);
+      if ("error" in res || !res.generationIds?.[0]) {
+        setAttachError("error" in res ? res.error : "Could not attach image.");
+        return;
+      }
+      setAttached({ generationId: res.generationIds[0], src: URL.createObjectURL(file) });
+    } catch (err) {
+      setAttachError(err instanceof Error ? err.message : "Upload failed.");
+    } finally {
+      setUploading(false);
+    }
+  }
+
+  const mentionSuggestions = mentionQuery !== null
+    ? (entities ?? []).filter(e => e.name.toLowerCase().includes(mentionQuery.toLowerCase())).slice(0, 6)
+    : [];
+
+  const handleTextChange = (e: React.ChangeEvent<HTMLTextAreaElement>) => {
+    const val = e.target.value;
+    setText(val);
+    const caret = e.target.selectionStart ?? val.length;
+    setMentionQuery(activeMentionQuery(val, caret));
+    setMentionHighlight(0);
+  };
+
+  const selectMention = (entity: {id: string; name: string}) => {
+    const textarea = document.getElementById("otto-composer") as HTMLTextAreaElement;
+    const caret = textarea?.selectionStart ?? text.length;
+    const before = text.slice(0, caret);
+    const atIdx = before.lastIndexOf("@");
+    const newText = text.slice(0, atIdx) + `@${entity.name} ` + text.slice(caret);
+    setText(newText);
+    setPickedMentions(prev => prev.some(p => p.id === entity.id) ? prev : [...prev, {id: entity.id, name: entity.name}]);
+    setMentionQuery(null);
+    setMentionHighlight(0);
+    setTimeout(() => textarea?.focus(), 0);
+  };
+
   function handleKeyDown(e: React.KeyboardEvent<HTMLTextAreaElement>) {
+    if (mentionSuggestions.length > 0) {
+      if (e.key === "ArrowUp") {
+        e.preventDefault();
+        setMentionHighlight(h => Math.max(0, h - 1));
+        return;
+      }
+      if (e.key === "ArrowDown") {
+        e.preventDefault();
+        setMentionHighlight(h => Math.min(mentionSuggestions.length - 1, h + 1));
+        return;
+      }
+      if (e.key === "Enter" && !e.shiftKey) {
+        e.preventDefault();
+        selectMention(mentionSuggestions[mentionHighlight]);
+        return;
+      }
+      if (e.key === "Tab") {
+        e.preventDefault();
+        selectMention(mentionSuggestions[mentionHighlight]);
+        return;
+      }
+      if (e.key === "Escape") {
+        e.preventDefault();
+        setMentionQuery(null);
+        setMentionHighlight(0);
+        return;
+      }
+    }
     if (e.key === "Enter" && !e.shiftKey) {
       e.preventDefault();
       submit();
@@ -295,9 +456,15 @@ export function OttoChatStream({
           @keyframes otto-msg-enter    { from {} to {} }
           @keyframes otto-status-fadein { from {} to {} }
         }
+        @media (max-width: 680px) {
+          .otto-chat-scroll { padding: var(--space-4) var(--space-3) !important; }
+          .otto-chat-composer { padding: var(--space-3) var(--space-3) !important; }
+          .otto-chat-header { padding: var(--space-3) var(--space-4) !important; }
+        }
       `}</style>
       {/* Header */}
       <div
+        className="otto-chat-header"
         style={{
           padding: "var(--space-4) var(--space-6)",
           borderBottom: "1px solid var(--border-subtle)",
@@ -328,6 +495,7 @@ export function OttoChatStream({
       {/* Messages (stick-to-bottom scroll region) */}
       <div
         ref={scrollRef}
+        className="otto-chat-scroll"
         style={{ flex: 1, overflow: "auto", padding: "var(--space-6)", position: "relative" }}
       >
         <div
@@ -344,33 +512,61 @@ export function OttoChatStream({
             // falls through to the text/reasoning renderer below.
             if (kind === "GEN_CARD") {
               const genJobId = m.metadata?.genJobId ?? null;
+              const durableId = m.metadata!.durableId;
               return (
                 <WidgetRow key={m.id} animateIn={isNewMessage(m.id)}>
                   <OttoPlanCard
-                    cardId={m.metadata!.durableId}
+                    cardId={durableId}
                     payload={m.metadata?.payload}
                     entities={entities}
                     threadId={thread.id}
                     projectId={projectId}
-                    alreadyGenerated={!!genJobId}
-                    hasDurableResult={!!genJobId && jobsWithResult.has(genJobId)}
-                    pendingApproval={pendingApprovalCardIds.has(m.metadata!.durableId)}
+                    genJobId={genJobId}
+                    cardState={deriveCardState({
+                      genJobId,
+                      submitted: submittedCardIds.has(durableId),
+                      results: jobsWithResult,
+                      errors: jobsWithError,
+                    })}
+                    pendingApproval={pendingApprovalCardIds.has(durableId)}
                     onApproved={() => {
+                      // Record submission so the card flips to "working" optimistically.
+                      setSubmittedCardIds((cur) => new Set(cur).add(durableId));
                       // Drop from the pending set; re-arm the poll (a freshly-approved
                       // card queues a new job even if a prior job hit the give-up cap).
                       setPendingApprovalCardIds((cur) => {
                         const next = new Set(cur);
-                        next.delete(m.metadata!.durableId);
+                        next.delete(durableId);
                         return next;
                       });
                       setPollGaveUp(false);
                       pollCountRef.current = 0;
+                      // An approve reserves credits — refresh the nav balance immediately.
+                      void onBalanceRefresh?.();
                       void pollAndInjectResults();
                     }}
-                    onChangeSomething={() => {
+                    onChangeSomething={(seed) => {
                       const ta = document.getElementById("otto-composer") as HTMLTextAreaElement | null;
-                      ta?.focus();
+                      if (ta) {
+                        // Prefill with the plan prompt so the user edits from it.
+                        const nativeInputValueSetter = Object.getOwnPropertyDescriptor(window.HTMLTextAreaElement.prototype, "value")?.set;
+                        nativeInputValueSetter?.call(ta, seed);
+                        ta.dispatchEvent(new Event("input", { bubbles: true }));
+                        ta.focus();
+                        setText(seed); // mirror OttoConversation — sync React state directly
+                      }
                     }}
+                    onRetry={() => {
+                      // A fresh card was spawned — re-arm poll and refetch so it appears.
+                      // Reset checkAgainUsedRef too: the retried job gets the full two-round
+                      // stall budget, not a one-round dead-end from an earlier "Check again".
+                      setPollGaveUp(false);
+                      setPollTerminal(false);
+                      pollCountRef.current = 0;
+                      checkAgainUsedRef.current = false;
+                      void pollAndInjectResults();
+                    }}
+                    onCancelled={() => void pollAndInjectResults()}
                   />
                 </WidgetRow>
               );
@@ -380,9 +576,18 @@ export function OttoChatStream({
               const r = (m.metadata?.payload ?? null) as
                 | { kind?: string; model?: string; urls?: string[]; generationIds?: string[]; costUsd?: number }
                 | null;
+              const sourceCardId = m.metadata?.genJobId ? cardIdByJobId.get(m.metadata.genJobId) : undefined;
               return (
                 <WidgetRow key={m.id} animateIn={isNewMessage(m.id)}>
-                  <OttoResult payload={r} onEditByHand={onEditByHand} />
+                  <OttoResult
+                    payload={r}
+                    sourceCardId={sourceCardId}
+                    onMakeAnother={() => {
+                      setPollGaveUp(false);
+                      pollCountRef.current = 0;
+                      void pollAndInjectResults();
+                    }}
+                  />
                 </WidgetRow>
               );
             }
@@ -492,7 +697,7 @@ export function OttoChatStream({
             </div>
           )}
 
-          {!isBusy && hasWorkingJob && pollGaveUp && (
+          {!isBusy && hasWorkingJob && pollGaveUp && !pollTerminal && (
             <div style={{ display: "flex", alignItems: "flex-start", gap: "var(--space-3)" }}>
               <OttoAvatar size={32} state="idle" />
               <div
@@ -505,10 +710,11 @@ export function OttoChatStream({
                   color: "var(--text-body)",
                 }}
               >
-                This is taking longer than usual. Your credits are safe — nothing is charged until a result comes back.{" "}
+                This is taking longer than usual. Your credits for this are on hold — if it doesn&rsquo;t finish, they&rsquo;re returned to you automatically.{" "}
                 <button
                   type="button"
                   onClick={() => {
+                    checkAgainUsedRef.current = true;
                     setPollGaveUp(false);
                     pollCountRef.current = 0;
                     void pollAndInjectResults();
@@ -517,6 +723,24 @@ export function OttoChatStream({
                 >
                   Check again
                 </button>
+              </div>
+            </div>
+          )}
+
+          {!isBusy && hasWorkingJob && pollTerminal && (
+            <div style={{ display: "flex", alignItems: "flex-start", gap: "var(--space-3)" }}>
+              <OttoAvatar size={32} state="idle" />
+              <div
+                style={{
+                  padding: "var(--space-3) var(--space-4)",
+                  background: "var(--surface-card)",
+                  border: "1px solid var(--border-subtle)",
+                  borderRadius: "0 var(--radius-lg) var(--radius-lg) var(--radius-lg)",
+                  fontSize: "var(--text-sm)",
+                  color: "var(--text-body)",
+                }}
+              >
+                This looks stuck. Cancel it on the card to get your credits back, or start a new card.
               </div>
             </div>
           )}
@@ -536,6 +760,17 @@ export function OttoChatStream({
               }}
             >
               {streamError}
+              {streamErrorKind === "insufficient_credits" && (
+                <>
+                  {" "}
+                  <a
+                    href="/billing"
+                    style={{ color: "var(--error-700)", fontWeight: "var(--weight-semibold)" as React.CSSProperties["fontWeight"], textDecoration: "underline" }}
+                  >
+                    Top up
+                  </a>
+                </>
+              )}
             </div>
           )}
 
@@ -594,13 +829,145 @@ export function OttoChatStream({
 
       {/* Composer */}
       <div
+        className="otto-chat-composer"
         style={{
           borderTop: "1px solid var(--border-subtle)",
           background: "var(--surface-card)",
           padding: "var(--space-4) var(--space-6)",
         }}
       >
-        <div style={{ maxWidth: 680, margin: "0 auto" }}>
+        <div style={{ maxWidth: 680, margin: "0 auto", position: "relative" }}>
+          {mentionSuggestions.length > 0 && (
+            <div
+              role="listbox"
+              style={{
+                position: "absolute",
+                bottom: "100%",
+                left: 0,
+                marginBottom: 4,
+                width: 256,
+                borderRadius: "var(--radius-lg)",
+                border: "1px solid var(--border-default)",
+                background: "var(--surface-card)",
+                boxShadow: "var(--shadow-lg)",
+                zIndex: 50,
+                overflow: "hidden",
+              }}
+            >
+              {mentionSuggestions.map((e, i) => (
+                <button
+                  key={e.id}
+                  role="option"
+                  aria-selected={i === mentionHighlight}
+                  onMouseDown={(ev) => { ev.preventDefault(); selectMention(e); }}
+                  style={{
+                    display: "block",
+                    width: "100%",
+                    textAlign: "left",
+                    padding: "var(--space-2) var(--space-3)",
+                    fontSize: "var(--text-sm)",
+                    background: i === mentionHighlight ? "var(--bg-muted, var(--surface-raised))" : "transparent",
+                    border: "none",
+                    cursor: "pointer",
+                    color: "var(--text-body)",
+                  }}
+                >
+                  @{e.name}
+                </button>
+              ))}
+            </div>
+          )}
+          {/* Hidden file input — triggered by the attach button below */}
+          <input
+            ref={fileInputRef}
+            type="file"
+            accept="image/png,image/jpeg,image/webp"
+            style={{ display: "none" }}
+            onChange={handleFilePick}
+          />
+
+          {/* Thumbnail chip: shown while uploading or when an image is attached */}
+          {(uploading || attached) && (
+            <div
+              style={{
+                display: "flex",
+                alignItems: "center",
+                gap: "var(--space-2)",
+                marginBottom: "var(--space-2)",
+              }}
+            >
+              {uploading ? (
+                <div
+                  style={{
+                    display: "inline-flex",
+                    alignItems: "center",
+                    gap: "var(--space-2)",
+                    padding: "var(--space-1) var(--space-2)",
+                    background: "var(--surface-raised)",
+                    borderRadius: "var(--radius-md)",
+                    border: "1px solid var(--border-subtle)",
+                    fontSize: "var(--text-sm)",
+                    color: "var(--text-muted)",
+                  }}
+                >
+                  attaching…
+                </div>
+              ) : attached ? (
+                <div
+                  style={{
+                    display: "inline-flex",
+                    alignItems: "center",
+                    gap: "var(--space-2)",
+                    padding: "var(--space-1) var(--space-2)",
+                    background: "var(--surface-raised)",
+                    borderRadius: "var(--radius-md)",
+                    border: "1px solid var(--border-subtle)",
+                  }}
+                >
+                  {/* eslint-disable-next-line @next/next/no-img-element */}
+                  <img
+                    src={attached.src}
+                    alt="Attached reference"
+                    style={{ width: 40, height: 40, objectFit: "cover", borderRadius: "var(--radius-sm)" }}
+                  />
+                  <button
+                    type="button"
+                    aria-label="Remove attached image"
+                    onClick={() => {
+                    if (attached?.src.startsWith("blob:")) URL.revokeObjectURL(attached.src);
+                    setAttached(null);
+                    setAttachError(null);
+                  }}
+                    style={{
+                      background: "none",
+                      border: "none",
+                      cursor: "pointer",
+                      color: "var(--text-muted)",
+                      lineHeight: 1,
+                      padding: 0,
+                      fontSize: "var(--text-sm)",
+                    }}
+                  >
+                    ×
+                  </button>
+                </div>
+              ) : null}
+            </div>
+          )}
+
+          {/* Attach error */}
+          {attachError && (
+            <div
+              style={{
+                marginBottom: "var(--space-2)",
+                fontSize: "var(--text-sm)",
+                color: "var(--error-700)",
+              }}
+            >
+              {attachError}
+            </div>
+          )}
+
           <div
             style={{
               background: "var(--bg-page)",
@@ -613,7 +980,7 @@ export function OttoChatStream({
             <textarea
               id="otto-composer"
               value={text}
-              onChange={(e) => setText(e.target.value)}
+              onChange={handleTextChange}
               onKeyDown={handleKeyDown}
               disabled={isBusy}
               placeholder="Reply to Otto…"
@@ -634,11 +1001,31 @@ export function OttoChatStream({
             <div
               style={{
                 display: "flex",
-                justifyContent: "flex-end",
+                justifyContent: "space-between",
+                alignItems: "center",
                 padding: "var(--space-2) var(--space-3)",
                 borderTop: "1px solid var(--border-subtle)",
               }}
             >
+              {/* Attach image button */}
+              <button
+                type="button"
+                aria-label="Attach reference image"
+                disabled={isBusy || uploading}
+                onClick={() => fileInputRef.current?.click()}
+                style={{
+                  background: "none",
+                  border: "none",
+                  cursor: isBusy || uploading ? "default" : "pointer",
+                  color: attached ? "var(--brand)" : "var(--text-muted)",
+                  padding: "var(--space-1)",
+                  display: "inline-flex",
+                  alignItems: "center",
+                  opacity: isBusy || uploading ? 0.5 : 1,
+                }}
+              >
+                <ImageIcon size={18} />
+              </button>
               <Button variant="primary" size="sm" disabled={isBusy || !text.trim()} onClick={submit}>
                 {isBusy ? "Sending…" : "Send"}
               </Button>

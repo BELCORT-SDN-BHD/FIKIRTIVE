@@ -1,0 +1,48 @@
+---
+name: money-safety-review
+description: Spend-path gate for Artlio. Use when a diff touches AI-generation spend — the typed genRequest gate, startGen, startRefGen, dispatchVariantJob/createVariant/regenerateVariant, coworkGenerate, idempotencyKey/dedup, the partial-unique idempotency indexes, or the fal provider call in apps/worker/src/jobs/gen.ts. Auto-fire when reviewing or writing any change that could create/charge a GenJob or RefGenJob, or alter exactly-once dedup. Skip entirely for UI/CSS/docs/non-spend changes.
+---
+
+Real money is spent only on AI generation via fal. This gate exists to keep the **spend path** exactly-once and single-authority. It is **not** a universal checklist — apply **proportional rigor**: max scrutiny on the spend path, nothing on everything else.
+
+## Step 1 — Does this diff touch the spend path? (exit fast)
+
+The **spend path** is, exhaustively, these symbols/files:
+
+- The typed gate `genRequest` (`packages/core/src/gen.ts`) and `genJobData`.
+- The 4 paid entrypoints: (1) `coworkGenerate` → `startGen`; (2) direct `startGen` (`apps/web/lib/gen-actions.ts`, used by GenSpace/Storyboard); (3) `startRefGen` (`apps/web/lib/refgen-actions.ts`); (4) `dispatchVariantJob` / `createVariant` / `regenerateVariant` (`apps/web/lib/refgen-actions.ts`).
+- `idempotencyKey` and the dedup machinery (the findFirst fast-path + P2002 backstop in any of the above).
+- The partial-unique indexes: `GenJob_active_idempotency_key`, `GenJob_cowork_idempotency_once`, `RefGenJob_active_entity_variant_key` (in `packages/db/prisma/migrations/`).
+- The fal **provider call** inside `handleGen` (`apps/worker/src/jobs/gen.ts`) — `provider.generate` / `provider.generateVideo` — and the `spent`/`committed` flags and store/commit transaction around it. (refgen.ts has the same shape for the variant path.)
+
+**If NO — none of the above is in the diff — STOP. This skill does not apply. Exit immediately and defer to normal proportional review.** Do NOT money-gate UI, CSS, copy, docs, admin read-only pages, the $0 worker paths (render.ts, caption.ts, ffmpeg/whisper), or anything else that cannot reach the symbols above. No money-safety theater.
+
+If YES, run every check below.
+
+## Checks (run all when Step 1 is YES)
+
+Each check ends on a concrete, checkable verdict. A single failed check blocks the change.
+
+### (a) genRequest stays the SOLE spend authority; idempotencyKey stays REQUIRED
+- `genRequest` is the only validator before a GenJob is created. No new code path may create/enqueue a GenJob bypassing `genRequest.safeParse` + its `.superRefine` + `checkCast`. The variant path (RefGenJob) is the documented exception — it has its own model/disable checks; it must not gain a way to spend on an unvalidated `(model, params)`.
+- `genRequest.idempotencyKey` stays `z.string().min(1).max(80)` — **required, never `.optional()`/`.nullish()`**. A keyless request would bypass dedup and double-charge. Verdict: the field is still required and every caller passes a stable key (`frame:<shotId>:<slot>`, `animate:<shotId>`, `cowork:<cardId>`, or a per-click `newId()`).
+- `.strict()` stays on `genRequest` (no silent extra fields), and any new video/param field is range-checked in the `.superRefine` against the model's option set before it can reach the worker.
+
+### (b) the cowork agent path still creates NO GenJob / never spends
+- `coworkTurn` (`apps/web/lib/cowork-actions.ts`) must remain $0: it persists messages and a **display-only** `GEN_CARD` (`estimatedPriceUsd` is display-only), calls no spend entrypoint, creates no GenJob/RefGenJob. The planner `transport.chat` is mock-$0 in dev and a non-spend LLM call otherwise.
+- The ONLY cowork spend is the user later clicking Generate → `coworkGenerate` → `startGen`. Verdict: the diff adds no GenJob create, no `boss.send(GEN_QUEUE…)`, no fal call to the agent/turn/planner path.
+
+### (c) new/changed spend is additive and cannot double-charge
+- `coworkGenerate` re-spend guard intact: it reads any-status `GenJob` by `idempotencyKey: cowork:<cardId>` and returns the existing job; the race-proof backstop is the all-status unique index `GenJob_cowork_idempotency_once`. A card generates **at most once ever** — retry = a new card, never a silent re-charge.
+- `startGen` / `startRefGen` / `dispatchVariantJob` keep the **findFirst(active)-then-create + catch P2002 → reuse in-flight job** pattern, backed by `GenJob_active_idempotency_key` / `RefGenJob_active_entity_variant_key`. A new spend path must replicate this, not invent a checkless create.
+- Worker store-self-heal intact (`handleGen`, `apps/worker/src/jobs/gen.ts`): `spent` flips true the instant the paid call returns; after that a failure must NOT retry (the stale-`GENERATING` claim is failed closed: "not retrying, to avoid a double charge"). `committed` + the resume path (`generationIds` recorded) finish via attach+DONE without re-spending, and a wrongly-FAILED-but-committed job still resumes. Verdict: the diff preserves the QUEUED→GENERATING atomic claim, the `spent`-then-no-retry rule, and the resume short-circuit.
+
+### (d) migrations additive-only
+- Any new migration only ADDs (columns/indexes), never drops or rewrites a spend column or an idempotency index. New partial-unique indexes use `CREATE UNIQUE INDEX IF NOT EXISTS … WHERE …` (Prisma can't express the predicate; it lives in `migration.sql`). They auto-run pre-deploy, so a destructive step would break prod.
+
+### (e) adversarial Codex re-gate before deploy
+- Recommend the change pass an adversarial `/codex` review on the full spend diff before pushing to `main` (push = auto-deploy). Treat Codex as a second reviewer specifically hunting double-spend and bypass.
+
+## Invocation
+
+**Model-invoked** (this file keeps a `description`): it should auto-fire whenever a reviewed or in-progress diff touches the spend-path symbols above, so the gate can't be forgotten on the one change that can lose money. It is also user-invokable by name. The Step-1 fast exit is what keeps the always-loaded description cheap in practice — on a non-spend diff the skill returns in one step.

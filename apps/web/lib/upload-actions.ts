@@ -86,7 +86,7 @@ export async function finalizeCandidateUploads(
   promptText: string,
   entityIds: string[],
   raw: unknown,
-): Promise<{ ok: true; count: number; failures: { filename: string; reason: string }[] } | { error: string }> {
+): Promise<{ ok: true; count: number; failures: { filename: string; reason: string }[]; generationIds: string[] } | { error: string }> {
   const gate = await requireOwner(); if ("error" in gate) return gate;
   const { ownerId } = gate;
   const project = await prisma.project.findFirst({ where: { id: projectId, ownerId } });
@@ -140,6 +140,7 @@ export async function finalizeCandidateUploads(
   }
 
   const assetIds: string[] = [];
+  const generationIds: string[] = [];
   await prisma.$transaction(async (tx) => {
     for (const { file } of verified) {
       const asset = await tx.asset.upsert({
@@ -168,9 +169,10 @@ export async function finalizeCandidateUploads(
         },
       });
       assetIds.push(asset.id);
+      const genId = newId();
       await tx.generation.create({
         data: {
-          id: newId(),
+          id: genId,
           ownerId,
           projectId,
           shotId: null,
@@ -180,6 +182,7 @@ export async function finalizeCandidateUploads(
           entitySnapshot,
         },
       });
+      generationIds.push(genId);
     }
     await tx.actionEvent.create({
       data: {
@@ -206,5 +209,5 @@ export async function finalizeCandidateUploads(
     console.error("[upload] UNVERIFIED — ingest dispatch failed for", assetIds, ":", e instanceof Error ? e.message : e);
   }
   revalidatePath("/", "layout");
-  return { ok: true, count: verified.length, failures };
+  return { ok: true, count: verified.length, failures, generationIds };
 }

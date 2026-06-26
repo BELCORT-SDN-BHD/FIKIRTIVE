@@ -7,7 +7,8 @@
  * scenes so it never clobbers work.
  */
 import { revalidatePath } from "next/cache";
-import { prisma, Prisma } from "@fikirtive/db";
+import { prisma, Prisma, refundReservation } from "@fikirtive/db";
+import { z } from "zod";
 import {
   coworkRequest, enhanceRequest, MAX_ENHANCE_TEXT, newId,
   draftStoryboardSkill, enhancePromptSkill,
@@ -707,4 +708,46 @@ export async function setCoworkBrief(raw: unknown): Promise<{ ok: true } | { err
   } catch { return { error: "Couldn't save the brief — please try again." }; }
   revalidatePath("/", "layout");
   return { ok: true };
+}
+
+const cancelGenJobRequest = z.object({ jobId: z.string().min(1) });
+
+/**
+ * Cancel a QUEUED generation job and refund its credit reservation.
+ *
+ * MONEY: the ONLY money operation is refundReservation inside the transaction.
+ * No reserve/settle/charge anywhere here.
+ *
+ * Safety contract (mirrors the reaper pattern in gen.ts):
+ * - The updateMany WHERE clause is { id: jobId, ownerId, status: "QUEUED" }.
+ *   A job that is already GENERATING, DONE, or FAILED will not match — count===0
+ *   → no refund, honest UI feedback.
+ * - refundReservation is called ONLY when count>0 (i.e. our update won the race).
+ * - The whole operation is one $transaction so the FAILED status and the refund
+ *   are written or rolled back atomically.
+ * - Owner-scoped: ownerId in the WHERE so a user can only cancel their own jobs.
+ */
+export async function cancelGenJob(raw: unknown): Promise<{ refunded: true } | { alreadyStarted: true } | { error: string }> {
+  const parsed = cancelGenJobRequest.safeParse(raw);
+  if (!parsed.success) return { error: "Invalid request." };
+  const gate = await requireOwner(); if ("error" in gate) return gate;
+  const { ownerId } = gate;
+  const { jobId } = parsed.data;
+  try {
+    const result = await prisma.$transaction(async (tx) => {
+      const { count } = await tx.genJob.updateMany({
+        where: { id: jobId, ownerId, status: "QUEUED" },
+        data: { status: "FAILED", error: "Cancelled by you", finishedAt: new Date() },
+      });
+      if (count > 0) {
+        await refundReservation(tx, { orgId: ownerId, refId: jobId });
+      }
+      return count;
+    });
+    if (result === 0) return { alreadyStarted: true };
+    revalidatePath("/", "layout");
+    return { refunded: true };
+  } catch {
+    return { error: "Couldn't cancel — please try again." };
+  }
 }

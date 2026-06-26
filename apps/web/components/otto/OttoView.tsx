@@ -10,6 +10,8 @@ import { OttoChatStream } from "./OttoChatStream";
 import { OttoMemory } from "./OttoMemory";
 import { OttoAccount } from "./OttoAccount";
 import { OttoStuff, type AdTile } from "./OttoStuff";
+import { OttoOnboarding } from "./OttoOnboarding";
+import type { AdJobItem } from "@/lib/data";
 import { getCoworkThreadClient } from "@/lib/cowork-fetch";
 
 interface OttoViewProps {
@@ -24,9 +26,11 @@ interface OttoViewProps {
   userName: string;
   memory: MemoryRow[];
   ads: AdTile[];
+  adJobs: AdJobItem[];
   account: AccountInfo | null;
   ottoStreamEnabled: boolean;
-  onEditByHand: () => void;
+  onBalanceRefresh: () => Promise<void>;
+  onViewChange: (view: OttoViewKey) => void;
 }
 
 export function OttoView({
@@ -41,9 +45,11 @@ export function OttoView({
   userName,
   memory,
   ads,
+  adJobs,
   account,
   ottoStreamEnabled,
-  onEditByHand,
+  onBalanceRefresh,
+  onViewChange,
 }: OttoViewProps) {
   const activeThread = threads.find((t) => t.id === activeThreadId) ?? null;
 
@@ -66,14 +72,14 @@ export function OttoView({
   if (view === "memory") {
     return (
       <div style={{ flex: 1, display: "flex", flexDirection: "column", overflow: "hidden" }}>
-        <OttoMemory initialMemory={memory} />
+        <OttoMemory initialMemory={memory} projectId={projectId} />
       </div>
     );
   }
   if (view === "stuff") {
     return (
       <div style={{ flex: 1, display: "flex", flexDirection: "column", overflow: "hidden" }}>
-        <OttoStuff entities={entities} ads={ads} />
+        <OttoStuff entities={entities} ads={ads} adJobs={adJobs} />
       </div>
     );
   }
@@ -87,9 +93,20 @@ export function OttoView({
 
   // Otto view — front door when no active thread, conversation when one is selected
   const showFrontDoor = !activeThread;
+  const isFirstRun =
+    showFrontDoor &&
+    entities.length === 0 &&
+    memory.length === 0 &&
+    threads.length === 0;
 
   return (
     <div style={{ flex: 1, display: "flex", flexDirection: "column", overflow: "hidden" }}>
+      {isFirstRun && (
+        <OttoOnboarding
+          onGoToStuff={() => onViewChange("stuff")}
+          onGoToMemory={() => onViewChange("memory")}
+        />
+      )}
       {showFrontDoor ? (
         <OttoFrontDoor
           projectId={projectId}
@@ -119,7 +136,7 @@ export function OttoView({
           onThreadUpdate={(updated) => {
             onThreadsChange([updated, ...threads.filter((t) => t.id !== updated.id)]);
           }}
-          onEditByHand={onEditByHand}
+          onBalanceRefresh={onBalanceRefresh}
           pendingFirst={
             pendingFirst && pendingFirst.threadId === activeThread.id
               ? { text: pendingFirst.text, goalKey: pendingFirst.goalKey }
@@ -137,7 +154,7 @@ export function OttoView({
           onThreadUpdate={(updated) => {
             onThreadsChange([updated, ...threads.filter((t) => t.id !== updated.id)]);
           }}
-          onEditByHand={onEditByHand}
+          onBalanceRefresh={onBalanceRefresh}
         />
       )}
     </div>
