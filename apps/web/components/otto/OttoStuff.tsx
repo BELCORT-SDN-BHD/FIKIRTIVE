@@ -183,7 +183,7 @@ export function OttoStuff({ entities, ads }: OttoStuffProps) {
 
         {tab === "cast" ? (
           items.length === 0 ? (
-            <Empty icon={<Users size={28} />} text="No cast yet. Otto saves the people and products you use, so they stay consistent." />
+            <EmptyCast />
           ) : (
             <>
               {deleteError && (
@@ -231,6 +231,53 @@ export function OttoStuff({ entities, ads }: OttoStuffProps) {
             ))}
           </div>
         )}
+      </div>
+    </div>
+  );
+}
+
+function EmptyCast() {
+  return (
+    <div
+      style={{
+        display: "flex",
+        flexDirection: "column",
+        alignItems: "center",
+        textAlign: "center",
+        padding: "var(--space-10) var(--space-4)",
+        gap: "var(--space-3)",
+        color: "var(--text-muted)",
+      }}
+    >
+      <span style={{ color: "var(--text-faint)" }}>
+        <Users size={32} />
+      </span>
+      <div>
+        <div
+          style={{
+            fontWeight: "var(--weight-semibold)" as React.CSSProperties["fontWeight"],
+            fontSize: "var(--text-base)",
+            color: "var(--text-strong)",
+            marginBottom: 4,
+          }}
+        >
+          Your cast lives here
+        </div>
+        <div style={{ fontSize: "var(--text-sm)", maxWidth: 340, lineHeight: "var(--leading-relaxed)" }}>
+          When you describe a person or product in a campaign, Otto saves it here so it stays consistent every time you use it.
+        </div>
+      </div>
+      <div
+        style={{
+          marginTop: "var(--space-2)",
+          fontSize: "var(--text-xs)",
+          color: "var(--text-faint)",
+          background: "var(--surface-sunken)",
+          borderRadius: "var(--radius-md)",
+          padding: "var(--space-2) var(--space-3)",
+        }}
+      >
+        Just start a campaign — Otto will fill this in automatically.
       </div>
     </div>
   );

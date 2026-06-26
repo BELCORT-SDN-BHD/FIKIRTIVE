@@ -95,6 +95,7 @@ export function OttoApp({
           account={account}
           ottoStreamEnabled={ottoStreamEnabled}
           onBalanceRefresh={refreshBalance}
+          onViewChange={setView}
         />
       </div>
 

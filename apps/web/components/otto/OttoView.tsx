@@ -10,6 +10,7 @@ import { OttoChatStream } from "./OttoChatStream";
 import { OttoMemory } from "./OttoMemory";
 import { OttoAccount } from "./OttoAccount";
 import { OttoStuff, type AdTile } from "./OttoStuff";
+import { OttoOnboarding } from "./OttoOnboarding";
 import { getCoworkThreadClient } from "@/lib/cowork-fetch";
 
 interface OttoViewProps {
@@ -27,6 +28,7 @@ interface OttoViewProps {
   account: AccountInfo | null;
   ottoStreamEnabled: boolean;
   onBalanceRefresh: () => Promise<void>;
+  onViewChange: (view: OttoViewKey) => void;
 }
 
 export function OttoView({
@@ -44,6 +46,7 @@ export function OttoView({
   account,
   ottoStreamEnabled,
   onBalanceRefresh,
+  onViewChange,
 }: OttoViewProps) {
   const activeThread = threads.find((t) => t.id === activeThreadId) ?? null;
 
@@ -87,9 +90,20 @@ export function OttoView({
 
   // Otto view — front door when no active thread, conversation when one is selected
   const showFrontDoor = !activeThread;
+  const isFirstRun =
+    showFrontDoor &&
+    entities.length === 0 &&
+    memory.length === 0 &&
+    threads.length === 0;
 
   return (
     <div style={{ flex: 1, display: "flex", flexDirection: "column", overflow: "hidden" }}>
+      {isFirstRun && (
+        <OttoOnboarding
+          onGoToStuff={() => onViewChange("stuff")}
+          onGoToMemory={() => onViewChange("memory")}
+        />
+      )}
       {showFrontDoor ? (
         <OttoFrontDoor
           projectId={projectId}
