@@ -150,7 +150,6 @@ export async function startRefGen(raw: unknown): Promise<{ id: string } | { erro
  *  (no arbitrary asset ids), then set Entity.baseAssetId. No spend. */
 export async function setBaseAsset(entityId: string, assetId: string): Promise<{ ok: true } | { error: string }> {
   const gate = await requireOwner(); if ("error" in gate) return gate;
-  if (await isImpersonating()) return { error: "Paused while impersonating a customer — exit impersonation to do this." };
   const { ownerId } = gate;
   const OWNED = { ownerId, deletedAt: null } as const;
   const ref = await prisma.referenceImage.findFirst({
@@ -279,6 +278,7 @@ async function withUniqueHandle(name: string, write: (handle: string) => Promise
  *  commits do we dispatch the paid job. */
 export async function createVariant(entityId: string, name: string, prompt: string): Promise<{ variantId: string; jobId: string } | { error: string }> {
   const gate = await requireOwner(); if ("error" in gate) return gate;
+  if (await isImpersonating()) return { error: "Paused while impersonating a customer — exit impersonation to do this." };
   const { ownerId } = gate;
   const OWNED = { ownerId, deletedAt: null } as const;
   const cleanName = name.trim();
@@ -348,6 +348,7 @@ export async function createVariant(entityId: string, name: string, prompt: stri
  *  (in dispatchVariantJob) prevents stacking spend. */
 export async function regenerateVariant(variantId: string): Promise<{ jobId: string } | { error: string }> {
   const gate = await requireOwner(); if ("error" in gate) return gate;
+  if (await isImpersonating()) return { error: "Paused while impersonating a customer — exit impersonation to do this." };
   const { ownerId } = gate;
   const OWNED = { ownerId, deletedAt: null } as const;
   const variant = await prisma.entityVariant.findFirst({
