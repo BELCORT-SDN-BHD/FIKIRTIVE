@@ -760,3 +760,24 @@ export async function createEmptyCoworkThread(raw: unknown): Promise<{ id: strin
     return { error: "Couldn't start a new conversation — please try again." };
   }
 }
+
+// ---------------------------------------------------------------------------
+// deleteCoworkThread — soft-delete a conversation (owner-scoped)
+// ---------------------------------------------------------------------------
+
+export async function deleteCoworkThread(threadId: string): Promise<{ ok: true } | { error: string }> {
+  const gate = await requireOwner();
+  if ("error" in gate) return gate;
+  const { ownerId } = gate;
+
+  try {
+    await prisma.chatThread.updateMany({
+      where: { id: threadId, ownerId, deletedAt: null },
+      data: { deletedAt: new Date() },
+    });
+    return { ok: true };
+  } catch (e) {
+    console.error("[deleteCoworkThread] failed:", errSummary(e));
+    return { error: "Couldn't delete the conversation — please try again." };
+  }
+}
