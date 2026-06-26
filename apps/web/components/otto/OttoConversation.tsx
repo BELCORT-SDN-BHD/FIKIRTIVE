@@ -210,6 +210,7 @@ export function OttoConversation({
               }}
               onRetry={(cardId, payload) => {
                 const p = (payload ?? {}) as { structuredPrompt?: string; entityIds?: string[]; variantSel?: Record<string, string> };
+                setSubmittedCardIds((cur) => new Set(cur).add(cardId));
                 void coworkGenerate({
                   cardId,
                   prompt: p.structuredPrompt ?? "",

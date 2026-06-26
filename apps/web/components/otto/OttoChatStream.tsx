@@ -384,6 +384,7 @@ export function OttoChatStream({
                     }}
                     onRetry={() => {
                       const p = (m.metadata?.payload ?? {}) as { structuredPrompt?: string; entityIds?: string[]; variantSel?: Record<string, string> };
+                      setSubmittedCardIds((cur) => new Set(cur).add(durableId));
                       void coworkGenerate({
                         cardId: durableId,
                         prompt: p.structuredPrompt ?? "",
