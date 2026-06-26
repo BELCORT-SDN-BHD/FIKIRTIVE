@@ -26,6 +26,8 @@ type CardPayload = {
   estimatedPriceUsd?: number;
   /** The real charge in credits (= what startGen reserves). Shown on the card. */
   estimatedCredits?: number;
+  /** Present only when this image card is step 1 of a two-step video plan. Display only. */
+  videoStep?: { estimatedCredits?: number };
   entityIds?: string[];
   variantSel?: Record<string, string>;
 };
@@ -46,6 +48,7 @@ export function OttoPlanCard({
   const [error, setError] = useState<string | null>(null);
 
   const isVideo = p.kind === "video";
+  const isTwoStep = !isVideo && typeof p.videoStep?.estimatedCredits === "number";
   // Show the real charge in CREDITS (= what startGen reserves). New cards carry
   // estimatedCredits; for older cards fall back to the displayed-credit equivalent
   // of the (record-only) USD estimate so nothing renders "$0.00".
@@ -53,7 +56,8 @@ export function OttoPlanCard({
     typeof p.estimatedCredits === "number"
       ? p.estimatedCredits
       : Math.max(1, Math.ceil((typeof p.estimatedPriceUsd === "number" ? p.estimatedPriceUsd : 0) / 0.1));
-  const desc = p.structuredPrompt || (isVideo ? "A short video" : "An image");
+  const videoCredits = isTwoStep ? (p.videoStep!.estimatedCredits as number) : 0;
+  const desc = p.structuredPrompt || (isVideo ? "A short video" : isTwoStep ? "Starting picture for your video" : "An image");
 
   async function approve() {
     if (busy || cardState !== "idle") return;
@@ -100,7 +104,7 @@ export function OttoPlanCard({
           </span>
           <div style={{ flex: 1, minWidth: 0 }}>
             <div style={{ fontWeight: "var(--weight-bold)" as React.CSSProperties["fontWeight"], fontSize: "var(--text-sm)", color: "var(--text-strong)" }}>
-              {isVideo ? "A short video" : "An image"}
+              {isVideo ? "A short video" : isTwoStep ? "Starting picture for your video" : "An image"}
             </div>
             <div style={{ fontSize: "var(--text-xs)", color: "var(--text-muted)", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
               {desc}
@@ -109,9 +113,23 @@ export function OttoPlanCard({
         </div>
 
         <div style={{ marginTop: "var(--space-4)", paddingTop: "var(--space-4)", borderTop: "1px solid var(--border-subtle)" }}>
-          <div style={{ fontFamily: "var(--font-display)", fontWeight: "var(--weight-bold)" as React.CSSProperties["fontWeight"], fontSize: "var(--text-xl)", color: "var(--text-strong)" }}>
-            About {creditsLabel(credits)}
-          </div>
+          {isTwoStep ? (
+            <div>
+              <div style={{ fontSize: "var(--text-xs)", color: "var(--text-muted)", marginBottom: "var(--space-1)" }}>
+                Two-step plan
+              </div>
+              <div style={{ fontFamily: "var(--font-display)", fontWeight: "var(--weight-bold)" as React.CSSProperties["fontWeight"], fontSize: "var(--text-xl)", color: "var(--text-strong)" }}>
+                Step 1 of 2 &mdash; ~{creditsLabel(credits)} now
+              </div>
+              <div style={{ fontSize: "var(--text-sm)", color: "var(--text-muted)", marginTop: "var(--space-1)" }}>
+                Then the video &mdash; ~{creditsLabel(videoCredits)}
+              </div>
+            </div>
+          ) : (
+            <div style={{ fontFamily: "var(--font-display)", fontWeight: "var(--weight-bold)" as React.CSSProperties["fontWeight"], fontSize: "var(--text-xl)", color: "var(--text-strong)" }}>
+              About {creditsLabel(credits)}
+            </div>
+          )}
         </div>
 
         {cardState === "failed" ? (

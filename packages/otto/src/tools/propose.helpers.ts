@@ -31,6 +31,9 @@ export const proposeInput = z.object({
   // Ad pack: how many image options to offer the user to choose from (images only;
   // video is always one clip). Clamped server-side to [1, MAX_GEN_COUNT].
   count: z.number().int().min(1).max(MAX_GEN_COUNT).optional(),
+  // Set true when this image is the starting keyframe for a video the user asked for —
+  // so the card shows the full two-step plan (image now, video next).
+  forVideo: z.boolean().optional(),
 });
 
 export type ProposeInput = z.infer<typeof proposeInput>;
@@ -59,6 +62,9 @@ export type CardPayload = {
    *  so the card quote equals what actually leaves the balance. The card shows THIS, not
    *  estimatedPriceUsd (which is the record-only fal cost, ~2.5x lower). */
   estimatedCredits: number;
+  /** Present only when this image card is the first step of a two-step video plan.
+   *  DISPLAY ONLY — an estimate of the follow-on video step's cost. Never used to charge. */
+  videoStep?: { estimatedCredits: number };
   sourceGenerationId?: string;
 };
 
@@ -80,7 +86,7 @@ export type ProposeCardResult = {
  * @param ownedEntityIds - Entity ids confirmed owned by ctx.orgId (DB lookup done by caller)
  */
 export function buildProposeCard(
-  input: Pick<ProposeInput, "kind" | "structuredPrompt" | "entityIds" | "variantSel" | "desiredAspect" | "desiredDuration" | "desiredAudio" | "count">,
+  input: Pick<ProposeInput, "kind" | "structuredPrompt" | "entityIds" | "variantSel" | "desiredAspect" | "desiredDuration" | "desiredAudio" | "count" | "forVideo">,
   ctx: OttoContext,
   ownedEntityIds: string[],
 ): ProposeCardResult {
@@ -154,6 +160,40 @@ export function buildProposeCard(
     }),
   );
 
+  // Step 4.6: video-step estimate — DISPLAY ONLY.
+  // When this image card is the first step of a two-step video plan (forVideo=true),
+  // estimate the follow-on video cost so the card can show the full plan total.
+  // Errors are silently swallowed — videoStep is best-effort and must never break the card.
+  let videoStep: { estimatedCredits: number } | undefined;
+  if (kind === "image" && input.forVideo) {
+    try {
+      const vm = suggestModel({
+        kind: "video",
+        desiredAspect: input.desiredAspect,
+        desiredDuration: input.desiredDuration,
+        desiredAudio: input.desiredAudio,
+        hasSourceImage: true,
+        hasTail: false,
+        disabled: new Set(ctx.disabledModels),
+      });
+      const videoEstCredits = displayCredits(
+        pricedGenCredits({
+          kind: "VIDEO",
+          model: vm.model,
+          count: 1,
+          videoOptions: {
+            seconds: vm.params.durationSeconds,
+            resolution: vm.params.resolution,
+            audio: vm.params.audio,
+          },
+        }),
+      );
+      videoStep = { estimatedCredits: videoEstCredits };
+    } catch {
+      // Best-effort — omit videoStep on any error
+    }
+  }
+
   // Step 5: cardPayload (mirror coworkTurn 401–406)
   const cardPayload: CardPayload = {
     kind,
@@ -166,6 +206,7 @@ export function buildProposeCard(
     variantSel,
     estimatedPriceUsd: price,
     estimatedCredits,
+    ...(videoStep ? { videoStep } : {}),
     ...(ctx.sourceGenerationId ? { sourceGenerationId: ctx.sourceGenerationId } : {}),
   };
 
