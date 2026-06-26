@@ -16,7 +16,7 @@ const SECTION_ORDER: Array<{ type: EntityDTO["type"]; label: string }> = [
 export function groupEntitiesByType(entities: EntityDTO[], query: string): EntityGroup[] {
   const needle = query.trim().toLowerCase();
   const filtered = needle
-    ? entities.filter((e) => e.name.toLowerCase().includes(needle))
+    ? entities.filter((e) => (e.name ?? "").toLowerCase().includes(needle))
     : entities;
 
   const groups: EntityGroup[] = [];

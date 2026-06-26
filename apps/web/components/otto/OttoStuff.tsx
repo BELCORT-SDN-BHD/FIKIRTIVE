@@ -56,15 +56,6 @@ function EntityTile({
     setEditing(false);
   }
 
-  async function handleDelete() {
-    onDelete(e.id); // optimistic
-    const res = await softDeleteEntity(e.id);
-    if ("error" in res) {
-      // parent restores via its own rollback; surface error locally
-      setEditError(res.error);
-    }
-  }
-
   return (
     <div style={{ borderRadius: "var(--radius-lg)", overflow: "hidden", border: "1px solid var(--border-subtle)", background: "var(--surface-card)", boxShadow: "var(--shadow-sm)" }}>
       <div style={{ aspectRatio: "1 / 1", background: "var(--surface-sunken)", display: "flex", alignItems: "center", justifyContent: "center", flexDirection: "column", gap: 6 }}>
@@ -99,8 +90,8 @@ function EntityTile({
               <div style={{ flex: 1, fontWeight: "var(--weight-semibold)" as React.CSSProperties["fontWeight"], fontSize: "var(--text-sm)", color: "var(--text-strong)", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
                 {e.name}
               </div>
-              <Button variant="ghost" size="sm" onClick={() => { setEditName(e.name); setEditing(true); }} aria-label="Rename"><Pencil size={13} /></Button>
-              <Button variant="ghost" size="sm" onClick={handleDelete} aria-label="Delete"><Trash2 size={13} /></Button>
+              <Button variant="ghost" size="sm" onClick={() => { setEditName(e.name); setEditError(null); setEditing(true); }} aria-label="Rename"><Pencil size={13} /></Button>
+              <Button variant="ghost" size="sm" onClick={() => onDelete(e.id)} aria-label="Delete"><Trash2 size={13} /></Button>
             </div>
             {editError && <div role="alert" style={{ fontSize: "var(--text-xs)", color: "var(--error-700)", marginTop: 2 }}>{editError}</div>}
             <div style={{ fontSize: "var(--text-xs)", color: "var(--text-faint)", marginTop: 2 }}>
@@ -116,7 +107,7 @@ function EntityTile({
 function AdMediaTile({ ad }: { ad: AdTile }) {
   const ext = ad.src.split("?")[0].split(".").pop() || (ad.kind === "video" ? "mp4" : "png");
   const filename = `fikirtive-${ad.id.slice(0, 8)}.${ext}`;
-  const altText = ad.prompt.slice(0, 60);
+  const altText = ad.prompt?.slice(0, 60) || "Generated ad";
   return (
     <div style={{ position: "relative", borderRadius: "var(--radius-lg)", overflow: "hidden", border: "1px solid var(--border-subtle)", background: "var(--surface-sunken)" }}>
       {ad.kind === "video" ? (
@@ -154,14 +145,21 @@ export function OttoStuff({ entities, ads }: OttoStuffProps) {
   const [tab, setTab] = useState<"cast" | "ads">("cast");
   const [items, setItems] = useState<EntityDTO[]>(entities);
   const [search, setSearch] = useState("");
+  const [deleteError, setDeleteError] = useState<string | null>(null);
 
   function handleRename(id: string, newName: string) {
     setItems((cur) => cur.map((e) => (e.id === id ? { ...e, name: newName } : e)));
   }
 
-  // optimistic remove; the tile surfaces any server error inline
-  function handleDelete(id: string) {
+  async function handleDelete(id: string) {
+    const snapshot = items.find((e) => e.id === id);
     setItems((cur) => cur.filter((e) => e.id !== id));
+    setDeleteError(null);
+    const res = await softDeleteEntity(id);
+    if ("error" in res) {
+      setItems((cur) => (snapshot ? [...cur, snapshot] : cur));
+      setDeleteError(res.error);
+    }
   }
 
   const groups = groupEntitiesByType(items, search);
@@ -188,12 +186,18 @@ export function OttoStuff({ entities, ads }: OttoStuffProps) {
             <Empty icon={<Users size={28} />} text="No cast yet. Otto saves the people and products you use, so they stay consistent." />
           ) : (
             <>
+              {deleteError && (
+                <div role="alert" style={{ fontSize: "var(--text-sm)", color: "var(--error-700)", marginBottom: "var(--space-3)", padding: "var(--space-2) var(--space-3)", background: "var(--error-50)", borderRadius: "var(--radius-md)" }}>
+                  {deleteError}
+                </div>
+              )}
               {/* Search */}
               <div style={{ marginBottom: "var(--space-5)", maxWidth: 320, position: "relative" }}>
                 <Input
                   value={search}
                   onChange={(ev) => setSearch(ev.target.value)}
                   placeholder="Search cast…"
+                  aria-label="Search cast"
                   leftIcon={<Search size={15} />}
                 />
               </div>

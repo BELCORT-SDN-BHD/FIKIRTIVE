@@ -75,4 +75,21 @@ describe("groupEntitiesByType", () => {
     expect(groups).toHaveLength(1);
     expect(groups[0].items).toHaveLength(2);
   });
+
+  it("does not throw and excludes entity with empty-string name when query is non-empty", () => {
+    const emptyName = makeEntity({ id: "e1", type: "PRODUCT", name: "" });
+    expect(() => groupEntitiesByType([emptyName, PRODUCT_A], "widget")).not.toThrow();
+    const groups = groupEntitiesByType([emptyName, PRODUCT_A], "widget");
+    // "Widget" matches, empty-name does not
+    expect(groups[0].items.map((e) => e.name)).toEqual(["Widget"]);
+  });
+
+  it("does not throw when an entity has a null or undefined name", () => {
+    const nullName = makeEntity({ id: "n1", type: "PRODUCT", name: null as unknown as string });
+    const undefName = makeEntity({ id: "n2", type: "PRODUCT", name: undefined as unknown as string });
+    expect(() => groupEntitiesByType([nullName, undefName, PRODUCT_A], "widget")).not.toThrow();
+    // null/undefined names should not match "widget"
+    const groups = groupEntitiesByType([nullName, undefName, PRODUCT_A], "widget");
+    expect(groups[0].items.map((e) => e.name)).toEqual(["Widget"]);
+  });
 });
