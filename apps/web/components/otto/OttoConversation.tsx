@@ -214,10 +214,16 @@ export function OttoConversation({
                 void onBalanceRefresh?.();
                 refreshAndUpdate();
               }}
-              onChangeRequest={() => {
-                // Focus the composer for a change request
+              onChangeRequest={(seed) => {
+                // Prefill the composer with the plan prompt so the user edits from it.
                 const ta = document.getElementById("otto-composer") as HTMLTextAreaElement | null;
-                ta?.focus();
+                if (ta) {
+                  const nativeInputValueSetter = Object.getOwnPropertyDescriptor(window.HTMLTextAreaElement.prototype, "value")?.set;
+                  nativeInputValueSetter?.call(ta, seed);
+                  ta.dispatchEvent(new Event("input", { bubbles: true }));
+                  ta.focus();
+                }
+                setText(seed);
               }}
               onEditByHand={onEditByHand}
             />
@@ -396,7 +402,7 @@ function MessageRow({
   pendingApprovalCardIds: Set<string>;
   busy: boolean;
   onApproved: (cardId: string) => void;
-  onChangeRequest: () => void;
+  onChangeRequest: (seed: string) => void;
   onEditByHand: () => void;
 }) {
   const isUser = m.role === "USER";
