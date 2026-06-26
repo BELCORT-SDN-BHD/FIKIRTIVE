@@ -32,6 +32,16 @@ const owner = flag("--owner") || "founder"; // FOUNDER_OWNER_ID
 const DEFAULT_PREFIXES = ["Brute", "PassOne", "SloppyNoRef", "SloppyRef", "Mira", "RefGen"];
 const prefixes = (flag("--prefixes")?.split(",").map((s) => s.trim()).filter(Boolean)) || DEFAULT_PREFIXES;
 
+// Pre-flight guards (this touches PROD data — fail loud, never silently).
+if (!process.env.DATABASE_URL) {
+  console.error("DATABASE_URL is not set. Aborting.");
+  process.exit(1);
+}
+if (prefixes.length === 0) {
+  console.error("--prefixes produced an empty list — refusing to match. Aborting.");
+  process.exit(1);
+}
+
 async function main() {
   const matches = await prisma.entity.findMany({
     where: {
