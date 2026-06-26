@@ -7,17 +7,22 @@ export type CreditPack = { priceId: string; credits: number; amountCents: number
 /** Active one-time credit packs = active Stripe Prices carrying metadata.credits.
  *  Packs live in Stripe (test/live dashboard) — no redeploy to change them. */
 export async function listCreditPacks(): Promise<CreditPack[]> {
-  const res = await stripe.prices.list({ active: true, expand: ["data.product"] });
-  return res.data
-    .filter((p) => p.active && p.metadata?.credits && Number(p.metadata.credits) > 0 && typeof p.unit_amount === "number")
-    .map((p) => ({
-      priceId: p.id,
-      credits: Number(p.metadata.credits),
-      amountCents: p.unit_amount as number,
-      currency: p.currency,
-      label: (typeof p.product === "object" && p.product && "name" in p.product ? (p.product.name as string) : `${p.metadata.credits} credits`),
-    }))
-    .sort((a, b) => a.amountCents - b.amountCents);
+  try {
+    const res = await stripe.prices.list({ active: true, expand: ["data.product"] });
+    return res.data
+      .filter((p) => p.active && p.metadata?.credits && Number(p.metadata.credits) > 0 && typeof p.unit_amount === "number")
+      .map((p) => ({
+        priceId: p.id,
+        credits: Number(p.metadata.credits),
+        amountCents: p.unit_amount as number,
+        currency: p.currency,
+        label: (typeof p.product === "object" && p.product && "name" in p.product ? (p.product.name as string) : `${p.metadata.credits} credits`),
+      }))
+      .sort((a, b) => a.amountCents - b.amountCents);
+  } catch (e) {
+    console.warn("[billing] listCreditPacks failed (Stripe unconfigured or API error):", e);
+    return [];
+  }
 }
 
 /** Start a one-time Checkout for a pack. requireOwner-gated; the org + credits ride in

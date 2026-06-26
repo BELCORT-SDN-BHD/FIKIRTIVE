@@ -28,6 +28,12 @@ describe("listCreditPacks", () => {
     expect(packs.map((p) => p.priceId)).toEqual(["price_a", "price_b"]); // metadata-less filtered out, sorted asc
     expect(packs[0]).toMatchObject({ priceId: "price_a", credits: 100, amountCents: 1000, currency: "usd", label: "100 credits" });
   });
+
+  it("returns [] when Stripe is unconfigured / prices.list throws", async () => {
+    pricesList.mockRejectedValue(new Error("STRIPE_SECRET_KEY is not set"));
+    const packs = await listCreditPacks();
+    expect(packs).toEqual([]);
+  });
 });
 
 describe("createTopupCheckout", () => {
