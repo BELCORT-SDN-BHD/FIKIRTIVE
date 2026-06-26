@@ -2,6 +2,8 @@
 
 **Status:** Approved design (brainstorm complete 2026-06-26). Next step: implementation plan via `writing-plans`.
 
+> **Revision 2026-06-26 (reconciled with existing code):** Plan-writing recon found the operator actions mostly already exist in `apps/web/lib/tenant-actions.ts` (`setMembershipStatus` = suspend, `cutTenantSessions` = force-logout, `grantTenantCredits`) and `apps/web/lib/admin-actions.ts` (`saveUserRole`). So this is NOT a greenfield build. Two consequences: (1) **`cutTenantSessions` is broken by the Better Auth cutover** — it deletes from the legacy `Session` table, but BA sessions live in `BetterAuthSession`, so force-logout currently kicks nobody (bug fix). (2) The chosen scope is **"fix the bug + install the plugin foundation"**: extend the existing actions in place, do not create a new `operator-actions.ts`. Phasing updated below. §6 is superseded by §6′.
+
 **Goal:** Give founder/staff an operator back-office inside the existing `/admin` that can manage users/roles, control accounts (suspend + force-logout), grant/adjust credits, and (later) impersonate a customer — using Better Auth's self-hosted `admin` plugin as the backend engine, gated by our existing RBAC, **without touching the money/generation path**.
 
 **Architecture:** Better Auth `admin` plugin is wired into the existing `auth` config and provides the hard parts (session-layer ban, session revocation, impersonation). Every operator action is a server action that passes **our** `requireRole(section, action)` gate first, then calls `auth.api.*` (or our own Prisma write), then writes an `actionEvent` audit row. UI is our own `/admin` pages + design system + RBAC — no second/parallel admin surface. Money-in (credits) stays on the existing `grantCredits()` ledger entry point.
@@ -24,8 +26,10 @@
 
 **In scope (approach: admin plugin as engine behind our `/admin` + RBAC):**
 
-- **Phase 1** — wire the `admin` plugin; user/role management; account control (suspend/reactivate + force-logout); credit grant/adjust UI.
-- **Phase 2** — impersonation (founder-only, audited, spend-blocked, visible banner).
+- **Phase 1 (this plan)** — add the 5 schema fields; install the `admin` plugin (minimal config, for the session-layer `banned` enforcement hook); **fix `cutTenantSessions`** to target `BetterAuthSession`; wire ban into `setMembershipStatus` (suspend = flip `Membership.status` + set `BetterAuthUser.banned` + cut BA sessions). Credit grant (`grantTenantCredits`), role write (`saveUserRole`), and the suspend status-flip already exist and are reused unchanged.
+- **Phase 2 (separate plan)** — role mirror (`ba_user.role` written by `convergeIdentity` + `saveUserRole`) so the plugin recognizes our roles for its API; impersonation (founder-only, audited, spend-blocked, visible banner). Needs a code-verified answer on where exactly to block spend without touching off-limits files.
+
+**Why the plugin in Phase 1 if ban is a direct DB write?** Setting `BetterAuthUser.banned=true` only *enforces* (blocks re-login) because the installed plugin registers a `session.create.before` hook that rejects banned users. Installing the plugin is what makes `banned` mean something. We do **not** call the plugin's HTTP API in Phase 1 (so no caller-recognition / role-mirror is needed yet — that lands with impersonation in Phase 2).
 
 **Out of scope (non-goals):**
 
@@ -115,7 +119,16 @@ admin({
 
 ---
 
-## 6. Server actions — `apps/web/lib/operator-actions.ts` (new)
+## 6′. Server actions — extend existing files (supersedes §6)
+
+These actions already exist and are **reused unchanged**: `grantTenantCredits` (credit grant), `saveUserRole` (role write to `User.role`), and the status-flip inside `setMembershipStatus`. Phase 1 only changes two of them and adds no new action file:
+
+- **FIX `cutTenantSessions(orgId)`** (`apps/web/lib/tenant-actions.ts`): currently deletes from the legacy `Session` table (`prisma.session.deleteMany`). Retarget to `BetterAuthSession`. Since `BetterAuthSession.userId` = `BetterAuthUser.id` (a different id space from our `User.id`, joined by email), map: org members → `User.email` → `BetterAuthUser` → delete `BetterAuthSession`. Add a small local helper `orgMemberBaUserIds(orgId)` shared with suspend.
+- **EXTEND `setMembershipStatus(orgId, status)`** (`apps/web/lib/tenant-actions.ts`): keep the existing `Membership.status` flip; then on `"suspended"` set `BetterAuthUser.banned=true` for the org's members and cut their BA sessions; on `"active"` set `banned=false`. The installed plugin's `session.create.before` hook turns `banned=true` into a real re-login block.
+
+Role mirror (`saveUserRole` also writing `BetterAuthUser.role`, and `convergeIdentity` stamping it) is **Phase 2** — not needed until we call the plugin API (impersonation).
+
+### (Historical) §6 — original greenfield sketch, NOT built
 
 Uniform shape: `requireRole(section, "mutate")` → call `auth.api.*` / Prisma → write `actionEvent` audit. All are `"use server"`.
 
