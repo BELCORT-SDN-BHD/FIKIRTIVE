@@ -64,6 +64,14 @@ const NAV_ITEMS: NavItem[] = [
   { key: "account", label: "Account", icon: <IconCircleUser /> },
 ];
 
+function IconX() {
+  return (
+    <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round" aria-hidden>
+      <path d="M18 6 6 18" /><path d="m6 6 12 12" />
+    </svg>
+  );
+}
+
 export interface OttoNavProps {
   view: OttoViewKey;
   onViewChange: (v: OttoViewKey) => void;
@@ -71,6 +79,7 @@ export interface OttoNavProps {
   activeThreadId: string | null;
   onSelectThread: (id: string) => void;
   onNewCampaign: () => void;
+  onDeleteThread: (id: string) => void;
   /** Spendable balance in DISPLAYED credits (the product shows credits, never dollars). */
   balanceCredits: number;
   userName: string;
@@ -84,6 +93,7 @@ export function OttoNav({
   activeThreadId,
   onSelectThread,
   onNewCampaign,
+  onDeleteThread,
   balanceCredits,
   userName,
   userEmail,
@@ -195,37 +205,81 @@ export function OttoNav({
             {threads.slice(0, 8).map((t) => {
               const isActive = t.id === activeThreadId && view === "otto";
               return (
-                <button
+                <div
                   key={t.id}
-                  onClick={() => {
-                    onSelectThread(t.id);
-                    onViewChange("otto");
-                  }}
-                  title={t.title}
-                  style={{
-                    display: "block",
-                    width: "100%",
-                    border: "none",
-                    background: isActive ? "var(--brand-tint)" : "transparent",
-                    color: isActive ? "var(--brand-press)" : "var(--text-muted)",
-                    fontFamily: "var(--font-sans)",
-                    fontSize: "var(--text-xs)",
-                    fontWeight: isActive ? "var(--weight-semibold)" : "var(--weight-regular)",
-                    padding: "7px var(--space-3)",
-                    borderRadius: "var(--radius-sm)",
-                    cursor: "pointer",
-                    textAlign: "left",
-                    overflow: "hidden",
-                    textOverflow: "ellipsis",
-                    whiteSpace: "nowrap",
-                    transition: "background var(--dur-fast) var(--ease-out)",
-                  }}
+                  className="otto-recent-row"
+                  style={{ position: "relative", display: "flex", alignItems: "center" }}
                 >
-                  {t.title}
-                </button>
+                  <button
+                    onClick={() => {
+                      onSelectThread(t.id);
+                      onViewChange("otto");
+                    }}
+                    title={t.title}
+                    style={{
+                      display: "block",
+                      flex: 1,
+                      minWidth: 0,
+                      border: "none",
+                      background: isActive ? "var(--brand-tint)" : "transparent",
+                      color: isActive ? "var(--brand-press)" : "var(--text-muted)",
+                      fontFamily: "var(--font-sans)",
+                      fontSize: "var(--text-xs)",
+                      fontWeight: isActive ? "var(--weight-semibold)" : "var(--weight-regular)",
+                      padding: "7px var(--space-3)",
+                      paddingRight: "var(--space-6)",
+                      borderRadius: "var(--radius-sm)",
+                      cursor: "pointer",
+                      textAlign: "left",
+                      overflow: "hidden",
+                      textOverflow: "ellipsis",
+                      whiteSpace: "nowrap",
+                      transition: "background var(--dur-fast) var(--ease-out)",
+                    }}
+                  >
+                    {t.title}
+                  </button>
+                  <button
+                    className="otto-recent-delete"
+                    aria-label={`Delete ${t.title}`}
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      onDeleteThread(t.id);
+                    }}
+                    style={{
+                      position: "absolute",
+                      right: "var(--space-2)",
+                      display: "flex",
+                      alignItems: "center",
+                      justifyContent: "center",
+                      width: 20,
+                      height: 20,
+                      border: "none",
+                      background: "transparent",
+                      color: "var(--text-faint)",
+                      borderRadius: "var(--radius-sm)",
+                      cursor: "pointer",
+                      padding: 0,
+                      opacity: 0,
+                      transition: "opacity var(--dur-fast) var(--ease-out), background var(--dur-fast) var(--ease-out)",
+                    }}
+                  >
+                    <IconX />
+                  </button>
+                </div>
               );
             })}
           </div>
+          <style>{`
+            .otto-recent-row:hover .otto-recent-delete,
+            .otto-recent-row:focus-within .otto-recent-delete {
+              opacity: 1;
+            }
+            .otto-recent-delete:hover {
+              background: var(--surface-hover, rgba(0,0,0,0.07)) !important;
+              color: var(--text-default) !important;
+            }
+          `}</style>
         </div>
       )}
 

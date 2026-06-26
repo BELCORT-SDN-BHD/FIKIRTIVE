@@ -8,6 +8,8 @@ import type { AdTile } from "./OttoStuff";
 import type { EntityDTO, ChatThreadDTO } from "@/lib/types";
 import type { MemoryRow } from "@/lib/memory-actions";
 import type { AccountInfo } from "@/lib/account-actions";
+import { deleteCoworkThread } from "@/lib/otto-actions";
+import { nextActiveThreadId } from "@/lib/thread-list";
 
 export interface OttoAppProps {
   projectId: string;
@@ -46,6 +48,25 @@ export function OttoApp({
   );
   const [workshopOpen, setWorkshopOpen] = useState(false);
 
+  async function handleDeleteThread(id: string) {
+    const snapshot = threads;
+    const snapshotActive = activeThreadId;
+    // Optimistic removal
+    setThreads((prev) => prev.filter((t) => t.id !== id));
+    const newActive = nextActiveThreadId(threads, id, activeThreadId);
+    if (activeThreadId === id) {
+      setActiveThreadId(newActive);
+      if (newActive === null) setView("otto");
+    }
+    const result = await deleteCoworkThread(id);
+    if ("error" in result) {
+      // Restore on failure
+      console.error("[handleDeleteThread] failed:", result.error);
+      setThreads(snapshot);
+      setActiveThreadId(snapshotActive);
+    }
+  }
+
   return (
     <div
       className="fk"
@@ -68,6 +89,7 @@ export function OttoApp({
           setView("otto");
           setActiveThreadId(null);
         }}
+        onDeleteThread={handleDeleteThread}
         balanceCredits={balanceCredits}
         userName={userName}
         userEmail={userEmail}
