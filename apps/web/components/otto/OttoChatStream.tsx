@@ -385,6 +385,12 @@ export function OttoChatStream({
                       const ta = document.getElementById("otto-composer") as HTMLTextAreaElement | null;
                       ta?.focus();
                     }}
+                    onRetry={() => {
+                      // A fresh card was spawned — re-arm poll and refetch so it appears.
+                      setPollGaveUp(false);
+                      pollCountRef.current = 0;
+                      void pollAndInjectResults();
+                    }}
                   />
                 </WidgetRow>
               );

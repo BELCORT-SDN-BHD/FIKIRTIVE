@@ -3,7 +3,7 @@ import React, { useState } from "react";
 import { ClipboardList, Film, Image as ImageIcon, ShieldCheck } from "lucide-react";
 import { Card, Button } from "@/components/fk";
 import { ottoApprove } from "@/lib/otto-client-actions";
-import { coworkGenerate } from "@/lib/cowork-actions";
+import { coworkGenerate, coworkVaryCard } from "@/lib/cowork-actions";
 import { creditsLabel } from "@/lib/credit-format";
 import type { EntityDTO } from "@/lib/types";
 import type { CardState } from "@/lib/otto-inject-helpers";
@@ -18,6 +18,8 @@ export interface OttoPlanCardProps {
   pendingApproval: boolean;
   onApproved: () => void;
   onChangeSomething: () => void;
+  /** Called after a fresh-card retry spawns a new card (failed state only). */
+  onRetry?: () => void;
 }
 
 type CardPayload = {
@@ -40,6 +42,7 @@ export function OttoPlanCard({
   pendingApproval,
   onApproved,
   onChangeSomething,
+  onRetry,
 }: OttoPlanCardProps) {
   const p = (payload ?? {}) as CardPayload;
   const [busy, setBusy] = useState(false);
@@ -54,6 +57,21 @@ export function OttoPlanCard({
       ? p.estimatedCredits
       : Math.max(1, Math.ceil((typeof p.estimatedPriceUsd === "number" ? p.estimatedPriceUsd : 0) / 0.1));
   const desc = p.structuredPrompt || (isVideo ? "A short video" : "An image");
+
+  async function retry() {
+    if (busy) return;
+    setBusy(true);
+    setError(null);
+    try {
+      const res = await coworkVaryCard({ cardId });
+      if (res && "error" in res) { setError(res.error); return; }
+      onRetry?.();
+    } catch {
+      setError("Couldn't queue a retry — please try again.");
+    } finally {
+      setBusy(false);
+    }
+  }
 
   async function approve() {
     if (busy || cardState !== "idle") return;
@@ -120,6 +138,9 @@ export function OttoPlanCard({
               😕 This one didn&rsquo;t come through — and you weren&rsquo;t charged.
             </div>
             <div style={{ display: "flex", gap: "var(--space-3)", marginTop: "var(--space-3)" }}>
+              <Button variant="primary" size="md" disabled={busy} onClick={retry}>
+                {busy ? "Queuing…" : "Try again"}
+              </Button>
               <Button variant="secondary" size="md" disabled={busy} onClick={onChangeSomething}>
                 Change something
               </Button>

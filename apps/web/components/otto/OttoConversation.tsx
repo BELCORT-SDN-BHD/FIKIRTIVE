@@ -212,6 +212,12 @@ export function OttoConversation({
                 const ta = document.getElementById("otto-composer") as HTMLTextAreaElement | null;
                 ta?.focus();
               }}
+              onRetry={() => {
+                // Fresh card spawned — re-arm poll and refetch so it appears.
+                setPollGaveUp(false);
+                pollCountRef.current = 0;
+                void refreshAndUpdate();
+              }}
               onEditByHand={onEditByHand}
             />
           ))}
@@ -377,6 +383,7 @@ function MessageRow({
   busy,
   onApproved,
   onChangeRequest,
+  onRetry,
   onEditByHand,
 }: {
   message: ChatMessageDTO;
@@ -390,6 +397,7 @@ function MessageRow({
   busy: boolean;
   onApproved: (cardId: string) => void;
   onChangeRequest: () => void;
+  onRetry: () => void;
   onEditByHand: () => void;
 }) {
   const isUser = m.role === "USER";
@@ -459,6 +467,7 @@ function MessageRow({
             pendingApproval={pendingApprovalCardIds.has(m.id)}
             onApproved={() => onApproved(m.id)}
             onChangeSomething={onChangeRequest}
+            onRetry={onRetry}
           />
         </div>
       </div>
