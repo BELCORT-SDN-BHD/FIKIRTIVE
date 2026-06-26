@@ -370,6 +370,7 @@ export function OttoChatStream({
                     entities={entities}
                     threadId={thread.id}
                     projectId={projectId}
+                    genJobId={genJobId}
                     cardState={deriveCardState({
                       genJobId,
                       submitted: submittedCardIds.has(durableId),
@@ -401,6 +402,7 @@ export function OttoChatStream({
                       pollCountRef.current = 0;
                       void pollAndInjectResults();
                     }}
+                    onCancelled={() => void pollAndInjectResults()}
                   />
                 </WidgetRow>
               );

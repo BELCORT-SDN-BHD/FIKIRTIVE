@@ -3,7 +3,7 @@ import React, { useState } from "react";
 import { ClipboardList, Film, Image as ImageIcon, ShieldCheck } from "lucide-react";
 import { Card, Button } from "@/components/fk";
 import { ottoApprove } from "@/lib/otto-client-actions";
-import { coworkGenerate, coworkVaryCard } from "@/lib/cowork-actions";
+import { coworkGenerate, coworkVaryCard, cancelGenJob } from "@/lib/cowork-actions";
 import { creditsLabel } from "@/lib/credit-format";
 import type { EntityDTO } from "@/lib/types";
 import type { CardState } from "@/lib/otto-inject-helpers";
@@ -14,12 +14,16 @@ export interface OttoPlanCardProps {
   entities: EntityDTO[];
   threadId: string;
   projectId: string;
+  /** The generation job id — present once the card is approved and a job is queued. */
+  genJobId?: string | null;
   cardState: CardState;
   pendingApproval: boolean;
   onApproved: () => void;
   onChangeSomething: () => void;
   /** Called after a fresh-card retry spawns a new card (failed state only). */
   onRetry?: () => void;
+  /** Called after a successful cancel + refund so the parent can refresh. */
+  onCancelled?: () => void;
 }
 
 type CardPayload = {
@@ -38,11 +42,13 @@ export function OttoPlanCard({
   cardId,
   payload,
   threadId,
+  genJobId,
   cardState,
   pendingApproval,
   onApproved,
   onChangeSomething,
   onRetry,
+  onCancelled,
 }: OttoPlanCardProps) {
   const p = (payload ?? {}) as CardPayload;
   const [busy, setBusy] = useState(false);
@@ -57,6 +63,28 @@ export function OttoPlanCard({
       ? p.estimatedCredits
       : Math.max(1, Math.ceil((typeof p.estimatedPriceUsd === "number" ? p.estimatedPriceUsd : 0) / 0.1));
   const desc = p.structuredPrompt || (isVideo ? "A short video" : "An image");
+
+  const [cancelled, setCancelled] = useState(false);
+
+  async function cancel() {
+    if (!genJobId || busy || cancelled) return;
+    setBusy(true);
+    setError(null);
+    try {
+      const res = await cancelGenJob({ jobId: genJobId });
+      if (!res || "error" in res) { setError("error" in res ? res.error : "Couldn't cancel."); return; }
+      if ("alreadyStarted" in res) {
+        setError("It already started — can't cancel at this point.");
+        return;
+      }
+      setCancelled(true);
+      onCancelled?.();
+    } catch {
+      setError("Couldn't cancel — please try again.");
+    } finally {
+      setBusy(false);
+    }
+  }
 
   async function retry() {
     if (busy) return;
@@ -146,9 +174,24 @@ export function OttoPlanCard({
               </Button>
             </div>
           </div>
-        ) : cardState === "working" || cardState === "done" ? (
+        ) : cancelled ? (
+          <div style={{ marginTop: "var(--space-4)", fontSize: "var(--text-sm)", color: "var(--text-muted)" }}>
+            Cancelled — you weren&rsquo;t charged.
+          </div>
+        ) : cardState === "done" ? (
           <div style={{ marginTop: "var(--space-4)", fontSize: "var(--text-sm)", color: "var(--success-700)", fontWeight: "var(--weight-semibold)" as React.CSSProperties["fontWeight"] }}>
-            {cardState === "done" ? "✓ Done" : "✓ On it — making this now."}
+            ✓ Done
+          </div>
+        ) : cardState === "working" ? (
+          <div style={{ marginTop: "var(--space-4)", display: "flex", alignItems: "center", gap: "var(--space-3)" }}>
+            <span style={{ fontSize: "var(--text-sm)", color: "var(--success-700)", fontWeight: "var(--weight-semibold)" as React.CSSProperties["fontWeight"] }}>
+              ✓ On it — making this now.
+            </span>
+            {genJobId && (
+              <Button variant="ghost" size="sm" disabled={busy} onClick={cancel}>
+                {busy ? "Cancelling…" : "Cancel"}
+              </Button>
+            )}
           </div>
         ) : (
           <div style={{ display: "flex", gap: "var(--space-3)", marginTop: "var(--space-4)" }}>

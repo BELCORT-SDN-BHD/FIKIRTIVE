@@ -226,6 +226,7 @@ export function OttoConversation({
                 pollCountRef.current = 0;
                 void refreshAndUpdate();
               }}
+              onCancelled={() => void refreshAndUpdate()}
               onMakeAnother={() => {
                 // Fresh card spawned via "Make another" — re-arm poll + refetch.
                 setPollGaveUp(false);
@@ -399,6 +400,7 @@ function MessageRow({
   onApproved,
   onChangeRequest,
   onRetry,
+  onCancelled,
   onMakeAnother,
   onEditByHand,
 }: {
@@ -415,6 +417,7 @@ function MessageRow({
   onApproved: (cardId: string) => void;
   onChangeRequest: () => void;
   onRetry: () => void;
+  onCancelled: () => void;
   onMakeAnother: () => void;
   onEditByHand: () => void;
 }) {
@@ -483,9 +486,11 @@ function MessageRow({
               errors: errorJobIds,
             })}
             pendingApproval={pendingApprovalCardIds.has(m.id)}
+            genJobId={m.genJobId}
             onApproved={() => onApproved(m.id)}
             onChangeSomething={onChangeRequest}
             onRetry={onRetry}
+            onCancelled={onCancelled}
           />
         </div>
       </div>
