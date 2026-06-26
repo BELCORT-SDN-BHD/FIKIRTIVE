@@ -327,6 +327,7 @@ export function OttoChatStream({
       if (e.key === "Escape") {
         e.preventDefault();
         setMentionQuery(null);
+        setMentionHighlight(0);
         return;
       }
     }
