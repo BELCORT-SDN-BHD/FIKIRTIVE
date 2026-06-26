@@ -89,6 +89,16 @@ export function buildContextSystemMessage(ctx: OttoContext): AgentInputItem | nu
     );
   }
   if (ctx.simpleMode) parts.push(ottoSimpleModeBlock);
+  if (ctx.activeJob) {
+    const s = ctx.activeJob.status;
+    const human =
+      s === "DONE" ? "the last generation finished"
+      : s === "FAILED" ? "the last generation FAILED — the user was automatically refunded, so they were NOT charged for it"
+      : s === "GENERATING" ? "a generation is being made right now"
+      : s === "QUEUED" ? "a generation is queued and about to start"
+      : `the last generation status is ${s}`;
+    parts.push(`Current generation status for this conversation: ${human}. Speak about generation progress ONLY based on this.`);
+  }
   return parts.length ? ({ role: "system", content: parts.join("\n\n") } as AgentInputItem) : null;
 }
 
@@ -110,9 +120,14 @@ export async function buildOttoContext({
   simpleMode?: boolean;
 }): Promise<OttoContext> {
   const disabledModels = Array.from(await resolveDisabledModels());
-  const [brandContext, availableRefs] = await Promise.all([
+  const [brandContext, availableRefs, activeJob] = await Promise.all([
     getBrandContextText(ownerId, null).catch(() => ""),
     loadAvailableRefsForAgent(ownerId),
+    prisma.genJob.findFirst({
+      where: { threadId, ownerId },
+      orderBy: { createdAt: "desc" },
+      select: { status: true, kind: true, error: true },
+    }).catch(() => null),
   ]);
   return {
     orgId: ownerId,
@@ -125,6 +140,7 @@ export async function buildOttoContext({
     brandContext,
     availableRefs,
     simpleMode: simpleMode ?? false,
+    activeJob,
   };
 }
 

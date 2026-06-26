@@ -207,9 +207,10 @@ function setupHappyPath() {
 beforeEach(() => {
   vi.clearAllMocks();
   mockChatThreadUpdateMany.mockResolvedValue({ count: 1 });
-  // Default: no brand context, no entities (best-effort baseline)
+  // Default: no brand context, no entities, no active job (best-effort baselines)
   mockGetBrandContextText.mockResolvedValue("");
   mockEntityFindMany.mockResolvedValue([]);
+  mockGenJobFindFirst.mockResolvedValue(null);
 });
 
 // ── Test 1: new thread ────────────────────────────────────────────────────────
@@ -887,6 +888,74 @@ describe("ottoTurn — simple-mode injects the plain-language block only when si
 });
 
 // ── Task 6: createEmptyCoworkThread ──────────────────────────────────────────
+
+// ── Task: activeJob status injection ─────────────────────────────────────────
+
+import { buildContextSystemMessage } from "@/lib/otto-actions";
+
+describe("buildContextSystemMessage — activeJob status injection", () => {
+  it("includes 'Current generation status' when activeJob is present", () => {
+    const result = buildContextSystemMessage({
+      orgId: "o1",
+      userId: "o1",
+      projectId: "p1",
+      threadId: "t1",
+      disabledModels: [],
+      activeJob: { status: "FAILED", kind: "IMAGE", error: "provider error" },
+    });
+    expect(result).not.toBeNull();
+    expect((result as { content: string }).content).toContain("Current generation status");
+    expect((result as { content: string }).content).toContain("NOT charged");
+  });
+
+  it("includes 'being made right now' for GENERATING status", () => {
+    const result = buildContextSystemMessage({
+      orgId: "o1",
+      userId: "o1",
+      projectId: "p1",
+      threadId: "t1",
+      disabledModels: [],
+      activeJob: { status: "GENERATING", kind: "VIDEO" },
+    });
+    expect((result as { content: string }).content).toContain("being made right now");
+  });
+
+  it("includes 'queued and about to start' for QUEUED status", () => {
+    const result = buildContextSystemMessage({
+      orgId: "o1",
+      userId: "o1",
+      projectId: "p1",
+      threadId: "t1",
+      disabledModels: [],
+      activeJob: { status: "QUEUED", kind: "IMAGE" },
+    });
+    expect((result as { content: string }).content).toContain("queued and about to start");
+  });
+
+  it("includes 'finished' for DONE status", () => {
+    const result = buildContextSystemMessage({
+      orgId: "o1",
+      userId: "o1",
+      projectId: "p1",
+      threadId: "t1",
+      disabledModels: [],
+      activeJob: { status: "DONE", kind: "IMAGE" },
+    });
+    expect((result as { content: string }).content).toContain("finished");
+  });
+
+  it("returns null when no context fields are set and activeJob is null", () => {
+    const result = buildContextSystemMessage({
+      orgId: "o1",
+      userId: "o1",
+      projectId: "p1",
+      threadId: "t1",
+      disabledModels: [],
+      activeJob: null,
+    });
+    expect(result).toBeNull();
+  });
+});
 
 describe("createEmptyCoworkThread — validation", () => {
   it("returns {error:'Invalid request.'} and makes no prisma calls when projectId is missing", async () => {
