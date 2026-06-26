@@ -97,7 +97,7 @@ Enforced at **definition time** (a violation throws on module load → the app f
 | 2 | Any of `cost/effect/reach` missing/undefined → treat as most-dangerous → `needsApproval: true` | ✅ fully |
 | 3 | `parameters` schema must NOT contain identity keys (`orgId`, `ownerId`, `userId`) — identity comes only from `ctx` | ✅ fully (inspect the Zod shape at registration) |
 | 4 | `cost==="spend"` requires `idempotencyKey` — missing → throw | ✅ fully |
-| 5 | "spend only via the metered port (`ctx.startGen`), never direct fal/`reserveCredits`" | ⚠️ **NOT** — the factory cannot see inside `execute`. Stays a test + code-review concern (as today). |
+| 5 | "spend only via the metered port (`ctx.startGen`), never direct fal/`reserveCredits`" | ⚠️ **Not by the factory** — it can't see inside `execute`. Fenced cheaply by the §3.3 lint (bans direct fal/`reserveCredits`/Prisma imports in `skills/`) + tests, as today. |
 | 6 | "owner-scoped WHERE clauses are correct (e.g. `ownerId: ctx.orgId`)" | ⚠️ **NOT** — the factory doesn't know which tables a skill queries. It guarantees #3 (identity not from model) only; correct scoping stays a test concern. |
 
 The factory makes the **gate decision** mechanical and unforgettable (#1–#4). **Business correctness** (#5–#6) remains the job of tests — exactly as it is today, so no regression. We do not oversell the wrapper as a silver bullet; it precisely kills the one accident class we fear most ("forgot the gate → silent spend / external action").
@@ -112,6 +112,17 @@ Add:  idempotencyKey: (i) => `transfer:${i.id}`
 ```
 
 This is the AI author's self-correction loop (it reads the error, fixes the file) and the human's safety net (a mis-declared skill cannot ship).
+
+### 3.3 Guardrail for the #5/#6 gap — a cheap lint fence (the Claude-Code posture)
+
+The factory gates at the *boundary* (#1–#4) and trusts skill internals to tests/review (#5–#6) — exactly how Claude Code's permission system works: it gates *whether* a tool runs, it does not audit the tool's internal code. We mirror Claude Code's full posture, which is **gate at the door (A) + a cheap declarative pattern-block (B), never a per-tool capability sandbox (C)**:
+
+- Claude Code layers cheap pattern guards on top of the gate — `permissions.deny: ["Bash(rm -rf:*)"]`, PreToolUse hooks that regex-block known-dangerous commands. It does **not** sandbox each tool's internals.
+- Our static-analysis equivalent: an **ESLint rule (or import-boundary config) that bans `skills/*` files from importing the dangerous modules directly** — the fal provider, `reserveCredits`, and `@fikirtive/db` (Prisma). This forces every spend / DB touch through an injected `ctx` **port**, fencing off the "#5: bypass the metered port" accident class at lint/CI time.
+
+This is **pure static analysis — additive, touches no runtime code, and does not go near the money path.** It does not attempt option C (a restricted `ctx` that physically hides Prisma/fal): the money "sandbox" already exists architecturally — spend has exactly one chokepoint port (`ctx.startGen`) that `generate` is already welded to. The lint fence just stops a future skill from bypassing that existing chokepoint; it does not rebuild it.
+
+Scope note: the rule lints `skills/*.ts`. Skills legitimately need Prisma for owner-scoped reads/writes today (e.g. `propose`/`generate` import `@fikirtive/db`). So the lint lands in **two steps**: (1) ship the rule in **warn** mode + an allow-list for the already-migrated skills that read their own tables, documenting each; (2) tighten to **error** for *new* skills and migrate reads behind read-ports incrementally. Step 1 is in this PR; full Prisma-behind-ports is a follow-up. This keeps the PR behavior-preserving while still fencing the spend/provider bypass (the part that matters most) from day one.
 
 ---
 
@@ -200,6 +211,7 @@ Directory rename `tools/ → skills/` updates imports in `otto.ts`, `index.ts`, 
 - **Factory unit tests** (`skill.test.ts`): the derivation truth table (all 8 rows of §2); fail-closed on missing fields; throw on identity-keys-in-params; throw on spend-without-idempotencyKey; `needsApproval` is literal `true` (not a predicate) for gated skills.
 - **Migration regression**: existing `generate.test.ts` / `propose` / otto suites stay green unmodified (proof of behavior preservation). Add one assertion per migrated skill that its derived `needsApproval` matches the §2 table.
 - **CATALOG freshness**: a test (or CI step) regenerates `CATALOG.md` and fails if the committed file is stale.
+- **Lint fence (§3.3)**: the `skills/*` import-ban rule runs in CI — **warn** + documented allow-list for already-migrated skills in this PR; **error** for new skills. A test asserts a skill importing the fal provider / `reserveCredits` trips the rule.
 - 总司令 runs `pnpm -r typecheck` + the otto suite in the real env pre-merge (sandbox can't typecheck — env, not code).
 
 ---
