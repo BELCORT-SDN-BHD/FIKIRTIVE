@@ -36,5 +36,6 @@ export default async function proxy(req: NextRequest) {
 export const config = {
   // api/better-auth MUST stay excluded — else the sign-in/OAuth-callback endpoints get
   // walled → infinite redirect / total lockout. (NextAuth's api/auth route is retired.)
-  matcher: ["/((?!login|api/better-auth|_next/static|_next/image|favicon.ico).*)"],
+  // api/stripe excluded — the webhook is unauthenticated (Stripe calls it; the signature is its auth).
+  matcher: ["/((?!login|api/better-auth|api/stripe|_next/static|_next/image|favicon.ico).*)"],
 };
