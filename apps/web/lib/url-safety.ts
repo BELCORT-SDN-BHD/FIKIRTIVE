@@ -53,6 +53,32 @@ function isBlockedIPv6(host: string): boolean {
   // ::1 loopback
   if (lower === "::1") return true;
 
+  // ::ffff:0:0/96 — IPv4-mapped IPv6 (e.g. ::ffff:127.0.0.1, ::ffff:169.254.169.254)
+  // Node fetch resolves these to the embedded IPv4 address, so we must block private ones.
+  if (lower.startsWith("::ffff:")) {
+    // The embedded IPv4 can appear as dotted-quad (::ffff:127.0.0.1)
+    // or as two colon-hex groups (::ffff:7f00:1 = 127.0.1)
+    // The simplest safe approach: extract the suffix and try dotted-quad parse.
+    // If dotted-quad, run isPrivateIPv4 on it.
+    // If hex-groups, convert to dotted-quad and run isPrivateIPv4 on it.
+    const suffix = lower.slice("::ffff:".length); // e.g. "127.0.0.1" or "7f00:1"
+    if (suffix.includes(".")) {
+      // dotted-quad form — run through isPrivateIPv4 and also check localhost/0.0.0.0
+      if (suffix === "0.0.0.0" || isPrivateIPv4(suffix)) return true;
+    } else {
+      // hex-groups form: "7f00:1" → convert to dotted quad "127.0.0.1"
+      const hexGroups = suffix.split(":");
+      if (hexGroups.length === 2) {
+        const hi = parseInt(hexGroups[0], 16);
+        const lo = parseInt(hexGroups[1], 16);
+        if (!Number.isNaN(hi) && !Number.isNaN(lo)) {
+          const dotted = `${(hi >> 8) & 0xff}.${hi & 0xff}.${(lo >> 8) & 0xff}.${lo & 0xff}`;
+          if (dotted === "0.0.0.0" || isPrivateIPv4(dotted)) return true;
+        }
+      }
+    }
+  }
+
   // fc00::/7 — unique-local: first byte 0xfc or 0xfd
   // fe80::/10 — link-local: first 10 bits are 1111111010, i.e. fe80–febf
   const firstGroup = lower.split(":")[0];

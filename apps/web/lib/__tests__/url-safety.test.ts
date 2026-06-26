@@ -98,6 +98,24 @@ describe("assertPublicHttpUrl", () => {
     });
   });
 
+  describe("REJECT: IPv4-mapped IPv6 (SSRF bypass)", () => {
+    it("rejects IPv4-mapped IPv6 loopback (dotted form)", () => {
+      expect(() => assertPublicHttpUrl("http://[::ffff:127.0.0.1]")).toThrow();
+    });
+    it("rejects IPv4-mapped IPv6 cloud metadata (dotted form)", () => {
+      expect(() => assertPublicHttpUrl("http://[::ffff:169.254.169.254]")).toThrow();
+    });
+    it("rejects IPv4-mapped IPv6 private (dotted form)", () => {
+      expect(() => assertPublicHttpUrl("http://[::ffff:10.0.0.5]")).toThrow();
+    });
+    it("rejects IPv4-mapped IPv6 loopback (hex form)", () => {
+      expect(() => assertPublicHttpUrl("http://[::ffff:7f00:1]")).toThrow();
+    });
+    it("rejects IPv4-mapped IPv6 cloud metadata (hex form)", () => {
+      expect(() => assertPublicHttpUrl("http://[::ffff:a9fe:a9fe]")).toThrow(); // 169.254.169.254
+    });
+  });
+
   describe("REJECT: bare hostnames", () => {
     it("rejects http://internal (bare hostname, no dot)", () => {
       expect(() => assertPublicHttpUrl("http://internal")).toThrow();
