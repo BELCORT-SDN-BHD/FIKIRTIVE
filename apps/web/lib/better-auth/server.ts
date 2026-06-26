@@ -1,7 +1,7 @@
 import "server-only";
 import { betterAuth } from "better-auth";
 import { prismaAdapter } from "better-auth/adapters/prisma";
-import { magicLink, customSession } from "better-auth/plugins";
+import { magicLink, customSession, admin } from "better-auth/plugins";
 import { nextCookies } from "better-auth/next-js";
 import { createAuthMiddleware } from "better-auth/api";
 import { prisma } from "@fikirtive/db";
@@ -104,6 +104,10 @@ export const auth = betterAuth({
     customSession(async ({ user, session }) => {
       return { user: { ...user, role: await roleForEmail(user.email) }, session };
     }),
+    // Operator-console engine. Phase 1: installed for the session.create.before ban hook
+    // (BetterAuthUser.banned ⇒ login blocked). Its API stays inert (no BA user has an admin
+    // role yet); roles/adminRoles + impersonation arrive in Phase 2.
+    admin(),
     nextCookies(), // MUST be last.
   ],
 });

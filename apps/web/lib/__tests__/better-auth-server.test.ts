@@ -11,4 +11,12 @@ describe("better-auth server instance", () => {
     expect(typeof auth.handler).toBe("function");
     expect(typeof auth.api.getSession).toBe("function");
   });
+
+  it("registers the admin plugin API and keeps getSession", async () => {
+    const { auth } = await import("@/lib/better-auth/server");
+    expect(typeof auth.api.getSession).toBe("function");
+    expect(typeof auth.api.banUser).toBe("function");
+    expect(typeof auth.api.listUsers).toBe("function");
+    expect(typeof auth.api.impersonateUser).toBe("function");
+  });
 });
