@@ -24,15 +24,19 @@ describe("deriveNeedsApproval — the §2 truth table", () => {
 });
 
 describe("defineOttoSkill enforcement", () => {
-  it("sets needsApproval (literal boolean) on the built tool for a gated skill", () => {
+  it("sets needsApproval (literal boolean) on the built tool for a gated skill", async () => {
     const s = defineOttoSkill({ ...base, name: "gated", cost: "spend", effect: "write", reach: "internal", idempotencyKey: () => "k" });
     expect(s.needsApproval).toBe(true);
-    expect(s.tool.needsApproval).toBeTruthy();
+    // The SDK normalizes the literal boolean into an async () => Promise<boolean>;
+    // prove it RESOLVES to true (the money-safety gate), not merely truthy.
+    expect(await (s.tool.needsApproval as () => Promise<boolean>)()).toBe(true);
   });
 
-  it("free+internal skill is not gated", () => {
+  it("free+internal skill is not gated", async () => {
     const s = defineOttoSkill({ ...base, name: "ungated", cost: "free", effect: "write", reach: "internal" });
     expect(s.needsApproval).toBe(false);
+    // Symmetric: the SDK tool's normalized gate resolves to literal false.
+    expect(await (s.tool.needsApproval as () => Promise<boolean>)()).toBe(false);
   });
 
   it("throws when parameters contain an identity key", () => {
@@ -52,6 +56,7 @@ describe("defineOttoSkill enforcement", () => {
 
   it("fail-closed: undefined classification is treated as most-dangerous (gated)", () => {
     // @ts-expect-error — deliberately omit cost/effect/reach to test the runtime backstop
+    // idempotencyKey is required here because the fail-closed default makes cost "spend".
     const s = defineOttoSkill({ ...base, name: "unclassified", idempotencyKey: () => "k" });
     expect(s.needsApproval).toBe(true);
   });
