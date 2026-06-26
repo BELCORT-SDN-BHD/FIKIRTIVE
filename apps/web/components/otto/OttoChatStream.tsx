@@ -75,6 +75,8 @@ export function OttoChatStream({
   const [liveStatus, setLiveStatus] = useState<OttoStatusData | null>(null);
   /** data-error text for the in-flight turn; stays visible after the turn ends. */
   const [streamError, setStreamError] = useState<string | null>(null);
+  /** data-error kind; "insufficient_credits" drives the Top-up link. */
+  const [streamErrorKind, setStreamErrorKind] = useState<string | null>(null);
   /** Card ids the run paused on (needs_approval) — drives OttoPlanCard's parked vs.
    *  proposed spend path. Mirrors OttoConversation's pendingApprovalCardIds set. */
   const [pendingApprovalCardIds, setPendingApprovalCardIds] = useState<Set<string>>(new Set());
@@ -152,7 +154,7 @@ export function OttoChatStream({
         return;
       }
       const e = asErrorData(part);
-      if (e) { setStreamError(e.text); return; }
+      if (e) { setStreamError(e.text); setStreamErrorKind(e.kind); return; }
       // data-tool-propose: the propose tool persisted a durable GEN_CARD synchronously,
       // but the stream part carries only { cardId, … }. Fetch the durable thread and
       // inject the GEN_CARD (full payload) into the message list, deduped by cardId.
@@ -252,6 +254,7 @@ export function OttoChatStream({
     // Reset ephemeral stream state for the new turn.
     setLiveStatus(null);
     setStreamError(null);
+    setStreamErrorKind(null);
     // A new turn may queue a new generation — re-arm polling (mirror OttoConversation).
     setPollGaveUp(false);
     pollCountRef.current = 0;
@@ -536,6 +539,17 @@ export function OttoChatStream({
               }}
             >
               {streamError}
+              {streamErrorKind === "insufficient_credits" && (
+                <>
+                  {" "}
+                  <a
+                    href="/billing"
+                    style={{ color: "var(--error-700)", fontWeight: "var(--weight-semibold)" as React.CSSProperties["fontWeight"], textDecoration: "underline" }}
+                  >
+                    Top up
+                  </a>
+                </>
+              )}
             </div>
           )}
 
