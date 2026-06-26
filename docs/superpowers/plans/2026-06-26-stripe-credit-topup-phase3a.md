@@ -33,7 +33,7 @@
 - Test: `apps/web/lib/__tests__/stripe-client.test.ts`
 
 **Interfaces:**
-- Produces: `export const stripe: Stripe` — the shared client (`apps/web/lib/stripe.ts`), consumed by Tasks 2 & 3. Build-safe: constructing with an absent key does not throw (Stripe only errors on an API call).
+- Produces: `export const stripe: Stripe` — the shared client (`apps/web/lib/stripe.ts`), consumed by Tasks 2 & 3. **Build-safe via LAZY construction behind a Proxy** — importing constructs nothing; `new Stripe(key)` defers to first property access. (NOTE: `new Stripe("")` DOES throw "Neither apiKey…", so an eager top-level `new Stripe(key)` would break keyless `next build` — the lazy Proxy is required, not optional. This was caught during Task 4's build and applied as commit `7283de7`.)
 
 - [ ] **Step 1: Add the dependency**
 

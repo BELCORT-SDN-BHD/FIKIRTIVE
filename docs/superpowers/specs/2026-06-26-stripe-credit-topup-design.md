@@ -66,7 +66,7 @@ A Next route handler (no auth wall; signature-verified):
 
 ## 4. Files
 
-- Create: `apps/web/lib/stripe.ts` — the `stripe` client singleton (`new Stripe(process.env.STRIPE_SECRET_KEY)`), build-safe (no throw at import if the key is absent — warn, like the better-auth secret guard).
+- Create: `apps/web/lib/stripe.ts` — the `stripe` client, build-safe via **lazy construction behind a Proxy** (importing constructs nothing; `new Stripe(key)` defers to first use). Note: `new Stripe("")` throws, so an eager top-level construction would break a keyless `next build` — the lazy Proxy is required.
 - Create: `apps/web/lib/billing-actions.ts` — `createTopupCheckout(priceId)` + a `listCreditPacks()` read for the page.
 - Create: `apps/web/app/api/stripe/webhook/route.ts` — the webhook handler.
 - Create: `apps/web/app/billing/page.tsx` (+ a small client buy-button component).
