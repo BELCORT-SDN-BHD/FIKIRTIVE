@@ -513,6 +513,23 @@ describe("impersonateTenant", () => {
     expect(authApi.impersonateUser).not.toHaveBeenCalled();
   });
 
+  it("rejects the founder's own org without calling the BA api", async () => {
+    mockRequireRole.mockResolvedValue(GATE);
+    (isFounderAdmin as Mock).mockReturnValue(true);
+    const res = await impersonateTenant(FOUNDER_OWNER_ID);
+    expect(res).toHaveProperty("error");
+    expect(authApi.impersonateUser).not.toHaveBeenCalled();
+  });
+
+  it("returns an error when the org has no resolvable BA owner", async () => {
+    mockRequireRole.mockResolvedValue(GATE);
+    (isFounderAdmin as Mock).mockReturnValue(true);
+    membershipFindMany.mockResolvedValue([]); // no owner
+    const res = await impersonateTenant("orgX");
+    expect(res).toHaveProperty("error");
+    expect(authApi.impersonateUser).not.toHaveBeenCalled();
+  });
+
   it("founder impersonates the org owner's BA user", async () => {
     mockRequireRole.mockResolvedValue(GATE);
     (isFounderAdmin as Mock).mockReturnValue(true);
@@ -524,6 +541,9 @@ describe("impersonateTenant", () => {
     expect(res).toEqual({ ok: true });
     expect(authApi.impersonateUser).toHaveBeenCalledWith(
       expect.objectContaining({ body: { userId: "ba_owner" } })
+    );
+    expect(actionEventCreate).toHaveBeenCalledWith(
+      expect.objectContaining({ data: expect.objectContaining({ type: "impersonate.start" }) })
     );
   });
 });
@@ -538,5 +558,16 @@ describe("stopImpersonatingTenant", () => {
     const res = await stopImpersonatingTenant();
     expect(res).toEqual({ ok: true });
     expect(authApi.stopImpersonating).toHaveBeenCalled();
+    expect(actionEventCreate).toHaveBeenCalledWith(
+      expect.objectContaining({ data: expect.objectContaining({ type: "impersonate.stop" }) })
+    );
+  });
+
+  it("stopImpersonatingTenant denies a non-founder", async () => {
+    mockRequireRole.mockResolvedValue(GATE);
+    (isFounderAdmin as Mock).mockReturnValue(false);
+    const res = await stopImpersonatingTenant();
+    expect(res).toHaveProperty("error");
+    expect(authApi.stopImpersonating).not.toHaveBeenCalled();
   });
 });
