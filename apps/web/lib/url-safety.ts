@@ -57,7 +57,7 @@ function isBlockedIPv6(host: string): boolean {
   // Node fetch resolves these to the embedded IPv4 address, so we must block private ones.
   if (lower.startsWith("::ffff:")) {
     // The embedded IPv4 can appear as dotted-quad (::ffff:127.0.0.1)
-    // or as two colon-hex groups (::ffff:7f00:1 = 127.0.1)
+    // or as two colon-hex groups (::ffff:7f00:1 = 127.0.0.1)
     // The simplest safe approach: extract the suffix and try dotted-quad parse.
     // If dotted-quad, run isPrivateIPv4 on it.
     // If hex-groups, convert to dotted-quad and run isPrivateIPv4 on it.
