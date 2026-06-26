@@ -6,6 +6,7 @@ import { getCoworkThreadClient } from "@/lib/cowork-fetch";
 import { OttoPlanCard } from "./OttoPlanCard";
 import { OttoResult } from "./OttoResult";
 import { deriveCardState } from "@/lib/otto-inject-helpers";
+import { activeMentionQuery, resolveSentEntityIds } from "@/lib/otto-mentions";
 import type { EntityDTO, ChatThreadDTO, ChatMessageDTO } from "@/lib/types";
 
 export interface OttoConversationProps {
@@ -29,6 +30,9 @@ export function OttoConversation({
   onBalanceRefresh,
 }: OttoConversationProps) {
   const [text, setText] = useState("");
+  const [pickedMentions, setPickedMentions] = useState<{id: string; name: string}[]>([]);
+  const [mentionQuery, setMentionQuery] = useState<string | null>(null);
+  const [mentionHighlight, setMentionHighlight] = useState(0);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [pendingApprovalCardIds, setPendingApprovalCardIds] = useState<Set<string>>(new Set());
@@ -48,12 +52,38 @@ export function OttoConversation({
     if (fresh) onThreadUpdate(fresh);
   }
 
+  const mentionSuggestions = mentionQuery !== null
+    ? (entities ?? []).filter(e => e.name.toLowerCase().includes(mentionQuery.toLowerCase())).slice(0, 6)
+    : [];
+
+  const handleTextChange = (e: React.ChangeEvent<HTMLTextAreaElement>) => {
+    const val = e.target.value;
+    setText(val);
+    const caret = e.target.selectionStart ?? val.length;
+    setMentionQuery(activeMentionQuery(val, caret));
+    setMentionHighlight(0);
+  };
+
+  const selectMention = (entity: {id: string; name: string}) => {
+    const textarea = document.getElementById("otto-composer") as HTMLTextAreaElement;
+    const caret = textarea?.selectionStart ?? text.length;
+    const before = text.slice(0, caret);
+    const atIdx = before.lastIndexOf("@");
+    const newText = text.slice(0, atIdx) + `@${entity.name} ` + text.slice(caret);
+    setText(newText);
+    setPickedMentions(prev => prev.some(p => p.id === entity.id) ? prev : [...prev, {id: entity.id, name: entity.name}]);
+    setMentionQuery(null);
+    setMentionHighlight(0);
+    setTimeout(() => textarea?.focus(), 0);
+  };
+
   async function send() {
     const trimmed = text.trim();
     if (!trimmed || busy || busyRef.current) return;
     busyRef.current = true;
     setBusy(true);
     setError(null);
+    const entityIds = resolveSentEntityIds(trimmed, pickedMentions);
     // a new turn may queue a new generation — re-arm polling
     setPollGaveUp(false);
     setPollTerminal(false);
@@ -64,7 +94,7 @@ export function OttoConversation({
         threadId: thread.id,
         projectId,
         text: trimmed,
-        entityIds: [],
+        entityIds,
         variantSel: {},
         simple: true,
       });
@@ -80,6 +110,7 @@ export function OttoConversation({
         });
       }
       setText("");
+      setPickedMentions([]);
       await refreshAndUpdate();
       // A completed turn meters LLM credits — refresh the nav balance display.
       void onBalanceRefresh?.();
@@ -92,9 +123,37 @@ export function OttoConversation({
   }
 
   function handleKeyDown(e: React.KeyboardEvent<HTMLTextAreaElement>) {
+    if (mentionSuggestions.length > 0) {
+      if (e.key === "ArrowUp") {
+        e.preventDefault();
+        setMentionHighlight(h => Math.max(0, h - 1));
+        return;
+      }
+      if (e.key === "ArrowDown") {
+        e.preventDefault();
+        setMentionHighlight(h => Math.min(mentionSuggestions.length - 1, h + 1));
+        return;
+      }
+      if (e.key === "Enter" && !e.shiftKey) {
+        e.preventDefault();
+        selectMention(mentionSuggestions[mentionHighlight]);
+        return;
+      }
+      if (e.key === "Tab") {
+        e.preventDefault();
+        selectMention(mentionSuggestions[mentionHighlight]);
+        return;
+      }
+      if (e.key === "Escape") {
+        e.preventDefault();
+        setMentionQuery(null);
+        setMentionHighlight(0);
+        return;
+      }
+    }
     if (e.key === "Enter" && !e.shiftKey) {
       e.preventDefault();
-      send();
+      void send();
     }
   }
 
@@ -381,7 +440,47 @@ export function OttoConversation({
           padding: "var(--space-4) var(--space-6)",
         }}
       >
-        <div style={{ maxWidth: 680, margin: "0 auto" }}>
+        <div style={{ maxWidth: 680, margin: "0 auto", position: "relative" }}>
+          {mentionSuggestions.length > 0 && (
+            <div
+              role="listbox"
+              style={{
+                position: "absolute",
+                bottom: "100%",
+                left: 0,
+                marginBottom: 4,
+                width: 256,
+                borderRadius: "var(--radius-lg)",
+                border: "1px solid var(--border-default)",
+                background: "var(--surface-card)",
+                boxShadow: "var(--shadow-lg)",
+                zIndex: 50,
+                overflow: "hidden",
+              }}
+            >
+              {mentionSuggestions.map((e, i) => (
+                <button
+                  key={e.id}
+                  role="option"
+                  aria-selected={i === mentionHighlight}
+                  onMouseDown={(ev) => { ev.preventDefault(); selectMention(e); }}
+                  style={{
+                    display: "block",
+                    width: "100%",
+                    textAlign: "left",
+                    padding: "var(--space-2) var(--space-3)",
+                    fontSize: "var(--text-sm)",
+                    background: i === mentionHighlight ? "var(--bg-muted, var(--surface-raised))" : "transparent",
+                    border: "none",
+                    cursor: "pointer",
+                    color: "var(--text-body)",
+                  }}
+                >
+                  @{e.name}
+                </button>
+              ))}
+            </div>
+          )}
           <div
             style={{
               background: "var(--bg-page)",
@@ -394,7 +493,7 @@ export function OttoConversation({
             <textarea
               id="otto-composer"
               value={text}
-              onChange={(e) => setText(e.target.value)}
+              onChange={handleTextChange}
               onKeyDown={handleKeyDown}
               disabled={busy}
               placeholder="Reply to Otto…"
