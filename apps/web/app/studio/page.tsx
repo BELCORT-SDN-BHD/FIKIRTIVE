@@ -36,6 +36,11 @@ export default async function StudioPage({ searchParams }: { searchParams: Promi
   const session = await auth();
   const owner = await requireOwner();
   if ("error" in owner) redirect("/login");
+
+  // Deprecation redirect: /studio and all non-editor views → /otto.
+  // Only /studio?view=editor still renders the Studio surface.
+  // TODO(future): migrate the editor itself into /otto (larger effort).
+  if (view !== "editor") redirect("/otto");
   const { ownerId } = owner;
   const user = userBadge(session?.user?.name, session?.user?.email);
   const defaultProject = await ensureDefaultProject(ownerId);
