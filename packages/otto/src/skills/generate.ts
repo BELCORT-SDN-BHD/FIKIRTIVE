@@ -21,8 +21,8 @@
  * spend/safety issue. The composer is app-level and not importable here.
  */
 import { z } from "zod";
-import { tool } from "@openai/agents";
 import type { RunContext } from "@openai/agents";
+import { defineOttoSkill } from "../skill.js";
 import { isModelDisabled, buildGenRequestFromCard } from "@fikirtive/core";
 import { prisma } from "@fikirtive/db";
 import type { OttoContext } from "../context.js";
@@ -138,12 +138,19 @@ export async function executeGenerate(
 }
 
 // ---------------------------------------------------------------------------
-// SDK tool definition
+// Skill definition via factory — derives needsApproval from cost:"spend".
 // needsApproval is a LITERAL `true` — never a predicate, never a number.
 // ---------------------------------------------------------------------------
 
-export const generate = tool<typeof generateInput, OttoContext>({
+export const generateSkill = defineOttoSkill({
   name: "generate",
+  cost: "spend",
+  effect: "write",
+  reach: "internal",
+  // The exactly-once guard itself lives in executeGenerate + the DB unique index
+  // (GenJob_cowork_idempotency_once). This declaration satisfies the factory's
+  // "spend must declare an idempotency key" rule and documents the key shape.
+  idempotencyKey: (i) => `cowork:${i.cardId}`,
   description:
     "Execute a generation proposal (GEN_CARD) that the user has approved. " +
     "This SPENDS the user's credits and REQUIRES the user's approval — only call it when " +
@@ -151,9 +158,8 @@ export const generate = tool<typeof generateInput, OttoContext>({
     "One card generates at most once. Pass only the card's id — model and params come from " +
     "the persisted card, not from this call.",
   parameters: generateInput,
-  needsApproval: true,
-  execute: async (input, runContext) => {
-    if (!runContext) throw new Error("OttoContext required");
-    return executeGenerate(input, runContext);
-  },
+  execute: executeGenerate,
 });
+
+// Backward-compatible bare-tool export — keeps generate.test.ts UNCHANGED.
+export const generate = generateSkill.tool;
