@@ -102,6 +102,7 @@ describe("setMembershipStatus", () => {
   it("updates memberships and returns ok for valid org + status", async () => {
     mockRequireRole.mockResolvedValue(GATE);
     membershipUpdateMany.mockResolvedValue({ count: 2 });
+    membershipFindMany.mockResolvedValue([]);
     const res = await setMembershipStatus("orgX", "suspended");
     expect(res).toEqual({ ok: true });
     expect(membershipUpdateMany).toHaveBeenCalledWith(
@@ -112,8 +113,48 @@ describe("setMembershipStatus", () => {
   it("accepts 'active' as a valid status", async () => {
     mockRequireRole.mockResolvedValue(GATE);
     membershipUpdateMany.mockResolvedValue({ count: 1 });
+    membershipFindMany.mockResolvedValue([]);
     const res = await setMembershipStatus("orgX", "active");
     expect(res).toEqual({ ok: true });
+  });
+
+  it("on suspend: bans the org's BA users and cuts their BA sessions", async () => {
+    mockRequireRole.mockResolvedValue(GATE);
+    membershipUpdateMany.mockResolvedValue({ count: 1 });
+    membershipFindMany.mockResolvedValue([{ userId: "user_0" }]);
+    userFindMany.mockResolvedValue([{ email: "u0@t.test" }]);
+    baUserFindMany.mockResolvedValue([{ id: "ba_0" }]);
+    baSessionDeleteMany.mockResolvedValue({ count: 2 });
+    const res = await setMembershipStatus("orgX", "suspended");
+    expect(res).toEqual({ ok: true });
+    expect(baUserUpdateMany).toHaveBeenCalledWith(
+      expect.objectContaining({ where: { id: { in: ["ba_0"] } }, data: expect.objectContaining({ banned: true }) })
+    );
+    expect(baSessionDeleteMany).toHaveBeenCalledWith({ where: { userId: { in: ["ba_0"] } } });
+  });
+
+  it("on reactivate: lifts the ban and does NOT cut sessions", async () => {
+    mockRequireRole.mockResolvedValue(GATE);
+    membershipUpdateMany.mockResolvedValue({ count: 1 });
+    membershipFindMany.mockResolvedValue([{ userId: "user_0" }]);
+    userFindMany.mockResolvedValue([{ email: "u0@t.test" }]);
+    baUserFindMany.mockResolvedValue([{ id: "ba_0" }]);
+    const res = await setMembershipStatus("orgX", "active");
+    expect(res).toEqual({ ok: true });
+    expect(baUserUpdateMany).toHaveBeenCalledWith(
+      expect.objectContaining({ where: { id: { in: ["ba_0"] } }, data: expect.objectContaining({ banned: false }) })
+    );
+    expect(baSessionDeleteMany).not.toHaveBeenCalled();
+  });
+
+  it("skips the auth-layer writes when the org has no BA users", async () => {
+    mockRequireRole.mockResolvedValue(GATE);
+    membershipUpdateMany.mockResolvedValue({ count: 1 });
+    membershipFindMany.mockResolvedValue([]);
+    const res = await setMembershipStatus("orgX", "suspended");
+    expect(res).toEqual({ ok: true });
+    expect(baUserUpdateMany).not.toHaveBeenCalled();
+    expect(baSessionDeleteMany).not.toHaveBeenCalled();
   });
 });
 

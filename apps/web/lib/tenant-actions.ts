@@ -27,6 +27,19 @@ export async function setMembershipStatus(orgId: string, status: string): Promis
   if (!ORG_STATUS.has(status)) return { error: "Invalid status." };
   const { count } = await prisma.membership.updateMany({ where: { orgId }, data: { status } });
   if (count === 0) return { error: "No memberships for that org." };
+  // Mirror to the Better Auth layer so suspension is immediate + global: ban the members'
+  // BA users (the installed admin plugin's session.create.before hook then blocks re-login)
+  // and cut their live BA sessions. Reactivation lifts the ban. Membership.status stays the
+  // authoritative per-tenant gate (requireOwner consumes it); this is defense-in-depth.
+  const baUserIds = await orgMemberBaUserIds(orgId);
+  if (baUserIds.length > 0) {
+    if (status === "suspended") {
+      await prisma.betterAuthUser.updateMany({ where: { id: { in: baUserIds } }, data: { banned: true, banReason: `suspended by ${gate.email}` } });
+      await prisma.betterAuthSession.deleteMany({ where: { userId: { in: baUserIds } } });
+    } else {
+      await prisma.betterAuthUser.updateMany({ where: { id: { in: baUserIds } }, data: { banned: false, banReason: null, banExpires: null } });
+    }
+  }
   await prisma.actionEvent.create({ data: { id: newId(), ownerId: FOUNDER_OWNER_ID, type: "tenant.status", payload: { orgId, status, via: gate.email } } }).catch(() => {});
   await prisma.actionEvent.create({ data: { id: newId(), ownerId: orgId, type: "tenant.status", payload: { status, via: gate.email } } }).catch(() => {});
   revalidatePath(`/admin/tenants/${orgId}`); revalidatePath("/admin/tenants");
