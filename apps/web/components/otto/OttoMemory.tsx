@@ -1,12 +1,21 @@
 "use client";
 import React, { useRef, useState } from "react";
-import { Sparkles, Plus, Pencil, Trash2, Check, X, Send } from "lucide-react";
+import { Sparkles, Plus, Pencil, Trash2, Check, X, Send, MessageCircle } from "lucide-react";
 import { Card, Button, Textarea, Badge } from "@/components/fk";
 import { addMemory, updateMemory, deleteMemory, listMyMemory, type MemoryRow } from "@/lib/memory-actions";
 import { ottoTurn } from "@/lib/otto-client-actions";
 import { getCoworkThreadClient } from "@/lib/cowork-fetch";
+import { suggestCategory, isNearDup } from "@/lib/memory-suggest";
 
 const CATEGORIES = ["Brand", "Voice", "Audience", "Products", "Rules"];
+
+const CATEGORY_HINTS: Record<string, string> = {
+  Brand: "what you sell + your story",
+  Voice: "how you sound",
+  Audience: "who you're for",
+  Products: "specific items or services",
+  Rules: "always/never do",
+};
 
 const STARTERS = [
   "Describe my brand",
@@ -40,6 +49,7 @@ export function OttoMemory({ initialMemory, projectId }: { initialMemory: Memory
   const [sending, setSending] = useState(false);
   const [chatError, setChatError] = useState<string | null>(null);
   const transcriptRef = useRef<HTMLDivElement>(null);
+  const composerWrapRef = useRef<HTMLDivElement>(null);
 
   // ── Manual add state ──
   const [category, setCategory] = useState<string>(CATEGORIES[0]);
@@ -49,6 +59,23 @@ export function OttoMemory({ initialMemory, projectId }: { initialMemory: Memory
   const [editingId, setEditingId] = useState<string | null>(null);
   const [editText, setEditText] = useState("");
   const [addOpen, setAddOpen] = useState(false);
+
+  // ── Derived: category suggestion + dup warning ──
+  const suggestedCategory = draft.trim() ? suggestCategory(draft) : null;
+  const showCategorySuggest = suggestedCategory !== null && suggestedCategory !== category;
+  const dupWarning = draft.trim().length > 10 && isNearDup(draft, memory.map((m) => m.content));
+
+  // P2-9: "Ask Otto about this" — prefills the chat composer
+  function askOttoAbout(content: string) {
+    const truncated = content.length > 80 ? content.slice(0, 80).trimEnd() + "…" : content;
+    setInput(`Tell me more about: "${truncated}"`);
+    // Scroll chat into view and focus the composer textarea
+    requestAnimationFrame(() => {
+      const ta = composerWrapRef.current?.querySelector("textarea");
+      ta?.scrollIntoView({ behavior: "smooth", block: "center" });
+      ta?.focus();
+    });
+  }
 
   async function refresh() {
     setMemory(await listMyMemory());
@@ -242,7 +269,7 @@ export function OttoMemory({ initialMemory, projectId }: { initialMemory: Memory
 
           {/* Composer */}
           <div style={{ display: "flex", gap: "var(--space-2)", alignItems: "flex-end" }}>
-            <div style={{ flex: 1 }}>
+            <div style={{ flex: 1 }} ref={composerWrapRef}>
               <Textarea
                 value={input}
                 onChange={(e) => setInput(e.target.value)}
@@ -286,7 +313,7 @@ export function OttoMemory({ initialMemory, projectId }: { initialMemory: Memory
           {/* Manual add form — togglable */}
           {addOpen && (
             <Card variant="tint" padding="md" style={{ marginBottom: "var(--space-4)" }}>
-              <div style={{ display: "flex", flexWrap: "wrap", gap: 8, marginBottom: "var(--space-3)" }}>
+              <div style={{ display: "flex", flexWrap: "wrap", gap: 8, marginBottom: "var(--space-2)" }}>
                 {CATEGORIES.map((c) => {
                   const active = c === category;
                   return (
@@ -311,12 +338,41 @@ export function OttoMemory({ initialMemory, projectId }: { initialMemory: Memory
                   );
                 })}
               </div>
+              {/* Category hint + auto-suggest */}
+              <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: "var(--space-3)", minHeight: 20 }}>
+                <span style={{ fontSize: "var(--text-xs)", color: "var(--text-faint)" }}>
+                  {CATEGORY_HINTS[category]}
+                </span>
+                {showCategorySuggest && (
+                  <button
+                    type="button"
+                    onClick={() => setCategory(suggestedCategory!)}
+                    style={{
+                      padding: "2px 10px",
+                      borderRadius: 999,
+                      border: "1.5px solid var(--accent)",
+                      background: "transparent",
+                      color: "var(--accent)",
+                      fontSize: "var(--text-xs)",
+                      fontWeight: "var(--weight-semibold)" as React.CSSProperties["fontWeight"],
+                      cursor: "pointer",
+                    }}
+                  >
+                    looks like {suggestedCategory}?
+                  </button>
+                )}
+              </div>
               <Textarea
                 value={draft}
                 onChange={(e) => setDraft(e.target.value)}
                 placeholder={category === "Brand" ? "Paste anything about your brand — what you sell, your style, your story…" : `A note about your ${category.toLowerCase()}…`}
                 rows={3}
               />
+              {dupWarning && (
+                <div role="status" style={{ fontSize: "var(--text-xs)", color: "var(--text-muted)", marginTop: 6 }}>
+                  You may have already added something like this.
+                </div>
+              )}
               {error && <div role="alert" style={{ color: "var(--error-700)", fontSize: "var(--text-sm)", marginTop: 6 }}>{error}</div>}
               <div style={{ display: "flex", justifyContent: "flex-end", marginTop: "var(--space-3)" }}>
                 <Button variant="primary" size="md" leftIcon={<Plus size={18} />} disabled={busy || !draft.trim()} onClick={add}>
@@ -360,6 +416,9 @@ export function OttoMemory({ initialMemory, projectId }: { initialMemory: Memory
                       </>
                     ) : (
                       <>
+                        <Button variant="ghost" size="sm" onClick={() => askOttoAbout(m.content)} aria-label="Ask Otto about this" title="Ask Otto about this">
+                          <MessageCircle size={16} />
+                        </Button>
                         <Button variant="ghost" size="sm" onClick={() => { setEditingId(m.id); setEditText(m.content); }} aria-label="Edit"><Pencil size={16} /></Button>
                         <Button variant="ghost" size="sm" onClick={() => remove(m.id)} aria-label="Delete"><Trash2 size={16} /></Button>
                       </>
