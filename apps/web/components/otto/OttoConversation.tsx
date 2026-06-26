@@ -56,7 +56,9 @@ export function OttoConversation({
     setError(null);
     // a new turn may queue a new generation — re-arm polling
     setPollGaveUp(false);
+    setPollTerminal(false);
     pollCountRef.current = 0;
+    checkAgainUsedRef.current = false;
     try {
       const res = await ottoTurn({
         threadId: thread.id,
@@ -109,6 +111,13 @@ export function OttoConversation({
       .map((m) => m.genJobId as string),
   );
 
+  // Map genJobId → cardId for the "Make another" path on GEN_RESULT widgets.
+  const cardIdByJobId = new Map<string, string>(
+    messages
+      .filter((m) => m.kind === "GEN_CARD" && m.genJobId)
+      .map((m) => [m.genJobId as string, m.id]),
+  );
+
   // A job is "working" once its card is approved (genJobId set) but no terminal
   // message (GEN_RESULT or TURN_ERROR) has landed yet. While any job is working we
   // poll the thread so the async worker result appears without a manual reload.
@@ -127,12 +136,17 @@ export function OttoConversation({
   const POLL_MS = 2500;
   const MAX_POLLS = 48; // ~2 minutes
   const [pollGaveUp, setPollGaveUp] = useState(false);
+  /** Set to true after "Check again" exhausts a second MAX_POLLS round — terminal message. */
+  const [pollTerminal, setPollTerminal] = useState(false);
   const pollCountRef = useRef(0);
+  const checkAgainUsedRef = useRef(false);
 
   // Reset the give-up state whenever we switch threads.
   useEffect(() => {
     setPollGaveUp(false);
+    setPollTerminal(false);
     pollCountRef.current = 0;
+    checkAgainUsedRef.current = false;
   }, [thread.id]);
 
   useEffect(() => {
@@ -140,6 +154,7 @@ export function OttoConversation({
     const t = setInterval(() => {
       pollCountRef.current += 1;
       if (pollCountRef.current >= MAX_POLLS) {
+        if (checkAgainUsedRef.current) setPollTerminal(true);
         setPollGaveUp(true);
         clearInterval(t);
         return;
@@ -201,6 +216,7 @@ export function OttoConversation({
               threadId={thread.id}
               resultJobIds={resultJobIds}
               errorJobIds={errorJobIds}
+              cardIdByJobId={cardIdByJobId}
               submittedCardIds={submittedCardIds}
               pendingApprovalCardIds={pendingApprovalCardIds}
               busy={busy}
@@ -230,6 +246,23 @@ export function OttoConversation({
                   ta.focus();
                 }
                 setText(seed);
+              }}
+              onRetry={() => {
+                // Fresh card spawned — re-arm poll and refetch so it appears.
+                // Reset checkAgainUsedRef too: the retried job gets the full two-round
+                // stall budget, not a one-round dead-end from an earlier "Check again".
+                setPollGaveUp(false);
+                setPollTerminal(false);
+                pollCountRef.current = 0;
+                checkAgainUsedRef.current = false;
+                void refreshAndUpdate();
+              }}
+              onCancelled={() => void refreshAndUpdate()}
+              onMakeAnother={() => {
+                // Fresh card spawned via "Make another" — re-arm poll + refetch.
+                setPollGaveUp(false);
+                pollCountRef.current = 0;
+                void refreshAndUpdate();
               }}
             />
           ))}
@@ -272,7 +305,7 @@ export function OttoConversation({
             </div>
           )}
 
-          {!busy && hasWorkingJob && pollGaveUp && (
+          {!busy && hasWorkingJob && pollGaveUp && !pollTerminal && (
             <div style={{ display: "flex", alignItems: "flex-start", gap: "var(--space-3)" }}>
               <OttoAvatar size={32} state="idle" />
               <div
@@ -289,6 +322,7 @@ export function OttoConversation({
                 <button
                   type="button"
                   onClick={() => {
+                    checkAgainUsedRef.current = true;
                     setPollGaveUp(false);
                     pollCountRef.current = 0;
                     void refreshAndUpdate();
@@ -297,6 +331,24 @@ export function OttoConversation({
                 >
                   Check again
                 </button>
+              </div>
+            </div>
+          )}
+
+          {!busy && hasWorkingJob && pollTerminal && (
+            <div style={{ display: "flex", alignItems: "flex-start", gap: "var(--space-3)" }}>
+              <OttoAvatar size={32} state="idle" />
+              <div
+                style={{
+                  padding: "var(--space-3) var(--space-4)",
+                  background: "var(--surface-card)",
+                  border: "1px solid var(--border-subtle)",
+                  borderRadius: "0 var(--radius-lg) var(--radius-lg) var(--radius-lg)",
+                  fontSize: "var(--text-sm)",
+                  color: "var(--text-body)",
+                }}
+              >
+                This looks stuck. Cancel it on the card to get your credits back, or start a new card.
               </div>
             </div>
           )}
@@ -391,11 +443,15 @@ function MessageRow({
   threadId,
   resultJobIds,
   errorJobIds,
+  cardIdByJobId,
   submittedCardIds,
   pendingApprovalCardIds,
   busy,
   onApproved,
   onChangeRequest,
+  onRetry,
+  onCancelled,
+  onMakeAnother,
 }: {
   message: ChatMessageDTO;
   entities: EntityDTO[];
@@ -403,11 +459,15 @@ function MessageRow({
   threadId: string;
   resultJobIds: Set<string>;
   errorJobIds: Set<string>;
+  cardIdByJobId: Map<string, string>;
   submittedCardIds: Set<string>;
   pendingApprovalCardIds: Set<string>;
   busy: boolean;
   onApproved: (cardId: string) => void;
   onChangeRequest: (seed: string) => void;
+  onRetry: () => void;
+  onCancelled: () => void;
+  onMakeAnother: () => void;
 }) {
   const isUser = m.role === "USER";
 
@@ -474,8 +534,11 @@ function MessageRow({
               errors: errorJobIds,
             })}
             pendingApproval={pendingApprovalCardIds.has(m.id)}
+            genJobId={m.genJobId}
             onApproved={() => onApproved(m.id)}
             onChangeSomething={onChangeRequest}
+            onRetry={onRetry}
+            onCancelled={onCancelled}
           />
         </div>
       </div>
@@ -484,11 +547,12 @@ function MessageRow({
 
   if (m.kind === "GEN_RESULT") {
     const r = m.payload as { kind?: string; model?: string; urls?: string[]; generationIds?: string[]; costUsd?: number } | null;
+    const sourceCardId = m.genJobId ? cardIdByJobId.get(m.genJobId) : undefined;
     return (
       <div style={{ display: "flex", alignItems: "flex-start", gap: "var(--space-3)" }}>
         <OttoAvatar size={32} state="idle" />
         <div style={{ flex: 1, minWidth: 0 }}>
-          <OttoResult payload={r} />
+          <OttoResult payload={r} sourceCardId={sourceCardId} onMakeAnother={onMakeAnother} />
         </div>
       </div>
     );

@@ -1,13 +1,18 @@
 "use client";
 import React, { useState } from "react";
-import { Download, Copy, Check, Sparkles, ChevronLeft, AlertCircle } from "lucide-react";
+import { Download, Copy, Check, Sparkles, ChevronLeft, AlertCircle, RefreshCw } from "lucide-react";
 import { Card, Button } from "@/components/fk";
 import { bustUrl } from "@/lib/media-retry";
 import { readPick, writePick } from "@/lib/result-pick";
+import { coworkVaryCard } from "@/lib/cowork-actions";
 
 export interface OttoResultProps {
   payload: { kind?: string; model?: string; urls?: string[]; generationIds?: string[]; prompt?: string; costUsd?: number } | null;
   onTweak?: () => void;
+  /** The GEN_CARD id that produced this result — enables "Make another". */
+  sourceCardId?: string;
+  /** Called after a fresh card is spawned so the parent can refetch/re-arm. */
+  onMakeAnother?: () => void;
 }
 
 const isVideoUrl = (u: string) => /\.(mp4|webm|mov|mkv)(\?|$)/i.test(u);
@@ -113,6 +118,7 @@ function Media({
           muted
           loop
           playsInline
+          preload="none"
           style={{ width: "100%", display: "block" }}
           onError={handleError}
         />
@@ -122,6 +128,7 @@ function Media({
           key={src}
           src={src}
           alt={alt}
+          loading="lazy"
           style={{ width: "100%", display: "block" }}
           onError={handleError}
         />
@@ -204,7 +211,7 @@ function ResultNudge({ onTweak }: { onTweak?: () => void }) {
 
 /** A finished result in the conversation. One asset → show it with Download / Copy.
  *  An ad pack (N variants) → a chooser grid with "Otto's pick"; tap one to settle on it. */
-export function OttoResult({ payload, onTweak }: OttoResultProps) {
+export function OttoResult({ payload, onTweak, sourceCardId, onMakeAnother }: OttoResultProps) {
   const urls = payload?.urls ?? [];
   const genIds = payload?.generationIds ?? [];
   const prompt = payload?.prompt ?? "";
@@ -236,6 +243,25 @@ export function OttoResult({ payload, onTweak }: OttoResultProps) {
     setCopyState(outcome);
     if (outcome === "copied") {
       setTimeout(() => setCopyState("idle"), 1800);
+    }
+  }
+
+  // "Make another" — spawns a fresh variant card via coworkVaryCard.
+  const [makingAnother, setMakingAnother] = useState(false);
+  const [makeAnotherError, setMakeAnotherError] = useState<string | null>(null);
+
+  async function makeAnother() {
+    if (!sourceCardId || makingAnother) return;
+    setMakingAnother(true);
+    setMakeAnotherError(null);
+    try {
+      const res = await coworkVaryCard({ cardId: sourceCardId });
+      if (res && "error" in res) { setMakeAnotherError(res.error); return; }
+      onMakeAnother?.();
+    } catch {
+      setMakeAnotherError("Couldn't queue another — please try again.");
+    } finally {
+      setMakingAnother(false);
     }
   }
 
@@ -322,7 +348,17 @@ export function OttoResult({ payload, onTweak }: OttoResultProps) {
               See all {urls.length} options
             </Button>
           )}
+          {sourceCardId && (
+            <Button variant="ghost" size="md" leftIcon={<RefreshCw size={18} />} disabled={makingAnother} onClick={makeAnother}>
+              {makingAnother ? "Queuing…" : "Make another"}
+            </Button>
+          )}
         </div>
+        {makeAnotherError && (
+          <div role="alert" style={{ marginTop: "var(--space-2)", fontSize: "var(--text-sm)", color: "var(--error-700)" }}>
+            {makeAnotherError}
+          </div>
+        )}
         {/* Fix #12 — free "how's it look?" nudge */}
         <ResultNudge onTweak={onTweak} />
       </Card>

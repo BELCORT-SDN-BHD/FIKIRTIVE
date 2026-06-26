@@ -109,7 +109,12 @@ export function OttoChatStream({
   const POLL_MS = 2500;
   const MAX_POLLS = 48; // ~2 minutes
   const [pollGaveUp, setPollGaveUp] = useState(false);
+  /** Set to true after the user has clicked "Check again" and the second MAX_POLLS round
+   *  also exhausted — shows a terminal message instead of re-arming indefinitely. */
+  const [pollTerminal, setPollTerminal] = useState(false);
   const pollCountRef = useRef(0);
+  /** Track whether the user has already clicked "Check again" once (armed → gave up → terminal). */
+  const checkAgainUsedRef = useRef(false);
 
   // useChat constructs its Chat (and captures `transport` + initial `messages`) ONCE.
   // We build both in a one-time useState initializer so they're stable across renders.
@@ -219,6 +224,16 @@ export function OttoChatStream({
   const jobsWithError = errorJobIds(messages);
   const hasWorkingJob = computeHasWorkingJob(messages);
 
+  // Map genJobId → cardId so GEN_RESULT widgets can pass sourceCardId to OttoResult
+  // for "Make another" (coworkVaryCard needs the card, not the job).
+  const cardIdByJobId = new Map<string, string>();
+  for (const m of messages) {
+    const meta = m.metadata;
+    if (meta?.kind === "GEN_CARD" && meta.genJobId && meta.durableId) {
+      cardIdByJobId.set(meta.genJobId, meta.durableId);
+    }
+  }
+
   // Refetch the durable thread and inject any new worker-output messages
   // (GEN_RESULT / TURN_ERROR) into the useChat list, deduped by durableId. NEVER
   // re-injects TEXT or GEN_CARD — those already arrived via the stream / card injection.
@@ -245,16 +260,24 @@ export function OttoChatStream({
     if (prevThreadIdRef.current === thread.id) return;
     prevThreadIdRef.current = thread.id;
     setPollGaveUp(false);
+    setPollTerminal(false);
     pollCountRef.current = 0;
+    checkAgainUsedRef.current = false;
   }, [thread.id]);
 
   // Bounded poll: a worker that fails-closed without writing a terminal message would
   // otherwise keep hasWorkingJob true forever. After ~2 min we stop and show "Check again".
+  // If the user clicks "Check again" and we exhaust again, show a terminal message
+  // instead of looping forever (checkAgainUsedRef guards the second exhaustion).
   useEffect(() => {
     if (!hasWorkingJob || pollGaveUp) return;
     const t = setInterval(() => {
       pollCountRef.current += 1;
       if (pollCountRef.current >= MAX_POLLS) {
+        if (checkAgainUsedRef.current) {
+          // Second exhaustion after "Check again" → terminal, stop re-arming.
+          setPollTerminal(true);
+        }
         setPollGaveUp(true);
         clearInterval(t);
         return;
@@ -295,7 +318,9 @@ export function OttoChatStream({
     setAttachError(null);
     // A new turn may queue a new generation — re-arm polling (mirror OttoConversation).
     setPollGaveUp(false);
+    setPollTerminal(false);
     pollCountRef.current = 0;
+    checkAgainUsedRef.current = false;
     // Capture and clear the attachment before send. Revoke the local preview blob URL
     // (the source is the generationId, not the blob) so repeated attach/send doesn't leak.
     const attachedNow = attached;
@@ -496,6 +521,7 @@ export function OttoChatStream({
                     entities={entities}
                     threadId={thread.id}
                     projectId={projectId}
+                    genJobId={genJobId}
                     cardState={deriveCardState({
                       genJobId,
                       submitted: submittedCardIds.has(durableId),
@@ -530,6 +556,17 @@ export function OttoChatStream({
                         setText(seed); // mirror OttoConversation — sync React state directly
                       }
                     }}
+                    onRetry={() => {
+                      // A fresh card was spawned — re-arm poll and refetch so it appears.
+                      // Reset checkAgainUsedRef too: the retried job gets the full two-round
+                      // stall budget, not a one-round dead-end from an earlier "Check again".
+                      setPollGaveUp(false);
+                      setPollTerminal(false);
+                      pollCountRef.current = 0;
+                      checkAgainUsedRef.current = false;
+                      void pollAndInjectResults();
+                    }}
+                    onCancelled={() => void pollAndInjectResults()}
                   />
                 </WidgetRow>
               );
@@ -539,9 +576,18 @@ export function OttoChatStream({
               const r = (m.metadata?.payload ?? null) as
                 | { kind?: string; model?: string; urls?: string[]; generationIds?: string[]; costUsd?: number }
                 | null;
+              const sourceCardId = m.metadata?.genJobId ? cardIdByJobId.get(m.metadata.genJobId) : undefined;
               return (
                 <WidgetRow key={m.id} animateIn={isNewMessage(m.id)}>
-                  <OttoResult payload={r} />
+                  <OttoResult
+                    payload={r}
+                    sourceCardId={sourceCardId}
+                    onMakeAnother={() => {
+                      setPollGaveUp(false);
+                      pollCountRef.current = 0;
+                      void pollAndInjectResults();
+                    }}
+                  />
                 </WidgetRow>
               );
             }
@@ -651,7 +697,7 @@ export function OttoChatStream({
             </div>
           )}
 
-          {!isBusy && hasWorkingJob && pollGaveUp && (
+          {!isBusy && hasWorkingJob && pollGaveUp && !pollTerminal && (
             <div style={{ display: "flex", alignItems: "flex-start", gap: "var(--space-3)" }}>
               <OttoAvatar size={32} state="idle" />
               <div
@@ -668,6 +714,7 @@ export function OttoChatStream({
                 <button
                   type="button"
                   onClick={() => {
+                    checkAgainUsedRef.current = true;
                     setPollGaveUp(false);
                     pollCountRef.current = 0;
                     void pollAndInjectResults();
@@ -676,6 +723,24 @@ export function OttoChatStream({
                 >
                   Check again
                 </button>
+              </div>
+            </div>
+          )}
+
+          {!isBusy && hasWorkingJob && pollTerminal && (
+            <div style={{ display: "flex", alignItems: "flex-start", gap: "var(--space-3)" }}>
+              <OttoAvatar size={32} state="idle" />
+              <div
+                style={{
+                  padding: "var(--space-3) var(--space-4)",
+                  background: "var(--surface-card)",
+                  border: "1px solid var(--border-subtle)",
+                  borderRadius: "0 var(--radius-lg) var(--radius-lg) var(--radius-lg)",
+                  fontSize: "var(--text-sm)",
+                  color: "var(--text-body)",
+                }}
+              >
+                This looks stuck. Cancel it on the card to get your credits back, or start a new card.
               </div>
             </div>
           )}
