@@ -40,7 +40,6 @@ export interface OttoChatStreamProps {
   balanceUsd: number;
   onRefresh: () => Promise<void>;
   onThreadUpdate: (thread: ChatThreadDTO) => void;
-  onEditByHand: () => void;
   /** Re-reads the account balance and updates the nav display after a spend event. */
   onBalanceRefresh?: () => void | Promise<void>;
   /** Streaming front door: a first message to auto-send ONCE into a freshly-created
@@ -70,7 +69,6 @@ export function OttoChatStream({
   entities,
   thread,
   onThreadUpdate,
-  onEditByHand,
   onBalanceRefresh,
   pendingFirst,
   onPendingFirstSent,
@@ -421,7 +419,7 @@ export function OttoChatStream({
                 | null;
               return (
                 <WidgetRow key={m.id} animateIn={isNewMessage(m.id)}>
-                  <OttoResult payload={r} onEditByHand={onEditByHand} />
+                  <OttoResult payload={r} />
                 </WidgetRow>
               );
             }

@@ -3,7 +3,6 @@ import React, { useState, useCallback } from "react";
 import "../../app/otto/otto-theme.css";
 import { OttoNav } from "./OttoNav";
 import { OttoView } from "./OttoView";
-import { OttoWorkshop } from "./OttoWorkshop";
 import type { AdTile } from "./OttoStuff";
 import type { EntityDTO, ChatThreadDTO } from "@/lib/types";
 import type { MemoryRow } from "@/lib/memory-actions";
@@ -45,7 +44,6 @@ export function OttoApp({
   const [activeThreadId, setActiveThreadId] = useState<string | null>(
     initialThreads[0]?.id ?? null,
   );
-  const [workshopOpen, setWorkshopOpen] = useState(false);
   const [balanceCredits, setBalanceCredits] = useState(initialBalanceCredits);
 
   const refreshBalance = useCallback(async () => {
@@ -96,12 +94,10 @@ export function OttoApp({
           ads={ads}
           account={account}
           ottoStreamEnabled={ottoStreamEnabled}
-          onEditByHand={() => setWorkshopOpen(true)}
           onBalanceRefresh={refreshBalance}
         />
       </div>
 
-      {workshopOpen && <OttoWorkshop onBack={() => setWorkshopOpen(false)} />}
     </div>
   );
 }

@@ -26,7 +26,6 @@ interface OttoViewProps {
   ads: AdTile[];
   account: AccountInfo | null;
   ottoStreamEnabled: boolean;
-  onEditByHand: () => void;
   onBalanceRefresh: () => Promise<void>;
 }
 
@@ -44,7 +43,6 @@ export function OttoView({
   ads,
   account,
   ottoStreamEnabled,
-  onEditByHand,
   onBalanceRefresh,
 }: OttoViewProps) {
   const activeThread = threads.find((t) => t.id === activeThreadId) ?? null;
@@ -121,7 +119,6 @@ export function OttoView({
           onThreadUpdate={(updated) => {
             onThreadsChange([updated, ...threads.filter((t) => t.id !== updated.id)]);
           }}
-          onEditByHand={onEditByHand}
           onBalanceRefresh={onBalanceRefresh}
           pendingFirst={
             pendingFirst && pendingFirst.threadId === activeThread.id
@@ -140,7 +137,6 @@ export function OttoView({
           onThreadUpdate={(updated) => {
             onThreadsChange([updated, ...threads.filter((t) => t.id !== updated.id)]);
           }}
-          onEditByHand={onEditByHand}
           onBalanceRefresh={onBalanceRefresh}
         />
       )}

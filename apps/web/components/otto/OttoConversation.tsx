@@ -15,7 +15,6 @@ export interface OttoConversationProps {
   balanceUsd: number;
   onRefresh: () => Promise<void>;
   onThreadUpdate: (thread: ChatThreadDTO) => void;
-  onEditByHand: () => void;
   /** Re-reads the account balance and updates the nav display after a spend event. */
   onBalanceRefresh?: () => void | Promise<void>;
 }
@@ -27,7 +26,6 @@ export function OttoConversation({
   balanceUsd,
   onRefresh,
   onThreadUpdate,
-  onEditByHand,
   onBalanceRefresh,
 }: OttoConversationProps) {
   const [text, setText] = useState("");
@@ -225,7 +223,6 @@ export function OttoConversation({
                 }
                 setText(seed);
               }}
-              onEditByHand={onEditByHand}
             />
           ))}
 
@@ -390,7 +387,6 @@ function MessageRow({
   busy,
   onApproved,
   onChangeRequest,
-  onEditByHand,
 }: {
   message: ChatMessageDTO;
   entities: EntityDTO[];
@@ -403,7 +399,6 @@ function MessageRow({
   busy: boolean;
   onApproved: (cardId: string) => void;
   onChangeRequest: (seed: string) => void;
-  onEditByHand: () => void;
 }) {
   const isUser = m.role === "USER";
 
@@ -484,7 +479,7 @@ function MessageRow({
       <div style={{ display: "flex", alignItems: "flex-start", gap: "var(--space-3)" }}>
         <OttoAvatar size={32} state="idle" />
         <div style={{ flex: 1, minWidth: 0 }}>
-          <OttoResult payload={r} onEditByHand={onEditByHand} />
+          <OttoResult payload={r} />
         </div>
       </div>
     );
