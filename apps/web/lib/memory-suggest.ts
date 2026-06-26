@@ -4,7 +4,7 @@
  */
 
 const VOICE_RE = /\b(tone|voice|sound|speak|style|writing|copy|personality)\b/i;
-const AUDIENCE_RE = /\b(customer|audience|client|user|who|for|demographic|buyer|person|people)\b/i;
+const AUDIENCE_RE = /\b(customer|audience|client|user|demographic|buyer|person|people)\b/i;
 const RULES_RE = /\b(never|always|don't|dont|must|avoid|forbidden|rule|guideline|policy)\b/i;
 const PRODUCTS_RE = /\b(\$|price|cost|product|sku|item|sell|service|offer|collection|shop)\b/i;
 
@@ -33,6 +33,8 @@ export function isNearDup(text: string, existing: string[]): boolean {
   if (!needle) return false;
   return existing.some((e) => {
     const hay = norm(e);
-    return hay === needle || hay.includes(needle) || needle.includes(hay);
+    // reverse-substring arm guarded so a short existing fragment (e.g. "eco")
+    // doesn't falsely match any longer draft that happens to contain it.
+    return hay === needle || hay.includes(needle) || (hay.length >= 5 && needle.includes(hay));
   });
 }

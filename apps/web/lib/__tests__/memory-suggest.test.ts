@@ -20,8 +20,13 @@ describe("suggestCategory", () => {
 
   it("detects Audience", () => {
     expect(suggestCategory("Our ideal customer is a busy mom")).toBe("Audience");
-    expect(suggestCategory("Who we're for: small business owners")).toBe("Audience");
+    expect(suggestCategory("Our audience is small business owners")).toBe("Audience");
     expect(suggestCategory("Target demographic: 25-40 women")).toBe("Audience");
+  });
+
+  it("does not flag ordinary copy with 'for'/'who' as Audience", () => {
+    expect(suggestCategory("known for our quality")).not.toBe("Audience");
+    expect(suggestCategory("we stand for sustainability")).not.toBe("Audience");
   });
 
   it("detects Rules", () => {
@@ -78,5 +83,9 @@ describe("isNearDup", () => {
     expect(isNearDup("friendly tone", existing)).toBe(true);
     expect(isNearDup("eco-friendly", existing)).toBe(true);
     expect(isNearDup("something completely different", existing)).toBe(false);
+  });
+
+  it("does not match a short existing fragment against a longer draft", () => {
+    expect(isNearDup("eco-friendly packaging", ["eco"])).toBe(false);
   });
 });
