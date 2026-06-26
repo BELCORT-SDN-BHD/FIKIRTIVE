@@ -1,0 +1,139 @@
+/**
+ * SSRF guard helper — validates URLs before server-side fetching.
+ * Pure TypeScript: no I/O, no DNS, no project imports.
+ */
+
+/**
+ * Parses an IPv4 address string into a [a, b, c, d] tuple, or null if not IPv4.
+ */
+function parseIPv4(host: string): [number, number, number, number] | null {
+  const parts = host.split(".");
+  if (parts.length !== 4) return null;
+  const nums = parts.map(Number);
+  if (nums.some((n) => !Number.isInteger(n) || n < 0 || n > 255)) return null;
+  return nums as [number, number, number, number];
+}
+
+/**
+ * Returns true if the hostname is a private, loopback, or link-local IPv4 address.
+ * Blocks: 127.0.0.0/8, 10.0.0.0/8, 172.16.0.0/12, 192.168.0.0/16, 169.254.0.0/16
+ */
+function isPrivateIPv4(host: string): boolean {
+  const ip = parseIPv4(host);
+  if (!ip) return false;
+  const [a, b] = ip;
+  // 127.0.0.0/8 — loopback
+  if (a === 127) return true;
+  // 10.0.0.0/8 — private
+  if (a === 10) return true;
+  // 172.16.0.0/12 — private (172.16 – 172.31)
+  if (a === 172 && b >= 16 && b <= 31) return true;
+  // 192.168.0.0/16 — private
+  if (a === 192 && b === 168) return true;
+  // 169.254.0.0/16 — link-local (includes cloud metadata 169.254.169.254)
+  if (a === 169 && b === 254) return true;
+  return false;
+}
+
+/**
+ * Returns true if the hostname (with brackets stripped) is a blocked IPv6 address.
+ * Blocks: ::1 (loopback), fc00::/7 (unique-local), fe80::/10 (link-local)
+ */
+function isBlockedIPv6(host: string): boolean {
+  // new URL() keeps square brackets for IPv6 — strip them
+  const addr = host.startsWith("[") && host.endsWith("]")
+    ? host.slice(1, -1)
+    : host;
+
+  // Must look like IPv6 (contains colon)
+  if (!addr.includes(":")) return false;
+
+  const lower = addr.toLowerCase();
+
+  // ::1 loopback
+  if (lower === "::1") return true;
+
+  // fc00::/7 — unique-local: first byte 0xfc or 0xfd
+  // fe80::/10 — link-local: first 10 bits are 1111111010, i.e. fe80–febf
+  const firstGroup = lower.split(":")[0];
+  if (!firstGroup) return false;
+
+  // Pad to 4 hex digits for comparison
+  const hex = firstGroup.padStart(4, "0");
+  const firstByte = parseInt(hex.slice(0, 2), 16);
+  const secondByte = parseInt(hex.slice(2, 4), 16);
+
+  // fc00::/7 covers fc00::–fdff:: (first byte 0xfc or 0xfd)
+  if (firstByte === 0xfc || firstByte === 0xfd) return true;
+
+  // fe80::/10 covers fe80::–febf:: (first byte 0xfe, second byte 0x80–0xbf)
+  if (firstByte === 0xfe && secondByte >= 0x80 && secondByte <= 0xbf) return true;
+
+  return false;
+}
+
+/**
+ * Returns true if the hostname looks like a bare internal name (no dot, not an IP).
+ */
+function isBareHostname(host: string): boolean {
+  // Strip IPv6 brackets before checking
+  const h = host.startsWith("[") ? host.slice(1, -1) : host;
+  // IPv6 addresses contain colons — not bare hostnames
+  if (h.includes(":")) return false;
+  // If it's a valid IPv4, it's not a bare hostname
+  if (parseIPv4(h)) return false;
+  // Bare if no dot
+  return !h.includes(".");
+}
+
+/**
+ * Asserts that `raw` is a safe, public HTTP/HTTPS URL.
+ *
+ * Throws a human-readable Error if:
+ * - The URL cannot be parsed
+ * - The protocol is not http: or https:
+ * - The hostname resolves to a private/loopback/link-local address
+ * - The hostname is bare (no dots, not an IP) — e.g. "internal"
+ *
+ * Returns the parsed URL object on success.
+ */
+export function assertPublicHttpUrl(raw: string): URL {
+  let url: URL;
+  try {
+    url = new URL(raw);
+  } catch {
+    throw new Error(`Invalid URL: "${raw}"`);
+  }
+
+  if (url.protocol !== "http:" && url.protocol !== "https:") {
+    throw new Error(
+      `Only http: and https: URLs are allowed. Got "${url.protocol}"`
+    );
+  }
+
+  const host = url.hostname.toLowerCase();
+
+  if (host === "localhost" || host === "0.0.0.0") {
+    throw new Error(`URL hostname "${host}" is not allowed (loopback/unspecified address)`);
+  }
+
+  if (isPrivateIPv4(host)) {
+    throw new Error(
+      `URL hostname "${host}" is a private or reserved IP address and is not allowed`
+    );
+  }
+
+  if (isBlockedIPv6(url.hostname)) {
+    throw new Error(
+      `URL hostname "${url.hostname}" is a private or loopback IPv6 address and is not allowed`
+    );
+  }
+
+  if (isBareHostname(host)) {
+    throw new Error(
+      `URL hostname "${host}" looks like an internal service name (no dots). Only public hostnames are allowed.`
+    );
+  }
+
+  return url;
+}
