@@ -479,6 +479,7 @@ model GenJob {
 
   @@index([projectId, createdAt])
   @@index([status, updatedAt])
+  @@index([ownerId, status])
 }
 
 // ── Auth.js v5 标准模型（D18：邮箱魔法链接）────────────────────────────
