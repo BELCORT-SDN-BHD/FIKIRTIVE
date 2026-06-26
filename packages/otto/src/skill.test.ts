@@ -54,6 +54,16 @@ describe("defineOttoSkill enforcement", () => {
     ).toThrow(/idempotencyKey/i);
   });
 
+  it("throws a fail-loud message when parameters is not a z.object schema", () => {
+    expect(() =>
+      defineOttoSkill({
+        name: "bad", description: "d", cost: "free", effect: "read", reach: "internal",
+        // @ts-expect-error — deliberately a non-object schema (a JS/as-any caller could do this)
+        parameters: z.string(), execute: noop,
+      }),
+    ).toThrow(/must be a z\.object/i);
+  });
+
   it("fail-closed: undefined classification is treated as most-dangerous (gated)", () => {
     // @ts-expect-error — deliberately omit cost/effect/reach to test the runtime backstop
     // idempotencyKey is required here because the fail-closed default makes cost "spend".

@@ -54,8 +54,19 @@ export function defineOttoSkill<P extends z.ZodObject<any>>(spec: OttoSkillSpec<
   const effect: Effect = spec.effect ?? "write";
   const reach: Reach = spec.reach ?? "external";
 
+  // Guard: parameters must be a z.object({...}) — we inspect its .shape below. A non-object
+  // schema (e.g. a JS/`as any` caller passing z.string()) would otherwise hit Object.keys(undefined)
+  // and throw an opaque TypeError instead of this fail-loud, agent-readable message.
+  const shape = (spec.parameters as z.ZodObject<any> | undefined)?.shape;
+  if (!shape || typeof shape !== "object") {
+    throw new Error(
+      `[defineOttoSkill] "${spec.name}" parameters must be a z.object({...}) schema. ` +
+        `Skills declare their inputs as an object so identity fields can be checked.`,
+    );
+  }
+
   // #3 — identity must come from ctx, never the model.
-  const leaked = Object.keys(spec.parameters.shape).filter((k) => IDENTITY_KEYS.includes(k));
+  const leaked = Object.keys(shape).filter((k) => IDENTITY_KEYS.includes(k));
   if (leaked.length > 0) {
     throw new Error(
       `[defineOttoSkill] "${spec.name}" parameters must not include identity field(s): ${leaked.join(", ")}. ` +
