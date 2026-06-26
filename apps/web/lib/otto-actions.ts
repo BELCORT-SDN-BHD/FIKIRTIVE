@@ -66,7 +66,10 @@ function errSummary(e: unknown): string {
 async function loadAvailableRefsForAgent(ownerId: string): Promise<{ id: string; name: string; type: string }[]> {
   try {
     const entities = await prisma.entity.findMany({
-      where: { ownerId, deletedAt: null },
+      // Only surface entities Otto can actually USE as a visual reference: one with no
+      // reference image can't meaningfully be @-mentioned (nothing to condition on). This
+      // also keeps ref-less test/junk entities out of Otto's @-suggestions (audit STUFF-7).
+      where: { ownerId, deletedAt: null, referenceImages: { some: { deletedAt: null } } },
       select: { id: true, name: true, type: true },
       orderBy: [{ type: "asc" }, { name: "asc" }],
     });
