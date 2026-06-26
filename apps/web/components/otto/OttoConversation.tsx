@@ -5,7 +5,6 @@ import { ottoTurn } from "@/lib/otto-client-actions";
 import { getCoworkThreadClient } from "@/lib/cowork-fetch";
 import { OttoPlanCard } from "./OttoPlanCard";
 import { OttoResult } from "./OttoResult";
-import { coworkGenerate } from "@/lib/cowork-actions";
 import { deriveCardState } from "@/lib/otto-inject-helpers";
 import type { EntityDTO, ChatThreadDTO, ChatMessageDTO } from "@/lib/types";
 
@@ -208,16 +207,6 @@ export function OttoConversation({
                 pollCountRef.current = 0;
                 refreshAndUpdate();
               }}
-              onRetry={(cardId, payload) => {
-                const p = (payload ?? {}) as { structuredPrompt?: string; entityIds?: string[]; variantSel?: Record<string, string> };
-                setSubmittedCardIds((cur) => new Set(cur).add(cardId));
-                void coworkGenerate({
-                  cardId,
-                  prompt: p.structuredPrompt ?? "",
-                  entityIds: Array.isArray(p.entityIds) ? p.entityIds : [],
-                  variantSel: p.variantSel && typeof p.variantSel === "object" ? p.variantSel : {},
-                }).then(() => { setPollGaveUp(false); pollCountRef.current = 0; void refreshAndUpdate(); });
-              }}
               onChangeRequest={() => {
                 // Focus the composer for a change request
                 const ta = document.getElementById("otto-composer") as HTMLTextAreaElement | null;
@@ -387,7 +376,6 @@ function MessageRow({
   pendingApprovalCardIds,
   busy,
   onApproved,
-  onRetry,
   onChangeRequest,
   onEditByHand,
 }: {
@@ -401,7 +389,6 @@ function MessageRow({
   pendingApprovalCardIds: Set<string>;
   busy: boolean;
   onApproved: (cardId: string) => void;
-  onRetry: (cardId: string, payload: unknown) => void;
   onChangeRequest: () => void;
   onEditByHand: () => void;
 }) {
@@ -471,7 +458,6 @@ function MessageRow({
             })}
             pendingApproval={pendingApprovalCardIds.has(m.id)}
             onApproved={() => onApproved(m.id)}
-            onRetry={() => onRetry(m.id, m.payload)}
             onChangeSomething={onChangeRequest}
           />
         </div>

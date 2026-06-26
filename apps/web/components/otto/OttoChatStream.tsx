@@ -6,7 +6,6 @@ import { DefaultChatTransport } from "ai";
 import { useStickToBottom } from "use-stick-to-bottom";
 import { OttoAvatar, Button } from "@/components/fk";
 import { getCoworkThreadClient } from "@/lib/cowork-fetch";
-import { coworkGenerate } from "@/lib/cowork-actions";
 import { threadToUiMessages, type OttoUiMessage } from "@/lib/otto-ui-messages";
 import {
   resultJobIds,
@@ -381,16 +380,6 @@ export function OttoChatStream({
                       setPollGaveUp(false);
                       pollCountRef.current = 0;
                       void pollAndInjectResults();
-                    }}
-                    onRetry={() => {
-                      const p = (m.metadata?.payload ?? {}) as { structuredPrompt?: string; entityIds?: string[]; variantSel?: Record<string, string> };
-                      setSubmittedCardIds((cur) => new Set(cur).add(durableId));
-                      void coworkGenerate({
-                        cardId: durableId,
-                        prompt: p.structuredPrompt ?? "",
-                        entityIds: Array.isArray(p.entityIds) ? p.entityIds : [],
-                        variantSel: p.variantSel && typeof p.variantSel === "object" ? p.variantSel : {},
-                      }).then(() => { setPollGaveUp(false); pollCountRef.current = 0; void pollAndInjectResults(); });
                     }}
                     onChangeSomething={() => {
                       const ta = document.getElementById("otto-composer") as HTMLTextAreaElement | null;

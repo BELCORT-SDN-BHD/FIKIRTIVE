@@ -18,7 +18,6 @@ export interface OttoPlanCardProps {
   pendingApproval: boolean;
   onApproved: () => void;
   onChangeSomething: () => void;
-  onRetry: () => void;
 }
 
 type CardPayload = {
@@ -41,7 +40,6 @@ export function OttoPlanCard({
   pendingApproval,
   onApproved,
   onChangeSomething,
-  onRetry,
 }: OttoPlanCardProps) {
   const p = (payload ?? {}) as CardPayload;
   const [busy, setBusy] = useState(false);
@@ -118,23 +116,17 @@ export function OttoPlanCard({
 
         {cardState === "failed" ? (
           <div style={{ marginTop: "var(--space-4)" }}>
-            <div style={{ fontSize: "var(--text-sm)", color: "var(--text-strong)", fontWeight: 600 }}>
+            <div style={{ fontSize: "var(--text-sm)", color: "var(--text-strong)", fontWeight: "var(--weight-semibold)" as React.CSSProperties["fontWeight"] }}>
               😕 This one didn&rsquo;t come through — and you weren&rsquo;t charged.
             </div>
             <div style={{ display: "flex", gap: "var(--space-3)", marginTop: "var(--space-3)" }}>
-              <Button variant="primary" size="md" disabled={busy} onClick={onRetry}>
-                {busy ? "Starting…" : "↻ Try again"}
-              </Button>
               <Button variant="secondary" size="md" disabled={busy} onClick={onChangeSomething}>
                 Change something
               </Button>
             </div>
-            <div style={{ fontSize: "var(--text-xs)", color: "var(--text-faint)", marginTop: 6 }}>
-              Retrying this won&rsquo;t charge you twice.
-            </div>
           </div>
         ) : cardState === "working" || cardState === "done" ? (
-          <div style={{ marginTop: "var(--space-4)", fontSize: "var(--text-sm)", color: "var(--success-700)", fontWeight: 600 }}>
+          <div style={{ marginTop: "var(--space-4)", fontSize: "var(--text-sm)", color: "var(--success-700)", fontWeight: "var(--weight-semibold)" as React.CSSProperties["fontWeight"] }}>
             {cardState === "done" ? "✓ Done" : "✓ On it — making this now."}
           </div>
         ) : (
