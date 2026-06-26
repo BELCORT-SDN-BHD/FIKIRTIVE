@@ -902,3 +902,24 @@ model BetterAuthVerification {
   @@index([identifier])
   @@map("ba_verification")
 }
+
+model CanvasNode {
+  id           String    @id
+  ownerId      String
+  projectId    String
+  type         String    // "image" | "video" | "text"
+  x            Float
+  y            Float
+  w            Float
+  h            Float
+  text         String?
+  prompt       String?
+  generationId String?
+  genJobId     String?
+  status       String    @default("done") // "pending" | "done" | "failed"
+  sourceNodeId String?
+  createdAt    DateTime  @default(now())
+  updatedAt    DateTime  @updatedAt
+
+  @@index([ownerId, projectId])
+}
