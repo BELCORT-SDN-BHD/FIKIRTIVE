@@ -48,6 +48,10 @@ const GEN_STALE_MS = 1000 * 60 * 18;
 // alive, refunding the merchant + eating the founder's fal cost. The on-redelivery stale path
 // keeps GEN_STALE_MS (a redelivery already implies the 20m expiry has passed).
 const GEN_REAP_MS = 1000 * 60 * 25;
+// A job that has sat in QUEUED this long was never claimed by a worker (worker down / message
+// lost). Fail it closed and refund — the credit hold would otherwise leak forever and the
+// cowork chat spins on a stuck "making this…" indefinitely (audit GEN-6 / P0-11).
+const GEN_QUEUED_REAP_MS = 1000 * 60 * 10;
 
 // Thrown INSIDE the commit transaction to roll it back (discarding the just-created,
 // user-visible Asset+Generation rows) when a redelivery has already FAILED+refunded the job
@@ -164,6 +168,7 @@ async function failClosedWithRefund(
  *  instead), so this is safe under concurrency and never clobbers a DONE. */
 export async function reapStaleGenJobs(): Promise<number> {
   const cutoff = new Date(Date.now() - GEN_REAP_MS);
+  const queuedCutoff = new Date(Date.now() - GEN_QUEUED_REAP_MS);
   // generationIds isEmpty EXCLUDES a job that has already committed its outputs (the commit
   // marker writes generationIds while status is briefly still GENERATING, before the DONE
   // flip). Without this, the reaper could fail-close + post a false "you weren't charged"
@@ -188,6 +193,30 @@ export async function reapStaleGenJobs(): Promise<number> {
       reaped++;
     }
   }
+
+  // Reap jobs stuck in QUEUED: worker never picked them up (worker down / message lost).
+  // The conditional updateMany (where: { status: "QUEUED" }) is the at-most-once claim —
+  // it loses to a worker that simultaneously claims the job (QUEUED→GENERATING), so we
+  // never clobber a job that just started.
+  const stuckQueued = await prisma.genJob.findMany({
+    where: { status: "QUEUED", createdAt: { lt: queuedCutoff } },
+    select: { id: true, ownerId: true, threadId: true, kind: true, model: true },
+  });
+  for (const job of stuckQueued) {
+    let failedClosed = false;
+    await prisma.$transaction(async (tx) => {
+      const failed = await tx.genJob.updateMany({
+        where: { id: job.id, status: "QUEUED", createdAt: { lt: queuedCutoff } },
+        data: { status: "FAILED", error: "queued too long — worker never picked it up; refunded", finishedAt: new Date() },
+      });
+      if (failed.count > 0) { await refundReservation(tx, { orgId: job.ownerId, refId: job.id }); failedClosed = true; }
+    });
+    if (failedClosed) {
+      await appendCoworkResult(job, "TURN_ERROR", [], "That one didn't start in time — the generator may be busy. You weren't charged; please try again.");
+      reaped++;
+    }
+  }
+
   return reaped;
 }
 
