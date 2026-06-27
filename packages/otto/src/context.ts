@@ -31,4 +31,13 @@ export interface OttoContext {
   /** The latest generation's status for THIS thread (best-effort), so Otto speaks truthfully
    *  about progress instead of guessing. Null/undefined = unknown. */
   activeJob?: { status: string; kind: string; error?: string | null } | null;
+  /** Web-research port — injected by the web/worker caller (G3a). Skills use this to fetch
+   *  pages or (when wired) search the web. Never imported directly inside skills/. */
+  research?: {
+    /** Fetch a public URL, extract its text, and return title + cleaned body. */
+    fetchUrl(url: string): Promise<{ url: string; title?: string; text: string }>;
+    /** Full-text web search. Optional — not wired until a search-API key is configured.
+     *  TODO(G3): wire a web-search API transport (needs a key). */
+    search?: (query: string) => Promise<{ results: { url: string; title: string; snippet: string }[] }>;
+  };
 }

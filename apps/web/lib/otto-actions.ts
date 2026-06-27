@@ -40,6 +40,7 @@ import { isImpersonating } from "@/lib/better-auth/compat";
 import { resolveDisabledModels } from "./model-registry";
 import { startGen } from "./gen-actions";
 import { getBrandContextText } from "./memory-actions";
+import { fetchAndExtract } from "./brand-research";
 
 // mapOttoUsage re-exported from @fikirtive/otto so existing callers that import
 // it from this module continue to work (the canonical source is @fikirtive/otto).
@@ -145,6 +146,10 @@ export async function buildOttoContext({
     availableRefs,
     simpleMode: simpleMode ?? false,
     activeJob,
+    research: {
+      fetchUrl: fetchAndExtract,
+      // TODO(G3): wire a web-search API transport (needs a key)
+    },
   };
 }
 
