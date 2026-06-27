@@ -63,6 +63,7 @@ const NAV_ITEMS: NavItem[] = [
   { key: "otto", label: "Otto", icon: <IconMessageCircle /> },
   { key: "stuff", label: "My stuff", icon: <IconFolderHeart /> },
   { key: "library", label: "Library", icon: <IconLibrary /> },
+  { key: "templates", label: "Templates", icon: <IconTemplates /> },
   { key: "memory", label: "Brand memory", icon: <IconBrain /> },
   { key: "account", label: "Account", icon: <IconCircleUser /> },
 ];
@@ -74,6 +75,14 @@ function IconLibrary() {
       <rect x="14" y="3" width="7" height="7" rx="1" />
       <rect x="3" y="14" width="7" height="7" rx="1" />
       <rect x="14" y="14" width="7" height="7" rx="1" />
+    </svg>
+  );
+}
+function IconTemplates() {
+  return (
+    <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden>
+      <rect x="3" y="3" width="18" height="18" rx="2" />
+      <path d="M3 9h18M9 21V9" />
     </svg>
   );
 }

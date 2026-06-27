@@ -12,6 +12,7 @@ import { OttoAccount } from "./OttoAccount";
 import { OttoStuff, type AdTile } from "./OttoStuff";
 import { OttoOnboarding } from "./OttoOnboarding";
 import OttoLibrary from "./OttoLibrary";
+import OttoTemplates from "./OttoTemplates";
 import type { AdJobItem } from "@/lib/data";
 import { getCoworkThreadClient } from "@/lib/cowork-fetch";
 import FlowCanvas from "../canvas/FlowCanvas";
@@ -103,6 +104,13 @@ export function OttoView({
     return (
       <div style={{ flex: 1, display: "flex", flexDirection: "column", overflow: "hidden" }}>
         <OttoAccount account={account} />
+      </div>
+    );
+  }
+  if (view === "templates") {
+    return (
+      <div style={{ flex: 1, display: "flex", flexDirection: "column", overflow: "hidden" }}>
+        <OttoTemplates projectId={projectId} entities={entities} />
       </div>
     );
   }
