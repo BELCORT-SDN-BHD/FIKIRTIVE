@@ -90,9 +90,12 @@ export default function FlowCanvas({ projectId }: { projectId: string }) {
     [deleteNode],
   );
 
-  const { generateImage, animate } = useCanvasGen(projectId, onNewNode, onResolve);
+  const { generateImage, animate, cancelledRef } = useCanvasGen(projectId, onNewNode, onResolve);
   // keep animateFnRef current
   animateFnRef.current = animate;
+
+  // Stop polls on unmount
+  useEffect(() => () => { cancelledRef.current = true; }, [cancelledRef]);
 
   useEffect(() => {
     listCanvasNodes(projectId).then((rows) => {
