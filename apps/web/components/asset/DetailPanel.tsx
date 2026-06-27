@@ -183,6 +183,23 @@ export default function DetailPanel({
     return "failed";
   }, []);
 
+  // After a job completes, resolve its new generation id and load it into the panel
+  // (so a paid regen/animate/edit result is visible here, not only in Library).
+  const reloadFromJob = useCallback(async (jobId: string) => {
+    const job = await getGenJob(jobId);
+    const newId = job?.generationIds?.[0];
+    if (!newId) return;
+    setState("loading");
+    setGen(null);
+    const r = await getGeneration(newId);
+    if (cancelledRef.current) return;
+    if (!r || "error" in r) { setState("error"); return; }
+    setGen(r);
+    setFavoriteLocal(r.favorite);
+    setSelectedIdx(0);
+    setState("ready");
+  }, []);
+
   const handleRegen = useCallback(async () => {
     if (!gen) return;
     setRegenStatus("running");
@@ -204,7 +221,8 @@ export default function DetailPanel({
       // reset to idle after 3s
       setTimeout(() => { if (!cancelledRef.current) setRegenStatus("idle"); }, 3000);
     }
-  }, [gen, generationId, projectId, pollJob]);
+    if (status === "done") await reloadFromJob(result.id);
+  }, [gen, generationId, projectId, pollJob, reloadFromJob]);
 
   const handleAnimate = useCallback(async () => {
     if (!gen) return;
@@ -235,7 +253,8 @@ export default function DetailPanel({
       setAnimStatus(status);
       setTimeout(() => { if (!cancelledRef.current) setAnimStatus("idle"); }, 3000);
     }
-  }, [gen, generationId, projectId, pollJob, chosenAspect]);
+    if (status === "done") await reloadFromJob(result.id);
+  }, [gen, generationId, projectId, pollJob, chosenAspect, reloadFromJob]);
 
   const handleCopyLink = useCallback(async () => {
     if (!gen) return;
@@ -283,7 +302,8 @@ export default function DetailPanel({
       setEditStatus(status);
       setTimeout(() => { if (!cancelledRef.current) setEditStatus("idle"); }, 3000);
     }
-  }, [gen, editPrompt, editIds, editStatus, projectId, pollJob]);
+    if (status === "done") await reloadFromJob(result.id);
+  }, [gen, editPrompt, editIds, editStatus, projectId, pollJob, reloadFromJob]);
 
   // Crop: confirm crop and save
   const handleCropConfirm = useCallback(async () => {
