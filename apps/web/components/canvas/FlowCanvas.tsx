@@ -7,6 +7,7 @@ import { VideoNode } from "./nodes/VideoNode";
 import { TextNode } from "./nodes/TextNode";
 import { useCanvasGen } from "./useCanvasGen";
 import { listCanvasNodes, moveCanvasNode, deleteCanvasNode, updateTextNode, createCanvasNode } from "../../lib/canvas-actions";
+import DetailPanel from "@/components/asset/DetailPanel";
 
 // Must be stable (defined outside component) per ReactFlow requirements
 const nodeTypes = { image: ImageNode, video: VideoNode, text: TextNode };
@@ -14,6 +15,8 @@ const nodeTypes = { image: ImageNode, video: VideoNode, text: TextNode };
 export default function FlowCanvas({ projectId }: { projectId: string }) {
   const [nodes, setNodes] = useState<Node[]>([]);
   const [prompt, setPrompt] = useState("");
+  // holds the generationId whose detail panel is open (null = closed)
+  const [detailFor, setDetailFor] = useState<string | null>(null);
   // track node count to offset new node positions
   const nodeCountRef = useRef(0);
 
@@ -37,6 +40,19 @@ export default function FlowCanvas({ projectId }: { projectId: string }) {
     return onAnimateByNode.current[id]!;
   }, []);
 
+  // Build a stable per-node onOpenDetail that reads generationId at call time
+  const onOpenDetailByNode = useRef<Record<string, () => void>>({});
+  const getOnOpenDetail = useCallback((id: string): (() => void) => {
+    if (!onOpenDetailByNode.current[id]) {
+      onOpenDetailByNode.current[id] = () => {
+        const entry = nodeDataRef.current[id];
+        if (!entry?.generationId) return; // guard: generationId not yet resolved
+        setDetailFor(entry.generationId);
+      };
+    }
+    return onOpenDetailByNode.current[id]!;
+  }, []);
+
   // stable delete
   const deleteNode = useCallback((id: string) => {
     setNodes((ns) => ns.filter((n) => n.id !== id));
@@ -58,9 +74,9 @@ export default function FlowCanvas({ projectId }: { projectId: string }) {
         if (n.id !== id) return n;
         const updated: Node = { ...n, data: { ...n.data, url: url ?? undefined, status } };
         if (generationId) updated.data = { ...updated.data, generationId };
-        // wire onAnimate now that generationId is known (if not already set)
+        // wire onAnimate + onOpenDetail now that generationId is known (if not already set)
         if (generationId && n.type === "image" && !n.data.onAnimate) {
-          updated.data = { ...updated.data, onAnimate: getOnAnimate(id) };
+          updated.data = { ...updated.data, onAnimate: getOnAnimate(id), onOpenDetail: getOnOpenDetail(id) };
         }
         return updated;
       }),
@@ -114,8 +130,9 @@ export default function FlowCanvas({ projectId }: { projectId: string }) {
             text: r.text,
             onDelete: () => deleteNode(r.id),
             onChange: r.type === "text" ? (t: string) => onTextChange(r.id, t) : undefined,
-            // onAnimate: only useful once URL resolves; generationId stored in ref for call-time read
+            // onAnimate + onOpenDetail: only useful once URL resolves; generationId stored in ref for call-time read
             onAnimate: r.type === "image" ? getOnAnimate(r.id) : undefined,
+            onOpenDetail: r.type === "image" ? getOnOpenDetail(r.id) : undefined,
           },
           style: { width: r.w, height: r.h },
         };
@@ -123,7 +140,7 @@ export default function FlowCanvas({ projectId }: { projectId: string }) {
       nodeCountRef.current = mapped.length;
       setNodes(mapped);
     });
-  }, [projectId, deleteNode, onTextChange, getOnAnimate]);
+  }, [projectId, deleteNode, onTextChange, getOnAnimate, getOnOpenDetail]);
 
   // Keep nodeDataRef positions in sync when nodes move (so onAnimate uses fresh coords)
   const onNodesChange = useCallback((changes: NodeChange[]) => {
@@ -154,6 +171,13 @@ export default function FlowCanvas({ projectId }: { projectId: string }) {
         <Background />
         <Controls />
       </ReactFlow>
+      {detailFor && (
+        <DetailPanel
+          generationId={detailFor}
+          projectId={projectId}
+          onClose={() => setDetailFor(null)}
+        />
+      )}
       <form
         className="al-promptbar"
         style={{ position: "absolute", bottom: 16, left: "50%", transform: "translateX(-50%)", width: 560 }}
