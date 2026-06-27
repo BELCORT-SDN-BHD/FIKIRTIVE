@@ -29,6 +29,9 @@ export default function FlowCanvas({ projectId, entities = [], activeThreadId = 
   const nodeCountRef = useRef(0);
   // bumped on successful generation submit to remount MentionInput cleared
   const [composerKey, setComposerKey] = useState(0);
+  // double-submit guard
+  const submittingRef = useRef(false);
+  const [submitting, setSubmitting] = useState(false);
 
   // Per-node data refs so stable onAnimate closures can read current generationId + position
   const nodeDataRef = useRef<Record<string, { generationId?: string; pos: { x: number; y: number } }>>({});
@@ -124,12 +127,20 @@ export default function FlowCanvas({ projectId, entities = [], activeThreadId = 
   // Shared submit handler — used by form onSubmit and MentionInput onSubmit
   const handleGenerate = useCallback(() => {
     if (!prompt.trim()) return;
-    const x = 80 + nodeCountRef.current * 340;
-    generateImage(prompt.trim(), { x, y: 80, w: 320, h: 320 }, promptIds, variantSel);
-    setPrompt("");
-    setPromptIds([]);
-    setVariantSel({});
-    setComposerKey((k) => k + 1);
+    if (submittingRef.current) return;
+    submittingRef.current = true;
+    setSubmitting(true);
+    try {
+      const x = 80 + nodeCountRef.current * 340;
+      generateImage(prompt.trim(), { x, y: 80, w: 320, h: 320 }, promptIds, variantSel);
+      setPrompt("");
+      setPromptIds([]);
+      setVariantSel({});
+      setComposerKey((k) => k + 1);
+    } finally {
+      submittingRef.current = false;
+      setSubmitting(false);
+    }
   }, [prompt, promptIds, variantSel, generateImage]);
 
   // Stop polls on unmount
@@ -216,7 +227,7 @@ export default function FlowCanvas({ projectId, entities = [], activeThreadId = 
             onSubmit={handleGenerate}
           />
         </div>
-        <button className="al-btn al-btn-primary al-btn-sm" type="submit">Generate</button>
+        <button className="al-btn al-btn-primary al-btn-sm" type="submit" disabled={submitting}>Generate</button>
         {activeThreadId && (
           <button
             type="button"

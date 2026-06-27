@@ -1,5 +1,5 @@
 "use client";
-import React, { useCallback, useEffect, useState } from "react";
+import React, { useCallback, useEffect, useRef, useState } from "react";
 import type { EntityDTO } from "@/lib/types";
 import { getGenerationHistory, type LibraryItem } from "@/lib/library-actions";
 import { setFavorite } from "@/lib/asset-actions";
@@ -16,9 +16,11 @@ export default function OttoLibrary({ projectId, entities = [] }: { projectId: s
   const [favoriteOnly, setFavoriteOnly] = useState(false);
   const [view, setView] = useState<"full" | "compact">("full");
   const [detailFor, setDetailFor] = useState<string | null>(null);
+  const reqIdRef = useRef(0);
 
   const fetchPage = useCallback(
     async (fromCursor: string | null, replace: boolean) => {
+      const myReq = ++reqIdRef.current;
       setLoading(true);
       const res = await getGenerationHistory(projectId, {
         search: search.trim() || undefined,
@@ -26,10 +28,14 @@ export default function OttoLibrary({ projectId, entities = [] }: { projectId: s
         cursor: fromCursor,
         take: PAGE,
       });
+      if (myReq !== reqIdRef.current) return;
       setLoading(false);
       if ("error" in res) return;
+      if (myReq !== reqIdRef.current) return;
       setItems((prev) => (replace ? res.items : [...prev, ...res.items]));
+      if (myReq !== reqIdRef.current) return;
       setCursor(res.nextCursor);
+      if (myReq !== reqIdRef.current) return;
       setHasMore(res.hasMore);
     },
     [projectId, search, favoriteOnly],

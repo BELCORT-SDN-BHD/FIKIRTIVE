@@ -1,5 +1,5 @@
 "use client";
-import React, { useState } from "react";
+import React, { useEffect, useRef, useState } from "react";
 import { Dialog } from "@/components/fk/Dialog";
 import DetailPanel from "@/components/asset/DetailPanel";
 import { startGen, getGenJob } from "@/lib/gen-actions";
@@ -22,6 +22,9 @@ export default function TemplateModal({
   entities?: EntityDTO[];
   onClose: () => void;
 }) {
+  const cancelledRef = useRef(false);
+  useEffect(() => () => { cancelledRef.current = true; }, []);
+
   const [uploading, setUploading] = useState(false);
   const [sourceGenId, setSourceGenId] = useState<string | null>(null);
   const [thumbUrl, setThumbUrl] = useState<string | null>(null);
@@ -57,13 +60,16 @@ export default function TemplateModal({
 
   async function pollJob(jobId: string): Promise<{ url: string; genId: string } | null> {
     for (let i = 0; i < 60; i++) {
+      if (cancelledRef.current) return null;
       await new Promise((r) => setTimeout(r, 1500));
+      if (cancelledRef.current) return null;
       let job;
       try {
         job = await getGenJob(jobId);
       } catch {
         return null;
       }
+      if (cancelledRef.current) return null;
       if (!job) return null;
       if (job.status === "DONE") {
         const url = job.urls[0];
@@ -97,6 +103,7 @@ export default function TemplateModal({
       return;
     }
     const out = await pollJob(started.id);
+    if (cancelledRef.current) return;
     if (!out) {
       setError("Generation failed — please try again.");
       setPhase("form");

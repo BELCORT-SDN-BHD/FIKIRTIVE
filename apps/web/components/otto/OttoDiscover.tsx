@@ -1,5 +1,5 @@
 "use client";
-import React, { useState } from "react";
+import React, { useEffect, useRef, useState } from "react";
 import { Dialog } from "@/components/fk/Dialog";
 import { INSPIRATIONS, inspirationCategories, type Inspiration } from "@/lib/inspirations";
 
@@ -7,6 +7,8 @@ export default function OttoDiscover({ onUseInOtto }: { onUseInOtto: (prompt: st
   const [cat, setCat] = useState<string>("All");
   const [active, setActive] = useState<Inspiration | null>(null);
   const [copied, setCopied] = useState(false);
+  const copyTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  useEffect(() => () => { if (copyTimer.current) clearTimeout(copyTimer.current); }, []);
 
   const cats = ["All", ...inspirationCategories(INSPIRATIONS)];
   const shown = cat === "All" ? INSPIRATIONS : INSPIRATIONS.filter((i) => i.category === cat);
@@ -15,7 +17,8 @@ export default function OttoDiscover({ onUseInOtto }: { onUseInOtto: (prompt: st
     try {
       await navigator.clipboard.writeText(prompt);
       setCopied(true);
-      setTimeout(() => setCopied(false), 1500);
+      if (copyTimer.current) clearTimeout(copyTimer.current);
+      copyTimer.current = setTimeout(() => setCopied(false), 1500);
     } catch {
       // clipboard may be unavailable; ignore (Copy is best-effort)
     }
