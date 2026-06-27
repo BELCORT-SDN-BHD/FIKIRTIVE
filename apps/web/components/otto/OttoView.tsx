@@ -14,6 +14,7 @@ import { OttoOnboarding } from "./OttoOnboarding";
 import OttoLibrary from "./OttoLibrary";
 import OttoTemplates from "./OttoTemplates";
 import OttoDiscover from "./OttoDiscover";
+import OttoConnections from "./OttoConnections";
 import type { AdJobItem } from "@/lib/data";
 import { getCoworkThreadClient } from "@/lib/cowork-fetch";
 import FlowCanvas from "../canvas/FlowCanvas";
@@ -123,6 +124,13 @@ export function OttoView({
     return (
       <div style={{ flex: 1, display: "flex", flexDirection: "column", overflow: "hidden" }}>
         <OttoDiscover onUseInOtto={onUseInOtto} />
+      </div>
+    );
+  }
+  if (view === "connections") {
+    return (
+      <div style={{ flex: 1, display: "flex", flexDirection: "column", overflow: "hidden" }}>
+        <OttoConnections />
       </div>
     );
   }

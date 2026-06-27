@@ -75,6 +75,7 @@ const NAV_ITEMS: NavItem[] = [
   { key: "discover", label: "Discover", icon: <IconCompass /> },
   { key: "memory", label: "Brand memory", icon: <IconBrain /> },
   { key: "account", label: "Account", icon: <IconCircleUser /> },
+  { key: "connections", label: "Connections", icon: <IconLink /> },
 ];
 
 function IconLibrary() {
@@ -92,6 +93,14 @@ function IconTemplates() {
     <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden>
       <rect x="3" y="3" width="18" height="18" rx="2" />
       <path d="M3 9h18M9 21V9" />
+    </svg>
+  );
+}
+function IconLink() {
+  return (
+    <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden>
+      <path d="M10 13a5 5 0 0 0 7.54.54l3-3a5 5 0 0 0-7.07-7.07l-1.72 1.71" />
+      <path d="M14 11a5 5 0 0 0-7.54-.54l-3 3a5 5 0 0 0 7.07 7.07l1.71-1.71" />
     </svg>
   );
 }
