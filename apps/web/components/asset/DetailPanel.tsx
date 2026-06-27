@@ -1,6 +1,7 @@
 "use client";
 /**
  * G2a · per-asset detail panel.
+ * G2b adds: variant switcher (25), aspect picker (17).
  * Opens as an absolute overlay inside the canvas container (not position:fixed).
  * Escape or click-on-backdrop closes; clicking the panel itself does not.
  */
@@ -9,12 +10,21 @@ import { getGeneration } from "@/lib/asset-actions";
 import { setFavorite } from "@/lib/asset-actions";
 import { deleteGeneration } from "@/lib/actions";
 import { startGen, getGenJob } from "@/lib/gen-actions";
-import { activeImageModel, activeVideoModel, videoDefaults, type GenVideoModel } from "@fikirtive/core";
+import { readPick, writePick } from "@/lib/result-pick";
+import {
+  activeImageModel,
+  activeVideoModel,
+  videoDefaults,
+  GEN_VIDEO_MODEL_OPTIONS,
+  type GenVideoModel,
+} from "@fikirtive/core";
 import { Button, IcX, IcPlay, IcRetry } from "@/components/ds";
+import type { EntityDTO } from "@/lib/types";
 
 type GenDTO = {
   id: string;
   url: string;
+  urls: string[];
   kind: string;
   prompt: string;
   favorite: boolean;
@@ -27,14 +37,22 @@ export default function DetailPanel({
   generationId,
   projectId,
   onClose,
+  entities: _entities = [],
 }: {
   generationId: string;
   projectId: string;
   onClose: () => void;
+  entities?: EntityDTO[];
 }) {
   const [state, setState] = useState<PanelState>("loading");
   const [gen, setGen] = useState<GenDTO | null>(null);
   const [favorite, setFavoriteLocal] = useState(false);
+
+  // Variant switcher (25)
+  const [selectedIdx, setSelectedIdx] = useState(0);
+
+  // Aspect picker (17)
+  const [chosenAspect, setChosenAspect] = useState<string>("");
 
   // Action states
   const [regenStatus, setRegenStatus] = useState<"idle" | "running" | "done" | "failed">("idle");
@@ -47,6 +65,7 @@ export default function DetailPanel({
     cancelledRef.current = false;
     setState("loading");
     setGen(null);
+    setSelectedIdx(0);
     getGeneration(generationId).then((result) => {
       if (cancelledRef.current) return;
       if ("error" in result) {
@@ -56,6 +75,20 @@ export default function DetailPanel({
       setGen(result);
       setFavoriteLocal(result.favorite);
       setState("ready");
+
+      // Restore persisted variant pick
+      const saved = readPick(result.id);
+      if (saved !== null && saved < result.urls.length) {
+        setSelectedIdx(saved);
+      }
+
+      // Init aspect picker default
+      const vm = activeVideoModel() as GenVideoModel;
+      const opts = GEN_VIDEO_MODEL_OPTIONS[vm];
+      if (opts?.aspectRatios?.length) {
+        const def = videoDefaults(vm).aspectRatio || opts.aspectRatios[0]!;
+        setChosenAspect(def);
+      }
     });
     return () => {
       cancelledRef.current = true;
@@ -119,6 +152,8 @@ export default function DetailPanel({
     setAnimStatus("running");
     const vm = activeVideoModel() as GenVideoModel;
     const vd = videoDefaults(vm);
+    // Use user's chosen aspect ratio if set; fall back to videoDefaults
+    const effectiveAspect = chosenAspect || vd.aspectRatio;
     const result = await startGen({
       projectId,
       prompt: gen.prompt,
@@ -129,7 +164,7 @@ export default function DetailPanel({
       durationSeconds: vd.seconds,
       resolution: vd.resolution,
       audio: vd.audio,
-      ...(vd.aspectRatio ? { aspectRatio: vd.aspectRatio } : {}),
+      ...(effectiveAspect ? { aspectRatio: effectiveAspect } : {}),
       idempotencyKey: `anim-${generationId}-${Date.now()}`,
     });
     if ("error" in result) {
@@ -141,23 +176,39 @@ export default function DetailPanel({
       setAnimStatus(status);
       setTimeout(() => { if (!cancelledRef.current) setAnimStatus("idle"); }, 3000);
     }
-  }, [gen, generationId, projectId, pollJob]);
+  }, [gen, generationId, projectId, pollJob, chosenAspect]);
 
   const handleCopyLink = useCallback(async () => {
     if (!gen) return;
+    const url = gen.urls[selectedIdx] ?? gen.url;
     try {
-      await navigator.clipboard.writeText(gen.url);
+      await navigator.clipboard.writeText(url);
       setCopied(true);
       setTimeout(() => { if (!cancelledRef.current) setCopied(false); }, 2000);
     } catch {
       // silently ignore clipboard errors
     }
-  }, [gen]);
+  }, [gen, selectedIdx]);
 
   const handleDelete = useCallback(async () => {
     await deleteGeneration(generationId);
     onClose();
   }, [generationId, onClose]);
+
+  // Variant switcher: switch displayed url + persist pick
+  const handleVariantPick = useCallback((idx: number) => {
+    if (!gen) return;
+    setSelectedIdx(idx);
+    writePick(gen.id, idx);
+  }, [gen]);
+
+  // Compute active URL to display
+  const displayUrl = gen ? (gen.urls[selectedIdx] ?? gen.url) : null;
+
+  // Aspect ratios for picker (only show if model has options)
+  const vm = activeVideoModel() as GenVideoModel;
+  const videoOpts = GEN_VIDEO_MODEL_OPTIONS[vm];
+  const aspectRatios = videoOpts?.aspectRatios ?? [];
 
   return (
     // Faux-viewport overlay — absolute inside the canvas container, not fixed
@@ -213,13 +264,14 @@ export default function DetailPanel({
           </div>
         )}
 
-        {state === "ready" && gen && (
+        {state === "ready" && gen && displayUrl && (
           <>
             {/* Media preview */}
             <div style={{ borderRadius: 10, overflow: "hidden", background: "#000", lineHeight: 0 }}>
               {gen.kind === "video" ? (
                 <video
-                  src={gen.url}
+                  key={displayUrl}
+                  src={displayUrl}
                   controls
                   playsInline
                   style={{ width: "100%", maxHeight: 340, objectFit: "contain" }}
@@ -227,16 +279,74 @@ export default function DetailPanel({
               ) : (
                 // eslint-disable-next-line @next/next/no-img-element
                 <img
-                  src={gen.url}
+                  src={displayUrl}
                   alt={gen.prompt}
                   style={{ width: "100%", maxHeight: 340, objectFit: "contain" }}
                 />
               )}
             </div>
 
+            {/* Variant switcher (25): thumbnail strip when multiple urls */}
+            {gen.urls.length > 1 && (
+              <div
+                role="listbox"
+                aria-label="Variant thumbnails"
+                style={{ display: "flex", gap: 6, overflowX: "auto", paddingBottom: 2 }}
+              >
+                {gen.urls.map((u, i) => (
+                  <button
+                    key={u}
+                    role="option"
+                    aria-selected={i === selectedIdx}
+                    onClick={() => handleVariantPick(i)}
+                    style={{
+                      flex: "none",
+                      width: 52,
+                      height: 52,
+                      padding: 0,
+                      border: `2px solid ${i === selectedIdx ? "var(--brand, #6c63ff)" : "transparent"}`,
+                      borderRadius: 6,
+                      overflow: "hidden",
+                      cursor: "pointer",
+                      background: "#000",
+                      opacity: i === selectedIdx ? 1 : 0.55,
+                    }}
+                  >
+                    {/* eslint-disable-next-line @next/next/no-img-element */}
+                    <img
+                      src={u}
+                      alt={`Variant ${i + 1}`}
+                      style={{ width: "100%", height: "100%", objectFit: "cover", display: "block" }}
+                    />
+                  </button>
+                ))}
+              </div>
+            )}
+
             {/* Prompt text */}
             {gen.prompt && (
               <p style={{ margin: 0, fontSize: 13, opacity: 0.7, lineHeight: 1.5 }}>{gen.prompt}</p>
+            )}
+
+            {/* Aspect picker (17): for image-to-video Animate when model has aspect ratios */}
+            {gen.kind === "image" && aspectRatios.length > 0 && (
+              <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+                <span style={{ fontSize: 12, opacity: 0.6, flexShrink: 0 }}>Aspect</span>
+                <div className="al-seg" role="tablist" aria-label="Aspect ratio">
+                  {aspectRatios.map((ar) => (
+                    <button
+                      key={ar}
+                      role="tab"
+                      type="button"
+                      aria-selected={chosenAspect === ar}
+                      className={`al-seg-item${chosenAspect === ar ? " al-seg-item-active" : ""}`}
+                      onClick={() => setChosenAspect(ar)}
+                    >
+                      {ar}
+                    </button>
+                  ))}
+                </div>
+              </div>
             )}
 
             {/* Action rail */}
@@ -288,7 +398,7 @@ export default function DetailPanel({
 
               {/* Download */}
               <a
-                href={gen.url}
+                href={displayUrl}
                 download
                 className="al-btn al-btn-secondary al-btn-sm"
                 style={{ textDecoration: "none" }}

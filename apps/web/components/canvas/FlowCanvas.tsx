@@ -8,11 +8,12 @@ import { TextNode } from "./nodes/TextNode";
 import { useCanvasGen } from "./useCanvasGen";
 import { listCanvasNodes, moveCanvasNode, deleteCanvasNode, updateTextNode, createCanvasNode } from "../../lib/canvas-actions";
 import DetailPanel from "@/components/asset/DetailPanel";
+import type { EntityDTO } from "@/lib/types";
 
 // Must be stable (defined outside component) per ReactFlow requirements
 const nodeTypes = { image: ImageNode, video: VideoNode, text: TextNode };
 
-export default function FlowCanvas({ projectId }: { projectId: string }) {
+export default function FlowCanvas({ projectId, entities = [] }: { projectId: string; entities?: EntityDTO[] }) {
   const [nodes, setNodes] = useState<Node[]>([]);
   const [prompt, setPrompt] = useState("");
   // holds the generationId whose detail panel is open (null = closed)
@@ -176,6 +177,7 @@ export default function FlowCanvas({ projectId }: { projectId: string }) {
           generationId={detailFor}
           projectId={projectId}
           onClose={() => setDetailFor(null)}
+          entities={entities}
         />
       )}
       <form
