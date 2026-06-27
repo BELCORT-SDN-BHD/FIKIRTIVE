@@ -84,13 +84,23 @@ export async function saveBrandKit(
       select: { id: true },
     });
 
+    // Validate logoAssetId is owned by the caller; fail-closed to null on miss.
+    let validLogoAssetId: string | null | undefined;
+    if (input.logoAssetId === null) {
+      validLogoAssetId = null;
+    } else if (typeof input.logoAssetId === "string") {
+      const owned = await prisma.asset.findFirst({ where: { id: input.logoAssetId, ownerId }, select: { id: true } });
+      validLogoAssetId = owned ? input.logoAssetId : null;
+    }
+    // if input.logoAssetId is undefined, validLogoAssetId stays undefined → stripped below
+
     const data = {
       name: typeof input.name === "string" ? input.name.trim().slice(0, 200) : undefined,
       colorsJson: input.colorsJson !== undefined ? (input.colorsJson as object) : undefined,
       fonts: Array.isArray(input.fonts) ? input.fonts.map((f) => String(f).trim()).filter(Boolean) : undefined,
       tone: typeof input.tone === "string" ? input.tone.trim().slice(0, 500) : (input.tone === null ? null : undefined),
       styleGuide: typeof input.styleGuide === "string" ? input.styleGuide.trim().slice(0, 5000) : (input.styleGuide === null ? null : undefined),
-      logoAssetId: typeof input.logoAssetId === "string" ? input.logoAssetId : (input.logoAssetId === null ? null : undefined),
+      logoAssetId: validLogoAssetId,
     } as Record<string, unknown>;
 
     // Strip undefined keys so Prisma doesn't try to write them

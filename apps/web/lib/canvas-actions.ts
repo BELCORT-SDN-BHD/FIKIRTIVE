@@ -46,14 +46,29 @@ export async function createCanvasNode(input: CreateNodeInput): Promise<{ id: st
     });
     threadId = t ? t.id : null;
   }
+  let generationId: string | null = null;
+  if (input.generationId) {
+    const g = await prisma.generation.findFirst({ where: { id: input.generationId, ownerId: gate.ownerId, deletedAt: null }, select: { id: true } });
+    generationId = g ? g.id : null;
+  }
+  let sourceNodeId: string | null = null;
+  if (input.sourceNodeId) {
+    const n = await prisma.canvasNode.findFirst({ where: { id: input.sourceNodeId, ownerId: gate.ownerId }, select: { id: true } });
+    sourceNodeId = n ? n.id : null;
+  }
+  let genJobId: string | null = null;
+  if (input.genJobId) {
+    const j = await prisma.genJob.findFirst({ where: { id: input.genJobId, ownerId: gate.ownerId }, select: { id: true } });
+    genJobId = j ? j.id : null;
+  }
   const id = newId();
   await prisma.canvasNode.create({
     data: {
       id, ownerId: gate.ownerId, projectId: input.projectId, type: input.type,
       x: input.x, y: input.y, w: input.w, h: input.h,
       text: input.text ?? null, prompt: input.prompt ?? null,
-      generationId: input.generationId ?? null, genJobId: input.genJobId ?? null,
-      status: input.status ?? "done", sourceNodeId: input.sourceNodeId ?? null,
+      generationId, genJobId,
+      status: input.status ?? "done", sourceNodeId,
       threadId,
     },
   });

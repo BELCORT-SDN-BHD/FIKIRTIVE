@@ -2,6 +2,7 @@ import { describe, it, expect, vi, beforeEach } from "vitest";
 
 const {
   mockRequireOwner,
+  mockAssetFindFirst,
   mockKitFindFirst,
   mockKitCreate,
   mockKitUpdate,
@@ -11,6 +12,7 @@ const {
   mockRuleDeleteMany,
 } = vi.hoisted(() => ({
   mockRequireOwner: vi.fn(),
+  mockAssetFindFirst: vi.fn(),
   mockKitFindFirst: vi.fn(),
   mockKitCreate: vi.fn(),
   mockKitUpdate: vi.fn(),
@@ -23,6 +25,9 @@ const {
 vi.mock("@/lib/auth-guard", () => ({ requireOwner: mockRequireOwner }));
 vi.mock("@fikirtive/db", () => ({
   prisma: {
+    asset: {
+      findFirst: mockAssetFindFirst,
+    },
     brandKit: {
       findFirst: mockKitFindFirst,
       create: mockKitCreate,
@@ -127,6 +132,26 @@ describe("saveBrandKit", () => {
   it("returns error on db failure", async () => {
     mockKitFindFirst.mockRejectedValue(new Error("db down"));
     expect(await saveBrandKit({ name: "x" })).toEqual({ error: expect.any(String) });
+  });
+
+  it("nulls logoAssetId when the asset is not owned by the caller", async () => {
+    mockAssetFindFirst.mockResolvedValue(null); // not owned
+    mockKitFindFirst.mockResolvedValue(null);   // no existing kit
+    mockKitCreate.mockResolvedValue({ id: "k1" });
+    await saveBrandKit({ logoAssetId: "asset-foreign" });
+    expect(mockKitCreate).toHaveBeenCalledWith(
+      expect.objectContaining({ data: expect.objectContaining({ logoAssetId: null }) }),
+    );
+  });
+
+  it("keeps logoAssetId when the asset is owned", async () => {
+    mockAssetFindFirst.mockResolvedValue({ id: "asset-mine" });
+    mockKitFindFirst.mockResolvedValue(null);
+    mockKitCreate.mockResolvedValue({ id: "k1" });
+    await saveBrandKit({ logoAssetId: "asset-mine" });
+    expect(mockKitCreate).toHaveBeenCalledWith(
+      expect.objectContaining({ data: expect.objectContaining({ logoAssetId: "asset-mine" }) }),
+    );
   });
 });
 

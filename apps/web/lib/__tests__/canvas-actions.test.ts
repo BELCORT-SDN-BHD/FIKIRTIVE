@@ -1,6 +1,6 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
 
-const { mockOwner, mockFindMany, mockCreate, mockUpdateMany, mockDeleteMany, mockProjectFindFirst, mockThreadFindFirst } = vi.hoisted(() => ({
+const { mockOwner, mockFindMany, mockCreate, mockUpdateMany, mockDeleteMany, mockProjectFindFirst, mockThreadFindFirst, mockGenerationFindFirst, mockCanvasNodeFindFirst, mockGenJobFindFirst } = vi.hoisted(() => ({
   mockOwner: vi.fn(),
   mockFindMany: vi.fn(),
   mockCreate: vi.fn(),
@@ -8,14 +8,19 @@ const { mockOwner, mockFindMany, mockCreate, mockUpdateMany, mockDeleteMany, moc
   mockDeleteMany: vi.fn(),
   mockProjectFindFirst: vi.fn(),
   mockThreadFindFirst: vi.fn(),
+  mockGenerationFindFirst: vi.fn(),
+  mockCanvasNodeFindFirst: vi.fn(),
+  mockGenJobFindFirst: vi.fn(),
 }));
 
 vi.mock("../auth-guard", () => ({ requireOwner: mockOwner }));
 vi.mock("@fikirtive/db", () => ({
   prisma: {
-    canvasNode: { findMany: mockFindMany, create: mockCreate, updateMany: mockUpdateMany, deleteMany: mockDeleteMany },
+    canvasNode: { findMany: mockFindMany, create: mockCreate, updateMany: mockUpdateMany, deleteMany: mockDeleteMany, findFirst: mockCanvasNodeFindFirst },
     project: { findFirst: mockProjectFindFirst },
     chatThread: { findFirst: mockThreadFindFirst },
+    generation: { findFirst: mockGenerationFindFirst },
+    genJob: { findFirst: mockGenJobFindFirst },
   },
 }));
 vi.mock("@fikirtive/core", () => ({ newId: () => "node-1" }));
@@ -93,6 +98,28 @@ describe("listCanvasNodes selects threadId", () => {
     await listCanvasNodes("p1");
     expect(mockFindMany).toHaveBeenCalledWith(
       expect.objectContaining({ select: expect.objectContaining({ threadId: true }) }),
+    );
+  });
+});
+
+describe("createCanvasNode attribution — generationId/genJobId/sourceNodeId owner-scoped", () => {
+  beforeEach(() => mockProjectFindFirst.mockResolvedValue({ id: "p1" }));
+
+  it("nulls a generationId the caller does not own", async () => {
+    mockGenerationFindFirst.mockResolvedValue(null); // not owned
+    mockCreate.mockResolvedValue({ id: "node-1" });
+    await createCanvasNode({ projectId: "p1", type: "image", x: 0, y: 0, w: 1, h: 1, generationId: "g-foreign" });
+    expect(mockCreate).toHaveBeenCalledWith(
+      expect.objectContaining({ data: expect.objectContaining({ generationId: null }) }),
+    );
+  });
+
+  it("keeps generationId when the caller owns it", async () => {
+    mockGenerationFindFirst.mockResolvedValue({ id: "g-mine" });
+    mockCreate.mockResolvedValue({ id: "node-1" });
+    await createCanvasNode({ projectId: "p1", type: "image", x: 0, y: 0, w: 1, h: 1, generationId: "g-mine" });
+    expect(mockCreate).toHaveBeenCalledWith(
+      expect.objectContaining({ data: expect.objectContaining({ generationId: "g-mine" }) }),
     );
   });
 });
