@@ -6,6 +6,7 @@ import { ottoApprove } from "@/lib/otto-client-actions";
 import { coworkGenerate } from "@/lib/cowork-actions";
 import { creditsLabel } from "@/lib/credit-format";
 import type { CardState } from "@/lib/otto-inject-helpers";
+import { packTotalCredits, canAffordPack } from "./pack-credit-math";
 
 /** The per-card shape PackCard receives from OttoChatStream. */
 export interface PackCardItem {
@@ -26,11 +27,6 @@ type SlimPayload = {
   entityIds?: string[];
   variantSel?: Record<string, string>;
 };
-
-function payloadCredits(p: SlimPayload): number {
-  if (typeof p.estimatedCredits === "number") return p.estimatedCredits;
-  return Math.max(1, Math.ceil((typeof p.estimatedPriceUsd === "number" ? p.estimatedPriceUsd : 0) / 0.1));
-}
 
 export interface PackCardProps {
   packTitle: string;
@@ -57,14 +53,16 @@ export function PackCard({ packTitle, cards, balanceUsd, onApproved }: PackCardP
 
   const parsedCards = cards.map((c) => {
     const p = (c.payload ?? {}) as SlimPayload;
-    return { ...c, p, credits: payloadCredits(p) };
+    // Inline credit calculation for each card: match payloadCredits logic
+    const credits =
+      typeof p.estimatedCredits === "number"
+        ? p.estimatedCredits
+        : Math.max(1, Math.ceil((typeof p.estimatedPriceUsd === "number" ? p.estimatedPriceUsd : 0) / 0.1));
+    return { ...c, p, credits };
   });
 
-  const totalCredits = parsedCards.reduce((sum, c) => sum + c.credits, 0);
-
-  // The balance prop is in USD; 1 displayed credit = $0.10 per credit-format.ts convention.
-  const balanceCredits = balanceUsd / 0.1;
-  const canAfford = balanceCredits >= totalCredits;
+  const totalCredits = packTotalCredits(cards);
+  const canAfford = canAffordPack(totalCredits, balanceUsd);
 
   // Only idle (not yet submitted / not already working/done) cards need firing.
   const idleCards = parsedCards.filter((c) => c.cardState === "idle");
@@ -131,7 +129,7 @@ export function PackCard({ packTitle, cards, balanceUsd, onApproved }: PackCardP
             const desc = c.p.structuredPrompt || (isVideo ? "A short video" : "An image");
             const isDone = doneCardIds.has(c.cardId) || c.cardState === "done" || c.cardState === "working";
             const isFailed = c.cardState === "failed";
-            const isGenerating = running && currentIdx === idleCards.indexOf(parsedCards.find((p) => p.cardId === c.cardId) ?? c);
+            const isGenerating = c.cardState === "idle" && running && idleCards.findIndex((ic) => ic.cardId === c.cardId) === currentIdx;
 
             return (
               <div
