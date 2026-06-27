@@ -10,7 +10,10 @@ export function activeImageModel(): string {
 
 export function activeVideoModel(env?: Env): string {
   const want = getEnv(env).OTTO_DEFAULT_VIDEO_MODEL;
-  return want && (GEN_VIDEO_MODELS as readonly string[]).includes(want) ? want : GEN_VIDEO_MODELS[0];
+  if (want && (GEN_VIDEO_MODELS as readonly string[]).includes(want)) return want;
+  // Default to veo3.1-lite (supports 9:16/16:9 + audio; the GEN_VIDEO_MODELS[0]=kling
+  // default lacks both). Founder overrides via OTTO_DEFAULT_VIDEO_MODEL.
+  return (GEN_VIDEO_MODELS as readonly string[]).includes("veo3.1-lite") ? "veo3.1-lite" : GEN_VIDEO_MODELS[0];
 }
 
 export function assertSpendableModel(
