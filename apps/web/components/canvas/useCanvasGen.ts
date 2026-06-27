@@ -27,6 +27,7 @@ export function useCanvasGen(
   projectId: string,
   onNode: OnNode,
   onResolve: (nodeId: string, url: string | null, status: string, generationId?: string) => void,
+  activeThreadId?: string | null,
 ) {
   const cancelledRef = useRef(false);
 
@@ -35,21 +36,21 @@ export function useCanvasGen(
     const req = { projectId, prompt, count: 1, kind: "image" as const, model: activeImageModel(), entityIds, ...(vsel && { variantSel: vsel }), idempotencyKey: `img-${Date.now()}` };
     const started = await startGen(req);
     if ("error" in started) return;
-    const created = await createCanvasNode({ projectId, type: "image", ...pos, prompt, genJobId: started.id, status: "pending" });
+    const created = await createCanvasNode({ projectId, type: "image", ...pos, prompt, genJobId: started.id, status: "pending", ...(activeThreadId ? { threadId: activeThreadId } : {}) });
     if ("error" in created) return;
     onNode({ id: created.id, type: "image", pos, status: "pending", prompt });
     poll(started.id, (url, status, generationId) => onResolve(created.id, url, status, generationId), cancelledRef);
-  }, [projectId, onNode, onResolve]);
+  }, [projectId, onNode, onResolve, activeThreadId]);
 
   const animate = useCallback(async (sourceGenerationId: string, sourceNodeId: string, prompt: string, pos: Pos) => {
     const req = { projectId, prompt, count: 1, kind: "video" as const, model: activeVideoModel(), sourceGenerationId, idempotencyKey: `vid-${Date.now()}` };
     const started = await startGen(req);
     if ("error" in started) return;
-    const created = await createCanvasNode({ projectId, type: "video", ...pos, prompt, genJobId: started.id, status: "pending", sourceNodeId });
+    const created = await createCanvasNode({ projectId, type: "video", ...pos, prompt, genJobId: started.id, status: "pending", sourceNodeId, ...(activeThreadId ? { threadId: activeThreadId } : {}) });
     if ("error" in created) return;
     onNode({ id: created.id, type: "video", pos, status: "pending", prompt, sourceNodeId });
     poll(started.id, (url, status) => onResolve(created.id, url, status), cancelledRef);
-  }, [projectId, onNode, onResolve]);
+  }, [projectId, onNode, onResolve, activeThreadId]);
 
   return { generateImage, animate, cancelledRef };
 }

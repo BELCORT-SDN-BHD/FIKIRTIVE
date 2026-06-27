@@ -172,7 +172,7 @@ export function OttoView({
       </div>
       {/* Right pane: canvas */}
       <div style={{ flex: 1, minWidth: 0, position: "relative" }}>
-        <FlowCanvas projectId={projectId} entities={entities} />
+        <FlowCanvas projectId={projectId} entities={entities} activeThreadId={activeThreadId} />
       </div>
     </div>
   );

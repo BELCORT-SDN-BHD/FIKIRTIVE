@@ -14,7 +14,7 @@ import type { EntityDTO } from "@/lib/types";
 // Must be stable (defined outside component) per ReactFlow requirements
 const nodeTypes = { image: ImageNode, video: VideoNode, text: TextNode };
 
-export default function FlowCanvas({ projectId, entities = [] }: { projectId: string; entities?: EntityDTO[] }) {
+export default function FlowCanvas({ projectId, entities = [], activeThreadId = null }: { projectId: string; entities?: EntityDTO[]; activeThreadId?: string | null }) {
   const [nodes, setNodes] = useState<Node[]>([]);
   const [prompt, setPrompt] = useState("");
   const [promptIds, setPromptIds] = useState<string[]>([]); // @mentioned entity ids
@@ -112,7 +112,7 @@ export default function FlowCanvas({ projectId, entities = [] }: { projectId: st
     [deleteNode],
   );
 
-  const { generateImage, animate, cancelledRef } = useCanvasGen(projectId, onNewNode, onResolve);
+  const { generateImage, animate, cancelledRef } = useCanvasGen(projectId, onNewNode, onResolve, activeThreadId);
   // keep animateFnRef current
   animateFnRef.current = animate;
 
@@ -216,7 +216,7 @@ export default function FlowCanvas({ projectId, entities = [] }: { projectId: st
           type="button"
           onClick={async () => {
             const x = 80 + nodeCountRef.current * 340;
-            const result = await createCanvasNode({ projectId, type: "text", x, y: 80, w: 240, h: 120, text: "", status: "done" });
+            const result = await createCanvasNode({ projectId, type: "text", x, y: 80, w: 240, h: 120, text: "", status: "done", ...(activeThreadId ? { threadId: activeThreadId } : {}) });
             if ("id" in result) {
               nodeCountRef.current += 1;
               setNodes((ns) => [
