@@ -92,7 +92,7 @@ export default function DetailPanel({
   const [editPrompt, setEditPrompt] = useState("");
   const [editIds, setEditIds] = useState<string[]>([]);
   const [editStatus, setEditStatus] = useState<"idle" | "running" | "done" | "failed">("idle");
-  const [composerKey] = useState(() => String(Date.now()));
+  const [composerKey, setComposerKey] = useState(() => String(Date.now()));
 
   // Crop (16)
   const [cropOpen, setCropOpen] = useState(false);
@@ -143,6 +143,13 @@ export default function DetailPanel({
       cancelledRef.current = true;
     };
   }, [generationId]);
+
+  // Clear edit composer on generation change
+  useEffect(() => {
+    setEditPrompt("");
+    setEditIds([]);
+    setComposerKey(String(Date.now()));
+  }, [gen?.id]);
 
   // Esc key
   useEffect(() => {
@@ -596,7 +603,6 @@ export default function DetailPanel({
                     image={displayUrl}
                     crop={crop}
                     zoom={zoom}
-                    aspect={4 / 3}
                     onCropChange={setCrop}
                     onZoomChange={setZoom}
                     onCropComplete={(_croppedArea, croppedAreaPx) => {
