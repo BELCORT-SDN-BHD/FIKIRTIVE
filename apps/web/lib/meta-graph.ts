@@ -23,21 +23,19 @@ export async function exchangeCodeForToken(
   const secret = process.env.META_APP_SECRET;
   if (!appId || !secret) return { error: "not_configured" };
 
-  const shortUrl = new URL(`https://graph.facebook.com/${META_GRAPH_VERSION}/oauth/access_token`);
-  shortUrl.searchParams.set("client_id", appId);
-  shortUrl.searchParams.set("redirect_uri", redirectUri);
-  shortUrl.searchParams.set("client_secret", secret);
-  shortUrl.searchParams.set("code", code);
-  const sr = await fetch(shortUrl.toString());
+  const sr = await fetch(`https://graph.facebook.com/${META_GRAPH_VERSION}/oauth/access_token`, {
+    method: "POST",
+    headers: { "Content-Type": "application/x-www-form-urlencoded" },
+    body: new URLSearchParams({ client_id: appId, redirect_uri: redirectUri, client_secret: secret, code }).toString(),
+  });
   const sj = await sr.json().catch(() => ({}));
   if (!sr.ok || !sj.access_token) return { error: "exchange" };
 
-  const longUrl = new URL(`https://graph.facebook.com/${META_GRAPH_VERSION}/oauth/access_token`);
-  longUrl.searchParams.set("grant_type", "fb_exchange_token");
-  longUrl.searchParams.set("client_id", appId);
-  longUrl.searchParams.set("client_secret", secret);
-  longUrl.searchParams.set("fb_exchange_token", sj.access_token);
-  const lr = await fetch(longUrl.toString());
+  const lr = await fetch(`https://graph.facebook.com/${META_GRAPH_VERSION}/oauth/access_token`, {
+    method: "POST",
+    headers: { "Content-Type": "application/x-www-form-urlencoded" },
+    body: new URLSearchParams({ grant_type: "fb_exchange_token", client_id: appId, client_secret: secret, fb_exchange_token: sj.access_token }).toString(),
+  });
   const lj = await lr.json().catch(() => ({}));
   if (!lr.ok || !lj.access_token) return { error: "exchange" };
 
