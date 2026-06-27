@@ -10,17 +10,21 @@ import { listCanvasNodes, moveCanvasNode, deleteCanvasNode, updateTextNode, crea
 import DetailPanel from "@/components/asset/DetailPanel";
 import { MentionInput } from "@/components/MentionInput";
 import type { EntityDTO } from "@/lib/types";
+import { filterNodesByConvo, convoColor } from "@/lib/convo-canvas";
+
+type CanvasFlowNode = Node & { threadId: string | null };
 
 // Must be stable (defined outside component) per ReactFlow requirements
 const nodeTypes = { image: ImageNode, video: VideoNode, text: TextNode };
 
 export default function FlowCanvas({ projectId, entities = [], activeThreadId = null }: { projectId: string; entities?: EntityDTO[]; activeThreadId?: string | null }) {
-  const [nodes, setNodes] = useState<Node[]>([]);
+  const [nodes, setNodes] = useState<CanvasFlowNode[]>([]);
   const [prompt, setPrompt] = useState("");
   const [promptIds, setPromptIds] = useState<string[]>([]); // @mentioned entity ids
   const [variantSel, setVariantSel] = useState<Record<string, string>>({}); // entityId → variant from @mention chip
   // holds the generationId whose detail panel is open (null = closed)
   const [detailFor, setDetailFor] = useState<string | null>(null);
+  const [filterToConvo, setFilterToConvo] = useState(false);
   // track node count to offset new node positions
   const nodeCountRef = useRef(0);
   // bumped on successful generation submit to remount MentionInput cleared
@@ -78,7 +82,7 @@ export default function FlowCanvas({ projectId, entities = [], activeThreadId = 
     setNodes((ns) =>
       ns.map((n) => {
         if (n.id !== id) return n;
-        const updated: Node = { ...n, data: { ...n.data, url: url ?? undefined, status } };
+        const updated: CanvasFlowNode = { ...n, data: { ...n.data, url: url ?? undefined, status } };
         if (generationId) updated.data = { ...updated.data, generationId };
         // wire onAnimate + onOpenDetail now that generationId is known (if not already set)
         if (generationId && n.type === "image" && !n.data.onAnimate) {
@@ -105,7 +109,8 @@ export default function FlowCanvas({ projectId, entities = [], activeThreadId = 
             onDelete: () => deleteNode(n.id),
             // onAnimate added after generationId arrives via onResolve
           },
-          style: { width: n.pos.w, height: n.pos.h },
+          style: { width: n.pos.w, height: n.pos.h, boxShadow: `0 0 0 2px ${convoColor(activeThreadId ?? null)}` },
+          threadId: activeThreadId ?? null,
         },
       ]);
     },
@@ -151,7 +156,8 @@ export default function FlowCanvas({ projectId, entities = [], activeThreadId = 
             onAnimate: r.type === "image" ? getOnAnimate(r.id) : undefined,
             onOpenDetail: r.type === "image" ? getOnOpenDetail(r.id) : undefined,
           },
-          style: { width: r.w, height: r.h },
+          style: { width: r.w, height: r.h, boxShadow: `0 0 0 2px ${convoColor(r.threadId ?? null)}` },
+          threadId: r.threadId ?? null,
         };
       });
       nodeCountRef.current = mapped.length;
@@ -161,7 +167,7 @@ export default function FlowCanvas({ projectId, entities = [], activeThreadId = 
 
   // Keep nodeDataRef positions in sync when nodes move (so onAnimate uses fresh coords)
   const onNodesChange = useCallback((changes: NodeChange[]) => {
-    setNodes((ns) => applyNodeChanges(changes, ns));
+    setNodes((ns) => applyNodeChanges(changes, ns) as CanvasFlowNode[]);
     for (const c of changes) {
       if (c.type === "position" && c.position) {
         // Update position in ref immediately (for onAnimate offset calc)
@@ -184,7 +190,7 @@ export default function FlowCanvas({ projectId, entities = [], activeThreadId = 
 
   return (
     <div style={{ flex: 1, position: "relative" }}>
-      <ReactFlow nodes={nodes} nodeTypes={nodeTypes} onNodesChange={onNodesChange} fitView>
+      <ReactFlow nodes={filterNodesByConvo(nodes, activeThreadId, filterToConvo)} nodeTypes={nodeTypes} onNodesChange={onNodesChange} fitView>
         <Background />
         <Controls />
       </ReactFlow>
@@ -211,6 +217,16 @@ export default function FlowCanvas({ projectId, entities = [], activeThreadId = 
           />
         </div>
         <button className="al-btn al-btn-primary al-btn-sm" type="submit">Generate</button>
+        {activeThreadId && (
+          <button
+            type="button"
+            className="al-btn al-btn-sm"
+            aria-pressed={filterToConvo}
+            onClick={() => setFilterToConvo((v) => !v)}
+          >
+            {filterToConvo ? "Showing this convo" : "Filter to this convo"}
+          </button>
+        )}
         <button
           className="al-btn al-btn-sm"
           type="button"
@@ -231,7 +247,8 @@ export default function FlowCanvas({ projectId, entities = [], activeThreadId = 
                     onChange: (t: string) => onTextChange(result.id, t),
                     onDelete: () => deleteNode(result.id),
                   },
-                  style: { width: 240, height: 120 },
+                  style: { width: 240, height: 120, boxShadow: `0 0 0 2px ${convoColor(activeThreadId ?? null)}` },
+                  threadId: activeThreadId ?? null,
                 },
               ]);
             } else {
