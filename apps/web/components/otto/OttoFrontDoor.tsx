@@ -1,10 +1,11 @@
 "use client";
-import React, { useRef, useState } from "react";
+import React, { useEffect, useRef, useState } from "react";
 import { OttoAvatar } from "@/components/fk";
 import { Button } from "@/components/fk";
 import { ottoTurn, createEmptyCoworkThread } from "@/lib/otto-client-actions";
 import { getCoworkThreadClient } from "@/lib/cowork-fetch";
 import { activeMentionQuery, resolveSentEntityIds } from "@/lib/otto-mentions";
+import { QuickBrief } from "@/components/otto/QuickBrief";
 import type { EntityDTO, ChatThreadDTO } from "@/lib/types";
 
 interface GoalTile {
@@ -89,6 +90,8 @@ export interface OttoFrontDoorProps {
   /** Streaming path: an empty thread was created; hand its first message up so
    *  OttoChatStream streams it in on mount. Used only when ottoStreamEnabled. */
   onStreamStart?: (thread: ChatThreadDTO, pending: { text: string; goalKey?: string }) => void;
+  /** When set (e.g. from Discover), pre-fills the composer. */
+  seedText?: string;
 }
 
 export function OttoFrontDoor({
@@ -98,8 +101,18 @@ export function OttoFrontDoor({
   onThreadStarted,
   ottoStreamEnabled,
   onStreamStart,
+  seedText,
 }: OttoFrontDoorProps) {
   const [text, setText] = useState("");
+  // Discover "Use in Otto": pre-fill the composer when a seed arrives (no auto-send).
+  // NOTE: this relies on the front door REMOUNTING per use — handleUseInOtto nulls
+  // activeThreadId, which toggles showFrontDoor and remounts this component, so the
+  // effect re-runs even when seedText is unchanged (repeat-use of the same idea). If the
+  // front door ever becomes persistently mounted (e.g. CSS-hidden or a stable key for
+  // draft persistence), switch seedText to a bumping nonce so repeat seeds still apply.
+  useEffect(() => {
+    if (seedText) setText(seedText);
+  }, [seedText]);
   const [pickedMentions, setPickedMentions] = useState<{id: string; name: string}[]>([]);
   const [mentionQuery, setMentionQuery] = useState<string | null>(null);
   const [mentionHighlight, setMentionHighlight] = useState(0);
@@ -447,6 +460,9 @@ export function OttoFrontDoor({
             ))}
           </div>
         </div>
+
+        {/* Quick brief */}
+        <QuickBrief projectId={projectId} />
 
         {/* Trust line */}
         <p

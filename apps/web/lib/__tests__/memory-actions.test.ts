@@ -1,14 +1,22 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
 
-const { mockRequireOwner, mockMemoryCreate, mockMemoryFindMany, mockMemoryUpdateMany } = vi.hoisted(() => ({
+const { mockRequireOwner, mockMemoryCreate, mockMemoryFindMany, mockMemoryUpdateMany, mockKitFindFirst, mockRuleFindMany } = vi.hoisted(() => ({
   mockRequireOwner: vi.fn(),
   mockMemoryCreate: vi.fn(),
   mockMemoryFindMany: vi.fn(),
   mockMemoryUpdateMany: vi.fn(),
+  mockKitFindFirst: vi.fn(),
+  mockRuleFindMany: vi.fn(),
 }));
 
 vi.mock("@/lib/auth-guard", () => ({ requireOwner: mockRequireOwner }));
-vi.mock("@fikirtive/db", () => ({ prisma: { memory: { create: mockMemoryCreate, findMany: mockMemoryFindMany, updateMany: mockMemoryUpdateMany } } }));
+vi.mock("@fikirtive/db", () => ({
+  prisma: {
+    memory: { create: mockMemoryCreate, findMany: mockMemoryFindMany, updateMany: mockMemoryUpdateMany },
+    brandKit: { findFirst: mockKitFindFirst },
+    brandRule: { findMany: mockRuleFindMany },
+  },
+}));
 vi.mock("@fikirtive/core", () => ({ newId: () => "m_1" }));
 vi.mock("next/cache", () => ({ revalidatePath: vi.fn() }));
 
@@ -17,6 +25,9 @@ import { addMemory, updateMemory, deleteMemory, getBrandContextText, listMemory,
 beforeEach(() => {
   vi.clearAllMocks();
   mockRequireOwner.mockResolvedValue({ ownerId: "o1" });
+  // Default: no kit and no rules (so existing tests are unaffected)
+  mockKitFindFirst.mockResolvedValue(null);
+  mockRuleFindMany.mockResolvedValue([]);
 });
 
 describe("addMemory", () => {
@@ -173,5 +184,87 @@ describe("tenant isolation — caller-supplied ownerId is ignored", () => {
     expect(await getBrandContextText("anything")).toBe("");
     expect(await listMyMemory()).toEqual([]);
     expect(mockMemoryFindMany).not.toHaveBeenCalled();
+  });
+});
+
+// ---------------------------------------------------------------------------
+// getBrandContextText — brand kit + rule enrichment
+// ---------------------------------------------------------------------------
+
+describe("getBrandContextText — kit + rule enrichment", () => {
+  it("returns empty string when no memory, no kit, no rules", async () => {
+    mockMemoryFindMany.mockResolvedValue([]);
+    // mockKitFindFirst and mockRuleFindMany already return null/[] in beforeEach
+    expect(await getBrandContextText()).toBe("");
+  });
+
+  it("includes kit name, fonts, tone, styleGuide, colorsJson in output", async () => {
+    mockMemoryFindMany.mockResolvedValue([]);
+    mockKitFindFirst.mockResolvedValue({
+      name: "Acme Brand",
+      colorsJson: { primary: "#ff0000" },
+      fonts: ["Inter", "Playfair Display"],
+      tone: "warm and friendly",
+      styleGuide: "Always use full sentences.",
+    });
+    const result = await getBrandContextText();
+    expect(result).toContain("Brand kit:");
+    expect(result).toContain("Acme Brand");
+    expect(result).toContain("Inter");
+    expect(result).toContain("warm and friendly");
+    expect(result).toContain("Always use full sentences.");
+    expect(result).toContain("#ff0000");
+  });
+
+  it("includes active brand rules grouped by kind", async () => {
+    mockMemoryFindMany.mockResolvedValue([]);
+    mockRuleFindMany.mockResolvedValue([
+      { kind: "always", text: "use bold headings" },
+      { kind: "never", text: "use Comic Sans" },
+      { kind: "always", text: "include a call to action" },
+    ]);
+    const result = await getBrandContextText();
+    expect(result).toContain("Brand rules:");
+    expect(result).toContain("ALWAYS:");
+    expect(result).toContain("use bold headings");
+    expect(result).toContain("include a call to action");
+    expect(result).toContain("NEVER:");
+    expect(result).toContain("use Comic Sans");
+  });
+
+  it("omits kit block when kit is null", async () => {
+    mockMemoryFindMany.mockResolvedValue([{ category: "voice", content: "warm" }]);
+    mockKitFindFirst.mockResolvedValue(null);
+    const result = await getBrandContextText();
+    expect(result).not.toContain("Brand kit:");
+    expect(result).toContain("warm");
+  });
+
+  it("omits rules block when no active rules returned", async () => {
+    mockMemoryFindMany.mockResolvedValue([{ category: "voice", content: "warm" }]);
+    mockRuleFindMany.mockResolvedValue([]);
+    const result = await getBrandContextText();
+    expect(result).not.toContain("Brand rules:");
+    expect(result).toContain("warm");
+  });
+
+  it("queries active rules only (where.active = true passed to brandRule.findMany)", async () => {
+    mockMemoryFindMany.mockResolvedValue([]);
+    mockRuleFindMany.mockResolvedValue([]);
+    await getBrandContextText(undefined, "brand_1");
+    expect(mockRuleFindMany).toHaveBeenCalledWith(
+      expect.objectContaining({ where: expect.objectContaining({ ownerId: "o1", brandId: "brand_1", active: true }) }),
+    );
+  });
+
+  it("includes both memory notes and kit + rules when all are present", async () => {
+    mockMemoryFindMany.mockResolvedValue([{ category: "voice", content: "playful" }]);
+    mockKitFindFirst.mockResolvedValue({ name: "Acme", colorsJson: null, fonts: [], tone: "fun", styleGuide: null });
+    mockRuleFindMany.mockResolvedValue([{ kind: "never", text: "avoid jargon" }]);
+    const result = await getBrandContextText();
+    expect(result).toContain("playful");
+    expect(result).toContain("Brand kit:");
+    expect(result).toContain("Brand rules:");
+    expect(result).toContain("avoid jargon");
   });
 });

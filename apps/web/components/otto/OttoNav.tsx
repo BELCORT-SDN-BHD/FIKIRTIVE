@@ -58,14 +58,43 @@ function IconPlus() {
     </svg>
   );
 }
+function IconCompass() {
+  return (
+    <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden>
+      <circle cx="12" cy="12" r="10" />
+      <polygon points="16.24 7.76 14.12 14.12 7.76 16.24 9.88 9.88 16.24 7.76" />
+    </svg>
+  );
+}
 
 const NAV_ITEMS: NavItem[] = [
   { key: "otto", label: "Otto", icon: <IconMessageCircle /> },
   { key: "stuff", label: "My stuff", icon: <IconFolderHeart /> },
+  { key: "library", label: "Library", icon: <IconLibrary /> },
+  { key: "templates", label: "Templates", icon: <IconTemplates /> },
+  { key: "discover", label: "Discover", icon: <IconCompass /> },
   { key: "memory", label: "Brand memory", icon: <IconBrain /> },
   { key: "account", label: "Account", icon: <IconCircleUser /> },
 ];
 
+function IconLibrary() {
+  return (
+    <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden>
+      <rect x="3" y="3" width="7" height="7" rx="1" />
+      <rect x="14" y="3" width="7" height="7" rx="1" />
+      <rect x="3" y="14" width="7" height="7" rx="1" />
+      <rect x="14" y="14" width="7" height="7" rx="1" />
+    </svg>
+  );
+}
+function IconTemplates() {
+  return (
+    <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden>
+      <rect x="3" y="3" width="18" height="18" rx="2" />
+      <path d="M3 9h18M9 21V9" />
+    </svg>
+  );
+}
 function IconX() {
   return (
     <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round" aria-hidden>

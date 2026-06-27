@@ -14,6 +14,7 @@ import {
   storageKeyToSrc,
   videoDefaults,
   isModelDisabled,
+  assertSpendableModel,
   pricedGenCredits,
   type GenJobData,
   type GenVideoModel,
@@ -88,6 +89,10 @@ export async function startGen(raw: unknown): Promise<{ id: string } | { error: 
   if (isModelDisabled(model, disabled)) {
     return { error: "That model is currently turned off — pick another." };
   }
+
+  const kindForModel = kind === "image" ? "image" : "video";
+  const spendable = assertSpendableModel(model, kindForModel);
+  if (!spendable.ok) return { error: spendable.error };
 
   // P2: the deterministic CHARGE in internal credits — reserved atomically with the
   // job insert below, settled at commit, refunded on terminal failure (the worker).

@@ -1,5 +1,6 @@
 "use client";
-import React, { useState, useCallback } from "react";
+import React, { useState, useCallback, useEffect } from "react";
+import { listProjectThreadActivity } from "@/lib/thread-activity";
 import "../../app/otto/otto-theme.css";
 import { OttoNav } from "./OttoNav";
 import { OttoView } from "./OttoView";
@@ -40,7 +41,7 @@ export interface OttoAppProps {
   ottoStreamEnabled: boolean;
 }
 
-export type OttoViewKey = "otto" | "stuff" | "memory" | "account";
+export type OttoViewKey = "otto" | "stuff" | "library" | "templates" | "discover" | "memory" | "account";
 
 export function OttoApp({
   projectId,
@@ -63,11 +64,33 @@ export function OttoApp({
   );
   const [balanceCredits, setBalanceCredits] = useState(initialBalanceCredits);
   const [drawerOpen, setDrawerOpen] = useState(false);
+  const [activity, setActivity] = useState<Set<string>>(new Set());
+  const [seedText, setSeedText] = useState<string>("");
+
+  useEffect(() => {
+    if (view !== "otto") return;
+    let alive = true;
+    async function poll() {
+      const res = await listProjectThreadActivity(projectId);
+      if (alive && Array.isArray(res)) {
+        setActivity(new Set(res.filter((r) => r.pending).map((r) => r.threadId)));
+      }
+    }
+    poll();
+    const h = setInterval(poll, 4000);
+    return () => { alive = false; clearInterval(h); };
+  }, [view, projectId, threads.length]);
 
   const refreshBalance = useCallback(async () => {
     const a = await getMyAccount();
     if (a && !("error" in a)) setBalanceCredits(a.balance);
   }, []);
+
+  function handleUseInOtto(prompt: string) {
+    setSeedText(prompt);
+    setActiveThreadId(null);
+    setView("otto");
+  }
 
   async function handleDeleteThread(id: string) {
     const snapshot = threads;
@@ -183,6 +206,11 @@ export function OttoApp({
           ottoStreamEnabled={ottoStreamEnabled}
           onBalanceRefresh={refreshBalance}
           onViewChange={setView}
+          activity={activity}
+          onDeleteThread={handleDeleteThread}
+          onNewConvo={() => setActiveThreadId(null)}
+          seedText={seedText}
+          onUseInOtto={handleUseInOtto}
         />
       </div>
 

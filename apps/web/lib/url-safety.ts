@@ -197,7 +197,7 @@ export async function assertPublicHttpUrlResolved(raw: string): Promise<URL> {
       a === "0.0.0.0" || a === "::1" || (family === 4 ? isPrivateIPv4(a) : isBlockedIPv6(a));
     if (blocked) {
       throw new Error(
-        `URL hostname "${url.hostname}" resolves to a private/reserved address (${address}) and is not allowed`
+        `URL hostname "${url.hostname}" resolves to a private/reserved address and is not allowed`
       );
     }
   }

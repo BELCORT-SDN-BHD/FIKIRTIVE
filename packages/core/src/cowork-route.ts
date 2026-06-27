@@ -1,12 +1,10 @@
 import {
-  GEN_VIDEO_MODELS,
   GEN_VIDEO_MODEL_OPTIONS,
   GEN_VIDEO_MODEL_INFO,
   videoDefaults,
-  videoPriceUsd,
   type GenVideoModel,
 } from "./gen.js";
-import { enabledVideoModels } from "./model-registry.js";
+import { activeVideoModel } from "./model-config.js";
 
 export interface SuggestModelInput {
   kind: "image" | "video";
@@ -46,51 +44,15 @@ export function suggestModel(input: SuggestModelInput): SuggestModelResult {
     };
   }
 
-  const wantTail = !!input.hasTail;
   // For t2v (no source frame) the aspect can only come from a model that EXPOSES it;
-  // an empty-aspect (Kling-class) model can't honor a requested aspect, so exclude it
-  // when an aspect is desired. For i2v the source frame carries the aspect, so an
-  // empty-aspect model stays eligible (usually cheaper) — don't exclude it there.
+  // kept for the aspectDropped flag below (still meaningful even with a locked model).
   const t2vNeedsAspect = !input.hasSourceImage && !!input.desiredAspect;
 
-  // Filter candidates: tail constraint; aspect constraint for models that expose
-  // aspectRatios; and (t2v-only) drop empty-aspect models when an aspect is desired.
-  const candidates = (GEN_VIDEO_MODELS as readonly string[]).filter((m) => {
-    if (input.disabled?.has(m)) return false; // OPT-6 P2: admin-disabled
-    const info = GEN_VIDEO_MODEL_INFO[m as GenVideoModel];
-    const o = GEN_VIDEO_MODEL_OPTIONS[m as GenVideoModel];
-    if (wantTail && !info.tail) return false;
-    if (input.desiredAspect && o.aspectRatios.length > 0 && !o.aspectRatios.includes(input.desiredAspect)) return false;
-    if (t2vNeedsAspect && o.aspectRatios.length === 0) return false;
-    return true;
-  });
-
-  // Never end up with an empty pool. If the capability+disabled filter empties
-  // the pool, fall back to the ENABLED typed menu so an admin-disabled model is
-  // never returned. Only if EVERY video model is disabled (degenerate) fall back
-  // to the full typed list — the spend gate will then surface the all-disabled
-  // state as an error (no spend).
-  const pool =
-    candidates.length > 0
-      ? candidates
-      : (() => {
-          const enabled = enabledVideoModels(input.disabled ?? new Set<string>());
-          return enabled.length > 0 ? enabled : (GEN_VIDEO_MODELS as readonly string[]).slice();
-        })();
-
-  // Pick the cheapest model in the pool (per-second at default settings, 1 clip).
-  const pick = pool
-    .map((m) => {
-      const d = videoDefaults(m as GenVideoModel);
-      const rate = videoPriceUsd(m as GenVideoModel, {
-        seconds: d.seconds,
-        resolution: d.resolution,
-        audio: d.audio,
-        count: 1,
-      });
-      return { m, rate };
-    })
-    .sort((a, b) => a.rate - b.rate)[0]!.m as GenVideoModel;
+  // Locked to the single active video model (product decision: one video model, no picker).
+  // The spend gate (assertSpendableModel) only allows activeVideoModel(); proposing any other
+  // model would freeze a price onto a card that startGen then rejects. Params below are still
+  // clamped to THIS model's options, so capability mismatches degrade to the model's defaults.
+  const pick = activeVideoModel() as GenVideoModel;
 
   const o = GEN_VIDEO_MODEL_OPTIONS[pick];
   const d = videoDefaults(pick);

@@ -234,7 +234,7 @@ model ShotEntityRef {
 }
 
 // 生成历史：不可变（永不物理删，deletedAt 仅作隐藏/候选区移除）。
-// 可变字段白名单：shotId, version, attachedAt, deletedAt —— 其余字段写入后冻结。
+// 可变字段白名单：shotId, version, attachedAt, deletedAt, favorite —— 其余字段写入后冻结。
 // E4-pre：prompt/模型/参数/实体引用分字段存储而非整段文本 —— 配方功能阶段二直接站上来。
 model Generation {
   id             String      @id
@@ -256,6 +256,7 @@ model Generation {
   threadId       String?   // set by the worker (= GenJob.threadId) when a cowork gen produced this; filters it out of candidate/asset/editor views
   // v1 additive: nullable soft-ref for GenerationBatch grouping (no FK, no backfill)
   batchId        String?
+  favorite       Boolean     @default(false)
   attachedAt     DateTime?
   createdAt      DateTime    @default(now())
   deletedAt      DateTime?
@@ -274,6 +275,9 @@ model Generation {
   //  AND deletedAt IS NULL）——只约束 LIVE 已附着行，让删除后的版本可被复用。Prisma
   //  无法表达条件唯一，故不在此声明 @@unique（旧的非部分索引已在迁移里 DROP）。
   @@index([assetId])
+  // G5a: unified library keyset — newest-first over ALL of a project's generations
+  // (no threadId filter, unlike Generation_media_idx). Additive, no backfill.
+  @@index([ownerId, projectId, deletedAt, createdAt, id], map: "Generation_library_idx")
 }
 
 // ComfyUI 模板注册表（SOP v1.1 A3.5 文件版 registry.json 的站内镜像；
@@ -574,6 +578,8 @@ model Organization {
   chatMessages            ChatMessage[]
   memories                Memory[]
   generationBatches       GenerationBatch[]
+  brandKits               BrandKit[]
+  brandRules              BrandRule[]
 }
 
 // User <-> Organization join, carrying the per-org role. role/status are code-validated
@@ -826,6 +832,42 @@ model Memory {
   @@index([ownerId, brandId, deletedAt])
 }
 
+// Brand Kit: structured brand metadata (colors, fonts, tone, style guide, logo) per owner/brand.
+// brandId is nullable — null = not yet scoped to an agency brand (mirrors Memory.brandId convention).
+model BrandKit {
+  id            String    @id
+  ownerId       String
+  organization  Organization @relation(fields: [ownerId], references: [id])
+  brandId       String?
+  name          String?
+  colorsJson    Json?     // { primary, secondary, accent, … } freeform JSON
+  fonts         String[]  // e.g. ["Inter", "Playfair Display"]
+  tone          String?   // e.g. "warm, conversational, approachable"
+  styleGuide    String?   // free-text style notes
+  logoAssetId   String?   // FK to Asset.id (optional, not enforced — asset may be deleted)
+  createdAt     DateTime  @default(now())
+  updatedAt     DateTime  @updatedAt
+
+  // F5: a raw UNIQUE INDEX on (ownerId, COALESCE(brandId,'')) lives in migration
+  // 20260628120000_review_fixes_indexes — dedups kits per owner+brand incl. brandId IS NULL.
+  @@index([ownerId, brandId])
+}
+
+// Brand Rule: explicit always/never/tone/color constraints for Otto to follow.
+// kind ∈ { "always" | "never" | "tone" | "color" }
+model BrandRule {
+  id           String    @id
+  ownerId      String
+  organization Organization @relation(fields: [ownerId], references: [id])
+  brandId      String?
+  kind         String    // "always" | "never" | "tone" | "color"
+  text         String
+  active       Boolean   @default(true)
+  createdAt    DateTime  @default(now())
+
+  @@index([ownerId, brandId, active])
+}
+
 // Generation batch: groups multiple GenJob outputs into a single "batch" proposal
 // (the ad-pack grouping table). projectId is nullable — batches can be cross-project.
 model GenerationBatch {
@@ -901,4 +943,29 @@ model BetterAuthVerification {
   updatedAt  DateTime @updatedAt
   @@index([identifier])
   @@map("ba_verification")
+}
+
+model CanvasNode {
+  id           String    @id
+  ownerId      String
+  projectId    String
+  type         String    // "image" | "video" | "text"
+  x            Float
+  y            Float
+  w            Float
+  h            Float
+  text         String?
+  prompt       String?
+  generationId String?
+  genJobId     String?
+  status       String    @default("done") // "pending" | "done" | "failed"
+  sourceNodeId String?
+  // G4c: convo attribution — which ChatThread created this node. Nullable, no backfill;
+  // validated (same owner+project) in createCanvasNode, no FK. null = "unattributed".
+  threadId     String?
+  createdAt    DateTime  @default(now())
+  updatedAt    DateTime  @updatedAt
+
+  @@index([ownerId, projectId])
+  @@index([ownerId, projectId, threadId])
 }

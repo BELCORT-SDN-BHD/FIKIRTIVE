@@ -95,28 +95,77 @@ export async function deleteMemory(raw: unknown): Promise<{ ok: true } | { error
   return { ok: true };
 }
 
-/** Compile this owner/brand's memory into a compact plain-text block for Otto's context. */
+/** Compile this owner/brand's memory into a compact plain-text block for Otto's context.
+ *  Appends Brand Kit (name, colors, fonts, tone, style guide) and active Brand Rules
+ *  (ALWAYS/NEVER/TONE/COLOR) when present so generations are on-brand and rule-constrained. */
 export async function getBrandContextText(_ownerId?: string, brandId?: string | null): Promise<string> {
   // SECURITY: session-scoped, ignore any caller-supplied id (see listMemory above).
   const gate = await requireOwner();
   if ("error" in gate) return "";
   const ownerId = gate.ownerId;
-  const rows = await prisma.memory.findMany({
-    where: { ownerId, brandId: brandId ?? null, deletedAt: null },
-    orderBy: [{ pinned: "desc" }, { updatedAt: "desc" }],
-    select: { category: true, content: true },
-    take: 100,
-  });
-  if (!rows.length) return "";
-  const byCat = new Map<string, string[]>();
-  for (const r of rows) {
-    const bucket = byCat.get(r.category) ?? [];
-    bucket.push(r.content);
-    byCat.set(r.category, bucket);
+
+  const [rows, kit, rules] = await Promise.all([
+    prisma.memory.findMany({
+      where: { ownerId, brandId: brandId ?? null, deletedAt: null },
+      orderBy: [{ pinned: "desc" }, { updatedAt: "desc" }],
+      select: { category: true, content: true },
+      take: 100,
+    }),
+    prisma.brandKit.findFirst({
+      where: { ownerId, brandId: brandId ?? null },
+      select: { name: true, colorsJson: true, fonts: true, tone: true, styleGuide: true },
+    }),
+    prisma.brandRule.findMany({
+      where: { ownerId, brandId: brandId ?? null, active: true },
+      orderBy: [{ kind: "asc" }, { createdAt: "asc" }],
+      select: { kind: true, text: true },
+    }),
+  ]);
+
+  const parts: string[] = [];
+
+  // Memory notes grouped by category
+  if (rows.length) {
+    const byCat = new Map<string, string[]>();
+    for (const r of rows) {
+      const bucket = byCat.get(r.category) ?? [];
+      bucket.push(r.content);
+      byCat.set(r.category, bucket);
+    }
+    parts.push(
+      [...byCat.entries()]
+        .map(([cat, items]) => `${cat}: ${items.join("; ")}`)
+        .join("\n"),
+    );
   }
-  const text = [...byCat.entries()]
-    .map(([cat, items]) => `${cat}: ${items.join("; ")}`)
-    .join("\n");
+
+  // Brand Kit block
+  if (kit) {
+    const kitLines: string[] = [];
+    if (kit.name) kitLines.push(`Name: ${kit.name}`);
+    if (kit.colorsJson) kitLines.push(`Colors: ${JSON.stringify(kit.colorsJson)}`);
+    if (kit.fonts?.length) kitLines.push(`Fonts: ${kit.fonts.join(", ")}`);
+    if (kit.tone) kitLines.push(`Tone: ${kit.tone}`);
+    if (kit.styleGuide) kitLines.push(`Style guide: ${kit.styleGuide}`);
+    if (kitLines.length) parts.push(`Brand kit:\n${kitLines.join("\n")}`);
+  }
+
+  // Brand Rules block — group by kind
+  if (rules.length) {
+    const byKind = new Map<string, string[]>();
+    for (const r of rules) {
+      const bucket = byKind.get(r.kind.toUpperCase()) ?? [];
+      bucket.push(r.text);
+      byKind.set(r.kind.toUpperCase(), bucket);
+    }
+    const ruleLines = [...byKind.entries()]
+      .map(([kind, texts]) => `${kind}: ${texts.join("; ")}`)
+      .join("\n");
+    parts.push(`Brand rules:\n${ruleLines}`);
+  }
+
+  if (!parts.length) return "";
+  const text = parts.join("\n\n");
   if (text.length <= 3000) return text;
   return text.slice(0, 3000) + "\n…(older brand notes not shown)";
 }

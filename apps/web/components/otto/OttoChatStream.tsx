@@ -21,6 +21,7 @@ import {
   syncCardJobIds,
 } from "@/lib/otto-inject-helpers";
 import { OttoPlanCard } from "./OttoPlanCard";
+import { PackCard } from "./PackCard";
 import { OttoResult } from "./OttoResult";
 import { TextPart } from "./parts/TextPart";
 import { StatusLine } from "./parts/StatusLine";
@@ -72,6 +73,7 @@ export function OttoChatStream({
   projectId,
   entities,
   thread,
+  balanceUsd,
   onThreadUpdate,
   onBalanceRefresh,
   pendingFirst,
@@ -502,9 +504,97 @@ export function OttoChatStream({
           ref={contentRef}
           style={{ maxWidth: 680, margin: "0 auto", display: "flex", flexDirection: "column", gap: "var(--space-4)" }}
         >
-          {messages.map((m, mi) => {
-            const isLastMessage = mi === messages.length - 1;
-            const kind = m.metadata?.kind;
+          {(() => {
+            // Pre-pass: coalesce consecutive GEN_CARD messages that share the same
+            // non-empty packId into a single pack group. Non-pack GEN_CARDs (packId
+            // absent or empty) and all other message kinds pass through unchanged.
+            type RenderItem =
+              | { type: "pack"; packId: string; packTitle: string; msgs: typeof messages; animateIn: boolean }
+              | { type: "single"; m: (typeof messages)[number]; mi: number };
+
+            const renderItems: RenderItem[] = [];
+            let i = 0;
+            while (i < messages.length) {
+              const m = messages[i];
+              const kind = m.metadata?.kind;
+              const payload = m.metadata?.payload as Record<string, unknown> | undefined;
+              const packId = kind === "GEN_CARD" && payload?.packId && typeof payload.packId === "string" ? payload.packId : null;
+
+              if (packId) {
+                // Collect the consecutive run of GEN_CARDs with the same packId.
+                const packMsgs = [m];
+                const packTitle = typeof payload?.packTitle === "string" ? payload.packTitle : "Pack";
+                const animateIn = isNewMessage(m.id);
+                let j = i + 1;
+                while (j < messages.length) {
+                  const next = messages[j];
+                  const np = next.metadata?.payload as Record<string, unknown> | undefined;
+                  if (next.metadata?.kind === "GEN_CARD" && np?.packId === packId) {
+                    packMsgs.push(next);
+                    j++;
+                  } else {
+                    break;
+                  }
+                }
+                renderItems.push({ type: "pack", packId, packTitle, msgs: packMsgs, animateIn });
+                i = j;
+              } else {
+                renderItems.push({ type: "single", m, mi: i });
+                i++;
+              }
+            }
+
+            return renderItems.map((item) => {
+              if (item.type === "pack") {
+                const { packId, packTitle, msgs, animateIn } = item;
+                const packCards = msgs.map((m) => {
+                  const genJobId = m.metadata?.genJobId ?? null;
+                  const durableId = m.metadata!.durableId;
+                  return {
+                    cardId: durableId,
+                    payload: m.metadata?.payload,
+                    threadId: thread.id,
+                    genJobId,
+                    cardState: deriveCardState({
+                      genJobId,
+                      submitted: submittedCardIds.has(durableId),
+                      results: jobsWithResult,
+                      errors: jobsWithError,
+                    }),
+                    pendingApproval: pendingApprovalCardIds.has(durableId),
+                  };
+                });
+                const packApproved = () => {
+                  msgs.forEach((m) => {
+                    const durableId = m.metadata!.durableId;
+                    setSubmittedCardIds((cur) => new Set(cur).add(durableId));
+                    setPendingApprovalCardIds((cur) => {
+                      const next = new Set(cur);
+                      next.delete(durableId);
+                      return next;
+                    });
+                  });
+                  setPollGaveUp(false);
+                  pollCountRef.current = 0;
+                  void onBalanceRefresh?.();
+                  void pollAndInjectResults();
+                };
+                return (
+                  <WidgetRow key={`pack:${packId}`} animateIn={animateIn}>
+                    <PackCard
+                      packTitle={packTitle}
+                      cards={packCards}
+                      balanceUsd={balanceUsd}
+                      onApproved={packApproved}
+                    />
+                  </WidgetRow>
+                );
+              }
+
+              // Single message render (unchanged from original).
+              const { m, mi } = item;
+              const isLastMessage = mi === messages.length - 1;
+              const kind = m.metadata?.kind;
 
             // Durable non-TEXT messages render as their REAL widget (the placeholder
             // text from threadToUiMessages is ignored — metadata carries the payload).
@@ -644,7 +734,8 @@ export function OttoChatStream({
                 <ReasoningPart key={`${m.id}:r${ri}`} part={p} />
               )),
             ];
-          })}
+            }); // end renderItems.map
+          })()} {/* end IIFE */}
 
           {/* Live status line: shows "Otto is thinking…" or the planning text while
               in-flight; hides automatically once isBusy is false (replaces the
