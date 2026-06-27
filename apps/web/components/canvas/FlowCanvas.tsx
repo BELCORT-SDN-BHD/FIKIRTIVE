@@ -125,14 +125,14 @@ export default function FlowCanvas({ projectId, entities = [], activeThreadId = 
   animateFnRef.current = animate;
 
   // Shared submit handler — used by form onSubmit and MentionInput onSubmit
-  const handleGenerate = useCallback(() => {
+  const handleGenerate = useCallback(async () => {
     if (!prompt.trim()) return;
     if (submittingRef.current) return;
     submittingRef.current = true;
     setSubmitting(true);
     try {
       const x = 80 + nodeCountRef.current * 340;
-      generateImage(prompt.trim(), { x, y: 80, w: 320, h: 320 }, promptIds, variantSel);
+      await generateImage(prompt.trim(), { x, y: 80, w: 320, h: 320 }, promptIds, variantSel);
       setPrompt("");
       setPromptIds([]);
       setVariantSel({});
