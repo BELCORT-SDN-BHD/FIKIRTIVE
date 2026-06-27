@@ -6,7 +6,7 @@ import { ImageNode } from "./nodes/ImageNode";
 import { VideoNode } from "./nodes/VideoNode";
 import { TextNode } from "./nodes/TextNode";
 import { useCanvasGen } from "./useCanvasGen";
-import { listCanvasNodes, moveCanvasNode, deleteCanvasNode, updateTextNode } from "../../lib/canvas-actions";
+import { listCanvasNodes, moveCanvasNode, deleteCanvasNode, updateTextNode, createCanvasNode } from "../../lib/canvas-actions";
 
 // Must be stable (defined outside component) per ReactFlow requirements
 const nodeTypes = { image: ImageNode, video: VideoNode, text: TextNode };
@@ -168,6 +168,36 @@ export default function FlowCanvas({ projectId }: { projectId: string }) {
       >
         <input className="al-input-wrap" value={prompt} onChange={(e) => setPrompt(e.target.value)} placeholder="Type to imagine…" />
         <button className="al-btn al-btn-primary al-btn-sm" type="submit">Generate</button>
+        <button
+          className="al-btn al-btn-sm"
+          type="button"
+          onClick={async () => {
+            const x = 80 + nodeCountRef.current * 340;
+            const result = await createCanvasNode({ projectId, type: "text", x, y: 80, w: 240, h: 120, text: "", status: "done" });
+            if ("id" in result) {
+              nodeCountRef.current += 1;
+              setNodes((ns) => [
+                ...ns,
+                {
+                  id: result.id,
+                  type: "text",
+                  position: { x, y: 80 },
+                  data: {
+                    text: "",
+                    status: "done",
+                    onChange: (t: string) => onTextChange(result.id, t),
+                    onDelete: () => deleteNode(result.id),
+                  },
+                  style: { width: 240, height: 120 },
+                },
+              ]);
+            } else {
+              console.warn("Failed to create text node:", result.error);
+            }
+          }}
+        >
+          + Text
+        </button>
       </form>
     </div>
   );
