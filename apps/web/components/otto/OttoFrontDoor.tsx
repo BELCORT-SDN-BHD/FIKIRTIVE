@@ -5,6 +5,7 @@ import { Button } from "@/components/fk";
 import { ottoTurn, createEmptyCoworkThread } from "@/lib/otto-client-actions";
 import { getCoworkThreadClient } from "@/lib/cowork-fetch";
 import { activeMentionQuery, resolveSentEntityIds } from "@/lib/otto-mentions";
+import { QuickBrief } from "@/components/otto/QuickBrief";
 import type { EntityDTO, ChatThreadDTO } from "@/lib/types";
 
 interface GoalTile {
@@ -447,6 +448,9 @@ export function OttoFrontDoor({
             ))}
           </div>
         </div>
+
+        {/* Quick brief */}
+        <QuickBrief projectId={projectId} />
 
         {/* Trust line */}
         <p
