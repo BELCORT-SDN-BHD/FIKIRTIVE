@@ -956,8 +956,12 @@ model CanvasNode {
   genJobId     String?
   status       String    @default("done") // "pending" | "done" | "failed"
   sourceNodeId String?
+  // G4c: convo attribution — which ChatThread created this node. Nullable, no backfill;
+  // validated (same owner+project) in createCanvasNode, no FK. null = "unattributed".
+  threadId     String?
   createdAt    DateTime  @default(now())
   updatedAt    DateTime  @updatedAt
 
   @@index([ownerId, projectId])
+  @@index([ownerId, projectId, threadId])
 }
