@@ -1,12 +1,15 @@
 "use client";
 /**
  * G2a · per-asset detail panel.
- * G2b adds: variant switcher (25), aspect picker (17).
+ * G2b adds: variant switcher (25), aspect picker (17), edit @composer (24), crop (16).
  * Opens as an absolute overlay inside the canvas container (not position:fixed).
  * Escape or click-on-backdrop closes; clicking the panel itself does not.
  */
 import { useCallback, useEffect, useRef, useState } from "react";
+import Cropper from "react-easy-crop";
+import type { Area } from "react-easy-crop";
 import { getGeneration } from "@/lib/asset-actions";
+import { saveCroppedGeneration } from "@/lib/asset-actions";
 import { setFavorite } from "@/lib/asset-actions";
 import { deleteGeneration } from "@/lib/actions";
 import { startGen, getGenJob } from "@/lib/gen-actions";
@@ -19,6 +22,7 @@ import {
   type GenVideoModel,
 } from "@fikirtive/core";
 import { Button, IcX, IcPlay, IcRetry } from "@/components/ds";
+import { MentionInput } from "@/components/MentionInput";
 import type { EntityDTO } from "@/lib/types";
 
 type GenDTO = {
@@ -33,11 +37,41 @@ type GenDTO = {
 
 type PanelState = "loading" | "ready" | "error";
 
+/** Render the cropped area of an image to a canvas and return a data URL. */
+async function getCroppedDataUrl(
+  imageSrc: string,
+  pixelCrop: Area,
+): Promise<string> {
+  const img = await new Promise<HTMLImageElement>((resolve, reject) => {
+    const i = new Image();
+    i.crossOrigin = "anonymous";
+    i.onload = () => resolve(i);
+    i.onerror = reject;
+    i.src = imageSrc;
+  });
+  const canvas = document.createElement("canvas");
+  canvas.width = pixelCrop.width;
+  canvas.height = pixelCrop.height;
+  const ctx = canvas.getContext("2d")!;
+  ctx.drawImage(
+    img,
+    pixelCrop.x,
+    pixelCrop.y,
+    pixelCrop.width,
+    pixelCrop.height,
+    0,
+    0,
+    pixelCrop.width,
+    pixelCrop.height,
+  );
+  return canvas.toDataURL("image/png");
+}
+
 export default function DetailPanel({
   generationId,
   projectId,
   onClose,
-  entities: _entities = [],
+  entities = [],
 }: {
   generationId: string;
   projectId: string;
@@ -54,6 +88,19 @@ export default function DetailPanel({
   // Aspect picker (17)
   const [chosenAspect, setChosenAspect] = useState<string>("");
 
+  // Edit @composer (24)
+  const [editPrompt, setEditPrompt] = useState("");
+  const [editIds, setEditIds] = useState<string[]>([]);
+  const [editStatus, setEditStatus] = useState<"idle" | "running" | "done" | "failed">("idle");
+  const [composerKey] = useState(() => String(Date.now()));
+
+  // Crop (16)
+  const [cropOpen, setCropOpen] = useState(false);
+  const [crop, setCrop] = useState({ x: 0, y: 0 });
+  const [zoom, setZoom] = useState(1);
+  const [croppedAreaPixels, setCroppedAreaPixels] = useState<Area | null>(null);
+  const [cropStatus, setCropStatus] = useState<"idle" | "saving" | "done" | "failed">("idle");
+
   // Action states
   const [regenStatus, setRegenStatus] = useState<"idle" | "running" | "done" | "failed">("idle");
   const [animStatus, setAnimStatus] = useState<"idle" | "running" | "done" | "failed">("idle");
@@ -66,6 +113,8 @@ export default function DetailPanel({
     setState("loading");
     setGen(null);
     setSelectedIdx(0);
+    setCropOpen(false);
+    setEditStatus("idle");
     getGeneration(generationId).then((result) => {
       if (cancelledRef.current) return;
       if ("error" in result) {
@@ -98,11 +147,14 @@ export default function DetailPanel({
   // Esc key
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
-      if (e.key === "Escape") onClose();
+      if (e.key === "Escape") {
+        if (cropOpen) { setCropOpen(false); return; }
+        onClose();
+      }
     };
     document.addEventListener("keydown", onKey);
     return () => document.removeEventListener("keydown", onKey);
-  }, [onClose]);
+  }, [onClose, cropOpen]);
 
   const handleFavorite = useCallback(async () => {
     if (!gen) return;
@@ -202,6 +254,66 @@ export default function DetailPanel({
     writePick(gen.id, idx);
   }, [gen]);
 
+  // Edit @composer: submit an edit generation
+  const handleEditSubmit = useCallback(async () => {
+    if (!gen || !editPrompt.trim() || editStatus === "running") return;
+    setEditStatus("running");
+    const result = await startGen({
+      projectId,
+      prompt: editPrompt.trim(),
+      entityIds: editIds,
+      count: 1,
+      kind: "image",
+      model: activeImageModel(),
+      idempotencyKey: `edit-${gen.id}-${Date.now()}`,
+    });
+    if ("error" in result) {
+      if (!cancelledRef.current) setEditStatus("failed");
+      return;
+    }
+    const status = await pollJob(result.id);
+    if (!cancelledRef.current) {
+      setEditStatus(status);
+      setTimeout(() => { if (!cancelledRef.current) setEditStatus("idle"); }, 3000);
+    }
+  }, [gen, editPrompt, editIds, editStatus, projectId, pollJob]);
+
+  // Crop: confirm crop and save
+  const handleCropConfirm = useCallback(async () => {
+    if (!gen || !croppedAreaPixels) return;
+    const srcUrl = gen.urls[selectedIdx] ?? gen.url;
+    setCropStatus("saving");
+    let dataUrl: string;
+    try {
+      dataUrl = await getCroppedDataUrl(srcUrl, croppedAreaPixels);
+    } catch {
+      if (!cancelledRef.current) setCropStatus("failed");
+      return;
+    }
+    const result = await saveCroppedGeneration(gen.id, dataUrl);
+    if ("error" in result) {
+      if (!cancelledRef.current) setCropStatus("failed");
+      return;
+    }
+    // Close crop modal; reload panel with new generation id
+    if (!cancelledRef.current) {
+      setCropOpen(false);
+      setCropStatus("idle");
+      // Reload panel to new cropped generation
+      // (parent passes generationId as key; we call getGeneration with the new id)
+      setState("loading");
+      setGen(null);
+      getGeneration(result.id).then((r) => {
+        if (cancelledRef.current) return;
+        if ("error" in r) { setState("error"); return; }
+        setGen(r);
+        setFavoriteLocal(r.favorite);
+        setSelectedIdx(0);
+        setState("ready");
+      });
+    }
+  }, [gen, croppedAreaPixels, selectedIdx]);
+
   // Compute active URL to display
   const displayUrl = gen ? (gen.urls[selectedIdx] ?? gen.url) : null;
 
@@ -213,7 +325,7 @@ export default function DetailPanel({
   return (
     // Faux-viewport overlay — absolute inside the canvas container, not fixed
     <div
-      onClick={onClose}
+      onClick={cropOpen ? undefined : onClose}
       style={{
         position: "absolute",
         inset: 0,
@@ -396,6 +508,17 @@ export default function DetailPanel({
                 </Button>
               )}
 
+              {/* Crop (16) */}
+              {gen.kind === "image" && (
+                <Button
+                  variant="ghost"
+                  size="sm"
+                  onClick={() => { setCrop({ x: 0, y: 0 }); setZoom(1); setCropStatus("idle"); setCropOpen(true); }}
+                >
+                  Crop
+                </Button>
+              )}
+
               {/* Download */}
               <a
                 href={displayUrl}
@@ -416,6 +539,92 @@ export default function DetailPanel({
                 Delete
               </Button>
             </div>
+
+            {/* Edit @composer (24) */}
+            {gen.kind === "image" && (
+              <div style={{ display: "flex", flexDirection: "column", gap: 8, borderTop: "1px solid var(--line-1, rgba(255,255,255,.08))", paddingTop: 12 }}>
+                <span style={{ fontSize: 12, opacity: 0.6 }}>Describe your edit, @ to reference</span>
+                <div style={{ display: "flex", gap: 8, alignItems: "flex-end" }}>
+                  <div className="al-input-wrap" style={{ flex: 1, minWidth: 0, border: "1px solid var(--line-1, rgba(255,255,255,.12))", borderRadius: 8, padding: "6px 10px" }}>
+                    <MentionInput
+                      entities={entities}
+                      docKey={composerKey}
+                      placeholder="Describe your edit, @ to reference"
+                      disabled={editStatus === "running"}
+                      onChange={(text, ids) => {
+                        setEditPrompt(text);
+                        setEditIds(ids);
+                      }}
+                      onSubmit={handleEditSubmit}
+                    />
+                  </div>
+                  <Button
+                    variant="primary"
+                    size="sm"
+                    onClick={handleEditSubmit}
+                    disabled={editStatus === "running" || !editPrompt.trim()}
+                  >
+                    {editStatus === "running"
+                      ? "Editing…"
+                      : editStatus === "done"
+                      ? "Edit ready!"
+                      : editStatus === "failed"
+                      ? "Failed"
+                      : "Send"}
+                  </Button>
+                </div>
+              </div>
+            )}
+
+            {/* Crop modal (16) — normal-flow overlay inside panel, NOT position:fixed */}
+            {cropOpen && (
+              <div
+                style={{
+                  position: "absolute",
+                  inset: 0,
+                  background: "rgba(0,0,0,0.85)",
+                  borderRadius: 16,
+                  zIndex: 10,
+                  display: "flex",
+                  flexDirection: "column",
+                }}
+                onClick={(e) => e.stopPropagation()}
+              >
+                {/* Crop area — takes remaining space */}
+                <div style={{ position: "relative", flex: 1, minHeight: 0 }}>
+                  <Cropper
+                    image={displayUrl}
+                    crop={crop}
+                    zoom={zoom}
+                    aspect={4 / 3}
+                    onCropChange={setCrop}
+                    onZoomChange={setZoom}
+                    onCropComplete={(_croppedArea, croppedAreaPx) => {
+                      setCroppedAreaPixels(croppedAreaPx);
+                    }}
+                  />
+                </div>
+                {/* Crop controls */}
+                <div style={{ display: "flex", gap: 8, padding: 16, justifyContent: "flex-end", background: "rgba(0,0,0,.4)" }}>
+                  {cropStatus === "failed" && (
+                    <span style={{ fontSize: 12, color: "var(--c-danger, #f55)", alignSelf: "center", marginRight: "auto" }}>
+                      Crop failed — try again
+                    </span>
+                  )}
+                  <Button variant="ghost" size="sm" onClick={() => setCropOpen(false)}>
+                    Cancel
+                  </Button>
+                  <Button
+                    variant="primary"
+                    size="sm"
+                    onClick={handleCropConfirm}
+                    disabled={cropStatus === "saving"}
+                  >
+                    {cropStatus === "saving" ? "Saving…" : "Confirm crop"}
+                  </Button>
+                </div>
+              </div>
+            )}
           </>
         )}
       </div>
