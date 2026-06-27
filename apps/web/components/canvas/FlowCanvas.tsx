@@ -22,6 +22,8 @@ export default function FlowCanvas({ projectId, entities = [] }: { projectId: st
   const [detailFor, setDetailFor] = useState<string | null>(null);
   // track node count to offset new node positions
   const nodeCountRef = useRef(0);
+  // bumped on successful generation submit to remount MentionInput cleared
+  const [composerKey, setComposerKey] = useState(0);
 
   // Per-node data refs so stable onAnimate closures can read current generationId + position
   const nodeDataRef = useRef<Record<string, { generationId?: string; pos: { x: number; y: number } }>>({});
@@ -192,12 +194,14 @@ export default function FlowCanvas({ projectId, entities = [] }: { projectId: st
             generateImage(prompt.trim(), { x, y: 80, w: 320, h: 320 }, promptIds);
             setPrompt("");
             setPromptIds([]);
+            setComposerKey((k) => k + 1);
           }
         }}
       >
         <div className="al-input-wrap" style={{ flex: 1, minWidth: 0, border: "none", background: "none", padding: 0 }}>
           <MentionInput
             entities={entities}
+            docKey={`canvas-${composerKey}`}
             placeholder="Type to imagine… (@ to reference elements)"
             onChange={(t, ids) => { setPrompt(t); setPromptIds(ids); }}
             onSubmit={() => {
@@ -206,6 +210,7 @@ export default function FlowCanvas({ projectId, entities = [] }: { projectId: st
                 generateImage(prompt.trim(), { x, y: 80, w: 320, h: 320 }, promptIds);
                 setPrompt("");
                 setPromptIds([]);
+                setComposerKey((k) => k + 1);
               }
             }}
           />
