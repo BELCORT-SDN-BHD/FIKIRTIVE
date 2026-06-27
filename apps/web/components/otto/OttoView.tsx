@@ -13,6 +13,7 @@ import { OttoStuff, type AdTile } from "./OttoStuff";
 import { OttoOnboarding } from "./OttoOnboarding";
 import OttoLibrary from "./OttoLibrary";
 import OttoTemplates from "./OttoTemplates";
+import OttoDiscover from "./OttoDiscover";
 import type { AdJobItem } from "@/lib/data";
 import { getCoworkThreadClient } from "@/lib/cowork-fetch";
 import FlowCanvas from "../canvas/FlowCanvas";
@@ -38,6 +39,8 @@ interface OttoViewProps {
   activity: Set<string>;
   onDeleteThread: (id: string) => void;
   onNewConvo: () => void;
+  seedText?: string;
+  onUseInOtto: (prompt: string) => void;
 }
 
 export function OttoView({
@@ -60,6 +63,8 @@ export function OttoView({
   activity,
   onDeleteThread,
   onNewConvo,
+  seedText,
+  onUseInOtto,
 }: OttoViewProps) {
   const activeThread = threads.find((t) => t.id === activeThreadId) ?? null;
 
@@ -114,6 +119,13 @@ export function OttoView({
       </div>
     );
   }
+  if (view === "discover") {
+    return (
+      <div style={{ flex: 1, display: "flex", flexDirection: "column", overflow: "hidden" }}>
+        <OttoDiscover onUseInOtto={onUseInOtto} />
+      </div>
+    );
+  }
 
   // Otto view — front door when no active thread, conversation when one is selected
   const showFrontDoor = !activeThread;
@@ -155,6 +167,7 @@ export function OttoView({
               projectId={projectId}
               entities={entities}
               userName={userName}
+              seedText={seedText}
               ottoStreamEnabled={ottoStreamEnabled}
               onThreadStarted={(thread) => {
                 onThreadsChange([thread, ...threads]);

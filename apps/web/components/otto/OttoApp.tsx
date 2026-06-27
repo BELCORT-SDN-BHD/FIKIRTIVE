@@ -41,7 +41,7 @@ export interface OttoAppProps {
   ottoStreamEnabled: boolean;
 }
 
-export type OttoViewKey = "otto" | "stuff" | "library" | "templates" | "memory" | "account";
+export type OttoViewKey = "otto" | "stuff" | "library" | "templates" | "discover" | "memory" | "account";
 
 export function OttoApp({
   projectId,
@@ -65,6 +65,7 @@ export function OttoApp({
   const [balanceCredits, setBalanceCredits] = useState(initialBalanceCredits);
   const [drawerOpen, setDrawerOpen] = useState(false);
   const [activity, setActivity] = useState<Set<string>>(new Set());
+  const [seedText, setSeedText] = useState<string>("");
 
   useEffect(() => {
     if (view !== "otto") return;
@@ -84,6 +85,12 @@ export function OttoApp({
     const a = await getMyAccount();
     if (a && !("error" in a)) setBalanceCredits(a.balance);
   }, []);
+
+  function handleUseInOtto(prompt: string) {
+    setSeedText(prompt);
+    setActiveThreadId(null);
+    setView("otto");
+  }
 
   async function handleDeleteThread(id: string) {
     const snapshot = threads;
@@ -202,6 +209,8 @@ export function OttoApp({
           activity={activity}
           onDeleteThread={handleDeleteThread}
           onNewConvo={() => setActiveThreadId(null)}
+          seedText={seedText}
+          onUseInOtto={handleUseInOtto}
         />
       </div>
 

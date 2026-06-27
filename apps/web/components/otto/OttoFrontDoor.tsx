@@ -1,5 +1,5 @@
 "use client";
-import React, { useRef, useState } from "react";
+import React, { useEffect, useRef, useState } from "react";
 import { OttoAvatar } from "@/components/fk";
 import { Button } from "@/components/fk";
 import { ottoTurn, createEmptyCoworkThread } from "@/lib/otto-client-actions";
@@ -90,6 +90,8 @@ export interface OttoFrontDoorProps {
   /** Streaming path: an empty thread was created; hand its first message up so
    *  OttoChatStream streams it in on mount. Used only when ottoStreamEnabled. */
   onStreamStart?: (thread: ChatThreadDTO, pending: { text: string; goalKey?: string }) => void;
+  /** When set (e.g. from Discover), pre-fills the composer. */
+  seedText?: string;
 }
 
 export function OttoFrontDoor({
@@ -99,8 +101,13 @@ export function OttoFrontDoor({
   onThreadStarted,
   ottoStreamEnabled,
   onStreamStart,
+  seedText,
 }: OttoFrontDoorProps) {
   const [text, setText] = useState("");
+  // Discover "Use in Otto": pre-fill the composer when a seed arrives (no auto-send).
+  useEffect(() => {
+    if (seedText) setText(seedText);
+  }, [seedText]);
   const [pickedMentions, setPickedMentions] = useState<{id: string; name: string}[]>([]);
   const [mentionQuery, setMentionQuery] = useState<string | null>(null);
   const [mentionHighlight, setMentionHighlight] = useState(0);
