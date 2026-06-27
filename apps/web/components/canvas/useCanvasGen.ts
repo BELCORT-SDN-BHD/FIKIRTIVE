@@ -30,8 +30,8 @@ export function useCanvasGen(
 ) {
   const cancelledRef = useRef(false);
 
-  const generateImage = useCallback(async (prompt: string, pos: Pos) => {
-    const req = { projectId, prompt, count: 1, kind: "image" as const, model: activeImageModel(), idempotencyKey: `img-${Date.now()}` };
+  const generateImage = useCallback(async (prompt: string, pos: Pos, entityIds: string[] = []) => {
+    const req = { projectId, prompt, count: 1, kind: "image" as const, model: activeImageModel(), entityIds, idempotencyKey: `img-${Date.now()}` };
     const started = await startGen(req);
     if ("error" in started) return;
     const created = await createCanvasNode({ projectId, type: "image", ...pos, prompt, genJobId: started.id, status: "pending" });

@@ -8,6 +8,7 @@ import { TextNode } from "./nodes/TextNode";
 import { useCanvasGen } from "./useCanvasGen";
 import { listCanvasNodes, moveCanvasNode, deleteCanvasNode, updateTextNode, createCanvasNode } from "../../lib/canvas-actions";
 import DetailPanel from "@/components/asset/DetailPanel";
+import { MentionInput } from "@/components/MentionInput";
 import type { EntityDTO } from "@/lib/types";
 
 // Must be stable (defined outside component) per ReactFlow requirements
@@ -16,6 +17,7 @@ const nodeTypes = { image: ImageNode, video: VideoNode, text: TextNode };
 export default function FlowCanvas({ projectId, entities = [] }: { projectId: string; entities?: EntityDTO[] }) {
   const [nodes, setNodes] = useState<Node[]>([]);
   const [prompt, setPrompt] = useState("");
+  const [promptIds, setPromptIds] = useState<string[]>([]); // @mentioned entity ids
   // holds the generationId whose detail panel is open (null = closed)
   const [detailFor, setDetailFor] = useState<string | null>(null);
   // track node count to offset new node positions
@@ -187,12 +189,27 @@ export default function FlowCanvas({ projectId, entities = [] }: { projectId: st
           e.preventDefault();
           if (prompt.trim()) {
             const x = 80 + nodeCountRef.current * 340;
-            generateImage(prompt.trim(), { x, y: 80, w: 320, h: 320 });
+            generateImage(prompt.trim(), { x, y: 80, w: 320, h: 320 }, promptIds);
             setPrompt("");
+            setPromptIds([]);
           }
         }}
       >
-        <input className="al-input-wrap" value={prompt} onChange={(e) => setPrompt(e.target.value)} placeholder="Type to imagine…" />
+        <div className="al-input-wrap" style={{ flex: 1, minWidth: 0, border: "none", background: "none", padding: 0 }}>
+          <MentionInput
+            entities={entities}
+            placeholder="Type to imagine… (@ to reference elements)"
+            onChange={(t, ids) => { setPrompt(t); setPromptIds(ids); }}
+            onSubmit={() => {
+              if (prompt.trim()) {
+                const x = 80 + nodeCountRef.current * 340;
+                generateImage(prompt.trim(), { x, y: 80, w: 320, h: 320 }, promptIds);
+                setPrompt("");
+                setPromptIds([]);
+              }
+            }}
+          />
+        </div>
         <button className="al-btn al-btn-primary al-btn-sm" type="submit">Generate</button>
         <button
           className="al-btn al-btn-sm"
