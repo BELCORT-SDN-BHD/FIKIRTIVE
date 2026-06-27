@@ -81,7 +81,7 @@ export default function FlowCanvas({ projectId }: { projectId: string }) {
         return updated;
       }),
     );
-  }, [getOnAnimate]);
+  }, [getOnAnimate, getOnOpenDetail]);
 
   const onNewNode = useCallback(
     (n: { id: string; type: "image" | "video"; pos: any; status: string; prompt: string }) => {

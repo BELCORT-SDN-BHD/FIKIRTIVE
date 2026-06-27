@@ -9,7 +9,7 @@ import { getGeneration } from "@/lib/asset-actions";
 import { setFavorite } from "@/lib/asset-actions";
 import { deleteGeneration } from "@/lib/actions";
 import { startGen, getGenJob } from "@/lib/gen-actions";
-import { activeImageModel, activeVideoModel } from "@fikirtive/core";
+import { activeImageModel, activeVideoModel, videoDefaults, type GenVideoModel } from "@fikirtive/core";
 import { Button, IcX, IcPlay, IcRetry } from "@/components/ds";
 
 type GenDTO = {
@@ -107,32 +107,40 @@ export default function DetailPanel({
       return;
     }
     const status = await pollJob(result.id);
-    if (cancelledRef.current) return;
-    setRegenStatus(status);
-    // reset to idle after 3s
-    setTimeout(() => { if (!cancelledRef.current) setRegenStatus("idle"); }, 3000);
+    if (!cancelledRef.current) {
+      setRegenStatus(status);
+      // reset to idle after 3s
+      setTimeout(() => { if (!cancelledRef.current) setRegenStatus("idle"); }, 3000);
+    }
   }, [gen, generationId, projectId, pollJob]);
 
   const handleAnimate = useCallback(async () => {
     if (!gen) return;
     setAnimStatus("running");
+    const vm = activeVideoModel() as GenVideoModel;
+    const vd = videoDefaults(vm);
     const result = await startGen({
       projectId,
       prompt: gen.prompt,
       count: 1,
       kind: "video",
-      model: activeVideoModel(),
+      model: vm,
       sourceGenerationId: generationId,
+      durationSeconds: vd.seconds,
+      resolution: vd.resolution,
+      audio: vd.audio,
+      ...(vd.aspectRatio ? { aspectRatio: vd.aspectRatio } : {}),
       idempotencyKey: `anim-${generationId}-${Date.now()}`,
     });
     if ("error" in result) {
-      setAnimStatus("failed");
+      if (!cancelledRef.current) setAnimStatus("failed");
       return;
     }
     const status = await pollJob(result.id);
-    if (cancelledRef.current) return;
-    setAnimStatus(status);
-    setTimeout(() => { if (!cancelledRef.current) setAnimStatus("idle"); }, 3000);
+    if (!cancelledRef.current) {
+      setAnimStatus(status);
+      setTimeout(() => { if (!cancelledRef.current) setAnimStatus("idle"); }, 3000);
+    }
   }, [gen, generationId, projectId, pollJob]);
 
   const handleCopyLink = useCallback(async () => {
