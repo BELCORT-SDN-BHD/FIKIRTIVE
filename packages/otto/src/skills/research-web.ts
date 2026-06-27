@@ -53,12 +53,16 @@ export async function executeResearchWeb(
 
   // URL mode — always wired
   if (input.url) {
-    const result = await context.research.fetchUrl(input.url);
-    return {
-      url: result.url,
-      title: result.title ?? null,
-      text: result.text.slice(0, MAX_TEXT),
-    };
+    try {
+      const result = await context.research.fetchUrl(input.url);
+      return {
+        url: result.url,
+        title: result.title ?? null,
+        text: result.text.slice(0, MAX_TEXT),
+      };
+    } catch (e) {
+      return { error: e instanceof Error ? e.message : "Failed to fetch that URL." };
+    }
   }
 
   // Search mode — only wired when a search transport is configured
@@ -69,8 +73,12 @@ export async function executeResearchWeb(
           "Web search isn't configured yet — give me the brand's website URL and I'll read it.",
       };
     }
-    const { results } = await context.research.search(input.query);
-    return { results };
+    try {
+      const { results } = await context.research.search(input.query);
+      return { results };
+    } catch (e) {
+      return { error: e instanceof Error ? e.message : "Failed to search the web." };
+    }
   }
 
   // Unreachable (superRefine guards this), but satisfies the type checker

@@ -90,6 +90,30 @@ describe("executeResearchWeb — url mode", () => {
 
     expect(result).toMatchObject({ url: "https://example.com/", title: null, text: "short text" });
   });
+
+  it("returns structured error when fetchUrl throws", async () => {
+    const fetchUrl = vi.fn().mockRejectedValue(new Error("SSRF blocked"));
+
+    const ctx = makeCtx({ research: { fetchUrl } });
+    const result = await executeResearchWeb(
+      { url: "https://example.com/" },
+      makeRunCtx(ctx),
+    );
+
+    expect(result).toEqual({ error: "SSRF blocked" });
+  });
+
+  it("returns fallback error message when fetchUrl throws non-Error", async () => {
+    const fetchUrl = vi.fn().mockRejectedValue("unknown error");
+
+    const ctx = makeCtx({ research: { fetchUrl } });
+    const result = await executeResearchWeb(
+      { url: "https://example.com/" },
+      makeRunCtx(ctx),
+    );
+
+    expect(result).toEqual({ error: "Failed to fetch that URL." });
+  });
 });
 
 // ---------------------------------------------------------------------------
@@ -134,6 +158,19 @@ describe("executeResearchWeb — query mode, search wired", () => {
     expect(search).toHaveBeenCalledWith("example brand");
     expect(fetchUrl).not.toHaveBeenCalled();
     expect(result).toEqual(searchResults);
+  });
+
+  it("returns structured error when search throws", async () => {
+    const search = vi.fn().mockRejectedValue(new Error("Search service unavailable"));
+    const fetchUrl = vi.fn();
+    const ctx = makeCtx({ research: { fetchUrl, search } });
+
+    const result = await executeResearchWeb(
+      { query: "example brand" },
+      makeRunCtx(ctx),
+    );
+
+    expect(result).toEqual({ error: "Search service unavailable" });
   });
 });
 
