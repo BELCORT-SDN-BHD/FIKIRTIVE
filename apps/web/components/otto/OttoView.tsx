@@ -14,6 +14,7 @@ import { OttoOnboarding } from "./OttoOnboarding";
 import type { AdJobItem } from "@/lib/data";
 import { getCoworkThreadClient } from "@/lib/cowork-fetch";
 import FlowCanvas from "../canvas/FlowCanvas";
+import { ConvoTabs } from "./ConvoTabs";
 
 interface OttoViewProps {
   view: OttoViewKey;
@@ -32,6 +33,9 @@ interface OttoViewProps {
   ottoStreamEnabled: boolean;
   onBalanceRefresh: () => Promise<void>;
   onViewChange: (view: OttoViewKey) => void;
+  activity: Set<string>;
+  onDeleteThread: (id: string) => void;
+  onNewConvo: () => void;
 }
 
 export function OttoView({
@@ -51,6 +55,9 @@ export function OttoView({
   ottoStreamEnabled,
   onBalanceRefresh,
   onViewChange,
+  activity,
+  onDeleteThread,
+  onNewConvo,
 }: OttoViewProps) {
   const activeThread = threads.find((t) => t.id === activeThreadId) ?? null;
 
@@ -113,62 +120,71 @@ export function OttoView({
         style={{
           flex: "0 0 clamp(360px, 38%, 520px)",
           minWidth: 0,
-          overflow: "auto",
           display: "flex",
           flexDirection: "column",
           borderRight: "1px solid var(--border-subtle)",
         }}
       >
-        {showFrontDoor ? (
-          <OttoFrontDoor
-            projectId={projectId}
-            entities={entities}
-            userName={userName}
-            ottoStreamEnabled={ottoStreamEnabled}
-            onThreadStarted={(thread) => {
-              onThreadsChange([thread, ...threads]);
-              onActiveThreadChange(thread.id);
-            }}
-            onStreamStart={(thread, pending) => {
-              // Streaming front door: an empty thread was created; hand its first
-              // message to OttoChatStream, which streams it in on mount.
-              onThreadsChange([thread, ...threads]);
-              onActiveThreadChange(thread.id);
-              setPendingFirst({ threadId: thread.id, text: pending.text, goalKey: pending.goalKey });
-            }}
-          />
-        ) : ottoStreamEnabled ? (
-          <OttoChatStream
-            key={activeThread.id}
-            projectId={projectId}
-            entities={entities}
-            thread={activeThread}
-            balanceUsd={balanceUsd}
-            onRefresh={() => refreshThread(activeThread.id)}
-            onThreadUpdate={(updated) => {
-              onThreadsChange([updated, ...threads.filter((t) => t.id !== updated.id)]);
-            }}
-            onBalanceRefresh={onBalanceRefresh}
-            pendingFirst={
-              pendingFirst && pendingFirst.threadId === activeThread.id
-                ? { text: pendingFirst.text, goalKey: pendingFirst.goalKey }
-                : undefined
-            }
-            onPendingFirstSent={() => setPendingFirst(null)}
-          />
-        ) : (
-          <OttoConversation
-            projectId={projectId}
-            entities={entities}
-            thread={activeThread}
-            balanceUsd={balanceUsd}
-            onRefresh={() => refreshThread(activeThread.id)}
-            onThreadUpdate={(updated) => {
-              onThreadsChange([updated, ...threads.filter((t) => t.id !== updated.id)]);
-            }}
-            onBalanceRefresh={onBalanceRefresh}
-          />
-        )}
+        <ConvoTabs
+          threads={threads}
+          activeThreadId={activeThreadId}
+          activity={activity}
+          onSelect={onActiveThreadChange}
+          onNew={onNewConvo}
+          onDelete={onDeleteThread}
+        />
+        <div style={{ flex: 1, minWidth: 0, overflow: "hidden", display: "flex", flexDirection: "column" }}>
+          {showFrontDoor ? (
+            <OttoFrontDoor
+              projectId={projectId}
+              entities={entities}
+              userName={userName}
+              ottoStreamEnabled={ottoStreamEnabled}
+              onThreadStarted={(thread) => {
+                onThreadsChange([thread, ...threads]);
+                onActiveThreadChange(thread.id);
+              }}
+              onStreamStart={(thread, pending) => {
+                // Streaming front door: an empty thread was created; hand its first
+                // message to OttoChatStream, which streams it in on mount.
+                onThreadsChange([thread, ...threads]);
+                onActiveThreadChange(thread.id);
+                setPendingFirst({ threadId: thread.id, text: pending.text, goalKey: pending.goalKey });
+              }}
+            />
+          ) : ottoStreamEnabled ? (
+            <OttoChatStream
+              key={activeThread.id}
+              projectId={projectId}
+              entities={entities}
+              thread={activeThread}
+              balanceUsd={balanceUsd}
+              onRefresh={() => refreshThread(activeThread.id)}
+              onThreadUpdate={(updated) => {
+                onThreadsChange([updated, ...threads.filter((t) => t.id !== updated.id)]);
+              }}
+              onBalanceRefresh={onBalanceRefresh}
+              pendingFirst={
+                pendingFirst && pendingFirst.threadId === activeThread.id
+                  ? { text: pendingFirst.text, goalKey: pendingFirst.goalKey }
+                  : undefined
+              }
+              onPendingFirstSent={() => setPendingFirst(null)}
+            />
+          ) : (
+            <OttoConversation
+              projectId={projectId}
+              entities={entities}
+              thread={activeThread}
+              balanceUsd={balanceUsd}
+              onRefresh={() => refreshThread(activeThread.id)}
+              onThreadUpdate={(updated) => {
+                onThreadsChange([updated, ...threads.filter((t) => t.id !== updated.id)]);
+              }}
+              onBalanceRefresh={onBalanceRefresh}
+            />
+          )}
+        </div>
       </div>
       {/* Right pane: canvas */}
       <div style={{ flex: 1, minWidth: 0, position: "relative" }}>
