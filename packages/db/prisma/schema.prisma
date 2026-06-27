@@ -276,6 +276,9 @@ model Generation {
   //  无法表达条件唯一，故不在此声明 @@unique（旧的非部分索引已在迁移里 DROP）。
   @@index([assetId])
   @@index([ownerId, favorite, deletedAt])
+  // G5a: unified library keyset — newest-first over ALL of a project's generations
+  // (no threadId filter, unlike Generation_media_idx). Additive, no backfill.
+  @@index([ownerId, projectId, deletedAt, createdAt, id], map: "Generation_library_idx")
 }
 
 // ComfyUI 模板注册表（SOP v1.1 A3.5 文件版 registry.json 的站内镜像；
