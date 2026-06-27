@@ -116,10 +116,20 @@ export async function saveBrandKit(
       return { id: existing.id };
     } else {
       const id = newId();
-      await prisma.brandKit.create({
-        data: { id, ownerId, brandId, ...data },
-      });
-      return { id };
+      try {
+        await prisma.brandKit.create({ data: { id, ownerId, brandId, ...data } });
+        return { id };
+      } catch (e) {
+        // F5: lost the create race — a concurrent saveBrandKit won the unique index.
+        if (e && typeof e === "object" && (e as { code?: string }).code === "P2002") {
+          const raced = await prisma.brandKit.findFirst({ where: { ownerId, brandId }, select: { id: true } });
+          if (raced) {
+            await prisma.brandKit.update({ where: { id: raced.id }, data });
+            return { id: raced.id };
+          }
+        }
+        throw e;
+      }
     }
   } catch {
     return { error: "Couldn't save brand kit — please try again." };

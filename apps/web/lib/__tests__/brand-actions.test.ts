@@ -153,6 +153,19 @@ describe("saveBrandKit", () => {
       expect.objectContaining({ data: expect.objectContaining({ logoAssetId: "asset-mine" }) }),
     );
   });
+
+  it("falls back to update when create races a unique violation (P2002)", async () => {
+    mockAssetFindFirst.mockResolvedValue(null);
+    mockKitFindFirst
+      .mockResolvedValueOnce(null)            // first read: no existing
+      .mockResolvedValueOnce({ id: "k-race" }); // re-read after P2002: the racer's row
+    const p2002 = Object.assign(new Error("unique"), { code: "P2002" });
+    mockKitCreate.mockRejectedValue(p2002);
+    mockKitUpdate.mockResolvedValue({ id: "k-race" });
+    const res = await saveBrandKit({ name: "X" });
+    expect(res).toEqual({ id: "k-race" });
+    expect(mockKitUpdate).toHaveBeenCalled();
+  });
 });
 
 // ---------------------------------------------------------------------------

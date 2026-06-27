@@ -275,7 +275,6 @@ model Generation {
   //  AND deletedAt IS NULL）——只约束 LIVE 已附着行，让删除后的版本可被复用。Prisma
   //  无法表达条件唯一，故不在此声明 @@unique（旧的非部分索引已在迁移里 DROP）。
   @@index([assetId])
-  @@index([ownerId, favorite, deletedAt])
   // G5a: unified library keyset — newest-first over ALL of a project's generations
   // (no threadId filter, unlike Generation_media_idx). Additive, no backfill.
   @@index([ownerId, projectId, deletedAt, createdAt, id], map: "Generation_library_idx")
@@ -849,6 +848,8 @@ model BrandKit {
   createdAt     DateTime  @default(now())
   updatedAt     DateTime  @updatedAt
 
+  // F5: a raw UNIQUE INDEX on (ownerId, COALESCE(brandId,'')) lives in migration
+  // 20260628120000_review_fixes_indexes — dedups kits per owner+brand incl. brandId IS NULL.
   @@index([ownerId, brandId])
 }
 
