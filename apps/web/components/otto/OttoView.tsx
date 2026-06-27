@@ -11,6 +11,7 @@ import { OttoMemory } from "./OttoMemory";
 import { OttoAccount } from "./OttoAccount";
 import { OttoStuff, type AdTile } from "./OttoStuff";
 import { OttoOnboarding } from "./OttoOnboarding";
+import OttoLibrary from "./OttoLibrary";
 import type { AdJobItem } from "@/lib/data";
 import { getCoworkThreadClient } from "@/lib/cowork-fetch";
 import FlowCanvas from "../canvas/FlowCanvas";
@@ -88,6 +89,13 @@ export function OttoView({
     return (
       <div style={{ flex: 1, display: "flex", flexDirection: "column", overflow: "hidden" }}>
         <OttoStuff entities={entities} ads={ads} adJobs={adJobs} />
+      </div>
+    );
+  }
+  if (view === "library") {
+    return (
+      <div style={{ flex: 1, display: "flex", flexDirection: "column", overflow: "hidden" }}>
+        <OttoLibrary projectId={projectId} entities={entities} />
       </div>
     );
   }

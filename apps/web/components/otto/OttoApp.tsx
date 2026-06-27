@@ -41,7 +41,7 @@ export interface OttoAppProps {
   ottoStreamEnabled: boolean;
 }
 
-export type OttoViewKey = "otto" | "stuff" | "memory" | "account";
+export type OttoViewKey = "otto" | "stuff" | "library" | "memory" | "account";
 
 export function OttoApp({
   projectId,

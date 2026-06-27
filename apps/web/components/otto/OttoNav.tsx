@@ -62,10 +62,21 @@ function IconPlus() {
 const NAV_ITEMS: NavItem[] = [
   { key: "otto", label: "Otto", icon: <IconMessageCircle /> },
   { key: "stuff", label: "My stuff", icon: <IconFolderHeart /> },
+  { key: "library", label: "Library", icon: <IconLibrary /> },
   { key: "memory", label: "Brand memory", icon: <IconBrain /> },
   { key: "account", label: "Account", icon: <IconCircleUser /> },
 ];
 
+function IconLibrary() {
+  return (
+    <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden>
+      <rect x="3" y="3" width="7" height="7" rx="1" />
+      <rect x="14" y="3" width="7" height="7" rx="1" />
+      <rect x="3" y="14" width="7" height="7" rx="1" />
+      <rect x="14" y="14" width="7" height="7" rx="1" />
+    </svg>
+  );
+}
 function IconX() {
   return (
     <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round" aria-hidden>
