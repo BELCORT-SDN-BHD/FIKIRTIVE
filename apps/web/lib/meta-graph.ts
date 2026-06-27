@@ -4,8 +4,7 @@ import { META_GRAPH_VERSION } from "./meta-oauth";
 export async function metaGraphGet(token: string, path: string, params: Record<string, string>): Promise<any> {
   const u = new URL(`https://graph.facebook.com/${META_GRAPH_VERSION}/${path}`);
   for (const [k, v] of Object.entries(params)) u.searchParams.set(k, v);
-  u.searchParams.set("access_token", token);
-  const r = await fetch(u.toString());
+  const r = await fetch(u.toString(), { headers: { Authorization: `Bearer ${token}` } });
   const j = await r.json();
   if (!r.ok || j?.error) {
     const e = new Error(j?.error?.message || "graph error");

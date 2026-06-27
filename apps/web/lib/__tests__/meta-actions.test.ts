@@ -38,7 +38,7 @@ describe("completeMetaConnect", () => {
       .mockResolvedValueOnce(jsonRes({ access_token: "short" }))               // short-lived
       .mockResolvedValueOnce(jsonRes({ access_token: "LONGTOKEN", expires_in: 5184000 })); // long-lived
     mockUpsert.mockResolvedValue({ id: "mc-1" });
-    const res = await completeMetaConnect("u1", "the-code", "https://app/api/meta/callback");
+    const res = await completeMetaConnect("the-code", "https://app/api/meta/callback");
     expect(res).toEqual({ ok: true });
     const call = mockUpsert.mock.calls[0][0];
     expect(call.where).toEqual({ ownerId: "u1" });
@@ -49,7 +49,7 @@ describe("completeMetaConnect", () => {
   });
   it("returns an error when the exchange fails", async () => {
     mockFetch.mockResolvedValueOnce(jsonRes({ error: { message: "bad" } }, false));
-    expect(await completeMetaConnect("u1", "x", "https://app/cb")).toEqual({ error: "exchange" });
+    expect(await completeMetaConnect("x", "https://app/cb")).toEqual({ error: "exchange" });
     expect(mockUpsert).not.toHaveBeenCalled();
   });
 });

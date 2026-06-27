@@ -8,20 +8,21 @@ import { exchangeCodeForToken, metaGraphGet } from "./meta-graph";
 
 export type MetaAdAccount = { id: string; name: string; currency: string; status: string };
 
-/** Called by the callback route AFTER requireOwner + verifyState. Owner id is the SESSION owner. */
+/** Enforces auth itself; NEVER accept ownerId from the caller. */
 export async function completeMetaConnect(
-  ownerId: string,
   code: string,
   redirectUri: string,
 ): Promise<{ ok: true } | { error: string }> {
+  const gate = await requireOwner();
+  if ("error" in gate) return gate;
   const ex = await exchangeCodeForToken(code, redirectUri);
   if ("error" in ex) return ex;
   const enc = encryptToken(ex.token);
   const data = { accessTokenEnc: enc, tokenExpiresAt: ex.expiresAt, scope: "ads_read", status: "active" };
   await prisma.metaConnection.upsert({
-    where: { ownerId },
+    where: { ownerId: gate.ownerId },
     update: data,
-    create: { id: newId(), ownerId, ...data },
+    create: { id: newId(), ownerId: gate.ownerId, ...data },
   });
   return { ok: true };
 }
@@ -45,8 +46,11 @@ async function getMyAdAccounts(ownerId: string): Promise<{ accounts: MetaAdAccou
       status: String(a.account_status ?? ""),
     }));
     return { accounts };
-  } catch {
-    await prisma.metaConnection.update({ where: { ownerId }, data: { status: "expired" } }).catch(() => {});
+  } catch (e) {
+    const code = (e as { metaError?: { code?: number } })?.metaError?.code;
+    if (code === 190) {
+      await prisma.metaConnection.update({ where: { ownerId }, data: { status: "expired" } }).catch(() => {});
+    }
     return { needsReconnect: true };
   }
 }
