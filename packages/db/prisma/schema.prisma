@@ -234,7 +234,7 @@ model ShotEntityRef {
 }
 
 // 生成历史：不可变（永不物理删，deletedAt 仅作隐藏/候选区移除）。
-// 可变字段白名单：shotId, version, attachedAt, deletedAt —— 其余字段写入后冻结。
+// 可变字段白名单：shotId, version, attachedAt, deletedAt, favorite —— 其余字段写入后冻结。
 // E4-pre：prompt/模型/参数/实体引用分字段存储而非整段文本 —— 配方功能阶段二直接站上来。
 model Generation {
   id             String      @id
@@ -256,6 +256,7 @@ model Generation {
   threadId       String?   // set by the worker (= GenJob.threadId) when a cowork gen produced this; filters it out of candidate/asset/editor views
   // v1 additive: nullable soft-ref for GenerationBatch grouping (no FK, no backfill)
   batchId        String?
+  favorite       Boolean     @default(false)
   attachedAt     DateTime?
   createdAt      DateTime    @default(now())
   deletedAt      DateTime?
@@ -274,6 +275,7 @@ model Generation {
   //  AND deletedAt IS NULL）——只约束 LIVE 已附着行，让删除后的版本可被复用。Prisma
   //  无法表达条件唯一，故不在此声明 @@unique（旧的非部分索引已在迁移里 DROP）。
   @@index([assetId])
+  @@index([ownerId, favorite, deletedAt])
 }
 
 // ComfyUI 模板注册表（SOP v1.1 A3.5 文件版 registry.json 的站内镜像；
