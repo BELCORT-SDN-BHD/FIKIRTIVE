@@ -18,6 +18,7 @@ export default function FlowCanvas({ projectId, entities = [] }: { projectId: st
   const [nodes, setNodes] = useState<Node[]>([]);
   const [prompt, setPrompt] = useState("");
   const [promptIds, setPromptIds] = useState<string[]>([]); // @mentioned entity ids
+  const [variantSel, setVariantSel] = useState<Record<string, string>>({}); // entityId → variant from @mention chip
   // holds the generationId whose detail panel is open (null = closed)
   const [detailFor, setDetailFor] = useState<string | null>(null);
   // track node count to offset new node positions
@@ -115,6 +116,17 @@ export default function FlowCanvas({ projectId, entities = [] }: { projectId: st
   // keep animateFnRef current
   animateFnRef.current = animate;
 
+  // Shared submit handler — used by form onSubmit and MentionInput onSubmit
+  const handleGenerate = useCallback(() => {
+    if (!prompt.trim()) return;
+    const x = 80 + nodeCountRef.current * 340;
+    generateImage(prompt.trim(), { x, y: 80, w: 320, h: 320 }, promptIds, variantSel);
+    setPrompt("");
+    setPromptIds([]);
+    setVariantSel({});
+    setComposerKey((k) => k + 1);
+  }, [prompt, promptIds, variantSel, generateImage]);
+
   // Stop polls on unmount
   useEffect(() => () => { cancelledRef.current = true; }, [cancelledRef]);
 
@@ -187,32 +199,15 @@ export default function FlowCanvas({ projectId, entities = [] }: { projectId: st
       <form
         className="al-promptbar"
         style={{ position: "absolute", bottom: 16, left: "50%", transform: "translateX(-50%)", width: 560 }}
-        onSubmit={(e) => {
-          e.preventDefault();
-          if (prompt.trim()) {
-            const x = 80 + nodeCountRef.current * 340;
-            generateImage(prompt.trim(), { x, y: 80, w: 320, h: 320 }, promptIds);
-            setPrompt("");
-            setPromptIds([]);
-            setComposerKey((k) => k + 1);
-          }
-        }}
+        onSubmit={(e) => { e.preventDefault(); handleGenerate(); }}
       >
         <div className="al-input-wrap" style={{ flex: 1, minWidth: 0, border: "none", background: "none", padding: 0 }}>
           <MentionInput
             entities={entities}
             docKey={`canvas-${composerKey}`}
             placeholder="Type to imagine… (@ to reference elements)"
-            onChange={(t, ids) => { setPrompt(t); setPromptIds(ids); }}
-            onSubmit={() => {
-              if (prompt.trim()) {
-                const x = 80 + nodeCountRef.current * 340;
-                generateImage(prompt.trim(), { x, y: 80, w: 320, h: 320 }, promptIds);
-                setPrompt("");
-                setPromptIds([]);
-                setComposerKey((k) => k + 1);
-              }
-            }}
+            onChange={(t, ids, vsel) => { setPrompt(t); setPromptIds(ids); setVariantSel(vsel); }}
+            onSubmit={handleGenerate}
           />
         </div>
         <button className="al-btn al-btn-primary al-btn-sm" type="submit">Generate</button>
