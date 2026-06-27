@@ -576,6 +576,8 @@ model Organization {
   chatMessages            ChatMessage[]
   memories                Memory[]
   generationBatches       GenerationBatch[]
+  brandKits               BrandKit[]
+  brandRules              BrandRule[]
 }
 
 // User <-> Organization join, carrying the per-org role. role/status are code-validated
@@ -826,6 +828,40 @@ model Memory {
   deletedAt DateTime?
 
   @@index([ownerId, brandId, deletedAt])
+}
+
+// Brand Kit: structured brand metadata (colors, fonts, tone, style guide, logo) per owner/brand.
+// brandId is nullable — null = not yet scoped to an agency brand (mirrors Memory.brandId convention).
+model BrandKit {
+  id            String    @id
+  ownerId       String
+  organization  Organization @relation(fields: [ownerId], references: [id])
+  brandId       String?
+  name          String?
+  colorsJson    Json?     // { primary, secondary, accent, … } freeform JSON
+  fonts         String[]  // e.g. ["Inter", "Playfair Display"]
+  tone          String?   // e.g. "warm, conversational, approachable"
+  styleGuide    String?   // free-text style notes
+  logoAssetId   String?   // FK to Asset.id (optional, not enforced — asset may be deleted)
+  createdAt     DateTime  @default(now())
+  updatedAt     DateTime  @updatedAt
+
+  @@index([ownerId, brandId])
+}
+
+// Brand Rule: explicit always/never/tone/color constraints for Otto to follow.
+// kind ∈ { "always" | "never" | "tone" | "color" }
+model BrandRule {
+  id           String    @id
+  ownerId      String
+  organization Organization @relation(fields: [ownerId], references: [id])
+  brandId      String?
+  kind         String    // "always" | "never" | "tone" | "color"
+  text         String
+  active       Boolean   @default(true)
+  createdAt    DateTime  @default(now())
+
+  @@index([ownerId, brandId, active])
 }
 
 // Generation batch: groups multiple GenJob outputs into a single "batch" proposal
