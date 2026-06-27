@@ -105,6 +105,11 @@ export function OttoFrontDoor({
 }: OttoFrontDoorProps) {
   const [text, setText] = useState("");
   // Discover "Use in Otto": pre-fill the composer when a seed arrives (no auto-send).
+  // NOTE: this relies on the front door REMOUNTING per use — handleUseInOtto nulls
+  // activeThreadId, which toggles showFrontDoor and remounts this component, so the
+  // effect re-runs even when seedText is unchanged (repeat-use of the same idea). If the
+  // front door ever becomes persistently mounted (e.g. CSS-hidden or a stable key for
+  // draft persistence), switch seedText to a bumping nonce so repeat seeds still apply.
   useEffect(() => {
     if (seedText) setText(seedText);
   }, [seedText]);
