@@ -76,6 +76,18 @@ describe("completeMetaConnect", () => {
     expect(await completeMetaConnect("x", "https://app/cb")).toEqual({ error: "exchange" });
     expect(mockUpsert).not.toHaveBeenCalled();
   });
+  it("sets canWrite:false and scope:'' when debug_token fetch fails", async () => {
+    mockFetch
+      .mockResolvedValueOnce(jsonRes({ access_token: "short" }))
+      .mockResolvedValueOnce(jsonRes({ access_token: "LONGTOKEN", expires_in: 5184000 }))
+      .mockResolvedValueOnce(jsonRes({ error: { message: "invalid" } }, false)); // debug_token fails
+    mockUpsert.mockResolvedValue({ id: "mc-1" });
+    const res = await completeMetaConnect("the-code", "https://app/api/meta/callback");
+    expect(res).toEqual({ ok: true });
+    const call = mockUpsert.mock.calls[0][0];
+    expect(call.create.canWrite).toBe(false);
+    expect(call.create.scope).toBe("");
+  });
 });
 
 describe("getMetaConnection", () => {
@@ -110,7 +122,7 @@ describe("getMetaConnection", () => {
     mockFetch.mockResolvedValueOnce(jsonRes({ error: { message: "invalid token", code: 190 } }, false));
     mockUpdate.mockResolvedValue({});
     const res = await getMetaConnection();
-    expect(res).toEqual({ connected: true, status: "expired", needsReconnect: true });
+    expect(res).toEqual({ connected: true, status: "expired", needsReconnect: true, adsAutonomy: "ASK", canWrite: false, adsWritesPaused: false });
     expect(mockUpdate).toHaveBeenCalledWith(expect.objectContaining({ where: { ownerId: "u1" }, data: { status: "expired" } }));
   });
 });

@@ -20,7 +20,7 @@ export async function completeMetaConnect(
   if ("error" in ex) return ex;
   const enc = encryptToken(ex.token);
   const canWrite = ex.grantedScopes.includes("ads_management");
-  const scope = ex.grantedScopes.length > 0 ? ex.grantedScopes.join(",") : "ads_read";
+  const scope = ex.grantedScopes.length > 0 ? ex.grantedScopes.join(",") : "";
   const data = { accessTokenEnc: enc, tokenExpiresAt: ex.expiresAt, scope, canWrite, status: "active" as const };
   await prisma.metaConnection.upsert({
     where: { ownerId: gate.ownerId },
@@ -70,7 +70,7 @@ export async function getMetaConnection(): Promise<
   });
   if (!conn) return { connected: false };
   const res = await getMyAdAccounts(gate.ownerId);
-  if ("needsReconnect" in res) return { connected: true, status: "expired", needsReconnect: true };
+  if ("needsReconnect" in res) return { connected: true, status: "expired", needsReconnect: true, adsAutonomy: conn.adsAutonomy ?? "ASK", canWrite: conn.canWrite ?? false, adsWritesPaused: conn.adsWritesPaused ?? false };
   return {
     connected: true,
     status: conn.status,
