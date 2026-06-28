@@ -369,6 +369,13 @@ export async function approveAdBuild(
   await consumeApproval(cardId, payload, new Date().toISOString());
 
   const result = await runAdBuild(ownerId, cardId);
+  // Stamp buildOutcome onto the card so launchAdDraft can read it.
+  // Use record() so a stamp failure never masks the build result.
+  await record(ownerId, cardId, null, {
+    built: result.state === "done",
+    createdIds: result.createdIds,
+    state: result.state,
+  });
   return { ok: true, state: result.state, createdIds: result.createdIds };
 }
 

@@ -531,6 +531,60 @@ describe("approveAdBuild", () => {
     expect(updateData.payload.approval.consumedAt).toBeTruthy();
     vi.useRealTimers();
   });
+
+  it("valid done → stamps buildOutcome.built=true and state=done onto the card payload", async () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date(NOW));
+    mockConnFindUnique.mockResolvedValue(conn());
+    // card() is needed for both the approve gate findFirst and the record() re-read
+    mockMsgFindFirst.mockResolvedValue(card());
+
+    const res = await approveAdBuild("card-1");
+
+    expect(res).toMatchObject({ ok: true, state: "done" });
+
+    // record() does chatMessage.update with buildOutcome — find that update call.
+    // There may be two updates: consumeApproval (first) and record (second).
+    const buildOutcomeUpdate = mockMsgUpdate.mock.calls.find((c) => {
+      const payload = (c[0] as { data?: { payload?: { buildOutcome?: unknown } } })?.data?.payload;
+      return payload && "buildOutcome" in payload;
+    });
+    expect(buildOutcomeUpdate).toBeDefined();
+    const bo = (buildOutcomeUpdate![0] as { data: { payload: { buildOutcome: Record<string, unknown> } } }).data.payload.buildOutcome;
+    expect(bo.built).toBe(true);
+    expect(bo.state).toBe("done");
+    expect((bo.createdIds as Record<string, string>).adId).toBe("ad_1");
+    vi.useRealTimers();
+  });
+
+  it("partial outcome → stamps buildOutcome.built=false and state=partial", async () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date(NOW));
+    mockConnFindUnique.mockResolvedValue(conn());
+    mockMsgFindFirst.mockResolvedValue(card());
+    // Make adset throw so build ends up partial
+    mockGraphPost.mockImplementation(async (_t: string, path: string) => {
+      if (path.endsWith("/adcreatives")) return { id: "creative_1" };
+      if (path.endsWith("/campaigns")) return { id: "campaign_1" };
+      if (path.endsWith("/adsets")) throw new Error("Meta: adset rejected");
+      if (path.endsWith("/ads")) return { id: "ad_1" };
+      return { id: "x" };
+    });
+
+    const res = await approveAdBuild("card-1");
+
+    expect(res).toMatchObject({ ok: true, state: "partial" });
+
+    const buildOutcomeUpdate = mockMsgUpdate.mock.calls.find((c) => {
+      const payload = (c[0] as { data?: { payload?: { buildOutcome?: unknown } } })?.data?.payload;
+      return payload && "buildOutcome" in payload;
+    });
+    expect(buildOutcomeUpdate).toBeDefined();
+    const bo = (buildOutcomeUpdate![0] as { data: { payload: { buildOutcome: Record<string, unknown> } } }).data.payload.buildOutcome;
+    expect(bo.built).toBe(false);
+    expect(bo.state).toBe("partial");
+    vi.useRealTimers();
+  });
 });
 
 // ════════════════════════════════════════════════════════════════════════════

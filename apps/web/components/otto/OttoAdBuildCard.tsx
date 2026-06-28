@@ -192,7 +192,7 @@ export function OttoAdBuildCard({ cardId, payload }: OttoAdBuildCardProps) {
               <span style={{ overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{p.creative.link}</span>
             </div>
             <span style={{ fontSize: "var(--text-xs)", color: "var(--text-faint)" }}>
-              {p.creative.kind} asset · {p.creative.assetId.slice(0, 12)}…
+              {p.creative.kind} asset · {(p.creative.assetId ?? "").slice(0, 12)}…
             </span>
           </div>
         )}
