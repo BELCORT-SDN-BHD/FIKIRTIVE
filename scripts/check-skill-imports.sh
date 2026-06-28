@@ -6,11 +6,11 @@
 set -uo pipefail
 DIR="packages/otto/src/skills"
 
-hard=$(grep -rnE "from \"@fikirtive/generation\"|reserveCredits" "$DIR" --include='*.ts' 2>/dev/null \
+hard=$(grep -rnE "from \"@fikirtive/generation\"|reserveCredits|meta-graph|metaGraphPost" "$DIR" --include='*.ts' 2>/dev/null \
   | grep -v '\.test\.ts' | grep -vE ':\s*(\*|//)' || true)
 
 if [ -n "$hard" ]; then
-  echo "FAIL: skills/ must not import the fal provider or reserveCredits — route spend through a ctx port:"
+  echo "FAIL: skills/ must not import the fal provider, reserveCredits, or the Meta Graph client — route spend through a ctx port:"
   echo "$hard"
   exit 1
 fi

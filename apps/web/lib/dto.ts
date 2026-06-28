@@ -84,11 +84,24 @@ export function toChatMessageDTO(
     };
   } else if (m.kind === "PLAN" && m.payload) {
     payload = m.payload; // { planSteps }
+  } else if (m.kind === "ACTION_CARD" && m.payload) {
+    // FIX G: send a CLIENT-SAFE payload — strip approval internals (boundActor = internal ownerId,
+    // and paramHash) that the browser never needs. The card only renders planTitle/steps/spend/
+    // autoEligible/autoOutcome, plus approval.expiresAt|consumedAt for display. The server-side
+    // payload in the DB stays intact; only this DTO sent to the client is stripped.
+    const p = m.payload as Record<string, unknown>;
+    const approval = (p.approval ?? null) as Record<string, unknown> | null;
+    payload = {
+      ...p,
+      ...(approval
+        ? { approval: { expiresAt: approval.expiresAt, consumedAt: approval.consumedAt } }
+        : {}),
+    };
   }
   return {
     id: m.id,
     role: m.role as "USER" | "AGENT",
-    kind: m.kind as "TEXT" | "PLAN" | "GEN_CARD" | "GEN_RESULT" | "DENIAL" | "TURN_ERROR",
+    kind: m.kind as "TEXT" | "PLAN" | "GEN_CARD" | "GEN_RESULT" | "DENIAL" | "TURN_ERROR" | "ACTION_CARD",
     seq: m.seq,
     text: m.text,
     payload,

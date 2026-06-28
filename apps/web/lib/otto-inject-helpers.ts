@@ -18,6 +18,8 @@
 import type { OttoUiMessage } from "./otto-ui-messages";
 import { threadToUiMessages } from "./otto-ui-messages";
 import type { ChatThreadDTO } from "./types";
+import type { MetaActionStep } from "./meta-plan-card";
+import type { StepResultStatus } from "./meta-write-actions";
 
 /** The genJobIds that already have a durable GEN_RESULT — so we never double-render
  *  a result for a job whose card also shows "✓ making this now". */
@@ -131,6 +133,40 @@ export function syncCardJobIds(messages: OttoUiMessage[], fresh: ChatThreadDTO):
   });
 
   return changed ? patched : messages;
+}
+
+export type ActionState = "pending" | "executing" | "done" | "partial" | "failed";
+
+/**
+ * Derive the display state of an ACTION_CARD's multi-step execution from its
+ * MetaActionExecution rows. Mirrors the `aggregate` function inside
+ * meta-write-actions.ts (which sets `RunResult.state`), extended to cover the
+ * in-flight (APPLYING/PENDING) cases the durable RunResult never sees.
+ *
+ * - pending   — no executions have been created yet (plan not yet approved/auto-run).
+ * - executing — at least one step is APPLYING (in-flight) or PENDING (queued).
+ * - done      — every step resolved as APPLIED or SKIPPED.
+ * - partial   — at least one APPLIED/SKIPPED AND at least one FAILED/DIVERGED/NEEDS_CONFIRM.
+ * - failed    — no APPLIED/SKIPPED at all, and at least one terminal non-ok status.
+ */
+export function deriveActionState(
+  steps: MetaActionStep[],
+  executions: Array<{ stepIndex: number; status: string }>,
+): ActionState {
+  if (executions.length === 0) return "pending";
+
+  const statuses = executions.map((e) => e.status as StepResultStatus | "APPLYING" | "PENDING");
+
+  const anyExecuting = statuses.some((s) => s === "APPLYING" || s === "PENDING");
+  if (anyExecuting) return "executing";
+
+  const anyOk = statuses.some((s) => s === "APPLIED" || s === "SKIPPED");
+  const allOk = statuses.every((s) => s === "APPLIED" || s === "SKIPPED") &&
+    statuses.length === steps.length;
+
+  if (allOk) return "done";
+  if (anyOk) return "partial";
+  return "failed";
 }
 
 /**

@@ -5,7 +5,12 @@
 |---|---|---|---|---|---|
 | describeRefs | free | read | internal | ❌ | Cache visual descriptions of reference images shown to you this turn. For each r |
 | generate | spend | write | internal | ✅ | Execute a generation proposal (GEN_CARD) that the user has approved. This SPENDS |
+| meta-insights | free | read | external | ❌ | Read the user's connected Meta (Facebook/Instagram) ad-account performance (spen |
+| meta-list-objects | free | read | external | ❌ | List the user's connected Meta (Facebook/Instagram) ad objects (campaigns, ad se |
 | propose | free | write | internal | ❌ | Build a generation proposal (GEN_CARD) the user can approve and generate later.  |
+| propose-meta-action | free | write | internal | ❌ | Build a Meta ad action plan (ACTION_CARD) the user can review and confirm. Use t |
+| proposePack | free | write | internal | ❌ | Lay out a coherent set of generation proposals (a campaign pack) in one turn. Us |
 | rememberBrandFact | free | write | internal | ❌ | Save ONE durable fact about the user's brand to Brand Memory (their voice, audie |
+| researchWeb | free | read | external | ❌ | Fetch a public web page or search the web to ground your response in real inform |
 | setTitle | free | write | internal | ❌ | Set a concise ≤6-word title for the current conversation. Call once early in a n |
 | updateBrief | free | write | internal | ❌ | Refine the project's creative brief with durable creative direction (tone, visua |

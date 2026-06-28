@@ -9,6 +9,8 @@ import { setTitleSkill } from "./skills/set-title.js";
 import { rememberBrandFactSkill } from "./skills/remember-brand-fact.js";
 import { researchWebSkill } from "./skills/research-web.js";
 import { metaInsightsSkill } from "./skills/meta-insights.js";
+import { metaListObjectsSkill } from "./skills/meta-list-objects.js";
+import { proposeMetaActionSkill } from "./skills/propose-meta-action.js";
 
 /** Add a new skill here (one line). Order is the agent's tool order. */
 export const allSkills: OttoSkill[] = [
@@ -21,6 +23,8 @@ export const allSkills: OttoSkill[] = [
   rememberBrandFactSkill,
   researchWebSkill,
   metaInsightsSkill,
+  metaListObjectsSkill,
+  proposeMetaActionSkill,
 ];
 
 export interface SkillMeta {

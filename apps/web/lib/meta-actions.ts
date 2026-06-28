@@ -19,11 +19,13 @@ export async function completeMetaConnect(
   const ex = await exchangeCodeForToken(code, redirectUri);
   if ("error" in ex) return ex;
   const enc = encryptToken(ex.token);
-  const data = { accessTokenEnc: enc, tokenExpiresAt: ex.expiresAt, scope: "ads_read", status: "active" };
+  const canWrite = ex.grantedScopes.includes("ads_management");
+  const scope = ex.grantedScopes.length > 0 ? ex.grantedScopes.join(",") : "";
+  const data = { accessTokenEnc: enc, tokenExpiresAt: ex.expiresAt, scope, canWrite, status: "active" as const };
   await prisma.metaConnection.upsert({
     where: { ownerId: gate.ownerId },
     update: data,
-    create: { id: newId(), ownerId: gate.ownerId, ...data },
+    create: { id: newId(), ownerId: gate.ownerId, adsAutonomy: "ASK" as const, ...data },
   });
   return { ok: true };
 }
@@ -57,15 +59,26 @@ async function getMyAdAccounts(ownerId: string): Promise<{ accounts: MetaAdAccou
 }
 
 export async function getMetaConnection(): Promise<
-  { connected: boolean; status?: string; accounts?: MetaAdAccount[]; needsReconnect?: boolean } | { error: string }
+  | { connected: boolean; status?: string; adsAutonomy?: string; canWrite?: boolean; adsWritesPaused?: boolean; accounts?: MetaAdAccount[]; needsReconnect?: boolean }
+  | { error: string }
 > {
   const gate = await requireOwner();
   if ("error" in gate) return gate;
-  const conn = await prisma.metaConnection.findUnique({ where: { ownerId: gate.ownerId }, select: { status: true } });
+  const conn = await prisma.metaConnection.findUnique({
+    where: { ownerId: gate.ownerId },
+    select: { status: true, adsAutonomy: true, canWrite: true, adsWritesPaused: true },
+  });
   if (!conn) return { connected: false };
   const res = await getMyAdAccounts(gate.ownerId);
-  if ("needsReconnect" in res) return { connected: true, status: "expired", needsReconnect: true };
-  return { connected: true, status: conn.status, accounts: res.accounts };
+  if ("needsReconnect" in res) return { connected: true, status: "expired", needsReconnect: true, adsAutonomy: conn.adsAutonomy ?? "ASK", canWrite: conn.canWrite ?? false, adsWritesPaused: conn.adsWritesPaused ?? false };
+  return {
+    connected: true,
+    status: conn.status,
+    adsAutonomy: conn.adsAutonomy,
+    canWrite: conn.canWrite,
+    adsWritesPaused: conn.adsWritesPaused,
+    accounts: res.accounts,
+  };
 }
 
 export async function disconnectMeta(): Promise<{ ok: true } | { error: string }> {
