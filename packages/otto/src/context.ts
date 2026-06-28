@@ -97,4 +97,47 @@ export interface OttoContext {
     | { unknownTargets: string[] }
     | { invalidSteps: Array<{ targetId: string; reason: string }> }
   >;
+  /** Meta build port (G7 v2) — injected by the web caller; builds + persists a BUILD_CARD
+   *  ChatMessage from the LLM-proposed ad build strategy. Skills reach it ONLY via ctx.metaBuild,
+   *  never importing meta-build-propose.ts or prisma directly (CI fence rule).
+   *  Input/result shape re-declared structurally here — NO web import. */
+  metaBuild?: {
+    propose(input: {
+      goal: string;
+      reasoning: string;
+      mode: "create" | "into_existing";
+      objective: string;
+      pageId: string;
+      targetingHint?: {
+        countries?: string[];
+        cities?: string[];
+        ageMin?: number;
+        ageMax?: number;
+        interests?: string[];
+      };
+      dailyBudgetMinor: number;
+      startTime?: string;
+      creative: {
+        assetId: string;
+        kind: "image" | "video";
+        message: string;
+        headline?: string;
+        cta: string;
+        link: string;
+      };
+      intoExisting?: { adsetId: string };
+    }): Promise<
+      | { cardId: string; autoBuilt: boolean }
+      | { notConnected: true }
+      | { needsReconnect: true }
+      | { needsPageScope: true }
+      | { invalid: Array<{ field: string; reason: string }> }
+    >;
+  };
+  /** Brand brain port (G3b) — injected by the web caller; returns the compiled brand context
+   *  text for the current owner. Skills reach it ONLY via ctx.brandBrain — never importing
+   *  memory-actions.ts directly (CI fence rule). */
+  brandBrain?: {
+    context(): Promise<string>;
+  };
 }
