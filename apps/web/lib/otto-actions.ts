@@ -42,6 +42,7 @@ import { startGen } from "./gen-actions";
 import { getBrandContextText } from "./memory-actions";
 import { fetchAndExtract } from "./brand-research";
 import { fetchOwnerInsights } from "./meta-insights";
+import { fetchOwnerAdObjects } from "./meta-objects";
 
 // mapOttoUsage re-exported from @fikirtive/otto so existing callers that import
 // it from this module continue to work (the canonical source is @fikirtive/otto).
@@ -147,6 +148,7 @@ export async function buildOttoContext({
     availableRefs,
     simpleMode: simpleMode ?? false,
     activeJob,
+    metaAds: { list: () => fetchOwnerAdObjects(ownerId) },
     metaInsights: { get: (datePreset: string) => fetchOwnerInsights(ownerId, datePreset) },
     research: {
       fetchUrl: fetchAndExtract,

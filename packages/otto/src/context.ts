@@ -1,5 +1,20 @@
 import type { GenRequestInput } from "@fikirtive/core";
 
+/** Minimal structural re-declaration of MetaAdObject for the otto package.
+ *  The web type (apps/web/lib/meta-objects.ts) must NOT be imported here. */
+export type MetaAdObject = {
+  id: string;
+  level: "campaign" | "adset" | "ad";
+  name: string;
+  status: string;
+  dailyBudgetMinor?: number;
+  lifetimeBudgetMinor?: number;
+  startTime?: string;
+  endTime?: string;
+  currency: string;
+  accountId: string;
+};
+
 /** Per-run context the caller (web route / worker) supplies to `run(otto, input, { context })`.
  *  It is re-derived FRESH every run from the verified session — it is NOT persisted in RunState,
  *  so identity/config can never go stale. Tools read identity/scope from HERE, never from model args. */
@@ -31,6 +46,11 @@ export interface OttoContext {
   /** The latest generation's status for THIS thread (best-effort), so Otto speaks truthfully
    *  about progress instead of guessing. Null/undefined = unknown. */
   activeJob?: { status: string; kind: string; error?: string | null } | null;
+  /** Meta ad objects port (G7) — injected by the web caller; lists the owner's connected ad objects
+   *  (campaigns, ad sets, ads). Skills reach it ONLY via ctx.metaAds, never importing meta-objects.ts. */
+  metaAds?: {
+    list(): Promise<{ objects: MetaAdObject[] } | { needsReconnect: true } | { notConnected: true }>;
+  };
   /** Meta analytics port (G6b) — injected by the web caller; reads the owner's connected ad-account
    *  performance. Skills reach it ONLY via ctx.metaInsights, never importing meta-insights.ts. */
   metaInsights?: {
