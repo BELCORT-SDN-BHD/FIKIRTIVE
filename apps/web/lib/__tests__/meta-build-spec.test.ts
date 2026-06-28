@@ -231,7 +231,7 @@ describe("buildAdBuildCard", () => {
     const input: AdBuildInput = {
       ...VALID_INPUT,
       mode: "into_existing",
-      intoExisting: {},
+      intoExisting: {} as { adsetId: string },
     };
     const ctx = { ...VALID_CTX, adsetValid: true };
     expect(() => buildAdBuildCard(input, ctx, ACTOR, NOW_ISO)).toThrow(
