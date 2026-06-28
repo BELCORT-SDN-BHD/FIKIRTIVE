@@ -768,6 +768,13 @@ enum ChatMessageKind {
   GEN_RESULT
   DENIAL
   TURN_ERROR
+  ACTION_CARD
+}
+
+// G7: per-org autonomy mode for Otto's ad-write operations
+enum AdsAutonomy {
+  ASK
+  AUTO
 }
 
 model ChatThread {
@@ -982,6 +989,20 @@ model MetaConnection {
   tokenExpiresAt DateTime?
   scope          String       // "ads_read"
   status         String       @default("active") // "active" | "expired"
+  adsAutonomy    AdsAutonomy  @default(ASK)      // per-org Ask/Auto; lost on disconnect → resets to ASK
+  adsWritesPaused Boolean     @default(false)    // kill-switch: when true, executor refuses all writes
+  canWrite       Boolean      @default(false)    // true only if Meta actually granted ads_management
   createdAt      DateTime     @default(now())
   updatedAt      DateTime     @updatedAt
+}
+
+// G7: idempotency table for Otto ad-write steps. One row per (owner, card, step).
+model MetaActionExecution {
+  id           String   @id
+  ownerId      String
+  cardId       String
+  stepIndex    Int
+  status       String   // PENDING | APPLYING | APPLIED | FAILED
+  appliedValue Json?
+  createdAt    DateTime @default(now())
 }
