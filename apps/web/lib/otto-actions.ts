@@ -41,6 +41,7 @@ import { resolveDisabledModels } from "./model-registry";
 import { startGen } from "./gen-actions";
 import { getBrandContextText } from "./memory-actions";
 import { fetchAndExtract } from "./brand-research";
+import { fetchOwnerInsights } from "./meta-insights";
 
 // mapOttoUsage re-exported from @fikirtive/otto so existing callers that import
 // it from this module continue to work (the canonical source is @fikirtive/otto).
@@ -146,6 +147,7 @@ export async function buildOttoContext({
     availableRefs,
     simpleMode: simpleMode ?? false,
     activeJob,
+    metaInsights: { get: (datePreset: string) => fetchOwnerInsights(ownerId, datePreset) },
     research: {
       fetchUrl: fetchAndExtract,
       // TODO(G3): wire a web-search API transport (needs a key)

@@ -31,6 +31,15 @@ export interface OttoContext {
   /** The latest generation's status for THIS thread (best-effort), so Otto speaks truthfully
    *  about progress instead of guessing. Null/undefined = unknown. */
   activeJob?: { status: string; kind: string; error?: string | null } | null;
+  /** Meta analytics port (G6b) — injected by the web caller; reads the owner's connected ad-account
+   *  performance. Skills reach it ONLY via ctx.metaInsights, never importing meta-insights.ts. */
+  metaInsights?: {
+    get(datePreset: string): Promise<
+      | { accounts: { accountId: string; name: string; metrics: Record<string, string | null> }[] }
+      | { needsReconnect: true }
+      | { notConnected: true }
+    >;
+  };
   /** Web-research port — injected by the web/worker caller (G3a). Skills use this to fetch
    *  pages or (when wired) search the web. Never imported directly inside skills/. */
   research?: {
