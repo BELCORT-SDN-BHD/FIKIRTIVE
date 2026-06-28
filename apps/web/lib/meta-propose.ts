@@ -24,6 +24,7 @@ export async function proposeMetaActionForOwner(
   | { notConnected: true }
   | { needsReconnect: true }
   | { unknownTargets: string[] }
+  | { invalidSteps: Array<{ targetId: string; reason: string }> }
 > {
   // 1. Fetch the owner's ad objects (validates Meta connection + decrypts token server-side)
   const objectsResult = await fetchOwnerAdObjects(ownerId);
@@ -37,6 +38,27 @@ export async function proposeMetaActionForOwner(
     .map((s) => s.targetId)
     .filter((id) => !knownIds.has(id));
   if (unknownTargets.length > 0) return { unknownTargets };
+
+  // 2b. MONEY-SAFETY (FIX A): a set_budget step is VALID only if BOTH the intent carries a
+  //     positive dailyBudgetMinor AND the target currently HAS a positive daily budget (i.e. it
+  //     is a daily-budget adset/campaign — never an ad, never a lifetime-budget object). REJECT
+  //     anything else — do NOT clamp it to a money-safe budget_down that auto-zeroes the budget.
+  const byId = new Map(objects.map((o) => [o.id, o] as const));
+  const invalidSteps: Array<{ targetId: string; reason: string }> = [];
+  for (const s of input.steps) {
+    if (s.op !== "set_budget") continue;
+    const amount = s.intent.dailyBudgetMinor;
+    if (typeof amount !== "number" || !(amount > 0)) {
+      invalidSteps.push({ targetId: s.targetId, reason: "missing-amount" });
+      continue;
+    }
+    const obj = byId.get(s.targetId);
+    const current = obj?.dailyBudgetMinor;
+    if (typeof current !== "number" || !(current > 0)) {
+      invalidSteps.push({ targetId: s.targetId, reason: "not-a-daily-budget-object" });
+    }
+  }
+  if (invalidSteps.length > 0) return { invalidSteps };
 
   // 3. Read adsAutonomy from MetaConnection (default ASK)
   const conn = await prisma.metaConnection.findUnique({
@@ -77,15 +99,40 @@ export async function proposeMetaActionForOwner(
   //    already persisted above, so the proposal always survives a throw from maybeAutoRun.
   if (payload.autoEligible) {
     let autoRan = false;
+    // FIX D: record the REAL auto outcome on the persisted card so the UI doesn't claim "handled
+    // automatically" when the auto-run was actually refused/failed. Default to a refusal; overwrite
+    // on a real run. A throw (e.g. kill-switch inside the executor) leaves the refusal outcome.
+    let outcome: { ran: boolean; state?: "done" | "partial" | "failed"; reason?: string } = {
+      ran: false,
+      reason: "error",
+    };
     try {
       const auto = await maybeAutoRun(ownerId, cardId);
       autoRan = auto.ran;
+      outcome = auto.ran
+        ? { ran: true, state: auto.state }
+        : { ran: false, reason: auto.reason };
     } catch (err) {
       console.warn(
         `proposeMetaActionForOwner: maybeAutoRun threw (cardId=${cardId}); degrading to pending proposal.`,
         err instanceof Error ? err.message : err,
       );
     }
+    // Patch the persisted card payload with autoOutcome (mirrors how consumeApproval patches it).
+    // maybeAutoRun may have stamped consumedAt; re-read so we don't clobber it.
+    const fresh = await prisma.chatMessage.findFirst({
+      where: { id: cardId, ownerId, kind: "ACTION_CARD" },
+      select: { payload: true },
+    });
+    const freshPayload = (fresh?.payload as object | null) ?? payload;
+    await prisma.chatMessage
+      .update({
+        where: { id: cardId },
+        data: { payload: { ...freshPayload, autoOutcome: outcome } as unknown as Prisma.InputJsonObject },
+      })
+      .catch((err) => {
+        console.warn(`proposeMetaActionForOwner: autoOutcome patch failed (cardId=${cardId}).`, err);
+      });
     return { cardId, autoEligible: true, autoRan };
   }
 

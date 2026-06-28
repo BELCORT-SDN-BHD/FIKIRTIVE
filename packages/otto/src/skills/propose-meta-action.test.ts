@@ -26,6 +26,24 @@ it("unknownTargets → friendly 'couldn't find' message, not a thrown error", as
   expect(JSON.stringify(res)).toMatch(/find|NOPE/i);
 });
 
+it("invalidSteps (missing-amount) → friendly 'need a daily budget amount' message", async () => {
+  const ctx = { metaPropose: async () => ({ invalidSteps: [{ targetId: "s1", reason: "missing-amount" }] }) };
+  const res: any = await executeProposeMetaAction(
+    { planTitle: "p", steps: [{ op: "set_budget", targetId: "s1", intent: {} }] },
+    { context: ctx as any },
+  );
+  expect(JSON.stringify(res)).toMatch(/budget amount/i);
+});
+
+it("invalidSteps (not-a-daily-budget-object) → friendly 'can't set a budget' message", async () => {
+  const ctx = { metaPropose: async () => ({ invalidSteps: [{ targetId: "a1", reason: "not-a-daily-budget-object" }] }) };
+  const res: any = await executeProposeMetaAction(
+    { planTitle: "p", steps: [{ op: "set_budget", targetId: "a1", intent: { dailyBudgetMinor: 2000 } }] },
+    { context: ctx as any },
+  );
+  expect(JSON.stringify(res)).toMatch(/can't set a daily budget|isn't a daily-budget/i);
+});
+
 it("input zod schema has no currentValue/moneyClass/approval keys (LLM can't set them)", () => {
   // Structurally verify the LLM-facing input schema exposes ONLY planTitle + steps.
   // moneyClass, currentValue, and approval are server-computed; the LLM must never set them.

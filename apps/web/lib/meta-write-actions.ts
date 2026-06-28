@@ -127,6 +127,23 @@ function bodyFor(step: MetaActionStep): Record<string, string | number> {
 }
 
 /**
+ * Is a live effective_status a "not-active" (paused-equivalent) state? Meta returns rollup values
+ * — CAMPAIGN_PAUSED / ADSET_PAUSED / PAUSED for paused, plus ARCHIVED / DELETED which are also not
+ * active — so a literal `=== "PAUSED"` comparison wrongly fails for a successfully-paused nested
+ * object. Normalize: anything containing PAUSED / ARCHIVED / DELETED is treated as paused/not-active.
+ */
+function isPausedStatus(status: string | undefined): boolean {
+  if (!status) return false;
+  const s = status.toUpperCase();
+  return s.includes("PAUSED") || s.includes("ARCHIVED") || s.includes("DELETED");
+}
+
+/** Is a live effective_status an active state? Meta returns "ACTIVE" for active. */
+function isActiveStatus(status: string | undefined): boolean {
+  return status?.toUpperCase() === "ACTIVE";
+}
+
+/**
  * Does the live state ALREADY equal what this step intended to write? Used to reconcile a
  * MAYBE-APPLIED (APPLYING) row left by a prior crash: if reality already matches the
  * target, the earlier write landed → idempotent, treat as applied. Otherwise ambiguous.
@@ -134,9 +151,9 @@ function bodyFor(step: MetaActionStep): Record<string, string | number> {
 function liveMatchesTarget(step: MetaActionStep, live: LiveObject): boolean {
   switch (step.op) {
     case "pause":
-      return live.status === "PAUSED";
+      return isPausedStatus(live.status);
     case "resume":
-      return live.status === "ACTIVE";
+      return isActiveStatus(live.status);
     case "budget_up":
     case "budget_down": {
       if (step.targetValue.lifetimeBudgetMinor != null) {
@@ -395,6 +412,18 @@ export async function approveMetaActionPlan(
     return { error: `This plan can't be approved (${verdict.reason}). Ask Otto to propose it again.` };
   }
 
+  // Kill-switch / canWrite gate BEFORE consuming the single-use approval. runApprovedPlan throws
+  // KILL_SWITCH when adsWritesPaused — if we consumed first, that throw would burn the approval
+  // forever (card un-approvable, nothing executed). Check it up front so the approval survives.
+  // (runApprovedPlan keeps its own check — defense in depth.)
+  const conn = await prisma.metaConnection.findUnique({ where: { ownerId } });
+  if (!conn || conn.canWrite !== true) {
+    return { error: "Meta isn't connected for ad changes — reconnect and try again." };
+  }
+  if (conn.adsWritesPaused === true) {
+    return { error: "Ad changes are paused (kill-switch on). Turn it off in Connections and try again." };
+  }
+
   // Single-use: stamp consumedAt and persist BEFORE executing. A concurrent/duplicate approve
   // now re-reads a consumed approval (verifyApproval → "consumed") and is refused.
   // Note: consumeApproval is best-effort (read-check-write, not atomic); the per-step
@@ -418,23 +447,29 @@ export async function approveMetaActionPlan(
 export async function maybeAutoRun(
   ownerId: string,
   cardId: string,
-): Promise<{ ran: false } | { ran: true; ok: true; state: RunResult["state"]; results: StepResult[] }> {
+): Promise<{ ran: false; reason?: string } | { ran: true; ok: true; state: RunResult["state"]; results: StepResult[] }> {
   const message = await prisma.chatMessage.findFirst({
     where: { id: cardId, ownerId, kind: "ACTION_CARD" },
   });
-  if (!message || !message.payload) return { ran: false };
+  if (!message || !message.payload) return { ran: false, reason: "missing-card" };
   const payload = message.payload as unknown as MetaActionCardPayload;
-  if (payload.autoEligible !== true) return { ran: false };
+  if (payload.autoEligible !== true) return { ran: false, reason: "not-auto-eligible" };
 
   // Re-derive server-side — do NOT trust the stored autoEligible alone.
   const conn = await prisma.metaConnection.findUnique({
     where: { ownerId },
-    select: { adsAutonomy: true },
+    select: { adsAutonomy: true, adsWritesPaused: true, canWrite: true },
   });
   const mode = conn?.adsAutonomy ?? "ASK";
-  if (mode !== "AUTO") return { ran: false };
+  if (mode !== "AUTO") return { ran: false, reason: "mode-ask" };
   const everyStepAuto = payload.steps.every((s) => policyDecision(mode, s.moneyClass) === "auto");
-  if (!everyStepAuto) return { ran: false }; // a spend step is never auto here
+  if (!everyStepAuto) return { ran: false, reason: "spend-step" }; // a spend step is never auto here
+
+  // Kill-switch / canWrite BEFORE consuming the single-use approval (FIX C). runApprovedPlan would
+  // throw KILL_SWITCH when paused — consuming first would burn the approval. Check up front so the
+  // card stays a normal pending proposal the user can approve manually once un-paused.
+  if (!conn || conn.canWrite !== true) return { ran: false, reason: "cannot-write" };
+  if (conn.adsWritesPaused === true) return { ran: false, reason: "kill-switch" };
 
   await consumeApproval(cardId, ownerId, payload, new Date().toISOString());
 

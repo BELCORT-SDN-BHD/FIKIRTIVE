@@ -74,6 +74,17 @@ export async function executeProposeMetaAction(
     };
   }
 
+  if ("invalidSteps" in res) {
+    // A set_budget step was rejected (money-safety): either no positive amount was given, or the
+    // target isn't a daily-budget object (an ad, or a lifetime-budget campaign/ad set).
+    const needsAmount = res.invalidSteps.some((s) => s.reason === "missing-amount");
+    const wrongTarget = res.invalidSteps.some((s) => s.reason === "not-a-daily-budget-object");
+    const parts: string[] = [];
+    if (needsAmount) parts.push("I need a positive daily budget amount to change that ad set's budget.");
+    if (wrongTarget) parts.push("I can't set a daily budget on that object — it isn't a daily-budget ad set or campaign.");
+    return { message: parts.join(" ") || "I couldn't set a budget on one of those targets." };
+  }
+
   return {
     message: `Plan "${input.planTitle}" prepared and ready for review (card id: ${res.cardId}).${res.autoEligible ? " This plan is eligible for auto-execution." : ""}`,
     cardId: res.cardId,

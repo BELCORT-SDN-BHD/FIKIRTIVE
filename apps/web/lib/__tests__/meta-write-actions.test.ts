@@ -257,6 +257,21 @@ describe("runApprovedPlan — MAYBE-APPLIED reconcile", () => {
     expect(res.state).toBe("done");
     expect(mockGraphPost).not.toHaveBeenCalled();
   });
+
+  // ── FIX F: Meta returns rollup effective_status (CAMPAIGN_PAUSED/ADSET_PAUSED/…) not "PAUSED" ──
+  it("APPLYING pause + live effective_status='CAMPAIGN_PAUSED' → reconciled APPLIED (SKIPPED), no re-post", async () => {
+    mockConnFindUnique.mockResolvedValue(conn());
+    mockMsgFindFirst.mockResolvedValue(card([pauseStep]));
+    mockExecFindFirst.mockResolvedValue({ id: "x", status: "APPLYING", stepIndex: 0 });
+    // a successfully-paused nested object reports the rollup value, not the literal "PAUSED"
+    mockGraphGet.mockResolvedValue({ id: "act_1_camp_9", effective_status: "CAMPAIGN_PAUSED" });
+
+    const res = await runApprovedPlan("u1", "card-1");
+
+    expect(res.results[0].status).toBe("SKIPPED"); // treated as already-applied (idempotent)
+    expect(res.state).toBe("done");
+    expect(mockGraphPost).not.toHaveBeenCalled();
+  });
 });
 
 describe("runApprovedPlan — duplicate-insert race", () => {
@@ -440,6 +455,68 @@ describe("approveMetaActionPlan — valid approval consumes + runs once", () => 
     expect(res).toEqual(expect.objectContaining({ ok: true }));
     expect(mockGraphPost).toHaveBeenCalledTimes(1);
     expect(mockGraphPost).toHaveBeenCalledWith("LIVE-TOKEN", "act_1_camp_9", { daily_budget: 10000 });
+  });
+});
+
+// ── FIX C: kill-switch / canWrite must be checked BEFORE consuming the single-use approval ──
+describe("approveMetaActionPlan — kill-switch checked BEFORE consume", () => {
+  it("kill-switch ON → refusal, approval NOT consumed, runApprovedPlan NOT called", async () => {
+    mockConnFindUnique.mockResolvedValue(conn({ adsWritesPaused: true }));
+    mockMsgFindFirst.mockResolvedValue(approvableCard([pauseStep]));
+
+    const res = await approveMetaActionPlan("card-1");
+
+    expect("error" in res).toBe(true);
+    if ("error" in res) expect(res.error).toMatch(/pause|kill/i);
+    // approval was NOT consumed (no payload patch) and NO graph write happened
+    expect(mockMsgUpdate).not.toHaveBeenCalled();
+    expect(mockGraphPost).not.toHaveBeenCalled();
+  });
+
+  it("after un-pausing, the SAME card can still be approved (approval was never burned)", async () => {
+    // 1st attempt: paused → refused, not consumed
+    let stored = approvableCard([pauseStep]);
+    mockMsgFindFirst.mockImplementation(async () => stored);
+    mockMsgUpdate.mockImplementation(async (args: { data: { payload: unknown } }) => {
+      stored = { ...stored, payload: args.data.payload as never };
+      return stored;
+    });
+    mockConnFindUnique.mockResolvedValueOnce(conn({ adsWritesPaused: true }));
+    const refused = await approveMetaActionPlan("card-1");
+    expect("error" in refused).toBe(true);
+    expect(mockMsgUpdate).not.toHaveBeenCalled(); // still unconsumed
+
+    // 2nd attempt after un-pausing: succeeds + executes once
+    mockConnFindUnique.mockResolvedValue(conn({ adsWritesPaused: false }));
+    mockGraphGet.mockResolvedValue({ effective_status: "ACTIVE" });
+    mockGraphPost.mockResolvedValue({ success: true });
+    const ok = await approveMetaActionPlan("card-1");
+    expect(ok).toEqual(expect.objectContaining({ ok: true }));
+    expect(mockGraphPost).toHaveBeenCalledTimes(1);
+  });
+
+  it("canWrite false → refusal, approval NOT consumed", async () => {
+    mockConnFindUnique.mockResolvedValue(conn({ canWrite: false }));
+    mockMsgFindFirst.mockResolvedValue(approvableCard([pauseStep]));
+
+    const res = await approveMetaActionPlan("card-1");
+
+    expect("error" in res).toBe(true);
+    expect(mockMsgUpdate).not.toHaveBeenCalled();
+    expect(mockGraphPost).not.toHaveBeenCalled();
+  });
+});
+
+describe("maybeAutoRun — kill-switch checked BEFORE consume", () => {
+  it("kill-switch ON → { ran:false }, approval NOT consumed, no graph write", async () => {
+    mockConnFindUnique.mockResolvedValue(conn({ adsAutonomy: "AUTO", adsWritesPaused: true }));
+    mockMsgFindFirst.mockResolvedValue(approvableCard([pauseStep], { autoEligible: true }));
+
+    const res = await maybeAutoRun("u1", "card-1");
+
+    expect(res).toEqual(expect.objectContaining({ ran: false }));
+    expect(mockMsgUpdate).not.toHaveBeenCalled(); // not consumed
+    expect(mockGraphPost).not.toHaveBeenCalled();
   });
 });
 

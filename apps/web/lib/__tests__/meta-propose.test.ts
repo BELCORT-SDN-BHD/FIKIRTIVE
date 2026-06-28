@@ -5,6 +5,7 @@ const {
   mockFindUnique,
   mockFindFirst,
   mockCreate,
+  mockUpdate,
   mockNewId,
   mockMaybeAutoRun,
 } = vi.hoisted(() => ({
@@ -12,6 +13,7 @@ const {
   mockFindUnique: vi.fn(),
   mockFindFirst: vi.fn(),
   mockCreate: vi.fn(),
+  mockUpdate: vi.fn(),
   mockNewId: vi.fn(() => "card-1"),
   mockMaybeAutoRun: vi.fn(),
 }));
@@ -20,7 +22,7 @@ vi.mock("../meta-objects", () => ({ fetchOwnerAdObjects: mockFetchOwnerAdObjects
 vi.mock("@fikirtive/db", () => ({
   prisma: {
     metaConnection: { findUnique: mockFindUnique },
-    chatMessage: { findFirst: mockFindFirst, create: mockCreate },
+    chatMessage: { findFirst: mockFindFirst, create: mockCreate, update: mockUpdate },
   },
 }));
 vi.mock("@fikirtive/core", () => ({ newId: mockNewId }));
@@ -38,6 +40,25 @@ const adObjects = [
     currency: "USD",
     accountId: "act_1",
   },
+  // an AD-level object (no dailyBudgetMinor — ads don't carry a daily budget)
+  {
+    id: "a1",
+    level: "ad",
+    name: "Ad 1",
+    status: "ACTIVE",
+    currency: "USD",
+    accountId: "act_1",
+  },
+  // a campaign on a LIFETIME budget (no dailyBudgetMinor)
+  {
+    id: "c1",
+    level: "campaign",
+    name: "Lifetime Camp",
+    status: "ACTIVE",
+    lifetimeBudgetMinor: 50000,
+    currency: "USD",
+    accountId: "act_1",
+  },
 ];
 
 const pauseInput = {
@@ -49,6 +70,7 @@ beforeEach(() => {
   vi.clearAllMocks();
   mockFindFirst.mockResolvedValue(null); // no prior messages → seq starts at 1
   mockCreate.mockResolvedValue({});
+  mockUpdate.mockResolvedValue({});
   mockNewId.mockReturnValue("card-1");
   mockMaybeAutoRun.mockResolvedValue({ ran: false });
 });
@@ -77,6 +99,62 @@ describe("proposeMetaActionForOwner", () => {
     });
     expect(res).toEqual({ unknownTargets: ["UNKNOWN"] });
     expect(mockCreate).not.toHaveBeenCalled();
+  });
+
+  // ── FIX A: set_budget money-safety — reject (not clamp) an unbudgeted/invalid set_budget ──
+  it("set_budget with EMPTY intent (no dailyBudgetMinor) → invalidSteps, no card persisted", async () => {
+    mockFetchOwnerAdObjects.mockResolvedValue({ objects: adObjects });
+    mockFindUnique.mockResolvedValue({ adsAutonomy: "AUTO" });
+    const res = await proposeMetaActionForOwner("org1", "thread1", {
+      planTitle: "Zero out the budget",
+      steps: [{ op: "set_budget" as const, targetId: "s1", intent: {} }],
+    });
+    expect(res).toMatchObject({ invalidSteps: [{ targetId: "s1" }] });
+    expect(mockCreate).not.toHaveBeenCalled();
+  });
+
+  it("set_budget with a ZERO/negative amount → invalidSteps, no card persisted", async () => {
+    mockFetchOwnerAdObjects.mockResolvedValue({ objects: adObjects });
+    mockFindUnique.mockResolvedValue({ adsAutonomy: "ASK" });
+    const res = await proposeMetaActionForOwner("org1", "thread1", {
+      planTitle: "Zero",
+      steps: [{ op: "set_budget" as const, targetId: "s1", intent: { dailyBudgetMinor: 0 } }],
+    });
+    expect("invalidSteps" in res).toBe(true);
+    expect(mockCreate).not.toHaveBeenCalled();
+  });
+
+  it("set_budget on an AD-level object (no daily budget) → invalidSteps, no card persisted", async () => {
+    mockFetchOwnerAdObjects.mockResolvedValue({ objects: adObjects });
+    mockFindUnique.mockResolvedValue({ adsAutonomy: "ASK" });
+    const res = await proposeMetaActionForOwner("org1", "thread1", {
+      planTitle: "Budget an ad",
+      steps: [{ op: "set_budget" as const, targetId: "a1", intent: { dailyBudgetMinor: 2000 } }],
+    });
+    expect(res).toMatchObject({ invalidSteps: [{ targetId: "a1" }] });
+    expect(mockCreate).not.toHaveBeenCalled();
+  });
+
+  it("set_budget on a LIFETIME-budget object (no daily budget) → invalidSteps, no card persisted", async () => {
+    mockFetchOwnerAdObjects.mockResolvedValue({ objects: adObjects });
+    mockFindUnique.mockResolvedValue({ adsAutonomy: "ASK" });
+    const res = await proposeMetaActionForOwner("org1", "thread1", {
+      planTitle: "Budget a lifetime campaign",
+      steps: [{ op: "set_budget" as const, targetId: "c1", intent: { dailyBudgetMinor: 2000 } }],
+    });
+    expect(res).toMatchObject({ invalidSteps: [{ targetId: "c1" }] });
+    expect(mockCreate).not.toHaveBeenCalled();
+  });
+
+  it("set_budget WITH a positive amount on a daily-budget adset → valid, card IS persisted", async () => {
+    mockFetchOwnerAdObjects.mockResolvedValue({ objects: adObjects });
+    mockFindUnique.mockResolvedValue({ adsAutonomy: "ASK" });
+    const res = await proposeMetaActionForOwner("org1", "thread1", {
+      planTitle: "Raise budget",
+      steps: [{ op: "set_budget" as const, targetId: "s1", intent: { dailyBudgetMinor: 2000 } }],
+    });
+    expect(res).toMatchObject({ cardId: "card-1" });
+    expect(mockCreate).toHaveBeenCalledTimes(1);
   });
 
   it("persists ONE ACTION_CARD with server-built payload and returns { cardId, autoEligible }", async () => {
@@ -136,5 +214,33 @@ describe("proposeMetaActionForOwner", () => {
 
     const res = await proposeMetaActionForOwner("org1", "thread1", pauseInput);
     expect(res).toMatchObject({ cardId: "card-1", autoEligible: true, autoRan: true });
+  });
+
+  // ── FIX D: persist the REAL auto outcome on the card payload so the UI doesn't lie ──
+  it("a refused auto-run patches autoOutcome.ran=false onto the persisted card", async () => {
+    mockFetchOwnerAdObjects.mockResolvedValue({ objects: adObjects });
+    mockFindUnique.mockResolvedValue({ adsAutonomy: "AUTO" });
+    // maybeAutoRun refused (e.g. kill-switch / mode flipped) — ran:false
+    mockMaybeAutoRun.mockResolvedValue({ ran: false, reason: "kill-switch" });
+
+    const res = await proposeMetaActionForOwner("org1", "thread1", pauseInput);
+    expect(res).toMatchObject({ cardId: "card-1", autoEligible: true, autoRan: false });
+
+    // the card payload was patched with autoOutcome.ran === false
+    expect(mockUpdate).toHaveBeenCalled();
+    const patched = mockUpdate.mock.calls[mockUpdate.mock.calls.length - 1][0];
+    expect(patched.where).toMatchObject({ id: "card-1" });
+    expect(patched.data.payload.autoOutcome).toMatchObject({ ran: false });
+  });
+
+  it("a successful auto-run patches autoOutcome.ran=true + state onto the persisted card", async () => {
+    mockFetchOwnerAdObjects.mockResolvedValue({ objects: adObjects });
+    mockFindUnique.mockResolvedValue({ adsAutonomy: "AUTO" });
+    mockMaybeAutoRun.mockResolvedValue({ ran: true, ok: true, state: "done", results: [] });
+
+    await proposeMetaActionForOwner("org1", "thread1", pauseInput);
+
+    const patched = mockUpdate.mock.calls[mockUpdate.mock.calls.length - 1][0];
+    expect(patched.data.payload.autoOutcome).toMatchObject({ ran: true, state: "done" });
   });
 });

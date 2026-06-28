@@ -85,5 +85,6 @@ export interface OttoContext {
     | { notConnected: true }
     | { needsReconnect: true }
     | { unknownTargets: string[] }
+    | { invalidSteps: Array<{ targetId: string; reason: string }> }
   >;
 }

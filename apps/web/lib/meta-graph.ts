@@ -57,12 +57,15 @@ export async function getAccountInsights(token: string, adAccountId: string, dat
 }
 
 export async function listCampaigns(token: string, accountId: string) {
-  const j = await metaGraphGet(token, `${accountId}/campaigns`, { fields: "name,effective_status,daily_budget,lifetime_budget,start_time,stop_time,account_id,currency" });
+  // NOTE: `currency` is intentionally NOT requested — Meta does not return it on campaign nodes
+  // (it would come back ""). Currency is sourced from the ad ACCOUNT in meta-objects.ts.
+  const j = await metaGraphGet(token, `${accountId}/campaigns`, { fields: "name,effective_status,daily_budget,lifetime_budget,start_time,stop_time,account_id" });
   return j.data ?? [];
 }
 
 export async function listAdSets(token: string, accountId: string) {
-  const j = await metaGraphGet(token, `${accountId}/adsets`, { fields: "name,effective_status,daily_budget,lifetime_budget,start_time,end_time,account_id,currency" });
+  // `currency` intentionally omitted — sourced from the ad account (see listCampaigns note).
+  const j = await metaGraphGet(token, `${accountId}/adsets`, { fields: "name,effective_status,daily_budget,lifetime_budget,start_time,end_time,account_id" });
   return j.data ?? [];
 }
 

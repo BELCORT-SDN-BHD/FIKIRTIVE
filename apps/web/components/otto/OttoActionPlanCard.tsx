@@ -10,14 +10,23 @@ export interface OttoActionPlanCardProps {
   payload: unknown;
 }
 
+/** A valid ISO-4217 code is exactly 3 ASCII letters. An empty/invalid code (e.g. a node that
+ *  never carried currency) would make Intl.NumberFormat throw — so we fall back to a plain number. */
+function isValidCurrency(code: string | undefined): code is string {
+  return typeof code === "string" && /^[A-Za-z]{3}$/.test(code);
+}
+
 /** Format a value-diff object as a human-readable string.
  *  Budget amounts are rendered using the object's `currency` field (÷100 minor→major). */
 function fmtValue(v: Record<string, unknown>, currency?: string): string {
   const parts: string[] = [];
   if (v.dailyBudgetMinor != null) {
-    const cur = currency ?? (v.currency as string | undefined) ?? "USD";
-    const fmt = new Intl.NumberFormat(undefined, { style: "currency", currency: cur });
-    parts.push(`${fmt.format(Number(v.dailyBudgetMinor) / 100)}/day`);
+    const cur = currency ?? (v.currency as string | undefined);
+    const major = Number(v.dailyBudgetMinor) / 100;
+    const fmt = isValidCurrency(cur)
+      ? new Intl.NumberFormat(undefined, { style: "currency", currency: cur })
+      : new Intl.NumberFormat(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+    parts.push(`${fmt.format(major)}/day`);
   }
   if (v.status != null) parts.push(String(v.status).toLowerCase());
   if (v.startTime != null) parts.push(`start ${v.startTime}`);
@@ -61,7 +70,13 @@ export function OttoActionPlanCard({ cardId, payload }: OttoActionPlanCardProps)
     }
   }
 
-  const isAutoEligible = p.autoEligible === true;
+  // FIX D: branch on the REAL persisted auto outcome, not just autoEligible. Only an auto-run that
+  // actually ran shows the "handled automatically" line; a refused/declined auto-run (ran:false, or
+  // no outcome recorded) leaves the card a normal PENDING proposal with Approve/Deny.
+  const autoOutcome = p.autoOutcome;
+  const autoRan = autoOutcome?.ran === true;
+  const autoState = autoOutcome?.state;
+  const showAutoStatus = autoRan; // a real auto-run happened → show its outcome, no buttons
   const approveResult = result && "ok" in result ? result : null;
   const errorMsg = result && "error" in result ? result.error : null;
   const isDone = approveResult?.state === "done";
@@ -143,12 +158,22 @@ export function OttoActionPlanCard({ cardId, payload }: OttoActionPlanCardProps)
         )}
 
         {/* Controls */}
-        {isAutoEligible ? (
-          /* Auto mode — no buttons, just status */
-          <div style={{ display: "flex", alignItems: "center", gap: "var(--space-2)", fontSize: "var(--text-sm)", color: "var(--success-700, #15803d)" }}>
-            <CheckCircle2 size={16} />
-            <span>Otto is handling this automatically.</span>
-          </div>
+        {showAutoStatus ? (
+          /* A real auto-run happened — show its honest outcome, no buttons */
+          autoState === "done" ? (
+            <div style={{ display: "flex", alignItems: "center", gap: "var(--space-2)", fontSize: "var(--text-sm)", color: "var(--success-700, #15803d)" }}>
+              <CheckCircle2 size={16} />
+              <span>Otto handled this automatically ✓</span>
+            </div>
+          ) : autoState === "partial" ? (
+            <div style={{ fontSize: "var(--text-sm)", color: "var(--warning-700, #b45309)" }}>
+              Otto applied this automatically, but some steps may need attention.
+            </div>
+          ) : (
+            <div style={{ fontSize: "var(--text-sm)", color: "var(--error-700, #b91c1c)" }}>
+              Otto tried to apply this automatically but it failed — no changes were made.
+            </div>
+          )
         ) : approveResult ? (
           /* Post-approve result */
           <div style={{ fontSize: "var(--text-sm)" }}>
@@ -198,7 +223,7 @@ export function OttoActionPlanCard({ cardId, payload }: OttoActionPlanCardProps)
         )}
 
         {/* Trust footer */}
-        {!approveResult && !denied && !isAutoEligible && (
+        {!approveResult && !denied && !showAutoStatus && (
           <div style={{ display: "flex", alignItems: "center", gap: 6, marginTop: "var(--space-3)", fontSize: "var(--text-xs)", color: "var(--text-faint)" }}>
             <ShieldCheck size={15} /> Otto only does this after you approve.
           </div>

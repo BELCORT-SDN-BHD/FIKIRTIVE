@@ -32,9 +32,17 @@ export async function fetchOwnerAdObjects(
 
   try {
     const accountList = await metaGraphGet(token, "me/adaccounts", { fields: "id,account_id,name,currency" });
-    const accountIds: string[] = (accountList.data ?? []).map((a: Record<string, unknown>) =>
-      String(a.id ?? `act_${a.account_id ?? ""}`),
-    );
+    const accounts: Record<string, unknown>[] = accountList.data ?? [];
+    const accountIds: string[] = accounts.map((a) => String(a.id ?? `act_${a.account_id ?? ""}`));
+
+    // Meta does NOT return `currency` on campaign/adset/ad nodes — only on the ad ACCOUNT.
+    // Build accountId → currency so every object inherits its account's currency (never a node field).
+    const currencyByAccount = new Map<string, string>();
+    for (const a of accounts) {
+      const id = String(a.id ?? `act_${a.account_id ?? ""}`);
+      currencyByAccount.set(id, String(a.currency ?? ""));
+    }
+    const currencyFor = (accountId: string): string => currencyByAccount.get(accountId) ?? "";
 
     const objects: MetaAdObject[] = [];
 
@@ -46,6 +54,7 @@ export async function fetchOwnerAdObjects(
       ]);
 
       for (const c of campaigns as Record<string, unknown>[]) {
+        const acct = String(c.account_id ?? accountId);
         objects.push({
           id: String(c.id ?? ""),
           level: "campaign",
@@ -55,12 +64,13 @@ export async function fetchOwnerAdObjects(
           lifetimeBudgetMinor: c.lifetime_budget != null ? parseInt(String(c.lifetime_budget), 10) : undefined,
           startTime: c.start_time != null ? String(c.start_time) : undefined,
           endTime: (c.stop_time ?? c.end_time) != null ? String(c.stop_time ?? c.end_time) : undefined,
-          currency: String(c.currency ?? ""),
-          accountId: String(c.account_id ?? accountId),
+          currency: currencyFor(acct),
+          accountId: acct,
         });
       }
 
       for (const s of adsets as Record<string, unknown>[]) {
+        const acct = String(s.account_id ?? accountId);
         objects.push({
           id: String(s.id ?? ""),
           level: "adset",
@@ -70,19 +80,20 @@ export async function fetchOwnerAdObjects(
           lifetimeBudgetMinor: s.lifetime_budget != null ? parseInt(String(s.lifetime_budget), 10) : undefined,
           startTime: s.start_time != null ? String(s.start_time) : undefined,
           endTime: s.end_time != null ? String(s.end_time) : undefined,
-          currency: String(s.currency ?? ""),
-          accountId: String(s.account_id ?? accountId),
+          currency: currencyFor(acct),
+          accountId: acct,
         });
       }
 
       for (const a of ads as Record<string, unknown>[]) {
+        const acct = String(a.account_id ?? accountId);
         objects.push({
           id: String(a.id ?? ""),
           level: "ad",
           name: String(a.name ?? ""),
           status: String(a.effective_status ?? ""),
-          currency: String(a.currency ?? ""),
-          accountId: String(a.account_id ?? accountId),
+          currency: currencyFor(acct),
+          accountId: acct,
         });
       }
     }
