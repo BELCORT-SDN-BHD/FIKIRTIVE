@@ -12,9 +12,9 @@
 import { useState, useEffect, useRef, useMemo } from "react";
 import { Button, IcPlus, IcImage, IcChevronDown, IcRetry, IcX, IcSparkle } from "@/components/ds";
 import {
-  GEN_PRICE_USD_PER_IMAGE, MAX_GEN_COUNT, GEN_VIDEO_MODELS, GEN_VIDEO_MODEL_INFO,
+  GEN_PRICE_USD_PER_IMAGE, MAX_GEN_COUNT, GEN_VIDEO_MODEL_INFO,
   GEN_VIDEO_MODEL_OPTIONS, videoDefaults, videoPriceUsd, type GenVideoModel,
-  modelFamily, deriveMode, lintPrompt, castFindings, type ModelDirectiveRules,
+  activeVideoModel, modelFamily, deriveMode, lintPrompt, castFindings, type ModelDirectiveRules,
   newId,
 } from "@fikirtive/core";
 import { startGen, getGenJob, getRecentGenResults } from "@/lib/gen-actions";
@@ -111,8 +111,12 @@ export function GenSpace({ projectId, entities, rulesMap, onGoToElements }: { pr
   const [coachOpen, setCoachOpen] = useState(false);   // promptCoach pill collapsed by default
   const [showBlock, setShowBlock] = useState(false);   // Guardian assist-bar (shown on a blocked Generate attempt)
   const [count, setCount] = useState(1);              // batch (video) / num images
-  const [videoModel, setVideoModel] = useState<GenVideoModel>("kling");
-  const [vopts, setVopts] = useState(() => videoDefaults("kling")); // seconds/res/aspect/fps/audio
+  // Founder rule: ONE spendable video model. The picker below offers only this; any other
+  // model would be cleanly rejected by startGen's assertSpendableModel gate (a no-spend
+  // dead-end), so the default state starts here too — matching what the gate will accept.
+  const lockedVideoModel = activeVideoModel() as GenVideoModel;
+  const [videoModel, setVideoModel] = useState<GenVideoModel>(lockedVideoModel);
+  const [vopts, setVopts] = useState(() => videoDefaults(lockedVideoModel)); // seconds/res/aspect/fps/audio
   const [showMore, setShowMore] = useState(false);
   const isVideo = kind === "video";
   const opts = GEN_VIDEO_MODEL_OPTIONS[videoModel];
@@ -573,7 +577,7 @@ export function GenSpace({ projectId, entities, rulesMap, onGoToElements }: { pr
             {isVideo ? (
               <>
                 <select aria-label="Video model" value={videoModel} disabled={busy} onChange={(e) => pickModel(e.target.value as GenVideoModel)} style={selectStyle}>
-                  {GEN_VIDEO_MODELS.map((m) => <option key={m} value={m} style={optStyle}>{GEN_VIDEO_MODEL_INFO[m].label}{GEN_VIDEO_MODEL_INFO[m].sound ? " · sound" : ""}</option>)}
+                  {[lockedVideoModel].map((m) => <option key={m} value={m} style={optStyle}>{GEN_VIDEO_MODEL_INFO[m].label}{GEN_VIDEO_MODEL_INFO[m].sound ? " · sound" : ""}</option>)}
                 </select>
                 <span className="al-seg" role="radiogroup" aria-label="Duration" style={{ display: "inline-flex" }}>
                   {opts.durations.map((s) => (
