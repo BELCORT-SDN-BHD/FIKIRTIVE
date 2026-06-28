@@ -536,24 +536,26 @@ git commit -m "feat(g7): bound/expiring/single-use approval (hash + verify + con
 
 ---
 
-## Task 9: `buildMetaPlanCard` pure helper + payload types
+## Task 9: `buildMetaPlanCard` + payload types (in apps/web)
 
 **Files:**
-- Create: `packages/otto/src/skills/propose-meta-action.helpers.ts`
-- Test: `packages/otto/src/skills/propose-meta-action.helpers.test.ts`
+- Create: `apps/web/lib/meta-plan-card.ts`
+- Test: `apps/web/lib/__tests__/meta-plan-card.test.ts`
+
+**Why web, not otto (architecture correction):** this builder consumes `classifyMoneyClass` (Task 2, `meta-action-policy.ts`) and `buildApproval`/`PlanStep`/`Approval` (Task 8, `meta-approval.ts`) — both live in `apps/web/lib`. `packages/otto` cannot import from `apps/web` (apps depend on packages, not the reverse — the import would not resolve). Putting the builder in web also lets it call `classifyMoneyClass` directly, so there is **no duplicated `SAFE_OPS` and no parity test** (the duplication the original plan mandated is eliminated). The otto `proposeMetaAction` skill (Task 10) reaches all of this through an injected `ctx.metaPropose` port — the LLM never touches money/approval logic, exactly as the spec requires.
 
 **Interfaces:**
-- Consumes: `classifyMoneyClass` (re-declare a local copy OR a shared structural type — keep otto free of a web import; replicate the tiny `SAFE_OPS` set here with a test asserting parity).
+- Consumes: `classifyMoneyClass`, `AdOp`, `AutonomyMode` (`./meta-action-policy`); `buildApproval`, `PlanStep`, `Approval` (`./meta-approval`); `MetaAdObject` (`./meta-objects`).
 - Produces:
   - `type ProposeMetaActionInput = { planTitle: string; steps: Array<{ op: "pause"|"resume"|"set_budget"|"reschedule"; targetId: string; intent: { dailyBudgetMinor?: number; startTime?: string; endTime?: string } }> }`
-  - `type MetaActionStep = { index; op: AdOp; targetId; targetName; currentValue; targetValue; moneyClass; evidence? }`
-  - `type MetaActionCardPayload = { planTitle; steps: MetaActionStep[]; totalSpendImpactDisplay; autoEligible: boolean; approval: Approval }`
-  - `function buildMetaPlanCard(input, currentObjects: MetaAdObject[], mode: AutonomyMode, actor: string, nowIso: string): MetaActionCardPayload`
+  - `type MetaActionStep = { index: number; op: AdOp; targetId: string; targetName: string; currentValue: Record<string, unknown>; targetValue: Record<string, unknown>; moneyClass: "safe"|"spend"; evidence?: string }`
+  - `type MetaActionCardPayload = { planTitle: string; steps: MetaActionStep[]; totalSpendImpactDisplay: string; autoEligible: boolean; approval: Approval }`
+  - `function buildMetaPlanCard(input: ProposeMetaActionInput, currentObjects: MetaAdObject[], mode: AutonomyMode, actor: string, nowIso: string): MetaActionCardPayload`
 
 - [ ] **Step 1: Write the failing test**
 ```ts
 import { describe, it, expect } from "vitest";
-import { buildMetaPlanCard } from "./propose-meta-action.helpers";
+import { buildMetaPlanCard } from "../meta-plan-card";
 
 const objects = [{ id: "s1", level: "adset", name: "Set 1", status: "ACTIVE", dailyBudgetMinor: 1000, currency: "USD", accountId: "act_1" }] as any;
 
@@ -591,37 +593,42 @@ it("unknown target id is dropped/flagged, never executable", () => {
 });
 ```
 
-- [ ] **Step 2: Run — expect FAIL.** Run: `pnpm --filter @fikirtive/otto test propose-meta-action.helpers`
+- [ ] **Step 2: Run — expect FAIL.** Run: `pnpm --filter @fikirtive/web test meta-plan-card`
 
-- [ ] **Step 3: Implement** — for each input step: find the matching object in `currentObjects` (throw `unknown target` if missing); snapshot `currentValue`; compute `targetValue`; **resolve the concrete op**: `set_budget` → `budget_up` if target>current else `budget_down`; `pause`/`resume`/`reschedule` map directly; classify money-class from the resolved op (local `SAFE_OPS = {pause,budget_down}`); build `evidence` from the object's known fields; compute `totalSpendImpactDisplay` (sum of budget deltas for spend steps); `autoEligible = mode==="AUTO" && steps.every(s => s.moneyClass==="safe")`; `approval = buildApproval(steps→PlanStep, actor, nowIso, ttl)`.
+- [ ] **Step 3: Implement** — for each input step: find the matching object in `currentObjects` (throw `unknown target` if missing); snapshot `currentValue` from the matched object; compute `targetValue` from `intent`; **resolve the concrete op**: `set_budget` → `budget_up` if the target budget > the object's current budget else `budget_down`; `pause`/`resume`/`reschedule` map directly; `moneyClass = classifyMoneyClass(resolvedOp)` (imported from `./meta-action-policy` — single source of truth, no local copy); build `evidence` from the object's known fields; compute `totalSpendImpactDisplay` (sum of budget deltas for spend steps); `autoEligible = mode==="AUTO" && steps.every(s => s.moneyClass==="safe")`; `approval = buildApproval(steps.map(s => ({ index: s.index, op: s.op, targetId: s.targetId, targetValue: s.targetValue })), actor, nowIso, 10*60*1000)`.
 
-- [ ] **Step 4: Add a parity test** asserting the local `SAFE_OPS` equals the policy's classification for all 5 ops (guards drift from `meta-action-policy.ts`).
+- [ ] **Step 4: Run — expect PASS.** Run: `pnpm --filter @fikirtive/web test meta-plan-card`
 
-- [ ] **Step 5: Run — expect PASS.** Run: `pnpm --filter @fikirtive/otto test propose-meta-action.helpers`
-
-- [ ] **Step 6: Commit**
+- [ ] **Step 5: Commit**
 ```bash
-git add packages/otto/src/skills/propose-meta-action.helpers.ts packages/otto/src/skills/propose-meta-action.helpers.test.ts
+git add apps/web/lib/meta-plan-card.ts apps/web/lib/__tests__/meta-plan-card.test.ts
 git commit -m "feat(g7): buildMetaPlanCard — server-resolved op/money-class/autoEligible/approval"
 ```
 
 ---
 
-## Task 10: `proposeMetaAction` skill (persists the ACTION_CARD)
+## Task 10: `proposeMetaAction` skill + `metaPropose` port
+
+The skill is a THIN ungated wrapper; all build/persist/money logic lives in a web-side port impl (so otto stays free of web imports, and the LLM never touches money/approval logic).
 
 **Files:**
-- Create: `packages/otto/src/skills/propose-meta-action.ts`
+- Modify: `packages/otto/src/context.ts` (add the `metaPropose` port)
+- Create: `packages/otto/src/skills/propose-meta-action.ts` (thin skill)
 - Modify: `packages/otto/src/registry.ts`
-- Modify: `packages/otto/src/context.ts` (the `metaAds` port gains a `currentObjects()` accessor if not already; reuse `list()`)
-- Test: `packages/otto/src/skills/propose-meta-action.test.ts`
+- Create: `apps/web/lib/meta-propose.ts` (the port impl: build + persist)
+- Modify: `apps/web/lib/otto-actions.ts` (`buildOttoContext` injects `metaPropose`)
+- Test: `packages/otto/src/skills/propose-meta-action.test.ts` + `apps/web/lib/__tests__/meta-propose.test.ts`
 
 **Interfaces:**
-- Consumes: `buildMetaPlanCard` (Task 9), `ctx.metaAds.list()` (Task 4), `prisma.chatMessage`, the org's `adsAutonomy` (read via a `ctx.metaAds.autonomy()` accessor — add it), `ctx.orgId`, `ctx.threadId`.
-- Produces: `executeProposeMetaAction(input, runContext): Promise<{ cardId: string; autoEligible: boolean }>`; `proposeMetaActionSkill` (`cost:"free", effect:"write", reach:"internal"` → ungated); `export const proposeMetaAction = proposeMetaActionSkill.tool;`.
+- PRODUCES:
+  - On `OttoContext` (structural input type re-declared in otto — NO web import): `metaPropose?: (input: { planTitle: string; steps: Array<{ op: "pause"|"resume"|"set_budget"|"reschedule"; targetId: string; intent: { dailyBudgetMinor?: number; startTime?: string; endTime?: string } }> }) => Promise<{ cardId: string; autoEligible: boolean } | { notConnected: true } | { needsReconnect: true } | { unknownTargets: string[] }>`
+  - `proposeMetaActionSkill` (`cost:"free", effect:"write", reach:"internal"` → ungated); `executeProposeMetaAction(input, runContext)`; `export const proposeMetaAction = proposeMetaActionSkill.tool;`. The skill calls `ctx.metaPropose(input)` and turns the result into either a confirmation or a friendly message (not connected / reconnect-needed / "I couldn't find ad X").
+  - web `proposeMetaActionForOwner(ownerId, threadId, input): Promise<{ cardId; autoEligible } | { notConnected: true } | { needsReconnect: true } | { unknownTargets: string[] }>` in `apps/web/lib/meta-propose.ts`: `fetchOwnerAdObjects(ownerId)` → friendly variants; read `MetaConnection.adsAutonomy` (default ASK); owner-validate every `targetId` against the fetched objects (collect `unknownTargets`); `buildMetaPlanCard(input, objects, mode, ownerId, new Date().toISOString())`; persist ONE `ChatMessage` `kind:"ACTION_CARD"` (next `seq`, role `AGENT`, `payload`); return `{ cardId, autoEligible: payload.autoEligible }`.
 
-- [ ] **Step 1: Add `autonomy()` to the `metaAds` port** (`context.ts`): `autonomy(): Promise<"ASK"|"AUTO">`. Inject in `buildOttoContext` reading `MetaConnection.adsAutonomy` for `orgId` (default `"ASK"`).
+- [ ] **Step 1: Add the `metaPropose` port** to `context.ts` (the structural type above; the otto package re-declares the input/result shape, no web import).
 
-- [ ] **Step 2: Write the failing test** (mirror `propose.test.ts`)
+- [ ] **Step 2: Write the failing tests**
+  - `packages/otto/src/skills/propose-meta-action.test.ts`:
 ```ts
 it("gate: free/write/internal → ungated", () => {
   expect(proposeMetaActionSkill.cost).toBe("free");
@@ -629,27 +636,34 @@ it("gate: free/write/internal → ungated", () => {
   expect(proposeMetaActionSkill.reach).toBe("internal");
   expect(proposeMetaActionSkill.needsApproval).toBe(false);
 });
-it("persists ONE ACTION_CARD with server-built payload", async () => {
-  // mock prisma.chatMessage.create + ctx.metaAds.list()/autonomy()
-  // assert kind==="ACTION_CARD", payload.steps length, payload.approval present, one create call
+it("calls ctx.metaPropose and reports the cardId", async () => {
+  const ctx = { metaPropose: async () => ({ cardId: "c1", autoEligible: false }) };
+  const res: any = await executeProposeMetaAction({ planTitle: "p", steps: [{ op: "pause", targetId: "s1", intent: {} }] }, { context: ctx as any });
+  expect(JSON.stringify(res)).toMatch(/c1|prepared|plan/i);
 });
-it("input carries no current values or money-class (LLM cannot set them)", () => {
-  // assert the zod schema has no currentValue/moneyClass keys
+it("unknownTargets → friendly 'couldn't find' message, not a thrown error", async () => {
+  const ctx = { metaPropose: async () => ({ unknownTargets: ["NOPE"] }) };
+  const res: any = await executeProposeMetaAction({ planTitle: "p", steps: [{ op: "pause", targetId: "NOPE", intent: {} }] }, { context: ctx as any });
+  expect(JSON.stringify(res)).toMatch(/find|NOPE/i);
+});
+it("input zod schema has no currentValue/moneyClass/approval keys (LLM can't set them)", () => {
+  // assert the parameters shape only exposes planTitle + steps(op/targetId/intent)
 });
 ```
+  - `apps/web/lib/__tests__/meta-propose.test.ts` (mock `fetchOwnerAdObjects`, `prisma`): persists ONE `ACTION_CARD` with the server-built payload (`payload.approval` present, `payload.steps` resolved); returns `{notConnected}`/`{needsReconnect}` pass-through; returns `{unknownTargets}` when a target id isn't owned (and does NOT persist a card).
 
-- [ ] **Step 3: Run — expect FAIL.** Run: `pnpm --filter @fikirtive/otto test propose-meta-action`
+- [ ] **Step 3: Run — expect FAIL.** `pnpm --filter @fikirtive/otto test propose-meta-action` and `pnpm --filter @fikirtive/web test meta-propose`
 
-- [ ] **Step 4: Implement** (copy DB shape from `propose.ts` `executePropose`): validate ownership by requiring every `targetId` to appear in `ctx.metaAds.list()`'s objects (else the skill returns a friendly "I can't find that ad" message — never persists an unowned target); read `mode = await ctx.metaAds.autonomy()`; `payload = buildMetaPlanCard(input, objects, mode, ctx.orgId, nowIso)`; persist ONE `ChatMessage` `kind:"ACTION_CARD"` (next `seq`, role `AGENT`, `payload`). Return `{ cardId, autoEligible: payload.autoEligible }`. Export the tool; **never import `meta-graph`** (fence).
+- [ ] **Step 4: Implement** the thin skill (it owns NO prisma, NO `meta-graph`, NO web import — only `ctx.metaPropose`) and `apps/web/lib/meta-propose.ts` (`proposeMetaActionForOwner`, copying the DB persist shape from `propose.ts` `executePropose` for the `ChatMessage` create + next-`seq`). Inject `metaPropose: (input) => proposeMetaActionForOwner(ownerId, threadId, input)` in `buildOttoContext`.
 
-- [ ] **Step 5: Register** in `registry.ts`.
+- [ ] **Step 5: Register** the skill in `registry.ts`.
 
-- [ ] **Step 6: Run + catalog.** `pnpm --filter @fikirtive/otto test propose-meta-action` → PASS; `pnpm --filter @fikirtive/otto run catalog`.
+- [ ] **Step 6: Run + catalog.** Both test suites PASS; `pnpm --filter @fikirtive/otto run catalog` (CATALOG lists `propose-meta-action` as free/write/internal/❌; the Meta writer stays ABSENT).
 
 - [ ] **Step 7: Commit**
 ```bash
-git add packages/otto/src/skills/propose-meta-action.ts packages/otto/src/skills/propose-meta-action.test.ts packages/otto/src/registry.ts packages/otto/src/context.ts packages/otto/src/skills/CATALOG.md apps/web/lib/otto-actions.ts
-git commit -m "feat(g7): proposeMetaAction skill — persists ACTION_CARD, owner-validated, ungated"
+git add packages/otto/src/context.ts packages/otto/src/skills/propose-meta-action.ts packages/otto/src/skills/propose-meta-action.test.ts packages/otto/src/registry.ts packages/otto/src/skills/CATALOG.md apps/web/lib/meta-propose.ts apps/web/lib/__tests__/meta-propose.test.ts apps/web/lib/otto-actions.ts
+git commit -m "feat(g7): proposeMetaAction skill (thin) + metaPropose web port — owner-validated, ungated"
 ```
 
 ---
