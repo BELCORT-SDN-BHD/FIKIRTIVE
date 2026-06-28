@@ -37,6 +37,21 @@ export async function getAccountInsights(token: string, adAccountId: string, dat
   };
 }
 
+export async function listCampaigns(token: string, accountId: string) {
+  const j = await metaGraphGet(token, `${accountId}/campaigns`, { fields: "name,effective_status,daily_budget,lifetime_budget,start_time,stop_time,account_id,currency" });
+  return j.data ?? [];
+}
+
+export async function listAdSets(token: string, accountId: string) {
+  const j = await metaGraphGet(token, `${accountId}/adsets`, { fields: "name,effective_status,daily_budget,lifetime_budget,start_time,end_time,account_id,currency" });
+  return j.data ?? [];
+}
+
+export async function listAds(token: string, accountId: string) {
+  const j = await metaGraphGet(token, `${accountId}/ads`, { fields: "name,effective_status,account_id" });
+  return j.data ?? [];
+}
+
 /** Exchange an OAuth code → a long-lived token (server-side; uses META_APP_SECRET). */
 export async function exchangeCodeForToken(
   code: string,
