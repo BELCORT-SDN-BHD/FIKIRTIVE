@@ -3,6 +3,8 @@ import {
   isSupportedObjective,
   shapeTargeting,
   isValidHttpUrl,
+  buildAdBuildCard,
+  type AdBuildInput,
 } from "../meta-build-spec";
 
 describe("isSupportedObjective", () => {
@@ -73,5 +75,155 @@ describe("isValidHttpUrl", () => {
     expect(isValidHttpUrl("javascript:alert(1)")).toBe(false);
     expect(isValidHttpUrl("ftp://example.com")).toBe(false);
     expect(isValidHttpUrl("not-a-url")).toBe(false);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// buildAdBuildCard
+// ---------------------------------------------------------------------------
+
+const VALID_INPUT: AdBuildInput = {
+  goal: "Drive traffic to landing page",
+  reasoning: "Audience is active on Instagram",
+  mode: "create",
+  objective: "OUTCOME_TRAFFIC",
+  pageId: "page-123",
+  targetingHint: { countries: ["MY"], ageMin: 25, ageMax: 44 },
+  dailyBudgetMinor: 5000,
+  creative: {
+    assetId: "asset-abc",
+    kind: "image",
+    message: "Check out our new product",
+    headline: "New Product Launch",
+    cta: "LEARN_MORE",
+    link: "https://example.com/landing",
+  },
+};
+
+const VALID_CTX = {
+  accountId: "act_999",
+  assetExists: true,
+  assetKind: "image" as const,
+  pageValid: true,
+  adsetValid: false,
+};
+
+const NOW_ISO = "2026-06-29T10:00:00.000Z";
+const ACTOR = "user:test@example.com";
+
+describe("buildAdBuildCard", () => {
+  it("valid create input → correct payload shape", () => {
+    const payload = buildAdBuildCard(VALID_INPUT, VALID_CTX, ACTOR, NOW_ISO);
+
+    expect(payload.mode).toBe("create");
+    expect(payload.goal).toBe(VALID_INPUT.goal);
+    expect(payload.reasoning).toBe(VALID_INPUT.reasoning);
+    expect(payload.objective).toBe("OUTCOME_TRAFFIC");
+    expect(payload.accountId).toBe("act_999");
+    expect(payload.pageId).toBe("page-123");
+    expect(payload.dailyBudgetMinor).toBe(5000);
+    expect(payload.creative.assetId).toBe("asset-abc");
+    expect(payload.creative.kind).toBe("image");
+    expect(payload.creative.link).toBe("https://example.com/landing");
+    expect(payload.buildOutcome).toBeUndefined();
+  });
+
+  it("targeting is server-shaped (not raw hint)", () => {
+    const payload = buildAdBuildCard(VALID_INPUT, VALID_CTX, ACTOR, NOW_ISO);
+    expect(payload.targeting).toEqual({
+      geo_locations: { countries: ["MY"] },
+      age_min: 25,
+      age_max: 44,
+    });
+  });
+
+  it("approval.paramHash is truthy", () => {
+    const payload = buildAdBuildCard(VALID_INPUT, VALID_CTX, ACTOR, NOW_ISO);
+    expect(payload.approval.paramHash).toBeTruthy();
+    expect(typeof payload.approval.paramHash).toBe("string");
+    expect(payload.approval.paramHash.length).toBeGreaterThan(0);
+  });
+
+  it("approval is bound to actor and expires 10 min after nowIso", () => {
+    const payload = buildAdBuildCard(VALID_INPUT, VALID_CTX, ACTOR, NOW_ISO);
+    expect(payload.approval.boundActor).toBe(ACTOR);
+    const expectedExpiry = new Date(Date.parse(NOW_ISO) + 10 * 60 * 1000).toISOString();
+    expect(payload.approval.expiresAt).toBe(expectedExpiry);
+  });
+
+  it("throws on unsupported objective", () => {
+    const input = { ...VALID_INPUT, objective: "OUTCOME_AWARENESS" };
+    expect(() => buildAdBuildCard(input, VALID_CTX, ACTOR, NOW_ISO)).toThrow(
+      /unsupported objective/i
+    );
+  });
+
+  it("throws on invalid link (not http/https)", () => {
+    const input = {
+      ...VALID_INPUT,
+      creative: { ...VALID_INPUT.creative, link: "ftp://example.com" },
+    };
+    expect(() => buildAdBuildCard(input, VALID_CTX, ACTOR, NOW_ISO)).toThrow(
+      /invalid link/i
+    );
+  });
+
+  it("throws when dailyBudgetMinor is 0", () => {
+    const input = { ...VALID_INPUT, dailyBudgetMinor: 0 };
+    expect(() => buildAdBuildCard(input, VALID_CTX, ACTOR, NOW_ISO)).toThrow(
+      /invalid budget/i
+    );
+  });
+
+  it("throws when dailyBudgetMinor is negative", () => {
+    const input = { ...VALID_INPUT, dailyBudgetMinor: -100 };
+    expect(() => buildAdBuildCard(input, VALID_CTX, ACTOR, NOW_ISO)).toThrow(
+      /invalid budget/i
+    );
+  });
+
+  it("throws when asset does not exist", () => {
+    const ctx = { ...VALID_CTX, assetExists: false };
+    expect(() => buildAdBuildCard(VALID_INPUT, ctx, ACTOR, NOW_ISO)).toThrow(
+      /unknown asset/i
+    );
+  });
+
+  it("throws on asset kind mismatch", () => {
+    const ctx = { ...VALID_CTX, assetKind: "video" as const };
+    expect(() => buildAdBuildCard(VALID_INPUT, ctx, ACTOR, NOW_ISO)).toThrow(
+      /asset kind mismatch/i
+    );
+  });
+
+  it("throws when page is invalid", () => {
+    const ctx = { ...VALID_CTX, pageValid: false };
+    expect(() => buildAdBuildCard(VALID_INPUT, ctx, ACTOR, NOW_ISO)).toThrow(
+      /invalid page/i
+    );
+  });
+
+  it("into_existing with adsetValid:false → throws", () => {
+    const input: AdBuildInput = {
+      ...VALID_INPUT,
+      mode: "into_existing",
+      intoExisting: { adsetId: "adset-xyz" },
+    };
+    const ctx = { ...VALID_CTX, adsetValid: false };
+    expect(() => buildAdBuildCard(input, ctx, ACTOR, NOW_ISO)).toThrow(
+      /invalid ad set/i
+    );
+  });
+
+  it("into_existing with adsetValid:true → payload includes intoExisting", () => {
+    const input: AdBuildInput = {
+      ...VALID_INPUT,
+      mode: "into_existing",
+      intoExisting: { adsetId: "adset-xyz" },
+    };
+    const ctx = { ...VALID_CTX, adsetValid: true };
+    const payload = buildAdBuildCard(input, ctx, ACTOR, NOW_ISO);
+    expect(payload.mode).toBe("into_existing");
+    expect(payload.intoExisting?.adsetId).toBe("adset-xyz");
   });
 });
