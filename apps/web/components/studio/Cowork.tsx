@@ -10,6 +10,7 @@ import { IcPlus, Dialog, Button } from "@/components/ds";
 import { GEN_PRICE_USD_PER_IMAGE, videoPriceUsd, videoDefaults, GEN_VIDEO_MODELS, type GenVideoModel } from "@fikirtive/core";
 import { GenerateCard } from "./GenerateCard";
 import { PostedResult } from "./PostedResult";
+import { OttoActionPlanCard } from "@/components/otto/OttoActionPlanCard";
 import type { EntityDTO, ChatThreadDTO } from "@/lib/types";
 
 const isVideoUrl = (u: string) => /\.(mp4|webm|mov|mkv)(\?|$)/i.test(u); // mirrors GenSpace
@@ -413,6 +414,16 @@ export function Cowork({ projectId, entities, threads, brief = "", simple = fals
                           });
                         }}
                       />
+                    </div>
+                    {replyBtn}
+                  </div>
+                );
+              }
+              if (m.kind === "ACTION_CARD") {
+                return (
+                  <div key={m.id} style={{ display: "flex", alignItems: "flex-start", gap: 4 }}>
+                    <div style={{ flex: 1, minWidth: 0 }}>
+                      <OttoActionPlanCard cardId={m.id} payload={m.payload} />
                     </div>
                     {replyBtn}
                   </div>
