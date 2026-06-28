@@ -14,6 +14,9 @@ describe("classifyMoneyClass", () => {
   it("unknown op falls back to spend", () => {
     expect(classifyMoneyClass("bogus" as AdOp)).toBe("spend");
   });
+  it("build is safe (money-free draft creation)", () => {
+    expect(classifyMoneyClass("build")).toBe("safe");
+  });
 });
 
 describe("policyDecision", () => {
