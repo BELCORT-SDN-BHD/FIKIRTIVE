@@ -1,5 +1,24 @@
 import { META_GRAPH_VERSION } from "./meta-oauth";
 
+/** Write Graph POST. Throws on a non-200 or a Meta `error` body (carries `metaError`). */
+export async function metaGraphPost(token: string, path: string, body: Record<string, string | number>): Promise<any> {
+  const u = `https://graph.facebook.com/${META_GRAPH_VERSION}/${path}`;
+  const params: Record<string, string> = {};
+  for (const [k, v] of Object.entries(body)) params[k] = String(v);
+  const r = await fetch(u, {
+    method: "POST",
+    headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/x-www-form-urlencoded" },
+    body: new URLSearchParams(params).toString(),
+  });
+  const j = await r.json();
+  if (!r.ok || j?.error) {
+    const e = new Error(j?.error?.message || "graph error");
+    (e as { metaError?: unknown }).metaError = j?.error;
+    throw e;
+  }
+  return j;
+}
+
 /** Read-only Graph GET. Throws on a non-200 or a Meta `error` body (carries `metaError`). */
 export async function metaGraphGet(token: string, path: string, params: Record<string, string>): Promise<any> {
   const u = new URL(`https://graph.facebook.com/${META_GRAPH_VERSION}/${path}`);
