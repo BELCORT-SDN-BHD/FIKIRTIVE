@@ -11,6 +11,7 @@ import { prisma, Prisma } from "@fikirtive/db";
 import { newId } from "@fikirtive/core";
 import { fetchOwnerAdObjects } from "./meta-objects";
 import { buildMetaPlanCard, type ProposeMetaActionInput } from "./meta-plan-card";
+import { maybeAutoRun } from "./meta-write-actions";
 
 export { type ProposeMetaActionInput };
 
@@ -19,7 +20,7 @@ export async function proposeMetaActionForOwner(
   threadId: string,
   input: ProposeMetaActionInput,
 ): Promise<
-  | { cardId: string; autoEligible: boolean }
+  | { cardId: string; autoEligible: boolean; autoRan?: boolean }
   | { notConnected: true }
   | { needsReconnect: true }
   | { unknownTargets: string[] }
@@ -67,6 +68,14 @@ export async function proposeMetaActionForOwner(
       payload: payload as unknown as Prisma.InputJsonObject,
     },
   });
+
+  // 6. AUTO path: if the card is auto-eligible, try to run it now. maybeAutoRun re-derives
+  //    the authorization server-side (AUTO mode + every step money-safe) and never executes
+  //    a spend step — so this is safe to call unconditionally on an autoEligible card.
+  if (payload.autoEligible) {
+    const auto = await maybeAutoRun(ownerId, cardId);
+    return { cardId, autoEligible: true, autoRan: auto.ran };
+  }
 
   return { cardId, autoEligible: payload.autoEligible };
 }

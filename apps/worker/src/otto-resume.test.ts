@@ -412,3 +412,42 @@ describe("Test #7 — CAS verdict write (Fix 4 / P2-b)", () => {
     expect(casArgs.where.ottoState).toBe("specific-prior-state");
   });
 });
+
+// ---------------------------------------------------------------------------
+// Test #8 — worker is Meta-WRITE-free (G7 Task 12)
+//
+// The Meta writer (runApprovedPlan / approveMetaActionPlan / maybeAutoRun) lives in
+// apps/web/lib and must NEVER be reachable from the worker — exactly as startGen is
+// withheld from the worker OttoContext. Two guards:
+//   (a) the OttoContext built here exposes no meta-write port (mirrors startGen).
+//   (b) the worker resume source imports nothing from the meta-write path.
+// ---------------------------------------------------------------------------
+describe("Test #8 — worker never has Meta-write capability", () => {
+  it("the OttoContext passed to run carries no meta-write port (no runApprovedPlan/approve/metaWrite)", async () => {
+    mocks.run.mockResolvedValue(makeRunResult());
+
+    await resumeOttoAfterGen(JOB);
+
+    const [, , runOptions] = mocks.run.mock.calls[0] as [
+      unknown,
+      unknown,
+      { context: Record<string, unknown> },
+    ];
+    const ctx = runOptions.context;
+    // the same discipline that withholds startGen withholds every spend capability
+    expect(ctx.startGen).toBeUndefined();
+    expect(ctx.metaWrite).toBeUndefined();
+    expect(ctx.approveMetaActionPlan).toBeUndefined();
+    expect(ctx.runApprovedPlan).toBeUndefined();
+    expect(ctx.maybeAutoRun).toBeUndefined();
+  });
+
+  it("otto-resume.ts source imports nothing from the meta-write path", async () => {
+    const { readFileSync } = await import("node:fs");
+    const { fileURLToPath } = await import("node:url");
+    const src = readFileSync(fileURLToPath(new URL("./otto-resume.ts", import.meta.url)), "utf8");
+    expect(src).not.toMatch(/meta-write/);
+    expect(src).not.toMatch(/runApprovedPlan/);
+    expect(src).not.toMatch(/approveMetaActionPlan/);
+  });
+});

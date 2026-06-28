@@ -22,7 +22,10 @@ import { prisma, Prisma } from "@fikirtive/db";
 import { newId } from "@fikirtive/core";
 import { decryptToken } from "./token-encryption";
 import { metaGraphGet, metaGraphPost } from "./meta-graph";
-import { classifyMoneyClass, type AdOp, type MoneyClass } from "./meta-action-policy";
+import { classifyMoneyClass, policyDecision, type AdOp, type MoneyClass } from "./meta-action-policy";
+import { verifyApproval, type PlanStep } from "./meta-approval";
+import { requireOwner } from "./auth-guard";
+import { isImpersonating } from "@/lib/better-auth/compat";
 import type { MetaActionCardPayload, MetaActionStep } from "./meta-plan-card";
 
 export type StepResultStatus = "APPLIED" | "SKIPPED" | "DIVERGED" | "FAILED" | "NEEDS_CONFIRM";
@@ -294,4 +297,119 @@ async function reconcile(
     return { index: step.index, status: "SKIPPED" };
   }
   return { index: step.index, status: "NEEDS_CONFIRM", reason: "prior write outcome unknown — live state does not match target" };
+}
+
+// ════════════════════════════════════════════════════════════════════════════
+// AUTHORIZATION GATES — the only two sanctioned entries to runApprovedPlan.
+//
+// runApprovedPlan TRUSTS its caller for authorization (it re-reads reality and
+// gates divergence/idempotency/kill-switch, but never checks "may this actor
+// spend?"). These two functions are where that authorization actually happens:
+//   - approveMetaActionPlan — a HUMAN clicking approve (authorizes the whole
+//     frozen plan, including any spend steps).
+//   - maybeAutoRun — the AUTO path: only money-SAFE steps under AUTO mode, never
+//     a spend step, re-derived server-side (never trust the stored flag alone).
+// ════════════════════════════════════════════════════════════════════════════
+
+/** Reconstruct the EXACT PlanStep[] the card's approval was built over. MUST mirror
+ *  buildMetaPlanCard's `planSteps` (same fields, same order) or the hash won't match. */
+function bindingSteps(payload: MetaActionCardPayload): PlanStep[] {
+  return payload.steps.map((s) => ({
+    index: s.index,
+    op: s.op,
+    targetId: s.targetId,
+    targetValue: s.targetValue,
+  }));
+}
+
+/** Patch the card's frozen JSON payload with a single-use consume stamp, BEFORE executing,
+ *  so a concurrent/duplicate trigger re-reads a consumed approval and is refused. */
+async function consumeApproval(cardId: string, ownerId: string, payload: MetaActionCardPayload, nowIso: string): Promise<void> {
+  const consumed: MetaActionCardPayload = {
+    ...payload,
+    approval: { ...payload.approval, consumedAt: nowIso },
+  };
+  await prisma.chatMessage.update({
+    where: { id: cardId },
+    data: { payload: consumed as unknown as Prisma.InputJsonObject },
+  });
+}
+
+/**
+ * approveMetaActionPlan — the HUMAN-approve gate (`'use server'`). The card UI calls this
+ * when the user clicks approve. This is where real-money authorization happens:
+ *   1. requireOwner (resolve ownerId server-side — NEVER a param).
+ *   2. Block impersonation — staff-impersonating-customer must never spend customer money.
+ *   3. Load the owner-scoped ACTION_CARD → frozen payload.
+ *   4. Verify the approval BINDING (hash/actor/expiry/consumed) against the exact steps the
+ *      card was built with. On any failure: refuse, do NOT execute, do NOT consume.
+ *   5. Consume (single-use) — persist consumedAt BEFORE executing, so a concurrent approve
+ *      re-reads consumed and is refused (no double-trigger).
+ *   6. runApprovedPlan (the trusted executor). Human approval authorizes the WHOLE frozen
+ *      plan including spend steps — so we do NOT block spend here. runApprovedPlan's live
+ *      re-read divergence gate still catches reality-drift before any write.
+ */
+export async function approveMetaActionPlan(
+  cardId: string,
+): Promise<{ ok: true; state: RunResult["state"]; results: StepResult[] } | { error: string }> {
+  const gate = await requireOwner();
+  if ("error" in gate) return gate;
+  if (await isImpersonating()) {
+    return { error: "Paused while impersonating a customer — exit impersonation to do this." };
+  }
+  const { ownerId } = gate;
+
+  const message = await prisma.chatMessage.findFirst({
+    where: { id: cardId, ownerId, kind: "ACTION_CARD" },
+  });
+  if (!message || !message.payload) return { error: "That action card no longer exists." };
+  const payload = message.payload as unknown as MetaActionCardPayload;
+
+  const verdict = verifyApproval(payload.approval, bindingSteps(payload), ownerId, new Date().toISOString());
+  if (!verdict.ok) {
+    return { error: `This plan can't be approved (${verdict.reason}). Ask Otto to propose it again.` };
+  }
+
+  // Single-use: stamp consumedAt and persist BEFORE executing. A concurrent/duplicate approve
+  // now re-reads a consumed approval (verifyApproval → "consumed") and is refused.
+  await consumeApproval(cardId, ownerId, payload, new Date().toISOString());
+
+  const result = await runApprovedPlan(ownerId, cardId);
+  return { ok: true, state: result.state, results: result.results };
+}
+
+/**
+ * maybeAutoRun — the AUTO path (internal, NOT `'use server'`). Called by the propose flow
+ * right after persisting an autoEligible card. Defense-in-depth: never trust the stored
+ * `autoEligible` flag alone — re-derive the authorization server-side:
+ *   - require MetaConnection.adsAutonomy === "AUTO"
+ *   - require EVERY step is `auto` under policy (a single spend step makes the plan ask-only)
+ * If either fails → return without running (a spend step can NEVER reach the executor here).
+ * On success, stamp consumedAt (so a later human approve can't re-trigger) then execute.
+ */
+export async function maybeAutoRun(
+  ownerId: string,
+  cardId: string,
+): Promise<{ ran: false } | { ran: true; ok: true; state: RunResult["state"]; results: StepResult[] }> {
+  const message = await prisma.chatMessage.findFirst({
+    where: { id: cardId, ownerId, kind: "ACTION_CARD" },
+  });
+  if (!message || !message.payload) return { ran: false };
+  const payload = message.payload as unknown as MetaActionCardPayload;
+  if (payload.autoEligible !== true) return { ran: false };
+
+  // Re-derive server-side — do NOT trust the stored autoEligible alone.
+  const conn = await prisma.metaConnection.findUnique({
+    where: { ownerId },
+    select: { adsAutonomy: true },
+  });
+  const mode = conn?.adsAutonomy ?? "ASK";
+  if (mode !== "AUTO") return { ran: false };
+  const everyStepAuto = payload.steps.every((s) => policyDecision(mode, s.moneyClass) === "auto");
+  if (!everyStepAuto) return { ran: false }; // a spend step is never auto here
+
+  await consumeApproval(cardId, ownerId, payload, new Date().toISOString());
+
+  const result = await runApprovedPlan(ownerId, cardId);
+  return { ran: true, ok: true, state: result.state, results: result.results };
 }

@@ -8,37 +8,46 @@ import { describe, it, expect, vi, beforeEach } from "vitest";
 const {
   mockConnFindUnique,
   mockMsgFindFirst,
+  mockMsgUpdate,
   mockExecFindFirst,
   mockExecCreate,
   mockExecUpdate,
   mockEventCreate,
   mockGraphGet,
   mockGraphPost,
+  mockRequireOwner,
+  mockIsImpersonating,
 } = vi.hoisted(() => ({
   mockConnFindUnique: vi.fn(),
   mockMsgFindFirst: vi.fn(),
+  mockMsgUpdate: vi.fn(),
   mockExecFindFirst: vi.fn(),
   mockExecCreate: vi.fn(),
   mockExecUpdate: vi.fn(),
   mockEventCreate: vi.fn(),
   mockGraphGet: vi.fn(),
   mockGraphPost: vi.fn(),
+  mockRequireOwner: vi.fn(),
+  mockIsImpersonating: vi.fn(),
 }));
 
 vi.mock("@fikirtive/db", () => ({
   prisma: {
     metaConnection: { findUnique: mockConnFindUnique },
-    chatMessage: { findFirst: mockMsgFindFirst },
+    chatMessage: { findFirst: mockMsgFindFirst, update: mockMsgUpdate },
     metaActionExecution: { findFirst: mockExecFindFirst, create: mockExecCreate, update: mockExecUpdate },
     actionEvent: { create: mockEventCreate },
   },
 }));
 vi.mock("@fikirtive/core", () => ({ newId: () => "id-fixed" }));
 vi.mock("../meta-graph", () => ({ metaGraphGet: mockGraphGet, metaGraphPost: mockGraphPost }));
+vi.mock("../auth-guard", () => ({ requireOwner: mockRequireOwner }));
+vi.mock("@/lib/better-auth/compat", () => ({ isImpersonating: mockIsImpersonating }));
 // token-encryption is REAL: decryptToken round-trips a token we encrypt under a fixed key.
 
-import { runApprovedPlan } from "../meta-write-actions";
+import { runApprovedPlan, approveMetaActionPlan, maybeAutoRun } from "../meta-write-actions";
 import { encryptToken } from "../token-encryption";
+import { buildApproval, type PlanStep } from "../meta-approval";
 
 // ── builders ──────────────────────────────────────────────────────────────────
 
@@ -88,6 +97,10 @@ beforeEach(() => {
   mockExecCreate.mockResolvedValue({ id: "id-fixed" });
   mockExecUpdate.mockResolvedValue({});
   mockEventCreate.mockResolvedValue({});
+  mockMsgUpdate.mockResolvedValue({});
+  // default auth: owner u1, not impersonating
+  mockRequireOwner.mockResolvedValue({ email: "u1@x.com", ownerId: "u1" });
+  mockIsImpersonating.mockResolvedValue(false);
 });
 
 describe("runApprovedPlan — kill-switch", () => {
@@ -256,6 +269,222 @@ describe("runApprovedPlan — duplicate-insert race", () => {
     const res = await runApprovedPlan("u1", "card-1");
 
     expect(res.results[0].status).toBe("SKIPPED");
+    expect(mockGraphPost).not.toHaveBeenCalled();
+  });
+});
+
+// ════════════════════════════════════════════════════════════════════════════
+// Task 12 — approveMetaActionPlan (HUMAN gate) + maybeAutoRun (AUTO path)
+//
+// These pin the AUTHORIZATION boundary. runApprovedPlan trusts its caller; THESE
+// two entries are where money authz actually happens. We drive the REAL executor
+// through the existing prisma/graph mocks, so "runApprovedPlan ran" is observable
+// as a graph write (mockGraphPost) and "did NOT run" as zero graph interaction.
+// ════════════════════════════════════════════════════════════════════════════
+
+/** Build the binding PlanStep[] exactly as buildMetaPlanCard does (the fields + order
+ *  approveMetaActionPlan must reconstruct), and a fresh, non-expired approval over it. */
+function bindApproval(steps: Array<{ index: number; op: string; targetId: string; targetValue: Record<string, unknown> }>, actor = "u1") {
+  const planSteps: PlanStep[] = steps.map((s) => ({
+    index: s.index,
+    op: s.op as PlanStep["op"],
+    targetId: s.targetId,
+    targetValue: s.targetValue,
+  }));
+  return buildApproval(planSteps, actor, new Date().toISOString(), 10 * 60 * 1000);
+}
+
+/** A full ACTION_CARD payload with a valid bound approval + steps, owner-scoped. */
+function approvableCard(
+  steps: Array<Record<string, unknown>>,
+  opts: { autoEligible?: boolean; approvalOverride?: Record<string, unknown>; actor?: string } = {},
+) {
+  const approval = opts.approvalOverride
+    ? { ...bindApproval(steps as never, opts.actor), ...opts.approvalOverride }
+    : bindApproval(steps as never, opts.actor);
+  return {
+    id: "card-1",
+    ownerId: "u1",
+    kind: "ACTION_CARD",
+    payload: { planTitle: "p", steps, autoEligible: opts.autoEligible ?? false, approval },
+  };
+}
+
+describe("approveMetaActionPlan — impersonation gate", () => {
+  it("BLOCKS while impersonating — runApprovedPlan NOT called (no graph, no card read)", async () => {
+    mockIsImpersonating.mockResolvedValue(true);
+    mockMsgFindFirst.mockResolvedValue(approvableCard([pauseStep]));
+
+    const res = await approveMetaActionPlan("card-1");
+
+    expect(res).toEqual(expect.objectContaining({ error: expect.stringMatching(/impersonat/i) }));
+    expect(mockGraphPost).not.toHaveBeenCalled();
+    expect(mockConnFindUnique).not.toHaveBeenCalled(); // executor never even started
+  });
+
+  it("returns requireOwner error verbatim and never executes", async () => {
+    mockRequireOwner.mockResolvedValue({ error: "Not authorized." });
+
+    const res = await approveMetaActionPlan("card-1");
+
+    expect(res).toEqual({ error: "Not authorized." });
+    expect(mockGraphPost).not.toHaveBeenCalled();
+    expect(mockConnFindUnique).not.toHaveBeenCalled();
+  });
+});
+
+describe("approveMetaActionPlan — approval binding gate", () => {
+  it("missing card → error, no execution", async () => {
+    mockMsgFindFirst.mockResolvedValue(null);
+    const res = await approveMetaActionPlan("card-1");
+    expect("error" in res).toBe(true);
+    expect(mockGraphPost).not.toHaveBeenCalled();
+    expect(mockConnFindUnique).not.toHaveBeenCalled();
+    // owner-scoped lookup
+    expect(mockMsgFindFirst).toHaveBeenCalledWith(
+      expect.objectContaining({ where: expect.objectContaining({ id: "card-1", ownerId: "u1", kind: "ACTION_CARD" }) }),
+    );
+  });
+
+  it("expired approval → error, no execution, not consumed", async () => {
+    const steps = [pauseStep];
+    // build an approval that expired 1ms TTL in the deep past
+    const planSteps: PlanStep[] = steps.map((s) => ({ index: s.index, op: s.op as PlanStep["op"], targetId: s.targetId, targetValue: s.targetValue }));
+    const expired = buildApproval(planSteps, "u1", new Date(Date.now() - 60 * 60 * 1000).toISOString(), 1);
+    mockMsgFindFirst.mockResolvedValue({
+      id: "card-1", ownerId: "u1", kind: "ACTION_CARD",
+      payload: { planTitle: "p", steps, autoEligible: false, approval: expired },
+    });
+
+    const res = await approveMetaActionPlan("card-1");
+
+    expect(res).toEqual(expect.objectContaining({ error: expect.stringMatching(/expired/i) }));
+    expect(mockGraphPost).not.toHaveBeenCalled();
+    expect(mockConnFindUnique).not.toHaveBeenCalled();
+    expect(mockMsgUpdate).not.toHaveBeenCalled(); // a failed verify must NOT consume
+  });
+
+  it("already-consumed approval → 'consumed' error, no execution", async () => {
+    mockMsgFindFirst.mockResolvedValue(
+      approvableCard([pauseStep], { approvalOverride: { consumedAt: new Date().toISOString() } }),
+    );
+
+    const res = await approveMetaActionPlan("card-1");
+
+    expect(res).toEqual(expect.objectContaining({ error: expect.stringMatching(/consumed/i) }));
+    expect(mockGraphPost).not.toHaveBeenCalled();
+    expect(mockConnFindUnique).not.toHaveBeenCalled();
+  });
+
+  it("tampered steps (hash mismatch) → error, no execution", async () => {
+    // approval bound to pauseStep, but the card now carries budgetDownStep → hash won't match
+    const approval = bindApproval([pauseStep] as never);
+    mockMsgFindFirst.mockResolvedValue({
+      id: "card-1", ownerId: "u1", kind: "ACTION_CARD",
+      payload: { planTitle: "p", steps: [budgetDownStep], autoEligible: false, approval },
+    });
+
+    const res = await approveMetaActionPlan("card-1");
+
+    expect("error" in res).toBe(true);
+    expect(mockGraphPost).not.toHaveBeenCalled();
+    expect(mockConnFindUnique).not.toHaveBeenCalled();
+  });
+});
+
+describe("approveMetaActionPlan — valid approval consumes + runs once", () => {
+  it("valid → consumes the approval (persisted) AND executes once; a 2nd call → 'consumed'", async () => {
+    // first call: a valid card; the executor runs a pause and applies it
+    mockConnFindUnique.mockResolvedValue(conn());
+    mockGraphGet.mockResolvedValue({ effective_status: "ACTIVE" });
+    mockGraphPost.mockResolvedValue({ success: true });
+
+    let stored = approvableCard([pauseStep]);
+    // the consume write mutates the stored payload, so a re-read sees consumedAt
+    mockMsgFindFirst.mockImplementation(async () => stored);
+    mockMsgUpdate.mockImplementation(async (args: { data: { payload: unknown } }) => {
+      stored = { ...stored, payload: args.data.payload as never };
+      return stored;
+    });
+
+    const res1 = await approveMetaActionPlan("card-1");
+    expect(res1).toEqual(expect.objectContaining({ ok: true, state: "done" }));
+    expect(mockGraphPost).toHaveBeenCalledTimes(1);
+    // the approval was consumed + persisted BEFORE executing
+    expect(mockMsgUpdate).toHaveBeenCalledTimes(1);
+    const consumedPayload = mockMsgUpdate.mock.calls[0][0].data.payload as { approval: { consumedAt?: string } };
+    expect(consumedPayload.approval.consumedAt).toBeTruthy();
+
+    // second approve of the SAME card now reads a consumed approval → refuses, no 2nd post
+    const res2 = await approveMetaActionPlan("card-1");
+    expect(res2).toEqual(expect.objectContaining({ error: expect.stringMatching(/consumed/i) }));
+    expect(mockGraphPost).toHaveBeenCalledTimes(1); // STILL one — no double-spend
+  });
+
+  it("a card whose plan INCLUDES a spend step still runs (human approval authorizes spend)", async () => {
+    const spendStep = {
+      index: 0, op: "budget_up", targetId: "act_1_camp_9", targetName: "Camp",
+      currentValue: { dailyBudgetMinor: 5000 }, targetValue: { dailyBudgetMinor: 10000 }, moneyClass: "spend",
+    };
+    mockConnFindUnique.mockResolvedValue(conn());
+    // live current 5000 → setting 10000 is an increase → recomputes budget_up/spend → matches frozen → NO divergence
+    mockGraphGet.mockResolvedValue({ daily_budget: "5000" });
+    mockGraphPost.mockResolvedValue({ success: true });
+    mockMsgFindFirst.mockResolvedValue(approvableCard([spendStep]));
+
+    const res = await approveMetaActionPlan("card-1");
+
+    expect(res).toEqual(expect.objectContaining({ ok: true }));
+    expect(mockGraphPost).toHaveBeenCalledTimes(1);
+    expect(mockGraphPost).toHaveBeenCalledWith("LIVE-TOKEN", "act_1_camp_9", { daily_budget: 10000 });
+  });
+});
+
+describe("maybeAutoRun — AUTO path (defense in depth)", () => {
+  it("AUTO mode + all-safe card → runApprovedPlan runs", async () => {
+    mockConnFindUnique.mockResolvedValue(conn({ adsAutonomy: "AUTO" }));
+    mockGraphGet.mockResolvedValue({ effective_status: "ACTIVE" });
+    mockGraphPost.mockResolvedValue({ success: true });
+    mockMsgFindFirst.mockResolvedValue(approvableCard([pauseStep], { autoEligible: true }));
+
+    const res = await maybeAutoRun("u1", "card-1");
+
+    expect(res).toEqual(expect.objectContaining({ ok: true }));
+    expect(mockGraphPost).toHaveBeenCalledTimes(1);
+  });
+
+  it("payload.autoEligible false → never runs", async () => {
+    mockConnFindUnique.mockResolvedValue(conn({ adsAutonomy: "AUTO" }));
+    mockMsgFindFirst.mockResolvedValue(approvableCard([pauseStep], { autoEligible: false }));
+
+    const res = await maybeAutoRun("u1", "card-1");
+
+    expect(res).toEqual(expect.objectContaining({ ran: false }));
+    expect(mockGraphPost).not.toHaveBeenCalled();
+  });
+
+  it("autoEligible true but a SPEND step present → never auto-runs (re-derived server-side)", async () => {
+    const spendStep = {
+      index: 0, op: "budget_up", targetId: "act_1_camp_9", targetName: "Camp",
+      currentValue: { dailyBudgetMinor: 5000 }, targetValue: { dailyBudgetMinor: 10000 }, moneyClass: "spend",
+    };
+    mockConnFindUnique.mockResolvedValue(conn({ adsAutonomy: "AUTO" }));
+    // even though the (forged) payload claims autoEligible, a spend step is not auto under policy
+    mockMsgFindFirst.mockResolvedValue(approvableCard([spendStep], { autoEligible: true }));
+
+    const res = await maybeAutoRun("u1", "card-1");
+
+    expect(res).toEqual(expect.objectContaining({ ran: false }));
+    expect(mockGraphPost).not.toHaveBeenCalled();
+  });
+
+  it("mode ASK (even with a safe-only card claiming autoEligible) → never auto-runs", async () => {
+    mockConnFindUnique.mockResolvedValue(conn({ adsAutonomy: "ASK" }));
+    mockMsgFindFirst.mockResolvedValue(approvableCard([pauseStep], { autoEligible: true }));
+
+    const res = await maybeAutoRun("u1", "card-1");
+
+    expect(res).toEqual(expect.objectContaining({ ran: false }));
     expect(mockGraphPost).not.toHaveBeenCalled();
   });
 });
