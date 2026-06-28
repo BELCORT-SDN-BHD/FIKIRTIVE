@@ -43,6 +43,7 @@ import { getBrandContextText } from "./memory-actions";
 import { fetchAndExtract } from "./brand-research";
 import { fetchOwnerInsights } from "./meta-insights";
 import { fetchOwnerAdObjects } from "./meta-objects";
+import { fetchOwnerPages } from "./meta-pages";
 import { proposeMetaActionForOwner } from "./meta-propose";
 
 // mapOttoUsage re-exported from @fikirtive/otto so existing callers that import
@@ -150,6 +151,7 @@ export async function buildOttoContext({
     simpleMode: simpleMode ?? false,
     activeJob,
     metaAds: { list: () => fetchOwnerAdObjects(ownerId) },
+    metaPages: { list: () => fetchOwnerPages(ownerId) },
     metaInsights: { get: (datePreset: string) => fetchOwnerInsights(ownerId, datePreset) },
     metaPropose: (input) => proposeMetaActionForOwner(ownerId, threadId, input),
     research: {

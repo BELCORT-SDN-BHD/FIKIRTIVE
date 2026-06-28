@@ -5,6 +5,7 @@
 |---|---|---|---|---|---|
 | describeRefs | free | read | internal | ❌ | Cache visual descriptions of reference images shown to you this turn. For each r |
 | generate | spend | write | internal | ✅ | Execute a generation proposal (GEN_CARD) that the user has approved. This SPENDS |
+| list-meta-pages | free | read | external | ❌ | List the user's connected Facebook Pages so you can pick one when building an ad |
 | meta-insights | free | read | external | ❌ | Read the user's connected Meta (Facebook/Instagram) ad-account performance (spen |
 | meta-list-objects | free | read | external | ❌ | List the user's connected Meta (Facebook/Instagram) ad objects (campaigns, ad se |
 | propose | free | write | internal | ❌ | Build a generation proposal (GEN_CARD) the user can approve and generate later.  |

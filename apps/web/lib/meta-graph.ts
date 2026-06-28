@@ -74,6 +74,15 @@ export async function listAds(token: string, accountId: string) {
   return j.data ?? [];
 }
 
+/** List Facebook Pages the user manages (requires pages_show_list scope). */
+export async function listPages(token: string): Promise<{ id: string; name: string }[]> {
+  const j = await metaGraphGet(token, "me/accounts", { fields: "id,name" });
+  return (j.data ?? []).map((p: Record<string, unknown>) => ({
+    id: String(p.id ?? ""),
+    name: String(p.name ?? ""),
+  }));
+}
+
 /** Exchange an OAuth code → a long-lived token (server-side; uses META_APP_SECRET).
  *  Also fetches debug_token to surface what scopes Meta ACTUALLY granted. */
 export async function exchangeCodeForToken(

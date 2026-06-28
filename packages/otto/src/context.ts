@@ -51,6 +51,16 @@ export interface OttoContext {
   metaAds?: {
     list(): Promise<{ objects: MetaAdObject[] } | { needsReconnect: true } | { notConnected: true }>;
   };
+  /** Meta pages port (G7 v2) — injected by the web caller; lists the owner's connected Facebook Pages.
+   *  Skills reach it ONLY via ctx.metaPages, never importing meta-pages.ts. */
+  metaPages?: {
+    list(): Promise<
+      | { pages: { id: string; name: string }[] }
+      | { needsReconnect: true }
+      | { notConnected: true }
+      | { needsPageScope: true }
+    >;
+  };
   /** Meta analytics port (G6b) — injected by the web caller; reads the owner's connected ad-account
    *  performance. Skills reach it ONLY via ctx.metaInsights, never importing meta-insights.ts. */
   metaInsights?: {
