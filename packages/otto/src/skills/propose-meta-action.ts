@@ -17,7 +17,7 @@ import type { OttoContext } from "../context.js";
 const NOT_CONNECTED =
   "Meta isn't connected yet. Ask the user to open Connections and click Connect Meta, then try again.";
 
-const proposeMetaActionInput = z.object({
+export const proposeMetaActionInput = z.object({
   planTitle: z.string().describe("Short title summarising the plan (e.g. 'Pause underperforming ad sets')."),
   steps: z
     .array(

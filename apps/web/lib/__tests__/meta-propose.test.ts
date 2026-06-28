@@ -6,12 +6,14 @@ const {
   mockFindFirst,
   mockCreate,
   mockNewId,
+  mockMaybeAutoRun,
 } = vi.hoisted(() => ({
   mockFetchOwnerAdObjects: vi.fn(),
   mockFindUnique: vi.fn(),
   mockFindFirst: vi.fn(),
   mockCreate: vi.fn(),
   mockNewId: vi.fn(() => "card-1"),
+  mockMaybeAutoRun: vi.fn(),
 }));
 
 vi.mock("../meta-objects", () => ({ fetchOwnerAdObjects: mockFetchOwnerAdObjects }));
@@ -22,6 +24,7 @@ vi.mock("@fikirtive/db", () => ({
   },
 }));
 vi.mock("@fikirtive/core", () => ({ newId: mockNewId }));
+vi.mock("../meta-write-actions", () => ({ maybeAutoRun: mockMaybeAutoRun }));
 
 import { proposeMetaActionForOwner } from "../meta-propose";
 
@@ -47,6 +50,7 @@ beforeEach(() => {
   mockFindFirst.mockResolvedValue(null); // no prior messages → seq starts at 1
   mockCreate.mockResolvedValue({});
   mockNewId.mockReturnValue("card-1");
+  mockMaybeAutoRun.mockResolvedValue({ ran: false });
 });
 
 describe("proposeMetaActionForOwner", () => {
@@ -107,5 +111,30 @@ describe("proposeMetaActionForOwner", () => {
     const res = await proposeMetaActionForOwner("org1", "thread1", pauseInput);
     // ASK mode + safe step → autoEligible false
     expect(res).toMatchObject({ cardId: "card-1", autoEligible: false });
+  });
+
+  it("maybeAutoRun throw degrades to autoRan:false — proposal still resolves, never rejects", async () => {
+    mockFetchOwnerAdObjects.mockResolvedValue({ objects: adObjects });
+    // AUTO mode + safe step → autoEligible true → maybeAutoRun will be called
+    mockFindUnique.mockResolvedValue({ adsAutonomy: "AUTO" });
+    // Simulate kill-switch or transient error inside maybeAutoRun
+    mockMaybeAutoRun.mockRejectedValue(new Error("KILL_SWITCH: ads writes are paused for this org"));
+
+    // Must resolve, not reject
+    const res = await proposeMetaActionForOwner("org1", "thread1", pauseInput);
+
+    // Card was persisted (card still created)
+    expect(mockCreate).toHaveBeenCalledTimes(1);
+    // Result resolves with the card (autoRan:false degraded state)
+    expect(res).toMatchObject({ cardId: "card-1", autoEligible: true, autoRan: false });
+  });
+
+  it("maybeAutoRun ran:true is passed through when it succeeds", async () => {
+    mockFetchOwnerAdObjects.mockResolvedValue({ objects: adObjects });
+    mockFindUnique.mockResolvedValue({ adsAutonomy: "AUTO" });
+    mockMaybeAutoRun.mockResolvedValue({ ran: true, ok: true, state: "done", results: [] });
+
+    const res = await proposeMetaActionForOwner("org1", "thread1", pauseInput);
+    expect(res).toMatchObject({ cardId: "card-1", autoEligible: true, autoRan: true });
   });
 });

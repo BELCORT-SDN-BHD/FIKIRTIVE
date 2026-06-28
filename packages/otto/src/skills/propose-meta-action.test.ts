@@ -1,5 +1,5 @@
 import { it, expect } from "vitest";
-import { proposeMetaActionSkill, executeProposeMetaAction, proposeMetaAction } from "./propose-meta-action.js";
+import { proposeMetaActionSkill, executeProposeMetaAction, proposeMetaAction, proposeMetaActionInput } from "./propose-meta-action.js";
 
 it("gate: free/write/internal → ungated", () => {
   expect(proposeMetaActionSkill.cost).toBe("free");
@@ -27,13 +27,15 @@ it("unknownTargets → friendly 'couldn't find' message, not a thrown error", as
 });
 
 it("input zod schema has no currentValue/moneyClass/approval keys (LLM can't set them)", () => {
-  // The skill tool is exported and defined; the skill flags are set correctly.
-  // Forbidden enrichment fields (server-computed) must not be in the input zod schema.
-  // We verify this by checking the skill name and that proposeMetaAction is the tool export.
-  expect(proposeMetaAction).toBeDefined();
-  expect(proposeMetaActionSkill.name).toBe("propose-meta-action");
-  expect(proposeMetaActionSkill.cost).toBe("free");
-  // proposeMetaAction is proposeMetaActionSkill.tool (same reference)
+  // Structurally verify the LLM-facing input schema exposes ONLY planTitle + steps.
+  // moneyClass, currentValue, and approval are server-computed; the LLM must never set them.
+  const topLevelKeys = Object.keys(proposeMetaActionInput.shape);
+  expect(topLevelKeys).toEqual(["planTitle", "steps"]);
+  // Confirm no forbidden enrichment fields appear at the top level
+  expect(topLevelKeys).not.toContain("moneyClass");
+  expect(topLevelKeys).not.toContain("currentValue");
+  expect(topLevelKeys).not.toContain("approval");
+  // proposeMetaAction is the bare tool export (same reference as the skill's .tool)
   expect(proposeMetaAction).toBe(proposeMetaActionSkill.tool);
 });
 

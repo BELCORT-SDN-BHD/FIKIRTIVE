@@ -35,3 +35,24 @@ it("unknown target id is dropped/flagged, never executable", () => {
     { planTitle: "p", steps: [{ op: "pause", targetId: "NOPE", intent: {} }] },
     objects, "ASK", "org1", "2026-06-28T00:00:00Z")).toThrow(/unknown target/i);
 });
+
+it("totalSpendImpactDisplay uses MYR currency and major units for a budget_up step", () => {
+  const myrObjects = [{ id: "s2", level: "adset", name: "MYR Set", status: "ACTIVE", dailyBudgetMinor: 1000, currency: "MYR", accountId: "act_2" }] as any;
+  const card = buildMetaPlanCard(
+    { planTitle: "p", steps: [{ op: "set_budget", targetId: "s2", intent: { dailyBudgetMinor: 2000 } }] },
+    myrObjects, "ASK", "org1", "2026-06-28T00:00:00Z");
+  // Must contain "MYR" or "RM" (Intl formats MYR as "MYR" or "RM" depending on locale)
+  expect(card.totalSpendImpactDisplay).toMatch(/MYR|RM/);
+  // Must NOT contain a bare "$" (no hardcoded USD symbol)
+  expect(card.totalSpendImpactDisplay).not.toMatch(/^\+\$/);
+  // The delta is 10.00 major units (2000-1000 = 1000 minor = MYR 10.00)
+  expect(card.totalSpendImpactDisplay).toMatch(/10/);
+});
+
+it("totalSpendImpactDisplay shows no added spend text (no hardcoded $) when there are no spend steps", () => {
+  const card = buildMetaPlanCard(
+    { planTitle: "p", steps: [{ op: "pause", targetId: "s1", intent: {} }] },
+    objects, "ASK", "org1", "2026-06-28T00:00:00Z");
+  // No spend steps → should not show a hardcoded dollar amount
+  expect(card.totalSpendImpactDisplay).not.toMatch(/^\+\$/);
+});

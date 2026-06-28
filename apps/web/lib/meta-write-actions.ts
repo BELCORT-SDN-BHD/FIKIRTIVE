@@ -397,6 +397,9 @@ export async function approveMetaActionPlan(
 
   // Single-use: stamp consumedAt and persist BEFORE executing. A concurrent/duplicate approve
   // now re-reads a consumed approval (verifyApproval → "consumed") and is refused.
+  // Note: consumeApproval is best-effort (read-check-write, not atomic); the per-step
+  // MetaActionExecution unique index (ownerId,cardId,stepIndex) is the real exactly-once
+  // serialization point, so a TOCTOU double-approve still cannot double-spend.
   await consumeApproval(cardId, ownerId, payload, new Date().toISOString());
 
   const result = await runApprovedPlan(ownerId, cardId);

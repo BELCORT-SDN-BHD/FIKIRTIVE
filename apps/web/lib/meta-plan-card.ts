@@ -91,6 +91,7 @@ export function buildMetaPlanCard(
       dailyBudgetMinor: obj.dailyBudgetMinor,
       startTime: obj.startTime,
       endTime: obj.endTime,
+      currency: obj.currency,
     };
 
     const resolvedOp = resolveOp(s.op, s.intent, obj);
@@ -110,19 +111,42 @@ export function buildMetaPlanCard(
     };
   });
 
-  // Sum budget deltas for spend steps
-  let spendDeltaMinor = 0;
-  for (const step of steps) {
-    if (step.moneyClass === "spend" && step.op === "budget_up") {
+  // Collect spend steps and sum deltas per currency (never sum across different currencies)
+  const spendSteps = steps.filter((s) => s.moneyClass === "spend" && s.op === "budget_up");
+
+  let totalSpendImpactDisplay: string;
+  if (spendSteps.length === 0) {
+    // No spend steps — display a zero in the first step's currency if available, else neutral text.
+    const firstCurrency = steps[0]?.currentValue?.currency as string | undefined;
+    if (firstCurrency) {
+      totalSpendImpactDisplay = new Intl.NumberFormat(undefined, { style: "currency", currency: firstCurrency }).format(0) + "/day";
+    } else {
+      totalSpendImpactDisplay = "no added spend";
+    }
+  } else {
+    // Group deltas by currency
+    const byCurrency = new Map<string, number>();
+    for (const step of spendSteps) {
+      const currency = (step.currentValue.currency as string | undefined) ?? "USD";
       const newBudget = (step.targetValue.dailyBudgetMinor as number | undefined) ?? 0;
       const oldBudget = (step.currentValue.dailyBudgetMinor as number | undefined) ?? 0;
-      spendDeltaMinor += newBudget - oldBudget;
+      byCurrency.set(currency, (byCurrency.get(currency) ?? 0) + (newBudget - oldBudget));
+    }
+    if (byCurrency.size === 1) {
+      // All spend steps share one currency — show a single formatted total
+      const [[currency, deltaMinor]] = [...byCurrency.entries()];
+      const fmt = new Intl.NumberFormat(undefined, { style: "currency", currency });
+      totalSpendImpactDisplay = `+${fmt.format(deltaMinor / 100)}/day`;
+    } else {
+      // Multi-currency plan (rare in v1) — list each currency's subtotal separately
+      totalSpendImpactDisplay = [...byCurrency.entries()]
+        .map(([currency, deltaMinor]) => {
+          const fmt = new Intl.NumberFormat(undefined, { style: "currency", currency });
+          return `+${fmt.format(deltaMinor / 100)}/day`;
+        })
+        .join(", ");
     }
   }
-  const totalSpendImpactDisplay =
-    spendDeltaMinor > 0
-      ? `+$${(spendDeltaMinor / 100).toFixed(2)}/day`
-      : "$0.00/day";
 
   const autoEligible = mode === "AUTO" && steps.every((s) => s.moneyClass === "safe");
 

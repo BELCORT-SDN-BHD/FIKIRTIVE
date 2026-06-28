@@ -72,9 +72,21 @@ export async function proposeMetaActionForOwner(
   // 6. AUTO path: if the card is auto-eligible, try to run it now. maybeAutoRun re-derives
   //    the authorization server-side (AUTO mode + every step money-safe) and never executes
   //    a spend step — so this is safe to call unconditionally on an autoEligible card.
+  //    Guard: if the kill-switch is ON or a transient error occurs, degrade to autoRan:false
+  //    (the card stays a normal pending proposal the user can approve manually). The card is
+  //    already persisted above, so the proposal always survives a throw from maybeAutoRun.
   if (payload.autoEligible) {
-    const auto = await maybeAutoRun(ownerId, cardId);
-    return { cardId, autoEligible: true, autoRan: auto.ran };
+    let autoRan = false;
+    try {
+      const auto = await maybeAutoRun(ownerId, cardId);
+      autoRan = auto.ran;
+    } catch (err) {
+      console.warn(
+        `proposeMetaActionForOwner: maybeAutoRun threw (cardId=${cardId}); degrading to pending proposal.`,
+        err instanceof Error ? err.message : err,
+      );
+    }
+    return { cardId, autoEligible: true, autoRan };
   }
 
   return { cardId, autoEligible: payload.autoEligible };

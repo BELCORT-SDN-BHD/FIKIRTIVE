@@ -33,22 +33,32 @@ export default function OttoConnections() {
 
   async function handleAutonomy(mode: "ASK" | "AUTO") {
     if (state.phase !== "connected") return;
+    const prevMode = state.adsAutonomy;
     setSaving("autonomy");
     setSaveError(null);
     setState((s) => s.phase === "connected" ? { ...s, adsAutonomy: mode } : s);
     const res = await setAdsAutonomy(mode);
     setSaving(null);
-    if ("error" in res) setSaveError(res.error);
+    if ("error" in res) {
+      // Server rejected — roll back the optimistic update so UI matches DB state
+      setState((s) => s.phase === "connected" ? { ...s, adsAutonomy: prevMode } : s);
+      setSaveError(res.error);
+    }
   }
 
   async function handlePaused(paused: boolean) {
     if (state.phase !== "connected") return;
+    const prevPaused = state.adsWritesPaused;
     setSaving("paused");
     setSaveError(null);
     setState((s) => s.phase === "connected" ? { ...s, adsWritesPaused: paused } : s);
     const res = await setAdsWritesPaused(paused);
     setSaving(null);
-    if ("error" in res) setSaveError(res.error);
+    if ("error" in res) {
+      // Server rejected — roll back the optimistic update so UI matches DB state
+      setState((s) => s.phase === "connected" ? { ...s, adsWritesPaused: prevPaused } : s);
+      setSaveError(res.error);
+    }
   }
   useEffect(() => { void load(); }, []);
 

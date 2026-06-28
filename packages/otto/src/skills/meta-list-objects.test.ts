@@ -1,4 +1,4 @@
-import { describe, it, expect } from "vitest";
+import { it, expect } from "vitest";
 import { metaListObjectsSkill, executeMetaListObjects } from "./meta-list-objects.js";
 
 it("gate: free/read/external → ungated", () => {

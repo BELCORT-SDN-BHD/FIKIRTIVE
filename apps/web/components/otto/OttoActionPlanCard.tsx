@@ -10,10 +10,15 @@ export interface OttoActionPlanCardProps {
   payload: unknown;
 }
 
-/** Format a value-diff object as a human-readable string. */
-function fmtValue(v: Record<string, unknown>): string {
+/** Format a value-diff object as a human-readable string.
+ *  Budget amounts are rendered using the object's `currency` field (÷100 minor→major). */
+function fmtValue(v: Record<string, unknown>, currency?: string): string {
   const parts: string[] = [];
-  if (v.dailyBudgetMinor != null) parts.push(`$${(Number(v.dailyBudgetMinor) / 100).toFixed(2)}/day`);
+  if (v.dailyBudgetMinor != null) {
+    const cur = currency ?? (v.currency as string | undefined) ?? "USD";
+    const fmt = new Intl.NumberFormat(undefined, { style: "currency", currency: cur });
+    parts.push(`${fmt.format(Number(v.dailyBudgetMinor) / 100)}/day`);
+  }
   if (v.status != null) parts.push(String(v.status).toLowerCase());
   if (v.startTime != null) parts.push(`start ${v.startTime}`);
   if (v.endTime != null) parts.push(`end ${v.endTime}`);
@@ -112,7 +117,7 @@ export function OttoActionPlanCard({ cardId, payload }: OttoActionPlanCardProps)
                 {/* Op + value diff */}
                 <div style={{ fontSize: "var(--text-xs)", color: "var(--text-muted)" }}>
                   {opLabel(step.op)}{Object.keys(step.currentValue ?? {}).length > 0 && Object.keys(step.targetValue ?? {}).length > 0
-                    ? `: ${fmtValue(step.currentValue ?? {})} → ${fmtValue(step.targetValue ?? {})}`
+                    ? `: ${fmtValue(step.currentValue ?? {}, step.currentValue?.currency as string | undefined)} → ${fmtValue(step.targetValue ?? {}, step.currentValue?.currency as string | undefined)}`
                     : ""}
                 </div>
 
