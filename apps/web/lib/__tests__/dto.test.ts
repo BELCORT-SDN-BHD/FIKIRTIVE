@@ -63,3 +63,53 @@ describe("toChatMessageDTO — ACTION_CARD client safety", () => {
     expect(p.autoOutcome).toMatchObject({ ran: true, state: "done" });
   });
 });
+
+// ── BUILD_CARD: client payload must NOT leak approval internals ──
+describe("toChatMessageDTO — BUILD_CARD client safety", () => {
+  function buildCardMessage(payloadExtra: Record<string, unknown> = {}) {
+    return {
+      id: "m2",
+      role: "AGENT",
+      kind: "BUILD_CARD",
+      seq: 2,
+      text: "",
+      genJobId: null,
+      createdAt: new Date("2026-06-29T00:00:00Z"),
+      payload: {
+        planTitle: "Build Meta ads",
+        buildOutcome: null,
+        approval: {
+          paramHash: "cafebabecafebabe",
+          boundActor: "org-internal-owner-id-456",
+          expiresAt: "2026-06-29T00:10:00Z",
+          consumedAt: undefined,
+        },
+        ...payloadExtra,
+      },
+    } as never;
+  }
+
+  it("strips approval.boundActor and approval.paramHash from the client payload", () => {
+    const dto = toChatMessageDTO(buildCardMessage(), new Map());
+    const p = dto.payload as { approval?: Record<string, unknown> };
+    expect(p.approval).toBeDefined();
+    expect(p.approval).not.toHaveProperty("boundActor");
+    expect(p.approval).not.toHaveProperty("paramHash");
+    expect(JSON.stringify(dto.payload)).not.toContain("org-internal-owner-id-456");
+    expect(JSON.stringify(dto.payload)).not.toContain("cafebabecafebabe");
+  });
+
+  it("keeps display fields and expiresAt", () => {
+    const dto = toChatMessageDTO(buildCardMessage(), new Map());
+    const p = dto.payload as { planTitle?: string; approval?: { expiresAt?: string }; buildOutcome?: unknown };
+    expect(p.planTitle).toBe("Build Meta ads");
+    expect(p.approval?.expiresAt).toBe("2026-06-29T00:10:00Z");
+    expect(p.buildOutcome).toBeNull();
+  });
+
+  it("forwards buildOutcome so the card can render the real build result", () => {
+    const dto = toChatMessageDTO(buildCardMessage({ buildOutcome: { state: "done" } }), new Map());
+    const p = dto.payload as { buildOutcome?: { state?: string } };
+    expect(p.buildOutcome).toMatchObject({ state: "done" });
+  });
+});

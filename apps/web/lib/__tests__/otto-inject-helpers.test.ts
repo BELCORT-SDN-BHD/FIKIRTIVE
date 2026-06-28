@@ -15,6 +15,7 @@ import {
   syncCardJobIds,
   deriveCardState,
   deriveActionState,
+  deriveBuildState,
 } from "@/lib/otto-inject-helpers";
 import { threadToUiMessages } from "@/lib/otto-ui-messages";
 import type { ChatThreadDTO, ChatMessageDTO } from "@/lib/types";
@@ -361,5 +362,53 @@ describe("deriveActionState", () => {
 
   it("failed when DIVERGED and none applied", () => {
     expect(deriveActionState(steps, [{ stepIndex: 0, status: "DIVERGED" }])).toBe("failed");
+  });
+});
+
+describe("deriveBuildState", () => {
+  it("pending when no executions", () => {
+    expect(deriveBuildState(null, [])).toBe("pending");
+  });
+
+  it("pending when executions exist but no buildOutcome", () => {
+    // Even with executions, if buildOutcome is absent it's still pending-ish
+    // but we check executions first — if some are APPLYING it's "building"
+    expect(deriveBuildState(null, [])).toBe("pending");
+  });
+
+  it("building when at least one execution is APPLYING", () => {
+    expect(deriveBuildState(null, [{ stepIndex: 0, status: "APPLYING" }])).toBe("building");
+  });
+
+  it("building when some PENDING and some APPLYING", () => {
+    expect(deriveBuildState(null, [
+      { stepIndex: 0, status: "APPLYING" },
+      { stepIndex: 1, status: "PENDING" },
+    ])).toBe("building");
+  });
+
+  it("built when all executions APPLIED and buildOutcome.state is done", () => {
+    expect(deriveBuildState(
+      { state: "done" },
+      [
+        { stepIndex: 0, status: "APPLIED" },
+        { stepIndex: 1, status: "APPLIED" },
+      ],
+    )).toBe("built");
+  });
+
+  it("partial when some APPLIED and some FAILED", () => {
+    expect(deriveBuildState(null, [
+      { stepIndex: 0, status: "APPLIED" },
+      { stepIndex: 1, status: "FAILED" },
+    ])).toBe("partial");
+  });
+
+  it("failed when nothing applied and at least one terminal failure", () => {
+    expect(deriveBuildState(null, [{ stepIndex: 0, status: "FAILED" }])).toBe("failed");
+  });
+
+  it("failed when DIVERGED and none applied", () => {
+    expect(deriveBuildState(null, [{ stepIndex: 0, status: "DIVERGED" }])).toBe("failed");
   });
 });

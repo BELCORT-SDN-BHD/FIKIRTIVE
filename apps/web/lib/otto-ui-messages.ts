@@ -7,7 +7,7 @@
  * Mirrors the pure-mapper pattern of otto-stream-bridge.ts.
  *
  * TEXT messages map to a single AI-SDK `text` part. NON-text durable messages
- * (PLAN | GEN_CARD | GEN_RESULT | DENIAL | TURN_ERROR | ACTION_CARD) map to a minimal visible
+ * (PLAN | GEN_CARD | GEN_RESULT | DENIAL | TURN_ERROR | ACTION_CARD | BUILD_CARD) map to a minimal visible
  * placeholder so a reload never silently drops history; the durable id / kind /
  * payload / genJobId ride along in message `metadata` so Task 5 can swap the
  * placeholder for the real OttoPlanCard / OttoResult widget.
@@ -41,6 +41,8 @@ function placeholderTextFor(kind: ChatMessageDTO["kind"], text: string): string 
       return "🖼 result";
     case "ACTION_CARD":
       return "Otto prepared an action plan.";
+    case "BUILD_CARD":
+      return "Otto drafted an ad plan.";
     case "DENIAL":
     case "TURN_ERROR":
       // These already carry user-facing copy on the durable message.
