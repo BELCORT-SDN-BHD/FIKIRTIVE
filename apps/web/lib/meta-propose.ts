@@ -7,7 +7,7 @@
  *
  * NOT "use server" — plain server module, called only from buildOttoContext port injection.
  */
-import { prisma } from "@fikirtive/db";
+import { prisma, Prisma } from "@fikirtive/db";
 import { newId } from "@fikirtive/core";
 import { fetchOwnerAdObjects } from "./meta-objects";
 import { buildMetaPlanCard, type ProposeMetaActionInput } from "./meta-plan-card";
@@ -64,7 +64,7 @@ export async function proposeMetaActionForOwner(
       kind: "ACTION_CARD",
       seq: (last?.seq ?? 0) + 1,
       text: "",
-      payload: payload as unknown as Record<string, unknown>,
+      payload: payload as unknown as Prisma.InputJsonObject,
     },
   });
 
