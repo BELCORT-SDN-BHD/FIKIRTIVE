@@ -373,6 +373,62 @@ export async function approveAdBuild(
 }
 
 /**
+ * launchAdDraft — creates a v1 ACTION_CARD that `resume`s the campaign/adset/ad created by
+ * a done BUILD_CARD. The user then approves that ACTION_CARD via v1's approveMetaActionPlan
+ * gate — no new spend/approval logic here.
+ *
+ * Returns the new ACTION_CARD id so the UI can surface it to the user, or `metaFallback:true`
+ * when createdIds are incomplete (user should open Meta Ads Manager instead).
+ */
+export async function launchAdDraft(
+  cardId: string,
+): Promise<{ actionCardId: string } | { metaFallback: true } | { error: string }> {
+  const gate = await requireOwner();
+  if ("error" in gate) return gate;
+  const { ownerId } = gate;
+
+  const message = await prisma.chatMessage.findFirst({
+    where: { id: cardId, ownerId, kind: "BUILD_CARD" },
+    select: { threadId: true, payload: true },
+  });
+  if (!message || !message.payload) return { error: "That build card no longer exists." };
+
+  const payload = message.payload as unknown as MetaAdBuildCardPayload;
+  const buildOutcome = payload.buildOutcome as
+    | { built?: boolean; state?: string; createdIds?: Record<string, string> }
+    | undefined;
+
+  if (!buildOutcome || buildOutcome.built !== true || buildOutcome.state !== "done") {
+    return { error: "The draft hasn't been built yet — approve it first." };
+  }
+
+  const createdIds = buildOutcome.createdIds ?? {};
+  const { campaignId, adsetId, adId } = createdIds;
+
+  if (!campaignId || !adsetId || !adId) {
+    return { metaFallback: true };
+  }
+
+  const { proposeMetaActionForOwner } = await import("./meta-propose");
+
+  const result = await proposeMetaActionForOwner(ownerId, message.threadId, {
+    planTitle: `Launch "${payload.goal || "ad"}"`,
+    steps: [
+      { op: "resume", targetId: campaignId, intent: {} },
+      { op: "resume", targetId: adsetId, intent: {} },
+      { op: "resume", targetId: adId, intent: {} },
+    ],
+  });
+
+  if ("notConnected" in result) return { error: "Meta isn't connected — reconnect and try again." };
+  if ("needsReconnect" in result) return { error: "Meta token expired — reconnect and try again." };
+  if ("unknownTargets" in result) return { metaFallback: true };
+  if ("invalidSteps" in result) return { metaFallback: true };
+
+  return { actionCardId: result.cardId };
+}
+
+/**
  * maybeAutoBuild — the AUTO path (internal). Called by proposeAdBuildForOwner right after
  * persisting an auto-eligible build card. Defense-in-depth: re-derive authorization
  * server-side — never trust a stored flag:

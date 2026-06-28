@@ -11,6 +11,7 @@ import { GEN_PRICE_USD_PER_IMAGE, videoPriceUsd, videoDefaults, GEN_VIDEO_MODELS
 import { GenerateCard } from "./GenerateCard";
 import { PostedResult } from "./PostedResult";
 import { OttoActionPlanCard } from "@/components/otto/OttoActionPlanCard";
+import { OttoAdBuildCard } from "@/components/otto/OttoAdBuildCard";
 import type { EntityDTO, ChatThreadDTO } from "@/lib/types";
 
 const isVideoUrl = (u: string) => /\.(mp4|webm|mov|mkv)(\?|$)/i.test(u); // mirrors GenSpace
@@ -424,6 +425,16 @@ export function Cowork({ projectId, entities, threads, brief = "", simple = fals
                   <div key={m.id} style={{ display: "flex", alignItems: "flex-start", gap: 4 }}>
                     <div style={{ flex: 1, minWidth: 0 }}>
                       <OttoActionPlanCard cardId={m.id} payload={m.payload} />
+                    </div>
+                    {replyBtn}
+                  </div>
+                );
+              }
+              if (m.kind === "BUILD_CARD") {
+                return (
+                  <div key={m.id} style={{ display: "flex", alignItems: "flex-start", gap: 4 }}>
+                    <div style={{ flex: 1, minWidth: 0 }}>
+                      <OttoAdBuildCard cardId={m.id} payload={m.payload} />
                     </div>
                     {replyBtn}
                   </div>
