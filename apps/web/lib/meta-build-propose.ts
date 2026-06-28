@@ -12,6 +12,7 @@ import { newId } from "@fikirtive/core";
 import { fetchOwnerPages } from "./meta-pages";
 import { fetchOwnerAdObjects, fetchOwnerAdAccounts } from "./meta-objects";
 import { buildAdBuildCard, isSupportedObjective, isValidHttpUrl, type AdBuildInput } from "./meta-build-spec";
+import { maybeAutoBuild } from "./meta-build-actions";
 
 export { type AdBuildInput };
 
@@ -156,6 +157,15 @@ export async function proposeAdBuildForOwner(
     },
   });
 
-  // 7. Auto-build is wired in Task 7 — leave the hook here
-  return { cardId, autoBuilt: false };
+  // 7. AUTO path: under AUTO mode, build is money-safe → maybeAutoBuild self-builds (all PAUSED).
+  //    Wrapped so a build failure NEVER breaks the proposal that already persisted. maybeAutoBuild
+  //    re-derives authorization server-side and records buildOutcome onto the card itself.
+  let autoBuilt = false;
+  try {
+    const outcome = await maybeAutoBuild(ownerId, cardId);
+    autoBuilt = outcome.built === true;
+  } catch {
+    autoBuilt = false; // defense in depth — maybeAutoBuild already swallows, but never let a throw escape.
+  }
+  return { cardId, autoBuilt };
 }

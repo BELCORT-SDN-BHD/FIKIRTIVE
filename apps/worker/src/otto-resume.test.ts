@@ -440,14 +440,24 @@ describe("Test #8 — worker never has Meta-write capability", () => {
     expect(ctx.approveMetaActionPlan).toBeUndefined();
     expect(ctx.runApprovedPlan).toBeUndefined();
     expect(ctx.maybeAutoRun).toBeUndefined();
+    // G7 v2: the Meta-CREATE writer (runAdBuild — the only thing that creates campaign/adset/
+    // creative/ad objects) is likewise withheld from the worker.
+    expect(ctx.runAdBuild).toBeUndefined();
+    expect(ctx.approveAdBuild).toBeUndefined();
+    expect(ctx.maybeAutoBuild).toBeUndefined();
+    expect(ctx.metaBuild).toBeUndefined();
   });
 
-  it("otto-resume.ts source imports nothing from the meta-write path", async () => {
+  it("otto-resume.ts source imports nothing from the meta-write or meta-build path", async () => {
     const { readFileSync } = await import("node:fs");
     const { fileURLToPath } = await import("node:url");
     const src = readFileSync(fileURLToPath(new URL("./otto-resume.ts", import.meta.url)), "utf8");
     expect(src).not.toMatch(/meta-write/);
     expect(src).not.toMatch(/runApprovedPlan/);
     expect(src).not.toMatch(/approveMetaActionPlan/);
+    // G7 v2: the build executor must never be importable from the worker either.
+    expect(src).not.toMatch(/meta-build/);
+    expect(src).not.toMatch(/runAdBuild/);
+    expect(src).not.toMatch(/approveAdBuild/);
   });
 });
