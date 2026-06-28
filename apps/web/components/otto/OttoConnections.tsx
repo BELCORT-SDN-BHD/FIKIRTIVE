@@ -1,6 +1,7 @@
 "use client";
 import React, { useEffect, useState } from "react";
-import { getMetaConnection, disconnectMeta, type MetaAdAccount } from "@/lib/meta-actions";
+import { getMetaConnection, disconnectMeta, getMetaInsights, type MetaAdAccount } from "@/lib/meta-actions";
+import type { AccountInsights } from "@/lib/meta-insights";
 
 type State =
   | { phase: "loading" }
@@ -10,6 +11,7 @@ type State =
 
 export default function OttoConnections() {
   const [state, setState] = useState<State>({ phase: "loading" });
+  const [insights, setInsights] = useState<AccountInsights[] | null>(null);
 
   async function load() {
     setState({ phase: "loading" });
@@ -19,6 +21,13 @@ export default function OttoConnections() {
     setState({ phase: "connected", status: res.status, accounts: res.accounts ?? [] });
   }
   useEffect(() => { void load(); }, []);
+
+  useEffect(() => {
+    if (state.phase !== "connected") return;
+    void getMetaInsights("last_30d").then((res) => {
+      if ("accounts" in res) setInsights(res.accounts);
+    });
+  }, [state.phase]);
 
   return (
     <div style={{ flex: 1, overflow: "auto", padding: "var(--space-5)" }}>
@@ -50,12 +59,23 @@ export default function OttoConnections() {
             <div style={{ marginTop: "var(--space-2)" }}>
               <div style={{ fontSize: 12, color: "var(--text-muted)", marginBottom: "var(--space-2)" }}>Connected · {state.accounts.length} ad account{state.accounts.length === 1 ? "" : "s"}</div>
               <div style={{ display: "flex", flexDirection: "column", gap: "var(--space-1)" }}>
-                {state.accounts.map((a) => (
-                  <div key={a.id} style={{ display: "flex", justifyContent: "space-between", fontSize: 13, color: "var(--text-body)", padding: "4px 0", borderBottom: "1px solid var(--border-subtle)" }}>
-                    <span>{a.name || a.id}</span>
-                    <span style={{ color: "var(--text-muted)" }}>{a.currency}{a.status ? ` · ${a.status}` : ""}</span>
-                  </div>
-                ))}
+                {state.accounts.map((a) => {
+                  const ins = insights?.find((i) => i.accountId === a.id);
+                  const m = ins?.metrics;
+                  return (
+                    <div key={a.id} style={{ padding: "4px 0", borderBottom: "1px solid var(--border-subtle)" }}>
+                      <div style={{ display: "flex", justifyContent: "space-between", fontSize: 13, color: "var(--text-body)" }}>
+                        <span>{a.name || a.id}</span>
+                        <span style={{ color: "var(--text-muted)" }}>{a.currency}{a.status ? ` · ${a.status}` : ""}</span>
+                      </div>
+                      {m && (
+                        <div style={{ fontSize: 12, color: "var(--text-muted)", paddingLeft: 2, marginTop: 2 }}>
+                          {m.spend ? `Spent ${m.spend}` : "—"} · {m.impressions ?? "—"} impr · CTR {m.ctr ?? "—"}% · CPC {m.cpc ?? "—"} · {m.purchaseRoas ? `ROAS ${m.purchaseRoas}` : "no conversion tracking"}
+                        </div>
+                      )}
+                    </div>
+                  );
+                })}
               </div>
               <button type="button" className="al-btn al-btn-sm" style={{ marginTop: "var(--space-3)" }} onClick={async () => { await disconnectMeta(); void load(); }}>
                 Disconnect
