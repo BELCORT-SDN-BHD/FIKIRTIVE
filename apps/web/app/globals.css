@@ -542,3 +542,78 @@ h1, h2, h3 { font-family: var(--font-sans); font-weight: 600; letter-spacing: va
 .admin-nav-link.is-disabled { color: var(--fg-4); cursor: default; }
 .admin-nav-link.is-disabled:hover { background: transparent; color: var(--fg-4); }
 .admin-content { flex: 1; min-width: 0; overflow: auto; }
+
+/* ════════════════════════════════════════════════════════════════════════
+ * Grok-bright — the NEW FIKIRTIVE system (strangler migration).
+ * Scoped to `.gb` so it never overrides the legacy Vapor tokens above.
+ * New screens wrap their root in className="gb". Coral = OTTO only;
+ * semantic colour = state only. Geist comes from next/font (layout.tsx).
+ * ════════════════════════════════════════════════════════════════════════ */
+.gb {
+  --radius: 0.875rem;        /* 14px controls */
+  --radius-card: 1.125rem;   /* 18px cards */
+  --radius-modal: 1.5rem;    /* 24px modals */
+
+  --background: #FCFCFC;  --foreground: #0A0A0A;
+  --card: #FFFFFF;        --card-foreground: #0A0A0A;
+  --popover: #FFFFFF;     --popover-foreground: #0A0A0A;
+  --primary: #0A0A0A;     --primary-foreground: #FCFCFC;
+  --secondary: #F4F4F3;   --secondary-foreground: #0A0A0A;
+  --muted: #F4F4F3;       --muted-foreground: #6E6E68;
+  --accent: #ECECEA;      --accent-foreground: #0A0A0A;
+  --destructive: #E5484D; --destructive-foreground: #FFFFFF;
+  --border: #E6E6E3;      --input: #E6E6E3;
+  --ring: #EC5828;
+
+  --brand: #EC5828;       --brand-foreground: #FFFFFF;
+  --brand-soft: #FBE4D8;  --brand-soft-foreground: #9A3A1A;
+
+  --success: #16A34A; --success-soft: #E7F6EC; --success-soft-foreground: #15803D;
+  --warning: #D97706; --warning-soft: #FBF0DD; --warning-soft-foreground: #B45309;
+  --error:   #E5484D; --error-soft:   #FCE9E9; --error-soft-foreground:   #B42B30;
+  --info:    #3B6FE6; --info-soft:    #E7EEFD; --info-soft-foreground:    #1D4ED8;
+
+  --shadow-xs: 0 1px 2px rgba(20 20 24 / 0.05);
+  --shadow-sm: 0 1px 3px rgba(20 20 24 / 0.06), 0 1px 2px rgba(20 20 24 / 0.05);
+  --shadow-md: 0 6px 16px rgba(20 20 24 / 0.08), 0 2px 6px rgba(20 20 24 / 0.05);
+  --shadow-lg: 0 14px 34px rgba(20 20 24 / 0.10);
+  --shadow-xl: 0 26px 60px rgba(20 20 24 / 0.12), 0 8px 20px rgba(20 20 24 / 0.07);
+  --shadow-brand: 0 8px 22px rgba(236 88 40 / 0.26);
+
+  background-color: var(--background);
+  color: var(--foreground);
+  font-family: var(--font-geist, system-ui), sans-serif;
+}
+.gb.dark, .gb[data-theme="dark"] {
+  --background:#0B0B0C; --foreground:#FAFAFA; --card:#131315; --card-foreground:#FAFAFA;
+  --popover:#18181B; --popover-foreground:#FAFAFA; --primary:#FAFAFA; --primary-foreground:#0B0B0C;
+  --secondary:#1C1C1F; --secondary-foreground:#FAFAFA; --muted:#161619; --muted-foreground:#A1A1A8;
+  --accent:#1C1C1F; --accent-foreground:#FAFAFA; --destructive:#F2555A; --destructive-foreground:#0B0B0C;
+  --border:#262629; --input:#262629; --ring:#F26A3C;
+  --brand:#F26A3C; --brand-foreground:#0B0B0C; --brand-soft:#3A1E12; --brand-soft-foreground:#F4A585;
+  --success:#2BB36B; --success-soft:#122A1B; --success-soft-foreground:#5EE0A0;
+  --warning:#E0A82B; --warning-soft:#2A1E08; --warning-soft-foreground:#F0C463;
+  --error:#F2555A; --error-soft:#2A1011; --error-soft-foreground:#F58E92;
+  --info:#5A8DF0; --info-soft:#0F1A33; --info-soft-foreground:#A8C2F7;
+}
+
+/* Register the shadcn utilities the new components use (names Vapor doesn't map,
+   except --color-accent which Vapor already maps to var(--accent) — contextual). */
+@theme inline {
+  --color-background: var(--background);
+  --color-foreground: var(--foreground);
+  --color-card: var(--card);                 --color-card-foreground: var(--card-foreground);
+  --color-popover: var(--popover);           --color-popover-foreground: var(--popover-foreground);
+  --color-primary: var(--primary);           --color-primary-foreground: var(--primary-foreground);
+  --color-secondary: var(--secondary);       --color-secondary-foreground: var(--secondary-foreground);
+  --color-muted: var(--muted);               --color-muted-foreground: var(--muted-foreground);
+  --color-accent-foreground: var(--accent-foreground);
+  --color-destructive: var(--destructive);   --color-destructive-foreground: var(--destructive-foreground);
+  --color-input: var(--input);               --color-ring: var(--ring);
+  --color-brand: var(--brand);               --color-brand-foreground: var(--brand-foreground);
+  --color-brand-soft: var(--brand-soft);     --color-brand-soft-foreground: var(--brand-soft-foreground);
+  --color-success-soft: var(--success-soft); --color-success-soft-foreground: var(--success-soft-foreground);
+  --color-warning-soft: var(--warning-soft); --color-warning-soft-foreground: var(--warning-soft-foreground);
+  --color-error-soft: var(--error-soft);     --color-error-soft-foreground: var(--error-soft-foreground);
+  --color-info-soft: var(--info-soft);       --color-info-soft-foreground: var(--info-soft-foreground);
+}
