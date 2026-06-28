@@ -11,7 +11,15 @@ import { OttoApp } from "@/components/otto/OttoApp";
 export const dynamic = "force-dynamic";
 export const metadata = { title: "Otto · Fikirtive" };
 
-export default async function OttoPage() {
+const VALID_VIEWS = ["otto", "stuff", "library", "templates", "discover", "memory", "account", "connections"] as const;
+type ValidView = (typeof VALID_VIEWS)[number];
+
+export default async function OttoPage({ searchParams }: { searchParams: Promise<{ view?: string }> }) {
+  const sp = await searchParams;
+  const initialView: ValidView | undefined = (VALID_VIEWS as readonly string[]).includes(sp?.view ?? "")
+    ? (sp!.view as ValidView)
+    : undefined;
+
   const owner = await requireOwner();
   if ("error" in owner) redirect("/login");
   const { email, ownerId } = owner;
@@ -62,6 +70,7 @@ export default async function OttoPage() {
       adJobs={adJobs}
       account={account}
       ottoStreamEnabled={ottoStreamEnabled}
+      initialView={initialView}
     />
   );
 }

@@ -580,6 +580,7 @@ model Organization {
   generationBatches       GenerationBatch[]
   brandKits               BrandKit[]
   brandRules              BrandRule[]
+  metaConnection          MetaConnection?
 }
 
 // User <-> Organization join, carrying the per-org role. role/status are code-validated
@@ -968,4 +969,19 @@ model CanvasNode {
 
   @@index([ownerId, projectId])
   @@index([ownerId, projectId, threadId])
+}
+
+// G6a: a user's connected Meta (Facebook) Ads account. One per owner. The access token is
+// AES-256-GCM encrypted at rest (apps/web/lib/token-encryption.ts) and never leaves the server.
+model MetaConnection {
+  id             String       @id
+  ownerId        String       @unique
+  organization   Organization @relation(fields: [ownerId], references: [id])
+  metaUserId     String?
+  accessTokenEnc String       // encrypted; never plaintext, never sent to the client
+  tokenExpiresAt DateTime?
+  scope          String       // "ads_read"
+  status         String       @default("active") // "active" | "expired"
+  createdAt      DateTime     @default(now())
+  updatedAt      DateTime     @updatedAt
 }

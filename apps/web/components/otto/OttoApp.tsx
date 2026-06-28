@@ -39,9 +39,10 @@ export interface OttoAppProps {
   adJobs: AdJobItem[];
   account: AccountInfo | null;
   ottoStreamEnabled: boolean;
+  initialView?: OttoViewKey;
 }
 
-export type OttoViewKey = "otto" | "stuff" | "library" | "templates" | "discover" | "memory" | "account";
+export type OttoViewKey = "otto" | "stuff" | "library" | "templates" | "discover" | "memory" | "account" | "connections";
 
 export function OttoApp({
   projectId,
@@ -56,8 +57,9 @@ export function OttoApp({
   adJobs,
   account,
   ottoStreamEnabled,
+  initialView,
 }: OttoAppProps) {
-  const [view, setView] = useState<OttoViewKey>("otto");
+  const [view, setView] = useState<OttoViewKey>(initialView ?? "otto");
   const [threads, setThreads] = useState<ChatThreadDTO[]>(initialThreads);
   const [activeThreadId, setActiveThreadId] = useState<string | null>(
     initialThreads[0]?.id ?? null,
