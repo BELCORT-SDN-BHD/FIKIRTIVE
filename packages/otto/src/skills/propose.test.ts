@@ -109,10 +109,11 @@ describe("buildProposeCard — pure helper", () => {
     expect(cardPayload.params.count).toBe(1);
   });
 
-  // Test 2: disabled filtering — M3: non-vacuous assertion
-  // First compute what model is chosen with NO disabled models, then assert
-  // that disabling THAT specific model makes buildProposeCard pick something different.
-  it("disabled filtering: disabling the default video model forces a different model to be chosen", () => {
+  // Test 2: video-model is locked to the single active model (product decision: one video
+  // model, no picker — see review-fixes F1). suggestModel ignores the `disabled` set for
+  // SELECTION; admin-disable is still enforced at spend time (assertSpendableModel /
+  // isModelDisabled in startGen), not by swapping the proposed model.
+  it("video model is locked to the active model regardless of the disabled set", () => {
     const baseInput = {
       kind: "video" as const,
       structuredPrompt: "A cat walks across a sunlit room",
@@ -120,20 +121,18 @@ describe("buildProposeCard — pure helper", () => {
       variantSel: {},
     };
 
-    // Capture the default model (no disabled list)
+    // Capture the active model (no disabled list)
     const defaultCtx = makeCtx({ disabledModels: [] });
     const { cardPayload: defaultCard } = buildProposeCard(baseInput, defaultCtx, []);
     const defaultModel = defaultCard.model;
 
-    // Now disable that exact default model
+    // Disabling that model does NOT change the proposed model — selection is locked to the
+    // single active video model; the disabled gate fires later, at the spend boundary.
     const disabledCtx = makeCtx({ disabledModels: [defaultModel] });
     const { cardPayload: disabledCard } = buildProposeCard(baseInput, disabledCtx, []);
 
     expect(disabledCard.kind).toBe("video");
-    // The selected model must be different from the disabled one
-    expect(disabledCard.model).not.toBe(defaultModel);
-    // Sanity: the disabled model itself should not appear
-    expect(disabledCard.model).not.toBe(defaultModel);
+    expect(disabledCard.model).toBe(defaultModel);
   });
 
   // Test 3: cardPayload does not carry ownerId/threadId from ctx (these are identity fields
