@@ -159,8 +159,11 @@ export function buildAdBuildCard(
     throw new Error(`invalid page: ${input.pageId}`);
   }
   if (input.mode === "into_existing") {
+    if (!input.intoExisting?.adsetId) {
+      throw new Error("into_existing requires intoExisting.adsetId");
+    }
     if (!ctx.adsetValid) {
-      throw new Error(`invalid ad set: ${input.intoExisting?.adsetId ?? "(none)"}`);
+      throw new Error(`invalid ad set: ${input.intoExisting.adsetId}`);
     }
   }
 

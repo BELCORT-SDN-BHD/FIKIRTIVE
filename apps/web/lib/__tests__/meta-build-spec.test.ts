@@ -226,4 +226,27 @@ describe("buildAdBuildCard", () => {
     expect(payload.mode).toBe("into_existing");
     expect(payload.intoExisting?.adsetId).toBe("adset-xyz");
   });
+
+  it("into_existing without intoExisting.adsetId throws, regardless of adsetValid", () => {
+    const input: AdBuildInput = {
+      ...VALID_INPUT,
+      mode: "into_existing",
+      intoExisting: {},
+    };
+    const ctx = { ...VALID_CTX, adsetValid: true };
+    expect(() => buildAdBuildCard(input, ctx, ACTOR, NOW_ISO)).toThrow(
+      /into_existing requires intoExisting\.adsetId/i
+    );
+  });
+
+  it("into_existing without intoExisting object throws", () => {
+    const input: AdBuildInput = {
+      ...VALID_INPUT,
+      mode: "into_existing",
+    };
+    const ctx = { ...VALID_CTX, adsetValid: true };
+    expect(() => buildAdBuildCard(input, ctx, ACTOR, NOW_ISO)).toThrow(
+      /into_existing requires intoExisting\.adsetId/i
+    );
+  });
 });
