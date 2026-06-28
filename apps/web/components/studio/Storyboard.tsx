@@ -14,7 +14,7 @@ import { saveShotPrompt, uploadReference, addSegmentToCut } from "@/lib/actions"
 import { enhancePrompt } from "@/lib/cowork-actions";
 import { coworkDraftStoryboard } from "@/lib/cowork-actions";
 import { startGen, getGenJob } from "@/lib/gen-actions";
-import { GEN_PRICE_USD_PER_IMAGE, GEN_VIDEO_MODELS, GEN_VIDEO_MODEL_INFO, GEN_VIDEO_MODEL_OPTIONS, videoDefaults, videoPriceUsd, type GenVideoModel } from "@fikirtive/core";
+import { GEN_PRICE_USD_PER_IMAGE, GEN_VIDEO_MODEL_INFO, GEN_VIDEO_MODEL_OPTIONS, videoDefaults, videoPriceUsd, activeVideoModel, type GenVideoModel } from "@fikirtive/core";
 import type { EntityDTO } from "@/lib/types";
 import { MentionInput, buildMentionDoc, resolveDoc } from "@/components/MentionInput";
 import { setDnd, getDnd, hasDnd } from "@/lib/dnd";
@@ -60,9 +60,13 @@ function ShotCard({ projectId, shot, index, total, entities }: { projectId: stri
   const enhancingRef = useRef(false); // synchronous guard: `enhancing` state can't catch a same-frame double-click → would spend Enhance twice
   const [enhanceDoc, setEnhanceDoc] = useState<unknown>(null); // ✨ Enhance re-seed (separate from server-sync)
   const [enhanceNonce, setEnhanceNonce] = useState(0);
-  const [videoModel, setVideoModel] = useState<GenVideoModel>("kling");
-  const [seconds, setSeconds] = useState(() => videoDefaults("kling").seconds);
-  const [audioOn, setAudioOn] = useState(() => videoDefaults("kling").audio); // per-segment audio (sound models: off is cheaper)
+  // Founder rule: ONE spendable video model (see GenSpace/GenerateCard). The Animate picker
+  // offers only this; any other would be cleanly rejected by startGen's assertSpendableModel
+  // gate (a no-spend dead-end), so the default state starts here too.
+  const lockedVideoModel = activeVideoModel() as GenVideoModel;
+  const [videoModel, setVideoModel] = useState<GenVideoModel>(lockedVideoModel);
+  const [seconds, setSeconds] = useState(() => videoDefaults(lockedVideoModel).seconds);
+  const [audioOn, setAudioOn] = useState(() => videoDefaults(lockedVideoModel).audio); // per-segment audio (sound models: off is cheaper)
   const vd = videoDefaults(videoModel);
   const opts = GEN_VIDEO_MODEL_OPTIONS[videoModel];
   const info = GEN_VIDEO_MODEL_INFO[videoModel];
@@ -377,7 +381,7 @@ function ShotCard({ projectId, shot, index, total, entities }: { projectId: stri
         <div style={{ display: "flex", gap: 6 }}>
           <select aria-label="Animate model" value={videoModel} onChange={(e) => pickModel(e.target.value as GenVideoModel)} disabled={busy || acting || !!slotBusy}
             style={{ flex: 1, minWidth: 0, background: "#11151b", border: "1px solid var(--line-2)", borderRadius: "var(--radius-sm)", padding: "5px 8px", color: "var(--fg-1)", font: "var(--text-caption)", cursor: "pointer", outline: "none" }}>
-            {GEN_VIDEO_MODELS.map((m) => <option key={m} value={m} style={{ background: "#11151b" }}>{GEN_VIDEO_MODEL_INFO[m].label}{GEN_VIDEO_MODEL_INFO[m].sound ? " · sound" : ""}</option>)}
+            {[lockedVideoModel].map((m) => <option key={m} value={m} style={{ background: "#11151b" }}>{GEN_VIDEO_MODEL_INFO[m].label}{GEN_VIDEO_MODEL_INFO[m].sound ? " · sound" : ""}</option>)}
           </select>
           <span className="al-seg" role="radiogroup" aria-label="Duration in seconds" style={{ display: "inline-flex", flex: "none" }}>
             {opts.durations.map((s) => (

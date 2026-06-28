@@ -7,6 +7,7 @@ import { getGenJob } from "@/lib/gen-actions";
 import {
   GEN_PRICE_USD_PER_IMAGE, videoPriceUsd, videoDefaults,
   GEN_MODELS, GEN_VIDEO_MODELS, GEN_VIDEO_MODEL_INFO, GEN_VIDEO_MODEL_OPTIONS,
+  activeVideoModel,
   type GenVideoModel,
 } from "@fikirtive/core";
 import { Lightbox } from "@/components/Lightbox";
@@ -92,7 +93,11 @@ export function GenerateCard({
   // count≤max) at spend, so an invalid combo is rejected, never charged.
   const isVideo = p.kind === "video";
   // The card-kind's model menu — the user edits WITHIN the kind (can't flip image↔video).
-  const modelMenu: readonly string[] = isVideo ? GEN_VIDEO_MODELS : GEN_MODELS;
+  // Founder rule: ONE spendable video model. The agent surface already locks to
+  // activeVideoModel() (suggestModel); the studio picker must match, since any other choice
+  // is cleanly rejected by startGen's assertSpendableModel gate — a no-spend dead-end. Image
+  // keeps its single Seedream entry (GEN_MODELS).
+  const modelMenu: readonly string[] = isVideo ? [activeVideoModel()] : GEN_MODELS;
   const modelLabel = (m: string): string => (isVideo ? GEN_VIDEO_MODEL_INFO[m as GenVideoModel]?.label ?? m : "Seedream");
 
   const [model, setModel] = useState<string>(p.model && modelMenu.includes(p.model) ? p.model : (modelMenu[0] ?? ""));
