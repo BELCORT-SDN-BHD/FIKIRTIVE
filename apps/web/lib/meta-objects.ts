@@ -15,6 +15,37 @@ export type MetaAdObject = {
   accountId: string;
 };
 
+export type MetaAdAccount = { id: string; name: string; currency: string };
+
+/** Owner-scoped list of ad accounts. Plain server fn — NOT a "use server" action. */
+export async function fetchOwnerAdAccounts(
+  ownerId: string,
+): Promise<{ accounts: MetaAdAccount[] } | { needsReconnect: true } | { notConnected: true }> {
+  const conn = await prisma.metaConnection.findUnique({ where: { ownerId } });
+  if (!conn) return { notConnected: true };
+  let token: string;
+  try {
+    token = decryptToken(conn.accessTokenEnc);
+  } catch {
+    return { needsReconnect: true };
+  }
+  try {
+    const j = await metaGraphGet(token, "me/adaccounts", { fields: "id,account_id,name,currency" });
+    const accounts: MetaAdAccount[] = (j.data ?? []).map((a: Record<string, unknown>) => ({
+      id: String(a.id ?? `act_${a.account_id ?? ""}`),
+      name: String(a.name ?? ""),
+      currency: String(a.currency ?? ""),
+    }));
+    return { accounts };
+  } catch (e) {
+    const code = (e as { metaError?: { code?: number } })?.metaError?.code;
+    if (code === 190) {
+      await prisma.metaConnection.update({ where: { ownerId }, data: { status: "expired" } }).catch(() => {});
+    }
+    return { needsReconnect: true };
+  }
+}
+
 /** Owner-scoped read of all campaigns/adsets/ads across the owner's connected ad accounts.
  *  Plain server fn — NOT a "use server" action — so there is no IDOR surface. Token stays here. */
 export async function fetchOwnerAdObjects(

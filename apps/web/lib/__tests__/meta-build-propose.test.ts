@@ -3,6 +3,7 @@ import { describe, it, expect, vi, beforeEach } from "vitest";
 const {
   mockFetchOwnerPages,
   mockFetchOwnerAdObjects,
+  mockFetchOwnerAdAccounts,
   mockFindFirst,
   mockCreate,
   mockNewId,
@@ -11,6 +12,7 @@ const {
 } = vi.hoisted(() => ({
   mockFetchOwnerPages: vi.fn(),
   mockFetchOwnerAdObjects: vi.fn(),
+  mockFetchOwnerAdAccounts: vi.fn(),
   mockFindFirst: vi.fn(),
   mockCreate: vi.fn(),
   mockNewId: vi.fn(() => "card-build-1"),
@@ -19,7 +21,10 @@ const {
 }));
 
 vi.mock("../meta-pages", () => ({ fetchOwnerPages: mockFetchOwnerPages }));
-vi.mock("../meta-objects", () => ({ fetchOwnerAdObjects: mockFetchOwnerAdObjects }));
+vi.mock("../meta-objects", () => ({
+  fetchOwnerAdObjects: mockFetchOwnerAdObjects,
+  fetchOwnerAdAccounts: mockFetchOwnerAdAccounts,
+}));
 vi.mock("@fikirtive/db", () => ({
   prisma: {
     chatMessage: { findFirst: mockFindFirst, create: mockCreate },
@@ -33,6 +38,7 @@ vi.mock("@fikirtive/core", () => ({ newId: mockNewId }));
 import { proposeAdBuildForOwner } from "../meta-build-propose";
 
 const PAGES = [{ id: "page-1", name: "My Page" }];
+const AD_ACCOUNTS = [{ id: "act_123", name: "Test Account", currency: "MYR" }];
 const AD_OBJECTS = [
   {
     id: "adset-1",
@@ -66,6 +72,8 @@ beforeEach(() => {
   mockFindFirst.mockResolvedValue(null); // no prior messages → seq starts at 1
   mockCreate.mockResolvedValue({});
   mockNewId.mockReturnValue("card-build-1");
+  // default: one ad account available
+  mockFetchOwnerAdAccounts.mockResolvedValue({ accounts: AD_ACCOUNTS });
   // default: asset found as image
   mockGenerationFindFirst.mockResolvedValue({ assetId: "asset-abc" });
   mockAssetFindUnique.mockResolvedValue({ id: "asset-abc", mime: "image/jpeg" });
@@ -211,5 +219,33 @@ describe("proposeAdBuildForOwner", () => {
     });
     expect(res).toEqual({ cardId: "card-build-1", autoBuilt: false });
     expect(mockCreate).toHaveBeenCalledTimes(1);
+  });
+
+  it("create-from-scratch: owner has an ad account but ZERO ad objects → persists BUILD_CARD with real accountId", async () => {
+    // The key regression test: a brand-new advertiser has an account but no campaigns/adsets/ads.
+    // proposeAdBuildForOwner must still succeed and use the accountId from the account list.
+    mockFetchOwnerPages.mockResolvedValue({ pages: PAGES });
+    mockFetchOwnerAdAccounts.mockResolvedValue({ accounts: AD_ACCOUNTS }); // real account
+    mockFetchOwnerAdObjects.mockResolvedValue({ objects: [] }); // zero ad objects
+    mockGenerationFindFirst.mockResolvedValue({ assetId: "asset-abc" });
+    mockAssetFindUnique.mockResolvedValue({ id: "asset-abc", mime: "image/jpeg" });
+
+    const res = await proposeAdBuildForOwner("org1", "thread1", VALID_INPUT);
+    expect(res).toEqual({ cardId: "card-build-1", autoBuilt: false });
+    expect(mockCreate).toHaveBeenCalledTimes(1);
+    const data = mockCreate.mock.calls[0][0].data;
+    expect(data.payload.accountId).toBe("act_123"); // from account list, not objects[0]
+  });
+
+  it("no ad account → returns invalid[accountId] and persists NO card", async () => {
+    mockFetchOwnerPages.mockResolvedValue({ pages: PAGES });
+    mockFetchOwnerAdAccounts.mockResolvedValue({ accounts: [] }); // no accounts
+    // fetchOwnerAdObjects should not even be called (early return)
+    const res = await proposeAdBuildForOwner("org1", "thread1", VALID_INPUT);
+    expect(res).toMatchObject({
+      invalid: expect.arrayContaining([expect.objectContaining({ field: "accountId" })]),
+    });
+    expect(mockCreate).not.toHaveBeenCalled();
+    expect(mockFetchOwnerAdObjects).not.toHaveBeenCalled();
   });
 });

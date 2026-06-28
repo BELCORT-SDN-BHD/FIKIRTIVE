@@ -10,7 +10,7 @@
 import { prisma, Prisma } from "@fikirtive/db";
 import { newId } from "@fikirtive/core";
 import { fetchOwnerPages } from "./meta-pages";
-import { fetchOwnerAdObjects } from "./meta-objects";
+import { fetchOwnerAdObjects, fetchOwnerAdAccounts } from "./meta-objects";
 import { buildAdBuildCard, isSupportedObjective, isValidHttpUrl, type AdBuildInput } from "./meta-build-spec";
 
 export { type AdBuildInput };
@@ -33,15 +33,26 @@ export async function proposeAdBuildForOwner(
   if ("needsPageScope" in pagesResult) return { needsPageScope: true };
   const { pages } = pagesResult;
 
-  // 2. Fetch the owner's ad objects to resolve accountId and validate adsetId
+  // 2. Fetch the owner's ad ACCOUNTS to resolve accountId (must come from the account list, not
+  //    from ad objects — a brand-new advertiser with zero campaigns has no objects but still has
+  //    an account). Pick the first account for v1; multi-account selection is a future refinement.
+  const accountsResult = await fetchOwnerAdAccounts(ownerId);
+  if ("notConnected" in accountsResult) return { notConnected: true };
+  if ("needsReconnect" in accountsResult) return { needsReconnect: true };
+  const { accounts } = accountsResult;
+  if (accounts.length === 0) {
+    return {
+      invalid: [{ field: "accountId", reason: "No Meta ad account found — set one up in Meta Ads Manager first." }],
+    };
+  }
+  const accountId = accounts[0].id;
+
+  // 3a. Fetch the owner's ad objects (campaigns/adsets/ads) for adset validation only.
   const objectsResult = await fetchOwnerAdObjects(ownerId);
   // If ad objects can't be fetched, treat as notConnected (same token)
   if ("notConnected" in objectsResult) return { notConnected: true };
   if ("needsReconnect" in objectsResult) return { needsReconnect: true };
   const { objects } = objectsResult;
-
-  // Derive accountId from the first ad object's accountId (all belong to the same account)
-  const accountId = objects[0]?.accountId ?? "";
 
   // 3. Resolve asset ownership + kind
   // The assetId in input.creative is a Generation id (from the user's library).
