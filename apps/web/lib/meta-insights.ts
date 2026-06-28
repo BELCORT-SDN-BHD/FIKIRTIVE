@@ -30,8 +30,13 @@ export async function fetchOwnerInsights(
       if (metrics) accounts.push({ accountId: a.id, name: a.name, metrics });
     }
     return { accounts };
-  } catch {
-    await prisma.metaConnection.update({ where: { ownerId }, data: { status: "expired" } }).catch(() => {});
+  } catch (e) {
+    // Only mark expired on a real Meta auth error (code 190) — a transient 5xx/rate-limit
+    // shouldn't force every user to reconnect. (Mirrors getMyAdAccounts in meta-actions.ts.)
+    const code = (e as { metaError?: { code?: number } })?.metaError?.code;
+    if (code === 190) {
+      await prisma.metaConnection.update({ where: { ownerId }, data: { status: "expired" } }).catch(() => {});
+    }
     return { needsReconnect: true };
   }
 }
