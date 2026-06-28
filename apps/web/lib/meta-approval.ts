@@ -52,6 +52,9 @@ export function buildApproval(
   nowIso: string,
   ttlMs: number
 ): Approval {
+  if (Number.isNaN(Date.parse(nowIso))) {
+    throw new Error("buildApproval: invalid nowIso");
+  }
   return {
     paramHash: hashSteps(steps),
     boundActor: actor,
@@ -67,7 +70,9 @@ export function verifyApproval(
 ): { ok: true } | { ok: false; reason: "hash" | "expired" | "consumed" | "actor" } {
   if (a.boundActor !== actor) return { ok: false, reason: "actor" };
   if (a.consumedAt !== undefined) return { ok: false, reason: "consumed" };
-  if (nowIso > a.expiresAt) return { ok: false, reason: "expired" };
+  const now = Date.parse(nowIso);
+  const exp = Date.parse(a.expiresAt);
+  if (Number.isNaN(now) || Number.isNaN(exp) || now > exp) return { ok: false, reason: "expired" };
   if (hashSteps(steps) !== a.paramHash) return { ok: false, reason: "hash" };
   return { ok: true };
 }
