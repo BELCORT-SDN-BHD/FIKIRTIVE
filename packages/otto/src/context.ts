@@ -69,4 +69,21 @@ export interface OttoContext {
      *  TODO(G3): wire a web-search API transport (needs a key). */
     search?: (query: string) => Promise<{ results: { url: string; title: string; snippet: string }[] }>;
   };
+  /** Meta propose port (G7) — injected by the web caller; builds + persists an ACTION_CARD
+   *  chat message from a structured plan. Skills reach it ONLY via ctx.metaPropose,
+   *  never importing meta-propose.ts or prisma directly (CI fence rule).
+   *  Input/result shape re-declared here — NO web import. */
+  metaPropose?: (input: {
+    planTitle: string;
+    steps: Array<{
+      op: "pause" | "resume" | "set_budget" | "reschedule";
+      targetId: string;
+      intent: { dailyBudgetMinor?: number; startTime?: string; endTime?: string };
+    }>;
+  }) => Promise<
+    | { cardId: string; autoEligible: boolean }
+    | { notConnected: true }
+    | { needsReconnect: true }
+    | { unknownTargets: string[] }
+  >;
 }
