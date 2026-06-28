@@ -12,7 +12,7 @@ export async function metaGraphUpload(
   const u = `https://graph.facebook.com/${META_GRAPH_VERSION}/${path}`;
   const fd = new FormData();
   for (const [k, v] of Object.entries(fields)) fd.append(k, v);
-  fd.append("source", new Blob([file.bytes], { type: file.contentType }), file.filename);
+  fd.append("source", new Blob([new Uint8Array(file.bytes)], { type: file.contentType }), file.filename);
   const r = await fetch(u, {
     method: "POST",
     // Do NOT set Content-Type — browser/Node fetch sets multipart boundary automatically
