@@ -4,6 +4,7 @@
  * the node harness (mirrors otto-ui-messages.test.ts / otto-status-helpers.test.ts).
  */
 import { describe, it, expect } from "vitest";
+import type { MetaActionStep } from "@/lib/meta-plan-card";
 import {
   resultJobIds,
   errorJobIds,
@@ -13,6 +14,7 @@ import {
   appendDurableResults,
   syncCardJobIds,
   deriveCardState,
+  deriveActionState,
 } from "@/lib/otto-inject-helpers";
 import { threadToUiMessages } from "@/lib/otto-ui-messages";
 import type { ChatThreadDTO, ChatMessageDTO } from "@/lib/types";
@@ -294,5 +296,70 @@ describe("deriveCardState", () => {
     expect(deriveCardState({ genJobId: "j1", submitted: true, results: S([]), errors: S(["j1"]) })).toBe(
       "failed",
     );
+  });
+});
+
+describe("deriveActionState", () => {
+  const steps: MetaActionStep[] = [
+    { index: 0, op: "pause", targetId: "t1", targetName: "Ad 1", currentValue: {}, targetValue: {}, moneyClass: "safe" },
+    { index: 1, op: "resume", targetId: "t2", targetName: "Ad 2", currentValue: {}, targetValue: {}, moneyClass: "safe" },
+  ];
+
+  it("pending when no executions", () => {
+    expect(deriveActionState(steps, [])).toBe("pending");
+  });
+
+  it("executing when at least one step is APPLYING", () => {
+    expect(deriveActionState(steps, [{ stepIndex: 0, status: "APPLYING" }])).toBe("executing");
+  });
+
+  it("executing when some PENDING and some APPLYING", () => {
+    expect(deriveActionState(steps, [
+      { stepIndex: 0, status: "APPLYING" },
+      { stepIndex: 1, status: "PENDING" },
+    ])).toBe("executing");
+  });
+
+  it("done when all steps are APPLIED", () => {
+    expect(deriveActionState(steps, [
+      { stepIndex: 0, status: "APPLIED" },
+      { stepIndex: 1, status: "APPLIED" },
+    ])).toBe("done");
+  });
+
+  it("done when all steps are APPLIED or SKIPPED", () => {
+    expect(deriveActionState(steps, [
+      { stepIndex: 0, status: "APPLIED" },
+      { stepIndex: 1, status: "SKIPPED" },
+    ])).toBe("done");
+  });
+
+  it("partial when some APPLIED and some FAILED", () => {
+    expect(deriveActionState(steps, [
+      { stepIndex: 0, status: "APPLIED" },
+      { stepIndex: 1, status: "FAILED" },
+    ])).toBe("partial");
+  });
+
+  it("partial when some APPLIED and some DIVERGED", () => {
+    expect(deriveActionState(steps, [
+      { stepIndex: 0, status: "APPLIED" },
+      { stepIndex: 1, status: "DIVERGED" },
+    ])).toBe("partial");
+  });
+
+  it("partial when some APPLIED and some NEEDS_CONFIRM", () => {
+    expect(deriveActionState(steps, [
+      { stepIndex: 0, status: "APPLIED" },
+      { stepIndex: 1, status: "NEEDS_CONFIRM" },
+    ])).toBe("partial");
+  });
+
+  it("failed when first step failed and none applied", () => {
+    expect(deriveActionState(steps, [{ stepIndex: 0, status: "FAILED" }])).toBe("failed");
+  });
+
+  it("failed when DIVERGED and none applied", () => {
+    expect(deriveActionState(steps, [{ stepIndex: 0, status: "DIVERGED" }])).toBe("failed");
   });
 });
