@@ -28,15 +28,26 @@ export async function metaGraphUpload(
   return j;
 }
 
-/** Upload an image to a Meta ad account. Returns the `image_hash`. */
+/**
+ * Upload an image to a Meta ad account. Returns the `image_hash`.
+ * @param token - OAuth access token
+ * @param accountId - Ad account ID, e.g. "act_123456"
+ * @param file - Image file to upload
+ */
 export async function uploadAdImage(token: string, accountId: string, file: AdFile): Promise<string> {
   const j = await metaGraphUpload(token, `${accountId}/adimages`, {}, file);
   // Meta response: { images: { <filename>: { hash, url } } }
-  const entry = Object.values(j.images as Record<string, { hash: string }>)[0];
-  return entry.hash;
+  const entry = j?.images ? (Object.values(j.images)[0] as { hash?: string } | undefined) : undefined;
+  if (!entry?.hash) throw new Error("adimages: unexpected Meta response shape");
+  return String(entry.hash);
 }
 
-/** Upload a video to a Meta ad account. Returns the `video_id`. */
+/**
+ * Upload a video to a Meta ad account. Returns the `video_id`.
+ * @param token - OAuth access token
+ * @param accountId - Ad account ID, e.g. "act_123456"
+ * @param file - Video file to upload
+ */
 export async function uploadAdVideo(token: string, accountId: string, file: AdFile): Promise<string> {
   const j = await metaGraphUpload(token, `${accountId}/advideos`, {}, file);
   // Meta response: { id }

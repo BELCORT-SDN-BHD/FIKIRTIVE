@@ -66,6 +66,18 @@ describe("uploadAdImage", () => {
     await expect(uploadAdImage("bad-tok", "act_1", file))
       .rejects.toMatchObject({ metaError: { code: 190 } });
   });
+
+  it("throws with clear error when Meta response has no images key", async () => {
+    const file = { bytes: Buffer.from("bytes"), filename: "img.jpg", contentType: "image/jpeg" };
+    const fetchMock = vi.fn().mockResolvedValueOnce({
+      ok: true,
+      json: async () => ({}),
+    });
+    vi.stubGlobal("fetch", fetchMock);
+
+    await expect(uploadAdImage("tok", "act_1", file))
+      .rejects.toThrow("adimages: unexpected Meta response shape");
+  });
 });
 
 describe("uploadAdVideo", () => {
@@ -85,5 +97,17 @@ describe("uploadAdVideo", () => {
     expect(init.method).toBe("POST");
     expect(init.headers?.Authorization).toBe("Bearer tok");
     expect(init.body).toBeInstanceOf(FormData);
+  });
+
+  it("throws with .metaError.code === 190 on Meta auth error", async () => {
+    const file = { bytes: Buffer.from("bytes"), filename: "clip.mp4", contentType: "video/mp4" };
+    const fetchMock = vi.fn().mockResolvedValueOnce({
+      ok: false,
+      json: async () => ({ error: { code: 190, message: "Invalid OAuth access token." } }),
+    });
+    vi.stubGlobal("fetch", fetchMock);
+
+    await expect(uploadAdVideo("bad-tok", "act_1", file))
+      .rejects.toMatchObject({ metaError: { code: 190 } });
   });
 });
