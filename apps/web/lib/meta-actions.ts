@@ -5,6 +5,7 @@ import { newId } from "@fikirtive/core";
 import { requireOwner } from "./auth-guard";
 import { encryptToken, decryptToken } from "./token-encryption";
 import { exchangeCodeForToken, metaGraphGet } from "./meta-graph";
+import { fetchOwnerInsights, type AccountInsights } from "./meta-insights";
 
 export type MetaAdAccount = { id: string; name: string; currency: string; status: string };
 
@@ -72,4 +73,12 @@ export async function disconnectMeta(): Promise<{ ok: true } | { error: string }
   if ("error" in gate) return gate;
   await prisma.metaConnection.deleteMany({ where: { ownerId: gate.ownerId } });
   return { ok: true };
+}
+
+export async function getMetaInsights(
+  datePreset?: string,
+): Promise<{ accounts: AccountInsights[] } | { needsReconnect: true } | { notConnected: true } | { error: string }> {
+  const gate = await requireOwner();
+  if ("error" in gate) return gate;
+  return fetchOwnerInsights(gate.ownerId, datePreset ?? "last_30d");
 }

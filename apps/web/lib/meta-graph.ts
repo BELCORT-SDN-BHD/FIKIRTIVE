@@ -14,6 +14,29 @@ export async function metaGraphGet(token: string, path: string, params: Record<s
   return j;
 }
 
+export type AccountMetrics = {
+  spend: string | null; impressions: string | null; reach: string | null; frequency: string | null;
+  clicks: string | null; ctr: string | null; cpc: string | null; cpm: string | null; purchaseRoas: string | null;
+};
+
+const INSIGHTS_FIELDS = "spend,impressions,reach,frequency,clicks,ctr,cpc,cpm,purchase_roas";
+
+/** Read-only account insights for one ad account. Returns null when there's no data row. */
+export async function getAccountInsights(token: string, adAccountId: string, datePreset: string): Promise<AccountMetrics | null> {
+  const j = await metaGraphGet(token, `${adAccountId}/insights`, { fields: INSIGHTS_FIELDS, date_preset: datePreset });
+  const d = (j.data ?? [])[0] as Record<string, unknown> | undefined;
+  if (!d) return null;
+  const s = (k: string): string | null => (d[k] == null ? null : String(d[k]));
+  const roas = Array.isArray(d.purchase_roas)
+    ? ((d.purchase_roas[0] as { value?: unknown } | undefined)?.value ?? null)
+    : (d.purchase_roas ?? null);
+  return {
+    spend: s("spend"), impressions: s("impressions"), reach: s("reach"), frequency: s("frequency"),
+    clicks: s("clicks"), ctr: s("ctr"), cpc: s("cpc"), cpm: s("cpm"),
+    purchaseRoas: roas == null ? null : String(roas),
+  };
+}
+
 /** Exchange an OAuth code → a long-lived token (server-side; uses META_APP_SECRET). */
 export async function exchangeCodeForToken(
   code: string,
