@@ -41,13 +41,13 @@ export function verifyState(state: string, now: number = Date.now()): { ownerId:
   return { ownerId: parsed.o };
 }
 
-/** The Meta OAuth consent URL — read-only ads_read scope. */
+/** The Meta OAuth consent URL — requests ads_read + ads_management (user may decline write). */
 export function buildAuthorizeUrl(appId: string, redirectUri: string, state: string): string {
   const u = new URL(`https://www.facebook.com/${META_GRAPH_VERSION}/dialog/oauth`);
   u.searchParams.set("client_id", appId);
   u.searchParams.set("redirect_uri", redirectUri);
   u.searchParams.set("state", state);
-  u.searchParams.set("scope", "ads_read");
+  u.searchParams.set("scope", "ads_read,ads_management");
   u.searchParams.set("response_type", "code");
   return u.toString();
 }

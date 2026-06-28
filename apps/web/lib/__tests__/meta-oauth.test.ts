@@ -36,8 +36,13 @@ describe("buildAuthorizeUrl", () => {
     expect(u.pathname).toContain(META_GRAPH_VERSION);
     expect(u.searchParams.get("client_id")).toBe("APPID");
     expect(u.searchParams.get("redirect_uri")).toBe("https://app/api/meta/callback");
-    expect(u.searchParams.get("scope")).toBe("ads_read");
+    expect(u.searchParams.get("scope")).toContain("ads_read");
     expect(u.searchParams.get("state")).toBe("STATE");
     expect(u.searchParams.get("response_type")).toBe("code");
+  });
+  it("authorize url requests ads_management + ads_read", () => {
+    const url = buildAuthorizeUrl("APPID", "https://app/api/meta/callback", "STATE");
+    expect(url).toContain("ads_management");
+    expect(url).toContain("ads_read");
   });
 });

@@ -52,11 +52,12 @@ export async function listAds(token: string, accountId: string) {
   return j.data ?? [];
 }
 
-/** Exchange an OAuth code → a long-lived token (server-side; uses META_APP_SECRET). */
+/** Exchange an OAuth code → a long-lived token (server-side; uses META_APP_SECRET).
+ *  Also fetches debug_token to surface what scopes Meta ACTUALLY granted. */
 export async function exchangeCodeForToken(
   code: string,
   redirectUri: string,
-): Promise<{ token: string; expiresAt: Date | null } | { error: string }> {
+): Promise<{ token: string; expiresAt: Date | null; grantedScopes: string[] } | { error: string }> {
   const appId = process.env.META_APP_ID;
   const secret = process.env.META_APP_SECRET;
   if (!appId || !secret) return { error: "not_configured" };
@@ -78,5 +79,13 @@ export async function exchangeCodeForToken(
   if (!lr.ok || !lj.access_token) return { error: "exchange" };
 
   const expiresAt = typeof lj.expires_in === "number" ? new Date(Date.now() + lj.expires_in * 1000) : null;
-  return { token: lj.access_token, expiresAt };
+
+  // Fetch the actually-granted scopes via debug_token (never trust what we requested).
+  const dr = await fetch(
+    `https://graph.facebook.com/${META_GRAPH_VERSION}/debug_token?input_token=${encodeURIComponent(lj.access_token)}&access_token=${encodeURIComponent(`${appId}|${secret}`)}`,
+  );
+  const dj = await dr.json().catch(() => ({}));
+  const grantedScopes: string[] = Array.isArray(dj?.data?.scopes) ? dj.data.scopes : [];
+
+  return { token: lj.access_token, expiresAt, grantedScopes };
 }
