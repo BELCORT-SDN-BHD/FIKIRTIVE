@@ -1,3 +1,28 @@
+// ════════════════════════════════════════════════════════════════════════════
+// Task 15 — Connections UI controls (autonomy toggle + kill-switch).
+// Shape mirrors updateMemory: requireOwner → updateMany owner-scoped → { ok }.
+// Surfaced to the client via otto-client-actions.ts (which is "use server").
+// ════════════════════════════════════════════════════════════════════════════
+
+/** Set the per-org Otto autonomy mode (Ask = always confirm; Auto = safe-only self-run). */
+export async function setAdsAutonomy(mode: "ASK" | "AUTO"): Promise<{ ok: true } | { error: string }> {
+  if (mode !== "ASK" && mode !== "AUTO") return { error: "Invalid autonomy mode." };
+  const gate = await requireOwner();
+  if ("error" in gate) return gate;
+  await prisma.metaConnection.updateMany({ where: { ownerId: gate.ownerId }, data: { adsAutonomy: mode } });
+  return { ok: true };
+}
+
+/** Toggle the kill-switch. When paused=true, runApprovedPlan refuses every write. */
+export async function setAdsWritesPaused(paused: boolean): Promise<{ ok: true } | { error: string }> {
+  const gate = await requireOwner();
+  if ("error" in gate) return gate;
+  await prisma.metaConnection.updateMany({ where: { ownerId: gate.ownerId }, data: { adsWritesPaused: paused } });
+  return { ok: true };
+}
+
+// ════════════════════════════════════════════════════════════════════════════
+
 /**
  * runApprovedPlan — the ONLY code path in the system that writes to Meta (spends the
  * user's real ad money). Trusted, internal, server-side executor. NOT `'use server'`.

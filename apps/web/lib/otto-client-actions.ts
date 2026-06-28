@@ -11,7 +11,7 @@ import {
   createEmptyCoworkThread as _createEmptyCoworkThread,
   deleteCoworkThread as _deleteCoworkThread,
 } from "./otto-actions";
-import { approveMetaActionPlan as _approveMetaActionPlan } from "./meta-write-actions";
+import { approveMetaActionPlan as _approveMetaActionPlan, setAdsAutonomy as _setAdsAutonomy, setAdsWritesPaused as _setAdsWritesPaused } from "./meta-write-actions";
 
 export async function ottoTurn(raw: unknown) {
   return _ottoTurn(raw);
@@ -34,4 +34,14 @@ export async function deleteCoworkThread(threadId: string) {
  *  approveMetaActionPlan; this wrapper only crosses the client→server boundary. */
 export async function approveMetaActionPlan(cardId: string) {
   return _approveMetaActionPlan(cardId);
+}
+
+/** Set the per-org autonomy mode ("ASK" | "AUTO"). Called from OttoConnections.tsx. */
+export async function setAdsAutonomy(mode: "ASK" | "AUTO") {
+  return _setAdsAutonomy(mode);
+}
+
+/** Toggle the kill-switch. paused=true → runApprovedPlan refuses all writes. */
+export async function setAdsWritesPaused(paused: boolean) {
+  return _setAdsWritesPaused(paused);
 }

@@ -1,24 +1,54 @@
 "use client";
 import React, { useEffect, useState } from "react";
 import { getMetaConnection, disconnectMeta, getMetaInsights, type MetaAdAccount } from "@/lib/meta-actions";
+import { setAdsAutonomy, setAdsWritesPaused } from "@/lib/otto-client-actions";
 import type { AccountInsights } from "@/lib/meta-insights";
 
 type State =
   | { phase: "loading" }
   | { phase: "disconnected" }
-  | { phase: "connected"; status?: string; accounts: MetaAdAccount[] }
+  | { phase: "connected"; status?: string; accounts: MetaAdAccount[]; canWrite: boolean; adsAutonomy: string; adsWritesPaused: boolean }
   | { phase: "reconnect" };
 
 export default function OttoConnections() {
   const [state, setState] = useState<State>({ phase: "loading" });
   const [insights, setInsights] = useState<AccountInsights[] | null>(null);
+  const [saving, setSaving] = useState<null | "autonomy" | "paused">(null);
+  const [saveError, setSaveError] = useState<string | null>(null);
 
   async function load() {
     setState({ phase: "loading" });
     const res = await getMetaConnection();
     if ("error" in res || !res.connected) return setState({ phase: "disconnected" });
     if (res.needsReconnect) return setState({ phase: "reconnect" });
-    setState({ phase: "connected", status: res.status, accounts: res.accounts ?? [] });
+    setState({
+      phase: "connected",
+      status: res.status,
+      accounts: res.accounts ?? [],
+      canWrite: res.canWrite ?? false,
+      adsAutonomy: res.adsAutonomy ?? "ASK",
+      adsWritesPaused: res.adsWritesPaused ?? false,
+    });
+  }
+
+  async function handleAutonomy(mode: "ASK" | "AUTO") {
+    if (state.phase !== "connected") return;
+    setSaving("autonomy");
+    setSaveError(null);
+    setState((s) => s.phase === "connected" ? { ...s, adsAutonomy: mode } : s);
+    const res = await setAdsAutonomy(mode);
+    setSaving(null);
+    if ("error" in res) setSaveError(res.error);
+  }
+
+  async function handlePaused(paused: boolean) {
+    if (state.phase !== "connected") return;
+    setSaving("paused");
+    setSaveError(null);
+    setState((s) => s.phase === "connected" ? { ...s, adsWritesPaused: paused } : s);
+    const res = await setAdsWritesPaused(paused);
+    setSaving(null);
+    if ("error" in res) setSaveError(res.error);
   }
   useEffect(() => { void load(); }, []);
 
@@ -77,6 +107,61 @@ export default function OttoConnections() {
                   );
                 })}
               </div>
+              {/* ── Autonomy + Kill-switch controls (only when write permission granted) ── */}
+              {state.canWrite ? (
+                <div style={{ marginTop: "var(--space-4)", borderTop: "1px solid var(--border-subtle)", paddingTop: "var(--space-3)", display: "flex", flexDirection: "column", gap: "var(--space-3)" }}>
+                  {/* Autonomy selector */}
+                  <div>
+                    <div style={{ fontSize: 13, fontWeight: 600, color: "var(--text-body)", marginBottom: "var(--space-1)" }}>Otto autonomy</div>
+                    <div style={{ display: "flex", gap: "var(--space-2)" }}>
+                      <button
+                        type="button"
+                        className={`al-btn al-btn-sm${state.adsAutonomy === "ASK" ? " al-btn-primary" : ""}`}
+                        disabled={saving === "autonomy"}
+                        onClick={() => void handleAutonomy("ASK")}
+                      >
+                        Ask
+                      </button>
+                      <button
+                        type="button"
+                        className={`al-btn al-btn-sm${state.adsAutonomy === "AUTO" ? " al-btn-primary" : ""}`}
+                        disabled={saving === "autonomy"}
+                        onClick={() => void handleAutonomy("AUTO")}
+                      >
+                        Auto
+                      </button>
+                    </div>
+                    <p style={{ margin: "var(--space-1) 0 0", fontSize: 12, color: "var(--text-muted)" }}>
+                      {state.adsAutonomy === "AUTO"
+                        ? "Auto lets Otto pause ads & lower budgets on its own — anything that spends still asks you."
+                        : "Ask (default) — Otto always asks before making changes."}
+                    </p>
+                  </div>
+
+                  {/* Kill-switch */}
+                  <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between" }}>
+                    <div>
+                      <div style={{ fontSize: 13, fontWeight: 600, color: "var(--text-body)" }}>Pause all ad changes</div>
+                      <div style={{ fontSize: 12, color: "var(--text-muted)" }}>Otto cannot change any ad until you unpause.</div>
+                    </div>
+                    <button
+                      type="button"
+                      className={`al-btn al-btn-sm${state.adsWritesPaused ? " al-btn-danger" : ""}`}
+                      disabled={saving === "paused"}
+                      onClick={() => void handlePaused(!state.adsWritesPaused)}
+                    >
+                      {state.adsWritesPaused ? "Paused — resume?" : "Pause"}
+                    </button>
+                  </div>
+
+                  {saveError && <p style={{ margin: 0, fontSize: 12, color: "var(--danger, #d65a5a)" }}>{saveError}</p>}
+                </div>
+              ) : (
+                <p style={{ marginTop: "var(--space-3)", fontSize: 13, color: "var(--text-muted)" }}>
+                  Reconnect to let Otto manage your ads.
+                </p>
+              )}
+
               <button type="button" className="al-btn al-btn-sm" style={{ marginTop: "var(--space-3)" }} onClick={async () => { await disconnectMeta(); void load(); }}>
                 Disconnect
               </button>

@@ -7,6 +7,7 @@ import { describe, it, expect, vi, beforeEach } from "vitest";
 
 const {
   mockConnFindUnique,
+  mockConnUpdateMany,
   mockMsgFindFirst,
   mockMsgUpdate,
   mockExecFindFirst,
@@ -19,6 +20,7 @@ const {
   mockIsImpersonating,
 } = vi.hoisted(() => ({
   mockConnFindUnique: vi.fn(),
+  mockConnUpdateMany: vi.fn(),
   mockMsgFindFirst: vi.fn(),
   mockMsgUpdate: vi.fn(),
   mockExecFindFirst: vi.fn(),
@@ -33,7 +35,7 @@ const {
 
 vi.mock("@fikirtive/db", () => ({
   prisma: {
-    metaConnection: { findUnique: mockConnFindUnique },
+    metaConnection: { findUnique: mockConnFindUnique, updateMany: mockConnUpdateMany },
     chatMessage: { findFirst: mockMsgFindFirst, update: mockMsgUpdate },
     metaActionExecution: { findFirst: mockExecFindFirst, create: mockExecCreate, update: mockExecUpdate },
     actionEvent: { create: mockEventCreate },
@@ -45,7 +47,7 @@ vi.mock("../auth-guard", () => ({ requireOwner: mockRequireOwner }));
 vi.mock("@/lib/better-auth/compat", () => ({ isImpersonating: mockIsImpersonating }));
 // token-encryption is REAL: decryptToken round-trips a token we encrypt under a fixed key.
 
-import { runApprovedPlan, approveMetaActionPlan, maybeAutoRun } from "../meta-write-actions";
+import { runApprovedPlan, approveMetaActionPlan, maybeAutoRun, setAdsAutonomy, setAdsWritesPaused } from "../meta-write-actions";
 import { encryptToken } from "../token-encryption";
 import { buildApproval, type PlanStep } from "../meta-approval";
 
@@ -98,6 +100,7 @@ beforeEach(() => {
   mockExecUpdate.mockResolvedValue({});
   mockEventCreate.mockResolvedValue({});
   mockMsgUpdate.mockResolvedValue({});
+  mockConnUpdateMany.mockResolvedValue({ count: 1 });
   // default auth: owner u1, not impersonating
   mockRequireOwner.mockResolvedValue({ email: "u1@x.com", ownerId: "u1" });
   mockIsImpersonating.mockResolvedValue(false);
@@ -486,5 +489,70 @@ describe("maybeAutoRun — AUTO path (defense in depth)", () => {
 
     expect(res).toEqual(expect.objectContaining({ ran: false }));
     expect(mockGraphPost).not.toHaveBeenCalled();
+  });
+});
+
+// ════════════════════════════════════════════════════════════════════════════
+// Task 15 — setAdsAutonomy + setAdsWritesPaused (Connections UI controls)
+// ════════════════════════════════════════════════════════════════════════════
+
+describe("setAdsAutonomy", () => {
+  it("AUTO: calls updateMany owner-scoped with { adsAutonomy: 'AUTO' } and returns ok", async () => {
+    const res = await setAdsAutonomy("AUTO");
+    expect(res).toEqual({ ok: true });
+    expect(mockConnUpdateMany).toHaveBeenCalledWith({
+      where: { ownerId: "u1" },
+      data: { adsAutonomy: "AUTO" },
+    });
+  });
+
+  it("ASK: calls updateMany owner-scoped with { adsAutonomy: 'ASK' } and returns ok", async () => {
+    const res = await setAdsAutonomy("ASK");
+    expect(res).toEqual({ ok: true });
+    expect(mockConnUpdateMany).toHaveBeenCalledWith({
+      where: { ownerId: "u1" },
+      data: { adsAutonomy: "ASK" },
+    });
+  });
+
+  it("rejects an invalid mode — never calls updateMany", async () => {
+    // @ts-expect-error intentional invalid value
+    const res = await setAdsAutonomy("YOLO");
+    expect(res).toEqual({ error: expect.any(String) });
+    expect(mockConnUpdateMany).not.toHaveBeenCalled();
+  });
+
+  it("requireOwner error → returns error, no updateMany", async () => {
+    mockRequireOwner.mockResolvedValue({ error: "Not authenticated." });
+    const res = await setAdsAutonomy("AUTO");
+    expect(res).toEqual({ error: "Not authenticated." });
+    expect(mockConnUpdateMany).not.toHaveBeenCalled();
+  });
+});
+
+describe("setAdsWritesPaused", () => {
+  it("true: calls updateMany owner-scoped with { adsWritesPaused: true } and returns ok", async () => {
+    const res = await setAdsWritesPaused(true);
+    expect(res).toEqual({ ok: true });
+    expect(mockConnUpdateMany).toHaveBeenCalledWith({
+      where: { ownerId: "u1" },
+      data: { adsWritesPaused: true },
+    });
+  });
+
+  it("false: calls updateMany owner-scoped with { adsWritesPaused: false } and returns ok", async () => {
+    const res = await setAdsWritesPaused(false);
+    expect(res).toEqual({ ok: true });
+    expect(mockConnUpdateMany).toHaveBeenCalledWith({
+      where: { ownerId: "u1" },
+      data: { adsWritesPaused: false },
+    });
+  });
+
+  it("requireOwner error → returns error, no updateMany", async () => {
+    mockRequireOwner.mockResolvedValue({ error: "Not authorized." });
+    const res = await setAdsWritesPaused(true);
+    expect(res).toEqual({ error: "Not authorized." });
+    expect(mockConnUpdateMany).not.toHaveBeenCalled();
   });
 });
