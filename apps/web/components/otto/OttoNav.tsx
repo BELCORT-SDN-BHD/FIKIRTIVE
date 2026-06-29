@@ -499,30 +499,25 @@ export function OttoNav({
 
       <div style={{ flex: (threads.length || history.length) ? 0 : 1 }} />
 
-      {/* Balance card */}
+      {/* Balance — compact credit line (Grok-style: subtle, not a big card) */}
       <div
+        title="Your balance"
         style={{
-          margin: "var(--space-3)",
-          padding: "var(--space-3) var(--space-4)",
-          borderRadius: "var(--radius-md)",
-          background: "var(--surface-sunken)",
-          border: "1px solid var(--border-subtle)",
+          display: "flex",
+          alignItems: "center",
+          gap: "var(--space-2)",
+          padding: "var(--space-2) var(--space-4)",
+          fontSize: "var(--text-xs)",
+          color: "var(--text-muted)",
+          borderTop: "1px solid var(--border-subtle)",
         }}
       >
-        <div style={{ fontSize: "var(--text-xs)", color: "var(--text-faint)", fontWeight: "var(--weight-semibold)", marginBottom: 2 }}>
-          Your balance
-        </div>
-        <div
-          style={{
-            fontFamily: "var(--font-display)",
-            fontWeight: "var(--weight-bold)",
-            fontSize: "var(--text-xl)",
-            color: "var(--text-strong)",
-            letterSpacing: "var(--tracking-snug)",
-          }}
-        >
+        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="var(--accent)" strokeWidth="2" aria-hidden>
+          <circle cx="12" cy="12" r="9" /><path d="M12 7v10M9 9.5h4a1.5 1.5 0 0 1 0 3h-2a1.5 1.5 0 0 0 0 3h4" />
+        </svg>
+        <span style={{ fontWeight: "var(--weight-semibold)", color: "var(--text-body)", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
           {balanceLabel}
-        </div>
+        </span>
       </div>
 
       {/* User */}
@@ -532,7 +527,6 @@ export function OttoNav({
           alignItems: "center",
           gap: "var(--space-3)",
           padding: "var(--space-3) var(--space-4)",
-          borderTop: "1px solid var(--border-subtle)",
         }}
       >
         <div
