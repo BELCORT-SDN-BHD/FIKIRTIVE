@@ -35,9 +35,20 @@ export default async function SkinPreviewPage({
     },
   ];
 
+  const iso = new Date(0).toISOString();
   return (
     <OttoApp
-      projectId="preview"
+      projectId="p1"
+      projects={[
+        { id: "p1", name: "Autumn menu launch" },
+        { id: "p2", name: "Sci-fi teaser" },
+      ]}
+      activeProjectId="p1"
+      sidebarThreads={[
+        { id: "t1", projectId: "p1", title: "Croissant hero shots", updatedAt: iso, messages: [], status: "done" },
+        { id: "t2", projectId: "p1", title: "Latte art video", updatedAt: iso, messages: [], status: "working" },
+        { id: "t3", projectId: "p2", title: "Teaser concepts", updatedAt: iso, messages: [], status: null },
+      ]}
       entities={[]}
       threads={[]}
       balanceUsd={84}

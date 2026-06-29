@@ -127,6 +127,20 @@ export async function deleteProject(projectId: string): Promise<{ ok: true } | {
   return { ok: true };
 }
 
+/** Rename a project (campaign). Owner-scoped, fail-closed; display-only metadata. */
+export async function renameProject(projectId: string, name: string): Promise<{ ok: true; name: string } | { error: string }> {
+  const gate = await requireOwner(); if ("error" in gate) return gate;
+  const { ownerId } = gate;
+  const clean = name.trim().slice(0, 80);
+  if (!clean) return { error: "Name required." };
+  const project = await prisma.project.findFirst({ where: { id: projectId, ownerId, deletedAt: null }, select: { id: true } });
+  if (!project) return { error: "Project not found." };
+  await prisma.project.update({ where: { id: project.id }, data: { name: clean } });
+  await logAction(ownerId, "project.rename", project.id, { name: clean });
+  revalidatePath("/", "layout");
+  return { ok: true, name: clean };
+}
+
 // ---------- entities ----------
 
 const REF_MAX_BYTES = 10 * 1024 * 1024; // 10 MB per source image
