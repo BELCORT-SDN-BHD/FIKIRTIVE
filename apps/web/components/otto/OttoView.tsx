@@ -45,6 +45,8 @@ interface OttoViewProps {
   /** Collapse the OTTO chat pane to give the canvas full width. */
   chatCollapsed?: boolean;
   onToggleChat?: () => void;
+  /** Re-skin flag (?skin=gb) — enables the chat→canvas bridge on the canvas. */
+  skin?: "gb";
 }
 
 export function OttoView({
@@ -71,6 +73,7 @@ export function OttoView({
   onUseInOtto,
   chatCollapsed = false,
   onToggleChat,
+  skin,
 }: OttoViewProps) {
   const activeThread = threads.find((t) => t.id === activeThreadId) ?? null;
 
@@ -262,7 +265,7 @@ export function OttoView({
             <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" aria-hidden><path d="m15 18-6-6 6-6" /></svg>
           </button>
         )}
-        <FlowCanvas projectId={projectId} entities={entities} activeThreadId={activeThreadId} activity={activity} />
+        <FlowCanvas projectId={projectId} entities={entities} activeThreadId={activeThreadId} activity={activity} skin={skin} />
       </div>
     </div>
   );

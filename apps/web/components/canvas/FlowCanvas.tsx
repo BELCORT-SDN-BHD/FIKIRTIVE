@@ -6,7 +6,8 @@ import { ImageNode } from "./nodes/ImageNode";
 import { VideoNode } from "./nodes/VideoNode";
 import { TextNode } from "./nodes/TextNode";
 import { useCanvasGen } from "./useCanvasGen";
-import { listCanvasNodes, moveCanvasNode, deleteCanvasNode, updateTextNode, createCanvasNode } from "../../lib/canvas-actions";
+import { listCanvasNodes, moveCanvasNode, deleteCanvasNode, updateTextNode, createCanvasNode, type CanvasNodeDTO } from "../../lib/canvas-actions";
+import { syncOttoCanvasNodes } from "../../lib/otto-canvas-bridge";
 import { OttoCanvasStatus } from "../otto/OttoTrace";
 import DetailPanel from "@/components/asset/DetailPanel";
 import { MentionInput } from "@/components/MentionInput";
@@ -18,7 +19,7 @@ type CanvasFlowNode = Node & { threadId: string | null };
 // Must be stable (defined outside component) per ReactFlow requirements
 const nodeTypes = { image: ImageNode, video: VideoNode, text: TextNode };
 
-export default function FlowCanvas({ projectId, entities = [], activeThreadId = null, activity }: { projectId: string; entities?: EntityDTO[]; activeThreadId?: string | null; activity?: Set<string> }) {
+export default function FlowCanvas({ projectId, entities = [], activeThreadId = null, activity, skin }: { projectId: string; entities?: EntityDTO[]; activeThreadId?: string | null; activity?: Set<string>; skin?: "gb" }) {
   const [nodes, setNodes] = useState<CanvasFlowNode[]>([]);
   const [prompt, setPrompt] = useState("");
   const [promptIds, setPromptIds] = useState<string[]>([]); // @mentioned entity ids
@@ -147,35 +148,62 @@ export default function FlowCanvas({ projectId, entities = [], activeThreadId = 
   // Stop polls on unmount
   useEffect(() => () => { cancelledRef.current = true; }, [cancelledRef]);
 
-  useEffect(() => {
-    listCanvasNodes(projectId).then((rows) => {
-      if ("error" in (rows as object)) return;
-      const mapped = (rows as any[]).map((r) => {
-        nodeDataRef.current[r.id] = { generationId: r.generationId ?? undefined, pos: { x: r.x, y: r.y } };
-        return {
-          id: r.id,
-          type: r.type,
-          position: { x: r.x, y: r.y },
-          data: {
-            status: r.status,
-            // TODO(G2): resolve stored generationId -> media URL on hydrate
-            url: undefined,
-            prompt: r.prompt,
-            text: r.text,
-            onDelete: () => deleteNode(r.id),
-            onChange: r.type === "text" ? (t: string) => onTextChange(r.id, t) : undefined,
-            // onAnimate + onOpenDetail: only useful once URL resolves; generationId stored in ref for call-time read
-            onAnimate: r.type === "image" ? getOnAnimate(r.id) : undefined,
-            onOpenDetail: r.type === "image" ? getOnOpenDetail(r.id) : undefined,
-          },
-          style: { width: r.w, height: r.h, boxShadow: `0 0 0 2px ${convoColor(r.threadId ?? null)}` },
-          threadId: r.threadId ?? null,
-        };
-      });
-      nodeCountRef.current = mapped.length;
-      setNodes(mapped);
+  // Load (and, under the Grok-bright skin, bridge OTTO's chat results onto) the
+  // canvas. The gb path resolves each node's media URL and ensures a node exists
+  // for the active thread's results (display-only, no spend). The default path is
+  // the original listCanvasNodes (URLs stay client-resolved via generation polls).
+  const reload = useCallback(async () => {
+    const rows = skin === "gb"
+      ? await syncOttoCanvasNodes(projectId, activeThreadId ?? undefined)
+      : await listCanvasNodes(projectId);
+    if ("error" in (rows as object)) return;
+    const mapped = (rows as Array<CanvasNodeDTO & { url?: string | null }>).map((r) => {
+      nodeDataRef.current[r.id] = { generationId: r.generationId ?? undefined, pos: { x: r.x, y: r.y } };
+      return {
+        id: r.id,
+        type: r.type,
+        position: { x: r.x, y: r.y },
+        data: {
+          status: r.status,
+          url: r.url ?? undefined,
+          prompt: r.prompt,
+          text: r.text,
+          onDelete: () => deleteNode(r.id),
+          onChange: r.type === "text" ? (t: string) => onTextChange(r.id, t) : undefined,
+          onAnimate: r.type === "image" ? getOnAnimate(r.id) : undefined,
+          onOpenDetail: r.type === "image" ? getOnOpenDetail(r.id) : undefined,
+        },
+        style: { width: r.w, height: r.h, boxShadow: `0 0 0 2px ${convoColor(r.threadId ?? null)}` },
+        threadId: r.threadId ?? null,
+      } as CanvasFlowNode;
     });
-  }, [projectId, deleteNode, onTextChange, getOnAnimate, getOnOpenDetail]);
+    // Merge, not replace: keep any node that's still generating locally (server may
+    // not have its URL yet) so a reload never clobbers an in-flight promptbar gen.
+    setNodes((prev) => {
+      const prevById = new Map(prev.map((n) => [n.id, n]));
+      const merged = mapped.map((m) => {
+        const old = prevById.get(m.id);
+        return old && old.data.status === "pending" && !m.data.url ? old : m;
+      });
+      const mergedIds = new Set(merged.map((n) => n.id));
+      const extras = prev.filter((n) => !mergedIds.has(n.id));
+      const all = [...merged, ...extras];
+      nodeCountRef.current = all.length;
+      return all;
+    });
+  }, [skin, projectId, activeThreadId, deleteNode, onTextChange, getOnAnimate, getOnOpenDetail]);
+
+  // Initial load + reload when the active thread changes (re-bridges that thread).
+  useEffect(() => { void reload(); }, [reload]);
+
+  // When the active thread's OTTO work finishes (pending → done), reload so its
+  // freshly-produced results appear on the canvas.
+  const prevPendingRef = useRef(false);
+  useEffect(() => {
+    const pending = !!(activeThreadId && activity?.has(activeThreadId));
+    if (prevPendingRef.current && !pending) void reload();
+    prevPendingRef.current = pending;
+  }, [activity, activeThreadId, reload]);
 
   // Keep nodeDataRef positions in sync when nodes move (so onAnimate uses fresh coords)
   const onNodesChange = useCallback((changes: NodeChange[]) => {

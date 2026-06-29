@@ -258,6 +258,7 @@ export function OttoApp({
           onUseInOtto={handleUseInOtto}
           chatCollapsed={chatCollapsed}
           onToggleChat={() => setChatCollapsed((v) => !v)}
+          skin={skin}
         />
       </div>
 
