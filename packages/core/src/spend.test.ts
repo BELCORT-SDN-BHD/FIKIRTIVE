@@ -55,6 +55,12 @@ describe("credit pricing (deterministic CHARGE in internal credits; 1 internal =
     expect(v("720p")).toBe(70);   // 7 displayed credits
     expect(v("1080p")).toBe(160); // 16 displayed credits
   });
+  it("unknown/higher resolution → the 1080p price (never under-charge)", () => {
+    const v = (resolution: string) => pricedGenCredits({ kind: "VIDEO", model: "seedance-2-fast", count: 1, videoOptions: { seconds: 5, resolution, audio: true } });
+    expect(v("4K")).toBe(160);  // unknown res → 1080p price (16 displayed × 10)
+    expect(v("")).toBe(160);
+    expect(v("480p")).toBe(160);
+  });
   it("image charge stays 1 displayed credit per image", () => {
     expect(pricedGenCredits({ kind: "IMAGE", model: "seedream", count: 1, videoOptions: null })).toBe(10);
     expect(pricedGenCredits({ kind: "IMAGE", model: "seedream", count: 3, videoOptions: null })).toBe(30);

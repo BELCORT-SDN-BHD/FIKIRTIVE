@@ -100,4 +100,12 @@ describe("generate (Seedream image, sync)", () => {
     await expect(new BytePlusProvider("ark-test").generate({ prompt: "x", inputImageUrls: [], count: 1, model: "nope" as any }))
       .rejects.toThrow(/no image model/);
   });
+  it("throws chargedError when a paid image fails to download (all-or-nothing)", async () => {
+    stubFetch((url) => {
+      if (url.endsWith("/images/generations")) return jsonRes({ data: [{ url: "https://tos/img1.png" }] });
+      return { ok: false, status: 500, arrayBuffer: async () => new ArrayBuffer(0) }; // the result download fails
+    });
+    await expect(new BytePlusProvider("ark-test").generate({ prompt: "x", inputImageUrls: [], count: 1, model: "seedream" }))
+      .rejects.toThrow(/usable/);
+  });
 });
