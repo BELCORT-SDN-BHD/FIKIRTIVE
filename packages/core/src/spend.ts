@@ -100,6 +100,7 @@ export function displayCredits(internal: number): number {
 }
 
 /** Beta: a new org's one-time CreditAccount seed (internal credits, 1 = $0.01).
- *  1000 DISPLAYED credits = 1000 × INTERNAL_PER_DISPLAY internal. Granted idempotently
- *  in the org-bootstrap path (requireOwner + events.signIn) under key "signup:<orgId>". */
-export const BETA_INITIAL_GRANT_CREDITS = 1000 * INTERNAL_PER_DISPLAY;
+ *  100 DISPLAYED credits = 100 × INTERNAL_PER_DISPLAY internal (≈ 4–5 complete campaigns
+ *  at BytePlus costs). Granted idempotently in the org-bootstrap path (requireOwner +
+ *  events.signIn) under key "signup:<orgId>". */
+export const BETA_INITIAL_GRANT_CREDITS = 100 * INTERNAL_PER_DISPLAY;

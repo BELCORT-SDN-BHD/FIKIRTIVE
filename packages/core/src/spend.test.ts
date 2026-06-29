@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { genSpentUsd, refgenSpentUsd, pricedGenCredits, pricedRefgenCredits, displayCredits, CREDITS_PER_USD, INTERNAL_PER_DISPLAY } from "./spend.js";
+import { genSpentUsd, refgenSpentUsd, pricedGenCredits, pricedRefgenCredits, displayCredits, CREDITS_PER_USD, INTERNAL_PER_DISPLAY, BETA_INITIAL_GRANT_CREDITS } from "./spend.js";
 import { GEN_PRICE_USD_PER_IMAGE, videoPriceUsd } from "./gen.js";
 import { REFGEN_PRICE_USD_PER_IMAGE } from "./refgen.js";
 // Note: video credit charge is split — flat per resolution for BytePlus flat-priced models
@@ -68,5 +68,9 @@ describe("credit pricing (deterministic CHARGE in internal credits; 1 internal =
   it("image charge stays 1 displayed credit per image", () => {
     expect(pricedGenCredits({ kind: "IMAGE", model: "seedream", count: 1, videoOptions: null })).toBe(10);
     expect(pricedGenCredits({ kind: "IMAGE", model: "seedream", count: 3, videoOptions: null })).toBe(30);
+  });
+  it("beta signup grant is 100 displayed credits (internal = ×INTERNAL_PER_DISPLAY)", () => {
+    expect(BETA_INITIAL_GRANT_CREDITS).toBe(100 * INTERNAL_PER_DISPLAY);
+    expect(displayCredits(BETA_INITIAL_GRANT_CREDITS)).toBe(100);
   });
 });

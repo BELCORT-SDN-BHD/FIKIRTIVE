@@ -42,9 +42,11 @@ export function llmPricesFor(model: string): LlmPrices {
 
 // ── Margin (Part B) ──────────────────────────────────────────────────────────
 
-/** Default markup over raw LLM cost (3× = ~66% margin). The per-category
- *  admin-dashboard knob is deferred to OPT-6; this is the v1 source of truth. */
-export const OTTO_LLM_MARGIN_DEFAULT = 3;
+/** Default markup over raw LLM cost (1.5× = real tokens + cache-write/overhead + thin
+ *  margin — Otto is the cheap differentiator; profit is generations + a future Otto
+ *  subscription). Overridable per-call (withLlmBudget margin) or via OTTO_LLM_MARGIN env;
+ *  the per-category admin-dashboard knob is deferred to OPT-6. v1 source of truth. */
+export const OTTO_LLM_MARGIN_DEFAULT = 1.5;
 
 /** Runtime-overridable margin via OTTO_LLM_MARGIN env var (positive finite number).
  *  Falls back to OTTO_LLM_MARGIN_DEFAULT when the env var is absent or invalid. */
