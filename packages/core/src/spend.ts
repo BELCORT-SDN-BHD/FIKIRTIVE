@@ -73,7 +73,7 @@ function displayedFromUsd(usd: number): number {
 /** Flat per-resolution video charge (BytePlus Seedance 2.0 fast; covers the t2v
  *  worst case, healthy margin on the i2v primary path). 1080p (and anything not
  *  720p) → 16 cr; 720p → 7 cr. Image = 1 displayed credit per image. */
-const VIDEO_CREDITS_BY_RESOLUTION: Record<string, number> = { "720p": 7, "1080p": 16 };
+export const VIDEO_CREDITS_BY_RESOLUTION: Record<string, number> = { "720p": 7, "1080p": 16 };
 export function pricedGenCredits(job: GenSpendInput): number {
   if (job.kind === "VIDEO") {
     const r = job.videoOptions?.resolution ?? "720p";

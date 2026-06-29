@@ -15,6 +15,7 @@ import {
   GEN_PRICE_USD_PER_IMAGE, MAX_GEN_COUNT, GEN_VIDEO_MODEL_INFO,
   GEN_VIDEO_MODEL_OPTIONS, videoDefaults, videoPriceUsd, type GenVideoModel,
   activeVideoModel, modelFamily, deriveMode, lintPrompt, castFindings, type ModelDirectiveRules,
+  VIDEO_CREDITS_BY_RESOLUTION,
   newId,
 } from "@fikirtive/core";
 import { startGen, getGenJob, getRecentGenResults } from "@/lib/gen-actions";
@@ -82,15 +83,17 @@ type Result = {
 };
 
 /** A labelled segmented control for the "More" settings panel. */
-function SettingRow({ label, options, value, onChange }: {
+function SettingRow({ label, options, value, onChange, labelFn }: {
   label: string; options: (string | number)[]; value: string | number; onChange: (v: string | number) => void;
+  /** Optional: maps a raw option value to the button display label. Value binding is always the raw value. */
+  labelFn?: (v: string | number) => string;
 }) {
   return (
     <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
       <span style={{ font: "var(--text-caption)", color: "var(--fg-3)", width: 70, flex: "none" }}>{label}</span>
       <div className="al-seg" role="group" aria-label={label}>
         {options.map((o) => (
-          <button key={String(o)} className={`al-seg-item${value === o ? " al-seg-item-active" : ""}`} onClick={() => onChange(o)}>{String(o)}</button>
+          <button key={String(o)} className={`al-seg-item${value === o ? " al-seg-item-active" : ""}`} onClick={() => onChange(o)}>{labelFn ? labelFn(o) : String(o)}</button>
         ))}
       </div>
     </div>
@@ -468,7 +471,8 @@ export function GenSpace({ projectId, entities, rulesMap, onGoToElements }: { pr
                 <button className="al-iconbtn al-iconbtn-sm" onClick={() => setShowMore(false)} aria-label="Close settings"><IcX size={12} /></button>
               </div>
               {opts.resolutions.length > 0 && (
-                <SettingRow label="Resolution" options={opts.resolutions} value={vopts.resolution} onChange={(v) => setVopts((o) => ({ ...o, resolution: String(v) }))} />
+                <SettingRow label="Resolution" options={opts.resolutions} value={vopts.resolution} onChange={(v) => setVopts((o) => ({ ...o, resolution: String(v) }))}
+                  labelFn={(r) => { const cr = VIDEO_CREDITS_BY_RESOLUTION[String(r)]; return cr != null ? `${String(r)} · ${cr} cr` : String(r); }} />
               )}
               {opts.aspectRatios.length > 0 && !refImg && (
                 <SettingRow label="Aspect" options={opts.aspectRatios} value={vopts.aspectRatio} onChange={(v) => setVopts((o) => ({ ...o, aspectRatio: String(v) }))} />
