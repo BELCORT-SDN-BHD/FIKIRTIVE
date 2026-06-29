@@ -42,6 +42,9 @@ export interface OttoAppProps {
   initialView?: OttoViewKey;
   /** Re-skin flag (?skin=gb): opt into the Grok-bright look (strangler). */
   skin?: "gb";
+  /** Start with a pane collapsed (the canvas home's panes are collapsible). */
+  initialNavCollapsed?: boolean;
+  initialChatCollapsed?: boolean;
 }
 
 export type OttoViewKey = "otto" | "stuff" | "library" | "templates" | "discover" | "memory" | "account" | "connections";
@@ -61,6 +64,8 @@ export function OttoApp({
   ottoStreamEnabled,
   initialView,
   skin,
+  initialNavCollapsed,
+  initialChatCollapsed,
 }: OttoAppProps) {
   const [view, setView] = useState<OttoViewKey>(initialView ?? "otto");
   const [threads, setThreads] = useState<ChatThreadDTO[]>(initialThreads);
@@ -71,6 +76,8 @@ export function OttoApp({
   const [drawerOpen, setDrawerOpen] = useState(false);
   const [activity, setActivity] = useState<Set<string>>(new Set());
   const [seedText, setSeedText] = useState<string>("");
+  const [navCollapsed, setNavCollapsed] = useState(initialNavCollapsed ?? false);
+  const [chatCollapsed, setChatCollapsed] = useState(initialChatCollapsed ?? false);
 
   useEffect(() => {
     if (view !== "otto") return;
@@ -136,8 +143,41 @@ export function OttoApp({
         }
       `}</style>
 
+      {/* Show-sidebar button — visible only while the nav is collapsed */}
+      {navCollapsed && (
+        <button
+          type="button"
+          onClick={() => setNavCollapsed(false)}
+          title="Show sidebar"
+          aria-label="Show sidebar"
+          style={{
+            position: "absolute",
+            top: "var(--space-3)",
+            left: "var(--space-3)",
+            zIndex: 50,
+            width: 34,
+            height: 34,
+            borderRadius: "var(--radius-sm)",
+            border: "1px solid var(--border-default)",
+            background: "var(--surface-card)",
+            color: "var(--text-muted)",
+            display: "flex",
+            alignItems: "center",
+            justifyContent: "center",
+            cursor: "pointer",
+            boxShadow: "var(--shadow-sm)",
+          }}
+        >
+          <svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.9" aria-hidden>
+            <rect x="3" y="3" width="18" height="18" rx="2" /><path d="M9 3v18" /><path d="m13 9 3 3-3 3" />
+          </svg>
+        </button>
+      )}
+
       {/* Left nav */}
       <OttoNav
+        collapsed={navCollapsed}
+        onToggleCollapse={() => setNavCollapsed((v) => !v)}
         view={view}
         onViewChange={setView}
         threads={threads}
@@ -216,6 +256,8 @@ export function OttoApp({
           onNewConvo={() => setActiveThreadId(null)}
           seedText={seedText}
           onUseInOtto={handleUseInOtto}
+          chatCollapsed={chatCollapsed}
+          onToggleChat={() => setChatCollapsed((v) => !v)}
         />
       </div>
 

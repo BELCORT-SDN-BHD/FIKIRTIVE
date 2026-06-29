@@ -42,6 +42,9 @@ interface OttoViewProps {
   onNewConvo: () => void;
   seedText?: string;
   onUseInOtto: (prompt: string) => void;
+  /** Collapse the OTTO chat pane to give the canvas full width. */
+  chatCollapsed?: boolean;
+  onToggleChat?: () => void;
 }
 
 export function OttoView({
@@ -66,6 +69,8 @@ export function OttoView({
   onNewConvo,
   seedText,
   onUseInOtto,
+  chatCollapsed = false,
+  onToggleChat,
 }: OttoViewProps) {
   const activeThread = threads.find((t) => t.id === activeThreadId) ?? null;
 
@@ -144,21 +149,35 @@ export function OttoView({
     threads.length === 0;
 
   return (
-    <div style={{ flex: 1, display: "flex", flexDirection: "row", overflow: "hidden" }}>
+    <div style={{ position: "relative", flex: 1, display: "flex", flexDirection: "row", overflow: "hidden" }}>
       {isFirstRun && (
         <OttoOnboarding
           onGoToStuff={() => onViewChange("stuff")}
           onGoToMemory={() => onViewChange("memory")}
         />
       )}
-      {/* Left pane: agent entry / chat */}
+      {/* Show-OTTO button — visible only while the OTTO pane is collapsed */}
+      {chatCollapsed && (
+        <button
+          type="button"
+          onClick={onToggleChat}
+          title="Show OTTO"
+          aria-label="Show OTTO"
+          style={{ position: "absolute", top: 54, left: "var(--space-3)", zIndex: 40, width: 34, height: 34, borderRadius: "var(--radius-sm)", border: "1px solid var(--border-default)", background: "var(--surface-card)", color: "var(--text-muted)", display: "flex", alignItems: "center", justifyContent: "center", cursor: "pointer", boxShadow: "var(--shadow-sm)" }}
+        >
+          <svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.9" aria-hidden><path d="M13 5l7 7-7 7" /><path d="M4 5v14" /></svg>
+        </button>
+      )}
+      {/* Left pane: agent entry / chat (collapsible) */}
       <div
         style={{
-          flex: "0 0 clamp(360px, 38%, 520px)",
+          flex: chatCollapsed ? "0 0 0px" : "0 0 clamp(360px, 38%, 520px)",
           minWidth: 0,
           display: "flex",
           flexDirection: "column",
-          borderRight: "1px solid var(--border-subtle)",
+          borderRight: chatCollapsed ? "none" : "1px solid var(--border-subtle)",
+          overflow: "hidden",
+          transition: "flex-basis var(--dur-base) var(--ease-out)",
         }}
       >
         <ConvoTabs
@@ -225,6 +244,18 @@ export function OttoView({
       </div>
       {/* Right pane: canvas */}
       <div style={{ flex: 1, minWidth: 0, position: "relative" }}>
+        {/* Collapse handle on the OTTO↔canvas border */}
+        {!chatCollapsed && (
+          <button
+            type="button"
+            onClick={onToggleChat}
+            title="Collapse OTTO panel"
+            aria-label="Collapse OTTO panel"
+            style={{ position: "absolute", left: -13, top: 60, zIndex: 30, width: 26, height: 26, borderRadius: "var(--radius-circle)", border: "1px solid var(--border-default)", background: "var(--surface-card)", color: "var(--text-muted)", boxShadow: "var(--shadow-sm)", display: "flex", alignItems: "center", justifyContent: "center", cursor: "pointer" }}
+          >
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" aria-hidden><path d="m15 18-6-6 6-6" /></svg>
+          </button>
+        )}
         <FlowCanvas projectId={projectId} entities={entities} activeThreadId={activeThreadId} />
       </div>
     </div>

@@ -128,6 +128,9 @@ export interface OttoNavProps {
   drawerOpen?: boolean;
   /** Mobile: called when the drawer should close (backdrop tap or nav action). */
   onDrawerClose?: () => void;
+  /** Desktop: collapse the sidebar to give the canvas more room. */
+  collapsed?: boolean;
+  onToggleCollapse?: () => void;
 }
 
 export function OttoNav({
@@ -143,6 +146,8 @@ export function OttoNav({
   userEmail,
   drawerOpen = false,
   onDrawerClose,
+  collapsed = false,
+  onToggleCollapse,
 }: OttoNavProps) {
   const initial = userName.slice(0, 1).toUpperCase();
   const balanceLabel = creditsLabel(balanceCredits);
@@ -197,25 +202,38 @@ export function OttoNav({
     <nav
       className={`otto-nav${drawerOpen ? " otto-nav--open" : ""}`}
       style={{
-        width: 240,
+        width: collapsed ? 0 : 240,
         flexShrink: 0,
         display: "flex",
         flexDirection: "column",
-        borderRight: "1px solid var(--border-subtle)",
+        borderRight: collapsed ? "none" : "1px solid var(--border-subtle)",
         background: "var(--surface-card)",
         overflow: "hidden",
-        padding: "var(--space-4) 0",
+        padding: collapsed ? 0 : "var(--space-4) 0",
+        transition: "width var(--dur-base) var(--ease-out)",
       }}
     >
-      {/* Logo */}
-      <div style={{ padding: "0 var(--space-4) var(--space-4)", borderBottom: "1px solid var(--border-subtle)" }}>
+      {/* Logo + collapse toggle */}
+      <div style={{ display: "flex", alignItems: "center", gap: "var(--space-2)", padding: "0 var(--space-3) var(--space-4) var(--space-4)", borderBottom: "1px solid var(--border-subtle)" }}>
         {/* eslint-disable-next-line @next/next/no-img-element */}
         <img
           src="/brand/logo-wordmark.svg"
           alt="Fikirtive"
           height={28}
-          style={{ display: "block" }}
+          style={{ display: "block", flex: 1, minWidth: 0, objectFit: "contain", objectPosition: "left center" }}
         />
+        <button
+          type="button"
+          onClick={onToggleCollapse}
+          title="Collapse sidebar"
+          aria-label="Collapse sidebar"
+          className="otto-nav-collapse"
+          style={{ flexShrink: 0, width: 28, height: 28, borderRadius: "var(--radius-sm)", border: "none", background: "transparent", color: "var(--text-faint)", display: "flex", alignItems: "center", justifyContent: "center", cursor: "pointer" }}
+        >
+          <svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.9" aria-hidden>
+            <rect x="3" y="3" width="18" height="18" rx="2" /><path d="M9 3v18" /><path d="m14 9-3 3 3 3" />
+          </svg>
+        </button>
       </div>
 
       {/* New campaign button */}
