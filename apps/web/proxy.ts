@@ -37,5 +37,7 @@ export const config = {
   // api/better-auth MUST stay excluded — else the sign-in/OAuth-callback endpoints get
   // walled → infinite redirect / total lockout. (NextAuth's api/auth route is retired.)
   // api/stripe excluded — the webhook is unauthenticated (Stripe calls it; the signature is its auth).
-  matcher: ["/((?!login|api/better-auth|api/stripe|_next/static|_next/image|favicon.ico).*)"],
+  // skin-preview: dev-only visual harness for the UI re-skin (the page itself 404s in
+  // production), excluded here so it renders without a session in dev. Throwaway.
+  matcher: ["/((?!login|skin-preview|api/better-auth|api/stripe|_next/static|_next/image|favicon.ico).*)"],
 };
