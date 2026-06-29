@@ -1,5 +1,59 @@
 import { META_GRAPH_VERSION } from "./meta-oauth";
 
+export type AdFile = { bytes: Buffer | Uint8Array; filename: string; contentType: string };
+
+/** Multipart POST to the Graph API. Same auth + `metaError`/code-190 contract as `metaGraphPost`. */
+export async function metaGraphUpload(
+  token: string,
+  path: string,
+  fields: Record<string, string>,
+  file: AdFile,
+): Promise<any> {
+  const u = `https://graph.facebook.com/${META_GRAPH_VERSION}/${path}`;
+  const fd = new FormData();
+  for (const [k, v] of Object.entries(fields)) fd.append(k, v);
+  fd.append("source", new Blob([new Uint8Array(file.bytes)], { type: file.contentType }), file.filename);
+  const r = await fetch(u, {
+    method: "POST",
+    // Do NOT set Content-Type — browser/Node fetch sets multipart boundary automatically
+    headers: { Authorization: `Bearer ${token}` },
+    body: fd,
+  });
+  const j = await r.json();
+  if (!r.ok || j?.error) {
+    const e = new Error(j?.error?.message || "graph error");
+    (e as { metaError?: unknown }).metaError = j?.error;
+    throw e;
+  }
+  return j;
+}
+
+/**
+ * Upload an image to a Meta ad account. Returns the `image_hash`.
+ * @param token - OAuth access token
+ * @param accountId - Ad account ID, e.g. "act_123456"
+ * @param file - Image file to upload
+ */
+export async function uploadAdImage(token: string, accountId: string, file: AdFile): Promise<string> {
+  const j = await metaGraphUpload(token, `${accountId}/adimages`, {}, file);
+  // Meta response: { images: { <filename>: { hash, url } } }
+  const entry = j?.images ? (Object.values(j.images)[0] as { hash?: string } | undefined) : undefined;
+  if (!entry?.hash) throw new Error("adimages: unexpected Meta response shape");
+  return String(entry.hash);
+}
+
+/**
+ * Upload a video to a Meta ad account. Returns the `video_id`.
+ * @param token - OAuth access token
+ * @param accountId - Ad account ID, e.g. "act_123456"
+ * @param file - Video file to upload
+ */
+export async function uploadAdVideo(token: string, accountId: string, file: AdFile): Promise<string> {
+  const j = await metaGraphUpload(token, `${accountId}/advideos`, {}, file);
+  // Meta response: { id }
+  return String(j.id);
+}
+
 /** Write Graph POST. Throws on a non-200 or a Meta `error` body (carries `metaError`). */
 export async function metaGraphPost(token: string, path: string, body: Record<string, string | number>): Promise<any> {
   const u = `https://graph.facebook.com/${META_GRAPH_VERSION}/${path}`;
@@ -72,6 +126,15 @@ export async function listAdSets(token: string, accountId: string) {
 export async function listAds(token: string, accountId: string) {
   const j = await metaGraphGet(token, `${accountId}/ads`, { fields: "name,effective_status,account_id" });
   return j.data ?? [];
+}
+
+/** List Facebook Pages the user manages (requires pages_show_list scope). */
+export async function listPages(token: string): Promise<{ id: string; name: string }[]> {
+  const j = await metaGraphGet(token, "me/accounts", { fields: "id,name" });
+  return (j.data ?? []).map((p: Record<string, unknown>) => ({
+    id: String(p.id ?? ""),
+    name: String(p.name ?? ""),
+  }));
 }
 
 /** Exchange an OAuth code → a long-lived token (server-side; uses META_APP_SECRET).

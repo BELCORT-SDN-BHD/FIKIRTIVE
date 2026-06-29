@@ -97,11 +97,23 @@ export function toChatMessageDTO(
         ? { approval: { expiresAt: approval.expiresAt, consumedAt: approval.consumedAt } }
         : {}),
     };
+  } else if (m.kind === "BUILD_CARD" && m.payload) {
+    // Mirror of the ACTION_CARD arm: strip approval.boundActor + paramHash (internal server fields)
+    // so the client never receives them. Keep approval.expiresAt|consumedAt for display, all
+    // display fields (planTitle, etc.), and buildOutcome for card state rendering.
+    const p = m.payload as Record<string, unknown>;
+    const approval = (p.approval ?? null) as Record<string, unknown> | null;
+    payload = {
+      ...p,
+      ...(approval
+        ? { approval: { expiresAt: approval.expiresAt, consumedAt: approval.consumedAt } }
+        : {}),
+    };
   }
   return {
     id: m.id,
     role: m.role as "USER" | "AGENT",
-    kind: m.kind as "TEXT" | "PLAN" | "GEN_CARD" | "GEN_RESULT" | "DENIAL" | "TURN_ERROR" | "ACTION_CARD",
+    kind: m.kind as "TEXT" | "PLAN" | "GEN_CARD" | "GEN_RESULT" | "DENIAL" | "TURN_ERROR" | "ACTION_CARD" | "BUILD_CARD",
     seq: m.seq,
     text: m.text,
     payload,

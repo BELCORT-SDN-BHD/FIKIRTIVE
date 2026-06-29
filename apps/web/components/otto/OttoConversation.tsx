@@ -5,6 +5,7 @@ import { ottoTurn } from "@/lib/otto-client-actions";
 import { getCoworkThreadClient } from "@/lib/cowork-fetch";
 import { OttoPlanCard } from "./OttoPlanCard";
 import { OttoActionPlanCard } from "./OttoActionPlanCard";
+import { OttoAdBuildCard } from "./OttoAdBuildCard";
 import { OttoResult } from "./OttoResult";
 import { deriveCardState } from "@/lib/otto-inject-helpers";
 import { activeMentionQuery, resolveSentEntityIds } from "@/lib/otto-mentions";
@@ -651,6 +652,17 @@ function MessageRow({
         <OttoAvatar size={32} state="idle" />
         <div style={{ flex: 1, minWidth: 0 }}>
           <OttoActionPlanCard cardId={m.id} payload={m.payload} />
+        </div>
+      </div>
+    );
+  }
+
+  if (m.kind === "BUILD_CARD") {
+    return (
+      <div style={{ display: "flex", alignItems: "flex-start", gap: "var(--space-3)" }}>
+        <OttoAvatar size={32} state="idle" />
+        <div style={{ flex: 1, minWidth: 0 }}>
+          <OttoAdBuildCard cardId={m.id} payload={m.payload} />
         </div>
       </div>
     );

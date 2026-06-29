@@ -12,6 +12,7 @@ import {
   deleteCoworkThread as _deleteCoworkThread,
 } from "./otto-actions";
 import { approveMetaActionPlan as _approveMetaActionPlan, setAdsAutonomy as _setAdsAutonomy, setAdsWritesPaused as _setAdsWritesPaused } from "./meta-write-actions";
+import { approveAdBuild as _approveAdBuild, launchAdDraft as _launchAdDraft } from "./meta-build-actions";
 
 export async function ottoTurn(raw: unknown) {
   return _ottoTurn(raw);
@@ -34,6 +35,19 @@ export async function deleteCoworkThread(threadId: string) {
  *  approveMetaActionPlan; this wrapper only crosses the client→server boundary. */
 export async function approveMetaActionPlan(cardId: string) {
   return _approveMetaActionPlan(cardId);
+}
+
+/** Human-approve gate for a Meta BUILD_CARD (G7 v2). The build card UI calls this when the
+ *  user clicks approve. requireOwner + impersonation-block + kill-switch + approval-binding
+ *  live inside approveAdBuild; this wrapper only crosses the client→server boundary. */
+export async function approveAdBuild(cardId: string) {
+  return _approveAdBuild(cardId);
+}
+
+/** Launch a built BUILD_CARD draft by creating a v1 ACTION_CARD that resumes the created
+ *  campaign/adset/ad. The user then approves that ACTION_CARD via v1's spend gate. */
+export async function launchAdDraft(cardId: string) {
+  return _launchAdDraft(cardId);
 }
 
 /** Set the per-org autonomy mode ("ASK" | "AUTO"). Called from OttoConnections.tsx. */

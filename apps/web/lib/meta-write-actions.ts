@@ -123,6 +123,8 @@ function bodyFor(step: MetaActionStep): Record<string, string | number> {
       if (step.targetValue.endTime != null) b.end_time = String(step.targetValue.endTime);
       return b;
     }
+    default:
+      throw new Error(`unsupported op for manage executor: ${(step as MetaActionStep).op}`);
   }
 }
 
@@ -166,6 +168,8 @@ function liveMatchesTarget(step: MetaActionStep, live: LiveObject): boolean {
       const endOk = step.targetValue.endTime == null || live.endTime === String(step.targetValue.endTime);
       return startOk && endOk;
     }
+    default:
+      throw new Error(`unsupported op for manage executor: ${(step as MetaActionStep).op}`);
   }
 }
 

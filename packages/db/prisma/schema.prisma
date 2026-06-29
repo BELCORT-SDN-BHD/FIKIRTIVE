@@ -769,6 +769,7 @@ enum ChatMessageKind {
   DENIAL
   TURN_ERROR
   ACTION_CARD
+  BUILD_CARD
 }
 
 // G7: per-org autonomy mode for Otto's ad-write operations
@@ -992,6 +993,8 @@ model MetaConnection {
   adsAutonomy    AdsAutonomy  @default(ASK)      // per-org Ask/Auto; lost on disconnect → resets to ASK
   adsWritesPaused Boolean     @default(false)    // kill-switch: when true, executor refuses all writes
   canWrite       Boolean      @default(false)    // true only if Meta actually granted ads_management
+  canManagePages Boolean      @default(false)    // true if Meta granted pages_manage_ads / pages_read_engagement
+  defaultPageId  String?                         // FB Page the org wants to post to by default
   createdAt      DateTime     @default(now())
   updatedAt      DateTime     @updatedAt
 }

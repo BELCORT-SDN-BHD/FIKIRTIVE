@@ -45,4 +45,9 @@ describe("buildAuthorizeUrl", () => {
     expect(url).toContain("ads_management");
     expect(url).toContain("ads_read");
   });
+  it("authorize url requests pages_show_list and business_management", () => {
+    const url = buildAuthorizeUrl("APPID", "https://app/api/meta/callback", "STATE");
+    expect(url).toContain("pages_show_list");
+    expect(url).toContain("business_management");
+  });
 });

@@ -88,6 +88,28 @@ describe("completeMetaConnect", () => {
     expect(call.create.canWrite).toBe(false);
     expect(call.create.scope).toBe("");
   });
+  it("sets canManagePages:true when Meta grants pages_show_list", async () => {
+    mockFetch
+      .mockResolvedValueOnce(jsonRes({ access_token: "short" }))
+      .mockResolvedValueOnce(jsonRes({ access_token: "LONGTOKEN", expires_in: 5184000 }))
+      .mockResolvedValueOnce(jsonRes({ data: { scopes: ["ads_read", "ads_management", "pages_show_list", "business_management"] } }));
+    mockUpsert.mockResolvedValue({ id: "mc-1" });
+    await completeMetaConnect("the-code", "https://app/api/meta/callback");
+    const call = mockUpsert.mock.calls[0][0];
+    expect(call.create.canManagePages).toBe(true);
+    expect(call.create.defaultPageId).toBeNull();
+  });
+  it("sets canManagePages:false when Meta does not grant pages_show_list", async () => {
+    mockFetch
+      .mockResolvedValueOnce(jsonRes({ access_token: "short" }))
+      .mockResolvedValueOnce(jsonRes({ access_token: "LONGTOKEN", expires_in: 5184000 }))
+      .mockResolvedValueOnce(jsonRes({ data: { scopes: ["ads_read", "ads_management"] } }));
+    mockUpsert.mockResolvedValue({ id: "mc-1" });
+    await completeMetaConnect("the-code", "https://app/api/meta/callback");
+    const call = mockUpsert.mock.calls[0][0];
+    expect(call.create.canManagePages).toBe(false);
+    expect(call.create.defaultPageId).toBeNull();
+  });
 });
 
 describe("getMetaConnection", () => {
@@ -99,7 +121,7 @@ describe("getMetaConnection", () => {
     // first findUnique: status+meta fields; second findUnique (inside getMyAdAccounts): full row with enc token
     const { encryptToken } = await import("../token-encryption");
     mockFindUnique
-      .mockResolvedValueOnce({ status: "active", adsAutonomy: "ASK", canWrite: true, adsWritesPaused: false })
+      .mockResolvedValueOnce({ status: "active", adsAutonomy: "ASK", canWrite: true, adsWritesPaused: false, canManagePages: false, defaultPageId: null })
       .mockResolvedValueOnce({ accessTokenEnc: encryptToken("LONGTOKEN"), status: "active" });
     mockFetch.mockResolvedValueOnce(jsonRes({ data: [{ account_id: "act_1", name: "Kaia Cafe", currency: "MYR", account_status: 1 }] }));
     const res = await getMetaConnection();
@@ -109,6 +131,8 @@ describe("getMetaConnection", () => {
       adsAutonomy: "ASK",
       canWrite: true,
       adsWritesPaused: false,
+      canManagePages: false,
+      defaultPageId: null,
       accounts: [{ id: "act_1", name: "Kaia Cafe", currency: "MYR", status: "1" }],
     });
     expect(JSON.stringify(res)).not.toContain("LONGTOKEN");
@@ -117,13 +141,22 @@ describe("getMetaConnection", () => {
   it("flags needsReconnect + marks expired on a Graph auth error", async () => {
     const { encryptToken } = await import("../token-encryption");
     mockFindUnique
-      .mockResolvedValueOnce({ status: "active", adsAutonomy: "ASK", canWrite: false, adsWritesPaused: false })
+      .mockResolvedValueOnce({ status: "active", adsAutonomy: "ASK", canWrite: false, adsWritesPaused: false, canManagePages: false, defaultPageId: null })
       .mockResolvedValueOnce({ accessTokenEnc: encryptToken("LONGTOKEN"), status: "active" });
     mockFetch.mockResolvedValueOnce(jsonRes({ error: { message: "invalid token", code: 190 } }, false));
     mockUpdate.mockResolvedValue({});
     const res = await getMetaConnection();
-    expect(res).toEqual({ connected: true, status: "expired", needsReconnect: true, adsAutonomy: "ASK", canWrite: false, adsWritesPaused: false });
+    expect(res).toEqual({ connected: true, status: "expired", needsReconnect: true, adsAutonomy: "ASK", canWrite: false, adsWritesPaused: false, canManagePages: false, defaultPageId: null });
     expect(mockUpdate).toHaveBeenCalledWith(expect.objectContaining({ where: { ownerId: "u1" }, data: { status: "expired" } }));
+  });
+  it("returns canManagePages + defaultPageId in the connection result", async () => {
+    const { encryptToken } = await import("../token-encryption");
+    mockFindUnique
+      .mockResolvedValueOnce({ status: "active", adsAutonomy: "ASK", canWrite: true, adsWritesPaused: false, canManagePages: true, defaultPageId: "pg_1" })
+      .mockResolvedValueOnce({ accessTokenEnc: encryptToken("LONGTOKEN"), status: "active" });
+    mockFetch.mockResolvedValueOnce(jsonRes({ data: [{ account_id: "act_1", name: "Kaia Cafe", currency: "MYR", account_status: 1 }] }));
+    const res = await getMetaConnection();
+    expect(res).toMatchObject({ connected: true, canManagePages: true, defaultPageId: "pg_1" });
   });
 });
 

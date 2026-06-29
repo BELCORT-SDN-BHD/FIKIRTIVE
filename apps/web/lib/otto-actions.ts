@@ -43,7 +43,9 @@ import { getBrandContextText } from "./memory-actions";
 import { fetchAndExtract } from "./brand-research";
 import { fetchOwnerInsights } from "./meta-insights";
 import { fetchOwnerAdObjects } from "./meta-objects";
+import { fetchOwnerPages } from "./meta-pages";
 import { proposeMetaActionForOwner } from "./meta-propose";
+import { proposeAdBuildForOwner } from "./meta-build-propose";
 
 // mapOttoUsage re-exported from @fikirtive/otto so existing callers that import
 // it from this module continue to work (the canonical source is @fikirtive/otto).
@@ -150,8 +152,11 @@ export async function buildOttoContext({
     simpleMode: simpleMode ?? false,
     activeJob,
     metaAds: { list: () => fetchOwnerAdObjects(ownerId) },
+    metaPages: { list: () => fetchOwnerPages(ownerId) },
     metaInsights: { get: (datePreset: string) => fetchOwnerInsights(ownerId, datePreset) },
     metaPropose: (input) => proposeMetaActionForOwner(ownerId, threadId, input),
+    metaBuild: { propose: (input) => proposeAdBuildForOwner(ownerId, threadId, input) },
+    brandBrain: { context: () => getBrandContextText(ownerId, null).catch(() => "") },
     research: {
       fetchUrl: fetchAndExtract,
       // TODO(G3): wire a web-search API transport (needs a key)

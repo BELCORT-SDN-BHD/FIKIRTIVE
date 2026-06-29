@@ -20,12 +20,13 @@ export async function completeMetaConnect(
   if ("error" in ex) return ex;
   const enc = encryptToken(ex.token);
   const canWrite = ex.grantedScopes.includes("ads_management");
+  const canManagePages = ex.grantedScopes.includes("pages_show_list");
   const scope = ex.grantedScopes.length > 0 ? ex.grantedScopes.join(",") : "";
-  const data = { accessTokenEnc: enc, tokenExpiresAt: ex.expiresAt, scope, canWrite, status: "active" as const };
+  const data = { accessTokenEnc: enc, tokenExpiresAt: ex.expiresAt, scope, canWrite, canManagePages, status: "active" as const };
   await prisma.metaConnection.upsert({
     where: { ownerId: gate.ownerId },
     update: data,
-    create: { id: newId(), ownerId: gate.ownerId, adsAutonomy: "ASK" as const, ...data },
+    create: { id: newId(), ownerId: gate.ownerId, adsAutonomy: "ASK" as const, defaultPageId: null, ...data },
   });
   return { ok: true };
 }
@@ -59,24 +60,26 @@ async function getMyAdAccounts(ownerId: string): Promise<{ accounts: MetaAdAccou
 }
 
 export async function getMetaConnection(): Promise<
-  | { connected: boolean; status?: string; adsAutonomy?: string; canWrite?: boolean; adsWritesPaused?: boolean; accounts?: MetaAdAccount[]; needsReconnect?: boolean }
+  | { connected: boolean; status?: string; adsAutonomy?: string; canWrite?: boolean; adsWritesPaused?: boolean; canManagePages?: boolean; defaultPageId?: string | null; accounts?: MetaAdAccount[]; needsReconnect?: boolean }
   | { error: string }
 > {
   const gate = await requireOwner();
   if ("error" in gate) return gate;
   const conn = await prisma.metaConnection.findUnique({
     where: { ownerId: gate.ownerId },
-    select: { status: true, adsAutonomy: true, canWrite: true, adsWritesPaused: true },
+    select: { status: true, adsAutonomy: true, canWrite: true, adsWritesPaused: true, canManagePages: true, defaultPageId: true },
   });
   if (!conn) return { connected: false };
   const res = await getMyAdAccounts(gate.ownerId);
-  if ("needsReconnect" in res) return { connected: true, status: "expired", needsReconnect: true, adsAutonomy: conn.adsAutonomy ?? "ASK", canWrite: conn.canWrite ?? false, adsWritesPaused: conn.adsWritesPaused ?? false };
+  if ("needsReconnect" in res) return { connected: true, status: "expired", needsReconnect: true, adsAutonomy: conn.adsAutonomy ?? "ASK", canWrite: conn.canWrite ?? false, adsWritesPaused: conn.adsWritesPaused ?? false, canManagePages: conn.canManagePages ?? false, defaultPageId: conn.defaultPageId ?? null };
   return {
     connected: true,
     status: conn.status,
     adsAutonomy: conn.adsAutonomy,
     canWrite: conn.canWrite,
     adsWritesPaused: conn.adsWritesPaused,
+    canManagePages: conn.canManagePages,
+    defaultPageId: conn.defaultPageId,
     accounts: res.accounts,
   };
 }
