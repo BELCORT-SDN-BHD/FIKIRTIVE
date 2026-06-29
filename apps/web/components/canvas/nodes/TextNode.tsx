@@ -13,15 +13,18 @@ export function TextNode({ data, selected }: NodeProps) {
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" aria-hidden><path d="M4 7V5h16v2" /><path d="M9 19h6" /><path d="M12 5v14" /></svg>
         Text
       </span>
-    <div className="al-panel nodrag" style={{ width: "100%", height: "100%", padding: 8, borderRadius: 12 }}>
+    {/* Card body is draggable; only the textarea + delete button opt out of drag
+        (nodrag) so typing/selecting text and clicking ✕ don't move the node. */}
+    <div className="al-panel" style={{ width: "100%", height: "100%", padding: 8, borderRadius: 12 }}>
       <textarea
+        className="nodrag"
         value={val}
         onChange={(e) => setVal(e.target.value)}
         onBlur={() => d.onChange?.(val)}
         placeholder="Type here…"
         style={{ width: "100%", height: "100%", border: "none", background: "transparent", resize: "none", outline: "none" }}
       />
-      <button className="al-btn al-btn-glass al-btn-sm" style={{ position: "absolute", top: 6, right: 6 }} onClick={d.onDelete}>✕</button>
+      <button className="al-btn al-btn-glass al-btn-sm nodrag" style={{ position: "absolute", top: 6, right: 6 }} onClick={d.onDelete}>✕</button>
     </div>
     </>
   );

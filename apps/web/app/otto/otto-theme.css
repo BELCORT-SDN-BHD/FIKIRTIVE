@@ -412,6 +412,14 @@
   background: var(--border-subtle);
   margin: 0 3px;
 }
+/* Active tool (e.g. select mode engaged) */
+.fk.gb-skin .cv-tb-active {
+  background: var(--brand-tint);
+  color: var(--brand-press);
+}
+.fk.gb-skin .cv-tb-active:hover:not(:disabled) { background: var(--brand-tint); }
+/* Select mode: arrow cursor on the canvas instead of the grab hand */
+.fk.gb-skin .cv-select-mode .react-flow__pane { cursor: default; }
 
 /* ── Canvas nodes (legacy .al-panel cards) re-skinned Grok-bright.
  * Scoped to ReactFlow nodes so only the canvas changes; gated by gb-skin.

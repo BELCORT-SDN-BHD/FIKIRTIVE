@@ -30,6 +30,9 @@ export default function FlowCanvas({ projectId, entities = [], activeThreadId = 
   // gb toolbar: the prompt composer is hidden behind the Generate button (Grok
   // pattern) instead of sitting persistently on the canvas. Display state only.
   const [composerOpen, setComposerOpen] = useState(false);
+  // Canvas tool: pan (grab hand, drag pans the board) vs select (arrow cursor,
+  // drag box-selects). The toolbar's cursor button toggles this. Display-only.
+  const [panMode, setPanMode] = useState(true);
   // track node count to offset new node positions
   const nodeCountRef = useRef(0);
   // bumped on successful generation submit to remount MentionInput cleared
@@ -289,12 +292,19 @@ export default function FlowCanvas({ projectId, entities = [], activeThreadId = 
   }, []);
 
   return (
-    <div style={{ flex: 1, position: "relative" }}>
+    <div style={{ flex: 1, position: "relative" }} className={skin === "gb" && !panMode ? "cv-select-mode" : undefined}>
       {/* OTTO working — mirrors the agent's activity onto the canvas (Grok pattern). */}
       {activeThreadId && activity?.has(activeThreadId) && (
         <OttoCanvasStatus label="working on it…" />
       )}
-      <ReactFlow nodes={filterNodesByConvo(nodes, activeThreadId, filterToConvo)} nodeTypes={nodeTypes} onNodesChange={onNodesChange} fitView>
+      <ReactFlow
+        nodes={filterNodesByConvo(nodes, activeThreadId, filterToConvo)}
+        nodeTypes={nodeTypes}
+        onNodesChange={onNodesChange}
+        panOnDrag={panMode}
+        selectionOnDrag={!panMode}
+        fitView
+      >
         <Background />
         <Controls />
       </ReactFlow>
@@ -330,7 +340,14 @@ export default function FlowCanvas({ projectId, entities = [], activeThreadId = 
           )}
           {/* Slim bottom toolbar — matches the approved canvas-home mockup. */}
           <div className="cv-toolbar" role="toolbar" aria-label="Canvas tools">
-            <button type="button" className="cv-tb" title="Select" aria-label="Select">
+            <button
+              type="button"
+              className={panMode ? "cv-tb" : "cv-tb cv-tb-active"}
+              title={panMode ? "Select tool (drag to box-select)" : "Hand tool (drag to pan)"}
+              aria-label="Toggle select / pan"
+              aria-pressed={!panMode}
+              onClick={() => setPanMode((v) => !v)}
+            >
               <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.9"><path d="m3 3 7.5 18 2.5-7.5L20.5 11 3 3z" /></svg>
             </button>
             <span className="cv-tb-div" />
