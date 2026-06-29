@@ -97,6 +97,12 @@ export function OttoView({
       </div>
     );
   }
+  if (view === "schedule") {
+    return <ComingSoon title="Schedule" line="Plan your posts on a calendar and let OTTO auto-publish to Instagram and Facebook. Coming soon." />;
+  }
+  if (view === "analytics") {
+    return <ComingSoon title="Analytics" line="See how your posts and ads perform, read straight from Meta. Coming soon." />;
+  }
   if (view === "stuff") {
     return (
       <div style={{ flex: 1, display: "flex", flexDirection: "column", overflow: "hidden" }}>
@@ -258,6 +264,26 @@ export function OttoView({
         )}
         <FlowCanvas projectId={projectId} entities={entities} activeThreadId={activeThreadId} activity={activity} />
       </div>
+    </div>
+  );
+}
+
+/** Placeholder for nav destinations whose hi-fi screen lands in a later phase. */
+function ComingSoon({ title, line }: { title: string; line: string }) {
+  return (
+    <div style={{ flex: 1, display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", gap: "var(--space-3)", textAlign: "center", padding: "var(--space-8)" }}>
+      <svg width={56} height={51} viewBox="0 0 120 110" aria-hidden>
+        <g fill="var(--accent)">
+          <ellipse cx="60" cy="64" rx="43" ry="22" />
+          <circle cx="37" cy="52" r="18" />
+          <circle cx="61" cy="40" r="24" />
+          <circle cx="85" cy="53" r="17" />
+        </g>
+        <ellipse cx="56" cy="49" rx="3.6" ry="4.6" fill="#2B1308" />
+        <ellipse cx="71" cy="49" rx="3.6" ry="4.6" fill="#2B1308" />
+      </svg>
+      <div style={{ fontSize: "var(--text-2xl)", fontWeight: "var(--weight-bold)", color: "var(--text-strong)", letterSpacing: "var(--tracking-snug)" }}>{title}</div>
+      <div style={{ fontSize: "var(--text-base)", color: "var(--text-muted)", maxWidth: 360, lineHeight: "var(--leading-normal)" }}>{line}</div>
     </div>
   );
 }

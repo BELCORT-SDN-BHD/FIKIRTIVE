@@ -66,16 +66,48 @@ function IconCompass() {
     </svg>
   );
 }
+function IconCalendar() {
+  return (
+    <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden>
+      <rect x="3" y="4" width="18" height="18" rx="2" />
+      <path d="M16 2v4M8 2v4M3 10h18" />
+    </svg>
+  );
+}
+function IconChart() {
+  return (
+    <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden>
+      <path d="M3 3v18h18" />
+      <path d="m7 14 4-4 3 3 5-6" />
+    </svg>
+  );
+}
+/** OTTO — the coral cloud mark (coral is OTTO's colour only). */
+function OttoCloud({ size = 26 }: { size?: number }) {
+  return (
+    <svg width={size} height={Math.round((size * 24) / 26)} viewBox="0 0 120 110" aria-hidden style={{ flexShrink: 0 }}>
+      <g fill="var(--accent)">
+        <ellipse cx="60" cy="64" rx="43" ry="22" />
+        <circle cx="37" cy="52" r="18" />
+        <circle cx="61" cy="40" r="24" />
+        <circle cx="85" cy="53" r="17" />
+      </g>
+      <rect x="51" y="48" width="7" height="13" rx="3.5" fill="#2B1308" />
+      <rect x="66" y="48" width="7" height="13" rx="3.5" fill="#2B1308" />
+    </svg>
+  );
+}
 
+// Simplified nav (founder, 2026-06-29): 6 destinations. Library/Templates/Discover/
+// Connections are no longer surfaced here (their views still exist, just unlinked);
+// Schedule + Analytics are new stub views (the hi-fi screens land in a later phase).
 const NAV_ITEMS: NavItem[] = [
-  { key: "otto", label: "Otto", icon: <IconMessageCircle /> },
-  { key: "stuff", label: "My stuff", icon: <IconFolderHeart /> },
-  { key: "library", label: "Library", icon: <IconLibrary /> },
-  { key: "templates", label: "Templates", icon: <IconTemplates /> },
-  { key: "discover", label: "Discover", icon: <IconCompass /> },
+  { key: "otto", label: "Canvas", icon: <IconLibrary /> },
+  { key: "stuff", label: "My Stuff", icon: <IconFolderHeart /> },
   { key: "memory", label: "Brand memory", icon: <IconBrain /> },
+  { key: "schedule", label: "Schedule", icon: <IconCalendar /> },
+  { key: "analytics", label: "Analytics", icon: <IconChart /> },
   { key: "account", label: "Account", icon: <IconCircleUser /> },
-  { key: "connections", label: "Connections", icon: <IconLink /> },
 ];
 
 function IconLibrary() {
@@ -215,13 +247,12 @@ export function OttoNav({
     >
       {/* Logo + collapse toggle */}
       <div style={{ display: "flex", alignItems: "center", gap: "var(--space-2)", padding: "0 var(--space-3) var(--space-4) var(--space-4)", borderBottom: "1px solid var(--border-subtle)" }}>
-        {/* eslint-disable-next-line @next/next/no-img-element */}
-        <img
-          src="/brand/logo-wordmark.svg"
-          alt="Fikirtive"
-          height={28}
-          style={{ display: "block", flex: 1, minWidth: 0, objectFit: "contain", objectPosition: "left center" }}
-        />
+        <div style={{ display: "flex", alignItems: "center", gap: "var(--space-2)", flex: 1, minWidth: 0 }}>
+          <OttoCloud size={26} />
+          <span style={{ fontSize: "var(--text-lg)", fontWeight: "var(--weight-bold)", letterSpacing: "var(--tracking-snug)", color: "var(--text-strong)" }}>
+            fikirtive
+          </span>
+        </div>
         <button
           type="button"
           onClick={onToggleCollapse}

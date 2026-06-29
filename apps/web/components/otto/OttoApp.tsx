@@ -47,7 +47,7 @@ export interface OttoAppProps {
   initialChatCollapsed?: boolean;
 }
 
-export type OttoViewKey = "otto" | "stuff" | "library" | "templates" | "discover" | "memory" | "account" | "connections";
+export type OttoViewKey = "otto" | "stuff" | "library" | "templates" | "discover" | "memory" | "account" | "connections" | "schedule" | "analytics";
 
 export function OttoApp({
   projectId,

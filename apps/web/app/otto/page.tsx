@@ -11,7 +11,7 @@ import { OttoApp } from "@/components/otto/OttoApp";
 export const dynamic = "force-dynamic";
 export const metadata = { title: "Otto · Fikirtive" };
 
-const VALID_VIEWS = ["otto", "stuff", "library", "templates", "discover", "memory", "account", "connections"] as const;
+const VALID_VIEWS = ["otto", "stuff", "library", "templates", "discover", "memory", "account", "connections", "schedule", "analytics"] as const;
 type ValidView = (typeof VALID_VIEWS)[number];
 
 export default async function OttoPage({ searchParams }: { searchParams: Promise<{ view?: string; skin?: string }> }) {
