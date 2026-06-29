@@ -160,6 +160,8 @@ export interface OttoNavProps {
   onSwitchProject: (projectId: string, threadId?: string) => void;
   /** Rename a project (campaign). */
   onRenameProject: (projectId: string, name: string) => void;
+  /** Delete (soft) a project (campaign). */
+  onDeleteProject: (projectId: string) => void;
   onNewCampaign: () => void;
   onDeleteThread: (id: string) => void;
   /** Spendable balance in DISPLAYED credits (the product shows credits, never dollars). */
@@ -187,6 +189,7 @@ export function OttoNav({
   onSelectThread,
   onSwitchProject,
   onRenameProject,
+  onDeleteProject,
   onNewCampaign,
   onDeleteThread,
   balanceCredits,
@@ -382,24 +385,35 @@ export function OttoNav({
               const projThreads = threadsByProject.get(p.id) ?? [];
               return (
                 <div key={p.id} style={{ marginBottom: "var(--space-1)" }}>
-                  {/* project (campaign) row — double-click to rename */}
-                  <button
-                    onClick={() => { if (!isActiveProject) handleNavAction(() => onSwitchProject(p.id)); }}
-                    onDoubleClick={() => { const n = window.prompt("Rename campaign", p.name); if (n && n.trim()) onRenameProject(p.id, n.trim()); }}
-                    title={p.name}
-                    style={{
-                      display: "flex", alignItems: "center", gap: "var(--space-2)", width: "100%", minWidth: 0,
-                      border: "none",
-                      background: isActiveProject ? "var(--brand-tint)" : "transparent",
-                      color: isActiveProject ? "var(--brand-press)" : "var(--text-body)",
-                      fontFamily: "var(--font-sans)", fontSize: "var(--text-sm)", fontWeight: "var(--weight-semibold)",
-                      padding: "6px var(--space-3)", borderRadius: "var(--radius-sm)", cursor: "pointer", textAlign: "left",
-                      transition: "background var(--dur-fast) var(--ease-out)",
-                    }}
-                  >
-                    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.9" aria-hidden style={{ flexShrink: 0 }}><path d="M3 7a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z" /></svg>
-                    <span style={{ overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", minWidth: 0, flex: 1 }}>{p.name}</span>
-                  </button>
+                  {/* project (campaign) row — double-click to rename, hover to delete */}
+                  <div className="otto-recent-row" style={{ position: "relative", display: "flex", alignItems: "center" }}>
+                    <button
+                      onClick={() => { if (!isActiveProject) handleNavAction(() => onSwitchProject(p.id)); }}
+                      onDoubleClick={() => { const n = window.prompt("Rename campaign", p.name); if (n && n.trim()) onRenameProject(p.id, n.trim()); }}
+                      title={p.name}
+                      style={{
+                        display: "flex", alignItems: "center", gap: "var(--space-2)", flex: 1, minWidth: 0,
+                        border: "none",
+                        background: isActiveProject ? "var(--brand-tint)" : "transparent",
+                        color: isActiveProject ? "var(--brand-press)" : "var(--text-body)",
+                        fontFamily: "var(--font-sans)", fontSize: "var(--text-sm)", fontWeight: "var(--weight-semibold)",
+                        padding: "6px var(--space-6) 6px var(--space-3)", borderRadius: "var(--radius-sm)", cursor: "pointer", textAlign: "left",
+                        transition: "background var(--dur-fast) var(--ease-out)",
+                      }}
+                    >
+                      <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.9" aria-hidden style={{ flexShrink: 0 }}><path d="M3 7a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z" /></svg>
+                      <span style={{ overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", minWidth: 0, flex: 1 }}>{p.name}</span>
+                    </button>
+                    <button
+                      className="otto-recent-delete"
+                      aria-label={`Delete ${p.name}`}
+                      title="Delete campaign"
+                      onClick={(e) => { e.stopPropagation(); onDeleteProject(p.id); }}
+                      style={{ position: "absolute", right: "var(--space-2)", display: "flex", alignItems: "center", justifyContent: "center", width: 20, height: 20, border: "none", background: "transparent", color: "var(--text-faint)", borderRadius: "var(--radius-sm)", cursor: "pointer", padding: 0, opacity: 0, transition: "opacity var(--dur-fast) var(--ease-out), background var(--dur-fast) var(--ease-out)" }}
+                    >
+                      <IconX />
+                    </button>
+                  </div>
                   {/* conversations nested under the project */}
                   {projThreads.length > 0 && (
                     <div style={{ display: "flex", flexDirection: "column", gap: "1px", marginTop: "1px" }}>

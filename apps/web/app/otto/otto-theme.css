@@ -460,6 +460,72 @@
 .fk.gb-skin .react-flow__node textarea { color: var(--text-body); }
 .fk.gb-skin .react-flow__node textarea::placeholder { color: var(--text-faint); }
 
+/* ── In-node generating state (gb) — OTTO making it + indeterminate progress +
+ * the honest money line. Coral is the agent making the asset (allowed use).
+ * Money copy is honest: no fabricated credit number, just "billed when it finishes". */
+.fk.gb-skin .react-flow__node .cv-gen {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 9px;
+  height: 100%;
+  background: var(--surface-sunken);
+}
+.fk.gb-skin .react-flow__node .cv-gen-otto {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 11.5px;
+  font-weight: 600;
+  color: var(--accent);
+}
+.fk.gb-skin .react-flow__node .cv-gen-bar {
+  width: 64%;
+  height: 5px;
+  border-radius: 99px;
+  background: var(--border-default);
+  position: relative;
+  overflow: hidden;
+}
+.fk.gb-skin .react-flow__node .cv-gen-bar::after {
+  content: "";
+  position: absolute;
+  top: 0;
+  left: -40%;
+  height: 100%;
+  width: 40%;
+  border-radius: 99px;
+  background: var(--accent);
+  animation: cv-gen-slide 1.3s ease-in-out infinite;
+}
+@keyframes cv-gen-slide { 0% { left: -40%; } 100% { left: 100%; } }
+.fk.gb-skin .react-flow__node .cv-gen-meta {
+  font-size: 10px;
+  color: var(--text-faint);
+}
+
+/* ── Video node poster + centered play button (gb) — matches the mockup. */
+.fk.gb-skin .react-flow__node .cv-video-wrap { position: relative; width: 100%; height: 100%; }
+.fk.gb-skin .react-flow__node .cv-play {
+  position: absolute;
+  top: 50%;
+  left: 50%;
+  transform: translate(-50%, -50%);
+  width: 40px;
+  height: 40px;
+  border-radius: 50%;
+  border: none;
+  background: rgba(255, 255, 255, 0.92);
+  color: var(--text-body);
+  box-shadow: var(--shadow-sm);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+}
+.fk.gb-skin .react-flow__node .cv-play:hover { background: #fff; }
+
 /* Reduced motion: respect user preference */
 @media (prefers-reduced-motion: reduce) {
   .fk * {

@@ -1,8 +1,13 @@
 // apps/web/components/canvas/nodes/VideoNode.tsx
+import { useRef, useState } from "react";
 import { Handle, Position, type NodeProps } from "@xyflow/react";
+import { GeneratingBody } from "./GeneratingBody";
 
 export function VideoNode({ data }: NodeProps) {
-  const d = data as { status: string; url?: string; onDelete?: () => void };
+  const d = data as { status: string; url?: string; skin?: string; onDelete?: () => void };
+  const gb = d.skin === "gb";
+  const videoRef = useRef<HTMLVideoElement>(null);
+  const [playing, setPlaying] = useState(false);
   return (
     <>
       <span className="cv-nodelabel">
@@ -11,7 +16,31 @@ export function VideoNode({ data }: NodeProps) {
       </span>
     <div className="al-panel" style={{ width: "100%", height: "100%", overflow: "hidden", borderRadius: 12 }}>
       {d.status === "pending" || !d.url ? (
-        <div style={{ display: "grid", placeItems: "center", height: "100%", opacity: 0.6 }}>Rendering…</div>
+        <GeneratingBody gb={gb} kind="video" />
+      ) : gb ? (
+        // gb: clean poster (first frame) + centered play button, like the mockup —
+        // no raw browser chrome until the owner presses play. Display-only.
+        <div className="cv-video-wrap">
+          <video
+            ref={videoRef}
+            src={d.url}
+            preload="metadata"
+            controls={playing}
+            onPlay={() => setPlaying(true)}
+            onPause={() => setPlaying(false)}
+            style={{ width: "100%", height: "100%", objectFit: "cover" }}
+          />
+          {!playing && (
+            <button
+              className="cv-play nodrag"
+              type="button"
+              aria-label="Play"
+              onClick={() => { void videoRef.current?.play(); }}
+            >
+              <svg width="15" height="15" viewBox="0 0 24 24" fill="currentColor" aria-hidden><path d="M8 5v14l11-7z" /></svg>
+            </button>
+          )}
+        </div>
       ) : (
         <video src={d.url} controls style={{ width: "100%", height: "100%", objectFit: "cover" }} />
       )}

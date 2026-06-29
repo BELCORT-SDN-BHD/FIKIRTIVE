@@ -114,6 +114,7 @@ export default function FlowCanvas({ projectId, entities = [], activeThreadId = 
           data: {
             status: n.status,
             prompt: n.prompt,
+            skin,
             onDelete: () => deleteNode(n.id),
             // onAnimate added after generationId arrives via onResolve
           },
@@ -161,7 +162,7 @@ export default function FlowCanvas({ projectId, entities = [], activeThreadId = 
           id: result.id,
           type: "text",
           position: { x, y: 80 },
-          data: { text: "", status: "done", onChange: (t: string) => onTextChange(result.id, t), onDelete: () => deleteNode(result.id) },
+          data: { text: "", status: "done", skin, onChange: (t: string) => onTextChange(result.id, t), onDelete: () => deleteNode(result.id) },
           style: { width: 240, height: 120, boxShadow: `0 0 0 2px ${convoColor(activeThreadId ?? null)}` },
           threadId: activeThreadId ?? null,
         },
@@ -169,7 +170,7 @@ export default function FlowCanvas({ projectId, entities = [], activeThreadId = 
     } else {
       console.warn("Failed to create text node:", result.error);
     }
-  }, [projectId, activeThreadId, onTextChange, deleteNode]);
+  }, [projectId, activeThreadId, onTextChange, deleteNode, skin]);
 
   // Animate the selected image node into a video — reuses the existing animate
   // path (no new spend logic). The video tool mirrors Grok's "select an image
@@ -202,6 +203,7 @@ export default function FlowCanvas({ projectId, entities = [], activeThreadId = 
           url: r.url ?? undefined,
           prompt: r.prompt,
           text: r.text,
+          skin,
           onDelete: () => deleteNode(r.id),
           onChange: r.type === "text" ? (t: string) => onTextChange(r.id, t) : undefined,
           onAnimate: r.type === "image" ? getOnAnimate(r.id) : undefined,

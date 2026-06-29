@@ -1,11 +1,13 @@
 // apps/web/components/canvas/nodes/ImageNode.tsx
 import { Handle, Position, type NodeProps } from "@xyflow/react";
+import { GeneratingBody } from "./GeneratingBody";
 
 export function ImageNode({ data }: NodeProps) {
   const d = data as {
     status: string;
     url?: string;
     prompt?: string;
+    skin?: string;
     onAnimate?: () => void;
     onDelete?: () => void;
     onOpenDetail?: () => void;
@@ -18,7 +20,7 @@ export function ImageNode({ data }: NodeProps) {
       </span>
     <div className="al-panel" style={{ width: "100%", height: "100%", overflow: "hidden", borderRadius: 12 }}>
       {d.status === "pending" || !d.url ? (
-        <div style={{ display: "grid", placeItems: "center", height: "100%", opacity: 0.6 }}>Generating…</div>
+        <GeneratingBody gb={d.skin === "gb"} kind="image" />
       ) : (
         <img src={d.url} alt={d.prompt ?? ""} style={{ width: "100%", height: "100%", objectFit: "cover" }} />
       )}
