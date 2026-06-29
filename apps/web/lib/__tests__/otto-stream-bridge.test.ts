@@ -23,7 +23,7 @@
  *   data part: 'data-${string}' { data }  → we use 'data-status' and 'data-tool-propose'
  */
 import { describe, it, expect } from "vitest";
-import { bridgeEvent } from "@/lib/otto-stream-bridge";
+import { bridgeEvent, stepEventOf, labelForTool } from "@/lib/otto-stream-bridge";
 
 // ── Helpers to build minimal events with the verified shapes ─────────────────
 
@@ -139,5 +139,56 @@ describe("bridgeEvent — unhandled events", () => {
         item: { type: "message_output_item", rawItem: { content: [] } },
       }),
     ).toBeNull();
+  });
+});
+
+describe("stepEventOf — agent step narration (the live trace)", () => {
+  it("maps tool_called to a start step with a friendly label + the call id", () => {
+    expect(stepEventOf(toolCalledEvent("researchWeb"))).toEqual({
+      id: "call_1",
+      label: "Researching your brand",
+      phase: "start",
+    });
+  });
+
+  it("maps tool_output to a done step with the SAME id (pairs start↔done)", () => {
+    expect(stepEventOf(toolOutputEvent("researchWeb", { ok: true }))).toEqual({
+      id: "call_1",
+      label: "Researching your brand",
+      phase: "done",
+    });
+  });
+
+  it("labels the planning + generation tools by their real (mixed-case) names", () => {
+    expect(stepEventOf(toolCalledEvent("propose"))?.label).toBe("Planning the campaign");
+    expect(stepEventOf(toolCalledEvent("proposePack"))?.label).toBe("Planning the ad pack");
+    expect(stepEventOf(toolCalledEvent("generate"))?.label).toBe("Making a visual");
+  });
+
+  it("stays silent (null) for internal/unknown tools", () => {
+    expect(stepEventOf(toolCalledEvent("setTitle"))).toBeNull();
+    expect(stepEventOf(toolCalledEvent("totally-unknown"))).toBeNull();
+  });
+
+  it("ignores non run-item events (tokens, reasoning, agent_updated)", () => {
+    expect(stepEventOf(tokenEvent("hi"))).toBeNull();
+    expect(stepEventOf(reasoningEvent("hmm"))).toBeNull();
+    expect(stepEventOf({ type: "agent_updated_stream_event" })).toBeNull();
+  });
+
+  it("returns null when the call id is missing (can't pair start↔done)", () => {
+    expect(
+      stepEventOf({
+        type: "run_item_stream_event" as const,
+        name: "tool_called" as const,
+        item: { type: "tool_call_item", rawItem: { type: "function_call", name: "propose" } },
+      }),
+    ).toBeNull();
+  });
+
+  it("labelForTool maps known tools and returns null for the rest", () => {
+    expect(labelForTool("researchWeb")).toBe("Researching your brand");
+    expect(labelForTool("setTitle")).toBeNull();
+    expect(labelForTool(undefined)).toBeNull();
   });
 });

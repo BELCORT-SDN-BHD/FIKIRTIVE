@@ -4,7 +4,7 @@
  *
  * Pure (no React, no I/O) so they are unit-testable in the node harness.
  */
-import type { OttoStatusData, OttoErrorData } from "./otto-stream-bridge";
+import type { OttoStatusData, OttoErrorData, OttoStepData } from "./otto-stream-bridge";
 
 /** Minimal shape of what a data-* part looks like at runtime. */
 interface RawDataPart {
@@ -43,4 +43,42 @@ export function asStatusData(part: RawDataPart): OttoStatusData | null {
 export function asErrorData(part: RawDataPart): OttoErrorData | null {
   if (part.type !== "data-error") return null;
   return part.data as OttoErrorData;
+}
+
+/** Narrow a raw part to `OttoStepData` if its type is "data-step", else null. */
+export function asStepData(part: RawDataPart): OttoStepData | null {
+  if (part.type !== "data-step") return null;
+  return part.data as OttoStepData;
+}
+
+/** A step as the trace UI consumes it. */
+export interface TraceStepView {
+  label: string;
+  status: "done" | "active" | "pending";
+}
+
+/**
+ * Fold the ordered `data-step` events of a turn into a display step list:
+ * first-seen order; a step stays "active" until its `done` event arrives. When the
+ * run reports `done`, every step is marked done. We never invent "pending" steps —
+ * the agent only narrates tools as it calls them. Pure + unit-tested.
+ */
+export function deriveTraceSteps(
+  events: OttoStepData[],
+  liveStatus: OttoStatusData | null,
+): TraceStepView[] {
+  const order: string[] = [];
+  const byId = new Map<string, TraceStepView>();
+  for (const ev of events) {
+    let s = byId.get(ev.id);
+    if (!s) {
+      s = { label: ev.label, status: "active" };
+      byId.set(ev.id, s);
+      order.push(ev.id);
+    }
+    if (ev.phase === "done") s.status = "done";
+  }
+  const steps = order.map((id) => ({ ...byId.get(id)! }));
+  if (liveStatus?.kind === "done") steps.forEach((s) => (s.status = "done"));
+  return steps;
 }

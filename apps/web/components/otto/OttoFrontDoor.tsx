@@ -440,7 +440,20 @@ export function OttoFrontDoor({
                   boxShadow: "var(--shadow-sm)",
                 }}
               >
-                <div style={{ color: "var(--brand)" }}>{goal.icon}</div>
+                <div
+                  style={{
+                    width: 38,
+                    height: 38,
+                    borderRadius: "var(--radius-sm)",
+                    background: "var(--accent-soft)",
+                    color: "#B23A12",
+                    display: "flex",
+                    alignItems: "center",
+                    justifyContent: "center",
+                  }}
+                >
+                  {goal.icon}
+                </div>
                 <div>
                   <div
                     style={{

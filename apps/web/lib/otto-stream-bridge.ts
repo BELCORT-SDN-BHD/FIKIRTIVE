@@ -48,6 +48,9 @@ export type OttoErrorData =
 /** Payload for the `data-tool-propose` stream part (the propose tool's return value). */
 export type OttoProposeData = unknown;
 
+/** Payload for the `data-step` stream part — one agent step (a tool call), display-only. */
+export type OttoStepData = { id: string; label: string; phase: "start" | "done" };
+
 // ---------------------------------------------------------------------------
 // Minimal structural type for the parts this bridge emits, plus the route's
 // data parts. Intentionally avoids importing `ai` so this module stays pure
@@ -58,6 +61,7 @@ export type OttoStreamPart =
   | { type: "reasoning-delta"; delta: string; id: string }
   | { type: "data-status"; data: OttoStatusData }
   | { type: "data-tool-propose"; data: OttoProposeData }
+  | { type: "data-step"; data: OttoStepData }
   | { type: "data-error"; data: OttoErrorData };
 
 // Stable ids so all deltas of one turn coalesce into a single text / reasoning part.
@@ -136,4 +140,62 @@ export function bridgeEvent(event: unknown): OttoStreamPart | null {
 
   // 3) agent_updated_stream_event and anything else → no client part
   return null;
+}
+
+// ---------------------------------------------------------------------------
+// Step narration — a SECOND pure mapper the route calls alongside bridgeEvent to
+// emit `data-step` parts (the live trace UI). It only NARRATES the agent's tool
+// calls; it never changes the run, approval, or spend path. Kept separate so
+// bridgeEvent's contract/tests are untouched.
+// ---------------------------------------------------------------------------
+
+/** Tool name → friendly, sentence-case step label. Unlisted tools stay silent.
+ *  Keys are the EXACT tool names from packages/otto/src/skills/*.ts (mixed casing). */
+const TOOL_STEP_LABELS: Record<string, string> = {
+  researchWeb: "Researching your brand",
+  rememberBrandFact: "Saving a brand note",
+  updateBrief: "Updating the brief",
+  describeRefs: "Looking at your references",
+  propose: "Planning the campaign",
+  proposePack: "Planning the ad pack",
+  generate: "Making a visual",
+  "meta-insights": "Reading your ad performance",
+  "meta-list-objects": "Checking your Meta account",
+  "list-meta-pages": "Finding your Pages",
+  "propose-meta-action": "Planning a Meta change",
+  "propose-ad-build": "Planning the campaign build",
+  // setTitle stays silent (internal housekeeping).
+};
+
+/** Friendly step label for a tool, or null for tools that shouldn't surface a step. */
+export function labelForTool(name: string | undefined): string | null {
+  if (!name) return null;
+  return TOOL_STEP_LABELS[name] ?? null;
+}
+
+/** Read a stable call id off a run_item event's item (pairs start↔done). */
+function callIdOf(item: unknown): string | undefined {
+  if (!item || typeof item !== "object") return undefined;
+  const raw = (item as { rawItem?: { callId?: unknown; id?: unknown } }).rawItem;
+  const id = raw?.callId ?? raw?.id;
+  return typeof id === "string" ? id : undefined;
+}
+
+/**
+ * Map a run_item event to a step (display-only narration of the agent's tool calls):
+ * tool_called → phase:"start"; tool_output → phase:"done". Returns null when the event
+ * isn't a labelled tool boundary. PURE — no DB/IO. The spend/approval path is untouched;
+ * this only describes what the agent is doing for the trace UI.
+ */
+export function stepEventOf(event: unknown): OttoStepData | null {
+  if (!event || typeof event !== "object") return null;
+  const e = event as { type?: unknown; name?: unknown; item?: unknown };
+  if (e.type !== "run_item_stream_event") return null;
+  const phase = e.name === "tool_called" ? "start" : e.name === "tool_output" ? "done" : null;
+  if (!phase) return null;
+  const label = labelForTool(toolNameOf(e.item));
+  if (!label) return null;
+  const id = callIdOf(e.item);
+  if (!id) return null;
+  return { id, label, phase };
 }

@@ -50,7 +50,7 @@ import {
   buildContextSystemMessage,
   finalizeOttoRun,
 } from "@/lib/otto-actions";
-import { bridgeEvent, OTTO_TEXT_ID, OTTO_REASONING_ID } from "@/lib/otto-stream-bridge";
+import { bridgeEvent, stepEventOf, OTTO_TEXT_ID, OTTO_REASONING_ID } from "@/lib/otto-stream-bridge";
 import type { OttoStatusData, OttoErrorData } from "@/lib/otto-stream-bridge";
 
 /** Safe one-line error summary for logs (mirrors otto-actions.errSummary). */
@@ -223,6 +223,12 @@ export async function POST(req: NextRequest): Promise<Response> {
             // stream:true → StreamedRunResult: AsyncIterable over RunStreamEvent.
             const r = await run(otto, runInput, { context: ctx, maxTurns: OTTO_MAX_STEPS, stream: true });
             for await (const event of r) {
+              // Live step-trace narration (display-only): emit a data-step for each
+              // labelled tool boundary. Computed BEFORE the bridgeEvent `continue` so
+              // tool events that carry no other part still narrate. No spend impact.
+              const step = stepEventOf(event);
+              if (step) writer.write({ type: "data-step", data: step });
+
               const part = bridgeEvent(event);
               if (!part) continue;
               if (part.type === "text-delta") openText();

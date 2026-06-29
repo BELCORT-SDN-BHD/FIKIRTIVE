@@ -3,6 +3,7 @@ import React from "react";
 import { creditsLabel } from "@/lib/credit-format";
 import type { OttoViewKey } from "./OttoApp";
 import type { ChatThreadDTO } from "@/lib/types";
+import type { HistoryThumb } from "@/lib/data";
 
 const MOBILE_BP = 680;
 
@@ -66,16 +67,48 @@ function IconCompass() {
     </svg>
   );
 }
+function IconCalendar() {
+  return (
+    <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden>
+      <rect x="3" y="4" width="18" height="18" rx="2" />
+      <path d="M16 2v4M8 2v4M3 10h18" />
+    </svg>
+  );
+}
+function IconChart() {
+  return (
+    <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden>
+      <path d="M3 3v18h18" />
+      <path d="m7 14 4-4 3 3 5-6" />
+    </svg>
+  );
+}
+/** OTTO — the coral cloud mark (coral is OTTO's colour only). */
+function OttoCloud({ size = 26 }: { size?: number }) {
+  return (
+    <svg width={size} height={Math.round((size * 24) / 26)} viewBox="0 0 120 110" aria-hidden style={{ flexShrink: 0 }}>
+      <g fill="var(--accent)">
+        <ellipse cx="60" cy="64" rx="43" ry="22" />
+        <circle cx="37" cy="52" r="18" />
+        <circle cx="61" cy="40" r="24" />
+        <circle cx="85" cy="53" r="17" />
+      </g>
+      <rect x="51" y="48" width="7" height="13" rx="3.5" fill="#2B1308" />
+      <rect x="66" y="48" width="7" height="13" rx="3.5" fill="#2B1308" />
+    </svg>
+  );
+}
 
+// Simplified nav (founder, 2026-06-29): 6 destinations. Library/Templates/Discover/
+// Connections are no longer surfaced here (their views still exist, just unlinked);
+// Schedule + Analytics are new stub views (the hi-fi screens land in a later phase).
 const NAV_ITEMS: NavItem[] = [
-  { key: "otto", label: "Otto", icon: <IconMessageCircle /> },
-  { key: "stuff", label: "My stuff", icon: <IconFolderHeart /> },
-  { key: "library", label: "Library", icon: <IconLibrary /> },
-  { key: "templates", label: "Templates", icon: <IconTemplates /> },
-  { key: "discover", label: "Discover", icon: <IconCompass /> },
+  { key: "otto", label: "Canvas", icon: <IconLibrary /> },
+  { key: "stuff", label: "My Stuff", icon: <IconFolderHeart /> },
   { key: "memory", label: "Brand memory", icon: <IconBrain /> },
+  { key: "schedule", label: "Schedule", icon: <IconCalendar /> },
+  { key: "analytics", label: "Analytics", icon: <IconChart /> },
   { key: "account", label: "Account", icon: <IconCircleUser /> },
-  { key: "connections", label: "Connections", icon: <IconLink /> },
 ];
 
 function IconLibrary() {
@@ -124,10 +157,15 @@ export interface OttoNavProps {
   balanceCredits: number;
   userName: string;
   userEmail: string;
+  /** Recent generation thumbnails for the History strip (display-only). */
+  history?: HistoryThumb[];
   /** Mobile: whether the drawer is open (controlled by OttoApp). */
   drawerOpen?: boolean;
   /** Mobile: called when the drawer should close (backdrop tap or nav action). */
   onDrawerClose?: () => void;
+  /** Desktop: collapse the sidebar to give the canvas more room. */
+  collapsed?: boolean;
+  onToggleCollapse?: () => void;
 }
 
 export function OttoNav({
@@ -141,8 +179,11 @@ export function OttoNav({
   balanceCredits,
   userName,
   userEmail,
+  history = [],
   drawerOpen = false,
   onDrawerClose,
+  collapsed = false,
+  onToggleCollapse,
 }: OttoNavProps) {
   const initial = userName.slice(0, 1).toUpperCase();
   const balanceLabel = creditsLabel(balanceCredits);
@@ -197,25 +238,37 @@ export function OttoNav({
     <nav
       className={`otto-nav${drawerOpen ? " otto-nav--open" : ""}`}
       style={{
-        width: 240,
+        width: collapsed ? 0 : 240,
         flexShrink: 0,
         display: "flex",
         flexDirection: "column",
-        borderRight: "1px solid var(--border-subtle)",
+        borderRight: collapsed ? "none" : "1px solid var(--border-subtle)",
         background: "var(--surface-card)",
         overflow: "hidden",
-        padding: "var(--space-4) 0",
+        padding: collapsed ? 0 : "var(--space-4) 0",
+        transition: "width var(--dur-base) var(--ease-out)",
       }}
     >
-      {/* Logo */}
-      <div style={{ padding: "0 var(--space-4) var(--space-4)", borderBottom: "1px solid var(--border-subtle)" }}>
-        {/* eslint-disable-next-line @next/next/no-img-element */}
-        <img
-          src="/brand/logo-wordmark.svg"
-          alt="Fikirtive"
-          height={28}
-          style={{ display: "block" }}
-        />
+      {/* Logo + collapse toggle */}
+      <div style={{ display: "flex", alignItems: "center", gap: "var(--space-2)", padding: "0 var(--space-3) var(--space-4) var(--space-4)", borderBottom: "1px solid var(--border-subtle)" }}>
+        <div style={{ display: "flex", alignItems: "center", gap: "var(--space-2)", flex: 1, minWidth: 0 }}>
+          <OttoCloud size={26} />
+          <span style={{ fontSize: "var(--text-lg)", fontWeight: "var(--weight-bold)", letterSpacing: "var(--tracking-snug)", color: "var(--text-strong)" }}>
+            fikirtive
+          </span>
+        </div>
+        <button
+          type="button"
+          onClick={onToggleCollapse}
+          title="Collapse sidebar"
+          aria-label="Collapse sidebar"
+          className="otto-nav-collapse"
+          style={{ flexShrink: 0, width: 28, height: 28, borderRadius: "var(--radius-sm)", border: "none", background: "transparent", color: "var(--text-faint)", display: "flex", alignItems: "center", justifyContent: "center", cursor: "pointer" }}
+        >
+          <svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.9" aria-hidden>
+            <rect x="3" y="3" width="18" height="18" rx="2" /><path d="M9 3v18" /><path d="m14 9-3 3 3 3" />
+          </svg>
+        </button>
       </div>
 
       {/* New campaign button */}
@@ -278,9 +331,11 @@ export function OttoNav({
         })}
       </div>
 
-      {/* Recent conversations */}
-      {threads.length > 0 && (
+      {/* Recent conversations + History */}
+      {(threads.length > 0 || history.length > 0) && (
         <div style={{ flex: 1, overflow: "auto", padding: "var(--space-4) var(--space-3) var(--space-2)" }}>
+          {threads.length > 0 && (
+          <>
           <div
             style={{
               fontSize: "var(--text-xs)",
@@ -398,10 +453,51 @@ export function OttoNav({
               color: var(--text-default) !important;
             }
           `}</style>
+          </>
+          )}
+          {history.length > 0 && (
+          <>
+            <div
+              style={{
+                fontSize: "var(--text-xs)",
+                color: "var(--text-faint)",
+                fontWeight: "var(--weight-semibold)",
+                textTransform: "uppercase",
+                letterSpacing: "var(--tracking-caps)",
+                margin: `${threads.length > 0 ? "var(--space-4)" : "0"} 0 var(--space-2)`,
+                paddingLeft: "var(--space-1)",
+              }}
+            >
+              History
+            </div>
+            <div style={{ display: "grid", gridTemplateColumns: "repeat(3, 1fr)", gap: 5 }}>
+              {history.map((h) => (
+                <div
+                  key={h.id}
+                  title={h.kind === "video" ? "Video" : "Image"}
+                  style={{
+                    aspectRatio: "1 / 1",
+                    borderRadius: "var(--radius-sm)",
+                    overflow: "hidden",
+                    border: "1px solid var(--border-subtle)",
+                    background: "var(--surface-sunken)",
+                  }}
+                >
+                  {h.kind === "video" ? (
+                    <video src={h.src} muted preload="metadata" style={{ width: "100%", height: "100%", objectFit: "cover" }} />
+                  ) : (
+                    // eslint-disable-next-line @next/next/no-img-element
+                    <img src={h.src} alt="" loading="lazy" style={{ width: "100%", height: "100%", objectFit: "cover" }} />
+                  )}
+                </div>
+              ))}
+            </div>
+          </>
+          )}
         </div>
       )}
 
-      <div style={{ flex: threads.length ? 0 : 1 }} />
+      <div style={{ flex: (threads.length || history.length) ? 0 : 1 }} />
 
       {/* Balance card */}
       <div

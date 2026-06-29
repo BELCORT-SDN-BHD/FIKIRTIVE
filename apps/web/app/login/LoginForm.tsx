@@ -2,40 +2,20 @@
 
 import { useState } from "react";
 import { authClient } from "@/lib/better-auth/client";
+import { Button } from "@/components/ui/button";
+import { Input } from "@/components/ui/input";
 
-/** Interactive sign-in surface. Magic-link stays the primary path (passwordless,
- *  matching the prior UX); Google and email+password are added beneath. All three
- *  go through authClient (Better Auth). `from` preserves the post-login redirect. */
+/** Interactive sign-in surface. Email + password is the primary path; magic link
+ *  (passwordless) and Google sit beneath as alternatives. All three go through
+ *  authClient (Better Auth). `from` preserves the post-login redirect. */
 export function LoginForm({ from }: { from: string }) {
   const callbackURL = from && from.startsWith("/") ? from : "/";
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
+  const [showPw, setShowPw] = useState(false);
   const [busy, setBusy] = useState<"magic" | "google" | "password" | null>(null);
   const [sent, setSent] = useState(false);
   const [error, setError] = useState<string | null>(null);
-
-  async function sendMagicLink(e: React.FormEvent) {
-    e.preventDefault();
-    if (!email.trim() || busy) return;
-    setBusy("magic");
-    setError(null);
-    const { error } = await authClient.signIn.magicLink({ email: email.trim(), callbackURL });
-    setBusy(null);
-    if (error) setError(error.message ?? "Sign-in failed — try again.");
-    else setSent(true);
-  }
-
-  async function signInWithGoogle() {
-    if (busy) return;
-    setBusy("google");
-    setError(null);
-    const { error } = await authClient.signIn.social({ provider: "google", callbackURL });
-    // On success the browser is redirected to Google; only reachable on error.
-    if (error) {
-      setBusy(null);
-      setError(error.message ?? "Google sign-in failed — try again.");
-    }
-  }
 
   async function signInWithPassword(e: React.FormEvent) {
     e.preventDefault();
@@ -48,86 +28,167 @@ export function LoginForm({ from }: { from: string }) {
     else window.location.assign(callbackURL);
   }
 
+  async function sendMagicLink(e?: React.SyntheticEvent) {
+    e?.preventDefault();
+    if (busy) return;
+    if (!email.trim()) {
+      setError("Enter your email first, then I'll send you a link.");
+      return;
+    }
+    setBusy("magic");
+    setError(null);
+    const { error } = await authClient.signIn.magicLink({ email: email.trim(), callbackURL });
+    setBusy(null);
+    if (error) setError(error.message ?? "Sign-in failed. Try again.");
+    else setSent(true);
+  }
+
+  async function signInWithGoogle() {
+    if (busy) return;
+    setBusy("google");
+    setError(null);
+    const { error } = await authClient.signIn.social({ provider: "google", callbackURL });
+    // On success the browser is redirected to Google; only reachable on error.
+    if (error) {
+      setBusy(null);
+      setError(error.message ?? "Google sign-in failed. Try again.");
+    }
+  }
+
   if (sent) {
     return (
-      <a
-        href="/login"
-        style={{ font: "var(--text-small)", color: "var(--fg-2)", textDecoration: "underline", textUnderlineOffset: 3 }}
-      >
-        Use a different email
-      </a>
+      <div className="rounded-[var(--radius-card)] border border-border bg-card p-5 text-center shadow-xs">
+        <p className="text-[15px] font-semibold text-foreground">Check your email</p>
+        <p className="mt-1.5 text-[13.5px] leading-[1.5] text-muted-foreground">
+          We sent a sign-in link to{" "}
+          <span className="font-medium text-foreground">{email.trim()}</span>. Open it on this device
+          to continue.
+        </p>
+        <button
+          type="button"
+          onClick={() => {
+            setSent(false);
+            setPassword("");
+          }}
+          className="mt-3.5 text-[13.5px] font-semibold text-muted-foreground underline underline-offset-4 hover:text-foreground"
+        >
+          Use a different email
+        </button>
+      </div>
     );
   }
 
   return (
-    <div style={{ display: "flex", flexDirection: "column", gap: 14 }}>
+    <div className="flex flex-col gap-3.5">
       {error && (
-        <p role="alert" style={{ font: "var(--text-small)", color: "var(--danger)", margin: "0 0 2px" }}>
+        <p role="alert" className="text-[13.5px] font-medium text-destructive">
           {error}
         </p>
       )}
 
-      <form onSubmit={sendMagicLink} style={{ display: "flex", flexDirection: "column", gap: 14 }}>
-        <label className="al-field">
-          <span className="al-field-label">Email</span>
-          <span className="al-input-wrap">
-            <input
-              type="email"
-              name="email"
-              required
-              autoFocus
-              placeholder="you@studio.com"
-              autoComplete="email"
-              value={email}
-              onChange={(e) => setEmail(e.target.value)}
-            />
-          </span>
-        </label>
+      <form onSubmit={signInWithPassword} className="flex flex-col gap-3.5">
+        <div className="flex flex-col gap-1.5">
+          <label htmlFor="email" className="text-[13px] font-semibold text-foreground/85">
+            Email
+          </label>
+          <Input
+            id="email"
+            type="email"
+            name="email"
+            required
+            autoFocus
+            placeholder="you@yourbrand.com"
+            autoComplete="email"
+            value={email}
+            onChange={(e) => setEmail(e.target.value)}
+          />
+        </div>
 
-        <label className="al-field">
-          <span className="al-field-label">Password (optional)</span>
-          <span className="al-input-wrap">
-            <input
-              type="password"
+        <div className="flex flex-col gap-1.5">
+          <div className="flex items-center justify-between">
+            <label htmlFor="password" className="text-[13px] font-semibold text-foreground/85">
+              Password
+            </label>
+            <button
+              type="button"
+              onClick={() => sendMagicLink()}
+              className="text-[12.5px] font-semibold text-muted-foreground hover:text-foreground"
+            >
+              Forgot?
+            </button>
+          </div>
+          <div className="relative">
+            <Input
+              id="password"
+              type={showPw ? "text" : "password"}
               name="password"
-              placeholder="Leave blank to use a magic link"
+              placeholder="Enter your password"
               autoComplete="current-password"
+              className="pr-11"
               value={password}
               onChange={(e) => setPassword(e.target.value)}
             />
-          </span>
-        </label>
+            <button
+              type="button"
+              onClick={() => setShowPw((v) => !v)}
+              aria-label={showPw ? "Hide password" : "Show password"}
+              className="absolute right-1.5 top-1/2 flex size-9 -translate-y-1/2 items-center justify-center rounded-[10px] text-muted-foreground transition-colors hover:text-foreground"
+            >
+              {showPw ? (
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={1.9} className="size-[18px]">
+                  <path d="M9.9 4.2A9.1 9.1 0 0 1 12 4c6.5 0 10 7 10 7a13.2 13.2 0 0 1-2.2 3M6.1 6.1A13.3 13.3 0 0 0 2 11s3.5 7 10 7a9 9 0 0 0 3.9-.9M3 3l18 18" />
+                </svg>
+              ) : (
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={1.9} className="size-[18px]">
+                  <path d="M2 12s3.5-7 10-7 10 7 10 7-3.5 7-10 7-10-7-10-7z" />
+                  <circle cx="12" cy="12" r="3" />
+                </svg>
+              )}
+            </button>
+          </div>
+        </div>
 
-        {password ? (
-          <button
-            type="button"
-            onClick={signInWithPassword}
-            disabled={!!busy}
-            className="al-btn al-btn-primary al-btn-md al-btn-full"
-          >
-            {busy === "password" ? "Signing in…" : "Sign in"}
-          </button>
-        ) : (
-          <button type="submit" disabled={!!busy} className="al-btn al-btn-primary al-btn-md al-btn-full">
-            {busy === "magic" ? "Sending…" : "Send magic link"}
-          </button>
-        )}
+        <Button type="submit" disabled={!!busy} className="mt-0.5 w-full">
+          {busy === "password" ? "Signing in…" : "Sign in"}
+        </Button>
       </form>
 
-      <div style={{ display: "flex", alignItems: "center", gap: 10, font: "var(--text-small)", color: "var(--fg-3)" }}>
-        <span style={{ flex: 1, height: 1, background: "var(--line-2)" }} />
+      <div className="flex items-center gap-3 text-[12.5px] font-medium text-muted-foreground">
+        <span className="h-px flex-1 bg-border" />
         or
-        <span style={{ flex: 1, height: 1, background: "var(--line-2)" }} />
+        <span className="h-px flex-1 bg-border" />
       </div>
 
-      <button
-        type="button"
-        onClick={signInWithGoogle}
-        disabled={!!busy}
-        className="al-btn al-btn-glass al-btn-md al-btn-full"
-      >
-        {busy === "google" ? "Redirecting…" : "Continue with Google"}
-      </button>
+      <div className="flex flex-col gap-2.5">
+        <Button type="button" variant="secondary" onClick={() => sendMagicLink()} disabled={!!busy} className="w-full">
+          {busy === "magic" ? (
+            "Sending…"
+          ) : (
+            <>
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2}>
+                <rect x="2" y="4" width="20" height="16" rx="2" />
+                <path d="m2 7 10 6 10-6" />
+              </svg>
+              Email me a magic link
+            </>
+          )}
+        </Button>
+        <Button type="button" variant="secondary" onClick={signInWithGoogle} disabled={!!busy} className="w-full">
+          {busy === "google" ? (
+            "Redirecting…"
+          ) : (
+            <>
+              <svg viewBox="0 0 24 24">
+                <path fill="#4285F4" d="M22.5 12.2c0-.7-.1-1.4-.2-2H12v3.8h5.9a5 5 0 0 1-2.2 3.3v2.7h3.5c2-1.9 3.3-4.7 3.3-7.8z" />
+                <path fill="#34A853" d="M12 23c3 0 5.5-1 7.3-2.7l-3.5-2.7c-1 .7-2.3 1.1-3.8 1.1-2.9 0-5.3-1.9-6.2-4.6H2.2v2.8A11 11 0 0 0 12 23z" />
+                <path fill="#FBBC05" d="M5.8 14.1a6.6 6.6 0 0 1 0-4.2V7.1H2.2a11 11 0 0 0 0 9.8z" />
+                <path fill="#EA4335" d="M12 5.4c1.6 0 3 .6 4.2 1.6l3.1-3.1A11 11 0 0 0 2.2 7.1l3.6 2.8C6.7 7.3 9.1 5.4 12 5.4z" />
+              </svg>
+              Continue with Google
+            </>
+          )}
+        </Button>
+      </div>
     </div>
   );
 }

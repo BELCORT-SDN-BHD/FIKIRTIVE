@@ -1,7 +1,7 @@
 import { getMyAccount } from "@/lib/account-actions";
 import { listCreditPacks } from "@/lib/billing-actions";
 import { BuyPackButton } from "@/components/billing/BuyPackButton";
-import { Card } from "@/components/fk";
+import { Card } from "@/components/ui/card";
 import { Wallet } from "lucide-react";
 
 export const dynamic = "force-dynamic";
@@ -26,45 +26,26 @@ export default async function BillingPage({
   const account = "error" in accountResult ? null : accountResult;
 
   return (
-    <div style={{ flex: 1, overflow: "auto", padding: "var(--space-6)" }}>
-      <div style={{ maxWidth: 640, margin: "0 auto" }}>
-        <h1
-          style={{
-            fontFamily: "var(--font-display)",
-            fontWeight: "var(--weight-bold)" as React.CSSProperties["fontWeight"],
-            fontSize: "var(--text-2xl)",
-            color: "var(--text-strong)",
-            margin: 0,
-          }}
-        >
-          Billing
-        </h1>
-        <p
-          style={{
-            fontSize: "var(--text-base)",
-            color: "var(--text-muted)",
-            marginTop: "var(--space-2)",
-            marginBottom: "var(--space-5)",
-          }}
-        >
-          Buy credits to power your generations.
+    <div className="gb" style={{ flex: 1, overflow: "auto", minHeight: "100dvh", padding: 24 }}>
+      <div style={{ maxWidth: 560, margin: "0 auto" }}>
+        <h1 style={{ fontSize: 30, fontWeight: 700, letterSpacing: "-0.03em", margin: 0 }}>Billing</h1>
+        <p className="text-muted-foreground" style={{ fontSize: 16, marginTop: 6, marginBottom: 24 }}>
+          Buy credits to power your campaigns.
         </p>
 
-        {/* Status note */}
         {status === "success" && (
           <div
             role="status"
             style={{
               padding: "12px 16px",
               borderRadius: "var(--radius-card)",
-              backgroundColor: "var(--success-50, #f0fdf4)",
-              border: "1px solid var(--success-200, #bbf7d0)",
-              color: "var(--success-700, #15803d)",
-              fontSize: "var(--text-sm)",
-              marginBottom: "var(--space-5)",
+              background: "var(--success-soft)",
+              color: "var(--success-soft-foreground)",
+              fontSize: 14,
+              marginBottom: 20,
             }}
           >
-            Payment received — credits will appear shortly.
+            Payment received. Credits will appear shortly.
           </div>
         )}
         {status === "cancel" && (
@@ -73,101 +54,67 @@ export default async function BillingPage({
             style={{
               padding: "12px 16px",
               borderRadius: "var(--radius-card)",
-              backgroundColor: "var(--surface-sunken)",
-              border: "1px solid var(--border-subtle)",
-              color: "var(--text-muted)",
-              fontSize: "var(--text-sm)",
-              marginBottom: "var(--space-5)",
+              background: "var(--secondary)",
+              color: "var(--muted-foreground)",
+              fontSize: 14,
+              marginBottom: 20,
             }}
           >
-            Checkout cancelled — no charge was made.
+            Checkout cancelled. No charge was made.
           </div>
         )}
 
-        {/* Current balance */}
-        <Card variant="tint" padding="lg" style={{ marginBottom: "var(--space-5)" }}>
+        <Card style={{ marginBottom: 20 }}>
           <div
-            style={{
-              display: "flex",
-              alignItems: "center",
-              gap: "var(--space-2)",
-              color: "var(--text-muted)",
-              fontSize: "var(--text-sm)",
-            }}
+            className="text-muted-foreground"
+            style={{ display: "flex", alignItems: "center", gap: 8, fontSize: 14 }}
           >
-            <Wallet size={18} color="var(--brand)" /> Your credit balance
+            <Wallet size={18} style={{ color: "var(--brand)" }} /> Your balance
           </div>
           {account ? (
             <>
-              <div
-                style={{
-                  fontFamily: "var(--font-display)",
-                  fontWeight: "var(--weight-bold)" as React.CSSProperties["fontWeight"],
-                  fontSize: "var(--text-4xl, 2.5rem)",
-                  color: "var(--text-strong)",
-                  marginTop: "var(--space-2)",
-                }}
-              >
-                ${account.balanceUsd.toFixed(2)}
+              <div style={{ fontSize: 36, fontWeight: 700, letterSpacing: "-0.02em", marginTop: 6 }}>
+                {account.balance.toLocaleString()}{" "}
+                <span className="text-muted-foreground" style={{ fontSize: 18, fontWeight: 500 }}>
+                  credits
+                </span>
               </div>
-              <div style={{ fontSize: "var(--text-sm)", color: "var(--text-faint)", marginTop: 4 }}>
-                {account.balance.toLocaleString()} credits
-                {account.reserved > 0
-                  ? ` · ${account.reserved.toLocaleString()} held for work in progress`
-                  : ""}
-              </div>
+              {account.reserved > 0 ? (
+                <div className="text-muted-foreground" style={{ fontSize: 14, marginTop: 4 }}>
+                  {account.reserved.toLocaleString()} held for work in progress
+                </div>
+              ) : null}
             </>
           ) : (
-            <div style={{ fontSize: "var(--text-sm)", color: "var(--text-faint)", marginTop: "var(--space-2)" }}>
-              Could not load balance — please refresh.
+            <div className="text-muted-foreground" style={{ fontSize: 14, marginTop: 6 }}>
+              Could not load balance. Please refresh.
             </div>
           )}
         </Card>
 
-        {/* Credit packs */}
-        <h2
-          style={{
-            fontFamily: "var(--font-display)",
-            fontWeight: "var(--weight-semibold)" as React.CSSProperties["fontWeight"],
-            fontSize: "var(--text-lg)",
-            color: "var(--text-strong)",
-            marginTop: "var(--space-6)",
-            marginBottom: "var(--space-3)",
-          }}
-        >
-          Top up
-        </h2>
+        <h2 style={{ fontSize: 18, fontWeight: 600, margin: "0 0 12px" }}>Top up</h2>
 
         {packs.length === 0 ? (
-          <div style={{ color: "var(--text-muted)", fontSize: "var(--text-sm)" }}>
+          <div className="text-muted-foreground" style={{ fontSize: 14 }}>
             No credit packs are available right now.
           </div>
         ) : (
-          <div style={{ display: "flex", flexDirection: "column", gap: "var(--space-3)" }}>
+          <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
             {packs.map((pack) => (
-              <Card key={pack.priceId} variant="default" padding="md">
+              <Card key={pack.priceId}>
                 <div
                   style={{
                     display: "flex",
                     alignItems: "center",
                     justifyContent: "space-between",
-                    gap: "var(--space-3)",
+                    gap: 12,
                     flexWrap: "wrap",
                   }}
                 >
                   <div>
-                    <div
-                      style={{
-                        fontWeight: "var(--weight-semibold)" as React.CSSProperties["fontWeight"],
-                        fontSize: "var(--text-base)",
-                        color: "var(--text-strong)",
-                      }}
-                    >
-                      {pack.label}
-                    </div>
-                    <div style={{ fontSize: "var(--text-sm)", color: "var(--text-muted)", marginTop: 2 }}>
-                      {pack.credits.toLocaleString()} credits ·{" "}
-                      {fmtPrice(pack.amountCents, pack.currency)}
+                    <div style={{ fontWeight: 600, fontSize: 16 }}>{pack.label}</div>
+                    <div className="text-muted-foreground" style={{ fontSize: 14, marginTop: 2 }}>
+                      {pack.credits.toLocaleString()} credits · {fmtPrice(pack.amountCents, pack.currency)}
                     </div>
                   </div>
                   <BuyPackButton

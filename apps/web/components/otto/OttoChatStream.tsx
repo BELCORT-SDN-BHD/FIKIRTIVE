@@ -25,10 +25,11 @@ import { PackCard } from "./PackCard";
 import { OttoResult } from "./OttoResult";
 import { TextPart } from "./parts/TextPart";
 import { StatusLine } from "./parts/StatusLine";
+import { OttoTrace } from "./OttoTrace";
 import { ReasoningPart } from "./parts/ReasoningPart";
-import { asStatusData, asErrorData } from "@/lib/otto-status-helpers";
+import { asStatusData, asErrorData, asStepData, deriveTraceSteps } from "@/lib/otto-status-helpers";
 import { activeMentionQuery, resolveSentEntityIds } from "@/lib/otto-mentions";
-import type { OttoStatusData } from "@/lib/otto-stream-bridge";
+import type { OttoStatusData, OttoStepData } from "@/lib/otto-stream-bridge";
 import type { ReasoningUIPart } from "ai";
 import type { EntityDTO, ChatThreadDTO } from "@/lib/types";
 
@@ -85,6 +86,8 @@ export function OttoChatStream({
   const [mentionHighlight, setMentionHighlight] = useState(0);
   /** Latest data-status received for the in-flight turn; reset on each new turn. */
   const [liveStatus, setLiveStatus] = useState<OttoStatusData | null>(null);
+  /** Ordered agent step events for this turn (data-step) → the live OttoTrace. Reset per turn. */
+  const [stepEvents, setStepEvents] = useState<OttoStepData[]>([]);
   /** data-error text for the in-flight turn; stays visible after the turn ends. */
   const [streamError, setStreamError] = useState<string | null>(null);
   /** data-error kind; "insufficient_credits" drives the Top-up link. */
@@ -170,6 +173,9 @@ export function OttoChatStream({
     // data-tool-propose (a card was proposed mid-turn → fetch the durable thread and
     // inject the full GEN_CARD so the plan card renders inline promptly).
     onData: (part) => {
+      // data-step: a tool boundary — append to the ordered step list for the trace.
+      const step = asStepData(part);
+      if (step) { setStepEvents((prev) => [...prev, step]); return; }
       const s = asStatusData(part);
       if (s) {
         setLiveStatus(s);
@@ -315,6 +321,7 @@ export function OttoChatStream({
     setPickedMentions([]);
     // Reset ephemeral stream state for the new turn.
     setLiveStatus(null);
+    setStepEvents([]);
     setStreamError(null);
     setStreamErrorKind(null);
     setAttachError(null);
@@ -736,6 +743,13 @@ export function OttoChatStream({
             ];
             }); // end renderItems.map
           })()} {/* end IIFE */}
+
+          {/* OTTO's live step-trace — the agent narrating its tool calls (display-only). */}
+          {stepEvents.length > 0 && (
+            <div style={{ margin: "var(--space-2) 0 var(--space-3)" }}>
+              <OttoTrace steps={deriveTraceSteps(stepEvents, liveStatus)} />
+            </div>
+          )}
 
           {/* Live status line: shows "Otto is thinking…" or the planning text while
               in-flight; hides automatically once isBusy is false (replaces the

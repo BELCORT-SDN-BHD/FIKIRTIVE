@@ -257,6 +257,159 @@
   box-sizing: inherit;
 }
 
+/* ════════════════════════════════════════════════════════════════════════
+ * Grok-bright re-skin of the Otto shell — opt-in via ?skin=gb (strangler).
+ * Applied as `.fk.gb-skin` on the OttoApp root: more specific than `.fk`, so it
+ * remaps the SEMANTIC tokens the shell already consumes — no component rewrites.
+ * Primary = INK (was slate); coral #EC5828 = OTTO / agent moments ONLY; the
+ * status palette is state-only; Geist (mono stays JetBrains). The old .fk look
+ * stays the default until this is verified, then `.gb-skin` becomes the default.
+ * ════════════════════════════════════════════════════════════════════════ */
+.fk.gb-skin {
+  /* surfaces */
+  --bg-page:         #FCFCFC;
+  --surface-card:    #FFFFFF;
+  --surface-sunken:  #F4F4F3;
+  --surface-raised:  #FFFFFF;
+  --surface-inverse: #0A0A0A;
+
+  /* text → ink ramp */
+  --text-strong:     #0A0A0A;
+  --text-body:       #1A1A18;
+  --text-muted:      #6E6E68;
+  --text-faint:      #9A9A98;
+  --text-on-brand:   #FCFCFC;
+  --text-on-inverse: #FCFCFC;
+
+  /* borders */
+  --border-subtle:  #EFEFED;
+  --border-default: #E6E6E3;
+  --border-strong:  #D8D7D1;
+
+  /* PRIMARY = ink — the confident default action (was slate-blue) */
+  --brand:            #0A0A0A;
+  --brand-hover:      #1A1A18;
+  --brand-press:      #000000;
+  --brand-soft:       #ECECEA;
+  --brand-tint:       #F4F4F3;
+  --on-brand-soft:    #0A0A0A;
+  --brand-soft-hover: #E6E6E3;
+
+  /* coral = OTTO / agent moments ONLY */
+  --accent:         #EC5828;
+  --accent-soft:    #FBE4D8;
+  --highlight:      #D97706;
+  --highlight-soft: #FBF0DD;
+
+  --focus-ring: #EC5828;
+
+  /* status = state only */
+  --success-100:#E7F6EC; --success-500:#16A34A; --success-700:#15803D;
+  --warning-100:#FBF0DD; --warning-500:#D97706; --warning-700:#B45309;
+  --error-100:#FCE9E9;   --error-500:#E5484D;   --error-700:#B42B30;
+  --info-100:#E7EEFD;    --info-500:#3B6FE6;    --info-700:#1D4ED8;
+
+  /* catch any DIRECT raw-token uses so no slate-blue leaks through */
+  --slate-50:#F4F4F3; --slate-100:#ECECEA; --slate-200:#E6E6E3;
+  --slate-500:#0A0A0A; --slate-600:#1A1A18; --slate-700:#000000;
+  --coral-50:#FFF1EC; --coral-100:#FBE4D8; --coral-400:#F0703F;
+  --coral-500:#EC5828; --coral-600:#D44A1E; --coral-700:#B23A12;
+
+  /* typography → Geist (next/font var from layout.tsx); mono stays JetBrains */
+  --font-display: var(--font-geist), system-ui, -apple-system, sans-serif;
+  --font-sans:    var(--font-geist), system-ui, -apple-system, sans-serif;
+
+  /* radius → tighter Grok-bright (14 control / 18 card / 24 modal) */
+  --radius-card:  18px;
+  --radius-modal: 24px;
+
+  /* shadows → cool + subtle; brand glow → coral */
+  --shadow-color:    20 20 24;
+  --shadow-brand:    0 8px 22px rgba(236 88 40 / 0.22);
+  --shadow-brand-sm: 0 4px 12px rgba(236 88 40 / 0.18);
+  --shadow-accent:   0 10px 26px rgba(236 88 40 / 0.26);
+  --ring-focus:      0 0 0 4px rgba(236 88 40 / 0.30);
+}
+
+/* ── Canvas bottom bar (legacy .al-* promptbar) re-skinned Grok-bright.
+ * Display-only: the dark "Vapor" glass classes assume white-on-dark, so on the
+ * light canvas the composer text and surface read wrong. Scoped to .al-promptbar
+ * so only the canvas bottom bar changes — matches the locked canvas-home mockup.
+ * Coral stays agent-only → the canvas Generate action is INK, not accent. */
+.fk.gb-skin .al-promptbar {
+  background: var(--surface-card);
+  border-color: var(--border-default);
+  box-shadow: 0 8px 24px rgba(20, 20, 24, 0.12);
+  -webkit-backdrop-filter: none;
+  backdrop-filter: none;
+}
+.fk.gb-skin .al-promptbar .tiptap { color: var(--text-body); }
+.fk.gb-skin .al-promptbar .tiptap p.is-editor-empty:first-child::before { color: var(--text-faint); }
+.fk.gb-skin .al-promptbar .al-btn-primary {
+  background: var(--brand);
+  color: var(--text-on-brand);
+  box-shadow: none;
+}
+.fk.gb-skin .al-promptbar .al-btn-primary:hover:not(:disabled) {
+  background: var(--brand-hover);
+  box-shadow: none;
+}
+.fk.gb-skin .al-promptbar .al-btn:not(.al-btn-primary) {
+  background: var(--surface-card);
+  border-color: var(--border-default);
+  color: var(--text-body);
+}
+.fk.gb-skin .al-promptbar .al-btn:not(.al-btn-primary):hover:not(:disabled) {
+  background: var(--surface-sunken);
+}
+
+/* ── Canvas nodes (legacy .al-panel cards) re-skinned Grok-bright.
+ * Scoped to ReactFlow nodes so only the canvas changes; gated by gb-skin.
+ * Each node gets a floating type pill (.cv-nodelabel) above the card — the
+ * canvas-home look. The pill markup always renders but is hidden in the old
+ * skin, so it appears only here (strangler). */
+.cv-nodelabel { display: none; }
+.fk.gb-skin .react-flow__node .al-panel {
+  background: var(--surface-card);
+  border: 1px solid var(--border-default);
+  box-shadow: 0 6px 18px rgba(20, 20, 24, 0.08);
+  -webkit-backdrop-filter: none;
+  backdrop-filter: none;
+  border-radius: 13px;
+}
+.fk.gb-skin .react-flow__node.selected .al-panel {
+  border: 2px solid var(--accent);
+}
+.fk.gb-skin .react-flow__node .cv-nodelabel {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  position: absolute;
+  top: -26px;
+  left: 0;
+  font-size: 10.5px;
+  font-weight: 600;
+  letter-spacing: -0.01em;
+  color: #fff;
+  background: #1C1B17;
+  padding: 3px 9px;
+  border-radius: 999px;
+  white-space: nowrap;
+  pointer-events: none;
+}
+.fk.gb-skin .react-flow__node .cv-nodelabel svg { width: 12px; height: 12px; }
+.fk.gb-skin .react-flow__node .al-btn-glass {
+  background: rgba(255, 255, 255, 0.92);
+  border-color: var(--border-default);
+  color: var(--text-body);
+  -webkit-backdrop-filter: none;
+  backdrop-filter: none;
+  box-shadow: var(--shadow-sm);
+}
+.fk.gb-skin .react-flow__node .al-btn-glass:hover:not(:disabled) { background: #fff; }
+.fk.gb-skin .react-flow__node textarea { color: var(--text-body); }
+.fk.gb-skin .react-flow__node textarea::placeholder { color: var(--text-faint); }
+
 /* Reduced motion: respect user preference */
 @media (prefers-reduced-motion: reduce) {
   .fk * {
