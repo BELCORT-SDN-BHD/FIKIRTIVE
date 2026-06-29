@@ -1,0 +1,93 @@
+<!-- @dsCard group="Canvas (app)" -->
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8"/>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Geist:wght@400;500;600;700;800&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
+<style>
+  *{box-sizing:border-box;margin:0;padding:0;}
+  body{font-family:'Geist',system-ui,sans-serif;color:#0A0A0A;-webkit-font-smoothing:antialiased;
+    background-color:#FCFCFC;background-image:radial-gradient(circle,#DCDCD7 1.2px,transparent 1.2px);background-size:22px 22px;padding:34px 36px;}
+  .cap{font-size:12px;font-weight:600;letter-spacing:.08em;text-transform:uppercase;color:#9A9A98;margin-bottom:22px;}
+  .grid{display:grid;grid-template-columns:repeat(4,1fr);gap:20px;max-width:980px;}
+  .node{background:#fff;border:1px solid #E6E6E3;border-radius:14px;box-shadow:0 6px 18px rgba(20,20,24,.08);overflow:hidden;position:relative;}
+  .node.otto{border-color:#F7C9B5;}
+  .nh{display:flex;align-items:center;gap:6px;padding:7px 10px;border-bottom:1px solid #F0F0EE;}
+  .nh .nt{font-size:11px;font-weight:600;color:#76766F;flex:1;display:flex;align-items:center;gap:5px;}
+  .nh .nt svg{width:13px;height:13px;}
+  .node img{width:100%;display:block;height:96px;object-fit:cover;}
+  .ncap{font-family:'JetBrains Mono',monospace;font-size:9.5px;color:#9A9A98;padding:6px 10px;}
+  .dur{position:absolute;right:8px;bottom:8px;font-family:'JetBrains Mono',monospace;font-size:9px;color:#fff;background:rgba(10,10,12,.6);padding:2px 6px;border-radius:999px;}
+  .play{position:absolute;top:42px;left:50%;transform:translate(-50%,-50%);width:30px;height:30px;border-radius:50%;background:rgba(255,255,255,.9);display:flex;align-items:center;justify-content:center;}
+  .txtbody{padding:11px 12px;font-size:13px;line-height:1.45;color:#1A1A18;font-weight:500;}
+  .ottobody{padding:12px;display:flex;flex-direction:column;align-items:center;gap:8px;background:#FFF6F2;}
+  .runbar{width:70%;height:5px;border-radius:99px;background:#F3D9CC;overflow:hidden;position:relative;}
+  .runbar::after{content:"";position:absolute;left:0;top:0;height:100%;width:55%;background:#EC5828;border-radius:99px;}
+  .ottometa{font-size:11.5px;font-weight:600;color:#9A3A1A;}
+  .packgrid{display:grid;grid-template-columns:1fr 1fr;gap:3px;padding:8px;}
+  .packgrid img{height:46px;border-radius:5px;}
+  .packfoot{display:flex;align-items:center;gap:6px;padding:7px 11px;border-top:1px solid #F0F0EE;font-size:11px;font-weight:600;color:#15803D;}
+  .resbody{padding:11px 12px;font-size:12px;color:#3A3A38;line-height:1.7;}
+  .resbody b{color:#0A0A0A;}
+  .badge4k{position:absolute;top:8px;right:8px;font-family:'JetBrains Mono',monospace;font-size:9px;font-weight:600;color:#fff;background:#0A0A0A;padding:2px 7px;border-radius:6px;}
+  .tname{color:#76766F;}
+</style>
+</head>
+<body>
+  <div class="cap">Canvas · node types</div>
+  <div class="grid">
+
+    <div class="node">
+      <div class="nh"><span class="nt"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M6 2 3 6v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2V6l-3-4z"/><path d="M3 6h18"/><path d="M16 10a4 4 0 0 1-8 0"/></svg>Product</span></div>
+      <img src="https://picsum.photos/seed/nt1/300/180"/>
+      <div class="ncap">@sunglasses · base</div>
+    </div>
+
+    <div class="node">
+      <div class="nh"><span class="nt"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="3" width="18" height="18" rx="3"/><circle cx="9" cy="9" r="2"/><path d="m21 15-5-5L5 21"/></svg>Image</span></div>
+      <img src="https://picsum.photos/seed/nt2/300/180"/>
+      <div class="ncap">1024×1024 · 1 credit</div>
+    </div>
+
+    <div class="node">
+      <div class="nh"><span class="nt"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="2" y="6" width="14" height="12" rx="2"/><path d="m22 8-6 4 6 4V8z"/></svg>Video · animate</span></div>
+      <div style="position:relative"><img src="https://picsum.photos/seed/nt3/300/180"/><div class="play"><svg width="13" height="13" viewBox="0 0 24 24" fill="#0A0A0A"><path d="M8 5v14l11-7z"/></svg></div><span class="dur">0:08</span></div>
+    </div>
+
+    <div class="node">
+      <div class="nh"><span class="nt"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M4 7V4h16v3M9 20h6M12 4v16"/></svg>Text · caption</span></div>
+      <div class="txtbody">Fresh every morning. Order the autumn menu before it's gone. 🥐</div>
+      <div class="ncap">tone: cozy · 3 options</div>
+    </div>
+
+    <div class="node otto">
+      <div class="nh"><span class="nt"><svg viewBox="0 0 24 24" fill="none" stroke="#EC5828" stroke-width="2"><path d="m12 3 1.9 5.1L19 10l-5.1 1.9L12 17l-1.9-5.1L5 10z"/></svg><span style="color:#9A3A1A">OTTO · task</span></span></div>
+      <div class="ottobody">
+        <svg width="30" height="27" viewBox="0 0 120 110" aria-hidden="true"><g fill="#EC5828"><ellipse cx="60" cy="64" rx="43" ry="22"/><circle cx="37" cy="52" r="18"/><circle cx="61" cy="40" r="24"/><circle cx="85" cy="53" r="17"/></g><ellipse cx="56" cy="49" rx="3.6" ry="4.6" fill="#2B1308"/><ellipse cx="71" cy="49" rx="3.6" ry="4.6" fill="#2B1308"/></svg>
+        <div class="runbar"></div>
+        <div class="ottometa">Making 4 ad variations…</div>
+      </div>
+    </div>
+
+    <div class="node">
+      <div class="nh"><span class="nt"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="3" width="18" height="18" rx="3"/><path d="M3 9h18M9 3v18"/></svg>Ad-pack</span></div>
+      <div class="packgrid"><img src="https://picsum.photos/seed/np1/120/120"/><img src="https://picsum.photos/seed/np2/120/120"/><img src="https://picsum.photos/seed/np3/120/120"/><img src="https://picsum.photos/seed/np4/120/120"/></div>
+      <div class="packfoot"><span class="dot" style="width:6px;height:6px;border-radius:50%;background:#16A34A;display:inline-block"></span>6 assets · ready to post</div>
+    </div>
+
+    <div class="node">
+      <div class="nh"><span class="nt"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="11" cy="11" r="8"/><path d="m21 21-4.3-4.3"/></svg>Web research</span></div>
+      <div class="resbody"><b>Voice:</b> cozy, warm<br/><b>Audience:</b> locals, 25-45<br/><b>Sources:</b> site + 2 socials</div>
+    </div>
+
+    <div class="node">
+      <div class="nh"><span class="nt"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="m3 16 4-4 5 5 4-4 5 5"/><circle cx="8.5" cy="8.5" r="1.5"/><rect x="3" y="3" width="18" height="18" rx="3"/></svg>Edit · upscale</span></div>
+      <div style="position:relative"><img src="https://picsum.photos/seed/nt8/300/180"/><span class="badge4k">4K</span></div>
+      <div class="ncap">crop · extend · upscale</div>
+    </div>
+
+  </div>
+</body>
+</html>

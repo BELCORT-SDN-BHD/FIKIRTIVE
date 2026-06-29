@@ -110,6 +110,11 @@ First-run/onboarding (OTTO greets + plain-language goal tiles = the empty-state 
 **Ship:** low risk; can go straight in (no flag) once approved.
 **Done when:** a new merchant signs in and lands on a warm, on-brand first-run that points at the first action.
 
+**Follow-up — dedicated password-reset flow (founder-requested 2026-06-29, TODO):** today the
+"Forgot?" link on `/login` sends a magic link (the passwordless way back in). Build a proper reset
+flow — Better Auth `requestPasswordReset` → emailed reset link → a `/reset-password` page that sets
+a new password — and point "Forgot?" at it. Not built yet; tracked here so it isn't lost.
+
 ## Phase 2 — ⭐ Core make-an-ad loop (the activation heart)
 
 **Screens:** Home (returning state) · the describe/chat surface · **the plan card (spend gate)** ·

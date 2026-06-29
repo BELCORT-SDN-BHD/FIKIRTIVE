@@ -1,0 +1,86 @@
+<!-- @dsCard group="App screens" -->
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8"/>
+<link rel="preconnect" href="https://fonts.googleapis.com"><link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Geist:wght@400;500;600;700;800&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
+<style>
+  *{box-sizing:border-box;margin:0;padding:0;}
+  body{font-family:'Geist',system-ui,sans-serif;color:#0A0A0A;-webkit-font-smoothing:antialiased;background:#FCFCFC;}
+  .app{display:flex;height:100vh;overflow:hidden;}
+  .rail{width:222px;flex:none;background:#F8F8F7;border-right:1px solid #EAEAE8;display:flex;flex-direction:column;padding:14px 10px;}
+  .brand{display:flex;align-items:center;gap:8px;padding:4px 8px 12px;} .wm{font-size:17px;font-weight:700;}
+  .new{display:flex;align-items:center;justify-content:center;gap:7px;height:38px;border-radius:12px;background:#0A0A0A;color:#fff;font-size:14px;font-weight:600;border:none;}
+  .nav{margin-top:10px;display:flex;flex-direction:column;gap:1px;}
+  .it{display:flex;align-items:center;gap:9px;padding:8px 9px;border-radius:9px;font-size:13.5px;color:#3A3A38;} .it svg{width:17px;height:17px;color:#76766F;}
+  .it.on{background:#EAEAE8;color:#0A0A0A;font-weight:600;} .it.on svg{color:#0A0A0A;}
+  .lbl{font-size:10.5px;font-weight:600;letter-spacing:.07em;text-transform:uppercase;color:#A6A6A0;padding:12px 9px 5px;}
+  .hist{display:grid;grid-template-columns:repeat(3,1fr);gap:5px;padding:2px 4px;} .hist img{width:100%;height:46px;object-fit:cover;border-radius:7px;}
+  .foot{margin-top:auto;display:flex;flex-direction:column;gap:6px;padding-top:8px;border-top:1px solid #EAEAE8;}
+  .cr{display:flex;align-items:center;gap:6px;font-size:12px;color:#76766F;padding:2px 8px;} .cr b{color:#0A0A0A;}
+  .usr{display:flex;align-items:center;gap:8px;padding:4px 8px;} .av{width:26px;height:26px;border-radius:50%;background:#E6E6E3;color:#3A3A38;display:flex;align-items:center;justify-content:center;font-size:10.5px;font-weight:600;}
+  .main{flex:1;min-width:0;overflow:auto;padding:24px 28px 36px;} .wrap{max-width:600px;}
+  .h1{font-size:24px;font-weight:700;letter-spacing:-0.02em;margin-bottom:18px;}
+  .bal{display:flex;align-items:center;gap:16px;border:1px solid #EAEAE8;border-radius:16px;background:#fff;padding:20px;box-shadow:0 2px 8px rgba(20,20,24,.04);margin-bottom:14px;}
+  .bn{font-size:38px;font-weight:700;letter-spacing:-0.02em;} .bn span{font-size:17px;font-weight:500;color:#86867F;}
+  .bsub{font-size:13px;color:#86867F;margin-top:2px;}
+  .topup{margin-left:auto;height:42px;padding:0 18px;border-radius:12px;background:#0A0A0A;color:#fff;font-size:14px;font-weight:600;border:none;}
+  .plan{display:flex;align-items:center;gap:10px;border:1px solid #EAEAE8;border-radius:14px;background:#fff;padding:14px 16px;margin-bottom:24px;}
+  .planb{display:inline-flex;align-items:center;gap:5px;font-size:11px;font-weight:600;background:#FBE4D8;color:#9A3A1A;padding:3px 9px;border-radius:999px;}
+  .sec{font-size:12px;font-weight:600;letter-spacing:.05em;text-transform:uppercase;color:#9A9A98;margin-bottom:10px;}
+  .ledger{border:1px solid #EAEAE8;border-radius:14px;background:#fff;overflow:hidden;margin-bottom:24px;}
+  .lr{display:flex;align-items:center;gap:12px;padding:12px 15px;border-top:1px solid #F4F4F2;} .lr:first-child{border-top:none;}
+  .li{width:32px;height:32px;border-radius:9px;display:flex;align-items:center;justify-content:center;flex:none;}
+  .lt{flex:1;} .ln{font-size:13.5px;font-weight:500;} .ld{font-family:'JetBrains Mono',monospace;font-size:10.5px;color:#9A9A98;margin-top:1px;}
+  .lv{font-family:'JetBrains Mono',monospace;font-size:13px;font-weight:500;}
+  .neg{color:#0A0A0A;} .pos{color:#15803D;}
+  .set{border:1px solid #EAEAE8;border-radius:14px;background:#fff;overflow:hidden;}
+  .sr{display:flex;align-items:center;gap:12px;padding:13px 15px;border-top:1px solid #F4F4F2;font-size:14px;} .sr:first-child{border-top:none;}
+  .sw{margin-left:auto;width:40px;height:23px;border-radius:999px;background:#0A0A0A;position:relative;} .sw.off{background:#D8D8D2;} .sw::after{content:"";position:absolute;top:3px;right:3px;width:17px;height:17px;border-radius:50%;background:#fff;} .sw.off::after{right:auto;left:3px;}
+  .signout{margin-top:14px;height:44px;width:100%;border:1px solid #E6E6E3;border-radius:12px;background:#fff;color:#B42B30;font-size:14px;font-weight:600;}
+</style>
+</head>
+<body>
+<div class="app">
+  <aside class="rail">
+    <div class="brand"><svg width="24" height="22" viewBox="0 0 120 110" aria-hidden="true"><g fill="#EC5828"><ellipse cx="60" cy="64" rx="43" ry="22"/><circle cx="37" cy="52" r="18"/><circle cx="61" cy="40" r="24"/><circle cx="85" cy="53" r="17"/></g><rect x="51" y="48" width="7" height="13" rx="3.5" fill="#2B1308"/><rect x="66" y="48" width="7" height="13" rx="3.5" fill="#2B1308"/></svg><span class="wm">fikirtive</span></div>
+    <button class="new"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"><path d="M12 5v14M5 12h14"/></svg> New campaign</button>
+    <div class="nav">
+      <div class="it"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9"><rect x="3" y="3" width="7" height="7" rx="1.5"/><rect x="14" y="3" width="7" height="7" rx="1.5"/><rect x="3" y="14" width="7" height="7" rx="1.5"/><rect x="14" y="14" width="7" height="7" rx="1.5"/></svg> Canvas</div>
+      <div class="it"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9"><path d="M6 2 3 6v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2V6l-3-4z"/><path d="M3 6h18"/></svg> My Stuff</div>
+      <div class="it"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9"><path d="M12 2a7 7 0 0 0-7 7c0 3 2 4 2 7h10c0-3 2-4 2-7a7 7 0 0 0-7-7z"/><path d="M9 21h6"/></svg> Brand memory</div>
+      <div class="it on"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9"><circle cx="12" cy="8" r="4"/><path d="M4 21a8 8 0 0 1 16 0"/></svg> Account</div>
+    </div>
+    <div class="lbl">History</div>
+    <div class="hist"><img src="https://picsum.photos/seed/ac1/120/120"/><img src="https://picsum.photos/seed/ac2/120/120"/><img src="https://picsum.photos/seed/ac3/120/120"/><img src="https://picsum.photos/seed/ac4/120/120"/><img src="https://picsum.photos/seed/ac5/120/120"/><img src="https://picsum.photos/seed/ac6/120/120"/></div>
+    <div class="foot"><div class="cr"><svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="#EC5828" stroke-width="2"><circle cx="12" cy="12" r="9"/><path d="M12 7v10M9 9.5h4a1.5 1.5 0 0 1 0 3h-2a1.5 1.5 0 0 0 0 3h4"/></svg> <b>840</b>&nbsp;credits</div><div class="usr"><span class="av">RK</span><span style="font-size:13px;color:#3A3A38;font-weight:500">Rosa Klein</span></div></div>
+  </aside>
+
+  <main class="main"><div class="wrap">
+    <div class="h1">Account</div>
+    <div class="bal">
+      <div><div class="bn">840 <span>credits</span></div><div class="bsub">12 held for work in progress</div></div>
+      <button class="topup">Top up</button>
+    </div>
+    <div class="plan"><span style="font-weight:600;font-size:14px">Studio plan</span><span class="planb">Active</span><div style="flex:1"></div><span style="font-size:13px;color:#76766F">Manage</span></div>
+
+    <div class="sec">Recent activity</div>
+    <div class="ledger">
+      <div class="lr"><span class="li" style="background:#FBE4D8;color:#B23A12"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9"><rect x="2" y="6" width="14" height="12" rx="2"/><path d="m22 8-6 4 6 4V8z"/></svg></span><div class="lt"><div class="ln">3 videos made — Autumn menu</div><div class="ld">JUN 29 · 2:14 PM</div></div><span class="lv neg">−18</span></div>
+      <div class="lr"><span class="li" style="background:#F4F4F3;color:#76766F"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9"><path d="m12 3 1.9 5.1L19 10l-5.1 1.9L12 17l-1.9-5.1L5 10z"/></svg></span><div class="lt"><div class="ln">Otto thinking</div><div class="ld">JUN 29 · 2:11 PM</div></div><span class="lv neg">−1</span></div>
+      <div class="lr"><span class="li" style="background:#E7F6EC;color:#15803D"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9"><path d="M3 12a9 9 0 1 0 3-6.7L3 8M3 3v5h5"/></svg></span><div class="lt"><div class="ln">Refunded — a video didn't finish</div><div class="ld">JUN 28 · 9:02 PM</div></div><span class="lv pos">+6</span></div>
+      <div class="lr"><span class="li" style="background:#E7EEFD;color:#1D4ED8"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9"><rect x="2" y="5" width="20" height="14" rx="2"/><path d="M2 10h20"/></svg></span><div class="lt"><div class="ln">Top-up — Studio pack</div><div class="ld">JUN 28 · 8:40 PM</div></div><span class="lv pos">+500</span></div>
+    </div>
+
+    <div class="sec">Settings</div>
+    <div class="set">
+      <div class="sr">Email me when OTTO finishes a campaign<span class="sw"></span></div>
+      <div class="sr">Let OTTO suggest next steps<span class="sw"></span></div>
+      <div class="sr">Dark mode<span class="sw off"></span></div>
+    </div>
+    <button class="signout">Sign out</button>
+  </div></main>
+</div>
+</body>
+</html>
