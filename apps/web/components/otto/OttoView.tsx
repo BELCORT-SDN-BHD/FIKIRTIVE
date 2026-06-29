@@ -189,14 +189,19 @@ export function OttoView({
           transition: "flex-basis var(--dur-base) var(--ease-out)",
         }}
       >
-        <ConvoTabs
-          threads={threads}
-          activeThreadId={activeThreadId}
-          activity={activity}
-          onSelect={onActiveThreadChange}
-          onNew={onNewConvo}
-          onDelete={onDeleteThread}
-        />
+        {/* Conversation tabs — only in the legacy skin. Under gb, conversations are
+            navigated from the left Projects sidebar (Grok pattern), so this top
+            chip bar is redundant and hidden. */}
+        {skin !== "gb" && (
+          <ConvoTabs
+            threads={threads}
+            activeThreadId={activeThreadId}
+            activity={activity}
+            onSelect={onActiveThreadChange}
+            onNew={onNewConvo}
+            onDelete={onDeleteThread}
+          />
+        )}
         <div style={{ flex: 1, minWidth: 0, overflow: "hidden", display: "flex", flexDirection: "column" }}>
           {showFrontDoor ? (
             <OttoFrontDoor

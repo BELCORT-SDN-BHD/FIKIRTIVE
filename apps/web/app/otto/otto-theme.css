@@ -363,6 +363,56 @@
   background: var(--surface-sunken);
 }
 
+/* ── Canvas slim toolbar (gb) — matches the approved canvas-home mockup.
+ * Replaces the legacy persistent promptbar: the prompt composer is revealed
+ * only when Generate is clicked (.cv-composer-pop, which reuses .al-promptbar
+ * styling). Generate is INK — coral stays agent-only. */
+.fk.gb-skin .cv-toolbar {
+  position: absolute;
+  left: 50%;
+  bottom: 20px;
+  transform: translateX(-50%);
+  z-index: 5;
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  background: var(--surface-card);
+  border: 1px solid var(--border-default);
+  border-radius: 14px;
+  box-shadow: 0 8px 24px rgba(20, 20, 24, 0.12);
+  padding: 6px;
+}
+.fk.gb-skin .cv-tb {
+  width: 36px;
+  height: 36px;
+  border: none;
+  background: transparent;
+  border-radius: 9px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: var(--text-body);
+  cursor: pointer;
+}
+.fk.gb-skin .cv-tb:hover:not(:disabled) { background: var(--surface-sunken); }
+.fk.gb-skin .cv-tb:disabled { color: var(--text-faint); cursor: default; }
+.fk.gb-skin .cv-tb-gen {
+  width: auto;
+  gap: 7px;
+  padding: 0 14px;
+  background: var(--brand);
+  color: var(--text-on-brand);
+  font-size: 13.5px;
+  font-weight: 600;
+}
+.fk.gb-skin .cv-tb-gen:hover:not(:disabled) { background: var(--brand-hover); }
+.fk.gb-skin .cv-tb-div {
+  width: 1px;
+  height: 22px;
+  background: var(--border-subtle);
+  margin: 0 3px;
+}
+
 /* ── Canvas nodes (legacy .al-panel cards) re-skinned Grok-bright.
  * Scoped to ReactFlow nodes so only the canvas changes; gated by gb-skin.
  * Each node gets a floating type pill (.cv-nodelabel) above the card — the
