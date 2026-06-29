@@ -344,7 +344,7 @@ export class FalProvider implements GenerationProvider {
   }
 }
 
-function extFromUrl(url: string): string | null {
+export function extFromUrl(url: string): string | null {
   const path = url.split("?")[0] ?? "";
   const m = path.match(/\.([a-z0-9]{1,8})$/i);
   return m?.[1] ? m[1].toLowerCase() : null;
