@@ -80,8 +80,8 @@ describe("generate (Seedream image, sync)", () => {
     });
     const out = await new BytePlusProvider("ark-test").generate({ prompt: "an apple", inputImageUrls: [], count: 1, model: "seedream" });
     expect(out).toHaveLength(1);
-    expect(out[0].ext).toBe("png");
-    expect(Array.from(out[0].bytes)).toEqual([1, 2, 3]);
+    expect(out[0]!.ext).toBe("png");
+    expect(Array.from(out[0]!.bytes)).toEqual([1, 2, 3]);
     const body = JSON.parse(calls[0].init.body);
     expect(body.model).toBe("seedream-5-0-260128");
     expect(body.size).toBe("2048x2048");

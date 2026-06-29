@@ -10,6 +10,7 @@
  */
 import { deflateSync, crc32 } from "node:zlib";
 import type { GenerationProvider, GenerationRequest, GeneratedImage, VideoRequest, GeneratedVideo, GenVideoModel } from "@fikirtive/core";
+import { BytePlusProvider } from "./byteplus.js";
 
 /** A tiny valid 1s mp4 (256×160 solid) the mock returns for i2v — real enough
  *  for ffprobe/the editor, no network. */
@@ -362,6 +363,11 @@ export function createGenerationProvider(): GenerationProvider {
     const key = process.env.FAL_KEY;
     if (!key) throw new Error("GENERATION_PROVIDER=fal but FAL_KEY is not set");
     return new FalProvider(key);
+  }
+  if (process.env.GENERATION_PROVIDER === "byteplus") {
+    const key = process.env.BYTEPLUS_API_KEY;
+    if (!key) throw new Error("GENERATION_PROVIDER=byteplus but BYTEPLUS_API_KEY is not set");
+    return new BytePlusProvider(key);
   }
   return new MockProvider();
 }
