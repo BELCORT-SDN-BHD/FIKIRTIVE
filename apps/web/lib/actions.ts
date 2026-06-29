@@ -141,6 +141,33 @@ export async function renameProject(projectId: string, name: string): Promise<{ 
   return { ok: true, name: clean };
 }
 
+/** Placeholder names a fresh campaign carries until its first conversation names it. */
+const DEFAULT_CAMPAIGN_NAMES = new Set(["New campaign", "Untitled Project"]);
+
+/** Auto-title a still-default campaign from its first conversation's title (Grok
+ *  pattern: a new agent gets named from the first prompt). Owner-scoped, fail-closed,
+ *  idempotent (no-op once the project has a real name); writes only project.name —
+ *  touches no credits/generation. Safe to call repeatedly from the client. */
+export async function autoTitleProjectIfDefault(projectId: string): Promise<{ ok: true; name?: string } | { error: string }> {
+  const gate = await requireOwner(); if ("error" in gate) return gate;
+  const { ownerId } = gate;
+  const project = await prisma.project.findFirst({ where: { id: projectId, ownerId, deletedAt: null }, select: { id: true, name: true } });
+  if (!project) return { error: "Project not found." };
+  if (!DEFAULT_CAMPAIGN_NAMES.has(project.name)) return { ok: true }; // already named
+  const thread = await prisma.chatThread.findFirst({
+    where: { ownerId, projectId: project.id },
+    orderBy: { createdAt: "asc" },
+    select: { title: true },
+  });
+  const title = thread?.title?.trim();
+  if (!title || DEFAULT_CAMPAIGN_NAMES.has(title)) return { ok: true }; // nothing to adopt yet
+  const clean = title.slice(0, 80);
+  await prisma.project.update({ where: { id: project.id }, data: { name: clean } });
+  await logAction(ownerId, "project.autotitle", project.id, { name: clean });
+  revalidatePath("/", "layout");
+  return { ok: true, name: clean };
+}
+
 // ---------- entities ----------
 
 const REF_MAX_BYTES = 10 * 1024 * 1024; // 10 MB per source image

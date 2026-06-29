@@ -1,7 +1,7 @@
 "use client";
-import React, { useState, useCallback, useEffect } from "react";
+import React, { useState, useCallback, useEffect, useRef } from "react";
 import { useRouter } from "next/navigation";
-import { createProject, renameProject } from "@/lib/actions";
+import { createProject, renameProject, deleteProject, autoTitleProjectIfDefault } from "@/lib/actions";
 import { listProjectThreadActivity } from "@/lib/thread-activity";
 import "../../app/otto/otto-theme.css";
 import { OttoNav } from "./OttoNav";
@@ -156,6 +156,38 @@ export function OttoApp({
     if (res && "ok" in res) router.refresh();
   }, [router]);
 
+  const handleDeleteProject = useCallback(async (projId: string) => {
+    if (!window.confirm("Delete this campaign? It will be hidden from your sidebar.")) return;
+    const res = await deleteProject(projId);
+    if (!(res && "ok" in res)) return;
+    // If the open project was deleted, move to another one (or the front door).
+    if (projId === curProjectId) {
+      const next = projects.find((p) => p.id !== projId);
+      if (next) router.push(projectHref(next.id));
+      else router.refresh();
+    } else {
+      router.refresh();
+    }
+  }, [router, projectHref, curProjectId, projects]);
+
+  // Auto-title a still-default campaign from its first conversation (Grok pattern).
+  // Runs once when the open project is unnamed but already has a titled thread.
+  // Money-safe: the action writes only the project name, never any spend path.
+  const autoTitledRef = useRef(false);
+  useEffect(() => {
+    if (autoTitledRef.current) return;
+    const active = projects.find((p) => p.id === curProjectId);
+    if (!active || (active.name !== "New campaign" && active.name !== "Untitled Project")) return;
+    const named = sidebarThreads.some(
+      (t) => t.projectId === curProjectId && t.title && t.title !== "New campaign" && t.title !== "Untitled",
+    );
+    if (!named) return;
+    autoTitledRef.current = true;
+    void autoTitleProjectIfDefault(curProjectId).then((res) => {
+      if (res && "name" in res && res.name) router.refresh();
+    });
+  }, [projects, curProjectId, sidebarThreads, router]);
+
   async function handleDeleteThread(id: string) {
     const snapshot = threads;
     const snapshotActive = activeThreadId;
@@ -239,6 +271,7 @@ export function OttoApp({
         onSelectThread={setActiveThreadId}
         onSwitchProject={handleSwitchProject}
         onRenameProject={handleRenameProject}
+        onDeleteProject={handleDeleteProject}
         onNewCampaign={handleNewCampaign}
         onDeleteThread={handleDeleteThread}
         balanceCredits={balanceCredits}

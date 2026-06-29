@@ -27,6 +27,9 @@ export default function FlowCanvas({ projectId, entities = [], activeThreadId = 
   // holds the generationId whose detail panel is open (null = closed)
   const [detailFor, setDetailFor] = useState<string | null>(null);
   const [filterToConvo, setFilterToConvo] = useState(false);
+  // gb toolbar: the prompt composer is hidden behind the Generate button (Grok
+  // pattern) instead of sitting persistently on the canvas. Display state only.
+  const [composerOpen, setComposerOpen] = useState(false);
   // track node count to offset new node positions
   const nodeCountRef = useRef(0);
   // bumped on successful generation submit to remount MentionInput cleared
@@ -111,6 +114,7 @@ export default function FlowCanvas({ projectId, entities = [], activeThreadId = 
           data: {
             status: n.status,
             prompt: n.prompt,
+            skin,
             onDelete: () => deleteNode(n.id),
             // onAnimate added after generationId arrives via onResolve
           },
@@ -139,11 +143,42 @@ export default function FlowCanvas({ projectId, entities = [], activeThreadId = 
       setPromptIds([]);
       setVariantSel({});
       setComposerKey((k) => k + 1);
+      setComposerOpen(false);
     } finally {
       submittingRef.current = false;
       setSubmitting(false);
     }
   }, [prompt, promptIds, variantSel, generateImage]);
+
+  // Add an empty text node (display-only, no spend) — the canvas toolbar's text tool.
+  const addTextNode = useCallback(async () => {
+    const x = 80 + nodeCountRef.current * 340;
+    const result = await createCanvasNode({ projectId, type: "text", x, y: 80, w: 240, h: 120, text: "", status: "done", ...(activeThreadId ? { threadId: activeThreadId } : {}) });
+    if ("id" in result) {
+      nodeCountRef.current += 1;
+      setNodes((ns) => [
+        ...ns,
+        {
+          id: result.id,
+          type: "text",
+          position: { x, y: 80 },
+          data: { text: "", status: "done", skin, onChange: (t: string) => onTextChange(result.id, t), onDelete: () => deleteNode(result.id) },
+          style: { width: 240, height: 120, boxShadow: `0 0 0 2px ${convoColor(activeThreadId ?? null)}` },
+          threadId: activeThreadId ?? null,
+        },
+      ]);
+    } else {
+      console.warn("Failed to create text node:", result.error);
+    }
+  }, [projectId, activeThreadId, onTextChange, deleteNode, skin]);
+
+  // Animate the selected image node into a video — reuses the existing animate
+  // path (no new spend logic). The video tool mirrors Grok's "select an image
+  // node to animate"; it is disabled until an animatable image is selected.
+  const selectedImageId = nodes.find((n) => n.selected && n.type === "image" && nodeDataRef.current[n.id]?.generationId)?.id ?? null;
+  const animateSelected = useCallback(() => {
+    if (selectedImageId) getOnAnimate(selectedImageId)();
+  }, [selectedImageId, getOnAnimate]);
 
   // Stop polls on unmount
   useEffect(() => () => { cancelledRef.current = true; }, [cancelledRef]);
@@ -168,6 +203,7 @@ export default function FlowCanvas({ projectId, entities = [], activeThreadId = 
           url: r.url ?? undefined,
           prompt: r.prompt,
           text: r.text,
+          skin,
           onDelete: () => deleteNode(r.id),
           onChange: r.type === "text" ? (t: string) => onTextChange(r.id, t) : undefined,
           onAnimate: r.type === "image" ? getOnAnimate(r.id) : undefined,
@@ -207,7 +243,18 @@ export default function FlowCanvas({ projectId, entities = [], activeThreadId = 
 
   // Keep nodeDataRef positions in sync when nodes move (so onAnimate uses fresh coords)
   const onNodesChange = useCallback((changes: NodeChange[]) => {
-    setNodes((ns) => applyNodeChanges(changes, ns) as CanvasFlowNode[]);
+    setNodes((ns) => {
+      let next = applyNodeChanges(changes, ns) as CanvasFlowNode[];
+      // Bridge NodeResizer dimension changes into our style-based sizing so the
+      // card visually grows/shrinks on the board (display-only — no regeneration).
+      for (const c of changes) {
+        if (c.type === "dimensions" && c.dimensions) {
+          const { width, height } = c.dimensions;
+          next = next.map((n) => (n.id === c.id ? { ...n, style: { ...n.style, width, height } } : n));
+        }
+      }
+      return next;
+    });
     for (const c of changes) {
       if (c.type === "position" && c.position) {
         // Update position in ref immediately (for onAnimate offset calc)
@@ -223,6 +270,19 @@ export default function FlowCanvas({ projectId, entities = [], activeThreadId = 
             return ns; // side-effect only, no state update
           });
         }
+      }
+      // Persist the new size when a resize gesture ends (display-only; reuses the
+      // same moveCanvasNode path as a drag — no spend, just x/y/w/h).
+      if (c.type === "dimensions" && c.resizing === false) {
+        setNodes((ns) => {
+          const n = ns.find((x2) => x2.id === c.id);
+          if (n) {
+            const entry = nodeDataRef.current[n.id];
+            if (entry) entry.pos = { x: n.position.x, y: n.position.y };
+            void moveCanvasNode(n.id, { x: n.position.x, y: n.position.y, w: Number(n.style?.width ?? 320), h: Number(n.style?.height ?? 320) });
+          }
+          return ns; // side-effect only
+        });
       }
       if (c.type === "remove") void deleteCanvasNode(c.id);
     }
@@ -246,63 +306,80 @@ export default function FlowCanvas({ projectId, entities = [], activeThreadId = 
           entities={entities}
         />
       )}
-      <form
-        className="al-promptbar"
-        style={{ position: "absolute", bottom: 16, left: "50%", transform: "translateX(-50%)", width: 560 }}
-        onSubmit={(e) => { e.preventDefault(); handleGenerate(); }}
-      >
-        <div className="al-input-wrap" style={{ flex: 1, minWidth: 0, border: "none", background: "none", padding: 0 }}>
-          <MentionInput
-            entities={entities}
-            docKey={`canvas-${composerKey}`}
-            placeholder="Type to imagine… (@ to reference elements)"
-            onChange={(t, ids, vsel) => { setPrompt(t); setPromptIds(ids); setVariantSel(vsel); }}
-            onSubmit={handleGenerate}
-          />
-        </div>
-        <button className="al-btn al-btn-primary al-btn-sm" type="submit" disabled={submitting}>Generate</button>
-        {activeThreadId && (
-          <button
-            type="button"
-            className="al-btn al-btn-sm"
-            aria-pressed={filterToConvo}
-            onClick={() => setFilterToConvo((v) => !v)}
-          >
-            {filterToConvo ? "Showing this convo" : "Filter to this convo"}
-          </button>
-        )}
-        <button
-          className="al-btn al-btn-sm"
-          type="button"
-          onClick={async () => {
-            const x = 80 + nodeCountRef.current * 340;
-            const result = await createCanvasNode({ projectId, type: "text", x, y: 80, w: 240, h: 120, text: "", status: "done", ...(activeThreadId ? { threadId: activeThreadId } : {}) });
-            if ("id" in result) {
-              nodeCountRef.current += 1;
-              setNodes((ns) => [
-                ...ns,
-                {
-                  id: result.id,
-                  type: "text",
-                  position: { x, y: 80 },
-                  data: {
-                    text: "",
-                    status: "done",
-                    onChange: (t: string) => onTextChange(result.id, t),
-                    onDelete: () => deleteNode(result.id),
-                  },
-                  style: { width: 240, height: 120, boxShadow: `0 0 0 2px ${convoColor(activeThreadId ?? null)}` },
-                  threadId: activeThreadId ?? null,
-                },
-              ]);
-            } else {
-              console.warn("Failed to create text node:", result.error);
-            }
-          }}
+      {skin === "gb" ? (
+        <>
+          {/* Composer — hidden until Generate is clicked (Grok pattern). Reuses the
+              existing handleGenerate spend path unchanged; positioned above the bar. */}
+          {composerOpen && (
+            <form
+              className="al-promptbar cv-composer-pop"
+              style={{ position: "absolute", bottom: 76, left: "50%", transform: "translateX(-50%)", width: 520 }}
+              onSubmit={(e) => { e.preventDefault(); handleGenerate(); }}
+            >
+              <div className="al-input-wrap" style={{ flex: 1, minWidth: 0, border: "none", background: "none", padding: 0 }}>
+                <MentionInput
+                  entities={entities}
+                  docKey={`canvas-${composerKey}`}
+                  placeholder="Describe an image… (@ to reference your stuff)"
+                  onChange={(t, ids, vsel) => { setPrompt(t); setPromptIds(ids); setVariantSel(vsel); }}
+                  onSubmit={handleGenerate}
+                />
+              </div>
+              <button className="al-btn al-btn-primary al-btn-sm" type="submit" disabled={submitting}>Generate</button>
+            </form>
+          )}
+          {/* Slim bottom toolbar — matches the approved canvas-home mockup. */}
+          <div className="cv-toolbar" role="toolbar" aria-label="Canvas tools">
+            <button type="button" className="cv-tb" title="Select" aria-label="Select">
+              <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.9"><path d="m3 3 7.5 18 2.5-7.5L20.5 11 3 3z" /></svg>
+            </button>
+            <span className="cv-tb-div" />
+            <button type="button" className="cv-tb cv-tb-gen" aria-expanded={composerOpen} onClick={() => setComposerOpen((v) => !v)}>
+              <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="m12 3 1.9 5.1L19 10l-5.1 1.9L12 17l-1.9-5.1L5 10z" /></svg>
+              <span>Generate</span>
+              <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="m6 9 6 6 6-6" /></svg>
+            </button>
+            <span className="cv-tb-div" />
+            <button type="button" className="cv-tb" title="Image" aria-label="Image" onClick={() => setComposerOpen(true)}>
+              <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.9"><rect x="3" y="3" width="18" height="18" rx="3" /><circle cx="9" cy="9" r="2" /><path d="m21 15-5-5L5 21" /></svg>
+            </button>
+            <button type="button" className="cv-tb" title={selectedImageId ? "Animate selected image" : "Select an image, then Video to animate it"} aria-label="Video" disabled={!selectedImageId} onClick={animateSelected}>
+              <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.9"><rect x="2" y="6" width="14" height="12" rx="2" /><path d="m22 8-6 4 6 4V8z" /></svg>
+            </button>
+            <button type="button" className="cv-tb" title="Add text" aria-label="Add text" onClick={addTextNode}>
+              <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.9"><path d="M4 7V4h16v3M9 20h6M12 4v16" /></svg>
+            </button>
+          </div>
+        </>
+      ) : (
+        <form
+          className="al-promptbar"
+          style={{ position: "absolute", bottom: 16, left: "50%", transform: "translateX(-50%)", width: 560 }}
+          onSubmit={(e) => { e.preventDefault(); handleGenerate(); }}
         >
-          + Text
-        </button>
-      </form>
+          <div className="al-input-wrap" style={{ flex: 1, minWidth: 0, border: "none", background: "none", padding: 0 }}>
+            <MentionInput
+              entities={entities}
+              docKey={`canvas-${composerKey}`}
+              placeholder="Type to imagine… (@ to reference elements)"
+              onChange={(t, ids, vsel) => { setPrompt(t); setPromptIds(ids); setVariantSel(vsel); }}
+              onSubmit={handleGenerate}
+            />
+          </div>
+          <button className="al-btn al-btn-primary al-btn-sm" type="submit" disabled={submitting}>Generate</button>
+          {activeThreadId && (
+            <button
+              type="button"
+              className="al-btn al-btn-sm"
+              aria-pressed={filterToConvo}
+              onClick={() => setFilterToConvo((v) => !v)}
+            >
+              {filterToConvo ? "Showing this convo" : "Filter to this convo"}
+            </button>
+          )}
+          <button className="al-btn al-btn-sm" type="button" onClick={addTextNode}>+ Text</button>
+        </form>
+      )}
     </div>
   );
 }
