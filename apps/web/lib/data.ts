@@ -154,6 +154,31 @@ async function shotLabelMap(ownerId: string, projectId: string): Promise<Map<str
   return m;
 }
 
+export type HistoryThumb = { id: string; src: string; kind: "image" | "video" };
+/** The most recent generations in a project (OTTO + studio), newest first, for the
+ *  sidebar History strip. Display-only: resolves each generation's asset to a media
+ *  URL (same resolver as the library/thumbnails). Owner-scoped, soft-deletes excluded. */
+export async function getRecentGenerationThumbs(
+  ownerId: string,
+  projectId: string,
+  take = 9,
+): Promise<HistoryThumb[]> {
+  const rows = await prisma.generation.findMany({
+    where: { ownerId, projectId, ...notDeleted },
+    orderBy: [{ createdAt: "desc" }, { id: "desc" }],
+    take,
+    include: { asset: true },
+  });
+  return rows.map((g) => {
+    const ext = g.asset.ext.toLowerCase();
+    return {
+      id: g.id,
+      src: storageKeyToSrc(storageKey(g.asset.ownerId, g.asset.contentHash, ext)),
+      kind: MEDIA_VIDEO_EXTS.has(ext) ? "video" : "image",
+    };
+  });
+}
+
 /** One keyset page of a project's media (attached + candidates) for the Assets library,
  *  newest first. Cursor = "<createdAt-iso>|<id>" (id breaks createdAt ties so no row is
  *  skipped or repeated across pages). Bounded by `take` → scales to any library size; the

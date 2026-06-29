@@ -2,7 +2,7 @@ import { redirect } from "next/navigation";
 import { isFounderAdmin } from "@/lib/allowlist";
 import { requireOwner } from "@/lib/auth-guard";
 import { getOrCreateDefaultProject } from "@/lib/actions";
-import { getEntities, getCoworkThreads, getCoworkThread, resolveCoworkResultUrls, getMyAds, getMyAdJobs } from "@/lib/data";
+import { getEntities, getCoworkThreads, getCoworkThread, resolveCoworkResultUrls, getMyAds, getMyAdJobs, getRecentGenerationThumbs } from "@/lib/data";
 import { toEntityDTO, toChatThreadDTO, toChatThreadMetaDTO } from "@/lib/dto";
 import { getMyAccount } from "@/lib/account-actions";
 import { listMemory } from "@/lib/memory-actions";
@@ -30,13 +30,14 @@ export default async function OttoPage({ searchParams }: { searchParams: Promise
   if ("error" in projectResult) redirect("/login");
   const { id: projectId } = projectResult;
 
-  const [entities, threadRows, accountResult, memory, ads, adJobs] = await Promise.all([
+  const [entities, threadRows, accountResult, memory, ads, adJobs, history] = await Promise.all([
     getEntities(ownerId),
     getCoworkThreads(ownerId, projectId),
     getMyAccount(),
     listMemory(ownerId),
     getMyAds(ownerId, projectId),
     getMyAdJobs(ownerId, projectId).catch(() => [] as Awaited<ReturnType<typeof getMyAdJobs>>),
+    getRecentGenerationThumbs(ownerId, projectId).catch(() => [] as Awaited<ReturnType<typeof getRecentGenerationThumbs>>),
   ]);
 
   // Eager-load the most-recent thread so the conversation shows immediately (mirrors /m pattern).
@@ -71,6 +72,7 @@ export default async function OttoPage({ searchParams }: { searchParams: Promise
       ads={ads}
       adJobs={adJobs}
       account={account}
+      history={history}
       ottoStreamEnabled={ottoStreamEnabled}
       initialView={initialView}
       skin={skin}

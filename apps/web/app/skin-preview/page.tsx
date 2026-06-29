@@ -48,6 +48,11 @@ export default async function SkinPreviewPage({
       ads={[]}
       adJobs={[]}
       account={null}
+      history={Array.from({ length: 6 }, (_, i) => ({
+        id: `h${i}`,
+        src: `https://picsum.photos/seed/hist${i}/120/120`,
+        kind: "image" as const,
+      }))}
       ottoStreamEnabled={false}
       initialView="otto"
       skin={skin}

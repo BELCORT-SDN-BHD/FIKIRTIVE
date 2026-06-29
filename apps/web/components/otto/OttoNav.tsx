@@ -3,6 +3,7 @@ import React from "react";
 import { creditsLabel } from "@/lib/credit-format";
 import type { OttoViewKey } from "./OttoApp";
 import type { ChatThreadDTO } from "@/lib/types";
+import type { HistoryThumb } from "@/lib/data";
 
 const MOBILE_BP = 680;
 
@@ -156,6 +157,8 @@ export interface OttoNavProps {
   balanceCredits: number;
   userName: string;
   userEmail: string;
+  /** Recent generation thumbnails for the History strip (display-only). */
+  history?: HistoryThumb[];
   /** Mobile: whether the drawer is open (controlled by OttoApp). */
   drawerOpen?: boolean;
   /** Mobile: called when the drawer should close (backdrop tap or nav action). */
@@ -176,6 +179,7 @@ export function OttoNav({
   balanceCredits,
   userName,
   userEmail,
+  history = [],
   drawerOpen = false,
   onDrawerClose,
   collapsed = false,
@@ -327,9 +331,11 @@ export function OttoNav({
         })}
       </div>
 
-      {/* Recent conversations */}
-      {threads.length > 0 && (
+      {/* Recent conversations + History */}
+      {(threads.length > 0 || history.length > 0) && (
         <div style={{ flex: 1, overflow: "auto", padding: "var(--space-4) var(--space-3) var(--space-2)" }}>
+          {threads.length > 0 && (
+          <>
           <div
             style={{
               fontSize: "var(--text-xs)",
@@ -447,10 +453,51 @@ export function OttoNav({
               color: var(--text-default) !important;
             }
           `}</style>
+          </>
+          )}
+          {history.length > 0 && (
+          <>
+            <div
+              style={{
+                fontSize: "var(--text-xs)",
+                color: "var(--text-faint)",
+                fontWeight: "var(--weight-semibold)",
+                textTransform: "uppercase",
+                letterSpacing: "var(--tracking-caps)",
+                margin: `${threads.length > 0 ? "var(--space-4)" : "0"} 0 var(--space-2)`,
+                paddingLeft: "var(--space-1)",
+              }}
+            >
+              History
+            </div>
+            <div style={{ display: "grid", gridTemplateColumns: "repeat(3, 1fr)", gap: 5 }}>
+              {history.map((h) => (
+                <div
+                  key={h.id}
+                  title={h.kind === "video" ? "Video" : "Image"}
+                  style={{
+                    aspectRatio: "1 / 1",
+                    borderRadius: "var(--radius-sm)",
+                    overflow: "hidden",
+                    border: "1px solid var(--border-subtle)",
+                    background: "var(--surface-sunken)",
+                  }}
+                >
+                  {h.kind === "video" ? (
+                    <video src={h.src} muted preload="metadata" style={{ width: "100%", height: "100%", objectFit: "cover" }} />
+                  ) : (
+                    // eslint-disable-next-line @next/next/no-img-element
+                    <img src={h.src} alt="" loading="lazy" style={{ width: "100%", height: "100%", objectFit: "cover" }} />
+                  )}
+                </div>
+              ))}
+            </div>
+          </>
+          )}
         </div>
       )}
 
-      <div style={{ flex: threads.length ? 0 : 1 }} />
+      <div style={{ flex: (threads.length || history.length) ? 0 : 1 }} />
 
       {/* Balance card */}
       <div

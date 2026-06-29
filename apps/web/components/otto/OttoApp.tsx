@@ -9,6 +9,7 @@ import type { AdJobItem } from "@/lib/data";
 import type { EntityDTO, ChatThreadDTO } from "@/lib/types";
 import type { MemoryRow } from "@/lib/memory-actions";
 import type { AccountInfo } from "@/lib/account-actions";
+import type { HistoryThumb } from "@/lib/data";
 import { getMyAccount } from "@/lib/account-actions";
 import { deleteCoworkThread } from "@/lib/otto-client-actions";
 import { nextActiveThreadId } from "@/lib/thread-list";
@@ -38,6 +39,8 @@ export interface OttoAppProps {
   ads: AdTile[];
   adJobs: AdJobItem[];
   account: AccountInfo | null;
+  /** Recent generation thumbnails for the sidebar History strip (display-only). */
+  history?: HistoryThumb[];
   ottoStreamEnabled: boolean;
   initialView?: OttoViewKey;
   /** Re-skin flag (?skin=gb): opt into the Grok-bright look (strangler). */
@@ -61,6 +64,7 @@ export function OttoApp({
   ads,
   adJobs,
   account,
+  history,
   ottoStreamEnabled,
   initialView,
   skin,
@@ -191,6 +195,7 @@ export function OttoApp({
         balanceCredits={balanceCredits}
         userName={userName}
         userEmail={userEmail}
+        history={history}
         drawerOpen={drawerOpen}
         onDrawerClose={() => setDrawerOpen(false)}
       />
