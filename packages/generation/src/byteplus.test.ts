@@ -1,4 +1,4 @@
-import { describe, it, expect, vi, afterEach } from "vitest";
+import { describe, it, expect, vi, afterEach, beforeEach } from "vitest";
 import { BytePlusProvider, IMAGE_MODEL_MAP, VIDEO_MODEL_MAP } from "./byteplus.js";
 
 describe("BytePlusProvider — wiring", () => {
@@ -18,6 +18,57 @@ function stubFetch(handler: (url: string, init?: any) => any) {
 }
 const jsonRes = (body: any) => ({ ok: true, status: 200, json: async () => body, text: async () => JSON.stringify(body) });
 const bytesRes = () => ({ ok: true, status: 200, arrayBuffer: async () => new Uint8Array([1, 2, 3]).buffer });
+
+describe("generateVideo (Seedance, async)", () => {
+  beforeEach(() => vi.useFakeTimers());
+  afterEach(() => vi.useRealTimers());
+
+  it("i2v: submits image_url+text content, polls to succeeded, downloads", async () => {
+    let submitBody: any; let polls = 0;
+    stubFetch((url, init) => {
+      if (url.endsWith("/contents/generations/tasks") && init?.method === "POST") {
+        submitBody = JSON.parse(init.body); return jsonRes({ id: "cgt-1" });
+      }
+      if (url.includes("/contents/generations/tasks/cgt-1")) {
+        polls++; return jsonRes(polls < 2 ? { status: "running" } : { status: "succeeded", content: { video_url: "https://tos/v.mp4" }, usage: { total_tokens: 108900 } });
+      }
+      return bytesRes(); // mp4 download
+    });
+    const promise = new BytePlusProvider("ark-test").generateVideo({ prompt: "roll", imageUrl: "https://r2/frame.png", durationSeconds: 5, model: "seedance-2-fast", resolution: "720p", aspectRatio: "16:9" });
+    // Advance through each poll interval
+    await vi.runAllTimersAsync();
+    const out = await promise;
+    expect(out.ext).toBe("mp4");
+    expect(submitBody.model).toBe("dreamina-seedance-2-0-fast-260128");
+    expect(submitBody.content[0]).toEqual({ type: "image_url", image_url: { url: "https://r2/frame.png" } });
+    expect(submitBody.content[1].text).toContain("--resolution 720p");
+    expect(submitBody.content[1].text).toContain("--duration 5");
+    expect(submitBody.content[1].text).toContain("--ratio 16:9");
+  });
+  it("t2v: text-only content when no source frame", async () => {
+    let submitBody: any;
+    stubFetch((url, init) => {
+      if (url.endsWith("/contents/generations/tasks")) { submitBody = JSON.parse(init.body); return jsonRes({ id: "cgt-2" }); }
+      if (url.includes("/tasks/cgt-2")) return jsonRes({ status: "succeeded", content: { video_url: "https://tos/v.mp4" } });
+      return bytesRes();
+    });
+    const promise = new BytePlusProvider("ark-test").generateVideo({ prompt: "a city", imageUrl: "", durationSeconds: 5, model: "seedance-2-fast", resolution: "1080p" });
+    await vi.runAllTimersAsync();
+    await promise;
+    expect(submitBody.content).toHaveLength(1);
+    expect(submitBody.content[0].type).toBe("text");
+  });
+  it("a failed task throws chargedError", async () => {
+    stubFetch((url) => url.includes("/tasks/") && !url.endsWith("tasks")
+      ? jsonRes({ status: "failed", error: { message: "nsfw" } })
+      : jsonRes({ id: "cgt-3" }));
+    const promise = new BytePlusProvider("ark-test").generateVideo({ prompt: "x", imageUrl: "", durationSeconds: 5, model: "seedance-2-fast" });
+    // Attach rejection handler before advancing timers to avoid unhandled rejection warning
+    const assertion = expect(promise).rejects.toThrow(/byteplus video.*failed/);
+    await vi.runAllTimersAsync();
+    await assertion;
+  });
+});
 
 describe("generate (Seedream image, sync)", () => {
   it("posts the Ark images request and downloads each result", async () => {

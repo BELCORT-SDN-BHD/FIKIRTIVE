@@ -42,7 +42,42 @@ export class BytePlusProvider implements GenerationProvider {
     if (ok.length !== req.count) throw chargedError(`byteplus image: only ${ok.length}/${req.count} usable`);
     return ok;
   }
-  async generateVideo(_req: VideoRequest): Promise<GeneratedVideo> {
-    throw new Error("not implemented"); // Task 3
+  async generateVideo(req: VideoRequest): Promise<GeneratedVideo> {
+    const model = VIDEO_MODEL_MAP[req.model];
+    if (!model) throw new Error(`byteplus: no video model mapping for ${req.model}`); // pre-spend
+    const i2v = req.imageUrl.length > 0;
+    // Seedance encodes controls as text flags appended to the prompt.
+    const flags = [`--resolution ${req.resolution ?? "720p"}`, `--duration ${req.durationSeconds}`]
+      .concat(req.aspectRatio ? [`--ratio ${req.aspectRatio}`] : []).join(" ");
+    const content: unknown[] = [];
+    if (i2v) content.push({ type: "image_url", image_url: { url: req.imageUrl } });
+    content.push({ type: "text", text: `${req.prompt} ${flags}`.trim() });
+
+    const sub = await fetch(`${ARK_BASE}/contents/generations/tasks`, {
+      method: "POST", headers: this.headers(), body: JSON.stringify({ model, content }),
+    });
+    if (!sub.ok) throw new Error(`byteplus video submit → ${sub.status}: ${(await sub.text().catch(() => "")).slice(0, 300)}`); // pre-charge
+    const taskId = ((await sub.json()) as { id?: string }).id;
+    if (!taskId) throw new Error("byteplus video: submit returned no task id");
+    // task created ⇒ billed on success. Poll inside the provider (the worker just awaits).
+    const startedAt = Date.now();
+    const TIMEOUT_MS = 5 * 60_000;
+    // eslint-disable-next-line no-constant-condition
+    while (true) {
+      await new Promise((r) => setTimeout(r, 5_000));
+      const st = await fetch(`${ARK_BASE}/contents/generations/tasks/${taskId}`, { headers: this.headers() });
+      if (!st.ok) { if (Date.now() - startedAt > TIMEOUT_MS) throw chargedError(`byteplus video: poll ${st.status} after timeout`); continue; }
+      const t = (await st.json()) as { status?: string; content?: { video_url?: string } };
+      if (t.status === "succeeded") {
+        const url = t.content?.video_url;
+        if (!url) throw chargedError("byteplus video: succeeded but no video_url");
+        const r = await fetch(url);
+        if (!r.ok) throw chargedError(`byteplus video download → ${r.status}`);
+        return { bytes: new Uint8Array(await r.arrayBuffer()), ext: extFromUrl(url) ?? "mp4" };
+      }
+      if (t.status === "failed" || t.status === "cancelled" || t.status === "canceled")
+        throw chargedError(`byteplus video task ${t.status}`);
+      if (Date.now() - startedAt > TIMEOUT_MS) throw chargedError("byteplus video: timed out");
+    }
   }
 }
