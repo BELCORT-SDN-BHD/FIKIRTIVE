@@ -37,11 +37,11 @@ describe("llmPricesFor — never priced free (metering-hole guard)", () => {
 });
 
 describe("ottoLlmMargin", () => {
-  it("defaults to OTTO_LLM_MARGIN_DEFAULT (3) when the env var is unset/invalid", () => {
+  it("defaults to OTTO_LLM_MARGIN_DEFAULT (1.5) when the env var is unset/invalid", () => {
     const saved = process.env.OTTO_LLM_MARGIN;
     delete process.env.OTTO_LLM_MARGIN;
     expect(ottoLlmMargin()).toBe(OTTO_LLM_MARGIN_DEFAULT);
-    expect(OTTO_LLM_MARGIN_DEFAULT).toBe(3);
+    expect(OTTO_LLM_MARGIN_DEFAULT).toBe(1.5);
     if (saved !== undefined) process.env.OTTO_LLM_MARGIN = saved;
   });
 });

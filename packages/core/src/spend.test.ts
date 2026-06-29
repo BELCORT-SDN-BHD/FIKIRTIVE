@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { genSpentUsd, refgenSpentUsd, pricedGenCredits, pricedRefgenCredits, displayCredits, CREDITS_PER_USD, INTERNAL_PER_DISPLAY } from "./spend.js";
+import { genSpentUsd, refgenSpentUsd, pricedGenCredits, pricedRefgenCredits, displayCredits, CREDITS_PER_USD, INTERNAL_PER_DISPLAY, BETA_INITIAL_GRANT_CREDITS } from "./spend.js";
 import { GEN_PRICE_USD_PER_IMAGE, videoPriceUsd } from "./gen.js";
 import { REFGEN_PRICE_USD_PER_IMAGE } from "./refgen.js";
 
@@ -49,5 +49,9 @@ describe("credit pricing (deterministic CHARGE in internal credits; 1 internal =
   it("displayCredits converts internal→displayed; CREDITS_PER_USD=100", () => {
     expect(displayCredits(2500)).toBe(250);
     expect(CREDITS_PER_USD).toBe(100);
+  });
+  it("beta signup grant is 100 displayed credits (internal = ×INTERNAL_PER_DISPLAY)", () => {
+    expect(BETA_INITIAL_GRANT_CREDITS).toBe(100 * INTERNAL_PER_DISPLAY);
+    expect(displayCredits(BETA_INITIAL_GRANT_CREDITS)).toBe(100);
   });
 });
