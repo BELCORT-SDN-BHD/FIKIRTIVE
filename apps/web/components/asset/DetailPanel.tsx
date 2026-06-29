@@ -356,7 +356,7 @@ export default function DetailPanel({
       style={{
         position: "absolute",
         inset: 0,
-        background: "rgba(0,0,0,0.6)",
+        background: "rgba(20,20,24,0.45)",
         display: "flex",
         alignItems: "center",
         justifyContent: "center",
@@ -366,7 +366,7 @@ export default function DetailPanel({
       {/* Panel card — click stops propagation so backdrop click still works */}
       <div
         onClick={(e) => e.stopPropagation()}
-        className="al-panel"
+        className="al-panel cv-detail"
         style={{
           position: "relative",
           width: 520,
@@ -385,7 +385,7 @@ export default function DetailPanel({
           onClick={onClose}
           aria-label="Close detail panel"
           className="al-iconbtn al-iconbtn-md"
-          style={{ position: "absolute", top: 12, right: 12, background: "rgba(255,255,255,.08)" }}
+          style={{ position: "absolute", top: 12, right: 12 }}
         >
           <IcX size={16} />
         </button>
@@ -398,7 +398,7 @@ export default function DetailPanel({
         )}
 
         {state === "error" && (
-          <div style={{ minHeight: 200, display: "grid", placeItems: "center", color: "var(--c-danger, #f55)" }}>
+          <div style={{ minHeight: 200, display: "grid", placeItems: "center", color: "var(--error)" }}>
             Could not load this asset.
           </div>
         )}
@@ -406,7 +406,7 @@ export default function DetailPanel({
         {state === "ready" && gen && displayUrl && (
           <>
             {/* Media preview */}
-            <div style={{ borderRadius: 10, overflow: "hidden", background: "#000", lineHeight: 0 }}>
+            <div style={{ borderRadius: 10, overflow: "hidden", background: "var(--surface-sunken)", lineHeight: 0 }}>
               {gen.kind === "video" ? (
                 <video
                   key={displayUrl}
@@ -443,11 +443,11 @@ export default function DetailPanel({
                       width: 52,
                       height: 52,
                       padding: 0,
-                      border: `2px solid ${i === selectedIdx ? "var(--brand, #6c63ff)" : "transparent"}`,
+                      border: `2px solid ${i === selectedIdx ? "var(--accent)" : "var(--border-default)"}`,
                       borderRadius: 6,
                       overflow: "hidden",
                       cursor: "pointer",
-                      background: "#000",
+                      background: "var(--surface-sunken)",
                       opacity: i === selectedIdx ? 1 : 0.55,
                     }}
                   >
@@ -464,13 +464,13 @@ export default function DetailPanel({
 
             {/* Prompt text */}
             {gen.prompt && (
-              <p style={{ margin: 0, fontSize: 13, opacity: 0.7, lineHeight: 1.5 }}>{gen.prompt}</p>
+              <p style={{ margin: 0, fontSize: 13, color: "var(--text-muted)", lineHeight: 1.5 }}>{gen.prompt}</p>
             )}
 
             {/* Aspect picker (17): for image-to-video Animate when model has aspect ratios */}
             {gen.kind === "image" && aspectRatios.length > 0 && (
               <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
-                <span style={{ fontSize: 12, opacity: 0.6, flexShrink: 0 }}>Aspect</span>
+                <span style={{ fontSize: 12, color: "var(--text-muted)", flexShrink: 0 }}>Aspect</span>
                 <div className="al-seg" role="tablist" aria-label="Aspect ratio">
                   {aspectRatios.map((ar) => (
                     <button
@@ -569,10 +569,10 @@ export default function DetailPanel({
 
             {/* Edit @composer (24) */}
             {gen.kind === "image" && (
-              <div style={{ display: "flex", flexDirection: "column", gap: 8, borderTop: "1px solid var(--line-1, rgba(255,255,255,.08))", paddingTop: 12 }}>
-                <span style={{ fontSize: 12, opacity: 0.6 }}>Describe your edit, @ to reference</span>
+              <div style={{ display: "flex", flexDirection: "column", gap: 8, borderTop: "1px solid var(--border-subtle)", paddingTop: 12 }}>
+                <span style={{ fontSize: 12, color: "var(--text-muted)" }}>Describe your edit, @ to reference</span>
                 <div style={{ display: "flex", gap: 8, alignItems: "flex-end" }}>
-                  <div className="al-input-wrap" style={{ flex: 1, minWidth: 0, border: "1px solid var(--line-1, rgba(255,255,255,.12))", borderRadius: 8, padding: "6px 10px" }}>
+                  <div className="al-input-wrap" style={{ flex: 1, minWidth: 0, border: "1px solid var(--border-default)", borderRadius: 8, padding: "6px 10px" }}>
                     <MentionInput
                       entities={entities}
                       docKey={composerKey}
@@ -633,7 +633,7 @@ export default function DetailPanel({
                 {/* Crop controls */}
                 <div style={{ display: "flex", gap: 8, padding: 16, justifyContent: "flex-end", background: "rgba(0,0,0,.4)" }}>
                   {cropStatus === "failed" && (
-                    <span style={{ fontSize: 12, color: "var(--c-danger, #f55)", alignSelf: "center", marginRight: "auto" }}>
+                    <span style={{ fontSize: 12, color: "var(--error)", alignSelf: "center", marginRight: "auto" }}>
                       Crop failed — try again
                     </span>
                   )}

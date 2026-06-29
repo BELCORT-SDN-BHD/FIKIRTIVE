@@ -421,6 +421,37 @@
 /* Select mode: arrow cursor on the canvas instead of the grab hand */
 .fk.gb-skin .cv-select-mode .react-flow__pane { cursor: default; }
 
+/* ── Per-asset Detail panel (gb) — the legacy DS card + buttons/segments assume
+ * dark glass; re-skin the whole overlay light. The card is an absolute overlay
+ * (not a ReactFlow node), so it doesn't get the node re-skin — style it here. */
+.fk.gb-skin .cv-detail {
+  background: var(--surface-card);
+  border: 1px solid var(--border-default);
+  box-shadow: 0 16px 48px rgba(20, 20, 24, 0.18);
+  -webkit-backdrop-filter: none;
+  backdrop-filter: none;
+  color: var(--text-body);
+}
+.fk.gb-skin .cv-detail .al-btn {
+  background: var(--surface-card);
+  border: 1px solid var(--border-default);
+  color: var(--text-body);
+  -webkit-backdrop-filter: none;
+  backdrop-filter: none;
+  box-shadow: none;
+}
+.fk.gb-skin .cv-detail .al-btn:hover:not(:disabled) { background: var(--surface-sunken); }
+.fk.gb-skin .cv-detail .al-btn-primary { background: var(--brand); color: var(--text-on-brand); border-color: var(--brand); }
+.fk.gb-skin .cv-detail .al-btn-primary:hover:not(:disabled) { background: var(--brand-hover); }
+.fk.gb-skin .cv-detail .al-btn-ghost { background: transparent; }
+.fk.gb-skin .cv-detail .al-iconbtn { background: var(--surface-sunken); border: 1px solid var(--border-default); color: var(--text-body); }
+.fk.gb-skin .cv-detail .al-iconbtn:hover { background: var(--surface-card); }
+.fk.gb-skin .cv-detail .al-seg { background: var(--surface-sunken); border: 1px solid var(--border-default); border-radius: 10px; padding: 2px; }
+.fk.gb-skin .cv-detail .al-seg-item { color: var(--text-muted); }
+.fk.gb-skin .cv-detail .al-seg-item-active { background: var(--surface-card); color: var(--text-body); border-radius: 8px; }
+.fk.gb-skin .cv-detail .tiptap { color: var(--text-body); }
+.fk.gb-skin .cv-detail .tiptap p.is-editor-empty:first-child::before { color: var(--text-faint); }
+
 /* ── Canvas nodes (legacy .al-panel cards) re-skinned Grok-bright.
  * Scoped to ReactFlow nodes so only the canvas changes; gated by gb-skin.
  * Each node gets a floating type pill (.cv-nodelabel) above the card — the
