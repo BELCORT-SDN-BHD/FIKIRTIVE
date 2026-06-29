@@ -75,19 +75,37 @@ hardcodes IG/FB. Phase A ships the **Instagram + Facebook adapters**
   `capabilities` declares what it supports; Reels/Stories = Phase B). A future
   platform = a new adapter, and the scheduler/composer pick it up unchanged.
 
-### 3. Schedule page UI (replaces the `ComingSoon` branch)
-Matches the locked mockup (`docs/ui-rework-mockups/schedule.html`):
-- Header: "Schedule" + **connected IG/FB chips** (or a Connect card if not connected)
-  + **OTTO auto-publish toggle** (reads/writes the OwnerSettings `autoPublish`) +
-  Week/Month toggle.
-- **OTTO best-time nudge banner** (Phase B for the real "best time"; Phase A shows
-  OTTO cadence proposals: "want me to fill this week?").
-- **Calendar** (week default): each day shows its posts as cards (channel icon,
-  time, thumbnail, status pill: Draft / Scheduled / Posted / Needs attention). "+"
-  on a day opens the composer at that day.
-- **Composer** (add/edit a post): media picker (from canvas / My Stuff — existing
-  generations), caption (write or "ask OTTO"), channel(s), date+time, first comment.
-  Save as Draft or "Approve & schedule".
+### 3. Schedule page UI — three views (chosen: Option C primary + A/B toggles)
+A top view-switcher with **three modes**; shared header across all:
+- **Shared header**: "Schedule" + **connected channel chips** (from the channel
+  registry; Connect card if none) + **OTTO auto-publish toggle** (OwnerSettings
+  `autoPublish`) + the view switcher.
+
+**(1) OTTO plan — DEFAULT landing (Option C mock).** OTTO's proposed posts for the
+week as a reviewable plan card ("OTTO planned your week — N posts"): each row =
+day/time · channel · thumbnail · caption + **Tweak**; a sticky **Approve all N**
+(+ per-row approve/tweak). A right-side mini week strip shows placement. "Nothing
+posts until you say go." This is the super-employee landing; cadence requests
+("post daily / 3× a week") fill this plan.
+
+**(2) Calendar — full month/week/day (Option A, made thorough per founder).**
+- **Granularity toggle: Month · Week · Day** + prev/next + **Today**, with the
+  current range label (e.g. "June 2026" / "Jun 23–29").
+  - *Month*: a real month grid; each day shows compact post chips (channel dot +
+    time), overflow "+N"; click a day → that day's Day view / composer.
+  - *Week*: 7 day-columns with fuller post cards (thumbnail, channel, time, status).
+  - *Day*: a single-day timeline by hour.
+- Each post card: channel icon, time, thumbnail, status pill
+  (Draft / Scheduled / Posted / Needs attention). "+" on any day/slot → composer.
+
+**(3) Queue — "what posts next" list (Option B).** Chronological, grouped by day
+(Today / Tomorrow / dates), channel filter (All / per-channel from the registry),
+each row = thumbnail · channel · time · caption preview · status.
+
+**Composer** (opened from any view's + or by editing a post): media picker (from
+canvas / My Stuff — existing generations, no new spend), caption (write or "ask
+OTTO"), channel(s) (registry; post types gated by channel capabilities), date+time,
+first comment. Save as **Draft** or **Approve & schedule**.
 
 ### 4. OTTO integration
 - OTTO can **propose** posts and a **cadence**. The owner says "post every day" /
