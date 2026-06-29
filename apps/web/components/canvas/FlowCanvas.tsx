@@ -7,6 +7,7 @@ import { VideoNode } from "./nodes/VideoNode";
 import { TextNode } from "./nodes/TextNode";
 import { useCanvasGen } from "./useCanvasGen";
 import { listCanvasNodes, moveCanvasNode, deleteCanvasNode, updateTextNode, createCanvasNode } from "../../lib/canvas-actions";
+import { OttoCanvasStatus } from "../otto/OttoTrace";
 import DetailPanel from "@/components/asset/DetailPanel";
 import { MentionInput } from "@/components/MentionInput";
 import type { EntityDTO } from "@/lib/types";
@@ -17,7 +18,7 @@ type CanvasFlowNode = Node & { threadId: string | null };
 // Must be stable (defined outside component) per ReactFlow requirements
 const nodeTypes = { image: ImageNode, video: VideoNode, text: TextNode };
 
-export default function FlowCanvas({ projectId, entities = [], activeThreadId = null }: { projectId: string; entities?: EntityDTO[]; activeThreadId?: string | null }) {
+export default function FlowCanvas({ projectId, entities = [], activeThreadId = null, activity }: { projectId: string; entities?: EntityDTO[]; activeThreadId?: string | null; activity?: Set<string> }) {
   const [nodes, setNodes] = useState<CanvasFlowNode[]>([]);
   const [prompt, setPrompt] = useState("");
   const [promptIds, setPromptIds] = useState<string[]>([]); // @mentioned entity ids
@@ -201,6 +202,10 @@ export default function FlowCanvas({ projectId, entities = [], activeThreadId = 
 
   return (
     <div style={{ flex: 1, position: "relative" }}>
+      {/* OTTO working — mirrors the agent's activity onto the canvas (Grok pattern). */}
+      {activeThreadId && activity?.has(activeThreadId) && (
+        <OttoCanvasStatus label="working on it…" />
+      )}
       <ReactFlow nodes={filterNodesByConvo(nodes, activeThreadId, filterToConvo)} nodeTypes={nodeTypes} onNodesChange={onNodesChange} fitView>
         <Background />
         <Controls />

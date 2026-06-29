@@ -4,8 +4,11 @@
  * SDK construction, runs in the node harness.
  */
 import { describe, it, expect } from "vitest";
-import { pickLiveStatusText, asStatusData, asErrorData } from "@/lib/otto-status-helpers";
-import type { OttoStatusData } from "@/lib/otto-stream-bridge";
+import { pickLiveStatusText, asStatusData, asErrorData, asStepData, deriveTraceSteps } from "@/lib/otto-status-helpers";
+import type { OttoStatusData, OttoStepData } from "@/lib/otto-stream-bridge";
+
+const startStep = (id: string, label: string): OttoStepData => ({ id, label, phase: "start" });
+const doneStep = (id: string, label: string): OttoStepData => ({ id, label, phase: "done" });
 
 describe("pickLiveStatusText", () => {
   it("returns the text for a planning status", () => {
@@ -50,5 +53,41 @@ describe("asErrorData", () => {
 
   it("returns null for non-data-error parts", () => {
     expect(asErrorData({ type: "data-status", data: { kind: "planning", text: "…" } })).toBeNull();
+  });
+});
+
+describe("asStepData", () => {
+  it("narrows data-step parts and ignores other data parts", () => {
+    expect(asStepData({ type: "data-step", data: { id: "a", label: "A", phase: "start" } })).toEqual({
+      id: "a",
+      label: "A",
+      phase: "start",
+    });
+    expect(asStepData({ type: "data-status", data: {} })).toBeNull();
+    expect(asStepData({ type: "data-error", data: {} })).toBeNull();
+  });
+});
+
+describe("deriveTraceSteps", () => {
+  it("keeps first-seen order; a step stays active until its done event arrives", () => {
+    const steps = deriveTraceSteps([startStep("a", "A"), doneStep("a", "A"), startStep("b", "B")], null);
+    expect(steps).toEqual([
+      { label: "A", status: "done" },
+      { label: "B", status: "active" },
+    ]);
+  });
+
+  it("marks every step done once the run reports done", () => {
+    const steps = deriveTraceSteps([startStep("a", "A"), startStep("b", "B")], { kind: "done", threadId: "t" });
+    expect(steps.map((s) => s.status)).toEqual(["done", "done"]);
+  });
+
+  it("dedupes by id and never invents pending steps", () => {
+    const steps = deriveTraceSteps([startStep("a", "A"), startStep("a", "A"), doneStep("a", "A")], null);
+    expect(steps).toEqual([{ label: "A", status: "done" }]);
+  });
+
+  it("empty events → empty list", () => {
+    expect(deriveTraceSteps([], null)).toEqual([]);
   });
 });
