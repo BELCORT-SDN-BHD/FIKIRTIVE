@@ -331,6 +331,38 @@
   --ring-focus:      0 0 0 4px rgba(236 88 40 / 0.30);
 }
 
+/* ── Canvas bottom bar (legacy .al-* promptbar) re-skinned Grok-bright.
+ * Display-only: the dark "Vapor" glass classes assume white-on-dark, so on the
+ * light canvas the composer text and surface read wrong. Scoped to .al-promptbar
+ * so only the canvas bottom bar changes — matches the locked canvas-home mockup.
+ * Coral stays agent-only → the canvas Generate action is INK, not accent. */
+.fk.gb-skin .al-promptbar {
+  background: var(--surface-card);
+  border-color: var(--border-default);
+  box-shadow: 0 8px 24px rgba(20, 20, 24, 0.12);
+  -webkit-backdrop-filter: none;
+  backdrop-filter: none;
+}
+.fk.gb-skin .al-promptbar .tiptap { color: var(--text-body); }
+.fk.gb-skin .al-promptbar .tiptap p.is-editor-empty:first-child::before { color: var(--text-faint); }
+.fk.gb-skin .al-promptbar .al-btn-primary {
+  background: var(--brand);
+  color: var(--text-on-brand);
+  box-shadow: none;
+}
+.fk.gb-skin .al-promptbar .al-btn-primary:hover:not(:disabled) {
+  background: var(--brand-hover);
+  box-shadow: none;
+}
+.fk.gb-skin .al-promptbar .al-btn:not(.al-btn-primary) {
+  background: var(--surface-card);
+  border-color: var(--border-default);
+  color: var(--text-body);
+}
+.fk.gb-skin .al-promptbar .al-btn:not(.al-btn-primary):hover:not(:disabled) {
+  background: var(--surface-sunken);
+}
+
 /* Reduced motion: respect user preference */
 @media (prefers-reduced-motion: reduce) {
   .fk * {
