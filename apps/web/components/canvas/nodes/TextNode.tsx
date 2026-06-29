@@ -1,12 +1,14 @@
 // apps/web/components/canvas/nodes/TextNode.tsx
 import { useState } from "react";
 import { type NodeProps } from "@xyflow/react";
+import { NodeResize } from "./NodeResize";
 
-export function TextNode({ data }: NodeProps) {
-  const d = data as { text?: string; onChange?: (t: string) => void; onDelete?: () => void };
+export function TextNode({ data, selected }: NodeProps) {
+  const d = data as { text?: string; skin?: string; onChange?: (t: string) => void; onDelete?: () => void };
   const [val, setVal] = useState(d.text ?? "");
   return (
     <>
+      <NodeResize gb={d.skin === "gb"} selected={selected} />
       <span className="cv-nodelabel">
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" aria-hidden><path d="M4 7V5h16v2" /><path d="M9 19h6" /><path d="M12 5v14" /></svg>
         Text

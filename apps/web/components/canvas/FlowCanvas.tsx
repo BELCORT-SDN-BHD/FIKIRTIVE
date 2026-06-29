@@ -243,7 +243,18 @@ export default function FlowCanvas({ projectId, entities = [], activeThreadId = 
 
   // Keep nodeDataRef positions in sync when nodes move (so onAnimate uses fresh coords)
   const onNodesChange = useCallback((changes: NodeChange[]) => {
-    setNodes((ns) => applyNodeChanges(changes, ns) as CanvasFlowNode[]);
+    setNodes((ns) => {
+      let next = applyNodeChanges(changes, ns) as CanvasFlowNode[];
+      // Bridge NodeResizer dimension changes into our style-based sizing so the
+      // card visually grows/shrinks on the board (display-only — no regeneration).
+      for (const c of changes) {
+        if (c.type === "dimensions" && c.dimensions) {
+          const { width, height } = c.dimensions;
+          next = next.map((n) => (n.id === c.id ? { ...n, style: { ...n.style, width, height } } : n));
+        }
+      }
+      return next;
+    });
     for (const c of changes) {
       if (c.type === "position" && c.position) {
         // Update position in ref immediately (for onAnimate offset calc)
@@ -259,6 +270,19 @@ export default function FlowCanvas({ projectId, entities = [], activeThreadId = 
             return ns; // side-effect only, no state update
           });
         }
+      }
+      // Persist the new size when a resize gesture ends (display-only; reuses the
+      // same moveCanvasNode path as a drag — no spend, just x/y/w/h).
+      if (c.type === "dimensions" && c.resizing === false) {
+        setNodes((ns) => {
+          const n = ns.find((x2) => x2.id === c.id);
+          if (n) {
+            const entry = nodeDataRef.current[n.id];
+            if (entry) entry.pos = { x: n.position.x, y: n.position.y };
+            void moveCanvasNode(n.id, { x: n.position.x, y: n.position.y, w: Number(n.style?.width ?? 320), h: Number(n.style?.height ?? 320) });
+          }
+          return ns; // side-effect only
+        });
       }
       if (c.type === "remove") void deleteCanvasNode(c.id);
     }

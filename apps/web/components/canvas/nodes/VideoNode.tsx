@@ -2,14 +2,16 @@
 import { useRef, useState } from "react";
 import { Handle, Position, type NodeProps } from "@xyflow/react";
 import { GeneratingBody } from "./GeneratingBody";
+import { NodeResize } from "./NodeResize";
 
-export function VideoNode({ data }: NodeProps) {
+export function VideoNode({ data, selected }: NodeProps) {
   const d = data as { status: string; url?: string; skin?: string; onDelete?: () => void };
   const gb = d.skin === "gb";
   const videoRef = useRef<HTMLVideoElement>(null);
   const [playing, setPlaying] = useState(false);
   return (
     <>
+      <NodeResize gb={gb} selected={selected} />
       <span className="cv-nodelabel">
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" aria-hidden><rect x="2" y="6" width="14" height="12" rx="2" /><path d="m22 8-6 4 6 4V8z" /></svg>
         Video
