@@ -40,6 +40,8 @@ export interface OttoAppProps {
   account: AccountInfo | null;
   ottoStreamEnabled: boolean;
   initialView?: OttoViewKey;
+  /** Re-skin flag (?skin=gb): opt into the Grok-bright look (strangler). */
+  skin?: "gb";
 }
 
 export type OttoViewKey = "otto" | "stuff" | "library" | "templates" | "discover" | "memory" | "account" | "connections";
@@ -58,6 +60,7 @@ export function OttoApp({
   account,
   ottoStreamEnabled,
   initialView,
+  skin,
 }: OttoAppProps) {
   const [view, setView] = useState<OttoViewKey>(initialView ?? "otto");
   const [threads, setThreads] = useState<ChatThreadDTO[]>(initialThreads);
@@ -115,7 +118,7 @@ export function OttoApp({
 
   return (
     <div
-      className="fk"
+      className={skin === "gb" ? "fk gb-skin" : "fk"}
       style={{
         position: "relative",
         display: "flex",

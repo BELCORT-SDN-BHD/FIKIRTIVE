@@ -14,11 +14,13 @@ export const metadata = { title: "Otto · Fikirtive" };
 const VALID_VIEWS = ["otto", "stuff", "library", "templates", "discover", "memory", "account", "connections"] as const;
 type ValidView = (typeof VALID_VIEWS)[number];
 
-export default async function OttoPage({ searchParams }: { searchParams: Promise<{ view?: string }> }) {
+export default async function OttoPage({ searchParams }: { searchParams: Promise<{ view?: string; skin?: string }> }) {
   const sp = await searchParams;
   const initialView: ValidView | undefined = (VALID_VIEWS as readonly string[]).includes(sp?.view ?? "")
     ? (sp!.view as ValidView)
     : undefined;
+  // Strangler flag: ?skin=gb opts into the Grok-bright re-skin; default stays the old look.
+  const skin = sp?.skin === "gb" ? ("gb" as const) : undefined;
 
   const owner = await requireOwner();
   if ("error" in owner) redirect("/login");
@@ -71,6 +73,7 @@ export default async function OttoPage({ searchParams }: { searchParams: Promise
       account={account}
       ottoStreamEnabled={ottoStreamEnabled}
       initialView={initialView}
+      skin={skin}
     />
   );
 }
