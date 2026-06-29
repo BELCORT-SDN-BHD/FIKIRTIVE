@@ -45,6 +45,11 @@ export class BytePlusProvider implements GenerationProvider {
   async generateVideo(req: VideoRequest): Promise<GeneratedVideo> {
     const model = VIDEO_MODEL_MAP[req.model];
     if (!model) throw new Error(`byteplus: no video model mapping for ${req.model}`); // pre-spend
+    // BytePlus Seedance i2v takes only a START frame; first→last (end-frame) is not supported.
+    // Reject it BEFORE the paid submit (no spend) rather than silently dropping it — defense in
+    // depth behind GEN_VIDEO_MODEL_INFO["seedance-2-fast"].tail=false (the gate/composer won't
+    // offer it). Video is always count=1 (startGen hardcodes it); the charge is flat per resolution.
+    if (req.tailImageUrl) throw new Error(`byteplus: ${req.model} does not support an end frame`); // pre-spend
     const i2v = req.imageUrl.length > 0;
     // Seedance encodes controls as text flags appended to the prompt.
     const flags = [`--resolution ${req.resolution ?? "720p"}`, `--duration ${req.durationSeconds}`]

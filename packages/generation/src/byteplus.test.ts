@@ -68,6 +68,13 @@ describe("generateVideo (Seedance, async)", () => {
     await vi.runAllTimersAsync();
     await assertion;
   });
+  it("rejects an end frame (tailImageUrl) BEFORE any submit — no spend", async () => {
+    const calls: string[] = [];
+    stubFetch((url) => { calls.push(url); return jsonRes({ id: "should-not-happen" }); });
+    await expect(new BytePlusProvider("ark-test").generateVideo({ prompt: "x", imageUrl: "https://r2/frame.png", tailImageUrl: "https://r2/end.png", durationSeconds: 5, model: "seedance-2-fast" }))
+      .rejects.toThrow(/end frame/);
+    expect(calls).toHaveLength(0); // pre-spend: never hit the API
+  });
 });
 
 describe("generate (Seedream image, sync)", () => {
