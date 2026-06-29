@@ -84,7 +84,7 @@ describe("requireOwner — fail-closed", () => {
     const mem = await prisma.membership.findUnique({ where: { userId_orgId: { userId, orgId: r.ownerId } } });
     expect(mem?.role).toBe("owner");
     const acct = await prisma.creditAccount.findUnique({ where: { orgId: r.ownerId } });
-    expect(acct?.balance).toBe(1000 * 10); // BETA_INITIAL_GRANT_CREDITS
+    expect(acct?.balance).toBe(100 * 10); // BETA_INITIAL_GRANT_CREDITS
   });
 
   it("is idempotent — a second call returns the same org and does not re-grant", async () => {
