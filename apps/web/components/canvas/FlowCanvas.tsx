@@ -7,6 +7,7 @@ import { VideoNode } from "./nodes/VideoNode";
 import { TextNode } from "./nodes/TextNode";
 import { useCanvasGen } from "./useCanvasGen";
 import { listCanvasNodes, moveCanvasNode, deleteCanvasNode, updateTextNode, createCanvasNode, type CanvasNodeDTO } from "../../lib/canvas-actions";
+import { uploadReference } from "../../lib/actions";
 import { syncOttoCanvasNodes } from "../../lib/otto-canvas-bridge";
 import { OttoCanvasStatus } from "../otto/OttoTrace";
 import DetailPanel from "@/components/asset/DetailPanel";
@@ -33,6 +34,8 @@ export default function FlowCanvas({ projectId, entities = [], activeThreadId = 
   // Canvas tool: pan (grab hand, drag pans the board) vs select (arrow cursor,
   // drag box-selects). The toolbar's cursor button toggles this. Display-only.
   const [panMode, setPanMode] = useState(true);
+  // Dragging an image file over the canvas (drop = upload it as an image node).
+  const [dragOver, setDragOver] = useState(false);
   // track node count to offset new node positions
   const nodeCountRef = useRef(0);
   // bumped on successful generation submit to remount MentionInput cleared
@@ -178,6 +181,39 @@ export default function FlowCanvas({ projectId, entities = [], activeThreadId = 
     }
   }, [projectId, activeThreadId, onTextChange, deleteNode, skin]);
 
+  // Drag-and-drop an image file from anywhere onto the canvas → upload it as an
+  // image node. Upload-only (uploadReference creates an UPLOAD Generation); it
+  // does NOT call the generation/spend path. The node is animatable afterward
+  // (it has a generationId), and a real prompt is sent on Animate (see #5 fix).
+  const handleCanvasDrop = useCallback(async (e: React.DragEvent) => {
+    e.preventDefault();
+    setDragOver(false);
+    const files = Array.from(e.dataTransfer?.files ?? []).filter((f) => f.type.startsWith("image/"));
+    if (files.length === 0) return;
+    for (const file of files) {
+      const fd = new FormData();
+      fd.append("files", file);
+      const res = await uploadReference(projectId, fd);
+      if (!res || "error" in res) { console.warn("[canvas drop] upload failed:", res); continue; }
+      const x = 80 + nodeCountRef.current * 340;
+      const created = await createCanvasNode({ projectId, type: "image", x, y: 80, w: 320, h: 320, generationId: res.id, status: "done", ...(activeThreadId ? { threadId: activeThreadId } : {}) });
+      if (!("id" in created)) { console.warn("[canvas drop] node create failed:", created); continue; }
+      nodeDataRef.current[created.id] = { generationId: res.id, pos: { x, y: 80 } };
+      nodeCountRef.current += 1;
+      setNodes((ns) => [
+        ...ns,
+        {
+          id: created.id,
+          type: "image",
+          position: { x, y: 80 },
+          data: { status: "done", url: res.src, skin, onDelete: () => deleteNode(created.id), onAnimate: getOnAnimate(created.id), onOpenDetail: getOnOpenDetail(created.id) },
+          style: { width: 320, height: 320, boxShadow: `0 0 0 2px ${convoColor(activeThreadId ?? null)}` },
+          threadId: activeThreadId ?? null,
+        },
+      ]);
+    }
+  }, [projectId, activeThreadId, deleteNode, getOnAnimate, getOnOpenDetail, skin]);
+
   // Animate the selected image node into a video — reuses the existing animate
   // path (no new spend logic). The video tool mirrors Grok's "select an image
   // node to animate"; it is disabled until an animatable image is selected.
@@ -299,10 +335,22 @@ export default function FlowCanvas({ projectId, entities = [], activeThreadId = 
   }, []);
 
   return (
-    <div style={{ flex: 1, position: "relative" }} className={skin === "gb" && !panMode ? "cv-select-mode" : undefined}>
+    <div
+      style={{ flex: 1, position: "relative" }}
+      className={skin === "gb" && !panMode ? "cv-select-mode" : undefined}
+      onDragOver={(e) => { if (Array.from(e.dataTransfer?.types ?? []).includes("Files")) { e.preventDefault(); e.dataTransfer.dropEffect = "copy"; setDragOver(true); } }}
+      onDragLeave={(e) => { if (e.currentTarget === e.target) setDragOver(false); }}
+      onDrop={handleCanvasDrop}
+    >
       {/* OTTO working — mirrors the agent's activity onto the canvas (Grok pattern). */}
       {activeThreadId && activity?.has(activeThreadId) && (
         <OttoCanvasStatus label="working on it…" />
+      )}
+      {/* Drop-to-add-image hint (drag a file from anywhere onto the canvas). */}
+      {dragOver && (
+        <div className="cv-dropzone" aria-hidden>
+          <span>Drop image to add it to the canvas</span>
+        </div>
       )}
       <ReactFlow
         nodes={filterNodesByConvo(nodes, activeThreadId, filterToConvo)}
