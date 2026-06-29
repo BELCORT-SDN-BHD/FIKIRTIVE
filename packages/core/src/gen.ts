@@ -117,7 +117,7 @@ export const GEN_VIDEO_MODEL_OPTIONS: Record<GenVideoModel, VideoModelOptions> =
   "ltx-2":           { durations: [6, 8, 10], resolutions: ["1080p", "1440p", "2160p"], aspectRatios: [],               fps: [],       audioToggle: true,  maxCount: 4 },
   "kling-2.6":       { durations: [5, 10],   resolutions: [],                           aspectRatios: [],               fps: [],       audioToggle: true,  maxCount: 4 },
   "kling-3":         { durations: [5, 10],   resolutions: [],                           aspectRatios: [],               fps: [],       audioToggle: true,  maxCount: 4 },
-  "seedance-2-fast": { durations: [5, 10],   resolutions: ["720p", "1080p"],           aspectRatios: ["16:9", "9:16"], fps: [],       audioToggle: true,  maxCount: 4 },
+  "seedance-2-fast": { durations: [5, 10],   resolutions: ["720p"],                   aspectRatios: ["16:9", "9:16"], fps: [],       audioToggle: true,  maxCount: 4 }, // BytePlus Seedance 2.0 fast = 720p-capped (verified; 1080p needs the full model)
   "veo3.1-fast":     { durations: [4, 6, 8],  resolutions: ["720p", "1080p"],           aspectRatios: ["16:9", "9:16"], fps: [],       audioToggle: true,  maxCount: 4 },
   "veo3.1":          { durations: [4, 6, 8],  resolutions: ["720p", "1080p", "4k"],     aspectRatios: ["16:9", "9:16"], fps: [],       audioToggle: true,  maxCount: 4 },
   "pixverse-v6":     { durations: [5, 8],    resolutions: ["360p", "540p", "720p", "1080p"], aspectRatios: [], fps: [], audioToggle: true,  maxCount: 4 }, // i2v schema has no aspect_ratio
