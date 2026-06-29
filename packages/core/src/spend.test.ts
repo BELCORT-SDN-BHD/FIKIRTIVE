@@ -50,4 +50,13 @@ describe("credit pricing (deterministic CHARGE in internal credits; 1 internal =
     expect(displayCredits(2500)).toBe(250);
     expect(CREDITS_PER_USD).toBe(100);
   });
+  it("video charge is flat per resolution: 720p=7cr, 1080p=16cr (internal ×10)", () => {
+    const v = (resolution: string) => pricedGenCredits({ kind: "VIDEO", model: "seedance-2-fast", count: 1, videoOptions: { seconds: 5, resolution, audio: true } });
+    expect(v("720p")).toBe(70);   // 7 displayed credits
+    expect(v("1080p")).toBe(160); // 16 displayed credits
+  });
+  it("image charge stays 1 displayed credit per image", () => {
+    expect(pricedGenCredits({ kind: "IMAGE", model: "seedream", count: 1, videoOptions: null })).toBe(10);
+    expect(pricedGenCredits({ kind: "IMAGE", model: "seedream", count: 3, videoOptions: null })).toBe(30);
+  });
 });

@@ -70,11 +70,16 @@ function displayedFromUsd(usd: number): number {
   return Math.max(1, Math.ceil(usd / USD_PER_DISPLAY_CREDIT));
 }
 
-/** DETERMINISTIC charge in INTERNAL credits for a gen job. Image = 1 displayed credit
- *  PER image (flat — the clean unit, ~2.5x margin over the ~$0.04 true cost). Video =
- *  true cost rounded up to the $0.10 displayed unit (always >= cost). */
+/** Flat per-resolution video charge (BytePlus Seedance 2.0 fast; covers the t2v
+ *  worst case, healthy margin on the i2v primary path). 1080p (and anything not
+ *  720p) → 16 cr; 720p → 7 cr. Image = 1 displayed credit per image. */
+const VIDEO_CREDITS_BY_RESOLUTION: Record<string, number> = { "720p": 7, "1080p": 16 };
 export function pricedGenCredits(job: GenSpendInput): number {
-  if (job.kind === "VIDEO") return displayedFromUsd(genSpentUsd(job)) * INTERNAL_PER_DISPLAY;
+  if (job.kind === "VIDEO") {
+    const r = job.videoOptions?.resolution ?? "720p";
+    const displayed = VIDEO_CREDITS_BY_RESOLUTION[r] ?? 16; // unknown/higher res → the 1080p price (never under-charge)
+    return displayed * INTERNAL_PER_DISPLAY;
+  }
   return job.count * INTERNAL_PER_DISPLAY; // 1 displayed credit per image
 }
 /** DETERMINISTIC charge in INTERNAL credits for a refgen job: 1 displayed credit per image. */
