@@ -1,5 +1,5 @@
 "use client";
-import React from "react";
+import React, { useState } from "react";
 import { creditsLabel } from "@/lib/credit-format";
 import type { OttoViewKey, ProjectMeta } from "./OttoApp";
 import type { ChatThreadDTO } from "@/lib/types";
@@ -204,6 +204,15 @@ export function OttoNav({
   const initial = userName.slice(0, 1).toUpperCase();
   const balanceLabel = creditsLabel(balanceCredits);
 
+  // Per-project collapse of the nested conversation list (default expanded).
+  const [collapsedProjects, setCollapsedProjects] = useState<Set<string>>(new Set());
+  const toggleProjectCollapse = (id: string) =>
+    setCollapsedProjects((prev) => {
+      const next = new Set(prev);
+      if (next.has(id)) next.delete(id); else next.add(id);
+      return next;
+    });
+
   // Group conversations under their project for the Grok-style nested sidebar.
   const threadsByProject = new Map<string, ChatThreadDTO[]>();
   for (const t of sidebarThreads) {
@@ -383,10 +392,24 @@ export function OttoNav({
             {projects.map((p) => {
               const isActiveProject = p.id === activeProjectId;
               const projThreads = threadsByProject.get(p.id) ?? [];
+              const isCollapsed = collapsedProjects.has(p.id);
               return (
                 <div key={p.id} style={{ marginBottom: "var(--space-1)" }}>
-                  {/* project (campaign) row — double-click to rename, hover to delete */}
+                  {/* project (campaign) row — chevron toggles its conversations,
+                      double-click renames, hover-X deletes */}
                   <div className="otto-recent-row" style={{ position: "relative", display: "flex", alignItems: "center" }}>
+                    <button
+                      type="button"
+                      aria-label={isCollapsed ? "Expand campaign" : "Collapse campaign"}
+                      aria-expanded={!isCollapsed}
+                      onClick={(e) => { e.stopPropagation(); toggleProjectCollapse(p.id); }}
+                      disabled={projThreads.length === 0}
+                      style={{ display: "flex", alignItems: "center", justifyContent: "center", width: 18, height: 26, border: "none", background: "transparent", color: "var(--text-faint)", cursor: projThreads.length ? "pointer" : "default", padding: 0, flexShrink: 0 }}
+                    >
+                      {projThreads.length > 0 && (
+                        <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.4" strokeLinecap="round" strokeLinejoin="round" aria-hidden style={{ transform: isCollapsed ? "rotate(-90deg)" : "none", transition: "transform var(--dur-fast) var(--ease-out)" }}><path d="m6 9 6 6 6-6" /></svg>
+                      )}
+                    </button>
                     <button
                       onClick={() => { if (!isActiveProject) handleNavAction(() => onSwitchProject(p.id)); }}
                       onDoubleClick={() => { const n = window.prompt("Rename campaign", p.name); if (n && n.trim()) onRenameProject(p.id, n.trim()); }}
@@ -397,7 +420,7 @@ export function OttoNav({
                         background: isActiveProject ? "var(--brand-tint)" : "transparent",
                         color: isActiveProject ? "var(--brand-press)" : "var(--text-body)",
                         fontFamily: "var(--font-sans)", fontSize: "var(--text-sm)", fontWeight: "var(--weight-semibold)",
-                        padding: "6px var(--space-6) 6px var(--space-3)", borderRadius: "var(--radius-sm)", cursor: "pointer", textAlign: "left",
+                        padding: "6px var(--space-6) 6px var(--space-2)", borderRadius: "var(--radius-sm)", cursor: "pointer", textAlign: "left",
                         transition: "background var(--dur-fast) var(--ease-out)",
                       }}
                     >
@@ -414,8 +437,8 @@ export function OttoNav({
                       <IconX />
                     </button>
                   </div>
-                  {/* conversations nested under the project */}
-                  {projThreads.length > 0 && (
+                  {/* conversations nested under the project (collapsible) */}
+                  {projThreads.length > 0 && !isCollapsed && (
                     <div style={{ display: "flex", flexDirection: "column", gap: "1px", marginTop: "1px" }}>
                       {projThreads.slice(0, 12).map((t) => {
                         const isActive = isActiveProject && t.id === activeThreadId && view === "otto";
