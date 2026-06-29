@@ -70,15 +70,22 @@ function displayedFromUsd(usd: number): number {
   return Math.max(1, Math.ceil(usd / USD_PER_DISPLAY_CREDIT));
 }
 
-/** Flat per-resolution video charge (BytePlus Seedance 2.0 fast; covers the t2v
- *  worst case, healthy margin on the i2v primary path). 1080p (and anything not
- *  720p) → 16 cr; 720p → 7 cr. Image = 1 displayed credit per image. */
+/** Video models whose credit charge is a flat per-resolution number (BytePlus Seedance,
+ *  priced by resolution not duration). All other models charge displayedFromUsd(true cost). */
+export const FLAT_PRICED_VIDEO_MODELS = new Set<string>(["seedance-2-fast"]);
+export function isFlatPricedVideoModel(model: string): boolean { return FLAT_PRICED_VIDEO_MODELS.has(model); }
+
+/** Flat per-resolution video charge table — applies ONLY to flat-priced BytePlus models
+ *  (seedance-2-fast). 720p → 7 cr; 1080p (and anything else) → 16 cr. */
 export const VIDEO_CREDITS_BY_RESOLUTION: Record<string, number> = { "720p": 7, "1080p": 16 };
+
 export function pricedGenCredits(job: GenSpendInput): number {
   if (job.kind === "VIDEO") {
-    const r = job.videoOptions?.resolution ?? "720p";
-    const displayed = VIDEO_CREDITS_BY_RESOLUTION[r] ?? 16; // unknown/higher res → the 1080p price (never under-charge)
-    return displayed * INTERNAL_PER_DISPLAY;
+    if (isFlatPricedVideoModel(job.model)) {
+      const r = job.videoOptions?.resolution ?? "720p";
+      return (VIDEO_CREDITS_BY_RESOLUTION[r] ?? 16) * INTERNAL_PER_DISPLAY; // BytePlus: flat per resolution
+    }
+    return displayedFromUsd(genSpentUsd(job)) * INTERNAL_PER_DISPLAY; // fal models: per-model USD cost (restores correct scaling)
   }
   return job.count * INTERNAL_PER_DISPLAY; // 1 displayed credit per image
 }

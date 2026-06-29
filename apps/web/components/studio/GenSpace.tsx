@@ -16,6 +16,7 @@ import {
   GEN_VIDEO_MODEL_OPTIONS, videoDefaults, videoPriceUsd, type GenVideoModel,
   activeVideoModel, modelFamily, deriveMode, lintPrompt, castFindings, type ModelDirectiveRules,
   VIDEO_CREDITS_BY_RESOLUTION,
+  isFlatPricedVideoModel,
   newId,
 } from "@fikirtive/core";
 import { startGen, getGenJob, getRecentGenResults } from "@/lib/gen-actions";
@@ -472,7 +473,13 @@ export function GenSpace({ projectId, entities, rulesMap, onGoToElements }: { pr
               </div>
               {opts.resolutions.length > 0 && (
                 <SettingRow label="Resolution" options={opts.resolutions} value={vopts.resolution} onChange={(v) => setVopts((o) => ({ ...o, resolution: String(v) }))}
-                  labelFn={(r) => { const cr = VIDEO_CREDITS_BY_RESOLUTION[String(r)]; return cr != null ? `${String(r)} · ${cr} cr` : String(r); }} />
+                  labelFn={(r) => {
+                    if (isFlatPricedVideoModel(videoModel)) {
+                      const cr = VIDEO_CREDITS_BY_RESOLUTION[String(r)];
+                      return cr != null ? `${String(r)} · ${cr} cr` : String(r);
+                    }
+                    return String(r); // fal models: cost shown via the ~$ duration estimate below
+                  }} />
               )}
               {opts.aspectRatios.length > 0 && !refImg && (
                 <SettingRow label="Aspect" options={opts.aspectRatios} value={vopts.aspectRatio} onChange={(v) => setVopts((o) => ({ ...o, aspectRatio: String(v) }))} />

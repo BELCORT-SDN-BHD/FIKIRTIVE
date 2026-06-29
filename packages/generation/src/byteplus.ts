@@ -25,6 +25,8 @@ export class BytePlusProvider implements GenerationProvider {
           method: "POST", headers: this.headers(),
           body: JSON.stringify({
             model, prompt: req.prompt, size: "2048x2048", response_format: "url",
+            // v1 limitation: only req.inputImageUrls[0] is sent. Ark Seedream i2i accepts a
+            // single source image; multi-reference conditioning is not supported in this version.
             ...(conditioned ? { image: req.inputImageUrls[0] } : {}),
           }),
         });
@@ -52,6 +54,9 @@ export class BytePlusProvider implements GenerationProvider {
     if (req.tailImageUrl) throw new Error(`byteplus: ${req.model} does not support an end frame`); // pre-spend
     const i2v = req.imageUrl.length > 0;
     // Seedance encodes controls as text flags appended to the prompt.
+    // v1 limitation: req.audio is not wired to Ark Seedance. Seedance uses its own default
+    // audio behaviour; the audio toggle is tracked in VideoRequest but the Ark flag is
+    // unverified — do NOT invent one until confirmed in the Ark API docs.
     const flags = [`--resolution ${req.resolution ?? "720p"}`, `--duration ${req.durationSeconds}`]
       .concat(req.aspectRatio ? [`--ratio ${req.aspectRatio}`] : []).join(" ");
     const content: unknown[] = [];
@@ -70,9 +75,23 @@ export class BytePlusProvider implements GenerationProvider {
     // eslint-disable-next-line no-constant-condition
     while (true) {
       await new Promise((r) => setTimeout(r, 5_000));
-      const st = await fetch(`${ARK_BASE}/contents/generations/tasks/${taskId}`, { headers: this.headers() });
-      if (!st.ok) { if (Date.now() - startedAt > TIMEOUT_MS) throw chargedError(`byteplus video: poll ${st.status} after timeout`); continue; }
-      const t = (await st.json()) as { status?: string; content?: { video_url?: string } };
+      let t: { status?: string; content?: { video_url?: string } };
+      try {
+        const st = await fetch(`${ARK_BASE}/contents/generations/tasks/${taskId}`, { headers: this.headers() });
+        if (!st.ok) {
+          // Non-2xx: if timed out, surface as chargedError (task may still complete on BytePlus = COGS already committed)
+          if (Date.now() - startedAt > TIMEOUT_MS) throw chargedError(`byteplus video: poll ${st.status} after timeout`);
+          continue; // transient non-2xx — retry
+        }
+        t = (await st.json()) as { status?: string; content?: { video_url?: string } };
+      } catch (e) {
+        // A chargedError thrown above must propagate (terminal); any other exception (network reset,
+        // malformed body) is a transient poll failure — the task was already submitted and may still
+        // succeed (and bill) on BytePlus, so re-submitting would double the COGS. Continue polling.
+        if (e instanceof Error && (e as { charged?: boolean }).charged) throw e;
+        if (Date.now() - startedAt > TIMEOUT_MS) throw chargedError("byteplus video: poll exception after timeout");
+        continue; // transient — poll again
+      }
       if (t.status === "succeeded") {
         const url = t.content?.video_url;
         if (!url) throw chargedError("byteplus video: succeeded but no video_url");
