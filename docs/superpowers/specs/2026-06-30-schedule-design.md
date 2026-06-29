@@ -64,11 +64,16 @@ ScheduledPost {
      notify the owner ("time to post X — open IG").
 - Idempotent: a `metaPostId` already set ⇒ never re-publish (resume = no double charge/post).
 
-### 2. Organic publish — `apps/web/lib/meta-publish-actions.ts` (new, separate from the ADS meta-write-actions)
-- IG: `createMediaContainer(image|carousel)` → poll container ready → `publishMedia`.
+### 2. Organic publish — via the **Channel foundation** (see channels-foundation spec)
+The scheduler calls `channel.publish(ownerId, target, post)` generically — it never
+hardcodes IG/FB. Phase A ships the **Instagram + Facebook adapters**
+(`channels/instagram.ts`, `channels/facebook.ts`):
+- IG: `createMediaContainer(image|carousel)` → poll ready → `publishMedia`.
 - FB: page feed post (image/link).
-- Reuses the existing Meta OAuth/token + pages plumbing; adds the publish scopes.
-- Phase A: IG **feed image + carousel**, FB **feed image**. (Reels/Stories = Phase B.)
+- Reuse the existing Meta OAuth/token + pages plumbing; add the publish scopes.
+- Phase A: IG **feed image + carousel**, FB **feed image** (each adapter's
+  `capabilities` declares what it supports; Reels/Stories = Phase B). A future
+  platform = a new adapter, and the scheduler/composer pick it up unchanged.
 
 ### 3. Schedule page UI (replaces the `ComingSoon` branch)
 Matches the locked mockup (`docs/ui-rework-mockups/schedule.html`):

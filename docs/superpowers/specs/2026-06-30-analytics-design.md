@@ -15,6 +15,12 @@ Replace the Analytics stub with a full performance view, wired to **real Meta da
 - **OTTO insight** — "your best performer is X — make more like it."
 gb skin; coral = OTTO/insight only.
 
+## Built on the channel foundation
+Analytics reads through the `Channel` seam (see channels-foundation spec):
+`channel.fetchAccountInsights` / `listPublishedPosts` / `fetchPostInsights`, iterated
+over the registered channels — so "all platforms" includes any future platform with
+no Analytics rewrite. Below is the IG/FB (Meta) reality the first adapters wrap.
+
 ## Data sources (and the honest dependency)
 Two distinct Meta data families:
 

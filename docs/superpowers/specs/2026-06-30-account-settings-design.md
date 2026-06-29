@@ -42,7 +42,10 @@ type Section = { id; title; subtitle?; danger?; fields: Field[] }
 ### Sections (v1)
 1. **Profile** — name (text), email (text, read-only or editable per existing auth), sign-in method (info), **Sign out** (action → better-auth signOut).
 2. **Billing & Credits** — credit balance hero (custom, from `getMyAccount`), **Buy credits** (custom → existing `BuyPackButton`), receipt ledger (custom, the existing honest ledger incl "Otto thinking" / "Refunded").
-3. **Connections** — Instagram + Facebook connect/disconnect (custom; reuses Meta OAuth/pages; shared with Schedule). Shows connected pages.
+3. **Connections** — renders one row per **registered channel** (channels-foundation
+   spec): connect / reconnect / disconnect + the connected targets. IG + FB in
+   Phase A; a future platform appears here automatically. (custom field; shared with
+   Schedule + Analytics.)
 4. **OTTO behavior** — Ads autonomy (toggle → existing `setAdsAutonomy` ASK/AUTO), Auto-publish posts (toggle; consumed by Schedule), Spend cap (number; "pause a task over N credits"), default voice/tone (text or link to Brand memory).
 5. **Notifications** — email + in-app prefs (toggles).
 6. **Schedule defaults** — time zone (text/select), default posting times (text). Consumed by Schedule.

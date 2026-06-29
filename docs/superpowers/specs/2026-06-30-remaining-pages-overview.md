@@ -2,9 +2,17 @@
 
 Date: 2026-06-30 · Status: approved in brainstorm, specs follow
 
-Three remaining surfaces, brainstormed and approved. Each is its own focused spec
-so it can be built and shipped independently, in this order (quick wins first;
-Schedule + its Meta App Review run in parallel):
+Three remaining surfaces + one shared foundation, brainstormed and approved. Each
+is its own focused spec so it can be built and shipped independently, in this order
+(foundation + quick wins first; Schedule + its Meta App Review run in parallel):
+
+0. **Channel provider foundation** → `2026-06-30-channels-foundation-design.md`
+   The platform-extensibility seam: IG + FB are the first two adapters behind one
+   `Channel` interface; adding a platform later (TikTok, LinkedIn, …) = drop in an
+   adapter + register it, no rewrite. Schedule (publish), Analytics (insights), and
+   Account → Connections all go through it. Build the interface + the IG/FB adapters
+   first, then the three features sit on top. (Founder: "之后会有更多的平台,基础先建好".)
+
 
 1. **Account / Settings redo** → `2026-06-30-account-settings-design.md`
    Smallest. Reskin + restructure the working Account page into a scalable
