@@ -155,6 +155,7 @@ describe("proposeAdBuildForOwner", () => {
     // payload should have server-built fields
     expect(data.payload.approval).toBeDefined();
     expect(data.payload.accountId).toBe("act_123");
+    expect(data.payload.currency).toBe("MYR"); // sourced from the ad ACCOUNT
     expect(data.payload.objective).toBe("OUTCOME_TRAFFIC");
   });
 

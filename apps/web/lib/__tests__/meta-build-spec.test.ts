@@ -128,6 +128,16 @@ describe("buildAdBuildCard", () => {
     expect(payload.buildOutcome).toBeUndefined();
   });
 
+  it("carries currency from ctx into the payload", () => {
+    const payload = buildAdBuildCard(VALID_INPUT, { ...VALID_CTX, currency: "MYR" }, ACTOR, NOW_ISO);
+    expect(payload.currency).toBe("MYR");
+  });
+
+  it("omits currency when ctx.currency is undefined", () => {
+    const payload = buildAdBuildCard(VALID_INPUT, VALID_CTX, ACTOR, NOW_ISO);
+    expect(payload.currency).toBeUndefined();
+  });
+
   it("targeting is server-shaped (not raw hint)", () => {
     const payload = buildAdBuildCard(VALID_INPUT, VALID_CTX, ACTOR, NOW_ISO);
     expect(payload.targeting).toEqual({

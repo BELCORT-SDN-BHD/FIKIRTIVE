@@ -31,8 +31,25 @@ import { requireOwner } from "./auth-guard";
 import { isImpersonating } from "@/lib/better-auth/compat";
 import type { MetaAdBuildCardPayload } from "./meta-build-spec";
 
-export type BuildState = "done" | "partial" | "failed";
+export type BuildState = "done" | "partial" | "failed" | "needs_review";
 export type BuildResult = { createdIds: Record<string, string>; state: BuildState };
+
+/**
+ * Sentinel thrown by claimAndCreate when it meets an APPLYING leftover from a prior crash:
+ * the Meta create for that step MAY have fired before the crash (no id was recorded), so
+ * re-creating risks a duplicate object. We refuse to re-create and surface needs_review.
+ */
+class InterruptedBuildError extends Error {
+  constructor() {
+    super("INTERRUPTED: a prior build crashed mid-create — refusing to re-create (ambiguous).");
+    this.name = "InterruptedBuildError";
+  }
+}
+
+/** User-facing reason stamped onto buildOutcome.reason when a build comes back needs_review. */
+const NEEDS_REVIEW_REASON =
+  "A previous build was interrupted partway — I won't risk creating duplicate ads. " +
+  "Please check your Meta Ads Manager, then ask me to build again.";
 
 // ── step indices (stable; the MetaActionExecution claim key is (ownerId,cardId,stepIndex)) ──
 const STEP_UPLOAD = 0;
@@ -80,7 +97,15 @@ async function claimAndCreate(
       const id = readAppliedId(row.appliedValue);
       if (id) return id; // already created — reuse, never re-create.
     }
-    // PENDING/APPLYING/FAILED leftover → re-claim this same row (re-run after a prior crash).
+    if (row.status === "APPLYING") {
+      // AMBIGUOUS crash state: the row reached APPLYING before a prior crash, so the Meta
+      // create for this step MAY have already fired (no id was recorded). Re-creating could
+      // duplicate the object. Mark FAILED and refuse — the caller surfaces needs_review.
+      await prisma.metaActionExecution.update({ where: { id: row.id }, data: { status: "FAILED" } });
+      throw new InterruptedBuildError();
+    }
+    // PENDING/FAILED leftover → SAFE to re-claim this same row: no Meta create was attempted
+    // (PENDING never reached APPLYING), so creating now cannot duplicate anything.
   } else {
     // 2. No row → create a PENDING claim. On a duplicate-insert race, re-read by index.
     try {
@@ -270,7 +295,12 @@ export async function runAdBuild(ownerId: string, cardId: string): Promise<Build
     createdIds.adId = adId;
 
     return { createdIds, state: "done" };
-  } catch {
+  } catch (e) {
+    // An APPLYING leftover from a prior crash → ambiguous (a create may have fired). We did NOT
+    // re-create; stop the batch and surface needs_review so the user checks Meta Ads Manager.
+    if (e instanceof InterruptedBuildError) {
+      return { createdIds, state: "needs_review" };
+    }
     // Stop-on-first-failure: a create threw. Earlier ids are already in createdIds and
     // recorded in their MetaActionExecution rows. NO auto-delete; NO later object attempted.
     const anyCreated = Object.keys(createdIds).length > 0;
@@ -375,6 +405,7 @@ export async function approveAdBuild(
     built: result.state === "done",
     createdIds: result.createdIds,
     state: result.state,
+    ...(result.state === "needs_review" ? { reason: NEEDS_REVIEW_REASON } : {}),
   });
   return { ok: true, state: result.state, createdIds: result.createdIds };
 }
@@ -476,6 +507,14 @@ export async function maybeAutoBuild(
     await consumeApproval(cardId, payload, new Date().toISOString());
 
     const result = await runAdBuild(ownerId, cardId);
+    if (result.state === "needs_review") {
+      return await record(ownerId, cardId, payload, {
+        built: false,
+        state: result.state,
+        createdIds: result.createdIds,
+        reason: NEEDS_REVIEW_REASON,
+      });
+    }
     return await record(ownerId, cardId, payload, { built: true, state: result.state, createdIds: result.createdIds });
   } catch (e) {
     // A throw (incl. KILL_SWITCH from a race) must never break the propose turn.

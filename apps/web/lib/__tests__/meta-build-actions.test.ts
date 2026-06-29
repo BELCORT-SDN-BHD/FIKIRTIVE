@@ -426,6 +426,82 @@ describe("runAdBuild — idempotency", () => {
 });
 
 // ════════════════════════════════════════════════════════════════════════════
+// runAdBuild — crash-rebuild reconcile (distinguish PENDING vs APPLYING leftovers)
+// ════════════════════════════════════════════════════════════════════════════
+
+describe("runAdBuild — crash-rebuild reconcile", () => {
+  beforeEach(() => {
+    mockConnFindUnique.mockResolvedValue(conn());
+    mockMsgFindFirst.mockResolvedValue(card());
+  });
+
+  it("a leftover PENDING campaign row → SAFE to proceed: re-claims and creates the campaign", async () => {
+    // stepIndex 2 = campaign — a PENDING leftover means the claim row was created but the
+    // Meta create was NEVER attempted (PENDING never reached APPLYING) → safe to create now.
+    mockExecFindFirst.mockImplementation(async (args: { where: { stepIndex: number } }) => {
+      if (args.where.stepIndex === 2) {
+        return { id: "exec-2", stepIndex: 2, status: "PENDING", appliedValue: null };
+      }
+      return null;
+    });
+
+    const res = await runAdBuild("u1", "card-1");
+
+    expect(res.state).toBe("done");
+    // the campaign WAS created (PENDING is safe to re-claim)
+    const paths = mockGraphPost.mock.calls.map((c) => c[1] as string);
+    expect(paths).toContain("act_111/campaigns");
+    expect(res.createdIds.campaignId).toBe("campaign_1");
+  });
+
+  it("a leftover APPLYING campaign row → AMBIGUOUS: does NOT re-create, marks FAILED, stops with needs_review", async () => {
+    // stepIndex 2 = campaign — an APPLYING leftover means the create MAY have fired before a
+    // prior crash (no id recorded). Re-creating risks a duplicate → refuse and surface needs_review.
+    mockExecFindFirst.mockImplementation(async (args: { where: { stepIndex: number } }) => {
+      if (args.where.stepIndex === 2) {
+        return { id: "exec-2", stepIndex: 2, status: "APPLYING", appliedValue: null };
+      }
+      return null;
+    });
+
+    const res = await runAdBuild("u1", "card-1");
+
+    expect(res.state).toBe("needs_review");
+
+    // The Meta CREATE for the campaign was NOT called again.
+    const paths = mockGraphPost.mock.calls.map((c) => c[1] as string);
+    expect(paths).not.toContain("act_111/campaigns");
+    // And the batch stopped — the ad (step 4) was never attempted.
+    expect(paths).not.toContain("act_111/ads");
+
+    // The ambiguous row was marked FAILED.
+    const failedUpdate = mockExecUpdate.mock.calls.find(
+      (c) => (c[0] as { where: { id: string }; data: { status?: string } }).data.status === "FAILED",
+    );
+    expect(failedUpdate).toBeDefined();
+    expect((failedUpdate![0] as { where: { id: string } }).where.id).toBe("exec-2");
+  });
+
+  it("a leftover APPLYING UPLOAD row (step 0) → no upload re-fired, no graph calls, needs_review", async () => {
+    // Belt-and-braces: the ambiguity can be the very first step (upload). Assert the upload mock
+    // is NOT called again and nothing downstream fires.
+    mockExecFindFirst.mockImplementation(async (args: { where: { stepIndex: number } }) => {
+      if (args.where.stepIndex === 0) {
+        return { id: "exec-0", stepIndex: 0, status: "APPLYING", appliedValue: null };
+      }
+      return null;
+    });
+
+    const res = await runAdBuild("u1", "card-1");
+
+    expect(res.state).toBe("needs_review");
+    expect(mockUploadImage).not.toHaveBeenCalled();
+    expect(mockUploadVideo).not.toHaveBeenCalled();
+    expect(mockGraphPost).not.toHaveBeenCalled();
+  });
+});
+
+// ════════════════════════════════════════════════════════════════════════════
 // runAdBuild — partial failure (stop-on-first-failure)
 // ════════════════════════════════════════════════════════════════════════════
 
@@ -554,6 +630,39 @@ describe("approveAdBuild", () => {
     expect(bo.built).toBe(true);
     expect(bo.state).toBe("done");
     expect((bo.createdIds as Record<string, string>).adId).toBe("ad_1");
+    vi.useRealTimers();
+  });
+
+  it("needs_review outcome (APPLYING leftover) → stamps built=false, state=needs_review, with a reason", async () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date(NOW));
+    mockConnFindUnique.mockResolvedValue(conn());
+    mockMsgFindFirst.mockResolvedValue(card());
+    // campaign step (2) has an APPLYING leftover → runAdBuild returns needs_review.
+    mockExecFindFirst.mockImplementation(async (args: { where: { stepIndex: number } }) => {
+      if (args.where.stepIndex === 2) {
+        return { id: "exec-2", stepIndex: 2, status: "APPLYING", appliedValue: null };
+      }
+      return null;
+    });
+
+    const res = await approveAdBuild("card-1");
+    expect(res).toMatchObject({ ok: true, state: "needs_review" });
+
+    // the campaign create was NOT re-fired
+    const paths = mockGraphPost.mock.calls.map((c) => c[1] as string);
+    expect(paths).not.toContain("act_111/campaigns");
+
+    const buildOutcomeUpdate = mockMsgUpdate.mock.calls.find((c) => {
+      const payload = (c[0] as { data?: { payload?: { buildOutcome?: unknown } } })?.data?.payload;
+      return payload && "buildOutcome" in payload;
+    });
+    expect(buildOutcomeUpdate).toBeDefined();
+    const bo = (buildOutcomeUpdate![0] as { data: { payload: { buildOutcome: Record<string, unknown> } } }).data.payload.buildOutcome;
+    expect(bo.built).toBe(false);
+    expect(bo.state).toBe("needs_review");
+    expect(typeof bo.reason).toBe("string");
+    expect(bo.reason as string).toMatch(/interrupted/i);
     vi.useRealTimers();
   });
 

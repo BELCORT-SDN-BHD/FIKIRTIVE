@@ -47,6 +47,7 @@ export async function proposeAdBuildForOwner(
     };
   }
   const accountId = accounts[0].id;
+  const accountCurrency = accounts[0].currency;
 
   // 3a. Fetch the owner's ad objects (campaigns/adsets/ads) for adset validation only.
   const objectsResult = await fetchOwnerAdObjects(ownerId);
@@ -126,7 +127,7 @@ export async function proposeAdBuildForOwner(
   try {
     payload = buildAdBuildCard(
       input,
-      { accountId, assetExists, assetKind, pageValid, adsetValid },
+      { accountId, currency: accountCurrency, assetExists, assetKind, pageValid, adsetValid },
       ownerId,
       new Date().toISOString(),
     );

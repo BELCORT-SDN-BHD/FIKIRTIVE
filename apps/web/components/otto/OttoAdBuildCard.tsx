@@ -107,6 +107,16 @@ export function OttoAdBuildCard({ cardId, payload }: OttoAdBuildCardProps) {
   const builtAfterApprove = approveOk?.state === "done";
   const partialAfterApprove = approveOk?.state === "partial";
   const failedAfterApprove = approveOk?.state === "failed";
+  const needsReviewAfterApprove = approveOk?.state === "needs_review";
+
+  // Persisted needs-review (e.g. an AUTO build hit an interrupted prior attempt): the build
+  // was refused to avoid duplicate ads. Surface the honest reason, offer NO one-click re-build.
+  const persistedNeedsReview = buildOutcome?.state === "needs_review";
+  const needsReview = needsReviewAfterApprove || persistedNeedsReview;
+  const needsReviewReason =
+    buildOutcome?.reason ||
+    "A previous build was interrupted partway — I won't risk creating duplicate ads. " +
+      "Please check your Meta Ads Manager, then ask me to build again.";
 
   // The effective "built" state: either persisted from auto-build or from this session's approve
   const effectivelyBuilt = isBuilt || builtAfterApprove;
@@ -114,12 +124,13 @@ export function OttoAdBuildCard({ cardId, payload }: OttoAdBuildCardProps) {
     ? (isBuilt ? createdIds : (approveOk?.createdIds ?? {}))
     : {};
 
-  const campaignId = effectiveCreatedIds.campaignId;
-  const launchReady = effectivelyBuilt && !!campaignId;
+  const { campaignId, adsetId, adId } = effectiveCreatedIds;
+  // Launch only once all three created ids are present (launchAdDraft re-checks server-side).
+  const launchReady = effectivelyBuilt && !!campaignId && !!adsetId && !!adId;
 
-  // Account currency (from MetaConnection data — not in payload, derive gracefully)
-  // We don't have the currency in the payload; use undefined → plain number guard
-  const currency = undefined as string | undefined;
+  // Account currency carried on the payload (sourced from the ad ACCOUNT at propose time).
+  // fmtBudget falls back to a plain number when missing/invalid.
+  const currency = p.currency;
 
   return (
     <div style={{ maxWidth: 480 }}>
@@ -253,6 +264,11 @@ export function OttoAdBuildCard({ cardId, payload }: OttoAdBuildCardProps) {
         ) : failedAfterApprove ? (
           <div style={{ fontSize: "var(--text-sm)", color: "var(--error-700, #b91c1c)" }}>
             Build failed — nothing was created.
+          </div>
+        ) : needsReview ? (
+          /* Interrupted prior build — refused to re-create. Honest reason, no one-click rebuild. */
+          <div role="alert" style={{ fontSize: "var(--text-sm)", color: "var(--warning-700, #b45309)" }}>
+            {needsReviewReason}
           </div>
         ) : buildOutcome && buildOutcome.built === false && buildOutcome.reason ? (
           /* Auto-build was attempted but refused/failed — show why, offer manual approve */

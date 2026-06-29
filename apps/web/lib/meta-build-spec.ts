@@ -103,6 +103,7 @@ export type MetaAdBuildCardPayload = {
   mode: "create" | "into_existing";
   objective: BuildObjective;
   accountId: string;
+  currency?: string;
   pageId: string;
   igAccountId?: string;
   targeting: Record<string, unknown>;
@@ -129,6 +130,7 @@ export function buildAdBuildCard(
   input: AdBuildInput,
   ctx: {
     accountId: string;
+    currency?: string;
     assetExists: boolean;
     assetKind: "image" | "video";
     pageValid: boolean;
@@ -205,6 +207,9 @@ export function buildAdBuildCard(
     approval,
   };
 
+  if (ctx.currency !== undefined) {
+    payload.currency = ctx.currency;
+  }
   if (input.startTime !== undefined) {
     payload.startTime = input.startTime;
   }

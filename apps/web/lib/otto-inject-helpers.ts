@@ -169,38 +169,6 @@ export function deriveActionState(
   return "failed";
 }
 
-export type BuildState = "pending" | "building" | "built" | "partial" | "failed";
-
-/**
- * Derive the display state of a BUILD_CARD's multi-step execution from its
- * MetaActionExecution rows. Mirrors `deriveActionState` (ACTION_CARD) with
- * BUILD_CARD-specific terminology:
- *
- * - pending   — no executions created yet (card not yet approved / auto-run).
- * - building  — at least one step is APPLYING or PENDING (in-flight).
- * - built     — all steps resolved ok (APPLIED/SKIPPED) AND buildOutcome.state === "done".
- * - partial   — at least one APPLIED/SKIPPED AND at least one terminal non-ok status.
- * - failed    — no APPLIED/SKIPPED at all, and at least one terminal non-ok status.
- */
-export function deriveBuildState(
-  buildOutcome: { state?: string } | null | undefined,
-  executions: Array<{ stepIndex: number; status: string }>,
-): BuildState {
-  if (executions.length === 0) return "pending";
-
-  const statuses = executions.map((e) => e.status as StepResultStatus | "APPLYING" | "PENDING");
-
-  const anyBuilding = statuses.some((s) => s === "APPLYING" || s === "PENDING");
-  if (anyBuilding) return "building";
-
-  const anyOk = statuses.some((s) => s === "APPLIED" || s === "SKIPPED");
-  const allOk = statuses.every((s) => s === "APPLIED" || s === "SKIPPED");
-
-  if (allOk && buildOutcome?.state === "done") return "built";
-  if (anyOk) return "partial";
-  return "failed";
-}
-
 /**
  * Append worker-output durable messages (GEN_RESULT / TURN_ERROR ONLY) from the
  * polled thread that are not already present in the useChat list, deduped by
