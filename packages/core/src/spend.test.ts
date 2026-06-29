@@ -2,6 +2,8 @@ import { describe, it, expect } from "vitest";
 import { genSpentUsd, refgenSpentUsd, pricedGenCredits, pricedRefgenCredits, displayCredits, CREDITS_PER_USD, INTERNAL_PER_DISPLAY, BETA_INITIAL_GRANT_CREDITS } from "./spend.js";
 import { GEN_PRICE_USD_PER_IMAGE, videoPriceUsd } from "./gen.js";
 import { REFGEN_PRICE_USD_PER_IMAGE } from "./refgen.js";
+// Note: video credit charge is split — flat per resolution for BytePlus flat-priced models
+// (seedance-2-fast), USD-formula for all other (fal) models.
 
 describe("genSpentUsd", () => {
   it("image = flat per-image price × count", () => {
@@ -34,13 +36,15 @@ describe("credit pricing (deterministic CHARGE in internal credits; 1 internal =
     expect(pricedGenCredits({ kind: "IMAGE", model: "seedream", count: 1, videoOptions: null })).toBe(10);
     expect(pricedGenCredits({ kind: "IMAGE", model: "seedream", count: 4, videoOptions: null })).toBe(40);
   });
-  it("video = cost rounded UP to the $0.10 displayed unit × 10 (>= true cost, deterministic)", () => {
-    const c = pricedGenCredits({ kind: "VIDEO", model: "kling", count: 1, videoOptions: { seconds: 5, resolution: "720p", audio: false } });
+  it("video (fal, non-flat model) = USD formula, NOT the flat BytePlus table", () => {
+    const job = { kind: "VIDEO" as const, model: "kling", count: 1, videoOptions: { seconds: 5, resolution: "", audio: false } };
+    const c = pricedGenCredits(job);
     expect(c % INTERNAL_PER_DISPLAY).toBe(0); // whole displayed credits
     expect(c).toBeGreaterThanOrEqual(10);     // at least 1 displayed credit
-    // charge must never under-cover the true fal cost
-    const usd = genSpentUsd({ kind: "VIDEO", model: "kling", count: 1, videoOptions: { seconds: 5, resolution: "720p", audio: false } });
-    expect(displayCredits(c) * 0.1).toBeGreaterThanOrEqual(usd);
+    // Must equal the USD-formula result, NOT the flat 1080p fallback (160)
+    const expected = Math.max(1, Math.ceil(genSpentUsd(job) / 0.1)) * INTERNAL_PER_DISPLAY;
+    expect(c).toBe(expected);
+    expect(c).not.toBe(160); // 160 = the stale flat fallback that would have been charged before the fix
   });
   it("refgen = 1 displayed credit per image", () => {
     expect(pricedRefgenCredits({ model: "seedream", count: 1 })).toBe(10);
@@ -49,6 +53,21 @@ describe("credit pricing (deterministic CHARGE in internal credits; 1 internal =
   it("displayCredits converts internal→displayed; CREDITS_PER_USD=100", () => {
     expect(displayCredits(2500)).toBe(250);
     expect(CREDITS_PER_USD).toBe(100);
+  });
+  it("video charge is flat per resolution: 720p=7cr, 1080p=16cr (internal ×10)", () => {
+    const v = (resolution: string) => pricedGenCredits({ kind: "VIDEO", model: "seedance-2-fast", count: 1, videoOptions: { seconds: 5, resolution, audio: true } });
+    expect(v("720p")).toBe(70);   // 7 displayed credits
+    expect(v("1080p")).toBe(160); // 16 displayed credits
+  });
+  it("seedance-2-fast: unknown/higher resolution → the 1080p price (never under-charge)", () => {
+    const v = (resolution: string) => pricedGenCredits({ kind: "VIDEO", model: "seedance-2-fast", count: 1, videoOptions: { seconds: 5, resolution, audio: true } });
+    expect(v("4K")).toBe(160);  // unknown res → 1080p price (16 displayed × 10)
+    expect(v("")).toBe(160);
+    expect(v("480p")).toBe(160);
+  });
+  it("image charge stays 1 displayed credit per image", () => {
+    expect(pricedGenCredits({ kind: "IMAGE", model: "seedream", count: 1, videoOptions: null })).toBe(10);
+    expect(pricedGenCredits({ kind: "IMAGE", model: "seedream", count: 3, videoOptions: null })).toBe(30);
   });
   it("beta signup grant is 100 displayed credits (internal = ×INTERNAL_PER_DISPLAY)", () => {
     expect(BETA_INITIAL_GRANT_CREDITS).toBe(100 * INTERNAL_PER_DISPLAY);
