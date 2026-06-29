@@ -55,7 +55,10 @@ export default function FlowCanvas({ projectId, entities = [], activeThreadId = 
         const entry = nodeDataRef.current[id];
         if (!entry?.generationId || !animateFnRef.current) return; // guard: not yet resolved
         const { x, y } = entry.pos;
-        void animateFnRef.current(entry.generationId, id, "", { x: x + 340, y, w: 320, h: 320 });
+        // genRequest requires a non-empty prompt (.trim().min(1)); an empty string
+        // makes startGen reject and animate silently no-op. Send a default motion
+        // prompt so the Animate button actually works (i2v from the source image).
+        void animateFnRef.current(entry.generationId, id, "Animate this image with gentle, natural motion.", { x: x + 340, y, w: 320, h: 320 });
       };
     }
     return onAnimateByNode.current[id]!;
@@ -202,7 +205,11 @@ export default function FlowCanvas({ projectId, entities = [], activeThreadId = 
         type: r.type,
         position: { x: r.x, y: r.y },
         data: {
-          status: r.status,
+          // A node with a resolved media URL is finished — show the image. Canvas
+          // nodes persist status "pending" and aren't updated to "done" in the DB,
+          // so without this a completed generation re-renders as "generating
+          // forever" on reload (founder bug: image loads forever).
+          status: r.url ? "done" : r.status,
           url: r.url ?? undefined,
           prompt: r.prompt,
           text: r.text,
