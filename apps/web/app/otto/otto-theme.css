@@ -363,6 +363,53 @@
   background: var(--surface-sunken);
 }
 
+/* ── Canvas nodes (legacy .al-panel cards) re-skinned Grok-bright.
+ * Scoped to ReactFlow nodes so only the canvas changes; gated by gb-skin.
+ * Each node gets a floating type pill (.cv-nodelabel) above the card — the
+ * canvas-home look. The pill markup always renders but is hidden in the old
+ * skin, so it appears only here (strangler). */
+.cv-nodelabel { display: none; }
+.fk.gb-skin .react-flow__node .al-panel {
+  background: var(--surface-card);
+  border: 1px solid var(--border-default);
+  box-shadow: 0 6px 18px rgba(20, 20, 24, 0.08);
+  -webkit-backdrop-filter: none;
+  backdrop-filter: none;
+  border-radius: 13px;
+}
+.fk.gb-skin .react-flow__node.selected .al-panel {
+  border: 2px solid var(--accent);
+}
+.fk.gb-skin .react-flow__node .cv-nodelabel {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  position: absolute;
+  top: -26px;
+  left: 0;
+  font-size: 10.5px;
+  font-weight: 600;
+  letter-spacing: -0.01em;
+  color: #fff;
+  background: #1C1B17;
+  padding: 3px 9px;
+  border-radius: 999px;
+  white-space: nowrap;
+  pointer-events: none;
+}
+.fk.gb-skin .react-flow__node .cv-nodelabel svg { width: 12px; height: 12px; }
+.fk.gb-skin .react-flow__node .al-btn-glass {
+  background: rgba(255, 255, 255, 0.92);
+  border-color: var(--border-default);
+  color: var(--text-body);
+  -webkit-backdrop-filter: none;
+  backdrop-filter: none;
+  box-shadow: var(--shadow-sm);
+}
+.fk.gb-skin .react-flow__node .al-btn-glass:hover:not(:disabled) { background: #fff; }
+.fk.gb-skin .react-flow__node textarea { color: var(--text-body); }
+.fk.gb-skin .react-flow__node textarea::placeholder { color: var(--text-faint); }
+
 /* Reduced motion: respect user preference */
 @media (prefers-reduced-motion: reduce) {
   .fk * {

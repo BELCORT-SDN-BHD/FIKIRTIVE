@@ -6,6 +6,11 @@ export function TextNode({ data }: NodeProps) {
   const d = data as { text?: string; onChange?: (t: string) => void; onDelete?: () => void };
   const [val, setVal] = useState(d.text ?? "");
   return (
+    <>
+      <span className="cv-nodelabel">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" aria-hidden><path d="M4 7V5h16v2" /><path d="M9 19h6" /><path d="M12 5v14" /></svg>
+        Text
+      </span>
     <div className="al-panel nodrag" style={{ width: "100%", height: "100%", padding: 8, borderRadius: 12 }}>
       <textarea
         value={val}
@@ -16,5 +21,6 @@ export function TextNode({ data }: NodeProps) {
       />
       <button className="al-btn al-btn-glass al-btn-sm" style={{ position: "absolute", top: 6, right: 6 }} onClick={d.onDelete}>✕</button>
     </div>
+    </>
   );
 }
