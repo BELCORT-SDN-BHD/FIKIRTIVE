@@ -19,8 +19,9 @@ export default async function OttoPage({ searchParams }: { searchParams: Promise
   const initialView: ValidView | undefined = (VALID_VIEWS as readonly string[]).includes(sp?.view ?? "")
     ? (sp!.view as ValidView)
     : undefined;
-  // Strangler flag: ?skin=gb opts into the Grok-bright re-skin; default stays the old look.
-  const skin = sp?.skin === "gb" ? ("gb" as const) : undefined;
+  // Grok-bright is now the official default (cutover). ?skin=fk is an internal
+  // rollback escape hatch to the legacy look; everything else gets gb.
+  const skin = sp?.skin === "fk" ? undefined : ("gb" as const);
 
   const owner = await requireOwner();
   if ("error" in owner) redirect("/login");

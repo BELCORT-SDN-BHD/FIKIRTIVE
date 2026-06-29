@@ -131,9 +131,9 @@ export function OttoApp({
     const p = new URLSearchParams();
     p.set("project", projId);
     if (threadId) p.set("thread", threadId);
-    if (skin === "gb") p.set("skin", "gb");
+    // gb is the default now — no ?skin needed in the URL.
     return `/otto?${p.toString()}`;
-  }, [skin]);
+  }, []);
 
   const handleNewCampaign = useCallback(async () => {
     try {
