@@ -2,7 +2,7 @@ import { redirect } from "next/navigation";
 import { isFounderAdmin } from "@/lib/allowlist";
 import { requireOwner } from "@/lib/auth-guard";
 import { getOrCreateDefaultProject } from "@/lib/actions";
-import { getEntities, getCoworkThreads, getCoworkThread, resolveCoworkResultUrls, getMyAds, getMyAdJobs, getRecentGenerationThumbs } from "@/lib/data";
+import { getEntities, getCoworkThreads, getCoworkThread, resolveCoworkResultUrls, getMyAds, getMyAdJobs, getRecentGenerationThumbs, getProjects, getAllCoworkThreadMetas } from "@/lib/data";
 import { toEntityDTO, toChatThreadDTO, toChatThreadMetaDTO } from "@/lib/dto";
 import { getMyAccount } from "@/lib/account-actions";
 import { listMemory } from "@/lib/memory-actions";
@@ -14,7 +14,7 @@ export const metadata = { title: "Otto · Fikirtive" };
 const VALID_VIEWS = ["otto", "stuff", "library", "templates", "discover", "memory", "account", "connections", "schedule", "analytics"] as const;
 type ValidView = (typeof VALID_VIEWS)[number];
 
-export default async function OttoPage({ searchParams }: { searchParams: Promise<{ view?: string; skin?: string }> }) {
+export default async function OttoPage({ searchParams }: { searchParams: Promise<{ view?: string; skin?: string; project?: string; thread?: string }> }) {
   const sp = await searchParams;
   const initialView: ValidView | undefined = (VALID_VIEWS as readonly string[]).includes(sp?.view ?? "")
     ? (sp!.view as ValidView)
@@ -26,11 +26,15 @@ export default async function OttoPage({ searchParams }: { searchParams: Promise
   if ("error" in owner) redirect("/login");
   const { email, ownerId } = owner;
 
-  const projectResult = await getOrCreateDefaultProject();
-  if ("error" in projectResult) redirect("/login");
-  const { id: projectId } = projectResult;
+  // Multi-project (campaign = project): ensure at least one project exists, then
+  // pick the active one from ?project= (must be owned) or default to the oldest.
+  const ensured = await getOrCreateDefaultProject();
+  if ("error" in ensured) redirect("/login");
+  const projects = await getProjects(ownerId);
+  const active = (sp?.project && projects.find((p) => p.id === sp.project)) || projects[0];
+  const projectId = active?.id ?? ensured.id;
 
-  const [entities, threadRows, accountResult, memory, ads, adJobs, history] = await Promise.all([
+  const [entities, threadRows, accountResult, memory, ads, adJobs, history, allThreadRows] = await Promise.all([
     getEntities(ownerId),
     getCoworkThreads(ownerId, projectId),
     getMyAccount(),
@@ -38,18 +42,24 @@ export default async function OttoPage({ searchParams }: { searchParams: Promise
     getMyAds(ownerId, projectId),
     getMyAdJobs(ownerId, projectId).catch(() => [] as Awaited<ReturnType<typeof getMyAdJobs>>),
     getRecentGenerationThumbs(ownerId, projectId).catch(() => [] as Awaited<ReturnType<typeof getRecentGenerationThumbs>>),
+    getAllCoworkThreadMetas(ownerId).catch(() => [] as Awaited<ReturnType<typeof getAllCoworkThreadMetas>>),
   ]);
 
-  // Eager-load the most-recent thread so the conversation shows immediately (mirrors /m pattern).
+  // Open the requested thread (?thread=, if it's in this project) or the most recent.
   let threads = threadRows.map(toChatThreadMetaDTO);
-  if (threadRows[0]) {
-    const activeFull = await getCoworkThread(ownerId, threadRows[0].id);
+  const openThreadId = (sp?.thread && threadRows.some((t) => t.id === sp.thread)) ? sp.thread : threadRows[0]?.id;
+  if (openThreadId) {
+    const activeFull = await getCoworkThread(ownerId, openThreadId);
     if (activeFull) {
       const coworkUrls = await resolveCoworkResultUrls(ownerId, [activeFull]);
       const activeDto = toChatThreadDTO(activeFull, coworkUrls);
       threads = threads.map((t) => (t.id === activeDto.id ? activeDto : t));
     }
   }
+
+  // All conversations across every project (metas) for the Grok-style sidebar.
+  const sidebarThreads = allThreadRows.map(toChatThreadMetaDTO);
+  const projectList = projects.map((p) => ({ id: p.id, name: p.name }));
 
   const account = "error" in accountResult ? null : accountResult;
   const balanceUsd = account?.balanceUsd ?? 0;
@@ -61,7 +71,12 @@ export default async function OttoPage({ searchParams }: { searchParams: Promise
 
   return (
     <OttoApp
+      key={projectId}
       projectId={projectId}
+      projects={projectList}
+      activeProjectId={projectId}
+      sidebarThreads={sidebarThreads}
+      initialActiveThreadId={openThreadId ?? null}
       entities={entities.map(toEntityDTO)}
       threads={threads}
       balanceUsd={balanceUsd}

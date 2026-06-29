@@ -1,7 +1,7 @@
 "use client";
 import React from "react";
 import { creditsLabel } from "@/lib/credit-format";
-import type { OttoViewKey } from "./OttoApp";
+import type { OttoViewKey, ProjectMeta } from "./OttoApp";
 import type { ChatThreadDTO } from "@/lib/types";
 import type { HistoryThumb } from "@/lib/data";
 
@@ -148,9 +148,18 @@ function IconX() {
 export interface OttoNavProps {
   view: OttoViewKey;
   onViewChange: (v: OttoViewKey) => void;
-  threads: ChatThreadDTO[];
+  /** All projects (campaigns) for the sidebar. */
+  projects: ProjectMeta[];
+  /** The open project. */
+  activeProjectId: string;
+  /** Conversation metas across ALL projects — nested under their project. */
+  sidebarThreads: ChatThreadDTO[];
   activeThreadId: string | null;
   onSelectThread: (id: string) => void;
+  /** Switch to another project (optionally opening a thread). */
+  onSwitchProject: (projectId: string, threadId?: string) => void;
+  /** Rename a project (campaign). */
+  onRenameProject: (projectId: string, name: string) => void;
   onNewCampaign: () => void;
   onDeleteThread: (id: string) => void;
   /** Spendable balance in DISPLAYED credits (the product shows credits, never dollars). */
@@ -171,9 +180,13 @@ export interface OttoNavProps {
 export function OttoNav({
   view,
   onViewChange,
-  threads,
+  projects,
+  activeProjectId,
+  sidebarThreads,
   activeThreadId,
   onSelectThread,
+  onSwitchProject,
+  onRenameProject,
   onNewCampaign,
   onDeleteThread,
   balanceCredits,
@@ -187,6 +200,19 @@ export function OttoNav({
 }: OttoNavProps) {
   const initial = userName.slice(0, 1).toUpperCase();
   const balanceLabel = creditsLabel(balanceCredits);
+
+  // Group conversations under their project for the Grok-style nested sidebar.
+  const threadsByProject = new Map<string, ChatThreadDTO[]>();
+  for (const t of sidebarThreads) {
+    const arr = threadsByProject.get(t.projectId) ?? [];
+    arr.push(t);
+    threadsByProject.set(t.projectId, arr);
+  }
+  const hasSidebar = projects.length > 0 || history.length > 0;
+
+  function dotFor(status: ChatThreadDTO["status"]) {
+    return status === "working" ? "#f59e0b" : status === "failed" ? "#dc2626" : status === "done" ? "#16a34a" : null;
+  }
 
   function handleNavAction(fn: () => void) {
     fn();
@@ -331,127 +357,99 @@ export function OttoNav({
         })}
       </div>
 
-      {/* Recent conversations + History */}
-      {(threads.length > 0 || history.length > 0) && (
+      {/* Projects (campaigns) + History */}
+      {hasSidebar && (
         <div style={{ flex: 1, overflow: "auto", padding: "var(--space-4) var(--space-3) var(--space-2)" }}>
-          {threads.length > 0 && (
+          {projects.length > 0 && (
           <>
-          <div
-            style={{
-              fontSize: "var(--text-xs)",
-              color: "var(--text-faint)",
-              fontWeight: "var(--weight-semibold)",
-              textTransform: "uppercase",
-              letterSpacing: "var(--tracking-caps)",
-              marginBottom: "var(--space-2)",
-              paddingLeft: "var(--space-1)",
-            }}
-          >
-            Recent
+          <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: "var(--space-2)", paddingLeft: "var(--space-1)" }}>
+            <span style={{ fontSize: "var(--text-xs)", color: "var(--text-faint)", fontWeight: "var(--weight-semibold)", textTransform: "uppercase", letterSpacing: "var(--tracking-caps)" }}>
+              Projects
+            </span>
+            <button
+              type="button"
+              onClick={() => handleNavAction(onNewCampaign)}
+              title="New campaign"
+              aria-label="New campaign"
+              style={{ display: "flex", alignItems: "center", justifyContent: "center", width: 20, height: 20, border: "none", background: "transparent", color: "var(--text-faint)", borderRadius: "var(--radius-sm)", cursor: "pointer", padding: 0 }}
+            >
+              <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" aria-hidden><path d="M12 5v14M5 12h14" /></svg>
+            </button>
           </div>
           <div style={{ display: "flex", flexDirection: "column", gap: "2px" }}>
-            {threads.slice(0, 8).map((t) => {
-              const isActive = t.id === activeThreadId && view === "otto";
-              const dotColor =
-                t.status === "working" ? "#f59e0b" :
-                t.status === "failed"  ? "#dc2626" :
-                t.status === "done"    ? "#16a34a" :
-                null;
-              const dotLabel =
-                t.status === "working" ? "Processing" :
-                t.status === "failed"  ? "Failed" :
-                t.status === "done"    ? "Done" :
-                null;
+            {projects.map((p) => {
+              const isActiveProject = p.id === activeProjectId;
+              const projThreads = threadsByProject.get(p.id) ?? [];
               return (
-                <div
-                  key={t.id}
-                  className="otto-recent-row"
-                  style={{ position: "relative", display: "flex", alignItems: "center" }}
-                >
+                <div key={p.id} style={{ marginBottom: "var(--space-1)" }}>
+                  {/* project (campaign) row — double-click to rename */}
                   <button
-                    onClick={() => handleNavAction(() => {
-                      onSelectThread(t.id);
-                      onViewChange("otto");
-                    })}
-                    title={t.title}
+                    onClick={() => { if (!isActiveProject) handleNavAction(() => onSwitchProject(p.id)); }}
+                    onDoubleClick={() => { const n = window.prompt("Rename campaign", p.name); if (n && n.trim()) onRenameProject(p.id, n.trim()); }}
+                    title={p.name}
                     style={{
-                      display: "flex",
-                      alignItems: "center",
-                      gap: "var(--space-2)",
-                      flex: 1,
-                      minWidth: 0,
+                      display: "flex", alignItems: "center", gap: "var(--space-2)", width: "100%", minWidth: 0,
                       border: "none",
-                      background: isActive ? "var(--brand-tint)" : "transparent",
-                      color: isActive ? "var(--brand-press)" : "var(--text-muted)",
-                      fontFamily: "var(--font-sans)",
-                      fontSize: "var(--text-xs)",
-                      fontWeight: isActive ? "var(--weight-semibold)" : "var(--weight-regular)",
-                      padding: "7px var(--space-3)",
-                      paddingRight: "var(--space-6)",
-                      borderRadius: "var(--radius-sm)",
-                      cursor: "pointer",
-                      textAlign: "left",
+                      background: isActiveProject ? "var(--brand-tint)" : "transparent",
+                      color: isActiveProject ? "var(--brand-press)" : "var(--text-body)",
+                      fontFamily: "var(--font-sans)", fontSize: "var(--text-sm)", fontWeight: "var(--weight-semibold)",
+                      padding: "6px var(--space-3)", borderRadius: "var(--radius-sm)", cursor: "pointer", textAlign: "left",
                       transition: "background var(--dur-fast) var(--ease-out)",
                     }}
                   >
-                    {dotColor && (
-                      <span
-                        aria-label={dotLabel ?? undefined}
-                        title={dotLabel ?? undefined}
-                        style={{
-                          display: "inline-block",
-                          flexShrink: 0,
-                          width: 8,
-                          height: 8,
-                          borderRadius: "50%",
-                          background: dotColor,
-                        }}
-                      />
-                    )}
-                    <span style={{ overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", minWidth: 0 }}>
-                      {t.title}
-                    </span>
+                    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.9" aria-hidden style={{ flexShrink: 0 }}><path d="M3 7a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z" /></svg>
+                    <span style={{ overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", minWidth: 0, flex: 1 }}>{p.name}</span>
                   </button>
-                  <button
-                    className="otto-recent-delete"
-                    aria-label={`Delete ${t.title}`}
-                    onClick={(e) => {
-                      e.stopPropagation();
-                      onDeleteThread(t.id);
-                    }}
-                    style={{
-                      position: "absolute",
-                      right: "var(--space-2)",
-                      display: "flex",
-                      alignItems: "center",
-                      justifyContent: "center",
-                      width: 20,
-                      height: 20,
-                      border: "none",
-                      background: "transparent",
-                      color: "var(--text-faint)",
-                      borderRadius: "var(--radius-sm)",
-                      cursor: "pointer",
-                      padding: 0,
-                      opacity: 0,
-                      transition: "opacity var(--dur-fast) var(--ease-out), background var(--dur-fast) var(--ease-out)",
-                    }}
-                  >
-                    <IconX />
-                  </button>
+                  {/* conversations nested under the project */}
+                  {projThreads.length > 0 && (
+                    <div style={{ display: "flex", flexDirection: "column", gap: "1px", marginTop: "1px" }}>
+                      {projThreads.slice(0, 12).map((t) => {
+                        const isActive = isActiveProject && t.id === activeThreadId && view === "otto";
+                        const dotColor = dotFor(t.status);
+                        return (
+                          <div key={t.id} className="otto-recent-row" style={{ position: "relative", display: "flex", alignItems: "center" }}>
+                            <button
+                              onClick={() => handleNavAction(() => {
+                                if (isActiveProject) { onSelectThread(t.id); onViewChange("otto"); }
+                                else { onSwitchProject(p.id, t.id); }
+                              })}
+                              title={t.title}
+                              style={{
+                                display: "flex", alignItems: "center", gap: "var(--space-2)", flex: 1, minWidth: 0,
+                                border: "none",
+                                background: isActive ? "var(--brand-tint)" : "transparent",
+                                color: isActive ? "var(--brand-press)" : "var(--text-muted)",
+                                fontFamily: "var(--font-sans)", fontSize: "var(--text-xs)",
+                                fontWeight: isActive ? "var(--weight-semibold)" : "var(--weight-regular)",
+                                padding: "5px var(--space-3)", paddingLeft: "calc(var(--space-3) + 16px)", paddingRight: "var(--space-6)",
+                                borderRadius: "var(--radius-sm)", cursor: "pointer", textAlign: "left",
+                                transition: "background var(--dur-fast) var(--ease-out)",
+                              }}
+                            >
+                              {dotColor && (<span style={{ display: "inline-block", flexShrink: 0, width: 7, height: 7, borderRadius: "50%", background: dotColor }} />)}
+                              <span style={{ overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", minWidth: 0 }}>{t.title}</span>
+                            </button>
+                            <button
+                              className="otto-recent-delete"
+                              aria-label={`Delete ${t.title}`}
+                              onClick={(e) => { e.stopPropagation(); onDeleteThread(t.id); }}
+                              style={{ position: "absolute", right: "var(--space-2)", display: "flex", alignItems: "center", justifyContent: "center", width: 20, height: 20, border: "none", background: "transparent", color: "var(--text-faint)", borderRadius: "var(--radius-sm)", cursor: "pointer", padding: 0, opacity: 0, transition: "opacity var(--dur-fast) var(--ease-out), background var(--dur-fast) var(--ease-out)" }}
+                            >
+                              <IconX />
+                            </button>
+                          </div>
+                        );
+                      })}
+                    </div>
+                  )}
                 </div>
               );
             })}
           </div>
           <style>{`
             .otto-recent-row:hover .otto-recent-delete,
-            .otto-recent-row:focus-within .otto-recent-delete {
-              opacity: 1;
-            }
-            .otto-recent-delete:hover {
-              background: var(--surface-hover, rgba(0,0,0,0.07)) !important;
-              color: var(--text-default) !important;
-            }
+            .otto-recent-row:focus-within .otto-recent-delete { opacity: 1; }
+            .otto-recent-delete:hover { background: var(--surface-hover, rgba(0,0,0,0.07)) !important; color: var(--text-default) !important; }
           `}</style>
           </>
           )}
@@ -464,7 +462,7 @@ export function OttoNav({
                 fontWeight: "var(--weight-semibold)",
                 textTransform: "uppercase",
                 letterSpacing: "var(--tracking-caps)",
-                margin: `${threads.length > 0 ? "var(--space-4)" : "0"} 0 var(--space-2)`,
+                margin: `${projects.length > 0 ? "var(--space-4)" : "0"} 0 var(--space-2)`,
                 paddingLeft: "var(--space-1)",
               }}
             >
@@ -497,32 +495,27 @@ export function OttoNav({
         </div>
       )}
 
-      <div style={{ flex: (threads.length || history.length) ? 0 : 1 }} />
+      <div style={{ flex: hasSidebar ? 0 : 1 }} />
 
-      {/* Balance card */}
+      {/* Balance — compact credit line (Grok-style: subtle, not a big card) */}
       <div
+        title="Your balance"
         style={{
-          margin: "var(--space-3)",
-          padding: "var(--space-3) var(--space-4)",
-          borderRadius: "var(--radius-md)",
-          background: "var(--surface-sunken)",
-          border: "1px solid var(--border-subtle)",
+          display: "flex",
+          alignItems: "center",
+          gap: "var(--space-2)",
+          padding: "var(--space-2) var(--space-4)",
+          fontSize: "var(--text-xs)",
+          color: "var(--text-muted)",
+          borderTop: "1px solid var(--border-subtle)",
         }}
       >
-        <div style={{ fontSize: "var(--text-xs)", color: "var(--text-faint)", fontWeight: "var(--weight-semibold)", marginBottom: 2 }}>
-          Your balance
-        </div>
-        <div
-          style={{
-            fontFamily: "var(--font-display)",
-            fontWeight: "var(--weight-bold)",
-            fontSize: "var(--text-xl)",
-            color: "var(--text-strong)",
-            letterSpacing: "var(--tracking-snug)",
-          }}
-        >
+        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="var(--accent)" strokeWidth="2" aria-hidden>
+          <circle cx="12" cy="12" r="9" /><path d="M12 7v10M9 9.5h4a1.5 1.5 0 0 1 0 3h-2a1.5 1.5 0 0 0 0 3h4" />
+        </svg>
+        <span style={{ fontWeight: "var(--weight-semibold)", color: "var(--text-body)", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
           {balanceLabel}
-        </div>
+        </span>
       </div>
 
       {/* User */}
@@ -532,7 +525,6 @@ export function OttoNav({
           alignItems: "center",
           gap: "var(--space-3)",
           padding: "var(--space-3) var(--space-4)",
-          borderTop: "1px solid var(--border-subtle)",
         }}
       >
         <div

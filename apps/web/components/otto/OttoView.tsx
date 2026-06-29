@@ -251,8 +251,10 @@ export function OttoView({
           )}
         </div>
       </div>
-      {/* Right pane: canvas */}
-      <div style={{ flex: 1, minWidth: 0, position: "relative" }}>
+      {/* Right pane: canvas. display:flex so FlowCanvas (flex:1) fills the full
+          height — without it the canvas pane collapses to 0 height and React Flow
+          renders nothing (the "canvas not working" blank-white regression). */}
+      <div style={{ flex: 1, minWidth: 0, position: "relative", display: "flex", flexDirection: "column" }}>
         {/* Collapse handle on the OTTO↔canvas border */}
         {!chatCollapsed && (
           <button

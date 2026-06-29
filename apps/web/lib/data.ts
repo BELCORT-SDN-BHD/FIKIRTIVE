@@ -307,6 +307,34 @@ export async function getCoworkThreads(ownerId: string, projectId: string) {
   }
 }
 
+/** All of the owner's cowork threads across EVERY project (metas only), newest
+ *  first, with status badges — for the Grok-style sidebar that nests conversations
+ *  under their project. Mirrors getCoworkThreads but without the projectId filter. */
+export async function getAllCoworkThreadMetas(ownerId: string) {
+  const threads = await prisma.chatThread.findMany({
+    where: { ownerId, ...notDeleted },
+    orderBy: { updatedAt: "desc" },
+    select: { id: true, projectId: true, title: true, updatedAt: true },
+  });
+  try {
+    const threadIds = threads.map((t) => t.id);
+    const jobs = threadIds.length
+      ? await prisma.genJob.findMany({
+          where: { ownerId, threadId: { in: threadIds } },
+          select: { threadId: true, status: true, updatedAt: true },
+          orderBy: { updatedAt: "desc" },
+        })
+      : [];
+    const latestByThread = new Map<string, string>();
+    for (const j of jobs) {
+      if (j.threadId && !latestByThread.has(j.threadId)) latestByThread.set(j.threadId, j.status);
+    }
+    return threads.map((t) => ({ ...t, _badge: threadBadgeFromJobStatus(latestByThread.get(t.id) ?? null) }));
+  } catch {
+    return threads.map((t) => ({ ...t, _badge: null as null }));
+  }
+}
+
 /** One owned, live thread with its messages in seq order (deep-link / refetch). */
 export async function getCoworkThread(ownerId: string, threadId: string) {
   return prisma.chatThread.findFirst({

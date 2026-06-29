@@ -1,5 +1,7 @@
 "use client";
 import React, { useState, useCallback, useEffect } from "react";
+import { useRouter } from "next/navigation";
+import { createProject, renameProject } from "@/lib/actions";
 import { listProjectThreadActivity } from "@/lib/thread-activity";
 import "../../app/otto/otto-theme.css";
 import { OttoNav } from "./OttoNav";
@@ -26,8 +28,18 @@ function IconMenu() {
   );
 }
 
+export type ProjectMeta = { id: string; name: string };
+
 export interface OttoAppProps {
   projectId: string;
+  /** All of the owner's projects (campaigns) for the Grok-style sidebar. */
+  projects?: ProjectMeta[];
+  /** The currently-open project (= projectId; explicit for nav highlighting). */
+  activeProjectId?: string;
+  /** Conversation metas across ALL projects — the sidebar nests these under their project. */
+  sidebarThreads?: ChatThreadDTO[];
+  /** Which thread to open on load (?thread=, falls back to most recent). */
+  initialActiveThreadId?: string | null;
   entities: EntityDTO[];
   threads: ChatThreadDTO[];
   balanceUsd: number;
@@ -54,6 +66,10 @@ export type OttoViewKey = "otto" | "stuff" | "library" | "templates" | "discover
 
 export function OttoApp({
   projectId,
+  projects = [],
+  activeProjectId,
+  sidebarThreads = [],
+  initialActiveThreadId,
   entities,
   threads: initialThreads,
   balanceUsd,
@@ -71,10 +87,11 @@ export function OttoApp({
   initialNavCollapsed,
   initialChatCollapsed,
 }: OttoAppProps) {
+  const router = useRouter();
   const [view, setView] = useState<OttoViewKey>(initialView ?? "otto");
   const [threads, setThreads] = useState<ChatThreadDTO[]>(initialThreads);
   const [activeThreadId, setActiveThreadId] = useState<string | null>(
-    initialThreads[0]?.id ?? null,
+    initialActiveThreadId ?? initialThreads[0]?.id ?? null,
   );
   const [balanceCredits, setBalanceCredits] = useState(initialBalanceCredits);
   const [drawerOpen, setDrawerOpen] = useState(false);
@@ -107,6 +124,37 @@ export function OttoApp({
     setActiveThreadId(null);
     setView("otto");
   }
+
+  // ── Multi-project (campaign = project) navigation ──
+  const curProjectId = activeProjectId ?? projectId;
+  const projectHref = useCallback((projId: string, threadId?: string) => {
+    const p = new URLSearchParams();
+    p.set("project", projId);
+    if (threadId) p.set("thread", threadId);
+    if (skin === "gb") p.set("skin", "gb");
+    return `/otto?${p.toString()}`;
+  }, [skin]);
+
+  const handleNewCampaign = useCallback(async () => {
+    try {
+      const res = await createProject("New campaign");
+      if (res && "id" in res) router.push(projectHref(res.id));
+    } catch (e) {
+      console.error("[handleNewCampaign] failed:", e);
+    }
+  }, [router, projectHref]);
+
+  // Switch to another project (optionally opening a specific thread). Same-project
+  // thread clicks are handled by state (snappy); cross-project goes through here.
+  const handleSwitchProject = useCallback((projId: string, threadId?: string) => {
+    if (projId === curProjectId && !threadId) return;
+    router.push(projectHref(projId, threadId));
+  }, [router, projectHref, curProjectId]);
+
+  const handleRenameProject = useCallback(async (projId: string, name: string) => {
+    const res = await renameProject(projId, name);
+    if (res && "ok" in res) router.refresh();
+  }, [router]);
 
   async function handleDeleteThread(id: string) {
     const snapshot = threads;
@@ -184,13 +232,14 @@ export function OttoApp({
         onToggleCollapse={() => setNavCollapsed((v) => !v)}
         view={view}
         onViewChange={setView}
-        threads={threads}
+        projects={projects}
+        activeProjectId={curProjectId}
+        sidebarThreads={sidebarThreads}
         activeThreadId={activeThreadId}
         onSelectThread={setActiveThreadId}
-        onNewCampaign={() => {
-          setView("otto");
-          setActiveThreadId(null);
-        }}
+        onSwitchProject={handleSwitchProject}
+        onRenameProject={handleRenameProject}
+        onNewCampaign={handleNewCampaign}
         onDeleteThread={handleDeleteThread}
         balanceCredits={balanceCredits}
         userName={userName}
