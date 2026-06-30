@@ -42,15 +42,18 @@ the surface, delete each `fk` primitive as its **last** consumer moves off it, s
 increment (the app keeps working — shadcn and fk render the same Grok-bright values, so
 each surface flips cleanly).
 
-- **S0 — Foundation** (unblocks everything):
-  - apply `.gb` at the root `layout.tsx`;
+- **S0 — Foundation** (unblocks everything; **additive, zero-visual-risk** — plan: `docs/superpowers/plans/2026-06-30-shadcn-S0-foundation.md`):
   - `npx shadcn add` the stock components the app needs to match the fk set
     (avatar, checkbox, progress, select, switch, tabs, textarea, tooltip, sonner/toast,
     + any others a surface needs) — they auto-theme from `.gb`;
-  - author a **fk → .gb token-mapping reference** (e.g. `--brand`→`--primary`,
-    surfaces/text/border/accent) so every later conversion is consistent;
-  - **delete `components/studio` + `app/studio`** after confirming nothing load-bearing
-    imports them.
+  - author a **fk → .gb token-mapping reference** (`docs/ui-rework/fk-to-gb-token-map.md`)
+    so every later conversion is consistent;
+  - **Deferred (safety, found during S0 grounding):** the **global root `.gb` flip**
+    moves to **S4 teardown** (applying `.gb` on `<body>` now would flip the bg/color/font
+    under the still-Vapor admin pages — each surface wraps its own root in `.gb` as it
+    migrates, like login/billing); **deleting `components/studio` + `app/studio`** moves
+    to **S2/S3** because `components/Editor.tsx` links to `/studio` (the studio+Editor
+    legacy pair is deleted together).
 - **S1 — Otto app** (the product; the biggest, sub-split into its own plans):
   S1a nav (`OttoNav`) → S1b the simple views (`OttoAccount` [already shadcn-ish via the
   new settings page], `OttoConnections`, `OttoStuff`, `OttoMemory`, `OttoLibrary`,
