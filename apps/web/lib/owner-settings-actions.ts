@@ -27,7 +27,11 @@ export async function setOwnerSetting<K extends keyof OwnerSettings>(
     select: { settings: true },
   });
   const next = { ...mergeSettings(org?.settings ?? null), [key]: value };
-  await prisma.organization.update({ where: { id: gate.ownerId }, data: { settings: next } });
+  try {
+    await prisma.organization.update({ where: { id: gate.ownerId }, data: { settings: next } });
+  } catch {
+    return { error: "Failed to save setting." };
+  }
   revalidatePath("/", "layout");
   return { ok: true };
 }
