@@ -184,15 +184,9 @@ export function buildSettingsSections(args: {
                     : "Not connected"}
               </div>
             </div>
-            {c.status === "connected" ? (
-              <a className="cv-set-btn" href={c.connectUrl}>
-                Manage
-              </a>
-            ) : (
-              <a className="cv-set-btn" href={c.connectUrl}>
-                {c.status === "needs_reconnect" ? "Reconnect" : "Connect"}
-              </a>
-            )}
+            <a className="cv-set-btn" href={c.connectUrl}>
+              {c.status === "connected" ? "Manage" : c.status === "needs_reconnect" ? "Reconnect" : "Connect"}
+            </a>
           </div>
         ),
       })),
@@ -261,6 +255,7 @@ export function buildSettingsSections(args: {
           id: "tz",
           label: "Time zone",
           value: settings.timezone,
+          readOnly: true,
         },
         {
           kind: "text",
@@ -268,6 +263,7 @@ export function buildSettingsSections(args: {
           label: "Default posting times",
           hint: "Comma-separated, e.g. 09:00,18:00",
           value: settings.defaultPostTimes,
+          readOnly: true,
         },
       ],
     },
