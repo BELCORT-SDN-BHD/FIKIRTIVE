@@ -274,8 +274,12 @@ export function OttoNav({
         }}
         aria-hidden
       />
+    {/* leading-[1.65] pins the line-height the nav currently INHERITS from the .fk
+        ancestor (--leading-relaxed); it survives S4 teardown (when .fk/otto-theme.css is
+        removed and .gb — which sets no line-height — applies at the root). Value-identical
+        today → zero visual change; without it the nav text compacts post-teardown. */}
     <nav
-      className={`otto-nav gb flex flex-col overflow-hidden bg-card${drawerOpen ? " otto-nav--open" : ""}`}
+      className={`otto-nav gb flex flex-col overflow-hidden bg-card leading-[1.65]${drawerOpen ? " otto-nav--open" : ""}`}
       style={{
         width: collapsed ? 0 : 240,
         flexShrink: 0,
