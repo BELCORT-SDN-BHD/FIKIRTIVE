@@ -11,8 +11,8 @@ export function ImpersonationBanner() {
     <div
       role="alert"
       style={{
-        background: "#7c2d12",
-        color: "#fff",
+        background: "var(--error)",
+        color: "var(--primary-foreground)",
         padding: "8px 16px",
         display: "grid",
         gap: 4,
@@ -33,8 +33,8 @@ export function ImpersonationBanner() {
           }
           style={{
             font: "var(--text-body)",
-            color: "#7c2d12",
-            background: "#fff",
+            color: "var(--error)",
+            background: "var(--background)",
             border: "none",
             borderRadius: 8,
             padding: "4px 12px",
@@ -46,7 +46,7 @@ export function ImpersonationBanner() {
           {pending ? "Stopping…" : "Stop impersonating"}
         </button>
       </div>
-      {err && <span style={{ font: "var(--text-caption)", color: "#fff" }}>{err}</span>}
+      {err && <span style={{ font: "var(--text-caption)", color: "var(--primary-foreground)" }}>{err}</span>}
     </div>
   );
 }

@@ -19,56 +19,56 @@ export function ContentAdmin({ gens, blocks, filterOrgId }: { gens: GenRow[]; bl
   return (
     <main style={{ maxWidth: 980, margin: "0 auto", padding: "32px 24px", display: "grid", gap: 20 }}>
       {filterOrgId && (
-        <div style={{ display: "flex", alignItems: "center", gap: 10, padding: "8px 12px", borderRadius: 8, background: "var(--bg-2)", border: "1px solid var(--line-1)" }}>
-          <span style={{ font: "var(--text-caption)", color: "var(--fg-2)" }}>Filtered to merchant <code style={{ font: "var(--text-mono-meta)" }}>{filterOrgId}</code></span>
-          <Link href="/admin/content" style={{ font: "var(--text-mono-meta)", color: "var(--fg-3)", textDecoration: "none", marginLeft: "auto" }}>Show all</Link>
+        <div style={{ display: "flex", alignItems: "center", gap: 10, padding: "8px 12px", borderRadius: 8, background: "var(--muted)", border: "1px solid var(--border)" }}>
+          <span style={{ font: "var(--text-caption)", color: "var(--muted-foreground)" }}>Filtered to merchant <code style={{ font: "var(--text-mono-meta)" }}>{filterOrgId}</code></span>
+          <Link href="/admin/content" style={{ font: "var(--text-mono-meta)", color: "var(--muted-foreground)", textDecoration: "none", marginLeft: "auto" }}>Show all</Link>
         </div>
       )}
       <header style={{ display: "grid", gap: 4 }}>
-        <h1 style={{ font: "var(--text-display)", color: "var(--fg-1)", margin: 0 }}>Content review</h1>
-        <p style={{ font: "var(--text-body)", color: "var(--fg-3)", margin: 0 }}>
+        <h1 style={{ font: "var(--text-display)", color: "var(--foreground)", margin: 0 }}>Content review</h1>
+        <p style={{ font: "var(--text-body)", color: "var(--muted-foreground)", margin: 0 }}>
           Recently produced media for moderation review, plus the guardian-block signal. Review-only — no enforcement actions in this phase.
         </p>
         <nav style={{ display: "flex", gap: 6, marginTop: 4 }}>
-          <Link href="/admin/audit" style={{ font: "var(--text-mono-meta)", padding: "3px 8px", borderRadius: 6, background: "var(--bg-2)", color: "var(--fg-1)", textDecoration: "none" }}>Audit log →</Link>
+          <Link href="/admin/audit" style={{ font: "var(--text-mono-meta)", padding: "3px 8px", borderRadius: 6, background: "var(--muted)", color: "var(--foreground)", textDecoration: "none" }}>Audit log →</Link>
         </nav>
       </header>
 
-      <section style={{ display: "grid", gap: 8, padding: 16, border: "1px solid var(--line-1)", borderRadius: 12, background: "var(--bg-1)" }}>
-        <h2 style={{ font: "var(--text-title)", color: "var(--fg-1)", margin: 0 }}>Recent media</h2>
-        {gens.length === 0 && <p style={{ font: "var(--text-caption)", color: "var(--fg-3)", margin: 0 }}>No media yet.</p>}
+      <section style={{ display: "grid", gap: 8, padding: 16, border: "1px solid var(--border)", borderRadius: 12, background: "var(--card)" }}>
+        <h2 style={{ font: "var(--text-title)", color: "var(--foreground)", margin: 0 }}>Recent media</h2>
+        {gens.length === 0 && <p style={{ font: "var(--text-caption)", color: "var(--muted-foreground)", margin: 0 }}>No media yet.</p>}
         <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(180px, 1fr))", gap: 12 }}>
           {gens.map((g) => (
-            <div key={g.id} style={{ display: "grid", gap: 4, padding: 8, border: "1px solid var(--line-2)", borderRadius: 10, background: "var(--bg-2)" }}>
+            <div key={g.id} style={{ display: "grid", gap: 4, padding: 8, border: "1px solid var(--border)", borderRadius: 10, background: "var(--muted)" }}>
               {g.kind === "video" ? (
-                <video src={g.src} controls muted playsInline style={{ width: "100%", aspectRatio: "1 / 1", objectFit: "cover", borderRadius: 6, background: "var(--bg-1)" }} />
+                <video src={g.src} controls muted playsInline style={{ width: "100%", aspectRatio: "1 / 1", objectFit: "cover", borderRadius: 6, background: "var(--card)" }} />
               ) : (
                 // eslint-disable-next-line @next/next/no-img-element
-                <img src={g.src} alt={g.prompt.slice(0, 80)} loading="lazy" style={{ width: "100%", aspectRatio: "1 / 1", objectFit: "cover", borderRadius: 6, background: "var(--bg-1)" }} />
+                <img src={g.src} alt={g.prompt.slice(0, 80)} loading="lazy" style={{ width: "100%", aspectRatio: "1 / 1", objectFit: "cover", borderRadius: 6, background: "var(--card)" }} />
               )}
               <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
-                <span style={{ font: "var(--text-mono-meta)", color: "var(--fg-3)" }}>{g.kind}</span>
-                <span style={{ font: "var(--text-mono-meta)", color: "var(--fg-3)", marginLeft: "auto" }}>{g.createdAt.slice(0, 10)}</span>
+                <span style={{ font: "var(--text-mono-meta)", color: "var(--muted-foreground)" }}>{g.kind}</span>
+                <span style={{ font: "var(--text-mono-meta)", color: "var(--muted-foreground)", marginLeft: "auto" }}>{g.createdAt.slice(0, 10)}</span>
               </div>
-              <span style={{ font: "var(--text-caption)", color: "var(--fg-2)" }}>{g.project}</span>
-              <span style={{ font: "var(--text-caption)", color: "var(--fg-3)", display: "-webkit-box", WebkitLineClamp: 3, WebkitBoxOrient: "vertical", overflow: "hidden" }}>{g.prompt || "(no prompt)"}</span>
-              {g.modelRef && <span style={{ font: "var(--text-mono-meta)", color: "var(--fg-4)" }}>{g.modelRef}</span>}
+              <span style={{ font: "var(--text-caption)", color: "var(--muted-foreground)" }}>{g.project}</span>
+              <span style={{ font: "var(--text-caption)", color: "var(--muted-foreground)", display: "-webkit-box", WebkitLineClamp: 3, WebkitBoxOrient: "vertical", overflow: "hidden" }}>{g.prompt || "(no prompt)"}</span>
+              {g.modelRef && <span style={{ font: "var(--text-mono-meta)", color: "color-mix(in oklab, var(--muted-foreground) 55%, transparent)" }}>{g.modelRef}</span>}
             </div>
           ))}
         </div>
       </section>
 
-      <section style={{ display: "grid", gap: 6, padding: 16, border: "1px solid var(--line-1)", borderRadius: 12, background: "var(--bg-1)" }}>
-        <h2 style={{ font: "var(--text-title)", color: "var(--fg-1)", margin: 0 }}>Guardian blocks</h2>
-        <p style={{ font: "var(--text-caption)", color: "var(--fg-3)", margin: 0 }}>The existing moderation signal — generations the guardian refused. Review-only.</p>
-        {blocks.length === 0 && <p style={{ font: "var(--text-caption)", color: "var(--fg-3)", margin: 0 }}>No blocks.</p>}
+      <section style={{ display: "grid", gap: 6, padding: 16, border: "1px solid var(--border)", borderRadius: 12, background: "var(--card)" }}>
+        <h2 style={{ font: "var(--text-title)", color: "var(--foreground)", margin: 0 }}>Guardian blocks</h2>
+        <p style={{ font: "var(--text-caption)", color: "var(--muted-foreground)", margin: 0 }}>The existing moderation signal — generations the guardian refused. Review-only.</p>
+        {blocks.length === 0 && <p style={{ font: "var(--text-caption)", color: "var(--muted-foreground)", margin: 0 }}>No blocks.</p>}
         {blocks.map((b) => (
-          <div key={b.id} style={{ display: "grid", gap: 2, padding: "6px 0", borderBottom: "1px solid var(--line-2)" }}>
+          <div key={b.id} style={{ display: "grid", gap: 2, padding: "6px 0", borderBottom: "1px solid var(--border)" }}>
             <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
-              <span style={{ font: "var(--text-mono-meta)", color: "var(--fg-1)" }}>gen.guardian-block</span>
-              <span style={{ font: "var(--text-caption)", color: "var(--fg-4)", marginLeft: "auto" }}>{b.createdAt.slice(0, 19).replace("T", " ")}</span>
+              <span style={{ font: "var(--text-mono-meta)", color: "var(--foreground)" }}>gen.guardian-block</span>
+              <span style={{ font: "var(--text-caption)", color: "color-mix(in oklab, var(--muted-foreground) 55%, transparent)", marginLeft: "auto" }}>{b.createdAt.slice(0, 19).replace("T", " ")}</span>
             </div>
-            <code style={{ font: "var(--text-mono-meta)", color: "var(--fg-3)", whiteSpace: "pre-wrap", wordBreak: "break-all" }}>{b.payload}</code>
+            <code style={{ font: "var(--text-mono-meta)", color: "var(--muted-foreground)", whiteSpace: "pre-wrap", wordBreak: "break-all" }}>{b.payload}</code>
           </div>
         ))}
       </section>

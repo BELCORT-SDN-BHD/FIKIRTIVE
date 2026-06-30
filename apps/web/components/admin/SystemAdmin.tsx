@@ -14,13 +14,13 @@ const usd = (n: number) => `$${n.toFixed(2)}`;
 
 function QueueCard({ title, counts, order }: { title: string; counts: StatusCounts; order: string[] }) {
   return (
-    <div style={{ display: "grid", gap: 8, padding: 16, border: "1px solid var(--line-1)", borderRadius: 12, background: "var(--bg-1)" }}>
-      <h2 style={{ font: "var(--text-title)", color: "var(--fg-1)", margin: 0 }}>{title}</h2>
+    <div style={{ display: "grid", gap: 8, padding: 16, border: "1px solid var(--border)", borderRadius: 12, background: "var(--card)" }}>
+      <h2 style={{ font: "var(--text-title)", color: "var(--foreground)", margin: 0 }}>{title}</h2>
       <div style={{ display: "flex", flexWrap: "wrap", gap: 18 }}>
         {order.map((s) => (
           <div key={s} style={{ display: "grid", gap: 2 }}>
-            <span style={{ font: "var(--text-mono-meta)", color: s === "FAILED" && (counts[s] ?? 0) > 0 ? "#e5484d" : "var(--fg-3)" }}>{s}</span>
-            <span style={{ font: "var(--text-display)", color: "var(--fg-1)" }}>{counts[s] ?? 0}</span>
+            <span style={{ font: "var(--text-mono-meta)", color: s === "FAILED" && (counts[s] ?? 0) > 0 ? "#e5484d" : "var(--muted-foreground)" }}>{s}</span>
+            <span style={{ font: "var(--text-display)", color: "var(--foreground)" }}>{counts[s] ?? 0}</span>
           </div>
         ))}
       </div>
@@ -37,20 +37,20 @@ export function SystemAdmin({
   return (
     <main style={{ maxWidth: 980, margin: "0 auto", padding: "32px 24px", display: "grid", gap: 20 }}>
       <header style={{ display: "grid", gap: 4 }}>
-        <h1 style={{ font: "var(--text-display)", color: "var(--fg-1)", margin: 0 }}>System &amp; queue</h1>
-        <p style={{ font: "var(--text-body)", color: "var(--fg-3)", margin: 0 }}>
+        <h1 style={{ font: "var(--text-display)", color: "var(--foreground)", margin: 0 }}>System &amp; queue</h1>
+        <p style={{ font: "var(--text-body)", color: "var(--muted-foreground)", margin: 0 }}>
           Health of the generation, reference, and render job tables — what&apos;s queued, in flight, done, or failing. Read-only — this view summarizes the app job tables, it never touches the queue.
         </p>
       </header>
 
-      <section style={{ display: "flex", gap: 24, padding: 16, border: "1px solid var(--line-1)", borderRadius: 12, background: "var(--bg-1)" }}>
+      <section style={{ display: "flex", gap: 24, padding: 16, border: "1px solid var(--border)", borderRadius: 12, background: "var(--card)" }}>
         <div style={{ display: "grid", gap: 2 }}>
-          <span style={{ font: "var(--text-mono-meta)", color: "var(--fg-3)" }}>IN FLIGHT</span>
-          <span style={{ font: "var(--text-display)", color: "var(--fg-1)" }}>{activeCount}</span>
+          <span style={{ font: "var(--text-mono-meta)", color: "var(--muted-foreground)" }}>IN FLIGHT</span>
+          <span style={{ font: "var(--text-display)", color: "var(--foreground)" }}>{activeCount}</span>
         </div>
         <div style={{ display: "grid", gap: 2 }}>
-          <span style={{ font: "var(--text-mono-meta)", color: "var(--fg-3)" }}>SPEND TODAY</span>
-          <span style={{ font: "var(--text-display)", color: "var(--fg-1)" }}>{usd(spendTodayUsd)}</span>
+          <span style={{ font: "var(--text-mono-meta)", color: "var(--muted-foreground)" }}>SPEND TODAY</span>
+          <span style={{ font: "var(--text-display)", color: "var(--foreground)" }}>{usd(spendTodayUsd)}</span>
         </div>
       </section>
 
@@ -58,19 +58,19 @@ export function SystemAdmin({
       <QueueCard title="Reference jobs" counts={refGenCounts} order={["QUEUED", "GENERATING", "DONE", "FAILED"]} />
       <QueueCard title="Render jobs" counts={renderCounts} order={["QUEUED", "RENDERING", "DONE", "FAILED"]} />
 
-      <section style={{ display: "grid", gap: 8, padding: 16, border: "1px solid var(--line-1)", borderRadius: 12, background: "var(--bg-1)" }}>
-        <h2 style={{ font: "var(--text-title)", color: "var(--fg-1)", margin: 0 }}>Recent failures</h2>
-        {failed.length === 0 && <p style={{ font: "var(--text-caption)", color: "var(--fg-3)", margin: 0 }}>No failed jobs.</p>}
+      <section style={{ display: "grid", gap: 8, padding: 16, border: "1px solid var(--border)", borderRadius: 12, background: "var(--card)" }}>
+        <h2 style={{ font: "var(--text-title)", color: "var(--foreground)", margin: 0 }}>Recent failures</h2>
+        {failed.length === 0 && <p style={{ font: "var(--text-caption)", color: "var(--muted-foreground)", margin: 0 }}>No failed jobs.</p>}
         {failed.map((f) => (
-          <div key={`${f.table}:${f.id}`} style={{ display: "grid", gap: 2, padding: "6px 0", borderBottom: "1px solid var(--line-2)" }}>
+          <div key={`${f.table}:${f.id}`} style={{ display: "grid", gap: 2, padding: "6px 0", borderBottom: "1px solid var(--border)" }}>
             <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
-              <span style={{ font: "var(--text-mono-meta)", color: "var(--fg-3)", minWidth: 70 }}>{f.table}</span>
-              <span style={{ font: "var(--text-mono-meta)", color: "var(--fg-3)", minWidth: 90 }}>{f.kind}</span>
-              <span style={{ font: "var(--text-mono-meta)", color: "var(--fg-3)", minWidth: 110 }}>{f.model}</span>
-              <span style={{ font: "var(--text-caption)", color: "var(--fg-4)", marginLeft: "auto" }}>{f.finishedAt.slice(0, 19).replace("T", " ")}</span>
+              <span style={{ font: "var(--text-mono-meta)", color: "var(--muted-foreground)", minWidth: 70 }}>{f.table}</span>
+              <span style={{ font: "var(--text-mono-meta)", color: "var(--muted-foreground)", minWidth: 90 }}>{f.kind}</span>
+              <span style={{ font: "var(--text-mono-meta)", color: "var(--muted-foreground)", minWidth: 110 }}>{f.model}</span>
+              <span style={{ font: "var(--text-caption)", color: "color-mix(in oklab, var(--muted-foreground) 55%, transparent)", marginLeft: "auto" }}>{f.finishedAt.slice(0, 19).replace("T", " ")}</span>
             </div>
             <code style={{ font: "var(--text-mono-meta)", color: "#e5484d", whiteSpace: "pre-wrap", wordBreak: "break-all" }}>{f.error || "(no error message)"}</code>
-            <span style={{ font: "var(--text-mono-meta)", color: "var(--fg-4)" }}>{f.id}</span>
+            <span style={{ font: "var(--text-mono-meta)", color: "color-mix(in oklab, var(--muted-foreground) 55%, transparent)" }}>{f.id}</span>
           </div>
         ))}
       </section>

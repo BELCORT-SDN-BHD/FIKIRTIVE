@@ -63,11 +63,11 @@ function Cell({ cell }: { cell: AdminCell }) {
   const rulesText = cell.rules && typeof cell.rules === "object" ? JSON.stringify(cell.rules) : "";
 
   return (
-    <div style={{ display: "grid", gap: 6, padding: 12, border: "1px solid var(--line-1)", borderRadius: 10, background: "var(--bg-1)" }}>
+    <div style={{ display: "grid", gap: 6, padding: 12, border: "1px solid var(--border)", borderRadius: 10, background: "var(--card)" }}>
       <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
-        <span style={{ font: "var(--text-mono)", color: "var(--fg-2)" }}>{cell.mode}</span>
+        <span style={{ font: "var(--text-mono)", color: "var(--muted-foreground)" }}>{cell.mode}</span>
         {!base.exists && <Badge tone="neutral">unset</Badge>}
-        {rulesText && <span title={rulesText} style={{ font: "var(--text-mono)", color: "var(--fg-3)", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", maxWidth: 220 }}>{rulesText}</span>}
+        {rulesText && <span title={rulesText} style={{ font: "var(--text-mono)", color: "var(--muted-foreground)", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", maxWidth: 220 }}>{rulesText}</span>}
       </div>
       <textarea
         value={directive}
@@ -75,17 +75,17 @@ function Cell({ cell }: { cell: AdminCell }) {
         rows={3}
         placeholder="family-neutral base (no directive)"
         maxLength={2000}
-        style={{ width: "100%", resize: "vertical", font: "var(--text-body)", color: "var(--fg-1)", background: "var(--bg-2)", border: "1px solid var(--line-1)", borderRadius: 8, padding: "8px 10px" }}
+        style={{ width: "100%", resize: "vertical", font: "var(--text-body)", color: "var(--foreground)", background: "var(--muted)", border: "1px solid var(--border)", borderRadius: 8, padding: "8px 10px" }}
       />
       <div style={{ display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap" }}>
-        <label style={{ display: "flex", alignItems: "center", gap: 6, font: "var(--text-caption)", color: "var(--fg-2)" }}>
+        <label style={{ display: "flex", alignItems: "center", gap: 6, font: "var(--text-caption)", color: "var(--muted-foreground)" }}>
           <span>confidence</span>
-          <select value={confidence} onChange={(e) => setConfidence(e.target.value)} style={{ font: "var(--text-caption)", padding: "3px 6px", borderRadius: 6, background: "var(--bg-2)", color: "var(--fg-1)", border: "1px solid var(--line-1)" }}>
+          <select value={confidence} onChange={(e) => setConfidence(e.target.value)} style={{ font: "var(--text-caption)", padding: "3px 6px", borderRadius: 6, background: "var(--muted)", color: "var(--foreground)", border: "1px solid var(--border)" }}>
             {CONFIDENCE_LEVELS.map((c) => <option key={c} value={c}>{c}</option>)}
           </select>
           <Badge tone={CONFIDENCE_TONE[confidence] ?? "neutral"} dot>{confidence}</Badge>
         </label>
-        <label style={{ display: "flex", alignItems: "center", gap: 6, font: "var(--text-caption)", color: "var(--fg-2)" }}>
+        <label style={{ display: "flex", alignItems: "center", gap: 6, font: "var(--text-caption)", color: "var(--muted-foreground)" }}>
           <input type="checkbox" checked={enabled} onChange={(e) => setEnabled(e.target.checked)} />
           <span>enabled</span>
         </label>
@@ -118,11 +118,11 @@ export function DirectivesAdmin({ families, modes, cells }: { families: string[]
     <div style={{ display: "grid", gap: 24 }}>
       <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
         <Button variant="glass" size="sm" disabled={seeding} onClick={seed}>{seeding ? "Seeding…" : "Seed research defaults"}</Button>
-        {seedMsg && <span style={{ font: "var(--text-caption)", color: "var(--fg-2)" }}>{seedMsg}</span>}
+        {seedMsg && <span style={{ font: "var(--text-caption)", color: "var(--muted-foreground)" }}>{seedMsg}</span>}
       </div>
       {families.map((family) => (
         <section key={family} style={{ display: "grid", gap: 10 }}>
-          <h2 style={{ font: "var(--text-title)", color: "var(--fg-1)", margin: 0, textTransform: "capitalize" }}>{family}</h2>
+          <h2 style={{ font: "var(--text-title)", color: "var(--foreground)", margin: 0, textTransform: "capitalize" }}>{family}</h2>
           <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(320px, 1fr))", gap: 10 }}>
             {modes.map((mode) => {
               const cell = byKey.get(`${family}:${mode}`)!;

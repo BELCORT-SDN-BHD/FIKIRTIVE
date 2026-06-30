@@ -13,13 +13,13 @@ import type { TenantDetail as Detail } from "@/lib/tenant-admin";
 import { grantTenantCredits, setMembershipStatus, cutTenantSessions, impersonateTenant } from "@/lib/tenant-actions";
 
 const BADGE_COLORS: Record<string, string> = {
-  active: "var(--fg-2)",
+  active: "var(--muted-foreground)",
   suspended: "#e5484d",
   revoked: "#e5484d",
 };
 
 function statusColor(s: string): string {
-  return BADGE_COLORS[s] ?? "var(--fg-3)";
+  return BADGE_COLORS[s] ?? "var(--muted-foreground)";
 }
 
 function fmtDate(iso: string): string {
@@ -117,22 +117,22 @@ export function TenantDetail({ detail }: { detail: Detail }) {
       {/* Back link */}
       <Link
         href="/admin/tenants"
-        style={{ font: "var(--text-caption)", color: "var(--fg-3)", textDecoration: "none", width: "fit-content" }}
+        style={{ font: "var(--text-caption)", color: "var(--muted-foreground)", textDecoration: "none", width: "fit-content" }}
       >
         ← Tenants
       </Link>
 
       {/* Header */}
       <header style={{ display: "grid", gap: 4 }}>
-        <h1 style={{ font: "var(--text-display)", color: "var(--fg-1)", margin: 0 }}>
+        <h1 style={{ font: "var(--text-display)", color: "var(--foreground)", margin: 0 }}>
           {ownerEmail || name || orgId}
         </h1>
         <div style={{ display: "flex", gap: 16, alignItems: "center", flexWrap: "wrap" }}>
-          <span style={{ font: "var(--text-mono-meta)", color: "var(--fg-4)" }}>{orgId}</span>
+          <span style={{ font: "var(--text-mono-meta)", color: "color-mix(in oklab, var(--muted-foreground) 55%, transparent)" }}>{orgId}</span>
           <span style={{ font: "var(--text-body)", color: statusColor(status) }}>{status}</span>
           <Link
             href={`/admin/content?orgId=${orgId}`}
-            style={{ font: "var(--text-mono-meta)", padding: "3px 8px", borderRadius: 6, background: "var(--bg-2)", color: "var(--fg-1)", textDecoration: "none", marginLeft: "auto" }}
+            style={{ font: "var(--text-mono-meta)", padding: "3px 8px", borderRadius: 6, background: "var(--muted)", color: "var(--foreground)", textDecoration: "none", marginLeft: "auto" }}
           >
             View content →
           </Link>
@@ -140,93 +140,93 @@ export function TenantDetail({ detail }: { detail: Detail }) {
       </header>
 
       {/* Stats row */}
-      <section style={{ display: "flex", flexWrap: "wrap", gap: 24, padding: 16, border: "1px solid var(--line-1)", borderRadius: 12, background: "var(--bg-1)" }}>
+      <section style={{ display: "flex", flexWrap: "wrap", gap: 24, padding: 16, border: "1px solid var(--border)", borderRadius: 12, background: "var(--card)" }}>
         <div style={{ display: "grid", gap: 2 }}>
-          <span style={{ font: "var(--text-mono-meta)", color: "var(--fg-3)" }}>BALANCE</span>
-          <span style={{ font: "var(--text-display)", color: "var(--fg-1)" }}>{balance.toLocaleString()}</span>
-          <span style={{ font: "var(--text-caption)", color: "var(--fg-4)" }}>credits</span>
+          <span style={{ font: "var(--text-mono-meta)", color: "var(--muted-foreground)" }}>BALANCE</span>
+          <span style={{ font: "var(--text-display)", color: "var(--foreground)" }}>{balance.toLocaleString()}</span>
+          <span style={{ font: "var(--text-caption)", color: "color-mix(in oklab, var(--muted-foreground) 55%, transparent)" }}>credits</span>
         </div>
         {reserved > 0 && (
           <div style={{ display: "grid", gap: 2 }}>
-            <span style={{ font: "var(--text-mono-meta)", color: "var(--fg-3)" }}>RESERVED</span>
-            <span style={{ font: "var(--text-display)", color: "var(--fg-1)" }}>{reserved.toLocaleString()}</span>
-            <span style={{ font: "var(--text-caption)", color: "var(--fg-4)" }}>in-flight</span>
+            <span style={{ font: "var(--text-mono-meta)", color: "var(--muted-foreground)" }}>RESERVED</span>
+            <span style={{ font: "var(--text-display)", color: "var(--foreground)" }}>{reserved.toLocaleString()}</span>
+            <span style={{ font: "var(--text-caption)", color: "color-mix(in oklab, var(--muted-foreground) 55%, transparent)" }}>in-flight</span>
           </div>
         )}
         <div style={{ display: "grid", gap: 2 }}>
-          <span style={{ font: "var(--text-mono-meta)", color: "var(--fg-3)" }}>TRUE COST</span>
-          <span style={{ font: "var(--text-display)", color: "var(--fg-1)" }}>{fmtUsd(spentUsd)}</span>
-          <span style={{ font: "var(--text-caption)", color: "var(--fg-4)" }}>USD spent</span>
+          <span style={{ font: "var(--text-mono-meta)", color: "var(--muted-foreground)" }}>TRUE COST</span>
+          <span style={{ font: "var(--text-display)", color: "var(--foreground)" }}>{fmtUsd(spentUsd)}</span>
+          <span style={{ font: "var(--text-caption)", color: "color-mix(in oklab, var(--muted-foreground) 55%, transparent)" }}>USD spent</span>
         </div>
         <div style={{ display: "grid", gap: 2 }}>
-          <span style={{ font: "var(--text-mono-meta)", color: "var(--fg-3)" }}>PROJECTS</span>
-          <span style={{ font: "var(--text-display)", color: "var(--fg-1)" }}>{projectCount}</span>
+          <span style={{ font: "var(--text-mono-meta)", color: "var(--muted-foreground)" }}>PROJECTS</span>
+          <span style={{ font: "var(--text-display)", color: "var(--foreground)" }}>{projectCount}</span>
         </div>
         <div style={{ display: "grid", gap: 2 }}>
-          <span style={{ font: "var(--text-mono-meta)", color: "var(--fg-3)" }}>GENS</span>
-          <span style={{ font: "var(--text-display)", color: "var(--fg-1)" }}>{genCount}</span>
+          <span style={{ font: "var(--text-mono-meta)", color: "var(--muted-foreground)" }}>GENS</span>
+          <span style={{ font: "var(--text-display)", color: "var(--foreground)" }}>{genCount}</span>
         </div>
       </section>
 
       {/* Controls */}
-      <section style={{ display: "grid", gap: 10, padding: 16, border: "1px solid var(--line-1)", borderRadius: 12, background: "var(--bg-1)" }}>
-        <h2 style={{ font: "var(--text-title)", color: "var(--fg-1)", margin: 0 }}>Controls</h2>
+      <section style={{ display: "grid", gap: 10, padding: 16, border: "1px solid var(--border)", borderRadius: 12, background: "var(--card)" }}>
+        <h2 style={{ font: "var(--text-title)", color: "var(--foreground)", margin: 0 }}>Controls</h2>
 
         {/* Grant credits form */}
         <form onSubmit={submitGrant} style={{ display: "grid", gap: 8 }}>
-          <span style={{ font: "var(--text-caption)", color: "var(--fg-3)" }}>Grant / adjust credits (1 credit = $0.10; negative to deduct)</span>
+          <span style={{ font: "var(--text-caption)", color: "var(--muted-foreground)" }}>Grant / adjust credits (1 credit = $0.10; negative to deduct)</span>
           <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
             <input
               type="number" step="1" inputMode="numeric" value={grantAmount} onChange={(e) => setGrantAmount(e.target.value)}
               placeholder="e.g. 500" required
-              style={{ font: "var(--text-body)", color: "var(--fg-1)", background: "var(--bg-2)", border: "1px solid var(--line-1)", borderRadius: 8, padding: "6px 10px", width: 120 }}
+              style={{ font: "var(--text-body)", color: "var(--foreground)", background: "var(--muted)", border: "1px solid var(--border)", borderRadius: 8, padding: "6px 10px", width: 120 }}
             />
             <input
               type="text" maxLength={500} value={grantReason} onChange={(e) => setGrantReason(e.target.value)}
               placeholder="Reason (optional)"
-              style={{ font: "var(--text-body)", color: "var(--fg-1)", background: "var(--bg-2)", border: "1px solid var(--line-1)", borderRadius: 8, padding: "6px 10px", flex: "1 1 160px" }}
+              style={{ font: "var(--text-body)", color: "var(--foreground)", background: "var(--muted)", border: "1px solid var(--border)", borderRadius: 8, padding: "6px 10px", flex: "1 1 160px" }}
             />
             <button type="submit" disabled={grantBusy}
-              style={{ font: "var(--text-body)", color: "var(--bg-1)", background: "var(--fg-1)", border: "none", borderRadius: 8, padding: "6px 16px", cursor: grantBusy ? "default" : "pointer", opacity: grantBusy ? 0.6 : 1, whiteSpace: "nowrap" }}>
+              style={{ font: "var(--text-body)", color: "var(--card)", background: "var(--foreground)", border: "none", borderRadius: 8, padding: "6px 16px", cursor: grantBusy ? "default" : "pointer", opacity: grantBusy ? 0.6 : 1, whiteSpace: "nowrap" }}>
               {grantBusy ? "Applying…" : "Grant"}
             </button>
           </div>
-          {grantMsg && <span style={{ font: "var(--text-caption)", color: grantMsg.ok ? "var(--fg-2)" : "#e5484d" }}>{grantMsg.text}</span>}
+          {grantMsg && <span style={{ font: "var(--text-caption)", color: grantMsg.ok ? "var(--muted-foreground)" : "#e5484d" }}>{grantMsg.text}</span>}
         </form>
 
         {/* Suspend / Resume + Cut sessions */}
         <div style={{ display: "flex", gap: 10, flexWrap: "wrap", alignItems: "center", paddingTop: 4 }}>
           <button onClick={toggleStatus} disabled={statusBusy}
-            style={{ font: "var(--text-body)", color: status === "suspended" ? "var(--bg-1)" : "#fff", background: status === "suspended" ? "var(--fg-2)" : "#e5484d", border: "none", borderRadius: 8, padding: "6px 16px", cursor: statusBusy ? "default" : "pointer", opacity: statusBusy ? 0.6 : 1 }}>
+            style={{ font: "var(--text-body)", color: status === "suspended" ? "var(--card)" : "#fff", background: status === "suspended" ? "var(--muted-foreground)" : "#e5484d", border: "none", borderRadius: 8, padding: "6px 16px", cursor: statusBusy ? "default" : "pointer", opacity: statusBusy ? 0.6 : 1 }}>
             {statusBusy ? "…" : status === "suspended" ? "Resume" : "Suspend"}
           </button>
           <button onClick={cutSessions} disabled={cutBusy}
-            style={{ font: "var(--text-body)", color: "var(--fg-1)", background: "var(--bg-2)", border: "1px solid var(--line-1)", borderRadius: 8, padding: "6px 16px", cursor: cutBusy ? "default" : "pointer", opacity: cutBusy ? 0.6 : 1 }}>
+            style={{ font: "var(--text-body)", color: "var(--foreground)", background: "var(--muted)", border: "1px solid var(--border)", borderRadius: 8, padding: "6px 16px", cursor: cutBusy ? "default" : "pointer", opacity: cutBusy ? 0.6 : 1 }}>
             {cutBusy ? "Signing out…" : "Sign this merchant out now"}
           </button>
           <button onClick={startImpersonating} disabled={impersonateBusy}
-            style={{ font: "var(--text-body)", color: "var(--fg-1)", background: "var(--bg-2)", border: "1px solid var(--line-1)", borderRadius: 8, padding: "6px 16px", cursor: impersonateBusy ? "default" : "pointer", opacity: impersonateBusy ? 0.6 : 1 }}>
+            style={{ font: "var(--text-body)", color: "var(--foreground)", background: "var(--muted)", border: "1px solid var(--border)", borderRadius: 8, padding: "6px 16px", cursor: impersonateBusy ? "default" : "pointer", opacity: impersonateBusy ? 0.6 : 1 }}>
             {impersonateBusy ? "Impersonating…" : "Impersonate"}
           </button>
-          {statusMsg && <span style={{ font: "var(--text-caption)", color: statusMsg.ok ? "var(--fg-2)" : "#e5484d" }}>{statusMsg.text}</span>}
-          {cutMsg && <span style={{ font: "var(--text-caption)", color: cutMsg.ok ? "var(--fg-2)" : "#e5484d" }}>{cutMsg.text}</span>}
-          {impersonateMsg && <span style={{ font: "var(--text-caption)", color: impersonateMsg.ok ? "var(--fg-2)" : "#e5484d" }}>{impersonateMsg.text}</span>}
+          {statusMsg && <span style={{ font: "var(--text-caption)", color: statusMsg.ok ? "var(--muted-foreground)" : "#e5484d" }}>{statusMsg.text}</span>}
+          {cutMsg && <span style={{ font: "var(--text-caption)", color: cutMsg.ok ? "var(--muted-foreground)" : "#e5484d" }}>{cutMsg.text}</span>}
+          {impersonateMsg && <span style={{ font: "var(--text-caption)", color: impersonateMsg.ok ? "var(--muted-foreground)" : "#e5484d" }}>{impersonateMsg.text}</span>}
         </div>
       </section>
 
       {/* Credit ledger */}
-      <section style={{ display: "grid", gap: 8, padding: 16, border: "1px solid var(--line-1)", borderRadius: 12, background: "var(--bg-1)" }}>
-        <h2 style={{ font: "var(--text-title)", color: "var(--fg-1)", margin: 0 }}>Credit activity</h2>
+      <section style={{ display: "grid", gap: 8, padding: 16, border: "1px solid var(--border)", borderRadius: 12, background: "var(--card)" }}>
+        <h2 style={{ font: "var(--text-title)", color: "var(--foreground)", margin: 0 }}>Credit activity</h2>
         {ledger.length === 0 && (
-          <p style={{ font: "var(--text-caption)", color: "var(--fg-3)", margin: 0 }}>No ledger entries yet.</p>
+          <p style={{ font: "var(--text-caption)", color: "var(--muted-foreground)", margin: 0 }}>No ledger entries yet.</p>
         )}
         {ledger.map((row) => (
-          <div key={row.id} style={{ display: "flex", alignItems: "center", gap: 10, padding: "6px 0", borderBottom: "1px solid var(--line-2)" }}>
-            <span style={{ font: "var(--text-caption)", color: "var(--fg-4)", minWidth: 130, whiteSpace: "nowrap" }}>{fmtDate(row.createdAt)}</span>
-            <span style={{ font: "var(--text-body)", color: row.displayedDelta < 0 ? "#e5484d" : "var(--fg-1)", minWidth: 64 }}>
+          <div key={row.id} style={{ display: "flex", alignItems: "center", gap: 10, padding: "6px 0", borderBottom: "1px solid var(--border)" }}>
+            <span style={{ font: "var(--text-caption)", color: "color-mix(in oklab, var(--muted-foreground) 55%, transparent)", minWidth: 130, whiteSpace: "nowrap" }}>{fmtDate(row.createdAt)}</span>
+            <span style={{ font: "var(--text-body)", color: row.displayedDelta < 0 ? "#e5484d" : "var(--foreground)", minWidth: 64 }}>
               {row.displayedDelta > 0 ? "+" : ""}{row.displayedDelta.toLocaleString()}
             </span>
-            <span style={{ font: "var(--text-caption)", color: "var(--fg-3)", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+            <span style={{ font: "var(--text-caption)", color: "var(--muted-foreground)", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
               {row.reason || row.kind}
             </span>
           </div>
@@ -234,15 +234,15 @@ export function TenantDetail({ detail }: { detail: Detail }) {
       </section>
 
       {/* Audit log */}
-      <section style={{ display: "grid", gap: 8, padding: 16, border: "1px solid var(--line-1)", borderRadius: 12, background: "var(--bg-1)" }}>
-        <h2 style={{ font: "var(--text-title)", color: "var(--fg-1)", margin: 0 }}>Recent audit</h2>
+      <section style={{ display: "grid", gap: 8, padding: 16, border: "1px solid var(--border)", borderRadius: 12, background: "var(--card)" }}>
+        <h2 style={{ font: "var(--text-title)", color: "var(--foreground)", margin: 0 }}>Recent audit</h2>
         {audit.length === 0 && (
-          <p style={{ font: "var(--text-caption)", color: "var(--fg-3)", margin: 0 }}>No audit events yet.</p>
+          <p style={{ font: "var(--text-caption)", color: "var(--muted-foreground)", margin: 0 }}>No audit events yet.</p>
         )}
         {audit.map((row) => (
-          <div key={row.id} style={{ display: "flex", alignItems: "center", gap: 10, padding: "6px 0", borderBottom: "1px solid var(--line-2)" }}>
-            <span style={{ font: "var(--text-caption)", color: "var(--fg-4)", minWidth: 130, whiteSpace: "nowrap" }}>{fmtDate(row.createdAt)}</span>
-            <span style={{ font: "var(--text-mono-meta)", color: "var(--fg-2)" }}>{row.type}</span>
+          <div key={row.id} style={{ display: "flex", alignItems: "center", gap: 10, padding: "6px 0", borderBottom: "1px solid var(--border)" }}>
+            <span style={{ font: "var(--text-caption)", color: "color-mix(in oklab, var(--muted-foreground) 55%, transparent)", minWidth: 130, whiteSpace: "nowrap" }}>{fmtDate(row.createdAt)}</span>
+            <span style={{ font: "var(--text-mono-meta)", color: "var(--muted-foreground)" }}>{row.type}</span>
           </div>
         ))}
       </section>
