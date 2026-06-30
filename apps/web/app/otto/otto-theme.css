@@ -597,3 +597,9 @@
     transition-duration: 0.01ms !important;
   }
 }
+
+/* ── Settings toggle (no shadcn switch exists; gb-styled). */
+.fk.gb-skin .cv-switch { width: 40px; height: 23px; border-radius: 999px; border: none; background: var(--border-strong); position: relative; cursor: pointer; transition: background var(--dur-fast) var(--ease-out); }
+.fk.gb-skin .cv-switch::after { content: ""; position: absolute; top: 2.5px; left: 2.5px; width: 18px; height: 18px; border-radius: 50%; background: #fff; box-shadow: var(--shadow-sm); transition: left var(--dur-fast) var(--ease-out); }
+.fk.gb-skin .cv-switch.on { background: var(--brand); }
+.fk.gb-skin .cv-switch.on::after { left: 19.5px; }
