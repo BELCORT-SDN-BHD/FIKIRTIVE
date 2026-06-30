@@ -1,7 +1,9 @@
 "use client";
 import React, { useState } from "react";
 import { Download, Users, Images, Pencil, Trash2, Check, X, Search, AlertCircle, Film, ImageIcon } from "lucide-react";
-import { Tabs, Button, Input } from "@/components/fk";
+import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs";
+import { Button } from "@/components/ui/button";
+import { Input } from "@/components/ui/input";
 import type { EntityDTO } from "@/lib/types";
 import type { AdJobItem } from "@/lib/data";
 import { groupEntitiesByType } from "@/lib/entity-grouping";
@@ -68,31 +70,31 @@ function EntityTile({
   }
 
   return (
-    <div style={{ borderRadius: "var(--radius-lg)", overflow: "hidden", border: "1px solid var(--border-subtle)", background: "var(--surface-card)", boxShadow: "var(--shadow-sm)" }}>
-      <div style={{ aspectRatio: "1 / 1", background: "var(--surface-sunken)", display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", gap: "var(--space-2)" }}>
+    <div className="overflow-hidden rounded-[20px] border border-border bg-card shadow-sm">
+      <div className="flex aspect-square flex-col items-center justify-center gap-2 bg-muted">
         {imgErrored ? (
           <>
-            <AlertCircle size={20} color="var(--text-faint)" />
-            <span style={{ fontSize: "var(--text-xs)", color: "var(--text-muted)" }}>Couldn&apos;t load this</span>
+            <AlertCircle size={20} className="text-muted-foreground/70" />
+            <span className="text-[0.75rem] text-muted-foreground">Couldn&apos;t load this</span>
             <button
               type="button"
               onClick={() => { setImgErrored(false); setImgAttempt((a) => a + 1); }}
-              style={{ fontSize: "var(--text-xs)", color: "var(--accent)", background: "none", border: "none", cursor: "pointer", padding: 0, textDecoration: "underline" }}
+              className="cursor-pointer border-none bg-none p-0 text-[0.75rem] text-brand underline"
             >
               Reload
             </button>
           </>
         ) : imgSrc ? (
           // eslint-disable-next-line @next/next/no-img-element
-          <img key={imgSrc} src={imgSrc} alt={e.name} style={{ width: "100%", height: "100%", objectFit: "cover" }} onError={handleEntityImgError} />
+          <img key={imgSrc} src={imgSrc} alt={e.name} className="h-full w-full object-cover" onError={handleEntityImgError} />
         ) : (
           <>
-            <Users size={28} color="var(--text-faint)" />
-            <span style={{ fontSize: "var(--text-xs)", color: "var(--text-faint)" }}>No image yet</span>
+            <Users size={28} className="text-muted-foreground/70" />
+            <span className="text-[0.75rem] text-muted-foreground/70">No image yet</span>
           </>
         )}
       </div>
-      <div style={{ padding: "10px 12px" }}>
+      <div className="px-3 py-2.5">
         {editing ? (
           <div>
             <Input
@@ -101,23 +103,23 @@ function EntityTile({
               onKeyDown={(ev) => { if (ev.key === "Enter") saveRename(); if (ev.key === "Escape") cancelRename(); }}
               autoFocus
             />
-            {editError && <div role="alert" style={{ fontSize: "var(--text-xs)", color: "var(--error-700)", marginBottom: 4 }}>{editError}</div>}
-            <div style={{ display: "flex", gap: 4 }}>
+            {editError && <div role="alert" className="mb-1 text-[0.75rem] text-[var(--error-soft-foreground)]">{editError}</div>}
+            <div className="flex gap-1">
               <Button variant="ghost" size="sm" onClick={saveRename} disabled={saving} aria-label="Save"><Check size={14} /></Button>
               <Button variant="ghost" size="sm" onClick={cancelRename} aria-label="Cancel"><X size={14} /></Button>
             </div>
           </div>
         ) : (
           <div>
-            <div style={{ display: "flex", alignItems: "center", gap: 4 }}>
-              <div style={{ flex: 1, fontWeight: "var(--weight-semibold)" as React.CSSProperties["fontWeight"], fontSize: "var(--text-sm)", color: "var(--text-strong)", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+            <div className="flex items-center gap-1">
+              <div className="flex-1 overflow-hidden text-ellipsis whitespace-nowrap text-[0.875rem] font-semibold text-foreground">
                 {e.name}
               </div>
               <Button variant="ghost" size="sm" onClick={() => { setEditName(e.name); setEditError(null); setEditing(true); }} aria-label="Rename"><Pencil size={13} /></Button>
               <Button variant="ghost" size="sm" onClick={() => onDelete(e.id)} aria-label="Delete"><Trash2 size={13} /></Button>
             </div>
-            {editError && <div role="alert" style={{ fontSize: "var(--text-xs)", color: "var(--error-700)", marginTop: 2 }}>{editError}</div>}
-            <div style={{ fontSize: "var(--text-xs)", color: "var(--text-faint)", marginTop: 2 }}>
+            {editError && <div role="alert" className="mt-0.5 text-[0.75rem] text-[var(--error-soft-foreground)]">{editError}</div>}
+            <div className="mt-0.5 text-[0.75rem] text-muted-foreground/70">
               {e.type.toLowerCase()} · used {e.usageCount} {e.usageCount === 1 ? "time" : "times"}
             </div>
           </div>
@@ -129,27 +131,28 @@ function EntityTile({
 
 function AdJobCard({ job }: { job: AdJobItem }) {
   const isProcessing = job.status === "processing";
-  const pillBg = isProcessing ? "var(--warning-100, #fef3c7)" : "var(--error-100, #fee2e2)";
-  const pillColor = isProcessing ? "var(--warning-700, #b45309)" : "var(--error-700, #b91c1c)";
+  const pillClass = isProcessing
+    ? "bg-warning-soft text-warning-soft-foreground"
+    : "bg-error-soft text-[var(--error-soft-foreground)]";
   const pillLabel = isProcessing ? "Processing…" : "Didn't go through";
   const when = new Date(job.createdAt).toLocaleDateString(undefined, { month: "short", day: "numeric" });
 
   return (
-    <div style={{ borderRadius: "var(--radius-lg)", border: "1px solid var(--border-subtle)", background: "var(--surface-card)", padding: "var(--space-3)", display: "flex", flexDirection: "column", gap: "var(--space-2)" }}>
-      <div style={{ display: "flex", alignItems: "center", gap: "var(--space-2)" }}>
-        <span style={{ color: "var(--text-faint)" }}>
+    <div className="flex flex-col gap-2 rounded-[20px] border border-border bg-card p-3">
+      <div className="flex items-center gap-2">
+        <span className="text-muted-foreground/70">
           {job.kind === "video" ? <Film size={15} /> : <ImageIcon size={15} />}
         </span>
-        <span style={{ fontSize: "var(--text-xs)", fontWeight: "var(--weight-medium)" as React.CSSProperties["fontWeight"], padding: "2px 8px", borderRadius: 99, background: pillBg, color: pillColor }}>
+        <span className={`rounded-[99px] px-2 py-0.5 text-[0.75rem] font-medium ${pillClass}`}>
           {pillLabel}
         </span>
       </div>
       {job.prompt && (
-        <div style={{ fontSize: "var(--text-xs)", color: "var(--text-muted)", overflow: "hidden", display: "-webkit-box", WebkitLineClamp: 2, WebkitBoxOrient: "vertical" }}>
+        <div className="overflow-hidden text-[0.75rem] text-muted-foreground [-webkit-box-orient:vertical] [-webkit-line-clamp:2] [display:-webkit-box]">
           {job.prompt}
         </div>
       )}
-      <div style={{ fontSize: "var(--text-xs)", color: "var(--text-faint)" }}>{when}</div>
+      <div className="text-[0.75rem] text-muted-foreground/70">{when}</div>
     </div>
   );
 }
@@ -169,34 +172,24 @@ function AdMediaTile({ ad }: { ad: AdTile }) {
   const mediaAlt = ad.prompt ? `Generated image: ${ad.prompt}` : "Generated image";
 
   return (
-    <div style={{ position: "relative", borderRadius: "var(--radius-lg)", overflow: "hidden", border: "1px solid var(--border-subtle)", background: "var(--surface-sunken)" }}>
+    <div className="relative overflow-hidden rounded-[20px] border border-border bg-muted">
       {errored ? (
-        <div
-          style={{
-            display: "flex",
-            flexDirection: "column",
-            alignItems: "center",
-            justifyContent: "center",
-            gap: "var(--space-2)",
-            padding: "var(--space-6)",
-            minHeight: 120,
-          }}
-        >
-          <AlertCircle size={20} color="var(--text-faint)" />
-          <span style={{ fontSize: "var(--text-xs)", color: "var(--text-muted)" }}>Couldn&apos;t load this</span>
+        <div className="flex min-h-[120px] flex-col items-center justify-center gap-2 p-6">
+          <AlertCircle size={20} className="text-muted-foreground/70" />
+          <span className="text-[0.75rem] text-muted-foreground">Couldn&apos;t load this</span>
           <button
             type="button"
             onClick={() => { setErrored(false); setAttempt((a) => a + 1); }}
-            style={{ fontSize: "var(--text-xs)", color: "var(--accent)", background: "none", border: "none", cursor: "pointer", padding: 0, textDecoration: "underline" }}
+            className="cursor-pointer border-none bg-none p-0 text-[0.75rem] text-brand underline"
           >
             Reload
           </button>
         </div>
       ) : ad.kind === "video" ? (
-        <video key={src} src={src} controls muted loop playsInline style={{ width: "100%", display: "block" }} onError={handleMediaError} />
+        <video key={src} src={src} controls muted loop playsInline className="block w-full" onError={handleMediaError} />
       ) : (
         // eslint-disable-next-line @next/next/no-img-element
-        <img key={src} src={src} alt={mediaAlt} style={{ width: "100%", display: "block" }} onError={handleMediaError} />
+        <img key={src} src={src} alt={mediaAlt} className="block w-full" onError={handleMediaError} />
       )}
       <a
         href={ad.src}
@@ -247,25 +240,37 @@ export function OttoStuff({ entities, ads, adJobs }: OttoStuffProps) {
   const groups = groupEntitiesByType(items, search);
 
   return (
-    <div className="otto-stuff-scroll" style={{ flex: 1, overflow: "auto", padding: "var(--space-6)" }}>
+    // leading-[1.65] pins the line-height this subtree currently INHERITS from the .fk
+    // ancestor (--leading-relaxed); it survives S4 teardown (when .fk/otto-theme.css is
+    // removed and .gb — which sets no line-height — applies at the root). Value-identical
+    // today → zero visual change; without it the text compacts post-teardown.
+    <div className="otto-stuff-scroll gb flex-1 overflow-auto p-6 leading-[1.65]">
       <style>{`
         @media (max-width: 680px) {
           .otto-stuff-scroll { padding: var(--space-4) var(--space-3) !important; }
         }
       `}</style>
-      <div style={{ maxWidth: 880, margin: "0 auto" }}>
-        <h1 style={{ fontFamily: "var(--font-display)", fontWeight: "var(--weight-bold)" as React.CSSProperties["fontWeight"], fontSize: "var(--text-2xl)", color: "var(--text-strong)", margin: "0 0 var(--space-4)" }}>
+      <div className="mx-auto max-w-[880px]">
+        <h1 className="m-0 mb-4 text-[1.75rem] font-bold text-foreground">
           My stuff
         </h1>
-        <div style={{ marginBottom: "var(--space-5)", maxWidth: 280 }}>
-          <Tabs
-            items={[
-              { value: "cast", label: "Cast" },
-              { value: "ads", label: "Ads" },
-            ]}
-            value={tab}
-            onChange={(v) => setTab(v as "cast" | "ads")}
-          />
+        <div className="mb-5 max-w-[280px]">
+          <Tabs value={tab} onValueChange={(v) => setTab(v as "cast" | "ads")}>
+            <TabsList className="w-full justify-start h-auto! gap-1 rounded-[14px] bg-muted p-1">
+              <TabsTrigger
+                value="cast"
+                className="flex-none h-auto border-0 rounded-[10px] px-3.5 py-1.5 text-[0.875rem] font-medium text-muted-foreground data-[state=active]:bg-card data-[state=active]:font-semibold data-[state=active]:text-foreground data-[state=active]:shadow-xs"
+              >
+                Cast
+              </TabsTrigger>
+              <TabsTrigger
+                value="ads"
+                className="flex-none h-auto border-0 rounded-[10px] px-3.5 py-1.5 text-[0.875rem] font-medium text-muted-foreground data-[state=active]:bg-card data-[state=active]:font-semibold data-[state=active]:text-foreground data-[state=active]:shadow-xs"
+              >
+                Ads
+              </TabsTrigger>
+            </TabsList>
+          </Tabs>
         </div>
 
         {tab === "cast" ? (
@@ -274,32 +279,33 @@ export function OttoStuff({ entities, ads, adJobs }: OttoStuffProps) {
           ) : (
             <>
               {deleteError && (
-                <div role="alert" style={{ fontSize: "var(--text-sm)", color: "var(--error-700)", marginBottom: "var(--space-3)", padding: "var(--space-2) var(--space-3)", background: "var(--error-50)", borderRadius: "var(--radius-md)" }}>
+                <div role="alert" className="mb-3 rounded-[14px] bg-error-soft px-3 py-2 text-[0.875rem] text-[var(--error-soft-foreground)]">
                   {deleteError}
                 </div>
               )}
               {/* Search */}
-              <div style={{ marginBottom: "var(--space-5)", maxWidth: 320, position: "relative" }}>
+              <div className="relative mb-5 max-w-[320px]">
+                <Search size={15} className="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 text-muted-foreground/70" />
                 <Input
                   value={search}
                   onChange={(ev) => setSearch(ev.target.value)}
                   placeholder="Search cast…"
                   aria-label="Search cast"
-                  leftIcon={<Search size={15} />}
+                  className="pl-10"
                 />
               </div>
 
               {groups.length === 0 ? (
-                <div style={{ color: "var(--text-muted)", fontSize: "var(--text-sm)", padding: "var(--space-4) 0" }}>
+                <div className="py-4 text-[0.875rem] text-muted-foreground">
                   No matches for &ldquo;{search}&rdquo;
                 </div>
               ) : (
                 groups.map((group) => (
-                  <section key={group.type} style={{ marginBottom: "var(--space-7)" }}>
-                    <h2 style={{ fontSize: "var(--text-sm)", fontWeight: "var(--weight-semibold)" as React.CSSProperties["fontWeight"], color: "var(--text-muted)", textTransform: "uppercase", letterSpacing: "0.06em", margin: "0 0 var(--space-3)" }}>
+                  <section key={group.type} className="mb-7">
+                    <h2 className="m-0 mb-3 text-[0.875rem] font-semibold uppercase tracking-[0.06em] text-muted-foreground">
                       {group.label}
                     </h2>
-                    <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(150px, 1fr))", gap: "var(--space-4)" }}>
+                    <div className="grid grid-cols-[repeat(auto-fill,minmax(150px,1fr))] gap-4">
                       {group.items.map((e) => (
                         <EntityTile key={e.id} e={e} onRename={handleRename} onDelete={handleDelete} />
                       ))}
@@ -312,7 +318,7 @@ export function OttoStuff({ entities, ads, adJobs }: OttoStuffProps) {
         ) : adJobs.length === 0 && ads.length === 0 ? (
           <Empty icon={<Images size={28} />} text="No ads yet. When Otto makes something, it lands here — newest first." />
         ) : (
-          <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(200px, 1fr))", gap: "var(--space-4)" }}>
+          <div className="grid grid-cols-[repeat(auto-fill,minmax(200px,1fr))] gap-4">
             {adJobs.map((job) => (
               <AdJobCard key={job.id} job={job} />
             ))}
@@ -328,45 +334,19 @@ export function OttoStuff({ entities, ads, adJobs }: OttoStuffProps) {
 
 function EmptyCast() {
   return (
-    <div
-      style={{
-        display: "flex",
-        flexDirection: "column",
-        alignItems: "center",
-        textAlign: "center",
-        padding: "var(--space-10) var(--space-4)",
-        gap: "var(--space-3)",
-        color: "var(--text-muted)",
-      }}
-    >
-      <span style={{ color: "var(--text-faint)" }}>
+    <div className="flex flex-col items-center gap-3 px-4 py-10 text-center text-muted-foreground">
+      <span className="text-muted-foreground/70">
         <Users size={32} />
       </span>
       <div>
-        <div
-          style={{
-            fontWeight: "var(--weight-semibold)" as React.CSSProperties["fontWeight"],
-            fontSize: "var(--text-base)",
-            color: "var(--text-strong)",
-            marginBottom: 4,
-          }}
-        >
+        <div className="mb-1 text-[1rem] font-semibold text-foreground">
           Your cast lives here
         </div>
-        <div style={{ fontSize: "var(--text-sm)", maxWidth: 340, lineHeight: "var(--leading-relaxed)" }}>
+        <div className="max-w-[340px] text-[0.875rem] leading-relaxed">
           When you describe a person or product in a campaign, Otto saves it here so it stays consistent every time you use it.
         </div>
       </div>
-      <div
-        style={{
-          marginTop: "var(--space-2)",
-          fontSize: "var(--text-xs)",
-          color: "var(--text-faint)",
-          background: "var(--surface-sunken)",
-          borderRadius: "var(--radius-md)",
-          padding: "var(--space-2) var(--space-3)",
-        }}
-      >
+      <div className="mt-2 rounded-[14px] bg-muted px-3 py-2 text-[0.75rem] text-muted-foreground/70">
         Just start a campaign — Otto will fill this in automatically.
       </div>
     </div>
@@ -375,9 +355,9 @@ function EmptyCast() {
 
 function Empty({ icon, text }: { icon: React.ReactNode; text: string }) {
   return (
-    <div style={{ textAlign: "center", color: "var(--text-muted)", padding: "var(--space-8) var(--space-4)", display: "flex", flexDirection: "column", alignItems: "center", gap: "var(--space-3)" }}>
-      <span style={{ color: "var(--text-faint)" }}>{icon}</span>
-      <span style={{ fontSize: "var(--text-base)", maxWidth: 360 }}>{text}</span>
+    <div className="flex flex-col items-center gap-3 px-4 py-8 text-center text-muted-foreground">
+      <span className="text-muted-foreground/70">{icon}</span>
+      <span className="max-w-[360px] text-[1rem]">{text}</span>
     </div>
   );
 }
