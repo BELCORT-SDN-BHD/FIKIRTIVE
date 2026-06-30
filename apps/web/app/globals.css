@@ -607,7 +607,8 @@ h1, h2, h3 { font-family: var(--font-sans); font-weight: 600; letter-spacing: va
   --color-primary: var(--primary);           --color-primary-foreground: var(--primary-foreground);
   --color-secondary: var(--secondary);       --color-secondary-foreground: var(--secondary-foreground);
   --color-muted: var(--muted);               --color-muted-foreground: var(--muted-foreground);
-  --color-accent-foreground: var(--accent-foreground);
+  --color-accent: var(--accent);             --color-accent-foreground: var(--accent-foreground);
+  --color-border: var(--border);
   --color-destructive: var(--destructive);   --color-destructive-foreground: var(--destructive-foreground);
   --color-input: var(--input);               --color-ring: var(--ring);
   --color-brand: var(--brand);               --color-brand-foreground: var(--brand-foreground);
