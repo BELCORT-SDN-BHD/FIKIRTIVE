@@ -14,6 +14,8 @@
 - **MONEY PATH UNTOUCHED.** S0 touches no money files (it only adds UI primitives + a doc). Money guard must stay clean.
 - **Additive only.** S0 must not change any existing component, route, page, or visual output. `next build` and the otto/login/billing surfaces look identical before and after.
 - **Lockfile discipline** ([[fikirtive-monorepo-deploy-gotchas]]): any `package.json` dependency change MUST be followed by a `pnpm install` that regenerates `pnpm-lock.yaml`, or clean Docker/worker builds break (`ERR_PNPM_OUTDATED_LOCKFILE`).
+- **Tailwind v4 does NOT error on a missing token.** A `@theme inline` that omits a `--color-X` used by a `border-X`/`bg-X` utility produces a silently-wrong render, not a build failure (codex review finding). So token completeness is verified by **reading the utilities the components use + a screenshot**, never by relying on `next build` to catch it.
+- **`.gb`-wrap invariant (binding for S1+):** every migrated surface MUST wrap its root in `className="gb"` before any `components/ui` renders — the `@theme inline` utilities resolve to vars (`--background`, `--primary`, `--border`…) that exist ONLY under `.gb` (`globals.css:552`); `layout.tsx` does not apply `.gb`. A shadcn component rendered outside a `.gb` ancestor compiles but renders with unresolved CSS variables.
 
 ## Deferred out of S0 (sequenced for safety — recorded so they are not lost)
 
@@ -22,8 +24,9 @@
 
 ## File Structure
 
-- Modify: `apps/web/components/ui/` (new files from `npx shadcn add`) + `apps/web/package.json` + `pnpm-lock.yaml` (only if the add pulls a new dep, e.g. `sonner`).
-- Create: `docs/ui-rework/fk-to-gb-token-map.md` — the canonical mapping reference.
+- Modify: `apps/web/components/ui/` (new files from `npx shadcn add`) + `apps/web/package.json` + `pnpm-lock.yaml` (only if the add pulls a new dep, e.g. `sonner`). [Task 1]
+- Modify: `apps/web/app/globals.css` (the `@theme inline` block — register the missing `--color-*`). [Task 2]
+- Create: `docs/ui-rework/fk-to-gb-token-map.md` — the canonical mapping reference (color + non-color). [Task 3]
 
 ---
 
@@ -47,7 +50,11 @@ Run from `apps/web`:
 ```bash
 npx shadcn@latest add avatar checkbox tabs select switch textarea progress sonner tooltip --yes
 ```
-Expected: new files in `components/ui/`. If the CLI reports it could not infer config, confirm `apps/web/components.json` exists (it does) and re-run from `apps/web`. Do NOT let it overwrite the existing `button/card/input/dialog/badge` (those are FIKIRTIVE-customized) — if prompted about an existing file, decline that file; the 9 names above are all new.
+Expected: 9 new files in `components/ui/`. The 9 names do NOT collide with the 5 customized files (`button/card/input/dialog/badge`), so `--yes` only writes new files. **Immediately verify the customized files were untouched** (codex finding #6 — `--yes` can't be declined, so prove it instead):
+```bash
+git diff --stat -- components/ui/button.tsx components/ui/card.tsx components/ui/input.tsx components/ui/dialog.tsx components/ui/badge.tsx
+```
+This MUST be empty. If ANY of the 5 changed, `git checkout -- <that file>` to restore it (the customizations — e.g. the `brand`/`soft` button variants — must survive). If the CLI couldn't infer config, confirm `apps/web/components.json` exists (it does) and re-run from `apps/web`.
 
 - [ ] **Step 3: Regenerate the lockfile** (only if `package.json` changed — `sonner` is the likely new dep; the rest route through the `radix-ui` umbrella already present).
 
@@ -67,7 +74,7 @@ Run:
 cd apps/web && npx tsc --noEmit
 cd /Users/winnin/Desktop/artlio/.claude/worktrees/gracious-chandrasekhar-72f8c9 && pnpm --filter @fikirtive/web build
 ```
-Expected: tsc clean; `next build` exit 0. If a newly added component references a token the `@theme inline` block doesn't register (e.g. a `--color-sidebar`/`--color-chart-*` used by some shadcn components), the build surfaces it — add the missing `--color-*: var(--…)` line to the `@theme inline` block in `app/globals.css` mapping it to the nearest existing `.gb` token (do NOT invent new colors; reuse existing ones). Re-run the build.
+Expected: tsc clean; `next build` exit 0. **Note (codex finding #3):** a clean build does NOT prove the components are correctly themed — tailwind v4 silently ignores a `bg-X`/`border-X` whose `--color-X` is unregistered; it does not error. Token completeness is verified in Task 2 (the `@theme inline` audit), not here. This step only confirms the new files compile and nothing else regressed.
 
 - [ ] **Step 5: Money guard + commit** (must print nothing):
 ```bash
@@ -79,7 +86,47 @@ git commit -m "feat(ui): add stock shadcn components (avatar/checkbox/tabs/selec
 
 ---
 
-## Task 2: fk → .gb token-mapping reference
+## Task 2: Complete the `@theme inline` token registrations (codex finding #3)
+
+**Files:**
+- Modify: `apps/web/app/globals.css` (the `@theme inline` block only)
+
+**Interfaces:**
+- Produces: a complete `@theme inline` so every `--color-X` referenced by a `border-X`/`bg-X`/`text-X` utility in `components/ui/*` (the existing 5 + the 9 added in Task 1) resolves under `.gb`. Foundational: without it, migrated surfaces render borders/accents as silent no-ops.
+
+The current `@theme inline` registers `--color-input`/`--color-ring` but NOT `--color-border` or `--color-accent`, yet `components/ui` already use `border-border` (`card.tsx:14`, `button.tsx:22`) and `bg-accent`/`hover:bg-accent` (button `ghost`/`outline`). Tailwind v4 silently drops a utility whose `--color-*` is unregistered — no build error. Fix it now, before any surface depends on it.
+
+- [ ] **Step 1: Audit** the color utilities the components reference. Run from `apps/web`:
+```bash
+grep -rhoE "(bg|text|border|ring|from|to|fill|stroke)-(border|input|ring|accent|accent-foreground|primary|primary-foreground|secondary|secondary-foreground|muted|muted-foreground|card|card-foreground|popover|popover-foreground|destructive|destructive-foreground|background|foreground|brand|brand-foreground|brand-soft|brand-soft-foreground)\b" components/ui | sort -u
+```
+For each utility `X-Y`, tailwind v4 needs `--color-Y` in the `@theme inline` block. Compare against that block in `app/globals.css` (it currently lacks at least `--color-border` and `--color-accent`).
+
+- [ ] **Step 2: Add the missing registrations** to the `@theme inline` block in `app/globals.css` (each maps to an already-defined `.gb` var — do NOT invent colors, do NOT touch the `.gb` token VALUES):
+```css
+  --color-border: var(--border);
+  --color-accent: var(--accent);
+```
+Add any further gap the Step-1 audit surfaced, each mapped to its existing `--<name>` var.
+
+- [ ] **Step 3: Verify visually** (build can't catch this). Build + screenshot the components proof route:
+```bash
+cd /Users/winnin/Desktop/artlio/.claude/worktrees/gracious-chandrasekhar-72f8c9 && pnpm --filter @fikirtive/web build
+PORT=3007 pnpm --filter @fikirtive/web dev   # background; wait for ready
+B="$HOME/.claude/skills/gstack/browse/dist/browse"
+$B goto "http://localhost:3007/kitchensink"; $B wait --networkidle; $B screenshot "/private/tmp/gb-tokens-check.png"; $B console --errors
+```
+Expected: cards/inputs/buttons on `/kitchensink` (uses `components/ui` under `.gb`) show their borders + accent hovers. Read the PNG to confirm.
+
+- [ ] **Step 4: Commit**
+```bash
+git add apps/web/app/globals.css
+git commit -m "fix(ui): register --color-border/--color-accent (+audit gaps) in @theme inline so shadcn utilities resolve"
+```
+
+---
+
+## Task 3: fk → .gb token-mapping reference
 
 **Files:**
 - Create: `docs/ui-rework/fk-to-gb-token-map.md`
@@ -119,9 +166,35 @@ consumed as inline `style={{var(--token)}}`) onto shadcn `components/ui` + the
 | success / warning / error / info | — | `--success` / `--warning` / `--error` / `--info` (+ `-soft`) | `bg-success-soft text-success-soft-foreground` etc. |
 | radius (controls / cards / modals) | 14 / 18 / 24 | `--radius` / `--radius-card` / `--radius-modal` | `rounded-lg` / `rounded-[var(--radius-card)]` |
 
-NOTE the swap: in `fk`, `--brand` is INK and `--accent` is coral. In `.gb`,
-`--primary` is INK and `--brand` is coral. So `fk --brand` → `.gb --primary`,
-and `fk --accent` → `.gb --brand`. Keep coral OTTO-only.
+NOTE the swap (read carefully — this is where coral/ink silently invert): the
+otto app's Grok-bright look comes from the `.fk.gb-skin` override block, NOT base
+`.fk` (in base `.fk`, `--brand` is slate `--slate-500` and `--accent` is coral —
+`otto-theme.css:103`; only `.fk.gb-skin` repaints `--brand` to INK `#0A0A0A` and
+keeps `--accent` coral `#EC5828` — `otto-theme.css:289`). Map from the
+**`.fk.gb-skin` values** (what users see today): `fk --brand` (ink) → `.gb
+--primary` / `bg-primary`; `fk --accent` (CORAL) → `.gb --brand` / **`bg-brand`**.
+**Coral is `bg-brand`/`text-brand`, NEVER `bg-accent`** (`.gb --accent` is the neutral
+`#ECECEA` hover tint). Putting coral on `bg-accent` is the exact silent-inversion bug.
+
+## Non-color tokens (spacing / type / weight / radius / motion) — needed by S1
+The otto components use these fk vars heavily as inline styles (e.g. `padding:
+"var(--space-3)"`, `font: "var(--text-sm)"`, `var(--weight-semibold)`,
+`var(--radius-control)`, `var(--transition-control)`). They live in `otto-theme.css`,
+NOT in `.gb` — so a surface cannot drop `otto-theme.css` until these are translated.
+Convert each to a tailwind utility using its REAL px value (read it from
+`otto-theme.css` per component; the scale below is the convention, confirm the px):
+| fk var family | example | tailwind utility |
+|---|---|---|
+| `--space-N` (4px scale: 1=4 2=8 3=12 4=16 5=20 6=24 8=32) | `padding: var(--space-3)` | `p-3` / `px-3` / `gap-3` / `m-3` (match the px) |
+| `--text-xs/sm/base/lg/xl/2xl/4xl` | `font-size: var(--text-sm)` | `text-xs` … `text-4xl` (match the px) |
+| `--weight-medium/semibold/bold` | `var(--weight-semibold)` | `font-medium` / `font-semibold` / `font-bold` |
+| `--radius-control/card/modal` (14/18/24) | `var(--radius-control)` | `rounded-lg` / `rounded-[var(--radius-card)]` / `rounded-[var(--radius-modal)]` (the `.gb` radius vars exist) |
+| `--dur-fast` / `--ease-out` / `--transition-control` | `transition: var(--transition-control)` | `transition` + `duration-150` + `ease-out` |
+| `--font-display` / `--font-body` | `font-family: var(--font-display)` | `.gb` uses Geist via `font-geist` (already on `<html>`); drop the per-element font var |
+
+If a fk var has no clean tailwind equivalent, use an arbitrary value bound to the
+EXISTING `.gb` var (`p-[var(--space-3)]`) rather than inventing a number — but prefer
+the named scale.
 
 ## Components (fk → shadcn `components/ui`)
 | fk (`@/components/fk`) | shadcn (`@/components/ui`) |
@@ -152,14 +225,17 @@ git commit -m "docs(ui): fk → .gb token + component mapping reference for the 
 
 ## Self-Review
 
-**Spec coverage** (migration strategy, S0 bullet):
-- `npx shadcn add` stock components → Task 1 ✓.
-- fk → .gb token-mapping reference → Task 2 ✓.
-- Apply `.gb` at root → **deferred to S4 teardown** (documented above with rationale — flipping the body under still-Vapor admin pages is the risk) ✓.
-- Delete studio → **deferred to S2/S3** (documented: Editor links to /studio; delete the legacy pair together) ✓.
+**Spec coverage** (migration strategy, S0 bullet + codex review fixes):
+- `npx shadcn add` stock components → Task 1 ✓ (with the 5-customized-files-unchanged verification — codex #6).
+- Complete `@theme inline` registrations (`--color-border`/`--color-accent` + audit) → **Task 2 ✓ (codex #3 — was missing entirely).**
+- fk → .gb token-mapping reference, **color + non-color** (space/text/weight/radius/motion) → Task 3 ✓ (codex #5 — non-color was missing; coral=`bg-brand`-not-`bg-accent` made explicit, codex #4).
+- Apply `.gb` at root → **deferred to S4 teardown** (the `.gb`-wrap-per-surface invariant in Global Constraints covers the interim — codex #2) ✓.
+- Delete studio → **deferred to S2/S3** (Editor links to /studio; delete the legacy pair together) ✓.
 
-**Placeholder scan:** none. The only conditional is "add the missing `--color-*` line if the build surfaces one" (Task 1 Step 4) — that is a concrete, bounded instruction (reuse an existing `.gb` token), not a TODO.
+**Codex findings addressed:** #2 (`.gb`-wrap invariant → Global Constraints), #3 (missing `@theme` tokens → new Task 2; false "build catches it" claim corrected in Task 1 Step 4), #4 (coral/ink inversion → Task 3 note maps from `.fk.gb-skin`, coral=`bg-brand`), #5 (non-color token map → Task 3), #6 (`--yes` overwrite → Task 1 Step 2 verify). #1 (billing/BuyPackButton uses fk) + #8 (S4 must tear down the Vapor body + ambient-layer) are **strategy-level** → fixed in the strategy spec, out of S0's scope.
 
-**Type consistency:** S0 produces no new types — it adds shadcn component files (standard shadcn API) + a doc. The component names in the token map (Task 2) match the `npx shadcn add` list (Task 1).
+**Placeholder scan:** none. Conditionals (Task 1 "restore if a customized file changed"; Task 2 "add any further gap the audit surfaced") are concrete bounded instructions, not TODOs.
 
-**Additive guarantee:** Task 1 Steps 1 + 4 verify nothing existing changed (pre-state recorded; build green). No surface is migrated in S0; the next plan (S1a nav) is the first real conversion.
+**Type consistency:** S0 produces no new types — shadcn component files (standard API) + a globals.css `@theme` addition + a doc. The component names in the Task 3 map match the Task 1 add list.
+
+**Additive guarantee:** Task 1 (5 files unchanged + build green) + Task 2 (only `@theme inline` registration added, `.gb` values untouched, verified by screenshot) change no existing visual output. No surface is migrated in S0; the next plan (S1a nav) is the first real conversion.

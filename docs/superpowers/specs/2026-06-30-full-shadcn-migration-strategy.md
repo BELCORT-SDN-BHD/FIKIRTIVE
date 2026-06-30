@@ -9,13 +9,15 @@ reuses the rules here. The parked Analytics task resumes (built natively on shad
 **after** every surface is migrated.
 
 ## Goal
-Kill the dual UI system. Today the app is a **hybrid**: `login` + `billing` are real
-shadcn (`.gb` tokens + `components/ui`), while the **otto app + admin console + the
-rest** are the **old `fk` design system** (`components/fk` + the `.fk` / `.fk.gb-skin`
-token CSS in `app/otto/otto-theme.css` + inline `style={{var(--token)}}`), merely
-**re-painted** to the Grok-bright look via a token-override hack. Convert every
-fk-based surface to **real shadcn `components/ui` + `.gb` tokens + tailwind v4**, then
-delete `fk`, `otto-theme.css`, and the `?skin=fk` flag entirely.
+Kill the dual UI system. Today the app is a **hybrid**: `login` + the `billing` PAGE use
+shadcn (`.gb` tokens + `components/ui`) — but even billing is not fully clean
+(`components/billing/BuyPackButton.tsx` still imports `@/components/fk`, so billing is in
+scope, not done — codex review finding #1). The **otto app + admin console + the rest**
+are the **old `fk` design system** (`components/fk` + the `.fk` / `.fk.gb-skin` token CSS
+in `app/otto/otto-theme.css` + inline `style={{var(--token)}}`), merely **re-painted** to
+the Grok-bright look via a token-override hack. Convert every fk-based surface (including
+`BuyPackButton`, swept into S3) to **real shadcn `components/ui` + `.gb` tokens + tailwind
+v4**, then delete `fk`, `otto-theme.css`, and the `?skin=fk` flag entirely.
 
 The **design is already locked** (see [[fikirtive-ui-rework]] + [[fikirtive-design-system-shadcn]]):
 Grok-bright — near-white `#FCFCFC`, ink `#0A0A0A`, **coral `#EC5828` = OTTO/agent ONLY**,
@@ -67,13 +69,27 @@ each surface flips cleanly).
   lower-stakes; its own multi-plan effort.
 - **S3 — Remaining routes**: `editor`, `library`, `m`, and any other fk consumers.
 - **S4 — Teardown**: once no surface imports `fk` or `otto-theme.css`, delete them +
-  the `?skin=fk` flag; grep-verify zero references.
+  the `?skin=fk` flag; grep-verify zero references. **Then do the global `.gb` flip
+  properly (codex #8): it is not just "add `.gb` + delete fk" —** `app/layout.tsx`
+  renders the legacy `ambient-layer` div and the global `<body>` is still Vapor-styled
+  (`globals.css`). Teardown must apply `.gb` at the root AND remove/neutralize the Vapor
+  body styling + the `ambient-layer`, or the new white `.gb` body fights the old Vapor bg.
 - **(then) Analytics + Schedule** — the parked tasks, built **natively on shadcn**
   (the Analytics Phase-A plan `docs/superpowers/plans/2026-06-30-analytics.md` is
   re-targeted to shadcn `components/ui` + a shadcn/recharts chart instead of the
   hand-built SVG + gb CSS).
 
 ## Per-surface discipline (the contract every surface plan inherits)
+- **`.gb`-wrap invariant (codex #2, BINDING).** Until S4's global root flip, every
+  migrated surface MUST wrap its root in `className="gb"` before any `components/ui`
+  renders — the `@theme inline` tailwind utilities resolve to vars (`--background`,
+  `--primary`, `--border`…) that exist ONLY under `.gb`; `layout.tsx` does not apply it.
+  A shadcn component outside a `.gb` ancestor compiles but renders with unresolved CSS
+  vars. (S0 also fixes the pre-existing missing `--color-border`/`--color-accent`
+  registrations so the utilities actually resolve once under `.gb`.)
+- **Tailwind v4 won't error on a missing token** (codex #3) — a `bg-X`/`border-X` whose
+  `--color-X` is unregistered renders as a silent no-op, not a build failure. Per-surface
+  verification is the **screenshot**, never `next build` alone.
 - **Strangler, not big-bang.** Convert one surface; delete an fk primitive only when its
   last consumer is gone (`grep -rl "@/components/fk/<X>"` returns nothing). The app stays
   shippable at every step.
@@ -97,7 +113,7 @@ each surface flips cleanly).
 | fk (`.fk` / `.fk.gb-skin`) | shadcn (`.gb` in globals.css) |
 |---|---|
 | `--brand` (ink `#0A0A0A`) | `--primary` |
-| `--accent` (coral `#EC5828`) | (coral; OTTO-only — keep as the accent, not a default) |
+| `--accent` (coral `#EC5828`, OTTO-only) | `--brand` → **`bg-brand` / `text-brand`** (NEVER `bg-accent` — `.gb --accent` is the neutral `#ECECEA` tint; coral on `bg-accent` is the silent-inversion bug, codex #4) |
 | `--surface-card` / `--bg-page` | `--card` / `--background` |
 | `--text-strong/body/muted/faint` | `--foreground` / `--muted-foreground` (+ scale) |
 | `--border-default/subtle/strong` | `--border` (+ a subtle/strong variant) |
