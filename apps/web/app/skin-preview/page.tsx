@@ -25,14 +25,10 @@ export default async function SkinPreviewPage({
 
   // One memory row flips isFirstRun=false so the real front door shows (not onboarding).
   const memory: MemoryRow[] = [
-    {
-      id: "m1",
-      category: "voice",
-      content: "Cozy, warm, a little playful.",
-      source: "otto",
-      pinned: true,
-      updatedAt: new Date(0),
-    },
+    { id: "m1", category: "voice", content: "Cozy, warm, a little playful.", source: "otto", pinned: true, updatedAt: new Date(0) },
+    { id: "m2", category: "audience", content: "Busy parents who want quick, healthy meals.", source: "user", pinned: false, updatedAt: new Date(0) },
+    { id: "m3", category: "product", content: "Single-origin beans, roasted weekly in small batches.", source: "otto", pinned: false, updatedAt: new Date(0) },
+    { id: "m4", category: "do-not", content: "Never use stock-photo smiles or corporate jargon.", source: "user", pinned: true, updatedAt: new Date(0) },
   ];
 
   const iso = new Date(0).toISOString();

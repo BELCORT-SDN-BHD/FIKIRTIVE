@@ -1,6 +1,15 @@
 "use client";
 import React, { useEffect, useRef, useState } from "react";
-import { Dialog } from "@/components/fk/Dialog";
+import {
+  Dialog,
+  DialogContent,
+  DialogHeader,
+  DialogTitle,
+  DialogDescription,
+  DialogFooter,
+} from "@/components/ui/dialog";
+import { Button } from "@/components/ui/button";
+import { Input } from "@/components/ui/input";
 import DetailPanel from "@/components/asset/DetailPanel";
 import { startGen, getGenJob } from "@/lib/gen-actions";
 import { uploadFilesDirect } from "@/lib/direct-upload";
@@ -117,43 +126,56 @@ export default function TemplateModal({
   const footer =
     phase === "done" ? (
       <>
-        <button type="button" className="al-btn al-btn-sm" onClick={() => setDetailOpen(true)}>Open in detail</button>
-        <button type="button" className="al-btn al-btn-sm" onClick={() => { setPhase("form"); setResultUrl(null); setResultGenId(null); }}>Make another</button>
-        <button type="button" className="al-btn al-btn-primary al-btn-sm" onClick={onClose}>Close</button>
+        <Button type="button" variant="ghost" size="sm" onClick={() => setDetailOpen(true)}>Open in detail</Button>
+        <Button type="button" variant="ghost" size="sm" onClick={() => { setPhase("form"); setResultUrl(null); setResultGenId(null); }}>Make another</Button>
+        <Button type="button" variant="brand" size="sm" onClick={onClose}>Close</Button>
       </>
     ) : (
-      <button type="button" className="al-btn al-btn-primary al-btn-sm" disabled={!canGenerate} onClick={onGenerate}>
+      <Button type="button" variant="brand" size="sm" disabled={!canGenerate} onClick={onGenerate}>
         {phase === "generating" ? "Generating…" : `Generate · ${templateRunCredits()} credit`}
-      </button>
+      </Button>
     );
 
   return (
     <>
-      <Dialog open onClose={onClose} title={template.name} description={template.description} footer={footer}>
-        {phase === "done" && resultUrl ? (
-          // eslint-disable-next-line @next/next/no-img-element
-          <img src={resultUrl} alt="result" style={{ width: "100%", borderRadius: "var(--radius-md)", display: "block" }} />
-        ) : (
-          <div style={{ display: "flex", flexDirection: "column", gap: "var(--space-3)" }}>
-            <label style={{ display: "flex", flexDirection: "column", gap: "var(--space-1)" }}>
-              <span style={{ fontSize: 13, color: "var(--text-muted)" }}>Product image</span>
-              {thumbUrl ? (
-                // eslint-disable-next-line @next/next/no-img-element
-                <img src={thumbUrl} alt="upload" style={{ width: 120, height: 120, objectFit: "cover", borderRadius: "var(--radius-md)" }} />
-              ) : (
-                <input type="file" accept="image/*" onChange={onPickFile} disabled={uploading} />
-              )}
-              {uploading && <span style={{ fontSize: 12, color: "var(--text-muted)" }}>Uploading…</span>}
-            </label>
-            {template.question && (
-              <label style={{ display: "flex", flexDirection: "column", gap: "var(--space-1)" }}>
-                <span style={{ fontSize: 13, color: "var(--text-muted)" }}>{template.question.label}</span>
-                <input className="al-input" value={answer} onChange={(e) => setAnswer(e.target.value)} placeholder={template.question.placeholder} />
-              </label>
+      {/* .gb resolves brand/surface/text tokens; leading-[1.65] pins the
+          inherited line-height so S4 teardown can remove it safely. */}
+      <Dialog open onOpenChange={(isOpen: boolean) => { if (!isOpen) onClose(); }}>
+        <DialogContent className="gb leading-[1.65]">
+          <DialogHeader>
+            <DialogTitle>{template.name}</DialogTitle>
+            {template.description && (
+              <DialogDescription>{template.description}</DialogDescription>
             )}
-            {error && <div style={{ color: "var(--danger, #d65a5a)", fontSize: 13 }}>{error}</div>}
-          </div>
-        )}
+          </DialogHeader>
+
+          {phase === "done" && resultUrl ? (
+            // eslint-disable-next-line @next/next/no-img-element
+            <img src={resultUrl} alt="result" style={{ width: "100%", borderRadius: "var(--radius-md)", display: "block" }} />
+          ) : (
+            <div style={{ display: "flex", flexDirection: "column", gap: "var(--space-3)" }}>
+              <label style={{ display: "flex", flexDirection: "column", gap: "var(--space-1)" }}>
+                <span className="text-[0.8125rem] text-muted-foreground">Product image</span>
+                {thumbUrl ? (
+                  // eslint-disable-next-line @next/next/no-img-element
+                  <img src={thumbUrl} alt="upload" style={{ width: 120, height: 120, objectFit: "cover", borderRadius: "var(--radius-md)" }} />
+                ) : (
+                  <input type="file" accept="image/*" onChange={onPickFile} disabled={uploading} />
+                )}
+                {uploading && <span className="text-[0.75rem] text-muted-foreground">Uploading…</span>}
+              </label>
+              {template.question && (
+                <label style={{ display: "flex", flexDirection: "column", gap: "var(--space-1)" }}>
+                  <span className="text-[0.8125rem] text-muted-foreground">{template.question.label}</span>
+                  <Input value={answer} onChange={(e) => setAnswer(e.target.value)} placeholder={template.question.placeholder} />
+                </label>
+              )}
+              {error && <div style={{ color: "var(--destructive)", fontSize: "0.8125rem" }}>{error}</div>}
+            </div>
+          )}
+
+          <DialogFooter>{footer}</DialogFooter>
+        </DialogContent>
       </Dialog>
       {detailOpen && resultGenId && (
         <DetailPanel generationId={resultGenId} projectId={projectId} entities={entities} onClose={() => setDetailOpen(false)} />

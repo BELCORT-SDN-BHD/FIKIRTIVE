@@ -59,10 +59,12 @@ export default function OttoLibrary({ projectId, entities = [] }: { projectId: s
 
   const minCard = view === "compact" ? 120 : 220;
 
+  // leading-[1.65]: pin the inherited line-height for the .gb subtree so S4
+  // teardown can remove it without layout shift (mirrors the S1a OttoNav pattern).
   return (
-    <div style={{ flex: 1, display: "flex", flexDirection: "column", overflow: "hidden" }}>
+    <div className="gb leading-[1.65]" style={{ flex: 1, display: "flex", flexDirection: "column", overflow: "hidden" }}>
       {/* Header */}
-      <div style={{ display: "flex", alignItems: "center", gap: "var(--space-3)", padding: "var(--space-4)", flexShrink: 0, borderBottom: "1px solid var(--border-subtle)" }}>
+      <div style={{ display: "flex", alignItems: "center", gap: "0.75rem", padding: "1rem", flexShrink: 0, borderBottom: "1px solid var(--border)" }}>
         <input
           value={search}
           onChange={(e) => setSearch(e.target.value)}
@@ -75,26 +77,26 @@ export default function OttoLibrary({ projectId, entities = [] }: { projectId: s
           onClick={() => setFavoriteOnly((v) => !v)}
           aria-pressed={favoriteOnly}
           className="al-btn al-btn-sm"
-          style={{ background: favoriteOnly ? "var(--surface-raised)" : "transparent" }}
+          style={{ background: favoriteOnly ? "var(--muted)" : "transparent" }}
         >
           {favoriteOnly ? "★ Favorites" : "☆ Favorites"}
         </button>
-        <div style={{ marginLeft: "auto", display: "flex", gap: "var(--space-1)" }}>
-          <button type="button" onClick={() => setView("full")} aria-pressed={view === "full"} className="al-btn al-btn-sm" style={{ background: view === "full" ? "var(--surface-raised)" : "transparent" }}>Full</button>
-          <button type="button" onClick={() => setView("compact")} aria-pressed={view === "compact"} className="al-btn al-btn-sm" style={{ background: view === "compact" ? "var(--surface-raised)" : "transparent" }}>Compact</button>
+        <div style={{ marginLeft: "auto", display: "flex", gap: "0.25rem" }}>
+          <button type="button" onClick={() => setView("full")} aria-pressed={view === "full"} className="al-btn al-btn-sm" style={{ background: view === "full" ? "var(--muted)" : "transparent" }}>Full</button>
+          <button type="button" onClick={() => setView("compact")} aria-pressed={view === "compact"} className="al-btn al-btn-sm" style={{ background: view === "compact" ? "var(--muted)" : "transparent" }}>Compact</button>
         </div>
       </div>
 
       {/* Grid */}
-      <div style={{ flex: 1, overflow: "auto", padding: "var(--space-4)" }}>
+      <div style={{ flex: 1, overflow: "auto", padding: "1rem" }}>
         {items.length === 0 && !loading ? (
-          <div style={{ padding: "var(--space-8)", textAlign: "center", color: "var(--text-muted)" }}>
+          <div style={{ padding: "2rem", textAlign: "center", color: "var(--muted-foreground)" }}>
             {search || favoriteOnly ? "Nothing matches." : "No generations yet — make something with Otto or the canvas."}
           </div>
         ) : (
-          <div style={{ display: "grid", gridTemplateColumns: `repeat(auto-fill, minmax(${minCard}px, 1fr))`, gap: "var(--space-3)" }}>
+          <div style={{ display: "grid", gridTemplateColumns: `repeat(auto-fill, minmax(${minCard}px, 1fr))`, gap: "0.75rem" }}>
             {items.map((it) => (
-              <div key={it.id} style={{ position: "relative", borderRadius: "var(--radius-md)", overflow: "hidden", border: "1px solid var(--border-subtle)", background: "var(--surface-card)", cursor: "pointer" }} onClick={() => setDetailFor(it.id)}>
+              <div key={it.id} style={{ position: "relative", borderRadius: "14px", overflow: "hidden", border: "1px solid var(--border)", background: "var(--card)", cursor: "pointer" }} onClick={() => setDetailFor(it.id)}>
                 {it.kind === "video" ? (
                   <video src={it.url} muted style={{ width: "100%", aspectRatio: "1", objectFit: "cover", display: "block" }} />
                 ) : (
@@ -110,9 +112,9 @@ export default function OttoLibrary({ projectId, entities = [] }: { projectId: s
                   {it.favorite ? "★" : "☆"}
                 </button>
                 {view === "full" && (
-                  <div style={{ padding: "var(--space-2)" }}>
-                    <div style={{ fontSize: 12, color: "var(--text-body)", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{it.prompt || "—"}</div>
-                    <div style={{ fontSize: 11, color: "var(--text-muted)" }}>{new Date(it.createdAt).toLocaleDateString()}</div>
+                  <div style={{ padding: "0.5rem" }}>
+                    <div style={{ fontSize: "0.75rem", color: "var(--foreground)", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{it.prompt || "—"}</div>
+                    <div style={{ fontSize: "0.75rem", color: "var(--muted-foreground)" }}>{new Date(it.createdAt).toLocaleDateString()}</div>
                   </div>
                 )}
               </div>
@@ -121,7 +123,7 @@ export default function OttoLibrary({ projectId, entities = [] }: { projectId: s
         )}
 
         {hasMore && (
-          <div style={{ display: "flex", justifyContent: "center", padding: "var(--space-4)" }}>
+          <div style={{ display: "flex", justifyContent: "center", padding: "1rem" }}>
             <button type="button" className="al-btn al-btn-sm" disabled={loading} onClick={() => void fetchPage(cursor, false)}>
               {loading ? "Loading…" : "Load more"}
             </button>

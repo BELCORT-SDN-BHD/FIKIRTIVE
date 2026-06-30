@@ -280,10 +280,11 @@ export function OttoView({
 
 /** Placeholder for nav destinations whose hi-fi screen lands in a later phase. */
 function ComingSoon({ title, line }: { title: string; line: string }) {
+  /* gb leading-[1.65]: resolves .gb tokens in this subtree; pins leading for S4 teardown */
   return (
-    <div style={{ flex: 1, display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", gap: "var(--space-3)", textAlign: "center", padding: "var(--space-8)" }}>
+    <div className="gb leading-[1.65] flex-1 flex flex-col items-center justify-center gap-3 text-center p-8">
       <svg width={56} height={51} viewBox="0 0 120 110" aria-hidden>
-        <g fill="var(--accent)">
+        <g fill="var(--brand)">
           <ellipse cx="60" cy="64" rx="43" ry="22" />
           <circle cx="37" cy="52" r="18" />
           <circle cx="61" cy="40" r="24" />
@@ -292,8 +293,8 @@ function ComingSoon({ title, line }: { title: string; line: string }) {
         <ellipse cx="56" cy="49" rx="3.6" ry="4.6" fill="#2B1308" />
         <ellipse cx="71" cy="49" rx="3.6" ry="4.6" fill="#2B1308" />
       </svg>
-      <div style={{ fontSize: "var(--text-2xl)", fontWeight: "var(--weight-bold)", color: "var(--text-strong)", letterSpacing: "var(--tracking-snug)" }}>{title}</div>
-      <div style={{ fontSize: "var(--text-base)", color: "var(--text-muted)", maxWidth: 360, lineHeight: "var(--leading-normal)" }}>{line}</div>
+      <div className="text-[1.75rem] font-bold text-foreground tracking-[-0.015em]">{title}</div>
+      <div className="text-[1rem] text-muted-foreground leading-normal" style={{ maxWidth: 360 }}>{line}</div>
     </div>
   );
 }
