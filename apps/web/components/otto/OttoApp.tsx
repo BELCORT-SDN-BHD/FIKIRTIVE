@@ -11,9 +11,6 @@ import type { AdJobItem } from "@/lib/data";
 import type { EntityDTO, ChatThreadDTO } from "@/lib/types";
 import type { MemoryRow } from "@/lib/memory-actions";
 import type { AccountInfo } from "@/lib/account-actions";
-import type { OwnerSettings } from "@/lib/owner-settings";
-import type { CreditPack } from "@/lib/billing-actions";
-import type { ChannelState } from "./settings/sections";
 import type { HistoryThumb } from "@/lib/data";
 import { getMyAccount } from "@/lib/account-actions";
 import { deleteCoworkThread } from "@/lib/otto-client-actions";
@@ -57,10 +54,6 @@ export interface OttoAppProps {
   /** Recent generation thumbnails for the sidebar History strip (display-only). */
   history?: HistoryThumb[];
   ottoStreamEnabled: boolean;
-  settings?: OwnerSettings;
-  channels?: ChannelState[];
-  packs?: CreditPack[];
-  adsAutonomy?: "ASK" | "AUTO";
   initialView?: OttoViewKey;
   /** Re-skin flag (?skin=gb): opt into the Grok-bright look (strangler). */
   skin?: "gb";
@@ -93,10 +86,6 @@ export function OttoApp({
   skin,
   initialNavCollapsed,
   initialChatCollapsed,
-  settings,
-  channels,
-  packs,
-  adsAutonomy,
 }: OttoAppProps) {
   const router = useRouter();
   const [view, setView] = useState<OttoViewKey>(initialView ?? "otto");
@@ -357,10 +346,6 @@ export function OttoApp({
           chatCollapsed={chatCollapsed}
           onToggleChat={() => setChatCollapsed((v) => !v)}
           skin={skin}
-          settings={settings}
-          channels={channels}
-          packs={packs}
-          adsAutonomy={adsAutonomy}
         />
       </div>
 

@@ -3,6 +3,7 @@ import { OttoAccount } from "@/components/otto/OttoAccount";
 import { DEFAULT_SETTINGS } from "@/lib/owner-settings";
 import type { AccountInfo } from "@/lib/account-actions";
 import type { CreditPack } from "@/lib/billing-actions";
+import type { AccountViewData } from "@/lib/account-view-data";
 import "../../otto/otto-theme.css";
 
 export const dynamic = "force-dynamic";
@@ -29,7 +30,7 @@ export default function AccountPreview() {
   return (
     <div className="fk gb-skin" style={{ height: "100vh", display: "flex", flexDirection: "column" }}>
       <div style={{ flex: 1, display: "flex", flexDirection: "column", overflow: "hidden" }}>
-        <OttoAccount account={account} settings={DEFAULT_SETTINGS} channels={channels} packs={packs} adsAutonomy="ASK" />
+        <OttoAccount account={account} previewData={{ settings: DEFAULT_SETTINGS, channels, packs, adsAutonomy: "ASK" } satisfies AccountViewData} />
       </div>
     </div>
   );
