@@ -1,7 +1,8 @@
 "use client";
 import React, { useState } from "react";
 import { Download, Copy, Check, Sparkles, ChevronLeft, AlertCircle, RefreshCw } from "lucide-react";
-import { Card, Button } from "@/components/fk";
+import { Button } from "@/components/ui/button";
+import { Card } from "@/components/ui/card";
 import { bustUrl } from "@/lib/media-retry";
 import { readPick, writePick } from "@/lib/result-pick";
 import { coworkVaryCard } from "@/lib/cowork-actions";
@@ -28,19 +29,7 @@ function DownloadLink({ url, filename }: { url: string; filename: string }) {
     <a
       href={url}
       download={filename}
-      style={{
-        display: "inline-flex",
-        alignItems: "center",
-        gap: 8,
-        height: 44,
-        padding: "0 20px",
-        borderRadius: "var(--radius-control)",
-        background: "var(--brand)",
-        color: "var(--text-on-brand)",
-        fontWeight: "var(--weight-semibold)" as React.CSSProperties["fontWeight"],
-        fontSize: "var(--text-base)",
-        textDecoration: "none",
-      }}
+      className="inline-flex items-center gap-2 h-11 px-5 rounded-[14px] bg-primary text-primary-foreground font-semibold text-[1rem] no-underline"
     >
       <Download size={18} /> Download
     </a>
@@ -74,34 +63,16 @@ function Media({
   if (errored) {
     return (
       <div
-        style={{
-          borderRadius: rounded ? "var(--radius-lg)" : 0,
-          background: "var(--surface-sunken)",
-          display: "flex",
-          flexDirection: "column",
-          alignItems: "center",
-          justifyContent: "center",
-          gap: "var(--space-2)",
-          padding: "var(--space-6)",
-          minHeight: 120,
-        }}
+        className={`flex flex-col items-center justify-center gap-2 p-6 min-h-[120px] bg-muted${rounded ? " rounded-[20px]" : ""}`}
       >
-        <AlertCircle size={22} color="var(--text-faint)" />
-        <span style={{ fontSize: "var(--text-sm)", color: "var(--text-muted)" }}>
+        <AlertCircle size={22} className="text-muted-foreground/70" />
+        <span className="text-[0.875rem] text-muted-foreground">
           Couldn&apos;t load this
         </span>
         <button
           type="button"
           onClick={() => { setErrored(false); setAttempt((a) => a + 1); }}
-          style={{
-            fontSize: "var(--text-sm)",
-            color: "var(--accent)",
-            background: "none",
-            border: "none",
-            cursor: "pointer",
-            padding: 0,
-            textDecoration: "underline",
-          }}
+          className="text-[0.875rem] text-brand bg-transparent border-none cursor-pointer p-0 underline"
         >
           Reload
         </button>
@@ -110,7 +81,7 @@ function Media({
   }
 
   return (
-    <div style={{ borderRadius: rounded ? "var(--radius-lg)" : 0, overflow: "hidden", background: "var(--surface-sunken)" }}>
+    <div className={`overflow-hidden bg-muted${rounded ? " rounded-[20px]" : ""}`}>
       {video ? (
         <video
           key={src}
@@ -156,30 +127,14 @@ function ResultNudge({ onTweak }: { onTweak?: () => void }) {
   const [dismissed, setDismissed] = useState(false);
   if (dismissed) return null;
   return (
-    <div
-      style={{
-        marginTop: "var(--space-4)",
-        display: "flex",
-        flexWrap: "wrap",
-        alignItems: "center",
-        gap: "var(--space-3)",
-      }}
-    >
-      <span style={{ fontSize: "var(--text-sm)", color: "var(--text-muted)" }}>
+    <div className="mt-4 flex flex-wrap items-center gap-3">
+      <span className="text-[0.875rem] text-muted-foreground">
         Done — happy with it, or want a tweak?
       </span>
       <button
         type="button"
         onClick={() => setDismissed(true)}
-        style={{
-          fontSize: "var(--text-sm)",
-          color: "var(--text-secondary)",
-          background: "var(--surface-raised)",
-          border: "1px solid var(--border-subtle)",
-          borderRadius: "var(--radius-control)",
-          padding: "4px 12px",
-          cursor: "pointer",
-        }}
+        className="text-[0.875rem] text-muted-foreground bg-card border border-border rounded-[14px] px-3 py-1 cursor-pointer"
       >
         Looks great
       </button>
@@ -194,15 +149,7 @@ function ResultNudge({ onTweak }: { onTweak?: () => void }) {
             if (el) (el as HTMLElement).focus();
           }
         }}
-        style={{
-          fontSize: "var(--text-sm)",
-          color: "var(--text-secondary)",
-          background: "var(--surface-raised)",
-          border: "1px solid var(--border-subtle)",
-          borderRadius: "var(--radius-control)",
-          padding: "4px 12px",
-          cursor: "pointer",
-        }}
+        className="text-[0.875rem] text-muted-foreground bg-card border border-border rounded-[14px] px-3 py-1 cursor-pointer"
       >
         Tweak it
       </button>
@@ -268,24 +215,34 @@ export function OttoResult({ payload, onTweak, sourceCardId, onMakeAnother }: Ot
 
   if (!urls.length) {
     return (
-      <Card variant="default" padding="md">
-        <div style={{ fontSize: "var(--text-sm)", color: "var(--text-muted)" }}>Your result is ready.</div>
-      </Card>
+      // leading-[1.65] pins the line-height this subtree currently INHERITS from the .fk
+      // ancestor (--leading-relaxed); it survives S4 teardown (when .fk/otto-theme.css is
+      // removed and .gb — which sets no line-height — applies at the root). Value-identical
+      // today → zero visual change; without it the text compacts post-teardown.
+      <div className="gb leading-[1.65]">
+        <Card>
+          <div className="text-[0.875rem] text-muted-foreground">Your result is ready.</div>
+        </Card>
+      </div>
     );
   }
 
   // ---- Chooser grid (ad pack, nothing chosen yet) ----
   if (selected === null) {
     return (
-      <div style={{ maxWidth: 560 }}>
-        <Card variant="default" padding="md">
-          <div style={{ display: "flex", alignItems: "center", gap: "var(--space-2)", marginBottom: "var(--space-3)" }}>
-            <Sparkles size={18} color="var(--accent)" />
-            <span style={{ fontWeight: "var(--weight-bold)" as React.CSSProperties["fontWeight"], fontSize: "var(--text-base)", color: "var(--text-strong)" }}>
+      // leading-[1.65] pins the line-height this subtree currently INHERITS from the .fk
+      // ancestor (--leading-relaxed); it survives S4 teardown (when .fk/otto-theme.css is
+      // removed and .gb — which sets no line-height — applies at the root). Value-identical
+      // today → zero visual change; without it the text compacts post-teardown.
+      <div className="gb leading-[1.65] max-w-[560px]">
+        <Card>
+          <div className="flex items-center gap-2 mb-3">
+            <Sparkles size={18} className="text-brand" />
+            <span className="font-bold text-[1rem] text-foreground">
               {urls.length} options — tap the one you like
             </span>
           </div>
-          <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "var(--space-3)" }}>
+          <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "var(--space-3, 0.75rem)" }}>
             {urls.map((u, i) => (
               // Fix #4 — accessible label on chooser buttons
               <button
@@ -293,16 +250,7 @@ export function OttoResult({ payload, onTweak, sourceCardId, onMakeAnother }: Ot
                 type="button"
                 aria-label={`Option ${i + 1}`}
                 onClick={() => pick(i)}
-                style={{
-                  position: "relative",
-                  padding: 0,
-                  border: "2px solid var(--border-subtle)",
-                  borderRadius: "var(--radius-lg)",
-                  overflow: "hidden",
-                  cursor: "pointer",
-                  background: "var(--surface-card)",
-                  transition: "var(--transition-control)",
-                }}
+                className="relative p-0 border-2 border-border rounded-[20px] overflow-hidden cursor-pointer bg-card transition"
               >
                 <Media url={u} alt={prompt ? `Generated image: ${prompt}` : `Option ${i + 1}`} rounded={false} />
                 {/* No "Otto's pick" badge: there is no real curation signal from the backend
@@ -322,46 +270,51 @@ export function OttoResult({ payload, onTweak, sourceCardId, onMakeAnother }: Ot
   const mediaAlt = prompt ? `Generated image: ${prompt}` : "Generated image";
 
   return (
-    <div style={{ maxWidth: 540 }}>
-      <Card variant="default" padding="md">
+    // leading-[1.65] pins the line-height this subtree currently INHERITS from the .fk
+    // ancestor (--leading-relaxed); it survives S4 teardown (when .fk/otto-theme.css is
+    // removed and .gb — which sets no line-height — applies at the root). Value-identical
+    // today → zero visual change; without it the text compacts post-teardown.
+    <div className="gb leading-[1.65] max-w-[540px]">
+      <Card>
         {/* Fix #4 — meaningful alt via mediaAlt */}
         <Media url={url} alt={mediaAlt} />
-        <div style={{ display: "flex", flexWrap: "wrap", gap: "var(--space-3)", marginTop: "var(--space-4)" }}>
+        <div className="flex flex-wrap gap-3 mt-4">
           <DownloadLink url={url} filename={filename} />
           {/* Fix #2 — honest copy states */}
           {copyState === "manual" ? (
-            <div style={{ display: "flex", alignItems: "center", gap: 6, fontSize: "var(--text-sm)", color: "var(--text-muted)" }}>
+            <div className="flex items-center gap-1.5 text-[0.875rem] text-muted-foreground">
               <AlertCircle size={15} />
               <span>Couldn&apos;t copy — long-press the link to copy</span>
             </div>
           ) : (
             <Button
               variant="soft"
-              size="md"
-              leftIcon={copyState === "copied" ? <Check size={18} /> : <Copy size={18} />}
               onClick={() => copyLink(url)}
             >
+              {copyState === "copied" ? <Check size={18} /> : <Copy size={18} />}
               {copyState === "copied" ? "Copied" : "Copy to post"}
             </Button>
           )}
           {urls.length > 1 && (
-            <Button variant="ghost" size="md" leftIcon={<ChevronLeft size={18} />} onClick={() => setSelected(null)}>
+            <Button variant="ghost" onClick={() => setSelected(null)}>
+              <ChevronLeft size={18} />
               See all {urls.length} options
             </Button>
           )}
           {sourceCardId && (
-            <Button variant="ghost" size="md" leftIcon={<RefreshCw size={18} />} disabled={makingAnother} onClick={makeAnother}>
+            <Button variant="ghost" disabled={makingAnother} onClick={makeAnother}>
+              <RefreshCw size={18} />
               {makingAnother ? "Queuing…" : "Make another"}
             </Button>
           )}
         </div>
         {makeAnotherError && (
-          <div role="alert" style={{ marginTop: "var(--space-2)", fontSize: "var(--text-sm)", color: "var(--error-700)" }}>
+          <div role="alert" className="mt-2 text-[0.875rem] text-[var(--error-soft-foreground)]">
             {makeAnotherError}
           </div>
         )}
         {typeof payload?.costCredits === "number" && (
-          <div style={{ marginTop: "var(--space-3)", fontSize: "var(--text-sm)", color: "var(--text-muted)" }}>
+          <div className="mt-3 text-[0.875rem] text-muted-foreground">
             Cost: {creditsLabel(payload.costCredits)}
           </div>
         )}

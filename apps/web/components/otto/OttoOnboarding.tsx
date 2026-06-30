@@ -51,48 +51,23 @@ export function OttoOnboarding({ onGoToStuff, onGoToMemory }: OttoOnboardingProp
     },
   ];
 
+  // leading-[1.65] pins the line-height inherited from the .fk ancestor
+  // (--leading-relaxed); survives S4 teardown (when .fk/otto-theme.css is removed
+  // and .gb — which sets no line-height — applies at the root).
   return (
     <div
       role="region"
       aria-label="Getting started"
-      style={{
-        margin: "var(--space-5) var(--space-6) 0",
-        borderRadius: "var(--radius-xl)",
-        border: "1.5px solid var(--border-subtle)",
-        background: "var(--surface-card)",
-        boxShadow: "var(--shadow-sm)",
-        overflow: "hidden",
-      }}
+      className="gb leading-[1.65] mx-6 mt-5 rounded-[28px] overflow-hidden bg-card shadow-sm"
+      style={{ border: "1.5px solid var(--border)" }}
     >
       {/* Header row */}
-      <div
-        style={{
-          display: "flex",
-          alignItems: "center",
-          justifyContent: "space-between",
-          padding: "var(--space-4) var(--space-5) var(--space-3)",
-          borderBottom: "1px solid var(--border-subtle)",
-        }}
-      >
+      <div className="flex items-center justify-between px-5 pt-4 pb-3 border-b border-border">
         <div>
-          <div
-            style={{
-              fontFamily: "var(--font-display)",
-              fontWeight: "var(--weight-bold)" as React.CSSProperties["fontWeight"],
-              fontSize: "var(--text-base)",
-              color: "var(--text-strong)",
-              lineHeight: "var(--leading-snug)",
-            }}
-          >
+          <div className="font-bold text-[1rem] text-foreground leading-[1.2]">
             Get Otto ready
           </div>
-          <div
-            style={{
-              fontSize: "var(--text-xs)",
-              color: "var(--text-muted)",
-              marginTop: 2,
-            }}
-          >
+          <div className="text-[0.75rem] text-muted-foreground mt-[2px]">
             Two quick things before your first campaign
           </div>
         </div>
@@ -100,19 +75,7 @@ export function OttoOnboarding({ onGoToStuff, onGoToMemory }: OttoOnboardingProp
           type="button"
           onClick={dismiss}
           aria-label="Dismiss getting started"
-          style={{
-            display: "inline-flex",
-            alignItems: "center",
-            justifyContent: "center",
-            width: 28,
-            height: 28,
-            borderRadius: "var(--radius-md)",
-            border: "none",
-            background: "transparent",
-            color: "var(--text-faint)",
-            cursor: "pointer",
-            flexShrink: 0,
-          }}
+          className="inline-flex items-center justify-center w-7 h-7 rounded-[14px] border-0 bg-transparent text-muted-foreground/70 cursor-pointer shrink-0"
         >
           <X size={16} />
         </button>
@@ -120,57 +83,24 @@ export function OttoOnboarding({ onGoToStuff, onGoToMemory }: OttoOnboardingProp
 
       {/* Tiles row */}
       <div
-        style={{
-          display: "grid",
-          gridTemplateColumns: "1fr 1fr",
-          gap: 1,
-          background: "var(--border-subtle)",
-        }}
+        className="grid grid-cols-2 gap-px"
+        style={{ background: "var(--border)" }}
       >
         {tiles.map((tile) => (
           <button
             key={tile.label}
             type="button"
             onClick={tile.onClick}
-            style={{
-              display: "flex",
-              alignItems: "flex-start",
-              gap: "var(--space-3)",
-              padding: "var(--space-4) var(--space-5)",
-              background: "var(--surface-card)",
-              border: "none",
-              cursor: "pointer",
-              textAlign: "left",
-              transition: "var(--transition-control)",
-            }}
-            onMouseEnter={(e) => {
-              (e.currentTarget as HTMLButtonElement).style.background = "var(--surface-hover)";
-            }}
-            onMouseLeave={(e) => {
-              (e.currentTarget as HTMLButtonElement).style.background = "var(--surface-card)";
-            }}
+            className="flex items-start gap-3 px-5 py-4 bg-card border-0 cursor-pointer text-left transition-colors duration-150 hover:bg-accent"
           >
-            <div
-              style={{
-                flexShrink: 0,
-                marginTop: 2,
-                color: "var(--brand)",
-              }}
-            >
+            <div className="shrink-0 mt-[2px] text-foreground">
               {tile.icon}
             </div>
             <div>
-              <div
-                style={{
-                  fontWeight: "var(--weight-semibold)" as React.CSSProperties["fontWeight"],
-                  fontSize: "var(--text-sm)",
-                  color: "var(--text-strong)",
-                  marginBottom: 2,
-                }}
-              >
+              <div className="font-semibold text-[0.875rem] text-foreground mb-[2px]">
                 {tile.label}
               </div>
-              <div style={{ fontSize: "var(--text-xs)", color: "var(--text-muted)" }}>
+              <div className="text-[0.75rem] text-muted-foreground">
                 {tile.hint}
               </div>
             </div>

@@ -5,8 +5,7 @@ import React from "react";
  * OTTO's live step-trace — the agent narrating what it's doing, Grok-style but in
  * OTTO's voice. Purely presentational: it renders a `steps[]` derived elsewhere from
  * the signals the agent already emits (stream status / message kinds). No data, no
- * spend — display only. Tokens are .fk semantic vars so it inherits the active skin
- * (under .fk.gb-skin it's Grok-bright; coral = OTTO).
+ * spend — display only. Tokens are .gb (shadcn) vars; coral = OTTO (var(--brand)).
  */
 
 export type TraceStepStatus = "done" | "active" | "pending";
@@ -24,7 +23,7 @@ function OttoGlyph({ size = 17 }: { size?: number }) {
   const h = Math.round((size * 22) / 24);
   return (
     <svg width={size} height={h} viewBox="0 0 120 110" aria-hidden style={{ flexShrink: 0 }}>
-      <g fill="var(--accent)">
+      <g fill="var(--brand)">
         <ellipse cx="60" cy="64" rx="43" ry="22" />
         <circle cx="37" cy="52" r="18" />
         <circle cx="61" cy="40" r="24" />
@@ -43,12 +42,12 @@ function StepRow({ step }: { step: TraceStep }) {
       style={{
         display: "flex",
         alignItems: "center",
-        gap: "var(--space-2)",
-        padding: "7px var(--space-2)",
-        borderRadius: "var(--radius-sm)",
-        background: isActive ? "var(--accent-soft)" : "transparent",
-        fontSize: "var(--text-sm)",
-        color: isActive ? CORAL_INK : isDone ? "var(--text-body)" : "var(--text-faint)",
+        gap: "0.5rem",
+        padding: "7px 0.5rem",
+        borderRadius: "10px",
+        background: isActive ? "var(--brand-soft)" : "transparent",
+        fontSize: "0.875rem",
+        color: isActive ? CORAL_INK : isDone ? "var(--foreground)" : "var(--muted-foreground)",
       }}
     >
       <span
@@ -60,9 +59,9 @@ function StepRow({ step }: { step: TraceStep }) {
           display: "flex",
           alignItems: "center",
           justifyContent: "center",
-          background: isDone ? "var(--success-100)" : isActive ? "var(--accent)" : "transparent",
-          border: status === "pending" ? "1.6px solid var(--border-default)" : "none",
-          color: isDone ? "var(--success-700)" : "#fff",
+          background: isDone ? "var(--success-soft)" : isActive ? "var(--brand)" : "transparent",
+          border: status === "pending" ? "1.6px solid var(--border)" : "none",
+          color: isDone ? "var(--success-soft-foreground)" : "#fff",
         }}
       >
         {isDone && (
@@ -83,15 +82,15 @@ function StepRow({ step }: { step: TraceStep }) {
           />
         )}
       </span>
-      <span style={{ flex: 1, fontWeight: isActive ? "var(--weight-semibold)" : "var(--weight-regular)" }}>
+      <span style={{ flex: 1, fontWeight: isActive ? 600 : 400 }}>
         {label}
       </span>
       {isActive ? (
         <span style={{ width: 48, height: 5, borderRadius: 99, background: "rgba(236,88,40,.22)", overflow: "hidden", position: "relative" }}>
-          <span className="otto-trace-bar" style={{ position: "absolute", top: 0, left: 0, height: "100%", width: "45%", background: "var(--accent)", borderRadius: 99 }} />
+          <span className="otto-trace-bar" style={{ position: "absolute", top: 0, left: 0, height: "100%", width: "45%", background: "var(--brand)", borderRadius: 99 }} />
         </span>
       ) : detail ? (
-        <span style={{ fontFamily: "var(--font-mono)", fontSize: "var(--text-xs)", color: "var(--text-faint)" }}>{detail}</span>
+        <span style={{ fontFamily: "var(--font-mono)", fontSize: "0.75rem", color: "var(--muted-foreground)" }}>{detail}</span>
       ) : null}
     </div>
   );
@@ -106,13 +105,16 @@ export function OttoTrace({ steps, title = "OTTO is making it" }: { steps: Trace
   const counter = activeIdx >= 0 ? `step ${activeIdx + 1} of ${total}` : allDone ? "done" : `${doneCount} of ${total}`;
 
   return (
+    // leading-[1.65] pins the line-height currently inherited from .fk (--leading-relaxed);
+    // it survives S4 teardown when .fk/otto-theme.css is removed. Zero visual change today.
     <div
+      className="gb leading-[1.65]"
       style={{
-        border: "1px solid var(--accent-soft)",
+        border: "1px solid var(--brand-soft)",
         borderRadius: "var(--radius-card)",
         overflow: "hidden",
         boxShadow: "var(--shadow-sm)",
-        background: "var(--surface-card)",
+        background: "var(--card)",
       }}
     >
       <style>{`
@@ -128,14 +130,14 @@ export function OttoTrace({ steps, title = "OTTO is making it" }: { steps: Trace
         style={{
           display: "flex",
           alignItems: "center",
-          gap: "var(--space-2)",
-          padding: "11px var(--space-3)",
-          background: "var(--accent-soft)",
+          gap: "0.5rem",
+          padding: "11px 0.75rem",
+          background: "var(--brand-soft)",
         }}
       >
         <OttoGlyph size={17} />
-        <span style={{ flex: 1, fontSize: "var(--text-sm)", fontWeight: "var(--weight-bold)", color: CORAL_INK }}>{title}</span>
-        <span style={{ fontFamily: "var(--font-mono)", fontSize: "var(--text-xs)", color: "var(--accent)" }}>{counter}</span>
+        <span style={{ flex: 1, fontSize: "0.875rem", fontWeight: 700, color: CORAL_INK }}>{title}</span>
+        <span style={{ fontFamily: "var(--font-mono)", fontSize: "0.75rem", color: "var(--brand)" }}>{counter}</span>
       </div>
       <div style={{ padding: "7px 5px", display: "flex", flexDirection: "column" }}>
         {steps.map((s, i) => (
@@ -152,28 +154,31 @@ export function OttoTrace({ steps, title = "OTTO is making it" }: { steps: Trace
  */
 export function OttoCanvasStatus({ label }: { label: string }) {
   return (
+    // leading-[1.65] pins the line-height currently inherited from .fk (--leading-relaxed);
+    // it survives S4 teardown when .fk/otto-theme.css is removed. Zero visual change today.
     <div
+      className="gb leading-[1.65]"
       style={{
         position: "absolute",
-        top: "var(--space-4)",
+        top: "1rem",
         left: "50%",
         transform: "translateX(-50%)",
         zIndex: 6,
         display: "inline-flex",
         alignItems: "center",
-        gap: "var(--space-2)",
-        background: "var(--surface-inverse)",
+        gap: "0.5rem",
+        background: "#0A0A0A",
         color: "#fff",
-        padding: "8px var(--space-3)",
+        padding: "8px 0.75rem",
         borderRadius: 999,
         boxShadow: "var(--shadow-lg)",
-        fontSize: "var(--text-sm)",
-        fontWeight: "var(--weight-medium)",
+        fontSize: "0.875rem",
+        fontWeight: 500,
         whiteSpace: "nowrap",
       }}
     >
       <svg width="15" height="14" viewBox="0 0 120 110" aria-hidden>
-        <g fill="var(--accent)">
+        <g fill="var(--brand)">
           <ellipse cx="60" cy="64" rx="43" ry="22" />
           <circle cx="37" cy="52" r="18" />
           <circle cx="61" cy="40" r="24" />

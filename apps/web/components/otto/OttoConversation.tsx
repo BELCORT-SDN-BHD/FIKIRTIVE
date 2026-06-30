@@ -1,6 +1,7 @@
 "use client";
 import React, { useEffect, useRef, useState } from "react";
-import { OttoAvatar, Button } from "@/components/fk";
+import { OttoAvatar } from "@/components/fk";
+import { Button } from "@/components/ui/button";
 import { ottoTurn } from "@/lib/otto-client-actions";
 import { getCoworkThreadClient } from "@/lib/cowork-fetch";
 import { OttoPlanCard } from "./OttoPlanCard";
@@ -226,48 +227,33 @@ export function OttoConversation({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [hasWorkingJob, thread.id, pollGaveUp]);
 
+  // leading-[1.65] pins the line-height the conversation currently INHERITS from the .fk
+  // ancestor (--leading-relaxed); it survives S4 teardown (when .fk/otto-theme.css is
+  // removed and .gb — which sets no line-height — applies at the root). Value-identical
+  // today → zero visual change; without it the text compacts post-teardown.
   return (
-    <div style={{ flex: 1, display: "flex", flexDirection: "column", overflow: "hidden" }}>
+    <div className="gb leading-[1.65]" style={{ flex: 1, display: "flex", flexDirection: "column", overflow: "hidden" }}>
       <style>{`
         @media (max-width: 680px) {
-          .otto-conv-scroll { padding: var(--space-4) var(--space-3) !important; }
-          .otto-conv-composer { padding: var(--space-3) var(--space-3) !important; }
-          .otto-conv-header { padding: var(--space-3) var(--space-4) !important; }
+          .otto-conv-scroll { padding: 1rem 0.75rem !important; }
+          .otto-conv-composer { padding: 0.75rem 0.75rem !important; }
+          .otto-conv-header { padding: 0.75rem 1rem !important; }
         }
       `}</style>
       {/* Header */}
       <div
-        className="otto-conv-header"
-        style={{
-          padding: "var(--space-4) var(--space-6)",
-          borderBottom: "1px solid var(--border-subtle)",
-          background: "var(--surface-card)",
-          display: "flex",
-          alignItems: "center",
-          gap: "var(--space-3)",
-        }}
+        className="otto-conv-header flex items-center gap-3 border-b border-border bg-card"
+        style={{ padding: "1rem 1.5rem" }}
       >
         <OttoAvatar size={32} state={busy ? "thinking" : "idle"} />
-        <div
-          style={{
-            fontFamily: "var(--font-display)",
-            fontWeight: "var(--weight-semibold)",
-            fontSize: "var(--text-base)",
-            color: "var(--text-strong)",
-            flex: 1,
-            minWidth: 0,
-            overflow: "hidden",
-            textOverflow: "ellipsis",
-            whiteSpace: "nowrap",
-          }}
-        >
+        <div className="flex-1 min-w-0 overflow-hidden text-ellipsis whitespace-nowrap text-[1rem] font-semibold text-foreground">
           {thread.title}
         </div>
       </div>
 
       {/* Messages */}
-      <div className="otto-conv-scroll" style={{ flex: 1, overflow: "auto", padding: "var(--space-6)" }}>
-        <div style={{ maxWidth: 680, margin: "0 auto", display: "flex", flexDirection: "column", gap: "var(--space-4)" }}>
+      <div className="otto-conv-scroll flex-1 overflow-auto" style={{ padding: "1.5rem" }}>
+        <div className="mx-auto flex flex-col gap-4" style={{ maxWidth: 680 }}>
           {messages.map((m) => (
             <MessageRow
               key={m.id}
@@ -329,56 +315,27 @@ export function OttoConversation({
           ))}
 
           {busy && (
-            <div style={{ display: "flex", alignItems: "flex-start", gap: "var(--space-3)" }}>
+            <div className="flex items-start gap-3">
               <OttoAvatar size={32} state="thinking" />
-              <div
-                style={{
-                  padding: "var(--space-3) var(--space-4)",
-                  background: "var(--surface-card)",
-                  borderRadius: "0 var(--radius-lg) var(--radius-lg) var(--radius-lg)",
-                  border: "1px solid var(--border-subtle)",
-                  fontSize: "var(--text-sm)",
-                  color: "var(--text-muted)",
-                  fontStyle: "italic",
-                }}
-              >
+              <div className="px-4 py-3 bg-card rounded-[0_20px_20px_20px] border border-border text-[0.875rem] text-muted-foreground italic">
                 Otto is thinking…
               </div>
             </div>
           )}
 
           {!busy && hasWorkingJob && !pollGaveUp && (
-            <div style={{ display: "flex", alignItems: "flex-start", gap: "var(--space-3)" }}>
+            <div className="flex items-start gap-3">
               <OttoAvatar size={32} state="thinking" />
-              <div
-                style={{
-                  padding: "var(--space-3) var(--space-4)",
-                  background: "var(--surface-card)",
-                  borderRadius: "0 var(--radius-lg) var(--radius-lg) var(--radius-lg)",
-                  border: "1px solid var(--border-subtle)",
-                  fontSize: "var(--text-sm)",
-                  color: "var(--text-muted)",
-                  fontStyle: "italic",
-                }}
-              >
+              <div className="px-4 py-3 bg-card rounded-[0_20px_20px_20px] border border-border text-[0.875rem] text-muted-foreground italic">
                 Otto is making this — this can take a moment…
               </div>
             </div>
           )}
 
           {!busy && hasWorkingJob && pollGaveUp && !pollTerminal && (
-            <div style={{ display: "flex", alignItems: "flex-start", gap: "var(--space-3)" }}>
+            <div className="flex items-start gap-3">
               <OttoAvatar size={32} state="idle" />
-              <div
-                style={{
-                  padding: "var(--space-3) var(--space-4)",
-                  background: "var(--surface-card)",
-                  border: "1px solid var(--border-subtle)",
-                  borderRadius: "0 var(--radius-lg) var(--radius-lg) var(--radius-lg)",
-                  fontSize: "var(--text-sm)",
-                  color: "var(--text-body)",
-                }}
-              >
+              <div className="px-4 py-3 bg-card border border-border rounded-[0_20px_20px_20px] text-[0.875rem] text-foreground">
                 This is taking longer than usual. Your credits for this are on hold — if it doesn&rsquo;t finish, they&rsquo;re returned to you automatically.{" "}
                 <button
                   type="button"
@@ -388,7 +345,7 @@ export function OttoConversation({
                     pollCountRef.current = 0;
                     void refreshAndUpdate();
                   }}
-                  style={{ background: "none", border: "none", padding: 0, color: "var(--brand)", fontWeight: "var(--weight-semibold)" as React.CSSProperties["fontWeight"], cursor: "pointer", textDecoration: "underline" }}
+                  className="bg-transparent border-0 p-0 text-primary font-semibold cursor-pointer underline"
                 >
                   Check again
                 </button>
@@ -397,18 +354,9 @@ export function OttoConversation({
           )}
 
           {!busy && hasWorkingJob && pollTerminal && (
-            <div style={{ display: "flex", alignItems: "flex-start", gap: "var(--space-3)" }}>
+            <div className="flex items-start gap-3">
               <OttoAvatar size={32} state="idle" />
-              <div
-                style={{
-                  padding: "var(--space-3) var(--space-4)",
-                  background: "var(--surface-card)",
-                  border: "1px solid var(--border-subtle)",
-                  borderRadius: "0 var(--radius-lg) var(--radius-lg) var(--radius-lg)",
-                  fontSize: "var(--text-sm)",
-                  color: "var(--text-body)",
-                }}
-              >
+              <div className="px-4 py-3 bg-card border border-border rounded-[0_20px_20px_20px] text-[0.875rem] text-foreground">
                 This looks stuck. Cancel it on the card to get your credits back, or start a new card.
               </div>
             </div>
@@ -417,13 +365,7 @@ export function OttoConversation({
           {error && (
             <div
               role="alert"
-              style={{
-                padding: "var(--space-3) var(--space-4)",
-                borderRadius: "var(--radius-md)",
-                background: "var(--error-100)",
-                color: "var(--error-700)",
-                fontSize: "var(--text-sm)",
-              }}
+              className="px-4 py-3 rounded-[14px] bg-error-soft text-[var(--error-soft-foreground)] text-[0.875rem]"
             >
               {error}
             </div>
@@ -435,30 +377,14 @@ export function OttoConversation({
 
       {/* Composer */}
       <div
-        className="otto-conv-composer"
-        style={{
-          borderTop: "1px solid var(--border-subtle)",
-          background: "var(--surface-card)",
-          padding: "var(--space-4) var(--space-6)",
-        }}
+        className="otto-conv-composer border-t border-border bg-card"
+        style={{ padding: "1rem 1.5rem" }}
       >
-        <div style={{ maxWidth: 680, margin: "0 auto", position: "relative" }}>
+        <div className="relative" style={{ maxWidth: 680, margin: "0 auto" }}>
           {mentionSuggestions.length > 0 && (
             <div
               role="listbox"
-              style={{
-                position: "absolute",
-                bottom: "100%",
-                left: 0,
-                marginBottom: 4,
-                width: 256,
-                borderRadius: "var(--radius-lg)",
-                border: "1px solid var(--border-default)",
-                background: "var(--surface-card)",
-                boxShadow: "var(--shadow-lg)",
-                zIndex: 50,
-                overflow: "hidden",
-              }}
+              className="absolute bottom-full left-0 mb-1 w-64 rounded-[20px] border border-border bg-card shadow-lg z-50 overflow-hidden"
             >
               {mentionSuggestions.map((e, i) => (
                 <button
@@ -466,32 +392,14 @@ export function OttoConversation({
                   role="option"
                   aria-selected={i === mentionHighlight}
                   onMouseDown={(ev) => { ev.preventDefault(); selectMention(e); }}
-                  style={{
-                    display: "block",
-                    width: "100%",
-                    textAlign: "left",
-                    padding: "var(--space-2) var(--space-3)",
-                    fontSize: "var(--text-sm)",
-                    background: i === mentionHighlight ? "var(--bg-muted, var(--surface-raised))" : "transparent",
-                    border: "none",
-                    cursor: "pointer",
-                    color: "var(--text-body)",
-                  }}
+                  className={`block w-full text-left px-3 py-2 text-[0.875rem] border-0 cursor-pointer text-foreground ${i === mentionHighlight ? "bg-muted" : "bg-transparent"}`}
                 >
                   @{e.name}
                 </button>
               ))}
             </div>
           )}
-          <div
-            style={{
-              background: "var(--bg-page)",
-              borderRadius: "var(--radius-xl)",
-              border: "1.5px solid var(--border-default)",
-              overflow: "hidden",
-              boxShadow: "var(--shadow-sm)",
-            }}
-          >
+          <div className="bg-background rounded-[28px] border-[1.5px] border-border overflow-hidden shadow-sm">
             <textarea
               id="otto-composer"
               value={text}
@@ -500,29 +408,11 @@ export function OttoConversation({
               disabled={busy}
               placeholder="Reply to Otto…"
               rows={2}
-              style={{
-                width: "100%",
-                border: "none",
-                outline: "none",
-                resize: "none",
-                padding: "var(--space-3) var(--space-4)",
-                fontFamily: "var(--font-sans)",
-                fontSize: "var(--text-base)",
-                color: "var(--text-body)",
-                background: "transparent",
-                lineHeight: "var(--leading-relaxed)",
-              }}
+              className="w-full border-0 outline-none resize-none px-4 py-3 text-[1rem] text-foreground bg-transparent leading-relaxed"
             />
-            <div
-              style={{
-                display: "flex",
-                justifyContent: "flex-end",
-                padding: "var(--space-2) var(--space-3)",
-                borderTop: "1px solid var(--border-subtle)",
-              }}
-            >
+            <div className="flex justify-end px-3 py-2 border-t border-border">
               <Button
-                variant="primary"
+                variant="default"
                 size="sm"
                 disabled={busy || !text.trim()}
                 onClick={send}
@@ -575,42 +465,17 @@ function MessageRow({
   if (m.kind === "TEXT") {
     if (isUser) {
       return (
-        <div style={{ display: "flex", justifyContent: "flex-end" }}>
-          <div
-            style={{
-              maxWidth: "75%",
-              padding: "var(--space-3) var(--space-4)",
-              background: "var(--brand)",
-              color: "var(--text-on-brand)",
-              borderRadius: "var(--radius-lg) var(--radius-lg) var(--space-1) var(--radius-lg)",
-              fontSize: "var(--text-sm)",
-              lineHeight: "var(--leading-normal)",
-              whiteSpace: "pre-wrap",
-              wordBreak: "break-word",
-            }}
-          >
+        <div className="flex justify-end">
+          <div className="max-w-[75%] px-4 py-3 bg-primary text-primary-foreground rounded-[20px_20px_4px_20px] text-[0.875rem] leading-normal whitespace-pre-wrap break-words">
             {m.text}
           </div>
         </div>
       );
     }
     return (
-      <div style={{ display: "flex", alignItems: "flex-start", gap: "var(--space-3)" }}>
+      <div className="flex items-start gap-3">
         <OttoAvatar size={32} state="idle" />
-        <div
-          style={{
-            maxWidth: "80%",
-            padding: "var(--space-3) var(--space-4)",
-            background: "var(--surface-card)",
-            border: "1px solid var(--border-subtle)",
-            borderRadius: "0 var(--radius-lg) var(--radius-lg) var(--radius-lg)",
-            fontSize: "var(--text-sm)",
-            lineHeight: "var(--leading-normal)",
-            color: "var(--text-body)",
-            whiteSpace: "pre-wrap",
-            wordBreak: "break-word",
-          }}
-        >
+        <div className="max-w-[80%] px-4 py-3 bg-card border border-border rounded-[0_20px_20px_20px] text-[0.875rem] leading-normal text-foreground whitespace-pre-wrap break-words">
           {m.text}
         </div>
       </div>
@@ -619,9 +484,9 @@ function MessageRow({
 
   if (m.kind === "GEN_CARD") {
     return (
-      <div style={{ display: "flex", alignItems: "flex-start", gap: "var(--space-3)" }}>
+      <div className="flex items-start gap-3">
         <OttoAvatar size={32} state="idle" />
-        <div style={{ flex: 1, minWidth: 0 }}>
+        <div className="flex-1 min-w-0">
           <OttoPlanCard
             cardId={m.id}
             payload={m.payload}
@@ -648,9 +513,9 @@ function MessageRow({
 
   if (m.kind === "ACTION_CARD") {
     return (
-      <div style={{ display: "flex", alignItems: "flex-start", gap: "var(--space-3)" }}>
+      <div className="flex items-start gap-3">
         <OttoAvatar size={32} state="idle" />
-        <div style={{ flex: 1, minWidth: 0 }}>
+        <div className="flex-1 min-w-0">
           <OttoActionPlanCard cardId={m.id} payload={m.payload} />
         </div>
       </div>
@@ -659,9 +524,9 @@ function MessageRow({
 
   if (m.kind === "BUILD_CARD") {
     return (
-      <div style={{ display: "flex", alignItems: "flex-start", gap: "var(--space-3)" }}>
+      <div className="flex items-start gap-3">
         <OttoAvatar size={32} state="idle" />
-        <div style={{ flex: 1, minWidth: 0 }}>
+        <div className="flex-1 min-w-0">
           <OttoAdBuildCard cardId={m.id} payload={m.payload} />
         </div>
       </div>
@@ -672,9 +537,9 @@ function MessageRow({
     const r = m.payload as { kind?: string; model?: string; urls?: string[]; generationIds?: string[]; costUsd?: number } | null;
     const sourceCardId = m.genJobId ? cardIdByJobId.get(m.genJobId) : undefined;
     return (
-      <div style={{ display: "flex", alignItems: "flex-start", gap: "var(--space-3)" }}>
+      <div className="flex items-start gap-3">
         <OttoAvatar size={32} state="idle" />
-        <div style={{ flex: 1, minWidth: 0 }}>
+        <div className="flex-1 min-w-0">
           <OttoResult payload={r} sourceCardId={sourceCardId} onMakeAnother={onMakeAnother} />
         </div>
       </div>
@@ -683,18 +548,9 @@ function MessageRow({
 
   if (m.kind === "DENIAL" || m.kind === "TURN_ERROR") {
     return (
-      <div style={{ display: "flex", alignItems: "flex-start", gap: "var(--space-3)" }}>
+      <div className="flex items-start gap-3">
         <OttoAvatar size={32} state="idle" />
-        <div
-          style={{
-            padding: "var(--space-3) var(--space-4)",
-            background: "var(--error-100)",
-            color: "var(--error-700)",
-            borderRadius: "0 var(--radius-lg) var(--radius-lg) var(--radius-lg)",
-            fontSize: "var(--text-sm)",
-            lineHeight: "var(--leading-normal)",
-          }}
-        >
+        <div className="px-4 py-3 bg-error-soft text-[var(--error-soft-foreground)] rounded-[0_20px_20px_20px] text-[0.875rem] leading-normal">
           {m.text}
         </div>
       </div>
