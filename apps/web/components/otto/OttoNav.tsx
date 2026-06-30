@@ -1,6 +1,7 @@
 "use client";
 import React, { useState } from "react";
 import { creditsLabel } from "@/lib/credit-format";
+import { Avatar, AvatarFallback } from "@/components/ui/avatar";
 import type { OttoViewKey, ProjectMeta } from "./OttoApp";
 import type { ChatThreadDTO } from "@/lib/types";
 import type { HistoryThumb } from "@/lib/data";
@@ -87,7 +88,7 @@ function IconChart() {
 function OttoCloud({ size = 26 }: { size?: number }) {
   return (
     <svg width={size} height={Math.round((size * 24) / 26)} viewBox="0 0 120 110" aria-hidden style={{ flexShrink: 0 }}>
-      <g fill="var(--accent)">
+      <g fill="var(--brand)">
         <ellipse cx="60" cy="64" rx="43" ry="22" />
         <circle cx="37" cy="52" r="18" />
         <circle cx="61" cy="40" r="24" />
@@ -273,25 +274,25 @@ export function OttoNav({
         }}
         aria-hidden
       />
+    {/* leading-[1.65] pins the line-height the nav currently INHERITS from the .fk
+        ancestor (--leading-relaxed); it survives S4 teardown (when .fk/otto-theme.css is
+        removed and .gb — which sets no line-height — applies at the root). Value-identical
+        today → zero visual change; without it the nav text compacts post-teardown. */}
     <nav
-      className={`otto-nav${drawerOpen ? " otto-nav--open" : ""}`}
+      className={`otto-nav gb flex flex-col overflow-hidden bg-card leading-[1.65]${drawerOpen ? " otto-nav--open" : ""}`}
       style={{
         width: collapsed ? 0 : 240,
         flexShrink: 0,
-        display: "flex",
-        flexDirection: "column",
-        borderRight: collapsed ? "none" : "1px solid var(--border-subtle)",
-        background: "var(--surface-card)",
-        overflow: "hidden",
-        padding: collapsed ? 0 : "var(--space-4) 0",
-        transition: "width var(--dur-base) var(--ease-out)",
+        borderRight: collapsed ? "none" : "1px solid var(--border)",
+        padding: collapsed ? 0 : "16px 0",
+        transition: "width 220ms cubic-bezier(0.22,1,0.36,1)",
       }}
     >
       {/* Logo + collapse toggle */}
-      <div style={{ display: "flex", alignItems: "center", gap: "var(--space-2)", padding: "0 var(--space-3) var(--space-4) var(--space-4)", borderBottom: "1px solid var(--border-subtle)" }}>
-        <div style={{ display: "flex", alignItems: "center", gap: "var(--space-2)", flex: 1, minWidth: 0 }}>
+      <div className="flex items-center gap-2 pr-3 pb-4 pl-4 border-b border-border">
+        <div className="flex items-center gap-2 flex-1 min-w-0">
           <OttoCloud size={26} />
-          <span style={{ fontSize: "var(--text-lg)", fontWeight: "var(--weight-bold)", letterSpacing: "var(--tracking-snug)", color: "var(--text-strong)" }}>
+          <span className="text-[1.125rem] font-bold tracking-[-0.015em] text-foreground">
             fikirtive
           </span>
         </div>
@@ -300,8 +301,7 @@ export function OttoNav({
           onClick={onToggleCollapse}
           title="Collapse sidebar"
           aria-label="Collapse sidebar"
-          className="otto-nav-collapse"
-          style={{ flexShrink: 0, width: 28, height: 28, borderRadius: "var(--radius-sm)", border: "none", background: "transparent", color: "var(--text-faint)", display: "flex", alignItems: "center", justifyContent: "center", cursor: "pointer" }}
+          className="otto-nav-collapse flex shrink-0 items-center justify-center w-7 h-7 rounded-[10px] border-0 bg-transparent text-muted-foreground/70 cursor-pointer"
         >
           <svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.9" aria-hidden>
             <rect x="3" y="3" width="18" height="18" rx="2" /><path d="M9 3v18" /><path d="m14 9-3 3 3 3" />
@@ -310,26 +310,10 @@ export function OttoNav({
       </div>
 
       {/* New campaign button */}
-      <div style={{ padding: "var(--space-4) var(--space-3) var(--space-3)" }}>
+      <div className="pt-4 px-3 pb-3">
         <button
           onClick={() => handleNavAction(onNewCampaign)}
-          style={{
-            display: "flex",
-            alignItems: "center",
-            gap: "var(--space-2)",
-            width: "100%",
-            border: "none",
-            background: "var(--brand)",
-            color: "#fff",
-            fontFamily: "var(--font-sans)",
-            fontSize: "var(--text-sm)",
-            fontWeight: "var(--weight-semibold)",
-            padding: "10px var(--space-3)",
-            borderRadius: "var(--radius-md)",
-            cursor: "pointer",
-            boxShadow: "var(--shadow-brand-sm)",
-            transition: "var(--transition-control)",
-          }}
+          className="flex items-center gap-2 w-full border-0 bg-primary text-primary-foreground text-[0.875rem] font-semibold px-3 py-2.5 rounded-[14px] cursor-pointer transition shadow-[0_4px_12px_rgba(236,88,40,0.18)]"
         >
           <IconPlus />
           New campaign
@@ -337,30 +321,14 @@ export function OttoNav({
       </div>
 
       {/* Nav items */}
-      <div style={{ padding: "0 var(--space-3)", display: "flex", flexDirection: "column", gap: "var(--space-1)" }}>
+      <div className="px-3 flex flex-col gap-1">
         {NAV_ITEMS.map((item) => {
           const active = view === item.key;
           return (
             <button
               key={item.key}
               onClick={() => handleNavAction(() => onViewChange(item.key))}
-              style={{
-                display: "flex",
-                alignItems: "center",
-                gap: "var(--space-3)",
-                width: "100%",
-                border: "none",
-                background: active ? "var(--brand-tint)" : "transparent",
-                color: active ? "var(--brand-press)" : "var(--text-muted)",
-                fontFamily: "var(--font-sans)",
-                fontSize: "var(--text-sm)",
-                fontWeight: "var(--weight-semibold)",
-                padding: "10px var(--space-3)",
-                borderRadius: "var(--radius-md)",
-                cursor: "pointer",
-                textAlign: "left",
-                transition: "background var(--dur-fast) var(--ease-out)",
-              }}
+              className={`flex items-center gap-3 w-full border-0 text-[0.875rem] font-semibold px-3 py-2.5 rounded-[14px] cursor-pointer text-left transition-colors duration-150 ${active ? "bg-secondary text-foreground" : "bg-transparent text-muted-foreground"}`}
             >
               {item.icon}
               {item.label}
@@ -371,11 +339,11 @@ export function OttoNav({
 
       {/* Projects (campaigns) + History */}
       {hasSidebar && (
-        <div style={{ flex: 1, overflow: "auto", padding: "var(--space-4) var(--space-3) var(--space-2)" }}>
+        <div className="flex-1 overflow-auto pt-4 px-3 pb-2">
           {projects.length > 0 && (
           <>
-          <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: "var(--space-2)", paddingLeft: "var(--space-1)" }}>
-            <span style={{ fontSize: "var(--text-xs)", color: "var(--text-faint)", fontWeight: "var(--weight-semibold)", textTransform: "uppercase", letterSpacing: "var(--tracking-caps)" }}>
+          <div className="flex items-center justify-between mb-2 pl-1">
+            <span className="text-[0.75rem] text-muted-foreground/70 font-semibold uppercase tracking-[0.08em]">
               Projects
             </span>
             <button
@@ -383,94 +351,74 @@ export function OttoNav({
               onClick={() => handleNavAction(onNewCampaign)}
               title="New campaign"
               aria-label="New campaign"
-              style={{ display: "flex", alignItems: "center", justifyContent: "center", width: 20, height: 20, border: "none", background: "transparent", color: "var(--text-faint)", borderRadius: "var(--radius-sm)", cursor: "pointer", padding: 0 }}
+              className="flex items-center justify-center w-5 h-5 border-0 bg-transparent text-muted-foreground/70 rounded-[10px] cursor-pointer p-0"
             >
               <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" aria-hidden><path d="M12 5v14M5 12h14" /></svg>
             </button>
           </div>
-          <div style={{ display: "flex", flexDirection: "column", gap: "2px" }}>
+          <div className="flex flex-col gap-0.5">
             {projects.map((p) => {
               const isActiveProject = p.id === activeProjectId;
               const projThreads = threadsByProject.get(p.id) ?? [];
               const isCollapsed = collapsedProjects.has(p.id);
               return (
-                <div key={p.id} style={{ marginBottom: "var(--space-1)" }}>
+                <div key={p.id} className="mb-1">
                   {/* project (campaign) row — chevron toggles its conversations,
                       double-click renames, hover-X deletes */}
-                  <div className="otto-recent-row" style={{ position: "relative", display: "flex", alignItems: "center" }}>
+                  <div className="otto-recent-row relative flex items-center">
                     <button
                       type="button"
                       aria-label={isCollapsed ? "Expand campaign" : "Collapse campaign"}
                       aria-expanded={!isCollapsed}
                       onClick={(e) => { e.stopPropagation(); toggleProjectCollapse(p.id); }}
                       disabled={projThreads.length === 0}
-                      style={{ display: "flex", alignItems: "center", justifyContent: "center", width: 18, height: 26, border: "none", background: "transparent", color: "var(--text-faint)", cursor: projThreads.length ? "pointer" : "default", padding: 0, flexShrink: 0 }}
+                      className={`flex items-center justify-center w-[18px] h-[26px] border-0 bg-transparent text-muted-foreground/70 p-0 shrink-0 ${projThreads.length ? "cursor-pointer" : "cursor-default"}`}
                     >
                       {projThreads.length > 0 && (
-                        <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.4" strokeLinecap="round" strokeLinejoin="round" aria-hidden style={{ transform: isCollapsed ? "rotate(-90deg)" : "none", transition: "transform var(--dur-fast) var(--ease-out)" }}><path d="m6 9 6 6 6-6" /></svg>
+                        <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.4" strokeLinecap="round" strokeLinejoin="round" aria-hidden className="transition-transform duration-150" style={{ transform: isCollapsed ? "rotate(-90deg)" : "none" }}><path d="m6 9 6 6 6-6" /></svg>
                       )}
                     </button>
                     <button
                       onClick={() => { if (!isActiveProject) handleNavAction(() => onSwitchProject(p.id)); }}
                       onDoubleClick={() => { const n = window.prompt("Rename campaign", p.name); if (n && n.trim()) onRenameProject(p.id, n.trim()); }}
                       title={p.name}
-                      style={{
-                        display: "flex", alignItems: "center", gap: "var(--space-2)", flex: 1, minWidth: 0,
-                        border: "none",
-                        background: isActiveProject ? "var(--brand-tint)" : "transparent",
-                        color: isActiveProject ? "var(--brand-press)" : "var(--text-body)",
-                        fontFamily: "var(--font-sans)", fontSize: "var(--text-sm)", fontWeight: "var(--weight-semibold)",
-                        padding: "6px var(--space-6) 6px var(--space-2)", borderRadius: "var(--radius-sm)", cursor: "pointer", textAlign: "left",
-                        transition: "background var(--dur-fast) var(--ease-out)",
-                      }}
+                      className={`flex items-center gap-2 flex-1 min-w-0 border-0 text-[0.875rem] font-semibold text-foreground py-1.5 pr-6 pl-2 rounded-[10px] cursor-pointer text-left transition-colors duration-150 ${isActiveProject ? "bg-secondary" : "bg-transparent"}`}
                     >
-                      <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.9" aria-hidden style={{ flexShrink: 0 }}><path d="M3 7a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z" /></svg>
-                      <span style={{ overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", minWidth: 0, flex: 1 }}>{p.name}</span>
+                      <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.9" aria-hidden className="shrink-0"><path d="M3 7a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z" /></svg>
+                      <span className="truncate min-w-0 flex-1">{p.name}</span>
                     </button>
                     <button
-                      className="otto-recent-delete"
+                      className="otto-recent-delete absolute right-2 flex items-center justify-center w-5 h-5 border-0 bg-transparent text-muted-foreground/70 rounded-[10px] cursor-pointer p-0 opacity-0 transition-[opacity,background] duration-150"
                       aria-label={`Delete ${p.name}`}
                       title="Delete campaign"
                       onClick={(e) => { e.stopPropagation(); onDeleteProject(p.id); }}
-                      style={{ position: "absolute", right: "var(--space-2)", display: "flex", alignItems: "center", justifyContent: "center", width: 20, height: 20, border: "none", background: "transparent", color: "var(--text-faint)", borderRadius: "var(--radius-sm)", cursor: "pointer", padding: 0, opacity: 0, transition: "opacity var(--dur-fast) var(--ease-out), background var(--dur-fast) var(--ease-out)" }}
                     >
                       <IconX />
                     </button>
                   </div>
                   {/* conversations nested under the project (collapsible) */}
                   {projThreads.length > 0 && !isCollapsed && (
-                    <div style={{ display: "flex", flexDirection: "column", gap: "1px", marginTop: "1px" }}>
+                    <div className="flex flex-col gap-px mt-px">
                       {projThreads.slice(0, 12).map((t) => {
                         const isActive = isActiveProject && t.id === activeThreadId && view === "otto";
                         const dotColor = dotFor(t.status);
                         return (
-                          <div key={t.id} className="otto-recent-row" style={{ position: "relative", display: "flex", alignItems: "center" }}>
+                          <div key={t.id} className="otto-recent-row relative flex items-center">
                             <button
                               onClick={() => handleNavAction(() => {
                                 if (isActiveProject) { onSelectThread(t.id); onViewChange("otto"); }
                                 else { onSwitchProject(p.id, t.id); }
                               })}
                               title={t.title}
-                              style={{
-                                display: "flex", alignItems: "center", gap: "var(--space-2)", flex: 1, minWidth: 0,
-                                border: "none",
-                                background: isActive ? "var(--brand-tint)" : "transparent",
-                                color: isActive ? "var(--brand-press)" : "var(--text-muted)",
-                                fontFamily: "var(--font-sans)", fontSize: "var(--text-xs)",
-                                fontWeight: isActive ? "var(--weight-semibold)" : "var(--weight-regular)",
-                                padding: "5px var(--space-3)", paddingLeft: "calc(var(--space-3) + 16px)", paddingRight: "var(--space-6)",
-                                borderRadius: "var(--radius-sm)", cursor: "pointer", textAlign: "left",
-                                transition: "background var(--dur-fast) var(--ease-out)",
-                              }}
+                              className={`flex items-center gap-2 flex-1 min-w-0 border-0 text-[0.75rem] py-[5px] pr-6 pl-7 rounded-[10px] cursor-pointer text-left transition-colors duration-150 ${isActive ? "bg-secondary text-foreground font-semibold" : "bg-transparent text-muted-foreground font-normal"}`}
                             >
-                              {dotColor && (<span style={{ display: "inline-block", flexShrink: 0, width: 7, height: 7, borderRadius: "50%", background: dotColor }} />)}
-                              <span style={{ overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", minWidth: 0 }}>{t.title}</span>
+                              {dotColor && (<span className="inline-block shrink-0 w-[7px] h-[7px] rounded-full" style={{ background: dotColor }} />)}
+                              <span className="truncate min-w-0">{t.title}</span>
                             </button>
                             <button
-                              className="otto-recent-delete"
+                              className="otto-recent-delete absolute right-2 flex items-center justify-center w-5 h-5 border-0 bg-transparent text-muted-foreground/70 rounded-[10px] cursor-pointer p-0 opacity-0 transition-[opacity,background] duration-150"
                               aria-label={`Delete ${t.title}`}
                               onClick={(e) => { e.stopPropagation(); onDeleteThread(t.id); }}
-                              style={{ position: "absolute", right: "var(--space-2)", display: "flex", alignItems: "center", justifyContent: "center", width: 20, height: 20, border: "none", background: "transparent", color: "var(--text-faint)", borderRadius: "var(--radius-sm)", cursor: "pointer", padding: 0, opacity: 0, transition: "opacity var(--dur-fast) var(--ease-out), background var(--dur-fast) var(--ease-out)" }}
                             >
                               <IconX />
                             </button>
@@ -492,37 +440,21 @@ export function OttoNav({
           )}
           {history.length > 0 && (
           <>
-            <div
-              style={{
-                fontSize: "var(--text-xs)",
-                color: "var(--text-faint)",
-                fontWeight: "var(--weight-semibold)",
-                textTransform: "uppercase",
-                letterSpacing: "var(--tracking-caps)",
-                margin: `${projects.length > 0 ? "var(--space-4)" : "0"} 0 var(--space-2)`,
-                paddingLeft: "var(--space-1)",
-              }}
-            >
+            <div className={`text-[0.75rem] text-muted-foreground/70 font-semibold uppercase tracking-[0.08em] pl-1 mb-2 ${projects.length > 0 ? "mt-4" : "mt-0"}`}>
               History
             </div>
-            <div style={{ display: "grid", gridTemplateColumns: "repeat(3, 1fr)", gap: 5 }}>
+            <div className="grid grid-cols-3 gap-[5px]">
               {history.map((h) => (
                 <div
                   key={h.id}
                   title={h.kind === "video" ? "Video" : "Image"}
-                  style={{
-                    aspectRatio: "1 / 1",
-                    borderRadius: "var(--radius-sm)",
-                    overflow: "hidden",
-                    border: "1px solid var(--border-subtle)",
-                    background: "var(--surface-sunken)",
-                  }}
+                  className="aspect-square rounded-[10px] overflow-hidden border border-border bg-muted"
                 >
                   {h.kind === "video" ? (
-                    <video src={h.src} muted preload="metadata" style={{ width: "100%", height: "100%", objectFit: "cover" }} />
+                    <video src={h.src} muted preload="metadata" className="w-full h-full object-cover" />
                   ) : (
                     // eslint-disable-next-line @next/next/no-img-element
-                    <img src={h.src} alt="" loading="lazy" style={{ width: "100%", height: "100%", objectFit: "cover" }} />
+                    <img src={h.src} alt="" loading="lazy" className="w-full h-full object-cover" />
                   )}
                 </div>
               ))}
@@ -537,72 +469,26 @@ export function OttoNav({
       {/* Balance — compact credit line (Grok-style: subtle, not a big card) */}
       <div
         title="Your balance"
-        style={{
-          display: "flex",
-          alignItems: "center",
-          gap: "var(--space-2)",
-          padding: "var(--space-2) var(--space-4)",
-          fontSize: "var(--text-xs)",
-          color: "var(--text-muted)",
-          borderTop: "1px solid var(--border-subtle)",
-        }}
+        className="flex items-center gap-2 px-4 py-2 text-[0.75rem] text-muted-foreground border-t border-border"
       >
-        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="var(--accent)" strokeWidth="2" aria-hidden>
+        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="var(--brand)" strokeWidth="2" aria-hidden>
           <circle cx="12" cy="12" r="9" /><path d="M12 7v10M9 9.5h4a1.5 1.5 0 0 1 0 3h-2a1.5 1.5 0 0 0 0 3h4" />
         </svg>
-        <span style={{ fontWeight: "var(--weight-semibold)", color: "var(--text-body)", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+        <span className="font-semibold text-foreground truncate">
           {balanceLabel}
         </span>
       </div>
 
       {/* User */}
-      <div
-        style={{
-          display: "flex",
-          alignItems: "center",
-          gap: "var(--space-3)",
-          padding: "var(--space-3) var(--space-4)",
-        }}
-      >
-        <div
-          style={{
-            width: 32,
-            height: 32,
-            borderRadius: "var(--radius-circle)",
-            background: "var(--brand-soft)",
-            color: "var(--on-brand-soft)",
-            display: "flex",
-            alignItems: "center",
-            justifyContent: "center",
-            fontWeight: "var(--weight-bold)",
-            fontSize: "var(--text-sm)",
-            flexShrink: 0,
-          }}
-        >
-          {initial}
-        </div>
-        <div style={{ minWidth: 0 }}>
-          <div
-            style={{
-              fontSize: "var(--text-sm)",
-              fontWeight: "var(--weight-semibold)",
-              color: "var(--text-strong)",
-              overflow: "hidden",
-              textOverflow: "ellipsis",
-              whiteSpace: "nowrap",
-            }}
-          >
+      <div className="flex items-center gap-3 px-4 py-3">
+        <Avatar className="size-8">
+          <AvatarFallback className="bg-accent text-accent-foreground text-[0.875rem] font-bold">{initial}</AvatarFallback>
+        </Avatar>
+        <div className="min-w-0">
+          <div className="text-[0.875rem] font-semibold text-foreground truncate">
             {userName}
           </div>
-          <div
-            style={{
-              fontSize: "var(--text-xs)",
-              color: "var(--text-faint)",
-              overflow: "hidden",
-              textOverflow: "ellipsis",
-              whiteSpace: "nowrap",
-            }}
-          >
+          <div className="text-[0.75rem] text-muted-foreground/70 truncate">
             {userEmail}
           </div>
         </div>
