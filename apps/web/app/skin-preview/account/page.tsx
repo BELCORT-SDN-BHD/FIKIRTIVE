@@ -3,6 +3,7 @@ import { OttoAccount } from "@/components/otto/OttoAccount";
 import { DEFAULT_SETTINGS } from "@/lib/owner-settings";
 import type { AccountInfo } from "@/lib/account-actions";
 import type { CreditPack } from "@/lib/billing-actions";
+import "../../otto/otto-theme.css";
 
 export const dynamic = "force-dynamic";
 export const metadata = { title: "Account preview (dev)" };

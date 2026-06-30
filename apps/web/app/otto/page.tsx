@@ -79,8 +79,8 @@ export default async function OttoPage({ searchParams }: { searchParams: Promise
     listCreditPacks().catch(() => []),
     getMetaConnection().catch(() => ({ error: "load-failed" } as const)),
   ]);
-  const settings = settingsRes && "error" in settingsRes ? undefined : settingsRes;
-  const adsAutonomy: "ASK" | "AUTO" = metaConn && !("error" in metaConn) && metaConn.adsAutonomy === "AUTO" ? "AUTO" : "ASK";
+  const settings = "error" in settingsRes ? undefined : settingsRes;
+  const adsAutonomy: "ASK" | "AUTO" = !("error" in metaConn) && metaConn.adsAutonomy === "AUTO" ? "AUTO" : "ASK";
   const channels = await Promise.all(
     listChannels().map(async (c) => ({
       id: c.id,
