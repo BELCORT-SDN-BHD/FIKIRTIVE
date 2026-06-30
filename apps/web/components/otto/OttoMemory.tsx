@@ -309,7 +309,7 @@ export function OttoMemory({ initialMemory, projectId }: { initialMemory: Memory
                         {selected && <Check size={12} className="text-primary-foreground" />}
                       </div>
                       <div>
-                        <div className="mb-1"><Badge variant="soft">{fact.category}</Badge></div>
+                        <div className="mb-1"><Badge variant="default">{fact.category}</Badge></div>
                         <div className="text-[0.875rem] text-foreground leading-relaxed">
                           {fact.content}
                         </div>
@@ -514,7 +514,7 @@ export function OttoMemory({ initialMemory, projectId }: { initialMemory: Memory
                 <div className="flex items-start gap-3">
                   <div className="flex-1 min-w-0">
                     <div className="flex items-center gap-2 mb-2">
-                      <Badge variant="soft">{m.category}</Badge>
+                      <Badge variant="default">{m.category}</Badge>
                       <span className="text-[0.75rem] text-muted-foreground/70">
                         {m.source === "otto" ? "Otto learned this" : "You added this"}
                         {whenLabel(m.updatedAt) ? ` · ${whenLabel(m.updatedAt)}` : ""}

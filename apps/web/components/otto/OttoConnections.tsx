@@ -85,7 +85,7 @@ export default function OttoConnections() {
           {state.phase === "loading" && <p className="text-muted-foreground text-[0.75rem]">Checking…</p>}
 
           {state.phase === "disconnected" && (
-            <Button asChild size="sm" className="mt-2">
+            <Button asChild size="sm" variant="brand" className="mt-2">
               <a href="/api/meta/authorize" style={{ textDecoration: "none" }}>
                 Connect Meta
               </a>
@@ -95,7 +95,7 @@ export default function OttoConnections() {
           {state.phase === "reconnect" && (
             <div style={{ marginTop: "0.5rem" }}>
               <p className="text-[var(--error-soft-foreground)] text-[0.75rem]">Your Meta connection expired.</p>
-              <Button asChild size="sm">
+              <Button asChild size="sm" variant="brand">
                 <a href="/api/meta/authorize" style={{ textDecoration: "none" }}>Reconnect</a>
               </Button>
             </div>
@@ -133,7 +133,7 @@ export default function OttoConnections() {
                       <Button
                         type="button"
                         size="sm"
-                        variant={state.adsAutonomy === "ASK" ? "default" : "ghost"}
+                        variant={state.adsAutonomy === "ASK" ? "brand" : "ghost"}
                         disabled={saving === "autonomy"}
                         onClick={() => void handleAutonomy("ASK")}
                       >
@@ -142,7 +142,7 @@ export default function OttoConnections() {
                       <Button
                         type="button"
                         size="sm"
-                        variant={state.adsAutonomy === "AUTO" ? "default" : "ghost"}
+                        variant={state.adsAutonomy === "AUTO" ? "brand" : "ghost"}
                         disabled={saving === "autonomy"}
                         onClick={() => void handleAutonomy("AUTO")}
                       >
