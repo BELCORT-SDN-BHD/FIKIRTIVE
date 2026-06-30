@@ -549,6 +549,7 @@ model Organization {
   deletedAt DateTime? // RESERVED NOW (account closure / GDPR erasure)
   createdAt DateTime  @default(now())
   updatedAt DateTime  @updatedAt
+  settings  Json?     // owner-scoped preferences (OwnerSettings shape); null = all defaults
 
   memberships Membership[]
   creditAccount CreditAccount?
