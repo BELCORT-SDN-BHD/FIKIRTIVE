@@ -23,9 +23,8 @@ export default async function RootLayout({
   const impersonating = await isImpersonating();
   return (
     <html lang="en" className={`${body.variable} ${meta.variable} ${geist.variable} h-full antialiased`}>
-      <body className="min-h-full flex flex-col">
+      <body className="gb min-h-full flex flex-col">
         {impersonating && <ImpersonationBanner />}
-        <div className="ambient-layer" aria-hidden />
         <div className="relative z-10 flex flex-col min-h-dvh">{children}</div>
       </body>
     </html>

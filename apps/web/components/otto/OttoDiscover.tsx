@@ -37,8 +37,8 @@ export default function OttoDiscover({ onUseInOtto }: { onUseInOtto: (prompt: st
     // leading-[1.65] pins the inherited line-height so S4 teardown won't reflow.
     <div className="gb leading-[1.65]" style={{ flex: 1, overflow: "auto", padding: "20px" }}>
       <div style={{ marginBottom: "16px" }}>
-        <h2 style={{ margin: 0, fontSize: "1.125rem", color: "var(--text-body)" }}>Discover</h2>
-        <p style={{ margin: "4px 0 0", color: "var(--text-muted)", fontSize: "0.875rem" }}>
+        <h2 style={{ margin: 0, fontSize: "1.125rem", color: "var(--foreground)" }}>Discover</h2>
+        <p style={{ margin: "4px 0 0", color: "var(--muted-foreground)", fontSize: "0.875rem" }}>
           Ideas to start from — pick one, tweak it, make it yours.
         </p>
       </div>
@@ -64,11 +64,11 @@ export default function OttoDiscover({ onUseInOtto }: { onUseInOtto: (prompt: st
             key={i.id}
             type="button"
             onClick={() => setActive(i)}
-            style={{ textAlign: "left", cursor: "pointer", border: "1px solid var(--border-subtle)", background: "var(--surface-card)", borderRadius: "var(--radius-md)", padding: "16px", color: "var(--text-body)" }}
+            style={{ textAlign: "left", cursor: "pointer", border: "1px solid var(--border)", background: "var(--card)", borderRadius: "14px", padding: "16px", color: "var(--foreground)" }}
           >
-            <div style={{ fontSize: "0.75rem", color: "var(--text-muted)", textTransform: "uppercase", letterSpacing: 0.4 }}>{i.category}</div>
+            <div style={{ fontSize: "0.75rem", color: "var(--muted-foreground)", textTransform: "uppercase", letterSpacing: 0.4 }}>{i.category}</div>
             <div style={{ fontSize: "0.9375rem", fontWeight: 600, marginTop: 2 }}>{i.title}</div>
-            <div style={{ fontSize: "0.8125rem", color: "var(--text-muted)", marginTop: "4px" }}>{i.description}</div>
+            <div style={{ fontSize: "0.8125rem", color: "var(--muted-foreground)", marginTop: "4px" }}>{i.description}</div>
           </button>
         ))}
       </div>
@@ -80,9 +80,9 @@ export default function OttoDiscover({ onUseInOtto }: { onUseInOtto: (prompt: st
               <DialogTitle>{active.title}</DialogTitle>
               <DialogDescription>{active.category}</DialogDescription>
             </DialogHeader>
-            <p style={{ color: "var(--text-body)", fontSize: "0.875rem", marginTop: 0 }}>{active.description}</p>
-            <div style={{ background: "var(--surface-card)", borderRadius: "var(--radius-md)", padding: "12px", fontSize: "0.8125rem", color: "var(--text-body)", whiteSpace: "pre-wrap" }}>{active.prompt}</div>
-            <p style={{ color: "var(--text-muted)", fontSize: "0.75rem", marginTop: "8px" }}>Tip: replace [your product] with your product name.</p>
+            <p style={{ color: "var(--foreground)", fontSize: "0.875rem", marginTop: 0 }}>{active.description}</p>
+            <div style={{ background: "var(--card)", borderRadius: "14px", padding: "12px", fontSize: "0.8125rem", color: "var(--foreground)", whiteSpace: "pre-wrap" }}>{active.prompt}</div>
+            <p style={{ color: "var(--muted-foreground)", fontSize: "0.75rem", marginTop: "8px" }}>Tip: replace [your product] with your product name.</p>
             <DialogFooter>
               <Button variant="ghost" size="sm" onClick={() => copy(active.prompt)}>{copied ? "Copied" : "Copy prompt"}</Button>
               <Button variant="brand" size="sm" onClick={() => { onUseInOtto(active.prompt); setActive(null); }}>Use in Otto</Button>

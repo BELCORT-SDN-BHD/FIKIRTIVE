@@ -3,7 +3,6 @@ import React, { useState, useCallback, useEffect, useRef } from "react";
 import { useRouter } from "next/navigation";
 import { createProject, renameProject, deleteProject, autoTitleProjectIfDefault } from "@/lib/actions";
 import { listProjectThreadActivity } from "@/lib/thread-activity";
-import "../../app/otto/otto-theme.css";
 import { OttoNav } from "./OttoNav";
 import { OttoView } from "./OttoView";
 import type { AdTile } from "./OttoStuff";
@@ -209,13 +208,13 @@ export function OttoApp({
 
   return (
     <div
-      className={skin === "gb" ? "fk gb-skin" : "fk"}
+      className="gb"
       style={{
         position: "relative",
         display: "flex",
         height: "100dvh",
         overflow: "hidden",
-        background: "var(--bg-page)",
+        background: "var(--background)",
       }}
     >
       <style>{`
@@ -236,15 +235,15 @@ export function OttoApp({
           aria-label="Show sidebar"
           style={{
             position: "absolute",
-            top: "var(--space-3)",
-            left: "var(--space-3)",
+            top: "0.75rem",
+            left: "0.75rem",
             zIndex: 50,
             width: 34,
             height: 34,
-            borderRadius: "var(--radius-sm)",
-            border: "1px solid var(--border-default)",
-            background: "var(--surface-card)",
-            color: "var(--text-muted)",
+            borderRadius: "10px",
+            border: "1px solid var(--border)",
+            background: "var(--card)",
+            color: "var(--muted-foreground)",
             display: "flex",
             alignItems: "center",
             justifyContent: "center",
@@ -290,12 +289,12 @@ export function OttoApp({
           style={{
             display: "none",
             alignItems: "center",
-            gap: "var(--space-3)",
-            padding: "0 var(--space-4)",
+            gap: "0.75rem",
+            padding: "0 1rem",
             height: 52,
             flexShrink: 0,
-            borderBottom: "1px solid var(--border-subtle)",
-            background: "var(--surface-card)",
+            borderBottom: "1px solid var(--border)",
+            background: "var(--card)",
           }}
         >
           <button
@@ -310,9 +309,9 @@ export function OttoApp({
               height: 44,
               border: "none",
               background: "transparent",
-              color: "var(--text-body)",
+              color: "var(--foreground)",
               cursor: "pointer",
-              borderRadius: "var(--radius-md)",
+              borderRadius: "14px",
               flexShrink: 0,
             }}
           >

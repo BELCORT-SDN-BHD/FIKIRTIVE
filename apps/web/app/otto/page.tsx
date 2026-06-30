@@ -21,7 +21,7 @@ export default async function OttoPage({ searchParams }: { searchParams: Promise
     : undefined;
   // Grok-bright is now the official default (cutover). ?skin=fk is an internal
   // rollback escape hatch to the legacy look; everything else gets gb.
-  const skin = sp?.skin === "fk" ? undefined : ("gb" as const);
+  const skin = "gb" as const;
 
   const owner = await requireOwner();
   if ("error" in owner) redirect("/login");

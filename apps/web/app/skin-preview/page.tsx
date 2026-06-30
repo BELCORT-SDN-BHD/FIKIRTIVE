@@ -21,7 +21,7 @@ export default async function SkinPreviewPage({
 }) {
   if (process.env.NODE_ENV === "production") notFound();
   const sp = await searchParams;
-  const skin = sp?.skin === "fk" ? undefined : ("gb" as const);
+  const skin = "gb" as const;
 
   // One memory row flips isFirstRun=false so the real front door shows (not onboarding).
   const memory: MemoryRow[] = [

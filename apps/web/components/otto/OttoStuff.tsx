@@ -247,7 +247,7 @@ export function OttoStuff({ entities, ads, adJobs }: OttoStuffProps) {
     <div className="otto-stuff-scroll gb flex-1 overflow-auto p-6 leading-[1.65]">
       <style>{`
         @media (max-width: 680px) {
-          .otto-stuff-scroll { padding: var(--space-4) var(--space-3) !important; }
+          .otto-stuff-scroll { padding: 1rem 0.75rem !important; }
         }
       `}</style>
       <div className="mx-auto max-w-[880px]">

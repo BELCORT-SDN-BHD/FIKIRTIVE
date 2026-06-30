@@ -434,7 +434,7 @@ export function OttoNav({
           <style>{`
             .otto-recent-row:hover .otto-recent-delete,
             .otto-recent-row:focus-within .otto-recent-delete { opacity: 1; }
-            .otto-recent-delete:hover { background: var(--surface-hover, rgba(0,0,0,0.07)) !important; color: var(--text-default) !important; }
+            .otto-recent-delete:hover { background: var(--surface-hover, rgba(0,0,0,0.07)) !important; color: var(--foreground) !important; }
           `}</style>
           </>
           )}

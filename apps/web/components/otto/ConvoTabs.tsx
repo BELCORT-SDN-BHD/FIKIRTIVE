@@ -21,9 +21,9 @@ export function ConvoTabs({ threads, activeThreadId, activity, onSelect, onNew, 
   return (
     <div
       style={{
-        display: "flex", alignItems: "center", gap: "var(--space-2)",
-        padding: "var(--space-2) var(--space-3)", overflowX: "auto", flexShrink: 0,
-        borderBottom: "1px solid var(--border-subtle)", background: "var(--surface-card)",
+        display: "flex", alignItems: "center", gap: "0.5rem",
+        padding: "0.5rem 0.75rem", overflowX: "auto", flexShrink: 0,
+        borderBottom: "1px solid var(--border)", background: "var(--card)",
       }}
     >
       {tabs.map((t) => (
@@ -34,10 +34,10 @@ export function ConvoTabs({ threads, activeThreadId, activity, onSelect, onNew, 
           onClick={() => onSelect(t.id)}
           style={{
             display: "inline-flex", alignItems: "center", gap: 6, cursor: "pointer",
-            padding: "4px 10px", borderRadius: "var(--radius-md)", whiteSpace: "nowrap",
-            border: "1px solid " + (t.active ? "var(--border-strong)" : "transparent"),
-            background: t.active ? "var(--surface-raised)" : "transparent",
-            color: "var(--text-body)", fontSize: 13, maxWidth: 180,
+            padding: "4px 10px", borderRadius: "14px", whiteSpace: "nowrap",
+            border: "1px solid " + (t.active ? "var(--border)" : "transparent"),
+            background: t.active ? "var(--card)" : "transparent",
+            color: "var(--foreground)", fontSize: 13, maxWidth: 180,
           }}
         >
           <span style={{ width: 8, height: 8, borderRadius: "50%", flexShrink: 0, background: convoColor(t.id) }} />
@@ -52,7 +52,7 @@ export function ConvoTabs({ threads, activeThreadId, activity, onSelect, onNew, 
             type="button"
             aria-label="Delete conversation"
             onClick={(e) => { e.stopPropagation(); onDelete(t.id); }}
-            style={{ border: "none", background: "transparent", color: "var(--text-muted)", cursor: "pointer", padding: 0, lineHeight: 1 }}
+            style={{ border: "none", background: "transparent", color: "var(--muted-foreground)", cursor: "pointer", padding: 0, lineHeight: 1 }}
           >
             ×
           </button>
@@ -62,9 +62,9 @@ export function ConvoTabs({ threads, activeThreadId, activity, onSelect, onNew, 
         type="button"
         onClick={onNew}
         style={{
-          marginLeft: "auto", flexShrink: 0, border: "1px solid var(--border-subtle)",
-          background: "transparent", color: "var(--text-body)", cursor: "pointer",
-          padding: "4px 10px", borderRadius: "var(--radius-md)", fontSize: 13,
+          marginLeft: "auto", flexShrink: 0, border: "1px solid var(--border)",
+          background: "transparent", color: "var(--foreground)", cursor: "pointer",
+          padding: "4px 10px", borderRadius: "14px", fontSize: 13,
         }}
       >
         + New convo

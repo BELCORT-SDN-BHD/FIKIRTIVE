@@ -172,7 +172,7 @@ export function OttoView({
           onClick={onToggleChat}
           title="Show OTTO"
           aria-label="Show OTTO"
-          style={{ position: "absolute", top: 54, left: "var(--space-3)", zIndex: 40, width: 34, height: 34, borderRadius: "var(--radius-sm)", border: "1px solid var(--border-default)", background: "var(--surface-card)", color: "var(--text-muted)", display: "flex", alignItems: "center", justifyContent: "center", cursor: "pointer", boxShadow: "var(--shadow-sm)" }}
+          style={{ position: "absolute", top: 54, left: "0.75rem", zIndex: 40, width: 34, height: 34, borderRadius: "10px", border: "1px solid var(--border)", background: "var(--card)", color: "var(--muted-foreground)", display: "flex", alignItems: "center", justifyContent: "center", cursor: "pointer", boxShadow: "var(--shadow-sm)" }}
         >
           <svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.9" aria-hidden><path d="M13 5l7 7-7 7" /><path d="M4 5v14" /></svg>
         </button>
@@ -184,9 +184,9 @@ export function OttoView({
           minWidth: 0,
           display: "flex",
           flexDirection: "column",
-          borderRight: chatCollapsed ? "none" : "1px solid var(--border-subtle)",
+          borderRight: chatCollapsed ? "none" : "1px solid var(--border)",
           overflow: "hidden",
-          transition: "flex-basis var(--dur-base) var(--ease-out)",
+          transition: "flex-basis 220ms cubic-bezier(0.22, 1, 0.36, 1)",
         }}
       >
         {/* Conversation tabs — only in the legacy skin. Under gb, conversations are
@@ -267,7 +267,7 @@ export function OttoView({
             onClick={onToggleChat}
             title="Collapse OTTO panel"
             aria-label="Collapse OTTO panel"
-            style={{ position: "absolute", left: -13, top: 60, zIndex: 30, width: 26, height: 26, borderRadius: "var(--radius-circle)", border: "1px solid var(--border-default)", background: "var(--surface-card)", color: "var(--text-muted)", boxShadow: "var(--shadow-sm)", display: "flex", alignItems: "center", justifyContent: "center", cursor: "pointer" }}
+            style={{ position: "absolute", left: -13, top: 60, zIndex: 30, width: 26, height: 26, borderRadius: "50%", border: "1px solid var(--border)", background: "var(--card)", color: "var(--muted-foreground)", boxShadow: "var(--shadow-sm)", display: "flex", alignItems: "center", justifyContent: "center", cursor: "pointer" }}
           >
             <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" aria-hidden><path d="m15 18-6-6 6-6" /></svg>
           </button>

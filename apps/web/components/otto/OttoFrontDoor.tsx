@@ -253,7 +253,7 @@ export function OttoFrontDoor({
       <style>{`
         @media (max-width: 480px) {
           .otto-goal-grid { grid-template-columns: 1fr !important; }
-          .otto-front-door-inner { padding: var(--space-4) var(--space-4) !important; }
+          .otto-front-door-inner { padding: 1rem 1rem !important; }
         }
       `}</style>
       <div className="otto-front-door-inner flex w-full max-w-[560px] flex-col items-center gap-6">
@@ -353,7 +353,7 @@ export function OttoFrontDoor({
               >
                 {/* Coral-soft chip: bg-brand-soft (coral tint) + coral icon color.
                     Under .gb, --brand is coral — NOT --accent (which is neutral gray).
-                    Inversion trap: keeping var(--accent-soft) here would render gray. */}
+                    Inversion trap: keeping var(--brand-soft) here would render gray. */}
                 <div className="flex h-[38px] w-[38px] items-center justify-center rounded-[10px] bg-brand-soft" style={{ color: "#B23A12" }}>
                   {goal.icon}
                 </div>
