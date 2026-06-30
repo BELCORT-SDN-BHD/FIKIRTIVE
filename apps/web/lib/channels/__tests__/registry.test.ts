@@ -11,8 +11,16 @@ describe("channelRegistry", () => {
     expect(ig.capabilities.maxMediaCount).toBe(10);
     expect(ig.capabilities.rateLimitPer24h).toBe(25);
     expect(ig.capabilities.postTypes).toContain("carousel");
+    expect(ig.capabilities.supportsFirstComment).toBe(true);
+    expect(ig.capabilities.supportsNativeSchedule).toBe(false);
   });
   it("getChannel returns undefined for an unknown id", () => {
     expect(getChannel("tiktok")).toBeUndefined();
+  });
+  it("facebook declares its capabilities", () => {
+    const fb = getChannel("facebook")!;
+    expect(fb.capabilities.maxMediaCount).toBe(1);
+    expect(fb.capabilities.supportsNativeSchedule).toBe(true);
+    expect(fb.capabilities.supportsFirstComment).toBe(false);
   });
 });

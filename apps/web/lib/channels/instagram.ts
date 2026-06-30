@@ -1,21 +1,14 @@
 import type { Channel, ChannelPost, ChannelTarget, ConnectionStatus } from "./types";
-import { getMetaConnection, disconnectMeta } from "../meta-actions";
+import { disconnectMeta } from "../meta-actions";
 import { fetchOwnerPages } from "../meta-pages";
-
-const notImpl = () => { throw new Error("not implemented (filled by the Schedule/Analytics plan)"); };
-
-async function metaStatus(): Promise<ConnectionStatus> {
-  const c = await getMetaConnection();
-  if ("error" in c || !c.connected) return "not_connected";
-  return c.needsReconnect || c.status === "expired" ? "needs_reconnect" : "connected";
-}
+import { metaStatus, notImpl } from "./meta-shared";
 
 export const instagram: Channel = {
   id: "instagram",
   label: "Instagram",
   icon: null,
   capabilities: { postTypes: ["feed-image", "carousel", "reel", "story"], maxMediaCount: 10, supportsFirstComment: true, supportsNativeSchedule: false, rateLimitPer24h: 25 },
-  connectionStatus: async () => metaStatus(),
+  connectionStatus: async (_ownerId) => metaStatus(),
   connectUrl: () => "/api/meta/authorize",
   disconnect: () => disconnectMeta(),
   // IG business accounts hang off FB pages. For the connect surface we list the
