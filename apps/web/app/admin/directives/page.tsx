@@ -44,8 +44,8 @@ export default async function AdminDirectivesPage() {
   return (
     <main style={{ maxWidth: 1100, margin: "0 auto", padding: "32px 24px", display: "grid", gap: 20 }}>
       <header style={{ display: "grid", gap: 4 }}>
-        <h1 style={{ font: "var(--text-display)", color: "var(--fg-1)", margin: 0 }}>Model directives</h1>
-        <p style={{ font: "var(--text-body)", color: "var(--fg-3)", margin: 0 }}>
+        <h1 style={{ font: "var(--text-display)", color: "var(--foreground)", margin: 0 }}>Model directives</h1>
+        <p style={{ font: "var(--text-body)", color: "var(--muted-foreground)", margin: 0 }}>
           Per-(family × mode) prompt knowledge the Otto skills read. Edit a cell and the next ✨ Enhance reflects it (no redeploy). Seeded cells are research-grade and <strong>untested</strong> — sharpen them as you verify.
         </p>
       </header>
