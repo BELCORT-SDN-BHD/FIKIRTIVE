@@ -74,14 +74,7 @@ export default async function OttoPage({ searchParams }: { searchParams: Promise
   // Founder-first streaming chat. Temporary flag (deleted in Task 8 once verified).
   const ottoStreamEnabled = isFounderAdmin(email);
 
-  const [settingsRes, packs, metaConn] = await Promise.all([
-    getOwnerSettings().catch(() => ({ error: "load-failed" } as const)),
-    listCreditPacks().catch(() => []),
-    getMetaConnection().catch(() => ({ error: "load-failed" } as const)),
-  ]);
-  const settings = "error" in settingsRes ? undefined : settingsRes;
-  const adsAutonomy: "ASK" | "AUTO" = !("error" in metaConn) && metaConn.adsAutonomy === "AUTO" ? "AUTO" : "ASK";
-  const channels = await Promise.all(
+  const channelsPromise = Promise.all(
     listChannels().map(async (c) => ({
       id: c.id,
       label: c.label,
@@ -90,6 +83,14 @@ export default async function OttoPage({ searchParams }: { searchParams: Promise
       targets: await c.listTargets(ownerId).then((t) => t.map((x) => x.name)).catch(() => [] as string[]),
     })),
   );
+  const [settingsRes, packs, metaConn, channels] = await Promise.all([
+    getOwnerSettings().catch(() => ({ error: "load-failed" } as const)),
+    listCreditPacks().catch(() => []),
+    getMetaConnection().catch(() => ({ error: "load-failed" } as const)),
+    channelsPromise,
+  ]);
+  const settings = "error" in settingsRes ? undefined : settingsRes;
+  const adsAutonomy: "ASK" | "AUTO" = !("error" in metaConn) && metaConn.adsAutonomy === "AUTO" ? "AUTO" : "ASK";
 
   return (
     <OttoApp

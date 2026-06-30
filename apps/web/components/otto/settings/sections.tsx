@@ -30,23 +30,16 @@ export function buildSettingsSections(args: {
   channels: ChannelState[];
   packs: CreditPack[];
   adsAutonomy: "ASK" | "AUTO";
-  onSettings: () => void;
 }): SettingsSection[] {
-  const { account, settings, channels, packs, adsAutonomy, onSettings } = args;
+  const { account, settings, channels, packs, adsAutonomy } = args;
 
   const toggle =
     (k: keyof OwnerSettings) =>
-    async (v: boolean): Promise<void> => {
-      await setOwnerSetting(k, v as never);
-      onSettings();
-    };
+    (v: boolean) => setOwnerSetting(k, v as never);
 
   const num =
     (k: keyof OwnerSettings) =>
-    async (v: number): Promise<void> => {
-      await setOwnerSetting(k, v as never);
-      onSettings();
-    };
+    (v: number) => setOwnerSetting(k, v as never);
 
   return [
     {
@@ -202,10 +195,7 @@ export function buildSettingsSections(args: {
           label: "Ask before ad spend",
           hint: "OTTO checks with you before spending on ads",
           value: adsAutonomy === "ASK",
-          onToggle: async (v) => {
-            await setAdsAutonomy(v ? "ASK" : "AUTO");
-            onSettings();
-          },
+          onToggle: (v) => setAdsAutonomy(v ? "ASK" : "AUTO"),
         },
         {
           kind: "toggle",

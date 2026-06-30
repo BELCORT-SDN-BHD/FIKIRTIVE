@@ -1,5 +1,4 @@
 "use client";
-import { useRouter } from "next/navigation";
 import type { AccountInfo } from "@/lib/account-actions";
 import type { OwnerSettings } from "@/lib/owner-settings";
 import { DEFAULT_SETTINGS } from "@/lib/owner-settings";
@@ -14,9 +13,8 @@ export function OttoAccount({ account, settings, channels = [], packs = [], adsA
   packs?: CreditPack[];
   adsAutonomy?: "ASK" | "AUTO";
 }) {
-  const router = useRouter();
   if (!account) return <div className="cv-settings-body">Could not load your account.</div>;
-  const sections = buildSettingsSections({ account, settings: settings ?? DEFAULT_SETTINGS, channels, packs, adsAutonomy, onSettings: () => router.refresh() });
+  const sections = buildSettingsSections({ account, settings: settings ?? DEFAULT_SETTINGS, channels, packs, adsAutonomy });
   return <SettingsPage sections={sections} />;
 }
 export default OttoAccount;
