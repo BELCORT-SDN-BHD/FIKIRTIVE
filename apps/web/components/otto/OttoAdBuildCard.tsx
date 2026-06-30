@@ -1,7 +1,7 @@
 "use client";
 import React, { useState } from "react";
 import { Hammer, ShieldCheck, CheckCircle2, Loader2, ExternalLink } from "lucide-react";
-import { Card, Button } from "@/components/fk";
+import { Button } from "@/components/ui/button";
 import { approveAdBuild, launchAdDraft } from "@/lib/otto-client-actions";
 import type { MetaAdBuildCardPayload } from "@/lib/meta-build-spec";
 
@@ -133,25 +133,30 @@ export function OttoAdBuildCard({ cardId, payload }: OttoAdBuildCardProps) {
   const currency = p.currency;
 
   return (
-    <div style={{ maxWidth: 480 }}>
-      <Card variant="tint" padding="md">
+    // leading-[1.65] pins the line-height this subtree currently INHERITS from the .fk
+    // ancestor (--leading-relaxed); it survives S4 teardown (when .fk/otto-theme.css is
+    // removed and .gb — which sets no line-height — applies at the root). Value-identical
+    // today → zero visual change; without it the text compacts post-teardown.
+    <div className="gb leading-[1.65]" style={{ maxWidth: 480 }}>
+      {/* Card variant="tint" padding="md": bg=--brand-tint=#F4F4F3=bg-accent, radius=--radius-card=18px, pad=--pad-card=--space-6=p-6, border=--border-subtle */}
+      <div className="rounded-[18px] border border-border bg-accent p-6">
         {/* Header */}
-        <div style={{ display: "flex", alignItems: "center", gap: "var(--space-2)", marginBottom: "var(--space-4)" }}>
-          <Hammer size={20} color="var(--brand)" />
-          <span style={{ fontWeight: "var(--weight-bold)" as React.CSSProperties["fontWeight"], fontSize: "var(--text-base)", color: "var(--text-strong)" }}>
+        <div className="mb-4 flex items-center gap-2">
+          <Hammer size={20} className="text-primary" />
+          <span className="text-[1rem] font-bold text-foreground">
             {p.goal || "Ad build"}
           </span>
         </div>
 
         {/* Strategy */}
         {p.reasoning && (
-          <div style={{ marginBottom: "var(--space-3)", fontSize: "var(--text-sm)", color: "var(--text-muted)", lineHeight: "var(--leading-relaxed)" }}>
+          <div className="mb-3 text-[0.875rem] leading-relaxed text-muted-foreground">
             {p.reasoning}
           </div>
         )}
 
         {/* Details rows */}
-        <div style={{ display: "flex", flexDirection: "column", gap: "var(--space-2)", marginBottom: "var(--space-4)" }}>
+        <div className="mb-4 flex flex-col gap-2">
           {/* Objective */}
           {p.objective && (
             <DetailRow label="Objective" value={objectiveLabel(p.objective)} />
@@ -176,33 +181,23 @@ export function OttoAdBuildCard({ cardId, payload }: OttoAdBuildCardProps) {
 
         {/* Creative preview */}
         {p.creative && (
-          <div
-            style={{
-              background: "var(--surface-card)",
-              borderRadius: "var(--radius-md)",
-              padding: "10px 12px",
-              marginBottom: "var(--space-4)",
-              display: "flex",
-              flexDirection: "column",
-              gap: "var(--space-1)",
-            }}
-          >
-            <span style={{ fontSize: "var(--text-xs)", color: "var(--text-faint)", textTransform: "uppercase", letterSpacing: "0.05em", fontWeight: "var(--weight-semibold)" as React.CSSProperties["fontWeight"] }}>
+          <div className="mb-4 flex flex-col gap-1 rounded-[14px] bg-card px-3 py-[10px]">
+            <span className="text-[0.75rem] font-semibold uppercase tracking-[0.05em] text-muted-foreground/70">
               Creative
             </span>
             {p.creative.headline && (
-              <span style={{ fontWeight: "var(--weight-semibold)" as React.CSSProperties["fontWeight"], fontSize: "var(--text-sm)", color: "var(--text-strong)" }}>
+              <span className="text-[0.875rem] font-semibold text-foreground">
                 {p.creative.headline}
               </span>
             )}
-            <span style={{ fontSize: "var(--text-sm)", color: "var(--text-body)", lineHeight: "var(--leading-relaxed)" }}>
+            <span className="text-[0.875rem] leading-relaxed text-foreground">
               {p.creative.message}
             </span>
-            <div style={{ display: "flex", gap: "var(--space-3)", fontSize: "var(--text-xs)", color: "var(--text-muted)" }}>
+            <div className="flex gap-3 text-[0.75rem] text-muted-foreground">
               <span>CTA: {p.creative.cta}</span>
-              <span style={{ overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{p.creative.link}</span>
+              <span className="overflow-hidden text-ellipsis whitespace-nowrap">{p.creative.link}</span>
             </div>
-            <span style={{ fontSize: "var(--text-xs)", color: "var(--text-faint)" }}>
+            <span className="text-[0.75rem] text-muted-foreground/70">
               {p.creative.kind} asset · {(p.creative.assetId ?? "").slice(0, 12)}…
             </span>
           </div>
@@ -213,33 +208,33 @@ export function OttoAdBuildCard({ cardId, payload }: OttoAdBuildCardProps) {
           /* Draft is built — offer Launch via v1 resume gate */
           launchResult ? (
             "actionCardId" in launchResult ? (
-              <div style={{ display: "flex", alignItems: "center", gap: "var(--space-2)", fontSize: "var(--text-sm)", color: "var(--success-700, #15803d)" }}>
+              <div className="flex items-center gap-2 text-[0.875rem] text-[var(--success)]">
                 <CheckCircle2 size={16} />
                 <span>Launch plan queued — approve the action card above to go live.</span>
               </div>
             ) : "metaFallback" in launchResult ? (
-              <div style={{ fontSize: "var(--text-sm)", color: "var(--text-muted)" }}>
+              <div className="text-[0.875rem] text-muted-foreground">
                 <span>Campaign created but IDs are incomplete — </span>
                 <a
                   href="https://www.facebook.com/adsmanager"
                   target="_blank"
                   rel="noopener noreferrer"
-                  style={{ color: "var(--brand)", textDecoration: "underline", display: "inline-flex", alignItems: "center", gap: 4 }}
+                  className="inline-flex items-center gap-1 text-primary underline"
                 >
-                  review & launch in Meta Ads Manager <ExternalLink size={12} />
+                  review &amp; launch in Meta Ads Manager <ExternalLink size={12} />
                 </a>
               </div>
             ) : null
           ) : (
-            <div style={{ display: "flex", flexDirection: "column", gap: "var(--space-3)" }}>
-              <div style={{ fontSize: "var(--text-sm)", color: "var(--success-700, #15803d)", display: "flex", alignItems: "center", gap: "var(--space-2)" }}>
+            <div className="flex flex-col gap-3">
+              <div className="flex items-center gap-2 text-[0.875rem] text-[var(--success)]">
                 <CheckCircle2 size={16} />
-                <span>Draft built ✓ — review & <strong>Launch</strong></span>
+                <span>Draft built ✓ — review &amp; <strong>Launch</strong></span>
               </div>
               {launchReady ? (
-                <Button variant="primary" size="md" disabled={busy} onClick={launch}>
+                <Button variant="default" size="default" disabled={busy} onClick={launch}>
                   {busy ? (
-                    <span style={{ display: "flex", alignItems: "center", gap: "var(--space-2)" }}>
+                    <span className="flex items-center gap-2">
                       <Loader2 size={14} style={{ animation: "spin 1s linear infinite" }} />
                       Queuing…
                     </span>
@@ -250,69 +245,69 @@ export function OttoAdBuildCard({ cardId, payload }: OttoAdBuildCardProps) {
                   href="https://www.facebook.com/adsmanager"
                   target="_blank"
                   rel="noopener noreferrer"
-                  style={{ color: "var(--brand)", fontSize: "var(--text-sm)", textDecoration: "underline", display: "inline-flex", alignItems: "center", gap: 4 }}
+                  className="inline-flex items-center gap-1 text-[0.875rem] text-primary underline"
                 >
-                  Review & launch in Meta Ads Manager <ExternalLink size={12} />
+                  Review &amp; launch in Meta Ads Manager <ExternalLink size={12} />
                 </a>
               )}
             </div>
           )
         ) : partialAfterApprove ? (
-          <div style={{ fontSize: "var(--text-sm)", color: "var(--warning-700, #b45309)" }}>
+          <div className="text-[0.875rem] text-[var(--warning-soft-foreground)]">
             Build partially completed — some steps may need attention. Check Meta Ads Manager.
           </div>
         ) : failedAfterApprove ? (
-          <div style={{ fontSize: "var(--text-sm)", color: "var(--error-700, #b91c1c)" }}>
+          <div className="text-[0.875rem] text-[var(--error-soft-foreground)]">
             Build failed — nothing was created.
           </div>
         ) : needsReview ? (
           /* Interrupted prior build — refused to re-create. Honest reason, no one-click rebuild. */
-          <div role="alert" style={{ fontSize: "var(--text-sm)", color: "var(--warning-700, #b45309)" }}>
+          <div role="alert" className="text-[0.875rem] text-[var(--warning-soft-foreground)]">
             {needsReviewReason}
           </div>
         ) : buildOutcome && buildOutcome.built === false && buildOutcome.reason ? (
           /* Auto-build was attempted but refused/failed — show why, offer manual approve */
-          <div style={{ display: "flex", flexDirection: "column", gap: "var(--space-3)" }}>
-            <div style={{ fontSize: "var(--text-sm)", color: "var(--text-muted)" }}>
+          <div className="flex flex-col gap-3">
+            <div className="text-[0.875rem] text-muted-foreground">
               Auto-build skipped ({buildOutcome.reason}). Click Approve to build now.
             </div>
             {!denied && !approveResult && (
-              <div style={{ display: "flex", gap: "var(--space-3)" }}>
-                <Button variant="primary" size="md" disabled={busy} onClick={approve}>
+              <div className="flex gap-3">
+                <Button variant="default" size="default" disabled={busy} onClick={approve}>
                   {busy ? (
-                    <span style={{ display: "flex", alignItems: "center", gap: "var(--space-2)" }}>
+                    <span className="flex items-center gap-2">
                       <Loader2 size={14} style={{ animation: "spin 1s linear infinite" }} />
                       Building…
                     </span>
                   ) : "Approve"}
                 </Button>
-                <Button variant="secondary" size="md" disabled={busy} onClick={() => setDenied(true)}>
+                <Button variant="outline" size="default" disabled={busy} onClick={() => setDenied(true)}>
                   Deny
                 </Button>
               </div>
             )}
             {denied && (
-              <div style={{ fontSize: "var(--text-sm)", color: "var(--text-muted)" }}>
+              <div className="text-[0.875rem] text-muted-foreground">
                 Build declined — nothing was created.
               </div>
             )}
           </div>
         ) : denied ? (
-          <div style={{ fontSize: "var(--text-sm)", color: "var(--text-muted)" }}>
+          <div className="text-[0.875rem] text-muted-foreground">
             Build declined — nothing was created.
           </div>
         ) : (
           /* Pending approval */
-          <div style={{ display: "flex", gap: "var(--space-3)" }}>
-            <Button variant="primary" size="md" disabled={busy} onClick={approve}>
+          <div className="flex gap-3">
+            <Button variant="default" size="default" disabled={busy} onClick={approve}>
               {busy ? (
-                <span style={{ display: "flex", alignItems: "center", gap: "var(--space-2)" }}>
+                <span className="flex items-center gap-2">
                   <Loader2 size={14} style={{ animation: "spin 1s linear infinite" }} />
                   Building…
                 </span>
               ) : "Approve"}
             </Button>
-            <Button variant="secondary" size="md" disabled={busy} onClick={() => setDenied(true)}>
+            <Button variant="outline" size="default" disabled={busy} onClick={() => setDenied(true)}>
               Deny
             </Button>
           </div>
@@ -320,23 +315,23 @@ export function OttoAdBuildCard({ cardId, payload }: OttoAdBuildCardProps) {
 
         {/* Errors */}
         {approveErr && (
-          <div role="alert" style={{ marginTop: "var(--space-2)", fontSize: "var(--text-sm)", color: "var(--error-700, #b91c1c)" }}>
+          <div role="alert" className="mt-2 text-[0.875rem] text-[var(--error-soft-foreground)]">
             {approveErr}
           </div>
         )}
         {launchErr && (
-          <div role="alert" style={{ marginTop: "var(--space-2)", fontSize: "var(--text-sm)", color: "var(--error-700, #b91c1c)" }}>
+          <div role="alert" className="mt-2 text-[0.875rem] text-[var(--error-soft-foreground)]">
             {launchErr}
           </div>
         )}
 
         {/* Trust footer */}
         {!effectivelyBuilt && !denied && !approveResult && (
-          <div style={{ display: "flex", alignItems: "center", gap: 6, marginTop: "var(--space-3)", fontSize: "var(--text-xs)", color: "var(--text-faint)" }}>
+          <div className="mt-3 flex items-center gap-1.5 text-[0.75rem] text-muted-foreground/70">
             <ShieldCheck size={15} /> Otto builds this <strong>paused</strong> — nothing spends until you launch.
           </div>
         )}
-      </Card>
+      </div>
       <style>{`@keyframes spin { to { transform: rotate(360deg); } }`}</style>
     </div>
   );
@@ -344,9 +339,9 @@ export function OttoAdBuildCard({ cardId, payload }: OttoAdBuildCardProps) {
 
 function DetailRow({ label, value }: { label: string; value: string }) {
   return (
-    <div style={{ display: "flex", gap: "var(--space-2)", fontSize: "var(--text-sm)" }}>
-      <span style={{ color: "var(--text-faint)", minWidth: 72, flexShrink: 0 }}>{label}</span>
-      <span style={{ color: "var(--text-body)" }}>{value}</span>
+    <div className="flex gap-2 text-[0.875rem]">
+      <span className="min-w-[72px] shrink-0 text-muted-foreground/70">{label}</span>
+      <span className="text-foreground">{value}</span>
     </div>
   );
 }

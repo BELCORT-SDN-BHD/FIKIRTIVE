@@ -2,7 +2,7 @@
 import React, { useState, useEffect } from "react";
 import { formatElapsed, usualSeconds } from "@/lib/progress-format";
 import { ClipboardList, Film, Image as ImageIcon, ShieldCheck } from "lucide-react";
-import { Card, Button } from "@/components/fk";
+import { Button } from "@/components/ui/button";
 import { ottoApprove } from "@/lib/otto-client-actions";
 import { coworkGenerate, coworkVaryCard, cancelGenJob } from "@/lib/cowork-actions";
 import { creditsLabel } from "@/lib/credit-format";
@@ -169,63 +169,52 @@ export function OttoPlanCard({
   }
 
   return (
-    <div style={{ maxWidth: 480 }}>
-      <Card variant="tint" padding="md">
-        <div style={{ display: "flex", alignItems: "center", gap: "var(--space-2)", marginBottom: "var(--space-4)" }}>
-          <ClipboardList size={20} color="var(--brand)" />
-          <span style={{ fontWeight: "var(--weight-bold)" as React.CSSProperties["fontWeight"], fontSize: "var(--text-base)", color: "var(--text-strong)" }}>
+    // leading-[1.65] pins the line-height this subtree currently INHERITS from the .fk
+    // ancestor (--leading-relaxed); it survives S4 teardown (when .fk/otto-theme.css is
+    // removed and .gb — which sets no line-height — applies at the root). Value-identical
+    // today → zero visual change; without it the text compacts post-teardown.
+    <div className="gb leading-[1.65]" style={{ maxWidth: 480 }}>
+      {/* Card variant="tint": bg-accent (--brand-tint=#F4F4F3), border, rounded-[18px], p-6 */}
+      <div className="rounded-[18px] border border-border bg-accent p-6">
+        <div className="mb-4 flex items-center gap-2">
+          <ClipboardList size={20} className="text-foreground" />
+          <span className="text-[1rem] font-bold text-foreground">
             Here&rsquo;s what I&rsquo;ll make
           </span>
         </div>
 
-        <div style={{ display: "flex", alignItems: "flex-start", gap: "var(--space-3)", background: "var(--surface-card)", borderRadius: "var(--radius-md)", padding: "12px 14px" }}>
-          <span style={{ width: 40, height: 40, flex: "none", borderRadius: 12, background: "var(--brand-soft)", color: "var(--on-brand-soft)", display: "flex", alignItems: "center", justifyContent: "center" }}>
+        <div className="flex items-start gap-3 rounded-[14px] bg-card px-[14px] py-3">
+          {/* Icon avatar: --brand-soft in .fk.gb-skin = #ECECEA (neutral) → bg-accent; --on-brand-soft = ink → text-foreground */}
+          <span className="flex h-10 w-10 shrink-0 items-center justify-center rounded-[12px] bg-accent text-foreground">
             {isVideo ? <Film size={21} /> : <ImageIcon size={21} />}
           </span>
-          <div style={{ flex: 1, minWidth: 0 }}>
-            <div style={{ fontWeight: "var(--weight-bold)" as React.CSSProperties["fontWeight"], fontSize: "var(--text-sm)", color: "var(--text-strong)" }}>
+          <div className="min-w-0 flex-1">
+            <div className="text-[0.875rem] font-bold text-foreground">
               {isVideo ? "A short video" : isTwoStep ? "Starting picture for your video" : "An image"}
             </div>
             <div
-              style={{
-                fontSize: "var(--text-xs)",
-                color: "var(--text-muted)",
-                ...(expanded
-                  ? { whiteSpace: "pre-wrap", wordBreak: "break-word" }
-                  : { overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }),
-              }}
+              className={`text-[0.75rem] text-muted-foreground${
+                expanded ? " whitespace-pre-wrap break-words" : " overflow-hidden text-ellipsis whitespace-nowrap"
+              }`}
             >
               {desc}
             </div>
             {/* Expand/collapse + copy row — only when there's a real prompt */}
             {p.structuredPrompt && (
-              <div style={{ display: "flex", alignItems: "center", gap: "var(--space-3)", marginTop: 4 }}>
+              <div className="mt-1 flex items-center gap-3">
                 <button
                   type="button"
                   onClick={() => setExpanded((v) => !v)}
-                  style={{
-                    background: "none",
-                    border: "none",
-                    padding: 0,
-                    cursor: "pointer",
-                    fontSize: "var(--text-xs)",
-                    color: "var(--text-faint)",
-                    textDecoration: "underline",
-                  }}
+                  className="cursor-pointer border-none bg-transparent p-0 text-[0.75rem] text-muted-foreground/70 underline"
                 >
                   {expanded ? "show less" : "show more"}
                 </button>
                 <button
                   type="button"
                   onClick={handleCopy}
-                  style={{
-                    background: "none",
-                    border: "none",
-                    padding: 0,
-                    cursor: "pointer",
-                    fontSize: "var(--text-xs)",
-                    color: copyState === "copied" ? "var(--success-700)" : "var(--text-faint)",
-                  }}
+                  className={`cursor-pointer border-none bg-transparent p-0 text-[0.75rem] underline ${
+                    copyState === "copied" ? "text-[var(--success-soft-foreground)]" : "text-muted-foreground/70"
+                  }`}
                 >
                   {copyState === "copied"
                     ? "Copied"
@@ -238,58 +227,58 @@ export function OttoPlanCard({
           </div>
         </div>
 
-        <div style={{ marginTop: "var(--space-4)", paddingTop: "var(--space-4)", borderTop: "1px solid var(--border-subtle)" }}>
+        <div className="mt-4 border-t border-border pt-4">
           {isTwoStep ? (
             <div>
-              <div style={{ fontSize: "var(--text-xs)", color: "var(--text-muted)", marginBottom: "var(--space-1)" }}>
+              <div className="mb-1 text-[0.75rem] text-muted-foreground">
                 Two-step plan
               </div>
-              <div style={{ fontFamily: "var(--font-display)", fontWeight: "var(--weight-bold)" as React.CSSProperties["fontWeight"], fontSize: "var(--text-xl)", color: "var(--text-strong)" }}>
+              <div className="text-[1.375rem] font-bold text-foreground">
                 Step 1 of 2 &mdash; ~{creditsLabel(credits)} now
               </div>
-              <div style={{ fontSize: "var(--text-sm)", color: "var(--text-muted)", marginTop: "var(--space-1)" }}>
+              <div className="mt-1 text-[0.875rem] text-muted-foreground">
                 Then the video &mdash; ~{creditsLabel(videoCredits)}
               </div>
             </div>
           ) : (
-            <div style={{ fontFamily: "var(--font-display)", fontWeight: "var(--weight-bold)" as React.CSSProperties["fontWeight"], fontSize: "var(--text-xl)", color: "var(--text-strong)" }}>
+            <div className="text-[1.375rem] font-bold text-foreground">
               About {creditsLabel(credits)}
             </div>
           )}
         </div>
 
         {cardState === "failed" ? (
-          <div style={{ marginTop: "var(--space-4)" }}>
-            <div style={{ fontSize: "var(--text-sm)", color: "var(--text-strong)", fontWeight: "var(--weight-semibold)" as React.CSSProperties["fontWeight"] }}>
+          <div className="mt-4">
+            <div className="text-[0.875rem] font-semibold text-foreground">
               😕 This one didn&rsquo;t come through — and you weren&rsquo;t charged.
             </div>
-            <div style={{ display: "flex", gap: "var(--space-3)", marginTop: "var(--space-3)" }}>
-              <Button variant="primary" size="md" disabled={busy} onClick={retry}>
+            <div className="mt-3 flex gap-3">
+              <Button variant="default" size="default" disabled={busy} onClick={retry}>
                 {busy ? "Queuing…" : "Try again"}
               </Button>
-              <Button variant="secondary" size="md" disabled={busy} onClick={handleChangeSomething}>
+              <Button variant="secondary" size="default" disabled={busy} onClick={handleChangeSomething}>
                 Change something
               </Button>
             </div>
           </div>
         ) : cancelled ? (
-          <div style={{ marginTop: "var(--space-4)", fontSize: "var(--text-sm)", color: "var(--text-muted)" }}>
+          <div className="mt-4 text-[0.875rem] text-muted-foreground">
             Cancelled — you weren&rsquo;t charged.
           </div>
         ) : cardState === "done" ? (
-          <div style={{ marginTop: "var(--space-4)" }}>
-            <div style={{ fontSize: "var(--text-sm)", color: "var(--success-700)", fontWeight: "var(--weight-semibold)" as React.CSSProperties["fontWeight"] }}>
+          <div className="mt-4">
+            <div className="text-[0.875rem] font-semibold text-[var(--success-soft-foreground)]">
               ✓ Done
             </div>
             {/* Spend-traceability line — pure copy, no charge logic. */}
-            <div style={{ marginTop: "var(--space-2)", fontSize: "var(--text-xs)", color: "var(--text-faint)" }}>
+            <div className="mt-2 text-[0.75rem] text-muted-foreground/70">
               ✓ You approved this — it used {creditsLabel(credits)}.
             </div>
           </div>
         ) : cardState === "working" ? (
-          <div style={{ marginTop: "var(--space-4)" }}>
-            <div style={{ display: "flex", alignItems: "center", gap: "var(--space-3)" }}>
-              <span style={{ fontSize: "var(--text-sm)", color: "var(--success-700)", fontWeight: "var(--weight-semibold)" as React.CSSProperties["fontWeight"] }}>
+          <div className="mt-4">
+            <div className="flex items-center gap-3">
+              <span className="text-[0.875rem] font-semibold text-[var(--success-soft-foreground)]">
                 ✓ On it — making this now · {formatElapsed(elapsed)} · usually ~{usualSeconds(isVideo)}s
               </span>
               {genJobId && (
@@ -299,31 +288,31 @@ export function OttoPlanCard({
               )}
             </div>
             {/* Spend-traceability line — pure copy, no charge logic. */}
-            <div style={{ marginTop: "var(--space-2)", fontSize: "var(--text-xs)", color: "var(--text-faint)" }}>
+            <div className="mt-2 text-[0.75rem] text-muted-foreground/70">
               ✓ You approved this — it used {creditsLabel(credits)}.
             </div>
           </div>
         ) : (
-          <div style={{ display: "flex", gap: "var(--space-3)", marginTop: "var(--space-4)" }}>
-            <Button variant="primary" size="md" disabled={busy} onClick={approve}>
+          <div className="mt-4 flex gap-3">
+            <Button variant="default" size="default" disabled={busy} onClick={approve}>
               {busy ? "Starting…" : `Make it · ${creditsLabel(credits)}`}
             </Button>
-            <Button variant="secondary" size="md" disabled={busy} onClick={handleChangeSomething}>
+            <Button variant="secondary" size="default" disabled={busy} onClick={handleChangeSomething}>
               Change something
             </Button>
           </div>
         )}
 
         {error ? (
-          <div role="alert" style={{ marginTop: "var(--space-2)", fontSize: "var(--text-sm)", color: "var(--error-700)" }}>
+          <div role="alert" className="mt-2 text-[0.875rem] text-[var(--error-soft-foreground)]">
             {error}
           </div>
         ) : (
-          <div style={{ display: "flex", alignItems: "center", gap: 6, marginTop: "var(--space-3)", fontSize: "var(--text-xs)", color: "var(--text-faint)" }}>
+          <div className="mt-3 flex items-center gap-[6px] text-[0.75rem] text-muted-foreground/70">
             <ShieldCheck size={15} /> Otto only makes this after you approve. (Chatting with Otto uses a little credit.)
           </div>
         )}
-      </Card>
+      </div>
     </div>
   );
 }

@@ -1,7 +1,7 @@
 "use client";
 import React, { useState } from "react";
 import { ClipboardList, Film, Image as ImageIcon } from "lucide-react";
-import { Card, Button } from "@/components/fk";
+import { Button } from "@/components/ui/button";
 import { ottoApprove } from "@/lib/otto-client-actions";
 import { coworkGenerate } from "@/lib/cowork-actions";
 import { creditsLabel } from "@/lib/credit-format";
@@ -109,21 +109,26 @@ export function PackCard({ packTitle, cards, balanceUsd, onApproved }: PackCardP
   }
 
   return (
-    <div style={{ maxWidth: 520 }}>
-      <Card variant="tint" padding="md">
+    // leading-[1.65] pins the line-height this subtree currently INHERITS from the .fk
+    // ancestor (--leading-relaxed); it survives S4 teardown (when .fk/otto-theme.css is
+    // removed and .gb — which sets no line-height — applies at the root). Value-identical
+    // today → zero visual change; without it the text compacts post-teardown.
+    <div className="gb leading-[1.65]" style={{ maxWidth: 520 }}>
+      {/* Pack card: bg-accent = --brand-tint (#F4F4F3 neutral tint) in .fk.gb-skin context */}
+      <div className="rounded-[var(--radius-card)] border border-border bg-accent p-6">
         {/* Pack header */}
-        <div style={{ display: "flex", alignItems: "center", gap: "var(--space-2)", marginBottom: "var(--space-4)" }}>
-          <ClipboardList size={20} color="var(--brand)" />
-          <span style={{ fontWeight: "var(--weight-bold)" as React.CSSProperties["fontWeight"], fontSize: "var(--text-base)", color: "var(--text-strong)" }}>
+        <div className="mb-4 flex items-center gap-2">
+          <ClipboardList size={20} className="text-primary" />
+          <span className="text-[1rem] font-bold text-foreground">
             {packTitle}
           </span>
-          <span style={{ marginLeft: "auto", fontSize: "var(--text-xs)", color: "var(--text-muted)", background: "var(--surface-raised)", borderRadius: "var(--radius-full)", padding: "2px 8px" }}>
+          <span className="ml-auto rounded-full bg-card px-2 py-0.5 text-[0.75rem] text-muted-foreground">
             {cards.length} {cards.length === 1 ? "item" : "items"}
           </span>
         </div>
 
         {/* Per-card compact rows */}
-        <div style={{ display: "flex", flexDirection: "column", gap: "var(--space-2)" }}>
+        <div className="flex flex-col gap-2">
           {parsedCards.map((c, idx) => {
             const isVideo = c.p.kind === "video";
             const desc = c.p.structuredPrompt || (isVideo ? "A short video" : "An image");
@@ -134,39 +139,33 @@ export function PackCard({ packTitle, cards, balanceUsd, onApproved }: PackCardP
             return (
               <div
                 key={c.cardId}
-                style={{
-                  display: "flex",
-                  alignItems: "center",
-                  gap: "var(--space-3)",
-                  background: "var(--surface-card)",
-                  borderRadius: "var(--radius-md)",
-                  padding: "10px 12px",
-                  opacity: isFailed ? 0.6 : 1,
-                }}
+                className="flex items-center gap-3 rounded-[14px] bg-card px-3 py-2.5"
+                style={{ opacity: isFailed ? 0.6 : 1 }}
               >
-                <span style={{ width: 32, height: 32, flex: "none", borderRadius: 8, background: "var(--brand-soft)", color: "var(--on-brand-soft)", display: "flex", alignItems: "center", justifyContent: "center" }}>
+                {/* Icon bubble: --brand-soft in .fk.gb-skin = neutral gray #ECECEA = .gb --accent */}
+                <span className="flex size-8 shrink-0 items-center justify-center rounded-[8px] bg-muted text-foreground">
                   {isVideo ? <Film size={17} /> : <ImageIcon size={17} />}
                 </span>
-                <div style={{ flex: 1, minWidth: 0 }}>
-                  <div style={{ fontSize: "var(--text-xs)", color: "var(--text-strong)", fontWeight: "var(--weight-semibold)" as React.CSSProperties["fontWeight"], overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+                <div className="min-w-0 flex-1">
+                  <div className="overflow-hidden text-ellipsis whitespace-nowrap text-[0.75rem] font-semibold text-foreground">
                     {desc}
                   </div>
-                  <div style={{ fontSize: "var(--text-xs)", color: "var(--text-muted)" }}>
+                  <div className="text-[0.75rem] text-muted-foreground">
                     ~{creditsLabel(c.credits)}
                   </div>
                 </div>
-                <div style={{ fontSize: "var(--text-xs)", flexShrink: 0 }}>
+                <div className="shrink-0 text-[0.75rem]">
                   {isFailed ? (
-                    <span style={{ color: "var(--error-700)" }}>failed</span>
+                    <span className="text-[var(--error-soft-foreground)]">failed</span>
                   ) : isDone ? (
-                    <span style={{ color: "var(--success-700)" }}>✓</span>
+                    <span className="text-[var(--success)]">✓</span>
                   ) : isGenerating ? (
-                    <span style={{ color: "var(--text-muted)" }}>starting…</span>
+                    <span className="text-muted-foreground">starting…</span>
                   ) : (
-                    <span style={{ color: "var(--text-faint)" }}>queued</span>
+                    <span className="text-muted-foreground/70">queued</span>
                   )}
                 </div>
-                <div style={{ fontSize: "var(--text-xs)", color: "var(--text-muted)", flexShrink: 0 }}>
+                <div className="shrink-0 text-[0.75rem] text-muted-foreground">
                   #{idx + 1}
                 </div>
               </div>
@@ -175,37 +174,37 @@ export function PackCard({ packTitle, cards, balanceUsd, onApproved }: PackCardP
         </div>
 
         {/* Pack footer */}
-        <div style={{ marginTop: "var(--space-4)", paddingTop: "var(--space-4)", borderTop: "1px solid var(--border-subtle)" }}>
+        <div className="mt-4 border-t border-border pt-4">
           {!allSubmitted && (
             <>
-              <div style={{ fontFamily: "var(--font-display)", fontWeight: "var(--weight-bold)" as React.CSSProperties["fontWeight"], fontSize: "var(--text-xl)", color: "var(--text-strong)", marginBottom: "var(--space-3)" }}>
+              <div className="mb-3 text-[1.375rem] font-bold text-foreground">
                 Total ~{creditsLabel(totalCredits)}
               </div>
 
               {!canAfford && (
-                <div role="alert" style={{ marginBottom: "var(--space-3)", fontSize: "var(--text-sm)", color: "var(--error-700)" }}>
+                <div role="alert" className="mb-3 text-[0.875rem] text-[var(--error-soft-foreground)]">
                   Not enough credits to make all {cards.length} — top up or approve individually.
                 </div>
               )}
 
               {confirming ? (
                 <div>
-                  <div style={{ fontSize: "var(--text-sm)", color: "var(--text-strong)", marginBottom: "var(--space-3)" }}>
+                  <div className="mb-3 text-[0.875rem] text-foreground">
                     Make all {idleCards.length} {idleCards.length === 1 ? "item" : "items"} for ~{creditsLabel(totalCredits)}? This will spend real credits.
                   </div>
-                  <div style={{ display: "flex", gap: "var(--space-3)" }}>
-                    <Button variant="primary" size="md" disabled={running} onClick={() => void makeAll()}>
+                  <div className="flex gap-3">
+                    <Button variant="default" size="default" disabled={running} onClick={() => void makeAll()}>
                       {running ? "Starting…" : "Confirm — make all"}
                     </Button>
-                    <Button variant="secondary" size="md" disabled={running} onClick={() => setConfirming(false)}>
+                    <Button variant="secondary" size="default" disabled={running} onClick={() => setConfirming(false)}>
                       Cancel
                     </Button>
                   </div>
                 </div>
               ) : (
                 <Button
-                  variant="primary"
-                  size="md"
+                  variant="default"
+                  size="default"
                   disabled={!canAfford || running}
                   onClick={() => setConfirming(true)}
                 >
@@ -216,18 +215,18 @@ export function PackCard({ packTitle, cards, balanceUsd, onApproved }: PackCardP
           )}
 
           {allSubmitted && !running && (
-            <div style={{ fontSize: "var(--text-sm)", color: "var(--success-700)", fontWeight: "var(--weight-semibold)" as React.CSSProperties["fontWeight"] }}>
+            <div className="text-[0.875rem] font-semibold text-[var(--success)]">
               ✓ All {cards.length} {cards.length === 1 ? "item" : "items"} started
             </div>
           )}
         </div>
 
         {error && (
-          <div role="alert" style={{ marginTop: "var(--space-2)", fontSize: "var(--text-sm)", color: "var(--error-700)" }}>
+          <div role="alert" className="mt-2 text-[0.875rem] text-[var(--error-soft-foreground)]">
             {error}
           </div>
         )}
-      </Card>
+      </div>
     </div>
   );
 }
