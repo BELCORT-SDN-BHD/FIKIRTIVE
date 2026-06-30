@@ -1,5 +1,5 @@
 import { notFound } from "next/navigation";
-import { OttoApp } from "@/components/otto/OttoApp";
+import { OttoApp, type OttoViewKey } from "@/components/otto/OttoApp";
 import type { MemoryRow } from "@/lib/memory-actions";
 
 export const dynamic = "force-dynamic";
@@ -17,7 +17,7 @@ export const metadata = { title: "Skin preview (dev)" };
 export default async function SkinPreviewPage({
   searchParams,
 }: {
-  searchParams: Promise<{ skin?: string; nav?: string; chat?: string }>;
+  searchParams: Promise<{ skin?: string; nav?: string; chat?: string; view?: string }>;
 }) {
   if (process.env.NODE_ENV === "production") notFound();
   const sp = await searchParams;
@@ -65,7 +65,7 @@ export default async function SkinPreviewPage({
         kind: "image" as const,
       }))}
       ottoStreamEnabled={false}
-      initialView="otto"
+      initialView={(sp?.view as OttoViewKey | undefined) ?? "otto"}
       skin={skin}
       initialNavCollapsed={sp?.nav === "collapsed"}
       initialChatCollapsed={sp?.chat === "collapsed"}
