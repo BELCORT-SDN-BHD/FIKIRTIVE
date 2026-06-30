@@ -90,7 +90,7 @@ export function OttoActionPlanCard({ cardId, payload }: OttoActionPlanCardProps)
     // today → zero visual change; without it the text compacts post-teardown.
     <div className="gb leading-[1.65]" style={{ maxWidth: 480 }}>
       {/* Card: tint variant = bg-accent (neutral #F4F4F3 tint), radius-card (18px), pad-card (p-6), border */}
-      <div className="rounded-[18px] border border-border bg-accent p-6">
+      <div className="rounded-[18px] border border-border bg-secondary p-6">
         {/* Header */}
         <div className="flex items-center gap-2 mb-4">
           <ClipboardList size={20} className="text-foreground" />

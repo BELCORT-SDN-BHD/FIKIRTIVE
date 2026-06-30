@@ -175,7 +175,7 @@ export function OttoPlanCard({
     // today → zero visual change; without it the text compacts post-teardown.
     <div className="gb leading-[1.65]" style={{ maxWidth: 480 }}>
       {/* Card variant="tint": bg-accent (--brand-tint=#F4F4F3), border, rounded-[18px], p-6 */}
-      <div className="rounded-[18px] border border-border bg-accent p-6">
+      <div className="rounded-[18px] border border-border bg-secondary p-6">
         <div className="mb-4 flex items-center gap-2">
           <ClipboardList size={20} className="text-foreground" />
           <span className="text-[1rem] font-bold text-foreground">

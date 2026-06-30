@@ -139,7 +139,7 @@ export function OttoAdBuildCard({ cardId, payload }: OttoAdBuildCardProps) {
     // today → zero visual change; without it the text compacts post-teardown.
     <div className="gb leading-[1.65]" style={{ maxWidth: 480 }}>
       {/* Card variant="tint" padding="md": bg=--brand-tint=#F4F4F3=bg-accent, radius=--radius-card=18px, pad=--pad-card=--space-6=p-6, border=--border-subtle */}
-      <div className="rounded-[18px] border border-border bg-accent p-6">
+      <div className="rounded-[18px] border border-border bg-secondary p-6">
         {/* Header */}
         <div className="mb-4 flex items-center gap-2">
           <Hammer size={20} className="text-primary" />

@@ -771,7 +771,7 @@ export function OttoChatStream({
                     pollCountRef.current = 0;
                     void pollAndInjectResults();
                   }}
-                  className="border-0 bg-transparent p-0 text-brand font-semibold cursor-pointer underline"
+                  className="border-0 bg-transparent p-0 text-primary font-semibold cursor-pointer underline"
                 >
                   Check again
                 </button>
@@ -928,9 +928,9 @@ export function OttoChatStream({
                 disabled={isBusy || uploading}
                 onClick={() => fileInputRef.current?.click()}
                 className="inline-flex items-center border-0 bg-transparent p-1 cursor-pointer disabled:cursor-default disabled:opacity-50"
-                style={{ color: attached ? "var(--brand)" : undefined }}
+                style={{ color: attached ? "var(--primary)" : undefined }}
               >
-                <ImageIcon size={18} className={attached ? "text-brand" : "text-muted-foreground"} />
+                <ImageIcon size={18} className={attached ? "text-primary" : "text-muted-foreground"} />
               </button>
               <Button variant="default" size="sm" disabled={isBusy || !text.trim()} onClick={submit}>
                 {isBusy ? "Sending…" : "Send"}

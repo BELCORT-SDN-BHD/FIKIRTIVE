@@ -115,7 +115,7 @@ export function PackCard({ packTitle, cards, balanceUsd, onApproved }: PackCardP
     // today → zero visual change; without it the text compacts post-teardown.
     <div className="gb leading-[1.65]" style={{ maxWidth: 520 }}>
       {/* Pack card: bg-accent = --brand-tint (#F4F4F3 neutral tint) in .fk.gb-skin context */}
-      <div className="rounded-[var(--radius-card)] border border-border bg-accent p-6">
+      <div className="rounded-[var(--radius-card)] border border-border bg-secondary p-6">
         {/* Pack header */}
         <div className="mb-4 flex items-center gap-2">
           <ClipboardList size={20} className="text-primary" />
@@ -143,7 +143,7 @@ export function PackCard({ packTitle, cards, balanceUsd, onApproved }: PackCardP
                 style={{ opacity: isFailed ? 0.6 : 1 }}
               >
                 {/* Icon bubble: --brand-soft in .fk.gb-skin = neutral gray #ECECEA = .gb --accent */}
-                <span className="flex size-8 shrink-0 items-center justify-center rounded-[8px] bg-muted text-foreground">
+                <span className="flex size-8 shrink-0 items-center justify-center rounded-[8px] bg-accent text-foreground">
                   {isVideo ? <Film size={17} /> : <ImageIcon size={17} />}
                 </span>
                 <div className="min-w-0 flex-1">
