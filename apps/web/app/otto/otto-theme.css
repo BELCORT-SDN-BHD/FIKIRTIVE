@@ -337,30 +337,30 @@
  * so only the canvas bottom bar changes — matches the locked canvas-home mockup.
  * Coral stays agent-only → the canvas Generate action is INK, not accent. */
 .fk.gb-skin .al-promptbar {
-  background: var(--surface-card);
-  border-color: var(--border-default);
+  background: var(--card);
+  border-color: var(--border);
   box-shadow: 0 8px 24px rgba(20, 20, 24, 0.12);
   -webkit-backdrop-filter: none;
   backdrop-filter: none;
 }
-.fk.gb-skin .al-promptbar .tiptap { color: var(--text-body); }
-.fk.gb-skin .al-promptbar .tiptap p.is-editor-empty:first-child::before { color: var(--text-faint); }
+.fk.gb-skin .al-promptbar .tiptap { color: var(--foreground); }
+.fk.gb-skin .al-promptbar .tiptap p.is-editor-empty:first-child::before { color: var(--muted-foreground); }
 .fk.gb-skin .al-promptbar .al-btn-primary {
-  background: var(--brand);
-  color: var(--text-on-brand);
+  background: var(--primary);
+  color: var(--primary-foreground);
   box-shadow: none;
 }
 .fk.gb-skin .al-promptbar .al-btn-primary:hover:not(:disabled) {
-  background: var(--brand-hover);
+  background: #1A1A18;
   box-shadow: none;
 }
 .fk.gb-skin .al-promptbar .al-btn:not(.al-btn-primary) {
-  background: var(--surface-card);
-  border-color: var(--border-default);
-  color: var(--text-body);
+  background: var(--card);
+  border-color: var(--border);
+  color: var(--foreground);
 }
 .fk.gb-skin .al-promptbar .al-btn:not(.al-btn-primary):hover:not(:disabled) {
-  background: var(--surface-sunken);
+  background: var(--muted);
 }
 
 /* ── Canvas slim toolbar (gb) — matches the approved canvas-home mockup.
@@ -376,8 +376,8 @@
   display: flex;
   align-items: center;
   gap: 4px;
-  background: var(--surface-card);
-  border: 1px solid var(--border-default);
+  background: var(--card);
+  border: 1px solid var(--border);
   border-radius: 14px;
   box-shadow: 0 8px 24px rgba(20, 20, 24, 0.12);
   padding: 6px;
@@ -391,33 +391,33 @@
   display: flex;
   align-items: center;
   justify-content: center;
-  color: var(--text-body);
+  color: var(--foreground);
   cursor: pointer;
 }
-.fk.gb-skin .cv-tb:hover:not(:disabled) { background: var(--surface-sunken); }
-.fk.gb-skin .cv-tb:disabled { color: var(--text-faint); cursor: default; }
+.fk.gb-skin .cv-tb:hover:not(:disabled) { background: var(--muted); }
+.fk.gb-skin .cv-tb:disabled { color: var(--muted-foreground); cursor: default; }
 .fk.gb-skin .cv-tb-gen {
   width: auto;
   gap: 7px;
   padding: 0 14px;
-  background: var(--brand);
-  color: var(--text-on-brand);
+  background: var(--primary);
+  color: var(--primary-foreground);
   font-size: 13.5px;
   font-weight: 600;
 }
-.fk.gb-skin .cv-tb-gen:hover:not(:disabled) { background: var(--brand-hover); }
+.fk.gb-skin .cv-tb-gen:hover:not(:disabled) { background: #1A1A18; }
 .fk.gb-skin .cv-tb-div {
   width: 1px;
   height: 22px;
-  background: var(--border-subtle);
+  background: var(--border);
   margin: 0 3px;
 }
 /* Active tool (e.g. select mode engaged) */
 .fk.gb-skin .cv-tb-active {
-  background: var(--brand-tint);
-  color: var(--brand-press);
+  background: var(--secondary);
+  color: var(--foreground);
 }
-.fk.gb-skin .cv-tb-active:hover:not(:disabled) { background: var(--brand-tint); }
+.fk.gb-skin .cv-tb-active:hover:not(:disabled) { background: var(--secondary); }
 /* Select mode: arrow cursor on the canvas instead of the grab hand */
 .fk.gb-skin .cv-select-mode .react-flow__pane { cursor: default; }
 
@@ -426,7 +426,7 @@
   position: absolute;
   inset: 12px;
   z-index: 6;
-  border: 2px dashed var(--border-strong);
+  border: 2px dashed var(--border);
   border-radius: 16px;
   background: rgba(20, 20, 24, 0.04);
   display: flex;
@@ -437,44 +437,44 @@
 .fk .cv-dropzone span {
   font-size: 14px;
   font-weight: 600;
-  color: var(--text-body);
-  background: var(--surface-card);
+  color: var(--foreground);
+  background: var(--card);
   padding: 8px 16px;
   border-radius: 999px;
   box-shadow: var(--shadow-sm);
-  border: 1px solid var(--border-default);
+  border: 1px solid var(--border);
 }
 
 /* ── Per-asset Detail panel (gb) — the legacy DS card + buttons/segments assume
  * dark glass; re-skin the whole overlay light. The card is an absolute overlay
  * (not a ReactFlow node), so it doesn't get the node re-skin — style it here. */
 .fk.gb-skin .cv-detail {
-  background: var(--surface-card);
-  border: 1px solid var(--border-default);
+  background: var(--card);
+  border: 1px solid var(--border);
   box-shadow: 0 16px 48px rgba(20, 20, 24, 0.18);
   -webkit-backdrop-filter: none;
   backdrop-filter: none;
-  color: var(--text-body);
+  color: var(--foreground);
 }
 .fk.gb-skin .cv-detail .al-btn {
-  background: var(--surface-card);
-  border: 1px solid var(--border-default);
-  color: var(--text-body);
+  background: var(--card);
+  border: 1px solid var(--border);
+  color: var(--foreground);
   -webkit-backdrop-filter: none;
   backdrop-filter: none;
   box-shadow: none;
 }
-.fk.gb-skin .cv-detail .al-btn:hover:not(:disabled) { background: var(--surface-sunken); }
-.fk.gb-skin .cv-detail .al-btn-primary { background: var(--brand); color: var(--text-on-brand); border-color: var(--brand); }
-.fk.gb-skin .cv-detail .al-btn-primary:hover:not(:disabled) { background: var(--brand-hover); }
+.fk.gb-skin .cv-detail .al-btn:hover:not(:disabled) { background: var(--muted); }
+.fk.gb-skin .cv-detail .al-btn-primary { background: var(--primary); color: var(--primary-foreground); border-color: var(--primary); }
+.fk.gb-skin .cv-detail .al-btn-primary:hover:not(:disabled) { background: #1A1A18; }
 .fk.gb-skin .cv-detail .al-btn-ghost { background: transparent; }
-.fk.gb-skin .cv-detail .al-iconbtn { background: var(--surface-sunken); border: 1px solid var(--border-default); color: var(--text-body); }
-.fk.gb-skin .cv-detail .al-iconbtn:hover { background: var(--surface-card); }
-.fk.gb-skin .cv-detail .al-seg { background: var(--surface-sunken); border: 1px solid var(--border-default); border-radius: 10px; padding: 2px; }
-.fk.gb-skin .cv-detail .al-seg-item { color: var(--text-muted); }
-.fk.gb-skin .cv-detail .al-seg-item-active { background: var(--surface-card); color: var(--text-body); border-radius: 8px; }
-.fk.gb-skin .cv-detail .tiptap { color: var(--text-body); }
-.fk.gb-skin .cv-detail .tiptap p.is-editor-empty:first-child::before { color: var(--text-faint); }
+.fk.gb-skin .cv-detail .al-iconbtn { background: var(--muted); border: 1px solid var(--border); color: var(--foreground); }
+.fk.gb-skin .cv-detail .al-iconbtn:hover { background: var(--card); }
+.fk.gb-skin .cv-detail .al-seg { background: var(--muted); border: 1px solid var(--border); border-radius: 10px; padding: 2px; }
+.fk.gb-skin .cv-detail .al-seg-item { color: var(--muted-foreground); }
+.fk.gb-skin .cv-detail .al-seg-item-active { background: var(--card); color: var(--foreground); border-radius: 8px; }
+.fk.gb-skin .cv-detail .tiptap { color: var(--foreground); }
+.fk.gb-skin .cv-detail .tiptap p.is-editor-empty:first-child::before { color: var(--muted-foreground); }
 
 /* ── Canvas nodes (legacy .al-panel cards) re-skinned Grok-bright.
  * Scoped to ReactFlow nodes so only the canvas changes; gated by gb-skin.
@@ -483,15 +483,15 @@
  * skin, so it appears only here (strangler). */
 .cv-nodelabel { display: none; }
 .fk.gb-skin .react-flow__node .al-panel {
-  background: var(--surface-card);
-  border: 1px solid var(--border-default);
+  background: var(--card);
+  border: 1px solid var(--border);
   box-shadow: 0 6px 18px rgba(20, 20, 24, 0.08);
   -webkit-backdrop-filter: none;
   backdrop-filter: none;
   border-radius: 13px;
 }
 .fk.gb-skin .react-flow__node.selected .al-panel {
-  border: 2px solid var(--accent);
+  border: 2px solid var(--brand);
 }
 .fk.gb-skin .react-flow__node .cv-nodelabel {
   display: inline-flex;
@@ -513,15 +513,15 @@
 .fk.gb-skin .react-flow__node .cv-nodelabel svg { width: 12px; height: 12px; }
 .fk.gb-skin .react-flow__node .al-btn-glass {
   background: rgba(255, 255, 255, 0.92);
-  border-color: var(--border-default);
-  color: var(--text-body);
+  border-color: var(--border);
+  color: var(--foreground);
   -webkit-backdrop-filter: none;
   backdrop-filter: none;
   box-shadow: var(--shadow-sm);
 }
 .fk.gb-skin .react-flow__node .al-btn-glass:hover:not(:disabled) { background: #fff; }
-.fk.gb-skin .react-flow__node textarea { color: var(--text-body); }
-.fk.gb-skin .react-flow__node textarea::placeholder { color: var(--text-faint); }
+.fk.gb-skin .react-flow__node textarea { color: var(--foreground); }
+.fk.gb-skin .react-flow__node textarea::placeholder { color: var(--muted-foreground); }
 
 /* ── In-node generating state (gb) — OTTO making it + indeterminate progress +
  * the honest money line. Coral is the agent making the asset (allowed use).
@@ -533,7 +533,7 @@
   justify-content: center;
   gap: 9px;
   height: 100%;
-  background: var(--surface-sunken);
+  background: var(--muted);
 }
 .fk.gb-skin .react-flow__node .cv-gen-otto {
   display: inline-flex;
@@ -541,13 +541,13 @@
   gap: 6px;
   font-size: 11.5px;
   font-weight: 600;
-  color: var(--accent);
+  color: var(--brand);
 }
 .fk.gb-skin .react-flow__node .cv-gen-bar {
   width: 64%;
   height: 5px;
   border-radius: 99px;
-  background: var(--border-default);
+  background: var(--border);
   position: relative;
   overflow: hidden;
 }
@@ -559,13 +559,13 @@
   height: 100%;
   width: 40%;
   border-radius: 99px;
-  background: var(--accent);
+  background: var(--brand);
   animation: cv-gen-slide 1.3s ease-in-out infinite;
 }
 @keyframes cv-gen-slide { 0% { left: -40%; } 100% { left: 100%; } }
 .fk.gb-skin .react-flow__node .cv-gen-meta {
   font-size: 10px;
-  color: var(--text-faint);
+  color: var(--muted-foreground);
 }
 
 /* ── Video node poster + centered play button (gb) — matches the mockup. */
@@ -580,7 +580,7 @@
   border-radius: 50%;
   border: none;
   background: rgba(255, 255, 255, 0.92);
-  color: var(--text-body);
+  color: var(--foreground);
   box-shadow: var(--shadow-sm);
   display: flex;
   align-items: center;
@@ -599,30 +599,30 @@
 }
 
 /* ── Settings toggle (no shadcn switch exists; gb-styled). */
-.fk.gb-skin .cv-switch { width: 40px; height: 23px; border-radius: 999px; border: none; background: var(--border-strong); position: relative; cursor: pointer; transition: background var(--dur-fast) var(--ease-out); }
+.fk.gb-skin .cv-switch { width: 40px; height: 23px; border-radius: 999px; border: none; background: var(--border); position: relative; cursor: pointer; transition: background var(--dur-fast) var(--ease-out); }
 .fk.gb-skin .cv-switch::after { content: ""; position: absolute; top: 2.5px; left: 2.5px; width: 18px; height: 18px; border-radius: 50%; background: #fff; box-shadow: var(--shadow-sm); transition: left var(--dur-fast) var(--ease-out); }
-.fk.gb-skin .cv-switch.on { background: var(--brand); }
+.fk.gb-skin .cv-switch.on { background: var(--primary); }
 .fk.gb-skin .cv-switch.on::after { left: 19.5px; }
 
 /* ── Account / Settings page (Direction 1: one page + sticky left jump-nav). */
 .fk.gb-skin .cv-settings { display: flex; flex: 1; overflow: hidden; }
-.fk.gb-skin .cv-settings-nav { width: 210px; flex: none; border-right: 1px solid var(--border-subtle); padding: 30px 16px; position: sticky; top: 0; }
+.fk.gb-skin .cv-settings-nav { width: 210px; flex: none; border-right: 1px solid var(--border); padding: 30px 16px; position: sticky; top: 0; }
 .fk.gb-skin .cv-settings-nav h1 { font-size: 20px; font-weight: 700; margin-bottom: 16px; }
-.fk.gb-skin .cv-settings-nav a { display: block; padding: 8px 11px; border-radius: 9px; font-size: 13.5px; color: var(--text-body); text-decoration: none; margin-bottom: 2px; }
-.fk.gb-skin .cv-settings-nav a.on { background: var(--brand-tint); color: var(--brand-press); font-weight: 600; }
+.fk.gb-skin .cv-settings-nav a { display: block; padding: 8px 11px; border-radius: 9px; font-size: 13.5px; color: var(--foreground); text-decoration: none; margin-bottom: 2px; }
+.fk.gb-skin .cv-settings-nav a.on { background: var(--secondary); color: var(--foreground); font-weight: 600; }
 .fk.gb-skin .cv-settings-nav a.danger { color: #B4321E; }
 .fk.gb-skin .cv-settings-body { flex: 1; overflow: auto; padding: 36px 44px; max-width: 760px; }
 .fk.gb-skin .cv-set-sec { margin-bottom: 34px; scroll-margin-top: 24px; }
 .fk.gb-skin .cv-set-sec h2 { font-size: 16px; font-weight: 700; }
-.fk.gb-skin .cv-set-sub { font-size: 13px; color: var(--text-muted); margin: 2px 0 12px; }
-.fk.gb-skin .cv-set-card { background: var(--surface-card); border: 1px solid var(--border-default); border-radius: 14px; padding: 4px 18px; }
+.fk.gb-skin .cv-set-sub { font-size: 13px; color: var(--muted-foreground); margin: 2px 0 12px; }
+.fk.gb-skin .cv-set-card { background: var(--card); border: 1px solid var(--border); border-radius: 14px; padding: 4px 18px; }
 .fk.gb-skin .cv-set-card.danger { border-color: #E7B7AE; }
-.fk.gb-skin .cv-set-row { display: flex; align-items: center; justify-content: space-between; gap: 16px; padding: 13px 0; border-top: 1px solid var(--border-subtle); }
+.fk.gb-skin .cv-set-row { display: flex; align-items: center; justify-content: space-between; gap: 16px; padding: 13px 0; border-top: 1px solid var(--border); }
 .fk.gb-skin .cv-set-row:first-child { border-top: none; }
 .fk.gb-skin .cv-set-lbl { display: flex; flex-direction: column; gap: 2px; font-size: 13.5px; font-weight: 500; }
-.fk.gb-skin .cv-set-hint { font-size: 12px; color: var(--text-faint); font-weight: 400; }
-.fk.gb-skin .cv-set-input { border: 1px solid var(--border-default); border-radius: 9px; padding: 7px 11px; font: inherit; font-size: 13.5px; color: var(--text-body); background: var(--surface-card); width: 240px; }
+.fk.gb-skin .cv-set-hint { font-size: 12px; color: var(--muted-foreground); font-weight: 400; }
+.fk.gb-skin .cv-set-input { border: 1px solid var(--border); border-radius: 9px; padding: 7px 11px; font: inherit; font-size: 13.5px; color: var(--foreground); background: var(--card); width: 240px; }
 .fk.gb-skin .cv-set-input-num { width: 90px; }
-.fk.gb-skin .cv-set-num { display: inline-flex; align-items: center; gap: 7px; color: var(--text-muted); font-size: 12.5px; }
-.fk.gb-skin .cv-set-btn { height: 34px; padding: 0 14px; border-radius: 10px; font-size: 13px; font-weight: 600; border: 1px solid var(--border-default); background: var(--surface-card); color: var(--text-body); cursor: pointer; }
+.fk.gb-skin .cv-set-num { display: inline-flex; align-items: center; gap: 7px; color: var(--muted-foreground); font-size: 12.5px; }
+.fk.gb-skin .cv-set-btn { height: 34px; padding: 0 14px; border-radius: 10px; font-size: 13px; font-weight: 600; border: 1px solid var(--border); background: var(--card); color: var(--foreground); cursor: pointer; }
 .fk.gb-skin .cv-set-btn.danger { border-color: #E7B7AE; color: #B4321E; }

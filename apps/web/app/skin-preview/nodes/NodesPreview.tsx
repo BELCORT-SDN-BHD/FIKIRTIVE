@@ -52,7 +52,7 @@ const nodes: Node[] = [
 
 export function NodesPreview() {
   return (
-    <div className="fk gb-skin" style={{ height: "100dvh", width: "100%", background: "var(--bg-page)" }}>
+    <div className="fk gb-skin gb" style={{ height: "100dvh", width: "100%", background: "var(--bg-page)" }}>
       <ReactFlow
         nodes={nodes}
         nodeTypes={nodeTypes}
