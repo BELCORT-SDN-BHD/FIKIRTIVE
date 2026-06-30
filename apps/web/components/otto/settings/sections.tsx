@@ -4,7 +4,7 @@ import type { AccountInfo } from "@/lib/account-actions";
 import { signOutAction } from "@/lib/account-actions";
 import type { OwnerSettings } from "@/lib/owner-settings";
 import { setOwnerSetting } from "@/lib/owner-settings-actions";
-import { setAdsAutonomy } from "@/lib/meta-write-actions";
+import { setAdsAutonomy } from "@/lib/otto-client-actions";
 import { BuyPackButton } from "@/components/billing/BuyPackButton";
 import { creditsLabel } from "@/lib/credit-format";
 import type { CreditPack } from "@/lib/billing-actions";
