@@ -1,6 +1,6 @@
 "use client";
 import React from "react";
-import { OttoAvatar } from "@/components/fk";
+import { OttoAvatar } from "@/components/otto/OttoAvatar";
 import type { OttoStatusData } from "@/lib/otto-stream-bridge";
 
 export interface StatusLineProps {

@@ -50,7 +50,7 @@ const MentionList = forwardRef<MentionListHandle, SuggestionProps<MentionItem>>(
   return (
     <div className="pop-menu" style={{ position: "static", minWidth: 220 }} role="listbox" aria-label="Entity suggestions">
       {props.items.length === 0 ? (
-        <p style={{ font: "var(--text-small)", color: "var(--fg-3)", padding: "7px 11px", margin: 0 }}>No matching elements — create one in Elements.</p>
+        <p style={{ font: "var(--text-small)", color: "var(--muted-foreground)", padding: "7px 11px", margin: 0 }}>No matching elements — create one in Elements.</p>
       ) : (
         props.items.map((item, i) => (
           // variants share the entity id → key on the variantId too, else React collides them
@@ -58,9 +58,9 @@ const MentionList = forwardRef<MentionListHandle, SuggestionProps<MentionItem>>(
             onMouseEnter={() => setSelected(i)} onClick={() => pick(i)}>
             <span style={{ width: 8, height: 8, borderRadius: 99, background: HUES[item.type], flex: "none" }} aria-hidden />
             <span className="pop-item-main"><span className="pop-item-label">{item.name}
-              {item.variantLabel && <span style={{ color: "var(--fg-2)" }}> · {item.variantLabel}</span>}
-              {item.aka && <span style={{ color: "var(--fg-3)", fontWeight: 400 }}> · aka {item.aka}</span>}</span></span>
-            <span style={{ font: "var(--text-mono-label)", letterSpacing: "0.08em", textTransform: "uppercase", color: "var(--fg-3)" }}>{item.variantId ? "variant" : item.type.toLowerCase()}</span>
+              {item.variantLabel && <span style={{ color: "var(--muted-foreground)" }}> · {item.variantLabel}</span>}
+              {item.aka && <span style={{ color: "var(--muted-foreground)", fontWeight: 400 }}> · aka {item.aka}</span>}</span></span>
+            <span style={{ font: "var(--text-mono-label)", letterSpacing: "0.08em", textTransform: "uppercase", color: "var(--muted-foreground)" }}>{item.variantId ? "variant" : item.type.toLowerCase()}</span>
           </div>
         ))
       )}

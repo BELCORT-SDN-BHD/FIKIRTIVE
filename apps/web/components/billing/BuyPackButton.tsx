@@ -1,17 +1,15 @@
 "use client";
 import { useState, useTransition } from "react";
 import { createTopupCheckout } from "@/lib/billing-actions";
-import { Button } from "@/components/fk";
+import { Button } from "@/components/ui/button";
 
 export function BuyPackButton({ priceId, label }: { priceId: string; label: string }) {
   const [pending, start] = useTransition();
   const [err, setErr] = useState<string | null>(null);
 
   return (
-    <span style={{ display: "inline-flex", flexDirection: "column", gap: 4 }}>
+    <span className="gb" style={{ display: "inline-flex", flexDirection: "column", gap: 4 }}>
       <Button
-        variant="primary"
-        size="md"
         disabled={pending}
         onClick={() =>
           start(async () => {
@@ -28,7 +26,7 @@ export function BuyPackButton({ priceId, label }: { priceId: string; label: stri
         {pending ? "Starting…" : label}
       </Button>
       {err && (
-        <span role="alert" style={{ fontSize: "var(--text-sm)", color: "var(--danger, #ef4444)" }}>
+        <span role="alert" style={{ fontSize: "0.8125rem", color: "var(--error)" }}>
           {err}
         </span>
       )}

@@ -4,7 +4,7 @@ import { MSG_ENTER_STYLE } from "./parts/motion";
 import { useChat } from "@ai-sdk/react";
 import { DefaultChatTransport } from "ai";
 import { useStickToBottom } from "use-stick-to-bottom";
-import { OttoAvatar } from "@/components/fk";
+import { OttoAvatar } from "@/components/otto/OttoAvatar";
 import { Button } from "@/components/ui/button";
 import { getCoworkThreadClient } from "@/lib/cowork-fetch";
 import { threadToUiMessages, type OttoUiMessage } from "@/lib/otto-ui-messages";

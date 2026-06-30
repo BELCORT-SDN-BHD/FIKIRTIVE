@@ -220,6 +220,24 @@ h1, h2, h3 { font-family: var(--font-sans); font-weight: 600; letter-spacing: va
 .gb .al-badge-positive{color:var(--success);border-color:color-mix(in oklab,var(--success) 28%,transparent);background:color-mix(in oklab,var(--success) 9%,transparent);}
 .gb .al-badge-warning{color:var(--warning);border-color:color-mix(in oklab,var(--warning) 28%,transparent);background:color-mix(in oklab,var(--warning) 9%,transparent);}
 .gb .al-badge-danger{color:var(--error);border-color:color-mix(in oklab,var(--error) 28%,transparent);background:color-mix(in oklab,var(--error) 9%,transparent);}
+.gb .al-panel{background:var(--card);border-color:var(--border);box-shadow:var(--shadow-sm);-webkit-backdrop-filter:none;backdrop-filter:none;}
+.gb .al-panel-raised{background:var(--card);box-shadow:var(--shadow-md);}
+.gb .al-panel-flat{background:var(--secondary);box-shadow:none;}
+.gb .al-iconbtn{color:var(--muted-foreground);}
+.gb .al-iconbtn:hover:not(:disabled){background:var(--accent);color:var(--foreground);}
+.gb .al-btn-secondary{background:var(--secondary);border-color:var(--border);color:var(--foreground);}
+.gb .al-btn-secondary:hover:not(:disabled){background:var(--accent);}
+.gb .al-field-label{color:var(--foreground);}
+.gb .al-field-hint{color:var(--muted-foreground);}
+.gb .al-input-wrap{background:var(--card);border-color:var(--border);}
+.gb .al-input-wrap:hover{background:var(--card);}
+.gb .al-input-wrap:focus-within{border-color:var(--ring);box-shadow:0 0 0 3px color-mix(in oklab,var(--ring) 35%,transparent);background:var(--card);}
+.gb .al-input-wrap input{color:var(--foreground);}
+.gb .al-input-wrap input::placeholder{color:var(--muted-foreground);}
+.gb .al-input-affix{color:var(--muted-foreground);}
+.gb .al-seg{background:var(--secondary);border-color:var(--border);-webkit-backdrop-filter:none;backdrop-filter:none;}
+.gb .al-seg-item{color:var(--muted-foreground);}
+.gb .al-seg-item-active{background:var(--card);color:var(--foreground);box-shadow:var(--shadow-sm);}
 
 .al-chip{display:inline-flex;align-items:center;gap:7px;white-space:nowrap;font-family:var(--font-sans);font-weight:500;font-size:12.5px;padding:7px 14px;border-radius:var(--radius-pill);border:1px solid var(--line-1);background:var(--glass-flat);-webkit-backdrop-filter:var(--backdrop-glass-light);backdrop-filter:var(--backdrop-glass-light);color:var(--fg-2);cursor:pointer;transition:background var(--dur-fast) var(--ease-out),color var(--dur-fast) var(--ease-out),border-color var(--dur-fast) var(--ease-out);}
 .al-chip:hover{background:var(--glass-hover);color:var(--fg-1);}
