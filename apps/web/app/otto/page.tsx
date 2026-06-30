@@ -6,6 +6,10 @@ import { getEntities, getCoworkThreads, getCoworkThread, resolveCoworkResultUrls
 import { toEntityDTO, toChatThreadDTO, toChatThreadMetaDTO } from "@/lib/dto";
 import { getMyAccount } from "@/lib/account-actions";
 import { listMemory } from "@/lib/memory-actions";
+import { getOwnerSettings } from "@/lib/owner-settings-actions";
+import { listCreditPacks } from "@/lib/billing-actions";
+import { listChannels } from "@/lib/channels/registry";
+import { getMetaConnection } from "@/lib/meta-actions";
 import { OttoApp } from "@/components/otto/OttoApp";
 
 export const dynamic = "force-dynamic";
@@ -70,6 +74,24 @@ export default async function OttoPage({ searchParams }: { searchParams: Promise
   // Founder-first streaming chat. Temporary flag (deleted in Task 8 once verified).
   const ottoStreamEnabled = isFounderAdmin(email);
 
+  const channelsPromise = Promise.all(
+    listChannels().map(async (c) => ({
+      id: c.id,
+      label: c.label,
+      connectUrl: c.connectUrl(),
+      status: await c.connectionStatus(ownerId).catch(() => "not_connected" as const),
+      targets: await c.listTargets(ownerId).then((t) => t.map((x) => x.name)).catch(() => [] as string[]),
+    })),
+  );
+  const [settingsRes, packs, metaConn, channels] = await Promise.all([
+    getOwnerSettings().catch(() => ({ error: "load-failed" } as const)),
+    listCreditPacks().catch(() => []),
+    getMetaConnection().catch(() => ({ error: "load-failed" } as const)),
+    channelsPromise,
+  ]);
+  const settings = "error" in settingsRes ? undefined : settingsRes;
+  const adsAutonomy: "ASK" | "AUTO" = !("error" in metaConn) && metaConn.adsAutonomy === "AUTO" ? "AUTO" : "ASK";
+
   return (
     <OttoApp
       key={projectId}
@@ -92,6 +114,10 @@ export default async function OttoPage({ searchParams }: { searchParams: Promise
       ottoStreamEnabled={ottoStreamEnabled}
       initialView={initialView}
       skin={skin}
+      settings={settings}
+      channels={channels}
+      packs={packs}
+      adsAutonomy={adsAutonomy}
     />
   );
 }

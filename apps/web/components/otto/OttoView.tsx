@@ -4,6 +4,9 @@ import type { OttoViewKey } from "./OttoApp";
 import type { EntityDTO, ChatThreadDTO } from "@/lib/types";
 import type { MemoryRow } from "@/lib/memory-actions";
 import type { AccountInfo } from "@/lib/account-actions";
+import type { OwnerSettings } from "@/lib/owner-settings";
+import type { CreditPack } from "@/lib/billing-actions";
+import type { ChannelState } from "./settings/sections";
 import { OttoFrontDoor } from "./OttoFrontDoor";
 import { OttoConversation } from "./OttoConversation";
 import { OttoChatStream } from "./OttoChatStream";
@@ -47,6 +50,10 @@ interface OttoViewProps {
   onToggleChat?: () => void;
   /** Re-skin flag (?skin=gb) — enables the chat→canvas bridge on the canvas. */
   skin?: "gb";
+  settings?: OwnerSettings;
+  channels?: ChannelState[];
+  packs?: CreditPack[];
+  adsAutonomy?: "ASK" | "AUTO";
 }
 
 export function OttoView({
@@ -74,6 +81,10 @@ export function OttoView({
   chatCollapsed = false,
   onToggleChat,
   skin,
+  settings,
+  channels,
+  packs,
+  adsAutonomy,
 }: OttoViewProps) {
   const activeThread = threads.find((t) => t.id === activeThreadId) ?? null;
 
@@ -123,7 +134,7 @@ export function OttoView({
   if (view === "account") {
     return (
       <div style={{ flex: 1, display: "flex", flexDirection: "column", overflow: "hidden" }}>
-        <OttoAccount account={account} />
+        <OttoAccount account={account} settings={settings} channels={channels} packs={packs} adsAutonomy={adsAutonomy} />
       </div>
     );
   }
