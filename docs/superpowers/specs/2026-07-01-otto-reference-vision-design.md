@@ -42,8 +42,9 @@ never sees the pixels — so "make an image in this style" is impossible today.
 
 ## Goals
 
-1. **看懂图 (vision):** feed the attached image (and @-mentioned entity base images) to the Otto planner
-   as image content parts, so Otto reasons about the actual pixels.
+1. **看懂图 (vision):** feed the attached reference image to the Otto planner as image content parts,
+   so Otto reasons about the actual pixels. (@-mentioned entity base images are a deferred follow-up —
+   the dropped reference is the founder's actual ask and needs no entity→asset resolution.)
 2. **不强制变视频 (decouple):** attaching a reference no longer forces `kind = "video"`. The planner
    decides image vs video from user intent; the reference is used correctly for each.
 3. **一个门 (rollout):** remove the founder-only gate so all users get the streaming surface (which carries
@@ -58,6 +59,8 @@ never sees the pixels — so "make an image in this style" is impossible today.
   own money-review.)
 - **Deleting `OttoConversation`** (the old non-streaming composer). The gate flip makes it unused;
   removing the code is a later cleanup, not this change.
+- **@-mentioned entity base images as vision input.** Only the *dropped* reference (`sourceGenerationId`)
+  is fed to Otto's vision here. Feeding @-mention entity base images needs entity→asset resolution — deferred.
 - Per-image `detail` tuning, multi-image beyond a small cap.
 
 ---
@@ -66,8 +69,8 @@ never sees the pixels — so "make an image in this style" is impossible today.
 
 ### Part 1 — 看懂图: multimodal user turn
 
-**Gather (in `buildOttoContext`, `apps/web/lib/otto-actions.ts` ~119-165):** after the existing
-`sourceGenerationId` + @-mention ref resolution, fetch image bytes → base64 data URL, best-effort,
+**Gather (in `buildOttoContext`, `apps/web/lib/otto-actions.ts` ~119-165):** resolve the already-validated
+`sourceGenerationId` → its `Generation.asset` → fetch image bytes → base64 data URL, best-effort,
 producing `images: { label: string; dataUrl: string }[]` on the context (current turn only).
 
 - Reuse the fetch/encode logic from `refImageDataUrl` (`apps/web/lib/cowork-actions.ts:39-52`).
