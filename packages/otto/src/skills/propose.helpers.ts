@@ -210,6 +210,7 @@ export function buildProposeCard(
     estimatedPriceUsd: price,
     estimatedCredits,
     ...(videoStep ? { videoStep } : {}),
+    // isI2V ⇒ kind==="video" && !!ctx.sourceGenerationId, so the non-null assertion is sound.
     ...(isI2V ? { sourceGenerationId: ctx.sourceGenerationId! } : {}),
   };
 

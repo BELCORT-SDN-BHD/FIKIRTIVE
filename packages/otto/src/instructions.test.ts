@@ -56,6 +56,8 @@ describe("ottoInstructions — attached reference image", () => {
   it("instructs Otto to pick kind from intent for an attached reference (animate → video, style → image)", () => {
     expect(ottoInstructions).toContain("Attached reference");
     expect(ottoInstructions.toLowerCase()).toContain("animate");
+    // style/inspiration → image branch (locks the full intent rule, not just the video branch)
+    expect(ottoInstructions.toLowerCase()).toContain("style");
     // default-to-image guidance so a reference never silently forces video
     expect(ottoInstructions.toLowerCase()).toContain("default to");
   });

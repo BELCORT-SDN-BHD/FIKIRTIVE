@@ -16,6 +16,8 @@ export async function gatherReferenceImages(
   sourceGenerationId: string | null | undefined,
 ): Promise<RefImage[]> {
   if (!sourceGenerationId) return [];
+  // Single dropped reference by design → only `maxBytes` applies here. `maxImages`
+  // becomes relevant once @-mention entity base images are gathered too (deferred).
   const { enabled, maxBytes } = await resolveVisionConfig();
   if (!enabled) return [];
   try {
