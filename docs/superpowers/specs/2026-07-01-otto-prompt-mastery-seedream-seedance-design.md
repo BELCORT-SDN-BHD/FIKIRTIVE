@@ -93,7 +93,7 @@ function assembleSeedream(i: SeedreamPromptInput): string {
     i.subject, i.actionPose, i.environment, i.style, i.lighting,
     i.colorPalette, i.cameraLens, i.mood, i.detail,
     i.forVideo && "clean uncluttered composition with headroom for motion, single dominant light direction",
-    identityLockClause(i.references) && `featuring ${identityLockClause(i.references)}`,
+    identityLockClause(i.references) || undefined,  // 直接追加祈使句（已是完整句）；不套 "featuring"（否则 "featuring keep/reproduce…" 语法破损，见实现 fix 789f96c）
     i.textContent && `with the text "${i.textContent}" in bold sans-serif, placed prominently`,
   ];
   return parts.filter(Boolean).join(", ");
