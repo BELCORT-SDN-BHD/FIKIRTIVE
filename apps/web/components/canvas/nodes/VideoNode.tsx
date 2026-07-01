@@ -16,7 +16,7 @@ export function VideoNode({ data, selected }: NodeProps) {
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" aria-hidden><rect x="2" y="6" width="14" height="12" rx="2" /><path d="m22 8-6 4 6 4V8z" /></svg>
         Video
       </span>
-    <div className="al-panel" style={{ width: "100%", height: "100%", overflow: "hidden", borderRadius: 12 }}>
+    <div className="al-panel" style={{ width: "100%", height: "100%", overflow: "hidden", borderRadius: 14 }}>
       {d.status === "pending" || !d.url ? (
         <GeneratingBody gb={gb} kind="video" />
       ) : gb ? (
@@ -39,7 +39,7 @@ export function VideoNode({ data, selected }: NodeProps) {
               aria-label="Play"
               onClick={() => { void videoRef.current?.play(); }}
             >
-              <svg width="15" height="15" viewBox="0 0 24 24" fill="currentColor" aria-hidden><path d="M8 5v14l11-7z" /></svg>
+              <svg width="13" height="13" viewBox="0 0 24 24" fill="currentColor" aria-hidden><path d="M8 5v14l11-7z" /></svg>
             </button>
           )}
         </div>

@@ -293,8 +293,8 @@ function ComingSoon({ title, line }: { title: string; line: string }) {
         <ellipse cx="56" cy="49" rx="3.6" ry="4.6" fill="#2B1308" />
         <ellipse cx="71" cy="49" rx="3.6" ry="4.6" fill="#2B1308" />
       </svg>
-      <div className="text-[1.75rem] font-bold text-foreground tracking-[-0.015em]">{title}</div>
-      <div className="text-[1rem] text-muted-foreground leading-normal" style={{ maxWidth: 360 }}>{line}</div>
+      <div className="text-[1.5rem] font-bold text-foreground tracking-[-0.02em] leading-normal">{title}</div>
+      <div className="text-[0.875rem] text-muted-foreground leading-[1.45]" style={{ maxWidth: 360 }}>{line}</div>
     </div>
   );
 }

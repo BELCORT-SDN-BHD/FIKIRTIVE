@@ -242,18 +242,18 @@ export function OttoConversation({
       `}</style>
       {/* Header */}
       <div
-        className="otto-conv-header flex items-center gap-3 border-b border-border bg-card"
-        style={{ padding: "1rem 1.5rem" }}
+        className="otto-conv-header flex items-center gap-[9px] border-b border-border bg-card"
+        style={{ padding: "13px 16px" }}
       >
-        <OttoAvatar size={32} state={busy ? "thinking" : "idle"} />
-        <div className="flex-1 min-w-0 overflow-hidden text-ellipsis whitespace-nowrap text-[1rem] font-semibold text-foreground">
+        <OttoAvatar size={22} state={busy ? "thinking" : "idle"} />
+        <div className="flex-1 min-w-0 overflow-hidden text-ellipsis whitespace-nowrap text-[0.90625rem] font-semibold text-foreground">
           {thread.title}
         </div>
       </div>
 
       {/* Messages */}
-      <div className="otto-conv-scroll flex-1 overflow-auto" style={{ padding: "1.5rem" }}>
-        <div className="mx-auto flex flex-col gap-4" style={{ maxWidth: 680 }}>
+      <div className="otto-conv-scroll flex-1 overflow-auto" style={{ padding: "16px" }}>
+        <div className="mx-auto flex flex-col gap-[14px]" style={{ maxWidth: 680 }}>
           {messages.map((m) => (
             <MessageRow
               key={m.id}
@@ -317,7 +317,7 @@ export function OttoConversation({
           {busy && (
             <div className="flex items-start gap-3">
               <OttoAvatar size={32} state="thinking" />
-              <div className="px-4 py-3 bg-card rounded-[0_20px_20px_20px] border border-border text-[0.875rem] text-muted-foreground italic">
+              <div className="px-[13px] py-[10px] bg-card rounded-[5px_14px_14px_14px] border border-border text-[0.875rem] text-muted-foreground italic">
                 Otto is thinking…
               </div>
             </div>
@@ -378,13 +378,13 @@ export function OttoConversation({
       {/* Composer */}
       <div
         className="otto-conv-composer border-t border-border bg-card"
-        style={{ padding: "1rem 1.5rem" }}
+        style={{ padding: "12px" }}
       >
         <div className="relative" style={{ maxWidth: 680, margin: "0 auto" }}>
           {mentionSuggestions.length > 0 && (
             <div
               role="listbox"
-              className="absolute bottom-full left-0 mb-1 w-64 rounded-[20px] border border-border bg-card shadow-lg z-50 overflow-hidden"
+              className="absolute bottom-full left-0 mb-1 w-64 rounded-[14px] border border-border bg-card shadow-lg z-50 overflow-hidden"
             >
               {mentionSuggestions.map((e, i) => (
                 <button
@@ -399,7 +399,7 @@ export function OttoConversation({
               ))}
             </div>
           )}
-          <div className="bg-background rounded-[28px] border-[1.5px] border-border overflow-hidden shadow-sm">
+          <div className="bg-background rounded-[14px] border-[1.5px] border-border overflow-hidden shadow-sm">
             <textarea
               id="otto-composer"
               value={text}
@@ -408,7 +408,7 @@ export function OttoConversation({
               disabled={busy}
               placeholder="Reply to Otto…"
               rows={2}
-              className="w-full border-0 outline-none resize-none px-4 py-3 text-[1rem] text-foreground bg-transparent leading-relaxed"
+              className="w-full border-0 outline-none resize-none px-4 py-3 text-[0.90625rem] text-foreground bg-transparent leading-normal"
             />
             <div className="flex justify-end px-3 py-2 border-t border-border">
               <Button
@@ -466,16 +466,16 @@ function MessageRow({
     if (isUser) {
       return (
         <div className="flex justify-end">
-          <div className="max-w-[75%] px-4 py-3 bg-primary text-primary-foreground rounded-[20px_20px_4px_20px] text-[0.875rem] leading-normal whitespace-pre-wrap break-words">
+          <div className="max-w-[75%] px-[13px] py-[10px] bg-primary text-primary-foreground rounded-[14px_14px_5px_14px] text-[0.875rem] leading-[1.45] whitespace-pre-wrap break-words">
             {m.text}
           </div>
         </div>
       );
     }
     return (
-      <div className="flex items-start gap-3">
-        <OttoAvatar size={32} state="idle" />
-        <div className="max-w-[80%] px-4 py-3 bg-card border border-border rounded-[0_20px_20px_20px] text-[0.875rem] leading-normal text-foreground whitespace-pre-wrap break-words">
+      <div className="flex items-start gap-[9px]">
+        <OttoAvatar size={26} state="idle" />
+        <div className="max-w-[80%] px-[13px] py-[10px] bg-card border border-border rounded-[5px_14px_14px_14px] text-[0.875rem] leading-[1.5] text-foreground whitespace-pre-wrap break-words">
           {m.text}
         </div>
       </div>

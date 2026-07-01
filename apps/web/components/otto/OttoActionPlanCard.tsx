@@ -94,7 +94,7 @@ export function OttoActionPlanCard({ cardId, payload }: OttoActionPlanCardProps)
         {/* Header */}
         <div className="flex items-center gap-2 mb-4">
           <ClipboardList size={20} className="text-foreground" />
-          <span className="font-bold text-[1rem] text-foreground">
+          <span className="font-bold text-[0.8125rem] text-foreground">
             {p.planTitle || "Action plan"}
           </span>
         </div>

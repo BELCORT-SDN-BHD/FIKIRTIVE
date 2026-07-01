@@ -175,21 +175,21 @@ export function OttoPlanCard({
     // today → zero visual change; without it the text compacts post-teardown.
     <div className="gb leading-[1.65]" style={{ maxWidth: 480 }}>
       {/* Card variant="tint": bg-accent (--brand-tint=#F4F4F3), border, rounded-[18px], p-6 */}
-      <div className="rounded-[18px] border border-border bg-secondary p-6">
-        <div className="mb-4 flex items-center gap-2">
-          <ClipboardList size={20} className="text-foreground" />
-          <span className="text-[1rem] font-bold text-foreground">
+      <div className="rounded-[14px] border border-border bg-secondary p-[13px]">
+        <div className="mb-[9px] flex items-center gap-[7px]">
+          <ClipboardList size={15} className="text-foreground" />
+          <span className="text-[0.8125rem] font-bold text-foreground">
             Here&rsquo;s what I&rsquo;ll make
           </span>
         </div>
 
-        <div className="flex items-start gap-3 rounded-[14px] bg-card px-[14px] py-3">
+        <div className="flex items-start gap-[9px] rounded-[14px] bg-card px-[14px] py-3">
           {/* Icon avatar: --brand-soft in .fk.gb-skin = #ECECEA (neutral) → bg-accent; --on-brand-soft = ink → text-foreground */}
-          <span className="flex h-10 w-10 shrink-0 items-center justify-center rounded-[12px] bg-accent text-foreground">
-            {isVideo ? <Film size={21} /> : <ImageIcon size={21} />}
+          <span className="flex h-7 w-7 shrink-0 items-center justify-center rounded-[8px] bg-accent text-foreground">
+            {isVideo ? <Film size={15} /> : <ImageIcon size={15} />}
           </span>
           <div className="min-w-0 flex-1">
-            <div className="text-[0.875rem] font-bold text-foreground">
+            <div className="text-[0.8125rem] font-bold text-foreground">
               {isVideo ? "A short video" : isTwoStep ? "Starting picture for your video" : "An image"}
             </div>
             <div
@@ -233,7 +233,7 @@ export function OttoPlanCard({
               <div className="mb-1 text-[0.75rem] text-muted-foreground">
                 Two-step plan
               </div>
-              <div className="text-[1.375rem] font-bold text-foreground">
+              <div className="font-mono text-[11.5px] text-muted-foreground">
                 Step 1 of 2 &mdash; ~{creditsLabel(credits)} now
               </div>
               <div className="mt-1 text-[0.875rem] text-muted-foreground">
@@ -241,7 +241,7 @@ export function OttoPlanCard({
               </div>
             </div>
           ) : (
-            <div className="text-[1.375rem] font-bold text-foreground">
+            <div className="font-mono text-[11.5px] text-muted-foreground">
               About {creditsLabel(credits)}
             </div>
           )}
@@ -253,10 +253,10 @@ export function OttoPlanCard({
               😕 This one didn&rsquo;t come through — and you weren&rsquo;t charged.
             </div>
             <div className="mt-3 flex gap-3">
-              <Button variant="default" size="default" disabled={busy} onClick={retry}>
+              <Button variant="default" size="sm" className="rounded-[11px]" disabled={busy} onClick={retry}>
                 {busy ? "Queuing…" : "Try again"}
               </Button>
-              <Button variant="secondary" size="default" disabled={busy} onClick={handleChangeSomething}>
+              <Button variant="secondary" size="sm" className="rounded-[11px]" disabled={busy} onClick={handleChangeSomething}>
                 Change something
               </Button>
             </div>
@@ -294,10 +294,10 @@ export function OttoPlanCard({
           </div>
         ) : (
           <div className="mt-4 flex gap-3">
-            <Button variant="default" size="default" disabled={busy} onClick={approve}>
+            <Button variant="default" size="sm" className="rounded-[11px]" disabled={busy} onClick={approve}>
               {busy ? "Starting…" : `Make it · ${creditsLabel(credits)}`}
             </Button>
-            <Button variant="secondary" size="default" disabled={busy} onClick={handleChangeSomething}>
+            <Button variant="secondary" size="sm" className="rounded-[11px]" disabled={busy} onClick={handleChangeSomething}>
               Change something
             </Button>
           </div>

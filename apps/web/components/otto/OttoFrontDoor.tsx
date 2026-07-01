@@ -17,7 +17,7 @@ interface GoalTile {
 
 function IconShoppingBag() {
   return (
-    <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.75" strokeLinecap="round" strokeLinejoin="round" aria-hidden>
+    <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.75" strokeLinecap="round" strokeLinejoin="round" aria-hidden>
       <path d="M6 2 3 6v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2V6l-3-4z" />
       <line x1="3" x2="21" y1="6" y2="6" />
       <path d="M16 10a4 4 0 0 1-8 0" />
@@ -26,7 +26,7 @@ function IconShoppingBag() {
 }
 function IconTag() {
   return (
-    <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.75" strokeLinecap="round" strokeLinejoin="round" aria-hidden>
+    <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.75" strokeLinecap="round" strokeLinejoin="round" aria-hidden>
       <path d="M12 2H2v10l9.29 9.29c.94.94 2.48.94 3.42 0l6.58-6.58c.94-.94.94-2.48 0-3.42L12 2Z" />
       <path d="M7 7h.01" />
     </svg>
@@ -34,7 +34,7 @@ function IconTag() {
 }
 function IconUsers() {
   return (
-    <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.75" strokeLinecap="round" strokeLinejoin="round" aria-hidden>
+    <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.75" strokeLinecap="round" strokeLinejoin="round" aria-hidden>
       <path d="M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2" />
       <circle cx="9" cy="7" r="4" />
       <path d="M22 21v-2a4 4 0 0 0-3-3.87" />
@@ -44,7 +44,7 @@ function IconUsers() {
 }
 function IconClapperboard() {
   return (
-    <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.75" strokeLinecap="round" strokeLinejoin="round" aria-hidden>
+    <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.75" strokeLinecap="round" strokeLinejoin="round" aria-hidden>
       <path d="M20.2 6 3 11l-.9-2.4c-.3-1.1.3-2.2 1.3-2.5l13.5-4c1-.3 2.1.3 2.4 1.3Z" />
       <path d="m6.2 5.3 3.1 3.9" />
       <path d="m12.4 3.4 3.1 4" />
@@ -259,12 +259,12 @@ export function OttoFrontDoor({
       <div className="otto-front-door-inner flex w-full max-w-[560px] flex-col items-center gap-6">
         {/* Otto avatar + greeting */}
         <div className="flex flex-col items-center gap-4 text-center">
-          <OttoAvatar size={76} state={busy ? "thinking" : "idle"} />
+          <OttoAvatar size={64} state={busy ? "thinking" : "idle"} />
           <div>
-            <h1 className="m-0 mb-2 text-[1.75rem] font-bold tracking-[-0.015em] text-foreground" style={{ lineHeight: 1.2 }}>
+            <h1 className="m-0 mb-2 text-[1.5rem] font-bold tracking-[-0.02em] text-foreground" style={{ lineHeight: 1.2 }}>
               {greeting}
             </h1>
-            <p className="m-0 text-[1rem] text-muted-foreground leading-normal">
+            <p className="m-0 text-[0.875rem] text-muted-foreground leading-normal">
               Tell me in your own words, or pick a goal below. No experience needed — I&apos;ll guide you through it.
             </p>
           </div>
@@ -295,7 +295,7 @@ export function OttoFrontDoor({
             </div>
           )}
           <div
-            className="w-full overflow-hidden rounded-[28px] border border-border bg-card"
+            className="w-full overflow-hidden rounded-[14px] border border-border bg-card"
             style={{ borderWidth: "1.5px", boxShadow: "0 8px 20px rgba(20 18 14 / 0.08), 0 2px 6px rgba(20 18 14 / 0.06)" }}
           >
           <textarea
@@ -306,7 +306,7 @@ export function OttoFrontDoor({
             disabled={busy}
             placeholder="Describe what you want to make…"
             rows={3}
-            className="w-full resize-none border-none bg-transparent px-5 py-4 text-[1rem] text-foreground outline-none leading-relaxed"
+            className="w-full resize-none border-none bg-transparent px-5 py-4 text-[0.90625rem] text-foreground outline-none leading-[1.5]"
           />
           <div className="flex items-center justify-end border-t border-border px-4 py-3">
             <Button
@@ -332,11 +332,11 @@ export function OttoFrontDoor({
 
         {/* Goal chips */}
         <div className="w-full">
-          <div className="mb-3 text-center text-[0.75rem] font-semibold uppercase tracking-[0.08em] text-muted-foreground/70">
+          <div className="mb-3 text-center text-[0.8125rem] font-semibold text-muted-foreground/70">
             Or pick a goal
           </div>
           <div
-            className="otto-goal-grid grid gap-3"
+            className="otto-goal-grid grid gap-2"
             style={{ gridTemplateColumns: "1fr 1fr" }}
           >
             {GOAL_TILES.map((goal) => (
@@ -344,9 +344,8 @@ export function OttoFrontDoor({
                 key={goal.goalKey}
                 disabled={busy}
                 onClick={() => start({ goalKey: goal.goalKey })}
-                className="flex flex-col items-start gap-2 rounded-[20px] border border-border bg-card p-4 text-left shadow-sm transition-colors duration-150"
+                className="flex flex-col items-start gap-[11px] rounded-[13px] border border-border bg-card py-[11px] px-[13px] text-left shadow-sm transition-colors duration-150"
                 style={{
-                  borderWidth: "1.5px",
                   cursor: busy ? "not-allowed" : "pointer",
                   opacity: busy ? 0.6 : 1,
                 }}
@@ -354,7 +353,7 @@ export function OttoFrontDoor({
                 {/* Coral-soft chip: bg-brand-soft (coral tint) + coral icon color.
                     Under .gb, --brand is coral — NOT --accent (which is neutral gray).
                     Inversion trap: keeping var(--brand-soft) here would render gray. */}
-                <div className="flex h-[38px] w-[38px] items-center justify-center rounded-[10px] bg-brand-soft" style={{ color: "#B23A12" }}>
+                <div className="flex h-[34px] w-[34px] items-center justify-center rounded-[10px] bg-brand-soft" style={{ color: "#B23A12" }}>
                   {goal.icon}
                 </div>
                 <div>
@@ -374,7 +373,7 @@ export function OttoFrontDoor({
         <QuickBrief projectId={projectId} />
 
         {/* Trust line */}
-        <p className="m-0 flex items-center gap-2 text-center text-[0.75rem] text-muted-foreground/70">
+        <p className="m-0 flex items-center gap-2 text-center text-[0.71875rem] text-muted-foreground/70">
           {/* eslint-disable-next-line @next/next/no-img-element */}
           <img src="/brand/otto.svg" width={16} height={16} alt="" style={{ display: "inline", verticalAlign: "middle" }} />
           Otto plans and makes it. Chatting uses a little credit; you approve before Otto makes anything.

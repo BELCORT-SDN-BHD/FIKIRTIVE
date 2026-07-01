@@ -274,12 +274,10 @@ export function OttoNav({
         }}
         aria-hidden
       />
-    {/* leading-[1.65] pins the line-height the nav currently INHERITS from the .fk
-        ancestor (--leading-relaxed); it survives S4 teardown (when .fk/otto-theme.css is
-        removed and .gb — which sets no line-height — applies at the root). Value-identical
-        today → zero visual change; without it the nav text compacts post-teardown. */}
+    {/* line-height: normal on the rail — matches the design system (its .rail/.it set no
+        line-height, so single-line nav text renders at the browser default ~1.2, not 1.5). */}
     <nav
-      className={`otto-nav gb flex flex-col overflow-hidden bg-card leading-[1.65]${drawerOpen ? " otto-nav--open" : ""}`}
+      className={`otto-nav gb flex flex-col overflow-hidden bg-card leading-[normal]${drawerOpen ? " otto-nav--open" : ""}`}
       style={{
         width: collapsed ? 0 : 240,
         flexShrink: 0,
@@ -292,7 +290,7 @@ export function OttoNav({
       <div className="flex items-center gap-2 pr-3 pb-4 pl-4 border-b border-border">
         <div className="flex items-center gap-2 flex-1 min-w-0">
           <OttoCloud size={26} />
-          <span className="text-[1.125rem] font-bold tracking-[-0.015em] text-foreground">
+          <span className="text-[1.0625rem] font-bold text-foreground">
             fikirtive
           </span>
         </div>
@@ -313,7 +311,7 @@ export function OttoNav({
       <div className="pt-4 px-3 pb-3">
         <button
           onClick={() => handleNavAction(onNewCampaign)}
-          className="flex items-center gap-2 w-full border-0 bg-primary text-primary-foreground text-[0.875rem] font-semibold px-3 py-2.5 rounded-[14px] cursor-pointer transition shadow-[0_4px_12px_rgba(236,88,40,0.18)]"
+          className="flex items-center justify-center gap-[7px] w-full h-[38px] border-0 bg-primary text-primary-foreground text-[0.875rem] font-semibold px-3 rounded-[12px] cursor-pointer transition shadow-[0_4px_12px_rgba(236,88,40,0.18)]"
         >
           <IconPlus />
           New campaign
@@ -321,14 +319,14 @@ export function OttoNav({
       </div>
 
       {/* Nav items */}
-      <div className="px-3 flex flex-col gap-1">
+      <div className="px-3 flex flex-col gap-[1px]">
         {NAV_ITEMS.map((item) => {
           const active = view === item.key;
           return (
             <button
               key={item.key}
               onClick={() => handleNavAction(() => onViewChange(item.key))}
-              className={`flex items-center gap-3 w-full border-0 text-[0.875rem] font-semibold px-3 py-2.5 rounded-[14px] cursor-pointer text-left transition-colors duration-150 ${active ? "bg-secondary text-foreground" : "bg-transparent text-muted-foreground"}`}
+              className={`flex items-center gap-[9px] w-full border-0 text-[0.84375rem] px-[9px] py-2 rounded-[9px] cursor-pointer text-left transition-colors duration-150 ${active ? "bg-secondary text-foreground font-semibold" : "bg-transparent text-muted-foreground font-normal"}`}
             >
               {item.icon}
               {item.label}
@@ -343,7 +341,7 @@ export function OttoNav({
           {projects.length > 0 && (
           <>
           <div className="flex items-center justify-between mb-2 pl-1">
-            <span className="text-[0.75rem] text-muted-foreground/70 font-semibold uppercase tracking-[0.08em]">
+            <span className="text-[0.65625rem] text-muted-foreground/70 font-semibold uppercase tracking-[0.07em]">
               Projects
             </span>
             <button
@@ -440,7 +438,7 @@ export function OttoNav({
           )}
           {history.length > 0 && (
           <>
-            <div className={`text-[0.75rem] text-muted-foreground/70 font-semibold uppercase tracking-[0.08em] pl-1 mb-2 ${projects.length > 0 ? "mt-4" : "mt-0"}`}>
+            <div className={`text-[0.65625rem] text-muted-foreground/70 font-semibold uppercase tracking-[0.07em] pl-1 mb-2 ${projects.length > 0 ? "mt-4" : "mt-0"}`}>
               History
             </div>
             <div className="grid grid-cols-3 gap-[5px]">
@@ -482,10 +480,10 @@ export function OttoNav({
       {/* User */}
       <div className="flex items-center gap-3 px-4 py-3">
         <Avatar className="size-8">
-          <AvatarFallback className="bg-accent text-accent-foreground text-[0.875rem] font-bold">{initial}</AvatarFallback>
+          <AvatarFallback className="bg-accent text-accent-foreground text-[0.65625rem] font-semibold">{initial}</AvatarFallback>
         </Avatar>
         <div className="min-w-0">
-          <div className="text-[0.875rem] font-semibold text-foreground truncate">
+          <div className="text-[0.8125rem] font-medium text-foreground truncate">
             {userName}
           </div>
           <div className="text-[0.75rem] text-muted-foreground/70 truncate">

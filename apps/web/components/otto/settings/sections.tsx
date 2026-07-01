@@ -88,7 +88,7 @@ export function buildSettingsSections(args: {
             >
               <div>
                 <div className="cv-set-hint">Credit balance</div>
-                <div style={{ fontSize: 30, fontWeight: 800 }}>
+                <div style={{ fontSize: 38, fontWeight: 700, letterSpacing: "-0.02em" }}>
                   {creditsLabel(account.balance)}
                 </div>
                 {account.reserved > 0 ? (
@@ -128,16 +128,18 @@ export function buildSettingsSections(args: {
                   style={{
                     display: "flex",
                     justifyContent: "space-between",
-                    padding: "6px 0",
-                    fontSize: 12.5,
+                    padding: "12px 15px",
+                    fontSize: 13.5,
                   }}
                 >
-                  <span style={{ color: "var(--foreground)" }}>{a.label}</span>
+                  <span style={{ color: "var(--foreground)", fontWeight: 500 }}>{a.label}</span>
                   <span
                     style={{
                       color:
                         a.delta > 0 ? "#15803D" : "var(--muted-foreground)",
                       fontVariantNumeric: "tabular-nums",
+                      fontFamily: "var(--font-mono)",
+                      fontSize: 13,
                     }}
                   >
                     {a.delta > 0 ? "+" : ""}

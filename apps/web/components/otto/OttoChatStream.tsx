@@ -478,10 +478,10 @@ export function OttoChatStream({
       `}</style>
       {/* Header */}
       <div
-        className="otto-chat-header flex items-center gap-3 border-b border-border bg-card px-6 py-4"
+        className="otto-chat-header flex items-center gap-[9px] border-b border-border bg-card px-4 py-[13px]"
       >
-        <OttoAvatar size={32} state={isBusy ? "thinking" : "idle"} />
-        <div className="flex-1 min-w-0 overflow-hidden text-ellipsis whitespace-nowrap text-[1rem] font-semibold text-foreground">
+        <OttoAvatar size={22} state={isBusy ? "thinking" : "idle"} />
+        <div className="flex-1 min-w-0 overflow-hidden text-ellipsis whitespace-nowrap text-[0.90625rem] font-semibold text-foreground">
           {thread.title}
         </div>
       </div>
@@ -489,11 +489,11 @@ export function OttoChatStream({
       {/* Messages (stick-to-bottom scroll region) */}
       <div
         ref={scrollRef}
-        className="otto-chat-scroll relative flex-1 overflow-auto p-6"
+        className="otto-chat-scroll relative flex-1 overflow-auto p-4"
       >
         <div
           ref={contentRef}
-          className="mx-auto flex max-w-[680px] flex-col gap-4"
+          className="mx-auto flex max-w-[680px] flex-col gap-[14px]"
         >
           {(() => {
             // Pre-pass: coalesce consecutive GEN_CARD messages that share the same
@@ -676,8 +676,8 @@ export function OttoChatStream({
             if (kind === "DENIAL" || kind === "TURN_ERROR") {
               return (
                 <div key={m.id} className="flex items-start gap-3" style={isNewMessage(m.id) ? MSG_ENTER_STYLE : undefined}>
-                  <OttoAvatar size={32} state="idle" />
-                  <div className="rounded-[0_20px_20px_20px] bg-error-soft px-4 py-3 text-[0.875rem] leading-normal text-[var(--error-soft-foreground)]">
+                  <OttoAvatar size={26} state="idle" />
+                  <div className="rounded-[5px_14px_14px_14px] bg-error-soft px-[13px] py-[10px] text-[0.875rem] leading-normal text-[var(--error-soft-foreground)]">
                     {/* DENIAL/TURN_ERROR carry their user-facing copy on the durable
                         message text, which threadToUiMessages put into the text part. */}
                     {(m.parts.find((p) => p.type === "text") as { text?: string } | undefined)?.text}
@@ -740,8 +740,8 @@ export function OttoChatStream({
               Clears automatically when submit() calls setLiveStatus(null). */}
           {!isBusy && (liveStatus?.kind === "degraded" || liveStatus?.kind === "stale") && (
             <div className="flex items-start gap-3" style={MSG_ENTER_STYLE}>
-              <OttoAvatar size={32} state="idle" />
-              <div className="rounded-[0_20px_20px_20px] border border-border bg-card px-4 py-3 text-[0.875rem] text-foreground">
+              <OttoAvatar size={26} state="idle" />
+              <div className="rounded-[5px_14px_14px_14px] border border-border bg-card px-4 py-3 text-[0.875rem] text-foreground">
                 {liveStatus.text}
               </div>
             </div>
@@ -751,8 +751,8 @@ export function OttoChatStream({
               worker hasn't written a terminal result yet. Ported from OttoConversation. */}
           {!isBusy && hasWorkingJob && !pollGaveUp && (
             <div className="flex items-start gap-3">
-              <OttoAvatar size={32} state="thinking" />
-              <div className="rounded-[0_20px_20px_20px] border border-border bg-card px-4 py-3 text-[0.875rem] italic text-muted-foreground">
+              <OttoAvatar size={26} state="thinking" />
+              <div className="rounded-[5px_14px_14px_14px] border border-border bg-card px-4 py-3 text-[0.875rem] italic text-muted-foreground">
                 Otto is making this — this can take a moment…
               </div>
             </div>
@@ -760,8 +760,8 @@ export function OttoChatStream({
 
           {!isBusy && hasWorkingJob && pollGaveUp && !pollTerminal && (
             <div className="flex items-start gap-3">
-              <OttoAvatar size={32} state="idle" />
-              <div className="rounded-[0_20px_20px_20px] border border-border bg-card px-4 py-3 text-[0.875rem] text-foreground">
+              <OttoAvatar size={26} state="idle" />
+              <div className="rounded-[5px_14px_14px_14px] border border-border bg-card px-4 py-3 text-[0.875rem] text-foreground">
                 This is taking longer than usual. Your credits for this are on hold — if it doesn&rsquo;t finish, they&rsquo;re returned to you automatically.{" "}
                 <button
                   type="button"
@@ -781,8 +781,8 @@ export function OttoChatStream({
 
           {!isBusy && hasWorkingJob && pollTerminal && (
             <div className="flex items-start gap-3">
-              <OttoAvatar size={32} state="idle" />
-              <div className="rounded-[0_20px_20px_20px] border border-border bg-card px-4 py-3 text-[0.875rem] text-foreground">
+              <OttoAvatar size={26} state="idle" />
+              <div className="rounded-[5px_14px_14px_14px] border border-border bg-card px-4 py-3 text-[0.875rem] text-foreground">
                 This looks stuck. Cancel it on the card to get your credits back, or start a new card.
               </div>
             </div>
@@ -839,13 +839,13 @@ export function OttoChatStream({
 
       {/* Composer */}
       <div
-        className="otto-chat-composer border-t border-border bg-card px-6 py-4"
+        className="otto-chat-composer border-t border-border bg-card p-3"
       >
         <div className="relative mx-auto max-w-[680px]">
           {mentionSuggestions.length > 0 && (
             <div
               role="listbox"
-              className="absolute bottom-full left-0 mb-1 w-64 overflow-hidden rounded-[20px] border border-border bg-card shadow-lg z-50"
+              className="absolute bottom-full left-0 mb-1 w-64 overflow-hidden rounded-[14px] border border-border bg-card shadow-lg z-50"
             >
               {mentionSuggestions.map((e, i) => (
                 <button
@@ -883,7 +883,7 @@ export function OttoChatStream({
                   <img
                     src={attached.src}
                     alt="Attached reference"
-                    className="h-10 w-10 rounded-[10px] object-cover"
+                    className="h-10 w-10 rounded-[7px] object-cover"
                   />
                   <button
                     type="button"
@@ -909,7 +909,7 @@ export function OttoChatStream({
             </div>
           )}
 
-          <div className="overflow-hidden rounded-[28px] border-[1.5px] border-border bg-background shadow-sm">
+          <div className="overflow-hidden rounded-[14px] border-[1.5px] border-border bg-background shadow-sm">
             <textarea
               id="otto-composer"
               value={text}
@@ -918,7 +918,7 @@ export function OttoChatStream({
               disabled={isBusy}
               placeholder="Reply to Otto…"
               rows={2}
-              className="w-full resize-none border-0 bg-transparent px-4 py-3 text-[1rem] text-foreground outline-none leading-relaxed"
+              className="w-full resize-none border-0 bg-transparent px-4 py-3 text-[0.90625rem] text-foreground outline-none leading-normal"
             />
             <div className="flex items-center justify-between border-t border-border px-3 py-2">
               {/* Attach image button */}
@@ -947,8 +947,8 @@ export function OttoChatStream({
  *  (mirrors OttoConversation's MessageRow layout for GEN_CARD / GEN_RESULT). */
 function WidgetRow({ children, animateIn }: { children: React.ReactNode; animateIn?: boolean }) {
   return (
-    <div className="flex items-start gap-3" style={animateIn ? MSG_ENTER_STYLE : undefined}>
-      <OttoAvatar size={32} state="idle" />
+    <div className="flex items-start gap-[9px]" style={animateIn ? MSG_ENTER_STYLE : undefined}>
+      <OttoAvatar size={26} state="idle" />
       <div className="min-w-0 flex-1">{children}</div>
     </div>
   );
