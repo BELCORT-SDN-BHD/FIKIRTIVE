@@ -24,7 +24,7 @@ export function TextNode({ data, selected }: NodeProps) {
         placeholder="Type here…"
         style={{ width: "100%", height: "100%", border: "none", background: "transparent", resize: "none", outline: "none" }}
       />
-      <button className="al-btn al-btn-glass al-btn-sm nodrag" style={{ position: "absolute", top: 6, right: 6 }} onClick={d.onDelete}>✕</button>
+      <button className="al-btn al-btn-glass al-btn-sm nodrag cv-node-actions" style={{ position: "absolute", top: 6, right: 6 }} onClick={d.onDelete}>✕</button>
     </div>
     </>
   );

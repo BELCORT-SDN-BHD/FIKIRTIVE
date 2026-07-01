@@ -26,7 +26,7 @@ export function ImageNode({ data, selected }: NodeProps) {
       ) : (
         <img src={d.url} alt={d.prompt ?? ""} style={{ width: "100%", height: "100%", objectFit: "cover" }} />
       )}
-      <div className="nodrag" style={{ position: "absolute", top: 6, right: 6, display: "flex", gap: 6 }}>
+      <div className="nodrag cv-node-actions" style={{ position: "absolute", top: 6, right: 6, display: "flex", gap: 6 }}>
         {d.onOpenDetail && (
           <button className="al-btn al-btn-glass al-btn-sm" onClick={d.onOpenDetail}>Detail</button>
         )}

@@ -42,6 +42,10 @@ export default function FlowCanvas({ projectId, entities = [], activeThreadId = 
   // Making a video costs credits — clicking "Make video" opens a confirm first.
   // Holds the source image node id awaiting confirm; null = no dialog.
   const [pendingAnimateId, setPendingAnimateId] = useState<string | null>(null);
+  // Motion choice for the "Make a video?" dialog (Phase 1a). Custom falls back to
+  // the gentle default so the paid prompt is never empty.
+  const [motion, setMotion] = useState<"gentle" | "dynamic" | "custom">("gentle");
+  const [customMotion, setCustomMotion] = useState("");
   // Dragging an image file over the canvas (drop = upload it as an image node).
   const [dragOver, setDragOver] = useState(false);
   // track node count to offset new node positions
@@ -72,14 +76,14 @@ export default function FlowCanvas({ projectId, entities = [], activeThreadId = 
   // The actual paid image→video generation — invoked only after the owner confirms
   // in the "Make a video?" dialog. Spend path is unchanged: same generationId, same
   // default motion prompt, same animate() call as before — just gated behind the OK.
-  const runAnimate = useCallback((id: string) => {
+  const runAnimate = useCallback((id: string, motionPrompt: string) => {
     const entry = nodeDataRef.current[id];
     if (!entry?.generationId || !animateFnRef.current) return; // guard: not yet resolved
     const { x, y } = entry.pos;
-    // genRequest requires a non-empty prompt (.trim().min(1)); an empty string
-    // makes startGen reject and animate silently no-op. Send a default motion
-    // prompt so Make video actually works (i2v from the source image).
-    void animateFnRef.current(entry.generationId, id, "Animate this image with gentle, natural motion.", { x: x + 340, y, w: 320, h: 320 });
+    // genRequest requires a non-empty prompt (.trim().min(1)); the dialog guarantees a
+    // non-empty motion prompt (custom falls back to the gentle default), so the paid
+    // i2v never no-ops on an empty prompt.
+    void animateFnRef.current(entry.generationId, id, motionPrompt, { x: x + 340, y, w: 320, h: 320 });
   }, []);
 
   // Build a stable per-node onOpenDetail that reads generationId at call time
@@ -486,17 +490,52 @@ export default function FlowCanvas({ projectId, entities = [], activeThreadId = 
           </DialogFooter>
         </DialogContent>
       </Dialog>
-      <Dialog open={pendingAnimateId !== null} onOpenChange={(open) => { if (!open) setPendingAnimateId(null); }}>
+      <Dialog open={pendingAnimateId !== null} onOpenChange={(open) => { if (!open) { setPendingAnimateId(null); setMotion("gentle"); setCustomMotion(""); } }}>
         <DialogContent>
           <DialogHeader>
             <DialogTitle>Make a video from this image?</DialogTitle>
             <DialogDescription>
-              Otto will animate this image into a short video. This uses credits.
+              Pick how it should move, then confirm. This uses credits.
             </DialogDescription>
           </DialogHeader>
+          <div className="flex flex-col gap-2.5">
+            <div className="flex gap-2">
+              {([["gentle", "Gentle"], ["dynamic", "Dynamic"], ["custom", "Custom"]] as const).map(([key, label]) => (
+                <button
+                  key={key}
+                  type="button"
+                  onClick={() => setMotion(key)}
+                  aria-pressed={motion === key}
+                  className={`flex-1 rounded-lg border px-3 py-2 text-sm transition-colors ${motion === key ? "border-foreground bg-accent text-foreground" : "border-border text-muted-foreground hover:bg-accent"}`}
+                >
+                  {label}
+                </button>
+              ))}
+            </div>
+            {motion === "custom" && (
+              <input
+                type="text"
+                value={customMotion}
+                onChange={(e) => setCustomMotion(e.target.value)}
+                placeholder="e.g. slow zoom in as she turns to camera"
+                className="rounded-lg border border-border bg-background px-3 py-2 text-sm outline-none focus-visible:ring-[3px] focus-visible:ring-ring/40"
+              />
+            )}
+          </div>
           <DialogFooter>
             <Button variant="ghost" onClick={() => setPendingAnimateId(null)}>Cancel</Button>
-            <Button onClick={() => { if (pendingAnimateId) runAnimate(pendingAnimateId); setPendingAnimateId(null); }}>
+            <Button
+              onClick={() => {
+                const p =
+                  motion === "dynamic"
+                    ? "Animate this image with dynamic, energetic motion."
+                    : motion === "custom"
+                      ? customMotion.trim() || "Animate this image with gentle, natural motion."
+                      : "Animate this image with gentle, natural motion.";
+                if (pendingAnimateId) runAnimate(pendingAnimateId, p);
+                setPendingAnimateId(null);
+              }}
+            >
               Make video
             </Button>
           </DialogFooter>

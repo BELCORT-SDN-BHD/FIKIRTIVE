@@ -738,6 +738,12 @@ h1, h2, h3 { font-family: var(--font-sans); font-weight: 600; letter-spacing: va
 /* Select mode: arrow cursor on the canvas instead of the grab hand */
 .gb .cv-select-mode .react-flow__pane { cursor: default; }
 
+/* Node action buttons (detail / make-video / delete) reveal on hover or when the
+   node is selected — Grok-clean, but still reachable without hover via select. */
+.gb .cv-node-actions { opacity: 0; transition: opacity 0.12s ease; }
+.gb .react-flow__node:hover .cv-node-actions,
+.gb .react-flow__node.selected .cv-node-actions { opacity: 1; }
+
 /* Drag-an-image-onto-the-canvas drop hint (neutral; coral stays OTTO-only). */
 .gb .cv-dropzone {
   position: absolute;
