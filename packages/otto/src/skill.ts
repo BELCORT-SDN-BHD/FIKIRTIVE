@@ -28,6 +28,10 @@ export interface OttoSkillSpec<P extends z.ZodObject<any>> {
   execute: (input: z.infer<P>, runContext: RunContext<OttoContext>) => Promise<unknown>;
   /** Required when cost === "spend": documents/justifies the exactly-once key. */
   idempotencyKey?: (input: z.infer<P>) => string;
+  /** 可选：此 skill 动手前需要的资讯。每个 field 必须也是 `parameters` 的一个 key。
+   *  工厂据此 (a) 把问题追加进 description 让模型先问，(b) 在 execute 前预检——
+   *  缺字段则跳过 execute、返回 { needMoreInfo }，让 agent 去追问。 */
+  requires?: { field: string; question: string }[];
 }
 
 export interface OttoSkill {
@@ -37,6 +41,8 @@ export interface OttoSkill {
   reach: Reach;
   needsApproval: boolean;
   description: string;
+  /** 声明的资讯门（空数组表示无）。 */
+  requires: { field: string; question: string }[];
   /** The @openai/agents tool, ready for the agent's `tools` array. */
   tool: FunctionTool<OttoContext, any, unknown>;
 }
@@ -82,6 +88,16 @@ export function defineOttoSkill<P extends z.ZodObject<any>>(spec: OttoSkillSpec<
     );
   }
 
+  // requires: 每个声明的 field 必须存在于 parameters 的 shape（fail-loud，同 #3 身份键检查）。
+  const requires = spec.requires ?? [];
+  const unknownReq = requires.filter((r) => !(r.field in shape));
+  if (unknownReq.length > 0) {
+    throw new Error(
+      `[defineOttoSkill] "${spec.name}" declares requires field(s) not in parameters: ` +
+        `${unknownReq.map((r) => r.field).join(", ")}. Add them to the z.object({...}) schema.`,
+    );
+  }
+
   const needsApproval = deriveNeedsApproval(cost, effect, reach);
 
   // Use a concrete ZodObject<any> at the SDK boundary: the SDK's ToolOptions does
@@ -99,5 +115,5 @@ export function defineOttoSkill<P extends z.ZodObject<any>>(spec: OttoSkillSpec<
     },
   });
 
-  return { name: spec.name, cost, effect, reach, needsApproval, description: spec.description, tool: built };
+  return { name: spec.name, cost, effect, reach, needsApproval, description: spec.description, requires, tool: built };
 }

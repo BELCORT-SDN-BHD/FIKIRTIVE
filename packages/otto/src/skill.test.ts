@@ -70,4 +70,26 @@ describe("defineOttoSkill enforcement", () => {
     const s = defineOttoSkill({ ...base, name: "unclassified", idempotencyKey: () => "k" });
     expect(s.needsApproval).toBe(true);
   });
+
+  it("throws when a requires field is not a key in parameters", () => {
+    expect(() =>
+      defineOttoSkill({
+        name: "badreq", description: "d", cost: "free", effect: "write", reach: "internal",
+        parameters: z.object({ x: z.string() }),
+        requires: [{ field: "audience", question: "Who is the audience?" }],
+        execute: noop,
+      }),
+    ).toThrow(/requires field/i);
+  });
+
+  it("exposes requires on the built OttoSkill (empty array when omitted)", () => {
+    const s = defineOttoSkill({ ...base, name: "noreq", cost: "free", effect: "write", reach: "internal" });
+    expect(s.requires).toEqual([]);
+    const s2 = defineOttoSkill({
+      ...base, name: "withreq", cost: "free", effect: "write", reach: "internal",
+      parameters: z.object({ x: z.string() }),
+      requires: [{ field: "x", question: "What is x?" }],
+    });
+    expect(s2.requires).toEqual([{ field: "x", question: "What is x?" }]);
+  });
 });
