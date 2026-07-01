@@ -153,8 +153,8 @@ export default function TemplateModal({
             // eslint-disable-next-line @next/next/no-img-element
             <img src={resultUrl} alt="result" style={{ width: "100%", borderRadius: "var(--radius-md)", display: "block" }} />
           ) : (
-            <div style={{ display: "flex", flexDirection: "column", gap: "var(--space-3)" }}>
-              <label style={{ display: "flex", flexDirection: "column", gap: "var(--space-1)" }}>
+            <div style={{ display: "flex", flexDirection: "column", gap: "0.75rem" }}>
+              <label style={{ display: "flex", flexDirection: "column", gap: "0.25rem" }}>
                 <span className="text-[0.8125rem] text-muted-foreground">Product image</span>
                 {thumbUrl ? (
                   // eslint-disable-next-line @next/next/no-img-element
@@ -165,7 +165,7 @@ export default function TemplateModal({
                 {uploading && <span className="text-[0.75rem] text-muted-foreground">Uploading…</span>}
               </label>
               {template.question && (
-                <label style={{ display: "flex", flexDirection: "column", gap: "var(--space-1)" }}>
+                <label style={{ display: "flex", flexDirection: "column", gap: "0.25rem" }}>
                   <span className="text-[0.8125rem] text-muted-foreground">{template.question.label}</span>
                   <Input value={answer} onChange={(e) => setAnswer(e.target.value)} placeholder={template.question.placeholder} />
                 </label>

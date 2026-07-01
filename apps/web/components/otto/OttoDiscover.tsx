@@ -75,14 +75,14 @@ export default function OttoDiscover({ onUseInOtto }: { onUseInOtto: (prompt: st
 
       {active && (
         <Dialog open onOpenChange={(open) => { if (!open) setActive(null); }}>
-          <DialogContent>
+          <DialogContent className="gb leading-[1.65]">
             <DialogHeader>
               <DialogTitle>{active.title}</DialogTitle>
               <DialogDescription>{active.category}</DialogDescription>
             </DialogHeader>
-            <p style={{ color: "var(--text-body)", fontSize: "0.875rem", marginTop: 0 }}>{active.description}</p>
-            <div style={{ background: "var(--surface-card)", borderRadius: "var(--radius-md)", padding: "12px", fontSize: "0.8125rem", color: "var(--text-body)", whiteSpace: "pre-wrap" }}>{active.prompt}</div>
-            <p style={{ color: "var(--text-muted)", fontSize: "0.75rem", marginTop: "8px" }}>Tip: replace [your product] with your product name.</p>
+            <p style={{ color: "var(--foreground)", fontSize: "0.875rem", marginTop: 0 }}>{active.description}</p>
+            <div style={{ background: "var(--card)", borderRadius: "var(--radius-md)", padding: "12px", fontSize: "0.8125rem", color: "var(--foreground)", whiteSpace: "pre-wrap" }}>{active.prompt}</div>
+            <p style={{ color: "var(--muted-foreground)", fontSize: "0.75rem", marginTop: "8px" }}>Tip: replace [your product] with your product name.</p>
             <DialogFooter>
               <Button variant="ghost" size="sm" onClick={() => copy(active.prompt)}>{copied ? "Copied" : "Copy prompt"}</Button>
               <Button variant="brand" size="sm" onClick={() => { onUseInOtto(active.prompt); setActive(null); }}>Use in Otto</Button>
