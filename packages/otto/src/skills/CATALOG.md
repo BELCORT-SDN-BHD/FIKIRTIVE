@@ -14,5 +14,7 @@
 | proposePack | free | write | internal | ❌ | Lay out a coherent set of generation proposals (a campaign pack) in one turn. Us |
 | rememberBrandFact | free | write | internal | ❌ | Save ONE durable fact about the user's brand to Brand Memory (their voice, audie |
 | researchWeb | free | read | external | ❌ | Fetch a public web page or search the web to ground your response in real inform |
+| seedancePrompt | free | read | internal | ❌ | Assemble a model-tuned English VIDEO prompt for Seedance — the CREATIVE prompt o |
+| seedreamPrompt | free | read | internal | ❌ | Assemble a model-tuned English IMAGE prompt for Seedream. Call this FIRST whenev |
 | setTitle | free | write | internal | ❌ | Set a concise ≤6-word title for the current conversation. Call once early in a n |
 | updateBrief | free | write | internal | ❌ | Refine the project's creative brief with durable creative direction (tone, visua |

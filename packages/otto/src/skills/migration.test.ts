@@ -4,6 +4,8 @@ import { updateBriefSkill } from "./update-brief.js";
 import { describeRefsSkill } from "./describe-refs.js";
 import { proposeSkill } from "./propose.js";
 import { generateSkill } from "./generate.js";
+import { seedreamPromptSkill } from "./seedream-prompt.js";
+import { seedancePromptSkill } from "./seedance-prompt.js";
 
 describe("migrated trivial skills carry the right gate", () => {
   it("setTitle: free/write/internal → not gated", () => {
@@ -33,5 +35,17 @@ describe("generate gate (money path)", () => {
   it("spend → gated; needsApproval is literal-derived true", () => {
     expect(generateSkill.cost).toBe("spend");
     expect(generateSkill.needsApproval).toBe(true);
+  });
+});
+
+describe("prompt-mastery skills gate", () => {
+  it("seedreamPrompt: free/read/internal → not gated", () => {
+    expect(seedreamPromptSkill.cost).toBe("free");
+    expect(seedreamPromptSkill.effect).toBe("read");
+    expect(seedreamPromptSkill.needsApproval).toBe(false);
+  });
+  it("seedancePrompt: free/read/internal → not gated", () => {
+    expect(seedancePromptSkill.effect).toBe("read");
+    expect(seedancePromptSkill.needsApproval).toBe(false);
   });
 });
