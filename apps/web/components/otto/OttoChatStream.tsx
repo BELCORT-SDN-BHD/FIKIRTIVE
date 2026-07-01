@@ -432,7 +432,7 @@ export function OttoChatStream({
         return;
       }
     }
-    if (e.key === "Enter" && !e.shiftKey) {
+    if (e.key === "Enter" && e.shiftKey) {
       e.preventDefault();
       submit();
     }

@@ -193,7 +193,7 @@ export function OttoMemory({ initialMemory, projectId }: { initialMemory: Memory
   }
 
   function onKeyDown(e: React.KeyboardEvent<HTMLTextAreaElement>) {
-    if (e.key === "Enter" && !e.shiftKey) {
+    if (e.key === "Enter" && e.shiftKey) {
       e.preventDefault();
       void sendChat();
     }
