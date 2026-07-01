@@ -1,5 +1,4 @@
 import { redirect } from "next/navigation";
-import { isFounderAdmin } from "@/lib/allowlist";
 import { requireOwner } from "@/lib/auth-guard";
 import { getOrCreateDefaultProject } from "@/lib/actions";
 import { getEntities, getCoworkThreads, getCoworkThread, resolveCoworkResultUrls, getMyAds, getMyAdJobs, getRecentGenerationThumbs, getProjects, getAllCoworkThreadMetas } from "@/lib/data";
@@ -67,8 +66,8 @@ export default async function OttoPage({ searchParams }: { searchParams: Promise
   const balanceCredits = account?.balance ?? 0; // DISPLAYED credits — the nav shows credits, not $
   const userName = email.split("@")[0];
 
-  // Founder-first streaming chat. Temporary flag (deleted in Task 8 once verified).
-  const ottoStreamEnabled = isFounderAdmin(email);
+  // Streaming chat is the single Otto surface for all users (reference-vision rollout, 2026-07-01).
+  const ottoStreamEnabled = true;
 
   return (
     <OttoApp
