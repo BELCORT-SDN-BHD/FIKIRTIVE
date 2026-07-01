@@ -30,7 +30,7 @@ export function ImageNode({ data, selected }: NodeProps) {
         {d.onOpenDetail && (
           <button className="al-btn al-btn-glass al-btn-sm" onClick={d.onOpenDetail}>Detail</button>
         )}
-        <button className="al-btn al-btn-glass al-btn-sm" onClick={d.onAnimate}>Animate</button>
+        <button className="al-btn al-btn-glass al-btn-sm" onClick={d.onAnimate} title="Make a video from this image">Make video</button>
         <button className="al-btn al-btn-glass al-btn-sm" onClick={d.onDelete}>✕</button>
       </div>
       <Handle type="source" position={Position.Right} />

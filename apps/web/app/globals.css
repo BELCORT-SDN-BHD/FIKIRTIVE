@@ -723,16 +723,6 @@ h1, h2, h3 { font-family: var(--font-sans); font-weight: 600; letter-spacing: va
 }
 .gb .cv-tb:hover:not(:disabled) { background: var(--muted); }
 .gb .cv-tb:disabled { color: var(--muted-foreground); cursor: default; }
-.gb .cv-tb-gen {
-  width: auto;
-  gap: 7px;
-  padding: 0 14px;
-  background: var(--primary);
-  color: var(--primary-foreground);
-  font-size: 13.5px;
-  font-weight: 600;
-}
-.gb .cv-tb-gen:hover:not(:disabled) { background: #1A1A18; }
 .gb .cv-tb-div {
   width: 1px;
   height: 22px;
