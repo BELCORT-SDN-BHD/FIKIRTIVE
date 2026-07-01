@@ -29,7 +29,7 @@ describe("assembleSeedream", () => {
       subject: "a hero shot",
       references: [{ role: "product", name: "the AeroBottle" }],
     }));
-    expect(out).toContain("featuring feature the AeroBottle exactly as in the reference");
+    expect(out).toContain("feature the AeroBottle exactly as in the reference");
   });
   it("i2i mode builds an edit instruction, not a fresh scene", () => {
     const out = assembleSeedream(seedreamPromptInput.parse({

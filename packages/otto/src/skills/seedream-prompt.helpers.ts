@@ -45,7 +45,7 @@ export function assembleSeedream(i: SeedreamPromptInput): string {
     i.mood,
     i.detail,
     i.forVideo && "clean uncluttered composition with headroom for motion, single dominant light direction",
-    locks && `featuring ${locks}`,
+    locks,
     i.textContent && `with the text "${i.textContent}" in bold sans-serif, placed prominently`,
   ];
   return parts.filter(Boolean).join(", ");
