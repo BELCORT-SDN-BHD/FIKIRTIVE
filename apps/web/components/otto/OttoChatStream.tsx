@@ -11,6 +11,7 @@ import { threadToUiMessages, type OttoUiMessage } from "@/lib/otto-ui-messages";
 import { ImageIcon } from "lucide-react";
 import { uploadFilesDirect } from "@/lib/direct-upload";
 import { finalizeCandidateUploads } from "@/lib/upload-actions";
+import { ACCEPT_ATTACH, isVideoFile, defaultFrameTime, frameFileName, FRAME_MAX_SIDE, FRAME_JPEG_QUALITY } from "@/lib/video-frame";
 import {
   resultJobIds,
   errorJobIds,
@@ -108,6 +109,10 @@ export function OttoChatStream({
   /** Upload error message shown near the attach button; clears on next successful attach. */
   const [attachError, setAttachError] = useState<string | null>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
+  const videoElRef = useRef<HTMLVideoElement | null>(null);
+  const canvasRef = useRef<HTMLCanvasElement | null>(null);
+  const [videoPick, setVideoPick] = useState<{ url: string; duration: number } | null>(null);
+  const [frameTime, setFrameTime] = useState(0);
 
   // Bounded in-flight poll for the async worker result (ported from OttoConversation):
   // a GEN_CARD whose genJobId is set but with no terminal GEN_RESULT/TURN_ERROR keeps
@@ -358,6 +363,17 @@ export function OttoChatStream({
     e.target.value = "";
     if (!file) return;
     setAttachError(null);
+
+    // Video → open the frame picker instead of uploading the clip. A frame is
+    // extracted in the browser and uploaded as an image through the same path.
+    if (isVideoFile(file)) {
+      if (videoPick) URL.revokeObjectURL(videoPick.url);
+      const url = URL.createObjectURL(file);
+      setVideoPick({ url, duration: 0 });
+      return;
+    }
+
+    // Image → existing behavior.
     setUploading(true);
     try {
       const outcome = await uploadFilesDirect([file], () => {});
@@ -371,6 +387,67 @@ export function OttoChatStream({
         return;
       }
       setAttached({ generationId: res.generationIds[0], src: URL.createObjectURL(file) });
+    } catch (err) {
+      setAttachError(err instanceof Error ? err.message : "Upload failed.");
+    } finally {
+      setUploading(false);
+    }
+  }
+
+  // Called once the hidden <video> has its metadata: set duration + seek to the default frame.
+  function handleVideoMeta() {
+    const v = videoElRef.current;
+    if (!v || !Number.isFinite(v.duration)) return;
+    const t = defaultFrameTime(v.duration);
+    setVideoPick((p) => (p ? { ...p, duration: v.duration } : p));
+    setFrameTime(t);
+    v.currentTime = t;
+  }
+
+  // Draw the current video frame into the preview canvas (longest side capped).
+  function drawCurrentFrame() {
+    const v = videoElRef.current;
+    const c = canvasRef.current;
+    if (!v || !c || !v.videoWidth) return;
+    const scale = Math.min(1, FRAME_MAX_SIDE / Math.max(v.videoWidth, v.videoHeight));
+    c.width = Math.round(v.videoWidth * scale);
+    c.height = Math.round(v.videoHeight * scale);
+    c.getContext("2d")?.drawImage(v, 0, 0, c.width, c.height);
+  }
+
+  function handleScrub(e: React.ChangeEvent<HTMLInputElement>) {
+    const t = Number(e.target.value);
+    setFrameTime(t);
+    if (videoElRef.current) videoElRef.current.currentTime = t;
+  }
+
+  function closeVideoPick() {
+    if (videoPick) URL.revokeObjectURL(videoPick.url);
+    setVideoPick(null);
+    setFrameTime(0);
+  }
+
+  async function useSelectedFrame() {
+    const c = canvasRef.current;
+    if (!c) return;
+    setUploading(true);
+    try {
+      const blob: Blob | null = await new Promise((res) => c.toBlob(res, "image/jpeg", FRAME_JPEG_QUALITY));
+      if (!blob) { setAttachError("Couldn't capture that frame — try another moment."); return; }
+      const file = new File([blob], frameFileName(frameTime), { type: "image/jpeg" });
+      const preview = c.toDataURL("image/jpeg", FRAME_JPEG_QUALITY);
+      const outcome = await uploadFilesDirect([file], () => {});
+      if (outcome.files.length === 0) {
+        setAttachError(outcome.failures[0]?.reason ?? "Upload failed.");
+        return;
+      }
+      const r = await finalizeCandidateUploads(projectId, "", [], outcome.files);
+      if ("error" in r || !r.generationIds?.[0]) {
+        setAttachError("error" in r ? r.error : "Could not attach frame.");
+        return;
+      }
+      setAttached({ generationId: r.generationIds[0], src: preview });
+      closeVideoPick();
     } catch (err) {
       setAttachError(err instanceof Error ? err.message : "Upload failed.");
     } finally {
@@ -865,10 +942,46 @@ export function OttoChatStream({
           <input
             ref={fileInputRef}
             type="file"
-            accept="image/png,image/jpeg,image/webp"
+            accept={ACCEPT_ATTACH}
             className="hidden"
             onChange={handleFilePick}
           />
+
+          {/* Video frame picker: pick a frame to use as the image reference */}
+          {videoPick && (
+            <div className="mb-2 rounded-[14px] border border-border bg-muted p-2">
+              <video
+                ref={videoElRef}
+                src={videoPick.url}
+                muted
+                playsInline
+                preload="metadata"
+                className="hidden"
+                onLoadedMetadata={handleVideoMeta}
+                onSeeked={drawCurrentFrame}
+                onError={() => { setAttachError("Couldn't read that video — try an MP4."); closeVideoPick(); }}
+              />
+              <canvas ref={canvasRef} className="mb-2 max-h-40 w-full rounded-[10px] object-contain" />
+              {videoPick.duration > 0 && (
+                <input
+                  type="range"
+                  min={0}
+                  max={videoPick.duration}
+                  step={0.05}
+                  value={frameTime}
+                  onChange={handleScrub}
+                  aria-label="Pick a video frame"
+                  className="w-full"
+                />
+              )}
+              <div className="mt-2 flex items-center justify-end gap-2">
+                <Button variant="ghost" size="sm" onClick={closeVideoPick} disabled={uploading}>Cancel</Button>
+                <Button variant="default" size="sm" onClick={useSelectedFrame} disabled={uploading || videoPick.duration === 0}>
+                  {uploading ? "Attaching…" : "Use this frame"}
+                </Button>
+              </div>
+            </div>
+          )}
 
           {/* Thumbnail chip: shown while uploading or when an image is attached */}
           {(uploading || attached) && (
@@ -925,7 +1038,7 @@ export function OttoChatStream({
               <button
                 type="button"
                 aria-label="Attach reference image"
-                disabled={isBusy || uploading}
+                disabled={isBusy || uploading || !!videoPick}
                 onClick={() => fileInputRef.current?.click()}
                 className="inline-flex items-center border-0 bg-transparent p-1 cursor-pointer disabled:cursor-default disabled:opacity-50"
                 style={{ color: attached ? "var(--primary)" : undefined }}

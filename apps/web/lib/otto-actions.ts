@@ -33,12 +33,13 @@ import {
   GOAL_PRESETS,
   isGoalKey,
 } from "@fikirtive/core";
-import { otto, withLlmBudget, OTTO_DEFAULT_MODEL, run, RunState, MaxTurnsExceededError, mapOttoUsage, ottoSimpleModeBlock } from "@fikirtive/otto";
+import { otto, withLlmBudget, OTTO_DEFAULT_MODEL, run, RunState, MaxTurnsExceededError, mapOttoUsage, ottoSimpleModeBlock, buildUserTurn, stripHistoryImages } from "@fikirtive/otto";
 import type { OttoContext, AgentInputItem } from "@fikirtive/otto";
 import { requireOwner } from "./auth-guard";
 import { isImpersonating } from "@/lib/better-auth/compat";
 import { resolveDisabledModels } from "./model-registry";
 import { startGen } from "./gen-actions";
+import { gatherReferenceImages } from "./otto-ref-images";
 import { getBrandContextText } from "./memory-actions";
 import { fetchAndExtract } from "./brand-research";
 import { fetchOwnerInsights } from "./meta-insights";
@@ -130,7 +131,7 @@ export async function buildOttoContext({
   simpleMode?: boolean;
 }): Promise<OttoContext> {
   const disabledModels = Array.from(await resolveDisabledModels());
-  const [brandContext, availableRefs, activeJob] = await Promise.all([
+  const [brandContext, availableRefs, activeJob, images] = await Promise.all([
     getBrandContextText(ownerId, null).catch(() => ""),
     loadAvailableRefsForAgent(ownerId),
     prisma.genJob.findFirst({
@@ -138,6 +139,7 @@ export async function buildOttoContext({
       orderBy: { createdAt: "desc" },
       select: { status: true, kind: true, error: true },
     }).catch(() => null),
+    gatherReferenceImages(ownerId, projectId, sourceGenerationId ?? null),
   ]);
   return {
     orgId: ownerId,
@@ -146,6 +148,7 @@ export async function buildOttoContext({
     threadId,
     disabledModels,
     sourceGenerationId: sourceGenerationId ?? null,
+    images,
     startGen,
     brandContext,
     availableRefs,
@@ -430,12 +433,13 @@ export async function ottoTurn(raw: unknown): Promise<
     // Build run input: rehydrate prior state (multi-turn) or start fresh;
     // prepend a system message with brand context + available refs when present.
     const sys = buildContextSystemMessage(ctx);
+    const userTurn = buildUserTurn(text, ctx.images);
     let runInput: AgentInputItem[];
     if (priorOttoState) {
       const priorState = await RunState.fromString(otto, priorOttoState);
-      runInput = [...(sys ? [sys] : []), ...priorState.history, { role: "user", content: text } as AgentInputItem];
+      runInput = [...(sys ? [sys] : []), ...stripHistoryImages(priorState.history), userTurn];
     } else {
-      runInput = [...(sys ? [sys] : []), { role: "user", content: text } as AgentInputItem];
+      runInput = [...(sys ? [sys] : []), userTurn];
     }
 
     // Run agent, metered
