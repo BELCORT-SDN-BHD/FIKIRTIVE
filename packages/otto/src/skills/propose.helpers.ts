@@ -90,17 +90,20 @@ export function buildProposeCard(
   ctx: OttoContext,
   ownedEntityIds: string[],
 ): ProposeCardResult {
-  // Step 1: i2v coercion (mirror coworkTurn 375–383)
+  // Step 1: kind is the PLANNER'S decision — an attached reference no longer forces video.
+  // A reference (ctx.sourceGenerationId) becomes an i2v start-frame ONLY for a video plan;
+  // for an image plan it is a vision reference the planner already SAW (buildOttoContext)
+  // and is NOT threaded into the gen request (no silent image-to-image).
   let kind = input.kind;
   let entityIds = input.entityIds;
   let variantSel = input.variantSel;
-  let hasSourceImage = false;
+  const isI2V = kind === "video" && !!ctx.sourceGenerationId;
+  const hasSourceImage = isI2V;
 
-  if (ctx.sourceGenerationId) {
-    kind = "video";
+  if (isI2V) {
+    // i2v conditions on the start frame, not on entity refs (preserve prior behavior)
     entityIds = [];
     variantSel = {};
-    hasSourceImage = true;
   }
 
   // Step 2: entityId scoping — keep only owned ids, drop foreign ones silently
@@ -207,7 +210,7 @@ export function buildProposeCard(
     estimatedPriceUsd: price,
     estimatedCredits,
     ...(videoStep ? { videoStep } : {}),
-    ...(ctx.sourceGenerationId ? { sourceGenerationId: ctx.sourceGenerationId } : {}),
+    ...(isI2V ? { sourceGenerationId: ctx.sourceGenerationId! } : {}),
   };
 
   // Step 6: the credit amount Otto may mention in chat = the real charge (estimatedCredits).

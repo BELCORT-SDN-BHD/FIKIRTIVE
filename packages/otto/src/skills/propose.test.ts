@@ -154,12 +154,12 @@ describe("buildProposeCard — pure helper", () => {
     expect(cardPayload.kind).toBe("image");
   });
 
-  // Test 4: i2v coercion — sourceGenerationId forces video, drops entityIds
-  it("i2v coercion: sourceGenerationId forces kind=video, entityIds=[], sourceGenerationId in payload", () => {
+  // Test 4a: i2v — a VIDEO plan + reference conditions on the start frame (entities dropped)
+  it("i2v: kind=video + sourceGenerationId → video, entityIds=[], sourceGenerationId in payload", () => {
     const ctx = makeCtx({ sourceGenerationId: "gen-abc123" });
     const input = {
-      kind: "image" as const, // user said image, but we have a source frame
-      structuredPrompt: "Animate this",
+      kind: "video" as const, // user wants to animate the reference
+      structuredPrompt: "Animate this into a 5s clip",
       entityIds: ["entity-1"],
       variantSel: { "entity-1": "variant-1" },
     };
@@ -169,6 +169,26 @@ describe("buildProposeCard — pure helper", () => {
     expect(cardPayload.entityIds).toEqual([]);
     expect(cardPayload.variantSel).toEqual({});
     expect((cardPayload as Record<string, unknown>)["sourceGenerationId"]).toBe("gen-abc123");
+  });
+
+  // Test 4b: DECOUPLE — an IMAGE plan + reference stays an image (NOT forced to video),
+  // keeps its owned entity refs, and does NOT thread sourceGenerationId into the gen request.
+  it("decouple: kind=image + sourceGenerationId → stays image, entities kept, sourceGenerationId NOT in payload", () => {
+    const ctx = makeCtx({ sourceGenerationId: "gen-abc123" });
+    const input = {
+      kind: "image" as const, // user wants an image in the reference's style
+      structuredPrompt: "A product shot in this style",
+      entityIds: ["entity-1"],
+      variantSel: { "entity-1": "variant-1" },
+    };
+    const { cardPayload } = buildProposeCard(input, ctx, ["entity-1"]);
+
+    expect(cardPayload.kind).toBe("image");
+    expect(cardPayload.entityIds).toEqual(["entity-1"]);
+    expect(cardPayload.variantSel).toEqual({ "entity-1": "variant-1" });
+    expect((cardPayload as Record<string, unknown>)["sourceGenerationId"]).toBeUndefined();
+    // image tier pricing (1 credit/image), not video
+    expect(cardPayload.estimatedCredits).toBe(1);
   });
 
   // Test forVideo: image with forVideo=true → videoStep.estimatedCredits is positive,
