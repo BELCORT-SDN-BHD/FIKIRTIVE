@@ -75,5 +75,19 @@ export function useCanvasGen(
     poll(started.id, (urls, status, generationIds) => onResolve(created.id, urls[0] ?? null, status, generationIds[0]), cancelledRef);
   }, [projectId, onNode, onResolve, activeThreadId]);
 
-  return { generateImage, animate, cancelledRef };
+  // Phase 3: text-to-video. The same paid video path as animate(), minus the
+  // source frame — the gate allows video without sourceGenerationId (it's the
+  // Gen-space path) and the provider uses the model's t2v endpoint. Video is
+  // always count=1 (startGen forces it). New spend entry, existing spend logic.
+  const generateVideoFromText = useCallback(async (prompt: string, pos: Pos) => {
+    const req = { projectId, prompt, count: 1, kind: "video" as const, model: activeVideoModel(), idempotencyKey: `vid-${Date.now()}` };
+    const started = await startGen(req);
+    if ("error" in started) return;
+    const created = await createCanvasNode({ projectId, type: "video", ...pos, prompt, genJobId: started.id, status: "pending", ...(activeThreadId ? { threadId: activeThreadId } : {}) });
+    if ("error" in created) return;
+    onNode({ id: created.id, type: "video", pos, status: "pending", prompt });
+    poll(started.id, (urls, status, generationIds) => onResolve(created.id, urls[0] ?? null, status, generationIds[0]), cancelledRef);
+  }, [projectId, onNode, onResolve, activeThreadId]);
+
+  return { generateImage, animate, generateVideoFromText, cancelledRef };
 }

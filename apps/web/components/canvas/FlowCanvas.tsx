@@ -79,14 +79,21 @@ export default function FlowCanvas({ projectId, entities = [], activeThreadId = 
   // The actual paid image→video generation — invoked only after the owner confirms
   // in the "Make a video?" dialog. Spend path is unchanged: same generationId, same
   // default motion prompt, same animate() call as before — just gated behind the OK.
+  // Synchronous double-fire guard for the paid video paths (i2v + t2v). The video
+  // idempotencyKey is per-click (vid-<Date.now()>), so two fast clicks would mint
+  // two keys → two charges; the confirm dialog closing isn't a guaranteed guard.
+  // True only during the ~1-2s startGen setup (poll isn't awaited), so it blocks a
+  // same-tick double-fire without serializing separate generations.
+  const videoBusyRef = useRef(false);
   const runAnimate = useCallback((id: string, motionPrompt: string) => {
     const entry = nodeDataRef.current[id];
-    if (!entry?.generationId || !animateFnRef.current) return; // guard: not yet resolved
+    if (!entry?.generationId || !animateFnRef.current || videoBusyRef.current) return;
+    videoBusyRef.current = true;
     const { x, y } = entry.pos;
     // genRequest requires a non-empty prompt (.trim().min(1)); the dialog guarantees a
     // non-empty motion prompt (custom falls back to the gentle default), so the paid
     // i2v never no-ops on an empty prompt.
-    void animateFnRef.current(entry.generationId, id, motionPrompt, { x: x + 340, y, w: 320, h: 320 });
+    void animateFnRef.current(entry.generationId, id, motionPrompt, { x: x + 340, y, w: 320, h: 320 }).finally(() => { videoBusyRef.current = false; });
   }, []);
 
   // Build a stable per-node onOpenDetail that reads generationId at call time
@@ -157,7 +164,7 @@ export default function FlowCanvas({ projectId, entities = [], activeThreadId = 
     [deleteNode],
   );
 
-  const { generateImage, animate, cancelledRef } = useCanvasGen(projectId, onNewNode, onResolve, activeThreadId);
+  const { generateImage, animate, generateVideoFromText, cancelledRef } = useCanvasGen(projectId, onNewNode, onResolve, activeThreadId);
   // keep animateFnRef current
   animateFnRef.current = animate;
 
@@ -243,6 +250,17 @@ export default function FlowCanvas({ projectId, entities = [], activeThreadId = 
   const animateSelected = useCallback(() => {
     if (selectedImageId) setPendingAnimateId(selectedImageId);
   }, [selectedImageId]);
+
+  // Phase 3: text-to-video — the video tool opens a prompt dialog when nothing is
+  // selected; runT2v spends via the existing video path (no source frame).
+  const [t2vOpen, setT2vOpen] = useState(false);
+  const [t2vPrompt, setT2vPrompt] = useState("");
+  const runT2v = useCallback((prompt: string) => {
+    if (videoBusyRef.current) return;
+    videoBusyRef.current = true;
+    const x = 80 + nodeCountRef.current * 340;
+    void generateVideoFromText(prompt, { x, y: 80, w: 320, h: 320 }).finally(() => { videoBusyRef.current = false; });
+  }, [generateVideoFromText]);
 
   // Stop polls on unmount
   useEffect(() => () => { cancelledRef.current = true; }, [cancelledRef]);
@@ -437,7 +455,7 @@ export default function FlowCanvas({ projectId, entities = [], activeThreadId = 
             <button type="button" className="cv-tb" title="Generate an image — describe what you want" aria-label="Generate image" aria-expanded={composerOpen} onClick={() => setComposerOpen((v) => !v)}>
               <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.9"><rect x="3" y="3" width="18" height="18" rx="3" /><circle cx="9" cy="9" r="2" /><path d="m21 15-5-5L5 21" /></svg>
             </button>
-            <button type="button" className="cv-tb" title={selectedImageId ? "Animate selected image" : "Select an image, then Video to animate it"} aria-label="Video" disabled={!selectedImageId} onClick={animateSelected}>
+            <button type="button" className="cv-tb" title={selectedImageId ? "Make a video from the selected image" : "Make a video from a prompt"} aria-label="Video" onClick={() => { if (selectedImageId) animateSelected(); else setT2vOpen(true); }}>
               <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.9"><rect x="2" y="6" width="14" height="12" rx="2" /><path d="m22 8-6 4 6 4V8z" /></svg>
             </button>
             <button type="button" className="cv-tb" title="Add text" aria-label="Add text" onClick={addTextNode}>
@@ -555,6 +573,32 @@ export default function FlowCanvas({ projectId, entities = [], activeThreadId = 
           <DialogFooter>
             <Button variant="ghost" onClick={() => setConfirmGen(false)}>Cancel</Button>
             <Button onClick={() => { setConfirmGen(false); void handleGenerate(); }}>Generate</Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+      <Dialog open={t2vOpen} onOpenChange={(open) => { if (!open) { setT2vOpen(false); setT2vPrompt(""); } }}>
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>Make a video from a prompt</DialogTitle>
+            <DialogDescription>
+              Describe the video you want — no source image needed. This uses credits.
+            </DialogDescription>
+          </DialogHeader>
+          <textarea
+            value={t2vPrompt}
+            onChange={(e) => setT2vPrompt(e.target.value)}
+            placeholder="e.g. a coffee cup steaming on a wooden table, slow push-in"
+            rows={3}
+            className="resize-none rounded-lg border border-border bg-background px-3 py-2 text-sm outline-none focus-visible:ring-[3px] focus-visible:ring-ring/40"
+          />
+          <DialogFooter>
+            <Button variant="ghost" onClick={() => { setT2vOpen(false); setT2vPrompt(""); }}>Cancel</Button>
+            <Button
+              disabled={!t2vPrompt.trim()}
+              onClick={() => { const p = t2vPrompt.trim(); setT2vOpen(false); setT2vPrompt(""); if (p) runT2v(p); }}
+            >
+              Make video
+            </Button>
           </DialogFooter>
         </DialogContent>
       </Dialog>
