@@ -1,6 +1,6 @@
 import { describe, it, expect } from "vitest";
 import { z } from "zod";
-import { defineOttoSkill, deriveNeedsApproval } from "./skill.js";
+import { defineOttoSkill, deriveNeedsApproval, missingRequired } from "./skill.js";
 
 const noop = async () => ({ ok: true });
 const base = {
@@ -91,5 +91,25 @@ describe("defineOttoSkill enforcement", () => {
       requires: [{ field: "x", question: "What is x?" }],
     });
     expect(s2.requires).toEqual([{ field: "x", question: "What is x?" }]);
+  });
+});
+
+describe("missingRequired — preflight logic", () => {
+  const reqs = [
+    { field: "goal", question: "What is the goal?" },
+    { field: "audience", question: "Who is it for?" },
+  ];
+  it("flags absent and empty-string fields", () => {
+    expect(missingRequired(reqs, {})).toEqual(reqs);
+    expect(missingRequired(reqs, { goal: "  ", audience: "" })).toEqual(reqs);
+  });
+  it("passes when all fields are non-empty", () => {
+    expect(missingRequired(reqs, { goal: "drive signups", audience: "gym-goers" })).toEqual([]);
+  });
+  it("flags only the missing subset", () => {
+    expect(missingRequired(reqs, { goal: "sell shoes" })).toEqual([{ field: "audience", question: "Who is it for?" }]);
+  });
+  it("empty requires → nothing missing", () => {
+    expect(missingRequired([], { anything: 1 })).toEqual([]);
   });
 });

@@ -54,6 +54,17 @@ export function deriveNeedsApproval(cost: Cost, effect: Effect, reach: Reach): b
   return cost === "spend" || (effect === "write" && reach === "external");
 }
 
+/** 纯：返回 input 中缺失（undefined/null/空串）的必要字段。空 requires → []。 */
+export function missingRequired(
+  requires: { field: string; question: string }[],
+  input: Record<string, unknown>,
+): { field: string; question: string }[] {
+  return requires.filter((r) => {
+    const v = input[r.field];
+    return v == null || (typeof v === "string" && v.trim() === "");
+  });
+}
+
 export function defineOttoSkill<P extends z.ZodObject<any>>(spec: OttoSkillSpec<P>): OttoSkill {
   // Fail-closed: any missing classification → most-dangerous value.
   const cost: Cost = spec.cost ?? "spend";
