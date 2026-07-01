@@ -6,6 +6,8 @@ export { updateBrief } from "./skills/update-brief.js";
 export { describeRefs, sanitizeRefDescription } from "./skills/describe-refs.js";
 export { setTitle } from "./skills/set-title.js";
 export type { OttoContext } from "./context.js";
+export { buildUserTurn, stripHistoryImages } from "./run-input.js";
+export type { RefImage } from "./run-input.js";
 export { withLlmBudget, actualCostInternal, mapOttoUsage } from "./meter.js";
 export type { TokenUsage } from "./meter.js";
 // Re-export SDK primitives needed by web callers (Task 1.8 / streaming)

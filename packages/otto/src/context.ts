@@ -31,6 +31,10 @@ export interface OttoContext {
   disabledModels: string[];
   /** "Animate this result": a server-validated i2v source frame, if the turn carries one. */
   sourceGenerationId?: string | null;
+  /** Reference images shown to Otto THIS turn (the dropped reference → vision). Bounded +
+   *  best-effort (gathered by the web caller). Appended as input_image parts to the CURRENT
+   *  user turn only; never persisted into RunState history (stripHistoryImages drops them). */
+  images?: { label: string; dataUrl: string }[];
   /** App-level spend entrypoint, injected by the web caller (Task 1.8). The generate tool calls this;
    *  $0 tools never touch it. It is `startGen` from apps/web (unchanged) — which does its own
    *  requireOwner() + genRequest validation + reserve + GenJob insert + enqueue. */
