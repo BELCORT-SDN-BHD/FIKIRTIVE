@@ -388,6 +388,11 @@ describe("propose requires-gate + goal", () => {
   });
 
   it("executePropose persists goal onto the GEN_CARD payload", async () => {
+    // ISOLATION (required): clear prior tests' create() call-history so .mock.calls[0]
+    // is THIS test's call, not an earlier one. Prefer a beforeEach(() => vi.clearAllMocks())
+    // in this describe — and reuse that pattern when copying this test to propose-pack /
+    // propose-ad-build requires-gates in later blocks (avoids cross-test mock pollution).
+    (mockPrisma.chatMessage.create as ReturnType<typeof vi.fn>).mockClear();
     const ctx = makeCtx({ orgId: "org-goal", threadId: "thread-goal" });
     await executePropose(
       { kind: "image", structuredPrompt: "A hero shot", entityIds: [], variantSel: {}, goal: "launch teaser" },
