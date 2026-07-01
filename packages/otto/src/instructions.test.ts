@@ -51,3 +51,12 @@ describe("ottoInstructions — video keyframes", () => {
     expect(ottoInstructions).toMatch(/forVideo/);
   });
 });
+
+describe("ottoInstructions — attached reference image", () => {
+  it("instructs Otto to pick kind from intent for an attached reference (animate → video, style → image)", () => {
+    expect(ottoInstructions).toContain("Attached reference");
+    expect(ottoInstructions.toLowerCase()).toContain("animate");
+    // default-to-image guidance so a reference never silently forces video
+    expect(ottoInstructions.toLowerCase()).toContain("default to");
+  });
+});
