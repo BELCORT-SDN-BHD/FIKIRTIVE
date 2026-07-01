@@ -94,6 +94,42 @@ describe("defineOttoSkill enforcement", () => {
   });
 });
 
+describe("defineOttoSkill requires wiring", () => {
+  const withReq = () =>
+    defineOttoSkill({
+      name: "reqskill", description: "Base description.", cost: "free", effect: "write", reach: "internal",
+      parameters: z.object({ goal: z.string().optional() }),
+      requires: [{ field: "goal", question: "What is the goal?" }],
+      execute: async () => ({ ok: true, ran: true }),
+    });
+
+  it("appends the requires questions to the tool description (model-facing)", () => {
+    const s = withReq();
+    const desc = (s.tool as { description?: string }).description ?? "";
+    expect(desc).toContain("Base description.");
+    expect(desc).toContain("What is the goal?");
+  });
+
+  it("keeps OttoSkill.description clean (no appended questions)", () => {
+    const s = withReq();
+    expect(s.description).toBe("Base description.");
+  });
+
+  it("preflight: execute returns needMoreInfo and does NOT run when a required field is empty", async () => {
+    const s = withReq();
+    const invoke = s.tool as unknown as { invoke: (rc: unknown, args: string) => Promise<unknown> };
+    const out = await invoke.invoke({ context: {} }, JSON.stringify({ goal: "" }));
+    expect(out).toEqual({ needMoreInfo: [{ field: "goal", question: "What is the goal?" }] });
+  });
+
+  it("preflight: execute runs when required fields are present", async () => {
+    const s = withReq();
+    const invoke = s.tool as unknown as { invoke: (rc: unknown, args: string) => Promise<unknown> };
+    const out = await invoke.invoke({ context: {} }, JSON.stringify({ goal: "drive signups" }));
+    expect(out).toEqual({ ok: true, ran: true });
+  });
+});
+
 describe("missingRequired — preflight logic", () => {
   const reqs = [
     { field: "goal", question: "What is the goal?" },

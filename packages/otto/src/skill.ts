@@ -111,17 +111,28 @@ export function defineOttoSkill<P extends z.ZodObject<any>>(spec: OttoSkillSpec<
 
   const needsApproval = deriveNeedsApproval(cost, effect, reach);
 
+  // requires 非空时，把"先确认什么"追加进 model-facing description（单一事实源：同一份 requires）。
+  const modelDescription =
+    requires.length > 0
+      ? `${spec.description}\n\nBefore calling, make sure you have (ask the user for anything still missing; ` +
+        `autofill from brand memory when you can): ${requires.map((r) => r.question).join(" ")}`
+      : spec.description;
+
   // Use a concrete ZodObject<any> at the SDK boundary: the SDK's ToolOptions does
   // `Extract<TParameters, ToolInputParametersStrict>`, which TS cannot resolve for a
   // *free* generic P. The public OttoSkillSpec<P> stays strongly typed for authors;
   // only this internal call widens to the SDK's object-schema shape.
   const built = tool<z.ZodObject<any>, OttoContext>({
     name: spec.name,
-    description: spec.description,
+    description: modelDescription,
     parameters: spec.parameters,
     needsApproval, // literal boolean — SDK normalizes to an async () => needsApproval
     execute: async (input, runContext) => {
       if (!runContext) throw new Error("OttoContext required");
+      if (requires.length > 0) {
+        const missing = missingRequired(requires, input as Record<string, unknown>);
+        if (missing.length > 0) return { needMoreInfo: missing };
+      }
       return spec.execute(input as z.infer<P>, runContext);
     },
   });
