@@ -12,6 +12,8 @@ import { syncOttoCanvasNodes } from "../../lib/otto-canvas-bridge";
 import { OttoCanvasStatus } from "../otto/OttoTrace";
 import DetailPanel from "@/components/asset/DetailPanel";
 import { MentionInput } from "@/components/MentionInput";
+import { Dialog, DialogContent, DialogHeader, DialogFooter, DialogTitle, DialogDescription } from "@/components/ui/dialog";
+import { Button } from "@/components/ui/button";
 import type { EntityDTO } from "@/lib/types";
 import { filterNodesByConvo, convoColor } from "@/lib/convo-canvas";
 
@@ -34,6 +36,12 @@ export default function FlowCanvas({ projectId, entities = [], activeThreadId = 
   // Canvas tool: pan (grab hand, drag pans the board) vs select (arrow cursor,
   // drag box-selects). The toolbar's cursor button toggles this. Display-only.
   const [panMode, setPanMode] = useState(true);
+  // Deleting a canvas card asks for confirmation first (they were too easy to
+  // remove by accident). Holds the node id awaiting confirm; null = no dialog.
+  const [pendingDeleteId, setPendingDeleteId] = useState<string | null>(null);
+  // Making a video costs credits — clicking "Make video" opens a confirm first.
+  // Holds the source image node id awaiting confirm; null = no dialog.
+  const [pendingAnimateId, setPendingAnimateId] = useState<string | null>(null);
   // Dragging an image file over the canvas (drop = upload it as an image node).
   const [dragOver, setDragOver] = useState(false);
   // track node count to offset new node positions
@@ -54,17 +62,24 @@ export default function FlowCanvas({ projectId, entities = [], activeThreadId = 
   const onAnimateByNode = useRef<Record<string, () => void>>({});
   const getOnAnimate = useCallback((id: string): (() => void) => {
     if (!onAnimateByNode.current[id]) {
-      onAnimateByNode.current[id] = () => {
-        const entry = nodeDataRef.current[id];
-        if (!entry?.generationId || !animateFnRef.current) return; // guard: not yet resolved
-        const { x, y } = entry.pos;
-        // genRequest requires a non-empty prompt (.trim().min(1)); an empty string
-        // makes startGen reject and animate silently no-op. Send a default motion
-        // prompt so the Animate button actually works (i2v from the source image).
-        void animateFnRef.current(entry.generationId, id, "Animate this image with gentle, natural motion.", { x: x + 340, y, w: 320, h: 320 });
-      };
+      // "Make video" is a paid image→video generation, so clicking it only OPENS
+      // a confirm; the actual spend happens in runAnimate() after the owner says OK.
+      onAnimateByNode.current[id] = () => setPendingAnimateId(id);
     }
     return onAnimateByNode.current[id]!;
+  }, []);
+
+  // The actual paid image→video generation — invoked only after the owner confirms
+  // in the "Make a video?" dialog. Spend path is unchanged: same generationId, same
+  // default motion prompt, same animate() call as before — just gated behind the OK.
+  const runAnimate = useCallback((id: string) => {
+    const entry = nodeDataRef.current[id];
+    if (!entry?.generationId || !animateFnRef.current) return; // guard: not yet resolved
+    const { x, y } = entry.pos;
+    // genRequest requires a non-empty prompt (.trim().min(1)); an empty string
+    // makes startGen reject and animate silently no-op. Send a default motion
+    // prompt so Make video actually works (i2v from the source image).
+    void animateFnRef.current(entry.generationId, id, "Animate this image with gentle, natural motion.", { x: x + 340, y, w: 320, h: 320 });
   }, []);
 
   // Build a stable per-node onOpenDetail that reads generationId at call time
@@ -124,7 +139,7 @@ export default function FlowCanvas({ projectId, entities = [], activeThreadId = 
             status: n.status,
             prompt: n.prompt,
             skin,
-            onDelete: () => deleteNode(n.id),
+            onDelete: () => setPendingDeleteId(n.id),
             // onAnimate added after generationId arrives via onResolve
           },
           style: { width: n.pos.w, height: n.pos.h, boxShadow: `0 0 0 2px ${convoColor(activeThreadId ?? null)}` },
@@ -171,7 +186,7 @@ export default function FlowCanvas({ projectId, entities = [], activeThreadId = 
           id: result.id,
           type: "text",
           position: { x, y: 80 },
-          data: { text: "", status: "done", skin, onChange: (t: string) => onTextChange(result.id, t), onDelete: () => deleteNode(result.id) },
+          data: { text: "", status: "done", skin, onChange: (t: string) => onTextChange(result.id, t), onDelete: () => setPendingDeleteId(result.id) },
           style: { width: 240, height: 120, boxShadow: `0 0 0 2px ${convoColor(activeThreadId ?? null)}` },
           threadId: activeThreadId ?? null,
         },
@@ -179,7 +194,7 @@ export default function FlowCanvas({ projectId, entities = [], activeThreadId = 
     } else {
       console.warn("Failed to create text node:", result.error);
     }
-  }, [projectId, activeThreadId, onTextChange, deleteNode, skin]);
+  }, [projectId, activeThreadId, onTextChange, skin]);
 
   // Drag-and-drop an image file from anywhere onto the canvas → upload it as an
   // image node. Upload-only (uploadReference creates an UPLOAD Generation); it
@@ -206,21 +221,21 @@ export default function FlowCanvas({ projectId, entities = [], activeThreadId = 
           id: created.id,
           type: "image",
           position: { x, y: 80 },
-          data: { status: "done", url: res.src, skin, onDelete: () => deleteNode(created.id), onAnimate: getOnAnimate(created.id), onOpenDetail: getOnOpenDetail(created.id) },
+          data: { status: "done", url: res.src, skin, onDelete: () => setPendingDeleteId(created.id), onAnimate: getOnAnimate(created.id), onOpenDetail: getOnOpenDetail(created.id) },
           style: { width: 320, height: 320, boxShadow: `0 0 0 2px ${convoColor(activeThreadId ?? null)}` },
           threadId: activeThreadId ?? null,
         },
       ]);
     }
-  }, [projectId, activeThreadId, deleteNode, getOnAnimate, getOnOpenDetail, skin]);
+  }, [projectId, activeThreadId, getOnAnimate, getOnOpenDetail, skin]);
 
   // Animate the selected image node into a video — reuses the existing animate
   // path (no new spend logic). The video tool mirrors Grok's "select an image
   // node to animate"; it is disabled until an animatable image is selected.
   const selectedImageId = nodes.find((n) => n.selected && n.type === "image" && nodeDataRef.current[n.id]?.generationId)?.id ?? null;
   const animateSelected = useCallback(() => {
-    if (selectedImageId) getOnAnimate(selectedImageId)();
-  }, [selectedImageId, getOnAnimate]);
+    if (selectedImageId) setPendingAnimateId(selectedImageId);
+  }, [selectedImageId]);
 
   // Stop polls on unmount
   useEffect(() => () => { cancelledRef.current = true; }, [cancelledRef]);
@@ -250,7 +265,7 @@ export default function FlowCanvas({ projectId, entities = [], activeThreadId = 
           prompt: r.prompt,
           text: r.text,
           skin,
-          onDelete: () => deleteNode(r.id),
+          onDelete: () => setPendingDeleteId(r.id),
           onChange: r.type === "text" ? (t: string) => onTextChange(r.id, t) : undefined,
           onAnimate: r.type === "image" ? getOnAnimate(r.id) : undefined,
           onOpenDetail: r.type === "image" ? getOnOpenDetail(r.id) : undefined,
@@ -273,7 +288,7 @@ export default function FlowCanvas({ projectId, entities = [], activeThreadId = 
       nodeCountRef.current = all.length;
       return all;
     });
-  }, [skin, projectId, activeThreadId, deleteNode, onTextChange, getOnAnimate, getOnOpenDetail]);
+  }, [skin, projectId, activeThreadId, onTextChange, getOnAnimate, getOnOpenDetail]);
 
   // Initial load + reload when the active thread changes (re-bridges that thread).
   useEffect(() => { void reload(); }, [reload]);
@@ -358,6 +373,8 @@ export default function FlowCanvas({ projectId, entities = [], activeThreadId = 
         onNodesChange={onNodesChange}
         panOnDrag={panMode}
         selectionOnDrag={!panMode}
+        deleteKeyCode={null}
+        proOptions={{ hideAttribution: true }}
         fitView
       >
         <Background />
@@ -398,21 +415,19 @@ export default function FlowCanvas({ projectId, entities = [], activeThreadId = 
             <button
               type="button"
               className={panMode ? "cv-tb" : "cv-tb cv-tb-active"}
-              title={panMode ? "Select tool (drag to box-select)" : "Hand tool (drag to pan)"}
-              aria-label="Toggle select / pan"
+              title={panMode ? "Hand tool — drag to pan. Click to switch to select." : "Select tool — drag to box-select. Click to switch to hand."}
+              aria-label={panMode ? "Hand tool active" : "Select tool active"}
               aria-pressed={!panMode}
               onClick={() => setPanMode((v) => !v)}
             >
-              <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.9"><path d="m3 3 7.5 18 2.5-7.5L20.5 11 3 3z" /></svg>
+              {panMode ? (
+                <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.9" strokeLinecap="round" strokeLinejoin="round"><path d="M18 11V6a2 2 0 0 0-4 0" /><path d="M14 10V4a2 2 0 0 0-4 0v2" /><path d="M10 10.5V6a2 2 0 0 0-4 0v8" /><path d="M18 8a2 2 0 1 1 4 0v6a8 8 0 0 1-8 8h-2c-2.8 0-4.5-.86-5.99-2.34l-3.6-3.6a2 2 0 0 1 2.83-2.82L7 15" /></svg>
+              ) : (
+                <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.9"><path d="m3 3 7.5 18 2.5-7.5L20.5 11 3 3z" /></svg>
+              )}
             </button>
             <span className="cv-tb-div" />
-            <button type="button" className="cv-tb cv-tb-gen" aria-expanded={composerOpen} onClick={() => setComposerOpen((v) => !v)}>
-              <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="m12 3 1.9 5.1L19 10l-5.1 1.9L12 17l-1.9-5.1L5 10z" /></svg>
-              <span>Generate</span>
-              <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="m6 9 6 6 6-6" /></svg>
-            </button>
-            <span className="cv-tb-div" />
-            <button type="button" className="cv-tb" title="Image" aria-label="Image" onClick={() => setComposerOpen(true)}>
+            <button type="button" className="cv-tb" title="Generate an image — describe what you want" aria-label="Generate image" aria-expanded={composerOpen} onClick={() => setComposerOpen((v) => !v)}>
               <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.9"><rect x="3" y="3" width="18" height="18" rx="3" /><circle cx="9" cy="9" r="2" /><path d="m21 15-5-5L5 21" /></svg>
             </button>
             <button type="button" className="cv-tb" title={selectedImageId ? "Animate selected image" : "Select an image, then Video to animate it"} aria-label="Video" disabled={!selectedImageId} onClick={animateSelected}>
@@ -452,6 +467,41 @@ export default function FlowCanvas({ projectId, entities = [], activeThreadId = 
           <button className="al-btn al-btn-sm" type="button" onClick={addTextNode}>+ Text</button>
         </form>
       )}
+      <Dialog open={pendingDeleteId !== null} onOpenChange={(open) => { if (!open) setPendingDeleteId(null); }}>
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>Remove from canvas?</DialogTitle>
+            <DialogDescription>
+              This takes the card off your board. Any generated image or video stays saved in your library.
+            </DialogDescription>
+          </DialogHeader>
+          <DialogFooter>
+            <Button variant="ghost" onClick={() => setPendingDeleteId(null)}>Cancel</Button>
+            <Button
+              variant="destructive"
+              onClick={() => { if (pendingDeleteId) deleteNode(pendingDeleteId); setPendingDeleteId(null); }}
+            >
+              Remove
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+      <Dialog open={pendingAnimateId !== null} onOpenChange={(open) => { if (!open) setPendingAnimateId(null); }}>
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>Make a video from this image?</DialogTitle>
+            <DialogDescription>
+              Otto will animate this image into a short video. This uses credits.
+            </DialogDescription>
+          </DialogHeader>
+          <DialogFooter>
+            <Button variant="ghost" onClick={() => setPendingAnimateId(null)}>Cancel</Button>
+            <Button onClick={() => { if (pendingAnimateId) runAnimate(pendingAnimateId); setPendingAnimateId(null); }}>
+              Make video
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
     </div>
   );
 }
