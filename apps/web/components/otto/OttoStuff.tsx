@@ -70,7 +70,7 @@ function EntityTile({
   }
 
   return (
-    <div className="overflow-hidden rounded-[20px] border border-border bg-card shadow-sm">
+    <div className="overflow-hidden rounded-[14px] border border-border bg-card shadow-sm">
       <div className="flex aspect-square flex-col items-center justify-center gap-2 bg-muted">
         {imgErrored ? (
           <>
@@ -94,7 +94,7 @@ function EntityTile({
           </>
         )}
       </div>
-      <div className="px-3 py-2.5">
+      <div className="px-[11px] py-[9px]">
         {editing ? (
           <div>
             <Input
@@ -112,14 +112,14 @@ function EntityTile({
         ) : (
           <div>
             <div className="flex items-center gap-1">
-              <div className="flex-1 overflow-hidden text-ellipsis whitespace-nowrap text-[0.875rem] font-semibold text-foreground">
+              <div className="flex-1 overflow-hidden text-ellipsis whitespace-nowrap text-[0.84375rem] font-semibold text-foreground">
                 {e.name}
               </div>
               <Button variant="ghost" size="sm" onClick={() => { setEditName(e.name); setEditError(null); setEditing(true); }} aria-label="Rename"><Pencil size={13} /></Button>
               <Button variant="ghost" size="sm" onClick={() => onDelete(e.id)} aria-label="Delete"><Trash2 size={13} /></Button>
             </div>
             {editError && <div role="alert" className="mt-0.5 text-[0.75rem] text-[var(--error-soft-foreground)]">{editError}</div>}
-            <div className="mt-0.5 text-[0.75rem] text-muted-foreground/70">
+            <div className="mt-px text-[0.71875rem] text-muted-foreground/70">
               {e.type.toLowerCase()} · used {e.usageCount} {e.usageCount === 1 ? "time" : "times"}
             </div>
           </div>
@@ -138,7 +138,7 @@ function AdJobCard({ job }: { job: AdJobItem }) {
   const when = new Date(job.createdAt).toLocaleDateString(undefined, { month: "short", day: "numeric" });
 
   return (
-    <div className="flex flex-col gap-2 rounded-[20px] border border-border bg-card p-3">
+    <div className="flex flex-col gap-2 rounded-[14px] border border-border bg-card p-3">
       <div className="flex items-center gap-2">
         <span className="text-muted-foreground/70">
           {job.kind === "video" ? <Film size={15} /> : <ImageIcon size={15} />}
@@ -172,7 +172,7 @@ function AdMediaTile({ ad }: { ad: AdTile }) {
   const mediaAlt = ad.prompt ? `Generated image: ${ad.prompt}` : "Generated image";
 
   return (
-    <div className="relative overflow-hidden rounded-[20px] border border-border bg-muted">
+    <div className="relative overflow-hidden rounded-[14px] border border-border bg-muted">
       {errored ? (
         <div className="flex min-h-[120px] flex-col items-center justify-center gap-2 p-6">
           <AlertCircle size={20} className="text-muted-foreground/70" />
@@ -251,7 +251,7 @@ export function OttoStuff({ entities, ads, adJobs }: OttoStuffProps) {
         }
       `}</style>
       <div className="mx-auto max-w-[880px]">
-        <h1 className="m-0 mb-4 text-[1.75rem] font-bold text-foreground">
+        <h1 className="m-0 mb-4 text-[1.5rem] font-bold tracking-[-0.02em] text-foreground">
           My stuff
         </h1>
         <div className="mb-5 max-w-[280px]">
@@ -259,13 +259,13 @@ export function OttoStuff({ entities, ads, adJobs }: OttoStuffProps) {
             <TabsList className="w-full justify-start h-auto! gap-1 rounded-[14px] bg-muted p-1">
               <TabsTrigger
                 value="cast"
-                className="flex-none h-auto border-0 rounded-[10px] px-3.5 py-1.5 text-[0.875rem] font-medium text-muted-foreground data-[state=active]:bg-card data-[state=active]:font-semibold data-[state=active]:text-foreground data-[state=active]:shadow-xs"
+                className="flex-none h-auto border-0 rounded-[10px] px-1 py-2 text-[0.875rem] font-semibold text-muted-foreground data-[state=active]:bg-card data-[state=active]:font-semibold data-[state=active]:text-foreground data-[state=active]:shadow-xs"
               >
                 Cast
               </TabsTrigger>
               <TabsTrigger
                 value="ads"
-                className="flex-none h-auto border-0 rounded-[10px] px-3.5 py-1.5 text-[0.875rem] font-medium text-muted-foreground data-[state=active]:bg-card data-[state=active]:font-semibold data-[state=active]:text-foreground data-[state=active]:shadow-xs"
+                className="flex-none h-auto border-0 rounded-[10px] px-1 py-2 text-[0.875rem] font-semibold text-muted-foreground data-[state=active]:bg-card data-[state=active]:font-semibold data-[state=active]:text-foreground data-[state=active]:shadow-xs"
               >
                 Ads
               </TabsTrigger>
@@ -301,11 +301,11 @@ export function OttoStuff({ entities, ads, adJobs }: OttoStuffProps) {
                 </div>
               ) : (
                 groups.map((group) => (
-                  <section key={group.type} className="mb-7">
-                    <h2 className="m-0 mb-3 text-[0.875rem] font-semibold uppercase tracking-[0.06em] text-muted-foreground">
+                  <section key={group.type} className="mb-[18px]">
+                    <h2 className="m-0 mb-3 text-[0.75rem] font-semibold uppercase tracking-[0.05em] text-muted-foreground">
                       {group.label}
                     </h2>
-                    <div className="grid grid-cols-[repeat(auto-fill,minmax(150px,1fr))] gap-4">
+                    <div className="grid grid-cols-[repeat(auto-fill,minmax(146px,1fr))] gap-[14px]">
                       {group.items.map((e) => (
                         <EntityTile key={e.id} e={e} onRename={handleRename} onDelete={handleDelete} />
                       ))}

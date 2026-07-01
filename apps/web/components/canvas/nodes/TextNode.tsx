@@ -15,14 +15,14 @@ export function TextNode({ data, selected }: NodeProps) {
       </span>
     {/* Card body is draggable; only the textarea + delete button opt out of drag
         (nodrag) so typing/selecting text and clicking ✕ don't move the node. */}
-    <div className="al-panel" style={{ width: "100%", height: "100%", padding: 8, borderRadius: 12 }}>
+    <div className="al-panel" style={{ width: "100%", height: "100%", padding: "11px 12px", borderRadius: 14 }}>
       <textarea
         className="nodrag"
         value={val}
         onChange={(e) => setVal(e.target.value)}
         onBlur={() => d.onChange?.(val)}
         placeholder="Type here…"
-        style={{ width: "100%", height: "100%", border: "none", background: "transparent", resize: "none", outline: "none" }}
+        style={{ width: "100%", height: "100%", border: "none", background: "transparent", resize: "none", outline: "none", fontSize: 13, fontWeight: 500, lineHeight: 1.45 }}
       />
       <button className="al-btn al-btn-glass al-btn-sm nodrag" style={{ position: "absolute", top: 6, right: 6 }} onClick={d.onDelete}>✕</button>
     </div>

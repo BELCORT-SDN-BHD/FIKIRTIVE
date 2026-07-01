@@ -238,25 +238,25 @@ export function OttoMemory({ initialMemory, projectId }: { initialMemory: Memory
     // ancestor (--leading-relaxed); it survives S4 teardown (when .fk/otto-theme.css is
     // removed and .gb — which sets no line-height — applies at the root). Value-identical
     // today → zero visual change; without it the text compacts post-teardown.
-    <div className="gb flex-1 overflow-auto p-6 leading-[1.65]">
+    <div className="gb flex-1 overflow-auto p-[24px_28px_36px] leading-[1.65]">
       <div className="mx-auto max-w-[720px]">
-        <h1 className="m-0 text-[1.75rem] font-bold text-foreground">
+        <h1 className="m-0 text-[1.5rem] font-bold text-foreground leading-tight">
           Brand memory
         </h1>
-        <p className="text-[1rem] text-muted-foreground mt-2 mb-5">
+        <p className="text-[0.9375rem] text-muted-foreground mt-[5px] mb-[18px] leading-[1.5]">
           Chat with Otto about your brand — what you sell, your style, who it&apos;s for. Otto uses it on every campaign.
         </p>
 
         {/* ── Research my brand ── */}
-        <div className="rounded-[18px] border border-border bg-secondary p-6 mb-5">
+        <div className="rounded-[16px] border border-border bg-secondary p-[18px] mb-5">
           <div className="flex items-center gap-2 mb-3">
             {/* Globe icon: coral (OTTO agent element) → text-brand */}
-            <Globe size={18} className="text-brand" />
-            <span className="font-bold text-foreground">
+            <Globe size={17} className="text-brand" />
+            <span className="text-[0.875rem] font-semibold text-foreground">
               Research my brand from a URL
             </span>
           </div>
-          <p className="text-[0.875rem] text-muted-foreground mb-3 mt-0">
+          <p className="text-[0.75rem] text-muted-foreground mb-3 mt-0">
             Paste your website and Otto will read it and propose brand facts to add to memory.
           </p>
           <div className="flex gap-2 items-end">
@@ -301,7 +301,7 @@ export function OttoMemory({ initialMemory, projectId }: { initialMemory: Memory
                       key={i}
                       type="button"
                       onClick={() => toggleFact(i)}
-                      className={`flex items-start gap-2 px-3.5 py-2.5 rounded-[10px] cursor-pointer text-left transition-colors duration-150 ${selected ? "border-[1.5px] border-primary bg-card" : "border-[1.5px] border-border bg-card"}`}
+                      className={`flex items-start gap-2 px-[15px] py-[13px] rounded-[10px] cursor-pointer text-left transition-colors duration-150 ${selected ? "border-[1.5px] border-primary bg-card" : "border-[1.5px] border-border bg-card"}`}
                     >
                       <div
                         className={`w-[18px] h-[18px] rounded-[4px] flex-none mt-[1px] flex items-center justify-center transition-colors duration-150 ${selected ? "border-[1.5px] border-primary bg-primary" : "border-[1.5px] border-border bg-transparent"}`}
@@ -310,7 +310,7 @@ export function OttoMemory({ initialMemory, projectId }: { initialMemory: Memory
                       </div>
                       <div>
                         <div className="mb-1"><Badge variant="default">{fact.category}</Badge></div>
-                        <div className="text-[0.875rem] text-foreground leading-relaxed">
+                        <div className="text-[0.875rem] text-foreground leading-[1.5]">
                           {fact.content}
                         </div>
                       </div>
@@ -332,11 +332,11 @@ export function OttoMemory({ initialMemory, projectId }: { initialMemory: Memory
         </div>
 
         {/* ── Chat panel ── */}
-        <div className="rounded-[18px] border border-border bg-secondary p-6">
+        <div className="rounded-[16px] border border-border bg-secondary p-[18px]">
           <div className="flex items-center gap-2 mb-3">
             {/* Sparkles icon: coral (OTTO agent element) → text-brand */}
-            <Sparkles size={18} className="text-brand" />
-            <span className="font-bold text-foreground">
+            <Sparkles size={17} className="text-brand" />
+            <span className="text-[0.875rem] font-semibold text-foreground">
               Chat with Otto about your brand
             </span>
           </div>
@@ -377,7 +377,7 @@ export function OttoMemory({ initialMemory, projectId }: { initialMemory: Memory
                   className={`flex ${b.role === "you" ? "justify-end" : "justify-start"}`}
                 >
                   <div
-                    className={`max-w-[78%] px-3.5 py-2 text-[0.875rem] leading-relaxed whitespace-pre-wrap break-words ${b.role === "you" ? "bg-primary text-primary-foreground" : "bg-card text-foreground"}`}
+                    className={`max-w-[78%] px-3.5 py-2 text-[0.875rem] leading-[1.5] whitespace-pre-wrap break-words ${b.role === "you" ? "bg-primary text-primary-foreground" : "bg-card text-foreground"}`}
                     style={{
                       borderRadius: b.role === "you" ? "16px 16px 4px 16px" : "16px 16px 16px 4px",
                     }}
@@ -432,8 +432,8 @@ export function OttoMemory({ initialMemory, projectId }: { initialMemory: Memory
         </div>
 
         {/* ── What Otto remembers ── */}
-        <div className="mt-8">
-          <div className="flex items-center justify-between mb-4">
+        <div className="mt-[22px]">
+          <div className="flex items-center justify-between mb-[10px]">
             <h2 className="font-semibold text-[1.125rem] text-foreground m-0">
               What Otto remembers
             </h2>
@@ -449,7 +449,7 @@ export function OttoMemory({ initialMemory, projectId }: { initialMemory: Memory
 
           {/* Manual add form — togglable */}
           {addOpen && (
-            <div className="rounded-[18px] border border-border bg-secondary p-6 mb-4">
+            <div className="rounded-[16px] border border-border bg-secondary p-[18px] mb-4">
               <div className="flex flex-wrap gap-2 mb-2">
                 {CATEGORIES.map((c) => {
                   const active = c === category;
@@ -495,7 +495,7 @@ export function OttoMemory({ initialMemory, projectId }: { initialMemory: Memory
               {error && <div role="alert" className="text-[var(--error-soft-foreground)] text-[0.875rem] mt-1.5">{error}</div>}
               <div className="flex justify-end mt-3">
                 <Button disabled={busy || !draft.trim()} onClick={add}>
-                  <Plus size={18} />
+                  <Plus size={16} />
                   {busy ? "Saving…" : "Add to memory"}
                 </Button>
               </div>
@@ -510,12 +510,12 @@ export function OttoMemory({ initialMemory, projectId }: { initialMemory: Memory
               </div>
             )}
             {memory.map((m) => (
-              <div key={m.id} className="rounded-[18px] border border-border bg-card shadow-md p-6">
+              <div key={m.id} className="rounded-[14px] border border-border bg-card p-[13px_15px]">
                 <div className="flex items-start gap-3">
                   <div className="flex-1 min-w-0">
                     <div className="flex items-center gap-2 mb-2">
                       <Badge variant="default">{m.category}</Badge>
-                      <span className="text-[0.75rem] text-muted-foreground/70">
+                      <span className="text-[0.71875rem] text-muted-foreground/70">
                         {m.source === "otto" ? "Otto learned this" : "You added this"}
                         {whenLabel(m.updatedAt) ? ` · ${whenLabel(m.updatedAt)}` : ""}
                       </span>
@@ -523,7 +523,7 @@ export function OttoMemory({ initialMemory, projectId }: { initialMemory: Memory
                     {editingId === m.id ? (
                       <Textarea className="[field-sizing:fixed] min-h-0" value={editText} onChange={(e) => setEditText(e.target.value)} rows={3} />
                     ) : (
-                      <div className="text-[0.875rem] text-foreground leading-relaxed whitespace-pre-wrap break-words">
+                      <div className="text-[0.875rem] text-foreground leading-[1.5] whitespace-pre-wrap break-words">
                         {m.content}
                       </div>
                     )}
@@ -531,16 +531,16 @@ export function OttoMemory({ initialMemory, projectId }: { initialMemory: Memory
                   <div className="flex gap-1 flex-none">
                     {editingId === m.id ? (
                       <>
-                        <Button variant="ghost" size="sm" onClick={() => saveEdit(m.id)} aria-label="Save"><Check size={16} /></Button>
-                        <Button variant="ghost" size="sm" onClick={() => setEditingId(null)} aria-label="Cancel"><X size={16} /></Button>
+                        <Button variant="ghost" size="sm" onClick={() => saveEdit(m.id)} aria-label="Save"><Check size={15} /></Button>
+                        <Button variant="ghost" size="sm" onClick={() => setEditingId(null)} aria-label="Cancel"><X size={15} /></Button>
                       </>
                     ) : (
                       <>
                         <Button variant="ghost" size="sm" onClick={() => askOttoAbout(m.content)} aria-label="Ask Otto about this" title="Ask Otto about this">
-                          <MessageCircle size={16} />
+                          <MessageCircle size={15} />
                         </Button>
-                        <Button variant="ghost" size="sm" onClick={() => { setEditingId(m.id); setEditText(m.content); }} aria-label="Edit"><Pencil size={16} /></Button>
-                        <Button variant="ghost" size="sm" onClick={() => remove(m.id)} aria-label="Delete"><Trash2 size={16} /></Button>
+                        <Button variant="ghost" size="sm" onClick={() => { setEditingId(m.id); setEditText(m.content); }} aria-label="Edit"><Pencil size={15} /></Button>
+                        <Button variant="ghost" size="sm" onClick={() => remove(m.id)} aria-label="Delete"><Trash2 size={15} /></Button>
                       </>
                     )}
                   </div>

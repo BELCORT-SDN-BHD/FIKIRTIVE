@@ -5,7 +5,7 @@
 // skin keeps the plain centered text so the old look is untouched (strangler).
 function OttoCloud() {
   return (
-    <svg width="20" height="18" viewBox="0 0 120 110" aria-hidden>
+    <svg width="30" height="27" viewBox="0 0 120 110" aria-hidden>
       <g fill="currentColor">
         <ellipse cx="60" cy="64" rx="43" ry="22" />
         <circle cx="37" cy="52" r="18" />

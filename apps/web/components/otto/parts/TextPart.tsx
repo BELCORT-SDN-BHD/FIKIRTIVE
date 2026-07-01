@@ -32,7 +32,7 @@ export function TextPart({ role, text, streaming, animateIn }: TextPartProps) {
             color: "var(--primary-foreground)",
             borderRadius: "20px 20px 0.25rem 20px",
             fontSize: "0.875rem",
-            lineHeight: "1.5",
+            lineHeight: "1.45",
             whiteSpace: "pre-wrap",
             wordBreak: "break-word",
           }}

@@ -1,12 +1,13 @@
 import type { Metadata } from "next";
-import { Hanken_Grotesk, Geist_Mono, Geist } from "next/font/google";
+import { Hanken_Grotesk, JetBrains_Mono, Geist } from "next/font/google";
 import "./globals.css";
 import { isImpersonating } from "@/lib/better-auth/compat";
 import { ImpersonationBanner } from "@/components/admin/ImpersonationBanner";
 
-// Vapor type system: Hanken Grotesk for everything, Geist Mono for metadata
+// Vapor type system (legacy): Hanken Grotesk for everything
 const body = Hanken_Grotesk({ variable: "--font-body", subsets: ["latin"] });
-const meta = Geist_Mono({ variable: "--font-meta", subsets: ["latin"] });
+// Mono for data/IDs — JetBrains Mono, matching design system 0abf8563
+const meta = JetBrains_Mono({ variable: "--font-meta", subsets: ["latin"] });
 // Grok-bright type system: Geist (sans) for the new `.gb` screens
 const geist = Geist({ variable: "--font-geist", subsets: ["latin"] });
 

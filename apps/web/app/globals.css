@@ -66,16 +66,16 @@
   /* type scale (prototype tokens; family vars come from next/font) */
   --font-sans: var(--font-body), "Helvetica Neue", system-ui, sans-serif;
   --font-mono: var(--font-meta), "SFMono-Regular", Menlo, monospace;
-  --text-display: 600 32px/1.08 var(--font-sans);
+  --text-display: 700 32px/1.1 var(--font-sans);
   --text-title: 600 22px/1.15 var(--font-sans);
   --text-heading: 600 16px/1.3 var(--font-sans);
-  --text-body: 400 14px/1.55 var(--font-sans);
+  --text-body: 400 14px/1.5 var(--font-sans);
   --text-body-medium: 500 14px/1.55 var(--font-sans);
   --text-small: 400 12.5px/1.5 var(--font-sans);
-  --text-caption: 500 11.5px/1.4 var(--font-sans);
+  --text-caption: 500 11.5px/1.5 var(--font-sans);
   --text-mono-label: 500 11px/1.4 var(--font-mono);
   --text-mono-meta: 400 12px/1.5 var(--font-mono);
-  --tracking-display: -0.03em;
+  --tracking-display: -0.035em;
   --tracking-tight: -0.02em;
   --tracking-mono-label: 0.12em;
 
@@ -287,7 +287,7 @@ h1, h2, h3 { font-family: var(--font-sans); font-weight: 600; letter-spacing: va
 .al-input-affix svg{width:15px;height:15px;}
 
 .al-seg{display:inline-flex;gap:3px;padding:3px;background:rgba(255,255,255,.05);border:1px solid var(--line-2);border-radius:var(--radius-md);-webkit-backdrop-filter:var(--backdrop-glass-light);backdrop-filter:var(--backdrop-glass-light);font-family:var(--font-sans);}
-.al-seg-item{border:none;background:transparent;color:var(--fg-3);font-family:var(--font-sans);font-size:12.5px;font-weight:500;padding:6px 14px;border-radius:calc(var(--radius-md) - 4px);cursor:pointer;transition:background var(--dur-fast) var(--ease-out),color var(--dur-fast) var(--ease-out);white-space:nowrap;}
+.al-seg-item{border:none;background:transparent;color:var(--fg-3);font-family:var(--font-sans);font-size:12.5px;font-weight:600;padding:6px 14px;border-radius:calc(var(--radius-md) - 4px);cursor:pointer;transition:background var(--dur-fast) var(--ease-out),color var(--dur-fast) var(--ease-out);white-space:nowrap;}
 .al-seg-item:hover{color:var(--fg-2);}
 .al-seg-item:focus-visible{outline:none;box-shadow:var(--ring-focus);}
 .al-seg-item-active{background:var(--glass-2);color:var(--fg-1);box-shadow:var(--inset-light),0 2px 8px rgba(0,0,0,.35);}
@@ -319,7 +319,7 @@ h1, h2, h3 { font-family: var(--font-sans); font-weight: 600; letter-spacing: va
 
 .sidenav { width: 236px; flex: none; display: flex; flex-direction: column; padding: 18px 12px 14px; border-right: 1px solid var(--line-2); }
 .sidenav-brand { display: flex; align-items: center; gap: 8px; padding: 0 10px 18px; min-height: 30px; }
-.wordmark { display: inline-flex; align-items: center; gap: 6px; white-space: nowrap; font-family: var(--font-sans); font-weight: 650; font-size: 21px; letter-spacing: -0.03em; color: var(--fg-1); line-height: 1; }
+.wordmark { display: inline-flex; align-items: center; gap: 6px; white-space: nowrap; font-family: var(--font-sans); font-weight: 700; font-size: 21px; letter-spacing: -0.035em; color: var(--fg-1); line-height: 1; }
 .wordmark-dot { display: inline-block; width: 7px; height: 7px; border-radius: 99px; background: #ffffff; box-shadow: 0 0 12px rgba(255,255,255,.65); margin-top: 4px; }
 .sidenav-project { position: relative; display: flex; align-items: center; gap: 10px; padding: 9px 10px; margin-bottom: 14px; border-radius: var(--radius-md); border: 1px solid var(--line-2); background: rgba(255,255,255,.04); cursor: pointer; min-height: 40px; width: 100%; text-align: left; color: inherit; transition: background var(--dur-fast) var(--ease-out); }
 .sidenav-project:hover { background: rgba(255,255,255,.07); }
@@ -468,7 +468,7 @@ h1, h2, h3 { font-family: var(--font-sans); font-weight: 600; letter-spacing: va
   min-height: 36px;
   outline: none;
   font-family: var(--font-sans);
-  font-size: 13.5px;
+  font-size: 14px;
   line-height: 1.5;
   color: var(--fg-1);
 }
@@ -616,6 +616,12 @@ h1, h2, h3 { font-family: var(--font-sans); font-weight: 600; letter-spacing: va
   --shadow-lg: 0 14px 34px rgba(20 20 24 / 0.10);
   --shadow-xl: 0 26px 60px rgba(20 20 24 / 0.12), 0 8px 20px rgba(20 20 24 / 0.07);
   --shadow-brand: 0 8px 22px rgba(236 88 40 / 0.26);
+
+  /* Type: Geist sans + JetBrains mono (matches design system 0abf8563) — point the
+     legacy --text-* / --font-mono tokens at Geist/JetBrains here so they stop leaking
+     the Hanken Grotesk / Geist Mono from the Vapor :root on migrated .gb screens. */
+  --font-sans: var(--font-geist);
+  --font-mono: var(--font-meta);
 
   background-color: var(--background);
   color: var(--foreground);
@@ -815,7 +821,7 @@ h1, h2, h3 { font-family: var(--font-sans); font-weight: 600; letter-spacing: va
   box-shadow: 0 6px 18px rgba(20, 20, 24, 0.08);
   -webkit-backdrop-filter: none;
   backdrop-filter: none;
-  border-radius: 13px;
+  border-radius: 14px;
 }
 .gb .react-flow__node.selected .al-panel {
   border: 2px solid var(--brand);
@@ -827,9 +833,9 @@ h1, h2, h3 { font-family: var(--font-sans); font-weight: 600; letter-spacing: va
   position: absolute;
   top: -26px;
   left: 0;
-  font-size: 10.5px;
+  font-size: 11px;
   font-weight: 600;
-  letter-spacing: -0.01em;
+  letter-spacing: normal;
   color: #fff;
   background: #1C1B17;
   padding: 3px 9px;
@@ -837,7 +843,7 @@ h1, h2, h3 { font-family: var(--font-sans); font-weight: 600; letter-spacing: va
   white-space: nowrap;
   pointer-events: none;
 }
-.gb .react-flow__node .cv-nodelabel svg { width: 12px; height: 12px; }
+.gb .react-flow__node .cv-nodelabel svg { width: 13px; height: 13px; }
 .gb .react-flow__node .al-btn-glass {
   background: rgba(255, 255, 255, 0.92);
   border-color: var(--border);
@@ -858,8 +864,9 @@ h1, h2, h3 { font-family: var(--font-sans); font-weight: 600; letter-spacing: va
   flex-direction: column;
   align-items: center;
   justify-content: center;
-  gap: 9px;
+  gap: 8px;
   height: 100%;
+  padding: 12px;
   background: var(--muted);
 }
 .gb .react-flow__node .cv-gen-otto {
@@ -871,7 +878,7 @@ h1, h2, h3 { font-family: var(--font-sans); font-weight: 600; letter-spacing: va
   color: var(--brand);
 }
 .gb .react-flow__node .cv-gen-bar {
-  width: 64%;
+  width: 70%;
   height: 5px;
   border-radius: 99px;
   background: var(--border);
@@ -891,7 +898,8 @@ h1, h2, h3 { font-family: var(--font-sans); font-weight: 600; letter-spacing: va
 }
 @keyframes cv-gen-slide { 0% { left: -40%; } 100% { left: 100%; } }
 .gb .react-flow__node .cv-gen-meta {
-  font-size: 10px;
+  font-size: 11.5px;
+  font-weight: 600;
   color: var(--muted-foreground);
 }
 
@@ -902,8 +910,8 @@ h1, h2, h3 { font-family: var(--font-sans); font-weight: 600; letter-spacing: va
   top: 50%;
   left: 50%;
   transform: translate(-50%, -50%);
-  width: 40px;
-  height: 40px;
+  width: 30px;
+  height: 30px;
   border-radius: 50%;
   border: none;
   background: rgba(255, 255, 255, 0.92);
@@ -927,29 +935,29 @@ h1, h2, h3 { font-family: var(--font-sans); font-weight: 600; letter-spacing: va
 
 /* ── Settings toggle (no shadcn switch exists; gb-styled). */
 .gb .cv-switch { width: 40px; height: 23px; border-radius: 999px; border: none; background: var(--border); position: relative; cursor: pointer; transition: background 140ms cubic-bezier(0.22, 1, 0.36, 1); }
-.gb .cv-switch::after { content: ""; position: absolute; top: 2.5px; left: 2.5px; width: 18px; height: 18px; border-radius: 50%; background: #fff; box-shadow: var(--shadow-sm); transition: left 140ms cubic-bezier(0.22, 1, 0.36, 1); }
+.gb .cv-switch::after { content: ""; position: absolute; top: 3px; left: 3px; width: 17px; height: 17px; border-radius: 50%; background: #fff; box-shadow: var(--shadow-sm); transition: left 140ms cubic-bezier(0.22, 1, 0.36, 1); }
 .gb .cv-switch.on { background: var(--primary); }
-.gb .cv-switch.on::after { left: 19.5px; }
+.gb .cv-switch.on::after { left: 20px; }
 
 /* ── Account / Settings page (Direction 1: one page + sticky left jump-nav). */
 .gb .cv-settings { display: flex; flex: 1; overflow: hidden; }
 .gb .cv-settings-nav { width: 210px; flex: none; border-right: 1px solid var(--border); padding: 30px 16px; position: sticky; top: 0; }
-.gb .cv-settings-nav h1 { font-size: 20px; font-weight: 700; margin-bottom: 16px; }
+.gb .cv-settings-nav h1 { font-size: 24px; font-weight: 700; letter-spacing: -0.02em; margin-bottom: 16px; }
 .gb .cv-settings-nav a { display: block; padding: 8px 11px; border-radius: 9px; font-size: 13.5px; color: var(--foreground); text-decoration: none; margin-bottom: 2px; }
 .gb .cv-settings-nav a.on { background: var(--secondary); color: var(--foreground); font-weight: 600; }
 .gb .cv-settings-nav a.danger { color: #B4321E; }
 .gb .cv-settings-body { flex: 1; overflow: auto; padding: 36px 44px; max-width: 760px; }
 .gb .cv-set-sec { margin-bottom: 34px; scroll-margin-top: 24px; }
-.gb .cv-set-sec h2 { font-size: 16px; font-weight: 700; }
-.gb .cv-set-sub { font-size: 13px; color: var(--muted-foreground); margin: 2px 0 12px; }
+.gb .cv-set-sec h2 { font-size: 12px; font-weight: 600; }
+.gb .cv-set-sub { font-size: 12px; color: var(--muted-foreground); margin: 2px 0 12px; }
 .gb .cv-set-card { background: var(--card); border: 1px solid var(--border); border-radius: 14px; padding: 4px 18px; }
 .gb .cv-set-card.danger { border-color: #E7B7AE; }
 .gb .cv-set-row { display: flex; align-items: center; justify-content: space-between; gap: 16px; padding: 13px 0; border-top: 1px solid var(--border); }
 .gb .cv-set-row:first-child { border-top: none; }
-.gb .cv-set-lbl { display: flex; flex-direction: column; gap: 2px; font-size: 13.5px; font-weight: 500; }
+.gb .cv-set-lbl { display: flex; flex-direction: column; gap: 2px; font-size: 14px; font-weight: 500; }
 .gb .cv-set-hint { font-size: 12px; color: var(--muted-foreground); font-weight: 400; }
 .gb .cv-set-input { border: 1px solid var(--border); border-radius: 9px; padding: 7px 11px; font: inherit; font-size: 13.5px; color: var(--foreground); background: var(--card); width: 240px; }
 .gb .cv-set-input-num { width: 90px; }
 .gb .cv-set-num { display: inline-flex; align-items: center; gap: 7px; color: var(--muted-foreground); font-size: 12.5px; }
-.gb .cv-set-btn { height: 34px; padding: 0 14px; border-radius: 10px; font-size: 13px; font-weight: 600; border: 1px solid var(--border); background: var(--card); color: var(--foreground); cursor: pointer; }
+.gb .cv-set-btn { height: 34px; padding: 0 14px; border-radius: 10px; font-size: 14px; font-weight: 600; border: 1px solid var(--border); background: var(--card); color: var(--foreground); cursor: pointer; }
 .gb .cv-set-btn.danger { border-color: #E7B7AE; color: #B4321E; }

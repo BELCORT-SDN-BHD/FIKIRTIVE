@@ -373,11 +373,11 @@ export default function DetailPanel({
           maxWidth: "90%",
           maxHeight: "85%",
           overflowY: "auto",
-          borderRadius: 16,
-          padding: 24,
+          borderRadius: 20,
+          padding: 22,
           display: "flex",
           flexDirection: "column",
-          gap: 16,
+          gap: 14,
         }}
       >
         {/* Close button */}
@@ -387,7 +387,7 @@ export default function DetailPanel({
           className="al-iconbtn al-iconbtn-md"
           style={{ position: "absolute", top: 12, right: 12 }}
         >
-          <IcX size={16} />
+          <IcX size={17} />
         </button>
 
         {/* Content */}
@@ -406,7 +406,7 @@ export default function DetailPanel({
         {state === "ready" && gen && displayUrl && (
           <>
             {/* Media preview */}
-            <div style={{ borderRadius: 10, overflow: "hidden", background: "var(--muted)", lineHeight: 0 }}>
+            <div style={{ borderRadius: 14, overflow: "hidden", background: "var(--muted)", lineHeight: 0 }}>
               {gen.kind === "video" ? (
                 <video
                   key={displayUrl}
@@ -430,7 +430,7 @@ export default function DetailPanel({
               <div
                 role="listbox"
                 aria-label="Variant thumbnails"
-                style={{ display: "flex", gap: 6, overflowX: "auto", paddingBottom: 2 }}
+                style={{ display: "flex", gap: 9, overflowX: "auto", paddingBottom: 2 }}
               >
                 {gen.urls.map((u, i) => (
                   <button
@@ -440,11 +440,11 @@ export default function DetailPanel({
                     onClick={() => handleVariantPick(i)}
                     style={{
                       flex: "none",
-                      width: 52,
-                      height: 52,
+                      width: 62,
+                      height: 62,
                       padding: 0,
-                      border: `2px solid ${i === selectedIdx ? "var(--brand)" : "var(--border)"}`,
-                      borderRadius: 6,
+                      border: `${i === selectedIdx ? "2px" : "1px"} solid ${i === selectedIdx ? "var(--brand)" : "var(--border)"}`,
+                      borderRadius: 10,
                       overflow: "hidden",
                       cursor: "pointer",
                       background: "var(--muted)",
@@ -464,13 +464,13 @@ export default function DetailPanel({
 
             {/* Prompt text */}
             {gen.prompt && (
-              <p style={{ margin: 0, fontSize: 13, color: "var(--muted-foreground)", lineHeight: 1.5 }}>{gen.prompt}</p>
+              <p style={{ margin: 0, fontSize: 14, color: "var(--muted-foreground)", lineHeight: 1.5 }}>{gen.prompt}</p>
             )}
 
             {/* Aspect picker (17): for image-to-video Animate when model has aspect ratios */}
             {gen.kind === "image" && aspectRatios.length > 0 && (
               <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
-                <span style={{ fontSize: 12, color: "var(--muted-foreground)", flexShrink: 0 }}>Aspect</span>
+                <span style={{ fontSize: 11, fontWeight: 600, letterSpacing: "0.07em", textTransform: "uppercase", color: "var(--muted-foreground)", flexShrink: 0 }}>Aspect</span>
                 <div className="al-seg" role="tablist" aria-label="Aspect ratio">
                   {aspectRatios.map((ar) => (
                     <button
@@ -569,10 +569,10 @@ export default function DetailPanel({
 
             {/* Edit @composer (24) */}
             {gen.kind === "image" && (
-              <div style={{ display: "flex", flexDirection: "column", gap: 8, borderTop: "1px solid var(--border)", paddingTop: 12 }}>
-                <span style={{ fontSize: 12, color: "var(--muted-foreground)" }}>Describe your edit, @ to reference</span>
+              <div style={{ display: "flex", flexDirection: "column", gap: 8, borderTop: "1px solid var(--border)", padding: "13px 16px" }}>
+                <span style={{ fontSize: 12, fontWeight: 500, color: "var(--muted-foreground)" }}>Describe your edit, @ to reference</span>
                 <div style={{ display: "flex", gap: 8, alignItems: "flex-end" }}>
-                  <div className="al-input-wrap" style={{ flex: 1, minWidth: 0, border: "1px solid var(--border)", borderRadius: 8, padding: "6px 10px" }}>
+                  <div className="al-input-wrap" style={{ flex: 1, minWidth: 0, border: "1.5px solid var(--border)", borderRadius: 12, padding: "5px 5px 5px 12px" }}>
                     <MentionInput
                       entities={entities}
                       docKey={composerKey}
