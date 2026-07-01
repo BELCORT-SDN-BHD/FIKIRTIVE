@@ -148,4 +148,8 @@ describe("missingRequired — preflight logic", () => {
   it("empty requires → nothing missing", () => {
     expect(missingRequired([], { anything: 1 })).toEqual([]);
   });
+  it("non-string falsy values (0, false) count as present, not missing", () => {
+    expect(missingRequired([{ field: "n", question: "?" }], { n: 0 })).toEqual([]);
+    expect(missingRequired([{ field: "n", question: "?" }], { n: false })).toEqual([]);
+  });
 });

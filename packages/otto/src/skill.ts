@@ -101,7 +101,7 @@ export function defineOttoSkill<P extends z.ZodObject<any>>(spec: OttoSkillSpec<
 
   // requires: 每个声明的 field 必须存在于 parameters 的 shape（fail-loud，同 #3 身份键检查）。
   const requires = spec.requires ?? [];
-  const unknownReq = requires.filter((r) => !(r.field in shape));
+  const unknownReq = requires.filter((r) => !Object.keys(shape).includes(r.field));
   if (unknownReq.length > 0) {
     throw new Error(
       `[defineOttoSkill] "${spec.name}" declares requires field(s) not in parameters: ` +
