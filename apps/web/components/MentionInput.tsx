@@ -243,7 +243,7 @@ export function MentionInput({ entities, initialDoc, docKey, placeholder, disabl
     ],
     editorProps: {
       handleKeyDown: (_view, event) => {
-        if (onSubmitRef.current && (event.metaKey || event.ctrlKey) && event.key === "Enter") { onSubmitRef.current(); return true; }
+        if (onSubmitRef.current && (event.shiftKey || event.metaKey || event.ctrlKey) && event.key === "Enter") { onSubmitRef.current(); return true; }
         return false;
       },
     },

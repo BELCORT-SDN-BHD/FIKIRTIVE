@@ -238,7 +238,7 @@ export function OttoFrontDoor({
         return;
       }
     }
-    if (e.key === "Enter" && !e.shiftKey) {
+    if (e.key === "Enter" && e.shiftKey) {
       e.preventDefault();
       void start({});
     }
