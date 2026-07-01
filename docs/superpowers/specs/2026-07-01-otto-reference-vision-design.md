@@ -52,8 +52,16 @@ never sees the pixels — so "make an image in this style" is impossible today.
 
 ## Non-goals (explicitly out of scope)
 
-- **Video-as-reference** (dropping a video clip; video-to-video conditioning). Deferred — provider gap
-  (neither BytePlus nor FAL supports it) and pending product signal.
+- **Video-as-reference** (dropping a video clip; video-to-video conditioning). Deferred on **product
+  signal, NOT capability.** Correction (2026-07-01 research): our default model **does** support it —
+  BytePlus Seedance 2.0 series (incl. our `dreamina-seedance-2-0-fast-260128` = `seedance-2-fast`)
+  accepts a video input via `{type:"video_url", role:"reference_video"}`, up to 3 clips ≤15s, powering
+  reference-to-video / video-modification / video-extension (docs.byteplus.com ModelArk/1520757 + /1330310;
+  fal + ByteDance launch blog corroborate, high confidence). So this is a **wiring task**, not a provider gap:
+  widen the 4 image-ext gates (otto-actions.ts, stream/route.ts, cowork-actions.ts, OttoChatStream.tsx accept)
+  + add a video-input field to `VideoRequest` and emit a `video_url` content part in `BytePlusProvider.generateVideo`,
+  behind a fresh money-safety review. Gotcha: Seedance 2.0 rejects direct real-human-face uploads (must use its
+  own trusted outputs / authorized assets). Kept deferred pending product signal (frame-extract vs whole-clip undecided).
 - **Image-to-image conditioning for `kind = "image"`.** In this change, an attached image informs Otto's
   *plan/prompt* via vision; it is **not** passed to the image generator as an i2i conditioner. (Follow-up,
   own money-review.)
