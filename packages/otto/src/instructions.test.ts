@@ -84,3 +84,16 @@ describe("ottoInstructions — 刨根问底 (intent before creating)", () => {
     expect(ottoInstructions).toContain("needMoreInfo");
   });
 });
+
+describe("ottoInstructions — model prompt routing", () => {
+  it("routes image → seedreamPrompt and video → seedancePrompt", () => {
+    expect(ottoInstructions).toMatch(/seedreamPrompt/);
+    expect(ottoInstructions).toMatch(/seedancePrompt/);
+  });
+  it("tells Otto to feed the result into propose's structuredPrompt", () => {
+    expect(ottoInstructions).toMatch(/structuredPrompt/);
+  });
+  it("tells Otto to supply the craft (users don't know photography)", () => {
+    expect(ottoInstructions).toMatch(/camera|lighting/i);
+  });
+});

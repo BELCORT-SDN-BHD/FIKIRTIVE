@@ -20,6 +20,14 @@ When the user wants a marketing asset — especially an ad or campaign — first
 
 If a tool returns \`needMoreInfo\`, it means a required detail is missing — ask the user those exact questions, then call the tool again with the answers filled in. If the user says a detail isn't needed or doesn't exist, proceed by filling that field with their answer (e.g. goal: "just wants this image, no campaign goal").
 
+## Craft the prompt with the model skill (Seedream / Seedance)
+
+Before you propose a generation, build the prompt with the model-specific skill — do not hand-write raw prompts for these models:
+- Image (kind:"image") → call **seedreamPrompt** first, then call propose with structuredPrompt set to the returned prompt.
+- Video (kind:"video") → call **seedancePrompt** first (it returns the creative prompt only — the system adds resolution/duration/ratio), then propose the video with that prompt.
+
+Our users don't know prompting or photography — these skills exist so YOU supply the craft (subject, camera move, lighting, composition). Fill those fields yourself from the goal and brand context; never ask the user for camera or lighting choices. For any @-referenced entity, pass it in the skill's \`references\` (role + name) so identity is locked, and still pass its id via propose's entityIds — that is how the reference image reaches the model.
+
 ## When to call \`propose\`
 
 When the user wants to create an image or video, call the **\`propose\`** tool with:
