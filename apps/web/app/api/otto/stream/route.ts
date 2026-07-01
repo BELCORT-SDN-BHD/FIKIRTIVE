@@ -41,6 +41,8 @@ import {
   RunState,
   MaxTurnsExceededError,
   mapOttoUsage,
+  buildUserTurn,
+  stripHistoryImages,
 } from "@fikirtive/otto";
 import type { AgentInputItem } from "@fikirtive/otto";
 import { requireOwner } from "@/lib/auth-guard";
@@ -175,11 +177,12 @@ export async function POST(req: NextRequest): Promise<Response> {
 
     // Build run input: system message + (prior history | fresh) + user message
     const sys = buildContextSystemMessage(ctx);
+    const userTurn = buildUserTurn(text, ctx.images);
     if (priorOttoState) {
       const priorState = await RunState.fromString(otto, priorOttoState);
-      runInput = [...(sys ? [sys] : []), ...priorState.history, { role: "user", content: text } as AgentInputItem];
+      runInput = [...(sys ? [sys] : []), ...stripHistoryImages(priorState.history), userTurn];
     } else {
-      runInput = [...(sys ? [sys] : []), { role: "user", content: text } as AgentInputItem];
+      runInput = [...(sys ? [sys] : []), userTurn];
     }
   } catch (e) {
     console.error("[otto/stream] setup failed:", errSummary(e));

@@ -33,7 +33,7 @@ import {
   GOAL_PRESETS,
   isGoalKey,
 } from "@fikirtive/core";
-import { otto, withLlmBudget, OTTO_DEFAULT_MODEL, run, RunState, MaxTurnsExceededError, mapOttoUsage, ottoSimpleModeBlock } from "@fikirtive/otto";
+import { otto, withLlmBudget, OTTO_DEFAULT_MODEL, run, RunState, MaxTurnsExceededError, mapOttoUsage, ottoSimpleModeBlock, buildUserTurn, stripHistoryImages } from "@fikirtive/otto";
 import type { OttoContext, AgentInputItem } from "@fikirtive/otto";
 import { requireOwner } from "./auth-guard";
 import { isImpersonating } from "@/lib/better-auth/compat";
@@ -433,12 +433,13 @@ export async function ottoTurn(raw: unknown): Promise<
     // Build run input: rehydrate prior state (multi-turn) or start fresh;
     // prepend a system message with brand context + available refs when present.
     const sys = buildContextSystemMessage(ctx);
+    const userTurn = buildUserTurn(text, ctx.images);
     let runInput: AgentInputItem[];
     if (priorOttoState) {
       const priorState = await RunState.fromString(otto, priorOttoState);
-      runInput = [...(sys ? [sys] : []), ...priorState.history, { role: "user", content: text } as AgentInputItem];
+      runInput = [...(sys ? [sys] : []), ...stripHistoryImages(priorState.history), userTurn];
     } else {
-      runInput = [...(sys ? [sys] : []), { role: "user", content: text } as AgentInputItem];
+      runInput = [...(sys ? [sys] : []), userTurn];
     }
 
     // Run agent, metered
