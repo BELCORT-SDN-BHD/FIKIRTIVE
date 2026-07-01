@@ -1,7 +1,9 @@
 "use client";
 import React, { useRef, useState } from "react";
 import { Sparkles, Plus, Pencil, Trash2, Check, X, Send, MessageCircle, Globe } from "lucide-react";
-import { Card, Button, Textarea, Badge } from "@/components/fk";
+import { Button } from "@/components/ui/button";
+import { Textarea } from "@/components/ui/textarea";
+import { Badge } from "@/components/ui/badge";
 import { addMemory, updateMemory, deleteMemory, listMyMemory, type MemoryRow } from "@/lib/memory-actions";
 import { researchBrandFromUrl, type ProposedFact } from "@/lib/brand-research";
 import { ottoTurn } from "@/lib/otto-client-actions";
@@ -232,29 +234,35 @@ export function OttoMemory({ initialMemory, projectId }: { initialMemory: Memory
   }
 
   return (
-    <div style={{ flex: 1, overflow: "auto", padding: "var(--space-6)" }}>
-      <div style={{ maxWidth: 720, margin: "0 auto" }}>
-        <h1 style={{ fontFamily: "var(--font-display)", fontWeight: "var(--weight-bold)" as React.CSSProperties["fontWeight"], fontSize: "var(--text-2xl)", color: "var(--text-strong)", margin: 0 }}>
+    // leading-[1.65] pins the line-height this subtree currently INHERITS from the .fk
+    // ancestor (--leading-relaxed); it survives S4 teardown (when .fk/otto-theme.css is
+    // removed and .gb — which sets no line-height — applies at the root). Value-identical
+    // today → zero visual change; without it the text compacts post-teardown.
+    <div className="gb flex-1 overflow-auto p-6 leading-[1.65]">
+      <div className="mx-auto max-w-[720px]">
+        <h1 className="m-0 text-[1.75rem] font-bold text-foreground">
           Brand memory
         </h1>
-        <p style={{ fontSize: "var(--text-base)", color: "var(--text-muted)", marginTop: "var(--space-2)", marginBottom: "var(--space-5)" }}>
+        <p className="text-[1rem] text-muted-foreground mt-2 mb-5">
           Chat with Otto about your brand — what you sell, your style, who it&apos;s for. Otto uses it on every campaign.
         </p>
 
         {/* ── Research my brand ── */}
-        <Card variant="tint" padding="md" style={{ marginBottom: "var(--space-5)" }}>
-          <div style={{ display: "flex", alignItems: "center", gap: "var(--space-2)", marginBottom: "var(--space-3)" }}>
-            <Globe size={18} color="var(--accent)" />
-            <span style={{ fontWeight: "var(--weight-bold)" as React.CSSProperties["fontWeight"], color: "var(--text-strong)" }}>
+        <div className="rounded-[18px] border border-border bg-secondary p-6 mb-5">
+          <div className="flex items-center gap-2 mb-3">
+            {/* Globe icon: coral (OTTO agent element) → text-brand */}
+            <Globe size={18} className="text-brand" />
+            <span className="font-bold text-foreground">
               Research my brand from a URL
             </span>
           </div>
-          <p style={{ fontSize: "var(--text-sm)", color: "var(--text-muted)", marginBottom: "var(--space-3)", marginTop: 0 }}>
+          <p className="text-[0.875rem] text-muted-foreground mb-3 mt-0">
             Paste your website and Otto will read it and propose brand facts to add to memory.
           </p>
-          <div style={{ display: "flex", gap: "var(--space-2)", alignItems: "flex-end" }}>
-            <div style={{ flex: 1 }}>
+          <div className="flex gap-2 items-end">
+            <div className="flex-1">
               <Textarea
+                className="[field-sizing:fixed] min-h-0"
                 value={researchUrl}
                 onChange={(e) => setResearchUrl(e.target.value)}
                 placeholder="https://yourbrand.com"
@@ -263,31 +271,29 @@ export function OttoMemory({ initialMemory, projectId }: { initialMemory: Memory
               />
             </div>
             <Button
-              variant="primary"
-              size="md"
-              leftIcon={<Globe size={16} />}
               disabled={researching || !researchUrl.trim()}
               onClick={() => void doResearch()}
             >
+              <Globe size={16} />
               {researching ? "Researching…" : "Research"}
             </Button>
           </div>
-          <p style={{ fontSize: "var(--text-xs)", color: "var(--text-faint)", marginTop: "var(--space-2)", marginBottom: proposedFacts.length ? "var(--space-3)" : 0 }}>
+          <p className="text-[0.75rem] text-muted-foreground/70 mt-2" style={{ marginBottom: proposedFacts.length ? "0.75rem" : 0 }}>
             Researching uses a little credit.
           </p>
 
           {researchError && (
-            <div role="alert" style={{ color: "var(--error-700)", fontSize: "var(--text-sm)", marginBottom: "var(--space-2)" }}>
+            <div role="alert" className="text-[var(--error-soft-foreground)] text-[0.875rem] mb-2">
               {researchError}
             </div>
           )}
 
           {proposedFacts.length > 0 && (
             <div>
-              <p style={{ fontSize: "var(--text-sm)", fontWeight: "var(--weight-semibold)" as React.CSSProperties["fontWeight"], color: "var(--text-strong)", marginBottom: "var(--space-2)", marginTop: 0 }}>
+              <p className="text-[0.875rem] font-semibold text-foreground mb-2 mt-0">
                 Otto found {proposedFacts.length} brand fact{proposedFacts.length !== 1 ? "s" : ""} — select the ones to add:
               </p>
-              <div style={{ display: "flex", flexDirection: "column", gap: "var(--space-2)", marginBottom: "var(--space-3)" }}>
+              <div className="flex flex-col gap-2 mb-3">
                 {proposedFacts.map((fact, i) => {
                   const selected = selectedFacts.has(i);
                   return (
@@ -295,36 +301,16 @@ export function OttoMemory({ initialMemory, projectId }: { initialMemory: Memory
                       key={i}
                       type="button"
                       onClick={() => toggleFact(i)}
-                      style={{
-                        display: "flex",
-                        alignItems: "flex-start",
-                        gap: "var(--space-2)",
-                        padding: "10px 14px",
-                        borderRadius: 10,
-                        border: selected ? "1.5px solid var(--brand)" : "1.5px solid var(--border-default)",
-                        background: selected ? "var(--surface-raised)" : "var(--surface-card)",
-                        cursor: "pointer",
-                        textAlign: "left",
-                        transition: "var(--transition-control)",
-                      }}
+                      className={`flex items-start gap-2 px-3.5 py-2.5 rounded-[10px] cursor-pointer text-left transition-colors duration-150 ${selected ? "border-[1.5px] border-primary bg-card" : "border-[1.5px] border-border bg-card"}`}
                     >
-                      <div style={{
-                        width: 18,
-                        height: 18,
-                        borderRadius: 4,
-                        border: selected ? "1.5px solid var(--brand)" : "1.5px solid var(--border-default)",
-                        background: selected ? "var(--brand)" : "transparent",
-                        flex: "none",
-                        marginTop: 1,
-                        display: "flex",
-                        alignItems: "center",
-                        justifyContent: "center",
-                      }}>
-                        {selected && <Check size={12} color="var(--text-on-brand)" />}
+                      <div
+                        className={`w-[18px] h-[18px] rounded-[4px] flex-none mt-[1px] flex items-center justify-center transition-colors duration-150 ${selected ? "border-[1.5px] border-primary bg-primary" : "border-[1.5px] border-border bg-transparent"}`}
+                      >
+                        {selected && <Check size={12} className="text-primary-foreground" />}
                       </div>
                       <div>
-                        <div style={{ marginBottom: 4 }}><Badge variant="brand">{fact.category}</Badge></div>
-                        <div style={{ fontSize: "var(--text-sm)", color: "var(--text-body)", lineHeight: "var(--leading-relaxed)" }}>
+                        <div className="mb-1"><Badge variant="default">{fact.category}</Badge></div>
+                        <div className="text-[0.875rem] text-foreground leading-relaxed">
                           {fact.content}
                         </div>
                       </div>
@@ -332,26 +318,25 @@ export function OttoMemory({ initialMemory, projectId }: { initialMemory: Memory
                   );
                 })}
               </div>
-              <div style={{ display: "flex", justifyContent: "flex-end" }}>
+              <div className="flex justify-end">
                 <Button
-                  variant="primary"
-                  size="md"
-                  leftIcon={<Plus size={16} />}
                   disabled={savingFacts || selectedFacts.size === 0}
                   onClick={() => void addSelectedFacts()}
                 >
+                  <Plus size={16} />
                   {savingFacts ? "Saving…" : `Add ${selectedFacts.size} selected`}
                 </Button>
               </div>
             </div>
           )}
-        </Card>
+        </div>
 
         {/* ── Chat panel ── */}
-        <Card variant="tint" padding="md">
-          <div style={{ display: "flex", alignItems: "center", gap: "var(--space-2)", marginBottom: "var(--space-3)" }}>
-            <Sparkles size={18} color="var(--accent)" />
-            <span style={{ fontWeight: "var(--weight-bold)" as React.CSSProperties["fontWeight"], color: "var(--text-strong)" }}>
+        <div className="rounded-[18px] border border-border bg-secondary p-6">
+          <div className="flex items-center gap-2 mb-3">
+            {/* Sparkles icon: coral (OTTO agent element) → text-brand */}
+            <Sparkles size={18} className="text-brand" />
+            <span className="font-bold text-foreground">
               Chat with Otto about your brand
             </span>
           </div>
@@ -359,38 +344,26 @@ export function OttoMemory({ initialMemory, projectId }: { initialMemory: Memory
           {/* Transcript */}
           <div
             ref={transcriptRef}
+            className="flex flex-col overflow-y-auto mb-3"
             style={{
               minHeight: 160,
               maxHeight: 360,
-              overflowY: "auto",
-              display: "flex",
-              flexDirection: "column",
-              gap: "var(--space-3)",
-              marginBottom: "var(--space-3)",
-              padding: chat.length ? "var(--space-2) 0" : 0,
+              gap: "0.75rem",
+              padding: chat.length ? "0.5rem 0" : 0,
             }}
           >
             {chat.length === 0 ? (
-              <div style={{ padding: "var(--space-4) 0", textAlign: "center" }}>
-                <p style={{ fontSize: "var(--text-sm)", color: "var(--text-muted)", marginBottom: "var(--space-3)" }}>
+              <div className="py-4 text-center">
+                <p className="text-[0.875rem] text-muted-foreground mb-3">
                   Tell me about your brand — what you sell, your style, who it&apos;s for — and I&apos;ll remember it.
                 </p>
-                <div style={{ display: "flex", flexWrap: "wrap", gap: 8, justifyContent: "center" }}>
+                <div className="flex flex-wrap gap-2 justify-center">
                   {STARTERS.map((s) => (
                     <button
                       key={s}
                       type="button"
                       onClick={() => setInput(s)}
-                      style={{
-                        padding: "6px 14px",
-                        borderRadius: 999,
-                        border: "1.5px solid var(--border-default)",
-                        background: "var(--surface-card)",
-                        color: "var(--text-body)",
-                        fontSize: "var(--text-sm)",
-                        cursor: "pointer",
-                        transition: "var(--transition-control)",
-                      }}
+                      className="px-3.5 py-1.5 rounded-full border-[1.5px] border-border bg-card text-foreground text-[0.875rem] cursor-pointer transition-colors duration-150"
                     >
                       {s}
                     </button>
@@ -401,22 +374,12 @@ export function OttoMemory({ initialMemory, projectId }: { initialMemory: Memory
               chat.map((b, i) => (
                 <div
                   key={i}
-                  style={{
-                    display: "flex",
-                    justifyContent: b.role === "you" ? "flex-end" : "flex-start",
-                  }}
+                  className={`flex ${b.role === "you" ? "justify-end" : "justify-start"}`}
                 >
                   <div
+                    className={`max-w-[78%] px-3.5 py-2 text-[0.875rem] leading-relaxed whitespace-pre-wrap break-words ${b.role === "you" ? "bg-primary text-primary-foreground" : "bg-card text-foreground"}`}
                     style={{
-                      maxWidth: "78%",
-                      padding: "8px 14px",
                       borderRadius: b.role === "you" ? "16px 16px 4px 16px" : "16px 16px 16px 4px",
-                      background: b.role === "you" ? "var(--brand)" : "var(--surface-card)",
-                      color: b.role === "you" ? "var(--text-on-brand)" : "var(--text-body)",
-                      fontSize: "var(--text-sm)",
-                      lineHeight: "var(--leading-relaxed)",
-                      whiteSpace: "pre-wrap",
-                      wordBreak: "break-word",
                     }}
                   >
                     {b.text}
@@ -425,14 +388,11 @@ export function OttoMemory({ initialMemory, projectId }: { initialMemory: Memory
               ))
             )}
             {sending && (
-              <div style={{ display: "flex", justifyContent: "flex-start" }}>
-                <div style={{
-                  padding: "8px 14px",
-                  borderRadius: "16px 16px 16px 4px",
-                  background: "var(--surface-card)",
-                  color: "var(--text-muted)",
-                  fontSize: "var(--text-sm)",
-                }}>
+              <div className="flex justify-start">
+                <div
+                  className="px-3.5 py-2 bg-card text-muted-foreground text-[0.875rem]"
+                  style={{ borderRadius: "16px 16px 16px 4px" }}
+                >
                   Otto is thinking…
                 </div>
               </div>
@@ -440,15 +400,16 @@ export function OttoMemory({ initialMemory, projectId }: { initialMemory: Memory
           </div>
 
           {chatError && (
-            <div role="alert" style={{ color: "var(--error-700)", fontSize: "var(--text-sm)", marginBottom: "var(--space-2)" }}>
+            <div role="alert" className="text-[var(--error-soft-foreground)] text-[0.875rem] mb-2">
               {chatError}
             </div>
           )}
 
           {/* Composer */}
-          <div style={{ display: "flex", gap: "var(--space-2)", alignItems: "flex-end" }}>
-            <div style={{ flex: 1 }} ref={composerWrapRef}>
+          <div className="flex gap-2 items-end">
+            <div className="flex-1" ref={composerWrapRef}>
               <Textarea
+                className="[field-sizing:fixed] min-h-0"
                 value={input}
                 onChange={(e) => setInput(e.target.value)}
                 onKeyDown={onKeyDown}
@@ -458,40 +419,38 @@ export function OttoMemory({ initialMemory, projectId }: { initialMemory: Memory
               />
             </div>
             <Button
-              variant="primary"
-              size="md"
-              leftIcon={<Send size={16} />}
               disabled={sending || !input.trim()}
               onClick={() => void sendChat()}
             >
+              <Send size={16} />
               Send
             </Button>
           </div>
-          <p style={{ fontSize: "var(--text-xs)", color: "var(--text-faint)", marginTop: "var(--space-2)", marginBottom: 0 }}>
+          <p className="text-[0.75rem] text-muted-foreground/70 mt-2 mb-0">
             Chatting with Otto uses a little credit.
           </p>
-        </Card>
+        </div>
 
         {/* ── What Otto remembers ── */}
-        <div style={{ marginTop: "var(--space-8)" }}>
-          <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: "var(--space-4)" }}>
-            <h2 style={{ fontWeight: "var(--weight-semibold)" as React.CSSProperties["fontWeight"], fontSize: "var(--text-lg)", color: "var(--text-strong)", margin: 0 }}>
+        <div className="mt-8">
+          <div className="flex items-center justify-between mb-4">
+            <h2 className="font-semibold text-[1.125rem] text-foreground m-0">
               What Otto remembers
             </h2>
             <Button
               variant="ghost"
               size="sm"
-              leftIcon={<Plus size={16} />}
               onClick={() => setAddOpen((v) => !v)}
             >
+              <Plus size={16} />
               Add manually
             </Button>
           </div>
 
           {/* Manual add form — togglable */}
           {addOpen && (
-            <Card variant="tint" padding="md" style={{ marginBottom: "var(--space-4)" }}>
-              <div style={{ display: "flex", flexWrap: "wrap", gap: 8, marginBottom: "var(--space-2)" }}>
+            <div className="rounded-[18px] border border-border bg-secondary p-6 mb-4">
+              <div className="flex flex-wrap gap-2 mb-2">
                 {CATEGORIES.map((c) => {
                   const active = c === category;
                   return (
@@ -499,17 +458,7 @@ export function OttoMemory({ initialMemory, projectId }: { initialMemory: Memory
                       key={c}
                       type="button"
                       onClick={() => setCategory(c)}
-                      style={{
-                        padding: "6px 14px",
-                        borderRadius: 999,
-                        border: active ? "1.5px solid var(--brand)" : "1.5px solid var(--border-default)",
-                        background: active ? "var(--brand)" : "var(--surface-card)",
-                        color: active ? "var(--text-on-brand)" : "var(--text-body)",
-                        fontSize: "var(--text-sm)",
-                        fontWeight: "var(--weight-semibold)" as React.CSSProperties["fontWeight"],
-                        cursor: "pointer",
-                        transition: "var(--transition-control)",
-                      }}
+                      className={`px-3.5 py-1.5 rounded-full text-[0.875rem] font-semibold cursor-pointer transition-colors duration-150 ${active ? "border-[1.5px] border-primary bg-primary text-primary-foreground" : "border-[1.5px] border-border bg-card text-foreground"}`}
                     >
                       {c}
                     </button>
@@ -517,76 +466,69 @@ export function OttoMemory({ initialMemory, projectId }: { initialMemory: Memory
                 })}
               </div>
               {/* Category hint + auto-suggest */}
-              <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: "var(--space-3)", minHeight: 20 }}>
-                <span style={{ fontSize: "var(--text-xs)", color: "var(--text-faint)" }}>
+              <div className="flex items-center gap-2 mb-3" style={{ minHeight: 20 }}>
+                <span className="text-[0.75rem] text-muted-foreground/70">
                   {CATEGORY_HINTS[category]}
                 </span>
                 {showCategorySuggest && (
                   <button
                     type="button"
                     onClick={() => setCategory(suggestedCategory!)}
-                    style={{
-                      padding: "2px 10px",
-                      borderRadius: 999,
-                      border: "1.5px solid var(--accent)",
-                      background: "transparent",
-                      color: "var(--accent)",
-                      fontSize: "var(--text-xs)",
-                      fontWeight: "var(--weight-semibold)" as React.CSSProperties["fontWeight"],
-                      cursor: "pointer",
-                    }}
+                    className="px-2.5 py-0.5 rounded-full border-[1.5px] border-brand bg-transparent text-brand text-[0.75rem] font-semibold cursor-pointer"
                   >
                     looks like {suggestedCategory}?
                   </button>
                 )}
               </div>
               <Textarea
+                className="[field-sizing:fixed] min-h-0"
                 value={draft}
                 onChange={(e) => setDraft(e.target.value)}
                 placeholder={category === "Brand" ? "Paste anything about your brand — what you sell, your style, your story…" : `A note about your ${category.toLowerCase()}…`}
                 rows={3}
               />
               {dupWarning && (
-                <div role="status" style={{ fontSize: "var(--text-xs)", color: "var(--text-muted)", marginTop: 6 }}>
+                <div role="status" className="text-[0.75rem] text-muted-foreground mt-1.5">
                   You may have already added something like this.
                 </div>
               )}
-              {error && <div role="alert" style={{ color: "var(--error-700)", fontSize: "var(--text-sm)", marginTop: 6 }}>{error}</div>}
-              <div style={{ display: "flex", justifyContent: "flex-end", marginTop: "var(--space-3)" }}>
-                <Button variant="primary" size="md" leftIcon={<Plus size={18} />} disabled={busy || !draft.trim()} onClick={add}>
+              {error && <div role="alert" className="text-[var(--error-soft-foreground)] text-[0.875rem] mt-1.5">{error}</div>}
+              <div className="flex justify-end mt-3">
+                <Button disabled={busy || !draft.trim()} onClick={add}>
+                  <Plus size={18} />
                   {busy ? "Saving…" : "Add to memory"}
                 </Button>
               </div>
-            </Card>
+            </div>
           )}
 
           {/* Memory list */}
-          <div style={{ display: "flex", flexDirection: "column", gap: "var(--space-3)" }}>
+          <div className="flex flex-col gap-3">
             {memory.length === 0 && (
-              <div style={{ textAlign: "center", color: "var(--text-muted)", padding: "var(--space-8) 0" }}>
+              <div className="text-center text-muted-foreground py-8">
                 Nothing yet. Chat with Otto above or add a note manually.
               </div>
             )}
             {memory.map((m) => (
-              <Card key={m.id} variant="default" padding="md">
-                <div style={{ display: "flex", alignItems: "flex-start", gap: "var(--space-3)" }}>
-                  <div style={{ flex: 1, minWidth: 0 }}>
-                    <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 8 }}>
-                      <Badge variant="brand">{m.category}</Badge>
-                      <span style={{ fontSize: "var(--text-xs)", color: "var(--text-faint)" }}>
+              <div key={m.id} className="rounded-[18px] border border-border bg-card shadow-md p-6">
+                <div className="flex items-start gap-3">
+                  <div className="flex-1 min-w-0">
+                    <div className="flex items-center gap-2 mb-2">
+                      <Badge variant="default">{m.category}</Badge>
+                      <span className="text-[0.75rem] text-muted-foreground/70">
                         {m.source === "otto" ? "Otto learned this" : "You added this"}
                         {whenLabel(m.updatedAt) ? ` · ${whenLabel(m.updatedAt)}` : ""}
                       </span>
                     </div>
                     {editingId === m.id ? (
-                      <Textarea value={editText} onChange={(e) => setEditText(e.target.value)} rows={3} />
+                      <Textarea className="[field-sizing:fixed] min-h-0" value={editText} onChange={(e) => setEditText(e.target.value)} rows={3} />
                     ) : (
-                      <div style={{ fontSize: "var(--text-sm)", color: "var(--text-body)", lineHeight: "var(--leading-relaxed)", whiteSpace: "pre-wrap", wordBreak: "break-word" }}>
+                      <div className="text-[0.875rem] text-foreground leading-relaxed whitespace-pre-wrap break-words">
                         {m.content}
                       </div>
                     )}
                   </div>
-                  <div style={{ display: "flex", gap: 4, flex: "none" }}>
+                  <div className="flex gap-1 flex-none">
                     {editingId === m.id ? (
                       <>
                         <Button variant="ghost" size="sm" onClick={() => saveEdit(m.id)} aria-label="Save"><Check size={16} /></Button>
@@ -603,7 +545,7 @@ export function OttoMemory({ initialMemory, projectId }: { initialMemory: Memory
                     )}
                   </div>
                 </div>
-              </Card>
+              </div>
             ))}
           </div>
         </div>

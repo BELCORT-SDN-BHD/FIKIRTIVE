@@ -3,6 +3,7 @@ import React, { useEffect, useState } from "react";
 import { getMetaConnection, disconnectMeta, getMetaInsights, type MetaAdAccount } from "@/lib/meta-actions";
 import { setAdsAutonomy, setAdsWritesPaused } from "@/lib/otto-client-actions";
 import type { AccountInsights } from "@/lib/meta-insights";
+import { Button } from "@/components/ui/button";
 
 type State =
   | { phase: "loading" }
@@ -70,46 +71,51 @@ export default function OttoConnections() {
   }, [state.phase]);
 
   return (
-    <div style={{ flex: 1, overflow: "auto", padding: "var(--space-5)" }}>
+    // leading-[1.65] pins the inherited line-height for S4 teardown
+    <div className="gb leading-[1.65]" style={{ flex: 1, overflow: "auto", padding: "1.25rem" }}>
       <div style={{ maxWidth: 720, margin: "0 auto" }}>
-        <h2 style={{ margin: 0, fontSize: 18, color: "var(--text-body)" }}>Connections</h2>
-        <p style={{ margin: "var(--space-1) 0 var(--space-4)", color: "var(--text-muted)", fontSize: 14 }}>
+        <h2 className="text-foreground" style={{ margin: 0, fontSize: "1.125rem" }}>Connections</h2>
+        <p className="text-muted-foreground text-[0.875rem]" style={{ margin: "0.25rem 0 1rem" }}>
           Connect your ad accounts so Otto can read your performance. Read-only — Otto can&rsquo;t spend or change your ads.
         </p>
 
-        <div style={{ border: "1px solid var(--border-subtle)", borderRadius: "var(--radius-md)", background: "var(--surface-card)", padding: "var(--space-4)" }}>
-          <div style={{ fontSize: 15, fontWeight: 600, color: "var(--text-body)" }}>Meta (Facebook &amp; Instagram Ads)</div>
+        <div className="bg-card border border-border rounded-[14px]" style={{ padding: "1rem" }}>
+          <div className="text-foreground font-semibold" style={{ fontSize: 15 }}>Meta (Facebook &amp; Instagram Ads)</div>
 
-          {state.phase === "loading" && <p style={{ color: "var(--text-muted)", fontSize: 13 }}>Checking…</p>}
+          {state.phase === "loading" && <p className="text-muted-foreground text-[0.75rem]">Checking…</p>}
 
           {state.phase === "disconnected" && (
-            <a href="/api/meta/authorize" className="al-btn al-btn-primary al-btn-sm" style={{ display: "inline-block", marginTop: "var(--space-2)", textDecoration: "none" }}>
-              Connect Meta
-            </a>
+            <Button asChild size="sm" variant="brand" className="mt-2">
+              <a href="/api/meta/authorize" style={{ textDecoration: "none" }}>
+                Connect Meta
+              </a>
+            </Button>
           )}
 
           {state.phase === "reconnect" && (
-            <div style={{ marginTop: "var(--space-2)" }}>
-              <p style={{ color: "var(--danger, #d65a5a)", fontSize: 13 }}>Your Meta connection expired.</p>
-              <a href="/api/meta/authorize" className="al-btn al-btn-primary al-btn-sm" style={{ display: "inline-block", textDecoration: "none" }}>Reconnect</a>
+            <div style={{ marginTop: "0.5rem" }}>
+              <p className="text-[var(--error-soft-foreground)] text-[0.75rem]">Your Meta connection expired.</p>
+              <Button asChild size="sm" variant="brand">
+                <a href="/api/meta/authorize" style={{ textDecoration: "none" }}>Reconnect</a>
+              </Button>
             </div>
           )}
 
           {state.phase === "connected" && (
-            <div style={{ marginTop: "var(--space-2)" }}>
-              <div style={{ fontSize: 12, color: "var(--text-muted)", marginBottom: "var(--space-2)" }}>Connected · {state.accounts.length} ad account{state.accounts.length === 1 ? "" : "s"}</div>
-              <div style={{ display: "flex", flexDirection: "column", gap: "var(--space-1)" }}>
+            <div style={{ marginTop: "0.5rem" }}>
+              <div className="text-muted-foreground text-[0.75rem]" style={{ marginBottom: "0.5rem" }}>Connected · {state.accounts.length} ad account{state.accounts.length === 1 ? "" : "s"}</div>
+              <div style={{ display: "flex", flexDirection: "column", gap: "0.25rem" }}>
                 {state.accounts.map((a) => {
                   const ins = insights?.find((i) => i.accountId === a.id);
                   const m = ins?.metrics;
                   return (
-                    <div key={a.id} style={{ padding: "4px 0", borderBottom: "1px solid var(--border-subtle)" }}>
-                      <div style={{ display: "flex", justifyContent: "space-between", fontSize: 13, color: "var(--text-body)" }}>
+                    <div key={a.id} className="border-b border-border" style={{ padding: "4px 0" }}>
+                      <div className="text-foreground text-[0.8125rem]" style={{ display: "flex", justifyContent: "space-between" }}>
                         <span>{a.name || a.id}</span>
-                        <span style={{ color: "var(--text-muted)" }}>{a.currency}{a.status ? ` · ${a.status}` : ""}</span>
+                        <span className="text-muted-foreground">{a.currency}{a.status ? ` · ${a.status}` : ""}</span>
                       </div>
                       {m && (
-                        <div style={{ fontSize: 12, color: "var(--text-muted)", paddingLeft: 2, marginTop: 2 }}>
+                        <div className="text-muted-foreground text-[0.75rem]" style={{ paddingLeft: 2, marginTop: 2 }}>
                           {m.spend ? `Spent ${m.spend}` : "—"} · {m.impressions ?? "—"} impr · CTR {m.ctr ?? "—"}% · CPC {m.cpc ?? "—"} · {m.purchaseRoas ? `ROAS ${m.purchaseRoas}` : "no conversion tracking"}
                         </div>
                       )}
@@ -119,29 +125,31 @@ export default function OttoConnections() {
               </div>
               {/* ── Autonomy + Kill-switch controls (only when write permission granted) ── */}
               {state.canWrite ? (
-                <div style={{ marginTop: "var(--space-4)", borderTop: "1px solid var(--border-subtle)", paddingTop: "var(--space-3)", display: "flex", flexDirection: "column", gap: "var(--space-3)" }}>
+                <div className="border-t border-border" style={{ marginTop: "1rem", paddingTop: "0.75rem", display: "flex", flexDirection: "column", gap: "0.75rem" }}>
                   {/* Autonomy selector */}
                   <div>
-                    <div style={{ fontSize: 13, fontWeight: 600, color: "var(--text-body)", marginBottom: "var(--space-1)" }}>Otto autonomy</div>
-                    <div style={{ display: "flex", gap: "var(--space-2)" }}>
-                      <button
+                    <div className="text-foreground font-semibold text-[0.8125rem]" style={{ marginBottom: "0.25rem" }}>Otto autonomy</div>
+                    <div style={{ display: "flex", gap: "0.5rem" }}>
+                      <Button
                         type="button"
-                        className={`al-btn al-btn-sm${state.adsAutonomy === "ASK" ? " al-btn-primary" : ""}`}
+                        size="sm"
+                        variant={state.adsAutonomy === "ASK" ? "brand" : "ghost"}
                         disabled={saving === "autonomy"}
                         onClick={() => void handleAutonomy("ASK")}
                       >
                         Ask
-                      </button>
-                      <button
+                      </Button>
+                      <Button
                         type="button"
-                        className={`al-btn al-btn-sm${state.adsAutonomy === "AUTO" ? " al-btn-primary" : ""}`}
+                        size="sm"
+                        variant={state.adsAutonomy === "AUTO" ? "brand" : "ghost"}
                         disabled={saving === "autonomy"}
                         onClick={() => void handleAutonomy("AUTO")}
                       >
                         Auto
-                      </button>
+                      </Button>
                     </div>
-                    <p style={{ margin: "var(--space-1) 0 0", fontSize: 12, color: "var(--text-muted)" }}>
+                    <p className="text-muted-foreground text-[0.75rem]" style={{ margin: "0.25rem 0 0" }}>
                       {state.adsAutonomy === "AUTO"
                         ? "Auto lets Otto pause ads & lower budgets on its own — anything that spends still asks you."
                         : "Ask (default) — Otto always asks before making changes."}
@@ -151,30 +159,37 @@ export default function OttoConnections() {
                   {/* Kill-switch */}
                   <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between" }}>
                     <div>
-                      <div style={{ fontSize: 13, fontWeight: 600, color: "var(--text-body)" }}>Pause all ad changes</div>
-                      <div style={{ fontSize: 12, color: "var(--text-muted)" }}>Otto cannot change any ad until you unpause.</div>
+                      <div className="text-foreground font-semibold text-[0.8125rem]">Pause all ad changes</div>
+                      <div className="text-muted-foreground text-[0.75rem]">Otto cannot change any ad until you unpause.</div>
                     </div>
-                    <button
+                    <Button
                       type="button"
-                      className={`al-btn al-btn-sm${state.adsWritesPaused ? " al-btn-danger" : ""}`}
+                      size="sm"
+                      variant={state.adsWritesPaused ? "destructive" : "ghost"}
                       disabled={saving === "paused"}
                       onClick={() => void handlePaused(!state.adsWritesPaused)}
                     >
                       {state.adsWritesPaused ? "Paused — resume?" : "Pause"}
-                    </button>
+                    </Button>
                   </div>
 
-                  {saveError && <p style={{ margin: 0, fontSize: 12, color: "var(--danger, #d65a5a)" }}>{saveError}</p>}
+                  {saveError && <p className="text-[var(--error-soft-foreground)] text-[0.75rem]" style={{ margin: 0 }}>{saveError}</p>}
                 </div>
               ) : (
-                <p style={{ marginTop: "var(--space-3)", fontSize: 13, color: "var(--text-muted)" }}>
+                <p className="text-muted-foreground text-[0.8125rem]" style={{ marginTop: "0.75rem" }}>
                   Reconnect to let Otto manage your ads.
                 </p>
               )}
 
-              <button type="button" className="al-btn al-btn-sm" style={{ marginTop: "var(--space-3)" }} onClick={async () => { await disconnectMeta(); void load(); }}>
+              <Button
+                type="button"
+                size="sm"
+                variant="ghost"
+                className="mt-3"
+                onClick={async () => { await disconnectMeta(); void load(); }}
+              >
                 Disconnect
-              </button>
+              </Button>
             </div>
           )}
         </div>

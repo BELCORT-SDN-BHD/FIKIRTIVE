@@ -132,11 +132,11 @@ export function buildSettingsSections(args: {
                     fontSize: 12.5,
                   }}
                 >
-                  <span style={{ color: "var(--text-body)" }}>{a.label}</span>
+                  <span style={{ color: "var(--foreground)" }}>{a.label}</span>
                   <span
                     style={{
                       color:
-                        a.delta > 0 ? "#15803D" : "var(--text-muted)",
+                        a.delta > 0 ? "#15803D" : "var(--muted-foreground)",
                       fontVariantNumeric: "tabular-nums",
                     }}
                   >

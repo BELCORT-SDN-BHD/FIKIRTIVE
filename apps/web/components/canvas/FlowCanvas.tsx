@@ -337,7 +337,7 @@ export default function FlowCanvas({ projectId, entities = [], activeThreadId = 
   return (
     <div
       style={{ flex: 1, position: "relative" }}
-      className={skin === "gb" && !panMode ? "cv-select-mode" : undefined}
+      className={skin === "gb" ? (panMode ? "gb" : "gb cv-select-mode") : undefined}
       onDragOver={(e) => { if (Array.from(e.dataTransfer?.types ?? []).includes("Files")) { e.preventDefault(); e.dataTransfer.dropEffect = "copy"; setDragOver(true); } }}
       onDragLeave={(e) => { if (e.currentTarget === e.target) setDragOver(false); }}
       onDrop={handleCanvasDrop}

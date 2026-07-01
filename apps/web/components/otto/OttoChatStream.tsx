@@ -4,7 +4,8 @@ import { MSG_ENTER_STYLE } from "./parts/motion";
 import { useChat } from "@ai-sdk/react";
 import { DefaultChatTransport } from "ai";
 import { useStickToBottom } from "use-stick-to-bottom";
-import { OttoAvatar, Button } from "@/components/fk";
+import { OttoAvatar } from "@/components/otto/OttoAvatar";
+import { Button } from "@/components/ui/button";
 import { getCoworkThreadClient } from "@/lib/cowork-fetch";
 import { threadToUiMessages, type OttoUiMessage } from "@/lib/otto-ui-messages";
 import { ImageIcon } from "lucide-react";
@@ -444,8 +445,12 @@ export function OttoChatStream({
     messages.length > 0 &&
     messages[messages.length - 1].role === "assistant";
 
+  // leading-[1.65] pins the line-height this subtree currently INHERITS from the .fk
+  // ancestor (--leading-relaxed); it survives S4 teardown (when .fk/otto-theme.css is
+  // removed and .gb — which sets no line-height — applies at the root). Value-identical
+  // today → zero visual change; without it the text compacts post-teardown.
   return (
-    <div style={{ flex: 1, display: "flex", flexDirection: "column", overflow: "hidden" }}>
+    <div className="gb leading-[1.65]" style={{ flex: 1, display: "flex", flexDirection: "column", overflow: "hidden" }}>
       <style>{`
         @keyframes otto-caret-blink { 50% { opacity: 0; } }
         @keyframes otto-shimmer {
@@ -466,37 +471,17 @@ export function OttoChatStream({
           @keyframes otto-status-fadein { from {} to {} }
         }
         @media (max-width: 680px) {
-          .otto-chat-scroll { padding: var(--space-4) var(--space-3) !important; }
-          .otto-chat-composer { padding: var(--space-3) var(--space-3) !important; }
-          .otto-chat-header { padding: var(--space-3) var(--space-4) !important; }
+          .otto-chat-scroll { padding: 1rem 0.75rem !important; }
+          .otto-chat-composer { padding: 0.75rem 0.75rem !important; }
+          .otto-chat-header { padding: 0.75rem 1rem !important; }
         }
       `}</style>
       {/* Header */}
       <div
-        className="otto-chat-header"
-        style={{
-          padding: "var(--space-4) var(--space-6)",
-          borderBottom: "1px solid var(--border-subtle)",
-          background: "var(--surface-card)",
-          display: "flex",
-          alignItems: "center",
-          gap: "var(--space-3)",
-        }}
+        className="otto-chat-header flex items-center gap-3 border-b border-border bg-card px-6 py-4"
       >
         <OttoAvatar size={32} state={isBusy ? "thinking" : "idle"} />
-        <div
-          style={{
-            fontFamily: "var(--font-display)",
-            fontWeight: "var(--weight-semibold)",
-            fontSize: "var(--text-base)",
-            color: "var(--text-strong)",
-            flex: 1,
-            minWidth: 0,
-            overflow: "hidden",
-            textOverflow: "ellipsis",
-            whiteSpace: "nowrap",
-          }}
-        >
+        <div className="flex-1 min-w-0 overflow-hidden text-ellipsis whitespace-nowrap text-[1rem] font-semibold text-foreground">
           {thread.title}
         </div>
       </div>
@@ -504,12 +489,11 @@ export function OttoChatStream({
       {/* Messages (stick-to-bottom scroll region) */}
       <div
         ref={scrollRef}
-        className="otto-chat-scroll"
-        style={{ flex: 1, overflow: "auto", padding: "var(--space-6)", position: "relative" }}
+        className="otto-chat-scroll relative flex-1 overflow-auto p-6"
       >
         <div
           ref={contentRef}
-          style={{ maxWidth: 680, margin: "0 auto", display: "flex", flexDirection: "column", gap: "var(--space-4)" }}
+          className="mx-auto flex max-w-[680px] flex-col gap-4"
         >
           {(() => {
             // Pre-pass: coalesce consecutive GEN_CARD messages that share the same
@@ -691,18 +675,9 @@ export function OttoChatStream({
 
             if (kind === "DENIAL" || kind === "TURN_ERROR") {
               return (
-                <div key={m.id} style={{ display: "flex", alignItems: "flex-start", gap: "var(--space-3)", ...(isNewMessage(m.id) ? MSG_ENTER_STYLE : undefined) }}>
+                <div key={m.id} className="flex items-start gap-3" style={isNewMessage(m.id) ? MSG_ENTER_STYLE : undefined}>
                   <OttoAvatar size={32} state="idle" />
-                  <div
-                    style={{
-                      padding: "var(--space-3) var(--space-4)",
-                      background: "var(--error-100)",
-                      color: "var(--error-700)",
-                      borderRadius: "0 var(--radius-lg) var(--radius-lg) var(--radius-lg)",
-                      fontSize: "var(--text-sm)",
-                      lineHeight: "var(--leading-normal)",
-                    }}
-                  >
+                  <div className="rounded-[0_20px_20px_20px] bg-error-soft px-4 py-3 text-[0.875rem] leading-normal text-[var(--error-soft-foreground)]">
                     {/* DENIAL/TURN_ERROR carry their user-facing copy on the durable
                         message text, which threadToUiMessages put into the text part. */}
                     {(m.parts.find((p) => p.type === "text") as { text?: string } | undefined)?.text}
@@ -746,7 +721,7 @@ export function OttoChatStream({
 
           {/* OTTO's live step-trace — the agent narrating its tool calls (display-only). */}
           {stepEvents.length > 0 && (
-            <div style={{ margin: "var(--space-2) 0 var(--space-3)" }}>
+            <div className="my-2 mb-3">
               <OttoTrace steps={deriveTraceSteps(stepEvents, liveStatus)} />
             </div>
           )}
@@ -764,18 +739,9 @@ export function OttoChatStream({
           {/* Terminal degrade/stale status: shown after an abnormal turn end.
               Clears automatically when submit() calls setLiveStatus(null). */}
           {!isBusy && (liveStatus?.kind === "degraded" || liveStatus?.kind === "stale") && (
-            <div style={{ display: "flex", alignItems: "flex-start", gap: "var(--space-3)", ...MSG_ENTER_STYLE }}>
+            <div className="flex items-start gap-3" style={MSG_ENTER_STYLE}>
               <OttoAvatar size={32} state="idle" />
-              <div
-                style={{
-                  padding: "var(--space-3) var(--space-4)",
-                  background: "var(--surface-card)",
-                  borderRadius: "0 var(--radius-lg) var(--radius-lg) var(--radius-lg)",
-                  border: "1px solid var(--border-subtle)",
-                  fontSize: "var(--text-sm)",
-                  color: "var(--text-body)",
-                }}
-              >
+              <div className="rounded-[0_20px_20px_20px] border border-border bg-card px-4 py-3 text-[0.875rem] text-foreground">
                 {liveStatus.text}
               </div>
             </div>
@@ -784,37 +750,18 @@ export function OttoChatStream({
           {/* Async generation in progress: a card was approved (genJobId set) and the
               worker hasn't written a terminal result yet. Ported from OttoConversation. */}
           {!isBusy && hasWorkingJob && !pollGaveUp && (
-            <div style={{ display: "flex", alignItems: "flex-start", gap: "var(--space-3)" }}>
+            <div className="flex items-start gap-3">
               <OttoAvatar size={32} state="thinking" />
-              <div
-                style={{
-                  padding: "var(--space-3) var(--space-4)",
-                  background: "var(--surface-card)",
-                  borderRadius: "0 var(--radius-lg) var(--radius-lg) var(--radius-lg)",
-                  border: "1px solid var(--border-subtle)",
-                  fontSize: "var(--text-sm)",
-                  color: "var(--text-muted)",
-                  fontStyle: "italic",
-                }}
-              >
+              <div className="rounded-[0_20px_20px_20px] border border-border bg-card px-4 py-3 text-[0.875rem] italic text-muted-foreground">
                 Otto is making this — this can take a moment…
               </div>
             </div>
           )}
 
           {!isBusy && hasWorkingJob && pollGaveUp && !pollTerminal && (
-            <div style={{ display: "flex", alignItems: "flex-start", gap: "var(--space-3)" }}>
+            <div className="flex items-start gap-3">
               <OttoAvatar size={32} state="idle" />
-              <div
-                style={{
-                  padding: "var(--space-3) var(--space-4)",
-                  background: "var(--surface-card)",
-                  border: "1px solid var(--border-subtle)",
-                  borderRadius: "0 var(--radius-lg) var(--radius-lg) var(--radius-lg)",
-                  fontSize: "var(--text-sm)",
-                  color: "var(--text-body)",
-                }}
-              >
+              <div className="rounded-[0_20px_20px_20px] border border-border bg-card px-4 py-3 text-[0.875rem] text-foreground">
                 This is taking longer than usual. Your credits for this are on hold — if it doesn&rsquo;t finish, they&rsquo;re returned to you automatically.{" "}
                 <button
                   type="button"
@@ -824,7 +771,7 @@ export function OttoChatStream({
                     pollCountRef.current = 0;
                     void pollAndInjectResults();
                   }}
-                  style={{ background: "none", border: "none", padding: 0, color: "var(--brand)", fontWeight: "var(--weight-semibold)" as React.CSSProperties["fontWeight"], cursor: "pointer", textDecoration: "underline" }}
+                  className="border-0 bg-transparent p-0 text-primary font-semibold cursor-pointer underline"
                 >
                   Check again
                 </button>
@@ -833,18 +780,9 @@ export function OttoChatStream({
           )}
 
           {!isBusy && hasWorkingJob && pollTerminal && (
-            <div style={{ display: "flex", alignItems: "flex-start", gap: "var(--space-3)" }}>
+            <div className="flex items-start gap-3">
               <OttoAvatar size={32} state="idle" />
-              <div
-                style={{
-                  padding: "var(--space-3) var(--space-4)",
-                  background: "var(--surface-card)",
-                  border: "1px solid var(--border-subtle)",
-                  borderRadius: "0 var(--radius-lg) var(--radius-lg) var(--radius-lg)",
-                  fontSize: "var(--text-sm)",
-                  color: "var(--text-body)",
-                }}
-              >
+              <div className="rounded-[0_20px_20px_20px] border border-border bg-card px-4 py-3 text-[0.875rem] text-foreground">
                 This looks stuck. Cancel it on the card to get your credits back, or start a new card.
               </div>
             </div>
@@ -856,13 +794,7 @@ export function OttoChatStream({
           {streamError && (
             <div
               role="alert"
-              style={{
-                padding: "var(--space-3) var(--space-4)",
-                borderRadius: "var(--radius-md)",
-                background: "var(--error-100)",
-                color: "var(--error-700)",
-                fontSize: "var(--text-sm)",
-              }}
+              className="rounded-[14px] bg-error-soft px-4 py-3 text-[0.875rem] text-[var(--error-soft-foreground)]"
             >
               {streamError}
               {streamErrorKind === "insufficient_credits" && (
@@ -870,7 +802,7 @@ export function OttoChatStream({
                   {" "}
                   <a
                     href="/billing"
-                    style={{ color: "var(--error-700)", fontWeight: "var(--weight-semibold)" as React.CSSProperties["fontWeight"], textDecoration: "underline" }}
+                    className="font-semibold text-[var(--error-soft-foreground)] underline"
                   >
                     Top up
                   </a>
@@ -884,13 +816,7 @@ export function OttoChatStream({
           {status === "error" && !streamError && (
             <div
               role="alert"
-              style={{
-                padding: "var(--space-3) var(--space-4)",
-                borderRadius: "var(--radius-md)",
-                background: "var(--error-100)",
-                color: "var(--error-700)",
-                fontSize: "var(--text-sm)",
-              }}
+              className="rounded-[14px] bg-error-soft px-4 py-3 text-[0.875rem] text-[var(--error-soft-foreground)]"
             >
               {error?.message || "Otto hit a snag — please try again."}
             </div>
@@ -898,33 +824,12 @@ export function OttoChatStream({
         </div>
 
         {!isAtBottom && (
-          <div
-            style={{
-              position: "sticky",
-              bottom: "var(--space-4)",
-              display: "flex",
-              justifyContent: "center",
-              pointerEvents: "none",
-            }}
-          >
+          <div className="sticky bottom-4 flex justify-center pointer-events-none">
             <button
               type="button"
               onClick={() => void scrollToBottom()}
               aria-label="Scroll to bottom"
-              style={{
-                pointerEvents: "auto",
-                display: "inline-flex",
-                alignItems: "center",
-                gap: "var(--space-1)",
-                padding: "var(--space-2) var(--space-3)",
-                borderRadius: "var(--radius-full)",
-                border: "1px solid var(--border-default)",
-                background: "var(--surface-card)",
-                boxShadow: "var(--shadow-sm)",
-                fontSize: "var(--text-sm)",
-                color: "var(--text-body)",
-                cursor: "pointer",
-              }}
+              className="pointer-events-auto inline-flex items-center gap-1 rounded-full border border-border bg-card px-3 py-2 shadow-sm text-[0.875rem] text-foreground cursor-pointer"
             >
               ↓ Scroll to bottom
             </button>
@@ -934,30 +839,13 @@ export function OttoChatStream({
 
       {/* Composer */}
       <div
-        className="otto-chat-composer"
-        style={{
-          borderTop: "1px solid var(--border-subtle)",
-          background: "var(--surface-card)",
-          padding: "var(--space-4) var(--space-6)",
-        }}
+        className="otto-chat-composer border-t border-border bg-card px-6 py-4"
       >
-        <div style={{ maxWidth: 680, margin: "0 auto", position: "relative" }}>
+        <div className="relative mx-auto max-w-[680px]">
           {mentionSuggestions.length > 0 && (
             <div
               role="listbox"
-              style={{
-                position: "absolute",
-                bottom: "100%",
-                left: 0,
-                marginBottom: 4,
-                width: 256,
-                borderRadius: "var(--radius-lg)",
-                border: "1px solid var(--border-default)",
-                background: "var(--surface-card)",
-                boxShadow: "var(--shadow-lg)",
-                zIndex: 50,
-                overflow: "hidden",
-              }}
+              className="absolute bottom-full left-0 mb-1 w-64 overflow-hidden rounded-[20px] border border-border bg-card shadow-lg z-50"
             >
               {mentionSuggestions.map((e, i) => (
                 <button
@@ -965,17 +853,8 @@ export function OttoChatStream({
                   role="option"
                   aria-selected={i === mentionHighlight}
                   onMouseDown={(ev) => { ev.preventDefault(); selectMention(e); }}
-                  style={{
-                    display: "block",
-                    width: "100%",
-                    textAlign: "left",
-                    padding: "var(--space-2) var(--space-3)",
-                    fontSize: "var(--text-sm)",
-                    background: i === mentionHighlight ? "var(--bg-muted, var(--surface-raised))" : "transparent",
-                    border: "none",
-                    cursor: "pointer",
-                    color: "var(--text-body)",
-                  }}
+                  className="block w-full cursor-pointer border-none bg-transparent px-3 py-2 text-left text-[0.875rem] text-foreground"
+                  style={{ background: i === mentionHighlight ? "var(--accent)" : "transparent" }}
                 >
                   @{e.name}
                 </button>
@@ -987,53 +866,24 @@ export function OttoChatStream({
             ref={fileInputRef}
             type="file"
             accept="image/png,image/jpeg,image/webp"
-            style={{ display: "none" }}
+            className="hidden"
             onChange={handleFilePick}
           />
 
           {/* Thumbnail chip: shown while uploading or when an image is attached */}
           {(uploading || attached) && (
-            <div
-              style={{
-                display: "flex",
-                alignItems: "center",
-                gap: "var(--space-2)",
-                marginBottom: "var(--space-2)",
-              }}
-            >
+            <div className="mb-2 flex items-center gap-2">
               {uploading ? (
-                <div
-                  style={{
-                    display: "inline-flex",
-                    alignItems: "center",
-                    gap: "var(--space-2)",
-                    padding: "var(--space-1) var(--space-2)",
-                    background: "var(--surface-raised)",
-                    borderRadius: "var(--radius-md)",
-                    border: "1px solid var(--border-subtle)",
-                    fontSize: "var(--text-sm)",
-                    color: "var(--text-muted)",
-                  }}
-                >
+                <div className="inline-flex items-center gap-2 rounded-[14px] border border-border bg-muted px-2 py-1 text-[0.875rem] text-muted-foreground">
                   attaching…
                 </div>
               ) : attached ? (
-                <div
-                  style={{
-                    display: "inline-flex",
-                    alignItems: "center",
-                    gap: "var(--space-2)",
-                    padding: "var(--space-1) var(--space-2)",
-                    background: "var(--surface-raised)",
-                    borderRadius: "var(--radius-md)",
-                    border: "1px solid var(--border-subtle)",
-                  }}
-                >
+                <div className="inline-flex items-center gap-2 rounded-[14px] border border-border bg-muted px-2 py-1">
                   {/* eslint-disable-next-line @next/next/no-img-element */}
                   <img
                     src={attached.src}
                     alt="Attached reference"
-                    style={{ width: 40, height: 40, objectFit: "cover", borderRadius: "var(--radius-sm)" }}
+                    className="h-10 w-10 rounded-[10px] object-cover"
                   />
                   <button
                     type="button"
@@ -1043,15 +893,7 @@ export function OttoChatStream({
                     setAttached(null);
                     setAttachError(null);
                   }}
-                    style={{
-                      background: "none",
-                      border: "none",
-                      cursor: "pointer",
-                      color: "var(--text-muted)",
-                      lineHeight: 1,
-                      padding: 0,
-                      fontSize: "var(--text-sm)",
-                    }}
+                    className="border-0 bg-transparent p-0 text-[0.875rem] text-muted-foreground cursor-pointer leading-none"
                   >
                     ×
                   </button>
@@ -1062,26 +904,12 @@ export function OttoChatStream({
 
           {/* Attach error */}
           {attachError && (
-            <div
-              style={{
-                marginBottom: "var(--space-2)",
-                fontSize: "var(--text-sm)",
-                color: "var(--error-700)",
-              }}
-            >
+            <div className="mb-2 text-[0.875rem] text-[var(--error-soft-foreground)]">
               {attachError}
             </div>
           )}
 
-          <div
-            style={{
-              background: "var(--bg-page)",
-              borderRadius: "var(--radius-xl)",
-              border: "1.5px solid var(--border-default)",
-              overflow: "hidden",
-              boxShadow: "var(--shadow-sm)",
-            }}
-          >
+          <div className="overflow-hidden rounded-[28px] border-[1.5px] border-border bg-background shadow-sm">
             <textarea
               id="otto-composer"
               value={text}
@@ -1090,48 +918,21 @@ export function OttoChatStream({
               disabled={isBusy}
               placeholder="Reply to Otto…"
               rows={2}
-              style={{
-                width: "100%",
-                border: "none",
-                outline: "none",
-                resize: "none",
-                padding: "var(--space-3) var(--space-4)",
-                fontFamily: "var(--font-sans)",
-                fontSize: "var(--text-base)",
-                color: "var(--text-body)",
-                background: "transparent",
-                lineHeight: "var(--leading-relaxed)",
-              }}
+              className="w-full resize-none border-0 bg-transparent px-4 py-3 text-[1rem] text-foreground outline-none leading-relaxed"
             />
-            <div
-              style={{
-                display: "flex",
-                justifyContent: "space-between",
-                alignItems: "center",
-                padding: "var(--space-2) var(--space-3)",
-                borderTop: "1px solid var(--border-subtle)",
-              }}
-            >
+            <div className="flex items-center justify-between border-t border-border px-3 py-2">
               {/* Attach image button */}
               <button
                 type="button"
                 aria-label="Attach reference image"
                 disabled={isBusy || uploading}
                 onClick={() => fileInputRef.current?.click()}
-                style={{
-                  background: "none",
-                  border: "none",
-                  cursor: isBusy || uploading ? "default" : "pointer",
-                  color: attached ? "var(--brand)" : "var(--text-muted)",
-                  padding: "var(--space-1)",
-                  display: "inline-flex",
-                  alignItems: "center",
-                  opacity: isBusy || uploading ? 0.5 : 1,
-                }}
+                className="inline-flex items-center border-0 bg-transparent p-1 cursor-pointer disabled:cursor-default disabled:opacity-50"
+                style={{ color: attached ? "var(--primary)" : undefined }}
               >
-                <ImageIcon size={18} />
+                <ImageIcon size={18} className={attached ? "text-primary" : "text-muted-foreground"} />
               </button>
-              <Button variant="primary" size="sm" disabled={isBusy || !text.trim()} onClick={submit}>
+              <Button variant="default" size="sm" disabled={isBusy || !text.trim()} onClick={submit}>
                 {isBusy ? "Sending…" : "Send"}
               </Button>
             </div>
@@ -1146,9 +947,9 @@ export function OttoChatStream({
  *  (mirrors OttoConversation's MessageRow layout for GEN_CARD / GEN_RESULT). */
 function WidgetRow({ children, animateIn }: { children: React.ReactNode; animateIn?: boolean }) {
   return (
-    <div style={{ display: "flex", alignItems: "flex-start", gap: "var(--space-3)", ...(animateIn ? MSG_ENTER_STYLE : undefined) }}>
+    <div className="flex items-start gap-3" style={animateIn ? MSG_ENTER_STYLE : undefined}>
       <OttoAvatar size={32} state="idle" />
-      <div style={{ flex: 1, minWidth: 0 }}>{children}</div>
+      <div className="min-w-0 flex-1">{children}</div>
     </div>
   );
 }

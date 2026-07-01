@@ -1,7 +1,7 @@
 "use client";
 import React, { useState } from "react";
 import { ClipboardList, ShieldCheck, CheckCircle2, Loader2 } from "lucide-react";
-import { Card, Button } from "@/components/fk";
+import { Button } from "@/components/ui/button";
 import { approveMetaActionPlan } from "@/lib/otto-client-actions";
 import type { MetaActionCardPayload } from "@/lib/meta-plan-card";
 
@@ -84,53 +84,49 @@ export function OttoActionPlanCard({ cardId, payload }: OttoActionPlanCardProps)
   const isFailed = approveResult?.state === "failed";
 
   return (
-    <div style={{ maxWidth: 480 }}>
-      <Card variant="tint" padding="md">
+    // leading-[1.65] pins the line-height this subtree currently INHERITS from the .fk
+    // ancestor (--leading-relaxed); it survives S4 teardown (when .fk/otto-theme.css is
+    // removed and .gb — which sets no line-height — applies at the root). Value-identical
+    // today → zero visual change; without it the text compacts post-teardown.
+    <div className="gb leading-[1.65]" style={{ maxWidth: 480 }}>
+      {/* Card: tint variant = bg-accent (neutral #F4F4F3 tint), radius-card (18px), pad-card (p-6), border */}
+      <div className="rounded-[18px] border border-border bg-secondary p-6">
         {/* Header */}
-        <div style={{ display: "flex", alignItems: "center", gap: "var(--space-2)", marginBottom: "var(--space-4)" }}>
-          <ClipboardList size={20} color="var(--brand)" />
-          <span style={{ fontWeight: "var(--weight-bold)" as React.CSSProperties["fontWeight"], fontSize: "var(--text-base)", color: "var(--text-strong)" }}>
+        <div className="flex items-center gap-2 mb-4">
+          <ClipboardList size={20} className="text-foreground" />
+          <span className="font-bold text-[1rem] text-foreground">
             {p.planTitle || "Action plan"}
           </span>
         </div>
 
         {/* Steps list */}
         {steps.length > 0 && (
-          <div style={{ display: "flex", flexDirection: "column", gap: "var(--space-2)", marginBottom: "var(--space-4)" }}>
+          <div className="flex flex-col gap-2 mb-4">
             {steps.map((step, i) => (
               <div
                 key={i}
-                style={{
-                  background: "var(--surface-card)",
-                  borderRadius: "var(--radius-md)",
-                  padding: "10px 12px",
-                  display: "flex",
-                  flexDirection: "column",
-                  gap: "var(--space-1)",
-                }}
+                className="bg-card rounded-[14px] flex flex-col gap-1"
+                style={{ padding: "10px 12px" }}
               >
                 {/* Target name + op label */}
-                <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: "var(--space-2)" }}>
-                  <span style={{ fontWeight: "var(--weight-semibold)" as React.CSSProperties["fontWeight"], fontSize: "var(--text-sm)", color: "var(--text-strong)" }}>
+                <div className="flex items-center justify-between gap-2">
+                  <span className="font-semibold text-[0.875rem] text-foreground">
                     {step.targetName}
                   </span>
-                  {/* money-class badge */}
+                  {/* money-class badge — per-step display only, no logic change */}
                   <span
-                    style={{
-                      fontSize: "var(--text-xs)",
-                      fontWeight: "var(--weight-semibold)" as React.CSSProperties["fontWeight"],
-                      padding: "2px 7px",
-                      borderRadius: 99,
-                      background: step.moneyClass === "spend" ? "var(--warning-100, #fef3c7)" : "var(--success-100, #dcfce7)",
-                      color: step.moneyClass === "spend" ? "var(--warning-700, #b45309)" : "var(--success-700, #15803d)",
-                    }}
+                    className={`text-[0.75rem] font-semibold px-[7px] py-[2px] rounded-full ${
+                      step.moneyClass === "spend"
+                        ? "bg-warning-soft text-[var(--warning-soft-foreground)]"
+                        : "bg-success-soft text-[var(--success-soft-foreground)]"
+                    }`}
                   >
                     {step.moneyClass === "spend" ? "spend" : "safe"}
                   </span>
                 </div>
 
                 {/* Op + value diff */}
-                <div style={{ fontSize: "var(--text-xs)", color: "var(--text-muted)" }}>
+                <div className="text-[0.75rem] text-muted-foreground">
                   {opLabel(step.op)}{Object.keys(step.currentValue ?? {}).length > 0 && Object.keys(step.targetValue ?? {}).length > 0
                     ? `: ${fmtValue(step.currentValue ?? {}, step.currentValue?.currency as string | undefined)} → ${fmtValue(step.targetValue ?? {}, step.currentValue?.currency as string | undefined)}`
                     : ""}
@@ -138,7 +134,7 @@ export function OttoActionPlanCard({ cardId, payload }: OttoActionPlanCardProps)
 
                 {/* Evidence */}
                 {step.evidence && (
-                  <div style={{ fontSize: "var(--text-xs)", color: "var(--text-faint)", fontStyle: "italic" }}>
+                  <div className="text-[0.75rem] text-muted-foreground/70 italic">
                     {step.evidence}
                   </div>
                 )}
@@ -149,9 +145,9 @@ export function OttoActionPlanCard({ cardId, payload }: OttoActionPlanCardProps)
 
         {/* Total spend impact */}
         {p.totalSpendImpactDisplay && (
-          <div style={{ paddingTop: "var(--space-3)", borderTop: "1px solid var(--border-subtle)", marginBottom: "var(--space-4)" }}>
-            <span style={{ fontSize: "var(--text-xs)", color: "var(--text-muted)" }}>Total daily budget change: </span>
-            <span style={{ fontWeight: "var(--weight-bold)" as React.CSSProperties["fontWeight"], fontSize: "var(--text-sm)", color: "var(--text-strong)" }}>
+          <div className="pt-3 border-t border-border mb-4">
+            <span className="text-[0.75rem] text-muted-foreground">Total daily budget change: </span>
+            <span className="font-bold text-[0.875rem] text-foreground">
               {p.totalSpendImpactDisplay}
             </span>
           </div>
@@ -161,55 +157,55 @@ export function OttoActionPlanCard({ cardId, payload }: OttoActionPlanCardProps)
         {showAutoStatus ? (
           /* A real auto-run happened — show its honest outcome, no buttons */
           autoState === "done" ? (
-            <div style={{ display: "flex", alignItems: "center", gap: "var(--space-2)", fontSize: "var(--text-sm)", color: "var(--success-700, #15803d)" }}>
+            <div className="flex items-center gap-2 text-[0.875rem] text-[var(--success-soft-foreground)]">
               <CheckCircle2 size={16} />
               <span>Otto handled this automatically ✓</span>
             </div>
           ) : autoState === "partial" ? (
-            <div style={{ fontSize: "var(--text-sm)", color: "var(--warning-700, #b45309)" }}>
+            <div className="text-[0.875rem] text-[var(--warning-soft-foreground)]">
               Otto applied this automatically, but some steps may need attention.
             </div>
           ) : (
-            <div style={{ fontSize: "var(--text-sm)", color: "var(--error-700, #b91c1c)" }}>
+            <div className="text-[0.875rem] text-[var(--error-soft-foreground)]">
               Otto tried to apply this automatically but it failed — no changes were made.
             </div>
           )
         ) : approveResult ? (
           /* Post-approve result */
-          <div style={{ fontSize: "var(--text-sm)" }}>
+          <div className="text-[0.875rem]">
             {isDone && (
-              <div style={{ display: "flex", alignItems: "center", gap: "var(--space-2)", color: "var(--success-700, #15803d)" }}>
+              <div className="flex items-center gap-2 text-[var(--success-soft-foreground)]">
                 <CheckCircle2 size={16} />
                 <span>Done — all steps applied.</span>
               </div>
             )}
             {isPartial && (
-              <div style={{ color: "var(--warning-700, #b45309)" }}>
+              <div className="text-[var(--warning-soft-foreground)]">
                 Partially applied — some steps may need attention.
               </div>
             )}
             {isFailed && (
-              <div style={{ color: "var(--error-700, #b91c1c)" }}>
+              <div className="text-[var(--error-soft-foreground)]">
                 Could not apply the plan — no changes were made.
               </div>
             )}
           </div>
         ) : denied ? (
-          <div style={{ fontSize: "var(--text-sm)", color: "var(--text-muted)" }}>
+          <div className="text-[0.875rem] text-muted-foreground">
             Plan declined — nothing was changed.
           </div>
         ) : (
           /* Pending approval */
-          <div style={{ display: "flex", gap: "var(--space-3)" }}>
-            <Button variant="primary" size="md" disabled={busy} onClick={approve}>
+          <div className="flex gap-3">
+            <Button variant="default" disabled={busy} onClick={approve}>
               {busy ? (
-                <span style={{ display: "flex", alignItems: "center", gap: "var(--space-2)" }}>
+                <span className="flex items-center gap-2">
                   <Loader2 size={14} style={{ animation: "spin 1s linear infinite" }} />
                   Applying…
                 </span>
               ) : "Approve"}
             </Button>
-            <Button variant="secondary" size="md" disabled={busy} onClick={() => setDenied(true)}>
+            <Button variant="secondary" disabled={busy} onClick={() => setDenied(true)}>
               Deny
             </Button>
           </div>
@@ -217,18 +213,18 @@ export function OttoActionPlanCard({ cardId, payload }: OttoActionPlanCardProps)
 
         {/* Error */}
         {errorMsg && (
-          <div role="alert" style={{ marginTop: "var(--space-2)", fontSize: "var(--text-sm)", color: "var(--error-700, #b91c1c)" }}>
+          <div role="alert" className="mt-2 text-[0.875rem] text-[var(--error-soft-foreground)]">
             {errorMsg}
           </div>
         )}
 
         {/* Trust footer */}
         {!approveResult && !denied && !showAutoStatus && (
-          <div style={{ display: "flex", alignItems: "center", gap: 6, marginTop: "var(--space-3)", fontSize: "var(--text-xs)", color: "var(--text-faint)" }}>
+          <div className="flex items-center gap-[6px] mt-3 text-[0.75rem] text-muted-foreground/70">
             <ShieldCheck size={15} /> Otto only does this after you approve.
           </div>
         )}
-      </Card>
+      </div>
       <style>{`@keyframes spin { to { transform: rotate(360deg); } }`}</style>
     </div>
   );

@@ -36,26 +36,26 @@ function VisionCard({ vision }: { vision: Vision }) {
   }
 
   return (
-    <section style={{ display: "grid", gap: 12, padding: 16, border: "1px solid var(--line-1)", borderRadius: 12, background: "var(--bg-1)" }}>
-      <h2 style={{ font: "var(--text-title)", color: "var(--fg-1)", margin: 0 }}>Vision</h2>
-      <label style={{ display: "flex", alignItems: "center", gap: 8, font: "var(--text-body)", color: "var(--fg-2)" }}>
+    <section style={{ display: "grid", gap: 12, padding: 16, border: "1px solid var(--border)", borderRadius: 12, background: "var(--card)" }}>
+      <h2 style={{ font: "var(--text-title)", color: "var(--foreground)", margin: 0 }}>Vision</h2>
+      <label style={{ display: "flex", alignItems: "center", gap: 8, font: "var(--text-body)", color: "var(--muted-foreground)" }}>
         <input type="checkbox" checked={enabled} onChange={(e) => setEnabled(e.target.checked)} />
         <span>Enabled (planner sees in-play reference pixels)</span>
       </label>
-      <label style={{ display: "flex", alignItems: "center", gap: 10, font: "var(--text-caption)", color: "var(--fg-2)" }}>
+      <label style={{ display: "flex", alignItems: "center", gap: 10, font: "var(--text-caption)", color: "var(--muted-foreground)" }}>
         <span style={{ minWidth: 90 }}>max images</span>
         <input
           type="number" min={1} max={8} value={maxImages}
           onChange={(e) => setMaxImages(Number(e.target.value))}
-          style={{ width: 90, font: "var(--text-body)", color: "var(--fg-1)", background: "var(--bg-2)", border: "1px solid var(--line-1)", borderRadius: 8, padding: "6px 10px" }}
+          style={{ width: 90, font: "var(--text-body)", color: "var(--foreground)", background: "var(--muted)", border: "1px solid var(--border)", borderRadius: 8, padding: "6px 10px" }}
         />
       </label>
-      <label style={{ display: "flex", alignItems: "center", gap: 10, font: "var(--text-caption)", color: "var(--fg-2)" }}>
+      <label style={{ display: "flex", alignItems: "center", gap: 10, font: "var(--text-caption)", color: "var(--muted-foreground)" }}>
         <span style={{ minWidth: 90 }}>max bytes</span>
         <input
           type="number" min={1} max={16000000} value={maxBytes}
           onChange={(e) => setMaxBytes(Number(e.target.value))}
-          style={{ width: 140, font: "var(--text-body)", color: "var(--fg-1)", background: "var(--bg-2)", border: "1px solid var(--line-1)", borderRadius: 8, padding: "6px 10px" }}
+          style={{ width: 140, font: "var(--text-body)", color: "var(--foreground)", background: "var(--muted)", border: "1px solid var(--border)", borderRadius: 8, padding: "6px 10px" }}
         />
       </label>
       <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
@@ -90,13 +90,13 @@ function ProviderCard({ provider, canModal }: { provider: string; canModal: bool
   }
 
   return (
-    <section style={{ display: "grid", gap: 12, padding: 16, border: "1px solid var(--line-1)", borderRadius: 12, background: "var(--bg-1)" }}>
-      <h2 style={{ font: "var(--text-title)", color: "var(--fg-1)", margin: 0 }}>Otto provider</h2>
-      <label style={{ display: "flex", alignItems: "center", gap: 10, font: "var(--text-caption)", color: "var(--fg-2)" }}>
+    <section style={{ display: "grid", gap: 12, padding: 16, border: "1px solid var(--border)", borderRadius: 12, background: "var(--card)" }}>
+      <h2 style={{ font: "var(--text-title)", color: "var(--foreground)", margin: 0 }}>Otto provider</h2>
+      <label style={{ display: "flex", alignItems: "center", gap: 10, font: "var(--text-caption)", color: "var(--muted-foreground)" }}>
         <span style={{ minWidth: 90 }}>provider</span>
         <select
           value={value} onChange={(e) => setValue(e.target.value)}
-          style={{ font: "var(--text-body)", padding: "6px 10px", borderRadius: 8, background: "var(--bg-2)", color: "var(--fg-1)", border: "1px solid var(--line-1)" }}
+          style={{ font: "var(--text-body)", padding: "6px 10px", borderRadius: 8, background: "var(--muted)", color: "var(--foreground)", border: "1px solid var(--border)" }}
         >
           <option value="mock">mock</option>
           <option value="fal">fal</option>
@@ -117,14 +117,14 @@ export function SettingsAdmin({ vision, provider, canModal }: { vision: Vision; 
   return (
     <main style={{ maxWidth: 760, margin: "0 auto", padding: "32px 24px", display: "grid", gap: 20 }}>
       <header style={{ display: "grid", gap: 4 }}>
-        <h1 style={{ font: "var(--text-display)", color: "var(--fg-1)", margin: 0 }}>Settings</h1>
-        <p style={{ font: "var(--text-body)", color: "var(--fg-3)", margin: 0 }}>
+        <h1 style={{ font: "var(--text-display)", color: "var(--foreground)", margin: 0 }}>Settings</h1>
+        <p style={{ font: "var(--text-body)", color: "var(--muted-foreground)", margin: 0 }}>
           Runtime config — takes effect on the next Otto turn (no redeploy).
         </p>
       </header>
       <VisionCard vision={vision} />
       <ProviderCard provider={provider} canModal={canModal} />
-      <p style={{ font: "var(--text-caption)", color: "var(--fg-3)", margin: 0 }}>
+      <p style={{ font: "var(--text-caption)", color: "var(--muted-foreground)", margin: 0 }}>
         Worker-side keys (GENERATION_PROVIDER, FAL_KEY) are restart-required and not shown here.
       </p>
     </main>

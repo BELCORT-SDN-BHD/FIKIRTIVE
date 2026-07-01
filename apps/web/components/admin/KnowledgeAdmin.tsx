@@ -32,12 +32,12 @@ function TextCard({ title, hint, value, configKey }: { title: string; hint: stri
   }
 
   return (
-    <section style={{ display: "grid", gap: 10, padding: 16, border: "1px solid var(--line-1)", borderRadius: 12, background: "var(--bg-1)" }}>
-      <h2 style={{ font: "var(--text-title)", color: "var(--fg-1)", margin: 0 }}>{title}</h2>
-      <p style={{ font: "var(--text-caption)", color: "var(--fg-3)", margin: 0 }}>{hint}</p>
+    <section style={{ display: "grid", gap: 10, padding: 16, border: "1px solid var(--border)", borderRadius: 12, background: "var(--card)" }}>
+      <h2 style={{ font: "var(--text-title)", color: "var(--foreground)", margin: 0 }}>{title}</h2>
+      <p style={{ font: "var(--text-caption)", color: "var(--muted-foreground)", margin: 0 }}>{hint}</p>
       <textarea
         value={text} onChange={(e) => setText(e.target.value)} rows={configKey === "planner_system" ? 12 : 5}
-        style={{ font: "var(--text-body)", color: "var(--fg-1)", background: "var(--bg-2)", border: "1px solid var(--line-1)", borderRadius: 8, padding: "8px 10px", resize: "vertical" }}
+        style={{ font: "var(--text-body)", color: "var(--foreground)", background: "var(--muted)", border: "1px solid var(--border)", borderRadius: 8, padding: "8px 10px", resize: "vertical" }}
       />
       <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
         {msg && <span style={{ font: "var(--text-caption)", color: msg.ok ? "#3fb950" : "#e5484d" }}>{msg.text}</span>}
@@ -53,8 +53,8 @@ export function KnowledgeAdmin({ plannerSystem, briefDefault, descriptionTemplat
   return (
     <main style={{ maxWidth: 860, margin: "0 auto", padding: "32px 24px", display: "grid", gap: 20 }}>
       <header style={{ display: "grid", gap: 4 }}>
-        <h1 style={{ font: "var(--text-display)", color: "var(--fg-1)", margin: 0 }}>Knowledge</h1>
-        <p style={{ font: "var(--text-body)", color: "var(--fg-3)", margin: 0 }}>Planner system prompt + project-brief default + reference-description template. $0 text — not a spend control. Saved here for now; wiring back into the live planner is a deferred $0 follow-on.</p>
+        <h1 style={{ font: "var(--text-display)", color: "var(--foreground)", margin: 0 }}>Knowledge</h1>
+        <p style={{ font: "var(--text-body)", color: "var(--muted-foreground)", margin: 0 }}>Planner system prompt + project-brief default + reference-description template. $0 text — not a spend control. Saved here for now; wiring back into the live planner is a deferred $0 follow-on.</p>
       </header>
       <TextCard configKey="planner_system" title="Planner system prompt" hint="The creative-director agent's system prompt. Empty/unset → the code default." value={plannerSystem} />
       <TextCard configKey="brief_default" title="Project-brief default" hint="Seed text for a new project's brief." value={briefDefault} />

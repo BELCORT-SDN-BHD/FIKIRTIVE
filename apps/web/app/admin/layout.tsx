@@ -35,7 +35,7 @@ export default async function AdminLayout({ children }: { children: React.ReactN
   // are provisioned; expand to a staff check (founder-org membership) when that happens.
   if (!isFounderAdmin(session?.user?.email)) redirect("/");
   return (
-    <div className="admin-shell">
+    <div className="admin-shell gb">
       <nav className="admin-nav">
         {NAV.map((n) =>
           n.live ? (

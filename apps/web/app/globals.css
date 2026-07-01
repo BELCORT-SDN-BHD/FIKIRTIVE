@@ -202,6 +202,43 @@ h1, h2, h3 { font-family: var(--font-sans); font-weight: 600; letter-spacing: va
 .al-btn-iconslot{display:inline-flex;}
 .al-btn-iconslot svg{width:1.1em;height:1.1em;}
 
+/* ds AL.* primitives under .gb (light). The base al-* recipes are Vapor (dark);
+   admin (and any .gb surface) renders ds Button/Badge, so re-point them to .gb
+   light tokens. Scoped to .gb only — the legacy dark Studio (not under .gb) is
+   unaffected. Added with the S2 admin dark→light migration. */
+.gb .al-btn-primary{background:var(--primary);color:var(--primary-foreground);box-shadow:none;}
+.gb .al-btn-primary:hover:not(:disabled){background:#1A1A18;box-shadow:none;}
+.gb .al-btn-glass{background:var(--card);border-color:var(--border);color:var(--foreground);-webkit-backdrop-filter:none;backdrop-filter:none;box-shadow:var(--shadow-sm);}
+.gb .al-btn-glass:hover:not(:disabled){background:var(--secondary);}
+.gb .al-btn-ghost{background:transparent;color:var(--muted-foreground);}
+.gb .al-btn-ghost:hover:not(:disabled){background:var(--accent);color:var(--foreground);}
+.gb .al-btn-danger{background:color-mix(in oklab,var(--error) 9%,transparent);border-color:color-mix(in oklab,var(--error) 25%,transparent);color:var(--error);}
+.gb .al-btn-danger:hover:not(:disabled){background:color-mix(in oklab,var(--error) 16%,transparent);}
+.gb .al-btn:focus-visible{box-shadow:0 0 0 3px color-mix(in oklab, var(--ring) 35%, transparent);}
+.gb .al-badge{border-color:var(--border);background:var(--secondary);color:var(--muted-foreground);}
+.gb .al-badge-accent{color:var(--foreground);border-color:var(--border);background:var(--accent);}
+.gb .al-badge-positive{color:var(--success);border-color:color-mix(in oklab,var(--success) 28%,transparent);background:color-mix(in oklab,var(--success) 9%,transparent);}
+.gb .al-badge-warning{color:var(--warning);border-color:color-mix(in oklab,var(--warning) 28%,transparent);background:color-mix(in oklab,var(--warning) 9%,transparent);}
+.gb .al-badge-danger{color:var(--error);border-color:color-mix(in oklab,var(--error) 28%,transparent);background:color-mix(in oklab,var(--error) 9%,transparent);}
+.gb .al-panel{background:var(--card);border-color:var(--border);box-shadow:var(--shadow-sm);-webkit-backdrop-filter:none;backdrop-filter:none;}
+.gb .al-panel-raised{background:var(--card);box-shadow:var(--shadow-md);}
+.gb .al-panel-flat{background:var(--secondary);box-shadow:none;}
+.gb .al-iconbtn{color:var(--muted-foreground);}
+.gb .al-iconbtn:hover:not(:disabled){background:var(--accent);color:var(--foreground);}
+.gb .al-btn-secondary{background:var(--secondary);border-color:var(--border);color:var(--foreground);}
+.gb .al-btn-secondary:hover:not(:disabled){background:var(--accent);}
+.gb .al-field-label{color:var(--foreground);}
+.gb .al-field-hint{color:var(--muted-foreground);}
+.gb .al-input-wrap{background:var(--card);border-color:var(--border);}
+.gb .al-input-wrap:hover{background:var(--card);}
+.gb .al-input-wrap:focus-within{border-color:var(--ring);box-shadow:0 0 0 3px color-mix(in oklab,var(--ring) 35%,transparent);background:var(--card);}
+.gb .al-input-wrap input{color:var(--foreground);}
+.gb .al-input-wrap input::placeholder{color:var(--muted-foreground);}
+.gb .al-input-affix{color:var(--muted-foreground);}
+.gb .al-seg{background:var(--secondary);border-color:var(--border);-webkit-backdrop-filter:none;backdrop-filter:none;}
+.gb .al-seg-item{color:var(--muted-foreground);}
+.gb .al-seg-item-active{background:var(--card);color:var(--foreground);box-shadow:var(--shadow-sm);}
+
 .al-chip{display:inline-flex;align-items:center;gap:7px;white-space:nowrap;font-family:var(--font-sans);font-weight:500;font-size:12.5px;padding:7px 14px;border-radius:var(--radius-pill);border:1px solid var(--line-1);background:var(--glass-flat);-webkit-backdrop-filter:var(--backdrop-glass-light);backdrop-filter:var(--backdrop-glass-light);color:var(--fg-2);cursor:pointer;transition:background var(--dur-fast) var(--ease-out),color var(--dur-fast) var(--ease-out),border-color var(--dur-fast) var(--ease-out);}
 .al-chip:hover{background:var(--glass-hover);color:var(--fg-1);}
 .al-chip:focus-visible{outline:none;box-shadow:var(--ring-focus);}
@@ -534,13 +571,13 @@ h1, h2, h3 { font-family: var(--font-sans); font-weight: 600; letter-spacing: va
 @media (min-width: 1024px) { .nav-burger, .nav-drawer { display: none; } }
 
 /* ---------- OPT-6 admin shell (rail + content) ---------- */
-.admin-shell { position: relative; z-index: 1; display: flex; min-height: 100dvh; }
-.admin-nav { flex: none; width: 220px; display: flex; flex-direction: column; gap: 2px; padding: 18px 12px; border-right: 1px solid var(--line-2); }
-.admin-nav-link { display: block; padding: 9px 12px; border-radius: var(--radius-md); font: var(--text-body-medium); color: var(--fg-2); text-decoration: none; transition: background var(--dur-fast) var(--ease-out), color var(--dur-fast) var(--ease-out); }
-.admin-nav-link:hover { background: var(--glass-hover); color: var(--fg-1); }
-.admin-nav-link:focus-visible { outline: none; box-shadow: var(--ring-focus); }
-.admin-nav-link.is-disabled { color: var(--fg-4); cursor: default; }
-.admin-nav-link.is-disabled:hover { background: transparent; color: var(--fg-4); }
+.admin-shell { position: relative; z-index: 1; display: flex; min-height: 100dvh; --font-sans: var(--font-geist, system-ui), sans-serif; }
+.admin-nav { flex: none; width: 220px; display: flex; flex-direction: column; gap: 2px; padding: 18px 12px; border-right: 1px solid var(--border); }
+.admin-nav-link { display: block; padding: 9px 12px; border-radius: 14px; font: var(--text-body-medium); color: var(--muted-foreground); text-decoration: none; transition: background var(--dur-fast) var(--ease-out), color var(--dur-fast) var(--ease-out); }
+.admin-nav-link:hover { background: var(--accent); color: var(--foreground); }
+.admin-nav-link:focus-visible { outline: none; box-shadow: 0 0 0 3px color-mix(in oklab, var(--ring) 35%, transparent); }
+.admin-nav-link.is-disabled { color: color-mix(in oklab, var(--muted-foreground) 55%, transparent); cursor: default; }
+.admin-nav-link.is-disabled:hover { background: transparent; color: color-mix(in oklab, var(--muted-foreground) 55%, transparent); }
 .admin-content { flex: 1; min-width: 0; overflow: auto; }
 
 /* ════════════════════════════════════════════════════════════════════════
@@ -618,3 +655,301 @@ h1, h2, h3 { font-family: var(--font-sans); font-weight: 600; letter-spacing: va
   --color-error-soft: var(--error-soft);     --color-error-soft-foreground: var(--error-soft-foreground);
   --color-info-soft: var(--info-soft);       --color-info-soft-foreground: var(--info-soft-foreground);
 }
+
+/* ===== Canvas + Account/Settings rules — moved from otto-theme.css in the S4b teardown.
+   Re-scoped .fk.gb-skin/.fk → .gb (the otto app + canvas render under .gb at root). ===== */
+/* ── Canvas bottom bar (legacy .al-* promptbar) re-skinned Grok-bright.
+ * Display-only: the dark "Vapor" glass classes assume white-on-dark, so on the
+ * light canvas the composer text and surface read wrong. Scoped to .al-promptbar
+ * so only the canvas bottom bar changes — matches the locked canvas-home mockup.
+ * Coral stays agent-only → the canvas Generate action is INK, not accent. */
+.gb .al-promptbar {
+  background: var(--card);
+  border-color: var(--border);
+  box-shadow: 0 8px 24px rgba(20, 20, 24, 0.12);
+  -webkit-backdrop-filter: none;
+  backdrop-filter: none;
+}
+.gb .al-promptbar .tiptap { color: var(--foreground); }
+.gb .al-promptbar .tiptap p.is-editor-empty:first-child::before { color: var(--muted-foreground); }
+.gb .al-promptbar .al-btn-primary {
+  background: var(--primary);
+  color: var(--primary-foreground);
+  box-shadow: none;
+}
+.gb .al-promptbar .al-btn-primary:hover:not(:disabled) {
+  background: #1A1A18;
+  box-shadow: none;
+}
+.gb .al-promptbar .al-btn:not(.al-btn-primary) {
+  background: var(--card);
+  border-color: var(--border);
+  color: var(--foreground);
+}
+.gb .al-promptbar .al-btn:not(.al-btn-primary):hover:not(:disabled) {
+  background: var(--muted);
+}
+
+/* ── Canvas slim toolbar (gb) — matches the approved canvas-home mockup.
+ * Replaces the legacy persistent promptbar: the prompt composer is revealed
+ * only when Generate is clicked (.cv-composer-pop, which reuses .al-promptbar
+ * styling). Generate is INK — coral stays agent-only. */
+.gb .cv-toolbar {
+  position: absolute;
+  left: 50%;
+  bottom: 20px;
+  transform: translateX(-50%);
+  z-index: 5;
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  background: var(--card);
+  border: 1px solid var(--border);
+  border-radius: 14px;
+  box-shadow: 0 8px 24px rgba(20, 20, 24, 0.12);
+  padding: 6px;
+}
+.gb .cv-tb {
+  width: 36px;
+  height: 36px;
+  border: none;
+  background: transparent;
+  border-radius: 9px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: var(--foreground);
+  cursor: pointer;
+}
+.gb .cv-tb:hover:not(:disabled) { background: var(--muted); }
+.gb .cv-tb:disabled { color: var(--muted-foreground); cursor: default; }
+.gb .cv-tb-gen {
+  width: auto;
+  gap: 7px;
+  padding: 0 14px;
+  background: var(--primary);
+  color: var(--primary-foreground);
+  font-size: 13.5px;
+  font-weight: 600;
+}
+.gb .cv-tb-gen:hover:not(:disabled) { background: #1A1A18; }
+.gb .cv-tb-div {
+  width: 1px;
+  height: 22px;
+  background: var(--border);
+  margin: 0 3px;
+}
+/* Active tool (e.g. select mode engaged) */
+.gb .cv-tb-active {
+  background: var(--secondary);
+  color: var(--foreground);
+}
+.gb .cv-tb-active:hover:not(:disabled) { background: var(--secondary); }
+/* Select mode: arrow cursor on the canvas instead of the grab hand */
+.gb .cv-select-mode .react-flow__pane { cursor: default; }
+
+/* Drag-an-image-onto-the-canvas drop hint (neutral; coral stays OTTO-only). */
+.gb .cv-dropzone {
+  position: absolute;
+  inset: 12px;
+  z-index: 6;
+  border: 2px dashed var(--border);
+  border-radius: 16px;
+  background: rgba(20, 20, 24, 0.04);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  pointer-events: none;
+}
+.gb .cv-dropzone span {
+  font-size: 14px;
+  font-weight: 600;
+  color: var(--foreground);
+  background: var(--card);
+  padding: 8px 16px;
+  border-radius: 999px;
+  box-shadow: var(--shadow-sm);
+  border: 1px solid var(--border);
+}
+
+/* ── Per-asset Detail panel (gb) — the legacy DS card + buttons/segments assume
+ * dark glass; re-skin the whole overlay light. The card is an absolute overlay
+ * (not a ReactFlow node), so it doesn't get the node re-skin — style it here. */
+.gb .cv-detail {
+  background: var(--card);
+  border: 1px solid var(--border);
+  box-shadow: 0 16px 48px rgba(20, 20, 24, 0.18);
+  -webkit-backdrop-filter: none;
+  backdrop-filter: none;
+  color: var(--foreground);
+}
+.gb .cv-detail .al-btn {
+  background: var(--card);
+  border: 1px solid var(--border);
+  color: var(--foreground);
+  -webkit-backdrop-filter: none;
+  backdrop-filter: none;
+  box-shadow: none;
+}
+.gb .cv-detail .al-btn:hover:not(:disabled) { background: var(--muted); }
+.gb .cv-detail .al-btn-primary { background: var(--primary); color: var(--primary-foreground); border-color: var(--primary); }
+.gb .cv-detail .al-btn-primary:hover:not(:disabled) { background: #1A1A18; }
+.gb .cv-detail .al-btn-ghost { background: transparent; }
+.gb .cv-detail .al-iconbtn { background: var(--muted); border: 1px solid var(--border); color: var(--foreground); }
+.gb .cv-detail .al-iconbtn:hover { background: var(--card); }
+.gb .cv-detail .al-seg { background: var(--muted); border: 1px solid var(--border); border-radius: 10px; padding: 2px; }
+.gb .cv-detail .al-seg-item { color: var(--muted-foreground); }
+.gb .cv-detail .al-seg-item-active { background: var(--card); color: var(--foreground); border-radius: 8px; }
+.gb .cv-detail .tiptap { color: var(--foreground); }
+.gb .cv-detail .tiptap p.is-editor-empty:first-child::before { color: var(--muted-foreground); }
+
+/* ── Canvas nodes (legacy .al-panel cards) re-skinned Grok-bright.
+ * Scoped to ReactFlow nodes so only the canvas changes; gated by gb-skin.
+ * Each node gets a floating type pill (.cv-nodelabel) above the card — the
+ * canvas-home look. The pill markup always renders but is hidden in the old
+ * skin, so it appears only here (strangler). */
+.cv-nodelabel { display: none; }
+.gb .react-flow__node .al-panel {
+  background: var(--card);
+  border: 1px solid var(--border);
+  box-shadow: 0 6px 18px rgba(20, 20, 24, 0.08);
+  -webkit-backdrop-filter: none;
+  backdrop-filter: none;
+  border-radius: 13px;
+}
+.gb .react-flow__node.selected .al-panel {
+  border: 2px solid var(--brand);
+}
+.gb .react-flow__node .cv-nodelabel {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  position: absolute;
+  top: -26px;
+  left: 0;
+  font-size: 10.5px;
+  font-weight: 600;
+  letter-spacing: -0.01em;
+  color: #fff;
+  background: #1C1B17;
+  padding: 3px 9px;
+  border-radius: 999px;
+  white-space: nowrap;
+  pointer-events: none;
+}
+.gb .react-flow__node .cv-nodelabel svg { width: 12px; height: 12px; }
+.gb .react-flow__node .al-btn-glass {
+  background: rgba(255, 255, 255, 0.92);
+  border-color: var(--border);
+  color: var(--foreground);
+  -webkit-backdrop-filter: none;
+  backdrop-filter: none;
+  box-shadow: var(--shadow-sm);
+}
+.gb .react-flow__node .al-btn-glass:hover:not(:disabled) { background: #fff; }
+.gb .react-flow__node textarea { color: var(--foreground); }
+.gb .react-flow__node textarea::placeholder { color: var(--muted-foreground); }
+
+/* ── In-node generating state (gb) — OTTO making it + indeterminate progress +
+ * the honest money line. Coral is the agent making the asset (allowed use).
+ * Money copy is honest: no fabricated credit number, just "billed when it finishes". */
+.gb .react-flow__node .cv-gen {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 9px;
+  height: 100%;
+  background: var(--muted);
+}
+.gb .react-flow__node .cv-gen-otto {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 11.5px;
+  font-weight: 600;
+  color: var(--brand);
+}
+.gb .react-flow__node .cv-gen-bar {
+  width: 64%;
+  height: 5px;
+  border-radius: 99px;
+  background: var(--border);
+  position: relative;
+  overflow: hidden;
+}
+.gb .react-flow__node .cv-gen-bar::after {
+  content: "";
+  position: absolute;
+  top: 0;
+  left: -40%;
+  height: 100%;
+  width: 40%;
+  border-radius: 99px;
+  background: var(--brand);
+  animation: cv-gen-slide 1.3s ease-in-out infinite;
+}
+@keyframes cv-gen-slide { 0% { left: -40%; } 100% { left: 100%; } }
+.gb .react-flow__node .cv-gen-meta {
+  font-size: 10px;
+  color: var(--muted-foreground);
+}
+
+/* ── Video node poster + centered play button (gb) — matches the mockup. */
+.gb .react-flow__node .cv-video-wrap { position: relative; width: 100%; height: 100%; }
+.gb .react-flow__node .cv-play {
+  position: absolute;
+  top: 50%;
+  left: 50%;
+  transform: translate(-50%, -50%);
+  width: 40px;
+  height: 40px;
+  border-radius: 50%;
+  border: none;
+  background: rgba(255, 255, 255, 0.92);
+  color: var(--foreground);
+  box-shadow: var(--shadow-sm);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+}
+.gb .react-flow__node .cv-play:hover { background: #fff; }
+
+/* Reduced motion: respect user preference */
+@media (prefers-reduced-motion: reduce) {
+  .gb * {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+  }
+}
+
+/* ── Settings toggle (no shadcn switch exists; gb-styled). */
+.gb .cv-switch { width: 40px; height: 23px; border-radius: 999px; border: none; background: var(--border); position: relative; cursor: pointer; transition: background 140ms cubic-bezier(0.22, 1, 0.36, 1); }
+.gb .cv-switch::after { content: ""; position: absolute; top: 2.5px; left: 2.5px; width: 18px; height: 18px; border-radius: 50%; background: #fff; box-shadow: var(--shadow-sm); transition: left 140ms cubic-bezier(0.22, 1, 0.36, 1); }
+.gb .cv-switch.on { background: var(--primary); }
+.gb .cv-switch.on::after { left: 19.5px; }
+
+/* ── Account / Settings page (Direction 1: one page + sticky left jump-nav). */
+.gb .cv-settings { display: flex; flex: 1; overflow: hidden; }
+.gb .cv-settings-nav { width: 210px; flex: none; border-right: 1px solid var(--border); padding: 30px 16px; position: sticky; top: 0; }
+.gb .cv-settings-nav h1 { font-size: 20px; font-weight: 700; margin-bottom: 16px; }
+.gb .cv-settings-nav a { display: block; padding: 8px 11px; border-radius: 9px; font-size: 13.5px; color: var(--foreground); text-decoration: none; margin-bottom: 2px; }
+.gb .cv-settings-nav a.on { background: var(--secondary); color: var(--foreground); font-weight: 600; }
+.gb .cv-settings-nav a.danger { color: #B4321E; }
+.gb .cv-settings-body { flex: 1; overflow: auto; padding: 36px 44px; max-width: 760px; }
+.gb .cv-set-sec { margin-bottom: 34px; scroll-margin-top: 24px; }
+.gb .cv-set-sec h2 { font-size: 16px; font-weight: 700; }
+.gb .cv-set-sub { font-size: 13px; color: var(--muted-foreground); margin: 2px 0 12px; }
+.gb .cv-set-card { background: var(--card); border: 1px solid var(--border); border-radius: 14px; padding: 4px 18px; }
+.gb .cv-set-card.danger { border-color: #E7B7AE; }
+.gb .cv-set-row { display: flex; align-items: center; justify-content: space-between; gap: 16px; padding: 13px 0; border-top: 1px solid var(--border); }
+.gb .cv-set-row:first-child { border-top: none; }
+.gb .cv-set-lbl { display: flex; flex-direction: column; gap: 2px; font-size: 13.5px; font-weight: 500; }
+.gb .cv-set-hint { font-size: 12px; color: var(--muted-foreground); font-weight: 400; }
+.gb .cv-set-input { border: 1px solid var(--border); border-radius: 9px; padding: 7px 11px; font: inherit; font-size: 13.5px; color: var(--foreground); background: var(--card); width: 240px; }
+.gb .cv-set-input-num { width: 90px; }
+.gb .cv-set-num { display: inline-flex; align-items: center; gap: 7px; color: var(--muted-foreground); font-size: 12.5px; }
+.gb .cv-set-btn { height: 34px; padding: 0 14px; border-radius: 10px; font-size: 13px; font-weight: 600; border: 1px solid var(--border); background: var(--card); color: var(--foreground); cursor: pointer; }
+.gb .cv-set-btn.danger { border-color: #E7B7AE; color: #B4321E; }

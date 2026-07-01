@@ -27,15 +27,15 @@ export function ReasoningPart({ part }: ReasoningPartProps) {
       style={{
         display: "flex",
         alignItems: "flex-start",
-        gap: "var(--space-3)",
+        gap: "0.75rem",
       }}
     >
       {/* Spacer matching the 32px avatar used in assistant bubbles so it aligns. */}
       <div style={{ width: 32, flexShrink: 0 }} />
       <div
         style={{
-          fontSize: "var(--text-sm)",
-          color: "var(--text-muted)",
+          fontSize: "0.875rem",
+          color: "var(--muted-foreground)",
           maxWidth: "80%",
         }}
       >
@@ -46,14 +46,14 @@ export function ReasoningPart({ part }: ReasoningPartProps) {
           style={{
             display: "inline-flex",
             alignItems: "center",
-            gap: "var(--space-1)",
+            gap: "0.25rem",
             background: "none",
             border: "none",
             padding: 0,
             cursor: "pointer",
-            fontFamily: "var(--font-sans)",
-            fontSize: "var(--text-sm)",
-            color: "var(--text-muted)",
+            fontFamily: "var(--font-geist)",
+            fontSize: "0.875rem",
+            color: "var(--muted-foreground)",
             fontStyle: "italic",
             userSelect: "none",
           }}
@@ -75,15 +75,15 @@ export function ReasoningPart({ part }: ReasoningPartProps) {
         {open && (
           <div
             style={{
-              marginTop: "var(--space-2)",
-              padding: "var(--space-3) var(--space-4)",
-              background: "var(--surface-subtle, var(--bg-page))",
-              border: "1px solid var(--border-subtle)",
-              borderRadius: "var(--radius-md)",
-              lineHeight: "var(--leading-relaxed)",
+              marginTop: "0.5rem",
+              padding: "0.75rem 1rem",
+              background: "var(--surface-subtle, var(--background))",
+              border: "1px solid var(--border)",
+              borderRadius: "14px",
+              lineHeight: "1.65",
               whiteSpace: "pre-wrap",
               wordBreak: "break-word",
-              color: "var(--text-muted)",
+              color: "var(--muted-foreground)",
             }}
           >
             {part.text}

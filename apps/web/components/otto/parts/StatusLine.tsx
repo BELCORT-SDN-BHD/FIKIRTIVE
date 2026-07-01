@@ -1,6 +1,6 @@
 "use client";
 import React from "react";
-import { OttoAvatar } from "@/components/fk";
+import { OttoAvatar } from "@/components/otto/OttoAvatar";
 import type { OttoStatusData } from "@/lib/otto-stream-bridge";
 
 export interface StatusLineProps {
@@ -40,15 +40,15 @@ export function StatusLine({ isBusy, liveStatus, chatStatus, hasAssistantText }:
   // Phase A: submitted but no tokens yet — show shimmer skeleton bubble.
   if (chatStatus === "submitted") {
     return (
-      <div style={{ display: "flex", alignItems: "flex-start", gap: "var(--space-3)" }}>
+      <div style={{ display: "flex", alignItems: "flex-start", gap: "0.75rem" }}>
         <OttoAvatar size={32} state="thinking" />
         <div
           style={{
             width: 180,
             height: 38,
-            borderRadius: "0 var(--radius-lg) var(--radius-lg) var(--radius-lg)",
+            borderRadius: "0 20px 20px 20px",
             background:
-              "linear-gradient(90deg, var(--border-subtle) 25%, var(--surface-card) 50%, var(--border-subtle) 75%)",
+              "linear-gradient(90deg, var(--border) 25%, var(--card) 50%, var(--border) 75%)",
             backgroundSize: "200% 100%",
             animation: "otto-shimmer 1.4s ease-in-out infinite",
           }}
@@ -64,7 +64,7 @@ export function StatusLine({ isBusy, liveStatus, chatStatus, hasAssistantText }:
     liveStatus?.kind === "planning" ? liveStatus.text : "Otto is thinking…";
 
   return (
-    <div style={{ display: "flex", alignItems: "flex-start", gap: "var(--space-3)" }}>
+    <div style={{ display: "flex", alignItems: "flex-start", gap: "0.75rem" }}>
       <OttoAvatar size={32} state="thinking" />
       {/* key={statusText} triggers a React remount (→ CSS animation restart) when the
           text changes, giving a crossfade between "Otto is thinking…" and planning text. */}
@@ -82,12 +82,12 @@ function StatusText({ text }: { text: string }) {
   return (
     <div
       style={{
-        padding: "var(--space-3) var(--space-4)",
-        background: "var(--surface-card)",
-        borderRadius: "0 var(--radius-lg) var(--radius-lg) var(--radius-lg)",
-        border: "1px solid var(--border-subtle)",
-        fontSize: "var(--text-sm)",
-        color: "var(--text-muted)",
+        padding: "0.75rem 1rem",
+        background: "var(--card)",
+        borderRadius: "0 20px 20px 20px",
+        border: "1px solid var(--border)",
+        fontSize: "0.875rem",
+        color: "var(--muted-foreground)",
         fontStyle: "italic",
         animation: "otto-status-fadein var(--dur-base, 220ms) var(--ease-out, cubic-bezier(0.22,1,0.36,1)) both",
       }}

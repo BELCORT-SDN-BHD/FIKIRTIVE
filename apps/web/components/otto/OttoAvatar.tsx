@@ -9,7 +9,7 @@ export interface OttoAvatarProps {
   className?: string;
 }
 
-const KEYFRAMES_ID = "fk-otto-keyframes";
+const KEYFRAMES_ID = "otto-avatar-keyframes";
 
 function ensureKeyframes() {
   if (typeof document === "undefined") return;
@@ -17,7 +17,7 @@ function ensureKeyframes() {
   const style = document.createElement("style");
   style.id = KEYFRAMES_ID;
   style.textContent = `
-    @keyframes fk-otto-bob {
+    @keyframes otto-avatar-bob {
       from { transform: translateY(0px); }
       to   { transform: translateY(-4px); }
     }
@@ -42,12 +42,13 @@ export function OttoAvatar({ size = 48, state = "idle", className }: OttoAvatarP
   const imgStyle: React.CSSProperties = {
     width: size,
     height: size,
-    borderRadius: "var(--radius-pill)",
+    borderRadius: "9999px",
     display: "block",
     objectFit: "cover",
-    boxShadow: isThinking ? "var(--shadow-accent)" : "none",
-    animation: isThinking ? "fk-otto-bob 1.4s ease-in-out infinite alternate" : "none",
-    transition: "box-shadow var(--transition-control)",
+    // coral (otto) glow while thinking — var(--brand) resolves to coral under .gb
+    boxShadow: isThinking ? "0 0 16px color-mix(in oklab, var(--brand) 50%, transparent)" : "none",
+    animation: isThinking ? "otto-avatar-bob 1.4s ease-in-out infinite alternate" : "none",
+    transition: "box-shadow 0.2s ease",
   };
 
   return (

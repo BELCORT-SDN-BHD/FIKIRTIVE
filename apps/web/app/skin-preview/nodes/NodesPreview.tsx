@@ -1,7 +1,6 @@
 "use client";
 import { ReactFlow, Background, type Node } from "@xyflow/react";
 import "@xyflow/react/dist/style.css";
-import "../../otto/otto-theme.css";
 import { ImageNode } from "@/components/canvas/nodes/ImageNode";
 import { VideoNode } from "@/components/canvas/nodes/VideoNode";
 import { TextNode } from "@/components/canvas/nodes/TextNode";
@@ -52,7 +51,7 @@ const nodes: Node[] = [
 
 export function NodesPreview() {
   return (
-    <div className="fk gb-skin" style={{ height: "100dvh", width: "100%", background: "var(--bg-page)" }}>
+    <div className="fk gb-skin gb" style={{ height: "100dvh", width: "100%", background: "var(--bg-page)" }}>
       <ReactFlow
         nodes={nodes}
         nodeTypes={nodeTypes}

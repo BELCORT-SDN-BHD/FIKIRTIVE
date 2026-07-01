@@ -51,70 +51,70 @@ export function CreditsAdmin({ orgId, balance, reserved, rows }: { orgId: string
   return (
     <main style={{ maxWidth: 860, margin: "0 auto", padding: "32px 24px", display: "grid", gap: 20 }}>
       <header style={{ display: "grid", gap: 4 }}>
-        <h1 style={{ font: "var(--text-display)", color: "var(--fg-1)", margin: 0 }}>Credits</h1>
-        <p style={{ font: "var(--text-body)", color: "var(--fg-3)", margin: 0 }}>
+        <h1 style={{ font: "var(--text-display)", color: "var(--foreground)", margin: 0 }}>Credits</h1>
+        <p style={{ font: "var(--text-body)", color: "var(--muted-foreground)", margin: 0 }}>
           The per-org credit balance and ledger. 1 credit = $0.10. Grants and adjustments are recorded as an append-only ledger; this form is the only way to add credits.
         </p>
       </header>
 
-      <section style={{ display: "flex", gap: 24, padding: 16, border: "1px solid var(--line-1)", borderRadius: 12, background: "var(--bg-1)" }}>
+      <section style={{ display: "flex", gap: 24, padding: 16, border: "1px solid var(--border)", borderRadius: 12, background: "var(--card)" }}>
         <div style={{ display: "grid", gap: 2 }}>
-          <span style={{ font: "var(--text-mono-meta)", color: "var(--fg-3)" }}>BALANCE</span>
-          <span style={{ font: "var(--text-display)", color: "var(--fg-1)" }}>{displayCredits(balance).toLocaleString()}</span>
-          <span style={{ font: "var(--text-caption)", color: "var(--fg-4)" }}>≈ {usdFromInternal(balance)}</span>
+          <span style={{ font: "var(--text-mono-meta)", color: "var(--muted-foreground)" }}>BALANCE</span>
+          <span style={{ font: "var(--text-display)", color: "var(--foreground)" }}>{displayCredits(balance).toLocaleString()}</span>
+          <span style={{ font: "var(--text-caption)", color: "color-mix(in oklab, var(--muted-foreground) 55%, transparent)" }}>≈ {usdFromInternal(balance)}</span>
         </div>
         <div style={{ display: "grid", gap: 2 }}>
-          <span style={{ font: "var(--text-mono-meta)", color: "var(--fg-3)" }}>HELD (in-flight)</span>
-          <span style={{ font: "var(--text-display)", color: "var(--fg-1)" }}>{displayCredits(reserved).toLocaleString()}</span>
-          <span style={{ font: "var(--text-caption)", color: "var(--fg-4)" }}>≈ {usdFromInternal(reserved)}</span>
+          <span style={{ font: "var(--text-mono-meta)", color: "var(--muted-foreground)" }}>HELD (in-flight)</span>
+          <span style={{ font: "var(--text-display)", color: "var(--foreground)" }}>{displayCredits(reserved).toLocaleString()}</span>
+          <span style={{ font: "var(--text-caption)", color: "color-mix(in oklab, var(--muted-foreground) 55%, transparent)" }}>≈ {usdFromInternal(reserved)}</span>
         </div>
         <div style={{ display: "grid", gap: 2, marginLeft: "auto" }}>
-          <span style={{ font: "var(--text-mono-meta)", color: "var(--fg-3)" }}>ORG</span>
-          <span style={{ font: "var(--text-mono-meta)", color: "var(--fg-2)" }}>{orgId}</span>
+          <span style={{ font: "var(--text-mono-meta)", color: "var(--muted-foreground)" }}>ORG</span>
+          <span style={{ font: "var(--text-mono-meta)", color: "var(--muted-foreground)" }}>{orgId}</span>
         </div>
       </section>
 
-      <section style={{ display: "grid", gap: 10, padding: 16, border: "1px solid var(--line-1)", borderRadius: 12, background: "var(--bg-1)" }}>
-        <h2 style={{ font: "var(--text-title)", color: "var(--fg-1)", margin: 0 }}>Grant / adjust</h2>
+      <section style={{ display: "grid", gap: 10, padding: 16, border: "1px solid var(--border)", borderRadius: 12, background: "var(--card)" }}>
+        <h2 style={{ font: "var(--text-title)", color: "var(--foreground)", margin: 0 }}>Grant / adjust</h2>
         <form onSubmit={submit} style={{ display: "grid", gap: 10 }}>
           <label style={{ display: "grid", gap: 4 }}>
-            <span style={{ font: "var(--text-caption)", color: "var(--fg-3)" }}>Credits (negative to deduct) — 1 credit = $0.10</span>
+            <span style={{ font: "var(--text-caption)", color: "var(--muted-foreground)" }}>Credits (negative to deduct) — 1 credit = $0.10</span>
             <input
               type="number" step="1" inputMode="numeric" value={amount} onChange={(e) => setAmount(e.target.value)}
               placeholder="1000" required
-              style={{ font: "var(--text-body)", color: "var(--fg-1)", background: "var(--bg-2)", border: "1px solid var(--line-1)", borderRadius: 8, padding: "8px 10px" }}
+              style={{ font: "var(--text-body)", color: "var(--foreground)", background: "var(--muted)", border: "1px solid var(--border)", borderRadius: 8, padding: "8px 10px" }}
             />
           </label>
           <label style={{ display: "grid", gap: 4 }}>
-            <span style={{ font: "var(--text-caption)", color: "var(--fg-3)" }}>Reason (optional)</span>
+            <span style={{ font: "var(--text-caption)", color: "var(--muted-foreground)" }}>Reason (optional)</span>
             <input
               type="text" maxLength={500} value={reason} onChange={(e) => setReason(e.target.value)}
               placeholder="beta top-up"
-              style={{ font: "var(--text-body)", color: "var(--fg-1)", background: "var(--bg-2)", border: "1px solid var(--line-1)", borderRadius: 8, padding: "8px 10px" }}
+              style={{ font: "var(--text-body)", color: "var(--foreground)", background: "var(--muted)", border: "1px solid var(--border)", borderRadius: 8, padding: "8px 10px" }}
             />
           </label>
           <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
             <button type="submit" disabled={busy}
-              style={{ font: "var(--text-body)", color: "var(--bg-1)", background: "var(--fg-1)", border: "none", borderRadius: 8, padding: "8px 16px", cursor: busy ? "default" : "pointer", opacity: busy ? 0.6 : 1 }}>
+              style={{ font: "var(--text-body)", color: "var(--card)", background: "var(--foreground)", border: "none", borderRadius: 8, padding: "8px 16px", cursor: busy ? "default" : "pointer", opacity: busy ? 0.6 : 1 }}>
               {busy ? "Applying…" : "Apply"}
             </button>
-            {msg && <span style={{ font: "var(--text-caption)", color: msg.ok ? "var(--fg-2)" : "#e5484d" }}>{msg.text}</span>}
+            {msg && <span style={{ font: "var(--text-caption)", color: msg.ok ? "var(--muted-foreground)" : "#e5484d" }}>{msg.text}</span>}
           </div>
         </form>
       </section>
 
-      <section style={{ display: "grid", gap: 8, padding: 16, border: "1px solid var(--line-1)", borderRadius: 12, background: "var(--bg-1)" }}>
-        <h2 style={{ font: "var(--text-title)", color: "var(--fg-1)", margin: 0 }}>Recent ledger</h2>
-        {rows.length === 0 && <p style={{ font: "var(--text-caption)", color: "var(--fg-3)", margin: 0 }}>No ledger entries yet.</p>}
+      <section style={{ display: "grid", gap: 8, padding: 16, border: "1px solid var(--border)", borderRadius: 12, background: "var(--card)" }}>
+        <h2 style={{ font: "var(--text-title)", color: "var(--foreground)", margin: 0 }}>Recent ledger</h2>
+        {rows.length === 0 && <p style={{ font: "var(--text-caption)", color: "var(--muted-foreground)", margin: 0 }}>No ledger entries yet.</p>}
         {rows.map((r) => (
-          <div key={r.id} style={{ display: "flex", alignItems: "center", gap: 10, padding: "6px 0", borderBottom: "1px solid var(--line-2)" }}>
-            <span style={{ font: "var(--text-mono-meta)", color: "var(--fg-3)", minWidth: 70 }}>{r.kind}</span>
-            <span style={{ font: "var(--text-body)", color: r.displayedDelta < 0 ? "#e5484d" : "var(--fg-1)", minWidth: 64 }}>{r.displayedDelta > 0 ? "+" : ""}{r.displayedDelta.toLocaleString()}</span>
+          <div key={r.id} style={{ display: "flex", alignItems: "center", gap: 10, padding: "6px 0", borderBottom: "1px solid var(--border)" }}>
+            <span style={{ font: "var(--text-mono-meta)", color: "var(--muted-foreground)", minWidth: 70 }}>{r.kind}</span>
+            <span style={{ font: "var(--text-body)", color: r.displayedDelta < 0 ? "#e5484d" : "var(--foreground)", minWidth: 64 }}>{r.displayedDelta > 0 ? "+" : ""}{r.displayedDelta.toLocaleString()}</span>
             {/* reserved-column movement — so SETTLE (balanceDelta 0) doesn't read as a no-op */}
-            <span style={{ font: "var(--text-caption)", color: "var(--fg-4)", minWidth: 70 }}>{r.displayedReservedDelta !== 0 ? `${r.displayedReservedDelta > 0 ? "+" : ""}${r.displayedReservedDelta.toLocaleString()} hold` : ""}</span>
-            <span style={{ font: "var(--text-mono-meta)", color: "var(--fg-4)", minWidth: 60 }}>{r.source}</span>
-            <span style={{ font: "var(--text-caption)", color: "var(--fg-3)", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{r.reason || r.createdBy}</span>
-            <span style={{ font: "var(--text-caption)", color: "var(--fg-4)", marginLeft: "auto", whiteSpace: "nowrap" }}>{r.createdAt.slice(0, 16).replace("T", " ")}</span>
+            <span style={{ font: "var(--text-caption)", color: "color-mix(in oklab, var(--muted-foreground) 55%, transparent)", minWidth: 70 }}>{r.displayedReservedDelta !== 0 ? `${r.displayedReservedDelta > 0 ? "+" : ""}${r.displayedReservedDelta.toLocaleString()} hold` : ""}</span>
+            <span style={{ font: "var(--text-mono-meta)", color: "color-mix(in oklab, var(--muted-foreground) 55%, transparent)", minWidth: 60 }}>{r.source}</span>
+            <span style={{ font: "var(--text-caption)", color: "var(--muted-foreground)", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{r.reason || r.createdBy}</span>
+            <span style={{ font: "var(--text-caption)", color: "color-mix(in oklab, var(--muted-foreground) 55%, transparent)", marginLeft: "auto", whiteSpace: "nowrap" }}>{r.createdAt.slice(0, 16).replace("T", " ")}</span>
           </div>
         ))}
       </section>

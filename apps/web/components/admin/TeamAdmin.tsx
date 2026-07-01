@@ -32,14 +32,14 @@ function RoleRow({ row, roles, isSelf }: { row: TeamRow; roles: string[]; isSelf
 
   return (
     <tr>
-      <td style={{ padding: "8px 10px", font: "var(--text-body)", color: "var(--fg-1)" }}>
-        {row.email}{isSelf && <span style={{ color: "var(--fg-3)", font: "var(--text-caption)" }}> (you)</span>}
+      <td style={{ padding: "8px 10px", font: "var(--text-body)", color: "var(--foreground)" }}>
+        {row.email}{isSelf && <span style={{ color: "var(--muted-foreground)", font: "var(--text-caption)" }}> (you)</span>}
       </td>
       <td style={{ padding: "8px 10px" }}>
         <select
           value={role} disabled={isSelf || saving}
           onChange={(e) => setRole(e.target.value)}
-          style={{ font: "var(--text-body)", padding: "6px 10px", borderRadius: 8, background: "var(--bg-2)", color: "var(--fg-1)", border: "1px solid var(--line-1)" }}
+          style={{ font: "var(--text-body)", padding: "6px 10px", borderRadius: 8, background: "var(--muted)", color: "var(--foreground)", border: "1px solid var(--border)" }}
         >
           {roles.map((r) => <option key={r} value={r}>{r}</option>)}
         </select>
@@ -56,17 +56,17 @@ export function TeamAdmin({ rows, roles, selfEmail }: { rows: TeamRow[]; roles: 
   return (
     <main style={{ maxWidth: 760, margin: "0 auto", padding: "32px 24px", display: "grid", gap: 20 }}>
       <header style={{ display: "grid", gap: 4 }}>
-        <h1 style={{ font: "var(--text-display)", color: "var(--fg-1)", margin: 0 }}>Team &amp; access</h1>
-        <p style={{ font: "var(--text-body)", color: "var(--fg-3)", margin: 0 }}>
+        <h1 style={{ font: "var(--text-display)", color: "var(--foreground)", margin: 0 }}>Team &amp; access</h1>
+        <p style={{ font: "var(--text-body)", color: "var(--muted-foreground)", margin: 0 }}>
           Operator roles. You can&apos;t change your own role (anti-lockout). super-admin grants super-admin.
         </p>
       </header>
-      <table style={{ borderCollapse: "collapse", width: "100%", border: "1px solid var(--line-1)", borderRadius: 12, overflow: "hidden" }}>
+      <table style={{ borderCollapse: "collapse", width: "100%", border: "1px solid var(--border)", borderRadius: 12, overflow: "hidden" }}>
         <thead>
-          <tr style={{ background: "var(--bg-1)" }}>
-            <th style={{ textAlign: "left", padding: "8px 10px", font: "var(--text-caption)", color: "var(--fg-3)" }}>Member</th>
-            <th style={{ textAlign: "left", padding: "8px 10px", font: "var(--text-caption)", color: "var(--fg-3)" }}>Role</th>
-            <th style={{ textAlign: "left", padding: "8px 10px", font: "var(--text-caption)", color: "var(--fg-3)" }}></th>
+          <tr style={{ background: "var(--card)" }}>
+            <th style={{ textAlign: "left", padding: "8px 10px", font: "var(--text-caption)", color: "var(--muted-foreground)" }}>Member</th>
+            <th style={{ textAlign: "left", padding: "8px 10px", font: "var(--text-caption)", color: "var(--muted-foreground)" }}>Role</th>
+            <th style={{ textAlign: "left", padding: "8px 10px", font: "var(--text-caption)", color: "var(--muted-foreground)" }}></th>
           </tr>
         </thead>
         <tbody>

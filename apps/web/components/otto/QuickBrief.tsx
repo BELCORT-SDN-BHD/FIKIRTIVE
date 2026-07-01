@@ -53,48 +53,16 @@ export function QuickBrief({ projectId, onSaved }: QuickBriefProps) {
     setTimeout(() => { setOpen(false); setSaved(false); }, 1200);
   }
 
-  const fieldStyle: React.CSSProperties = {
-    width: "100%",
-    padding: "var(--space-2) var(--space-3)",
-    fontFamily: "var(--font-sans)",
-    fontSize: "var(--text-sm)",
-    color: "var(--text-body)",
-    background: "var(--surface-base, var(--bg-1))",
-    border: "1px solid var(--border-default)",
-    borderRadius: "var(--radius-md)",
-    outline: "none",
-    boxSizing: "border-box",
-  };
-
-  const labelStyle: React.CSSProperties = {
-    display: "block",
-    fontSize: "var(--text-xs)",
-    fontWeight: "var(--weight-semibold)",
-    color: "var(--text-faint)",
-    marginBottom: "var(--space-1)",
-  };
-
   return (
-    <div style={{ width: "100%" }}>
+    /* leading-[1.65] pins the line-height this subtree currently INHERITS from the .fk
+       ancestor (--leading-relaxed); it survives S4 teardown (when .fk/otto-theme.css is
+       removed and .gb — which sets no line-height — applies at the root). Value-identical
+       today → zero visual change; without it the text compacts post-teardown. */
+    <div className="gb leading-[1.65] w-full">
       <button
         type="button"
         onClick={() => setOpen((o) => !o)}
-        style={{
-          display: "flex",
-          alignItems: "center",
-          gap: "var(--space-2)",
-          fontSize: "var(--text-xs)",
-          fontWeight: "var(--weight-semibold)",
-          color: "var(--text-faint)",
-          textTransform: "uppercase",
-          letterSpacing: "var(--tracking-caps)",
-          background: "none",
-          border: "none",
-          cursor: "pointer",
-          padding: 0,
-          width: "100%",
-          justifyContent: "center",
-        }}
+        className="flex items-center justify-center gap-2 text-[0.75rem] font-semibold text-muted-foreground/70 uppercase tracking-[0.08em] bg-transparent border-0 cursor-pointer p-0 w-full"
         aria-expanded={open}
       >
         <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden>
@@ -113,103 +81,81 @@ export function QuickBrief({ projectId, onSaved }: QuickBriefProps) {
       {open && (
         <form
           onSubmit={handleSave}
-          style={{
-            marginTop: "var(--space-4)",
-            padding: "var(--space-4)",
-            background: "var(--surface-card)",
-            border: "1.5px solid var(--border-subtle)",
-            borderRadius: "var(--radius-lg)",
-            display: "flex",
-            flexDirection: "column",
-            gap: "var(--space-3)",
-          }}
+          className="mt-4 p-4 bg-card border border-border rounded-[20px] flex flex-col gap-3"
+          style={{ borderWidth: "1.5px" }}
         >
           <div>
-            <label style={labelStyle} htmlFor="qb-offer">What you sell / offer</label>
+            <label className="block text-[0.75rem] font-semibold text-muted-foreground/70 mb-1" htmlFor="qb-offer">What you sell / offer</label>
             <input
               id="qb-offer"
               type="text"
               value={offer}
               onChange={(e) => setOffer(e.target.value.slice(0, MAX_FIELD))}
               placeholder="e.g. handmade ceramic mugs"
-              style={fieldStyle}
+              className="w-full py-2 px-3 text-[0.875rem] text-foreground bg-card border border-border rounded-[14px] outline-none box-border"
               disabled={saving}
             />
           </div>
           <div>
-            <label style={labelStyle} htmlFor="qb-audience">Who it's for (audience)</label>
+            <label className="block text-[0.75rem] font-semibold text-muted-foreground/70 mb-1" htmlFor="qb-audience">Who it&apos;s for (audience)</label>
             <input
               id="qb-audience"
               type="text"
               value={audience}
               onChange={(e) => setAudience(e.target.value.slice(0, MAX_FIELD))}
               placeholder="e.g. design-minded home cooks, 25–40"
-              style={fieldStyle}
+              className="w-full py-2 px-3 text-[0.875rem] text-foreground bg-card border border-border rounded-[14px] outline-none box-border"
               disabled={saving}
             />
           </div>
           <div>
-            <label style={labelStyle} htmlFor="qb-platform">Where you'll post (platform)</label>
+            <label className="block text-[0.75rem] font-semibold text-muted-foreground/70 mb-1" htmlFor="qb-platform">Where you&apos;ll post (platform)</label>
             <input
               id="qb-platform"
               type="text"
               value={platform}
               onChange={(e) => setPlatform(e.target.value.slice(0, MAX_FIELD))}
               placeholder="e.g. Instagram, TikTok, LinkedIn"
-              style={fieldStyle}
+              className="w-full py-2 px-3 text-[0.875rem] text-foreground bg-card border border-border rounded-[14px] outline-none box-border"
               disabled={saving}
             />
           </div>
           <div>
-            <label style={labelStyle} htmlFor="qb-budget">Budget vibe <span style={{ fontWeight: 400, textTransform: "none" }}>(optional)</span></label>
+            <label className="block text-[0.75rem] font-semibold text-muted-foreground/70 mb-1" htmlFor="qb-budget">Budget vibe <span className="font-normal normal-case">(optional)</span></label>
             <input
               id="qb-budget"
               type="text"
               value={budget}
               onChange={(e) => setBudget(e.target.value.slice(0, MAX_FIELD))}
               placeholder="e.g. low-cost DIY, or $500/month"
-              style={fieldStyle}
+              className="w-full py-2 px-3 text-[0.875rem] text-foreground bg-card border border-border rounded-[14px] outline-none box-border"
               disabled={saving}
             />
           </div>
 
           {error && (
-            <p role="alert" style={{ fontSize: "var(--text-xs)", color: "var(--error-700, var(--danger))", margin: 0 }}>
+            <p role="alert" className="text-[0.75rem] text-[var(--error-soft-foreground)] m-0">
               {error}
             </p>
           )}
 
-          <div style={{ display: "flex", justifyContent: "flex-end", gap: "var(--space-2)" }}>
+          <div className="flex justify-end gap-2">
             <button
               type="button"
               onClick={() => setOpen(false)}
               disabled={saving}
-              style={{
-                padding: "var(--space-2) var(--space-4)",
-                fontSize: "var(--text-sm)",
-                color: "var(--text-muted)",
-                background: "none",
-                border: "1px solid var(--border-default)",
-                borderRadius: "var(--radius-md)",
-                cursor: "pointer",
-              }}
+              className="py-2 px-4 text-[0.875rem] text-muted-foreground bg-transparent border border-border rounded-[14px] cursor-pointer"
             >
               Cancel
             </button>
             <button
               type="submit"
               disabled={saving || !composeBrief({ offer, audience, platform, budget })}
+              className="py-2 px-4 text-[0.875rem] font-semibold text-primary-foreground rounded-[14px] border-0 transition-colors duration-150"
               style={{
-                padding: "var(--space-2) var(--space-4)",
-                fontSize: "var(--text-sm)",
-                fontWeight: "var(--weight-semibold)",
-                color: "#fff",
-                background: saved ? "var(--success, #22c55e)" : "var(--brand)",
-                border: "none",
-                borderRadius: "var(--radius-md)",
+                background: saved ? "var(--success, #22c55e)" : "var(--primary)",
                 cursor: saving || !composeBrief({ offer, audience, platform, budget }) ? "not-allowed" : "pointer",
                 opacity: saving ? 0.7 : 1,
-                transition: "background 0.2s",
               }}
             >
               {saved ? "Saved!" : saving ? "Saving…" : "Save brief"}

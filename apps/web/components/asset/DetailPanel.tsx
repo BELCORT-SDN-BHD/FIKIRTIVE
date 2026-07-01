@@ -406,7 +406,7 @@ export default function DetailPanel({
         {state === "ready" && gen && displayUrl && (
           <>
             {/* Media preview */}
-            <div style={{ borderRadius: 10, overflow: "hidden", background: "var(--surface-sunken)", lineHeight: 0 }}>
+            <div style={{ borderRadius: 10, overflow: "hidden", background: "var(--muted)", lineHeight: 0 }}>
               {gen.kind === "video" ? (
                 <video
                   key={displayUrl}
@@ -443,11 +443,11 @@ export default function DetailPanel({
                       width: 52,
                       height: 52,
                       padding: 0,
-                      border: `2px solid ${i === selectedIdx ? "var(--accent)" : "var(--border-default)"}`,
+                      border: `2px solid ${i === selectedIdx ? "var(--brand)" : "var(--border)"}`,
                       borderRadius: 6,
                       overflow: "hidden",
                       cursor: "pointer",
-                      background: "var(--surface-sunken)",
+                      background: "var(--muted)",
                       opacity: i === selectedIdx ? 1 : 0.55,
                     }}
                   >
@@ -464,13 +464,13 @@ export default function DetailPanel({
 
             {/* Prompt text */}
             {gen.prompt && (
-              <p style={{ margin: 0, fontSize: 13, color: "var(--text-muted)", lineHeight: 1.5 }}>{gen.prompt}</p>
+              <p style={{ margin: 0, fontSize: 13, color: "var(--muted-foreground)", lineHeight: 1.5 }}>{gen.prompt}</p>
             )}
 
             {/* Aspect picker (17): for image-to-video Animate when model has aspect ratios */}
             {gen.kind === "image" && aspectRatios.length > 0 && (
               <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
-                <span style={{ fontSize: 12, color: "var(--text-muted)", flexShrink: 0 }}>Aspect</span>
+                <span style={{ fontSize: 12, color: "var(--muted-foreground)", flexShrink: 0 }}>Aspect</span>
                 <div className="al-seg" role="tablist" aria-label="Aspect ratio">
                   {aspectRatios.map((ar) => (
                     <button
@@ -569,10 +569,10 @@ export default function DetailPanel({
 
             {/* Edit @composer (24) */}
             {gen.kind === "image" && (
-              <div style={{ display: "flex", flexDirection: "column", gap: 8, borderTop: "1px solid var(--border-subtle)", paddingTop: 12 }}>
-                <span style={{ fontSize: 12, color: "var(--text-muted)" }}>Describe your edit, @ to reference</span>
+              <div style={{ display: "flex", flexDirection: "column", gap: 8, borderTop: "1px solid var(--border)", paddingTop: 12 }}>
+                <span style={{ fontSize: 12, color: "var(--muted-foreground)" }}>Describe your edit, @ to reference</span>
                 <div style={{ display: "flex", gap: 8, alignItems: "flex-end" }}>
-                  <div className="al-input-wrap" style={{ flex: 1, minWidth: 0, border: "1px solid var(--border-default)", borderRadius: 8, padding: "6px 10px" }}>
+                  <div className="al-input-wrap" style={{ flex: 1, minWidth: 0, border: "1px solid var(--border)", borderRadius: 8, padding: "6px 10px" }}>
                     <MentionInput
                       entities={entities}
                       docKey={composerKey}

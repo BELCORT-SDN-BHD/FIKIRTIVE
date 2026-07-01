@@ -1,6 +1,5 @@
 import { notFound } from "next/navigation";
 import { OttoTrace, OttoCanvasStatus, type TraceStep } from "@/components/otto/OttoTrace";
-import "../../otto/otto-theme.css";
 
 export const dynamic = "force-dynamic";
 export const metadata = { title: "Trace preview (dev)" };

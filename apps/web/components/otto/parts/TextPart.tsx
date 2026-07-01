@@ -1,6 +1,6 @@
 "use client";
 import React from "react";
-import { OttoAvatar } from "@/components/fk";
+import { OttoAvatar } from "@/components/otto/OttoAvatar";
 import { MSG_ENTER_STYLE } from "./motion";
 
 export interface TextPartProps {
@@ -27,12 +27,12 @@ export function TextPart({ role, text, streaming, animateIn }: TextPartProps) {
         <div
           style={{
             maxWidth: "75%",
-            padding: "var(--space-3) var(--space-4)",
+            padding: "0.75rem 1rem",
             background: "var(--brand)",
-            color: "var(--text-on-brand)",
-            borderRadius: "var(--radius-lg) var(--radius-lg) var(--space-1) var(--radius-lg)",
-            fontSize: "var(--text-sm)",
-            lineHeight: "var(--leading-normal)",
+            color: "var(--primary-foreground)",
+            borderRadius: "20px 20px 0.25rem 20px",
+            fontSize: "0.875rem",
+            lineHeight: "1.5",
             whiteSpace: "pre-wrap",
             wordBreak: "break-word",
           }}
@@ -44,18 +44,18 @@ export function TextPart({ role, text, streaming, animateIn }: TextPartProps) {
   }
 
   return (
-    <div style={{ display: "flex", alignItems: "flex-start", gap: "var(--space-3)", ...enterStyle }}>
+    <div style={{ display: "flex", alignItems: "flex-start", gap: "0.75rem", ...enterStyle }}>
       <OttoAvatar size={32} state={streaming ? "thinking" : "idle"} />
       <div
         style={{
           maxWidth: "80%",
-          padding: "var(--space-3) var(--space-4)",
-          background: "var(--surface-card)",
-          border: "1px solid var(--border-subtle)",
-          borderRadius: "0 var(--radius-lg) var(--radius-lg) var(--radius-lg)",
-          fontSize: "var(--text-sm)",
-          lineHeight: "var(--leading-normal)",
-          color: "var(--text-body)",
+          padding: "0.75rem 1rem",
+          background: "var(--card)",
+          border: "1px solid var(--border)",
+          borderRadius: "0 20px 20px 20px",
+          fontSize: "0.875rem",
+          lineHeight: "1.5",
+          color: "var(--foreground)",
           whiteSpace: "pre-wrap",
           wordBreak: "break-word",
         }}
@@ -76,7 +76,7 @@ function BlinkingCaret() {
         display: "inline-block",
         width: "0.5em",
         marginLeft: "1px",
-        color: "var(--text-muted)",
+        color: "var(--muted-foreground)",
         animation: "otto-caret-blink 1s steps(1) infinite",
       }}
     >

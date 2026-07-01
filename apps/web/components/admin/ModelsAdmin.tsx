@@ -28,10 +28,10 @@ function ModelToggle({ row }: { row: ModelRow }) {
   }
 
   return (
-    <div style={{ display: "flex", alignItems: "center", gap: 10, padding: "8px 0", borderBottom: "1px solid var(--line-2)" }}>
-      <span style={{ font: "var(--text-body)", color: "var(--fg-1)", minWidth: 160 }}>{row.id}</span>
-      <span style={{ font: "var(--text-mono-meta)", color: "var(--fg-3)", minWidth: 90 }}>{row.family}</span>
-      <label style={{ display: "flex", alignItems: "center", gap: 6, font: "var(--text-caption)", color: "var(--fg-2)" }}>
+    <div style={{ display: "flex", alignItems: "center", gap: 10, padding: "8px 0", borderBottom: "1px solid var(--border)" }}>
+      <span style={{ font: "var(--text-body)", color: "var(--foreground)", minWidth: 160 }}>{row.id}</span>
+      <span style={{ font: "var(--text-mono-meta)", color: "var(--muted-foreground)", minWidth: 90 }}>{row.family}</span>
+      <label style={{ display: "flex", alignItems: "center", gap: 6, font: "var(--text-caption)", color: "var(--muted-foreground)" }}>
         <input type="checkbox" aria-label={`${row.id} enabled`} checked={enabled} disabled={saving} onChange={(e) => toggle(e.target.checked)} />
         <span>{enabled ? "enabled" : "disabled"}</span>
       </label>
@@ -45,31 +45,31 @@ export function ModelsAdmin({ imageRows, videoRows, coverage }: { imageRows: Mod
   return (
     <main style={{ maxWidth: 860, margin: "0 auto", padding: "32px 24px", display: "grid", gap: 20 }}>
       <header style={{ display: "grid", gap: 4 }}>
-        <h1 style={{ font: "var(--text-display)", color: "var(--fg-1)", margin: 0 }}>Models</h1>
-        <p style={{ font: "var(--text-body)", color: "var(--fg-3)", margin: 0 }}>
+        <h1 style={{ font: "var(--text-display)", color: "var(--foreground)", margin: 0 }}>Models</h1>
+        <p style={{ font: "var(--text-body)", color: "var(--muted-foreground)", margin: 0 }}>
           Turn a model off and it stops spending everywhere (picker, direct gen, references, and any already-queued job). Capability is fixed in code — this only disables.
         </p>
       </header>
 
-      <section style={{ display: "grid", gap: 8, padding: 16, border: "1px solid var(--line-1)", borderRadius: 12, background: "var(--bg-1)" }}>
-        <h2 style={{ font: "var(--text-title)", color: "var(--fg-1)", margin: 0 }}>Image model</h2>
-        <p style={{ font: "var(--text-caption)", color: "var(--fg-3)", margin: 0 }}>
+      <section style={{ display: "grid", gap: 8, padding: 16, border: "1px solid var(--border)", borderRadius: 12, background: "var(--card)" }}>
+        <h2 style={{ font: "var(--text-title)", color: "var(--foreground)", margin: 0 }}>Image model</h2>
+        <p style={{ font: "var(--text-caption)", color: "var(--muted-foreground)", margin: 0 }}>
           One shared image model (Seedream). Turning it off disables ALL image generation — element bases, ref sheets, variants, and direct image gen.
         </p>
         {imageRows.map((r) => <ModelToggle key={r.id} row={r} />)}
       </section>
 
-      <section style={{ display: "grid", gap: 8, padding: 16, border: "1px solid var(--line-1)", borderRadius: 12, background: "var(--bg-1)" }}>
-        <h2 style={{ font: "var(--text-title)", color: "var(--fg-1)", margin: 0 }}>Video models</h2>
+      <section style={{ display: "grid", gap: 8, padding: 16, border: "1px solid var(--border)", borderRadius: 12, background: "var(--card)" }}>
+        <h2 style={{ font: "var(--text-title)", color: "var(--foreground)", margin: 0 }}>Video models</h2>
         {videoRows.map((r) => <ModelToggle key={r.id} row={r} />)}
       </section>
 
-      <section style={{ display: "grid", gap: 8, padding: 16, border: "1px solid var(--line-1)", borderRadius: 12, background: "var(--bg-1)" }}>
-        <h2 style={{ font: "var(--text-title)", color: "var(--fg-1)", margin: 0 }}>Directive coverage</h2>
-        <p style={{ font: "var(--text-caption)", color: "var(--fg-3)", margin: 0 }}>{covered}/{coverage.length} routed video families have an enabled directive.</p>
+      <section style={{ display: "grid", gap: 8, padding: 16, border: "1px solid var(--border)", borderRadius: 12, background: "var(--card)" }}>
+        <h2 style={{ font: "var(--text-title)", color: "var(--foreground)", margin: 0 }}>Directive coverage</h2>
+        <p style={{ font: "var(--text-caption)", color: "var(--muted-foreground)", margin: 0 }}>{covered}/{coverage.length} routed video families have an enabled directive.</p>
         <div style={{ display: "flex", flexWrap: "wrap", gap: 8 }}>
           {coverage.map((c) => (
-            <span key={c.family} style={{ font: "var(--text-mono-meta)", padding: "3px 8px", borderRadius: 6, background: "var(--bg-2)", color: c.covered ? "#3fb950" : "#e5484d" }}>
+            <span key={c.family} style={{ font: "var(--text-mono-meta)", padding: "3px 8px", borderRadius: 6, background: "var(--muted)", color: c.covered ? "#3fb950" : "#e5484d" }}>
               {c.family} {c.covered ? "✓" : "—"}
             </span>
           ))}

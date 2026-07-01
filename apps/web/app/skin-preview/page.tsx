@@ -1,5 +1,5 @@
 import { notFound } from "next/navigation";
-import { OttoApp } from "@/components/otto/OttoApp";
+import { OttoApp, type OttoViewKey } from "@/components/otto/OttoApp";
 import type { MemoryRow } from "@/lib/memory-actions";
 
 export const dynamic = "force-dynamic";
@@ -17,22 +17,18 @@ export const metadata = { title: "Skin preview (dev)" };
 export default async function SkinPreviewPage({
   searchParams,
 }: {
-  searchParams: Promise<{ skin?: string; nav?: string; chat?: string }>;
+  searchParams: Promise<{ skin?: string; nav?: string; chat?: string; view?: string }>;
 }) {
   if (process.env.NODE_ENV === "production") notFound();
   const sp = await searchParams;
-  const skin = sp?.skin === "fk" ? undefined : ("gb" as const);
+  const skin = "gb" as const;
 
   // One memory row flips isFirstRun=false so the real front door shows (not onboarding).
   const memory: MemoryRow[] = [
-    {
-      id: "m1",
-      category: "voice",
-      content: "Cozy, warm, a little playful.",
-      source: "otto",
-      pinned: true,
-      updatedAt: new Date(0),
-    },
+    { id: "m1", category: "voice", content: "Cozy, warm, a little playful.", source: "otto", pinned: true, updatedAt: new Date(0) },
+    { id: "m2", category: "audience", content: "Busy parents who want quick, healthy meals.", source: "user", pinned: false, updatedAt: new Date(0) },
+    { id: "m3", category: "product", content: "Single-origin beans, roasted weekly in small batches.", source: "otto", pinned: false, updatedAt: new Date(0) },
+    { id: "m4", category: "do-not", content: "Never use stock-photo smiles or corporate jargon.", source: "user", pinned: true, updatedAt: new Date(0) },
   ];
 
   const iso = new Date(0).toISOString();
@@ -65,7 +61,7 @@ export default async function SkinPreviewPage({
         kind: "image" as const,
       }))}
       ottoStreamEnabled={false}
-      initialView="otto"
+      initialView={(sp?.view as OttoViewKey | undefined) ?? "otto"}
       skin={skin}
       initialNavCollapsed={sp?.nav === "collapsed"}
       initialChatCollapsed={sp?.chat === "collapsed"}

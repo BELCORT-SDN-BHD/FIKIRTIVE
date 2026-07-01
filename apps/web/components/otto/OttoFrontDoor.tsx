@@ -1,7 +1,7 @@
 "use client";
 import React, { useEffect, useRef, useState } from "react";
-import { OttoAvatar } from "@/components/fk";
-import { Button } from "@/components/fk";
+import { OttoAvatar } from "@/components/otto/OttoAvatar";
+import { Button } from "@/components/ui/button";
 import { ottoTurn, createEmptyCoworkThread } from "@/lib/otto-client-actions";
 import { getCoworkThreadClient } from "@/lib/cowork-fetch";
 import { activeMentionQuery, resolveSentEntityIds } from "@/lib/otto-mentions";
@@ -244,66 +244,39 @@ export function OttoFrontDoor({
     }
   }
 
+  // leading-[1.65] pins the line-height this subtree currently INHERITS from the .fk
+  // ancestor (--leading-relaxed); it survives S4 teardown (when .fk/otto-theme.css is
+  // removed and .gb — which sets no line-height — applies at the root). Value-identical
+  // today → zero visual change; without it the text compacts post-teardown.
   return (
-    <div
-      style={{
-        flex: 1,
-        display: "flex",
-        flexDirection: "column",
-        alignItems: "center",
-        justifyContent: "center",
-        padding: "var(--space-8) var(--space-6)",
-        overflow: "auto",
-      }}
-    >
+    <div className="gb flex flex-1 flex-col items-center justify-center overflow-auto px-6 py-8 leading-[1.65]">
       <style>{`
         @media (max-width: 480px) {
           .otto-goal-grid { grid-template-columns: 1fr !important; }
-          .otto-front-door-inner { padding: var(--space-4) var(--space-4) !important; }
+          .otto-front-door-inner { padding: 1rem 1rem !important; }
         }
       `}</style>
-      <div className="otto-front-door-inner" style={{ width: "100%", maxWidth: 560, display: "flex", flexDirection: "column", alignItems: "center", gap: "var(--space-6)" }}>
+      <div className="otto-front-door-inner flex w-full max-w-[560px] flex-col items-center gap-6">
         {/* Otto avatar + greeting */}
-        <div style={{ display: "flex", flexDirection: "column", alignItems: "center", gap: "var(--space-4)", textAlign: "center" }}>
+        <div className="flex flex-col items-center gap-4 text-center">
           <OttoAvatar size={76} state={busy ? "thinking" : "idle"} />
           <div>
-            <h1
-              style={{
-                fontFamily: "var(--font-display)",
-                fontWeight: "var(--weight-bold)",
-                fontSize: "var(--text-2xl)",
-                color: "var(--text-strong)",
-                letterSpacing: "var(--tracking-tight)",
-                margin: "0 0 var(--space-2)",
-                lineHeight: "var(--leading-snug)",
-              }}
-            >
+            <h1 className="m-0 mb-2 text-[1.75rem] font-bold tracking-[-0.015em] text-foreground" style={{ lineHeight: 1.2 }}>
               {greeting}
             </h1>
-            <p style={{ fontSize: "var(--text-base)", color: "var(--text-muted)", margin: 0, lineHeight: "var(--leading-normal)" }}>
+            <p className="m-0 text-[1rem] text-muted-foreground leading-normal">
               Tell me in your own words, or pick a goal below. No experience needed — I&apos;ll guide you through it.
             </p>
           </div>
         </div>
 
         {/* Composer */}
-        <div style={{ width: "100%", position: "relative" }}>
+        <div className="relative w-full">
           {mentionSuggestions.length > 0 && (
             <div
               role="listbox"
-              style={{
-                position: "absolute",
-                bottom: "100%",
-                left: 0,
-                marginBottom: 4,
-                width: 256,
-                borderRadius: "var(--radius-lg)",
-                border: "1px solid var(--border-default)",
-                background: "var(--surface-card)",
-                boxShadow: "var(--shadow-lg)",
-                zIndex: 50,
-                overflow: "hidden",
-              }}
+              className="absolute bottom-full left-0 mb-1 w-64 overflow-hidden rounded-[20px] border border-border bg-card z-50"
+              style={{ boxShadow: "0 18px 40px rgba(20 18 14 / 0.10), 0 6px 14px rgba(20 18 14 / 0.07)" }}
             >
               {mentionSuggestions.map((e, i) => (
                 <button
@@ -311,16 +284,9 @@ export function OttoFrontDoor({
                   role="option"
                   aria-selected={i === mentionHighlight}
                   onMouseDown={(ev) => { ev.preventDefault(); selectMention(e); }}
+                  className="block w-full cursor-pointer border-none px-3 py-2 text-left text-[0.875rem] text-foreground"
                   style={{
-                    display: "block",
-                    width: "100%",
-                    textAlign: "left",
-                    padding: "var(--space-2) var(--space-3)",
-                    fontSize: "var(--text-sm)",
-                    background: i === mentionHighlight ? "var(--bg-muted, var(--surface-raised))" : "transparent",
-                    border: "none",
-                    cursor: "pointer",
-                    color: "var(--text-body)",
+                    background: i === mentionHighlight ? "var(--muted)" : "transparent",
                   }}
                 >
                   @{e.name}
@@ -329,14 +295,8 @@ export function OttoFrontDoor({
             </div>
           )}
           <div
-            style={{
-              width: "100%",
-              background: "var(--surface-card)",
-              borderRadius: "var(--radius-xl)",
-              border: "1.5px solid var(--border-default)",
-              boxShadow: "var(--shadow-md)",
-              overflow: "hidden",
-            }}
+            className="w-full overflow-hidden rounded-[28px] border border-border bg-card"
+            style={{ borderWidth: "1.5px", boxShadow: "0 8px 20px rgba(20 18 14 / 0.08), 0 2px 6px rgba(20 18 14 / 0.06)" }}
           >
           <textarea
             ref={textareaRef}
@@ -346,30 +306,11 @@ export function OttoFrontDoor({
             disabled={busy}
             placeholder="Describe what you want to make…"
             rows={3}
-            style={{
-              width: "100%",
-              border: "none",
-              outline: "none",
-              resize: "none",
-              padding: "var(--space-4) var(--space-5)",
-              fontFamily: "var(--font-sans)",
-              fontSize: "var(--text-base)",
-              color: "var(--text-body)",
-              background: "transparent",
-              lineHeight: "var(--leading-relaxed)",
-            }}
+            className="w-full resize-none border-none bg-transparent px-5 py-4 text-[1rem] text-foreground outline-none leading-relaxed"
           />
-          <div
-            style={{
-              display: "flex",
-              alignItems: "center",
-              justifyContent: "flex-end",
-              padding: "var(--space-3) var(--space-4)",
-              borderTop: "1px solid var(--border-subtle)",
-            }}
-          >
+          <div className="flex items-center justify-end border-t border-border px-4 py-3">
             <Button
-              variant="primary"
+              variant="default"
               size="sm"
               disabled={busy || !text.trim()}
               onClick={() => void start({})}
@@ -383,89 +324,44 @@ export function OttoFrontDoor({
         {error && (
           <div
             role="alert"
-            style={{
-              width: "100%",
-              padding: "var(--space-3) var(--space-4)",
-              borderRadius: "var(--radius-md)",
-              background: "var(--error-100)",
-              color: "var(--error-700)",
-              fontSize: "var(--text-sm)",
-            }}
+            className="w-full rounded-[14px] bg-error-soft px-4 py-3 text-[0.875rem] text-[var(--error-soft-foreground)]"
           >
             {error}
           </div>
         )}
 
         {/* Goal chips */}
-        <div style={{ width: "100%" }}>
-          <div
-            style={{
-              fontSize: "var(--text-xs)",
-              fontWeight: "var(--weight-semibold)",
-              color: "var(--text-faint)",
-              textTransform: "uppercase",
-              letterSpacing: "var(--tracking-caps)",
-              marginBottom: "var(--space-3)",
-              textAlign: "center",
-            }}
-          >
+        <div className="w-full">
+          <div className="mb-3 text-center text-[0.75rem] font-semibold uppercase tracking-[0.08em] text-muted-foreground/70">
             Or pick a goal
           </div>
           <div
-            className="otto-goal-grid"
-            style={{
-              display: "grid",
-              gridTemplateColumns: "1fr 1fr",
-              gap: "var(--space-3)",
-            }}
+            className="otto-goal-grid grid gap-3"
+            style={{ gridTemplateColumns: "1fr 1fr" }}
           >
             {GOAL_TILES.map((goal) => (
               <button
                 key={goal.goalKey}
                 disabled={busy}
                 onClick={() => start({ goalKey: goal.goalKey })}
+                className="flex flex-col items-start gap-2 rounded-[20px] border border-border bg-card p-4 text-left shadow-sm transition-colors duration-150"
                 style={{
-                  display: "flex",
-                  flexDirection: "column",
-                  alignItems: "flex-start",
-                  gap: "var(--space-2)",
-                  padding: "var(--space-4)",
-                  background: "var(--surface-card)",
-                  border: "1.5px solid var(--border-subtle)",
-                  borderRadius: "var(--radius-lg)",
+                  borderWidth: "1.5px",
                   cursor: busy ? "not-allowed" : "pointer",
-                  textAlign: "left",
-                  transition: "var(--transition-control)",
                   opacity: busy ? 0.6 : 1,
-                  boxShadow: "var(--shadow-sm)",
                 }}
               >
-                <div
-                  style={{
-                    width: 38,
-                    height: 38,
-                    borderRadius: "var(--radius-sm)",
-                    background: "var(--accent-soft)",
-                    color: "#B23A12",
-                    display: "flex",
-                    alignItems: "center",
-                    justifyContent: "center",
-                  }}
-                >
+                {/* Coral-soft chip: bg-brand-soft (coral tint) + coral icon color.
+                    Under .gb, --brand is coral — NOT --accent (which is neutral gray).
+                    Inversion trap: keeping var(--brand-soft) here would render gray. */}
+                <div className="flex h-[38px] w-[38px] items-center justify-center rounded-[10px] bg-brand-soft" style={{ color: "#B23A12" }}>
                   {goal.icon}
                 </div>
                 <div>
-                  <div
-                    style={{
-                      fontWeight: "var(--weight-semibold)",
-                      fontSize: "var(--text-sm)",
-                      color: "var(--text-strong)",
-                      marginBottom: 2,
-                    }}
-                  >
+                  <div className="mb-0.5 text-[0.875rem] font-semibold text-foreground">
                     {goal.label}
                   </div>
-                  <div style={{ fontSize: "var(--text-xs)", color: "var(--text-muted)" }}>
+                  <div className="text-[0.75rem] text-muted-foreground">
                     {goal.hint}
                   </div>
                 </div>
@@ -478,17 +374,7 @@ export function OttoFrontDoor({
         <QuickBrief projectId={projectId} />
 
         {/* Trust line */}
-        <p
-          style={{
-            fontSize: "var(--text-xs)",
-            color: "var(--text-faint)",
-            textAlign: "center",
-            margin: 0,
-            display: "flex",
-            alignItems: "center",
-            gap: "var(--space-2)",
-          }}
-        >
+        <p className="m-0 flex items-center gap-2 text-center text-[0.75rem] text-muted-foreground/70">
           {/* eslint-disable-next-line @next/next/no-img-element */}
           <img src="/brand/otto.svg" width={16} height={16} alt="" style={{ display: "inline", verticalAlign: "middle" }} />
           Otto plans and makes it. Chatting uses a little credit; you approve before Otto makes anything.

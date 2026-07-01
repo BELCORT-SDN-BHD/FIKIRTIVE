@@ -1,6 +1,14 @@
 "use client";
 import React, { useEffect, useRef, useState } from "react";
-import { Dialog } from "@/components/fk/Dialog";
+import { Button } from "@/components/ui/button";
+import {
+  Dialog,
+  DialogContent,
+  DialogHeader,
+  DialogTitle,
+  DialogDescription,
+  DialogFooter,
+} from "@/components/ui/dialog";
 import { INSPIRATIONS, inspirationCategories, type Inspiration } from "@/lib/inspirations";
 
 export default function OttoDiscover({ onUseInOtto }: { onUseInOtto: (prompt: string) => void }) {
@@ -25,53 +33,61 @@ export default function OttoDiscover({ onUseInOtto }: { onUseInOtto: (prompt: st
   }
 
   return (
-    <div style={{ flex: 1, overflow: "auto", padding: "var(--space-5)" }}>
-      <div style={{ marginBottom: "var(--space-4)" }}>
-        <h2 style={{ margin: 0, fontSize: 18, color: "var(--text-body)" }}>Discover</h2>
-        <p style={{ margin: "var(--space-1) 0 0", color: "var(--text-muted)", fontSize: 14 }}>
+    // gb: .gb resolves brand/accent/muted tokens for the Grok-bright skin;
+    // leading-[1.65] pins the inherited line-height so S4 teardown won't reflow.
+    <div className="gb leading-[1.65]" style={{ flex: 1, overflow: "auto", padding: "20px" }}>
+      <div style={{ marginBottom: "16px" }}>
+        <h2 style={{ margin: 0, fontSize: "1.125rem", color: "var(--foreground)" }}>Discover</h2>
+        <p style={{ margin: "4px 0 0", color: "var(--muted-foreground)", fontSize: "0.875rem" }}>
           Ideas to start from — pick one, tweak it, make it yours.
         </p>
       </div>
 
-      <div style={{ display: "flex", gap: "var(--space-2)", marginBottom: "var(--space-4)", flexWrap: "wrap" }}>
+      <div style={{ display: "flex", gap: "8px", marginBottom: "16px", flexWrap: "wrap" }}>
         {cats.map((c) => (
-          <button key={c} type="button" onClick={() => setCat(c)} className="al-btn al-btn-sm" style={{ background: cat === c ? "var(--surface-raised)" : "transparent" }}>
+          <Button
+            key={c}
+            type="button"
+            variant="ghost"
+            size="sm"
+            onClick={() => setCat(c)}
+            className={cat === c ? "bg-card" : ""}
+          >
             {c}
-          </button>
+          </Button>
         ))}
       </div>
 
-      <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(240px, 1fr))", gap: "var(--space-3)" }}>
+      <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(240px, 1fr))", gap: "12px" }}>
         {shown.map((i) => (
           <button
             key={i.id}
             type="button"
             onClick={() => setActive(i)}
-            style={{ textAlign: "left", cursor: "pointer", border: "1px solid var(--border-subtle)", background: "var(--surface-card)", borderRadius: "var(--radius-md)", padding: "var(--space-4)", color: "var(--text-body)" }}
+            style={{ textAlign: "left", cursor: "pointer", border: "1px solid var(--border)", background: "var(--card)", borderRadius: "14px", padding: "16px", color: "var(--foreground)" }}
           >
-            <div style={{ fontSize: 11, color: "var(--text-muted)", textTransform: "uppercase", letterSpacing: 0.4 }}>{i.category}</div>
-            <div style={{ fontSize: 15, fontWeight: 600, marginTop: 2 }}>{i.title}</div>
-            <div style={{ fontSize: 13, color: "var(--text-muted)", marginTop: "var(--space-1)" }}>{i.description}</div>
+            <div style={{ fontSize: "0.75rem", color: "var(--muted-foreground)", textTransform: "uppercase", letterSpacing: 0.4 }}>{i.category}</div>
+            <div style={{ fontSize: "0.9375rem", fontWeight: 600, marginTop: 2 }}>{i.title}</div>
+            <div style={{ fontSize: "0.8125rem", color: "var(--muted-foreground)", marginTop: "4px" }}>{i.description}</div>
           </button>
         ))}
       </div>
 
       {active && (
-        <Dialog
-          open
-          onClose={() => setActive(null)}
-          title={active.title}
-          description={active.category}
-          footer={
-            <>
-              <button type="button" className="al-btn al-btn-sm" onClick={() => copy(active.prompt)}>{copied ? "Copied" : "Copy prompt"}</button>
-              <button type="button" className="al-btn al-btn-primary al-btn-sm" onClick={() => { onUseInOtto(active.prompt); setActive(null); }}>Use in Otto</button>
-            </>
-          }
-        >
-          <p style={{ color: "var(--text-body)", fontSize: 14, marginTop: 0 }}>{active.description}</p>
-          <div style={{ background: "var(--surface-raised)", borderRadius: "var(--radius-md)", padding: "var(--space-3)", fontSize: 13, color: "var(--text-body)", whiteSpace: "pre-wrap" }}>{active.prompt}</div>
-          <p style={{ color: "var(--text-muted)", fontSize: 12, marginTop: "var(--space-2)" }}>Tip: replace [your product] with your product name.</p>
+        <Dialog open onOpenChange={(open) => { if (!open) setActive(null); }}>
+          <DialogContent>
+            <DialogHeader>
+              <DialogTitle>{active.title}</DialogTitle>
+              <DialogDescription>{active.category}</DialogDescription>
+            </DialogHeader>
+            <p style={{ color: "var(--foreground)", fontSize: "0.875rem", marginTop: 0 }}>{active.description}</p>
+            <div style={{ background: "var(--card)", borderRadius: "14px", padding: "12px", fontSize: "0.8125rem", color: "var(--foreground)", whiteSpace: "pre-wrap" }}>{active.prompt}</div>
+            <p style={{ color: "var(--muted-foreground)", fontSize: "0.75rem", marginTop: "8px" }}>Tip: replace [your product] with your product name.</p>
+            <DialogFooter>
+              <Button variant="ghost" size="sm" onClick={() => copy(active.prompt)}>{copied ? "Copied" : "Copy prompt"}</Button>
+              <Button variant="brand" size="sm" onClick={() => { onUseInOtto(active.prompt); setActive(null); }}>Use in Otto</Button>
+            </DialogFooter>
+          </DialogContent>
         </Dialog>
       )}
     </div>
