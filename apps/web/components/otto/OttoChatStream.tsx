@@ -367,6 +367,7 @@ export function OttoChatStream({
     // Video → open the frame picker instead of uploading the clip. A frame is
     // extracted in the browser and uploaded as an image through the same path.
     if (isVideoFile(file)) {
+      if (videoPick) URL.revokeObjectURL(videoPick.url);
       const url = URL.createObjectURL(file);
       setVideoPick({ url, duration: 0 });
       return;
@@ -958,7 +959,7 @@ export function OttoChatStream({
                 className="hidden"
                 onLoadedMetadata={handleVideoMeta}
                 onSeeked={drawCurrentFrame}
-                onError={() => { setAttachError("读不了这个视频,换 MP4 试试。"); closeVideoPick(); }}
+                onError={() => { setAttachError("Couldn't read that video — try an MP4."); closeVideoPick(); }}
               />
               <canvas ref={canvasRef} className="mb-2 max-h-40 w-full rounded-[10px] object-contain" />
               {videoPick.duration > 0 && (
@@ -1037,7 +1038,7 @@ export function OttoChatStream({
               <button
                 type="button"
                 aria-label="Attach reference image"
-                disabled={isBusy || uploading}
+                disabled={isBusy || uploading || !!videoPick}
                 onClick={() => fileInputRef.current?.click()}
                 className="inline-flex items-center border-0 bg-transparent p-1 cursor-pointer disabled:cursor-default disabled:opacity-50"
                 style={{ color: attached ? "var(--primary)" : undefined }}
