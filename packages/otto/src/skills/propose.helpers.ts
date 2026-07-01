@@ -34,6 +34,8 @@ export const proposeInput = z.object({
   // Set true when this image is the starting keyframe for a video the user asked for —
   // so the card shows the full two-step plan (image now, video next).
   forVideo: z.boolean().optional(),
+  // 创作意图/目的 —— requires 资讯门要求它非空。琐碎请求可由 Otto 从上下文推断填入。
+  goal: z.string().optional(),
 });
 
 export type ProposeInput = z.infer<typeof proposeInput>;
@@ -66,6 +68,8 @@ export type CardPayload = {
    *  DISPLAY ONLY — an estimate of the follow-on video step's cost. Never used to charge. */
   videoStep?: { estimatedCredits: number };
   sourceGenerationId?: string;
+  /** 这条创作的目的/意图（来自 propose 的资讯门）。展示/审计用。 */
+  goal?: string;
 };
 
 export type ProposeCardResult = {
