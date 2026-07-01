@@ -45,7 +45,7 @@ export function ConvoTabs({ threads, activeThreadId, activity, onSelect, onNew, 
           {t.working && (
             <span
               aria-label="working"
-              style={{ width: 6, height: 6, borderRadius: "50%", flexShrink: 0, background: "var(--accent)" }}
+              style={{ width: 6, height: 6, borderRadius: "50%", flexShrink: 0, background: "var(--brand)" }}
             />
           )}
           <button

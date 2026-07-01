@@ -443,7 +443,7 @@ export default function DetailPanel({
                       width: 52,
                       height: 52,
                       padding: 0,
-                      border: `2px solid ${i === selectedIdx ? "var(--accent)" : "var(--border)"}`,
+                      border: `2px solid ${i === selectedIdx ? "var(--brand)" : "var(--border)"}`,
                       borderRadius: 6,
                       overflow: "hidden",
                       cursor: "pointer",

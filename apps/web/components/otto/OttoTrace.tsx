@@ -45,7 +45,7 @@ function StepRow({ step }: { step: TraceStep }) {
         gap: "0.5rem",
         padding: "7px 0.5rem",
         borderRadius: "10px",
-        background: isActive ? "var(--accent)" : "transparent",
+        background: isActive ? "var(--brand-soft)" : "transparent",
         fontSize: "0.875rem",
         color: isActive ? CORAL_INK : isDone ? "var(--foreground)" : "var(--muted-foreground)",
       }}
@@ -110,7 +110,7 @@ export function OttoTrace({ steps, title = "OTTO is making it" }: { steps: Trace
     <div
       className="gb leading-[1.65]"
       style={{
-        border: "1px solid var(--accent)",
+        border: "1px solid var(--brand-soft)",
         borderRadius: "var(--radius-card)",
         overflow: "hidden",
         boxShadow: "var(--shadow-sm)",
@@ -132,7 +132,7 @@ export function OttoTrace({ steps, title = "OTTO is making it" }: { steps: Trace
           alignItems: "center",
           gap: "0.5rem",
           padding: "11px 0.75rem",
-          background: "var(--accent)",
+          background: "var(--brand-soft)",
         }}
       >
         <OttoGlyph size={17} />
