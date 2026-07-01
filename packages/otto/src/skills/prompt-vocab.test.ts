@@ -23,6 +23,7 @@ describe("identityLockClause", () => {
       { role: "product", name: "A", lock: true },
       { role: "brandmark", name: "B", lock: true },
     ]);
+    expect(out).toContain("feature A exactly");
     expect(out).toContain("; ");
     expect(out).toContain("reproduce the B logo");
   });

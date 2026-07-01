@@ -45,6 +45,7 @@ describe("prompt-mastery skills gate", () => {
     expect(seedreamPromptSkill.needsApproval).toBe(false);
   });
   it("seedancePrompt: free/read/internal → not gated", () => {
+    expect(seedancePromptSkill.cost).toBe("free");
     expect(seedancePromptSkill.effect).toBe("read");
     expect(seedancePromptSkill.needsApproval).toBe(false);
   });

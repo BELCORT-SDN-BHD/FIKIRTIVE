@@ -16,6 +16,7 @@ describe("assembleSeedance", () => {
     const out = assembleSeedance(oneShot());
     expect(out).not.toContain("--resolution");
     expect(out).not.toContain("--duration");
+    expect(out).not.toContain("--ratio");
   });
   it("i2v adds a subject-consistency line", () => {
     expect(assembleSeedance(oneShot())).toContain("keep the subject consistent with the source frame");
@@ -58,6 +59,12 @@ describe("assembleSeedance", () => {
     }));
     expect(withRef).toContain("keep Otto the fox identical to the reference");
     expect(out).not.toContain("Otto the fox");
+  });
+  it("appends constraints when present", () => {
+    const out = assembleSeedance(seedancePromptInput.parse({
+      shots: [{ subject: "a cat", action: "leaps" }], constraints: "no motion blur",
+    }));
+    expect(out).toContain("no motion blur");
   });
 });
 
