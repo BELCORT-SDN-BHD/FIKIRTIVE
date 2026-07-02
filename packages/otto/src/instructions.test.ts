@@ -100,3 +100,19 @@ describe("ottoInstructions — model prompt routing", () => {
     expect(ottoInstructions).toMatch(/t2v/);
   });
 });
+
+describe("ottoInstructions — audit fix: propose/identity/keyframe reconciled with prompt-skill routing", () => {
+  it("tells Otto not to hand-write structuredPrompt for these models (Fix 5)", () => {
+    expect(ottoInstructions).toMatch(/don't hand-write|do not hand-write|build that structuredPrompt/i);
+  });
+
+  it("tells Otto desiredDuration/desiredAspect/desiredAudio go on propose, not the prompt text (Fix 10)", () => {
+    expect(ottoInstructions).toMatch(/desiredDuration/);
+    expect(ottoInstructions).toMatch(/desiredAspect/);
+  });
+
+  it("bridges the keyframe rule to seedreamPrompt's forVideo (Fix 8)", () => {
+    expect(ottoInstructions).toMatch(/keyframe/i);
+    expect(ottoInstructions).toMatch(/forVideo/);
+  });
+});
