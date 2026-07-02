@@ -642,6 +642,17 @@ export function OttoChatStream({
               const m = messages[i];
               const kind = m.metadata?.kind;
               const payload = m.metadata?.payload as Record<string, unknown> | undefined;
+
+              // Storyboard first-frame child GEN_CARDs render INSIDE their parent
+              // StoryboardCard (thumbnails), not as standalone cards in the chat.
+              // Skip them here — polling (hasWorkingJob) reads the raw messages array,
+              // so hiding the render leaves the child's job unaffected.
+              const isStoryboardChild = kind === "GEN_CARD" && typeof payload?.storyboardCardId === "string";
+              if (isStoryboardChild) {
+                i++;
+                continue;
+              }
+
               const packId = kind === "GEN_CARD" && payload?.packId && typeof payload.packId === "string" ? payload.packId : null;
 
               if (packId) {
@@ -719,6 +730,12 @@ export function OttoChatStream({
               const { m, mi } = item;
               const isLastMessage = mi === messages.length - 1;
               const kind = m.metadata?.kind;
+
+              // Defensive double-guard: a storyboard first-frame child is already
+              // dropped in the pre-pass, but never render one even if it reaches here.
+              if (kind === "GEN_CARD" && typeof (m.metadata?.payload as Record<string, unknown> | undefined)?.storyboardCardId === "string") {
+                return null;
+              }
 
             // Durable non-TEXT messages render as their REAL widget (the placeholder
             // text from threadToUiMessages is ignored — metadata carries the payload).
@@ -822,7 +839,12 @@ export function OttoChatStream({
             if (kind === "STORYBOARD_CARD") {
               return (
                 <WidgetRow key={m.id} animateIn={isNewMessage(m.id)}>
-                  <StoryboardCard cardId={m.metadata!.durableId} payload={m.metadata?.payload} />
+                  <StoryboardCard
+                    cardId={m.metadata!.durableId}
+                    payload={m.metadata?.payload}
+                    balanceUsd={balanceUsd}
+                    onBalanceRefresh={() => void onBalanceRefresh?.()}
+                  />
                 </WidgetRow>
               );
             }

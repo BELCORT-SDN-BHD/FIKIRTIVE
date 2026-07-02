@@ -492,6 +492,35 @@ describe("syncStoryboardFirstFrames — $0 对账", () => {
     expect(updShots[1].firstFrameCardId).toBe("child-1");
   });
 
+  it("job FAILED → 该镜头不写(不清字段),兄弟 DONE 镜头照常写", async () => {
+    const p = payload3();
+    delete p.shots[1].firstFrameGenerationId; // s1 pending too
+    p.shots[0].firstFrameCardId = "child-0"; // FAILED job
+    p.shots[1].firstFrameCardId = "child-1"; // DONE job
+    delete p.shots[2].firstFrameGenerationId; // s2: not pending (no child)
+    wireSync(
+      card(p),
+      { "child-0": { genJobId: "job-0" }, "child-1": { genJobId: "job-1" } },
+      { "job-1": { generationIds: ["gen-B"] } }, // only the DONE job has a result
+    );
+    mockGenJobFindFirst.mockImplementation(async (args: { where?: { id?: string } }) => {
+      if (args?.where?.id === "job-0") return { id: "job-0", status: "FAILED" };
+      if (args?.where?.id === "job-1") return { id: "job-1", status: "DONE" };
+      return null;
+    });
+    mockGenerationFindMany.mockResolvedValue([gen("gen-B")]);
+
+    const res = await syncStoryboardFirstFrames({ cardId: "card-1" });
+    if (!("payload" in res)) throw new Error("expected payload");
+
+    // exactly one write staged (the DONE sibling); the FAILED shot is left untouched
+    expect(mockChatUpdate).toHaveBeenCalledTimes(1);
+    const updShots = (mockChatUpdate.mock.calls[0][0].data.payload as StoryboardCardPayload).shots;
+    expect(updShots[1].firstFrameGenerationId).toBe("gen-B"); // DONE sibling written
+    expect(updShots[0].firstFrameGenerationId).toBeUndefined(); // FAILED shot: no field written
+    expect(updShots[0].firstFrameCardId).toBe("child-0"); // FAILED shot: child pointer not cleared
+  });
+
   it("写回是定点的:只动目标 shot 字段,其余 shot(含正在编辑的文字)原样", async () => {
     const p = payload3();
     p.shots[0].firstFrameCardId = "child-0";
