@@ -257,8 +257,30 @@ export const GEN_QUEUE = "gen";
 export const GEN_DLQ = `${GEN_QUEUE}.dlq`;
 
 /** Otto 深度研究队列名（研究 S3）。approve 动作把 { jobId } 发到这个队列;worker
- *  (Task 2) 注册消费者 + 队列 policy(retryLimit:0)。此处只声明名字,policy 待 Task 2。 */
+ *  注册消费者 handleResearch。 */
 export const RESEARCH_QUEUE = "research";
+export const RESEARCH_DLQ = `${RESEARCH_QUEUE}.dlq`;
+
+/** Research queue job payload — just the ResearchJob id; the worker owner-scopes everything off it. */
+export const researchJobData = z.object({ jobId: z.string().min(1).max(64) }).strict();
+export type ResearchJobData = z.infer<typeof researchJobData>;
+
+/**
+ * RESEARCH_QUEUE_POLICY — **retryLimit: 0 is a MONEY-SAFETY decision** (Otto research S3).
+ *
+ * A research run spends real credits (LLM tokens, metered by withLlmBudget in the worker). If a
+ * run fails, it must NOT auto-retry — a retry could re-enter the spend path. Instead the card is
+ * marked "failed" and the user re-approves (a fresh card → a fresh refId), so a human is always in
+ * the loop before credits are spent again. The worker also CAS-gates status QUEUED→RUNNING so any
+ * pg-boss redelivery is a no-op; retryLimit:0 is belt-and-suspenders on top of that.
+ *
+ * expireInSeconds is generous — a deep research run does many sequential LLM turns + page reads.
+ */
+export const RESEARCH_QUEUE_POLICY = {
+  retryLimit: 0,
+  expireInSeconds: 60 * 30,
+  deadLetter: RESEARCH_DLQ,
+} as const;
 export const GEN_RETRY_LIMIT = 2;
 export const GEN_QUEUE_POLICY = {
   retryLimit: GEN_RETRY_LIMIT,
