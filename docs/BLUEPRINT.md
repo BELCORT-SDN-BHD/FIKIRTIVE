@@ -13,6 +13,7 @@
 > | 法律 | 根 `CLAUDE.md`(合并纪律)+ CI 围栏 + `money-safety-review` skill | 总审查员 | 机器强制 |
 > | 建筑规范 | `docs/review/REVIEWER-PLAYBOOK.md` | 总审查员 | 审 PR 必查 |
 > | 地质报告 | `docs/review/CODEBASE-MAP-*.md` / `EXPANSION-SEAMS.md` / `LIVE-SURFACE-*.md` / `DECISION-INVENTORY-*.md` | 大变更后可更新 | 深度参考 |
+> | 总设计 | `docs/design/2026-07-03-harmony-0*.md`(数据模型/Parity/工厂路线/costing/第二账道) | founder + 总审查员 | 分区 spec 的上位约束 |
 > | 施工图 | `docs/superpowers/specs/` + `plans/` | 每个建设 session | 逐楼图纸 |
 
 ---
@@ -99,6 +100,7 @@ pg-boss 五条队列 + 三类回收器(gen/refgen/LLM 预扣)、ingest 哈希复
 | 6 | **Queue/worker** | core 定义策略 → 两端 createQueue → handler + 回收器时间链 | 任何异步/长任务 |
 | 7 | **.gb + shadcn** | 单一设计系统;coral 只属于 Otto | 任何新界面 |
 | 8 | **ChatMessage 卡片五道缝** | kind 联合→占位→双渲染器→注入过滤→流桥名单,五处齐动 | 任何新卡片类型 |
+| 9 | **Parity Manifest** | 每个新 action 出生即配 skill 或明示豁免,CI 拦截(宪法第 7 条的机器围栏) | 任何新 server action / 页面数据读取 |
 
 ---
 
@@ -117,6 +119,7 @@ pg-boss 五条队列 + 三类回收器(gen/refgen/LLM 预扣)、ingest 哈希复
 
 **建设节奏(2026-07-03 定调):不走 funding,直接市场变现、利益最大化 —— Content creation 相关楼最先上线赚钱**,其余新区按收入贡献排队。
 **GTM 王牌(founder 2026-07-03):dev 团队用 FIKIRTIVE 来 market FIKIRTIVE 并大获成功** —— dogfood 即营销,成功案例本身就是最响的广告(也是最狠的 QA)。
+**落地顺序 = 和声图 P1→P4**(见 `docs/design/2026-07-03-harmony-01-data-model.md` §六):P1 创作变现先锋(工厂三件套)→ P1½ 排期+Routine → P2 消息进场(WhatsApp+第二账道)→ P3 CRM+Campaign → P4 深化。**动工闸:costing 模型 §四 三个数字闭合前,任何档位定价不得写死**(harmony-04)。
 
 按 founder 的城市群构想,以下新区**方向锁定**,动工前必须各自出 spec 走第五章流程。
 **新区的功能清单不凭空发明** —— 以 Salesforce + HubSpot 全量 feature 分析为底稿(`docs/research/`,2026-07-03 起),founder 逐项 WHAT-pass(要/不要/以后)拍板后才画施工图;每个新区同时满足宪法第 7 条双模原则(人工全操作 + Otto 100% 代劳)。
@@ -152,3 +155,4 @@ pg-boss 五条队列 + 三类回收器(gen/refgen/LLM 预扣)、ingest 哈希复
 | 2026-07-03 | v1.6 G 区封卷入宪:双档席位/功能全开/滚存上限制(costing 先行)/MYR+分市场定价/直传/unlimited 永禁/白标永禁/Agency 顺序 G-09→协作+G-11→G-10 | 待 founder 定稿 |
 | 2026-07-03 | v1.7 C 区封卷:工厂 MVP(升级票纪律)+ money-in 豁免入第 7 条 + 新第 10 条"技能为弱模型设计"(原 10 顺延为 11) | 待 founder 定稿 |
 | 2026-07-03 | v1.8 WHAT-pass 全卷封盘:双模无例外判例 + 租户 RBAC 入第 7 条;通道费独立账道入第 5 条;发布可插拔/CRM 分阶段/独立 Campaign 对象/WhatsApp 第一波/dogfood GTM 入第六章 | 待 founder 定稿 |
+| 2026-07-03 | **v2.0 终稿候选**:harmony 六件套收录(总设计层入金字塔)、第九缝 Parity Manifest 入交通系统、P1→P4 落地顺序 + costing 动工闸入第六章 | **待 founder 终审合并** |
