@@ -6,6 +6,9 @@ import {
   frameFileName,
   FRAME_MAX_SIDE,
   FRAME_JPEG_QUALITY,
+  REF_VIDEO_MIN_SECONDS,
+  REF_VIDEO_MAX_SECONDS,
+  isRefVideoDurationOk,
 } from "../video-frame.js";
 
 describe("ACCEPT_ATTACH", () => {
@@ -53,5 +56,17 @@ describe("frame export constants", () => {
   it("cap 1600 and jpeg quality 0.92", () => {
     expect(FRAME_MAX_SIDE).toBe(1600);
     expect(FRAME_JPEG_QUALITY).toBe(0.92);
+  });
+});
+
+describe("ref video duration bounds", () => {
+  it("2..10s inclusive ok; outside not", () => {
+    expect(REF_VIDEO_MIN_SECONDS).toBe(2);
+    expect(REF_VIDEO_MAX_SECONDS).toBe(10);
+    expect(isRefVideoDurationOk(2)).toBe(true);
+    expect(isRefVideoDurationOk(10)).toBe(true);
+    expect(isRefVideoDurationOk(1.5)).toBe(false);
+    expect(isRefVideoDurationOk(11)).toBe(false);
+    expect(isRefVideoDurationOk(Number.NaN)).toBe(false);
   });
 });

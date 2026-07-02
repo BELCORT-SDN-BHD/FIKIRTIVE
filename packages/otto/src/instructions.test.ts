@@ -116,3 +116,9 @@ describe("ottoInstructions — audit fix: propose/identity/keyframe reconciled w
     expect(ottoInstructions).toMatch(/forVideo/);
   });
 });
+
+describe("ottoInstructions — reference video", () => {
+  it("mentions an attached reference video guides motion/style of a video plan", () => {
+    expect(ottoInstructions.toLowerCase()).toContain("reference video");
+  });
+});

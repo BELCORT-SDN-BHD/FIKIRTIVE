@@ -24,3 +24,10 @@ export function frameFileName(seconds: number): string {
   const s = Number.isFinite(seconds) ? seconds : 0;
   return `frame-${s.toFixed(2)}.jpg`;
 }
+
+export const REF_VIDEO_MIN_SECONDS = 2;
+export const REF_VIDEO_MAX_SECONDS = 10;
+/** Whole-clip reference video must be 2–10s (Seedance min; upper bound protects COGS). */
+export function isRefVideoDurationOk(duration: number): boolean {
+  return Number.isFinite(duration) && duration >= REF_VIDEO_MIN_SECONDS && duration <= REF_VIDEO_MAX_SECONDS;
+}
