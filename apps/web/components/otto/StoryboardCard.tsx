@@ -2,9 +2,8 @@
 import React, { useState } from "react";
 import { Film, Pencil, Trash2, Plus, ChevronUp, ChevronDown, Loader2 } from "lucide-react";
 import { Button } from "@/components/ui/button";
-import { parseStoryboardCardPayload, type StoryboardCardView, type StoryboardShotView } from "@/lib/storyboard-card";
+import { parseStoryboardCardPayload, MAX_STORYBOARD_SHOTS, type StoryboardCardView, type StoryboardShotView } from "@/lib/storyboard-card";
 import { editShotPrompt, addShot, deleteShot, reorderShots } from "@/lib/storyboard-actions";
-import { MAX_STORYBOARD_SHOTS } from "@fikirtive/otto";
 
 export interface StoryboardCardProps {
   cardId: string;

@@ -5,6 +5,12 @@
  */
 import type { StoryboardCardPayload } from "@fikirtive/otto";
 
+/** 镜头数上限（client-safe 常量）。权威值在 @fikirtive/otto 的
+ *  MAX_STORYBOARD_SHOTS；此处保留一份纯值副本，好让 "use client" 的
+ *  StoryboardCard 引用它而不必把 otto barrel（→ skills → prisma → pg）
+ *  拖进浏览器 bundle。node 侧测试(storyboard-card.test.ts)断言二者相等,漂移不可能。 */
+export const MAX_STORYBOARD_SHOTS = 8;
+
 export interface StoryboardShotView {
   index: number;
   title?: string;

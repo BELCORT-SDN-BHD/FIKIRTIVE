@@ -1,5 +1,15 @@
 import { describe, it, expect } from "vitest";
-import { parseStoryboardCardPayload } from "../storyboard-card";
+import { parseStoryboardCardPayload, MAX_STORYBOARD_SHOTS } from "../storyboard-card";
+import { MAX_STORYBOARD_SHOTS as MAX_STORYBOARD_SHOTS_OTTO } from "@fikirtive/otto";
+
+describe("MAX_STORYBOARD_SHOTS (client-safe copy)", () => {
+  // 本地纯值副本存在,只为让 "use client" 的 StoryboardCard 不必 import @fikirtive/otto
+  // (那会把 skills→prisma→pg 拖进浏览器 bundle,导致 build 失败)。这条断言在 node 侧
+  // 跑,import otto 安全 —— 一旦权威值改动而副本没跟,测试立刻红,漂移不可能。
+  it("等于 @fikirtive/otto 的权威值", () => {
+    expect(MAX_STORYBOARD_SHOTS).toBe(MAX_STORYBOARD_SHOTS_OTTO);
+  });
+});
 
 describe("parseStoryboardCardPayload", () => {
   it("empty / undefined payload → 空标题 + 空 shots", () => {
