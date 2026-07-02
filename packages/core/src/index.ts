@@ -102,3 +102,5 @@ export { sectionsTouched } from "./memory-sections.js";
 export type { SectionKey, RowDiff } from "./memory-sections.js";
 export { tavilySearch, braveSearch, searchWithFallback } from "./websearch.js";
 export type { WebSearchResult, WebSearchFn } from "./websearch.js";
+export { assertPublicHttpUrl, assertPublicHttpUrlResolved } from "./url-safety.js";
+export { fetchAndExtract, MAX_BODY } from "./fetch-extract.js";

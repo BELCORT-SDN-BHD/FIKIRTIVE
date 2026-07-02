@@ -18,7 +18,9 @@ describe("fetchAndExtract module boundary (F16)", () => {
     const src = read("../fetch-extract.ts");
     expect(src).toMatch(/^import "server-only";/m);
     expect(src).not.toMatch(/^\s*["']use server["'];/m);
-    expect(src).toMatch(/export async function fetchAndExtract/);
+    // research-prep: the logic moved to @fikirtive/core; this web module is now a server-only
+    // re-export shim. It must still expose fetchAndExtract (via re-export) and keep the guards above.
+    expect(src).toMatch(/export \{[^}]*\bfetchAndExtract\b[^}]*\} from "@fikirtive\/core"/);
   });
 
   it("brand-research.ts no longer defines/exports fetchAndExtract", () => {
