@@ -51,17 +51,19 @@
 
 ---
 
-### Task 3: 端口接线 + `searchWeb` skill + `researchWeb` 升级(17→18)
+### Task 3: 端口接线 + `researchWeb` 原地升级(无新 skill;registry 不变)
 
-**Files:** Modify `packages/otto/src/context.ts`(research 端口形状:`search?: WebSearchFn` 已声明,补 `readPage?(url, page?)`)、`apps/web/lib/otto-actions.ts`(buildOttoContext 注入:env 读 key → `searchWithFallback(tavilySearch(k1), k2 ? braveSearch(k2) : undefined)`;`readPage: readPageCached`)、`packages/otto/src/skills/research-web.ts`(输入加 `page?: z.number().int().min(1).optional()`,走 `ctx.research.readPage`,回 `{title, page, totalPages, text}`)、Create `packages/otto/src/skills/search-web.ts`(+test)、`registry.ts`(17→18)+ `registry.test.ts` + `instructions.ts`(研究一节:先 searchWeb 拿瘦结果 → 挑 1-3 个 URL researchWeb 按页读,**不要一次读全部结果**;华语注释英文 prose,反引号转义)+ instructions.test + CATALOG regen。
+> **2026-07-03 修正**:现状核实 —— `researchWeb`(20 skill 之一)**已同时处理 url+query**,query 已接 `ctx.research.search?`(缺真适配器),端口 `search` shape = `(q) => {results:[...]}`。故**不新建 `searchWeb` skill**(重复/YAGNI):原地升级 researchWeb(注入真搜索 + url 路径加分页)。registry 数目不变(20)。
+
+**Files:** Modify `packages/otto/src/context.ts`(research 端口补 `readPage?(url, page?) => Promise<{url,title?,page,totalPages,text,stale}>`;保留 fetchUrl + search)、`apps/web/lib/otto-actions.ts`(buildOttoContext 注入:env 读 `TAVILY_API_KEY`/`BRAVE_SEARCH_API_KEY` → 有任一 key 才注入 `search: async q => ({ results: await searchWithFallback(tavilySearch(k1), k2?braveSearch(k2):undefined)(q) })`,包一层 `{results}` 对齐端口;`readPage: (url,page)=>readPageCached(url,page)`;`fetchUrl` 不变)、`packages/otto/src/skills/research-web.ts`(输入加 `page?: z.number().int().min(1).optional()`;url 路径:有 `ctx.research.readPage` 则走分页回 `{title,page,totalPages,text}`,否则回退旧 `fetchUrl`;query 路径不变——适配器一注入就真出结果)、`instructions.ts`(研究一节:先用 researchWeb 的 query 拿瘦结果 → 挑 1-3 个 URL 用 researchWeb 的 url+page **按页读**,**不要一次拉全部结果/全文**;华语注释英文 prose,反引号转义)+ `instructions.test.ts` + CATALOG regen(若 researchWeb 描述变)。
 
 **语义:**
-1. `searchWeb` skill:`defineOttoSkill({ cost:"free", effect:"read", reach:"external", parameters: z.object({ query: z.string().trim().min(2).max(200) }) })` → `needsApproval === false`(测试断言);无端口(key 未配)→ 友好 `{error: "Web search isn't configured yet."}`;结果原样瘦透传(≤8 条)。
-2. `researchWeb` 升级向后兼容:不传 page = 第 1 页;未接 readPage 端口时回退旧 fetchUrl 行为(平滑过渡,测试锁)。
-3. registry 排序名单更新(18 名,照 F1 先例);CATALOG `pnpm --filter @fikirtive/otto run catalog`。
-4. 测试:gate 断言、无端口 error、瘦透传、researchWeb 分页/回退、instructions 锚定断言(/searchWeb/、分页提示 token)。
+1. **端口注入 shape 对齐**:Task1 适配器返回裸 `WebSearchResult[]`,端口声明 `{results:[...]}` → 注入处包 `{ results }`。key 都没配 → `search` 不注入(researchWeb query 路径回落既有友好 message,不崩)。
+2. `researchWeb` 向后兼容:不传 page = 第 1 页;未接 `readPage` 端口 → 回退旧 `fetchUrl` 行为(平滑,测试锁)。
+3. registry **不变**(不新增 skill);仅 researchWeb 描述可能更新 → `pnpm --filter @fikirtive/otto run catalog` 若有 diff 就提交。
+4. 测试:researchWeb query 路径(注入 mock search → 出结果 / 未注入 → 友好 message)、url 分页(注入 mock readPage → 回 page/totalPages / 未注入 → fetchUrl 回退)、instructions 锚定断言(researchWeb + 分页/"page" + "don't dump all" 类 token)。
 
-**Steps:** TDD → otto 全套 + web 全套(允许失败仅既有环境族)→ `pnpm -r typecheck` + **web build EXIT 0** → commit `feat(otto): searchWeb skill + cached paged researchWeb — research port wired (17→18, \$0)`。
+**Steps:** TDD → otto 全套 + web 全套(允许失败仅既有环境族)→ `pnpm -r typecheck` + **web build EXIT 0** → commit `feat(otto): wire research search adapter + cached paged researchWeb (\$0)`。
 
 ---
 
