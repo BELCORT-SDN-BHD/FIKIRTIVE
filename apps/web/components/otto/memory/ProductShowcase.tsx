@@ -127,7 +127,7 @@ export function ProductShowcase({
   onOpenPicker: (rec: BrandRecordRow) => void;
 }) {
   const [query, setQuery] = useState("");
-  const [catFilter, setCatFilter] = useState<"all" | "uncat" | string>("all");
+  const [catSel, setCatSel] = useState<Set<string>>(new Set());
   const [editingId, setEditingId] = useState<string | null>(null);
   const [adding, setAdding] = useState(false);
   const [noteEditId, setNoteEditId] = useState<string | null>(null);
@@ -175,28 +175,35 @@ export function ProductShowcase({
     return { byKey, uncat };
   }, [records]);
 
-  // Guard against a stranded filter: archiving the last product of the selected
-  // category (or the last uncategorized one) removes its chip, but `catFilter`
-  // would still hide everything. Derive a valid filter and fall back to "all".
-  const activeCatFilter =
-    catFilter === "all" ||
-    (catFilter === "uncat" ? catCounts.uncat > 0 : categories.some((c) => categoryKey(c) === catFilter))
-      ? catFilter
-      : "all";
+  // Guard against stranded keys: archiving the last product of a selected
+  // category (or the last uncategorized one) removes its chip, but `catSel`
+  // would still hide everything. Drop keys no longer present; when nothing
+  // valid remains, treat as "All" (same safety property as before).
+  const validSel = useMemo(() => {
+    const live = new Set<string>();
+    for (const c of categories) live.add(categoryKey(c));
+    const out = new Set<string>();
+    for (const key of catSel) {
+      if (key === "uncat") {
+        if (catCounts.uncat > 0) out.add(key);
+      } else if (live.has(key)) {
+        out.add(key);
+      }
+    }
+    return out;
+  }, [catSel, categories, catCounts.uncat]);
 
   const filtered = useMemo(() => {
     const q = query.trim().toLowerCase();
     return sorted.filter((r) => {
       const d = r.data as Record<string, unknown>;
       // Category filter applies to the active grid; archived cards pass through.
-      if (activeCatFilter !== "all" && r.status !== "archived") {
+      // Empty validSel = All. Multiple selected = union (OR).
+      if (validSel.size > 0 && r.status !== "archived") {
         const raw = d.category;
         const hasCat = typeof raw === "string" && raw.trim().length > 0;
-        if (activeCatFilter === "uncat") {
-          if (hasCat) return false;
-        } else if (!hasCat || categoryKey(raw as string) !== activeCatFilter) {
-          return false;
-        }
+        const key = hasCat ? categoryKey(raw as string) : "uncat";
+        if (!validSel.has(key)) return false;
       }
       if (!q) return true;
       const name = typeof d.name === "string" ? d.name.toLowerCase() : "";
@@ -204,7 +211,7 @@ export function ProductShowcase({
       const tags = Array.isArray(d.tags) ? (d.tags as unknown[]).filter((t) => typeof t === "string").join(" ").toLowerCase() : "";
       return name.includes(q) || desc.includes(q) || tags.includes(q);
     });
-  }, [sorted, query, activeCatFilter]);
+  }, [sorted, query, validSel]);
 
   const archivedCount = filtered.filter((r) => r.status === "archived").length;
   const activeCount = records.filter((r) => r.status === "active").length;
@@ -222,17 +229,24 @@ export function ProductShowcase({
         <Button size="sm" onClick={() => setAdding(true)}>+ Add product</Button>
       </div>
 
-      {/* Category filter chips (active products only). */}
+      {/* Category filter chips (active products only) — multi-select toggles. */}
       {categories.length > 0 && (
         <div className="mb-3 flex flex-wrap gap-1 rounded-[14px] bg-muted p-1">
           {(() => {
-            const chip = (key: "all" | "uncat" | string, label: string) => (
+            const toggle = (key: string) =>
+              setCatSel((cur) => {
+                const next = new Set(cur);
+                if (next.has(key)) next.delete(key);
+                else next.add(key);
+                return next;
+              });
+            const chip = (active: boolean, onClick: () => void, label: string, key: string) => (
               <button
                 key={key}
                 type="button"
-                onClick={() => setCatFilter(key)}
-                className={`rounded-[10px] px-3 py-1.5 text-[0.8125rem] transition-colors ${
-                  activeCatFilter === key ? "bg-card text-foreground shadow-sm" : "text-muted-foreground hover:text-foreground"
+                onClick={onClick}
+                className={`whitespace-nowrap rounded-[10px] px-3 py-1.5 text-[0.8125rem] transition-colors ${
+                  active ? "bg-card text-foreground shadow-sm" : "text-muted-foreground hover:text-foreground"
                 }`}
               >
                 {label}
@@ -240,9 +254,13 @@ export function ProductShowcase({
             );
             return (
               <>
-                {chip("all", `All (${activeCount})`)}
-                {categories.map((c) => chip(categoryKey(c), `${c} (${catCounts.byKey.get(categoryKey(c)) ?? 0})`))}
-                {catCounts.uncat > 0 && chip("uncat", `Uncategorized (${catCounts.uncat})`)}
+                {chip(validSel.size === 0, () => setCatSel(new Set()), `All (${activeCount})`, "all")}
+                {categories.map((c) => {
+                  const key = categoryKey(c);
+                  return chip(validSel.has(key), () => toggle(key), `${c} (${catCounts.byKey.get(key) ?? 0})`, key);
+                })}
+                {catCounts.uncat > 0 &&
+                  chip(validSel.has("uncat"), () => toggle("uncat"), `Uncategorized (${catCounts.uncat})`, "uncat")}
               </>
             );
           })()}
@@ -317,29 +335,33 @@ export function ProductShowcase({
               <div className="p-4">
                 <div className="flex items-center gap-2 flex-wrap">
                   <span className="text-[0.875rem] leading-[1.45] font-semibold text-foreground">{f.name}</span>
-                  {f.price && <span className="text-[0.8125rem] font-mono text-muted-foreground">{f.price}</span>}
+                  {f.price && <span className="whitespace-nowrap font-mono text-[13px] text-muted-foreground">{f.price}</span>}
                 </div>
                 {f.description && (
                   <div className="mt-0.5 text-[0.8125rem] leading-[1.45] text-muted-foreground line-clamp-2">
                     {f.description}
                   </div>
                 )}
-                <div className="mt-2 flex items-center gap-2 text-[0.6875rem] text-muted-foreground/70">
-                  <span className="rounded-full bg-accent px-2 py-[2px] font-medium text-muted-foreground">
+                {/* Row 1: badges wrap as whole units; updated label pushed right. */}
+                <div className="mt-2 flex flex-wrap items-center gap-x-2 gap-y-1 text-[0.6875rem] text-muted-foreground/70">
+                  <span className="whitespace-nowrap rounded-full bg-accent px-2 py-[2px] font-medium text-muted-foreground">
                     {r.source === "otto" ? "✦ OTTO learned" : "You added"}
                   </span>
                   {f.category && (
-                    <span className="rounded-full bg-accent px-2 py-[2px] text-[0.6875rem] text-muted-foreground">
+                    <span className="whitespace-nowrap rounded-full bg-accent px-2 py-[2px] text-[0.6875rem] text-muted-foreground">
                       {f.category}
                     </span>
                   )}
-                  {whenLabel(r.updatedAt) && <span>updated {whenLabel(r.updatedAt)}</span>}
+                  {whenLabel(r.updatedAt) && (
+                    <span className="ml-auto whitespace-nowrap">updated {whenLabel(r.updatedAt)}</span>
+                  )}
                 </div>
-                <div className="mt-1 flex flex-wrap gap-x-3 gap-y-1 text-[0.6875rem] text-muted-foreground/70">
+                {/* Row 2: actions as small ghost buttons (comfortable tap targets). */}
+                <div className="mt-1.5 flex flex-wrap items-center gap-x-1 gap-y-1">
                   {imgUrl && (
                     <button
                       type="button"
-                      className="hover:text-foreground whitespace-nowrap"
+                      className="-ml-2 first:ml-0 rounded-[8px] px-2 py-1 text-[0.8125rem] text-muted-foreground hover:bg-accent hover:text-foreground"
                       onClick={() => void onSetImage(r, null)}
                     >
                       Remove image
@@ -348,14 +370,14 @@ export function ProductShowcase({
                   <button
                     type="button"
                     aria-label="Edit"
-                    className="hover:text-foreground whitespace-nowrap"
+                    className="-ml-2 first:ml-0 rounded-[8px] px-2 py-1 text-[0.8125rem] text-muted-foreground hover:bg-accent hover:text-foreground"
                     onClick={() => setEditingId(r.id)}
                   >
                     ✎ Edit
                   </button>
                   <button
                     type="button"
-                    className="hover:text-foreground whitespace-nowrap"
+                    className="-ml-2 first:ml-0 rounded-[8px] px-2 py-1 text-[0.8125rem] text-muted-foreground hover:bg-accent hover:text-foreground"
                     onClick={() => void onArchive(r.id, d, archived ? "active" : "archived")}
                   >
                     {archived ? "Unarchive" : "Archive"}
