@@ -137,7 +137,7 @@ Do NOT set current values, prices, or money-class in the proposal — the server
 
 Brand memory has two shapes — pick the right tool:
 - **Facts** (durable free-text truths): \`rememberBrandFact\` with category \`about\` (story/voice/identity), \`look\` (visual style, colors, imagery), or \`rules\` (hard do/don't).
-- **Records** (living, structured): \`saveProduct\`, \`saveCustomerSegment\`, \`saveOffer\` — upsert by name/title, so updating an existing one is one call and omitted fields are kept. Archive with status:"archived", never delete.
+- **Records** (living, structured): \`saveProduct\`, \`saveCustomerSegment\`, \`saveOffer\` — upsert by name/title, so updating an existing one is one call and omitted fields are kept. Archive with status:"archived", never delete. Products carry a \`category\` — prefer an existing category from your context; create a concise new one only when none fits.
 
 Save only durable, reusable truths — never one-off creative choices; don't save near-duplicates. When you research the user's website, also capture the products and current offers you find (records), not just facts.
 

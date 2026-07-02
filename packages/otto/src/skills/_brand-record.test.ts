@@ -111,6 +111,29 @@ describe("upsertBrandRecordFromOtto", () => {
       }),
     });
   });
+
+  it("saveProduct threads category into data", async () => {
+    db.prisma.brandRecord.findFirst.mockResolvedValue(null);
+    db.prisma.brandRecord.create.mockResolvedValue({});
+    await upsertBrandRecordFromOtto(
+      { kind: "product", fields: { name: "Latte Blend", category: "Coffee" } },
+      { context: makeCtx() },
+    );
+    const arg = db.prisma.brandRecord.create.mock.calls[0]![0] as { data: { data: Record<string, unknown> } };
+    expect(arg.data.data.category).toBe("Coffee");
+  });
+  it("OTTO update without category preserves the existing one (merge)", async () => {
+    db.prisma.brandRecord.findFirst.mockResolvedValue({ id: "r1", data: { name: "Latte Blend", category: "Coffee" } });
+    db.prisma.brandRecord.update.mockResolvedValue({});
+    await upsertBrandRecordFromOtto(
+      { kind: "product", fields: { name: "Latte Blend", price: "RM 55" } },
+      { context: makeCtx() },
+    );
+    expect(db.prisma.brandRecord.update).toHaveBeenCalledWith({
+      where: { id: "r1" },
+      data: expect.objectContaining({ data: expect.objectContaining({ category: "Coffee", price: "RM 55" }) }),
+    });
+  });
 });
 
 describe("skill classifications", () => {
