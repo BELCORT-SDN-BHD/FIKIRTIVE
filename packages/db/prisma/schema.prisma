@@ -438,6 +438,7 @@ model GenJob {
   sourceGenerationId String?
   // 可选末帧（last frame）：i2v 在 source→tail 之间补间（Kling tail_image_url）
   tailGenerationId   String?
+  referenceVideoGenerationId String?
   prompt             String
   entityIds          String[]  @default([])
   // Phase C: { [entityId]: variantId } — selected variant per @mentioned entity;
