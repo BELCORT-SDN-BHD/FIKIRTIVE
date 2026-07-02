@@ -4,7 +4,7 @@
 
 **Goal（一句话）：** 加一个 $0 的 `proposeStoryboard` skill，持久化一张有序的 `STORYBOARD_CARD`（每镜头：首帧 prompt + 视频 prompt），作为分镜块 F 的后端地基。
 
-**Architecture：** 完全照 `propose` 的模式（`packages/otto/src/skills/propose.ts`）：一个 helpers 文件（Zod schema + 纯持久化前的整形）+ 一个 skill 文件（`defineOttoSkill` free/write/internal → 不审批 + owner-scoped 持久化）。`kind` 是 `ChatMessage` 上的**自由字符串**（现有 GEN_CARD/ACTION_CARD 都是字符串字面量）——`STORYBOARD_CARD` 是新字符串，**无需 Prisma migration**。无 UI、无花钱、无 GenJob。
+**Architecture：** 完全照 `propose` 的模式（`packages/otto/src/skills/propose.ts`）：一个 helpers 文件（Zod schema + 纯持久化前的整形）+ 一个 skill 文件（`defineOttoSkill` free/write/internal → 不审批 + owner-scoped 持久化）。`kind` 是 `ChatMessage` 上的 **Prisma enum `ChatMessageKind`**（schema.prisma），**不是自由字符串**——所以 `STORYBOARD_CARD` 需要一个**加性 enum migration**（`ALTER TYPE "ChatMessageKind" ADD VALUE 'STORYBOARD_CARD';`，和 BUILD_CARD 一样;`20260702000000_storyboard_card`)+ `prisma generate` 重生成 client。这是唯一的 schema 改动:加性、无数据/花钱影响。无 UI、无花钱、无 GenJob。〔2026-07-02 修正:原计划误以为自由字符串——implementer 正确 escalate〕
 
 **Tech Stack：** TypeScript、Zod、`@fikirtive/db`（Prisma）、`@fikirtive/core`（newId、COWORK caps）、vitest。`packages/otto`。分支 `claude/otto-storyboard`（stacked 在 D/E 上）。
 
