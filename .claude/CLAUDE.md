@@ -72,3 +72,9 @@ session must follow them:
   on prod — a bad merge ships instantly. When in doubt, don't merge; ask the founder.
 - Spend-path diffs (see `.claude/skills/money-safety-review`) additionally require that
   skill's checks to pass before merge.
+
+## The Blueprint (constitution)
+`docs/BLUEPRINT.md` is the founder-finalized master plan: what this product IS, its
+non-negotiable principles, and the 8 expansion seams every new feature must use.
+**Read it before building anything new. NEVER edit it** — if code and blueprint
+disagree, stop and report; only the founder changes the blueprint.
