@@ -134,6 +134,30 @@ describe("ottoInstructions — web research (researchWeb query→url→page)", (
   });
 });
 
+describe("ottoInstructions — deep vs lightweight (proposeResearch)", () => {
+  it("names the proposeResearch tool for deep research", () => {
+    expect(ottoInstructions).toMatch(/proposeResearch/);
+  });
+  it("says proposeResearch costs credits and needs the user's approval", () => {
+    // anchor to the approval/credits gate — the new deep-research content, not the S1 researchWeb section
+    expect(ottoInstructions).toMatch(/proposeResearch/);
+    expect(ottoInstructions).toMatch(/approve|approval|costs? credits|charged/i);
+  });
+  it("is honest that proposeResearch only lays out the PLAN — research runs after approval", () => {
+    expect(ottoInstructions).toMatch(
+      /after you approve|runs? (after|later)|only.*plan|does not (research|run) yet/i,
+    );
+  });
+  it("distinguishes lightweight researchWeb from deep proposeResearch in the research context", () => {
+    // both tools must be named so the lightweight-vs-deep routing is unambiguous
+    expect(ottoInstructions).toMatch(/researchWeb/);
+    expect(ottoInstructions).toMatch(/proposeResearch/);
+  });
+  it("gates proposeResearch on a topic (刨根问底)", () => {
+    expect(ottoInstructions).toMatch(/topic/);
+  });
+});
+
 describe("ottoInstructions — reference video", () => {
   it("mentions an attached reference video guides motion/style of a video plan", () => {
     expect(ottoInstructions.toLowerCase()).toContain("reference video");
