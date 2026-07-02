@@ -72,3 +72,10 @@ session must follow them:
   on prod — a bad merge ships instantly. When in doubt, don't merge; ask the founder.
 - Spend-path diffs (see `.claude/skills/money-safety-review`) additionally require that
   skill's checks to pass before merge.
+
+## Reviewing PRs (any agent)
+Before reviewing or merging ANY PR, read `docs/review/REVIEWER-PLAYBOOK.md` and run the
+checklist for every area the diff touches. The full codebase map is
+`docs/review/CODEBASE-MAP-2026-07-02.md`. These files encode invariants that look like
+over-engineering but are load-bearing — when a diff contradicts the playbook, the playbook
+wins until a human says otherwise.
