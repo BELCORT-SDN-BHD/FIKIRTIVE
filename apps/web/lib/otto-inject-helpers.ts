@@ -87,11 +87,13 @@ export function proposeCardId(part: { type: string; data?: unknown }): string | 
 }
 
 /**
- * Inject the durable GEN_CARD identified by `cardId` (from a freshly-streamed
+ * Inject the durable card identified by `cardId` (from a freshly-streamed
  * data-tool-propose) into the useChat message list, so the just-proposed card
- * appears inline with its FULL payload. Deduped by durableId — if the card is
- * already present (e.g. it was seeded or a prior poll already added it) the list
- * is returned unchanged (same reference).
+ * appears inline with its FULL payload. Handles both GEN_CARD (propose) and
+ * STORYBOARD_CARD (proposeStoryboard) — both stream `{ cardId }` on the same
+ * data-tool-propose channel. Deduped by durableId — if the card is already
+ * present (seeded or added by a prior poll) the list is returned unchanged
+ * (same reference).
  *
  * Returns the new messages array (or the same array if nothing changed).
  */
@@ -102,7 +104,9 @@ export function injectCardMessage(
 ): OttoUiMessage[] {
   if (messages.some((m) => m.metadata?.durableId === cardId)) return messages;
   const card = threadToUiMessages(fresh).find(
-    (u) => u.metadata?.durableId === cardId && u.metadata?.kind === "GEN_CARD",
+    (u) =>
+      u.metadata?.durableId === cardId &&
+      (u.metadata?.kind === "GEN_CARD" || u.metadata?.kind === "STORYBOARD_CARD"),
   );
   if (!card) return messages;
   return [...messages, card];

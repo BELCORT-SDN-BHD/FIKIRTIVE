@@ -111,18 +111,21 @@ export function bridgeEvent(event: unknown): OttoStreamPart | null {
     const item = (event as { item?: unknown }).item;
 
     if (name === "tool_called") {
-      // Only the propose tool gets a live status; other $0 tools are silent.
-      if (toolNameOf(item) === "propose") {
+      // Only the card-proposing tools get a live status; other $0 tools are silent.
+      const called = toolNameOf(item);
+      if (called === "propose" || called === "proposeStoryboard") {
         return { type: "data-status", data: { kind: "planning", text: "planning your ad…" } };
       }
       return null;
     }
 
     if (name === "tool_output") {
-      // The durable GEN_CARD is persisted by the propose tool itself; here we just
-      // forward its return value ({ cardId, shownPriceDisplay }) so the client can
-      // render the card inline immediately. The card DATA is on the OUTPUT event.
-      if (toolNameOf(item) === "propose") {
+      // The durable GEN_CARD / STORYBOARD_CARD is persisted by the tool itself; here we
+      // just forward its return value ({ cardId, … }) so the client can inject + render
+      // the card inline immediately. The card DATA is on the OUTPUT event. proposeStoryboard
+      // returns { cardId } too, so the same data-tool-propose channel carries both.
+      const out = toolNameOf(item);
+      if (out === "propose" || out === "proposeStoryboard") {
         const output = (item as { output?: unknown }).output;
         return { type: "data-tool-propose", data: output };
       }
@@ -158,6 +161,9 @@ const TOOL_STEP_LABELS: Record<string, string> = {
   describeRefs: "Looking at your references",
   propose: "Planning the campaign",
   proposePack: "Planning the ad pack",
+  proposeStoryboard: "Laying out the storyboard",
+  seedreamPrompt: "Crafting the image prompt",
+  seedancePrompt: "Crafting the video prompt",
   generate: "Making a visual",
   "meta-insights": "Reading your ad performance",
   "meta-list-objects": "Checking your Meta account",

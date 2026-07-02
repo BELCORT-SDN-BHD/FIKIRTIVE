@@ -109,6 +109,11 @@ export function toChatMessageDTO(
         ? { approval: { expiresAt: approval.expiresAt, consumedAt: approval.consumedAt } }
         : {}),
     };
+  } else if (m.kind === "STORYBOARD_CARD" && m.payload) {
+    // Pass the storyboard payload through so the STORYBOARD_CARD render branch has
+    // shots to draw — both on reload and on live mid-turn inject. No spend/approval
+    // internals live on it ($0 card); parseStoryboardCardPayload defends the shape client-side.
+    payload = m.payload;
   }
   return {
     id: m.id,
