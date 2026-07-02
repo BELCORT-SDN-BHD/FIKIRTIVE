@@ -17,7 +17,7 @@ import { handleRefGen, reapStaleRefGenJobs } from "./jobs/refgen.js";
 import { handleGen, reapStaleGenJobs } from "./jobs/gen.js";
 import { reapStaleLlmReservations } from "./jobs/llm-reservation-reaper.js";
 import { handleCaption } from "./jobs/caption.js";
-import { handleResearch } from "./jobs/research.js";
+import { handleResearch, reapStaleResearchJobs } from "./jobs/research.js";
 import {
   RENDER_DLQ,
   RENDER_QUEUE_POLICY,
@@ -188,6 +188,11 @@ async function main(): Promise<void> {
       if (rn) console.log(`[worker] reaped ${rn} stale refgen job(s)`);
       const ln = await reapStaleLlmReservations();
       if (ln) console.log(`[worker] reaped ${ln} leaked LLM reservation(s)`);
+      // Research: a worker SIGKILL'd mid-run (retryLimit:0 → no redelivery) strands the card
+      // "Researching…" forever. Credits are already recovered by reapStaleLlmReservations above;
+      // this flips the stranded RUNNING job → FAILED + its card → failed (pure UX, $0).
+      const sn = await reapStaleResearchJobs();
+      if (sn) console.log(`[worker] reaped ${sn} stale research job(s)`);
       // F41(c): recover uploads whose ingest dispatch was lost (finalize commits
       // rows before the send). singletonKey dedupes while a re-send is in flight.
       const ri = await redispatchLostIngest((assetId) =>

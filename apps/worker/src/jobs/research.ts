@@ -107,25 +107,32 @@ type ResearchCardPayloadShape = {
 };
 
 /**
- * Mark the card + job FAILED, owner-scoped. RMW re-reads the card payload inside the update so
- * every other field is byte-preserved; only status + a brief error move. NO credit calls here —
- * withLlmBudget already settled/refunded internally.
+ * Flip a RESEARCH_CARD payload → failed, owner-scoped. RMW re-reads the payload so every OTHER
+ * field is byte-preserved; only status + a brief error move. NO credit calls. Shared by the inline
+ * failure path (failResearch) and the stale-job reaper (reapStaleResearchJobs).
+ */
+async function failResearchCard(cardId: string, ownerId: string, errorText: string): Promise<void> {
+  const fresh = await prisma.chatMessage.findFirst({
+    where: { id: cardId, ownerId, kind: "RESEARCH_CARD" },
+    select: { payload: true },
+  });
+  if (!fresh) return;
+  const cur = (fresh.payload ?? {}) as ResearchCardPayloadShape;
+  await prisma.chatMessage.updateMany({
+    where: { id: cardId, ownerId, kind: "RESEARCH_CARD" },
+    data: { payload: { ...cur, status: "failed", error: errorText } as unknown as object },
+  });
+}
+
+/**
+ * Mark the card + job FAILED, owner-scoped. NO credit calls here — withLlmBudget already
+ * settled/refunded internally.
  */
 async function failResearch(
   job: { id: string; ownerId: string; cardId: string },
   errorText: string,
 ): Promise<void> {
-  const fresh = await prisma.chatMessage.findFirst({
-    where: { id: job.cardId, ownerId: job.ownerId, kind: "RESEARCH_CARD" },
-    select: { payload: true },
-  });
-  if (fresh) {
-    const cur = (fresh.payload ?? {}) as ResearchCardPayloadShape;
-    await prisma.chatMessage.updateMany({
-      where: { id: job.cardId, ownerId: job.ownerId, kind: "RESEARCH_CARD" },
-      data: { payload: { ...cur, status: "failed", error: errorText } as unknown as object },
-    });
-  }
+  await failResearchCard(job.cardId, job.ownerId, errorText);
   await prisma.researchJob.updateMany({
     where: { id: job.id, ownerId: job.ownerId },
     data: { status: "FAILED", error: errorText },
@@ -270,4 +277,46 @@ export async function handleResearch(data: { jobId: string }, _retryCount: numbe
     data: { status: "DONE" },
   });
   console.log(`[research] job ${job.id}: DONE (${ctx.searchesUsed} searches, ${ctx.pagesUsed} reads, ${ctx.sourcesRead.length} sources)`);
+}
+
+// A research run holds NO "started" timestamp on the job row — handleResearch's QUEUED→RUNNING CAS
+// only moves `status`, and it never touches the row again until the terminal DONE/FAILED flip, so
+// `updatedAt` is stable at the RUNNING-transition time for the whole run. 60 min is comfortably
+// longer than any real research run (bounded by tier.maxSteps) and MATCHES the reservation reaper's
+// LLM_RESERVATION_STALE_MS — the two reapers agree on what "the worker crashed" means, so the money
+// reaper (which refunds the leaked `research:<cardId>` RESERVE) and this card reaper key off the
+// same stranded rows.
+const RESEARCH_STALE_MS = 1000 * 60 * 60;
+const RESEARCH_INTERRUPTED = "research was interrupted — please try again";
+
+/**
+ * Reaper for research cards stranded "Researching…" forever. RESEARCH_QUEUE is retryLimit:0, so a
+ * worker SIGKILL'd mid-run (e.g. every Railway deploy) after the QUEUED→RUNNING CAS is never
+ * redelivered — handleResearch never resumes to flip the ResearchJob RUNNING→FAILED nor the card
+ * running→failed. The user's CREDITS are already recovered by reapStaleLlmReservations (the
+ * `research:<cardId>` RESERVE has no SETTLE/REFUND finalizer → refunded there), so this is a PURE
+ * UX sweep and a $0 change — it makes NO credit calls (a refund here would double-refund).
+ *
+ * Mirrors reapStaleRefGenJobs: a status-guarded conditional updateMany is the at-most-once claim. A
+ * run that legitimately just finished flips RUNNING→DONE out from under us → count===0 → we skip, so
+ * a completed job is never clobbered and a card is never falsely marked failed. All reads/writes are
+ * owner-scoped. Returns how many stranded research jobs it swept.
+ */
+export async function reapStaleResearchJobs(): Promise<number> {
+  const cutoff = new Date(Date.now() - RESEARCH_STALE_MS);
+  const stuck = await prisma.researchJob.findMany({
+    where: { status: "RUNNING", updatedAt: { lt: cutoff } },
+    select: { id: true, ownerId: true, cardId: true },
+  });
+  let reaped = 0;
+  for (const job of stuck) {
+    const { count } = await prisma.researchJob.updateMany({
+      where: { id: job.id, ownerId: job.ownerId, status: "RUNNING", updatedAt: { lt: cutoff } },
+      data: { status: "FAILED", error: RESEARCH_INTERRUPTED },
+    });
+    if (count === 0) continue; // lost the claim (finished / concurrent sweep) — leave it alone
+    await failResearchCard(job.cardId, job.ownerId, RESEARCH_INTERRUPTED);
+    reaped++;
+  }
+  return reaped;
 }
