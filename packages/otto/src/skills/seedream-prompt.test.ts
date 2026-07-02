@@ -58,4 +58,9 @@ describe("seedreamPromptSkill gate", () => {
     expect(seedreamPromptSkill.description).toContain("cinematic");
     expect(seedreamPromptSkill.description).not.toContain("推镜头");
   });
+  it("description gates i2i on an @-entity source (guards spend on bare priors)", () => {
+    expect(seedreamPromptSkill.description).toContain(
+      "Use mode:'i2i' ONLY when an @-referenced entity supplies the source image (pass its id via propose's entityIds); to change a prior generation with no entity, use t2i instead."
+    );
+  });
 });

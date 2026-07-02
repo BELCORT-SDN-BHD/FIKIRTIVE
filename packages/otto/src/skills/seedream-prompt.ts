@@ -16,7 +16,9 @@ export const seedreamPromptSkill = defineOttoSkill({
     "to propose an image, then pass the returned `prompt` as propose's structuredPrompt. Our users don't " +
     "know photography — YOU supply the craft: always give a concrete subject, and add style, lighting " +
     "(direction + color temperature), camera/lens, and composition even if the user didn't mention them. " +
-    "Use mode:'i2i' to edit a source image (fill editVerb + editTarget + what to preserve). Set forVideo:true " +
+    "Use mode:'i2i' ONLY when an @-referenced entity supplies the source image (pass its id via propose's " +
+    "entityIds); to change a prior generation with no entity, use t2i instead. For i2i, fill editVerb + " +
+    "editTarget + what to preserve. Set forVideo:true " +
     "when the image is a video's first frame. List any @-referenced entities in `references` (role + name) so " +
     "their identity is locked; the reference image itself is passed separately via propose's entityIds. " +
     `Lighting (give direction + color temperature), e.g.: ${enOnly(LIGHTING).join(", ")}. ` +
