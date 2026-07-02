@@ -97,3 +97,5 @@ export {
 export type {
   RecordKind, ProductRecordData, SegmentRecordData, OfferRecordData, OfferPhase,
 } from "./brand-records.js";
+export { SECTIONS, FACT_SECTION_KEYS, sectionForCategory, diffRows } from "./memory-sections.js";
+export type { SectionKey, RowDiff } from "./memory-sections.js";
