@@ -26,3 +26,10 @@
 | O-13 connectors → 团队协作 | **Slack/Notion connectors 不要;团队协作 FEATURE 要**(founder 转向) | 在 FIKIRTIVE 内做 team collab(多席位、协作、审批)—— 直接支撑席位收入模型;新簇,归 G 区细化 |
 | O-14 对外 MCP | **不要(永久)** | founder 定案:"如果会用其他 LLM,代表我们的 Otto harness 不够好,就代表 FIKIRTIVE 不好。不要有这个机会。" —— 不留逃生口,质量压力全压在 Otto 上;外部 agent 永不获得操作面 |
 | 差异化叙事 | **确认** | 首发 = "SEA 的创作超级员工"先赚钱;投放闭环第二章;"一个员工 + 100% 覆盖"为结构承诺 |
+
+## 追加判决(founder 2026-07-03 深夜)
+
+| 项 | 判决 | 内容 |
+|---|---|---|
+| Credit 消费明细(用户侧+官方侧) | **要** | 用户在 Account → Credits 看到分类消费明细(Otto 对话 / 图 / 视频 / 未来任何花费点,可展开单笔);官方在 /admin/cost 扩同口径全租户聚合。**纯只读展示层,零钱路风险** —— CreditLedger 的 refId/kind 结构本来就携带分类,只差 UI。宪法推论:未来任何新花费点必须走同一账本 → 自动进明细,不许旁路。 |
+| 收钱绝对正确(不多扣/不漏扣) | **重申为最高铁律**(已是宪法第 2 条的实质) | 架构现状:reserve→settle 账本事务、幂等键+partial-unique 索引防双扣(数据库级)、SETTLE/REFUND 互斥、三类回收器防漏、money-safety-review + 总审查员双闸看守。2026-07-02 审计 P0=0。 |
