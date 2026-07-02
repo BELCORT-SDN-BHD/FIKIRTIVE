@@ -79,6 +79,9 @@ non-negotiable principles, and the 9 expansion seams every new feature must use.
 disagree, stop and report; only the founder changes the blueprint.
 
 ## Reviewing PRs (any agent)
+The chief-reviewer role is an OFFICE defined in the playbook, not a person or session —
+whoever reviews holds it temporarily and is bound by its rules (incl. never self-merging
+your own PRs; the founder is above the office as final authority).
 Before reviewing or merging ANY PR, read `docs/review/REVIEWER-PLAYBOOK.md` and run the
 checklist for every area the diff touches. The full codebase map is
 `docs/review/CODEBASE-MAP-2026-07-02.md`. These files encode invariants that look like
