@@ -1,5 +1,6 @@
 "use client";
 import React, { useMemo, useState } from "react";
+import { categoryKey, distinctCategories } from "@fikirtive/core";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
@@ -16,16 +17,16 @@ export function whenLabel(d: Date | string): string {
   return Number.isNaN(date.getTime()) ? "" : fmtDay(date);
 }
 
-type ProdFields = { name: string; description: string; price: string; url: string; sellingAngle: string; tags: string };
+type ProdFields = { name: string; description: string; price: string; url: string; sellingAngle: string; tags: string; category: string };
 
-const EMPTY: ProdFields = { name: "", description: "", price: "", url: "", sellingAngle: "", tags: "" };
+const EMPTY: ProdFields = { name: "", description: "", price: "", url: "", sellingAngle: "", tags: "", category: "" };
 
 function fieldsOf(data: Record<string, unknown>): ProdFields {
   const s = (v: unknown) => (typeof v === "string" ? v : "");
   const tags = Array.isArray(data.tags) ? (data.tags as unknown[]).filter((t) => typeof t === "string").join(", ") : "";
   return {
     name: s(data.name), description: s(data.description), price: s(data.price),
-    url: s(data.url), sellingAngle: s(data.sellingAngle), tags,
+    url: s(data.url), sellingAngle: s(data.sellingAngle), tags, category: s(data.category),
   };
 }
 
@@ -39,11 +40,13 @@ function toData(f: ProdFields): Record<string, unknown> {
     ...(f.url.trim() ? { url: f.url.trim() } : {}),
     ...(f.sellingAngle.trim() ? { sellingAngle: f.sellingAngle.trim() } : {}),
     ...(tags.length ? { tags } : {}),
+    ...(f.category.trim() ? { category: f.category.trim() } : {}),
   };
 }
 
-function ProdForm({ initial, onCancel, onSubmit }: {
+function ProdForm({ initial, categories, onCancel, onSubmit }: {
   initial: ProdFields;
+  categories: string[];
   onCancel: () => void;
   onSubmit: (data: Record<string, unknown>) => Promise<void>;
 }) {
@@ -76,6 +79,20 @@ function ProdForm({ initial, onCancel, onSubmit }: {
       <label className="flex flex-col gap-1">
         <span className="text-[0.75rem] text-muted-foreground">Tags (comma-separated)</span>
         <Input value={f.tags} onChange={set("tags")} placeholder="coffee, everyday" />
+      </label>
+      <label className="flex flex-col gap-1">
+        <span className="text-[0.75rem] text-muted-foreground">Category</span>
+        <Input
+          value={f.category}
+          onChange={set("category")}
+          list="product-categories"
+          placeholder="e.g. Coffee — type a new name to create"
+        />
+        <datalist id="product-categories">
+          {categories.map((c) => (
+            <option key={c} value={c} />
+          ))}
+        </datalist>
       </label>
       <div className="flex gap-2">
         <Button
@@ -110,6 +127,7 @@ export function ProductShowcase({
   onOpenPicker: (rec: BrandRecordRow) => void;
 }) {
   const [query, setQuery] = useState("");
+  const [catFilter, setCatFilter] = useState<"all" | "uncat" | string>("all");
   const [editingId, setEditingId] = useState<string | null>(null);
   const [adding, setAdding] = useState(false);
   const [noteEditId, setNoteEditId] = useState<string | null>(null);
@@ -135,19 +153,52 @@ export function ProductShowcase({
     });
   }, [records]);
 
+  const categories = useMemo(
+    () => distinctCategories(records.map((r) => ({ kind: r.kind, status: r.status, data: r.data }))),
+    [records],
+  );
+
+  // Active-product counts per category key (+ uncategorized) for the chips row.
+  const catCounts = useMemo(() => {
+    const byKey = new Map<string, number>();
+    let uncat = 0;
+    for (const r of records) {
+      if (r.status !== "active") continue;
+      const raw = r.data.category;
+      if (typeof raw === "string" && raw.trim()) {
+        const key = categoryKey(raw);
+        byKey.set(key, (byKey.get(key) ?? 0) + 1);
+      } else {
+        uncat += 1;
+      }
+    }
+    return { byKey, uncat };
+  }, [records]);
+
   const filtered = useMemo(() => {
     const q = query.trim().toLowerCase();
-    if (!q) return sorted;
     return sorted.filter((r) => {
       const d = r.data as Record<string, unknown>;
+      // Category filter applies to the active grid; archived cards pass through.
+      if (catFilter !== "all" && r.status !== "archived") {
+        const raw = d.category;
+        const hasCat = typeof raw === "string" && raw.trim().length > 0;
+        if (catFilter === "uncat") {
+          if (hasCat) return false;
+        } else if (!hasCat || categoryKey(raw as string) !== catFilter) {
+          return false;
+        }
+      }
+      if (!q) return true;
       const name = typeof d.name === "string" ? d.name.toLowerCase() : "";
       const desc = typeof d.description === "string" ? d.description.toLowerCase() : "";
       const tags = Array.isArray(d.tags) ? (d.tags as unknown[]).filter((t) => typeof t === "string").join(" ").toLowerCase() : "";
       return name.includes(q) || desc.includes(q) || tags.includes(q);
     });
-  }, [sorted, query]);
+  }, [sorted, query, catFilter]);
 
   const archivedCount = filtered.filter((r) => r.status === "archived").length;
+  const activeCount = records.filter((r) => r.status === "active").length;
 
   return (
     <section>
@@ -161,6 +212,33 @@ export function ProductShowcase({
         />
         <Button size="sm" onClick={() => setAdding(true)}>+ Add product</Button>
       </div>
+
+      {/* Category filter chips (active products only). */}
+      {categories.length > 0 && (
+        <div className="mb-3 flex flex-wrap gap-1 rounded-[14px] bg-muted p-1">
+          {(() => {
+            const chip = (key: "all" | "uncat" | string, label: string) => (
+              <button
+                key={key}
+                type="button"
+                onClick={() => setCatFilter(key)}
+                className={`rounded-[10px] px-3 py-1.5 text-[0.8125rem] transition-colors ${
+                  catFilter === key ? "bg-card text-foreground shadow-sm" : "text-muted-foreground hover:text-foreground"
+                }`}
+              >
+                {label}
+              </button>
+            );
+            return (
+              <>
+                {chip("all", `All (${activeCount})`)}
+                {categories.map((c) => chip(categoryKey(c), `${c} (${catCounts.byKey.get(categoryKey(c)) ?? 0})`))}
+                {catCounts.uncat > 0 && chip("uncat", `Uncategorized (${catCounts.uncat})`)}
+              </>
+            );
+          })()}
+        </div>
+      )}
 
       {records.length === 0 && looseNotes.length === 0 && (
         <div className="rounded-[16px] border border-border bg-card px-[15px] py-[10px] text-[0.875rem] leading-[1.45] text-muted-foreground">
@@ -182,6 +260,7 @@ export function ProductShowcase({
               <div key={r.id} className="rounded-[16px] border border-border bg-card p-4">
                 <ProdForm
                   initial={f}
+                  categories={categories}
                   onCancel={() => setEditingId(null)}
                   onSubmit={(data) => onSave(r.id, { ...d, ...data }).then(() => setEditingId(null))}
                 />
@@ -232,6 +311,11 @@ export function ProductShowcase({
                   <span className="rounded-full bg-accent px-2 py-[2px] font-medium text-muted-foreground">
                     {r.source === "otto" ? "✦ OTTO learned" : "You added"}
                   </span>
+                  {f.category && (
+                    <span className="rounded-full bg-accent px-2 py-[2px] text-[0.6875rem] text-muted-foreground">
+                      {f.category}
+                    </span>
+                  )}
                   {whenLabel(r.updatedAt) && <span>updated {whenLabel(r.updatedAt)}</span>}
                 </div>
                 <div className="mt-1 flex flex-wrap gap-x-3 gap-y-1 text-[0.6875rem] text-muted-foreground/70">
@@ -270,6 +354,7 @@ export function ProductShowcase({
           <div className="rounded-[16px] border border-border bg-card p-4">
             <ProdForm
               initial={EMPTY}
+              categories={categories}
               onCancel={() => setAdding(false)}
               onSubmit={(data) => onSave(undefined, data).then(() => setAdding(false))}
             />
