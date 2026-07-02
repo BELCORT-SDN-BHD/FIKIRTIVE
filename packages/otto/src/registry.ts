@@ -13,6 +13,8 @@ import { metaListObjectsSkill } from "./skills/meta-list-objects.js";
 import { listMetaPagesSkill } from "./skills/list-meta-pages.js";
 import { proposeMetaActionSkill } from "./skills/propose-meta-action.js";
 import { proposeAdBuildSkill } from "./skills/propose-ad-build.js";
+import { seedreamPromptSkill } from "./skills/seedream-prompt.js";
+import { seedancePromptSkill } from "./skills/seedance-prompt.js";
 
 /** Add a new skill here (one line). Order is the agent's tool order. */
 export const allSkills: OttoSkill[] = [
@@ -29,6 +31,8 @@ export const allSkills: OttoSkill[] = [
   listMetaPagesSkill,
   proposeMetaActionSkill,
   proposeAdBuildSkill,
+  seedreamPromptSkill,
+  seedancePromptSkill,
 ];
 
 export interface SkillMeta {
