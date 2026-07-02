@@ -1045,3 +1045,17 @@ model MetaActionExecution {
   // here. Modeled so `migrate dev` stops trying to DROP it as drift.
   @@unique([ownerId, cardId, stepIndex], map: "MetaActionExecution_step_once")
 }
+
+// Block S1 (Otto research): Nous-style page cache. `fetchAndExtract`'s clean page text
+// is cached once by urlHash, then read page-by-page on demand (readPageCached in
+// apps/web/lib/web-page-cache.ts). Additive, no FK, no owner scope: it caches PUBLIC web
+// pages (SSRF-guarded at fetch time), not tenant data, so a URL fetched by one org can be
+// served from cache to another — same public bytes. $0 infra table; money path untouched.
+model WebPageCache {
+  id        String   @id
+  urlHash   String   @unique
+  url       String
+  title     String   @default("")
+  text      String
+  fetchedAt DateTime
+}
