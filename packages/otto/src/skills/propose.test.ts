@@ -191,6 +191,23 @@ describe("buildProposeCard — pure helper", () => {
     expect(cardPayload.estimatedCredits).toBe(1);
   });
 
+  it("reference video: kind=video + referenceVideoGenerationId → present in payload, image tier untouched", () => {
+    const ctx = makeCtx({ referenceVideoGenerationId: "gen_vid" });
+    const { cardPayload } = buildProposeCard(
+      { kind: "video", structuredPrompt: "move like this", entityIds: [], variantSel: {} }, ctx, []);
+    expect(cardPayload.kind).toBe("video");
+    expect((cardPayload as Record<string, unknown>)["referenceVideoGenerationId"]).toBe("gen_vid");
+  });
+
+  it("reference video: kind=image ignores referenceVideoGenerationId (not in payload)", () => {
+    const ctx = makeCtx({ referenceVideoGenerationId: "gen_vid" });
+    const { cardPayload } = buildProposeCard(
+      { kind: "image", structuredPrompt: "a poster", entityIds: [], variantSel: {} }, ctx, []);
+    expect(cardPayload.kind).toBe("image");
+    expect((cardPayload as Record<string, unknown>)["referenceVideoGenerationId"]).toBeUndefined();
+    expect(cardPayload.estimatedCredits).toBe(1); // image tier unchanged
+  });
+
   // Test forVideo: image with forVideo=true → videoStep.estimatedCredits is positive,
   // estimatedCredits (image) is unchanged/smaller
   it("forVideo=true on image → cardPayload.videoStep.estimatedCredits is a positive number, estimatedCredits (image) unchanged", () => {
