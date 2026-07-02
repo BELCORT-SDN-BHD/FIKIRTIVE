@@ -53,9 +53,9 @@ function seriesDelta(series: DailyMetric[], pick: (d: DailyMetric) => number): K
 // --- KPIs -------------------------------------------------------------------
 
 /**
- * Exactly 4 KPI cards in order: Reach, Engagement, Spend, ROAS.
+ * Exactly 4 KPI cards in order: Reach, Engagement, Spend, Sales (est.).
  * Reach/Engagement come from the daily `series` (with series-halving deltas);
- * Spend/ROAS come from the per-account `totals` (deltas null in Phase A — the
+ * Spend/Sales come from the per-account `totals` (deltas null in Phase A — the
  * account totals aren't a time series we can halve, so there's nothing to compare).
  */
 export function buildKpis(series: DailyMetric[], totals: AccountMetrics[]): Kpi[] {
@@ -67,20 +67,29 @@ export function buildKpis(series: DailyMetric[], totals: AccountMetrics[]): Kpi[
     .filter((v): v is number => v != null && Number.isFinite(v));
   const spendStr = spendVals.length ? spendVals.reduce((s, v) => s + v, 0).toFixed(2) : "—";
 
-  const roasVals = totals
-    .map((t) => (t.purchaseRoas == null ? null : Number.parseFloat(t.purchaseRoas)))
-    .filter((v): v is number => v != null && Number.isFinite(v));
-  const roasStr = roasVals.length
-    ? `${(roasVals.reduce((s, v) => s + v, 0) / roasVals.length).toFixed(2)}x`
-    : "—";
+  // Estimated purchase value = Σ over accounts of (spend × purchaseRoas), skipping an
+  // account when either side is null/non-finite. Plain rounded integer with thousands
+  // separators — NO currency symbol (no-hardcode-currency rule; a currency prefix is a
+  // separate future item). "—" when no account has both spend & roas.
+  let salesTotal = 0;
+  let salesHasAny = false;
+  for (const t of totals) {
+    const spend = t.spend == null ? NaN : Number.parseFloat(t.spend);
+    const roas = t.purchaseRoas == null ? NaN : Number.parseFloat(t.purchaseRoas);
+    if (Number.isFinite(spend) && Number.isFinite(roas)) {
+      salesTotal += spend * roas;
+      salesHasAny = true;
+    }
+  }
+  const salesStr = salesHasAny ? Math.round(salesTotal).toLocaleString("en-US") : "—";
 
   return [
     { label: "Reach", value: compact(reach), delta: seriesDelta(series, (d) => d.reach) },
     { label: "Engagement", value: compact(clicks), delta: seriesDelta(series, (d) => d.clicks) },
-    // Spend/ROAS deltas null in Phase A: totals are a single aggregate per account,
+    // Spend/Sales deltas null in Phase A: totals are a single aggregate per account,
     // not a series, so there's no older half to compare against.
     { label: "Spend", value: spendStr, delta: null },
-    { label: "ROAS", value: roasStr, delta: null },
+    { label: "Sales (est.)", value: salesStr, delta: null },
   ];
 }
 

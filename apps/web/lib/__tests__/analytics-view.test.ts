@@ -54,9 +54,9 @@ describe("RANGES", () => {
 
 // ---------------------------------------------------------------------------
 describe("buildKpis — cards, order, formatting", () => {
-  it("returns exactly 4 cards in order Reach, Engagement, Spend, ROAS", () => {
+  it("returns exactly 4 cards in order Reach, Engagement, Spend, Sales (est.)", () => {
     const kpis = buildKpis([], []);
-    expect(kpis.map((k) => k.label)).toEqual(["Reach", "Engagement", "Spend", "ROAS"]);
+    expect(kpis.map((k) => k.label)).toEqual(["Reach", "Engagement", "Spend", "Sales (est.)"]);
   });
 
   it("Reach = sum of series.reach, Engagement = sum of series.clicks", () => {
@@ -96,18 +96,32 @@ describe("buildKpis — cards, order, formatting", () => {
     expect((buildKpis([], [])[2] as Kpi).value).toBe("—");
   });
 
-  it("ROAS = average of non-null purchaseRoas, 2dp + x", () => {
+  it("Sales (est.) = Σ (spend × roas) per account, rounded int with separators", () => {
     const totals = [
-      emptyTotals({ purchaseRoas: "2.0" }),
-      emptyTotals({ purchaseRoas: "4.0" }),
-      emptyTotals({ purchaseRoas: null }), // ignored in the average
+      emptyTotals({ spend: "100", purchaseRoas: "2" }), // 200
+      emptyTotals({ spend: "50", purchaseRoas: "3" }), // 150
     ];
-    expect((buildKpis([], totals)[3] as Kpi).value).toBe("3.00x");
+    // 100*2 + 50*3 = 350
+    expect((buildKpis([], totals)[3] as Kpi).value).toBe("350");
   });
 
-  it("ROAS = — when every purchaseRoas is null", () => {
-    const totals = [emptyTotals(), emptyTotals()];
+  it("Sales (est.) skips an account missing either spend or roas", () => {
+    const totals = [
+      emptyTotals({ spend: "1000", purchaseRoas: "2" }), // 2000
+      emptyTotals({ spend: "500", purchaseRoas: null }), // skipped (no roas)
+      emptyTotals({ spend: null, purchaseRoas: "4" }), // skipped (no spend)
+    ];
+    // only the first account counts → 2000, formatted with separator
+    expect((buildKpis([], totals)[3] as Kpi).value).toBe("2,000");
+  });
+
+  it("Sales (est.) = — when no account has both spend & roas", () => {
+    const totals = [emptyTotals({ spend: "100" }), emptyTotals({ purchaseRoas: "3" })];
     expect((buildKpis([], totals)[3] as Kpi).value).toBe("—");
+  });
+
+  it("Sales (est.) = — when totals is empty", () => {
+    expect((buildKpis([], [])[3] as Kpi).value).toBe("—");
   });
 });
 
@@ -148,12 +162,12 @@ describe("buildKpis — deltas via series halving", () => {
     expect(kpis[0]!.delta).toBeNull();
   });
 
-  it("Spend and ROAS deltas are always null in Phase A", () => {
+  it("Spend and Sales (est.) deltas are always null in Phase A", () => {
     const totals = [emptyTotals({ spend: "100.0", purchaseRoas: "3.0" })];
-    // even with 14 points of series, spend/roas deltas stay null
+    // even with 14 points of series, spend/sales deltas stay null
     const kpis = buildKpis(seriesOf(new Array(14).fill(100)), totals);
     expect(kpis[2]!.delta).toBeNull(); // Spend
-    expect(kpis[3]!.delta).toBeNull(); // ROAS
+    expect(kpis[3]!.delta).toBeNull(); // Sales (est.)
   });
 
   it("odd-length series (>=14) halves cleanly by flooring the midpoint", () => {

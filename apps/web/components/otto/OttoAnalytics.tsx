@@ -64,7 +64,10 @@ export function OttoAnalytics({
             {data.kpis.map((k) => (
               <div key={k.label} className="rounded-[14px] border border-border bg-card p-[15px]">
                 <div className="text-[12px] text-[#86867F] font-medium">{k.label}</div>
-                <div className="text-[26px] font-bold tracking-[-0.02em] mt-1">{k.value}</div>
+                {/* Empty period: every value renders "—" (buildKpis sums an empty series to 0). */}
+                <div className="text-[26px] font-bold tracking-[-0.02em] mt-1">
+                  {data.empty ? "—" : k.value}
+                </div>
                 {k.delta && (
                   <div
                     className={
@@ -77,6 +80,8 @@ export function OttoAnalytics({
                     }
                   >
                     {k.delta.text}
+                    {/* Gold-standard suffix: "▲ 18% vs last month" — muted, weight 500. */}
+                    <span className="text-[#86867F] font-medium"> vs prev. period</span>
                   </div>
                 )}
               </div>
