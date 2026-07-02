@@ -17,8 +17,11 @@ import type { OttoContext } from "../context.js";
 // ---------------------------------------------------------------------------
 // Input schema
 // ---------------------------------------------------------------------------
-const rememberBrandFactInput = z.object({
-  category: z.enum(["Brand", "Voice", "Audience", "Products", "Rules"]),
+// 6-section taxonomy (2026-07-02): free-text FACTS file to the 3 static sections only.
+// Products / customer groups / offers are structured records → saveProduct / saveCustomerSegment / saveOffer.
+// Legacy categories (Brand/Voice/Audience/Products/Rules) map at read time in @fikirtive/core sectionForCategory.
+export const rememberBrandFactInput = z.object({
+  category: z.enum(["about", "look", "rules"]),
   content: z.string().min(1).max(600),
 });
 
@@ -61,10 +64,11 @@ export const rememberBrandFactSkill = defineOttoSkill({
   effect: "write",
   reach: "internal",
   description:
-    "Save ONE durable fact about the user's brand to Brand Memory (their voice, audience, products, rules, or story). " +
-    "$0, persists across all future campaigns. " +
-    "Call this ONLY when the user clearly tells you to remember something, or states a durable brand fact you should keep — " +
-    "never for one-off creative choices or to spam memory. Pick the best category.",
+    "Save ONE durable brand FACT to Brand Memory. $0, persists across campaigns. Categories: " +
+    "'about' = who the brand is, story, voice, positioning; 'look' = visual style, colors, imagery mood; " +
+    "'rules' = hard do/don't constraints (banned words, competitors, compliance). " +
+    "Call ONLY for durable truths the user states or asks you to remember — never one-off creative choices. " +
+    "For products, customer groups or offers/promotions use saveProduct / saveCustomerSegment / saveOffer instead.",
   parameters: rememberBrandFactInput,
   execute: executeRememberBrandFact,
 });
