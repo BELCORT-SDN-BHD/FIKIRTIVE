@@ -175,17 +175,26 @@ export function ProductShowcase({
     return { byKey, uncat };
   }, [records]);
 
+  // Guard against a stranded filter: archiving the last product of the selected
+  // category (or the last uncategorized one) removes its chip, but `catFilter`
+  // would still hide everything. Derive a valid filter and fall back to "all".
+  const activeCatFilter =
+    catFilter === "all" ||
+    (catFilter === "uncat" ? catCounts.uncat > 0 : categories.some((c) => categoryKey(c) === catFilter))
+      ? catFilter
+      : "all";
+
   const filtered = useMemo(() => {
     const q = query.trim().toLowerCase();
     return sorted.filter((r) => {
       const d = r.data as Record<string, unknown>;
       // Category filter applies to the active grid; archived cards pass through.
-      if (catFilter !== "all" && r.status !== "archived") {
+      if (activeCatFilter !== "all" && r.status !== "archived") {
         const raw = d.category;
         const hasCat = typeof raw === "string" && raw.trim().length > 0;
-        if (catFilter === "uncat") {
+        if (activeCatFilter === "uncat") {
           if (hasCat) return false;
-        } else if (!hasCat || categoryKey(raw as string) !== catFilter) {
+        } else if (!hasCat || categoryKey(raw as string) !== activeCatFilter) {
           return false;
         }
       }
@@ -195,7 +204,7 @@ export function ProductShowcase({
       const tags = Array.isArray(d.tags) ? (d.tags as unknown[]).filter((t) => typeof t === "string").join(" ").toLowerCase() : "";
       return name.includes(q) || desc.includes(q) || tags.includes(q);
     });
-  }, [sorted, query, catFilter]);
+  }, [sorted, query, activeCatFilter]);
 
   const archivedCount = filtered.filter((r) => r.status === "archived").length;
   const activeCount = records.filter((r) => r.status === "active").length;
@@ -223,7 +232,7 @@ export function ProductShowcase({
                 type="button"
                 onClick={() => setCatFilter(key)}
                 className={`rounded-[10px] px-3 py-1.5 text-[0.8125rem] transition-colors ${
-                  catFilter === key ? "bg-card text-foreground shadow-sm" : "text-muted-foreground hover:text-foreground"
+                  activeCatFilter === key ? "bg-card text-foreground shadow-sm" : "text-muted-foreground hover:text-foreground"
                 }`}
               >
                 {label}
@@ -262,7 +271,15 @@ export function ProductShowcase({
                   initial={f}
                   categories={categories}
                   onCancel={() => setEditingId(null)}
-                  onSubmit={(data) => onSave(r.id, { ...d, ...data }).then(() => setEditingId(null))}
+                  onSubmit={(data) => {
+                    // Merge over the original record, but let a cleared category
+                    // actually clear: toData() omits `category` when empty, so an
+                    // unconditional spread would keep the stale value (mirror the
+                    // prodSetImage delete-the-key discipline). Only `category`.
+                    const merged = { ...d, ...data };
+                    if (!("category" in data)) delete merged.category;
+                    return onSave(r.id, merged).then(() => setEditingId(null));
+                  }}
                 />
               </div>
             );
