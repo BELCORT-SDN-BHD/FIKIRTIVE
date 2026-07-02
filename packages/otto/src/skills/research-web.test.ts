@@ -117,6 +117,112 @@ describe("executeResearchWeb — url mode", () => {
 });
 
 // ---------------------------------------------------------------------------
+// executeResearchWeb — url mode WITH readPage (cached paging)
+// ---------------------------------------------------------------------------
+
+describe("executeResearchWeb — url mode, readPage wired (paging)", () => {
+  it("calls context.research.readPage and returns page/totalPages/text", async () => {
+    const readPage = vi.fn().mockResolvedValue({
+      url: "https://example.com/",
+      title: "Example Brand",
+      page: 1,
+      totalPages: 3,
+      text: "page one text",
+      stale: false,
+    });
+    const fetchUrl = vi.fn();
+    const ctx = makeCtx({ research: { fetchUrl, readPage } });
+
+    const result = await executeResearchWeb(
+      { url: "https://example.com/" },
+      makeRunCtx(ctx),
+    );
+
+    expect(readPage).toHaveBeenCalledWith("https://example.com/", undefined);
+    expect(fetchUrl).not.toHaveBeenCalled();
+    expect(result).toMatchObject({
+      url: "https://example.com/",
+      title: "Example Brand",
+      page: 1,
+      totalPages: 3,
+      text: "page one text",
+    });
+  });
+
+  it("passes the requested page through to readPage", async () => {
+    const readPage = vi.fn().mockResolvedValue({
+      url: "https://example.com/",
+      title: "Example Brand",
+      page: 2,
+      totalPages: 3,
+      text: "page two text",
+      stale: false,
+    });
+    const fetchUrl = vi.fn();
+    const ctx = makeCtx({ research: { fetchUrl, readPage } });
+
+    const result = await executeResearchWeb(
+      { url: "https://example.com/", page: 2 },
+      makeRunCtx(ctx),
+    );
+
+    expect(readPage).toHaveBeenCalledWith("https://example.com/", 2);
+    expect(result).toMatchObject({ page: 2, totalPages: 3, text: "page two text" });
+  });
+
+  it("caps page text at MAX_TEXT", async () => {
+    const readPage = vi.fn().mockResolvedValue({
+      url: "https://example.com/",
+      title: "Example Brand",
+      page: 1,
+      totalPages: 1,
+      text: "B".repeat(8000), // longer than MAX_TEXT=6000
+      stale: false,
+    });
+    const ctx = makeCtx({ research: { fetchUrl: vi.fn(), readPage } });
+
+    const result = await executeResearchWeb(
+      { url: "https://example.com/" },
+      makeRunCtx(ctx),
+    );
+
+    expect((result as any).text.length).toBe(6000);
+  });
+
+  it("returns structured error when readPage throws", async () => {
+    const readPage = vi.fn().mockRejectedValue(new Error("SSRF blocked"));
+    const ctx = makeCtx({ research: { fetchUrl: vi.fn(), readPage } });
+
+    const result = await executeResearchWeb(
+      { url: "https://example.com/" },
+      makeRunCtx(ctx),
+    );
+
+    expect(result).toEqual({ error: "SSRF blocked" });
+  });
+
+  it("falls back to fetchUrl (old shape, no page field) when readPage is absent", async () => {
+    const fetchUrl = vi.fn().mockResolvedValue({
+      url: "https://example.com/",
+      title: "Example Brand",
+      text: "legacy body",
+    });
+    const ctx = makeCtx({ research: { fetchUrl } }); // no readPage
+
+    const result = await executeResearchWeb(
+      { url: "https://example.com/" },
+      makeRunCtx(ctx),
+    );
+
+    expect(fetchUrl).toHaveBeenCalledWith("https://example.com/");
+    expect(result).toMatchObject({ url: "https://example.com/", title: "Example Brand", text: "legacy body" });
+    // old shape — no paging fields leak in
+    expect((result as any).totalPages).toBeUndefined();
+    expect((result as any).page).toBeUndefined();
+  });
+});
+
+// ---------------------------------------------------------------------------
 // executeResearchWeb — query mode without search configured
 // ---------------------------------------------------------------------------
 

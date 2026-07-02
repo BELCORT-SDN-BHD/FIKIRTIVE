@@ -32,6 +32,9 @@ import {
   OTTO_MAX_STEPS,
   GOAL_PRESETS,
   isGoalKey,
+  tavilySearch,
+  braveSearch,
+  searchWithFallback,
 } from "@fikirtive/core";
 import { otto, withLlmBudget, OTTO_DEFAULT_MODEL, run, MaxTurnsExceededError, mapOttoUsage, ottoSimpleModeBlock, buildUserTurn, sanitizeHistory, tryRestoreRunState } from "@fikirtive/otto";
 import type { OttoContext, AgentInputItem } from "@fikirtive/otto";
@@ -42,6 +45,7 @@ import { startGen } from "./gen-actions";
 import { gatherReferenceImages } from "./otto-ref-images";
 import { getBrandContextText } from "./memory-actions";
 import { fetchAndExtract } from "./fetch-extract";
+import { readPageCached } from "./web-page-cache";
 import { fetchOwnerInsights } from "./meta-insights";
 import { fetchOwnerAdObjects } from "./meta-objects";
 import { fetchOwnerPages } from "./meta-pages";
@@ -144,6 +148,19 @@ export async function buildOttoContext({
   simpleMode?: boolean;
 }): Promise<OttoContext> {
   const disabledModels = Array.from(await resolveDisabledModels());
+
+  // Web-search transport (S1). Tavily is primary; Brave is the fallback when both keys
+  // are present. With no key configured, `search` is left unwired — researchWeb's query
+  // path then returns its graceful "not configured" message (fail-closed, never crashes).
+  const k1 = process.env.TAVILY_API_KEY;
+  const k2 = process.env.BRAVE_SEARCH_API_KEY;
+  const primary = k1 ? tavilySearch(k1) : k2 ? braveSearch(k2) : undefined;
+  const fb = k1 && k2 ? braveSearch(k2) : undefined;
+  // Wrap the bare WebSearchResult[] the adapter returns in { results } to match the port shape.
+  const search = primary
+    ? async (query: string) => ({ results: await searchWithFallback(primary, fb)(query) })
+    : undefined;
+
   const [brandContext, availableRefs, activeJob, images] = await Promise.all([
     getBrandContextText(ownerId, null).catch(() => ""),
     loadAvailableRefsForAgent(ownerId),
@@ -176,7 +193,8 @@ export async function buildOttoContext({
     brandBrain: { context: () => getBrandContextText(ownerId, null).catch(() => "") },
     research: {
       fetchUrl: fetchAndExtract,
-      // TODO(G3): wire a web-search API transport (needs a key)
+      search,
+      readPage: (url: string, page?: number) => readPageCached(url, page),
     },
   };
 }

@@ -117,6 +117,23 @@ describe("ottoInstructions — audit fix: propose/identity/keyframe reconciled w
   });
 });
 
+describe("ottoInstructions — web research (researchWeb query→url→page)", () => {
+  it("has a research section that names the researchWeb tool", () => {
+    expect(ottoInstructions).toMatch(/research/i);
+    expect(ottoInstructions).toMatch(/researchWeb/);
+  });
+  it("teaches the query→url two-step (thin list first, then read chosen pages)", () => {
+    expect(ottoInstructions).toMatch(/query/);
+    expect(ottoInstructions).toMatch(/snippet|thin/i);
+  });
+  it("teaches page-by-page reading (paging token)", () => {
+    expect(ottoInstructions).toMatch(/totalPages|page by page|page-by-page|page: ?\d/i);
+  });
+  it("warns against reading everything / dumping whole pages at once", () => {
+    expect(ottoInstructions).toMatch(/do not (try to )?open every|don't (try to )?open every|not.*every (search )?result|read page by page|sparingly/i);
+  });
+});
+
 describe("ottoInstructions — reference video", () => {
   it("mentions an attached reference video guides motion/style of a video plan", () => {
     expect(ottoInstructions.toLowerCase()).toContain("reference video");
