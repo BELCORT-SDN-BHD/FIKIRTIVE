@@ -65,3 +65,31 @@
 | C-01 工厂 MVP 打法 | **批准,但升级路线必须严格执行** —— founder:"要很严格的执行那个步骤,不然我还是倾向于直接做到最棒的"。纪律:每个 MVP 占位件(多参考图顶替训练人设、模式砍量、无 avatar 库)必须有**被追踪的升级票 + 触发条件**,MVP 是阶段不是终点;harmony 阶段产出工厂"MVP→完全体"路线图作为正式交付物 |
 | C-07 与 Otto 全自动化 | founder 重申:**工厂每一步都必须 Otto 可全自动驱动**(routine/审批规则内),不许设计出"中间必须人手"的断点。口播供应商选型时"Otto 可操作性"是硬性选型标准。**新增具体豁免:充值/购买 credits(money-in)Otto 永不代办**(founder 原话例子:"帮忙充值进 fikirtive 这种"= 真危险类) |
 | C-02 边界 + 模型经济学 | founder:结构拆解本来就不会太像(风险可控);更重要的设计约束 —— **Otto 运行时是 cost-efficient 档模型(sonnet 级),不是 Fable/Opus**。所有 skill 的专业判断必须冻进确定性代码/schema/模板(prompt-skills 模式为全城标准),不靠模型天赋 |
+
+## S/A/R/P/M/L/B 七区 + 红旗题(2026-07-03 拍板,WHAT-pass 封卷)
+
+七区默认判决全数通过(见底稿各区提议),红旗题判决:
+
+| 红旗 | 判决 | 内容 |
+|---|---|---|
+| 一 S 平台矩阵 | **TikTok/Shopee/Lazada 类全要** | 且**发布基建必须平台可插拔**(加新平台 = 加一个 adapter,不改核心)—— 渠道缝延伸为发布缝 |
+| 二 A 报表引擎 | **要(我的"不做"被否,违宪纠正)** | founder:"Otto 是在原有都建设很棒的基建上的自动化操作员,用户一定也要 100% 可以操作全平台的东西" —— 双模无例外;这也是卖 seats 的根 + **user org 内部也要阶级制度**(租户侧 RBAC,与团队协作/审批同件设计) |
+| 三 CRM 深度 | **分阶段:respond.io 级起步 → 长到 Salesforce 级深度** | 架构按终局深度设计(未来可加自定义对象等);Otto 让专业级简单化 + 丝滑 UIUX 消化复杂度 |
+| 四 商家收款 | **同意:以后;先不过我们** | 起步形态 = 生成收款链接跳商家自己账户,资金流不经 FIKIRTIVE |
+| 五 WhatsApp BSP | **要,M 区第一波;通道费单独收,不进 credits** | founder:通道过路费混进 credits 不是 best practice —— **计费架构:credits(我们的服务)与通道费(透明直传)两条独立账道**(respond.io WABA 余额形态) |
+| 六 Campaign 容器 | **独立 Campaign 对象,不升格 project** | founder:"要 scale 去 Salesforce 那种,干净最重要" |
+| 七 email | **以后,但必须建**(不是不要) | 附 GTM 战略(founder):**dev 用 FIKIRTIVE 来 market FIKIRTIVE,大获成功 = 名声大噪的最佳路径**(dogfood 即营销) |
+
+## 市政厅 X 题(2026-07-03)
+
+| 题 | 判决 |
+|---|---|
+| X-01 阶级 | 五级维持;当前团队 = founders only,细化等真实团队出现 |
+| X-02 授信上限 | founder 委托总审查员建议,采纳:**finance 单笔 ≤1,000 显示 credits(≈$100),日累计 ≤3,000(≈$300),超限进 founder 审批队列**;数字放矩阵文件随时可调 |
+| X-03 冒充 | best practice 采纳:**仅 super-admin(现 = founders)可冒充;永久保持禁写(F15);每次需填理由、横幅可见、30 分钟自动过期、全量留痕** |
+| X-04 双人确认 | best practice 采纳:封/删租户、负数信用调整、全租户级模型开关、租户数据导出 → 团队 >1 人后双人确认;founders-only 期间 = 键入确认 + 冷却延时 |
+| X-05 内容可见深度 | best practice 采纳:**默认仅元数据;看全文需显式"开 case"动作(留痕);finance 永远看不到内容只看账**;moderator 因职责可看被举报内容 |
+
+---
+
+# ✅ WHAT-pass 全卷封盘(2026-07-03):158 簇 + 7 红旗 + 5 市政厅题,全部有判决。
