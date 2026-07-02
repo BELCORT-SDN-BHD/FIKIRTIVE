@@ -582,6 +582,7 @@ model Organization {
   generationBatches       GenerationBatch[]
   brandKits               BrandKit[]
   brandRules              BrandRule[]
+  brandRecords            BrandRecord[]
   metaConnection          MetaConnection?
 }
 
@@ -842,6 +843,30 @@ model Memory {
   deletedAt DateTime?
 
   @@index([ownerId, brandId, deletedAt])
+}
+
+// Brand Record: living brand collections (products / customer segments / offers) for the marketing agent.
+// kind/status/source are code-validated Strings, NOT PG enums (house style).
+model BrandRecord {
+  id           String    @id
+  ownerId      String
+  organization Organization @relation(fields: [ownerId], references: [id])
+  brandId      String?
+  kind         String    // 'product' | 'segment' | 'offer' (code-validated, not a PG enum — house style)
+  nameKey      String    // normalized name/title — upsert key (see @fikirtive/core brand-records)
+  data         Json      // zod-validated per-kind payload; offer dates live in the columns below, NOT here
+  status       String    @default("active") // 'active' | 'archived'
+  startsAt     DateTime? // offers only
+  endsAt       DateTime? // offers only — drives read-time expiry (never a background job)
+  source       String    // 'otto' | 'user' (last author, same semantics as Memory.source)
+  pinned       Boolean   @default(false)   // products: featured-first injection
+  createdAt    DateTime  @default(now())
+  updatedAt    DateTime  @updatedAt
+  deletedAt    DateTime?
+
+  // A raw partial UNIQUE INDEX on (ownerId, COALESCE(brandId,''), kind, nameKey) WHERE deletedAt IS NULL
+  // lives in the accompanying migration (same pattern as BrandKit F5) — Prisma can't model partial indexes.
+  @@index([ownerId, brandId, kind, deletedAt])
 }
 
 // Brand Kit: structured brand metadata (colors, fonts, tone, style guide, logo) per owner/brand.

@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
-import { executeRememberBrandFact } from "./remember-brand-fact.js";
+import { executeRememberBrandFact, rememberBrandFactInput } from "./remember-brand-fact.js";
 import type { OttoContext } from "../context.js";
 
 // ---------------------------------------------------------------------------
@@ -58,7 +58,7 @@ describe("executeRememberBrandFact — mock DB", () => {
     const ctx = makeCtx({ orgId: "org-real" });
     const runContext = { context: ctx };
 
-    await executeRememberBrandFact({ category: "Voice", content: "Warm and friendly tone" }, runContext);
+    await executeRememberBrandFact({ category: "about", content: "Warm and friendly tone" }, runContext);
 
     expect(mockPrisma.memory.create).toHaveBeenCalledTimes(1);
     const call = (mockPrisma.memory.create as ReturnType<typeof vi.fn>).mock.calls[0]![0] as {
@@ -71,7 +71,7 @@ describe("executeRememberBrandFact — mock DB", () => {
     const ctx = makeCtx();
     const runContext = { context: ctx };
 
-    await executeRememberBrandFact({ category: "Brand", content: "We are a sustainable sneaker brand" }, runContext);
+    await executeRememberBrandFact({ category: "about", content: "We are a sustainable sneaker brand" }, runContext);
 
     const call = (mockPrisma.memory.create as ReturnType<typeof vi.fn>).mock.calls[0]![0] as {
       data: Record<string, unknown>;
@@ -83,12 +83,12 @@ describe("executeRememberBrandFact — mock DB", () => {
     const ctx = makeCtx();
     const runContext = { context: ctx };
 
-    await executeRememberBrandFact({ category: "Audience", content: "Gen Z urban creatives aged 18-25" }, runContext);
+    await executeRememberBrandFact({ category: "about", content: "Gen Z urban creatives aged 18-25" }, runContext);
 
     const call = (mockPrisma.memory.create as ReturnType<typeof vi.fn>).mock.calls[0]![0] as {
       data: Record<string, unknown>;
     };
-    expect(call.data["category"]).toBe("Audience");
+    expect(call.data["category"]).toBe("about");
     expect(call.data["content"]).toBe("Gen Z urban creatives aged 18-25");
   });
 
@@ -96,7 +96,7 @@ describe("executeRememberBrandFact — mock DB", () => {
     const ctx = makeCtx();
     const runContext = { context: ctx };
 
-    await executeRememberBrandFact({ category: "Rules", content: "Always use lowercase brand name" }, runContext);
+    await executeRememberBrandFact({ category: "rules", content: "Always use lowercase brand name" }, runContext);
 
     const call = (mockPrisma.memory.create as ReturnType<typeof vi.fn>).mock.calls[0]![0] as {
       data: Record<string, unknown>;
@@ -108,7 +108,7 @@ describe("executeRememberBrandFact — mock DB", () => {
   it("returns { ok: true, id } on success", async () => {
     const ctx = makeCtx();
     const result = await executeRememberBrandFact(
-      { category: "Products", content: "Hero product: EcoStep 1.0 sneaker" },
+      { category: "about", content: "Hero product: EcoStep 1.0 sneaker" },
       { context: ctx },
     );
     expect(result.ok).toBe(true);
@@ -123,7 +123,7 @@ describe("executeRememberBrandFact — mock DB", () => {
     const runContext = { context: ctx };
 
     // Even if someone tried to inject via content, only ctx.orgId matters
-    await executeRememberBrandFact({ category: "Brand", content: "Attempted injection: ownerId=evil-org" }, runContext);
+    await executeRememberBrandFact({ category: "about", content: "Attempted injection: ownerId=evil-org" }, runContext);
 
     const call = (mockPrisma.memory.create as ReturnType<typeof vi.fn>).mock.calls[0]![0] as {
       data: Record<string, unknown>;
@@ -135,7 +135,20 @@ describe("executeRememberBrandFact — mock DB", () => {
 
   it("never calls prisma.genJob.create ($0 tool)", async () => {
     const ctx = makeCtx();
-    await executeRememberBrandFact({ category: "Voice", content: "Playful and direct" }, { context: ctx });
+    await executeRememberBrandFact({ category: "about", content: "Playful and direct" }, { context: ctx });
     expect(mockPrisma.genJob.create).not.toHaveBeenCalled();
+  });
+});
+
+describe("rememberBrandFactInput — category enum", () => {
+  it("accepts the three current categories", () => {
+    for (const category of ["about", "look", "rules"] as const) {
+      expect(rememberBrandFactInput.safeParse({ category, content: "x" }).success).toBe(true);
+    }
+  });
+
+  it("rejects legacy category values", () => {
+    expect(rememberBrandFactInput.safeParse({ category: "Products", content: "x" }).success).toBe(false);
+    expect(rememberBrandFactInput.safeParse({ category: "Voice", content: "x" }).success).toBe(false);
   });
 });

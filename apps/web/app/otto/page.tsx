@@ -5,6 +5,7 @@ import { getEntities, getCoworkThreads, getCoworkThread, resolveCoworkResultUrls
 import { toEntityDTO, toChatThreadDTO, toChatThreadMetaDTO } from "@/lib/dto";
 import { getMyAccount } from "@/lib/account-actions";
 import { listMemory } from "@/lib/memory-actions";
+import { listBrandRecords } from "@/lib/brand-record-actions";
 import { OttoApp } from "@/components/otto/OttoApp";
 
 export const dynamic = "force-dynamic";
@@ -34,11 +35,12 @@ export default async function OttoPage({ searchParams }: { searchParams: Promise
   const active = (sp?.project && projects.find((p) => p.id === sp.project)) || projects[0];
   const projectId = active?.id ?? ensured.id;
 
-  const [entities, threadRows, accountResult, memory, ads, adJobs, history, allThreadRows] = await Promise.all([
+  const [entities, threadRows, accountResult, memory, records, ads, adJobs, history, allThreadRows] = await Promise.all([
     getEntities(ownerId),
     getCoworkThreads(ownerId, projectId),
     getMyAccount(),
     listMemory(ownerId),
+    listBrandRecords(ownerId),
     getMyAds(ownerId, projectId),
     getMyAdJobs(ownerId, projectId).catch(() => [] as Awaited<ReturnType<typeof getMyAdJobs>>),
     getRecentGenerationThumbs(ownerId, projectId).catch(() => [] as Awaited<ReturnType<typeof getRecentGenerationThumbs>>),
@@ -84,6 +86,7 @@ export default async function OttoPage({ searchParams }: { searchParams: Promise
       userName={userName}
       userEmail={email}
       memory={memory}
+      records={records}
       ads={ads}
       adJobs={adJobs}
       account={account}

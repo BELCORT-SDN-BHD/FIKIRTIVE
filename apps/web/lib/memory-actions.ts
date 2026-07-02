@@ -1,7 +1,7 @@
 "use server";
 import { revalidatePath } from "next/cache";
 import { prisma } from "@fikirtive/db";
-import { newId } from "@fikirtive/core";
+import { newId, sectionForCategory, offerPhase } from "@fikirtive/core";
 import { requireOwner } from "./auth-guard";
 
 export type MemoryRow = {
@@ -104,7 +104,7 @@ export async function getBrandContextText(_ownerId?: string, brandId?: string | 
   if ("error" in gate) return "";
   const ownerId = gate.ownerId;
 
-  const [rows, kit, rules] = await Promise.all([
+  const [rows, kit, rules, records] = await Promise.all([
     prisma.memory.findMany({
       where: { ownerId, brandId: brandId ?? null, deletedAt: null },
       orderBy: [{ pinned: "desc" }, { updatedAt: "desc" }],
@@ -120,52 +120,105 @@ export async function getBrandContextText(_ownerId?: string, brandId?: string | 
       orderBy: [{ kind: "asc" }, { createdAt: "asc" }],
       select: { kind: true, text: true },
     }),
+    prisma.brandRecord.findMany({
+      where: { ownerId, brandId: brandId ?? null, deletedAt: null },
+      orderBy: [{ pinned: "desc" }, { updatedAt: "desc" }],
+      select: { kind: true, data: true, status: true, startsAt: true, endsAt: true, pinned: true },
+    }),
   ]);
+
+  // Per-section budgets (chars). Rules are assembled FIRST so they can never be
+  // truncated by other sections growing (the old global slice(0,3000) cut them first).
+  const cap = (text: string, budget: number) => (text.length <= budget ? text : text.slice(0, budget) + "…");
+  const now = new Date();
+
+  // Facts grouped into the 6-section taxonomy (legacy categories map here).
+  const factsBySection = new Map<string, string[]>();
+  for (const r of rows) {
+    const key = sectionForCategory(r.category);
+    factsBySection.set(key, [...(factsBySection.get(key) ?? []), r.content]);
+  }
 
   const parts: string[] = [];
 
-  // Memory notes grouped by category
-  if (rows.length) {
-    const byCat = new Map<string, string[]>();
-    for (const r of rows) {
-      const bucket = byCat.get(r.category) ?? [];
-      bucket.push(r.content);
-      byCat.set(r.category, bucket);
-    }
-    parts.push(
-      [...byCat.entries()]
-        .map(([cat, items]) => `${cat}: ${items.join("; ")}`)
-        .join("\n"),
-    );
-  }
-
-  // Brand Kit block
-  if (kit) {
-    const kitLines: string[] = [];
-    if (kit.name) kitLines.push(`Name: ${kit.name}`);
-    if (kit.colorsJson) kitLines.push(`Colors: ${JSON.stringify(kit.colorsJson)}`);
-    if (kit.fonts?.length) kitLines.push(`Fonts: ${kit.fonts.join(", ")}`);
-    if (kit.tone) kitLines.push(`Tone: ${kit.tone}`);
-    if (kit.styleGuide) kitLines.push(`Style guide: ${kit.styleGuide}`);
-    if (kitLines.length) parts.push(`Brand kit:\n${kitLines.join("\n")}`);
-  }
-
-  // Brand Rules block — group by kind
-  if (rules.length) {
+  // 1) Do & don't — budget 600
+  {
+    const lines: string[] = [];
     const byKind = new Map<string, string[]>();
-    for (const r of rules) {
-      const bucket = byKind.get(r.kind.toUpperCase()) ?? [];
-      bucket.push(r.text);
-      byKind.set(r.kind.toUpperCase(), bucket);
+    for (const r of rules) byKind.set(r.kind.toUpperCase(), [...(byKind.get(r.kind.toUpperCase()) ?? []), r.text]);
+    for (const [kind, texts] of byKind) lines.push(`${kind}: ${texts.join("; ")}`);
+    for (const f of factsBySection.get("rules") ?? []) lines.push(f);
+    if (lines.length) parts.push(cap(`Brand rules:\n${lines.join("\n")}`, 600));
+  }
+
+  // 2) About + Look & feel + Brand kit — budget 1200 combined
+  {
+    const lines: string[] = [];
+    const about = factsBySection.get("about") ?? [];
+    if (about.length) lines.push(`About the brand: ${about.join("; ")}`);
+    const look = factsBySection.get("look") ?? [];
+    if (look.length) lines.push(`Look & feel: ${look.join("; ")}`);
+    if (kit) {
+      const kitLines: string[] = [];
+      if (kit.name) kitLines.push(`Name: ${kit.name}`);
+      if (kit.colorsJson) kitLines.push(`Colors: ${JSON.stringify(kit.colorsJson)}`);
+      if (kit.fonts?.length) kitLines.push(`Fonts: ${kit.fonts.join(", ")}`);
+      if (kit.tone) kitLines.push(`Tone: ${kit.tone}`);
+      if (kit.styleGuide) kitLines.push(`Style guide: ${kit.styleGuide}`);
+      if (kitLines.length) lines.push(`Brand kit:\n${kitLines.join("\n")}`);
     }
-    const ruleLines = [...byKind.entries()]
-      .map(([kind, texts]) => `${kind}: ${texts.join("; ")}`)
-      .join("\n");
-    parts.push(`Brand rules:\n${ruleLines}`);
+    if (lines.length) parts.push(cap(lines.join("\n"), 1200));
+  }
+
+  const str = (v: unknown): string | undefined => (typeof v === "string" && v.trim() ? v : undefined);
+
+  // 3) Your customers — budget 900
+  {
+    const lines: string[] = [];
+    for (const rec of records) {
+      if (rec.kind !== "segment" || rec.status !== "active") continue;
+      const d = rec.data as Record<string, unknown>;
+      const bits = [str(d.who), str(d.pains) && `pains: ${d.pains}`, str(d.wants) && `wants: ${d.wants}`,
+        str(d.channels) && `reach: ${d.channels}`, str(d.toneTips) && `tone: ${d.toneTips}`].filter(Boolean);
+      lines.push(`- ${str(d.name) ?? "?"}: ${bits.join("; ")}`);
+    }
+    for (const f of factsBySection.get("customers") ?? []) lines.push(`- ${f}`);
+    if (lines.length) parts.push(cap(`Your customers:\n${lines.join("\n")}`, 900));
+  }
+
+  // 4) Your offers — budget 500; expired NEVER injected (read-time derivation)
+  {
+    const lines: string[] = [];
+    for (const rec of records) {
+      if (rec.kind !== "offer" || rec.status !== "active") continue;
+      const phase = offerPhase(rec, now);
+      if (phase === "expired") continue;
+      const d = rec.data as Record<string, unknown>;
+      const bits = [str(d.details), str(d.code) && `code ${d.code}`,
+        rec.endsAt && `ends ${rec.endsAt.toISOString().slice(0, 10)}`].filter(Boolean);
+      lines.push(`- ${phase === "scheduled" ? "(upcoming) " : ""}${str(d.title) ?? "?"}${bits.length ? ` (${bits.join("; ")})` : ""}`);
+    }
+    if (lines.length) parts.push(cap(`Your offers (active):\n${lines.join("\n")}`, 500));
+  }
+
+  // 5) Your products — budget 800: summary + Top-10 + lookup hint
+  {
+    const products = records.filter((r) => r.kind === "product" && r.status === "active");
+    const lines: string[] = [];
+    if (products.length) {
+      const pinnedCount = products.filter((p) => p.pinned).length;
+      lines.push(`Your products: ${products.length} total (${pinnedCount} pinned). Top:`);
+      for (const rec of products.slice(0, 10)) {
+        const d = rec.data as Record<string, unknown>;
+        const bits = [str(d.description), str(d.price), str(d.sellingAngle) && `angle: ${d.sellingAngle}`].filter(Boolean);
+        lines.push(`- ${str(d.name) ?? "?"}${bits.length ? ` — ${bits.join("; ")}` : ""}`);
+      }
+      if (products.length > 10) lines.push("(use lookupProducts for the rest)");
+    }
+    for (const f of factsBySection.get("products") ?? []) lines.push(`- ${f}`);
+    if (lines.length) parts.push(cap(lines.join("\n"), 800));
   }
 
   if (!parts.length) return "";
-  const text = parts.join("\n\n");
-  if (text.length <= 3000) return text;
-  return text.slice(0, 3000) + "\n…(older brand notes not shown)";
+  return parts.join("\n\n");
 }

@@ -1,15 +1,18 @@
 "use client";
-import React, { useState } from "react";
-import { Download, Users, Images, Pencil, Trash2, Check, X, Search, AlertCircle, Film, ImageIcon } from "lucide-react";
-import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs";
+import React, { useMemo, useState } from "react";
+import { Plus, Film, ImageIcon } from "lucide-react";
 import { Button } from "@/components/ui/button";
-import { Input } from "@/components/ui/input";
 import type { EntityDTO } from "@/lib/types";
-import type { AdJobItem } from "@/lib/data";
-import { groupEntitiesByType } from "@/lib/entity-grouping";
+import type { AdJobItem, HistoryThumb } from "@/lib/data";
+import type { BrandRecordRow } from "@/lib/brand-record-actions";
 import { updateEntity, softDeleteEntity } from "@/lib/actions";
-import { bustUrl } from "@/lib/media-retry";
+import { saveBrandRecord } from "@/lib/brand-record-actions";
+import { buildStuffItems } from "@/lib/stuff-items";
+import { StuffLibrary } from "./stuff/StuffLibrary";
+import { AddAssetDialog } from "./stuff/AddAssetDialog";
+import { useRouter } from "next/navigation";
 
+// Kept as a public export — lib/stuff-items imports this type-only.
 export interface AdTile {
   id: string;
   src: string;
@@ -22,111 +25,8 @@ export interface OttoStuffProps {
   entities: EntityDTO[];
   ads: AdTile[];
   adJobs: AdJobItem[];
-}
-
-function EntityTile({
-  e,
-  onRename,
-  onDelete,
-}: {
-  e: EntityDTO;
-  onRename: (id: string, newName: string) => void;
-  onDelete: (id: string) => void;
-}) {
-  const baseUrl = e.refs.find((r) => r.assetId === e.baseAssetId)?.url ?? e.refs[0]?.url ?? null;
-  const [editing, setEditing] = useState(false);
-  const [editName, setEditName] = useState(e.name);
-  const [editError, setEditError] = useState<string | null>(null);
-  const [saving, setSaving] = useState(false);
-  const [imgAttempt, setImgAttempt] = useState(0);
-  const [imgErrored, setImgErrored] = useState(false);
-  const imgSrc = baseUrl ? (imgAttempt === 0 ? baseUrl : bustUrl(baseUrl, imgAttempt)) : null;
-
-  async function saveRename() {
-    const trimmed = editName.trim();
-    if (!trimmed || trimmed === e.name) { setEditing(false); return; }
-    setSaving(true);
-    setEditError(null);
-    const res = await updateEntity(e.id, { name: trimmed });
-    if ("error" in res) {
-      setEditError(res.error);
-      setSaving(false);
-    } else {
-      onRename(e.id, trimmed);
-      setEditing(false);
-      setSaving(false);
-    }
-  }
-
-  function cancelRename() {
-    setEditName(e.name);
-    setEditError(null);
-    setEditing(false);
-  }
-
-  function handleEntityImgError() {
-    if (imgAttempt < 2) setImgAttempt((a) => a + 1);
-    else setImgErrored(true);
-  }
-
-  return (
-    <div className="overflow-hidden rounded-[14px] border border-border bg-card shadow-sm">
-      <div className="flex aspect-square flex-col items-center justify-center gap-2 bg-muted">
-        {imgErrored ? (
-          <>
-            <AlertCircle size={20} className="text-muted-foreground/70" />
-            <span className="text-[0.75rem] text-muted-foreground">Couldn&apos;t load this</span>
-            <button
-              type="button"
-              onClick={() => { setImgErrored(false); setImgAttempt((a) => a + 1); }}
-              className="cursor-pointer border-none bg-none p-0 text-[0.75rem] text-brand underline"
-            >
-              Reload
-            </button>
-          </>
-        ) : imgSrc ? (
-          // eslint-disable-next-line @next/next/no-img-element
-          <img key={imgSrc} src={imgSrc} alt={e.name} className="h-full w-full object-cover" onError={handleEntityImgError} />
-        ) : (
-          <>
-            <Users size={28} className="text-muted-foreground/70" />
-            <span className="text-[0.75rem] text-muted-foreground/70">No image yet</span>
-          </>
-        )}
-      </div>
-      <div className="px-[11px] py-[9px]">
-        {editing ? (
-          <div>
-            <Input
-              value={editName}
-              onChange={(ev) => setEditName(ev.target.value)}
-              onKeyDown={(ev) => { if (ev.key === "Enter") saveRename(); if (ev.key === "Escape") cancelRename(); }}
-              autoFocus
-            />
-            {editError && <div role="alert" className="mb-1 text-[0.75rem] text-[var(--error-soft-foreground)]">{editError}</div>}
-            <div className="flex gap-1">
-              <Button variant="ghost" size="sm" onClick={saveRename} disabled={saving} aria-label="Save"><Check size={14} /></Button>
-              <Button variant="ghost" size="sm" onClick={cancelRename} aria-label="Cancel"><X size={14} /></Button>
-            </div>
-          </div>
-        ) : (
-          <div>
-            <div className="flex items-center gap-1">
-              <div className="flex-1 overflow-hidden text-ellipsis whitespace-nowrap text-[0.84375rem] font-semibold text-foreground">
-                {e.name}
-              </div>
-              <Button variant="ghost" size="sm" onClick={() => { setEditName(e.name); setEditError(null); setEditing(true); }} aria-label="Rename"><Pencil size={13} /></Button>
-              <Button variant="ghost" size="sm" onClick={() => onDelete(e.id)} aria-label="Delete"><Trash2 size={13} /></Button>
-            </div>
-            {editError && <div role="alert" className="mt-0.5 text-[0.75rem] text-[var(--error-soft-foreground)]">{editError}</div>}
-            <div className="mt-px text-[0.71875rem] text-muted-foreground/70">
-              {e.type.toLowerCase()} · used {e.usageCount} {e.usageCount === 1 ? "time" : "times"}
-            </div>
-          </div>
-        )}
-      </div>
-    </div>
-  );
+  records: BrandRecordRow[];
+  history: HistoryThumb[];
 }
 
 function AdJobCard({ job }: { job: AdJobItem }) {
@@ -157,87 +57,56 @@ function AdJobCard({ job }: { job: AdJobItem }) {
   );
 }
 
-function AdMediaTile({ ad }: { ad: AdTile }) {
-  const ext = ad.src.split("?")[0].split(".").pop() || (ad.kind === "video" ? "mp4" : "png");
-  const filename = `fikirtive-${ad.id.slice(0, 8)}.${ext}`;
-  const [attempt, setAttempt] = useState(0);
-  const [errored, setErrored] = useState(false);
-  const src = attempt === 0 ? ad.src : bustUrl(ad.src, attempt);
-
-  function handleMediaError() {
-    if (attempt < 2) setAttempt((a) => a + 1);
-    else setErrored(true);
+export function OttoStuff({ entities, ads, adJobs, records, history }: OttoStuffProps) {
+  const router = useRouter();
+  const [entityList, setEntityList] = useState<EntityDTO[]>(entities);
+  const [prevEntities, setPrevEntities] = useState(entities);
+  if (prevEntities !== entities) {
+    // server truth arrived (router.refresh) — resync and drop stale optimistic edits
+    setPrevEntities(entities);
+    setEntityList(entities);
   }
-
-  const mediaAlt = ad.prompt ? `Generated image: ${ad.prompt}` : "Generated image";
-
-  return (
-    <div className="relative overflow-hidden rounded-[14px] border border-border bg-muted">
-      {errored ? (
-        <div className="flex min-h-[120px] flex-col items-center justify-center gap-2 p-6">
-          <AlertCircle size={20} className="text-muted-foreground/70" />
-          <span className="text-[0.75rem] text-muted-foreground">Couldn&apos;t load this</span>
-          <button
-            type="button"
-            onClick={() => { setErrored(false); setAttempt((a) => a + 1); }}
-            className="cursor-pointer border-none bg-none p-0 text-[0.75rem] text-brand underline"
-          >
-            Reload
-          </button>
-        </div>
-      ) : ad.kind === "video" ? (
-        <video key={src} src={src} controls muted loop playsInline className="block w-full" onError={handleMediaError} />
-      ) : (
-        // eslint-disable-next-line @next/next/no-img-element
-        <img key={src} src={src} alt={mediaAlt} className="block w-full" onError={handleMediaError} />
-      )}
-      <a
-        href={ad.src}
-        download={filename}
-        aria-label="Download"
-        title="Download"
-        style={{
-          position: "absolute",
-          top: 8,
-          right: 8,
-          display: "inline-flex",
-          alignItems: "center",
-          justifyContent: "center",
-          width: 34,
-          height: 34,
-          borderRadius: 10,
-          background: "rgba(20,20,20,.6)",
-          color: "#fff",
-        }}
-      >
-        <Download size={16} />
-      </a>
-    </div>
-  );
-}
-
-export function OttoStuff({ entities, ads, adJobs }: OttoStuffProps) {
-  const [tab, setTab] = useState<"cast" | "ads">("cast");
-  const [items, setItems] = useState<EntityDTO[]>(entities);
-  const [search, setSearch] = useState("");
+  const [addOpen, setAddOpen] = useState(false);
+  const [chooseProductFor, setChooseProductFor] = useState<string | null>(null);
   const [deleteError, setDeleteError] = useState<string | null>(null);
 
-  function handleRename(id: string, newName: string) {
-    setItems((cur) => cur.map((e) => (e.id === id ? { ...e, name: newName } : e)));
+  const items = useMemo(
+    () => buildStuffItems({ entities: entityList, history, ads, records }),
+    [entityList, history, ads, records],
+  );
+
+  async function handleRename(entityId: string, newName: string) {
+    const trimmed = newName.trim();
+    if (!trimmed) return;
+    const snapshot = entityList.find((e) => e.id === entityId);
+    if (!snapshot || trimmed === snapshot.name) return;
+    setEntityList((cur) => cur.map((e) => (e.id === entityId ? { ...e, name: trimmed } : e)));
+    const res = await updateEntity(entityId, { name: trimmed });
+    if ("error" in res) {
+      setEntityList((cur) => cur.map((e) => (e.id === entityId ? { ...e, name: snapshot.name } : e)));
+    }
   }
 
-  async function handleDelete(id: string) {
-    const snapshot = items.find((e) => e.id === id);
-    setItems((cur) => cur.filter((e) => e.id !== id));
+  async function handleDelete(entityId: string) {
+    const snapshot = entityList.find((e) => e.id === entityId);
+    setEntityList((cur) => cur.filter((e) => e.id !== entityId));
     setDeleteError(null);
-    const res = await softDeleteEntity(id);
+    const res = await softDeleteEntity(entityId);
     if ("error" in res) {
-      setItems((cur) => (snapshot ? [...cur, snapshot] : cur));
+      setEntityList((cur) => (snapshot ? [...cur, snapshot] : cur));
       setDeleteError(res.error);
     }
   }
 
-  const groups = groupEntitiesByType(items, search);
+  // Active product records to choose from when linking an image as a product image.
+  const activeProducts = records.filter((r) => r.kind === "product" && r.status === "active");
+
+  async function linkProductImage(rec: BrandRecordRow, assetId: string) {
+    const data = { ...(rec.data as Record<string, unknown>), imageAssetId: assetId };
+    await saveBrandRecord({ id: rec.id, kind: "product", data });
+    setChooseProductFor(null);
+    router.refresh();
+  }
 
   return (
     // leading-[1.5] — design-baseline body line-height (Analytics standard)
@@ -248,113 +117,94 @@ export function OttoStuff({ entities, ads, adJobs }: OttoStuffProps) {
         }
       `}</style>
       <div className="mx-auto max-w-[880px]">
-        <h1 className="m-0 mb-4 text-[1.5rem] font-bold tracking-[-0.02em] text-foreground">
-          My stuff
-        </h1>
-        <div className="mb-5 max-w-[280px]">
-          <Tabs value={tab} onValueChange={(v) => setTab(v as "cast" | "ads")}>
-            <TabsList className="w-full justify-start h-auto! gap-1 rounded-[14px] bg-muted p-1">
-              <TabsTrigger
-                value="cast"
-                className="flex-none h-auto border-0 rounded-[10px] px-1 py-2 text-[0.875rem] font-semibold text-muted-foreground data-[state=active]:bg-card data-[state=active]:font-semibold data-[state=active]:text-foreground data-[state=active]:shadow-xs"
-              >
-                Cast
-              </TabsTrigger>
-              <TabsTrigger
-                value="ads"
-                className="flex-none h-auto border-0 rounded-[10px] px-1 py-2 text-[0.875rem] font-semibold text-muted-foreground data-[state=active]:bg-card data-[state=active]:font-semibold data-[state=active]:text-foreground data-[state=active]:shadow-xs"
-              >
-                Ads
-              </TabsTrigger>
-            </TabsList>
-          </Tabs>
+        <div className="mb-4 flex items-start justify-between gap-4">
+          <div>
+            <h1 className="m-0 text-[1.5rem] font-bold tracking-[-0.02em] text-foreground">
+              My Stuff
+            </h1>
+            <p className="mt-1 mb-0 max-w-[560px] text-[0.9375rem] text-muted-foreground leading-[1.5]">
+              Everything you and Otto have made or saved — reuse any of it in the next campaign.
+            </p>
+          </div>
+          <Button size="sm" onClick={() => setAddOpen(true)} className="shrink-0">
+            <Plus size={16} />
+            Add
+          </Button>
         </div>
 
-        {tab === "cast" ? (
-          items.length === 0 ? (
-            <EmptyCast />
-          ) : (
-            <>
-              {deleteError && (
-                <div role="alert" className="mb-3 rounded-[14px] bg-error-soft px-3 py-2 text-[0.875rem] text-[var(--error-soft-foreground)]">
-                  {deleteError}
-                </div>
-              )}
-              {/* Search */}
-              <div className="relative mb-5 max-w-[320px]">
-                <Search size={15} className="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 text-muted-foreground/70" />
-                <Input
-                  value={search}
-                  onChange={(ev) => setSearch(ev.target.value)}
-                  placeholder="Search cast…"
-                  aria-label="Search cast"
-                  className="pl-10"
-                />
-              </div>
+        {deleteError && (
+          <div role="alert" className="mb-3 rounded-[14px] bg-error-soft px-3 py-2 text-[0.875rem] text-[var(--error-soft-foreground)]">
+            {deleteError}
+          </div>
+        )}
 
-              {groups.length === 0 ? (
-                <div className="py-4 text-[0.875rem] text-muted-foreground">
-                  No matches for &ldquo;{search}&rdquo;
-                </div>
-              ) : (
-                groups.map((group) => (
-                  <section key={group.type} className="mb-[18px]">
-                    <h2 className="m-0 mb-3 text-[0.75rem] font-semibold uppercase tracking-[0.05em] text-muted-foreground">
-                      {group.label}
-                    </h2>
-                    <div className="grid grid-cols-[repeat(auto-fill,minmax(146px,1fr))] gap-[14px]">
-                      {group.items.map((e) => (
-                        <EntityTile key={e.id} e={e} onRename={handleRename} onDelete={handleDelete} />
-                      ))}
-                    </div>
-                  </section>
-                ))
-              )}
-            </>
-          )
-        ) : adJobs.length === 0 && ads.length === 0 ? (
-          <Empty icon={<Images size={28} />} text="No ads yet. When Otto makes something, it lands here — newest first." />
-        ) : (
-          <div className="grid grid-cols-[repeat(auto-fill,minmax(200px,1fr))] gap-4">
+        {/* In-flight / failed ad jobs stay above the library, unchanged. */}
+        {adJobs.length > 0 && (
+          <div className="mb-5 grid grid-cols-[repeat(auto-fill,minmax(200px,1fr))] gap-4">
             {adJobs.map((job) => (
               <AdJobCard key={job.id} job={job} />
             ))}
-            {ads.map((ad) => (
-              <AdMediaTile key={ad.id} ad={ad} />
-            ))}
           </div>
         )}
-      </div>
-    </div>
-  );
-}
 
-function EmptyCast() {
-  return (
-    <div className="flex flex-col items-center gap-3 px-4 py-10 text-center text-muted-foreground">
-      <span className="text-muted-foreground/70">
-        <Users size={32} />
-      </span>
-      <div>
-        <div className="mb-1 text-[1rem] font-semibold text-foreground">
-          Your cast lives here
-        </div>
-        <div className="max-w-[340px] text-[0.875rem] leading-[1.5]">
-          When you describe a person or product in a campaign, Otto saves it here so it stays consistent every time you use it.
-        </div>
+        <StuffLibrary
+          items={items}
+          mode="library"
+          onRename={handleRename}
+          onDelete={handleDelete}
+          onSetProductImage={(assetId) => setChooseProductFor(assetId)}
+        />
       </div>
-      <div className="mt-2 rounded-[14px] bg-muted px-3 py-2 text-[0.75rem] text-muted-foreground/70">
-        Just start a campaign — Otto will fill this in automatically.
-      </div>
-    </div>
-  );
-}
 
-function Empty({ icon, text }: { icon: React.ReactNode; text: string }) {
-  return (
-    <div className="flex flex-col items-center gap-3 px-4 py-8 text-center text-muted-foreground">
-      <span className="text-muted-foreground/70">{icon}</span>
-      <span className="max-w-[360px] text-[1rem]">{text}</span>
+      <AddAssetDialog
+        open={addOpen}
+        onClose={() => setAddOpen(false)}
+        onDone={() => router.refresh()}
+      />
+
+      {chooseProductFor && (
+        <div
+          className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4"
+          role="dialog"
+          aria-modal="true"
+          aria-label="Choose a product"
+          onClick={() => setChooseProductFor(null)}
+        >
+          <div
+            className="w-full max-w-[420px] rounded-[16px] border border-border bg-card p-6 shadow-lg"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <h2 className="m-0 mb-1 text-[1.125rem] font-semibold text-foreground">Set as product image</h2>
+            <p className="mb-4 mt-0 text-[0.875rem] text-muted-foreground">Pick which product this image belongs to.</p>
+            {activeProducts.length === 0 ? (
+              <p className="text-[0.875rem] text-muted-foreground">
+                No products yet — add one in Brand memory first.
+              </p>
+            ) : (
+              <div className="flex flex-col gap-1">
+                {activeProducts.map((rec) => {
+                  const name = (rec.data as { name?: unknown }).name;
+                  return (
+                    <button
+                      key={rec.id}
+                      type="button"
+                      onClick={() => void linkProductImage(rec, chooseProductFor)}
+                      className="rounded-[10px] px-3 py-2 text-left text-[0.9375rem] text-foreground hover:bg-accent"
+                    >
+                      {typeof name === "string" && name ? name : "Untitled product"}
+                    </button>
+                  );
+                })}
+              </div>
+            )}
+            <div className="mt-4 flex justify-end">
+              <Button variant="ghost" size="sm" onClick={() => setChooseProductFor(null)}>
+                Cancel
+              </Button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }

@@ -135,7 +135,16 @@ Do NOT set current values, prices, or money-class in the proposal — the server
 
 ## Brand memory
 
-When the user shares a durable brand fact (their voice, audience, products, rules, or brand story — use the **Brand** category for general story/identity) OR explicitly asks you to remember something, call \`rememberBrandFact\` with the best category and a concise fact. Do NOT save one-off creative choices or per-campaign decisions — only durable, reusable truths about the brand. Do not save the same fact twice; if a very similar fact was already shared this session, skip the call.
+Brand memory has two shapes — pick the right tool:
+- **Facts** (durable free-text truths): \`rememberBrandFact\` with category \`about\` (story/voice/identity), \`look\` (visual style, colors, imagery), or \`rules\` (hard do/don't).
+- **Records** (living, structured): \`saveProduct\`, \`saveCustomerSegment\`, \`saveOffer\` — upsert by name/title, so updating an existing one is one call and omitted fields are kept. Archive with status:"archived", never delete.
+
+Save only durable, reusable truths — never one-off creative choices; don't save near-duplicates. When you research the user's website, also capture the products and current offers you find (records), not just facts.
+
+Discipline for produced content:
+- **Prices** come ONLY from product records. If no record states a price, write copy without a number.
+- **Offers**: never reference an expired or invented offer; only use offers in your context (expired ones are auto-removed) — record new ones the user mentions with \`saveOffer\`.
+- Featuring a specific product not in your context? Call \`lookupProducts\` first.
 
 ## When to call \`list-meta-pages\` and \`propose-ad-build\`
 

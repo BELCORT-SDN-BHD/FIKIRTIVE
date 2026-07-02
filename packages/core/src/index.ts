@@ -90,3 +90,13 @@ export * from "./otto-budget.js";
 export * from "./llm-prices.js";
 export { GOAL_PRESETS, isGoalKey, type GoalKey } from "./goals.js";
 export * from "./model-config.js";
+export {
+  RECORD_KINDS, productRecordData, segmentRecordData, offerRecordData,
+  recordSchemaFor, recordName, normalizeNameKey, offerPhase,
+} from "./brand-records.js";
+export type {
+  RecordKind, ProductRecordData, SegmentRecordData, OfferRecordData, OfferPhase,
+} from "./brand-records.js";
+export { SECTIONS, FACT_SECTION_KEYS, sectionForCategory, diffRows } from "./memory-sections.js";
+export { sectionsTouched } from "./memory-sections.js";
+export type { SectionKey, RowDiff } from "./memory-sections.js";

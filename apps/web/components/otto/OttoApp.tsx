@@ -9,6 +9,7 @@ import type { AdTile } from "./OttoStuff";
 import type { AdJobItem } from "@/lib/data";
 import type { EntityDTO, ChatThreadDTO } from "@/lib/types";
 import type { MemoryRow } from "@/lib/memory-actions";
+import type { BrandRecordRow } from "@/lib/brand-record-actions";
 import type { AccountInfo } from "@/lib/account-actions";
 import type { HistoryThumb } from "@/lib/data";
 import { getMyAccount } from "@/lib/account-actions";
@@ -47,6 +48,7 @@ export interface OttoAppProps {
   userName: string;
   userEmail: string;
   memory: MemoryRow[];
+  records: BrandRecordRow[];
   ads: AdTile[];
   adJobs: AdJobItem[];
   account: AccountInfo | null;
@@ -76,6 +78,7 @@ export function OttoApp({
   userName,
   userEmail,
   memory,
+  records,
   ads,
   adJobs,
   account,
@@ -331,8 +334,10 @@ export function OttoApp({
           balanceUsd={balanceUsd}
           userName={userName}
           memory={memory}
+          records={records}
           ads={ads}
           adJobs={adJobs}
+          history={history ?? []}
           account={account}
           ottoStreamEnabled={ottoStreamEnabled}
           onBalanceRefresh={refreshBalance}
