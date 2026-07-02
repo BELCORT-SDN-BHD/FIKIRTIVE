@@ -29,6 +29,7 @@ import { OttoAdBuildCard } from "./OttoAdBuildCard";
 import { PackCard } from "./PackCard";
 import { StoryboardCard } from "./StoryboardCard";
 import { ResearchCard } from "./ResearchCard";
+import { ResearchReport } from "./ResearchReport";
 import { OttoResult } from "./OttoResult";
 import { TextPart } from "./parts/TextPart";
 import { StatusLine } from "./parts/StatusLine";
@@ -897,10 +898,9 @@ export function OttoChatStream({
             }
 
             if (kind === "RESEARCH_REPORT") {
-              // S2 placeholder — real report render is S4. Friendly stub, never a blank row.
               return (
                 <WidgetRow key={m.id} animateIn={isNewMessage(m.id)}>
-                  <div className="text-[0.875rem] text-muted-foreground">Research report</div>
+                  <ResearchReport cardId={m.metadata!.durableId} payload={m.metadata?.payload} />
                 </WidgetRow>
               );
             }
