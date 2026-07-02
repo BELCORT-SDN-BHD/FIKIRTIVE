@@ -145,6 +145,16 @@ vi.mock("@fikirtive/otto", async (importOriginal) => {
     withLlmBudget: mockWithLlmBudget,
     run: mockRun,
     RunState: MockRunState,
+    // tryRestoreRunState (F24) wraps @openai/agents' RunState.fromString directly, so the real
+    // helper bypasses the MockRunState override above. Delegate it to MockRunState.fromString so
+    // these tests keep controlling restore behavior through mockRunStateFromString.
+    tryRestoreRunState: async (_agent: unknown, str: string) => {
+      try {
+        return await MockRunState.fromString(_agent, str);
+      } catch {
+        return null;
+      }
+    },
     MaxTurnsExceededError: MockMaxTurnsExceededError,
   };
 });
@@ -336,6 +346,24 @@ describe("ottoTurn — metered", () => {
       expect.any(Function),
     );
     expect(runCalledInsideBudget).toBe(true);
+  });
+
+  it("keys the reservation refId off the UNIQUE user-message id, not threadId:seq (F27)", async () => {
+    setupHappyPath();
+    await ottoTurn(BASE_INPUT);
+
+    // the USER ChatMessage.create carries a unique newId()
+    const userCreate = mockChatMessageCreate.mock.calls.find(
+      (c) => (c[0] as { data: { role: string } }).data.role === "USER",
+    );
+    expect(userCreate).toBeDefined();
+    const userMessageId = (userCreate![0] as { data: { id: string } }).data.id;
+
+    const refId = (mockWithLlmBudget.mock.calls[0]![0] as { refId: string }).refId;
+    expect(refId).toBe(`otto-turn:${userMessageId}`);
+    // NOT the old collidable `otto-turn:<threadId>:<seq>` shape (two concurrent turns could
+    // land the same seq → same refId → the second reserveCredits no-ops → an unpaid turn).
+    expect(refId).not.toMatch(/^otto-turn:[^:]+:\d+$/);
   });
 });
 

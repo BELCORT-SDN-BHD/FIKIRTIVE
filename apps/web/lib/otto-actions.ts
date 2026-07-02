@@ -33,7 +33,7 @@ import {
   GOAL_PRESETS,
   isGoalKey,
 } from "@fikirtive/core";
-import { otto, withLlmBudget, OTTO_DEFAULT_MODEL, run, RunState, MaxTurnsExceededError, mapOttoUsage, ottoSimpleModeBlock, buildUserTurn, stripHistoryImages } from "@fikirtive/otto";
+import { otto, withLlmBudget, OTTO_DEFAULT_MODEL, run, MaxTurnsExceededError, mapOttoUsage, ottoSimpleModeBlock, buildUserTurn, sanitizeHistory, tryRestoreRunState } from "@fikirtive/otto";
 import type { OttoContext, AgentInputItem } from "@fikirtive/otto";
 import { requireOwner } from "./auth-guard";
 import { isImpersonating } from "@/lib/better-auth/compat";
@@ -41,7 +41,7 @@ import { resolveDisabledModels } from "./model-registry";
 import { startGen } from "./gen-actions";
 import { gatherReferenceImages } from "./otto-ref-images";
 import { getBrandContextText } from "./memory-actions";
-import { fetchAndExtract } from "./brand-research";
+import { fetchAndExtract } from "./fetch-extract";
 import { fetchOwnerInsights } from "./meta-insights";
 import { fetchOwnerAdObjects } from "./meta-objects";
 import { fetchOwnerPages } from "./meta-pages";
@@ -405,9 +405,10 @@ export async function ottoTurn(raw: unknown): Promise<
         data: { id: threadId, ownerId, projectId, title: text.slice(0, 80) },
       });
     }
+    const userMessageId = newId();
     await prisma.chatMessage.create({
       data: {
-        id: newId(),
+        id: userMessageId,
         threadId,
         ownerId,
         role: "USER",
@@ -435,15 +436,20 @@ export async function ottoTurn(raw: unknown): Promise<
     const sys = buildContextSystemMessage(ctx);
     const userTurn = buildUserTurn(text, ctx.images);
     let runInput: AgentInputItem[];
-    if (priorOttoState) {
-      const priorState = await RunState.fromString(otto, priorOttoState);
-      runInput = [...(sys ? [sys] : []), ...stripHistoryImages(priorState.history), userTurn];
+    const priorState = priorOttoState ? await tryRestoreRunState(otto, priorOttoState) : null;
+    if (priorState) {
+      runInput = [...(sys ? [sys] : []), ...sanitizeHistory(priorState.history), userTurn];
     } else {
+      // No prior state OR an unrestorable one (F24): start fresh — the turn still runs and its
+      // normal state write self-heals ottoState to the current schema.
       runInput = [...(sys ? [sys] : []), userTurn];
     }
 
-    // Run agent, metered
-    const refId = `otto-turn:${threadId}:${seq}`;
+    // Run agent, metered. Key the reservation off the UNIQUE user-message id, not threadId:seq —
+    // seq is read-max-then-insert with only a non-unique index, so two concurrent turns can land
+    // the same seq → the same `otto-turn:threadId:seq` refId → the second reserveCredits collides
+    // on the reserve:<refId> unique index and no-ops, running a turn WITHOUT holding credits (F27).
+    const refId = `otto-turn:${userMessageId}`;
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     let agentResult: any;
 
@@ -551,8 +557,11 @@ export async function ottoApprove(raw: unknown): Promise<
     if (!thread.ottoState) return { error: "Nothing to approve." };
     const priorOttoState = thread.ottoState;
 
-    // Rehydrate the paused RunState
-    const state = await RunState.fromString(otto, priorOttoState);
+    // Rehydrate the paused RunState. On an unrestorable state (schema bump / corruption, F24)
+    // we can't resume the interruption this approval refers to — surface a clean error instead
+    // of throwing (which would 500 every approve on a stale thread).
+    const state = await tryRestoreRunState(otto, priorOttoState);
+    if (!state) return { error: "This conversation's approval state couldn't be restored — please ask Otto to propose it again." };
 
     // Find the matching generate interruption (cardId binding)
     const interruptions = state.getInterruptions();

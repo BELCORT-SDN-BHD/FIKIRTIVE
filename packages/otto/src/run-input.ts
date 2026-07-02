@@ -1,4 +1,4 @@
-import type { AgentInputItem } from "@openai/agents";
+import { RunState, type Agent, type AgentInputItem } from "@openai/agents";
 
 export type RefImage = { label: string; dataUrl: string };
 
@@ -39,4 +39,39 @@ export function stripHistoryImages(history: AgentInputItem[]): AgentInputItem[] 
     }
     return { ...it, content: kept } as AgentInputItem;
   });
+}
+
+/**
+ * Sanitize rehydrated Otto history before re-running (F25). Two bounded-growth leaks:
+ *  1. A FRESH system message (brand context + available refs) is prepended every turn, so any
+ *     system message carried inside the rehydrated history is a stale duplicate — drop them.
+ *  2. Image bytes must never accumulate across turns (stripHistoryImages).
+ * Together these stop ottoState from growing without bound each turn. (Token-budget truncation
+ * of the remaining turns is intentionally NOT done here — naively dropping items can split a
+ * tool_call/tool_result pair and break the run; that needs pair-aware handling, tracked separately.)
+ */
+export function sanitizeHistory(history: AgentInputItem[]): AgentInputItem[] {
+  const withoutSystem = history.filter((item) => (item as { role?: string }).role !== "system");
+  return stripHistoryImages(withoutSystem);
+}
+
+/**
+ * Restore a persisted RunState, returning null instead of throwing on a corrupt or
+ * schema-version-incompatible serialized state (F24). RunState.fromString throws on an
+ * @openai/agents schema bump or a truncated/garbled ottoState; unguarded, that bricks EVERY
+ * existing thread forever. Callers treat null as "no prior state": turn paths start a fresh
+ * run (dropping history, which self-heals ottoState on the next write); resume paths (approve /
+ * worker verdict) surface a clean error / skip rather than resume an unrecoverable state.
+ */
+// eslint-disable-next-line @typescript-eslint/no-explicit-any -- mirrors RunState.fromString's own `Agent<any, any>` constraint; Agent is invariant in its context param, so `Agent<unknown>` would reject the concrete `Agent<OttoContext>`.
+export async function tryRestoreRunState<TAgent extends Agent<any, any>>(
+  agent: TAgent,
+  serialized: string,
+): Promise<RunState<unknown, TAgent> | null> {
+  try {
+    return await RunState.fromString<unknown, TAgent>(agent, serialized);
+  } catch (e) {
+    console.warn("[otto] could not restore prior run state — starting fresh:", e instanceof Error ? e.message : e);
+    return null;
+  }
 }

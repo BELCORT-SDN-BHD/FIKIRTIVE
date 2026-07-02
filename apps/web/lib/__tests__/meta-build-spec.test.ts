@@ -154,6 +154,31 @@ describe("buildAdBuildCard", () => {
     expect(payload.approval.paramHash.length).toBeGreaterThan(0);
   });
 
+  // F17: the approval must bind the CREATIVE and the TARGETING, not just objective/budget/
+  // page/mode/adset — otherwise the ad content or audience that executes can drift from what
+  // the user approved (the hash would still verify). Changing any of them must change the hash.
+  const baseHash = () => buildAdBuildCard(VALID_INPUT, VALID_CTX, ACTOR, NOW_ISO).approval.paramHash;
+
+  it("approval.paramHash changes when the creative message drifts (F17)", () => {
+    const drifted = { ...VALID_INPUT, creative: { ...VALID_INPUT.creative, message: "Totally different copy" } };
+    expect(buildAdBuildCard(drifted, VALID_CTX, ACTOR, NOW_ISO).approval.paramHash).not.toBe(baseHash());
+  });
+
+  it("approval.paramHash changes when the creative link drifts (F17)", () => {
+    const drifted = { ...VALID_INPUT, creative: { ...VALID_INPUT.creative, link: "https://evil.example.com" } };
+    expect(buildAdBuildCard(drifted, VALID_CTX, ACTOR, NOW_ISO).approval.paramHash).not.toBe(baseHash());
+  });
+
+  it("approval.paramHash changes when the creative CTA drifts (F17)", () => {
+    const drifted = { ...VALID_INPUT, creative: { ...VALID_INPUT.creative, cta: "SHOP_NOW" } };
+    expect(buildAdBuildCard(drifted, VALID_CTX, ACTOR, NOW_ISO).approval.paramHash).not.toBe(baseHash());
+  });
+
+  it("approval.paramHash changes when the targeting drifts (F17)", () => {
+    const drifted = { ...VALID_INPUT, targetingHint: { countries: ["US"], ageMin: 18, ageMax: 65 } };
+    expect(buildAdBuildCard(drifted, VALID_CTX, ACTOR, NOW_ISO).approval.paramHash).not.toBe(baseHash());
+  });
+
   it("approval is bound to actor and expires 10 min after nowIso", () => {
     const payload = buildAdBuildCard(VALID_INPUT, VALID_CTX, ACTOR, NOW_ISO);
     expect(payload.approval.boundActor).toBe(ACTOR);

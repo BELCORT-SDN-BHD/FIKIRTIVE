@@ -16,34 +16,48 @@ const IMAGE_VARIANT_COUNT = 4;
  *  not silently drop the card, or the owner sees nothing, clicks "Make it" again, and
  *  mints a fresh idempotencyKey → a second paid job. Retries the owner-scoped insert;
  *  if it still fails the paid output is not lost (it lands in the library) — we log. */
-async function createNodeWithRetry(
+export async function createNodeWithRetry(
   args: Parameters<typeof createCanvasNode>[0],
   attempts = 3,
 ): Promise<Awaited<ReturnType<typeof createCanvasNode>>> {
   let last: Awaited<ReturnType<typeof createCanvasNode>> = { error: "not attempted" };
   for (let i = 0; i < attempts; i++) {
-    last = await createCanvasNode(args);
-    if ("id" in last) return last;
+    // A network blip on the server action REJECTS (throws) — the real transient failure
+    // class — rather than returning {error}. Catch it so the retry loop covers throws too,
+    // and an exhausted throw becomes an {error} the caller can surface (never an escape).
+    try {
+      last = await createCanvasNode(args);
+      if ("id" in last) return last;
+    } catch (e) {
+      last = { error: e instanceof Error ? e.message : "node create threw" };
+    }
     await new Promise((r) => setTimeout(r, 300 * (i + 1)));
   }
   console.warn("[canvas] createCanvasNode failed after retries — a paid job's card is missing (output still in the library):", last);
   return last;
 }
 
-async function poll(
+export async function poll(
   jobId: string,
   onDone: (urls: string[], status: string, generationIds: string[]) => void,
   cancelledRef: React.MutableRefObject<boolean>,
+  opts: { intervalMs?: number; maxPolls?: number } = {},
 ) {
-  for (let i = 0; i < 48; i++) {
+  const intervalMs = opts.intervalMs ?? 2500;
+  // ~8 min at 2.5s. Video gens can legitimately exceed 2 min (the old 48-iteration/~2-min cap
+  // spuriously reported "failed"); the worker settles late ones regardless of the client poll.
+  const maxPolls = opts.maxPolls ?? 192;
+  for (let i = 0; i < maxPolls; i++) {
     if (cancelledRef.current) return;
     const job = await getGenJob(jobId);
     if (!job) return;
     if (job.status === "DONE") return onDone(job.urls, "done", job.generationIds ?? []);
     if (job.status === "FAILED") return onDone([], "failed", []);
-    await new Promise((r) => setTimeout(r, 2500));
+    await new Promise((r) => setTimeout(r, intervalMs));
   }
-  onDone([], "failed", []);
+  // Client-side give-up ≠ failure: the worker may still finish and settle. Report a distinct
+  // "timeout" so the card shows "still working — check back" instead of a hard "failed".
+  onDone([], "timeout", []);
 }
 
 export function useCanvasGen(
@@ -51,8 +65,14 @@ export function useCanvasGen(
   onNode: OnNode,
   onResolve: (nodeId: string, url: string | null, status: string, generationId?: string) => void,
   activeThreadId?: string | null,
+  onError?: (msg: string) => void,
 ) {
   const cancelledRef = useRef(false);
+  // A paid-gen kickoff that fails before any card is placed (out of credits, model disabled,
+  // guardian block, or a node-create that never recovered) must tell the user — otherwise they
+  // see nothing, assume the app broke, and re-click, minting a fresh idempotencyKey → a real
+  // second charge attempt (F19/F20).
+  const fail = (msg: string) => onError?.(msg || "That didn't go through — please try again.");
 
   const generateImage = useCallback(async (prompt: string, pos: Pos, entityIds: string[] = [], variantSel: Record<string, string> = {}) => {
     const vsel = Object.keys(variantSel).length ? variantSel : undefined;
@@ -62,9 +82,9 @@ export function useCanvasGen(
     // the library. Sibling cards below are pure placement (no extra spend).
     const req = { projectId, prompt, count: IMAGE_VARIANT_COUNT, kind: "image" as const, model: activeImageModel(), entityIds, ...(vsel && { variantSel: vsel }), idempotencyKey: `img-${Date.now()}` };
     const started = await startGen(req);
-    if ("error" in started) return;
+    if ("error" in started) { fail(started.error); return; }
     const created = await createNodeWithRetry({ projectId, type: "image", ...pos, prompt, genJobId: started.id, status: "pending", ...(activeThreadId ? { threadId: activeThreadId } : {}) });
-    if ("error" in created) return;
+    if ("error" in created) { fail("Your image is generating — the card didn't appear, but you can find it in your library."); return; }
     onNode({ id: created.id, type: "image", pos, status: "pending", prompt });
     poll(started.id, async (urls, status, generationIds) => {
       if (status !== "done" || urls.length === 0) { onResolve(created.id, null, status); return; }
@@ -82,17 +102,17 @@ export function useCanvasGen(
         onResolve(sib.id, urls[i], "done", generationIds[i]);
       }
     }, cancelledRef);
-  }, [projectId, onNode, onResolve, activeThreadId]);
+  }, [projectId, onNode, onResolve, activeThreadId, onError]);
 
   const animate = useCallback(async (sourceGenerationId: string, sourceNodeId: string, prompt: string, pos: Pos) => {
     const req = { projectId, prompt, count: 1, kind: "video" as const, model: activeVideoModel(), sourceGenerationId, idempotencyKey: `vid-${Date.now()}` };
     const started = await startGen(req);
-    if ("error" in started) return;
+    if ("error" in started) { fail(started.error); return; }
     const created = await createNodeWithRetry({ projectId, type: "video", ...pos, prompt, genJobId: started.id, status: "pending", sourceNodeId, ...(activeThreadId ? { threadId: activeThreadId } : {}) });
-    if ("error" in created) return;
+    if ("error" in created) { fail("Your video is generating — the card didn't appear, but you can find it in your library."); return; }
     onNode({ id: created.id, type: "video", pos, status: "pending", prompt, sourceNodeId });
     poll(started.id, (urls, status, generationIds) => onResolve(created.id, urls[0] ?? null, status, generationIds[0]), cancelledRef);
-  }, [projectId, onNode, onResolve, activeThreadId]);
+  }, [projectId, onNode, onResolve, activeThreadId, onError]);
 
   // Phase 3: text-to-video. The same paid video path as animate(), minus the
   // source frame — the gate allows video without sourceGenerationId (it's the
@@ -101,12 +121,12 @@ export function useCanvasGen(
   const generateVideoFromText = useCallback(async (prompt: string, pos: Pos) => {
     const req = { projectId, prompt, count: 1, kind: "video" as const, model: activeVideoModel(), idempotencyKey: `vid-${Date.now()}` };
     const started = await startGen(req);
-    if ("error" in started) return;
+    if ("error" in started) { fail(started.error); return; }
     const created = await createNodeWithRetry({ projectId, type: "video", ...pos, prompt, genJobId: started.id, status: "pending", ...(activeThreadId ? { threadId: activeThreadId } : {}) });
-    if ("error" in created) return;
+    if ("error" in created) { fail("Your video is generating — the card didn't appear, but you can find it in your library."); return; }
     onNode({ id: created.id, type: "video", pos, status: "pending", prompt });
     poll(started.id, (urls, status, generationIds) => onResolve(created.id, urls[0] ?? null, status, generationIds[0]), cancelledRef);
-  }, [projectId, onNode, onResolve, activeThreadId]);
+  }, [projectId, onNode, onResolve, activeThreadId, onError]);
 
   return { generateImage, animate, generateVideoFromText, cancelledRef };
 }

@@ -106,6 +106,15 @@ function buildStep(p: ReturnType<typeof basePayload>) {
       pageId: p.pageId,
       mode: p.mode,
       adsetId: p.intoExisting?.adsetId ?? null,
+      // F17: mirror bindingSteps() — bind creative + targeting.
+      creative: {
+        kind: p.creative.kind,
+        message: p.creative.message,
+        headline: p.creative.headline ?? null,
+        cta: p.creative.cta,
+        link: p.creative.link,
+      },
+      targeting: p.targeting,
     },
   };
 }
@@ -423,6 +432,38 @@ describe("runAdBuild — idempotency", () => {
     expect(paths).not.toContain("act_111/campaigns"); // P2002 → read applied id, no re-create
     expect(res.createdIds.campaignId).toBe("campaign_RACED");
   });
+
+  it("does NOT re-create when a P2002 race finds a CONCURRENT PENDING claimant → needs_review (F13)", async () => {
+    mockConnFindUnique.mockResolvedValue(conn());
+    mockMsgFindFirst.mockResolvedValue(card());
+
+    // stepIndex 2 (campaign): no prior row on the first findFirst; create loses the unique
+    // insert (P2002); the re-read finds the WINNER's row still PENDING — it is the rightful
+    // executor and may already be firing the Meta create. Proceeding here would create a
+    // DUPLICATE campaign (double budget). The build must refuse → needs_review.
+    let campaignLookups = 0;
+    mockExecFindFirst.mockImplementation(async (args: { where: { stepIndex: number } }) => {
+      if (args.where.stepIndex === 2) {
+        campaignLookups += 1;
+        return campaignLookups === 1 ? null : { id: "exec-2", stepIndex: 2, status: "PENDING" };
+      }
+      return null;
+    });
+    mockExecCreate.mockImplementation(async (args: { data: { stepIndex: number } }) => {
+      if (args.data.stepIndex === 2) {
+        const e = new Error("dup") as Error & { code?: string };
+        e.code = "P2002";
+        throw e;
+      }
+      return { id: `exec-${args.data.stepIndex}`, stepIndex: args.data.stepIndex, status: "PENDING" };
+    });
+
+    const res = await runAdBuild("u1", "card-1");
+    expect(res.state).toBe("needs_review");
+    const paths = mockGraphPost.mock.calls.map((c) => c[1] as string);
+    expect(paths).not.toContain("act_111/campaigns"); // never created the duplicate campaign
+    expect(paths.some((p) => p.endsWith("/adsets") || p.endsWith("/ads"))).toBe(false); // stopped the batch
+  });
 });
 
 // ════════════════════════════════════════════════════════════════════════════
@@ -590,6 +631,7 @@ describe("approveAdBuild", () => {
     expect(mockMsgUpdate).not.toHaveBeenCalled();
     expect(mockGraphPost).not.toHaveBeenCalled();
   });
+
 
   it("valid → consumes the approval THEN runs the build", async () => {
     vi.useFakeTimers();

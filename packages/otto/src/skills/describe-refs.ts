@@ -95,7 +95,10 @@ export async function executeDescribeRefs(
 export const describeRefsSkill = defineOttoSkill({
   name: "describeRefs",
   cost: "free",
-  effect: "read",
+  // Writes descriptions via prisma.entity.updateMany (see executeDescribeRefs) — a
+  // state change, so effect is "write". free + write + internal still derives
+  // needsApproval=false; the correct label keeps the fail-closed gate audit honest.
+  effect: "write",
   reach: "internal",
   description:
     "Cache visual descriptions of reference images shown to you this turn. " +

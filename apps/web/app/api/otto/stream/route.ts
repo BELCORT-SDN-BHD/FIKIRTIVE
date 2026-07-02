@@ -38,11 +38,11 @@ import {
   withLlmBudget,
   OTTO_DEFAULT_MODEL,
   run,
-  RunState,
   MaxTurnsExceededError,
   mapOttoUsage,
   buildUserTurn,
-  stripHistoryImages,
+  sanitizeHistory,
+  tryRestoreRunState,
 } from "@fikirtive/otto";
 import type { AgentInputItem } from "@fikirtive/otto";
 import { requireOwner } from "@/lib/auth-guard";
@@ -93,6 +93,7 @@ export async function POST(req: NextRequest): Promise<Response> {
   let isNew: boolean;
   let priorOttoState: string | null = null;
   let seqAfterUser: number;
+  let userMessageId: string;
   let runInput: AgentInputItem[];
   let ctx: Awaited<ReturnType<typeof buildOttoContext>>;
 
@@ -150,9 +151,10 @@ export async function POST(req: NextRequest): Promise<Response> {
         data: { id: threadId, ownerId, projectId, title: text.slice(0, 80) },
       });
     }
+    userMessageId = newId();
     await prisma.chatMessage.create({
       data: {
-        id: newId(),
+        id: userMessageId,
         threadId,
         ownerId,
         role: "USER",
@@ -178,10 +180,12 @@ export async function POST(req: NextRequest): Promise<Response> {
     // Build run input: system message + (prior history | fresh) + user message
     const sys = buildContextSystemMessage(ctx);
     const userTurn = buildUserTurn(text, ctx.images);
-    if (priorOttoState) {
-      const priorState = await RunState.fromString(otto, priorOttoState);
-      runInput = [...(sys ? [sys] : []), ...stripHistoryImages(priorState.history), userTurn];
+    const priorState = priorOttoState ? await tryRestoreRunState(otto, priorOttoState) : null;
+    if (priorState) {
+      runInput = [...(sys ? [sys] : []), ...sanitizeHistory(priorState.history), userTurn];
     } else {
+      // No prior state OR an unrestorable one (F24): start fresh — the turn still runs and its
+      // normal state write self-heals ottoState to the current schema.
       runInput = [...(sys ? [sys] : []), userTurn];
     }
   } catch (e) {
@@ -189,7 +193,10 @@ export async function POST(req: NextRequest): Promise<Response> {
     return Response.json({ error: "Couldn't reach Otto — please try again." }, { status: 500 });
   }
 
-  const refId = `otto-stream:${threadId}:${seqAfterUser}`;
+  // Key the reservation off the UNIQUE user-message id, not threadId:seq — seq is
+  // read-max-then-insert with a non-unique index, so a concurrent turn could collide the
+  // `otto-stream:threadId:seq` refId and the second reserveCredits would no-op (F27).
+  const refId = `otto-stream:${userMessageId}`;
 
   // --- Open the UI-message stream and run the agent inside it -----------------
   const stream = createUIMessageStream({

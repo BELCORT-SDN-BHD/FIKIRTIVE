@@ -186,6 +186,17 @@ export function buildAdBuildCard(
           pageId: input.pageId,
           mode: input.mode,
           adsetId: input.intoExisting?.adsetId ?? null,
+          // F17: bind the CREATIVE and the resolved TARGETING too, so approved ad content /
+          // audience can't drift from what executes. MUST mirror bindingSteps() in
+          // meta-build-actions.ts exactly (same fields, same order) or the hash won't verify.
+          creative: {
+            kind: input.creative.kind,
+            message: input.creative.message,
+            headline: input.creative.headline ?? null,
+            cta: input.creative.cta,
+            link: input.creative.link,
+          },
+          targeting,
         },
       },
     ],

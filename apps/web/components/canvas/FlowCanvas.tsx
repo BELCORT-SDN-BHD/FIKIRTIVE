@@ -6,6 +6,7 @@ import { ImageNode } from "./nodes/ImageNode";
 import { VideoNode } from "./nodes/VideoNode";
 import { TextNode } from "./nodes/TextNode";
 import { useCanvasGen } from "./useCanvasGen";
+import { toast } from "sonner";
 import { listCanvasNodes, moveCanvasNode, deleteCanvasNode, updateTextNode, createCanvasNode, type CanvasNodeDTO } from "../../lib/canvas-actions";
 import { uploadReference } from "../../lib/actions";
 import { syncOttoCanvasNodes } from "../../lib/otto-canvas-bridge";
@@ -164,7 +165,8 @@ export default function FlowCanvas({ projectId, entities = [], activeThreadId = 
     [deleteNode],
   );
 
-  const { generateImage, animate, generateVideoFromText, cancelledRef } = useCanvasGen(projectId, onNewNode, onResolve, activeThreadId);
+  const onGenError = useCallback((msg: string) => { toast.error(msg); }, []);
+  const { generateImage, animate, generateVideoFromText, cancelledRef } = useCanvasGen(projectId, onNewNode, onResolve, activeThreadId, onGenError);
   // keep animateFnRef current
   animateFnRef.current = animate;
 

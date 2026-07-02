@@ -29,6 +29,7 @@ type GenDTO = {
   id: string;
   url: string;
   urls: string[];
+  variants: { id: string; url: string }[]; // aligned to urls; carries each variant's own id (F08)
   kind: string;
   prompt: string;
   favorite: boolean;
@@ -163,13 +164,18 @@ export default function DetailPanel({
     return () => document.removeEventListener("keydown", onKey);
   }, [onClose, cropOpen]);
 
+  // The generation the user is actually LOOKING AT — the selected variant, not the primary
+  // prop. All mutate/spend handlers act on this so a sibling variant isn't animated/deleted/
+  // starred/edited against the wrong image (F08/F09). Still an owned id resolved server-side.
+  const selectedGenId = gen ? (gen.variants[selectedIdx]?.id ?? gen.id) : generationId;
+
   const handleFavorite = useCallback(async () => {
     if (!gen) return;
     const next = !favorite;
     setFavoriteLocal(next); // optimistic
-    const result = await setFavorite(generationId, next);
+    const result = await setFavorite(selectedGenId, next);
     if ("error" in result) setFavoriteLocal(!next); // revert
-  }, [gen, favorite, generationId]);
+  }, [gen, favorite, selectedGenId]);
 
   const pollJob = useCallback(async (jobId: string): Promise<"done" | "failed"> => {
     for (let i = 0; i < 120; i++) {
@@ -237,12 +243,12 @@ export default function DetailPanel({
       count: 1,
       kind: "video",
       model: vm,
-      sourceGenerationId: generationId,
+      sourceGenerationId: selectedGenId,
       durationSeconds: vd.seconds,
       resolution: vd.resolution,
       audio: vd.audio,
       ...(effectiveAspect ? { aspectRatio: effectiveAspect } : {}),
-      idempotencyKey: `anim-${generationId}-${Date.now()}`,
+      idempotencyKey: `anim-${selectedGenId}-${Date.now()}`,
     });
     if ("error" in result) {
       if (!cancelledRef.current) setAnimStatus("failed");
@@ -254,7 +260,7 @@ export default function DetailPanel({
       setTimeout(() => { if (!cancelledRef.current) setAnimStatus("idle"); }, 3000);
     }
     if (status === "done") await reloadFromJob(result.id);
-  }, [gen, generationId, projectId, pollJob, chosenAspect, reloadFromJob]);
+  }, [gen, selectedGenId, projectId, pollJob, chosenAspect, reloadFromJob]);
 
   const handleCopyLink = useCallback(async () => {
     if (!gen) return;
@@ -269,9 +275,9 @@ export default function DetailPanel({
   }, [gen, selectedIdx]);
 
   const handleDelete = useCallback(async () => {
-    await deleteGeneration(generationId);
+    await deleteGeneration(selectedGenId);
     onClose();
-  }, [generationId, onClose]);
+  }, [selectedGenId, onClose]);
 
   // Variant switcher: switch displayed url + persist pick
   const handleVariantPick = useCallback((idx: number) => {
@@ -291,7 +297,11 @@ export default function DetailPanel({
       count: 1,
       kind: "image",
       model: activeImageModel(),
-      idempotencyKey: `edit-${gen.id}-${Date.now()}`,
+      // F09: condition the edit on the image the user is actually viewing (the selected
+      // variant), so a paid "edit this" result relates to the displayed image instead of
+      // being an unconditioned fresh generation. Owned id resolved server-side (D19).
+      sourceGenerationId: selectedGenId,
+      idempotencyKey: `edit-${selectedGenId}-${Date.now()}`,
     });
     if ("error" in result) {
       if (!cancelledRef.current) setEditStatus("failed");
@@ -303,7 +313,7 @@ export default function DetailPanel({
       setTimeout(() => { if (!cancelledRef.current) setEditStatus("idle"); }, 3000);
     }
     if (status === "done") await reloadFromJob(result.id);
-  }, [gen, editPrompt, editIds, editStatus, projectId, pollJob, reloadFromJob]);
+  }, [gen, editPrompt, editIds, editStatus, projectId, pollJob, reloadFromJob, selectedGenId]);
 
   // Crop: confirm crop and save
   const handleCropConfirm = useCallback(async () => {

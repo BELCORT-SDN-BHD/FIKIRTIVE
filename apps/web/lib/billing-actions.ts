@@ -8,7 +8,11 @@ export type CreditPack = { priceId: string; credits: number; amountCents: number
  *  Packs live in Stripe (test/live dashboard) — no redeploy to change them. */
 export async function listCreditPacks(): Promise<CreditPack[]> {
   try {
-    const res = await stripe.prices.list({ active: true, expand: ["data.product"] });
+    // limit:100 (Stripe max per page) — the default of 10 silently truncates once the
+    // account carries >10 active Prices (test/live packs, currency variants), dropping
+    // real packs from the money-in list. The metadata.credits filter below still scopes
+    // the result to credit packs.
+    const res = await stripe.prices.list({ active: true, expand: ["data.product"], limit: 100 });
     return res.data
       .filter((p) => p.active && p.metadata?.credits && Number(p.metadata.credits) > 0 && typeof p.unit_amount === "number")
       .map((p) => ({

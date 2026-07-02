@@ -9,6 +9,10 @@ export type GenerationDTO = {
   id: string;
   url: string;
   urls: string[];
+  // Sibling variants aligned to `urls`, each with its OWN generation id (F08). The panel must
+  // act on the SELECTED variant's id — not the primary `id` — for animate/delete/favorite/edit,
+  // or it spends on / mutates the wrong image when a sibling variant is displayed.
+  variants: { id: string; url: string }[];
   kind: string;
   prompt: string;
   favorite: boolean;
@@ -43,29 +47,33 @@ export async function getGeneration(
   const { asset } = gen;
   const url = storage.url(storageKey(asset.ownerId, asset.contentHash, asset.ext));
 
-  // Resolve sibling URLs from the producing GenJob's generationIds array (owner-scoped).
-  let urls: string[] = [url];
+  // Resolve sibling variants (id + url) from the producing GenJob's generationIds array
+  // (owner-scoped). Kept as an aligned {id, url}[] so the panel can act on the SELECTED
+  // variant's own generation id, not just show its url (F08).
+  let variants: { id: string; url: string }[] = [{ id: gen.id, url }];
   if (job && job.generationIds.length > 1) {
     const siblingIds = job.generationIds.filter((id) => id !== generationId);
     const siblings = await prisma.generation.findMany({
       where: { id: { in: siblingIds }, ownerId, deletedAt: null },
       select: { id: true, asset: { select: { ownerId: true, contentHash: true, ext: true } } },
     });
-    // Build a map to preserve the original generationIds order
     const siblingMap = new Map(siblings.map((s) => [s.id, s]));
-    urls = job.generationIds.map((id) => {
-      if (id === generationId) return url;
+    // Preserve the original generationIds order; each entry carries its own id (a missing
+    // sibling — soft-deleted — is dropped as a whole {id,url} pair, so id/url never misalign).
+    variants = job.generationIds.flatMap((id) => {
+      if (id === generationId) return [{ id, url }];
       const sib = siblingMap.get(id);
-      if (!sib) return null;
-      return storage.url(storageKey(sib.asset.ownerId, sib.asset.contentHash, sib.asset.ext));
-    }).filter((u): u is string => u !== null);
-    if (!urls.includes(url)) urls = [url, ...urls];
+      if (!sib) return [];
+      return [{ id, url: storage.url(storageKey(sib.asset.ownerId, sib.asset.contentHash, sib.asset.ext)) }];
+    });
+    if (!variants.some((v) => v.id === generationId)) variants = [{ id: gen.id, url }, ...variants];
   }
 
   return {
     id: gen.id,
     url,
-    urls,
+    urls: variants.map((v) => v.url),
+    variants,
     kind: kindOf(asset.ext),
     prompt: gen.promptText,
     favorite: gen.favorite,
