@@ -772,6 +772,7 @@ enum ChatMessageKind {
   TURN_ERROR
   ACTION_CARD
   BUILD_CARD
+  STORYBOARD_CARD
 }
 
 // G7: per-org autonomy mode for Otto's ad-write operations
