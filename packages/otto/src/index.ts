@@ -29,3 +29,6 @@ export { defineOttoSkill, deriveNeedsApproval } from "./skill.js";
 export type { OttoSkill, OttoSkillSpec, Cost, Effect, Reach } from "./skill.js";
 export type { StoryboardCardPayload, StoryboardCardInput } from "./skills/propose-storyboard.helpers.js";
 export { MAX_STORYBOARD_SHOTS } from "./skills/propose-storyboard.helpers.js";
+export { proposeResearch, proposeResearchSkill } from "./skills/propose-research.js";
+export type { ResearchCardPayload, ResearchCardInput } from "./skills/propose-research.helpers.js";
+export { RESEARCH_TIERS } from "./skills/propose-research.helpers.js";
