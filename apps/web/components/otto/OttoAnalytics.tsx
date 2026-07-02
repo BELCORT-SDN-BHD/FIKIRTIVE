@@ -2,6 +2,7 @@
 import React, { useState, useTransition } from "react";
 import { getAnalytics, type AnalyticsData } from "@/lib/analytics-actions";
 import { RANGES, type RangeKey } from "@/lib/analytics-view";
+import { ANALYTICS_PLATFORMS, platformById } from "@/lib/analytics-platforms";
 import type { OttoViewKey } from "./OttoApp";
 
 /**
@@ -19,6 +20,10 @@ export function OttoAnalytics({
 }) {
   const [data, setData] = useState<AnalyticsData>(initial);
   const [pending, startTransition] = useTransition();
+  // Which analytics platform is selected. Purely in-page: switching platform
+  // fires NO server action (soon platforms have no data; returning to meta
+  // reuses the already-loaded `data`). Only range changes re-fetch.
+  const [platform, setPlatform] = useState("meta");
 
   function onRangeChange(range: RangeKey) {
     startTransition(async () => {
@@ -27,6 +32,69 @@ export function OttoAnalytics({
     });
   }
 
+  const selected = platformById(platform);
+  const isMeta = platform === "meta";
+
+  // Header platform select — same styling as the date-range select. "(soon)"
+  // suffix on placeholder platforms; · read-only muted tag trails it.
+  const platformSelect = (
+    <>
+      <select
+        aria-label="Platform"
+        value={platform}
+        onChange={(e) => setPlatform(e.target.value)}
+        className="h-[34px] rounded-[10px] border border-border bg-card px-[13px] text-[13px] font-semibold"
+      >
+        {ANALYTICS_PLATFORMS.map((p) => (
+          <option key={p.id} value={p.id}>
+            {p.label}
+            {p.status === "soon" ? " (soon)" : ""}
+          </option>
+        ))}
+      </select>
+      <span className="text-[12px] text-muted-foreground">· read-only</span>
+    </>
+  );
+
+  if (!isMeta) {
+    // "Soon" platform: hide the date-range select and the entire data body,
+    // show a centered coming-soon panel (mirrors ConnectPanel's card layout).
+    // Never touches Meta's connection state — switching platform fires no
+    // server action, so `data` is untouched here.
+    const label = selected?.label ?? platform;
+    return (
+      <div className="flex-1 overflow-auto">
+        <div className="mx-auto max-w-[880px] px-7 py-6">
+          {/* Header */}
+          <div className="flex items-center gap-3 mb-4">
+            <h1 className="text-[1.5rem] font-bold tracking-[-0.02em]">Analytics</h1>
+            {platformSelect}
+            <div className="flex-1" />
+          </div>
+
+          <div className="rounded-[16px] border border-border bg-card p-[18px] text-center flex flex-col items-center gap-3 py-14">
+            <CoralCloud size={40} />
+            <div className="text-[1.5rem] font-bold tracking-[-0.02em]">
+              {label} analytics is coming soon
+            </div>
+            <div className="text-[13px] text-muted-foreground" style={{ maxWidth: 360 }}>
+              We'll light this up here once {label} is connected — same place, same view.
+            </div>
+            <button
+              type="button"
+              disabled
+              // TODO(analytics): wire Notify-me
+              className="mt-1 h-[38px] rounded-[11px] px-4 text-[13.5px] font-semibold text-muted-foreground opacity-50 cursor-default"
+            >
+              Notify me
+            </button>
+          </div>
+        </div>
+      </div>
+    );
+  }
+
+  // Meta view (live). Connect/reconnect prompts apply only to Meta.
   if (data.state === "notConnected") {
     return <ConnectPanel kind="connect" onNavigate={onNavigate} />;
   }
@@ -42,7 +110,7 @@ export function OttoAnalytics({
         {/* Header */}
         <div className="flex items-center gap-3 mb-4">
           <h1 className="text-[1.5rem] font-bold tracking-[-0.02em]">Analytics</h1>
-          <span className="text-[12px] text-muted-foreground">via Meta · read-only</span>
+          {platformSelect}
           <div className="flex-1" />
           <select
             aria-label="Date range"
