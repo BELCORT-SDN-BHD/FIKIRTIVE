@@ -122,3 +122,21 @@ describe("ottoInstructions — reference video", () => {
     expect(ottoInstructions.toLowerCase()).toContain("reference video");
   });
 });
+
+describe("ottoInstructions — storyboard routing", () => {
+  it("names the proposeStoryboard tool", () => {
+    expect(ottoInstructions).toMatch(/proposeStoryboard/);
+  });
+  it("routes multi-shot video/ad requests to a storyboard", () => {
+    expect(ottoInstructions).toMatch(/storyboard/i);
+    expect(ottoInstructions).toMatch(/multi-shot|multiple shots|several shots|scene/i);
+  });
+  it("tells Otto to build each shot's prompts with the model skills first", () => {
+    // 每镜头先 seedreamPrompt(首帧)+ seedancePrompt(视频)再入卡
+    expect(ottoInstructions).toMatch(/seedreamPrompt/);
+    expect(ottoInstructions).toMatch(/seedancePrompt/);
+  });
+  it("makes clear the storyboard itself spends nothing", () => {
+    expect(ottoInstructions).toMatch(/no credits|nothing is charged|does not spend|doesn.t spend/i);
+  });
+});
