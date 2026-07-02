@@ -114,11 +114,16 @@ export function toChatMessageDTO(
     // shots to draw — both on reload and on live mid-turn inject. No spend/approval
     // internals live on it ($0 card); parseStoryboardCardPayload defends the shape client-side.
     payload = m.payload;
+  } else if ((m.kind === "RESEARCH_CARD" || m.kind === "RESEARCH_REPORT") && m.payload) {
+    // Pass the research payload through so the render branch has the plan/report to draw.
+    // No spend/approval internals live on the $0 RESEARCH_CARD (approve→reserve is S3);
+    // parseResearchCardPayload defends the shape client-side.
+    payload = m.payload;
   }
   return {
     id: m.id,
     role: m.role as "USER" | "AGENT",
-    kind: m.kind as "TEXT" | "PLAN" | "GEN_CARD" | "GEN_RESULT" | "DENIAL" | "TURN_ERROR" | "ACTION_CARD" | "BUILD_CARD" | "STORYBOARD_CARD",
+    kind: m.kind as "TEXT" | "PLAN" | "GEN_CARD" | "GEN_RESULT" | "DENIAL" | "TURN_ERROR" | "ACTION_CARD" | "BUILD_CARD" | "STORYBOARD_CARD" | "RESEARCH_CARD" | "RESEARCH_REPORT",
     seq: m.seq,
     text: m.text,
     payload,
