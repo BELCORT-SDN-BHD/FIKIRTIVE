@@ -49,20 +49,27 @@ const editInput = z.object({
   index: z.number().int().min(0),
   firstFramePrompt: z.string().trim().min(1).max(2000).optional(),
   videoPrompt: z.string().trim().min(1).max(2000).optional(),
+  durationSeconds: z.number().int().min(1).max(60).optional(),
 });
 
 export async function editShotPrompt(raw: unknown): Promise<Ok | Err> {
   const parsed = editInput.safeParse(raw);
-  if (!parsed.success || (parsed.data.firstFramePrompt === undefined && parsed.data.videoPrompt === undefined)) {
+  // G 闸②:durationSeconds 也是可改字段 —— 三者都不传才拒。
+  if (
+    !parsed.success ||
+    (parsed.data.firstFramePrompt === undefined &&
+      parsed.data.videoPrompt === undefined &&
+      parsed.data.durationSeconds === undefined)
+  ) {
     return { error: "That edit isn't valid." };
   }
   const gate = await requireOwner(); if ("error" in gate) return gate;
-  const { cardId, index, firstFramePrompt, videoPrompt } = parsed.data;
+  const { cardId, index, firstFramePrompt, videoPrompt, durationSeconds } = parsed.data;
   const card = await loadCard(cardId, gate.ownerId);
   if (!card) return { error: "Card not found." };
   const cur = (card.payload ?? {}) as StoryboardCardPayload;
   if (index >= cur.shots.length) return { error: "That shot no longer exists." };
-  return persist(cardId, applyEditShotPrompt(cur, index, { firstFramePrompt, videoPrompt }));
+  return persist(cardId, applyEditShotPrompt(cur, index, { firstFramePrompt, videoPrompt, durationSeconds }));
 }
 
 const addInput = z.object({

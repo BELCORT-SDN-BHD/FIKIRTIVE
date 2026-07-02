@@ -11,33 +11,69 @@ function base(): StoryboardCardPayload {
   return {
     storyboardTitle: "Ad",
     shots: [
-      { shotId: "s0", index: 0, title: "A", firstFramePrompt: "ff0", videoPrompt: "v0", entityIds: ["ent_a"], firstFrameGenerationId: "gen0" },
-      { shotId: "s1", index: 1, firstFramePrompt: "ff1", videoPrompt: "v1", firstFrameGenerationId: "gen1" },
+      // s0 carries the FULL frame+video pointer set — cascade matrix exercises which keys survive.
+      { shotId: "s0", index: 0, title: "A", firstFramePrompt: "ff0", videoPrompt: "v0", entityIds: ["ent_a"], durationSeconds: 5, firstFrameCardId: "fc0", firstFrameGenerationId: "gen0", videoCardId: "vc0", videoGenerationId: "vg0" },
+      { shotId: "s1", index: 1, firstFramePrompt: "ff1", videoPrompt: "v1", firstFrameGenerationId: "gen1", videoGenerationId: "vg1" },
       { shotId: "s2", index: 2, firstFramePrompt: "ff2", videoPrompt: "v2" },
     ],
   };
 }
 
-describe("applyEditShotPrompt", () => {
-  it("改 firstFramePrompt → 更新文字并清掉该镜头 firstFrameGenerationId", () => {
+describe("applyEditShotPrompt — cascade matrix (G-block)", () => {
+  // --- firstFramePrompt present → frame stale ⇒ video stale: drop ALL FOUR keys ---
+  it("改 firstFramePrompt → 更新文字并清帧两键 + 视频两键(帧过期⇒视频过期)", () => {
     const r = applyEditShotPrompt(base(), 0, { firstFramePrompt: "NEW" });
     expect(r.shots[0].firstFramePrompt).toBe("NEW");
-    expect(r.shots[0].firstFrameGenerationId).toBeUndefined();
+    expect("firstFrameCardId" in r.shots[0]).toBe(false);
     expect("firstFrameGenerationId" in r.shots[0]).toBe(false);
+    expect("videoCardId" in r.shots[0]).toBe(false);
+    expect("videoGenerationId" in r.shots[0]).toBe(false);
   });
-  it("编辑保留该镜头的 shotId 与 entityIds(只清首帧图引用)", () => {
+  it("编辑保留该镜头的 shotId 与 entityIds(只清帧/视频引用)", () => {
     const r = applyEditShotPrompt(base(), 0, { firstFramePrompt: "NEW" });
     expect(r.shots[0].shotId).toBe("s0");
     expect(r.shots[0].entityIds).toEqual(["ent_a"]);
   });
-  it("改 videoPrompt 也清该镜头首帧图引用", () => {
-    const r = applyEditShotPrompt(base(), 1, { videoPrompt: "NEWV" });
-    expect(r.shots[1].videoPrompt).toBe("NEWV");
-    expect(r.shots[1].firstFrameGenerationId).toBeUndefined();
+
+  // --- videoPrompt-ONLY → G-block correction of F3: PRESERVE the paid frame, drop only video ---
+  it("只改 videoPrompt → 只清视频两键;帧两键(含已付费的首帧图)保留", () => {
+    // G-block semantic FIX to F3: F3 unconditionally dropped the frame keys on any edit.
+    // Editing video text must NOT invalidate the paid first frame — only the two video keys go.
+    const r = applyEditShotPrompt(base(), 0, { videoPrompt: "NEWV" });
+    expect(r.shots[0].videoPrompt).toBe("NEWV");
+    // frame keys PRESERVED with their original values
+    expect(r.shots[0].firstFrameCardId).toBe("fc0");
+    expect(r.shots[0].firstFrameGenerationId).toBe("gen0");
+    // video keys DROPPED (by key omission)
+    expect("videoCardId" in r.shots[0]).toBe(false);
+    expect("videoGenerationId" in r.shots[0]).toBe(false);
   });
-  it("不影响其它镜头的 firstFrameGenerationId", () => {
+
+  // --- durationSeconds-ONLY (new patch field) → apply value, drop only video pair, frame intact ---
+  it("只改 durationSeconds → 写入时长 + 只清视频两键;帧两键保留(时长变⇒视频过期)", () => {
+    const r = applyEditShotPrompt(base(), 0, { durationSeconds: 10 });
+    expect(r.shots[0].durationSeconds).toBe(10);
+    expect(r.shots[0].firstFrameCardId).toBe("fc0");
+    expect(r.shots[0].firstFrameGenerationId).toBe("gen0");
+    expect("videoCardId" in r.shots[0]).toBe(false);
+    expect("videoGenerationId" in r.shots[0]).toBe(false);
+  });
+
+  // --- combination: firstFramePrompt + videoPrompt → still all four dropped ---
+  it("组合:含 firstFramePrompt(+videoPrompt)→ 四键全清", () => {
+    const r = applyEditShotPrompt(base(), 0, { firstFramePrompt: "NEW", videoPrompt: "NEWV" });
+    expect(r.shots[0].firstFramePrompt).toBe("NEW");
+    expect(r.shots[0].videoPrompt).toBe("NEWV");
+    expect("firstFrameCardId" in r.shots[0]).toBe(false);
+    expect("firstFrameGenerationId" in r.shots[0]).toBe(false);
+    expect("videoCardId" in r.shots[0]).toBe(false);
+    expect("videoGenerationId" in r.shots[0]).toBe(false);
+  });
+
+  it("不影响其它镜头的 frame/video 引用", () => {
     const r = applyEditShotPrompt(base(), 0, { firstFramePrompt: "NEW" });
     expect(r.shots[1].firstFrameGenerationId).toBe("gen1");
+    expect(r.shots[1].videoGenerationId).toBe("vg1");
   });
   it("越界 index → 原样返回", () => {
     const r = applyEditShotPrompt(base(), 9, { firstFramePrompt: "X" });
@@ -45,16 +81,10 @@ describe("applyEditShotPrompt", () => {
   });
   it("不 mutate 入参", () => {
     const b = base();
-    applyEditShotPrompt(b, 0, { firstFramePrompt: "NEW" });
-    expect(b.shots[0].firstFramePrompt).toBe("ff0");
+    applyEditShotPrompt(b, 0, { videoPrompt: "NEWV" });
+    expect(b.shots[0].videoPrompt).toBe("v0");
+    expect(b.shots[0].videoGenerationId).toBe("vg0");
     expect(b.shots[0].firstFrameGenerationId).toBe("gen0");
-  });
-  it("改文字同时清 firstFrameCardId(旧子卡过期)", () => {
-    const b = base();
-    (b.shots[0] as Record<string, unknown>).firstFrameCardId = "child-0";
-    const r = applyEditShotPrompt(b, 0, { firstFramePrompt: "NEW" });
-    expect("firstFrameCardId" in r.shots[0]).toBe(false);
-    expect("firstFrameGenerationId" in r.shots[0]).toBe(false);
   });
 });
 
@@ -104,5 +134,16 @@ describe("applyReorderShots", () => {
     // 返回值必须是 SAME 引用,不是等值副本 —— reorderShots 动作靠 `next === cur`
     // 判定"非法排列 → 不回写",若改成返回副本会静默破坏该守卫。
     expect(applyReorderShots(b, [0, 1])).toBe(b);
+  });
+
+  it("重排经 restamp `...s` 展开自然保留新字段(durationSeconds/video 两键)", () => {
+    // s0 (full pointer set) moves to position 1; its new G-block fields must survive the spread.
+    const r = applyReorderShots(base(), [2, 0, 1]);
+    const moved = r.shots[1];
+    expect(moved.shotId).toBe("s0");
+    expect(moved.durationSeconds).toBe(5);
+    expect(moved.videoCardId).toBe("vc0");
+    expect(moved.videoGenerationId).toBe("vg0");
+    expect(moved.firstFrameGenerationId).toBe("gen0");
   });
 });

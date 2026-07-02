@@ -35,6 +35,18 @@ describe("storyboardCardInput schema", () => {
     const tooMany = { ...okShot, entityIds: Array.from({ length: MAX_STORYBOARD_SHOTS + 1 }, (_, i) => `e${i}`) };
     expect(storyboardCardInput.safeParse({ storyboardTitle: "x", shots: [tooMany] }).success).toBe(false);
   });
+  it("accepts optional per-shot durationSeconds (int 1..60), rejects out-of-range / non-int (G-block)", () => {
+    expect(storyboardCardInput.safeParse({ storyboardTitle: "x", shots: [{ ...okShot, durationSeconds: 5 }] }).success).toBe(true);
+    expect(storyboardCardInput.safeParse({ storyboardTitle: "x", shots: [{ ...okShot, durationSeconds: 0 }] }).success).toBe(false);
+    expect(storyboardCardInput.safeParse({ storyboardTitle: "x", shots: [{ ...okShot, durationSeconds: 61 }] }).success).toBe(false);
+    expect(storyboardCardInput.safeParse({ storyboardTitle: "x", shots: [{ ...okShot, durationSeconds: 5.5 }] }).success).toBe(false);
+  });
+  it("does NOT accept server-written video pointer fields in the input schema (server-written only)", () => {
+    const r = storyboardCardInput.parse({ storyboardTitle: "x", shots: [{ ...okShot, videoCardId: "c", videoGenerationId: "g" }] });
+    // zod strips unknown keys by default → the pointer fields never enter the parsed shot.
+    expect("videoCardId" in r.shots[0]!).toBe(false);
+    expect("videoGenerationId" in r.shots[0]!).toBe(false);
+  });
 });
 
 describe("buildStoryboardPayload", () => {
@@ -78,6 +90,18 @@ describe("buildStoryboardPayload", () => {
       storyboardTitle: "x", goal: "launch teaser", shots: [{ firstFramePrompt: "a", videoPrompt: "b" }],
     }), counter());
     expect(p.goal).toBe("launch teaser");
+  });
+  it("passes through per-shot durationSeconds when present, omits otherwise (G-block)", () => {
+    const p = buildStoryboardPayload(storyboardCardInput.parse({
+      storyboardTitle: "x",
+      shots: [
+        { firstFramePrompt: "a", videoPrompt: "b", durationSeconds: 10 },
+        { firstFramePrompt: "c", videoPrompt: "d" },
+      ],
+    }), counter());
+    expect(p.shots[0]!.durationSeconds).toBe(10);
+    expect(p.shots[1]!.durationSeconds).toBeUndefined();
+    expect("durationSeconds" in p.shots[1]!).toBe(false);
   });
 });
 

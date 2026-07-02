@@ -82,9 +82,32 @@ describe("editShotPrompt", () => {
     expect(mockFindFirst).not.toHaveBeenCalled();
   });
 
-  it("两个 prompt 字段都不传 → error,不碰 DB", async () => {
+  it("三个可改字段都不传 → error,不碰 DB(G-block:含 durationSeconds)", async () => {
     const res = await editShotPrompt({ cardId: "card-1", index: 0 });
     expect("error" in res).toBe(true);
+    expect(mockFindFirst).not.toHaveBeenCalled();
+  });
+
+  it("只传 durationSeconds → 有效编辑(写入时长,清视频两键,保留帧引用)", async () => {
+    const p = payload3();
+    // s0 carries a paid frame + a video pointer; a duration change stales only the video.
+    (p.shots[0] as Record<string, unknown>).videoGenerationId = "vg0";
+    mockFindFirst.mockResolvedValue(card(p));
+    const res = await editShotPrompt({ cardId: "card-1", index: 0, durationSeconds: 10 });
+    expect("payload" in res).toBe(true);
+    if ("payload" in res) {
+      expect(res.payload.shots[0].durationSeconds).toBe(10);
+      expect(res.payload.shots[0].firstFrameGenerationId).toBe("gen0"); // frame preserved
+      expect("videoGenerationId" in res.payload.shots[0]).toBe(false);  // video stale
+    }
+    expect(mockUpdate).toHaveBeenCalled();
+  });
+
+  it("durationSeconds 越界(0 / 61 / 非整)→ error,不碰 DB", async () => {
+    for (const d of [0, 61, 5.5]) {
+      const res = await editShotPrompt({ cardId: "card-1", index: 0, durationSeconds: d });
+      expect("error" in res).toBe(true);
+    }
     expect(mockFindFirst).not.toHaveBeenCalled();
   });
 });

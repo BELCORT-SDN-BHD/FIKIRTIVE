@@ -1,7 +1,9 @@
 /**
  * storyboard-edit — PURE 编辑变换:一个 StoryboardCardPayload → 新 payload。
  * 不 mutate 入参;重排镜头后一律重编 0-based index(同 buildStoryboardPayload)。
- * editShotPrompt 额外清掉被改镜头的 firstFrameGenerationId(旧首帧图作废,F4 重出)。
+ * editShotPrompt 的陈旧级联(G 闸②):视频以首帧为源,故
+ *   - 改 firstFramePrompt → 帧过期 ⇒ 视频过期:清帧两键 + 视频两键;
+ *   - 只改 videoPrompt / durationSeconds → 只清视频两键,已付费的首帧图两键保留。
  * 无 React / 无 DB / 无 I/O —— 边界策略(镜头数上限/下限)在动作层,不在这里。
  */
 import type { StoryboardCardPayload } from "@fikirtive/otto";
@@ -11,6 +13,7 @@ type Shot = StoryboardCardPayload["shots"][number];
 export interface ShotPromptPatch {
   firstFramePrompt?: string;
   videoPrompt?: string;
+  durationSeconds?: number;
 }
 
 export interface NewShotInput {
@@ -26,21 +29,28 @@ function restamp(shots: Shot[]): Shot[] {
   return shots.map((s, index) => ({ ...s, index }));
 }
 
-/** 改某镜头文字 + 清其 firstFrameGenerationId。越界 index → 原样返回。 */
+/** 改某镜头文字/时长 + 陈旧级联(视频以首帧为源)。越界 index → 原样返回。
+ *  G 闸② 对 F3 无条件删帧行为的语义修正:改帧文字才作废首帧图;改视频文字/时长只作废视频。
+ *  一律解构剔除键(不设 undefined),不 mutate 入参。 */
 export function applyEditShotPrompt(
   payload: StoryboardCardPayload,
   index: number,
   patch: ShotPromptPatch,
 ): StoryboardCardPayload {
   if (index < 0 || index >= payload.shots.length) return payload;
+  const frameStale = patch.firstFramePrompt !== undefined; // 帧过期 ⇒ 视频过期
   const shots = payload.shots.map((s, i) => {
     if (i !== index) return s;
-    // 丢弃 firstFrameGenerationId + firstFrameCardId:解构剔除该键,不是设成 undefined。
-    const { firstFrameGenerationId: _drop, firstFrameCardId: _drop2, ...rest } = s;
+    // 视频两键始终作废(改帧/改视频文字/改时长都令旧视频过期)。
+    // 帧两键仅在 frameStale 时作废——editing video text/duration must not invalidate the paid frame.
+    const { videoCardId: _v1, videoGenerationId: _v2, ...noVideo } = s;
+    const { firstFrameCardId: _f1, firstFrameGenerationId: _f2, ...noFrame } = noVideo;
+    const rest = frameStale ? noFrame : noVideo;
     return {
       ...rest,
       ...(patch.firstFramePrompt !== undefined ? { firstFramePrompt: patch.firstFramePrompt } : {}),
       ...(patch.videoPrompt !== undefined ? { videoPrompt: patch.videoPrompt } : {}),
+      ...(patch.durationSeconds !== undefined ? { durationSeconds: patch.durationSeconds } : {}),
     };
   });
   return { ...payload, shots: restamp(shots) };

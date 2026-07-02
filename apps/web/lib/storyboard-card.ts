@@ -18,8 +18,11 @@ export interface StoryboardShotView {
   firstFramePrompt: string;
   videoPrompt: string;
   entityIds?: string[];
+  durationSeconds?: number;
   firstFrameCardId?: string;
   firstFrameGenerationId?: string;
+  videoCardId?: string;
+  videoGenerationId?: string;
 }
 
 export interface StoryboardCardView {
@@ -47,11 +50,20 @@ export function parseStoryboardCardPayload(payload: unknown): StoryboardCardView
         ...(Array.isArray(shot.entityIds) && shot.entityIds.every((e) => typeof e === "string")
           ? { entityIds: shot.entityIds as string[] }
           : {}),
+        ...(typeof shot.durationSeconds === "number"
+          ? { durationSeconds: shot.durationSeconds }
+          : {}),
         ...(typeof shot.firstFrameCardId === "string"
           ? { firstFrameCardId: shot.firstFrameCardId }
           : {}),
         ...(typeof shot.firstFrameGenerationId === "string"
           ? { firstFrameGenerationId: shot.firstFrameGenerationId }
+          : {}),
+        ...(typeof shot.videoCardId === "string"
+          ? { videoCardId: shot.videoCardId }
+          : {}),
+        ...(typeof shot.videoGenerationId === "string"
+          ? { videoGenerationId: shot.videoGenerationId }
           : {}),
       };
     })

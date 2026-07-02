@@ -12,6 +12,9 @@ export const storyboardShot = z.object({
   videoPrompt: z.string().trim().min(1).max(2000),
   // 形状对齐花钱侧 coworkProposalSchema 的 entityIds(gen.ts)——F4 铸子卡时零转换透传。
   entityIds: z.array(z.string().min(1).max(64)).max(MAX_GEN_ENTITIES).optional(),
+  // 该镜头视频时长(Otto 可按用户要求建议)——入库仅存数字,校验交给下游模型吸附(G 闸②)。
+  // videoCardId/videoGenerationId 是服务端写字段,不进输入 schema(同 firstFrameCardId 规则)。
+  durationSeconds: z.number().int().min(1).max(60).optional(),
 });
 
 /** Otto 调 proposeStoryboard 的输入。goal 是刨根问底资讯门（同 propose）。 */
@@ -35,9 +38,15 @@ export type StoryboardCardPayload = {
     firstFramePrompt: string;
     videoPrompt: string;
     entityIds?: string[];
+    /** 该镜头视频时长(用户在卡上选/Otto 建议)——入库仅存数字,校验交给下游模型吸附(G 闸②)。 */
+    durationSeconds?: number;
     /** 该镜头"当前子 GEN_CARD"的 id(闸① 铸卡时写)——显式追踪;改文字/重出时替换或清空。 */
     firstFrameCardId?: string;
     firstFrameGenerationId?: string;
+    /** 该镜头"当前视频子 GEN_CARD"的 id(闸② 铸卡时写,服务端字段)——同 firstFrameCardId 语义。 */
+    videoCardId?: string;
+    /** 视频生成完写回(闸②,服务端字段)——同 firstFrameGenerationId 语义。 */
+    videoGenerationId?: string;
   }[];
 };
 
@@ -57,6 +66,7 @@ export function buildStoryboardPayload(
       firstFramePrompt: s.firstFramePrompt,
       videoPrompt: s.videoPrompt,
       ...(s.entityIds ? { entityIds: s.entityIds } : {}),
+      ...(s.durationSeconds !== undefined ? { durationSeconds: s.durationSeconds } : {}),
     })),
   };
 }
