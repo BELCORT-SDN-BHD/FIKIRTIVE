@@ -1,12 +1,13 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
 
-const { mockRequireOwner, mockMemoryCreate, mockMemoryFindMany, mockMemoryUpdateMany, mockKitFindFirst, mockRuleFindMany } = vi.hoisted(() => ({
+const { mockRequireOwner, mockMemoryCreate, mockMemoryFindMany, mockMemoryUpdateMany, mockKitFindFirst, mockRuleFindMany, mockRecordFindMany } = vi.hoisted(() => ({
   mockRequireOwner: vi.fn(),
   mockMemoryCreate: vi.fn(),
   mockMemoryFindMany: vi.fn(),
   mockMemoryUpdateMany: vi.fn(),
   mockKitFindFirst: vi.fn(),
   mockRuleFindMany: vi.fn(),
+  mockRecordFindMany: vi.fn(),
 }));
 
 vi.mock("@/lib/auth-guard", () => ({ requireOwner: mockRequireOwner }));
@@ -15,9 +16,13 @@ vi.mock("@fikirtive/db", () => ({
     memory: { create: mockMemoryCreate, findMany: mockMemoryFindMany, updateMany: mockMemoryUpdateMany },
     brandKit: { findFirst: mockKitFindFirst },
     brandRule: { findMany: mockRuleFindMany },
+    brandRecord: { findMany: mockRecordFindMany },
   },
 }));
-vi.mock("@fikirtive/core", () => ({ newId: () => "m_1" }));
+vi.mock("@fikirtive/core", async () => ({
+  ...(await vi.importActual<typeof import("@fikirtive/core")>("@fikirtive/core")),
+  newId: () => "m_1",
+}));
 vi.mock("next/cache", () => ({ revalidatePath: vi.fn() }));
 
 import { addMemory, updateMemory, deleteMemory, getBrandContextText, listMemory, listMyMemory } from "../memory-actions";
@@ -25,9 +30,10 @@ import { addMemory, updateMemory, deleteMemory, getBrandContextText, listMemory,
 beforeEach(() => {
   vi.clearAllMocks();
   mockRequireOwner.mockResolvedValue({ ownerId: "o1" });
-  // Default: no kit and no rules (so existing tests are unaffected)
+  // Default: no kit, no rules, no records (so existing tests are unaffected)
   mockKitFindFirst.mockResolvedValue(null);
   mockRuleFindMany.mockResolvedValue([]);
+  mockRecordFindMany.mockResolvedValue([]);
 });
 
 describe("addMemory", () => {
@@ -124,7 +130,9 @@ describe("getBrandContextText", () => {
     mockMemoryFindMany.mockResolvedValue([{ category: "voice", content: "warm" }]);
     const result = await getBrandContextText("o1", null);
     expect(result).toContain("warm");
-    expect(result).toContain("voice");
+    // v2: legacy "voice" category is mapped to the "about" taxonomy section,
+    // so the section label is "About the brand", not the raw category name.
+    expect(result).toContain("About the brand");
   });
 
   it("groups multiple entries under the same category", async () => {
@@ -266,5 +274,52 @@ describe("getBrandContextText — kit + rule enrichment", () => {
     expect(result).toContain("Brand kit:");
     expect(result).toContain("Brand rules:");
     expect(result).toContain("avoid jargon");
+  });
+});
+
+describe("getBrandContextText v2 — sections + records", () => {
+  it("rules come first and survive when other sections are huge", async () => {
+    mockMemoryFindMany.mockResolvedValue(
+      Array.from({ length: 80 }, (_, i) => ({ category: "Brand", content: `note ${i} ${"x".repeat(50)}` })),
+    );
+    mockRuleFindMany.mockResolvedValue([{ kind: "never", text: "no competitor names" }]);
+    const text = await getBrandContextText();
+    expect(text.startsWith("Brand rules:")).toBe(true);
+    expect(text).toContain("no competitor names");
+  });
+
+  it("injects active segments and offers, excludes expired offers", async () => {
+    mockMemoryFindMany.mockResolvedValue([]);
+    mockRecordFindMany.mockResolvedValue([
+      { kind: "segment", data: { name: "Young working moms", who: "25-38 urban" }, status: "active", startsAt: null, endsAt: null, pinned: false },
+      { kind: "offer", data: { title: "Raya sale", code: "RAYA20" }, status: "active", startsAt: null, endsAt: new Date("2099-01-01"), pinned: false },
+      { kind: "offer", data: { title: "Dead promo" }, status: "active", startsAt: null, endsAt: new Date("2020-01-01"), pinned: false },
+    ]);
+    const text = await getBrandContextText();
+    expect(text).toContain("Young working moms");
+    expect(text).toContain("Raya sale");
+    expect(text).not.toContain("Dead promo");
+  });
+
+  it("products: summary + top list, archived excluded, lookup hint when >10", async () => {
+    mockMemoryFindMany.mockResolvedValue([]);
+    const product = (name: string, pinned = false, status = "active") =>
+      ({ kind: "product", data: { name, price: "RM 9" }, status, startsAt: null, endsAt: null, pinned });
+    mockRecordFindMany.mockResolvedValue([
+      product("Pinned One", true), ...Array.from({ length: 12 }, (_, i) => product(`P${i}`)),
+      product("Gone", false, "archived"),
+    ]);
+    const text = await getBrandContextText();
+    expect(text).toMatch(/Your products: 13 total \(1 pinned\)/);
+    expect(text).toContain("Pinned One");
+    expect(text).not.toContain("Gone");
+    expect(text).toContain("lookupProducts");
+  });
+
+  it("legacy Audience facts appear under Your customers", async () => {
+    mockMemoryFindMany.mockResolvedValue([{ category: "Audience", content: "mostly KL urbanites" }]);
+    const text = await getBrandContextText();
+    expect(text).toContain("Your customers");
+    expect(text).toContain("mostly KL urbanites");
   });
 });
