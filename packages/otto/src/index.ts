@@ -23,3 +23,4 @@ export { PROMPT_SKILLS, PROMPT_SKILLED_FAMILIES, familyHasPromptSkill } from "./
 export { defineOttoSkill, deriveNeedsApproval } from "./skill.js";
 export type { OttoSkill, OttoSkillSpec, Cost, Effect, Reach } from "./skill.js";
 export type { StoryboardCardPayload, StoryboardCardInput } from "./skills/propose-storyboard.helpers.js";
+export { MAX_STORYBOARD_SHOTS } from "./skills/propose-storyboard.helpers.js";
