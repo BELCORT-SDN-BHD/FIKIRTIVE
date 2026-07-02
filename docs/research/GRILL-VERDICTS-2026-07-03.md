@@ -99,3 +99,20 @@
 | 项 | 判决 | 内容 |
 |---|---|---|
 | Search API(Tavily)计价 | **3x(200% margin),不并进 Otto 1.5x** | founder:"那么便宜,可以 200% 的 margin"。basic $0.008 → 收 ~3 internal credits($0.03);advanced $0.016 → ~5 internal($0.05)。**落地形态**:像 LLM token 一样走 turn 计量(withLlmBudget 的 settle 加 search 项,各用各的 margin 率),skill 保持 free/read/external —— **不做每次搜索弹审批**(否则 Otto 每查一下都要用户点头);消费明细里单列 "search" 类目(founder 的 credit 明细指令自动覆盖)。费率进 config 层,永不硬编码。 |
+
+## 定价终案(founder 2026-07-03 全数认可)
+
+**定价规则(入宪)**:①每个收费点毛利率(售价−成本)/售价 **≥45%**,目标区 45-50%(不含人工);②市场定位**中下**(靠 Otto+seats 赚钱,内容生成保持竞争力);③全部数字落 config 层。
+
+| 档 | 终案 | 毛利率 |
+|---|---|---|
+| 图 | 1cr 不动 | 65% |
+| 5s 视频 | **7→8cr($0.80)** | 51% |
+| 10s 视频 | **14cr($1.40)** | 45% |
+| 参考视频 | **参考片上限 6s + 16cr($1.60)** | 46% |
+| Otto 劳动 | **OTTO_LLM_MARGIN 1.5→2.0** | 50% |
+| search | 3x 不动 | 67% |
+
+**护栏升级**:BytePlus 资源包余量告警 = **P1 必做**(包烧完跳裸价,10s 档毛利 45%→13%)。
+
+**效率良心条款(founder 2026-07-03,入宪)**:"虽然赚钱很重要,但要通过 engineering 和设计让 Otto efficient,不让用户花冤枉钱" —— margin 赚在倍率上,永不赚在浪费上;任何让用户多烧 token 的低效(冗余重发/臃肿上下文/多余步数)按缺陷处理。已知效率工单:①prompt caching(COGS 与用户成本同降 ~90%,先补 meter 的 cache_write 处理)②verdict 轮重发 base64 图(审计已记)③skill 确定性化减少步数(宪法"技能为弱模型设计"同向)。
