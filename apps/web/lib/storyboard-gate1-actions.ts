@@ -417,7 +417,8 @@ export async function regenShotFirstFrameCard(
 }
 
 // ---------------------------------------------------------------------------
-// syncStoryboardFirstFrames — $0 reconcile: write finished gen ids back by shotId
+// syncStoryboardMedia — $0 reconcile: write finished gen ids back by shotId
+// (frames AND videos), apply the frame-replace cascade, return frame + video urls
 // ---------------------------------------------------------------------------
 
 /** Read-only: the child card's finished GenJob, if any. Prefer the best-effort
@@ -450,9 +451,13 @@ async function firstGenerationIdOf(genJobId: string, ownerId: string): Promise<s
   return typeof first === "string" && first.length > 0 ? first : null;
 }
 
-/** Owner-scoped Generation id → thumbnail URL (mirrors data.ts getGenerationThumbs:
- *  Generation → asset → storageKey → src). A generation whose row is gone is omitted. */
-async function resolveFrameUrls(ownerId: string, generationIds: string[]): Promise<Record<string, string>> {
+/** Owner-scoped Generation id → media URL (mirrors data.ts getGenerationThumbs /
+ *  getGenerationMedia: Generation → asset → storageKey → src). Media-type-agnostic:
+ *  the URL is derived from the asset's OWN ext (png/mp4/mov/webm/…), so the exact
+ *  same helper resolves both frame (image) and video generations — a video asset's
+ *  ext yields its video URL with zero image bias. A generation whose row is gone is
+ *  omitted (not an error). */
+async function resolveMediaUrls(ownerId: string, generationIds: string[]): Promise<Record<string, string>> {
   const clean = [...new Set(generationIds.filter(Boolean))];
   if (clean.length === 0) return {};
   const gens = await prisma.generation.findMany({
@@ -466,9 +471,11 @@ async function resolveFrameUrls(ownerId: string, generationIds: string[]): Promi
   return byGenId;
 }
 
-export async function syncStoryboardFirstFrames(
+export async function syncStoryboardMedia(
   raw: unknown,
-): Promise<{ payload: StoryboardCardPayload; frames: Record<string, string> } | Err> {
+): Promise<
+  { payload: StoryboardCardPayload; frames: Record<string, string>; videos: Record<string, string> } | Err
+> {
   const parsed = syncInput.safeParse(raw);
   if (!parsed.success) return { error: "That request isn't valid." };
 
@@ -481,35 +488,77 @@ export async function syncStoryboardFirstFrames(
 
   const cur = (card.payload ?? {}) as StoryboardCardPayload;
 
-  // Collect finished writes OUTSIDE the txn (all reads). Candidate = EVERY shot that
-  // points at a child card (≤8 shots, so the extra per-shot lookups are bounded). For
-  // each, resolve its child's DONE generationId; stage a write iff that id exists AND
-  // DIFFERS from the shot's current firstFrameGenerationId. This covers both:
-  //  • first landing (no genId yet → write), and
-  //  • replace-overwrite (a regen's new frame lands → overwrites the old genId).
-  // FAILED/queued/generating/missing children resolve to null → inert (no write). A
-  // write only ever REPLACES the genId value; it never deletes the key.
-  const writes: Record<string, string> = {}; // shotId → generationId
+  // Collect finished writes OUTSIDE the txn (all reads). Candidate rules are identical in
+  // shape for the two media classes (≤8 shots, so the extra per-shot lookups are bounded):
+  //  • FRAME: a shot with a firstFrameCardId. Resolve its child's DONE generationId; stage a
+  //    frame write iff that id exists AND DIFFERS from the shot's current firstFrameGenerationId.
+  //    Covers first landing (no genId yet → write) and replace-overwrite (a regen's new frame
+  //    lands → overwrites the old genId).
+  //  • VIDEO: a shot with a videoCardId. Resolve its child's DONE generationId; stage a video
+  //    write iff that id exists AND DIFFERS from the shot's current videoGenerationId.
+  // FAILED/queued/generating/missing children resolve to null → inert (no write). A write only
+  // ever REPLACES the genId value; it never deletes the key.
+  const frameWrites: Record<string, string> = {}; // shotId → new firstFrameGenerationId
+  const videoWrites: Record<string, string> = {}; // shotId → new videoGenerationId
+  // CASCADE set (spec §3c): shots whose staged frame write REPLACES an existing DIFFERENT
+  // firstFrameGenerationId (the shot HAD a genId and the new one differs — NOT a first-ever
+  // write). The source frame changed, so the old video no longer represents the shot → its
+  // videoCardId + videoGenerationId are dropped (key-omission) in the same transaction. A
+  // first-ever frame write (no prior genId) does NOT cascade.
+  const cascadeShots = new Set<string>();
   for (const shot of cur.shots) {
-    if (!shot.firstFrameCardId) continue;
-    const job = await doneJobFor(shot.firstFrameCardId, ownerId);
-    if (!job) continue;
-    const genId = await firstGenerationIdOf(job.id, ownerId);
-    if (genId && genId !== shot.firstFrameGenerationId) writes[shot.shotId] = genId;
+    if (shot.firstFrameCardId) {
+      const job = await doneJobFor(shot.firstFrameCardId, ownerId);
+      if (job) {
+        const genId = await firstGenerationIdOf(job.id, ownerId);
+        if (genId && genId !== shot.firstFrameGenerationId) {
+          frameWrites[shot.shotId] = genId;
+          // Cascade only when REPLACING a prior genId — never on the first-ever frame write.
+          if (shot.firstFrameGenerationId) cascadeShots.add(shot.shotId);
+        }
+      }
+    }
+    if (shot.videoCardId) {
+      const job = await doneJobFor(shot.videoCardId, ownerId);
+      if (job) {
+        const genId = await firstGenerationIdOf(job.id, ownerId);
+        if (genId && genId !== shot.videoGenerationId) videoWrites[shot.shotId] = genId;
+      }
+    }
   }
 
   // Apply staged writes in ONE transactional RMW (re-read payload, patch only target shots).
+  // Any staged write OR any cascade requires a DB write.
   let payload = cur;
-  if (Object.keys(writes).length > 0) {
+  const hasStaged =
+    Object.keys(frameWrites).length > 0 ||
+    Object.keys(videoWrites).length > 0 ||
+    cascadeShots.size > 0;
+  if (hasStaged) {
     payload = await prisma.$transaction(async (tx) => {
       const fresh = await tx.chatMessage.findFirst({
         where: { id: card.id, ownerId, kind: "STORYBOARD_CARD", deletedAt: null },
         select: { payload: true },
       });
       const p = (fresh?.payload ?? cur) as StoryboardCardPayload;
-      const nextShots = p.shots.map((s) =>
-        writes[s.shotId] ? { ...s, firstFrameGenerationId: writes[s.shotId] } : s,
-      );
+      const nextShots = p.shots.map((s) => {
+        const frameGen = frameWrites[s.shotId];
+        const videoGen = videoWrites[s.shotId];
+        if (!frameGen && !videoGen) return s;
+        // CASCADE PRECEDENCE (spec §3c): when a shot's frame is REPLACED, drop its video keys —
+        // and this WINS over any video write staged for the SAME shot in this pass. A video that
+        // just landed for the OLD source frame is dropped too: it was built off the outdated
+        // frame, so it no longer represents the shot. So: cascade ⇒ omit videoCardId +
+        // videoGenerationId (key-omission), and do NOT apply the staged video write.
+        if (cascadeShots.has(s.shotId)) {
+          const { videoCardId: _drop1, videoGenerationId: _drop2, ...rest } = s;
+          return { ...rest, firstFrameGenerationId: frameGen! };
+        }
+        const next = { ...s };
+        if (frameGen) next.firstFrameGenerationId = frameGen;
+        if (videoGen) next.videoGenerationId = videoGen;
+        return next;
+      });
       const next = { ...p, shots: nextShots };
       await tx.chatMessage.update({
         where: { id: card.id },
@@ -519,20 +568,37 @@ export async function syncStoryboardFirstFrames(
     });
   }
 
-  // frames: resolve a URL for EVERY shot that now has a firstFrameGenerationId (old or just written).
-  const genIdByShot = new Map<string, string>();
+  // Resolve URLs for EVERY shot that now has a genId (old or just written), for both media
+  // classes, via the SAME owner-scoped Generation→asset→storage mechanism. Cascade-dropped
+  // video keys are already gone from `payload`, so they naturally contribute no video url.
+  const frameGenByShot = new Map<string, string>();
+  const videoGenByShot = new Map<string, string>();
   for (const shot of payload.shots) {
-    if (shot.firstFrameGenerationId) genIdByShot.set(shot.shotId, shot.firstFrameGenerationId);
+    if (shot.firstFrameGenerationId) frameGenByShot.set(shot.shotId, shot.firstFrameGenerationId);
+    if (shot.videoGenerationId) videoGenByShot.set(shot.shotId, shot.videoGenerationId);
   }
-  const urlByGenId = await resolveFrameUrls(ownerId, [...genIdByShot.values()]);
+  const urlByGenId = await resolveMediaUrls(ownerId, [
+    ...frameGenByShot.values(),
+    ...videoGenByShot.values(),
+  ]);
   const frames: Record<string, string> = {};
-  for (const [shotId, genId] of genIdByShot) {
+  for (const [shotId, genId] of frameGenByShot) {
     const url = urlByGenId[genId];
     if (url) frames[shotId] = url; // a deleted generation → omit, don't error
   }
+  const videos: Record<string, string> = {};
+  for (const [shotId, genId] of videoGenByShot) {
+    const url = urlByGenId[genId];
+    if (url) videos[shotId] = url; // a deleted generation → omit, don't error
+  }
 
-  return { payload, frames };
+  return { payload, frames, videos };
 }
+
+/** @deprecated Use syncStoryboardMedia. Thin back-compat alias kept ONLY because
+ *  StoryboardCard.tsx still imports the old name (Task 4 updates the UI + removes this).
+ *  The return shape widened (added `videos`); existing frame-only callers ignore it. */
+export const syncStoryboardFirstFrames = syncStoryboardMedia;
 
 // ---------------------------------------------------------------------------
 // prepareStoryboardVideos — 闸②:idempotent $0 mint of missing video children
