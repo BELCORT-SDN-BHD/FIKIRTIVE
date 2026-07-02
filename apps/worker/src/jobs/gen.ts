@@ -516,11 +516,27 @@ export async function handleGen(data: GenJobData, retryCount: number): Promise<v
         tailImageUrl = (await storage.presignedGet(storageKey(tail.asset.ownerId, tail.asset.contentHash, tail.asset.ext), 3600)) ?? "";
         if (provider.name !== "mock" && !tailImageUrl) throw new Error("last-frame image unreachable — refusing to spend on i2v");
       }
+      // Whole-clip reference video (整段视频参考). Resolved server-side from an owned,
+      // in-project, video-ext Generation; fail-closed if set-but-missing (never spend).
+      let refVideoUrl = "";
+      if (job.referenceVideoGenerationId) {
+        const rv = await prisma.generation.findFirst({
+          where: { id: job.referenceVideoGenerationId, ownerId: job.ownerId, projectId: job.projectId, deletedAt: null, asset: { ext: { in: ["mp4", "mov", "webm"] } } },
+          include: { asset: true },
+        });
+        if (!rv) {
+          await failClosedWithRefund(job, "reference video not found (or not a video) in this project");
+          return;
+        }
+        refVideoUrl = (await storage.presignedGet(storageKey(rv.asset.ownerId, rv.asset.contentHash, rv.asset.ext), 3600)) ?? "";
+        if (provider.name !== "mock" && !refVideoUrl) throw new Error("reference video unreachable — refusing to spend");
+      }
       // per-model controls chosen in the composer (resolved + stored at enqueue);
       // fall back to the legacy fixed duration if an older job has none.
       const vo = job.videoOptions as { seconds?: number; resolution?: string; aspectRatio?: string; fps?: number; audio?: boolean } | null;
       const video = await provider.generateVideo({
         prompt: job.prompt, imageUrl, tailImageUrl: tailImageUrl || undefined,
+        refVideoUrl: refVideoUrl || undefined,
         durationSeconds: vo?.seconds ?? videoDefaults(job.model as GenVideoModel).seconds,
         resolution: vo?.resolution, aspectRatio: vo?.aspectRatio, fps: vo?.fps, audio: vo?.audio,
         model: job.model,
