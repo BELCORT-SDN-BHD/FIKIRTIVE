@@ -19,6 +19,7 @@ const {
   mockGenerationFindMany,
   mockBuildProposeCard,
   mockResolveDisabled,
+  mockSuggestModel,
   db,
 } = vi.hoisted(() => {
   const mockChatFindFirst = vi.fn();
@@ -48,6 +49,7 @@ const {
     mockGenerationFindMany,
     mockBuildProposeCard: vi.fn(),
     mockResolveDisabled: vi.fn(),
+    mockSuggestModel: vi.fn(),
     db,
   };
 });
@@ -57,10 +59,14 @@ vi.mock("../model-registry", () => ({ resolveDisabledModels: mockResolveDisabled
 vi.mock("@fikirtive/db", () => ({ prisma: db, Prisma: {} }));
 
 // newId: deterministic counter so minted child ids are predictable.
+// suggestModel: overridden so getStoryboardVideoOptions derives a deterministic
+// video model, while GEN_VIDEO_MODEL_OPTIONS (the real durations table) is kept
+// via importOriginal — the options action reads the REAL table for that model.
 let idCounter = 0;
 vi.mock("@fikirtive/core", async (importOriginal) => ({
   ...(await importOriginal<typeof import("@fikirtive/core")>()),
   newId: () => `new-${++idCounter}`,
+  suggestModel: mockSuggestModel,
 }));
 
 // buildProposeCard: deterministic payload; estimatedCredits 5 so totalCredits math is exact.
@@ -75,6 +81,8 @@ import {
   prepareStoryboardFirstFrames,
   regenShotFirstFrameCard,
   syncStoryboardFirstFrames,
+  getStoryboardVideoOptions,
+  prepareStoryboardVideos,
 } from "../storyboard-gate1-actions";
 
 const OWNER = "owner-1";
@@ -104,6 +112,16 @@ beforeEach(() => {
 
 function mockResolvedDefaults() {
   mockResolveDisabled.mockResolvedValue(new Set<string>());
+  // suggestModel: deterministic video model "kling" (real durations table = [5,10]).
+  // The action passes the SAME suggestModel path minting uses; options reads the REAL
+  // GEN_VIDEO_MODEL_OPTIONS[model].durations (kept via importOriginal).
+  mockSuggestModel.mockReturnValue({
+    model: "kling",
+    params: { durationSeconds: 5, count: 1 },
+    reason: "",
+    downgraded: false,
+    requested: {},
+  });
   mockEntityFindMany.mockResolvedValue([{ id: "e0" }]); // e0 owned
   mockChatCreate.mockResolvedValue({});
   mockChatUpdate.mockResolvedValue({});
@@ -740,5 +758,329 @@ describe("syncStoryboardFirstFrames — $0 对账", () => {
     if (!("payload" in res)) throw new Error("expected payload");
     expect("s1" in res.frames).toBe(false); // omitted, no throw
     expect(mockChatUpdate).not.toHaveBeenCalled();
+  });
+});
+
+// ---------------------------------------------------------------------------
+// getStoryboardVideoOptions — $0 read: the SELECTED video model's durations
+// ---------------------------------------------------------------------------
+
+describe("getStoryboardVideoOptions — $0 读取模型时长", () => {
+  it("返回 suggestModel 选定视频模型在真实能力表里的 durations(kling → [5,10])", async () => {
+    const res = await getStoryboardVideoOptions();
+    expect("model" in res).toBe(true);
+    if (!("model" in res)) return;
+    // model = the SAME suggestModel path minting uses (kind:"video")
+    expect(mockSuggestModel).toHaveBeenCalledWith(
+      expect.objectContaining({ kind: "video" }),
+    );
+    expect(res.model).toBe("kling");
+    // durations come from the REAL GEN_VIDEO_MODEL_OPTIONS table (not hardcoded)
+    expect(res.durations).toEqual([5, 10]);
+    // $0: no writes at all
+    expect(mockChatCreate).not.toHaveBeenCalled();
+    expect(mockChatUpdate).not.toHaveBeenCalled();
+    expect(mockGenJobCreate).not.toHaveBeenCalled();
+  });
+
+  it("模型驱动:换一个选定模型 → 自动返回该模型的真实 durations(veo3.1-lite → [4,6,8])", async () => {
+    mockSuggestModel.mockReturnValue({
+      model: "veo3.1-lite",
+      params: { durationSeconds: 4, count: 1 },
+      reason: "",
+      downgraded: false,
+      requested: {},
+    });
+    const res = await getStoryboardVideoOptions();
+    if (!("model" in res)) throw new Error("expected model");
+    expect(res.model).toBe("veo3.1-lite");
+    expect(res.durations).toEqual([4, 6, 8]); // real table, zero hardcoding
+  });
+
+  it("sources disabledModels 走 resolveDisabledModels(与铸卡同一来源)", async () => {
+    mockResolveDisabled.mockResolvedValue(new Set(["some-model"]));
+    await getStoryboardVideoOptions();
+    expect(mockResolveDisabled).toHaveBeenCalled();
+    // the disabled set threads into suggestModel (same as minting)
+    const arg = mockSuggestModel.mock.calls[0][0];
+    expect(arg.disabled).toBeInstanceOf(Set);
+    expect(arg.disabled.has("some-model")).toBe(true);
+  });
+
+  it("requireOwner 失败 → {error},不查库", async () => {
+    mockOwner.mockResolvedValue({ error: "unauthorized" });
+    const res = await getStoryboardVideoOptions();
+    expect(res).toEqual({ error: "unauthorized" });
+    expect(mockSuggestModel).not.toHaveBeenCalled();
+  });
+});
+
+// ---------------------------------------------------------------------------
+// prepareStoryboardVideos — $0 铸"视频子卡"(闸②),mirror prepareStoryboardFirstFrames
+// ---------------------------------------------------------------------------
+
+/** buildProposeCard video-mock: echo a kind:"video" payload; carry the injected
+ *  ctx.sourceGenerationId (i2v start frame) + desiredDuration→params.durationSeconds
+ *  onto the payload so the action's reuse rule + backlink can be asserted. */
+function mockVideoProposeCard() {
+  mockBuildProposeCard.mockImplementation(
+    (
+      input: { structuredPrompt: string; entityIds: string[]; desiredDuration?: number },
+      ctx: { sourceGenerationId?: string },
+    ) => ({
+      cardPayload: {
+        kind: "video",
+        model: "kling",
+        params: { count: 1, ...(input.desiredDuration !== undefined ? { durationSeconds: input.desiredDuration } : {}) },
+        structuredPrompt: input.structuredPrompt,
+        entityIds: input.entityIds,
+        estimatedCredits: 5,
+        estimatedPriceUsd: 0.35,
+        reason: "",
+        downgraded: false,
+        variantSel: {},
+        ...(ctx.sourceGenerationId ? { sourceGenerationId: ctx.sourceGenerationId } : {}),
+      },
+      shownPriceDisplay: 5,
+    }),
+  );
+}
+
+/** 3 shots for video gate:
+ *  - s0: framed (firstFrameGenerationId) + no video → ELIGIBLE (mint)
+ *  - s1: frameless (no firstFrameGenerationId) → SKIP silently
+ *  - s2: framed + already has videoGenerationId → SKIP (video exists) */
+function videoPayload3(): StoryboardCardPayload {
+  return {
+    storyboardTitle: "Ad",
+    shots: [
+      { shotId: "s0", index: 0, firstFramePrompt: "ff0", videoPrompt: "vp0", firstFrameGenerationId: "ffgen0", durationSeconds: 5 },
+      { shotId: "s1", index: 1, firstFramePrompt: "ff1", videoPrompt: "vp1" },
+      { shotId: "s2", index: 2, firstFramePrompt: "ff2", videoPrompt: "vp2", firstFrameGenerationId: "ffgen2", videoGenerationId: "vidgen2" },
+    ],
+  };
+}
+
+describe("prepareStoryboardVideos — $0 铸视频子卡(闸②)", () => {
+  it("只给 framed+videoless 镜头铸 kind:video 子卡(frameless 跳过,已有视频跳过)", async () => {
+    mockVideoProposeCard();
+    wireLoads(card(videoPayload3()));
+
+    const res = await prepareStoryboardVideos({ cardId: "card-1" });
+    expect("children" in res).toBe(true);
+    if (!("children" in res)) return;
+
+    // exactly 1 child minted (s0); s1 frameless skipped, s2 has-video skipped
+    expect(mockChatCreate).toHaveBeenCalledTimes(1);
+    const data = mockChatCreate.mock.calls[0][0].data;
+    expect(data.kind).toBe("GEN_CARD");
+    expect(data.role).toBe("AGENT");
+    expect(data.ownerId).toBe(OWNER);
+    expect(data.threadId).toBe("t-1");
+    expect("genJobId" in data).toBe(false); // $0
+
+    // buildProposeCard called with kind:"video", the shot's videoPrompt, desiredDuration
+    const [propInput, propCtx] = mockBuildProposeCard.mock.calls[0];
+    expect(propInput.kind).toBe("video");
+    expect(propInput.structuredPrompt).toBe("vp0");
+    expect(propInput.desiredDuration).toBe(5);
+    expect(propInput.entityIds).toEqual([]); // video plan carries no entity refs
+    // per-shot ctx: sourceGenerationId = the shot's first-frame generation id (i2v source)
+    expect(propCtx.sourceGenerationId).toBe("ffgen0");
+
+    // child payload: i2v source frame flowed through + correct backlink + duration
+    expect(data.payload.sourceGenerationId).toBe("ffgen0");
+    expect(data.payload.storyboardCardId).toBe("card-1");
+    expect(data.payload.shotId).toBe("s0");
+    expect(data.payload.params.durationSeconds).toBe(5);
+
+    // parent write: only s0.videoCardId set; firstFrame keys + s2 video untouched
+    expect(mockChatUpdate).toHaveBeenCalledTimes(1);
+    const updShots = (mockChatUpdate.mock.calls[0][0].data.payload as StoryboardCardPayload).shots;
+    expect(updShots[0].videoCardId).toBeTruthy();
+    expect(updShots[0].firstFrameGenerationId).toBe("ffgen0"); // frame keys untouched
+    expect(updShots[0].videoGenerationId).toBeUndefined(); // NOT written (I1 semantics)
+    expect(updShots[1].videoCardId).toBeUndefined(); // frameless: no mint, no write
+    expect(updShots[2].videoCardId).toBeUndefined(); // has-video: skipped
+    expect(updShots[2].videoGenerationId).toBe("vidgen2"); // preserved
+
+    // return: 1 child, totalCredits 5 (unspent)
+    expect(res.children).toHaveLength(1);
+    expect(res.children[0].shotId).toBe("s0");
+    expect(res.children[0].estimatedCredits).toBe(5);
+    expect(res.children[0].structuredPrompt).toBe("vp0");
+    expect(res.children[0].spent).toBe(false);
+    expect(res.totalCredits).toBe(5);
+  });
+
+  it("可重入:videoCardId 子卡未花钱且 prompt/source/duration 一致 → 复用,不铸、不写", async () => {
+    mockVideoProposeCard();
+    const p = videoPayload3();
+    p.shots[0].videoCardId = "vchild-0";
+    wireLoads(card(p), {
+      "vchild-0": {
+        payload: { structuredPrompt: "vp0", sourceGenerationId: "ffgen0", params: { durationSeconds: 5 }, estimatedCredits: 5 },
+        genJobId: null,
+      },
+    });
+
+    const res = await prepareStoryboardVideos({ cardId: "card-1" });
+    if (!("children" in res)) throw new Error("expected children");
+
+    expect(mockChatCreate).not.toHaveBeenCalled(); // reused
+    expect(mockChatUpdate).not.toHaveBeenCalled(); // no pointer swap
+    expect(mockBuildProposeCard).not.toHaveBeenCalled();
+    expect(res.children).toHaveLength(1);
+    expect(res.children[0].childCardId).toBe("vchild-0");
+    expect(res.children[0].spent).toBe(false);
+    // totalCredits = UNSPENT only; the reused unspent child's stored estimatedCredits (5)
+    expect(res.totalCredits).toBe(5);
+  });
+
+  it("可重入:prompt/source/duration 任一不一致 → 铸新 + 指针替换,不碰 videoGenerationId", async () => {
+    mockVideoProposeCard();
+    const p = videoPayload3();
+    p.shots[0].videoCardId = "vchild-0";
+    // duration mismatch: child payload duration 8 != shot.durationSeconds 5
+    wireLoads(card(p), {
+      "vchild-0": {
+        payload: { structuredPrompt: "vp0", sourceGenerationId: "ffgen0", params: { durationSeconds: 8 } },
+        genJobId: null,
+      },
+    });
+
+    const res = await prepareStoryboardVideos({ cardId: "card-1" });
+    if (!("children" in res)) throw new Error("expected children");
+
+    expect(mockChatCreate).toHaveBeenCalledTimes(1); // fresh mint
+    const updShots = (mockChatUpdate.mock.calls[0][0].data.payload as StoryboardCardPayload).shots;
+    expect(updShots[0].videoCardId).not.toBe("vchild-0"); // pointer swapped
+    expect(updShots[0].videoGenerationId).toBeUndefined(); // NEVER touched
+    expect(res.children[0].childCardId).not.toBe("vchild-0");
+  });
+
+  it("可重入:source 不一致(首帧被重出换了 genId)→ 铸新替换", async () => {
+    mockVideoProposeCard();
+    const p = videoPayload3();
+    p.shots[0].videoCardId = "vchild-0";
+    // source mismatch: child was built off an OLD frame id
+    wireLoads(card(p), {
+      "vchild-0": {
+        payload: { structuredPrompt: "vp0", sourceGenerationId: "OLD-frame", params: { durationSeconds: 5 } },
+        genJobId: null,
+      },
+    });
+
+    const res = await prepareStoryboardVideos({ cardId: "card-1" });
+    if (!("children" in res)) throw new Error("expected children");
+    expect(mockChatCreate).toHaveBeenCalledTimes(1);
+    expect(res.children[0].childCardId).not.toBe("vchild-0");
+  });
+
+  it("可重入:子卡已花过钱(有幂等 job)→ 不复用,铸新替换", async () => {
+    mockVideoProposeCard();
+    const p = videoPayload3();
+    p.shots[0].videoCardId = "vchild-0";
+    wireLoads(card(p), {
+      "vchild-0": {
+        payload: { structuredPrompt: "vp0", sourceGenerationId: "ffgen0", params: { durationSeconds: 5 } },
+        genJobId: null,
+      },
+    });
+    // spent: idempotency job exists → must mint fresh
+    mockGenJobFindFirst.mockResolvedValue({ id: "job-spent" });
+
+    const res = await prepareStoryboardVideos({ cardId: "card-1" });
+    if (!("children" in res)) throw new Error("expected children");
+    expect(mockChatCreate).toHaveBeenCalledTimes(1); // fresh mint (spent child not reused)
+    const updShots = (mockChatUpdate.mock.calls[0][0].data.payload as StoryboardCardPayload).shots;
+    expect(updShots[0].videoCardId).not.toBe("vchild-0");
+    expect(updShots[0].videoGenerationId).toBeUndefined();
+    expect(res.children[0].childCardId).not.toBe("vchild-0");
+  });
+
+  it("durationSeconds 未定义时 duration 不参与一致性判断 → 复用(prompt+source 一致即可)", async () => {
+    mockVideoProposeCard();
+    const p = videoPayload3();
+    delete p.shots[0].durationSeconds; // no desired duration
+    p.shots[0].videoCardId = "vchild-0";
+    wireLoads(card(p), {
+      "vchild-0": {
+        payload: { structuredPrompt: "vp0", sourceGenerationId: "ffgen0", params: { durationSeconds: 5 } },
+        genJobId: null,
+      },
+    });
+
+    const res = await prepareStoryboardVideos({ cardId: "card-1" });
+    if (!("children" in res)) throw new Error("expected children");
+    expect(mockChatCreate).not.toHaveBeenCalled(); // reused despite param duration present
+    expect(res.children[0].childCardId).toBe("vchild-0");
+  });
+
+  it("spent 侦测:matching 子卡已 genJobId 链接(已花钱)→ 不复用,铸新(spent 绝不进 quote)", async () => {
+    mockVideoProposeCard();
+    const p = videoPayload3();
+    p.shots[0].videoCardId = "vchild-0";
+    wireLoads(card(p), {
+      "vchild-0": {
+        payload: { structuredPrompt: "vp0", sourceGenerationId: "ffgen0", params: { durationSeconds: 5 }, estimatedCredits: 5 },
+        genJobId: "gj-1", // best-effort link present → spent (charged)
+      },
+    });
+
+    const res = await prepareStoryboardVideos({ cardId: "card-1" });
+    if (!("children" in res)) throw new Error("expected children");
+    // spent child is NOT reused — a fresh replacement is minted (no double-charge on re-approve)
+    expect(mockChatCreate).toHaveBeenCalledTimes(1);
+    const updShots = (mockChatUpdate.mock.calls[0][0].data.payload as StoryboardCardPayload).shots;
+    expect(updShots[0].videoCardId).not.toBe("vchild-0"); // pointer swapped to the fresh child
+    expect(updShots[0].videoGenerationId).toBeUndefined(); // never touched
+    // the returned child is the FRESH one (unspent) — spent card never enters the quote
+    expect(res.children[0].childCardId).not.toBe("vchild-0");
+    expect(res.children[0].spent).toBe(false);
+    expect(res.totalCredits).toBe(5); // the fresh unspent mint's credits
+  });
+
+  it("$0 铁证:genJob.create 从未被调", async () => {
+    mockVideoProposeCard();
+    wireLoads(card(videoPayload3()));
+    await prepareStoryboardVideos({ cardId: "card-1" });
+    expect(mockGenJobCreate).not.toHaveBeenCalled();
+  });
+
+  it("requireOwner 失败 → {error},不碰 DB", async () => {
+    mockOwner.mockResolvedValue({ error: "unauthorized" });
+    const res = await prepareStoryboardVideos({ cardId: "card-1" });
+    expect(res).toEqual({ error: "unauthorized" });
+    expect(mockChatFindFirst).not.toHaveBeenCalled();
+    expect(mockChatCreate).not.toHaveBeenCalled();
+    expect(mockChatUpdate).not.toHaveBeenCalled();
+  });
+
+  it("卡不存在 → {error},不写 DB", async () => {
+    wireLoads(card(videoPayload3()));
+    const res = await prepareStoryboardVideos({ cardId: "missing" });
+    expect("error" in res).toBe(true);
+    expect(mockChatCreate).not.toHaveBeenCalled();
+    expect(mockChatUpdate).not.toHaveBeenCalled();
+  });
+
+  it("非法入参 → {error},不碰 DB", async () => {
+    const res = await prepareStoryboardVideos({ cardId: "" } as unknown as { cardId: string });
+    expect("error" in res).toBe(true);
+    expect(mockChatFindFirst).not.toHaveBeenCalled();
+  });
+
+  it("无合格镜头(全 frameless 或已有视频)→ children:[], totalCredits:0,不写 DB", async () => {
+    mockVideoProposeCard();
+    const p = videoPayload3();
+    // strip s0's frame → frameless; s2 already has video; s1 frameless → nothing eligible
+    delete p.shots[0].firstFrameGenerationId;
+    wireLoads(card(p));
+    const res = await prepareStoryboardVideos({ cardId: "card-1" });
+    expect(res).toEqual({ children: [], totalCredits: 0 });
+    expect(mockChatCreate).not.toHaveBeenCalled();
+    expect(mockChatUpdate).not.toHaveBeenCalled();
+    expect(mockGenJobCreate).not.toHaveBeenCalled();
   });
 });

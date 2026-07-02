@@ -16,7 +16,7 @@
  */
 import { z } from "zod";
 import { prisma, Prisma } from "@fikirtive/db";
-import { newId, storageKey, storageKeyToSrc } from "@fikirtive/core";
+import { newId, storageKey, storageKeyToSrc, suggestModel, GEN_VIDEO_MODEL_OPTIONS, type GenVideoModel } from "@fikirtive/core";
 import { buildProposeCard } from "@fikirtive/otto";
 import type { OttoContext, StoryboardCardPayload } from "@fikirtive/otto";
 import { requireOwner } from "./auth-guard";
@@ -84,6 +84,35 @@ async function spentOf(childCardId: string, ownerId: string): Promise<boolean> {
   return job !== null;
 }
 
+/** 闸② 铸卡会选定的视频模型 —— 与 buildProposeCard 内部同一条 selectModel 路径
+ *  (suggestModel({ kind:"video", disabled }) → activeVideoModel)。这里复用它,保证
+ *  "选项面板给的时长" 与 "铸卡吸附的时长" 出自同一模型,零硬编码。 */
+function selectedVideoModel(disabledModels: string[]): GenVideoModel {
+  const sm = suggestModel({ kind: "video", disabled: new Set(disabledModels) });
+  return sm.model as GenVideoModel;
+}
+
+// ---------------------------------------------------------------------------
+// getStoryboardVideoOptions — $0 read: the SELECTED video model + its durations
+// ---------------------------------------------------------------------------
+//
+// Model-driven, zero hardcoding: derive the video model the SAME way minting will
+// (suggestModel — the activeVideoModel lock), then return THAT model's durations from
+// the shared GEN_VIDEO_MODEL_OPTIONS capability table. A future model swap (activeVideoModel
+// change) flows through automatically — no values copied here.
+
+export async function getStoryboardVideoOptions(): Promise<
+  { model: string; durations: number[] } | Err
+> {
+  const gate = await requireOwner();
+  if ("error" in gate) return gate;
+
+  const disabledModels = Array.from(await resolveDisabledModels());
+  const model = selectedVideoModel(disabledModels);
+  const durations = GEN_VIDEO_MODEL_OPTIONS[model].durations;
+  return { model, durations };
+}
+
 /** 铸一张子 GEN_CARD($0):定价走 buildProposeCard,payload 加 storyboardCardId+shotId 回链。
  *  seq = 同 thread 最新 +1(propose-pack.ts:46-108 先例)。genJobId 不写(null)。
  *  返回新子卡 id 及其 ChildFrameCard(spent 固定 false —— 刚铸,尚无幂等 job)。 */
@@ -105,6 +134,62 @@ async function mintChild(
     },
     ctx,
     ownedIds,
+  );
+
+  const payload = { ...cardPayload, storyboardCardId: parent.id, shotId: shot.shotId };
+
+  const last = await tx.chatMessage.findFirst({
+    where: { threadId: parent.threadId, ownerId },
+    orderBy: { seq: "desc" },
+    select: { seq: true },
+  });
+
+  const childCardId = newId();
+  await tx.chatMessage.create({
+    data: {
+      id: childCardId,
+      threadId: parent.threadId,
+      ownerId,
+      role: "AGENT",
+      kind: "GEN_CARD",
+      seq: (last?.seq ?? 0) + 1,
+      text: "",
+      payload: payload as unknown as Prisma.InputJsonObject,
+    },
+  });
+
+  return {
+    shotId: shot.shotId,
+    childCardId,
+    estimatedCredits: cardPayload.estimatedCredits,
+    structuredPrompt: cardPayload.structuredPrompt,
+    entityIds: cardPayload.entityIds,
+    spent: false,
+  };
+}
+
+/** 铸一张"视频子 GEN_CARD"($0):镜像 mintChild,但走 kind:"video" —— 定价/模型/时长吸附
+ *  全交给 buildProposeCard(与普通 i2v propose 同一条路)。ctx 带 per-shot sourceGenerationId
+ *  = 该镜头首帧 generationId(i2v 起始帧);desiredDuration = shot.durationSeconds。
+ *  payload 加 storyboardCardId+shotId 回链;genJobId 不写(null)。 */
+async function mintVideoChild(
+  tx: PrismaTx,
+  parent: { id: string; threadId: string },
+  shot: Shot,
+  ownerId: string,
+  ctx: OttoContext,
+): Promise<ChildFrameCard> {
+  const { cardPayload } = buildProposeCard(
+    {
+      kind: "video",
+      structuredPrompt: shot.videoPrompt,
+      entityIds: [],
+      variantSel: {},
+      count: 1,
+      desiredDuration: shot.durationSeconds,
+    },
+    ctx,
+    [],
   );
 
   const payload = { ...cardPayload, storyboardCardId: parent.id, shotId: shot.shotId };
@@ -447,4 +532,126 @@ export async function syncStoryboardFirstFrames(
   }
 
   return { payload, frames };
+}
+
+// ---------------------------------------------------------------------------
+// prepareStoryboardVideos — 闸②:idempotent $0 mint of missing video children
+// ---------------------------------------------------------------------------
+//
+// Mirrors prepareStoryboardFirstFrames exactly (owner-scoping, $transaction RMW,
+// reuse-if-fresh, seq allocation, ChildFrameCard shape, totalCredits = unspent only),
+// with the video-gate differences:
+//  • Eligible = firstFrameGenerationId && !videoGenerationId (partial execution:
+//    frameless shots are silently skipped — the UI hints why).
+//  • Mint via buildProposeCard kind:"video" with a PER-SHOT ctx whose sourceGenerationId
+//    = the shot's first frame (i2v source), and desiredDuration = shot.durationSeconds.
+//  • Parent write swaps ONLY shot.videoCardId (transactional RMW).
+//  • Reuse-if-fresh: existing videoCardId child, unspent, AND prompt+source+duration
+//    match → reuse (no mint). Spent or any mismatch → fresh mint + pointer swap;
+//    videoGenerationId is NEVER touched (I1 semantics — old video survives until the
+//    new one lands via sync).
+
+export async function prepareStoryboardVideos(
+  raw: unknown,
+): Promise<{ children: ChildFrameCard[]; totalCredits: number } | Err> {
+  const parsed = prepareInput.safeParse(raw);
+  if (!parsed.success) return { error: "That request isn't valid." };
+
+  const gate = await requireOwner();
+  if ("error" in gate) return gate;
+  const { ownerId } = gate;
+
+  const card = await loadCard(parsed.data.cardId, ownerId);
+  if (!card) return { error: "Card not found." };
+
+  const cur = (card.payload ?? {}) as StoryboardCardPayload;
+
+  // Source disabledModels ONCE (same sourcing as buildOttoContext). Video children are
+  // i2v (no entity refs), so no owned-entity lookup is needed.
+  const disabledModels = Array.from(await resolveDisabledModels());
+
+  const children: ChildFrameCard[] = [];
+
+  await prisma.$transaction(async (tx) => {
+    // Re-read the parent payload INSIDE the tx (RMW) so a concurrent edit can't be clobbered.
+    const fresh = await tx.chatMessage.findFirst({
+      where: { id: card.id, ownerId, kind: "STORYBOARD_CARD", deletedAt: null },
+      select: { payload: true },
+    });
+    const payload = (fresh?.payload ?? cur) as StoryboardCardPayload;
+
+    // Build the next shots array, mutating ONLY videoCardId on target shots.
+    const nextShots: Shot[] = [];
+    let changed = false;
+
+    for (const shot of payload.shots) {
+      // Not eligible: no first frame (frameless — skip silently), or already has a video.
+      if (!shot.firstFrameGenerationId || shot.videoGenerationId) {
+        nextShots.push(shot);
+        continue;
+      }
+
+      // Per-shot ctx: the shot's first frame is the i2v source for THIS video.
+      const ctx = minimalCtx(ownerId, card.threadId, disabledModels);
+      ctx.sourceGenerationId = shot.firstFrameGenerationId;
+
+      // Already points at a video child → try to reuse it.
+      if (shot.videoCardId) {
+        const existing = await tx.chatMessage.findFirst({
+          where: { id: shot.videoCardId, ownerId, kind: "GEN_CARD", deletedAt: null },
+          select: { id: true, payload: true, genJobId: true },
+        });
+        const ep = (existing?.payload ?? {}) as {
+          structuredPrompt?: unknown;
+          sourceGenerationId?: unknown;
+          params?: { durationSeconds?: unknown };
+          entityIds?: string[];
+          estimatedCredits?: number;
+        };
+        const promptMatch = ep.structuredPrompt === shot.videoPrompt;
+        const sourceMatch = ep.sourceGenerationId === shot.firstFrameGenerationId;
+        const durationMatch =
+          shot.durationSeconds === undefined || ep.params?.durationSeconds === shot.durationSeconds;
+        // Reuse ONLY an UNSPENT, fully-matching child. A spent child (already charged) must
+        // NOT be reused — mint a fresh replacement so a re-approve can't double-charge the
+        // same card (same rule as regenShotFirstFrameCard; the frame-prepare path differs
+        // by design). spent = best-effort genJobId link OR the durable cowork:<id> job.
+        if (existing && promptMatch && sourceMatch && durationMatch) {
+          const spent = existing.genJobId != null || (await spentOf(existing.id, ownerId));
+          if (!spent) {
+            children.push({
+              shotId: shot.shotId,
+              childCardId: existing.id,
+              estimatedCredits: typeof ep.estimatedCredits === "number" ? ep.estimatedCredits : 0,
+              structuredPrompt: typeof ep.structuredPrompt === "string" ? ep.structuredPrompt : shot.videoPrompt,
+              entityIds: Array.isArray(ep.entityIds) ? ep.entityIds : [],
+              spent: false,
+            });
+            nextShots.push(shot);
+            continue;
+          }
+          // spent → fall through to mint a fresh replacement.
+        }
+        // Missing, spent, or any mismatch → mint a replacement (pointer swap below).
+      }
+
+      // Mint a fresh video child for this shot.
+      const child = await mintVideoChild(tx, card, shot, ownerId, ctx);
+      children.push(child);
+      // Replace videoCardId ONLY. NEVER touch videoGenerationId — the old video (if any)
+      // stays valid until sync overwrites the genId when the new clip is DONE.
+      nextShots.push({ ...shot, videoCardId: child.childCardId });
+      changed = true;
+    }
+
+    if (changed) {
+      await tx.chatMessage.update({
+        where: { id: card.id },
+        data: { payload: { ...payload, shots: nextShots } as unknown as Prisma.InputJsonObject },
+      });
+    }
+  });
+
+  const totalCredits = children.filter((c) => !c.spent).reduce((sum, c) => sum + c.estimatedCredits, 0);
+  return { children, totalCredits };
 }
