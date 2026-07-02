@@ -1,6 +1,11 @@
 export { otto, ottoInstructions, OTTO_DEFAULT_MODEL } from "./otto.js";
 export { ottoSimpleModeBlock } from "./instructions.js";
 export { propose } from "./skills/propose.js";
+// buildProposeCard — the pure $0 card-payload helper (no DB/SDK). Exposed for the
+// web gate① child-card minting layer (storyboard-gate1-actions), which prices minted
+// children through the SAME path as a normal propose. Types travel with it.
+export { buildProposeCard } from "./skills/propose.js";
+export type { CardPayload, ProposeCardResult } from "./skills/propose.js";
 export { generate } from "./skills/generate.js";
 export { updateBrief } from "./skills/update-brief.js";
 export { describeRefs, sanitizeRefDescription } from "./skills/describe-refs.js";

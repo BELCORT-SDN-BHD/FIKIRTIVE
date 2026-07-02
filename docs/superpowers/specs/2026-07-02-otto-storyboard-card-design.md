@@ -66,6 +66,8 @@ type StoryboardCardPayload = {
     videoPrompt: string;      // Seedance 视频 prompt(来自 seedancePrompt)
     entityIds?: string[];     // 该镜头的 @引用实体(可选)——F4 铸子卡时透传,
                               // 参考图才能真正到模型(否则只有文字锁,人物会漂移)
+    firstFrameCardId?: string;       // 该镜头"当前子 GEN_CARD"的 id(F4 铸卡时写)——
+                                     // 显式追踪,替代脆弱的 JSON 反查;改文字/重出时替换或清空
     firstFrameGenerationId?: string; // 闸① 生成后写回;编辑文字后清空(标记需重出)
   }[];
   // v1 无连贯字段(留后)
@@ -106,7 +108,7 @@ type StoryboardCardPayload = {
 ## 8. 编辑动作(server actions,owner+thread scoped)
 
 - `editShotPrompt(cardId, index, { firstFramePrompt?, videoPrompt? })` → 改文字 + 清 `firstFrameGenerationId`。$0。
-- `regenShotFirstFrame(cardId, shotId)` → 单帧重出 = **再铸一张子 GEN_CARD** 走一次 `generate`(见 §7;按 shotId 定位,不按 index)。**花钱**(F4)。
+- `regenShotFirstFrame(cardId, shotId)` → 单帧重出 = **再铸一张子 GEN_CARD**(可重入:既有未花钱且 prompt 一致的子卡则复用)走一次 `generate`(见 §7;按 shotId 定位,不按 index)。**旧图保留到新图落地才被覆盖**(只替换 `firstFrameCardId`,不动 `firstFrameGenerationId`;新图 DONE 后由 sync 覆盖旧 genId);**取消重出 = 无操作**(不再"先作废旧图")。**花钱**(F4)。
 - `addShot(cardId, shot)` / `deleteShot(cardId, index)` → 增/删,重排 index。$0。
 - `reorderShots(cardId, order[])` → 重排。$0。
 - 全部严格 owner-scoped(身份来自 session,不来自输入)。
@@ -136,12 +138,13 @@ type StoryboardCardPayload = {
 ## 11. 相关文件
 
 - 复用原语:`packages/otto/src/skills/propose.helpers.ts`(buildProposeCard)、`propose-pack.ts` / `apps/web/components/otto/PackCard.tsx` / `pack-credit-math.ts`(makeAll 聚合模式)、`packages/otto/src/skills/generate.ts`(唯一花钱)、`packages/core/src/cowork.ts`(CoworkPlan 有序 schema)
+- D/E prompt skills:`packages/otto/src/skills/{seedream-prompt,seedance-prompt}.ts`
+- 卡片渲染参考:`apps/web/components/otto/{OttoPlanCard,PackCard}.tsx`、`OttoChatStream.tsx`(卡片分组/渲染)
+- 新建:`packages/otto/src/skills/propose-storyboard.{ts,helpers.ts,test.ts}` + `STORYBOARD_CARD` 渲染组件 + 编辑/闸① server actions(`apps/web/lib/`)
 
 ---
 
 ## 12. Changelog
 
 - **2026-07-02(Fable 终审,45-agent 对抗验证后)**:§7 修正闸① 幂等机制——原「`cowork:${cardId}` 一 key 盖全卡」不可实现,改为**每镜头铸子 GEN_CARD**(fresh `cowork:<childCardId>` key;重出=再铸一张;禁止复合 key);§5 payload 加 `shotId`(稳定镜头 id,付费写回按它定位)与可选 per-shot `entityIds`(@引用透传,F4 铸子卡时才能把参考图真正送到模型);§8 `regenShotFirstFrame` 改按 shotId;明确 F4 不许继承 last-write-wins 整包回写;prompt 超长维持 reject-only(fail-closed,不静默截断)。
-- D/E prompt skills:`packages/otto/src/skills/{seedream-prompt,seedance-prompt}.ts`
-- 卡片渲染参考:`apps/web/components/otto/{OttoPlanCard,PackCard}.tsx`、`OttoChatStream.tsx`(卡片分组/渲染)
-- 新建:`packages/otto/src/skills/propose-storyboard.{ts,helpers.ts,test.ts}` + `STORYBOARD_CARD` 渲染组件 + 编辑/闸① server actions(`apps/web/lib/`)
+- **2026-07-03(F4 终审 I1 修复)**:§8 重出语义修正——**旧图保留到新图落地才被覆盖**(regen 只替换 `firstFrameCardId`,不再预先作废 `firstFrameGenerationId`;sync 谓词泛化为"子卡 DONE 的 genId ≠ 当前 → 覆写");**取消重出 = 真无操作**;regen 加 reuse-if-fresh 防 $0 孤儿堆积。

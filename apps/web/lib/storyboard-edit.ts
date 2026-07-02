@@ -35,8 +35,8 @@ export function applyEditShotPrompt(
   if (index < 0 || index >= payload.shots.length) return payload;
   const shots = payload.shots.map((s, i) => {
     if (i !== index) return s;
-    // 丢弃 firstFrameGenerationId:解构剔除该键,不是设成 undefined。
-    const { firstFrameGenerationId: _drop, ...rest } = s;
+    // 丢弃 firstFrameGenerationId + firstFrameCardId:解构剔除该键,不是设成 undefined。
+    const { firstFrameGenerationId: _drop, firstFrameCardId: _drop2, ...rest } = s;
     return {
       ...rest,
       ...(patch.firstFramePrompt !== undefined ? { firstFramePrompt: patch.firstFramePrompt } : {}),
