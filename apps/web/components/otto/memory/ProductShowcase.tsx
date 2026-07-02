@@ -12,7 +12,7 @@ const MONTHS = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "
 const fmtDay = (d: Date) => `${MONTHS[d.getMonth()]} ${d.getDate()}`;
 
 /** Short "Mon D" label for a row's updatedAt. Deterministic — no toLocaleDateString (SSR-safe). */
-export function whenLabel(d: Date | string): string {
+function whenLabel(d: Date | string): string {
   const date = new Date(d as unknown as string);
   return Number.isNaN(date.getTime()) ? "" : fmtDay(date);
 }
