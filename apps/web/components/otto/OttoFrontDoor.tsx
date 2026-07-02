@@ -244,12 +244,9 @@ export function OttoFrontDoor({
     }
   }
 
-  // leading-[1.65] pins the line-height this subtree currently INHERITS from the .fk
-  // ancestor (--leading-relaxed); it survives S4 teardown (when .fk/otto-theme.css is
-  // removed and .gb — which sets no line-height — applies at the root). Value-identical
-  // today → zero visual change; without it the text compacts post-teardown.
+  // leading-[1.5] — design-baseline body line-height (Analytics standard)
   return (
-    <div className="gb flex flex-1 flex-col items-center justify-center overflow-auto px-6 py-8 leading-[1.65]">
+    <div className="gb flex flex-1 flex-col items-center justify-center overflow-auto px-6 py-8 leading-[1.5]">
       <style>{`
         @media (max-width: 480px) {
           .otto-goal-grid { grid-template-columns: 1fr !important; }
@@ -275,7 +272,7 @@ export function OttoFrontDoor({
           {mentionSuggestions.length > 0 && (
             <div
               role="listbox"
-              className="absolute bottom-full left-0 mb-1 w-64 overflow-hidden rounded-[20px] border border-border bg-card z-50"
+              className="absolute bottom-full left-0 mb-1 w-64 overflow-hidden rounded-[14px] border border-border bg-card z-50"
               style={{ boxShadow: "0 18px 40px rgba(20 18 14 / 0.10), 0 6px 14px rgba(20 18 14 / 0.07)" }}
             >
               {mentionSuggestions.map((e, i) => (

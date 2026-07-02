@@ -71,8 +71,8 @@ export default function OttoConnections() {
   }, [state.phase]);
 
   return (
-    // leading-[1.65] pins the inherited line-height for S4 teardown
-    <div className="gb leading-[1.65]" style={{ flex: 1, overflow: "auto", padding: "1.25rem" }}>
+    // leading-[1.5] — design-baseline body line-height (Analytics standard)
+    <div className="gb leading-[1.5]" style={{ flex: 1, overflow: "auto", padding: "1.25rem" }}>
       <div style={{ maxWidth: 720, margin: "0 auto" }}>
         <h2 className="text-foreground" style={{ margin: 0, fontSize: "1.125rem" }}>Connections</h2>
         <p className="text-muted-foreground text-[0.875rem]" style={{ margin: "0.25rem 0 1rem" }}>

@@ -51,14 +51,12 @@ export function OttoOnboarding({ onGoToStuff, onGoToMemory }: OttoOnboardingProp
     },
   ];
 
-  // leading-[1.65] pins the line-height inherited from the .fk ancestor
-  // (--leading-relaxed); survives S4 teardown (when .fk/otto-theme.css is removed
-  // and .gb — which sets no line-height — applies at the root).
+  // leading-[1.5] — design-baseline body line-height (Analytics standard)
   return (
     <div
       role="region"
       aria-label="Getting started"
-      className="gb leading-[1.65] mx-6 mt-5 rounded-[28px] overflow-hidden bg-card shadow-sm"
+      className="gb leading-[1.5] mx-6 mt-5 rounded-[28px] overflow-hidden bg-card shadow-sm"
       style={{ border: "1.5px solid var(--border)" }}
     >
       {/* Header row */}

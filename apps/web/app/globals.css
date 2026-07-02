@@ -346,15 +346,17 @@ h1, h2, h3 { font-family: var(--font-sans); font-weight: 600; letter-spacing: va
 .media-ph { position: relative; overflow: hidden; border-radius: var(--radius-lg); border: 1px solid var(--line-2); background: linear-gradient(120deg, #1a1e26 0%, #0c0e13 50%, #181c23 100%); }
 .media-ph-glow { position: absolute; inset: 0; background: radial-gradient(60% 60% at 50% 38%, rgba(205,218,238,.16), transparent 70%); }
 
-.pop-menu { position: absolute; z-index: 50; min-width: 240px; background: var(--glass-2); -webkit-backdrop-filter: var(--backdrop-glass); backdrop-filter: var(--backdrop-glass); border: 1px solid var(--line-1); border-radius: var(--radius-md); box-shadow: var(--shadow-pop), var(--inset-light); padding: 6px; }
+/* Light popover — Grok-bright baseline (was dark Vapor glass; the app is .gb-light since S4).
+   Hard fallbacks so the portaled MentionInput popup renders right even outside .gb. */
+.pop-menu { position: absolute; z-index: 50; min-width: 240px; background: var(--popover, #FFFFFF); border: 1px solid var(--border, #E6E6E3); border-radius: var(--radius-md); box-shadow: var(--shadow-lg, 0 14px 34px rgba(20 20 24 / 0.10)); padding: 6px; }
 .pop-menu-heading { padding: 7px 11px 5px; }
 .pop-item { display: flex; align-items: center; gap: 11px; padding: 9px 11px; border-radius: var(--radius-sm); cursor: pointer; transition: background var(--dur-fast) var(--ease-out); }
-.pop-item:hover { background: var(--glass-hover); }
-.pop-item.active { background: rgba(255,255,255,.08); }
+.pop-item:hover { background: var(--accent, #ECECEA); }
+.pop-item.active { background: var(--accent, #ECECEA); }
 .pop-item-main { flex: 1; min-width: 0; }
-.pop-item-label { font: var(--text-body-medium); color: var(--fg-1); display: flex; align-items: center; gap: 8px; }
-.pop-item-desc { font: var(--text-small); color: var(--fg-3); margin-top: 1px; }
-.pop-item-check { flex: none; color: var(--fg-1); width: 16px; }
+.pop-item-label { font: var(--text-body-medium); color: var(--foreground, #0A0A0A); display: flex; align-items: center; gap: 8px; }
+.pop-item-desc { font: var(--text-small); color: var(--muted-foreground, #6E6E68); margin-top: 1px; }
+.pop-item-check { flex: none; color: var(--foreground, #0A0A0A); width: 16px; }
 
 .empty-hero { display: flex; flex-direction: column; align-items: center; text-align: center; gap: 6px; }
 .empty-hero h1 { font: var(--text-display); letter-spacing: var(--tracking-display); margin: 0; color: var(--fg-1); text-wrap: pretty; }

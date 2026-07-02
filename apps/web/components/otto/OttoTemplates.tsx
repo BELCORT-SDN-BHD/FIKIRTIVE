@@ -6,10 +6,9 @@ import TemplateModal from "./TemplateModal";
 
 export default function OttoTemplates({ projectId, entities = [] }: { projectId: string; entities?: EntityDTO[] }) {
   const [active, setActive] = useState<Template | null>(null);
-  // .gb resolves brand/surface/text tokens; leading-[1.65] pins the inherited
-  // line-height so S4 teardown of --leading-relaxed can remove it safely.
+  // leading-[1.5] — design-baseline body line-height (Analytics standard)
   return (
-    <div className="gb leading-[1.65]" style={{ flex: 1, display: "flex", flexDirection: "column", overflow: "auto", padding: "1.25rem" }}>
+    <div className="gb leading-[1.5]" style={{ flex: 1, display: "flex", flexDirection: "column", overflow: "auto", padding: "1.25rem" }}>
       <div style={{ marginBottom: "1rem" }}>
         <h2 style={{ margin: 0, fontSize: "1.125rem", color: "var(--foreground)" }}>Templates</h2>
         <p style={{ margin: "0.25rem 0 0", color: "var(--muted-foreground)", fontSize: "0.875rem" }}>

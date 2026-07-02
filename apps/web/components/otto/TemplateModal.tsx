@@ -138,10 +138,9 @@ export default function TemplateModal({
 
   return (
     <>
-      {/* .gb resolves brand/surface/text tokens; leading-[1.65] pins the
-          inherited line-height so S4 teardown can remove it safely. */}
+      {/* leading-[1.5] — design-baseline body line-height (Analytics standard) */}
       <Dialog open onOpenChange={(isOpen: boolean) => { if (!isOpen) onClose(); }}>
-        <DialogContent className="gb leading-[1.65]">
+        <DialogContent className="gb leading-[1.5]">
           <DialogHeader>
             <DialogTitle>{template.name}</DialogTitle>
             {template.description && (

@@ -522,12 +522,9 @@ export function OttoChatStream({
     messages.length > 0 &&
     messages[messages.length - 1].role === "assistant";
 
-  // leading-[1.65] pins the line-height this subtree currently INHERITS from the .fk
-  // ancestor (--leading-relaxed); it survives S4 teardown (when .fk/otto-theme.css is
-  // removed and .gb — which sets no line-height — applies at the root). Value-identical
-  // today → zero visual change; without it the text compacts post-teardown.
+  // leading-[1.5] — design-baseline body line-height (Analytics standard)
   return (
-    <div className="gb leading-[1.65]" style={{ flex: 1, display: "flex", flexDirection: "column", overflow: "hidden" }}>
+    <div className="gb leading-[1.5]" style={{ flex: 1, display: "flex", flexDirection: "column", overflow: "hidden" }}>
       <style>{`
         @keyframes otto-caret-blink { 50% { opacity: 0; } }
         @keyframes otto-shimmer {

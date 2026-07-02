@@ -63,7 +63,7 @@ function Media({
   if (errored) {
     return (
       <div
-        className={`flex flex-col items-center justify-center gap-2 p-6 min-h-[120px] bg-muted${rounded ? " rounded-[20px]" : ""}`}
+        className={`flex flex-col items-center justify-center gap-2 p-6 min-h-[120px] bg-muted${rounded ? " rounded-[14px]" : ""}`}
       >
         <AlertCircle size={22} className="text-muted-foreground/70" />
         <span className="text-[0.875rem] text-muted-foreground">
@@ -81,7 +81,7 @@ function Media({
   }
 
   return (
-    <div className={`overflow-hidden bg-muted${rounded ? " rounded-[20px]" : ""}`}>
+    <div className={`overflow-hidden bg-muted${rounded ? " rounded-[14px]" : ""}`}>
       {video ? (
         <video
           key={src}
@@ -215,11 +215,8 @@ export function OttoResult({ payload, onTweak, sourceCardId, onMakeAnother }: Ot
 
   if (!urls.length) {
     return (
-      // leading-[1.65] pins the line-height this subtree currently INHERITS from the .fk
-      // ancestor (--leading-relaxed); it survives S4 teardown (when .fk/otto-theme.css is
-      // removed and .gb — which sets no line-height — applies at the root). Value-identical
-      // today → zero visual change; without it the text compacts post-teardown.
-      <div className="gb leading-[1.65]">
+      // leading-[1.5] — design-baseline body line-height (Analytics standard)
+      <div className="gb leading-[1.5]">
         <Card>
           <div className="text-[0.875rem] text-muted-foreground">Your result is ready.</div>
         </Card>
@@ -230,11 +227,8 @@ export function OttoResult({ payload, onTweak, sourceCardId, onMakeAnother }: Ot
   // ---- Chooser grid (ad pack, nothing chosen yet) ----
   if (selected === null) {
     return (
-      // leading-[1.65] pins the line-height this subtree currently INHERITS from the .fk
-      // ancestor (--leading-relaxed); it survives S4 teardown (when .fk/otto-theme.css is
-      // removed and .gb — which sets no line-height — applies at the root). Value-identical
-      // today → zero visual change; without it the text compacts post-teardown.
-      <div className="gb leading-[1.65] max-w-[560px]">
+      // leading-[1.5] — design-baseline body line-height (Analytics standard)
+      <div className="gb leading-[1.5] max-w-[560px]">
         <Card>
           <div className="flex items-center gap-2 mb-3">
             <Sparkles size={18} className="text-brand" />
@@ -250,7 +244,7 @@ export function OttoResult({ payload, onTweak, sourceCardId, onMakeAnother }: Ot
                 type="button"
                 aria-label={`Option ${i + 1}`}
                 onClick={() => pick(i)}
-                className="relative p-0 border-2 border-border rounded-[20px] overflow-hidden cursor-pointer bg-card transition"
+                className="relative p-0 border-2 border-border rounded-[14px] overflow-hidden cursor-pointer bg-card transition"
               >
                 <Media url={u} alt={prompt ? `Generated image: ${prompt}` : `Option ${i + 1}`} rounded={false} />
                 {/* No "Otto's pick" badge: there is no real curation signal from the backend
@@ -270,11 +264,8 @@ export function OttoResult({ payload, onTweak, sourceCardId, onMakeAnother }: Ot
   const mediaAlt = prompt ? `Generated image: ${prompt}` : "Generated image";
 
   return (
-    // leading-[1.65] pins the line-height this subtree currently INHERITS from the .fk
-    // ancestor (--leading-relaxed); it survives S4 teardown (when .fk/otto-theme.css is
-    // removed and .gb — which sets no line-height — applies at the root). Value-identical
-    // today → zero visual change; without it the text compacts post-teardown.
-    <div className="gb leading-[1.65] max-w-[540px]">
+    // leading-[1.5] — design-baseline body line-height (Analytics standard)
+    <div className="gb leading-[1.5] max-w-[540px]">
       <Card>
         {/* Fix #4 — meaningful alt via mediaAlt */}
         <Media url={url} alt={mediaAlt} />

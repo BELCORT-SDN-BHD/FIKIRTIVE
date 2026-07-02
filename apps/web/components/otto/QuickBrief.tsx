@@ -54,15 +54,12 @@ export function QuickBrief({ projectId, onSaved }: QuickBriefProps) {
   }
 
   return (
-    /* leading-[1.65] pins the line-height this subtree currently INHERITS from the .fk
-       ancestor (--leading-relaxed); it survives S4 teardown (when .fk/otto-theme.css is
-       removed and .gb — which sets no line-height — applies at the root). Value-identical
-       today → zero visual change; without it the text compacts post-teardown. */
-    <div className="gb leading-[1.65] w-full">
+    /* leading-[1.5] — design-baseline body line-height (Analytics standard) */
+    <div className="gb leading-[1.5] w-full">
       <button
         type="button"
         onClick={() => setOpen((o) => !o)}
-        className="flex items-center justify-center gap-2 text-[0.75rem] font-semibold text-muted-foreground/70 uppercase tracking-[0.08em] bg-transparent border-0 cursor-pointer p-0 w-full"
+        className="flex items-center justify-center gap-2 text-[0.65625rem] font-semibold text-muted-foreground/70 uppercase tracking-[0.07em] bg-transparent border-0 cursor-pointer p-0 w-full"
         aria-expanded={open}
       >
         <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden>
@@ -81,7 +78,7 @@ export function QuickBrief({ projectId, onSaved }: QuickBriefProps) {
       {open && (
         <form
           onSubmit={handleSave}
-          className="mt-4 p-4 bg-card border border-border rounded-[20px] flex flex-col gap-3"
+          className="mt-4 p-4 bg-card border border-border rounded-[14px] flex flex-col gap-3"
           style={{ borderWidth: "1.5px" }}
         >
           <div>
