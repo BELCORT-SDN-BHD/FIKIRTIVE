@@ -218,7 +218,9 @@ export async function handleRefGen(data: RefGenJobData, retryCount: number): Pro
       // about to commit (delivered-but-refunded). Mirrors gen.ts's stale cutoff.
       await prisma.$transaction(async (tx) => {
         const staled = await tx.refGenJob.updateMany({
-          where: { id: job.id, status: "GENERATING", startedAt: { lt: new Date(Date.now() - REFGEN_STALE_MS) } },
+          // outputAssetIds isEmpty: never fail-close a job that already committed outputs (a
+          // redelivery landing in the commit→DONE window) — its resume delivery must win.
+          where: { id: job.id, status: "GENERATING", startedAt: { lt: new Date(Date.now() - REFGEN_STALE_MS) }, outputAssetIds: { isEmpty: true } },
           data: { status: "FAILED", error: "stale GENERATING after a possible paid call — not retrying, to avoid a double charge", finishedAt: new Date() },
         });
         // refund only if WE just failed it closed (count>0) — never touch an active
