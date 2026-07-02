@@ -6,7 +6,7 @@
  * requireOwner, withLlmBudget, resolveDisabledModels, revalidatePath.
  * No real DB needed.
  */
-import { describe, it, expect, vi, beforeEach } from "vitest";
+import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 
 // ── Hoisted mock primitives (available before vi.mock factories run) ─────────
 
@@ -35,11 +35,17 @@ const {
   MockMaxTurnsExceededError,
   mockApprove,
   mockGetInterruptions,
+  mockTavilySearch,
+  mockBraveSearch,
+  mockSearchWithFallback,
 } = vi.hoisted(() => {
   const mockRunStateToString = vi.fn(() => '{"mocked":"state"}');
   const mockRunStateFromString = vi.fn();
   const mockApprove = vi.fn();
   const mockGetInterruptions = vi.fn(() => [] as unknown[]);
+  const mockTavilySearch = vi.fn();
+  const mockBraveSearch = vi.fn();
+  const mockSearchWithFallback = vi.fn();
 
   class MockRunState {
     history: unknown[];
@@ -95,6 +101,9 @@ const {
     MockMaxTurnsExceededError,
     mockApprove,
     mockGetInterruptions,
+    mockTavilySearch,
+    mockBraveSearch,
+    mockSearchWithFallback,
   };
 });
 
@@ -133,6 +142,19 @@ vi.mock("@fikirtive/db", () => ({
     $transaction: mockTransaction,
   },
 }));
+
+// Spread the REAL module so pure helpers (newId, coworkTurnRequest, OTTO_MAX_STEPS,
+// GOAL_PRESETS, isGoalKey, ...) stay real — only the web-search adapters are mocked so
+// buildOttoContext's env-key wiring can be tested with ZERO real network calls.
+vi.mock("@fikirtive/core", async (importOriginal) => {
+  const actual = (await importOriginal()) as Record<string, unknown>;
+  return {
+    ...actual,
+    tavilySearch: mockTavilySearch,
+    braveSearch: mockBraveSearch,
+    searchWithFallback: mockSearchWithFallback,
+  };
+});
 
 // Spread the REAL module so pure helpers (mapOttoUsage, OTTO_DEFAULT_MODEL, prices)
 // stay real — only the heavy / non-deterministic exports are mocked. MaxTurnsExceededError
@@ -323,6 +345,122 @@ describe("buildOttoContext", () => {
     expect(ctx.disabledModels).toEqual(["bad-model"]);
     // startGen is the injected port from gen-actions
     expect(ctx.startGen).toBe(mockStartGen);
+  });
+});
+
+// ── Test 3b: research.search env-key wiring (S1) ─────────────────────────────
+//
+// buildOttoContext wires ctx.research.search off TAVILY_API_KEY / BRAVE_SEARCH_API_KEY:
+// no keys -> undefined (not configured); one key -> that provider as primary, no
+// fallback; both keys -> Tavily primary + Brave fallback via searchWithFallback.
+// The adapter's bare WebSearchResult[] is wrapped as { results: [...] } at this seam.
+
+describe("buildOttoContext — research.search env-key wiring", () => {
+  const savedEnv: { TAVILY_API_KEY?: string; BRAVE_SEARCH_API_KEY?: string } = {};
+
+  beforeEach(() => {
+    savedEnv.TAVILY_API_KEY = process.env.TAVILY_API_KEY;
+    savedEnv.BRAVE_SEARCH_API_KEY = process.env.BRAVE_SEARCH_API_KEY;
+    delete process.env.TAVILY_API_KEY;
+    delete process.env.BRAVE_SEARCH_API_KEY;
+    mockResolveDisabledModels.mockResolvedValue(new Set());
+  });
+
+  afterEach(() => {
+    if (savedEnv.TAVILY_API_KEY === undefined) delete process.env.TAVILY_API_KEY;
+    else process.env.TAVILY_API_KEY = savedEnv.TAVILY_API_KEY;
+    if (savedEnv.BRAVE_SEARCH_API_KEY === undefined) delete process.env.BRAVE_SEARCH_API_KEY;
+    else process.env.BRAVE_SEARCH_API_KEY = savedEnv.BRAVE_SEARCH_API_KEY;
+  });
+
+  it("no keys: search is undefined; readPage and fetchUrl are still wired", async () => {
+    const ctx = await buildOttoContext({
+      ownerId: "owner_nokeys",
+      projectId: "proj_nokeys",
+      threadId: "thread_nokeys",
+    });
+
+    expect(ctx.research!.search).toBeUndefined();
+    expect(typeof ctx.research!.readPage).toBe("function");
+    expect(typeof ctx.research!.fetchUrl).toBe("function");
+    expect(mockTavilySearch).not.toHaveBeenCalled();
+    expect(mockBraveSearch).not.toHaveBeenCalled();
+  });
+
+  it("Tavily key only: search is wired via tavilySearch, returns {results}-wrapped, brave unused", async () => {
+    process.env.TAVILY_API_KEY = "tvly-test-key";
+
+    const bareResults = [{ title: "t", url: "https://example.com", snippet: "s" }];
+    const mockPrimaryFn = vi.fn();
+    mockTavilySearch.mockReturnValue(mockPrimaryFn);
+    // searchWithFallback(primary, fb) -> a WebSearchFn; stub it to return the bare array
+    // so we can assert buildOttoContext wraps it as { results: [...] }.
+    mockSearchWithFallback.mockReturnValue(async () => bareResults);
+
+    const ctx = await buildOttoContext({
+      ownerId: "owner_tavily",
+      projectId: "proj_tavily",
+      threadId: "thread_tavily",
+    });
+
+    expect(mockTavilySearch).toHaveBeenCalledWith("tvly-test-key");
+    expect(mockBraveSearch).not.toHaveBeenCalled();
+    expect(typeof ctx.research!.search).toBe("function");
+
+    const result = await ctx.research!.search!("some query");
+    expect(result).toEqual({ results: bareResults });
+  });
+
+  it("both keys: search wired {results}-wrapped; searchWithFallback fed a Tavily primary + Brave fallback", async () => {
+    process.env.TAVILY_API_KEY = "tvly-test-key";
+    process.env.BRAVE_SEARCH_API_KEY = "brave-test-key";
+
+    const mockPrimaryFn = vi.fn();
+    const mockFallbackFn = vi.fn();
+    mockTavilySearch.mockReturnValue(mockPrimaryFn);
+    mockBraveSearch.mockReturnValue(mockFallbackFn);
+    const bareResults = [{ title: "t2", url: "https://example.com/2", snippet: "s2" }];
+    mockSearchWithFallback.mockReturnValue(async () => bareResults);
+
+    const ctx = await buildOttoContext({
+      ownerId: "owner_both",
+      projectId: "proj_both",
+      threadId: "thread_both",
+    });
+
+    expect(mockTavilySearch).toHaveBeenCalledWith("tvly-test-key");
+    expect(mockBraveSearch).toHaveBeenCalledWith("brave-test-key");
+    expect(typeof ctx.research!.search).toBe("function");
+
+    // searchWithFallback composition is wired lazily inside the search closure — invoke it
+    // to observe primary=Tavily's fn, fallback=Brave's fn both feeding the fallback compose.
+    const result = await ctx.research!.search!("q");
+    expect(mockSearchWithFallback).toHaveBeenCalledWith(mockPrimaryFn, mockFallbackFn);
+    expect(result).toEqual({ results: bareResults });
+  });
+
+  it("Brave key only: search wired via braveSearch as primary, tavily unused", async () => {
+    process.env.BRAVE_SEARCH_API_KEY = "brave-test-key";
+
+    const mockPrimaryFn = vi.fn();
+    mockBraveSearch.mockReturnValue(mockPrimaryFn);
+    const bareResults = [{ title: "t3", url: "https://example.com/3", snippet: "s3" }];
+    mockSearchWithFallback.mockReturnValue(async () => bareResults);
+
+    const ctx = await buildOttoContext({
+      ownerId: "owner_brave",
+      projectId: "proj_brave",
+      threadId: "thread_brave",
+    });
+
+    expect(mockBraveSearch).toHaveBeenCalledWith("brave-test-key");
+    expect(mockTavilySearch).not.toHaveBeenCalled();
+    expect(typeof ctx.research!.search).toBe("function");
+
+    const result = await ctx.research!.search!("q");
+    // No fallback available when only Brave is present.
+    expect(mockSearchWithFallback).toHaveBeenCalledWith(mockPrimaryFn, undefined);
+    expect(result).toEqual({ results: bareResults });
   });
 });
 
