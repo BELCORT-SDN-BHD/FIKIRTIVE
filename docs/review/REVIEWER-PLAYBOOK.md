@@ -5,7 +5,8 @@
 > 全库详细地图见同目录 [CODEBASE-MAP-2026-07-02.md](CODEBASE-MAP-2026-07-02.md)。
 
 ## 审查协议
-1. **一律 PR + 双 CI 绿**才可合并(见根 CLAUDE.md「Merge discipline」)。
+0. **先读宪法**:`docs/BLUEPRINT.md` 在本手册之上 —— diff 与蓝图冲突 → 停手、报告、等 founder 裁决(手册与蓝图冲突时,蓝图赢)。
+1. **一律 PR + 全部 CI checks 绿**才可合并(见 `.claude/CLAUDE.md`「Merge discipline」)。
 2. **钱路 diff**(genRequest/startGen/startRefGen/dispatch/幂等键/partial-unique 索引/provider 调用)必过 `money-safety-review` skill,逐检查项给结论。
 3. **审查者不自批自己写的 PR** —— 自己的改动要么等 founder,要么换一个 session 审。
 4. **UI/客户端 PR**:typecheck+单测不够,合并前需浏览器 runtime QA(谁提出谁验证,PR 里贴证据)。
@@ -42,7 +43,7 @@
 ### 必查清单
 - [ ] FOUNDER path exclusivity: requireOwner (auth-guard.ts) is the ONLY resolver allowed to return FOUNDER_OWNER_ID, and only via isFounderAdmin(email); any error path returning "founder" or a default org is an instant block. Grep new code for FOUNDER_OWNER_ID used as a fallback.
 - [ ] R7 in-handler gates: every new server action / route handler re-asserts its own gate (requireSession | requireOwner | requireRole) as the first statement — proxy.ts is convenience, never the guard. ownerId/orgId must come from the gate result, never from client input.
-- [ ] Spend never on requireRole: spend/generation actions gate with requireSession/requireOwner only; a PR that puts operator-RBAC (requireRole) on a spend path, or loosens a spend gate to a role check, is wrong by design.
+- [ ] Spend never on requireRole: spend/generation actions gate with requireSession/requireOwner only; a PR that puts **operator/staff requireRole** on a tenant spend path, or loosens a spend gate to a role check, is wrong by design. **边界注(2026-07-03)**:未来租户侧审批席闸(宪法 7 RBAC)与市政厅 v2 授信限额是独立的新设计 —— 不被本条禁止,也不豁免本条;动工时单独立清单。
 - [ ] allowed()/isAllowedEmail are async: reject any `if (!allowed(email))` without await (always-falsy Promise = gate silently open).
 - [ ] Allowlist coverage for new auth methods: any new BA sign-in surface must be covered by databaseHooks user.create.before + session.create.before (not just hooks.before path prefixes), and any new outbound auth email must assertAllowedEmail before send (the sendResetPassword/sendMagicLink pattern). requireEmailVerification: true and accountLinking.requireLocalEmailVerified: true are non-removable.
 - [ ] Role dual-write: User.role (canonical, read by roleForEmail/requireRole) and ba_user.role (read by the BA admin plugin's hasPermission for its client-callable /api/better-auth admin endpoints) must be written together (saveUserRole tx, converge founder promote). A ba_user.role write without the matching User.role write (or vice versa) desyncs two live permission systems.
@@ -121,7 +122,7 @@
 - [ ] New-model diffs touch THREE tables in lockstep: GEN_VIDEO_MODELS + GEN_VIDEO_MODEL_INFO + GEN_VIDEO_MODEL_OPTIONS (core/gen.ts) AND VIDEO_CFG (generation/index.ts) or the BytePlus MODEL_MAPs — and if flat-priced, FLAT_PRICED_VIDEO_MODELS + VIDEO_CREDITS_BY_RESOLUTION; a model in the menu with no provider mapping fails pre-spend (OK), a mapping with no menu entry is dead; a BytePlus model NOT in FLAT_PRICED_VIDEO_MODELS silently charges by fal USD rates.
 - [ ] Provider error discipline: failures before the billed POST/submit throw PLAIN Errors (worker retries); any failure after res.ok / task-created throws chargedError (worker terminal-fails + sets spent) — verify every new fetch/parse/download inside a provider is on the correct side of that line.
 - [ ] Partial-unique index changes: predicates must stay IMMUTABLE (no ::text enum casts), GenJob_active_idempotency_key stays active-only while GenJob_cowork_idempotency_once stays all-status LIKE 'cowork:%', and the startGen P2002 recovery lookup must mirror the index it catches (cowork = any status, general = QUEUED/GENERATING).
-- [ ] Money-in is grantCredits/grantCreditsTx ONLY, ledger-row-first, with a stable idempotencyKey (stripe:<session.id>, signup:<orgId>, admin keys); Stripe handler returns 200 for anything but a bad signature and dedups on session id, not event id; negative amounts only via ADJUST's conditional decrement (never account-creating, never below zero).
+- [ ] **Credits 账道**的 money-in 只有 grantCredits/grantCreditsTx(ledger-row-first、稳定幂等键 stripe:<session.id>/signup:<orgId>/admin keys;Stripe handler 除坏签名外一律 200、按 session id 去重;负数只走 ADJUST 条件递减)。**第二账道(通道费,宪法 5)是独立合法 money 面**:与 CreditLedger **零共享表/actions/finalizer**(grep 级隔离);任何把通道费写进 CreditLedger 的 diff = reject;审 P2 第二账道 diff 时逐条对 harmony-05 五条安全律(幂等键/行先行/事件后记账/fail-closed/互斥索引)+ 报价卡两账道分行列示 + **动工前先扩 money-safety-review Step-1 符号范围**(已写入该 skill 前瞻义务)。
 - [ ] Refunds only fire when the caller's guarded status flip WON (updateMany count>0 on QUEUED/stale predicate); and post-enqueue bookkeeping failures (queueJobId persist) must stay best-effort — never refund a job a worker will still run.
 - [ ] pg-boss queue policy edits keep retryDelay>0 alongside retryBackoff and expireInSeconds > the longest provider call (BytePlus 15-min poll + persist headroom < 20 min); shrinking expire or the poll-timeout ordering re-opens the expired-redelivery double-spend/false-FAIL window.
 - [ ] Anything touching packages/db/src/credits.ts, the finalizer indexes, or worker settle/refund ordering triggers the money-safety-review skill and the founder's ask-before-spend rule for verification runs.
@@ -158,3 +159,26 @@
 - ⚠️ ChatThread deliberately has NO prisma @@index — the raw partial ChatThread_project_live_idx is the only list index; adding a 'missing' @@index creates duplicate-index drift, and dropping the partial silently kills thread-list performance while `prisma validate` stays green.
 - ⚠️ The D21 sweep queue exists (QUEUES.sweep, created in apps/worker/src/index.ts) with NO handler — anyone implementing it must delete blobs only and keep Asset rows as tombstones (Generation FK Restrict makes row deletion impossible by design); a naive implementation that deletes rows or ignores Entity.baseAssetId protection corrupts provenance and live entities.
 
+
+
+---
+
+# 增补(2026-07-03 对齐审查,随宪法 v2.1 生效)
+
+> 基线注:本手册主体测绘于 main #99;宪法与拍板会(2026-07-03)晚于它。以下增补条款优先于上文旧条款。
+
+## 审查协议增补
+- **双模两问(宪法 7,判例:报表引擎 Otto 替代案被 founder 否决)**:任何新功能面 (a) 人工不靠 Otto 能否完整操作?(b) 人工可见的数据面有没有对应 free/read skill 或明示豁免?任一为否 = 挡。
+- **第九缝(Parity Manifest)**:新 server action / 新页面数据读取 → 必须在 parity-manifest 登记(配对 skill 或四类封闭豁免:ADMIN/VISUAL/MONEY_IN/ACCOUNT_SECURITY;新增豁免类 = 修宪);manifest 保持纯字面量;check-parity.sh warn→hard 阶段状态要核;viewContext(上下文桥)server 侧一律 ownerId 复核。
+- **协议 #4 扩为两关**:UI 改动 = 浏览器 runtime QA **+ 设计审**(宪法 11:.gb 单一系统、基准 = Analytics 屏)。
+
+## 钱路清单增补(定价规则,宪法 5)
+- [ ] 任何新收费点/调价 diff 必附 costing 计算并过 **毛利率 ≥45% 地板**(口径 = (售价−成本)/售价;依据 harmony-04)
+- [ ] 费率/价格字面量出现在 config 层之外 = reject;pricing/UI 文案出现 "unlimited" 类字样 = reject(宪法 8)
+- [ ] BytePlus 资源包余量告警工单(P1 必做)在包相关 diff 时核状态
+- [ ] Search API(3x margin)走 withLlmBudget settle 的 search 项 —— 各费率各自 margin,不并轨;不做每次搜索弹审批
+
+## Otto 包清单增补
+- [ ] **效率良心(宪法 5 附则)**:触及 turn 循环/上下文组装/skill 步数的 diff,增查是否引入用户侧 token 浪费(冗余重发/臃肿上下文/多余步数)—— 是 = **缺陷级 reject**,不是"优化建议"。已知三工单勿重报:①prompt caching(前置:meter 补 cache_write 计量)②verdict 轮重发 base64 图 ③skill 确定性化
+- [ ] **技能为弱模型设计(宪法 10)**:新 skill 的专业判断必须冻进确定性代码/schema/模板,不靠模型天赋(prompt-skills 范本)
+- [ ] 注册处所从五处改**六处**:registry.ts / registry.test / migration.test / CATALOG.md(已入 CI catalog:check)/ instructions.ts / **Parity Manifest**
