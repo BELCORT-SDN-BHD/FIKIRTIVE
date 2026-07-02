@@ -36,6 +36,21 @@ export async function createNodeWithRetry(
   return last;
 }
 
+/**
+ * A canvas node representing a PAID generation still in flight — an image/video gen
+ * node that hasn't resolved to media yet (status "pending"/"timeout", no url).
+ * Deleting one does NOT refund (its GenJob already reserved and will settle) and
+ * re-running mints a fresh per-click idempotencyKey → a SECOND charge. The delete
+ * confirm uses this to warn before the owner reflexively removes a stuck-looking
+ * card and reclicks. "failed" is terminal (already refunded) and "done"/url-present
+ * is finished — both safe to delete.
+ */
+export function isInFlightPaidGen(node: { type: string; status?: string; url?: string | null }): boolean {
+  if (node.type !== "image" && node.type !== "video") return false;
+  if (node.url) return false;
+  return node.status === "pending" || node.status === "timeout";
+}
+
 export async function poll(
   jobId: string,
   onDone: (urls: string[], status: string, generationIds: string[]) => void,
