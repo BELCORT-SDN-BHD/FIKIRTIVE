@@ -42,7 +42,7 @@ export function assembleSeedance(i: SeedancePromptInput): string {
     lines.push(single ? seg : `Shot ${idx + 1}: ${seg}`);
     if (s.audio) lines.push(`Audio: ${s.audio}`);
   });
-  if (i.mode === "i2v") lines.push("keep the subject consistent with the source frame, preserve face and outfit");
+  if (i.mode === "i2v") lines.push("keep the subject consistent with the source frame");
   const locks = identityLockClause(i.references);
   if (locks) lines.push(locks);
   if (i.pacing) lines.push(i.pacing);

@@ -18,8 +18,17 @@ describe("assembleSeedance", () => {
     expect(out).not.toContain("--duration");
     expect(out).not.toContain("--ratio");
   });
-  it("i2v adds a subject-consistency line", () => {
-    expect(assembleSeedance(oneShot())).toContain("keep the subject consistent with the source frame");
+  it("i2v adds a subject-neutral consistency line (no face/outfit assumption)", () => {
+    const out = assembleSeedance(oneShot());
+    expect(out).toContain("keep the subject consistent with the source frame");
+    expect(out).not.toContain("preserve face and outfit");
+  });
+  it("a character reference still yields face/hairstyle/build identity lock", () => {
+    const out = assembleSeedance(seedancePromptInput.parse({
+      shots: [{ subject: "the man in the frame", action: "turns to face the camera" }],
+      references: [{ role: "character", name: "Mia", lock: true }],
+    }));
+    expect(out).toContain("same face, hairstyle, and build");
   });
   it("cleanFootage (default) appends the no-text/watermark/logo line", () => {
     expect(assembleSeedance(oneShot())).toContain("no on-screen text, watermark, or logo");
