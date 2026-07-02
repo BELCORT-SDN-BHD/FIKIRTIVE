@@ -41,9 +41,9 @@
 2. **钱路神圣。** money-in 只有 `grantCredits`(Stripe webhook + admin 授予);spend path(genRequest 闸 → startGen → 幂等键 → provider 调用 → reserve/settle)的任何 diff 必过 `money-safety-review`。**每笔真实花费逐笔问 founder —— "问"就是上限,没有代码上限。**
 3. **Otto 运营契约(五条铁律)**:① 计费透明、只显示 credits 永不显示美元 ② 花钱前必审批 ③ 状态诚实(失败自动退款、重试绝不双扣)④ 建议按钮引导下一步 ⑤ One Otto —— 新能力永远 = 新 skill,不是新 app。
 4. **审批的数学**:`needsApproval = (cost=spend) ∥ (effect=write ∧ reach=external)`。三字段缺一即取最危险值(fail-closed)。这条公式是城市的电闸,不许出现绕过它的旁路。
-5. **定价永不硬编码。** 目标毛利 40–50%;图约 2.5x、视频近成本卖、**利润主要在 Otto 本身**。credits 与美元锚定(1 credit = $0.10,内部 ×10 记账)。**结构定调(2026-07-03,G 区拍板)**:席位订阅(创作席+审批席双档)+ credits 用量双轨;功能全开、档位卖规模;credits 滚存上限制(以 costing 为准 —— **任何定价决定 costing 先行**);**MYR 为主货币 + 分市场差异定价(最大化 margin)**;通道费透明直传;**永久禁止任何 "unlimited" 类报价**(founder 2026-07-03:"Otto 自动化的时候我们就糟糕了" —— agent 自动化使不限量承诺变成本敞口)。
+5. **定价永不硬编码。** 目标毛利 40–50%;图约 2.5x、视频近成本卖、**利润主要在 Otto 本身**。credits 与美元锚定(1 credit = $0.10,内部 ×10 记账)。**结构定调(2026-07-03,G 区拍板)**:席位订阅(创作席+审批席双档)+ credits 用量双轨;功能全开、档位卖规模;credits 滚存上限制(以 costing 为准 —— **任何定价决定 costing 先行**);**MYR 为主货币 + 分市场差异定价(最大化 margin)**;通道费透明直传且**单独账道收取,永不混入 credits**(credits = 我们的服务;通道费 = 代收过路费,两条独立账道);**永久禁止任何 "unlimited" 类报价**(founder 2026-07-03:"Otto 自动化的时候我们就糟糕了" —— agent 自动化使不限量承诺变成本敞口)。
 6. **租户铁幕。** 一切数据 ownerId 隔离;身份永远来自 session(requireOwner),永远不信客户端传的 org/owner。跨租户读一个字节 = 事故。
-7. **双模原则 + Otto 全操控(2026-07-03,founder 定为最高设计要求)。** 每个功能区必须满足两条:(a) **人工可完整操作** —— Otto 不在也是一个能打的产品;(b) **Otto 可 100% 操控 FIKIRTIVE 能操控的一切**。保证机制是结构性的,不靠自觉:
+7. **双模原则 + Otto 全操控(2026-07-03,founder 定为最高设计要求)。** 每个功能区必须满足两条:(a) **人工可完整操作** —— Otto 不在也是一个能打的产品;(b) **Otto 可 100% 操控 FIKIRTIVE 能操控的一切**。**(a) 无例外**(判例:总审查员曾提议"报表引擎由 Otto 替代",被 founder 否决 —— "Otto 是在建设很棒的基建上的自动化操作员",人工面就是卖 seats 的根)。**租户 org 内部同样要阶级制度**(用户侧 RBAC:创作席/审批席 + org 内角色,与团队协作/审批流同件设计)。保证机制是结构性的,不靠自觉:
    - **单一动作层**:UI 按钮和 Otto skill 调用**同一个** server action,禁止两套业务实现(`generate`→`startGen`←canvas 按钮 = 范本);
    - **Parity Manifest**:action ↔ skill 对照表 + 明示豁免,CI 扫描 —— 新 action 没登记就合并不进去;
    - **读的对等**:每个人工可见的数据面都有对应 free/read skill(Otto 不做瞎子操作员);
@@ -116,16 +116,17 @@ pg-boss 五条队列 + 三类回收器(gen/refgen/LLM 预扣)、ingest 哈希复
 ## 六、还没盖的区(终局路线,方向已定、图纸未画)
 
 **建设节奏(2026-07-03 定调):不走 funding,直接市场变现、利益最大化 —— Content creation 相关楼最先上线赚钱**,其余新区按收入贡献排队。
+**GTM 王牌(founder 2026-07-03):dev 团队用 FIKIRTIVE 来 market FIKIRTIVE 并大获成功** —— dogfood 即营销,成功案例本身就是最响的广告(也是最狠的 QA)。
 
 按 founder 的城市群构想,以下新区**方向锁定**,动工前必须各自出 spec 走第五章流程。
 **新区的功能清单不凭空发明** —— 以 Salesforce + HubSpot 全量 feature 分析为底稿(`docs/research/`,2026-07-03 起),founder 逐项 WHAT-pass(要/不要/以后)拍板后才画施工图;每个新区同时满足宪法第 7 条双模原则(人工全操作 + Otto 100% 代劳)。
 
-- **CRM 区**(客户/联系人/公司、线索与 pipeline、生命周期阶段、活动时间线 —— 对标 Salesforce Sales Cloud 核心 + HubSpot Smart CRM;全新区)
-- **Campaign 管理区**(campaign 对象、预算、多渠道编排、归因、UTM、campaign 级报表 —— 对标两家的 campaign 体系;把现有"投放"升格为完整管理面)
+- **CRM 区**(**分阶段:respond.io 级 SMB-lite 起步 → 长到 Salesforce 级深度**,架构按终局设计;联系人主要从对话/广告自动进来,WhatsApp-first;帮商家收款 = 以后且起步不碰资金流)
+- **Campaign 管理区**(**独立 Campaign 对象**,不升格 project —— founder:"要 scale 去 Salesforce 那种,干净最重要";预算/编排/归因/UTM/campaign 级报表)
 - **多平台广告区扩建**:TikTok → Lazada → Shopee(渠道缝已铺好,每平台独立 PR + 独立安全测试,顺序按商业价值定)
-- **排期发布区**(spec 已有,等 App Review)
+- **排期发布区**(spec 已有,等 App Review;**发布基建必须平台可插拔** —— FB/IG 先行,TikTok/Shopee/Lazada 类全要,加新平台 = 加 adapter 不改核心)
 - **全量分析区**(spec 已有)
-- **自动回复/客服区**(共享收件箱、IG/FB DM、WhatsApp、chatbot、知识库 —— 对标 Service Hub / Service Cloud;全新区)
+- **自动回复/客服区**(**WhatsApp BSP = 第一波入场券**;共享收件箱/Comment-to-DM/AI 客服(O-06 护栏前置);对标 respond.io(KL 同城)+ ManyChat;生命周期 WhatsApp-first,**email 以后但必须建**)
 - **订阅层**(Stripe Phase 4;利润在 Otto 的定价哲学落地处)
 - **定时任务/自主 Otto —— routine 授权模型已定调(2026-07-03 第一轮共同设计)**:用户明确创建 routine(例:每周一 per 用户时区,研究 trend → 出 posts → 自动发布)= 一次性预授权,执行免逐次审批;配套四件不可少 —— 预算上限、范围声明、kill switch、事后摘要。细化 spec 动工前仍需 founder 过目
 - **手机 App(远期)**:routine 管理与审批的移动面(founder 2026-07-03 点名)
@@ -150,3 +151,4 @@ pg-boss 五条队列 + 三类回收器(gen/refgen/LLM 预扣)、ingest 哈希复
 | 2026-07-03 | v1.5 O 区封卷:对外 MCP 永久不做入第 8 条("操作这座城的 agent 永远只有 Otto");O-09 分域/O-10 要/O-12 Otto 之手/O-13 团队协作(归 G 区) | 待 founder 定稿 |
 | 2026-07-03 | v1.6 G 区封卷入宪:双档席位/功能全开/滚存上限制(costing 先行)/MYR+分市场定价/直传/unlimited 永禁/白标永禁/Agency 顺序 G-09→协作+G-11→G-10 | 待 founder 定稿 |
 | 2026-07-03 | v1.7 C 区封卷:工厂 MVP(升级票纪律)+ money-in 豁免入第 7 条 + 新第 10 条"技能为弱模型设计"(原 10 顺延为 11) | 待 founder 定稿 |
+| 2026-07-03 | v1.8 WHAT-pass 全卷封盘:双模无例外判例 + 租户 RBAC 入第 7 条;通道费独立账道入第 5 条;发布可插拔/CRM 分阶段/独立 Campaign 对象/WhatsApp 第一波/dogfood GTM 入第六章 | 待 founder 定稿 |
