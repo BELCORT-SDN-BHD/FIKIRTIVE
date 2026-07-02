@@ -20,7 +20,7 @@ export async function executeLookupProducts(
     take: 200, // catalog design bound (founder decision 6); substring match in app code
   });
   const hit = (d: Record<string, unknown>): boolean => {
-    const hay = [d.name, d.description, d.sellingAngle, ...(Array.isArray(d.tags) ? d.tags : [])]
+    const hay = [d.name, d.description, d.sellingAngle, d.category, ...(Array.isArray(d.tags) ? d.tags : [])]
       .filter((v): v is string => typeof v === "string").join(" ").toLowerCase();
     return hay.includes(q);
   };
@@ -34,7 +34,7 @@ export const lookupProductsSkill = defineOttoSkill({
   effect: "read",
   reach: "internal",
   description:
-    "Look up the user's saved products by name, tag or description (returns up to 5 full records). $0. " +
+    "Look up the user's saved products by name, category, tag or description (returns up to 5 full records). $0. " +
     "Your context only shows a summary of the catalog — call this BEFORE naming, pricing or featuring a specific product that isn't already in your context.",
   parameters: params,
   execute: executeLookupProducts,
