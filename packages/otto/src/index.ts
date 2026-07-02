@@ -19,5 +19,6 @@ export type {
 } from "@openai/agents";
 export { allSkills, skillCatalog } from "./registry.js";
 export type { SkillMeta } from "./registry.js";
+export { PROMPT_SKILLS, PROMPT_SKILLED_FAMILIES, familyHasPromptSkill } from "./prompt-skills.js";
 export { defineOttoSkill, deriveNeedsApproval } from "./skill.js";
 export type { OttoSkill, OttoSkillSpec, Cost, Effect, Reach } from "./skill.js";

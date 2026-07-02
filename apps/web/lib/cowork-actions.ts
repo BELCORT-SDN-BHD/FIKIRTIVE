@@ -31,6 +31,7 @@ import { requireOwner } from "./auth-guard";
 import { isImpersonating } from "@/lib/better-auth/compat";
 import { withLlmBudget } from "@fikirtive/otto";
 import { OTTO_DEFAULT_MODEL } from "@fikirtive/otto";
+import { familyHasPromptSkill } from "@fikirtive/otto";
 
 /** Phase C vision: resolve one asset to a base64 data-URL for the planner.
  *  Returns null (and never throws) when the asset is missing, foreign, deleted,
@@ -553,19 +554,28 @@ export async function coworkGenerate(raw: unknown): Promise<{ id: string } | { e
     return { error: "That model is currently turned off — pick another, or ask an admin to re-enable it." };
   }
 
-  // OPT-6 P2: deterministic $0 composer (spec §4a) — append the resolved family×mode
-  // directive to the CLIENT prompt, compose ONCE here at the spend side (NOT in
-  // coworkTurn — that double-appends). conditioned = entityIds.length>0 is an advisory
-  // APPROXIMATION (a bare 0-ref LOCATION mention runs t2i at the worker but keys i2i
-  // here) — acceptable because the composer is advisory TEXT, never a spend decision,
-  // matching the Guardian's conditioned:true precedent. Changes ONLY the prompt string.
+  // Deterministic $0 composer (OPT-6 P2, spec §4a) — append the resolved family×mode
+  // directive to the CLIENT prompt at the spend side. conditioned = entityIds.length>0 is
+  // an advisory APPROXIMATION (a bare 0-ref LOCATION mention runs t2i at the worker but keys
+  // i2i here) — acceptable because the composer is advisory TEXT, never a spend decision.
+  //
+  // D/E prompt-mastery decision 6: a family that owns a dedicated prompt skill
+  // (seedreamPrompt/seedancePrompt) is the SOLE prompt authority — do NOT stack the legacy
+  // directive on top of its already-assembled prompt (the two contradicted: the assembler
+  // emits comma-joined fragments while the seedream directive says "avoid comma-soup"). So we
+  // skip the directive for skilled families; it stays a fallback ONLY for un-skilled models.
+  // This also aligns the two spend surfaces — the Otto-chat `generate` skill already uses the
+  // card prompt directly — so button + chat yield the identical model-bound prompt for the
+  // families they both generate. Money-safety: changes ONLY the prompt string, never the
+  // model/count/params/idempotency that determine the charge. composePrompt no-ops on undefined.
   const family = modelFamily(chosenModel);
   const mode = deriveMode({
     kind: proposal.data.kind,
     conditioned: entityIds.length > 0,
     hasSourceImage: !!sourceGenerationId,
   });
-  const directive = family ? await getEnhanceDirective(family, mode) : undefined;
+  const directive =
+    family && !familyHasPromptSkill(family) ? await getEnhanceDirective(family, mode) : undefined;
   const composedPrompt = composePrompt({ prompt, directive, maxLen: MAX_GEN_PROMPT });
 
   // Build the request via the pure core builder (same logic, extracted for reuse by the Otto
