@@ -1,5 +1,5 @@
 import { z } from "zod";
-import { newId } from "@fikirtive/core";
+import { newId, MAX_GEN_ENTITIES } from "@fikirtive/core";
 
 /** 一条分镜最多几个镜头（对齐遗留 CoworkPlan 每场 8 shot 的上限，防跑飞）。 */
 export const MAX_STORYBOARD_SHOTS = 8;
@@ -10,7 +10,8 @@ export const storyboardShot = z.object({
   title: z.string().trim().max(120).optional(),
   firstFramePrompt: z.string().trim().min(1).max(2000),
   videoPrompt: z.string().trim().min(1).max(2000),
-  entityIds: z.array(z.string()).max(MAX_STORYBOARD_SHOTS).optional(),
+  // 形状对齐花钱侧 coworkProposalSchema 的 entityIds(gen.ts)——F4 铸子卡时零转换透传。
+  entityIds: z.array(z.string().min(1).max(64)).max(MAX_GEN_ENTITIES).optional(),
 });
 
 /** Otto 调 proposeStoryboard 的输入。goal 是刨根问底资讯门（同 propose）。 */
