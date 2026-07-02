@@ -5,7 +5,7 @@ import "@xyflow/react/dist/style.css";
 import { ImageNode } from "./nodes/ImageNode";
 import { VideoNode } from "./nodes/VideoNode";
 import { TextNode } from "./nodes/TextNode";
-import { useCanvasGen } from "./useCanvasGen";
+import { useCanvasGen, isInFlightPaidGen } from "./useCanvasGen";
 import { toast } from "sonner";
 import { listCanvasNodes, moveCanvasNode, deleteCanvasNode, updateTextNode, createCanvasNode, type CanvasNodeDTO } from "../../lib/canvas-actions";
 import { uploadReference } from "../../lib/actions";
@@ -376,6 +376,17 @@ export default function FlowCanvas({ projectId, entities = [], activeThreadId = 
     }
   }, []);
 
+  // Is the card awaiting delete a PAID generation still in flight? If so the confirm
+  // must warn that removing won't refund and re-running charges again — this is what
+  // stops the "delete a stuck-looking paid card → reclick → second charge" vector
+  // (deleteKeyCode is null, so the ✕→confirm is the only delete path).
+  const pendingDeleteNode = pendingDeleteId ? nodes.find((n) => n.id === pendingDeleteId) : undefined;
+  const pendingDeletePaid = !!pendingDeleteNode && isInFlightPaidGen({
+    type: pendingDeleteNode.type ?? "",
+    status: pendingDeleteNode.data?.status as string | undefined,
+    url: pendingDeleteNode.data?.url as string | undefined,
+  });
+
   return (
     <div
       style={{ flex: 1, position: "relative" }}
@@ -497,13 +508,15 @@ export default function FlowCanvas({ projectId, entities = [], activeThreadId = 
       <Dialog open={pendingDeleteId !== null} onOpenChange={(open) => { if (!open) setPendingDeleteId(null); }}>
         <DialogContent>
           <DialogHeader>
-            <DialogTitle>Remove from canvas?</DialogTitle>
+            <DialogTitle>{pendingDeletePaid ? "Still generating — remove anyway?" : "Remove from canvas?"}</DialogTitle>
             <DialogDescription>
-              This takes the card off your board. Any generated image or video stays saved in your library.
+              {pendingDeletePaid
+                ? "This one is still being made and you've already been charged for it. Removing it won't refund the credits, and it will still finish and land in your Library. If you remove it and generate again, you'll be charged a second time."
+                : "This takes the card off your board. Any generated image or video stays saved in your library."}
             </DialogDescription>
           </DialogHeader>
           <DialogFooter>
-            <Button variant="ghost" onClick={() => setPendingDeleteId(null)}>Cancel</Button>
+            <Button variant="ghost" onClick={() => setPendingDeleteId(null)}>{pendingDeletePaid ? "Keep it" : "Cancel"}</Button>
             <Button
               variant="destructive"
               onClick={() => { if (pendingDeleteId) deleteNode(pendingDeleteId); setPendingDeleteId(null); }}

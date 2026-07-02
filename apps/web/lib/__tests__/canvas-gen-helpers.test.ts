@@ -15,9 +15,31 @@ const m = vi.hoisted(() => ({ createCanvasNode: vi.fn(), getGenJob: vi.fn(), sta
 vi.mock("../canvas-actions", () => ({ createCanvasNode: m.createCanvasNode }));
 vi.mock("../gen-actions", () => ({ getGenJob: m.getGenJob, startGen: m.startGen }));
 
-import { createNodeWithRetry, poll } from "../../components/canvas/useCanvasGen";
+import { createNodeWithRetry, poll, isInFlightPaidGen } from "../../components/canvas/useCanvasGen";
 
 beforeEach(() => vi.clearAllMocks());
+
+describe("isInFlightPaidGen (paid-aware delete-guard predicate)", () => {
+  // A paid GenJob that hasn't resolved to media yet: deleting the card won't refund it and
+  // re-running mints a fresh per-click idempotencyKey → a SECOND charge. The delete confirm
+  // must warn for exactly these nodes.
+  it("true for a still-generating image (pending, no url)", () => {
+    expect(isInFlightPaidGen({ type: "image", status: "pending" })).toBe(true);
+  });
+  it("true for a timed-out video (client gave up; job may still settle server-side)", () => {
+    expect(isInFlightPaidGen({ type: "video", status: "timeout" })).toBe(true);
+  });
+  it("false once resolved to media (has url)", () => {
+    expect(isInFlightPaidGen({ type: "image", status: "pending", url: "https://r2/x.png" })).toBe(false);
+    expect(isInFlightPaidGen({ type: "video", status: "done", url: "https://tos/v.mp4" })).toBe(false);
+  });
+  it("false for a failed gen (terminal → already refunded, safe to delete)", () => {
+    expect(isInFlightPaidGen({ type: "image", status: "failed" })).toBe(false);
+  });
+  it("false for a text node (never paid)", () => {
+    expect(isInFlightPaidGen({ type: "text", status: "pending" })).toBe(false);
+  });
+});
 
 describe("createNodeWithRetry (F20)", () => {
   it("returns the node when createCanvasNode succeeds first try", async () => {
