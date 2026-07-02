@@ -255,6 +255,10 @@ export type GenJobData = z.infer<typeof genJobData>;
 
 export const GEN_QUEUE = "gen";
 export const GEN_DLQ = `${GEN_QUEUE}.dlq`;
+
+/** Otto 深度研究队列名（研究 S3）。approve 动作把 { jobId } 发到这个队列;worker
+ *  (Task 2) 注册消费者 + 队列 policy(retryLimit:0)。此处只声明名字,policy 待 Task 2。 */
+export const RESEARCH_QUEUE = "research";
 export const GEN_RETRY_LIMIT = 2;
 export const GEN_QUEUE_POLICY = {
   retryLimit: GEN_RETRY_LIMIT,

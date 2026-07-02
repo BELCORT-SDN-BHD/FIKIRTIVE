@@ -487,6 +487,32 @@ model GenJob {
   @@index([ownerId, status])
 }
 
+// 深度研究任务（Otto 研究 S3）：用户在 RESEARCH_CARD 点 Approve → 建此 job + 入队；
+// worker 跑有界 search→read→synthesize 循环并经 withLlmBudget 计量。approve 本身 $0
+//（不 reserve/settle）—— 花钱只在 worker。幂等靠迁移里的 `research:%` once-EVER 部分唯一
+// 索引（Prisma 无法在 schema 表达条件唯一，故只在 migration.sql 里建）：同一 (owner,
+// idempotencyKey) 全状态只能有一条 → 双击/重放 approve DB 层挡住,不会双建 job。
+model ResearchJob {
+  id              String   @id
+  ownerId         String
+  organization    Organization @relation(fields: [ownerId], references: [id])
+  threadId        String
+  cardId          String
+  idempotencyKey  String
+  tier            String
+  status          String   @default("QUEUED") // QUEUED | RUNNING | DONE | FAILED（house style：代码校验的 String,非 PG enum）
+  /// worker 起步时 withLlmBudget reserve 的 turnBudget 上限（记录用；approve 时为 null）
+  reservedCredits Int?
+  /// worker settle 的实际 token 成本（记录用；approve 时为 null）
+  actualCredits   Int?
+  error           String?
+  queueJobId      String?
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime @updatedAt
+
+  @@index([cardId])
+}
+
 // ── Auth.js v5 标准模型（D18：邮箱魔法链接）────────────────────────────
 // 业务表的 ownerId 仍恒为 "founder"：登录只是门禁，不是多租户（A3 预留不变）。
 model User {
@@ -584,6 +610,7 @@ model Organization {
   brandRules              BrandRule[]
   brandRecords            BrandRecord[]
   metaConnection          MetaConnection?
+  researchJobs            ResearchJob[]
 }
 
 // User <-> Organization join, carrying the per-org role. role/status are code-validated
