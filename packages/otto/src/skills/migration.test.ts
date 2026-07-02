@@ -6,6 +6,7 @@ import { proposeSkill } from "./propose.js";
 import { generateSkill } from "./generate.js";
 import { seedreamPromptSkill } from "./seedream-prompt.js";
 import { seedancePromptSkill } from "./seedance-prompt.js";
+import { proposeStoryboardSkill } from "./propose-storyboard.js";
 
 describe("migrated trivial skills carry the right gate", () => {
   it("setTitle: free/write/internal → not gated", () => {
@@ -48,5 +49,13 @@ describe("prompt-mastery skills gate", () => {
     expect(seedancePromptSkill.cost).toBe("free");
     expect(seedancePromptSkill.effect).toBe("read");
     expect(seedancePromptSkill.needsApproval).toBe(false);
+  });
+});
+
+describe("proposeStoryboard gate", () => {
+  it("free/write/internal → not gated", () => {
+    expect(proposeStoryboardSkill.cost).toBe("free");
+    expect(proposeStoryboardSkill.effect).toBe("write");
+    expect(proposeStoryboardSkill.needsApproval).toBe(false);
   });
 });
