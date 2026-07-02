@@ -110,7 +110,7 @@ beforeEach(() => {
   mockResearchUpdate.mockResolvedValue({});
   mockChatUpdate.mockResolvedValue({});
   mockBossSend.mockResolvedValue("queue-abc");
-  // ample balance by default (standard tier estimate = 25)
+  // ample balance by default (standard tier estimate = 11, derived from turnBudgetInternal)
   mockCreditFindUnique.mockResolvedValue({ balance: 1000 });
 });
 
@@ -199,8 +199,8 @@ describe("approveResearch — 拒绝路径(不建 job)", () => {
   });
 
   it("余额低于预估 → insufficient_credits,NOT 建 job / NOT enqueue / NOT 读账后写", async () => {
-    wireCard(card({ tier: "deep" })); // deep estimate = 60
-    mockCreditFindUnique.mockResolvedValue({ balance: 10 }); // 10 < 60
+    wireCard(card({ tier: "deep" })); // deep estimate = 22 (derived from turnBudgetInternal)
+    mockCreditFindUnique.mockResolvedValue({ balance: 10 }); // 10 < 22
     const res = await approveResearch({ cardId: "card-1" });
     expect(res).toEqual({ error: "You don't have enough credits for this research.", code: "insufficient_credits" });
     expect(mockResearchCreate).not.toHaveBeenCalled();

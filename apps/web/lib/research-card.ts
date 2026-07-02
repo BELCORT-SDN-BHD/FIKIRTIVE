@@ -17,9 +17,9 @@ export const RESEARCH_TIER_LABELS = {
 
 export type ResearchTierView = keyof typeof RESEARCH_TIER_LABELS;
 
-/** 卡状态:S2 只落 "planned";running/done 由 S3/S4 推进。视图侧提前认这三态,
+/** 卡状态:S2 只落 "planned";running/done/failed 由 S3/S4 推进。视图侧认这四态,
  *  未知/缺失 → "planned"(最保守:显示可审批的计划态)。 */
-export type ResearchStatusView = "planned" | "running" | "done";
+export type ResearchStatusView = "planned" | "running" | "done" | "failed";
 
 export interface ResearchCardView {
   topic: string;
@@ -30,7 +30,7 @@ export interface ResearchCardView {
   status: ResearchStatusView;
 }
 
-const KNOWN_STATUS: ReadonlySet<string> = new Set<ResearchStatusView>(["planned", "running", "done"]);
+const KNOWN_STATUS: ReadonlySet<string> = new Set<ResearchStatusView>(["planned", "running", "done", "failed"]);
 
 export function parseResearchCardPayload(payload: unknown): ResearchCardView {
   const p = (payload ?? {}) as Partial<ResearchCardPayload> & { status?: unknown };

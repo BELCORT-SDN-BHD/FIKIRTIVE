@@ -262,6 +262,7 @@ export function OttoConversation({
               threadId={thread.id}
               balanceUsd={balanceUsd}
               onBalanceRefresh={onBalanceRefresh}
+              onRefresh={refreshAndUpdate}
               resultJobIds={resultJobIds}
               errorJobIds={errorJobIds}
               cardIdByJobId={cardIdByJobId}
@@ -435,6 +436,7 @@ function MessageRow({
   threadId,
   balanceUsd,
   onBalanceRefresh,
+  onRefresh,
   resultJobIds,
   errorJobIds,
   cardIdByJobId,
@@ -453,6 +455,7 @@ function MessageRow({
   threadId: string;
   balanceUsd: number;
   onBalanceRefresh?: () => void | Promise<void>;
+  onRefresh?: () => void | Promise<void>;
   resultJobIds: Set<string>;
   errorJobIds: Set<string>;
   cardIdByJobId: Map<string, string>;
@@ -565,7 +568,13 @@ function MessageRow({
       <div className="flex items-start gap-3">
         <OttoAvatar size={32} state="idle" />
         <div className="flex-1 min-w-0">
-          <ResearchCard cardId={m.id} payload={m.payload} />
+          <ResearchCard
+            cardId={m.id}
+            payload={m.payload}
+            balanceUsd={balanceUsd}
+            onBalanceRefresh={() => void onBalanceRefresh?.()}
+            onRefresh={onRefresh}
+          />
         </div>
       </div>
     );

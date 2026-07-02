@@ -1,6 +1,7 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
-import { researchCardInput, buildResearchCardPayload, RESEARCH_TIERS } from "./propose-research.helpers.js";
+import { researchCardInput, buildResearchCardPayload, RESEARCH_TIERS, researchTierEstimate } from "./propose-research.helpers.js";
 import { executeProposeResearch, proposeResearchSkill } from "./propose-research.js";
+import { turnBudgetInternal, llmPricesFor, ottoLlmMargin, displayCredits } from "@fikirtive/core";
 import type { OttoContext } from "../context.js";
 
 vi.mock("@fikirtive/db", () => ({
@@ -49,6 +50,28 @@ describe("RESEARCH_TIERS", () => {
       expect(RESEARCH_TIERS.quick[axis]).toBeLessThan(RESEARCH_TIERS.standard[axis]);
       expect(RESEARCH_TIERS.standard[axis]).toBeLessThan(RESEARCH_TIERS.deep[axis]);
     }
+  });
+
+  it("estimatedCredits is DERIVED from the worker's withLlmBudget reserve, not a magic number", () => {
+    // Each tier's card estimate must equal displayCredits(turnBudgetInternal(sonnet, margin, maxSteps))
+    // rounded up — i.e. the SAME reserve apps/worker/src/jobs/research.ts hands to withLlmBudget,
+    // expressed in DISPLAYED credits. This is the honesty invariant: card quote ≈ worker reserve.
+    for (const key of ["quick", "standard", "deep"] as const) {
+      const t = RESEARCH_TIERS[key];
+      const expected = Math.ceil(
+        displayCredits(turnBudgetInternal(llmPricesFor("claude-sonnet-4-6"), ottoLlmMargin(), t.maxSteps)),
+      );
+      expect(t.estimatedCredits).toBe(expected);
+      // And it is NOT the retired S2 placeholder (10/25/60).
+      expect(t.estimatedCredits).not.toBe({ quick: 10, standard: 25, deep: 60 }[key]);
+    }
+  });
+
+  it("researchTierEstimate is monotonic in maxSteps and matches the tier table", () => {
+    expect(researchTierEstimate(6)).toBeLessThan(researchTierEstimate(12));
+    expect(researchTierEstimate(12)).toBeLessThan(researchTierEstimate(24));
+    expect(researchTierEstimate(RESEARCH_TIERS.quick.maxSteps)).toBe(RESEARCH_TIERS.quick.estimatedCredits);
+    expect(researchTierEstimate(RESEARCH_TIERS.deep.maxSteps)).toBe(RESEARCH_TIERS.deep.estimatedCredits);
   });
 });
 

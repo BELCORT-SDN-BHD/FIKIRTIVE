@@ -54,11 +54,12 @@ describe("parseResearchCardPayload", () => {
     expect(parseResearchCardPayload({ topic: "x", questions: ["a", 1, null, "b"] }).questions).toEqual(["a", "b"]);
   });
 
-  it("未知/缺失 status → 回落 planned;running/done 透传", () => {
+  it("未知/缺失 status → 回落 planned;running/done/failed 透传", () => {
     expect(parseResearchCardPayload({ topic: "x", status: "weird" }).status).toBe("planned");
     expect(parseResearchCardPayload({ topic: "x" }).status).toBe("planned");
     expect(parseResearchCardPayload({ topic: "x", status: "running" }).status).toBe("running");
     expect(parseResearchCardPayload({ topic: "x", status: "done" }).status).toBe("done");
+    expect(parseResearchCardPayload({ topic: "x", status: "failed" }).status).toBe("failed");
   });
 
   it("estimatedCredits 非 number → 兜底 0;goal 空串 → 省略", () => {

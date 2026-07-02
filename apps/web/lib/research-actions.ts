@@ -38,6 +38,22 @@ async function loadCard(cardId: string, ownerId: string) {
   return card;
 }
 
+/** Read-only ($0) poll: return a RESEARCH_CARD's current payload so the client can watch
+ *  status advance planned→running→done/failed after approve. Owner-scoped via loadCard;
+ *  NEVER writes, NEVER spends — mirrors syncStoryboardMedia's read-only reconcile shape. */
+export async function getResearchCard(raw: unknown): Promise<{ payload: ResearchPayload } | Err> {
+  const parsed = approveInput.safeParse(raw);
+  if (!parsed.success) return { error: "That request isn't valid." };
+
+  const gate = await requireOwner();
+  if ("error" in gate) return gate;
+  const { ownerId } = gate;
+
+  const card = await loadCard(parsed.data.cardId, ownerId);
+  if (!card) return { error: "Card not found." };
+  return { payload: (card.payload ?? {}) as ResearchPayload };
+}
+
 export async function approveResearch(raw: unknown): Promise<Ok | Err> {
   const parsed = approveInput.safeParse(raw);
   if (!parsed.success) return { error: "That request isn't valid." };

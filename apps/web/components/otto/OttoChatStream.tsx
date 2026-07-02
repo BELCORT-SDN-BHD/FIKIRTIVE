@@ -885,7 +885,13 @@ export function OttoChatStream({
             if (kind === "RESEARCH_CARD") {
               return (
                 <WidgetRow key={m.id} animateIn={isNewMessage(m.id)}>
-                  <ResearchCard cardId={m.metadata!.durableId} payload={m.metadata?.payload} />
+                  <ResearchCard
+                    cardId={m.metadata!.durableId}
+                    payload={m.metadata?.payload}
+                    balanceUsd={balanceUsd}
+                    onBalanceRefresh={() => void onBalanceRefresh?.()}
+                    onRefresh={pollAndInjectResults}
+                  />
                 </WidgetRow>
               );
             }
