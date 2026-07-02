@@ -1,7 +1,7 @@
 # Design spec — Otto Agent + Canvas workspace (PR #1)
 
 Date: 2026-06-27
-Status: draft for founder review (not yet approved for implementation)
+Status: ✅ SHIPPED — the Otto agent+canvas workspace is live on main (canvas home, node→animate, video flow).
 Author: brainstormed with founder (winnin.eth)
 
 > 一句话：把 Otto 现有的生成引擎，包进一个「左 chat rail + 右无限画布」的统一主面，

@@ -1,7 +1,7 @@
 # G7 v2 Design — Otto Builds Ads (the strategist)
 
 **Date:** 2026-06-29
-**Status:** design, pending founder review → `writing-plans`
+**Status:** ✅ SHIPPED — merged as PR #65 (`5ad6214`); prod dormant until a reconnect grants pages_show_list. Build=$0, launch=v1 gate.
 **Scope:** v2 = slice (c) **create from scratch AND drop an asset into an existing ad set**, driven by Brand Brain like a real media strategist.
 **Builds on:** G7 v1 (manage-existing, shipped/merged `f141037`) + Brand Brain (G3b: BrandKit/BrandRule + `getBrandContextText`) + the FIKIRTIVE asset/generation engine.
 

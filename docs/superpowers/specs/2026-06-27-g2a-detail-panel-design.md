@@ -1,7 +1,7 @@
 # Design spec — G2a · Per-asset detail panel (stacked on G1)
 
 Date: 2026-06-27
-Status: draft (autonomous build; founder batch-reviews all PRs at the end)
+Status: ✅ SHIPPED — detail panel merged (PR #49 via the #60 stack); live on main.
 Branch: `claude/otto-g2-asset-editor` (off `claude/otto-g1-canvas`). Grounded in current main + G1.
 
 ## Context

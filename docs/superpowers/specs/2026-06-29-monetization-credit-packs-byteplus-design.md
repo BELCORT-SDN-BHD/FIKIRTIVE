@@ -1,7 +1,7 @@
 # Monetization — Credit Packs (MYR) + BytePlus Pricing — Design
 
 **Date:** 2026-06-29
-**Status:** design, pending founder review → `writing-plans`
+**Status:** ✅ SHIPPED — merged as PR #66 (`d52b9c3`), LIVE on prod 2026-06-29 (`68efad4`): 100 free credits, 3 MYR packs (live Stripe), Otto 1.5×.
 **Decides:** the FIKIRTIVE credit economics (post-BytePlus), the MYR credit packs, and the implementation sequence.
 
 ---

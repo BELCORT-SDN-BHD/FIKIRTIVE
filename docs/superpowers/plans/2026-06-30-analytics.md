@@ -1,5 +1,7 @@
 # Analytics (Phase A) Implementation Plan
 
+> ⚠️ **STALE STYLING (2026-07-02): do NOT follow this plan's CSS instructions verbatim.** It was written pre-#80. The S4 shadcn teardown (#80, main `313eb27`) DELETED the `.fk` system and `apps/web/app/otto/otto-theme.css` — the file this plan appends `.fk.gb-skin .cv-an*` rules to no longer exists. Per `2026-06-30-full-shadcn-migration-strategy.md`, Analytics resumes built natively on **`.gb` + shadcn** (components/ui + a shadcn/recharts chart). Restyle this plan onto `.gb` (or regenerate it from the Analytics design spec against current main) before building.
+
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
 **Goal:** Replace the missing Analytics view with a real, read-only performance page wired to live Meta **ad-account** data — KPI cards, a daily reach/spend chart, an OTTO insight, and a designed "organic past-posts pending Meta approval" section — landing only when the view opens.

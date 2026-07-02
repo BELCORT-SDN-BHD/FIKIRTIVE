@@ -1,7 +1,7 @@
 # Design spec — G1 · Canvas spine (first PR)
 
 Date: 2026-06-27
-Status: draft for founder review (not approved for implementation)
+Status: ✅ SHIPPED — canvas spine merged (PR #48 via the #60 stack) and iterated through #82/#85/#88/#89/#90; live on main.
 Supersedes the earlier draft `2026-06-27-otto-agent-canvas-workspace-design.md`, which was
 grounded in a stale worktree. This spec is grounded in **current main `fba7882`** (post 34-PR
 integration) and the founder's fresh decisions (see `2026-06-27-otto-feature-decisions.md`).
