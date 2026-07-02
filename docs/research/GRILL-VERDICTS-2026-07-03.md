@@ -13,14 +13,14 @@
 | GTM 节奏 | **定调** | **Content creation 最先上线赚钱**。不走 funding,直接市场变现,利益最大化。 |
 | UIUX | **升格宪法** | 除 agent-operates-100% 外,UIUX 是第二卖点/留存支柱。标杆 = Apple;gamification 参考 Duolingo 但因面向专业用户,做 **minimal gamification**(具体形态 harmony 阶段设计)。 |
 
-### O 区待确认(总审查员提议的默认判决,founder 可整批确认或逐项推翻)
-| 项 | 提议 | 理由 |
+### O 区第二批判决(founder 2026-07-03)
+| 项 | 判决 | 内容 |
 |---|---|---|
-| O-04 品牌记忆自养 | 要 | "懂你"层 = 生成质量+黏性;brand memory 已在建,补"从批改学习" |
-| O-07 Otto 绩效面板 | 要(简版) | credits 经济下"Otto 干了多少活"= 续费理由;先做周报级 |
-| O-09 NL 替代 builder | 要 | 与 file-system 哲学同构:Otto 写可读规则文件、人可改;不做 GHL 式节点画布 |
-| O-10 效果反哺闭环 | 以后 | 需归因+投放量先立;地基(Meta 读写)已有 |
-| O-12 嵌入式点状 AI | 要,但砍到创作区高频动作 | UIUX 优先的"就地小改"体验;避免全城撒按钮稀释"一个员工"叙事 |
-| O-13 外接 connectors(Slack/Notion) | 不要 | SEA SMB 不在 Notion/Slack;欧美知识工作者语境,虚胖 |
-| O-14 对外 MCP/开放接口 | 以后 | 先内后外;外部 agent 顶替 Otto 位置有战略张力 |
-| 差异化叙事 | A+B 切入、C+D 结构 | 首发故事 = "SEA 的创作超级员工"(B×创作先行赚钱),投放闭环(A)是第二章;C(一个员工)D(100% 覆盖率)是产品结构承诺 |
+| O-04 品牌记忆自养 | **要**(默认确认) | "懂你"层;补"从批改学习" |
+| O-07 Otto 绩效面板 | **要(简版)**(默认确认) | 周报级起步 |
+| O-09 NL vs 可视 builder | **要,分域**(founder 修正) | **创作域保留可视画布**(canvas 的灵感本来自 Grok —— Grok 正式加入对标名单);**规则/自动化域**(flows/routine/分群)才用"Otto 写可读规则文件替代拖拽画布" |
+| O-10 效果反哺闭环 | **要**(founder 升级:"也很重要") | 建设顺序仍是归因/分析先立,但判决为要,不是以后 |
+| O-12 就地 AI 按钮 | **要**,设计关键(founder 强调) | **设计原则候选:就地按钮 = Otto 的手,不是第二个匿名 AI** —— 同一大脑、同一记忆、coral 身份;harmony 阶段出交互方案 |
+| O-13 connectors → 团队协作 | **Slack/Notion connectors 不要;团队协作 FEATURE 要**(founder 转向) | 在 FIKIRTIVE 内做 team collab(多席位、协作、审批)—— 直接支撑席位收入模型;新簇,归 G 区细化 |
+| O-14 对外 MCP | **讨论中** | founder:主要靠 credits 赚钱,外部 agent 烧 credits 也是收入。三个选项待拍(见拍板会记录) |
+| 差异化叙事 | **确认** | 首发 = "SEA 的创作超级员工"先赚钱;投放闭环第二章;"一个员工 + 100% 覆盖"为结构承诺 |
