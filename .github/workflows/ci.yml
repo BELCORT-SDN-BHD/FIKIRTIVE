@@ -22,9 +22,9 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+      # pnpm version comes from package.json's `packageManager` field — action-setup@v4
+      # errors if `version` is ALSO set here.
       - uses: pnpm/action-setup@v4
-        with:
-          version: 10
       - uses: actions/setup-node@v4
         with:
           node-version: 22
@@ -58,9 +58,7 @@ jobs:
       DATABASE_URL: postgres://postgres:postgres@localhost:5432/artlio_test
     steps:
       - uses: actions/checkout@v4
-      - uses: pnpm/action-setup@v4
-        with:
-          version: 10
+      - uses: pnpm/action-setup@v4 # version from package.json `packageManager` (see check job)
       - uses: actions/setup-node@v4
         with:
           node-version: 22
