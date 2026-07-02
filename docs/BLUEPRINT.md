@@ -25,7 +25,7 @@
 滩头阵地 = 马来西亚/东南亚(本地语言、本地支付、本地渠道是先手优势,不是天花板);每一个架构决定都按全球尺度做(多币种/多市场定价/多语言/渠道可插拔从第一天就是骨架,不是补丁)。住户是不懂营销、不懂 AI 的老板 —— 他们雇不起营销团队,所以这座城给他们一个**超级员工:Otto**。
 
 **双模城市 —— 这是卖点的根(founder 2026-07-03 定调)。**
-每一栋楼都必须是**真实、完整、人可以亲手操作的工具**:真正的 CRM、真正的 campaign 管理、真正的排期表 —— 功能深度对标 Salesforce / HubSpot,**不依赖 Otto 也完全能用**。
+每一栋楼都必须是**真实、完整、人可以亲手操作的工具**:真正的 CRM、真正的 campaign 管理、真正的排期表 —— 功能深度对标各区最强者(完整对标地图见第六章,18 家全量研究在 `docs/research/`),**不依赖 Otto 也完全能用**。
 **卖点在上面一层:Otto 能替用户操作这一切的 100%。** 竞品卖工具,FIKIRTIVE 卖"完整的工具 + 一个会用全部工具的超级员工"。两个都是真的:楼是真的楼,员工是真的员工。
 
 **Otto 是差异化,不是遮羞布。** Otto 是"营销界的 Claude Code":有技能注册表、有品牌记忆、有异步工厂、有人工闸门。用户可以只跟 Otto 说话把事做完,也可以随时亲手进任何一栋楼自己操作 —— 两条路通向同一份数据。
@@ -131,7 +131,23 @@ pg-boss 五条队列 + 三类回收器(gen/refgen/LLM 预扣)、ingest 哈希复
 **定价落地**:档位数字以定价终案(判决记录·定价终案节)为准,全部落 config 层、永不硬编码;costing 模型输入已全部闭合(harmony-04)。**P1 必做护栏:BytePlus 资源包余量告警**(包烧完静默跳裸价,10s 档毛利 45%→13%)。
 
 按 founder 的城市群构想,以下新区**方向锁定**,动工前必须各自出 spec 走第五章流程。
-**新区的功能清单不凭空发明** —— 以 Salesforce + HubSpot 全量 feature 分析为底稿(`docs/research/`,2026-07-03 起),founder 逐项 WHAT-pass(要/不要/以后)拍板后才画施工图;每个新区同时满足宪法第 7 条双模原则(人工全操作 + Otto 100% 代劳)。
+**新区的功能清单不凭空发明** —— 以 18 家对标全量 feature 分析为底稿(`docs/research/2026-07-03-*`),founder 已完成 158 簇 WHAT-pass(判决记录);每个新区同时满足宪法第 7 条双模原则(人工全操作 + Otto 100% 代劳)。
+
+**对标地图(每栋楼的标杆与胜负手;对标是活清单,新增走"深研 → WHAT-pass"流程)**:
+
+| 区 | 对标 | 我们要赢在哪 |
+|---|---|---|
+| Otto/agent 本体 | **Higgsfield Supercomputer**(全市场唯一同类:agent 替用户操作平台,$500M ARR 但只站创意一区)、Salesforce Agentforce、HubSpot Breeze、GHL AI Employee | agent 操作**全城**而非一区;双模;效率良心(不赚浪费) |
+| 创作区 | Higgsfield(UGC 工厂/运镜/Soul)、LTX Studio(分镜)、Canva(模板/Brand Kit/民用标杆)、Adobe GenStudio(品牌约束生成)、**Grok Imagine**(canvas 原型灵感来源) | 成品导向(贴链接→可投广告)+ SEA 语境 + 生成完的下一公里 |
+| 排期发布区 | Buffer(3 视图范本)、Metricool、Canva 内容规划 | 创作车间直连排期(对手没有生成端) |
+| 分析区 | Metricool(SMB 分析最强)、HubSpot 归因 | Otto 主动洞察 + 真实投放反哺(O-10) |
+| CRM 区 | Salesforce Sales Cloud(终局深度)、HubSpot Smart CRM、respond.io(起步形态)、Klaviyo(CDP 画像) | respond.io 级起步→SF 级深度;联系人从对话自动进来 |
+| Campaign 管理区 | SF Campaign 体系(对象/归因)、HubSpot campaigns、Adobe GenStudio 内容供应链 | 独立 Campaign 对象 + 创作→投放→归因一人跑通 |
+| 自动回复/客服区 | **respond.io(KL 同城,直接对手)**、ManyChat(营销侧)、Service Cloud/Service Hub | WhatsApp-first + Otto 前台后台一个人 + O-06 护栏 |
+| 生命周期自动化 | **Klaviyo(标杆)**、HubSpot workflows、SF Journey Builder | WhatsApp-first(他们 email-first);规则文件替代节点画布 |
+| 资产/品牌区 | Canva Brand Kit、Adobe Brand Intelligence(从批改学习) | 品牌记忆自养 + 生成时校验(C-08/O-04) |
+| Agency 楼层 | **GoHighLevel(结构同类:sub-accounts/Snapshots)**、ManyChat partner 生态 | 行业开店模板 Otto 化(比静态快照多一层个性化) |
+| 定价结构 | **Zoho(founder 点名:seats+credits 概念参照)**、GHL(档位卖规模)、Canva(本地价范本) | MYR-first + 分市场 + 毛利地板 ≥45% + 永禁 unlimited |
 
 - **CRM 区**(**分阶段:respond.io 级 SMB-lite 起步 → 长到 Salesforce 级深度**,架构按终局设计;联系人主要从对话/广告自动进来,WhatsApp-first;帮商家收款 = 以后且起步不碰资金流)
 - **Campaign 管理区**(**独立 Campaign 对象**,不升格 project —— founder:"要 scale 去 Salesforce 那种,干净最重要";预算/编排/归因/UTM/campaign 级报表)
@@ -170,4 +186,5 @@ pg-boss 五条队列 + 三类回收器(gen/refgen/LLM 预扣)、ingest 哈希复
 | 2026-07-03 | v2.1a 第一章定位:SEA = 滩头、终点 = 全球世界级平台(founder 口述;补 v2.1 留痕) | 待 founder 终审 |
 | 2026-07-03 | v2.2 harmony-06 补件(UIUX 设计审可执行版 + 丝滑工程标准 + GM 候选)—— 兑现第 11 条悬空承诺;总设计层改七件 | 待 founder 终审 |
 | 2026-07-03 | v2.2a GM 卷拍板入第 11 条:GM-02/03/04/05 要、GM-01 streak 不要(founder 拍板) | founder 已拍(口头) |
+| 2026-07-03 | v2.3 对标地图入第六章(11 区 × 对标 × 胜负手;第一章对标句改指全量);对标 = 活清单,新增走深研→WHAT-pass | 待 founder 终审 |
 | 2026-07-03 | **v2.1 全量对齐修订**(5 员对抗审查 40+ findings):宪法 5 重写(≥45% 地板/效率良心真入宪,删"视频近成本卖"旧句)/宪法 2 加开发期限定+账本推论/铁律①法币边界/第 4 条两类例外/O-12 之手+O-09 分域入第 7 条/connectors 不要入第 8 条/九条缝改数/区划图刷新至 #117 并豁免不可改/第六章补团队协作+账务透明+包告警+Agency 顺序+叙事节奏/金字塔加判决记录层 | 待 founder 终审 |
