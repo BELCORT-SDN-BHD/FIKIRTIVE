@@ -120,6 +120,7 @@
 **Money-safety（硬约束）**
 - 真正花钱的只有现成的 `generate`（幂等键 `cowork:${cardId}`）。闸①闸② 都是 fan-out 去调它，**钱路一行不改**。
 - **不做**"单个批量花钱 skill"——那会撞 3 字段 gate 的"`spend` ⇒ 一个 `idempotencyKey`"规则（一个 key 无法覆盖 N 个不同生成）。批量执行是编排/UI，循环 per-card `generate`。
+- **这里的 "card" = 每镜头铸的子 GEN_CARD**，不是分镜卡本身——`cowork:%` key 是 once-EVER，分镜卡一个 key 盖不住 N 镜头+重出；禁止复合 key。机制详见分镜 spec §7（2026-07-02 Fable 终审修正）。
 - G 块碰花钱路径（即使只是循环），实现时走 money-safety review。
 
 ---

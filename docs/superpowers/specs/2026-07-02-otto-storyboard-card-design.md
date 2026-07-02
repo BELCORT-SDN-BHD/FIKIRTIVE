@@ -56,11 +56,16 @@ F = **可编辑的分镜卡 + 真实首帧图**。用户说"做个广告"、Otto
 ```ts
 type StoryboardCardPayload = {
   storyboardTitle: string;
+  goal?: string;              // 刨根问底资讯门(block 1),F4/G 审批文案/审计要用
   shots: {
-    index: number;            // 有序(0..n)
+    shotId: string;           // 稳定镜头 id(服务端铸造)——index 每次编辑都重编,
+                              // 付费重出/异步写回必须按 shotId 定位(Fable 终审加)
+    index: number;            // 有序(0..n),仅排序用
     title?: string;           // 简短镜头名(可选)
     firstFramePrompt: string; // Seedream 首帧 prompt(来自 seedreamPrompt)
     videoPrompt: string;      // Seedance 视频 prompt(来自 seedancePrompt)
+    entityIds?: string[];     // 该镜头的 @引用实体(可选)——F4 铸子卡时透传,
+                              // 参考图才能真正到模型(否则只有文字锁,人物会漂移)
     firstFrameGenerationId?: string; // 闸① 生成后写回;编辑文字后清空(标记需重出)
   }[];
   // v1 无连贯字段(留后)
@@ -87,18 +92,21 @@ type StoryboardCardPayload = {
 
 ## 7. Money-safety(闸① 碰钱,硬约束)
 
-- **不新建钱路**:每张首帧图 = 一次现有 `generate`(`cowork:${cardId}` 幂等、reserve/settle 不变)。闸① 只是**编排** N 次(像 PackCard makeAll),不复制花钱逻辑。
-- **聚合审批 + 亲和度**:复用 `pack-credit-math` 算总额、balance-guard;一次"生成全部首帧(N · X credits)"确认。
-- **单帧重出** = 一次独立 `generate`(用户主动、显式)。
+> **2026-07-02 Fable 终审修正**:本节原来那句「每张首帧图 = 一次现有 `generate`(`cowork:${cardId}` 幂等)」**照字面不可实现**——`generate` 只加载 `kind:"GEN_CARD"`(generate.ts:64),且 `GenJob_cowork_idempotency_once` 索引让任何 `cowork:%` key **一辈子只能用一次**(once-EVER):一张分镜卡一个 key 盖不住 N 镜头,更盖不住重出。若 F4 实现者被迫发明 `cowork:${cardId}:${shotIndex}` 复合 key,那就是改钱路(且 shotIndex 每次编辑都重编,不稳定)——**明确禁止**。
+
+- **闸① 的正确机制(钱路零改)**:对每个需要出图的镜头,**铸一张子 GEN_CARD**(走 `buildProposeCard` 定价,与 `propose` 完全一致;子卡 payload 带 `{storyboardCardId, shotId}` 回链),然后逐子卡循环**不改动的** `generate`/`coworkGenerate`——每张子卡天然有自己全新的 `cowork:<childCardId>` once-ever key。**单帧重出 = 再铸一张子卡**(`coworkVaryCard` 是官方 fresh-card-per-attempt 先例,cowork-actions.ts:645)。重入安全:"make all" 双击/刷新中途重进,先找既有子卡、按其 key 去重,绝不重复扣费。
+- **聚合审批 + 亲和度**:复用 `pack-credit-math` 对**子卡集合**算总额、balance-guard;一次"生成全部首帧(N · X credits)"确认——和 PackCard makeAll 同构(它能工作正是因为 propose-pack 每 item 铸一张 GEN_CARD)。
 - **编辑不花钱**:改文字/增删/重排都只动 payload。改文字会**清空该帧的 `firstFrameGenerationId`**(图变旧 → 用户重出),不会自动偷偷重生成。
-- F 的实现走 **money-safety review**(碰 generate 编排)。`proposeStoryboard` + 编辑动作本身 $0(无 GenJob),可先独立 ship + review。
+- **F4 不许继承 persist() 的 last-write-wins 整包回写**:F4 的生成 id 写回必须按 `shotId` 定点、与用户编辑并发安全(否则清图-防旧的花钱门失效)。F3 的 $0 编辑用 last-write-wins 没问题(零钱耦合),已在 storyboard-actions.ts 注明。
+- **prompt 长度**:入库按 `MAX_GEN_PROMPT`(2000)reject-only(fail-closed)——**有意不做静默截断**(付费生成前偷偷截 prompt 更危险);超长时模型收到 zod 错误自行改短重试。
+- F4 的实现走 **money-safety review**(碰 generate 编排)。`proposeStoryboard` + 编辑动作本身 $0(无 GenJob),已独立 ship + review(PR #99)。
 
 ---
 
 ## 8. 编辑动作(server actions,owner+thread scoped)
 
 - `editShotPrompt(cardId, index, { firstFramePrompt?, videoPrompt? })` → 改文字 + 清 `firstFrameGenerationId`。$0。
-- `regenShotFirstFrame(cardId, index)` → 单帧重出(一次 `generate`)。**花钱**。
+- `regenShotFirstFrame(cardId, shotId)` → 单帧重出 = **再铸一张子 GEN_CARD** 走一次 `generate`(见 §7;按 shotId 定位,不按 index)。**花钱**(F4)。
 - `addShot(cardId, shot)` / `deleteShot(cardId, index)` → 增/删,重排 index。$0。
 - `reorderShots(cardId, order[])` → 重排。$0。
 - 全部严格 owner-scoped(身份来自 session,不来自输入)。
@@ -128,6 +136,12 @@ type StoryboardCardPayload = {
 ## 11. 相关文件
 
 - 复用原语:`packages/otto/src/skills/propose.helpers.ts`(buildProposeCard)、`propose-pack.ts` / `apps/web/components/otto/PackCard.tsx` / `pack-credit-math.ts`(makeAll 聚合模式)、`packages/otto/src/skills/generate.ts`(唯一花钱)、`packages/core/src/cowork.ts`(CoworkPlan 有序 schema)
+
+---
+
+## 12. Changelog
+
+- **2026-07-02(Fable 终审,45-agent 对抗验证后)**:§7 修正闸① 幂等机制——原「`cowork:${cardId}` 一 key 盖全卡」不可实现,改为**每镜头铸子 GEN_CARD**(fresh `cowork:<childCardId>` key;重出=再铸一张;禁止复合 key);§5 payload 加 `shotId`(稳定镜头 id,付费写回按它定位)与可选 per-shot `entityIds`(@引用透传,F4 铸子卡时才能把参考图真正送到模型);§8 `regenShotFirstFrame` 改按 shotId;明确 F4 不许继承 last-write-wins 整包回写;prompt 超长维持 reject-only(fail-closed,不静默截断)。
 - D/E prompt skills:`packages/otto/src/skills/{seedream-prompt,seedance-prompt}.ts`
 - 卡片渲染参考:`apps/web/components/otto/{OttoPlanCard,PackCard}.tsx`、`OttoChatStream.tsx`(卡片分组/渲染)
 - 新建:`packages/otto/src/skills/propose-storyboard.{ts,helpers.ts,test.ts}` + `STORYBOARD_CARD` 渲染组件 + 编辑/闸① server actions(`apps/web/lib/`)
