@@ -96,4 +96,7 @@ describe("ottoInstructions — model prompt routing", () => {
   it("tells Otto to supply the craft (users don't know photography)", () => {
     expect(ottoInstructions).toMatch(/camera|lighting/i);
   });
+  it("tells Otto to use t2v when there is no source frame", () => {
+    expect(ottoInstructions).toMatch(/t2v/);
+  });
 });

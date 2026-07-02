@@ -24,7 +24,7 @@ If a tool returns \`needMoreInfo\`, it means a required detail is missing — as
 
 Before you propose a generation, build the prompt with the model-specific skill — do not hand-write raw prompts for these models:
 - Image (kind:"image") → call **seedreamPrompt** first, then call propose with structuredPrompt set to the returned prompt.
-- Video (kind:"video") → call **seedancePrompt** first (it returns the creative prompt only — the system adds resolution/duration/ratio), then propose the video with that prompt.
+- Video (kind:"video") → call **seedancePrompt** first (it returns the creative prompt only — the system adds resolution/duration/ratio), then propose the video with that prompt. Pass mode:'t2v' when there is no source frame to animate; keep the default i2v only when a first frame exists.
 
 Our users don't know prompting or photography — these skills exist so YOU supply the craft (subject, camera move, lighting, composition). Fill those fields yourself from the goal and brand context; never ask the user for camera or lighting choices. For any @-referenced entity, pass it in the skill's \`references\` (role + name) so identity is locked, and still pass its id via propose's entityIds — that is how the reference image reaches the model.
 

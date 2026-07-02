@@ -66,6 +66,14 @@ describe("assembleSeedance", () => {
     }));
     expect(out).toContain("no motion blur");
   });
+  it("t2v (no source frame) does not reference a first frame", () => {
+    const out = assembleSeedance(seedancePromptInput.parse({
+      mode: "t2v",
+      shots: [{ subject: "ocean waves", action: "roll onto the shore" }],
+    }));
+    expect(out).not.toContain("starting from the given first frame");
+    expect(out).not.toContain("keep the subject consistent with the source frame");
+  });
 });
 
 describe("seedancePromptSkill gate", () => {
