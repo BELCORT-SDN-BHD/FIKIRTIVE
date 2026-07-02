@@ -2,11 +2,33 @@ import { describe, it, expect, vi } from "vitest";
 import {
   createNodeWithRetry,
   pollGenJob,
+  isInFlightPaidGen,
   CANVAS_POLL_MAX_ATTEMPTS,
   CANVAS_POLL_INTERVAL_MS,
 } from "../canvas-gen";
 
 const noWait = async () => {};
+
+describe("isInFlightPaidGen (delete-guard predicate)", () => {
+  // A paid GenJob that hasn't resolved to media yet: deleting it won't refund and
+  // re-running mints a fresh key → 2nd charge. The delete confirm must warn.
+  it("true for a still-generating image (pending, no url)", () => {
+    expect(isInFlightPaidGen({ type: "image", status: "pending" })).toBe(true);
+  });
+  it("true for a timed-out video (still running server-side, no url)", () => {
+    expect(isInFlightPaidGen({ type: "video", status: "timeout" })).toBe(true);
+  });
+  it("false once resolved to media (has url)", () => {
+    expect(isInFlightPaidGen({ type: "image", status: "pending", url: "https://r2/x.png" })).toBe(false);
+    expect(isInFlightPaidGen({ type: "video", status: "done", url: "https://tos/v.mp4" })).toBe(false);
+  });
+  it("false for a failed gen (terminal → already refunded, safe to delete)", () => {
+    expect(isInFlightPaidGen({ type: "image", status: "failed" })).toBe(false);
+  });
+  it("false for a text node (never paid)", () => {
+    expect(isInFlightPaidGen({ type: "text", status: "pending" })).toBe(false);
+  });
+});
 
 describe("createNodeWithRetry (canvas paid-card placement)", () => {
   it("returns the node on first success", async () => {

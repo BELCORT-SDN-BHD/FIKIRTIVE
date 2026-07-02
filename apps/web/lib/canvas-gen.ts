@@ -10,6 +10,20 @@ type Ref = { current: boolean };
 const sleep = (ms: number): Promise<void> => new Promise((r) => setTimeout(r, ms));
 
 /**
+ * A canvas node representing a PAID generation still in flight — an image/video
+ * gen node that hasn't resolved to media yet (status "pending"/"timeout", no url).
+ * Deleting one does NOT refund (its GenJob already reserved/settles) and re-running
+ * mints a fresh per-click idempotencyKey → a SECOND charge. The delete confirm uses
+ * this to warn before the owner reflexively removes a stuck-looking card and reclicks.
+ * "failed" is terminal (already refunded) and "done"/url-present is finished — both safe.
+ */
+export function isInFlightPaidGen(node: { type: string; status?: string; url?: string | null }): boolean {
+  if (node.type !== "image" && node.type !== "video") return false;
+  if (node.url) return false;
+  return node.status === "pending" || node.status === "timeout";
+}
+
+/**
  * Poll cadence. The BytePlus video provider itself times out at ~5 min, and the
  * worker's job window is 20 min — so the client ceiling must comfortably exceed
  * the real server window, or a still-running paid job reads as done/failed and
