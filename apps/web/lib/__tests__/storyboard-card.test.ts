@@ -23,18 +23,39 @@ describe("parseStoryboardCardPayload", () => {
     expect(r).toEqual({ storyboardTitle: "T", shots: [] });
   });
 
-  it("合法 payload → 映射 title + 双 prompt,按 index 排序", () => {
+  it("合法 payload → 映射 title + 双 prompt + shotId,按 index 排序", () => {
     const r = parseStoryboardCardPayload({
       storyboardTitle: "New shoes ad",
       shots: [
-        { index: 1, title: "Hero", firstFramePrompt: "ff-1", videoPrompt: "v-1" },
-        { index: 0, firstFramePrompt: "ff-0", videoPrompt: "v-0" },
+        { shotId: "sb", index: 1, title: "Hero", firstFramePrompt: "ff-1", videoPrompt: "v-1" },
+        { shotId: "sa", index: 0, firstFramePrompt: "ff-0", videoPrompt: "v-0" },
       ],
     });
     expect(r.storyboardTitle).toBe("New shoes ad");
     expect(r.shots.map((s) => s.index)).toEqual([0, 1]);
-    expect(r.shots[0]).toEqual({ index: 0, firstFramePrompt: "ff-0", videoPrompt: "v-0" });
+    expect(r.shots[0]).toEqual({ shotId: "sa", index: 0, firstFramePrompt: "ff-0", videoPrompt: "v-0" });
     expect(r.shots[1].title).toBe("Hero");
+    expect(r.shots[1].shotId).toBe("sb");
+  });
+
+  it("缺失 shotId 的遗留 payload → 回落到 String(index)", () => {
+    const r = parseStoryboardCardPayload({
+      storyboardTitle: "X",
+      shots: [{ index: 0, firstFramePrompt: "a", videoPrompt: "b" }, { index: 1, firstFramePrompt: "c", videoPrompt: "d" }],
+    });
+    expect(r.shots.map((s) => s.shotId)).toEqual(["0", "1"]);
+  });
+
+  it("entityIds 是字符串数组时透传,否则省略", () => {
+    const r = parseStoryboardCardPayload({
+      storyboardTitle: "X",
+      shots: [
+        { shotId: "s0", index: 0, firstFramePrompt: "a", videoPrompt: "b", entityIds: ["ent_1"] },
+        { shotId: "s1", index: 1, firstFramePrompt: "c", videoPrompt: "d", entityIds: "nope" },
+      ],
+    });
+    expect(r.shots[0].entityIds).toEqual(["ent_1"]);
+    expect(r.shots[1].entityIds).toBeUndefined();
   });
 
   it("缺失 prompt 字段 → 兜底成空串(不抛)", () => {

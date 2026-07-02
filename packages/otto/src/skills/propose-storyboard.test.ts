@@ -30,26 +30,53 @@ describe("storyboardCardInput schema", () => {
   it("goal is optional", () => {
     expect(storyboardCardInput.safeParse({ storyboardTitle: "x", shots: [okShot], goal: "drive signups" }).success).toBe(true);
   });
+  it("accepts optional per-shot entityIds and caps them at MAX_STORYBOARD_SHOTS", () => {
+    expect(storyboardCardInput.safeParse({ storyboardTitle: "x", shots: [{ ...okShot, entityIds: ["a", "b"] }] }).success).toBe(true);
+    const tooMany = { ...okShot, entityIds: Array.from({ length: MAX_STORYBOARD_SHOTS + 1 }, (_, i) => `e${i}`) };
+    expect(storyboardCardInput.safeParse({ storyboardTitle: "x", shots: [tooMany] }).success).toBe(false);
+  });
 });
 
 describe("buildStoryboardPayload", () => {
-  it("stamps a 0-based index on each shot in order", () => {
+  // 注入计数器 id 工厂,让 shotId 确定可断言(默认工厂是 newId=ULID,非确定)。
+  const counter = () => { let n = 0; return () => `shot-${n++}`; };
+  it("stamps a 0-based index + stable shotId on each shot in order", () => {
     const p = buildStoryboardPayload(storyboardCardInput.parse({
       storyboardTitle: "Launch",
       shots: [
         { firstFramePrompt: "wide shot of the product", videoPrompt: "slow dolly in" },
         { firstFramePrompt: "close-up on the label", videoPrompt: "rack focus", title: "Detail" },
       ],
-    }));
+    }), counter());
     expect(p.storyboardTitle).toBe("Launch");
     expect(p.shots.map((s) => s.index)).toEqual([0, 1]);
+    expect(p.shots.map((s) => s.shotId)).toEqual(["shot-0", "shot-1"]);
     expect(p.shots[1]!.title).toBe("Detail");
     expect(p.shots[0]!.firstFrameGenerationId).toBeUndefined();
+  });
+  it("mints a shotId per shot by default (no injected factory)", () => {
+    const p = buildStoryboardPayload(storyboardCardInput.parse({
+      storyboardTitle: "x", shots: [{ firstFramePrompt: "a", videoPrompt: "b" }],
+    }));
+    expect(typeof p.shots[0]!.shotId).toBe("string");
+    expect(p.shots[0]!.shotId.length).toBeGreaterThan(0);
+  });
+  it("passes through per-shot entityIds when present, omits otherwise", () => {
+    const p = buildStoryboardPayload(storyboardCardInput.parse({
+      storyboardTitle: "x",
+      shots: [
+        { firstFramePrompt: "a", videoPrompt: "b", entityIds: ["ent_1", "ent_2"] },
+        { firstFramePrompt: "c", videoPrompt: "d" },
+      ],
+    }), counter());
+    expect(p.shots[0]!.entityIds).toEqual(["ent_1", "ent_2"]);
+    expect(p.shots[1]!.entityIds).toBeUndefined();
+    expect("entityIds" in p.shots[1]!).toBe(false);
   });
   it("carries goal onto the payload when present", () => {
     const p = buildStoryboardPayload(storyboardCardInput.parse({
       storyboardTitle: "x", goal: "launch teaser", shots: [{ firstFramePrompt: "a", videoPrompt: "b" }],
-    }));
+    }), counter());
     expect(p.goal).toBe("launch teaser");
   });
 });
@@ -79,10 +106,12 @@ describe("executeProposeStoryboard — mock DB", () => {
     expect(data.threadId).toBe("thr-A");
     expect(data.role).toBe("AGENT");
     expect(data.seq).toBe(5);
-    const payload = data.payload as { storyboardTitle: string; goal?: string; shots: { index: number }[] };
+    const payload = data.payload as { storyboardTitle: string; goal?: string; shots: { index: number; shotId: string }[] };
     expect(payload.storyboardTitle).toBe("Raya ad");
     expect(payload.goal).toBe("festive launch");
     expect(payload.shots.map((s) => s.index)).toEqual([0, 1]);
+    // 服务端为每镜头铸了稳定 shotId(F4 付费写回按它定位)。
+    expect(payload.shots.every((s) => typeof s.shotId === "string" && s.shotId.length > 0)).toBe(true);
     expect(res.cardId).toEqual(expect.any(String));
   });
 

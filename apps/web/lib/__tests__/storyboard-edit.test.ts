@@ -11,9 +11,9 @@ function base(): StoryboardCardPayload {
   return {
     storyboardTitle: "Ad",
     shots: [
-      { index: 0, title: "A", firstFramePrompt: "ff0", videoPrompt: "v0", firstFrameGenerationId: "gen0" },
-      { index: 1, firstFramePrompt: "ff1", videoPrompt: "v1", firstFrameGenerationId: "gen1" },
-      { index: 2, firstFramePrompt: "ff2", videoPrompt: "v2" },
+      { shotId: "s0", index: 0, title: "A", firstFramePrompt: "ff0", videoPrompt: "v0", entityIds: ["ent_a"], firstFrameGenerationId: "gen0" },
+      { shotId: "s1", index: 1, firstFramePrompt: "ff1", videoPrompt: "v1", firstFrameGenerationId: "gen1" },
+      { shotId: "s2", index: 2, firstFramePrompt: "ff2", videoPrompt: "v2" },
     ],
   };
 }
@@ -24,6 +24,11 @@ describe("applyEditShotPrompt", () => {
     expect(r.shots[0].firstFramePrompt).toBe("NEW");
     expect(r.shots[0].firstFrameGenerationId).toBeUndefined();
     expect("firstFrameGenerationId" in r.shots[0]).toBe(false);
+  });
+  it("编辑保留该镜头的 shotId 与 entityIds(只清首帧图引用)", () => {
+    const r = applyEditShotPrompt(base(), 0, { firstFramePrompt: "NEW" });
+    expect(r.shots[0].shotId).toBe("s0");
+    expect(r.shots[0].entityIds).toEqual(["ent_a"]);
   });
   it("改 videoPrompt 也清该镜头首帧图引用", () => {
     const r = applyEditShotPrompt(base(), 1, { videoPrompt: "NEWV" });
@@ -47,15 +52,16 @@ describe("applyEditShotPrompt", () => {
 });
 
 describe("applyAddShot", () => {
-  it("追加新镜头并重编 index;新镜头无 firstFrameGenerationId", () => {
-    const r = applyAddShot(base(), { firstFramePrompt: "ffN", videoPrompt: "vN" });
+  it("追加新镜头并重编 index;新镜头带 shotId、无 firstFrameGenerationId", () => {
+    const r = applyAddShot(base(), { shotId: "sN", firstFramePrompt: "ffN", videoPrompt: "vN" });
     expect(r.shots).toHaveLength(4);
     expect(r.shots.map((s) => s.index)).toEqual([0, 1, 2, 3]);
+    expect(r.shots[3].shotId).toBe("sN");
     expect(r.shots[3].firstFramePrompt).toBe("ffN");
     expect(r.shots[3].firstFrameGenerationId).toBeUndefined();
   });
   it("带 title", () => {
-    const r = applyAddShot(base(), { title: "T", firstFramePrompt: "ffN", videoPrompt: "vN" });
+    const r = applyAddShot(base(), { shotId: "sN", title: "T", firstFramePrompt: "ffN", videoPrompt: "vN" });
     expect(r.shots[3].title).toBe("T");
   });
 });
@@ -74,10 +80,11 @@ describe("applyDeleteShot", () => {
 });
 
 describe("applyReorderShots", () => {
-  it("按给定顺序重排并重编 index", () => {
+  it("按给定顺序重排并重编 index(shotId 跟着镜头走,不因重排改变)", () => {
     const r = applyReorderShots(base(), [2, 0, 1]);
     expect(r.shots.map((s) => s.firstFramePrompt)).toEqual(["ff2", "ff0", "ff1"]);
     expect(r.shots.map((s) => s.index)).toEqual([0, 1, 2]);
+    expect(r.shots.map((s) => s.shotId)).toEqual(["s2", "s0", "s1"]);
   });
   it("order 不是当前 index 的合法排列 → 原样返回", () => {
     expect(applyReorderShots(base(), [0, 1]).shots).toEqual(base().shots);      // 少一个

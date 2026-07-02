@@ -12,6 +12,12 @@ vi.mock("@fikirtive/db", () => ({
   prisma: { chatMessage: { findFirst: mockFindFirst, update: mockUpdate } },
   Prisma: {},
 }));
+// addShot mints a shotId via newId — stub only newId deterministic (partial mock: the otto
+// barrel also imports MAX_GEN_PROMPT etc. from core at load, so keep the real exports).
+vi.mock("@fikirtive/core", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("@fikirtive/core")>()),
+  newId: () => "new-shot-id",
+}));
 
 import { editShotPrompt, addShot, deleteShot, reorderShots } from "../storyboard-actions";
 
@@ -23,9 +29,9 @@ function payload3(): StoryboardCardPayload {
   return {
     storyboardTitle: "Ad",
     shots: [
-      { index: 0, firstFramePrompt: "ff0", videoPrompt: "v0", firstFrameGenerationId: "gen0" },
-      { index: 1, firstFramePrompt: "ff1", videoPrompt: "v1" },
-      { index: 2, firstFramePrompt: "ff2", videoPrompt: "v2" },
+      { shotId: "s0", index: 0, firstFramePrompt: "ff0", videoPrompt: "v0", firstFrameGenerationId: "gen0" },
+      { shotId: "s1", index: 1, firstFramePrompt: "ff1", videoPrompt: "v1" },
+      { shotId: "s2", index: 2, firstFramePrompt: "ff2", videoPrompt: "v2" },
     ],
   };
 }
@@ -84,14 +90,15 @@ describe("editShotPrompt", () => {
 });
 
 describe("addShot", () => {
-  it("追加并回写", async () => {
+  it("追加并回写(ACTION 层铸的 shotId 落到新镜头)", async () => {
     mockFindFirst.mockResolvedValue(card(payload3()));
     const res = await addShot({ cardId: "card-1", firstFramePrompt: "ffN", videoPrompt: "vN" });
     expect("payload" in res && res.payload.shots).toHaveLength(4);
+    if ("payload" in res) expect(res.payload.shots[3].shotId).toBe("new-shot-id");
   });
   it("到上限(8)拒绝", async () => {
     const full = payload3();
-    full.shots = Array.from({ length: 8 }, (_, i) => ({ index: i, firstFramePrompt: `ff${i}`, videoPrompt: `v${i}` }));
+    full.shots = Array.from({ length: 8 }, (_, i) => ({ shotId: `s${i}`, index: i, firstFramePrompt: `ff${i}`, videoPrompt: `v${i}` }));
     mockFindFirst.mockResolvedValue(card(full));
     const res = await addShot({ cardId: "card-1", firstFramePrompt: "x", videoPrompt: "y" });
     expect("error" in res).toBe(true);

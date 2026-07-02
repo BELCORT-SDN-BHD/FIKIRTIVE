@@ -71,7 +71,7 @@ export function StoryboardCard({ cardId, payload }: StoryboardCardProps) {
             {shots.map((shot) => {
               const isEditing = editing === shot.index;
               return (
-                <div key={shot.index} className="bg-card rounded-[14px] flex flex-col gap-1" style={{ padding: "10px 12px" }}>
+                <div key={shot.shotId} className="bg-card rounded-[14px] flex flex-col gap-1" style={{ padding: "10px 12px" }}>
                   {/* Row header: shot number + optional title + controls */}
                   <div className="flex items-center gap-2">
                     <span className="text-[0.75rem] font-semibold px-[7px] py-[2px] rounded-full bg-secondary text-muted-foreground">

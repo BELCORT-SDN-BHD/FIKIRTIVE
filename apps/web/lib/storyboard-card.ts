@@ -12,10 +12,12 @@ import type { StoryboardCardPayload } from "@fikirtive/otto";
 export const MAX_STORYBOARD_SHOTS = 8;
 
 export interface StoryboardShotView {
+  shotId: string;
   index: number;
   title?: string;
   firstFramePrompt: string;
   videoPrompt: string;
+  entityIds?: string[];
   firstFrameGenerationId?: string;
 }
 
@@ -33,11 +35,17 @@ export function parseStoryboardCardPayload(payload: unknown): StoryboardCardView
   const shots = rawShots
     .map((s, i): StoryboardShotView => {
       const shot = (s ?? {}) as RawShot;
+      const index = typeof shot.index === "number" ? shot.index : i;
       return {
-        index: typeof shot.index === "number" ? shot.index : i,
+        // 遗留 payload 可能没 shotId → 回落到 String(index),渲染/key 仍稳定。
+        shotId: typeof shot.shotId === "string" && shot.shotId ? shot.shotId : String(index),
+        index,
         ...(typeof shot.title === "string" && shot.title ? { title: shot.title } : {}),
         firstFramePrompt: typeof shot.firstFramePrompt === "string" ? shot.firstFramePrompt : "",
         videoPrompt: typeof shot.videoPrompt === "string" ? shot.videoPrompt : "",
+        ...(Array.isArray(shot.entityIds) && shot.entityIds.every((e) => typeof e === "string")
+          ? { entityIds: shot.entityIds as string[] }
+          : {}),
         ...(typeof shot.firstFrameGenerationId === "string"
           ? { firstFrameGenerationId: shot.firstFrameGenerationId }
           : {}),

@@ -7,6 +7,7 @@
  */
 import { z } from "zod";
 import { prisma, Prisma } from "@fikirtive/db";
+import { newId } from "@fikirtive/core";
 import { MAX_STORYBOARD_SHOTS } from "@fikirtive/otto";
 import type { StoryboardCardPayload } from "@fikirtive/otto";
 import { requireOwner } from "./auth-guard";
@@ -80,7 +81,8 @@ export async function addShot(raw: unknown): Promise<Ok | Err> {
   if (!card) return { error: "Card not found." };
   const cur = (card.payload ?? {}) as StoryboardCardPayload;
   if (cur.shots.length >= MAX_STORYBOARD_SHOTS) return { error: `A storyboard can have at most ${MAX_STORYBOARD_SHOTS} shots.` };
-  return persist(cardId, applyAddShot(cur, { title, firstFramePrompt, videoPrompt }));
+  // shotId 在 ACTION 层铸造(纯 edit 层保持确定性)——F4 付费写回按它定位镜头。
+  return persist(cardId, applyAddShot(cur, { shotId: newId(), title, firstFramePrompt, videoPrompt }));
 }
 
 const deleteInput = z.object({ cardId: cardIdSchema, index: z.number().int().min(0) });

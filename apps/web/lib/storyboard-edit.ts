@@ -14,6 +14,8 @@ export interface ShotPromptPatch {
 }
 
 export interface NewShotInput {
+  /** 稳定镜头 id —— ACTION 层铸造(纯层保持确定性,不自己 mint)。 */
+  shotId: string;
   title?: string;
   firstFramePrompt: string;
   videoPrompt: string;
@@ -50,6 +52,7 @@ export function applyAddShot(
   shot: NewShotInput,
 ): StoryboardCardPayload {
   const added: Shot = {
+    shotId: shot.shotId,
     index: payload.shots.length,
     ...(shot.title ? { title: shot.title } : {}),
     firstFramePrompt: shot.firstFramePrompt,
