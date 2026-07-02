@@ -69,6 +69,9 @@ export function PackCard({ packTitle, cards, balanceUsd, onApproved }: PackCardP
 
   // If all cards are non-idle (all working/done/failed), the pack is fully running.
   const allSubmitted = idleCards.length === 0;
+  // F11: "failed" cards are non-idle too, so allSubmitted alone would show a green success footer
+  // even when every card failed. Count only the non-failed (actually started) ones.
+  const startedCount = parsedCards.filter((c) => c.cardState !== "failed").length;
 
   async function makeAll() {
     if (running) return;
@@ -92,6 +95,9 @@ export function PackCard({ packTitle, cards, balanceUsd, onApproved }: PackCardP
           setError(`Card ${i + 1} of ${idleCards.length}: ${res.error}`);
           setRunning(false);
           setCurrentIdx(null);
+          // F11: earlier cards in this loop were already charged + started — poll them even
+          // though a later card failed, so their paid results still surface (don't strand them).
+          if (i > 0) onApproved();
           return;
         }
         setDoneCardIds((prev) => new Set(prev).add(c.cardId));
@@ -99,6 +105,7 @@ export function PackCard({ packTitle, cards, balanceUsd, onApproved }: PackCardP
         setError(`Card ${i + 1} of ${idleCards.length} failed — please try again.`);
         setRunning(false);
         setCurrentIdx(null);
+        if (i > 0) onApproved(); // F11: poll the earlier already-charged cards
         return;
       }
     }
@@ -211,9 +218,9 @@ export function PackCard({ packTitle, cards, balanceUsd, onApproved }: PackCardP
             </>
           )}
 
-          {allSubmitted && !running && (
+          {allSubmitted && !running && startedCount > 0 && (
             <div className="text-[0.875rem] font-semibold text-[var(--success)]">
-              ✓ All {cards.length} {cards.length === 1 ? "item" : "items"} started
+              ✓ {startedCount === cards.length ? `All ${cards.length}` : `${startedCount} of ${cards.length}`} {cards.length === 1 ? "item" : "items"} started
             </div>
           )}
         </div>

@@ -96,7 +96,7 @@ describe("requireOwner — fail-closed", () => {
     if ("error" in second) throw new Error(second.error);
     expect(second.ownerId).toBe(first.ownerId);
     const acct = await prisma.creditAccount.findUnique({ where: { orgId: first.ownerId } });
-    expect(acct?.balance).toBe(1000 * 10);
+    expect(acct?.balance).toBe(100 * 10); // BETA_INITIAL_GRANT_CREDITS (cut 1000→100 in #66)
     const grants = await prisma.creditLedger.count({ where: { orgId: first.ownerId, idempotencyKey: `signup:${first.ownerId}` } });
     expect(grants).toBe(1);
   });

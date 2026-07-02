@@ -226,6 +226,23 @@ describe("getGeneration sibling urls", () => {
     expect(result.urls[2]).toContain("hash3");
   });
 
+  it("returns variants[] carrying each sibling's OWN id, aligned to urls (F08)", async () => {
+    mockGenFindFirst.mockResolvedValue({
+      id: "g1", promptText: "hello", favorite: false,
+      asset: { ownerId: "u1", contentHash: "hash1", ext: "jpg" },
+    });
+    mockJobFindFirst.mockResolvedValue({ sourceGenerationId: null, generationIds: ["g1", "g2", "g3"] });
+    mockGenFindMany.mockResolvedValue([
+      { id: "g2", asset: { ownerId: "u1", contentHash: "hash2", ext: "jpg" } },
+      { id: "g3", asset: { ownerId: "u1", contentHash: "hash3", ext: "jpg" } },
+    ]);
+    const result = await getGeneration("g1") as { urls: string[]; variants: { id: string; url: string }[] };
+    // ids in generationIds order — so variants[selectedIdx].id is the displayed image's real id
+    expect(result.variants.map((v) => v.id)).toEqual(["g1", "g2", "g3"]);
+    // and aligned to urls (each variant's url matches the same index)
+    expect(result.variants.map((v) => v.url)).toEqual(result.urls);
+  });
+
   it("sibling findMany is scoped by ownerId (cross-tenant guard)", async () => {
     mockGenFindFirst.mockResolvedValue({
       id: "g1",

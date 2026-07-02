@@ -12,10 +12,9 @@ import { getGeneration } from "@/lib/asset-actions";
 import { saveCroppedGeneration } from "@/lib/asset-actions";
 import { setFavorite } from "@/lib/asset-actions";
 import { deleteGeneration } from "@/lib/actions";
-import { startGen, getGenJob } from "@/lib/gen-actions";
+import { startGen, getGenJob, getActiveGenModels } from "@/lib/gen-actions";
 import { readPick, writePick } from "@/lib/result-pick";
 import {
-  activeImageModel,
   activeVideoModel,
   videoDefaults,
   GEN_VIDEO_MODEL_OPTIONS,
@@ -29,6 +28,7 @@ type GenDTO = {
   id: string;
   url: string;
   urls: string[];
+  variants: { id: string; url: string }[]; // aligned to urls; carries each variant's own id (F08)
   kind: string;
   prompt: string;
   favorite: boolean;
@@ -107,6 +107,18 @@ export default function DetailPanel({
   const [copied, setCopied] = useState(false);
 
   const cancelledRef = useRef(false);
+  // F18: the active models must be resolved SERVER-side (the OTTO_DEFAULT_VIDEO_MODEL env isn't
+  // bundled into the client, so activeVideoModel() in the browser returns the wrong default and
+  // the server gate rejects it). Fetch once; the spend handlers await it, render uses it once loaded.
+  const [activeModels, setActiveModels] = useState<{ image: string; video: string } | null>(null);
+  const modelsRef = useRef<{ image: string; video: string } | null>(null);
+  const ensureModels = async () => {
+    if (!modelsRef.current) modelsRef.current = await getActiveGenModels();
+    setActiveModels(modelsRef.current);
+    return modelsRef.current;
+  };
+  useEffect(() => { void ensureModels(); /* eslint-disable-next-line react-hooks/exhaustive-deps */ }, []);
+  const videoModel = (activeModels?.video ?? activeVideoModel()) as GenVideoModel;
 
   useEffect(() => {
     cancelledRef.current = false;
@@ -131,8 +143,9 @@ export default function DetailPanel({
         setSelectedIdx(saved);
       }
 
-      // Init aspect picker default
-      const vm = activeVideoModel() as GenVideoModel;
+      // Init aspect picker default (F18: use the server-resolved model, falling back to the
+      // client default only until it loads — display-only, the spend paths await the real model)
+      const vm = videoModel;
       const opts = GEN_VIDEO_MODEL_OPTIONS[vm];
       if (opts?.aspectRatios?.length) {
         const def = videoDefaults(vm).aspectRatio || opts.aspectRatios[0]!;
@@ -163,13 +176,18 @@ export default function DetailPanel({
     return () => document.removeEventListener("keydown", onKey);
   }, [onClose, cropOpen]);
 
+  // The generation the user is actually LOOKING AT — the selected variant, not the primary
+  // prop. All mutate/spend handlers act on this so a sibling variant isn't animated/deleted/
+  // starred/edited against the wrong image (F08/F09). Still an owned id resolved server-side.
+  const selectedGenId = gen ? (gen.variants[selectedIdx]?.id ?? gen.id) : generationId;
+
   const handleFavorite = useCallback(async () => {
     if (!gen) return;
     const next = !favorite;
     setFavoriteLocal(next); // optimistic
-    const result = await setFavorite(generationId, next);
+    const result = await setFavorite(selectedGenId, next);
     if ("error" in result) setFavoriteLocal(!next); // revert
-  }, [gen, favorite, generationId]);
+  }, [gen, favorite, selectedGenId]);
 
   const pollJob = useCallback(async (jobId: string): Promise<"done" | "failed"> => {
     for (let i = 0; i < 120; i++) {
@@ -203,12 +221,13 @@ export default function DetailPanel({
   const handleRegen = useCallback(async () => {
     if (!gen) return;
     setRegenStatus("running");
+    const { image } = await ensureModels(); // F18: server-resolved model
     const result = await startGen({
       projectId,
       prompt: gen.prompt,
       count: 1,
       kind: "image",
-      model: activeImageModel(),
+      model: image,
       idempotencyKey: `regen-${generationId}-${Date.now()}`,
     });
     if ("error" in result) {
@@ -227,7 +246,7 @@ export default function DetailPanel({
   const handleAnimate = useCallback(async () => {
     if (!gen) return;
     setAnimStatus("running");
-    const vm = activeVideoModel() as GenVideoModel;
+    const vm = (await ensureModels()).video as GenVideoModel; // F18: server-resolved model
     const vd = videoDefaults(vm);
     // Use user's chosen aspect ratio if set; fall back to videoDefaults
     const effectiveAspect = chosenAspect || vd.aspectRatio;
@@ -237,12 +256,12 @@ export default function DetailPanel({
       count: 1,
       kind: "video",
       model: vm,
-      sourceGenerationId: generationId,
+      sourceGenerationId: selectedGenId,
       durationSeconds: vd.seconds,
       resolution: vd.resolution,
       audio: vd.audio,
       ...(effectiveAspect ? { aspectRatio: effectiveAspect } : {}),
-      idempotencyKey: `anim-${generationId}-${Date.now()}`,
+      idempotencyKey: `anim-${selectedGenId}-${Date.now()}`,
     });
     if ("error" in result) {
       if (!cancelledRef.current) setAnimStatus("failed");
@@ -254,7 +273,7 @@ export default function DetailPanel({
       setTimeout(() => { if (!cancelledRef.current) setAnimStatus("idle"); }, 3000);
     }
     if (status === "done") await reloadFromJob(result.id);
-  }, [gen, generationId, projectId, pollJob, chosenAspect, reloadFromJob]);
+  }, [gen, selectedGenId, projectId, pollJob, chosenAspect, reloadFromJob]);
 
   const handleCopyLink = useCallback(async () => {
     if (!gen) return;
@@ -269,9 +288,9 @@ export default function DetailPanel({
   }, [gen, selectedIdx]);
 
   const handleDelete = useCallback(async () => {
-    await deleteGeneration(generationId);
+    await deleteGeneration(selectedGenId);
     onClose();
-  }, [generationId, onClose]);
+  }, [selectedGenId, onClose]);
 
   // Variant switcher: switch displayed url + persist pick
   const handleVariantPick = useCallback((idx: number) => {
@@ -284,14 +303,19 @@ export default function DetailPanel({
   const handleEditSubmit = useCallback(async () => {
     if (!gen || !editPrompt.trim() || editStatus === "running") return;
     setEditStatus("running");
+    const { image } = await ensureModels(); // F18: server-resolved model
     const result = await startGen({
       projectId,
       prompt: editPrompt.trim(),
       entityIds: editIds,
       count: 1,
       kind: "image",
-      model: activeImageModel(),
-      idempotencyKey: `edit-${gen.id}-${Date.now()}`,
+      model: image,
+      // F09: condition the edit on the image the user is actually viewing (the selected
+      // variant), so a paid "edit this" result relates to the displayed image instead of
+      // being an unconditioned fresh generation. Owned id resolved server-side (D19).
+      sourceGenerationId: selectedGenId,
+      idempotencyKey: `edit-${selectedGenId}-${Date.now()}`,
     });
     if ("error" in result) {
       if (!cancelledRef.current) setEditStatus("failed");
@@ -303,7 +327,7 @@ export default function DetailPanel({
       setTimeout(() => { if (!cancelledRef.current) setEditStatus("idle"); }, 3000);
     }
     if (status === "done") await reloadFromJob(result.id);
-  }, [gen, editPrompt, editIds, editStatus, projectId, pollJob, reloadFromJob]);
+  }, [gen, editPrompt, editIds, editStatus, projectId, pollJob, reloadFromJob, selectedGenId]);
 
   // Crop: confirm crop and save
   const handleCropConfirm = useCallback(async () => {
@@ -344,8 +368,8 @@ export default function DetailPanel({
   // Compute active URL to display
   const displayUrl = gen ? (gen.urls[selectedIdx] ?? gen.url) : null;
 
-  // Aspect ratios for picker (only show if model has options)
-  const vm = activeVideoModel() as GenVideoModel;
+  // Aspect ratios for picker (only show if model has options) — F18: server-resolved model
+  const vm = videoModel;
   const videoOpts = GEN_VIDEO_MODEL_OPTIONS[vm];
   const aspectRatios = videoOpts?.aspectRatios ?? [];
 

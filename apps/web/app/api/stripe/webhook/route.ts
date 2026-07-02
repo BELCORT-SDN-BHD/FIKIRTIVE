@@ -16,7 +16,11 @@ export async function POST(req: NextRequest): Promise<Response> {
     return new Response(`Webhook signature verification failed: ${e instanceof Error ? e.message : "error"}`, { status: 400 });
   }
 
-  if (event.type === "checkout.session.completed") {
+  // F01: async_payment_succeeded fires when a delayed-notification method (e.g. FPX/GrabPay)
+  // settles AFTER the session completed 'unpaid' — grant on it too, or that customer pays and
+  // never receives credits. The stripe:<session.id> idempotencyKey keeps it exactly-once even
+  // if both completed(paid) and async_payment_succeeded arrive for the same session.
+  if (event.type === "checkout.session.completed" || event.type === "checkout.session.async_payment_succeeded") {
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     const session = event.data.object as any;
     if (session.payment_status === "paid") {

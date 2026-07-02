@@ -28,7 +28,9 @@ export default async function proxy(req: NextRequest) {
   const session = await auth.api.getSession({ headers: req.headers });
   if (!session) {
     const login = new URL("/login", req.nextUrl);
-    login.searchParams.set("from", req.nextUrl.pathname);
+    // F42: keep the query string too, so a deep link (e.g. ?project=…&thread=…) survives the
+    // login round-trip. LoginForm's sanitizeCallbackURL already accepts a path with a query.
+    login.searchParams.set("from", req.nextUrl.pathname + req.nextUrl.search);
     return NextResponse.redirect(login);
   }
 }

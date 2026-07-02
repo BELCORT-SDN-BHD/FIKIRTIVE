@@ -34,3 +34,6 @@ _*.md
 # tool-local staging (gstack / superpowers) — not project artifacts
 .out-of-scope/
 .superpowers/
+
+# Stray Claude worktree dirs must never be committed (see F32 audit)
+.claire/

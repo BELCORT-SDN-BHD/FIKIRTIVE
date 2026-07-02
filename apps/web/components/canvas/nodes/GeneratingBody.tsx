@@ -18,6 +18,28 @@ function OttoCloud() {
   );
 }
 
+/** Terminal state for a card whose gen didn't deliver. "failed" is a hard fail (the worker
+ *  FAILED + refunded the job, so it's safe to say "not charged"); "timeout" is soft — the
+ *  client stopped polling but the worker may still settle it, so it invites a check-back
+ *  rather than claiming failure. Without this, a FAILED/timed-out node showed GeneratingBody
+ *  forever (the eternal spinner, F21). */
+export function FailedBody({ status }: { status: "failed" | "timeout" }) {
+  const timeout = status === "timeout";
+  return (
+    <div style={{ display: "grid", placeItems: "center", height: "100%", padding: 12, textAlign: "center", gap: 6 }}>
+      <div style={{ fontSize: 20, opacity: 0.5 }} aria-hidden>{timeout ? "⏳" : "⚠️"}</div>
+      <div style={{ fontSize: 12.5, fontWeight: 600, opacity: 0.8 }}>
+        {timeout ? "Still working…" : "That didn't finish"}
+      </div>
+      <div style={{ fontSize: 11.5, opacity: 0.55, lineHeight: 1.4 }}>
+        {timeout
+          ? "This is taking longer than usual — check back in a moment."
+          : "You weren't charged. Try again."}
+      </div>
+    </div>
+  );
+}
+
 export function GeneratingBody({ gb, kind }: { gb?: boolean; kind: "image" | "video" }) {
   if (!gb) {
     return (

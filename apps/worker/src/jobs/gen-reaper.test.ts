@@ -12,14 +12,17 @@ const m = vi.hoisted(() => {
   const chatMessageCreate = vi.fn();
   const refundReservation = vi.fn();
   const settleCredits = vi.fn();
+  const queryRaw = vi.fn();
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const prisma: any = {
     genJob: { findMany: genJobFindMany, updateMany: genJobUpdateMany },
     chatMessage: { findFirst: chatMessageFindFirst, create: chatMessageCreate },
     // the reaper's $transaction body only touches tx.genJob.updateMany + refundReservation(tx)
     $transaction: vi.fn(async (fn: (tx: unknown) => Promise<unknown>) => fn(prisma)),
+    // QUEUED-branch liveness check against pgboss.job (F07). Default: no live message.
+    $queryRaw: queryRaw,
   };
-  return { prisma, genJobFindMany, genJobUpdateMany, chatMessageFindFirst, chatMessageCreate, refundReservation, settleCredits };
+  return { prisma, genJobFindMany, genJobUpdateMany, chatMessageFindFirst, chatMessageCreate, refundReservation, settleCredits, queryRaw };
 });
 
 vi.mock("@fikirtive/db", () => ({ prisma: m.prisma, refundReservation: m.refundReservation, settleCredits: m.settleCredits }));
@@ -37,6 +40,8 @@ beforeEach(() => {
   vi.clearAllMocks();
   m.chatMessageFindFirst.mockResolvedValue({ seq: 5 });
   m.chatMessageCreate.mockResolvedValue({ id: "msg1" });
+  // Default: pg-boss has no live message for the job → the QUEUED reap may proceed.
+  m.queryRaw.mockResolvedValue([]);
 });
 
 describe("reapStaleGenJobs — GENERATING branch", () => {
@@ -84,6 +89,19 @@ describe("reapStaleGenJobs — QUEUED branch (GEN-6 / P0-11)", () => {
     expect(m.refundReservation).toHaveBeenCalledWith(expect.anything(), { orgId: "o2", refId: "g2" });
     expect(m.chatMessageCreate).toHaveBeenCalledTimes(1);
     expect(m.chatMessageCreate.mock.calls[0]![0].data).toMatchObject({ kind: "TURN_ERROR", genJobId: "g2", threadId: "t2" });
+  });
+
+  it("does NOT reap a QUEUED job that still has a live pg-boss message (F07 — serial-queue starvation)", async () => {
+    // A paid job can legitimately wait >25 min behind a burst of long video jobs (serial
+    // batchSize:1 queue). If pg-boss still holds a live message for it, it will be delivered —
+    // fail-closing it here would spuriously refund a job that's about to run.
+    m.genJobFindMany.mockResolvedValueOnce([]).mockResolvedValueOnce([stuckQueuedJob]);
+    m.queryRaw.mockResolvedValue([{ id: "boss-msg-1" }]); // pg-boss: message is created/retry/active
+    const n = await reapStaleGenJobs();
+    expect(n).toBe(0);
+    expect(m.genJobUpdateMany).not.toHaveBeenCalled(); // never even attempts the fail-close claim
+    expect(m.refundReservation).not.toHaveBeenCalled();
+    expect(m.chatMessageCreate).not.toHaveBeenCalled();
   });
 
   it("does NOT refund or post a TURN_ERROR when a worker wins the race (updateMany returns count 0)", async () => {

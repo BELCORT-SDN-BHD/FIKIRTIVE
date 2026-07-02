@@ -68,6 +68,22 @@ describe("generateVideo (Seedance, async)", () => {
     await vi.runAllTimersAsync();
     await assertion;
   });
+  it("keeps polling past the old 5-min cap (video can run longer) and still succeeds (F06)", async () => {
+    // Return "running" for ~70 polls (~5.8 min at 5s) then succeed. The old 5-min TIMEOUT_MS
+    // would have thrown a chargedError timeout (~poll 61) — refunding the user while BytePlus
+    // still bills the completing task. The 15-min cap lets it finish.
+    let polls = 0;
+    stubFetch((url) => {
+      if (url.endsWith("/contents/generations/tasks")) return jsonRes({ id: "cgt-slow" });
+      if (url.includes("/tasks/cgt-slow")) { polls++; return jsonRes(polls < 70 ? { status: "running" } : { status: "succeeded", content: { video_url: "https://tos/v.mp4" } }); }
+      return bytesRes();
+    });
+    const promise = new BytePlusProvider("ark-test").generateVideo({ prompt: "x", imageUrl: "", durationSeconds: 5, model: "seedance-2-fast" });
+    await vi.runAllTimersAsync();
+    const out = await promise;
+    expect(out.ext).toBe("mp4");
+  });
+
   it("rejects an end frame (tailImageUrl) BEFORE any submit — no spend", async () => {
     const calls: string[] = [];
     stubFetch((url) => { calls.push(url); return jsonRes({ id: "should-not-happen" }); });
@@ -114,5 +130,45 @@ describe("generate (Seedream image, sync)", () => {
     });
     await expect(new BytePlusProvider("ark-test").generate({ prompt: "x", inputImageUrls: [], count: 1, model: "seedream" }))
       .rejects.toThrow(/usable/);
+  });
+
+  it("sets watermark:false on the Ark image request (F40 — paying users must not get watermarked images)", async () => {
+    let body: any;
+    stubFetch((url, init) => {
+      if (url.endsWith("/images/generations")) { body = JSON.parse(init.body); return jsonRes({ data: [{ url: "https://tos/x.png" }] }); }
+      return bytesRes();
+    });
+    await new BytePlusProvider("ark-test").generate({ prompt: "x", inputImageUrls: [], count: 1, model: "seedream" });
+    expect(body.watermark).toBe(false);
+  });
+
+  it("a PRE-charge POST failure (429, nothing billed) rejects PLAIN/retryable, not chargedError (F05)", async () => {
+    stubFetch((url) => {
+      if (url.endsWith("/images/generations")) return { ok: false, status: 429, text: async () => "rate limited" };
+      return bytesRes();
+    });
+    let err: any;
+    try {
+      await new BytePlusProvider("ark-test").generate({ prompt: "x", inputImageUrls: [], count: 1, model: "seedream" });
+    } catch (e) { err = e; }
+    expect(err).toBeInstanceOf(Error);
+    expect((err as any).charged).toBeFalsy(); // pre-charge → the worker may safely retry
+    expect(err.message).toContain("429");
+  });
+
+  it("a shortfall where at least one image WAS billed still surfaces as chargedError (F05)", async () => {
+    let n = 0;
+    stubFetch((url) => {
+      if (url.endsWith("/images/generations")) {
+        n++;
+        return n === 1 ? jsonRes({ data: [{ url: "https://tos/a.png" }] }) : { ok: false, status: 500, text: async () => "boom" };
+      }
+      return bytesRes();
+    });
+    let err: any;
+    try {
+      await new BytePlusProvider("ark-test").generate({ prompt: "x", inputImageUrls: [], count: 2, model: "seedream" });
+    } catch (e) { err = e; }
+    expect((err as any).charged).toBe(true); // one image billed → retrying would re-bill it
   });
 });

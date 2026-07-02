@@ -31,9 +31,10 @@ export async function GET(
   }
   try {
     const { ext } = parseStorageKey(joined); // rejects traversal/malformed keys
-    // r2 driver: hand the client a short-lived presigned GET — R2 serves
-    // Range/206 natively
-    const presigned = await storage.presignedGet(joined);
+    // r2 driver: hand the client a presigned GET — R2 serves Range/206 natively.
+    // F41: 1h TTL (default is 300s) — a 5-min URL expired mid-playback/seek on longer videos.
+    // The content is immutable (content-addressed), so a longer-lived signed GET is safe.
+    const presigned = await storage.presignedGet(joined, 3600);
     if (presigned) {
       // the signed URL must not linger in caches or leak via referrers
       return NextResponse.redirect(presigned, {

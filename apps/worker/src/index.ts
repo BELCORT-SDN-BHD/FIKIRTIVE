@@ -13,8 +13,9 @@ import { PgBoss } from "pg-boss";
 import { QUEUES } from "./queues.js";
 import { handleIngest, type IngestJobData } from "./jobs/ingest.js";
 import { handleRender } from "./jobs/render.js";
-import { handleRefGen } from "./jobs/refgen.js";
+import { handleRefGen, reapStaleRefGenJobs } from "./jobs/refgen.js";
 import { handleGen, reapStaleGenJobs } from "./jobs/gen.js";
+import { reapStaleLlmReservations } from "./jobs/llm-reservation-reaper.js";
 import { handleCaption } from "./jobs/caption.js";
 import {
   RENDER_DLQ,
@@ -162,6 +163,10 @@ async function main(): Promise<void> {
     try {
       const n = await reapStaleGenJobs();
       if (n) console.log(`[worker] reaped ${n} stale gen job(s)`);
+      const rn = await reapStaleRefGenJobs();
+      if (rn) console.log(`[worker] reaped ${rn} stale refgen job(s)`);
+      const ln = await reapStaleLlmReservations();
+      if (ln) console.log(`[worker] reaped ${ln} leaked LLM reservation(s)`);
     } catch (e) {
       console.error("[worker] reaper error:", e);
       captureError(e);

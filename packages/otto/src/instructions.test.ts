@@ -46,6 +46,15 @@ describe("ottoInstructions — brand memory guidance", () => {
   });
 });
 
+describe("ottoInstructions — meta-action tool name (F26)", () => {
+  it("references the registered kebab-case tool name, not the un-callable camelCase alias", () => {
+    // The skill is registered as "propose-meta-action" (skills/propose-meta-action.ts).
+    // Instructing the model to call `proposeMetaAction` means it can never invoke the tool.
+    expect(ottoInstructions).toContain("propose-meta-action");
+    expect(ottoInstructions).not.toMatch(/proposeMetaAction/);
+  });
+});
+
 describe("ottoInstructions — video keyframes", () => {
   it("prompt instructs Otto to pass forVideo:true when making an image keyframe for a video", () => {
     expect(ottoInstructions).toMatch(/forVideo/);

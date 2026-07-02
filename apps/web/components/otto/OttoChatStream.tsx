@@ -53,7 +53,7 @@ export interface OttoChatStreamProps {
   /** Streaming front door: a first message to auto-send ONCE into a freshly-created
    *  (empty) thread on mount. The thread row already exists (createEmptyCoworkThread),
    *  so the route's existing-thread branch handles it. */
-  pendingFirst?: { text: string; goalKey?: string };
+  pendingFirst?: { text: string; goalKey?: string; entityIds?: string[] };
   /** Called right after the pendingFirst message is dispatched, so the parent can
    *  clear it (prevents a re-send if this thread is remounted later). */
   onPendingFirstSent?: () => void;
@@ -113,6 +113,9 @@ export function OttoChatStream({
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
   const [videoPick, setVideoPick] = useState<{ url: string; duration: number } | null>(null);
   const [frameTime, setFrameTime] = useState(0);
+  // F28: only true once a frame has actually been drawn to the canvas (onSeeked), so "Use this
+  // frame" can't attach a blank JPEG before the first paint.
+  const [frameReady, setFrameReady] = useState(false);
 
   // Bounded in-flight poll for the async worker result (ported from OttoConversation):
   // a GEN_CARD whose genJobId is set but with no terminal GEN_RESULT/TURN_ERROR keeps
@@ -313,7 +316,7 @@ export function OttoChatStream({
     pendingSentRef.current = true;
     void sendMessage(
       { text: pendingFirst.text },
-      { body: { projectId, threadId: thread.id, ...(pendingFirst.goalKey ? { goalKey: pendingFirst.goalKey } : {}) } },
+      { body: { projectId, threadId: thread.id, ...(pendingFirst.goalKey ? { goalKey: pendingFirst.goalKey } : {}), ...(pendingFirst.entityIds?.length ? { entityIds: pendingFirst.entityIds } : {}) } }, // F30: carry entity conditioning into the first streamed turn
     );
     onPendingFirstSent?.();
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -397,11 +400,32 @@ export function OttoChatStream({
   // Called once the hidden <video> has its metadata: set duration + seek to the default frame.
   function handleVideoMeta() {
     const v = videoElRef.current;
-    if (!v || !Number.isFinite(v.duration)) return;
+    if (!v) return;
+    // F28: MediaRecorder-produced webm reports Infinity/NaN duration until the browser is forced
+    // to compute it. Seek past the end to trigger that; the real duration arrives via
+    // onDurationChange (below) — without this the picker dead-ends (duration stays 0 → button
+    // permanently disabled). ACCEPT_ATTACH explicitly allows video/webm, so this IS reachable.
+    if (!Number.isFinite(v.duration) || v.duration <= 0) {
+      v.currentTime = Number.MAX_SAFE_INTEGER;
+      return;
+    }
     const t = defaultFrameTime(v.duration);
     setVideoPick((p) => (p ? { ...p, duration: v.duration } : p));
     setFrameTime(t);
     v.currentTime = t;
+  }
+
+  // F28: once the forced seek resolves the real (finite) duration for a webm, record it and
+  // seek back to the default frame (we're currently parked past the end).
+  function handleDurationChange() {
+    const v = videoElRef.current;
+    if (!v || !Number.isFinite(v.duration) || v.duration <= 0) return;
+    setVideoPick((p) => (p && p.duration > 0 ? p : p ? { ...p, duration: v.duration } : p));
+    if (v.currentTime > v.duration) {
+      const t = defaultFrameTime(v.duration);
+      setFrameTime(t);
+      v.currentTime = t;
+    }
   }
 
   // Draw the current video frame into the preview canvas (longest side capped).
@@ -413,11 +437,13 @@ export function OttoChatStream({
     c.width = Math.round(v.videoWidth * scale);
     c.height = Math.round(v.videoHeight * scale);
     c.getContext("2d")?.drawImage(v, 0, 0, c.width, c.height);
+    setFrameReady(true); // a real frame is now on the canvas
   }
 
   function handleScrub(e: React.ChangeEvent<HTMLInputElement>) {
     const t = Number(e.target.value);
     setFrameTime(t);
+    setFrameReady(false); // wait for the next onSeeked paint before allowing capture
     if (videoElRef.current) videoElRef.current.currentTime = t;
   }
 
@@ -425,6 +451,7 @@ export function OttoChatStream({
     if (videoPick) URL.revokeObjectURL(videoPick.url);
     setVideoPick(null);
     setFrameTime(0);
+    setFrameReady(false);
   }
 
   async function useSelectedFrame() {
@@ -955,6 +982,7 @@ export function OttoChatStream({
                 preload="metadata"
                 className="hidden"
                 onLoadedMetadata={handleVideoMeta}
+                onDurationChange={handleDurationChange}
                 onSeeked={drawCurrentFrame}
                 onError={() => { setAttachError("Couldn't read that video — try an MP4."); closeVideoPick(); }}
               />
@@ -973,7 +1001,7 @@ export function OttoChatStream({
               )}
               <div className="mt-2 flex items-center justify-end gap-2">
                 <Button variant="ghost" size="sm" onClick={closeVideoPick} disabled={uploading}>Cancel</Button>
-                <Button variant="default" size="sm" onClick={useSelectedFrame} disabled={uploading || videoPick.duration === 0}>
+                <Button variant="default" size="sm" onClick={useSelectedFrame} disabled={uploading || videoPick.duration === 0 || !frameReady}>
                   {uploading ? "Attaching…" : "Use this frame"}
                 </Button>
               </div>

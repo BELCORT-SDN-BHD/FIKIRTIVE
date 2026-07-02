@@ -1,4 +1,9 @@
-"use server";
+// F12: deliberately NOT "use server". runAdBuild/maybeAutoBuild take a TRUSTED ownerId and do
+// not re-authenticate — if this module were "use server", every export (incl. those two) would
+// become a public Server Action any authenticated user could POST with another org's ownerId.
+// The client-facing, requireOwner-gated actions (approveAdBuild / launchAdDraft) are re-exposed
+// through the "use server" wrapper otto-client-actions.ts; maybeAutoBuild is called only from the
+// plain server module meta-build-propose.ts. This mirrors meta-write-actions.ts (runApprovedPlan).
 /**
  * runAdBuild — the ONLY code path in the system that CREATES Meta objects (campaign,
  * adset, ad creative, ad) in the user's real ad account. Trusted, internal, server-side
@@ -96,6 +101,9 @@ async function claimAndCreate(
     if (row.status === "APPLIED") {
       const id = readAppliedId(row.appliedValue);
       if (id) return id; // already created — reuse, never re-create.
+      // APPLIED but no recorded id: ambiguous (the object may exist in Meta). Re-creating
+      // would duplicate it, so refuse rather than fall through to a fresh create. (F13)
+      throw new InterruptedBuildError();
     }
     if (row.status === "APPLYING") {
       // AMBIGUOUS crash state: the row reached APPLYING before a prior crash, so the Meta
@@ -119,8 +127,14 @@ async function claimAndCreate(
           const id = readAppliedId(existing.appliedValue);
           if (id) return id;
         }
-        row = existing ?? null;
-        if (!row) throw e;
+        // We LOST the unique-index insert race: another claimant already owns this step's row.
+        // A PENDING/APPLYING row means that concurrent claimant is the rightful executor and may
+        // be firing the Meta create right now — re-claiming and creating here would DUPLICATE the
+        // object (duplicate campaign/adset, double budget). An APPLIED row without a usable id is
+        // equally ambiguous. Refuse and surface needs_review; a genuinely crashed leftover (not
+        // concurrent) is recovered by a later retry via the step-1 PENDING re-claim path. (F13)
+        if (existing) throw new InterruptedBuildError();
+        throw e;
       } else {
         throw e;
       }
@@ -326,6 +340,15 @@ function bindingSteps(payload: MetaAdBuildCardPayload): PlanStep[] {
         pageId: payload.pageId,
         mode: payload.mode,
         adsetId: payload.intoExisting?.adsetId ?? null,
+        // F17: MUST mirror buildAdBuildCard's approval step exactly (same fields, same order).
+        creative: {
+          kind: payload.creative.kind,
+          message: payload.creative.message,
+          headline: payload.creative.headline ?? null,
+          cta: payload.creative.cta,
+          link: payload.creative.link,
+        },
+        targeting: payload.targeting,
       },
     },
   ];
