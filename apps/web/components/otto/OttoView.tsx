@@ -3,6 +3,7 @@ import React, { useState } from "react";
 import type { OttoViewKey } from "./OttoApp";
 import type { EntityDTO, ChatThreadDTO } from "@/lib/types";
 import type { MemoryRow } from "@/lib/memory-actions";
+import type { BrandRecordRow } from "@/lib/brand-record-actions";
 import type { AccountInfo } from "@/lib/account-actions";
 import { OttoFrontDoor } from "./OttoFrontDoor";
 import { OttoConversation } from "./OttoConversation";
@@ -31,6 +32,7 @@ interface OttoViewProps {
   balanceUsd: number;
   userName: string;
   memory: MemoryRow[];
+  records: BrandRecordRow[];
   ads: AdTile[];
   adJobs: AdJobItem[];
   account: AccountInfo | null;
@@ -60,6 +62,7 @@ export function OttoView({
   balanceUsd,
   userName,
   memory,
+  records,
   ads,
   adJobs,
   account,
@@ -96,7 +99,7 @@ export function OttoView({
   if (view === "memory") {
     return (
       <div style={{ flex: 1, display: "flex", flexDirection: "column", overflow: "hidden" }}>
-        <OttoMemory initialMemory={memory} projectId={projectId} />
+        <OttoMemory initialMemory={memory} initialRecords={records} projectId={projectId} />
       </div>
     );
   }

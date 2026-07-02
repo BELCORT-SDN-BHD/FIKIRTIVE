@@ -1,6 +1,7 @@
 import { notFound } from "next/navigation";
 import { OttoApp, type OttoViewKey } from "@/components/otto/OttoApp";
 import type { MemoryRow } from "@/lib/memory-actions";
+import type { BrandRecordRow } from "@/lib/brand-record-actions";
 
 export const dynamic = "force-dynamic";
 export const metadata = { title: "Skin preview (dev)" };
@@ -31,6 +32,14 @@ export default async function SkinPreviewPage({
     { id: "m4", category: "do-not", content: "Never use stock-photo smiles or corporate jargon.", source: "user", pinned: true, updatedAt: new Date(0) },
   ];
 
+  const records: BrandRecordRow[] = [
+    { id: "sp-seg1", kind: "segment", data: { name: "Young working moms", who: "25–38, urban, time-poor", pains: "no time to cook", channels: "IG Reels, TikTok" }, status: "active", startsAt: null, endsAt: null, source: "otto", pinned: false, updatedAt: new Date() },
+    { id: "sp-prod1", kind: "product", data: { name: "Latte Blend", description: "smooth everyday coffee", price: "RM 49", sellingAngle: "affordable daily ritual" }, status: "active", startsAt: null, endsAt: null, source: "user", pinned: true, updatedAt: new Date() },
+    { id: "sp-prod2", kind: "product", data: { name: "Espresso Kit", price: "RM 129" }, status: "active", startsAt: null, endsAt: null, source: "otto", pinned: false, updatedAt: new Date() },
+    { id: "sp-off1", kind: "offer", data: { title: "Raya sale — 20% off", code: "RAYA20" }, status: "active", startsAt: null, endsAt: new Date("2026-07-15"), source: "otto", pinned: false, updatedAt: new Date() },
+    { id: "sp-off2", kind: "offer", data: { title: "Launch promo (over)" }, status: "active", startsAt: null, endsAt: new Date("2026-06-01"), source: "user", pinned: false, updatedAt: new Date() },
+  ];
+
   const iso = new Date(0).toISOString();
   return (
     <OttoApp
@@ -52,6 +61,7 @@ export default async function SkinPreviewPage({
       userName="rosa"
       userEmail="rosa@bloomcoffee.co"
       memory={memory}
+      records={records}
       ads={[]}
       adJobs={[]}
       account={null}
