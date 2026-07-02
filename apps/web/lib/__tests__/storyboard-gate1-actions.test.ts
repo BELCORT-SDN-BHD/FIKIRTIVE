@@ -16,6 +16,7 @@ const {
   mockGenJobFindFirst,
   mockGenJobCreate,
   mockEntityFindMany,
+  mockGenerationFindMany,
   mockBuildProposeCard,
   mockResolveDisabled,
   db,
@@ -26,12 +27,14 @@ const {
   const mockGenJobFindFirst = vi.fn();
   const mockGenJobCreate = vi.fn();
   const mockEntityFindMany = vi.fn();
+  const mockGenerationFindMany = vi.fn();
   // $transaction runs its callback with a `tx` that is the SAME db object (passthrough),
   // so assertions on the shared mock fns capture writes made inside the transaction.
   const db: Record<string, unknown> = {
     chatMessage: { findFirst: mockChatFindFirst, create: mockChatCreate, update: mockChatUpdate },
     genJob: { findFirst: mockGenJobFindFirst, create: mockGenJobCreate },
     entity: { findMany: mockEntityFindMany },
+    generation: { findMany: mockGenerationFindMany },
   };
   db.$transaction = async (fn: (tx: unknown) => unknown) => fn(db);
   return {
@@ -42,6 +45,7 @@ const {
     mockGenJobFindFirst,
     mockGenJobCreate,
     mockEntityFindMany,
+    mockGenerationFindMany,
     mockBuildProposeCard: vi.fn(),
     mockResolveDisabled: vi.fn(),
     db,
@@ -67,7 +71,11 @@ vi.mock("@fikirtive/otto", async (importOriginal) => ({
   buildProposeCard: mockBuildProposeCard,
 }));
 
-import { prepareStoryboardFirstFrames, regenShotFirstFrameCard } from "../storyboard-gate1-actions";
+import {
+  prepareStoryboardFirstFrames,
+  regenShotFirstFrameCard,
+  syncStoryboardFirstFrames,
+} from "../storyboard-gate1-actions";
 
 const OWNER = "owner-1";
 
@@ -100,6 +108,7 @@ function mockResolvedDefaults() {
   mockChatCreate.mockResolvedValue({});
   mockChatUpdate.mockResolvedValue({});
   mockGenJobFindFirst.mockResolvedValue(null); // nothing spent by default
+  mockGenerationFindMany.mockResolvedValue([]); // no thumbnails by default
   // seq allocation: latest seq in thread +1 (only used for minted children)
   mockChatFindFirst.mockImplementation(async (args: { where?: { kind?: string } }) => {
     // seq lookup (orderBy seq desc) → return a seq; card/child loads are set per-test.
@@ -376,5 +385,225 @@ describe("regenShotFirstFrameCard — $0 重出铸卡", () => {
     wireLoads(card(payload3()));
     await regenShotFirstFrameCard({ cardId: "card-1", shotId: "s1" });
     expect(mockGenJobCreate).not.toHaveBeenCalled();
+  });
+});
+
+// ---------------------------------------------------------------------------
+// syncStoryboardFirstFrames — $0 reconcile: write back firstFrameGenerationId + frame urls
+// ---------------------------------------------------------------------------
+
+const HASH = "a".repeat(64); // valid 64-hex content hash (real storageKey validates it)
+
+/** A live Generation row shaped for getGenerationThumbs' storageKey derivation. */
+function gen(id: string, ext = "png") {
+  return { id, asset: { ownerId: OWNER, contentHash: HASH, ext } };
+}
+
+/**
+ * Wire the sync path's reads:
+ *  - parent STORYBOARD_CARD load (findFirst by kind)
+ *  - child GEN_CARD load by id → returns its genJobId (best-effort link)
+ *  - GEN_RESULT load by genJobId → returns its payload ({ generationIds })
+ *  - seq lookups (orderBy, no kind) → { seq }
+ * `children` maps childCardId → { genJobId } (the GEN_CARD row).
+ * `results` maps genJobId → payload (the GEN_RESULT row's payload), or null if absent.
+ */
+function wireSync(
+  parent: ReturnType<typeof card>,
+  children: Record<string, { genJobId: string | null }> = {},
+  results: Record<string, unknown> = {},
+) {
+  mockChatFindFirst.mockImplementation(async (args: { where?: Record<string, unknown>; orderBy?: unknown }) => {
+    const where = args?.where ?? {};
+    if (where.kind === "STORYBOARD_CARD") return where.id === parent.id ? parent : null;
+    if (where.kind === "GEN_CARD" && typeof where.id === "string") {
+      const rec = where.id in children ? children[where.id] : null;
+      return rec ? { id: where.id, genJobId: rec.genJobId } : null;
+    }
+    if (where.kind === "GEN_RESULT" && typeof where.genJobId === "string") {
+      const payload = where.genJobId in results ? results[where.genJobId] : null;
+      return payload ? { payload } : null;
+    }
+    if (args?.orderBy) return { seq: 10 };
+    return null;
+  });
+}
+
+describe("syncStoryboardFirstFrames — $0 对账", () => {
+  it("子卡 job DONE → 读 GEN_RESULT.generationIds[0] 按 shotId 写回 firstFrameGenerationId", async () => {
+    const p = payload3();
+    // s0 points at a minted child whose job is DONE; s1 already has an image; s2 has no child yet.
+    p.shots[0].firstFrameCardId = "child-0";
+    delete p.shots[2].firstFrameGenerationId; // s2: no child, no image → not pending
+    wireSync(
+      card(p),
+      { "child-0": { genJobId: "job-0" } },
+      { "job-0": { generationIds: ["gen-A"] } },
+    );
+    mockGenJobFindFirst.mockResolvedValue({ id: "job-0", status: "DONE" });
+    mockGenerationFindMany.mockResolvedValue([gen("gen-A"), gen("gen1")]);
+
+    const res = await syncStoryboardFirstFrames({ cardId: "card-1" });
+    expect("payload" in res).toBe(true);
+    if (!("payload" in res)) return;
+
+    // wrote gen-A back onto s0 by shotId (transactional RMW)
+    expect(mockChatUpdate).toHaveBeenCalledTimes(1);
+    const upd = mockChatUpdate.mock.calls[0][0];
+    expect(upd.where).toEqual({ id: "card-1" });
+    const updShots = (upd.data.payload as StoryboardCardPayload).shots;
+    expect(updShots[0].firstFrameGenerationId).toBe("gen-A");
+    expect(updShots[1].firstFrameGenerationId).toBe("gen1"); // s1 untouched
+    expect(updShots[2].firstFrameGenerationId).toBeUndefined(); // s2 not pending
+
+    // returned payload reflects the write; frames has urls for both resolvable gens
+    expect(res.payload.shots[0].firstFrameGenerationId).toBe("gen-A");
+    expect(res.frames.s0).toContain("gen-A".slice(0, 0) + HASH); // url derived from asset
+    expect(res.frames.s0).toBeTruthy();
+    expect(res.frames.s1).toBeTruthy(); // pre-existing gen1 resolves too
+  });
+
+  it("job 未完成 → 该镜头不写,其他完成的照常写(部分完成可对账)", async () => {
+    const p = payload3();
+    delete p.shots[1].firstFrameGenerationId; // make s1 pending too
+    p.shots[0].firstFrameCardId = "child-0"; // DONE
+    p.shots[1].firstFrameCardId = "child-1"; // still generating
+    delete p.shots[2].firstFrameGenerationId; // s2: not pending (no child)
+    wireSync(
+      card(p),
+      { "child-0": { genJobId: "job-0" }, "child-1": { genJobId: "job-1" } },
+      { "job-0": { generationIds: ["gen-A"] } }, // only job-0 has a result
+    );
+    mockGenJobFindFirst.mockImplementation(async (args: { where?: { id?: string; idempotencyKey?: string } }) => {
+      if (args?.where?.id === "job-0") return { id: "job-0", status: "DONE" };
+      if (args?.where?.id === "job-1") return { id: "job-1", status: "GENERATING" };
+      return null;
+    });
+    mockGenerationFindMany.mockResolvedValue([gen("gen-A")]);
+
+    const res = await syncStoryboardFirstFrames({ cardId: "card-1" });
+    if (!("payload" in res)) throw new Error("expected payload");
+
+    // only s0 written; s1 left alone (still generating)
+    const updShots = (mockChatUpdate.mock.calls[0][0].data.payload as StoryboardCardPayload).shots;
+    expect(updShots[0].firstFrameGenerationId).toBe("gen-A");
+    expect(updShots[1].firstFrameGenerationId).toBeUndefined();
+    // s1 keeps its child pointer (not cleared)
+    expect(updShots[1].firstFrameCardId).toBe("child-1");
+  });
+
+  it("写回是定点的:只动目标 shot 字段,其余 shot(含正在编辑的文字)原样", async () => {
+    const p = payload3();
+    p.shots[0].firstFrameCardId = "child-0";
+    // s1 carries pre-existing image + an edited prompt we must preserve byte-for-byte
+    p.shots[1].firstFramePrompt = "EDITED PROMPT";
+    delete p.shots[2].firstFrameGenerationId;
+    const before1 = JSON.parse(JSON.stringify(p.shots[1]));
+    const before2 = JSON.parse(JSON.stringify(p.shots[2]));
+    wireSync(
+      card(p),
+      { "child-0": { genJobId: "job-0" } },
+      { "job-0": { generationIds: ["gen-A"] } },
+    );
+    mockGenJobFindFirst.mockResolvedValue({ id: "job-0", status: "DONE" });
+    mockGenerationFindMany.mockResolvedValue([gen("gen-A"), gen("gen1")]);
+
+    const res = await syncStoryboardFirstFrames({ cardId: "card-1" });
+    if (!("payload" in res)) throw new Error("expected payload");
+    const updShots = (mockChatUpdate.mock.calls[0][0].data.payload as StoryboardCardPayload).shots;
+    // only s0.firstFrameGenerationId changed
+    expect(updShots[0].firstFrameGenerationId).toBe("gen-A");
+    // s1 and s2 identical to before (edited text preserved)
+    expect(updShots[1]).toEqual(before1);
+    expect(updShots[2]).toEqual(before2);
+  });
+
+  it("无待对账镜头 → 原样返回,不写 DB", async () => {
+    const p = payload3();
+    // s0/s2 have no child pointer at all; s1 already has an image → nothing pending.
+    delete p.shots[2].firstFrameGenerationId;
+    wireSync(card(p));
+    mockGenerationFindMany.mockResolvedValue([gen("gen1")]);
+
+    const res = await syncStoryboardFirstFrames({ cardId: "card-1" });
+    if (!("payload" in res)) throw new Error("expected payload");
+    expect(mockChatUpdate).not.toHaveBeenCalled(); // no DB write
+    // frames still resolves the one pre-existing image (s1)
+    expect(res.frames.s1).toBeTruthy();
+    expect(res.payload.shots).toEqual(p.shots); // unchanged payload returned
+  });
+
+  it("genJob.create / startGen 从未被调($0)", async () => {
+    const p = payload3();
+    p.shots[0].firstFrameCardId = "child-0";
+    delete p.shots[2].firstFrameGenerationId;
+    wireSync(
+      card(p),
+      { "child-0": { genJobId: "job-0" } },
+      { "job-0": { generationIds: ["gen-A"] } },
+    );
+    mockGenJobFindFirst.mockResolvedValue({ id: "job-0", status: "DONE" });
+    mockGenerationFindMany.mockResolvedValue([gen("gen-A")]);
+
+    await syncStoryboardFirstFrames({ cardId: "card-1" });
+    expect(mockGenJobCreate).not.toHaveBeenCalled(); // $0: never creates a job
+  });
+
+  it("requireOwner 失败 → {error},不碰 DB", async () => {
+    mockOwner.mockResolvedValue({ error: "unauthorized" });
+    const res = await syncStoryboardFirstFrames({ cardId: "card-1" });
+    expect(res).toEqual({ error: "unauthorized" });
+    expect(mockChatFindFirst).not.toHaveBeenCalled();
+    expect(mockChatUpdate).not.toHaveBeenCalled();
+  });
+
+  it("卡不存在 → {error},不写 DB", async () => {
+    wireSync(card(payload3()));
+    const res = await syncStoryboardFirstFrames({ cardId: "missing" });
+    expect("error" in res).toBe(true);
+    expect(mockChatUpdate).not.toHaveBeenCalled();
+  });
+
+  it("非法入参 → {error},不碰 DB", async () => {
+    const res = await syncStoryboardFirstFrames({ cardId: "" } as unknown as { cardId: string });
+    expect("error" in res).toBe(true);
+    expect(mockChatFindFirst).not.toHaveBeenCalled();
+  });
+
+  it("fallback:子卡无 genJobId → 用 cowork:<childId> 幂等 job 查状态", async () => {
+    const p = payload3();
+    p.shots[0].firstFrameCardId = "child-0";
+    delete p.shots[2].firstFrameGenerationId;
+    wireSync(
+      card(p),
+      { "child-0": { genJobId: null } }, // best-effort link missing
+      { "job-fb": { generationIds: ["gen-A"] } },
+    );
+    // fallback lookup by idempotencyKey returns the DONE job
+    mockGenJobFindFirst.mockImplementation(async (args: { where?: { idempotencyKey?: string } }) => {
+      if (args?.where?.idempotencyKey === "cowork:child-0") return { id: "job-fb", status: "DONE" };
+      return null;
+    });
+    mockGenerationFindMany.mockResolvedValue([gen("gen-A")]);
+
+    const res = await syncStoryboardFirstFrames({ cardId: "card-1" });
+    if (!("payload" in res)) throw new Error("expected payload");
+    expect(mockGenJobFindFirst).toHaveBeenCalledWith(
+      expect.objectContaining({ where: expect.objectContaining({ ownerId: OWNER, idempotencyKey: "cowork:child-0" }) }),
+    );
+    expect((mockChatUpdate.mock.calls[0][0].data.payload as StoryboardCardPayload).shots[0].firstFrameGenerationId).toBe("gen-A");
+  });
+
+  it("frames 省略已删除的 generation(不报错)", async () => {
+    const p = payload3();
+    // s1 has firstFrameGenerationId gen1 but that generation row no longer exists.
+    delete p.shots[2].firstFrameGenerationId;
+    wireSync(card(p));
+    mockGenerationFindMany.mockResolvedValue([]); // gen1 gone
+
+    const res = await syncStoryboardFirstFrames({ cardId: "card-1" });
+    if (!("payload" in res)) throw new Error("expected payload");
+    expect("s1" in res.frames).toBe(false); // omitted, no throw
+    expect(mockChatUpdate).not.toHaveBeenCalled();
   });
 });

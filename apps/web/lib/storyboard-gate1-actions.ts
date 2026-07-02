@@ -16,7 +16,7 @@
  */
 import { z } from "zod";
 import { prisma, Prisma } from "@fikirtive/db";
-import { newId } from "@fikirtive/core";
+import { newId, storageKey, storageKeyToSrc } from "@fikirtive/core";
 import { buildProposeCard } from "@fikirtive/otto";
 import type { OttoContext, StoryboardCardPayload } from "@fikirtive/otto";
 import { requireOwner } from "./auth-guard";
@@ -38,6 +38,7 @@ type PrismaTx = Prisma.TransactionClient;
 
 const prepareInput = z.object({ cardId: z.string().min(1) });
 const regenInput = z.object({ cardId: z.string().min(1), shotId: z.string().min(1) });
+const syncInput = z.object({ cardId: z.string().min(1) });
 
 /** owner-scoped 载入一张 STORYBOARD_CARD(复制 F3 storyboard-actions.ts 的模式;不跨文件导出)。
  *  身份来自 session;thread.ownerId/deletedAt 复核防越权。 */
@@ -286,4 +287,115 @@ export async function regenShotFirstFrameCard(
 
   if (!child) return { error: "That shot no longer exists." };
   return { child };
+}
+
+// ---------------------------------------------------------------------------
+// syncStoryboardFirstFrames — $0 reconcile: write finished gen ids back by shotId
+// ---------------------------------------------------------------------------
+
+/** Read-only: the child card's finished GenJob, if any. Prefer the best-effort
+ *  `genJobId` link coworkGenerate stamped (cowork-actions.ts:614); fall back to the
+ *  durable `cowork:<childId>` idempotency key (mirrors spentOf's read). Never writes. */
+async function doneJobFor(childCardId: string, ownerId: string): Promise<{ id: string } | null> {
+  const child = await prisma.chatMessage.findFirst({
+    where: { id: childCardId, ownerId, kind: "GEN_CARD", deletedAt: null },
+    select: { genJobId: true },
+  });
+  const job = child?.genJobId
+    ? await prisma.genJob.findFirst({ where: { id: child.genJobId, ownerId }, select: { id: true, status: true } })
+    : await prisma.genJob.findFirst({
+        where: { ownerId, idempotencyKey: `cowork:${childCardId}` },
+        select: { id: true, status: true },
+      });
+  if (!job || job.status !== "DONE") return null; // missing/queued/generating/failed → leave the shot alone
+  return { id: job.id };
+}
+
+/** Read-only: the first Generation id this DONE job produced, via its durable GEN_RESULT
+ *  message (owner-scoped). Returns null if the result isn't written yet or is malformed. */
+async function firstGenerationIdOf(genJobId: string, ownerId: string): Promise<string | null> {
+  const result = await prisma.chatMessage.findFirst({
+    where: { genJobId, ownerId, kind: "GEN_RESULT", deletedAt: null },
+    select: { payload: true },
+  });
+  const ids = (result?.payload as { generationIds?: unknown } | null)?.generationIds;
+  const first = Array.isArray(ids) ? ids[0] : undefined;
+  return typeof first === "string" && first.length > 0 ? first : null;
+}
+
+/** Owner-scoped Generation id → thumbnail URL (mirrors data.ts getGenerationThumbs:
+ *  Generation → asset → storageKey → src). A generation whose row is gone is omitted. */
+async function resolveFrameUrls(ownerId: string, generationIds: string[]): Promise<Record<string, string>> {
+  const clean = [...new Set(generationIds.filter(Boolean))];
+  if (clean.length === 0) return {};
+  const gens = await prisma.generation.findMany({
+    where: { id: { in: clean }, ownerId, deletedAt: null },
+    include: { asset: true },
+  });
+  const byGenId: Record<string, string> = {};
+  for (const g of gens) {
+    byGenId[g.id] = storageKeyToSrc(storageKey(g.asset.ownerId, g.asset.contentHash, g.asset.ext.toLowerCase()));
+  }
+  return byGenId;
+}
+
+export async function syncStoryboardFirstFrames(
+  raw: unknown,
+): Promise<{ payload: StoryboardCardPayload; frames: Record<string, string> } | Err> {
+  const parsed = syncInput.safeParse(raw);
+  if (!parsed.success) return { error: "That request isn't valid." };
+
+  const gate = await requireOwner();
+  if ("error" in gate) return gate;
+  const { ownerId } = gate;
+
+  const card = await loadCard(parsed.data.cardId, ownerId);
+  if (!card) return { error: "Card not found." };
+
+  const cur = (card.payload ?? {}) as StoryboardCardPayload;
+
+  // Collect finished writes OUTSIDE the txn (all reads): pending shot = has a child but no image yet.
+  const writes: Record<string, string> = {}; // shotId → generationId
+  for (const shot of cur.shots) {
+    if (!shot.firstFrameCardId || shot.firstFrameGenerationId) continue;
+    const job = await doneJobFor(shot.firstFrameCardId, ownerId);
+    if (!job) continue;
+    const genId = await firstGenerationIdOf(job.id, ownerId);
+    if (genId) writes[shot.shotId] = genId;
+  }
+
+  // Apply staged writes in ONE transactional RMW (re-read payload, patch only target shots).
+  let payload = cur;
+  if (Object.keys(writes).length > 0) {
+    payload = await prisma.$transaction(async (tx) => {
+      const fresh = await tx.chatMessage.findFirst({
+        where: { id: card.id, ownerId, kind: "STORYBOARD_CARD", deletedAt: null },
+        select: { payload: true },
+      });
+      const p = (fresh?.payload ?? cur) as StoryboardCardPayload;
+      const nextShots = p.shots.map((s) =>
+        writes[s.shotId] ? { ...s, firstFrameGenerationId: writes[s.shotId] } : s,
+      );
+      const next = { ...p, shots: nextShots };
+      await tx.chatMessage.update({
+        where: { id: card.id },
+        data: { payload: next as unknown as Prisma.InputJsonObject },
+      });
+      return next;
+    });
+  }
+
+  // frames: resolve a URL for EVERY shot that now has a firstFrameGenerationId (old or just written).
+  const genIdByShot = new Map<string, string>();
+  for (const shot of payload.shots) {
+    if (shot.firstFrameGenerationId) genIdByShot.set(shot.shotId, shot.firstFrameGenerationId);
+  }
+  const urlByGenId = await resolveFrameUrls(ownerId, [...genIdByShot.values()]);
+  const frames: Record<string, string> = {};
+  for (const [shotId, genId] of genIdByShot) {
+    const url = urlByGenId[genId];
+    if (url) frames[shotId] = url; // a deleted generation → omit, don't error
+  }
+
+  return { payload, frames };
 }
