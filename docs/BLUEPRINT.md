@@ -57,7 +57,7 @@
 8. **明确不盖的楼**(拍板过,别再提案):Build 终端 coding agent、独立通用 Chat、Spicy/18+ NSFW、**开放第三方 skill 生态**(skill 永久 BELCORT 内部编写)、**对外 MCP/API 让外部 agent 操作 FIKIRTIVE**(founder:"如果会用其他 LLM,代表我们的 Otto harness 不够好,就代表 FIKIRTIVE 不好。" —— 操作这座城的 agent 永远只有 Otto)、**白标**(founder 2026-07-03:"我要的就是 FIKIRTIVE 变成世界级别的平台" —— 平台不贴别人的牌,Otto 永不改名换脸)、**任何 unlimited 类报价**(与 Otto 自动化互斥,成本敞口)、**Slack/Notion 类工作工具 connectors**(O-13 拍板:SEA SMB 主场在 WhatsApp/Meta/TikTok/Shopee,不在欧美知识工作者工具)。
 9. **语言约定**:spec/skill 文档用华语(founder 复审);生成 prompt 一律英文;UI 文案 sentence case。
 10. **技能为弱模型设计(2026-07-03 入宪)。** Otto 运行时永远是 cost-efficient 档模型(sonnet 级),不是 Fable/Opus。因此一切 skill 的专业判断必须**冻进确定性代码/schema/模板**(prompt-skills 是范本),质量来自结构不来自模型天赋;换更强模型是加分,不是前提。
-11. **UIUX 是第二支柱(2026-07-03 入宪)。** 除"Otto 全操控"外,UIUX 是留住与吸引用户的核心卖点。质感标杆 = **Apple**;交互趣味参考 Duolingo 但克制 —— 面向专业用户只做 **minimal gamification**(候选方案 GM-01~05 + 三条不可协商边界见 `docs/design/2026-07-03-harmony-06-uiux-gamification.md`,待 founder WHAT-pass)。落地机制:单一设计系统(.gb)不许分叉;每个用户可感的面必须过设计审(不只 runtime QA);设计基准 = Analytics 屏(已有 gold standard)。
+11. **UIUX 是第二支柱(2026-07-03 入宪)。** 除"Otto 全操控"外,UIUX 是留住与吸引用户的核心卖点。质感标杆 = **Apple**;交互趣味参考 Duolingo 但克制 —— 面向专业用户只做 **minimal gamification**(GM 卷已拍 2026-07-03:**GM-02 里程碑/GM-03 目标进度/GM-04 周报语气/GM-05 开店完成度 = 要;GM-01 streak = 不要**;三条边界与方案见 `docs/design/2026-07-03-harmony-06-uiux-gamification.md`)。落地机制:单一设计系统(.gb)不许分叉;每个用户可感的面必须过设计审(不只 runtime QA);设计基准 = Analytics 屏(已有 gold standard)。
 
 ---
 
@@ -168,5 +168,6 @@ pg-boss 五条队列 + 三类回收器(gen/refgen/LLM 预扣)、ingest 哈希复
 | 2026-07-03 | v1.8 WHAT-pass 全卷封盘:双模无例外判例 + 租户 RBAC 入第 7 条;通道费独立账道入第 5 条;发布可插拔/CRM 分阶段/独立 Campaign 对象/WhatsApp 第一波/dogfood GTM 入第六章 | 待 founder 定稿 |
 | 2026-07-03 | **v2.0 终稿候选**:harmony 六件套收录(总设计层入金字塔)、第九缝 Parity Manifest 入交通系统、P1→P4 落地顺序 + costing 动工闸入第六章 | **待 founder 终审合并** |
 | 2026-07-03 | v2.1a 第一章定位:SEA = 滩头、终点 = 全球世界级平台(founder 口述;补 v2.1 留痕) | 待 founder 终审 |
-| 2026-07-03 | v2.2 harmony-06 补件(UIUX 设计审可执行版 + 丝滑工程标准 + GM-01~05 候选待拍)—— 兑现第 11 条悬空承诺;总设计层改七件 | 待 founder 终审 |
+| 2026-07-03 | v2.2 harmony-06 补件(UIUX 设计审可执行版 + 丝滑工程标准 + GM 候选)—— 兑现第 11 条悬空承诺;总设计层改七件 | 待 founder 终审 |
+| 2026-07-03 | v2.2a GM 卷拍板入第 11 条:GM-02/03/04/05 要、GM-01 streak 不要(founder 拍板) | founder 已拍(口头) |
 | 2026-07-03 | **v2.1 全量对齐修订**(5 员对抗审查 40+ findings):宪法 5 重写(≥45% 地板/效率良心真入宪,删"视频近成本卖"旧句)/宪法 2 加开发期限定+账本推论/铁律①法币边界/第 4 条两类例外/O-12 之手+O-09 分域入第 7 条/connectors 不要入第 8 条/九条缝改数/区划图刷新至 #117 并豁免不可改/第六章补团队协作+账务透明+包告警+Agency 顺序+叙事节奏/金字塔加判决记录层 | 待 founder 终审 |
