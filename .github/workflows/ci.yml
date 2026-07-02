@@ -34,13 +34,36 @@ jobs:
       - run: pnpm install --frozen-lockfile
       # Workspace packages resolve from dist, so build them (tsc-only — cheap) before
       # typechecking the apps. db's build script runs `prisma generate` itself. The apps are
-      # deliberately NOT built here: `next build` is expensive and env-dependent.
+      # deliberately NOT built here — apps/web gets its own `web-build` job below, kept
+      # separate so this job stays fast.
       - run: pnpm --filter "./packages/*" build
       - run: pnpm -r typecheck
       # Hard spend-fence: skills must not import the fal provider / reserveCredits directly.
       - run: bash scripts/check-skill-imports.sh
       # Tenancy tripwire (informational baseline today; never fails the build yet).
       - run: bash scripts/check-no-raw-prisma.sh
+
+  # `next build` for apps/web — the exact command Railway's Dockerfile runs on deploy.
+  # Typecheck can't catch client→server-bundle leaks (a "use client" file value-importing
+  # @fikirtive/otto or another server-only module drags prisma/pg into the browser bundle);
+  # that class of bug merged green twice (#33, and the otto-in-client leak found 2026-07-02)
+  # and only exploded at deploy time. Needs NO env vars: every route is dynamic (ƒ) and all
+  # process.env reads sit behind lazy getters, so nothing connects to a DB at build time.
+  # If a build ever starts demanding an env var, prefer making the read lazy over adding a
+  # stub here — a build-time env dependency would also break Railway builds.
+  web-build:
+    name: next build (apps/web)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4 # version from package.json `packageManager` (see check job)
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm --filter "./packages/*" build
+      - run: pnpm --filter @fikirtive/web build
 
   test:
     name: unit + integration tests
