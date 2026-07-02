@@ -128,3 +128,32 @@
 | GM-05 开店完成度 | **要** |
 
 三条边界照立:永不 XP/等级/排行榜/徽章墙、一切可关、永不打断工作流。落地:GM-05 随 onboarding、GM-03 随 Campaign 区、GM-04 随 O-07 周报、GM-02 随各楼里程碑事件;不单独立项。
+
+## North-Star 未捕获 feature 判决(founder 2026-07-03)
+
+审计见 `docs/research/2026-07-03-northstar-feature-capture-audit.md`(N-01~N-30)。12 个"可纳入"项直接折进相关区/和声;18 个"需拍板"判决:
+
+| # | feature | 判决 |
+|---|---|---|
+| N (Grok) canvas A/B 分叉 | **要** | 创作区 canvas;差异化单点 + 省 credits |
+| N (Grok) 多 clip 拼叙事长片 | **要** | 工厂 Wave 3(成片下一公里) |
+| N (Grok) Speed/Quality 双档 | **要** | GenerationProvider 缝 + 定价 config(接 Seedance-mini 草稿档) |
+| N (Higgsfield) 实景/OOH 场景模式 | **要** | 工厂 Wave 3 模式扩充 |
+| N (LTX) Audio-to-Video | **推迟** | 未来加模型时并入 |
+| N (LTX) 视频硬字幕烧录 | **推迟** | 未来加模型时并入 |
+| N (Grok) 用户自建+可分享模板 gallery | **以后** | 目前不用 |
+| N (SF) Lead Conversion 转化事件 | **不要(太深奥)** | — |
+| N (SF) Campaign 首触归因埋点 | **不要(太深奥)** | — |
+| N (respond.io) 客户生命周期阶段 | **归 P3 建 CRM 区时再议**(总审查员建议:与 8/9 同族,founder 待确认) | — |
+| N (Buffer) Ideas 内容孵化管道 | **不建 Buffer 式产品;改 = Otto 做捕获+生成 + 一张极轻"想法清单"防沉底**(founder 待确认建议) | Otto 行为 + 小数据对象 |
+| N (Buffer) 公开评论收件箱 | **要** | P2 客服区(私信 inbox 旁加 public-comment 线程类型) |
+| N (HubSpot) 知识库反向回路 | **要** | P2(并入 O-04 品牌记忆自养客户侧 / M-13) |
+| N (respond.io) 回复才计费 | **不要(已有定价规则)** | — |
+| N (Metricool) 报告 live-URL 分享 | **不要(重叠)** | — |
+| N (Metricool) 按天道具计费 | **不要(重叠)** | — |
+| N (Adobe) 生成侧内容安全硬闸 | **不要(重叠)** | — |
+| N (Adobe) 全城概览页 | **不要(重叠)** | — |
+
+**可直接纳入的 12 项**(founder 未反对,总审查员折进地基):AI 配乐+音效(并 C-07 扩为视频声音全家桶)、多机位一键出图、视频换脸/换角、卡点模板(创作区)、冷启动时段种子表(A/S 区)、营业时间自动回复原语(M 区)、consent/勿扰字段(CRM)、字段变更留痕(复用 ActionEvent)、消息互动信号触发源(L-07)、单帖可分享预览 URL(排期区)等 —— 各随所属区 spec 落地。
+
+**从本轮推断的 founder 决策原则(入 [[present-options-dont-decide]] 精神)**:①能让 Otto 做的别建手动工具;②太深奥/企业级不碰;③重叠即砍;④依赖未来能力的推迟;⑤创作区保持丰富(赚钱先锋)。
