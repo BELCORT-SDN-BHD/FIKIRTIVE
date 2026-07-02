@@ -18,7 +18,7 @@ export function VideoNode({ data, selected }: NodeProps) {
       </span>
     <div className="al-panel" style={{ width: "100%", height: "100%", overflow: "hidden", borderRadius: 14 }}>
       {d.status === "pending" || !d.url ? (
-        <GeneratingBody gb={gb} kind="video" />
+        <GeneratingBody gb={gb} kind="video" timedOut={d.status === "timeout"} />
       ) : gb ? (
         // gb: clean poster (first frame) + centered play button, like the mockup —
         // no raw browser chrome until the owner presses play. Display-only.

@@ -18,11 +18,15 @@ function OttoCloud() {
   );
 }
 
-export function GeneratingBody({ gb, kind }: { gb?: boolean; kind: "image" | "video" }) {
+export function GeneratingBody({ gb, kind, timedOut }: { gb?: boolean; kind: "image" | "video"; timedOut?: boolean }) {
+  // timedOut = the client poll window elapsed while the job was still running.
+  // The job was NOT lost — it settles server-side and lands in the Library. Say
+  // so truthfully instead of looking dead, so the owner doesn't delete + reclick
+  // (a fresh idempotencyKey → a second charge).
   if (!gb) {
     return (
-      <div style={{ display: "grid", placeItems: "center", height: "100%", opacity: 0.6 }}>
-        {kind === "video" ? "Rendering…" : "Generating…"}
+      <div style={{ display: "grid", placeItems: "center", height: "100%", opacity: 0.6, textAlign: "center", padding: 8 }}>
+        {timedOut ? "Still working — it'll appear in your Library" : kind === "video" ? "Rendering…" : "Generating…"}
       </div>
     );
   }
@@ -30,7 +34,7 @@ export function GeneratingBody({ gb, kind }: { gb?: boolean; kind: "image" | "vi
     <div className="cv-gen">
       <span className="cv-gen-otto"><OttoCloud /> OTTO is making this</span>
       <div className="cv-gen-bar" />
-      <div className="cv-gen-meta">billed only when it finishes</div>
+      <div className="cv-gen-meta">{timedOut ? "taking longer than usual — it'll appear in your Library" : "billed only when it finishes"}</div>
     </div>
   );
 }

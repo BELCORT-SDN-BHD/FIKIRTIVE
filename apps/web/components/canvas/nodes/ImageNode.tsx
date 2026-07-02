@@ -22,7 +22,7 @@ export function ImageNode({ data, selected }: NodeProps) {
       </span>
     <div className="al-panel" style={{ width: "100%", height: "100%", overflow: "hidden", borderRadius: 14 }}>
       {d.status === "pending" || !d.url ? (
-        <GeneratingBody gb={d.skin === "gb"} kind="image" />
+        <GeneratingBody gb={d.skin === "gb"} kind="image" timedOut={d.status === "timeout"} />
       ) : (
         <img src={d.url} alt={d.prompt ?? ""} style={{ width: "100%", height: "100%", objectFit: "cover" }} />
       )}

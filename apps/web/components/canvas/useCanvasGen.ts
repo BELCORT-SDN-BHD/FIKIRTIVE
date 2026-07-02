@@ -2,6 +2,7 @@
 import { useCallback, useRef } from "react";
 import { startGen, getGenJob } from "../../lib/gen-actions";
 import { createCanvasNode } from "../../lib/canvas-actions";
+import { createNodeWithRetry, pollGenJob } from "../../lib/canvas-gen";
 import { activeImageModel, activeVideoModel } from "@fikirtive/core";
 
 type Pos = { x: number; y: number; w: number; h: number };
@@ -10,41 +11,6 @@ type OnNode = (node: { id: string; type: "image" | "video"; pos: Pos; status: st
 /** Phase 2: how many image variants a single canvas generation produces. Must be
  *  ≤ MAX_GEN_COUNT (4) — the gate rejects more, and the charge scales by count. */
 const IMAGE_VARIANT_COUNT = 4;
-
-/** createCanvasNode with a small retry. By the time we place a paid GenJob's card,
- *  startGen has already reserved/queued it — so a transient node-create failure must
- *  not silently drop the card, or the owner sees nothing, clicks "Make it" again, and
- *  mints a fresh idempotencyKey → a second paid job. Retries the owner-scoped insert;
- *  if it still fails the paid output is not lost (it lands in the library) — we log. */
-async function createNodeWithRetry(
-  args: Parameters<typeof createCanvasNode>[0],
-  attempts = 3,
-): Promise<Awaited<ReturnType<typeof createCanvasNode>>> {
-  let last: Awaited<ReturnType<typeof createCanvasNode>> = { error: "not attempted" };
-  for (let i = 0; i < attempts; i++) {
-    last = await createCanvasNode(args);
-    if ("id" in last) return last;
-    await new Promise((r) => setTimeout(r, 300 * (i + 1)));
-  }
-  console.warn("[canvas] createCanvasNode failed after retries — a paid job's card is missing (output still in the library):", last);
-  return last;
-}
-
-async function poll(
-  jobId: string,
-  onDone: (urls: string[], status: string, generationIds: string[]) => void,
-  cancelledRef: React.MutableRefObject<boolean>,
-) {
-  for (let i = 0; i < 48; i++) {
-    if (cancelledRef.current) return;
-    const job = await getGenJob(jobId);
-    if (!job) return;
-    if (job.status === "DONE") return onDone(job.urls, "done", job.generationIds ?? []);
-    if (job.status === "FAILED") return onDone([], "failed", []);
-    await new Promise((r) => setTimeout(r, 2500));
-  }
-  onDone([], "failed", []);
-}
 
 export function useCanvasGen(
   projectId: string,
@@ -63,10 +29,10 @@ export function useCanvasGen(
     const req = { projectId, prompt, count: IMAGE_VARIANT_COUNT, kind: "image" as const, model: activeImageModel(), entityIds, ...(vsel && { variantSel: vsel }), idempotencyKey: `img-${Date.now()}` };
     const started = await startGen(req);
     if ("error" in started) return;
-    const created = await createNodeWithRetry({ projectId, type: "image", ...pos, prompt, genJobId: started.id, status: "pending", ...(activeThreadId ? { threadId: activeThreadId } : {}) });
+    const created = await createNodeWithRetry(createCanvasNode, { projectId, type: "image", ...pos, prompt, genJobId: started.id, status: "pending", ...(activeThreadId ? { threadId: activeThreadId } : {}) });
     if ("error" in created) return;
     onNode({ id: created.id, type: "image", pos, status: "pending", prompt });
-    poll(started.id, async (urls, status, generationIds) => {
+    pollGenJob(getGenJob, started.id, async (urls, status, generationIds) => {
       if (status !== "done" || urls.length === 0) { onResolve(created.id, null, status); return; }
       // primary card → first variant
       onResolve(created.id, urls[0], "done", generationIds[0]);
@@ -88,10 +54,10 @@ export function useCanvasGen(
     const req = { projectId, prompt, count: 1, kind: "video" as const, model: activeVideoModel(), sourceGenerationId, idempotencyKey: `vid-${Date.now()}` };
     const started = await startGen(req);
     if ("error" in started) return;
-    const created = await createNodeWithRetry({ projectId, type: "video", ...pos, prompt, genJobId: started.id, status: "pending", sourceNodeId, ...(activeThreadId ? { threadId: activeThreadId } : {}) });
+    const created = await createNodeWithRetry(createCanvasNode, { projectId, type: "video", ...pos, prompt, genJobId: started.id, status: "pending", sourceNodeId, ...(activeThreadId ? { threadId: activeThreadId } : {}) });
     if ("error" in created) return;
     onNode({ id: created.id, type: "video", pos, status: "pending", prompt, sourceNodeId });
-    poll(started.id, (urls, status, generationIds) => onResolve(created.id, urls[0] ?? null, status, generationIds[0]), cancelledRef);
+    pollGenJob(getGenJob, started.id, (urls, status, generationIds) => onResolve(created.id, urls[0] ?? null, status, generationIds[0]), cancelledRef);
   }, [projectId, onNode, onResolve, activeThreadId]);
 
   // Phase 3: text-to-video. The same paid video path as animate(), minus the
@@ -102,10 +68,10 @@ export function useCanvasGen(
     const req = { projectId, prompt, count: 1, kind: "video" as const, model: activeVideoModel(), idempotencyKey: `vid-${Date.now()}` };
     const started = await startGen(req);
     if ("error" in started) return;
-    const created = await createNodeWithRetry({ projectId, type: "video", ...pos, prompt, genJobId: started.id, status: "pending", ...(activeThreadId ? { threadId: activeThreadId } : {}) });
+    const created = await createNodeWithRetry(createCanvasNode, { projectId, type: "video", ...pos, prompt, genJobId: started.id, status: "pending", ...(activeThreadId ? { threadId: activeThreadId } : {}) });
     if ("error" in created) return;
     onNode({ id: created.id, type: "video", pos, status: "pending", prompt });
-    poll(started.id, (urls, status, generationIds) => onResolve(created.id, urls[0] ?? null, status, generationIds[0]), cancelledRef);
+    pollGenJob(getGenJob, started.id, (urls, status, generationIds) => onResolve(created.id, urls[0] ?? null, status, generationIds[0]), cancelledRef);
   }, [projectId, onNode, onResolve, activeThreadId]);
 
   return { generateImage, animate, generateVideoFromText, cancelledRef };
