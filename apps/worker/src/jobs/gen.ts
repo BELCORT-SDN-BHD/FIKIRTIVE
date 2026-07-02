@@ -530,7 +530,8 @@ export async function handleGen(data: GenJobData, retryCount: number): Promise<v
       // F09: an "edit @composer" from DetailPanel sets sourceGenerationId on an IMAGE job —
       // condition the gen on that owned still (resolved server-side from an owned id, D19) so a
       // paid edit relates to the image the user was viewing, not an unconditioned fresh gen.
-      // Prepended so it's the primary reference (byteplus i2i uses inputImageUrls[0]). Pre-spend.
+      // Prepended so it's the primary reference (byteplus sends inputImageUrls[0] first; with
+      // multi-reference conditioning the @ref images ride along after it). Pre-spend.
       if (job.sourceGenerationId) {
         const src = await prisma.generation.findFirst({
           where: { id: job.sourceGenerationId, ownerId: job.ownerId, projectId: job.projectId, deletedAt: null, asset: { ext: { in: ["png", "jpg", "jpeg", "webp"] } } },
