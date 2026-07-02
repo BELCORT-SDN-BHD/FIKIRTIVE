@@ -71,12 +71,13 @@ function SegForm({ initial, onCancel, onSubmit }: {
   );
 }
 
-export function SegmentCards({ records, looseNotes, freshIds, onSave, onDelete, onNoteSave, onNoteDelete }: {
+export function SegmentCards({ records, looseNotes, freshIds, onSave, onDelete, onArchive, onNoteSave, onNoteDelete }: {
   records: BrandRecordRow[];
   looseNotes: MemoryRow[];
   freshIds: Set<string>;
   onSave: (id: string | undefined, data: SegFields) => Promise<void>;
   onDelete: (id: string) => Promise<void>;
+  onArchive: (id: string, data: Record<string, unknown>, status: "active" | "archived") => Promise<void>;
   onNoteSave: (id: string, content: string) => Promise<void>;
   onNoteDelete: (id: string) => Promise<void>;
 }) {
@@ -87,18 +88,26 @@ export function SegmentCards({ records, looseNotes, freshIds, onSave, onDelete, 
 
   const activeCount = records.filter((r) => r.status === "active").length;
 
+  // Active cards first, archived after (dimmed) — same treatment as ProductList.
+  const ordered = [...records].sort((a, b) => {
+    const av = a.status === "archived" ? 1 : 0;
+    const bv = b.status === "archived" ? 1 : 0;
+    return av - bv;
+  });
+
   return (
     <section>
       <h2 className="text-[0.75rem] font-semibold tracking-[0.05em] uppercase text-muted-foreground mt-6 mb-2">Your customers</h2>
 
       <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-        {records.map((r) => {
+        {ordered.map((r) => {
           const d = fieldsOf(r.data);
+          const archived = r.status === "archived";
           const fresh = freshIds.has(r.id);
           return (
             <div
               key={r.id}
-              className={`rounded-[16px] border border-border bg-card px-[15px] py-[10px] ${fresh ? "bg-brand/5 border-l-[3px] border-l-brand" : ""}`}
+              className={`rounded-[16px] border border-border bg-card px-[15px] py-[10px] ${archived ? "opacity-60" : ""} ${fresh ? "bg-brand/5 border-l-[3px] border-l-brand" : ""}`}
             >
               {editingId === r.id ? (
                 <SegForm
@@ -108,12 +117,22 @@ export function SegmentCards({ records, looseNotes, freshIds, onSave, onDelete, 
                 />
               ) : (
                 <div className="flex flex-col gap-1">
-                  <div className="flex items-start gap-2">
+                  <div className="flex items-start gap-2 flex-wrap">
                     <span className="text-[0.875rem] leading-[1.45] font-semibold text-foreground flex-1">{d.name}</span>
+                    {archived && (
+                      <span className="text-[0.6875rem] rounded-full px-2 py-[2px] font-medium whitespace-nowrap text-muted-foreground bg-accent">Archived</span>
+                    )}
                     <span className={`text-[0.6875rem] rounded-full px-2 py-[2px] font-medium whitespace-nowrap ${r.source === "otto" ? "text-brand bg-brand/10" : "text-muted-foreground bg-accent"}`}>
                       {r.source === "otto" ? "✦ OTTO learned" : "You added"}
                     </span>
                     <button type="button" aria-label="Edit" className="text-muted-foreground hover:text-foreground" onClick={() => setEditingId(r.id)}>✎</button>
+                    <button
+                      type="button"
+                      className="text-[0.75rem] text-muted-foreground hover:text-foreground whitespace-nowrap"
+                      onClick={() => void onArchive(r.id, r.data, archived ? "active" : "archived")}
+                    >
+                      {archived ? "Unarchive" : "Archive"}
+                    </button>
                     <button type="button" aria-label="Delete" className="text-muted-foreground hover:text-foreground" onClick={() => void onDelete(r.id)}>🗑</button>
                   </div>
                   <span className="text-[0.875rem] leading-[1.45] text-muted-foreground">{d.who}</span>

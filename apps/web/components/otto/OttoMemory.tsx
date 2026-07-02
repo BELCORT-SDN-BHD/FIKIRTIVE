@@ -188,6 +188,10 @@ export function OttoMemory({ initialMemory, initialRecords, projectId }: {
     await refreshRecords();
   };
   const segDelete = async (id: string) => { await deleteBrandRecord({ id }); await refreshRecords(); };
+  const segArchive = async (id: string, data: Record<string, unknown>, status: "active" | "archived") => {
+    await saveBrandRecord({ id, kind: "segment", data, status });
+    await refreshRecords();
+  };
 
   // ── Product handlers ──
   const prodSave = async (id: string | undefined, data: Record<string, unknown>) => {
@@ -334,6 +338,7 @@ export function OttoMemory({ initialMemory, initialRecords, projectId }: {
             freshIds={freshIds}
             onSave={segSave}
             onDelete={segDelete}
+            onArchive={segArchive}
             onNoteSave={noteSave}
             onNoteDelete={noteDelete}
           />
