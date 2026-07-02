@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { SECTIONS, FACT_SECTION_KEYS, sectionForCategory, diffRows } from "./memory-sections.js";
+import { SECTIONS, FACT_SECTION_KEYS, sectionForCategory, diffRows, sectionsTouched } from "./memory-sections.js";
 
 describe("SECTIONS", () => {
   it("has the 6 approved sections in page order", () => {
@@ -37,5 +37,22 @@ describe("diffRows", () => {
   it("compares Date vs ISO-string updatedAt equal", () => {
     const d = diffRows([{ id: "a", updatedAt: t1 }], [{ id: "a", updatedAt: t1.toISOString() }]);
     expect(d.changed.length).toBe(0);
+  });
+});
+
+describe("sectionsTouched", () => {
+  const t = new Date("2026-07-02T00:00:00Z");
+  const empty = { added: [], changed: [], removed: [] };
+  it("maps fact categories and record kinds to their sections", () => {
+    const facts = { added: [{ id: "f1", updatedAt: t, category: "look" }], changed: [], removed: [{ id: "f2", updatedAt: t, category: "Rules" }] };
+    const recs = { added: [{ id: "r1", updatedAt: t, kind: "product" }], changed: [{ before: { id: "r2", updatedAt: t, kind: "segment" }, after: { id: "r2", updatedAt: t, kind: "segment" } }], removed: [] };
+    expect([...sectionsTouched(facts, recs)].sort()).toEqual(["customers", "look", "products", "rules"]);
+  });
+  it("empty diffs → empty set", () => {
+    expect(sectionsTouched(empty, empty).size).toBe(0);
+  });
+  it("offer kind → offers", () => {
+    const recs = { added: [{ id: "r1", updatedAt: t, kind: "offer" }], changed: [], removed: [] };
+    expect([...sectionsTouched(empty, recs)]).toEqual(["offers"]);
   });
 });

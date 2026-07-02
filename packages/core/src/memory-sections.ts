@@ -40,3 +40,19 @@ export function diffRows<T extends { id: string; updatedAt: Date | string }>(bef
   const removed = before.filter((r) => !afterIds.has(r.id));
   return { added, changed, removed };
 }
+
+const KIND_SECTION: Record<string, SectionKey> = { segment: "customers", product: "products", offer: "offers" };
+
+/** Which tabs a chat turn touched — drives the per-tab coral dot. */
+export function sectionsTouched(
+  factDiff: RowDiff<{ id: string; updatedAt: Date | string; category: string }>,
+  recDiff: RowDiff<{ id: string; updatedAt: Date | string; kind: string }>,
+): Set<SectionKey> {
+  const out = new Set<SectionKey>();
+  for (const f of [...factDiff.added, ...factDiff.removed, ...factDiff.changed.map((c) => c.after)]) out.add(sectionForCategory(f.category));
+  for (const r of [...recDiff.added, ...recDiff.removed, ...recDiff.changed.map((c) => c.after)]) {
+    const s = KIND_SECTION[r.kind];
+    if (s) out.add(s);
+  }
+  return out;
+}

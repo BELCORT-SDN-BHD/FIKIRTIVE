@@ -48,3 +48,11 @@ describe("offerPhase", () => {
     expect(offerPhase({}, now)).toBe("active");
   });
 });
+
+describe("product imageAssetId", () => {
+  it("accepts an optional imageAssetId and keeps it out of required fields", () => {
+    expect(productRecordData.safeParse({ name: "Latte", imageAssetId: "as_123" }).success).toBe(true);
+    expect(productRecordData.safeParse({ name: "Latte" }).success).toBe(true);
+    expect(productRecordData.safeParse({ name: "Latte", imageAssetId: 5 }).success).toBe(false);
+  });
+});

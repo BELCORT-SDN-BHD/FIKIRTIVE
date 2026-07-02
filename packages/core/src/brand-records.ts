@@ -13,6 +13,8 @@ export const productRecordData = z.object({
   url: z.string().max(500).optional(),
   sellingAngle: z.string().max(300).optional(),
   tags: z.array(z.string().max(40)).max(10).optional(),
+  /** Optional My Stuff asset link for the showcase card. Display-only; UI-managed (OTTO skills never accept it). */
+  imageAssetId: z.string().max(64).optional(),
 });
 export type ProductRecordData = z.infer<typeof productRecordData>;
 
