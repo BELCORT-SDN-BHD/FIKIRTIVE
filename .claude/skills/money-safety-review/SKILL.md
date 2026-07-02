@@ -3,7 +3,7 @@ name: money-safety-review
 description: Spend-path gate for Artlio. Use when a diff touches AI-generation spend — the typed genRequest gate, startGen, startRefGen, dispatchVariantJob/createVariant/regenerateVariant, coworkGenerate, idempotencyKey/dedup, the partial-unique idempotency indexes, or the fal provider call in apps/worker/src/jobs/gen.ts. Auto-fire when reviewing or writing any change that could create/charge a GenJob or RefGenJob, or alter exactly-once dedup. Skip entirely for UI/CSS/docs/non-spend changes.
 ---
 
-Real money is spent only on AI generation via fal. This gate exists to keep the **spend path** exactly-once and single-authority. It is **not** a universal checklist — apply **proportional rigor**: max scrutiny on the spend path, nothing on everything else.
+Real money is spent on AI generation (BytePlus/fal provider) and Otto LLM turns (Anthropic). This gate exists to keep the **spend path** exactly-once and single-authority. It is **not** a universal checklist — apply **proportional rigor**: max scrutiny on the spend path, nothing on everything else.
 
 ## Step 1 — Does this diff touch the spend path? (exit fast)
 
@@ -14,6 +14,15 @@ The **spend path** is, exhaustively, these symbols/files:
 - `idempotencyKey` and the dedup machinery (the findFirst fast-path + P2002 backstop in any of the above).
 - The partial-unique indexes: `GenJob_active_idempotency_key`, `GenJob_cowork_idempotency_once`, `RefGenJob_active_entity_variant_key` (in `packages/db/prisma/migrations/`).
 - The fal **provider call** inside `handleGen` (`apps/worker/src/jobs/gen.ts`) — `provider.generate` / `provider.generateVideo` — and the `spent`/`committed` flags and store/commit transaction around it. (refgen.ts has the same shape for the variant path.)
+- The **provider implementations** themselves (`packages/generation/src/byteplus.ts` / fal path in `index.ts`) — the pre-charge vs chargedError boundary.
+- **The ledger core**: `packages/db/src/credits.ts`(reserveCredits/settleCredits/refundReservation/grantCreditsTx)and the finalizer partial-unique indexes.
+- **Otto LLM metering**: `packages/otto/src/meter.ts`(withLlmBudget)+ `packages/core/src/llm-prices.ts`(margin/价格表)— every Otto turn is real Anthropic money; future search-fee settle rides here too.
+- **Reaper refund paths**: gen/refgen reapers + `apps/worker/src/jobs/llm-reservation-reaper.ts`(incl. its refId prefix allowlist).
+- **Catch-all(枚举防腐)**: ANY new outbound paid API call site, and ANY writer of CreditLedger or a future money ledger, is spend path — whether or not listed above.
+
+**Money-in note**: `grantCredits`/Stripe webhook diffs are guarded by REVIEWER-PLAYBOOK(admin-auth + money 清单), not this skill's checks — do not treat Step-1 NO as "money-in is unreviewed".
+
+**前瞻义务(动工前必须先扩本表)**: ①Routine 预算字段与执行扣费(harmony-01 对象 6,P1½);②第二账道 ChannelFeeWallet/ChannelFeeLedger + `watopup:`/`waconv:` 幂等键(harmony-05,P2);③任何不经 handleGen/refgen 的新付费调用点(如工厂 Wave 2 lipsync/TTS 供应商)。
 
 **If NO — none of the above is in the diff — STOP. This skill does not apply. Exit immediately and defer to normal proportional review.** Do NOT money-gate UI, CSS, copy, docs, admin read-only pages, the $0 worker paths (render.ts, caption.ts, ffmpeg/whisper), or anything else that cannot reach the symbols above. No money-safety theater.
 

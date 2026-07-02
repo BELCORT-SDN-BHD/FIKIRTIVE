@@ -243,3 +243,7 @@
 | A new owner-visible data type | 5 (ownerId + TENANT_MODELS + requireOwner) + 7 for its UI |
 | A new admin surface | RBAC matrix + requireRole + FOUNDER_OWNER_ID stamping + audit |
 | A new screen | 7 (.gb + shadcn + coral law) |
+
+
+## Seam 9 — Parity Manifest(第九缝,2026-07-03 入宪)
+完整施工配方在 `docs/design/2026-07-03-harmony-02-parity-manifest.md`:每个新 server action / 页面数据读取,出生即在 `packages/otto/src/parity-manifest.ts` 登记(配对 skill 或四类封闭豁免之一);CI `check-parity.sh` warn→hard 两阶段(在建)。豁免四类:ADMIN / VISUAL / MONEY_IN / ACCOUNT_SECURITY —— 新增类别 = 修宪。

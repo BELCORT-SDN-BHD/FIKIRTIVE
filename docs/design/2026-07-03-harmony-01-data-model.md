@@ -93,6 +93,7 @@ P4  深化:Company + 报表引擎数据面(读现有全部对象,自身无新表
 ```
 
 每个阶段的对象各出 spec 走扩建守则;**任何对象提前需要时可以提前建**(比如工厂想给成片挂 campaign,就把 Campaign 提前到 P1½ 的最小版:只有 id/name/status)。
+**已知的两个提前**:①ScheduledPost(P1½)的 NEEDS_APPROVAL 状态依赖审批原语 → **ApprovalRequest 最小版(kind=PUBLISH)随排期区提前到 P1½**,不许排期区临时自建第二套审批(§四④);②Campaign 最小版可随工厂提前(上例)。
 
 ---
 
