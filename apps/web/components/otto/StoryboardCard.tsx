@@ -31,6 +31,12 @@ export function StoryboardCard({ cardId, payload }: StoryboardCardProps) {
       const res = await fn();
       if ("error" in res) { setError(res.error); return false; }
       setView(parseStoryboardCardPayload(res.payload));
+      // Any successful action restamps indices (reorder/delete shift rows). Close any
+      // open edit form + clear drafts so a still-open form can't Save onto the WRONG
+      // shot the index now points at (would overwrite its prompts + clear its firstFrame).
+      setEditing(null);
+      setDraftFf("");
+      setDraftV("");
       return true;
     } catch {
       setError("Couldn't save — please try again.");
