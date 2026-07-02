@@ -32,7 +32,9 @@ async function loadCard(cardId: string, ownerId: string) {
   return card;
 }
 
-/** 回写新 payload(只改 payload,绝不动 genJobId)。 */
+/** 回写新 payload(只改 payload,绝不动 genJobId)。
+ *  并发模型:read-modify-write,last-write-wins($0 payload 写,零 money 耦合 ——
+ *  两端同时编辑最坏是丢一次编辑,绝不会重复扣费或污染花钱状态,故不加乐观锁)。 */
 async function persist(cardId: string, payload: StoryboardCardPayload): Promise<Ok> {
   await prisma.chatMessage.update({
     where: { id: cardId },

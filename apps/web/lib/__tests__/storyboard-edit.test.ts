@@ -84,4 +84,11 @@ describe("applyReorderShots", () => {
     expect(applyReorderShots(base(), [0, 1, 5]).shots).toEqual(base().shots);   // 含越界
     expect(applyReorderShots(base(), [0, 0, 1]).shots).toEqual(base().shots);   // 重复
   });
+
+  it("非法排列返回同一引用(动作层 `next === cur` 守卫依赖此契约)", () => {
+    const b = base();
+    // 返回值必须是 SAME 引用,不是等值副本 —— reorderShots 动作靠 `next === cur`
+    // 判定"非法排列 → 不回写",若改成返回副本会静默破坏该守卫。
+    expect(applyReorderShots(b, [0, 1])).toBe(b);
+  });
 });
