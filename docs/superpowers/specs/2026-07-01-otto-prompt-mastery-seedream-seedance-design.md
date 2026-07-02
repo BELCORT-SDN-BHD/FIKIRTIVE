@@ -23,7 +23,7 @@ Otto 今天写的 `structuredPrompt` **原样直送模型**,是通用 prompt,没
 ## 2. 现状(研究 + 源码,2026-07-01)
 
 - **prompt 直送模型**:`propose` → `CardPayload.structuredPrompt` → worker → `BytePlusProvider`。图:prompt 原样 `POST /images/generations`;视频:provider 追加 `${prompt} --resolution/--duration/--ratio`(技术 flag 自动加,skill **不产出** flag)。`packages/generation/src/byteplus.ts`。
-- **已有一层顾问式提示** `packages/core/src/cowork-directives.ts`——**⚠️ 审计更正(2026-07-02)**:它不只是"提醒",而是在**花钱时**由 `coworkGenerate`→`composePrompt`(apps/web/lib/cowork-actions.ts)把 family×mode directive **追加**到卡片 prompt 上(Generate 按钮路径)。所以本 spec 早前"prompt 原样直送"的说法对按钮路径不准确。**D/E 是它的确定性装配器版**(同知识,结构化输入→精确字符串输出);但让 D/E 真正"取代"这层(decision 6)**尚未落地**——见 §3 decision 6 的更正。
+- **已有一层顾问式提示** `packages/core/src/cowork-directives.ts`——**⚠️ 审计更正(2026-07-02)**:它不只是"提醒",而是在**花钱时**由 `coworkGenerate`→`composePrompt`(apps/web/lib/cowork-actions.ts)把 family×mode directive **追加**到卡片 prompt 上(Generate 按钮路径)。所以本 spec 早前"prompt 原样直送"的说法对按钮路径不准确。**D/E 是它的确定性装配器版**(同知识,结构化输入→精确字符串输出);让 D/E 真正"取代"这层(decision 6)**已于 2026-07-02 落地**(task_84dba154,方案 B+,branch `claude/otto-sole-prompt-authority`):`coworkGenerate` 对有专属 prompt skill 的 family(seedream/seedance)跳过 directive 追加——详见 §3 decision 6。
 - **模型(实测确认)**:图 = `seedream`(`seedream-5-0-260128`);视频 = `seedance-2-fast`(`dreamina-seedance-2-0-fast-260128`):**720p、时长 [5,10]、16:9|9:16、audio-on、`tail:false`(只有首帧,无尾帧)**。`packages/core/src/gen.ts`。
 - **reference(实体条件化)**:`entityIds`(schema/worker 支持最多 8 实体 / 10 图,`gen.ts:351-426` round-robin+封顶+presign+不可达拒付)→ 但 **provider 只发第 1 张**(`byteplus.ts:30` `image: inputImageUrls[0]`,注释 "v1 limitation")。**`@图片N` 是消费级"即梦 web app"机制,不在我们的 Ark API 线上**(参考图走 API 参数,不走 prompt 文字)。"多图真喂给模型"的最后一公里 = 独立 task **`task_dc06ac5a`**(改 provider 那行 + 先验 Ark + money review),**不属于 D/E**。
 
@@ -36,7 +36,7 @@ Otto 今天写的 `structuredPrompt` **原样直送模型**,是通用 prompt,没
 3. **视频默认加 clean-footage 负向约束**(`no on-screen text, watermark, or logo`);当创意确实要字/logo 时 Otto 关掉(`cleanFootage:false`)。图**不**默认加(图的 `textContent` 是刻意功能)。
 4. **reference = 措辞 + 身份锁定,不搬像素** —— 像素永远走 `entityIds → worker → API 参数`(D19 信任边界)。skill 只据 `role`/`name` 织入英文身份锁定句。
 5. **形态 = 主动确定性装配 skill**(纯模板,无额外 LLM,$0),每模型一个。
-6. **cowork-directives 关系** —— 目标:这两个 skill 成为 seedream/seedance 的**唯一权威**;`cowork-directives.ts` 只留给没有专属 skill 的模型作 fallback。**⚠️ 审计发现(2026-07-02):此决定尚未在代码里落地** —— 按钮路径的 `composePrompt` 仍把旧 directive 叠加到 skill 拼好的 prompt 上(两个权威打架)。落地方式(禁用 directive 单元 vs composer 跳过有 skill 的模型)+ money-safety review = 独立 task **`task_84dba154`**。
+6. **cowork-directives 关系** —— 目标:这两个 skill 成为 seedream/seedance 的**唯一权威**;`cowork-directives.ts` 只留给没有专属 skill 的模型作 fallback。**✅ 已落地(2026-07-02,task_84dba154):选方案 B+(改代码,非改数据)。** 新增 `packages/otto/src/prompt-skills.ts` 作单一来源:`PROMPT_SKILLS`(skill↔family)派生出 `PROMPT_SKILLED_FAMILIES` + `familyHasPromptSkill()`;`coworkGenerate` 花钱前用 `family && !familyHasPromptSkill(family) ? getEnhanceDirective : undefined` —— 有专属 skill 的 family 不再叠加旧 directive(`composePrompt` 遇 undefined 即 no-op,产出纯 skill prompt)。**为什么 B+ 不选 A(禁用 directive 单元):** B+ 无需生产库数据迁移、不会被重灌种子/手滑开关悄悄复发,且"哪些 family 算 skilled"从单一来源自动派生(加新 prompt skill 只改一行)。money-safety review 通过(只改 prompt 字符串,不碰 model/count/params/idempotency,`reserve==settle` 不变)。
 
 ---
 
@@ -231,7 +231,7 @@ function identityLockClause(refs: ReferenceInput[]): string {
   - `kind:"image"` → 先调 **`seedreamPrompt`** → `propose({ kind:"image", structuredPrompt: result.prompt, forVideo, entityIds, count })`。
   - `kind:"video"` → 先调 **`seedancePrompt`** → 用 `result.prompt` 提视频(i2v 由 `ctx.sourceGenerationId` 服务端自动识别)。
   - **storyboard(block F)**:每 shot 调一次 `seedancePrompt`(或一次传 `shots[]`);后续 shot 置 `continuesFromPrev:true`。
-  - 这两个 skill **取代** `cowork-directives` 对 seedream/seedance 的自由发挥;directives 留作其它模型 fallback。
+  - 这两个 skill **取代** `cowork-directives` 对 seedream/seedance 的自由发挥;directives 留作其它模型 fallback。**此"取代"已在代码里强制(task_84dba154):** `coworkGenerate` 用 `familyHasPromptSkill()`(源自 `PROMPT_SKILLED_FAMILIES`)对 skilled family 跳过 directive 追加。**两条花钱路径已对齐:** 按钮 `coworkGenerate` 与 Otto 聊天 `generate` skill(本就直用 `card.structuredPrompt`)对同一张卡产出**相同**的 model-bound prompt。注:composer 之外的 ✨Enhance(`enhancePrompt`)是**独立的顾问式 LLM 改写面**,不在 decision 6 范围(它不往 skill 拼好的 prompt 上叠加,产出的是用户可再编辑的文本)。
 - **"看图 prompt"依赖**:为 i2v/i2i 写更好的 prompt,Otto 最好能**看见**源图 —— 那是 multimodal-to-planner(参考上传 chip `task_21c8587b` 的第 ③ 块)。**D/E 不阻塞**(Otto 从 goal/结构化意图写);"看图"增强随该 chip 落地后自然增益。
 
 ---
@@ -263,12 +263,18 @@ catalog skill 数 13→15(注:`registry.test.ts` 硬编码"13 skills"名单 —�
 - 新建:`packages/otto/src/skills/{seedream-prompt.ts, seedream-prompt.helpers.ts, seedance-prompt.ts, seedance-prompt.helpers.ts, prompt-vocab.ts}` + 各 `.test.ts`
 - 改:`packages/otto/src/registry.ts`、`migration.test.ts`、`instructions.ts`(+ test)、`registry.test.ts`(13→15)、`skills/CATALOG.md`(生成)
 - 参考:`packages/core/src/cowork-directives.ts`(fallback 保留)、`byteplus.ts`(prompt 落点)、`propose.helpers.ts`(structuredPrompt 入口)
-- **spun-off(不属 D/E):** 多参考真喂给模型 = `task_dc06ac5a`;参考上传+看图 prompt = `task_21c8587b`;prompt-skill 成为唯一权威(去掉 composePrompt 叠加)= `task_84dba154`
+- **spun-off(不属 D/E):** 多参考真喂给模型 = `task_dc06ac5a`;参考上传+看图 prompt = `task_21c8587b`;prompt-skill 成为唯一权威(去掉 composePrompt 叠加)= `task_84dba154` **✅ 已完成(2026-07-02,方案 B+,branch `claude/otto-sole-prompt-authority`;新增 `packages/otto/src/prompt-skills.ts`)**
 
 ---
 
 ## 11. 变更记录
 
+- **2026-07-02 decision 6 落地**(task_84dba154,方案 **B+**,branch `claude/otto-sole-prompt-authority`,off `claude/otto-prompt-mastery`):
+  - 新增 `packages/otto/src/prompt-skills.ts`(+ `prompt-skills.test.ts`,4 测试):`PROMPT_SKILLS`(skill↔family)→ `PROMPT_SKILLED_FAMILIES` + `familyHasPromptSkill()`,由 `index.ts` 导出。**单一来源**,加 prompt skill 只改一行且被测试断言"每个声明的 skill 真的已注册"。
+  - `apps/web/lib/cowork-actions.ts` `coworkGenerate`:改为 `family && !familyHasPromptSkill(family)` 才读 directive —— seedream/seedance 不再被叠加旧 directive(消除"逗号拼片段 vs 禁逗号-soup"自相矛盾)。
+  - `packages/otto/src/skills/generate.ts`:注释更新 —— 原"v1 gap"改为 decision-6 **有意对齐**(按钮/聊天两条花钱路对同一卡产出相同 prompt)。
+  - ✨Enhance(`enhancePrompt`)判为**独立顾问面**,不在范围。
+  - **验证:** otto 275 测试全过、`catalog:check` fresh、skill-import fence clean、apps/web `typecheck` clean、core compose/gen-from-card 全过;**money-safety review 通过**(仅改 prompt 字符串,`reserve==settle`/exactly-once 不变)。
 - **2026-07-02 独立审计后修**(20 raw → 13 confirmed,均进 PR #91):
   - **#7** seedance:锁定 brandmark reference 时不再输出 clean-footage 的"禁 logo"(否则同一 prompt 又要又禁)——`hasLockedBrandmark` 门。
   - **#13** seedance i2v 一致句改**中性**("keep the subject consistent with the source frame",去掉"preserve face and outfit"的人物假设);人物细节只由 character reference 的 identityLockClause 提供——避免产品视频被误导加人。
@@ -276,5 +282,5 @@ catalog skill 数 13→15(注:`registry.test.ts` 硬编码"13 skills"名单 —�
   - **#12** seedreamPrompt i2i description 加护栏:i2i 只在有 @entity 源图时用,否则用 t2i(防无源图当 t2i 跑烧钱)。
   - **#2/#6** seedancePrompt 补 t2v 指引(description + 指令);pack 补 goal 门(见 requires 主设计)。
   - **指令对齐**(#5/#8/#10):"When to call propose"/"Identity preservation"/"Video keyframes" 与新路由块统一(不再教 Otto 手写 prompt/身份句;keyframe 桥接;desired* 参数走 propose)。
-  - **#1(HIGH,未在本 PR 修)**:decision 6 未落地 —— composePrompt 仍叠加旧 directive → 独立 `task_84dba154`(碰花钱路,走 money-safety review)。
+  - **#1(HIGH)**:decision 6 —— composePrompt 叠加旧 directive —— **✅ 已修复(见上方 2026-07-02 decision-6 落地条目 / task_84dba154)**。
   - **#9(留给 block F)**:装配 prompt 无长度上限 vs `MAX_GEN_PROMPT`(2000)——多镜头 storyboard 才会真撞,F 时给 assembler 加 clamp。
