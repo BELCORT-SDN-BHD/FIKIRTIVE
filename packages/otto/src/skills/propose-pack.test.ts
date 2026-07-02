@@ -1,6 +1,6 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import { executeProposePack } from "./propose-pack.js";
-import { proposePackSkill } from "./propose-pack.js";
+import { proposePackSkill, proposePackInput } from "./propose-pack.js";
 import type { OttoContext } from "../context.js";
 
 // ---------------------------------------------------------------------------
@@ -252,5 +252,96 @@ describe("executeProposePack — mock DB", () => {
     // Pack grouping fields
     expect(typeof payload["packId"]).toBe("string");
     expect(payload["packTitle"]).toBe("Type Check Pack");
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Goal info-gate (closes the 刨根问底 hard-gate bypass via proposePack)
+// ---------------------------------------------------------------------------
+
+describe("proposePackSkill — goal info-gate", () => {
+  it("requires field list contains goal", () => {
+    const fields = proposePackSkill.requires.map((r) => r.field);
+    expect(fields).toContain("goal");
+  });
+
+  it("proposePackInput parses with goal", () => {
+    const parsed = proposePackInput.parse({
+      packTitle: "Summer Campaign",
+      items: [{ kind: "image", structuredPrompt: "Product shot", entityIds: [], variantSel: {} }],
+      goal: "drive signups for the summer sale",
+    });
+    expect(parsed.goal).toBe("drive signups for the summer sale");
+  });
+
+  it("proposePackInput parses without goal", () => {
+    const parsed = proposePackInput.parse({
+      packTitle: "Summer Campaign",
+      items: [{ kind: "image", structuredPrompt: "Product shot", entityIds: [], variantSel: {} }],
+    });
+    expect(parsed.goal).toBeUndefined();
+  });
+});
+
+describe("executeProposePack — goal persisted onto every card payload", () => {
+  let mockPrisma: {
+    entity: { findMany: ReturnType<typeof vi.fn> };
+    chatMessage: { findFirst: ReturnType<typeof vi.fn>; create: ReturnType<typeof vi.fn> };
+    genJob: { create: ReturnType<typeof vi.fn> };
+  };
+
+  beforeEach(async () => {
+    vi.clearAllMocks();
+    const db = await import("@fikirtive/db");
+    mockPrisma = db.prisma as unknown as typeof mockPrisma;
+
+    (mockPrisma.entity.findMany as ReturnType<typeof vi.fn>).mockResolvedValue([]);
+    (mockPrisma.chatMessage.findFirst as ReturnType<typeof vi.fn>).mockResolvedValue({ seq: 10 });
+    (mockPrisma.chatMessage.create as ReturnType<typeof vi.fn>).mockResolvedValue({});
+  });
+
+  it("with goal — every persisted GEN_CARD payload carries goal", async () => {
+    const ctx = makeCtx();
+    const runContext = { context: ctx };
+
+    await executeProposePack(
+      {
+        packTitle: "Summer Campaign",
+        goal: "drive signups for the summer sale",
+        items: [
+          { kind: "image", structuredPrompt: "Product shot", entityIds: [], variantSel: {} },
+          { kind: "image", structuredPrompt: "Model shot", entityIds: [], variantSel: {} },
+          { kind: "video", structuredPrompt: "Brand reveal", entityIds: [], variantSel: {} },
+        ],
+      },
+      runContext,
+    );
+
+    const calls = (mockPrisma.chatMessage.create as ReturnType<typeof vi.fn>).mock.calls;
+    expect(calls).toHaveLength(3);
+    for (const call of calls) {
+      const data = (call[0] as { data: Record<string, unknown> }).data;
+      const payload = data["payload"] as Record<string, unknown>;
+      expect(payload["goal"]).toBe("drive signups for the summer sale");
+    }
+  });
+
+  it("without goal — payload has no goal key", async () => {
+    const ctx = makeCtx();
+    const runContext = { context: ctx };
+
+    await executeProposePack(
+      {
+        packTitle: "No Goal Pack",
+        items: [{ kind: "image", structuredPrompt: "A sneaker", entityIds: [], variantSel: {} }],
+      },
+      runContext,
+    );
+
+    const calls = (mockPrisma.chatMessage.create as ReturnType<typeof vi.fn>).mock.calls;
+    expect(calls).toHaveLength(1);
+    const data = (calls[0]![0] as { data: Record<string, unknown> }).data;
+    const payload = data["payload"] as Record<string, unknown>;
+    expect(payload).not.toHaveProperty("goal");
   });
 });
