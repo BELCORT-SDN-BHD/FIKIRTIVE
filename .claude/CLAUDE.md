@@ -78,3 +78,25 @@ session must follow them:
 non-negotiable principles, and the 8 expansion seams every new feature must use.
 **Read it before building anything new. NEVER edit it** — if code and blueprint
 disagree, stop and report; only the founder changes the blueprint.
+
+## Working with the founder (portable rules — survive any machine/account/session)
+These were previously only in one machine's agent memory; they are now repo law:
+- **Ask before spending real money.** Every real paid call (BytePlus/fal/Anthropic verification
+  runs, Stripe live actions) needs the founder's explicit per-spend confirmation. The ask IS the
+  cap — there is deliberately NO code cap. Delegated phrases like "you decide" do NOT cover a
+  specific spend.
+- **Present options, don't decide.** Product calls belong to the founder: lay out options with
+  tradeoffs, neutrally. Recommend only when asked (he often asks — then commit to a clear one).
+- **Specs/skill docs in 华语** (founder reviews in Chinese); generation prompts stay English;
+  UI copy sentence case.
+- **Founder can't see inline chat widgets** — render design mockups to PNG on ~/Desktop.
+- **Founder priorities, in order: 安全 > 效率 > 易管理**(file-system style: readable files +
+  simple toggles, nothing buried).
+
+## Fresh agent bootstrap (new machine / new session — read in this order)
+1. `docs/BLUEPRINT.md` — the constitution (NEVER edit; conflicts → stop and report)
+2. `docs/review/REVIEWER-PLAYBOOK.md` — review checklists before touching any PR
+3. `docs/research/GRILL-VERDICTS-2026-07-03.md` — every product decision the founder has made
+4. `docs/design/2026-07-03-harmony-0*.md` — data model, seams, factory roadmap, costing, ledger
+5. `docs/review/EXPANSION-SEAMS.md` — the recipe for whatever you're about to build
+Everything an agent needs to build correctly is in the repo; no chat history required.
