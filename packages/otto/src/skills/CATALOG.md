@@ -12,6 +12,7 @@
 | propose-ad-build | free | write | internal | ❌ | Build a Meta ad creation proposal (BUILD_CARD) the user can review and confirm.  |
 | propose-meta-action | free | write | internal | ❌ | Build a Meta ad action plan (ACTION_CARD) the user can review and confirm. Use t |
 | proposePack | free | write | internal | ❌ | Lay out a coherent set of generation proposals (a campaign pack) in one turn. Us |
+| proposeStoryboard | free | write | internal | ❌ | Lay out an ordered STORYBOARD for a video/ad the user can review and edit before |
 | rememberBrandFact | free | write | internal | ❌ | Save ONE durable fact about the user's brand to Brand Memory (their voice, audie |
 | researchWeb | free | read | external | ❌ | Fetch a public web page or search the web to ground your response in real inform |
 | seedancePrompt | free | read | internal | ❌ | Assemble a model-tuned English VIDEO prompt for Seedance — the CREATIVE prompt o |

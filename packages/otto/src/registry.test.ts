@@ -3,9 +3,9 @@ import { allSkills, skillCatalog } from "./registry.js";
 import { otto } from "./otto.js";
 
 describe("registry", () => {
-  it("collects all fifteen skills", () => {
+  it("collects all sixteen skills", () => {
     const names = allSkills.map((s) => s.name).sort();
-    expect(names).toEqual(["describeRefs", "generate", "list-meta-pages", "meta-insights", "meta-list-objects", "propose", "propose-ad-build", "propose-meta-action", "proposePack", "rememberBrandFact", "researchWeb", "seedancePrompt", "seedreamPrompt", "setTitle", "updateBrief"]);
+    expect(names).toEqual(["describeRefs", "generate", "list-meta-pages", "meta-insights", "meta-list-objects", "propose", "propose-ad-build", "propose-meta-action", "proposePack", "proposeStoryboard", "rememberBrandFact", "researchWeb", "seedancePrompt", "seedreamPrompt", "setTitle", "updateBrief"]);
   });
   it("every registered skill carries a built SDK tool", () => {
     expect(allSkills.every((s) => s.tool != null)).toBe(true);

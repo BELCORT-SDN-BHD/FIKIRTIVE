@@ -167,6 +167,35 @@ describe("injectCardMessage", () => {
     const out = injectCardMessage(existing, fresh, "card_missing");
     expect(out).toBe(existing);
   });
+
+  it("also injects a STORYBOARD_CARD (proposeStoryboard streams { cardId } too)", () => {
+    const existing = threadToUiMessages(
+      thread([msg({ id: "u1", role: "USER", kind: "TEXT", text: "make a video ad" })]),
+    );
+    const fresh = thread([
+      msg({ id: "u1", role: "USER", kind: "TEXT", text: "make a video ad" }),
+      msg({
+        id: "sb_1",
+        role: "AGENT",
+        kind: "STORYBOARD_CARD",
+        payload: { storyboardTitle: "Raya ad", shots: [{ shotId: "s0", index: 0, firstFramePrompt: "a", videoPrompt: "b" }] },
+      }),
+    ]);
+    const out = injectCardMessage(existing, fresh, "sb_1");
+    expect(out).toHaveLength(2);
+    expect(out[1].metadata?.durableId).toBe("sb_1");
+    expect(out[1].metadata?.kind).toBe("STORYBOARD_CARD");
+    expect((out[1].metadata?.payload as { shots?: unknown[] })?.shots).toHaveLength(1);
+  });
+
+  it("is idempotent for a STORYBOARD_CARD already present (same ref)", () => {
+    const fresh = thread([
+      msg({ id: "sb_1", role: "AGENT", kind: "STORYBOARD_CARD", payload: { storyboardTitle: "x", shots: [] } }),
+    ]);
+    const existing = threadToUiMessages(fresh);
+    const out = injectCardMessage(existing, fresh, "sb_1");
+    expect(out).toBe(existing);
+  });
 });
 
 describe("syncCardJobIds", () => {

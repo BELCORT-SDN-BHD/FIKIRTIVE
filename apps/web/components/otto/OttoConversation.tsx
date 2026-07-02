@@ -7,6 +7,7 @@ import { getCoworkThreadClient } from "@/lib/cowork-fetch";
 import { OttoPlanCard } from "./OttoPlanCard";
 import { OttoActionPlanCard } from "./OttoActionPlanCard";
 import { OttoAdBuildCard } from "./OttoAdBuildCard";
+import { StoryboardCard } from "./StoryboardCard";
 import { OttoResult } from "./OttoResult";
 import { deriveCardState } from "@/lib/otto-inject-helpers";
 import { activeMentionQuery, resolveSentEntityIds } from "@/lib/otto-mentions";
@@ -525,6 +526,17 @@ function MessageRow({
         <OttoAvatar size={32} state="idle" />
         <div className="flex-1 min-w-0">
           <OttoAdBuildCard cardId={m.id} payload={m.payload} />
+        </div>
+      </div>
+    );
+  }
+
+  if (m.kind === "STORYBOARD_CARD") {
+    return (
+      <div className="flex items-start gap-3">
+        <OttoAvatar size={32} state="idle" />
+        <div className="flex-1 min-w-0">
+          <StoryboardCard cardId={m.id} payload={m.payload} />
         </div>
       </div>
     );

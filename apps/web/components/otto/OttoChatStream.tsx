@@ -24,6 +24,7 @@ import {
 } from "@/lib/otto-inject-helpers";
 import { OttoPlanCard } from "./OttoPlanCard";
 import { PackCard } from "./PackCard";
+import { StoryboardCard } from "./StoryboardCard";
 import { OttoResult } from "./OttoResult";
 import { TextPart } from "./parts/TextPart";
 import { StatusLine } from "./parts/StatusLine";
@@ -815,6 +816,14 @@ export function OttoChatStream({
                     {(m.parts.find((p) => p.type === "text") as { text?: string } | undefined)?.text}
                   </div>
                 </div>
+              );
+            }
+
+            if (kind === "STORYBOARD_CARD") {
+              return (
+                <WidgetRow key={m.id} animateIn={isNewMessage(m.id)}>
+                  <StoryboardCard cardId={m.metadata!.durableId} payload={m.metadata?.payload} />
+                </WidgetRow>
               );
             }
 
