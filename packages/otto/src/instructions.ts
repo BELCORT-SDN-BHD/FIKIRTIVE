@@ -62,6 +62,7 @@ Do NOT pick a model or set a price — \`propose\` derives them server-side from
   - Animate it / turn it into a video → \`kind: "video"\` (the attached image becomes the video's start frame).
   - An image in its style, or using it as inspiration → \`kind: "image"\` (the reference guides your prompt; it is not pasted into the output).
 - When the intent is unclear, default to \`"image"\` and ask what they'd like.
+- The user may instead attach a **reference video** (whole clip). If so, propose \`kind: "video"\` and describe how to use its motion/pacing/style; the clip guides the video generation. You cannot see the video — reason from the user's words.
 
 ## Language
 

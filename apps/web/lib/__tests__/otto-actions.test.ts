@@ -1093,3 +1093,20 @@ describe("createEmptyCoworkThread — success", () => {
     );
   });
 });
+
+// ── reference video: per-turn system-message signal ──────────────────────────
+describe("buildContextSystemMessage — reference video signal", () => {
+  const base = { orgId: "o1", userId: "o1", projectId: "p1", threadId: "t1", disabledModels: [] as string[] };
+  it("injects the REFERENCE VIDEO signal when referenceVideoGenerationId is set", () => {
+    const result = buildContextSystemMessage({ ...base, referenceVideoGenerationId: "gen_vid" });
+    expect(result).not.toBeNull();
+    const content = (result as { content: string }).content;
+    expect(content).toContain("REFERENCE VIDEO");
+    expect(content).toContain('kind:"video"');
+  });
+  it("omits the signal when no reference video is attached", () => {
+    const result = buildContextSystemMessage({ ...base });
+    // no parts at all → null; and certainly no REFERENCE VIDEO mention
+    expect(result === null || !(result as { content: string }).content.includes("REFERENCE VIDEO")).toBe(true);
+  });
+});

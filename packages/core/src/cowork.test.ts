@@ -18,3 +18,15 @@ describe("coworkTurnRequest sourceGenerationId", () => {
     expect(r.success).toBe(false);
   });
 });
+
+describe("coworkTurnRequest referenceVideoGenerationId", () => {
+  const base = { projectId: "p", text: "hi" };
+  it("accepts a bounded referenceVideoGenerationId", () => {
+    const r = coworkTurnRequest.safeParse({ ...base, referenceVideoGenerationId: "gen_vid" });
+    expect(r.success && r.data.referenceVideoGenerationId).toBe("gen_vid");
+  });
+  it("rejects an over-length referenceVideoGenerationId", () => {
+    const r = coworkTurnRequest.safeParse({ ...base, referenceVideoGenerationId: "x".repeat(65) });
+    expect(r.success).toBe(false);
+  });
+});

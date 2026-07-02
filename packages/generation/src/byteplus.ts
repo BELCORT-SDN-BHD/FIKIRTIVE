@@ -76,6 +76,7 @@ export class BytePlusProvider implements GenerationProvider {
       .concat(req.aspectRatio ? [`--ratio ${req.aspectRatio}`] : []).join(" ");
     const content: unknown[] = [];
     if (i2v) content.push({ type: "image_url", image_url: { url: req.imageUrl } });
+    if (req.refVideoUrl) content.push({ type: "video_url", video_url: { url: req.refVideoUrl }, role: "reference_video" });
     content.push({ type: "text", text: `${req.prompt} ${flags}`.trim() });
 
     const sub = await fetch(`${ARK_BASE}/contents/generations/tasks`, {

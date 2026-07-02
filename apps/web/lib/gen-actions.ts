@@ -34,7 +34,7 @@ export async function startGen(raw: unknown): Promise<{ id: string } | { error: 
   const OWNED = { ownerId, deletedAt: null } as const;
   const parsed = genRequest.safeParse(raw);
   if (!parsed.success) return { error: "That generation request is out of bounds." };
-  const { projectId, shotId, sourceGenerationId, tailGenerationId, prompt, entityIds, count, kind, model, durationSeconds, resolution, aspectRatio, fps, audio, idempotencyKey, variantSel, threadId } = parsed.data;
+  const { projectId, shotId, sourceGenerationId, tailGenerationId, referenceVideoGenerationId, prompt, entityIds, count, kind, model, durationSeconds, resolution, aspectRatio, fps, audio, idempotencyKey, variantSel, threadId } = parsed.data;
 
   const project = await prisma.project.findFirst({ where: { id: projectId, ...OWNED } });
   if (!project) return { error: "Project not found." };
@@ -118,6 +118,7 @@ export async function startGen(raw: unknown): Promise<{ id: string } | { error: 
           id: newId(), ownerId, projectId, shotId: shotId ?? null,
           sourceGenerationId: sourceGenerationId ?? null,
           tailGenerationId: tailGenerationId ?? null,
+          referenceVideoGenerationId: referenceVideoGenerationId ?? null,
           prompt, entityIds, count: kind === "video" ? 1 : count, model,
           kind: kind === "video" ? "VIDEO" : "IMAGE",
           idempotencyKey: idempotencyKey ?? null,

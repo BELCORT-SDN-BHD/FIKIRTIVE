@@ -11,7 +11,7 @@ import { threadToUiMessages, type OttoUiMessage } from "@/lib/otto-ui-messages";
 import { ImageIcon } from "lucide-react";
 import { uploadFilesDirect } from "@/lib/direct-upload";
 import { finalizeCandidateUploads } from "@/lib/upload-actions";
-import { ACCEPT_ATTACH, isVideoFile, defaultFrameTime, frameFileName, FRAME_MAX_SIDE, FRAME_JPEG_QUALITY } from "@/lib/video-frame";
+import { ACCEPT_ATTACH, isVideoFile, defaultFrameTime, frameFileName, FRAME_MAX_SIDE, FRAME_JPEG_QUALITY, REF_VIDEO_MIN_SECONDS, REF_VIDEO_MAX_SECONDS, isRefVideoDurationOk } from "@/lib/video-frame";
 import {
   resultJobIds,
   errorJobIds,
@@ -101,9 +101,10 @@ export function OttoChatStream({
    *  session — drives the optimistic "working" state before the genJobId lands from the
    *  durable thread. Resets on remount (thread switch = component re-key). */
   const [submittedCardIds, setSubmittedCardIds] = useState<Set<string>>(new Set());
-  /** Image attachment: a generation created from a user-uploaded file, included as
-   *  sourceGenerationId on the next send. Null when no image is attached. */
-  const [attached, setAttached] = useState<{ generationId: string; src: string } | null>(null);
+  /** Attachment: a generation created from a user-uploaded file, included as
+   *  sourceGenerationId (image) or referenceVideoGenerationId (whole clip) on the
+   *  next send. Null when nothing is attached. */
+  const [attached, setAttached] = useState<{ generationId: string; src: string; kind: "image" | "refVideo" } | null>(null);
   /** True while the file is being hashed + uploaded + finalized. */
   const [uploading, setUploading] = useState(false);
   /** Upload error message shown near the attach button; clears on next successful attach. */
@@ -116,6 +117,9 @@ export function OttoChatStream({
   // F28: only true once a frame has actually been drawn to the canvas (onSeeked), so "Use this
   // frame" can't attach a blank JPEG before the first paint.
   const [frameReady, setFrameReady] = useState(false);
+  /** The original video File for the current videoPick — used by "Use whole video"
+   *  to upload the clip itself (not an extracted frame). */
+  const wholeVideoFileRef = useRef<File | null>(null);
 
   // Bounded in-flight poll for the async worker result (ported from OttoConversation):
   // a GEN_CARD whose genJobId is set but with no terminal GEN_RESULT/TURN_ERROR keeps
@@ -146,7 +150,7 @@ export function OttoChatStream({
     transport: new DefaultChatTransport<OttoUiMessage>({
       api: "/api/otto/stream",
       prepareSendMessagesRequest: ({ messages, body }) => {
-        const ids = (body ?? {}) as { projectId?: string; threadId?: string; goalKey?: string; entityIds?: string[]; sourceGenerationId?: string };
+        const ids = (body ?? {}) as { projectId?: string; threadId?: string; goalKey?: string; entityIds?: string[]; sourceGenerationId?: string; referenceVideoGenerationId?: string };
         return {
           body: {
             projectId: ids.projectId,
@@ -157,7 +161,9 @@ export function OttoChatStream({
             // accepts it as an optional field, so include it only when present.
             ...(ids.goalKey ? { goalKey: ids.goalKey } : {}),
             ...(ids.entityIds?.length ? { entityIds: ids.entityIds } : {}),
-            ...(ids.sourceGenerationId ? { sourceGenerationId: ids.sourceGenerationId } : {}),
+            ...(ids.referenceVideoGenerationId
+              ? { referenceVideoGenerationId: ids.referenceVideoGenerationId }
+              : ids.sourceGenerationId ? { sourceGenerationId: ids.sourceGenerationId } : {}),
           },
         };
       },
@@ -345,8 +351,9 @@ export function OttoChatStream({
     if (attachedNow?.src.startsWith("blob:")) URL.revokeObjectURL(attachedNow.src);
     setAttached(null);
     // Pass the live projectId/threadId, optional @mention entityIds, and optional
-    // sourceGenerationId (attached image) via the per-call body; prepareSendMessagesRequest
-    // reads them off `body` and shapes the strict route payload.
+    // sourceGenerationId (attached image) or referenceVideoGenerationId (attached whole
+    // clip) via the per-call body; prepareSendMessagesRequest reads them off `body` and
+    // shapes the strict route payload.
     void sendMessage(
       { text: trimmed },
       {
@@ -354,7 +361,9 @@ export function OttoChatStream({
           projectId,
           threadId: thread.id,
           ...(entityIds.length ? { entityIds } : {}),
-          ...(attachedNow ? { sourceGenerationId: attachedNow.generationId } : {}),
+          ...(attachedNow?.kind === "refVideo"
+            ? { referenceVideoGenerationId: attachedNow.generationId }
+            : attachedNow ? { sourceGenerationId: attachedNow.generationId } : {}),
         },
       },
     );
@@ -373,6 +382,7 @@ export function OttoChatStream({
       if (videoPick) URL.revokeObjectURL(videoPick.url);
       const url = URL.createObjectURL(file);
       setVideoPick({ url, duration: 0 });
+      wholeVideoFileRef.current = file;
       return;
     }
 
@@ -389,7 +399,7 @@ export function OttoChatStream({
         setAttachError("error" in res ? res.error : "Could not attach image.");
         return;
       }
-      setAttached({ generationId: res.generationIds[0], src: URL.createObjectURL(file) });
+      setAttached({ generationId: res.generationIds[0], src: URL.createObjectURL(file), kind: "image" });
     } catch (err) {
       setAttachError(err instanceof Error ? err.message : "Upload failed.");
     } finally {
@@ -473,13 +483,34 @@ export function OttoChatStream({
         setAttachError("error" in r ? r.error : "Could not attach frame.");
         return;
       }
-      setAttached({ generationId: r.generationIds[0], src: preview });
+      setAttached({ generationId: r.generationIds[0], src: preview, kind: "image" });
       closeVideoPick();
     } catch (err) {
       setAttachError(err instanceof Error ? err.message : "Upload failed.");
     } finally {
       setUploading(false);
     }
+  }
+
+  async function useWholeVideo() {
+    const v = videoElRef.current;
+    if (!v || !isRefVideoDurationOk(v.duration)) {
+      setAttachError(`Reference video must be ${REF_VIDEO_MIN_SECONDS}–${REF_VIDEO_MAX_SECONDS}s.`);
+      return;
+    }
+    if (!wholeVideoFileRef.current) return;
+    setUploading(true);
+    try {
+      const outcome = await uploadFilesDirect([wholeVideoFileRef.current], () => {});
+      if (outcome.files.length === 0) { setAttachError(outcome.failures[0]?.reason ?? "Upload failed."); return; }
+      const r = await finalizeCandidateUploads(projectId, "", [], outcome.files);
+      if ("error" in r || !r.generationIds?.[0]) { setAttachError("error" in r ? r.error : "Could not attach video."); return; }
+      const preview = canvasRef.current?.toDataURL("image/jpeg", FRAME_JPEG_QUALITY) ?? "";
+      setAttached({ generationId: r.generationIds[0], src: preview, kind: "refVideo" });
+      closeVideoPick();
+    } catch (err) {
+      setAttachError(err instanceof Error ? err.message : "Upload failed.");
+    } finally { setUploading(false); }
   }
 
   const mentionSuggestions = mentionQuery !== null
@@ -999,8 +1030,16 @@ export function OttoChatStream({
                   className="w-full"
                 />
               )}
+              {videoPick.duration > 0 && !isRefVideoDurationOk(videoPick.duration) && (
+                <div className="text-[0.8rem] text-muted-foreground">Whole-video reference needs a {REF_VIDEO_MIN_SECONDS}–{REF_VIDEO_MAX_SECONDS}s clip.</div>
+              )}
               <div className="mt-2 flex items-center justify-end gap-2">
                 <Button variant="ghost" size="sm" onClick={closeVideoPick} disabled={uploading}>Cancel</Button>
+                <Button variant="default" size="sm" onClick={useWholeVideo} disabled={uploading || !isRefVideoDurationOk(videoPick.duration)}>
+                  {uploading ? "Attaching…" : "Use whole video"}
+                </Button>
+                {/* F28: gated on frameReady — the whole-video button above doesn't need it
+                    (it uploads the original file, not the canvas frame). */}
                 <Button variant="default" size="sm" onClick={useSelectedFrame} disabled={uploading || videoPick.duration === 0 || !frameReady}>
                   {uploading ? "Attaching…" : "Use this frame"}
                 </Button>

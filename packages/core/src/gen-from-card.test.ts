@@ -370,3 +370,25 @@ describe("buildGenRequestFromCard — byte-identical deep-equal test", () => {
     expect(result.req).toStrictEqual(expected);
   });
 });
+
+describe("buildGenRequestFromCard — referenceVideoGenerationId", () => {
+  it("threads referenceVideoGenerationId from a video card payload", () => {
+    const r = buildGenRequestFromCard({
+      projectId: "p", threadId: "t", cardId: "c", prompt: "make it move",
+      entityIds: [], variantSel: {},
+      cardPayload: { kind: "video", model: "seedance-2-fast", structuredPrompt: "x", params: {}, referenceVideoGenerationId: "gen_vid" },
+    });
+    expect(r.ok).toBe(true);
+    if (r.ok) expect(r.req.referenceVideoGenerationId).toBe("gen_vid");
+  });
+
+  it("omits referenceVideoGenerationId when the card has none", () => {
+    const r = buildGenRequestFromCard({
+      projectId: "p", threadId: "t", cardId: "c", prompt: "make it move",
+      entityIds: [], variantSel: {},
+      cardPayload: { kind: "video", model: "seedance-2-fast", structuredPrompt: "x", params: {} },
+    });
+    expect(r.ok).toBe(true);
+    if (r.ok) expect("referenceVideoGenerationId" in r.req).toBe(false);
+  });
+});

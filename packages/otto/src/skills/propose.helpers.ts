@@ -70,6 +70,7 @@ export type CardPayload = {
   sourceGenerationId?: string;
   /** 这条创作的目的/意图（来自 propose 的资讯门）。展示/审计用。 */
   goal?: string;
+  referenceVideoGenerationId?: string;
 };
 
 export type ProposeCardResult = {
@@ -103,6 +104,7 @@ export function buildProposeCard(
   let variantSel = input.variantSel;
   const isI2V = kind === "video" && !!ctx.sourceGenerationId;
   const hasSourceImage = isI2V;
+  const isRefVideo = kind === "video" && !!ctx.referenceVideoGenerationId;
 
   if (isI2V) {
     // i2v conditions on the start frame, not on entity refs (preserve prior behavior)
@@ -216,6 +218,8 @@ export function buildProposeCard(
     ...(videoStep ? { videoStep } : {}),
     // isI2V ⇒ kind==="video" && !!ctx.sourceGenerationId, so the non-null assertion is sound.
     ...(isI2V ? { sourceGenerationId: ctx.sourceGenerationId! } : {}),
+    // isRefVideo ⇒ kind==="video" && !!ctx.referenceVideoGenerationId, so the non-null assertion is sound.
+    ...(isRefVideo ? { referenceVideoGenerationId: ctx.referenceVideoGenerationId! } : {}),
   };
 
   // Step 6: the credit amount Otto may mention in chat = the real charge (estimatedCredits).

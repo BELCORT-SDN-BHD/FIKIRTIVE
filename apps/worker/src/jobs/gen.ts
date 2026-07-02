@@ -21,6 +21,8 @@ import {
   GEN_QUEUE,
   videoDefaults,
   MAX_CONDITIONING_IMAGES,
+  REF_VIDEO_MIN_SECONDS,
+  REF_VIDEO_MAX_SECONDS,
   genSpentUsd,
   pricedGenCredits,
   displayCredits,
@@ -516,11 +518,36 @@ export async function handleGen(data: GenJobData, retryCount: number): Promise<v
         tailImageUrl = (await storage.presignedGet(storageKey(tail.asset.ownerId, tail.asset.contentHash, tail.asset.ext), 3600)) ?? "";
         if (provider.name !== "mock" && !tailImageUrl) throw new Error("last-frame image unreachable — refusing to spend on i2v");
       }
+      // Whole-clip reference video (整段视频参考). Resolved server-side from an owned,
+      // in-project, video-ext Generation; fail-closed if set-but-missing (never spend).
+      let refVideoUrl = "";
+      if (job.referenceVideoGenerationId) {
+        const rv = await prisma.generation.findFirst({
+          where: { id: job.referenceVideoGenerationId, ownerId: job.ownerId, projectId: job.projectId, deletedAt: null, asset: { ext: { in: ["mp4", "mov", "webm"] } } },
+          include: { asset: true },
+        });
+        if (!rv) {
+          await failClosedWithRefund(job, "reference video not found (or not a video) in this project");
+          return;
+        }
+        // Margin guard: BytePlus bills reference-video input by duration while our charge is
+        // flat per resolution. The composer gates 2–10s client-side; re-enforce here from
+        // ingest's ffprobe (Asset.durationS). null = probe pending/failed → allow (the async
+        // ingest race is the NORMAL flow right after attach; the client already gated it).
+        const refDur = rv.asset.durationS;
+        if (refDur != null && (refDur < REF_VIDEO_MIN_SECONDS || refDur > REF_VIDEO_MAX_SECONDS)) {
+          await failClosedWithRefund(job, `reference video must be ${REF_VIDEO_MIN_SECONDS}–${REF_VIDEO_MAX_SECONDS}s (this clip is ~${Math.round(refDur)}s)`);
+          return;
+        }
+        refVideoUrl = (await storage.presignedGet(storageKey(rv.asset.ownerId, rv.asset.contentHash, rv.asset.ext), 3600)) ?? "";
+        if (provider.name !== "mock" && !refVideoUrl) throw new Error("reference video unreachable — refusing to spend");
+      }
       // per-model controls chosen in the composer (resolved + stored at enqueue);
       // fall back to the legacy fixed duration if an older job has none.
       const vo = job.videoOptions as { seconds?: number; resolution?: string; aspectRatio?: string; fps?: number; audio?: boolean } | null;
       const video = await provider.generateVideo({
         prompt: job.prompt, imageUrl, tailImageUrl: tailImageUrl || undefined,
+        refVideoUrl: refVideoUrl || undefined,
         durationSeconds: vo?.seconds ?? videoDefaults(job.model as GenVideoModel).seconds,
         resolution: vo?.resolution, aspectRatio: vo?.aspectRatio, fps: vo?.fps, audio: vo?.audio,
         model: job.model,
