@@ -227,12 +227,9 @@ export function OttoConversation({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [hasWorkingJob, thread.id, pollGaveUp]);
 
-  // leading-[1.65] pins the line-height the conversation currently INHERITS from the .fk
-  // ancestor (--leading-relaxed); it survives S4 teardown (when .fk/otto-theme.css is
-  // removed and .gb — which sets no line-height — applies at the root). Value-identical
-  // today → zero visual change; without it the text compacts post-teardown.
+  // leading-[1.5] — design-baseline body line-height (Analytics standard)
   return (
-    <div className="gb leading-[1.65]" style={{ flex: 1, display: "flex", flexDirection: "column", overflow: "hidden" }}>
+    <div className="gb leading-[1.5]" style={{ flex: 1, display: "flex", flexDirection: "column", overflow: "hidden" }}>
       <style>{`
         @media (max-width: 680px) {
           .otto-conv-scroll { padding: 1rem 0.75rem !important; }

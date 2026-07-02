@@ -280,9 +280,9 @@ export function OttoView({
 
 /** Placeholder for nav destinations whose hi-fi screen lands in a later phase. */
 function ComingSoon({ title, line }: { title: string; line: string }) {
-  /* gb leading-[1.65]: resolves .gb tokens in this subtree; pins leading for S4 teardown */
+  /* leading-[1.5] — design-baseline body line-height (Analytics standard) */
   return (
-    <div className="gb leading-[1.65] flex-1 flex flex-col items-center justify-center gap-3 text-center p-8">
+    <div className="gb leading-[1.5] flex-1 flex flex-col items-center justify-center gap-3 text-center p-8">
       <svg width={56} height={51} viewBox="0 0 120 110" aria-hidden>
         <g fill="var(--brand)">
           <ellipse cx="60" cy="64" rx="43" ry="22" />

@@ -59,10 +59,9 @@ export default function OttoLibrary({ projectId, entities = [] }: { projectId: s
 
   const minCard = view === "compact" ? 120 : 220;
 
-  // leading-[1.65]: pin the inherited line-height for the .gb subtree so S4
-  // teardown can remove it without layout shift (mirrors the S1a OttoNav pattern).
+  // leading-[1.5] — design-baseline body line-height (Analytics standard)
   return (
-    <div className="gb leading-[1.65]" style={{ flex: 1, display: "flex", flexDirection: "column", overflow: "hidden" }}>
+    <div className="gb leading-[1.5]" style={{ flex: 1, display: "flex", flexDirection: "column", overflow: "hidden" }}>
       {/* Header */}
       <div style={{ display: "flex", alignItems: "center", gap: "0.75rem", padding: "1rem", flexShrink: 0, borderBottom: "1px solid var(--border)" }}>
         <input

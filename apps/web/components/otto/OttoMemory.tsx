@@ -234,11 +234,8 @@ export function OttoMemory({ initialMemory, projectId }: { initialMemory: Memory
   }
 
   return (
-    // leading-[1.65] pins the line-height this subtree currently INHERITS from the .fk
-    // ancestor (--leading-relaxed); it survives S4 teardown (when .fk/otto-theme.css is
-    // removed and .gb — which sets no line-height — applies at the root). Value-identical
-    // today → zero visual change; without it the text compacts post-teardown.
-    <div className="gb flex-1 overflow-auto p-[24px_28px_36px] leading-[1.65]">
+    // leading-[1.5] — design-baseline body line-height (Analytics standard)
+    <div className="gb flex-1 overflow-auto p-[24px_28px_36px] leading-[1.5]">
       <div className="mx-auto max-w-[720px]">
         <h1 className="m-0 text-[1.5rem] font-bold text-foreground leading-tight">
           Brand memory

@@ -109,11 +109,8 @@ export function PackCard({ packTitle, cards, balanceUsd, onApproved }: PackCardP
   }
 
   return (
-    // leading-[1.65] pins the line-height this subtree currently INHERITS from the .fk
-    // ancestor (--leading-relaxed); it survives S4 teardown (when .fk/otto-theme.css is
-    // removed and .gb — which sets no line-height — applies at the root). Value-identical
-    // today → zero visual change; without it the text compacts post-teardown.
-    <div className="gb leading-[1.65]" style={{ maxWidth: 520 }}>
+    // leading-[1.5] — design-baseline body line-height (Analytics standard)
+    <div className="gb leading-[1.5]" style={{ maxWidth: 520 }}>
       {/* Pack card: bg-accent = --brand-tint (#F4F4F3 neutral tint) in .fk.gb-skin context */}
       <div className="rounded-[var(--radius-card)] border border-border bg-secondary p-6">
         {/* Pack header */}

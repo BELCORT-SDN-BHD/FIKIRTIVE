@@ -105,10 +105,9 @@ export function OttoTrace({ steps, title = "OTTO is making it" }: { steps: Trace
   const counter = activeIdx >= 0 ? `step ${activeIdx + 1} of ${total}` : allDone ? "done" : `${doneCount} of ${total}`;
 
   return (
-    // leading-[1.65] pins the line-height currently inherited from .fk (--leading-relaxed);
-    // it survives S4 teardown when .fk/otto-theme.css is removed. Zero visual change today.
+    // leading-[1.5] — design-baseline body line-height (Analytics standard)
     <div
-      className="gb leading-[1.65]"
+      className="gb leading-[1.5]"
       style={{
         border: "1px solid var(--brand-soft)",
         borderRadius: "var(--radius-card)",
@@ -154,10 +153,9 @@ export function OttoTrace({ steps, title = "OTTO is making it" }: { steps: Trace
  */
 export function OttoCanvasStatus({ label }: { label: string }) {
   return (
-    // leading-[1.65] pins the line-height currently inherited from .fk (--leading-relaxed);
-    // it survives S4 teardown when .fk/otto-theme.css is removed. Zero visual change today.
+    // leading-[1.5] — design-baseline body line-height (Analytics standard)
     <div
-      className="gb leading-[1.65]"
+      className="gb leading-[1.5]"
       style={{
         position: "absolute",
         top: "1rem",

@@ -133,11 +133,8 @@ export function OttoAdBuildCard({ cardId, payload }: OttoAdBuildCardProps) {
   const currency = p.currency;
 
   return (
-    // leading-[1.65] pins the line-height this subtree currently INHERITS from the .fk
-    // ancestor (--leading-relaxed); it survives S4 teardown (when .fk/otto-theme.css is
-    // removed and .gb — which sets no line-height — applies at the root). Value-identical
-    // today → zero visual change; without it the text compacts post-teardown.
-    <div className="gb leading-[1.65]" style={{ maxWidth: 480 }}>
+    // leading-[1.5] — design-baseline body line-height (Analytics standard)
+    <div className="gb leading-[1.5]" style={{ maxWidth: 480 }}>
       {/* Card variant="tint" padding="md": bg=--brand-tint=#F4F4F3=bg-accent, radius=--radius-card=18px, pad=--pad-card=--space-6=p-6, border=--border-subtle */}
       <div className="rounded-[18px] border border-border bg-secondary p-6">
         {/* Header */}
@@ -150,7 +147,7 @@ export function OttoAdBuildCard({ cardId, payload }: OttoAdBuildCardProps) {
 
         {/* Strategy */}
         {p.reasoning && (
-          <div className="mb-3 text-[0.875rem] leading-relaxed text-muted-foreground">
+          <div className="mb-3 text-[0.875rem] leading-[1.5] text-muted-foreground">
             {p.reasoning}
           </div>
         )}
@@ -190,7 +187,7 @@ export function OttoAdBuildCard({ cardId, payload }: OttoAdBuildCardProps) {
                 {p.creative.headline}
               </span>
             )}
-            <span className="text-[0.875rem] leading-relaxed text-foreground">
+            <span className="text-[0.875rem] leading-[1.5] text-foreground">
               {p.creative.message}
             </span>
             <div className="flex gap-3 text-[0.75rem] text-muted-foreground">

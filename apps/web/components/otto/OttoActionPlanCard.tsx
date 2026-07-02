@@ -84,11 +84,8 @@ export function OttoActionPlanCard({ cardId, payload }: OttoActionPlanCardProps)
   const isFailed = approveResult?.state === "failed";
 
   return (
-    // leading-[1.65] pins the line-height this subtree currently INHERITS from the .fk
-    // ancestor (--leading-relaxed); it survives S4 teardown (when .fk/otto-theme.css is
-    // removed and .gb — which sets no line-height — applies at the root). Value-identical
-    // today → zero visual change; without it the text compacts post-teardown.
-    <div className="gb leading-[1.65]" style={{ maxWidth: 480 }}>
+    // leading-[1.5] — design-baseline body line-height (Analytics standard)
+    <div className="gb leading-[1.5]" style={{ maxWidth: 480 }}>
       {/* Card: tint variant = bg-accent (neutral #F4F4F3 tint), radius-card (18px), pad-card (p-6), border */}
       <div className="rounded-[18px] border border-border bg-secondary p-6">
         {/* Header */}

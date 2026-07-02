@@ -34,8 +34,8 @@ export default function OttoDiscover({ onUseInOtto }: { onUseInOtto: (prompt: st
 
   return (
     // gb: .gb resolves brand/accent/muted tokens for the Grok-bright skin;
-    // leading-[1.65] pins the inherited line-height so S4 teardown won't reflow.
-    <div className="gb leading-[1.65]" style={{ flex: 1, overflow: "auto", padding: "20px" }}>
+    // leading-[1.5] — design-baseline body line-height (Analytics standard)
+    <div className="gb leading-[1.5]" style={{ flex: 1, overflow: "auto", padding: "20px" }}>
       <div style={{ marginBottom: "16px" }}>
         <h2 style={{ margin: 0, fontSize: "1.125rem", color: "var(--foreground)" }}>Discover</h2>
         <p style={{ margin: "4px 0 0", color: "var(--muted-foreground)", fontSize: "0.875rem" }}>

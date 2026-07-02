@@ -240,11 +240,8 @@ export function OttoStuff({ entities, ads, adJobs }: OttoStuffProps) {
   const groups = groupEntitiesByType(items, search);
 
   return (
-    // leading-[1.65] pins the line-height this subtree currently INHERITS from the .fk
-    // ancestor (--leading-relaxed); it survives S4 teardown (when .fk/otto-theme.css is
-    // removed and .gb — which sets no line-height — applies at the root). Value-identical
-    // today → zero visual change; without it the text compacts post-teardown.
-    <div className="otto-stuff-scroll gb flex-1 overflow-auto p-6 leading-[1.65]">
+    // leading-[1.5] — design-baseline body line-height (Analytics standard)
+    <div className="otto-stuff-scroll gb flex-1 overflow-auto p-6 leading-[1.5]">
       <style>{`
         @media (max-width: 680px) {
           .otto-stuff-scroll { padding: 1rem 0.75rem !important; }
@@ -342,7 +339,7 @@ function EmptyCast() {
         <div className="mb-1 text-[1rem] font-semibold text-foreground">
           Your cast lives here
         </div>
-        <div className="max-w-[340px] text-[0.875rem] leading-relaxed">
+        <div className="max-w-[340px] text-[0.875rem] leading-[1.5]">
           When you describe a person or product in a campaign, Otto saves it here so it stays consistent every time you use it.
         </div>
       </div>
