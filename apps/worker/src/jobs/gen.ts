@@ -13,7 +13,7 @@
  * Conditioning = the @mentioned entities' reference images, resolved here from
  * the job's entityIds (D19 trust boundary).
  */
-import { prisma, settleCredits, refundReservation } from "@fikirtive/db";
+import { prisma, settleCredits, refundReservation, type GenJob } from "@fikirtive/db";
 import {
   storageKey,
   newId,
@@ -156,6 +156,35 @@ async function appendCoworkResult(
   }
 }
 
+/** Finish a job whose outputs are already COMMITTED (generationIds recorded — and the commit
+ *  tx settles atomically with that write, so committed ⟹ charged-and-settled): idempotent
+ *  attach → DONE + settle (no-op if already) → GEN_RESULT → otto resume. Shared by handleGen's
+ *  redelivery-resume path and the reaper's committed-but-stuck scan. NEVER re-spends, never
+ *  refunds — the only correct terminal state for a committed job is DONE-with-attach. Safe
+ *  against a concurrently-finishing winner: every step is idempotent (the identical race
+ *  already exists between a redelivery-resume and the original delivery). */
+async function resumeCommittedGenJob(job: GenJob): Promise<void> {
+  if (job.shotId) await attachBestEffort(job.id, job.shotId, job.generationIds);
+  await prisma.$transaction(async (tx) => {
+    await tx.genJob.update({
+      where: { id: job.id },
+      data: {
+        status: "DONE", progress: 100, finishedAt: new Date(), error: "", spent: true,
+        // defensive backfill: a row committed before spentUsd existed (or a partial
+        // write) has the marker but null spentUsd — reconstruct from the frozen job
+        // inputs. Never overwrites a value the commit tx already froze.
+        ...(job.spentUsd == null ? { spentUsd: genSpentUsd({ kind: job.kind, model: job.model, count: job.count, videoOptions: job.videoOptions as { seconds?: number; resolution?: string; audio?: boolean } | null }) } : {}),
+      },
+    });
+    // settle the hold (idempotent: P2002 no-op if a prior delivery's commit tx
+    // already settled; no-op if there was no reservation). Outputs exist → the
+    // generation succeeded → the charge becomes permanent.
+    await settleCredits(tx, { orgId: job.ownerId, refId: job.id });
+  });
+  await appendCoworkResult(job, "GEN_RESULT", job.generationIds, "", displayCredits(pricedGenCredits({ kind: job.kind as "IMAGE" | "VIDEO", model: job.model, count: job.count, videoOptions: job.videoOptions as { seconds?: number; resolution?: string; audio?: boolean } | null }))); // idempotent — P2002 swallowed if already written
+  await resumeOttoAfterGen(job); // best-effort; at-most-once via ottoVerdictAt claim
+}
+
 /** Terminal-fail a job that NEVER delivered AND release its credit hold, atomically.
  *  Used by every pre-commit fail-closed branch (no outputs recorded) so a merchant is
  *  never charged for a generation they didn't receive. refundReservation is idempotent
@@ -180,7 +209,9 @@ async function failClosedWithRefund(
  *  runs, the credit hold never releases, and the UI spins. Run on a timer to fail-close +
  *  refund + post a terminal message for any GENERATING row older than the stale window. The
  *  conditional updateMany is the at-most-once claim (a late finisher or another instance wins
- *  instead), so this is safe under concurrency and never clobbers a DONE. */
+ *  instead), so this is safe under concurrency and never clobbers a DONE. A third scan
+ *  RESUMES (never refunds) committed-but-stuck rows — outputs recorded but the finisher
+ *  crashed and no redelivery will ever come (see the inline comment on that scan). */
 /** F07: does pg-boss still hold a deliverable message for this QUEUED gen job? Under the serial
  *  (batchSize:1) queue, a paid job can wait past the 25-min wall-clock cutoff behind a burst of
  *  long video jobs — but if its message is still created/retry/active, pg-boss WILL deliver it,
@@ -234,9 +265,13 @@ export async function reapStaleGenJobs(): Promise<number> {
   // Reap jobs stuck in QUEUED: worker never picked them up (worker down / message lost).
   // The conditional updateMany (where: { status: "QUEUED" }) is the at-most-once claim —
   // it loses to a worker that simultaneously claims the job (QUEUED→GENERATING), so we
-  // never clobber a job that just started.
+  // never clobber a job that just started. generationIds isEmpty EXCLUDES a committed job
+  // that was requeued by a post-commit blip and then lost its message: it was CHARGED
+  // (settled) and has outputs, so fail-closing it would post a FALSE "you weren't charged"
+  // TURN_ERROR that wins the single-terminal-message index over the real GEN_RESULT — the
+  // committed-but-stuck scan below finishes it instead.
   const stuckQueued = await prisma.genJob.findMany({
-    where: { status: "QUEUED", createdAt: { lt: queuedCutoff } },
+    where: { status: "QUEUED", createdAt: { lt: queuedCutoff }, generationIds: { isEmpty: true } },
     select: { id: true, ownerId: true, threadId: true, kind: true, model: true },
   });
   for (const job of stuckQueued) {
@@ -245,7 +280,7 @@ export async function reapStaleGenJobs(): Promise<number> {
     let failedClosed = false;
     await prisma.$transaction(async (tx) => {
       const failed = await tx.genJob.updateMany({
-        where: { id: job.id, status: "QUEUED", createdAt: { lt: queuedCutoff } },
+        where: { id: job.id, status: "QUEUED", createdAt: { lt: queuedCutoff }, generationIds: { isEmpty: true } },
         data: { status: "FAILED", error: "queued too long — worker never picked it up; refunded", finishedAt: new Date() },
       });
       if (failed.count > 0) { await refundReservation(tx, { orgId: job.ownerId, refId: job.id }); failedClosed = true; }
@@ -253,6 +288,34 @@ export async function reapStaleGenJobs(): Promise<number> {
     if (failedClosed) {
       await appendCoworkResult(job, "TURN_ERROR", [], "That one didn't start in time — the generator may be busy. You weren't charged; please try again.");
       reaped++;
+    }
+  }
+
+  // Committed-but-stuck scan (Codex adversarial review, 2026-07-03): a job whose commit tx
+  // landed (generationIds + settle written, status still GENERATING) but whose delivery
+  // crashed before attach/DONE can be unreachable by redelivery — the LAST redelivery may
+  // have snapshotted the row pre-commit (bypassing the resume short-circuit), lost the
+  // claim, been correctly blocked by the isEmpty guards, and returned; or the message
+  // dead-lettered. Both fail-close scans above skip committed rows BY DESIGN, so without
+  // this scan the job sits GENERATING+charged forever (no result message, and for refgen
+  // the active-index slot stays hostage). Committed ⟹ settled ⟹ the ONLY correct terminal
+  // state is DONE-with-attach — so RESUME it exactly like a redelivery would (idempotent
+  // attach + DONE + settle no-op + GEN_RESULT): no fail-close, no refund, no re-spend.
+  // QUEUED covers a committed job requeued by a post-commit blip whose message then died;
+  // FAILED covers wrongly-FAILED-but-committed rows (handleGen already resumes those on
+  // redelivery). startedAt < cutoff (25m > queue expiry): any live delivery has finished
+  // or hung by then, and a concurrent finisher is safe anyway (every step is idempotent).
+  // Per-job try/catch: one bad row must not halt the sweep — it retries next sweep.
+  const committedStuck = await prisma.genJob.findMany({
+    where: { status: { in: ["QUEUED", "GENERATING", "FAILED"] }, startedAt: { lt: cutoff }, generationIds: { isEmpty: false } },
+  });
+  for (const job of committedStuck) {
+    try {
+      await resumeCommittedGenJob(job);
+      console.log(`[gen] reaper finished committed-but-stuck job ${job.id} → DONE (no re-spend, no refund)`);
+      reaped++;
+    } catch (e) {
+      console.error(`[gen] reaper resume failed for ${job.id} (retries next sweep):`, e instanceof Error ? e.message : e);
     }
   }
 
@@ -290,25 +353,7 @@ export async function handleGen(data: GenJobData, retryCount: number): Promise<v
     // shot is gone; the candidate generations remain, reusable) (#2/#3).
     if (job.generationIds.length > 0) {
       committed = true; // outputs recorded on a prior delivery — never re-spend; finish best-effort
-      if (job.shotId) await attachBestEffort(job.id, job.shotId, job.generationIds);
-      await prisma.$transaction(async (tx) => {
-        await tx.genJob.update({
-          where: { id: job.id },
-          data: {
-            status: "DONE", progress: 100, finishedAt: new Date(), error: "", spent: true,
-            // defensive backfill: a row committed before spentUsd existed (or a partial
-            // write) has the marker but null spentUsd — reconstruct from the frozen job
-            // inputs. Never overwrites a value the commit tx already froze.
-            ...(job.spentUsd == null ? { spentUsd: genSpentUsd({ kind: job.kind, model: job.model, count: job.count, videoOptions: job.videoOptions as { seconds?: number; resolution?: string; audio?: boolean } | null }) } : {}),
-          },
-        });
-        // settle the hold (idempotent: P2002 no-op if a prior delivery's commit tx
-        // already settled; no-op if there was no reservation). Outputs exist → the
-        // generation succeeded → the charge becomes permanent.
-        await settleCredits(tx, { orgId: job.ownerId, refId: job.id });
-      });
-      await appendCoworkResult(job, "GEN_RESULT", job.generationIds, "", displayCredits(pricedGenCredits({ kind: job.kind as "IMAGE" | "VIDEO", model: job.model, count: job.count, videoOptions: job.videoOptions as { seconds?: number; resolution?: string; audio?: boolean } | null }))); // idempotent — P2002 swallowed if already written
-      await resumeOttoAfterGen(job); // best-effort; at-most-once via ottoVerdictAt claim
+      await resumeCommittedGenJob(job);
       return;
     }
     if (job.status === "FAILED") return; // terminal with no recorded outputs — nothing to resume
