@@ -49,6 +49,13 @@ describe("applyEditShotPrompt", () => {
     expect(b.shots[0].firstFramePrompt).toBe("ff0");
     expect(b.shots[0].firstFrameGenerationId).toBe("gen0");
   });
+  it("改文字同时清 firstFrameCardId(旧子卡过期)", () => {
+    const b = base();
+    (b.shots[0] as Record<string, unknown>).firstFrameCardId = "child-0";
+    const r = applyEditShotPrompt(b, 0, { firstFramePrompt: "NEW" });
+    expect("firstFrameCardId" in r.shots[0]).toBe(false);
+    expect("firstFrameGenerationId" in r.shots[0]).toBe(false);
+  });
 });
 
 describe("applyAddShot", () => {

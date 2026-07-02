@@ -18,6 +18,7 @@ export interface StoryboardShotView {
   firstFramePrompt: string;
   videoPrompt: string;
   entityIds?: string[];
+  firstFrameCardId?: string;
   firstFrameGenerationId?: string;
 }
 
@@ -45,6 +46,9 @@ export function parseStoryboardCardPayload(payload: unknown): StoryboardCardView
         videoPrompt: typeof shot.videoPrompt === "string" ? shot.videoPrompt : "",
         ...(Array.isArray(shot.entityIds) && shot.entityIds.every((e) => typeof e === "string")
           ? { entityIds: shot.entityIds as string[] }
+          : {}),
+        ...(typeof shot.firstFrameCardId === "string"
+          ? { firstFrameCardId: shot.firstFrameCardId }
           : {}),
         ...(typeof shot.firstFrameGenerationId === "string"
           ? { firstFrameGenerationId: shot.firstFrameGenerationId }

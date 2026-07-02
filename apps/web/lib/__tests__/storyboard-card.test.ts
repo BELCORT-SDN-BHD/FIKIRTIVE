@@ -79,4 +79,12 @@ describe("parseStoryboardCardPayload", () => {
     });
     expect(r.shots[0].firstFrameGenerationId).toBe("gen_123");
   });
+
+  it("firstFrameCardId 透传(F4 用)", () => {
+    const r = parseStoryboardCardPayload({
+      storyboardTitle: "X",
+      shots: [{ shotId: "s0", index: 0, firstFramePrompt: "a", videoPrompt: "b", firstFrameCardId: "child-1" }],
+    });
+    expect(r.shots[0].firstFrameCardId).toBe("child-1");
+  });
 });

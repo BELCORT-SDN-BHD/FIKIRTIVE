@@ -35,6 +35,8 @@ export type StoryboardCardPayload = {
     firstFramePrompt: string;
     videoPrompt: string;
     entityIds?: string[];
+    /** 该镜头"当前子 GEN_CARD"的 id(闸① 铸卡时写)——显式追踪;改文字/重出时替换或清空。 */
+    firstFrameCardId?: string;
     firstFrameGenerationId?: string;
   }[];
 };
