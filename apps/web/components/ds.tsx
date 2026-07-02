@@ -6,6 +6,9 @@
  * verbatim so the CSS recipes in globals.css render pixel-faithfully.
  */
 import { useEffect, useRef, useState } from "react";
+// SYNTHETIC CI TEST — client value-import of server-only package. REVERTED in next commit.
+import { OTTO_DEFAULT_MODEL } from "@fikirtive/otto";
+export const __syntheticOttoLeak = OTTO_DEFAULT_MODEL;
 
 /* ---------------- icons (Lucide-style, 1.75 stroke) ---------------- */
 function mkIcon(nodes: React.ReactNode) {
