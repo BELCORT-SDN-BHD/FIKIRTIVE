@@ -83,8 +83,15 @@ export interface OttoContext {
     /** Fetch a public URL, extract its text, and return title + cleaned body. */
     fetchUrl(url: string): Promise<{ url: string; title?: string; text: string }>;
     /** Full-text web search. Optional — not wired until a search-API key is configured.
-     *  TODO(G3): wire a web-search API transport (needs a key). */
+     *  Returns THIN results ({title,url,snippet}); Otto reads full pages on demand via readPage. */
     search?: (query: string) => Promise<{ results: { url: string; title: string; snippet: string }[] }>;
+    /** Read ONE page of a public URL's clean text, backed by a shared cache (Nous-style paging).
+     *  Optional — a context without it falls back to fetchUrl. `page` is 1-based; the result carries
+     *  totalPages so Otto knows there is more to read. */
+    readPage?(
+      url: string,
+      page?: number,
+    ): Promise<{ url: string; title?: string; page: number; totalPages: number; text: string; stale: boolean }>;
   };
   /** Meta propose port (G7) — injected by the web caller; builds + persists an ACTION_CARD
    *  chat message from a structured plan. Skills reach it ONLY via ctx.metaPropose,

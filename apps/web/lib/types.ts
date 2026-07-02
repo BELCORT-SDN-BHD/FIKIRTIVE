@@ -65,7 +65,7 @@ export interface ProjectDTO {
 export interface ChatMessageDTO {
   id: string;
   role: "USER" | "AGENT";
-  kind: "TEXT" | "PLAN" | "GEN_CARD" | "GEN_RESULT" | "DENIAL" | "TURN_ERROR" | "ACTION_CARD" | "BUILD_CARD" | "STORYBOARD_CARD";
+  kind: "TEXT" | "PLAN" | "GEN_CARD" | "GEN_RESULT" | "DENIAL" | "TURN_ERROR" | "ACTION_CARD" | "BUILD_CARD" | "STORYBOARD_CARD" | "RESEARCH_CARD" | "RESEARCH_REPORT";
   seq: number;
   text: string;
   payload: unknown | null;

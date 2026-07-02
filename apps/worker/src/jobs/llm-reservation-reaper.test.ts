@@ -47,4 +47,17 @@ describe("reapStaleLlmReservations (F03)", () => {
     expect(n).toBe(0);
     expect(m.refundReservation).not.toHaveBeenCalled();
   });
+
+  it("reaps leaked research: reservations (worker crash between reserve and settle)", async () => {
+    // The prefix allowlist in the raw SQL MUST include research:% — otherwise a mid-research
+    // worker crash strands the user's reserved credits forever (no finalizer, no reaper).
+    m.queryRaw.mockResolvedValue([{ orgId: "o3", refId: "research:card-9" }]);
+    const n = await reapStaleLlmReservations();
+    expect(n).toBe(1);
+    expect(m.refundReservation).toHaveBeenCalledWith(expect.anything(), { orgId: "o3", refId: "research:card-9" });
+    // Assert the SQL template itself carries the research:% prefix (proves it's actually reaped,
+    // not just that the loop refunds whatever the query returns).
+    const sqlParts = (m.queryRaw.mock.calls[0]![0] as string[]).join("");
+    expect(sqlParts).toContain("research:%");
+  });
 });

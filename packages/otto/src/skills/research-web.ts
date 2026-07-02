@@ -11,8 +11,10 @@
  * imports brand-research.ts or calls fetch() directly — ctx-port rule enforced.
  *
  * Two modes:
- *   url   → ctx.research.fetchUrl(url) — always wired (G3a shipped)
- *   query → ctx.research.search?(query) — not wired yet; returns a graceful message
+ *   url   → ctx.research.readPage?(url, page) when wired (cached, page-by-page — Nous-style);
+ *           else falls back to ctx.research.fetchUrl(url) (backward compatible).
+ *   query → ctx.research.search?(query) — thin results when a search transport is configured;
+ *           else returns a graceful "not configured" message.
  */
 import type { RunContext } from "@openai/agents";
 import { z } from "zod";
@@ -24,6 +26,7 @@ const MAX_TEXT = 6000; // chars — same cap brand-research uses before the LLM
 export const researchWebInput = z.object({
   url: z.string().url().optional().describe("A public URL to fetch and read (e.g. the brand's homepage)."),
   query: z.string().min(1).optional().describe("A search query to find web pages about a topic."),
+  page: z.number().int().min(1).optional().describe("With url: which page of a long page's text to read (1-based). Read page-by-page; don't dump the whole page."),
 }).superRefine((val, ctx) => {
   if (!val.url && !val.query) {
     ctx.addIssue({
@@ -51,9 +54,20 @@ export async function executeResearchWeb(
     };
   }
 
-  // URL mode — always wired
+  // URL mode — always wired. Prefer cached paging (readPage) when the port has it,
+  // so a long research loop reads page-by-page; else fall back to the old fetchUrl shape.
   if (input.url) {
     try {
+      if (context.research.readPage) {
+        const result = await context.research.readPage(input.url, input.page);
+        return {
+          url: result.url,
+          title: result.title ?? null,
+          page: result.page,
+          totalPages: result.totalPages,
+          text: result.text.slice(0, MAX_TEXT),
+        };
+      }
       const result = await context.research.fetchUrl(input.url);
       return {
         url: result.url,

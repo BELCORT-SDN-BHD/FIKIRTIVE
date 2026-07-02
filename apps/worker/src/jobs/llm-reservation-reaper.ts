@@ -28,7 +28,7 @@ export async function reapStaleLlmReservations(): Promise<number> {
         r."refId" LIKE 'otto-turn:%' OR r."refId" LIKE 'otto-stream:%' OR
         r."refId" LIKE 'otto-approve:%' OR r."refId" LIKE 'otto-verdict:%' OR
         r."refId" LIKE 'brand-research:%' OR r."refId" LIKE 'draft:%' OR
-        r."refId" LIKE 'enhance:%'
+        r."refId" LIKE 'enhance:%' OR r."refId" LIKE 'research:%'
       )
       AND NOT EXISTS (
         SELECT 1 FROM "CreditLedger" f

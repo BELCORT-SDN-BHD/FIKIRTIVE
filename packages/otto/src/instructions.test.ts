@@ -117,6 +117,49 @@ describe("ottoInstructions — audit fix: propose/identity/keyframe reconciled w
   });
 });
 
+describe("ottoInstructions — web research (researchWeb query→url→page)", () => {
+  it("has a research section that names the researchWeb tool", () => {
+    expect(ottoInstructions).toMatch(/research/i);
+    expect(ottoInstructions).toMatch(/researchWeb/);
+  });
+  it("teaches the query→url two-step (thin list first, then read chosen pages)", () => {
+    expect(ottoInstructions).toMatch(/query/);
+    expect(ottoInstructions).toMatch(/snippet|thin/i);
+  });
+  it("teaches page-by-page reading (paging token)", () => {
+    expect(ottoInstructions).toMatch(/totalPages|page by page|page-by-page|page: ?\d/i);
+  });
+  it("warns against reading everything / dumping whole pages at once", () => {
+    expect(ottoInstructions).toMatch(/do not (try to )?open every|don't (try to )?open every|not.*every (search )?result|read page by page|sparingly/i);
+  });
+});
+
+describe("ottoInstructions — deep vs lightweight (proposeResearch)", () => {
+  it("names the proposeResearch tool for deep research", () => {
+    expect(ottoInstructions).toMatch(/proposeResearch/);
+  });
+  it("says proposeResearch costs credits and needs the user's approval", () => {
+    // anchor to the approval/credits gate — the new deep-research content, not the S1 researchWeb section
+    expect(ottoInstructions).toMatch(/proposeResearch/);
+    expect(ottoInstructions).toMatch(/approve|approval|costs? credits|charged/i);
+  });
+  it("is honest that proposeResearch only lays out the PLAN — research runs after approval", () => {
+    // Anchor to phrases UNIQUE to the proposeResearch honesty paragraph — NOT the
+    // pre-existing proposeStoryboard "only lays out the plan" line (which /only.*plan/
+    // would also satisfy). These two phrases occur only in the new deep-research content.
+    expect(ottoInstructions).toMatch(/does not research anything yet/i);
+    expect(ottoInstructions).toMatch(/never claim you already researched/i);
+  });
+  it("distinguishes lightweight researchWeb from deep proposeResearch in the research context", () => {
+    // both tools must be named so the lightweight-vs-deep routing is unambiguous
+    expect(ottoInstructions).toMatch(/researchWeb/);
+    expect(ottoInstructions).toMatch(/proposeResearch/);
+  });
+  it("gates proposeResearch on a topic (刨根问底)", () => {
+    expect(ottoInstructions).toMatch(/topic/);
+  });
+});
+
 describe("ottoInstructions — reference video", () => {
   it("mentions an attached reference video guides motion/style of a video plan", () => {
     expect(ottoInstructions.toLowerCase()).toContain("reference video");

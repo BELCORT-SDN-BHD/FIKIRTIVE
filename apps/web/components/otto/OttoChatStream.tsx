@@ -28,6 +28,8 @@ import { OttoActionPlanCard } from "./OttoActionPlanCard";
 import { OttoAdBuildCard } from "./OttoAdBuildCard";
 import { PackCard } from "./PackCard";
 import { StoryboardCard } from "./StoryboardCard";
+import { ResearchCard } from "./ResearchCard";
+import { ResearchReport } from "./ResearchReport";
 import { OttoResult } from "./OttoResult";
 import { TextPart } from "./parts/TextPart";
 import { StatusLine } from "./parts/StatusLine";
@@ -877,6 +879,28 @@ export function OttoChatStream({
                     balanceUsd={balanceUsd}
                     onBalanceRefresh={() => void onBalanceRefresh?.()}
                   />
+                </WidgetRow>
+              );
+            }
+
+            if (kind === "RESEARCH_CARD") {
+              return (
+                <WidgetRow key={m.id} animateIn={isNewMessage(m.id)}>
+                  <ResearchCard
+                    cardId={m.metadata!.durableId}
+                    payload={m.metadata?.payload}
+                    balanceUsd={balanceUsd}
+                    onBalanceRefresh={() => void onBalanceRefresh?.()}
+                    onRefresh={pollAndInjectResults}
+                  />
+                </WidgetRow>
+              );
+            }
+
+            if (kind === "RESEARCH_REPORT") {
+              return (
+                <WidgetRow key={m.id} animateIn={isNewMessage(m.id)}>
+                  <ResearchReport cardId={m.metadata!.durableId} payload={m.metadata?.payload} />
                 </WidgetRow>
               );
             }

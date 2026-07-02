@@ -1,0 +1,273 @@
+/**
+ * handleResearch — the Otto deep-research worker (research S3 · Task 2, the MONEY CORE).
+ *
+ * The user approves a RESEARCH_CARD → approveResearch creates a ResearchJob (status QUEUED, $0)
+ * and enqueues { jobId } on RESEARCH_QUEUE. This handler runs the bounded research agent and is
+ * the ONLY place in the whole research block where real credits are spent.
+ *
+ * ── MONEY-SAFETY invariants (an adversarial review audits each) ─────────────────────────────
+ *  1. Credits are touched ONLY through `withLlmBudget` — this file NEVER calls reserveCredits /
+ *     settleCredits / refundReservation directly. withLlmBudget reserves the turn budget up front,
+ *     settles the ACTUAL token cost, and refunds the difference (or the whole reservation on a
+ *     pre-spend throw). The refId is `research:<cardId>` — the SAME key approveResearch used for
+ *     the ResearchJob idempotencyKey, so the CreditLedger reserve:/settle: idempotency makes the
+ *     SPEND once-EVER across any redelivery.
+ *  2. No double-reserve on pg-boss retry: a status CAS (QUEUED→RUNNING via updateMany) makes this
+ *     handler a NO-OP on any redelivery/duplicate (count===0 → return before any spend). The queue
+ *     is also retryLimit:0, so a failed run never auto-retries. Belt + suspenders.
+ *  3. searchSources / readSource are FREE reads (no credit calls). The only cost is LLM tokens,
+ *     metered by the wrapper. Truncation (MaxTurnsExceeded) settles ACTUAL usage, never over-charges.
+ *  4. A failure BEFORE spend (e.g. insufficient balance) charges $0 — withLlmBudget refunds.
+ *  5. No provider key is ever logged or placed in an error message (adapters scrub keys already).
+ *
+ * All reads are owner-scoped off ResearchJob.ownerId.
+ */
+import { prisma } from "@fikirtive/db";
+import {
+  RESEARCH_TIERS,
+  researchAgent,
+  withLlmBudget,
+  OTTO_DEFAULT_MODEL,
+  run,
+  MaxTurnsExceededError,
+  mapOttoUsage,
+  type ResearchContext,
+} from "@fikirtive/otto";
+import {
+  newId,
+  fetchAndExtract,
+  tavilySearch,
+  braveSearch,
+  searchWithFallback,
+} from "@fikirtive/core";
+
+/** Chars per page when slicing a page's clean text (mirrors web-page-cache PAGE_CHARS). */
+const PAGE_CHARS = 4000;
+
+/**
+ * A worker-side page reader: core fetchAndExtract (SSRF-guarded, HTML-stripped) + page-slice.
+ * FREE (no spend, no owner scope — public pages). Caching is deliberately NOT done here: the
+ * web-side WebPageCache keys on a hash of a normalized URL (apps/web/lib/web-page-cache.ts), which
+ * the worker can't import — duplicating that normalization risks a subtle key mismatch, and the
+ * brief marks caching an optional optimization ("else fetch fresh"). Fresh fetch is correct.
+ *
+ * NOTE: fetchAndExtract caps its returned text; the slice below simply pages within that cap.
+ */
+async function readPageWorker(
+  url: string,
+  page = 1,
+): Promise<{ url: string; title: string; page: number; totalPages: number; text: string }> {
+  const fetched = await fetchAndExtract(url); // throws on SSRF/network/non-200 (the tool try/catches)
+  const fullText = fetched.text;
+  const totalPages = Math.max(1, Math.ceil(fullText.length / PAGE_CHARS));
+  const start = (page - 1) * PAGE_CHARS;
+  const text = page >= 1 && page <= totalPages ? fullText.slice(start, start + PAGE_CHARS) : "";
+  return { url: fetched.url, title: fetched.title ?? "", page, totalPages, text };
+}
+
+/** Build the FREE search port from env keys — SAME sourcing as buildOttoContext (web). */
+function buildSearch(): ResearchContext["search"] {
+  const k1 = process.env.TAVILY_API_KEY;
+  const k2 = process.env.BRAVE_SEARCH_API_KEY;
+  const primary = k1 ? tavilySearch(k1) : k2 ? braveSearch(k2) : undefined;
+  const fb = k1 && k2 ? braveSearch(k2) : undefined;
+  if (!primary) {
+    // No key configured → a search that returns nothing (the agent still writes from what it has).
+    return async () => [];
+  }
+  const fn = searchWithFallback(primary, fb);
+  return (q: string) => fn(q);
+}
+
+/** Extract the agent's final message text = the report synthesis (same pattern as otto-resume). */
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+function extractText(r: any): string {
+  if (r?.finalOutput != null) return String(r.finalOutput);
+  return (Array.isArray(r?.newItems) ? (r.newItems as any[]) : [])
+    .filter((it: any) => it.type === "message_output_item")
+    .map((it: any) => {
+      const content: any[] = it?.rawItem?.content ?? [];
+      return content
+        .filter((c: any) => c.type === "output_text")
+        .map((c: any) => c.text ?? "")
+        .join("");
+    })
+    .join("");
+}
+
+type ResearchCardPayloadShape = {
+  researchId?: string;
+  topic?: string;
+  goal?: string;
+  tier?: keyof typeof RESEARCH_TIERS;
+  questions?: string[];
+  estimatedCredits?: number;
+  status?: string;
+  [k: string]: unknown;
+};
+
+/**
+ * Mark the card + job FAILED, owner-scoped. RMW re-reads the card payload inside the update so
+ * every other field is byte-preserved; only status + a brief error move. NO credit calls here —
+ * withLlmBudget already settled/refunded internally.
+ */
+async function failResearch(
+  job: { id: string; ownerId: string; cardId: string },
+  errorText: string,
+): Promise<void> {
+  const fresh = await prisma.chatMessage.findFirst({
+    where: { id: job.cardId, ownerId: job.ownerId, kind: "RESEARCH_CARD" },
+    select: { payload: true },
+  });
+  if (fresh) {
+    const cur = (fresh.payload ?? {}) as ResearchCardPayloadShape;
+    await prisma.chatMessage.updateMany({
+      where: { id: job.cardId, ownerId: job.ownerId, kind: "RESEARCH_CARD" },
+      data: { payload: { ...cur, status: "failed", error: errorText } as unknown as object },
+    });
+  }
+  await prisma.researchJob.updateMany({
+    where: { id: job.id, ownerId: job.ownerId },
+    data: { status: "FAILED", error: errorText },
+  });
+}
+
+export async function handleResearch(data: { jobId: string }, _retryCount: number): Promise<void> {
+  // (a) Load the ResearchJob (owner-scope everything downstream off job.ownerId).
+  const job = await prisma.researchJob.findUnique({ where: { id: data.jobId } });
+  if (!job) {
+    console.warn(`[research] job ${data.jobId} not found — nothing to do`);
+    return;
+  }
+
+  // (b) RETRY-IDEMPOTENCY (money-critical): CAS status QUEUED→RUNNING. On any redelivery/duplicate
+  // the row is no longer QUEUED → count===0 → return BEFORE any spend. Primary double-reserve guard.
+  const { count } = await prisma.researchJob.updateMany({
+    where: { id: job.id, status: "QUEUED" },
+    data: { status: "RUNNING" },
+  });
+  if (count === 0) {
+    console.log(`[research] job ${job.id}: not QUEUED (already handled/redelivery) — no-op`);
+    return;
+  }
+
+  // (c) Load the RESEARCH_CARD (owner + thread scoped) + parse tier → caps.
+  const card = await prisma.chatMessage.findFirst({
+    where: { id: job.cardId, ownerId: job.ownerId, kind: "RESEARCH_CARD" },
+    select: { payload: true },
+  });
+  const payload = (card?.payload ?? {}) as ResearchCardPayloadShape;
+  const tierKey = (payload.tier && payload.tier in RESEARCH_TIERS ? payload.tier : job.tier) as keyof typeof RESEARCH_TIERS;
+  const tier = RESEARCH_TIERS[tierKey] ?? RESEARCH_TIERS.standard;
+  const topic = payload.topic ?? "";
+
+  // (d) Build the small, mutable ResearchContext. search/readPage are FREE ports; counters cap use.
+  const ctx: ResearchContext = {
+    search: buildSearch(),
+    readPage: (url: string, page?: number) => readPageWorker(url, page),
+    sourcesRead: [],
+    maxSearches: tier.maxSearches,
+    maxPages: tier.maxPages,
+    searchesUsed: 0,
+    pagesUsed: 0,
+  };
+
+  // Compose the agent's task from the card plan.
+  const goalLine = payload.goal ? `\nGoal: ${payload.goal}` : "";
+  const questionsLine =
+    payload.questions && payload.questions.length > 0
+      ? `\nSub-questions to investigate:\n${payload.questions.map((q) => `- ${q}`).join("\n")}`
+      : "";
+  const researchInput = `Research this topic and write a thorough, well-organized report.\n\nTopic: ${topic}${goalLine}${questionsLine}`;
+
+  // (e) THE SPEND — the sole credit path. Copies the otto-resume shape EXACTLY. withLlmBudget
+  // reserves turnBudgetInternal(maxSteps) up front, runs, settles ACTUAL token cost, refunds the
+  // rest. On MaxTurnsExceeded (graceful truncation) usageOnError feeds actual usage → settle actual.
+  const refId = `research:${job.cardId}`;
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  let result: any;
+  try {
+    result = await withLlmBudget(
+      {
+        orgId: job.ownerId,
+        refId,
+        model: OTTO_DEFAULT_MODEL,
+        paid: true,
+        maxSteps: tier.maxSteps,
+        usageOnError: (e) =>
+          e instanceof MaxTurnsExceededError && (e as { state?: { usage?: unknown } }).state?.usage
+            ? mapOttoUsage((e as { state: { usage: Parameters<typeof mapOttoUsage>[0] } }).state.usage)
+            : null,
+      },
+      async () => {
+        const run_ = await run(researchAgent, researchInput, { context: ctx, maxTurns: tier.maxSteps });
+        return { result: run_, usage: mapOttoUsage(run_.state.usage) };
+      },
+    );
+  } catch (e) {
+    // withLlmBudget threw (insufficient balance / provider / max-turns w/o usable state / etc.).
+    // Credits already refunded/settled INSIDE withLlmBudget — we do NOT touch credits here.
+    const errorText =
+      e instanceof MaxTurnsExceededError
+        ? "The research hit its step budget before finishing."
+        : e instanceof Error
+          ? e.message
+          : "Research failed.";
+    console.warn(`[research] job ${job.id}: withLlmBudget threw — marking failed:`, errorText);
+    await failResearch(job, errorText);
+    return;
+  }
+
+  // (f) SUCCESS: the agent's final message text IS the report synthesis.
+  const synthesis = extractText(result);
+
+  // Write a RESEARCH_REPORT ChatMessage (seq+1, owner/thread from the job), mirroring appendCoworkResult.
+  try {
+    const last = await prisma.chatMessage.findFirst({
+      where: { threadId: job.threadId, ownerId: job.ownerId },
+      orderBy: { seq: "desc" },
+      select: { seq: true },
+    });
+    await prisma.chatMessage.create({
+      data: {
+        id: newId(),
+        threadId: job.threadId,
+        ownerId: job.ownerId,
+        role: "AGENT",
+        kind: "RESEARCH_REPORT",
+        seq: (last?.seq ?? 0) + 1,
+        text: topic ? `Research report: ${topic}` : "Research report",
+        payload: {
+          topic,
+          synthesis,
+          sources: ctx.sourcesRead,
+        } as unknown as object,
+      },
+    });
+  } catch (e) {
+    // Best-effort: a report-write hiccup must not flip the job back / re-spend. Log + continue to
+    // mark the card/job done (the spend already settled; the run succeeded).
+    console.warn(`[research] job ${job.id}: RESEARCH_REPORT write failed (non-fatal):`, e instanceof Error ? e.message : e);
+  }
+
+  // Card → "done" (RMW: re-read payload, byte-preserve other fields, flip only status).
+  const freshCard = await prisma.chatMessage.findFirst({
+    where: { id: job.cardId, ownerId: job.ownerId, kind: "RESEARCH_CARD" },
+    select: { payload: true },
+  });
+  if (freshCard) {
+    const cur = (freshCard.payload ?? {}) as ResearchCardPayloadShape;
+    await prisma.chatMessage.updateMany({
+      where: { id: job.cardId, ownerId: job.ownerId, kind: "RESEARCH_CARD" },
+      data: { payload: { ...cur, status: "done" } as unknown as object },
+    });
+  }
+
+  // Job → DONE (owner-scoped). actualCredits is omitted — the authoritative settle lives in the
+  // CreditLedger via withLlmBudget; we do NOT re-derive a spend figure outside the wrapper.
+  await prisma.researchJob.updateMany({
+    where: { id: job.id, ownerId: job.ownerId },
+    data: { status: "DONE" },
+  });
+  console.log(`[research] job ${job.id}: DONE (${ctx.searchesUsed} searches, ${ctx.pagesUsed} reads, ${ctx.sourcesRead.length} sources)`);
+}

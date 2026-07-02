@@ -17,6 +17,7 @@ import { handleRefGen, reapStaleRefGenJobs } from "./jobs/refgen.js";
 import { handleGen, reapStaleGenJobs } from "./jobs/gen.js";
 import { reapStaleLlmReservations } from "./jobs/llm-reservation-reaper.js";
 import { handleCaption } from "./jobs/caption.js";
+import { handleResearch } from "./jobs/research.js";
 import {
   RENDER_DLQ,
   RENDER_QUEUE_POLICY,
@@ -28,10 +29,14 @@ import {
   GEN_QUEUE_POLICY,
   CAPTION_DLQ,
   CAPTION_QUEUE_POLICY,
+  RESEARCH_QUEUE,
+  RESEARCH_DLQ,
+  RESEARCH_QUEUE_POLICY,
   type RenderJobData,
   type RefGenJobData,
   type GenJobData,
   type CaptionJobData,
+  type ResearchJobData,
 } from "@fikirtive/core";
 
 // Long-lived worker prefers the DIRECT url — a persistent process gains nothing
@@ -95,6 +100,8 @@ async function main(): Promise<void> {
   await boss.createQueue(GEN_QUEUE, { ...GEN_QUEUE_POLICY });
   await boss.createQueue(CAPTION_DLQ);
   await boss.createQueue(QUEUES.caption, { ...CAPTION_QUEUE_POLICY });
+  await boss.createQueue(RESEARCH_DLQ);
+  await boss.createQueue(RESEARCH_QUEUE, { ...RESEARCH_QUEUE_POLICY });
 
   await boss.work<IngestJobData>(QUEUES.ingest, { batchSize: 1 }, async ([job]) => {
     if (!job) return;
@@ -147,6 +154,20 @@ async function main(): Promise<void> {
       console.log(`[worker] caption job ${job.id} start (try ${job.retryCount + 1})`, job.data);
       await runHandler(() => handleCaption(job.data, job.retryCount));
       console.log(`[worker] caption job ${job.id} done`);
+    },
+  );
+
+  // Otto deep research (research S3, the MONEY CORE): bounded search→read→synthesize agent,
+  // metered by ONE withLlmBudget. retryLimit:0 (RESEARCH_QUEUE_POLICY) + a status CAS in
+  // handleResearch make any redelivery a no-op — a failed run does NOT auto-retry into the spend.
+  await boss.work<{ jobId: string }>(
+    RESEARCH_QUEUE,
+    { batchSize: 1, includeMetadata: true },
+    async ([job]) => {
+      if (!job) return;
+      console.log(`[worker] research job ${job.id} start (try ${job.retryCount + 1})`, job.data);
+      await runHandler(() => handleResearch(job.data as ResearchJobData, job.retryCount));
+      console.log(`[worker] research job ${job.id} done`);
     },
   );
 
