@@ -114,6 +114,13 @@ export function buildContextSystemMessage(ctx: OttoContext): AgentInputItem | nu
       : `the last generation status is ${s}`;
     parts.push(`Current generation status for this conversation: ${human}. Speak about generation progress ONLY based on this.`);
   }
+  if (ctx.referenceVideoGenerationId) {
+    // Per-turn signal: unlike an attached image (which Otto SEES as an input_image part),
+    // a reference video is invisible to the model — so tell it one is attached this turn.
+    parts.push(
+      `The user attached a REFERENCE VIDEO this turn — you cannot see it; reason from their words. Propose kind:"video" so the clip guides the generation's motion, pacing, and style.`,
+    );
+  }
   return parts.length ? ({ role: "system", content: parts.join("\n\n") } as AgentInputItem) : null;
 }
 
