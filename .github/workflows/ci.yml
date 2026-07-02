@@ -1,0 +1,71 @@
+# F36 — the FIRST automated gate for this repo. Pushing to main auto-deploys web + worker to
+# Railway and auto-migrates prod, with no human gate in between, so a bad merge ships instantly.
+# This runs on every PR and on push to main.
+#
+# NOTE (founder): after this workflow goes green on its first PR, enable branch protection on
+# `main` requiring the `check` job — that is a repo-admin action in GitHub Settings and is NOT
+# done here on purpose. Until then this reports status but does not block a merge.
+name: CI
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  check:
+    name: typecheck + fences + frozen lockfile
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 10
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+      # --frozen-lockfile moves the #68 class of failure (a package.json dep added without
+      # regenerating pnpm-lock.yaml) from deploy-time to PR-time.
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm --filter @fikirtive/db generate
+      - run: pnpm -r typecheck
+      # Hard spend-fence: skills must not import the fal provider / reserveCredits directly.
+      - run: bash scripts/check-skill-imports.sh
+      # Tenancy tripwire (informational baseline today; never fails the build yet).
+      - run: bash scripts/check-no-raw-prisma.sh
+
+  test:
+    name: unit + integration tests
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: postgres
+          POSTGRES_DB: artlio_test
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd pg_isready --health-interval 10s --health-timeout 5s --health-retries 5
+    env:
+      # Database name ends in _test — required by the packages/db and apps/web (F35) guards.
+      DATABASE_URL: postgres://postgres:postgres@localhost:5432/artlio_test
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 10
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm --filter @fikirtive/db generate
+      - run: pnpm --filter @fikirtive/db exec prisma migrate deploy
+      - run: pnpm -r test

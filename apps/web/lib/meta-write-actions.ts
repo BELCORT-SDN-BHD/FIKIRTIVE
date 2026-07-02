@@ -9,6 +9,9 @@ export async function setAdsAutonomy(mode: "ASK" | "AUTO"): Promise<{ ok: true }
   if (mode !== "ASK" && mode !== "AUTO") return { error: "Invalid autonomy mode." };
   const gate = await requireOwner();
   if ("error" in gate) return gate;
+  // F15 (safe default): staff impersonating a customer must not loosen that customer's ad-spend
+  // gate (ASK→AUTO lets Otto spend without per-action approval). Exit impersonation to change it.
+  if (await isImpersonating()) return { error: "Paused while impersonating a customer — exit impersonation to change their ad autonomy." };
   await prisma.metaConnection.updateMany({ where: { ownerId: gate.ownerId }, data: { adsAutonomy: mode } });
   return { ok: true };
 }

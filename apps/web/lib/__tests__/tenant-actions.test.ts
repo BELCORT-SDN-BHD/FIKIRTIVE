@@ -12,6 +12,8 @@ vi.mock("next/cache", () => ({ revalidatePath: vi.fn() }));
 vi.mock("next/headers", () => ({ headers: vi.fn().mockResolvedValue({}) }));
 
 vi.mock("@/lib/allowlist", () => ({ isFounderAdmin: vi.fn() }));
+const mockIsImpersonating = vi.fn();
+vi.mock("@/lib/better-auth/compat", () => ({ isImpersonating: mockIsImpersonating }));
 vi.mock("@/lib/better-auth/server", () => ({
   auth: { api: { impersonateUser: vi.fn(), stopImpersonating: vi.fn() } },
 }));
@@ -551,9 +553,8 @@ describe("impersonateTenant", () => {
 // ── stopImpersonatingTenant ─────────────────────────────────────────────────
 
 describe("stopImpersonatingTenant", () => {
-  it("calls stopImpersonating", async () => {
-    mockRequireRole.mockResolvedValue(GATE);
-    (isFounderAdmin as Mock).mockReturnValue(true);
+  it("calls stopImpersonating when the session IS impersonating (F15 — not gated on the viewer's role)", async () => {
+    mockIsImpersonating.mockResolvedValue(true);
     authApi.stopImpersonating.mockResolvedValue({ ok: true });
     const res = await stopImpersonatingTenant();
     expect(res).toEqual({ ok: true });
@@ -563,9 +564,8 @@ describe("stopImpersonatingTenant", () => {
     );
   });
 
-  it("stopImpersonatingTenant denies a non-founder", async () => {
-    mockRequireRole.mockResolvedValue(GATE);
-    (isFounderAdmin as Mock).mockReturnValue(false);
+  it("returns an error and does not call stopImpersonating when NOT impersonating (F15)", async () => {
+    mockIsImpersonating.mockResolvedValue(false);
     const res = await stopImpersonatingTenant();
     expect(res).toHaveProperty("error");
     expect(authApi.stopImpersonating).not.toHaveBeenCalled();
