@@ -23,7 +23,7 @@ Otto 今天写的 `structuredPrompt` **原样直送模型**,是通用 prompt,没
 ## 2. 现状(研究 + 源码,2026-07-01)
 
 - **prompt 直送模型**:`propose` → `CardPayload.structuredPrompt` → worker → `BytePlusProvider`。图:prompt 原样 `POST /images/generations`;视频:provider 追加 `${prompt} --resolution/--duration/--ratio`(技术 flag 自动加,skill **不产出** flag)。`packages/generation/src/byteplus.ts`。
-- **已有一层顾问式提示** `packages/core/src/cowork-directives.ts`(全部 `confidence:"untested"`)——只"提醒"Otto 自己写。**D/E 是它的确定性装配器版**(同知识,但结构化输入→精确字符串输出,Otto 不再自由发挥模型规则)。
+- **已有一层顾问式提示** `packages/core/src/cowork-directives.ts`——**⚠️ 审计更正(2026-07-02)**:它不只是"提醒",而是在**花钱时**由 `coworkGenerate`→`composePrompt`(apps/web/lib/cowork-actions.ts)把 family×mode directive **追加**到卡片 prompt 上(Generate 按钮路径)。所以本 spec 早前"prompt 原样直送"的说法对按钮路径不准确。**D/E 是它的确定性装配器版**(同知识,结构化输入→精确字符串输出);但让 D/E 真正"取代"这层(decision 6)**尚未落地**——见 §3 decision 6 的更正。
 - **模型(实测确认)**:图 = `seedream`(`seedream-5-0-260128`);视频 = `seedance-2-fast`(`dreamina-seedance-2-0-fast-260128`):**720p、时长 [5,10]、16:9|9:16、audio-on、`tail:false`(只有首帧,无尾帧)**。`packages/core/src/gen.ts`。
 - **reference(实体条件化)**:`entityIds`(schema/worker 支持最多 8 实体 / 10 图,`gen.ts:351-426` round-robin+封顶+presign+不可达拒付)→ 但 **provider 只发第 1 张**(`byteplus.ts:30` `image: inputImageUrls[0]`,注释 "v1 limitation")。**`@图片N` 是消费级"即梦 web app"机制,不在我们的 Ark API 线上**(参考图走 API 参数,不走 prompt 文字)。"多图真喂给模型"的最后一公里 = 独立 task **`task_dc06ac5a`**(改 provider 那行 + 先验 Ark + money review),**不属于 D/E**。
 
@@ -36,7 +36,7 @@ Otto 今天写的 `structuredPrompt` **原样直送模型**,是通用 prompt,没
 3. **视频默认加 clean-footage 负向约束**(`no on-screen text, watermark, or logo`);当创意确实要字/logo 时 Otto 关掉(`cleanFootage:false`)。图**不**默认加(图的 `textContent` 是刻意功能)。
 4. **reference = 措辞 + 身份锁定,不搬像素** —— 像素永远走 `entityIds → worker → API 参数`(D19 信任边界)。skill 只据 `role`/`name` 织入英文身份锁定句。
 5. **形态 = 主动确定性装配 skill**(纯模板,无额外 LLM,$0),每模型一个。
-6. **cowork-directives 关系** —— 这两个 skill 成为 seedream/seedance 的**唯一权威**;`cowork-directives.ts` 只留给没有专属 skill 的模型作 fallback。
+6. **cowork-directives 关系** —— 目标:这两个 skill 成为 seedream/seedance 的**唯一权威**;`cowork-directives.ts` 只留给没有专属 skill 的模型作 fallback。**⚠️ 审计发现(2026-07-02):此决定尚未在代码里落地** —— 按钮路径的 `composePrompt` 仍把旧 directive 叠加到 skill 拼好的 prompt 上(两个权威打架)。落地方式(禁用 directive 单元 vs composer 跳过有 skill 的模型)+ money-safety review = 独立 task **`task_84dba154`**。
 
 ---
 
@@ -159,11 +159,12 @@ function assembleSeedance(i: SeedancePromptInput): string {
     lines.push(single ? seg : `Shot ${idx + 1}: ${seg}`);
     if (s.audio) lines.push(`Audio: ${s.audio}`);
   });
-  if (i.mode === "i2v") lines.push("keep the subject consistent with the source frame — preserve face and outfit");
+  if (i.mode === "i2v") lines.push("keep the subject consistent with the source frame");
   const locks = identityLockClause(i.references);
   if (locks) lines.push(locks);
   if (i.pacing) lines.push(i.pacing);
-  if (i.cleanFootage) lines.push("no on-screen text, watermark, or logo");
+  const hasLockedBrandmark = i.references.some((r) => r.role === "brandmark" && r.lock);  // #7 审计修
+  if (i.cleanFootage && !hasLockedBrandmark) lines.push("no on-screen text, watermark, or logo");  // 锁定 brandmark 时不禁 logo（否则同一 prompt 又要又禁）
   if (i.constraints) lines.push(i.constraints);
   return lines.join("\n");
 }
@@ -177,7 +178,7 @@ function assembleSeedance(i: SeedancePromptInput): string {
 ```
 facial close-up, the man in the frame, footsteps slow, finally stops at the door, takes a deep breath, slow dolly in, warm interior light strengthens from the left
 Audio: quiet ambient room tone
-keep the subject consistent with the source frame — preserve face and outfit
+keep the subject consistent with the source frame
 no on-screen text, watermark, or logo
 ```
 (provider 再追加 `--duration 5 --resolution 720p --ratio 16:9`)
@@ -262,4 +263,18 @@ catalog skill 数 13→15(注:`registry.test.ts` 硬编码"13 skills"名单 —�
 - 新建:`packages/otto/src/skills/{seedream-prompt.ts, seedream-prompt.helpers.ts, seedance-prompt.ts, seedance-prompt.helpers.ts, prompt-vocab.ts}` + 各 `.test.ts`
 - 改:`packages/otto/src/registry.ts`、`migration.test.ts`、`instructions.ts`(+ test)、`registry.test.ts`(13→15)、`skills/CATALOG.md`(生成)
 - 参考:`packages/core/src/cowork-directives.ts`(fallback 保留)、`byteplus.ts`(prompt 落点)、`propose.helpers.ts`(structuredPrompt 入口)
-- **spun-off(不属 D/E):** 多参考真喂给模型 = `task_dc06ac5a`;参考上传+看图 prompt = `task_21c8587b`
+- **spun-off(不属 D/E):** 多参考真喂给模型 = `task_dc06ac5a`;参考上传+看图 prompt = `task_21c8587b`;prompt-skill 成为唯一权威(去掉 composePrompt 叠加)= `task_84dba154`
+
+---
+
+## 11. 变更记录
+
+- **2026-07-02 独立审计后修**(20 raw → 13 confirmed,均进 PR #91):
+  - **#7** seedance:锁定 brandmark reference 时不再输出 clean-footage 的"禁 logo"(否则同一 prompt 又要又禁)——`hasLockedBrandmark` 门。
+  - **#13** seedance i2v 一致句改**中性**("keep the subject consistent with the source frame",去掉"preserve face and outfit"的人物假设);人物细节只由 character reference 的 identityLockClause 提供——避免产品视频被误导加人。
+  - **#11** prompt-vocab 词表(CAMERA_MOVES/SHOT_SCALES/LIGHTING/STYLES…)**接进 skill description**(`enOnly` 剥中文注释)——原本是死导出,现在 Otto 真看得到词汇。
+  - **#12** seedreamPrompt i2i description 加护栏:i2i 只在有 @entity 源图时用,否则用 t2i(防无源图当 t2i 跑烧钱)。
+  - **#2/#6** seedancePrompt 补 t2v 指引(description + 指令);pack 补 goal 门(见 requires 主设计)。
+  - **指令对齐**(#5/#8/#10):"When to call propose"/"Identity preservation"/"Video keyframes" 与新路由块统一(不再教 Otto 手写 prompt/身份句;keyframe 桥接;desired* 参数走 propose)。
+  - **#1(HIGH,未在本 PR 修)**:decision 6 未落地 —— composePrompt 仍叠加旧 directive → 独立 `task_84dba154`(碰花钱路,走 money-safety review)。
+  - **#9(留给 block F)**:装配 prompt 无长度上限 vs `MAX_GEN_PROMPT`(2000)——多镜头 storyboard 才会真撞,F 时给 assembler 加 clamp。
