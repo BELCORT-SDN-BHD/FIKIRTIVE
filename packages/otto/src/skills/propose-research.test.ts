@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
-import { researchCardInput, buildResearchCardPayload, RESEARCH_TIERS, researchTierEstimate } from "./propose-research.helpers.js";
+import { researchCardInput, buildResearchCardPayload, RESEARCH_TIERS, researchTierEstimate, researchTierBudgetInternal } from "./propose-research.helpers.js";
 import { executeProposeResearch, proposeResearchSkill } from "./propose-research.js";
 import { turnBudgetInternal, llmPricesFor, ottoLlmMargin, displayCredits } from "@fikirtive/core";
 import type { OttoContext } from "../context.js";
@@ -72,6 +72,33 @@ describe("RESEARCH_TIERS", () => {
     expect(researchTierEstimate(12)).toBeLessThan(researchTierEstimate(24));
     expect(researchTierEstimate(RESEARCH_TIERS.quick.maxSteps)).toBe(RESEARCH_TIERS.quick.estimatedCredits);
     expect(researchTierEstimate(RESEARCH_TIERS.deep.maxSteps)).toBe(RESEARCH_TIERS.deep.estimatedCredits);
+  });
+
+  it("researchTierBudgetInternal returns the RAW internal turnBudget (the worker's withLlmBudget reserve)", () => {
+    // This is the exact value apps/worker/src/jobs/research.ts reserves via withLlmBudget for the
+    // tier's maxSteps — approve's balance gate compares CreditAccount.balance (also internal) to it.
+    for (const key of ["quick", "standard", "deep"] as const) {
+      const maxSteps = RESEARCH_TIERS[key].maxSteps;
+      const expected = turnBudgetInternal(llmPricesFor("claude-sonnet-4-6"), ottoLlmMargin(), maxSteps);
+      expect(researchTierBudgetInternal(maxSteps)).toBe(expected);
+    }
+  });
+
+  it("internal budget > displayed estimate for the same tier (they are DIFFERENT units)", () => {
+    // Regression guard: internal (balance-unit) and displayed (card-unit) must never be conflated.
+    // The internal budget is INTERNAL_PER_DISPLAY (~10×) larger — that gap IS the unit-mismatch
+    // the approve gate must respect. If a refactor ever makes these equal, this fails loudly.
+    for (const key of ["quick", "standard", "deep"] as const) {
+      const maxSteps = RESEARCH_TIERS[key].maxSteps;
+      expect(researchTierBudgetInternal(maxSteps)).toBeGreaterThan(researchTierEstimate(maxSteps));
+    }
+  });
+
+  it("researchTierBudgetInternal is monotonic across tiers", () => {
+    expect(researchTierBudgetInternal(RESEARCH_TIERS.quick.maxSteps))
+      .toBeLessThan(researchTierBudgetInternal(RESEARCH_TIERS.standard.maxSteps));
+    expect(researchTierBudgetInternal(RESEARCH_TIERS.standard.maxSteps))
+      .toBeLessThan(researchTierBudgetInternal(RESEARCH_TIERS.deep.maxSteps));
   });
 });
 

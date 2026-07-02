@@ -71,7 +71,7 @@ vi.mock("@fikirtive/core", async (importOriginal) => ({
 import { approveResearch } from "../research-actions";
 // RESEARCH_TIERS is real (@fikirtive/otto not mocked); RESEARCH_QUEUE is real (core mock keeps
 // importOriginal — only newId is overridden).
-import { RESEARCH_TIERS } from "@fikirtive/otto";
+import { RESEARCH_TIERS, researchTierBudgetInternal } from "@fikirtive/otto";
 import { RESEARCH_QUEUE } from "@fikirtive/core";
 
 const OWNER = "owner-1";
@@ -198,9 +198,10 @@ describe("approveResearch — 拒绝路径(不建 job)", () => {
     expect(mockResearchCreate).not.toHaveBeenCalled();
   });
 
-  it("余额低于预估 → insufficient_credits,NOT 建 job / NOT enqueue / NOT 读账后写", async () => {
-    wireCard(card({ tier: "deep" })); // deep estimate = 22 (derived from turnBudgetInternal)
-    mockCreditFindUnique.mockResolvedValue({ balance: 10 }); // 10 < 22
+  it("余额低于 INTERNAL 预算 → insufficient_credits,NOT 建 job / NOT enqueue / NOT 读账后写", async () => {
+    const deepInternal = researchTierBudgetInternal(RESEARCH_TIERS.deep.maxSteps); // = 216 internal
+    wireCard(card({ tier: "deep" }));
+    mockCreditFindUnique.mockResolvedValue({ balance: deepInternal - 1 }); // just below the worker reserve
     const res = await approveResearch({ cardId: "card-1" });
     expect(res).toEqual({ error: "You don't have enough credits for this research.", code: "insufficient_credits" });
     expect(mockResearchCreate).not.toHaveBeenCalled();
@@ -208,7 +209,34 @@ describe("approveResearch — 拒绝路径(不建 job)", () => {
     expect(mockBossSend).not.toHaveBeenCalled();
   });
 
-  it("账户不存在(null balance→0)且预估>0 → insufficient_credits,不建 job", async () => {
+  it("余额 ≥ INTERNAL 预算 → 放行(建 job)", async () => {
+    const deepInternal = researchTierBudgetInternal(RESEARCH_TIERS.deep.maxSteps);
+    wireCard(card({ tier: "deep" }));
+    mockCreditFindUnique.mockResolvedValue({ balance: deepInternal }); // exactly the reserve → allowed
+    const res = await approveResearch({ cardId: "card-1" });
+    expect(res).toEqual({ jobId: "job-new-1" });
+    expect(mockResearchCreate).toHaveBeenCalledTimes(1);
+  });
+
+  // THE UNIT-MISMATCH REGRESSION: a balance ABOVE the card's DISPLAYED estimate but BELOW the
+  // INTERNAL worker reserve must now REFUSE. Under the old (buggy) gate — which compared the
+  // internal balance to the displayed estimate — this balance would have wrongly PASSED.
+  it("余额高于显示预估但低于内部预算 → 仍拒(锁死单位不匹配 bug)", async () => {
+    const tier = "deep" as const;
+    const displayed = RESEARCH_TIERS[tier].estimatedCredits; // 22 (displayed units)
+    const internal = researchTierBudgetInternal(RESEARCH_TIERS[tier].maxSteps); // 216 (internal units)
+    expect(displayed).toBeLessThan(internal); // sanity: the two units genuinely differ
+    const balance = displayed + 1; // 23 — clears the OLD displayed gate, fails the NEW internal one
+    expect(balance).toBeLessThan(internal);
+    wireCard(card({ tier }));
+    mockCreditFindUnique.mockResolvedValue({ balance });
+    const res = await approveResearch({ cardId: "card-1" });
+    expect(res).toEqual({ error: "You don't have enough credits for this research.", code: "insufficient_credits" });
+    expect(mockResearchCreate).not.toHaveBeenCalled();
+    expect(mockBossSend).not.toHaveBeenCalled();
+  });
+
+  it("账户不存在(null balance→0)且预算>0 → insufficient_credits,不建 job", async () => {
     wireCard(card());
     mockCreditFindUnique.mockResolvedValue(null);
     const res = await approveResearch({ cardId: "card-1" });

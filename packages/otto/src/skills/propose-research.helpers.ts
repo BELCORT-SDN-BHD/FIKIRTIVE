@@ -13,17 +13,25 @@ import {
  *  (aisdk(...)) into a bundle. llmPricesFor resolves any "sonnet…" id to the sonnet table. */
 const RESEARCH_METER_MODEL = "claude-sonnet-4-6";
 
-/** 每档 maxSteps → 卡面 DISPLAY 预估 credits,DERIVED(不再拍脑袋占位)。
+/** 每档 maxSteps → worker 真 reserve 的 RAW INTERNAL budget(未转显示前的值)。
  *
  *  worker(apps/worker/src/jobs/research.ts)对整段 research 循环用一个
  *  `withLlmBudget({ model: OTTO_DEFAULT_MODEL, maxSteps: tier.maxSteps })` 计量;它 reserve 的正是
  *  `turnBudgetInternal(llmPricesFor(OTTO_DEFAULT_MODEL), ottoLlmMargin(), maxSteps)`(INTERNAL credits)。
+ *  → 这个数 = worker withLlmBudget 对该档 maxSteps 的 reserve。approve 的 balance 预检拿它跟
+ *  CreditAccount.balance(也是 INTERNAL 单位)比对,单位对齐(不能拿显示预估比内部余额)。 */
+export function researchTierBudgetInternal(maxSteps: number): number {
+  return turnBudgetInternal(llmPricesFor(RESEARCH_METER_MODEL), ottoLlmMargin(), maxSteps);
+}
+
+/** 每档 maxSteps → 卡面 DISPLAY 预估 credits,DERIVED(不再拍脑袋占位)。
+ *
  *  卡面显示走 DISPLAYED 单位(全 UI 惯例:estimatedCredits = displayCredits(internal),见
- *  propose.helpers.ts 的 gen 卡),故这里 = displayCredits(那个 reserve),Math.ceil 到整数显示 credit。
- *  → 卡面估值 ≈ worker 真 reserve(同一档、同一模型、同一 margin),不是另拍的数。 */
+ *  propose.helpers.ts 的 gen 卡),故这里 = displayCredits(researchTierBudgetInternal(maxSteps)),
+ *  Math.ceil 到整数显示 credit。→ 卡面估值 ≈ worker 真 reserve(同一档、同一模型、同一 margin)。
+ *  注意:显示值 ≠ 内部 budget(差 INTERNAL_PER_DISPLAY 倍),approve 的余额门用 internal 版本。 */
 export function researchTierEstimate(maxSteps: number): number {
-  const internal = turnBudgetInternal(llmPricesFor(RESEARCH_METER_MODEL), ottoLlmMargin(), maxSteps);
-  return Math.ceil(displayCredits(internal));
+  return Math.ceil(displayCredits(researchTierBudgetInternal(maxSteps)));
 }
 
 /** 深度档:一处集中声明,UI/校验/预估全读这里(能力表哲学)。

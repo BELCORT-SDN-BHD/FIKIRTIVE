@@ -31,7 +31,7 @@ export type { StoryboardCardPayload, StoryboardCardInput } from "./skills/propos
 export { MAX_STORYBOARD_SHOTS } from "./skills/propose-storyboard.helpers.js";
 export { proposeResearch, proposeResearchSkill } from "./skills/propose-research.js";
 export type { ResearchCardPayload, ResearchCardInput } from "./skills/propose-research.helpers.js";
-export { RESEARCH_TIERS } from "./skills/propose-research.helpers.js";
+export { RESEARCH_TIERS, researchTierEstimate, researchTierBudgetInternal } from "./skills/propose-research.helpers.js";
 // researchAgent — the bounded research agent + its FREE tools (S3 Task 2). The worker runs it
 // inside withLlmBudget (the sole spend path). Its context is small + mutable (counters, sources).
 export { researchAgent, searchSources, readSource } from "./research-agent.js";

@@ -14,7 +14,7 @@
 import { z } from "zod";
 import { prisma, Prisma } from "@fikirtive/db";
 import { newId, RESEARCH_QUEUE } from "@fikirtive/core";
-import { RESEARCH_TIERS, type ResearchCardPayload } from "@fikirtive/otto";
+import { RESEARCH_TIERS, researchTierBudgetInternal, type ResearchCardPayload } from "@fikirtive/otto";
 import { requireOwner } from "./auth-guard";
 import { getBoss } from "./queue";
 
@@ -74,15 +74,19 @@ export async function approveResearch(raw: unknown): Promise<Ok | Err> {
   }
 
   const tier = payload.tier;
-  const estimate = RESEARCH_TIERS[tier]?.estimatedCredits ?? 0;
+  // INTERNAL budget for this tier — the EXACT reserve the worker's withLlmBudget will take for
+  // tier.maxSteps. CreditAccount.balance is also INTERNAL, so this compares like-for-like. (The
+  // card's estimatedCredits is DISPLAYED units, ~10× smaller — using it here would make the gate
+  // far too lax; the honest fail-fast threshold is the internal budget.)
+  const estimateInternal = researchTierBudgetInternal(RESEARCH_TIERS[tier]?.maxSteps ?? 0);
 
   // BALANCE PRE-CHECK (fail-fast, NOT a reservation): read the org's spendable balance and
-  // compare against the card's tier estimate. If it can't cover the estimate, refuse WITHOUT
-  // creating a job — the real atomic reserve happens in the worker (Task 2) via withLlmBudget.
+  // compare against the tier's INTERNAL budget. If it can't cover it, refuse WITHOUT creating a
+  // job — the real atomic reserve happens in the worker (Task 2) via withLlmBudget.
   // This is a friendly gate, not the spend cap: a missing account reads as 0 balance → refuse.
   const account = await prisma.creditAccount.findUnique({ where: { orgId: ownerId }, select: { balance: true } });
   const balance = account?.balance ?? 0;
-  if (balance < estimate) {
+  if (balance < estimateInternal) {
     return { error: "You don't have enough credits for this research.", code: "insufficient_credits" };
   }
 
