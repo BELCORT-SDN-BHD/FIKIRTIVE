@@ -41,7 +41,7 @@
 2. **钱路神圣。** money-in 只有 `grantCredits`(Stripe webhook + admin 授予);spend path(genRequest 闸 → startGen → 幂等键 → provider 调用 → reserve/settle)的任何 diff 必过 `money-safety-review`。**每笔真实花费逐笔问 founder —— "问"就是上限,没有代码上限。**
 3. **Otto 运营契约(五条铁律)**:① 计费透明、只显示 credits 永不显示美元 ② 花钱前必审批 ③ 状态诚实(失败自动退款、重试绝不双扣)④ 建议按钮引导下一步 ⑤ One Otto —— 新能力永远 = 新 skill,不是新 app。
 4. **审批的数学**:`needsApproval = (cost=spend) ∥ (effect=write ∧ reach=external)`。三字段缺一即取最危险值(fail-closed)。这条公式是城市的电闸,不许出现绕过它的旁路。
-5. **定价永不硬编码。** 目标毛利 40–50%;图约 2.5x、视频近成本卖、**利润主要在 Otto 本身**(订阅/按任务)。credits 与美元锚定(1 credit = $0.10,内部 ×10 记账)。
+5. **定价永不硬编码。** 目标毛利 40–50%;图约 2.5x、视频近成本卖、**利润主要在 Otto 本身**。credits 与美元锚定(1 credit = $0.10,内部 ×10 记账)。**结构定调(2026-07-03):席位订阅 + credits 用量双轨(Zoho 式)** —— 全部 feature 用量走 credits,座位数叠加收费;具体档位经拍板会 G 区后入册。
 6. **租户铁幕。** 一切数据 ownerId 隔离;身份永远来自 session(requireOwner),永远不信客户端传的 org/owner。跨租户读一个字节 = 事故。
 7. **双模原则 + Otto 全操控(2026-07-03,founder 定为最高设计要求)。** 每个功能区必须满足两条:(a) **人工可完整操作** —— Otto 不在也是一个能打的产品;(b) **Otto 可 100% 操控 FIKIRTIVE 能操控的一切**。保证机制是结构性的,不靠自觉:
    - **单一动作层**:UI 按钮和 Otto skill 调用**同一个** server action,禁止两套业务实现(`generate`→`startGen`←canvas 按钮 = 范本);
@@ -50,8 +50,9 @@
    - **上下文桥**:当前视图/选中项注入每轮对话,"把这个改成 9:16"里的"这个"必须可解析;
    - **三类豁免写死**:市政厅(admin)永久豁免、纯视觉微操、账户安全操作(人亲自来);
    - **审批经济学不变**:全操控 ≠ 全自动,花钱与外部写照旧过闸。
-8. **明确不盖的楼**(拍板过,别再提案):Build 终端 coding agent、独立通用 Chat、Spicy/18+ NSFW。
+8. **明确不盖的楼**(拍板过,别再提案):Build 终端 coding agent、独立通用 Chat、Spicy/18+ NSFW、**开放第三方 skill 生态**(2026-07-03 拍板:skill 永久 BELCORT 内部编写 —— 全平台自己管得住,不开安全面)。
 9. **语言约定**:spec/skill 文档用华语(founder 复审);生成 prompt 一律英文;UI 文案 sentence case。
+10. **UIUX 是第二支柱(2026-07-03 入宪)。** 除"Otto 全操控"外,UIUX 是留住与吸引用户的核心卖点。质感标杆 = **Apple**;交互趣味参考 Duolingo 但克制 —— 面向专业用户只做 **minimal gamification**(形态在 harmony 设计阶段定)。落地机制:单一设计系统(.gb)不许分叉;每个用户可感的面必须过设计审(不只 runtime QA);设计基准 = Analytics 屏(已有 gold standard)。
 
 ---
 
@@ -113,6 +114,8 @@ pg-boss 五条队列 + 三类回收器(gen/refgen/LLM 预扣)、ingest 哈希复
 
 ## 六、还没盖的区(终局路线,方向已定、图纸未画)
 
+**建设节奏(2026-07-03 定调):不走 funding,直接市场变现、利益最大化 —— Content creation 相关楼最先上线赚钱**,其余新区按收入贡献排队。
+
 按 founder 的城市群构想,以下新区**方向锁定**,动工前必须各自出 spec 走第五章流程。
 **新区的功能清单不凭空发明** —— 以 Salesforce + HubSpot 全量 feature 分析为底稿(`docs/research/`,2026-07-03 起),founder 逐项 WHAT-pass(要/不要/以后)拍板后才画施工图;每个新区同时满足宪法第 7 条双模原则(人工全操作 + Otto 100% 代劳)。
 
@@ -123,7 +126,8 @@ pg-boss 五条队列 + 三类回收器(gen/refgen/LLM 预扣)、ingest 哈希复
 - **全量分析区**(spec 已有)
 - **自动回复/客服区**(共享收件箱、IG/FB DM、WhatsApp、chatbot、知识库 —— 对标 Service Hub / Service Cloud;全新区)
 - **订阅层**(Stripe Phase 4;利润在 Otto 的定价哲学落地处)
-- **定时任务/自主 Otto**(唯一碰"自主花钱"的楼 —— **必须 founder 共同设计花钱闸后才许动工**,已明文记档)
+- **定时任务/自主 Otto —— routine 授权模型已定调(2026-07-03 第一轮共同设计)**:用户明确创建 routine(例:每周一 per 用户时区,研究 trend → 出 posts → 自动发布)= 一次性预授权,执行免逐次审批;配套四件不可少 —— 预算上限、范围声明、kill switch、事后摘要。细化 spec 动工前仍需 founder 过目
+- **手机 App(远期)**:routine 管理与审批的移动面(founder 2026-07-03 点名)
 - **Agency/Pro 楼层**(多品牌管理,盖在现有楼上,不开第二扇门)
 - **市政厅 v2 —— 团队阶级制度(founder 2026-07-03 点名)**:把现有 admin(11 个 live section + 五级角色矩阵,今天被 founder-only 闸挡着)升级为完整可扩的团队管理后台。设计轴:①阶级 = 矩阵驱动(SECTION_MATRIX 一张可读表,section × 角色 × 读/写/审批 —— 符合 file-system 易管理宪法);②**钱的阶级**:授信按角色设单笔/日累计上限,超限走 founder 审批链;③邀请/停用/审计全留痕(ActionEvent);④替换 founder-only 闸为真实 staff 成员制(现有 ba_user.role 双写与双 user-id 空间的脆弱点在此一并加固,见 playbook);⑤冒充权限按阶级收紧(F15 安全默认为底);⑥**Otto 永久豁免市政厅**(宪法第 7 条豁免①,admin 只许人操作)。
 
@@ -141,3 +145,4 @@ pg-boss 五条队列 + 三类回收器(gen/refgen/LLM 预扣)、ingest 哈希复
 | 2026-07-03 | v1.1 双模原则入宪(宪法第 7 条)+ 第一章重写 + 第六章新区以 SF/HS 全量分析为底稿(founder 口述修订,总审查员执笔) | 待 founder 定稿 |
 | 2026-07-03 | v1.2 第 7 条升格:Otto 全操控 = 最高设计要求,写入四层结构保证(单一动作层/Parity Manifest/读对等/上下文桥)+ 三类豁免(founder 口述,总审查员执笔) | 待 founder 定稿 |
 | 2026-07-03 | v1.3 第六章新增市政厅 v2(团队阶级制度:矩阵驱动权限 + 钱的阶级 + 审批链 + staff 成员制)(founder 口述,总审查员执笔) | 待 founder 定稿 |
+| 2026-07-03 | v1.4 O 区拍板入宪:定价双轨(席位+credits)/skill 永久内部/UIUX 第二支柱(第 10 条)/routine 授权模型/建设节奏 = 创作先行赚钱(拍板会第一批,总审查员执笔) | 待 founder 定稿 |
