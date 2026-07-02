@@ -76,7 +76,7 @@ export default function OttoConnections() {
       <div style={{ maxWidth: 720, margin: "0 auto" }}>
         <h2 className="text-foreground" style={{ margin: 0, fontSize: "1.125rem" }}>Connections</h2>
         <p className="text-muted-foreground text-[0.875rem]" style={{ margin: "0.25rem 0 1rem" }}>
-          Connect your ad accounts so Otto can read your performance. Read-only — Otto can&rsquo;t spend or change your ads.
+          Connect your ad accounts so Otto can read your performance. Otto never changes an ad on its own — every change needs your approval, and the controls below stay in your hands.
         </p>
 
         <div className="bg-card border border-border rounded-[14px]" style={{ padding: "1rem" }}>

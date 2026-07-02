@@ -2,10 +2,43 @@ import { describe, it, expect, vi, beforeEach } from "vitest";
 
 vi.mock("../meta-oauth", () => ({ META_GRAPH_VERSION: "v21.0" }));
 
-import { metaGraphPost, uploadAdImage, uploadAdVideo } from "../meta-graph";
+import { metaGraphPost, uploadAdImage, uploadAdVideo, metaGraphGetAll } from "../meta-graph";
 
 beforeEach(() => {
   vi.clearAllMocks();
+});
+
+describe("metaGraphGetAll (F37 pagination)", () => {
+  it("follows paging.next across pages and concatenates .data", async () => {
+    const fetchMock = vi.fn()
+      // page 1 (via metaGraphGet)
+      .mockResolvedValueOnce({ ok: true, json: async () => ({ data: [{ id: "a" }, { id: "b" }], paging: { next: "https://graph.facebook.com/next2" } }) })
+      // page 2 (via direct fetch of paging.next)
+      .mockResolvedValueOnce({ ok: true, json: async () => ({ data: [{ id: "c" }], paging: { next: "https://graph.facebook.com/next3" } }) })
+      // page 3 — no next → stop
+      .mockResolvedValueOnce({ ok: true, json: async () => ({ data: [{ id: "d" }] }) });
+    vi.stubGlobal("fetch", fetchMock);
+    const out = await metaGraphGetAll("tok", "act_1/campaigns", { fields: "name" });
+    expect(out.map((x) => x.id)).toEqual(["a", "b", "c", "d"]);
+    expect(fetchMock).toHaveBeenCalledTimes(3);
+  });
+
+  it("stops at the page cap (no infinite loop)", async () => {
+    const fetchMock = vi.fn().mockResolvedValue({ ok: true, json: async () => ({ data: [{ id: "x" }], paging: { next: "https://graph.facebook.com/loop" } }) });
+    vi.stubGlobal("fetch", fetchMock);
+    const out = await metaGraphGetAll("tok", "act_1/ads", {}, 3);
+    expect(fetchMock).toHaveBeenCalledTimes(3); // page 1 + 2 more, then cap
+    expect(out).toHaveLength(3);
+  });
+
+  it("returns page-1 data (best-effort) when a later page errors", async () => {
+    const fetchMock = vi.fn()
+      .mockResolvedValueOnce({ ok: true, json: async () => ({ data: [{ id: "a" }], paging: { next: "https://graph.facebook.com/next2" } }) })
+      .mockResolvedValueOnce({ ok: false, json: async () => ({ error: { message: "rate limited" } }) });
+    vi.stubGlobal("fetch", fetchMock);
+    const out = await metaGraphGetAll("tok", "act_1/adsets", {});
+    expect(out.map((x) => x.id)).toEqual(["a"]);
+  });
 });
 
 describe("metaGraphPost", () => {

@@ -87,6 +87,26 @@ export async function metaGraphGet(token: string, path: string, params: Record<s
   return j;
 }
 
+/** F37: paginate a Graph list edge — follow `paging.next` (a full cursor URL) up to a hard page
+ *  cap so lists longer than one page (Meta defaults to 25) aren't silently truncated. Best-effort:
+ *  a mid-pagination error returns what was collected so far rather than discarding page 1.
+ *  Requests limit=100 to minimize round-trips. */
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+export async function metaGraphGetAll(token: string, path: string, params: Record<string, string>, maxPages = 10): Promise<any[]> {
+  const first = await metaGraphGet(token, path, { limit: "100", ...params });
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  let out: any[] = first.data ?? [];
+  let next: string | undefined = first.paging?.next;
+  for (let i = 1; i < maxPages && next; i++) {
+    const r = await fetch(next, { headers: { Authorization: `Bearer ${token}` } });
+    const j = await r.json();
+    if (!r.ok || j?.error) break;
+    out = out.concat(j.data ?? []);
+    next = j.paging?.next;
+  }
+  return out;
+}
+
 export type AccountMetrics = {
   spend: string | null; impressions: string | null; reach: string | null; frequency: string | null;
   clicks: string | null; ctr: string | null; cpc: string | null; cpm: string | null; purchaseRoas: string | null;
@@ -113,25 +133,23 @@ export async function getAccountInsights(token: string, adAccountId: string, dat
 export async function listCampaigns(token: string, accountId: string) {
   // NOTE: `currency` is intentionally NOT requested — Meta does not return it on campaign nodes
   // (it would come back ""). Currency is sourced from the ad ACCOUNT in meta-objects.ts.
-  const j = await metaGraphGet(token, `${accountId}/campaigns`, { fields: "name,effective_status,daily_budget,lifetime_budget,start_time,stop_time,account_id" });
-  return j.data ?? [];
+  // F37: paginate so accounts with >25 campaigns aren't silently truncated.
+  return metaGraphGetAll(token, `${accountId}/campaigns`, { fields: "name,effective_status,daily_budget,lifetime_budget,start_time,stop_time,account_id" });
 }
 
 export async function listAdSets(token: string, accountId: string) {
   // `currency` intentionally omitted — sourced from the ad account (see listCampaigns note).
-  const j = await metaGraphGet(token, `${accountId}/adsets`, { fields: "name,effective_status,daily_budget,lifetime_budget,start_time,end_time,account_id" });
-  return j.data ?? [];
+  return metaGraphGetAll(token, `${accountId}/adsets`, { fields: "name,effective_status,daily_budget,lifetime_budget,start_time,end_time,account_id" });
 }
 
 export async function listAds(token: string, accountId: string) {
-  const j = await metaGraphGet(token, `${accountId}/ads`, { fields: "name,effective_status,account_id" });
-  return j.data ?? [];
+  return metaGraphGetAll(token, `${accountId}/ads`, { fields: "name,effective_status,account_id" });
 }
 
 /** List Facebook Pages the user manages (requires pages_show_list scope). */
 export async function listPages(token: string): Promise<{ id: string; name: string }[]> {
-  const j = await metaGraphGet(token, "me/accounts", { fields: "id,name" });
-  return (j.data ?? []).map((p: Record<string, unknown>) => ({
+  const data = await metaGraphGetAll(token, "me/accounts", { fields: "id,name" });
+  return data.map((p: Record<string, unknown>) => ({
     id: String(p.id ?? ""),
     name: String(p.name ?? ""),
   }));
