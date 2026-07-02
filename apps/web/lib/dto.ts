@@ -113,7 +113,7 @@ export function toChatMessageDTO(
   return {
     id: m.id,
     role: m.role as "USER" | "AGENT",
-    kind: m.kind as "TEXT" | "PLAN" | "GEN_CARD" | "GEN_RESULT" | "DENIAL" | "TURN_ERROR" | "ACTION_CARD" | "BUILD_CARD",
+    kind: m.kind as "TEXT" | "PLAN" | "GEN_CARD" | "GEN_RESULT" | "DENIAL" | "TURN_ERROR" | "ACTION_CARD" | "BUILD_CARD" | "STORYBOARD_CARD",
     seq: m.seq,
     text: m.text,
     payload,
