@@ -150,6 +150,13 @@ model ReferenceImage {
   asset   Asset          @relation(fields: [assetId], references: [id])
   variant EntityVariant? @relation(fields: [variantId], references: [id], onDelete: Restrict)
 
+  // 防并发重复挂靠靠迁移里的 PARTIAL UNIQUE 索引(Prisma 无法在 schema 表达条件唯一,
+  // 故只在 20260703000000_reference_image_live_uniqueness/migration.sql 里建):同一
+  // (entityId, assetId, COALESCE(variantId,'')) 同时只能有一行 live(deletedAt IS NULL)。
+  // attachOutputs 的 findFirst-then-create TOCTOU(reaper 复活 vs 在途投递并发重挂)和
+  // 同图重复上传(assetUpsert 内容去重到同一 Asset)都被 DB 层挡住;创建方捕获 P2002
+  // 跳过(并发赢家已挂上)。COALESCE 是承重的:variantId NULL 在 PG 里彼此 DISTINCT。
+
   @@index([entityId, deletedAt])
   @@index([entityId, variantId, deletedAt])
   @@index([assetId])

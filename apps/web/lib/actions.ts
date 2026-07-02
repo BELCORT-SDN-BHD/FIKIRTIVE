@@ -81,6 +81,20 @@ function assetUpsert(ownerId: string, ingested: Awaited<ReturnType<typeof ingest
   });
 }
 
+/** Attach a (base-level) ReferenceImage, swallowing the live-uniqueness P2002.
+ *  Content-addressed upload dedups identical bytes to one Asset, so re-picking or
+ *  re-uploading the same image would attach it twice; ReferenceImage_live_entity_
+ *  asset_variant_key rejects the dup and we skip it (already attached) instead of
+ *  500-ing the upload. Mirrors attachOutputs' skip in apps/worker/src/jobs/refgen.ts. */
+async function createRefSkippingDup(data: { id: string; ownerId: string; entityId: string; assetId: string; position: number }): Promise<void> {
+  try {
+    await prisma.referenceImage.create({ data });
+  } catch (e) {
+    if (typeof e === "object" && e !== null && (e as { code?: string }).code === "P2002") return;
+    throw e;
+  }
+}
+
 // ---------- projects ----------
 
 /** Idempotent: returns the owner's oldest non-deleted project, or creates one named
@@ -199,9 +213,11 @@ export async function createEntity(formData: FormData) {
   for (const [i, file] of files.entries()) {
     const asset = await assetUpsert(ownerId, await ingestFile(ownerId, file));
     if (i === 0) firstAssetId = asset.id;
-    await prisma.referenceImage.create({
-      data: { id: newId(), ownerId, entityId: entity.id, assetId: asset.id, position: i },
-    });
+    // content-addressed upload dedups identical files to one Asset, so the same
+    // image picked twice would attach the same asset twice — the live-uniqueness
+    // index (ReferenceImage_live_entity_asset_variant_key) rejects the dup with
+    // P2002; skip it (already attached) rather than 500 the upload.
+    await createRefSkippingDup({ id: newId(), ownerId, entityId: entity.id, assetId: asset.id, position: i });
   }
   // the first reference becomes the locked base (same invariant as addReferenceImages + the migration backfill)
   if (firstAssetId) await prisma.entity.update({ where: { id: entity.id }, data: { baseAssetId: firstAssetId } });
@@ -302,9 +318,9 @@ export async function addReferenceImages(entityId: string, formData: FormData) {
   let position = (last?.position ?? -1) + 1;
   for (const file of files) {
     const asset = await assetUpsert(ownerId, await ingestFile(ownerId, file));
-    await prisma.referenceImage.create({
-      data: { id: newId(), ownerId, entityId, assetId: asset.id, position: position++ },
-    });
+    // re-uploading an already-attached image dedups to the same Asset → the
+    // live-uniqueness index rejects the dup with P2002; skip it (already attached).
+    await createRefSkippingDup({ id: newId(), ownerId, entityId, assetId: asset.id, position: position++ });
   }
   // an entity's base defaults to its first (lowest-position) live reference — so
   // "Upload photo" locks the base in one step, matching the migration backfill.

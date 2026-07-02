@@ -403,7 +403,14 @@ async function finalizeDone(
  *  existing ones. `variantId` tags them (null = base/entity-level). Idempotent
  *  within scope: an asset already attached (live) at the SAME (entityId, assetId,
  *  variantId) is skipped, so a resumed/retried job never double-attaches, while
- *  the same asset can legitimately exist as both a base ref and a variant ref. */
+ *  the same asset can legitimately exist as both a base ref and a variant ref.
+ *
+ *  The findFirst-then-create pre-check is a TOCTOU window against a CONCURRENT
+ *  double-attach (a reaper-resumed redelivery racing a live delivery's attach, or
+ *  two redeliveries): both pass the check, both create. ReferenceImage_live_entity_
+ *  asset_variant_key (migration 20260703000000) closes it at the DB — the loser's
+ *  create throws P2002, which we swallow (the concurrent winner already attached
+ *  this exact asset, so the desired state is reached). */
 async function attachOutputs(entityId: string, ownerId: string, assetIds: string[], variantId: string | null = null): Promise<void> {
   let position = await nextRefPosition(entityId, ownerId);
   for (const assetId of assetIds) {
@@ -411,9 +418,16 @@ async function attachOutputs(entityId: string, ownerId: string, assetIds: string
       where: { entityId, assetId, variantId, deletedAt: null },
     });
     if (existing) continue;
-    await prisma.referenceImage.create({
-      data: { id: newId(), ownerId, entityId, assetId, variantId, position: position++ },
-    });
+    try {
+      await prisma.referenceImage.create({
+        data: { id: newId(), ownerId, entityId, assetId, variantId, position: position++ },
+      });
+    } catch (e) {
+      // P2002 = a concurrent attacher won the live-uniqueness index for this
+      // (entity, asset, variant) between our pre-check and create → already attached, skip.
+      if (typeof e === "object" && e !== null && (e as { code?: string }).code === "P2002") continue;
+      throw e;
+    }
   }
 }
 
