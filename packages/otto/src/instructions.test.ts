@@ -132,9 +132,13 @@ describe("ottoInstructions — storyboard routing", () => {
     expect(ottoInstructions).toMatch(/multi-shot|multiple shots|several shots|scene/i);
   });
   it("tells Otto to build each shot's prompts with the model skills first", () => {
-    // 每镜头先 seedreamPrompt(首帧)+ seedancePrompt(视频)再入卡
-    expect(ottoInstructions).toMatch(/seedreamPrompt/);
-    expect(ottoInstructions).toMatch(/seedancePrompt/);
+    // 锚定 storyboard 专属 token(firstFramePrompt/videoPrompt),而非到处都出现的
+    // seedreamPrompt/seedancePrompt —— 否则断言在别处也能满足,失去意义。
+    expect(ottoInstructions).toMatch(/firstFramePrompt/);
+    expect(ottoInstructions).toMatch(/videoPrompt/);
+  });
+  it("tells Otto to pass @-entity ids via the shot's entityIds (reference image reaches the model)", () => {
+    expect(ottoInstructions).toMatch(/entityIds/);
   });
   it("makes clear the storyboard itself spends nothing", () => {
     expect(ottoInstructions).toMatch(/no credits|nothing is charged|does not spend|doesn.t spend/i);
