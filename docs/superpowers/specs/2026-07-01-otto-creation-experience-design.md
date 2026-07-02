@@ -1,6 +1,6 @@
 # Otto 创作体验设计 —— 意图 → 分镜 → 执行
 
-**状态：** 设计已与创始人对齐（brainstorm 完成 2026-07-01）。下一步：按 build 顺序，对第 1 块（`clarify` + `requires`）走 writing-plans 出实现计划。
+**状态：** Block 1（requires 资讯门）+ Block D/E（prompt 精通）**已 ship**（PR #83 / #91，2026-07-01）。**下一块 = F（storyboard 卡片）**，再 G（两道闸执行）。变更记录见 §9。
 
 **语言约定：** 本文件及后续 skill 文档一律用华语写，方便创始人复审（`structuredPrompt` 生成 prompt 仍须英文，因为图/视频模型是英文调优的）。
 
@@ -89,7 +89,7 @@
 
 | # | skill / 组件 | 作用 | cost/effect/reach → gate | 框架改动 |
 |---|---|---|---|---|
-| **A** | `requires` 字段 | 每个 skill 声明所需资讯（`{ field, question, canAutofill? }[]`） | —（框架层）| **OttoSkillSpec 加一个可选字段**（本设计唯一的框架改动）|
+| **A** | `requires` 字段 | 每个 skill 声明所需资讯（**已 ship 形状 `{ field, question }[]`**；原设想的 per-field `canAutofill?` 被工厂给每条 requires 描述追加的统一"autofill from brand memory when you can"提示取代）| —（框架层）| **OttoSkillSpec 加一个可选字段**（本设计唯一的框架改动）|
 | **B** | `clarify` skill（**已砍**，2026-07-02 复审拍板） | 刨根问底由**纯文字追问 + `needMoreInfo`** 实现（多轮问答是运行时原生能力，见 block 1） | — | 不建：QUESTION_CARD 只是 UI 糖（YAGNI）；若 F 的编辑 UI 需要结构化问答再评估 |
 | **C** | `recallBrandFact` skill（**已砍**，block-1 拍板） | brandContext 每轮已整体自动注入，定向查询冗余 | — | 不建 |
 | **D** | `seedancePrompt` skill | 精通 Seedance 视频 prompt 风格 | free / read / internal → 不审批 | 借 `seedance-prompt-skill` 模板 |
