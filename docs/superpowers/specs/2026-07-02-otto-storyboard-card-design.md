@@ -66,6 +66,8 @@ type StoryboardCardPayload = {
     videoPrompt: string;      // Seedance 视频 prompt(来自 seedancePrompt)
     entityIds?: string[];     // 该镜头的 @引用实体(可选)——F4 铸子卡时透传,
                               // 参考图才能真正到模型(否则只有文字锁,人物会漂移)
+    firstFrameCardId?: string;       // 该镜头"当前子 GEN_CARD"的 id(F4 铸卡时写)——
+                                     // 显式追踪,替代脆弱的 JSON 反查;改文字/重出时替换或清空
     firstFrameGenerationId?: string; // 闸① 生成后写回;编辑文字后清空(标记需重出)
   }[];
   // v1 无连贯字段(留后)
