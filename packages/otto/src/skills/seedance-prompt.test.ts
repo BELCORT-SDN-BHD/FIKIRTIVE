@@ -113,4 +113,9 @@ describe("seedancePromptSkill gate", () => {
     expect(typeof out.prompt).toBe("string");
     expect(out.prompt).toContain("a cat");
   });
+  it("description carries concrete camera/shot/lighting vocabulary, English only", () => {
+    expect(seedancePromptSkill.description).toContain("dolly in");
+    expect(seedancePromptSkill.description).toContain("golden hour");
+    expect(seedancePromptSkill.description).not.toContain("推镜头");
+  });
 });

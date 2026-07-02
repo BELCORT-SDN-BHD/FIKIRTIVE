@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { identityLockClause, promptRef, CAMERA_MOVES } from "./prompt-vocab.js";
+import { identityLockClause, promptRef, CAMERA_MOVES, enOnly } from "./prompt-vocab.js";
 
 describe("identityLockClause", () => {
   it("empty refs → empty string", () => {
@@ -41,5 +41,14 @@ describe("promptRef schema", () => {
 describe("vocab constants", () => {
   it("camera moves is a non-empty readonly list", () => {
     expect(CAMERA_MOVES.length).toBeGreaterThan(0);
+  });
+});
+
+describe("enOnly", () => {
+  it("strips a trailing Chinese parenthetical gloss", () => {
+    expect(enOnly(["dolly in (推镜头)"])).toEqual(["dolly in"]);
+  });
+  it("leaves entries with no parenthetical unchanged", () => {
+    expect(enOnly(["golden hour"])).toEqual(["golden hour"]);
   });
 });

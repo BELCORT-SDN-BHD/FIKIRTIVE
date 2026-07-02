@@ -4,6 +4,7 @@
  */
 import { defineOttoSkill } from "../skill.js";
 import { seedancePromptInput, assembleSeedance } from "./seedance-prompt.helpers.js";
+import { CAMERA_MOVES, SHOT_SCALES, LIGHTING, enOnly } from "./prompt-vocab.js";
 
 export const seedancePromptSkill = defineOttoSkill({
   name: "seedancePrompt",
@@ -20,7 +21,10 @@ export const seedancePromptSkill = defineOttoSkill({
     "if unmentioned. One shot = one beat; use up to 4 shots for a multi-beat clip. Set continuesFromPrev:true for " +
     "a shot that follows a prior clip. List @-referenced entities in `references` to lock identity. cleanFootage " +
     "defaults true (bans on-screen text/watermark/logo) — set false only when text or a logo should appear in " +
-    "the video.",
+    "the video. " +
+    `Camera — use ONE per shot from: ${enOnly(CAMERA_MOVES).join(", ")}. ` +
+    `Shot framing from: ${enOnly(SHOT_SCALES).join(", ")}. ` +
+    `Lighting — always give direction + color temperature, e.g.: ${enOnly(LIGHTING).join(", ")}.`,
   parameters: seedancePromptInput,
   execute: async (i) => ({ prompt: assembleSeedance(i) }),
 });

@@ -53,4 +53,9 @@ describe("seedreamPromptSkill gate", () => {
     const out = await invoke.invoke({ context: {} }, JSON.stringify({ subject: "a red apple" }));
     expect(out).toEqual({ prompt: "a red apple" });
   });
+  it("description carries concrete lighting/style vocabulary, English only", () => {
+    expect(seedreamPromptSkill.description).toContain("golden hour");
+    expect(seedreamPromptSkill.description).toContain("cinematic");
+    expect(seedreamPromptSkill.description).not.toContain("推镜头");
+  });
 });

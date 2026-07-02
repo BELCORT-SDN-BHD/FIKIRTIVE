@@ -22,6 +22,9 @@ export const STYLES = [
 ] as const;
 export const PACING = ["slow-motion", "hard cut", "fast cut", "timelapse", "one continuous take"] as const;
 
+/** 纯：去掉词表条目末尾的中文括注，只留英文（喂给 skill description，模型只看英文）。 */
+export const enOnly = (list: readonly string[]) => list.map((s) => s.replace(/\s*\(.*\)$/, ""));
+
 /** reference：像素不在这里（走 propose 的 entityIds → API 参数）。只承载织入英文措辞所需的 role + name。 */
 export const promptRef = z.object({
   role: z.enum(["character", "product", "location", "brandmark"]),
