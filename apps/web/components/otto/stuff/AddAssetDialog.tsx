@@ -2,6 +2,7 @@
 import React, { useState } from "react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
+import { Textarea } from "@/components/ui/textarea";
 import {
   Select,
   SelectContent,
@@ -9,11 +10,20 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
-import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip";
-import { REFERENCE_FORMATS } from "@/lib/reference-formats";
+import { REFERENCE_FORMATS, type ReferenceFormat } from "@/lib/reference-formats";
 import { createEntity } from "@/lib/actions";
+import { startRefGen } from "@/lib/refgen-actions";
+import { REFGEN_PRICE_USD_PER_IMAGE } from "@fikirtive/core";
 
 type Mode = "upload" | "generate";
+
+// One-line skeleton hint shown under each format card.
+const FORMAT_HINT: Record<ReferenceFormat["key"], string> = {
+  avatar: "Head-and-shoulders studio portrait",
+  "product-shot": "Clean studio product photo",
+  location: "Empty wide establishing shot",
+  brandmark: "Flat mark on plain white",
+};
 
 // Friendly label → EntityType, sourced from REFERENCE_FORMATS so the two
 // stay in lockstep (same labels the reference-gen UI shows).
@@ -32,12 +42,19 @@ export function AddAssetDialog({
   onClose: () => void;
   onDone: () => void;
 }) {
-  const [mode] = useState<Mode>("upload");
+  const [mode, setMode] = useState<Mode>("upload");
   const [name, setName] = useState("");
   const [type, setType] = useState<string>(TYPE_OPTIONS[0]?.value ?? "");
   const [files, setFiles] = useState<FileList | null>(null);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
+
+  // Generate half.
+  const [fmtKey, setFmtKey] = useState<ReferenceFormat["key"] | null>(null);
+  const [subject, setSubject] = useState("");
+  const [notes, setNotes] = useState("");
+  const [done, setDone] = useState(false);
+  const fmt = REFERENCE_FORMATS.find((f) => f.key === fmtKey) ?? null;
 
   if (!open) return null;
 
@@ -46,11 +63,56 @@ export function AddAssetDialog({
     setType(TYPE_OPTIONS[0]?.value ?? "");
     setFiles(null);
     setError(null);
+    setMode("upload");
+    setFmtKey(null);
+    setSubject("");
+    setNotes("");
+    setDone(false);
   }
 
   function close() {
     reset();
     onClose();
+  }
+
+  async function generate() {
+    if (!fmt) return;
+    const subj = subject.trim();
+    if (!subj) {
+      setError("Please describe the subject.");
+      return;
+    }
+    setSaving(true);
+    setError(null);
+    try {
+      const fd = new FormData();
+      fd.set("name", subj.slice(0, 60));
+      fd.set("type", fmt.entityType);
+      const created = await createEntity(fd); // no files — entity shell
+      if (!created || "error" in created) {
+        setError((created && "error" in created && created.error) || "Couldn't create the reference. Please try again.");
+        setSaving(false);
+        return;
+      }
+      const res = await startRefGen({
+        entityId: created.id,
+        prompt: fmt.buildPrompt({ subject: subj, notes }),
+        count: 1,
+        model: "seedream",
+        mode: "BASE",
+      });
+      if ("error" in res) {
+        setError(res.error);
+        setSaving(false);
+        return;
+      }
+      setDone(true);
+      setSaving(false);
+      onDone();
+    } catch {
+      setError("Couldn't generate this. Please try again.");
+      setSaving(false);
+    }
   }
 
   async function submit() {
@@ -108,86 +170,158 @@ export function AddAssetDialog({
           </button>
         </div>
 
-        {/* Segmented Upload / Generate. Generate disabled until Task 7. */}
+        {/* Segmented Upload / Generate. */}
         <div className="mb-5 flex gap-1 rounded-[14px] bg-muted p-1">
           <button
             type="button"
+            onClick={() => { setMode("upload"); setError(null); }}
             className={`flex-1 rounded-[10px] px-3 py-2 text-[0.875rem] font-semibold ${
               mode === "upload" ? "bg-card text-foreground shadow-xs" : "text-muted-foreground"
             }`}
           >
             Upload
           </button>
-          <TooltipProvider>
-            <Tooltip>
-              <TooltipTrigger asChild>
-                <button
-                  type="button"
-                  disabled
-                  aria-disabled="true"
-                  className="flex-1 cursor-not-allowed rounded-[10px] px-3 py-2 text-[0.875rem] font-semibold text-muted-foreground/60"
-                >
-                  Generate reference
-                </button>
-              </TooltipTrigger>
-              <TooltipContent>Coming in the next step</TooltipContent>
-            </Tooltip>
-          </TooltipProvider>
+          <button
+            type="button"
+            onClick={() => { setMode("generate"); setError(null); }}
+            className={`flex-1 rounded-[10px] px-3 py-2 text-[0.875rem] font-semibold ${
+              mode === "generate" ? "bg-card text-foreground shadow-xs" : "text-muted-foreground"
+            }`}
+          >
+            Generate reference
+          </button>
         </div>
 
-        <div className="flex flex-col gap-3">
-          <label className="flex flex-col gap-1">
-            <span className="text-[0.75rem] text-muted-foreground">Name *</span>
-            <Input
-              value={name}
-              onChange={(e) => setName(e.target.value)}
-              placeholder="e.g. Rosa"
-              autoFocus
-            />
-          </label>
+        {mode === "upload" && (
+          <div className="flex flex-col gap-3">
+            <label className="flex flex-col gap-1">
+              <span className="text-[0.75rem] text-muted-foreground">Name *</span>
+              <Input
+                value={name}
+                onChange={(e) => setName(e.target.value)}
+                placeholder="e.g. Rosa"
+                autoFocus
+              />
+            </label>
 
-          <label className="flex flex-col gap-1">
-            <span className="text-[0.75rem] text-muted-foreground">Type</span>
-            <Select value={type} onValueChange={setType}>
-              <SelectTrigger className="w-full">
-                <SelectValue />
-              </SelectTrigger>
-              <SelectContent>
-                {TYPE_OPTIONS.map((o) => (
-                  <SelectItem key={o.value} value={o.value}>
-                    {o.label}
-                  </SelectItem>
-                ))}
-              </SelectContent>
-            </Select>
-          </label>
+            <label className="flex flex-col gap-1">
+              <span className="text-[0.75rem] text-muted-foreground">Type</span>
+              <Select value={type} onValueChange={setType}>
+                <SelectTrigger className="w-full">
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  {TYPE_OPTIONS.map((o) => (
+                    <SelectItem key={o.value} value={o.value}>
+                      {o.label}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            </label>
 
-          <label className="flex flex-col gap-1">
-            <span className="text-[0.75rem] text-muted-foreground">Images</span>
-            <input
-              type="file"
-              accept="image/png,image/jpeg,image/webp"
-              multiple
-              onChange={(e) => setFiles(e.target.files)}
-              className="text-[0.8125rem] text-muted-foreground file:mr-3 file:rounded-[10px] file:border-0 file:bg-accent file:px-3 file:py-1.5 file:text-[0.8125rem] file:font-medium file:text-foreground"
-            />
-          </label>
+            <label className="flex flex-col gap-1">
+              <span className="text-[0.75rem] text-muted-foreground">Images</span>
+              <input
+                type="file"
+                accept="image/png,image/jpeg,image/webp"
+                multiple
+                onChange={(e) => setFiles(e.target.files)}
+                className="text-[0.8125rem] text-muted-foreground file:mr-3 file:rounded-[10px] file:border-0 file:bg-accent file:px-3 file:py-1.5 file:text-[0.8125rem] file:font-medium file:text-foreground"
+              />
+            </label>
 
-          {error && (
-            <div role="alert" className="text-[0.8125rem] text-[var(--error-soft-foreground)]">
-              {error}
+            {error && (
+              <div role="alert" className="text-[0.8125rem] text-[var(--error-soft-foreground)]">
+                {error}
+              </div>
+            )}
+
+            <div className="mt-1 flex justify-end gap-2">
+              <Button variant="ghost" size="sm" onClick={close} disabled={saving}>
+                Cancel
+              </Button>
+              <Button size="sm" onClick={() => void submit()} disabled={saving || !name.trim()}>
+                {saving ? "Adding…" : "Add"}
+              </Button>
             </div>
-          )}
-
-          <div className="mt-1 flex justify-end gap-2">
-            <Button variant="ghost" size="sm" onClick={close} disabled={saving}>
-              Cancel
-            </Button>
-            <Button size="sm" onClick={() => void submit()} disabled={saving || !name.trim()}>
-              {saving ? "Adding…" : "Add"}
-            </Button>
           </div>
-        </div>
+        )}
+
+        {mode === "generate" && (
+          done ? (
+            <div className="flex flex-col gap-4">
+              <p className="text-[0.875rem] leading-[1.45] text-foreground">
+                Generating — it will appear in My Stuff shortly.
+              </p>
+              <div className="flex justify-end">
+                <Button size="sm" onClick={close}>Done</Button>
+              </div>
+            </div>
+          ) : (
+            <div className="flex flex-col gap-4">
+              {/* Format picker */}
+              <div className="grid grid-cols-2 gap-2">
+                {REFERENCE_FORMATS.map((f) => (
+                  <button
+                    key={f.key}
+                    type="button"
+                    onClick={() => { setFmtKey(f.key); setError(null); }}
+                    className={`rounded-[12px] border p-3 text-left transition ${
+                      fmtKey === f.key ? "border-brand bg-brand/5" : "border-border hover:border-foreground/30"
+                    }`}
+                  >
+                    <div className="text-[0.875rem] font-semibold text-foreground">{f.label}</div>
+                    <div className="mt-0.5 text-[0.75rem] leading-[1.35] text-muted-foreground">{FORMAT_HINT[f.key]}</div>
+                  </button>
+                ))}
+              </div>
+
+              {fmt && (
+                <>
+                  <label className="flex flex-col gap-1">
+                    <span className="text-[0.75rem] text-muted-foreground">{fmt.subjectLabel} *</span>
+                    <Input
+                      value={subject}
+                      onChange={(e) => setSubject(e.target.value)}
+                      placeholder={fmt.subjectPlaceholder}
+                      autoFocus
+                    />
+                  </label>
+
+                  <label className="flex flex-col gap-1">
+                    <span className="text-[0.75rem] text-muted-foreground">Notes (optional)</span>
+                    <Textarea
+                      value={notes}
+                      onChange={(e) => setNotes(e.target.value)}
+                      rows={2}
+                      placeholder="Anything to add — colors, mood, angle…"
+                    />
+                  </label>
+                </>
+              )}
+
+              {error && (
+                <div role="alert" className="text-[0.8125rem] text-[var(--error-soft-foreground)]">
+                  {error}
+                </div>
+              )}
+
+              <p className="text-[0.75rem] text-muted-foreground/70">
+                Generates 1 reference image — uses ~${REFGEN_PRICE_USD_PER_IMAGE.toFixed(2)} of credits.
+              </p>
+
+              <div className="flex justify-end gap-2">
+                <Button variant="ghost" size="sm" onClick={close} disabled={saving}>
+                  Cancel
+                </Button>
+                <Button size="sm" onClick={() => void generate()} disabled={saving || !fmt || !subject.trim()}>
+                  {saving ? "Generating…" : "Generate"}
+                </Button>
+              </div>
+            </div>
+          )
+        )}
       </div>
     </div>
   );

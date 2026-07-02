@@ -19,9 +19,11 @@ import { ottoTurn } from "@/lib/otto-client-actions";
 import { getCoworkThreadClient } from "@/lib/cowork-fetch";
 import { FactSection } from "./memory/FactSection";
 import { SegmentCards } from "./memory/SegmentCards";
-import { ProductList } from "./memory/ProductList";
+import { ProductShowcase } from "./memory/ProductShowcase";
 import { OfferList } from "./memory/OfferList";
 import { UndoBar } from "./memory/UndoBar";
+import { StuffLibrary } from "./stuff/StuffLibrary";
+import type { StuffItem } from "@/lib/stuff-items";
 
 type Bubble = { role: "you" | "otto"; text: string };
 
@@ -58,14 +60,16 @@ function summarize(facts: RowDiff<MemoryRow>, records: RowDiff<BrandRecordRow>):
   return parts.join(", ");
 }
 
-export function OttoMemory({ initialMemory, initialRecords, projectId }: {
+export function OttoMemory({ initialMemory, initialRecords, projectId, stuffItems = [] }: {
   initialMemory: MemoryRow[];
   initialRecords: BrandRecordRow[];
   projectId: string;
+  stuffItems?: StuffItem[];
 }) {
   const [memory, setMemory] = useState<MemoryRow[]>(initialMemory);
   const [records, setRecords] = useState<BrandRecordRow[]>(initialRecords);
   const [freshIds, setFreshIds] = useState<Set<string>>(new Set());
+  const [pickerFor, setPickerFor] = useState<BrandRecordRow | null>(null);
   const [lastDiff, setLastDiff] = useState<{ facts: RowDiff<MemoryRow>; records: RowDiff<BrandRecordRow> } | null>(null);
   const [undoBusy, setUndoBusy] = useState(false);
 
@@ -217,6 +221,14 @@ export function OttoMemory({ initialMemory, initialRecords, projectId }: {
   };
   const prodArchive = async (id: string, data: Record<string, unknown>, status: "active" | "archived") => {
     await saveBrandRecord({ id, kind: "product", data, status });
+    await refreshRecords();
+  };
+  // Set/clear a product's showcase image. null clears by OMITTING the key.
+  const prodSetImage = async (rec: BrandRecordRow, assetId: string | null) => {
+    const rest = { ...(rec.data as Record<string, unknown>) };
+    delete rest.imageAssetId;
+    const data = assetId ? { ...rest, imageAssetId: assetId } : rest;
+    await saveBrandRecord({ id: rec.id, kind: "product", data });
     await refreshRecords();
   };
 
@@ -384,14 +396,17 @@ export function OttoMemory({ initialMemory, initialRecords, projectId }: {
             />
           )}
           {activeTab === "products" && (
-            <ProductList
+            <ProductShowcase
               records={recordsFor("product")}
               looseNotes={factsFor("products")}
               freshIds={freshIds}
+              stuffItems={stuffItems}
               onSave={prodSave}
               onArchive={prodArchive}
               onNoteSave={noteSave}
               onNoteDelete={noteDelete}
+              onSetImage={prodSetImage}
+              onOpenPicker={setPickerFor}
             />
           )}
           {activeTab === "offers" && (
@@ -407,6 +422,15 @@ export function OttoMemory({ initialMemory, initialRecords, projectId }: {
           )}
         </div>
       </div>
+
+      {pickerFor && (
+        <div className="fixed inset-0 z-50 bg-foreground/40 flex items-center justify-center" onClick={() => setPickerFor(null)}>
+          <div className="bg-card rounded-[16px] border border-border p-5 max-w-[720px] w-full max-h-[80vh] overflow-auto" onClick={(e) => e.stopPropagation()}>
+            <h3 className="text-[0.9375rem] font-semibold mb-3">Choose an image from My Stuff</h3>
+            <StuffLibrary items={stuffItems} mode="picker" onPick={(assetId) => { void prodSetImage(pickerFor, assetId); setPickerFor(null); }} />
+          </div>
+        </div>
+      )}
     </div>
   );
 }

@@ -88,7 +88,7 @@ export function SegmentCards({ records, looseNotes, freshIds, onSave, onDelete, 
 
   const activeCount = records.filter((r) => r.status === "active").length;
 
-  // Active cards first, archived after (dimmed) — same treatment as ProductList.
+  // Active cards first, archived after (dimmed) — same treatment as ProductShowcase.
   const ordered = [...records].sort((a, b) => {
     const av = a.status === "archived" ? 1 : 0;
     const bv = b.status === "archived" ? 1 : 0;
