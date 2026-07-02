@@ -6,10 +6,13 @@ import { Textarea } from "@/components/ui/textarea";
 import type { BrandRecordRow } from "@/lib/brand-record-actions";
 import type { MemoryRow } from "@/lib/memory-actions";
 
+const MONTHS = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
+const fmtDay = (d: Date) => `${MONTHS[d.getMonth()]} ${d.getDate()}`;
+
 /** Short "Mon D" label for a row's updatedAt. Shared with the orchestrator. */
 export function whenLabel(d: Date | string): string {
   const date = new Date(d as unknown as string);
-  return Number.isNaN(date.getTime()) ? "" : date.toLocaleDateString(undefined, { month: "short", day: "numeric" });
+  return Number.isNaN(date.getTime()) ? "" : fmtDay(date);
 }
 
 type ProdFields = { name: string; description: string; price: string; url: string; sellingAngle: string; tags: string };

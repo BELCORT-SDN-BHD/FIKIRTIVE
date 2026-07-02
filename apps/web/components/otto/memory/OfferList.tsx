@@ -26,10 +26,13 @@ function fieldsOf(r: BrandRecordRow): OfferFields {
   };
 }
 
+const MONTHS = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
+const fmtDay = (d: Date) => `${MONTHS[d.getMonth()]} ${d.getDate()}`;
+
 /** "Ends Jul 15" / "Starts Jul 10" pill copy for an active/scheduled offer. */
 function datePill(r: BrandRecordRow, now: Date): string | null {
   const phase = offerPhase(r, now);
-  const fmt = (d: Date) => new Date(d).toLocaleDateString("en-MY", { month: "short", day: "numeric" });
+  const fmt = (d: Date) => fmtDay(new Date(d));
   if (phase === "scheduled" && r.startsAt) return `Starts ${fmt(r.startsAt)}`;
   if (r.endsAt) return `Ends ${fmt(r.endsAt)}`;
   return null;
