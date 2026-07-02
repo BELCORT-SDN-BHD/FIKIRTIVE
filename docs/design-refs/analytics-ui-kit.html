@@ -1,0 +1,81 @@
+<!-- DESIGN REFERENCE (read-only): ui_kits/app/analytics.html from claude.ai/design project 0abf8563 "FIKIRTIVE — MAIN".
+     This is the founder's GOLD-STANDARD screen — the real OttoAnalytics build must match these values exactly.
+     Decoded copy vendored 2026-07-03 for implementer reference. Do not serve this file. -->
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8"/>
+<link rel="preconnect" href="https://fonts.googleapis.com"><link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Geist:wght@400;500;600;700;800&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
+<style>
+  *{box-sizing:border-box;margin:0;padding:0;}
+  body{font-family:'Geist',system-ui,sans-serif;color:#0A0A0A;-webkit-font-smoothing:antialiased;background:#FCFCFC;}
+  .app{display:flex;height:100vh;overflow:hidden;}
+  .rail{width:222px;flex:none;background:#F8F8F7;border-right:1px solid #EAEAE8;display:flex;flex-direction:column;padding:14px 10px;}
+  .brand{display:flex;align-items:center;gap:8px;padding:4px 8px 12px;} .wm{font-size:17px;font-weight:700;}
+  .new{display:flex;align-items:center;justify-content:center;gap:7px;height:38px;border-radius:12px;background:#0A0A0A;color:#fff;font-size:14px;font-weight:600;border:none;}
+  .nav{margin-top:10px;display:flex;flex-direction:column;gap:1px;}
+  .it{display:flex;align-items:center;gap:9px;padding:8px 9px;border-radius:9px;font-size:13.5px;color:#3A3A38;} .it svg{width:17px;height:17px;color:#76766F;}
+  .it.on{background:#EAEAE8;color:#0A0A0A;font-weight:600;} .it.on svg{color:#0A0A0A;}
+  .foot{margin-top:auto;display:flex;flex-direction:column;gap:6px;padding-top:8px;border-top:1px solid #EAEAE8;}
+  .cr{display:flex;align-items:center;gap:6px;font-size:12px;color:#76766F;padding:2px 8px;} .cr b{color:#0A0A0A;}
+  .usr{display:flex;align-items:center;gap:8px;padding:4px 8px;} .av{width:26px;height:26px;border-radius:50%;background:#E6E6E3;color:#3A3A38;display:flex;align-items:center;justify-content:center;font-size:10.5px;font-weight:600;}
+  .main{flex:1;min-width:0;overflow:auto;padding:22px 28px 30px;} .wrap{max-width:880px;}
+  .head{display:flex;align-items:center;gap:12px;margin-bottom:16px;}
+  .h1{font-size:24px;font-weight:700;letter-spacing:-0.02em;} .sp{flex:1;}
+  .src{display:inline-flex;align-items:center;gap:6px;font-size:12px;color:#76766F;}
+  .range{display:inline-flex;align-items:center;gap:6px;height:34px;padding:0 13px;border:1px solid #E6E6E3;border-radius:10px;font-size:13px;font-weight:600;color:#2A2A28;}
+  .kpis{display:grid;grid-template-columns:repeat(4,1fr);gap:12px;margin-bottom:14px;}
+  .kpi{border:1px solid #EAEAE8;border-radius:14px;background:#fff;padding:15px;}
+  .kl{font-size:12px;color:#86867F;font-weight:500;} .kv{font-size:26px;font-weight:700;letter-spacing:-0.02em;margin-top:4px;}
+  .kd{display:inline-flex;align-items:center;gap:3px;font-size:12px;font-weight:600;margin-top:5px;}
+  .up{color:#15803D;} .flat{color:#86867F;}
+  .panel{border:1px solid #EAEAE8;border-radius:16px;background:#fff;padding:18px;margin-bottom:14px;}
+  .pt{font-size:14px;font-weight:600;margin-bottom:2px;} .ps{font-size:12px;color:#86867F;margin-bottom:14px;}
+  .insight{display:flex;align-items:center;gap:13px;background:#FFF6F2;border:1px solid #FBD9C9;border-radius:16px;padding:15px 17px;margin-bottom:14px;}
+  .insight .tx{flex:1;font-size:14px;color:#9A3A1A;line-height:1.45;} .insight .tx b{font-weight:700;}
+  .insight button{height:38px;padding:0 16px;border-radius:11px;background:#EC5828;color:#fff;font-size:13.5px;font-weight:600;border:none;white-space:nowrap;}
+  .ad{display:flex;align-items:center;gap:13px;padding:11px 0;border-top:1px solid #F4F4F2;} .ad:first-child{border-top:none;}
+  .ath{width:46px;height:46px;border-radius:9px;object-fit:cover;flex:none;}
+  .an{flex:1;} .ann{font-size:13.5px;font-weight:600;} .ane{font-size:11.5px;color:#86867F;margin-top:1px;}
+  .am{text-align:right;} .amv{font-size:14px;font-weight:700;} .aml{font-size:10.5px;color:#9A9A98;}
+  .best{display:inline-block;font-size:9.5px;font-weight:600;background:#E7F6EC;color:#15803D;padding:2px 7px;border-radius:999px;margin-left:6px;}
+</style>
+</head>
+<body>
+<div class="app">
+  <main class="main"><div class="wrap">
+    <div class="head"><span class="h1">Analytics</span>
+      <span class="src">via Meta · read-only</span>
+      <div class="sp"></div>
+      <span class="range">Last 30 days ▾</span>
+    </div>
+    <div class="kpis">
+      <div class="kpi"><div class="kl">Reach</div><div class="kv">48.2K</div><div class="kd up">▲ 18% <span class="flat" style="font-weight:500">vs last month</span></div></div>
+      <div class="kpi"><div class="kl">Engagement</div><div class="kv">3,140</div><div class="kd up">▲ 9%</div></div>
+      <div class="kpi"><div class="kl">Spend</div><div class="kv">RM 420</div><div class="kd flat">on budget</div></div>
+      <div class="kpi"><div class="kl">Sales (est.)</div><div class="kv">RM 2,140</div><div class="kd up">▲ 24%</div></div>
+    </div>
+    <div class="insight">
+      <span class="tx">Your <b>Autumn menu video</b> is your best performer — <b>3.2× the reach</b> of your average post, and most of the sales lift. Want me to make 3 more in that style?</span>
+      <button>Make more like it</button>
+    </div>
+    <div class="panel">
+      <div class="pt">Reach over time</div><div class="ps">Last 30 days · peaks on the days you posted video</div>
+      <svg viewBox="0 0 820 180" style="width:100%;height:170px">
+        <defs><linearGradient id="g" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#0A0A0A" stop-opacity="0.10"/><stop offset="1" stop-color="#0A0A0A" stop-opacity="0"/></linearGradient></defs>
+        <line x1="0" y1="150" x2="820" y2="150" stroke="#EFEFED"/><line x1="0" y1="100" x2="820" y2="100" stroke="#F4F4F2"/><line x1="0" y1="50" x2="820" y2="50" stroke="#F4F4F2"/>
+        <path d="M0 130 C 60 120, 90 96, 130 100 S 210 70, 250 96 S 330 110, 380 60 S 470 88, 520 78 S 600 40, 650 64 S 740 30, 820 44 L 820 150 L 0 150 Z" fill="url(#g)"/>
+        <path d="M0 130 C 60 120, 90 96, 130 100 S 210 70, 250 96 S 330 110, 380 60 S 470 88, 520 78 S 600 40, 650 64 S 740 30, 820 44" fill="none" stroke="#0A0A0A" stroke-width="2.2"/>
+        <circle cx="380" cy="60" r="4" fill="#EC5828"/><circle cx="650" cy="64" r="4" fill="#EC5828"/><circle cx="820" cy="44" r="4" fill="#EC5828"/>
+      </svg>
+    </div>
+    <div class="panel">
+      <div class="pt">Top posts</div><div class="ps" style="margin-bottom:10px">By reach, last 30 days</div>
+      <div class="ad"><div class="an"><div class="ann">Autumn menu — reel <span class="best">Best</span></div><div class="ane">Posted Jun 26 · Instagram</div></div><div class="am"><div class="amv">21.4K</div><div class="aml">reach</div></div></div>
+      <div class="ad"><div class="an"><div class="ann">Fresh croissants</div><div class="ane">Posted Jun 24 · Instagram</div></div><div class="am"><div class="amv">9.8K</div><div class="aml">reach</div></div></div>
+    </div>
+  </div></main>
+</div>
+</body>
+</html>
