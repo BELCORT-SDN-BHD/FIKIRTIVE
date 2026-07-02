@@ -1,8 +1,7 @@
 "use client";
 import { useCallback, useRef } from "react";
-import { startGen, getGenJob } from "../../lib/gen-actions";
+import { startGen, getGenJob, getActiveGenModels } from "../../lib/gen-actions";
 import { createCanvasNode } from "../../lib/canvas-actions";
-import { activeImageModel, activeVideoModel } from "@fikirtive/core";
 
 type Pos = { x: number; y: number; w: number; h: number };
 type OnNode = (node: { id: string; type: "image" | "video"; pos: Pos; status: string; url?: string; prompt: string; sourceNodeId?: string }) => void;
@@ -68,6 +67,14 @@ export function useCanvasGen(
   onError?: (msg: string) => void,
 ) {
   const cancelledRef = useRef(false);
+  // F18: resolve the active models SERVER-side (the client can't — the env isn't bundled, so
+  // activeVideoModel() in the browser always returns the wrong default). Cache after first fetch;
+  // await before every spend so the gen request carries the real model the server gate expects.
+  const modelsRef = useRef<{ image: string; video: string } | null>(null);
+  const ensureModels = async () => {
+    if (!modelsRef.current) modelsRef.current = await getActiveGenModels();
+    return modelsRef.current;
+  };
   // A paid-gen kickoff that fails before any card is placed (out of credits, model disabled,
   // guardian block, or a node-create that never recovered) must tell the user — otherwise they
   // see nothing, assume the app broke, and re-click, minting a fresh idempotencyKey → a real
@@ -80,7 +87,8 @@ export function useCanvasGen(
     // parameter (MAX_GEN_COUNT=4) and the charge scales by it — this is the ONLY
     // spend change. The owner keeps one card and deletes the rest; all 4 stay in
     // the library. Sibling cards below are pure placement (no extra spend).
-    const req = { projectId, prompt, count: IMAGE_VARIANT_COUNT, kind: "image" as const, model: activeImageModel(), entityIds, ...(vsel && { variantSel: vsel }), idempotencyKey: `img-${Date.now()}` };
+    const { image } = await ensureModels();
+    const req = { projectId, prompt, count: IMAGE_VARIANT_COUNT, kind: "image" as const, model: image, entityIds, ...(vsel && { variantSel: vsel }), idempotencyKey: `img-${Date.now()}` };
     const started = await startGen(req);
     if ("error" in started) { fail(started.error); return; }
     const created = await createNodeWithRetry({ projectId, type: "image", ...pos, prompt, genJobId: started.id, status: "pending", ...(activeThreadId ? { threadId: activeThreadId } : {}) });
@@ -105,7 +113,8 @@ export function useCanvasGen(
   }, [projectId, onNode, onResolve, activeThreadId, onError]);
 
   const animate = useCallback(async (sourceGenerationId: string, sourceNodeId: string, prompt: string, pos: Pos) => {
-    const req = { projectId, prompt, count: 1, kind: "video" as const, model: activeVideoModel(), sourceGenerationId, idempotencyKey: `vid-${Date.now()}` };
+    const { video } = await ensureModels();
+    const req = { projectId, prompt, count: 1, kind: "video" as const, model: video, sourceGenerationId, idempotencyKey: `vid-${Date.now()}` };
     const started = await startGen(req);
     if ("error" in started) { fail(started.error); return; }
     const created = await createNodeWithRetry({ projectId, type: "video", ...pos, prompt, genJobId: started.id, status: "pending", sourceNodeId, ...(activeThreadId ? { threadId: activeThreadId } : {}) });
@@ -119,7 +128,8 @@ export function useCanvasGen(
   // Gen-space path) and the provider uses the model's t2v endpoint. Video is
   // always count=1 (startGen forces it). New spend entry, existing spend logic.
   const generateVideoFromText = useCallback(async (prompt: string, pos: Pos) => {
-    const req = { projectId, prompt, count: 1, kind: "video" as const, model: activeVideoModel(), idempotencyKey: `vid-${Date.now()}` };
+    const { video } = await ensureModels();
+    const req = { projectId, prompt, count: 1, kind: "video" as const, model: video, idempotencyKey: `vid-${Date.now()}` };
     const started = await startGen(req);
     if ("error" in started) { fail(started.error); return; }
     const created = await createNodeWithRetry({ projectId, type: "video", ...pos, prompt, genJobId: started.id, status: "pending", ...(activeThreadId ? { threadId: activeThreadId } : {}) });

@@ -12,10 +12,9 @@ import { getGeneration } from "@/lib/asset-actions";
 import { saveCroppedGeneration } from "@/lib/asset-actions";
 import { setFavorite } from "@/lib/asset-actions";
 import { deleteGeneration } from "@/lib/actions";
-import { startGen, getGenJob } from "@/lib/gen-actions";
+import { startGen, getGenJob, getActiveGenModels } from "@/lib/gen-actions";
 import { readPick, writePick } from "@/lib/result-pick";
 import {
-  activeImageModel,
   activeVideoModel,
   videoDefaults,
   GEN_VIDEO_MODEL_OPTIONS,
@@ -108,6 +107,18 @@ export default function DetailPanel({
   const [copied, setCopied] = useState(false);
 
   const cancelledRef = useRef(false);
+  // F18: the active models must be resolved SERVER-side (the OTTO_DEFAULT_VIDEO_MODEL env isn't
+  // bundled into the client, so activeVideoModel() in the browser returns the wrong default and
+  // the server gate rejects it). Fetch once; the spend handlers await it, render uses it once loaded.
+  const [activeModels, setActiveModels] = useState<{ image: string; video: string } | null>(null);
+  const modelsRef = useRef<{ image: string; video: string } | null>(null);
+  const ensureModels = async () => {
+    if (!modelsRef.current) modelsRef.current = await getActiveGenModels();
+    setActiveModels(modelsRef.current);
+    return modelsRef.current;
+  };
+  useEffect(() => { void ensureModels(); /* eslint-disable-next-line react-hooks/exhaustive-deps */ }, []);
+  const videoModel = (activeModels?.video ?? activeVideoModel()) as GenVideoModel;
 
   useEffect(() => {
     cancelledRef.current = false;
@@ -132,8 +143,9 @@ export default function DetailPanel({
         setSelectedIdx(saved);
       }
 
-      // Init aspect picker default
-      const vm = activeVideoModel() as GenVideoModel;
+      // Init aspect picker default (F18: use the server-resolved model, falling back to the
+      // client default only until it loads — display-only, the spend paths await the real model)
+      const vm = videoModel;
       const opts = GEN_VIDEO_MODEL_OPTIONS[vm];
       if (opts?.aspectRatios?.length) {
         const def = videoDefaults(vm).aspectRatio || opts.aspectRatios[0]!;
@@ -209,12 +221,13 @@ export default function DetailPanel({
   const handleRegen = useCallback(async () => {
     if (!gen) return;
     setRegenStatus("running");
+    const { image } = await ensureModels(); // F18: server-resolved model
     const result = await startGen({
       projectId,
       prompt: gen.prompt,
       count: 1,
       kind: "image",
-      model: activeImageModel(),
+      model: image,
       idempotencyKey: `regen-${generationId}-${Date.now()}`,
     });
     if ("error" in result) {
@@ -233,7 +246,7 @@ export default function DetailPanel({
   const handleAnimate = useCallback(async () => {
     if (!gen) return;
     setAnimStatus("running");
-    const vm = activeVideoModel() as GenVideoModel;
+    const vm = (await ensureModels()).video as GenVideoModel; // F18: server-resolved model
     const vd = videoDefaults(vm);
     // Use user's chosen aspect ratio if set; fall back to videoDefaults
     const effectiveAspect = chosenAspect || vd.aspectRatio;
@@ -290,13 +303,14 @@ export default function DetailPanel({
   const handleEditSubmit = useCallback(async () => {
     if (!gen || !editPrompt.trim() || editStatus === "running") return;
     setEditStatus("running");
+    const { image } = await ensureModels(); // F18: server-resolved model
     const result = await startGen({
       projectId,
       prompt: editPrompt.trim(),
       entityIds: editIds,
       count: 1,
       kind: "image",
-      model: activeImageModel(),
+      model: image,
       // F09: condition the edit on the image the user is actually viewing (the selected
       // variant), so a paid "edit this" result relates to the displayed image instead of
       // being an unconditioned fresh generation. Owned id resolved server-side (D19).
@@ -354,8 +368,8 @@ export default function DetailPanel({
   // Compute active URL to display
   const displayUrl = gen ? (gen.urls[selectedIdx] ?? gen.url) : null;
 
-  // Aspect ratios for picker (only show if model has options)
-  const vm = activeVideoModel() as GenVideoModel;
+  // Aspect ratios for picker (only show if model has options) — F18: server-resolved model
+  const vm = videoModel;
   const videoOpts = GEN_VIDEO_MODEL_OPTIONS[vm];
   const aspectRatios = videoOpts?.aspectRatios ?? [];
 

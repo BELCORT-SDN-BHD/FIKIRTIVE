@@ -341,6 +341,7 @@ export function OttoApp({
           onDeleteThread={handleDeleteThread}
           onNewConvo={() => setActiveThreadId(null)}
           seedText={seedText}
+          onSeedConsumed={() => setSeedText("")}
           onUseInOtto={handleUseInOtto}
           chatCollapsed={chatCollapsed}
           onToggleChat={() => setChatCollapsed((v) => !v)}

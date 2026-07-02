@@ -53,7 +53,7 @@ export interface OttoChatStreamProps {
   /** Streaming front door: a first message to auto-send ONCE into a freshly-created
    *  (empty) thread on mount. The thread row already exists (createEmptyCoworkThread),
    *  so the route's existing-thread branch handles it. */
-  pendingFirst?: { text: string; goalKey?: string };
+  pendingFirst?: { text: string; goalKey?: string; entityIds?: string[] };
   /** Called right after the pendingFirst message is dispatched, so the parent can
    *  clear it (prevents a re-send if this thread is remounted later). */
   onPendingFirstSent?: () => void;
@@ -313,7 +313,7 @@ export function OttoChatStream({
     pendingSentRef.current = true;
     void sendMessage(
       { text: pendingFirst.text },
-      { body: { projectId, threadId: thread.id, ...(pendingFirst.goalKey ? { goalKey: pendingFirst.goalKey } : {}) } },
+      { body: { projectId, threadId: thread.id, ...(pendingFirst.goalKey ? { goalKey: pendingFirst.goalKey } : {}), ...(pendingFirst.entityIds?.length ? { entityIds: pendingFirst.entityIds } : {}) } }, // F30: carry entity conditioning into the first streamed turn
     );
     onPendingFirstSent?.();
     // eslint-disable-next-line react-hooks/exhaustive-deps
