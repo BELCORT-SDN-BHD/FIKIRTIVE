@@ -117,7 +117,27 @@ describe("generate (Seedream image, sync)", () => {
       return bytesRes();
     });
     await new BytePlusProvider("ark-test").generate({ prompt: "edit", inputImageUrls: ["https://r2/src.png"], count: 1, model: "seedream" });
-    expect(body.image).toBe("https://r2/src.png");
+    expect(body.image).toBe("https://r2/src.png"); // single ref → proven string form, unchanged
+  });
+  it("sends ALL reference images (multi-reference) as an array", async () => {
+    let body: any;
+    stubFetch((url, init) => {
+      if (url.endsWith("/images/generations")) { body = JSON.parse(init.body); return jsonRes({ data: [{ url: "https://tos/x.png" }] }); }
+      return bytesRes();
+    });
+    const refs = ["https://r2/product.png", "https://r2/logo.png", "https://r2/character.png"];
+    await new BytePlusProvider("ark-test").generate({ prompt: "compose", inputImageUrls: refs, count: 1, model: "seedream" });
+    // Ark Seedream's `image` field takes an array of refs — product + logo + character all condition.
+    expect(body.image).toEqual(refs);
+  });
+  it("omits image entirely for pure text-to-image (no refs)", async () => {
+    let body: any;
+    stubFetch((url, init) => {
+      if (url.endsWith("/images/generations")) { body = JSON.parse(init.body); return jsonRes({ data: [{ url: "https://tos/x.png" }] }); }
+      return bytesRes();
+    });
+    await new BytePlusProvider("ark-test").generate({ prompt: "an apple", inputImageUrls: [], count: 1, model: "seedream" });
+    expect("image" in body).toBe(false);
   });
   it("throws (no spend) for an unknown model", async () => {
     await expect(new BytePlusProvider("ark-test").generate({ prompt: "x", inputImageUrls: [], count: 1, model: "nope" as any }))

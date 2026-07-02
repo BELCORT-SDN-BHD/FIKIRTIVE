@@ -28,9 +28,12 @@ export class BytePlusProvider implements GenerationProvider {
             // F40: Ark Seedream defaults watermark=true — paying customers must not receive
             // watermarked images, so set it false explicitly.
             watermark: false,
-            // v1 limitation: only req.inputImageUrls[0] is sent. Ark Seedream i2i accepts a
-            // single source image; multi-reference conditioning is not supported in this version.
-            ...(conditioned ? { image: req.inputImageUrls[0] } : {}),
+            // Multi-reference conditioning: Ark Seedream's `image` field accepts an array of
+            // source images (verified against ark.ap-southeast; ≤14 refs, inputs+outputs ≤ 15,
+            // and the worker caps at MAX_CONDITIONING_IMAGES=10 → 10+1 ≤ 15). Send the whole
+            // presigned set so product+logo+character all condition. Keep the proven single-
+            // string form for exactly one ref (the live-verified prod shape); array only for 2+.
+            ...(conditioned ? { image: req.inputImageUrls.length === 1 ? req.inputImageUrls[0] : req.inputImageUrls } : {}),
           }),
         });
         if (!res.ok) throw new Error(`byteplus image → ${res.status}: ${(await res.text().catch(() => "")).slice(0, 300)}`); // pre-charge (nothing billed) — stays PLAIN so the worker can retry
