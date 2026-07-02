@@ -192,3 +192,26 @@ export async function exchangeCodeForToken(
 
   return { token: lj.access_token, expiresAt, grantedScopes };
 }
+
+/** One day of ad-account metrics (Analytics Phase A). Numbers coerced; missing → 0. */
+export type DailyMetric = { date: string; spend: number; reach: number; impressions: number; clicks: number };
+
+export function parseDailyRows(data: unknown[]): DailyMetric[] {
+  const out: DailyMetric[] = [];
+  const n = (v: unknown): number => { const x = typeof v === "string" ? Number(v) : typeof v === "number" ? v : 0; return Number.isFinite(x) ? x : 0; };
+  for (const raw of data) {
+    if (typeof raw !== "object" || raw === null) continue;
+    const d = raw as Record<string, unknown>;
+    if (typeof d.date_start !== "string") continue;
+    out.push({ date: d.date_start, spend: n(d.spend), reach: n(d.reach), impressions: n(d.impressions), clicks: n(d.clicks) });
+  }
+  return out;
+}
+
+/** Read-only daily series for one ad account — same insights edge with time_increment=1. */
+export async function getAccountInsightsSeries(token: string, adAccountId: string, datePreset: string): Promise<DailyMetric[]> {
+  const j = await metaGraphGet(token, `${adAccountId}/insights`, {
+    fields: "spend,reach,impressions,clicks", date_preset: datePreset, time_increment: "1", limit: "500",
+  });
+  return parseDailyRows((j.data ?? []) as unknown[]);
+}
