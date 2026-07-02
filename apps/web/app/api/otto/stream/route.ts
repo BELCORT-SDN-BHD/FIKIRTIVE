@@ -52,8 +52,12 @@ import {
   buildContextSystemMessage,
   finalizeOttoRun,
 } from "@/lib/otto-actions";
+import { validateOwnedGenerationExt } from "@/lib/otto-generation-validate";
 import { bridgeEvent, stepEventOf, OTTO_TEXT_ID, OTTO_REASONING_ID } from "@/lib/otto-stream-bridge";
 import type { OttoStatusData, OttoErrorData } from "@/lib/otto-stream-bridge";
+
+const IMAGE_EXTS = ["png", "jpg", "jpeg", "webp"];
+const VIDEO_EXTS = ["mp4", "mov", "webm"];
 
 /** Safe one-line error summary for logs (mirrors otto-actions.errSummary). */
 function errSummary(e: unknown): string {
@@ -84,7 +88,7 @@ export async function POST(req: NextRequest): Promise<Response> {
   }
   const { ownerId } = gate;
 
-  const { projectId, text, entityIds, variantSel, sourceGenerationId, replyToMessageId } = parsed.data;
+  const { projectId, text, entityIds, variantSel, sourceGenerationId, referenceVideoGenerationId, replyToMessageId } = parsed.data;
   const OWNED = { ownerId, deletedAt: null } as const;
 
   // Pre-stream setup (validation + USER persist) runs BEFORE the SSE opens so a bad
@@ -105,11 +109,23 @@ export async function POST(req: NextRequest): Promise<Response> {
     // Validate sourceGenerationId (owned + in-project + image-ext), else null
     let validSource: string | null = null;
     if (sourceGenerationId) {
-      const g = await prisma.generation.findFirst({
-        where: { id: sourceGenerationId, ...OWNED, projectId, asset: { ext: { in: ["png", "jpg", "jpeg", "webp"] } } },
-        select: { id: true },
+      validSource = await validateOwnedGenerationExt(prisma, {
+        id: sourceGenerationId,
+        ownerId,
+        projectId,
+        exts: IMAGE_EXTS,
       });
-      if (g) validSource = g.id;
+    }
+
+    // Validate referenceVideoGenerationId (owned + in-project + VIDEO-ext), else null
+    let validRefVideo: string | null = null;
+    if (referenceVideoGenerationId) {
+      validRefVideo = await validateOwnedGenerationExt(prisma, {
+        id: referenceVideoGenerationId,
+        ownerId,
+        projectId,
+        exts: VIDEO_EXTS,
+      });
     }
 
     // Resolve thread: new vs existing-owned-and-in-project
@@ -168,7 +184,7 @@ export async function POST(req: NextRequest): Promise<Response> {
     seqAfterUser = seq;
 
     // Build context (mirror ottoTurn)
-    ctx = await buildOttoContext({ ownerId, projectId, threadId, sourceGenerationId: validSource, simpleMode: parsed.data.simple });
+    ctx = await buildOttoContext({ ownerId, projectId, threadId, sourceGenerationId: validSource, referenceVideoGenerationId: validRefVideo, simpleMode: parsed.data.simple });
 
     // Goal-intent seeding on a new thread with a goalKey
     if (!priorOttoState && parsed.data.goalKey && isGoalKey(parsed.data.goalKey)) {

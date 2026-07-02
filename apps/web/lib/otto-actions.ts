@@ -47,10 +47,14 @@ import { fetchOwnerAdObjects } from "./meta-objects";
 import { fetchOwnerPages } from "./meta-pages";
 import { proposeMetaActionForOwner } from "./meta-propose";
 import { proposeAdBuildForOwner } from "./meta-build-propose";
+import { validateOwnedGenerationExt } from "./otto-generation-validate";
 
 // mapOttoUsage re-exported from @fikirtive/otto so existing callers that import
 // it from this module continue to work (the canonical source is @fikirtive/otto).
 export { mapOttoUsage } from "@fikirtive/otto";
+
+const IMAGE_EXTS = ["png", "jpg", "jpeg", "webp"];
+const VIDEO_EXTS = ["mp4", "mov", "webm"];
 
 /**
  * Safe one-line error summary for server logs. Logs name/message/statusCode only —
@@ -122,12 +126,14 @@ export async function buildOttoContext({
   projectId,
   threadId,
   sourceGenerationId,
+  referenceVideoGenerationId,
   simpleMode,
 }: {
   ownerId: string;
   projectId: string;
   threadId: string;
   sourceGenerationId?: string | null;
+  referenceVideoGenerationId?: string | null;
   simpleMode?: boolean;
 }): Promise<OttoContext> {
   const disabledModels = Array.from(await resolveDisabledModels());
@@ -148,6 +154,7 @@ export async function buildOttoContext({
     threadId,
     disabledModels,
     sourceGenerationId: sourceGenerationId ?? null,
+    referenceVideoGenerationId: referenceVideoGenerationId ?? null,
     images,
     startGen,
     brandContext,
@@ -341,7 +348,7 @@ export async function ottoTurn(raw: unknown): Promise<
   if (await isImpersonating()) return { error: "Paused while impersonating a customer — exit impersonation to do this." };
   const { ownerId } = gate;
 
-  const { projectId, text, entityIds, variantSel, sourceGenerationId, replyToMessageId } = parsed.data;
+  const { projectId, text, entityIds, variantSel, sourceGenerationId, referenceVideoGenerationId, replyToMessageId } = parsed.data;
 
   try {
     const OWNED = { ownerId, deletedAt: null } as const;
@@ -353,16 +360,23 @@ export async function ottoTurn(raw: unknown): Promise<
     // Validate sourceGenerationId (owned + in-project + image-ext), else null
     let validSource: string | null = null;
     if (sourceGenerationId) {
-      const g = await prisma.generation.findFirst({
-        where: {
-          id: sourceGenerationId,
-          ...OWNED,
-          projectId,
-          asset: { ext: { in: ["png", "jpg", "jpeg", "webp"] } },
-        },
-        select: { id: true },
+      validSource = await validateOwnedGenerationExt(prisma, {
+        id: sourceGenerationId,
+        ownerId,
+        projectId,
+        exts: IMAGE_EXTS,
       });
-      if (g) validSource = g.id;
+    }
+
+    // Validate referenceVideoGenerationId (owned + in-project + VIDEO-ext), else null
+    let validRefVideo: string | null = null;
+    if (referenceVideoGenerationId) {
+      validRefVideo = await validateOwnedGenerationExt(prisma, {
+        id: referenceVideoGenerationId,
+        ownerId,
+        projectId,
+        exts: VIDEO_EXTS,
+      });
     }
 
     // Resolve thread: new vs existing-owned-and-in-project
@@ -421,7 +435,7 @@ export async function ottoTurn(raw: unknown): Promise<
     });
 
     // Build context
-    const ctx = await buildOttoContext({ ownerId, projectId, threadId, sourceGenerationId: validSource, simpleMode: parsed.data.simple });
+    const ctx = await buildOttoContext({ ownerId, projectId, threadId, sourceGenerationId: validSource, referenceVideoGenerationId: validRefVideo, simpleMode: parsed.data.simple });
 
     // Goal-intent seeding: on a new thread with a goalKey, append the preset's opening
     // to brandContext so buildContextSystemMessage injects it as a system message.
