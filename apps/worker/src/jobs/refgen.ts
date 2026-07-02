@@ -25,6 +25,7 @@ import { prisma, Prisma, settleCredits, refundReservation, type RefGenMode } fro
 import {
   storageKey,
   newId,
+  REFGEN_QUEUE,
   REFGEN_RETRY_LIMIT,
   MAX_CONDITIONING_IMAGES,
   refgenSpentUsd,
@@ -64,6 +65,28 @@ async function failClosedRefund(jobId: string, ownerId: string, error: string): 
   });
 }
 
+/** F07-analog of gen.ts hasLiveGenMessage: does pg-boss still hold a deliverable message for
+ *  this QUEUED refgen job? A paid job can wait past the 25-min wall-clock cutoff behind a
+ *  congested worker — but if its message is still created/retry/active, pg-boss WILL deliver
+ *  it, so fail-closing here would refund a job that then runs anyway (a free paid generation).
+ *  Only a QUEUED job whose message is truly lost/expired-to-DLQ (no live row) should be reaped.
+ *  Matched by the payload's refGenJobId, robust even when the best-effort queueJobId persist
+ *  failed. Fails SAFE: if pg-boss state can't be read, assume a live message may exist and
+ *  skip the reap this sweep (a delayed reap is far better than refunding a live paid job). */
+async function hasLiveRefGenMessage(refGenJobId: string): Promise<boolean> {
+  try {
+    const rows = await prisma.$queryRaw<{ id: string }[]>`
+      SELECT id FROM pgboss.job
+      WHERE name = ${REFGEN_QUEUE} AND state IN ('created', 'retry', 'active')
+        AND data->>'refGenJobId' = ${refGenJobId}
+      LIMIT 1`;
+    return rows.length > 0;
+  } catch (e) {
+    console.warn(`[refgen] pg-boss liveness check failed for ${refGenJobId}; skipping reap this sweep:`, e instanceof Error ? e.message : e);
+    return true;
+  }
+}
+
 /** Proactive reaper for RefGenJob — the analog of reapStaleGenJobs (gen.ts). refgen's
  *  on-claim stale branch only runs on a pg-boss REDELIVERY; a job whose message is lost or
  *  dead-lettered on its final attempt (REFGEN_DLQ has no consumer) is never redelivered, so
@@ -99,6 +122,8 @@ export async function reapStaleRefGenJobs(): Promise<number> {
     select: { id: true, ownerId: true },
   });
   for (const job of stuckQueued) {
+    // F07-analog: skip a job pg-boss will still deliver (worker congestion, not a lost message).
+    if (await hasLiveRefGenMessage(job.id)) continue;
     await prisma.$transaction(async (tx) => {
       const failed = await tx.refGenJob.updateMany({
         where: { id: job.id, status: "QUEUED", createdAt: { lt: queuedCutoff } },
