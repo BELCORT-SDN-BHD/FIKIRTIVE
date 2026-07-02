@@ -243,7 +243,7 @@ describe("buildInsightText", () => {
     expect(out).not.toBeNull();
     expect(out.text).toContain("2026-06-03");
     expect(out.text).toContain("6.0×");
-    expect(out.text).toContain("your average reach");
+    expect(out.text).toContain("your typical post");
     expect(out.prefill).toContain("2026-06-03");
     expect(out.prefill).toContain("900"); // reached 900 people
   });

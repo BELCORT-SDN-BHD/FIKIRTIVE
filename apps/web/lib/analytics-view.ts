@@ -148,7 +148,10 @@ export function buildInsightText(series: DailyMetric[]): { text: string; prefill
   const mult = best.reach / Math.max(restAvg, 1);
 
   const multStr = `${mult.toFixed(1)}×`;
-  const text = `Your best day was ${best.date} — ${multStr} your average reach. Want me to make more content like that?`;
+  // Copy tracks the math: `mult` divides by the average of the OTHER days (best
+  // excluded), so we say "your typical post", not "your average" (which would read
+  // as including the best day). See analytics-view.test.ts for the pinned wording.
+  const text = `Your best day was ${best.date} — it reached ${multStr} more than your typical post. Want me to make more like it?`;
   const prefill = `Make more content like my ${best.date} post — it reached ${best.reach} people.`;
   return { text, prefill };
 }
