@@ -75,6 +75,12 @@ describe("editShotPrompt", () => {
     expect("error" in res).toBe(true);
     expect(mockFindFirst).not.toHaveBeenCalled();
   });
+
+  it("两个 prompt 字段都不传 → error,不碰 DB", async () => {
+    const res = await editShotPrompt({ cardId: "card-1", index: 0 });
+    expect("error" in res).toBe(true);
+    expect(mockFindFirst).not.toHaveBeenCalled();
+  });
 });
 
 describe("addShot", () => {
@@ -114,5 +120,27 @@ describe("reorderShots", () => {
     mockFindFirst.mockResolvedValue(card(payload3()));
     const res = await reorderShots({ cardId: "card-1", order: [2, 0, 1] });
     expect("payload" in res && res.payload.shots.map((s) => s.firstFramePrompt)).toEqual(["ff2", "ff0", "ff1"]);
+  });
+
+  it("非法排列(长度不对)→ error,不回写", async () => {
+    mockFindFirst.mockResolvedValue(card(payload3()));
+    const res = await reorderShots({ cardId: "card-1", order: [0, 1] });
+    expect("error" in res).toBe(true);
+    expect(mockUpdate).not.toHaveBeenCalled();
+  });
+
+  it("requireOwner 失败 → 直接返回 error,不碰 DB", async () => {
+    mockOwner.mockResolvedValue({ error: "unauthorized" });
+    const res = await reorderShots({ cardId: "card-1", order: [2, 0, 1] });
+    expect(res).toEqual({ error: "unauthorized" });
+    expect(mockFindFirst).not.toHaveBeenCalled();
+    expect(mockUpdate).not.toHaveBeenCalled();
+  });
+
+  it("卡片不存在(或非本人)→ error,不回写", async () => {
+    mockFindFirst.mockResolvedValue(null);
+    const res = await reorderShots({ cardId: "card-1", order: [2, 0, 1] });
+    expect("error" in res).toBe(true);
+    expect(mockUpdate).not.toHaveBeenCalled();
   });
 });
