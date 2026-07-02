@@ -61,9 +61,10 @@ function placeholderTextFor(kind: ChatMessageDTO["kind"], text: string): string 
  *
  * - role: USER → 'user', AGENT → 'assistant'.
  * - kind TEXT → one `text` part with the message text.
- * - kind PLAN | GEN_CARD | GEN_RESULT | DENIAL | TURN_ERROR → a single `text`
- *   placeholder part (see placeholderTextFor) PLUS metadata carrying the durable
- *   id / kind / payload / genJobId for Task 5.
+ * - kind PLAN | GEN_CARD | GEN_RESULT | DENIAL | TURN_ERROR | ACTION_CARD |
+ *   BUILD_CARD | STORYBOARD_CARD → a single `text` placeholder part (see
+ *   placeholderTextFor) PLUS metadata carrying the durable id / kind / payload /
+ *   genJobId for the widget renderer.
  *
  * The durable ChatMessage id is reused as the UIMessage id so streamed-then-
  * reloaded messages stay keyed stably.
