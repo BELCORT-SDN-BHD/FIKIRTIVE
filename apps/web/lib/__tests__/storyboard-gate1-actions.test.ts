@@ -81,7 +81,6 @@ import {
   prepareStoryboardFirstFrames,
   regenShotFirstFrameCard,
   syncStoryboardMedia,
-  syncStoryboardFirstFrames,
   getStoryboardVideoOptions,
   prepareStoryboardVideos,
   regenShotVideoCard,
@@ -762,10 +761,6 @@ describe("syncStoryboardMedia — $0 对账(帧)", () => {
     expect(mockChatUpdate).not.toHaveBeenCalled();
   });
 
-  it("deprecated alias syncStoryboardFirstFrames === syncStoryboardMedia(back-compat,Task 4 前保留)", () => {
-    // StoryboardCard.tsx still imports the old name; the alias must be the SAME function.
-    expect(syncStoryboardFirstFrames).toBe(syncStoryboardMedia);
-  });
 });
 
 // ---------------------------------------------------------------------------

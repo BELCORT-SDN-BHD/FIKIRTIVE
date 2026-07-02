@@ -7,7 +7,10 @@ import { editShotPrompt, addShot, deleteShot, reorderShots } from "@/lib/storybo
 import {
   prepareStoryboardFirstFrames,
   regenShotFirstFrameCard,
-  syncStoryboardFirstFrames,
+  prepareStoryboardVideos,
+  regenShotVideoCard,
+  getStoryboardVideoOptions,
+  syncStoryboardMedia,
   type ChildFrameCard,
 } from "@/lib/storyboard-gate1-actions";
 import { coworkGenerate } from "@/lib/cowork-actions";
@@ -23,18 +26,27 @@ export interface StoryboardCardProps {
 
 type ActionResult = { payload: unknown } | { error: string };
 
-const SYNC_INTERVAL_MS = 3000;
-const SYNC_MAX_TRIES = 40;
+// Frames land in ~seconds; videos take minutes. Poll faster/short for a frames-only
+// wait, slower/long when any video is pending.
+const FRAME_SYNC_INTERVAL_MS = 3000;
+const FRAME_SYNC_MAX_TRIES = 40;
+const VIDEO_SYNC_INTERVAL_MS = 5000;
+const VIDEO_SYNC_MAX_TRIES = 120;
 
-/** A shot is "pending" once it points at a child card but has no finished image yet. */
-function isPending(s: StoryboardShotView): boolean {
+/** A shot's FRAME is "pending" once it points at a child card but has no finished image yet. */
+function isFramePending(s: StoryboardShotView): boolean {
   return !!s.firstFrameCardId && !s.firstFrameGenerationId;
 }
 
-/** Otto 的分镜卡(F3:可逐帧编辑,$0)+ F4 闸①:聚合确认铸首帧图、逐帧重出、缩略图。
- *  本地 state 持 payload;编辑动作成功后用返回 payload 更新。闸①:prepare($0)→ 确认 →
- *  逐子卡 coworkGenerate(唯一花钱调用)→ sync 轮询把 firstFrameGenerationId 写回 + 取图。
- *  样式沿用 OttoActionPlanCard:.gb 壳 → bg-secondary 卡体 → bg-card 行。 */
+/** A shot's VIDEO is "pending" once it points at a video child but has no finished clip yet. */
+function isVideoPending(s: StoryboardShotView): boolean {
+  return !!s.videoCardId && !s.videoGenerationId;
+}
+
+/** Otto 的分镜卡(F3:可逐帧编辑,$0)+ 闸①(首帧图)+ 闸②(make all videos)。
+ *  本地 state 持 payload;编辑动作成功后用返回 payload 更新。闸②:每镜头选时长(model-driven,
+ *  editShotPrompt 级联清视频键)→ prepare($0)→ 确认 → 逐子卡 coworkGenerate(花钱)→ 统一 sync
+ *  轮询把 frame/video genId 写回 + 取媒体 URL。花钱调用点恰好 4 处,全在显式确认 handler 内。 */
 export function StoryboardCard({ cardId, payload, balanceUsd, onBalanceRefresh }: StoryboardCardProps) {
   const [view, setView] = useState<StoryboardCardView>(() => parseStoryboardCardPayload(payload));
   const [busy, setBusy] = useState(false);
@@ -43,28 +55,43 @@ export function StoryboardCard({ cardId, payload, balanceUsd, onBalanceRefresh }
   const [draftFf, setDraftFf] = useState("");
   const [draftV, setDraftV] = useState("");
 
-  // Gate① state.
+  // Model-driven video duration options ($0 read, fetched once on mount).
+  const [videoDurations, setVideoDurations] = useState<number[]>([]);
+
+  // Gate① (frames) state.
   // `children` is the SERVER-returned set from the prepare call made in THIS confirm
   // interaction. The spend loop derives its work list from THIS array only — never a
   // stale render — and it's CLEARED on any edit or payload change (forcing a re-prepare).
   const [children, setChildren] = useState<ChildFrameCard[] | null>(null);
   const [totalCredits, setTotalCredits] = useState(0);
   const [confirming, setConfirming] = useState(false);
-  const [regenShotId, setRegenShotId] = useState<string | null>(null); // shotId awaiting per-shot confirm
-  const [regenChild, setRegenChild] = useState<ChildFrameCard | null>(null); // the freshly-minted child for that shot
+  const [regenShotId, setRegenShotId] = useState<string | null>(null); // shotId awaiting per-shot frame-regen confirm
+  const [regenChild, setRegenChild] = useState<ChildFrameCard | null>(null); // the freshly-minted frame child for that shot
+
+  // Gate② (videos) state — parallel to the frame state above, same single-source-of-truth rules.
+  const [videoChildren, setVideoChildren] = useState<ChildFrameCard[] | null>(null);
+  const [videoTotalCredits, setVideoTotalCredits] = useState(0);
+  const [videoConfirming, setVideoConfirming] = useState(false);
+  const [regenVideoShotId, setRegenVideoShotId] = useState<string | null>(null); // shotId awaiting per-shot video-remake confirm
+  const [regenVideoChild, setRegenVideoChild] = useState<ChildFrameCard | null>(null); // the freshly-minted video child for that shot
+
   const [generating, setGenerating] = useState(false); // spend loop OR sync poll running
   const [frames, setFrames] = useState<Record<string, string>>({});
+  const [videos, setVideos] = useState<Record<string, string>>({});
   const [polling, setPolling] = useState(false);
-  // Shots whose regen was CONFIRMED (spent) but whose thumbnail hasn't swapped yet.
-  // The old frame stays shown + a "Replacing frame…" hint; a shot leaves this set the
-  // moment sync returns a DIFFERENT genId for it (the new frame has landed).
+  // Shots whose FRAME regen was CONFIRMED (spent) but whose thumbnail hasn't swapped yet.
   const [replacingShotIds, setReplacingShotIds] = useState<Set<string>>(() => new Set());
-  // shotId → the genId shown when its regen was confirmed (the OLD frame). A sync result
-  // with a genId ≠ this baseline means the replacement landed → drop the shot from the set.
+  // Shots whose VIDEO remake was CONFIRMED (spent) but whose clip hasn't swapped yet.
+  const [replacingVideoShotIds, setReplacingVideoShotIds] = useState<Set<string>>(() => new Set());
+  // shotId → the genId shown when its regen was confirmed (the OLD media). A sync result with
+  // a genId ≠ this baseline means the replacement landed → drop the shot from the set.
   // Refs so the sync loop reads live values without re-subscribing the interval.
   const replacingBaselineRef = useRef<Record<string, string | undefined>>({});
   const replacingShotIdsRef = useRef<Set<string>>(replacingShotIds);
   replacingShotIdsRef.current = replacingShotIds;
+  const replacingVideoBaselineRef = useRef<Record<string, string | undefined>>({});
+  const replacingVideoShotIdsRef = useRef<Set<string>>(replacingVideoShotIds);
+  replacingVideoShotIdsRef.current = replacingVideoShotIds;
 
   const pollTriesRef = useRef(0);
 
@@ -79,13 +106,10 @@ export function StoryboardCard({ cardId, payload, balanceUsd, onBalanceRefresh }
       const res = await fn();
       if ("error" in res) { setError(res.error); return false; }
       setView(parseStoryboardCardPayload(res.payload));
-      // A structural edit shifts indices AND may re-prompt a shot (clearing its frame
-      // server-side). Discard any prepared children so a confirm can't spend a stale set;
-      // the user re-prepares against the fresh payload.
-      setChildren(null);
-      setConfirming(false);
-      setRegenShotId(null);
-      setRegenChild(null);
+      // A structural or prompt/duration edit shifts indices AND may clear a shot's frame/video
+      // server-side (staleness cascade). Discard any prepared children so a confirm can't spend
+      // a stale set; the user re-prepares against the fresh payload.
+      resetPrepared();
       setEditing(null);
       setDraftFf("");
       setDraftV("");
@@ -96,6 +120,19 @@ export function StoryboardCard({ cardId, payload, balanceUsd, onBalanceRefresh }
     } finally {
       setBusy(false);
     }
+  }
+
+  /** Clear every prepared-but-unspent staging state (both gates) — the single source of truth
+   *  for "a confirm may not spend". Called on any edit success and on a fresh payload injection. */
+  function resetPrepared() {
+    setChildren(null);
+    setConfirming(false);
+    setRegenShotId(null);
+    setRegenChild(null);
+    setVideoChildren(null);
+    setVideoConfirming(false);
+    setRegenVideoShotId(null);
+    setRegenVideoChild(null);
   }
 
   function startEdit(shot: StoryboardShotView) {
@@ -110,49 +147,87 @@ export function StoryboardCard({ cardId, payload, balanceUsd, onBalanceRefresh }
     if (ok) setEditing(null);
   }
 
-  // --- Gate① sync polling -------------------------------------------------
-  // Reconcile finished first-frame jobs into the payload; refresh thumbnails.
-  // Runs while `polling` is true, every 3s, capped. Stops when no shot is pending.
-  // Money guard: if the parent re-injects a fresh payload (identity change), any
-  // previously-prepared spend set is now stale — discard it so a confirm can't spend
-  // against an outdated child list. Skips the initial mount (prevPayloadRef seeded once).
+  // --- Video options: fetch the model-driven duration list once on mount ($0) --------
+  const didFetchOptionsRef = useRef(false);
+  useEffect(() => {
+    if (didFetchOptionsRef.current) return;
+    didFetchOptionsRef.current = true;
+    void (async () => {
+      try {
+        const res = await getStoryboardVideoOptions();
+        if (!("error" in res)) setVideoDurations(res.durations);
+      } catch {
+        // Options are a nicety; a failure just leaves duration selects empty (auto). No error UI.
+      }
+    })();
+  }, []);
+
+  // --- Unified sync polling -----------------------------------------------
+  // Reconcile finished first-frame AND video jobs into the payload; refresh media URLs.
+  // Money guard: if the parent re-injects a fresh payload (identity change), any previously
+  // prepared spend set is now stale — discard it so a confirm can't spend an outdated child
+  // list. Skips the initial mount (prevPayloadRef seeded once).
   const prevPayloadRef = useRef(payload);
   useEffect(() => {
     if (prevPayloadRef.current === payload) return;
     prevPayloadRef.current = payload;
-    setChildren(null);
-    setConfirming(false);
-    setRegenShotId(null);
-    setRegenChild(null);
+    resetPrepared();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [payload]);
 
   const runSyncOnce = useCallback(async (): Promise<boolean> => {
-    // returns true if there's still work to poll for: any shot pending (first-frame
-    // landing) OR any confirmed regen whose replacement hasn't overwritten its genId yet.
+    // returns true if there's still work to poll for: any shot with a pending frame/video OR
+    // any confirmed regen whose replacement hasn't overwritten its genId yet.
     try {
-      const res = await syncStoryboardFirstFrames({ cardId });
+      const res = await syncStoryboardMedia({ cardId });
       if ("error" in res) return false; // give up quietly on a sync error
       const nextView = parseStoryboardCardPayload(res.payload);
       setView(nextView);
       setFrames(res.frames);
+      setVideos(res.videos);
 
-      // A replacing shot leaves the set once its genId differs from the recorded baseline.
-      const stillReplacing = new Set<string>();
+      // A replacing FRAME shot leaves the set once its genId differs from the recorded baseline.
+      const stillReplacingFrame = new Set<string>();
       for (const shotId of replacingShotIdsRef.current) {
         const genId = nextView.shots.find((s) => s.shotId === shotId)?.firstFrameGenerationId;
         if (genId && genId !== replacingBaselineRef.current[shotId]) {
           delete replacingBaselineRef.current[shotId]; // landed → forget the baseline
         } else {
-          stillReplacing.add(shotId);
+          stillReplacingFrame.add(shotId);
         }
       }
-      if (stillReplacing.size !== replacingShotIdsRef.current.size) setReplacingShotIds(stillReplacing);
+      if (stillReplacingFrame.size !== replacingShotIdsRef.current.size) setReplacingShotIds(stillReplacingFrame);
 
-      return nextView.shots.some(isPending) || stillReplacing.size > 0;
+      // A replacing VIDEO shot leaves the set once its videoGenerationId differs from baseline
+      // (a cascade that dropped the video key also clears it — genId becomes undefined ≠ baseline).
+      const stillReplacingVideo = new Set<string>();
+      for (const shotId of replacingVideoShotIdsRef.current) {
+        const genId = nextView.shots.find((s) => s.shotId === shotId)?.videoGenerationId;
+        if (genId && genId !== replacingVideoBaselineRef.current[shotId]) {
+          delete replacingVideoBaselineRef.current[shotId];
+        } else {
+          stillReplacingVideo.add(shotId);
+        }
+      }
+      if (stillReplacingVideo.size !== replacingVideoShotIdsRef.current.size) setReplacingVideoShotIds(stillReplacingVideo);
+
+      return (
+        nextView.shots.some(isFramePending) ||
+        nextView.shots.some(isVideoPending) ||
+        stillReplacingFrame.size > 0 ||
+        stillReplacingVideo.size > 0
+      );
     } catch {
       return false;
     }
   }, [cardId]);
+
+  // Poll cadence: videos take minutes → slow interval + high cap when any video is pending;
+  // a frames-only wait keeps the fast/short cadence.
+  const anyVideoPending =
+    view.shots.some(isVideoPending) || replacingVideoShotIds.size > 0;
+  const syncIntervalMs = anyVideoPending ? VIDEO_SYNC_INTERVAL_MS : FRAME_SYNC_INTERVAL_MS;
+  const syncMaxTries = anyVideoPending ? VIDEO_SYNC_MAX_TRIES : FRAME_SYNC_MAX_TRIES;
 
   useEffect(() => {
     if (!polling) return;
@@ -162,21 +237,25 @@ export function StoryboardCard({ cardId, payload, balanceUsd, onBalanceRefresh }
       pollTriesRef.current += 1;
       const stillPending = await runSyncOnce();
       if (cancelled) return;
-      if (!stillPending || pollTriesRef.current >= SYNC_MAX_TRIES) {
+      if (!stillPending || pollTriesRef.current >= syncMaxTries) {
         setPolling(false);
         setGenerating(false);
+        // Poll gave up (or finished): clear any lingering "Replacing…" hints so a stuck shot
+        // doesn't show the spinner forever (fixes F4's logged M1).
+        if (replacingShotIdsRef.current.size > 0) setReplacingShotIds(new Set());
+        if (replacingVideoShotIdsRef.current.size > 0) setReplacingVideoShotIds(new Set());
       }
-    }, SYNC_INTERVAL_MS);
+    }, syncIntervalMs);
     return () => { cancelled = true; clearInterval(timer); };
-  }, [polling, runSyncOnce]);
+  }, [polling, runSyncOnce, syncIntervalMs, syncMaxTries]);
 
-  // Reload-mid-generation recovery: on mount, if any shot has a child but no image,
+  // Reload-mid-generation recovery: on mount, if any shot has a frame/video child but no media,
   // sync ONCE and start polling if still pending. Never spends — read-only reconcile.
   const didMountSyncRef = useRef(false);
   useEffect(() => {
     if (didMountSyncRef.current) return;
     didMountSyncRef.current = true;
-    if (!view.shots.some(isPending)) return;
+    if (!view.shots.some(isFramePending) && !view.shots.some(isVideoPending)) return;
     void (async () => {
       const stillPending = await runSyncOnce();
       if (stillPending) { pollTriesRef.current = 0; setGenerating(true); setPolling(true); }
@@ -207,7 +286,7 @@ export function StoryboardCard({ cardId, payload, balanceUsd, onBalanceRefresh }
     }
   }
 
-  // Spend EXACTLY the server-returned children from THIS confirm interaction.
+  // Spend EXACTLY the server-returned children from THIS confirm interaction. (SPEND SITE 1/4)
   async function confirmGenerateAll() {
     if (generating || !children) return;
     const toSpend = children.filter((c) => !c.spent);
@@ -237,7 +316,7 @@ export function StoryboardCard({ cardId, payload, balanceUsd, onBalanceRefresh }
     }
   }
 
-  // --- Gate① per-shot regenerate -----------------------------------------
+  // --- Gate① per-shot frame regenerate -----------------------------------
   async function prepareRegen(shotId: string) {
     if (busy || generating) return;
     setBusy(true);
@@ -245,9 +324,8 @@ export function StoryboardCard({ cardId, payload, balanceUsd, onBalanceRefresh }
     try {
       const res = await regenShotFirstFrameCard({ cardId, shotId });
       if ("error" in res) { setError(res.error); return; }
-      // Do NOT clear the local view's genId or thumbnail — the OLD frame stays valid
-      // until the NEW one lands (server preserved firstFrameGenerationId). Just stage the
-      // per-shot confirm; Cancel leaves the old thumbnail fully intact (true no-op).
+      // Do NOT clear the local view's genId or thumbnail — the OLD frame stays valid until the
+      // NEW one lands. Just stage the per-shot confirm; Cancel is a true no-op.
       setRegenShotId(shotId);
       setRegenChild(res.child);
     } catch {
@@ -257,6 +335,7 @@ export function StoryboardCard({ cardId, payload, balanceUsd, onBalanceRefresh }
     }
   }
 
+  // (SPEND SITE 2/4)
   async function confirmRegen() {
     if (generating || !regenChild) return;
     const c = regenChild;
@@ -275,9 +354,100 @@ export function StoryboardCard({ cardId, payload, balanceUsd, onBalanceRefresh }
     onBalanceRefresh?.();
     if (started) {
       // Old frame stays shown + a "Replacing frame…" hint until sync swaps the thumbnail.
-      // Record the OLD genId as the baseline; sync clears the shot once it sees a new one.
       replacingBaselineRef.current[c.shotId] = view.shots.find((s) => s.shotId === c.shotId)?.firstFrameGenerationId;
       setReplacingShotIds((prev) => new Set(prev).add(c.shotId));
+      startPolling();
+    } else {
+      setGenerating(false);
+    }
+  }
+
+  // --- Gate② spend: "Make all videos" ------------------------------------
+  async function prepareVideos() {
+    if (busy || generating) return;
+    setBusy(true);
+    setError(null);
+    try {
+      const res = await prepareStoryboardVideos({ cardId });
+      if ("error" in res) { setError(res.error); return; }
+      setVideoChildren(res.children);
+      setVideoTotalCredits(res.totalCredits);
+      setVideoConfirming(true);
+    } catch {
+      setError("Couldn't prepare — please try again.");
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  // Spend EXACTLY the server-returned video children from THIS confirm interaction. (SPEND SITE 3/4)
+  async function confirmGenerateAllVideos() {
+    if (generating || !videoChildren) return;
+    const toSpend = videoChildren.filter((c) => !c.spent);
+    setVideoConfirming(false);
+    setGenerating(true);
+    setError(null);
+
+    let anyStarted = false;
+    for (let i = 0; i < toSpend.length; i++) {
+      const c = toSpend[i];
+      try {
+        const res = await coworkGenerate({ cardId: c.childCardId, prompt: c.structuredPrompt, entityIds: c.entityIds, variantSel: {} });
+        if (res && "error" in res) { setError(`Video ${i + 1} of ${toSpend.length}: ${res.error}`); continue; }
+        anyStarted = true;
+      } catch {
+        setError(`Video ${i + 1} of ${toSpend.length} failed — please try again.`);
+      }
+    }
+
+    setVideoChildren(null);
+    onBalanceRefresh?.();
+    if (anyStarted) {
+      startPolling();
+    } else {
+      setGenerating(false);
+    }
+  }
+
+  // --- Gate② per-shot video remake ---------------------------------------
+  async function prepareVideoRegen(shotId: string) {
+    if (busy || generating) return;
+    setBusy(true);
+    setError(null);
+    try {
+      const res = await regenShotVideoCard({ cardId, shotId });
+      if ("error" in res) { setError(res.error); return; }
+      // Old video stays valid until the new one lands. Stage the per-shot confirm; Cancel = no-op.
+      setRegenVideoShotId(shotId);
+      setRegenVideoChild(res.child);
+    } catch {
+      setError("Couldn't prepare — please try again.");
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  // (SPEND SITE 4/4)
+  async function confirmVideoRegen() {
+    if (generating || !regenVideoChild) return;
+    const c = regenVideoChild;
+    setRegenVideoShotId(null);
+    setRegenVideoChild(null);
+    setGenerating(true);
+    setError(null);
+    let started = false;
+    try {
+      const res = await coworkGenerate({ cardId: c.childCardId, prompt: c.structuredPrompt, entityIds: c.entityIds, variantSel: {} });
+      if (res && "error" in res) setError(res.error);
+      else started = true;
+    } catch {
+      setError("Couldn't remake — please try again.");
+    }
+    onBalanceRefresh?.();
+    if (started) {
+      // Old video stays shown + a "Replacing video…" hint until sync swaps the player.
+      replacingVideoBaselineRef.current[c.shotId] = view.shots.find((s) => s.shotId === c.shotId)?.videoGenerationId;
+      setReplacingVideoShotIds((prev) => new Set(prev).add(c.shotId));
       startPolling();
     } else {
       setGenerating(false);
@@ -288,8 +458,17 @@ export function StoryboardCard({ cardId, payload, balanceUsd, onBalanceRefresh }
   const missingCount = shots.filter((s) => !s.firstFrameGenerationId).length;
   const bal = balanceUsd ?? 0;
   const affordAll = canAffordPack(totalCredits, bal);
-  // Show the "Generate all" affordance only when idle (not editing, not confirming a regen).
-  const showGenerateAll = missingCount > 0 && editing === null && regenShotId === null && !generating;
+  const affordAllVideos = canAffordPack(videoTotalCredits, bal);
+
+  // Gate①: show "Generate all frames" only when idle (not editing, not confirming any regen).
+  const idleForAffordance = editing === null && regenShotId === null && regenVideoShotId === null && !generating;
+  const showGenerateAll = missingCount > 0 && idleForAffordance;
+
+  // Gate②: "Make all videos" is visible when ≥1 shot has a frame and no video yet.
+  const videoEligibleCount = shots.filter((s) => s.firstFrameGenerationId && !s.videoGenerationId).length;
+  // Shots with a first frame still missing (would need one before their video can be made).
+  const videoBlockedCount = shots.filter((s) => !s.firstFrameGenerationId).length;
+  const showMakeVideos = videoEligibleCount > 0 && idleForAffordance;
 
   return (
     <div className="gb leading-[1.65]" style={{ maxWidth: 480 }}>
@@ -308,10 +487,17 @@ export function StoryboardCard({ cardId, payload, balanceUsd, onBalanceRefresh }
             {shots.map((shot) => {
               const isEditing = editing === shot.index;
               const frameUrl = frames[shot.shotId];
+              const videoUrl = videos[shot.shotId];
               const hasFrame = !!shot.firstFrameGenerationId;
-              const shotPending = isPending(shot);
+              const framePending = isFramePending(shot);
               const isRegenConfirm = regenShotId === shot.shotId;
               const isReplacing = replacingShotIds.has(shot.shotId);
+              const videoPending = isVideoPending(shot);
+              const isVideoRegenConfirm = regenVideoShotId === shot.shotId;
+              const isReplacingVideo = replacingVideoShotIds.has(shot.shotId);
+              // Any per-shot confirm currently open (either gate) suppresses the OTHER shots'
+              // action buttons — clone gate①'s "only one regen at a time" rule, extended to videos.
+              const anyRegenOpen = regenShotId !== null || regenVideoShotId !== null;
               return (
                 <div key={shot.shotId} className="bg-card rounded-[14px] flex flex-col gap-1" style={{ padding: "10px 12px" }}>
                   {/* Row header: shot number + optional title + controls */}
@@ -383,19 +569,19 @@ export function StoryboardCard({ cardId, payload, balanceUsd, onBalanceRefresh }
                           style={{ maxWidth: 180 }}
                         />
                       )}
-                      {shotPending && !hasFrame && !frameUrl && (
+                      {framePending && !hasFrame && !frameUrl && (
                         <div className="flex items-center gap-1 text-[0.75rem] text-muted-foreground">
                           <Loader2 size={13} style={{ animation: "spin 1s linear infinite" }} /> Generating first frame…
                         </div>
                       )}
-                      {/* Confirmed regen in flight: old thumbnail stays; hint while the new frame lands. */}
+                      {/* Confirmed frame regen in flight: old thumbnail stays; hint while the new frame lands. */}
                       {isReplacing && (
                         <div className="flex items-center gap-1 text-[0.75rem] text-muted-foreground">
                           <Loader2 size={13} style={{ animation: "spin 1s linear infinite" }} /> Replacing frame…
                         </div>
                       )}
 
-                      {/* Per-shot regenerate (only when this shot already HAS a frame) */}
+                      {/* Per-shot frame regenerate (only when this shot already HAS a frame) */}
                       {hasFrame && frameUrl && !generating && editing === null && (
                         isRegenConfirm && regenChild ? (
                           <div className="mt-1 flex flex-col gap-2">
@@ -412,7 +598,7 @@ export function StoryboardCard({ cardId, payload, balanceUsd, onBalanceRefresh }
                             </div>
                           </div>
                         ) : (
-                          regenShotId === null && (
+                          !anyRegenOpen && (
                             <div className="mt-1">
                               <Button variant="secondary" disabled={busy} onClick={() => void prepareRegen(shot.shotId)}>
                                 <span className="flex items-center gap-1"><RotateCw size={13} /> Regenerate frame</span>
@@ -420,6 +606,81 @@ export function StoryboardCard({ cardId, payload, balanceUsd, onBalanceRefresh }
                             </div>
                           )
                         )
+                      )}
+
+                      {/* --- Video block (only for shots that HAVE a first frame) --- */}
+                      {hasFrame && (
+                        <div className="mt-1 flex flex-col gap-1 border-t border-border pt-2">
+                          {/* Duration select (model-driven options; editing-class → disabled while generating). */}
+                          <label className="flex items-center gap-2 text-[0.75rem] text-muted-foreground">
+                            <span className="font-semibold text-foreground">Duration</span>
+                            <select
+                              value={shot.durationSeconds ?? ""}
+                              disabled={busy || generating || editing !== null}
+                              onChange={(e) => {
+                                const v = e.target.value;
+                                // "Auto" (empty) is display-only for the unset state — the edit
+                                // action has no clear-to-auto path, so picking it is a no-op.
+                                if (v === "") return;
+                                void run(() => editShotPrompt({ cardId, index: shot.index, durationSeconds: Number(v) }));
+                              }}
+                              className="rounded-[8px] border border-border bg-card px-2 py-1 text-[0.8125rem] text-foreground disabled:opacity-40"
+                            >
+                              <option value="">Auto</option>
+                              {videoDurations.map((d) => (
+                                <option key={d} value={d}>{d}s</option>
+                              ))}
+                            </select>
+                          </label>
+
+                          {/* Video player (only when this shot HAS a landed video). */}
+                          {videoUrl && (
+                            <video
+                              controls
+                              preload="metadata"
+                              src={videos[shot.shotId]}
+                              className="rounded-[10px] border border-border"
+                              style={{ maxWidth: 240 }}
+                            />
+                          )}
+                          {videoPending && !videoUrl && (
+                            <div className="flex items-center gap-1 text-[0.75rem] text-muted-foreground">
+                              <Loader2 size={13} style={{ animation: "spin 1s linear infinite" }} /> Generating video…
+                            </div>
+                          )}
+                          {isReplacingVideo && (
+                            <div className="flex items-center gap-1 text-[0.75rem] text-muted-foreground">
+                              <Loader2 size={13} style={{ animation: "spin 1s linear infinite" }} /> Replacing video…
+                            </div>
+                          )}
+
+                          {/* Per-shot remake video (only when this shot already HAS a video) */}
+                          {videoUrl && !generating && editing === null && (
+                            isVideoRegenConfirm && regenVideoChild ? (
+                              <div className="mt-1 flex flex-col gap-2">
+                                <div className="text-[0.75rem] text-foreground">
+                                  Replace this video — {creditsLabel(regenVideoChild.estimatedCredits)}? This will spend real credits.
+                                </div>
+                                <div className="flex gap-2">
+                                  <Button variant="default" disabled={generating} onClick={() => void confirmVideoRegen()}>
+                                    Confirm — replace
+                                  </Button>
+                                  <Button variant="secondary" disabled={generating} onClick={() => { setRegenVideoShotId(null); setRegenVideoChild(null); }}>
+                                    Cancel
+                                  </Button>
+                                </div>
+                              </div>
+                            ) : (
+                              !anyRegenOpen && (
+                                <div className="mt-1">
+                                  <Button variant="secondary" disabled={busy} onClick={() => void prepareVideoRegen(shot.shotId)}>
+                                    <span className="flex items-center gap-1"><RotateCw size={13} /> Remake video</span>
+                                  </Button>
+                                </div>
+                              )
+                            )
+                          )}
+                        </div>
                       )}
                     </>
                   )}
@@ -467,9 +728,46 @@ export function StoryboardCard({ cardId, payload, balanceUsd, onBalanceRefresh }
           </div>
         )}
 
+        {/* Gate②: make all videos */}
+        {showMakeVideos && (
+          <div className="mt-4 border-t border-border pt-4">
+            {videoConfirming && videoChildren ? (
+              <div className="flex flex-col gap-3">
+                {!affordAllVideos && (
+                  <div role="alert" className="text-[0.875rem] text-[var(--error-soft-foreground)]">
+                    Not enough credits — top up to make these videos.
+                  </div>
+                )}
+                <div className="text-[0.875rem] text-foreground">
+                  Make {videoChildren.filter((c) => !c.spent).length} {videoChildren.filter((c) => !c.spent).length === 1 ? "video" : "videos"} for ~{creditsLabel(videoTotalCredits)}? This will spend real credits.
+                </div>
+                <div className="flex gap-3">
+                  <Button variant="default" disabled={!affordAllVideos || generating} onClick={() => void confirmGenerateAllVideos()}>
+                    Confirm — {videoChildren.filter((c) => !c.spent).length} {videoChildren.filter((c) => !c.spent).length === 1 ? "clip" : "clips"} · {creditsLabel(videoTotalCredits)}
+                  </Button>
+                  <Button variant="secondary" disabled={generating} onClick={() => { setVideoConfirming(false); setVideoChildren(null); }}>
+                    Cancel
+                  </Button>
+                </div>
+              </div>
+            ) : (
+              <div className="flex flex-col gap-2">
+                <Button variant="default" disabled={busy} onClick={() => void prepareVideos()}>
+                  {busy ? <Loader2 size={14} style={{ animation: "spin 1s linear infinite" }} /> : `Make all videos (${videoEligibleCount} ${videoEligibleCount === 1 ? "clip" : "clips"})`}
+                </Button>
+                {videoBlockedCount > 0 && (
+                  <div className="text-[0.75rem] text-muted-foreground">
+                    {videoBlockedCount} {videoBlockedCount === 1 ? "shot needs" : "shots need"} a first frame first.
+                  </div>
+                )}
+              </div>
+            )}
+          </div>
+        )}
+
         {generating && (
           <div className="mt-3 flex items-center gap-2 text-[0.875rem] text-muted-foreground">
-            <Loader2 size={14} style={{ animation: "spin 1s linear infinite" }} /> Generating first frames — this can take a moment…
+            <Loader2 size={14} style={{ animation: "spin 1s linear infinite" }} /> Working — this can take a moment…
           </div>
         )}
 

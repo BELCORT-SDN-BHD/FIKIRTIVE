@@ -623,11 +623,6 @@ export async function syncStoryboardMedia(
   return { payload, frames, videos };
 }
 
-/** @deprecated Use syncStoryboardMedia. Thin back-compat alias kept ONLY because
- *  StoryboardCard.tsx still imports the old name (Task 4 updates the UI + removes this).
- *  The return shape widened (added `videos`); existing frame-only callers ignore it. */
-export const syncStoryboardFirstFrames = syncStoryboardMedia;
-
 // ---------------------------------------------------------------------------
 // prepareStoryboardVideos — 闸②:idempotent $0 mint of missing video children
 // ---------------------------------------------------------------------------
