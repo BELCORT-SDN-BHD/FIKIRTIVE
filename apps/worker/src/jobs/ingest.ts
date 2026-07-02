@@ -46,6 +46,42 @@ export async function probeFile(file: string): Promise<ProbeResult> {
   };
 }
 
+// F41(c): finalize commits Asset+Generation BEFORE the ingest dispatch; a
+// boss.send failure leaves the asset unverified (client-claimed hash, no probe
+// metadata) with nothing re-dispatching it. The reaper sweep below recovers
+// those: any live UPLOAD asset whose probe metadata is still all-null after the
+// grace window gets its ingest re-sent. Ingest is idempotent, and the caller
+// dedupes in-flight re-sends via a pg-boss singletonKey. The age ceiling stops
+// a permanently-unprobeable asset (probe crashed to DLQ) re-dispatching forever.
+export const INGEST_REDISPATCH_MIN_AGE_MS = 15 * 60_000;
+export const INGEST_REDISPATCH_MAX_AGE_MS = 24 * 60 * 60_000;
+
+export async function redispatchLostIngest(
+  send: (assetId: string) => Promise<unknown>,
+  now: Date = new Date(),
+): Promise<number> {
+  const assets = await prisma.asset.findMany({
+    where: {
+      deletedAt: null,
+      // GENERATED assets never get ingest jobs (worker-computed hash, no probe)
+      // — sweeping them would re-dispatch every generated image forever.
+      source: "UPLOAD",
+      width: null,
+      height: null,
+      durationS: null,
+      createdAt: {
+        lt: new Date(now.getTime() - INGEST_REDISPATCH_MIN_AGE_MS),
+        gt: new Date(now.getTime() - INGEST_REDISPATCH_MAX_AGE_MS),
+      },
+    },
+    select: { id: true },
+    orderBy: { createdAt: "asc" },
+    take: 100, // per-tick bound; the next 5-min tick picks up the rest
+  });
+  for (const a of assets) await send(a.id);
+  return assets.length;
+}
+
 export async function handleIngest(data: IngestJobData): Promise<void> {
   const asset = await prisma.asset.findUnique({ where: { id: data.assetId } });
   if (!asset) {

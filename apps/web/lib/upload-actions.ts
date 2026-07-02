@@ -13,6 +13,7 @@
  *  - hash re-check: every finalized asset gets an INGEST job; the worker
  *    re-hashes the stream and deletes mismatches (see worker/jobs/ingest)
  */
+import { createHash } from "node:crypto";
 import { revalidatePath } from "next/cache";
 import { prisma } from "@fikirtive/db";
 import {
@@ -23,12 +24,14 @@ import {
   storageKey,
   mimeOf,
   newId,
+  uploadExtFromFilename,
   INGEST_QUEUE,
   UPLOAD_SINGLE_MAX_BYTES,
   UPLOAD_PART_BYTES,
   UPLOAD_URL_TTL_SECONDS,
   expectedPartLength,
   type AuthorizeUploadResult,
+  type FinalizedUpload,
 } from "@fikirtive/core";
 import { storage } from "@/lib/storage";
 import { getBoss } from "@/lib/queue";
@@ -38,9 +41,11 @@ import { requireOwner } from "@/lib/auth-guard";
 export async function authorizeUpload(raw: unknown): Promise<AuthorizeUploadResult | { error: string }> {
   const gate = await requireOwner(); if ("error" in gate) return gate;
   const { ownerId } = gate;
-  if (!storage.supportsDirectUpload) return { error: "Direct upload is not available on this storage driver." };
   const parsed = authorizeUploadInput.safeParse(raw);
   if (!parsed.success) return { error: "That file can't be uploaded (type or size out of bounds)." };
+  // F41: not an error — the client falls back to the server-action upload path
+  // (uploadFileFallback below), which is how dev's local-disk driver uploads.
+  if (!storage.supportsDirectUpload) return { kind: "unsupported" };
   const { sha256, ext, sizeBytes } = parsed.data;
   const key = storageKey(ownerId, sha256, ext);
   if (await storage.exists(key)) return { kind: "exists" };
@@ -49,6 +54,41 @@ export async function authorizeUpload(raw: unknown): Promise<AuthorizeUploadResu
   }
   const uploadId = await storage.createMultipart(key);
   return { kind: "multipart", uploadId, partSizeBytes: UPLOAD_PART_BYTES };
+}
+
+/**
+ * F41: server-action upload for drivers WITHOUT direct upload (dev local disk).
+ * The bytes come through the action body (next.config bodySizeLimit 256mb was
+ * reserved for exactly this path), the hash is computed SERVER-side (stronger
+ * than the direct path's client claim), and the receipt is FinalizedUpload-
+ * shaped (mode:"existed") so finalizeCandidateUploads works unchanged.
+ * Refused when the driver supports direct upload — no alternate upload path on prod.
+ */
+export async function uploadFileFallback(
+  formData: FormData,
+): Promise<{ ok: FinalizedUpload } | { error: string }> {
+  const gate = await requireOwner(); if ("error" in gate) return gate;
+  const { ownerId } = gate;
+  if (storage.supportsDirectUpload) return { error: "Use direct upload on this storage driver." };
+  const file = formData.get("file");
+  if (!(file instanceof File)) return { error: "No file in the upload request." };
+  const ext = uploadExtFromFilename(file.name);
+  if (!ext) return { error: "file type not supported" };
+  const bytes = new Uint8Array(await file.arrayBuffer());
+  const sha256 = createHash("sha256").update(bytes).digest("hex");
+  // Same authoritative bounds as the direct path (type + size), one contract.
+  const parsed = authorizeUploadInput.safeParse({ sha256, ext, sizeBytes: bytes.byteLength });
+  if (!parsed.success) return { error: "That file can't be uploaded (type or size out of bounds)." };
+  const { contentHash } = await storage.put(ownerId, bytes, ext);
+  return {
+    ok: {
+      sha256: contentHash,
+      ext,
+      sizeBytes: bytes.byteLength,
+      originalFilename: file.name,
+      upload: { mode: "existed" },
+    },
+  };
 }
 
 export async function signUploadPart(raw: unknown): Promise<{ url: string } | { error: string }> {
@@ -91,7 +131,10 @@ export async function finalizeCandidateUploads(
   const { ownerId } = gate;
   const project = await prisma.project.findFirst({ where: { id: projectId, ownerId } });
   if (!project) return { error: "Project not found." };
-  const parsed = finalizeUploadsInput.safeParse(raw);
+  // Callers (OttoChatStream / TemplateModal) pass the receipts ARRAY; the schema
+  // declares the wrapped shape — wrap here so the declared contract stays intact.
+  // (Unwrapped, every finalize died with "Malformed finalize request." — F41 QA find.)
+  const parsed = finalizeUploadsInput.safeParse({ files: raw });
   if (!parsed.success) return { error: "Malformed finalize request." };
 
   const entitySnapshot = await buildEntitySnapshot(ownerId, entityIds.map(String).filter(Boolean));

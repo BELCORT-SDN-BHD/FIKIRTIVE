@@ -279,8 +279,15 @@ export async function POST(req: NextRequest): Promise<Response> {
         if (e instanceof MaxTurnsExceededError) {
           closeOpenParts();
           const degradeText = "I got a bit tangled up — try asking again.";
+          // Tools may have persisted cards mid-run at max(seq)+1 — the pre-run
+          // seqAfterUser snapshot could collide (same fix as finalizeOttoRun).
+          const lastMsg = await prisma.chatMessage.findFirst({
+            where: { threadId, ownerId },
+            orderBy: { seq: "desc" },
+            select: { seq: true },
+          });
           await prisma.chatMessage.create({
-            data: { id: newId(), threadId, ownerId, role: "AGENT", kind: "TEXT", seq: seqAfterUser + 1, text: degradeText },
+            data: { id: newId(), threadId, ownerId, role: "AGENT", kind: "TEXT", seq: Math.max(seqAfterUser, lastMsg?.seq ?? 0) + 1, text: degradeText },
           });
           writer.write({ type: "data-status", data: { kind: "degraded", text: degradeText } satisfies OttoStatusData });
           return;

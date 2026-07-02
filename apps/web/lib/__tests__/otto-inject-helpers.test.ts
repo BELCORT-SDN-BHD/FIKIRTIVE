@@ -9,8 +9,9 @@ import {
   resultJobIds,
   errorJobIds,
   hasWorkingJob,
-  proposeCardId,
+  cardIdsOf,
   injectCardMessage,
+  appendMissingCards,
   appendDurableResults,
   syncCardJobIds,
   deriveCardState,
@@ -109,21 +110,33 @@ describe("hasWorkingJob", () => {
   });
 });
 
-describe("proposeCardId", () => {
-  it("extracts cardId from a data-tool-propose part", () => {
+describe("cardIdsOf", () => {
+  it("extracts a single cardId from a data-tool-propose part (propose / meta-action / ad-build shape)", () => {
     expect(
-      proposeCardId({ type: "data-tool-propose", data: { cardId: "card_9", shownPriceDisplay: "$1" } }),
-    ).toBe("card_9");
+      cardIdsOf({ type: "data-tool-propose", data: { cardId: "card_9", shownPriceDisplay: "$1" } }),
+    ).toEqual(["card_9"]);
+    expect(
+      cardIdsOf({ type: "data-tool-propose", data: { message: "Plan ready", cardId: "card_ma" } }),
+    ).toEqual(["card_ma"]);
   });
 
-  it("returns null for other part types", () => {
-    expect(proposeCardId({ type: "data-status", data: { cardId: "x" } })).toBeNull();
+  it("extracts cardIds[] from a proposePack output shape", () => {
+    expect(
+      cardIdsOf({ type: "data-tool-propose", data: { packId: "pack_1", cardIds: ["c1", "c2", "c3"] } }),
+    ).toEqual(["c1", "c2", "c3"]);
   });
 
-  it("returns null when cardId is missing/blank", () => {
-    expect(proposeCardId({ type: "data-tool-propose", data: {} })).toBeNull();
-    expect(proposeCardId({ type: "data-tool-propose", data: { cardId: "" } })).toBeNull();
-    expect(proposeCardId({ type: "data-tool-propose", data: null })).toBeNull();
+  it("returns [] for other part types", () => {
+    expect(cardIdsOf({ type: "data-status", data: { cardId: "x" } })).toEqual([]);
+  });
+
+  it("returns [] when no card id is present, filtering blanks/non-strings", () => {
+    expect(cardIdsOf({ type: "data-tool-propose", data: {} })).toEqual([]);
+    expect(cardIdsOf({ type: "data-tool-propose", data: { cardId: "" } })).toEqual([]);
+    expect(cardIdsOf({ type: "data-tool-propose", data: null })).toEqual([]);
+    // a failed propose-meta-action returns { message } only — no card was persisted
+    expect(cardIdsOf({ type: "data-tool-propose", data: { message: "invalid step" } })).toEqual([]);
+    expect(cardIdsOf({ type: "data-tool-propose", data: { cardIds: ["", 7, "ok"] } })).toEqual(["ok"]);
   });
 });
 
@@ -195,6 +208,57 @@ describe("injectCardMessage", () => {
     const existing = threadToUiMessages(fresh);
     const out = injectCardMessage(existing, fresh, "sb_1");
     expect(out).toBe(existing);
+  });
+
+  it("injects ACTION_CARD and BUILD_CARD durables too [F23]", () => {
+    const existing: ReturnType<typeof threadToUiMessages> = [];
+    const fresh = thread([
+      msg({ id: "card_ma", role: "AGENT", kind: "ACTION_CARD", payload: { planTitle: "Pause X" } }),
+      msg({ id: "card_ab", role: "AGENT", kind: "BUILD_CARD", payload: { goal: "signups" } }),
+    ]);
+    const withAction = injectCardMessage(existing, fresh, "card_ma");
+    expect(withAction).toHaveLength(1);
+    expect(withAction[0].metadata?.kind).toBe("ACTION_CARD");
+    const withBoth = injectCardMessage(withAction, fresh, "card_ab");
+    expect(withBoth).toHaveLength(2);
+    expect(withBoth[1].metadata?.kind).toBe("BUILD_CARD");
+  });
+
+  it("does NOT inject a non-card durable (TEXT/GEN_RESULT) even if the id matches", () => {
+    const existing: ReturnType<typeof threadToUiMessages> = [];
+    const fresh = thread([
+      msg({ id: "t1", role: "AGENT", kind: "TEXT", text: "hello" }),
+      msg({ id: "r1", role: "AGENT", kind: "GEN_RESULT", payload: { urls: ["u"] } }),
+    ]);
+    expect(injectCardMessage(existing, fresh, "t1")).toBe(existing);
+    expect(injectCardMessage(existing, fresh, "r1")).toBe(existing);
+  });
+});
+
+describe("appendMissingCards [F23 onFinish safety net]", () => {
+  it("appends card-kind durables (GEN_CARD/ACTION_CARD/BUILD_CARD) missing from the list", () => {
+    const existing = threadToUiMessages(
+      thread([msg({ id: "u1", role: "USER", kind: "TEXT", text: "build me an ad" })]),
+    );
+    const fresh = thread([
+      msg({ id: "u1", role: "USER", kind: "TEXT", text: "build me an ad" }),
+      msg({ id: "t2", role: "AGENT", kind: "TEXT", text: "Here's the plan." }),
+      msg({ id: "card_g", role: "AGENT", kind: "GEN_CARD", payload: { kind: "image" } }),
+      msg({ id: "card_ma", role: "AGENT", kind: "ACTION_CARD", payload: { planTitle: "Pause" } }),
+      msg({ id: "card_ab", role: "AGENT", kind: "BUILD_CARD", payload: { goal: "sales" } }),
+    ]);
+    const out = appendMissingCards(existing, fresh);
+    expect(out.map((m) => m.metadata?.durableId)).toEqual(["u1", "card_g", "card_ma", "card_ab"]);
+    // never TEXT — the streamed reply already rendered live; re-adding would double it
+    expect(out.some((m) => m.metadata?.kind === "TEXT" && m.metadata.durableId === "t2")).toBe(false);
+  });
+
+  it("dedupes by durableId — returns the same ref when every card is already present", () => {
+    const fresh = thread([
+      msg({ id: "card_g", role: "AGENT", kind: "GEN_CARD", payload: { kind: "image" } }),
+    ]);
+    const existing = threadToUiMessages(fresh);
+    expect(appendMissingCards(existing, fresh)).toBe(existing);
   });
 });
 

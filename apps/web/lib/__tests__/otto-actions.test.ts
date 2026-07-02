@@ -161,7 +161,7 @@ vi.mock("@fikirtive/otto", async (importOriginal) => {
 
 // ── Import SUT after mocks ───────────────────────────────────────────────────
 
-const { ottoTurn, mapOttoUsage, buildOttoContext, ottoApprove, createEmptyCoworkThread } = await import("@/lib/otto-actions");
+const { ottoTurn, mapOttoUsage, buildOttoContext, ottoApprove, createEmptyCoworkThread, finalizeOttoRun } = await import("@/lib/otto-actions");
 
 // ── Shared fixtures ──────────────────────────────────────────────────────────
 
@@ -435,6 +435,41 @@ describe("ottoTurn — MaxTurnsExceededError", () => {
 });
 
 // ── Test 7: mapOttoUsage pure unit ────────────────────────────────────────────
+
+describe("finalizeOttoRun — assistant TEXT seq accounts for tool-persisted cards", () => {
+  // proposePack (and propose / propose-meta-action / propose-ad-build) persist card
+  // messages MID-run at max(seq)+1. seqAfterUser is a PRE-run snapshot; writing the
+  // reply at seqAfterUser+1 collides with the first card, and a reload (ordered by
+  // seq) then interleaves the TEXT into the pack, splitting the PackCard grouping.
+  it("writes the reply after the thread's REAL max seq, not the pre-run snapshot", async () => {
+    mockChatMessageFindFirst.mockResolvedValue({ seq: 6 }); // 3 cards landed at 4/5/6 mid-run
+    mockChatThreadUpdateMany.mockResolvedValue({ count: 1 });
+    mockChatMessageCreate.mockResolvedValue({});
+    const result = { state: new MockRunState(), interruptions: [], finalOutput: "Here is the pack.", newItems: [] };
+    const out = await finalizeOttoRun({
+      ownerId: OWNER_ID, threadId: THREAD_ID, isNew: false, priorOttoState: "s0",
+      result, seqAfterUser: 3,
+    });
+    expect(out).toEqual({ status: "done", reply: "Here is the pack." });
+    expect(mockChatMessageCreate).toHaveBeenCalledWith(
+      expect.objectContaining({ data: expect.objectContaining({ kind: "TEXT", seq: 7 }) }),
+    );
+  });
+
+  it("still uses seqAfterUser when no tool wrote anything mid-run", async () => {
+    mockChatMessageFindFirst.mockResolvedValue({ seq: 3 }); // user msg is still the max
+    mockChatThreadUpdateMany.mockResolvedValue({ count: 1 });
+    mockChatMessageCreate.mockResolvedValue({});
+    const result = { state: new MockRunState(), interruptions: [], finalOutput: "Plain reply.", newItems: [] };
+    await finalizeOttoRun({
+      ownerId: OWNER_ID, threadId: THREAD_ID, isNew: false, priorOttoState: "s0",
+      result, seqAfterUser: 3,
+    });
+    expect(mockChatMessageCreate).toHaveBeenCalledWith(
+      expect.objectContaining({ data: expect.objectContaining({ kind: "TEXT", seq: 4 }) }),
+    );
+  });
+});
 
 describe("mapOttoUsage", () => {
   it("maps state.usage to correct TokenUsage with cached tokens summed across requests", () => {

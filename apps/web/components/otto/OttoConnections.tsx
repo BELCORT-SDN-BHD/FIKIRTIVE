@@ -9,7 +9,10 @@ type State =
   | { phase: "loading" }
   | { phase: "disconnected" }
   | { phase: "connected"; status?: string; accounts: MetaAdAccount[]; canWrite: boolean; adsAutonomy: string; adsWritesPaused: boolean }
-  | { phase: "reconnect" };
+  | { phase: "reconnect" }
+  // F37: Meta couldn't be reached right now (network / 5xx / rate limit) — the
+  // connection itself is fine, so offer a retry instead of a false reconnect scare.
+  | { phase: "unreachable" };
 
 export default function OttoConnections() {
   const [state, setState] = useState<State>({ phase: "loading" });
@@ -21,6 +24,7 @@ export default function OttoConnections() {
     setState({ phase: "loading" });
     const res = await getMetaConnection();
     if ("error" in res || !res.connected) return setState({ phase: "disconnected" });
+    if (res.transientError) return setState({ phase: "unreachable" });
     if (res.needsReconnect) return setState({ phase: "reconnect" });
     setState({
       phase: "connected",
@@ -90,6 +94,17 @@ export default function OttoConnections() {
                 Connect Meta
               </a>
             </Button>
+          )}
+
+          {state.phase === "unreachable" && (
+            <div style={{ marginTop: "0.5rem" }}>
+              <p className="text-muted-foreground text-[0.75rem]">
+                Couldn&rsquo;t reach Meta just now — this is usually temporary. Your connection is fine.
+              </p>
+              <Button type="button" size="sm" variant="ghost" onClick={() => void load()}>
+                Retry
+              </Button>
+            </div>
           )}
 
           {state.phase === "reconnect" && (
