@@ -546,10 +546,16 @@ export async function syncStoryboardFirstFrames(
 //  • Mint via buildProposeCard kind:"video" with a PER-SHOT ctx whose sourceGenerationId
 //    = the shot's first frame (i2v source), and desiredDuration = shot.durationSeconds.
 //  • Parent write swaps ONLY shot.videoCardId (transactional RMW).
-//  • Reuse-if-fresh: existing videoCardId child, unspent, AND prompt+source+duration
-//    match → reuse (no mint). Spent or any mismatch → fresh mint + pointer swap;
-//    videoGenerationId is NEVER touched (I1 semantics — old video survives until the
-//    new one lands via sync).
+//  • Reuse-if-matches (MONEY-CRITICAL): compute the WOULD-BE-MINTED card via the same pure
+//    buildProposeCard call minting uses, then REUSE the existing videoCardId child REGARDLESS
+//    of spent iff it matches on structuredPrompt + sourceGenerationId + params.durationSeconds
+//    (snapped-vs-snapped) + model. Matching+spent → surfaced with spent:true (excluded from
+//    totalCredits, UI skips), NO mint / NO pointer swap / NO parent write for that shot — so
+//    aggregate-prepare is idempotent under double-click / mid-flight re-entry (a video is SPENT
+//    but pending for minutes before videoGenerationId lands; the old spent→mint arm double-paid
+//    the same shot). Fresh mint + pointer swap ONLY when there is no child or the match fails
+//    (genuinely stale inputs); videoGenerationId is NEVER touched (I1 semantics — old video
+//    survives until the new one lands via sync).
 
 export async function prepareStoryboardVideos(
   raw: unknown,
@@ -595,6 +601,26 @@ export async function prepareStoryboardVideos(
       const ctx = minimalCtx(ownerId, card.threadId, disabledModels);
       ctx.sourceGenerationId = shot.firstFrameGenerationId;
 
+      // The WOULD-BE-MINTED card for THIS shot — computed via the SAME pure buildProposeCard
+      // call minting uses (mintVideoChild). This is the single source of truth for the reuse
+      // comparison: we compare an existing child against what a fresh mint would produce, NOT
+      // against the raw shot fields. Crucially, wouldBe.params.durationSeconds is the SNAPPED
+      // value (suggestModel snaps shot.durationSeconds to the model's option list), so a child
+      // minted at the snapped duration matches even when shot.durationSeconds is off-menu (P2:
+      // no snap-mismatch churn). buildProposeCard is pure ($0) — this adds no I/O.
+      const { cardPayload: wouldBe } = buildProposeCard(
+        {
+          kind: "video",
+          structuredPrompt: shot.videoPrompt,
+          entityIds: [],
+          variantSel: {},
+          count: 1,
+          desiredDuration: shot.durationSeconds,
+        },
+        ctx,
+        [],
+      );
+
       // Already points at a video child → try to reuse it.
       if (shot.videoCardId) {
         const existing = await tx.chatMessage.findFirst({
@@ -604,38 +630,43 @@ export async function prepareStoryboardVideos(
         const ep = (existing?.payload ?? {}) as {
           structuredPrompt?: unknown;
           sourceGenerationId?: unknown;
+          model?: unknown;
           params?: { durationSeconds?: unknown };
           entityIds?: string[];
           estimatedCredits?: number;
         };
-        const promptMatch = ep.structuredPrompt === shot.videoPrompt;
-        const sourceMatch = ep.sourceGenerationId === shot.firstFrameGenerationId;
-        const durationMatch =
-          shot.durationSeconds === undefined || ep.params?.durationSeconds === shot.durationSeconds;
-        // Reuse ONLY an UNSPENT, fully-matching child. A spent child (already charged) must
-        // NOT be reused — mint a fresh replacement so a re-approve can't double-charge the
-        // same card (same rule as regenShotFirstFrameCard; the frame-prepare path differs
-        // by design). spent = best-effort genJobId link OR the durable cowork:<id> job.
-        if (existing && promptMatch && sourceMatch && durationMatch) {
+        // Match the existing child against the would-be card on ALL of: structuredPrompt,
+        // sourceGenerationId, params.durationSeconds (snapped-vs-snapped), and model. A full
+        // match means a fresh mint would produce an identical spend — so reusing it is exact.
+        const promptMatch = ep.structuredPrompt === wouldBe.structuredPrompt;
+        const sourceMatch = ep.sourceGenerationId === wouldBe.sourceGenerationId;
+        const durationMatch = ep.params?.durationSeconds === wouldBe.params?.durationSeconds;
+        const modelMatch = ep.model === wouldBe.model;
+        // MONEY CORRECTION (P1 kill-shot): reuse a fully-matching child REGARDLESS of spent.
+        // Videos take minutes; videoGenerationId lands only when DONE, so a mid-flight re-entry
+        // (double-click / re-open) sees a SPENT-but-pending child. The OLD code minted a fresh
+        // child on spent → confirm charged it → the SAME shot got two children and two charges.
+        // Now: matching+spent → surface it with spent:true (excluded from totalCredits, UI skips)
+        // and DO NOT mint, DO NOT swap the pointer, DO NOT write the parent for this shot. This
+        // makes aggregate-prepare idempotent under double-click / mid-flight re-entry. We mint a
+        // fresh replacement ONLY when there is no child or the match fails (genuinely stale inputs).
+        if (existing && promptMatch && sourceMatch && durationMatch && modelMatch) {
           const spent = existing.genJobId != null || (await spentOf(existing.id, ownerId));
-          if (!spent) {
-            children.push({
-              shotId: shot.shotId,
-              childCardId: existing.id,
-              estimatedCredits: typeof ep.estimatedCredits === "number" ? ep.estimatedCredits : 0,
-              structuredPrompt: typeof ep.structuredPrompt === "string" ? ep.structuredPrompt : shot.videoPrompt,
-              entityIds: Array.isArray(ep.entityIds) ? ep.entityIds : [],
-              spent: false,
-            });
-            nextShots.push(shot);
-            continue;
-          }
-          // spent → fall through to mint a fresh replacement.
+          children.push({
+            shotId: shot.shotId,
+            childCardId: existing.id,
+            estimatedCredits: typeof ep.estimatedCredits === "number" ? ep.estimatedCredits : 0,
+            structuredPrompt: typeof ep.structuredPrompt === "string" ? ep.structuredPrompt : shot.videoPrompt,
+            entityIds: Array.isArray(ep.entityIds) ? ep.entityIds : [],
+            spent,
+          });
+          nextShots.push(shot);
+          continue;
         }
-        // Missing, spent, or any mismatch → mint a replacement (pointer swap below).
+        // Missing or any mismatch (genuinely stale inputs) → mint a replacement (pointer swap below).
       }
 
-      // Mint a fresh video child for this shot.
+      // Mint a fresh video child for this shot (no child, or a real mismatch).
       const child = await mintVideoChild(tx, card, shot, ownerId, ctx);
       children.push(child);
       // Replace videoCardId ONLY. NEVER touch videoGenerationId — the old video (if any)

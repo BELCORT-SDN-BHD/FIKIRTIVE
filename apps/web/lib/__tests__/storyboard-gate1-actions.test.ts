@@ -820,8 +820,19 @@ describe("getStoryboardVideoOptions — $0 读取模型时长", () => {
 // ---------------------------------------------------------------------------
 
 /** buildProposeCard video-mock: echo a kind:"video" payload; carry the injected
- *  ctx.sourceGenerationId (i2v start frame) + desiredDuration→params.durationSeconds
- *  onto the payload so the action's reuse rule + backlink can be asserted. */
+ *  ctx.sourceGenerationId (i2v start frame) onto the payload so the action's reuse rule
+ *  + backlink can be asserted.
+ *
+ *  Duration is SNAPPED deterministically, mirroring the real suggestModel snap for "kling"
+ *  (durations [5,10], default 5): an off-menu desiredDuration (e.g. 7) or undefined snaps to
+ *  5; an on-menu value (5 or 10) is kept. This is what makes the action's snapped-vs-snapped
+ *  comparison faithful — the would-be card's params.durationSeconds is ALWAYS the snapped
+ *  value, never the raw shot field (P2: no snap-mismatch churn). */
+const KLING_DURATIONS = [5, 10] as const;
+const KLING_DEFAULT_DURATION = 5;
+function snapDuration(want: number | undefined): number {
+  return want != null && KLING_DURATIONS.includes(want as 5 | 10) ? want : KLING_DEFAULT_DURATION;
+}
 function mockVideoProposeCard() {
   mockBuildProposeCard.mockImplementation(
     (
@@ -831,7 +842,7 @@ function mockVideoProposeCard() {
       cardPayload: {
         kind: "video",
         model: "kling",
-        params: { count: 1, ...(input.desiredDuration !== undefined ? { durationSeconds: input.desiredDuration } : {}) },
+        params: { count: 1, durationSeconds: snapDuration(input.desiredDuration) },
         structuredPrompt: input.structuredPrompt,
         entityIds: input.entityIds,
         estimatedCredits: 5,
@@ -919,7 +930,7 @@ describe("prepareStoryboardVideos — $0 铸视频子卡(闸②)", () => {
     p.shots[0].videoCardId = "vchild-0";
     wireLoads(card(p), {
       "vchild-0": {
-        payload: { structuredPrompt: "vp0", sourceGenerationId: "ffgen0", params: { durationSeconds: 5 }, estimatedCredits: 5 },
+        payload: { structuredPrompt: "vp0", sourceGenerationId: "ffgen0", model: "kling", params: { durationSeconds: 5 }, estimatedCredits: 5 },
         genJobId: null,
       },
     });
@@ -929,7 +940,6 @@ describe("prepareStoryboardVideos — $0 铸视频子卡(闸②)", () => {
 
     expect(mockChatCreate).not.toHaveBeenCalled(); // reused
     expect(mockChatUpdate).not.toHaveBeenCalled(); // no pointer swap
-    expect(mockBuildProposeCard).not.toHaveBeenCalled();
     expect(res.children).toHaveLength(1);
     expect(res.children[0].childCardId).toBe("vchild-0");
     expect(res.children[0].spent).toBe(false);
@@ -941,10 +951,10 @@ describe("prepareStoryboardVideos — $0 铸视频子卡(闸②)", () => {
     mockVideoProposeCard();
     const p = videoPayload3();
     p.shots[0].videoCardId = "vchild-0";
-    // duration mismatch: child payload duration 8 != shot.durationSeconds 5
+    // duration mismatch: child payload duration 8 != would-be (snapped) duration 5
     wireLoads(card(p), {
       "vchild-0": {
-        payload: { structuredPrompt: "vp0", sourceGenerationId: "ffgen0", params: { durationSeconds: 8 } },
+        payload: { structuredPrompt: "vp0", sourceGenerationId: "ffgen0", model: "kling", params: { durationSeconds: 8 } },
         genJobId: null,
       },
     });
@@ -966,7 +976,7 @@ describe("prepareStoryboardVideos — $0 铸视频子卡(闸②)", () => {
     // source mismatch: child was built off an OLD frame id
     wireLoads(card(p), {
       "vchild-0": {
-        payload: { structuredPrompt: "vp0", sourceGenerationId: "OLD-frame", params: { durationSeconds: 5 } },
+        payload: { structuredPrompt: "vp0", sourceGenerationId: "OLD-frame", model: "kling", params: { durationSeconds: 5 } },
         genJobId: null,
       },
     });
@@ -977,68 +987,141 @@ describe("prepareStoryboardVideos — $0 铸视频子卡(闸②)", () => {
     expect(res.children[0].childCardId).not.toBe("vchild-0");
   });
 
-  it("可重入:子卡已花过钱(有幂等 job)→ 不复用,铸新替换", async () => {
+  // MONEY CORRECTION (P1): a matching child that is SPENT via its durable cowork:<id>
+  // idempotency job MUST be REUSED with spent:true — NOT re-minted. The OLD test asserted
+  // spent→mint, which double-paid the same shot on a second prepare (the fresh child got
+  // charged on confirm while the spent one was still pending). Now: reuse, no mint, no
+  // parent write, excluded from totalCredits.
+  it("可重入:matching 子卡已花过钱(有幂等 job)→ 复用 spent:true,不铸、不写、不计费(P1 修正)", async () => {
     mockVideoProposeCard();
     const p = videoPayload3();
     p.shots[0].videoCardId = "vchild-0";
     wireLoads(card(p), {
       "vchild-0": {
-        payload: { structuredPrompt: "vp0", sourceGenerationId: "ffgen0", params: { durationSeconds: 5 } },
+        payload: { structuredPrompt: "vp0", sourceGenerationId: "ffgen0", model: "kling", params: { durationSeconds: 5 }, estimatedCredits: 5 },
         genJobId: null,
       },
     });
-    // spent: idempotency job exists → must mint fresh
+    // spent: durable cowork:<id> idempotency job exists (matching child already charged)
     mockGenJobFindFirst.mockResolvedValue({ id: "job-spent" });
 
     const res = await prepareStoryboardVideos({ cardId: "card-1" });
     if (!("children" in res)) throw new Error("expected children");
-    expect(mockChatCreate).toHaveBeenCalledTimes(1); // fresh mint (spent child not reused)
-    const updShots = (mockChatUpdate.mock.calls[0][0].data.payload as StoryboardCardPayload).shots;
-    expect(updShots[0].videoCardId).not.toBe("vchild-0");
-    expect(updShots[0].videoGenerationId).toBeUndefined();
-    expect(res.children[0].childCardId).not.toBe("vchild-0");
+    // matching+spent → reused, NOT re-minted
+    expect(mockChatCreate).not.toHaveBeenCalled();
+    expect(mockChatUpdate).not.toHaveBeenCalled(); // no pointer swap / parent write
+    expect(res.children).toHaveLength(1);
+    expect(res.children[0].childCardId).toBe("vchild-0");
+    expect(res.children[0].spent).toBe(true);
+    expect(res.totalCredits).toBe(0); // spent excluded from the quote
   });
 
-  it("durationSeconds 未定义时 duration 不参与一致性判断 → 复用(prompt+source 一致即可)", async () => {
+  // durationSeconds undefined → suggestModel snaps to the model DEFAULT (kling → 5s). The
+  // would-be card therefore has params.durationSeconds:5, which matches the child minted at 5
+  // → reuse. (The comparison is always snapped-vs-snapped, never against the raw shot field.)
+  it("durationSeconds 未定义 → would-be 吸附到模型默认(5s),与子卡一致 → 复用", async () => {
     mockVideoProposeCard();
     const p = videoPayload3();
-    delete p.shots[0].durationSeconds; // no desired duration
+    delete p.shots[0].durationSeconds; // no desired duration → snaps to default 5
     p.shots[0].videoCardId = "vchild-0";
     wireLoads(card(p), {
       "vchild-0": {
-        payload: { structuredPrompt: "vp0", sourceGenerationId: "ffgen0", params: { durationSeconds: 5 } },
+        payload: { structuredPrompt: "vp0", sourceGenerationId: "ffgen0", model: "kling", params: { durationSeconds: 5 } },
         genJobId: null,
       },
     });
 
     const res = await prepareStoryboardVideos({ cardId: "card-1" });
     if (!("children" in res)) throw new Error("expected children");
-    expect(mockChatCreate).not.toHaveBeenCalled(); // reused despite param duration present
+    expect(mockChatCreate).not.toHaveBeenCalled(); // reused: would-be default 5 == child 5
     expect(res.children[0].childCardId).toBe("vchild-0");
   });
 
-  it("spent 侦测:matching 子卡已 genJobId 链接(已花钱)→ 不复用,铸新(spent 绝不进 quote)", async () => {
+  // P2 (snap-mismatch churn kill): shot.durationSeconds is OFF-MENU (7; kling offers [5,10]).
+  // The child was minted at the SNAPPED value (5). The comparison uses the WOULD-BE card's
+  // params.durationSeconds (also snaps 7→5), NOT the raw shot field — so it MATCHES and the
+  // child is reused with NO churn. The old raw-field comparison (7 != 5) would have re-minted
+  // on every prepare, and combined with a spent pending child that re-opened the P1 double-pay.
+  it("P2:shot.durationSeconds 离菜单(7)→ would-be 吸附到 5,与吸附值铸的子卡一致 → 复用不 churn", async () => {
     mockVideoProposeCard();
     const p = videoPayload3();
+    p.shots[0].durationSeconds = 7; // off-menu; suggestModel snaps 7 → 5
     p.shots[0].videoCardId = "vchild-0";
     wireLoads(card(p), {
       "vchild-0": {
-        payload: { structuredPrompt: "vp0", sourceGenerationId: "ffgen0", params: { durationSeconds: 5 }, estimatedCredits: 5 },
-        genJobId: "gj-1", // best-effort link present → spent (charged)
+        // child was minted at the SNAPPED duration (5), NOT the raw 7
+        payload: { structuredPrompt: "vp0", sourceGenerationId: "ffgen0", model: "kling", params: { durationSeconds: 5 }, estimatedCredits: 5 },
+        genJobId: null,
       },
     });
 
     const res = await prepareStoryboardVideos({ cardId: "card-1" });
     if (!("children" in res)) throw new Error("expected children");
-    // spent child is NOT reused — a fresh replacement is minted (no double-charge on re-approve)
-    expect(mockChatCreate).toHaveBeenCalledTimes(1);
-    const updShots = (mockChatUpdate.mock.calls[0][0].data.payload as StoryboardCardPayload).shots;
-    expect(updShots[0].videoCardId).not.toBe("vchild-0"); // pointer swapped to the fresh child
-    expect(updShots[0].videoGenerationId).toBeUndefined(); // never touched
-    // the returned child is the FRESH one (unspent) — spent card never enters the quote
-    expect(res.children[0].childCardId).not.toBe("vchild-0");
+    // snapped-vs-snapped (5 == 5) → REUSE, no re-mint, no pointer swap
+    expect(mockChatCreate).not.toHaveBeenCalled();
+    expect(mockChatUpdate).not.toHaveBeenCalled();
+    expect(res.children).toHaveLength(1);
+    expect(res.children[0].childCardId).toBe("vchild-0");
     expect(res.children[0].spent).toBe(false);
-    expect(res.totalCredits).toBe(5); // the fresh unspent mint's credits
+  });
+
+  // Model change: the would-be model differs from the child's stored model (e.g. an admin
+  // model swap since the child was minted). A model mismatch is a genuine stale-input mismatch
+  // → mint fresh + pointer swap; videoGenerationId is NEVER touched (old video survives).
+  it("可重入:model 不一致(would-be model != 子卡 model)→ 铸新 + 指针替换,不碰 videoGenerationId", async () => {
+    mockVideoProposeCard(); // would-be model = "kling"
+    const p = videoPayload3();
+    p.shots[0].videoCardId = "vchild-0";
+    wireLoads(card(p), {
+      "vchild-0": {
+        // everything matches EXCEPT model — child was minted under a different (old) model
+        payload: { structuredPrompt: "vp0", sourceGenerationId: "ffgen0", model: "seedance-2", params: { durationSeconds: 5 } },
+        genJobId: null,
+      },
+    });
+
+    const res = await prepareStoryboardVideos({ cardId: "card-1" });
+    if (!("children" in res)) throw new Error("expected children");
+    expect(mockChatCreate).toHaveBeenCalledTimes(1); // fresh mint
+    const updShots = (mockChatUpdate.mock.calls[0][0].data.payload as StoryboardCardPayload).shots;
+    expect(updShots[0].videoCardId).not.toBe("vchild-0"); // pointer swapped
+    expect(updShots[0].videoGenerationId).toBeUndefined(); // NEVER touched
+    expect(res.children[0].childCardId).not.toBe("vchild-0");
+  });
+
+  // ===================================================================================
+  // P1 KILL-SHOT: the double-pay this whole fix exists to prevent.
+  // Flow: make-all → child A minted & CHARGED (spent, but videoGenerationId is still absent
+  // because the video takes minutes) → user clicks make-all AGAIN. The SECOND prepare sees a
+  // matching+SPENT child. The OLD (broken) code minted a fresh child B, swapped the pointer,
+  // and returned B UNSPENT → confirm then charged B → SAME shot, two children, two charges.
+  // CORRECTED: a matching+spent child (spent via its best-effort genJobId link) is REUSED with
+  // spent:true. NO mint (chatMessage.create NOT called), NO pointer swap / parent write, and it
+  // is EXCLUDED from totalCredits — so the second prepare offers ZERO new charges for that shot.
+  // ===================================================================================
+  it("P1 kill-shot:matching 子卡已花钱(genJobId 链接)→ 复用 spent:true,不铸不写,第二次 prepare 该镜头 0 计费", async () => {
+    mockVideoProposeCard();
+    const p = videoPayload3();
+    p.shots[0].videoCardId = "vchild-0";
+    wireLoads(card(p), {
+      "vchild-0": {
+        payload: { structuredPrompt: "vp0", sourceGenerationId: "ffgen0", model: "kling", params: { durationSeconds: 5 }, estimatedCredits: 5 },
+        genJobId: "gj-1", // best-effort link present → spent (charged), video still pending
+      },
+    });
+
+    const res = await prepareStoryboardVideos({ cardId: "card-1" });
+    if (!("children" in res)) throw new Error("expected children");
+    // matching+spent → REUSED, never re-minted (kills the second charge)
+    expect(mockChatCreate).not.toHaveBeenCalled(); // NO new child card
+    expect(mockGenJobCreate).not.toHaveBeenCalled(); // $0 invariant intact
+    expect(mockChatUpdate).not.toHaveBeenCalled(); // NO pointer swap / parent write
+    // the returned child IS the spent one, surfaced as spent so the UI skips it
+    expect(res.children).toHaveLength(1);
+    expect(res.children[0].childCardId).toBe("vchild-0");
+    expect(res.children[0].spent).toBe(true);
+    // the kill-shot: second prepare after a confirm offers ZERO new charges for that shot
+    expect(res.totalCredits).toBe(0);
   });
 
   it("$0 铁证:genJob.create 从未被调", async () => {
