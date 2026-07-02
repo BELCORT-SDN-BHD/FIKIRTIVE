@@ -4,6 +4,7 @@ import { Film, Pencil, Trash2, Plus, ChevronUp, ChevronDown, Loader2 } from "luc
 import { Button } from "@/components/ui/button";
 import { parseStoryboardCardPayload, type StoryboardCardView, type StoryboardShotView } from "@/lib/storyboard-card";
 import { editShotPrompt, addShot, deleteShot, reorderShots } from "@/lib/storyboard-actions";
+import { MAX_STORYBOARD_SHOTS } from "@fikirtive/otto";
 
 export interface StoryboardCardProps {
   cardId: string;
@@ -141,7 +142,7 @@ export function StoryboardCard({ cardId, payload }: StoryboardCardProps) {
 
         {/* Add shot */}
         <div className="mt-3">
-          <Button variant="secondary" disabled={busy || shots.length >= 8}
+          <Button variant="secondary" disabled={busy || shots.length >= MAX_STORYBOARD_SHOTS}
             onClick={() => run(() => addShot({ cardId, firstFramePrompt: "New shot — describe the opening frame", videoPrompt: "New shot — describe the motion" }))}>
             <span className="flex items-center gap-1"><Plus size={14} /> Add shot</span>
           </Button>
