@@ -60,6 +60,12 @@ function AdJobCard({ job }: { job: AdJobItem }) {
 export function OttoStuff({ entities, ads, adJobs, records, history }: OttoStuffProps) {
   const router = useRouter();
   const [entityList, setEntityList] = useState<EntityDTO[]>(entities);
+  const [prevEntities, setPrevEntities] = useState(entities);
+  if (prevEntities !== entities) {
+    // server truth arrived (router.refresh) — resync and drop stale optimistic edits
+    setPrevEntities(entities);
+    setEntityList(entities);
+  }
   const [addOpen, setAddOpen] = useState(false);
   const [chooseProductFor, setChooseProductFor] = useState<string | null>(null);
   const [deleteError, setDeleteError] = useState<string | null>(null);
