@@ -13,6 +13,8 @@ export const productRecordData = z.object({
   url: z.string().max(500).optional(),
   sellingAngle: z.string().max(300).optional(),
   tags: z.array(z.string().max(40)).max(10).optional(),
+  /** Type-to-create category; display keeps original casing. */
+  category: z.string().max(40).optional(),
   /** Optional My Stuff asset link for the showcase card. Display-only; UI-managed (OTTO skills never accept it). */
   imageAssetId: z.string().max(64).optional(),
 });
@@ -57,4 +59,24 @@ export function offerPhase(o: { startsAt?: Date | null; endsAt?: Date | null }, 
   if (o.endsAt && o.endsAt.getTime() < now.getTime()) return "expired";
   if (o.startsAt && o.startsAt.getTime() > now.getTime()) return "scheduled";
   return "active";
+}
+
+/** Case-insensitive grouping key for type-to-create categories (display keeps original casing). */
+export function categoryKey(name: string): string {
+  return name.trim().toLowerCase();
+}
+
+/** Derived category list: distinct categories of ACTIVE products, first-seen casing, insertion order. */
+export function distinctCategories(
+  records: Array<{ kind: string; status: string; data: Record<string, unknown> }>,
+): string[] {
+  const seen = new Map<string, string>();
+  for (const r of records) {
+    if (r.kind !== "product" || r.status !== "active") continue;
+    const raw = r.data.category;
+    if (typeof raw !== "string" || !raw.trim()) continue;
+    const key = categoryKey(raw);
+    if (!seen.has(key)) seen.set(key, raw.trim());
+  }
+  return [...seen.values()];
 }

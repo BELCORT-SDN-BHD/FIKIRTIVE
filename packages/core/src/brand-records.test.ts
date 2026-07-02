@@ -2,6 +2,7 @@ import { describe, it, expect } from "vitest";
 import {
   productRecordData, segmentRecordData, offerRecordData,
   recordSchemaFor, recordName, normalizeNameKey, offerPhase,
+  categoryKey, distinctCategories,
 } from "./brand-records.js";
 
 describe("record schemas", () => {
@@ -55,4 +56,25 @@ describe("product imageAssetId", () => {
     expect(productRecordData.safeParse({ name: "Latte" }).success).toBe(true);
     expect(productRecordData.safeParse({ name: "Latte", imageAssetId: 5 }).success).toBe(false);
   });
+});
+
+describe("product category", () => {
+  it("accepts an optional category ≤40 chars", () => {
+    expect(productRecordData.safeParse({ name: "Latte", category: "Coffee" }).success).toBe(true);
+    expect(productRecordData.safeParse({ name: "Latte", category: "x".repeat(41) }).success).toBe(false);
+    expect(productRecordData.safeParse({ name: "Latte" }).success).toBe(true);
+  });
+});
+
+describe("distinctCategories", () => {
+  const rec = (name: string, category?: string, status = "active", kind = "product") =>
+    ({ kind, status, data: { name, ...(category ? { category } : {}) } });
+  it("derives first-seen-casing distinct list from active products only", () => {
+    const list = distinctCategories([
+      rec("A", "Coffee"), rec("B", "coffee"), rec("C", "Merch"),
+      rec("D", "Seasonal", "archived"), rec("E"), rec("F", "Tea", "active", "offer"),
+    ]);
+    expect(list).toEqual(["Coffee", "Merch"]);
+  });
+  it("empty input → empty list", () => expect(distinctCategories([])).toEqual([]));
 });
