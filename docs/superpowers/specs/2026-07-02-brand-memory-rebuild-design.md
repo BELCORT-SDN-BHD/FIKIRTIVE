@@ -1,7 +1,13 @@
 # Brand memory 重建 — 设计 spec
 
 日期：2026-07-02 · 分支：`claude/brand-memory-rebuild`（off main `e61722f`）
-状态：**待创始人审核** · mockup：`~/Desktop/brandmem-rebuild-mock.png`
+状态：**已被升级** · mockup：`~/Desktop/brandmem-rebuild-mock.png`
+
+> ⚠️ **2026-07-02 升级**：分类法已重设计并拍板 —— 见
+> `2026-07-02-brand-memory-taxonomy-fable-design.md`（§5 拍板结果）。
+> 本 spec 的「4 分区 / category 枚举 / 零新表」部分以该文档为准
+> （6 分区；枚举 → `about|look|rules`；活集合存新 BrandRecord 表 = 拍板 C）。
+> 聊天置顶、自动生效+可撤销（方案 A 机制）、徽章、钱路条款等其余部分**继续有效**。
 
 ## 背景 / 目标
 

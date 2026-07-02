@@ -1,6 +1,6 @@
 # Brand memory 分类法重设计 — 静态事实 vs 活集合（FABLE 研究稿）
 
-日期：2026-07-02 · 分支：`claude/brand-memory-rebuild` · 状态：**待创始人拍板（见 §5 开放问题）**
+日期：2026-07-02 · 分支：`claude/brand-memory-rebuild` · 状态：**已拍板 2026-07-02（7/7，见 §5 拍板结果）**
 关系：建立在 `2026-07-02-brand-memory-rebuild-design.md` 之上（不推翻，是升级 —— 见 §4）。
 实现者：Opus（本文不含任何产品代码）。
 
@@ -8,7 +8,7 @@
 
 ## TL;DR
 
-创始人的直觉是对的：品牌知识**不是一种东西**。「品牌是谁 / 长什么样 / 什么不能做」是**慢变的单例事实**，平铺卡片就够；但**产品、客群、优惠**是**活集合** —— 会持续增长、每条是有生命周期的结构化记录，硬塞进「一行自由文本」是错的。建议：6 个分区 = 3 个静态事实区（About / Look & feel / Do & don't）+ 3 个活集合区（Your customers / Your products / Your offers）。v1 **零新表**：活集合记录复用现有 Memory 表（category 当 kind 判别符，content 存 zod 校验过的紧凑 JSON），rebuild spec 的 diff/undo 机制原样适用。注入按「分区预算」分层：静态全量、客群/优惠只注 active、产品注摘要+Top-N，另加一个 $0 只读 skill `lookupProducts` 让 OTTO 按需查全量目录 —— 目录再大也不爆 context。
+创始人的直觉是对的：品牌知识**不是一种东西**。「品牌是谁 / 长什么样 / 什么不能做」是**慢变的单例事实**，平铺卡片就够；但**产品、客群、优惠**是**活集合** —— 会持续增长、每条是有生命周期的结构化记录，硬塞进「一行自由文本」是错的。建议：6 个分区 = 3 个静态事实区（About / Look & feel / Do & don't）+ 3 个活集合区（Your customers / Your products / Your offers）。存储 **已拍板选 C**（通用 BrandRecord 表，真日期列，一步到位不搬家 —— FABLE 原默认 A 被创始人否，见 §5 拍板结果）；静态事实照旧留在 Memory 表。undo 机制需扩展覆盖 BrandRecord（见 §3）。注入按「分区预算」分层：静态全量、客群/优惠只注 active、产品注摘要+Top-N，另加一个 $0 只读 skill `lookupProducts` 让 OTTO 按需查全量目录 —— 目录再大也不爆 context。
 
 ---
 
@@ -240,6 +240,21 @@ Your products: 37 total (5 pinned). Top:
 5. **过期 offer 的行为**：到期后静默从 OTTO 上下文剔除 + UI 置灰（安静），还是同时在聊天里提醒你（「Raya 促销昨天到期了」）？→ **默认静默**，主动提醒 = v2。
 6. **产品规模假设**：按 ≤200 SKU 设计（摘要 + Top-10 + lookupProducts 兜底），还是第一天就按千级目录 + Shopify/Meta feed 导入设计？→ **默认 ≤200**（你的用户画像是中小商家；feed 导入是清晰的 v2）。
 7. **建站研究要不要升级**：researchBrandFromUrl 是否 v1 就升级为「顺手抽出产品和优惠记录」（每次研究多一点 LLM 花费）？→ **默认不升**：先聊天驱动（「把网站上的产品记下来」→ OTTO 用 researchWeb + saveProduct 也能做到），观察用法再决定。
+
+### 拍板结果（创始人，2026-07-02）
+
+| # | 决定 | 与默认的关系 |
+|---|---|---|
+| 1 | 存储 = **C · 通用 BrandRecord 表**（真日期/状态列，1 migration，undo 扩展到新表；"最好且 scalable"，不搬家） | ⚠️ **改默认**（原默认 A） |
+| 2 | 页面 = **单页 6 分区**（产品/优惠 Top-N + View all） | = 默认 |
+| 3 | OTTO 写记录 = **全部自动生效 + 可撤销**（不逐条确认） | = 默认 |
+| 4 | 产品价格 = **存，display-only** 自由文本 + updatedAt 可见 + OTTO 价格纪律 | = 默认 |
+| 5 | 过期 offer = **静默**（自动剔出 context + UI 置灰；主动提醒 = v2） | = 默认 |
+| 6 | 产品录入 = **手动 + 聊天**（Shopify/Meta feed 导入 = v2；C 表已为其留好底子） | = 默认 |
+| 7 | 建站研究 = **v1 就升级**：researchBrandFromUrl 顺手抽产品/优惠为结构化记录 | ⚠️ **改默认**（原默认不升） |
+
+拍板 1 的连带：§3 的「A 方案三纪律」中纪律 1（唯一写入口 + zod）与纪律 3（status 读时推导）**照样适用于 C 表**（`data Json` 列仍需 zod 校验层；offer 过期仍读时推导）；纪律 2（记录/笔记共存）简化 —— 记录住 BrandRecord，松散笔记住 Memory，天然分离，旧 Products/Audience 事实仍按 §4 读时映射成对应分区的松散笔记。
+拍板 7 的连带：researchBrandFromUrl 的 SYSTEM prompt 升级为同时产出 facts + products + offers（zod 校验后走各自写入口）；研究仍是既有 metered LLM 路径，不新增花钱路径。
 
 ---
 
