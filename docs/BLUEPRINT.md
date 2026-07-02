@@ -22,12 +22,16 @@
 **FIKIRTIVE = 一座给东南亚(首发马来西亚)中小商家的 agentic marketing OS。**
 住户是不懂营销、不懂 AI 的老板 —— 他们雇不起营销团队,所以这座城给他们一个**超级员工:Otto**。
 
-**Otto 就是产品本身。** 用户不学工具、不填表单、不切换十个 app —— 只跟 Otto 说话。Otto 是"营销界的 Claude Code":有技能注册表、有品牌记忆、有异步工厂、有人工闸门。
+**双模城市 —— 这是卖点的根(founder 2026-07-03 定调)。**
+每一栋楼都必须是**真实、完整、人可以亲手操作的工具**:真正的 CRM、真正的 campaign 管理、真正的排期表 —— 功能深度对标 Salesforce / HubSpot,**不依赖 Otto 也完全能用**。
+**卖点在上面一层:Otto 能替用户操作这一切的 100%。** 竞品卖工具,FIKIRTIVE 卖"完整的工具 + 一个会用全部工具的超级员工"。两个都是真的:楼是真的楼,员工是真的员工。
 
-**终局形态(城市群全景)**:一个 agent 操作的完整营销操作系统 ——
-内容创作(图/视频/分镜)→ 投放(Meta/TikTok/Lazada/Shopee)→ 数据分析 → 排期发布 → **CRM + 自动回复(客服)** → 资产管理。全部通过 Otto 一张嘴驱动。今天建成的是创作区和广告区的地基;CRM/回复/更多平台是已规划的新区(见第六章)。
+**Otto 是差异化,不是遮羞布。** Otto 是"营销界的 Claude Code":有技能注册表、有品牌记忆、有异步工厂、有人工闸门。用户可以只跟 Otto 说话把事做完,也可以随时亲手进任何一栋楼自己操作 —— 两条路通向同一份数据。
 
-**只有一扇门。** 曾经的 /simple + /pro 双门设计已废除。Pro/agency 是未来往上加的**楼层**,不是并排的另一栋楼。
+**终局形态(城市群全景)**:一个完整营销操作系统 ——
+内容创作(图/视频/分镜)→ 投放(Meta/TikTok/Lazada/Shopee)→ 数据分析 → 排期发布 → **CRM + campaign 管理 + 自动回复(客服)** → 资产管理。每一环都人工可操作,每一环 Otto 都能 100% 代劳。今天建成的是创作区和广告区的地基;CRM/campaign 管理/回复/更多平台是已规划的新区(见第六章,功能清单以 Salesforce/HubSpot 全量分析为底稿)。
+
+**只有一扇门。** 曾经的 /simple + /pro 双门设计已废除。Pro/agency 是未来往上加的**楼层**,不是并排的另一栋楼。"双模"不是第二扇门 —— 同一个 app 里,Otto 和人工操作的是同一批楼。
 
 ---
 
@@ -39,8 +43,9 @@
 4. **审批的数学**:`needsApproval = (cost=spend) ∥ (effect=write ∧ reach=external)`。三字段缺一即取最危险值(fail-closed)。这条公式是城市的电闸,不许出现绕过它的旁路。
 5. **定价永不硬编码。** 目标毛利 40–50%;图约 2.5x、视频近成本卖、**利润主要在 Otto 本身**(订阅/按任务)。credits 与美元锚定(1 credit = $0.10,内部 ×10 记账)。
 6. **租户铁幕。** 一切数据 ownerId 隔离;身份永远来自 session(requireOwner),永远不信客户端传的 org/owner。跨租户读一个字节 = 事故。
-7. **明确不盖的楼**(拍板过,别再提案):Build 终端 coding agent、独立通用 Chat、Spicy/18+ NSFW。
-8. **语言约定**:spec/skill 文档用华语(founder 复审);生成 prompt 一律英文;UI 文案 sentence case。
+7. **双模原则(2026-07-03)。** 每个功能区必须满足两条:(a) **人工可完整操作** —— Otto 不在也是一个能打的产品;(b) **Otto 可 100% 代操作** —— 每个人工操作面都有对应 skill 通路。"只有 Otto 够得着的功能"和"Otto 够不着的功能"都算设计缺陷(存量逐步补齐,新区一步到位)。
+8. **明确不盖的楼**(拍板过,别再提案):Build 终端 coding agent、独立通用 Chat、Spicy/18+ NSFW。
+9. **语言约定**:spec/skill 文档用华语(founder 复审);生成 prompt 一律英文;UI 文案 sentence case。
 
 ---
 
@@ -102,13 +107,15 @@ pg-boss 五条队列 + 三类回收器(gen/refgen/LLM 预扣)、ingest 哈希复
 
 ## 六、还没盖的区(终局路线,方向已定、图纸未画)
 
-按 founder 的城市群构想,以下新区**方向锁定**,动工前必须各自出 spec 走第五章流程:
+按 founder 的城市群构想,以下新区**方向锁定**,动工前必须各自出 spec 走第五章流程。
+**新区的功能清单不凭空发明** —— 以 Salesforce + HubSpot 全量 feature 分析为底稿(`docs/research/`,2026-07-03 起),founder 逐项 WHAT-pass(要/不要/以后)拍板后才画施工图;每个新区同时满足宪法第 7 条双模原则(人工全操作 + Otto 100% 代劳)。
 
+- **CRM 区**(客户/联系人/公司、线索与 pipeline、生命周期阶段、活动时间线 —— 对标 Salesforce Sales Cloud 核心 + HubSpot Smart CRM;全新区)
+- **Campaign 管理区**(campaign 对象、预算、多渠道编排、归因、UTM、campaign 级报表 —— 对标两家的 campaign 体系;把现有"投放"升格为完整管理面)
 - **多平台广告区扩建**:TikTok → Lazada → Shopee(渠道缝已铺好,每平台独立 PR + 独立安全测试,顺序按商业价值定)
 - **排期发布区**(spec 已有,等 App Review)
 - **全量分析区**(spec 已有)
-- **CRM 区**(客户数据、线索、生命周期 —— 全新区,需从 spec 开始)
-- **自动回复/客服区**(IG/FB DM、WhatsApp?—— 全新区)
+- **自动回复/客服区**(共享收件箱、IG/FB DM、WhatsApp、chatbot、知识库 —— 对标 Service Hub / Service Cloud;全新区)
 - **订阅层**(Stripe Phase 4;利润在 Otto 的定价哲学落地处)
 - **定时任务/自主 Otto**(唯一碰"自主花钱"的楼 —— **必须 founder 共同设计花钱闸后才许动工**,已明文记档)
 - **Agency/Pro 楼层**(多品牌管理,盖在现有楼上,不开第二扇门)
@@ -124,3 +131,4 @@ pg-boss 五条队列 + 三类回收器(gen/refgen/LLM 预扣)、ingest 哈希复
 | 日期 | 修订 | 批准 |
 |---|---|---|
 | 2026-07-03 | v1 初稿(Fable 5 起草,基线 main #106) | 待 founder 定稿 |
+| 2026-07-03 | v1.1 双模原则入宪(宪法第 7 条)+ 第一章重写 + 第六章新区以 SF/HS 全量分析为底稿(founder 口述修订,总审查员执笔) | 待 founder 定稿 |
