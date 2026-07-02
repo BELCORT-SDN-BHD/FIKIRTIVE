@@ -20,4 +20,10 @@ describe("registry", () => {
     expect(gen.needsApproval).toBe(true);
     expect(gen.cost).toBe("spend");
   });
+  it("catalog carries the requires declaration for each skill", () => {
+    const propose = skillCatalog.find((m) => m.name === "propose")!;
+    expect(Array.isArray(propose.requires)).toBe(true);
+    // 每个 skill 至少有一个空数组（不是 undefined）
+    expect(skillCatalog.every((m) => Array.isArray(m.requires))).toBe(true);
+  });
 });

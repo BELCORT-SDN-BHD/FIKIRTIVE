@@ -38,6 +38,7 @@ export interface SkillMeta {
   reach: Reach;
   needsApproval: boolean;
   description: string;
+  requires: { field: string; question: string }[];
 }
 
 export const skillCatalog: SkillMeta[] = allSkills.map((s) => ({
@@ -47,4 +48,5 @@ export const skillCatalog: SkillMeta[] = allSkills.map((s) => ({
   reach: s.reach,
   needsApproval: s.needsApproval,
   description: s.description,
+  requires: s.requires,
 }));

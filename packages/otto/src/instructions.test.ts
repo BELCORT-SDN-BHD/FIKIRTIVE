@@ -71,3 +71,16 @@ describe("ottoInstructions — attached reference image", () => {
     expect(ottoInstructions.toLowerCase()).toContain("default to");
   });
 });
+
+describe("ottoInstructions — 刨根问底 (intent before creating)", () => {
+  it("has the intent-first section", () => {
+    expect(ottoInstructions).toMatch(/刨根问底|before you propose|before creating/i);
+  });
+  it("tells Otto to autofill from brand memory and ask only for gaps", () => {
+    expect(ottoInstructions).toMatch(/brand memory/i);
+    expect(ottoInstructions).toMatch(/only for what.?s (genuinely )?missing|only for the gaps|only ask/i);
+  });
+  it("tells Otto how to handle a needMoreInfo tool result", () => {
+    expect(ottoInstructions).toContain("needMoreInfo");
+  });
+});
