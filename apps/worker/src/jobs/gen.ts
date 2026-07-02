@@ -21,6 +21,8 @@ import {
   GEN_QUEUE,
   videoDefaults,
   MAX_CONDITIONING_IMAGES,
+  REF_VIDEO_MIN_SECONDS,
+  REF_VIDEO_MAX_SECONDS,
   genSpentUsd,
   pricedGenCredits,
   displayCredits,
@@ -526,6 +528,15 @@ export async function handleGen(data: GenJobData, retryCount: number): Promise<v
         });
         if (!rv) {
           await failClosedWithRefund(job, "reference video not found (or not a video) in this project");
+          return;
+        }
+        // Margin guard: BytePlus bills reference-video input by duration while our charge is
+        // flat per resolution. The composer gates 2–10s client-side; re-enforce here from
+        // ingest's ffprobe (Asset.durationS). null = probe pending/failed → allow (the async
+        // ingest race is the NORMAL flow right after attach; the client already gated it).
+        const refDur = rv.asset.durationS;
+        if (refDur != null && (refDur < REF_VIDEO_MIN_SECONDS || refDur > REF_VIDEO_MAX_SECONDS)) {
+          await failClosedWithRefund(job, `reference video must be ${REF_VIDEO_MIN_SECONDS}–${REF_VIDEO_MAX_SECONDS}s (this clip is ~${Math.round(refDur)}s)`);
           return;
         }
         refVideoUrl = (await storage.presignedGet(storageKey(rv.asset.ownerId, rv.asset.contentHash, rv.asset.ext), 3600)) ?? "";

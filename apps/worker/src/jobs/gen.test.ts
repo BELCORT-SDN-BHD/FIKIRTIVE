@@ -90,6 +90,37 @@ describe("handleGen VIDEO — reference video resolution (fail-closed)", () => {
     expect(m.chatMessageCreate.mock.calls[0]![0].data).toMatchObject({ kind: "TURN_ERROR", genJobId: "g1" });
   });
 
+  it("reference video longer than the 2–10s window → fail closed, no spend (margin guard)", async () => {
+    // The client gates 2–10s, but a hand-crafted request could attach a long clip: BytePlus
+    // bills by input duration while we charge flat per resolution — a margin leak. Ingest's
+    // ffprobe stores Asset.durationS; enforce the window server-side when the probe value exists.
+    const asset = { ownerId: "o1", contentHash: "a".repeat(64), ext: "mp4", durationS: 25 };
+    m.generationFindFirst.mockResolvedValue({ id: "gen_ref_long", asset });
+
+    await handleGen({ genJobId: "g1" }, 0);
+
+    expect(m.generateVideo).not.toHaveBeenCalled();
+    const updateCall = m.genJobUpdate.mock.calls.find((c) => c[0]?.data?.status === "FAILED");
+    expect(updateCall).toBeTruthy();
+    expect(updateCall![0].data.error).toMatch(/2.*10/);
+    expect(m.refundReservation).toHaveBeenCalledWith(expect.anything(), { orgId: "o1", refId: "g1" });
+  });
+
+  it("reference video with durationS null (ingest probe pending/failed) → allowed (client already gated)", async () => {
+    const asset = { ownerId: "o1", contentHash: "a".repeat(64), ext: "mp4", durationS: null };
+    m.generationFindFirst.mockResolvedValue({ id: "gen_ref_noprobe", asset });
+    const storageModule = await import("../storage.js");
+    (storageModule.storage as unknown as { presignedGet: (k: string, t: number) => Promise<string> }).presignedGet = vi.fn(async () => "https://signed/ref.mp4");
+    (storageModule.storage as unknown as { put: (b: Uint8Array, e: string) => Promise<{ contentHash: string; ext: string }> }).put = vi.fn(async () => ({ contentHash: "outhash", ext: "mp4" }));
+    m.generateVideo.mockResolvedValue({ bytes: new Uint8Array([1, 2, 3]), ext: "mp4" });
+    m.prisma.asset = { upsert: vi.fn(async () => ({ id: "asset1" })) };
+    m.prisma.generation.create = vi.fn(async () => ({ id: "gen_out1" }));
+
+    await handleGen({ genJobId: "g1" }, 0);
+
+    expect(m.generateVideo).toHaveBeenCalledTimes(1);
+  });
+
   it("reference video resolved → refVideoUrl passed to provider.generateVideo", async () => {
     const asset = { ownerId: "o1", contentHash: "a".repeat(64), ext: "mp4" };
     m.generationFindFirst.mockResolvedValue({ id: "gen_ref_missing", asset });

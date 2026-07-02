@@ -76,6 +76,11 @@ export const MAX_GEN_COUNT = 4;
 export const MAX_GEN_PROMPT = 2000;
 export const MAX_GEN_ENTITIES = 8;
 export const GEN_VIDEO_SECONDS = 5;
+/** Whole-clip reference video window: Seedance needs ≥2s; the upper bound protects COGS
+ *  (BytePlus bills by input duration, our charge is flat per resolution). Enforced in the
+ *  composer AND server-side in the worker (via Asset.durationS from ingest's ffprobe). */
+export const REF_VIDEO_MIN_SECONDS = 2;
+export const REF_VIDEO_MAX_SECONDS = 10;
 /** Image price is flat per image; video price is dynamic — see videoPriceUsd
  *  (scales with duration × resolution × audio × count). */
 // F39: this is the RECORD-ONLY COGS basis (spentUsd/margin reporting), not the charge (images
