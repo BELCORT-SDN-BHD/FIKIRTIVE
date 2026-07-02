@@ -91,6 +91,24 @@ describe("generateVideo (Seedance, async)", () => {
       .rejects.toThrow(/end frame/);
     expect(calls).toHaveLength(0); // pre-spend: never hit the API
   });
+  it("generateVideo includes a reference_video content part when refVideoUrl is set", async () => {
+    let submitBody: any;
+    stubFetch((url, init) => {
+      if (url.endsWith("/contents/generations/tasks") && init?.method === "POST") {
+        submitBody = JSON.parse(init.body); return jsonRes({ id: "cgt-4" });
+      }
+      if (url.includes("/tasks/cgt-4")) return jsonRes({ status: "succeeded", content: { video_url: "https://x/v.mp4" } });
+      return bytesRes();
+    });
+    const promise = new BytePlusProvider("ark-test").generateVideo({ prompt: "move like this", imageUrl: "", refVideoUrl: "https://x/ref.mp4", durationSeconds: 5, model: "seedance-2-fast" });
+    await vi.runAllTimersAsync();
+    await promise;
+    const parts = submitBody.content as Array<{ type: string; role?: string; video_url?: { url: string } }>;
+    const vp = parts.find((c) => c.type === "video_url");
+    expect(vp).toBeTruthy();
+    expect(vp!.role).toBe("reference_video");
+    expect(vp!.video_url!.url).toBe("https://x/ref.mp4");
+  });
 });
 
 describe("generate (Seedream image, sync)", () => {

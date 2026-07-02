@@ -271,6 +271,7 @@ export class FalProvider implements GenerationProvider {
   }
 
   async generateVideo(req: VideoRequest): Promise<GeneratedVideo> {
+    if (req.refVideoUrl) throw new Error("fal provider does not support whole-clip reference video (BytePlus only)"); // pre-spend
     // Resolve the model's fal wiring. Unknown model → fail BEFORE the paid POST
     // (no spend); the contract already rejects it, this is defense in depth.
     const cfg = VIDEO_CFG[req.model as GenVideoModel];
