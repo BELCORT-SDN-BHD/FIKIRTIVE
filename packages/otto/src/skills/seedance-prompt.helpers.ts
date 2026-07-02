@@ -46,7 +46,8 @@ export function assembleSeedance(i: SeedancePromptInput): string {
   const locks = identityLockClause(i.references);
   if (locks) lines.push(locks);
   if (i.pacing) lines.push(i.pacing);
-  if (i.cleanFootage) lines.push("no on-screen text, watermark, or logo");
+  const hasLockedBrandmark = i.references.some((r) => r.role === "brandmark" && r.lock);
+  if (i.cleanFootage && !hasLockedBrandmark) lines.push("no on-screen text, watermark, or logo");
   if (i.constraints) lines.push(i.constraints);
   return lines.join("\n");
 }

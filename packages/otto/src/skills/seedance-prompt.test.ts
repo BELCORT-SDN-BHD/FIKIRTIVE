@@ -74,6 +74,21 @@ describe("assembleSeedance", () => {
     expect(out).not.toContain("starting from the given first frame");
     expect(out).not.toContain("keep the subject consistent with the source frame");
   });
+  it("a locked brandmark reference suppresses the clean-footage logo ban", () => {
+    const out = assembleSeedance(seedancePromptInput.parse({
+      shots: [{ subject: "the bottle", action: "spins slowly" }],
+      references: [{ role: "brandmark", name: "the AeroCo logo", lock: true }],
+    }));
+    expect(out).not.toContain("no on-screen text, watermark, or logo");
+    expect(out).toContain("reproduce the");
+  });
+  it("a brandmark reference with lock:false still gets the clean-footage logo ban", () => {
+    const out = assembleSeedance(seedancePromptInput.parse({
+      shots: [{ subject: "the bottle", action: "spins slowly" }],
+      references: [{ role: "brandmark", name: "the AeroCo logo", lock: false }],
+    }));
+    expect(out).toContain("no on-screen text, watermark, or logo");
+  });
 });
 
 describe("seedancePromptSkill gate", () => {
