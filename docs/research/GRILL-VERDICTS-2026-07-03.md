@@ -93,3 +93,9 @@
 ---
 
 # ✅ WHAT-pass 全卷封盘(2026-07-03):158 簇 + 7 红旗 + 5 市政厅题,全部有判决。
+
+## 追加判决(founder 2026-07-03)
+
+| 项 | 判决 | 内容 |
+|---|---|---|
+| Search API(Tavily)计价 | **3x(200% margin),不并进 Otto 1.5x** | founder:"那么便宜,可以 200% 的 margin"。basic $0.008 → 收 ~3 internal credits($0.03);advanced $0.016 → ~5 internal($0.05)。**落地形态**:像 LLM token 一样走 turn 计量(withLlmBudget 的 settle 加 search 项,各用各的 margin 率),skill 保持 free/read/external —— **不做每次搜索弹审批**(否则 Otto 每查一下都要用户点头);消费明细里单列 "search" 类目(founder 的 credit 明细指令自动覆盖)。费率进 config 层,永不硬编码。 |
