@@ -3,6 +3,9 @@ import { OttoApp, type OttoViewKey } from "@/components/otto/OttoApp";
 import type { MemoryRow } from "@/lib/memory-actions";
 import type { BrandRecordRow } from "@/lib/brand-record-actions";
 import type { EntityDTO } from "@/lib/types";
+import type { AnalyticsData } from "@/lib/analytics-actions";
+import { buildChart, buildInsightText } from "@/lib/analytics-view";
+import type { DailyMetric } from "@/lib/meta-graph";
 
 export const dynamic = "force-dynamic";
 export const metadata = { title: "Skin preview (dev)" };
@@ -57,6 +60,35 @@ export default async function SkinPreviewPage({
     },
   ];
 
+  // Analytics mock (ready state) — a 28-point reach series with a clear best day so the
+  // chart is non-empty and the OTTO "best day" insight fires. KPIs are hand-built to show
+  // every delta variant: an up, a down, a null-delta "—", and a flat-ish up. Read-only mock.
+  const reachSeries: DailyMetric[] = Array.from({ length: 28 }, (_, i) => {
+    const base = 900 + i * 60; // gently rising trend
+    const bump = i === 21 ? 4200 : i % 6 === 0 ? 800 : 0; // one standout day + minor peaks
+    const reach = base + bump;
+    return {
+      date: `2026-06-${String(i + 1).padStart(2, "0")}`,
+      spend: 15,
+      reach,
+      impressions: reach * 3,
+      clicks: Math.round(reach * 0.06),
+    };
+  });
+  const analytics: AnalyticsData = {
+    state: "ready",
+    range: "30d",
+    kpis: [
+      { label: "Reach", value: "48.2K", delta: { dir: "up", text: "▲ 18%" } },
+      { label: "Engagement", value: "3,140", delta: { dir: "down", text: "▼ 6%" } },
+      { label: "Spend", value: "—", delta: null },
+      { label: "Sales (est.)", value: "RM 2,140", delta: { dir: "up", text: "▲ 24%" } },
+    ],
+    chart: buildChart(reachSeries, 820, 180),
+    insight: buildInsightText(reachSeries),
+    empty: false,
+  };
+
   const iso = new Date(0).toISOString();
   return (
     <OttoApp
@@ -82,6 +114,7 @@ export default async function SkinPreviewPage({
       ads={[]}
       adJobs={[]}
       account={null}
+      analytics={analytics}
       history={[
         ...Array.from({ length: 5 }, (_, i) => ({
           id: `h${i}`,

@@ -12,6 +12,8 @@ import { OttoChatStream } from "./OttoChatStream";
 import { OttoMemory } from "./OttoMemory";
 import { OttoAccount } from "./OttoAccount";
 import { OttoStuff, type AdTile } from "./OttoStuff";
+import { OttoAnalytics } from "./OttoAnalytics";
+import type { AnalyticsData } from "@/lib/analytics-actions";
 import { OttoOnboarding } from "./OttoOnboarding";
 import OttoLibrary from "./OttoLibrary";
 import OttoTemplates from "./OttoTemplates";
@@ -38,6 +40,8 @@ interface OttoViewProps {
   adJobs: AdJobItem[];
   history: HistoryThumb[];
   account: AccountInfo | null;
+  /** Analytics view payload — wired in Task 5; the Analytics branch consumes it. */
+  analytics: AnalyticsData;
   ottoStreamEnabled: boolean;
   onBalanceRefresh: () => Promise<void>;
   onViewChange: (view: OttoViewKey) => void;
@@ -70,6 +74,7 @@ export function OttoView({
   adJobs,
   history,
   account,
+  analytics,
   ottoStreamEnabled,
   onBalanceRefresh,
   onViewChange,
@@ -118,7 +123,7 @@ export function OttoView({
     return <ComingSoon title="Schedule" line="Plan your posts on a calendar and let OTTO auto-publish to Instagram and Facebook. Coming soon." />;
   }
   if (view === "analytics") {
-    return <ComingSoon title="Analytics" line="See how your posts and ads perform, read straight from Meta. Coming soon." />;
+    return <OttoAnalytics initial={analytics} onNavigate={onViewChange} />;
   }
   if (view === "stuff") {
     return (

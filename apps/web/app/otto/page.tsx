@@ -6,6 +6,7 @@ import { toEntityDTO, toChatThreadDTO, toChatThreadMetaDTO } from "@/lib/dto";
 import { getMyAccount } from "@/lib/account-actions";
 import { listMemory } from "@/lib/memory-actions";
 import { listBrandRecords } from "@/lib/brand-record-actions";
+import { getAnalytics } from "@/lib/analytics-actions";
 import { OttoApp } from "@/components/otto/OttoApp";
 
 export const dynamic = "force-dynamic";
@@ -35,7 +36,7 @@ export default async function OttoPage({ searchParams }: { searchParams: Promise
   const active = (sp?.project && projects.find((p) => p.id === sp.project)) || projects[0];
   const projectId = active?.id ?? ensured.id;
 
-  const [entities, threadRows, accountResult, memory, records, ads, adJobs, history, allThreadRows] = await Promise.all([
+  const [entities, threadRows, accountResult, memory, records, ads, adJobs, history, allThreadRows, analytics] = await Promise.all([
     getEntities(ownerId),
     getCoworkThreads(ownerId, projectId),
     getMyAccount(),
@@ -45,6 +46,9 @@ export default async function OttoPage({ searchParams }: { searchParams: Promise
     getMyAdJobs(ownerId, projectId).catch(() => [] as Awaited<ReturnType<typeof getMyAdJobs>>),
     getRecentGenerationThumbs(ownerId, projectId).catch(() => [] as Awaited<ReturnType<typeof getRecentGenerationThumbs>>),
     getAllCoworkThreadMetas(ownerId).catch(() => [] as Awaited<ReturnType<typeof getAllCoworkThreadMetas>>),
+    // Analytics view payload for the Analytics screen (read-only Meta reads; default 30d range).
+    // Refined in Task 5; provided here so the required OttoApp `analytics` prop typechecks.
+    getAnalytics({}).catch(() => ({ state: "notConnected" as const })),
   ]);
 
   // Open the requested thread (?thread=, if it's in this project) or the most recent.
@@ -90,6 +94,7 @@ export default async function OttoPage({ searchParams }: { searchParams: Promise
       ads={ads}
       adJobs={adJobs}
       account={account}
+      analytics={analytics}
       history={history}
       ottoStreamEnabled={ottoStreamEnabled}
       initialView={initialView}

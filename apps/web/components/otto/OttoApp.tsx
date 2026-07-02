@@ -11,6 +11,7 @@ import type { EntityDTO, ChatThreadDTO } from "@/lib/types";
 import type { MemoryRow } from "@/lib/memory-actions";
 import type { BrandRecordRow } from "@/lib/brand-record-actions";
 import type { AccountInfo } from "@/lib/account-actions";
+import type { AnalyticsData } from "@/lib/analytics-actions";
 import type { HistoryThumb } from "@/lib/data";
 import { getMyAccount } from "@/lib/account-actions";
 import { deleteCoworkThread } from "@/lib/otto-client-actions";
@@ -52,6 +53,8 @@ export interface OttoAppProps {
   ads: AdTile[];
   adJobs: AdJobItem[];
   account: AccountInfo | null;
+  /** Analytics view payload — threaded to OttoView's Analytics branch (server-fetched in Task 5). */
+  analytics: AnalyticsData;
   /** Recent generation thumbnails for the sidebar History strip (display-only). */
   history?: HistoryThumb[];
   ottoStreamEnabled: boolean;
@@ -82,6 +85,7 @@ export function OttoApp({
   ads,
   adJobs,
   account,
+  analytics,
   history,
   ottoStreamEnabled,
   initialView,
@@ -339,6 +343,7 @@ export function OttoApp({
           adJobs={adJobs}
           history={history ?? []}
           account={account}
+          analytics={analytics}
           ottoStreamEnabled={ottoStreamEnabled}
           onBalanceRefresh={refreshBalance}
           onViewChange={setView}
