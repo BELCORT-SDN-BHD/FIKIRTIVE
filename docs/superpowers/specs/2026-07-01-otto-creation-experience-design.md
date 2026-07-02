@@ -90,8 +90,8 @@
 | # | skill / 组件 | 作用 | cost/effect/reach → gate | 框架改动 |
 |---|---|---|---|---|
 | **A** | `requires` 字段 | 每个 skill 声明所需资讯（`{ field, question, canAutofill? }[]`） | —（框架层）| **OttoSkillSpec 加一个可选字段**（本设计唯一的框架改动）|
-| **B** | `clarify` skill | 出结构化问题卡、刨根问底 | free / write / internal → 不审批 | 复用 `propose` 的"写卡片"模式（**不用** SDK interrupt）|
-| **C** | `recallBrandFact` skill | Otto 察觉缺资讯时去 brandbrain 定向查 | free / read / internal → 不审批 | 复用现有 `brandBrain` port |
+| **B** | `clarify` skill（**已砍**，2026-07-02 复审拍板） | 刨根问底由**纯文字追问 + `needMoreInfo`** 实现（多轮问答是运行时原生能力，见 block 1） | — | 不建：QUESTION_CARD 只是 UI 糖（YAGNI）；若 F 的编辑 UI 需要结构化问答再评估 |
+| **C** | `recallBrandFact` skill（**已砍**，block-1 拍板） | brandContext 每轮已整体自动注入，定向查询冗余 | — | 不建 |
 | **D** | `seedancePrompt` skill | 精通 Seedance 视频 prompt 风格 | free / read / internal → 不审批 | 借 `seedance-prompt-skill` 模板 |
 | **E** | `seedreamPrompt` skill | 精通 Seedream 图像 prompt 风格 | free / read / internal → 不审批 | 加模型 = 加这类 skill（模块化）|
 | **F** | `proposeStoryboard` + `STORYBOARD_CARD` + 逐帧编辑 UI | 出可编辑的有序分镜 | free / write / internal → 不审批 | 新卡片类型 + 编辑 UI |
@@ -99,10 +99,10 @@
 
 ### 4.2 关键机制
 
-**追问硬门（A + B + C）**
+**追问硬门（A + 指令；B/C 已砍，见上表）**
 - **硬拦截**：`requires` 里的每个字段必须满足，否则 Otto 不出分镜 / 不执行。**例外放行**：用户明说"不需要"或该资讯"没有"（每字段可被用户显式豁免）。执行时用 `execute` 内的自检返回"缺资讯"来兜底，不只是 prompt 引导。
-- **资讯来源经由 skill 处理**：Otto 发现缺资讯时，先看已注入的 brandContext，再调 `recallBrandFact` 去 brandbrain 定向查，仍缺的才用 `clarify` 问用户。
-- **wait/continue 免费**：clarify 不用 SDK 的 needsApproval interrupt（那是给花钱/外部写的）；它就是一张 `QUESTION_CARD` + 用户答案作为下一轮用户消息回流。
+- **资讯来源**：Otto 发现缺资讯时，先用已注入的 brandContext 自动补齐，仍缺的才**纯文字**追问用户。（复审拍板：不建 `recallBrandFact`——品牌记忆每轮已整体注入；不建 `clarify` 卡片——文字追问 + `needMoreInfo` 已够。）
+- **wait/continue 免费**：追问不用 SDK 的 needsApproval interrupt（那是给花钱/外部写的）；Otto 纯文字提问，用户答案作为下一轮用户消息回流。
 
 **分镜（F）**
 - 新 `STORYBOARD_CARD`，payload 为**有序**结构：`{ shots: [{ index, title, firstFramePrompt, videoPrompt, keyframeGenerationId?, continuity? }] }`，起点复用 `CoworkPlan`/`coworkPlan` 的 Zod 形状。
@@ -134,8 +134,8 @@
 
 ## 6. Build 顺序（一次一块，每块单独细化）
 
-1. **A + B + C**（`requires` + `clarify` + `recallBrandFact`）→ 立刻兑现"刨根问底"北极星，独立可上，最小改动。← **先做这块**
-2. **D + E**（Seedance/Seedream prompt 精通）→ 提升质量，现有 `propose` 马上也受益，低风险。
+1. **A + 指令 + propose 装 goal 门** → **已 ship：PR #83**（原计划的 B/C 经 2026-07-02 复审砍除；proposePack 的 goal 门随复审补进 PR #91）。
+2. **D + E**（Seedance/Seedream prompt 精通）→ **已 ship：PR #91**（stacked 在 #83 上）。
 3. **F**（`STORYBOARD_CARD` + `proposeStoryboard` + 编辑 UI）→ 依赖 1、2。
 4. **G**（两道闸执行 + 连贯模式）→ 依赖 3，碰花钱路，走 money-safety review。
 
@@ -144,7 +144,7 @@
 ## 7. 未决 / 后续
 
 - **首帧图"预览档"**：闸① 用正式 Seedream 生成还是有便宜的低清预览档？（待确认 Seedream 是否有便宜档；无则用正式生成的最小规格）
-- **prompt 精通 skill 的主动/被动形态**：D/E 是被动知识注入（Otto 自己写 prompt 时参考）还是主动"打磨/校验"工具（Otto 起草 → 按模型偏好重写）？实现细化时定，倾向：注入为主 + 可选校验步。
+- **prompt 精通 skill 的主动/被动形态**：D/E 是被动知识注入（Otto 自己写 prompt 时参考）还是主动"打磨/校验"工具（Otto 起草 → 按模型偏好重写）？**已定（PR #91）**：主动确定性装配 skill；`cowork-directives` 只留作无专属 skill 模型的 fallback。
 - **连贯性判定的具体规则**：Otto 依据什么判断"需要连贯"（用户明说 / 广告类型 / 镜头语义）——细化 G 时定。
 - **参考上传第 ③ 块（多模态喂规划者）** 若要分镜视觉匹配拖入参考图，是软前提；跟踪 `task_21c8587b`。
 
@@ -158,3 +158,10 @@
 - 轮次 / 花钱：`apps/web/lib/otto-actions.ts`、`apps/web/lib/gen-actions.ts`、`packages/otto/src/skills/generate.ts`
 - 参考 / composer：`apps/web/components/otto/OttoChatStream.tsx`、`OttoConversation.tsx`、`PackCard.tsx`；`apps/web/app/api/otto/stream/route.ts`
 - 后端：`packages/core/src/gen.ts`、`packages/generation/src/index.ts`
+
+---
+
+## 9. 变更记录
+
+- **2026-07-02 复审**（founder："走你的建议流程"）：砍 **B**（clarify 卡片——文字追问 + `needMoreInfo` 已够，UI 糖 YAGNI）与 **C**（recallBrandFact——brandContext 已每轮注入）；**proposePack 补 goal 资讯门**（堵住绕过硬门的口子）；**seedancePrompt 补 t2v 指引**（无源帧时不再误写 "starting from the given first frame"）。均进 PR #91。
+- **2026-07-01**：Block 1（requires 资讯门）ship = **PR #83**；Block D/E（prompt 精通）ship = **PR #91**（stacked）。参考上传 → `task_21c8587b`；多参考喂模型 → `task_dc06ac5a`（均已另开 session）。
