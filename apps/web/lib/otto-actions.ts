@@ -33,7 +33,7 @@ import {
   GOAL_PRESETS,
   isGoalKey,
 } from "@fikirtive/core";
-import { otto, withLlmBudget, OTTO_DEFAULT_MODEL, run, RunState, MaxTurnsExceededError, mapOttoUsage, ottoSimpleModeBlock, buildUserTurn, stripHistoryImages } from "@fikirtive/otto";
+import { otto, withLlmBudget, OTTO_DEFAULT_MODEL, run, MaxTurnsExceededError, mapOttoUsage, ottoSimpleModeBlock, buildUserTurn, sanitizeHistory, tryRestoreRunState } from "@fikirtive/otto";
 import type { OttoContext, AgentInputItem } from "@fikirtive/otto";
 import { requireOwner } from "./auth-guard";
 import { isImpersonating } from "@/lib/better-auth/compat";
@@ -41,16 +41,20 @@ import { resolveDisabledModels } from "./model-registry";
 import { startGen } from "./gen-actions";
 import { gatherReferenceImages } from "./otto-ref-images";
 import { getBrandContextText } from "./memory-actions";
-import { fetchAndExtract } from "./brand-research";
+import { fetchAndExtract } from "./fetch-extract";
 import { fetchOwnerInsights } from "./meta-insights";
 import { fetchOwnerAdObjects } from "./meta-objects";
 import { fetchOwnerPages } from "./meta-pages";
 import { proposeMetaActionForOwner } from "./meta-propose";
 import { proposeAdBuildForOwner } from "./meta-build-propose";
+import { validateOwnedGenerationExt } from "./otto-generation-validate";
 
 // mapOttoUsage re-exported from @fikirtive/otto so existing callers that import
 // it from this module continue to work (the canonical source is @fikirtive/otto).
 export { mapOttoUsage } from "@fikirtive/otto";
+
+const IMAGE_EXTS = ["png", "jpg", "jpeg", "webp"];
+const VIDEO_EXTS = ["mp4", "mov", "webm"];
 
 /**
  * Safe one-line error summary for server logs. Logs name/message/statusCode only —
@@ -110,6 +114,13 @@ export function buildContextSystemMessage(ctx: OttoContext): AgentInputItem | nu
       : `the last generation status is ${s}`;
     parts.push(`Current generation status for this conversation: ${human}. Speak about generation progress ONLY based on this.`);
   }
+  if (ctx.referenceVideoGenerationId) {
+    // Per-turn signal: unlike an attached image (which Otto SEES as an input_image part),
+    // a reference video is invisible to the model — so tell it one is attached this turn.
+    parts.push(
+      `The user attached a REFERENCE VIDEO this turn — you cannot see it; reason from their words. Propose kind:"video" so the clip guides the generation's motion, pacing, and style.`,
+    );
+  }
   return parts.length ? ({ role: "system", content: parts.join("\n\n") } as AgentInputItem) : null;
 }
 
@@ -122,12 +133,14 @@ export async function buildOttoContext({
   projectId,
   threadId,
   sourceGenerationId,
+  referenceVideoGenerationId,
   simpleMode,
 }: {
   ownerId: string;
   projectId: string;
   threadId: string;
   sourceGenerationId?: string | null;
+  referenceVideoGenerationId?: string | null;
   simpleMode?: boolean;
 }): Promise<OttoContext> {
   const disabledModels = Array.from(await resolveDisabledModels());
@@ -148,6 +161,7 @@ export async function buildOttoContext({
     threadId,
     disabledModels,
     sourceGenerationId: sourceGenerationId ?? null,
+    referenceVideoGenerationId: referenceVideoGenerationId ?? null,
     images,
     startGen,
     brandContext,
@@ -225,7 +239,16 @@ export async function finalizeOttoRun({
   seqAfterUser: number;
 }): Promise<FinalizeOttoRunResult> {
   const newOttoState = result.state.toString() as string;
-  let seq = seqAfterUser;
+  // Tools persist card messages MID-run at max(seq)+1 (proposePack writes one per
+  // item), so the pre-run seqAfterUser snapshot can be stale. Writing the reply at
+  // seqAfterUser+1 would collide with the first card — a reload (ordered by seq)
+  // then interleaves the TEXT into the pack and splits the PackCard grouping.
+  const lastMsg = await prisma.chatMessage.findFirst({
+    where: { threadId, ownerId },
+    orderBy: { seq: "desc" },
+    select: { seq: true },
+  });
+  let seq = Math.max(seqAfterUser, lastMsg?.seq ?? 0);
 
   // Handle interruption (generate tool parked for approval)
   if (Array.isArray(result.interruptions) && result.interruptions.length > 0) {
@@ -341,7 +364,7 @@ export async function ottoTurn(raw: unknown): Promise<
   if (await isImpersonating()) return { error: "Paused while impersonating a customer — exit impersonation to do this." };
   const { ownerId } = gate;
 
-  const { projectId, text, entityIds, variantSel, sourceGenerationId, replyToMessageId } = parsed.data;
+  const { projectId, text, entityIds, variantSel, sourceGenerationId, referenceVideoGenerationId, replyToMessageId } = parsed.data;
 
   try {
     const OWNED = { ownerId, deletedAt: null } as const;
@@ -353,16 +376,23 @@ export async function ottoTurn(raw: unknown): Promise<
     // Validate sourceGenerationId (owned + in-project + image-ext), else null
     let validSource: string | null = null;
     if (sourceGenerationId) {
-      const g = await prisma.generation.findFirst({
-        where: {
-          id: sourceGenerationId,
-          ...OWNED,
-          projectId,
-          asset: { ext: { in: ["png", "jpg", "jpeg", "webp"] } },
-        },
-        select: { id: true },
+      validSource = await validateOwnedGenerationExt(prisma, {
+        id: sourceGenerationId,
+        ownerId,
+        projectId,
+        exts: IMAGE_EXTS,
       });
-      if (g) validSource = g.id;
+    }
+
+    // Validate referenceVideoGenerationId (owned + in-project + VIDEO-ext), else null
+    let validRefVideo: string | null = null;
+    if (referenceVideoGenerationId) {
+      validRefVideo = await validateOwnedGenerationExt(prisma, {
+        id: referenceVideoGenerationId,
+        ownerId,
+        projectId,
+        exts: VIDEO_EXTS,
+      });
     }
 
     // Resolve thread: new vs existing-owned-and-in-project
@@ -405,9 +435,10 @@ export async function ottoTurn(raw: unknown): Promise<
         data: { id: threadId, ownerId, projectId, title: text.slice(0, 80) },
       });
     }
+    const userMessageId = newId();
     await prisma.chatMessage.create({
       data: {
-        id: newId(),
+        id: userMessageId,
         threadId,
         ownerId,
         role: "USER",
@@ -420,7 +451,7 @@ export async function ottoTurn(raw: unknown): Promise<
     });
 
     // Build context
-    const ctx = await buildOttoContext({ ownerId, projectId, threadId, sourceGenerationId: validSource, simpleMode: parsed.data.simple });
+    const ctx = await buildOttoContext({ ownerId, projectId, threadId, sourceGenerationId: validSource, referenceVideoGenerationId: validRefVideo, simpleMode: parsed.data.simple });
 
     // Goal-intent seeding: on a new thread with a goalKey, append the preset's opening
     // to brandContext so buildContextSystemMessage injects it as a system message.
@@ -435,15 +466,20 @@ export async function ottoTurn(raw: unknown): Promise<
     const sys = buildContextSystemMessage(ctx);
     const userTurn = buildUserTurn(text, ctx.images);
     let runInput: AgentInputItem[];
-    if (priorOttoState) {
-      const priorState = await RunState.fromString(otto, priorOttoState);
-      runInput = [...(sys ? [sys] : []), ...stripHistoryImages(priorState.history), userTurn];
+    const priorState = priorOttoState ? await tryRestoreRunState(otto, priorOttoState) : null;
+    if (priorState) {
+      runInput = [...(sys ? [sys] : []), ...sanitizeHistory(priorState.history), userTurn];
     } else {
+      // No prior state OR an unrestorable one (F24): start fresh — the turn still runs and its
+      // normal state write self-heals ottoState to the current schema.
       runInput = [...(sys ? [sys] : []), userTurn];
     }
 
-    // Run agent, metered
-    const refId = `otto-turn:${threadId}:${seq}`;
+    // Run agent, metered. Key the reservation off the UNIQUE user-message id, not threadId:seq —
+    // seq is read-max-then-insert with only a non-unique index, so two concurrent turns can land
+    // the same seq → the same `otto-turn:threadId:seq` refId → the second reserveCredits collides
+    // on the reserve:<refId> unique index and no-ops, running a turn WITHOUT holding credits (F27).
+    const refId = `otto-turn:${userMessageId}`;
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     let agentResult: any;
 
@@ -551,8 +587,11 @@ export async function ottoApprove(raw: unknown): Promise<
     if (!thread.ottoState) return { error: "Nothing to approve." };
     const priorOttoState = thread.ottoState;
 
-    // Rehydrate the paused RunState
-    const state = await RunState.fromString(otto, priorOttoState);
+    // Rehydrate the paused RunState. On an unrestorable state (schema bump / corruption, F24)
+    // we can't resume the interruption this approval refers to — surface a clean error instead
+    // of throwing (which would 500 every approve on a stale thread).
+    const state = await tryRestoreRunState(otto, priorOttoState);
+    if (!state) return { error: "This conversation's approval state couldn't be restored — please ask Otto to propose it again." };
 
     // Find the matching generate interruption (cardId binding)
     const interruptions = state.getInterruptions();

@@ -60,3 +60,15 @@ Both are active and do NOT conflict (separate storage, separate tools):
 - **GBrain** (`~/.gbrain`) — *semantic* search ("find code about this concept")
   plus non-code knowledge (this repo's plans/PRDs/research). Reach for it for
   fuzzy/conceptual questions and for searching docs/decisions.
+
+## Merge discipline (branch protection substitute)
+This is a PRIVATE repo on a free GitHub plan — real branch protection is unavailable
+(and the founder chose not to upgrade). These rules ARE the protection; every agent
+session must follow them:
+- **Never push directly to `main`.** All changes land via a PR.
+- **Never merge a PR whose two CI checks ("typecheck + fences + frozen lockfile",
+  "unit + integration tests") are not both green** on the current head commit.
+- Pushing `main` auto-deploys web + worker to Railway and auto-runs prisma migrations
+  on prod — a bad merge ships instantly. When in doubt, don't merge; ask the founder.
+- Spend-path diffs (see `.claude/skills/money-safety-review`) additionally require that
+  skill's checks to pass before merge.

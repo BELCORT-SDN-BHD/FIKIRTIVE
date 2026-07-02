@@ -17,6 +17,9 @@ import { metaListObjectsSkill } from "./skills/meta-list-objects.js";
 import { listMetaPagesSkill } from "./skills/list-meta-pages.js";
 import { proposeMetaActionSkill } from "./skills/propose-meta-action.js";
 import { proposeAdBuildSkill } from "./skills/propose-ad-build.js";
+import { seedreamPromptSkill } from "./skills/seedream-prompt.js";
+import { seedancePromptSkill } from "./skills/seedance-prompt.js";
+import { proposeStoryboardSkill } from "./skills/propose-storyboard.js";
 
 /** Add a new skill here (one line). Order is the agent's tool order. */
 export const allSkills: OttoSkill[] = [
@@ -37,6 +40,9 @@ export const allSkills: OttoSkill[] = [
   listMetaPagesSkill,
   proposeMetaActionSkill,
   proposeAdBuildSkill,
+  seedreamPromptSkill,
+  seedancePromptSkill,
+  proposeStoryboardSkill,
 ];
 
 export interface SkillMeta {
@@ -46,6 +52,7 @@ export interface SkillMeta {
   reach: Reach;
   needsApproval: boolean;
   description: string;
+  requires: { field: string; question: string }[];
 }
 
 export const skillCatalog: SkillMeta[] = allSkills.map((s) => ({
@@ -55,4 +62,5 @@ export const skillCatalog: SkillMeta[] = allSkills.map((s) => ({
   reach: s.reach,
   needsApproval: s.needsApproval,
   description: s.description,
+  requires: s.requires,
 }));

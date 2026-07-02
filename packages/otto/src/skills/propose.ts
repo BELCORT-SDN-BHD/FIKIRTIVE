@@ -64,7 +64,7 @@ export async function executePropose(
       kind: "GEN_CARD",
       seq: (last?.seq ?? 0) + 1,
       text: "",
-      payload: cardPayload,
+      payload: { ...cardPayload, ...(input.goal ? { goal: input.goal } : {}) },
     },
   });
 
@@ -88,6 +88,13 @@ export const proposeSkill = defineOttoSkill({
     "When the user wants a few options to choose from (an 'ad pack'), pass count (2–4) " +
     "to offer that many image variants — images only; video is always a single clip.",
   parameters: proposeInput,
+  requires: [
+    {
+      field: "goal",
+      question:
+        "What is this creative for — its goal/purpose (e.g. an ad to drive signups, a product hero shot for the site)?",
+    },
+  ],
   execute: executePropose,
 });
 

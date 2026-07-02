@@ -30,9 +30,11 @@ import { z } from "zod";
 /** A single item in the pack — same fields as proposeInput, no identity. */
 const packItemSchema = proposeInput; // exact reuse — same Zod shape, no identity fields
 
-const proposePackInput = z.object({
+export const proposePackInput = z.object({
   packTitle: z.string().min(1).max(120),
   items: z.array(packItemSchema).min(1).max(8),
+  // 创作意图/目的 —— requires 资讯门要求它非空。
+  goal: z.string().optional(),
 });
 
 type ProposePackInput = z.infer<typeof proposePackInput>;
@@ -75,6 +77,7 @@ export async function executeProposePack(
       ...cardPayload,
       packId,
       packTitle: input.packTitle,
+      ...(input.goal ? { goal: input.goal } : {}),
     };
 
     // Find the current max seq so each card gets a monotonically increasing sequence.
@@ -123,6 +126,13 @@ export const proposePackSkill = defineOttoSkill({
     "Each item takes the same fields as propose: kind, structuredPrompt, entityIds, etc. " +
     "This tool is $0 — NO generation, NO spend. Spending happens per card, via the generate skill.",
   parameters: proposePackInput,
+  requires: [
+    {
+      field: "goal",
+      question:
+        "What is this campaign pack for — its goal/purpose (e.g. an ad set to drive signups, a product launch pack)?",
+    },
+  ],
   execute: executeProposePack,
 });
 

@@ -58,6 +58,7 @@ export function buildGenRequestFromCard(args: {
     count?: number;
   };
   const sourceGenerationId = typeof p.sourceGenerationId === "string" ? p.sourceGenerationId : null;
+  const referenceVideoGenerationId = typeof p.referenceVideoGenerationId === "string" ? p.referenceVideoGenerationId : null;
 
   // Step 4: chosen model (mirrors coworkGenerate line 517).
   const chosenModel = overrides?.model ?? model;
@@ -81,6 +82,7 @@ export function buildGenRequestFromCard(args: {
     entityIds,
     ...(Object.keys(variantSel).length ? { variantSel } : {}),
     ...(sourceGenerationId ? { sourceGenerationId } : {}),
+    ...(referenceVideoGenerationId ? { referenceVideoGenerationId } : {}),
     count,
     kind: proposal.data.kind, // CARD-trusted — anti-flip
     model: chosenModel,

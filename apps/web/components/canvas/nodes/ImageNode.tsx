@@ -1,6 +1,6 @@
 // apps/web/components/canvas/nodes/ImageNode.tsx
 import { Handle, Position, type NodeProps } from "@xyflow/react";
-import { GeneratingBody } from "./GeneratingBody";
+import { GeneratingBody, FailedBody } from "./GeneratingBody";
 import { NodeResize } from "./NodeResize";
 
 export function ImageNode({ data, selected }: NodeProps) {
@@ -21,7 +21,9 @@ export function ImageNode({ data, selected }: NodeProps) {
         Image
       </span>
     <div className="al-panel" style={{ width: "100%", height: "100%", overflow: "hidden", borderRadius: 14 }}>
-      {d.status === "pending" || !d.url ? (
+      {d.status === "failed" || d.status === "timeout" ? (
+        <FailedBody status={d.status} />
+      ) : d.status === "pending" || !d.url ? (
         <GeneratingBody gb={d.skin === "gb"} kind="image" />
       ) : (
         <img src={d.url} alt={d.prompt ?? ""} style={{ width: "100%", height: "100%", objectFit: "cover" }} />

@@ -3,7 +3,7 @@
 
 | skill | cost | effect | reach | needsApproval | description |
 |---|---|---|---|---|---|
-| describeRefs | free | read | internal | ❌ | Cache visual descriptions of reference images shown to you this turn. For each r |
+| describeRefs | free | write | internal | ❌ | Cache visual descriptions of reference images shown to you this turn. For each r |
 | generate | spend | write | internal | ✅ | Execute a generation proposal (GEN_CARD) that the user has approved. This SPENDS |
 | list-meta-pages | free | read | external | ❌ | List the user's connected Facebook Pages so you can pick one when building an ad |
 | lookupProducts | free | read | internal | ❌ | Look up the user's saved products by name, tag or description (returns up to 5 f |
@@ -13,10 +13,13 @@
 | propose-ad-build | free | write | internal | ❌ | Build a Meta ad creation proposal (BUILD_CARD) the user can review and confirm.  |
 | propose-meta-action | free | write | internal | ❌ | Build a Meta ad action plan (ACTION_CARD) the user can review and confirm. Use t |
 | proposePack | free | write | internal | ❌ | Lay out a coherent set of generation proposals (a campaign pack) in one turn. Us |
+| proposeStoryboard | free | write | internal | ❌ | Lay out an ordered STORYBOARD for a video/ad the user can review and edit before |
 | rememberBrandFact | free | write | internal | ❌ | Save ONE durable brand FACT to Brand Memory. $0, persists across campaigns. Cate |
 | researchWeb | free | read | external | ❌ | Fetch a public web page or search the web to ground your response in real inform |
 | saveCustomerSegment | free | write | internal | ❌ | Save or update ONE customer group in the user's Brand memory (upsert by name; om |
 | saveOffer | free | write | internal | ❌ | Save or update ONE offer/promotion in the user's Brand memory (upsert by title;  |
 | saveProduct | free | write | internal | ❌ | Save or update ONE product in the user's Brand memory (upsert by name — mentioni |
+| seedancePrompt | free | read | internal | ❌ | Assemble a model-tuned English VIDEO prompt for Seedance — the CREATIVE prompt o |
+| seedreamPrompt | free | read | internal | ❌ | Assemble a model-tuned English IMAGE prompt for Seedream. Call this FIRST whenev |
 | setTitle | free | write | internal | ❌ | Set a concise ≤6-word title for the current conversation. Call once early in a n |
 | updateBrief | free | write | internal | ❌ | Refine the project's creative brief with durable creative direction (tone, visua |

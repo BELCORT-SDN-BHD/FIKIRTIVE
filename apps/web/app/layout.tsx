@@ -3,6 +3,7 @@ import { Hanken_Grotesk, JetBrains_Mono, Geist } from "next/font/google";
 import "./globals.css";
 import { isImpersonating } from "@/lib/better-auth/compat";
 import { ImpersonationBanner } from "@/components/admin/ImpersonationBanner";
+import { Toaster } from "@/components/ui/sonner";
 
 // Vapor type system (legacy): Hanken Grotesk for everything
 const body = Hanken_Grotesk({ variable: "--font-body", subsets: ["latin"] });
@@ -27,6 +28,7 @@ export default async function RootLayout({
       <body className="gb min-h-full flex flex-col">
         {impersonating && <ImpersonationBanner />}
         <div className="relative z-10 flex flex-col min-h-dvh">{children}</div>
+        <Toaster />
       </body>
     </html>
   );

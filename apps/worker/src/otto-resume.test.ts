@@ -47,7 +47,7 @@ const mocks = vi.hoisted(() => {
     getInterruptions: vi.fn(() => []),
   };
   const RunState = {
-    fromString: vi.fn(async () => runStateMock),
+    fromString: vi.fn(async (_agent?: unknown, _str?: string) => runStateMock),
   };
 
   // run mock
@@ -109,6 +109,16 @@ vi.mock("@fikirtive/otto", () => ({
   OTTO_DEFAULT_MODEL: "claude-sonnet-4-6",
   run: mocks.run,
   RunState: mocks.RunState,
+  // F24/F25: the worker resume now restores via tryRestoreRunState (delegate to the mocked
+  // RunState.fromString so existing assertions hold) and sanitizes history (drops system items).
+  tryRestoreRunState: async (agent: unknown, str: string) => {
+    try {
+      return await mocks.RunState.fromString(agent, str);
+    } catch {
+      return null;
+    }
+  },
+  sanitizeHistory: (h: Array<{ role?: string }>) => h.filter((i) => i?.role !== "system"),
   MaxTurnsExceededError: mocks.MaxTurnsExceededError,
   mapOttoUsage: mocks.mapOttoUsage,
 }));

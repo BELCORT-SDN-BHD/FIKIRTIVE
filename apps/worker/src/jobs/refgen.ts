@@ -44,6 +44,13 @@ const MAX_EDIT_INPUT_PLUS_OUTPUT = 15;
 // running gen is never failed-closed by a duplicate delivery, but a truly stuck one is.
 const REFGEN_STALE_MS = 1000 * 60 * 18;
 
+// The proactive reaper's windows (mirror gen.ts GEN_REAP_MS / GEN_QUEUED_REAP_MS). Both sit
+// ABOVE the 20-min queue expiry so the reaper never races a delivery pg-boss will still
+// redeliver — it only sweeps jobs whose message is truly lost/dead-lettered (REFGEN_DLQ has
+// no consumer), whose RESERVE hold would otherwise leak forever.
+const REFGEN_REAP_MS = 1000 * 60 * 25;
+const REFGEN_QUEUED_REAP_MS = 1000 * 60 * 25;
+
 const mimeForExt = (ext: string) =>
   ext === "png" ? "image/png" : ext === "webp" ? "image/webp" : "image/jpeg";
 
@@ -55,6 +62,53 @@ async function failClosedRefund(jobId: string, ownerId: string, error: string): 
     await tx.refGenJob.update({ where: { id: jobId }, data: { status: "FAILED", error, finishedAt: new Date() } });
     await refundReservation(tx, { orgId: ownerId, refId: jobId });
   });
+}
+
+/** Proactive reaper for RefGenJob — the analog of reapStaleGenJobs (gen.ts). refgen's
+ *  on-claim stale branch only runs on a pg-boss REDELIVERY; a job whose message is lost or
+ *  dead-lettered on its final attempt (REFGEN_DLQ has no consumer) is never redelivered, so
+ *  it sits GENERATING forever and its RESERVE hold leaks — and the partial-unique active
+ *  index keeps blocking new generations for that entity/variant. This sweeps such jobs.
+ *
+ *  Each transition is a CONDITIONAL updateMany (the at-most-once claim): it loses to a worker
+ *  that concurrently owns the job, so a live delivery is never clobbered. The GENERATING
+ *  branch also requires outputAssetIds isEmpty, so a job that already committed outputs (and
+ *  was charged) is never fail-closed + refunded. Refund runs only when WE won the claim.
+ *  No cowork message — refgen has no chat thread. Returns how many jobs it reaped. */
+export async function reapStaleRefGenJobs(): Promise<number> {
+  const cutoff = new Date(Date.now() - REFGEN_REAP_MS);
+  const queuedCutoff = new Date(Date.now() - REFGEN_QUEUED_REAP_MS);
+  let reaped = 0;
+
+  const stuck = await prisma.refGenJob.findMany({
+    where: { status: "GENERATING", startedAt: { lt: cutoff }, outputAssetIds: { isEmpty: true } },
+    select: { id: true, ownerId: true },
+  });
+  for (const job of stuck) {
+    await prisma.$transaction(async (tx) => {
+      const staled = await tx.refGenJob.updateMany({
+        where: { id: job.id, status: "GENERATING", startedAt: { lt: cutoff }, outputAssetIds: { isEmpty: true } },
+        data: { status: "FAILED", error: "stale GENERATING reaped — worker hung or crashed; refunded", finishedAt: new Date() },
+      });
+      if (staled.count > 0) { await refundReservation(tx, { orgId: job.ownerId, refId: job.id }); reaped++; }
+    });
+  }
+
+  const stuckQueued = await prisma.refGenJob.findMany({
+    where: { status: "QUEUED", createdAt: { lt: queuedCutoff } },
+    select: { id: true, ownerId: true },
+  });
+  for (const job of stuckQueued) {
+    await prisma.$transaction(async (tx) => {
+      const failed = await tx.refGenJob.updateMany({
+        where: { id: job.id, status: "QUEUED", createdAt: { lt: queuedCutoff } },
+        data: { status: "FAILED", error: "queued too long — worker never picked it up; refunded", finishedAt: new Date() },
+      });
+      if (failed.count > 0) { await refundReservation(tx, { orgId: job.ownerId, refId: job.id }); reaped++; }
+    });
+  }
+
+  return reaped;
 }
 
 export async function handleRefGen(data: RefGenJobData, retryCount: number): Promise<void> {
@@ -307,7 +361,16 @@ export async function handleRefGen(data: RefGenJobData, retryCount: number): Pro
     } else {
       // recoverable: a pre-charge retry (keep the hold), OR a post-commit failure (committed:
       // already settled) — either way requeue so the resume path re-attaches without re-spending.
-      await prisma.refGenJob.update({ where: { id: job.id }, data: { status: "QUEUED", error: message, progress: 0 } });
+      // GUARDED conditional write: only requeue a row still QUEUED/GENERATING. If reapStaleRefGenJobs
+      // already FAILED+refunded this job (message lost on a prior attempt), the updateMany matches 0
+      // and we must NOT resurrect it — a redelivery would re-run the paid call against a refunded hold.
+      // A committed job is still GENERATING here (the commit tx wrote outputAssetIds, not status), so
+      // its resume requeue still matches. (Mirror of the gen.ts F04 guard.)
+      const requeued = await prisma.refGenJob.updateMany({
+        where: { id: job.id, status: { in: ["QUEUED", "GENERATING"] } },
+        data: { status: "QUEUED", error: message, progress: 0 },
+      });
+      if (requeued.count === 0) console.error(`[refgen] ${job.id}: not requeued — a finalizer already owns it (FAILED/DONE); discarding this delivery`);
     }
     throw err; // pg-boss owns the retry schedule
   }

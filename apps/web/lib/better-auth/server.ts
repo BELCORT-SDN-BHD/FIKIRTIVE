@@ -45,6 +45,9 @@ export const auth = betterAuth({
     // NON-REMOVABLE: better-auth's default is OFF; without this an unverified email+password signup mints a session → account takeover via convergeIdentity. Keep true.
     requireEmailVerification: true,
     sendResetPassword: async ({ user, url }) => {
+      // Allowlist-gate the reset email (F17): hooks.before only covers /sign-in + /sign-up, so a
+      // revoked/removed user could otherwise still receive a valid reset link. Mirror sendMagicLink.
+      await assertAllowedEmail(user.email);
       await sendAuthEmail({ to: user.email, subject: "Reset your Fikirtive password", url, intro: "Reset your password" });
     },
   },

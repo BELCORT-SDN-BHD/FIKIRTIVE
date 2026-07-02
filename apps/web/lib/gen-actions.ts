@@ -16,6 +16,8 @@ import {
   isModelDisabled,
   assertSpendableModel,
   pricedGenCredits,
+  activeImageModel,
+  activeVideoModel,
   type GenJobData,
   type GenVideoModel,
 } from "@fikirtive/core";
@@ -32,7 +34,7 @@ export async function startGen(raw: unknown): Promise<{ id: string } | { error: 
   const OWNED = { ownerId, deletedAt: null } as const;
   const parsed = genRequest.safeParse(raw);
   if (!parsed.success) return { error: "That generation request is out of bounds." };
-  const { projectId, shotId, sourceGenerationId, tailGenerationId, prompt, entityIds, count, kind, model, durationSeconds, resolution, aspectRatio, fps, audio, idempotencyKey, variantSel, threadId } = parsed.data;
+  const { projectId, shotId, sourceGenerationId, tailGenerationId, referenceVideoGenerationId, prompt, entityIds, count, kind, model, durationSeconds, resolution, aspectRatio, fps, audio, idempotencyKey, variantSel, threadId } = parsed.data;
 
   const project = await prisma.project.findFirst({ where: { id: projectId, ...OWNED } });
   if (!project) return { error: "Project not found." };
@@ -116,6 +118,7 @@ export async function startGen(raw: unknown): Promise<{ id: string } | { error: 
           id: newId(), ownerId, projectId, shotId: shotId ?? null,
           sourceGenerationId: sourceGenerationId ?? null,
           tailGenerationId: tailGenerationId ?? null,
+          referenceVideoGenerationId: referenceVideoGenerationId ?? null,
           prompt, entityIds, count: kind === "video" ? 1 : count, model,
           kind: kind === "video" ? "VIDEO" : "IMAGE",
           idempotencyKey: idempotencyKey ?? null,
@@ -190,6 +193,15 @@ export async function startGen(raw: unknown): Promise<{ id: string } | { error: 
   }
   revalidatePath("/", "layout");
   return { id: job.id };
+}
+
+/** F18: resolve the active image/video models SERVER-side (where OTTO_DEFAULT_VIDEO_MODEL is
+ *  actually in the environment). Client components must NOT call activeImageModel()/
+ *  activeVideoModel() directly — that env is not bundled, so the browser always computes the
+ *  default (veo3.1-lite), which mismatches the prod model (seedance-2-fast) and gets rejected by
+ *  the server gate. Clients fetch this instead so their gen requests carry the real model. */
+export async function getActiveGenModels(): Promise<{ image: string; video: string }> {
+  return { image: activeImageModel(), video: activeVideoModel() };
 }
 
 /** Poll a gen job + return its produced generations' image URLs when DONE. */

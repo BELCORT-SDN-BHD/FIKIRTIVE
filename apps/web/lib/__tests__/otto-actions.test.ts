@@ -145,13 +145,23 @@ vi.mock("@fikirtive/otto", async (importOriginal) => {
     withLlmBudget: mockWithLlmBudget,
     run: mockRun,
     RunState: MockRunState,
+    // tryRestoreRunState (F24) wraps @openai/agents' RunState.fromString directly, so the real
+    // helper bypasses the MockRunState override above. Delegate it to MockRunState.fromString so
+    // these tests keep controlling restore behavior through mockRunStateFromString.
+    tryRestoreRunState: async (_agent: unknown, str: string) => {
+      try {
+        return await MockRunState.fromString(_agent, str);
+      } catch {
+        return null;
+      }
+    },
     MaxTurnsExceededError: MockMaxTurnsExceededError,
   };
 });
 
 // ── Import SUT after mocks ───────────────────────────────────────────────────
 
-const { ottoTurn, mapOttoUsage, buildOttoContext, ottoApprove, createEmptyCoworkThread } = await import("@/lib/otto-actions");
+const { ottoTurn, mapOttoUsage, buildOttoContext, ottoApprove, createEmptyCoworkThread, finalizeOttoRun } = await import("@/lib/otto-actions");
 
 // ── Shared fixtures ──────────────────────────────────────────────────────────
 
@@ -337,6 +347,24 @@ describe("ottoTurn — metered", () => {
     );
     expect(runCalledInsideBudget).toBe(true);
   });
+
+  it("keys the reservation refId off the UNIQUE user-message id, not threadId:seq (F27)", async () => {
+    setupHappyPath();
+    await ottoTurn(BASE_INPUT);
+
+    // the USER ChatMessage.create carries a unique newId()
+    const userCreate = mockChatMessageCreate.mock.calls.find(
+      (c) => (c[0] as { data: { role: string } }).data.role === "USER",
+    );
+    expect(userCreate).toBeDefined();
+    const userMessageId = (userCreate![0] as { data: { id: string } }).data.id;
+
+    const refId = (mockWithLlmBudget.mock.calls[0]![0] as { refId: string }).refId;
+    expect(refId).toBe(`otto-turn:${userMessageId}`);
+    // NOT the old collidable `otto-turn:<threadId>:<seq>` shape (two concurrent turns could
+    // land the same seq → same refId → the second reserveCredits no-ops → an unpaid turn).
+    expect(refId).not.toMatch(/^otto-turn:[^:]+:\d+$/);
+  });
 });
 
 // ── Test 5: interruption ─────────────────────────────────────────────────────
@@ -407,6 +435,41 @@ describe("ottoTurn — MaxTurnsExceededError", () => {
 });
 
 // ── Test 7: mapOttoUsage pure unit ────────────────────────────────────────────
+
+describe("finalizeOttoRun — assistant TEXT seq accounts for tool-persisted cards", () => {
+  // proposePack (and propose / propose-meta-action / propose-ad-build) persist card
+  // messages MID-run at max(seq)+1. seqAfterUser is a PRE-run snapshot; writing the
+  // reply at seqAfterUser+1 collides with the first card, and a reload (ordered by
+  // seq) then interleaves the TEXT into the pack, splitting the PackCard grouping.
+  it("writes the reply after the thread's REAL max seq, not the pre-run snapshot", async () => {
+    mockChatMessageFindFirst.mockResolvedValue({ seq: 6 }); // 3 cards landed at 4/5/6 mid-run
+    mockChatThreadUpdateMany.mockResolvedValue({ count: 1 });
+    mockChatMessageCreate.mockResolvedValue({});
+    const result = { state: new MockRunState(), interruptions: [], finalOutput: "Here is the pack.", newItems: [] };
+    const out = await finalizeOttoRun({
+      ownerId: OWNER_ID, threadId: THREAD_ID, isNew: false, priorOttoState: "s0",
+      result, seqAfterUser: 3,
+    });
+    expect(out).toEqual({ status: "done", reply: "Here is the pack." });
+    expect(mockChatMessageCreate).toHaveBeenCalledWith(
+      expect.objectContaining({ data: expect.objectContaining({ kind: "TEXT", seq: 7 }) }),
+    );
+  });
+
+  it("still uses seqAfterUser when no tool wrote anything mid-run", async () => {
+    mockChatMessageFindFirst.mockResolvedValue({ seq: 3 }); // user msg is still the max
+    mockChatThreadUpdateMany.mockResolvedValue({ count: 1 });
+    mockChatMessageCreate.mockResolvedValue({});
+    const result = { state: new MockRunState(), interruptions: [], finalOutput: "Plain reply.", newItems: [] };
+    await finalizeOttoRun({
+      ownerId: OWNER_ID, threadId: THREAD_ID, isNew: false, priorOttoState: "s0",
+      result, seqAfterUser: 3,
+    });
+    expect(mockChatMessageCreate).toHaveBeenCalledWith(
+      expect.objectContaining({ data: expect.objectContaining({ kind: "TEXT", seq: 4 }) }),
+    );
+  });
+});
 
 describe("mapOttoUsage", () => {
   it("maps state.usage to correct TokenUsage with cached tokens summed across requests", () => {
@@ -1063,5 +1126,22 @@ describe("createEmptyCoworkThread — success", () => {
         }),
       }),
     );
+  });
+});
+
+// ── reference video: per-turn system-message signal ──────────────────────────
+describe("buildContextSystemMessage — reference video signal", () => {
+  const base = { orgId: "o1", userId: "o1", projectId: "p1", threadId: "t1", disabledModels: [] as string[] };
+  it("injects the REFERENCE VIDEO signal when referenceVideoGenerationId is set", () => {
+    const result = buildContextSystemMessage({ ...base, referenceVideoGenerationId: "gen_vid" });
+    expect(result).not.toBeNull();
+    const content = (result as { content: string }).content;
+    expect(content).toContain("REFERENCE VIDEO");
+    expect(content).toContain('kind:"video"');
+  });
+  it("omits the signal when no reference video is attached", () => {
+    const result = buildContextSystemMessage({ ...base });
+    // no parts at all → null; and certainly no REFERENCE VIDEO mention
+    expect(result === null || !(result as { content: string }).content.includes("REFERENCE VIDEO")).toBe(true);
   });
 });

@@ -84,4 +84,15 @@ describe("canAffordPack", () => {
     expect(canAffordPack(1000, 100.0)).toBe(true); // 1000 credits = $100
     expect(canAffordPack(1001, 100.0)).toBe(false);
   });
+
+  it("does not under-count on float-imprecise balances (F10)", () => {
+    // 0.3 / 0.1 === 2.9999999999999996 in IEEE-754 → naive Math.floor = 2, undercounts.
+    // $0.30 is exactly 3 credits and must afford a 3-credit pack.
+    expect(canAffordPack(3, 0.3)).toBe(true);
+    // $0.70 is exactly 7 credits (0.7/0.1 === 6.999999999999999 naively).
+    expect(canAffordPack(7, 0.7)).toBe(true);
+    // Still correctly rejects the next credit up.
+    expect(canAffordPack(4, 0.3)).toBe(false);
+    expect(canAffordPack(8, 0.7)).toBe(false);
+  });
 });

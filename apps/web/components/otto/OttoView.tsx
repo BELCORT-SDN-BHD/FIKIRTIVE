@@ -45,6 +45,7 @@ interface OttoViewProps {
   onDeleteThread: (id: string) => void;
   onNewConvo: () => void;
   seedText?: string;
+  onSeedConsumed?: () => void;
   onUseInOtto: (prompt: string) => void;
   /** Collapse the OTTO chat pane to give the canvas full width. */
   chatCollapsed?: boolean;
@@ -76,6 +77,7 @@ export function OttoView({
   onDeleteThread,
   onNewConvo,
   seedText,
+  onSeedConsumed,
   onUseInOtto,
   chatCollapsed = false,
   onToggleChat,
@@ -93,7 +95,7 @@ export function OttoView({
   // door. Keyed to its threadId + cleared once OttoChatStream has auto-sent it, so a
   // later remount (switch away + back) never re-sends. (Founder streaming front door.)
   const [pendingFirst, setPendingFirst] = useState<
-    { threadId: string; text: string; goalKey?: string } | null
+    { threadId: string; text: string; goalKey?: string; entityIds?: string[] } | null
   >(null);
 
   // Refresh a thread and bring it to the top of the list
@@ -221,6 +223,7 @@ export function OttoView({
               entities={entities}
               userName={userName}
               seedText={seedText}
+              onSeedConsumed={onSeedConsumed}
               ottoStreamEnabled={ottoStreamEnabled}
               onThreadStarted={(thread) => {
                 onThreadsChange([thread, ...threads]);
@@ -231,7 +234,7 @@ export function OttoView({
                 // message to OttoChatStream, which streams it in on mount.
                 onThreadsChange([thread, ...threads]);
                 onActiveThreadChange(thread.id);
-                setPendingFirst({ threadId: thread.id, text: pending.text, goalKey: pending.goalKey });
+                setPendingFirst({ threadId: thread.id, text: pending.text, goalKey: pending.goalKey, entityIds: pending.entityIds });
               }}
             />
           ) : ottoStreamEnabled ? (
@@ -248,7 +251,7 @@ export function OttoView({
               onBalanceRefresh={onBalanceRefresh}
               pendingFirst={
                 pendingFirst && pendingFirst.threadId === activeThread.id
-                  ? { text: pendingFirst.text, goalKey: pendingFirst.goalKey }
+                  ? { text: pendingFirst.text, goalKey: pendingFirst.goalKey, entityIds: pendingFirst.entityIds }
                   : undefined
               }
               onPendingFirstSent={() => setPendingFirst(null)}

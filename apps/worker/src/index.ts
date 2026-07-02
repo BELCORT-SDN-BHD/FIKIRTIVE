@@ -11,10 +11,11 @@
 import * as Sentry from "@sentry/node";
 import { PgBoss } from "pg-boss";
 import { QUEUES } from "./queues.js";
-import { handleIngest, type IngestJobData } from "./jobs/ingest.js";
+import { handleIngest, redispatchLostIngest, type IngestJobData } from "./jobs/ingest.js";
 import { handleRender } from "./jobs/render.js";
-import { handleRefGen } from "./jobs/refgen.js";
+import { handleRefGen, reapStaleRefGenJobs } from "./jobs/refgen.js";
 import { handleGen, reapStaleGenJobs } from "./jobs/gen.js";
+import { reapStaleLlmReservations } from "./jobs/llm-reservation-reaper.js";
 import { handleCaption } from "./jobs/caption.js";
 import {
   RENDER_DLQ,
@@ -162,6 +163,16 @@ async function main(): Promise<void> {
     try {
       const n = await reapStaleGenJobs();
       if (n) console.log(`[worker] reaped ${n} stale gen job(s)`);
+      const rn = await reapStaleRefGenJobs();
+      if (rn) console.log(`[worker] reaped ${rn} stale refgen job(s)`);
+      const ln = await reapStaleLlmReservations();
+      if (ln) console.log(`[worker] reaped ${ln} leaked LLM reservation(s)`);
+      // F41(c): recover uploads whose ingest dispatch was lost (finalize commits
+      // rows before the send). singletonKey dedupes while a re-send is in flight.
+      const ri = await redispatchLostIngest((assetId) =>
+        boss.send(QUEUES.ingest, { assetId } satisfies IngestJobData, { singletonKey: `ingest-recover:${assetId}` }),
+      );
+      if (ri) console.log(`[worker] re-dispatched ${ri} lost ingest job(s)`);
     } catch (e) {
       console.error("[worker] reaper error:", e);
       captureError(e);

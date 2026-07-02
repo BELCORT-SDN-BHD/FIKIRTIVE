@@ -34,6 +34,14 @@ describe("listCreditPacks", () => {
     const packs = await listCreditPacks();
     expect(packs).toEqual([]);
   });
+
+  it("requests a high page limit so >10 active prices are not silently truncated (F34)", async () => {
+    // stripe.prices.list defaults to limit 10; a MYR account can accumulate more than
+    // 10 active Prices (test/live packs, currency variants), silently truncating the list.
+    pricesList.mockResolvedValue({ data: [] });
+    await listCreditPacks();
+    expect(pricesList).toHaveBeenCalledWith(expect.objectContaining({ limit: 100 }));
+  });
 });
 
 describe("createTopupCheckout", () => {

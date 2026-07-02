@@ -7,6 +7,7 @@ import { getCoworkThreadClient } from "@/lib/cowork-fetch";
 import { OttoPlanCard } from "./OttoPlanCard";
 import { OttoActionPlanCard } from "./OttoActionPlanCard";
 import { OttoAdBuildCard } from "./OttoAdBuildCard";
+import { StoryboardCard } from "./StoryboardCard";
 import { OttoResult } from "./OttoResult";
 import { deriveCardState } from "@/lib/otto-inject-helpers";
 import { activeMentionQuery, resolveSentEntityIds } from "@/lib/otto-mentions";
@@ -258,6 +259,8 @@ export function OttoConversation({
               entities={entities}
               projectId={projectId}
               threadId={thread.id}
+              balanceUsd={balanceUsd}
+              onBalanceRefresh={onBalanceRefresh}
               resultJobIds={resultJobIds}
               errorJobIds={errorJobIds}
               cardIdByJobId={cardIdByJobId}
@@ -429,6 +432,8 @@ function MessageRow({
   entities,
   projectId,
   threadId,
+  balanceUsd,
+  onBalanceRefresh,
   resultJobIds,
   errorJobIds,
   cardIdByJobId,
@@ -445,6 +450,8 @@ function MessageRow({
   entities: EntityDTO[];
   projectId: string;
   threadId: string;
+  balanceUsd: number;
+  onBalanceRefresh?: () => void | Promise<void>;
   resultJobIds: Set<string>;
   errorJobIds: Set<string>;
   cardIdByJobId: Map<string, string>;
@@ -480,6 +487,12 @@ function MessageRow({
   }
 
   if (m.kind === "GEN_CARD") {
+    // Storyboard first-frame child cards render as thumbnails inside their parent
+    // StoryboardCard, not as standalone plan cards. Hide them here (their GenJob is
+    // driven by the card's own coworkGenerate + the parent's sync poll — unaffected).
+    if (typeof (m.payload as Record<string, unknown> | null)?.storyboardCardId === "string") {
+      return null;
+    }
     return (
       <div className="flex items-start gap-3">
         <OttoAvatar size={32} state="idle" />
@@ -525,6 +538,22 @@ function MessageRow({
         <OttoAvatar size={32} state="idle" />
         <div className="flex-1 min-w-0">
           <OttoAdBuildCard cardId={m.id} payload={m.payload} />
+        </div>
+      </div>
+    );
+  }
+
+  if (m.kind === "STORYBOARD_CARD") {
+    return (
+      <div className="flex items-start gap-3">
+        <OttoAvatar size={32} state="idle" />
+        <div className="flex-1 min-w-0">
+          <StoryboardCard
+            cardId={m.id}
+            payload={m.payload}
+            balanceUsd={balanceUsd}
+            onBalanceRefresh={() => void onBalanceRefresh?.()}
+          />
         </div>
       </div>
     );

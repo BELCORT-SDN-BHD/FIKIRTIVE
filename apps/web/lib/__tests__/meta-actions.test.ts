@@ -149,6 +149,51 @@ describe("getMetaConnection", () => {
     expect(res).toEqual({ connected: true, status: "expired", needsReconnect: true, adsAutonomy: "ASK", canWrite: false, adsWritesPaused: false, canManagePages: false, defaultPageId: null });
     expect(mockUpdate).toHaveBeenCalledWith(expect.objectContaining({ where: { ownerId: "u1" }, data: { status: "expired" } }));
   });
+  it("F37: a transient Graph failure (network throw) reports transientError, NOT needsReconnect, and does NOT mark expired", async () => {
+    const { encryptToken } = await import("../token-encryption");
+    mockFindUnique
+      .mockResolvedValueOnce({ status: "active", adsAutonomy: "ASK", canWrite: true, adsWritesPaused: false, canManagePages: false, defaultPageId: null })
+      .mockResolvedValueOnce({ accessTokenEnc: encryptToken("LONGTOKEN"), status: "active" });
+    mockFetch.mockRejectedValueOnce(new TypeError("fetch failed")); // network blip — no metaError at all
+    const res = await getMetaConnection();
+    expect(res).toEqual({
+      connected: true,
+      status: "active", // the REAL DB status — not a hardcoded "expired"
+      transientError: true,
+      adsAutonomy: "ASK",
+      canWrite: true,
+      adsWritesPaused: false,
+      canManagePages: false,
+      defaultPageId: null,
+    });
+    expect(mockUpdate).not.toHaveBeenCalled();
+  });
+
+  it("F37: a Meta rate-limit error (code 4) is transient, not a reconnect", async () => {
+    const { encryptToken } = await import("../token-encryption");
+    mockFindUnique
+      .mockResolvedValueOnce({ status: "active", adsAutonomy: "ASK", canWrite: false, adsWritesPaused: false, canManagePages: false, defaultPageId: null })
+      .mockResolvedValueOnce({ accessTokenEnc: encryptToken("LONGTOKEN"), status: "active" });
+    mockFetch.mockResolvedValueOnce(
+      jsonRes({ error: { message: "Application request limit reached", type: "OAuthException", code: 4 } }, false),
+    );
+    const res = await getMetaConnection();
+    expect(res).toMatchObject({ connected: true, status: "active", transientError: true });
+    expect((res as { needsReconnect?: boolean }).needsReconnect).toBeUndefined();
+    expect(mockUpdate).not.toHaveBeenCalled();
+  });
+
+  it("F37: a Meta 5xx (code 2, transient) is transient, not a reconnect", async () => {
+    const { encryptToken } = await import("../token-encryption");
+    mockFindUnique
+      .mockResolvedValueOnce({ status: "active", adsAutonomy: "ASK", canWrite: false, adsWritesPaused: false, canManagePages: false, defaultPageId: null })
+      .mockResolvedValueOnce({ accessTokenEnc: encryptToken("LONGTOKEN"), status: "active" });
+    mockFetch.mockResolvedValueOnce(jsonRes({ error: { message: "An unexpected error has occurred", code: 2 } }, false));
+    const res = await getMetaConnection();
+    expect(res).toMatchObject({ connected: true, transientError: true });
+    expect(mockUpdate).not.toHaveBeenCalled();
+  });
+
   it("returns canManagePages + defaultPageId in the connection result", async () => {
     const { encryptToken } = await import("../token-encryption");
     mockFindUnique

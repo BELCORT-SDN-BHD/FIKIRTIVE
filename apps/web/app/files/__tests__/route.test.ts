@@ -2,7 +2,9 @@ import { describe, it, expect, vi } from "vitest";
 
 const mockRequireOwner = vi.fn();
 vi.mock("@/lib/auth-guard", () => ({ requireOwner: mockRequireOwner }));
-vi.mock("@/auth", () => ({ auth: vi.fn().mockResolvedValue({ user: { email: "a@test" } }), allowed: () => true }));
+// Route reads auth from better-auth/compat and allowed from allowlist (post-Better-Auth paths).
+vi.mock("@/lib/better-auth/compat", () => ({ auth: vi.fn().mockResolvedValue({ user: { email: "a@test" } }) }));
+vi.mock("@/lib/allowlist", () => ({ allowed: vi.fn().mockResolvedValue(true) }));
 vi.mock("@/lib/storage", () => ({
   storage: { presignedGet: vi.fn().mockResolvedValue(null), get: vi.fn().mockResolvedValue(new Uint8Array([1, 2, 3])) },
   mimeOf: () => "image/png", kindOf: () => "image",

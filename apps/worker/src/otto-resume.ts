@@ -15,7 +15,7 @@
  */
 import { prisma } from "@fikirtive/db";
 import { newId, OTTO_MAX_STEPS } from "@fikirtive/core";
-import { otto, withLlmBudget, OTTO_DEFAULT_MODEL, run, RunState, MaxTurnsExceededError, mapOttoUsage } from "@fikirtive/otto";
+import { otto, withLlmBudget, OTTO_DEFAULT_MODEL, run, MaxTurnsExceededError, mapOttoUsage, sanitizeHistory, tryRestoreRunState } from "@fikirtive/otto";
 import type { OttoContext } from "@fikirtive/otto";
 
 export async function resumeOttoAfterGen(job: {
@@ -58,13 +58,19 @@ export async function resumeOttoAfterGen(job: {
       // startGen intentionally NOT injected
     };
 
-    // Rehydrate prior state
-    const state = await RunState.fromString(otto, thread.ottoState);
+    // Rehydrate prior state. The verdict turn is a best-effort follow-up ("does this look right?"),
+    // so an unrestorable state (schema bump / corruption, F24) must SKIP it, not crash the worker job.
+    const state = await tryRestoreRunState(otto, thread.ottoState);
+    if (!state) {
+      console.warn(`[otto-resume] ${job.id}: prior run state unrestorable — skipping verdict turn`);
+      return;
+    }
 
     // Inject a system message telling Otto the generation finished.
-    // We append it to the existing history as a user-turn (continuation pattern).
+    // We append it to the existing history as a user-turn (continuation pattern). sanitizeHistory
+    // strips accumulated images (F25 leg 3 — the worker previously re-sent base64 dataURLs).
     const injectionMessage = "[The generation you queued has finished. Briefly ask the user, in their language, whether it meets their expectation and if they want any changes — a natural verdict question, not a sales pitch.]";
-    const runInput = [...state.history, { role: "user" as const, content: injectionMessage }];
+    const runInput = [...sanitizeHistory(state.history), { role: "user" as const, content: injectionMessage }];
 
     // Run metered (LLM token cost only — no generation spend)
     const refId = `otto-verdict:${job.id}`;

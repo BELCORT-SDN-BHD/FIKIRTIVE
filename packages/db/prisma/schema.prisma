@@ -438,6 +438,7 @@ model GenJob {
   sourceGenerationId String?
   // 可选末帧（last frame）：i2v 在 source→tail 之间补间（Kling tail_image_url）
   tailGenerationId   String?
+  referenceVideoGenerationId String?
   prompt             String
   entityIds          String[]  @default([])
   // Phase C: { [entityId]: variantId } — selected variant per @mentioned entity;
@@ -772,6 +773,7 @@ enum ChatMessageKind {
   TURN_ERROR
   ACTION_CARD
   BUILD_CARD
+  STORYBOARD_CARD
 }
 
 // G7: per-org autonomy mode for Otto's ad-write operations
@@ -1010,7 +1012,9 @@ model CanvasNode {
 model MetaConnection {
   id             String       @id
   ownerId        String       @unique
-  organization   Organization @relation(fields: [ownerId], references: [id])
+  // onDelete: Cascade matches the FK 20260628140000_meta_connection created; without it
+  // Prisma defaults to Restrict and `migrate dev` keeps trying to recreate the constraint.
+  organization   Organization @relation(fields: [ownerId], references: [id], onDelete: Cascade)
   metaUserId     String?
   accessTokenEnc String       // encrypted; never plaintext, never sent to the client
   tokenExpiresAt DateTime?
@@ -1034,4 +1038,10 @@ model MetaActionExecution {
   status       String   // PENDING | APPLYING | APPLIED | FAILED
   appliedValue Json?
   createdAt    DateTime @default(now())
+
+  // Exactly-once safety index for ad-write steps, created as raw SQL in
+  // 20260628150000_g7_ad_write. That migration's comment calls it "partial-unique",
+  // but it has no WHERE clause — it's a plain unique index, so it IS expressible
+  // here. Modeled so `migrate dev` stops trying to DROP it as drift.
+  @@unique([ownerId, cardId, stepIndex], map: "MetaActionExecution_step_once")
 }

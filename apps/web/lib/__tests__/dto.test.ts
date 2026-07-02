@@ -113,3 +113,35 @@ describe("toChatMessageDTO — BUILD_CARD client safety", () => {
     expect(p.buildOutcome).toMatchObject({ state: "done" });
   });
 });
+
+// ── STORYBOARD_CARD: payload must survive the DTO so the card renders (live + reload) ──
+describe("toChatMessageDTO — STORYBOARD_CARD payload passthrough", () => {
+  function storyboardMessage() {
+    return {
+      id: "m3",
+      role: "AGENT",
+      kind: "STORYBOARD_CARD",
+      seq: 3,
+      text: "",
+      genJobId: null,
+      createdAt: new Date("2026-07-02T00:00:00Z"),
+      payload: {
+        storyboardTitle: "Raya ad",
+        goal: "festive launch",
+        shots: [
+          { shotId: "s0", index: 0, firstFramePrompt: "family at the door", videoPrompt: "they wave" },
+          { shotId: "s1", index: 1, firstFramePrompt: "close-up cookies", videoPrompt: "steam rises" },
+        ],
+      },
+    } as never;
+  }
+
+  it("passes the storyboard payload through (shots survive) instead of nulling it", () => {
+    const dto = toChatMessageDTO(storyboardMessage(), new Map());
+    const p = dto.payload as { storyboardTitle?: string; shots?: { shotId?: string }[] };
+    expect(dto.kind).toBe("STORYBOARD_CARD");
+    expect(p.storyboardTitle).toBe("Raya ad");
+    expect(p.shots).toHaveLength(2);
+    expect(p.shots?.[0].shotId).toBe("s0");
+  });
+});

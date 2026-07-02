@@ -89,9 +89,12 @@ export interface OttoFrontDoorProps {
   ottoStreamEnabled?: boolean;
   /** Streaming path: an empty thread was created; hand its first message up so
    *  OttoChatStream streams it in on mount. Used only when ottoStreamEnabled. */
-  onStreamStart?: (thread: ChatThreadDTO, pending: { text: string; goalKey?: string }) => void;
+  onStreamStart?: (thread: ChatThreadDTO, pending: { text: string; goalKey?: string; entityIds?: string[] }) => void;
   /** When set (e.g. from Discover), pre-fills the composer. */
   seedText?: string;
+  /** Called once the seed has been applied so the parent can clear it — otherwise a stale
+   *  seed re-fills an unrelated NEW conversation later (F29). */
+  onSeedConsumed?: () => void;
 }
 
 export function OttoFrontDoor({
@@ -102,17 +105,18 @@ export function OttoFrontDoor({
   ottoStreamEnabled,
   onStreamStart,
   seedText,
+  onSeedConsumed,
 }: OttoFrontDoorProps) {
   const [text, setText] = useState("");
-  // Discover "Use in Otto": pre-fill the composer when a seed arrives (no auto-send).
-  // NOTE: this relies on the front door REMOUNTING per use — handleUseInOtto nulls
-  // activeThreadId, which toggles showFrontDoor and remounts this component, so the
-  // effect re-runs even when seedText is unchanged (repeat-use of the same idea). If the
-  // front door ever becomes persistently mounted (e.g. CSS-hidden or a stable key for
-  // draft persistence), switch seedText to a bumping nonce so repeat seeds still apply.
+  // Discover "Use in Otto": pre-fill the composer when a seed arrives (no auto-send), then tell
+  // the parent to clear it (F29) so it can't leak into a later unrelated conversation. Repeat-use
+  // of the same idea still works: the parent re-sets seedText ("" → prompt is a real change).
   useEffect(() => {
-    if (seedText) setText(seedText);
-  }, [seedText]);
+    if (seedText) {
+      setText(seedText);
+      onSeedConsumed?.();
+    }
+  }, [seedText, onSeedConsumed]);
   const [pickedMentions, setPickedMentions] = useState<{id: string; name: string}[]>([]);
   const [mentionQuery, setMentionQuery] = useState<string | null>(null);
   const [mentionHighlight, setMentionHighlight] = useState(0);
@@ -180,7 +184,10 @@ export function OttoFrontDoor({
           updatedAt: new Date().toISOString(),
           messages: [],
         };
-        onStreamStart(thread, { text: msgText, ...(opts.goalKey ? { goalKey: opts.goalKey } : {}) });
+        // F30: carry the resolved @mention entityIds into the first streamed message — the
+        // classic ottoTurn path below already passes them, so the streaming path must too or
+        // the thread's first turn silently loses entity conditioning.
+        onStreamStart(thread, { text: msgText, ...(opts.goalKey ? { goalKey: opts.goalKey } : {}), ...(entityIds.length ? { entityIds } : {}) });
         return;
       }
 

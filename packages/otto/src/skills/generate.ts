@@ -16,9 +16,13 @@
  * is checked; if found, the existing job is returned without re-charging. The DB unique index
  * GenJob_cowork_idempotency_once is the race-proof backstop.
  *
- * v1 simplification: the card's structuredPrompt is used directly — no enhance-directive
- * composer (getEnhanceDirective, composePrompt). This is a prompt-quality gap only, not a
- * spend/safety issue. The composer is app-level and not importable here.
+ * Prompt authority (D/E decision 6): the card's structuredPrompt is used directly — no legacy
+ * enhance-directive composer. The models this path generates (seedream/seedance) each own a
+ * dedicated prompt skill and are the SOLE prompt authority, so the family×mode directive is
+ * intentionally NOT applied on EITHER spend surface — the button path (coworkGenerate) also
+ * skips it for skilled families (familyHasPromptSkill) — and both yield the identical
+ * model-bound prompt. (The app-level directive read isn't importable here anyway.) This only
+ * ever affects the prompt string, never spend/safety.
  */
 import { z } from "zod";
 import type { RunContext } from "@openai/agents";
@@ -99,8 +103,9 @@ export async function executeGenerate(
     return { error: "That model is currently turned off." };
   }
 
-  // Step 5: build the request from the persisted card — pure, no overrides (anti-flip)
-  // v1: structuredPrompt used directly (no enhance-directive composer — app-level, not importable here)
+  // Step 5: build the request from the persisted card — pure, no overrides (anti-flip).
+  // structuredPrompt used directly: the families reachable here (seedream/seedance) are the
+  // sole prompt authority (decision 6) — no directive on either surface. See file header.
   const structuredPrompt = typeof p.structuredPrompt === "string" ? p.structuredPrompt : "";
   const entityIds = Array.isArray(p.entityIds) ? (p.entityIds as string[]) : [];
   const variantSel =

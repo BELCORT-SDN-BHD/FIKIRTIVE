@@ -9,7 +9,10 @@ type State =
   | { phase: "loading" }
   | { phase: "disconnected" }
   | { phase: "connected"; status?: string; accounts: MetaAdAccount[]; canWrite: boolean; adsAutonomy: string; adsWritesPaused: boolean }
-  | { phase: "reconnect" };
+  | { phase: "reconnect" }
+  // F37: Meta couldn't be reached right now (network / 5xx / rate limit) — the
+  // connection itself is fine, so offer a retry instead of a false reconnect scare.
+  | { phase: "unreachable" };
 
 export default function OttoConnections() {
   const [state, setState] = useState<State>({ phase: "loading" });
@@ -21,6 +24,7 @@ export default function OttoConnections() {
     setState({ phase: "loading" });
     const res = await getMetaConnection();
     if ("error" in res || !res.connected) return setState({ phase: "disconnected" });
+    if (res.transientError) return setState({ phase: "unreachable" });
     if (res.needsReconnect) return setState({ phase: "reconnect" });
     setState({
       phase: "connected",
@@ -76,7 +80,7 @@ export default function OttoConnections() {
       <div style={{ maxWidth: 720, margin: "0 auto" }}>
         <h2 className="text-foreground" style={{ margin: 0, fontSize: "1.125rem" }}>Connections</h2>
         <p className="text-muted-foreground text-[0.875rem]" style={{ margin: "0.25rem 0 1rem" }}>
-          Connect your ad accounts so Otto can read your performance. Read-only — Otto can&rsquo;t spend or change your ads.
+          Connect your ad accounts so Otto can read your performance. Otto never changes an ad on its own — every change needs your approval, and the controls below stay in your hands.
         </p>
 
         <div className="bg-card border border-border rounded-[14px]" style={{ padding: "1rem" }}>
@@ -90,6 +94,17 @@ export default function OttoConnections() {
                 Connect Meta
               </a>
             </Button>
+          )}
+
+          {state.phase === "unreachable" && (
+            <div style={{ marginTop: "0.5rem" }}>
+              <p className="text-muted-foreground text-[0.75rem]">
+                Couldn&rsquo;t reach Meta just now — this is usually temporary. Your connection is fine.
+              </p>
+              <Button type="button" size="sm" variant="ghost" onClick={() => void load()}>
+                Retry
+              </Button>
+            </div>
           )}
 
           {state.phase === "reconnect" && (

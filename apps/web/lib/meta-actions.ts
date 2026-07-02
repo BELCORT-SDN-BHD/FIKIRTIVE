@@ -31,8 +31,13 @@ export async function completeMetaConnect(
   return { ok: true };
 }
 
-/** Read-only: the owner's connected ad accounts via their decrypted token. Never returns the token. */
-async function getMyAdAccounts(ownerId: string): Promise<{ accounts: MetaAdAccount[] } | { needsReconnect: true }> {
+/** Read-only: the owner's connected ad accounts via their decrypted token. Never returns the token.
+ *  F37: only a REAL token failure (Meta code 190/102) reports needsReconnect; any other thrown
+ *  error (network blip, Graph 5xx, rate limit — code 4/17/32 are type OAuthException too, so we
+ *  branch on code, not type) is transientError so the UI offers a retry, not a redundant OAuth. */
+async function getMyAdAccounts(
+  ownerId: string,
+): Promise<{ accounts: MetaAdAccount[] } | { needsReconnect: true } | { transientError: true }> {
   const conn = await prisma.metaConnection.findUnique({ where: { ownerId } });
   if (!conn) return { needsReconnect: true };
   let token: string;
@@ -52,15 +57,18 @@ async function getMyAdAccounts(ownerId: string): Promise<{ accounts: MetaAdAccou
     return { accounts };
   } catch (e) {
     const code = (e as { metaError?: { code?: number } })?.metaError?.code;
-    if (code === 190) {
-      await prisma.metaConnection.update({ where: { ownerId }, data: { status: "expired" } }).catch(() => {});
+    if (code === 190 || code === 102) {
+      if (code === 190) {
+        await prisma.metaConnection.update({ where: { ownerId }, data: { status: "expired" } }).catch(() => {});
+      }
+      return { needsReconnect: true };
     }
-    return { needsReconnect: true };
+    return { transientError: true };
   }
 }
 
 export async function getMetaConnection(): Promise<
-  | { connected: boolean; status?: string; adsAutonomy?: string; canWrite?: boolean; adsWritesPaused?: boolean; canManagePages?: boolean; defaultPageId?: string | null; accounts?: MetaAdAccount[]; needsReconnect?: boolean }
+  | { connected: boolean; status?: string; adsAutonomy?: string; canWrite?: boolean; adsWritesPaused?: boolean; canManagePages?: boolean; defaultPageId?: string | null; accounts?: MetaAdAccount[]; needsReconnect?: boolean; transientError?: boolean }
   | { error: string }
 > {
   const gate = await requireOwner();
@@ -71,6 +79,9 @@ export async function getMetaConnection(): Promise<
   });
   if (!conn) return { connected: false };
   const res = await getMyAdAccounts(gate.ownerId);
+  // F37: transient failure — report the REAL stored status (the token is fine) so the
+  // UI shows "couldn't reach Meta — retry" instead of a false reconnect scare.
+  if ("transientError" in res) return { connected: true, status: conn.status, transientError: true, adsAutonomy: conn.adsAutonomy ?? "ASK", canWrite: conn.canWrite ?? false, adsWritesPaused: conn.adsWritesPaused ?? false, canManagePages: conn.canManagePages ?? false, defaultPageId: conn.defaultPageId ?? null };
   if ("needsReconnect" in res) return { connected: true, status: "expired", needsReconnect: true, adsAutonomy: conn.adsAutonomy ?? "ASK", canWrite: conn.canWrite ?? false, adsWritesPaused: conn.adsWritesPaused ?? false, canManagePages: conn.canManagePages ?? false, defaultPageId: conn.defaultPageId ?? null };
   return {
     connected: true,

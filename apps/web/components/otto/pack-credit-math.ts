@@ -28,5 +28,9 @@ export function packTotalCredits(cards: { payload: unknown }[]): number {
  * Mirrors the inline affordability logic from PackCard.tsx line 67.
  */
 export function canAffordPack(totalCredits: number, balanceUsd: number): boolean {
-  return totalCredits <= Math.floor(balanceUsd / 0.1);
+  // Recover exact integer credits before dividing: balanceUsd/0.1 is IEEE-754
+  // imprecise (0.3/0.1 === 2.9999999999999996), so a naive Math.floor under-counts
+  // and blocks affordable packs. Round cents first, then divide by the 10-cent rate.
+  const balanceCredits = Math.floor(Math.round(balanceUsd * 100) / 10);
+  return totalCredits <= balanceCredits;
 }

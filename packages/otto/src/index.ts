@@ -1,12 +1,17 @@
 export { otto, ottoInstructions, OTTO_DEFAULT_MODEL } from "./otto.js";
 export { ottoSimpleModeBlock } from "./instructions.js";
 export { propose } from "./skills/propose.js";
+// buildProposeCard — the pure $0 card-payload helper (no DB/SDK). Exposed for the
+// web gate① child-card minting layer (storyboard-gate1-actions), which prices minted
+// children through the SAME path as a normal propose. Types travel with it.
+export { buildProposeCard } from "./skills/propose.js";
+export type { CardPayload, ProposeCardResult } from "./skills/propose.js";
 export { generate } from "./skills/generate.js";
 export { updateBrief } from "./skills/update-brief.js";
 export { describeRefs, sanitizeRefDescription } from "./skills/describe-refs.js";
 export { setTitle } from "./skills/set-title.js";
 export type { OttoContext } from "./context.js";
-export { buildUserTurn, stripHistoryImages } from "./run-input.js";
+export { buildUserTurn, stripHistoryImages, sanitizeHistory, tryRestoreRunState } from "./run-input.js";
 export type { RefImage } from "./run-input.js";
 export { withLlmBudget, actualCostInternal, mapOttoUsage } from "./meter.js";
 export type { TokenUsage } from "./meter.js";
@@ -19,5 +24,8 @@ export type {
 } from "@openai/agents";
 export { allSkills, skillCatalog } from "./registry.js";
 export type { SkillMeta } from "./registry.js";
+export { PROMPT_SKILLS, PROMPT_SKILLED_FAMILIES, familyHasPromptSkill } from "./prompt-skills.js";
 export { defineOttoSkill, deriveNeedsApproval } from "./skill.js";
 export type { OttoSkill, OttoSkillSpec, Cost, Effect, Reach } from "./skill.js";
+export type { StoryboardCardPayload, StoryboardCardInput } from "./skills/propose-storyboard.helpers.js";
+export { MAX_STORYBOARD_SHOTS } from "./skills/propose-storyboard.helpers.js";

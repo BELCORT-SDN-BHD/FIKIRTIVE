@@ -1,7 +1,7 @@
 // apps/web/components/canvas/nodes/VideoNode.tsx
 import { useRef, useState } from "react";
 import { Handle, Position, type NodeProps } from "@xyflow/react";
-import { GeneratingBody } from "./GeneratingBody";
+import { GeneratingBody, FailedBody } from "./GeneratingBody";
 import { NodeResize } from "./NodeResize";
 
 export function VideoNode({ data, selected }: NodeProps) {
@@ -17,7 +17,9 @@ export function VideoNode({ data, selected }: NodeProps) {
         Video
       </span>
     <div className="al-panel" style={{ width: "100%", height: "100%", overflow: "hidden", borderRadius: 14 }}>
-      {d.status === "pending" || !d.url ? (
+      {d.status === "failed" || d.status === "timeout" ? (
+        <FailedBody status={d.status} />
+      ) : d.status === "pending" || !d.url ? (
         <GeneratingBody gb={gb} kind="video" />
       ) : gb ? (
         // gb: clean poster (first frame) + centered play button, like the mockup —

@@ -11,19 +11,23 @@ import { threadToUiMessages, type OttoUiMessage } from "@/lib/otto-ui-messages";
 import { ImageIcon } from "lucide-react";
 import { uploadFilesDirect } from "@/lib/direct-upload";
 import { finalizeCandidateUploads } from "@/lib/upload-actions";
-import { ACCEPT_ATTACH, isVideoFile, defaultFrameTime, frameFileName, FRAME_MAX_SIDE, FRAME_JPEG_QUALITY } from "@/lib/video-frame";
+import { ACCEPT_ATTACH, isVideoFile, defaultFrameTime, frameFileName, FRAME_MAX_SIDE, FRAME_JPEG_QUALITY, REF_VIDEO_MIN_SECONDS, REF_VIDEO_MAX_SECONDS, isRefVideoDurationOk } from "@/lib/video-frame";
 import {
   resultJobIds,
   errorJobIds,
   deriveCardState,
   hasWorkingJob as computeHasWorkingJob,
-  proposeCardId,
+  cardIdsOf,
   injectCardMessage,
+  appendMissingCards,
   appendDurableResults,
   syncCardJobIds,
 } from "@/lib/otto-inject-helpers";
 import { OttoPlanCard } from "./OttoPlanCard";
+import { OttoActionPlanCard } from "./OttoActionPlanCard";
+import { OttoAdBuildCard } from "./OttoAdBuildCard";
 import { PackCard } from "./PackCard";
+import { StoryboardCard } from "./StoryboardCard";
 import { OttoResult } from "./OttoResult";
 import { TextPart } from "./parts/TextPart";
 import { StatusLine } from "./parts/StatusLine";
@@ -53,7 +57,7 @@ export interface OttoChatStreamProps {
   /** Streaming front door: a first message to auto-send ONCE into a freshly-created
    *  (empty) thread on mount. The thread row already exists (createEmptyCoworkThread),
    *  so the route's existing-thread branch handles it. */
-  pendingFirst?: { text: string; goalKey?: string };
+  pendingFirst?: { text: string; goalKey?: string; entityIds?: string[] };
   /** Called right after the pendingFirst message is dispatched, so the parent can
    *  clear it (prevents a re-send if this thread is remounted later). */
   onPendingFirstSent?: () => void;
@@ -101,9 +105,10 @@ export function OttoChatStream({
    *  session — drives the optimistic "working" state before the genJobId lands from the
    *  durable thread. Resets on remount (thread switch = component re-key). */
   const [submittedCardIds, setSubmittedCardIds] = useState<Set<string>>(new Set());
-  /** Image attachment: a generation created from a user-uploaded file, included as
-   *  sourceGenerationId on the next send. Null when no image is attached. */
-  const [attached, setAttached] = useState<{ generationId: string; src: string } | null>(null);
+  /** Attachment: a generation created from a user-uploaded file, included as
+   *  sourceGenerationId (image) or referenceVideoGenerationId (whole clip) on the
+   *  next send. Null when nothing is attached. */
+  const [attached, setAttached] = useState<{ generationId: string; src: string; kind: "image" | "refVideo" } | null>(null);
   /** True while the file is being hashed + uploaded + finalized. */
   const [uploading, setUploading] = useState(false);
   /** Upload error message shown near the attach button; clears on next successful attach. */
@@ -113,6 +118,12 @@ export function OttoChatStream({
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
   const [videoPick, setVideoPick] = useState<{ url: string; duration: number } | null>(null);
   const [frameTime, setFrameTime] = useState(0);
+  // F28: only true once a frame has actually been drawn to the canvas (onSeeked), so "Use this
+  // frame" can't attach a blank JPEG before the first paint.
+  const [frameReady, setFrameReady] = useState(false);
+  /** The original video File for the current videoPick — used by "Use whole video"
+   *  to upload the clip itself (not an extracted frame). */
+  const wholeVideoFileRef = useRef<File | null>(null);
 
   // Bounded in-flight poll for the async worker result (ported from OttoConversation):
   // a GEN_CARD whose genJobId is set but with no terminal GEN_RESULT/TURN_ERROR keeps
@@ -143,7 +154,7 @@ export function OttoChatStream({
     transport: new DefaultChatTransport<OttoUiMessage>({
       api: "/api/otto/stream",
       prepareSendMessagesRequest: ({ messages, body }) => {
-        const ids = (body ?? {}) as { projectId?: string; threadId?: string; goalKey?: string; entityIds?: string[]; sourceGenerationId?: string };
+        const ids = (body ?? {}) as { projectId?: string; threadId?: string; goalKey?: string; entityIds?: string[]; sourceGenerationId?: string; referenceVideoGenerationId?: string };
         return {
           body: {
             projectId: ids.projectId,
@@ -154,7 +165,9 @@ export function OttoChatStream({
             // accepts it as an optional field, so include it only when present.
             ...(ids.goalKey ? { goalKey: ids.goalKey } : {}),
             ...(ids.entityIds?.length ? { entityIds: ids.entityIds } : {}),
-            ...(ids.sourceGenerationId ? { sourceGenerationId: ids.sourceGenerationId } : {}),
+            ...(ids.referenceVideoGenerationId
+              ? { referenceVideoGenerationId: ids.referenceVideoGenerationId }
+              : ids.sourceGenerationId ? { sourceGenerationId: ids.sourceGenerationId } : {}),
           },
         };
       },
@@ -198,22 +211,32 @@ export function OttoChatStream({
       }
       const e = asErrorData(part);
       if (e) { setStreamError(e.text); setStreamErrorKind(e.kind); return; }
-      // data-tool-propose: the propose tool persisted a durable GEN_CARD synchronously,
-      // but the stream part carries only { cardId, … }. Fetch the durable thread and
-      // inject the GEN_CARD (full payload) into the message list, deduped by cardId.
-      const cardId = proposeCardId(part);
-      if (cardId) {
+      // data-tool-propose: a card tool (propose / proposePack / propose-meta-action /
+      // propose-ad-build) persisted durable card(s) synchronously, but the stream part
+      // carries only the id(s). Fetch the durable thread ONCE and inject each card
+      // (full payload) into the message list, deduped by durableId (F23).
+      const cardIds = cardIdsOf(part);
+      if (cardIds.length > 0) {
         void (async () => {
           const fresh = await getCoworkThreadClient(thread.id);
-          if (fresh) setMessages((cur) => injectCardMessage(cur, fresh, cardId));
+          if (fresh) {
+            setMessages((cur) =>
+              cardIds.reduce((acc, id) => injectCardMessage(acc, fresh, id), cur),
+            );
+          }
         })();
       }
     },
     onFinish: () => {
       // Sync the parent thread list + make reload authoritative. Non-blocking.
+      // Safety net (F23): backfill any card-kind durable the live stream missed
+      // (e.g. a dropped data-tool-propose part) so cards never need a reload.
       void (async () => {
         const fresh = await getCoworkThreadClient(thread.id);
-        if (fresh) onThreadUpdate(fresh);
+        if (fresh) {
+          onThreadUpdate(fresh);
+          setMessages((cur) => appendMissingCards(cur, fresh));
+        }
       })();
       // A completed turn meters LLM credits — refresh the nav balance display.
       void onBalanceRefresh?.();
@@ -313,7 +336,7 @@ export function OttoChatStream({
     pendingSentRef.current = true;
     void sendMessage(
       { text: pendingFirst.text },
-      { body: { projectId, threadId: thread.id, ...(pendingFirst.goalKey ? { goalKey: pendingFirst.goalKey } : {}) } },
+      { body: { projectId, threadId: thread.id, ...(pendingFirst.goalKey ? { goalKey: pendingFirst.goalKey } : {}), ...(pendingFirst.entityIds?.length ? { entityIds: pendingFirst.entityIds } : {}) } }, // F30: carry entity conditioning into the first streamed turn
     );
     onPendingFirstSent?.();
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -342,8 +365,9 @@ export function OttoChatStream({
     if (attachedNow?.src.startsWith("blob:")) URL.revokeObjectURL(attachedNow.src);
     setAttached(null);
     // Pass the live projectId/threadId, optional @mention entityIds, and optional
-    // sourceGenerationId (attached image) via the per-call body; prepareSendMessagesRequest
-    // reads them off `body` and shapes the strict route payload.
+    // sourceGenerationId (attached image) or referenceVideoGenerationId (attached whole
+    // clip) via the per-call body; prepareSendMessagesRequest reads them off `body` and
+    // shapes the strict route payload.
     void sendMessage(
       { text: trimmed },
       {
@@ -351,7 +375,9 @@ export function OttoChatStream({
           projectId,
           threadId: thread.id,
           ...(entityIds.length ? { entityIds } : {}),
-          ...(attachedNow ? { sourceGenerationId: attachedNow.generationId } : {}),
+          ...(attachedNow?.kind === "refVideo"
+            ? { referenceVideoGenerationId: attachedNow.generationId }
+            : attachedNow ? { sourceGenerationId: attachedNow.generationId } : {}),
         },
       },
     );
@@ -370,6 +396,7 @@ export function OttoChatStream({
       if (videoPick) URL.revokeObjectURL(videoPick.url);
       const url = URL.createObjectURL(file);
       setVideoPick({ url, duration: 0 });
+      wholeVideoFileRef.current = file;
       return;
     }
 
@@ -386,7 +413,7 @@ export function OttoChatStream({
         setAttachError("error" in res ? res.error : "Could not attach image.");
         return;
       }
-      setAttached({ generationId: res.generationIds[0], src: URL.createObjectURL(file) });
+      setAttached({ generationId: res.generationIds[0], src: URL.createObjectURL(file), kind: "image" });
     } catch (err) {
       setAttachError(err instanceof Error ? err.message : "Upload failed.");
     } finally {
@@ -397,11 +424,32 @@ export function OttoChatStream({
   // Called once the hidden <video> has its metadata: set duration + seek to the default frame.
   function handleVideoMeta() {
     const v = videoElRef.current;
-    if (!v || !Number.isFinite(v.duration)) return;
+    if (!v) return;
+    // F28: MediaRecorder-produced webm reports Infinity/NaN duration until the browser is forced
+    // to compute it. Seek past the end to trigger that; the real duration arrives via
+    // onDurationChange (below) — without this the picker dead-ends (duration stays 0 → button
+    // permanently disabled). ACCEPT_ATTACH explicitly allows video/webm, so this IS reachable.
+    if (!Number.isFinite(v.duration) || v.duration <= 0) {
+      v.currentTime = Number.MAX_SAFE_INTEGER;
+      return;
+    }
     const t = defaultFrameTime(v.duration);
     setVideoPick((p) => (p ? { ...p, duration: v.duration } : p));
     setFrameTime(t);
     v.currentTime = t;
+  }
+
+  // F28: once the forced seek resolves the real (finite) duration for a webm, record it and
+  // seek back to the default frame (we're currently parked past the end).
+  function handleDurationChange() {
+    const v = videoElRef.current;
+    if (!v || !Number.isFinite(v.duration) || v.duration <= 0) return;
+    setVideoPick((p) => (p && p.duration > 0 ? p : p ? { ...p, duration: v.duration } : p));
+    if (v.currentTime > v.duration) {
+      const t = defaultFrameTime(v.duration);
+      setFrameTime(t);
+      v.currentTime = t;
+    }
   }
 
   // Draw the current video frame into the preview canvas (longest side capped).
@@ -413,11 +461,13 @@ export function OttoChatStream({
     c.width = Math.round(v.videoWidth * scale);
     c.height = Math.round(v.videoHeight * scale);
     c.getContext("2d")?.drawImage(v, 0, 0, c.width, c.height);
+    setFrameReady(true); // a real frame is now on the canvas
   }
 
   function handleScrub(e: React.ChangeEvent<HTMLInputElement>) {
     const t = Number(e.target.value);
     setFrameTime(t);
+    setFrameReady(false); // wait for the next onSeeked paint before allowing capture
     if (videoElRef.current) videoElRef.current.currentTime = t;
   }
 
@@ -425,6 +475,7 @@ export function OttoChatStream({
     if (videoPick) URL.revokeObjectURL(videoPick.url);
     setVideoPick(null);
     setFrameTime(0);
+    setFrameReady(false);
   }
 
   async function useSelectedFrame() {
@@ -446,13 +497,34 @@ export function OttoChatStream({
         setAttachError("error" in r ? r.error : "Could not attach frame.");
         return;
       }
-      setAttached({ generationId: r.generationIds[0], src: preview });
+      setAttached({ generationId: r.generationIds[0], src: preview, kind: "image" });
       closeVideoPick();
     } catch (err) {
       setAttachError(err instanceof Error ? err.message : "Upload failed.");
     } finally {
       setUploading(false);
     }
+  }
+
+  async function useWholeVideo() {
+    const v = videoElRef.current;
+    if (!v || !isRefVideoDurationOk(v.duration)) {
+      setAttachError(`Reference video must be ${REF_VIDEO_MIN_SECONDS}–${REF_VIDEO_MAX_SECONDS}s.`);
+      return;
+    }
+    if (!wholeVideoFileRef.current) return;
+    setUploading(true);
+    try {
+      const outcome = await uploadFilesDirect([wholeVideoFileRef.current], () => {});
+      if (outcome.files.length === 0) { setAttachError(outcome.failures[0]?.reason ?? "Upload failed."); return; }
+      const r = await finalizeCandidateUploads(projectId, "", [], outcome.files);
+      if ("error" in r || !r.generationIds?.[0]) { setAttachError("error" in r ? r.error : "Could not attach video."); return; }
+      const preview = canvasRef.current?.toDataURL("image/jpeg", FRAME_JPEG_QUALITY) ?? "";
+      setAttached({ generationId: r.generationIds[0], src: preview, kind: "refVideo" });
+      closeVideoPick();
+    } catch (err) {
+      setAttachError(err instanceof Error ? err.message : "Upload failed.");
+    } finally { setUploading(false); }
   }
 
   const mentionSuggestions = mentionQuery !== null
@@ -583,6 +655,17 @@ export function OttoChatStream({
               const m = messages[i];
               const kind = m.metadata?.kind;
               const payload = m.metadata?.payload as Record<string, unknown> | undefined;
+
+              // Storyboard first-frame child GEN_CARDs render INSIDE their parent
+              // StoryboardCard (thumbnails), not as standalone cards in the chat.
+              // Skip them here — polling (hasWorkingJob) reads the raw messages array,
+              // so hiding the render leaves the child's job unaffected.
+              const isStoryboardChild = kind === "GEN_CARD" && typeof payload?.storyboardCardId === "string";
+              if (isStoryboardChild) {
+                i++;
+                continue;
+              }
+
               const packId = kind === "GEN_CARD" && payload?.packId && typeof payload.packId === "string" ? payload.packId : null;
 
               if (packId) {
@@ -661,6 +744,12 @@ export function OttoChatStream({
               const isLastMessage = mi === messages.length - 1;
               const kind = m.metadata?.kind;
 
+              // Defensive double-guard: a storyboard first-frame child is already
+              // dropped in the pre-pass, but never render one even if it reaches here.
+              if (kind === "GEN_CARD" && typeof (m.metadata?.payload as Record<string, unknown> | undefined)?.storyboardCardId === "string") {
+                return null;
+              }
+
             // Durable non-TEXT messages render as their REAL widget (the placeholder
             // text from threadToUiMessages is ignored — metadata carries the payload).
             // Live-streamed text/reasoning has no durable metadata (kind undefined) and
@@ -727,6 +816,25 @@ export function OttoChatStream({
               );
             }
 
+            // Meta approval-flow cards (F23) — mirror OttoConversation's branches.
+            // The approve buttons inside call the existing gated server actions
+            // (approveMetaActionPlan / approveAdBuild); this only renders them.
+            if (kind === "ACTION_CARD") {
+              return (
+                <WidgetRow key={m.id} animateIn={isNewMessage(m.id)}>
+                  <OttoActionPlanCard cardId={m.metadata!.durableId} payload={m.metadata?.payload} />
+                </WidgetRow>
+              );
+            }
+
+            if (kind === "BUILD_CARD") {
+              return (
+                <WidgetRow key={m.id} animateIn={isNewMessage(m.id)}>
+                  <OttoAdBuildCard cardId={m.metadata!.durableId} payload={m.metadata?.payload} />
+                </WidgetRow>
+              );
+            }
+
             if (kind === "GEN_RESULT") {
               const r = (m.metadata?.payload ?? null) as
                 | { kind?: string; model?: string; urls?: string[]; generationIds?: string[]; costUsd?: number }
@@ -757,6 +865,19 @@ export function OttoChatStream({
                     {(m.parts.find((p) => p.type === "text") as { text?: string } | undefined)?.text}
                   </div>
                 </div>
+              );
+            }
+
+            if (kind === "STORYBOARD_CARD") {
+              return (
+                <WidgetRow key={m.id} animateIn={isNewMessage(m.id)}>
+                  <StoryboardCard
+                    cardId={m.metadata!.durableId}
+                    payload={m.metadata?.payload}
+                    balanceUsd={balanceUsd}
+                    onBalanceRefresh={() => void onBalanceRefresh?.()}
+                  />
+                </WidgetRow>
               );
             }
 
@@ -955,6 +1076,7 @@ export function OttoChatStream({
                 preload="metadata"
                 className="hidden"
                 onLoadedMetadata={handleVideoMeta}
+                onDurationChange={handleDurationChange}
                 onSeeked={drawCurrentFrame}
                 onError={() => { setAttachError("Couldn't read that video — try an MP4."); closeVideoPick(); }}
               />
@@ -971,9 +1093,17 @@ export function OttoChatStream({
                   className="w-full"
                 />
               )}
+              {videoPick.duration > 0 && !isRefVideoDurationOk(videoPick.duration) && (
+                <div className="text-[0.8rem] text-muted-foreground">Whole-video reference needs a {REF_VIDEO_MIN_SECONDS}–{REF_VIDEO_MAX_SECONDS}s clip.</div>
+              )}
               <div className="mt-2 flex items-center justify-end gap-2">
                 <Button variant="ghost" size="sm" onClick={closeVideoPick} disabled={uploading}>Cancel</Button>
-                <Button variant="default" size="sm" onClick={useSelectedFrame} disabled={uploading || videoPick.duration === 0}>
+                <Button variant="default" size="sm" onClick={useWholeVideo} disabled={uploading || !isRefVideoDurationOk(videoPick.duration)}>
+                  {uploading ? "Attaching…" : "Use whole video"}
+                </Button>
+                {/* F28: gated on frameReady — the whole-video button above doesn't need it
+                    (it uploads the original file, not the canvas frame). */}
+                <Button variant="default" size="sm" onClick={useSelectedFrame} disabled={uploading || videoPick.duration === 0 || !frameReady}>
                   {uploading ? "Attaching…" : "Use this frame"}
                 </Button>
               </div>

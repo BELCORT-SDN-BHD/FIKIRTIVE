@@ -22,6 +22,11 @@ describe("genSpentUsd", () => {
     expect(Number.isFinite(v)).toBe(true);
     expect(v).toBeGreaterThan(0);
   });
+  it("seedance-2-fast COGS uses the BytePlus basis, not the old fal 0.2419/s (F39)", () => {
+    // 5s × 0.03/s = 0.15 (the ~$0.15/5s benchmark), not 5 × 0.2419 = 1.21.
+    expect(genSpentUsd({ kind: "VIDEO", model: "seedance-2-fast", count: 1, videoOptions: { seconds: 5, resolution: "720p", audio: false } }))
+      .toBeCloseTo(0.15, 5);
+  });
 });
 
 describe("refgenSpentUsd", () => {
@@ -35,6 +40,14 @@ describe("credit pricing (deterministic CHARGE in internal credits; 1 internal =
   it("image = 1 displayed credit (10 internal) PER image — flat, with margin over the ~$0.04 true cost", () => {
     expect(pricedGenCredits({ kind: "IMAGE", model: "seedream", count: 1, videoOptions: null })).toBe(10);
     expect(pricedGenCredits({ kind: "IMAGE", model: "seedream", count: 4, videoOptions: null })).toBe(40);
+  });
+  it("seedance-2-fast CHARGE is flat-per-resolution and UNCHANGED by the F39 COGS-basis edit", () => {
+    // Money-safety pin: lowering the recorded COGS (videoRateUsdPerSec) must NOT change what the
+    // user pays — seedance-2-fast is flat-priced (720p → 7 displayed credits = 70 internal).
+    expect(pricedGenCredits({ kind: "VIDEO", model: "seedance-2-fast", count: 1, videoOptions: { seconds: 5, resolution: "720p", audio: false } }))
+      .toBe(7 * INTERNAL_PER_DISPLAY);
+    expect(pricedGenCredits({ kind: "VIDEO", model: "seedance-2-fast", count: 1, videoOptions: { seconds: 10, resolution: "720p", audio: false } }))
+      .toBe(7 * INTERNAL_PER_DISPLAY); // duration doesn't change a flat charge
   });
   it("video (fal, non-flat model) = USD formula, NOT the flat BytePlus table", () => {
     const job = { kind: "VIDEO" as const, model: "kling", count: 1, videoOptions: { seconds: 5, resolution: "", audio: false } };

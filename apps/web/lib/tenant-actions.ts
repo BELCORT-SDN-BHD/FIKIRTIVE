@@ -6,6 +6,7 @@ import { revalidatePath } from "next/cache";
 import { headers } from "next/headers";
 import { auth } from "@/lib/better-auth/server";
 import { isFounderAdmin } from "@/lib/allowlist";
+import { isImpersonating } from "@/lib/better-auth/compat";
 
 const ORG_STATUS = new Set(["active", "suspended"]);
 
@@ -122,14 +123,17 @@ export async function impersonateTenant(orgId: string): Promise<{ ok: true } | {
 
 /** End impersonation and restore the founder's own session. */
 export async function stopImpersonatingTenant(): Promise<{ ok: true } | { error: string }> {
-  const gate = await requireRole("tenants", "mutate"); if ("error" in gate) return gate;
-  if (!isFounderAdmin(gate.email)) return { error: "Only a founder may do this." };
+  // F15: while impersonating, the ACTIVE session IS the impersonated (viewer-role) user, so
+  // gating on requireRole("tenants","mutate") of that session could lock staff OUT of stopping
+  // impersonation. Gate on "is this session actually impersonating" instead — Better Auth's
+  // stopImpersonating only reverts a session carrying impersonatedBy, which IS the authorization.
+  if (!(await isImpersonating())) return { error: "Not impersonating anyone." };
   try {
     await auth.api.stopImpersonating({ headers: await headers() });
   } catch (e) {
     return { error: e instanceof Error ? e.message : "Could not stop impersonation." };
   }
-  await prisma.actionEvent.create({ data: { id: newId(), ownerId: FOUNDER_OWNER_ID, type: "impersonate.stop", payload: { via: gate.email } } }).catch(() => {});
+  await prisma.actionEvent.create({ data: { id: newId(), ownerId: FOUNDER_OWNER_ID, type: "impersonate.stop", payload: {} } }).catch(() => {});
   return { ok: true };
 }
 

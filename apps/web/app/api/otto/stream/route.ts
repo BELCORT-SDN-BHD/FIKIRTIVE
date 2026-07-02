@@ -38,11 +38,11 @@ import {
   withLlmBudget,
   OTTO_DEFAULT_MODEL,
   run,
-  RunState,
   MaxTurnsExceededError,
   mapOttoUsage,
   buildUserTurn,
-  stripHistoryImages,
+  sanitizeHistory,
+  tryRestoreRunState,
 } from "@fikirtive/otto";
 import type { AgentInputItem } from "@fikirtive/otto";
 import { requireOwner } from "@/lib/auth-guard";
@@ -52,8 +52,12 @@ import {
   buildContextSystemMessage,
   finalizeOttoRun,
 } from "@/lib/otto-actions";
+import { validateOwnedGenerationExt } from "@/lib/otto-generation-validate";
 import { bridgeEvent, stepEventOf, OTTO_TEXT_ID, OTTO_REASONING_ID } from "@/lib/otto-stream-bridge";
 import type { OttoStatusData, OttoErrorData } from "@/lib/otto-stream-bridge";
+
+const IMAGE_EXTS = ["png", "jpg", "jpeg", "webp"];
+const VIDEO_EXTS = ["mp4", "mov", "webm"];
 
 /** Safe one-line error summary for logs (mirrors otto-actions.errSummary). */
 function errSummary(e: unknown): string {
@@ -84,7 +88,7 @@ export async function POST(req: NextRequest): Promise<Response> {
   }
   const { ownerId } = gate;
 
-  const { projectId, text, entityIds, variantSel, sourceGenerationId, replyToMessageId } = parsed.data;
+  const { projectId, text, entityIds, variantSel, sourceGenerationId, referenceVideoGenerationId, replyToMessageId } = parsed.data;
   const OWNED = { ownerId, deletedAt: null } as const;
 
   // Pre-stream setup (validation + USER persist) runs BEFORE the SSE opens so a bad
@@ -93,6 +97,7 @@ export async function POST(req: NextRequest): Promise<Response> {
   let isNew: boolean;
   let priorOttoState: string | null = null;
   let seqAfterUser: number;
+  let userMessageId: string;
   let runInput: AgentInputItem[];
   let ctx: Awaited<ReturnType<typeof buildOttoContext>>;
 
@@ -104,11 +109,23 @@ export async function POST(req: NextRequest): Promise<Response> {
     // Validate sourceGenerationId (owned + in-project + image-ext), else null
     let validSource: string | null = null;
     if (sourceGenerationId) {
-      const g = await prisma.generation.findFirst({
-        where: { id: sourceGenerationId, ...OWNED, projectId, asset: { ext: { in: ["png", "jpg", "jpeg", "webp"] } } },
-        select: { id: true },
+      validSource = await validateOwnedGenerationExt(prisma, {
+        id: sourceGenerationId,
+        ownerId,
+        projectId,
+        exts: IMAGE_EXTS,
       });
-      if (g) validSource = g.id;
+    }
+
+    // Validate referenceVideoGenerationId (owned + in-project + VIDEO-ext), else null
+    let validRefVideo: string | null = null;
+    if (referenceVideoGenerationId) {
+      validRefVideo = await validateOwnedGenerationExt(prisma, {
+        id: referenceVideoGenerationId,
+        ownerId,
+        projectId,
+        exts: VIDEO_EXTS,
+      });
     }
 
     // Resolve thread: new vs existing-owned-and-in-project
@@ -150,9 +167,10 @@ export async function POST(req: NextRequest): Promise<Response> {
         data: { id: threadId, ownerId, projectId, title: text.slice(0, 80) },
       });
     }
+    userMessageId = newId();
     await prisma.chatMessage.create({
       data: {
-        id: newId(),
+        id: userMessageId,
         threadId,
         ownerId,
         role: "USER",
@@ -166,7 +184,7 @@ export async function POST(req: NextRequest): Promise<Response> {
     seqAfterUser = seq;
 
     // Build context (mirror ottoTurn)
-    ctx = await buildOttoContext({ ownerId, projectId, threadId, sourceGenerationId: validSource, simpleMode: parsed.data.simple });
+    ctx = await buildOttoContext({ ownerId, projectId, threadId, sourceGenerationId: validSource, referenceVideoGenerationId: validRefVideo, simpleMode: parsed.data.simple });
 
     // Goal-intent seeding on a new thread with a goalKey
     if (!priorOttoState && parsed.data.goalKey && isGoalKey(parsed.data.goalKey)) {
@@ -178,10 +196,12 @@ export async function POST(req: NextRequest): Promise<Response> {
     // Build run input: system message + (prior history | fresh) + user message
     const sys = buildContextSystemMessage(ctx);
     const userTurn = buildUserTurn(text, ctx.images);
-    if (priorOttoState) {
-      const priorState = await RunState.fromString(otto, priorOttoState);
-      runInput = [...(sys ? [sys] : []), ...stripHistoryImages(priorState.history), userTurn];
+    const priorState = priorOttoState ? await tryRestoreRunState(otto, priorOttoState) : null;
+    if (priorState) {
+      runInput = [...(sys ? [sys] : []), ...sanitizeHistory(priorState.history), userTurn];
     } else {
+      // No prior state OR an unrestorable one (F24): start fresh — the turn still runs and its
+      // normal state write self-heals ottoState to the current schema.
       runInput = [...(sys ? [sys] : []), userTurn];
     }
   } catch (e) {
@@ -189,7 +209,10 @@ export async function POST(req: NextRequest): Promise<Response> {
     return Response.json({ error: "Couldn't reach Otto — please try again." }, { status: 500 });
   }
 
-  const refId = `otto-stream:${threadId}:${seqAfterUser}`;
+  // Key the reservation off the UNIQUE user-message id, not threadId:seq — seq is
+  // read-max-then-insert with a non-unique index, so a concurrent turn could collide the
+  // `otto-stream:threadId:seq` refId and the second reserveCredits would no-op (F27).
+  const refId = `otto-stream:${userMessageId}`;
 
   // --- Open the UI-message stream and run the agent inside it -----------------
   const stream = createUIMessageStream({
@@ -256,8 +279,15 @@ export async function POST(req: NextRequest): Promise<Response> {
         if (e instanceof MaxTurnsExceededError) {
           closeOpenParts();
           const degradeText = "I got a bit tangled up — try asking again.";
+          // Tools may have persisted cards mid-run at max(seq)+1 — the pre-run
+          // seqAfterUser snapshot could collide (same fix as finalizeOttoRun).
+          const lastMsg = await prisma.chatMessage.findFirst({
+            where: { threadId, ownerId },
+            orderBy: { seq: "desc" },
+            select: { seq: true },
+          });
           await prisma.chatMessage.create({
-            data: { id: newId(), threadId, ownerId, role: "AGENT", kind: "TEXT", seq: seqAfterUser + 1, text: degradeText },
+            data: { id: newId(), threadId, ownerId, role: "AGENT", kind: "TEXT", seq: Math.max(seqAfterUser, lastMsg?.seq ?? 0) + 1, text: degradeText },
           });
           writer.write({ type: "data-status", data: { kind: "degraded", text: degradeText } satisfies OttoStatusData });
           return;

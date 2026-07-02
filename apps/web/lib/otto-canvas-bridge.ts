@@ -106,6 +106,11 @@ export async function syncOttoCanvasNodes(
 
   return nodes.map((n) => {
     const gid = n.generationId ?? (n.genJobId ? jobFirstGen.get(n.genJobId) ?? null : null);
-    return { ...n, url: gid ? thumbs[gid]?.src ?? null : null };
+    // Return the RESOLVED generationId, not the raw row's. A promptbar-created node
+    // persists only genJobId (generationId null), so after a reload the client had no
+    // generationId for it — Make video / Detail silently no-oped on that primary card
+    // (their guard needs nodeDataRef.generationId). Display-only metadata resolution;
+    // the id is the job's OWN first generation (owner-scoped above), no spend logic.
+    return { ...n, generationId: gid, url: gid ? thumbs[gid]?.src ?? null : null };
   });
 }

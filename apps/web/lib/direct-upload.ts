@@ -19,7 +19,7 @@ import {
   type FinalizedUpload,
   type UploadPart,
 } from "@fikirtive/core";
-import { authorizeUpload, signUploadPart, abortDirectUpload } from "./upload-actions";
+import { authorizeUpload, signUploadPart, abortDirectUpload, uploadFileFallback } from "./upload-actions";
 
 export interface DirectUploadFailure {
   filename: string;
@@ -86,6 +86,21 @@ export async function uploadFilesDirect(
     if (auth.kind === "exists") {
       onProgress(file.name, 100);
       done.push({ sha256, ext, sizeBytes: file.size, originalFilename: file.name, upload: { mode: "existed" } });
+      continue;
+    }
+    // F41: driver can't presign (dev local disk) — upload through the server
+    // action instead. The server hashes + bounds-checks the bytes itself and
+    // returns the same FinalizedUpload receipt shape.
+    if (auth.kind === "unsupported") {
+      const fd = new FormData();
+      fd.set("file", file);
+      const res = await uploadFileFallback(fd);
+      if ("error" in res) {
+        failures.push({ filename: file.name, reason: res.error });
+      } else {
+        onProgress(file.name, 100);
+        done.push(res.ok);
+      }
       continue;
     }
     pending.push({

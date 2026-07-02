@@ -25,24 +25,39 @@ export class BytePlusProvider implements GenerationProvider {
           method: "POST", headers: this.headers(),
           body: JSON.stringify({
             model, prompt: req.prompt, size: "2048x2048", response_format: "url",
-            // v1 limitation: only req.inputImageUrls[0] is sent. Ark Seedream i2i accepts a
-            // single source image; multi-reference conditioning is not supported in this version.
-            ...(conditioned ? { image: req.inputImageUrls[0] } : {}),
+            // F40: Ark Seedream defaults watermark=true — paying customers must not receive
+            // watermarked images, so set it false explicitly.
+            watermark: false,
+            // Multi-reference conditioning: Ark Seedream's `image` field accepts an array of
+            // source images (verified against ark.ap-southeast; ≤14 refs, inputs+outputs ≤ 15,
+            // and the worker caps at MAX_CONDITIONING_IMAGES=10 → 10+1 ≤ 15). Send the whole
+            // presigned set so product+logo+character all condition. Keep the proven single-
+            // string form for exactly one ref (the live-verified prod shape); array only for 2+.
+            ...(conditioned ? { image: req.inputImageUrls.length === 1 ? req.inputImageUrls[0] : req.inputImageUrls } : {}),
           }),
         });
-        if (!res.ok) throw new Error(`byteplus image → ${res.status}: ${(await res.text().catch(() => "")).slice(0, 300)}`); // pre-charge
-        // res.ok ⇒ billed; a failure past here is a charged failure
+        if (!res.ok) throw new Error(`byteplus image → ${res.status}: ${(await res.text().catch(() => "")).slice(0, 300)}`); // pre-charge (nothing billed) — stays PLAIN so the worker can retry
+        // res.ok ⇒ billed; a failure past here is a CHARGED failure (a retry would re-bill).
         const data = (await res.json()) as { data?: { url: string }[] };
         const url = data.data?.[0]?.url;
-        if (!url) throw new Error("byteplus image: no url in response");
+        if (!url) throw chargedError("byteplus image: no url in response");
         const r = await fetch(url);
-        if (!r.ok) throw new Error(`image download → ${r.status}`);
+        if (!r.ok) throw chargedError(`image download → ${r.status}`);
         return { bytes: new Uint8Array(await r.arrayBuffer()), ext: extFromUrl(url) ?? "png" } as GeneratedImage;
       }),
     );
     const ok = results.flatMap((s) => (s.status === "fulfilled" ? [s.value] : []));
-    if (ok.length !== req.count) throw chargedError(`byteplus image: only ${ok.length}/${req.count} usable`);
-    return ok;
+    if (ok.length === req.count) return ok;
+    // Shortfall (F05). If ANY image was billed — a promise fulfilled (its POST succeeded and
+    // billed), or a rejection is marked charged (a post-POST failure) — the batch is a CHARGED
+    // failure: a retry would re-bill the already-billed ones, so fail closed as charged. But if
+    // EVERY rejection is an unmarked PRE-charge failure (the POST itself 4xx/5xx'd, nothing
+    // billed), rethrow the first as a PLAIN error so the worker retries and the spend audit isn't
+    // polluted with phantom provider spend.
+    const rejections = results.flatMap((s) => (s.status === "rejected" ? [s.reason] : []));
+    const anyCharged = ok.length > 0 || rejections.some((e) => e instanceof Error && (e as { charged?: boolean }).charged);
+    if (anyCharged) throw chargedError(`byteplus image: only ${ok.length}/${req.count} usable`);
+    throw rejections[0] instanceof Error ? rejections[0] : new Error(String(rejections[0]));
   }
   async generateVideo(req: VideoRequest): Promise<GeneratedVideo> {
     const model = VIDEO_MODEL_MAP[req.model];
@@ -61,6 +76,7 @@ export class BytePlusProvider implements GenerationProvider {
       .concat(req.aspectRatio ? [`--ratio ${req.aspectRatio}`] : []).join(" ");
     const content: unknown[] = [];
     if (i2v) content.push({ type: "image_url", image_url: { url: req.imageUrl } });
+    if (req.refVideoUrl) content.push({ type: "video_url", video_url: { url: req.refVideoUrl }, role: "reference_video" });
     content.push({ type: "text", text: `${req.prompt} ${flags}`.trim() });
 
     const sub = await fetch(`${ARK_BASE}/contents/generations/tasks`, {
@@ -71,7 +87,11 @@ export class BytePlusProvider implements GenerationProvider {
     if (!taskId) throw new Error("byteplus video: submit returned no task id");
     // task created ⇒ billed on success. Poll inside the provider (the worker just awaits).
     const startedAt = Date.now();
-    const TIMEOUT_MS = 5 * 60_000;
+    // F06: 15 min > realistic Seedance tail latency, so a still-running task isn't abandoned
+    // (abandoning FAILs+refunds the user while BytePlus later bills the completing task = margin
+    // leak). Stays safely under GEN_QUEUE_POLICY.expireInSeconds (20 min) minus download/persist
+    // headroom, so the worker's own message doesn't expire mid-poll.
+    const TIMEOUT_MS = 15 * 60_000;
     // eslint-disable-next-line no-constant-condition
     while (true) {
       await new Promise((r) => setTimeout(r, 5_000));

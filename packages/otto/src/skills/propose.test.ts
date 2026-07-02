@@ -3,7 +3,7 @@ import { GEN_PRICE_USD_PER_IMAGE } from "@fikirtive/core";
 // I1: pure-helper tests import from propose.helpers — no DB mock needed for these
 import { buildProposeCard } from "./propose.helpers.js";
 // executePropose (DB-side) still imported from propose.ts
-import { executePropose } from "./propose.js";
+import { executePropose, proposeSkill } from "./propose.js";
 import type { OttoContext } from "../context.js";
 
 // ---------------------------------------------------------------------------
@@ -191,6 +191,23 @@ describe("buildProposeCard — pure helper", () => {
     expect(cardPayload.estimatedCredits).toBe(1);
   });
 
+  it("reference video: kind=video + referenceVideoGenerationId → present in payload, image tier untouched", () => {
+    const ctx = makeCtx({ referenceVideoGenerationId: "gen_vid" });
+    const { cardPayload } = buildProposeCard(
+      { kind: "video", structuredPrompt: "move like this", entityIds: [], variantSel: {} }, ctx, []);
+    expect(cardPayload.kind).toBe("video");
+    expect((cardPayload as Record<string, unknown>)["referenceVideoGenerationId"]).toBe("gen_vid");
+  });
+
+  it("reference video: kind=image ignores referenceVideoGenerationId (not in payload)", () => {
+    const ctx = makeCtx({ referenceVideoGenerationId: "gen_vid" });
+    const { cardPayload } = buildProposeCard(
+      { kind: "image", structuredPrompt: "a poster", entityIds: [], variantSel: {} }, ctx, []);
+    expect(cardPayload.kind).toBe("image");
+    expect((cardPayload as Record<string, unknown>)["referenceVideoGenerationId"]).toBeUndefined();
+    expect(cardPayload.estimatedCredits).toBe(1); // image tier unchanged
+  });
+
   // Test forVideo: image with forVideo=true → videoStep.estimatedCredits is positive,
   // estimatedCredits (image) is unchanged/smaller
   it("forVideo=true on image → cardPayload.videoStep.estimatedCredits is a positive number, estimatedCredits (image) unchanged", () => {
@@ -369,5 +386,40 @@ describe("executePropose — mock DB", () => {
     // Identity MUST come from ctx.orgId and ctx.threadId exclusively
     expect(createArg.data["ownerId"]).toBe("org-A");
     expect(createArg.data["threadId"]).toBe("thread-from-ctx");
+  });
+});
+
+describe("propose requires-gate + goal", () => {
+  it("proposeSkill declares a goal requirement", () => {
+    expect(proposeSkill.requires.map((r) => r.field)).toContain("goal");
+  });
+
+  it("proposeInput accepts an optional goal and still parses without it", async () => {
+    const { proposeInput } = await import("./propose.helpers.js");
+    expect(proposeInput.safeParse({ kind: "image", structuredPrompt: "x" }).success).toBe(true);
+    const withGoal = proposeInput.safeParse({ kind: "image", structuredPrompt: "x", goal: "drive signups" });
+    expect(withGoal.success).toBe(true);
+  });
+
+  it("executePropose persists goal onto the GEN_CARD payload", async () => {
+    const db = await import("@fikirtive/db");
+    const mockPrisma = db.prisma as unknown as {
+      entity: { findMany: ReturnType<typeof vi.fn> };
+      chatMessage: { findFirst: ReturnType<typeof vi.fn>; create: ReturnType<typeof vi.fn> };
+    };
+    mockPrisma.entity.findMany.mockResolvedValue([]);
+    mockPrisma.chatMessage.findFirst.mockResolvedValue({ seq: 5 });
+    mockPrisma.chatMessage.create.mockClear();
+    mockPrisma.chatMessage.create.mockResolvedValue({});
+
+    const ctx = makeCtx({ orgId: "org-goal", threadId: "thread-goal" });
+    await executePropose(
+      { kind: "image", structuredPrompt: "A hero shot", entityIds: [], variantSel: {}, goal: "launch teaser" },
+      { context: ctx },
+    );
+    const createArg = (mockPrisma.chatMessage.create as ReturnType<typeof vi.fn>).mock.calls[0]![0] as {
+      data: { payload: Record<string, unknown> };
+    };
+    expect(createArg.data.payload["goal"]).toBe("launch teaser");
   });
 });

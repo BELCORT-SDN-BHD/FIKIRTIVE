@@ -34,6 +34,22 @@ describe("stripe webhook", () => {
     expect(actionEventCreate).toHaveBeenCalled();
   });
 
+  it("grants on checkout.session.async_payment_succeeded (paid) with the same dedup key (F01)", async () => {
+    // Delayed-notification methods (e.g. FPX/GrabPay) can complete 'unpaid' and pay later via
+    // this event — it must grant too, or a paying customer gets no credits. Same stripe:<session>
+    // key makes it exactly-once even if completed + async_payment_succeeded both fire.
+    constructEvent.mockReturnValue({
+      id: "evt_async", type: "checkout.session.async_payment_succeeded",
+      data: { object: { id: "cs_async", payment_status: "paid", metadata: { orgId: "org_9", credits: "220" }, payment_intent: "pi_9", amount_total: 10000 } },
+    });
+    grantCredits.mockResolvedValue({ ok: true });
+    const res = await POST(req());
+    expect(res.status).toBe(200);
+    expect(grantCredits).toHaveBeenCalledWith(expect.objectContaining({
+      orgId: "org_9", amount: 220 * 10, source: "PURCHASE", idempotencyKey: "stripe:cs_async",
+    }));
+  });
+
   it("200 + no grant when metadata is missing/invalid (no retry storm)", async () => {
     constructEvent.mockReturnValue({ id: "evt_2", type: "checkout.session.completed", data: { object: { payment_status: "paid", metadata: {} } } });
     const res = await POST(req());

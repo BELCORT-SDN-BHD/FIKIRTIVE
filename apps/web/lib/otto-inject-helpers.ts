@@ -76,22 +76,36 @@ export function hasWorkingJob(messages: OttoUiMessage[]): boolean {
   });
 }
 
-/** Extract the proposed card id from a `data-tool-propose` part's payload
- *  ({ cardId, shownPriceDisplay }), tolerant of shape. Returns null if absent. */
-export function proposeCardId(part: { type: string; data?: unknown }): string | null {
-  if (part.type !== "data-tool-propose") return null;
+/** The durable message kinds that render as an inline card widget. These (and
+ *  only these) may be injected live mid-stream / backfilled by appendMissingCards. */
+const CARD_KINDS = new Set(["GEN_CARD", "STORYBOARD_CARD", "ACTION_CARD", "BUILD_CARD"]);
+
+/** Extract the persisted card id(s) from a `data-tool-propose` part's payload,
+ *  tolerant of shape (F23): propose / propose-meta-action / propose-ad-build
+ *  return { cardId }, proposePack returns { cardIds: [] }. A failed tool call
+ *  returns neither (e.g. { message } only) → []. */
+export function cardIdsOf(part: { type: string; data?: unknown }): string[] {
+  if (part.type !== "data-tool-propose") return [];
   const data = part.data;
-  if (!data || typeof data !== "object") return null;
-  const cardId = (data as { cardId?: unknown }).cardId;
-  return typeof cardId === "string" && cardId.length > 0 ? cardId : null;
+  if (!data || typeof data !== "object") return [];
+  const { cardId, cardIds } = data as { cardId?: unknown; cardIds?: unknown };
+  const ids: string[] = [];
+  if (typeof cardId === "string" && cardId.length > 0) ids.push(cardId);
+  if (Array.isArray(cardIds)) {
+    for (const id of cardIds) {
+      if (typeof id === "string" && id.length > 0) ids.push(id);
+    }
+  }
+  return ids;
 }
 
 /**
- * Inject the durable GEN_CARD identified by `cardId` (from a freshly-streamed
- * data-tool-propose) into the useChat message list, so the just-proposed card
- * appears inline with its FULL payload. Deduped by durableId — if the card is
- * already present (e.g. it was seeded or a prior poll already added it) the list
- * is returned unchanged (same reference).
+ * Inject the durable card (GEN_CARD | STORYBOARD_CARD | ACTION_CARD | BUILD_CARD)
+ * identified by `cardId` (from a freshly-streamed data-tool-propose) into the
+ * useChat message list, so the just-proposed card appears inline with its FULL
+ * payload. Deduped by durableId — if the card is already present (e.g. it was
+ * seeded or a prior poll already added it) the list is returned unchanged
+ * (same reference).
  *
  * Returns the new messages array (or the same array if nothing changed).
  */
@@ -102,10 +116,33 @@ export function injectCardMessage(
 ): OttoUiMessage[] {
   if (messages.some((m) => m.metadata?.durableId === cardId)) return messages;
   const card = threadToUiMessages(fresh).find(
-    (u) => u.metadata?.durableId === cardId && u.metadata?.kind === "GEN_CARD",
+    (u) => u.metadata?.durableId === cardId && CARD_KINDS.has(u.metadata?.kind ?? ""),
   );
   if (!card) return messages;
   return [...messages, card];
+}
+
+/**
+ * Safety net run at turn end (onFinish): append any card-kind durables
+ * (GEN_CARD | ACTION_CARD | BUILD_CARD) present in the fresh thread but missing
+ * from the useChat list, deduped by durableId. Covers a live data-tool-propose
+ * part that was lost mid-stream. NEVER appends TEXT (the streamed reply already
+ * rendered — re-adding would double it) or worker results (appendDurableResults
+ * owns those). Returns the same array reference when nothing is missing.
+ */
+export function appendMissingCards(
+  messages: OttoUiMessage[],
+  fresh: ChatThreadDTO,
+): OttoUiMessage[] {
+  const present = new Set(
+    messages.map((m) => m.metadata?.durableId).filter((id): id is string => !!id),
+  );
+  const additions = threadToUiMessages(fresh).filter((u) => {
+    const meta = u.metadata;
+    return !!meta && CARD_KINDS.has(meta.kind) && !present.has(meta.durableId);
+  });
+  if (additions.length === 0) return messages;
+  return [...messages, ...additions];
 }
 
 /** Patch in-memory GEN_CARD genJobIds from the durable thread. After "Make it",

@@ -18,8 +18,11 @@ import {
   storageKey,
   newId,
   GEN_RETRY_LIMIT,
+  GEN_QUEUE,
   videoDefaults,
   MAX_CONDITIONING_IMAGES,
+  REF_VIDEO_MIN_SECONDS,
+  REF_VIDEO_MAX_SECONDS,
   genSpentUsd,
   pricedGenCredits,
   displayCredits,
@@ -178,6 +181,28 @@ async function failClosedWithRefund(
  *  refund + post a terminal message for any GENERATING row older than the stale window. The
  *  conditional updateMany is the at-most-once claim (a late finisher or another instance wins
  *  instead), so this is safe under concurrency and never clobbers a DONE. */
+/** F07: does pg-boss still hold a deliverable message for this QUEUED gen job? Under the serial
+ *  (batchSize:1) queue, a paid job can wait past the 25-min wall-clock cutoff behind a burst of
+ *  long video jobs — but if its message is still created/retry/active, pg-boss WILL deliver it,
+ *  so fail-closing here would spuriously refund a job that's about to run. Only a QUEUED job whose
+ *  message is truly lost/expired-to-DLQ (no live row) should be reaped. Matched by the payload's
+ *  genJobId, robust even when the best-effort queueJobId persist failed. Fails SAFE: if pg-boss
+ *  state can't be read, assume a live message may exist and skip the reap this sweep (a delayed
+ *  reap is far better than refunding a live paid job). */
+async function hasLiveGenMessage(genJobId: string): Promise<boolean> {
+  try {
+    const rows = await prisma.$queryRaw<{ id: string }[]>`
+      SELECT id FROM pgboss.job
+      WHERE name = ${GEN_QUEUE} AND state IN ('created', 'retry', 'active')
+        AND data->>'genJobId' = ${genJobId}
+      LIMIT 1`;
+    return rows.length > 0;
+  } catch (e) {
+    console.warn(`[gen] pg-boss liveness check failed for ${genJobId}; skipping reap this sweep:`, e instanceof Error ? e.message : e);
+    return true;
+  }
+}
+
 export async function reapStaleGenJobs(): Promise<number> {
   const cutoff = new Date(Date.now() - GEN_REAP_MS);
   const queuedCutoff = new Date(Date.now() - GEN_QUEUED_REAP_MS);
@@ -215,6 +240,8 @@ export async function reapStaleGenJobs(): Promise<number> {
     select: { id: true, ownerId: true, threadId: true, kind: true, model: true },
   });
   for (const job of stuckQueued) {
+    // F07: skip a job pg-boss will still deliver (serial-queue starvation, not a lost message).
+    if (await hasLiveGenMessage(job.id)) continue;
     let failedClosed = false;
     await prisma.$transaction(async (tx) => {
       const failed = await tx.genJob.updateMany({
@@ -491,17 +518,57 @@ export async function handleGen(data: GenJobData, retryCount: number): Promise<v
         tailImageUrl = (await storage.presignedGet(storageKey(tail.asset.ownerId, tail.asset.contentHash, tail.asset.ext), 3600)) ?? "";
         if (provider.name !== "mock" && !tailImageUrl) throw new Error("last-frame image unreachable — refusing to spend on i2v");
       }
+      // Whole-clip reference video (整段视频参考). Resolved server-side from an owned,
+      // in-project, video-ext Generation; fail-closed if set-but-missing (never spend).
+      let refVideoUrl = "";
+      if (job.referenceVideoGenerationId) {
+        const rv = await prisma.generation.findFirst({
+          where: { id: job.referenceVideoGenerationId, ownerId: job.ownerId, projectId: job.projectId, deletedAt: null, asset: { ext: { in: ["mp4", "mov", "webm"] } } },
+          include: { asset: true },
+        });
+        if (!rv) {
+          await failClosedWithRefund(job, "reference video not found (or not a video) in this project");
+          return;
+        }
+        // Margin guard: BytePlus bills reference-video input by duration while our charge is
+        // flat per resolution. The composer gates 2–10s client-side; re-enforce here from
+        // ingest's ffprobe (Asset.durationS). null = probe pending/failed → allow (the async
+        // ingest race is the NORMAL flow right after attach; the client already gated it).
+        const refDur = rv.asset.durationS;
+        if (refDur != null && (refDur < REF_VIDEO_MIN_SECONDS || refDur > REF_VIDEO_MAX_SECONDS)) {
+          await failClosedWithRefund(job, `reference video must be ${REF_VIDEO_MIN_SECONDS}–${REF_VIDEO_MAX_SECONDS}s (this clip is ~${Math.round(refDur)}s)`);
+          return;
+        }
+        refVideoUrl = (await storage.presignedGet(storageKey(rv.asset.ownerId, rv.asset.contentHash, rv.asset.ext), 3600)) ?? "";
+        if (provider.name !== "mock" && !refVideoUrl) throw new Error("reference video unreachable — refusing to spend");
+      }
       // per-model controls chosen in the composer (resolved + stored at enqueue);
       // fall back to the legacy fixed duration if an older job has none.
       const vo = job.videoOptions as { seconds?: number; resolution?: string; aspectRatio?: string; fps?: number; audio?: boolean } | null;
       const video = await provider.generateVideo({
         prompt: job.prompt, imageUrl, tailImageUrl: tailImageUrl || undefined,
+        refVideoUrl: refVideoUrl || undefined,
         durationSeconds: vo?.seconds ?? videoDefaults(job.model as GenVideoModel).seconds,
         resolution: vo?.resolution, aspectRatio: vo?.aspectRatio, fps: vo?.fps, audio: vo?.audio,
         model: job.model,
       });
       outputs = [video];
     } else {
+      // F09: an "edit @composer" from DetailPanel sets sourceGenerationId on an IMAGE job —
+      // condition the gen on that owned still (resolved server-side from an owned id, D19) so a
+      // paid edit relates to the image the user was viewing, not an unconditioned fresh gen.
+      // Prepended so it's the primary reference (byteplus sends inputImageUrls[0] first; with
+      // multi-reference conditioning the @ref images ride along after it). Pre-spend.
+      if (job.sourceGenerationId) {
+        const src = await prisma.generation.findFirst({
+          where: { id: job.sourceGenerationId, ownerId: job.ownerId, projectId: job.projectId, deletedAt: null, asset: { ext: { in: ["png", "jpg", "jpeg", "webp"] } } },
+          include: { asset: true },
+        });
+        if (!src) { await failClosedWithRefund(job, "edit source image not found (or not an image) in this project"); return; }
+        const srcUrl = (await storage.presignedGet(storageKey(src.asset.ownerId, src.asset.contentHash, src.asset.ext), 3600)) ?? "";
+        if (provider.name !== "mock" && !srcUrl) throw new Error("edit source image unreachable — refusing to spend");
+        if (srcUrl) inputImageUrls.unshift(srcUrl);
+      }
       outputs = await provider.generate({ prompt: job.prompt, inputImageUrls, count: job.count, model: job.model as GenModel });
     }
     spent = true; // the paid call has returned — past here, a failure must not retry
@@ -623,8 +690,16 @@ export async function handleGen(data: GenJobData, retryCount: number): Promise<v
       });
     } else {
       // recoverable pre-charge retry — requeue and keep the hold (the resume path
-      // settles it on success, or a later terminal failure refunds it).
-      await prisma.genJob.update({ where: { id: job.id }, data: { status: "QUEUED", error: message, progress: 0 } });
+      // settles it on success, or a later terminal failure refunds it). GUARDED
+      // conditional write: only requeue a row still QUEUED/GENERATING. If a finalizer
+      // (reaper / stale fail-close) already FAILED+refunded this job mid-flight, the
+      // updateMany matches 0 rows and we must NOT resurrect it — otherwise a redelivery
+      // would run the paid call and deliver a free result against a refunded hold (F04).
+      const requeued = await prisma.genJob.updateMany({
+        where: { id: job.id, status: { in: ["QUEUED", "GENERATING"] } },
+        data: { status: "QUEUED", error: message, progress: 0 },
+      });
+      if (requeued.count === 0) console.error(`[gen] ${job.id}: not requeued — a finalizer already owns it (FAILED/DONE); discarding this delivery`);
     }
     // user-facing chat text stays generic; the sanitized provider error is kept in GenJob.error (ops/DB)
     if (final) await appendCoworkResult(job, "TURN_ERROR", [], "That generation didn't go through — you can try again.");

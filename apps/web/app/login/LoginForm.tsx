@@ -2,6 +2,7 @@
 
 import { useState } from "react";
 import { authClient } from "@/lib/better-auth/client";
+import { sanitizeCallbackURL } from "@/lib/safe-redirect";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 
@@ -9,7 +10,7 @@ import { Input } from "@/components/ui/input";
  *  (passwordless) and Google sit beneath as alternatives. All three go through
  *  authClient (Better Auth). `from` preserves the post-login redirect. */
 export function LoginForm({ from }: { from: string }) {
-  const callbackURL = from && from.startsWith("/") ? from : "/";
+  const callbackURL = sanitizeCallbackURL(from);
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [showPw, setShowPw] = useState(false);

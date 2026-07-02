@@ -3,9 +3,9 @@ import { allSkills, skillCatalog } from "./registry.js";
 import { otto } from "./otto.js";
 
 describe("registry", () => {
-  it("collects all seventeen skills", () => {
+  it("collects all twenty skills", () => {
     const names = allSkills.map((s) => s.name).sort();
-    expect(names).toEqual(["describeRefs", "generate", "list-meta-pages", "lookupProducts", "meta-insights", "meta-list-objects", "propose", "propose-ad-build", "propose-meta-action", "proposePack", "rememberBrandFact", "researchWeb", "saveCustomerSegment", "saveOffer", "saveProduct", "setTitle", "updateBrief"]);
+    expect(names).toEqual(["describeRefs", "generate", "list-meta-pages", "lookupProducts", "meta-insights", "meta-list-objects", "propose", "propose-ad-build", "propose-meta-action", "proposePack", "proposeStoryboard", "rememberBrandFact", "researchWeb", "saveCustomerSegment", "saveOffer", "saveProduct", "seedancePrompt", "seedreamPrompt", "setTitle", "updateBrief"]);
   });
   it("every registered skill carries a built SDK tool", () => {
     expect(allSkills.every((s) => s.tool != null)).toBe(true);
@@ -19,5 +19,11 @@ describe("registry", () => {
     const gen = skillCatalog.find((m) => m.name === "generate")!;
     expect(gen.needsApproval).toBe(true);
     expect(gen.cost).toBe("spend");
+  });
+  it("catalog carries the requires declaration for each skill", () => {
+    const propose = skillCatalog.find((m) => m.name === "propose")!;
+    expect(Array.isArray(propose.requires)).toBe(true);
+    // 每个 skill 至少有一个空数组（不是 undefined）
+    expect(skillCatalog.every((m) => Array.isArray(m.requires))).toBe(true);
   });
 });

@@ -69,6 +69,10 @@ export type OttoStreamPart =
 export const OTTO_TEXT_ID = "otto-text";
 export const OTTO_REASONING_ID = "otto-reasoning";
 
+/** Tools whose output carries the id(s) of a durable card they just persisted
+ *  (GEN_CARD / ACTION_CARD / BUILD_CARD) — forwarded live as data-tool-propose. */
+const CARD_TOOL_NAMES = new Set(["propose", "proposeStoryboard", "proposePack", "propose-meta-action", "propose-ad-build"]);
+
 /** Read the tool name off a run_item event's item, tolerant of item shape. */
 function toolNameOf(item: unknown): string | undefined {
   if (!item || typeof item !== "object") return undefined;
@@ -111,18 +115,22 @@ export function bridgeEvent(event: unknown): OttoStreamPart | null {
     const item = (event as { item?: unknown }).item;
 
     if (name === "tool_called") {
-      // Only the propose tool gets a live status; other $0 tools are silent.
-      if (toolNameOf(item) === "propose") {
+      // Only the card-proposing tools get a live status; other $0 tools are silent.
+      const called = toolNameOf(item);
+      if (called === "propose" || called === "proposeStoryboard") {
         return { type: "data-status", data: { kind: "planning", text: "planning your ad…" } };
       }
       return null;
     }
 
     if (name === "tool_output") {
-      // The durable GEN_CARD is persisted by the propose tool itself; here we just
-      // forward its return value ({ cardId, shownPriceDisplay }) so the client can
-      // render the card inline immediately. The card DATA is on the OUTPUT event.
-      if (toolNameOf(item) === "propose") {
+      // The durable card is persisted by the tool itself; here we just forward its
+      // return value so the client can render the card inline immediately (F23).
+      // Shapes: propose / proposeStoryboard → { cardId, … }; proposePack →
+      // { packId, cardIds[] }; propose-meta-action / propose-ad-build →
+      // { message, cardId?, … } (cardId absent on validation failure — the
+      // client's cardIdsOf handles that).
+      if (CARD_TOOL_NAMES.has(toolNameOf(item) ?? "")) {
         const output = (item as { output?: unknown }).output;
         return { type: "data-tool-propose", data: output };
       }
@@ -158,6 +166,9 @@ const TOOL_STEP_LABELS: Record<string, string> = {
   describeRefs: "Looking at your references",
   propose: "Planning the campaign",
   proposePack: "Planning the ad pack",
+  proposeStoryboard: "Laying out the storyboard",
+  seedreamPrompt: "Crafting the image prompt",
+  seedancePrompt: "Crafting the video prompt",
   generate: "Making a visual",
   "meta-insights": "Reading your ad performance",
   "meta-list-objects": "Checking your Meta account",

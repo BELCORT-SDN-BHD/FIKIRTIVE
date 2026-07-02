@@ -7,7 +7,7 @@
  * Mirrors the pure-mapper pattern of otto-stream-bridge.ts.
  *
  * TEXT messages map to a single AI-SDK `text` part. NON-text durable messages
- * (PLAN | GEN_CARD | GEN_RESULT | DENIAL | TURN_ERROR | ACTION_CARD | BUILD_CARD) map to a minimal visible
+ * (PLAN | GEN_CARD | GEN_RESULT | DENIAL | TURN_ERROR | ACTION_CARD | BUILD_CARD | STORYBOARD_CARD) map to a minimal visible
  * placeholder so a reload never silently drops history; the durable id / kind /
  * payload / genJobId ride along in message `metadata` so Task 5 can swap the
  * placeholder for the real OttoPlanCard / OttoResult widget.
@@ -43,6 +43,8 @@ function placeholderTextFor(kind: ChatMessageDTO["kind"], text: string): string 
       return "Otto prepared an action plan.";
     case "BUILD_CARD":
       return "Otto drafted an ad plan.";
+    case "STORYBOARD_CARD":
+      return "Otto laid out a storyboard.";
     case "DENIAL":
     case "TURN_ERROR":
       // These already carry user-facing copy on the durable message.
@@ -59,9 +61,10 @@ function placeholderTextFor(kind: ChatMessageDTO["kind"], text: string): string 
  *
  * - role: USER → 'user', AGENT → 'assistant'.
  * - kind TEXT → one `text` part with the message text.
- * - kind PLAN | GEN_CARD | GEN_RESULT | DENIAL | TURN_ERROR → a single `text`
- *   placeholder part (see placeholderTextFor) PLUS metadata carrying the durable
- *   id / kind / payload / genJobId for Task 5.
+ * - kind PLAN | GEN_CARD | GEN_RESULT | DENIAL | TURN_ERROR | ACTION_CARD |
+ *   BUILD_CARD | STORYBOARD_CARD → a single `text` placeholder part (see
+ *   placeholderTextFor) PLUS metadata carrying the durable id / kind / payload /
+ *   genJobId for the widget renderer.
  *
  * The durable ChatMessage id is reused as the UIMessage id so streamed-then-
  * reloaded messages stay keyed stably.
