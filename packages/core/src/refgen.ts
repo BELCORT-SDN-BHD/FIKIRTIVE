@@ -109,6 +109,9 @@ export interface VideoRequest {
   imageUrl: string;
   /** optional end frame — i2v interpolates source→tail (Kling tail_image_url). */
   tailImageUrl?: string;
+  /** optional whole-clip reference video — a short-lived presigned GET the provider
+   *  passes to Seedance as role:"reference_video". BytePlus 2.0 only; Fal rejects it. */
+  refVideoUrl?: string;
   durationSeconds: number;
   model: string;
   // per-model controls (resolved from the job; the provider maps each to the

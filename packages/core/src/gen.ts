@@ -175,6 +175,9 @@ export const genRequest = z
     sourceGenerationId: z.string().min(1).max(64).nullish(),
     // optional end frame for i2v (interpolate source→tail). Same trust boundary.
     tailGenerationId: z.string().min(1).max(64).nullish(),
+    // whole-clip reference video (Seedance 2.0 reference_video). Server-validated
+    // owner+project+video-ext, like sourceGenerationId. Only used by video plans.
+    referenceVideoGenerationId: z.string().min(1).max(64).nullish(),
     prompt: z.string().trim().min(1).max(MAX_GEN_PROMPT),
     entityIds: z.array(z.string().min(1).max(64)).max(MAX_GEN_ENTITIES).default([]),
     // Phase C: { [entityId]: variantId } — which named variant each @mention

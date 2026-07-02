@@ -53,6 +53,9 @@ export const coworkTurnRequest = z.object({
   // live) before forcing a video proposal, and startGen's checkCast re-validates at
   // spend. Drop/ignore if invalid; never errors the turn.
   sourceGenerationId: z.string().min(1).max(64).optional(),
+  // whole-clip reference video (整段视频参考). Server-TRUSTED: re-validated owned +
+  // in-project + video-ext before use; invalid/foreign/deleted id silently ignored.
+  referenceVideoGenerationId: z.string().min(1).max(64).optional(),
   // "Reply to message" — a prior message in the same thread to quote in context.
   // Server-TRUSTED: coworkTurn re-validates ownership + thread + live before
   // injecting the quote; invalid/foreign/deleted id is silently ignored.
