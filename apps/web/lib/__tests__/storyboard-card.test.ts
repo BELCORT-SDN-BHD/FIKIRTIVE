@@ -87,4 +87,24 @@ describe("parseStoryboardCardPayload", () => {
     });
     expect(r.shots[0].firstFrameCardId).toBe("child-1");
   });
+
+  it("durationSeconds 透传(number guard),videoCardId/videoGenerationId 透传(G 用)", () => {
+    const r = parseStoryboardCardPayload({
+      storyboardTitle: "X",
+      shots: [{ shotId: "s0", index: 0, firstFramePrompt: "a", videoPrompt: "b", durationSeconds: 10, videoCardId: "vc-1", videoGenerationId: "vg-1" }],
+    });
+    expect(r.shots[0].durationSeconds).toBe(10);
+    expect(r.shots[0].videoCardId).toBe("vc-1");
+    expect(r.shots[0].videoGenerationId).toBe("vg-1");
+  });
+
+  it("durationSeconds 非 number → 省略(defensive typeof)", () => {
+    const r = parseStoryboardCardPayload({
+      storyboardTitle: "X",
+      shots: [{ shotId: "s0", index: 0, firstFramePrompt: "a", videoPrompt: "b", durationSeconds: "5", videoCardId: 42 }],
+    });
+    expect(r.shots[0].durationSeconds).toBeUndefined();
+    expect("durationSeconds" in r.shots[0]).toBe(false);
+    expect(r.shots[0].videoCardId).toBeUndefined();
+  });
 });
