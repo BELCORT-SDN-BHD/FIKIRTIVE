@@ -48,11 +48,12 @@
    - **Parity Manifest**:action ↔ skill 对照表 + 明示豁免,CI 扫描 —— 新 action 没登记就合并不进去;
    - **读的对等**:每个人工可见的数据面都有对应 free/read skill(Otto 不做瞎子操作员);
    - **上下文桥**:当前视图/选中项注入每轮对话,"把这个改成 9:16"里的"这个"必须可解析;
-   - **三类豁免写死**:市政厅(admin)永久豁免、纯视觉微操、账户安全操作(人亲自来);
+   - **豁免写死(四类)**:市政厅(admin)永久豁免;纯视觉微操;账户安全操作(人亲自来);**money-in —— 充值/购买 credits,Otto 永不代办**(founder 2026-07-03 例示的"真危险类");
    - **审批经济学不变**:全操控 ≠ 全自动,花钱与外部写照旧过闸。
 8. **明确不盖的楼**(拍板过,别再提案):Build 终端 coding agent、独立通用 Chat、Spicy/18+ NSFW、**开放第三方 skill 生态**(skill 永久 BELCORT 内部编写)、**对外 MCP/API 让外部 agent 操作 FIKIRTIVE**(founder:"如果会用其他 LLM,代表我们的 Otto harness 不够好,就代表 FIKIRTIVE 不好。" —— 操作这座城的 agent 永远只有 Otto)、**白标**(founder 2026-07-03:"我要的就是 FIKIRTIVE 变成世界级别的平台" —— 平台不贴别人的牌,Otto 永不改名换脸)、**任何 unlimited 类报价**(与 Otto 自动化互斥,成本敞口)。
 9. **语言约定**:spec/skill 文档用华语(founder 复审);生成 prompt 一律英文;UI 文案 sentence case。
-10. **UIUX 是第二支柱(2026-07-03 入宪)。** 除"Otto 全操控"外,UIUX 是留住与吸引用户的核心卖点。质感标杆 = **Apple**;交互趣味参考 Duolingo 但克制 —— 面向专业用户只做 **minimal gamification**(形态在 harmony 设计阶段定)。落地机制:单一设计系统(.gb)不许分叉;每个用户可感的面必须过设计审(不只 runtime QA);设计基准 = Analytics 屏(已有 gold standard)。
+10. **技能为弱模型设计(2026-07-03 入宪)。** Otto 运行时永远是 cost-efficient 档模型(sonnet 级),不是 Fable/Opus。因此一切 skill 的专业判断必须**冻进确定性代码/schema/模板**(prompt-skills 是范本),质量来自结构不来自模型天赋;换更强模型是加分,不是前提。
+11. **UIUX 是第二支柱(2026-07-03 入宪)。** 除"Otto 全操控"外,UIUX 是留住与吸引用户的核心卖点。质感标杆 = **Apple**;交互趣味参考 Duolingo 但克制 —— 面向专业用户只做 **minimal gamification**(形态在 harmony 设计阶段定)。落地机制:单一设计系统(.gb)不许分叉;每个用户可感的面必须过设计审(不只 runtime QA);设计基准 = Analytics 屏(已有 gold standard)。
 
 ---
 
@@ -148,3 +149,4 @@ pg-boss 五条队列 + 三类回收器(gen/refgen/LLM 预扣)、ingest 哈希复
 | 2026-07-03 | v1.4 O 区拍板入宪:定价双轨(席位+credits)/skill 永久内部/UIUX 第二支柱(第 10 条)/routine 授权模型/建设节奏 = 创作先行赚钱(拍板会第一批,总审查员执笔) | 待 founder 定稿 |
 | 2026-07-03 | v1.5 O 区封卷:对外 MCP 永久不做入第 8 条("操作这座城的 agent 永远只有 Otto");O-09 分域/O-10 要/O-12 Otto 之手/O-13 团队协作(归 G 区) | 待 founder 定稿 |
 | 2026-07-03 | v1.6 G 区封卷入宪:双档席位/功能全开/滚存上限制(costing 先行)/MYR+分市场定价/直传/unlimited 永禁/白标永禁/Agency 顺序 G-09→协作+G-11→G-10 | 待 founder 定稿 |
+| 2026-07-03 | v1.7 C 区封卷:工厂 MVP(升级票纪律)+ money-in 豁免入第 7 条 + 新第 10 条"技能为弱模型设计"(原 10 顺延为 11) | 待 founder 定稿 |
