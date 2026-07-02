@@ -144,9 +144,11 @@ describe("ottoInstructions — deep vs lightweight (proposeResearch)", () => {
     expect(ottoInstructions).toMatch(/approve|approval|costs? credits|charged/i);
   });
   it("is honest that proposeResearch only lays out the PLAN — research runs after approval", () => {
-    expect(ottoInstructions).toMatch(
-      /after you approve|runs? (after|later)|only.*plan|does not (research|run) yet/i,
-    );
+    // Anchor to phrases UNIQUE to the proposeResearch honesty paragraph — NOT the
+    // pre-existing proposeStoryboard "only lays out the plan" line (which /only.*plan/
+    // would also satisfy). These two phrases occur only in the new deep-research content.
+    expect(ottoInstructions).toMatch(/does not research anything yet/i);
+    expect(ottoInstructions).toMatch(/never claim you already researched/i);
   });
   it("distinguishes lightweight researchWeb from deep proposeResearch in the research context", () => {
     // both tools must be named so the lightweight-vs-deep routing is unambiguous
