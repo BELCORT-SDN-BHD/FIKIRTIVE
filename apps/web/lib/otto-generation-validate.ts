@@ -9,7 +9,8 @@
 import type { PrismaClient } from "@fikirtive/db";
 
 export async function validateOwnedGenerationExt(
-  prisma: Pick<PrismaClient, "generation">,
+  // Narrowed to the one delegate method used, so unit tests can pass a findFirst-only mock.
+  prisma: { generation: Pick<PrismaClient["generation"], "findFirst"> },
   { id, ownerId, projectId, exts }: { id: string; ownerId: string; projectId: string; exts: string[] },
 ): Promise<string | null> {
   const g = await prisma.generation.findFirst({
