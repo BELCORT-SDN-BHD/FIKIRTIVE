@@ -17,12 +17,15 @@ import {
   errorJobIds,
   deriveCardState,
   hasWorkingJob as computeHasWorkingJob,
-  proposeCardId,
+  cardIdsOf,
   injectCardMessage,
+  appendMissingCards,
   appendDurableResults,
   syncCardJobIds,
 } from "@/lib/otto-inject-helpers";
 import { OttoPlanCard } from "./OttoPlanCard";
+import { OttoActionPlanCard } from "./OttoActionPlanCard";
+import { OttoAdBuildCard } from "./OttoAdBuildCard";
 import { PackCard } from "./PackCard";
 import { StoryboardCard } from "./StoryboardCard";
 import { OttoResult } from "./OttoResult";
@@ -208,22 +211,32 @@ export function OttoChatStream({
       }
       const e = asErrorData(part);
       if (e) { setStreamError(e.text); setStreamErrorKind(e.kind); return; }
-      // data-tool-propose: the propose tool persisted a durable GEN_CARD synchronously,
-      // but the stream part carries only { cardId, … }. Fetch the durable thread and
-      // inject the GEN_CARD (full payload) into the message list, deduped by cardId.
-      const cardId = proposeCardId(part);
-      if (cardId) {
+      // data-tool-propose: a card tool (propose / proposePack / propose-meta-action /
+      // propose-ad-build) persisted durable card(s) synchronously, but the stream part
+      // carries only the id(s). Fetch the durable thread ONCE and inject each card
+      // (full payload) into the message list, deduped by durableId (F23).
+      const cardIds = cardIdsOf(part);
+      if (cardIds.length > 0) {
         void (async () => {
           const fresh = await getCoworkThreadClient(thread.id);
-          if (fresh) setMessages((cur) => injectCardMessage(cur, fresh, cardId));
+          if (fresh) {
+            setMessages((cur) =>
+              cardIds.reduce((acc, id) => injectCardMessage(acc, fresh, id), cur),
+            );
+          }
         })();
       }
     },
     onFinish: () => {
       // Sync the parent thread list + make reload authoritative. Non-blocking.
+      // Safety net (F23): backfill any card-kind durable the live stream missed
+      // (e.g. a dropped data-tool-propose part) so cards never need a reload.
       void (async () => {
         const fresh = await getCoworkThreadClient(thread.id);
-        if (fresh) onThreadUpdate(fresh);
+        if (fresh) {
+          onThreadUpdate(fresh);
+          setMessages((cur) => appendMissingCards(cur, fresh));
+        }
       })();
       // A completed turn meters LLM credits — refresh the nav balance display.
       void onBalanceRefresh?.();
@@ -782,6 +795,25 @@ export function OttoChatStream({
                     }}
                     onCancelled={() => void pollAndInjectResults()}
                   />
+                </WidgetRow>
+              );
+            }
+
+            // Meta approval-flow cards (F23) — mirror OttoConversation's branches.
+            // The approve buttons inside call the existing gated server actions
+            // (approveMetaActionPlan / approveAdBuild); this only renders them.
+            if (kind === "ACTION_CARD") {
+              return (
+                <WidgetRow key={m.id} animateIn={isNewMessage(m.id)}>
+                  <OttoActionPlanCard cardId={m.metadata!.durableId} payload={m.metadata?.payload} />
+                </WidgetRow>
+              );
+            }
+
+            if (kind === "BUILD_CARD") {
+              return (
+                <WidgetRow key={m.id} animateIn={isNewMessage(m.id)}>
+                  <OttoAdBuildCard cardId={m.metadata!.durableId} payload={m.metadata?.payload} />
                 </WidgetRow>
               );
             }

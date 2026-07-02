@@ -69,6 +69,10 @@ export type OttoStreamPart =
 export const OTTO_TEXT_ID = "otto-text";
 export const OTTO_REASONING_ID = "otto-reasoning";
 
+/** Tools whose output carries the id(s) of a durable card they just persisted
+ *  (GEN_CARD / ACTION_CARD / BUILD_CARD) — forwarded live as data-tool-propose. */
+const CARD_TOOL_NAMES = new Set(["propose", "proposeStoryboard", "proposePack", "propose-meta-action", "propose-ad-build"]);
+
 /** Read the tool name off a run_item event's item, tolerant of item shape. */
 function toolNameOf(item: unknown): string | undefined {
   if (!item || typeof item !== "object") return undefined;
@@ -120,12 +124,13 @@ export function bridgeEvent(event: unknown): OttoStreamPart | null {
     }
 
     if (name === "tool_output") {
-      // The durable GEN_CARD / STORYBOARD_CARD is persisted by the tool itself; here we
-      // just forward its return value ({ cardId, … }) so the client can inject + render
-      // the card inline immediately. The card DATA is on the OUTPUT event. proposeStoryboard
-      // returns { cardId } too, so the same data-tool-propose channel carries both.
-      const out = toolNameOf(item);
-      if (out === "propose" || out === "proposeStoryboard") {
+      // The durable card is persisted by the tool itself; here we just forward its
+      // return value so the client can render the card inline immediately (F23).
+      // Shapes: propose / proposeStoryboard → { cardId, … }; proposePack →
+      // { packId, cardIds[] }; propose-meta-action / propose-ad-build →
+      // { message, cardId?, … } (cardId absent on validation failure — the
+      // client's cardIdsOf handles that).
+      if (CARD_TOOL_NAMES.has(toolNameOf(item) ?? "")) {
         const output = (item as { output?: unknown }).output;
         return { type: "data-tool-propose", data: output };
       }

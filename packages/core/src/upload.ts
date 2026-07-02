@@ -115,7 +115,10 @@ export type AuthorizeUploadInput = z.infer<typeof authorizeUploadInput>;
 export type AuthorizeUploadResult =
   | { kind: "exists" } // content-addressed dedup: blob already stored, skip the wire
   | { kind: "single"; url: string }
-  | { kind: "multipart"; uploadId: string; partSizeBytes: number };
+  | { kind: "multipart"; uploadId: string; partSizeBytes: number }
+  // F41: driver can't presign (dev local disk) — client falls back to the
+  // server-action upload path (uploadFileFallback) instead of dead-ending.
+  | { kind: "unsupported" };
 
 /** Per-part URL signing request. sizeBytes is re-claimed so the server can
  *  bound partNumber without holding session state; the binding that matters

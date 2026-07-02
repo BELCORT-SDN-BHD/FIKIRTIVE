@@ -239,7 +239,16 @@ export async function finalizeOttoRun({
   seqAfterUser: number;
 }): Promise<FinalizeOttoRunResult> {
   const newOttoState = result.state.toString() as string;
-  let seq = seqAfterUser;
+  // Tools persist card messages MID-run at max(seq)+1 (proposePack writes one per
+  // item), so the pre-run seqAfterUser snapshot can be stale. Writing the reply at
+  // seqAfterUser+1 would collide with the first card — a reload (ordered by seq)
+  // then interleaves the TEXT into the pack and splits the PackCard grouping.
+  const lastMsg = await prisma.chatMessage.findFirst({
+    where: { threadId, ownerId },
+    orderBy: { seq: "desc" },
+    select: { seq: true },
+  });
+  let seq = Math.max(seqAfterUser, lastMsg?.seq ?? 0);
 
   // Handle interruption (generate tool parked for approval)
   if (Array.isArray(result.interruptions) && result.interruptions.length > 0) {

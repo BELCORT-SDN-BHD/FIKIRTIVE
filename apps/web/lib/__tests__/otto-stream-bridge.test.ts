@@ -116,8 +116,35 @@ describe("bridgeEvent — tool_output(propose)", () => {
     expect((part as { data: unknown }).data).toEqual(output);
   });
 
-  it("ignores tool_output for non-propose tools (returns null)", () => {
+  it("ignores tool_output for non-card tools (returns null)", () => {
     expect(bridgeEvent(toolOutputEvent("setTitle", { ok: true }))).toBeNull();
+    expect(bridgeEvent(toolOutputEvent("researchWeb", { ok: true }))).toBeNull();
+  });
+});
+
+describe("bridgeEvent — tool_output(other card-persisting tools) [F23]", () => {
+  it("forwards proposePack output ({ packId, cardIds }) as data-tool-propose", () => {
+    const output = { packId: "pack_1", cardIds: ["card_a", "card_b", "card_c"] };
+    const part = bridgeEvent(toolOutputEvent("proposePack", output));
+    expect(part).not.toBeNull();
+    expect((part as { type: string }).type).toBe("data-tool-propose");
+    expect((part as { data: unknown }).data).toEqual(output);
+  });
+
+  it("forwards propose-meta-action output ({ message, cardId }) as data-tool-propose", () => {
+    const output = { message: "Plan ready", cardId: "card_ma", autoEligible: false };
+    const part = bridgeEvent(toolOutputEvent("propose-meta-action", output));
+    expect(part).not.toBeNull();
+    expect((part as { type: string }).type).toBe("data-tool-propose");
+    expect((part as { data: unknown }).data).toEqual(output);
+  });
+
+  it("forwards propose-ad-build output ({ message, cardId }) as data-tool-propose", () => {
+    const output = { message: "Build ready", cardId: "card_ab", autoBuilt: false };
+    const part = bridgeEvent(toolOutputEvent("propose-ad-build", output));
+    expect(part).not.toBeNull();
+    expect((part as { type: string }).type).toBe("data-tool-propose");
+    expect((part as { data: unknown }).data).toEqual(output);
   });
 
   it("forwards proposeStoryboard's { cardId } on the same data-tool-propose channel", () => {
