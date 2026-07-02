@@ -233,32 +233,32 @@ export function ProductShowcase({
                     {r.source === "otto" ? "✦ OTTO learned" : "You added"}
                   </span>
                   {whenLabel(r.updatedAt) && <span>updated {whenLabel(r.updatedAt)}</span>}
-                  <span className="ml-auto flex items-center gap-2">
-                    {imgUrl && (
-                      <button
-                        type="button"
-                        className="hover:text-foreground"
-                        onClick={() => void onSetImage(r, null)}
-                      >
-                        Remove image
-                      </button>
-                    )}
-                    <button
-                      type="button"
-                      aria-label="Edit"
-                      className="hover:text-foreground"
-                      onClick={() => setEditingId(r.id)}
-                    >
-                      ✎ Edit
-                    </button>
+                </div>
+                <div className="mt-1 flex flex-wrap gap-x-3 gap-y-1 text-[0.6875rem] text-muted-foreground/70">
+                  {imgUrl && (
                     <button
                       type="button"
                       className="hover:text-foreground whitespace-nowrap"
-                      onClick={() => void onArchive(r.id, d, archived ? "active" : "archived")}
+                      onClick={() => void onSetImage(r, null)}
                     >
-                      {archived ? "Unarchive" : "Archive"}
+                      Remove image
                     </button>
-                  </span>
+                  )}
+                  <button
+                    type="button"
+                    aria-label="Edit"
+                    className="hover:text-foreground whitespace-nowrap"
+                    onClick={() => setEditingId(r.id)}
+                  >
+                    ✎ Edit
+                  </button>
+                  <button
+                    type="button"
+                    className="hover:text-foreground whitespace-nowrap"
+                    onClick={() => void onArchive(r.id, d, archived ? "active" : "archived")}
+                  >
+                    {archived ? "Unarchive" : "Archive"}
+                  </button>
                 </div>
               </div>
             </div>

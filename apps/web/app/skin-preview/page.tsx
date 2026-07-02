@@ -47,12 +47,12 @@ export default async function SkinPreviewPage({
   const entities: EntityDTO[] = [
     {
       id: "sp-ent-latte", type: "PRODUCT", name: "Latte Blend bag", aliases: [], notes: "", negativeConstraints: "",
-      refs: [{ id: "r-latte", assetId: "as-latte", url: "/window.svg", kind: "image" }],
+      refs: [{ id: "r-latte", assetId: "as-latte", url: "https://picsum.photos/seed/latte/480/360", kind: "image" }],
       baseAssetId: "as-latte", variants: [], usageCount: 3,
     },
     {
       id: "sp-ent-rosa", type: "CHARACTER", name: "Rosa", aliases: [], notes: "", negativeConstraints: "",
-      refs: [{ id: "r-rosa", assetId: "as-rosa", url: "/window.svg", kind: "image" }],
+      refs: [{ id: "r-rosa", assetId: "as-rosa", url: "https://picsum.photos/seed/rosa/480/360", kind: "image" }],
       baseAssetId: "as-rosa", variants: [], usageCount: 5,
     },
   ];
