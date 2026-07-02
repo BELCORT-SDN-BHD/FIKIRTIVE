@@ -1,5 +1,6 @@
 "use client";
 import React, { useRef, useState } from "react";
+import { useRouter, usePathname, useSearchParams } from "next/navigation";
 import { Sparkles, Send } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Textarea } from "@/components/ui/textarea";
@@ -11,7 +12,8 @@ import {
   type BrandRecordRow,
 } from "@/lib/brand-record-actions";
 import {
-  sectionForCategory, diffRows, FACT_SECTION_KEYS, type RowDiff, type SectionKey,
+  sectionForCategory, diffRows, FACT_SECTION_KEYS, SECTIONS, sectionsTouched,
+  type RowDiff, type SectionKey,
 } from "@fikirtive/core";
 import { ottoTurn } from "@/lib/otto-client-actions";
 import { getCoworkThreadClient } from "@/lib/cowork-fetch";
@@ -66,6 +68,19 @@ export function OttoMemory({ initialMemory, initialRecords, projectId }: {
   const [freshIds, setFreshIds] = useState<Set<string>>(new Set());
   const [lastDiff, setLastDiff] = useState<{ facts: RowDiff<MemoryRow>; records: RowDiff<BrandRecordRow> } | null>(null);
   const [undoBusy, setUndoBusy] = useState(false);
+
+  // ── Tab state (shallow-routed via ?tab=) ──
+  const searchParams = useSearchParams();
+  const router = useRouter();
+  const pathname = usePathname();
+  const rawTab = searchParams.get("tab");
+  const activeTab: SectionKey = (SECTIONS.some((s) => s.key === rawTab) ? rawTab : "about") as SectionKey;
+  const setTab = (k: SectionKey) => {
+    const p = new URLSearchParams(searchParams.toString());
+    p.set("tab", k);
+    router.replace(`${pathname}?${p.toString()}`, { scroll: false });
+  };
+  const [touchedTabs, setTouchedTabs] = useState<Set<SectionKey>>(new Set());
 
   // ── Chat state (unchanged) ──
   const [chat, setChat] = useState<Bubble[]>([]);
@@ -125,6 +140,8 @@ export function OttoMemory({ initialMemory, initialRecords, projectId }: {
           setLastDiff({ facts: factDiff, records: recDiff });
           setFreshIds(new Set(touched));
           window.setTimeout(() => setFreshIds(new Set()), 4000);
+          setTouchedTabs(sectionsTouched(factDiff, recDiff));
+          window.setTimeout(() => setTouchedTabs(new Set()), 4000);
         }
       }
     } catch {
@@ -165,7 +182,7 @@ export function OttoMemory({ initialMemory, initialRecords, projectId }: {
       setMemory(await listMyMemory());
       setRecords(await listMyBrandRecords());
     } finally {
-      setUndoBusy(false); setLastDiff(null); setFreshIds(new Set());
+      setUndoBusy(false); setLastDiff(null); setFreshIds(new Set()); setTouchedTabs(new Set());
     }
   }
 
@@ -329,35 +346,65 @@ export function OttoMemory({ initialMemory, initialRecords, projectId }: {
             />
           )}
 
-          {/* ── Sections ── */}
-          <FactSection label="About the brand" rows={factsFor("about")} freshIds={freshIds} {...factHandlers("about")} />
-          <FactSection label="Look & feel" rows={factsFor("look")} freshIds={freshIds} {...factHandlers("look")} />
-          <SegmentCards
-            records={recordsFor("segment")}
-            looseNotes={factsFor("customers")}
-            freshIds={freshIds}
-            onSave={segSave}
-            onDelete={segDelete}
-            onArchive={segArchive}
-            onNoteSave={noteSave}
-            onNoteDelete={noteDelete}
-          />
-          <ProductList
-            records={recordsFor("product")}
-            looseNotes={factsFor("products")}
-            freshIds={freshIds}
-            onSave={prodSave}
-            onArchive={prodArchive}
-            onNoteSave={noteSave}
-            onNoteDelete={noteDelete}
-          />
-          <OfferList
-            records={recordsFor("offer")}
-            freshIds={freshIds}
-            onSave={offerSave}
-            onDelete={offerDelete}
-          />
-          <FactSection label="Do & don't" rows={factsFor("rules")} freshIds={freshIds} {...factHandlers("rules")} />
+          {/* ── Tab bar ── */}
+          <div className="flex gap-1 rounded-[14px] bg-muted p-1 w-max mb-4" role="tablist">
+            {SECTIONS.map((s) => {
+              const count = s.key === "customers" ? recordsFor("segment").length
+                : s.key === "products" ? recordsFor("product").length
+                : s.key === "offers" ? recordsFor("offer").length : 0;
+              const on = activeTab === s.key;
+              return (
+                <button key={s.key} role="tab" aria-selected={on} onClick={() => setTab(s.key)}
+                  className={`flex items-center gap-2 rounded-[10px] px-4 py-2 text-[0.8125rem] ${on ? "bg-card font-semibold text-foreground shadow-sm" : "text-muted-foreground"}`}>
+                  {s.label}
+                  {count > 0 && <span className="text-[0.6875rem] text-muted-foreground/70">{count}</span>}
+                  {touchedTabs.has(s.key) && <span className="h-[6px] w-[6px] rounded-full bg-brand" aria-label="Otto updated this" />}
+                </button>
+              );
+            })}
+          </div>
+
+          {/* ── Active panel ── */}
+          {activeTab === "about" && (
+            <FactSection label="" rows={factsFor("about")} freshIds={freshIds} {...factHandlers("about")} />
+          )}
+          {activeTab === "look" && (
+            <FactSection label="" rows={factsFor("look")} freshIds={freshIds} {...factHandlers("look")} />
+          )}
+          {activeTab === "customers" && (
+            <SegmentCards
+              records={recordsFor("segment")}
+              looseNotes={factsFor("customers")}
+              freshIds={freshIds}
+              onSave={segSave}
+              onDelete={segDelete}
+              onArchive={segArchive}
+              onNoteSave={noteSave}
+              onNoteDelete={noteDelete}
+            />
+          )}
+          {activeTab === "products" && (
+            <ProductList
+              records={recordsFor("product")}
+              looseNotes={factsFor("products")}
+              freshIds={freshIds}
+              onSave={prodSave}
+              onArchive={prodArchive}
+              onNoteSave={noteSave}
+              onNoteDelete={noteDelete}
+            />
+          )}
+          {activeTab === "offers" && (
+            <OfferList
+              records={recordsFor("offer")}
+              freshIds={freshIds}
+              onSave={offerSave}
+              onDelete={offerDelete}
+            />
+          )}
+          {activeTab === "rules" && (
+            <FactSection label="" rows={factsFor("rules")} freshIds={freshIds} {...factHandlers("rules")} />
+          )}
         </div>
       </div>
     </div>

@@ -19,7 +19,7 @@ export function FactSection({ label, rows, freshIds, onSave, onDelete, onAdd }: 
 
   return (
     <section>
-      <h2 className="text-[0.75rem] font-semibold tracking-[0.05em] uppercase text-muted-foreground mt-6 mb-2">{label}</h2>
+      {label && <h2 className="text-[0.75rem] font-semibold tracking-[0.05em] uppercase text-muted-foreground mt-6 mb-2">{label}</h2>}
       <div className="rounded-[16px] border border-border bg-card divide-y divide-border">
         {rows.map((r) => (
           <div key={r.id} className={`px-[15px] py-[10px] ${freshIds.has(r.id) ? "bg-brand/5 border-l-[3px] border-l-brand" : ""}`}>
