@@ -125,6 +125,7 @@ pg-boss 五条队列 + 三类回收器(gen/refgen/LLM 预扣)、ingest 哈希复
 - **订阅层**(Stripe Phase 4;利润在 Otto 的定价哲学落地处)
 - **定时任务/自主 Otto**(唯一碰"自主花钱"的楼 —— **必须 founder 共同设计花钱闸后才许动工**,已明文记档)
 - **Agency/Pro 楼层**(多品牌管理,盖在现有楼上,不开第二扇门)
+- **市政厅 v2 —— 团队阶级制度(founder 2026-07-03 点名)**:把现有 admin(11 个 live section + 五级角色矩阵,今天被 founder-only 闸挡着)升级为完整可扩的团队管理后台。设计轴:①阶级 = 矩阵驱动(SECTION_MATRIX 一张可读表,section × 角色 × 读/写/审批 —— 符合 file-system 易管理宪法);②**钱的阶级**:授信按角色设单笔/日累计上限,超限走 founder 审批链;③邀请/停用/审计全留痕(ActionEvent);④替换 founder-only 闸为真实 staff 成员制(现有 ba_user.role 双写与双 user-id 空间的脆弱点在此一并加固,见 playbook);⑤冒充权限按阶级收紧(F15 安全默认为底);⑥**Otto 永久豁免市政厅**(宪法第 7 条豁免①,admin 只许人操作)。
 
 ---
 
@@ -139,3 +140,4 @@ pg-boss 五条队列 + 三类回收器(gen/refgen/LLM 预扣)、ingest 哈希复
 | 2026-07-03 | v1 初稿(Fable 5 起草,基线 main #106) | 待 founder 定稿 |
 | 2026-07-03 | v1.1 双模原则入宪(宪法第 7 条)+ 第一章重写 + 第六章新区以 SF/HS 全量分析为底稿(founder 口述修订,总审查员执笔) | 待 founder 定稿 |
 | 2026-07-03 | v1.2 第 7 条升格:Otto 全操控 = 最高设计要求,写入四层结构保证(单一动作层/Parity Manifest/读对等/上下文桥)+ 三类豁免(founder 口述,总审查员执笔) | 待 founder 定稿 |
+| 2026-07-03 | v1.3 第六章新增市政厅 v2(团队阶级制度:矩阵驱动权限 + 钱的阶级 + 审批链 + staff 成员制)(founder 口述,总审查员执笔) | 待 founder 定稿 |
