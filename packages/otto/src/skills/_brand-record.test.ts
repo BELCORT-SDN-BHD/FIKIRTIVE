@@ -94,6 +94,23 @@ describe("upsertBrandRecordFromOtto", () => {
     expect(arg.data.endsAt).toEqual(new Date("2026-07-15"));
     expect((arg.data.data as Record<string, unknown>).endsAt).toBeUndefined();
   });
+
+  it("preserves UI-set imageAssetId when OTTO updates a product (merge keeps unknown-to-skill fields)", async () => {
+    db.prisma.brandRecord.findFirst.mockResolvedValue({
+      id: "r-img", data: { name: "Latte Blend", price: "RM 49", imageAssetId: "as_777" },
+    });
+    db.prisma.brandRecord.update.mockResolvedValue({});
+    await upsertBrandRecordFromOtto(
+      { kind: "product", fields: { name: "Latte Blend", price: "RM 55" } },
+      { context: makeCtx() },
+    );
+    expect(db.prisma.brandRecord.update).toHaveBeenCalledWith({
+      where: { id: "r-img" },
+      data: expect.objectContaining({
+        data: expect.objectContaining({ imageAssetId: "as_777", price: "RM 55" }),
+      }),
+    });
+  });
 });
 
 describe("skill classifications", () => {
