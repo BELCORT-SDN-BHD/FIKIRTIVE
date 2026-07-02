@@ -40,4 +40,12 @@ describe("executeLookupProducts", () => {
     db.prisma.brandRecord.findMany.mockResolvedValue([row("Mug")]);
     expect((await executeLookupProducts({ query: "latte" }, ctx)).matches).toEqual([]);
   });
+  it("matches by category (type-to-create categories)", async () => {
+    db.prisma.brandRecord.findMany.mockResolvedValue([
+      row("Latte Blend", { category: "Coffee" }),
+      row("Tote Bag", { category: "Merch" }),
+    ]);
+    const res = await executeLookupProducts({ query: "coffee" }, ctx);
+    expect(res.matches.map((m) => m.name)).toEqual(["Latte Blend"]);
+  });
 });
