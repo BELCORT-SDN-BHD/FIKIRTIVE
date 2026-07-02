@@ -92,9 +92,28 @@ async function hasLiveRefGenMessage(refGenJobId: string): Promise<boolean> {
  *  idempotent attach → spentUsd backfill → settle (no-op if already) → DONE. Shared by
  *  handleRefGen's redelivery-resume path and the reaper's committed-but-stuck scan. NEVER
  *  re-spends, never refunds — the only correct terminal state for a committed job is
- *  DONE-with-attach. Safe against a concurrently-finishing winner: every step is idempotent
- *  (the identical race already exists between a redelivery-resume and the original delivery). */
+ *  DONE-with-attach. Safe against a concurrently-finishing winner on the MONEY side (settle
+ *  P2002 no-op, DONE re-assert); attachOutputs is idempotent against sequential re-runs but
+ *  a true concurrent double-attach can duplicate a (cosmetic, deletable) ReferenceImage —
+ *  a pre-existing race this shares with redelivery-resume vs the original delivery. */
 async function resumeCommittedRefGenJob(job: RefGenJob): Promise<void> {
+  // Free-delivery guard (Codex P1, 2026-07-03): in current worker code, outputs on the row
+  // imply the commit tx settled the charge. But a LEGACY row (pre-conditional-commit era) or
+  // a future out-of-worker refund path can carry outputs while a REFUND won the finalizer
+  // index — the merchant got their money back, so attaching + DONE now would be a FREE
+  // delivery. Fail it closed instead (frees the active-index slot), WITHOUT refunding again.
+  const refunded = await prisma.creditLedger.findFirst({
+    where: { orgId: job.ownerId, refId: job.id, kind: "REFUND" },
+    select: { id: true },
+  });
+  if (refunded) {
+    console.warn(`[refgen] ${job.id}: outputs recorded but a REFUND won the finalizer — failing closed, not delivering`);
+    await prisma.refGenJob.update({
+      where: { id: job.id },
+      data: { status: "FAILED", error: "outputs were recorded but the charge was refunded — not delivering (free-delivery guard)", finishedAt: new Date() },
+    });
+    return;
+  }
   await attachOutputs(job.entityId, job.ownerId, job.outputAssetIds, job.variantId);
   // defensive backfill: a row that recorded outputs before spentUsd existed (or crashed
   // between the outputAssetIds write and DONE) has the marker but null spentUsd — reconstruct
@@ -169,11 +188,14 @@ export async function reapStaleRefGenJobs(): Promise<number> {
   // index keeps the entity/variant slot hostage. Committed ⟹ settled ⟹ the ONLY correct
   // terminal state is DONE-with-attach — so RESUME it exactly like a redelivery would
   // (idempotent attach + settle no-op + DONE): no fail-close, no refund, no re-spend.
-  // QUEUED covers a committed job requeued by a post-commit blip whose message then died;
-  // FAILED covers wrongly-FAILED-but-committed rows (handleRefGen already resumes those on
-  // redelivery). Per-job try/catch: one bad row must not halt the sweep — retries next sweep.
+  // QUEUED covers a committed job requeued by a post-commit blip whose message then died.
+  // FAILED is deliberately EXCLUDED (Codex P1): for QUEUED/GENERATING rows the current
+  // worker invariants guarantee outputs ⟹ settle won, but a legacy FAILED row can carry
+  // outputs while a REFUND won the finalizer — those stay inert (already terminal; a
+  // redelivery that resumes one is caught by the free-delivery guard in the helper).
+  // Per-job try/catch: one bad row must not halt the sweep — retries next sweep.
   const committedStuck = await prisma.refGenJob.findMany({
-    where: { status: { in: ["QUEUED", "GENERATING", "FAILED"] }, startedAt: { lt: cutoff }, outputAssetIds: { isEmpty: false } },
+    where: { status: { in: ["QUEUED", "GENERATING"] }, startedAt: { lt: cutoff }, outputAssetIds: { isEmpty: false } },
   });
   for (const job of committedStuck) {
     try {

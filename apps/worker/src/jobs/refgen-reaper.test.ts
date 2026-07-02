@@ -15,6 +15,7 @@ const m = vi.hoisted(() => {
   const refGenJobUpdateMany = vi.fn();
   const referenceImageFindFirst = vi.fn();
   const referenceImageCreate = vi.fn();
+  const creditLedgerFindFirst = vi.fn();
   const refundReservation = vi.fn();
   const settleCredits = vi.fn();
   const queryRaw = vi.fn();
@@ -22,13 +23,14 @@ const m = vi.hoisted(() => {
   const prisma: any = {
     refGenJob: { findMany: refGenJobFindMany, update: refGenJobUpdate, updateMany: refGenJobUpdateMany },
     referenceImage: { findFirst: referenceImageFindFirst, create: referenceImageCreate },
+    creditLedger: { findFirst: creditLedgerFindFirst },
     // fn form (reaper claims, settle) AND array form (finalizeDone's PrismaPromise batch)
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     $transaction: vi.fn(async (arg: any) => (typeof arg === "function" ? arg(prisma) : Promise.all(arg))),
     // QUEUED-branch liveness check against pgboss.job (F07-analog). Default: no live message.
     $queryRaw: queryRaw,
   };
-  return { prisma, refGenJobFindMany, refGenJobUpdate, refGenJobUpdateMany, referenceImageFindFirst, referenceImageCreate, refundReservation, settleCredits, queryRaw };
+  return { prisma, refGenJobFindMany, refGenJobUpdate, refGenJobUpdateMany, referenceImageFindFirst, referenceImageCreate, creditLedgerFindFirst, refundReservation, settleCredits, queryRaw };
 });
 
 vi.mock("@fikirtive/db", () => ({ prisma: m.prisma, refundReservation: m.refundReservation, settleCredits: m.settleCredits, Prisma: {} }));
@@ -49,6 +51,8 @@ beforeEach(() => {
   m.refGenJobUpdate.mockResolvedValue({});
   m.referenceImageFindFirst.mockResolvedValue(null);
   m.referenceImageCreate.mockResolvedValue({ id: "ref1" });
+  // Default: no REFUND finalizer on the ledger → a committed job may be delivered.
+  m.creditLedgerFindFirst.mockResolvedValue(null);
 });
 
 describe("reapStaleRefGenJobs — GENERATING branch", () => {
@@ -170,11 +174,17 @@ describe("reapStaleRefGenJobs — committed-but-stuck resume scan (Codex 2026-07
       .mockResolvedValueOnce([committedStuck]); // scan 3: committed-but-stuck
     const n = await reapStaleRefGenJobs();
     expect(n).toBe(1);
-    // the scan targets exactly the stranded-commit population, past the reap window
+    // the scan targets exactly the stranded-commit population, past the reap window.
+    // FAILED is deliberately EXCLUDED (Codex P1): a legacy FAILED row can carry outputs
+    // while a REFUND won the finalizer — only QUEUED/GENERATING guarantee settle won.
     const scan = m.refGenJobFindMany.mock.calls[2]![0];
     expect(scan.where.outputAssetIds).toEqual({ isEmpty: false });
-    expect(scan.where.status).toEqual({ in: ["QUEUED", "GENERATING", "FAILED"] });
+    expect(scan.where.status).toEqual({ in: ["QUEUED", "GENERATING"] });
     expect(scan.where.startedAt.lt).toBeInstanceOf(Date);
+    // delivery was gated on the ledger showing NO refund finalizer
+    expect(m.creditLedgerFindFirst).toHaveBeenCalledWith(
+      expect.objectContaining({ where: expect.objectContaining({ refId: "r3", kind: "REFUND" }) }),
+    );
     // the user-visible outputs finally exist: one ReferenceImage per committed asset
     expect(m.referenceImageCreate).toHaveBeenCalledTimes(2);
     expect(m.referenceImageCreate.mock.calls[0]![0].data).toMatchObject({ entityId: "e1", assetId: "a1", variantId: null });
@@ -193,5 +203,20 @@ describe("reapStaleRefGenJobs — committed-but-stuck resume scan (Codex 2026-07
     const n = await reapStaleRefGenJobs();
     expect(n).toBe(1); // only the second healed this sweep; the first stays for the next sweep
     expect(m.refundReservation).not.toHaveBeenCalled(); // a resume failure must never turn into a refund
+  });
+
+  it("never delivers a committed job whose charge was REFUNDED — fails it closed, no attach, no re-refund (Codex P1 free-delivery guard)", async () => {
+    // Legacy shape: outputs recorded but a REFUND won the finalizer — the merchant got their
+    // money back. Attaching + DONE would hand them the images for free; fail it closed instead.
+    m.refGenJobFindMany.mockResolvedValueOnce([]).mockResolvedValueOnce([]).mockResolvedValueOnce([committedStuck]);
+    m.creditLedgerFindFirst.mockResolvedValueOnce({ id: "rf1" }); // a REFUND finalizer exists
+    const n = await reapStaleRefGenJobs();
+    expect(n).toBe(1); // transitioned out of stuck (to terminal FAILED) — counted as handled
+    expect(m.referenceImageCreate).not.toHaveBeenCalled(); // refunded outputs are never attached
+    const failed = m.refGenJobUpdate.mock.calls.find((c) => c[0]?.data?.status === "FAILED");
+    expect(failed).toBeTruthy();
+    expect(m.refGenJobUpdate.mock.calls.find((c) => c[0]?.data?.status === "DONE")).toBeFalsy();
+    expect(m.settleCredits).not.toHaveBeenCalled();
+    expect(m.refundReservation).not.toHaveBeenCalled(); // already refunded — never refund twice
   });
 });

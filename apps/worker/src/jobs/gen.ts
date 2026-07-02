@@ -161,9 +161,32 @@ async function appendCoworkResult(
  *  attach → DONE + settle (no-op if already) → GEN_RESULT → otto resume. Shared by handleGen's
  *  redelivery-resume path and the reaper's committed-but-stuck scan. NEVER re-spends, never
  *  refunds — the only correct terminal state for a committed job is DONE-with-attach. Safe
- *  against a concurrently-finishing winner: every step is idempotent (the identical race
- *  already exists between a redelivery-resume and the original delivery). */
+ *  against a concurrently-finishing winner: money steps are idempotent (settle P2002 no-op,
+ *  DONE re-assert, GEN_RESULT unique-indexed, otto at-most-once), and attachToShot tolerates
+ *  the concurrent-attach race via its (shotId, version) P2002 retry — the identical race
+ *  already exists between a redelivery-resume and the original delivery. */
 async function resumeCommittedGenJob(job: GenJob): Promise<void> {
+  // Free-delivery guard (Codex P1, 2026-07-03): in current worker code, outputs on the row
+  // imply the commit tx settled the charge (settle is atomic with the outputs write, and every
+  // refund path flips status away from GENERATING in the same tx, which makes the conditional
+  // commit discard). But a LEGACY row (pre-conditional-commit / pre-F04-guard era) or a future
+  // out-of-worker refund path can carry outputs while a REFUND won the finalizer index — the
+  // merchant got their money back, so delivering now would be a FREE delivery. Fail it closed
+  // instead, WITHOUT refunding again.
+  const refunded = await prisma.creditLedger.findFirst({
+    where: { orgId: job.ownerId, refId: job.id, kind: "REFUND" },
+    select: { id: true },
+  });
+  if (refunded) {
+    console.warn(`[gen] ${job.id}: outputs recorded but a REFUND won the finalizer — failing closed, not delivering`);
+    await prisma.genJob.update({
+      where: { id: job.id },
+      data: { status: "FAILED", error: "outputs were recorded but the charge was refunded — not delivering (free-delivery guard)", finishedAt: new Date() },
+    });
+    // accurate terminal message (idempotent via the genJobId unique index): refund won → not charged
+    await appendCoworkResult(job, "TURN_ERROR", [], "That generation didn't go through — you can try again. You weren't charged.");
+    return;
+  }
   if (job.shotId) await attachBestEffort(job.id, job.shotId, job.generationIds);
   await prisma.$transaction(async (tx) => {
     await tx.genJob.update({
@@ -301,13 +324,16 @@ export async function reapStaleGenJobs(): Promise<number> {
   // the active-index slot stays hostage). Committed ⟹ settled ⟹ the ONLY correct terminal
   // state is DONE-with-attach — so RESUME it exactly like a redelivery would (idempotent
   // attach + DONE + settle no-op + GEN_RESULT): no fail-close, no refund, no re-spend.
-  // QUEUED covers a committed job requeued by a post-commit blip whose message then died;
-  // FAILED covers wrongly-FAILED-but-committed rows (handleGen already resumes those on
-  // redelivery). startedAt < cutoff (25m > queue expiry): any live delivery has finished
-  // or hung by then, and a concurrent finisher is safe anyway (every step is idempotent).
+  // QUEUED covers a committed job requeued by a post-commit blip whose message then died.
+  // FAILED is deliberately EXCLUDED (Codex P1): for QUEUED/GENERATING rows the current
+  // worker invariants guarantee outputs ⟹ settle won, but a legacy FAILED row can carry
+  // outputs while a REFUND won the finalizer — those stay inert (already terminal; a
+  // redelivery that resumes one is caught by the free-delivery guard in the helper).
+  // startedAt < cutoff (25m > queue expiry): any live delivery has finished or hung by
+  // then, and a concurrent finisher is safe anyway (every step is idempotent).
   // Per-job try/catch: one bad row must not halt the sweep — it retries next sweep.
   const committedStuck = await prisma.genJob.findMany({
-    where: { status: { in: ["QUEUED", "GENERATING", "FAILED"] }, startedAt: { lt: cutoff }, generationIds: { isEmpty: false } },
+    where: { status: { in: ["QUEUED", "GENERATING"] }, startedAt: { lt: cutoff }, generationIds: { isEmpty: false } },
   });
   for (const job of committedStuck) {
     try {
