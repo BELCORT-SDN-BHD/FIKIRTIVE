@@ -41,7 +41,7 @@
 2. **钱路神圣。** money-in 只有 `grantCredits`(Stripe webhook + admin 授予);spend path(genRequest 闸 → startGen → 幂等键 → provider 调用 → reserve/settle)的任何 diff 必过 `money-safety-review`。**每笔真实花费逐笔问 founder —— "问"就是上限,没有代码上限。**
 3. **Otto 运营契约(五条铁律)**:① 计费透明、只显示 credits 永不显示美元 ② 花钱前必审批 ③ 状态诚实(失败自动退款、重试绝不双扣)④ 建议按钮引导下一步 ⑤ One Otto —— 新能力永远 = 新 skill,不是新 app。
 4. **审批的数学**:`needsApproval = (cost=spend) ∥ (effect=write ∧ reach=external)`。三字段缺一即取最危险值(fail-closed)。这条公式是城市的电闸,不许出现绕过它的旁路。
-5. **定价永不硬编码。** 目标毛利 40–50%;图约 2.5x、视频近成本卖、**利润主要在 Otto 本身**。credits 与美元锚定(1 credit = $0.10,内部 ×10 记账)。**结构定调(2026-07-03):席位订阅 + credits 用量双轨(Zoho 式)** —— 全部 feature 用量走 credits,座位数叠加收费;具体档位经拍板会 G 区后入册。
+5. **定价永不硬编码。** 目标毛利 40–50%;图约 2.5x、视频近成本卖、**利润主要在 Otto 本身**。credits 与美元锚定(1 credit = $0.10,内部 ×10 记账)。**结构定调(2026-07-03,G 区拍板)**:席位订阅(创作席+审批席双档)+ credits 用量双轨;功能全开、档位卖规模;credits 滚存上限制(以 costing 为准 —— **任何定价决定 costing 先行**);**MYR 为主货币 + 分市场差异定价(最大化 margin)**;通道费透明直传;**永久禁止任何 "unlimited" 类报价**(founder 2026-07-03:"Otto 自动化的时候我们就糟糕了" —— agent 自动化使不限量承诺变成本敞口)。
 6. **租户铁幕。** 一切数据 ownerId 隔离;身份永远来自 session(requireOwner),永远不信客户端传的 org/owner。跨租户读一个字节 = 事故。
 7. **双模原则 + Otto 全操控(2026-07-03,founder 定为最高设计要求)。** 每个功能区必须满足两条:(a) **人工可完整操作** —— Otto 不在也是一个能打的产品;(b) **Otto 可 100% 操控 FIKIRTIVE 能操控的一切**。保证机制是结构性的,不靠自觉:
    - **单一动作层**:UI 按钮和 Otto skill 调用**同一个** server action,禁止两套业务实现(`generate`→`startGen`←canvas 按钮 = 范本);
@@ -50,7 +50,7 @@
    - **上下文桥**:当前视图/选中项注入每轮对话,"把这个改成 9:16"里的"这个"必须可解析;
    - **三类豁免写死**:市政厅(admin)永久豁免、纯视觉微操、账户安全操作(人亲自来);
    - **审批经济学不变**:全操控 ≠ 全自动,花钱与外部写照旧过闸。
-8. **明确不盖的楼**(拍板过,别再提案):Build 终端 coding agent、独立通用 Chat、Spicy/18+ NSFW、**开放第三方 skill 生态**(skill 永久 BELCORT 内部编写)、**对外 MCP/API 让外部 agent 操作 FIKIRTIVE**(2026-07-03 拍板,founder 原话:"如果会用其他 LLM,代表我们的 Otto harness 不够好,就代表 FIKIRTIVE 不好。不要有这个机会。" —— 操作这座城的 agent 永远只有 Otto)。
+8. **明确不盖的楼**(拍板过,别再提案):Build 终端 coding agent、独立通用 Chat、Spicy/18+ NSFW、**开放第三方 skill 生态**(skill 永久 BELCORT 内部编写)、**对外 MCP/API 让外部 agent 操作 FIKIRTIVE**(founder:"如果会用其他 LLM,代表我们的 Otto harness 不够好,就代表 FIKIRTIVE 不好。" —— 操作这座城的 agent 永远只有 Otto)、**白标**(founder 2026-07-03:"我要的就是 FIKIRTIVE 变成世界级别的平台" —— 平台不贴别人的牌,Otto 永不改名换脸)、**任何 unlimited 类报价**(与 Otto 自动化互斥,成本敞口)。
 9. **语言约定**:spec/skill 文档用华语(founder 复审);生成 prompt 一律英文;UI 文案 sentence case。
 10. **UIUX 是第二支柱(2026-07-03 入宪)。** 除"Otto 全操控"外,UIUX 是留住与吸引用户的核心卖点。质感标杆 = **Apple**;交互趣味参考 Duolingo 但克制 —— 面向专业用户只做 **minimal gamification**(形态在 harmony 设计阶段定)。落地机制:单一设计系统(.gb)不许分叉;每个用户可感的面必须过设计审(不只 runtime QA);设计基准 = Analytics 屏(已有 gold standard)。
 
@@ -147,3 +147,4 @@ pg-boss 五条队列 + 三类回收器(gen/refgen/LLM 预扣)、ingest 哈希复
 | 2026-07-03 | v1.3 第六章新增市政厅 v2(团队阶级制度:矩阵驱动权限 + 钱的阶级 + 审批链 + staff 成员制)(founder 口述,总审查员执笔) | 待 founder 定稿 |
 | 2026-07-03 | v1.4 O 区拍板入宪:定价双轨(席位+credits)/skill 永久内部/UIUX 第二支柱(第 10 条)/routine 授权模型/建设节奏 = 创作先行赚钱(拍板会第一批,总审查员执笔) | 待 founder 定稿 |
 | 2026-07-03 | v1.5 O 区封卷:对外 MCP 永久不做入第 8 条("操作这座城的 agent 永远只有 Otto");O-09 分域/O-10 要/O-12 Otto 之手/O-13 团队协作(归 G 区) | 待 founder 定稿 |
+| 2026-07-03 | v1.6 G 区封卷入宪:双档席位/功能全开/滚存上限制(costing 先行)/MYR+分市场定价/直传/unlimited 永禁/白标永禁/Agency 顺序 G-09→协作+G-11→G-10 | 待 founder 定稿 |
