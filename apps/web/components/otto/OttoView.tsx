@@ -1,10 +1,11 @@
 "use client";
-import React, { useState } from "react";
+import React, { useMemo, useState } from "react";
 import type { OttoViewKey } from "./OttoApp";
 import type { EntityDTO, ChatThreadDTO } from "@/lib/types";
 import type { MemoryRow } from "@/lib/memory-actions";
 import type { BrandRecordRow } from "@/lib/brand-record-actions";
 import type { AccountInfo } from "@/lib/account-actions";
+import { buildStuffItems } from "@/lib/stuff-items";
 import { OttoFrontDoor } from "./OttoFrontDoor";
 import { OttoConversation } from "./OttoConversation";
 import { OttoChatStream } from "./OttoChatStream";
@@ -16,7 +17,7 @@ import OttoLibrary from "./OttoLibrary";
 import OttoTemplates from "./OttoTemplates";
 import OttoDiscover from "./OttoDiscover";
 import OttoConnections from "./OttoConnections";
-import type { AdJobItem } from "@/lib/data";
+import type { AdJobItem, HistoryThumb } from "@/lib/data";
 import { getCoworkThreadClient } from "@/lib/cowork-fetch";
 import FlowCanvas from "../canvas/FlowCanvas";
 import { ConvoTabs } from "./ConvoTabs";
@@ -35,6 +36,7 @@ interface OttoViewProps {
   records: BrandRecordRow[];
   ads: AdTile[];
   adJobs: AdJobItem[];
+  history: HistoryThumb[];
   account: AccountInfo | null;
   ottoStreamEnabled: boolean;
   onBalanceRefresh: () => Promise<void>;
@@ -65,6 +67,7 @@ export function OttoView({
   records,
   ads,
   adJobs,
+  history,
   account,
   ottoStreamEnabled,
   onBalanceRefresh,
@@ -79,6 +82,12 @@ export function OttoView({
   skin,
 }: OttoViewProps) {
   const activeThread = threads.find((t) => t.id === activeThreadId) ?? null;
+
+  // Unified My Stuff items — shared by the Memory product picker and the Stuff library.
+  const stuffItems = useMemo(
+    () => buildStuffItems({ entities, history, ads, records }),
+    [entities, history, ads, records],
+  );
 
   // The first message for a freshly-created streaming thread, handed up by the front
   // door. Keyed to its threadId + cleared once OttoChatStream has auto-sent it, so a
@@ -99,7 +108,7 @@ export function OttoView({
   if (view === "memory") {
     return (
       <div style={{ flex: 1, display: "flex", flexDirection: "column", overflow: "hidden" }}>
-        <OttoMemory initialMemory={memory} initialRecords={records} projectId={projectId} />
+        <OttoMemory initialMemory={memory} initialRecords={records} projectId={projectId} stuffItems={stuffItems} />
       </div>
     );
   }
@@ -112,7 +121,7 @@ export function OttoView({
   if (view === "stuff") {
     return (
       <div style={{ flex: 1, display: "flex", flexDirection: "column", overflow: "hidden" }}>
-        <OttoStuff entities={entities} ads={ads} adJobs={adJobs} />
+        <OttoStuff entities={entities} ads={ads} adJobs={adJobs} records={records} history={history} />
       </div>
     );
   }

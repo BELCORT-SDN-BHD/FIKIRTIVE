@@ -337,6 +337,7 @@ export function OttoApp({
           records={records}
           ads={ads}
           adJobs={adJobs}
+          history={history ?? []}
           account={account}
           ottoStreamEnabled={ottoStreamEnabled}
           onBalanceRefresh={refreshBalance}

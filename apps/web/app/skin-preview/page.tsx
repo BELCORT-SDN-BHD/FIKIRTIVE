@@ -2,6 +2,7 @@ import { notFound } from "next/navigation";
 import { OttoApp, type OttoViewKey } from "@/components/otto/OttoApp";
 import type { MemoryRow } from "@/lib/memory-actions";
 import type { BrandRecordRow } from "@/lib/brand-record-actions";
+import type { EntityDTO } from "@/lib/types";
 
 export const dynamic = "force-dynamic";
 export const metadata = { title: "Skin preview (dev)" };
@@ -34,10 +35,26 @@ export default async function SkinPreviewPage({
 
   const records: BrandRecordRow[] = [
     { id: "sp-seg1", kind: "segment", data: { name: "Young working moms", who: "25–38, urban, time-poor", pains: "no time to cook", channels: "IG Reels, TikTok" }, status: "active", startsAt: null, endsAt: null, source: "otto", pinned: false, updatedAt: new Date() },
-    { id: "sp-prod1", kind: "product", data: { name: "Latte Blend", description: "smooth everyday coffee", price: "RM 49", sellingAngle: "affordable daily ritual" }, status: "active", startsAt: null, endsAt: null, source: "user", pinned: true, updatedAt: new Date() },
+    { id: "sp-prod1", kind: "product", data: { name: "Latte Blend", description: "smooth everyday coffee", price: "RM 49", sellingAngle: "affordable daily ritual", imageAssetId: "as-latte" }, status: "active", startsAt: null, endsAt: null, source: "user", pinned: true, updatedAt: new Date() },
     { id: "sp-prod2", kind: "product", data: { name: "Espresso Kit", price: "RM 129" }, status: "active", startsAt: null, endsAt: null, source: "otto", pinned: false, updatedAt: new Date() },
     { id: "sp-off1", kind: "offer", data: { title: "Raya sale — 20% off", code: "RAYA20" }, status: "active", startsAt: null, endsAt: new Date("2026-07-15"), source: "otto", pinned: false, updatedAt: new Date() },
     { id: "sp-off2", kind: "offer", data: { title: "Launch promo (over)" }, status: "active", startsAt: null, endsAt: new Date("2026-06-01"), source: "user", pinned: false, updatedAt: new Date() },
+  ];
+
+  // My Stuff library mocks. The PRODUCT entity's base ref carries assetId "as-latte",
+  // which sp-prod1.imageAssetId points at — so the ⭐ product tag and its image both
+  // render in the library. The CHARACTER entity (Rosa) shows a Cast tile.
+  const entities: EntityDTO[] = [
+    {
+      id: "sp-ent-latte", type: "PRODUCT", name: "Latte Blend bag", aliases: [], notes: "", negativeConstraints: "",
+      refs: [{ id: "r-latte", assetId: "as-latte", url: "/window.svg", kind: "image" }],
+      baseAssetId: "as-latte", variants: [], usageCount: 3,
+    },
+    {
+      id: "sp-ent-rosa", type: "CHARACTER", name: "Rosa", aliases: [], notes: "", negativeConstraints: "",
+      refs: [{ id: "r-rosa", assetId: "as-rosa", url: "/window.svg", kind: "image" }],
+      baseAssetId: "as-rosa", variants: [], usageCount: 5,
+    },
   ];
 
   const iso = new Date(0).toISOString();
@@ -54,7 +71,7 @@ export default async function SkinPreviewPage({
         { id: "t2", projectId: "p1", title: "Latte art video", updatedAt: iso, messages: [], status: "working" },
         { id: "t3", projectId: "p2", title: "Teaser concepts", updatedAt: iso, messages: [], status: null },
       ]}
-      entities={[]}
+      entities={entities}
       threads={[]}
       balanceUsd={84}
       balanceCredits={840}
@@ -65,11 +82,15 @@ export default async function SkinPreviewPage({
       ads={[]}
       adJobs={[]}
       account={null}
-      history={Array.from({ length: 6 }, (_, i) => ({
-        id: `h${i}`,
-        src: `https://picsum.photos/seed/hist${i}/120/120`,
-        kind: "image" as const,
-      }))}
+      history={[
+        ...Array.from({ length: 5 }, (_, i) => ({
+          id: `h${i}`,
+          src: `https://picsum.photos/seed/hist${i}/120/120`,
+          kind: "image" as const,
+        })),
+        // One video so the Images/Videos filters in My Stuff both have content.
+        { id: "h-vid", src: "https://storage.googleapis.com/gtv-videos-bucket/sample/BigBuckBunny.mp4", kind: "video" as const },
+      ]}
       ottoStreamEnabled={false}
       initialView={(sp?.view as OttoViewKey | undefined) ?? "otto"}
       skin={skin}
