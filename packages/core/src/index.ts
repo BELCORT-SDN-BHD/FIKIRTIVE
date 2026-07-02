@@ -100,3 +100,5 @@ export type {
 export { SECTIONS, FACT_SECTION_KEYS, sectionForCategory, diffRows } from "./memory-sections.js";
 export { sectionsTouched } from "./memory-sections.js";
 export type { SectionKey, RowDiff } from "./memory-sections.js";
+export { tavilySearch, braveSearch, searchWithFallback } from "./websearch.js";
+export type { WebSearchResult, WebSearchFn } from "./websearch.js";
