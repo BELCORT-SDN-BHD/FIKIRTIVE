@@ -1,7 +1,7 @@
 "use server";
 import { revalidatePath } from "next/cache";
 import { prisma } from "@fikirtive/db";
-import { newId, sectionForCategory, offerPhase } from "@fikirtive/core";
+import { newId, sectionForCategory, offerPhase, distinctCategories } from "@fikirtive/core";
 import { requireOwner } from "./auth-guard";
 
 export type MemoryRow = {
@@ -207,11 +207,14 @@ export async function getBrandContextText(_ownerId?: string, brandId?: string | 
     const lines: string[] = [];
     if (products.length) {
       const pinnedCount = products.filter((p) => p.pinned).length;
-      lines.push(`Your products: ${products.length} total (${pinnedCount} pinned). Top:`);
+      const categories = distinctCategories(records as Array<{ kind: string; status: string; data: Record<string, unknown> }>);
+      const catSegment = categories.length ? ` Categories: ${categories.join(", ")}.` : "";
+      lines.push(`Your products: ${products.length} total (${pinnedCount} pinned).${catSegment} Top:`);
       for (const rec of products.slice(0, 10)) {
         const d = rec.data as Record<string, unknown>;
         const bits = [str(d.description), str(d.price), str(d.sellingAngle) && `angle: ${d.sellingAngle}`].filter(Boolean);
-        lines.push(`- ${str(d.name) ?? "?"}${bits.length ? ` — ${bits.join("; ")}` : ""}`);
+        const cat = str(d.category);
+        lines.push(`- ${str(d.name) ?? "?"}${bits.length ? ` — ${bits.join("; ")}` : ""}${cat ? ` [${cat}]` : ""}`);
       }
       if (products.length > 10) lines.push("(use lookupProducts for the rest)");
     }

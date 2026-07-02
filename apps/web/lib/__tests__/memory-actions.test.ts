@@ -322,4 +322,16 @@ describe("getBrandContextText v2 — sections + records", () => {
     expect(text).toContain("Your customers");
     expect(text).toContain("mostly KL urbanites");
   });
+
+  it("products injection includes [category] per line and a Categories summary", async () => {
+    mockMemoryFindMany.mockResolvedValue([]);
+    mockRecordFindMany.mockResolvedValue([
+      { kind: "product", data: { name: "Latte Blend", category: "Coffee" }, status: "active", startsAt: null, endsAt: null, pinned: false },
+      { kind: "product", data: { name: "Tote Bag", category: "Merch" }, status: "active", startsAt: null, endsAt: null, pinned: false },
+      { kind: "product", data: { name: "Mystery" }, status: "active", startsAt: null, endsAt: null, pinned: false },
+    ]);
+    const text = await getBrandContextText();
+    expect(text).toContain("[Coffee]");
+    expect(text).toMatch(/Categories: Coffee, Merch/);
+  });
 });

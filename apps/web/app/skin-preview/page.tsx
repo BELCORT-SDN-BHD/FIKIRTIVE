@@ -35,8 +35,8 @@ export default async function SkinPreviewPage({
 
   const records: BrandRecordRow[] = [
     { id: "sp-seg1", kind: "segment", data: { name: "Young working moms", who: "25–38, urban, time-poor", pains: "no time to cook", channels: "IG Reels, TikTok" }, status: "active", startsAt: null, endsAt: null, source: "otto", pinned: false, updatedAt: new Date() },
-    { id: "sp-prod1", kind: "product", data: { name: "Latte Blend", description: "smooth everyday coffee", price: "RM 49", sellingAngle: "affordable daily ritual", imageAssetId: "as-latte" }, status: "active", startsAt: null, endsAt: null, source: "user", pinned: true, updatedAt: new Date() },
-    { id: "sp-prod2", kind: "product", data: { name: "Espresso Kit", price: "RM 129" }, status: "active", startsAt: null, endsAt: null, source: "otto", pinned: false, updatedAt: new Date() },
+    { id: "sp-prod1", kind: "product", data: { name: "Latte Blend", description: "smooth everyday coffee", price: "RM 49", sellingAngle: "affordable daily ritual", category: "Coffee", imageAssetId: "as-latte" }, status: "active", startsAt: null, endsAt: null, source: "user", pinned: true, updatedAt: new Date() },
+    { id: "sp-prod2", kind: "product", data: { name: "Espresso Kit", price: "RM 129", category: "Merch" }, status: "active", startsAt: null, endsAt: null, source: "otto", pinned: false, updatedAt: new Date() },
     { id: "sp-off1", kind: "offer", data: { title: "Raya sale — 20% off", code: "RAYA20" }, status: "active", startsAt: null, endsAt: new Date("2026-07-15"), source: "otto", pinned: false, updatedAt: new Date() },
     { id: "sp-off2", kind: "offer", data: { title: "Launch promo (over)" }, status: "active", startsAt: null, endsAt: new Date("2026-06-01"), source: "user", pinned: false, updatedAt: new Date() },
   ];
