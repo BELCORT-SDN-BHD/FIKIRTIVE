@@ -232,8 +232,15 @@ export async function prepareStoryboardFirstFrames(
 }
 
 // ---------------------------------------------------------------------------
-// regenShotFirstFrameCard — mint a FRESH replacement child for one shot ($0)
+// regenShotFirstFrameCard — stage a replacement first-frame child for one shot ($0)
 // ---------------------------------------------------------------------------
+//
+// New semantics (Fable): the OLD frame stays valid until the NEW one actually
+// lands. This action ONLY swaps `firstFrameCardId` to the replacement child and
+// NEVER touches `firstFrameGenerationId` — the old image survives until sync
+// overwrites the genId when the new frame is DONE. Cancel (client-side) is a true
+// no-op. Reuse-if-fresh (same rule as prepare) prevents $0 orphan accumulation
+// from repeated open/cancel.
 
 export async function regenShotFirstFrameCard(
   raw: unknown,
@@ -268,15 +275,50 @@ export async function regenShotFirstFrameCard(
     const target = payload.shots.find((s) => s.shotId === parsed.data.shotId);
     if (!target) return; // vanished mid-flight → no writes; caller returns error below.
 
+    // Reuse-if-fresh: an existing child that still matches the CURRENT prompt AND is
+    // unspent → reuse it, do NOT mint (repeated open/cancel would otherwise orphan $0
+    // cards). A spent or stale (prompt-drifted / missing) child → mint fresh.
+    if (target.firstFrameCardId) {
+      const existing = await tx.chatMessage.findFirst({
+        where: { id: target.firstFrameCardId, ownerId, kind: "GEN_CARD", deletedAt: null },
+        select: { id: true, payload: true, genJobId: true },
+      });
+      const existingPrompt =
+        existing && ((existing.payload ?? {}) as { structuredPrompt?: unknown }).structuredPrompt;
+      if (existing && existingPrompt === target.firstFramePrompt) {
+        const spent = existing.genJobId != null || (await spentOf(existing.id, ownerId));
+        if (!spent) {
+          const p = (existing.payload ?? {}) as {
+            structuredPrompt?: string;
+            entityIds?: string[];
+            estimatedCredits?: number;
+          };
+          child = {
+            shotId: target.shotId,
+            childCardId: existing.id,
+            estimatedCredits: typeof p.estimatedCredits === "number" ? p.estimatedCredits : 0,
+            structuredPrompt:
+              typeof p.structuredPrompt === "string" ? p.structuredPrompt : target.firstFramePrompt,
+            entityIds: Array.isArray(p.entityIds) ? p.entityIds : (target.entityIds ?? []),
+            spent: false,
+          };
+          // Child already registered on the shot; nothing to write. No genId touch.
+          return;
+        }
+        // spent → fall through to mint a fresh replacement.
+      }
+      // missing / stale prompt → fall through to mint.
+    }
+
     const ownedAll = await ownedEntityIdsFor(ownerId, target.entityIds ?? []);
     child = await mintChild(tx, card, target, ownerId, ctx, ownedAll);
     const newChildId = child.childCardId;
 
     const nextShots = payload.shots.map((s) => {
       if (s.shotId !== parsed.data.shotId) return s;
-      // Replace firstFrameCardId; DROP firstFrameGenerationId (old image invalidated) by key-omission.
-      const { firstFrameGenerationId: _drop, ...rest } = s;
-      return { ...rest, firstFrameCardId: newChildId };
+      // Replace firstFrameCardId ONLY. NEVER touch firstFrameGenerationId — the old
+      // image stays valid until sync overwrites the genId when the new frame lands.
+      return { ...s, firstFrameCardId: newChildId };
     });
 
     await tx.chatMessage.update({
@@ -354,14 +396,21 @@ export async function syncStoryboardFirstFrames(
 
   const cur = (card.payload ?? {}) as StoryboardCardPayload;
 
-  // Collect finished writes OUTSIDE the txn (all reads): pending shot = has a child but no image yet.
+  // Collect finished writes OUTSIDE the txn (all reads). Candidate = EVERY shot that
+  // points at a child card (≤8 shots, so the extra per-shot lookups are bounded). For
+  // each, resolve its child's DONE generationId; stage a write iff that id exists AND
+  // DIFFERS from the shot's current firstFrameGenerationId. This covers both:
+  //  • first landing (no genId yet → write), and
+  //  • replace-overwrite (a regen's new frame lands → overwrites the old genId).
+  // FAILED/queued/generating/missing children resolve to null → inert (no write). A
+  // write only ever REPLACES the genId value; it never deletes the key.
   const writes: Record<string, string> = {}; // shotId → generationId
   for (const shot of cur.shots) {
-    if (!shot.firstFrameCardId || shot.firstFrameGenerationId) continue;
+    if (!shot.firstFrameCardId) continue;
     const job = await doneJobFor(shot.firstFrameCardId, ownerId);
     if (!job) continue;
     const genId = await firstGenerationIdOf(job.id, ownerId);
-    if (genId) writes[shot.shotId] = genId;
+    if (genId && genId !== shot.firstFrameGenerationId) writes[shot.shotId] = genId;
   }
 
   // Apply staged writes in ONE transactional RMW (re-read payload, patch only target shots).

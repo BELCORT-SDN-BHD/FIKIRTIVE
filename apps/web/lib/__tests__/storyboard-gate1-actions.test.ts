@@ -318,11 +318,13 @@ describe("prepareStoryboardFirstFrames — $0 铸卡", () => {
 });
 
 describe("regenShotFirstFrameCard — $0 重出铸卡", () => {
-  it("按 shotId 铸新子卡替换 firstFrameCardId 并清 firstFrameGenerationId(其余镜头不动)", async () => {
+  it("按 shotId 铸新子卡只替换 firstFrameCardId,PRESERVE firstFrameGenerationId(其余镜头不动)", async () => {
     const p = payload3();
-    // give s1 an existing firstFrameCardId too, so we can prove it's untouched
+    // s1 has an existing stale child ("old-1", not in loads → missing/stale) AND an image
+    // (gen1). Regen mints a replacement but must NOT touch the old genId — old frame stays
+    // valid until the new one lands (via sync).
     p.shots[1].firstFrameCardId = "old-1";
-    wireLoads(card(p));
+    wireLoads(card(p)); // no children map → "old-1" resolves null → mint fresh
 
     const res = await regenShotFirstFrameCard({ cardId: "card-1", shotId: "s1" });
     expect("child" in res).toBe(true);
@@ -336,13 +338,14 @@ describe("regenShotFirstFrameCard — $0 重出铸卡", () => {
     expect(created.payload.storyboardCardId).toBe("card-1");
     expect("genJobId" in created).toBe(false);
 
-    // parent update: s1.firstFrameCardId replaced (new id), firstFrameGenerationId dropped
+    // parent update: s1.firstFrameCardId replaced (new id); firstFrameGenerationId PRESERVED.
     const upd = mockChatUpdate.mock.calls[0][0];
     expect(upd.where).toEqual({ id: "card-1" });
     const shots = (upd.data.payload as StoryboardCardPayload).shots;
     expect(shots[1].firstFrameCardId).toBeTruthy();
     expect(shots[1].firstFrameCardId).not.toBe("old-1");
-    expect("firstFrameGenerationId" in shots[1]).toBe(false); // dropped by key-omission
+    expect("firstFrameGenerationId" in shots[1]).toBe(true); // key still present…
+    expect(shots[1].firstFrameGenerationId).toBe("gen1"); // …with the OLD value intact
     // other shots byte-preserved
     expect(shots[0]).toEqual(p.shots[0]);
     expect(shots[2]).toEqual(p.shots[2]);
@@ -350,6 +353,46 @@ describe("regenShotFirstFrameCard — $0 重出铸卡", () => {
     expect(res.child.shotId).toBe("s1");
     expect(res.child.estimatedCredits).toBe(5);
     expect(res.child.structuredPrompt).toBe("ff1");
+  });
+
+  it("可重入:镜头已有未花钱且 prompt 一致的子卡 → 复用,不铸新、不写 DB", async () => {
+    const p = payload3();
+    // s1 has an image (gen1) and an existing unspent child whose prompt matches ff1.
+    p.shots[1].firstFrameCardId = "child-1";
+    wireLoads(card(p), {
+      "child-1": { payload: { structuredPrompt: "ff1", entityIds: [], estimatedCredits: 5 }, genJobId: null },
+    });
+
+    const res = await regenShotFirstFrameCard({ cardId: "card-1", shotId: "s1" });
+    if (!("child" in res)) throw new Error("expected child");
+
+    // Reused: no mint, no parent write (child already registered on the shot).
+    expect(mockChatCreate).not.toHaveBeenCalled();
+    expect(mockChatUpdate).not.toHaveBeenCalled();
+    expect(res.child.childCardId).toBe("child-1");
+    expect(res.child.shotId).toBe("s1");
+    expect(res.child.estimatedCredits).toBe(5);
+    expect(res.child.structuredPrompt).toBe("ff1");
+    expect(res.child.spent).toBe(false);
+  });
+
+  it("可重入:既有子卡已花过钱(有幂等 job)→ 不复用,铸新替换", async () => {
+    const p = payload3();
+    p.shots[1].firstFrameCardId = "child-1";
+    wireLoads(card(p), {
+      "child-1": { payload: { structuredPrompt: "ff1" }, genJobId: null },
+    });
+    // child-1 already spent (idempotency job exists) → must NOT reuse; mint fresh.
+    mockGenJobFindFirst.mockResolvedValue({ id: "job-spent" });
+
+    const res = await regenShotFirstFrameCard({ cardId: "card-1", shotId: "s1" });
+    if (!("child" in res)) throw new Error("expected child");
+
+    expect(mockChatCreate).toHaveBeenCalledTimes(1);
+    const shots = (mockChatUpdate.mock.calls[0][0].data.payload as StoryboardCardPayload).shots;
+    expect(shots[1].firstFrameCardId).not.toBe("child-1"); // replaced away from the spent child
+    expect(shots[1].firstFrameGenerationId).toBe("gen1"); // old genId still preserved
+    expect(res.child.childCardId).not.toBe("child-1");
   });
 
   it("shotId 不存在 → {error},不写 DB", async () => {
@@ -461,6 +504,69 @@ describe("syncStoryboardFirstFrames — $0 对账", () => {
     expect(res.frames.s0).toContain("gen-A".slice(0, 0) + HASH); // url derived from asset
     expect(res.frames.s0).toBeTruthy();
     expect(res.frames.s1).toBeTruthy(); // pre-existing gen1 resolves too
+  });
+
+  it("重出对账:镜头有旧 genId + 子卡 DONE 出了新 genId → 覆盖写(REPLACE,非删除)", async () => {
+    const p = payload3();
+    // s0 already shows an OLD frame (gen-OLD) and points at a regen child whose job is DONE
+    // with a DIFFERENT new gen (gen-NEW). Sync must OVERWRITE the genId in place.
+    p.shots[0].firstFrameCardId = "child-0";
+    p.shots[0].firstFrameGenerationId = "gen-OLD";
+    delete p.shots[2].firstFrameGenerationId; // isolate: s2 not a candidate
+    wireSync(
+      card(p),
+      { "child-0": { genJobId: "job-0" } },
+      { "job-0": { generationIds: ["gen-NEW"] } },
+    );
+    mockGenJobFindFirst.mockResolvedValue({ id: "job-0", status: "DONE" });
+    mockGenerationFindMany.mockResolvedValue([gen("gen-NEW"), gen("gen1")]);
+
+    const res = await syncStoryboardFirstFrames({ cardId: "card-1" });
+    if (!("payload" in res)) throw new Error("expected payload");
+
+    // exactly one write: s0's genId REPLACED gen-OLD → gen-NEW (key still present).
+    expect(mockChatUpdate).toHaveBeenCalledTimes(1);
+    const updShots = (mockChatUpdate.mock.calls[0][0].data.payload as StoryboardCardPayload).shots;
+    expect("firstFrameGenerationId" in updShots[0]).toBe(true);
+    expect(updShots[0].firstFrameGenerationId).toBe("gen-NEW");
+    expect(res.payload.shots[0].firstFrameGenerationId).toBe("gen-NEW");
+    expect(res.frames.s0).toBeTruthy();
+  });
+
+  it("重出对账:子卡 DONE 但 genId 与现值相同 → 不写(幂等,无变更)", async () => {
+    const p = payload3();
+    // s0's child is DONE producing the SAME gen it already shows → nothing to overwrite.
+    p.shots[0].firstFrameCardId = "child-0";
+    p.shots[0].firstFrameGenerationId = "gen-A";
+    delete p.shots[2].firstFrameGenerationId;
+    wireSync(
+      card(p),
+      { "child-0": { genJobId: "job-0" } },
+      { "job-0": { generationIds: ["gen-A"] } }, // same as current
+    );
+    mockGenJobFindFirst.mockResolvedValue({ id: "job-0", status: "DONE" });
+    mockGenerationFindMany.mockResolvedValue([gen("gen-A"), gen("gen1")]);
+
+    const res = await syncStoryboardFirstFrames({ cardId: "card-1" });
+    if (!("payload" in res)) throw new Error("expected payload");
+    expect(mockChatUpdate).not.toHaveBeenCalled(); // no differing genId staged → no write
+    expect(res.payload.shots[0].firstFrameGenerationId).toBe("gen-A");
+  });
+
+  it("重出对账:镜头有旧 genId + 子卡未 DONE → 旧 genId 原样(不写)", async () => {
+    const p = payload3();
+    // s0 shows an old frame; its regen child is still GENERATING → old genId must stay.
+    p.shots[0].firstFrameCardId = "child-0";
+    p.shots[0].firstFrameGenerationId = "gen-OLD";
+    delete p.shots[2].firstFrameGenerationId;
+    wireSync(card(p), { "child-0": { genJobId: "job-0" } }, {});
+    mockGenJobFindFirst.mockResolvedValue({ id: "job-0", status: "GENERATING" });
+    mockGenerationFindMany.mockResolvedValue([gen("gen-OLD"), gen("gen1")]);
+
+    const res = await syncStoryboardFirstFrames({ cardId: "card-1" });
+    if (!("payload" in res)) throw new Error("expected payload");
+    expect(mockChatUpdate).not.toHaveBeenCalled(); // child not done → no write
+    expect(res.payload.shots[0].firstFrameGenerationId).toBe("gen-OLD"); // old genId intact
   });
 
   it("job 未完成 → 该镜头不写,其他完成的照常写(部分完成可对账)", async () => {

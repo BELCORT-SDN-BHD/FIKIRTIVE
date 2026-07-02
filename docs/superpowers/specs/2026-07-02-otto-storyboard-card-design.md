@@ -108,7 +108,7 @@ type StoryboardCardPayload = {
 ## 8. 编辑动作(server actions,owner+thread scoped)
 
 - `editShotPrompt(cardId, index, { firstFramePrompt?, videoPrompt? })` → 改文字 + 清 `firstFrameGenerationId`。$0。
-- `regenShotFirstFrame(cardId, shotId)` → 单帧重出 = **再铸一张子 GEN_CARD** 走一次 `generate`(见 §7;按 shotId 定位,不按 index)。**花钱**(F4)。
+- `regenShotFirstFrame(cardId, shotId)` → 单帧重出 = **再铸一张子 GEN_CARD**(可重入:既有未花钱且 prompt 一致的子卡则复用)走一次 `generate`(见 §7;按 shotId 定位,不按 index)。**旧图保留到新图落地才被覆盖**(只替换 `firstFrameCardId`,不动 `firstFrameGenerationId`;新图 DONE 后由 sync 覆盖旧 genId);**取消重出 = 无操作**(不再"先作废旧图")。**花钱**(F4)。
 - `addShot(cardId, shot)` / `deleteShot(cardId, index)` → 增/删,重排 index。$0。
 - `reorderShots(cardId, order[])` → 重排。$0。
 - 全部严格 owner-scoped(身份来自 session,不来自输入)。

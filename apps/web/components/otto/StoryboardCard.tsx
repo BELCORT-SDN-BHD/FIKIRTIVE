@@ -55,6 +55,16 @@ export function StoryboardCard({ cardId, payload, balanceUsd, onBalanceRefresh }
   const [generating, setGenerating] = useState(false); // spend loop OR sync poll running
   const [frames, setFrames] = useState<Record<string, string>>({});
   const [polling, setPolling] = useState(false);
+  // Shots whose regen was CONFIRMED (spent) but whose thumbnail hasn't swapped yet.
+  // The old frame stays shown + a "Replacing frame…" hint; a shot leaves this set the
+  // moment sync returns a DIFFERENT genId for it (the new frame has landed).
+  const [replacingShotIds, setReplacingShotIds] = useState<Set<string>>(() => new Set());
+  // shotId → the genId shown when its regen was confirmed (the OLD frame). A sync result
+  // with a genId ≠ this baseline means the replacement landed → drop the shot from the set.
+  // Refs so the sync loop reads live values without re-subscribing the interval.
+  const replacingBaselineRef = useRef<Record<string, string | undefined>>({});
+  const replacingShotIdsRef = useRef<Set<string>>(replacingShotIds);
+  replacingShotIdsRef.current = replacingShotIds;
 
   const pollTriesRef = useRef(0);
 
@@ -117,14 +127,28 @@ export function StoryboardCard({ cardId, payload, balanceUsd, onBalanceRefresh }
   }, [payload]);
 
   const runSyncOnce = useCallback(async (): Promise<boolean> => {
-    // returns true if any shot is still pending after this sync
+    // returns true if there's still work to poll for: any shot pending (first-frame
+    // landing) OR any confirmed regen whose replacement hasn't overwritten its genId yet.
     try {
       const res = await syncStoryboardFirstFrames({ cardId });
       if ("error" in res) return false; // give up quietly on a sync error
       const nextView = parseStoryboardCardPayload(res.payload);
       setView(nextView);
       setFrames(res.frames);
-      return nextView.shots.some(isPending);
+
+      // A replacing shot leaves the set once its genId differs from the recorded baseline.
+      const stillReplacing = new Set<string>();
+      for (const shotId of replacingShotIdsRef.current) {
+        const genId = nextView.shots.find((s) => s.shotId === shotId)?.firstFrameGenerationId;
+        if (genId && genId !== replacingBaselineRef.current[shotId]) {
+          delete replacingBaselineRef.current[shotId]; // landed → forget the baseline
+        } else {
+          stillReplacing.add(shotId);
+        }
+      }
+      if (stillReplacing.size !== replacingShotIdsRef.current.size) setReplacingShotIds(stillReplacing);
+
+      return nextView.shots.some(isPending) || stillReplacing.size > 0;
     } catch {
       return false;
     }
@@ -221,16 +245,9 @@ export function StoryboardCard({ cardId, payload, balanceUsd, onBalanceRefresh }
     try {
       const res = await regenShotFirstFrameCard({ cardId, shotId });
       if ("error" in res) { setError(res.error); return; }
-      // Reflect the cleared frame immediately (server dropped firstFrameGenerationId).
-      setView((v) => ({
-        ...v,
-        shots: v.shots.map((s) =>
-          s.shotId === shotId
-            ? { ...s, firstFrameCardId: res.child.childCardId, firstFrameGenerationId: undefined }
-            : s,
-        ),
-      }));
-      setFrames((f) => { const n = { ...f }; delete n[shotId]; return n; });
+      // Do NOT clear the local view's genId or thumbnail — the OLD frame stays valid
+      // until the NEW one lands (server preserved firstFrameGenerationId). Just stage the
+      // per-shot confirm; Cancel leaves the old thumbnail fully intact (true no-op).
       setRegenShotId(shotId);
       setRegenChild(res.child);
     } catch {
@@ -256,8 +273,15 @@ export function StoryboardCard({ cardId, payload, balanceUsd, onBalanceRefresh }
       setError("Couldn't regenerate — please try again.");
     }
     onBalanceRefresh?.();
-    if (started) startPolling();
-    else setGenerating(false);
+    if (started) {
+      // Old frame stays shown + a "Replacing frame…" hint until sync swaps the thumbnail.
+      // Record the OLD genId as the baseline; sync clears the shot once it sees a new one.
+      replacingBaselineRef.current[c.shotId] = view.shots.find((s) => s.shotId === c.shotId)?.firstFrameGenerationId;
+      setReplacingShotIds((prev) => new Set(prev).add(c.shotId));
+      startPolling();
+    } else {
+      setGenerating(false);
+    }
   }
 
   const shots = view.shots;
@@ -287,6 +311,7 @@ export function StoryboardCard({ cardId, payload, balanceUsd, onBalanceRefresh }
               const hasFrame = !!shot.firstFrameGenerationId;
               const shotPending = isPending(shot);
               const isRegenConfirm = regenShotId === shot.shotId;
+              const isReplacing = replacingShotIds.has(shot.shotId);
               return (
                 <div key={shot.shotId} className="bg-card rounded-[14px] flex flex-col gap-1" style={{ padding: "10px 12px" }}>
                   {/* Row header: shot number + optional title + controls */}
@@ -358,9 +383,15 @@ export function StoryboardCard({ cardId, payload, balanceUsd, onBalanceRefresh }
                           style={{ maxWidth: 180 }}
                         />
                       )}
-                      {shotPending && !frameUrl && (
+                      {shotPending && !hasFrame && !frameUrl && (
                         <div className="flex items-center gap-1 text-[0.75rem] text-muted-foreground">
                           <Loader2 size={13} style={{ animation: "spin 1s linear infinite" }} /> Generating first frame…
+                        </div>
+                      )}
+                      {/* Confirmed regen in flight: old thumbnail stays; hint while the new frame lands. */}
+                      {isReplacing && (
+                        <div className="flex items-center gap-1 text-[0.75rem] text-muted-foreground">
+                          <Loader2 size={13} style={{ animation: "spin 1s linear infinite" }} /> Replacing frame…
                         </div>
                       )}
 
