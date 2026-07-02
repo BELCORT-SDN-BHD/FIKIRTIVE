@@ -32,7 +32,10 @@ jobs:
       # --frozen-lockfile moves the #68 class of failure (a package.json dep added without
       # regenerating pnpm-lock.yaml) from deploy-time to PR-time.
       - run: pnpm install --frozen-lockfile
-      - run: pnpm --filter @fikirtive/db generate
+      # Workspace packages resolve from dist, so build them (tsc-only — cheap) before
+      # typechecking the apps. db's build script runs `prisma generate` itself. The apps are
+      # deliberately NOT built here: `next build` is expensive and env-dependent.
+      - run: pnpm --filter "./packages/*" build
       - run: pnpm -r typecheck
       # Hard spend-fence: skills must not import the fal provider / reserveCredits directly.
       - run: bash scripts/check-skill-imports.sh
@@ -64,6 +67,7 @@ jobs:
           node-version: 22
           cache: pnpm
       - run: pnpm install --frozen-lockfile
-      - run: pnpm --filter @fikirtive/db generate
+      # Same as the check job: tests import @fikirtive/* from dist (see comment above).
+      - run: pnpm --filter "./packages/*" build
       - run: pnpm --filter @fikirtive/db exec prisma migrate deploy
       - run: pnpm -r test
