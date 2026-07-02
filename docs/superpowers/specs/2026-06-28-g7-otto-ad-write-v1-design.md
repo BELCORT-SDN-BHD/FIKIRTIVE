@@ -1,7 +1,7 @@
 # G7 v1 Design — Otto Manages Existing Meta Ads (write)
 
 **Date:** 2026-06-28
-**Status:** design, pending founder review → `writing-plans`
+**Status:** ✅ SHIPPED — merged as PR #64 (`f141037`); prod dormant until a user reconnects granting ads_management + App Review.
 **Scope:** v1 = slice (a) **manage existing** Meta ads only. Creating ads = v2.
 **Grounds on:** [codebase grounding map](#references) · [agent-authz research](2026-06-28-g7-agent-authz-research.md) · [session handoff](2026-06-28-SESSION-HANDOFF.md)
 **Builds on:** G6 read-only Meta connector (shipped, prod) + the Otto Skill Framework.

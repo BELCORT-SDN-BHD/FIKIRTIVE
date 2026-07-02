@@ -1,7 +1,7 @@
 # Phase 2 — BytePlus (Seedream/Seedance) Generation Migration — Design
 
 **Date:** 2026-06-29
-**Status:** design (grounded in real API tests), pending founder review → `writing-plans`
+**Status:** ✅ SHIPPED — merged as PR #67 (`4c164b9`), LIVE on prod since the 2026-06-29 go-live (`68efad4`); BytePlus is the prod generation provider.
 **Decides:** move image+video generation fal → official BytePlus ModelArk, collapse the model lineup, add a 720p/1080p quality picker, and re-cost the per-generation credit charge.
 
 ---
