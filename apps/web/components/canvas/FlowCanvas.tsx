@@ -486,8 +486,8 @@ export default function FlowCanvas({
     url: pendingDeleteNode.data?.url as string | undefined,
   });
   const showGraph = canvasReady && (!directToolsLocked || nodes.length > 0 || dragOver);
-  const imageCostLabel = costQuote ? creditsLabel(costQuote.imageCredits) : "Checking exact cost...";
-  const videoCostLabel = costQuote ? creditsLabel(costQuote.videoCredits) : "Checking exact cost...";
+  const imageCostLabel = costQuote ? creditsLabel(costQuote.imageCredits) : "checking exact cost";
+  const videoCostLabel = costQuote ? creditsLabel(costQuote.videoCredits) : "checking exact cost";
   const directToolTitle = directToolsLocked ? directToolsLockedReason : undefined;
 
   return (
@@ -707,7 +707,7 @@ export default function FlowCanvas({
                 setPendingAnimateId(null);
               }}
             >
-              Make video
+              {costQuote ? "Make video" : "Checking cost..."}
             </Button>
           </DialogFooter>
         </DialogContent>
@@ -722,7 +722,9 @@ export default function FlowCanvas({
           </DialogHeader>
           <DialogFooter>
             <Button variant="ghost" onClick={() => setConfirmGen(false)}>Cancel</Button>
-            <Button disabled={!costQuote} onClick={() => { setConfirmGen(false); void handleGenerate(); }}>Generate</Button>
+            <Button disabled={!costQuote} onClick={() => { setConfirmGen(false); void handleGenerate(); }}>
+              {costQuote ? "Generate" : "Checking cost..."}
+            </Button>
           </DialogFooter>
         </DialogContent>
       </Dialog>
@@ -747,7 +749,7 @@ export default function FlowCanvas({
               disabled={!t2vPrompt.trim() || !costQuote}
               onClick={() => { const p = t2vPrompt.trim(); setT2vOpen(false); setT2vPrompt(""); if (p) runT2v(p); }}
             >
-              Make video
+              {costQuote ? "Make video" : "Checking cost..."}
             </Button>
           </DialogFooter>
         </DialogContent>
