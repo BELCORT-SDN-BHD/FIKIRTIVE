@@ -36,6 +36,9 @@ describe("isInFlightPaidGen (paid-aware delete-guard predicate)", () => {
   it("false for a failed gen (terminal → already refunded, safe to delete)", () => {
     expect(isInFlightPaidGen({ type: "image", status: "failed" })).toBe(false);
   });
+  it("false for a done-but-missing preview (terminal, not in-flight)", () => {
+    expect(isInFlightPaidGen({ type: "video", status: "missing" })).toBe(false);
+  });
   it("false for a text node (never paid)", () => {
     expect(isInFlightPaidGen({ type: "text", status: "pending" })).toBe(false);
   });
@@ -92,6 +95,13 @@ describe("poll (F21)", () => {
     const onDone = vi.fn();
     await poll("j", onDone, cancelled, { intervalMs: 0, maxPolls: 5 });
     expect(onDone).toHaveBeenCalledWith([], "failed", []);
+  });
+
+  it("reports 'missing' when the job is DONE but no media URL resolves", async () => {
+    m.getGenJob.mockResolvedValue({ status: "DONE", urls: [], generationIds: ["g-missing"] });
+    const onDone = vi.fn();
+    await poll("j", onDone, cancelled, { intervalMs: 0, maxPolls: 5 });
+    expect(onDone).toHaveBeenCalledWith([], "missing", ["g-missing"]);
   });
 
   it("stops without calling onDone when cancelled", async () => {

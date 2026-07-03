@@ -66,7 +66,7 @@ export async function poll(
     if (cancelledRef.current) return;
     const job = await getGenJob(jobId);
     if (!job) return;
-    if (job.status === "DONE") return onDone(job.urls, "done", job.generationIds ?? []);
+    if (job.status === "DONE") return onDone(job.urls, job.urls.length ? "done" : "missing", job.generationIds ?? []);
     if (job.status === "FAILED") return onDone([], "failed", []);
     await new Promise((r) => setTimeout(r, intervalMs));
   }

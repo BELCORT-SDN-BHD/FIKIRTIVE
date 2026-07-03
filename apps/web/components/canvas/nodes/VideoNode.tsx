@@ -7,6 +7,7 @@ import { NodeResize } from "./NodeResize";
 export function VideoNode({ data, selected }: NodeProps) {
   const d = data as { status: string; url?: string; skin?: string; onDelete?: () => void };
   const gb = d.skin === "gb";
+  const terminal = d.status === "failed" || d.status === "timeout" || d.status === "missing";
   const videoRef = useRef<HTMLVideoElement>(null);
   const [playing, setPlaying] = useState(false);
   return (
@@ -17,8 +18,8 @@ export function VideoNode({ data, selected }: NodeProps) {
         Video
       </span>
     <div className="al-panel" style={{ width: "100%", height: "100%", overflow: "hidden", borderRadius: 14 }}>
-      {d.status === "failed" || d.status === "timeout" ? (
-        <FailedBody status={d.status} />
+      {terminal ? (
+        <FailedBody status={d.status as "failed" | "timeout" | "missing"} />
       ) : d.status === "pending" || !d.url ? (
         <GeneratingBody gb={gb} kind="video" />
       ) : gb ? (

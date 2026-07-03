@@ -359,7 +359,7 @@ export default function FlowCanvas({
       const prevById = new Map(prev.map((n) => [n.id, n]));
       const merged = mapped.map((m) => {
         const old = prevById.get(m.id);
-        return old && old.data.status === "pending" && !m.data.url ? old : m;
+        return old && old.data.status === "pending" && m.data.status === "pending" && !m.data.url ? old : m;
       });
       const mergedIds = new Set(merged.map((n) => n.id));
       const extras = prev.filter((n) => !mergedIds.has(n.id));

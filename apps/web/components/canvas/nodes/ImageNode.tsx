@@ -13,6 +13,8 @@ export function ImageNode({ data, selected }: NodeProps) {
     onDelete?: () => void;
     onOpenDetail?: () => void;
   };
+  const terminal = d.status === "failed" || d.status === "timeout" || d.status === "missing";
+  const ready = !!d.url && !terminal;
   return (
     <>
       <NodeResize gb={d.skin === "gb"} selected={selected} />
@@ -21,18 +23,20 @@ export function ImageNode({ data, selected }: NodeProps) {
         Image
       </span>
     <div className="al-panel" style={{ width: "100%", height: "100%", overflow: "hidden", borderRadius: 14 }}>
-      {d.status === "failed" || d.status === "timeout" ? (
-        <FailedBody status={d.status} />
+      {terminal ? (
+        <FailedBody status={d.status as "failed" | "timeout" | "missing"} />
       ) : d.status === "pending" || !d.url ? (
         <GeneratingBody gb={d.skin === "gb"} kind="image" />
       ) : (
         <img src={d.url} alt={d.prompt ?? ""} style={{ width: "100%", height: "100%", objectFit: "cover" }} />
       )}
       <div className="nodrag cv-node-actions" style={{ position: "absolute", top: 6, right: 6, display: "flex", gap: 6 }}>
-        {d.onOpenDetail && (
+        {ready && d.onOpenDetail && (
           <button className="al-btn al-btn-glass al-btn-sm" onClick={d.onOpenDetail}>Detail</button>
         )}
-        <button className="al-btn al-btn-glass al-btn-sm" onClick={d.onAnimate} title="Make a video from this image">Make video</button>
+        {ready && d.onAnimate && (
+          <button className="al-btn al-btn-glass al-btn-sm" onClick={d.onAnimate} title="Make a video from this image">Make video</button>
+        )}
         <button className="al-btn al-btn-glass al-btn-sm" onClick={d.onDelete}>✕</button>
       </div>
       <Handle type="source" position={Position.Right} />

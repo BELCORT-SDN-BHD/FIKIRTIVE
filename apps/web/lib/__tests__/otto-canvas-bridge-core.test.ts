@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { planBridgeNodes, type GenResultMsg } from "../otto-canvas-bridge-core";
+import { canvasNodeDisplayStatus, planBridgeNodes, type GenResultMsg } from "../otto-canvas-bridge-core";
 
 const msg = (seq: number, genJobId: string | null, kind?: string, text: string | null = null): GenResultMsg => ({
   seq,
@@ -58,5 +58,26 @@ describe("planBridgeNodes", () => {
   it("returns nothing when there are no results or no resolved generations", () => {
     expect(planBridgeNodes([], new Map(), [])).toEqual([]);
     expect(planBridgeNodes([msg(1, "job-a", "image")], new Map(), [])).toEqual([]);
+  });
+});
+
+describe("canvasNodeDisplayStatus", () => {
+  it("treats a resolved URL as done even when the stored row is still pending", () => {
+    expect(canvasNodeDisplayStatus("pending", "DONE", "/files/u/video.mp4")).toBe("done");
+  });
+
+  it("uses linked GenJob terminal status when the canvas row is stale", () => {
+    expect(canvasNodeDisplayStatus("pending", "FAILED", null)).toBe("failed");
+    expect(canvasNodeDisplayStatus("pending", "DONE", null)).toBe("missing");
+  });
+
+  it("only treats linked in-flight jobs as pending", () => {
+    expect(canvasNodeDisplayStatus("done", "QUEUED", null)).toBe("pending");
+    expect(canvasNodeDisplayStatus("done", "GENERATING", null)).toBe("pending");
+  });
+
+  it("falls back to the stored row status when no linked job status is available", () => {
+    expect(canvasNodeDisplayStatus("pending", null, null)).toBe("pending");
+    expect(canvasNodeDisplayStatus("failed", undefined, null)).toBe("failed");
   });
 });
