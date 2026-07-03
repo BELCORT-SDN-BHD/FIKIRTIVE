@@ -21,6 +21,7 @@ import {
   injectCardMessage,
   appendMissingCards,
   appendDurableResults,
+  appendResearchReports,
   syncCardJobIds,
 } from "@/lib/otto-inject-helpers";
 import { OttoPlanCard } from "./OttoPlanCard";
@@ -302,6 +303,13 @@ export function OttoChatStream({
     const fresh = await getCoworkThreadClient(thread.id);
     if (!fresh) return;
     setMessages((cur) => appendMissingCards(syncCardJobIds(cur, fresh), fresh));
+    onThreadUpdate(fresh);
+  }
+
+  async function refetchAndAppendResearchReports() {
+    const fresh = await getCoworkThreadClient(thread.id);
+    if (!fresh) return;
+    setMessages((cur) => appendResearchReports(cur, fresh));
     onThreadUpdate(fresh);
   }
 
@@ -908,7 +916,7 @@ export function OttoChatStream({
                     payload={m.metadata?.payload}
                     balanceUsd={balanceUsd}
                     onBalanceRefresh={() => void onBalanceRefresh?.()}
-                    onRefresh={pollAndInjectResults}
+                    onRefresh={refetchAndAppendResearchReports}
                   />
                 </WidgetRow>
               );
