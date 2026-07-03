@@ -43,6 +43,24 @@ describe("diagnosePerformance", () => {
     expect(diagnosePerformance(noRoas, META_EXPERTISE_KB, { objective: "conversions" }).metricUsed).toBe("CTR");
   });
 
+  it("all-zero CTR batch: no fabricated winner from a degenerate zero mean", () => {
+    // all ads CTR="0" (real case: impressions but no clicks yet) → mean=0; must NOT trip n >= mean*1.25
+    const d = diagnosePerformance([ad("a1", "0"), ad("a2", "0"), ad("a3", "0")], META_EXPERTISE_KB);
+    for (const v of d.verdicts) {
+      expect(v.verdict).toBe("neutral");
+      expect(v.suggestRecreate).toBe(false);
+    }
+    expect(d.note).toMatch(/not enough|signal/i);
+  });
+
+  it("all-tied non-zero CTR batch: neutral (no signal to distinguish them)", () => {
+    const d = diagnosePerformance([ad("a1", "1.0"), ad("a2", "1.0"), ad("a3", "1.0")], META_EXPERTISE_KB);
+    for (const v of d.verdicts) {
+      expect(v.verdict).toBe("neutral");
+      expect(v.suggestRecreate).toBe(false);
+    }
+  });
+
   it("never fabricates: no verdict/reason cites an external industry benchmark number", () => {
     const d = diagnosePerformance([ad("a1", "3.0"), ad("a2", "0.1"), ad("a3", "3.0")], META_EXPERTISE_KB);
     const allText = d.verdicts.flatMap((v) => v.reasons.map((r) => r.text)).join(" ") + " " + d.basis;

@@ -61,14 +61,14 @@ export function diagnosePerformance(
     const name = a.adName || "Untitled ad";
     if (n == null) return { adId: a.adId, name, verdict: "neutral", metric: metricUsed, value: "—", reasons: [], suggestRecreate: false };
     const value = disp(n);
-    if (n >= mean * 1.25) {
+    if (mean > 0 && n >= mean * 1.25) {
       return {
         adId: a.adId, name, verdict: "winner", metric: metricUsed, value, suggestRecreate: true,
         reasons: [{ kind: "creative", grounded: true, citations: [],
           text: `Top performer — ${metricUsed} ${value} is well above your account average (${meanDisplay}).` }],
       };
     }
-    if (n <= mean * 0.6 && spend > 0) {
+    if (mean > 0 && n <= mean * 0.6 && spend > 0) {
       return {
         adId: a.adId, name, verdict: "loser", metric: metricUsed, value, suggestRecreate: false,
         reasons: [
@@ -82,5 +82,5 @@ export function diagnosePerformance(
     return { adId: a.adId, name, verdict: "neutral", metric: metricUsed, value, reasons: [], suggestRecreate: false };
   });
 
-  return { verdicts, metricUsed, basis, note: null };
+  return { verdicts, metricUsed, basis, note: mean <= 0 ? `Not enough ${metricUsed} signal to compare yet.` : null };
 }
