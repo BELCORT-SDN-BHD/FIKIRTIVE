@@ -308,20 +308,8 @@ export default function FlowCanvas({
     }
   }, [projectId, activeThreadId, getOnAnimate, getOnOpenDetail, skin, scheduleFitView]);
 
-  // Animate the selected image node into a video — reuses the existing animate
-  // path (no new spend logic). The video tool mirrors Grok's "select an image
-  // node to animate"; it is disabled until an animatable image is selected.
-  const selectedImageId = nodes.find((n) => n.selected && n.type === "image" && nodeDataRef.current[n.id]?.generationId)?.id ?? null;
-  const animateSelected = useCallback(() => {
-    if (directToolsLocked) return;
-    if (selectedImageId) {
-      setCostQuote(null);
-      setPendingAnimateId(selectedImageId);
-    }
-  }, [selectedImageId, directToolsLocked]);
-
-  // Phase 3: text-to-video — the video tool opens a prompt dialog when nothing is
-  // selected; runT2v spends via the existing video path (no source frame).
+  // Phase 3: text-to-video — the bottom video tool always opens a prompt dialog;
+  // image cards own the explicit "Make video" image-to-video path.
   const [t2vOpen, setT2vOpen] = useState(false);
   const [t2vPrompt, setT2vPrompt] = useState("");
   const runT2v = useCallback((prompt: string) => {
@@ -577,10 +565,10 @@ export default function FlowCanvas({
             <button
               type="button"
               className="cv-tb"
-              title={directToolTitle ?? (selectedImageId ? "Make a video from the selected image" : "Make a video from a prompt")}
+              title={directToolTitle ?? "Make a video from a prompt"}
               aria-label="Video"
               disabled={directToolsLocked}
-              onClick={() => { if (selectedImageId) animateSelected(); else { setCostQuote(null); setT2vOpen(true); } }}
+              onClick={() => { setCostQuote(null); setT2vOpen(true); }}
             >
               <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.9"><rect x="2" y="6" width="14" height="12" rx="2" /><path d="m22 8-6 4 6 4V8z" /></svg>
             </button>
