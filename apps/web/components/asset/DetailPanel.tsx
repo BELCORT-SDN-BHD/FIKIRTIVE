@@ -96,7 +96,7 @@ export default function DetailPanel({
   // Edit @composer (24)
   const [editPrompt, setEditPrompt] = useState("");
   const [editIds, setEditIds] = useState<string[]>([]);
-  const [editStatus, setEditStatus] = useState<"idle" | "running" | "done" | "failed">("idle");
+  const [editStatus, setEditStatus] = useState<"idle" | "running" | "done" | "failed" | "timeout">("idle");
   const [composerKey, setComposerKey] = useState(() => String(Date.now()));
 
   // Crop (16)
@@ -107,8 +107,8 @@ export default function DetailPanel({
   const [cropStatus, setCropStatus] = useState<"idle" | "saving" | "done" | "failed">("idle");
 
   // Action states
-  const [regenStatus, setRegenStatus] = useState<"idle" | "running" | "done" | "failed">("idle");
-  const [animStatus, setAnimStatus] = useState<"idle" | "running" | "done" | "failed">("idle");
+  const [regenStatus, setRegenStatus] = useState<"idle" | "running" | "done" | "failed" | "timeout">("idle");
+  const [animStatus, setAnimStatus] = useState<"idle" | "running" | "done" | "failed" | "timeout">("idle");
   const [copied, setCopied] = useState(false);
   const [confirmAction, setConfirmAction] = useState<ConfirmAction>(null);
 
@@ -213,16 +213,21 @@ export default function DetailPanel({
     if ("error" in result) setFavoriteLocal(!next); // revert
   }, [gen, favorite, selectedGenId]);
 
-  const pollJob = useCallback(async (jobId: string): Promise<"done" | "failed"> => {
-    for (let i = 0; i < 120; i++) {
-      if (cancelledRef.current) return "failed";
-      await new Promise((r) => setTimeout(r, 2000));
+  const pollJob = useCallback(async (jobId: string): Promise<"done" | "failed" | "timeout"> => {
+    // ~8 min at 2.5s — mirrors the canvas poll() window (useCanvasGen.ts). Video gens can
+    // legitimately exceed the old ~4-min cap; the worker settles late jobs regardless of this
+    // client poll. A client-side give-up is a "timeout" (still working), NOT a "failed": surfacing
+    // it as failed invites a retry, and regen/animate/edit mint a fresh idempotencyKey per click →
+    // a second real charge on a job that's still running.
+    for (let i = 0; i < 192; i++) {
+      if (cancelledRef.current) return "timeout";
       const job = await getGenJob(jobId);
       if (!job) return "failed";
       if (job.status === "DONE") return "done";
       if (job.status === "FAILED") return "failed";
+      await new Promise((r) => setTimeout(r, 2500));
     }
-    return "failed";
+    return "timeout";
   }, []);
 
   // After a job completes, resolve its new generation id and load it into the panel
@@ -261,8 +266,13 @@ export default function DetailPanel({
     const status = await pollJob(result.id);
     if (!cancelledRef.current) {
       setRegenStatus(status);
-      // reset to idle after 3s
-      setTimeout(() => { if (!cancelledRef.current) setRegenStatus("idle"); }, 3000);
+      // A timeout means the paid job is STILL RUNNING (the worker settles it late) — keep the
+      // "still processing" state so the control never reverts to an inviting "Regenerate" whose
+      // re-click mints a NEW idempotencyKey = a second charge. done/failed reset to idle (a real
+      // failure is refunded, so retrying it is safe).
+      if (status !== "timeout") {
+        setTimeout(() => { if (!cancelledRef.current) setRegenStatus("idle"); }, 3000);
+      }
     }
     if (status === "done") await reloadFromJob(result.id);
   }, [gen, generationId, projectId, pollJob, reloadFromJob]);
@@ -294,7 +304,11 @@ export default function DetailPanel({
     const status = await pollJob(result.id);
     if (!cancelledRef.current) {
       setAnimStatus(status);
-      setTimeout(() => { if (!cancelledRef.current) setAnimStatus("idle"); }, 3000);
+      // Timeout ⇒ the paid video job is still running (worker settles late ones) — stay in
+      // "still processing" so a re-click can't fire a second charge. See handleRegen.
+      if (status !== "timeout") {
+        setTimeout(() => { if (!cancelledRef.current) setAnimStatus("idle"); }, 3000);
+      }
     }
     if (status === "done") await reloadFromJob(result.id);
   }, [gen, selectedGenId, projectId, pollJob, chosenAspect, reloadFromJob]);
@@ -394,7 +408,11 @@ export default function DetailPanel({
     const status = await pollJob(result.id);
     if (!cancelledRef.current) {
       setEditStatus(status);
-      setTimeout(() => { if (!cancelledRef.current) setEditStatus("idle"); }, 3000);
+      // Timeout ⇒ the paid edit job is still running — stay in "still processing" so a re-click
+      // can't fire a second charge. See handleRegen.
+      if (status !== "timeout") {
+        setTimeout(() => { if (!cancelledRef.current) setEditStatus("idle"); }, 3000);
+      }
     }
     if (status === "done") await reloadFromJob(result.id);
   }, [gen, editPrompt, editIds, editStatus, projectId, pollJob, reloadFromJob, selectedGenId]);
@@ -608,12 +626,14 @@ export default function DetailPanel({
                 size="sm"
                 icon={<IcRetry size={14} />}
                 onClick={() => requestSpendConfirm("regen")}
-                disabled={regenStatus === "running"}
+                disabled={regenStatus === "running" || regenStatus === "timeout"}
               >
                 {regenStatus === "running"
                   ? "Generating…"
                   : regenStatus === "done"
                   ? "New version ready"
+                  : regenStatus === "timeout"
+                  ? "Still processing — check the library"
                   : regenStatus === "failed"
                   ? "Failed — retry?"
                   : "Regenerate"}
@@ -626,12 +646,14 @@ export default function DetailPanel({
                   size="sm"
                   icon={<IcPlay size={14} />}
                   onClick={() => requestSpendConfirm("animate")}
-                  disabled={animStatus === "running"}
+                  disabled={animStatus === "running" || animStatus === "timeout"}
                 >
                   {animStatus === "running"
                     ? "Animating…"
                     : animStatus === "done"
                     ? "Video ready"
+                    : animStatus === "timeout"
+                    ? "Still processing — check the library"
                     : animStatus === "failed"
                     ? "Failed — retry?"
                     : "Animate"}
@@ -692,12 +714,14 @@ export default function DetailPanel({
                     variant="primary"
                     size="sm"
                     onClick={requestEditSubmit}
-                    disabled={editStatus === "running" || !editPrompt.trim()}
+                    disabled={editStatus === "running" || editStatus === "timeout" || !editPrompt.trim()}
                   >
                     {editStatus === "running"
                       ? "Editing…"
                       : editStatus === "done"
                       ? "Edit ready!"
+                      : editStatus === "timeout"
+                      ? "Still processing — check the library"
                       : editStatus === "failed"
                       ? "Failed"
                       : "Send"}
