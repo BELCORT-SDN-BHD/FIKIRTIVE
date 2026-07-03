@@ -22,12 +22,14 @@ import { listDirectives } from "@/lib/cowork-knowledge";
 import { listConversations } from "@/lib/conversation-admin";
 import { listTenants } from "@/lib/tenant-admin";
 import { resolveVisionConfig } from "@/lib/runtime-config";
+import { buildBytePlusPackSignal } from "@/lib/byteplus-pack-alert";
 
 const DAY_MS = 24 * 60 * 60 * 1000;
 
 const GEN_STATUSES = ["QUEUED", "GENERATING", "DONE", "FAILED"] as const;
 const RENDER_STATUSES = ["QUEUED", "RENDERING", "DONE", "FAILED"] as const;
 const ADMIN_SECTIONS: Section[] = ["model", "cost", "content", "team", "system", "knowledge", "credits", "tenants"];
+const BYTEPLUS_MODELS = new Set(["seedream", "seedance-2-fast"]);
 
 type Tone = "neutral" | "info" | "success" | "warning" | "danger";
 
@@ -577,6 +579,25 @@ export async function getAdminV2Data(): Promise<AdminV2Data> {
       tone: "info",
     },
   ];
+  const bytePlusPack = buildBytePlusPackSignal({
+    estimatedUsedUsd: moneyJobs
+      .filter((job) => BYTEPLUS_MODELS.has(job.model))
+      .reduce((sum, job) => sum + job.spentUsd, 0),
+    env: {
+      capacityUsd: process.env.BYTEPLUS_RESOURCE_PACK_USD,
+      usedUsd: process.env.BYTEPLUS_RESOURCE_PACK_USED_USD,
+      alertPct: process.env.BYTEPLUS_RESOURCE_PACK_ALERT_PCT,
+    },
+  });
+  systemIncidents.push({
+    id: "byteplus-pack",
+    area: "BytePlus pack",
+    status: bytePlusPack.status,
+    count: bytePlusPack.count,
+    detail: bytePlusPack.detail,
+    updatedAt: new Date().toISOString(),
+    tone: bytePlusPack.tone,
+  });
 
   const cases: CaseRow[] = [
     ...guardianBlocks.map((row) => {

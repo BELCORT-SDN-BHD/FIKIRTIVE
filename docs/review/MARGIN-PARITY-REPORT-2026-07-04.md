@@ -6,7 +6,7 @@ Aligned executable pricing, quote, reserve, settlement, and recorded COGS with t
 
 ## Sources Checked
 
-- `docs/BLUEPRINT.md`: margin floor >=45%, Otto margin 2.0x, no unlimited, BytePlus resource-pack alert remains P1.
+- `docs/BLUEPRINT.md`: margin floor >=45%, Otto margin 2.0x, no unlimited, BytePlus resource-pack alert is P1.
 - `docs/design/2026-07-03-harmony-04-costing-model.md`: final prices: image 1cr, Seedance 5s/720p 8cr, Seedance 10s/720p 14cr, reference video 16cr with 2-6s input and 5s output, Otto LLM 2.0x.
 - BytePlus Advanced Creation Rights guide: relevant for the future hidden KYC/high-volume asset-library path, not the public reference-video pricing path.
 - BytePlus private virtual portrait / real-human asset docs: treated as KYC advanced references only; no public-launch feature change was made from these docs.
@@ -27,6 +27,7 @@ Aligned executable pricing, quote, reserve, settlement, and recorded COGS with t
   - model: `seedance-2-fast` only
 - Otto proposal cards now quote the same reference-video price that `startGen` reserves and the worker settles.
 - Otto LLM default margin is now 2.0x.
+- Admin System Health now surfaces the BytePlus resource-pack guard from env-configured pack capacity/console-used amounts, falling back to frozen spend snapshots and warning when the alert is not configured.
 
 ## Verification
 

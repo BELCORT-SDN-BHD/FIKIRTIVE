@@ -267,6 +267,7 @@ const incidents: SystemIncident[] = [
   { id: "sys-2", service: "Reference jobs", state: "degraded", detail: "3 failures on image remix", count: 3, updatedAt: "9 min ago" },
   { id: "sys-3", service: "Render jobs", state: "healthy", detail: "1 rendering, no failed jobs", count: 1, updatedAt: "12 min ago" },
   { id: "sys-4", service: "BytePlus provider", state: "failed", detail: "1 transient poll timeout", count: 1, updatedAt: "17 min ago" },
+  { id: "sys-5", service: "BytePlus pack", state: "degraded", detail: "Configure pack capacity and console-used amount before launch", count: 0, updatedAt: "now" },
 ];
 
 const audits: AuditPreview[] = [

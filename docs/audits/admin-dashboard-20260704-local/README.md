@@ -32,6 +32,8 @@ Latest local target: `AUTH_ENABLED=false` dev preview at `/skin-preview/admin-v2
 | `11-admin-v2-mobile-money.png` | Mobile section selector on Money | Pass |
 | `12-admin-v2-mobile-search-fixed.png` | Search now filters local preview rows and shows empty states | Pass |
 | `13-admin-v2-filter-refresh-fixed.png` | Filter summary and refresh status controls | Pass |
+| `14-admin-v2-byteplus-pack-desktop.png` | System Health BytePlus resource-pack guard on desktop | Pass |
+| `15-admin-v2-byteplus-pack-mobile.png` | System Health BytePlus resource-pack guard at 390px mobile | Pass; no horizontal overflow |
 
 Interactive checks completed:
 
@@ -40,6 +42,7 @@ Interactive checks completed:
 - Otto enable/provider switches expose switch semantics and update state.
 - Search now narrows approvals, tenants, cases, audit, and system rows in the preview instead of only echoing the query.
 - Filter and refresh icon buttons now expose visible state: filter summary with current chips, and a timestamped mock-data refresh notice.
+- BytePlus pack guard row is visible in System Health on desktop and mobile preview; no console errors or horizontal overflow.
 
 Verification commands:
 
