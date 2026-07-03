@@ -304,6 +304,11 @@ const moneyFilterLabel: Record<string, string> = {
   blocked: "Blocked",
 };
 
+function matchesSearch(query: string, values: Array<string | number | null | undefined>) {
+  if (!query) return true;
+  return values.some((value) => String(value ?? "").toLowerCase().includes(query));
+}
+
 const permissionRows = [
   { section: "Money", viewer: "none", ops: "none", finance: "read / grant", moderator: "none", super: "approve" },
   { section: "Tenants", viewer: "none", ops: "read", finance: "wallet read", moderator: "none", super: "write / approve" },
@@ -369,15 +374,17 @@ function IconButton({
   label,
   children,
   onClick,
+  pressed,
 }: {
   label: string;
   children: React.ReactNode;
   onClick?: () => void;
+  pressed?: boolean;
 }) {
   return (
     <Tooltip>
       <TooltipTrigger asChild>
-        <Button type="button" variant="ghost" size="icon" className="size-9" aria-label={label} onClick={onClick}>
+        <Button type="button" variant="ghost" size="icon" className="size-9" aria-label={label} aria-pressed={pressed} onClick={onClick}>
           {children}
         </Button>
       </TooltipTrigger>
@@ -410,11 +417,13 @@ function MetricCard({ signal }: { signal: RiskSignal }) {
 function MoneyQueue({
   filter,
   setFilter,
+  rows = approvalQueue,
 }: {
   filter: string;
   setFilter: (next: string) => void;
+  rows?: ApprovalItem[];
 }) {
-  const visible = approvalQueue.filter((item) => filter === "all" || item.status === filter);
+  const visible = rows.filter((item) => filter === "all" || item.status === filter);
   return (
     <Panel
       title="Money risk queue"
@@ -442,6 +451,7 @@ function MoneyQueue({
         <TableHead>Age</TableHead>
       </div>
       <div className="mt-2 grid gap-2">
+        {visible.length === 0 ? <EmptyState label="No money risk rows match this view." /> : null}
         {visible.map((item) => (
           <div key={item.id} className="rounded-lg border border-border bg-background px-3 py-3 lg:grid lg:grid-cols-[1.1fr_0.8fr_0.8fr_0.9fr_88px] lg:items-center lg:gap-3">
             <div className="min-w-0">
@@ -465,12 +475,14 @@ function MoneyQueue({
 function TenantWatchlist({
   selectedTenantId,
   setSelectedTenantId,
+  rows = tenants,
 }: {
   selectedTenantId: string;
   setSelectedTenantId: (next: string) => void;
+  rows?: TenantHealthRow[];
 }) {
   return (
-    <Panel title="Tenant watchlist" kicker="Wallet + activity" action={<Badge variant="outline">{tenants.length} tenants</Badge>}>
+    <Panel title="Tenant watchlist" kicker="Wallet + activity" action={<Badge variant="outline">{rows.length} tenants</Badge>}>
       <div className="hidden lg:grid lg:grid-cols-[1.1fr_0.75fr_0.75fr_0.85fr_0.75fr] lg:gap-3">
         <TableHead>Tenant</TableHead>
         <TableHead>Balance</TableHead>
@@ -479,7 +491,8 @@ function TenantWatchlist({
         <TableHead>Last active</TableHead>
       </div>
       <div className="mt-2 grid gap-2">
-        {tenants.map((tenant) => (
+        {rows.length === 0 ? <EmptyState label="No tenants match this view." /> : null}
+        {rows.map((tenant) => (
           <button
             key={tenant.id}
             type="button"
@@ -511,10 +524,13 @@ function TenantWatchlist({
 function CasesPanel({
   onOpenCase,
   compact = false,
+  rows = cases,
 }: {
   onOpenCase: (caseRow: CaseRow) => void;
   compact?: boolean;
+  rows?: CaseRow[];
 }) {
+  const visible = compact ? rows.slice(0, 2) : rows;
   return (
     <Panel title="Cases" kicker="Metadata default" action={<Badge variant="info">sealed by default</Badge>}>
       <div className="hidden lg:grid lg:grid-cols-[0.8fr_1fr_0.75fr_0.75fr_1.2fr_64px] lg:gap-3">
@@ -526,7 +542,8 @@ function CasesPanel({
         <TableHead>Open</TableHead>
       </div>
       <div className="mt-2 grid gap-2">
-        {(compact ? cases.slice(0, 2) : cases).map((caseRow) => (
+        {visible.length === 0 ? <EmptyState label="No cases match this view." /> : null}
+        {visible.map((caseRow) => (
           <div key={caseRow.id} className="rounded-lg border border-border bg-background px-3 py-3 lg:grid lg:grid-cols-[0.8fr_1fr_0.75fr_0.75fr_1.2fr_64px] lg:items-center lg:gap-3">
             <div className="min-w-0">
               <p className="truncate text-sm font-semibold text-foreground">{caseRow.id}</p>
@@ -552,12 +569,13 @@ function CasesPanel({
   );
 }
 
-function SystemPanel({ compact = false }: { compact?: boolean }) {
-  const rows = compact ? incidents.slice(0, 3) : incidents;
+function SystemPanel({ compact = false, rows = incidents }: { compact?: boolean; rows?: SystemIncident[] }) {
+  const visible = compact ? rows.slice(0, 3) : rows;
   return (
     <Panel title="System health" kicker="Queues + providers" action={<Badge variant="warning">1 degraded</Badge>}>
       <div className="grid gap-2">
-        {rows.map((incident) => (
+        {visible.length === 0 ? <EmptyState label="No system rows match this view." /> : null}
+        {visible.map((incident) => (
           <div key={incident.id} className="flex items-start justify-between gap-3 rounded-lg border border-border bg-background px-3 py-3">
             <div className="min-w-0">
               <div className="flex items-center gap-2">
@@ -577,11 +595,12 @@ function SystemPanel({ compact = false }: { compact?: boolean }) {
   );
 }
 
-function AuditPanel() {
+function AuditPanel({ rows = audits }: { rows?: AuditPreview[] }) {
   return (
     <Panel title="Recent admin activity" kicker="ActionEvent" action={<Badge variant="outline">live audit shape</Badge>}>
       <div className="grid gap-2">
-        {audits.map((event) => (
+        {rows.length === 0 ? <EmptyState label="No audit rows match this view." /> : null}
+        {rows.map((event) => (
           <div key={event.id} className="flex items-start justify-between gap-3 rounded-lg border border-border bg-background px-3 py-3">
             <div className="min-w-0">
               <p className="truncate text-sm font-semibold text-foreground">{event.type}</p>
@@ -648,6 +667,14 @@ function TableHead({ children }: { children: React.ReactNode }) {
   return <div className="px-3 text-[11px] font-semibold uppercase tracking-[0.08em] text-muted-foreground">{children}</div>;
 }
 
+function EmptyState({ label }: { label: string }) {
+  return (
+    <div className="rounded-lg border border-dashed border-border bg-background px-3 py-6 text-center text-sm text-muted-foreground">
+      {label}
+    </div>
+  );
+}
+
 function MiniStat({ label, value }: { label: string; value: string }) {
   return (
     <div className="rounded-lg border border-border bg-background p-3">
@@ -682,16 +709,52 @@ export function AdminDashboardV2Prototype() {
   const [dateRange, setDateRange] = React.useState("24h");
   const [moneyFilter, setMoneyFilter] = React.useState("all");
   const [search, setSearch] = React.useState("");
+  const [showFilterSummary, setShowFilterSummary] = React.useState(false);
+  const [lastRefreshLabel, setLastRefreshLabel] = React.useState("");
   const [selectedTenantId, setSelectedTenantId] = React.useState(tenants[0].id);
   const [caseToOpen, setCaseToOpen] = React.useState<CaseRow | null>(null);
   const [caseReason, setCaseReason] = React.useState("");
   const [caseUnlocked, setCaseUnlocked] = React.useState(false);
   const [ottoEnabled, setOttoEnabled] = React.useState(true);
   const [providerEnabled, setProviderEnabled] = React.useState(true);
+  const query = search.trim().toLowerCase();
+  const visibleApprovalQueue = React.useMemo(
+    () =>
+      approvalQueue.filter((item) =>
+        matchesSearch(query, [item.tenant, item.owner, item.amount, item.limit, item.requestedBy, item.status, item.reason, item.age]),
+      ),
+    [query],
+  );
+  const visibleTenants = React.useMemo(
+    () =>
+      tenants.filter((tenant) =>
+        matchesSearch(query, [tenant.name, tenant.owner, tenant.balance, tenant.reserved, tenant.spend24h, tenant.status, tenant.lastActive]),
+      ),
+    [query],
+  );
+  const visibleCases = React.useMemo(
+    () =>
+      cases.filter((caseRow) =>
+        matchesSearch(query, [caseRow.id, caseRow.tenant, caseRow.owner, caseRow.source, caseRow.kind, caseRow.status, caseRow.severity, caseRow.metadata]),
+      ),
+    [query],
+  );
+  const visibleIncidents = React.useMemo(
+    () => incidents.filter((incident) => matchesSearch(query, [incident.service, incident.state, incident.detail, incident.count, incident.updatedAt])),
+    [query],
+  );
+  const visibleAudits = React.useMemo(
+    () => audits.filter((event) => matchesSearch(query, [event.type, event.actor, event.target, event.result, event.age])),
+    [query],
+  );
 
-  const selectedTenant = tenants.find((tenant) => tenant.id === selectedTenantId) ?? tenants[0];
+  const selectedTenant = visibleTenants.find((tenant) => tenant.id === selectedTenantId) ?? visibleTenants[0] ?? null;
   const active = sections.find((section) => section.id === activeSection) ?? sections[0];
   const ActiveIcon = active.icon;
+
+  function refreshMockData() {
+    setLastRefreshLabel(new Date().toLocaleTimeString([], { hour: "2-digit", minute: "2-digit", second: "2-digit" }));
+  }
 
   function openCase(caseRow: CaseRow) {
     setCaseToOpen(caseRow);
@@ -707,14 +770,14 @@ export function AdminDashboardV2Prototype() {
             {riskSignals.map((signal) => <MetricCard key={signal.id} signal={signal} />)}
           </div>
           <div className="grid gap-4 xl:grid-cols-[1.3fr_1fr]">
-            <MoneyQueue filter={moneyFilter} setFilter={setMoneyFilter} />
-            <TenantWatchlist selectedTenantId={selectedTenantId} setSelectedTenantId={setSelectedTenantId} />
+            <MoneyQueue filter={moneyFilter} setFilter={setMoneyFilter} rows={visibleApprovalQueue} />
+            <TenantWatchlist selectedTenantId={selectedTenantId} setSelectedTenantId={setSelectedTenantId} rows={visibleTenants} />
           </div>
           <div className="grid gap-4 xl:grid-cols-[1.2fr_0.8fr]">
-            <CasesPanel compact onOpenCase={openCase} />
-            <SystemPanel compact />
+            <CasesPanel compact rows={visibleCases} onOpenCase={openCase} />
+            <SystemPanel compact rows={visibleIncidents} />
           </div>
-          <AuditPanel />
+          <AuditPanel rows={visibleAudits} />
         </div>
       );
     }
@@ -722,7 +785,7 @@ export function AdminDashboardV2Prototype() {
       return (
         <PlaceholderSection section="money">
           <div className="grid gap-4 xl:grid-cols-[1.2fr_0.8fr]">
-            <MoneyQueue filter={moneyFilter} setFilter={setMoneyFilter} />
+            <MoneyQueue filter={moneyFilter} setFilter={setMoneyFilter} rows={visibleApprovalQueue} />
             <Panel title="Ledger categories" kicker="Credit taxonomy" action={<Badge variant="outline">{dateRange}</Badge>}>
               <div className="grid gap-3 sm:grid-cols-2">
                 {ledgerCategories.map((item) => (
@@ -749,8 +812,8 @@ export function AdminDashboardV2Prototype() {
       return (
         <PlaceholderSection section="tenants">
           <div className="grid gap-4 xl:grid-cols-[1.25fr_0.75fr]">
-            <TenantWatchlist selectedTenantId={selectedTenantId} setSelectedTenantId={setSelectedTenantId} />
-            <TenantDetail tenant={selectedTenant} />
+            <TenantWatchlist selectedTenantId={selectedTenantId} setSelectedTenantId={setSelectedTenantId} rows={visibleTenants} />
+            {selectedTenant ? <TenantDetail tenant={selectedTenant} /> : <EmptyState label="No tenant detail available for this search." />}
           </div>
         </PlaceholderSection>
       );
@@ -793,7 +856,7 @@ export function AdminDashboardV2Prototype() {
     if (activeSection === "cases") {
       return (
         <PlaceholderSection section="cases">
-          <CasesPanel onOpenCase={openCase} />
+          <CasesPanel rows={visibleCases} onOpenCase={openCase} />
         </PlaceholderSection>
       );
     }
@@ -822,13 +885,13 @@ export function AdminDashboardV2Prototype() {
     if (activeSection === "audit") {
       return (
         <PlaceholderSection section="audit">
-          <AuditPanel />
+          <AuditPanel rows={visibleAudits} />
         </PlaceholderSection>
       );
     }
     return (
       <PlaceholderSection section="system">
-        <SystemPanel />
+        <SystemPanel rows={visibleIncidents} />
       </PlaceholderSection>
     );
   }
@@ -932,10 +995,10 @@ export function AdminDashboardV2Prototype() {
                       <SelectItem value="30d">30d</SelectItem>
                     </SelectContent>
                   </Select>
-                  <IconButton label="Filter view">
+                  <IconButton label="Filter view" pressed={showFilterSummary} onClick={() => setShowFilterSummary((open) => !open)}>
                     <Filter className="size-4" />
                   </IconButton>
-                  <IconButton label="Refresh mock data">
+                  <IconButton label="Refresh mock data" onClick={refreshMockData}>
                     <RefreshCw className="size-4" />
                   </IconButton>
                 </div>
@@ -943,10 +1006,31 @@ export function AdminDashboardV2Prototype() {
             </header>
 
             <div className="w-full max-w-[1180px] overflow-x-hidden px-4 pb-7 md:px-7">
+              {showFilterSummary ? (
+                <div className="mb-4 grid gap-3 rounded-xl border border-border bg-card px-4 py-3 sm:grid-cols-[1fr_auto] sm:items-center">
+                  <div className="min-w-0">
+                    <p className="text-sm font-semibold text-foreground">View filters</p>
+                    <p className="mt-1 text-xs leading-5 text-muted-foreground">
+                      Search narrows approvals, tenants, cases, audit, and system rows in this preview.
+                    </p>
+                  </div>
+                  <div className="flex flex-wrap gap-2">
+                    <Badge variant="outline">{active.label}</Badge>
+                    <Badge variant="outline">{roleLabel[role]}</Badge>
+                    <Badge variant="outline">{dateRangeLabel[dateRange]}</Badge>
+                    <Badge variant="outline">{moneyFilterLabel[moneyFilter]}</Badge>
+                  </div>
+                </div>
+              ) : null}
               {search.trim() ? (
                 <div className="mb-4 flex items-center justify-between gap-3 rounded-xl border border-border bg-card px-4 py-3">
-                  <p className="min-w-0 truncate text-sm text-muted-foreground">Search staged locally: <span className="font-semibold text-foreground">{search}</span></p>
+                  <p className="min-w-0 truncate text-sm text-muted-foreground">Showing local matches for <span className="font-semibold text-foreground">{search}</span></p>
                   <Button variant="ghost" size="sm" onClick={() => setSearch("")}>Clear</Button>
+                </div>
+              ) : null}
+              {lastRefreshLabel ? (
+                <div className="mb-4 rounded-xl border border-border bg-card px-4 py-3 text-sm text-muted-foreground">
+                  Mock data refreshed at <span className="font-mono font-semibold text-foreground">{lastRefreshLabel}</span>
                 </div>
               ) : null}
               {renderSection()}
