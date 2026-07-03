@@ -1,5 +1,5 @@
 "use client";
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useLayoutEffect, useRef, useState } from "react";
 import { ReactFlow, Background, Controls, type Edge, type Node, type NodeChange, applyNodeChanges, type ReactFlowInstance } from "@xyflow/react";
 import "@xyflow/react/dist/style.css";
 import { ImageNode } from "./nodes/ImageNode";
@@ -85,9 +85,11 @@ export default function FlowCanvas({
   // Per-node data refs so stable onAnimate closures can read current generationId + position
   const nodeDataRef = useRef<Record<string, { generationId?: string; pos: { x: number; y: number } }>>({});
   const flowRef = useRef<ReactFlowInstance<CanvasFlowNode, Edge> | null>(null);
+  const canvasHostRef = useRef<HTMLDivElement | null>(null);
   const fittedScopeRef = useRef<string | null>(null);
   const fitTimerRef = useRef<number | null>(null);
   const [flowReady, setFlowReady] = useState(false);
+  const [canvasReady, setCanvasReady] = useState(false);
 
   // Keep a ref to animate() so per-node closures don't go stale
   const animateFnRef = useRef<ReturnType<typeof useCanvasGen>["animate"] | null>(null);
@@ -105,6 +107,19 @@ export default function FlowCanvas({
 
   useEffect(() => () => {
     if (fitTimerRef.current) window.clearTimeout(fitTimerRef.current);
+  }, []);
+
+  useLayoutEffect(() => {
+    const host = canvasHostRef.current;
+    if (!host) return;
+    const check = () => {
+      const rect = host.getBoundingClientRect();
+      setCanvasReady(rect.width > 0 && rect.height > 0);
+    };
+    check();
+    const ro = new ResizeObserver(check);
+    ro.observe(host);
+    return () => ro.disconnect();
   }, []);
 
   const getOnAnimate = useCallback((id: string): (() => void) => {
@@ -466,12 +481,14 @@ export default function FlowCanvas({
     status: pendingDeleteNode.data?.status as string | undefined,
     url: pendingDeleteNode.data?.url as string | undefined,
   });
+  const showGraph = canvasReady && (!directToolsLocked || nodes.length > 0 || dragOver);
   const imageCostLabel = costQuote ? creditsLabel(costQuote.imageCredits) : "Checking exact cost...";
   const videoCostLabel = costQuote ? creditsLabel(costQuote.videoCredits) : "Checking exact cost...";
   const directToolTitle = directToolsLocked ? directToolsLockedReason : undefined;
 
   return (
     <div
+      ref={canvasHostRef}
       style={{ flex: 1, width: "100%", height: "100%", minHeight: 0, position: "relative", overflow: "hidden" }}
       className={skin === "gb" ? (panMode ? "gb" : "gb cv-select-mode") : undefined}
       onDragOver={(e) => { if (Array.from(e.dataTransfer?.types ?? []).includes("Files")) { e.preventDefault(); e.dataTransfer.dropEffect = "copy"; setDragOver(true); } }}
@@ -488,22 +505,27 @@ export default function FlowCanvas({
           <span>Drop image to add it to the canvas</span>
         </div>
       )}
-      <ReactFlow
-        onInit={(instance) => { flowRef.current = instance; setFlowReady(true); }}
-        nodes={filterNodesByConvo(nodes, activeThreadId, filterToConvo)}
-        nodeTypes={nodeTypes}
-        onNodesChange={onNodesChange}
-        panOnDrag={panMode}
-        selectionOnDrag={!panMode}
-        deleteKeyCode={null}
-        proOptions={{ hideAttribution: true }}
-        minZoom={0.1}
-        fitView
-        fitViewOptions={{ padding: 0.22 }}
-      >
-        <Background />
-        <Controls />
-      </ReactFlow>
+      {showGraph && (
+        <div style={{ position: "absolute", inset: 0 }}>
+          <ReactFlow
+            style={{ width: "100%", height: "100%", minHeight: 0 }}
+            onInit={(instance) => { flowRef.current = instance; setFlowReady(true); }}
+            nodes={filterNodesByConvo(nodes, activeThreadId, filterToConvo)}
+            nodeTypes={nodeTypes}
+            onNodesChange={onNodesChange}
+            panOnDrag={panMode}
+            selectionOnDrag={!panMode}
+            deleteKeyCode={null}
+            proOptions={{ hideAttribution: true }}
+            minZoom={0.1}
+            fitView
+            fitViewOptions={{ padding: 0.22 }}
+          >
+            <Background />
+            <Controls />
+          </ReactFlow>
+        </div>
+      )}
       {detailFor && (
         <DetailPanel
           generationId={detailFor}

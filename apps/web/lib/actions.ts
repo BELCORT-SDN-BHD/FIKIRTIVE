@@ -113,7 +113,6 @@ export async function getOrCreateDefaultProject(): Promise<{ id: string } | { er
     data: { id: newId(), ownerId, name: "My Videos" },
   });
   await logAction(ownerId, "project.create", project.id, { name: project.name, via: "simple-mode" });
-  revalidatePath("/", "layout");
   return { id: project.id };
 }
 
