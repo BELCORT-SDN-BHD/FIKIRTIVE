@@ -205,8 +205,8 @@ export default function DetailPanel({
       },
     }))
     : null;
-  const imageCostLabel = imageCost == null ? "Checking exact cost..." : creditsLabel(imageCost);
-  const videoCostLabel = videoCost == null ? "Checking exact cost..." : creditsLabel(videoCost);
+  const imageCostLabel = imageCost == null ? "checking exact cost" : creditsLabel(imageCost);
+  const videoCostLabel = videoCost == null ? "checking exact cost" : creditsLabel(videoCost);
 
   const handleFavorite = useCallback(async () => {
     if (!gen) return;
@@ -360,21 +360,21 @@ export default function DetailPanel({
         return {
           title: "Regenerate this image?",
           description: `Creates one new image version from the same prompt. Cost: ${imageCostLabel}. No charge until you confirm.`,
-          confirmLabel: "Regenerate",
+          confirmLabel: imageCost == null ? "Checking cost..." : "Regenerate",
           disabled: imageCost == null || regenStatus === "running",
         };
       case "animate":
         return {
           title: "Animate this image?",
           description: `Creates one video from the selected image. Cost: ${videoCostLabel}. No charge until you confirm.`,
-          confirmLabel: "Animate",
+          confirmLabel: videoCost == null ? "Checking cost..." : "Animate",
           disabled: videoCost == null || animStatus === "running",
         };
       case "edit":
         return {
           title: "Generate this edit?",
           description: `Uses the current image as the source for your edit. Cost: ${imageCostLabel}. No charge until you confirm.`,
-          confirmLabel: "Generate edit",
+          confirmLabel: imageCost == null ? "Checking cost..." : "Generate edit",
           disabled: imageCost == null || editStatus === "running" || !editPrompt.trim(),
         };
       case "delete":
