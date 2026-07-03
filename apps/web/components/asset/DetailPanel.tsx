@@ -111,6 +111,9 @@ export default function DetailPanel({
   const [animStatus, setAnimStatus] = useState<"idle" | "running" | "done" | "failed" | "timeout">("idle");
   const [copied, setCopied] = useState(false);
   const [confirmAction, setConfirmAction] = useState<ConfirmAction>(null);
+  const regenBusyRef = useRef(false);
+  const animBusyRef = useRef(false);
+  const editBusyRef = useRef(false);
 
   const cancelledRef = useRef(false);
   // F18: the active models must be resolved SERVER-side (the OTTO_DEFAULT_VIDEO_MODEL env isn't
@@ -248,69 +251,79 @@ export default function DetailPanel({
   }, []);
 
   const handleRegen = useCallback(async () => {
-    if (!gen) return;
-    setRegenStatus("running");
-    const { image } = await ensureModels(); // F18: server-resolved model
-    const result = await startGen({
-      projectId,
-      prompt: gen.prompt,
-      count: 1,
-      kind: "image",
-      model: image,
-      idempotencyKey: `regen-${generationId}-${Date.now()}`,
-    });
-    if ("error" in result) {
-      setRegenStatus("failed");
-      return;
-    }
-    const status = await pollJob(result.id);
-    if (!cancelledRef.current) {
-      setRegenStatus(status);
-      // A timeout means the paid job is STILL RUNNING (the worker settles it late) — keep the
-      // "still processing" state so the control never reverts to an inviting "Regenerate" whose
-      // re-click mints a NEW idempotencyKey = a second charge. done/failed reset to idle (a real
-      // failure is refunded, so retrying it is safe).
-      if (status !== "timeout") {
-        setTimeout(() => { if (!cancelledRef.current) setRegenStatus("idle"); }, 3000);
+    if (!gen || regenBusyRef.current) return;
+    regenBusyRef.current = true;
+    try {
+      setRegenStatus("running");
+      const { image } = await ensureModels(); // F18: server-resolved model
+      const result = await startGen({
+        projectId,
+        prompt: gen.prompt,
+        count: 1,
+        kind: "image",
+        model: image,
+        idempotencyKey: `regen-${generationId}-${Date.now()}`,
+      });
+      if ("error" in result) {
+        setRegenStatus("failed");
+        return;
       }
+      const status = await pollJob(result.id);
+      if (!cancelledRef.current) {
+        setRegenStatus(status);
+        // A timeout means the paid job is STILL RUNNING (the worker settles it late) — keep the
+        // "still processing" state so the control never reverts to an inviting "Regenerate" whose
+        // re-click mints a NEW idempotencyKey = a second charge. done/failed reset to idle (a real
+        // failure is refunded, so retrying it is safe).
+        if (status !== "timeout") {
+          setTimeout(() => { if (!cancelledRef.current) setRegenStatus("idle"); }, 3000);
+        }
+      }
+      if (status === "done") await reloadFromJob(result.id);
+    } finally {
+      regenBusyRef.current = false;
     }
-    if (status === "done") await reloadFromJob(result.id);
   }, [gen, generationId, projectId, pollJob, reloadFromJob]);
 
   const handleAnimate = useCallback(async () => {
-    if (!gen) return;
-    setAnimStatus("running");
-    const vm = (await ensureModels()).video as GenVideoModel; // F18: server-resolved model
-    const vd = videoDefaults(vm);
-    // Use user's chosen aspect ratio if set; fall back to videoDefaults
-    const effectiveAspect = chosenAspect || vd.aspectRatio;
-    const result = await startGen({
-      projectId,
-      prompt: gen.prompt,
-      count: 1,
-      kind: "video",
-      model: vm,
-      sourceGenerationId: selectedGenId,
-      durationSeconds: vd.seconds,
-      resolution: vd.resolution,
-      audio: vd.audio,
-      ...(effectiveAspect ? { aspectRatio: effectiveAspect } : {}),
-      idempotencyKey: `anim-${selectedGenId}-${Date.now()}`,
-    });
-    if ("error" in result) {
-      if (!cancelledRef.current) setAnimStatus("failed");
-      return;
-    }
-    const status = await pollJob(result.id);
-    if (!cancelledRef.current) {
-      setAnimStatus(status);
-      // Timeout ⇒ the paid video job is still running (worker settles late ones) — stay in
-      // "still processing" so a re-click can't fire a second charge. See handleRegen.
-      if (status !== "timeout") {
-        setTimeout(() => { if (!cancelledRef.current) setAnimStatus("idle"); }, 3000);
+    if (!gen || animBusyRef.current) return;
+    animBusyRef.current = true;
+    try {
+      setAnimStatus("running");
+      const vm = (await ensureModels()).video as GenVideoModel; // F18: server-resolved model
+      const vd = videoDefaults(vm);
+      // Use user's chosen aspect ratio if set; fall back to videoDefaults
+      const effectiveAspect = chosenAspect || vd.aspectRatio;
+      const result = await startGen({
+        projectId,
+        prompt: gen.prompt,
+        count: 1,
+        kind: "video",
+        model: vm,
+        sourceGenerationId: selectedGenId,
+        durationSeconds: vd.seconds,
+        resolution: vd.resolution,
+        audio: vd.audio,
+        ...(effectiveAspect ? { aspectRatio: effectiveAspect } : {}),
+        idempotencyKey: `anim-${selectedGenId}-${Date.now()}`,
+      });
+      if ("error" in result) {
+        if (!cancelledRef.current) setAnimStatus("failed");
+        return;
       }
+      const status = await pollJob(result.id);
+      if (!cancelledRef.current) {
+        setAnimStatus(status);
+        // Timeout ⇒ the paid video job is still running (worker settles late ones) — stay in
+        // "still processing" so a re-click can't fire a second charge. See handleRegen.
+        if (status !== "timeout") {
+          setTimeout(() => { if (!cancelledRef.current) setAnimStatus("idle"); }, 3000);
+        }
+      }
+      if (status === "done") await reloadFromJob(result.id);
+    } finally {
+      animBusyRef.current = false;
     }
-    if (status === "done") await reloadFromJob(result.id);
   }, [gen, selectedGenId, projectId, pollJob, chosenAspect, reloadFromJob]);
 
   const handleCopyLink = useCallback(async () => {
@@ -385,36 +398,41 @@ export default function DetailPanel({
 
   // Edit @composer: submit an edit generation
   const handleEditSubmit = useCallback(async () => {
-    if (!gen || !editPrompt.trim() || editStatus === "running") return;
-    setEditStatus("running");
-    const { image } = await ensureModels(); // F18: server-resolved model
-    const result = await startGen({
-      projectId,
-      prompt: editPrompt.trim(),
-      entityIds: editIds,
-      count: 1,
-      kind: "image",
-      model: image,
-      // F09: condition the edit on the image the user is actually viewing (the selected
-      // variant), so a paid "edit this" result relates to the displayed image instead of
-      // being an unconditioned fresh generation. Owned id resolved server-side (D19).
-      sourceGenerationId: selectedGenId,
-      idempotencyKey: `edit-${selectedGenId}-${Date.now()}`,
-    });
-    if ("error" in result) {
-      if (!cancelledRef.current) setEditStatus("failed");
-      return;
-    }
-    const status = await pollJob(result.id);
-    if (!cancelledRef.current) {
-      setEditStatus(status);
-      // Timeout ⇒ the paid edit job is still running — stay in "still processing" so a re-click
-      // can't fire a second charge. See handleRegen.
-      if (status !== "timeout") {
-        setTimeout(() => { if (!cancelledRef.current) setEditStatus("idle"); }, 3000);
+    if (!gen || !editPrompt.trim() || editStatus === "running" || editBusyRef.current) return;
+    editBusyRef.current = true;
+    try {
+      setEditStatus("running");
+      const { image } = await ensureModels(); // F18: server-resolved model
+      const result = await startGen({
+        projectId,
+        prompt: editPrompt.trim(),
+        entityIds: editIds,
+        count: 1,
+        kind: "image",
+        model: image,
+        // F09: condition the edit on the image the user is actually viewing (the selected
+        // variant), so a paid "edit this" result relates to the displayed image instead of
+        // being an unconditioned fresh generation. Owned id resolved server-side (D19).
+        sourceGenerationId: selectedGenId,
+        idempotencyKey: `edit-${selectedGenId}-${Date.now()}`,
+      });
+      if ("error" in result) {
+        if (!cancelledRef.current) setEditStatus("failed");
+        return;
       }
+      const status = await pollJob(result.id);
+      if (!cancelledRef.current) {
+        setEditStatus(status);
+        // Timeout ⇒ the paid edit job is still running — stay in "still processing" so a re-click
+        // can't fire a second charge. See handleRegen.
+        if (status !== "timeout") {
+          setTimeout(() => { if (!cancelledRef.current) setEditStatus("idle"); }, 3000);
+        }
+      }
+      if (status === "done") await reloadFromJob(result.id);
+    } finally {
+      editBusyRef.current = false;
     }
-    if (status === "done") await reloadFromJob(result.id);
   }, [gen, editPrompt, editIds, editStatus, projectId, pollJob, reloadFromJob, selectedGenId]);
 
   const runConfirmedAction = useCallback(() => {
@@ -782,7 +800,7 @@ export default function DetailPanel({
         )}
       </div>
       <Dialog open={confirmAction !== null} onOpenChange={(open) => { if (!open) setConfirmAction(null); }}>
-        <DialogContent>
+        <DialogContent onPointerDown={(e) => e.stopPropagation()} onClick={(e) => e.stopPropagation()}>
           <DialogHeader>
             <DialogTitle>{confirmDetails?.title ?? ""}</DialogTitle>
             <DialogDescription>{confirmDetails?.description ?? ""}</DialogDescription>

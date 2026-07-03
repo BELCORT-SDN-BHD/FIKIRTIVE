@@ -36,12 +36,34 @@ export function ImageNode({ data, selected }: NodeProps) {
         onPointerDown={(e) => e.stopPropagation()}
       >
         {ready && d.onOpenDetail && (
-          <button type="button" className="al-btn al-btn-glass al-btn-sm" onClick={d.onOpenDetail}>Detail</button>
+          <button
+            type="button"
+            className="al-btn al-btn-glass al-btn-sm nodrag nopan"
+            onPointerDown={(e) => e.stopPropagation()}
+            onClick={(e) => { e.stopPropagation(); d.onOpenDetail?.(); }}
+          >
+            Detail
+          </button>
         )}
         {ready && d.onAnimate && (
-          <button type="button" className="al-btn al-btn-glass al-btn-sm" onClick={d.onAnimate} title="Make a video from this image">Make video</button>
+          <button
+            type="button"
+            className="al-btn al-btn-glass al-btn-sm nodrag nopan"
+            onPointerDown={(e) => e.stopPropagation()}
+            onClick={(e) => { e.stopPropagation(); d.onAnimate?.(); }}
+            title="Make a video from this image"
+          >
+            Make video
+          </button>
         )}
-        <button type="button" className="al-btn al-btn-glass al-btn-sm" onClick={d.onDelete}>✕</button>
+        <button
+          type="button"
+          className="al-btn al-btn-glass al-btn-sm nodrag nopan"
+          onPointerDown={(e) => e.stopPropagation()}
+          onClick={(e) => { e.stopPropagation(); d.onDelete?.(); }}
+        >
+          ✕
+        </button>
       </div>
       <Handle type="source" position={Position.Right} />
     </div>

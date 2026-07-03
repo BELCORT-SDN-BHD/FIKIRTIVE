@@ -55,7 +55,14 @@ export function VideoNode({ data, selected }: NodeProps) {
         style={{ position: "absolute", top: 6, right: 6 }}
         onPointerDown={(e) => e.stopPropagation()}
       >
-        <button type="button" className="al-btn al-btn-glass al-btn-sm" onClick={d.onDelete}>✕</button>
+        <button
+          type="button"
+          className="al-btn al-btn-glass al-btn-sm nodrag nopan"
+          onPointerDown={(e) => e.stopPropagation()}
+          onClick={(e) => { e.stopPropagation(); d.onDelete?.(); }}
+        >
+          ✕
+        </button>
       </div>
       <Handle type="target" position={Position.Left} />
     </div>
