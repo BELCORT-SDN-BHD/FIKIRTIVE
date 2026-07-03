@@ -37,9 +37,10 @@ export function VideoNode({ data, selected }: NodeProps) {
           />
           {!playing && (
             <button
-              className="cv-play nodrag"
+              className="cv-play nodrag nopan"
               type="button"
               aria-label="Play"
+              onPointerDown={(e) => e.stopPropagation()}
               onClick={() => { void videoRef.current?.play(); }}
             >
               <svg width="13" height="13" viewBox="0 0 24 24" fill="currentColor" aria-hidden><path d="M8 5v14l11-7z" /></svg>
@@ -49,8 +50,12 @@ export function VideoNode({ data, selected }: NodeProps) {
       ) : (
         <video src={d.url} controls style={{ width: "100%", height: "100%", objectFit: "cover" }} />
       )}
-      <div className="nodrag cv-node-actions" style={{ position: "absolute", top: 6, right: 6 }}>
-        <button className="al-btn al-btn-glass al-btn-sm" onClick={d.onDelete}>✕</button>
+      <div
+        className="nodrag nopan cv-node-actions"
+        style={{ position: "absolute", top: 6, right: 6 }}
+        onPointerDown={(e) => e.stopPropagation()}
+      >
+        <button type="button" className="al-btn al-btn-glass al-btn-sm" onClick={d.onDelete}>✕</button>
       </div>
       <Handle type="target" position={Position.Left} />
     </div>

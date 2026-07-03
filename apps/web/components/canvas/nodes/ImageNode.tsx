@@ -30,14 +30,18 @@ export function ImageNode({ data, selected }: NodeProps) {
       ) : (
         <img src={d.url} alt={d.prompt ?? ""} style={{ width: "100%", height: "100%", objectFit: "cover" }} />
       )}
-      <div className="nodrag cv-node-actions" style={{ position: "absolute", top: 6, right: 6, display: "flex", gap: 6 }}>
+      <div
+        className="nodrag nopan cv-node-actions"
+        style={{ position: "absolute", top: 6, right: 6, display: "flex", gap: 6 }}
+        onPointerDown={(e) => e.stopPropagation()}
+      >
         {ready && d.onOpenDetail && (
-          <button className="al-btn al-btn-glass al-btn-sm" onClick={d.onOpenDetail}>Detail</button>
+          <button type="button" className="al-btn al-btn-glass al-btn-sm" onClick={d.onOpenDetail}>Detail</button>
         )}
         {ready && d.onAnimate && (
-          <button className="al-btn al-btn-glass al-btn-sm" onClick={d.onAnimate} title="Make a video from this image">Make video</button>
+          <button type="button" className="al-btn al-btn-glass al-btn-sm" onClick={d.onAnimate} title="Make a video from this image">Make video</button>
         )}
-        <button className="al-btn al-btn-glass al-btn-sm" onClick={d.onDelete}>✕</button>
+        <button type="button" className="al-btn al-btn-glass al-btn-sm" onClick={d.onDelete}>✕</button>
       </div>
       <Handle type="source" position={Position.Right} />
     </div>

@@ -97,6 +97,10 @@ export default function FlowCanvas({
       // a confirm; the actual spend happens in runAnimate() after the owner says OK.
       onAnimateByNode.current[id] = () => {
         if (directToolsLockedRef.current) return;
+        if (!nodeDataRef.current[id]?.generationId) {
+          toast.error("This image is not ready for video yet.");
+          return;
+        }
         setCostQuote(null);
         setPendingAnimateId(id);
       };
@@ -116,7 +120,14 @@ export default function FlowCanvas({
   const runAnimate = useCallback((id: string, motionPrompt: string) => {
     if (directToolsLockedRef.current) return;
     const entry = nodeDataRef.current[id];
-    if (!entry?.generationId || !animateFnRef.current || videoBusyRef.current) return;
+    if (videoBusyRef.current) {
+      toast.message("Video is already starting.");
+      return;
+    }
+    if (!entry?.generationId || !animateFnRef.current) {
+      toast.error("This image is not ready for video yet.");
+      return;
+    }
     videoBusyRef.current = true;
     const { x, y } = entry.pos;
     // genRequest requires a non-empty prompt (.trim().min(1)); the dialog guarantees a

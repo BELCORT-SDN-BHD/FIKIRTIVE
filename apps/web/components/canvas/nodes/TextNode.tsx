@@ -13,18 +13,26 @@ export function TextNode({ data, selected }: NodeProps) {
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" aria-hidden><path d="M4 7V5h16v2" /><path d="M9 19h6" /><path d="M12 5v14" /></svg>
         Text
       </span>
-    {/* Card body is draggable; only the textarea + delete button opt out of drag
-        (nodrag) so typing/selecting text and clicking ✕ don't move the node. */}
+    {/* Card body is draggable; only the textarea + delete button opt out of drag/pan. */}
     <div className="al-panel" style={{ width: "100%", height: "100%", padding: "11px 12px", borderRadius: 14 }}>
       <textarea
-        className="nodrag"
+        className="nodrag nopan"
+        onPointerDown={(e) => e.stopPropagation()}
         value={val}
         onChange={(e) => setVal(e.target.value)}
         onBlur={() => d.onChange?.(val)}
         placeholder="Type here…"
         style={{ width: "100%", height: "100%", border: "none", background: "transparent", resize: "none", outline: "none", fontSize: 13, fontWeight: 500, lineHeight: 1.45 }}
       />
-      <button className="al-btn al-btn-glass al-btn-sm nodrag cv-node-actions" style={{ position: "absolute", top: 6, right: 6 }} onClick={d.onDelete}>✕</button>
+      <button
+        type="button"
+        className="al-btn al-btn-glass al-btn-sm nodrag nopan cv-node-actions"
+        style={{ position: "absolute", top: 6, right: 6 }}
+        onPointerDown={(e) => e.stopPropagation()}
+        onClick={d.onDelete}
+      >
+        ✕
+      </button>
     </div>
     </>
   );
