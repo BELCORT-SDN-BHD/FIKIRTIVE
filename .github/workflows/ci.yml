@@ -2,9 +2,9 @@
 # Railway and auto-migrates prod, with no human gate in between, so a bad merge ships instantly.
 # This runs on every PR and on push to main.
 #
-# NOTE (founder): after this workflow goes green on its first PR, enable branch protection on
-# `main` requiring the `check` job — that is a repo-admin action in GitHub Settings and is NOT
-# done here on purpose. Until then this reports status but does not block a merge.
+# NOTE: real branch protection is unavailable (private repo, free plan — founder chose not to
+# upgrade). The enforcement is the merge discipline in .claude/CLAUDE.md: PRs only, ALL checks
+# green before merge. This workflow reports status; agents are bound by the discipline.
 name: CI
 
 on:
@@ -42,6 +42,8 @@ jobs:
       - run: bash scripts/check-skill-imports.sh
       # Tenancy tripwire (informational baseline today; never fails the build yet).
       - run: bash scripts/check-no-raw-prisma.sh
+      # Skill catalog must match the registry (Seam 1 step 5) — a stale CATALOG.md fails here.
+      - run: pnpm --filter @fikirtive/otto run catalog:check
 
   # `next build` for apps/web — the exact command Railway's Dockerfile runs on deploy.
   # Typecheck can't catch client→server-bundle leaks (a "use client" file value-importing
