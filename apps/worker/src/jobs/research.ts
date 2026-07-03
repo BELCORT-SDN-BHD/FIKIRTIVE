@@ -35,11 +35,11 @@ import {
 } from "@fikirtive/otto";
 import {
   newId,
-  fetchAndExtract,
   tavilySearch,
   braveSearch,
   searchWithFallback,
 } from "@fikirtive/core";
+import { fetchAndExtract } from "@fikirtive/core/server";
 
 /** Chars per page when slicing a page's clean text (mirrors web-page-cache PAGE_CHARS). */
 const PAGE_CHARS = 4000;
