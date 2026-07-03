@@ -511,7 +511,7 @@ export default function FlowCanvas({
                   onSubmit={() => { if (prompt.trim()) { setCostQuote(null); setConfirmGen(true); } }}
                 />
               </div>
-              <button className="al-btn al-btn-primary al-btn-sm" type="submit" disabled={submitting}>Generate</button>
+              <button className="al-btn al-btn-primary al-btn-sm" type="submit" disabled={submitting || !prompt.trim()}>Generate</button>
             </form>
           )}
           {/* Slim bottom toolbar — matches the approved canvas-home mockup. */}
@@ -579,7 +579,7 @@ export default function FlowCanvas({
               onSubmit={handleGenerate}
             />
           </div>
-          <button className="al-btn al-btn-primary al-btn-sm" type="submit" disabled={submitting}>Generate</button>
+          <button className="al-btn al-btn-primary al-btn-sm" type="submit" disabled={submitting || !prompt.trim()}>Generate</button>
           {activeThreadId && (
             <button
               type="button"
