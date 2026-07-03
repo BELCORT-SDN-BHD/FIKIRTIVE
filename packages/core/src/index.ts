@@ -105,3 +105,5 @@ export { tavilySearch, braveSearch, searchWithFallback } from "./websearch.js";
 export type { WebSearchResult, WebSearchFn } from "./websearch.js";
 export { assertPublicHttpUrl, assertPublicHttpUrlResolved } from "./url-safety.js";
 export { fetchAndExtract, MAX_BODY } from "./fetch-extract.js";
+export { extractProductDraft } from "./product-extract.js";
+export type { ProductDraft } from "./product-extract.js";
