@@ -15,11 +15,13 @@ import type { OttoViewKey } from "./OttoApp";
 import type { StuffItem } from "@/lib/stuff-items";
 import {
   listScheduledPosts,
+  listOwnerTargets,
   createScheduledPost,
   updateScheduledPost,
   approveScheduledPost,
   cancelScheduledPost,
   type ScheduledPostRow,
+  type OwnerTarget,
 } from "@/lib/schedule-actions";
 import { getMetaConnection } from "@/lib/meta-actions";
 import { getOwnerSettings, setOwnerSetting } from "@/lib/owner-settings-actions";
@@ -150,6 +152,11 @@ export function OttoSchedule({
   const [posts, setPosts] = useState<ScheduledPostRow[]>([]);
   const [loading, setLoading] = useState(true);
   const [conn, setConn] = useState<ConnState>({ phase: "loading" });
+  // Owner's connectable publish targets (page/account per channel). Drives both the
+  // header chips (only channels with a real target are shown postable) and the composer's
+  // required account picker. [] = nothing publishable → composer disables approve.
+  const [targets, setTargets] = useState<OwnerTarget[]>([]);
+  const [targetsLoaded, setTargetsLoaded] = useState(false);
   const [autoPublish, setAutoPublish] = useState(false);
   const [defaultTz, setDefaultTz] = useState<string>("Asia/Kuala_Lumpur");
   const [savingAuto, setSavingAuto] = useState(false);
@@ -186,6 +193,13 @@ export function OttoSchedule({
       if (res.needsReconnect) return setConn({ phase: "reconnect" });
       setConn({ phase: "connected", targets: [] });
     });
+    // Publishable targets (owner's own pages, per channel). Empty until a page-scoped
+    // connection exists — an ads-only Meta connection returns none, so no channel shows
+    // as postable and the composer keeps approve disabled.
+    void listOwnerTargets().then((t) => {
+      setTargets(t);
+      setTargetsLoaded(true);
+    });
     void getOwnerSettings().then((s) => {
       if (!("error" in s)) {
         setAutoPublish(s.autoPublish);
@@ -202,13 +216,19 @@ export function OttoSchedule({
     if ("error" in res) setAutoPublish(!next); // roll back
   }
 
-  const connectedChannels = useMemo(() => {
-    if (conn.phase !== "connected") return [];
-    // IG + FB both hang off the same Meta connection in this slice.
-    return CHANNEL_META;
-  }, [conn.phase]);
+  // Postable channels = those with at least one real publishable target from
+  // listOwnerTargets. This is stricter than "a Meta connection exists": an ads-only
+  // connection (no page scope) yields no targets, so no channel shows as postable.
+  const postableChannelIds = useMemo(
+    () => new Set(targets.map((t) => t.channel)),
+    [targets],
+  );
+  const connectedChannels = useMemo(
+    () => CHANNEL_META.filter((c) => postableChannelIds.has(c.id)),
+    [postableChannelIds],
+  );
 
-  const isConnected = conn.phase === "connected";
+  const isConnected = connectedChannels.length > 0;
 
   function openNew() {
     setComposer({
@@ -248,7 +268,7 @@ export function OttoSchedule({
         <div className="flex items-center gap-3 flex-wrap mb-3">
           <h1 className="text-[1.5rem] font-bold tracking-[-0.02em]">Schedule</h1>
           <div className="flex items-center gap-1.5">
-            {isConnected && connectedChannels.length > 0 ? (
+            {isConnected ? (
               connectedChannels.map((c) => (
                 <span
                   key={c.id}
@@ -258,7 +278,7 @@ export function OttoSchedule({
                   {c.label}
                 </span>
               ))
-            ) : conn.phase !== "loading" ? (
+            ) : conn.phase !== "loading" && targetsLoaded ? (
               <button
                 type="button"
                 onClick={() => onNavigate("connections")}
@@ -331,8 +351,13 @@ export function OttoSchedule({
         <Composer
           seed={composer}
           channels={connectedChannels.length ? connectedChannels.map((c) => c.id) : ["instagram", "facebook"]}
+          targets={targets}
           mediaChoices={mediaChoices}
           onClose={() => setComposer(null)}
+          onConnect={() => {
+            setComposer(null);
+            onNavigate("connections");
+          }}
           onSaved={async () => {
             setComposer(null);
             await reload();
@@ -950,14 +975,18 @@ function localToUtcIso(dateKey: string, time: string, tz: string): string | null
 function Composer({
   seed,
   channels,
+  targets,
   mediaChoices,
   onClose,
+  onConnect,
   onSaved,
 }: {
   seed: ComposerSeed;
   channels: ChannelId[];
+  targets: OwnerTarget[];
   mediaChoices: StuffItem[];
   onClose: () => void;
+  onConnect: () => void;
   onSaved: () => Promise<void>;
 }) {
   const [channel, setChannel] = useState<ChannelId>(seed.channel);
@@ -967,6 +996,7 @@ function Composer({
   const [time, setTime] = useState(seed.time);
   const [tz, setTz] = useState(seed.tz);
   const [firstComment, setFirstComment] = useState(seed.firstComment);
+  const [metaTargetId, setMetaTargetId] = useState<string | null>(seed.metaTargetId);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
@@ -974,6 +1004,23 @@ function Composer({
   const maxMedia = cap?.maxMediaCount ?? 10;
   const supportsFirstComment = cap?.supportsFirstComment ?? false;
   const editable = seed.mode === "create" || seed.status === "DRAFT";
+
+  // Account/page picker options for the SELECTED channel. A picked target must belong to
+  // the channel being posted to (mirrors the server's owner-scoped approve check).
+  const channelTargets = useMemo(() => targets.filter((t) => t.channel === channel), [targets, channel]);
+  const noTargets = channelTargets.length === 0;
+
+  // Switching channel drops a target that no longer belongs, so we never submit a mismatched
+  // id (done in the handler, not an effect — derived-on-event, not synchronized-via-effect).
+  function changeChannel(next: ChannelId) {
+    setChannel(next);
+    if (metaTargetId && !targets.some((t) => t.channel === next && t.id === metaTargetId)) {
+      setMetaTargetId(null);
+    }
+  }
+  // Approve = DRAFT→SCHEDULED, which the server rejects without a resolved owner-owned target.
+  // Gate it in the UI too: no target picked (or none connectable) → approve disabled.
+  const canApprove = editable && !!metaTargetId;
 
   function toggleMedia(genId: string) {
     setMedia((cur) => {
@@ -999,7 +1046,7 @@ function Composer({
           scheduledTz: tz,
           media,
           firstComment: supportsFirstComment && firstComment.trim() ? firstComment : undefined,
-          metaTargetId: seed.metaTargetId ?? undefined,
+          metaTargetId: metaTargetId ?? undefined,
         });
         if ("error" in res) { setError(res.error); return; }
         id = res.id;
@@ -1009,6 +1056,7 @@ function Composer({
           scheduledAt: iso,
           scheduledTz: tz,
           firstComment: supportsFirstComment && firstComment.trim() ? firstComment : null,
+          metaTargetId,
         });
         if ("error" in res) { setError(res.error); return; }
       }
@@ -1055,7 +1103,7 @@ function Composer({
                   key={c}
                   type="button"
                   disabled={!editable}
-                  onClick={() => setChannel(c)}
+                  onClick={() => changeChannel(c)}
                   className={`inline-flex items-center gap-1.5 h-9 rounded-[10px] border px-3 text-[13px] font-semibold ${
                     channel === c ? "border-foreground bg-secondary text-foreground" : "border-border bg-card text-muted-foreground"
                   } disabled:opacity-50`}
@@ -1069,6 +1117,31 @@ function Composer({
                 {channel === "instagram" ? "Feed image or carousel · up to 10 media" : "Single feed image"}
                 {cap.rateLimitPer24h ? ` · ${cap.rateLimitPer24h}/day limit` : ""}
               </div>
+            )}
+          </Field>
+
+          {/* Account / page — required to approve (sets metaTargetId). Options are the owner's
+              own publishable targets for this channel; empty = nothing to post to yet. */}
+          <Field label="Account">
+            {noTargets ? (
+              <div className="flex items-center gap-2 rounded-[10px] border border-dashed border-border p-3 text-[12px] text-muted-foreground">
+                <span className="flex-1">Connect an account first — you can save a draft now, but approving needs a page to post to.</span>
+                <Button variant="secondary" size="sm" type="button" onClick={onConnect}>
+                  <Plus size={14} /> Connect
+                </Button>
+              </div>
+            ) : (
+              <select
+                value={metaTargetId ?? ""}
+                disabled={!editable}
+                onChange={(e) => setMetaTargetId(e.target.value || null)}
+                className="w-full h-9 rounded-[10px] border border-border bg-card px-2.5 text-[13px] font-semibold disabled:opacity-60"
+              >
+                <option value="">Choose an account…</option>
+                {channelTargets.map((t) => (
+                  <option key={t.id} value={t.id}>{t.name}</option>
+                ))}
+              </select>
             )}
           </Field>
 
@@ -1154,12 +1227,6 @@ function Composer({
               </select>
             </Field>
           </div>
-
-          {seed.metaTargetId == null && (
-            <div className="text-[11.5px] text-muted-foreground">
-              You&rsquo;ll pick which account to post to when approving — connect a channel first if you haven&rsquo;t.
-            </div>
-          )}
         </div>
 
         {error && <div role="alert" className="text-[12.5px] text-[var(--error-soft-foreground)]">{error}</div>}
@@ -1173,7 +1240,13 @@ function Composer({
           <Button variant="secondary" size="sm" disabled={busy || !editable} onClick={() => persist(false)}>
             {busy ? "Saving…" : "Save draft"}
           </Button>
-          <Button variant="default" size="sm" disabled={busy || !editable} onClick={() => persist(true)}>
+          <Button
+            variant="default"
+            size="sm"
+            disabled={busy || !canApprove}
+            title={editable && !metaTargetId ? "Pick an account to approve" : undefined}
+            onClick={() => persist(true)}
+          >
             {busy ? "Saving…" : "Approve & schedule"}
           </Button>
         </DialogFooter>
