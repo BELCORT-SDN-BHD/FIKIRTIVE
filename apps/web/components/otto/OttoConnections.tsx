@@ -191,9 +191,14 @@ export default function OttoConnections() {
                   {saveError && <p className="text-[var(--error-soft-foreground)] text-[0.75rem]" style={{ margin: 0 }}>{saveError}</p>}
                 </div>
               ) : (
-                <p className="text-muted-foreground text-[0.8125rem]" style={{ marginTop: "0.75rem" }}>
-                  Reconnect to let Otto manage your ads.
-                </p>
+                <div style={{ marginTop: "0.75rem", display: "flex", flexDirection: "column", alignItems: "flex-start", gap: "0.5rem" }}>
+                  <p className="text-muted-foreground text-[0.8125rem]" style={{ margin: 0 }}>
+                    Reconnect to let Otto manage your ads.
+                  </p>
+                  <Button asChild size="sm" variant="brand">
+                    <a href="/api/meta/authorize" style={{ textDecoration: "none" }}>Reconnect Meta</a>
+                  </Button>
+                </div>
               )}
 
               <Button
