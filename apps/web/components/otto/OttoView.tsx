@@ -129,7 +129,18 @@ export function OttoView({
   if (view === "stuff") {
     return (
       <div style={{ flex: 1, display: "flex", flexDirection: "column", overflow: "hidden" }}>
-        <OttoStuff entities={entities} ads={ads} adJobs={adJobs} records={records} history={history} />
+        <OttoStuff
+          entities={entities}
+          ads={ads}
+          adJobs={adJobs}
+          records={records}
+          history={history}
+          onOpenThread={(threadId) => {
+            onActiveThreadChange(threadId);
+            onViewChange("otto");
+          }}
+          onRetryWithOtto={onUseInOtto}
+        />
       </div>
     );
   }
@@ -293,7 +304,16 @@ export function OttoView({
             <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" aria-hidden><path d="m15 18-6-6 6-6" /></svg>
           </button>
         )}
-        <FlowCanvas projectId={projectId} entities={entities} activeThreadId={activeThreadId} activity={activity} skin={skin} />
+        <FlowCanvas
+          projectId={projectId}
+          entities={entities}
+          activeThreadId={activeThreadId}
+          activity={activity}
+          skin={skin}
+          onBalanceRefresh={onBalanceRefresh}
+          directToolsLocked={showFrontDoor}
+          directToolsLockedReason="Start with Otto to unlock canvas tools."
+        />
       </div>
     </div>
   );

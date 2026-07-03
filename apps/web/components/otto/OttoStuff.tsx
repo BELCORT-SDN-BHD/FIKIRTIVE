@@ -1,6 +1,6 @@
 "use client";
 import React, { useMemo, useState } from "react";
-import { Plus, Film, ImageIcon } from "lucide-react";
+import { ExternalLink, Plus, Film, ImageIcon, RotateCcw, X } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import type { EntityDTO } from "@/lib/types";
 import type { AdJobItem, HistoryThumb } from "@/lib/data";
@@ -27,9 +27,21 @@ export interface OttoStuffProps {
   adJobs: AdJobItem[];
   records: BrandRecordRow[];
   history: HistoryThumb[];
+  onOpenThread?: (threadId: string) => void;
+  onRetryWithOtto?: (prompt: string) => void;
 }
 
-function AdJobCard({ job }: { job: AdJobItem }) {
+function AdJobCard({
+  job,
+  onOpenThread,
+  onRetryWithOtto,
+  onHide,
+}: {
+  job: AdJobItem;
+  onOpenThread?: (threadId: string) => void;
+  onRetryWithOtto?: (prompt: string) => void;
+  onHide?: (jobId: string) => void;
+}) {
   const isProcessing = job.status === "processing";
   const pillClass = isProcessing
     ? "bg-warning-soft text-warning-soft-foreground"
@@ -53,11 +65,36 @@ function AdJobCard({ job }: { job: AdJobItem }) {
         </div>
       )}
       <div className="text-[0.75rem] text-muted-foreground/70">{when}</div>
+      {job.error && !isProcessing && (
+        <div className="overflow-hidden text-[0.75rem] text-muted-foreground [-webkit-box-orient:vertical] [-webkit-line-clamp:2] [display:-webkit-box]">
+          {job.error}
+        </div>
+      )}
+      <div className="flex flex-wrap gap-1.5 pt-1">
+        {job.threadId && (
+          <Button type="button" size="sm" variant="secondary" className="h-7 px-2 text-[0.75rem]" onClick={() => onOpenThread?.(job.threadId)}>
+            <ExternalLink size={13} />
+            Open
+          </Button>
+        )}
+        {!isProcessing && job.prompt && (
+          <Button type="button" size="sm" variant="secondary" className="h-7 px-2 text-[0.75rem]" onClick={() => onRetryWithOtto?.(`Try again with this failed generation: ${job.prompt}`)}>
+            <RotateCcw size={13} />
+            Retry
+          </Button>
+        )}
+        {!isProcessing && (
+          <Button type="button" size="sm" variant="ghost" className="h-7 px-2 text-[0.75rem]" onClick={() => onHide?.(job.id)}>
+            <X size={13} />
+            Hide
+          </Button>
+        )}
+      </div>
     </div>
   );
 }
 
-export function OttoStuff({ entities, ads, adJobs, records, history }: OttoStuffProps) {
+export function OttoStuff({ entities, ads, adJobs, records, history, onOpenThread, onRetryWithOtto }: OttoStuffProps) {
   const router = useRouter();
   const [entityList, setEntityList] = useState<EntityDTO[]>(entities);
   const [prevEntities, setPrevEntities] = useState(entities);
@@ -69,6 +106,7 @@ export function OttoStuff({ entities, ads, adJobs, records, history }: OttoStuff
   const [addOpen, setAddOpen] = useState(false);
   const [chooseProductFor, setChooseProductFor] = useState<string | null>(null);
   const [deleteError, setDeleteError] = useState<string | null>(null);
+  const [hiddenFailedJobs, setHiddenFailedJobs] = useState<Set<string>>(new Set());
 
   const items = useMemo(
     () => buildStuffItems({ entities: entityList, history, ads, records }),
@@ -100,6 +138,9 @@ export function OttoStuff({ entities, ads, adJobs, records, history }: OttoStuff
 
   // Active product records to choose from when linking an image as a product image.
   const activeProducts = records.filter((r) => r.kind === "product" && r.status === "active");
+  const visibleAdJobs = adJobs.filter((j) => !hiddenFailedJobs.has(j.id));
+  const processingJobs = visibleAdJobs.filter((j) => j.status === "processing");
+  const failedJobs = visibleAdJobs.filter((j) => j.status === "failed");
 
   async function linkProductImage(rec: BrandRecordRow, assetId: string) {
     const data = { ...(rec.data as Record<string, unknown>), imageAssetId: assetId };
@@ -138,11 +179,10 @@ export function OttoStuff({ entities, ads, adJobs, records, history }: OttoStuff
           </div>
         )}
 
-        {/* In-flight / failed ad jobs stay above the library, unchanged. */}
-        {adJobs.length > 0 && (
+        {processingJobs.length > 0 && (
           <div className="mb-5 grid grid-cols-[repeat(auto-fill,minmax(200px,1fr))] gap-4">
-            {adJobs.map((job) => (
-              <AdJobCard key={job.id} job={job} />
+            {processingJobs.map((job) => (
+              <AdJobCard key={job.id} job={job} onOpenThread={onOpenThread} />
             ))}
           </div>
         )}
@@ -154,6 +194,28 @@ export function OttoStuff({ entities, ads, adJobs, records, history }: OttoStuff
           onDelete={handleDelete}
           onSetProductImage={(assetId) => setChooseProductFor(assetId)}
         />
+
+        {failedJobs.length > 0 && (
+          <div className="mt-6 rounded-[14px] border border-border bg-card p-4">
+            <div className="mb-3">
+              <h2 className="m-0 text-[1rem] font-semibold text-foreground">Needs attention</h2>
+              <p className="m-0 mt-1 text-[0.8125rem] text-muted-foreground">
+                Failed generations stay here so the library remains focused on reusable assets.
+              </p>
+            </div>
+            <div className="grid grid-cols-[repeat(auto-fill,minmax(200px,1fr))] gap-4">
+              {failedJobs.map((job) => (
+                <AdJobCard
+                  key={job.id}
+                  job={job}
+                  onOpenThread={onOpenThread}
+                  onRetryWithOtto={onRetryWithOtto}
+                  onHide={(id) => setHiddenFailedJobs((cur) => new Set(cur).add(id))}
+                />
+              ))}
+            </div>
+          </div>
+        )}
       </div>
 
       <AddAssetDialog

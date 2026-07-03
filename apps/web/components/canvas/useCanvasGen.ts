@@ -2,13 +2,14 @@
 import { useCallback, useRef } from "react";
 import { startGen, getGenJob, getActiveGenModels } from "../../lib/gen-actions";
 import { createCanvasNode } from "../../lib/canvas-actions";
+import { CANVAS_IMAGE_VARIANT_COUNT, canvasGenCostQuote } from "@/lib/canvas-gen-costs";
 
 type Pos = { x: number; y: number; w: number; h: number };
 type OnNode = (node: { id: string; type: "image" | "video"; pos: Pos; status: string; url?: string; prompt: string; sourceNodeId?: string }) => void;
 
 /** Phase 2: how many image variants a single canvas generation produces. Must be
  *  ≤ MAX_GEN_COUNT (4) — the gate rejects more, and the charge scales by count. */
-const IMAGE_VARIANT_COUNT = 4;
+const IMAGE_VARIANT_COUNT = CANVAS_IMAGE_VARIANT_COUNT;
 
 /** createCanvasNode with a small retry. By the time we place a paid GenJob's card,
  *  startGen has already reserved/queued it — so a transient node-create failure must
@@ -80,6 +81,7 @@ export function useCanvasGen(
   onResolve: (nodeId: string, url: string | null, status: string, generationId?: string) => void,
   activeThreadId?: string | null,
   onError?: (msg: string) => void,
+  onBalanceRefresh?: () => void | Promise<void>,
 ) {
   const cancelledRef = useRef(false);
   // F18: resolve the active models SERVER-side (the client can't — the env isn't bundled, so
@@ -90,6 +92,7 @@ export function useCanvasGen(
     if (!modelsRef.current) modelsRef.current = await getActiveGenModels();
     return modelsRef.current;
   };
+  const quoteCosts = useCallback(async () => canvasGenCostQuote(await ensureModels()), []);
   // A paid-gen kickoff that fails before any card is placed (out of credits, model disabled,
   // guardian block, or a node-create that never recovered) must tell the user — otherwise they
   // see nothing, assume the app broke, and re-click, minting a fresh idempotencyKey → a real
@@ -106,10 +109,12 @@ export function useCanvasGen(
     const req = { projectId, prompt, count: IMAGE_VARIANT_COUNT, kind: "image" as const, model: image, entityIds, ...(vsel && { variantSel: vsel }), idempotencyKey: `img-${Date.now()}` };
     const started = await startGen(req);
     if ("error" in started) { fail(started.error); return; }
+    void onBalanceRefresh?.();
     const created = await createNodeWithRetry({ projectId, type: "image", ...pos, prompt, genJobId: started.id, status: "pending", ...(activeThreadId ? { threadId: activeThreadId } : {}) });
     if ("error" in created) { fail("Your image is generating — the card didn't appear, but you can find it in your library."); return; }
     onNode({ id: created.id, type: "image", pos, status: "pending", prompt });
     poll(started.id, async (urls, status, generationIds) => {
+      void onBalanceRefresh?.();
       if (status !== "done" || urls.length === 0) { onResolve(created.id, null, status); return; }
       // primary card → first variant
       onResolve(created.id, urls[0], "done", generationIds[0]);
@@ -125,18 +130,22 @@ export function useCanvasGen(
         onResolve(sib.id, urls[i], "done", generationIds[i]);
       }
     }, cancelledRef);
-  }, [projectId, onNode, onResolve, activeThreadId, onError]);
+  }, [projectId, onNode, onResolve, activeThreadId, onError, onBalanceRefresh]);
 
   const animate = useCallback(async (sourceGenerationId: string, sourceNodeId: string, prompt: string, pos: Pos) => {
     const { video } = await ensureModels();
     const req = { projectId, prompt, count: 1, kind: "video" as const, model: video, sourceGenerationId, idempotencyKey: `vid-${Date.now()}` };
     const started = await startGen(req);
     if ("error" in started) { fail(started.error); return; }
+    void onBalanceRefresh?.();
     const created = await createNodeWithRetry({ projectId, type: "video", ...pos, prompt, genJobId: started.id, status: "pending", sourceNodeId, ...(activeThreadId ? { threadId: activeThreadId } : {}) });
     if ("error" in created) { fail("Your video is generating — the card didn't appear, but you can find it in your library."); return; }
     onNode({ id: created.id, type: "video", pos, status: "pending", prompt, sourceNodeId });
-    poll(started.id, (urls, status, generationIds) => onResolve(created.id, urls[0] ?? null, status, generationIds[0]), cancelledRef);
-  }, [projectId, onNode, onResolve, activeThreadId, onError]);
+    poll(started.id, (urls, status, generationIds) => {
+      void onBalanceRefresh?.();
+      onResolve(created.id, urls[0] ?? null, status, generationIds[0]);
+    }, cancelledRef);
+  }, [projectId, onNode, onResolve, activeThreadId, onError, onBalanceRefresh]);
 
   // Phase 3: text-to-video. The same paid video path as animate(), minus the
   // source frame — the gate allows video without sourceGenerationId (it's the
@@ -147,11 +156,15 @@ export function useCanvasGen(
     const req = { projectId, prompt, count: 1, kind: "video" as const, model: video, idempotencyKey: `vid-${Date.now()}` };
     const started = await startGen(req);
     if ("error" in started) { fail(started.error); return; }
+    void onBalanceRefresh?.();
     const created = await createNodeWithRetry({ projectId, type: "video", ...pos, prompt, genJobId: started.id, status: "pending", ...(activeThreadId ? { threadId: activeThreadId } : {}) });
     if ("error" in created) { fail("Your video is generating — the card didn't appear, but you can find it in your library."); return; }
     onNode({ id: created.id, type: "video", pos, status: "pending", prompt });
-    poll(started.id, (urls, status, generationIds) => onResolve(created.id, urls[0] ?? null, status, generationIds[0]), cancelledRef);
-  }, [projectId, onNode, onResolve, activeThreadId, onError]);
+    poll(started.id, (urls, status, generationIds) => {
+      void onBalanceRefresh?.();
+      onResolve(created.id, urls[0] ?? null, status, generationIds[0]);
+    }, cancelledRef);
+  }, [projectId, onNode, onResolve, activeThreadId, onError, onBalanceRefresh]);
 
-  return { generateImage, animate, generateVideoFromText, cancelledRef };
+  return { generateImage, animate, generateVideoFromText, quoteCosts, cancelledRef };
 }

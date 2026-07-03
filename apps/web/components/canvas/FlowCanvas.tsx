@@ -17,13 +17,34 @@ import { Dialog, DialogContent, DialogHeader, DialogFooter, DialogTitle, DialogD
 import { Button } from "@/components/ui/button";
 import type { EntityDTO } from "@/lib/types";
 import { filterNodesByConvo, convoColor } from "@/lib/convo-canvas";
+import { creditsLabel } from "@/lib/credit-format";
+import type { CanvasGenCostQuote } from "@/lib/canvas-gen-costs";
 
 type CanvasFlowNode = Node & { threadId: string | null };
+type FlowCanvasProps = {
+  projectId: string;
+  entities?: EntityDTO[];
+  activeThreadId?: string | null;
+  activity?: Set<string>;
+  skin?: "gb";
+  onBalanceRefresh?: () => void | Promise<void>;
+  directToolsLocked?: boolean;
+  directToolsLockedReason?: string;
+};
 
 // Must be stable (defined outside component) per ReactFlow requirements
 const nodeTypes = { image: ImageNode, video: VideoNode, text: TextNode };
 
-export default function FlowCanvas({ projectId, entities = [], activeThreadId = null, activity, skin }: { projectId: string; entities?: EntityDTO[]; activeThreadId?: string | null; activity?: Set<string>; skin?: "gb" }) {
+export default function FlowCanvas({
+  projectId,
+  entities = [],
+  activeThreadId = null,
+  activity,
+  skin,
+  onBalanceRefresh,
+  directToolsLocked = false,
+  directToolsLockedReason = "Start with Otto first.",
+}: FlowCanvasProps) {
   const [nodes, setNodes] = useState<CanvasFlowNode[]>([]);
   const [prompt, setPrompt] = useState("");
   const [promptIds, setPromptIds] = useState<string[]>([]); // @mentioned entity ids
@@ -59,6 +80,7 @@ export default function FlowCanvas({ projectId, entities = [], activeThreadId = 
   // double-submit guard
   const submittingRef = useRef(false);
   const [submitting, setSubmitting] = useState(false);
+  const [costQuote, setCostQuote] = useState<CanvasGenCostQuote | null>(null);
 
   // Per-node data refs so stable onAnimate closures can read current generationId + position
   const nodeDataRef = useRef<Record<string, { generationId?: string; pos: { x: number; y: number } }>>({});
@@ -68,11 +90,16 @@ export default function FlowCanvas({ projectId, entities = [], activeThreadId = 
 
   // Build a stable per-node onAnimate that reads generationId at call time
   const onAnimateByNode = useRef<Record<string, () => void>>({});
+  const directToolsLockedRef = useRef(directToolsLocked);
   const getOnAnimate = useCallback((id: string): (() => void) => {
     if (!onAnimateByNode.current[id]) {
       // "Make video" is a paid image→video generation, so clicking it only OPENS
       // a confirm; the actual spend happens in runAnimate() after the owner says OK.
-      onAnimateByNode.current[id] = () => setPendingAnimateId(id);
+      onAnimateByNode.current[id] = () => {
+        if (directToolsLockedRef.current) return;
+        setCostQuote(null);
+        setPendingAnimateId(id);
+      };
     }
     return onAnimateByNode.current[id]!;
   }, []);
@@ -87,6 +114,7 @@ export default function FlowCanvas({ projectId, entities = [], activeThreadId = 
   // same-tick double-fire without serializing separate generations.
   const videoBusyRef = useRef(false);
   const runAnimate = useCallback((id: string, motionPrompt: string) => {
+    if (directToolsLockedRef.current) return;
     const entry = nodeDataRef.current[id];
     if (!entry?.generationId || !animateFnRef.current || videoBusyRef.current) return;
     videoBusyRef.current = true;
@@ -162,16 +190,20 @@ export default function FlowCanvas({ projectId, entities = [], activeThreadId = 
         },
       ]);
     },
-    [deleteNode],
+    [activeThreadId, skin],
   );
 
   const onGenError = useCallback((msg: string) => { toast.error(msg); }, []);
-  const { generateImage, animate, generateVideoFromText, cancelledRef } = useCanvasGen(projectId, onNewNode, onResolve, activeThreadId, onGenError);
+  const { generateImage, animate, generateVideoFromText, quoteCosts, cancelledRef } = useCanvasGen(projectId, onNewNode, onResolve, activeThreadId, onGenError, onBalanceRefresh);
+  const refreshCostQuote = useCallback(() => {
+    void quoteCosts().then(setCostQuote).catch(() => setCostQuote(null));
+  }, [quoteCosts]);
   // keep animateFnRef current
   animateFnRef.current = animate;
 
   // Shared submit handler — used by form onSubmit and MentionInput onSubmit
   const handleGenerate = useCallback(async () => {
+    if (directToolsLocked) return;
     if (!prompt.trim()) return;
     if (submittingRef.current) return;
     submittingRef.current = true;
@@ -188,10 +220,11 @@ export default function FlowCanvas({ projectId, entities = [], activeThreadId = 
       submittingRef.current = false;
       setSubmitting(false);
     }
-  }, [prompt, promptIds, variantSel, generateImage]);
+  }, [prompt, promptIds, variantSel, generateImage, directToolsLocked]);
 
   // Add an empty text node (display-only, no spend) — the canvas toolbar's text tool.
   const addTextNode = useCallback(async () => {
+    if (directToolsLocked) return;
     const x = 80 + nodeCountRef.current * 340;
     const result = await createCanvasNode({ projectId, type: "text", x, y: 80, w: 240, h: 120, text: "", status: "done", ...(activeThreadId ? { threadId: activeThreadId } : {}) });
     if ("id" in result) {
@@ -210,7 +243,7 @@ export default function FlowCanvas({ projectId, entities = [], activeThreadId = 
     } else {
       console.warn("Failed to create text node:", result.error);
     }
-  }, [projectId, activeThreadId, onTextChange, skin]);
+  }, [projectId, activeThreadId, onTextChange, skin, directToolsLocked]);
 
   // Drag-and-drop an image file from anywhere onto the canvas → upload it as an
   // image node. Upload-only (uploadReference creates an UPLOAD Generation); it
@@ -250,19 +283,38 @@ export default function FlowCanvas({ projectId, entities = [], activeThreadId = 
   // node to animate"; it is disabled until an animatable image is selected.
   const selectedImageId = nodes.find((n) => n.selected && n.type === "image" && nodeDataRef.current[n.id]?.generationId)?.id ?? null;
   const animateSelected = useCallback(() => {
-    if (selectedImageId) setPendingAnimateId(selectedImageId);
-  }, [selectedImageId]);
+    if (directToolsLocked) return;
+    if (selectedImageId) {
+      setCostQuote(null);
+      setPendingAnimateId(selectedImageId);
+    }
+  }, [selectedImageId, directToolsLocked]);
 
   // Phase 3: text-to-video — the video tool opens a prompt dialog when nothing is
   // selected; runT2v spends via the existing video path (no source frame).
   const [t2vOpen, setT2vOpen] = useState(false);
   const [t2vPrompt, setT2vPrompt] = useState("");
   const runT2v = useCallback((prompt: string) => {
-    if (videoBusyRef.current) return;
+    if (directToolsLocked || videoBusyRef.current) return;
     videoBusyRef.current = true;
     const x = 80 + nodeCountRef.current * 340;
     void generateVideoFromText(prompt, { x, y: 80, w: 320, h: 320 }).finally(() => { videoBusyRef.current = false; });
-  }, [generateVideoFromText]);
+  }, [generateVideoFromText, directToolsLocked]);
+
+  useEffect(() => {
+    directToolsLockedRef.current = directToolsLocked;
+    if (directToolsLocked) {
+      setComposerOpen(false);
+      setConfirmGen(false);
+      setPendingAnimateId(null);
+      setT2vOpen(false);
+      setT2vPrompt("");
+    }
+  }, [directToolsLocked]);
+
+  useEffect(() => {
+    if (confirmGen || pendingAnimateId !== null || t2vOpen) refreshCostQuote();
+  }, [confirmGen, pendingAnimateId, t2vOpen, refreshCostQuote]);
 
   // Stop polls on unmount
   useEffect(() => () => { cancelledRef.current = true; }, [cancelledRef]);
@@ -386,6 +438,9 @@ export default function FlowCanvas({ projectId, entities = [], activeThreadId = 
     status: pendingDeleteNode.data?.status as string | undefined,
     url: pendingDeleteNode.data?.url as string | undefined,
   });
+  const imageCostLabel = costQuote ? creditsLabel(costQuote.imageCredits) : "Checking exact cost...";
+  const videoCostLabel = costQuote ? creditsLabel(costQuote.videoCredits) : "Checking exact cost...";
+  const directToolTitle = directToolsLocked ? directToolsLockedReason : undefined;
 
   return (
     <div
@@ -430,11 +485,11 @@ export default function FlowCanvas({ projectId, entities = [], activeThreadId = 
         <>
           {/* Composer — hidden until Generate is clicked (Grok pattern). Reuses the
               existing handleGenerate spend path unchanged; positioned above the bar. */}
-          {composerOpen && (
+          {composerOpen && !directToolsLocked && (
             <form
               className="al-promptbar cv-composer-pop"
               style={{ position: "absolute", bottom: 76, left: "50%", transform: "translateX(-50%)", width: 520 }}
-              onSubmit={(e) => { e.preventDefault(); if (prompt.trim()) setConfirmGen(true); }}
+              onSubmit={(e) => { e.preventDefault(); if (prompt.trim()) { setCostQuote(null); setConfirmGen(true); } }}
             >
               <div className="al-input-wrap" style={{ flex: 1, minWidth: 0, border: "none", background: "none", padding: 0 }}>
                 <MentionInput
@@ -442,7 +497,7 @@ export default function FlowCanvas({ projectId, entities = [], activeThreadId = 
                   docKey={`canvas-${composerKey}`}
                   placeholder="Describe an image… (@ to reference your stuff)"
                   onChange={(t, ids, vsel) => { setPrompt(t); setPromptIds(ids); setVariantSel(vsel); }}
-                  onSubmit={() => { if (prompt.trim()) setConfirmGen(true); }}
+                  onSubmit={() => { if (prompt.trim()) { setCostQuote(null); setConfirmGen(true); } }}
                 />
               </div>
               <button className="al-btn al-btn-primary al-btn-sm" type="submit" disabled={submitting}>Generate</button>
@@ -465,17 +520,39 @@ export default function FlowCanvas({ projectId, entities = [], activeThreadId = 
               )}
             </button>
             <span className="cv-tb-div" />
-            <button type="button" className="cv-tb" title="Generate an image — describe what you want" aria-label="Generate image" aria-expanded={composerOpen} onClick={() => setComposerOpen((v) => !v)}>
+            <button
+              type="button"
+              className="cv-tb"
+              title={directToolTitle ?? "Generate an image — describe what you want"}
+              aria-label="Generate image"
+              aria-expanded={composerOpen && !directToolsLocked}
+              disabled={directToolsLocked}
+              onClick={() => setComposerOpen((v) => !v)}
+            >
               <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.9"><rect x="3" y="3" width="18" height="18" rx="3" /><circle cx="9" cy="9" r="2" /><path d="m21 15-5-5L5 21" /></svg>
             </button>
-            <button type="button" className="cv-tb" title={selectedImageId ? "Make a video from the selected image" : "Make a video from a prompt"} aria-label="Video" onClick={() => { if (selectedImageId) animateSelected(); else setT2vOpen(true); }}>
+            <button
+              type="button"
+              className="cv-tb"
+              title={directToolTitle ?? (selectedImageId ? "Make a video from the selected image" : "Make a video from a prompt")}
+              aria-label="Video"
+              disabled={directToolsLocked}
+              onClick={() => { if (selectedImageId) animateSelected(); else { setCostQuote(null); setT2vOpen(true); } }}
+            >
               <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.9"><rect x="2" y="6" width="14" height="12" rx="2" /><path d="m22 8-6 4 6 4V8z" /></svg>
             </button>
-            <button type="button" className="cv-tb" title="Add text" aria-label="Add text" onClick={addTextNode}>
+            <button type="button" className="cv-tb" title={directToolTitle ?? "Add text"} aria-label="Add text" disabled={directToolsLocked} onClick={addTextNode}>
               <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.9"><path d="M4 7V4h16v3M9 20h6M12 4v16" /></svg>
             </button>
           </div>
         </>
+      ) : directToolsLocked ? (
+        <div
+          className="al-promptbar"
+          style={{ position: "absolute", bottom: 16, left: "50%", transform: "translateX(-50%)", width: 420, justifyContent: "center" }}
+        >
+          <span className="text-[0.875rem] font-medium text-muted-foreground">{directToolsLockedReason}</span>
+        </div>
       ) : (
         <form
           className="al-promptbar"
@@ -531,7 +608,7 @@ export default function FlowCanvas({ projectId, entities = [], activeThreadId = 
           <DialogHeader>
             <DialogTitle>Make a video from this image?</DialogTitle>
             <DialogDescription>
-              Pick how it should move, then confirm. This uses credits.
+              Pick how it should move, then confirm. Cost: {videoCostLabel}. No charge until you confirm.
             </DialogDescription>
           </DialogHeader>
           <div className="flex flex-col gap-2.5">
@@ -561,6 +638,7 @@ export default function FlowCanvas({ projectId, entities = [], activeThreadId = 
           <DialogFooter>
             <Button variant="ghost" onClick={() => setPendingAnimateId(null)}>Cancel</Button>
             <Button
+              disabled={!costQuote}
               onClick={() => {
                 const p =
                   motion === "dynamic"
@@ -582,12 +660,12 @@ export default function FlowCanvas({ projectId, entities = [], activeThreadId = 
           <DialogHeader>
             <DialogTitle>Generate 4 variations?</DialogTitle>
             <DialogDescription>
-              Otto makes 4 images so you can pick the best one — this uses credits for 4 images. Keep the one you like and delete the rest.
+              Otto makes 4 images so you can pick the best one. Cost: {imageCostLabel}. No charge until you confirm.
             </DialogDescription>
           </DialogHeader>
           <DialogFooter>
             <Button variant="ghost" onClick={() => setConfirmGen(false)}>Cancel</Button>
-            <Button onClick={() => { setConfirmGen(false); void handleGenerate(); }}>Generate</Button>
+            <Button disabled={!costQuote} onClick={() => { setConfirmGen(false); void handleGenerate(); }}>Generate</Button>
           </DialogFooter>
         </DialogContent>
       </Dialog>
@@ -596,7 +674,7 @@ export default function FlowCanvas({ projectId, entities = [], activeThreadId = 
           <DialogHeader>
             <DialogTitle>Make a video from a prompt</DialogTitle>
             <DialogDescription>
-              Describe the video you want — no source image needed. This uses credits.
+              Describe the video you want — no source image needed. Cost: {videoCostLabel}. No charge until you confirm.
             </DialogDescription>
           </DialogHeader>
           <textarea
@@ -609,7 +687,7 @@ export default function FlowCanvas({ projectId, entities = [], activeThreadId = 
           <DialogFooter>
             <Button variant="ghost" onClick={() => { setT2vOpen(false); setT2vPrompt(""); }}>Cancel</Button>
             <Button
-              disabled={!t2vPrompt.trim()}
+              disabled={!t2vPrompt.trim() || !costQuote}
               onClick={() => { const p = t2vPrompt.trim(); setT2vOpen(false); setT2vPrompt(""); if (p) runT2v(p); }}
             >
               Make video
