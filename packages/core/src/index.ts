@@ -105,3 +105,11 @@ export { tavilySearch, braveSearch, searchWithFallback } from "./websearch.js";
 export type { WebSearchResult, WebSearchFn } from "./websearch.js";
 export { assertPublicHttpUrl, assertPublicHttpUrlResolved } from "./url-safety.js";
 export { fetchAndExtract, MAX_BODY } from "./fetch-extract.js";
+export {
+  SCHEDULED_POST_STATUSES,
+  TERMINAL_STATUSES,
+  isScheduledPostStatus,
+  canTransition,
+  allowedNextStates,
+  type ScheduledPostStatus,
+} from "./schedule-state.js";
