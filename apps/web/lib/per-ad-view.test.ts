@@ -46,4 +46,22 @@ describe("buildPerAdView", () => {
   it("no truncated note when not truncated", () => {
     expect(buildPerAdView({ ...base, truncated: false }).truncatedNote).toBeNull();
   });
+
+  it("garbage (non-numeric, non-empty) metric strings render — not NaN (anti-fabrication)", () => {
+    const garbage: OwnerAdPerformance = {
+      ...base,
+      ads: [
+        { adId: "a3", adName: "Ad Three", accountId: "act_1",
+          metrics: { spend: "n/a", reach: "n/a", ctr: "n/a", cpc: "n/a", cpm: null, frequency: null, clicks: null, impressions: null, purchaseRoas: "n/a" },
+          creative: { imageUrl: null, body: null, title: null, videoId: null } },
+      ],
+    };
+    const v = buildPerAdView(garbage);
+    const m = Object.fromEntries(v.rows[0]!.metrics.map((x) => [x.label, x.value]));
+    expect(m.Spend).toBe("—");
+    expect(m.Reach).toBe("—");
+    expect(m.CTR).toBe("—");
+    expect(m.CPC).toBe("—");
+    expect(m.ROAS).toBe("—");
+  });
 });

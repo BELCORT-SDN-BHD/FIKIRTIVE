@@ -9,10 +9,18 @@ export type PerAdDisplayRow = {
 };
 export type PerAdView = { rows: PerAdDisplayRow[]; stamp: string; truncatedNote: string | null };
 
-const num = (s: string | null): string => (s == null || s === "" ? "—" : Number(s).toLocaleString("en-US"));
-const dec = (s: string | null): string => (s == null || s === "" ? "—" : String(Number(s))); // trims trailing zeros, no currency symbol
-const pct = (s: string | null): string => (s == null || s === "" ? "—" : `${Number(s)}%`);
-const roas = (s: string | null): string => (s == null || s === "" ? "—" : `${Number(s)}×`);
+// Parses a Meta numeric string; null for null/""/non-numeric — never a stray "NaN" on screen
+// (a garbage string must render "—", not "NaN"/"NaN×"/"NaN%": anti-fabrication rule).
+function parse(s: string | null): number | null {
+  if (s == null || s === "") return null;
+  const n = Number(s);
+  return Number.isNaN(n) ? null : n;
+}
+
+const num = (s: string | null): string => { const n = parse(s); return n == null ? "—" : n.toLocaleString("en-US"); };
+const dec = (s: string | null): string => { const n = parse(s); return n == null ? "—" : String(n); }; // trims trailing zeros, no currency symbol
+const pct = (s: string | null): string => { const n = parse(s); return n == null ? "—" : `${n}%`; };
+const roas = (s: string | null): string => { const n = parse(s); return n == null ? "—" : `${n}×`; };
 
 function rangeLabel(preset: string): string {
   // getAdPerformance's datePreset is the Meta preset form ("last_30d"); RANGES.preset matches it
