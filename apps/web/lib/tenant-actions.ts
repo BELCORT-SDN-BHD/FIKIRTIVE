@@ -106,10 +106,11 @@ async function ownerBaUserId(orgId: string): Promise<string | null> {
 
 /** Founder-only: become the org owner to debug what they see. Spend is blocked while
  *  impersonating (the 8 web entry-point guards). Audited. */
-export async function impersonateTenant(orgId: string): Promise<{ ok: true } | { error: string }> {
+export async function impersonateTenant(orgId: string, reasonRaw?: unknown): Promise<{ ok: true } | { error: string }> {
   const gate = await requireRole("tenants", "mutate"); if ("error" in gate) return gate;
   if (!isFounderAdmin(gate.email)) return { error: "Only a founder may impersonate." };
   if (typeof orgId !== "string" || !orgId || orgId === FOUNDER_OWNER_ID) return { error: "Invalid org." };
+  const reason = typeof reasonRaw === "string" ? reasonRaw.trim().slice(0, 500) : "";
   const baUserId = await ownerBaUserId(orgId);
   if (!baUserId) return { error: "That tenant has no signed-in owner to impersonate yet." };
   try {
@@ -117,7 +118,7 @@ export async function impersonateTenant(orgId: string): Promise<{ ok: true } | {
   } catch (e) {
     return { error: e instanceof Error ? e.message : "Could not start impersonation." };
   }
-  await prisma.actionEvent.create({ data: { id: newId(), ownerId: FOUNDER_OWNER_ID, type: "impersonate.start", payload: { orgId, baUserId, via: gate.email } } }).catch(() => {});
+  await prisma.actionEvent.create({ data: { id: newId(), ownerId: FOUNDER_OWNER_ID, type: "impersonate.start", payload: { orgId, baUserId, reason, via: gate.email } } }).catch(() => {});
   return { ok: true };
 }
 
