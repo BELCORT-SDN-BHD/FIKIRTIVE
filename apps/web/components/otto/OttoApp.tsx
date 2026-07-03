@@ -289,7 +289,7 @@ export function OttoApp({
       />
 
       {/* Main content area */}
-      <div style={{ flex: 1, minWidth: 0, display: "flex", flexDirection: "column", overflow: "hidden" }}>
+      <div style={{ flex: 1, minWidth: 0, minHeight: 0, height: "100%", display: "flex", flexDirection: "column", overflow: "hidden" }}>
         {/* Mobile top bar — hamburger + logo. Hidden on desktop via CSS. */}
         <div
           className="otto-mobile-topbar"

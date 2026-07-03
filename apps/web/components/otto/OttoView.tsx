@@ -189,7 +189,7 @@ export function OttoView({
     threads.length === 0;
 
   return (
-    <div style={{ position: "relative", flex: 1, display: "flex", flexDirection: "row", overflow: "hidden" }}>
+    <div style={{ position: "relative", flex: 1, minHeight: 0, height: "100%", display: "flex", flexDirection: "row", overflow: "hidden" }}>
       {isFirstRun && (
         <OttoOnboarding
           onGoToStuff={() => onViewChange("stuff")}
@@ -291,7 +291,7 @@ export function OttoView({
       {/* Right pane: canvas. display:flex so FlowCanvas (flex:1) fills the full
           height — without it the canvas pane collapses to 0 height and React Flow
           renders nothing (the "canvas not working" blank-white regression). */}
-      <div style={{ flex: 1, minWidth: 0, position: "relative", display: "flex", flexDirection: "column" }}>
+      <div style={{ flex: 1, minWidth: 0, minHeight: 0, height: "100%", position: "relative", display: "flex", flexDirection: "column" }}>
         {/* Collapse handle on the OTTO↔canvas border */}
         {!chatCollapsed && (
           <button

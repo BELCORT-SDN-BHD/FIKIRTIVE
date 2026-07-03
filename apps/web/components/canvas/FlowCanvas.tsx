@@ -86,6 +86,7 @@ export default function FlowCanvas({
   const nodeDataRef = useRef<Record<string, { generationId?: string; pos: { x: number; y: number } }>>({});
   const flowRef = useRef<ReactFlowInstance<CanvasFlowNode, Edge> | null>(null);
   const fittedScopeRef = useRef<string | null>(null);
+  const fitTimerRef = useRef<number | null>(null);
   const [flowReady, setFlowReady] = useState(false);
 
   // Keep a ref to animate() so per-node closures don't go stale
@@ -94,6 +95,18 @@ export default function FlowCanvas({
   // Build a stable per-node onAnimate that reads generationId at call time
   const onAnimateByNode = useRef<Record<string, () => void>>({});
   const directToolsLockedRef = useRef(directToolsLocked);
+  const scheduleFitView = useCallback(() => {
+    if (fitTimerRef.current) window.clearTimeout(fitTimerRef.current);
+    fitTimerRef.current = window.setTimeout(() => {
+      fitTimerRef.current = null;
+      void flowRef.current?.fitView({ padding: 0.22, duration: 160 });
+    }, 80);
+  }, []);
+
+  useEffect(() => () => {
+    if (fitTimerRef.current) window.clearTimeout(fitTimerRef.current);
+  }, []);
+
   const getOnAnimate = useCallback((id: string): (() => void) => {
     if (!onAnimateByNode.current[id]) {
       // "Make video" is a paid image→video generation, so clicking it only OPENS
@@ -203,12 +216,13 @@ export default function FlowCanvas({
           threadId: activeThreadId ?? null,
         },
       ]);
+      scheduleFitView();
     },
-    [activeThreadId, skin],
+    [activeThreadId, skin, scheduleFitView],
   );
 
   const onGenError = useCallback((msg: string) => { toast.error(msg); }, []);
-  const { generateImage, animate, generateVideoFromText, quoteCosts, cancelledRef } = useCanvasGen(projectId, onNewNode, onResolve, activeThreadId, onGenError, onBalanceRefresh);
+  const { generateImage, animate, generateVideoFromText, quoteCosts } = useCanvasGen(projectId, onNewNode, onResolve, activeThreadId, onGenError, onBalanceRefresh);
   const refreshCostQuote = useCallback(() => {
     void quoteCosts().then(setCostQuote).catch(() => setCostQuote(null));
   }, [quoteCosts]);
@@ -254,10 +268,11 @@ export default function FlowCanvas({
           threadId: activeThreadId ?? null,
         },
       ]);
+      scheduleFitView();
     } else {
       console.warn("Failed to create text node:", result.error);
     }
-  }, [projectId, activeThreadId, onTextChange, skin, directToolsLocked]);
+  }, [projectId, activeThreadId, onTextChange, skin, directToolsLocked, scheduleFitView]);
 
   // Drag-and-drop an image file from anywhere onto the canvas → upload it as an
   // image node. Upload-only (uploadReference creates an UPLOAD Generation); it
@@ -289,8 +304,9 @@ export default function FlowCanvas({
           threadId: activeThreadId ?? null,
         },
       ]);
+      scheduleFitView();
     }
-  }, [projectId, activeThreadId, getOnAnimate, getOnOpenDetail, skin]);
+  }, [projectId, activeThreadId, getOnAnimate, getOnOpenDetail, skin, scheduleFitView]);
 
   // Animate the selected image node into a video — reuses the existing animate
   // path (no new spend logic). The video tool mirrors Grok's "select an image
@@ -329,9 +345,6 @@ export default function FlowCanvas({
   useEffect(() => {
     if (confirmGen || pendingAnimateId !== null || t2vOpen) refreshCostQuote();
   }, [confirmGen, pendingAnimateId, t2vOpen, refreshCostQuote]);
-
-  // Stop polls on unmount
-  useEffect(() => () => { cancelledRef.current = true; }, [cancelledRef]);
 
   // Load (and, under the Grok-bright skin, bridge OTTO's chat results onto) the
   // canvas. The gb path resolves each node's media URL and ensures a node exists
@@ -471,7 +484,7 @@ export default function FlowCanvas({
 
   return (
     <div
-      style={{ flex: 1, position: "relative", overflow: "hidden" }}
+      style={{ flex: 1, width: "100%", height: "100%", minHeight: 0, position: "relative", overflow: "hidden" }}
       className={skin === "gb" ? (panMode ? "gb" : "gb cv-select-mode") : undefined}
       onDragOver={(e) => { if (Array.from(e.dataTransfer?.types ?? []).includes("Files")) { e.preventDefault(); e.dataTransfer.dropEffect = "copy"; setDragOver(true); } }}
       onDragLeave={(e) => { if (e.currentTarget === e.target) setDragOver(false); }}

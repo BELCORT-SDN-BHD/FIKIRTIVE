@@ -1,5 +1,5 @@
 "use client";
-import { useCallback, useRef } from "react";
+import { useCallback, useEffect, useRef } from "react";
 import { startGen, getGenJob, getActiveGenModels } from "../../lib/gen-actions";
 import { createCanvasNode } from "../../lib/canvas-actions";
 import { CANVAS_IMAGE_VARIANT_COUNT, canvasGenCostQuote } from "@/lib/canvas-gen-costs";
@@ -84,6 +84,10 @@ export function useCanvasGen(
   onBalanceRefresh?: () => void | Promise<void>,
 ) {
   const cancelledRef = useRef(false);
+  useEffect(() => {
+    cancelledRef.current = false;
+    return () => { cancelledRef.current = true; };
+  }, []);
   // F18: resolve the active models SERVER-side (the client can't — the env isn't bundled, so
   // activeVideoModel() in the browser always returns the wrong default). Cache after first fetch;
   // await before every spend so the gen request carries the real model the server gate expects.
