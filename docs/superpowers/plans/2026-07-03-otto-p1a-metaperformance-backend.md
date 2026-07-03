@@ -59,7 +59,7 @@ import { describe, it, expect, vi, afterEach } from "vitest";
 import { getAdInsights, getAdCreative, readMetricFields } from "./meta-graph";
 
 function mockFetchOnce(json: unknown, ok = true) {
-  vi.spyOn(global, "fetch" as never).mockResolvedValueOnce({ ok, json: async () => json } as never);
+  return vi.spyOn(global, "fetch" as never).mockResolvedValueOnce({ ok, json: async () => json } as never);
 }
 afterEach(() => vi.restoreAllMocks());
 
@@ -246,7 +246,7 @@ Run: `pnpm --filter @fikirtive/web exec vitest run lib/meta-performance.test.ts`
 ```ts
 import { prisma } from "@fikirtive/db";
 import { decryptToken } from "./token-encryption";
-import { getAdInsights, getAdCreative, type AdCreative, type AdInsightsRow } from "./meta-graph";
+import { metaGraphGet, getAdInsights, getAdCreative, type AdCreative, type AdInsightsRow } from "./meta-graph";
 
 export const MAX_ADS = 25;
 
@@ -277,7 +277,7 @@ export async function fetchOwnerAdPerformance(
 
   let accountsRes: { data?: { id: string }[] };
   try {
-    accountsRes = await (await import("./meta-graph")).metaGraphGet(token, "me/adaccounts", { fields: "account_id" });
+    accountsRes = await metaGraphGet(token, "me/adaccounts", { fields: "account_id" });
   } catch (e) {
     if ((e as { metaError?: { code?: number } })?.metaError?.code === 190) {
       await prisma.metaConnection.update({ where: { ownerId }, data: { status: "expired" } });
@@ -307,7 +307,6 @@ export async function fetchOwnerAdPerformance(
   return { ads, truncated, organic, datePreset, fetchedAt: new Date().toISOString() };
 }
 ```
-> 注:`metaGraphGet` 用动态 `import` 仅为让 vitest 的 `./meta-graph` mock 生效于三个命名导出;若既有测试基建允许顶层 import 也 mock 到,改回顶层 import(实现时按仓库既有 mock 习惯二选一,保持 mock 生效即可)。
 
 - [ ] **Step 4: Run tests → PASS**
 
