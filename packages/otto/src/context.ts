@@ -77,6 +77,29 @@ export interface OttoContext {
       | { notConnected: true }
     >;
   };
+  /** Meta per-ad performance port (P1a) — injected by the web caller; reads the owner's
+   *  connected ad-level performance + creative. Skills reach it ONLY via ctx.metaPerformance,
+   *  never importing meta-performance.ts. Single action layer: this port and the P1b human
+   *  panel's getAdPerformance action both resolve to fetchOwnerAdPerformance. */
+  metaPerformance?: {
+    getAds(datePreset: string): Promise<
+      | {
+          ads: {
+            adId: string;
+            adName: string | null;
+            accountId: string;
+            metrics: Record<string, string | null>;
+            creative: { imageUrl: string | null; body: string | null; title: string | null; videoId: string | null } | null;
+          }[];
+          truncated: boolean;
+          organic: { status: "pending_permission" } | { posts: [] };
+          datePreset: string;
+          fetchedAt: string;
+        }
+      | { needsReconnect: true }
+      | { notConnected: true }
+    >;
+  };
   /** Web-research port — injected by the web/worker caller (G3a). Skills use this to fetch
    *  pages or (when wired) search the web. Never imported directly inside skills/. */
   research?: {
