@@ -373,9 +373,23 @@ describe("META_EXPERTISE_KB (real, researched)", () => {
     expect(META_EXPERTISE_KB.version).toMatch(/^\d{4}-\d{2}-\d{2}$/);
   });
 
-  it("has at least one benchmark for CTR and for ROAS (headline diagnosis metrics)", () => {
-    expect(getBenchmark(META_EXPERTISE_KB, { metric: "CTR" })).not.toBeNull();
-    expect(getBenchmark(META_EXPERTISE_KB, { metric: "ROAS" })).not.toBeNull();
+  // NOTE (grounding): the deep research found NO verifiable public CTR/ROAS "industry average"
+  // numbers (Meta doesn't publish them; third-party pages weren't fetchable to verify). Per the
+  // iron rule we do NOT fabricate one. We assert what honestly exists instead:
+  it("has a handful of cited benchmark entries (verifiable stats only — no invented industry averages)", () => {
+    const withBench = META_EXPERTISE_KB.entries.filter((e) => e.benchmark);
+    expect(withBench.length).toBeGreaterThanOrEqual(5);
+  });
+
+  it("diagnosis domain covers the four root-cause hypotheses (creative / learning-time / audience / budget)", () => {
+    const blob = META_EXPERTISE_KB.entries
+      .filter((e) => e.domain === "diagnosis")
+      .map((e) => `${e.claim} ${e.detail ?? ""} ${e.appliesWhen ?? ""}`.toLowerCase())
+      .join(" || ");
+    expect(blob).toMatch(/learning|not enough|events/); // not-enough-time (learning phase)
+    expect(blob).toMatch(/audience|target/);            // wrong audience
+    expect(blob).toMatch(/budget/);                     // budget too low
+    expect(blob).toMatch(/creative|fatigue|frequency/); // creative problem / fatigue
   });
 
   it("every benchmark entry states a range (no empty ranges)", () => {
