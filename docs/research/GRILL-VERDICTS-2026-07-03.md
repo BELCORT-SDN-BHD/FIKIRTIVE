@@ -144,8 +144,8 @@
 | N (Grok) 用户自建+可分享模板 gallery | **以后** | 目前不用 |
 | N (SF) Lead Conversion 转化事件 | **不要(太深奥)** | — |
 | N (SF) Campaign 首触归因埋点 | **不要(太深奥)** | — |
-| N (respond.io) 客户生命周期阶段 | **归 P3 建 CRM 区时再议**(总审查员建议:与 8/9 同族,founder 待确认) | — |
-| N (Buffer) Ideas 内容孵化管道 | **不建 Buffer 式产品;改 = Otto 做捕获+生成 + 一张极轻"想法清单"防沉底**(founder 待确认建议) | Otto 行为 + 小数据对象 |
+| N (respond.io) 客户生命周期阶段 | **归 P3 建 CRM 区时再议**(founder 2026-07-03 确认) | — |
+| N (Buffer) Ideas 内容孵化管道 | **不建 Buffer 式产品;Otto 做捕获+生成 + 一张极轻"想法清单"防沉底**(founder 2026-07-03 确认) | Otto 行为 + 小数据对象 |
 | N (Buffer) 公开评论收件箱 | **要** | P2 客服区(私信 inbox 旁加 public-comment 线程类型) |
 | N (HubSpot) 知识库反向回路 | **要** | P2(并入 O-04 品牌记忆自养客户侧 / M-13) |
 | N (respond.io) 回复才计费 | **不要(已有定价规则)** | — |
