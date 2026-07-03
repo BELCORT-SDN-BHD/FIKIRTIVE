@@ -7,6 +7,8 @@ import { generateSkill } from "./generate.js";
 import { seedreamPromptSkill } from "./seedream-prompt.js";
 import { seedancePromptSkill } from "./seedance-prompt.js";
 import { proposeStoryboardSkill } from "./propose-storyboard.js";
+import { ingestProductSkill } from "./ingest-product.js";
+import { researchWebSkill } from "./research-web.js";
 
 describe("migrated trivial skills carry the right gate", () => {
   it("setTitle: free/write/internal → not gated", () => {
@@ -57,5 +59,18 @@ describe("proposeStoryboard gate", () => {
     expect(proposeStoryboardSkill.cost).toBe("free");
     expect(proposeStoryboardSkill.effect).toBe("write");
     expect(proposeStoryboardSkill.needsApproval).toBe(false);
+  });
+});
+
+describe("external-read skills gate (P1-01)", () => {
+  it("ingestProduct: free/read/external → not gated (external READ is never approval-gated)", () => {
+    expect(ingestProductSkill.cost).toBe("free");
+    expect(ingestProductSkill.effect).toBe("read");
+    expect(ingestProductSkill.reach).toBe("external");
+    expect(ingestProductSkill.needsApproval).toBe(false);
+  });
+  it("researchWeb: same shape — the sibling external read stays ungated too", () => {
+    expect(researchWebSkill.reach).toBe("external");
+    expect(researchWebSkill.needsApproval).toBe(false);
   });
 });
