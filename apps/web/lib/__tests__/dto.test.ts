@@ -145,3 +145,41 @@ describe("toChatMessageDTO — STORYBOARD_CARD payload passthrough", () => {
     expect(p.shots?.[0].shotId).toBe("s0");
   });
 });
+
+// ── PERFORMANCE_CARD (#128): reload/DTO hydration must keep the diagnosis payload ──
+describe("toChatMessageDTO — PERFORMANCE_CARD payload passthrough", () => {
+  function performanceMessage() {
+    return {
+      id: "m4",
+      role: "AGENT",
+      kind: "PERFORMANCE_CARD",
+      seq: 4,
+      text: "",
+      genJobId: null,
+      createdAt: new Date("2026-07-03T00:00:00Z"),
+      payload: {
+        datePreset: "last_30d",
+        fetchedAt: "2026-07-03T00:00:00Z",
+        truncated: false,
+        metricUsed: "purchaseRoas",
+        basis: "your own account average",
+        note: null,
+        verdicts: [
+          { adId: "a1", adName: "Winner", verdict: "winner", reasons: [{ kind: "creative", text: "CTR above your average", grounded: true, citations: [] }] },
+          { adId: "a2", adName: "Laggard", verdict: "loser", reasons: [{ kind: "creative", text: "CPC above your average", grounded: true, citations: [] }] },
+        ],
+        ads: [{ adId: "a1", imageUrl: null, isVideo: false }],
+      },
+    } as never;
+  }
+
+  it("passes the diagnosis payload through (verdicts survive) instead of nulling it", () => {
+    const dto = toChatMessageDTO(performanceMessage(), new Map());
+    const p = dto.payload as { datePreset?: string; metricUsed?: string; verdicts?: { adId?: string; verdict?: string }[] };
+    expect(dto.kind).toBe("PERFORMANCE_CARD");
+    expect(p.datePreset).toBe("last_30d");
+    expect(p.metricUsed).toBe("purchaseRoas");
+    expect(p.verdicts).toHaveLength(2);
+    expect(p.verdicts?.[0].verdict).toBe("winner");
+  });
+});
