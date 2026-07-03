@@ -42,3 +42,5 @@ export {
 export type {
   MetaExpertiseKB, MetaKnowledgeDomain, MetaCitation, MetaBenchmark, MetaKnowledgeEntry,
 } from "./knowledge/meta-expertise.types.js";
+export { diagnosePerformance } from "./diagnosis/diagnose-performance.js";
+export type { DiagAdInput, DiagReason, DiagReasonKind, AdVerdict, PerformanceDiagnosis } from "./diagnosis/diagnose-performance.js";
