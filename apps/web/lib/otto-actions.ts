@@ -45,6 +45,7 @@ import { startGen } from "./gen-actions";
 import { gatherReferenceImages } from "./otto-ref-images";
 import { getBrandContextText } from "./memory-actions";
 import { fetchAndExtract } from "./fetch-extract";
+import { draftScheduledPost } from "./schedule-service";
 import { readPageCached } from "./web-page-cache";
 import { fetchOwnerInsights } from "./meta-insights";
 import { fetchOwnerAdObjects } from "./meta-objects";
@@ -196,6 +197,9 @@ export async function buildOttoContext({
       search,
       readPage: (url: string, page?: number) => readPageCached(url, page),
     },
+    // Single write authority: Otto's schedulePosts skill drafts through the SAME server function
+    // the human createScheduledPost action uses (shared validation + owner-scoped media check).
+    schedule: { draft: (input) => draftScheduledPost({ ownerId, projectId, source: "otto", input }) },
   };
 }
 

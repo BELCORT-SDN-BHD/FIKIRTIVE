@@ -29,6 +29,8 @@ const {
   mockFbListTargets: vi.fn(),
 }));
 
+// createScheduledPost now delegates to schedule-service.ts, which is `import "server-only"`.
+vi.mock("server-only", () => ({}));
 vi.mock("@/lib/auth-guard", () => ({ requireOwner: mockRequireOwner }));
 vi.mock("@fikirtive/db", () => ({
   prisma: {
@@ -210,13 +212,13 @@ describe("createScheduledPost", () => {
 // --- updateScheduledPost ----------------------------------------------------
 
 describe("updateScheduledPost", () => {
-  it("patches caption/scheduledAt owner-scoped, live rows only (DRAFT keeps its status)", async () => {
-    mockFindFirst.mockResolvedValue({ status: "DRAFT" }); // consent gate reads current status
+  it("patches caption/scheduledAt on a DRAFT — atomic WHERE pins the read status", async () => {
+    mockFindFirst.mockResolvedValue({ status: "DRAFT", channel: "instagram" });
     mockUpdateMany.mockResolvedValue({ count: 1 });
     const res = await updateScheduledPost("p1", { caption: "new", scheduledAt: AT });
     expect(res).toEqual({ ok: true });
     expect(mockUpdateMany).toHaveBeenCalledWith({
-      where: { id: "p1", ownerId: OWNER, deletedAt: null },
+      where: { id: "p1", ownerId: OWNER, deletedAt: null, status: "DRAFT" },
       data: { caption: "new", scheduledAt: new Date(AT) },
     });
   });
@@ -233,44 +235,70 @@ describe("updateScheduledPost", () => {
   });
 
   it("re-consent gate: a MATERIAL edit to a SCHEDULED post resets it to DRAFT + clears approvedAt", async () => {
-    mockFindFirst.mockResolvedValue({ status: "SCHEDULED" });
+    mockFindFirst.mockResolvedValue({ status: "SCHEDULED", channel: "instagram" });
     mockUpdateMany.mockResolvedValue({ count: 1 });
     const res = await updateScheduledPost("p1", { caption: "changed my mind" });
     expect(res).toEqual({ ok: true });
     const call = mockUpdateMany.mock.calls[0][0];
-    expect(call.where).toEqual({ id: "p1", ownerId: OWNER, deletedAt: null });
+    expect(call.where).toEqual({ id: "p1", ownerId: OWNER, deletedAt: null, status: "SCHEDULED" });
     expect(call.data).toMatchObject({ caption: "changed my mind", status: "DRAFT", approvedAt: null });
   });
 
   it("a NON-material edit (scheduledTz only) to a SCHEDULED post keeps it SCHEDULED", async () => {
-    mockFindFirst.mockResolvedValue({ status: "SCHEDULED" });
+    mockFindFirst.mockResolvedValue({ status: "SCHEDULED", channel: "instagram" });
     mockUpdateMany.mockResolvedValue({ count: 1 });
     const res = await updateScheduledPost("p1", { scheduledTz: "UTC" });
     expect(res).toEqual({ ok: true });
-    // tz-only isn't material → no status load, no consent reset
-    expect(mockFindFirst).not.toHaveBeenCalled();
     const call = mockUpdateMany.mock.calls[0][0];
     expect(call.data).toEqual({ scheduledTz: "UTC" });
     expect(call.data.status).toBeUndefined();
     expect(call.data.approvedAt).toBeUndefined();
   });
 
-  it("rejects an empty patch, writes nothing", async () => {
+  it("refuses to edit a terminal / publishing / failed post server-side (status, not just the UI)", async () => {
+    for (const status of ["PUBLISHED", "PUBLISHING", "CANCELLED", "FAILED", "NEEDS_ATTENTION"]) {
+      vi.clearAllMocks();
+      mockRequireOwner.mockResolvedValue({ ownerId: OWNER, email: "a@b.co" });
+      mockFindFirst.mockResolvedValue({ status, channel: "instagram" });
+      const res = await updateScheduledPost("p1", { caption: "too late" });
+      expect(res, `status=${status}`).toHaveProperty("error");
+      expect(mockUpdateMany, `status=${status}`).not.toHaveBeenCalled();
+    }
+  });
+
+  it("treats a lost CAS (count===0) as a stale conflict, not success", async () => {
+    mockFindFirst.mockResolvedValue({ status: "DRAFT", channel: "instagram" });
+    mockUpdateMany.mockResolvedValue({ count: 0 }); // a concurrent approve/cancel moved the row
+    const res = await updateScheduledPost("p1", { caption: "race" });
+    expect(res).toHaveProperty("error");
+  });
+
+  it("rejects a first comment on a channel that doesn't support it (Facebook), no write", async () => {
+    mockFindFirst.mockResolvedValue({ status: "DRAFT", channel: "facebook" });
+    const res = await updateScheduledPost("p1", { firstComment: "nope on FB" });
+    expect(res).toHaveProperty("error");
+    expect(mockUpdateMany).not.toHaveBeenCalled();
+  });
+
+  it("rejects an empty patch on an editable post, writes nothing", async () => {
+    mockFindFirst.mockResolvedValue({ status: "DRAFT", channel: "instagram" });
     const res = await updateScheduledPost("p1", {});
     expect(res).toHaveProperty("error");
     expect(mockUpdateMany).not.toHaveBeenCalled();
   });
 
   it("rejects a caption that is only whitespace, writes nothing", async () => {
+    mockFindFirst.mockResolvedValue({ status: "DRAFT", channel: "instagram" });
     const res = await updateScheduledPost("p1", { caption: "   " });
     expect(res).toHaveProperty("error");
     expect(mockUpdateMany).not.toHaveBeenCalled();
   });
 
-  it("unauthenticated → error, no DB write", async () => {
+  it("unauthenticated → error, no DB read/write", async () => {
     mockRequireOwner.mockResolvedValue({ error: "Not authorized." });
     const res = await updateScheduledPost("p1", { caption: "x" });
     expect(res).toEqual({ error: "Not authorized." });
+    expect(mockFindFirst).not.toHaveBeenCalled();
     expect(mockUpdateMany).not.toHaveBeenCalled();
   });
 });
@@ -290,7 +318,7 @@ function draftReady(over: Partial<Record<string, unknown>> = {}) {
 }
 
 describe("approveScheduledPost", () => {
-  it("approves a ready DRAFT: sets approvedAt + status SCHEDULED, owner-scoped", async () => {
+  it("approves a ready DRAFT: status SCHEDULED + approvedAt, atomic WHERE pins the read status", async () => {
     mockFindFirst.mockResolvedValue(draftReady());
     mockUpdateMany.mockResolvedValue({ count: 1 });
     const res = await approveScheduledPost("p1");
@@ -301,12 +329,19 @@ describe("approveScheduledPost", () => {
     );
     // validated the target against the owner's own connected pages
     expect(mockFetchOwnerPages).toHaveBeenCalledWith(OWNER);
-    // write sets both fields, owner-scoped
+    // write sets both fields, owner-scoped, and CAS-pins the status we validated
     expect(mockUpdateMany).toHaveBeenCalledTimes(1);
     const call = mockUpdateMany.mock.calls[0][0];
-    expect(call.where).toEqual({ id: "p1", ownerId: OWNER, deletedAt: null });
+    expect(call.where).toEqual({ id: "p1", ownerId: OWNER, deletedAt: null, status: "DRAFT" });
     expect(call.data.status).toBe("SCHEDULED");
     expect(call.data.approvedAt).toBeInstanceOf(Date);
+  });
+
+  it("treats a lost CAS (count===0) as a stale conflict — never resurrects a cancelled post", async () => {
+    mockFindFirst.mockResolvedValue(draftReady()); // read as DRAFT...
+    mockUpdateMany.mockResolvedValue({ count: 0 }); // ...but a concurrent cancel already moved it
+    const res = await approveScheduledPost("p1");
+    expect(res).toHaveProperty("error");
   });
 
   it("cannot approve another owner's post — not found under owner scope → error, no write", async () => {
@@ -368,7 +403,7 @@ describe("approveScheduledPost", () => {
 // --- cancelScheduledPost ----------------------------------------------------
 
 describe("cancelScheduledPost", () => {
-  it("cancels a DRAFT: status CANCELLED, owner-scoped, via the state machine", async () => {
+  it("cancels a DRAFT: status CANCELLED, owner-scoped, atomic WHERE pins the read status", async () => {
     mockFindFirst.mockResolvedValue({ id: "p1", ownerId: OWNER, status: "DRAFT" });
     mockUpdateMany.mockResolvedValue({ count: 1 });
     const res = await cancelScheduledPost("p1");
@@ -377,7 +412,7 @@ describe("cancelScheduledPost", () => {
       expect.objectContaining({ where: { id: "p1", ownerId: OWNER, deletedAt: null } }),
     );
     const call = mockUpdateMany.mock.calls[0][0];
-    expect(call.where).toEqual({ id: "p1", ownerId: OWNER, deletedAt: null });
+    expect(call.where).toEqual({ id: "p1", ownerId: OWNER, deletedAt: null, status: "DRAFT" });
     expect(call.data).toEqual({ status: "CANCELLED" });
   });
 
@@ -385,6 +420,13 @@ describe("cancelScheduledPost", () => {
     mockFindFirst.mockResolvedValue({ id: "p1", ownerId: OWNER, status: "SCHEDULED" });
     mockUpdateMany.mockResolvedValue({ count: 1 });
     expect(await cancelScheduledPost("p1")).toEqual({ ok: true });
+  });
+
+  it("treats a lost CAS (count===0) as a stale conflict, not success", async () => {
+    mockFindFirst.mockResolvedValue({ id: "p1", ownerId: OWNER, status: "DRAFT" });
+    mockUpdateMany.mockResolvedValue({ count: 0 }); // a concurrent publish/approve moved the row
+    const res = await cancelScheduledPost("p1");
+    expect(res).toHaveProperty("error");
   });
 
   it("cannot cancel another owner's post — not found under owner scope → error, no write", async () => {

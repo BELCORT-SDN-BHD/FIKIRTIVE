@@ -1,24 +1,14 @@
-import { describe, it, expect, vi, beforeEach } from "vitest";
+import { describe, it, expect, vi } from "vitest";
 import { executeSchedulePosts, schedulePostsSkill } from "./schedule-posts.js";
 import type { OttoContext } from "../context.js";
 
-vi.mock("@fikirtive/db", () => ({
-  prisma: {
-    scheduledPost: { create: vi.fn() },
-    generation: { findMany: vi.fn() }, // owner-scoped media-ownership validation
-    genJob: { create: vi.fn() }, // must never be called — this is a $0 skill
-    publishAttempt: { create: vi.fn() }, // must never be called — this NEVER publishes
-  },
-}));
+// #123: the skill no longer touches Prisma or validates itself — it routes every post through the
+// injected ctx.schedule.draft port (the SAME shared authority the human createScheduledPost action
+// uses). So the test mocks the port and asserts the skill's orchestration: one call per post, the
+// clean per-post input, id collection, per-post failure handling, and graceful degradation.
 
-// Deterministic ids: post-id-1, post-id-2, ... in call order.
-let idCounter = 0;
-vi.mock("@fikirtive/core", async (importOriginal) => ({
-  ...(await importOriginal<typeof import("@fikirtive/core")>()),
-  newId: vi.fn(() => `id-${++idCounter}`),
-}));
-
-function makeCtx(): OttoContext {
+/** A ctx carrying a mock schedule port. */
+function makeCtx(draft: ReturnType<typeof vi.fn>): OttoContext {
   return {
     orgId: "org-test",
     userId: "user-test",
@@ -26,28 +16,15 @@ function makeCtx(): OttoContext {
     threadId: "thread-test",
     disabledModels: [],
     sourceGenerationId: null,
+    schedule: { draft },
   } as unknown as OttoContext;
 }
 
-let db: {
-  prisma: {
-    scheduledPost: { create: ReturnType<typeof vi.fn> };
-    generation: { findMany: ReturnType<typeof vi.fn> };
-    genJob: { create: ReturnType<typeof vi.fn> };
-    publishAttempt: { create: ReturnType<typeof vi.fn> };
-  };
-};
-beforeEach(async () => {
-  vi.clearAllMocks();
-  idCounter = 0;
-  db = (await import("@fikirtive/db")) as unknown as typeof db;
-  db.prisma.scheduledPost.create.mockResolvedValue({});
-  // Default: every requested media id is owned (echo the queried ids back). Tests that
-  // exercise the cross-tenant drop override this to return only the owned subset.
-  db.prisma.generation.findMany.mockImplementation(async (args: { where: { id: { in: string[] } } }) =>
-    args.where.id.in.map((id) => ({ id })),
-  );
-});
+/** A draft port that hands back sequential ids. */
+function okDraft() {
+  let n = 0;
+  return vi.fn(async (_input: Record<string, unknown>) => ({ ok: true as const, id: `id-${++n}` }));
+}
 
 describe("schedulePosts gate", () => {
   it("free/write/internal → needsApproval false (internal $0 write, never gated)", () => {
@@ -58,187 +35,88 @@ describe("schedulePosts gate", () => {
   });
 });
 
-describe("executeSchedulePosts — drafts only", () => {
-  it("creates a DRAFT: status DRAFT, source otto, approvedAt null, metaTargetId null; never publishes/spends", async () => {
+describe("executeSchedulePosts — routes every post through the shared ctx.schedule port", () => {
+  it("drafts one post via the port and returns its id (firstComment defaults to null)", async () => {
+    const draft = okDraft();
     const res = await executeSchedulePosts(
-      {
-        posts: [
-          { channel: "instagram", caption: "Hello", scheduledAt: "2026-07-10T09:00:00Z", scheduledTz: "Asia/Kuala_Lumpur" },
-        ],
-      },
-      { context: makeCtx() },
+      { posts: [{ channel: "instagram", caption: "Hello", scheduledAt: "2026-07-10T09:00:00Z", scheduledTz: "Asia/Kuala_Lumpur" }] },
+      { context: makeCtx(draft) },
     );
-
-    expect(res).toEqual({ ok: true, draftedIds: ["id-1"], droppedMedia: 0 });
-    expect(db.prisma.scheduledPost.create).toHaveBeenCalledTimes(1);
-    const arg = db.prisma.scheduledPost.create.mock.calls[0]![0] as { data: Record<string, unknown> };
-    expect(arg.data).toMatchObject({
-      id: "id-1",
+    expect(res).toEqual({ ok: true, draftedIds: ["id-1"], failures: [] });
+    expect(draft).toHaveBeenCalledTimes(1);
+    expect(draft).toHaveBeenCalledWith({
       channel: "instagram",
       caption: "Hello",
+      scheduledAt: "2026-07-10T09:00:00Z",
       scheduledTz: "Asia/Kuala_Lumpur",
-      status: "DRAFT",
-      source: "otto",
-      approvedAt: null,
-      metaTargetId: null,
-      publishMode: "AUTO",
+      media: undefined,
+      firstComment: null,
     });
-    expect(arg.data.scheduledAt).toEqual(new Date("2026-07-10T09:00:00Z"));
-    // never sets a published/publishing status, never a metaPostId
-    expect(arg.data.metaPostId).toBeUndefined();
-    // never publishes, never spends
-    expect(db.prisma.publishAttempt.create).not.toHaveBeenCalled();
-    expect(db.prisma.genJob.create).not.toHaveBeenCalled();
   });
 
-  it("drafts several posts in one call and returns their ids in order", async () => {
+  it("forwards mediaGenerationIds to the port (the owner-scoped media check lives in the service)", async () => {
+    const draft = okDraft();
+    await executeSchedulePosts(
+      { posts: [{ channel: "instagram", caption: "Carousel", scheduledAt: "2026-07-10T09:00:00Z", scheduledTz: "Asia/Kuala_Lumpur", mediaGenerationIds: ["gen-a", "gen-b"] }] },
+      { context: makeCtx(draft) },
+    );
+    expect(draft).toHaveBeenCalledWith(expect.objectContaining({ media: ["gen-a", "gen-b"] }));
+  });
+
+  it("drafts several posts in order; each is exactly one port call", async () => {
+    const draft = okDraft();
     const res = await executeSchedulePosts(
-      {
-        posts: [
-          { channel: "instagram", caption: "Mon", scheduledAt: "2026-07-13T01:00:00Z", scheduledTz: "Asia/Kuala_Lumpur" },
-          { channel: "facebook", caption: "Wed", scheduledAt: "2026-07-15T01:00:00Z", scheduledTz: "Asia/Kuala_Lumpur" },
-        ],
-      },
-      { context: makeCtx() },
+      { posts: [
+        { channel: "instagram", caption: "Mon", scheduledAt: "2026-07-13T01:00:00Z", scheduledTz: "Asia/Kuala_Lumpur" },
+        { channel: "facebook", caption: "Wed", scheduledAt: "2026-07-15T01:00:00Z", scheduledTz: "Asia/Kuala_Lumpur" },
+      ] },
+      { context: makeCtx(draft) },
     );
-    expect(res.draftedIds).toHaveLength(2);
-    expect(db.prisma.scheduledPost.create).toHaveBeenCalledTimes(2);
-  });
-});
-
-describe("executeSchedulePosts — media ordering", () => {
-  it("writes ScheduledPostMedia rows at position 0..n in the given order", async () => {
-    await executeSchedulePosts(
-      {
-        posts: [
-          {
-            channel: "instagram",
-            caption: "Carousel",
-            scheduledAt: "2026-07-10T09:00:00Z",
-            scheduledTz: "Asia/Kuala_Lumpur",
-            mediaGenerationIds: ["gen-a", "gen-b", "gen-c"],
-          },
-        ],
-      },
-      { context: makeCtx() },
-    );
-    const arg = db.prisma.scheduledPost.create.mock.calls[0]![0] as {
-      data: { media?: { create: { generationId: string; position: number }[] } };
-    };
-    expect(arg.data.media!.create).toEqual([
-      expect.objectContaining({ generationId: "gen-a", position: 0 }),
-      expect.objectContaining({ generationId: "gen-b", position: 1 }),
-      expect.objectContaining({ generationId: "gen-c", position: 2 }),
-    ]);
+    expect(res).toMatchObject({ ok: true, draftedIds: ["id-1", "id-2"], failures: [] });
+    expect(draft).toHaveBeenCalledTimes(2);
   });
 
-  it("omits media entirely when no mediaGenerationIds are given", async () => {
-    await executeSchedulePosts(
-      {
-        posts: [
-          { channel: "facebook", caption: "Text only", scheduledAt: "2026-07-10T09:00:00Z", scheduledTz: "Asia/Kuala_Lumpur" },
-        ],
-      },
-      { context: makeCtx() },
-    );
-    const arg = db.prisma.scheduledPost.create.mock.calls[0]![0] as { data: { media?: unknown } };
-    expect(arg.data.media).toBeUndefined();
-  });
-});
-
-describe("executeSchedulePosts — cross-tenant media guard", () => {
-  it("validates every media id against ctx.orgId (owner-scoped, live rows only)", async () => {
-    await executeSchedulePosts(
-      {
-        posts: [
-          {
-            channel: "instagram",
-            caption: "x",
-            scheduledAt: "2026-07-10T09:00:00Z",
-            scheduledTz: "Asia/Kuala_Lumpur",
-            mediaGenerationIds: ["gen-a", "gen-b"],
-          },
-        ],
-      },
-      { context: makeCtx() },
-    );
-    expect(db.prisma.generation.findMany).toHaveBeenCalledWith(
-      expect.objectContaining({
-        where: { id: { in: ["gen-a", "gen-b"] }, ownerId: "org-test", deletedAt: null },
-      }),
-    );
-  });
-
-  it("silently drops a media id the org does NOT own — never persists it, never hard-fails", async () => {
-    // Only gen-a is owned; gen-foreign belongs to another org and must be dropped.
-    db.prisma.generation.findMany.mockResolvedValue([{ id: "gen-a" }]);
+  it("collects a per-post rejection in `failures` and still drafts the valid posts (no batch hard-fail)", async () => {
+    const draft = vi
+      .fn()
+      .mockResolvedValueOnce({ ok: true, id: "id-1" })
+      .mockResolvedValueOnce({ error: "Some selected media isn't yours." });
     const res = await executeSchedulePosts(
-      {
-        posts: [
-          {
-            channel: "instagram",
-            caption: "x",
-            scheduledAt: "2026-07-10T09:00:00Z",
-            scheduledTz: "Asia/Kuala_Lumpur",
-            mediaGenerationIds: ["gen-a", "gen-foreign"],
-          },
-        ],
-      },
-      { context: makeCtx() },
+      { posts: [
+        { channel: "instagram", caption: "good", scheduledAt: "2026-07-10T09:00:00Z", scheduledTz: "Asia/Kuala_Lumpur" },
+        { channel: "instagram", caption: "bad media", scheduledAt: "2026-07-11T09:00:00Z", scheduledTz: "Asia/Kuala_Lumpur", mediaGenerationIds: ["foreign"] },
+      ] },
+      { context: makeCtx(draft) },
     );
-    expect(res.ok).toBe(true);
-    expect(res.droppedMedia).toBe(1);
-    const arg = db.prisma.scheduledPost.create.mock.calls[0]![0] as {
-      data: { media?: { create: { generationId: string; position: number }[] } };
-    };
-    // Only the owned id is persisted, re-numbered to position 0.
-    expect(arg.data.media!.create).toEqual([
-      expect.objectContaining({ generationId: "gen-a", position: 0 }),
-    ]);
+    expect(res).toEqual({
+      ok: true,
+      draftedIds: ["id-1"],
+      failures: [{ index: 1, error: "Some selected media isn't yours." }],
+    });
   });
 
-  it("drops ALL media when none are owned — post is drafted with no media rows", async () => {
-    db.prisma.generation.findMany.mockResolvedValue([]); // nothing owned
-    const res = await executeSchedulePosts(
-      {
-        posts: [
-          {
-            channel: "facebook",
-            caption: "x",
-            scheduledAt: "2026-07-10T09:00:00Z",
-            scheduledTz: "Asia/Kuala_Lumpur",
-            mediaGenerationIds: ["foreign-1", "foreign-2"],
-          },
-        ],
-      },
-      { context: makeCtx() },
-    );
-    expect(res.droppedMedia).toBe(2);
-    const arg = db.prisma.scheduledPost.create.mock.calls[0]![0] as { data: { media?: unknown } };
-    expect(arg.data.media).toBeUndefined();
-  });
-});
-
-describe("executeSchedulePosts — tenant scoping", () => {
-  it("scopes writes to ctx.orgId / ctx.projectId and IGNORES any owner smuggled in args", async () => {
+  it("never passes an owner/project id to the port — identity is the ctx/service's, not the model's", async () => {
+    const draft = okDraft();
     await executeSchedulePosts(
-      {
-        // A malicious/hallucinated ownerId in the payload must be ignored — identity is from ctx.
-        posts: [
-          {
-            channel: "instagram",
-            caption: "Scoped",
-            scheduledAt: "2026-07-10T09:00:00Z",
-            scheduledTz: "Asia/Kuala_Lumpur",
-            // eslint-disable-next-line @typescript-eslint/no-explicit-any
-            ...({ ownerId: "org-EVIL", projectId: "proj-EVIL" } as any),
-          },
-        ],
-      },
-      { context: makeCtx() },
+      { posts: [{
+        channel: "instagram", caption: "Scoped", scheduledAt: "2026-07-10T09:00:00Z", scheduledTz: "Asia/Kuala_Lumpur",
+        // a hallucinated owner in the payload must never reach the port
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        ...({ ownerId: "org-EVIL", projectId: "proj-EVIL" } as any),
+      }] },
+      { context: makeCtx(draft) },
     );
-    const arg = db.prisma.scheduledPost.create.mock.calls[0]![0] as { data: Record<string, unknown> };
-    expect(arg.data.ownerId).toBe("org-test");
-    expect(arg.data.projectId).toBe("proj-test");
+    const arg = draft.mock.calls[0]![0];
+    expect(arg).not.toHaveProperty("ownerId");
+    expect(arg).not.toHaveProperty("projectId");
+  });
+
+  it("degrades gracefully when the schedule port is absent (minimal worker verdict ctx)", async () => {
+    const ctx = { orgId: "o", projectId: "p", threadId: "t" } as unknown as OttoContext;
+    const res = await executeSchedulePosts(
+      { posts: [{ channel: "instagram", caption: "x", scheduledAt: "2026-07-10T09:00:00Z", scheduledTz: "Asia/Kuala_Lumpur" }] },
+      { context: ctx },
+    );
+    expect(res).toEqual({ ok: false, error: expect.any(String) });
   });
 });

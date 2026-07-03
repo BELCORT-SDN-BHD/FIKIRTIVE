@@ -113,3 +113,12 @@ export {
   allowedNextStates,
   type ScheduledPostStatus,
 } from "./schedule-state.js";
+export {
+  SCHEDULE_CHANNELS,
+  SCHEDULE_CHANNEL_CAPS,
+  isScheduleChannel,
+  validateScheduleDraft,
+  type ScheduleChannel,
+  type ScheduleDraftInput,
+  type NormalizedScheduleDraft,
+} from "./schedule-draft.js";
