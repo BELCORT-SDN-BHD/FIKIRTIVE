@@ -699,7 +699,7 @@ export const META_EXPERTISE_KB: MetaExpertiseKB = {
         },
         {
           "url": "https://www.facebook.com/business/help/164749007013531",
-          "title": "Best Practices for Multi-country Lookalike Audiences | Meta Business Help Center",
+          "title": "About Lookalike Audiences | Meta Business Help Center",
           "retrievedAt": "2026-07-03"
         }
       ]
@@ -725,11 +725,6 @@ export const META_EXPERTISE_KB: MetaExpertiseKB = {
           "url": "https://www.facebook.com/business/help/273363992030035",
           "title": "About Specific Targeting | Meta Business Help Center",
           "retrievedAt": "2026-07-03"
-        },
-        {
-          "url": "https://www.facebook.com/business/help/273363992030035",
-          "title": "About broad targeting | Meta Business Help Center",
-          "retrievedAt": "2026-07-03"
         }
       ]
     },
@@ -740,7 +735,7 @@ export const META_EXPERTISE_KB: MetaExpertiseKB = {
       "citations": [
         {
           "url": "https://www.facebook.com/business/help/273363992030035",
-          "title": "About Advantage+ Audience | Meta Business Help Center",
+          "title": "About Specific Targeting | Meta Business Help Center",
           "retrievedAt": "2026-07-03"
         },
         {
@@ -1005,7 +1000,7 @@ export const META_EXPERTISE_KB: MetaExpertiseKB = {
       "citations": [
         {
           "url": "https://www.facebook.com/business/ads/ad-auction",
-          "title": "Facebook Ad Auctions Explained | Meta for Business",
+          "title": "Facebook Ad Auctions Explained",
           "retrievedAt": "2026-07-03"
         }
       ]
