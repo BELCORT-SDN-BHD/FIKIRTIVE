@@ -3,11 +3,11 @@
 > 生成:2026-07-03 深度研究 Workflow(7 域研究 → 逐条对抗核实 → 归并)。产物 = `packages/otto/src/knowledge/meta-expertise.data.ts`(带引用知识模块)。**本文件是 P0 Task 3 的留痕;知识库本体在代码里,由 `validateKnowledgeBase` 守引用地板。**
 
 ## 方法(反捏造铁律落地)
-- **只用公开官方/可核对资料**:Meta Business Help Center、Meta for Business best-practice、ad-objectives 页、官方 case study,少量可核对第三方页。**门控课程正文(需报名)拿不到,不收。**
+- **只用公开官方/可核对资料**:Meta Business Help Center、Meta for Business best-practice、ad-objectives 页、官方 case study。构建时曾含一处可核对第三方页(get-ryze.ai),已在 **2026-07-03 引用复核 follow-up**(见文末)换成官方 Engagement 目标页,现全部为 Meta 第一方源。**门控课程正文(需报名)拿不到,不收。**
 - **逐条对抗核实**:每条候选 claim/benchmark 由独立 verifier 打开引用 URL 核对(源支持 + 非逐字复制 + 未过期),不过关即弃。
 - **数字型 benchmark 只在可访问正文中被证实才保留**,否则宁缺不造。
 
-## 覆盖(逐域条数,共 56 条 / 64 个源)
+## 覆盖(逐域条数,共 56 条 / 63 个源)
 
 | 域 | 条数 |
 |---|---|
@@ -19,14 +19,15 @@
 | algorithm | 3 |
 | diagnosis | 8 |
 
-## 保留的可核对 benchmark(6 条)
+## 保留的可核对 benchmark(5 条)
 
 - **cost-per-lead and lead volume**: 60% lower CPL and 125% more leads (instant forms + website forms strategy) — `objectives-leads-instant-forms-performance`
 - **Cost per result improvement** (conversions): 34.5% lower — `creative-reels-vertical-9-16-aspect-ratio`
 - **Engagement perception** (engagement): 79% prefer vertical format — `creative-vertical-video-consumer-preference`
 - **Cost per action reduction** (conversions): 4.8% lower with vertical sound-on video — `creative-audio-quality-reels-conversion`
 - **learning_phase_stabilization** (stable_cost_prediction): ~50 optimization events per 7 days — `algorithm-learning-phase-mechanism`
-- **Quality Ranking Percentile**: Bottom 20% (Below Average), 35th-55th percentile (Average), 55th+ (Above Average) — `diagnosis-quality-ranking-impact`
+
+> 原第 6 条 **Quality Ranking Percentile**(`diagnosis-quality-ranking-impact`)已在 2026-07-03 引用复核中软化下架:具体百分位分档无法第一方复核(官方页仍只返回标题)、第三方页之间互相矛盾且不署 Meta 出处,故删去 benchmark 与具体百分比,仅保留定性描述。详见文末 follow-up 与下方诚实缺口。
 
 ## 诚实缺口(核实不到 → 一律丢弃,不臆造)
 
@@ -40,6 +41,7 @@
 - Vertical phone screen-time (90%) × engagement — unverifiable, dropped from creative
 - Learning-phase daily pacing variance (±25%) × delivery — could not be confirmed from pacing docs, dropped from algorithm
 - Combine-adsets cost-per-purchase improvement (68%) and creative-quality sales lift (12%) × conversions — appeared fabricated / uncitable, dropped from diagnosis
+- Quality-ranking percentile tiers (Bottom 20% / 35th-55th / 55th+) × diagnosis — **软化(2026-07-03 复核)**:官方 About Quality Ranking 页仍只返回标题无正文,第三方页彼此矛盾(Sprinklr 记 Average=35th-55th,wittelsbach 记 Above=top 35%/Average=middle 35-65%)且均声明非 Meta 官方口径,具体百分位无法证实。`diagnosis-quality-ranking-impact` 保留定性 claim(Below/Average/Above Average 三档、用户反馈+低质属性信号、Below Average 对应更高投放成本),删去具体百分比与 benchmark 字段,不臆造
 
 ## 覆盖边界说明
 
@@ -49,12 +51,11 @@
 
 所有 claim 均为对 Meta 官方文档/帮助中心及少量第三方页面要点的提炼与改写(distilled),非逐字复制原文;每条 entry 至少保留一条可核对的 citation,数字型 benchmark 仅在可访问正文中被证实时才保留。
 
-## 源(master list,64)
+## 源(master list,63)
 
 - [Awareness Ad Objective: Improve Brand Awareness & Reach](https://www.facebook.com/business/ads/ad-objectives/awareness)
 - [Traffic Ad Objective: Grow Website Traffic & Reach New Visitors](https://www.facebook.com/business/ads/ad-objectives/traffic)
 - [Using Engagement Ads Objective in Your Advertising Campaigns](https://www.facebook.com/business/ads/ad-objectives/engagement)
-- [Meta Ads Campaign Objectives Explained (2026): All 6 + When to Use](https://www.get-ryze.ai/blog/meta-ads-campaign-objectives-explained)
 - [Generate Leads with Online Forms](https://www.facebook.com/business/ads/ad-objectives/lead-generation/lead-ads-with-forms)
 - [Meta Advantage+ App Campaigns: Increase App Installs with Ads](https://www.facebook.com/business/ads/meta-advantage-plus/app-campaigns)
 - [Facebook Ad Auctions Explained](https://www.facebook.com/business/ads/ad-auction)
@@ -116,3 +117,12 @@
 - [View Meta ad results by platform, device and placement in Ads Manager | Meta Business Help Center](https://www.facebook.com/business/help/1098535543548363)
 - [About landing page view optimization | Meta Business Help Center](https://www.facebook.com/business/help/417293491972212)
 
+## 2026-07-03 引用复核 follow-up(P0 整片接地评审的两处非阻断改进)
+
+复核只做接地(grounding)修正,不改动实质 claim 文字之外的任何东西;凡无法核对的一律软化/删除,绝不臆造。
+
+1. **`objectives-engagement-sub-objectives` 换官方源(第三方 → 第一方)。** 原引 get-ryze.ai 博客(全库唯一非第一方源)。复核时官方 Engagement 目标页 `facebook.com/business/ads/ad-objectives/engagement` 可核对,正文明列 messages / video views / post engagement(另有 event responses),支持该 claim。已把 citation 换成该官方页;get-ryze.ai 同时从 master source list 删除(64 → 63),知识库现 100% Meta 第一方源。claim 未改。
+
+2. **`diagnosis-quality-ranking-impact` 软化具体百分位分档。** 原 claim/benchmark 断言 Bottom 20% = Below Average、35th-55th = Average、55th+ = Above Average。复核结论:官方 About Quality Ranking 页(含 en-gb / ?locale=en_US 变体)仍只返回标题、无正文;可搜到的第三方页彼此矛盾(Sprinklr:Average=35th-55th;wittelsbach:Above=top 35%、Average=middle 35-65%)且都声明这些百分位是各自解读、非 Meta 官方口径;该分档作为区间划分本身也不自洽(20-35 与 55-56 留空档)。因无第一方来源可证实、且不存在能证实该分档的可加引用,遂删去具体百分比与 `benchmark` 字段,claim 软化为定性表述(Below/Average/Above Average 三档、用户反馈+低质属性信号如 engagement bait/sensationalized language/withholding information、Below Average 对应更高投放成本 CPM/CPC),保留原 About Quality Ranking 官方 citation。可核对 benchmark 计数 6 → 5(仍 ≥ 测试地板 5)。
+
+变更后仍 `validateKnowledgeBase` 全绿、`meta-expertise.test.ts` 17 测试通过、knowledge/ 目录 typecheck 干净。

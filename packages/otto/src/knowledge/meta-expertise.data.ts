@@ -27,11 +27,6 @@ export const META_EXPERTISE_KB: MetaExpertiseKB = {
       "retrievedAt": "2026-07-03"
     },
     {
-      "url": "https://www.get-ryze.ai/blog/meta-ads-campaign-objectives-explained",
-      "title": "Meta Ads Campaign Objectives Explained (2026): All 6 + When to Use",
-      "retrievedAt": "2026-07-03"
-    },
-    {
       "url": "https://www.facebook.com/business/ads/ad-objectives/lead-generation/lead-ads-with-forms",
       "title": "Generate Leads with Online Forms",
       "retrievedAt": "2026-07-03"
@@ -387,8 +382,8 @@ export const META_EXPERTISE_KB: MetaExpertiseKB = {
       "claim": "Engagement objective supports three sub-goals: Post Engagement (optimizes for feed interactions), Video Views (optimizes for video playback), and Messages (optimizes for direct messaging conversations).",
       "citations": [
         {
-          "url": "https://www.get-ryze.ai/blog/meta-ads-campaign-objectives-explained",
-          "title": "Meta Ads Campaign Objectives Explained (2026): All 6 + When to Use",
+          "url": "https://www.facebook.com/business/ads/ad-objectives/engagement",
+          "title": "Using Engagement Ads Objective in Your Advertising Campaigns",
           "retrievedAt": "2026-07-03"
         }
       ]
@@ -1080,12 +1075,8 @@ export const META_EXPERTISE_KB: MetaExpertiseKB = {
     {
       "id": "diagnosis-quality-ranking-impact",
       "domain": "diagnosis",
-      "claim": "Quality ranking categorizes ad creative on percentile tiers (Bottom 20% = Below Average, 35th-55th percentile = Average, above 55th = Above Average) based on perceived quality signals like user feedback and low-quality attributes. Below Average quality status directly correlates with higher delivery costs.",
+      "claim": "Quality ranking rates an ad's perceived quality relative to ads competing for the same audience as Below Average, Average or Above Average, based on signals like user feedback (e.g. hiding or reporting the ad) and low-quality attributes such as engagement bait, sensationalized language or withholding information. A Below Average quality ranking is associated with higher delivery costs (higher CPM/CPC), making the creative a candidate for improvement.",
       "appliesWhen": "Ad showing Below Average quality ranking in Ads Manager, higher than expected CPC/CPM despite decent CTR, quality score visible in last 35 days",
-      "benchmark": {
-        "metric": "Quality Ranking Percentile",
-        "range": "Bottom 20% (Below Average), 35th-55th percentile (Average), 55th+ (Above Average)"
-      },
       "citations": [
         {
           "url": "https://www.facebook.com/business/help/303639570334185",
