@@ -5,6 +5,7 @@ import type { OttoContext } from "../context.js";
 vi.mock("@fikirtive/db", () => ({
   prisma: {
     scheduledPost: { create: vi.fn() },
+    generation: { findMany: vi.fn() }, // owner-scoped media-ownership validation
     genJob: { create: vi.fn() }, // must never be called — this is a $0 skill
     publishAttempt: { create: vi.fn() }, // must never be called — this NEVER publishes
   },
@@ -31,6 +32,7 @@ function makeCtx(): OttoContext {
 let db: {
   prisma: {
     scheduledPost: { create: ReturnType<typeof vi.fn> };
+    generation: { findMany: ReturnType<typeof vi.fn> };
     genJob: { create: ReturnType<typeof vi.fn> };
     publishAttempt: { create: ReturnType<typeof vi.fn> };
   };
@@ -40,6 +42,11 @@ beforeEach(async () => {
   idCounter = 0;
   db = (await import("@fikirtive/db")) as unknown as typeof db;
   db.prisma.scheduledPost.create.mockResolvedValue({});
+  // Default: every requested media id is owned (echo the queried ids back). Tests that
+  // exercise the cross-tenant drop override this to return only the owned subset.
+  db.prisma.generation.findMany.mockImplementation(async (args: { where: { id: { in: string[] } } }) =>
+    args.where.id.in.map((id) => ({ id })),
+  );
 });
 
 describe("schedulePosts gate", () => {
@@ -62,7 +69,7 @@ describe("executeSchedulePosts — drafts only", () => {
       { context: makeCtx() },
     );
 
-    expect(res).toEqual({ ok: true, draftedIds: ["id-1"] });
+    expect(res).toEqual({ ok: true, draftedIds: ["id-1"], droppedMedia: 0 });
     expect(db.prisma.scheduledPost.create).toHaveBeenCalledTimes(1);
     const arg = db.prisma.scheduledPost.create.mock.calls[0]![0] as { data: Record<string, unknown> };
     expect(arg.data).toMatchObject({
@@ -134,6 +141,79 @@ describe("executeSchedulePosts — media ordering", () => {
       },
       { context: makeCtx() },
     );
+    const arg = db.prisma.scheduledPost.create.mock.calls[0]![0] as { data: { media?: unknown } };
+    expect(arg.data.media).toBeUndefined();
+  });
+});
+
+describe("executeSchedulePosts — cross-tenant media guard", () => {
+  it("validates every media id against ctx.orgId (owner-scoped, live rows only)", async () => {
+    await executeSchedulePosts(
+      {
+        posts: [
+          {
+            channel: "instagram",
+            caption: "x",
+            scheduledAt: "2026-07-10T09:00:00Z",
+            scheduledTz: "Asia/Kuala_Lumpur",
+            mediaGenerationIds: ["gen-a", "gen-b"],
+          },
+        ],
+      },
+      { context: makeCtx() },
+    );
+    expect(db.prisma.generation.findMany).toHaveBeenCalledWith(
+      expect.objectContaining({
+        where: { id: { in: ["gen-a", "gen-b"] }, ownerId: "org-test", deletedAt: null },
+      }),
+    );
+  });
+
+  it("silently drops a media id the org does NOT own — never persists it, never hard-fails", async () => {
+    // Only gen-a is owned; gen-foreign belongs to another org and must be dropped.
+    db.prisma.generation.findMany.mockResolvedValue([{ id: "gen-a" }]);
+    const res = await executeSchedulePosts(
+      {
+        posts: [
+          {
+            channel: "instagram",
+            caption: "x",
+            scheduledAt: "2026-07-10T09:00:00Z",
+            scheduledTz: "Asia/Kuala_Lumpur",
+            mediaGenerationIds: ["gen-a", "gen-foreign"],
+          },
+        ],
+      },
+      { context: makeCtx() },
+    );
+    expect(res.ok).toBe(true);
+    expect(res.droppedMedia).toBe(1);
+    const arg = db.prisma.scheduledPost.create.mock.calls[0]![0] as {
+      data: { media?: { create: { generationId: string; position: number }[] } };
+    };
+    // Only the owned id is persisted, re-numbered to position 0.
+    expect(arg.data.media!.create).toEqual([
+      expect.objectContaining({ generationId: "gen-a", position: 0 }),
+    ]);
+  });
+
+  it("drops ALL media when none are owned — post is drafted with no media rows", async () => {
+    db.prisma.generation.findMany.mockResolvedValue([]); // nothing owned
+    const res = await executeSchedulePosts(
+      {
+        posts: [
+          {
+            channel: "facebook",
+            caption: "x",
+            scheduledAt: "2026-07-10T09:00:00Z",
+            scheduledTz: "Asia/Kuala_Lumpur",
+            mediaGenerationIds: ["foreign-1", "foreign-2"],
+          },
+        ],
+      },
+      { context: makeCtx() },
+    );
+    expect(res.droppedMedia).toBe(2);
     const arg = db.prisma.scheduledPost.create.mock.calls[0]![0] as { data: { media?: unknown } };
     expect(arg.data.media).toBeUndefined();
   });

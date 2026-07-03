@@ -37,13 +37,33 @@ type SchedulePostsInput = z.infer<typeof params>;
 export async function executeSchedulePosts(
   input: SchedulePostsInput,
   runContext: Pick<RunContext<OttoContext>, "context">,
-): Promise<{ ok: true; draftedIds: string[] }> {
+): Promise<{ ok: true; draftedIds: string[]; droppedMedia: number }> {
   if (!runContext) throw new Error("OttoContext required");
   const ctx = runContext.context as OttoContext;
 
+  // Cross-tenant media guard: only reuse Generation media the SESSION org (ctx.orgId) owns.
+  // Resolve every requested id across all posts in ONE owner-scoped query, then keep only the
+  // owned ones (re-numbering position). A drafting skill must never HARD-fail on a bad id, so
+  // foreign/unknown ids are silently dropped (and counted) — never persisted onto the draft.
+  const requestedIds = [...new Set(input.posts.flatMap((p) => p.mediaGenerationIds ?? []))];
+  let ownedIds = new Set<string>();
+  if (requestedIds.length) {
+    const owned = await prisma.generation.findMany({
+      where: { id: { in: requestedIds }, ownerId: ctx.orgId, deletedAt: null },
+      select: { id: true },
+    });
+    ownedIds = new Set(owned.map((g) => g.id));
+  }
+
   const draftedIds: string[] = [];
+  let droppedMedia = 0;
   for (const p of input.posts) {
     const id = newId();
+    const media = (p.mediaGenerationIds ?? []).filter((gid) => {
+      const keep = ownedIds.has(gid);
+      if (!keep) droppedMedia++;
+      return keep;
+    });
     // DRAFTS ONLY: status DRAFT, source "otto", approvedAt/metaTargetId/metaPostId NULL.
     // Never sets approvedAt, never advances status, never publishes, never spends.
     await prisma.scheduledPost.create({
@@ -61,9 +81,9 @@ export async function executeSchedulePosts(
         publishMode: "AUTO",
         source: "otto",
         approvedAt: null,
-        media: p.mediaGenerationIds?.length
+        media: media.length
           ? {
-              create: p.mediaGenerationIds.map((generationId, position) => ({
+              create: media.map((generationId, position) => ({
                 id: newId(),
                 generationId,
                 position,
@@ -75,7 +95,7 @@ export async function executeSchedulePosts(
     draftedIds.push(id);
   }
 
-  return { ok: true, draftedIds };
+  return { ok: true, draftedIds, droppedMedia };
 }
 
 export const schedulePostsSkill = defineOttoSkill({

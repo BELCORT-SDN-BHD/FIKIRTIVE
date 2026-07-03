@@ -4,6 +4,8 @@ import { prisma } from "@fikirtive/db";
 import { newId, canTransition, type ScheduledPostStatus } from "@fikirtive/core";
 import { requireOwner } from "./auth-guard";
 import { fetchOwnerPages } from "./meta-pages";
+import { channelRegistry } from "./channels/registry";
+import type { ChannelId } from "./channels/types";
 
 // Channels this slice supports — code-validated (mirrors the ScheduledPost.channel comment),
 // not a PG enum. IG/FB only until App Review adds more.
@@ -78,6 +80,18 @@ export async function createScheduledPost(
   const firstComment = typeof input?.firstComment === "string" && input.firstComment.trim() ? input.firstComment : null;
   const metaTargetId = typeof input?.metaTargetId === "string" && input.metaTargetId ? input.metaTargetId : null;
 
+  // Cross-tenant media guard: every media id must be a Generation the SESSION owner owns
+  // (never trust the client). A foreign id here would persist another org's asset onto this
+  // post — reject the create outright rather than silently drop, so the owner picks again.
+  if (media.length) {
+    const owned = await prisma.generation.findMany({
+      where: { id: { in: media }, ownerId: gate.ownerId, deletedAt: null },
+      select: { id: true },
+    });
+    const ownedIds = new Set(owned.map((g) => g.id));
+    if (media.some((id) => !ownedIds.has(id))) return { error: "Some selected media isn't yours." };
+  }
+
   try {
     const id = newId();
     await prisma.scheduledPost.create({
@@ -119,15 +133,21 @@ export async function updateScheduledPost(
   if ("error" in gate) return gate;
 
   const data: Record<string, unknown> = {};
+  // A MATERIAL edit changes what would be published (caption/scheduledAt/firstComment/metaTargetId).
+  // scheduledTz alone is a display detail, not material. Tracked so an edit to an already-approved
+  // (SCHEDULED) post can revoke consent below — approval = consent to publish (spec §五).
+  let material = false;
   if (patch?.caption !== undefined) {
     const c = typeof patch.caption === "string" ? patch.caption.trim() : "";
     if (!c) return { error: "A post needs a caption." };
     data.caption = c;
+    material = true;
   }
   if (patch?.scheduledAt !== undefined) {
     const d = typeof patch.scheduledAt === "string" ? toDate(patch.scheduledAt) : null;
     if (!d) return { error: "Pick a valid date and time." };
     data.scheduledAt = d;
+    material = true;
   }
   if (patch?.scheduledTz !== undefined) {
     const tz = typeof patch.scheduledTz === "string" ? patch.scheduledTz.trim() : "";
@@ -136,11 +156,28 @@ export async function updateScheduledPost(
   }
   if (patch?.firstComment !== undefined) {
     data.firstComment = typeof patch.firstComment === "string" && patch.firstComment.trim() ? patch.firstComment : null;
+    material = true;
   }
   if (patch?.metaTargetId !== undefined) {
     data.metaTargetId = typeof patch.metaTargetId === "string" && patch.metaTargetId ? patch.metaTargetId : null;
+    material = true;
   }
   if (Object.keys(data).length === 0) return { error: "Nothing to update." };
+
+  // Re-consent gate: a material edit to an approved (SCHEDULED) post revokes its approval —
+  // it drops back to DRAFT with approvedAt cleared, so the owner must re-approve before it
+  // re-enters the publish queue. Edits stay allowed; they just require fresh consent.
+  if (material) {
+    const current = await prisma.scheduledPost.findFirst({
+      where: { id, ownerId: gate.ownerId, deletedAt: null },
+      select: { status: true },
+    });
+    if (!current) return { error: "Post not found." };
+    if (current.status === "SCHEDULED") {
+      data.status = "DRAFT";
+      data.approvedAt = null;
+    }
+  }
 
   try {
     const { count } = await prisma.scheduledPost.updateMany({
@@ -248,4 +285,24 @@ export async function listScheduledPosts(
     select: LIST_SELECT,
   });
   return rows as unknown as ScheduledPostRow[];
+}
+
+export type OwnerTarget = { id: string; name: string; channel: ChannelId };
+
+/** Owner-scoped list of connectable publish targets for the composer's account picker.
+ *  Derives from the owner's OWN connected pages (fetchOwnerPages(gate.ownerId), the same
+ *  owner-scoped source the approve path validates against) and cross-joins with each
+ *  supported channel via the registry. $0 read. Returns [] (never throws) when the owner
+ *  isn't connected / needs a reconnect / needs the page scope, so the UI shows a Connect
+ *  prompt instead of an error. */
+export async function listOwnerTargets(): Promise<OwnerTarget[]> {
+  const gate = await requireOwner();
+  if ("error" in gate) return [];
+
+  const out: OwnerTarget[] = [];
+  for (const channel of Object.values(channelRegistry)) {
+    const targets = await channel.listTargets(gate.ownerId);
+    for (const t of targets) out.push({ id: t.id, name: t.name, channel: channel.id });
+  }
+  return out;
 }

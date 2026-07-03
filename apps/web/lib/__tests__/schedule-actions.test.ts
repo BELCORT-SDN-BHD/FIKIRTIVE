@@ -13,14 +13,20 @@ const {
   mockFindFirst,
   mockCreate,
   mockUpdateMany,
+  mockGenFindMany,
   mockFetchOwnerPages,
+  mockIgListTargets,
+  mockFbListTargets,
 } = vi.hoisted(() => ({
   mockRequireOwner: vi.fn(),
   mockFindMany: vi.fn(),
   mockFindFirst: vi.fn(),
   mockCreate: vi.fn(),
   mockUpdateMany: vi.fn(),
+  mockGenFindMany: vi.fn(),
   mockFetchOwnerPages: vi.fn(),
+  mockIgListTargets: vi.fn(),
+  mockFbListTargets: vi.fn(),
 }));
 
 vi.mock("@/lib/auth-guard", () => ({ requireOwner: mockRequireOwner }));
@@ -32,9 +38,17 @@ vi.mock("@fikirtive/db", () => ({
       create: mockCreate,
       updateMany: mockUpdateMany,
     },
+    generation: { findMany: mockGenFindMany },
   },
 }));
 vi.mock("../meta-pages", () => ({ fetchOwnerPages: mockFetchOwnerPages }));
+// listOwnerTargets walks the channel registry — mock its two adapters' listTargets.
+vi.mock("../channels/registry", () => ({
+  channelRegistry: {
+    instagram: { id: "instagram", listTargets: mockIgListTargets },
+    facebook: { id: "facebook", listTargets: mockFbListTargets },
+  },
+}));
 vi.mock("next/cache", () => ({ revalidatePath: vi.fn() }));
 
 // newId: deterministic so created ids are predictable in assertions.
@@ -50,6 +64,7 @@ import {
   approveScheduledPost,
   cancelScheduledPost,
   listScheduledPosts,
+  listOwnerTargets,
 } from "../schedule-actions";
 
 const OWNER = "o1";
@@ -60,6 +75,13 @@ beforeEach(() => {
   idCounter = 0;
   mockRequireOwner.mockResolvedValue({ ownerId: OWNER, email: "a@b.co" });
   mockFetchOwnerPages.mockResolvedValue({ pages: [{ id: "page-1", name: "My Page" }] });
+  // Default: every requested media id is owned (echo the queried ids back). Cross-tenant
+  // tests override this to return only the owned subset.
+  mockGenFindMany.mockImplementation(async (args: { where: { id: { in: string[] } } }) =>
+    args.where.id.in.map((id) => ({ id })),
+  );
+  mockIgListTargets.mockResolvedValue([]);
+  mockFbListTargets.mockResolvedValue([]);
 });
 
 // --- createScheduledPost ----------------------------------------------------
@@ -153,12 +175,43 @@ describe("createScheduledPost", () => {
     expect(res).toEqual({ error: "Not authorized." });
     expect(mockCreate).not.toHaveBeenCalled();
   });
+
+  it("validates media ids belong to the session owner (owner-scoped, live rows)", async () => {
+    mockCreate.mockResolvedValue({});
+    await createScheduledPost({
+      channel: "instagram", caption: "x", scheduledAt: AT, scheduledTz: "UTC",
+      media: ["gen-a", "gen-b"],
+    });
+    expect(mockGenFindMany).toHaveBeenCalledWith({
+      where: { id: { in: ["gen-a", "gen-b"] }, ownerId: OWNER, deletedAt: null },
+      select: { id: true },
+    });
+  });
+
+  it("rejects the create when ANY media id isn't the owner's, writes nothing", async () => {
+    // Only gen-a is owned; gen-foreign belongs to another org → whole create rejected.
+    mockGenFindMany.mockResolvedValue([{ id: "gen-a" }]);
+    const res = await createScheduledPost({
+      channel: "instagram", caption: "x", scheduledAt: AT, scheduledTz: "UTC",
+      media: ["gen-a", "gen-foreign"],
+    });
+    expect(res).toHaveProperty("error");
+    expect(mockCreate).not.toHaveBeenCalled();
+  });
+
+  it("does not query generations when no media is attached", async () => {
+    mockCreate.mockResolvedValue({});
+    await createScheduledPost({ channel: "facebook", caption: "x", scheduledAt: AT, scheduledTz: "UTC" });
+    expect(mockGenFindMany).not.toHaveBeenCalled();
+    expect(mockCreate).toHaveBeenCalledTimes(1);
+  });
 });
 
 // --- updateScheduledPost ----------------------------------------------------
 
 describe("updateScheduledPost", () => {
-  it("patches caption/scheduledAt owner-scoped, live rows only", async () => {
+  it("patches caption/scheduledAt owner-scoped, live rows only (DRAFT keeps its status)", async () => {
+    mockFindFirst.mockResolvedValue({ status: "DRAFT" }); // consent gate reads current status
     mockUpdateMany.mockResolvedValue({ count: 1 });
     const res = await updateScheduledPost("p1", { caption: "new", scheduledAt: AT });
     expect(res).toEqual({ ok: true });
@@ -168,15 +221,38 @@ describe("updateScheduledPost", () => {
     });
   });
 
-  it("cannot touch another owner's post — count 0 → error, treated as not found", async () => {
-    mockUpdateMany.mockResolvedValue({ count: 0 });
+  it("cannot touch another owner's post — status load misses → not found, no write", async () => {
+    mockFindFirst.mockResolvedValue(null); // owner-scoped status load misses the foreign row
     const res = await updateScheduledPost("someone-elses", { caption: "hijack" });
     expect(res).toHaveProperty("error");
-    // the where clause is always owner-scoped (isolation enforced at the query)
-    expect(mockUpdateMany).toHaveBeenCalledWith({
-      where: { id: "someone-elses", ownerId: OWNER, deletedAt: null },
-      data: { caption: "hijack" },
-    });
+    // the status load is always owner-scoped (isolation enforced at the query)
+    expect(mockFindFirst).toHaveBeenCalledWith(
+      expect.objectContaining({ where: { id: "someone-elses", ownerId: OWNER, deletedAt: null } }),
+    );
+    expect(mockUpdateMany).not.toHaveBeenCalled();
+  });
+
+  it("re-consent gate: a MATERIAL edit to a SCHEDULED post resets it to DRAFT + clears approvedAt", async () => {
+    mockFindFirst.mockResolvedValue({ status: "SCHEDULED" });
+    mockUpdateMany.mockResolvedValue({ count: 1 });
+    const res = await updateScheduledPost("p1", { caption: "changed my mind" });
+    expect(res).toEqual({ ok: true });
+    const call = mockUpdateMany.mock.calls[0][0];
+    expect(call.where).toEqual({ id: "p1", ownerId: OWNER, deletedAt: null });
+    expect(call.data).toMatchObject({ caption: "changed my mind", status: "DRAFT", approvedAt: null });
+  });
+
+  it("a NON-material edit (scheduledTz only) to a SCHEDULED post keeps it SCHEDULED", async () => {
+    mockFindFirst.mockResolvedValue({ status: "SCHEDULED" });
+    mockUpdateMany.mockResolvedValue({ count: 1 });
+    const res = await updateScheduledPost("p1", { scheduledTz: "UTC" });
+    expect(res).toEqual({ ok: true });
+    // tz-only isn't material → no status load, no consent reset
+    expect(mockFindFirst).not.toHaveBeenCalled();
+    const call = mockUpdateMany.mock.calls[0][0];
+    expect(call.data).toEqual({ scheduledTz: "UTC" });
+    expect(call.data.status).toBeUndefined();
+    expect(call.data.approvedAt).toBeUndefined();
   });
 
   it("rejects an empty patch, writes nothing", async () => {
@@ -366,5 +442,34 @@ describe("listScheduledPosts", () => {
     mockRequireOwner.mockResolvedValue({ error: "Not authorized." });
     expect(await listScheduledPosts()).toEqual([]);
     expect(mockFindMany).not.toHaveBeenCalled();
+  });
+});
+
+// --- listOwnerTargets -------------------------------------------------------
+
+describe("listOwnerTargets", () => {
+  it("returns the owner's connectable targets per channel, owner-scoped", async () => {
+    mockIgListTargets.mockResolvedValue([{ id: "page-1", name: "My Page" }]);
+    mockFbListTargets.mockResolvedValue([{ id: "page-1", name: "My Page" }]);
+    const res = await listOwnerTargets();
+    // each adapter is asked for the SESSION owner's targets, never a client id
+    expect(mockIgListTargets).toHaveBeenCalledWith(OWNER);
+    expect(mockFbListTargets).toHaveBeenCalledWith(OWNER);
+    expect(res).toEqual([
+      { id: "page-1", name: "My Page", channel: "instagram" },
+      { id: "page-1", name: "My Page", channel: "facebook" },
+    ]);
+  });
+
+  it("returns [] when the owner has no connected targets (Connect prompt case)", async () => {
+    // adapters return [] on notConnected/needsReconnect/needsPageScope (see fetchOwnerPages mapping)
+    expect(await listOwnerTargets()).toEqual([]);
+  });
+
+  it("returns [] when not signed in, queries no channel", async () => {
+    mockRequireOwner.mockResolvedValue({ error: "Not authorized." });
+    expect(await listOwnerTargets()).toEqual([]);
+    expect(mockIgListTargets).not.toHaveBeenCalled();
+    expect(mockFbListTargets).not.toHaveBeenCalled();
   });
 });
