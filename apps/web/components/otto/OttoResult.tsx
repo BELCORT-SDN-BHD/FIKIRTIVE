@@ -197,14 +197,18 @@ export function OttoResult({ payload, onTweak, sourceCardId, onMakeAnother }: Ot
   // "Make another" — spawns a fresh variant card via coworkVaryCard.
   const [makingAnother, setMakingAnother] = useState(false);
   const [makeAnotherError, setMakeAnotherError] = useState<string | null>(null);
+  const [makeAnotherSuccess, setMakeAnotherSuccess] = useState(false);
 
   async function makeAnother() {
     if (!sourceCardId || makingAnother) return;
     setMakingAnother(true);
     setMakeAnotherError(null);
+    setMakeAnotherSuccess(false);
     try {
       const res = await coworkVaryCard({ cardId: sourceCardId });
       if (res && "error" in res) { setMakeAnotherError(res.error); return; }
+      setMakeAnotherSuccess(true);
+      setTimeout(() => setMakeAnotherSuccess(false), 2500);
       onMakeAnother?.();
     } catch {
       setMakeAnotherError("Couldn't queue another — please try again.");
@@ -295,10 +299,15 @@ export function OttoResult({ payload, onTweak, sourceCardId, onMakeAnother }: Ot
           {sourceCardId && (
             <Button variant="ghost" disabled={makingAnother} onClick={makeAnother}>
               <RefreshCw size={18} />
-              {makingAnother ? "Queuing…" : "Make another"}
+              {makingAnother ? "Queuing…" : makeAnotherSuccess ? "Added" : "Make another"}
             </Button>
           )}
         </div>
+        {makeAnotherSuccess && (
+          <div role="status" className="mt-2 text-[0.875rem] text-[var(--success-soft-foreground)]">
+            Added another card to this conversation.
+          </div>
+        )}
         {makeAnotherError && (
           <div role="alert" className="mt-2 text-[0.875rem] text-[var(--error-soft-foreground)]">
             {makeAnotherError}
