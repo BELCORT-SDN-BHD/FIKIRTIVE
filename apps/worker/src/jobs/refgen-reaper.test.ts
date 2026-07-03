@@ -14,12 +14,15 @@ const m = vi.hoisted(() => {
   const refGenJobUpdateMany = vi.fn();
   const refundReservation = vi.fn();
   const settleCredits = vi.fn();
+  const queryRaw = vi.fn();
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const prisma: any = {
     refGenJob: { findMany: refGenJobFindMany, updateMany: refGenJobUpdateMany },
     $transaction: vi.fn(async (fn: (tx: unknown) => Promise<unknown>) => fn(prisma)),
+    // QUEUED-branch liveness check against pgboss.job (F07-analog). Default: no live message.
+    $queryRaw: queryRaw,
   };
-  return { prisma, refGenJobFindMany, refGenJobUpdateMany, refundReservation, settleCredits };
+  return { prisma, refGenJobFindMany, refGenJobUpdateMany, refundReservation, settleCredits, queryRaw };
 });
 
 vi.mock("@fikirtive/db", () => ({ prisma: m.prisma, refundReservation: m.refundReservation, settleCredits: m.settleCredits, Prisma: {} }));
@@ -35,6 +38,8 @@ const stuckQueued = { id: "r2", ownerId: "o2" };
 
 beforeEach(() => {
   vi.clearAllMocks();
+  // Default: pg-boss has no live message for the job → the QUEUED reap may proceed.
+  m.queryRaw.mockResolvedValue([]);
 });
 
 describe("reapStaleRefGenJobs — GENERATING branch", () => {
@@ -81,6 +86,29 @@ describe("reapStaleRefGenJobs — QUEUED branch", () => {
     const claim = m.refGenJobUpdateMany.mock.calls[0]![0];
     expect(claim.where).toMatchObject({ id: "r2", status: "QUEUED" });
     expect(claim.data).toMatchObject({ status: "FAILED" });
+  });
+
+  it("does NOT reap a QUEUED refgen job that still has a live pg-boss message (F07-analog — serial-queue starvation)", async () => {
+    // A paid refgen job can legitimately wait >25 min behind a congested worker. If pg-boss
+    // still holds a live message for it (created/retry/active), it WILL be delivered —
+    // fail-closing it here would refund a job that then runs anyway (a free paid generation).
+    m.refGenJobFindMany.mockResolvedValueOnce([]).mockResolvedValueOnce([stuckQueued]);
+    m.queryRaw.mockResolvedValue([{ id: "boss-msg-1" }]); // pg-boss: message is created/retry/active
+    const n = await reapStaleRefGenJobs();
+    expect(n).toBe(0);
+    expect(m.refGenJobUpdateMany).not.toHaveBeenCalled(); // never even attempts the fail-close claim
+    expect(m.refundReservation).not.toHaveBeenCalled();
+  });
+
+  it("skips the QUEUED reap this sweep when the pg-boss liveness check fails (fail-safe)", async () => {
+    // If pgboss.job can't be read we must assume a live message MAY exist — a delayed reap
+    // is far better than refunding a live paid job.
+    m.refGenJobFindMany.mockResolvedValueOnce([]).mockResolvedValueOnce([stuckQueued]);
+    m.queryRaw.mockRejectedValue(new Error("pgboss schema unreadable"));
+    const n = await reapStaleRefGenJobs();
+    expect(n).toBe(0);
+    expect(m.refGenJobUpdateMany).not.toHaveBeenCalled();
+    expect(m.refundReservation).not.toHaveBeenCalled();
   });
 
   it("does NOT refund when a worker wins the QUEUED→GENERATING race (count 0)", async () => {
