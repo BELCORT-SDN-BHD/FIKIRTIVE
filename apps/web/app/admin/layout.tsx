@@ -1,30 +1,13 @@
 import { auth } from "@/lib/better-auth/compat";
 import { allowed, isFounderAdmin } from "@/lib/allowlist";
 import { redirect } from "next/navigation";
-import Link from "next/link";
+import { AdminV2Nav } from "@/components/admin/AdminV2Nav";
 
 /**
- * OPT-6 P1a admin shell. Server component: gates with auth() + the email
- * allowlist (R7), then renders a left-nav + content pane. Only Settings and
- * "Prompt & knowledge" (the existing /admin/directives) are live; the rest are
- * disabled "Coming soon" placeholders, one per planned OPT-6 section. The admin
- * ACTIONS still re-assert requireAdmin independently — this wall is convenience,
- * not the only guard.
+ * Admin City Hall v2 shell. The outer wall stays founder-only until real staff
+ * membership replaces the closed-beta gate; individual routes/actions still
+ * re-assert their own role checks.
  */
-const NAV = [
-  { href: "/admin/settings", label: "Settings", live: true },
-  { href: "/admin/directives", label: "Prompt & knowledge", live: true },
-  { href: "/admin/knowledge", label: "Knowledge", live: true },
-  { href: "/admin/models", label: "Model & provider", live: true },
-  { href: "/admin/cost", label: "Cost & usage", live: true },
-  { href: "/admin/credits", label: "Credits", live: true },
-  { href: "/admin/content", label: "Content review", live: true },
-  { href: "/admin/conversations", label: "Otto conversations", live: true },
-  { href: "/admin/team", label: "Team & access", live: true },
-  { href: "/admin/tenants", label: "Tenants", live: true },
-  { href: "/admin/system", label: "System & queue", live: true },
-];
-
 export default async function AdminLayout({ children }: { children: React.ReactNode }) {
   const session = await auth();
   if (!(await allowed(session?.user?.email))) redirect("/login");
@@ -35,17 +18,9 @@ export default async function AdminLayout({ children }: { children: React.ReactN
   // are provisioned; expand to a staff check (founder-org membership) when that happens.
   if (!isFounderAdmin(session?.user?.email)) redirect("/");
   return (
-    <div className="admin-shell gb">
-      <nav className="admin-nav">
-        {NAV.map((n) =>
-          n.live ? (
-            <Link key={n.label} href={n.href} className="admin-nav-link">{n.label}</Link>
-          ) : (
-            <span key={n.label} className="admin-nav-link is-disabled" title="Coming soon">{n.label}</span>
-          ),
-        )}
-      </nav>
-      <main className="admin-content">{children}</main>
+    <div className="gb min-h-dvh bg-background text-foreground md:flex">
+      <AdminV2Nav />
+      <main className="min-w-0 flex-1 overflow-x-hidden">{children}</main>
     </div>
   );
 }
