@@ -44,3 +44,5 @@ export type {
 } from "./knowledge/meta-expertise.types.js";
 export { diagnosePerformance } from "./diagnosis/diagnose-performance.js";
 export type { DiagAdInput, DiagReason, DiagReasonKind, AdVerdict, PerformanceDiagnosis } from "./diagnosis/diagnose-performance.js";
+export { buildPerformanceCardPayload } from "./skills/meta-expert.helpers.js";
+export type { PerformanceCardPayload, PerfCardAd } from "./skills/meta-expert.helpers.js";
