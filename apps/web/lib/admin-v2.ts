@@ -2,6 +2,7 @@ import "server-only";
 
 import {
   displayCredits,
+  COWORK_PLANNER_SYSTEM,
   GEN_MODES,
   FOUNDER_OWNER_ID,
   GEN_MODELS,
@@ -20,6 +21,7 @@ import { prisma } from "@fikirtive/db";
 import { listDirectives } from "@/lib/cowork-knowledge";
 import { listConversations } from "@/lib/conversation-admin";
 import { listTenants } from "@/lib/tenant-admin";
+import { resolveVisionConfig } from "@/lib/runtime-config";
 
 const DAY_MS = 24 * 60 * 60 * 1000;
 
@@ -154,7 +156,21 @@ export type OttoOpsSummary = {
   filledDirectiveCells: number;
   coveredFamilies: number;
   routedFamilies: number;
-  knowledgeKeys: { key: string; present: boolean }[];
+  vision: { enabled: boolean; maxImages: number; maxBytes: number };
+  models: { id: string; kind: "image" | "video"; family: string; enabled: boolean; notes: string }[];
+  directives: {
+    family: string;
+    mode: string;
+    directive: string;
+    confidence: string;
+    enabled: boolean;
+    notes: string;
+    source: string;
+    exists: boolean;
+  }[];
+  families: string[];
+  modes: string[];
+  knowledge: { key: "planner_system" | "brief_default" | "description_template"; title: string; value: string; present: boolean }[];
 };
 
 export type AdminV2Data = {
@@ -246,6 +262,7 @@ export async function getAdminV2Data(): Promise<AdminV2Data> {
     auditEvents,
     staffRows,
     modelOverlay,
+    vision,
     runtimeProvider,
     knowledgeRows,
   ] = await Promise.all([
@@ -385,8 +402,9 @@ export async function getAdminV2Data(): Promise<AdminV2Data> {
     }),
     prisma.modelRegistryOverlay.findMany({
       where: { ownerId: FOUNDER_OWNER_ID },
-      select: { modelId: true, enabled: true },
+      select: { modelId: true, enabled: true, notes: true },
     }),
+    resolveVisionConfig(),
     prisma.runtimeConfig.findUnique({
       where: { key: "cowork_provider" },
       select: { valueJson: true },
@@ -629,8 +647,41 @@ export async function getAdminV2Data(): Promise<AdminV2Data> {
   }));
 
   const modelIds = Array.from(new Set<string>([...GEN_MODELS, ...REFGEN_MODELS, ...GEN_VIDEO_MODELS]));
+  const overlayByModel = new Map(modelOverlay.map((row) => [row.modelId, row]));
   const disabledModels = new Set(modelOverlay.filter((row) => !row.enabled).map((row) => row.modelId));
+  const modelRows = [
+    ...Array.from(new Set<string>([...GEN_MODELS, ...REFGEN_MODELS])).map((id) => ({
+      id,
+      kind: "image" as const,
+      family: modelFamily(id) ?? "unknown",
+      enabled: overlayByModel.get(id)?.enabled ?? true,
+      notes: overlayByModel.get(id)?.notes ?? "",
+    })),
+    ...(GEN_VIDEO_MODELS as readonly string[]).map((id) => ({
+      id,
+      kind: "video" as const,
+      family: modelFamily(id) ?? "unknown",
+      enabled: overlayByModel.get(id)?.enabled ?? true,
+      notes: overlayByModel.get(id)?.notes ?? "",
+    })),
+  ];
   const directives = await listDirectives();
+  const directivesByKey = new Map(directives.map((row) => [`${row.family}:${row.mode}`, row]));
+  const directiveCells = MODEL_FAMILIES.flatMap((family) =>
+    GEN_MODES.map((mode) => {
+      const row = directivesByKey.get(`${family}:${mode}`);
+      return {
+        family,
+        mode,
+        directive: row?.directive ?? "",
+        confidence: row?.confidence ?? "untested",
+        enabled: row?.enabled ?? true,
+        notes: row?.notes ?? "",
+        source: row?.source ?? "founder",
+        exists: Boolean(row),
+      };
+    }),
+  );
   const filledDirectives = directives.filter((row) => row.enabled && row.directive.trim()).length;
   const seededFamilies = new Set(
     directives.filter((row) => row.enabled && row.directive.trim()).map((row) => row.family),
@@ -643,6 +694,12 @@ export async function getAdminV2Data(): Promise<AdminV2Data> {
     process.env.COWORK_PROVIDER ??
     "mock";
   const knowledgeByKey = new Map(knowledgeRows.map((row) => [row.key, row.valueJson]));
+  const knowledgeValue = (key: "planner_system" | "brief_default" | "description_template") => {
+    const text = (knowledgeByKey.get(key) as { text?: unknown } | undefined)?.text;
+    if (typeof text === "string") return text;
+    if (key === "planner_system") return COWORK_PLANNER_SYSTEM;
+    return "";
+  };
 
   const lowBalanceCount = tenants.filter((tenant) => tenant.risk === "watch").length;
   const blockedTenantCount = tenants.filter((tenant) => tenant.risk === "blocked").length;
@@ -723,10 +780,31 @@ export async function getAdminV2Data(): Promise<AdminV2Data> {
       filledDirectiveCells: filledDirectives,
       coveredFamilies: routedFamilies.filter((family) => seededFamilies.has(family)).length,
       routedFamilies: routedFamilies.length,
-      knowledgeKeys: ["planner_system", "brief_default", "description_template"].map((key) => ({
-        key,
-        present: Boolean(knowledgeByKey.get(key)),
-      })),
+      vision: { enabled: vision.enabled, maxImages: vision.maxImages, maxBytes: vision.maxBytes },
+      models: modelRows,
+      directives: directiveCells,
+      families: [...MODEL_FAMILIES],
+      modes: [...GEN_MODES],
+      knowledge: [
+        {
+          key: "planner_system",
+          title: "Planner system prompt",
+          value: knowledgeValue("planner_system"),
+          present: Boolean(knowledgeByKey.get("planner_system")),
+        },
+        {
+          key: "brief_default",
+          title: "Project-brief default",
+          value: knowledgeValue("brief_default"),
+          present: Boolean(knowledgeByKey.get("brief_default")),
+        },
+        {
+          key: "description_template",
+          title: "Reference-description template",
+          value: knowledgeValue("description_template"),
+          present: Boolean(knowledgeByKey.get("description_template")),
+        },
+      ],
     },
   };
 }

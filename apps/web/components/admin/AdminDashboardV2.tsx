@@ -15,7 +15,13 @@ import {
   RefreshCw,
   ShieldCheck,
 } from "lucide-react";
-import { saveUserRole } from "@/lib/admin-actions";
+import {
+  saveModelDirective,
+  saveModelEnabled,
+  saveRuntimeConfig,
+  saveUserRole,
+  seedResearchDirectives,
+} from "@/lib/admin-actions";
 import { grantCreditsAction } from "@/lib/credit-actions";
 import type {
   AdminV2Data,
@@ -48,10 +54,12 @@ type Props = {
   section: AdminV2Section;
   data: AdminV2Data;
   selfEmail: string;
+  currentRole: string;
 };
 
 const FOUNDER_OWNER_ID = "founder";
 const displayCredits = (internal: number) => internal / 10;
+const CONFIDENCE_LEVELS = ["high", "medium", "low", "untested"] as const;
 
 const SECTION_META: Record<AdminV2Section, { title: string; eyebrow: string; description: string }> = {
   overview: {
@@ -725,7 +733,7 @@ function CasesSection({ data, setCase }: { data: AdminV2Data; setCase: (row: Cas
   );
 }
 
-function OttoSection({ data }: { data: AdminV2Data }) {
+function OttoSection({ data, currentRole }: { data: AdminV2Data; currentRole: string }) {
   return (
     <div className="grid gap-5">
       <div className="grid gap-3 md:grid-cols-4">
@@ -734,38 +742,364 @@ function OttoSection({ data }: { data: AdminV2Data }) {
         <MetricCard label="Directive cells" value={`${data.otto.filledDirectiveCells}/${data.otto.directiveCells}`} detail="Enabled prompt directive cells with content." tone="info" />
         <MetricCard label="Family coverage" value={`${data.otto.coveredFamilies}/${data.otto.routedFamilies}`} detail="Routed video families with at least one directive." tone={data.otto.coveredFamilies === data.otto.routedFamilies ? "success" : "warning"} />
       </div>
-      <Panel title="Otto operating readiness" subtitle="Coral markers are reserved for Otto-specific operational state.">
-        <div className="grid gap-3 lg:grid-cols-3">
-          {data.otto.knowledgeKeys.map((row) => (
-            <div key={row.key} className="rounded-xl border border-border bg-background p-4">
-              <div className="flex items-center justify-between gap-3">
-                <div className="flex min-w-0 items-center gap-2">
-                  <Bot className="size-4 text-brand" />
-                  <span className="truncate text-sm font-medium text-foreground">{row.key}</span>
-                </div>
-                <Badge variant={row.present ? "success" : "warning"}>{row.present ? "present" : "default"}</Badge>
-              </div>
-              <p className="mt-2 text-xs leading-5 text-muted-foreground">
-                {row.present ? "Stored runtime knowledge exists." : "The app is falling back to code defaults."}
-              </p>
+      <RuntimeConfigPanel data={data} canModal={currentRole === "super-admin"} />
+      <ModelControlsPanel data={data} />
+      <DirectivesPanel data={data} />
+      <KnowledgePanel data={data} />
+    </div>
+  );
+}
+
+function RuntimeConfigPanel({ data, canModal }: { data: AdminV2Data; canModal: boolean }) {
+  const router = useRouter();
+  const [provider, setProvider] = useState(data.otto.provider);
+  const [providerBase, setProviderBase] = useState(data.otto.provider);
+  const [enabled, setEnabled] = useState(data.otto.vision.enabled);
+  const [maxImages, setMaxImages] = useState(data.otto.vision.maxImages);
+  const [maxBytes, setMaxBytes] = useState(data.otto.vision.maxBytes);
+  const [visionBase, setVisionBase] = useState(data.otto.vision);
+  const [providerMessage, setProviderMessage] = useState<string | null>(null);
+  const [visionMessage, setVisionMessage] = useState<string | null>(null);
+  const [savingProvider, setSavingProvider] = useState(false);
+  const [savingVision, setSavingVision] = useState(false);
+  const providerDirty = provider !== providerBase;
+  const visionDirty = enabled !== visionBase.enabled || maxImages !== visionBase.maxImages || maxBytes !== visionBase.maxBytes;
+
+  async function saveProvider() {
+    if (!providerDirty || savingProvider) return;
+    setSavingProvider(true);
+    setProviderMessage(null);
+    const result = await saveRuntimeConfig({ key: "cowork_provider", value: { provider } }).catch(() => null);
+    setSavingProvider(false);
+    if (!result) {
+      setProviderMessage("Save failed.");
+      return;
+    }
+    if ("error" in result) {
+      setProviderMessage(result.error);
+      return;
+    }
+    setProviderBase(provider);
+    setProviderMessage("Saved.");
+    router.refresh();
+  }
+
+  async function saveVision() {
+    if (!visionDirty || savingVision) return;
+    setSavingVision(true);
+    setVisionMessage(null);
+    const result = await saveRuntimeConfig({ key: "vision", value: { enabled, maxImages, maxBytes } }).catch(() => null);
+    setSavingVision(false);
+    if (!result) {
+      setVisionMessage("Save failed.");
+      return;
+    }
+    if ("error" in result) {
+      setVisionMessage(result.error);
+      return;
+    }
+    setVisionBase({ enabled, maxImages, maxBytes });
+    setVisionMessage("Saved.");
+    router.refresh();
+  }
+
+  return (
+    <Panel title="Runtime controls" subtitle="Runtime config takes effect on the next Otto turn; server actions keep the existing audit trail.">
+      <div className="grid gap-3 xl:grid-cols-2">
+        <div className="rounded-xl border border-border bg-background p-4">
+          <div className="flex items-center justify-between gap-3">
+            <div>
+              <h3 className="text-sm font-semibold text-foreground">Otto provider</h3>
+              <p className="mt-1 text-xs text-muted-foreground">Paid providers remain server-gated.</p>
             </div>
-          ))}
-        </div>
-      </Panel>
-      <Panel title="Legacy controls" subtitle="Config editing is intentionally not in the primary rail until the v2 control model is approved.">
-        <div className="grid gap-2 md:grid-cols-4">
-          {[
-            ["/admin/models", "Models"],
-            ["/admin/directives", "Directives"],
-            ["/admin/knowledge", "Knowledge"],
-            ["/admin/settings", "Runtime settings"],
-          ].map(([href, label]) => (
-            <Button key={href} asChild variant="secondary" size="sm">
-              <Link href={href}>{label}</Link>
+            <Badge variant={provider === "mock" ? "warning" : "info"}>{provider}</Badge>
+          </div>
+          <div className="mt-4 grid gap-3 sm:grid-cols-[1fr_auto] sm:items-end">
+            <label className="grid gap-1.5">
+              <span className="text-xs font-medium text-muted-foreground">Provider</span>
+              <Select value={provider} onValueChange={setProvider}>
+                <SelectTrigger className="w-full bg-card"><span>{provider}</span></SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="mock">mock</SelectItem>
+                  <SelectItem value="fal">fal</SelectItem>
+                  {canModal ? <SelectItem value="modal">modal</SelectItem> : null}
+                </SelectContent>
+              </Select>
+            </label>
+            <Button type="button" variant="secondary" disabled={!providerDirty || savingProvider} onClick={saveProvider}>
+              {savingProvider ? "Saving" : "Save"}
             </Button>
-          ))}
+          </div>
+          {providerMessage ? <p className="mt-3 text-xs text-muted-foreground">{providerMessage}</p> : null}
         </div>
-      </Panel>
+
+        <div className="rounded-xl border border-border bg-background p-4">
+          <div className="flex items-center justify-between gap-3">
+            <div>
+              <h3 className="text-sm font-semibold text-foreground">Vision caps</h3>
+              <p className="mt-1 text-xs text-muted-foreground">Reference image limits for Otto planner turns.</p>
+            </div>
+            <Badge variant={enabled ? "success" : "outline"}>{enabled ? "enabled" : "disabled"}</Badge>
+          </div>
+          <div className="mt-4 grid gap-3 sm:grid-cols-[120px_120px_1fr_auto] sm:items-end">
+            <label className="flex h-10 items-center gap-2 rounded-lg border border-border bg-card px-3 text-sm text-foreground">
+              <input type="checkbox" checked={enabled} onChange={(event) => setEnabled(event.target.checked)} />
+              enabled
+            </label>
+            <label className="grid gap-1.5">
+              <span className="text-xs font-medium text-muted-foreground">Images</span>
+              <Input type="number" min={1} max={8} value={maxImages} onChange={(event) => setMaxImages(Number(event.target.value))} className="h-10 text-sm" />
+            </label>
+            <label className="grid gap-1.5">
+              <span className="text-xs font-medium text-muted-foreground">Max bytes</span>
+              <Input type="number" min={1} max={16000000} value={maxBytes} onChange={(event) => setMaxBytes(Number(event.target.value))} className="h-10 text-sm" />
+            </label>
+            <Button type="button" variant="secondary" disabled={!visionDirty || savingVision} onClick={saveVision}>
+              {savingVision ? "Saving" : "Save"}
+            </Button>
+          </div>
+          {visionMessage ? <p className="mt-3 text-xs text-muted-foreground">{visionMessage}</p> : null}
+        </div>
+      </div>
+    </Panel>
+  );
+}
+
+function ModelControlsPanel({ data }: { data: AdminV2Data }) {
+  const [kind, setKind] = useState("all");
+  const rows = data.otto.models.filter((row) => kind === "all" || row.kind === kind);
+
+  return (
+    <Panel
+      title="Model controls"
+      subtitle="Disable a typed model without changing the model catalog."
+      action={
+        <Select value={kind} onValueChange={setKind}>
+          <SelectTrigger size="sm" className="w-[120px] bg-card"><span>{kind === "all" ? "All models" : kind}</span></SelectTrigger>
+          <SelectContent align="end">
+            <SelectItem value="all">All models</SelectItem>
+            <SelectItem value="image">image</SelectItem>
+            <SelectItem value="video">video</SelectItem>
+          </SelectContent>
+        </Select>
+      }
+    >
+      <div className="grid gap-2 md:grid-cols-2">
+        {rows.map((row) => <ModelControlRow key={`${row.kind}:${row.id}`} row={row} />)}
+      </div>
+    </Panel>
+  );
+}
+
+function ModelControlRow({ row }: { row: AdminV2Data["otto"]["models"][number] }) {
+  const router = useRouter();
+  const [enabled, setEnabled] = useState(row.enabled);
+  const [saving, setSaving] = useState(false);
+  const [message, setMessage] = useState<string | null>(null);
+
+  async function toggle(next: boolean) {
+    if (saving) return;
+    setSaving(true);
+    setMessage(null);
+    const result = await saveModelEnabled({ modelId: row.id, enabled: next, notes: row.notes }).catch(() => null);
+    setSaving(false);
+    if (!result) {
+      setMessage("Save failed.");
+      return;
+    }
+    if ("error" in result) {
+      setMessage(result.error);
+      return;
+    }
+    setEnabled(next);
+    setMessage("Saved.");
+    router.refresh();
+  }
+
+  return (
+    <div className="rounded-xl border border-border bg-background p-3">
+      <div className="flex items-start justify-between gap-3">
+        <div className="min-w-0">
+          <div className="flex min-w-0 items-center gap-2">
+            <span className="truncate text-sm font-medium text-foreground">{row.id}</span>
+            <Badge variant={row.kind === "video" ? "info" : "outline"}>{row.kind}</Badge>
+          </div>
+          <p className="mt-1 text-xs text-muted-foreground">{row.family}</p>
+        </div>
+        <label className="flex items-center gap-2 text-xs text-muted-foreground">
+          <input type="checkbox" checked={enabled} disabled={saving} onChange={(event) => toggle(event.target.checked)} />
+          {enabled ? "enabled" : "disabled"}
+        </label>
+      </div>
+      {message ? <p className="mt-2 text-xs text-muted-foreground">{message}</p> : null}
+    </div>
+  );
+}
+
+function DirectivesPanel({ data }: { data: AdminV2Data }) {
+  const router = useRouter();
+  const [family, setFamily] = useState(data.otto.families[0] ?? "seedream");
+  const [seedMessage, setSeedMessage] = useState<string | null>(null);
+  const [seeding, setSeeding] = useState(false);
+  const rows = data.otto.directives.filter((row) => row.family === family);
+
+  async function seed() {
+    if (seeding) return;
+    setSeeding(true);
+    setSeedMessage(null);
+    const result = await seedResearchDirectives().catch(() => null);
+    setSeeding(false);
+    if (!result) {
+      setSeedMessage("Seed failed.");
+      return;
+    }
+    if ("error" in result) {
+      setSeedMessage(result.error);
+      return;
+    }
+    setSeedMessage(`Inserted ${result.inserted}, refreshed ${result.refreshed}.`);
+    router.refresh();
+  }
+
+  return (
+    <Panel
+      title="Prompt directives"
+      subtitle="Edit the family x mode instruction cells Otto reads on the next enhance turn."
+      action={
+        <div className="flex items-center gap-2">
+          <Select value={family} onValueChange={setFamily}>
+            <SelectTrigger size="sm" className="w-[132px] bg-card"><span>{family}</span></SelectTrigger>
+            <SelectContent align="end">
+              {data.otto.families.map((item) => <SelectItem key={item} value={item}>{item}</SelectItem>)}
+            </SelectContent>
+          </Select>
+          <Button type="button" variant="secondary" size="sm" disabled={seeding} onClick={seed}>{seeding ? "Seeding" : "Seed"}</Button>
+        </div>
+      }
+    >
+      {seedMessage ? <p className="mb-3 text-xs text-muted-foreground">{seedMessage}</p> : null}
+      <div className="grid gap-3 lg:grid-cols-2">
+        {rows.map((row) => <DirectiveCell key={`${row.family}:${row.mode}`} cell={row} />)}
+      </div>
+    </Panel>
+  );
+}
+
+function DirectiveCell({ cell }: { cell: AdminV2Data["otto"]["directives"][number] }) {
+  const router = useRouter();
+  const [directive, setDirective] = useState(cell.directive);
+  const [confidence, setConfidence] = useState(cell.confidence);
+  const [enabled, setEnabled] = useState(cell.enabled);
+  const [base, setBase] = useState({ directive: cell.directive, confidence: cell.confidence, enabled: cell.enabled, exists: cell.exists, source: cell.source });
+  const [saving, setSaving] = useState(false);
+  const [message, setMessage] = useState<string | null>(null);
+  const dirty = directive !== base.directive || confidence !== base.confidence || enabled !== base.enabled;
+
+  async function save() {
+    if (!dirty || saving) return;
+    setSaving(true);
+    setMessage(null);
+    const result = await saveModelDirective({
+      family: cell.family,
+      mode: cell.mode,
+      directive,
+      notes: cell.notes,
+      confidence,
+      enabled,
+      source: base.exists ? base.source : "founder",
+    }).catch(() => null);
+    setSaving(false);
+    if (!result) {
+      setMessage("Save failed.");
+      return;
+    }
+    if ("error" in result) {
+      setMessage(result.error);
+      return;
+    }
+    setBase({ directive, confidence, enabled, exists: true, source: base.exists ? base.source : "founder" });
+    setMessage("Saved.");
+    router.refresh();
+  }
+
+  return (
+    <div className="rounded-xl border border-border bg-background p-3">
+      <div className="flex items-center justify-between gap-3">
+        <div className="flex items-center gap-2">
+          <span className="font-mono text-xs font-semibold text-foreground">{cell.mode}</span>
+          {!base.exists ? <Badge variant="outline">unset</Badge> : null}
+        </div>
+        <label className="flex items-center gap-2 text-xs text-muted-foreground">
+          <input type="checkbox" checked={enabled} onChange={(event) => setEnabled(event.target.checked)} />
+          enabled
+        </label>
+      </div>
+      <Textarea value={directive} onChange={(event) => setDirective(event.target.value)} rows={4} maxLength={2000} placeholder="family-neutral base (no directive)" className="mt-3 min-h-24 text-sm" />
+      <div className="mt-3 grid gap-2 sm:grid-cols-[150px_1fr_auto] sm:items-center">
+        <Select value={confidence} onValueChange={setConfidence}>
+          <SelectTrigger size="sm" className="w-full bg-card"><span>{confidence}</span></SelectTrigger>
+          <SelectContent>
+            {CONFIDENCE_LEVELS.map((level) => <SelectItem key={level} value={level}>{level}</SelectItem>)}
+          </SelectContent>
+        </Select>
+        <span className="text-xs text-muted-foreground">{message}</span>
+        <Button type="button" variant="secondary" size="sm" disabled={!dirty || saving} onClick={save}>{saving ? "Saving" : "Save"}</Button>
+      </div>
+    </div>
+  );
+}
+
+function KnowledgePanel({ data }: { data: AdminV2Data }) {
+  return (
+    <Panel title="Knowledge text" subtitle="Planner prompt, project brief default, and reference description template.">
+      <div className="grid gap-3">
+        {data.otto.knowledge.map((row) => <KnowledgeTextRow key={row.key} row={row} />)}
+      </div>
+    </Panel>
+  );
+}
+
+function KnowledgeTextRow({ row }: { row: AdminV2Data["otto"]["knowledge"][number] }) {
+  const router = useRouter();
+  const [value, setValue] = useState(row.value);
+  const [base, setBase] = useState(row.value);
+  const [saving, setSaving] = useState(false);
+  const [message, setMessage] = useState<string | null>(null);
+  const dirty = value !== base;
+
+  async function save() {
+    if (!dirty || saving) return;
+    setSaving(true);
+    setMessage(null);
+    const result = await saveRuntimeConfig({ key: row.key, value: { text: value } }).catch(() => null);
+    setSaving(false);
+    if (!result) {
+      setMessage("Save failed.");
+      return;
+    }
+    if ("error" in result) {
+      setMessage(result.error);
+      return;
+    }
+    setBase(value);
+    setMessage("Saved.");
+    router.refresh();
+  }
+
+  return (
+    <div className="rounded-xl border border-border bg-background p-3">
+      <div className="flex items-center justify-between gap-3">
+        <div>
+          <h3 className="text-sm font-semibold text-foreground">{row.title}</h3>
+          <p className="mt-1 font-mono text-xs text-muted-foreground">{row.key}</p>
+        </div>
+        <Badge variant={row.present ? "success" : "warning"}>{row.present ? "stored" : "default"}</Badge>
+      </div>
+      <Textarea value={value} onChange={(event) => setValue(event.target.value)} rows={row.key === "planner_system" ? 8 : 4} className="mt-3 min-h-28 text-sm" />
+      <div className="mt-3 flex items-center justify-between gap-3">
+        <span className="text-xs text-muted-foreground">{message}</span>
+        <Button type="button" variant="secondary" size="sm" disabled={!dirty || saving} onClick={save}>{saving ? "Saving" : "Save"}</Button>
+      </div>
     </div>
   );
 }
@@ -907,18 +1241,18 @@ function CaseDialog({ row, onClose }: { row: CaseRow | null; onClose: () => void
   );
 }
 
-export function AdminDashboardV2({ section, data, selfEmail }: Props) {
+export function AdminDashboardV2({ section, data, selfEmail, currentRole }: Props) {
   const [selectedCase, setSelectedCase] = useState<CaseRow | null>(null);
   const content = useMemo(() => {
     if (section === "money") return <MoneySection data={data} />;
     if (section === "tenants") return <TenantsSection data={data} />;
     if (section === "staff") return <StaffSection data={data} selfEmail={selfEmail} />;
     if (section === "cases") return <CasesSection data={data} setCase={setSelectedCase} />;
-    if (section === "otto") return <OttoSection data={data} />;
+    if (section === "otto") return <OttoSection data={data} currentRole={currentRole} />;
     if (section === "audit") return <AuditSection data={data} />;
     if (section === "system") return <SystemSection data={data} />;
     return <Overview data={data} setCase={setSelectedCase} />;
-  }, [data, section, selfEmail]);
+  }, [currentRole, data, section, selfEmail]);
 
   return (
     <PageChrome section={section} data={data}>

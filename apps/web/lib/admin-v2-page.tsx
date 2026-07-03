@@ -9,5 +9,5 @@ export async function renderAdminV2Page(section: AdminV2Section, gateSection: Se
   if ("error" in gate) redirect(`/login?from=${from}`);
 
   const data = await getAdminV2Data();
-  return <AdminDashboardV2 section={section} data={data} selfEmail={gate.email} />;
+  return <AdminDashboardV2 section={section} data={data} selfEmail={gate.email} currentRole={gate.role} />;
 }
