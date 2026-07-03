@@ -11,7 +11,7 @@
  */
 import { useState } from "react";
 import { Button, Badge } from "@/components/ds";
-import { CONFIDENCE_LEVELS } from "@fikirtive/core";
+import { CONFIDENCE_LEVELS } from "@fikirtive/core/cowork-directives";
 import { saveModelDirective, seedResearchDirectives } from "@/lib/admin-actions";
 
 export type AdminCell = {
