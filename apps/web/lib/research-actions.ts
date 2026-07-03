@@ -15,10 +15,13 @@ import { z } from "zod";
 import { prisma, Prisma } from "@fikirtive/db";
 import { newId, RESEARCH_QUEUE } from "@fikirtive/core";
 import { RESEARCH_TIERS, researchTierBudgetInternal, type ResearchCardPayload } from "@fikirtive/otto";
+import { isImpersonating } from "@/lib/better-auth/compat";
 import { requireOwner } from "./auth-guard";
 import { getBoss } from "./queue";
 
 const approveInput = z.object({ cardId: z.string().min(1) });
+const IMPERSONATION_BLOCK = "Paused while impersonating a customer — exit impersonation to do this.";
+const RESEARCH_QUEUE_ERROR = "Could not reach the research queue — please try again.";
 
 /** RESEARCH_CARD payload 的运行时形状 —— status 生命周期 planned→running→done/failed。
  *  S2 只落 "planned";approve 推进到 "running"。tier 决定预估 credits。 */
@@ -36,6 +39,30 @@ async function loadCard(cardId: string, ownerId: string) {
   });
   if (!card || card.thread.deletedAt || card.thread.ownerId !== ownerId) return null;
   return card;
+}
+
+async function failQueuedResearch(
+  card: NonNullable<Awaited<ReturnType<typeof loadCard>>>,
+  ownerId: string,
+  jobId: string,
+  fallbackPayload: ResearchPayload,
+  errorText: string,
+): Promise<void> {
+  await prisma.$transaction(async (tx) => {
+    await tx.researchJob.update({
+      where: { id: jobId },
+      data: { status: "FAILED", error: errorText },
+    });
+    const fresh = await tx.chatMessage.findFirst({
+      where: { id: card.id, ownerId, kind: "RESEARCH_CARD", deletedAt: null },
+      select: { payload: true },
+    });
+    const cur = (fresh?.payload ?? fallbackPayload) as ResearchPayload;
+    await tx.chatMessage.updateMany({
+      where: { id: card.id, ownerId, kind: "RESEARCH_CARD", deletedAt: null },
+      data: { payload: { ...cur, status: "failed", error: errorText } as unknown as Prisma.InputJsonObject },
+    });
+  });
 }
 
 /** Read-only ($0) poll: return a RESEARCH_CARD's current payload so the client can watch
@@ -60,6 +87,7 @@ export async function approveResearch(raw: unknown): Promise<Ok | Err> {
 
   const gate = await requireOwner();
   if ("error" in gate) return gate;
+  if (await isImpersonating()) return { error: IMPERSONATION_BLOCK };
   const { ownerId } = gate;
 
   const card = await loadCard(parsed.data.cardId, ownerId);
@@ -132,16 +160,23 @@ export async function approveResearch(raw: unknown): Promise<Ok | Err> {
     throw e;
   }
 
-  // BEST-EFFORT enqueue + queueJobId persist: the job row already exists and the card is
-  // "running", so a queue hiccup must NOT throw past here (a retry would re-hit the status
-  // guard / once-EVER index and return the SAME job — never a second one). The worker also
-  // scopes off the ResearchJob row, so a lost enqueue is recoverable, not a leaked spend.
+  // ONLY the enqueue is in this try: if the message was never sent, no worker can run the
+  // research, so fail-close the $0 job/card immediately. Nothing has been reserved/spent yet.
+  let queueJobId: string | null = null;
   try {
     const boss = await getBoss();
-    const queueJobId = await boss.send(RESEARCH_QUEUE, { jobId });
+    queueJobId = await boss.send(RESEARCH_QUEUE, { jobId });
+  } catch (e) {
+    const message = e instanceof Error ? e.message.slice(0, 300) : "queue unavailable";
+    await failQueuedResearch(card, ownerId, jobId, payload, `dispatch failed: ${message}`);
+    return { error: RESEARCH_QUEUE_ERROR };
+  }
+
+  // BEST-EFFORT: the job is ALREADY enqueued; queueJobId is tracking only.
+  try {
     await prisma.researchJob.update({ where: { id: jobId }, data: { queueJobId: queueJobId ?? "" } });
   } catch (e) {
-    console.warn(`approveResearch: enqueue/persist failed for job ${jobId} (non-fatal):`, e instanceof Error ? e.message : e);
+    console.warn(`approveResearch: queueJobId persist failed for job ${jobId} (non-fatal):`, e instanceof Error ? e.message : e);
   }
 
   return { jobId };
