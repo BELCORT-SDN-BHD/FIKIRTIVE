@@ -155,7 +155,7 @@ export function PackCard({ packTitle, cards, balanceUsd, onApproved }: PackCardP
                     {desc}
                   </div>
                   <div className="text-[0.75rem] text-muted-foreground">
-                    ~{creditsLabel(c.credits)}
+                    {creditsLabel(c.credits)}
                   </div>
                 </div>
                 <div className="shrink-0 text-[0.75rem]">
@@ -182,7 +182,7 @@ export function PackCard({ packTitle, cards, balanceUsd, onApproved }: PackCardP
           {!allSubmitted && (
             <>
               <div className="mb-3 text-[1.375rem] font-bold text-foreground">
-                Total ~{creditsLabel(totalCredits)}
+                Total {creditsLabel(totalCredits)}
               </div>
 
               {!canAfford && (
@@ -194,7 +194,7 @@ export function PackCard({ packTitle, cards, balanceUsd, onApproved }: PackCardP
               {confirming ? (
                 <div>
                   <div className="mb-3 text-[0.875rem] text-foreground">
-                    Make all {idleCards.length} {idleCards.length === 1 ? "item" : "items"} for ~{creditsLabel(totalCredits)}? This will spend real credits.
+                    Make all {idleCards.length} {idleCards.length === 1 ? "item" : "items"} for {creditsLabel(totalCredits)}? This will spend real credits.
                   </div>
                   <div className="flex gap-3">
                     <Button variant="default" size="default" disabled={running} onClick={() => void makeAll()}>
@@ -212,7 +212,7 @@ export function PackCard({ packTitle, cards, balanceUsd, onApproved }: PackCardP
                   disabled={!canAfford || running}
                   onClick={() => setConfirming(true)}
                 >
-                  Make all ({idleCards.length} · ~{creditsLabel(totalCredits)})
+                  Make all ({idleCards.length} · {creditsLabel(totalCredits)})
                 </Button>
               )}
             </>

@@ -298,6 +298,13 @@ export function OttoChatStream({
     if (freshResultCount > prevResultCount) void onBalanceRefresh?.();
   }
 
+  async function refetchAndAppendCards() {
+    const fresh = await getCoworkThreadClient(thread.id);
+    if (!fresh) return;
+    setMessages((cur) => appendMissingCards(syncCardJobIds(cur, fresh), fresh));
+    onThreadUpdate(fresh);
+  }
+
   // Reset the give-up state whenever we switch threads (mirror OttoConversation).
   // Guarded by a prev-id ref so the reset runs only on an actual thread change, not
   // on the mount render (where the state is already fresh) — avoids a cascading render.
@@ -820,7 +827,7 @@ export function OttoChatStream({
                       setPollTerminal(false);
                       pollCountRef.current = 0;
                       checkAgainUsedRef.current = false;
-                      void pollAndInjectResults();
+                      void refetchAndAppendCards();
                     }}
                     onCancelled={() => void pollAndInjectResults()}
                   />
@@ -860,7 +867,7 @@ export function OttoChatStream({
                     onMakeAnother={() => {
                       setPollGaveUp(false);
                       pollCountRef.current = 0;
-                      void pollAndInjectResults();
+                      void refetchAndAppendCards();
                     }}
                   />
                 </WidgetRow>
