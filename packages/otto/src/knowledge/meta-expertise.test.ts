@@ -83,3 +83,49 @@ describe("getBenchmark", () => {
     expect(getBenchmark(KBX, { metric: "frequency" })).toBeNull();
   });
 });
+
+import { META_EXPERTISE_KB } from "./meta-expertise.js";
+import type { MetaKnowledgeDomain } from "./meta-expertise.types.js";
+
+describe("META_EXPERTISE_KB (real, researched)", () => {
+  it("validates clean — every entry cited, no dup, valid domains", () => {
+    expect(validateKnowledgeBase(META_EXPERTISE_KB)).toEqual([]);
+  });
+
+  it("covers every knowledge domain", () => {
+    const present = new Set(META_EXPERTISE_KB.entries.map((e) => e.domain));
+    const required: MetaKnowledgeDomain[] =
+      ["objectives", "bidding", "targeting", "creative", "measurement", "algorithm", "diagnosis"];
+    for (const d of required) expect(present.has(d), `missing domain ${d}`).toBe(true);
+  });
+
+  it("has a non-empty master source list and a build version", () => {
+    expect(META_EXPERTISE_KB.sources.length).toBeGreaterThan(0);
+    expect(META_EXPERTISE_KB.version).toMatch(/^\d{4}-\d{2}-\d{2}$/);
+  });
+
+  // NOTE (grounding): the deep research found NO verifiable public CTR/ROAS "industry average"
+  // numbers (Meta doesn't publish them; third-party pages weren't fetchable to verify). Per the
+  // iron rule we do NOT fabricate one. We assert what honestly exists instead:
+  it("has a handful of cited benchmark entries (verifiable stats only — no invented industry averages)", () => {
+    const withBench = META_EXPERTISE_KB.entries.filter((e) => e.benchmark);
+    expect(withBench.length).toBeGreaterThanOrEqual(5);
+  });
+
+  it("diagnosis domain covers the four root-cause hypotheses (creative / learning-time / audience / budget)", () => {
+    const blob = META_EXPERTISE_KB.entries
+      .filter((e) => e.domain === "diagnosis")
+      .map((e) => `${e.claim} ${e.detail ?? ""} ${e.appliesWhen ?? ""}`.toLowerCase())
+      .join(" || ");
+    expect(blob).toMatch(/learning|not enough|events/); // not-enough-time (learning phase)
+    expect(blob).toMatch(/audience|target/);            // wrong audience
+    expect(blob).toMatch(/budget/);                     // budget too low
+    expect(blob).toMatch(/creative|fatigue|frequency/); // creative problem / fatigue
+  });
+
+  it("every benchmark entry states a range (no empty ranges)", () => {
+    for (const e of META_EXPERTISE_KB.entries) {
+      if (e.benchmark) expect(e.benchmark.range.trim().length, `empty range on ${e.id}`).toBeGreaterThan(0);
+    }
+  });
+});

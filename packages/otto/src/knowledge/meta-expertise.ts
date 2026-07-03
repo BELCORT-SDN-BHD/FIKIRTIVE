@@ -54,3 +54,5 @@ export function getBenchmark(
 }
 
 export type { MetaExpertiseKB, MetaKnowledgeDomain, MetaCitation, MetaBenchmark, MetaKnowledgeEntry } from "./meta-expertise.types.js";
+
+export { META_EXPERTISE_KB } from "./meta-expertise.data.js";

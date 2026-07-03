@@ -36,3 +36,9 @@ export { RESEARCH_TIERS, researchTierEstimate, researchTierBudgetInternal } from
 // inside withLlmBudget (the sole spend path). Its context is small + mutable (counters, sources).
 export { researchAgent, searchSources, readSource } from "./research-agent.js";
 export type { ResearchContext } from "./research-agent.js";
+export {
+  META_EXPERTISE_KB, validateKnowledgeBase, queryMetaKnowledge, getBenchmark,
+} from "./knowledge/meta-expertise.js";
+export type {
+  MetaExpertiseKB, MetaKnowledgeDomain, MetaCitation, MetaBenchmark, MetaKnowledgeEntry,
+} from "./knowledge/meta-expertise.types.js";
