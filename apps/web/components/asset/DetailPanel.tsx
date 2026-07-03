@@ -16,12 +16,17 @@ import { startGen, getGenJob, getActiveGenModels } from "@/lib/gen-actions";
 import { readPick, writePick } from "@/lib/result-pick";
 import {
   activeVideoModel,
+  displayCredits,
   videoDefaults,
   GEN_VIDEO_MODEL_OPTIONS,
+  pricedGenCredits,
   type GenVideoModel,
 } from "@fikirtive/core";
 import { Button, IcX, IcPlay, IcRetry } from "@/components/ds";
+import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog";
+import { Button as UiButton } from "@/components/ui/button";
 import { MentionInput } from "@/components/MentionInput";
+import { creditsLabel } from "@/lib/credit-format";
 import type { EntityDTO } from "@/lib/types";
 
 type GenDTO = {
@@ -36,6 +41,7 @@ type GenDTO = {
 };
 
 type PanelState = "loading" | "ready" | "error";
+type ConfirmAction = "regen" | "animate" | "edit" | "delete" | null;
 
 /** Render the cropped area of an image to a canvas and return a data URL. */
 async function getCroppedDataUrl(
@@ -105,6 +111,7 @@ export default function DetailPanel({
   const [regenStatus, setRegenStatus] = useState<"idle" | "running" | "done" | "failed">("idle");
   const [animStatus, setAnimStatus] = useState<"idle" | "running" | "done" | "failed">("idle");
   const [copied, setCopied] = useState(false);
+  const [confirmAction, setConfirmAction] = useState<ConfirmAction>(null);
 
   const cancelledRef = useRef(false);
   // F18: the active models must be resolved SERVER-side (the OTTO_DEFAULT_VIDEO_MODEL env isn't
@@ -180,6 +187,24 @@ export default function DetailPanel({
   // prop. All mutate/spend handlers act on this so a sibling variant isn't animated/deleted/
   // starred/edited against the wrong image (F08/F09). Still an owned id resolved server-side.
   const selectedGenId = gen ? (gen.variants[selectedIdx]?.id ?? gen.id) : generationId;
+  const imageCost = activeModels
+    ? displayCredits(pricedGenCredits({ kind: "IMAGE", model: activeModels.image, count: 1, videoOptions: null }))
+    : null;
+  const activeVideoDefaults = activeModels ? videoDefaults(activeModels.video as GenVideoModel) : null;
+  const videoCost = activeModels && activeVideoDefaults
+    ? displayCredits(pricedGenCredits({
+      kind: "VIDEO",
+      model: activeModels.video,
+      count: 1,
+      videoOptions: {
+        seconds: activeVideoDefaults.seconds,
+        resolution: activeVideoDefaults.resolution,
+        audio: activeVideoDefaults.audio,
+      },
+    }))
+    : null;
+  const imageCostLabel = imageCost == null ? "Checking exact cost..." : creditsLabel(imageCost);
+  const videoCostLabel = videoCost == null ? "Checking exact cost..." : creditsLabel(videoCost);
 
   const handleFavorite = useCallback(async () => {
     if (!gen) return;
@@ -292,6 +317,52 @@ export default function DetailPanel({
     onClose();
   }, [selectedGenId, onClose]);
 
+  const requestSpendConfirm = useCallback((action: Exclude<ConfirmAction, "delete" | null>) => {
+    setConfirmAction(action);
+    void ensureModels();
+  }, []);
+
+  const requestEditSubmit = useCallback(() => {
+    if (!editPrompt.trim() || editStatus === "running") return;
+    setConfirmAction("edit");
+    void ensureModels();
+  }, [editPrompt, editStatus]);
+
+  const confirmDetails = (() => {
+    switch (confirmAction) {
+      case "regen":
+        return {
+          title: "Regenerate this image?",
+          description: `Creates one new image version from the same prompt. Cost: ${imageCostLabel}. No charge until you confirm.`,
+          confirmLabel: "Regenerate",
+          disabled: imageCost == null || regenStatus === "running",
+        };
+      case "animate":
+        return {
+          title: "Animate this image?",
+          description: `Creates one video from the selected image. Cost: ${videoCostLabel}. No charge until you confirm.`,
+          confirmLabel: "Animate",
+          disabled: videoCost == null || animStatus === "running",
+        };
+      case "edit":
+        return {
+          title: "Generate this edit?",
+          description: `Uses the current image as the source for your edit. Cost: ${imageCostLabel}. No charge until you confirm.`,
+          confirmLabel: "Generate edit",
+          disabled: imageCost == null || editStatus === "running" || !editPrompt.trim(),
+        };
+      case "delete":
+        return {
+          title: "Delete this asset?",
+          description: "This removes the selected generation from your library and canvas views. This cannot be undone.",
+          confirmLabel: "Delete",
+          disabled: false,
+        };
+      default:
+        return null;
+    }
+  })();
+
   // Variant switcher: switch displayed url + persist pick
   const handleVariantPick = useCallback((idx: number) => {
     if (!gen) return;
@@ -328,6 +399,15 @@ export default function DetailPanel({
     }
     if (status === "done") await reloadFromJob(result.id);
   }, [gen, editPrompt, editIds, editStatus, projectId, pollJob, reloadFromJob, selectedGenId]);
+
+  const runConfirmedAction = useCallback(() => {
+    const action = confirmAction;
+    setConfirmAction(null);
+    if (action === "regen") void handleRegen();
+    if (action === "animate") void handleAnimate();
+    if (action === "edit") void handleEditSubmit();
+    if (action === "delete") void handleDelete();
+  }, [confirmAction, handleAnimate, handleDelete, handleEditSubmit, handleRegen]);
 
   // Crop: confirm crop and save
   const handleCropConfirm = useCallback(async () => {
@@ -528,7 +608,7 @@ export default function DetailPanel({
                 variant="ghost"
                 size="sm"
                 icon={<IcRetry size={14} />}
-                onClick={handleRegen}
+                onClick={() => requestSpendConfirm("regen")}
                 disabled={regenStatus === "running"}
               >
                 {regenStatus === "running"
@@ -546,7 +626,7 @@ export default function DetailPanel({
                   variant="ghost"
                   size="sm"
                   icon={<IcPlay size={14} />}
-                  onClick={handleAnimate}
+                  onClick={() => requestSpendConfirm("animate")}
                   disabled={animStatus === "running"}
                 >
                   {animStatus === "running"
@@ -586,7 +666,7 @@ export default function DetailPanel({
               </Button>
 
               {/* Delete */}
-              <Button variant="ghost" size="sm" onClick={handleDelete}>
+              <Button variant="ghost" size="sm" onClick={() => setConfirmAction("delete")}>
                 Delete
               </Button>
             </div>
@@ -606,13 +686,13 @@ export default function DetailPanel({
                         setEditPrompt(text);
                         setEditIds(ids);
                       }}
-                      onSubmit={handleEditSubmit}
+                      onSubmit={requestEditSubmit}
                     />
                   </div>
                   <Button
                     variant="primary"
                     size="sm"
-                    onClick={handleEditSubmit}
+                    onClick={requestEditSubmit}
                     disabled={editStatus === "running" || !editPrompt.trim()}
                   >
                     {editStatus === "running"
@@ -678,6 +758,24 @@ export default function DetailPanel({
           </>
         )}
       </div>
+      <Dialog open={confirmAction !== null} onOpenChange={(open) => { if (!open) setConfirmAction(null); }}>
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>{confirmDetails?.title ?? ""}</DialogTitle>
+            <DialogDescription>{confirmDetails?.description ?? ""}</DialogDescription>
+          </DialogHeader>
+          <DialogFooter>
+            <UiButton variant="ghost" onClick={() => setConfirmAction(null)}>Cancel</UiButton>
+            <UiButton
+              variant={confirmAction === "delete" ? "destructive" : "default"}
+              disabled={confirmDetails?.disabled ?? true}
+              onClick={runConfirmedAction}
+            >
+              {confirmDetails?.confirmLabel ?? "Confirm"}
+            </UiButton>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
     </div>
   );
 }
