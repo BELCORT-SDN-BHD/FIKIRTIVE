@@ -340,6 +340,7 @@ function bindingSteps(payload: MetaAdBuildCardPayload): PlanStep[] {
         pageId: payload.pageId,
         mode: payload.mode,
         adsetId: payload.intoExisting?.adsetId ?? null,
+        startTime: payload.startTime ?? null,
         // F17: MUST mirror buildAdBuildCard's approval step exactly (same fields, same order).
         creative: {
           kind: payload.creative.kind,

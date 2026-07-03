@@ -179,6 +179,11 @@ describe("buildAdBuildCard", () => {
     expect(buildAdBuildCard(drifted, VALID_CTX, ACTOR, NOW_ISO).approval.paramHash).not.toBe(baseHash());
   });
 
+  it("approval.paramHash changes when startTime drifts", () => {
+    const drifted = { ...VALID_INPUT, startTime: "2026-06-29T11:00:00.000Z" };
+    expect(buildAdBuildCard(drifted, VALID_CTX, ACTOR, NOW_ISO).approval.paramHash).not.toBe(baseHash());
+  });
+
   it("approval is bound to actor and expires 10 min after nowIso", () => {
     const payload = buildAdBuildCard(VALID_INPUT, VALID_CTX, ACTOR, NOW_ISO);
     expect(payload.approval.boundActor).toBe(ACTOR);
