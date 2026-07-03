@@ -29,22 +29,23 @@ export async function fetchOwnerAdPerformance(
   let token: string;
   try { token = decryptToken(conn.accessTokenEnc); } catch { return { needsReconnect: true }; }
 
-  let accountsRes: { data?: { id: string }[] };
+  let all: (AdInsightsRow & { accountId: string })[];
   try {
-    accountsRes = await metaGraphGet(token, "me/adaccounts", { fields: "account_id" });
+    const accountsRes: { data?: { id: string; account_id?: string }[] } =
+      await metaGraphGet(token, "me/adaccounts", { fields: "id,account_id" });
+    const accounts = accountsRes.data ?? [];
+
+    all = [];
+    for (const a of accounts) {
+      const accountId = String(a.id ?? `act_${a.account_id}`);
+      const rows = await getAdInsights(token, accountId, datePreset);
+      for (const r of rows) all.push({ ...r, accountId });
+    }
   } catch (e) {
     if ((e as { metaError?: { code?: number } })?.metaError?.code === 190) {
-      await prisma.metaConnection.update({ where: { ownerId }, data: { status: "expired" } });
-      return { needsReconnect: true };
+      await prisma.metaConnection.update({ where: { ownerId }, data: { status: "expired" } }).catch(() => {});
     }
-    throw e;
-  }
-  const accounts = accountsRes.data ?? [];
-
-  const all: (AdInsightsRow & { accountId: string })[] = [];
-  for (const a of accounts) {
-    const rows = await getAdInsights(token, a.id, datePreset);
-    for (const r of rows) all.push({ ...r, accountId: a.id });
+    return { needsReconnect: true };
   }
   const sorted = all.slice().sort((x, y) => Number(y.spend ?? 0) - Number(x.spend ?? 0));
   const top = sorted.slice(0, MAX_ADS);
