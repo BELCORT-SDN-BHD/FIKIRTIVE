@@ -85,11 +85,13 @@ export default function FlowCanvas({
   // Per-node data refs so stable onAnimate closures can read current generationId + position
   const nodeDataRef = useRef<Record<string, { generationId?: string; pos: { x: number; y: number } }>>({});
   const flowRef = useRef<ReactFlowInstance<CanvasFlowNode, Edge> | null>(null);
+  const reloadRef = useRef<(() => Promise<void>) | null>(null);
   const canvasHostRef = useRef<HTMLDivElement | null>(null);
   const fittedScopeRef = useRef<string | null>(null);
   const fitTimerRef = useRef<number | null>(null);
   const [flowReady, setFlowReady] = useState(false);
   const [canvasReady, setCanvasReady] = useState(false);
+  const requestReload = useCallback(() => { void reloadRef.current?.(); }, []);
 
   // Keep a ref to animate() so per-node closures don't go stale
   const animateFnRef = useRef<ReturnType<typeof useCanvasGen>["animate"] | null>(null);
@@ -224,6 +226,7 @@ export default function FlowCanvas({
             prompt: n.prompt,
             skin,
             onDelete: () => setPendingDeleteId(n.id),
+            onRefresh: requestReload,
             // onAnimate added after generationId arrives via onResolve
           },
           style: { width: n.pos.w, height: n.pos.h, boxShadow: `0 0 0 2px ${convoColor(activeThreadId ?? null)}` },
@@ -232,7 +235,7 @@ export default function FlowCanvas({
       ]);
       scheduleFitView();
     },
-    [activeThreadId, skin, scheduleFitView],
+    [activeThreadId, requestReload, skin, scheduleFitView],
   );
 
   const onGenError = useCallback((msg: string) => { toast.error(msg); }, []);
@@ -313,14 +316,14 @@ export default function FlowCanvas({
           id: created.id,
           type: "image",
           position: { x, y: 80 },
-          data: { status: "done", url: res.src, skin, onDelete: () => setPendingDeleteId(created.id), onAnimate: getOnAnimate(created.id), onOpenDetail: getOnOpenDetail(created.id) },
+          data: { status: "done", url: res.src, skin, onDelete: () => setPendingDeleteId(created.id), onRefresh: requestReload, onAnimate: getOnAnimate(created.id), onOpenDetail: getOnOpenDetail(created.id) },
           style: { width: 320, height: 320, boxShadow: `0 0 0 2px ${convoColor(activeThreadId ?? null)}` },
           threadId: activeThreadId ?? null,
         },
       ]);
       scheduleFitView();
     }
-  }, [projectId, activeThreadId, getOnAnimate, getOnOpenDetail, skin, scheduleFitView]);
+  }, [projectId, activeThreadId, getOnAnimate, getOnOpenDetail, requestReload, skin, scheduleFitView]);
 
   // Phase 3: text-to-video — the bottom video tool always opens a prompt dialog;
   // image cards own the explicit "Make video" image-to-video path.
@@ -374,6 +377,7 @@ export default function FlowCanvas({
           text: r.text,
           skin,
           onDelete: () => setPendingDeleteId(r.id),
+          onRefresh: requestReload,
           onChange: r.type === "text" ? (t: string) => onTextChange(r.id, t) : undefined,
           onAnimate: r.type === "image" ? getOnAnimate(r.id) : undefined,
           onOpenDetail: r.type === "image" ? getOnOpenDetail(r.id) : undefined,
@@ -396,7 +400,8 @@ export default function FlowCanvas({
       nodeCountRef.current = all.length;
       return all;
     });
-  }, [skin, projectId, activeThreadId, onTextChange, getOnAnimate, getOnOpenDetail]);
+  }, [skin, projectId, activeThreadId, onTextChange, getOnAnimate, getOnOpenDetail, requestReload]);
+  reloadRef.current = reload;
 
   // Initial load + reload when the active thread changes (re-bridges that thread).
   useEffect(() => { void reload(); }, [reload]);

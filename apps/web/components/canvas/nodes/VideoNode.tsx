@@ -5,7 +5,7 @@ import { GeneratingBody, FailedBody } from "./GeneratingBody";
 import { NodeResize } from "./NodeResize";
 
 export function VideoNode({ data, selected }: NodeProps) {
-  const d = data as { status: string; url?: string; skin?: string; onDelete?: () => void };
+  const d = data as { status: string; url?: string; skin?: string; onDelete?: () => void; onRefresh?: () => void };
   const gb = d.skin === "gb";
   const terminal = d.status === "failed" || d.status === "timeout" || d.status === "missing";
   const videoRef = useRef<HTMLVideoElement>(null);
@@ -19,9 +19,9 @@ export function VideoNode({ data, selected }: NodeProps) {
       </span>
     <div className="al-panel" style={{ width: "100%", height: "100%", overflow: "hidden", borderRadius: 14 }}>
       {terminal ? (
-        <FailedBody status={d.status as "failed" | "timeout" | "missing"} />
+        <FailedBody status={d.status as "failed" | "timeout" | "missing"} onRefresh={d.onRefresh} />
       ) : d.status === "pending" || !d.url ? (
-        <GeneratingBody gb={gb} kind="video" />
+        <GeneratingBody gb={gb} kind="video" onRefresh={d.onRefresh} />
       ) : gb ? (
         // gb: clean poster (first frame) + centered play button, like the mockup —
         // no raw browser chrome until the owner presses play. Display-only.

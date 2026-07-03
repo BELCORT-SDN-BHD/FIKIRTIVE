@@ -18,13 +18,39 @@ function OttoCloud() {
   );
 }
 
+function RefreshButton({ onRefresh }: { onRefresh?: () => void }) {
+  if (!onRefresh) return null;
+  return (
+    <button
+      type="button"
+      className="nodrag nopan"
+      onPointerDown={(e) => e.stopPropagation()}
+      onClick={(e) => { e.stopPropagation(); onRefresh(); }}
+      style={{
+        border: "1px solid color-mix(in srgb, currentColor 18%, transparent)",
+        borderRadius: 999,
+        background: "color-mix(in srgb, var(--background) 86%, transparent)",
+        color: "inherit",
+        fontSize: 11.5,
+        fontWeight: 650,
+        lineHeight: 1,
+        padding: "7px 10px",
+        marginTop: 2,
+        cursor: "pointer",
+      }}
+    >
+      Check again
+    </button>
+  );
+}
+
 /** Terminal state for a card whose gen didn't deliver. "failed" is a hard fail (the worker
  *  FAILED + refunded the job, so it's safe to say "not charged"); "timeout" is soft — the
  *  client stopped polling but the worker may still settle it, so it invites a check-back
  *  rather than claiming failure. Without this, a FAILED/timed-out node showed GeneratingBody
  *  forever (the eternal spinner, F21). "missing" means the job is terminal but
  *  the preview URL could not be resolved, so do not claim a refund. */
-export function FailedBody({ status }: { status: "failed" | "timeout" | "missing" }) {
+export function FailedBody({ status, onRefresh }: { status: "failed" | "timeout" | "missing"; onRefresh?: () => void }) {
   const timeout = status === "timeout";
   const missing = status === "missing";
   return (
@@ -40,15 +66,17 @@ export function FailedBody({ status }: { status: "failed" | "timeout" | "missing
             ? "The job finished, but this card could not load the media."
             : "You weren't charged. Try again."}
       </div>
+      {(timeout || missing) && <RefreshButton onRefresh={onRefresh} />}
     </div>
   );
 }
 
-export function GeneratingBody({ gb, kind }: { gb?: boolean; kind: "image" | "video" }) {
+export function GeneratingBody({ gb, kind, onRefresh }: { gb?: boolean; kind: "image" | "video"; onRefresh?: () => void }) {
   if (!gb) {
     return (
-      <div style={{ display: "grid", placeItems: "center", height: "100%", opacity: 0.6 }}>
-        {kind === "video" ? "Rendering…" : "Generating…"}
+      <div style={{ display: "grid", placeItems: "center", height: "100%", opacity: 0.6, gap: 8 }}>
+        <span>{kind === "video" ? "Rendering…" : "Generating…"}</span>
+        <RefreshButton onRefresh={onRefresh} />
       </div>
     );
   }
@@ -57,6 +85,7 @@ export function GeneratingBody({ gb, kind }: { gb?: boolean; kind: "image" | "vi
       <span className="cv-gen-otto"><OttoCloud /> OTTO is making this</span>
       <div className="cv-gen-bar" />
       <div className="cv-gen-meta">billed only when it finishes</div>
+      <RefreshButton onRefresh={onRefresh} />
     </div>
   );
 }
