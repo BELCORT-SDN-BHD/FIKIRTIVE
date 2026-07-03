@@ -36,7 +36,7 @@ export async function listProjectThreadActivity(
   const inFlightJobIds = new Set(jobs.map((j) => j.id));
   for (const j of jobs) if (j.threadId) pending.add(j.threadId);
   for (const n of nodes) {
-    if (n.threadId && (!n.genJobId || inFlightJobIds.has(n.genJobId))) pending.add(n.threadId);
+    if (n.threadId && n.genJobId && inFlightJobIds.has(n.genJobId)) pending.add(n.threadId);
   }
 
   return threads.map((t) => ({ threadId: t.id, pending: pending.has(t.id) }));

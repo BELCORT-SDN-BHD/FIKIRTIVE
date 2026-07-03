@@ -31,7 +31,7 @@ describe("listProjectThreadActivity", () => {
     expect(await listProjectThreadActivity("pX")).toEqual({ error: "Project not found." });
   });
 
-  it("marks threads pending from an in-flight GenJob or a pending CanvasNode without a linked job", async () => {
+  it("marks threads pending from an in-flight GenJob but not from an unlinked pending CanvasNode", async () => {
     mockProjectFindFirst.mockResolvedValue({ id: "p1" });
     mockThreadFindMany.mockResolvedValue([{ id: "t1" }, { id: "t2" }, { id: "t3" }]);
     mockGenJobFindMany.mockResolvedValue([{ id: "j1", threadId: "t1" }]);
@@ -39,7 +39,7 @@ describe("listProjectThreadActivity", () => {
     const res = await listProjectThreadActivity("p1");
     expect(res).toEqual([
       { threadId: "t1", pending: true },
-      { threadId: "t2", pending: true },
+      { threadId: "t2", pending: false },
       { threadId: "t3", pending: false },
     ]);
   });
