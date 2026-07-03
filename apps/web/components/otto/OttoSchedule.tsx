@@ -1018,9 +1018,10 @@ function Composer({
       setMetaTargetId(null);
     }
   }
-  // Approve = DRAFT→SCHEDULED, which the server rejects without a resolved owner-owned target.
-  // Gate it in the UI too: no target picked (or none connectable) → approve disabled.
-  const canApprove = editable && !!metaTargetId;
+  // Approve = DRAFT→SCHEDULED, which the server rejects without a resolved owner-owned target AND
+  // at least one media item. Gate BOTH in the UI so "Approve & schedule" never fires create-then-
+  // fail-approval and leaves an orphan draft behind (#123): require a target AND media before approve.
+  const canApprove = editable && !!metaTargetId && media.length > 0;
 
   function toggleMedia(genId: string) {
     setMedia((cur) => {

@@ -1,16 +1,23 @@
 "use server";
 import { revalidatePath } from "next/cache";
 import { prisma } from "@fikirtive/db";
-import { newId, canTransition, type ScheduledPostStatus } from "@fikirtive/core";
+import {
+  canTransition,
+  isScheduleChannel,
+  SCHEDULE_CHANNEL_CAPS,
+  type ScheduledPostStatus,
+  type ScheduleChannel,
+} from "@fikirtive/core";
 import { requireOwner } from "./auth-guard";
+import { draftScheduledPost } from "./schedule-service";
 import { fetchOwnerPages } from "./meta-pages";
 import { channelRegistry } from "./channels/registry";
 import type { ChannelId } from "./channels/types";
 
-// Channels this slice supports — code-validated (mirrors the ScheduledPost.channel comment),
-// not a PG enum. IG/FB only until App Review adds more.
-const CHANNELS = ["instagram", "facebook"] as const;
-type ScheduleChannel = (typeof CHANNELS)[number];
+// Statuses whose CONTENT the owner may still edit. DRAFT is freely editable; a material edit to an
+// approved (SCHEDULED) post revokes consent (drops to DRAFT). Everything else (PUBLISHING / terminal
+// PUBLISHED·CANCELLED / FAILED / NEEDS_ATTENTION) is content-frozen server-side — the UI is not the guard.
+const EDITABLE_STATUSES = new Set<ScheduledPostStatus>(["DRAFT", "SCHEDULED"]);
 
 export type CreateScheduledPostInput = {
   channel: ScheduleChannel;
@@ -60,65 +67,32 @@ function toDate(v: string): Date | null {
 
 /** Create an owner-scoped DRAFT (spec §四B Composer "Save Draft"). $0 — media reuses
  *  already-paid Generation rows, never regenerates, never publishes. approvedAt stays
- *  null (no consent yet); metaTargetId is validated later, at approve-time. */
+ *  null (no consent yet); metaTargetId is validated later, at approve-time.
+ *
+ *  Single write authority: this and the Otto skill both go through draftScheduledPost
+ *  (shared core validation + owner-scoped media check). projectId scopes by org in this slice. */
 export async function createScheduledPost(
   input: CreateScheduledPostInput,
 ): Promise<{ ok: true; id: string } | { error: string }> {
   const gate = await requireOwner();
   if ("error" in gate) return gate;
 
-  const channel = (input?.channel ?? "") as ScheduleChannel;
-  if (!CHANNELS.includes(channel)) return { error: "Pick a supported channel." };
-  const caption = typeof input?.caption === "string" ? input.caption.trim() : "";
-  if (!caption) return { error: "A post needs a caption." };
-  const scheduledAt = typeof input?.scheduledAt === "string" ? toDate(input.scheduledAt) : null;
-  if (!scheduledAt) return { error: "Pick a valid date and time." };
-  const scheduledTz = typeof input?.scheduledTz === "string" ? input.scheduledTz.trim() : "";
-  if (!scheduledTz) return { error: "Pick a time zone." };
-  const media = Array.isArray(input?.media) ? input.media.filter((m) => typeof m === "string" && m) : [];
-  if (media.length > 10) return { error: "A carousel can have at most 10 items." };
-  const firstComment = typeof input?.firstComment === "string" && input.firstComment.trim() ? input.firstComment : null;
-  const metaTargetId = typeof input?.metaTargetId === "string" && input.metaTargetId ? input.metaTargetId : null;
-
-  // Cross-tenant media guard: every media id must be a Generation the SESSION owner owns
-  // (never trust the client). A foreign id here would persist another org's asset onto this
-  // post — reject the create outright rather than silently drop, so the owner picks again.
-  if (media.length) {
-    const owned = await prisma.generation.findMany({
-      where: { id: { in: media }, ownerId: gate.ownerId, deletedAt: null },
-      select: { id: true },
-    });
-    const ownedIds = new Set(owned.map((g) => g.id));
-    if (media.some((id) => !ownedIds.has(id))) return { error: "Some selected media isn't yours." };
-  }
-
-  try {
-    const id = newId();
-    await prisma.scheduledPost.create({
-      data: {
-        id,
-        ownerId: gate.ownerId, // from the SESSION — client-supplied owner ids are ignored
-        projectId: gate.ownerId, // no per-project scoping in this slice; scope by org
-        channel,
-        metaTargetId,
-        caption,
-        firstComment,
-        scheduledAt,
-        scheduledTz,
-        status: "DRAFT",
-        publishMode: "AUTO",
-        source: "owner",
-        approvedAt: null,
-        media: media.length
-          ? { create: media.map((generationId, position) => ({ id: newId(), generationId, position })) }
-          : undefined,
-      },
-    });
-    revalidatePath("/", "layout");
-    return { ok: true, id };
-  } catch {
-    return { error: "Couldn't save that — please try again." };
-  }
+  const res = await draftScheduledPost({
+    ownerId: gate.ownerId, // from the SESSION — client-supplied owner ids are ignored
+    projectId: gate.ownerId, // no per-project scoping in this slice; scope by org
+    source: "owner",
+    input: {
+      channel: input?.channel,
+      caption: input?.caption,
+      scheduledAt: input?.scheduledAt,
+      scheduledTz: input?.scheduledTz,
+      media: input?.media,
+      firstComment: input?.firstComment ?? null,
+      metaTargetId: input?.metaTargetId ?? null,
+    },
+  });
+  if ("ok" in res) revalidatePath("/", "layout");
+  return res;
 }
 
 /** Patch a DRAFT/queued post — ONLY if it belongs to the session owner. The owner scope +
@@ -131,6 +105,17 @@ export async function updateScheduledPost(
   if (typeof id !== "string" || !id) return { error: "Invalid request." };
   const gate = await requireOwner();
   if ("error" in gate) return gate;
+
+  // Read the current row FIRST: status gates editability (server-side, not just the UI), and
+  // channel gates first-comment capability. A terminal / publishing / failed row is content-frozen.
+  const current = await prisma.scheduledPost.findFirst({
+    where: { id, ownerId: gate.ownerId, deletedAt: null },
+    select: { status: true, channel: true },
+  });
+  if (!current) return { error: "Post not found." };
+  if (!EDITABLE_STATUSES.has(current.status as ScheduledPostStatus)) {
+    return { error: "This post can no longer be edited." };
+  }
 
   const data: Record<string, unknown> = {};
   // A MATERIAL edit changes what would be published (caption/scheduledAt/firstComment/metaTargetId).
@@ -155,7 +140,13 @@ export async function updateScheduledPost(
     data.scheduledTz = tz;
   }
   if (patch?.firstComment !== undefined) {
-    data.firstComment = typeof patch.firstComment === "string" && patch.firstComment.trim() ? patch.firstComment : null;
+    const fc = typeof patch.firstComment === "string" && patch.firstComment.trim() ? patch.firstComment : null;
+    // Channel capability (shared server enforcement): only channels that support a first comment
+    // may carry a non-empty one — the UI hides the field, but this action is a callable boundary.
+    if (fc && !(isScheduleChannel(current.channel) && SCHEDULE_CHANNEL_CAPS[current.channel].supportsFirstComment)) {
+      return { error: "This channel doesn't support a first comment." };
+    }
+    data.firstComment = fc;
     material = true;
   }
   if (patch?.metaTargetId !== undefined) {
@@ -164,27 +155,21 @@ export async function updateScheduledPost(
   }
   if (Object.keys(data).length === 0) return { error: "Nothing to update." };
 
-  // Re-consent gate: a material edit to an approved (SCHEDULED) post revokes its approval —
-  // it drops back to DRAFT with approvedAt cleared, so the owner must re-approve before it
-  // re-enters the publish queue. Edits stay allowed; they just require fresh consent.
-  if (material) {
-    const current = await prisma.scheduledPost.findFirst({
-      where: { id, ownerId: gate.ownerId, deletedAt: null },
-      select: { status: true },
-    });
-    if (!current) return { error: "Post not found." };
-    if (current.status === "SCHEDULED") {
-      data.status = "DRAFT";
-      data.approvedAt = null;
-    }
+  // Re-consent gate: a material edit to an approved (SCHEDULED) post revokes its approval — it drops
+  // back to DRAFT with approvedAt cleared, so the owner must re-approve before it re-enters the queue.
+  if (material && current.status === "SCHEDULED") {
+    data.status = "DRAFT";
+    data.approvedAt = null;
   }
 
   try {
+    // Atomic: the WHERE pins the status we validated against, so a concurrent approve/cancel that
+    // moved the row out from under us matches zero rows → conflict, never a silent clobber.
     const { count } = await prisma.scheduledPost.updateMany({
-      where: { id, ownerId: gate.ownerId, deletedAt: null },
+      where: { id, ownerId: gate.ownerId, deletedAt: null, status: current.status },
       data,
     });
-    if (!count) return { error: "Post not found." };
+    if (!count) return { error: "This post just changed — please refresh and try again." };
   } catch {
     return { error: "Couldn't save that — please try again." };
   }
@@ -223,11 +208,14 @@ export async function approveScheduledPost(id: string): Promise<{ ok: true } | {
   }
 
   try {
+    // Atomic transition: pin the status we read + validated (post.status) in the WHERE. If a
+    // concurrent cancel/edit changed it between the read and here, count===0 → stale/conflict,
+    // so we never resurrect a CANCELLED post into SCHEDULED (the read-then-write race).
     const { count } = await prisma.scheduledPost.updateMany({
-      where: { id, ownerId: gate.ownerId, deletedAt: null },
+      where: { id, ownerId: gate.ownerId, deletedAt: null, status: post.status },
       data: { status: "SCHEDULED", approvedAt: new Date() },
     });
-    if (!count) return { error: "Post not found." };
+    if (!count) return { error: "This post just changed — please refresh and try again." };
   } catch {
     return { error: "Couldn't approve that — please try again." };
   }
@@ -252,11 +240,12 @@ export async function cancelScheduledPost(id: string): Promise<{ ok: true } | { 
   }
 
   try {
+    // Atomic transition: pin the read status so a concurrent publish/approve can't be clobbered.
     const { count } = await prisma.scheduledPost.updateMany({
-      where: { id, ownerId: gate.ownerId, deletedAt: null },
+      where: { id, ownerId: gate.ownerId, deletedAt: null, status: post.status },
       data: { status: "CANCELLED" },
     });
-    if (!count) return { error: "Post not found." };
+    if (!count) return { error: "This post just changed — please refresh and try again." };
   } catch {
     return { error: "Couldn't cancel that — please try again." };
   }
