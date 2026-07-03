@@ -22,10 +22,22 @@ describe("genSpentUsd", () => {
     expect(Number.isFinite(v)).toBe(true);
     expect(v).toBeGreaterThan(0);
   });
-  it("seedance-2-fast COGS uses the BytePlus basis, not the old fal 0.2419/s (F39)", () => {
-    // 5s × 0.03/s = 0.15 (the ~$0.15/5s benchmark), not 5 × 0.2419 = 1.21.
+  it("seedance-2-fast COGS uses the bill-backed BytePlus basis, not the old fal or benchmark basis", () => {
+    // 5s × $0.077/s ≈ $0.39, not 5 × 0.2419 = $1.21 or the old $0.03/s benchmark.
     expect(genSpentUsd({ kind: "VIDEO", model: "seedance-2-fast", count: 1, videoOptions: { seconds: 5, resolution: "720p", audio: false } }))
-      .toBeCloseTo(0.15, 5);
+      .toBeCloseTo(0.385, 5);
+    expect(genSpentUsd({ kind: "VIDEO", model: "seedance-2-fast", count: 1, videoOptions: { seconds: 10, resolution: "720p", audio: false } }))
+      .toBeCloseTo(0.77, 5);
+  });
+
+  it("reference video COGS uses the locked costing estimate for 6s input + 5s output", () => {
+    expect(genSpentUsd({
+      kind: "VIDEO",
+      model: "seedance-2-fast",
+      count: 1,
+      referenceVideoGenerationId: "gen_ref",
+      videoOptions: { seconds: 5, resolution: "720p", audio: true },
+    })).toBe(0.85);
   });
 });
 
@@ -41,13 +53,20 @@ describe("credit pricing (deterministic CHARGE in internal credits; 1 internal =
     expect(pricedGenCredits({ kind: "IMAGE", model: "seedream", count: 1, videoOptions: null })).toBe(10);
     expect(pricedGenCredits({ kind: "IMAGE", model: "seedream", count: 4, videoOptions: null })).toBe(40);
   });
-  it("seedance-2-fast CHARGE is flat-per-resolution and UNCHANGED by the F39 COGS-basis edit", () => {
-    // Money-safety pin: lowering the recorded COGS (videoRateUsdPerSec) must NOT change what the
-    // user pays — seedance-2-fast is flat-priced (720p → 7 displayed credits = 70 internal).
+  it("seedance-2-fast CHARGE follows the locked costing model, not the record-only COGS", () => {
+    // Money-safety pin: changing the recorded COGS (videoRateUsdPerSec) must NOT change what the
+    // user pays — seedance-2-fast is final-priced in credits.
     expect(pricedGenCredits({ kind: "VIDEO", model: "seedance-2-fast", count: 1, videoOptions: { seconds: 5, resolution: "720p", audio: false } }))
-      .toBe(7 * INTERNAL_PER_DISPLAY);
+      .toBe(8 * INTERNAL_PER_DISPLAY);
     expect(pricedGenCredits({ kind: "VIDEO", model: "seedance-2-fast", count: 1, videoOptions: { seconds: 10, resolution: "720p", audio: false } }))
-      .toBe(7 * INTERNAL_PER_DISPLAY); // duration doesn't change a flat charge
+      .toBe(14 * INTERNAL_PER_DISPLAY);
+    expect(pricedGenCredits({
+      kind: "VIDEO",
+      model: "seedance-2-fast",
+      count: 1,
+      referenceVideoGenerationId: "gen_ref",
+      videoOptions: { seconds: 5, resolution: "720p", audio: false },
+    })).toBe(16 * INTERNAL_PER_DISPLAY);
   });
   it("video (fal, non-flat model) = USD formula, NOT the flat BytePlus table", () => {
     const job = { kind: "VIDEO" as const, model: "kling", count: 1, videoOptions: { seconds: 5, resolution: "", audio: false } };
@@ -67,10 +86,12 @@ describe("credit pricing (deterministic CHARGE in internal credits; 1 internal =
     expect(displayCredits(2500)).toBe(250);
     expect(CREDITS_PER_USD).toBe(100);
   });
-  it("video charge is flat per resolution: 720p=7cr, 1080p=16cr (internal ×10)", () => {
+  it("video charge is flat by duration/guardrail: 720p 5s=8cr, 720p 10s=14cr, 1080p=16cr", () => {
     const v = (resolution: string) => pricedGenCredits({ kind: "VIDEO", model: "seedance-2-fast", count: 1, videoOptions: { seconds: 5, resolution, audio: true } });
-    expect(v("720p")).toBe(70);   // 7 displayed credits
+    expect(v("720p")).toBe(80);   // 8 displayed credits
     expect(v("1080p")).toBe(160); // 16 displayed credits
+    expect(pricedGenCredits({ kind: "VIDEO", model: "seedance-2-fast", count: 1, videoOptions: { seconds: 10, resolution: "720p", audio: true } }))
+      .toBe(140);
   });
   it("seedance-2-fast: unknown/higher resolution → the 1080p price (never under-charge)", () => {
     const v = (resolution: string) => pricedGenCredits({ kind: "VIDEO", model: "seedance-2-fast", count: 1, videoOptions: { seconds: 5, resolution, audio: true } });

@@ -194,9 +194,11 @@ describe("buildProposeCard — pure helper", () => {
   it("reference video: kind=video + referenceVideoGenerationId → present in payload, image tier untouched", () => {
     const ctx = makeCtx({ referenceVideoGenerationId: "gen_vid" });
     const { cardPayload } = buildProposeCard(
-      { kind: "video", structuredPrompt: "move like this", entityIds: [], variantSel: {} }, ctx, []);
+      { kind: "video", structuredPrompt: "move like this", entityIds: [], variantSel: {}, desiredDuration: 10 }, ctx, []);
     expect(cardPayload.kind).toBe("video");
     expect((cardPayload as Record<string, unknown>)["referenceVideoGenerationId"]).toBe("gen_vid");
+    expect(cardPayload.params.durationSeconds).toBe(5);
+    expect(cardPayload.estimatedCredits).toBe(16);
   });
 
   it("reference video: kind=image ignores referenceVideoGenerationId (not in payload)", () => {

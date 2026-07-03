@@ -196,7 +196,7 @@ async function resumeCommittedGenJob(job: GenJob): Promise<void> {
         // defensive backfill: a row committed before spentUsd existed (or a partial
         // write) has the marker but null spentUsd — reconstruct from the frozen job
         // inputs. Never overwrites a value the commit tx already froze.
-        ...(job.spentUsd == null ? { spentUsd: genSpentUsd({ kind: job.kind, model: job.model, count: job.count, videoOptions: job.videoOptions as { seconds?: number; resolution?: string; audio?: boolean } | null }) } : {}),
+        ...(job.spentUsd == null ? { spentUsd: genSpentUsd({ kind: job.kind, model: job.model, count: job.count, referenceVideoGenerationId: job.referenceVideoGenerationId, videoOptions: job.videoOptions as { seconds?: number; resolution?: string; audio?: boolean } | null }) } : {}),
       },
     });
     // settle the hold (idempotent: P2002 no-op if a prior delivery's commit tx
@@ -204,7 +204,7 @@ async function resumeCommittedGenJob(job: GenJob): Promise<void> {
     // generation succeeded → the charge becomes permanent.
     await settleCredits(tx, { orgId: job.ownerId, refId: job.id });
   });
-  await appendCoworkResult(job, "GEN_RESULT", job.generationIds, "", displayCredits(pricedGenCredits({ kind: job.kind as "IMAGE" | "VIDEO", model: job.model, count: job.count, videoOptions: job.videoOptions as { seconds?: number; resolution?: string; audio?: boolean } | null }))); // idempotent — P2002 swallowed if already written
+  await appendCoworkResult(job, "GEN_RESULT", job.generationIds, "", displayCredits(pricedGenCredits({ kind: job.kind as "IMAGE" | "VIDEO", model: job.model, count: job.count, referenceVideoGenerationId: job.referenceVideoGenerationId, videoOptions: job.videoOptions as { seconds?: number; resolution?: string; audio?: boolean } | null }))); // idempotent — P2002 swallowed if already written
   await resumeOttoAfterGen(job); // best-effort; at-most-once via ottoVerdictAt claim
 }
 
@@ -602,7 +602,7 @@ export async function handleGen(data: GenJobData, retryCount: number): Promise<v
           return;
         }
         // Margin guard: BytePlus bills reference-video input by duration while our charge is
-        // flat per resolution. The composer gates 2–10s client-side; re-enforce here from
+        // fixed at the 6s-input/5s-output costing model. The composer gates 2–6s client-side; re-enforce here from
         // ingest's ffprobe (Asset.durationS). null = probe pending/failed → allow (the async
         // ingest race is the NORMAL flow right after attach; the client already gated it).
         const refDur = rv.asset.durationS;
@@ -692,7 +692,7 @@ export async function handleGen(data: GenJobData, retryCount: number): Promise<v
           // refunded (no free delivery, no DONE-vs-REFUND mismatch). The outer catch handles it.
           const marked = await tx.genJob.updateMany({
             where: { id: job.id, status: "GENERATING" },
-            data: { generationIds: ids, spent: true, spentUsd: genSpentUsd({ kind: job.kind, model: job.model, count: job.count, videoOptions: job.videoOptions as { seconds?: number; resolution?: string; audio?: boolean } | null }) },
+            data: { generationIds: ids, spent: true, spentUsd: genSpentUsd({ kind: job.kind, model: job.model, count: job.count, referenceVideoGenerationId: job.referenceVideoGenerationId, videoOptions: job.videoOptions as { seconds?: number; resolution?: string; audio?: boolean } | null }) },
           });
           if (marked.count === 0) throw REDELIVERY_DISCARD;
           // SETTLE the hold atomically with the resume marker — the generation succeeded,
@@ -729,7 +729,7 @@ export async function handleGen(data: GenJobData, retryCount: number): Promise<v
     // FAILED+settled+delivered mismatch in that ordering.)
     await prisma.genJob.update({ where: { id: job.id }, data: { status: "DONE", progress: 100, finishedAt: new Date(), error: "" } });
     console.log(`[gen] ${job.id}: DONE → ${generationIds.length} generations via ${provider.name}`);
-    await appendCoworkResult(job, "GEN_RESULT", generationIds, "", displayCredits(pricedGenCredits({ kind: job.kind as "IMAGE" | "VIDEO", model: job.model, count: job.count, videoOptions: job.videoOptions as { seconds?: number; resolution?: string; audio?: boolean } | null })));
+    await appendCoworkResult(job, "GEN_RESULT", generationIds, "", displayCredits(pricedGenCredits({ kind: job.kind as "IMAGE" | "VIDEO", model: job.model, count: job.count, referenceVideoGenerationId: job.referenceVideoGenerationId, videoOptions: job.videoOptions as { seconds?: number; resolution?: string; audio?: boolean } | null })));
     await resumeOttoAfterGen(job); // best-effort; at-most-once via ottoVerdictAt claim
   } catch (err) {
     // PERSISTED error surfaces in the admin UI — strip any signed URL / argv a
@@ -755,7 +755,7 @@ export async function handleGen(data: GenJobData, retryCount: number): Promise<v
       await prisma.$transaction(async (tx) => {
         await tx.genJob.update({
           where: { id: job.id },
-          data: { status: "FAILED", error: message, finishedAt: new Date(), spent: spent || charged, ...((spent || charged) ? { spentUsd: genSpentUsd({ kind: job.kind, model: job.model, count: job.count, videoOptions: job.videoOptions as { seconds?: number; resolution?: string; audio?: boolean } | null }) } : {}) },
+          data: { status: "FAILED", error: message, finishedAt: new Date(), spent: spent || charged, ...((spent || charged) ? { spentUsd: genSpentUsd({ kind: job.kind, model: job.model, count: job.count, referenceVideoGenerationId: job.referenceVideoGenerationId, videoOptions: job.videoOptions as { seconds?: number; resolution?: string; audio?: boolean } | null }) } : {}) },
         });
         await refundReservation(tx, { orgId: job.ownerId, refId: job.id });
       });
