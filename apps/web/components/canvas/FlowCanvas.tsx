@@ -152,7 +152,6 @@ export default function FlowCanvas({
     if (directToolsLockedRef.current) return;
     const entry = nodeDataRef.current[id];
     if (videoBusyRef.current) {
-      toast.message("Video is already starting.");
       return;
     }
     if (!entry?.generationId || !animateFnRef.current) {
