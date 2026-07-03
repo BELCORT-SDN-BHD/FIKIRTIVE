@@ -3,6 +3,8 @@
 > **性质**:施工图(第一份 P1 spec)。上位 = 蓝图第六章 P1 + harmony-01(修正见 §0)+ harmony-03 工厂 Wave 1。
 > **状态**:founder 已定范围 —— **两层做齐**(免费确定性打底 + 乱页面升级到 LLM)。本稿据此重写,进入 plan → TDD。
 > **原则对齐**:双模(人工贴链接 + Otto skill 双入口)· 效率良心(免费先扛,LLM 只在真加质量时 escalate,见 [[efficiency-conscience-meaning]])· **不碰生成 spend-path**(无 genRequest/startGen/fal) · 租户铁幕。
+>
+> **修正(2026-07-04,#124 money-honesty review)**:**人工面 Layer 2(显式付费 LLM)已撤下**。原设计 UI 标 `$0`,但薄页面会走 `withLlmBudget` 付费调用、且 refId 非 URL 幂等 —— 诚实钱路 UX 违背宪法 2/铁律①。取"安全>效率":人工贴链接改为**确定性-only($0 真成立)**,薄页面少填几格、用户在草稿卡补齐。**Otto 面不变**(本就 `cost:"free"`,由 Otto 自身已计量的 turn 推理补齐)。若日后要人工面 AI 补齐 = 另开独立 PR(诚实 credits 边界 + URL 级幂等 + costing/money-safety 复审 + founder 逐笔批验证)。下文 §2 表"人工面 Layer 2"列、§5 `withLlmBudget` 段、§6"薄页面走 mock"验收项均以本修正为准。
 
 ## 0. 侦察修正(动手前的现状核对 —— 已对着 main 代码核实)
 

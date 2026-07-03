@@ -144,8 +144,8 @@ export function ProductShowcase({
   const [noteEditId, setNoteEditId] = useState<string | null>(null);
   const [noteText, setNoteText] = useState("");
 
-  // P1-01: read a URL → prefilled draft. Deterministic fields (JSON-LD/OG) come back instantly;
-  // a thin page is filled by one LLM call server-side. Nothing is saved — the review form's Save does that.
+  // P1-01: read a URL → prefilled draft. Deterministic only (JSON-LD/OG/title) — no LLM, no spend.
+  // A sparse page just pre-fills fewer fields. Nothing is saved — the review form's Save does that.
   const runIngest = async (url: string) => {
     if (!onIngest) return;
     setLink({ phase: "url", url, busy: true, err: null });
@@ -282,7 +282,7 @@ export function ProductShowcase({
             </span>
             <span className="text-[0.875rem] font-semibold">Add product from link</span>
             <span className="ml-auto rounded-full border border-border bg-secondary px-2 py-0.5 font-mono text-[0.625rem] uppercase tracking-wide text-muted-foreground">
-              read only · $0
+              read only · free
             </span>
           </div>
 
@@ -305,7 +305,7 @@ export function ProductShowcase({
               </div>
               {link.err && <p className="mt-2 text-[0.8125rem] text-[color:var(--destructive)]">{link.err}</p>}
               <p className="mt-2 text-[0.75rem] text-muted-foreground">
-                Paste a product page — we read it and pre-fill the form for you. $0, nothing is saved until you do.
+                Paste a product page — we read it and pre-fill the form for you. Free — nothing is saved until you do.
               </p>
             </>
           ) : (

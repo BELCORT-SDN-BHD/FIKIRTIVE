@@ -103,7 +103,9 @@ export { sectionsTouched } from "./memory-sections.js";
 export type { SectionKey, RowDiff } from "./memory-sections.js";
 export { tavilySearch, braveSearch, searchWithFallback } from "./websearch.js";
 export type { WebSearchResult, WebSearchFn } from "./websearch.js";
-export { assertPublicHttpUrl, assertPublicHttpUrlResolved } from "./url-safety.js";
-export { fetchAndExtract, fetchRawHtml, MAX_BODY } from "./fetch-extract.js";
+// url-safety (node:dns) + fetch-extract are SERVER-ONLY — import from
+// "@fikirtive/core/server" (see src/server.ts). Keeping them out of this barrel
+// prevents node:dns from leaking into client bundles that import "@fikirtive/core".
+// extractProductDraft is a PURE parser (no node/network) — safe to stay here.
 export { extractProductDraft } from "./product-extract.js";
 export type { ProductDraft } from "./product-extract.js";
