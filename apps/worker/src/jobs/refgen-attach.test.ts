@@ -25,6 +25,10 @@ const m = vi.hoisted(() => {
     refGenJob: { findUnique: refGenJobFindUnique, update: refGenJobUpdate, updateMany: refGenJobUpdateMany },
     referenceImage: { findFirst: refFindFirst, create: refCreate },
     entity: { update: entityUpdate },
+    // #112 routes the committed-resume path through resumeCommittedRefGenJob, whose first step
+    // reads the reserve ledger row. These tests enter resume-first (committedJob w/ outputAssetIds)
+    // but don't exercise the ledger branch, so a null-returning stub is enough.
+    creditLedger: { findFirst: vi.fn().mockResolvedValue(null) },
     // finalizeDone passes an ARRAY of PrismaPromises; the settle path passes a callback
     $transaction: vi.fn(async (arg: unknown) =>
       Array.isArray(arg) ? Promise.all(arg) : (arg as (tx: unknown) => Promise<unknown>)(prisma)),
