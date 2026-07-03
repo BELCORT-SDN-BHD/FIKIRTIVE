@@ -1,4 +1,4 @@
-import { displayCredits, pricedGenCredits } from "@fikirtive/core";
+import { displayCredits, pricedGenCredits } from "@fikirtive/core/spend";
 
 export const CANVAS_IMAGE_VARIANT_COUNT = 4;
 
