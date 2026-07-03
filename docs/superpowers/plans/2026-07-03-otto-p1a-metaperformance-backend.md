@@ -411,13 +411,14 @@ git commit -m "feat(otto): metaPerformance port + getAdPerformance action (singl
 
 ---
 
-### Task 4: `metaAdPerformance` read skill + 注册 + CATALOG + Parity Manifest
+### Task 4: `metaAdPerformance` read skill + 注册 + CATALOG
+
+> **Parity Manifest 说明:** 机器版 `packages/otto/src/parity-manifest.ts` + `check-parity.sh` **尚未建**(harmony 交付物,CI 未引用;现有 `metaInsights` 也无登记处)。故本 Task **不编那份 harmony 设计文档**(宪法层,founder/总审查员 维护)。parity 配对 `getAdPerformance` ↔ `meta-ad-performance`(读的对等)由 orchestrator 记进 P 块 spec §8 + ledger,待 manifest 落地时随分区回填。
 
 **Files:**
 - Create: `packages/otto/src/skills/meta-ad-performance.ts`
 - Modify: `packages/otto/src/registry.ts`
 - Modify: `packages/otto/src/skills/CATALOG.md`(由 `pnpm --filter @fikirtive/otto run catalog` 生成)
-- Modify: `docs/design/2026-07-03-harmony-02-parity-manifest.md`
 - Test: `packages/otto/src/skills/meta-ad-performance.test.ts`
 
 **Interfaces:**
@@ -502,11 +503,11 @@ export const metaAdPerformanceSkill = defineOttoSkill({
 });
 ```
 
-- [ ] **Step 4: Register + CATALOG + Parity Manifest**
+- [ ] **Step 4: Register + CATALOG**
 
 `registry.ts`:import `metaAdPerformanceSkill` + 加入 `allSkills`。
 Run: `pnpm --filter @fikirtive/otto run catalog`(重生成 CATALOG.md)。
-`docs/design/2026-07-03-harmony-02-parity-manifest.md`:加一行登记 `getAdPerformance` action ↔ `meta-ad-performance` skill(读的对等;人工面 = P1b)。**先读该文件既有格式,按其表格/字段登记。**
+(Parity Manifest 机器文件未建 → 不编 harmony 设计文档;配对由 orchestrator 记 spec/ledger,见 Task 4 头说明。)
 
 - [ ] **Step 5: Run tests + build**
 
@@ -516,8 +517,8 @@ Run: `pnpm --filter @fikirtive/otto build && pnpm --filter @fikirtive/web build`
 - [ ] **Step 6: Commit**
 
 ```bash
-git add packages/otto/src/skills/meta-ad-performance.ts packages/otto/src/registry.ts packages/otto/src/skills/CATALOG.md docs/design/2026-07-03-harmony-02-parity-manifest.md packages/otto/src/skills/meta-ad-performance.test.ts
-git commit -m "feat(otto): meta-ad-performance read skill (per-ad winners/losers) + registry + parity manifest"
+git add packages/otto/src/skills/meta-ad-performance.ts packages/otto/src/registry.ts packages/otto/src/skills/CATALOG.md packages/otto/src/skills/meta-ad-performance.test.ts
+git commit -m "feat(otto): meta-ad-performance read skill (per-ad winners/losers) + registry"
 ```
 
 ---
