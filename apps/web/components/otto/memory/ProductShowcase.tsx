@@ -150,20 +150,22 @@ export function ProductShowcase({
     if (!onIngest) return;
     setLink({ phase: "url", url, busy: true, err: null });
     const res = await onIngest(url);
-    if ("error" in res) {
-      setLink({ phase: "url", url, busy: false, err: res.error });
-      return;
-    }
-    const d = res.draft;
-    const initial = fieldsOf({ name: d.name, description: d.description, price: d.price, url: d.sourceUrl });
-    let source: string;
-    try {
-      source = new URL(d.sourceUrl).host;
-    } catch {
-      source = d.sourceUrl;
-    }
-    const filled = d.filled.filter((f) => f === "name" || f === "price" || f === "description");
-    setLink({ phase: "review", initial, source, filled });
+    // Stale-guard: if the user hit Cancel (or started another fetch) during the await,
+    // don't clobber their state — only apply to the in-flight url step we started.
+    setLink((cur) => {
+      if (cur.phase !== "url" || cur.url !== url || !cur.busy) return cur;
+      if ("error" in res) return { phase: "url", url, busy: false, err: res.error };
+      const d = res.draft;
+      const initial = fieldsOf({ name: d.name, description: d.description, price: d.price, url: d.sourceUrl });
+      let source: string;
+      try {
+        source = new URL(d.sourceUrl).host;
+      } catch {
+        source = d.sourceUrl;
+      }
+      const filled = d.filled.filter((f) => f === "name" || f === "price" || f === "description");
+      return { phase: "review", initial, source, filled };
+    });
   };
 
   // assetId → image url (only image items that carry an assetId + url).
