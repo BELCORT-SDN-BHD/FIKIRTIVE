@@ -27,7 +27,7 @@ export function frameFileName(seconds: number): string {
 
 // Window constants live in @fikirtive/core (single source) — the worker enforces the same
 // window server-side via Asset.durationS.
-import { REF_VIDEO_MIN_SECONDS, REF_VIDEO_MAX_SECONDS } from "@fikirtive/core";
+import { REF_VIDEO_MIN_SECONDS, REF_VIDEO_MAX_SECONDS } from "@fikirtive/core/gen";
 export { REF_VIDEO_MIN_SECONDS, REF_VIDEO_MAX_SECONDS };
 /** Whole-clip reference video must be 2–10s (Seedance min; upper bound protects COGS). */
 export function isRefVideoDurationOk(duration: number): boolean {

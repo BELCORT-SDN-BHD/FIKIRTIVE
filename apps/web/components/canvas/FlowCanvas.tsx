@@ -1,6 +1,6 @@
 "use client";
 import { useCallback, useEffect, useRef, useState } from "react";
-import { ReactFlow, Background, Controls, type Node, type NodeChange, applyNodeChanges } from "@xyflow/react";
+import { ReactFlow, Background, Controls, type Edge, type Node, type NodeChange, applyNodeChanges, type ReactFlowInstance } from "@xyflow/react";
 import "@xyflow/react/dist/style.css";
 import { ImageNode } from "./nodes/ImageNode";
 import { VideoNode } from "./nodes/VideoNode";
@@ -84,6 +84,9 @@ export default function FlowCanvas({
 
   // Per-node data refs so stable onAnimate closures can read current generationId + position
   const nodeDataRef = useRef<Record<string, { generationId?: string; pos: { x: number; y: number } }>>({});
+  const flowRef = useRef<ReactFlowInstance<CanvasFlowNode, Edge> | null>(null);
+  const fittedScopeRef = useRef<string | null>(null);
+  const [flowReady, setFlowReady] = useState(false);
 
   // Keep a ref to animate() so per-node closures don't go stale
   const animateFnRef = useRef<ReturnType<typeof useCanvasGen>["animate"] | null>(null);
@@ -383,6 +386,19 @@ export default function FlowCanvas({
   // Initial load + reload when the active thread changes (re-bridges that thread).
   useEffect(() => { void reload(); }, [reload]);
 
+  // ReactFlow's `fitView` prop only runs on mount, before our async canvas nodes arrive.
+  // Fit once per project/thread after nodes load so left-edge node action buttons do not
+  // sit underneath the Otto panel and become visible-but-unclickable.
+  useEffect(() => {
+    if (!flowReady || !flowRef.current || nodes.length === 0) return;
+    const scope = `${projectId}:${activeThreadId ?? "all"}`;
+    if (fittedScopeRef.current === scope) return;
+    fittedScopeRef.current = scope;
+    requestAnimationFrame(() => {
+      void flowRef.current?.fitView({ padding: 0.22, duration: 160 });
+    });
+  }, [flowReady, nodes.length, projectId, activeThreadId]);
+
   // When the active thread's OTTO work finishes (pending → done), reload so its
   // freshly-produced results appear on the canvas.
   const prevPendingRef = useRef(false);
@@ -455,7 +471,7 @@ export default function FlowCanvas({
 
   return (
     <div
-      style={{ flex: 1, position: "relative" }}
+      style={{ flex: 1, position: "relative", overflow: "hidden" }}
       className={skin === "gb" ? (panMode ? "gb" : "gb cv-select-mode") : undefined}
       onDragOver={(e) => { if (Array.from(e.dataTransfer?.types ?? []).includes("Files")) { e.preventDefault(); e.dataTransfer.dropEffect = "copy"; setDragOver(true); } }}
       onDragLeave={(e) => { if (e.currentTarget === e.target) setDragOver(false); }}
@@ -472,6 +488,7 @@ export default function FlowCanvas({
         </div>
       )}
       <ReactFlow
+        onInit={(instance) => { flowRef.current = instance; setFlowReady(true); }}
         nodes={filterNodesByConvo(nodes, activeThreadId, filterToConvo)}
         nodeTypes={nodeTypes}
         onNodesChange={onNodesChange}
@@ -479,7 +496,9 @@ export default function FlowCanvas({
         selectionOnDrag={!panMode}
         deleteKeyCode={null}
         proOptions={{ hideAttribution: true }}
+        minZoom={0.1}
         fitView
+        fitViewOptions={{ padding: 0.22 }}
       >
         <Background />
         <Controls />

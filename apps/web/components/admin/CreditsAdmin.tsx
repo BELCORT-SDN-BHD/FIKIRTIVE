@@ -8,7 +8,7 @@
  */
 import { useState } from "react";
 import { useRouter } from "next/navigation";
-import { displayCredits } from "@fikirtive/core";
+import { displayCredits } from "@fikirtive/core/spend";
 import { grantCreditsAction } from "@/lib/credit-actions";
 
 export type LedgerRow = {

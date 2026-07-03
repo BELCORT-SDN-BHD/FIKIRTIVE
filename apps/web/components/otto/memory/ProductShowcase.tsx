@@ -1,6 +1,6 @@
 "use client";
 import React, { useMemo, useState } from "react";
-import { categoryKey, distinctCategories } from "@fikirtive/core";
+import { categoryKey, distinctCategories } from "@fikirtive/core/brand-records";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";

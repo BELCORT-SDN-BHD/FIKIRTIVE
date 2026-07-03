@@ -15,13 +15,12 @@ import { deleteGeneration } from "@/lib/actions";
 import { startGen, getGenJob, getActiveGenModels } from "@/lib/gen-actions";
 import { readPick, writePick } from "@/lib/result-pick";
 import {
-  activeVideoModel,
-  displayCredits,
-  videoDefaults,
   GEN_VIDEO_MODEL_OPTIONS,
-  pricedGenCredits,
+  videoDefaults,
   type GenVideoModel,
-} from "@fikirtive/core";
+} from "@fikirtive/core/gen";
+import { activeVideoModel } from "@fikirtive/core/model-config";
+import { displayCredits, pricedGenCredits } from "@fikirtive/core/spend";
 import { Button, IcX, IcPlay, IcRetry } from "@/components/ds";
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { Button as UiButton } from "@/components/ui/button";

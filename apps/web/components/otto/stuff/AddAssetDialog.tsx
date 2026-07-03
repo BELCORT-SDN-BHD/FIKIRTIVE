@@ -13,7 +13,7 @@ import {
 import { REFERENCE_FORMATS, type ReferenceFormat } from "@/lib/reference-formats";
 import { createEntity } from "@/lib/actions";
 import { startRefGen } from "@/lib/refgen-actions";
-import { REFGEN_PRICE_USD_PER_IMAGE } from "@fikirtive/core";
+import { REFGEN_PRICE_USD_PER_IMAGE } from "@fikirtive/core/refgen";
 
 type Mode = "upload" | "generate";
 

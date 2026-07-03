@@ -18,7 +18,7 @@ import {
   UPLOAD_PART_BYTES,
   type FinalizedUpload,
   type UploadPart,
-} from "@fikirtive/core";
+} from "@fikirtive/core/upload";
 import { authorizeUpload, signUploadPart, abortDirectUpload, uploadFileFallback } from "./upload-actions";
 
 export interface DirectUploadFailure {
