@@ -8,6 +8,8 @@
 | ingestProduct | free | read | external | ❌ | Read a product's page from a URL (e.g. a Shopee/Lazada or store link) and get a  |
 | list-meta-pages | free | read | external | ❌ | List the user's connected Facebook Pages so you can pick one when building an ad |
 | lookupProducts | free | read | internal | ❌ | Look up the user's saved products by name, category, tag or description (returns |
+| meta-ad-performance | free | read | external | ❌ | Read the user's PER-AD Meta performance (each ad's spend/reach/CTR/CPC/ROAS + it |
+| meta-expert | free | write | internal | ❌ | Diagnose the user's Meta ad performance: which specific ads/creatives are winnin |
 | meta-insights | free | read | external | ❌ | Read the user's connected Meta (Facebook/Instagram) ad-account performance (spen |
 | meta-list-objects | free | read | external | ❌ | List the user's connected Meta (Facebook/Instagram) ad objects (campaigns, ad se |
 | propose | free | write | internal | ❌ | Build a generation proposal (GEN_CARD) the user can approve and generate later.  |

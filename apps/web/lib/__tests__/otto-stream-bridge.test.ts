@@ -147,6 +147,14 @@ describe("bridgeEvent — tool_output(other card-persisting tools) [F23]", () =>
     expect((part as { data: unknown }).data).toEqual(output);
   });
 
+  it("forwards meta-expert output ({ cardId, summary }) as data-tool-propose (#128)", () => {
+    const output = { cardId: "card_perf", summary: "which ads are winning vs need attention" };
+    const part = bridgeEvent(toolOutputEvent("meta-expert", output));
+    expect(part).not.toBeNull();
+    expect((part as { type: string }).type).toBe("data-tool-propose");
+    expect((part as { data: unknown }).data).toEqual(output);
+  });
+
   it("forwards proposeStoryboard's { cardId } on the same data-tool-propose channel", () => {
     const output = { cardId: "sb_card_1" };
     const part = bridgeEvent(toolOutputEvent("proposeStoryboard", output));

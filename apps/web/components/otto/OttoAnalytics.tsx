@@ -4,6 +4,7 @@ import { getAnalytics, type AnalyticsData } from "@/lib/analytics-actions";
 import { RANGES, type RangeKey } from "@/lib/analytics-view";
 import { ANALYTICS_PLATFORMS, platformById } from "@/lib/analytics-platforms";
 import type { OttoViewKey } from "./OttoApp";
+import { PerAdPerformance } from "./PerAdPerformance";
 
 /**
  * Analytics screen (Phase A) — KPIs, a reach-over-time chart, and OTTO's "best day"
@@ -200,6 +201,9 @@ export function OttoAnalytics({
               )}
             </svg>
           </div>
+
+          {/* Per-ad performance (additive, 宪法7 read parity) */}
+          <PerAdPerformance range={data.range} />
 
           {/* Top posts panel — pending one more Meta permission (Phase A) */}
           <div className="rounded-[16px] border border-border bg-card p-[18px] mt-[14px]">

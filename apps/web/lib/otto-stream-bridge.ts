@@ -71,7 +71,7 @@ export const OTTO_REASONING_ID = "otto-reasoning";
 
 /** Tools whose output carries the id(s) of a durable card they just persisted
  *  (GEN_CARD / ACTION_CARD / BUILD_CARD) — forwarded live as data-tool-propose. */
-const CARD_TOOL_NAMES = new Set(["propose", "proposeStoryboard", "proposePack", "propose-meta-action", "propose-ad-build"]);
+const CARD_TOOL_NAMES = new Set(["propose", "proposeStoryboard", "proposePack", "propose-meta-action", "propose-ad-build", "meta-expert"]);
 
 /** Read the tool name off a run_item event's item, tolerant of item shape. */
 function toolNameOf(item: unknown): string | undefined {
@@ -175,6 +175,8 @@ const TOOL_STEP_LABELS: Record<string, string> = {
   "list-meta-pages": "Finding your Pages",
   "propose-meta-action": "Planning a Meta change",
   "propose-ad-build": "Planning the campaign build",
+  "meta-ad-performance": "Reading your per-ad performance",
+  "meta-expert": "Diagnosing your ad performance",
   // setTitle stays silent (internal housekeeping).
 };
 
