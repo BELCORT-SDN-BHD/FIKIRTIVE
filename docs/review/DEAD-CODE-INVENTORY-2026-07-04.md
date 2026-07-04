@@ -32,13 +32,31 @@
 
 ### 1. 5 个 UI-dead 的 cowork server action(`apps/web/lib/cowork-actions.ts`)
 `coworkTurn`、`enhancePrompt`、`coworkDraftStoryboard`、`coworkRenameThread`、`coworkDeleteThread` —— 路由/组件层 0 引用,其中 `coworkTurn`/`enhancePrompt` 会跑**付费 LLM**且是 `"use server"` 导出(理论上任意已认证客户端可 POST 调用,是一个死的付费面)。
-- **纠缠**:与 4 个 LIVE 函数(coworkGenerate/coworkVaryCard/setCoworkBrief/cancelGenJob)交错在同一 789 行文件,**共享 helper**(refImageDataUrl/loadAvailableRefs/quoted*);外科式抽取易误伤。且 `money-safety-review/SKILL.md:41` 为 `coworkTurn` 维护着一条不变量 —— 删函数须同删该行。
-- **安全删法**:一个聚焦 PR,逐个函数删 + 删孤立 helper + 删 SKILL.md:41 + 删对应 parity 条目,每步 typecheck+test 绿。
+- **死活已确证(2026-07-04 phase-2 调查)**:5 个函数全部 0 真实调用。两处看似引用是假阳性 ——
+  `otto-actions.ts` 引的是 `coworkTurnRequest`(**LIVE schema,同前缀不同符号,删函数时绝不能碰**)
+  + 一句注释;`cowork-knowledge.ts` 是一句注释。
+- **helper/import 归属已测绘(可直接照做)**:`refImageDataUrl`/`loadAvailableRefs`/`quotedKindLabel`/
+  `quotedPreview` 仅被 `coworkTurn` 用 → 随删;`getTransport` 仅被这 3 个死函数用 → 删该 import;
+  **`getEnhanceDirective`/`familyHasPromptSkill` 被 LIVE 的 `coworkGenerate`(:578)共用 → 保留**。
+- **为什么仍未删**:这 5 个死函数与**钱路核心** `coworkGenerate`(唯一的 cowork→startGen 付费入口)
+  同处一个 789 行热文件,且该文件正被并发 agent 编辑。在紧挨钱路的地方做 350 行非连续外科抽取,
+  一处错手风险等级 = 动钱路。**收益(死付费面清理)配不上这个风险**(安全 > 效率)。
+- **安全删法(基础已打好)**:待该文件安静时,单独聚焦 PR,按上面的 helper/import 映射逐个删 +
+  删 `money-safety-review/SKILL.md:41`(它为死的 `coworkTurn` 维护不变量,是"法律层漂到死代码"的实例)
+  + 删对应 parity 条目;每步 typecheck+全量 test 绿,末尾对抗审查确认 `coworkGenerate` 未被触碰。
 
 ### 2. core 的 pre-Otto planner 模块(`packages/core/src`)
-`cowork-coach`、`cowork-planner`、`cowork-skills`、`cowork-transport` —— 仅被 barrel(`index.ts`)导出;`cowork-transport` 还链到 `runtime-config.ts`(admin `cowork_provider` fal/modal 开关,带 super-admin 升级)。
-- **纠缠**:barrel 导出 = 需确认 app 侧没消费这些具体 export;transport→runtime-config→admin 开关是一条活的配置链(虽配置的后端无调用点)。
-- **安全删法**:先确认 app 未消费 → 从 barrel 摘除 → 删模块 → 删 admin 开关的 UI+config。
+`cowork-coach`、`cowork-planner`、`cowork-skills`、`cowork-transport`。
+- **消费者已逐符号测绘(2026-07-04 phase-2 调查)—— 有 LIVE 触手,不可整簇删**:
+  - `cowork-planner.buildPlannerMessages` 被 **`apps/web/components/admin/KnowledgeAdmin.tsx` 消费**
+    → 若 KnowledgeAdmin 活着,cowork-planner 就活着(先判 KnowledgeAdmin 死活:它 0 route 引用,
+    但需确认没被其他 admin 组件间接引用 —— 这本身是一个待解的子问题)。
+  - `cowork-transport.createTransport` 被 **`runtime-config.ts` 消费**(admin `cowork_provider` 开关)
+    → 删 transport 须先删这条配置链的 UI + config。
+  - 真正 0 消费者的只有:`lintPrompt`/`looksLikeTagSoup`/`countMotionCues`(coach)、
+    `runSkill`/`draftStoryboardSkill`/`enhancePromptSkill`(skills)、`COWORK`(planner)。
+- **安全删法**:先判定 KnowledgeAdmin 与 cowork_provider 开关的死活(各是一个独立判断)→ 再决定
+  哪些能删。**不是整簇一刀**,而是先解两个子问题。
 
 ### 3. `apps/web/lib/studio-actions.ts`(~160)
 0 file-importers,但 `addShot`/`deleteShot` 在 1 个 UI 文件出现(疑似与 `actions.ts` 同名函数**撞名**)。
