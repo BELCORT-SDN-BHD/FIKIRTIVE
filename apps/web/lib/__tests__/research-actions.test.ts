@@ -4,14 +4,14 @@ import { describe, it, expect, vi, beforeEach } from "vitest";
 // Mocks — mirror storyboard-gate1-actions.test.ts style (vi.hoisted + vi.mock).
 // db mock's chatMessage/researchJob/creditAccount are the SAME object instances the
 // code sees inside the (passthrough) $transaction — so tx.researchJob.create ===
-// mockResearchCreate. requireOwner, getBoss are mocked. @fikirtive/core and
-// @fikirtive/otto are kept REAL (importOriginal) so RESEARCH_QUEUE + RESEARCH_TIERS
-// are the real values; only newId is overridden for determinism.
+// mockResearchCreate. requireOwner, getBoss, and the otto research pricing helper are mocked;
+// @fikirtive/core is kept real except newId so RESEARCH_QUEUE stays real.
 // ---------------------------------------------------------------------------
 const {
   mockOwner,
   mockChatFindFirst,
   mockChatUpdate,
+  mockChatUpdateMany,
   mockResearchCreate,
   mockResearchFindFirst,
   mockResearchUpdate,
@@ -21,17 +21,19 @@ const {
   mockSettle,
   mockBossSend,
   mockGetBoss,
+  mockIsImpersonating,
   db,
 } = vi.hoisted(() => {
   const mockChatFindFirst = vi.fn();
   const mockChatUpdate = vi.fn();
+  const mockChatUpdateMany = vi.fn();
   const mockResearchCreate = vi.fn();
   const mockResearchFindFirst = vi.fn();
   const mockResearchUpdate = vi.fn();
   const mockCreditFindUnique = vi.fn();
   const mockGenJobCreate = vi.fn();
   const db: Record<string, unknown> = {
-    chatMessage: { findFirst: mockChatFindFirst, update: mockChatUpdate },
+    chatMessage: { findFirst: mockChatFindFirst, update: mockChatUpdate, updateMany: mockChatUpdateMany },
     researchJob: { create: mockResearchCreate, findFirst: mockResearchFindFirst, update: mockResearchUpdate },
     creditAccount: { findUnique: mockCreditFindUnique },
     genJob: { create: mockGenJobCreate },
@@ -44,6 +46,7 @@ const {
     mockOwner: vi.fn(),
     mockChatFindFirst,
     mockChatUpdate,
+    mockChatUpdateMany,
     mockResearchCreate,
     mockResearchFindFirst,
     mockResearchUpdate,
@@ -53,6 +56,7 @@ const {
     mockSettle: vi.fn(),
     mockBossSend,
     mockGetBoss: vi.fn(async () => ({ send: mockBossSend })),
+    mockIsImpersonating: vi.fn(),
     db,
   };
 });
@@ -61,16 +65,25 @@ const {
 vi.mock("@fikirtive/db", () => ({ prisma: db, Prisma: {}, reserveCredits: mockReserve, settleCredits: mockSettle }));
 vi.mock("../auth-guard", () => ({ requireOwner: mockOwner }));
 vi.mock("../queue", () => ({ getBoss: mockGetBoss }));
+vi.mock("@/lib/better-auth/compat", () => ({ isImpersonating: mockIsImpersonating }));
 
 // newId: deterministic id so the created job id is predictable.
 vi.mock("@fikirtive/core", async (importOriginal) => ({
   ...(await importOriginal<typeof import("@fikirtive/core")>()),
   newId: () => "job-new-1",
+  RESEARCH_QUEUE: "research",
+}));
+vi.mock("@fikirtive/otto", () => ({
+  RESEARCH_TIERS: {
+    quick: { label: "Quick", maxSearches: 5, maxPages: 8, maxSteps: 6, estimatedCredits: 6 },
+    standard: { label: "Standard", maxSearches: 12, maxPages: 20, maxSteps: 12, estimatedCredits: 11 },
+    deep: { label: "Deep", maxSearches: 25, maxPages: 40, maxSteps: 24, estimatedCredits: 22 },
+  },
+  researchTierBudgetInternal: (maxSteps: number) => maxSteps * 9,
 }));
 
 import { approveResearch } from "../research-actions";
-// RESEARCH_TIERS is real (@fikirtive/otto not mocked); RESEARCH_QUEUE is real (core mock keeps
-// importOriginal — only newId is overridden).
+// RESEARCH_QUEUE is real (core mock keeps importOriginal — only newId is overridden).
 import { RESEARCH_TIERS, researchTierBudgetInternal } from "@fikirtive/otto";
 import { RESEARCH_QUEUE } from "@fikirtive/core";
 
@@ -104,12 +117,15 @@ function wireCard(parent: ReturnType<typeof card> | null) {
 }
 
 beforeEach(() => {
-  vi.clearAllMocks();
+  vi.resetAllMocks();
   mockOwner.mockResolvedValue({ ownerId: OWNER });
   mockResearchCreate.mockResolvedValue({});
   mockResearchUpdate.mockResolvedValue({});
   mockChatUpdate.mockResolvedValue({});
+  mockChatUpdateMany.mockResolvedValue({ count: 1 });
   mockBossSend.mockResolvedValue("queue-abc");
+  mockGetBoss.mockResolvedValue({ send: mockBossSend });
+  mockIsImpersonating.mockResolvedValue(false);
   // ample balance by default (standard tier estimate = 11, derived from turnBudgetInternal)
   mockCreditFindUnique.mockResolvedValue({ balance: 1000 });
 });
@@ -151,13 +167,24 @@ describe("approveResearch — happy path", () => {
     expect(mockResearchUpdate).toHaveBeenCalledWith({ where: { id: "job-new-1" }, data: { queueJobId: "queue-abc" } });
   });
 
-  it("enqueue 抛错 → 仍返回 jobId(job 已建+卡已 running,best-effort 不回滚)", async () => {
+  it("enqueue 抛错 → fail-close job/card,不留下 running 死卡", async () => {
     wireCard(card());
     mockBossSend.mockRejectedValue(new Error("queue down"));
     const res = await approveResearch({ cardId: "card-1" });
-    expect(res).toEqual({ jobId: "job-new-1" });
+    expect(res).toEqual({ error: "Could not reach the research queue — please try again." });
     expect(mockResearchCreate).toHaveBeenCalledTimes(1);
     expect(mockChatUpdate).toHaveBeenCalledTimes(1);
+    expect(mockResearchUpdate).toHaveBeenCalledWith({
+      where: { id: "job-new-1" },
+      data: { status: "FAILED", error: "dispatch failed: queue down" },
+    });
+    expect(mockChatUpdateMany).toHaveBeenCalledWith(
+      expect.objectContaining({
+        where: expect.objectContaining({ id: "card-1", ownerId: OWNER, kind: "RESEARCH_CARD" }),
+      }),
+    );
+    const failedPayload = mockChatUpdateMany.mock.calls[0][0].data.payload;
+    expect(failedPayload).toMatchObject({ status: "failed", error: "dispatch failed: queue down" });
   });
 });
 
@@ -246,6 +273,16 @@ describe("approveResearch — 拒绝路径(不建 job)", () => {
 });
 
 describe("approveResearch — owner-scope / 入参", () => {
+  it("impersonating customer → blocked before card/balance reads", async () => {
+    mockIsImpersonating.mockResolvedValue(true);
+    const res = await approveResearch({ cardId: "card-1" });
+    expect(res).toEqual({ error: "Paused while impersonating a customer — exit impersonation to do this." });
+    expect(mockChatFindFirst).not.toHaveBeenCalled();
+    expect(mockCreditFindUnique).not.toHaveBeenCalled();
+    expect(mockResearchCreate).not.toHaveBeenCalled();
+    expect(mockBossSend).not.toHaveBeenCalled();
+  });
+
   it("requireOwner 失败 → {error},不碰 DB", async () => {
     mockOwner.mockResolvedValue({ error: "Not authorized." });
     const res = await approveResearch({ cardId: "card-1" });
