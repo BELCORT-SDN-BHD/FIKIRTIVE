@@ -12,11 +12,21 @@ vi.mock("@/lib/auth-guard", () => ({ requireOwner: mockRequireOwner, requireRole
 vi.mock("@/lib/better-auth/compat", () => ({ isImpersonating: vi.fn(), auth: vi.fn() }));
 
 const updateMany = vi.fn();
+const findFirst = vi.fn();
+const aggregate = vi.fn();
+const create = vi.fn();
+const updateThread = vi.fn();
 const refundReservation = vi.fn();
 // $transaction runs the callback with a tx that exposes genJob.updateMany, and returns its result.
-const $transaction = vi.fn(async (fn: (tx: unknown) => unknown) => fn({ genJob: { updateMany } }));
+const $transaction = vi.fn(async (fn: (tx: unknown) => unknown) =>
+  fn({
+    genJob: { updateMany, findFirst },
+    chatMessage: { aggregate, create },
+    chatThread: { update: updateThread },
+  }),
+);
 vi.mock("@fikirtive/db", () => ({
-  prisma: { $transaction, genJob: { updateMany } },
+  prisma: { $transaction, genJob: { updateMany, findFirst }, chatMessage: { aggregate, create }, chatThread: { update: updateThread } },
   Prisma: {},
   refundReservation,
 }));
@@ -26,6 +36,8 @@ vi.mock("next/cache", () => ({ revalidatePath: vi.fn() }));
 beforeEach(() => {
   vi.clearAllMocks();
   mockRequireOwner.mockResolvedValue({ email: "u@t.test", ownerId: "org-1" });
+  findFirst.mockResolvedValue({ threadId: "thread-1" });
+  aggregate.mockResolvedValue({ _max: { seq: 7 } });
 });
 
 const { cancelGenJob } = await import("@/lib/cowork-actions");
@@ -41,6 +53,21 @@ describe("cancelGenJob — refund/race (audit #46)", () => {
     });
     expect(refundReservation).toHaveBeenCalledTimes(1);
     expect(refundReservation).toHaveBeenCalledWith(expect.anything(), { orgId: "org-1", refId: "g1" });
+    expect(create).toHaveBeenCalledWith({
+      data: expect.objectContaining({
+        threadId: "thread-1",
+        ownerId: "org-1",
+        role: "AGENT",
+        kind: "TURN_ERROR",
+        seq: 8,
+        text: "Cancelled — you weren't charged.",
+        genJobId: "g1",
+      }),
+    });
+    expect(updateThread).toHaveBeenCalledWith({
+      where: { id: "thread-1" },
+      data: { updatedAt: expect.any(Date) },
+    });
   });
 
   it("already started (worker won the race / DONE / FAILED): count 0 → no refund", async () => {
@@ -48,6 +75,7 @@ describe("cancelGenJob — refund/race (audit #46)", () => {
     const res = await cancelGenJob({ jobId: "g2" });
     expect(res).toEqual({ alreadyStarted: true });
     expect(refundReservation).not.toHaveBeenCalled();
+    expect(create).not.toHaveBeenCalled();
   });
 
   it("cross-tenant jobId: ownerId scoping yields count 0 → no refund", async () => {
@@ -55,6 +83,16 @@ describe("cancelGenJob — refund/race (audit #46)", () => {
     const res = await cancelGenJob({ jobId: "someone-elses" });
     expect(res).toEqual({ alreadyStarted: true });
     expect(refundReservation).not.toHaveBeenCalled();
+  });
+
+  it("non-cowork queued job: refunds without writing a thread terminal message", async () => {
+    updateMany.mockResolvedValue({ count: 1 });
+    findFirst.mockResolvedValue({ threadId: null });
+    const res = await cancelGenJob({ jobId: "g-space" });
+    expect(res).toEqual({ refunded: true });
+    expect(refundReservation).toHaveBeenCalledTimes(1);
+    expect(create).not.toHaveBeenCalled();
+    expect(updateThread).not.toHaveBeenCalled();
   });
 
   it("invalid input (no jobId): rejects before any DB write or refund", async () => {

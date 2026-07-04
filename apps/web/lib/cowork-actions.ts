@@ -751,6 +751,32 @@ export async function cancelGenJob(raw: unknown): Promise<{ refunded: true } | {
       });
       if (count > 0) {
         await refundReservation(tx, { orgId: ownerId, refId: jobId });
+        const job = await tx.genJob.findFirst({
+          where: { id: jobId, ownerId },
+          select: { threadId: true },
+        });
+        if (job?.threadId) {
+          const last = await tx.chatMessage.aggregate({
+            where: { threadId: job.threadId, ownerId },
+            _max: { seq: true },
+          });
+          await tx.chatMessage.create({
+            data: {
+              id: newId(),
+              threadId: job.threadId,
+              ownerId,
+              role: "AGENT",
+              kind: "TURN_ERROR",
+              seq: (last._max.seq ?? 0) + 1,
+              text: "Cancelled — you weren't charged.",
+              genJobId: jobId,
+            },
+          });
+          await tx.chatThread.update({
+            where: { id: job.threadId },
+            data: { updatedAt: new Date() },
+          });
+        }
       }
       return count;
     });
