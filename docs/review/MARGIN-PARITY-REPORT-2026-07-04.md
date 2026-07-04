@@ -33,6 +33,7 @@ Aligned executable pricing, quote, reserve, settlement, and recorded COGS with t
   - output duration: fixed 5s
   - model: `seedance-2-fast` only
 - Otto proposal cards now quote the same reference-video price that `startGen` reserves and the worker settles.
+- `startGen` now has a focused regression test proving a reference-video request persists `referenceVideoGenerationId` and reserves exactly 16 displayed credits before the worker runs.
 - Otto LLM default margin is now 2.0x.
 - Admin System Health now surfaces the BytePlus resource-pack guard from env-configured pack capacity/console-used amounts, falling back to frozen spend snapshots and warning when the alert is not configured.
 
@@ -43,6 +44,11 @@ Aligned executable pricing, quote, reserve, settlement, and recorded COGS with t
 - `DATABASE_URL='postgresql://artlio:artlio@localhost:5432/artlio_test' COREPACK_ENABLE_DOWNLOAD_PROMPT=0 corepack pnpm -r build`
 - `COREPACK_ENABLE_DOWNLOAD_PROMPT=0 corepack pnpm --filter @fikirtive/web exec eslint lib/gen-actions.ts lib/video-frame.ts lib/__tests__/video-frame.test.ts`
 - `COREPACK_ENABLE_DOWNLOAD_PROMPT=0 corepack pnpm --filter @fikirtive/core exec vitest run src/spend.test.ts src/gen.test.ts src/llm-prices.test.ts`
+- `DATABASE_URL='postgresql://artlio:artlio@localhost:5432/artlio_test' COREPACK_ENABLE_DOWNLOAD_PROMPT=0 corepack pnpm --filter @fikirtive/web exec vitest run lib/__tests__/gen-actions.test.ts lib/__tests__/video-frame.test.ts lib/__tests__/otto-generation-validate.test.ts`
+- `DATABASE_URL='postgresql://artlio:artlio@localhost:5432/artlio_test' COREPACK_ENABLE_DOWNLOAD_PROMPT=0 corepack pnpm --filter @fikirtive/core exec vitest run src/spend.test.ts src/gen.test.ts src/gen-from-card.test.ts`
+- `COREPACK_ENABLE_DOWNLOAD_PROMPT=0 corepack pnpm --filter @fikirtive/otto test -- src/skills/propose.test.ts`
+- `COREPACK_ENABLE_DOWNLOAD_PROMPT=0 corepack pnpm --filter @fikirtive/worker test -- src/jobs/gen.test.ts`
+- `DATABASE_URL='postgresql://artlio:artlio@localhost:5432/artlio_test' COREPACK_ENABLE_DOWNLOAD_PROMPT=0 corepack pnpm --filter @fikirtive/web typecheck`
 - `git diff --check`
 
 ## Notes
