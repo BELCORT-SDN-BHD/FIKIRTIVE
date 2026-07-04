@@ -74,13 +74,13 @@ function AdJobCard({
         {job.threadId && (
           <Button type="button" size="sm" variant="secondary" className="h-7 px-2 text-[0.75rem]" onClick={() => onOpenThread?.(job.threadId)}>
             <ExternalLink size={13} />
-            Open
+            Open conversation
           </Button>
         )}
         {!isProcessing && job.prompt && (
           <Button type="button" size="sm" variant="secondary" className="h-7 px-2 text-[0.75rem]" onClick={() => onRetryWithOtto?.(`Try again with this failed generation: ${job.prompt}`)}>
             <RotateCcw size={13} />
-            Retry
+            Retry with Otto
           </Button>
         )}
         {!isProcessing && (

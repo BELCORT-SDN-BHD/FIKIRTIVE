@@ -48,6 +48,7 @@ interface OttoViewProps {
   onBalanceRefresh: () => Promise<void>;
   onActivityRefresh?: () => Promise<void>;
   onViewChange: (view: OttoViewKey) => void;
+  onOpenThread: (threadId: string) => void;
   activity: Set<string>;
   onDeleteThread: (id: string) => void;
   onNewConvo: () => void;
@@ -83,6 +84,7 @@ export function OttoView({
   onBalanceRefresh,
   onActivityRefresh,
   onViewChange,
+  onOpenThread,
   activity,
   onDeleteThread,
   onNewConvo,
@@ -139,10 +141,7 @@ export function OttoView({
           adJobs={adJobs}
           records={records}
           history={history}
-          onOpenThread={(threadId) => {
-            onActiveThreadChange(threadId);
-            onViewChange("otto");
-          }}
+          onOpenThread={onOpenThread}
           onRetryWithOtto={onUseInOtto}
         />
       </div>

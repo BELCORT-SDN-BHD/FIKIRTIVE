@@ -402,6 +402,7 @@ export function OttoApp({
           ottoStreamEnabled={ottoStreamEnabled}
           onBalanceRefresh={refreshBalance}
           onViewChange={setView}
+          onOpenThread={handleSelectThread}
           activity={activity}
           onActivityRefresh={refreshActivity}
           onDeleteThread={handleDeleteThread}
