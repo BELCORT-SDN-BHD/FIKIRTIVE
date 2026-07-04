@@ -148,12 +148,12 @@ describe("getGeneration", () => {
 // setFavorite
 // ---------------------------------------------------------------------------
 describe("setFavorite", () => {
-  it("scopes updateMany by ownerId (cross-tenant guard)", async () => {
+  it("scopes updateMany by ownerId and live rows only (cross-tenant + soft-delete guard)", async () => {
     mockUpdateMany.mockResolvedValue({ count: 1 });
     await setFavorite("g1", true);
     expect(mockUpdateMany).toHaveBeenCalledWith(
       expect.objectContaining({
-        where: { id: "g1", ownerId: "u1" },
+        where: { id: "g1", ownerId: "u1", deletedAt: null },
         data: { favorite: true },
       }),
     );
@@ -327,6 +327,13 @@ describe("saveCroppedGeneration", () => {
   it("returns { error } for invalid data URL", async () => {
     const result = await saveCroppedGeneration("g1", "not-a-data-url");
     expect(result).toEqual({ error: "Invalid data URL." });
+  });
+
+  it("returns { error } for malformed base64 and writes nothing", async () => {
+    const result = await saveCroppedGeneration("g1", "data:image/png;base64,@@@@");
+    expect(result).toEqual({ error: "Invalid data URL." });
+    expect(mockStoragePut).not.toHaveBeenCalled();
+    expect(mockTransaction).not.toHaveBeenCalled();
   });
 
   it("does NOT touch any credit or pricing table", async () => {
