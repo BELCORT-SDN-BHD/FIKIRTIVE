@@ -156,10 +156,12 @@ describe("margin floor — every sellable video combo keeps ≥45% gross margin 
             const priceUsd = pricedGenCredits(job) / CREDITS_PER_USD;
             const costUsd = genSpentUsd(job);
             const margin = (priceUsd - costUsd) / priceUsd;
+            // 1e-9 = IEEE754 容差:定价可以精确压在 45.0% 地板上(720p 10s 档,
+            // #129 按 Ark 实测成本核定),0.63/1.4 在浮点里是 0.44999999999999996。
             expect(
               margin,
               `${model} ${seconds}s ${resolution || "(default res)"} audio=${audio}: price $${priceUsd} cost $${costUsd} margin ${(margin * 100).toFixed(1)}%`,
-            ).toBeGreaterThanOrEqual(0.45);
+            ).toBeGreaterThanOrEqual(0.45 - 1e-9);
           }
         }
       }
