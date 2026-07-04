@@ -42,6 +42,10 @@ jobs:
       - run: bash scripts/check-skill-imports.sh
       # Tenancy tripwire (informational baseline today; never fails the build yet).
       - run: bash scripts/check-no-raw-prisma.sh
+      # Parity fence (Seam 9 / 宪法 7): every exported server action must be registered in
+      # parity-manifest.ts. WARN phase (harmony-02 §四.2) — red list visible, never fails;
+      # flips to hard fail once the backfill clears the list.
+      - run: bash scripts/check-parity.sh
       # Skill catalog must match the registry (Seam 1 step 5) — a stale CATALOG.md fails here.
       - run: pnpm --filter @fikirtive/otto run catalog:check
 
