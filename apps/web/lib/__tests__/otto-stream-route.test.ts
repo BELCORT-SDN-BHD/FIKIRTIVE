@@ -88,6 +88,39 @@ function req(body: unknown) {
   return { json: async () => body } as never;
 }
 
+function tokenEvent(delta: string) {
+  return {
+    type: "raw_model_stream_event" as const,
+    data: { type: "output_text_delta", delta },
+  };
+}
+
+function streamedRunResult(args: {
+  events: unknown[];
+  usage?: {
+    inputTokens: number;
+    outputTokens: number;
+    requestUsageEntries?: Array<{
+      inputTokens: number;
+      outputTokens: number;
+      inputTokensDetails: Record<string, number>;
+    }>;
+  };
+}) {
+  return {
+    async *[Symbol.asyncIterator]() {
+      for (const event of args.events) yield event;
+    },
+    completed: Promise.resolve(undefined),
+    state: {
+      usage: args.usage ?? {
+        inputTokens: 0,
+        outputTokens: 0,
+      },
+    },
+  };
+}
+
 beforeEach(() => {
   vi.clearAllMocks();
   mocks.parts.length = 0;
@@ -106,9 +139,88 @@ beforeEach(() => {
     disabledModels: [],
   });
   mocks.buildContextSystemMessage.mockReturnValue(null);
+  mocks.finalizeOttoRun.mockResolvedValue({ status: "completed" });
+  mocks.withLlmBudget.mockImplementation(
+    async (_args: unknown, fn: () => Promise<{ result: unknown; usage?: unknown }>) => {
+      const out = await fn();
+      return out.result;
+    },
+  );
 });
 
 describe("POST /api/otto/stream", () => {
+  it("streams a successful Otto turn inside the LLM budget, returns usage for settlement, and finalizes the run", async () => {
+    let runCalledInsideBudget = false;
+    let usageForSettlement: unknown = null;
+    const streamed = streamedRunResult({
+      events: [tokenEvent("Done")],
+      usage: {
+        inputTokens: 120,
+        outputTokens: 30,
+        requestUsageEntries: [
+          { inputTokens: 120, outputTokens: 30, inputTokensDetails: { cached_tokens: 50 } },
+        ],
+      },
+    });
+    mocks.run.mockResolvedValue(streamed);
+    mocks.withLlmBudget.mockImplementation(
+      async (_args: unknown, fn: () => Promise<{ result: unknown; usage?: unknown }>) => {
+        const out = await fn();
+        runCalledInsideBudget = mocks.run.mock.calls.length > 0;
+        usageForSettlement = out.usage;
+        return out.result;
+      },
+    );
+
+    const res = await POST(req({ projectId: "proj_stream", text: "Make a launch post" }));
+    const parts = await res.json();
+
+    expect(res.status).toBe(200);
+    expect(mocks.withLlmBudget).toHaveBeenCalledWith(
+      expect.objectContaining({
+        orgId: "org_stream",
+        refId: expect.stringMatching(/^otto-stream:/),
+        paid: true,
+      }),
+      expect.any(Function),
+    );
+    expect(runCalledInsideBudget).toBe(true);
+    expect(mocks.run).toHaveBeenCalledWith(
+      expect.objectContaining({ name: "Otto" }),
+      expect.any(Array),
+      expect.objectContaining({
+        context: expect.objectContaining({ orgId: "org_stream", projectId: "proj_stream" }),
+        stream: true,
+      }),
+    );
+    expect(usageForSettlement).toEqual({
+      inputTokens: 120,
+      outputTokens: 30,
+      cachedInputTokens: 50,
+    });
+    const finalized = mocks.finalizeOttoRun.mock.calls[0]?.[0] as { threadId?: string } | undefined;
+    const threadId = finalized?.threadId;
+    expect(threadId).toEqual(expect.any(String));
+    expect(mocks.finalizeOttoRun).toHaveBeenCalledWith(
+      expect.objectContaining({
+        ownerId: "org_stream",
+        threadId,
+        isNew: true,
+        priorOttoState: null,
+        result: streamed,
+        seqAfterUser: 1,
+      }),
+    );
+    expect(parts).toEqual(
+      expect.arrayContaining([
+        { type: "text-start", id: "otto-text" },
+        { type: "text-delta", id: "otto-text", delta: "Done" },
+        { type: "text-end", id: "otto-text" },
+        { type: "data-status", data: { kind: "done", threadId } },
+      ]),
+    );
+  });
+
   it("surfaces insufficient credits as a stream error without running Otto or persisting an AGENT message", async () => {
     mocks.withLlmBudget.mockRejectedValue(new mocks.MockInsufficientCredits());
 
