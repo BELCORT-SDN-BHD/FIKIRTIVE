@@ -46,6 +46,7 @@ import { startGen } from "./gen-actions";
 import { gatherReferenceImages } from "./otto-ref-images";
 import { getBrandContextText } from "./memory-actions";
 import { fetchAndExtract, fetchRawHtml } from "./fetch-extract";
+import { draftScheduledPost } from "./schedule-service";
 import { readPageCached } from "./web-page-cache";
 import { fetchOwnerInsights } from "./meta-insights";
 import { fetchOwnerAdPerformance } from "./meta-performance";
@@ -199,6 +200,9 @@ export async function buildOttoContext({
       search,
       readPage: (url: string, page?: number) => readPageCached(url, page),
     },
+    // Single write authority: Otto's schedulePosts skill drafts through the SAME server function
+    // the human createScheduledPost action uses (shared validation + owner-scoped media check).
+    schedule: { draft: (input) => draftScheduledPost({ ownerId, projectId, source: "otto", input }) },
     productIngest: {
       // Layer 1 only: fetch (SSRF-hardened) + deterministic extract, plus the page text so
       // Otto itself fills any gaps (that is the skill path's Layer 2 — no separate LLM call).
