@@ -23,4 +23,12 @@ describe("channelRegistry", () => {
     expect(fb.capabilities.supportsNativeSchedule).toBe(true);
     expect(fb.capabilities.supportsFirstComment).toBe(false);
   });
+  it("organic publish adapters fail closed until the publish worker/App Review slice lands", async () => {
+    for (const id of ["instagram", "facebook"]) {
+      const channel = getChannel(id)!;
+      expect(() =>
+        channel.publish("owner-1", { id: "target-1", name: "Target" }, { caption: "x", mediaUrls: [], postType: "feed-image" }),
+      ).toThrow(/not implemented/i);
+    }
+  });
 });

@@ -4,13 +4,13 @@ import { prisma } from "@fikirtive/db";
 import {
   canTransition,
   isScheduleChannel,
+  newId,
   SCHEDULE_CHANNEL_CAPS,
   type ScheduledPostStatus,
   type ScheduleChannel,
 } from "@fikirtive/core";
 import { requireOwner } from "./auth-guard";
 import { draftScheduledPost } from "./schedule-service";
-import { fetchOwnerPages } from "./meta-pages";
 import { channelRegistry } from "./channels/registry";
 import type { ChannelId } from "./channels/types";
 
@@ -30,9 +30,11 @@ export type CreateScheduledPostInput = {
 };
 
 export type UpdateScheduledPostPatch = {
+  channel?: ScheduleChannel;
   caption?: string;
   scheduledAt?: string;
   scheduledTz?: string;
+  media?: string[];
   firstComment?: string | null;
   metaTargetId?: string | null;
 };
@@ -110,7 +112,7 @@ export async function updateScheduledPost(
   // channel gates first-comment capability. A terminal / publishing / failed row is content-frozen.
   const current = await prisma.scheduledPost.findFirst({
     where: { id, ownerId: gate.ownerId, deletedAt: null },
-    select: { status: true, channel: true },
+    select: { status: true, channel: true, firstComment: true },
   });
   if (!current) return { error: "Post not found." };
   if (!EDITABLE_STATUSES.has(current.status as ScheduledPostStatus)) {
@@ -118,10 +120,20 @@ export async function updateScheduledPost(
   }
 
   const data: Record<string, unknown> = {};
+  const nextChannel = patch?.channel !== undefined ? patch.channel : current.channel;
+  if (!isScheduleChannel(nextChannel)) return { error: "Pick a supported channel." };
+  const caps = SCHEDULE_CHANNEL_CAPS[nextChannel];
   // A MATERIAL edit changes what would be published (caption/scheduledAt/firstComment/metaTargetId).
-  // scheduledTz alone is a display detail, not material. Tracked so an edit to an already-approved
-  // (SCHEDULED) post can revoke consent below — approval = consent to publish (spec §五).
+  // scheduledTz alone is a display detail, not material. Channel/media edits are material too.
+  // Tracked so an edit to an already-approved (SCHEDULED) post can revoke consent below —
+  // approval = consent to publish (spec §五).
   let material = false;
+  if (patch?.channel !== undefined) {
+    data.channel = nextChannel;
+    material = true;
+    // Moving an Instagram draft to Facebook must not leave an impossible first comment behind.
+    if (!caps.supportsFirstComment && current.firstComment) data.firstComment = null;
+  }
   if (patch?.caption !== undefined) {
     const c = typeof patch.caption === "string" ? patch.caption.trim() : "";
     if (!c) return { error: "A post needs a caption." };
@@ -143,17 +155,38 @@ export async function updateScheduledPost(
     const fc = typeof patch.firstComment === "string" && patch.firstComment.trim() ? patch.firstComment : null;
     // Channel capability (shared server enforcement): only channels that support a first comment
     // may carry a non-empty one — the UI hides the field, but this action is a callable boundary.
-    if (fc && !(isScheduleChannel(current.channel) && SCHEDULE_CHANNEL_CAPS[current.channel].supportsFirstComment)) {
+    if (fc && !caps.supportsFirstComment) {
       return { error: "This channel doesn't support a first comment." };
     }
     data.firstComment = fc;
+    material = true;
+  }
+  let nextMedia: string[] | null = null;
+  if (patch?.media !== undefined) {
+    nextMedia = Array.isArray(patch.media) ? patch.media.filter((m) => typeof m === "string" && m) : [];
+    if (nextMedia.length > caps.maxMediaCount) {
+      return {
+        error:
+          caps.maxMediaCount === 1
+            ? `${caps.label} supports a single image or video, not a carousel.`
+            : `A carousel can have at most ${caps.maxMediaCount} items.`,
+      };
+    }
+    if (nextMedia.length) {
+      const owned = await prisma.generation.findMany({
+        where: { id: { in: nextMedia }, ownerId: gate.ownerId, deletedAt: null },
+        select: { id: true },
+      });
+      const ownedIds = new Set(owned.map((g) => g.id));
+      if (nextMedia.some((mediaId) => !ownedIds.has(mediaId))) return { error: "Some selected media isn't yours." };
+    }
     material = true;
   }
   if (patch?.metaTargetId !== undefined) {
     data.metaTargetId = typeof patch.metaTargetId === "string" && patch.metaTargetId ? patch.metaTargetId : null;
     material = true;
   }
-  if (Object.keys(data).length === 0) return { error: "Nothing to update." };
+  if (Object.keys(data).length === 0 && nextMedia === null) return { error: "Nothing to update." };
 
   // Re-consent gate: a material edit to an approved (SCHEDULED) post revokes its approval — it drops
   // back to DRAFT with approvedAt cleared, so the owner must re-approve before it re-enters the queue.
@@ -163,14 +196,25 @@ export async function updateScheduledPost(
   }
 
   try {
-    // Atomic: the WHERE pins the status we validated against, so a concurrent approve/cancel that
-    // moved the row out from under us matches zero rows → conflict, never a silent clobber.
-    const { count } = await prisma.scheduledPost.updateMany({
-      where: { id, ownerId: gate.ownerId, deletedAt: null, status: current.status },
-      data,
+    await prisma.$transaction(async (tx) => {
+      // Atomic: the WHERE pins the status we validated against, so a concurrent approve/cancel that
+      // moved the row out from under us matches zero rows → conflict, never a silent clobber.
+      const { count } = await tx.scheduledPost.updateMany({
+        where: { id, ownerId: gate.ownerId, deletedAt: null, status: current.status },
+        data: Object.keys(data).length ? data : { updatedAt: new Date() },
+      });
+      if (!count) throw new Error("stale");
+      if (nextMedia !== null) {
+        await tx.scheduledPostMedia.deleteMany({ where: { scheduledPostId: id } });
+        if (nextMedia.length) {
+          await tx.scheduledPostMedia.createMany({
+            data: nextMedia.map((generationId, position) => ({ id: newId(), scheduledPostId: id, generationId, position })),
+          });
+        }
+      }
     });
-    if (!count) return { error: "This post just changed — please refresh and try again." };
-  } catch {
+  } catch (e) {
+    if (e instanceof Error && e.message === "stale") return { error: "This post just changed — please refresh and try again." };
     return { error: "Couldn't save that — please try again." };
   }
   revalidatePath("/", "layout");
@@ -189,7 +233,7 @@ export async function approveScheduledPost(id: string): Promise<{ ok: true } | {
 
   const post = await prisma.scheduledPost.findFirst({
     where: { id, ownerId: gate.ownerId, deletedAt: null },
-    select: { id: true, status: true, metaTargetId: true, media: { select: { id: true }, take: 1 } },
+    select: { id: true, status: true, channel: true, metaTargetId: true, media: { select: { id: true }, take: 1 } },
   });
   if (!post) return { error: "Post not found." };
 
@@ -201,9 +245,12 @@ export async function approveScheduledPost(id: string): Promise<{ ok: true } | {
   if (!post.metaTargetId) return { error: "Pick which account to post to before approving." };
   if (!post.media.length) return { error: "Add at least one image or video before approving." };
 
-  const pages = await fetchOwnerPages(gate.ownerId);
-  if (!("pages" in pages)) return { error: "Connect your account before approving." };
-  if (!pages.pages.some((p) => p.id === post.metaTargetId)) {
+  if (!isScheduleChannel(post.channel)) return { error: "Pick a supported channel." };
+  const adapter = channelRegistry[post.channel];
+  if (!adapter) return { error: "Connect your account before approving." };
+  const targets = await adapter.listTargets(gate.ownerId);
+  if (!targets.length) return { error: "Connect your account before approving." };
+  if (!targets.some((t) => t.id === post.metaTargetId)) {
     return { error: "That account isn't one of your connected channels." };
   }
 
