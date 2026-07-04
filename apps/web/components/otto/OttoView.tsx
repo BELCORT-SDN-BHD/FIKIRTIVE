@@ -195,14 +195,17 @@ export function OttoView({
         }
         @media (max-width: 680px) {
           .otto-workspace:not(.otto-chat-collapsed) .otto-chat-pane {
-            flex: 1 1 100% !important;
+            flex: 1 1 calc(100% - 26px) !important;
           }
           .otto-workspace:not(.otto-chat-collapsed) .otto-canvas-pane {
-            flex: 0 0 1px !important;
-            min-width: 1px;
+            flex: 0 0 26px !important;
+            min-width: 26px;
           }
           .otto-workspace:not(.otto-chat-collapsed) .otto-canvas-pane > :not(button) {
             visibility: hidden;
+          }
+          .otto-chat-collapse-handle {
+            left: 0 !important;
           }
           .otto-onboarding-overlay {
             top: 12px;
@@ -332,6 +335,7 @@ export function OttoView({
             onClick={onToggleChat}
             title="Collapse OTTO panel"
             aria-label="Collapse OTTO panel"
+            className="otto-chat-collapse-handle"
             style={{ position: "absolute", left: -13, top: 60, zIndex: 30, width: 26, height: 26, borderRadius: "50%", border: "1px solid var(--border)", background: "var(--card)", color: "var(--muted-foreground)", boxShadow: "var(--shadow-sm)", display: "flex", alignItems: "center", justifyContent: "center", cursor: "pointer" }}
           >
             <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" aria-hidden><path d="m15 18-6-6 6-6" /></svg>
