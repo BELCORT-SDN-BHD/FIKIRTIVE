@@ -246,4 +246,4 @@
 
 
 ## Seam 9 — Parity Manifest(第九缝,2026-07-03 入宪)
-完整施工配方在 `docs/design/2026-07-03-harmony-02-parity-manifest.md`:每个新 server action / 页面数据读取,出生即在 `packages/otto/src/parity-manifest.ts` 登记(配对 skill 或四类封闭豁免之一);CI `check-parity.sh` warn→hard 两阶段(在建)。豁免四类:ADMIN / VISUAL / MONEY_IN / ACCOUNT_SECURITY —— 新增类别 = 修宪。
+完整施工配方在 `docs/design/2026-07-03-harmony-02-parity-manifest.md`:每个新 server action / 页面数据读取,出生即在 `packages/otto/src/parity-manifest.ts` 登记(配对 skill、四类封闭豁免之一,或 rollout 期明确 `todoSkill` 债务);CI `scripts/check-parity.sh` 已接入 `pnpm lint:parity`,会硬拦漏登记/僵尸登记/未知 skill/未知豁免。豁免四类:ADMIN / VISUAL / MONEY_IN / ACCOUNT_SECURITY —— 新增类别 = 修宪。

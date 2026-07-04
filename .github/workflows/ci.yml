@@ -44,6 +44,8 @@ jobs:
       - run: bash scripts/check-no-raw-prisma.sh
       # Skill catalog must match the registry (Seam 1 step 5) — a stale CATALOG.md fails here.
       - run: pnpm --filter @fikirtive/otto run catalog:check
+      # Parity Manifest seam: every server action / API route / registered read surface is registered.
+      - run: pnpm lint:parity
 
   # `next build` for apps/web — the exact command Railway's Dockerfile runs on deploy.
   # Typecheck can't catch client→server-bundle leaks (a "use client" file value-importing
