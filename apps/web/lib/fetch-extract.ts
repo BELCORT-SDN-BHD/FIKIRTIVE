@@ -5,4 +5,4 @@ import "server-only";
 // shim keeps the original apps/web import path stable and preserves the web-only `server-only`
 // guard — it must NOT be a `"use server"` module (that would make fetchAndExtract, which has no
 // auth guard, a POSTable cross-tenant Server Action).
-export { fetchAndExtract, MAX_BODY } from "@fikirtive/core/server";
+export { fetchAndExtract, fetchRawHtml, MAX_BODY } from "@fikirtive/core/server";

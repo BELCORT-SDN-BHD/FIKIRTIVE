@@ -4,9 +4,11 @@ import { categoryKey, distinctCategories } from "@fikirtive/core";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
+import { Link2, Check } from "lucide-react";
 import type { BrandRecordRow } from "@/lib/brand-record-actions";
 import type { MemoryRow } from "@/lib/memory-actions";
 import type { StuffItem } from "@/lib/stuff-items";
+import type { ProductDraftResult } from "@/lib/product-ingest-actions";
 
 const MONTHS = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
 const fmtDay = (d: Date) => `${MONTHS[d.getMonth()]} ${d.getDate()}`;
@@ -20,6 +22,12 @@ function whenLabel(d: Date | string): string {
 type ProdFields = { name: string; description: string; price: string; url: string; sellingAngle: string; tags: string; category: string };
 
 const EMPTY: ProdFields = { name: "", description: "", price: "", url: "", sellingAngle: "", tags: "", category: "" };
+
+/** "Add from link" flow state (P1-01). Persists nothing until the user hits Save in the review form. */
+type LinkState =
+  | { phase: "idle" }
+  | { phase: "url"; url: string; busy: boolean; err: string | null }
+  | { phase: "review"; initial: ProdFields; source: string; filled: string[] };
 
 function fieldsOf(data: Record<string, unknown>): ProdFields {
   const s = (v: unknown) => (typeof v === "string" ? v : "");
@@ -113,7 +121,7 @@ function ProdForm({ initial, categories, onCancel, onSubmit }: {
 
 export function ProductShowcase({
   records, looseNotes, freshIds, stuffItems = [],
-  onSave, onArchive, onNoteSave, onNoteDelete, onSetImage, onOpenPicker,
+  onSave, onArchive, onNoteSave, onNoteDelete, onSetImage, onOpenPicker, onIngest,
 }: {
   records: BrandRecordRow[];
   looseNotes: MemoryRow[];
@@ -125,13 +133,40 @@ export function ProductShowcase({
   onNoteDelete: (id: string) => Promise<void>;
   onSetImage: (rec: BrandRecordRow, assetId: string | null) => Promise<void>;
   onOpenPicker: (rec: BrandRecordRow) => void;
+  /** P1-01: read a product URL → draft (never saves). Undefined disables the "Paste a link" affordance. */
+  onIngest?: (url: string) => Promise<ProductDraftResult>;
 }) {
   const [query, setQuery] = useState("");
   const [catSel, setCatSel] = useState<Set<string>>(new Set());
   const [editingId, setEditingId] = useState<string | null>(null);
   const [adding, setAdding] = useState(false);
+  const [link, setLink] = useState<LinkState>({ phase: "idle" });
   const [noteEditId, setNoteEditId] = useState<string | null>(null);
   const [noteText, setNoteText] = useState("");
+
+  // P1-01: read a URL → prefilled draft. Deterministic only (JSON-LD/OG/title) — no LLM, no spend.
+  // A sparse page just pre-fills fewer fields. Nothing is saved — the review form's Save does that.
+  const runIngest = async (url: string) => {
+    if (!onIngest) return;
+    setLink({ phase: "url", url, busy: true, err: null });
+    const res = await onIngest(url);
+    // Stale-guard: if the user hit Cancel (or started another fetch) during the await,
+    // don't clobber their state — only apply to the in-flight url step we started.
+    setLink((cur) => {
+      if (cur.phase !== "url" || cur.url !== url || !cur.busy) return cur;
+      if ("error" in res) return { phase: "url", url, busy: false, err: res.error };
+      const d = res.draft;
+      const initial = fieldsOf({ name: d.name, description: d.description, price: d.price, url: d.sourceUrl });
+      let source: string;
+      try {
+        source = new URL(d.sourceUrl).host;
+      } catch {
+        source = d.sourceUrl;
+      }
+      const filled = d.filled.filter((f) => f === "name" || f === "price" || f === "description");
+      return { phase: "review", initial, source, filled };
+    });
+  };
 
   // assetId → image url (only image items that carry an assetId + url).
   const urlByAsset = useMemo(() => {
@@ -218,7 +253,7 @@ export function ProductShowcase({
 
   return (
     <section>
-      {/* Toolbar: search (flex) + Add product button (right). */}
+      {/* Toolbar: search (flex) + Add product + Paste a link (P1-01). */}
       <div className="mt-6 mb-3 flex items-center gap-2">
         <Input
           value={query}
@@ -227,7 +262,69 @@ export function ProductShowcase({
           className="flex-1"
         />
         <Button size="sm" onClick={() => setAdding(true)}>+ Add product</Button>
+        {onIngest && (
+          <Button
+            size="sm"
+            variant="secondary"
+            onClick={() => setLink({ phase: "url", url: "", busy: false, err: null })}
+          >
+            <Link2 /> Paste a link
+          </Button>
+        )}
       </div>
+
+      {/* "Add from link" flow: URL capture → prefilled ProdForm. Persists nothing until Save. */}
+      {link.phase !== "idle" && (
+        <div className="mb-4 max-w-[560px] rounded-[16px] border border-border bg-card p-4 shadow-sm">
+          <div className="mb-3 flex items-center gap-2">
+            <span className="flex h-7 w-7 items-center justify-center rounded-[9px] bg-[color:var(--brand-soft)] text-[color:var(--brand)]">
+              <Link2 className="h-4 w-4" />
+            </span>
+            <span className="text-[0.875rem] font-semibold">Add product from link</span>
+            <span className="ml-auto rounded-full border border-border bg-secondary px-2 py-0.5 font-mono text-[0.625rem] uppercase tracking-wide text-muted-foreground">
+              read only · free
+            </span>
+          </div>
+
+          {link.phase === "url" ? (
+            <>
+              <div className="flex items-center gap-2">
+                <Input
+                  value={link.url}
+                  onChange={(e) => setLink({ phase: "url", url: e.target.value, busy: false, err: null })}
+                  placeholder="https://… a product page"
+                  className="flex-1"
+                  disabled={link.busy}
+                />
+                <Button size="sm" disabled={link.busy || !link.url.trim()} onClick={() => void runIngest(link.url.trim())}>
+                  {link.busy ? "Reading…" : "Fetch"}
+                </Button>
+                <Button size="sm" variant="ghost" onClick={() => setLink({ phase: "idle" })}>
+                  Cancel
+                </Button>
+              </div>
+              {link.err && <p className="mt-2 text-[0.8125rem] text-[color:var(--destructive)]">{link.err}</p>}
+              <p className="mt-2 text-[0.75rem] text-muted-foreground">
+                Paste a product page — we read it and pre-fill the form for you. Free — nothing is saved until you do.
+              </p>
+            </>
+          ) : (
+            <>
+              <div className="mb-2 flex items-center gap-1.5 text-[0.75rem] text-muted-foreground">
+                <Check className="h-3.5 w-3.5 text-[color:var(--brand)]" />
+                Read from <span className="font-medium text-foreground">{link.source}</span>
+                {link.filled.length > 0 && <span>· filled: {link.filled.join(", ")}</span>}
+              </div>
+              <ProdForm
+                initial={link.initial}
+                categories={categories}
+                onCancel={() => setLink({ phase: "idle" })}
+                onSubmit={(data) => onSave(undefined, data).then(() => setLink({ phase: "idle" }))}
+              />
+            </>
+          )}
+        </div>
+      )}
 
       {/* Category filter chips (active products only) — multi-select toggles. */}
       {categories.length > 0 && (
