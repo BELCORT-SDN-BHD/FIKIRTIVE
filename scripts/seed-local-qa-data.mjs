@@ -1,5 +1,5 @@
 #!/usr/bin/env node
-import { createHash } from "node:crypto";
+import { createCipheriv, createHash, randomBytes } from "node:crypto";
 import { mkdir, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { deflateSync, crc32 } from "node:zlib";
@@ -57,6 +57,16 @@ function date(daysAgo, minutes = 0) {
 
 function sha(bytes) {
   return createHash("sha256").update(bytes).digest("hex");
+}
+
+function encryptQaToken(plain) {
+  const hex = process.env.TOKEN_ENCRYPTION_KEY;
+  if (!/^[a-f0-9]{64}$/i.test(hex ?? "")) return "qa-encrypted-token-placeholder";
+  const iv = randomBytes(12);
+  const cipher = createCipheriv("aes-256-gcm", Buffer.from(hex, "hex"), iv);
+  const ct = Buffer.concat([cipher.update(plain, "utf8"), cipher.final()]);
+  const tag = cipher.getAuthTag();
+  return [iv.toString("base64"), tag.toString("base64"), ct.toString("base64")].join(".");
 }
 
 function storageKey(ownerId, contentHash, ext) {
@@ -846,6 +856,7 @@ async function seedCanvas(ownerId, projectId, imageAssets, videoAsset, threadId)
 }
 
 async function seedAdminSurface() {
+  const qaMetaTokenEnc = encryptQaToken("qa_meta_fixture_token");
   const directives = [
     ["seedream", "t2i", "Use natural prose, visible product, clear scene, and realistic local offer details."],
     ["seedream", "i2i", "Describe the edit clearly and preserve the reference identity."],
@@ -907,21 +918,24 @@ async function seedAdminSurface() {
       id: id("meta_founder"),
       ownerId: FOUNDER,
       metaUserId: "qa_meta_user",
-      accessTokenEnc: "qa-encrypted-token-placeholder",
+      accessTokenEnc: qaMetaTokenEnc,
+      tokenExpiresAt: date(-30),
       scope: "ads_read,ads_management,pages_show_list",
       status: "active",
       adsAutonomy: "ASK",
       adsWritesPaused: true,
-      canWrite: false,
+      canWrite: true,
       canManagePages: true,
       defaultPageId: "qa_page_1",
     },
     update: {
+      accessTokenEnc: qaMetaTokenEnc,
+      tokenExpiresAt: date(-30),
       scope: "ads_read,ads_management,pages_show_list",
       status: "active",
       adsAutonomy: "ASK",
       adsWritesPaused: true,
-      canWrite: false,
+      canWrite: true,
       canManagePages: true,
       defaultPageId: "qa_page_1",
     },

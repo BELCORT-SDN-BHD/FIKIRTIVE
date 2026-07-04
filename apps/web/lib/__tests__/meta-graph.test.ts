@@ -1,11 +1,60 @@
-import { describe, it, expect, vi, beforeEach } from "vitest";
+import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 
 vi.mock("../meta-oauth", () => ({ META_GRAPH_VERSION: "v21.0" }));
 
-import { metaGraphPost, uploadAdImage, uploadAdVideo, metaGraphGetAll } from "../meta-graph";
+import {
+  getAccountInsights,
+  getAccountInsightsSeries,
+  getAdCreative,
+  getAdInsights,
+  metaGraphGet,
+  metaGraphGetAll,
+  metaGraphPost,
+  uploadAdImage,
+  uploadAdVideo,
+} from "../meta-graph";
 
 beforeEach(() => {
   vi.clearAllMocks();
+});
+
+afterEach(() => {
+  vi.unstubAllEnvs();
+  vi.unstubAllGlobals();
+});
+
+describe("metaGraphGet fixture", () => {
+  it("serves deterministic connected-account fixture data without network in non-production", async () => {
+    vi.stubEnv("META_GRAPH_MOCK", "fixture");
+    const fetchMock = vi.fn();
+    vi.stubGlobal("fetch", fetchMock);
+
+    const accounts = await metaGraphGet("qa-token", "me/adaccounts", { fields: "name,account_id" });
+    const metrics = await getAccountInsights("qa-token", "act_qa_1", "last_30d");
+    const series = await getAccountInsightsSeries("qa-token", "act_qa_1", "last_30d");
+    const ads = await getAdInsights("qa-token", "act_qa_1", "last_30d");
+    const creative = await getAdCreative("qa-token", "ad_qa_1");
+
+    expect(fetchMock).not.toHaveBeenCalled();
+    expect(accounts.data).toHaveLength(2);
+    expect(accounts.data[0]).toMatchObject({ id: "act_qa_1", name: "Kaia Cafe QA Ads", currency: "MYR" });
+    expect(metrics).toMatchObject({ spend: "48.75", impressions: "18342", purchaseRoas: "3.1" });
+    expect(series.map((d) => d.date)).toEqual(["2026-06-28", "2026-06-29", "2026-06-30"]);
+    expect(ads.map((ad) => ad.adId)).toEqual(["ad_qa_1", "ad_qa_2"]);
+    expect(creative).toMatchObject({ title: "Iced Latte Launch" });
+  });
+
+  it("does not enable fixture mode in production", async () => {
+    vi.stubEnv("META_GRAPH_MOCK", "fixture");
+    vi.stubEnv("NODE_ENV", "production");
+    const fetchMock = vi.fn().mockResolvedValueOnce({ ok: true, json: async () => ({ data: [{ id: "real-ish" }] }) });
+    vi.stubGlobal("fetch", fetchMock);
+
+    const out = await metaGraphGet("tok", "me/adaccounts", { fields: "name" });
+
+    expect(out).toEqual({ data: [{ id: "real-ish" }] });
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+  });
 });
 
 describe("metaGraphGetAll (F37 pagination)", () => {

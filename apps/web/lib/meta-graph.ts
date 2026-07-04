@@ -75,6 +75,9 @@ export async function metaGraphPost(token: string, path: string, body: Record<st
 
 /** Read-only Graph GET. Throws on a non-200 or a Meta `error` body (carries `metaError`). */
 export async function metaGraphGet(token: string, path: string, params: Record<string, string>): Promise<any> {
+  const fixture = metaGraphFixture(path, params);
+  if (fixture) return fixture;
+
   const u = new URL(`https://graph.facebook.com/${META_GRAPH_VERSION}/${path}`);
   for (const [k, v] of Object.entries(params)) u.searchParams.set(k, v);
   const r = await fetch(u.toString(), { headers: { Authorization: `Bearer ${token}` } });
@@ -85,6 +88,88 @@ export async function metaGraphGet(token: string, path: string, params: Record<s
     throw e;
   }
   return j;
+}
+
+function metaGraphFixture(path: string, params: Record<string, string>): any | null {
+  if (process.env.NODE_ENV === "production" || process.env.META_GRAPH_MOCK !== "fixture") return null;
+
+  if (path === "me/adaccounts") {
+    return {
+      data: [
+        { id: "act_qa_1", account_id: "act_qa_1", name: "Kaia Cafe QA Ads", currency: "MYR", account_status: 1 },
+        { id: "act_qa_2", account_id: "act_qa_2", name: "Night Market QA Ads", currency: "MYR", account_status: 1 },
+      ],
+    };
+  }
+
+  if (path === "me/accounts") {
+    return { data: [{ id: "qa_page_1", name: "Kaia Cafe QA Page" }] };
+  }
+
+  if (path.endsWith("/insights")) {
+    if (params.level === "ad") {
+      const secondAccount = path.startsWith("act_qa_2");
+      return {
+        data: [
+          { ad_id: secondAccount ? "ad_qa_3" : "ad_qa_1", ad_name: secondAccount ? "Night Market Carousel" : "Iced Latte Launch", spend: secondAccount ? "22.70" : "31.20", impressions: secondAccount ? "7810" : "9120", reach: secondAccount ? "5900" : "6400", frequency: "1.43", clicks: secondAccount ? "188" : "286", ctr: secondAccount ? "2.41" : "3.14", cpc: secondAccount ? "0.12" : "0.11", cpm: secondAccount ? "2.91" : "3.42", purchase_roas: [{ value: secondAccount ? "2.9" : "3.8" }] },
+          { ad_id: secondAccount ? "ad_qa_4" : "ad_qa_2", ad_name: secondAccount ? "Retail Reorder Reminder" : "Weekend Brunch Offer", spend: secondAccount ? "10.40" : "18.40", impressions: secondAccount ? "4080" : "6210", reach: secondAccount ? "3120" : "4880", frequency: "1.27", clicks: secondAccount ? "98" : "141", ctr: secondAccount ? "2.40" : "2.27", cpc: "0.13", cpm: secondAccount ? "2.55" : "2.96", purchase_roas: [{ value: secondAccount ? "2.6" : "2.4" }] },
+        ],
+      };
+    }
+
+    if (params.time_increment === "1") {
+      const base = path.startsWith("act_qa_2") ? 2 : 1;
+      return {
+        data: [
+          { date_start: "2026-06-28", spend: String(8 * base), reach: String(2400 * base), impressions: String(3600 * base), clicks: String(72 * base) },
+          { date_start: "2026-06-29", spend: String(11 * base), reach: String(2900 * base), impressions: String(4300 * base), clicks: String(94 * base) },
+          { date_start: "2026-06-30", spend: String(15 * base), reach: String(3400 * base), impressions: String(5200 * base), clicks: String(128 * base) },
+        ],
+      };
+    }
+
+    return {
+      data: [{
+        spend: path.startsWith("act_qa_2") ? "33.10" : "48.75",
+        impressions: path.startsWith("act_qa_2") ? "11890" : "18342",
+        reach: path.startsWith("act_qa_2") ? "9020" : "12840",
+        frequency: "1.43",
+        clicks: path.startsWith("act_qa_2") ? "286" : "412",
+        ctr: path.startsWith("act_qa_2") ? "2.41" : "2.25",
+        cpc: "0.12",
+        cpm: "2.66",
+        purchase_roas: [{ value: path.startsWith("act_qa_2") ? "2.9" : "3.1" }],
+      }],
+    };
+  }
+
+  if (/^ad_qa_[1-4]$/.test(path)) {
+    const titles: Record<string, string> = {
+      ad_qa_1: "Iced Latte Launch",
+      ad_qa_2: "Weekend Brunch Offer",
+      ad_qa_3: "Night Market Carousel",
+      ad_qa_4: "Retail Reorder Reminder",
+    };
+    return {
+      creative: {
+        body: path === "ad_qa_1" ? "Try the new iced latte today." : "Book a weekend brunch table.",
+        title: titles[path] ?? "QA ad",
+        video_id: null,
+      },
+    };
+  }
+
+  if (path.endsWith("/campaigns")) {
+    return { data: [{ id: "cmp_qa_1", name: "QA Launch Campaign", effective_status: "ACTIVE", account_id: path.split("/")[0] }] };
+  }
+  if (path.endsWith("/adsets")) {
+    return { data: [{ id: "set_qa_1", name: "QA Prospecting", effective_status: "ACTIVE", account_id: path.split("/")[0] }] };
+  }
+  if (path.endsWith("/ads")) {
+    return { data: [{ id: "ad_qa_1", name: "Iced Latte Launch", effective_status: "ACTIVE", account_id: path.split("/")[0] }] };
+  }
+
+  throw new Error(`Meta graph fixture missing path: ${path}`);
 }
 
 /** F37: paginate a Graph list edge — follow `paging.next` (a full cursor URL) up to a hard page
