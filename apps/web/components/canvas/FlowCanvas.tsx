@@ -85,6 +85,7 @@ export default function FlowCanvas({
   const [costQuote, setCostQuote] = useState<CanvasGenCostQuote | null>(null);
 
   // Per-node data refs so stable onAnimate closures can read current generationId + position
+  const nodesRef = useRef<CanvasFlowNode[]>([]);
   const nodeDataRef = useRef<Record<string, { generationId?: string; pos: { x: number; y: number } }>>({});
   const flowRef = useRef<ReactFlowInstance<CanvasFlowNode, Edge> | null>(null);
   const reloadRef = useRef<(() => Promise<void>) | null>(null);
@@ -117,6 +118,10 @@ export default function FlowCanvas({
   useEffect(() => () => {
     if (fitTimerRef.current) window.clearTimeout(fitTimerRef.current);
   }, []);
+
+  useEffect(() => {
+    nodesRef.current = nodes;
+  }, [nodes]);
 
   useLayoutEffect(() => {
     const host = canvasHostRef.current;
@@ -438,20 +443,20 @@ export default function FlowCanvas({
 
   // Keep nodeDataRef positions in sync when nodes move (so onAnimate uses fresh coords)
   const onNodesChange = useCallback((changes: NodeChange[]) => {
-    setNodes((ns) => {
-      let next = applyNodeChanges(changes, ns) as CanvasFlowNode[];
-      // Bridge NodeResizer dimension changes into our style-based sizing so the
-      // card visually grows/shrinks on the board (display-only — no regeneration).
-      for (const c of changes) {
-        if (c.type === "dimensions" && c.dimensions) {
-          const { width, height } = c.dimensions;
-          next = next.map((n) => (n.id === c.id ? { ...n, style: { ...n.style, width, height } } : n));
-        }
+    let next = applyNodeChanges(changes, nodesRef.current) as CanvasFlowNode[];
+    const persistMoves: Array<{ id: string; x: number; y: number; w: number; h: number }> = [];
+    const deletes: string[] = [];
+    // Bridge NodeResizer dimension changes into our style-based sizing so the
+    // card visually grows/shrinks on the board (display-only — no regeneration).
+    for (const c of changes) {
+      if (c.type === "dimensions" && c.dimensions) {
+        const { width, height } = c.dimensions;
+        next = next.map((n) => (n.id === c.id ? { ...n, style: { ...n.style, width, height } } : n));
       }
-      return next;
-    });
+    }
     for (const c of changes) {
       if (c.type === "position" && c.position) {
+        const n = next.find((x2) => x2.id === c.id);
         // Update position in ref immediately (for onAnimate offset calc)
         const entry = nodeDataRef.current[c.id];
         if (entry) entry.pos = { x: c.position.x, y: c.position.y };
@@ -459,28 +464,25 @@ export default function FlowCanvas({
         if (c.dragging === false) {
           // Read position from CHANGE object (not stale nodes closure)
           const { x, y } = c.position;
-          setNodes((ns) => {
-            const n = ns.find((x2) => x2.id === c.id);
-            if (n) void moveCanvasNode(n.id, { x, y, w: Number(n.style?.width ?? 320), h: Number(n.style?.height ?? 320) });
-            return ns; // side-effect only, no state update
-          });
+          if (n) persistMoves.push({ id: n.id, x, y, w: Number(n.style?.width ?? 320), h: Number(n.style?.height ?? 320) });
         }
       }
       // Persist the new size when a resize gesture ends (display-only; reuses the
       // same moveCanvasNode path as a drag — no spend, just x/y/w/h).
       if (c.type === "dimensions" && c.resizing === false) {
-        setNodes((ns) => {
-          const n = ns.find((x2) => x2.id === c.id);
-          if (n) {
-            const entry = nodeDataRef.current[n.id];
-            if (entry) entry.pos = { x: n.position.x, y: n.position.y };
-            void moveCanvasNode(n.id, { x: n.position.x, y: n.position.y, w: Number(n.style?.width ?? 320), h: Number(n.style?.height ?? 320) });
-          }
-          return ns; // side-effect only
-        });
+        const n = next.find((x2) => x2.id === c.id);
+        if (n) {
+          const entry = nodeDataRef.current[n.id];
+          if (entry) entry.pos = { x: n.position.x, y: n.position.y };
+          persistMoves.push({ id: n.id, x: n.position.x, y: n.position.y, w: Number(n.style?.width ?? 320), h: Number(n.style?.height ?? 320) });
+        }
       }
-      if (c.type === "remove") void deleteCanvasNode(c.id);
+      if (c.type === "remove") deletes.push(c.id);
     }
+    nodesRef.current = next;
+    setNodes(next);
+    for (const move of persistMoves) void moveCanvasNode(move.id, { x: move.x, y: move.y, w: move.w, h: move.h });
+    for (const id of deletes) void deleteCanvasNode(id);
   }, []);
 
   // Is the card awaiting delete a PAID generation still in flight? If so the confirm
