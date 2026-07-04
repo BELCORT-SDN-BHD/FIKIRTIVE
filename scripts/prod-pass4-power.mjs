@@ -9,13 +9,13 @@ import { mkdir, readFile } from "node:fs/promises";
 import { createHash } from "node:crypto";
 import path from "node:path";
 import os from "node:os";
+import { writePngFixture } from "./qa-fixtures.mjs";
 
 const BASE = process.env.BASE_URL ?? "https://web-production-b13a4.up.railway.app";
 const OUT = path.join(os.homedir(), ".gstack/projects/artlio/prod-pass4");
 await mkdir(OUT, { recursive: true });
-const REPO = path.resolve(".");
-const SRC_IMG = path.join(REPO, "demo-remotion/out/s-elements.png"); // start frame (real PNG)
-const TAIL_IMG = path.join(REPO, "demo-remotion/out/s-promise.png");  // end frame (real PNG)
+const SRC_IMG = await writePngFixture(OUT, "qa-start-frame.png", "source");
+const TAIL_IMG = await writePngFixture(OUT, "qa-end-frame.png", "tail");
 // sha256 of the bytes IS the Asset.contentHash (storage/src/index.ts) — lets us bind the
 // uploaded source/tail generations (and the rendered video) to THESE exact files.
 const sha = async (p) => createHash("sha256").update(await readFile(p)).digest("hex");
