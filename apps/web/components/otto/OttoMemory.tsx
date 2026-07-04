@@ -11,6 +11,7 @@ import {
   saveBrandRecord, deleteBrandRecord, restoreBrandRecord, listMyBrandRecords,
   type BrandRecordRow,
 } from "@/lib/brand-record-actions";
+import { ingestProductFromUrl } from "@/lib/product-ingest-actions";
 import {
   sectionForCategory, diffRows, FACT_SECTION_KEYS, SECTIONS, sectionsTouched,
   type RowDiff, type SectionKey,
@@ -407,6 +408,7 @@ export function OttoMemory({ initialMemory, initialRecords, projectId, stuffItem
               onNoteDelete={noteDelete}
               onSetImage={prodSetImage}
               onOpenPicker={setPickerFor}
+              onIngest={ingestProductFromUrl}
             />
           )}
           {activeTab === "offers" && (
