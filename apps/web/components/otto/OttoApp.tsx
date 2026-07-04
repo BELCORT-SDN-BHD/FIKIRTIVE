@@ -2,7 +2,6 @@
 import React, { useState, useCallback, useEffect, useRef } from "react";
 import { useRouter } from "next/navigation";
 import { createProject, renameProject, deleteProject, autoTitleProjectIfDefault } from "@/lib/actions";
-import { listProjectThreadActivity } from "@/lib/thread-activity";
 import { OttoNav } from "./OttoNav";
 import { OttoView } from "./OttoView";
 import type { AdTile } from "./OttoStuff";
@@ -18,6 +17,61 @@ import { deleteCoworkThread } from "@/lib/otto-client-actions";
 import { nextActiveThreadId } from "@/lib/thread-list";
 
 const MOBILE_BP = 680;
+const STALE_ACTION_RELOAD_KEY = "fikirtive:stale-server-action-reload-at";
+
+type ThreadActivityRow = { threadId: string; pending: boolean };
+
+function isThreadActivityRows(value: unknown): value is ThreadActivityRow[] {
+  return Array.isArray(value)
+    && value.every((row) => (
+      row
+      && typeof row === "object"
+      && typeof (row as ThreadActivityRow).threadId === "string"
+      && typeof (row as ThreadActivityRow).pending === "boolean"
+    ));
+}
+
+function errorText(value: unknown): string {
+  if (value instanceof Error) return `${value.name}: ${value.message}`;
+  if (typeof value === "string") return value;
+  if (value && typeof value === "object") {
+    const record = value as { message?: unknown; reason?: unknown };
+    if (typeof record.message === "string") return record.message;
+    if (typeof record.reason === "string") return record.reason;
+  }
+  return "";
+}
+
+function isStaleServerActionError(value: unknown): boolean {
+  return /failed to find server action|server action .*not found|unexpected response was received from the server/i.test(errorText(value));
+}
+
+function reloadOnceForFreshDeploy(): void {
+  if (typeof window === "undefined") return;
+  const now = Date.now();
+  const last = Number(window.sessionStorage.getItem(STALE_ACTION_RELOAD_KEY) ?? "0");
+  if (Number.isFinite(last) && now - last < 60_000) return;
+  window.sessionStorage.setItem(STALE_ACTION_RELOAD_KEY, String(now));
+  window.location.reload();
+}
+
+async function fetchProjectThreadActivity(projectId: string): Promise<ThreadActivityRow[] | { error: string }> {
+  try {
+    const res = await fetch(`/api/otto/thread-activity?projectId=${encodeURIComponent(projectId)}`, {
+      cache: "no-store",
+      credentials: "same-origin",
+    });
+    const body = await res.json().catch(() => null) as { activity?: unknown; error?: unknown } | null;
+    if (!res.ok) {
+      return { error: typeof body?.error === "string" ? body.error : "Could not refresh activity." };
+    }
+    if (isThreadActivityRows(body?.activity)) return body.activity;
+    return { error: "Could not refresh activity." };
+  } catch (e) {
+    if (isStaleServerActionError(e)) reloadOnceForFreshDeploy();
+    return { error: "Could not refresh activity." };
+  }
+}
 
 function IconMenu() {
   return (
@@ -117,6 +171,21 @@ export function OttoApp({
   const curProjectId = activeProjectId ?? projectId;
 
   useEffect(() => {
+    function onError(event: ErrorEvent) {
+      if (isStaleServerActionError(event.error ?? event.message)) reloadOnceForFreshDeploy();
+    }
+    function onUnhandledRejection(event: PromiseRejectionEvent) {
+      if (isStaleServerActionError(event.reason)) reloadOnceForFreshDeploy();
+    }
+    window.addEventListener("error", onError);
+    window.addEventListener("unhandledrejection", onUnhandledRejection);
+    return () => {
+      window.removeEventListener("error", onError);
+      window.removeEventListener("unhandledrejection", onUnhandledRejection);
+    };
+  }, []);
+
+  useEffect(() => {
     function syncViewFromLocation() {
       setView(parseViewParam(new URLSearchParams(window.location.search).get("view")));
       setActionError(null);
@@ -146,7 +215,7 @@ export function OttoApp({
   }, []);
 
   const refreshActivity = useCallback(async () => {
-    const res = await listProjectThreadActivity(projectId);
+    const res = await fetchProjectThreadActivity(projectId);
     if (Array.isArray(res)) applyActivity(res);
   }, [projectId, applyActivity]);
 
@@ -154,7 +223,7 @@ export function OttoApp({
     if (view !== "otto") return;
     let alive = true;
     async function poll() {
-      const res = await listProjectThreadActivity(projectId);
+      const res = await fetchProjectThreadActivity(projectId);
       if (alive && Array.isArray(res)) {
         applyActivity(res);
       }
