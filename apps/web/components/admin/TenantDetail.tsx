@@ -217,7 +217,7 @@ export function TenantDetail({ detail }: { detail: Detail }) {
               <Button type="submit" disabled={grantBusy}>{grantBusy ? "Applying" : "Apply"}</Button>
             </div>
             <div className="flex flex-wrap items-center gap-2 text-xs text-muted-foreground">
-              <Badge variant={Number(grantAmount) > 1000 ? "warning" : "outline"}>{Number(grantAmount) > 1000 ? "Over 1,000 limit" : "Within single-action limit"}</Badge>
+              <Badge variant={Math.abs(Number(grantAmount)) > 1000 ? "warning" : "outline"}>{Math.abs(Number(grantAmount)) > 1000 ? "Over finance limit" : "Within finance limit"}</Badge>
               <span>Negative values deduct credits if the account can stay non-negative.</span>
               {grantMsg ? <span className={grantMsg.ok ? "text-success" : "text-destructive"}>{grantMsg.text}</span> : null}
             </div>

@@ -384,7 +384,7 @@ function CreditActionPanel() {
   const [saving, setSaving] = useState(false);
   const [message, setMessage] = useState<{ ok: boolean; text: string } | null>(null);
   const parsedAmount = Number(amount);
-  const overLimit = Number.isFinite(parsedAmount) && parsedAmount > 1000;
+  const overLimit = Number.isFinite(parsedAmount) && Math.abs(parsedAmount) > 1000;
 
   async function submit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
@@ -430,8 +430,8 @@ function CreditActionPanel() {
         <Button type="submit" disabled={saving}>{saving ? "Applying" : "Apply"}</Button>
       </form>
       <div className="mt-3 flex flex-wrap items-center gap-2 text-xs text-muted-foreground">
-        <Badge variant={overLimit ? "warning" : "outline"}>{overLimit ? "Over 1,000 limit" : "Within single-action limit"}</Badge>
-        <span>Daily limit target is 3,000 displayed credits; persistence approval workflow remains a later slice.</span>
+        <Badge variant={overLimit ? "warning" : "outline"}>{overLimit ? "Over finance limit" : "Within finance limit"}</Badge>
+        <span>Finance direct actions cap at 1,000 displayed credits; founder approval is required over that.</span>
         {message ? <span className={message.ok ? "text-success" : "text-destructive"}>{message.text}</span> : null}
       </div>
     </Panel>

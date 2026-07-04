@@ -44,6 +44,13 @@ Interactive checks completed:
 - Filter and refresh icon buttons now expose visible state: filter summary with current chips, and a timestamped mock-data refresh notice.
 - BytePlus pack guard row is visible in System Health on desktop and mobile preview; no console errors or horizontal overflow.
 
+Follow-up source QA completed after the margin pass:
+
+- Cases read model in `apps/web/lib/admin-v2.ts` selects metadata only for guardian blocks, Otto threads, failed queues, recent media, and audit events. It does not select prompt text, transcript bodies, media URLs, guardian payloads, or raw audit payloads for the default Admin v2 tables.
+- Money-in server action `grantCreditsAction` now rejects non-super-admin direct credit actions over 1,000 displayed credits before calling the single ledger writer. Super-admin can still perform founder-approved over-limit actions.
+- Admin v2 and tenant detail money labels now say "finance limit" and warn on large negative adjustments as well as large grants.
+- Production `next start` browser QA with local founder auth captured `/admin/money` at desktop and 390px mobile: `qa-22-admin-money-finance-limit-prod-desktop.png` and `qa-21-admin-money-finance-limit-prod-mobile.png` in `.gstack/qa-reports/screenshots/`. Both had no browser console errors and no horizontal overflow.
+
 Verification commands:
 
 - `corepack pnpm --filter @fikirtive/web typecheck`
@@ -52,6 +59,8 @@ Verification commands:
 - `corepack pnpm --filter @fikirtive/web build`
 - `corepack pnpm -r test`
 - `corepack pnpm -r typecheck`
+- `corepack pnpm --filter @fikirtive/web exec vitest run lib/__tests__/tenant-actions.test.ts lib/__tests__/credit-actions.test.ts lib/__tests__/save-user-role.test.ts`
+- Production browser QA: `/admin/money` via dev magic-link founder auth, then `next start` on `localhost:3132`; desktop/mobile screenshots listed above.
 
 ## Latest Project Decisions That Matter
 
