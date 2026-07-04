@@ -82,6 +82,7 @@ export default function FlowCanvas({
   // double-submit guard
   const submittingRef = useRef(false);
   const [submitting, setSubmitting] = useState(false);
+  const [videoSubmitting, setVideoSubmitting] = useState(false);
   const [costQuote, setCostQuote] = useState<CanvasGenCostQuote | null>(null);
 
   // Per-node data refs so stable onAnimate closures can read current generationId + position
@@ -96,8 +97,9 @@ export default function FlowCanvas({
   const [canvasReady, setCanvasReady] = useState(false);
   const requestReload = useCallback(() => {
     void (async () => {
+      await Promise.resolve(onActivityRefresh?.()).catch(() => undefined);
       await reloadRef.current?.();
-      await onActivityRefresh?.();
+      await Promise.resolve(onActivityRefresh?.()).catch(() => undefined);
     })();
   }, [onActivityRefresh]);
 
@@ -162,22 +164,28 @@ export default function FlowCanvas({
   // True only during the ~1-2s startGen setup (poll isn't awaited), so it blocks a
   // same-tick double-fire without serializing separate generations.
   const videoBusyRef = useRef(false);
-  const runAnimate = useCallback((id: string, motionPrompt: string) => {
-    if (directToolsLockedRef.current) return;
+  const runAnimate = useCallback(async (id: string, motionPrompt: string): Promise<boolean> => {
+    if (directToolsLockedRef.current) return false;
     const entry = nodeDataRef.current[id];
     if (videoBusyRef.current) {
-      return;
+      return false;
     }
     if (!entry?.generationId || !animateFnRef.current) {
       toast.error("This image is not ready for video yet.");
-      return;
+      return false;
     }
     videoBusyRef.current = true;
+    setVideoSubmitting(true);
     const { x, y } = entry.pos;
     // genRequest requires a non-empty prompt (.trim().min(1)); the dialog guarantees a
     // non-empty motion prompt (custom falls back to the gentle default), so the paid
     // i2v never no-ops on an empty prompt.
-    void animateFnRef.current(entry.generationId, id, motionPrompt, { x: x + 340, y, w: 320, h: 320 }).finally(() => { videoBusyRef.current = false; });
+    try {
+      return await animateFnRef.current(entry.generationId, id, motionPrompt, { x: x + 340, y, w: 320, h: 320 });
+    } finally {
+      videoBusyRef.current = false;
+      setVideoSubmitting(false);
+    }
   }, []);
 
   // Build a stable per-node onOpenDetail that reads generationId at call time
@@ -342,11 +350,17 @@ export default function FlowCanvas({
   // image cards own the explicit "Make video" image-to-video path.
   const [t2vOpen, setT2vOpen] = useState(false);
   const [t2vPrompt, setT2vPrompt] = useState("");
-  const runT2v = useCallback((prompt: string) => {
-    if (directToolsLocked || videoBusyRef.current) return;
+  const runT2v = useCallback(async (prompt: string): Promise<boolean> => {
+    if (directToolsLocked || videoBusyRef.current) return false;
     videoBusyRef.current = true;
+    setVideoSubmitting(true);
     const x = 80 + nodeCountRef.current * 340;
-    void generateVideoFromText(prompt, { x, y: 80, w: 320, h: 320 }).finally(() => { videoBusyRef.current = false; });
+    try {
+      return await generateVideoFromText(prompt, { x, y: 80, w: 320, h: 320 });
+    } finally {
+      videoBusyRef.current = false;
+      setVideoSubmitting(false);
+    }
   }, [generateVideoFromText, directToolsLocked]);
 
   useEffect(() => {
@@ -680,7 +694,7 @@ export default function FlowCanvas({
           </DialogFooter>
         </DialogContent>
       </Dialog>
-      <Dialog open={pendingAnimateId !== null} onOpenChange={(open) => { if (!open) { setPendingAnimateId(null); setMotion("gentle"); setCustomMotion(""); } }}>
+      <Dialog open={pendingAnimateId !== null} onOpenChange={(open) => { if (!open && !videoSubmitting) { setPendingAnimateId(null); setMotion("gentle"); setCustomMotion(""); } }}>
         <DialogContent>
           <DialogHeader>
             <DialogTitle>Make a video from this image?</DialogTitle>
@@ -713,21 +727,24 @@ export default function FlowCanvas({
             )}
           </div>
           <DialogFooter>
-            <Button variant="ghost" onClick={() => setPendingAnimateId(null)}>Cancel</Button>
+            <Button variant="ghost" disabled={videoSubmitting} onClick={() => setPendingAnimateId(null)}>Cancel</Button>
             <Button
-              disabled={!costQuote}
-              onClick={() => {
+              disabled={!costQuote || videoSubmitting}
+              onClick={async () => {
                 const p =
                   motion === "dynamic"
                     ? "Animate this image with dynamic, energetic motion."
                     : motion === "custom"
                       ? customMotion.trim() || "Animate this image with gentle, natural motion."
                       : "Animate this image with gentle, natural motion.";
-                if (pendingAnimateId) runAnimate(pendingAnimateId, p);
-                setPendingAnimateId(null);
+                if (pendingAnimateId && await runAnimate(pendingAnimateId, p)) {
+                  setPendingAnimateId(null);
+                  setMotion("gentle");
+                  setCustomMotion("");
+                }
               }}
             >
-              {costQuote ? "Make video" : "Checking cost..."}
+              {costQuote ? videoSubmitting ? "Starting..." : "Make video" : "Checking cost..."}
             </Button>
           </DialogFooter>
         </DialogContent>
@@ -748,7 +765,7 @@ export default function FlowCanvas({
           </DialogFooter>
         </DialogContent>
       </Dialog>
-      <Dialog open={t2vOpen} onOpenChange={(open) => { if (!open) { setT2vOpen(false); setT2vPrompt(""); } }}>
+      <Dialog open={t2vOpen} onOpenChange={(open) => { if (!open && !videoSubmitting) { setT2vOpen(false); setT2vPrompt(""); } }}>
         <DialogContent>
           <DialogHeader>
             <DialogTitle>Make a video from a prompt</DialogTitle>
@@ -764,12 +781,18 @@ export default function FlowCanvas({
             className="resize-none rounded-lg border border-border bg-background px-3 py-2 text-sm outline-none focus-visible:ring-[3px] focus-visible:ring-ring/40"
           />
           <DialogFooter>
-            <Button variant="ghost" onClick={() => { setT2vOpen(false); setT2vPrompt(""); }}>Cancel</Button>
+            <Button variant="ghost" disabled={videoSubmitting} onClick={() => { setT2vOpen(false); setT2vPrompt(""); }}>Cancel</Button>
             <Button
-              disabled={!t2vPrompt.trim() || !costQuote}
-              onClick={() => { const p = t2vPrompt.trim(); setT2vOpen(false); setT2vPrompt(""); if (p) runT2v(p); }}
+              disabled={!t2vPrompt.trim() || !costQuote || videoSubmitting}
+              onClick={async () => {
+                const p = t2vPrompt.trim();
+                if (p && await runT2v(p)) {
+                  setT2vOpen(false);
+                  setT2vPrompt("");
+                }
+              }}
             >
-              {costQuote ? "Make video" : "Checking cost..."}
+              {costQuote ? videoSubmitting ? "Starting..." : "Make video" : "Checking cost..."}
             </Button>
           </DialogFooter>
         </DialogContent>

@@ -64,8 +64,14 @@ export async function poll(
   const maxPolls = opts.maxPolls ?? 192;
   for (let i = 0; i < maxPolls; i++) {
     if (cancelledRef.current) return;
-    const job = await getGenJob(jobId);
-    if (!job) return;
+    let job: Awaited<ReturnType<typeof getGenJob>> | null = null;
+    try {
+      job = await getGenJob(jobId);
+    } catch (e) {
+      console.warn("[canvas] generation status lookup failed:", e instanceof Error ? e.message : e);
+      return onDone([], "timeout", []);
+    }
+    if (!job) return onDone([], "timeout", []);
     if (job.status === "DONE") return onDone(job.urls, job.urls.length ? "done" : "missing", job.generationIds ?? []);
     if (job.status === "FAILED") return onDone([], "failed", []);
     await new Promise((r) => setTimeout(r, intervalMs));
@@ -136,38 +142,40 @@ export function useCanvasGen(
     }, cancelledRef);
   }, [projectId, onNode, onResolve, activeThreadId, onError, onBalanceRefresh]);
 
-  const animate = useCallback(async (sourceGenerationId: string, sourceNodeId: string, prompt: string, pos: Pos) => {
+  const animate = useCallback(async (sourceGenerationId: string, sourceNodeId: string, prompt: string, pos: Pos): Promise<boolean> => {
     const { video } = await ensureModels();
     const req = { projectId, prompt, count: 1, kind: "video" as const, model: video, sourceGenerationId, idempotencyKey: `vid-${Date.now()}` };
     const started = await startGen(req);
-    if ("error" in started) { fail(started.error); return; }
+    if ("error" in started) { fail(started.error); return false; }
     void onBalanceRefresh?.();
     const created = await createNodeWithRetry({ projectId, type: "video", ...pos, prompt, genJobId: started.id, status: "pending", sourceNodeId, ...(activeThreadId ? { threadId: activeThreadId } : {}) });
-    if ("error" in created) { fail("Your video is generating — the card didn't appear, but you can find it in your library."); return; }
+    if ("error" in created) { fail("Your video is generating — the card didn't appear, but you can find it in your library."); return false; }
     onNode({ id: created.id, type: "video", pos, status: "pending", prompt, sourceNodeId });
     poll(started.id, (urls, status, generationIds) => {
       void onBalanceRefresh?.();
       onResolve(created.id, urls[0] ?? null, status, generationIds[0]);
     }, cancelledRef);
+    return true;
   }, [projectId, onNode, onResolve, activeThreadId, onError, onBalanceRefresh]);
 
   // Phase 3: text-to-video. The same paid video path as animate(), minus the
   // source frame — the gate allows video without sourceGenerationId (it's the
   // Gen-space path) and the provider uses the model's t2v endpoint. Video is
   // always count=1 (startGen forces it). New spend entry, existing spend logic.
-  const generateVideoFromText = useCallback(async (prompt: string, pos: Pos) => {
+  const generateVideoFromText = useCallback(async (prompt: string, pos: Pos): Promise<boolean> => {
     const { video } = await ensureModels();
     const req = { projectId, prompt, count: 1, kind: "video" as const, model: video, idempotencyKey: `vid-${Date.now()}` };
     const started = await startGen(req);
-    if ("error" in started) { fail(started.error); return; }
+    if ("error" in started) { fail(started.error); return false; }
     void onBalanceRefresh?.();
     const created = await createNodeWithRetry({ projectId, type: "video", ...pos, prompt, genJobId: started.id, status: "pending", ...(activeThreadId ? { threadId: activeThreadId } : {}) });
-    if ("error" in created) { fail("Your video is generating — the card didn't appear, but you can find it in your library."); return; }
+    if ("error" in created) { fail("Your video is generating — the card didn't appear, but you can find it in your library."); return false; }
     onNode({ id: created.id, type: "video", pos, status: "pending", prompt });
     poll(started.id, (urls, status, generationIds) => {
       void onBalanceRefresh?.();
       onResolve(created.id, urls[0] ?? null, status, generationIds[0]);
     }, cancelledRef);
+    return true;
   }, [projectId, onNode, onResolve, activeThreadId, onError, onBalanceRefresh]);
 
   return { generateImage, animate, generateVideoFromText, quoteCosts, cancelledRef };

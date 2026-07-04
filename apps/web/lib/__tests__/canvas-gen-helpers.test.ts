@@ -104,6 +104,20 @@ describe("poll (F21)", () => {
     expect(onDone).toHaveBeenCalledWith([], "missing", ["g-missing"]);
   });
 
+  it("reports 'timeout' when the job lookup returns null instead of leaving the card pending", async () => {
+    m.getGenJob.mockResolvedValue(null);
+    const onDone = vi.fn();
+    await poll("j", onDone, cancelled, { intervalMs: 0, maxPolls: 5 });
+    expect(onDone).toHaveBeenCalledWith([], "timeout", []);
+  });
+
+  it("reports 'timeout' when the job lookup throws instead of leaving an unhandled poll rejection", async () => {
+    m.getGenJob.mockRejectedValue(new Error("session expired"));
+    const onDone = vi.fn();
+    await poll("j", onDone, cancelled, { intervalMs: 0, maxPolls: 5 });
+    expect(onDone).toHaveBeenCalledWith([], "timeout", []);
+  });
+
   it("stops without calling onDone when cancelled", async () => {
     cancelled.current = true;
     m.getGenJob.mockResolvedValue({ status: "RUNNING", urls: [], generationIds: [] });
