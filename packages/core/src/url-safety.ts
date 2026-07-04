@@ -4,7 +4,6 @@
  * assertPublicHttpUrlResolved (server-only) additionally resolves DNS and re-checks every
  * resolved IP — closing the DNS-rebinding hole the lexical check alone cannot.
  */
-import { lookup } from "node:dns/promises";
 
 /**
  * Parses an IPv4 address string into a [a, b, c, d] tuple, or null if not IPv4.
@@ -181,6 +180,7 @@ export function assertPublicHttpUrl(raw: string): URL {
  * follow-up hardening. Server-only (uses node:dns).
  */
 export async function assertPublicHttpUrlResolved(raw: string): Promise<URL> {
+  const { lookup } = await import("node:dns/promises");
   const url = assertPublicHttpUrl(raw); // protocol + literal private-IP + bare-name checks first
   let addrs: { address: string; family: number }[];
   try {

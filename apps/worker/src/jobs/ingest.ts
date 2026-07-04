@@ -62,6 +62,7 @@ export async function redispatchLostIngest(
 ): Promise<number> {
   const assets = await prisma.asset.findMany({
     where: {
+      ownerId: { not: "" },
       deletedAt: null,
       // GENERATED assets never get ingest jobs (worker-computed hash, no probe)
       // — sweeping them would re-dispatch every generated image forever.

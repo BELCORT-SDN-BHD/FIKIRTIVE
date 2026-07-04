@@ -1,6 +1,6 @@
 "use client";
-import { useCallback, useEffect, useRef, useState } from "react";
-import { ReactFlow, Background, Controls, type Node, type NodeChange, applyNodeChanges } from "@xyflow/react";
+import { useCallback, useEffect, useLayoutEffect, useRef, useState } from "react";
+import { ReactFlow, Background, Controls, type Edge, type Node, type NodeChange, applyNodeChanges, type ReactFlowInstance } from "@xyflow/react";
 import "@xyflow/react/dist/style.css";
 import { ImageNode } from "./nodes/ImageNode";
 import { VideoNode } from "./nodes/VideoNode";
@@ -17,13 +17,36 @@ import { Dialog, DialogContent, DialogHeader, DialogFooter, DialogTitle, DialogD
 import { Button } from "@/components/ui/button";
 import type { EntityDTO } from "@/lib/types";
 import { filterNodesByConvo, convoColor } from "@/lib/convo-canvas";
+import { creditsLabel } from "@/lib/credit-format";
+import type { CanvasGenCostQuote } from "@/lib/canvas-gen-costs";
 
 type CanvasFlowNode = Node & { threadId: string | null };
+type FlowCanvasProps = {
+  projectId: string;
+  entities?: EntityDTO[];
+  activeThreadId?: string | null;
+  activity?: Set<string>;
+  skin?: "gb";
+  onBalanceRefresh?: () => void | Promise<void>;
+  onActivityRefresh?: () => void | Promise<void>;
+  directToolsLocked?: boolean;
+  directToolsLockedReason?: string;
+};
 
 // Must be stable (defined outside component) per ReactFlow requirements
 const nodeTypes = { image: ImageNode, video: VideoNode, text: TextNode };
 
-export default function FlowCanvas({ projectId, entities = [], activeThreadId = null, activity, skin }: { projectId: string; entities?: EntityDTO[]; activeThreadId?: string | null; activity?: Set<string>; skin?: "gb" }) {
+export default function FlowCanvas({
+  projectId,
+  entities = [],
+  activeThreadId = null,
+  activity,
+  skin,
+  onBalanceRefresh,
+  onActivityRefresh,
+  directToolsLocked = false,
+  directToolsLockedReason = "Start with Otto first.",
+}: FlowCanvasProps) {
   const [nodes, setNodes] = useState<CanvasFlowNode[]>([]);
   const [prompt, setPrompt] = useState("");
   const [promptIds, setPromptIds] = useState<string[]>([]); // @mentioned entity ids
@@ -59,20 +82,75 @@ export default function FlowCanvas({ projectId, entities = [], activeThreadId = 
   // double-submit guard
   const submittingRef = useRef(false);
   const [submitting, setSubmitting] = useState(false);
+  const [videoSubmitting, setVideoSubmitting] = useState(false);
+  const [costQuote, setCostQuote] = useState<CanvasGenCostQuote | null>(null);
 
   // Per-node data refs so stable onAnimate closures can read current generationId + position
+  const nodesRef = useRef<CanvasFlowNode[]>([]);
   const nodeDataRef = useRef<Record<string, { generationId?: string; pos: { x: number; y: number } }>>({});
+  const flowRef = useRef<ReactFlowInstance<CanvasFlowNode, Edge> | null>(null);
+  const reloadRef = useRef<(() => Promise<void>) | null>(null);
+  const canvasHostRef = useRef<HTMLDivElement | null>(null);
+  const fittedScopeRef = useRef<string | null>(null);
+  const fitTimerRef = useRef<number | null>(null);
+  const [flowReady, setFlowReady] = useState(false);
+  const [canvasReady, setCanvasReady] = useState(false);
+  const requestReload = useCallback(() => {
+    void (async () => {
+      await Promise.resolve(onActivityRefresh?.()).catch(() => undefined);
+      await reloadRef.current?.();
+      await Promise.resolve(onActivityRefresh?.()).catch(() => undefined);
+    })();
+  }, [onActivityRefresh]);
 
   // Keep a ref to animate() so per-node closures don't go stale
   const animateFnRef = useRef<ReturnType<typeof useCanvasGen>["animate"] | null>(null);
 
   // Build a stable per-node onAnimate that reads generationId at call time
   const onAnimateByNode = useRef<Record<string, () => void>>({});
+  const directToolsLockedRef = useRef(directToolsLocked);
+  const scheduleFitView = useCallback(() => {
+    if (fitTimerRef.current) window.clearTimeout(fitTimerRef.current);
+    fitTimerRef.current = window.setTimeout(() => {
+      fitTimerRef.current = null;
+      void flowRef.current?.fitView({ padding: 0.22, duration: 160 });
+    }, 80);
+  }, []);
+
+  useEffect(() => () => {
+    if (fitTimerRef.current) window.clearTimeout(fitTimerRef.current);
+  }, []);
+
+  useEffect(() => {
+    nodesRef.current = nodes;
+  }, [nodes]);
+
+  useLayoutEffect(() => {
+    const host = canvasHostRef.current;
+    if (!host) return;
+    const check = () => {
+      const rect = host.getBoundingClientRect();
+      setCanvasReady(rect.width > 0 && rect.height > 0);
+    };
+    check();
+    const ro = new ResizeObserver(check);
+    ro.observe(host);
+    return () => ro.disconnect();
+  }, []);
+
   const getOnAnimate = useCallback((id: string): (() => void) => {
     if (!onAnimateByNode.current[id]) {
       // "Make video" is a paid image→video generation, so clicking it only OPENS
       // a confirm; the actual spend happens in runAnimate() after the owner says OK.
-      onAnimateByNode.current[id] = () => setPendingAnimateId(id);
+      onAnimateByNode.current[id] = () => {
+        if (directToolsLockedRef.current) return;
+        if (!nodeDataRef.current[id]?.generationId) {
+          toast.error("This image is not ready for video yet.");
+          return;
+        }
+        setCostQuote(null);
+        setPendingAnimateId(id);
+      };
     }
     return onAnimateByNode.current[id]!;
   }, []);
@@ -86,15 +164,28 @@ export default function FlowCanvas({ projectId, entities = [], activeThreadId = 
   // True only during the ~1-2s startGen setup (poll isn't awaited), so it blocks a
   // same-tick double-fire without serializing separate generations.
   const videoBusyRef = useRef(false);
-  const runAnimate = useCallback((id: string, motionPrompt: string) => {
+  const runAnimate = useCallback(async (id: string, motionPrompt: string): Promise<boolean> => {
+    if (directToolsLockedRef.current) return false;
     const entry = nodeDataRef.current[id];
-    if (!entry?.generationId || !animateFnRef.current || videoBusyRef.current) return;
+    if (videoBusyRef.current) {
+      return false;
+    }
+    if (!entry?.generationId || !animateFnRef.current) {
+      toast.error("This image is not ready for video yet.");
+      return false;
+    }
     videoBusyRef.current = true;
+    setVideoSubmitting(true);
     const { x, y } = entry.pos;
     // genRequest requires a non-empty prompt (.trim().min(1)); the dialog guarantees a
     // non-empty motion prompt (custom falls back to the gentle default), so the paid
     // i2v never no-ops on an empty prompt.
-    void animateFnRef.current(entry.generationId, id, motionPrompt, { x: x + 340, y, w: 320, h: 320 }).finally(() => { videoBusyRef.current = false; });
+    try {
+      return await animateFnRef.current(entry.generationId, id, motionPrompt, { x: x + 340, y, w: 320, h: 320 });
+    } finally {
+      videoBusyRef.current = false;
+      setVideoSubmitting(false);
+    }
   }, []);
 
   // Build a stable per-node onOpenDetail that reads generationId at call time
@@ -155,23 +246,29 @@ export default function FlowCanvas({ projectId, entities = [], activeThreadId = 
             prompt: n.prompt,
             skin,
             onDelete: () => setPendingDeleteId(n.id),
+            onRefresh: requestReload,
             // onAnimate added after generationId arrives via onResolve
           },
           style: { width: n.pos.w, height: n.pos.h, boxShadow: `0 0 0 2px ${convoColor(activeThreadId ?? null)}` },
           threadId: activeThreadId ?? null,
         },
       ]);
+      scheduleFitView();
     },
-    [deleteNode],
+    [activeThreadId, requestReload, skin, scheduleFitView],
   );
 
   const onGenError = useCallback((msg: string) => { toast.error(msg); }, []);
-  const { generateImage, animate, generateVideoFromText, cancelledRef } = useCanvasGen(projectId, onNewNode, onResolve, activeThreadId, onGenError);
+  const { generateImage, animate, generateVideoFromText, quoteCosts } = useCanvasGen(projectId, onNewNode, onResolve, activeThreadId, onGenError, onBalanceRefresh);
+  const refreshCostQuote = useCallback(() => {
+    void quoteCosts().then(setCostQuote).catch(() => setCostQuote(null));
+  }, [quoteCosts]);
   // keep animateFnRef current
   animateFnRef.current = animate;
 
   // Shared submit handler — used by form onSubmit and MentionInput onSubmit
   const handleGenerate = useCallback(async () => {
+    if (directToolsLocked) return;
     if (!prompt.trim()) return;
     if (submittingRef.current) return;
     submittingRef.current = true;
@@ -188,10 +285,11 @@ export default function FlowCanvas({ projectId, entities = [], activeThreadId = 
       submittingRef.current = false;
       setSubmitting(false);
     }
-  }, [prompt, promptIds, variantSel, generateImage]);
+  }, [prompt, promptIds, variantSel, generateImage, directToolsLocked]);
 
   // Add an empty text node (display-only, no spend) — the canvas toolbar's text tool.
   const addTextNode = useCallback(async () => {
+    if (directToolsLocked) return;
     const x = 80 + nodeCountRef.current * 340;
     const result = await createCanvasNode({ projectId, type: "text", x, y: 80, w: 240, h: 120, text: "", status: "done", ...(activeThreadId ? { threadId: activeThreadId } : {}) });
     if ("id" in result) {
@@ -207,10 +305,11 @@ export default function FlowCanvas({ projectId, entities = [], activeThreadId = 
           threadId: activeThreadId ?? null,
         },
       ]);
+      scheduleFitView();
     } else {
       console.warn("Failed to create text node:", result.error);
     }
-  }, [projectId, activeThreadId, onTextChange, skin]);
+  }, [projectId, activeThreadId, onTextChange, skin, directToolsLocked, scheduleFitView]);
 
   // Drag-and-drop an image file from anywhere onto the canvas → upload it as an
   // image node. Upload-only (uploadReference creates an UPLOAD Generation); it
@@ -219,6 +318,7 @@ export default function FlowCanvas({ projectId, entities = [], activeThreadId = 
   const handleCanvasDrop = useCallback(async (e: React.DragEvent) => {
     e.preventDefault();
     setDragOver(false);
+    if (directToolsLockedRef.current) return;
     const files = Array.from(e.dataTransfer?.files ?? []).filter((f) => f.type.startsWith("image/"));
     if (files.length === 0) return;
     for (const file of files) {
@@ -237,35 +337,46 @@ export default function FlowCanvas({ projectId, entities = [], activeThreadId = 
           id: created.id,
           type: "image",
           position: { x, y: 80 },
-          data: { status: "done", url: res.src, skin, onDelete: () => setPendingDeleteId(created.id), onAnimate: getOnAnimate(created.id), onOpenDetail: getOnOpenDetail(created.id) },
+          data: { status: "done", url: res.src, generationId: res.id, skin, onDelete: () => setPendingDeleteId(created.id), onRefresh: requestReload, onAnimate: getOnAnimate(created.id), onOpenDetail: getOnOpenDetail(created.id) },
           style: { width: 320, height: 320, boxShadow: `0 0 0 2px ${convoColor(activeThreadId ?? null)}` },
           threadId: activeThreadId ?? null,
         },
       ]);
+      scheduleFitView();
     }
-  }, [projectId, activeThreadId, getOnAnimate, getOnOpenDetail, skin]);
+  }, [projectId, activeThreadId, getOnAnimate, getOnOpenDetail, requestReload, skin, scheduleFitView]);
 
-  // Animate the selected image node into a video — reuses the existing animate
-  // path (no new spend logic). The video tool mirrors Grok's "select an image
-  // node to animate"; it is disabled until an animatable image is selected.
-  const selectedImageId = nodes.find((n) => n.selected && n.type === "image" && nodeDataRef.current[n.id]?.generationId)?.id ?? null;
-  const animateSelected = useCallback(() => {
-    if (selectedImageId) setPendingAnimateId(selectedImageId);
-  }, [selectedImageId]);
-
-  // Phase 3: text-to-video — the video tool opens a prompt dialog when nothing is
-  // selected; runT2v spends via the existing video path (no source frame).
+  // Phase 3: text-to-video — the bottom video tool always opens a prompt dialog;
+  // image cards own the explicit "Make video" image-to-video path.
   const [t2vOpen, setT2vOpen] = useState(false);
   const [t2vPrompt, setT2vPrompt] = useState("");
-  const runT2v = useCallback((prompt: string) => {
-    if (videoBusyRef.current) return;
+  const runT2v = useCallback(async (prompt: string): Promise<boolean> => {
+    if (directToolsLocked || videoBusyRef.current) return false;
     videoBusyRef.current = true;
+    setVideoSubmitting(true);
     const x = 80 + nodeCountRef.current * 340;
-    void generateVideoFromText(prompt, { x, y: 80, w: 320, h: 320 }).finally(() => { videoBusyRef.current = false; });
-  }, [generateVideoFromText]);
+    try {
+      return await generateVideoFromText(prompt, { x, y: 80, w: 320, h: 320 });
+    } finally {
+      videoBusyRef.current = false;
+      setVideoSubmitting(false);
+    }
+  }, [generateVideoFromText, directToolsLocked]);
 
-  // Stop polls on unmount
-  useEffect(() => () => { cancelledRef.current = true; }, [cancelledRef]);
+  useEffect(() => {
+    directToolsLockedRef.current = directToolsLocked;
+    if (directToolsLocked) {
+      setComposerOpen(false);
+      setConfirmGen(false);
+      setPendingAnimateId(null);
+      setT2vOpen(false);
+      setT2vPrompt("");
+    }
+  }, [directToolsLocked]);
+
+  useEffect(() => {
+    if (confirmGen || pendingAnimateId !== null || t2vOpen) refreshCostQuote();
+  }, [confirmGen, pendingAnimateId, t2vOpen, refreshCostQuote]);
 
   // Load (and, under the Grok-bright skin, bridge OTTO's chat results onto) the
   // canvas. The gb path resolves each node's media URL and ensures a node exists
@@ -289,10 +400,12 @@ export default function FlowCanvas({ projectId, entities = [], activeThreadId = 
           // forever" on reload (founder bug: image loads forever).
           status: r.url ? "done" : r.status,
           url: r.url ?? undefined,
+          generationId: r.generationId ?? undefined,
           prompt: r.prompt,
           text: r.text,
           skin,
           onDelete: () => setPendingDeleteId(r.id),
+          onRefresh: requestReload,
           onChange: r.type === "text" ? (t: string) => onTextChange(r.id, t) : undefined,
           onAnimate: r.type === "image" ? getOnAnimate(r.id) : undefined,
           onOpenDetail: r.type === "image" ? getOnOpenDetail(r.id) : undefined,
@@ -307,7 +420,7 @@ export default function FlowCanvas({ projectId, entities = [], activeThreadId = 
       const prevById = new Map(prev.map((n) => [n.id, n]));
       const merged = mapped.map((m) => {
         const old = prevById.get(m.id);
-        return old && old.data.status === "pending" && !m.data.url ? old : m;
+        return old && old.data.status === "pending" && m.data.status === "pending" && !m.data.url ? old : m;
       });
       const mergedIds = new Set(merged.map((n) => n.id));
       const extras = prev.filter((n) => !mergedIds.has(n.id));
@@ -315,10 +428,24 @@ export default function FlowCanvas({ projectId, entities = [], activeThreadId = 
       nodeCountRef.current = all.length;
       return all;
     });
-  }, [skin, projectId, activeThreadId, onTextChange, getOnAnimate, getOnOpenDetail]);
+  }, [skin, projectId, activeThreadId, onTextChange, getOnAnimate, getOnOpenDetail, requestReload]);
+  reloadRef.current = reload;
 
   // Initial load + reload when the active thread changes (re-bridges that thread).
   useEffect(() => { void reload(); }, [reload]);
+
+  // ReactFlow's `fitView` prop only runs on mount, before our async canvas nodes arrive.
+  // Fit once per project/thread after nodes load so left-edge node action buttons do not
+  // sit underneath the Otto panel and become visible-but-unclickable.
+  useEffect(() => {
+    if (!flowReady || !flowRef.current || nodes.length === 0) return;
+    const scope = `${projectId}:${activeThreadId ?? "all"}`;
+    if (fittedScopeRef.current === scope) return;
+    fittedScopeRef.current = scope;
+    requestAnimationFrame(() => {
+      void flowRef.current?.fitView({ padding: 0.22, duration: 160 });
+    });
+  }, [flowReady, nodes.length, projectId, activeThreadId]);
 
   // When the active thread's OTTO work finishes (pending → done), reload so its
   // freshly-produced results appear on the canvas.
@@ -331,20 +458,20 @@ export default function FlowCanvas({ projectId, entities = [], activeThreadId = 
 
   // Keep nodeDataRef positions in sync when nodes move (so onAnimate uses fresh coords)
   const onNodesChange = useCallback((changes: NodeChange[]) => {
-    setNodes((ns) => {
-      let next = applyNodeChanges(changes, ns) as CanvasFlowNode[];
-      // Bridge NodeResizer dimension changes into our style-based sizing so the
-      // card visually grows/shrinks on the board (display-only — no regeneration).
-      for (const c of changes) {
-        if (c.type === "dimensions" && c.dimensions) {
-          const { width, height } = c.dimensions;
-          next = next.map((n) => (n.id === c.id ? { ...n, style: { ...n.style, width, height } } : n));
-        }
+    let next = applyNodeChanges(changes, nodesRef.current) as CanvasFlowNode[];
+    const persistMoves: Array<{ id: string; x: number; y: number; w: number; h: number }> = [];
+    const deletes: string[] = [];
+    // Bridge NodeResizer dimension changes into our style-based sizing so the
+    // card visually grows/shrinks on the board (display-only — no regeneration).
+    for (const c of changes) {
+      if (c.type === "dimensions" && c.dimensions) {
+        const { width, height } = c.dimensions;
+        next = next.map((n) => (n.id === c.id ? { ...n, style: { ...n.style, width, height } } : n));
       }
-      return next;
-    });
+    }
     for (const c of changes) {
       if (c.type === "position" && c.position) {
+        const n = next.find((x2) => x2.id === c.id);
         // Update position in ref immediately (for onAnimate offset calc)
         const entry = nodeDataRef.current[c.id];
         if (entry) entry.pos = { x: c.position.x, y: c.position.y };
@@ -352,28 +479,25 @@ export default function FlowCanvas({ projectId, entities = [], activeThreadId = 
         if (c.dragging === false) {
           // Read position from CHANGE object (not stale nodes closure)
           const { x, y } = c.position;
-          setNodes((ns) => {
-            const n = ns.find((x2) => x2.id === c.id);
-            if (n) void moveCanvasNode(n.id, { x, y, w: Number(n.style?.width ?? 320), h: Number(n.style?.height ?? 320) });
-            return ns; // side-effect only, no state update
-          });
+          if (n) persistMoves.push({ id: n.id, x, y, w: Number(n.style?.width ?? 320), h: Number(n.style?.height ?? 320) });
         }
       }
       // Persist the new size when a resize gesture ends (display-only; reuses the
       // same moveCanvasNode path as a drag — no spend, just x/y/w/h).
       if (c.type === "dimensions" && c.resizing === false) {
-        setNodes((ns) => {
-          const n = ns.find((x2) => x2.id === c.id);
-          if (n) {
-            const entry = nodeDataRef.current[n.id];
-            if (entry) entry.pos = { x: n.position.x, y: n.position.y };
-            void moveCanvasNode(n.id, { x: n.position.x, y: n.position.y, w: Number(n.style?.width ?? 320), h: Number(n.style?.height ?? 320) });
-          }
-          return ns; // side-effect only
-        });
+        const n = next.find((x2) => x2.id === c.id);
+        if (n) {
+          const entry = nodeDataRef.current[n.id];
+          if (entry) entry.pos = { x: n.position.x, y: n.position.y };
+          persistMoves.push({ id: n.id, x: n.position.x, y: n.position.y, w: Number(n.style?.width ?? 320), h: Number(n.style?.height ?? 320) });
+        }
       }
-      if (c.type === "remove") void deleteCanvasNode(c.id);
+      if (c.type === "remove") deletes.push(c.id);
     }
+    nodesRef.current = next;
+    setNodes(next);
+    for (const move of persistMoves) void moveCanvasNode(move.id, { x: move.x, y: move.y, w: move.w, h: move.h });
+    for (const id of deletes) void deleteCanvasNode(id);
   }, []);
 
   // Is the card awaiting delete a PAID generation still in flight? If so the confirm
@@ -386,12 +510,27 @@ export default function FlowCanvas({ projectId, entities = [], activeThreadId = 
     status: pendingDeleteNode.data?.status as string | undefined,
     url: pendingDeleteNode.data?.url as string | undefined,
   });
+  const showGraph = canvasReady && (!directToolsLocked || nodes.length > 0 || dragOver);
+  const imageCostLabel = costQuote ? creditsLabel(costQuote.imageCredits) : "checking exact cost";
+  const videoCostLabel = costQuote ? creditsLabel(costQuote.videoCredits) : "checking exact cost";
+  const directToolTitle = directToolsLocked ? directToolsLockedReason : undefined;
 
   return (
     <div
-      style={{ flex: 1, position: "relative" }}
+      ref={canvasHostRef}
+      style={{ flex: 1, width: "100%", height: "100%", minHeight: 0, position: "relative", overflow: "hidden" }}
       className={skin === "gb" ? (panMode ? "gb" : "gb cv-select-mode") : undefined}
-      onDragOver={(e) => { if (Array.from(e.dataTransfer?.types ?? []).includes("Files")) { e.preventDefault(); e.dataTransfer.dropEffect = "copy"; setDragOver(true); } }}
+      onDragOver={(e) => {
+        if (!Array.from(e.dataTransfer?.types ?? []).includes("Files")) return;
+        e.preventDefault();
+        if (directToolsLocked) {
+          e.dataTransfer.dropEffect = "none";
+          setDragOver(false);
+          return;
+        }
+        e.dataTransfer.dropEffect = "copy";
+        setDragOver(true);
+      }}
       onDragLeave={(e) => { if (e.currentTarget === e.target) setDragOver(false); }}
       onDrop={handleCanvasDrop}
     >
@@ -405,19 +544,27 @@ export default function FlowCanvas({ projectId, entities = [], activeThreadId = 
           <span>Drop image to add it to the canvas</span>
         </div>
       )}
-      <ReactFlow
-        nodes={filterNodesByConvo(nodes, activeThreadId, filterToConvo)}
-        nodeTypes={nodeTypes}
-        onNodesChange={onNodesChange}
-        panOnDrag={panMode}
-        selectionOnDrag={!panMode}
-        deleteKeyCode={null}
-        proOptions={{ hideAttribution: true }}
-        fitView
-      >
-        <Background />
-        <Controls />
-      </ReactFlow>
+      {showGraph && (
+        <div style={{ position: "absolute", inset: 0 }}>
+          <ReactFlow
+            style={{ width: "100%", height: "100%", minHeight: 0 }}
+            onInit={(instance) => { flowRef.current = instance; setFlowReady(true); }}
+            nodes={filterNodesByConvo(nodes, activeThreadId, filterToConvo)}
+            nodeTypes={nodeTypes}
+            onNodesChange={onNodesChange}
+            panOnDrag={panMode}
+            selectionOnDrag={!panMode}
+            deleteKeyCode={null}
+            proOptions={{ hideAttribution: true }}
+            minZoom={0.1}
+            fitView
+            fitViewOptions={{ padding: 0.22 }}
+          >
+            <Background />
+            <Controls />
+          </ReactFlow>
+        </div>
+      )}
       {detailFor && (
         <DetailPanel
           generationId={detailFor}
@@ -430,11 +577,11 @@ export default function FlowCanvas({ projectId, entities = [], activeThreadId = 
         <>
           {/* Composer — hidden until Generate is clicked (Grok pattern). Reuses the
               existing handleGenerate spend path unchanged; positioned above the bar. */}
-          {composerOpen && (
+          {composerOpen && !directToolsLocked && (
             <form
               className="al-promptbar cv-composer-pop"
               style={{ position: "absolute", bottom: 76, left: "50%", transform: "translateX(-50%)", width: 520 }}
-              onSubmit={(e) => { e.preventDefault(); if (prompt.trim()) setConfirmGen(true); }}
+              onSubmit={(e) => { e.preventDefault(); if (prompt.trim()) { setCostQuote(null); setConfirmGen(true); } }}
             >
               <div className="al-input-wrap" style={{ flex: 1, minWidth: 0, border: "none", background: "none", padding: 0 }}>
                 <MentionInput
@@ -442,10 +589,10 @@ export default function FlowCanvas({ projectId, entities = [], activeThreadId = 
                   docKey={`canvas-${composerKey}`}
                   placeholder="Describe an image… (@ to reference your stuff)"
                   onChange={(t, ids, vsel) => { setPrompt(t); setPromptIds(ids); setVariantSel(vsel); }}
-                  onSubmit={() => { if (prompt.trim()) setConfirmGen(true); }}
+                  onSubmit={() => { if (prompt.trim()) { setCostQuote(null); setConfirmGen(true); } }}
                 />
               </div>
-              <button className="al-btn al-btn-primary al-btn-sm" type="submit" disabled={submitting}>Generate</button>
+              <button className="al-btn al-btn-primary al-btn-sm" type="submit" disabled={submitting || !prompt.trim()}>Generate</button>
             </form>
           )}
           {/* Slim bottom toolbar — matches the approved canvas-home mockup. */}
@@ -465,17 +612,39 @@ export default function FlowCanvas({ projectId, entities = [], activeThreadId = 
               )}
             </button>
             <span className="cv-tb-div" />
-            <button type="button" className="cv-tb" title="Generate an image — describe what you want" aria-label="Generate image" aria-expanded={composerOpen} onClick={() => setComposerOpen((v) => !v)}>
+            <button
+              type="button"
+              className="cv-tb"
+              title={directToolTitle ?? "Generate an image — describe what you want"}
+              aria-label="Generate image"
+              aria-expanded={composerOpen && !directToolsLocked}
+              disabled={directToolsLocked}
+              onClick={() => setComposerOpen((v) => !v)}
+            >
               <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.9"><rect x="3" y="3" width="18" height="18" rx="3" /><circle cx="9" cy="9" r="2" /><path d="m21 15-5-5L5 21" /></svg>
             </button>
-            <button type="button" className="cv-tb" title={selectedImageId ? "Make a video from the selected image" : "Make a video from a prompt"} aria-label="Video" onClick={() => { if (selectedImageId) animateSelected(); else setT2vOpen(true); }}>
+            <button
+              type="button"
+              className="cv-tb"
+              title={directToolTitle ?? "Make a video from a prompt"}
+              aria-label="Video"
+              disabled={directToolsLocked}
+              onClick={() => { setCostQuote(null); setT2vOpen(true); }}
+            >
               <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.9"><rect x="2" y="6" width="14" height="12" rx="2" /><path d="m22 8-6 4 6 4V8z" /></svg>
             </button>
-            <button type="button" className="cv-tb" title="Add text" aria-label="Add text" onClick={addTextNode}>
+            <button type="button" className="cv-tb" title={directToolTitle ?? "Add text"} aria-label="Add text" disabled={directToolsLocked} onClick={addTextNode}>
               <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.9"><path d="M4 7V4h16v3M9 20h6M12 4v16" /></svg>
             </button>
           </div>
         </>
+      ) : directToolsLocked ? (
+        <div
+          className="al-promptbar"
+          style={{ position: "absolute", bottom: 16, left: "50%", transform: "translateX(-50%)", width: 420, justifyContent: "center" }}
+        >
+          <span className="text-[0.875rem] font-medium text-muted-foreground">{directToolsLockedReason}</span>
+        </div>
       ) : (
         <form
           className="al-promptbar"
@@ -491,7 +660,7 @@ export default function FlowCanvas({ projectId, entities = [], activeThreadId = 
               onSubmit={handleGenerate}
             />
           </div>
-          <button className="al-btn al-btn-primary al-btn-sm" type="submit" disabled={submitting}>Generate</button>
+          <button className="al-btn al-btn-primary al-btn-sm" type="submit" disabled={submitting || !prompt.trim()}>Generate</button>
           {activeThreadId && (
             <button
               type="button"
@@ -526,12 +695,12 @@ export default function FlowCanvas({ projectId, entities = [], activeThreadId = 
           </DialogFooter>
         </DialogContent>
       </Dialog>
-      <Dialog open={pendingAnimateId !== null} onOpenChange={(open) => { if (!open) { setPendingAnimateId(null); setMotion("gentle"); setCustomMotion(""); } }}>
+      <Dialog open={pendingAnimateId !== null} onOpenChange={(open) => { if (!open && !videoSubmitting) { setPendingAnimateId(null); setMotion("gentle"); setCustomMotion(""); } }}>
         <DialogContent>
           <DialogHeader>
             <DialogTitle>Make a video from this image?</DialogTitle>
             <DialogDescription>
-              Pick how it should move, then confirm. This uses credits.
+              Pick how it should move, then confirm. Cost: {videoCostLabel}. No charge until you confirm.
             </DialogDescription>
           </DialogHeader>
           <div className="flex flex-col gap-2.5">
@@ -559,20 +728,24 @@ export default function FlowCanvas({ projectId, entities = [], activeThreadId = 
             )}
           </div>
           <DialogFooter>
-            <Button variant="ghost" onClick={() => setPendingAnimateId(null)}>Cancel</Button>
+            <Button variant="ghost" disabled={videoSubmitting} onClick={() => setPendingAnimateId(null)}>Cancel</Button>
             <Button
-              onClick={() => {
+              disabled={!costQuote || videoSubmitting}
+              onClick={async () => {
                 const p =
                   motion === "dynamic"
                     ? "Animate this image with dynamic, energetic motion."
                     : motion === "custom"
                       ? customMotion.trim() || "Animate this image with gentle, natural motion."
                       : "Animate this image with gentle, natural motion.";
-                if (pendingAnimateId) runAnimate(pendingAnimateId, p);
-                setPendingAnimateId(null);
+                if (pendingAnimateId && await runAnimate(pendingAnimateId, p)) {
+                  setPendingAnimateId(null);
+                  setMotion("gentle");
+                  setCustomMotion("");
+                }
               }}
             >
-              Make video
+              {costQuote ? videoSubmitting ? "Starting..." : "Make video" : "Checking cost..."}
             </Button>
           </DialogFooter>
         </DialogContent>
@@ -582,21 +755,23 @@ export default function FlowCanvas({ projectId, entities = [], activeThreadId = 
           <DialogHeader>
             <DialogTitle>Generate 4 variations?</DialogTitle>
             <DialogDescription>
-              Otto makes 4 images so you can pick the best one — this uses credits for 4 images. Keep the one you like and delete the rest.
+              Otto makes 4 images so you can pick the best one. Cost: {imageCostLabel}. No charge until you confirm.
             </DialogDescription>
           </DialogHeader>
           <DialogFooter>
             <Button variant="ghost" onClick={() => setConfirmGen(false)}>Cancel</Button>
-            <Button onClick={() => { setConfirmGen(false); void handleGenerate(); }}>Generate</Button>
+            <Button disabled={!costQuote} onClick={() => { setConfirmGen(false); void handleGenerate(); }}>
+              {costQuote ? "Generate" : "Checking cost..."}
+            </Button>
           </DialogFooter>
         </DialogContent>
       </Dialog>
-      <Dialog open={t2vOpen} onOpenChange={(open) => { if (!open) { setT2vOpen(false); setT2vPrompt(""); } }}>
+      <Dialog open={t2vOpen} onOpenChange={(open) => { if (!open && !videoSubmitting) { setT2vOpen(false); setT2vPrompt(""); } }}>
         <DialogContent>
           <DialogHeader>
             <DialogTitle>Make a video from a prompt</DialogTitle>
             <DialogDescription>
-              Describe the video you want — no source image needed. This uses credits.
+              Describe the video you want — no source image needed. Cost: {videoCostLabel}. No charge until you confirm.
             </DialogDescription>
           </DialogHeader>
           <textarea
@@ -607,12 +782,18 @@ export default function FlowCanvas({ projectId, entities = [], activeThreadId = 
             className="resize-none rounded-lg border border-border bg-background px-3 py-2 text-sm outline-none focus-visible:ring-[3px] focus-visible:ring-ring/40"
           />
           <DialogFooter>
-            <Button variant="ghost" onClick={() => { setT2vOpen(false); setT2vPrompt(""); }}>Cancel</Button>
+            <Button variant="ghost" disabled={videoSubmitting} onClick={() => { setT2vOpen(false); setT2vPrompt(""); }}>Cancel</Button>
             <Button
-              disabled={!t2vPrompt.trim()}
-              onClick={() => { const p = t2vPrompt.trim(); setT2vOpen(false); setT2vPrompt(""); if (p) runT2v(p); }}
+              disabled={!t2vPrompt.trim() || !costQuote || videoSubmitting}
+              onClick={async () => {
+                const p = t2vPrompt.trim();
+                if (p && await runT2v(p)) {
+                  setT2vOpen(false);
+                  setT2vPrompt("");
+                }
+              }}
             >
-              Make video
+              {costQuote ? videoSubmitting ? "Starting..." : "Make video" : "Checking cost..."}
             </Button>
           </DialogFooter>
         </DialogContent>

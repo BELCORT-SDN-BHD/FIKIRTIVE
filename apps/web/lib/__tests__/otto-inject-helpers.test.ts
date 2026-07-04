@@ -13,6 +13,7 @@ import {
   injectCardMessage,
   appendMissingCards,
   appendDurableResults,
+  appendResearchReports,
   syncCardJobIds,
   deriveCardState,
   deriveActionState,
@@ -375,6 +376,36 @@ describe("appendDurableResults", () => {
     const out = appendDurableResults(existing, fresh);
     expect(out).toHaveLength(2);
     expect(out[1].metadata?.kind).toBe("TURN_ERROR");
+  });
+});
+
+describe("appendResearchReports", () => {
+  it("appends new RESEARCH_REPORT messages but never TEXT or RESEARCH_CARD", () => {
+    const existing = threadToUiMessages(
+      thread([
+        msg({ id: "u1", role: "USER", kind: "TEXT", text: "research competitors" }),
+        msg({ id: "rc_1", role: "AGENT", kind: "RESEARCH_CARD", payload: { status: "running" } }),
+      ]),
+    );
+    const fresh = thread([
+      msg({ id: "u1", role: "USER", kind: "TEXT", text: "research competitors" }),
+      msg({ id: "a1", role: "AGENT", kind: "TEXT", text: "I'll research that." }),
+      msg({ id: "rc_1", role: "AGENT", kind: "RESEARCH_CARD", payload: { status: "done" } }),
+      msg({ id: "rr_1", role: "AGENT", kind: "RESEARCH_REPORT", payload: { body: "Report body" } }),
+    ]);
+    const out = appendResearchReports(existing, fresh);
+    expect(out).toHaveLength(3);
+    expect(out[2].metadata?.durableId).toBe("rr_1");
+    expect(out[2].metadata?.kind).toBe("RESEARCH_REPORT");
+    expect(out.some((m) => m.metadata?.kind === "TEXT" && m.metadata.durableId === "a1")).toBe(false);
+  });
+
+  it("dedupes by durableId and returns the same ref when no report is missing", () => {
+    const fresh = thread([
+      msg({ id: "rr_1", role: "AGENT", kind: "RESEARCH_REPORT", payload: { body: "Report body" } }),
+    ]);
+    const existing = threadToUiMessages(fresh);
+    expect(appendResearchReports(existing, fresh)).toBe(existing);
   });
 });
 

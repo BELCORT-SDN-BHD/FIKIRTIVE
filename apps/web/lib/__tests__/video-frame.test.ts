@@ -60,13 +60,13 @@ describe("frame export constants", () => {
 });
 
 describe("ref video duration bounds", () => {
-  it("2..10s inclusive ok; outside not", () => {
+  it("2..6s inclusive ok; outside not", () => {
     expect(REF_VIDEO_MIN_SECONDS).toBe(2);
-    expect(REF_VIDEO_MAX_SECONDS).toBe(10);
+    expect(REF_VIDEO_MAX_SECONDS).toBe(6);
     expect(isRefVideoDurationOk(2)).toBe(true);
-    expect(isRefVideoDurationOk(10)).toBe(true);
+    expect(isRefVideoDurationOk(6)).toBe(true);
     expect(isRefVideoDurationOk(1.5)).toBe(false);
-    expect(isRefVideoDurationOk(11)).toBe(false);
+    expect(isRefVideoDurationOk(7)).toBe(false);
     expect(isRefVideoDurationOk(Number.NaN)).toBe(false);
   });
 });

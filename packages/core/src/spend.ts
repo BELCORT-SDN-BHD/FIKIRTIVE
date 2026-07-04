@@ -21,6 +21,7 @@ export interface GenSpendInput {
   kind: "IMAGE" | "VIDEO";
   model: string;
   count: number;
+  referenceVideoGenerationId?: string | null;
   /** GenJob.videoOptions Json: { seconds, resolution, aspectRatio, fps, audio }. */
   videoOptions: { seconds?: number; resolution?: string; audio?: boolean } | null;
 }
@@ -30,6 +31,7 @@ export interface GenSpendInput {
  *  provider call — never NaN). Image: flat per-image × count. */
 export function genSpentUsd(job: GenSpendInput): number {
   if (job.kind === "VIDEO") {
+    if (job.model === "seedance-2-fast" && job.referenceVideoGenerationId) return 0.85;
     const d = videoDefaults(job.model as GenVideoModel);
     return videoPriceUsd(job.model as GenVideoModel, {
       seconds: job.videoOptions?.seconds ?? d.seconds,
@@ -74,18 +76,25 @@ function displayedFromUsd(usd: number): number {
 }
 
 /** Video models whose credit charge is a flat per-resolution number (BytePlus Seedance,
- *  priced by resolution not duration). All other models charge displayedFromUsd(true cost). */
+ *  priced by final locked costing, not the record-only COGS). All other models charge
+ *  displayedFromUsd(true cost). */
 export const FLAT_PRICED_VIDEO_MODELS = new Set<string>(["seedance-2-fast"]);
 export function isFlatPricedVideoModel(model: string): boolean { return FLAT_PRICED_VIDEO_MODELS.has(model); }
 
-/** Flat per-resolution video charge table — applies ONLY to flat-priced BytePlus models
- *  (seedance-2-fast). 720p → 7 cr; 1080p (and anything else) → 16 cr. */
-export const VIDEO_CREDITS_BY_RESOLUTION: Record<string, number> = { "720p": 7, "1080p": 16 };
+/** Flat video charge table for Seedance 2.0 Fast:
+ *  720p 5s → 8cr, 720p 10s → 14cr, whole-clip reference video → 16cr.
+ *  Unknown/higher resolution stays at the 16cr guardrail. */
+export const VIDEO_CREDITS_BY_RESOLUTION: Record<string, number> = { "720p": 8, "1080p": 16 };
+export const VIDEO_CREDITS_720P_10S = 14;
+export const REFERENCE_VIDEO_CREDITS = 16;
 
 export function pricedGenCredits(job: GenSpendInput): number {
   if (job.kind === "VIDEO") {
     if (isFlatPricedVideoModel(job.model)) {
+      if (job.referenceVideoGenerationId) return REFERENCE_VIDEO_CREDITS * INTERNAL_PER_DISPLAY;
       const r = job.videoOptions?.resolution ?? "720p";
+      const seconds = job.videoOptions?.seconds ?? 5;
+      if (r === "720p" && seconds >= 10) return VIDEO_CREDITS_720P_10S * INTERNAL_PER_DISPLAY;
       return (VIDEO_CREDITS_BY_RESOLUTION[r] ?? 16) * INTERNAL_PER_DISPLAY; // BytePlus: flat per resolution
     }
     return displayedFromUsd(genSpentUsd(job)) * INTERNAL_PER_DISPLAY; // fal models: per-model USD cost (restores correct scaling)

@@ -185,11 +185,11 @@ export function ResearchCard({ cardId, payload, balanceUsd, onBalanceRefresh, on
             {confirming ? (
               <>
                 <div className="text-[0.875rem] text-foreground">
-                  Run research for ~{creditsLabel(estimate)}? This will spend real credits.
+                  Run research for {creditsLabel(estimate)}? This will spend real credits.
                 </div>
                 <div className="flex gap-3">
                   <Button variant="default" disabled={approving || !affordable} onClick={() => void confirmApprove()}>
-                    {approving ? <Loader2 size={14} style={{ animation: "spin 1s linear infinite" }} /> : `Confirm — run research (~${creditsLabel(estimate)})`}
+                    {approving ? <Loader2 size={14} style={{ animation: "spin 1s linear infinite" }} /> : `Confirm - run research (${creditsLabel(estimate)})`}
                   </Button>
                   <Button variant="secondary" disabled={approving} onClick={() => setConfirming(false)}>
                     Cancel
@@ -202,7 +202,7 @@ export function ResearchCard({ cardId, payload, balanceUsd, onBalanceRefresh, on
                 disabled={!affordable}
                 onClick={() => { setInsufficient(false); setError(null); setConfirming(true); }}
               >
-                Approve &amp; run — ~{creditsLabel(estimate)}
+                Review cost - {creditsLabel(estimate)}
               </Button>
             )}
             {!affordable && !confirming && (

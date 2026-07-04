@@ -1,13 +1,14 @@
 "use client";
-import { useState, useEffect } from "react";
-export function Switch({ checked, onChange, "aria-label": label }: {
+import { useState } from "react";
+export function Switch({ checked, onChange, disabled, "aria-label": label }: {
   checked: boolean;
   onChange: (v: boolean) => void | Promise<unknown>;
+  disabled?: boolean;
   "aria-label": string;
 }) {
   const [on, setOn] = useState(checked);
-  useEffect(() => { setOn(checked); }, [checked]); // server truth wins after revalidation
   const toggle = async () => {
+    if (disabled) return;
     const next = !on;
     setOn(next); // optimistic
     try {
@@ -19,6 +20,6 @@ export function Switch({ checked, onChange, "aria-label": label }: {
   };
   return (
     <button type="button" role="switch" aria-checked={on} aria-label={label}
-      className={on ? "cv-switch on" : "cv-switch"} onClick={toggle} />
+      className={on ? "cv-switch on" : "cv-switch"} onClick={toggle} disabled={disabled} />
   );
 }

@@ -106,7 +106,8 @@ function buildStep(p: ReturnType<typeof basePayload>) {
       pageId: p.pageId,
       mode: p.mode,
       adsetId: p.intoExisting?.adsetId ?? null,
-      // F17: mirror bindingSteps() — bind creative + targeting.
+      startTime: p.startTime ?? null,
+      // F17: mirror bindingSteps() — bind creative + schedule + targeting.
       creative: {
         kind: p.creative.kind,
         message: p.creative.message,
@@ -632,6 +633,20 @@ describe("approveAdBuild", () => {
     expect(mockGraphPost).not.toHaveBeenCalled();
   });
 
+  it("invalid approval when startTime drifts → error, no consume, no build", async () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date(NOW)); // within the 10-min TTL; failure must be hash drift.
+    mockConnFindUnique.mockResolvedValue(conn());
+    const c = card({ startTime: "2026-06-28T01:00:00.000Z" });
+    (c.payload as { startTime: string }).startTime = "2026-06-28T02:00:00.000Z";
+    mockMsgFindFirst.mockResolvedValue(c);
+
+    const res = await approveAdBuild("card-1");
+    expect("error" in res).toBe(true);
+    expect(mockMsgUpdate).not.toHaveBeenCalled();
+    expect(mockGraphPost).not.toHaveBeenCalled();
+    vi.useRealTimers();
+  });
 
   it("valid → consumes the approval THEN runs the build", async () => {
     vi.useFakeTimers();

@@ -21,6 +21,7 @@ import {
   injectCardMessage,
   appendMissingCards,
   appendDurableResults,
+  appendResearchReports,
   syncCardJobIds,
 } from "@/lib/otto-inject-helpers";
 import { OttoPlanCard } from "./OttoPlanCard";
@@ -101,6 +102,7 @@ export function OttoChatStream({
   const [streamError, setStreamError] = useState<string | null>(null);
   /** data-error kind; "insufficient_credits" drives the Top-up link. */
   const [streamErrorKind, setStreamErrorKind] = useState<string | null>(null);
+  const [retryDraft, setRetryDraft] = useState<string | null>(null);
   /** Card ids the run paused on (needs_approval) — drives OttoPlanCard's parked vs.
    *  proposed spend path. Mirrors OttoConversation's pendingApprovalCardIds set. */
   const [pendingApprovalCardIds, setPendingApprovalCardIds] = useState<Set<string>>(new Set());
@@ -117,6 +119,7 @@ export function OttoChatStream({
   /** Upload error message shown near the attach button; clears on next successful attach. */
   const [attachError, setAttachError] = useState<string | null>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
+  const lastSubmittedTextRef = useRef("");
   const videoElRef = useRef<HTMLVideoElement | null>(null);
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
   const [videoPick, setVideoPick] = useState<{ url: string; duration: number } | null>(null);
@@ -213,7 +216,12 @@ export function OttoChatStream({
         return;
       }
       const e = asErrorData(part);
-      if (e) { setStreamError(e.text); setStreamErrorKind(e.kind); return; }
+      if (e) {
+        setStreamError(e.text);
+        setStreamErrorKind(e.kind);
+        setRetryDraft(e.kind === "error" ? lastSubmittedTextRef.current || null : null);
+        return;
+      }
       // data-tool-propose: a card tool (propose / proposePack / propose-meta-action /
       // propose-ad-build) persisted durable card(s) synchronously, but the stream part
       // carries only the id(s). Fetch the durable thread ONCE and inject each card
@@ -292,6 +300,20 @@ export function OttoChatStream({
     if (freshResultCount > prevResultCount) void onBalanceRefresh?.();
   }
 
+  async function refetchAndAppendCards() {
+    const fresh = await getCoworkThreadClient(thread.id);
+    if (!fresh) return;
+    setMessages((cur) => appendMissingCards(syncCardJobIds(cur, fresh), fresh));
+    onThreadUpdate(fresh);
+  }
+
+  async function refetchAndAppendResearchReports() {
+    const fresh = await getCoworkThreadClient(thread.id);
+    if (!fresh) return;
+    setMessages((cur) => appendResearchReports(cur, fresh));
+    onThreadUpdate(fresh);
+  }
+
   // Reset the give-up state whenever we switch threads (mirror OttoConversation).
   // Guarded by a prev-id ref so the reset runs only on an actual thread change, not
   // on the mount render (where the state is already fresh) — avoids a cascading render.
@@ -337,6 +359,7 @@ export function OttoChatStream({
   useEffect(() => {
     if (!pendingFirst || pendingSentRef.current) return;
     pendingSentRef.current = true;
+    lastSubmittedTextRef.current = pendingFirst.text;
     void sendMessage(
       { text: pendingFirst.text },
       { body: { projectId, threadId: thread.id, ...(pendingFirst.goalKey ? { goalKey: pendingFirst.goalKey } : {}), ...(pendingFirst.entityIds?.length ? { entityIds: pendingFirst.entityIds } : {}) } }, // F30: carry entity conditioning into the first streamed turn
@@ -349,6 +372,7 @@ export function OttoChatStream({
     const trimmed = text.trim();
     if (!trimmed || isBusy) return;
     const entityIds = resolveSentEntityIds(trimmed, pickedMentions);
+    lastSubmittedTextRef.current = trimmed;
     setText(""); // clear the composer immediately; sendMessage echoes the user msg
     setPickedMentions([]);
     // Reset ephemeral stream state for the new turn.
@@ -356,6 +380,7 @@ export function OttoChatStream({
     setStepEvents([]);
     setStreamError(null);
     setStreamErrorKind(null);
+    setRetryDraft(null);
     setAttachError(null);
     // A new turn may queue a new generation — re-arm polling (mirror OttoConversation).
     setPollGaveUp(false);
@@ -811,7 +836,7 @@ export function OttoChatStream({
                       setPollTerminal(false);
                       pollCountRef.current = 0;
                       checkAgainUsedRef.current = false;
-                      void pollAndInjectResults();
+                      void refetchAndAppendCards();
                     }}
                     onCancelled={() => void pollAndInjectResults()}
                   />
@@ -851,7 +876,7 @@ export function OttoChatStream({
                     onMakeAnother={() => {
                       setPollGaveUp(false);
                       pollCountRef.current = 0;
-                      void pollAndInjectResults();
+                      void refetchAndAppendCards();
                     }}
                   />
                 </WidgetRow>
@@ -892,7 +917,7 @@ export function OttoChatStream({
                     payload={m.metadata?.payload}
                     balanceUsd={balanceUsd}
                     onBalanceRefresh={() => void onBalanceRefresh?.()}
-                    onRefresh={pollAndInjectResults}
+                    onRefresh={refetchAndAppendResearchReports}
                   />
                 </WidgetRow>
               );
@@ -1035,6 +1060,23 @@ export function OttoChatStream({
                     Top up
                   </a>
                 </>
+              )}
+              {streamErrorKind === "error" && retryDraft && (
+                <div className="mt-2">
+                  <Button
+                    type="button"
+                    size="sm"
+                    variant="secondary"
+                    onClick={() => {
+                      setText(retryDraft);
+                      setStreamError(null);
+                      setStreamErrorKind(null);
+                      setRetryDraft(null);
+                    }}
+                  >
+                    Edit and retry
+                  </Button>
+                </div>
               )}
             </div>
           )}

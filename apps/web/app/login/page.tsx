@@ -103,8 +103,8 @@ export default async function LoginPage({
 
           <p className="mt-6 text-center text-[12px] leading-[1.6] text-muted-foreground">
             By continuing you agree to our{" "}
-            <a href="#" className="underline">Terms</a> and{" "}
-            <a href="#" className="underline">Privacy Policy</a>.
+            <a href="/terms" className="underline">Terms</a> and{" "}
+            <a href="/privacy" className="underline">Privacy Policy</a>.
           </p>
         </div>
       </section>

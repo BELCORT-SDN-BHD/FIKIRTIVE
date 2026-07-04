@@ -34,7 +34,7 @@ describe("filterStuffItems", () => {
     history: [{ id: "g1", src: "/g1.png", kind: "image" }, { id: "g2", src: "/g2.mp4", kind: "video" }],
     ads: [], records: [],
   });
-  it("cast/products filter by entity type; location shows in images+all only", () => {
+  it("cast/product-assets filter by entity type; location shows in images+all only", () => {
     expect(filterStuffItems(items, "cast", "").map((i) => i.entityId)).toEqual(["e1"]);
     expect(filterStuffItems(items, "products", "").map((i) => i.entityId)).toEqual(["e2"]);
     expect(filterStuffItems(items, "images", "").length).toBe(4); // 3 entity images + g1

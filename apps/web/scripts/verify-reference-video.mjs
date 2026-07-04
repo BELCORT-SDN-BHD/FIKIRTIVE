@@ -5,7 +5,7 @@
  * Purpose (the "money gate" step of docs/superpowers/plans/2026-07-02-otto-reference-video.md, Task 8):
  *   1. Confirm the exact Ark param shape we ship — `{type:"video_url", video_url:{url}, role:"reference_video"}`
  *      on dreamina-seedance-2-0-fast-260128 — is ACCEPTED (not "invalid role"/"video input not supported").
- *   2. Measure the REAL COGS of a reference-video gen so we can check margin vs our flat 720p = 7cr ($0.70).
+ *   2. Measure the REAL COGS of a reference-video gen so we can check margin vs our fixed reference-video price = 16cr ($1.60).
  *
  * ⚠️ THIS SPENDS REAL MONEY on BytePlus (one video generation). Run ONLY with the founder's explicit go-ahead.
  *
@@ -16,11 +16,11 @@
  * Usage:
  *   BYTEPLUS_API_KEY=... node apps/web/scripts/verify-reference-video.mjs --video <PUBLIC_MP4_URL> [--prompt "..."] [--duration 5]
  *
- * --video : a PUBLIC, BytePlus-reachable mp4/mov URL, 2–10s, NON-real-human-face (product/scene/motion),
+ * --video : a PUBLIC, BytePlus-reachable mp4/mov URL, 2–6s, NON-real-human-face (product/scene/motion),
  *           720p-ish. Seedance 2.0 rejects real human faces as subject — use non-face footage for this test.
  *
  * COGS: BytePlus bills per generation; the API response may not itself carry the charge. Note your BytePlus
- * console credit balance BEFORE and AFTER this run to get the real per-gen COGS, and compare to $0.70 (7cr).
+ * console credit balance BEFORE and AFTER this run to get the real per-gen COGS, and compare to $1.60 (16cr).
  */
 
 const ARK_BASE = "https://ark.ap-southeast.bytepluses.com/api/v3";
@@ -37,7 +37,8 @@ const prompt = arg("prompt", "Recreate this reference video's camera motion and 
 const duration = arg("duration", "5");
 
 if (!apiKey) { console.error("✗ BYTEPLUS_API_KEY env is required."); process.exit(2); }
-if (!videoUrl) { console.error("✗ --video <PUBLIC_MP4_URL> is required (2–10s, non-real-face)."); process.exit(2); }
+if (!videoUrl) { console.error("✗ --video <PUBLIC_MP4_URL> is required (2–6s, non-real-face)."); process.exit(2); }
+if (Number(duration) !== 5) { console.error("✗ reference-video verification is fixed to --duration 5 to match the 16cr costing model."); process.exit(2); }
 
 const headers = { Authorization: `Bearer ${apiKey}`, "Content-Type": "application/json" };
 
@@ -84,7 +85,7 @@ while (true) {
     console.log(`   elapsed  : ~${secs}s`);
     if (t.usage) console.log(`   usage    : ${JSON.stringify(t.usage)}`);
     console.log(`\n   → Now check your BytePlus console credit delta (before vs after) for the real COGS.`);
-    console.log(`     If COGS > $0.70 (7cr) by >20%, lower REF_VIDEO_MAX_SECONDS (apps/web/lib/video-frame.ts) — not the price.`);
+    console.log(`     If COGS threatens the 45% margin floor at $1.60 (16cr), lower REF_VIDEO_MAX_SECONDS before shipping broader use.`);
     process.exit(0);
   }
   if (["failed", "cancelled", "canceled"].includes(t.status)) {

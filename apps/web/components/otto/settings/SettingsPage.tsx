@@ -9,7 +9,7 @@ function FieldRow({ f }: { f: SettingsField }) {
     <div className="cv-set-row">
       <div className="cv-set-lbl"><span>{f.label}</span>{"hint" in f && f.hint ? <span className="cv-set-hint">{f.hint}</span> : null}</div>
       {f.kind === "text" && <input className="cv-set-input" defaultValue={f.value} readOnly={f.readOnly} />}
-      {f.kind === "toggle" && <Switch checked={f.value} onChange={f.onToggle} aria-label={f.label} />}
+      {f.kind === "toggle" && <Switch checked={f.value} onChange={f.onToggle} disabled={f.disabled} aria-label={f.label} />}
       {f.kind === "number" && (
         <span className="cv-set-num"><input className="cv-set-input cv-set-input-num" type="number" defaultValue={f.value}
           onBlur={(e) => f.onSave(Number(e.target.value))} />{f.unit ? <em>{f.unit}</em> : null}</span>

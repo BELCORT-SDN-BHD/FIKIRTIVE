@@ -62,25 +62,64 @@ export default function OttoLibrary({ projectId, entities = [] }: { projectId: s
   // leading-[1.5] — design-baseline body line-height (Analytics standard)
   return (
     <div className="gb leading-[1.5]" style={{ flex: 1, display: "flex", flexDirection: "column", overflow: "hidden" }}>
+      <style>{`
+        .otto-library-header {
+          display: flex;
+          align-items: center;
+          gap: 0.75rem;
+          padding: 1rem;
+          flex-shrink: 0;
+          border-bottom: 1px solid var(--border);
+        }
+        .otto-library-search {
+          flex: 1;
+          max-width: 360px;
+          min-width: 180px;
+        }
+        .otto-library-view-toggle {
+          margin-left: auto;
+          display: flex;
+          gap: 0.25rem;
+        }
+        @media (max-width: 680px) {
+          .otto-library-header {
+            flex-wrap: wrap;
+            align-items: stretch;
+            gap: 0.5rem;
+            padding: 0.75rem;
+          }
+          .otto-library-search {
+            flex: 1 0 100%;
+            max-width: none;
+            min-width: 0;
+          }
+          .otto-library-favorites {
+            flex: 1 1 auto;
+          }
+          .otto-library-view-toggle {
+            margin-left: 0;
+            flex: 0 1 auto;
+          }
+        }
+      `}</style>
       {/* Header */}
-      <div style={{ display: "flex", alignItems: "center", gap: "0.75rem", padding: "1rem", flexShrink: 0, borderBottom: "1px solid var(--border)" }}>
+      <div className="otto-library-header">
         <input
           value={search}
           onChange={(e) => setSearch(e.target.value)}
           placeholder="Search your library…"
-          className="al-input"
-          style={{ flex: 1, maxWidth: 360 }}
+          className="al-input otto-library-search"
         />
         <button
           type="button"
           onClick={() => setFavoriteOnly((v) => !v)}
           aria-pressed={favoriteOnly}
-          className="al-btn al-btn-sm"
+          className="al-btn al-btn-sm otto-library-favorites"
           style={{ background: favoriteOnly ? "var(--muted)" : "transparent" }}
         >
           {favoriteOnly ? "★ Favorites" : "☆ Favorites"}
         </button>
-        <div style={{ marginLeft: "auto", display: "flex", gap: "0.25rem" }}>
+        <div className="otto-library-view-toggle">
           <button type="button" onClick={() => setView("full")} aria-pressed={view === "full"} className="al-btn al-btn-sm" style={{ background: view === "full" ? "var(--muted)" : "transparent" }}>Full</button>
           <button type="button" onClick={() => setView("compact")} aria-pressed={view === "compact"} className="al-btn al-btn-sm" style={{ background: view === "compact" ? "var(--muted)" : "transparent" }}>Compact</button>
         </div>

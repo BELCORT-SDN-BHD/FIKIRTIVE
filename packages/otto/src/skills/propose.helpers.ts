@@ -8,7 +8,11 @@ import { z } from "zod";
 import {
   suggestModel,
   videoPriceUsd,
+  videoDefaults,
+  GEN_VIDEO_MODEL_OPTIONS,
   GEN_PRICE_USD_PER_IMAGE,
+  GEN_VIDEO_SECONDS,
+  REFERENCE_VIDEO_MODEL,
   MAX_GEN_PROMPT,
   MAX_GEN_COUNT,
   displayCredits,
@@ -134,6 +138,19 @@ export function buildProposeCard(
     disabled: new Set(ctx.disabledModels),
   });
 
+  if (isRefVideo) {
+    const opts = GEN_VIDEO_MODEL_OPTIONS[REFERENCE_VIDEO_MODEL];
+    const d = videoDefaults(REFERENCE_VIDEO_MODEL);
+    sm.model = REFERENCE_VIDEO_MODEL;
+    sm.params.durationSeconds = GEN_VIDEO_SECONDS;
+    sm.params.resolution = d.resolution;
+    sm.params.aspectRatio = input.desiredAspect && opts.aspectRatios.includes(input.desiredAspect) ? input.desiredAspect : d.aspectRatio;
+    sm.params.audio = typeof input.desiredAudio === "boolean" ? input.desiredAudio : d.audio;
+    sm.params.count = 1;
+    sm.reason = `Seedance 2.0 Fast — ${sm.params.aspectRatio}, ${GEN_VIDEO_SECONDS}s reference video`;
+    sm.downgraded = sm.downgraded || (input.desiredDuration != null && input.desiredDuration !== GEN_VIDEO_SECONDS);
+  }
+
   // Step 3.5: ad-pack count — the user can ask for N image options to choose from.
   // Images only (video stays a single clip). The count lives on the FROZEN card
   // (params.count) and drives BOTH the displayed price (unit × count, Step 4) and
@@ -162,6 +179,7 @@ export function buildProposeCard(
       kind: kind === "video" ? "VIDEO" : "IMAGE",
       model: sm.model,
       count: kind === "video" ? 1 : sm.params.count,
+      referenceVideoGenerationId: isRefVideo ? ctx.referenceVideoGenerationId : null,
       videoOptions:
         kind === "video"
           ? { seconds: sm.params.durationSeconds, resolution: sm.params.resolution, audio: sm.params.audio }

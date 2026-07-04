@@ -234,3 +234,24 @@ export function appendDurableResults(
   if (additions.length === 0) return messages;
   return [...messages, ...additions];
 }
+
+/**
+ * Append completed research reports after a RESEARCH_CARD's status poll observes
+ * `done`. Research reports are async worker output too, but they are intentionally
+ * separate from appendDurableResults so the generation poll keeps its narrow
+ * GEN_RESULT / TURN_ERROR contract.
+ */
+export function appendResearchReports(
+  messages: OttoUiMessage[],
+  fresh: ChatThreadDTO,
+): OttoUiMessage[] {
+  const present = new Set(
+    messages.map((m) => m.metadata?.durableId).filter((id): id is string => !!id),
+  );
+  const additions = threadToUiMessages(fresh).filter((u) => {
+    const meta = u.metadata;
+    return meta?.kind === "RESEARCH_REPORT" && !present.has(meta.durableId);
+  });
+  if (additions.length === 0) return messages;
+  return [...messages, ...additions];
+}

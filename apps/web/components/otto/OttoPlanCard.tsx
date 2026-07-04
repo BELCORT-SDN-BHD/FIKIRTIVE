@@ -61,12 +61,17 @@ export function OttoPlanCard({
   const [elapsed, setElapsed] = useState(0);
   const [expanded, setExpanded] = useState(false);
   const [copyState, setCopyState] = useState<"idle" | "copied" | "no-api">("idle");
+  const [confirming, setConfirming] = useState(false);
 
   useEffect(() => {
     if (cardState !== "working") { setElapsed(0); return; }
     const start = Date.now();
     const t = setInterval(() => setElapsed(Math.floor((Date.now() - start) / 1000)), 1000);
     return () => clearInterval(t);
+  }, [cardState]);
+
+  useEffect(() => {
+    if (cardState !== "idle") setConfirming(false);
   }, [cardState]);
 
   const isVideo = p.kind === "video";
@@ -139,6 +144,7 @@ export function OttoPlanCard({
         setError(res.error);
         return;
       }
+      setConfirming(false);
       onApproved();
     } catch {
       setError("Couldn't start that — please try again.");
@@ -165,6 +171,7 @@ export function OttoPlanCard({
   }
 
   function handleChangeSomething() {
+    setConfirming(false);
     onChangeSomething(p.structuredPrompt ?? "");
   }
 
@@ -289,10 +296,24 @@ export function OttoPlanCard({
               ✓ You approved this — it used {creditsLabel(credits)}.
             </div>
           </div>
+        ) : confirming ? (
+          <div className="mt-4 flex flex-col gap-3">
+            <div className="text-[0.875rem] text-foreground">
+              Generate this {isVideo ? "video" : "image"} for {creditsLabel(credits)}? This will spend real credits.
+            </div>
+            <div className="flex gap-3">
+              <Button variant="default" size="sm" className="rounded-[11px]" disabled={busy} onClick={approve}>
+                {busy ? "Starting…" : `Confirm generate · ${creditsLabel(credits)}`}
+              </Button>
+              <Button variant="secondary" size="sm" className="rounded-[11px]" disabled={busy} onClick={() => setConfirming(false)}>
+                Cancel
+              </Button>
+            </div>
+          </div>
         ) : (
           <div className="mt-4 flex gap-3">
-            <Button variant="default" size="sm" className="rounded-[11px]" disabled={busy} onClick={approve}>
-              {busy ? "Starting…" : `Make it · ${creditsLabel(credits)}`}
+            <Button variant="default" size="sm" className="rounded-[11px]" disabled={busy} onClick={() => setConfirming(true)}>
+              Review cost · {creditsLabel(credits)}
             </Button>
             <Button variant="secondary" size="sm" className="rounded-[11px]" disabled={busy} onClick={handleChangeSomething}>
               Change something

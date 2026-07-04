@@ -10,7 +10,7 @@ import { NextResponse, type NextRequest } from "next/server";
  * (editor render tracer, API-key generation), set AUTH_ENABLED=true +
  * RESEND_API_KEY in Railway — no code change needed.
  *
- * When enabled, everything is gated except /login, the auth APIs, and Next
+ * When enabled, everything is gated except /login, public legal pages, the auth APIs, and Next
  * statics — including /files/* (reference images are private). The wall is now
  * Better Auth: it reads the BA session via auth.api.getSession.
  */
@@ -41,5 +41,5 @@ export const config = {
   // api/stripe excluded — the webhook is unauthenticated (Stripe calls it; the signature is its auth).
   // skin-preview: dev-only visual harness for the UI re-skin (the page itself 404s in
   // production), excluded here so it renders without a session in dev. Throwaway.
-  matcher: ["/((?!login|skin-preview|api/better-auth|api/stripe|_next/static|_next/image|favicon.ico).*)"],
+  matcher: ["/((?!login|terms|privacy|skin-preview|api/better-auth|api/stripe|_next/static|_next/image|favicon.ico).*)"],
 };
