@@ -1,7 +1,7 @@
 # Launch Readiness Audit - 2026-07-04
 
 PR: https://github.com/toolsbbb/FIKIRTIVE/pull/131
-Last code head audited before latest prod auth/OAuth follow-up: `550e605`
+Last pushed code head audited before the Meta connected-fixture follow-up: `971dbec`
 Merge state: `CLEAN`
 
 This audit consolidates the local QA reports, tracked review docs, PR comments, and CI status for the public-launch readiness goal. It does not replace the per-surface reports; it maps them to the launch requirements and names the remaining gates.
@@ -13,7 +13,7 @@ This audit consolidates the local QA reports, tracked review docs, PR comments, 
 - Local browser QA in this audit used safe boundaries unless explicitly noted:
   - `GENERATION_PROVIDER=mock`
   - `COWORK_PROVIDER=mock`
-- Production smoke explicitly used real generation once and real Google OAuth initiation; remaining paid/external gates are listed below.
+- Production smoke explicitly used real generation once and real Google OAuth initiation; local Meta connected-fixture QA now covers post-connect UI states without real Meta writes.
 
 ## Requirement Status
 
@@ -24,10 +24,10 @@ This audit consolidates the local QA reports, tracked review docs, PR comments, 
 | Mobile layout is launch-safe for tested surfaces | Proven for tested surfaces at 390px | Per-surface mobile checks and screenshots |
 | Margin model is above constitutional floor | Proven from executable pricing and current official BytePlus evidence | `docs/review/MARGIN-PARITY-REPORT-2026-07-04.md` |
 | All changes/reports are handled in PR | Proven for tracked reports and PR comments | PR #131, tracked docs, comments |
-| CI is green | Proven for pushed head `550e605` | GitHub checks for `550e605`: typecheck/fences/lockfile, next build, unit + integration all passed |
+| CI is green | Proven for pushed head `971dbec` | GitHub checks for `971dbec`: typecheck/fences/lockfile, next build, unit + integration all passed |
 | Live paid supplier smoke | Partially proven in production | One real production image generation passed with USD 0.16 COGS; see `docs/review/EXTERNAL-SMOKE-RESULTS-2026-07-04.md`. Video, reference-video, and Otto LLM-only accounting were not run. |
 | Real Stripe checkout/webhook | Not yet proven; checkout failure path hardened | Local QA intentionally avoided real checkout. Commit `fd7f8e2` makes Stripe Checkout Session creation failures return a user-visible retry error instead of an unhandled server action failure. |
-| Real Meta/Google OAuth and connected Meta states | Partially proven for Google initiation; Meta not run | Follow-up Google OAuth reached Google's sign-in page with the Better Auth callback URI; consent/callback and connected OAuth state remain unproven. See `docs/review/EXTERNAL-SMOKE-RESULTS-2026-07-04.md`. |
+| Real Meta/Google OAuth and connected Meta states | Partially proven | Fourth follow-up Google OAuth reached Google's sign-in page with the Better Auth callback URI and no mismatch. Local Meta fixture QA proves connected Connections/Analytics/autonomy/kill-switch states. Real Google consent/callback and real Meta OAuth/token exchange remain unproven. See `docs/review/EXTERNAL-SMOKE-RESULTS-2026-07-04.md` and `docs/review/QA-META-CONNECTED-FIXTURE-2026-07-04.md`. |
 | Production deploy/canary | Partially proven for current production only | Current production route smoke passed for tested normal/admin routes, but production was not serving PR #131 admin v2. PR #131 is now merge-clean and CI-green; post-merge deploy canary remains required. |
 | Direct admin credit-action cap | Proven locally with tests and browser QA | Commit `3c655e0` enforces the 1,000 displayed-credit direct cap for founder and tenant actions; over-limit Apply buttons are disabled and server actions reject the same input. |
 
@@ -143,7 +143,7 @@ Fixes:
 - Template StrictMode polling cleanup and Open in detail dialog unmount.
 - Discover copy fallback and feedback.
 
-Result: pass for local/url-only and disconnected states. Connected OAuth states remain external-gated.
+Result: pass for local/url-only and disconnected states. Connected Meta UI states are covered by the later local fixture QA; real OAuth remains external-gated.
 
 ### Brand Memory
 
@@ -191,7 +191,45 @@ Covered:
 - Schedule coming-soon stub.
 - Analytics not-connected Meta state, Connect Meta handoff to Connections, TikTok coming-soon platform panel, desktop/mobile.
 
-Result: pass for documented stub/disconnected states. Real connected insights remain external-gated.
+Result: pass for documented stub/disconnected states. Connected Analytics ready state is covered by the local Meta fixture QA below; real connected insights still require a real Meta OAuth/token run.
+
+### Local Meta Connected Fixture QA
+
+Evidence:
+- Tracked report: `docs/review/QA-META-CONNECTED-FIXTURE-2026-07-04.md`
+- Screenshots:
+  - `.gstack/qa-reports/screenshots/local-meta-fixture-2026-07-04/connections-connected.png`
+  - `.gstack/qa-reports/screenshots/local-meta-fixture-2026-07-04/analytics-ready-fixed.png`
+  - `.gstack/qa-reports/screenshots/local-meta-fixture-2026-07-04/analytics-make-more-prefill-fixed.png`
+
+Covered:
+- Founder connected Meta row seeded locally with decryptable token envelope and `canWrite=true`.
+- Connections connected state: two ad accounts, metrics, Ask/Auto autonomy persistence, pause/resume kill-switch persistence, desktop/mobile.
+- Analytics ready state: KPIs, per-ad rows, per-account fixture data, no external creative-image failures, desktop/mobile.
+- Analytics `Make more like it` now uses the existing Otto composer prefill path instead of writing an unconsumed `sessionStorage` TODO key.
+
+Boundary:
+- Fixture mode is disabled in production.
+- No real Meta OAuth, token exchange, write, publish, or disconnect was run.
+
+Result: pass for post-OAuth connected product behavior under deterministic local fixture.
+
+### External Session `019f27ff-9260-72b2-baae-28c4e32cf6e0`
+
+This Codex session was inspected because it was another large QA run. It primarily covered PR #129 content/canvas desktop behavior, not PR #131 admin/money/OAuth readiness.
+
+Covered there:
+- Focused desktop sweeps for canvas i2v/t2v, pending/timeout, delete/retry/check-again, detail paid actions, new campaign, Otto result/approval/research/attachments, and related worker tenant-scope fixes.
+- Web, worker, core, Otto tests, workspace typecheck, web build, and GitHub CI for that PR.
+
+Not covered there:
+- Production Google/Meta OAuth completion.
+- Stripe checkout/webhook.
+- Meta write/publish.
+- PR #131 admin v2 production canary.
+- Mobile/tablet for that PR's later canvas findings.
+
+Conclusion: useful supporting evidence for desktop content/canvas stability, but it does not close the remaining PR #131 launch gates.
 
 ### Admin Console
 
@@ -265,6 +303,8 @@ Load-bearing constraints:
 - `0985a94` - Launch readiness audit added.
 - `3c655e0` - Direct admin credit-action cap enforced for founder and tenant credit actions.
 - `fd7f8e2` - Billing checkout session failures return a friendly retry error.
+- `ee1bd8e` - Local Meta connected fixture and decryptable QA seed token.
+- `172c070` - Analytics insight CTA now pre-fills the Otto composer through the existing seed-text path.
 
 ## Current Verification State
 
@@ -272,7 +312,8 @@ External production follow-up:
 
 - Result file: `docs/review/EXTERNAL-SMOKE-RESULTS-2026-07-04.md`
 - One real production image generation completed successfully with USD 0.16 COGS and paired reserve/settle ledger rows.
-- Production Google OAuth initially failed before consent with `redirect_uri_mismatch`; three follow-ups reached Google's sign-in page with `https://fikirtive.com/api/better-auth/callback/google`.
+- Production Google OAuth initially failed before consent with `redirect_uri_mismatch`; four follow-ups reached Google's sign-in page with `https://fikirtive.com/api/better-auth/callback/google`.
+- Local Meta connected-fixture QA passed for connected Connections/Analytics/autonomy/kill-switch states; real Meta OAuth remains unproven.
 - Production did not yet validate PR #131 admin v2 because the PR-only admin routes returned 404 before merge/deploy.
 - Follow-up replacement admin and normal magic links were invalid at test time, including the latest `tools@belcort.com` and `nicksgan@gmail.com` links; earlier fresh magic links had already proven both roles.
 - Current production Account sign-out cleared the session but did not visibly navigate until the next protected route load; recheck after deploy.
@@ -290,7 +331,7 @@ Local verification for `fd7f8e2`:
 - `pnpm --filter @fikirtive/web typecheck`: pass.
 - Browser checkout was not run because this worktree has no Stripe secret configured; the remaining real checkout/webhook gate still requires an approved Stripe test/live-mode run.
 
-GitHub CI for pushed code head `550e605`:
+GitHub CI for pushed code head `971dbec`:
 
 - `typecheck + fences + frozen lockfile`: pass
 - `next build (apps/web)`: pass
@@ -322,9 +363,9 @@ These are the only material items not proven by current evidence:
    - Execution checklist: `docs/review/EXTERNAL-SMOKE-RUNBOOK-2026-07-04.md`.
 
 3. Real Meta/Google OAuth and connected Meta states.
-   - Local QA verified links and disconnected states.
+   - Local QA verified links, disconnected states, and fixture-backed connected Connections/Analytics states.
    - Google OAuth initiation now reaches Google sign-in; callback/consent still needs a controlled Google account.
-   - Connected account, insights, publish-draft, reconnect, outage, pause, and disconnect states need OAuth credentials or seeded connection fixtures.
+   - Real Meta OAuth, token exchange, real token persistence, reconnect after expiry, real outage behavior, publish-draft, and real disconnect still need OAuth credentials.
    - Execution checklist: `docs/review/EXTERNAL-SMOKE-RUNBOOK-2026-07-04.md`.
 
 4. Production deploy/canary.

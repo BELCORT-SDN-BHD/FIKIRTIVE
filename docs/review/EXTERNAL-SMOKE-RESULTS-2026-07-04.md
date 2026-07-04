@@ -6,6 +6,7 @@ Run window: 2026-07-04 06:30-06:56 UTC / 2026-07-04 14:30-14:56 +08
 Follow-up window: 2026-07-04 07:27-07:30 UTC / 2026-07-04 15:27-15:30 +08
 Second follow-up window: 2026-07-04 07:41-07:44 UTC / 2026-07-04 15:41-15:44 +08
 Third follow-up window: 2026-07-04 08:06 UTC / 2026-07-04 16:06 +08
+Fourth follow-up window: 2026-07-04 08:31 UTC / 2026-07-04 16:31 +08
 PR head observed during first run: `6140e15fa2613d6e9e2150781793fce89c5be9f1`
 PR head observed during follow-up: `f6461fc55fc16f7365d6c0241041204f2ecac2ab`
 PR head observed before the second follow-up: `cdad10936a2ba4da826a7a704359d7df26c62207`
@@ -28,6 +29,7 @@ Overall result: partial pass.
 - Spend used: USD 0.16 of the approved USD 60 cap.
 - Ledger behavior passed for the real generation: `RESERVE -4 +4 hold` followed by `SETTLE 0 -4 hold`.
 - Google OAuth failed before consent during the first run with Google `redirect_uri_mismatch`; all three follow-ups passed the OAuth initiation boundary and reached Google's sign-in page with the expected Better Auth callback URI.
+- A fourth follow-up repeated the same current Google OAuth result: `POST /api/better-auth/sign-in/social` returned `200`, Google returned `302`, the browser reached Google sign-in, and no `redirect_uri_mismatch` was present.
 - Google consent/callback was not completed because no Google account credentials were available to the browser.
 - Replacement magic links supplied for the follow-ups were already invalid, expired, or consumed; they did not create new sessions.
 - Production was not running PR #131 admin v2 at the time of the first run: the PR-only admin routes returned 404. PR #131 is now merge-clean and CI-green, but production canary still requires a human merge/deploy.
@@ -76,7 +78,7 @@ Fresh admin magic link:
 
 Initial auth note: an earlier normal-user token produced a Cloudflare 502 from the Better Auth magic-link verify route and was then invalid on retry. Fresh replacement links succeeded, so this did not block the run, but it is worth watching as an auth-edge transient.
 
-Follow-up auth note: replacement admin/normal magic-link pairs redirected through `/otto?error=INVALID_TOKEN` and landed on `/login`. The third follow-up repeated the same result for both `tools@belcort.com` and `nicksgan@gmail.com`. They were therefore expired, already consumed, or otherwise invalid at test time. No raw token values are recorded.
+Follow-up auth note: replacement admin/normal magic-link pairs redirected through `/otto?error=INVALID_TOKEN` and landed on `/login`. The third and fourth follow-ups repeated the same result for both `tools@belcort.com` and `nicksgan@gmail.com`. They were therefore expired, already consumed, or otherwise invalid at test time. No raw token values are recorded.
 
 Second follow-up evidence:
 
@@ -87,6 +89,11 @@ Third follow-up evidence:
 
 - `.gstack/qa-reports/screenshots/prod-smoke-2026-07-04/admin-link-invalid-third-followup.png`
 - `.gstack/qa-reports/screenshots/prod-smoke-2026-07-04/user-link-invalid-third-followup.png`
+
+Fourth follow-up evidence:
+
+- `.gstack/qa-reports/screenshots/prod-followup-2026-07-04/admin-magic-followup.png`
+- `.gstack/qa-reports/screenshots/prod-followup-2026-07-04/user-magic-followup.png`
 
 Follow-up sign-out note: clicking the production Account `Sign out` control cleared the session, but the visible page did not immediately navigate to `/login`; a subsequent protected `/otto` navigation redirected to `/login?from=%2Fotto`. This should be rechecked after deploy because local QA for the PR had sign-out passing.
 
@@ -137,7 +144,7 @@ No Google account consent or app callback state was reached.
 
 Follow-up result: pass for OAuth initiation, still unproven for consent/callback.
 
-Observed follow-up behavior, repeated in the second and third follow-ups:
+Observed follow-up behavior, repeated in the second, third, and fourth follow-ups:
 
 - `POST /api/better-auth/sign-in/social` returned `200`.
 - Google OAuth auth URL returned `302`.
@@ -150,6 +157,7 @@ Follow-up evidence:
 - `.gstack/qa-reports/screenshots/prod-2026-07-04/google-oauth-google-login.png`
 - `.gstack/qa-reports/screenshots/prod-smoke-2026-07-04/google-oauth-entry.png`
 - `.gstack/qa-reports/screenshots/prod-smoke-2026-07-04/google-oauth-third-followup.png`
+- `.gstack/qa-reports/screenshots/prod-followup-2026-07-04/google-oauth-followup.png`
 
 The earlier `redirect_uri_mismatch` appears fixed in Google Cloud configuration. Full OAuth completion still needs a controlled Google account consent flow.
 
