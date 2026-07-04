@@ -1,12 +1,15 @@
 "use server";
 import { stripe } from "@/lib/stripe";
 import { requireOwner } from "@/lib/auth-guard";
+import { isImpersonating } from "@/lib/better-auth/compat";
 
 export type CreditPack = { priceId: string; credits: number; amountCents: number; currency: string; label: string };
 
 /** Active one-time credit packs = active Stripe Prices carrying metadata.credits.
  *  Packs live in Stripe (test/live dashboard) — no redeploy to change them. */
 export async function listCreditPacks(): Promise<CreditPack[]> {
+  const gate = await requireOwner();
+  if ("error" in gate) return [];
   if (!process.env.STRIPE_SECRET_KEY) {
     if (process.env.NODE_ENV === "production") {
       console.warn("[billing] listCreditPacks unavailable: STRIPE_SECRET_KEY is not set.");
@@ -43,6 +46,7 @@ export async function listCreditPacks(): Promise<CreditPack[]> {
 export async function createTopupCheckout(priceId: string): Promise<{ url: string } | { error: string }> {
   const gate = await requireOwner();
   if ("error" in gate) return gate;
+  if (await isImpersonating()) return { error: "Paused while impersonating a customer — exit impersonation to buy credits." };
   if (typeof priceId !== "string" || !priceId) return { error: "Pick a credit pack." };
 
   let price: Awaited<ReturnType<typeof stripe.prices.retrieve>>;

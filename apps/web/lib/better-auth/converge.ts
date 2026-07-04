@@ -20,15 +20,17 @@ export async function convergeIdentity(input: { email: string; name?: string | n
     }
     // 2. Founder super-admin self-heal (promote-only, idempotent).
     if (isFounderAdmin(email)) {
-      await Promise.resolve(prisma.user.updateMany({ where: { email, role: { not: "super-admin" } }, data: { role: "super-admin" } })).catch(() => {});
-      // Mirror the canonical role onto ba_user.role so the admin plugin's hasPermission
-      // recognizes the founder (it reads the raw ba_user.role, not roleForEmail).
-      await Promise.resolve(prisma.betterAuthUser.updateMany({ where: { email }, data: { role: "super-admin" } })).catch(() => {});
-      await Promise.resolve(prisma.membership.upsert({
-        where: { userId_orgId: { userId: user.id, orgId: FOUNDER_OWNER_ID } },
-        create: { id: newId(), userId: user.id, orgId: FOUNDER_OWNER_ID, role: "owner" },
-        update: {},
-      })).catch(() => {});
+      await prisma.$transaction(async (tx) => {
+        await tx.user.updateMany({ where: { email, role: { not: "super-admin" } }, data: { role: "super-admin" } });
+        // Mirror the canonical role onto ba_user.role in the same tx so the admin plugin's
+        // HTTP gate cannot drift from requireRole's canonical User.role view.
+        await tx.betterAuthUser.updateMany({ where: { email }, data: { role: "super-admin" } });
+        await tx.membership.upsert({
+          where: { userId_orgId: { userId: user.id, orgId: FOUNDER_OWNER_ID } },
+          create: { id: newId(), userId: user.id, orgId: FOUNDER_OWNER_ID, role: "owner" },
+          update: {},
+        });
+      });
     } else {
       // 3. Non-founder personal-org convergence (best-effort; requireOwner re-bootstraps on demand).
       try {

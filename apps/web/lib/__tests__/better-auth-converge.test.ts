@@ -4,13 +4,22 @@ const db = {
   membership: { upsert: vi.fn() },
   betterAuthUser: { updateMany: vi.fn() },
   actionEvent: { create: vi.fn() },
+  $transaction: vi.fn(),
 };
 vi.mock("@fikirtive/db", () => ({ prisma: db }));
 const mockBootstrap = vi.fn();
 vi.mock("@/lib/auth-guard", () => ({ bootstrapPersonalOrg: mockBootstrap }));
 
 beforeEach(() => {
-  Object.values(db).forEach((m) => Object.values(m).forEach((f: any) => f.mockReset()));
+  Object.values(db).forEach((m) => Object.values(m).forEach((f: any) => f.mockReset?.()));
+  db.$transaction.mockReset();
+  db.$transaction.mockImplementation(async (fn: any) =>
+    fn({
+      user: { updateMany: db.user.updateMany },
+      betterAuthUser: { updateMany: db.betterAuthUser.updateMany },
+      membership: { upsert: db.membership.upsert },
+    })
+  );
   mockBootstrap.mockReset();
   process.env.FOUNDER_ADMIN_EMAILS = "founder@x.test";
 });
@@ -35,6 +44,17 @@ describe("convergeIdentity", () => {
     expect(db.betterAuthUser.updateMany).toHaveBeenCalledWith(
       expect.objectContaining({ where: { email: "founder@x.test" }, data: { role: "super-admin" } })
     );
+  });
+  it("does not write ba_user.role when the canonical User.role write fails", async () => {
+    const { convergeIdentity } = await import("@/lib/better-auth/converge");
+    db.user.findUnique.mockResolvedValue({ id: "usr_f", email: "founder@x.test" });
+    db.user.updateMany.mockRejectedValue(new Error("canonical role write failed"));
+
+    await expect(convergeIdentity({ email: "founder@x.test", emailVerified: true })).resolves.toBeUndefined();
+
+    expect(db.$transaction).toHaveBeenCalled();
+    expect(db.betterAuthUser.updateMany).not.toHaveBeenCalled();
+    expect(db.membership.upsert).not.toHaveBeenCalled();
   });
   it("never throws when a write fails", async () => {
     const { convergeIdentity } = await import("@/lib/better-auth/converge");

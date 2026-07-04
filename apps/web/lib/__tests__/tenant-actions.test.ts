@@ -85,6 +85,7 @@ beforeEach(() => {
   mockGrantCredits.mockReset();
   // audit writes are best-effort; default to a resolved promise so .catch(() => {}) works
   actionEventCreate.mockResolvedValue({});
+  organizationFindFirst.mockResolvedValue({ id: "orgX" });
   (isFounderAdmin as Mock).mockReset();
   authApi.impersonateUser.mockReset();
   authApi.stopImpersonating.mockReset();
@@ -114,6 +115,19 @@ describe("setMembershipStatus", () => {
     expect(membershipUpdateMany).not.toHaveBeenCalled();
   });
 
+  it("rejects an unknown or soft-deleted org before changing memberships", async () => {
+    mockRequireRole.mockResolvedValue(GATE);
+    organizationFindFirst.mockResolvedValue(null);
+
+    const res = await setMembershipStatus("orgX", "suspended");
+
+    expect(res).toEqual({ error: "Unknown or closed org." });
+    expect(organizationFindFirst).toHaveBeenCalledWith(
+      expect.objectContaining({ where: { id: "orgX", deletedAt: null } })
+    );
+    expect(membershipUpdateMany).not.toHaveBeenCalled();
+  });
+
   it("returns error when no memberships matched", async () => {
     mockRequireRole.mockResolvedValue(GATE);
     membershipUpdateMany.mockResolvedValue({ count: 0 });
@@ -129,7 +143,7 @@ describe("setMembershipStatus", () => {
     const res = await setMembershipStatus("orgX", "suspended");
     expect(res).toEqual({ ok: true });
     expect(membershipUpdateMany).toHaveBeenCalledWith(
-      expect.objectContaining({ where: { orgId: "orgX" }, data: { status: "suspended" } })
+      expect.objectContaining({ where: { orgId: "orgX", deletedAt: null }, data: { status: "suspended" } })
     );
   });
 
@@ -210,6 +224,17 @@ describe("cutTenantSessions", () => {
     membershipFindMany.mockResolvedValue([]);
     const res = await cutTenantSessions("orgX");
     expect(res).toEqual({ ok: true, cut: 0 });
+    expect(baSessionDeleteMany).not.toHaveBeenCalled();
+  });
+
+  it("rejects an unknown or soft-deleted org before resolving members", async () => {
+    mockRequireRole.mockResolvedValue(GATE);
+    organizationFindFirst.mockResolvedValue(null);
+
+    const res = await cutTenantSessions("orgX");
+
+    expect(res).toEqual({ error: "Unknown or closed org." });
+    expect(membershipFindMany).not.toHaveBeenCalled();
     expect(baSessionDeleteMany).not.toHaveBeenCalled();
   });
 
@@ -550,6 +575,18 @@ describe("impersonateTenant", () => {
     expect(membershipFindMany).not.toHaveBeenCalled();
     expect(authApi.impersonateUser).not.toHaveBeenCalled();
     expect(actionEventCreate).not.toHaveBeenCalled();
+  });
+
+  it("rejects an unknown or soft-deleted org before resolving the BA owner", async () => {
+    mockRequireRole.mockResolvedValue(GATE);
+    (isFounderAdmin as Mock).mockReturnValue(true);
+    organizationFindFirst.mockResolvedValue(null);
+
+    const res = await impersonateTenant("orgX", "Debug checkout issue");
+
+    expect(res).toEqual({ error: "Unknown or closed org." });
+    expect(membershipFindMany).not.toHaveBeenCalled();
+    expect(authApi.impersonateUser).not.toHaveBeenCalled();
   });
 
   it("returns an error when the org has no resolvable BA owner", async () => {
