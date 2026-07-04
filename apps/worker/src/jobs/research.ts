@@ -38,6 +38,7 @@ import {
   tavilySearch,
   braveSearch,
   searchWithFallback,
+  RESEARCH_QUEUE,
 } from "@fikirtive/core";
 import { fetchAndExtract } from "@fikirtive/core/server";
 
@@ -288,6 +289,25 @@ export async function handleResearch(data: { jobId: string }, _retryCount: numbe
 // same stranded rows.
 const RESEARCH_STALE_MS = 1000 * 60 * 60;
 const RESEARCH_INTERRUPTED = "research was interrupted — please try again";
+const RESEARCH_NOT_STARTED = "research could not be started — please try again";
+
+/** Does pg-boss still hold a deliverable message for this QUEUED research job? A queued job with
+ * a live message should be left for the worker. A queued row with no live message past the stale
+ * window means approve crashed/lost the send before handleResearch could ever spend. Fails safe:
+ * if pg-boss state can't be read, assume the message may exist and skip this sweep. */
+async function hasLiveResearchMessage(jobId: string): Promise<boolean> {
+  try {
+    const rows = await prisma.$queryRaw<{ id: string }[]>`
+      SELECT id FROM pgboss.job
+      WHERE name = ${RESEARCH_QUEUE} AND state IN ('created', 'retry', 'active')
+        AND data->>'jobId' = ${jobId}
+      LIMIT 1`;
+    return rows.length > 0;
+  } catch (e) {
+    console.warn(`[research] pg-boss liveness check failed for ${jobId}; skipping reap this sweep:`, e instanceof Error ? e.message : e);
+    return true;
+  }
+}
 
 /**
  * Reaper for research cards stranded "Researching…" forever. RESEARCH_QUEUE is retryLimit:0, so a
@@ -299,8 +319,10 @@ const RESEARCH_INTERRUPTED = "research was interrupted — please try again";
  *
  * Mirrors reapStaleRefGenJobs: a status-guarded conditional updateMany is the at-most-once claim. A
  * run that legitimately just finished flips RUNNING→DONE out from under us → count===0 → we skip, so
- * a completed job is never clobbered and a card is never falsely marked failed. All reads/writes are
- * owner-scoped. Returns how many stranded research jobs it swept.
+ * a completed job is never clobbered and a card is never falsely marked failed. It also fail-closes
+ * stale QUEUED rows only when pg-boss has no live message for them, covering approve crashes between
+ * the DB commit and queue send. All reads/writes are owner-scoped. Returns how many stranded research
+ * jobs it swept.
  */
 export async function reapStaleResearchJobs(): Promise<number> {
   const cutoff = new Date(Date.now() - RESEARCH_STALE_MS);
@@ -316,6 +338,21 @@ export async function reapStaleResearchJobs(): Promise<number> {
     });
     if (count === 0) continue; // lost the claim (finished / concurrent sweep) — leave it alone
     await failResearchCard(job.cardId, job.ownerId, RESEARCH_INTERRUPTED);
+    reaped++;
+  }
+
+  const queued = await prisma.researchJob.findMany({
+    where: { status: "QUEUED", createdAt: { lt: cutoff } },
+    select: { id: true, ownerId: true, cardId: true },
+  });
+  for (const job of queued) {
+    if (await hasLiveResearchMessage(job.id)) continue;
+    const { count } = await prisma.researchJob.updateMany({
+      where: { id: job.id, ownerId: job.ownerId, status: "QUEUED", createdAt: { lt: cutoff } },
+      data: { status: "FAILED", error: RESEARCH_NOT_STARTED },
+    });
+    if (count === 0) continue;
+    await failResearchCard(job.cardId, job.ownerId, RESEARCH_NOT_STARTED);
     reaped++;
   }
   return reaped;
