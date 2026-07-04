@@ -11,6 +11,11 @@ import { isImpersonating } from "@/lib/better-auth/compat";
 const ORG_STATUS = new Set(["active", "suspended"]);
 const FINANCE_DIRECT_CREDIT_LIMIT = 1_000;
 
+async function activeMerchantOrg(orgId: string): Promise<{ id: string } | null> {
+  if (!orgId || orgId === FOUNDER_OWNER_ID) return null;
+  return prisma.organization.findFirst({ where: { id: orgId, deletedAt: null }, select: { id: true } });
+}
+
 /** Resolve an org's active members to their Better Auth user ids.
  *  Membership.userId → User.email → BetterAuthUser.id (the two user tables join by email;
  *  BetterAuthSession/ban operate on BetterAuthUser.id, a different id space from User.id). */
@@ -30,6 +35,7 @@ export async function setMembershipStatus(orgId: string, status: string): Promis
   const gate = await requireRole("tenants", "mutate"); if ("error" in gate) return gate;
   if (typeof orgId !== "string" || !orgId || orgId === FOUNDER_OWNER_ID) return { error: "Invalid org." };
   if (!ORG_STATUS.has(status)) return { error: "Invalid status." };
+  if (!(await activeMerchantOrg(orgId))) return { error: "Unknown or closed org." };
   // Mirror to the Better Auth layer so suspension is immediate + global: ban the members'
   // BA users (the installed admin plugin's session.create.before hook then blocks re-login)
   // and cut their live BA sessions. Reactivation lifts the ban. Membership.status stays the
@@ -38,7 +44,7 @@ export async function setMembershipStatus(orgId: string, status: string): Promis
   // Atomic: flip Membership.status and mirror to the BA auth layer in one transaction, so a
   // BA-write failure rolls back the status flip (no diverged "suspended but not banned" state).
   const updated = await prisma.$transaction(async (tx) => {
-    const { count } = await tx.membership.updateMany({ where: { orgId }, data: { status } });
+    const { count } = await tx.membership.updateMany({ where: { orgId, deletedAt: null }, data: { status } });
     if (count === 0) return 0;
     if (baUserIds.length > 0) {
       if (status === "suspended") {
@@ -60,6 +66,7 @@ export async function setMembershipStatus(orgId: string, status: string): Promis
 export async function cutTenantSessions(orgId: string): Promise<{ ok: true; cut: number } | { error: string }> {
   const gate = await requireRole("tenants", "mutate"); if ("error" in gate) return gate;
   if (typeof orgId !== "string" || !orgId || orgId === FOUNDER_OWNER_ID) return { error: "Invalid org." };
+  if (!(await activeMerchantOrg(orgId))) return { error: "Unknown or closed org." };
   const baUserIds = await orgMemberBaUserIds(orgId);
   if (baUserIds.length === 0) return { ok: true, cut: 0 };
   const { count } = await prisma.betterAuthSession.deleteMany({ where: { userId: { in: baUserIds } } });
@@ -113,6 +120,7 @@ export async function impersonateTenant(orgId: string, reasonRaw?: unknown): Pro
   if (typeof orgId !== "string" || !orgId || orgId === FOUNDER_OWNER_ID) return { error: "Invalid org." };
   const reason = typeof reasonRaw === "string" ? reasonRaw.trim().slice(0, 500) : "";
   if (reason.length < 8) return { error: "Enter an impersonation reason with at least 8 characters." };
+  if (!(await activeMerchantOrg(orgId))) return { error: "Unknown or closed org." };
   const baUserId = await ownerBaUserId(orgId);
   if (!baUserId) return { error: "That tenant has no signed-in owner to impersonate yet." };
   try {
@@ -145,7 +153,7 @@ export async function grantTenantCredits(raw: unknown): Promise<{ ok: true; dupl
   const v = raw as { orgId?: unknown; displayedAmount?: unknown; reason?: unknown; idempotencyKey?: unknown };
   const orgId = typeof v?.orgId === "string" ? v.orgId : "";
   if (!orgId || orgId === FOUNDER_OWNER_ID) return { error: "Pick a merchant org (founder top-up uses /admin/credits)." };
-  const org = await prisma.organization.findFirst({ where: { id: orgId, deletedAt: null }, select: { id: true } });
+  const org = await activeMerchantOrg(orgId);
   if (!org) return { error: "Unknown or closed org." }; // NEVER fall back to founder
   const displayedAmount = typeof v?.displayedAmount === "number" ? v.displayedAmount : NaN;
   if (!Number.isInteger(displayedAmount) || displayedAmount === 0 || Math.abs(displayedAmount) > 1_000_000) return { error: "Enter a non-zero whole number of credits (max ±1,000,000)." };

@@ -2,6 +2,8 @@ import { describe, it, expect, vi, beforeEach } from "vitest";
 
 const mockRequireOwner = vi.fn();
 vi.mock("@/lib/auth-guard", () => ({ requireOwner: mockRequireOwner }));
+const mockIsImpersonating = vi.fn();
+vi.mock("@/lib/better-auth/compat", () => ({ isImpersonating: mockIsImpersonating }));
 
 const pricesList = vi.fn();
 const pricesRetrieve = vi.fn();
@@ -12,6 +14,8 @@ vi.mock("@/lib/stripe", () => ({
 
 beforeEach(() => {
   vi.clearAllMocks();
+  mockRequireOwner.mockResolvedValue({ email: "c@t.test", ownerId: "org_1" });
+  mockIsImpersonating.mockResolvedValue(false);
   process.env.BETTER_AUTH_URL = "https://app.test";
   process.env.STRIPE_SECRET_KEY = "sk_test_fake";
 });
@@ -19,6 +23,15 @@ beforeEach(() => {
 const { listCreditPacks, createTopupCheckout } = await import("@/lib/billing-actions");
 
 describe("listCreditPacks", () => {
+  it("fails closed before touching Stripe when requireOwner denies", async () => {
+    mockRequireOwner.mockResolvedValue({ error: "Not authorized." });
+
+    const packs = await listCreditPacks();
+
+    expect(packs).toEqual([]);
+    expect(pricesList).not.toHaveBeenCalled();
+  });
+
   it("returns active prices that carry metadata.credits, sorted by amount", async () => {
     pricesList.mockResolvedValue({ data: [
       { id: "price_b", unit_amount: 5000, currency: "usd", active: true, metadata: { credits: "550" }, product: { name: "550 credits" } },
@@ -72,6 +85,16 @@ describe("createTopupCheckout", () => {
     mockRequireOwner.mockResolvedValue({ error: "Not authorized." });
     const res = await createTopupCheckout("price_a");
     expect(res).toEqual({ error: "Not authorized." });
+    expect(sessionsCreate).not.toHaveBeenCalled();
+  });
+
+  it("blocks checkout creation while impersonating a customer", async () => {
+    mockIsImpersonating.mockResolvedValue(true);
+
+    const res = await createTopupCheckout("price_a");
+
+    expect(res).toEqual({ error: "Paused while impersonating a customer — exit impersonation to buy credits." });
+    expect(pricesRetrieve).not.toHaveBeenCalled();
     expect(sessionsCreate).not.toHaveBeenCalled();
   });
 
