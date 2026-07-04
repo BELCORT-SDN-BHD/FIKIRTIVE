@@ -592,6 +592,12 @@ describe("setAdsAutonomy", () => {
     });
   });
 
+  it("returns an error when no Meta connection row exists", async () => {
+    mockConnUpdateMany.mockResolvedValueOnce({ count: 0 });
+    const res = await setAdsAutonomy("AUTO");
+    expect(res).toEqual({ error: "Connect Meta before changing ad-spend autonomy." });
+  });
+
   it("rejects an invalid mode — never calls updateMany", async () => {
     // @ts-expect-error intentional invalid value
     const res = await setAdsAutonomy("YOLO");
@@ -624,6 +630,12 @@ describe("setAdsWritesPaused", () => {
       where: { ownerId: "u1" },
       data: { adsWritesPaused: false },
     });
+  });
+
+  it("returns an error when no Meta connection row exists", async () => {
+    mockConnUpdateMany.mockResolvedValueOnce({ count: 0 });
+    const res = await setAdsWritesPaused(true);
+    expect(res).toEqual({ error: "Connect Meta before changing ad-write controls." });
   });
 
   it("requireOwner error → returns error, no updateMany", async () => {

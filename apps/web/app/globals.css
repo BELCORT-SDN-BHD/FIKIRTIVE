@@ -936,6 +936,8 @@ h1, h2, h3 { font-family: var(--font-sans); font-weight: 600; letter-spacing: va
 .gb .cv-switch::after { content: ""; position: absolute; top: 3px; left: 3px; width: 17px; height: 17px; border-radius: 50%; background: #fff; box-shadow: var(--shadow-sm); transition: left 140ms cubic-bezier(0.22, 1, 0.36, 1); }
 .gb .cv-switch.on { background: var(--primary); }
 .gb .cv-switch.on::after { left: 20px; }
+.gb .cv-switch:disabled { cursor: not-allowed; opacity: 1; background: var(--border); }
+.gb .cv-switch:disabled::after { background: var(--muted-foreground); opacity: 0.55; }
 
 /* ── Account / Settings page (Direction 1: one page + sticky left jump-nav). */
 .gb .cv-settings { display: flex; flex: 1; overflow: hidden; }
@@ -959,3 +961,29 @@ h1, h2, h3 { font-family: var(--font-sans); font-weight: 600; letter-spacing: va
 .gb .cv-set-num { display: inline-flex; align-items: center; gap: 7px; color: var(--muted-foreground); font-size: 12.5px; }
 .gb .cv-set-btn { height: 34px; padding: 0 14px; border-radius: 10px; font-size: 14px; font-weight: 600; border: 1px solid var(--border); background: var(--card); color: var(--foreground); cursor: pointer; }
 .gb .cv-set-btn.danger { border-color: #E7B7AE; color: #B4321E; }
+
+@media (max-width: 680px) {
+  .gb .cv-settings { flex-direction: column; overflow: auto; }
+  .gb .cv-settings-nav {
+    width: auto;
+    position: static;
+    border-right: none;
+    border-bottom: 1px solid var(--border);
+    padding: 24px 16px 10px;
+  }
+  .gb .cv-settings-nav h1 { margin-bottom: 12px; }
+  .gb .cv-settings-nav a { display: inline-flex; margin: 0 6px 6px 0; }
+  .gb .cv-settings-body {
+    width: 100%;
+    max-width: none;
+    flex: none;
+    overflow: visible;
+    padding: 20px 16px 32px;
+  }
+  .gb .cv-set-card { padding: 4px 14px; }
+  .gb .cv-set-row { flex-wrap: wrap; align-items: flex-start; }
+  .gb .cv-set-lbl { min-width: 0; flex: 1 1 190px; }
+  .gb .cv-set-input { width: min(100%, 240px); }
+  .gb .cv-set-num { width: 100%; justify-content: flex-start; }
+  .gb .cv-set-num .cv-set-input { width: 110px; }
+}
