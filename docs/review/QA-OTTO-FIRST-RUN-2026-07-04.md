@@ -31,7 +31,7 @@ Desktop:
 - Composer text enables `Let's go`; start creates a thread and reaches the zero-credit `You're out of credits` recovery state with `Top up`.
 - `Top up` link opens `/billing`.
 - `Set up brand brief` expands inline form, required fields enable `Save brief`, save reaches `Saved!`.
-- `Announce a sale` goal tile creates a thread and reaches the same zero-credit recovery state.
+- All four goal tiles (`Sell a product`, `Announce a sale`, `Get more followers`, `Make a video`) create a thread and reach the same zero-credit recovery state.
 - Temporary QA threads were deleted after the pass.
 
 Mobile (`390x844`):
