@@ -1,5 +1,3 @@
-"use server";
-
 import { prisma } from "@fikirtive/db";
 import { requireOwner } from "./auth-guard";
 
