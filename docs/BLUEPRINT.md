@@ -63,25 +63,25 @@
 
 ## 三、区划图(现状快照 —— 本章豁免"不可改",总审查员随地质报告更新)
 
-> 快照:2026-07-03,基线 main ≈ #117。注:本章 F 指分镜的第 1-4 步,与审计编号 F01-F44 无关。
+> 快照:2026-07-04,基线 main = #129(74d6719;#131/#132 尚未合并,不入本快照)。注:本章 F 指分镜的第 1-4 步,与审计编号 F01-F44 无关。
 
 图例:✅ 通电运营 · 🌙 建成断电(等钥匙:重连/App Review/env)· 🔧 建成没挂门牌(功能全好,导航不可达)· 🚧 空地立了牌子 · 📋 图纸阶段
 
 ### 中央区 —— Otto 本体 ✅
-20 个注册技能(1 个花钱技能 `generate`,唯一)。刨根问底资讯门、seedream/seedance prompt 精通(唯一 prompt 权威)、**分镜卡全链已闭环**(第 1-3 步 $0 + 第 4 步首帧付费 #111 + make-all 闸② #114)、品牌记忆、web research、视觉参考。模型 = sonnet 主力 + 同级 failover;每轮 reserve→settle 计费。
-**待建**:分镜连贯模式;Otto 深化三件(O-04 品牌记忆自养/O-07 绩效周报/O-10 效果反哺闭环,判决均为"要")。
+25 个注册技能(1 个花钱技能 `generate`,唯一)。刨根问底资讯门、seedream/seedance prompt 精通(唯一 prompt 权威)、**分镜卡全链已闭环**(第 1-3 步 $0 + 第 4 步首帧付费 #111 + make-all 闸② #114)、品牌记忆、web research、视觉参考。#117 后新增:**Block S 研究**(researchWeb 轻查 + proposeResearch 深研报告,#118)、**Meta 专家诊断**(56 条带引用知识库 + meta-ad-performance/meta-expert 双技能 —— O-10 判断侧第一批,#128)、排期起草 schedulePosts(只建 DRAFT,#123)、产品建档 ingestProduct(#124)。模型 = sonnet 主力 + 同级 failover;每轮 reserve→settle 计费。
+**待建**:分镜连贯模式;O-04 品牌记忆自养/O-07 绩效周报(判决均为"要");O-10 剩复刻接线(诊断卡按钮→创作链,碰 generate,独立 PR 跟进)。
 
 ### 创作区 —— Canvas 工作台 ✅
-无限画布、4 变体图 + 成本确认、i2v/t2v 视频、多参考图调理(#92)、整段参考视频(#97)、抽帧、付费卡防误删警告、失败态卡片。**这是用户的家(canvas-as-home)。**
+无限画布、4 变体图 + 成本确认(花费精确报价 + 余额即时刷新,#129)、i2v/t2v 视频、多参考图调理(#92)、整段参考视频(#97)、抽帧、付费卡防误删警告、失败态卡片、Otto 流错误可恢复(#129)。**这是用户的家(canvas-as-home)。**
 
-### 资产区 ✅ + 🔧
-My Stuff(统一版,#103)✅、**Brand memory v2**(6-tab 知识库 + living collections + 产品档案与分类,#103/#113)✅;**Library 🔧、Templates(4 个一键付费模板)🔧、Discover(灵感库)🔧 —— 三栋楼全建好了但没挂导航门牌**(已知缺口,等 founder 排优先级)。
+### 资产区 ✅
+My Stuff(统一版,#103;失败任务可恢复,#129)✅、**Brand memory v2**(6-tab 知识库 + living collections + 产品档案与分类,#103/#113;新增**产品链接一键建档** —— 贴 URL 自动预填草稿、双模等价、$0 确定性优先,#124)✅;**Library/Templates/Discover 三栋楼已挂导航门牌**(分组导航 Create/Assets/Operate 上线,#129)—— 原 🔧 缺口已闭。
 
 ### 广告区 —— Meta 🌙(等钥匙)
-读(insights/列表)✅ 已通电;**写**(暂停/预算/ad-write v1)和**建**(整 campaign PAUSED 草稿,build=$0)已建成断电 —— 等 ads_management/pages_show_list 重连 + App Review。TikTok/Lazada/Shopee 是同一条渠道缝上的规划新楼。
+读(insights/列表/**逐条 ad 表现 + 创意**,#128)✅ 已通电;**写**(暂停/预算/ad-write v1)和**建**(整 campaign PAUSED 草稿,build=$0)已建成断电 —— 等 ads_management/pages_show_list 重连 + App Review。TikTok/Lazada/Shopee 是同一条渠道缝上的规划新楼。
 
-### 排期区 🚧 + 分析区 ✅(Phase A)
-排期仍是空地(Buffer 式 3 视图,卡 instagram_content_publish App Review)。**分析区已通电**:Phase A 真实 ad-account KPI + reach 图 + OTTO insight(#116)+ 平台切换器(Meta live,TikTok/Shopee/Google/WhatsApp 占位,#117);剩余范围 = organic + history 全量。
+### 排期区 ✅(UI-first;实发布 🌙)+ 分析区 ✅(Phase A+)
+**排期不再是空地**:Buffer 式 3 视图(Plan+队列混合/日历/队列)+ Composer(账号/媒体选现有成片/时区/first comment)+ 工作级数据模型(ScheduledPost + 媒体连接表 + PublishAttempt 防双发)已通电,只建草稿、零花钱(#123/#129);**实发布 worker 断电等钥匙**(instagram_content_publish + pages_manage_posts App Review,slice 2 升级票)。**分析区已通电**:Phase A 真实 ad-account KPI + reach 图 + OTTO insight(#116)+ 平台切换器(Meta live,TikTok/Shopee/Google/WhatsApp 占位,#117);新增 **Per-ad performance 面板 + Otto 诊断卡**(账户自身均值分赢家/输家、创意原因挂 KB 真引用、不捏造,#128)。剩余范围 = organic(代码就绪,等 App Review)+ history 全量。
 
 ### 住户服务中心 —— Account/Connections ✅
 Account/Settings 页(#74):资料、credits + 消费记录、充值包购买、渠道连接管理(Meta 连接/重连/自治开关/kill-switch)、OTTO 行为设置。
@@ -90,7 +90,7 @@ Account/Settings 页(#74):资料、credits + 消费记录、充值包购买、�
 Admin 11 个 section 全活(模型开关/成本/授信/内容审/会话审/租户管理/冒充/审计日志);Stripe MYR 充值包 LIVE;100 免费 credits/新 org;冒充态禁写(F15 安全默认)。
 
 ### 地下管网 ✅
-pg-boss 五条队列 + 三类回收器(gen/refgen/LLM 预扣)、ingest 哈希复验(D19)、render/caption 管线、R2 内容寻址存储、CI(check/web-build/test 三 job,#105)+ 合并纪律。2026-07-02 全库审计 44 条全闭环。
+pg-boss 五条队列 + 四类回收器(gen/refgen/LLM 预扣/research 滞留,#122)、ingest 哈希复验(D19)、render/caption 管线、R2 内容寻址存储、CI(check/web-build/test 三 job,#105)+ 合并纪律。#117 后加固:冒充态调研审批阻断 + 队列丢发恢复(#126)、session.create 白名单锁测(#127)、node:dns SSRF 守卫移 core/server 子路径 + 客户端导入回归围栏(#125/#130)。2026-07-02 全库审计 44 条全闭环;2026-07-04 本地生产规模 QA 报告落库(`.gstack/qa-reports/`,#130);**2026-07-04 地基审计安全带在途**(PR #132:schema 漂移 CI 闸/视频毛利地板/守卫测试 —— 待 founder 终审,未入本快照)。
 
 ---
 
