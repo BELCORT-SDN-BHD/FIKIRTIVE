@@ -55,6 +55,16 @@ describe("metaGraphGet fixture", () => {
     expect(out).toEqual({ data: [{ id: "real-ish" }] });
     expect(fetchMock).toHaveBeenCalledTimes(1);
   });
+
+  it("fails closed on an unknown fixture path instead of falling through to network", async () => {
+    vi.stubEnv("META_GRAPH_MOCK", "fixture");
+    const fetchMock = vi.fn();
+    vi.stubGlobal("fetch", fetchMock);
+
+    await expect(metaGraphGet("qa-token", "missing_fixture_path", { fields: "id" }))
+      .rejects.toThrow(/fixture missing path/i);
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
 });
 
 describe("metaGraphGetAll (F37 pagination)", () => {

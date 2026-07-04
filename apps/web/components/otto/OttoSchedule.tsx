@@ -1053,9 +1053,11 @@ function Composer({
         id = res.id;
       } else {
         const res = await updateScheduledPost(seed.id!, {
+          channel: channel as "instagram" | "facebook",
           caption,
           scheduledAt: iso,
           scheduledTz: tz,
+          media,
           firstComment: supportsFirstComment && firstComment.trim() ? firstComment : null,
           metaTargetId,
         });

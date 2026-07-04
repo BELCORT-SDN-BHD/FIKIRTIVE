@@ -9,20 +9,26 @@ import { describe, it, expect, vi, beforeEach } from "vitest";
 // ---------------------------------------------------------------------------
 const {
   mockRequireOwner,
+  mockTransaction,
   mockFindMany,
   mockFindFirst,
   mockCreate,
   mockUpdateMany,
+  mockMediaDeleteMany,
+  mockMediaCreateMany,
   mockGenFindMany,
   mockFetchOwnerPages,
   mockIgListTargets,
   mockFbListTargets,
 } = vi.hoisted(() => ({
   mockRequireOwner: vi.fn(),
+  mockTransaction: vi.fn(),
   mockFindMany: vi.fn(),
   mockFindFirst: vi.fn(),
   mockCreate: vi.fn(),
   mockUpdateMany: vi.fn(),
+  mockMediaDeleteMany: vi.fn(),
+  mockMediaCreateMany: vi.fn(),
   mockGenFindMany: vi.fn(),
   mockFetchOwnerPages: vi.fn(),
   mockIgListTargets: vi.fn(),
@@ -34,11 +40,16 @@ vi.mock("server-only", () => ({}));
 vi.mock("@/lib/auth-guard", () => ({ requireOwner: mockRequireOwner }));
 vi.mock("@fikirtive/db", () => ({
   prisma: {
+    $transaction: mockTransaction,
     scheduledPost: {
       findMany: mockFindMany,
       findFirst: mockFindFirst,
       create: mockCreate,
       updateMany: mockUpdateMany,
+    },
+    scheduledPostMedia: {
+      deleteMany: mockMediaDeleteMany,
+      createMany: mockMediaCreateMany,
     },
     generation: { findMany: mockGenFindMany },
   },
@@ -77,13 +88,19 @@ beforeEach(() => {
   idCounter = 0;
   mockRequireOwner.mockResolvedValue({ ownerId: OWNER, email: "a@b.co" });
   mockFetchOwnerPages.mockResolvedValue({ pages: [{ id: "page-1", name: "My Page" }] });
+  mockTransaction.mockImplementation(async (fn: (tx: unknown) => unknown) =>
+    fn({
+      scheduledPost: { updateMany: mockUpdateMany },
+      scheduledPostMedia: { deleteMany: mockMediaDeleteMany, createMany: mockMediaCreateMany },
+    }),
+  );
   // Default: every requested media id is owned (echo the queried ids back). Cross-tenant
   // tests override this to return only the owned subset.
   mockGenFindMany.mockImplementation(async (args: { where: { id: { in: string[] } } }) =>
     args.where.id.in.map((id) => ({ id })),
   );
-  mockIgListTargets.mockResolvedValue([]);
-  mockFbListTargets.mockResolvedValue([]);
+  mockIgListTargets.mockResolvedValue([{ id: "page-1", name: "My Page" }]);
+  mockFbListTargets.mockResolvedValue([{ id: "page-1", name: "My Page" }]);
 });
 
 // --- createScheduledPost ----------------------------------------------------
@@ -213,7 +230,7 @@ describe("createScheduledPost", () => {
 
 describe("updateScheduledPost", () => {
   it("patches caption/scheduledAt on a DRAFT — atomic WHERE pins the read status", async () => {
-    mockFindFirst.mockResolvedValue({ status: "DRAFT", channel: "instagram" });
+    mockFindFirst.mockResolvedValue({ status: "DRAFT", channel: "instagram", firstComment: null });
     mockUpdateMany.mockResolvedValue({ count: 1 });
     const res = await updateScheduledPost("p1", { caption: "new", scheduledAt: AT });
     expect(res).toEqual({ ok: true });
@@ -221,6 +238,52 @@ describe("updateScheduledPost", () => {
       where: { id: "p1", ownerId: OWNER, deletedAt: null, status: "DRAFT" },
       data: { caption: "new", scheduledAt: new Date(AT) },
     });
+  });
+
+  it("replaces media rows in order when editing a DRAFT, after owner-scoped media validation", async () => {
+    mockFindFirst.mockResolvedValue({ status: "DRAFT", channel: "instagram", firstComment: null });
+    mockUpdateMany.mockResolvedValue({ count: 1 });
+    const res = await updateScheduledPost("p1", { media: ["gen-b", "gen-a"] });
+    expect(res).toEqual({ ok: true });
+    expect(mockGenFindMany).toHaveBeenCalledWith({
+      where: { id: { in: ["gen-b", "gen-a"] }, ownerId: OWNER, deletedAt: null },
+      select: { id: true },
+    });
+    expect(mockUpdateMany).toHaveBeenCalledWith({
+      where: { id: "p1", ownerId: OWNER, deletedAt: null, status: "DRAFT" },
+      data: { updatedAt: expect.any(Date) },
+    });
+    expect(mockMediaDeleteMany).toHaveBeenCalledWith({ where: { scheduledPostId: "p1" } });
+    expect(mockMediaCreateMany).toHaveBeenCalledWith({
+      data: [
+        { id: "new-1", scheduledPostId: "p1", generationId: "gen-b", position: 0 },
+        { id: "new-2", scheduledPostId: "p1", generationId: "gen-a", position: 1 },
+      ],
+    });
+  });
+
+  it("rejects media replacement when any selected media is foreign, writes nothing", async () => {
+    mockFindFirst.mockResolvedValue({ status: "DRAFT", channel: "instagram", firstComment: null });
+    mockGenFindMany.mockResolvedValue([{ id: "gen-a" }]);
+    const res = await updateScheduledPost("p1", { media: ["gen-a", "foreign"] });
+    expect(res).toHaveProperty("error");
+    expect(mockTransaction).not.toHaveBeenCalled();
+    expect(mockMediaDeleteMany).not.toHaveBeenCalled();
+  });
+
+  it("rejects a media replacement over the selected channel cap, writes nothing", async () => {
+    mockFindFirst.mockResolvedValue({ status: "DRAFT", channel: "facebook", firstComment: null });
+    const res = await updateScheduledPost("p1", { media: ["gen-a", "gen-b"] });
+    expect(res).toHaveProperty("error");
+    expect(mockGenFindMany).not.toHaveBeenCalled();
+    expect(mockTransaction).not.toHaveBeenCalled();
+  });
+
+  it("lets a channel edit enforce the new channel cap before saving media", async () => {
+    mockFindFirst.mockResolvedValue({ status: "DRAFT", channel: "instagram", firstComment: "tags" });
+    const res = await updateScheduledPost("p1", { channel: "facebook", media: ["gen-a", "gen-b"] });
+    expect(res).toHaveProperty("error");
+    expect(mockTransaction).not.toHaveBeenCalled();
   });
 
   it("cannot touch another owner's post — status load misses → not found, no write", async () => {
@@ -235,7 +298,7 @@ describe("updateScheduledPost", () => {
   });
 
   it("re-consent gate: a MATERIAL edit to a SCHEDULED post resets it to DRAFT + clears approvedAt", async () => {
-    mockFindFirst.mockResolvedValue({ status: "SCHEDULED", channel: "instagram" });
+    mockFindFirst.mockResolvedValue({ status: "SCHEDULED", channel: "instagram", firstComment: null });
     mockUpdateMany.mockResolvedValue({ count: 1 });
     const res = await updateScheduledPost("p1", { caption: "changed my mind" });
     expect(res).toEqual({ ok: true });
@@ -245,7 +308,7 @@ describe("updateScheduledPost", () => {
   });
 
   it("a NON-material edit (scheduledTz only) to a SCHEDULED post keeps it SCHEDULED", async () => {
-    mockFindFirst.mockResolvedValue({ status: "SCHEDULED", channel: "instagram" });
+    mockFindFirst.mockResolvedValue({ status: "SCHEDULED", channel: "instagram", firstComment: null });
     mockUpdateMany.mockResolvedValue({ count: 1 });
     const res = await updateScheduledPost("p1", { scheduledTz: "UTC" });
     expect(res).toEqual({ ok: true });
@@ -274,21 +337,21 @@ describe("updateScheduledPost", () => {
   });
 
   it("rejects a first comment on a channel that doesn't support it (Facebook), no write", async () => {
-    mockFindFirst.mockResolvedValue({ status: "DRAFT", channel: "facebook" });
+    mockFindFirst.mockResolvedValue({ status: "DRAFT", channel: "facebook", firstComment: null });
     const res = await updateScheduledPost("p1", { firstComment: "nope on FB" });
     expect(res).toHaveProperty("error");
     expect(mockUpdateMany).not.toHaveBeenCalled();
   });
 
   it("rejects an empty patch on an editable post, writes nothing", async () => {
-    mockFindFirst.mockResolvedValue({ status: "DRAFT", channel: "instagram" });
+    mockFindFirst.mockResolvedValue({ status: "DRAFT", channel: "instagram", firstComment: null });
     const res = await updateScheduledPost("p1", {});
     expect(res).toHaveProperty("error");
     expect(mockUpdateMany).not.toHaveBeenCalled();
   });
 
   it("rejects a caption that is only whitespace, writes nothing", async () => {
-    mockFindFirst.mockResolvedValue({ status: "DRAFT", channel: "instagram" });
+    mockFindFirst.mockResolvedValue({ status: "DRAFT", channel: "instagram", firstComment: null });
     const res = await updateScheduledPost("p1", { caption: "   " });
     expect(res).toHaveProperty("error");
     expect(mockUpdateMany).not.toHaveBeenCalled();
@@ -311,6 +374,7 @@ function draftReady(over: Partial<Record<string, unknown>> = {}) {
     id: "p1",
     ownerId: OWNER,
     status: "DRAFT",
+    channel: "instagram",
     metaTargetId: "page-1",
     media: [{ id: "m1" }],
     ...over,
@@ -327,8 +391,8 @@ describe("approveScheduledPost", () => {
     expect(mockFindFirst).toHaveBeenCalledWith(
       expect.objectContaining({ where: { id: "p1", ownerId: OWNER, deletedAt: null } }),
     );
-    // validated the target against the owner's own connected pages
-    expect(mockFetchOwnerPages).toHaveBeenCalledWith(OWNER);
+    // validated the target against the owner's own connected targets for this post's channel
+    expect(mockIgListTargets).toHaveBeenCalledWith(OWNER);
     // write sets both fields, owner-scoped, and CAS-pins the status we validated
     expect(mockUpdateMany).toHaveBeenCalledTimes(1);
     const call = mockUpdateMany.mock.calls[0][0];
@@ -365,16 +429,26 @@ describe("approveScheduledPost", () => {
     mockFindFirst.mockResolvedValue(draftReady({ metaTargetId: "not-mine" }));
     const res = await approveScheduledPost("p1");
     expect(res).toHaveProperty("error");
-    expect(mockFetchOwnerPages).toHaveBeenCalledWith(OWNER);
+    expect(mockIgListTargets).toHaveBeenCalledWith(OWNER);
     expect(mockUpdateMany).not.toHaveBeenCalled();
   });
 
   it("rejects when the owner has no connected channel (fetchOwnerPages notConnected), no write", async () => {
     mockFindFirst.mockResolvedValue(draftReady());
-    mockFetchOwnerPages.mockResolvedValue({ notConnected: true });
+    mockIgListTargets.mockResolvedValue([]);
     const res = await approveScheduledPost("p1");
     expect(res).toHaveProperty("error");
     expect(mockUpdateMany).not.toHaveBeenCalled();
+  });
+
+  it("validates approval against the post channel's own target adapter", async () => {
+    mockFindFirst.mockResolvedValue(draftReady({ channel: "facebook" }));
+    mockIgListTargets.mockResolvedValue([{ id: "page-1", name: "IG Page" }]);
+    mockFbListTargets.mockResolvedValue([{ id: "page-1", name: "FB Page" }]);
+    mockUpdateMany.mockResolvedValue({ count: 1 });
+    expect(await approveScheduledPost("p1")).toEqual({ ok: true });
+    expect(mockFbListTargets).toHaveBeenCalledWith(OWNER);
+    expect(mockIgListTargets).not.toHaveBeenCalled();
   });
 
   it("rejects when the post has no media rows, no write", async () => {
@@ -505,6 +579,8 @@ describe("listOwnerTargets", () => {
 
   it("returns [] when the owner has no connected targets (Connect prompt case)", async () => {
     // adapters return [] on notConnected/needsReconnect/needsPageScope (see fetchOwnerPages mapping)
+    mockIgListTargets.mockResolvedValue([]);
+    mockFbListTargets.mockResolvedValue([]);
     expect(await listOwnerTargets()).toEqual([]);
   });
 
