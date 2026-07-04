@@ -157,6 +157,11 @@ export function OttoApp({
     router.push(projectHref(projId, threadId));
   }, [router, projectHref, curProjectId]);
 
+  const handleSelectThread = useCallback((threadId: string) => {
+    setActiveThreadId(threadId);
+    router.push(projectHref(curProjectId, threadId));
+  }, [router, projectHref, curProjectId]);
+
   const handleRenameProject = useCallback(async (projId: string, name: string) => {
     const res = await renameProject(projId, name);
     if (res && "ok" in res) router.refresh();
@@ -210,6 +215,10 @@ export function OttoApp({
       console.error("[handleDeleteThread] failed:", result.error);
       setThreads(snapshot);
       setActiveThreadId(snapshotActive);
+      return;
+    }
+    if (snapshotActive === id) {
+      router.replace(projectHref(curProjectId, newActive ?? undefined));
     }
   }
 
@@ -274,7 +283,7 @@ export function OttoApp({
         activeProjectId={curProjectId}
         sidebarThreads={sidebarThreads}
         activeThreadId={activeThreadId}
-        onSelectThread={setActiveThreadId}
+        onSelectThread={handleSelectThread}
         onSwitchProject={handleSwitchProject}
         onRenameProject={handleRenameProject}
         onDeleteProject={handleDeleteProject}

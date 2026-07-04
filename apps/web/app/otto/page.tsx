@@ -84,7 +84,7 @@ export default async function OttoPage({ searchParams }: { searchParams: Promise
 
   return (
     <OttoApp
-      key={projectId}
+      key={`${projectId}:${openThreadId ?? ""}`}
       projectId={projectId}
       projects={projectList}
       activeProjectId={projectId}
