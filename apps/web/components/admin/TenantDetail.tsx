@@ -94,6 +94,8 @@ export function TenantDetail({ detail }: { detail: Detail }) {
   const [impersonateBusy, setImpersonateBusy] = useState(false);
   const [impersonateMsg, setImpersonateMsg] = useState<{ ok: boolean; text: string } | null>(null);
   const canImpersonate = impersonateReason.trim().length >= 8;
+  const parsedGrantAmount = Number(grantAmount);
+  const grantOverLimit = Number.isFinite(parsedGrantAmount) && Math.abs(parsedGrantAmount) > 1000;
 
   async function submitGrant(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
@@ -103,6 +105,10 @@ export function TenantDetail({ detail }: { detail: Detail }) {
       const displayedAmount = Number(grantAmount);
       if (!Number.isInteger(displayedAmount) || displayedAmount === 0) {
         setGrantMsg({ ok: false, text: "Enter a non-zero whole number of credits." });
+        return;
+      }
+      if (Math.abs(displayedAmount) > 1000) {
+        setGrantMsg({ ok: false, text: "Credit actions over 1,000 displayed credits require founder approval." });
         return;
       }
       setGrantBusy(true);
@@ -214,10 +220,10 @@ export function TenantDetail({ detail }: { detail: Detail }) {
                 <span className="text-xs font-medium text-muted-foreground">Reason</span>
                 <Input value={grantReason} onChange={(event) => setGrantReason(event.target.value)} maxLength={500} placeholder="support correction or beta top-up" className="h-10 text-sm" />
               </label>
-              <Button type="submit" disabled={grantBusy}>{grantBusy ? "Applying" : "Apply"}</Button>
+              <Button type="submit" disabled={grantBusy || grantOverLimit}>{grantBusy ? "Applying" : "Apply"}</Button>
             </div>
             <div className="flex flex-wrap items-center gap-2 text-xs text-muted-foreground">
-              <Badge variant={Math.abs(Number(grantAmount)) > 1000 ? "warning" : "outline"}>{Math.abs(Number(grantAmount)) > 1000 ? "Over finance limit" : "Within finance limit"}</Badge>
+              <Badge variant={grantOverLimit ? "warning" : "outline"}>{grantOverLimit ? "Over finance limit" : "Within finance limit"}</Badge>
               <span>Negative values deduct credits if the account can stay non-negative.</span>
               {grantMsg ? <span className={grantMsg.ok ? "text-success" : "text-destructive"}>{grantMsg.text}</span> : null}
             </div>

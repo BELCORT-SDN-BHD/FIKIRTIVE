@@ -393,6 +393,10 @@ function CreditActionPanel() {
       setMessage({ ok: false, text: "Enter a non-zero whole number of displayed credits." });
       return;
     }
+    if (Math.abs(displayedAmount) > 1000) {
+      setMessage({ ok: false, text: "Credit actions over 1,000 displayed credits require founder approval." });
+      return;
+    }
     setSaving(true);
     setMessage(null);
     const result = await grantCreditsAction({
@@ -427,7 +431,7 @@ function CreditActionPanel() {
           <span className="text-xs font-medium text-muted-foreground">Reason</span>
           <Input value={reason} onChange={(event) => setReason(event.target.value)} placeholder="beta top-up or correction" maxLength={500} className="h-10 text-sm" />
         </label>
-        <Button type="submit" disabled={saving}>{saving ? "Applying" : "Apply"}</Button>
+        <Button type="submit" disabled={saving || overLimit}>{saving ? "Applying" : "Apply"}</Button>
       </form>
       <div className="mt-3 flex flex-wrap items-center gap-2 text-xs text-muted-foreground">
         <Badge variant={overLimit ? "warning" : "outline"}>{overLimit ? "Over finance limit" : "Within finance limit"}</Badge>

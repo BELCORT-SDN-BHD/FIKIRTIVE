@@ -414,6 +414,15 @@ describe("grantTenantCredits", () => {
     expect(mockGrantCredits).not.toHaveBeenCalled();
   });
 
+  it("rejects direct tenant credit actions over 1,000 displayed credits", async () => {
+    mockRequireRole.mockResolvedValue(GATE);
+    organizationFindFirst.mockResolvedValue({ id: "org_merchant" });
+    const res = await grantTenantCredits({ ...VALID_PAYLOAD, displayedAmount: 1001 });
+    expect(res).toEqual({ error: "Credit actions over 1,000 displayed credits require founder approval." });
+    expect(mockGrantCredits).not.toHaveBeenCalled();
+    expect(actionEventCreate).not.toHaveBeenCalled();
+  });
+
   it("converts displayedAmount to internal credits (×INTERNAL_PER_DISPLAY)", async () => {
     mockRequireRole.mockResolvedValue(GATE);
     organizationFindFirst.mockResolvedValue({ id: "org_merchant" });

@@ -9,6 +9,7 @@ import { isFounderAdmin } from "@/lib/allowlist";
 import { isImpersonating } from "@/lib/better-auth/compat";
 
 const ORG_STATUS = new Set(["active", "suspended"]);
+const FINANCE_DIRECT_CREDIT_LIMIT = 1_000;
 
 /** Resolve an org's active members to their Better Auth user ids.
  *  Membership.userId → User.email → BetterAuthUser.id (the two user tables join by email;
@@ -147,6 +148,7 @@ export async function grantTenantCredits(raw: unknown): Promise<{ ok: true; dupl
   if (!org) return { error: "Unknown or closed org." }; // NEVER fall back to founder
   const displayedAmount = typeof v?.displayedAmount === "number" ? v.displayedAmount : NaN;
   if (!Number.isInteger(displayedAmount) || displayedAmount === 0 || Math.abs(displayedAmount) > 1_000_000) return { error: "Enter a non-zero whole number of credits (max ±1,000,000)." };
+  if (Math.abs(displayedAmount) > FINANCE_DIRECT_CREDIT_LIMIT) return { error: "Credit actions over 1,000 displayed credits require founder approval." };
   const reason = typeof v?.reason === "string" ? v.reason.slice(0, 500) : "";
   const idempotencyKey = typeof v?.idempotencyKey === "string" ? v.idempotencyKey : "";
   if (idempotencyKey.length < 8 || idempotencyKey.length > 100) return { error: "Invalid request." };

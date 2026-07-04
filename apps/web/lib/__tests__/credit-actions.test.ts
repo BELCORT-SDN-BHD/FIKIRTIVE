@@ -98,19 +98,14 @@ describe("grantCreditsAction", () => {
     expect(revalidatePath).toHaveBeenCalledWith("/admin/credits");
   });
 
-  it("allows super-admin to apply an over-limit founder-approved credit action", async () => {
+  it("rejects super-admin direct grants over 1,000 displayed credits", async () => {
     mockRequireRole.mockResolvedValue(SUPER_GATE);
-    mockGrantCredits.mockResolvedValue({ ok: true });
 
     const result = await grantCreditsAction({ ...payload, displayedAmount: 5000 });
 
-    expect(result).toEqual({ ok: true, duplicate: false });
-    expect(mockGrantCredits).toHaveBeenCalledWith(
-      expect.objectContaining({
-        amount: 5000 * INTERNAL_PER_DISPLAY,
-        createdBy: SUPER_GATE.email,
-      }),
-    );
+    expect(result).toEqual({ error: "Credit actions over 1,000 displayed credits require founder approval." });
+    expect(mockGrantCredits).not.toHaveBeenCalled();
+    expect(actionEventCreate).not.toHaveBeenCalled();
   });
 
   it("keeps insufficient-credit adjustments friendly and retry-safe", async () => {

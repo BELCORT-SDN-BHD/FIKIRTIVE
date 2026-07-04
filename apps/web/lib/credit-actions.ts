@@ -25,7 +25,7 @@ export async function grantCreditsAction(raw: unknown): Promise<{ ok: true; dupl
   if (!Number.isInteger(displayedAmount) || displayedAmount === 0 || Math.abs(displayedAmount) > 1_000_000) {
     return { error: "Enter a non-zero whole number of credits (max ±1,000,000)." };
   }
-  if (gate.role !== "super-admin" && Math.abs(displayedAmount) > FINANCE_DIRECT_CREDIT_LIMIT) {
+  if (Math.abs(displayedAmount) > FINANCE_DIRECT_CREDIT_LIMIT) {
     return { error: "Credit actions over 1,000 displayed credits require founder approval." };
   }
   const reason = typeof v?.reason === "string" ? v.reason.slice(0, 500) : "";
