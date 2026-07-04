@@ -14,9 +14,29 @@ Aligned executable pricing, quote, reserve, settlement, and recorded COGS with t
 ## Follow-up source audit — 2026-07-04
 
 - Official BytePlus ModelArk pricing page was checked again. It was last updated on 2026-07-02 and still exposes Seedance 2.0 pricing as public ModelArk pricing, while the resource-pack page itself is JS/content-gated in this environment.
+- Extracted public Seedance Fast price signals from the embedded pricing payload:
+  - `dreamina-seedance-2-0-fast-260128`
+  - 1080p output is not supported on Fast.
+  - token unit prices: input without video $5.6/M; input with video $3.3/M.
+  - `Dreamina Seedance 2.0 Fast (USD per video)` examples include $0.30-$0.66 and $0.64-$1.43 ranges; BytePlus notes the low end corresponds to 2-4s input and the high end to 15s input.
+  - Launch implication: normal Fast remains 720p-only; the public 15s input-video high end is not an allowed whole-clip-reference path because runtime gates reference inputs to 2-6s and fixed 5s output.
 - Official BytePlus Seedance product page still links to pricing/billing and describes resource plans for Dreamina Seedance 2.0 / 2.0 mini, but plan prices render client-side as "Loading pricing..." here.
 - Official Advanced Creation Rights guide was checked again. It lists Advanced Creation Rights at $14,000/year or $1,400/month, Premium at $42,000/year or $4,200/month, larger private asset quotas, higher QPM, non-refundability, and asset deletion after the grace/reclamation window. This is an enterprise/KYC entitlement path, not a current public-launch spend path in code.
-- Official private virtual portrait and real-human asset pages remain accessible only as public shells from this environment; they were not used to change launch pricing or runtime behavior.
+- Official private virtual portrait and real-human asset pages were checked as KYC-only references. The visible/embedded content points at private asset-library and Assets API flows for invited/verified use cases; no current public launch path calls CreateAsset, private asset groups, or a real-human asset library. Current whole-clip reference video still uses the ordinary Seedance task endpoint with `role: "reference_video"`.
+
+## Launch Margin Check
+
+All launch-priced spend points are still above the `docs/BLUEPRINT.md` >=45% margin floor using the current executable charge and record-only COGS:
+
+| Spend point | Revenue | COGS basis | Gross margin |
+|---|---:|---:|---:|
+| Image | 1cr = $0.10 | $0.04 recorded / $0.035 bill fact | 60%-65% |
+| Seedance Fast 720p 5s | 8cr = $0.80 | $0.385 | 51.9% |
+| Seedance Fast 720p 10s | 14cr = $1.40 | $0.77 | 45.0% |
+| Reference video, 2-6s input + 5s output | 16cr = $1.60 | $0.85 estimate | 46.9% |
+| Otto LLM | actual token cost x2.0 | official token-rate table | 50.0% |
+
+The 10s Seedance price is exactly at the constitutional floor. Any supplier price increase, loss of the BytePlus resource-pack rate, 1080p Fast enablement, or reference-video input-window expansion must trigger a pricing review before launch.
 
 ## Changes Made
 
