@@ -290,7 +290,7 @@ export async function getAdminV2Data(): Promise<AdminV2Data> {
       },
     }),
     prisma.genJob.findMany({
-      where: { spentUsd: { not: null }, finishedAt: { gte: since } },
+      where: { ownerId: { not: "" }, spentUsd: { not: null }, finishedAt: { gte: since } },
       select: {
         id: true,
         kind: true,
@@ -305,7 +305,7 @@ export async function getAdminV2Data(): Promise<AdminV2Data> {
       take: 200,
     }),
     prisma.refGenJob.findMany({
-      where: { spentUsd: { not: null }, finishedAt: { gte: since } },
+      where: { ownerId: { not: "" }, spentUsd: { not: null }, finishedAt: { gte: since } },
       select: {
         id: true,
         mode: true,
@@ -323,7 +323,7 @@ export async function getAdminV2Data(): Promise<AdminV2Data> {
     prisma.refGenJob.groupBy({ by: ["status"], _count: { _all: true } }),
     prisma.renderJob.groupBy({ by: ["status"], _count: { _all: true } }),
     prisma.genJob.findMany({
-      where: { status: "FAILED" },
+      where: { ownerId: { not: "" }, status: "FAILED" },
       orderBy: { updatedAt: "desc" },
       take: 15,
       select: {
@@ -338,7 +338,7 @@ export async function getAdminV2Data(): Promise<AdminV2Data> {
       },
     }),
     prisma.refGenJob.findMany({
-      where: { status: "FAILED" },
+      where: { ownerId: { not: "" }, status: "FAILED" },
       orderBy: { updatedAt: "desc" },
       take: 15,
       select: {
@@ -352,7 +352,7 @@ export async function getAdminV2Data(): Promise<AdminV2Data> {
       },
     }),
     prisma.renderJob.findMany({
-      where: { status: "FAILED" },
+      where: { ownerId: { not: "" }, status: "FAILED" },
       orderBy: { updatedAt: "desc" },
       take: 15,
       select: {
