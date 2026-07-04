@@ -532,11 +532,31 @@ describe("impersonateTenant", () => {
     expect(authApi.impersonateUser).not.toHaveBeenCalled();
   });
 
+  it("rejects an empty reason before resolving the BA owner", async () => {
+    mockRequireRole.mockResolvedValue(GATE);
+    (isFounderAdmin as Mock).mockReturnValue(true);
+    const res = await impersonateTenant("orgX", "   ");
+    expect(res).toEqual({ error: "Enter an impersonation reason with at least 8 characters." });
+    expect(membershipFindMany).not.toHaveBeenCalled();
+    expect(authApi.impersonateUser).not.toHaveBeenCalled();
+    expect(actionEventCreate).not.toHaveBeenCalled();
+  });
+
+  it("rejects a too-short reason before resolving the BA owner", async () => {
+    mockRequireRole.mockResolvedValue(GATE);
+    (isFounderAdmin as Mock).mockReturnValue(true);
+    const res = await impersonateTenant("orgX", "short");
+    expect(res).toEqual({ error: "Enter an impersonation reason with at least 8 characters." });
+    expect(membershipFindMany).not.toHaveBeenCalled();
+    expect(authApi.impersonateUser).not.toHaveBeenCalled();
+    expect(actionEventCreate).not.toHaveBeenCalled();
+  });
+
   it("returns an error when the org has no resolvable BA owner", async () => {
     mockRequireRole.mockResolvedValue(GATE);
     (isFounderAdmin as Mock).mockReturnValue(true);
     membershipFindMany.mockResolvedValue([]); // no owner
-    const res = await impersonateTenant("orgX");
+    const res = await impersonateTenant("orgX", "Debug checkout issue");
     expect(res).toHaveProperty("error");
     expect(authApi.impersonateUser).not.toHaveBeenCalled();
   });
@@ -548,13 +568,19 @@ describe("impersonateTenant", () => {
     userFindMany.mockResolvedValue([{ email: "owner@t.test" }]);
     baUserFindMany.mockResolvedValue([{ id: "ba_owner" }]);
     authApi.impersonateUser.mockResolvedValue({ ok: true });
-    const res = await impersonateTenant("orgX");
+    const reason = "Debug checkout issue";
+    const res = await impersonateTenant("orgX", reason);
     expect(res).toEqual({ ok: true });
     expect(authApi.impersonateUser).toHaveBeenCalledWith(
       expect.objectContaining({ body: { userId: "ba_owner" } })
     );
     expect(actionEventCreate).toHaveBeenCalledWith(
-      expect.objectContaining({ data: expect.objectContaining({ type: "impersonate.start" }) })
+      expect.objectContaining({
+        data: expect.objectContaining({
+          type: "impersonate.start",
+          payload: expect.objectContaining({ reason }),
+        }),
+      })
     );
   });
 });

@@ -112,6 +112,7 @@ export async function impersonateTenant(orgId: string, reasonRaw?: unknown): Pro
   if (!isFounderAdmin(gate.email)) return { error: "Only a founder may impersonate." };
   if (typeof orgId !== "string" || !orgId || orgId === FOUNDER_OWNER_ID) return { error: "Invalid org." };
   const reason = typeof reasonRaw === "string" ? reasonRaw.trim().slice(0, 500) : "";
+  if (reason.length < 8) return { error: "Enter an impersonation reason with at least 8 characters." };
   const baUserId = await ownerBaUserId(orgId);
   if (!baUserId) return { error: "That tenant has no signed-in owner to impersonate yet." };
   try {
