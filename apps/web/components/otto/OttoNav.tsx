@@ -5,6 +5,7 @@ import { Avatar, AvatarFallback } from "@/components/ui/avatar";
 import type { OttoViewKey, ProjectMeta } from "./OttoApp";
 import type { ChatThreadDTO } from "@/lib/types";
 import type { HistoryThumb } from "@/lib/data";
+import { buildOttoNavEntries, type OttoNavEntry } from "./otto-nav-model";
 
 const MOBILE_BP = 680;
 
@@ -226,32 +227,15 @@ export function OttoNav({
       return next;
     });
 
-  // Group conversations under their project for the Grok-style nested sidebar.
-  const threadsByProject = new Map<string, ChatThreadDTO[]>();
-  for (const t of sidebarThreads) {
-    const arr = threadsByProject.get(t.projectId) ?? [];
-    arr.push(t);
-    threadsByProject.set(t.projectId, arr);
-  }
-  const projectIndex = new Map(projects.map((p, index) => [p.id, index]));
-  const projectLastActivity = new Map<string, number>();
-  for (const t of sidebarThreads) {
-    const ts = Date.parse(t.updatedAt) || 0;
-    projectLastActivity.set(t.projectId, Math.max(projectLastActivity.get(t.projectId) ?? 0, ts));
-  }
-  const visibleProjects = [...projects].sort((a, b) => {
-    if (a.id === activeProjectId && b.id !== activeProjectId) return -1;
-    if (b.id === activeProjectId && a.id !== activeProjectId) return 1;
-    const activity = (projectLastActivity.get(b.id) ?? 0) - (projectLastActivity.get(a.id) ?? 0);
-    if (activity !== 0) return activity;
-    return (projectIndex.get(a.id) ?? 0) - (projectIndex.get(b.id) ?? 0);
-  }).slice(0, PROJECT_LIMIT);
-  const activeProject = projects.find((p) => p.id === activeProjectId);
-  if (activeProject && !visibleProjects.some((p) => p.id === activeProject.id)) {
-    if (visibleProjects.length >= PROJECT_LIMIT) visibleProjects[visibleProjects.length - 1] = activeProject;
-    else visibleProjects.push(activeProject);
-  }
-  const hasSidebar = visibleProjects.length > 0 || history.length > 0;
+  const navEntries = buildOttoNavEntries({
+    projects,
+    sidebarThreads,
+    activeProjectId,
+    activeThreadId,
+    projectLimit: PROJECT_LIMIT,
+    threadLimit: THREAD_LIMIT,
+  });
+  const hasSidebar = navEntries.length > 0 || history.length > 0;
 
   function dotFor(status: ChatThreadDTO["status"]) {
     return status === "working" ? "#f59e0b" : status === "failed" ? "#dc2626" : status === "done" ? "#16a34a" : null;
@@ -260,6 +244,21 @@ export function OttoNav({
   function handleNavAction(fn: () => void) {
     fn();
     onDrawerClose?.();
+  }
+
+  function openThreadEntry(entry: Extract<OttoNavEntry, { kind: "thread" }>) {
+    if (entry.project.id === activeProjectId) onSelectThread(entry.thread.id);
+    else onSwitchProject(entry.project.id, entry.thread.id);
+  }
+
+  function openProjectEntry(entry: Extract<OttoNavEntry, { kind: "project" }>) {
+    if (entry.defaultThread) {
+      if (entry.project.id === activeProjectId) onSelectThread(entry.defaultThread.id);
+      else onSwitchProject(entry.project.id, entry.defaultThread.id);
+      return;
+    }
+    if (entry.project.id === activeProjectId) onViewChange("otto");
+    else onSwitchProject(entry.project.id);
   }
 
   return (
@@ -403,7 +402,7 @@ export function OttoNav({
       {/* Projects (campaigns) + History */}
       {hasSidebar && (
         <div className="flex-1 overflow-auto pt-4 px-3 pb-2">
-          {visibleProjects.length > 0 && (
+          {navEntries.length > 0 && (
           <>
           <div className="flex items-center justify-between mb-2 pl-1">
             <span className="text-[0.65625rem] text-muted-foreground/70 font-semibold uppercase tracking-[0.07em]">
@@ -411,24 +410,41 @@ export function OttoNav({
             </span>
           </div>
           <div className="flex flex-col gap-0.5">
-            {visibleProjects.map((p) => {
-              const isActiveProject = p.id === activeProjectId;
-              const projThreads = threadsByProject.get(p.id) ?? [];
-              const visibleThreads = projThreads.slice(0, THREAD_LIMIT);
-              const activeThread = isActiveProject && activeThreadId
-                ? projThreads.find((t) => t.id === activeThreadId)
-                : undefined;
-              if (activeThread && !visibleThreads.some((t) => t.id === activeThread.id)) {
-                if (visibleThreads.length >= THREAD_LIMIT) visibleThreads[visibleThreads.length - 1] = activeThread;
-                else visibleThreads.push(activeThread);
+            {navEntries.map((entry) => {
+              if (entry.kind === "thread") {
+                const isActiveProject = entry.project.id === activeProjectId;
+                const isActive = isActiveProject && entry.thread.id === activeThreadId && view === "otto";
+                const dotColor = dotFor(entry.thread.status);
+                return (
+                  <div key={`thread:${entry.thread.id}`} className="otto-recent-row relative flex items-center mb-0.5">
+                    <button
+                      onClick={() => handleNavAction(() => openThreadEntry(entry))}
+                      title={entry.thread.title}
+                      className={`flex items-center gap-2 flex-1 min-w-0 border-0 text-[0.8125rem] py-[7px] pr-6 pl-3 rounded-[10px] cursor-pointer text-left transition-colors duration-150 ${isActive ? "bg-secondary text-foreground font-semibold" : "bg-transparent text-muted-foreground font-normal"}`}
+                    >
+                      {dotColor && (<span className="inline-block shrink-0 w-[7px] h-[7px] rounded-full" style={{ background: dotColor }} />)}
+                      <span className="truncate min-w-0">{entry.thread.title}</span>
+                    </button>
+                    <button
+                      className="otto-recent-delete absolute right-2 flex items-center justify-center w-5 h-5 border-0 bg-transparent text-muted-foreground/70 rounded-[10px] cursor-pointer p-0 opacity-0 transition-[opacity,background] duration-150"
+                      aria-label={`Delete ${entry.thread.title}`}
+                      onClick={(e) => { e.stopPropagation(); onDeleteThread(entry.thread.id); }}
+                    >
+                      <IconX />
+                    </button>
+                  </div>
+                );
               }
+              const p = entry.project;
+              const isActiveProject = p.id === activeProjectId;
               const isCollapsed = collapsedProjects.has(p.id);
+              const canExpand = entry.threads.length > 0;
               return (
-                <div key={p.id} className="mb-1">
+                <div key={`project:${p.id}`} className="mb-1">
                   {/* project (campaign) row — chevron toggles its conversations,
                       double-click renames, hover-X deletes */}
                   <div className="otto-recent-row relative flex items-center">
-                    {projThreads.length > 0 ? (
+                    {canExpand ? (
                       <button
                         type="button"
                         aria-label={isCollapsed ? "Expand campaign" : "Collapse campaign"}
@@ -442,7 +458,7 @@ export function OttoNav({
                       <span className="w-[18px] h-[26px] shrink-0" aria-hidden />
                     )}
                     <button
-                      onClick={() => { if (!isActiveProject) handleNavAction(() => onSwitchProject(p.id)); }}
+                      onClick={() => handleNavAction(() => openProjectEntry(entry))}
                       onDoubleClick={() => { const n = window.prompt("Rename campaign", p.name); if (n && n.trim()) onRenameProject(p.id, n.trim()); }}
                       title={p.name}
                       className={`flex items-center gap-2 flex-1 min-w-0 border-0 text-[0.875rem] font-semibold text-foreground py-1.5 pr-6 pl-2 rounded-[10px] cursor-pointer text-left transition-colors duration-150 ${isActiveProject ? "bg-secondary" : "bg-transparent"}`}
@@ -460,9 +476,9 @@ export function OttoNav({
                     </button>
                   </div>
                   {/* conversations nested under the project (collapsible) */}
-                  {projThreads.length > 0 && !isCollapsed && (
+                  {canExpand && !isCollapsed && (
                     <div className="flex flex-col gap-px mt-px">
-                      {visibleThreads.map((t) => {
+                      {entry.threads.map((t) => {
                         const isActive = isActiveProject && t.id === activeThreadId && view === "otto";
                         const dotColor = dotFor(t.status);
                         return (
@@ -503,7 +519,7 @@ export function OttoNav({
           )}
           {history.length > 0 && (
           <>
-            <div className={`text-[0.65625rem] text-muted-foreground/70 font-semibold uppercase tracking-[0.07em] pl-1 mb-2 ${visibleProjects.length > 0 ? "mt-4" : "mt-0"}`}>
+            <div className={`text-[0.65625rem] text-muted-foreground/70 font-semibold uppercase tracking-[0.07em] pl-1 mb-2 ${navEntries.length > 0 ? "mt-4" : "mt-0"}`}>
               Recent media
             </div>
             <div className="grid grid-cols-3 gap-[5px]">

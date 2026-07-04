@@ -4,7 +4,7 @@ import { prisma } from "@fikirtive/db";
 import { newId } from "@fikirtive/core";
 import { requireOwner } from "./auth-guard";
 import { getGenerationThumbs } from "./data";
-import { canvasNodeDisplayStatus, firstDisplayableGenerationId } from "./otto-canvas-bridge-core";
+import { canvasNodeDisplayStatus, firstDisplayableGenerationId, settledCanvasNodeRepairPatch } from "./otto-canvas-bridge-core";
 
 export type CanvasNodeDTO = {
   id: string; type: string; x: number; y: number; w: number; h: number;
@@ -48,13 +48,23 @@ export async function listCanvasNodes(projectId: string): Promise<CanvasNodeDTO[
   ];
   const thumbs = await getGenerationThumbs(gate.ownerId, genIds);
 
-  return nodes.map((n) => {
+  const repairs: Array<{ id: string; data: NonNullable<ReturnType<typeof settledCanvasNodeRepairPatch>> }> = [];
+  const resolved = nodes.map((n) => {
     const job = n.genJobId ? jobById.get(n.genJobId) : null;
     const generationId = n.generationId ?? firstDisplayableGenerationId(job?.generationIds, thumbs);
     const url = generationId ? thumbs[generationId]?.src ?? null : null;
     const status = generationId && !url ? "missing" : canvasNodeDisplayStatus(n.status, job?.status, url);
+    const patch = settledCanvasNodeRepairPatch(n.status, n.generationId, job?.status, generationId, url);
+    if (patch) repairs.push({ id: n.id, data: patch });
     return { ...n, generationId, status, url };
   });
+  if (repairs.length) {
+    await Promise.all(repairs.map((r) => prisma.canvasNode.updateMany({
+      where: { id: r.id, ownerId: gate.ownerId, projectId },
+      data: r.data,
+    })));
+  }
+  return resolved;
 }
 
 export async function createCanvasNode(input: CreateNodeInput): Promise<{ id: string } | { error: string }> {
