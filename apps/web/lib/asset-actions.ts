@@ -106,7 +106,11 @@ export async function saveCroppedGeneration(
   if (!match) return { error: "Invalid data URL." };
   const mimeType = `image/${match[1]}`;
   const base64Data = match[2];
+  if (!/^[A-Za-z0-9+/]+={0,2}$/.test(base64Data) || base64Data.length % 4 !== 0) {
+    return { error: "Invalid data URL." };
+  }
   const bytes = Uint8Array.from(Buffer.from(base64Data, "base64"));
+  if (bytes.byteLength === 0) return { error: "Invalid data URL." };
 
   // Build a File so we can reuse the ingestFile path via storage.put directly
   // (ingestFile is not exported, so replicate its logic inline)
@@ -158,7 +162,7 @@ export async function setFavorite(
   const { ownerId } = gate;
 
   const result = await prisma.generation.updateMany({
-    where: { id: generationId, ownerId },
+    where: { id: generationId, ownerId, deletedAt: null },
     data: { favorite },
   });
 
