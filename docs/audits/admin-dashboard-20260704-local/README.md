@@ -50,6 +50,9 @@ Follow-up source QA completed after the margin pass:
 - Money-in server action `grantCreditsAction` now rejects non-super-admin direct credit actions over 1,000 displayed credits before calling the single ledger writer. Super-admin can still perform founder-approved over-limit actions.
 - Admin v2 and tenant detail money labels now say "finance limit" and warn on large negative adjustments as well as large grants.
 - Production `next start` browser QA with local founder auth captured `/admin/money` at desktop and 390px mobile: `qa-22-admin-money-finance-limit-prod-desktop.png` and `qa-21-admin-money-finance-limit-prod-mobile.png` in `.gstack/qa-reports/screenshots/`. Both had no browser console errors and no horizontal overflow.
+- Production `next start` route crawl with local founder auth loaded all 8 official admin routes (`/admin`, `/admin/money`, `/admin/tenants`, `/admin/staff`, `/admin/cases`, `/admin/otto`, `/admin/audit`, `/admin/system`) and verified the expected headings with no browser console errors, no page errors, and no horizontal overflow.
+- Legacy admin routes redirect to the rebuilt sections: `/admin/content` and `/admin/conversations` to `/admin/cases`, `/admin/conversations/[threadId]` to `/admin/cases?case=[threadId]`, `/admin/cost` and `/admin/credits` to `/admin/money`, `/admin/directives`, `/admin/knowledge`, `/admin/models`, and `/admin/settings` to `/admin/otto`, and `/admin/team` to `/admin/staff`.
+- Production route screenshots were captured as `qa-23-admin-official-routes-desktop.png` and `qa-24-admin-mobile-section-selector-prod.png` in `.gstack/qa-reports/screenshots/`. Mobile section selector navigation from Overview to System Health passed at 390px with no horizontal overflow.
 
 Verification commands:
 
@@ -61,6 +64,7 @@ Verification commands:
 - `corepack pnpm -r typecheck`
 - `corepack pnpm --filter @fikirtive/web exec vitest run lib/__tests__/tenant-actions.test.ts lib/__tests__/credit-actions.test.ts lib/__tests__/save-user-role.test.ts`
 - Production browser QA: `/admin/money` via dev magic-link founder auth, then `next start` on `localhost:3132`; desktop/mobile screenshots listed above.
+- Production browser QA: official admin route crawl via dev magic-link founder auth, then `next start` on `localhost:3133`; all live routes, legacy redirects, and mobile selector passed. Result saved during QA as `/tmp/admin-route-crawl.json`.
 
 ## Latest Project Decisions That Matter
 
