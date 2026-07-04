@@ -1,5 +1,5 @@
 "use client";
-import React, { useState } from "react";
+import React, { useEffect, useState } from "react";
 import { Download, Copy, Check, Sparkles, ChevronLeft, AlertCircle, RefreshCw } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
@@ -168,14 +168,21 @@ export function OttoResult({ payload, onTweak, sourceCardId, onMakeAnother }: Ot
   const pickKey = genIds[0] ?? urls[0] ?? "";
   const [selected, setSelected] = useState<number | null>(() => {
     if (urls.length === 1) return 0;
-    if (pickKey) {
-      // Clamp the persisted pick to a valid index — a corrupt/stale localStorage value
-      // (e.g. out-of-range or negative) must not select a missing url and crash the card.
-      const stored = readPick(pickKey);
-      return stored !== null && stored >= 0 && stored < urls.length ? stored : null;
-    }
+    // Keep SSR/client hydration deterministic; restore persisted picks after mount.
     return null;
   });
+  useEffect(() => {
+    if (urls.length === 1) {
+      setSelected(0);
+      return;
+    }
+    if (pickKey) {
+      const stored = readPick(pickKey);
+      setSelected(stored !== null && stored >= 0 && stored < urls.length ? stored : null);
+      return;
+    }
+    setSelected(null);
+  }, [pickKey, urls.length]);
 
   // Keep localStorage in sync when the user picks
   function pick(i: number) {
@@ -185,6 +192,9 @@ export function OttoResult({ payload, onTweak, sourceCardId, onMakeAnother }: Ot
 
   // Fix #2 — honest copy state
   const [copyState, setCopyState] = useState<CopyState>("idle");
+  useEffect(() => {
+    setCopyState("idle");
+  }, [selected]);
 
   async function copyLink(url: string) {
     const outcome = await attemptCopy(url);
@@ -277,9 +287,24 @@ export function OttoResult({ payload, onTweak, sourceCardId, onMakeAnother }: Ot
           <DownloadLink url={url} filename={filename} />
           {/* Fix #2 — honest copy states */}
           {copyState === "manual" ? (
-            <div className="flex items-center gap-1.5 text-[0.875rem] text-muted-foreground">
+            <div className="flex flex-wrap items-center gap-2 text-[0.875rem] text-muted-foreground">
               <AlertCircle size={15} />
-              <span>Couldn&apos;t copy — long-press the link to copy</span>
+              <span>Couldn&apos;t copy automatically.</span>
+              <a
+                href={url}
+                target="_blank"
+                rel="noreferrer"
+                className="font-semibold text-brand underline underline-offset-2"
+              >
+                Open asset
+              </a>
+              <button
+                type="button"
+                onClick={() => copyLink(url)}
+                className="border-0 bg-transparent p-0 font-semibold text-brand underline underline-offset-2 cursor-pointer"
+              >
+                Try again
+              </button>
             </div>
           ) : (
             <Button
