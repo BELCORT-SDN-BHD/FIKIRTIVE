@@ -1,6 +1,6 @@
 // Static built-in template catalog (G5b). Pure — no DB, no React, no server.
 // Each template is an image-to-image preset run through the existing startGen spend gate.
-import { GEN_PRICE_USD_PER_IMAGE } from "@fikirtive/core";
+import { GEN_PRICE_USD_PER_IMAGE } from "@fikirtive/core/gen";
 
 export type TemplateQuestion = { label: string; placeholder: string };
 export type Template = {

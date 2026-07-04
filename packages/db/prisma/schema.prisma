@@ -618,6 +618,7 @@ model Organization {
   brandRecords            BrandRecord[]
   metaConnection          MetaConnection?
   researchJobs            ResearchJob[]
+  scheduledPosts          ScheduledPost[]
 }
 
 // User <-> Organization join, carrying the per-org role. role/status are code-validated
@@ -810,6 +811,7 @@ enum ChatMessageKind {
   STORYBOARD_CARD
   RESEARCH_CARD
   RESEARCH_REPORT
+  PERFORMANCE_CARD
 }
 
 // G7: per-org autonomy mode for Otto's ad-write operations
@@ -1094,4 +1096,80 @@ model WebPageCache {
   title     String   @default("")
   text      String
   fetchedAt DateTime
+}
+
+// ── Schedule (蓝图 P1½「排期 + Routine」) ──────────────────────────────────
+// UI-first slice: owner/OTTO can build, approve, and queue IG/FB posts, but the
+// publish worker is deferred to Meta App Review (see docs/superpowers/specs/
+// 2026-07-03-schedule-uifirst-slice-design.md). This slice builds the full
+// working-grade schema so slice 2 (real publishing) needs NO further migration.
+// $0 path: media reuses already-paid Generation rows; nothing here touches spend.
+model ScheduledPost {
+  id           String       @id
+  ownerId      String
+  organization Organization @relation(fields: [ownerId], references: [id])
+  projectId    String
+  channel      String       // 'instagram' | 'facebook' (code-validated, not a PG enum — house style)
+  // Connected IG business id / FB page id. NULLABLE: an OTTO DRAFT may have no resolved
+  // target until the owner picks a connected channel at approve-time. Must belong to the
+  // owner's own MetaConnection — server actions verify ownership, never trust a client id.
+  metaTargetId String?
+  caption      String
+  firstComment String?
+  scheduledAt  DateTime     // UTC — the scheduler polls on this
+  scheduledTz  String       // IANA tz (e.g. "Asia/Kuala_Lumpur"); stored alongside UTC so DST / cross-region display stays correct
+  // DRAFT | SCHEDULED | PUBLISHING | PUBLISHED | FAILED | NEEDS_ATTENTION | CANCELLED
+  // (code-validated String, not a PG enum — house style; state machine is a pure helper)
+  status       String       @default("DRAFT")
+  publishMode  String       @default("AUTO") // 'AUTO' | 'REMINDER'
+  source       String       // 'otto' | 'owner' (who drafted it)
+  approvedAt   DateTime?    // null ⇒ never queued/published; owner approval = consent to publish
+  metaPostId   String?      // set after publish (slice 2); idempotency anchor — once set, never re-publish
+  lastError    String?
+  deletedAt    DateTime?    // soft delete — never hard-delete history
+  createdAt    DateTime     @default(now())
+  updatedAt    DateTime     @updatedAt
+
+  media ScheduledPostMedia[]
+  attempts PublishAttempt[]
+
+  @@index([status, scheduledAt])  // scheduler polling (slice 2)
+  @@index([ownerId, scheduledAt]) // list / calendar queries
+}
+
+// Join table for a post's media (not a string[] array): carousel ordering + reliable
+// add/remove of a single item, race-safe on concurrent edits. generationId references an
+// already-PAID Generation (media is NEVER regenerated here) — kept as a plain String, no
+// hard FK, matching how other tables reference generations by id (e.g. ChatMessage.sourceGenerationId).
+model ScheduledPostMedia {
+  id              String        @id
+  scheduledPostId String
+  post            ScheduledPost @relation(fields: [scheduledPostId], references: [id], onDelete: Cascade)
+  generationId    String        // reuse of an already-paid Generation; never regenerated
+  position        Int           // carousel order 0..9 (single image = 1 row, carousel = 2..10 rows)
+
+  @@unique([scheduledPostId, position])
+}
+
+// Anti-double-publish core (slice 1 builds the table; slice 2's publish worker uses it).
+// Before publishing, the worker inserts PublishAttempt(state='APPLYING'); a PARTIAL UNIQUE
+// index "only one APPLYING per post" (raw SQL in the migration — Prisma can't express the
+// WHERE; same technique as BrandRecord's live nameKey index and refgen's attach index) makes
+// the second racing worker's insert fail → it skips. This mirrors the gen worker's fail-closed
+// claim. metaPostId is set on APPLIED and, together with ScheduledPost.metaPostId, guarantees
+// resume/restart never re-publishes.
+model PublishAttempt {
+  id              String        @id
+  scheduledPostId String
+  post            ScheduledPost @relation(fields: [scheduledPostId], references: [id], onDelete: Cascade)
+  state           String        // 'APPLYING' | 'APPLIED' | 'FAILED' (code-validated String — house style)
+  startedAt       DateTime      @default(now())
+  finishedAt      DateTime?
+  metaPostId      String?       // set when state = 'APPLIED'
+  error           String?
+
+  // A raw partial UNIQUE INDEX on (scheduledPostId) WHERE state = 'APPLYING' lives in the
+  // accompanying migration — at most one in-flight attempt per post. Prisma can't model a
+  // partial index, so no @@unique is declared here.
+  @@index([scheduledPostId])
 }

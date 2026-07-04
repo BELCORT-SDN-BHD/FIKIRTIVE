@@ -15,11 +15,11 @@ import { deleteGeneration } from "@/lib/actions";
 import { startGen, getGenJob, getActiveGenModels } from "@/lib/gen-actions";
 import { readPick, writePick } from "@/lib/result-pick";
 import {
-  activeVideoModel,
   videoDefaults,
   GEN_VIDEO_MODEL_OPTIONS,
   type GenVideoModel,
-} from "@fikirtive/core";
+} from "@fikirtive/core/gen";
+import { activeVideoModel } from "@fikirtive/core/model-config";
 import { Button, IcX, IcPlay, IcRetry } from "@/components/ds";
 import { MentionInput } from "@/components/MentionInput";
 import type { EntityDTO } from "@/lib/types";

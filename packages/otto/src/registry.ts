@@ -11,8 +11,11 @@ import { saveProductSkill } from "./skills/save-product.js";
 import { saveCustomerSegmentSkill } from "./skills/save-customer-segment.js";
 import { saveOfferSkill } from "./skills/save-offer.js";
 import { lookupProductsSkill } from "./skills/lookup-products.js";
+import { ingestProductSkill } from "./skills/ingest-product.js";
 import { researchWebSkill } from "./skills/research-web.js";
 import { metaInsightsSkill } from "./skills/meta-insights.js";
+import { metaAdPerformanceSkill } from "./skills/meta-ad-performance.js";
+import { metaExpertSkill } from "./skills/meta-expert.js";
 import { metaListObjectsSkill } from "./skills/meta-list-objects.js";
 import { listMetaPagesSkill } from "./skills/list-meta-pages.js";
 import { proposeMetaActionSkill } from "./skills/propose-meta-action.js";
@@ -21,6 +24,7 @@ import { seedreamPromptSkill } from "./skills/seedream-prompt.js";
 import { seedancePromptSkill } from "./skills/seedance-prompt.js";
 import { proposeStoryboardSkill } from "./skills/propose-storyboard.js";
 import { proposeResearchSkill } from "./skills/propose-research.js";
+import { schedulePostsSkill } from "./skills/schedule-posts.js";
 
 /** Add a new skill here (one line). Order is the agent's tool order. */
 export const allSkills: OttoSkill[] = [
@@ -35,8 +39,11 @@ export const allSkills: OttoSkill[] = [
   saveCustomerSegmentSkill,
   saveOfferSkill,
   lookupProductsSkill,
+  ingestProductSkill,
   researchWebSkill,
   metaInsightsSkill,
+  metaAdPerformanceSkill,
+  metaExpertSkill,
   metaListObjectsSkill,
   listMetaPagesSkill,
   proposeMetaActionSkill,
@@ -45,6 +52,7 @@ export const allSkills: OttoSkill[] = [
   seedancePromptSkill,
   proposeStoryboardSkill,
   proposeResearchSkill,
+  schedulePostsSkill,
 ];
 
 export interface SkillMeta {

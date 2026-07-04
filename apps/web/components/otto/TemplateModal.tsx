@@ -14,7 +14,7 @@ import DetailPanel from "@/components/asset/DetailPanel";
 import { startGen, getGenJob } from "@/lib/gen-actions";
 import { uploadFilesDirect } from "@/lib/direct-upload";
 import { finalizeCandidateUploads } from "@/lib/upload-actions";
-import { activeImageModel } from "@fikirtive/core";
+import { activeImageModel } from "@fikirtive/core/model-config";
 import type { EntityDTO } from "@/lib/types";
 import { type Template, buildTemplatePrompt, templateRunCredits } from "@/lib/templates";
 

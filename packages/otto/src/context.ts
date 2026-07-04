@@ -1,4 +1,4 @@
-import type { GenRequestInput } from "@fikirtive/core";
+import type { GenRequestInput, ProductDraft, ScheduleDraftInput } from "@fikirtive/core";
 
 /** Minimal structural re-declaration of MetaAdObject for the otto package.
  *  The web type (apps/web/lib/meta-objects.ts) must NOT be imported here. */
@@ -73,6 +73,29 @@ export interface OttoContext {
   metaInsights?: {
     get(datePreset: string): Promise<
       | { accounts: { accountId: string; name: string; metrics: Record<string, string | null> }[] }
+      | { needsReconnect: true }
+      | { notConnected: true }
+    >;
+  };
+  /** Meta per-ad performance port (P1a) — injected by the web caller; reads the owner's
+   *  connected ad-level performance + creative. Skills reach it ONLY via ctx.metaPerformance,
+   *  never importing meta-performance.ts. Single action layer: this port and the P1b human
+   *  panel's getAdPerformance action both resolve to fetchOwnerAdPerformance. */
+  metaPerformance?: {
+    getAds(datePreset: string): Promise<
+      | {
+          ads: {
+            adId: string;
+            adName: string | null;
+            accountId: string;
+            metrics: Record<string, string | null>;
+            creative: { imageUrl: string | null; body: string | null; title: string | null; videoId: string | null } | null;
+          }[];
+          truncated: boolean;
+          organic: { status: "pending_permission" } | { posts: [] };
+          datePreset: string;
+          fetchedAt: string;
+        }
       | { needsReconnect: true }
       | { notConnected: true }
     >;
@@ -153,5 +176,22 @@ export interface OttoContext {
    *  memory-actions.ts directly (CI fence rule). */
   brandBrain?: {
     context(): Promise<string>;
+  };
+  /** Schedule-draft port (#123) — injected by the web caller. Drafts ONE IG/FB post through the
+   *  SAME shared authority the human action uses (draftScheduledPost: shared core validation +
+   *  owner-scoped media check + create). Skills reach it ONLY via ctx.schedule — never importing
+   *  prisma/schedule-service directly (single-action-layer rule). Absent in the minimal worker
+   *  verdict ctx; the skill degrades gracefully when it is not injected. Never publishes/approves/spends. */
+  schedule?: {
+    draft(input: ScheduleDraftInput): Promise<{ ok: true; id: string } | { error: string }>;
+  };
+  /** Product-ingest port (P1-01) — injected by the web caller. Fetches a URL (SSRF-hardened)
+   *  and runs the deterministic Layer-1 extractor, returning a product DRAFT plus the page text.
+   *  Otto fills any gaps itself from `text` (no separate LLM call) — that is this path's Layer 2.
+   *  Skills reach it ONLY via ctx.productIngest — never importing fetch-extract/product-extract
+   *  or calling fetch() directly (CI fence rule). Absent in the minimal worker verdict ctx; the
+   *  skill degrades gracefully when it is not injected. */
+  productIngest?: {
+    fromUrl(url: string): Promise<{ draft: ProductDraft; text: string } | { error: string }>;
   };
 }

@@ -13,6 +13,7 @@ import { OttoMemory } from "./OttoMemory";
 import { OttoAccount } from "./OttoAccount";
 import { OttoStuff, type AdTile } from "./OttoStuff";
 import { OttoAnalytics } from "./OttoAnalytics";
+import { OttoSchedule } from "./OttoSchedule";
 import type { AnalyticsData } from "@/lib/analytics-actions";
 import { OttoOnboarding } from "./OttoOnboarding";
 import OttoLibrary from "./OttoLibrary";
@@ -120,7 +121,7 @@ export function OttoView({
     );
   }
   if (view === "schedule") {
-    return <ComingSoon title="Schedule" line="Plan your posts on a calendar and let OTTO auto-publish to Instagram and Facebook. Coming soon." />;
+    return <OttoSchedule stuffItems={stuffItems} onNavigate={onViewChange} />;
   }
   if (view === "analytics") {
     return <OttoAnalytics initial={analytics} onNavigate={onViewChange} />;
@@ -349,27 +350,6 @@ export function OttoView({
         )}
         <FlowCanvas projectId={projectId} entities={entities} activeThreadId={activeThreadId} activity={activity} skin={skin} />
       </div>
-    </div>
-  );
-}
-
-/** Placeholder for nav destinations whose hi-fi screen lands in a later phase. */
-function ComingSoon({ title, line }: { title: string; line: string }) {
-  /* leading-[1.5] — design-baseline body line-height (Analytics standard) */
-  return (
-    <div className="gb leading-[1.5] flex-1 flex flex-col items-center justify-center gap-3 text-center p-8">
-      <svg width={56} height={51} viewBox="0 0 120 110" aria-hidden>
-        <g fill="var(--brand)">
-          <ellipse cx="60" cy="64" rx="43" ry="22" />
-          <circle cx="37" cy="52" r="18" />
-          <circle cx="61" cy="40" r="24" />
-          <circle cx="85" cy="53" r="17" />
-        </g>
-        <ellipse cx="56" cy="49" rx="3.6" ry="4.6" fill="#2B1308" />
-        <ellipse cx="71" cy="49" rx="3.6" ry="4.6" fill="#2B1308" />
-      </svg>
-      <div className="text-[1.5rem] font-bold text-foreground tracking-[-0.02em] leading-normal">{title}</div>
-      <div className="text-[0.875rem] text-muted-foreground leading-[1.45]" style={{ maxWidth: 360 }}>{line}</div>
     </div>
   );
 }

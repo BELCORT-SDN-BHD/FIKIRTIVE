@@ -1,6 +1,6 @@
 "use client";
 import React, { useState } from "react";
-import { offerPhase } from "@fikirtive/core";
+import { offerPhase } from "@fikirtive/core/brand-records";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";

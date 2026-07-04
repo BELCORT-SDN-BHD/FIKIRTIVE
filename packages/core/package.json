@@ -7,6 +7,42 @@
     ".": {
       "types": "./dist/index.d.ts",
       "default": "./dist/index.js"
+    },
+    "./brand-records": {
+      "types": "./dist/brand-records.d.ts",
+      "default": "./dist/brand-records.js"
+    },
+    "./cowork-directives": {
+      "types": "./dist/cowork-directives.d.ts",
+      "default": "./dist/cowork-directives.js"
+    },
+    "./gen": {
+      "types": "./dist/gen.d.ts",
+      "default": "./dist/gen.js"
+    },
+    "./memory-sections": {
+      "types": "./dist/memory-sections.d.ts",
+      "default": "./dist/memory-sections.js"
+    },
+    "./model-config": {
+      "types": "./dist/model-config.d.ts",
+      "default": "./dist/model-config.js"
+    },
+    "./refgen": {
+      "types": "./dist/refgen.d.ts",
+      "default": "./dist/refgen.js"
+    },
+    "./spend": {
+      "types": "./dist/spend.d.ts",
+      "default": "./dist/spend.js"
+    },
+    "./upload": {
+      "types": "./dist/upload.d.ts",
+      "default": "./dist/upload.js"
+    },
+    "./server": {
+      "types": "./dist/server.d.ts",
+      "default": "./dist/server.js"
     }
   },
   "scripts": {
