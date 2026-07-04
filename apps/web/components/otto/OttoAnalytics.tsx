@@ -41,12 +41,12 @@ export function OttoAnalytics({
   // Header platform select — same styling as the date-range select. "(soon)"
   // suffix on placeholder platforms; · read-only muted tag trails it.
   const platformSelect = (
-    <>
+    <div className="flex min-w-0 flex-wrap items-center gap-2">
       <select
         aria-label="Platform"
         value={platform}
         onChange={(e) => setPlatform(e.target.value)}
-        className="h-[34px] rounded-[10px] border border-border bg-card px-[13px] text-[13px] font-semibold"
+        className="h-[34px] max-w-full rounded-[10px] border border-border bg-card px-[13px] text-[13px] font-semibold"
       >
         {ANALYTICS_PLATFORMS.map((p) => (
           <option key={p.id} value={p.id}>
@@ -55,8 +55,8 @@ export function OttoAnalytics({
           </option>
         ))}
       </select>
-      <span className="text-[12px] text-muted-foreground">· read-only</span>
-    </>
+      <span className="whitespace-nowrap text-[12px] text-muted-foreground">· read-only</span>
+    </div>
   );
 
   // Header always renders (h1 + platform switcher + · read-only), so a user
@@ -72,10 +72,10 @@ export function OttoAnalytics({
     <div className="flex-1 overflow-auto">
       <div className="mx-auto max-w-[880px] px-7 py-6">
         {/* Header */}
-        <div className="flex items-center gap-3 mb-4">
+        <div className="mb-4 flex flex-wrap items-center gap-3">
           <h1 className="text-[1.5rem] font-bold tracking-[-0.02em]">Analytics</h1>
           {platformSelect}
-          <div className="flex-1" />
+          <div className="hidden flex-1 sm:block" />
           {isReady && (
             <select
               aria-label="Date range"
