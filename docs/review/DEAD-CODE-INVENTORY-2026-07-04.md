@@ -14,7 +14,7 @@
 
 | 项 | 行数 | 证据 |
 |---|---|---|
-| `demo-remotion/` | 整目录 | Artlio 时代营销视频脚手架,在 pnpm workspace 之外,全库 0 引用 |
+| `demo-remotion/` | 整目录 | Artlio 时代营销视频脚手架,在 pnpm workspace 之外;仍存活的生产 QA 脚本已改为运行时生成稳定 PNG fixture |
 | `apps/web/lib/brand-actions.ts`(+ test) | ~237 | 0 importers + 0 UI 函数名引用;brand memory v2 实际走 `brand-record-actions.ts`(BrandRecord),此为 v1 遗留(BrandKit/BrandRule) |
 
 > ⚠️ **BrandKit / BrandRule 表本身不可删。** brand-actions.ts 只是它们的**死写入者**(UI CRUD),

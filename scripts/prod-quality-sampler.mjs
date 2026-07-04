@@ -8,13 +8,13 @@ import { chromium } from "playwright";
 import { mkdir, writeFile } from "node:fs/promises";
 import path from "node:path";
 import os from "node:os";
+import { writePngFixture } from "./qa-fixtures.mjs";
 
 const BASE = process.env.BASE_URL ?? "https://web-production-b13a4.up.railway.app";
 const OUT = path.join(os.homedir(), ".gstack/projects/artlio/quality");
 await mkdir(OUT, { recursive: true });
 const SAMPLES = path.join(OUT, "samples.json");
-const REPO = path.resolve(".");
-const SRC_IMG = path.join(REPO, "demo-remotion/out/s-elements.png");
+const SRC_IMG = await writePngFixture(OUT, "qa-start-frame.png", "source");
 
 const PROD_DB = process.env.PROD_DATABASE_URL;
 if (!PROD_DB) { console.error("PROD_DATABASE_URL is required"); process.exit(1); }
