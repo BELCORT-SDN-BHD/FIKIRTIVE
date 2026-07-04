@@ -22,18 +22,22 @@ export default function OttoConnections() {
 
   async function load() {
     setState({ phase: "loading" });
-    const res = await getMetaConnection();
-    if ("error" in res || !res.connected) return setState({ phase: "disconnected" });
-    if (res.transientError) return setState({ phase: "unreachable" });
-    if (res.needsReconnect) return setState({ phase: "reconnect" });
-    setState({
-      phase: "connected",
-      status: res.status,
-      accounts: res.accounts ?? [],
-      canWrite: res.canWrite ?? false,
-      adsAutonomy: res.adsAutonomy ?? "ASK",
-      adsWritesPaused: res.adsWritesPaused ?? false,
-    });
+    try {
+      const res = await getMetaConnection();
+      if ("error" in res || !res.connected) return setState({ phase: "disconnected" });
+      if (res.transientError) return setState({ phase: "unreachable" });
+      if (res.needsReconnect) return setState({ phase: "reconnect" });
+      setState({
+        phase: "connected",
+        status: res.status,
+        accounts: res.accounts ?? [],
+        canWrite: res.canWrite ?? false,
+        adsAutonomy: res.adsAutonomy ?? "ASK",
+        adsWritesPaused: res.adsWritesPaused ?? false,
+      });
+    } catch {
+      setState({ phase: "unreachable" });
+    }
   }
 
   async function handleAutonomy(mode: "ASK" | "AUTO") {
@@ -86,7 +90,18 @@ export default function OttoConnections() {
         <div className="bg-card border border-border rounded-[14px]" style={{ padding: "1rem" }}>
           <div className="text-foreground font-semibold" style={{ fontSize: 15 }}>Meta (Facebook &amp; Instagram Ads)</div>
 
-          {state.phase === "loading" && <p className="text-muted-foreground text-[0.75rem]">Checking…</p>}
+          {state.phase === "loading" && (
+            <div style={{ marginTop: "0.5rem", display: "flex", flexDirection: "column", alignItems: "flex-start", gap: "0.5rem" }}>
+              <p className="text-muted-foreground text-[0.75rem]" style={{ margin: 0 }}>
+                Checking…
+              </p>
+              <Button asChild size="sm" variant="ghost">
+                <a href="/api/meta/authorize" style={{ textDecoration: "none" }}>
+                  Connect Meta
+                </a>
+              </Button>
+            </div>
+          )}
 
           {state.phase === "disconnected" && (
             <Button asChild size="sm" variant="brand" className="mt-2">
@@ -97,13 +112,20 @@ export default function OttoConnections() {
           )}
 
           {state.phase === "unreachable" && (
-            <div style={{ marginTop: "0.5rem" }}>
-              <p className="text-muted-foreground text-[0.75rem]">
+            <div style={{ marginTop: "0.5rem", display: "flex", flexDirection: "column", alignItems: "flex-start", gap: "0.5rem" }}>
+              <p className="text-muted-foreground text-[0.75rem]" style={{ margin: 0 }}>
                 Couldn&rsquo;t reach Meta just now — this is usually temporary. Your connection is fine.
               </p>
-              <Button type="button" size="sm" variant="ghost" onClick={() => void load()}>
-                Retry
-              </Button>
+              <div style={{ display: "flex", gap: "0.5rem", flexWrap: "wrap" }}>
+                <Button type="button" size="sm" variant="ghost" onClick={() => void load()}>
+                  Retry
+                </Button>
+                <Button asChild size="sm" variant="brand">
+                  <a href="/api/meta/authorize" style={{ textDecoration: "none" }}>
+                    Reconnect Meta
+                  </a>
+                </Button>
+              </div>
             </div>
           )}
 
