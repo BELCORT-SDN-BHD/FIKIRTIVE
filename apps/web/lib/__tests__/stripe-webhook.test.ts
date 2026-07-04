@@ -6,6 +6,8 @@ const grantCredits = vi.fn();
 const actionEventCreate = vi.fn();
 vi.mock("@fikirtive/db", () => ({ grantCredits, prisma: { actionEvent: { create: actionEventCreate } } }));
 vi.mock("@fikirtive/core", () => ({ newId: () => "evt_id", INTERNAL_PER_DISPLAY: 10 }));
+const captureMessage = vi.fn();
+vi.mock("@sentry/node", () => ({ captureMessage }));
 
 beforeEach(() => { vi.clearAllMocks(); process.env.STRIPE_WEBHOOK_SECRET = "whsec_test"; actionEventCreate.mockResolvedValue({}); });
 
@@ -69,6 +71,35 @@ describe("stripe webhook", () => {
     const res = await POST(req());
     expect(res.status).toBe(200);
     expect(grantCredits).not.toHaveBeenCalled();
+  });
+
+  // ── 2026-07-04 盲区修复:争议/退款 = 钱被拉回,必须有人被叫到 ──────────────
+  it("charge.dispute.created → audit event + Sentry alert, NO money mutation, 200", async () => {
+    constructEvent.mockReturnValue({
+      id: "evt_d1", type: "charge.dispute.created",
+      data: { object: { id: "dp_1", charge: "ch_1", payment_intent: "pi_1", amount: 5000, reason: "fraudulent", status: "needs_response" } },
+    });
+    const res = await POST(req());
+    expect(res.status).toBe(200);
+    expect(grantCredits).not.toHaveBeenCalled(); // alert-only: clawback 是 founder 的钱决定
+    expect(captureMessage).toHaveBeenCalledWith(expect.stringContaining("charge.dispute.created"), "warning");
+    expect(actionEventCreate).toHaveBeenCalledWith(
+      expect.objectContaining({ data: expect.objectContaining({ type: "credits.dispute" }) }),
+    );
+  });
+
+  it("charge.refunded → audit event + Sentry alert, NO money mutation, 200", async () => {
+    constructEvent.mockReturnValue({
+      id: "evt_r1", type: "charge.refunded",
+      data: { object: { id: "ch_2", payment_intent: "pi_2", amount: 3000, amount_refunded: 3000 } },
+    });
+    const res = await POST(req());
+    expect(res.status).toBe(200);
+    expect(grantCredits).not.toHaveBeenCalled();
+    expect(captureMessage).toHaveBeenCalledWith(expect.stringContaining("charge.refunded"), "warning");
+    expect(actionEventCreate).toHaveBeenCalledWith(
+      expect.objectContaining({ data: expect.objectContaining({ type: "credits.refund" }) }),
+    );
   });
 
   it("200 + no grant when credits is fractional (metadata.credits = '1.5')", async () => {

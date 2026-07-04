@@ -38,6 +38,7 @@ import {
   type CaptionJobData,
   type ResearchJobData,
 } from "@fikirtive/core";
+import { prisma } from "@fikirtive/db";
 
 // Long-lived worker prefers the DIRECT url — a persistent process gains nothing
 // from PgBouncer and the direct path avoids pooler quirks (audit P3).
@@ -171,8 +172,18 @@ async function main(): Promise<void> {
     },
   );
 
-  // Heartbeat: the status panel's "worker alive" signal (appendix A).
-  setInterval(() => console.log(`[worker] heartbeat ${new Date().toISOString()}`), 60_000);
+  // Heartbeat: the status panel's "worker alive" signal (appendix A) + the durable
+  // liveness row /api/health reads (2026-07-04 可观测性盲区修复). A failed write is
+  // logged but never crashes the worker — health degrades to "stale", which is the signal.
+  const beat = () =>
+    prisma.workerHeartbeat
+      .upsert({ where: { id: "worker" }, create: { id: "worker", at: new Date() }, update: { at: new Date() } })
+      .catch((e) => console.warn("[worker] heartbeat write failed:", e instanceof Error ? e.message : e));
+  setInterval(() => {
+    console.log(`[worker] heartbeat ${new Date().toISOString()}`);
+    void beat();
+  }, 60_000);
+  void beat(); // flip /api/health to "up" immediately on boot, not after the first minute
 
   // Reaper: jobs the worker hung/crashed on (no redelivery → the on-claim stale path
   // never runs) would sit GENERATING forever, holding the credit reservation and spinning

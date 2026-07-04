@@ -1,6 +1,7 @@
 import { stripe } from "@/lib/stripe";
 import { grantCredits, prisma } from "@fikirtive/db";
 import { newId, INTERNAL_PER_DISPLAY } from "@fikirtive/core";
+import * as Sentry from "@sentry/node";
 import type { NextRequest } from "next/server";
 
 // Unauthenticated by design — Stripe calls this; the SIGNATURE is the auth. proxy.ts excludes
@@ -39,6 +40,36 @@ export async function POST(req: NextRequest): Promise<Response> {
       });
       await prisma.actionEvent.create({ data: { id: newId(), ownerId: orgId, type: "credits.purchase", payload: { credits, amountTotal: session.amount_total ?? null, paymentIntentId: session.payment_intent ?? null, sessionId: session.id ?? null, eventId: event.id, duplicate: "duplicate" in res } } }).catch(() => {});
     }
+  }
+  // 2026-07-04 盲区修复:争议/退款 = 真钱被拉回,而系统此前对这些事件完全静默
+  // (credits 已发、钱没了、没人知道)。这里是 ALERT-ONLY:记审计 + 叫人,绝不
+  // 自动 clawback —— 扣回用户额度是 founder 的钱决定(设计上 deferred 到 Phase 3b),
+  // 且账本的负 ADJUST 需要人工核对 balance。Sentry 未配 DSN 时 captureMessage 安全 no-op。
+  if (event.type === "charge.dispute.created" || event.type === "charge.dispute.closed" || event.type === "charge.refunded") {
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const obj = event.data.object as any;
+    const kind = event.type === "charge.refunded" ? "credits.refund" : "credits.dispute";
+    Sentry.captureMessage(`[stripe] ${event.type} — money pulled back; check the Stripe dashboard and the credits ledger`, "warning");
+    await prisma.actionEvent
+      .create({
+        data: {
+          id: newId(),
+          ownerId: "founder",
+          type: kind,
+          payload: {
+            eventType: event.type,
+            eventId: event.id,
+            disputeOrChargeId: obj.id ?? null,
+            chargeId: obj.charge ?? null,
+            paymentIntentId: obj.payment_intent ?? null,
+            amount: obj.amount ?? null,
+            amountRefunded: obj.amount_refunded ?? null,
+            reason: obj.reason ?? null,
+            status: obj.status ?? null,
+          },
+        },
+      })
+      .catch(() => {}); // best-effort audit — the 200 (stop Stripe retries) must not depend on it
   }
   return new Response("ok", { status: 200 });
 }

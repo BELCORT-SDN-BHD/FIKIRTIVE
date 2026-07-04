@@ -218,8 +218,10 @@ export const PARITY_MANIFEST = {
 
   "api:better-auth/[...all].GET": { exempt: "ACCOUNT_SECURITY", reason: "Better Auth routes are account-security surfaces." },
   "api:better-auth/[...all].POST": { exempt: "ACCOUNT_SECURITY", reason: "Better Auth routes are account-security surfaces." },
+  "api:health.GET": { exempt: "ADMIN", reason: "Platform liveness probe for external uptime monitors (ops surface); exposes no user capability." },
   "api:meta/authorize.GET": { exempt: "ACCOUNT_SECURITY", reason: "OAuth authorization starts external account binding." },
   "api:meta/callback.GET": { exempt: "ACCOUNT_SECURITY", reason: "OAuth callback binds external accounts and must stay human-controlled." },
+  "api:meta/data-deletion.POST": { exempt: "ACCOUNT_SECURITY", reason: "Meta-initiated data-deletion callback (signed_request auth); unbinds the external account — machine-called, never Otto." },
   "api:otto/stream.POST": { todoSkill: true, reason: "Otto stream is the agent transport; needs a manifest convention separate from individual skills." },
   "api:stripe/webhook.POST": { exempt: "MONEY_IN", reason: "Stripe webhook is money-in and authenticated by Stripe signature, not Otto." },
 } as const satisfies Record<string, ParityManifestEntry>;
