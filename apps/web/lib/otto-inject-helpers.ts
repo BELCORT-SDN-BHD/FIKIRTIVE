@@ -62,8 +62,8 @@ export function deriveCardState(args: {
 /** A job is "working" once its GEN_CARD has a genJobId (it was approved/generated)
  *  but no terminal message (GEN_RESULT or TURN_ERROR) has landed for that job yet.
  *  While any job is working the component polls the durable thread for the result. */
-export function hasWorkingJob(messages: OttoUiMessage[]): boolean {
-  const terminal = new Set<string>();
+export function hasWorkingJob(messages: OttoUiMessage[], extraTerminalJobIds: Set<string> = new Set()): boolean {
+  const terminal = new Set<string>(extraTerminalJobIds);
   for (const m of messages) {
     const meta = m.metadata;
     if ((meta?.kind === "GEN_RESULT" || meta?.kind === "TURN_ERROR") && meta.genJobId) {

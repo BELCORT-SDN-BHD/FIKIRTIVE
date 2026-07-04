@@ -31,6 +31,8 @@ import { CARD_KINDS } from "../otto-inject-helpers";
 const REPO_ROOT = path.resolve(__dirname, "../../../..");
 const SKILLS_DIR = path.join(REPO_ROOT, "packages/otto/src/skills");
 const WEB_LIB_DIR = path.join(REPO_ROOT, "apps/web/lib");
+const OTTO_CHAT_STREAM = path.join(REPO_ROOT, "apps/web/components/otto/OttoChatStream.tsx");
+const OTTO_CONVERSATION = path.join(REPO_ROOT, "apps/web/components/otto/OttoConversation.tsx");
 
 /** 端口持久化的卡片:kind → 提出它的 skill 工具名(跨包,无法从源码推断,手工登记)。 */
 const PORT_CARD_TOOLS: Record<string, string> = {
@@ -152,6 +154,19 @@ describe("card seams — CARD_TOOL_NAMES (seam 5) and CARD_KINDS (seam 4) stay i
           `injectCardMessage/appendMissingCards will silently drop it; the card only appears after a page refresh. ` +
           `This is the exact seam-4 hole the 2026-07-04 adversarial review caught on RESEARCH_CARD.`,
       ).toBe(true);
+    }
+  });
+
+  it("stream approval/cancel paths fully re-arm poll state and refresh after cancel", () => {
+    for (const component of [OTTO_CHAT_STREAM, OTTO_CONVERSATION]) {
+      const src = fs.readFileSync(component, "utf8");
+      const helper = src.match(/function rearmGenerationPoll\(\) \{([\s\S]*?)\n  \}/)?.[1] ?? "";
+      expect(helper).toContain("setPollGaveUp(false)");
+      expect(helper).toContain("setPollTerminal(false)");
+      expect(helper).toContain("pollCountRef.current = 0");
+      expect(helper).toContain("checkAgainUsedRef.current = false");
+      expect((src.match(/rearmGenerationPoll\(\);/g) ?? []).length).toBeGreaterThanOrEqual(4);
+      expect(src).toMatch(/onCancelled=\{[\s\S]*setCancelledJobIds[\s\S]*onBalanceRefresh\?\.\(\)[\s\S]*(pollAndInjectResults|refreshAndUpdate)/);
     }
   });
 });
