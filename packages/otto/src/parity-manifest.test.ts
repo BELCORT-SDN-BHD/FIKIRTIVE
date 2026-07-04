@@ -2,12 +2,12 @@ import { describe, it, expect } from "vitest";
 import { PARITY_MANIFEST, type ParityEntry } from "./parity-manifest.js";
 import { allSkills } from "./registry.js";
 
-// `as const` narrows the literal, so widen back to the ParityEntry union to exercise both branches.
-const entries = Object.entries(PARITY_MANIFEST) as [string, ParityEntry][];
-
 // The 9th seam's core invariant (harmony-02 §二.2): every skill a manifest entry points at must
 // really exist in the registry, and every exemption must use one of the four closed classes. This
 // is the load-bearing subset of the future check-parity.sh — kept as a unit test until that lands.
+// `as const` narrows the literal, so widen back to the ParityEntry union to exercise both branches.
+const entries = Object.entries(PARITY_MANIFEST) as [string, ParityEntry][];
+
 describe("parity manifest", () => {
   const skillNames = new Set(allSkills.map((s) => s.name));
 

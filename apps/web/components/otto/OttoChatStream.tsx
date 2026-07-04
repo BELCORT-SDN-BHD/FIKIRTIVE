@@ -30,6 +30,7 @@ import { PackCard } from "./PackCard";
 import { StoryboardCard } from "./StoryboardCard";
 import { ResearchCard } from "./ResearchCard";
 import { ResearchReport } from "./ResearchReport";
+import { PerformanceCard } from "./PerformanceCard";
 import { OttoResult } from "./OttoResult";
 import { TextPart } from "./parts/TextPart";
 import { StatusLine } from "./parts/StatusLine";
@@ -893,6 +894,14 @@ export function OttoChatStream({
                     onBalanceRefresh={() => void onBalanceRefresh?.()}
                     onRefresh={pollAndInjectResults}
                   />
+                </WidgetRow>
+              );
+            }
+
+            if (kind === "PERFORMANCE_CARD") {
+              return (
+                <WidgetRow key={m.id} animateIn={isNewMessage(m.id)}>
+                  <PerformanceCard payload={m.metadata?.payload} />
                 </WidgetRow>
               );
             }
