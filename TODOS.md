@@ -1,5 +1,9 @@
 # TODOS
 
+> ⚠️ **已废止(TOMBSTONE 2026-07-04)。** pivot 前(Artlio)的 backlog,与当前已发布现实
+> 矛盾(它列为"未做"的 Stripe/auth/credits 等多已 LIVE)。**不要据此判断现状或排优先级。**
+> 权威顺序见 `AGENTS.md` → `docs/BLUEPRINT.md` → 判决记录。保留仅供历史考古。
+
 > 由 /office-hours 与 /plan-ceo-review（2026-06-10）产生的延期项。每项含足够上下文供 3 个月后冷启动。
 
 ## P2 — 阶段二开建前

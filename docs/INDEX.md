@@ -1,5 +1,9 @@
 # docs/ — index & source-of-truth map
 
+> ⚠️ **过期(TOMBSTONE 2026-07-04)。** 本文件冻结于 2026-06-24,早于并**不包含**当前宪法栈
+> (BLUEPRINT / REVIEWER-PLAYBOOK / harmony 七件 / 判决记录)。它不再是"source of truth map"。
+> **权威的 source-of-truth 与阅读顺序在仓库根的 `AGENTS.md`。** 本文件保留仅供旧目录考古。
+
 One line per folder: what it is, and which file is canonical. When two docs cover the
 same thing, the **canonical** one wins; the other is marked superseded.
 
