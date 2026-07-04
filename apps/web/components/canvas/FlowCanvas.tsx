@@ -20,6 +20,7 @@ import type { EntityDTO } from "@/lib/types";
 import { filterNodesByConvo, convoColor } from "@/lib/convo-canvas";
 import { creditsLabel } from "@/lib/credit-format";
 import type { CanvasGenCostQuote } from "@/lib/canvas-gen-costs";
+import { DEFAULT_CANVAS_NODE_LOCK_REASON } from "@/lib/canvas-node-lock";
 
 type CanvasFlowNode = Node & { threadId: string | null };
 type FlowCanvasProps = {
@@ -47,7 +48,7 @@ export default function FlowCanvas({
   onBalanceRefresh,
   onActivityRefresh,
   directToolsLocked = false,
-  directToolsLockedReason = "Start with Otto first.",
+  directToolsLockedReason = DEFAULT_CANVAS_NODE_LOCK_REASON,
 }: FlowCanvasProps) {
   const [nodes, setNodes] = useState<CanvasFlowNode[]>([]);
   const [prompt, setPrompt] = useState("");
@@ -112,6 +113,11 @@ export default function FlowCanvas({
       await Promise.resolve(onActivityRefresh?.()).catch(() => undefined);
     })();
   }, [onActivityRefresh]);
+  const withNodeActionLock = useCallback((data: Record<string, unknown>) => ({
+    ...data,
+    directToolsLocked,
+    directToolsLockedReason,
+  }), [directToolsLocked, directToolsLockedReason]);
 
   // Keep a ref to animate() so per-node closures don't go stale
   const animateFnRef = useRef<ReturnType<typeof useCanvasGen>["animate"] | null>(null);
@@ -216,6 +222,7 @@ export default function FlowCanvas({
 
   // stable delete
   const deleteNode = useCallback((id: string) => {
+    if (directToolsLockedRef.current) return;
     setNodes((ns) => ns.filter((n) => n.id !== id));
     void deleteCanvasNode(id);
   }, []);
@@ -255,12 +262,14 @@ export default function FlowCanvas({
           type: n.type,
           position: { x: n.pos.x, y: n.pos.y },
           data: {
-            status: n.status,
-            prompt: n.prompt,
-            skin,
-            onDelete: () => setPendingDeleteId(n.id),
-            onRefresh: requestReload,
-            // onAnimate added after generationId arrives via onResolve
+            ...withNodeActionLock({
+              status: n.status,
+              prompt: n.prompt,
+              skin,
+              onDelete: () => setPendingDeleteId(n.id),
+              onRefresh: requestReload,
+              // onAnimate added after generationId arrives via onResolve
+            }),
           },
           style: { width: n.pos.w, height: n.pos.h, boxShadow: `0 0 0 2px ${convoColor(activeThreadId ?? null)}` },
           threadId: activeThreadId ?? null,
@@ -268,7 +277,7 @@ export default function FlowCanvas({
       ]);
       scheduleFitView();
     },
-    [activeThreadId, requestReload, skin, scheduleFitView],
+    [activeThreadId, requestReload, skin, scheduleFitView, withNodeActionLock],
   );
 
   const onGenError = useCallback((msg: string) => { toast.error(msg); }, []);
@@ -310,7 +319,7 @@ export default function FlowCanvas({
           id: result.id,
           type: "text",
           position: { x, y: 80 },
-          data: { text: "", status: "done", skin, onChange: (t: string) => onTextChange(result.id, t), onDelete: () => setPendingDeleteId(result.id) },
+          data: withNodeActionLock({ text: "", status: "done", skin, onChange: (t: string) => onTextChange(result.id, t), onDelete: () => setPendingDeleteId(result.id) }),
           style: { width: 240, height: 120, boxShadow: `0 0 0 2px ${convoColor(activeThreadId ?? null)}` },
           threadId: activeThreadId ?? null,
         },
@@ -319,7 +328,7 @@ export default function FlowCanvas({
     } else {
       console.warn("Failed to create text node:", result.error);
     }
-  }, [projectId, activeThreadId, onTextChange, skin, directToolsLocked, scheduleFitView, closeComposer]);
+  }, [projectId, activeThreadId, onTextChange, skin, directToolsLocked, scheduleFitView, closeComposer, withNodeActionLock]);
 
   // Drag-and-drop an image file from anywhere onto the canvas → upload it as an
   // image node. Upload-only (uploadReference creates an UPLOAD Generation); it
@@ -363,14 +372,14 @@ export default function FlowCanvas({
           id: created.id,
           type: "image",
           position: { x, y: 80 },
-          data: { status: "done", url: res.src, generationId: res.id, skin, onDelete: () => setPendingDeleteId(created.id), onRefresh: requestReload, onAnimate: getOnAnimate(created.id), onOpenDetail: getOnOpenDetail(created.id) },
+          data: withNodeActionLock({ status: "done", url: res.src, generationId: res.id, skin, onDelete: () => setPendingDeleteId(created.id), onRefresh: requestReload, onAnimate: getOnAnimate(created.id), onOpenDetail: getOnOpenDetail(created.id) }),
           style: { width: 320, height: 320, boxShadow: `0 0 0 2px ${convoColor(activeThreadId ?? null)}` },
           threadId: activeThreadId ?? null,
         },
       ]);
       scheduleFitView();
     }
-  }, [projectId, activeThreadId, getOnAnimate, getOnOpenDetail, requestReload, skin, scheduleFitView]);
+  }, [projectId, activeThreadId, getOnAnimate, getOnOpenDetail, requestReload, skin, scheduleFitView, withNodeActionLock]);
 
   // Phase 3: text-to-video — the bottom video tool always opens a prompt dialog;
   // image cards own the explicit "Make video" image-to-video path.
@@ -394,6 +403,7 @@ export default function FlowCanvas({
     if (directToolsLocked) {
       closeComposer(true);
       setConfirmGen(false);
+      setPendingDeleteId(null);
       setPendingAnimateId(null);
       setT2vOpen(false);
       setT2vPrompt("");
@@ -419,7 +429,7 @@ export default function FlowCanvas({
         id: r.id,
         type: r.type,
         position: { x: r.x, y: r.y },
-        data: {
+        data: withNodeActionLock({
           // A node with a resolved media URL is finished — show the image. Canvas
           // nodes persist status "pending" and aren't updated to "done" in the DB,
           // so without this a completed generation re-renders as "generating
@@ -435,7 +445,7 @@ export default function FlowCanvas({
           onChange: r.type === "text" ? (t: string) => onTextChange(r.id, t) : undefined,
           onAnimate: r.type === "image" ? getOnAnimate(r.id) : undefined,
           onOpenDetail: r.type === "image" ? getOnOpenDetail(r.id) : undefined,
-        },
+        }),
         style: { width: r.w, height: r.h, boxShadow: `0 0 0 2px ${convoColor(r.threadId ?? null)}` },
         threadId: r.threadId ?? null,
       } as CanvasFlowNode;
@@ -454,7 +464,7 @@ export default function FlowCanvas({
       nodeCountRef.current = all.length;
       return all;
     });
-  }, [skin, projectId, activeThreadId, onTextChange, getOnAnimate, getOnOpenDetail, requestReload]);
+  }, [skin, projectId, activeThreadId, onTextChange, getOnAnimate, getOnOpenDetail, requestReload, withNodeActionLock]);
   reloadRef.current = reload;
 
   // Initial load + reload when the active thread changes (re-bridges that thread).
@@ -484,25 +494,30 @@ export default function FlowCanvas({
 
   // Keep nodeDataRef positions in sync when nodes move (so onAnimate uses fresh coords)
   const onNodesChange = useCallback((changes: NodeChange[]) => {
-    let next = applyNodeChanges(changes, nodesRef.current) as CanvasFlowNode[];
+    const canPersistWrites = !directToolsLockedRef.current;
+    const effectiveChanges = canPersistWrites
+      ? changes
+      : changes.filter((c) => c.type !== "position" && c.type !== "dimensions" && c.type !== "remove");
+    if (effectiveChanges.length === 0) return;
+    let next = applyNodeChanges(effectiveChanges, nodesRef.current) as CanvasFlowNode[];
     const persistMoves: Array<{ id: string; x: number; y: number; w: number; h: number }> = [];
     const deletes: string[] = [];
     // Bridge NodeResizer dimension changes into our style-based sizing so the
     // card visually grows/shrinks on the board (display-only — no regeneration).
-    for (const c of changes) {
+    for (const c of effectiveChanges) {
       if (c.type === "dimensions" && c.dimensions) {
         const { width, height } = c.dimensions;
         next = next.map((n) => (n.id === c.id ? { ...n, style: { ...n.style, width, height } } : n));
       }
     }
-    for (const c of changes) {
+    for (const c of effectiveChanges) {
       if (c.type === "position" && c.position) {
         const n = next.find((x2) => x2.id === c.id);
         // Update position in ref immediately (for onAnimate offset calc)
         const entry = nodeDataRef.current[c.id];
         if (entry) entry.pos = { x: c.position.x, y: c.position.y };
 
-        if (c.dragging === false) {
+        if (canPersistWrites && c.dragging === false) {
           // Read position from CHANGE object (not stale nodes closure)
           const { x, y } = c.position;
           if (n) persistMoves.push({ id: n.id, x, y, w: Number(n.style?.width ?? 320), h: Number(n.style?.height ?? 320) });
@@ -510,7 +525,7 @@ export default function FlowCanvas({
       }
       // Persist the new size when a resize gesture ends (display-only; reuses the
       // same moveCanvasNode path as a drag — no spend, just x/y/w/h).
-      if (c.type === "dimensions" && c.resizing === false) {
+      if (canPersistWrites && c.type === "dimensions" && c.resizing === false) {
         const n = next.find((x2) => x2.id === c.id);
         if (n) {
           const entry = nodeDataRef.current[n.id];
@@ -518,7 +533,7 @@ export default function FlowCanvas({
           persistMoves.push({ id: n.id, x: n.position.x, y: n.position.y, w: Number(n.style?.width ?? 320), h: Number(n.style?.height ?? 320) });
         }
       }
-      if (c.type === "remove") deletes.push(c.id);
+      if (canPersistWrites && c.type === "remove") deletes.push(c.id);
     }
     nodesRef.current = next;
     setNodes(next);
@@ -540,6 +555,10 @@ export default function FlowCanvas({
   const imageCostLabel = costQuote ? creditsLabel(costQuote.imageCredits) : "checking exact cost";
   const videoCostLabel = costQuote ? creditsLabel(costQuote.videoCredits) : "checking exact cost";
   const directToolTitle = directToolsLocked ? directToolsLockedReason : undefined;
+  const visibleNodes: CanvasFlowNode[] = filterNodesByConvo(nodes, activeThreadId, filterToConvo).map((n) => ({
+    ...n,
+    data: withNodeActionLock(n.data),
+  }));
 
   return (
     <div
@@ -575,9 +594,10 @@ export default function FlowCanvas({
           <ReactFlow
             style={{ width: "100%", height: "100%", minHeight: 0 }}
             onInit={(instance) => { flowRef.current = instance; setFlowReady(true); }}
-            nodes={filterNodesByConvo(nodes, activeThreadId, filterToConvo)}
+            nodes={visibleNodes}
             nodeTypes={nodeTypes}
             onNodesChange={onNodesChange}
+            nodesDraggable={!directToolsLocked}
             panOnDrag={panMode}
             selectionOnDrag={!panMode}
             deleteKeyCode={null}
@@ -597,6 +617,7 @@ export default function FlowCanvas({
           projectId={projectId}
           onClose={() => setDetailFor(null)}
           entities={entities}
+          readOnlyReason={directToolsLocked ? directToolsLockedReason : undefined}
         />
       )}
       {skin === "gb" ? (
@@ -723,6 +744,7 @@ export default function FlowCanvas({
             <Button variant="ghost" onClick={() => setPendingDeleteId(null)}>{pendingDeletePaid ? "Keep it" : "Cancel"}</Button>
             <Button
               variant="destructive"
+              disabled={directToolsLocked}
               onClick={() => { if (pendingDeleteId) deleteNode(pendingDeleteId); setPendingDeleteId(null); }}
             >
               Remove

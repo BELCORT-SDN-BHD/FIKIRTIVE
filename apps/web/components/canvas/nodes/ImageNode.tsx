@@ -2,6 +2,7 @@
 import { Handle, NodeToolbar, Position, type NodeProps } from "@xyflow/react";
 import { GeneratingBody, FailedBody } from "./GeneratingBody";
 import { NodeResize } from "./NodeResize";
+import { getCanvasNodeWriteLock } from "@/lib/canvas-node-lock";
 
 export function ImageNode({ data, selected }: NodeProps) {
   const d = data as {
@@ -14,13 +15,16 @@ export function ImageNode({ data, selected }: NodeProps) {
     onDelete?: () => void;
     onOpenDetail?: () => void;
     onRefresh?: () => void;
+    directToolsLocked?: boolean;
+    directToolsLockedReason?: string;
   };
   const terminal = d.status === "failed" || d.status === "timeout" || d.status === "missing";
   const viewable = !!d.url && !terminal;
   const actionable = viewable && !!d.generationId;
+  const writeLock = getCanvasNodeWriteLock(d);
   return (
     <>
-      <NodeResize gb={d.skin === "gb"} selected={selected} />
+      <NodeResize gb={d.skin === "gb"} selected={selected} locked={writeLock.locked} />
       <NodeToolbar
         className="cv-node-toolbar nodrag nopan"
         isVisible={selected}
@@ -45,9 +49,10 @@ export function ImageNode({ data, selected }: NodeProps) {
           <button
             type="button"
             className="al-btn al-btn-glass al-btn-sm nodrag nopan"
+            disabled={writeLock.locked}
             onPointerDown={(e) => e.stopPropagation()}
-            onClick={(e) => { e.stopPropagation(); d.onAnimate?.(); }}
-            title="Make a video from this image"
+            onClick={(e) => { e.stopPropagation(); if (!writeLock.locked) d.onAnimate?.(); }}
+            title={writeLock.locked ? writeLock.reason : "Make a video from this image"}
           >
             Make video
           </button>
@@ -56,8 +61,10 @@ export function ImageNode({ data, selected }: NodeProps) {
           type="button"
           aria-label="Delete image node"
           className="al-btn al-btn-glass al-btn-sm nodrag nopan"
+          disabled={writeLock.locked}
           onPointerDown={(e) => e.stopPropagation()}
-          onClick={(e) => { e.stopPropagation(); d.onDelete?.(); }}
+          onClick={(e) => { e.stopPropagation(); if (!writeLock.locked) d.onDelete?.(); }}
+          title={writeLock.locked ? writeLock.reason : "Delete image node"}
         >
           ✕
         </button>

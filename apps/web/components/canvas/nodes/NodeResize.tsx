@@ -4,7 +4,7 @@
 // see it bigger or smaller. It does NOT re-generate the asset — no money path.
 import { NodeResizer } from "@xyflow/react";
 
-export function NodeResize({ gb, selected }: { gb?: boolean; selected?: boolean }) {
+export function NodeResize({ gb, selected, locked }: { gb?: boolean; selected?: boolean; locked?: boolean }) {
   if (!gb) return null;
-  return <NodeResizer minWidth={140} minHeight={90} color="#EC5828" isVisible={!!selected} />;
+  return <NodeResizer minWidth={140} minHeight={90} color="#EC5828" isVisible={!!selected && !locked} />;
 }

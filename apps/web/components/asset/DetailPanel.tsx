@@ -77,12 +77,15 @@ export default function DetailPanel({
   projectId,
   onClose,
   entities = [],
+  readOnlyReason,
 }: {
   generationId: string;
   projectId: string;
   onClose: () => void;
   entities?: EntityDTO[];
+  readOnlyReason?: string;
 }) {
+  const readOnly = !!readOnlyReason;
   const [state, setState] = useState<PanelState>("loading");
   const [gen, setGen] = useState<GenDTO | null>(null);
   const [favorite, setFavoriteLocal] = useState(false);
@@ -214,6 +217,7 @@ export default function DetailPanel({
   const videoCostLabel = videoCost == null ? "checking exact cost" : creditsLabel(videoCost);
 
   const handleFavorite = useCallback(async () => {
+    if (readOnly) return;
     if (!gen) return;
     const targetGenId = selectedGenId;
     const next = !favorite;
@@ -232,7 +236,7 @@ export default function DetailPanel({
     applyLocal(next); // optimistic
     const result = await setFavorite(targetGenId, next);
     if ("error" in result) applyLocal(!next); // revert
-  }, [gen, favorite, selectedGenId]);
+  }, [gen, favorite, selectedGenId, readOnly]);
 
   const pollJob = useCallback(async (jobId: string): Promise<"done" | "failed" | "timeout"> => {
     // ~8 min at 2.5s — mirrors the canvas poll() window (useCanvasGen.ts). Video gens can
@@ -269,6 +273,7 @@ export default function DetailPanel({
   }, []);
 
   const handleRegen = useCallback(async () => {
+    if (readOnly) return;
     if (!gen || regenBusyRef.current) return;
     regenBusyRef.current = true;
     try {
@@ -301,9 +306,10 @@ export default function DetailPanel({
     } finally {
       regenBusyRef.current = false;
     }
-  }, [gen, generationId, projectId, pollJob, reloadFromJob]);
+  }, [gen, generationId, projectId, pollJob, reloadFromJob, readOnly]);
 
   const handleAnimate = useCallback(async () => {
+    if (readOnly) return;
     if (!gen || animBusyRef.current) return;
     animBusyRef.current = true;
     try {
@@ -342,7 +348,7 @@ export default function DetailPanel({
     } finally {
       animBusyRef.current = false;
     }
-  }, [gen, selectedGenId, projectId, pollJob, chosenAspect, reloadFromJob]);
+  }, [gen, selectedGenId, projectId, pollJob, chosenAspect, reloadFromJob, readOnly]);
 
   const handleCopyLink = useCallback(async () => {
     if (!gen) return;
@@ -357,20 +363,23 @@ export default function DetailPanel({
   }, [gen, selectedIdx]);
 
   const handleDelete = useCallback(async () => {
+    if (readOnly) return;
     await deleteGeneration(selectedGenId);
     onClose();
-  }, [selectedGenId, onClose]);
+  }, [selectedGenId, onClose, readOnly]);
 
   const requestSpendConfirm = useCallback((action: Exclude<ConfirmAction, "delete" | null>) => {
+    if (readOnly) return;
     setConfirmAction(action);
     void ensureModels();
-  }, []);
+  }, [readOnly]);
 
   const requestEditSubmit = useCallback(() => {
+    if (readOnly) return;
     if (!editPrompt.trim() || editStatus === "running") return;
     setConfirmAction("edit");
     void ensureModels();
-  }, [editPrompt, editStatus]);
+  }, [editPrompt, editStatus, readOnly]);
 
   const confirmDetails = (() => {
     switch (confirmAction) {
@@ -379,28 +388,28 @@ export default function DetailPanel({
           title: "Regenerate this image?",
           description: `Creates one new image version from the same prompt. Cost: ${imageCostLabel}. No charge until you confirm.`,
           confirmLabel: imageCost == null ? "Checking cost..." : "Regenerate",
-          disabled: imageCost == null || regenStatus === "running",
+          disabled: readOnly || imageCost == null || regenStatus === "running",
         };
       case "animate":
         return {
           title: "Animate this image?",
           description: `Creates one video from the selected image. Cost: ${videoCostLabel}. No charge until you confirm.`,
           confirmLabel: videoCost == null ? "Checking cost..." : "Animate",
-          disabled: videoCost == null || animStatus === "running",
+          disabled: readOnly || videoCost == null || animStatus === "running",
         };
       case "edit":
         return {
           title: "Generate this edit?",
           description: `Uses the current image as the source for your edit. Cost: ${imageCostLabel}. No charge until you confirm.`,
           confirmLabel: imageCost == null ? "Checking cost..." : "Generate edit",
-          disabled: imageCost == null || editStatus === "running" || !editPrompt.trim(),
+          disabled: readOnly || imageCost == null || editStatus === "running" || !editPrompt.trim(),
         };
       case "delete":
         return {
           title: "Delete this asset?",
           description: "This removes the selected generation from your library and canvas views. This cannot be undone.",
           confirmLabel: "Delete",
-          disabled: false,
+          disabled: readOnly,
         };
       default:
         return null;
@@ -417,6 +426,7 @@ export default function DetailPanel({
 
   // Edit @composer: submit an edit generation
   const handleEditSubmit = useCallback(async () => {
+    if (readOnly) return;
     if (!gen || !editPrompt.trim() || editStatus === "running" || editBusyRef.current) return;
     editBusyRef.current = true;
     try {
@@ -452,19 +462,21 @@ export default function DetailPanel({
     } finally {
       editBusyRef.current = false;
     }
-  }, [gen, editPrompt, editIds, editStatus, projectId, pollJob, reloadFromJob, selectedGenId]);
+  }, [gen, editPrompt, editIds, editStatus, projectId, pollJob, reloadFromJob, selectedGenId, readOnly]);
 
   const runConfirmedAction = useCallback(() => {
     const action = confirmAction;
     setConfirmAction(null);
+    if (readOnly) return;
     if (action === "regen") void handleRegen();
     if (action === "animate") void handleAnimate();
     if (action === "edit") void handleEditSubmit();
     if (action === "delete") void handleDelete();
-  }, [confirmAction, handleAnimate, handleDelete, handleEditSubmit, handleRegen]);
+  }, [confirmAction, handleAnimate, handleDelete, handleEditSubmit, handleRegen, readOnly]);
 
   // Crop: confirm crop and save
   const handleCropConfirm = useCallback(async () => {
+    if (readOnly) return;
     if (!gen || !croppedAreaPixels) return;
     const srcUrl = gen.urls[selectedIdx] ?? gen.url;
     setCropStatus("saving");
@@ -497,7 +509,7 @@ export default function DetailPanel({
         setState("ready");
       });
     }
-  }, [gen, croppedAreaPixels, selectedIdx, selectedGenId]);
+  }, [gen, croppedAreaPixels, selectedIdx, selectedGenId, readOnly]);
 
   // Compute active URL to display
   const displayUrl = gen ? (gen.urls[selectedIdx] ?? gen.url) : null;
@@ -637,6 +649,8 @@ export default function DetailPanel({
                       type="button"
                       aria-selected={chosenAspect === ar}
                       className={`al-seg-item${chosenAspect === ar ? " al-seg-item-active" : ""}`}
+                      disabled={readOnly}
+                      title={readOnlyReason}
                       onClick={() => setChosenAspect(ar)}
                     >
                       {ar}
@@ -653,6 +667,8 @@ export default function DetailPanel({
                 variant={favorite ? "primary" : "ghost"}
                 size="sm"
                 onClick={handleFavorite}
+                disabled={readOnly}
+                title={readOnlyReason}
               >
                 {favorite ? "♥ Saved" : "♡ Save"}
               </Button>
@@ -663,7 +679,8 @@ export default function DetailPanel({
                 size="sm"
                 icon={<IcRetry size={14} />}
                 onClick={() => requestSpendConfirm("regen")}
-                disabled={regenStatus === "running" || regenStatus === "timeout"}
+                disabled={readOnly || regenStatus === "running" || regenStatus === "timeout"}
+                title={readOnlyReason}
               >
                 {regenStatus === "running"
                   ? "Generating…"
@@ -683,7 +700,8 @@ export default function DetailPanel({
                   size="sm"
                   icon={<IcPlay size={14} />}
                   onClick={() => requestSpendConfirm("animate")}
-                  disabled={animStatus === "running" || animStatus === "timeout"}
+                  disabled={readOnly || animStatus === "running" || animStatus === "timeout"}
+                  title={readOnlyReason}
                 >
                   {animStatus === "running"
                     ? "Animating…"
@@ -703,6 +721,8 @@ export default function DetailPanel({
                   variant="ghost"
                   size="sm"
                   onClick={() => { setCrop({ x: 0, y: 0 }); setZoom(1); setCropStatus("idle"); setCropOpen(true); }}
+                  disabled={readOnly}
+                  title={readOnlyReason}
                 >
                   Crop
                 </Button>
@@ -724,7 +744,7 @@ export default function DetailPanel({
               </Button>
 
               {/* Delete */}
-              <Button variant="ghost" size="sm" onClick={() => setConfirmAction("delete")}>
+              <Button variant="ghost" size="sm" onClick={() => { if (!readOnly) setConfirmAction("delete"); }} disabled={readOnly} title={readOnlyReason}>
                 Delete
               </Button>
             </div>
@@ -739,8 +759,9 @@ export default function DetailPanel({
                       entities={entities}
                       docKey={composerKey}
                       placeholder="Describe your edit, @ to reference"
-                      disabled={editStatus === "running"}
+                      disabled={readOnly || editStatus === "running"}
                       onChange={(text, ids) => {
+                        if (readOnly) return;
                         setEditPrompt(text);
                         setEditIds(ids);
                       }}
@@ -751,7 +772,8 @@ export default function DetailPanel({
                     variant="primary"
                     size="sm"
                     onClick={requestEditSubmit}
-                    disabled={editStatus === "running" || editStatus === "timeout" || !editPrompt.trim()}
+                    disabled={readOnly || editStatus === "running" || editStatus === "timeout" || !editPrompt.trim()}
+                    title={readOnlyReason}
                   >
                     {editStatus === "running"
                       ? "Editing…"
@@ -768,7 +790,7 @@ export default function DetailPanel({
             )}
 
             {/* Crop modal (16) — normal-flow overlay inside panel, NOT position:fixed */}
-            {cropOpen && (
+            {cropOpen && !readOnly && (
               <div
                 style={{
                   position: "absolute",
@@ -808,7 +830,7 @@ export default function DetailPanel({
                     variant="primary"
                     size="sm"
                     onClick={handleCropConfirm}
-                    disabled={cropStatus === "saving"}
+                    disabled={readOnly || cropStatus === "saving"}
                   >
                     {cropStatus === "saving" ? "Saving…" : "Confirm crop"}
                   </Button>

@@ -2,9 +2,18 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { NodeToolbar, Position, type NodeProps } from "@xyflow/react";
 import { NodeResize } from "./NodeResize";
+import { getCanvasNodeWriteLock } from "@/lib/canvas-node-lock";
 
 export function TextNode({ data, selected }: NodeProps) {
-  const d = data as { text?: string; skin?: string; onChange?: (t: string) => void; onDelete?: () => void };
+  const d = data as {
+    text?: string;
+    skin?: string;
+    onChange?: (t: string) => void;
+    onDelete?: () => void;
+    directToolsLocked?: boolean;
+    directToolsLockedReason?: string;
+  };
+  const writeLock = getCanvasNodeWriteLock(d);
   const [val, setVal] = useState(d.text ?? "");
   const latestRef = useRef(val);
   const savedRef = useRef(d.text ?? "");
@@ -40,6 +49,7 @@ export function TextNode({ data, selected }: NodeProps) {
   }, [d.text]);
 
   const update = useCallback((next: string) => {
+    if (writeLock.locked) return;
     setVal(next);
     latestRef.current = next;
     if (timerRef.current) window.clearTimeout(timerRef.current);
@@ -47,11 +57,11 @@ export function TextNode({ data, selected }: NodeProps) {
       timerRef.current = null;
       flush();
     }, 350);
-  }, [flush]);
+  }, [flush, writeLock.locked]);
 
   return (
     <>
-      <NodeResize gb={d.skin === "gb"} selected={selected} />
+      <NodeResize gb={d.skin === "gb"} selected={selected} locked={writeLock.locked} />
       <NodeToolbar
         className="cv-node-toolbar nodrag nopan"
         isVisible={selected}
@@ -66,8 +76,10 @@ export function TextNode({ data, selected }: NodeProps) {
           type="button"
           aria-label="Delete text node"
           className="al-btn al-btn-glass al-btn-sm nodrag nopan"
+          disabled={writeLock.locked}
           onPointerDown={(e) => e.stopPropagation()}
-          onClick={(e) => { e.stopPropagation(); d.onDelete?.(); }}
+          onClick={(e) => { e.stopPropagation(); if (!writeLock.locked) d.onDelete?.(); }}
+          title={writeLock.locked ? writeLock.reason : "Delete text node"}
         >
           ✕
         </button>
@@ -84,6 +96,9 @@ export function TextNode({ data, selected }: NodeProps) {
         value={val}
         onChange={(e) => update(e.target.value)}
         onBlur={flush}
+        readOnly={writeLock.locked}
+        aria-readonly={writeLock.locked}
+        title={writeLock.locked ? writeLock.reason : undefined}
         placeholder="Type here…"
         style={{ width: "100%", height: "100%", border: "none", background: "transparent", resize: "none", outline: "none", fontSize: 13, fontWeight: 500, lineHeight: 1.45 }}
       />
