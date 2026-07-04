@@ -3,7 +3,9 @@
 PR: https://github.com/toolsbbb/FIKIRTIVE/pull/131
 Environment: production, `https://fikirtive.com`
 Run window: 2026-07-04 06:30-06:56 UTC / 2026-07-04 14:30-14:56 +08
-PR head observed during run: `6140e15fa2613d6e9e2150781793fce89c5be9f1`
+Follow-up window: 2026-07-04 07:27-07:30 UTC / 2026-07-04 15:27-15:30 +08
+PR head observed during first run: `6140e15fa2613d6e9e2150781793fce89c5be9f1`
+PR head observed during follow-up: `f6461fc55fc16f7365d6c0241041204f2ecac2ab`
 
 ## Approval
 
@@ -21,12 +23,14 @@ Overall result: partial pass.
 - One real production image generation completed successfully.
 - Spend used: USD 0.16 of the approved USD 60 cap.
 - Ledger behavior passed for the real generation: `RESERVE -4 +4 hold` followed by `SETTLE 0 -4 hold`.
-- Google OAuth failed before consent with Google `redirect_uri_mismatch`.
-- Production was not running PR #131 admin v2 at the time of this run: the PR-only admin routes returned 404, and GitHub reported PR #131 merge state `DIRTY`.
+- Google OAuth failed before consent during the first run with Google `redirect_uri_mismatch`; the follow-up passed the OAuth initiation boundary and reached Google's sign-in page with the expected Better Auth callback URI.
+- Google consent/callback was not completed because no Google account credentials were available to the browser.
+- Replacement magic links supplied for the follow-up were already invalid or expired; they did not create new sessions.
+- Production was not running PR #131 admin v2 at the time of the first run: the PR-only admin routes returned 404. PR #131 is now merge-clean and CI-green, but production canary still requires a human merge/deploy.
 
 ## CI And Deploy State
 
-GitHub PR state observed after the run:
+GitHub PR state observed after the first run:
 
 - Head: `6140e15fa2613d6e9e2150781793fce89c5be9f1`
 - Checks: green
@@ -34,6 +38,15 @@ GitHub PR state observed after the run:
   - `next build (apps/web)`: success
   - `unit + integration tests`: success
 - Merge state: `DIRTY`
+
+GitHub PR state observed after the follow-up:
+
+- Head: `f6461fc55fc16f7365d6c0241041204f2ecac2ab`
+- Checks: green
+  - `typecheck + fences + frozen lockfile`: success
+  - `next build (apps/web)`: success
+  - `unit + integration tests`: success
+- Merge state: `CLEAN`
 
 Production canary caveat: production was not serving the new admin v2 route set from PR #131. The following PR routes exist in source but returned 404 on production during this run: `/admin/otto`, `/admin/staff`, `/admin/money`, and `/admin/cases`.
 
@@ -58,6 +71,10 @@ Fresh admin magic link:
 - Screenshot: `.gstack/qa-reports/screenshots/prod-admin-otto-home.png`
 
 Initial auth note: an earlier normal-user token produced a Cloudflare 502 from the Better Auth magic-link verify route and was then invalid on retry. Fresh replacement links succeeded, so this did not block the run, but it is worth watching as an auth-edge transient.
+
+Follow-up auth note: the next replacement admin and normal-user magic links both redirected through `/otto?error=INVALID_TOKEN` and landed on `/login`. They were therefore expired, already consumed, or otherwise invalid at test time. No raw token values are recorded.
+
+Follow-up sign-out note: clicking the production Account `Sign out` control cleared the session, but the visible page did not immediately navigate to `/login`; a subsequent protected `/otto` navigation redirected to `/login?from=%2Fotto`. This should be rechecked after deploy because local QA for the PR had sign-out passing.
 
 ## Normal User Route Smoke
 
@@ -92,7 +109,7 @@ No Stripe checkout was run.
 Route: `/login?from=%2Fotto`
 Action: clicked `Continue with Google`.
 
-Result: fail before Google consent.
+Initial result: fail before Google consent.
 
 Observed Google error:
 
@@ -100,9 +117,25 @@ Observed Google error:
 - App shown by Google: `Potato App`
 - Redirect URI shown by Google: `https://fikirtive.com/api/better-auth/callback/google`
 
-Required fix: add `https://fikirtive.com/api/better-auth/callback/google` to the authorized redirect URIs for the Google OAuth client configured in production, then rerun the OAuth smoke.
+Required fix from the initial run: add `https://fikirtive.com/api/better-auth/callback/google` to the authorized redirect URIs for the Google OAuth client configured in production, then rerun the OAuth smoke.
 
 No Google account consent or app callback state was reached.
+
+Follow-up result: pass for OAuth initiation, still unproven for consent/callback.
+
+Observed follow-up behavior:
+
+- `POST /api/better-auth/sign-in/social` returned `200`.
+- Google OAuth auth URL returned `302`.
+- Browser reached the Google sign-in page for `fikirtive.com`.
+- Redirect URI in the Google URL was `https://fikirtive.com/api/better-auth/callback/google`.
+- No console errors were observed.
+
+Follow-up evidence:
+
+- `.gstack/qa-reports/screenshots/prod-2026-07-04/google-oauth-google-login.png`
+
+The earlier `redirect_uri_mismatch` appears fixed in Google Cloud configuration. Full OAuth completion still needs a controlled Google account consent flow.
 
 ## Admin Route Smoke
 
@@ -201,9 +234,9 @@ Margin check:
 
 ## Required Follow-Ups
 
-1. Rebase or update PR #131 until GitHub merge state is `CLEAN`, rerun CI, then have an authorized human merge/deploy.
+1. Have an authorized human merge/deploy PR #131 now that it is `CLEAN` and CI-green.
 2. After deploy, rerun production canary specifically against the PR #131 admin v2 routes.
-3. Fix Google OAuth authorized redirect URI in Google Cloud Console:
-   `https://fikirtive.com/api/better-auth/callback/google`
-4. Decide whether the old `/admin/content` route should remain reachable. If yes, remove direct cross-tenant `/files` media previews or replace them with an explicit admin-gated preview route.
-5. Run the remaining approved-but-not-executed gates only if still needed: Stripe test-mode checkout/webhook, Meta OAuth, real video, reference-video, and Otto LLM accounting.
+3. Complete Google OAuth through consent/callback with a controlled Google account; initiation now reaches Google and no longer shows `redirect_uri_mismatch`.
+4. Recheck Account `Sign out` on the deployed PR build; current production cleared the session but did not visibly navigate until the next protected route load.
+5. Decide whether the old `/admin/content` route should remain reachable. If yes, remove direct cross-tenant `/files` media previews or replace them with an explicit admin-gated preview route.
+6. Run the remaining approved-but-not-executed gates only if still needed: Stripe test-mode checkout/webhook, Meta OAuth, real video, reference-video, and Otto LLM accounting.

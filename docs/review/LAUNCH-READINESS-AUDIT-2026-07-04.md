@@ -1,7 +1,7 @@
 # Launch Readiness Audit - 2026-07-04
 
 PR: https://github.com/toolsbbb/FIKIRTIVE/pull/131
-Last code head audited before this document-only follow-up: `0985a94910d32d1b91006c7d29191b52ea0c6eef`
+Last code head audited before this document-only follow-up: `f6461fc55fc16f7365d6c0241041204f2ecac2ab`
 Merge state: `CLEAN`
 
 This audit consolidates the local QA reports, tracked review docs, PR comments, and CI status for the public-launch readiness goal. It does not replace the per-surface reports; it maps them to the launch requirements and names the remaining gates.
@@ -10,10 +10,10 @@ This audit consolidates the local QA reports, tracked review docs, PR comments, 
 
 - `docs/BLUEPRINT.md` remains the constitution. It was read and was not edited.
 - `.claude/CLAUDE.md` merge and spend discipline still applies: all changes through PR, CI green before merge, no direct main push, no self-merge, and no real supplier spend without explicit founder approval per spend.
-- All browser QA in this audit used local safe boundaries unless explicitly noted:
+- Local browser QA in this audit used safe boundaries unless explicitly noted:
   - `GENERATION_PROVIDER=mock`
   - `COWORK_PROVIDER=mock`
-  - no real BytePlus, fal, Anthropic, Stripe, Google OAuth, or Meta OAuth calls.
+- Production smoke explicitly used real generation once and real Google OAuth initiation; remaining paid/external gates are listed below.
 
 ## Requirement Status
 
@@ -24,11 +24,11 @@ This audit consolidates the local QA reports, tracked review docs, PR comments, 
 | Mobile layout is launch-safe for tested surfaces | Proven for tested surfaces at 390px | Per-surface mobile checks and screenshots |
 | Margin model is above constitutional floor | Proven from executable pricing and current official BytePlus evidence | `docs/review/MARGIN-PARITY-REPORT-2026-07-04.md` |
 | All changes/reports are handled in PR | Proven for tracked reports and PR comments | PR #131, tracked docs, comments |
-| CI is green | Proven | GitHub checks for run `28696231293`: typecheck/fences/lockfile, next build, unit + integration all passed |
-| Live paid supplier smoke | Partially proven in production | One real production image generation passed; see `docs/review/EXTERNAL-SMOKE-RESULTS-2026-07-04.md`. Video, reference-video, and Otto LLM-only accounting were not run. |
+| CI is green | Proven | GitHub checks for run `28698962964`: typecheck/fences/lockfile, next build, unit + integration all passed |
+| Live paid supplier smoke | Partially proven in production | One real production image generation passed with USD 0.16 COGS; see `docs/review/EXTERNAL-SMOKE-RESULTS-2026-07-04.md`. Video, reference-video, and Otto LLM-only accounting were not run. |
 | Real Stripe checkout/webhook | Not yet proven | Local QA intentionally avoided real checkout |
-| Real Meta/Google OAuth and connected Meta states | Failed for Google; Meta not run | Production Google OAuth failed with `redirect_uri_mismatch`; connected OAuth state remains unproven. See `docs/review/EXTERNAL-SMOKE-RESULTS-2026-07-04.md`. |
-| Production deploy/canary | Partially proven for current production only | Current production route smoke passed for tested normal/admin routes, but production was not serving PR #131 admin v2 and PR merge state later reported `DIRTY`. |
+| Real Meta/Google OAuth and connected Meta states | Partially proven for Google initiation; Meta not run | Follow-up Google OAuth reached Google's sign-in page with the Better Auth callback URI; consent/callback and connected OAuth state remain unproven. See `docs/review/EXTERNAL-SMOKE-RESULTS-2026-07-04.md`. |
+| Production deploy/canary | Partially proven for current production only | Current production route smoke passed for tested normal/admin routes, but production was not serving PR #131 admin v2. PR #131 is now merge-clean and CI-green; post-merge deploy canary remains required. |
 
 ## Browser QA Coverage
 
@@ -247,10 +247,12 @@ External production follow-up:
 
 - Result file: `docs/review/EXTERNAL-SMOKE-RESULTS-2026-07-04.md`
 - One real production image generation completed successfully with USD 0.16 COGS and paired reserve/settle ledger rows.
-- Production Google OAuth failed before consent with `redirect_uri_mismatch` for `https://fikirtive.com/api/better-auth/callback/google`.
-- Production did not yet validate PR #131 admin v2 because the PR-only admin routes returned 404 on production and GitHub reported merge state `DIRTY`.
+- Production Google OAuth initially failed before consent with `redirect_uri_mismatch`, then a follow-up reached Google's sign-in page with `https://fikirtive.com/api/better-auth/callback/google`.
+- Production did not yet validate PR #131 admin v2 because the PR-only admin routes returned 404 before merge/deploy.
+- Follow-up replacement admin and normal magic links were invalid at test time; earlier fresh magic links had already proven both roles.
+- Current production Account sign-out cleared the session but did not visibly navigate until the next protected route load; recheck after deploy.
 
-GitHub CI for audited code head `0985a94`:
+GitHub CI for audited code head `f6461fc`:
 
 - `typecheck + fences + frozen lockfile`: pass
 - `next build (apps/web)`: pass
@@ -271,8 +273,9 @@ Recent local verification recorded in the tracked reports includes:
 These are the only material items not proven by current evidence:
 
 1. Live paid supplier smoke.
-   - Needed to prove real Anthropic/Otto LLM and real BytePlus media generation still work with production-like credentials.
-   - Not run because `.claude/CLAUDE.md` and `docs/BLUEPRINT.md` require explicit approval per real spend.
+   - One real production image generation has passed.
+   - Still needed to prove real Anthropic/Otto LLM, real Seedance video, and real reference-video generation with production-like credentials.
+   - Remaining paid calls must stay inside the founder-approved spend cap.
    - Execution checklist: `docs/review/EXTERNAL-SMOKE-RUNBOOK-2026-07-04.md`.
 
 2. Real Stripe checkout and webhook.
@@ -282,6 +285,7 @@ These are the only material items not proven by current evidence:
 
 3. Real Meta/Google OAuth and connected Meta states.
    - Local QA verified links and disconnected states.
+   - Google OAuth initiation now reaches Google sign-in; callback/consent still needs a controlled Google account.
    - Connected account, insights, publish-draft, reconnect, outage, pause, and disconnect states need OAuth credentials or seeded connection fixtures.
    - Execution checklist: `docs/review/EXTERNAL-SMOKE-RUNBOOK-2026-07-04.md`.
 
@@ -307,4 +311,4 @@ Run only after explicit founder approval for each spend group:
 
 Software-local launch readiness is strong for the tested no-spend and disconnected states: routes load, safe buttons work, known defects found during QA were fixed, margin math is documented against current official BytePlus evidence, and PR #131 is green.
 
-Full public launch remains gated on explicit founder-approved paid supplier smoke, real Stripe checkout/webhook verification, real OAuth connected-state verification, and post-deploy canary. Without those, completion of the original goal is not proven.
+Full public launch remains gated on remaining paid supplier smoke beyond the proven image path, real Stripe checkout/webhook verification, real OAuth consent/connected-state verification, and post-deploy canary after a human merge/deploy. Without those, completion of the original goal is not proven.
