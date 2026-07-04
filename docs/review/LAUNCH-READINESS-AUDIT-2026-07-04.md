@@ -1,7 +1,7 @@
 # Launch Readiness Audit - 2026-07-04
 
 PR: https://github.com/toolsbbb/FIKIRTIVE/pull/131
-Last code head audited before this document-only follow-up: `f6461fc55fc16f7365d6c0241041204f2ecac2ab`
+Last code head audited before this follow-up: `3c655e0`
 Merge state: `CLEAN`
 
 This audit consolidates the local QA reports, tracked review docs, PR comments, and CI status for the public-launch readiness goal. It does not replace the per-surface reports; it maps them to the launch requirements and names the remaining gates.
@@ -29,6 +29,7 @@ This audit consolidates the local QA reports, tracked review docs, PR comments, 
 | Real Stripe checkout/webhook | Not yet proven | Local QA intentionally avoided real checkout |
 | Real Meta/Google OAuth and connected Meta states | Partially proven for Google initiation; Meta not run | Follow-up Google OAuth reached Google's sign-in page with the Better Auth callback URI; consent/callback and connected OAuth state remain unproven. See `docs/review/EXTERNAL-SMOKE-RESULTS-2026-07-04.md`. |
 | Production deploy/canary | Partially proven for current production only | Current production route smoke passed for tested normal/admin routes, but production was not serving PR #131 admin v2. PR #131 is now merge-clean and CI-green; post-merge deploy canary remains required. |
+| Direct admin credit-action cap | Proven locally with tests and browser QA | Commit `3c655e0` enforces the 1,000 displayed-credit direct cap for founder and tenant actions; over-limit Apply buttons are disabled and server actions reject the same input. |
 
 ## Browser QA Coverage
 
@@ -208,6 +209,28 @@ Boundary:
 
 Result: pass. Monitored dev diagnostic remains: intentional admin aggregate reads trigger tenant-guard warning noise.
 
+### Local Prod-Scale Seeded Admin QA
+
+Evidence:
+- Screenshots:
+  - `.gstack/qa-reports/screenshots/local-prod-scale-2026-07-04/admin-home.png`
+  - `.gstack/qa-reports/screenshots/local-prod-scale-2026-07-04/admin-money.png`
+  - `.gstack/qa-reports/screenshots/local-prod-scale-2026-07-04/admin-money-overlimit.png`
+  - `.gstack/qa-reports/screenshots/local-prod-scale-2026-07-04/admin-money-overlimit-fixed.png`
+  - `.gstack/qa-reports/screenshots/local-prod-scale-2026-07-04/tenant-overlimit-fixed.png`
+
+Covered:
+- Seeded QA database with production-scale admin samples: 2 orgs, 10 projects, 24 entities, 282 assets, 632 generations, 50 threads, 60 messages, 40 nodes, and 10 ledger rows.
+- Founder local magic-link sign-in, `/otto`, `/admin`, `/admin/money`, and `/admin/tenants/org_qa_merchant`.
+- Admin money overview, BytePlus pack telemetry, ledger/risk queue, tenant detail credit activity, and direct credit-action cap states.
+
+Finding and fix:
+- Before `3c655e0`, `/admin/money` let a super-admin apply `+1,500` displayed credits despite the "Over finance limit" state. The local ledger mutated, proving the server action was the weak point.
+- `3c655e0` removed the super-admin bypass in `grantCreditsAction`, added the same 1,000 displayed-credit cap to `grantTenantCredits`, and disabled/prevented over-limit form submits in both admin UIs.
+- Retest: founder money form and tenant detail form both show `Over finance limit` with Apply disabled for `1501`; no new `QA over-limit after fix` ledger/audit row appeared.
+
+Result: pass after fix.
+
 ## Margin and Spend Safety
 
 Evidence:
@@ -240,6 +263,7 @@ Load-bearing constraints:
 - `7ffcd91` - First-run front door blocker and mobile onboarding spacing.
 - `f0adbc3` - All four front-door goal tiles recorded in QA report.
 - `0985a94` - Launch readiness audit added.
+- `3c655e0` - Direct admin credit-action cap enforced for founder and tenant credit actions.
 
 ## Current Verification State
 
@@ -247,16 +271,25 @@ External production follow-up:
 
 - Result file: `docs/review/EXTERNAL-SMOKE-RESULTS-2026-07-04.md`
 - One real production image generation completed successfully with USD 0.16 COGS and paired reserve/settle ledger rows.
-- Production Google OAuth initially failed before consent with `redirect_uri_mismatch`, then a follow-up reached Google's sign-in page with `https://fikirtive.com/api/better-auth/callback/google`.
+- Production Google OAuth initially failed before consent with `redirect_uri_mismatch`; two follow-ups reached Google's sign-in page with `https://fikirtive.com/api/better-auth/callback/google`.
 - Production did not yet validate PR #131 admin v2 because the PR-only admin routes returned 404 before merge/deploy.
-- Follow-up replacement admin and normal magic links were invalid at test time; earlier fresh magic links had already proven both roles.
+- Follow-up replacement admin and normal magic links were invalid at test time across two attempts; earlier fresh magic links had already proven both roles.
 - Current production Account sign-out cleared the session but did not visibly navigate until the next protected route load; recheck after deploy.
 
-GitHub CI for audited code head `f6461fc`:
+Local verification for `3c655e0`:
+
+- `pnpm --filter @fikirtive/web exec vitest run lib/__tests__/credit-actions.test.ts lib/__tests__/tenant-actions.test.ts`: pass, 55 tests.
+- `pnpm --filter @fikirtive/web typecheck`: pass.
+- Browser retest on `http://localhost:3110/admin/money`: over-limit Apply disabled and no new ledger row.
+- Browser retest on `http://localhost:3110/admin/tenants/org_qa_merchant`: over-limit Apply disabled.
+
+GitHub CI for pre-fix audited code head `cdad109`:
 
 - `typecheck + fences + frozen lockfile`: pass
 - `next build (apps/web)`: pass
 - `unit + integration tests`: pass
+
+GitHub CI for `3c655e0` must be rechecked after push.
 
 Recent local verification recorded in the tracked reports includes:
 
