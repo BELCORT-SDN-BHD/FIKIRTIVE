@@ -314,6 +314,7 @@ Load-bearing constraints:
 - `17a10f2` - Meta OAuth route tests cover authorize/callback gates, signed owner state, and success/error redirects.
 - `09c700e` - Account sign-out regression test covers Better Auth sign-out before redirecting to `/login`.
 - `3f63598` - Google OAuth config test covers Better Auth callback URL generation for the Google authorization URL.
+- `3756ec3` - Otto stream route success test covers streamed usage mapping, budget wrapper handoff, and final done status.
 
 ## Current Verification State
 
@@ -354,6 +355,14 @@ Local verification for `7eef840`:
 - `pnpm --filter @fikirtive/web exec vitest run lib/__tests__/otto-actions.test.ts lib/__tests__/otto-status-helpers.test.ts lib/__tests__/otto-stream-bridge.test.ts lib/__tests__/otto-stream-route.test.ts`: pass, 81 tests.
 - `pnpm --filter @fikirtive/web typecheck`: pass.
 - The route test proves `/api/otto/stream` returns a stream `insufficient_credits` error without calling Otto `run()`, without finalizing the run, and without persisting an AGENT message when metering reserve fails.
+
+Local verification for `3756ec3`:
+
+- Report: `docs/review/QA-OTTO-STREAM-ROUTE-2026-07-04.md`
+- `pnpm --filter @fikirtive/web exec vitest run lib/__tests__/otto-stream-route.test.ts`: pass, 2 tests.
+- `pnpm --filter @fikirtive/web exec vitest run lib/__tests__/otto-actions.test.ts lib/__tests__/otto-status-helpers.test.ts lib/__tests__/otto-stream-bridge.test.ts lib/__tests__/otto-stream-route.test.ts`: pass, 82 tests.
+- `pnpm --filter @fikirtive/web typecheck`: pass.
+- The success-path route test proves `/api/otto/stream` drains the streamed run, maps usage with cached-token detail, returns that usage to `withLlmBudget()` for settlement, calls `run()` inside the budget wrapper with `stream: true`, finalizes the run, and emits final `data-status kind=done`.
 
 Local verification for `17a10f2`:
 
@@ -400,7 +409,7 @@ These are the only material items not proven by current evidence:
 
 1. Live paid supplier smoke.
    - One real production image generation has passed.
-   - Local route QA proves the Otto stream insufficient-credit branch does not execute Otto or persist an AGENT reply after reserve failure.
+   - Local route QA proves the Otto stream insufficient-credit branch does not execute Otto or persist an AGENT reply after reserve failure, and the successful branch drains streamed usage back through the metering seam before finalization.
    - Still needed to prove real Anthropic/Otto successful turn accounting, real Seedance video, and real reference-video generation with production-like credentials.
    - Remaining paid calls must stay inside the founder-approved spend cap.
    - Execution checklist: `docs/review/EXTERNAL-SMOKE-RUNBOOK-2026-07-04.md`.
