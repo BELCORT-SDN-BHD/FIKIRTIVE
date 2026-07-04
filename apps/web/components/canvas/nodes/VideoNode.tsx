@@ -1,6 +1,6 @@
 // apps/web/components/canvas/nodes/VideoNode.tsx
 import { useRef, useState } from "react";
-import { Handle, Position, type NodeProps } from "@xyflow/react";
+import { Handle, NodeToolbar, Position, type NodeProps } from "@xyflow/react";
 import { GeneratingBody, FailedBody } from "./GeneratingBody";
 import { NodeResize } from "./NodeResize";
 
@@ -13,6 +13,25 @@ export function VideoNode({ data, selected }: NodeProps) {
   return (
     <>
       <NodeResize gb={gb} selected={selected} />
+      <NodeToolbar
+        className="cv-node-toolbar nodrag nopan"
+        isVisible={selected}
+        position={Position.Top}
+        align="start"
+        offset={10}
+        style={{ pointerEvents: "all" }}
+        onPointerDown={(e) => e.stopPropagation()}
+      >
+        <button
+          type="button"
+          aria-label="Delete video node"
+          className="al-btn al-btn-glass al-btn-sm nodrag nopan"
+          onPointerDown={(e) => e.stopPropagation()}
+          onClick={(e) => { e.stopPropagation(); d.onDelete?.(); }}
+        >
+          ✕
+        </button>
+      </NodeToolbar>
       <span className="cv-nodelabel">
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" aria-hidden><rect x="2" y="6" width="14" height="12" rx="2" /><path d="m22 8-6 4 6 4V8z" /></svg>
         Video
@@ -50,20 +69,6 @@ export function VideoNode({ data, selected }: NodeProps) {
       ) : (
         <video src={d.url} controls style={{ width: "100%", height: "100%", objectFit: "cover" }} />
       )}
-      <div
-        className="nodrag nopan cv-node-actions"
-        style={{ position: "absolute", top: 6, right: 6 }}
-        onPointerDown={(e) => e.stopPropagation()}
-      >
-        <button
-          type="button"
-          className="al-btn al-btn-glass al-btn-sm nodrag nopan"
-          onPointerDown={(e) => e.stopPropagation()}
-          onClick={(e) => { e.stopPropagation(); d.onDelete?.(); }}
-        >
-          ✕
-        </button>
-      </div>
       <Handle type="target" position={Position.Left} />
     </div>
     </>

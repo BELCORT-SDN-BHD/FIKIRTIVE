@@ -337,7 +337,7 @@ export default function FlowCanvas({
           id: created.id,
           type: "image",
           position: { x, y: 80 },
-          data: { status: "done", url: res.src, skin, onDelete: () => setPendingDeleteId(created.id), onRefresh: requestReload, onAnimate: getOnAnimate(created.id), onOpenDetail: getOnOpenDetail(created.id) },
+          data: { status: "done", url: res.src, generationId: res.id, skin, onDelete: () => setPendingDeleteId(created.id), onRefresh: requestReload, onAnimate: getOnAnimate(created.id), onOpenDetail: getOnOpenDetail(created.id) },
           style: { width: 320, height: 320, boxShadow: `0 0 0 2px ${convoColor(activeThreadId ?? null)}` },
           threadId: activeThreadId ?? null,
         },
@@ -400,6 +400,7 @@ export default function FlowCanvas({
           // forever" on reload (founder bug: image loads forever).
           status: r.url ? "done" : r.status,
           url: r.url ?? undefined,
+          generationId: r.generationId ?? undefined,
           prompt: r.prompt,
           text: r.text,
           skin,

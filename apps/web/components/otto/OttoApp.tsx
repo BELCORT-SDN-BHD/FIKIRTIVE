@@ -106,14 +106,24 @@ export function OttoApp({
   const [seedText, setSeedText] = useState<string>("");
   const [navCollapsed, setNavCollapsed] = useState(initialNavCollapsed ?? false);
   const [chatCollapsed, setChatCollapsed] = useState(initialChatCollapsed ?? false);
+  // ── Multi-project (campaign = project) navigation ──
+  const curProjectId = activeProjectId ?? projectId;
 
   useEffect(() => {
-    setThreads(initialThreads);
-  }, [initialThreads]);
+    setThreads((prev) => {
+      if (!activeThreadId || initialThreads.some((t) => t.id === activeThreadId)) return initialThreads;
+      const active = prev.find((t) => t.id === activeThreadId && t.projectId === curProjectId);
+      return active ? [active, ...initialThreads] : initialThreads;
+    });
+  }, [activeThreadId, curProjectId, initialThreads]);
 
   useEffect(() => {
-    setSidebarThreadList(sidebarThreads);
-  }, [sidebarThreads]);
+    setSidebarThreadList((prev) => {
+      if (!activeThreadId || sidebarThreads.some((t) => t.id === activeThreadId)) return sidebarThreads;
+      const active = prev.find((t) => t.id === activeThreadId && t.projectId === curProjectId);
+      return active ? [active, ...sidebarThreads] : sidebarThreads;
+    });
+  }, [activeThreadId, curProjectId, sidebarThreads]);
 
   const applyActivity = useCallback((rows: Array<{ threadId: string; pending: boolean }>) => {
     setActivity(new Set(rows.filter((r) => r.pending).map((r) => r.threadId)));
@@ -149,8 +159,6 @@ export function OttoApp({
     setView("otto");
   }
 
-  // ── Multi-project (campaign = project) navigation ──
-  const curProjectId = activeProjectId ?? projectId;
   const projectHref = useCallback((projId: string, threadId?: string) => {
     const p = new URLSearchParams();
     p.set("project", projId);

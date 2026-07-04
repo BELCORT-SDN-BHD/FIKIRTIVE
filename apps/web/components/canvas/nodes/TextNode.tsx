@@ -1,6 +1,6 @@
 // apps/web/components/canvas/nodes/TextNode.tsx
 import { useCallback, useEffect, useRef, useState } from "react";
-import { type NodeProps } from "@xyflow/react";
+import { NodeToolbar, Position, type NodeProps } from "@xyflow/react";
 import { NodeResize } from "./NodeResize";
 
 export function TextNode({ data, selected }: NodeProps) {
@@ -52,6 +52,25 @@ export function TextNode({ data, selected }: NodeProps) {
   return (
     <>
       <NodeResize gb={d.skin === "gb"} selected={selected} />
+      <NodeToolbar
+        className="cv-node-toolbar nodrag nopan"
+        isVisible={selected}
+        position={Position.Top}
+        align="start"
+        offset={10}
+        style={{ pointerEvents: "all" }}
+        onPointerDown={(e) => e.stopPropagation()}
+      >
+        <button
+          type="button"
+          aria-label="Delete text node"
+          className="al-btn al-btn-glass al-btn-sm nodrag nopan"
+          onPointerDown={(e) => e.stopPropagation()}
+          onClick={(e) => { e.stopPropagation(); d.onDelete?.(); }}
+        >
+          ✕
+        </button>
+      </NodeToolbar>
       <span className="cv-nodelabel">
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" aria-hidden><path d="M4 7V5h16v2" /><path d="M9 19h6" /><path d="M12 5v14" /></svg>
         Text
@@ -67,15 +86,6 @@ export function TextNode({ data, selected }: NodeProps) {
         placeholder="Type here…"
         style={{ width: "100%", height: "100%", border: "none", background: "transparent", resize: "none", outline: "none", fontSize: 13, fontWeight: 500, lineHeight: 1.45 }}
       />
-      <button
-        type="button"
-        className="al-btn al-btn-glass al-btn-sm nodrag nopan cv-node-actions"
-        style={{ position: "absolute", top: 6, right: 6 }}
-        onPointerDown={(e) => e.stopPropagation()}
-        onClick={d.onDelete}
-      >
-        ✕
-      </button>
     </div>
     </>
   );
