@@ -53,6 +53,9 @@ Follow-up source QA completed after the margin pass:
 - Production `next start` route crawl with local founder auth loaded all 8 official admin routes (`/admin`, `/admin/money`, `/admin/tenants`, `/admin/staff`, `/admin/cases`, `/admin/otto`, `/admin/audit`, `/admin/system`) and verified the expected headings with no browser console errors, no page errors, and no horizontal overflow.
 - Legacy admin routes redirect to the rebuilt sections: `/admin/content` and `/admin/conversations` to `/admin/cases`, `/admin/conversations/[threadId]` to `/admin/cases?case=[threadId]`, `/admin/cost` and `/admin/credits` to `/admin/money`, `/admin/directives`, `/admin/knowledge`, `/admin/models`, and `/admin/settings` to `/admin/otto`, and `/admin/team` to `/admin/staff`.
 - Production route screenshots were captured as `qa-23-admin-official-routes-desktop.png` and `qa-24-admin-mobile-section-selector-prod.png` in `.gstack/qa-reports/screenshots/`. Mobile section selector navigation from Overview to System Health passed at 390px with no horizontal overflow.
+- Production `/admin/otto` live-action QA exercised the new Otto Ops controls against `artlio_test`: `fal` provider switch was rejected without `FAL_KEY` and did not persist, vision max-images saved and restored, the first model enabled toggle saved and restored, and planner-system knowledge text saved and restored. No paid provider call was made.
+- Otto Ops action screenshots were captured as `qa-25-admin-otto-live-actions-prod-desktop.png` and `qa-26-admin-otto-live-actions-prod-mobile.png` in `.gstack/qa-reports/screenshots/`. Desktop and 390px mobile had no browser console errors, no page errors, and no horizontal overflow.
+- Local QA fixture note: `artlio_test` was missing the migration-seeded `Organization(id="founder")`, so the row was restored with the same idempotent seed shape before action QA. The founder org is required by `ActionEvent.ownerId` foreign keys and is seeded by `20260619120000_org_tenant`.
 
 Verification commands:
 
@@ -65,6 +68,7 @@ Verification commands:
 - `corepack pnpm --filter @fikirtive/web exec vitest run lib/__tests__/tenant-actions.test.ts lib/__tests__/credit-actions.test.ts lib/__tests__/save-user-role.test.ts`
 - Production browser QA: `/admin/money` via dev magic-link founder auth, then `next start` on `localhost:3132`; desktop/mobile screenshots listed above.
 - Production browser QA: official admin route crawl via dev magic-link founder auth, then `next start` on `localhost:3133`; all live routes, legacy redirects, and mobile selector passed. Result saved during QA as `/tmp/admin-route-crawl.json`.
+- Production browser QA: `/admin/otto` live-action pass via dev magic-link founder auth, then `next start` on `localhost:3135`; provider credential gate, vision cap save/restore, model toggle/restore, and knowledge text save/restore passed. Result saved during QA as `/tmp/admin-otto-live-actions.json`.
 
 ## Latest Project Decisions That Matter
 
