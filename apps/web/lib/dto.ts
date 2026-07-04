@@ -119,11 +119,17 @@ export function toChatMessageDTO(
     // No spend/approval internals live on the $0 RESEARCH_CARD (approve→reserve is S3);
     // parseResearchCardPayload defends the shape client-side.
     payload = m.payload;
+  } else if (m.kind === "PERFORMANCE_CARD" && m.payload) {
+    // Pass the diagnosis payload through so the PERFORMANCE_CARD render branch has the per-ad
+    // verdicts to draw — both on reload and on live mid-turn inject. $0 card, no spend/approval
+    // internals; PerformanceCard defends the shape client-side. (Without this the reload/DTO path
+    // hands the card a null payload and it renders empty.)
+    payload = m.payload;
   }
   return {
     id: m.id,
     role: m.role as "USER" | "AGENT",
-    kind: m.kind as "TEXT" | "PLAN" | "GEN_CARD" | "GEN_RESULT" | "DENIAL" | "TURN_ERROR" | "ACTION_CARD" | "BUILD_CARD" | "STORYBOARD_CARD" | "RESEARCH_CARD" | "RESEARCH_REPORT",
+    kind: m.kind as "TEXT" | "PLAN" | "GEN_CARD" | "GEN_RESULT" | "DENIAL" | "TURN_ERROR" | "ACTION_CARD" | "BUILD_CARD" | "STORYBOARD_CARD" | "RESEARCH_CARD" | "RESEARCH_REPORT" | "PERFORMANCE_CARD",
     seq: m.seq,
     text: m.text,
     payload,

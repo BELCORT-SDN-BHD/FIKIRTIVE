@@ -114,11 +114,8 @@ export type AccountMetrics = {
 
 const INSIGHTS_FIELDS = "spend,impressions,reach,frequency,clicks,ctr,cpc,cpm,purchase_roas";
 
-/** Read-only account insights for one ad account. Returns null when there's no data row. */
-export async function getAccountInsights(token: string, adAccountId: string, datePreset: string): Promise<AccountMetrics | null> {
-  const j = await metaGraphGet(token, `${adAccountId}/insights`, { fields: INSIGHTS_FIELDS, date_preset: datePreset });
-  const d = (j.data ?? [])[0] as Record<string, unknown> | undefined;
-  if (!d) return null;
+/** Extract the 9 metric fields from an insights row (unwraps array purchase_roas). */
+export function readMetricFields(d: Record<string, unknown>): AccountMetrics {
   const s = (k: string): string | null => (d[k] == null ? null : String(d[k]));
   const roas = Array.isArray(d.purchase_roas)
     ? ((d.purchase_roas[0] as { value?: unknown } | undefined)?.value ?? null)
@@ -127,6 +124,39 @@ export async function getAccountInsights(token: string, adAccountId: string, dat
     spend: s("spend"), impressions: s("impressions"), reach: s("reach"), frequency: s("frequency"),
     clicks: s("clicks"), ctr: s("ctr"), cpc: s("cpc"), cpm: s("cpm"),
     purchaseRoas: roas == null ? null : String(roas),
+  };
+}
+
+/** Read-only account insights for one ad account. Returns null when there's no data row. */
+export async function getAccountInsights(token: string, adAccountId: string, datePreset: string): Promise<AccountMetrics | null> {
+  const j = await metaGraphGet(token, `${adAccountId}/insights`, { fields: INSIGHTS_FIELDS, date_preset: datePreset });
+  const d = (j.data ?? [])[0] as Record<string, unknown> | undefined;
+  if (!d) return null;
+  return readMetricFields(d);
+}
+
+export type AdInsightsRow = AccountMetrics & { adId: string; adName: string | null };
+
+/** Per-ad performance for one ad account (level=ad). Paginated; ads_read scope covers this. */
+export async function getAdInsights(token: string, adAccountId: string, datePreset: string): Promise<AdInsightsRow[]> {
+  const rows = await metaGraphGetAll(token, `${adAccountId}/insights`, {
+    level: "ad", fields: `ad_id,ad_name,${INSIGHTS_FIELDS}`, date_preset: datePreset,
+  });
+  return rows.map((d: Record<string, unknown>) => ({
+    adId: String(d.ad_id ?? ""), adName: (d.ad_name as string | undefined) ?? null, ...readMetricFields(d),
+  }));
+}
+
+export type AdCreative = { imageUrl: string | null; body: string | null; title: string | null; videoId: string | null };
+
+/** Read one ad's creative (image/copy). ads_read covers it. null when the node has no creative. */
+export async function getAdCreative(token: string, adId: string): Promise<AdCreative | null> {
+  const j = await metaGraphGet(token, adId, { fields: "creative{image_url,thumbnail_url,body,title,video_id}" });
+  const c = (j?.creative ?? null) as Record<string, unknown> | null;
+  if (!c) return null;
+  return {
+    imageUrl: (c.image_url as string) ?? (c.thumbnail_url as string) ?? null,
+    body: (c.body as string) ?? null, title: (c.title as string) ?? null, videoId: (c.video_id as string) ?? null,
   };
 }
 

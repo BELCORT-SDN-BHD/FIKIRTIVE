@@ -201,6 +201,26 @@ describe("injectCardMessage", () => {
     expect((out[1].metadata?.payload as { shots?: unknown[] })?.shots).toHaveLength(1);
   });
 
+  it("also injects a PERFORMANCE_CARD (#128 — meta-expert streams { cardId } too)", () => {
+    const existing = threadToUiMessages(
+      thread([msg({ id: "u1", role: "USER", kind: "TEXT", text: "how are my ads doing?" })]),
+    );
+    const fresh = thread([
+      msg({ id: "u1", role: "USER", kind: "TEXT", text: "how are my ads doing?" }),
+      msg({
+        id: "perf_1",
+        role: "AGENT",
+        kind: "PERFORMANCE_CARD",
+        payload: { datePreset: "last_30d", verdicts: [{ adId: "a1", verdict: "winner", reasons: [] }] },
+      }),
+    ]);
+    const out = injectCardMessage(existing, fresh, "perf_1");
+    expect(out).toHaveLength(2);
+    expect(out[1].metadata?.durableId).toBe("perf_1");
+    expect(out[1].metadata?.kind).toBe("PERFORMANCE_CARD");
+    expect((out[1].metadata?.payload as { verdicts?: unknown[] })?.verdicts).toHaveLength(1);
+  });
+
   it("is idempotent for a STORYBOARD_CARD already present (same ref)", () => {
     const fresh = thread([
       msg({ id: "sb_1", role: "AGENT", kind: "STORYBOARD_CARD", payload: { storyboardTitle: "x", shots: [] } }),

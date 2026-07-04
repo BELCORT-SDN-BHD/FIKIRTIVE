@@ -39,6 +39,10 @@
     "./upload": {
       "types": "./dist/upload.d.ts",
       "default": "./dist/upload.js"
+    },
+    "./server": {
+      "types": "./dist/server.d.ts",
+      "default": "./dist/server.js"
     }
   },
   "scripts": {
