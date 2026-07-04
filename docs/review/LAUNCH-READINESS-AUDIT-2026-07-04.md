@@ -24,9 +24,9 @@ This audit consolidates the local QA reports, tracked review docs, PR comments, 
 | Mobile layout is launch-safe for tested surfaces | Proven for tested surfaces at 390px | Per-surface mobile checks and screenshots |
 | Margin model is above constitutional floor | Proven from executable pricing and current official BytePlus evidence | `docs/review/MARGIN-PARITY-REPORT-2026-07-04.md` |
 | All changes/reports are handled in PR | Proven for tracked reports and PR comments | PR #131, tracked docs, comments |
-| CI is green | Proven | GitHub checks for run `28698962964`: typecheck/fences/lockfile, next build, unit + integration all passed |
+| CI is green | Proven for pushed head `ade0dcd`; pending recheck after `fd7f8e2` push | GitHub checks for `ade0dcd`: typecheck/fences/lockfile, next build, unit + integration all passed |
 | Live paid supplier smoke | Partially proven in production | One real production image generation passed with USD 0.16 COGS; see `docs/review/EXTERNAL-SMOKE-RESULTS-2026-07-04.md`. Video, reference-video, and Otto LLM-only accounting were not run. |
-| Real Stripe checkout/webhook | Not yet proven | Local QA intentionally avoided real checkout |
+| Real Stripe checkout/webhook | Not yet proven; checkout failure path hardened | Local QA intentionally avoided real checkout. Commit `fd7f8e2` makes Stripe Checkout Session creation failures return a user-visible retry error instead of an unhandled server action failure. |
 | Real Meta/Google OAuth and connected Meta states | Partially proven for Google initiation; Meta not run | Follow-up Google OAuth reached Google's sign-in page with the Better Auth callback URI; consent/callback and connected OAuth state remain unproven. See `docs/review/EXTERNAL-SMOKE-RESULTS-2026-07-04.md`. |
 | Production deploy/canary | Partially proven for current production only | Current production route smoke passed for tested normal/admin routes, but production was not serving PR #131 admin v2. PR #131 is now merge-clean and CI-green; post-merge deploy canary remains required. |
 | Direct admin credit-action cap | Proven locally with tests and browser QA | Commit `3c655e0` enforces the 1,000 displayed-credit direct cap for founder and tenant actions; over-limit Apply buttons are disabled and server actions reject the same input. |
@@ -264,6 +264,7 @@ Load-bearing constraints:
 - `f0adbc3` - All four front-door goal tiles recorded in QA report.
 - `0985a94` - Launch readiness audit added.
 - `3c655e0` - Direct admin credit-action cap enforced for founder and tenant credit actions.
+- `fd7f8e2` - Billing checkout session failures return a friendly retry error.
 
 ## Current Verification State
 
@@ -283,13 +284,19 @@ Local verification for `3c655e0`:
 - Browser retest on `http://localhost:3110/admin/money`: over-limit Apply disabled and no new ledger row.
 - Browser retest on `http://localhost:3110/admin/tenants/org_qa_merchant`: over-limit Apply disabled.
 
-GitHub CI for pre-fix audited code head `cdad109`:
+Local verification for `fd7f8e2`:
+
+- `pnpm --filter @fikirtive/web exec vitest run lib/__tests__/billing-actions.test.ts lib/__tests__/stripe-webhook.test.ts`: pass, 19 tests.
+- `pnpm --filter @fikirtive/web typecheck`: pass.
+- Browser checkout was not run because this worktree has no Stripe secret configured; the remaining real checkout/webhook gate still requires an approved Stripe test/live-mode run.
+
+GitHub CI for pushed code head `ade0dcd`:
 
 - `typecheck + fences + frozen lockfile`: pass
 - `next build (apps/web)`: pass
 - `unit + integration tests`: pass
 
-GitHub CI for `3c655e0` must be rechecked after push.
+GitHub CI for `fd7f8e2` must be rechecked after push.
 
 Recent local verification recorded in the tracked reports includes:
 
