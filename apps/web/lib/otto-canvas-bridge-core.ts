@@ -35,6 +35,28 @@ export function firstDisplayableGenerationId(
   return generationIds.find((id) => !!thumbs[id]?.src) ?? generationIds[0] ?? null;
 }
 
+export type CanvasNodeRepairPatch = {
+  status?: string;
+  generationId?: string;
+};
+
+export function settledCanvasNodeRepairPatch(
+  rowStatus: string,
+  rowGenerationId: string | null,
+  jobStatus: string | null | undefined,
+  resolvedGenerationId: string | null,
+  url: string | null | undefined,
+): CanvasNodeRepairPatch | null {
+  const patch: CanvasNodeRepairPatch = {};
+  if (url && resolvedGenerationId) {
+    if (rowStatus !== "done") patch.status = "done";
+    if (rowGenerationId !== resolvedGenerationId) patch.generationId = resolvedGenerationId;
+  } else if (jobStatus === "FAILED" && rowStatus !== "failed") {
+    patch.status = "failed";
+  }
+  return Object.keys(patch).length ? patch : null;
+}
+
 /**
  * Decide which canvas nodes to create for a thread's GEN_RESULT messages.
  *

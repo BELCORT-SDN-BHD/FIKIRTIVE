@@ -4,7 +4,7 @@ import { prisma } from "@fikirtive/db";
 import { requireOwner } from "./auth-guard";
 import { getCoworkThread, getGenerationThumbs } from "./data";
 import { createCanvasNode, type CanvasNodeDTO } from "./canvas-actions";
-import { canvasNodeDisplayStatus, firstDisplayableGenerationId, planBridgeNodes } from "./otto-canvas-bridge-core";
+import { canvasNodeDisplayStatus, firstDisplayableGenerationId, planBridgeNodes, settledCanvasNodeRepairPatch } from "./otto-canvas-bridge-core";
 
 /** A canvas node plus its resolved media URL (display-only). */
 export type CanvasNodeWithUrl = CanvasNodeDTO & { url: string | null };
@@ -51,7 +51,7 @@ export async function syncOttoCanvasNodes(
       const genResults = thread.messages.filter((m) => m.kind === "GEN_RESULT" && m.genJobId);
       const jobIds = genResults.map((m) => m.genJobId as string);
       const jobs = jobIds.length
-        ? await prisma.genJob.findMany({ where: { id: { in: jobIds }, ownerId }, select: { id: true, generationIds: true } })
+        ? await prisma.genJob.findMany({ where: { id: { in: jobIds }, ownerId, projectId }, select: { id: true, generationIds: true } })
         : [];
       const jobGenIds = new Map(jobs.map((j) => [j.id, j.generationIds]));
 
@@ -94,7 +94,7 @@ export async function syncOttoCanvasNodes(
   // after terminal settlement because legacy rows can stay "pending" forever.
   const linkedJobIds = [...new Set(nodes.map((n) => n.genJobId).filter((x): x is string => !!x))];
   const jobs = linkedJobIds.length
-    ? await prisma.genJob.findMany({ where: { id: { in: linkedJobIds }, ownerId }, select: { id: true, generationIds: true, status: true } })
+    ? await prisma.genJob.findMany({ where: { id: { in: linkedJobIds }, ownerId, projectId }, select: { id: true, generationIds: true, status: true } })
     : [];
   const jobById = new Map(jobs.map((j) => [j.id, j]));
 
@@ -104,7 +104,8 @@ export async function syncOttoCanvasNodes(
   ];
   const thumbs = await getGenerationThumbs(ownerId, genIds); // generationId → { src, kind }
 
-  return nodes.map((n) => {
+  const repairs: Array<{ id: string; data: NonNullable<ReturnType<typeof settledCanvasNodeRepairPatch>> }> = [];
+  const resolved = nodes.map((n) => {
     const job = n.genJobId ? jobById.get(n.genJobId) : null;
     const gid = n.generationId ?? firstDisplayableGenerationId(job?.generationIds, thumbs);
     // Return the RESOLVED generationId, not the raw row's. A promptbar-created node
@@ -115,6 +116,15 @@ export async function syncOttoCanvasNodes(
     const url = gid ? thumbs[gid]?.src ?? null : null;
     const jobStatus = job?.status;
     const status = gid && !url ? "missing" : canvasNodeDisplayStatus(n.status, jobStatus, url);
+    const patch = settledCanvasNodeRepairPatch(n.status, n.generationId, jobStatus, gid, url);
+    if (patch) repairs.push({ id: n.id, data: patch });
     return { ...n, generationId: gid, status, url };
   });
+  if (repairs.length) {
+    await Promise.all(repairs.map((r) => prisma.canvasNode.updateMany({
+      where: { id: r.id, ownerId, projectId },
+      data: r.data,
+    })));
+  }
+  return resolved;
 }

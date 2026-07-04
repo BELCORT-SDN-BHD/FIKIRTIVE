@@ -15,6 +15,7 @@ import DetailPanel from "@/components/asset/DetailPanel";
 import { MentionInput } from "@/components/MentionInput";
 import { Dialog, DialogContent, DialogHeader, DialogFooter, DialogTitle, DialogDescription } from "@/components/ui/dialog";
 import { Button } from "@/components/ui/button";
+import { X } from "lucide-react";
 import type { EntityDTO } from "@/lib/types";
 import { filterNodesByConvo, convoColor } from "@/lib/convo-canvas";
 import { creditsLabel } from "@/lib/credit-format";
@@ -96,6 +97,14 @@ export default function FlowCanvas({
   const fitTimerRef = useRef<number | null>(null);
   const [flowReady, setFlowReady] = useState(false);
   const [canvasReady, setCanvasReady] = useState(false);
+  const closeComposer = useCallback((clearPrompt = false) => {
+    setComposerOpen(false);
+    if (!clearPrompt) return;
+    setPrompt("");
+    setPromptIds([]);
+    setVariantSel({});
+    setComposerKey((k) => k + 1);
+  }, []);
   const requestReload = useCallback(() => {
     void (async () => {
       await Promise.resolve(onActivityRefresh?.()).catch(() => undefined);
@@ -280,20 +289,17 @@ export default function FlowCanvas({
     try {
       const x = 80 + nodeCountRef.current * 340;
       await generateImage(prompt.trim(), { x, y: 80, w: 320, h: 320 }, promptIds, variantSel);
-      setPrompt("");
-      setPromptIds([]);
-      setVariantSel({});
-      setComposerKey((k) => k + 1);
-      setComposerOpen(false);
+      closeComposer(true);
     } finally {
       submittingRef.current = false;
       setSubmitting(false);
     }
-  }, [prompt, promptIds, variantSel, generateImage, directToolsLocked]);
+  }, [prompt, promptIds, variantSel, generateImage, directToolsLocked, closeComposer]);
 
   // Add an empty text node (display-only, no spend) — the canvas toolbar's text tool.
   const addTextNode = useCallback(async () => {
     if (directToolsLocked) return;
+    closeComposer(false);
     const x = 80 + nodeCountRef.current * 340;
     const result = await createCanvasNode({ projectId, type: "text", x, y: 80, w: 240, h: 120, text: "", status: "done", ...(activeThreadId ? { threadId: activeThreadId } : {}) });
     if ("id" in result) {
@@ -313,7 +319,7 @@ export default function FlowCanvas({
     } else {
       console.warn("Failed to create text node:", result.error);
     }
-  }, [projectId, activeThreadId, onTextChange, skin, directToolsLocked, scheduleFitView]);
+  }, [projectId, activeThreadId, onTextChange, skin, directToolsLocked, scheduleFitView, closeComposer]);
 
   // Drag-and-drop an image file from anywhere onto the canvas → upload it as an
   // image node. Upload-only (uploadReference creates an UPLOAD Generation); it
@@ -386,13 +392,13 @@ export default function FlowCanvas({
   useEffect(() => {
     directToolsLockedRef.current = directToolsLocked;
     if (directToolsLocked) {
-      setComposerOpen(false);
+      closeComposer(true);
       setConfirmGen(false);
       setPendingAnimateId(null);
       setT2vOpen(false);
       setT2vPrompt("");
     }
-  }, [directToolsLocked]);
+  }, [directToolsLocked, closeComposer]);
 
   useEffect(() => {
     if (confirmGen || pendingAnimateId !== null || t2vOpen) refreshCostQuote();
@@ -613,6 +619,15 @@ export default function FlowCanvas({
                 />
               </div>
               <button className="al-btn al-btn-primary al-btn-sm" type="submit" disabled={submitting || !prompt.trim()}>Generate</button>
+              <button
+                className="al-btn al-btn-sm"
+                type="button"
+                title="Close prompt"
+                aria-label="Close image prompt"
+                onClick={() => closeComposer(true)}
+              >
+                <X size={15} strokeWidth={2.2} aria-hidden />
+              </button>
             </form>
           )}
           {/* Slim bottom toolbar — matches the approved canvas-home mockup. */}
@@ -649,7 +664,7 @@ export default function FlowCanvas({
               title={directToolTitle ?? "Make a video from a prompt"}
               aria-label="Video"
               disabled={directToolsLocked}
-              onClick={() => { setCostQuote(null); setT2vOpen(true); }}
+              onClick={() => { closeComposer(false); setCostQuote(null); setT2vOpen(true); }}
             >
               <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.9"><rect x="2" y="6" width="14" height="12" rx="2" /><path d="m22 8-6 4 6 4V8z" /></svg>
             </button>

@@ -83,6 +83,10 @@ describe("listCanvasNodes", () => {
     expect(mockGenJobFindMany).toHaveBeenCalledWith(
       expect.objectContaining({ where: { id: { in: ["job-1"] }, ownerId: "u1", projectId: "p1" } }),
     );
+    expect(mockUpdateMany).toHaveBeenCalledWith({
+      where: { id: "node-1", ownerId: "u1", projectId: "p1" },
+      data: { status: "done", generationId: "gen-1" },
+    });
   });
 
   it("recovers stale promptbar nodes from the first displayable job generation", async () => {
@@ -116,6 +120,10 @@ describe("listCanvasNodes", () => {
       }),
     ]);
     expect(mockGetGenerationThumbs).toHaveBeenCalledWith("u1", expect.arrayContaining(["gen-missing", "gen-good"]));
+    expect(mockUpdateMany).toHaveBeenCalledWith({
+      where: { id: "node-1", ownerId: "u1", projectId: "p1" },
+      data: { status: "done", generationId: "gen-good" },
+    });
   });
 });
 
