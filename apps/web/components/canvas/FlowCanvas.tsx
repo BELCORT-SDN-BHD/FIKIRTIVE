@@ -94,6 +94,7 @@ export default function FlowCanvas({
   const flowRef = useRef<ReactFlowInstance<CanvasFlowNode, Edge> | null>(null);
   const reloadRef = useRef<(() => Promise<void>) | null>(null);
   const canvasHostRef = useRef<HTMLDivElement | null>(null);
+  const composerFormRef = useRef<HTMLFormElement | null>(null);
   const fittedScopeRef = useRef<string | null>(null);
   const fitTimerRef = useRef<number | null>(null);
   const [flowReady, setFlowReady] = useState(false);
@@ -118,6 +119,23 @@ export default function FlowCanvas({
     directToolsLocked,
     directToolsLockedReason,
   }), [directToolsLocked, directToolsLockedReason]);
+
+  useEffect(() => {
+    if (!composerOpen || directToolsLocked) return;
+    let retryTimer: number | null = null;
+    const focusEditor = () => {
+      const editor = composerFormRef.current?.querySelector<HTMLElement>('[contenteditable="true"]');
+      editor?.focus();
+      return !!editor;
+    };
+    const frame = window.requestAnimationFrame(() => {
+      if (!focusEditor()) retryTimer = window.setTimeout(focusEditor, 0);
+    });
+    return () => {
+      window.cancelAnimationFrame(frame);
+      if (retryTimer !== null) window.clearTimeout(retryTimer);
+    };
+  }, [composerOpen, directToolsLocked, composerKey]);
 
   // Keep a ref to animate() so per-node closures don't go stale
   const animateFnRef = useRef<ReturnType<typeof useCanvasGen>["animate"] | null>(null);
@@ -626,6 +644,7 @@ export default function FlowCanvas({
               existing handleGenerate spend path unchanged; positioned above the bar. */}
           {composerOpen && !directToolsLocked && (
             <form
+              ref={composerFormRef}
               className="al-promptbar cv-composer-pop"
               style={{ position: "absolute", bottom: 76, left: "50%", transform: "translateX(-50%)", width: 520 }}
               onSubmit={(e) => { e.preventDefault(); if (prompt.trim()) { setCostQuote(null); setConfirmGen(true); } }}
