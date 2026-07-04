@@ -674,24 +674,26 @@ export default function DetailPanel({
               </Button>
 
               {/* Regenerate */}
-              <Button
-                variant="ghost"
-                size="sm"
-                icon={<IcRetry size={14} />}
-                onClick={() => requestSpendConfirm("regen")}
-                disabled={readOnly || regenStatus === "running" || regenStatus === "timeout"}
-                title={readOnlyReason}
-              >
-                {regenStatus === "running"
-                  ? "Generating…"
-                  : regenStatus === "done"
-                  ? "New version ready"
-                  : regenStatus === "timeout"
-                  ? "Still processing — check the library"
-                  : regenStatus === "failed"
-                  ? "Failed — retry?"
-                  : "Regenerate"}
-              </Button>
+              {gen.kind === "image" && (
+                <Button
+                  variant="ghost"
+                  size="sm"
+                  icon={<IcRetry size={14} />}
+                  onClick={() => requestSpendConfirm("regen")}
+                  disabled={readOnly || regenStatus === "running" || regenStatus === "timeout"}
+                  title={readOnlyReason}
+                >
+                  {regenStatus === "running"
+                    ? "Generating…"
+                    : regenStatus === "done"
+                    ? "New version ready"
+                    : regenStatus === "timeout"
+                    ? "Still processing — check the library"
+                    : regenStatus === "failed"
+                    ? "Failed — retry?"
+                    : "Regenerate"}
+                </Button>
+              )}
 
               {/* Animate (image → video) */}
               {gen.kind === "image" && (

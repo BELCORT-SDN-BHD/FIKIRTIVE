@@ -229,7 +229,7 @@ export default function FlowCanvas({
       onOpenDetailByNode.current[id] = () => {
         const entry = nodeDataRef.current[id];
         if (!entry?.generationId) {
-          toast.error("This image is not ready for details yet.");
+          toast.error("This asset is not ready for details yet.");
           return;
         }
         setDetailFor(entry.generationId);
@@ -260,9 +260,14 @@ export default function FlowCanvas({
         if (n.id !== id) return n;
         const updated: CanvasFlowNode = { ...n, data: { ...n.data, url: url ?? undefined, status } };
         if (generationId) updated.data = { ...updated.data, generationId };
-        // wire onAnimate + onOpenDetail now that generationId is known (if not already set)
-        if (generationId && n.type === "image" && !n.data.onAnimate) {
-          updated.data = { ...updated.data, onAnimate: getOnAnimate(id), onOpenDetail: getOnOpenDetail(id) };
+        // Wire actions now that generationId is known (if not already set).
+        // Videos only need Detail; images also need Make video.
+        if (generationId && (n.type === "image" || n.type === "video")) {
+          updated.data = {
+            ...updated.data,
+            ...(!updated.data.onOpenDetail ? { onOpenDetail: getOnOpenDetail(id) } : {}),
+            ...(n.type === "image" && !updated.data.onAnimate ? { onAnimate: getOnAnimate(id) } : {}),
+          };
         }
         return updated;
       }),
@@ -462,7 +467,7 @@ export default function FlowCanvas({
           onRefresh: requestReload,
           onChange: r.type === "text" ? (t: string) => onTextChange(r.id, t) : undefined,
           onAnimate: r.type === "image" ? getOnAnimate(r.id) : undefined,
-          onOpenDetail: r.type === "image" ? getOnOpenDetail(r.id) : undefined,
+          onOpenDetail: r.type === "image" || r.type === "video" ? getOnOpenDetail(r.id) : undefined,
         }),
         style: { width: r.w, height: r.h, boxShadow: `0 0 0 2px ${convoColor(r.threadId ?? null)}` },
         threadId: r.threadId ?? null,
