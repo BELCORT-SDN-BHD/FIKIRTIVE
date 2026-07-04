@@ -10,6 +10,7 @@ import { OttoAdBuildCard } from "./OttoAdBuildCard";
 import { StoryboardCard } from "./StoryboardCard";
 import { ResearchCard } from "./ResearchCard";
 import { ResearchReport } from "./ResearchReport";
+import { PerformanceCard } from "./PerformanceCard";
 import { OttoResult } from "./OttoResult";
 import { deriveCardState } from "@/lib/otto-inject-helpers";
 import { activeMentionQuery, resolveSentEntityIds } from "@/lib/otto-mentions";
@@ -576,6 +577,17 @@ function MessageRow({
             onBalanceRefresh={() => void onBalanceRefresh?.()}
             onRefresh={onRefresh}
           />
+        </div>
+      </div>
+    );
+  }
+
+  if (m.kind === "PERFORMANCE_CARD") {
+    return (
+      <div className="flex items-start gap-3">
+        <OttoAvatar size={32} state="idle" />
+        <div className="flex-1 min-w-0">
+          <PerformanceCard payload={m.payload} />
         </div>
       </div>
     );

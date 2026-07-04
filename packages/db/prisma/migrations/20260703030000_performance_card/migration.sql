@@ -1,0 +1,2 @@
+-- P2b: add PERFORMANCE_CARD chat message kind (sibling of RESEARCH_CARD / STORYBOARD_CARD)
+ALTER TYPE "ChatMessageKind" ADD VALUE 'PERFORMANCE_CARD';

@@ -1,0 +1,84 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><style>
+  :root{
+    --brand:#EC5828; --brand-soft:#FBE4D8; --brand-soft-fg:#9A3A1A;
+    --card:#fff; --fg:#0A0A0A; --muted:#F4F4F3; --muted-fg:#6E6E68;
+    --border:#E6E6E3; --bg:#F3F1EE; --dim:#86867F; --up:#15803D;
+  }
+  *{box-sizing:border-box;margin:0;padding:0}
+  body{background:var(--bg);font-family:"Geist","Helvetica Neue",system-ui,sans-serif;color:var(--fg);-webkit-font-smoothing:antialiased;padding:26px}
+  .chat{max-width:640px;margin:0 auto}
+  /* the card as it appears in the Otto conversation */
+  .card{background:var(--card);border:1px solid var(--border);border-radius:18px;overflow:hidden;box-shadow:0 1px 2px rgba(0,0,0,.04)}
+  .hd{display:flex;align-items:flex-start;gap:12px;padding:17px 18px 14px}
+  .hd .t{flex:1}
+  .hd .title{font-size:15px;font-weight:700;letter-spacing:-0.01em}
+  .hd .basis{font-size:12.5px;color:var(--muted-fg);margin-top:3px;line-height:1.4}
+  .stamp{font-size:11px;color:var(--dim);background:var(--muted);border-radius:7px;padding:3px 8px;font-weight:500;white-space:nowrap}
+  .sec{padding:4px 18px}
+  .seclabel{font-size:11.5px;font-weight:700;letter-spacing:.02em;text-transform:uppercase;color:var(--dim);margin:12px 0 2px;display:flex;align-items:center;gap:7px}
+  .row{display:flex;gap:12px;padding:12px 0;border-top:1px solid var(--border)}
+  .thumb{width:48px;height:48px;border-radius:9px;flex-shrink:0;border:1px solid var(--border);position:relative;overflow:hidden}
+  .play{position:absolute;inset:0;display:flex;align-items:center;justify-content:center}
+  .body{flex:1;min-width:0}
+  .nmeline{display:flex;align-items:center;gap:8px}
+  .nm{font-size:13.5px;font-weight:600;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+  .chip{font-size:10.5px;font-weight:700;border-radius:999px;padding:2px 8px;white-space:nowrap}
+  .chip.win{background:var(--brand-soft);color:var(--brand-soft-fg)}
+  .chip.lose{background:var(--muted);color:var(--muted-fg)}
+  .reason{font-size:12.5px;line-height:1.5;color:#3a3a37;margin-top:5px}
+  .reason .metric{font-weight:600;color:var(--fg)}
+  .cite{display:inline-flex;align-items:center;gap:3px;font-size:11.5px;color:var(--brand);text-decoration:none;font-weight:600;background:#FEF2EC;border-radius:6px;padding:1px 7px;margin-top:6px}
+  .gap{font-size:12px;line-height:1.5;color:var(--muted-fg);margin-top:6px;padding-left:10px;border-left:2px solid var(--border)}
+  .acts{display:flex;gap:8px;margin-top:9px}
+  .btn{height:31px;border-radius:9px;font-size:12px;font-weight:600;padding:0 12px;display:inline-flex;align-items:center;gap:5px;cursor:pointer;border:1px solid var(--border);background:#fff}
+  .btn.recreate{border-color:var(--brand);color:var(--brand)}
+  .btn.angle{color:var(--muted-fg)}
+  .foot{font-size:11.5px;color:var(--dim);padding:13px 18px 16px;border-top:1px solid var(--border);margin-top:8px;line-height:1.5}
+  .cloud{flex-shrink:0}
+</style></head><body>
+<div class="chat">
+  <div class="card">
+    <!-- header -->
+    <div class="hd">
+      <svg class="cloud" width="30" height="27" viewBox="0 0 120 110"><g fill="#EC5828"><ellipse cx="60" cy="64" rx="43" ry="22"/><circle cx="37" cy="52" r="18"/><circle cx="61" cy="40" r="24"/><circle cx="85" cy="53" r="17"/></g><rect x="51" y="48" width="7" height="13" rx="3.5" fill="#2B1308"/><rect x="66" y="48" width="7" height="13" rx="3.5" fill="#2B1308"/></svg>
+      <div class="t">
+        <div class="title">Here's how your ads are doing</div>
+        <div class="basis">Ranked against <b>your own account average</b> this period — I don't guess with made-up industry numbers. By CTR.</div>
+      </div>
+      <span class="stamp">Meta · Last 30 days · fetched Jul 3</span>
+    </div>
+
+    <!-- winners -->
+    <div class="sec">
+      <div class="seclabel">✦ Working well — worth making more of</div>
+      <div class="row">
+        <div class="thumb" style="background:linear-gradient(135deg,#F7B267,#EC5828)"></div>
+        <div class="body">
+          <div class="nmeline"><span class="nm">Raya Sale — Reel "Unbox the deal"</span><span class="chip win">▲ Top performer</span></div>
+          <div class="reason"><span class="metric">CTR 2.1%</span> is well above your account average (<span class="metric">0.9%</span>).</div>
+          <div class="acts"><button class="btn recreate">✦ Recreate this</button></div>
+        </div>
+      </div>
+    </div>
+
+    <!-- losers -->
+    <div class="sec">
+      <div class="seclabel">Needs attention</div>
+      <div class="row">
+        <div class="thumb" style="background:linear-gradient(135deg,#D7D7D2,#B4B4AD)"></div>
+        <div class="body">
+          <div class="nmeline"><span class="nm">Static image — "Shop now"</span><span class="chip lose">Underperforming</span></div>
+          <div class="reason"><span class="metric">CTR 0.4%</span> is well below your account average (<span class="metric">0.9%</span>) — the <b>creative</b> is the most controllable lever here.</div>
+          <a class="cite" href="#">Meta: hook viewers in the first seconds ↗</a>
+          <div class="gap">Also worth checking what I can't see from here yet: whether it's had time to exit Meta's learning phase, the audience, and the budget.</div>
+          <div class="acts"><button class="btn recreate">✦ Make a fresh version</button><button class="btn angle">Try a new angle</button></div>
+        </div>
+      </div>
+    </div>
+
+    <!-- footer honesty -->
+    <div class="foot">Based on your top 25 ads by spend. ROAS shown only where Meta reports it. Organic post performance isn't included yet — it lights up once your Meta permission is approved.</div>
+  </div>
+</div>
+</body></html>

@@ -14,6 +14,8 @@ import { lookupProductsSkill } from "./skills/lookup-products.js";
 import { ingestProductSkill } from "./skills/ingest-product.js";
 import { researchWebSkill } from "./skills/research-web.js";
 import { metaInsightsSkill } from "./skills/meta-insights.js";
+import { metaAdPerformanceSkill } from "./skills/meta-ad-performance.js";
+import { metaExpertSkill } from "./skills/meta-expert.js";
 import { metaListObjectsSkill } from "./skills/meta-list-objects.js";
 import { listMetaPagesSkill } from "./skills/list-meta-pages.js";
 import { proposeMetaActionSkill } from "./skills/propose-meta-action.js";
@@ -40,6 +42,8 @@ export const allSkills: OttoSkill[] = [
   ingestProductSkill,
   researchWebSkill,
   metaInsightsSkill,
+  metaAdPerformanceSkill,
+  metaExpertSkill,
   metaListObjectsSkill,
   listMetaPagesSkill,
   proposeMetaActionSkill,

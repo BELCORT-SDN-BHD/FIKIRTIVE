@@ -49,6 +49,7 @@ import { fetchAndExtract, fetchRawHtml } from "./fetch-extract";
 import { draftScheduledPost } from "./schedule-service";
 import { readPageCached } from "./web-page-cache";
 import { fetchOwnerInsights } from "./meta-insights";
+import { fetchOwnerAdPerformance } from "./meta-performance";
 import { fetchOwnerAdObjects } from "./meta-objects";
 import { fetchOwnerPages } from "./meta-pages";
 import { proposeMetaActionForOwner } from "./meta-propose";
@@ -190,6 +191,7 @@ export async function buildOttoContext({
     metaAds: { list: () => fetchOwnerAdObjects(ownerId) },
     metaPages: { list: () => fetchOwnerPages(ownerId) },
     metaInsights: { get: (datePreset: string) => fetchOwnerInsights(ownerId, datePreset) },
+    metaPerformance: { getAds: (p: string) => fetchOwnerAdPerformance(ownerId, p) },
     metaPropose: (input) => proposeMetaActionForOwner(ownerId, threadId, input),
     metaBuild: { propose: (input) => proposeAdBuildForOwner(ownerId, threadId, input) },
     brandBrain: { context: () => getBrandContextText(ownerId, null).catch(() => "") },
