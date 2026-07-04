@@ -4,6 +4,7 @@ import { newId, storageKey, storageKeyToSrc } from "@fikirtive/core";
 import { requireOwner } from "./auth-guard";
 import { tallyEntityUsage } from "./entity-usage";
 import { threadBadgeFromJobStatus } from "./thread-status";
+import { storage } from "./storage";
 
 const THUMB_VIDEO_EXTS = new Set(["mp4", "mov", "webm", "mkv"]);
 /** Resolve generation ids → { src, kind } thumbnails (segment frame slots). */
@@ -14,7 +15,9 @@ export async function getGenerationThumbs(ownerId: string, ids: string[]): Promi
   const out: Record<string, { src: string; kind: "image" | "video" }> = {};
   for (const g of gens) {
     const ext = g.asset.ext.toLowerCase();
-    out[g.id] = { src: storageKeyToSrc(storageKey(g.asset.ownerId, g.asset.contentHash, ext)), kind: THUMB_VIDEO_EXTS.has(ext) ? "video" : "image" };
+    const key = storageKey(g.asset.ownerId, g.asset.contentHash, ext);
+    if (!(await storage.exists(key))) continue;
+    out[g.id] = { src: storageKeyToSrc(key), kind: THUMB_VIDEO_EXTS.has(ext) ? "video" : "image" };
   }
   return out;
 }
@@ -163,20 +166,24 @@ export async function getRecentGenerationThumbs(
   projectId: string,
   take = 9,
 ): Promise<HistoryThumb[]> {
+  const queryTake = Math.min(Math.max(take * 3, take), 30);
   const rows = await prisma.generation.findMany({
     where: { ownerId, projectId, ...notDeleted },
     orderBy: [{ createdAt: "desc" }, { id: "desc" }],
-    take,
+    take: queryTake,
     include: { asset: true },
   });
-  return rows.map((g) => {
+  const thumbs = await Promise.all(rows.map(async (g) => {
     const ext = g.asset.ext.toLowerCase();
+    const key = storageKey(g.asset.ownerId, g.asset.contentHash, ext);
+    if (!(await storage.exists(key))) return null;
     return {
       id: g.id,
-      src: storageKeyToSrc(storageKey(g.asset.ownerId, g.asset.contentHash, ext)),
+      src: storageKeyToSrc(key),
       kind: MEDIA_VIDEO_EXTS.has(ext) ? "video" : "image",
     };
-  });
+  }));
+  return thumbs.filter((thumb): thumb is HistoryThumb => thumb != null).slice(0, take);
 }
 
 /** One keyset page of a project's media (attached + candidates) for the Assets library,

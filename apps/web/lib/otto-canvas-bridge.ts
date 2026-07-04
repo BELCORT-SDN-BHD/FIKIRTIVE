@@ -114,6 +114,7 @@ export async function syncOttoCanvasNodes(
     // the id is the job's OWN first generation (owner-scoped above), no spend logic.
     const url = gid ? thumbs[gid]?.src ?? null : null;
     const jobStatus = n.genJobId ? jobById.get(n.genJobId)?.status : null;
-    return { ...n, generationId: gid, status: canvasNodeDisplayStatus(n.status, jobStatus, url), url };
+    const status = gid && !url ? "missing" : canvasNodeDisplayStatus(n.status, jobStatus, url);
+    return { ...n, generationId: gid, status, url };
   });
 }

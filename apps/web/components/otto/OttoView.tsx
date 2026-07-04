@@ -33,6 +33,7 @@ interface OttoViewProps {
   activeThreadId: string | null;
   onThreadsChange: (threads: ChatThreadDTO[]) => void;
   onActiveThreadChange: (id: string | null) => void;
+  onThreadStarted: (thread: ChatThreadDTO) => void;
   balanceUsd: number;
   userName: string;
   memory: MemoryRow[];
@@ -68,6 +69,7 @@ export function OttoView({
   activeThreadId,
   onThreadsChange,
   onActiveThreadChange,
+  onThreadStarted,
   balanceUsd,
   userName,
   memory,
@@ -244,15 +246,11 @@ export function OttoView({
               seedText={seedText}
               onSeedConsumed={onSeedConsumed}
               ottoStreamEnabled={ottoStreamEnabled}
-              onThreadStarted={(thread) => {
-                onThreadsChange([thread, ...threads]);
-                onActiveThreadChange(thread.id);
-              }}
+              onThreadStarted={onThreadStarted}
               onStreamStart={(thread, pending) => {
                 // Streaming front door: an empty thread was created; hand its first
                 // message to OttoChatStream, which streams it in on mount.
-                onThreadsChange([thread, ...threads]);
-                onActiveThreadChange(thread.id);
+                onThreadStarted(thread);
                 setPendingFirst({ threadId: thread.id, text: pending.text, goalKey: pending.goalKey, entityIds: pending.entityIds });
               }}
             />

@@ -96,6 +96,7 @@ export function OttoApp({
   const router = useRouter();
   const [view, setView] = useState<OttoViewKey>(initialView ?? "otto");
   const [threads, setThreads] = useState<ChatThreadDTO[]>(initialThreads);
+  const [sidebarThreadList, setSidebarThreadList] = useState<ChatThreadDTO[]>(sidebarThreads);
   const [activeThreadId, setActiveThreadId] = useState<string | null>(
     initialActiveThreadId ?? initialThreads[0]?.id ?? null,
   );
@@ -105,6 +106,14 @@ export function OttoApp({
   const [seedText, setSeedText] = useState<string>("");
   const [navCollapsed, setNavCollapsed] = useState(initialNavCollapsed ?? false);
   const [chatCollapsed, setChatCollapsed] = useState(initialChatCollapsed ?? false);
+
+  useEffect(() => {
+    setThreads(initialThreads);
+  }, [initialThreads]);
+
+  useEffect(() => {
+    setSidebarThreadList(sidebarThreads);
+  }, [sidebarThreads]);
 
   const applyActivity = useCallback((rows: Array<{ threadId: string; pending: boolean }>) => {
     setActivity(new Set(rows.filter((r) => r.pending).map((r) => r.threadId)));
@@ -149,6 +158,33 @@ export function OttoApp({
     // gb is the default now — no ?skin needed in the URL.
     return `/otto?${p.toString()}`;
   }, []);
+
+  const pushLocalRoute = useCallback((href: string) => {
+    if (typeof window !== "undefined") {
+      const current = `${window.location.pathname}${window.location.search}`;
+      if (current !== href) window.history.pushState(null, "", href);
+    }
+    router.replace(href);
+  }, [router]);
+
+  const handleThreadsChange = useCallback((next: ChatThreadDTO[]) => {
+    setThreads(next);
+    // The sidebar receives all-project thread metas from the server, but a new
+    // front-door thread is created client-side before the next server refresh.
+    // Mirror the active project's thread list immediately so campaign history
+    // does not look empty until reload.
+    setSidebarThreadList((prev) => [
+      ...next,
+      ...prev.filter((t) => t.projectId !== curProjectId),
+    ]);
+  }, [curProjectId]);
+
+  const handleThreadStarted = useCallback((thread: ChatThreadDTO) => {
+    handleThreadsChange([thread, ...threads.filter((t) => t.id !== thread.id)]);
+    setActiveThreadId(thread.id);
+    setView("otto");
+    pushLocalRoute(projectHref(thread.projectId || curProjectId, thread.id));
+  }, [curProjectId, handleThreadsChange, projectHref, pushLocalRoute, threads]);
 
   const handleNewCampaign = useCallback(async () => {
     try {
@@ -198,7 +234,7 @@ export function OttoApp({
     if (autoTitledRef.current) return;
     const active = projects.find((p) => p.id === curProjectId);
     if (!active || (active.name !== "New campaign" && active.name !== "Untitled Project")) return;
-    const named = sidebarThreads.some(
+    const named = sidebarThreadList.some(
       (t) => t.projectId === curProjectId && t.title && t.title !== "New campaign" && t.title !== "Untitled",
     );
     if (!named) return;
@@ -206,13 +242,13 @@ export function OttoApp({
     void autoTitleProjectIfDefault(curProjectId).then((res) => {
       if (res && "name" in res && res.name) router.refresh();
     });
-  }, [projects, curProjectId, sidebarThreads, router]);
+  }, [projects, curProjectId, sidebarThreadList, router]);
 
   async function handleDeleteThread(id: string) {
     const snapshot = threads;
     const snapshotActive = activeThreadId;
     // Optimistic removal
-    setThreads((prev) => prev.filter((t) => t.id !== id));
+    handleThreadsChange(threads.filter((t) => t.id !== id));
     const newActive = nextActiveThreadId(threads, id, activeThreadId);
     if (activeThreadId === id) {
       setActiveThreadId(newActive);
@@ -222,7 +258,7 @@ export function OttoApp({
     if ("error" in result) {
       // Restore on failure
       console.error("[handleDeleteThread] failed:", result.error);
-      setThreads(snapshot);
+      handleThreadsChange(snapshot);
       setActiveThreadId(snapshotActive);
       return;
     }
@@ -290,7 +326,7 @@ export function OttoApp({
         onViewChange={setView}
         projects={projects}
         activeProjectId={curProjectId}
-        sidebarThreads={sidebarThreads}
+        sidebarThreads={sidebarThreadList}
         activeThreadId={activeThreadId}
         onSelectThread={handleSelectThread}
         onSwitchProject={handleSwitchProject}
@@ -351,8 +387,9 @@ export function OttoApp({
           entities={entities}
           threads={threads}
           activeThreadId={activeThreadId}
-          onThreadsChange={setThreads}
+          onThreadsChange={handleThreadsChange}
           onActiveThreadChange={setActiveThreadId}
+          onThreadStarted={handleThreadStarted}
           balanceUsd={balanceUsd}
           userName={userName}
           memory={memory}
