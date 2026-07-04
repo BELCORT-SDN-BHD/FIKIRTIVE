@@ -116,4 +116,17 @@ describe("createTopupCheckout", () => {
       customer_email: "c@t.test",
     }));
   });
+
+  it("returns a friendly error when Checkout Session creation fails", async () => {
+    mockRequireOwner.mockResolvedValue({ email: "c@t.test", ownerId: "org_1" });
+    pricesRetrieve.mockResolvedValue({ id: "price_a", active: true, metadata: { credits: "100" } });
+    sessionsCreate.mockRejectedValue(new Error("stripe unavailable"));
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+
+    const res = await createTopupCheckout("price_a");
+
+    expect(res).toEqual({ error: "Could not start checkout — please retry." });
+    expect(warn).toHaveBeenCalledOnce();
+    warn.mockRestore();
+  });
 });

@@ -56,15 +56,21 @@ export async function createTopupCheckout(priceId: string): Promise<{ url: strin
 
   const base = process.env.BETTER_AUTH_URL ?? "";
   if (!base) return { error: "Checkout is unavailable — please contact support." };
-  const session = await stripe.checkout.sessions.create({
-    mode: "payment",
-    line_items: [{ price: priceId, quantity: 1 }],
-    client_reference_id: gate.ownerId,
-    metadata: { orgId: gate.ownerId, credits: String(credits), priceId },
-    success_url: `${base}/billing?status=success`,
-    cancel_url: `${base}/billing?status=cancel`,
-    customer_email: gate.email,
-  });
+  let session: Awaited<ReturnType<typeof stripe.checkout.sessions.create>>;
+  try {
+    session = await stripe.checkout.sessions.create({
+      mode: "payment",
+      line_items: [{ price: priceId, quantity: 1 }],
+      client_reference_id: gate.ownerId,
+      metadata: { orgId: gate.ownerId, credits: String(credits), priceId },
+      success_url: `${base}/billing?status=success`,
+      cancel_url: `${base}/billing?status=cancel`,
+      customer_email: gate.email,
+    });
+  } catch (e) {
+    console.warn("[billing] createTopupCheckout failed:", e);
+    return { error: "Could not start checkout — please retry." };
+  }
   if (!session.url) return { error: "Could not start checkout — please retry." };
   return { url: session.url };
 }
