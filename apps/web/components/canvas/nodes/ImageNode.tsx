@@ -26,9 +26,10 @@ export function ImageNode({ data, selected }: NodeProps) {
         isVisible={selected}
         position={Position.Top}
         align="start"
-        offset={10}
-        style={{ display: "flex", gap: 6, pointerEvents: "all" }}
+        offset={22}
+        style={{ display: "flex", gap: 6, pointerEvents: "all", zIndex: 50 }}
         onPointerDown={(e) => e.stopPropagation()}
+        onMouseDown={(e) => e.stopPropagation()}
       >
         {actionable && d.onOpenDetail && (
           <button

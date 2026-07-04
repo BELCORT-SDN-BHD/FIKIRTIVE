@@ -18,9 +18,10 @@ export function VideoNode({ data, selected }: NodeProps) {
         isVisible={selected}
         position={Position.Top}
         align="start"
-        offset={10}
-        style={{ pointerEvents: "all" }}
+        offset={22}
+        style={{ pointerEvents: "all", zIndex: 50 }}
         onPointerDown={(e) => e.stopPropagation()}
+        onMouseDown={(e) => e.stopPropagation()}
       >
         <button
           type="button"
