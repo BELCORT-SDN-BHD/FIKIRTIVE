@@ -229,7 +229,7 @@ export default function FlowCanvas({
       onOpenDetailByNode.current[id] = () => {
         const entry = nodeDataRef.current[id];
         if (!entry?.generationId) {
-          toast.error("This image is not ready for details yet.");
+          toast.error("This asset is not ready for details yet.");
           return;
         }
         setDetailFor(entry.generationId);
@@ -462,7 +462,7 @@ export default function FlowCanvas({
           onRefresh: requestReload,
           onChange: r.type === "text" ? (t: string) => onTextChange(r.id, t) : undefined,
           onAnimate: r.type === "image" ? getOnAnimate(r.id) : undefined,
-          onOpenDetail: r.type === "image" ? getOnOpenDetail(r.id) : undefined,
+          onOpenDetail: r.type === "image" || r.type === "video" ? getOnOpenDetail(r.id) : undefined,
         }),
         style: { width: r.w, height: r.h, boxShadow: `0 0 0 2px ${convoColor(r.threadId ?? null)}` },
         threadId: r.threadId ?? null,

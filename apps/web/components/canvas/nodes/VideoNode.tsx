@@ -9,8 +9,10 @@ export function VideoNode({ data, selected }: NodeProps) {
   const d = data as {
     status: string;
     url?: string;
+    generationId?: string;
     skin?: string;
     onDelete?: () => void;
+    onOpenDetail?: () => void;
     onRefresh?: () => void;
     directToolsLocked?: boolean;
     directToolsLockedReason?: string;
@@ -18,6 +20,8 @@ export function VideoNode({ data, selected }: NodeProps) {
   const gb = d.skin === "gb";
   const writeLock = getCanvasNodeWriteLock(d);
   const terminal = d.status === "failed" || d.status === "timeout" || d.status === "missing";
+  const viewable = !!d.url && !terminal;
+  const actionable = viewable && !!d.generationId;
   const videoRef = useRef<HTMLVideoElement>(null);
   const [playing, setPlaying] = useState(false);
   return (
@@ -29,10 +33,20 @@ export function VideoNode({ data, selected }: NodeProps) {
         position={Position.Top}
         align="start"
         offset={22}
-        style={{ pointerEvents: "all", zIndex: 50 }}
+        style={{ display: "flex", gap: 6, pointerEvents: "all", zIndex: 50 }}
         onPointerDown={(e) => e.stopPropagation()}
         onMouseDown={(e) => e.stopPropagation()}
       >
+        {actionable && d.onOpenDetail && (
+          <button
+            type="button"
+            className="al-btn al-btn-glass al-btn-sm nodrag nopan"
+            onPointerDown={(e) => e.stopPropagation()}
+            onClick={(e) => { e.stopPropagation(); d.onOpenDetail?.(); }}
+          >
+            Detail
+          </button>
+        )}
         <button
           type="button"
           aria-label="Delete video node"
