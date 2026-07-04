@@ -201,8 +201,10 @@ export function OttoView({
             flex: 0 0 26px !important;
             min-width: 26px;
           }
-          .otto-workspace:not(.otto-chat-collapsed) .otto-canvas-pane > :not(button) {
-            visibility: hidden;
+          .otto-workspace:not(.otto-chat-collapsed) .otto-canvas-pane > :not(button),
+          .otto-workspace:not(.otto-chat-collapsed) .otto-canvas-pane > :not(button) * {
+            visibility: hidden !important;
+            pointer-events: none;
           }
           .otto-chat-collapse-handle {
             left: 0 !important;
