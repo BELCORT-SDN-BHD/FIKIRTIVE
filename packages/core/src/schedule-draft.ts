@@ -52,14 +52,14 @@ const CAPTION_MAX = 2200;
 /** Strict ISO-8601 instant WITH an explicit timezone designator (Z or ±HH:MM) → Date, else null.
  *  Rejects naive/local datetimes (e.g. "2026-07-10T09:00:00") that new Date() would parse in the
  *  server's local zone — the loose `z.string().min(1)` the Otto skill used let those through. */
-function parseInstant(v: string): Date | null {
+export function parseScheduleInstant(v: string): Date | null {
   if (!/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}(:\d{2}(\.\d{1,3})?)?(Z|[+-]\d{2}:\d{2})$/.test(v)) return null;
   const d = new Date(v);
   return Number.isNaN(d.getTime()) ? null : d;
 }
 
 /** Validate an IANA time zone name via Intl (constructor throws on an unknown zone). */
-function isValidTimeZone(tz: string): boolean {
+export function isValidScheduleTimeZone(tz: string): boolean {
   if (!tz) return false;
   try {
     new Intl.DateTimeFormat("en-US", { timeZone: tz });
@@ -82,11 +82,11 @@ export function validateScheduleDraft(
   if (!caption) return { error: "A post needs a caption." };
   if (caption.length > CAPTION_MAX) return { error: `A caption can be at most ${CAPTION_MAX} characters.` };
 
-  const scheduledAt = typeof input?.scheduledAt === "string" ? parseInstant(input.scheduledAt.trim()) : null;
+  const scheduledAt = typeof input?.scheduledAt === "string" ? parseScheduleInstant(input.scheduledAt.trim()) : null;
   if (!scheduledAt) return { error: "Pick a valid date and time (include a UTC offset)." };
 
   const scheduledTz = typeof input?.scheduledTz === "string" ? input.scheduledTz.trim() : "";
-  if (!isValidTimeZone(scheduledTz)) return { error: "Pick a valid time zone." };
+  if (!isValidScheduleTimeZone(scheduledTz)) return { error: "Pick a valid time zone." };
 
   const media = Array.isArray(input?.media) ? input.media.filter((m) => typeof m === "string" && m) : [];
   if (media.length > caps.maxMediaCount) {
