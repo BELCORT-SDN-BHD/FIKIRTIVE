@@ -35,6 +35,7 @@ type FlowCanvasProps = {
 
 // Must be stable (defined outside component) per ReactFlow requirements
 const nodeTypes = { image: ImageNode, video: VideoNode, text: TextNode };
+const CANVAS_REF_MAX_BYTES = 10 * 1024 * 1024;
 
 export default function FlowCanvas({
   projectId,
@@ -320,15 +321,31 @@ export default function FlowCanvas({
     setDragOver(false);
     if (directToolsLockedRef.current) return;
     const files = Array.from(e.dataTransfer?.files ?? []).filter((f) => f.type.startsWith("image/"));
-    if (files.length === 0) return;
+    if (files.length === 0) {
+      toast.error("Drop a PNG, JPG, or WEBP image.");
+      return;
+    }
     for (const file of files) {
+      if (file.size > CANVAS_REF_MAX_BYTES) {
+        toast.error("Reference image must be 10 MB or smaller.");
+        continue;
+      }
       const fd = new FormData();
       fd.append("files", file);
       const res = await uploadReference(projectId, fd);
-      if (!res || "error" in res) { console.warn("[canvas drop] upload failed:", res); continue; }
+      if (!res || "error" in res) {
+        const msg = res && "error" in res ? res.error : "Upload failed; please try another image.";
+        toast.error(msg);
+        console.warn("[canvas drop] upload failed:", res);
+        continue;
+      }
       const x = 80 + nodeCountRef.current * 340;
       const created = await createCanvasNode({ projectId, type: "image", x, y: 80, w: 320, h: 320, generationId: res.id, status: "done", ...(activeThreadId ? { threadId: activeThreadId } : {}) });
-      if (!("id" in created)) { console.warn("[canvas drop] node create failed:", created); continue; }
+      if (!("id" in created)) {
+        toast.error(created.error || "Upload succeeded, but the canvas card did not appear.");
+        console.warn("[canvas drop] node create failed:", created);
+        continue;
+      }
       nodeDataRef.current[created.id] = { generationId: res.id, pos: { x, y: 80 } };
       nodeCountRef.current += 1;
       setNodes((ns) => [
