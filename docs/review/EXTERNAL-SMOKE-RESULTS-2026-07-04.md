@@ -95,7 +95,7 @@ Fourth follow-up evidence:
 - `.gstack/qa-reports/screenshots/prod-followup-2026-07-04/admin-magic-followup.png`
 - `.gstack/qa-reports/screenshots/prod-followup-2026-07-04/user-magic-followup.png`
 
-Follow-up sign-out note: clicking the production Account `Sign out` control cleared the session, but the visible page did not immediately navigate to `/login`; a subsequent protected `/otto` navigation redirected to `/login?from=%2Fotto`. This should be rechecked after deploy because local QA for the PR had sign-out passing.
+Follow-up sign-out note: clicking the production Account `Sign out` control cleared the session, but the visible page did not immediately navigate to `/login`; a subsequent protected `/otto` navigation redirected to `/login?from=%2Fotto`. A later local regression test covers the intended server action behavior, but this should still be rechecked after deploy because current production is not PR #131.
 
 ## Normal User Route Smoke
 
@@ -261,6 +261,6 @@ Margin check:
 1. Have an authorized human merge/deploy PR #131 now that it is `CLEAN` and CI-green.
 2. After deploy, rerun production canary specifically against the PR #131 admin v2 routes.
 3. Complete Google OAuth through consent/callback with a controlled Google account; initiation now reaches Google and no longer shows `redirect_uri_mismatch`.
-4. Recheck Account `Sign out` on the deployed PR build; current production cleared the session but did not visibly navigate until the next protected route load.
+4. Recheck Account `Sign out` on the deployed PR build; current production cleared the session but did not visibly navigate until the next protected route load, while local regression coverage now pins the expected sign-out-then-redirect action.
 5. Decide whether the old `/admin/content` route should remain reachable. If yes, remove direct cross-tenant `/files` media previews or replace them with an explicit admin-gated preview route.
 6. Run the remaining approved-but-not-executed gates only if still needed: Stripe test-mode hosted checkout/event delivery, Meta OAuth, real video, reference-video, and Otto LLM accounting.

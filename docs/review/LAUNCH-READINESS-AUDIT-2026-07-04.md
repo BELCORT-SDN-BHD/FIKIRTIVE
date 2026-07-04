@@ -312,6 +312,7 @@ Load-bearing constraints:
 - `f8d30e6` - Stripe webhook route integration covers real credit-ledger idempotency for delayed-payment replay.
 - `7eef840` - Otto stream route test covers insufficient-credit behavior without running Otto or persisting an AGENT reply.
 - `17a10f2` - Meta OAuth route tests cover authorize/callback gates, signed owner state, and success/error redirects.
+- `09c700e` - Account sign-out regression test covers Better Auth sign-out before redirecting to `/login`.
 
 ## Current Verification State
 
@@ -323,7 +324,7 @@ External production follow-up:
 - Local Meta connected-fixture QA passed for connected Connections/Analytics/autonomy/kill-switch states; real Meta OAuth remains unproven.
 - Production did not yet validate PR #131 admin v2 because the PR-only admin routes returned 404 before merge/deploy.
 - Follow-up replacement admin and normal magic links were invalid at test time, including the latest `tools@belcort.com` and `nicksgan@gmail.com` links; earlier fresh magic links had already proven both roles.
-- Current production Account sign-out cleared the session but did not visibly navigate until the next protected route load; recheck after deploy.
+- Current production Account sign-out cleared the session but did not visibly navigate until the next protected route load; local code-level regression now covers the expected Better Auth sign-out then `/login` redirect behavior, but production must still be rechecked after deploy.
 
 Local verification for `3c655e0`:
 
@@ -358,6 +359,14 @@ Local verification for `17a10f2`:
 - `pnpm --filter @fikirtive/web exec vitest run lib/__tests__/meta-oauth-route.test.ts lib/__tests__/meta-oauth.test.ts lib/__tests__/meta-actions.test.ts`: pass, 31 tests.
 - `pnpm --filter @fikirtive/web typecheck`: pass.
 - The route test proves `/api/meta/authorize` and `/api/meta/callback` enforce auth, build and verify signed owner state, avoid calling connection completion on missing/mismatched state, pass the exact callback URI to `completeMetaConnect`, and return explicit Connections redirects.
+
+Local verification for `09c700e`:
+
+- Report: `docs/review/QA-ACCOUNT-SIGNOUT-2026-07-04.md`
+- `pnpm --filter @fikirtive/web exec vitest run lib/__tests__/account-actions.test.ts`: pass, 4 tests.
+- `pnpm --filter @fikirtive/web exec vitest run lib/__tests__/account-actions.test.ts lib/__tests__/better-auth-server.test.ts lib/__tests__/better-auth-client.test.ts`: pass, 7 tests.
+- `pnpm --filter @fikirtive/web typecheck`: pass.
+- The regression test proves `signOutAction()` awaits Better Auth `auth.api.signOut({ headers })` before calling `redirect("/login")`.
 
 GitHub CI for pushed code head `6058178` before the Meta OAuth route follow-up:
 
