@@ -84,6 +84,39 @@ describe("listCanvasNodes", () => {
       expect.objectContaining({ where: { id: { in: ["job-1"] }, ownerId: "u1", projectId: "p1" } }),
     );
   });
+
+  it("recovers stale promptbar nodes from the first displayable job generation", async () => {
+    mockProjectFindFirst.mockResolvedValue({ id: "p1" });
+    mockFindMany.mockResolvedValue([
+      {
+        id: "node-1",
+        type: "image",
+        x: 0,
+        y: 0,
+        w: 320,
+        h: 320,
+        text: null,
+        prompt: "four variants",
+        generationId: null,
+        genJobId: "job-1",
+        status: "pending",
+        sourceNodeId: null,
+        threadId: null,
+      },
+    ]);
+    mockGenJobFindMany.mockResolvedValue([{ id: "job-1", status: "DONE", generationIds: ["gen-missing", "gen-good"] }]);
+    mockGetGenerationThumbs.mockResolvedValue({ "gen-good": { src: "/files/u1/good.jpeg", kind: "image" } });
+
+    await expect(listCanvasNodes("p1")).resolves.toEqual([
+      expect.objectContaining({
+        id: "node-1",
+        generationId: "gen-good",
+        status: "done",
+        url: "/files/u1/good.jpeg",
+      }),
+    ]);
+    expect(mockGetGenerationThumbs).toHaveBeenCalledWith("u1", expect.arrayContaining(["gen-missing", "gen-good"]));
+  });
 });
 
 describe("moveCanvasNode", () => {

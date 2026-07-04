@@ -4,7 +4,7 @@ import { prisma } from "@fikirtive/db";
 import { newId } from "@fikirtive/core";
 import { requireOwner } from "./auth-guard";
 import { getGenerationThumbs } from "./data";
-import { canvasNodeDisplayStatus } from "./otto-canvas-bridge-core";
+import { canvasNodeDisplayStatus, firstDisplayableGenerationId } from "./otto-canvas-bridge-core";
 
 export type CanvasNodeDTO = {
   id: string; type: string; x: number; y: number; w: number; h: number;
@@ -44,13 +44,13 @@ export async function listCanvasNodes(projectId: string): Promise<CanvasNodeDTO[
   const jobById = new Map(jobs.map((j) => [j.id, j]));
   const genIds = [
     ...nodes.map((n) => n.generationId).filter((x): x is string => !!x),
-    ...jobs.map((j) => j.generationIds[0]).filter((x): x is string => !!x),
+    ...jobs.flatMap((j) => j.generationIds),
   ];
   const thumbs = await getGenerationThumbs(gate.ownerId, genIds);
 
   return nodes.map((n) => {
     const job = n.genJobId ? jobById.get(n.genJobId) : null;
-    const generationId = n.generationId ?? job?.generationIds[0] ?? null;
+    const generationId = n.generationId ?? firstDisplayableGenerationId(job?.generationIds, thumbs);
     const url = generationId ? thumbs[generationId]?.src ?? null : null;
     const status = generationId && !url ? "missing" : canvasNodeDisplayStatus(n.status, job?.status, url);
     return { ...n, generationId, status, url };

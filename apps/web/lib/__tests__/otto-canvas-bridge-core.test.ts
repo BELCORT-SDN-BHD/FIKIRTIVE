@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { canvasNodeDisplayStatus, planBridgeNodes, type GenResultMsg } from "../otto-canvas-bridge-core";
+import { canvasNodeDisplayStatus, firstDisplayableGenerationId, planBridgeNodes, type GenResultMsg } from "../otto-canvas-bridge-core";
 
 const msg = (seq: number, genJobId: string | null, kind?: string, text: string | null = null): GenResultMsg => ({
   seq,
@@ -79,5 +79,13 @@ describe("canvasNodeDisplayStatus", () => {
   it("falls back to the stored row status when no linked job status is available", () => {
     expect(canvasNodeDisplayStatus("pending", null, null)).toBe("pending");
     expect(canvasNodeDisplayStatus("failed", undefined, null)).toBe("failed");
+  });
+});
+
+describe("firstDisplayableGenerationId", () => {
+  it("uses the first generation with a resolved thumbnail before falling back to the first id", () => {
+    expect(firstDisplayableGenerationId(["g-missing", "g-good"], { "g-good": { src: "/files/u/good.jpeg" } })).toBe("g-good");
+    expect(firstDisplayableGenerationId(["g-missing", "g-later"], {})).toBe("g-missing");
+    expect(firstDisplayableGenerationId([], {})).toBeNull();
   });
 });

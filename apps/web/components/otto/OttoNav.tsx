@@ -1,5 +1,5 @@
 "use client";
-import React, { useState } from "react";
+import React, { useEffect, useState } from "react";
 import { creditsLabel } from "@/lib/credit-format";
 import { Avatar, AvatarFallback } from "@/components/ui/avatar";
 import type { OttoViewKey, ProjectMeta } from "./OttoApp";
@@ -12,11 +12,6 @@ interface NavItem {
   key: OttoViewKey;
   label: string;
   icon: React.ReactNode;
-}
-
-interface NavGroup {
-  label: string;
-  items: NavItem[];
 }
 
 function IconMessageCircle() {
@@ -105,33 +100,24 @@ function OttoCloud({ size = 26 }: { size?: number }) {
   );
 }
 
-const NAV_GROUPS: NavGroup[] = [
-  {
-    label: "Create",
-    items: [
-      { key: "otto", label: "Canvas", icon: <IconLibrary /> },
-      { key: "library", label: "Library", icon: <IconFolderHeart /> },
-      { key: "templates", label: "Templates", icon: <IconTemplates /> },
-      { key: "discover", label: "Discover", icon: <IconCompass /> },
-    ],
-  },
-  {
-    label: "Assets",
-    items: [
-      { key: "stuff", label: "My Stuff", icon: <IconFolderHeart /> },
-      { key: "memory", label: "Brand memory", icon: <IconBrain /> },
-    ],
-  },
-  {
-    label: "Operate",
-    items: [
-      { key: "schedule", label: "Schedule", icon: <IconCalendar /> },
-      { key: "analytics", label: "Analytics", icon: <IconChart /> },
-      { key: "connections", label: "Connections", icon: <IconLink /> },
-      { key: "account", label: "Account", icon: <IconCircleUser /> },
-    ],
-  },
+const PRIMARY_ITEMS: NavItem[] = [
+  { key: "otto", label: "Chat", icon: <IconMessageCircle /> },
 ];
+
+const TOOL_ITEMS: NavItem[] = [
+  { key: "library", label: "Library", icon: <IconFolderHeart /> },
+  { key: "stuff", label: "My Stuff", icon: <IconFolderHeart /> },
+  { key: "memory", label: "Brand memory", icon: <IconBrain /> },
+  { key: "templates", label: "Templates", icon: <IconTemplates /> },
+  { key: "discover", label: "Discover", icon: <IconCompass /> },
+  { key: "schedule", label: "Schedule", icon: <IconCalendar /> },
+  { key: "analytics", label: "Analytics", icon: <IconChart /> },
+  { key: "connections", label: "Connections", icon: <IconLink /> },
+  { key: "account", label: "Account", icon: <IconCircleUser /> },
+];
+
+const PROJECT_LIMIT = 10;
+const THREAD_LIMIT = 6;
 
 function IconLibrary() {
   return (
@@ -225,9 +211,14 @@ export function OttoNav({
 }: OttoNavProps) {
   const initial = userName.slice(0, 1).toUpperCase();
   const balanceLabel = creditsLabel(balanceCredits);
+  const toolsActive = TOOL_ITEMS.some((item) => item.key === view);
 
   // Per-project collapse of the nested conversation list (default expanded).
   const [collapsedProjects, setCollapsedProjects] = useState<Set<string>>(new Set());
+  const [toolsOpen, setToolsOpen] = useState(toolsActive);
+  useEffect(() => {
+    if (toolsActive) setToolsOpen(true);
+  }, [toolsActive]);
   const toggleProjectCollapse = (id: string) =>
     setCollapsedProjects((prev) => {
       const next = new Set(prev);
@@ -242,7 +233,25 @@ export function OttoNav({
     arr.push(t);
     threadsByProject.set(t.projectId, arr);
   }
-  const hasSidebar = projects.length > 0 || history.length > 0;
+  const projectIndex = new Map(projects.map((p, index) => [p.id, index]));
+  const projectLastActivity = new Map<string, number>();
+  for (const t of sidebarThreads) {
+    const ts = Date.parse(t.updatedAt) || 0;
+    projectLastActivity.set(t.projectId, Math.max(projectLastActivity.get(t.projectId) ?? 0, ts));
+  }
+  const visibleProjects = [...projects].sort((a, b) => {
+    if (a.id === activeProjectId && b.id !== activeProjectId) return -1;
+    if (b.id === activeProjectId && a.id !== activeProjectId) return 1;
+    const activity = (projectLastActivity.get(b.id) ?? 0) - (projectLastActivity.get(a.id) ?? 0);
+    if (activity !== 0) return activity;
+    return (projectIndex.get(a.id) ?? 0) - (projectIndex.get(b.id) ?? 0);
+  }).slice(0, PROJECT_LIMIT);
+  const activeProject = projects.find((p) => p.id === activeProjectId);
+  if (activeProject && !visibleProjects.some((p) => p.id === activeProject.id)) {
+    if (visibleProjects.length >= PROJECT_LIMIT) visibleProjects[visibleProjects.length - 1] = activeProject;
+    else visibleProjects.push(activeProject);
+  }
+  const hasSidebar = visibleProjects.length > 0 || history.length > 0;
 
   function dotFor(status: ChatThreadDTO["status"]) {
     return status === "working" ? "#f59e0b" : status === "failed" ? "#dc2626" : status === "done" ? "#16a34a" : null;
@@ -343,71 +352,95 @@ export function OttoNav({
         </button>
       </div>
 
-      {/* Nav items */}
-      <div className="px-3 flex flex-col gap-3">
-        {NAV_GROUPS.map((group) => (
-          <div key={group.label} className="flex flex-col gap-[1px]">
-            <div className="px-[9px] pb-1 text-[0.625rem] font-semibold uppercase tracking-[0.07em] text-muted-foreground/65">
-              {group.label}
+      {/* Primary path + secondary tools */}
+      <div className="px-3 flex flex-col gap-2">
+        <div className="flex flex-col gap-[1px]">
+          {PRIMARY_ITEMS.map((item) => {
+            const active = view === item.key;
+            return (
+              <button
+                key={item.key}
+                onClick={() => handleNavAction(() => onViewChange(item.key))}
+                className={`flex items-center gap-[9px] w-full border-0 text-[0.84375rem] px-[9px] py-2 rounded-[9px] cursor-pointer text-left transition-colors duration-150 ${active ? "bg-secondary text-foreground font-semibold" : "bg-transparent text-muted-foreground font-normal"}`}
+              >
+                {item.icon}
+                {item.label}
+              </button>
+            );
+          })}
+        </div>
+        <div className="flex flex-col gap-[1px]">
+          <button
+            type="button"
+            onClick={() => setToolsOpen((v) => !v)}
+            aria-expanded={toolsOpen}
+            className={`flex items-center gap-[9px] w-full border-0 text-[0.84375rem] px-[9px] py-2 rounded-[9px] cursor-pointer text-left transition-colors duration-150 ${toolsActive ? "bg-secondary text-foreground font-semibold" : "bg-transparent text-muted-foreground font-normal"}`}
+          >
+            <IconLibrary />
+            <span className="flex-1">Tools</span>
+            <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.4" strokeLinecap="round" strokeLinejoin="round" aria-hidden className="transition-transform duration-150" style={{ transform: toolsOpen ? "none" : "rotate(-90deg)" }}><path d="m6 9 6 6 6-6" /></svg>
+          </button>
+          {toolsOpen && (
+            <div className="flex flex-col gap-[1px] pt-1">
+              {TOOL_ITEMS.map((item) => {
+                const active = view === item.key;
+                return (
+                  <button
+                    key={item.key}
+                    onClick={() => handleNavAction(() => onViewChange(item.key))}
+                    className={`flex items-center gap-[9px] w-full border-0 text-[0.8125rem] pl-8 pr-[9px] py-[7px] rounded-[9px] cursor-pointer text-left transition-colors duration-150 ${active ? "bg-secondary text-foreground font-semibold" : "bg-transparent text-muted-foreground font-normal"}`}
+                  >
+                    {item.icon}
+                    {item.label}
+                  </button>
+                );
+              })}
             </div>
-            {group.items.map((item) => {
-              const active = view === item.key;
-              return (
-                <button
-                  key={item.key}
-                  onClick={() => handleNavAction(() => onViewChange(item.key))}
-                  className={`flex items-center gap-[9px] w-full border-0 text-[0.84375rem] px-[9px] py-2 rounded-[9px] cursor-pointer text-left transition-colors duration-150 ${active ? "bg-secondary text-foreground font-semibold" : "bg-transparent text-muted-foreground font-normal"}`}
-                >
-                  {item.icon}
-                  {item.label}
-                </button>
-              );
-            })}
-          </div>
-        ))}
+          )}
+        </div>
       </div>
 
       {/* Projects (campaigns) + History */}
       {hasSidebar && (
         <div className="flex-1 overflow-auto pt-4 px-3 pb-2">
-          {projects.length > 0 && (
+          {visibleProjects.length > 0 && (
           <>
           <div className="flex items-center justify-between mb-2 pl-1">
             <span className="text-[0.65625rem] text-muted-foreground/70 font-semibold uppercase tracking-[0.07em]">
-              Projects
+              History
             </span>
-            <button
-              type="button"
-              onClick={() => handleNavAction(onNewCampaign)}
-              title="New campaign"
-              aria-label="New campaign"
-              className="flex items-center justify-center w-5 h-5 border-0 bg-transparent text-muted-foreground/70 rounded-[10px] cursor-pointer p-0"
-            >
-              <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" aria-hidden><path d="M12 5v14M5 12h14" /></svg>
-            </button>
           </div>
           <div className="flex flex-col gap-0.5">
-            {projects.map((p) => {
+            {visibleProjects.map((p) => {
               const isActiveProject = p.id === activeProjectId;
               const projThreads = threadsByProject.get(p.id) ?? [];
+              const visibleThreads = projThreads.slice(0, THREAD_LIMIT);
+              const activeThread = isActiveProject && activeThreadId
+                ? projThreads.find((t) => t.id === activeThreadId)
+                : undefined;
+              if (activeThread && !visibleThreads.some((t) => t.id === activeThread.id)) {
+                if (visibleThreads.length >= THREAD_LIMIT) visibleThreads[visibleThreads.length - 1] = activeThread;
+                else visibleThreads.push(activeThread);
+              }
               const isCollapsed = collapsedProjects.has(p.id);
               return (
                 <div key={p.id} className="mb-1">
                   {/* project (campaign) row — chevron toggles its conversations,
                       double-click renames, hover-X deletes */}
                   <div className="otto-recent-row relative flex items-center">
-                    <button
-                      type="button"
-                      aria-label={isCollapsed ? "Expand campaign" : "Collapse campaign"}
-                      aria-expanded={!isCollapsed}
-                      onClick={(e) => { e.stopPropagation(); toggleProjectCollapse(p.id); }}
-                      disabled={projThreads.length === 0}
-                      className={`flex items-center justify-center w-[18px] h-[26px] border-0 bg-transparent text-muted-foreground/70 p-0 shrink-0 ${projThreads.length ? "cursor-pointer" : "cursor-default"}`}
-                    >
-                      {projThreads.length > 0 && (
+                    {projThreads.length > 0 ? (
+                      <button
+                        type="button"
+                        aria-label={isCollapsed ? "Expand campaign" : "Collapse campaign"}
+                        aria-expanded={!isCollapsed}
+                        onClick={(e) => { e.stopPropagation(); toggleProjectCollapse(p.id); }}
+                        className="flex items-center justify-center w-[18px] h-[26px] border-0 bg-transparent text-muted-foreground/70 p-0 shrink-0 cursor-pointer"
+                      >
                         <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.4" strokeLinecap="round" strokeLinejoin="round" aria-hidden className="transition-transform duration-150" style={{ transform: isCollapsed ? "rotate(-90deg)" : "none" }}><path d="m6 9 6 6 6-6" /></svg>
-                      )}
-                    </button>
+                      </button>
+                    ) : (
+                      <span className="w-[18px] h-[26px] shrink-0" aria-hidden />
+                    )}
                     <button
                       onClick={() => { if (!isActiveProject) handleNavAction(() => onSwitchProject(p.id)); }}
                       onDoubleClick={() => { const n = window.prompt("Rename campaign", p.name); if (n && n.trim()) onRenameProject(p.id, n.trim()); }}
@@ -429,7 +462,7 @@ export function OttoNav({
                   {/* conversations nested under the project (collapsible) */}
                   {projThreads.length > 0 && !isCollapsed && (
                     <div className="flex flex-col gap-px mt-px">
-                      {projThreads.slice(0, 12).map((t) => {
+                      {visibleThreads.map((t) => {
                         const isActive = isActiveProject && t.id === activeThreadId && view === "otto";
                         const dotColor = dotFor(t.status);
                         return (
@@ -470,8 +503,8 @@ export function OttoNav({
           )}
           {history.length > 0 && (
           <>
-            <div className={`text-[0.65625rem] text-muted-foreground/70 font-semibold uppercase tracking-[0.07em] pl-1 mb-2 ${projects.length > 0 ? "mt-4" : "mt-0"}`}>
-              History
+            <div className={`text-[0.65625rem] text-muted-foreground/70 font-semibold uppercase tracking-[0.07em] pl-1 mb-2 ${visibleProjects.length > 0 ? "mt-4" : "mt-0"}`}>
+              Recent media
             </div>
             <div className="grid grid-cols-3 gap-[5px]">
               {history.map((h) => (

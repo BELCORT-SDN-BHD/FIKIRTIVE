@@ -195,7 +195,10 @@ export default function FlowCanvas({
     if (!onOpenDetailByNode.current[id]) {
       onOpenDetailByNode.current[id] = () => {
         const entry = nodeDataRef.current[id];
-        if (!entry?.generationId) return; // guard: generationId not yet resolved
+        if (!entry?.generationId) {
+          toast.error("This image is not ready for details yet.");
+          return;
+        }
         setDetailFor(entry.generationId);
       };
     }
