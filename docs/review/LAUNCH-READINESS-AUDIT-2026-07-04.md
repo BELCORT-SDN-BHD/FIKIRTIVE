@@ -1,7 +1,7 @@
 # Launch Readiness Audit - 2026-07-04
 
 PR: https://github.com/toolsbbb/FIKIRTIVE/pull/131
-Head audited: `f0adbc36d8d6638f9129858bfbc6ff04962982f3`
+Last code head audited before this document-only follow-up: `0985a94910d32d1b91006c7d29191b52ea0c6eef`
 Merge state: `CLEAN`
 
 This audit consolidates the local QA reports, tracked review docs, PR comments, and CI status for the public-launch readiness goal. It does not replace the per-surface reports; it maps them to the launch requirements and names the remaining gates.
@@ -24,7 +24,7 @@ This audit consolidates the local QA reports, tracked review docs, PR comments, 
 | Mobile layout is launch-safe for tested surfaces | Proven for tested surfaces at 390px | Per-surface mobile checks and screenshots |
 | Margin model is above constitutional floor | Proven from executable pricing and current official BytePlus evidence | `docs/review/MARGIN-PARITY-REPORT-2026-07-04.md` |
 | All changes/reports are handled in PR | Proven for tracked reports and PR comments | PR #131, tracked docs, comments |
-| CI is green | Proven | GitHub checks for run `28696048259`: typecheck/fences/lockfile, next build, unit + integration all passed |
+| CI is green | Proven | GitHub checks for run `28696231293`: typecheck/fences/lockfile, next build, unit + integration all passed |
 | Live paid supplier smoke | Not yet proven | Requires explicit per-spend founder approval despite the broad $60 allowance |
 | Real Stripe checkout/webhook | Not yet proven | Local QA intentionally avoided real checkout |
 | Real Meta/Google OAuth and connected Meta states | Not yet proven | Local QA checked handoff links and disconnected states only |
@@ -239,10 +239,11 @@ Load-bearing constraints:
 - `05fdc3d` - BytePlus pricing and margin evidence.
 - `7ffcd91` - First-run front door blocker and mobile onboarding spacing.
 - `f0adbc3` - All four front-door goal tiles recorded in QA report.
+- `0985a94` - Launch readiness audit added.
 
 ## Current Verification State
 
-GitHub CI for current head `f0adbc3`:
+GitHub CI for audited code head `0985a94`:
 
 - `typecheck + fences + frozen lockfile`: pass
 - `next build (apps/web)`: pass
@@ -265,18 +266,22 @@ These are the only material items not proven by current evidence:
 1. Live paid supplier smoke.
    - Needed to prove real Anthropic/Otto LLM and real BytePlus media generation still work with production-like credentials.
    - Not run because `.claude/CLAUDE.md` and `docs/BLUEPRINT.md` require explicit approval per real spend.
+   - Execution checklist: `docs/review/EXTERNAL-SMOKE-RUNBOOK-2026-07-04.md`.
 
 2. Real Stripe checkout and webhook.
    - Local Billing was tested in the unconfigured-pack state.
    - Real checkout must be tested only with an approved Stripe test/live-mode plan and expected ledger assertion.
+   - Execution checklist: `docs/review/EXTERNAL-SMOKE-RUNBOOK-2026-07-04.md`.
 
 3. Real Meta/Google OAuth and connected Meta states.
    - Local QA verified links and disconnected states.
    - Connected account, insights, publish-draft, reconnect, outage, pause, and disconnect states need OAuth credentials or seeded connection fixtures.
+   - Execution checklist: `docs/review/EXTERNAL-SMOKE-RUNBOOK-2026-07-04.md`.
 
 4. Production deploy/canary.
    - PR is clean and CI green.
    - No merge, deploy, or production canary has been run from this worktree.
+   - Execution checklist: `docs/review/EXTERNAL-SMOKE-RUNBOOK-2026-07-04.md`.
 
 ## Recommended Paid/External Smoke Matrix
 
