@@ -4,6 +4,7 @@ import { newId, storageKey, storageKeyToSrc } from "@fikirtive/core";
 import { requireOwner } from "./auth-guard";
 import { tallyEntityUsage } from "./entity-usage";
 import { threadBadgeFromJobStatus } from "./thread-status";
+import { storage } from "./storage";
 
 const THUMB_VIDEO_EXTS = new Set(["mp4", "mov", "webm", "mkv"]);
 /** Resolve generation ids → { src, kind } thumbnails (segment frame slots). */
@@ -14,7 +15,9 @@ export async function getGenerationThumbs(ownerId: string, ids: string[]): Promi
   const out: Record<string, { src: string; kind: "image" | "video" }> = {};
   for (const g of gens) {
     const ext = g.asset.ext.toLowerCase();
-    out[g.id] = { src: storageKeyToSrc(storageKey(g.asset.ownerId, g.asset.contentHash, ext)), kind: THUMB_VIDEO_EXTS.has(ext) ? "video" : "image" };
+    const key = storageKey(g.asset.ownerId, g.asset.contentHash, ext);
+    if (!(await storage.exists(key))) continue;
+    out[g.id] = { src: storageKeyToSrc(key), kind: THUMB_VIDEO_EXTS.has(ext) ? "video" : "image" };
   }
   return out;
 }
@@ -129,6 +132,7 @@ export async function getFrameCandidates(ownerId: string, projectId: string, tak
 }
 
 const MEDIA_VIDEO_EXTS = new Set(["mp4", "mov", "webm", "mkv"]);
+const MEDIA_SCAN_BUFFER = 20;
 
 /** One Assets-library row (client-safe — no BigInt). Shape matches Assets.MediaItem. */
 export type MediaPageItem = { id: string; src: string; kind: "image" | "video"; prompt: string; attached: boolean; shotLabel: string | null };
@@ -163,20 +167,24 @@ export async function getRecentGenerationThumbs(
   projectId: string,
   take = 9,
 ): Promise<HistoryThumb[]> {
+  const queryTake = Math.min(Math.max(take * 3, take), 30);
   const rows = await prisma.generation.findMany({
     where: { ownerId, projectId, ...notDeleted },
     orderBy: [{ createdAt: "desc" }, { id: "desc" }],
-    take,
+    take: queryTake,
     include: { asset: true },
   });
-  return rows.map((g) => {
+  const thumbs = await Promise.all(rows.map(async (g) => {
     const ext = g.asset.ext.toLowerCase();
+    const key = storageKey(g.asset.ownerId, g.asset.contentHash, ext);
+    if (!(await storage.exists(key))) return null;
     return {
       id: g.id,
-      src: storageKeyToSrc(storageKey(g.asset.ownerId, g.asset.contentHash, ext)),
+      src: storageKeyToSrc(key),
       kind: MEDIA_VIDEO_EXTS.has(ext) ? "video" : "image",
     };
-  });
+  }));
+  return thumbs.filter((thumb): thumb is HistoryThumb => thumb != null).slice(0, take);
 }
 
 /** One keyset page of a project's media (attached + candidates) for the Assets library,
@@ -189,6 +197,7 @@ export async function getMediaPage(
   cursor?: string | null,
   take = 60,
 ): Promise<MediaPage> {
+  const scanTake = Math.min(Math.max(take + MEDIA_SCAN_BUFFER, take + 1), 100);
   let cursorWhere = {};
   if (cursor) {
     const sep = cursor.lastIndexOf("|");
@@ -201,26 +210,36 @@ export async function getMediaPage(
   const rows = await prisma.generation.findMany({
     where: { ownerId, projectId, threadId: null, ...notDeleted, ...cursorWhere },
     orderBy: [{ createdAt: "desc" }, { id: "desc" }],
-    take: take + 1, // over-fetch one to learn hasMore without a count()
+    take: scanTake + 1,
     include: { asset: true },
   });
-  const hasMore = rows.length > take;
-  const page = hasMore ? rows.slice(0, take) : rows;
+  const scanned = rows.slice(0, scanTake);
   const labels = await shotLabelMap(ownerId, projectId);
-  const items: MediaPageItem[] = page.map((g) => {
+  const resolved = await Promise.all(scanned.map(async (g) => {
     const ext = g.asset.ext.toLowerCase();
+    const key = storageKey(g.asset.ownerId, g.asset.contentHash, ext);
+    if (!(await storage.exists(key))) return null;
     return {
-      id: g.id,
-      src: storageKeyToSrc(storageKey(g.asset.ownerId, g.asset.contentHash, ext)),
-      kind: MEDIA_VIDEO_EXTS.has(ext) ? "video" : "image",
-      prompt: g.promptText ?? "",
-      attached: g.shotId != null,
-      shotLabel: g.shotId ? (labels.get(g.shotId) ?? null) : null,
+      row: g,
+      item: {
+        id: g.id,
+        src: storageKeyToSrc(key),
+        kind: MEDIA_VIDEO_EXTS.has(ext) ? "video" : "image",
+        prompt: g.promptText ?? "",
+        attached: g.shotId != null,
+        shotLabel: g.shotId ? (labels.get(g.shotId) ?? null) : null,
+      } satisfies MediaPageItem,
     };
-  });
-  const last = page[page.length - 1];
-  const nextCursor = hasMore && last ? `${last.createdAt.toISOString()}|${last.id}` : null;
-  return { items, nextCursor, hasMore };
+  }));
+  const existing = resolved.filter((entry): entry is NonNullable<typeof entry> => entry != null);
+  const items = existing.slice(0, take).map((entry) => entry.item);
+  const cursorRow = existing.length > take
+    ? existing[take - 1].row
+    : rows.length > scanTake
+      ? scanned[scanned.length - 1]
+      : null;
+  const nextCursor = cursorRow ? `${cursorRow.createdAt.toISOString()}|${cursorRow.id}` : null;
+  return { items, nextCursor, hasMore: nextCursor != null };
 }
 
 /** Otto's finished ads: cowork-tagged generations (threadId set), newest first.
@@ -228,43 +247,49 @@ export async function getMediaPage(
  *  manual-studio gens). Used by My Stuff → Ads. */
 export type AdItem = { id: string; src: string; kind: "image" | "video"; prompt: string; createdAt: string };
 export async function getMyAds(ownerId: string, projectId: string, take = 60): Promise<AdItem[]> {
+  const scanTake = Math.min(Math.max(take + MEDIA_SCAN_BUFFER, take + 1), 100);
   const rows = await prisma.generation.findMany({
     where: { ownerId, projectId, threadId: { not: null }, ...notDeleted },
     orderBy: [{ createdAt: "desc" }, { id: "desc" }],
-    take,
+    take: scanTake,
     include: { asset: true },
   });
-  return rows.map((g) => {
+  const resolved = await Promise.all(rows.map(async (g) => {
     const ext = g.asset.ext.toLowerCase();
+    const key = storageKey(g.asset.ownerId, g.asset.contentHash, ext);
+    if (!(await storage.exists(key))) return null;
     return {
       id: g.id,
-      src: storageKeyToSrc(storageKey(g.asset.ownerId, g.asset.contentHash, ext)),
+      src: storageKeyToSrc(key),
       kind: MEDIA_VIDEO_EXTS.has(ext) ? ("video" as const) : ("image" as const),
       prompt: g.promptText ?? "",
       createdAt: g.createdAt.toISOString(),
     };
-  });
+  }));
+  return resolved.filter((item): item is AdItem => item != null).slice(0, take);
 }
 
 /** Otto ad jobs that are still running or failed — shown as status cards in My Stuff → Ads.
  *  DONE jobs are excluded (they show as finished media via getMyAds). */
-export type AdJobItem = { id: string; kind: "image" | "video"; status: "processing" | "failed"; prompt: string; createdAt: string };
+export type AdJobItem = { id: string; threadId: string; kind: "image" | "video"; status: "processing" | "failed"; prompt: string; createdAt: string; error: string };
 export async function getMyAdJobs(ownerId: string, projectId: string, take = 30): Promise<AdJobItem[]> {
   const { adJobStatusFromGenStatus } = await import("./ad-job-status");
   const rows = await prisma.genJob.findMany({
     where: { ownerId, projectId, threadId: { not: null }, status: { in: ["QUEUED", "GENERATING", "FAILED"] } },
     orderBy: { createdAt: "desc" },
     take,
-    select: { id: true, kind: true, status: true, prompt: true, createdAt: true },
+    select: { id: true, threadId: true, kind: true, status: true, prompt: true, error: true, createdAt: true },
   });
   return rows.flatMap((r) => {
     const status = adJobStatusFromGenStatus(r.status);
     if (!status) return [];
     return [{
       id: r.id,
+      threadId: r.threadId ?? "",
       kind: r.kind === "VIDEO" ? ("video" as const) : ("image" as const),
       status,
       prompt: r.prompt ?? "",
+      error: r.error ?? "",
       createdAt: r.createdAt.toISOString(),
     }];
   });

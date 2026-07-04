@@ -39,7 +39,7 @@ export async function resumeOttoAfterGen(job: {
   // Redelivery or concurrent winner → count=0 → return immediately.
   // MUST claim BEFORE the LLM call.
   const { count } = await prisma.genJob.updateMany({
-    where: { id: job.id, ottoVerdictAt: null },
+    where: { id: job.id, ownerId: job.ownerId, ottoVerdictAt: null },
     data: { ottoVerdictAt: new Date() },
   });
   if (count === 0) return; // already claimed or redelivery

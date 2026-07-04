@@ -14,7 +14,7 @@ const FILTERS: { value: StuffFilter; label: string }[] = [
   { value: "images", label: "Images" },
   { value: "videos", label: "Videos" },
   { value: "cast", label: "Cast" },
-  { value: "products", label: "Products" },
+  { value: "products", label: "Product assets" },
   { value: "ads", label: "Ads" },
 ];
 
@@ -57,7 +57,7 @@ function TileChrome({ item }: { item: StuffItem }) {
     <>
       {item.productName && (
         <span className="absolute left-1.5 top-1.5 rounded-[8px] bg-card/90 px-1.5 py-0.5 text-[0.6875rem] font-semibold text-brand">
-          ⭐ {item.productName}
+          Used by product: {item.productName}
         </span>
       )}
       {tag && (
@@ -185,7 +185,9 @@ export function StuffLibrary({
       </div>
 
       {filtered.length === 0 ? (
-        <div className="py-4 text-[0.875rem] text-muted-foreground">Nothing here yet.</div>
+        <div className="py-4 text-[0.875rem] text-muted-foreground">
+          {filter === "products" ? "No product assets yet. Add product knowledge in Brand memory, then link images here." : "Nothing here yet."}
+        </div>
       ) : (
         <div className={grid}>
           {filtered.map((item) => {

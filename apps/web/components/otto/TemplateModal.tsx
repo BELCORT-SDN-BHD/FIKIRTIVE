@@ -17,6 +17,7 @@ import { finalizeCandidateUploads } from "@/lib/upload-actions";
 import { activeImageModel } from "@fikirtive/core/model-config";
 import type { EntityDTO } from "@/lib/types";
 import { type Template, buildTemplatePrompt, templateRunCredits } from "@/lib/templates";
+import { creditsLabel } from "@/lib/credit-format";
 
 type Phase = "form" | "generating" | "done";
 
@@ -46,6 +47,7 @@ export default function TemplateModal({
   const [resultGenId, setResultGenId] = useState<string | null>(null);
   const [detailOpen, setDetailOpen] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [confirming, setConfirming] = useState(false);
 
   async function onPickFile(e: React.ChangeEvent<HTMLInputElement>) {
     const file = e.target.files?.[0];
@@ -62,6 +64,7 @@ export default function TemplateModal({
       } else {
         setSourceGenId(res.generationIds[0]);
         setThumbUrl(URL.createObjectURL(file));
+        setConfirming(false);
       }
     } catch {
       setError("Upload failed — please try again.");
@@ -99,6 +102,7 @@ export default function TemplateModal({
   async function onGenerate() {
     if (!sourceGenId) return;
     setError(null);
+    setConfirming(false);
     setPhase("generating");
     const started = await startGen({
       projectId,
@@ -126,6 +130,8 @@ export default function TemplateModal({
     setPhase("done");
   }
 
+  const costLabel = creditsLabel(templateRunCredits());
+
   const footer =
     phase === "done" ? (
       <>
@@ -133,9 +139,27 @@ export default function TemplateModal({
         <Button type="button" variant="ghost" size="sm" onClick={() => { setPhase("form"); setResultUrl(null); setResultGenId(null); }}>Make another</Button>
         <Button type="button" variant="brand" size="sm" onClick={onClose}>Close</Button>
       </>
+    ) : phase === "generating" ? (
+      <Button type="button" variant="brand" size="sm" disabled>
+        Generating…
+      </Button>
+    ) : confirming ? (
+      <div className="flex w-full flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+        <p className="m-0 text-[0.8125rem] text-muted-foreground">
+          Cost: {costLabel}. No charge until you confirm.
+        </p>
+        <div className="flex justify-end gap-2">
+          <Button type="button" variant="ghost" size="sm" onClick={() => setConfirming(false)}>
+            Back
+          </Button>
+          <Button type="button" variant="brand" size="sm" disabled={!canGenerate} onClick={onGenerate}>
+            Confirm generate · {costLabel}
+          </Button>
+        </div>
+      </div>
     ) : (
-      <Button type="button" variant="brand" size="sm" disabled={!canGenerate} onClick={onGenerate}>
-        {phase === "generating" ? "Generating…" : `Generate · ${templateRunCredits()} credit`}
+      <Button type="button" variant="brand" size="sm" disabled={!canGenerate} onClick={() => setConfirming(true)}>
+        Review cost · {costLabel}
       </Button>
     );
 
@@ -180,7 +204,7 @@ export default function TemplateModal({
               {template.question && (
                 <label style={{ display: "flex", flexDirection: "column", gap: "0.25rem" }}>
                   <span className="text-[0.8125rem] text-muted-foreground">{template.question.label}</span>
-                  <Input value={answer} onChange={(e) => setAnswer(e.target.value)} placeholder={template.question.placeholder} />
+                  <Input value={answer} onChange={(e) => { setAnswer(e.target.value); setConfirming(false); }} placeholder={template.question.placeholder} />
                 </label>
               )}
               {error && <div style={{ color: "var(--destructive)", fontSize: "0.8125rem" }}>{error}</div>}

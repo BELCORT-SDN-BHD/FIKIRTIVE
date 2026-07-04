@@ -1,3 +1,17 @@
+/**
+ * parity-manifest.ts — the 9th expansion seam (BLUEPRINT §四 / docs/design/2026-07-03-harmony-02).
+ *
+ * A machine- and human-readable table: every human server action ↔ the Otto skill that exposes the
+ * same capability, an explicit exemption (four closed classes), or a TODO_SKILL debt entry (an
+ * action that SHOULD get a skill but doesn't yet — 欠账清单, not an exemption). This turns 宪法 7
+ * ("Otto can operate 100% of what a human can") from prose into structure.
+ *
+ * STATUS — rollout per harmony-02 §四: this is the initial SEED, registering the Schedule,
+ * P1-01 product-ingest, and P-block Meta performance surfaces. Full backfill of every existing
+ * action (盘点回填) and the CI enforcer (scripts/check-parity.sh, warn→hard) are separate follow-ups.
+ * Keep this a PURE LITERAL (SECTION_MATRIX style) so a diff is one-glance auditable. A new
+ * exemption class = a constitution amendment (founder-approved).
+ */
 export const PARITY_EXEMPTIONS = ["ADMIN", "VISUAL", "MONEY_IN", "ACCOUNT_SECURITY"] as const;
 
 export type ParityExemption = (typeof PARITY_EXEMPTIONS)[number];

@@ -709,7 +709,7 @@ export function StoryboardCard({ cardId, payload, balanceUsd, onBalanceRefresh }
                   </div>
                 )}
                 <div className="text-[0.875rem] text-foreground">
-                  Generate {children.filter((c) => !c.spent).length} {children.filter((c) => !c.spent).length === 1 ? "frame" : "frames"} for ~{creditsLabel(totalCredits)}? This will spend real credits.
+                  Generate {children.filter((c) => !c.spent).length} {children.filter((c) => !c.spent).length === 1 ? "frame" : "frames"} for {creditsLabel(totalCredits)}? This will spend real credits.
                 </div>
                 <div className="flex gap-3">
                   <Button variant="default" disabled={!affordAll || generating} onClick={() => void confirmGenerateAll()}>
@@ -739,7 +739,7 @@ export function StoryboardCard({ cardId, payload, balanceUsd, onBalanceRefresh }
                   </div>
                 )}
                 <div className="text-[0.875rem] text-foreground">
-                  Make {videoChildren.filter((c) => !c.spent).length} {videoChildren.filter((c) => !c.spent).length === 1 ? "video" : "videos"} for ~{creditsLabel(videoTotalCredits)}? This will spend real credits.
+                  Make {videoChildren.filter((c) => !c.spent).length} {videoChildren.filter((c) => !c.spent).length === 1 ? "video" : "videos"} for {creditsLabel(videoTotalCredits)}? This will spend real credits.
                 </div>
                 <div className="flex gap-3">
                   <Button variant="default" disabled={!affordAllVideos || generating} onClick={() => void confirmGenerateAllVideos()}>

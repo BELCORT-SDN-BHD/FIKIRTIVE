@@ -851,6 +851,15 @@ h1, h2, h3 { font-family: var(--font-sans); font-weight: 600; letter-spacing: va
   box-shadow: var(--shadow-sm);
 }
 .gb .react-flow__node .al-btn-glass:hover:not(:disabled) { background: #fff; }
+.gb .cv-node-toolbar .al-btn-glass {
+  background: rgba(255, 255, 255, 0.92);
+  border-color: var(--border);
+  color: var(--foreground);
+  -webkit-backdrop-filter: none;
+  backdrop-filter: none;
+  box-shadow: var(--shadow-sm);
+}
+.gb .cv-node-toolbar .al-btn-glass:hover:not(:disabled) { background: #fff; }
 .gb .react-flow__node textarea { color: var(--foreground); }
 .gb .react-flow__node textarea::placeholder { color: var(--muted-foreground); }
 

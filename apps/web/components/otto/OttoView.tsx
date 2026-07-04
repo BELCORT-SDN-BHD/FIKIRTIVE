@@ -33,6 +33,7 @@ interface OttoViewProps {
   activeThreadId: string | null;
   onThreadsChange: (threads: ChatThreadDTO[]) => void;
   onActiveThreadChange: (id: string | null) => void;
+  onThreadStarted: (thread: ChatThreadDTO) => void;
   balanceUsd: number;
   userName: string;
   memory: MemoryRow[];
@@ -45,7 +46,9 @@ interface OttoViewProps {
   analytics: AnalyticsData;
   ottoStreamEnabled: boolean;
   onBalanceRefresh: () => Promise<void>;
+  onActivityRefresh?: () => Promise<void>;
   onViewChange: (view: OttoViewKey) => void;
+  onOpenThread: (threadId: string) => void;
   activity: Set<string>;
   onDeleteThread: (id: string) => void;
   onNewConvo: () => void;
@@ -67,6 +70,7 @@ export function OttoView({
   activeThreadId,
   onThreadsChange,
   onActiveThreadChange,
+  onThreadStarted,
   balanceUsd,
   userName,
   memory,
@@ -78,7 +82,9 @@ export function OttoView({
   analytics,
   ottoStreamEnabled,
   onBalanceRefresh,
+  onActivityRefresh,
   onViewChange,
+  onOpenThread,
   activity,
   onDeleteThread,
   onNewConvo,
@@ -129,7 +135,15 @@ export function OttoView({
   if (view === "stuff") {
     return (
       <div style={{ flex: 1, display: "flex", flexDirection: "column", overflow: "hidden" }}>
-        <OttoStuff entities={entities} ads={ads} adJobs={adJobs} records={records} history={history} />
+        <OttoStuff
+          entities={entities}
+          ads={ads}
+          adJobs={adJobs}
+          records={records}
+          history={history}
+          onOpenThread={onOpenThread}
+          onRetryWithOtto={onUseInOtto}
+        />
       </div>
     );
   }
@@ -180,7 +194,7 @@ export function OttoView({
   return (
     <div
       className={`otto-workspace${chatCollapsed ? " otto-chat-collapsed" : ""}${isFirstRun ? " otto-workspace-first-run" : ""}`}
-      style={{ position: "relative", flex: 1, display: "flex", flexDirection: "row", overflow: "hidden" }}
+      style={{ position: "relative", flex: 1, minHeight: 0, height: "100%", display: "flex", flexDirection: "row", overflow: "hidden" }}
     >
       <style>{`
         .otto-onboarding-overlay {
@@ -285,15 +299,11 @@ export function OttoView({
               seedText={seedText}
               onSeedConsumed={onSeedConsumed}
               ottoStreamEnabled={ottoStreamEnabled}
-              onThreadStarted={(thread) => {
-                onThreadsChange([thread, ...threads]);
-                onActiveThreadChange(thread.id);
-              }}
+              onThreadStarted={onThreadStarted}
               onStreamStart={(thread, pending) => {
                 // Streaming front door: an empty thread was created; hand its first
                 // message to OttoChatStream, which streams it in on mount.
-                onThreadsChange([thread, ...threads]);
-                onActiveThreadChange(thread.id);
+                onThreadStarted(thread);
                 setPendingFirst({ threadId: thread.id, text: pending.text, goalKey: pending.goalKey, entityIds: pending.entityIds });
               }}
             />
@@ -334,7 +344,7 @@ export function OttoView({
       {/* Right pane: canvas. display:flex so FlowCanvas (flex:1) fills the full
           height — without it the canvas pane collapses to 0 height and React Flow
           renders nothing (the "canvas not working" blank-white regression). */}
-      <div className="otto-canvas-pane" style={{ flex: 1, minWidth: 0, position: "relative", display: "flex", flexDirection: "column" }}>
+      <div className="otto-canvas-pane" style={{ flex: 1, minWidth: 0, minHeight: 0, height: "100%", position: "relative", display: "flex", flexDirection: "column" }}>
         {/* Collapse handle on the OTTO↔canvas border */}
         {!chatCollapsed && (
           <button
@@ -348,7 +358,17 @@ export function OttoView({
             <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" aria-hidden><path d="m15 18-6-6 6-6" /></svg>
           </button>
         )}
-        <FlowCanvas projectId={projectId} entities={entities} activeThreadId={activeThreadId} activity={activity} skin={skin} />
+        <FlowCanvas
+          projectId={projectId}
+          entities={entities}
+          activeThreadId={activeThreadId}
+          activity={activity}
+          skin={skin}
+          onBalanceRefresh={onBalanceRefresh}
+          onActivityRefresh={onActivityRefresh}
+          directToolsLocked={showFrontDoor}
+          directToolsLockedReason="Start with Otto to unlock canvas tools."
+        />
       </div>
     </div>
   );

@@ -104,14 +104,6 @@ export function OttoAnalytics({
             <div className="text-[13px] text-muted-foreground" style={{ maxWidth: 360 }}>
               We'll light this up here once {label} is connected — same place, same view.
             </div>
-            <button
-              type="button"
-              disabled
-              // TODO(analytics): wire Notify-me
-              className="mt-1 h-[38px] rounded-[11px] px-4 text-[13.5px] font-semibold text-muted-foreground opacity-50 cursor-default"
-            >
-              Notify me
-            </button>
           </div>
         )}
 

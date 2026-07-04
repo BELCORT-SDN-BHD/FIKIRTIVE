@@ -15,6 +15,18 @@ export type BridgeNode = {
   prompt: string | null;
 };
 
+export function canvasNodeDisplayStatus(
+  rowStatus: string,
+  jobStatus: string | null | undefined,
+  url: string | null | undefined,
+): string {
+  if (url) return "done";
+  if (jobStatus === "FAILED") return "failed";
+  if (jobStatus === "DONE") return "missing";
+  if (jobStatus === "QUEUED" || jobStatus === "GENERATING") return "pending";
+  return rowStatus;
+}
+
 /**
  * Decide which canvas nodes to create for a thread's GEN_RESULT messages.
  *

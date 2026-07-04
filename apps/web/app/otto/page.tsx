@@ -33,8 +33,15 @@ export default async function OttoPage({ searchParams }: { searchParams: Promise
   const ensured = await getOrCreateDefaultProject();
   if ("error" in ensured) redirect("/login");
   const projects = await getProjects(ownerId);
-  const active = (sp?.project && projects.find((p) => p.id === sp.project)) || projects[0];
+  const requestedProject = sp?.project ? projects.find((p) => p.id === sp.project) : undefined;
+  const active = requestedProject || projects[0];
   const projectId = active?.id ?? ensured.id;
+  if (sp?.project && !requestedProject) {
+    const next = new URLSearchParams();
+    next.set("project", projectId);
+    if (initialView) next.set("view", initialView);
+    redirect(`/otto?${next.toString()}`);
+  }
 
   const [entities, threadRows, accountResult, memory, records, ads, adJobs, history, allThreadRows, analytics] = await Promise.all([
     getEntities(ownerId),
@@ -77,7 +84,7 @@ export default async function OttoPage({ searchParams }: { searchParams: Promise
 
   return (
     <OttoApp
-      key={projectId}
+      key={`${projectId}:${openThreadId ?? ""}`}
       projectId={projectId}
       projects={projectList}
       activeProjectId={projectId}

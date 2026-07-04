@@ -14,6 +14,11 @@ interface NavItem {
   icon: React.ReactNode;
 }
 
+interface NavGroup {
+  label: string;
+  items: NavItem[];
+}
+
 function IconMessageCircle() {
   return (
     <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden>
@@ -100,16 +105,32 @@ function OttoCloud({ size = 26 }: { size?: number }) {
   );
 }
 
-// Simplified nav (founder, 2026-06-29): 6 destinations. Library/Templates/Discover/
-// Connections are no longer surfaced here (their views still exist, just unlinked);
-// Schedule + Analytics are new stub views (the hi-fi screens land in a later phase).
-const NAV_ITEMS: NavItem[] = [
-  { key: "otto", label: "Canvas", icon: <IconLibrary /> },
-  { key: "stuff", label: "My Stuff", icon: <IconFolderHeart /> },
-  { key: "memory", label: "Brand memory", icon: <IconBrain /> },
-  { key: "schedule", label: "Schedule", icon: <IconCalendar /> },
-  { key: "analytics", label: "Analytics", icon: <IconChart /> },
-  { key: "account", label: "Account", icon: <IconCircleUser /> },
+const NAV_GROUPS: NavGroup[] = [
+  {
+    label: "Create",
+    items: [
+      { key: "otto", label: "Canvas", icon: <IconLibrary /> },
+      { key: "library", label: "Library", icon: <IconFolderHeart /> },
+      { key: "templates", label: "Templates", icon: <IconTemplates /> },
+      { key: "discover", label: "Discover", icon: <IconCompass /> },
+    ],
+  },
+  {
+    label: "Assets",
+    items: [
+      { key: "stuff", label: "My Stuff", icon: <IconFolderHeart /> },
+      { key: "memory", label: "Brand memory", icon: <IconBrain /> },
+    ],
+  },
+  {
+    label: "Operate",
+    items: [
+      { key: "schedule", label: "Schedule", icon: <IconCalendar /> },
+      { key: "analytics", label: "Analytics", icon: <IconChart /> },
+      { key: "connections", label: "Connections", icon: <IconLink /> },
+      { key: "account", label: "Account", icon: <IconCircleUser /> },
+    ],
+  },
 ];
 
 function IconLibrary() {
@@ -319,20 +340,27 @@ export function OttoNav({
       </div>
 
       {/* Nav items */}
-      <div className="px-3 flex flex-col gap-[1px]">
-        {NAV_ITEMS.map((item) => {
-          const active = view === item.key;
-          return (
-            <button
-              key={item.key}
-              onClick={() => handleNavAction(() => onViewChange(item.key))}
-              className={`flex items-center gap-[9px] w-full border-0 text-[0.84375rem] px-[9px] py-2 rounded-[9px] cursor-pointer text-left transition-colors duration-150 ${active ? "bg-secondary text-foreground font-semibold" : "bg-transparent text-muted-foreground font-normal"}`}
-            >
-              {item.icon}
-              {item.label}
-            </button>
-          );
-        })}
+      <div className="px-3 flex flex-col gap-3">
+        {NAV_GROUPS.map((group) => (
+          <div key={group.label} className="flex flex-col gap-[1px]">
+            <div className="px-[9px] pb-1 text-[0.625rem] font-semibold uppercase tracking-[0.07em] text-muted-foreground/65">
+              {group.label}
+            </div>
+            {group.items.map((item) => {
+              const active = view === item.key;
+              return (
+                <button
+                  key={item.key}
+                  onClick={() => handleNavAction(() => onViewChange(item.key))}
+                  className={`flex items-center gap-[9px] w-full border-0 text-[0.84375rem] px-[9px] py-2 rounded-[9px] cursor-pointer text-left transition-colors duration-150 ${active ? "bg-secondary text-foreground font-semibold" : "bg-transparent text-muted-foreground font-normal"}`}
+                >
+                  {item.icon}
+                  {item.label}
+                </button>
+              );
+            })}
+          </div>
+        ))}
       </div>
 
       {/* Projects (campaigns) + History */}

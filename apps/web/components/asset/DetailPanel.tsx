@@ -15,20 +15,24 @@ import { deleteGeneration } from "@/lib/actions";
 import { startGen, getGenJob, getActiveGenModels } from "@/lib/gen-actions";
 import { readPick, writePick } from "@/lib/result-pick";
 import {
-  videoDefaults,
   GEN_VIDEO_MODEL_OPTIONS,
+  videoDefaults,
   type GenVideoModel,
 } from "@fikirtive/core/gen";
 import { activeVideoModel } from "@fikirtive/core/model-config";
+import { displayCredits, pricedGenCredits } from "@fikirtive/core/spend";
 import { Button, IcX, IcPlay, IcRetry } from "@/components/ds";
+import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog";
+import { Button as UiButton } from "@/components/ui/button";
 import { MentionInput } from "@/components/MentionInput";
+import { creditsLabel } from "@/lib/credit-format";
 import type { EntityDTO } from "@/lib/types";
 
 type GenDTO = {
   id: string;
   url: string;
   urls: string[];
-  variants: { id: string; url: string }[]; // aligned to urls; carries each variant's own id (F08)
+  variants: { id: string; url: string; favorite: boolean }[]; // aligned to urls; carries each variant's own id/state (F08)
   kind: string;
   prompt: string;
   favorite: boolean;
@@ -36,6 +40,7 @@ type GenDTO = {
 };
 
 type PanelState = "loading" | "ready" | "error";
+type ConfirmAction = "regen" | "animate" | "edit" | "delete" | null;
 
 /** Render the cropped area of an image to a canvas and return a data URL. */
 async function getCroppedDataUrl(
@@ -91,7 +96,7 @@ export default function DetailPanel({
   // Edit @composer (24)
   const [editPrompt, setEditPrompt] = useState("");
   const [editIds, setEditIds] = useState<string[]>([]);
-  const [editStatus, setEditStatus] = useState<"idle" | "running" | "done" | "failed">("idle");
+  const [editStatus, setEditStatus] = useState<"idle" | "running" | "done" | "failed" | "timeout">("idle");
   const [composerKey, setComposerKey] = useState(() => String(Date.now()));
 
   // Crop (16)
@@ -102,9 +107,13 @@ export default function DetailPanel({
   const [cropStatus, setCropStatus] = useState<"idle" | "saving" | "done" | "failed">("idle");
 
   // Action states
-  const [regenStatus, setRegenStatus] = useState<"idle" | "running" | "done" | "failed">("idle");
-  const [animStatus, setAnimStatus] = useState<"idle" | "running" | "done" | "failed">("idle");
+  const [regenStatus, setRegenStatus] = useState<"idle" | "running" | "done" | "failed" | "timeout">("idle");
+  const [animStatus, setAnimStatus] = useState<"idle" | "running" | "done" | "failed" | "timeout">("idle");
   const [copied, setCopied] = useState(false);
+  const [confirmAction, setConfirmAction] = useState<ConfirmAction>(null);
+  const regenBusyRef = useRef(false);
+  const animBusyRef = useRef(false);
+  const editBusyRef = useRef(false);
 
   const cancelledRef = useRef(false);
   // F18: the active models must be resolved SERVER-side (the OTTO_DEFAULT_VIDEO_MODEL env isn't
@@ -164,6 +173,11 @@ export default function DetailPanel({
     setComposerKey(String(Date.now()));
   }, [gen?.id]);
 
+  useEffect(() => {
+    if (!gen) return;
+    setFavoriteLocal(gen.variants[selectedIdx]?.favorite ?? gen.favorite);
+  }, [gen, selectedIdx]);
+
   // Esc key
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
@@ -180,25 +194,61 @@ export default function DetailPanel({
   // prop. All mutate/spend handlers act on this so a sibling variant isn't animated/deleted/
   // starred/edited against the wrong image (F08/F09). Still an owned id resolved server-side.
   const selectedGenId = gen ? (gen.variants[selectedIdx]?.id ?? gen.id) : generationId;
+  const imageCost = activeModels
+    ? displayCredits(pricedGenCredits({ kind: "IMAGE", model: activeModels.image, count: 1, videoOptions: null }))
+    : null;
+  const activeVideoDefaults = activeModels ? videoDefaults(activeModels.video as GenVideoModel) : null;
+  const videoCost = activeModels && activeVideoDefaults
+    ? displayCredits(pricedGenCredits({
+      kind: "VIDEO",
+      model: activeModels.video,
+      count: 1,
+      videoOptions: {
+        seconds: activeVideoDefaults.seconds,
+        resolution: activeVideoDefaults.resolution,
+        audio: activeVideoDefaults.audio,
+      },
+    }))
+    : null;
+  const imageCostLabel = imageCost == null ? "checking exact cost" : creditsLabel(imageCost);
+  const videoCostLabel = videoCost == null ? "checking exact cost" : creditsLabel(videoCost);
 
   const handleFavorite = useCallback(async () => {
     if (!gen) return;
+    const targetGenId = selectedGenId;
     const next = !favorite;
-    setFavoriteLocal(next); // optimistic
-    const result = await setFavorite(selectedGenId, next);
-    if ("error" in result) setFavoriteLocal(!next); // revert
+    const applyLocal = (value: boolean) => {
+      setFavoriteLocal(value);
+      setGen((prev) => prev
+        ? {
+            ...prev,
+            favorite: prev.id === targetGenId ? value : prev.favorite,
+            variants: prev.variants.map((variant) => (
+              variant.id === targetGenId ? { ...variant, favorite: value } : variant
+            )),
+          }
+        : prev);
+    };
+    applyLocal(next); // optimistic
+    const result = await setFavorite(targetGenId, next);
+    if ("error" in result) applyLocal(!next); // revert
   }, [gen, favorite, selectedGenId]);
 
-  const pollJob = useCallback(async (jobId: string): Promise<"done" | "failed"> => {
-    for (let i = 0; i < 120; i++) {
-      if (cancelledRef.current) return "failed";
-      await new Promise((r) => setTimeout(r, 2000));
+  const pollJob = useCallback(async (jobId: string): Promise<"done" | "failed" | "timeout"> => {
+    // ~8 min at 2.5s — mirrors the canvas poll() window (useCanvasGen.ts). Video gens can
+    // legitimately exceed the old ~4-min cap; the worker settles late jobs regardless of this
+    // client poll. A client-side give-up is a "timeout" (still working), NOT a "failed": surfacing
+    // it as failed invites a retry, and regen/animate/edit mint a fresh idempotencyKey per click →
+    // a second real charge on a job that's still running.
+    for (let i = 0; i < 192; i++) {
+      if (cancelledRef.current) return "timeout";
       const job = await getGenJob(jobId);
       if (!job) return "failed";
       if (job.status === "DONE") return "done";
       if (job.status === "FAILED") return "failed";
+      await new Promise((r) => setTimeout(r, 2500));
     }
-    return "failed";
+    return "timeout";
   }, []);
 
   // After a job completes, resolve its new generation id and load it into the panel
@@ -219,60 +269,79 @@ export default function DetailPanel({
   }, []);
 
   const handleRegen = useCallback(async () => {
-    if (!gen) return;
-    setRegenStatus("running");
-    const { image } = await ensureModels(); // F18: server-resolved model
-    const result = await startGen({
-      projectId,
-      prompt: gen.prompt,
-      count: 1,
-      kind: "image",
-      model: image,
-      idempotencyKey: `regen-${generationId}-${Date.now()}`,
-    });
-    if ("error" in result) {
-      setRegenStatus("failed");
-      return;
+    if (!gen || regenBusyRef.current) return;
+    regenBusyRef.current = true;
+    try {
+      setRegenStatus("running");
+      const { image } = await ensureModels(); // F18: server-resolved model
+      const result = await startGen({
+        projectId,
+        prompt: gen.prompt,
+        count: 1,
+        kind: "image",
+        model: image,
+        idempotencyKey: `regen-${generationId}-${Date.now()}`,
+      });
+      if ("error" in result) {
+        setRegenStatus("failed");
+        return;
+      }
+      const status = await pollJob(result.id);
+      if (!cancelledRef.current) {
+        setRegenStatus(status);
+        // A timeout means the paid job is STILL RUNNING (the worker settles it late) — keep the
+        // "still processing" state so the control never reverts to an inviting "Regenerate" whose
+        // re-click mints a NEW idempotencyKey = a second charge. done/failed reset to idle (a real
+        // failure is refunded, so retrying it is safe).
+        if (status !== "timeout") {
+          setTimeout(() => { if (!cancelledRef.current) setRegenStatus("idle"); }, 3000);
+        }
+      }
+      if (status === "done") await reloadFromJob(result.id);
+    } finally {
+      regenBusyRef.current = false;
     }
-    const status = await pollJob(result.id);
-    if (!cancelledRef.current) {
-      setRegenStatus(status);
-      // reset to idle after 3s
-      setTimeout(() => { if (!cancelledRef.current) setRegenStatus("idle"); }, 3000);
-    }
-    if (status === "done") await reloadFromJob(result.id);
   }, [gen, generationId, projectId, pollJob, reloadFromJob]);
 
   const handleAnimate = useCallback(async () => {
-    if (!gen) return;
-    setAnimStatus("running");
-    const vm = (await ensureModels()).video as GenVideoModel; // F18: server-resolved model
-    const vd = videoDefaults(vm);
-    // Use user's chosen aspect ratio if set; fall back to videoDefaults
-    const effectiveAspect = chosenAspect || vd.aspectRatio;
-    const result = await startGen({
-      projectId,
-      prompt: gen.prompt,
-      count: 1,
-      kind: "video",
-      model: vm,
-      sourceGenerationId: selectedGenId,
-      durationSeconds: vd.seconds,
-      resolution: vd.resolution,
-      audio: vd.audio,
-      ...(effectiveAspect ? { aspectRatio: effectiveAspect } : {}),
-      idempotencyKey: `anim-${selectedGenId}-${Date.now()}`,
-    });
-    if ("error" in result) {
-      if (!cancelledRef.current) setAnimStatus("failed");
-      return;
+    if (!gen || animBusyRef.current) return;
+    animBusyRef.current = true;
+    try {
+      setAnimStatus("running");
+      const vm = (await ensureModels()).video as GenVideoModel; // F18: server-resolved model
+      const vd = videoDefaults(vm);
+      // Use user's chosen aspect ratio if set; fall back to videoDefaults
+      const effectiveAspect = chosenAspect || vd.aspectRatio;
+      const result = await startGen({
+        projectId,
+        prompt: gen.prompt,
+        count: 1,
+        kind: "video",
+        model: vm,
+        sourceGenerationId: selectedGenId,
+        durationSeconds: vd.seconds,
+        resolution: vd.resolution,
+        audio: vd.audio,
+        ...(effectiveAspect ? { aspectRatio: effectiveAspect } : {}),
+        idempotencyKey: `anim-${selectedGenId}-${Date.now()}`,
+      });
+      if ("error" in result) {
+        if (!cancelledRef.current) setAnimStatus("failed");
+        return;
+      }
+      const status = await pollJob(result.id);
+      if (!cancelledRef.current) {
+        setAnimStatus(status);
+        // Timeout ⇒ the paid video job is still running (worker settles late ones) — stay in
+        // "still processing" so a re-click can't fire a second charge. See handleRegen.
+        if (status !== "timeout") {
+          setTimeout(() => { if (!cancelledRef.current) setAnimStatus("idle"); }, 3000);
+        }
+      }
+      if (status === "done") await reloadFromJob(result.id);
+    } finally {
+      animBusyRef.current = false;
     }
-    const status = await pollJob(result.id);
-    if (!cancelledRef.current) {
-      setAnimStatus(status);
-      setTimeout(() => { if (!cancelledRef.current) setAnimStatus("idle"); }, 3000);
-    }
-    if (status === "done") await reloadFromJob(result.id);
   }, [gen, selectedGenId, projectId, pollJob, chosenAspect, reloadFromJob]);
 
   const handleCopyLink = useCallback(async () => {
@@ -292,42 +361,107 @@ export default function DetailPanel({
     onClose();
   }, [selectedGenId, onClose]);
 
+  const requestSpendConfirm = useCallback((action: Exclude<ConfirmAction, "delete" | null>) => {
+    setConfirmAction(action);
+    void ensureModels();
+  }, []);
+
+  const requestEditSubmit = useCallback(() => {
+    if (!editPrompt.trim() || editStatus === "running") return;
+    setConfirmAction("edit");
+    void ensureModels();
+  }, [editPrompt, editStatus]);
+
+  const confirmDetails = (() => {
+    switch (confirmAction) {
+      case "regen":
+        return {
+          title: "Regenerate this image?",
+          description: `Creates one new image version from the same prompt. Cost: ${imageCostLabel}. No charge until you confirm.`,
+          confirmLabel: imageCost == null ? "Checking cost..." : "Regenerate",
+          disabled: imageCost == null || regenStatus === "running",
+        };
+      case "animate":
+        return {
+          title: "Animate this image?",
+          description: `Creates one video from the selected image. Cost: ${videoCostLabel}. No charge until you confirm.`,
+          confirmLabel: videoCost == null ? "Checking cost..." : "Animate",
+          disabled: videoCost == null || animStatus === "running",
+        };
+      case "edit":
+        return {
+          title: "Generate this edit?",
+          description: `Uses the current image as the source for your edit. Cost: ${imageCostLabel}. No charge until you confirm.`,
+          confirmLabel: imageCost == null ? "Checking cost..." : "Generate edit",
+          disabled: imageCost == null || editStatus === "running" || !editPrompt.trim(),
+        };
+      case "delete":
+        return {
+          title: "Delete this asset?",
+          description: "This removes the selected generation from your library and canvas views. This cannot be undone.",
+          confirmLabel: "Delete",
+          disabled: false,
+        };
+      default:
+        return null;
+    }
+  })();
+
   // Variant switcher: switch displayed url + persist pick
   const handleVariantPick = useCallback((idx: number) => {
     if (!gen) return;
     setSelectedIdx(idx);
+    setFavoriteLocal(gen.variants[idx]?.favorite ?? gen.favorite);
     writePick(gen.id, idx);
   }, [gen]);
 
   // Edit @composer: submit an edit generation
   const handleEditSubmit = useCallback(async () => {
-    if (!gen || !editPrompt.trim() || editStatus === "running") return;
-    setEditStatus("running");
-    const { image } = await ensureModels(); // F18: server-resolved model
-    const result = await startGen({
-      projectId,
-      prompt: editPrompt.trim(),
-      entityIds: editIds,
-      count: 1,
-      kind: "image",
-      model: image,
-      // F09: condition the edit on the image the user is actually viewing (the selected
-      // variant), so a paid "edit this" result relates to the displayed image instead of
-      // being an unconditioned fresh generation. Owned id resolved server-side (D19).
-      sourceGenerationId: selectedGenId,
-      idempotencyKey: `edit-${selectedGenId}-${Date.now()}`,
-    });
-    if ("error" in result) {
-      if (!cancelledRef.current) setEditStatus("failed");
-      return;
+    if (!gen || !editPrompt.trim() || editStatus === "running" || editBusyRef.current) return;
+    editBusyRef.current = true;
+    try {
+      setEditStatus("running");
+      const { image } = await ensureModels(); // F18: server-resolved model
+      const result = await startGen({
+        projectId,
+        prompt: editPrompt.trim(),
+        entityIds: editIds,
+        count: 1,
+        kind: "image",
+        model: image,
+        // F09: condition the edit on the image the user is actually viewing (the selected
+        // variant), so a paid "edit this" result relates to the displayed image instead of
+        // being an unconditioned fresh generation. Owned id resolved server-side (D19).
+        sourceGenerationId: selectedGenId,
+        idempotencyKey: `edit-${selectedGenId}-${Date.now()}`,
+      });
+      if ("error" in result) {
+        if (!cancelledRef.current) setEditStatus("failed");
+        return;
+      }
+      const status = await pollJob(result.id);
+      if (!cancelledRef.current) {
+        setEditStatus(status);
+        // Timeout ⇒ the paid edit job is still running — stay in "still processing" so a re-click
+        // can't fire a second charge. See handleRegen.
+        if (status !== "timeout") {
+          setTimeout(() => { if (!cancelledRef.current) setEditStatus("idle"); }, 3000);
+        }
+      }
+      if (status === "done") await reloadFromJob(result.id);
+    } finally {
+      editBusyRef.current = false;
     }
-    const status = await pollJob(result.id);
-    if (!cancelledRef.current) {
-      setEditStatus(status);
-      setTimeout(() => { if (!cancelledRef.current) setEditStatus("idle"); }, 3000);
-    }
-    if (status === "done") await reloadFromJob(result.id);
   }, [gen, editPrompt, editIds, editStatus, projectId, pollJob, reloadFromJob, selectedGenId]);
+
+  const runConfirmedAction = useCallback(() => {
+    const action = confirmAction;
+    setConfirmAction(null);
+    if (action === "regen") void handleRegen();
+    if (action === "animate") void handleAnimate();
+    if (action === "edit") void handleEditSubmit();
+    if (action === "delete") void handleDelete();
+  }, [confirmAction, handleAnimate, handleDelete, handleEditSubmit, handleRegen]);
 
   // Crop: confirm crop and save
   const handleCropConfirm = useCallback(async () => {
@@ -341,7 +475,7 @@ export default function DetailPanel({
       if (!cancelledRef.current) setCropStatus("failed");
       return;
     }
-    const result = await saveCroppedGeneration(gen.id, dataUrl);
+    const result = await saveCroppedGeneration(selectedGenId, dataUrl);
     if ("error" in result) {
       if (!cancelledRef.current) setCropStatus("failed");
       return;
@@ -363,7 +497,7 @@ export default function DetailPanel({
         setState("ready");
       });
     }
-  }, [gen, croppedAreaPixels, selectedIdx]);
+  }, [gen, croppedAreaPixels, selectedIdx, selectedGenId]);
 
   // Compute active URL to display
   const displayUrl = gen ? (gen.urls[selectedIdx] ?? gen.url) : null;
@@ -528,13 +662,15 @@ export default function DetailPanel({
                 variant="ghost"
                 size="sm"
                 icon={<IcRetry size={14} />}
-                onClick={handleRegen}
-                disabled={regenStatus === "running"}
+                onClick={() => requestSpendConfirm("regen")}
+                disabled={regenStatus === "running" || regenStatus === "timeout"}
               >
                 {regenStatus === "running"
                   ? "Generating…"
                   : regenStatus === "done"
                   ? "New version ready"
+                  : regenStatus === "timeout"
+                  ? "Still processing — check the library"
                   : regenStatus === "failed"
                   ? "Failed — retry?"
                   : "Regenerate"}
@@ -546,13 +682,15 @@ export default function DetailPanel({
                   variant="ghost"
                   size="sm"
                   icon={<IcPlay size={14} />}
-                  onClick={handleAnimate}
-                  disabled={animStatus === "running"}
+                  onClick={() => requestSpendConfirm("animate")}
+                  disabled={animStatus === "running" || animStatus === "timeout"}
                 >
                   {animStatus === "running"
                     ? "Animating…"
                     : animStatus === "done"
                     ? "Video ready"
+                    : animStatus === "timeout"
+                    ? "Still processing — check the library"
                     : animStatus === "failed"
                     ? "Failed — retry?"
                     : "Animate"}
@@ -586,7 +724,7 @@ export default function DetailPanel({
               </Button>
 
               {/* Delete */}
-              <Button variant="ghost" size="sm" onClick={handleDelete}>
+              <Button variant="ghost" size="sm" onClick={() => setConfirmAction("delete")}>
                 Delete
               </Button>
             </div>
@@ -606,19 +744,21 @@ export default function DetailPanel({
                         setEditPrompt(text);
                         setEditIds(ids);
                       }}
-                      onSubmit={handleEditSubmit}
+                      onSubmit={requestEditSubmit}
                     />
                   </div>
                   <Button
                     variant="primary"
                     size="sm"
-                    onClick={handleEditSubmit}
-                    disabled={editStatus === "running" || !editPrompt.trim()}
+                    onClick={requestEditSubmit}
+                    disabled={editStatus === "running" || editStatus === "timeout" || !editPrompt.trim()}
                   >
                     {editStatus === "running"
                       ? "Editing…"
                       : editStatus === "done"
                       ? "Edit ready!"
+                      : editStatus === "timeout"
+                      ? "Still processing — check the library"
                       : editStatus === "failed"
                       ? "Failed"
                       : "Send"}
@@ -678,6 +818,24 @@ export default function DetailPanel({
           </>
         )}
       </div>
+      <Dialog open={confirmAction !== null} onOpenChange={(open) => { if (!open) setConfirmAction(null); }}>
+        <DialogContent onPointerDown={(e) => e.stopPropagation()} onClick={(e) => e.stopPropagation()}>
+          <DialogHeader>
+            <DialogTitle>{confirmDetails?.title ?? ""}</DialogTitle>
+            <DialogDescription>{confirmDetails?.description ?? ""}</DialogDescription>
+          </DialogHeader>
+          <DialogFooter>
+            <UiButton variant="ghost" onClick={() => setConfirmAction(null)}>Cancel</UiButton>
+            <UiButton
+              variant={confirmAction === "delete" ? "destructive" : "default"}
+              disabled={confirmDetails?.disabled ?? true}
+              onClick={runConfirmedAction}
+            >
+              {confirmDetails?.confirmLabel ?? "Confirm"}
+            </UiButton>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
     </div>
   );
 }
