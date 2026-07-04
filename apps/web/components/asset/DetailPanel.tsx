@@ -32,7 +32,7 @@ type GenDTO = {
   id: string;
   url: string;
   urls: string[];
-  variants: { id: string; url: string }[]; // aligned to urls; carries each variant's own id (F08)
+  variants: { id: string; url: string; favorite: boolean }[]; // aligned to urls; carries each variant's own id/state (F08)
   kind: string;
   prompt: string;
   favorite: boolean;
@@ -173,6 +173,11 @@ export default function DetailPanel({
     setComposerKey(String(Date.now()));
   }, [gen?.id]);
 
+  useEffect(() => {
+    if (!gen) return;
+    setFavoriteLocal(gen.variants[selectedIdx]?.favorite ?? gen.favorite);
+  }, [gen, selectedIdx]);
+
   // Esc key
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
@@ -210,10 +215,23 @@ export default function DetailPanel({
 
   const handleFavorite = useCallback(async () => {
     if (!gen) return;
+    const targetGenId = selectedGenId;
     const next = !favorite;
-    setFavoriteLocal(next); // optimistic
-    const result = await setFavorite(selectedGenId, next);
-    if ("error" in result) setFavoriteLocal(!next); // revert
+    const applyLocal = (value: boolean) => {
+      setFavoriteLocal(value);
+      setGen((prev) => prev
+        ? {
+            ...prev,
+            favorite: prev.id === targetGenId ? value : prev.favorite,
+            variants: prev.variants.map((variant) => (
+              variant.id === targetGenId ? { ...variant, favorite: value } : variant
+            )),
+          }
+        : prev);
+    };
+    applyLocal(next); // optimistic
+    const result = await setFavorite(targetGenId, next);
+    if ("error" in result) applyLocal(!next); // revert
   }, [gen, favorite, selectedGenId]);
 
   const pollJob = useCallback(async (jobId: string): Promise<"done" | "failed" | "timeout"> => {
@@ -393,6 +411,7 @@ export default function DetailPanel({
   const handleVariantPick = useCallback((idx: number) => {
     if (!gen) return;
     setSelectedIdx(idx);
+    setFavoriteLocal(gen.variants[idx]?.favorite ?? gen.favorite);
     writePick(gen.id, idx);
   }, [gen]);
 
@@ -456,7 +475,7 @@ export default function DetailPanel({
       if (!cancelledRef.current) setCropStatus("failed");
       return;
     }
-    const result = await saveCroppedGeneration(gen.id, dataUrl);
+    const result = await saveCroppedGeneration(selectedGenId, dataUrl);
     if ("error" in result) {
       if (!cancelledRef.current) setCropStatus("failed");
       return;
@@ -478,7 +497,7 @@ export default function DetailPanel({
         setState("ready");
       });
     }
-  }, [gen, croppedAreaPixels, selectedIdx]);
+  }, [gen, croppedAreaPixels, selectedIdx, selectedGenId]);
 
   // Compute active URL to display
   const displayUrl = gen ? (gen.urls[selectedIdx] ?? gen.url) : null;
