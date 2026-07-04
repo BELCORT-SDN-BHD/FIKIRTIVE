@@ -131,18 +131,26 @@ export function useCanvasGen(
         return;
       }
       // primary card → first variant
-      void resolveCanvasNode(created.id, { status: "done", generationId: generationIds[0] });
-      onResolve(created.id, urls[0], "done", generationIds[0]);
+      const primaryGenerationId = generationIds[0];
+      if (!primaryGenerationId) {
+        void resolveCanvasNode(created.id, { status: "missing" });
+        onResolve(created.id, null, "missing");
+        return;
+      }
+      void resolveCanvasNode(created.id, { status: "done", generationId: primaryGenerationId });
+      onResolve(created.id, urls[0], "done", primaryGenerationId);
       // one sibling card per remaining variant, laid out in a 2×2 cluster. Each
       // is a plain canvas-node placement of an already-generated (already-charged)
       // Generation — createCanvasNode is not a spend path.
       for (let i = 1; i < urls.length; i++) {
         const sx = pos.x + (i % 2) * (pos.w + 20);
         const sy = pos.y + Math.floor(i / 2) * (pos.h + 20);
-        const sib = await createCanvasNode({ projectId, type: "image", x: sx, y: sy, w: pos.w, h: pos.h, prompt, generationId: generationIds[i], status: "done", ...(activeThreadId ? { threadId: activeThreadId } : {}) });
+        const generationId = generationIds[i];
+        if (!generationId) continue;
+        const sib = await createCanvasNode({ projectId, type: "image", x: sx, y: sy, w: pos.w, h: pos.h, prompt, generationId, status: "done", ...(activeThreadId ? { threadId: activeThreadId } : {}) });
         if ("error" in sib) continue;
         onNode({ id: sib.id, type: "image", pos: { x: sx, y: sy, w: pos.w, h: pos.h }, status: "pending", prompt });
-        onResolve(sib.id, urls[i], "done", generationIds[i]);
+        onResolve(sib.id, urls[i], "done", generationId);
       }
     }, cancelledRef);
   }, [projectId, onNode, onResolve, activeThreadId, onError, onBalanceRefresh]);
@@ -158,8 +166,10 @@ export function useCanvasGen(
     onNode({ id: created.id, type: "video", pos, status: "pending", prompt, sourceNodeId });
     poll(started.id, (urls, status, generationIds) => {
       void onBalanceRefresh?.();
-      void resolveCanvasNode(created.id, { status, generationId: generationIds[0] });
-      onResolve(created.id, urls[0] ?? null, status, generationIds[0]);
+      const generationId = generationIds[0];
+      const resolvedStatus = status === "done" && !generationId ? "missing" : status;
+      void resolveCanvasNode(created.id, { status: resolvedStatus, ...(generationId ? { generationId } : {}) });
+      onResolve(created.id, urls[0] ?? null, resolvedStatus, generationId);
     }, cancelledRef);
     return true;
   }, [projectId, onNode, onResolve, activeThreadId, onError, onBalanceRefresh]);
@@ -179,8 +189,10 @@ export function useCanvasGen(
     onNode({ id: created.id, type: "video", pos, status: "pending", prompt });
     poll(started.id, (urls, status, generationIds) => {
       void onBalanceRefresh?.();
-      void resolveCanvasNode(created.id, { status, generationId: generationIds[0] });
-      onResolve(created.id, urls[0] ?? null, status, generationIds[0]);
+      const generationId = generationIds[0];
+      const resolvedStatus = status === "done" && !generationId ? "missing" : status;
+      void resolveCanvasNode(created.id, { status: resolvedStatus, ...(generationId ? { generationId } : {}) });
+      onResolve(created.id, urls[0] ?? null, resolvedStatus, generationId);
     }, cancelledRef);
     return true;
   }, [projectId, onNode, onResolve, activeThreadId, onError, onBalanceRefresh]);

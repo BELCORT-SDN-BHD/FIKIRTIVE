@@ -168,4 +168,22 @@ describe("resolveCanvasNode", () => {
       expect.objectContaining({ data: { status: "failed", generationId: null } }),
     );
   });
+
+  it("rejects unknown resolve statuses", async () => {
+    await expect(resolveCanvasNode("node-1", { status: "weird" })).resolves.toEqual({ error: "Invalid status." });
+    expect(mockCanvasNodeFindFirst).not.toHaveBeenCalled();
+    expect(mockUpdateMany).not.toHaveBeenCalled();
+  });
+
+  it("requires a generation when marking a node done", async () => {
+    await expect(resolveCanvasNode("node-1", { status: "done" })).resolves.toEqual({ error: "Generation required." });
+    expect(mockCanvasNodeFindFirst).not.toHaveBeenCalled();
+    expect(mockUpdateMany).not.toHaveBeenCalled();
+  });
+
+  it("does not attach a generation to non-done status", async () => {
+    await expect(resolveCanvasNode("node-1", { status: "failed", generationId: "g1" })).resolves.toEqual({ error: "Generation only allowed for done status." });
+    expect(mockCanvasNodeFindFirst).not.toHaveBeenCalled();
+    expect(mockUpdateMany).not.toHaveBeenCalled();
+  });
 });

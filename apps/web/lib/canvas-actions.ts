@@ -16,10 +16,12 @@ export type CreateNodeInput = {
   text?: string; prompt?: string; generationId?: string; genJobId?: string;
   status?: string; sourceNodeId?: string; threadId?: string;
 };
+type CanvasNodeResolveStatus = "done" | "failed" | "timeout" | "missing";
 
 const SELECT = { id: true, type: true, x: true, y: true, w: true, h: true, text: true,
   prompt: true, generationId: true, genJobId: true, status: true, sourceNodeId: true,
   threadId: true } as const;
+const RESOLVE_STATUSES = new Set<CanvasNodeResolveStatus>(["done", "failed", "timeout", "missing"]);
 
 async function ownedProject(projectId: string, ownerId: string) {
   return prisma.project.findFirst({ where: { id: projectId, ownerId, deletedAt: null } });
@@ -92,6 +94,9 @@ export async function updateTextNode(id: string, text: string) {
 export async function resolveCanvasNode(id: string, input: { status: string; generationId?: string | null }) {
   const gate = await requireOwner();
   if ("error" in gate) return gate;
+  if (!RESOLVE_STATUSES.has(input.status as CanvasNodeResolveStatus)) return { error: "Invalid status." };
+  if (input.status === "done" && !input.generationId) return { error: "Generation required." };
+  if (input.status !== "done" && input.generationId) return { error: "Generation only allowed for done status." };
   const node = await prisma.canvasNode.findFirst({
     where: { id, ownerId: gate.ownerId, type: { in: ["image", "video"] } },
     select: { id: true, projectId: true },
