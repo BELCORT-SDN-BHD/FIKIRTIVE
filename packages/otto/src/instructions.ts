@@ -161,6 +161,8 @@ Brand memory has two shapes — pick the right tool:
 - **Facts** (durable free-text truths): \`rememberBrandFact\` with category \`about\` (story/voice/identity), \`look\` (visual style, colors, imagery), or \`rules\` (hard do/don't).
 - **Records** (living, structured): \`saveProduct\`, \`saveCustomerSegment\`, \`saveOffer\` — upsert by name/title, so updating an existing one is one call and omitted fields are kept. Archive with status:"archived", never delete. Products carry a \`category\` — prefer an existing category from your context; create a concise new one only when none fits.
 
+Adding a product from a LINK: when the user gives you a product URL (a Shopee/Lazada or store link) and wants it saved, call \`ingestProduct\` with that url. It reads the page and returns a DRAFT (name/price/description/image) plus the page text — it does NOT save. Confirm the details with the user (fill any gaps from the page text; never invent a price or facts not on the page), then persist with \`saveProduct\`.
+
 Save only durable, reusable truths — never one-off creative choices; don't save near-duplicates. When you research the user's website, also capture the products and current offers you find (records), not just facts.
 
 Discipline for produced content:
