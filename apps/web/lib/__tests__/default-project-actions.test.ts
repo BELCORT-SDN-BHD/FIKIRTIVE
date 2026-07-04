@@ -9,7 +9,7 @@ vi.mock("@fikirtive/db", () => ({
   },
 }));
 
-import { getOrCreateDefaultProject } from "@/lib/actions";
+import { createProject, getOrCreateDefaultProject } from "@/lib/actions";
 import { requireOwner } from "@/lib/auth-guard";
 import { prisma } from "@fikirtive/db";
 import { revalidatePath } from "next/cache";
@@ -48,5 +48,36 @@ describe("getOrCreateDefaultProject", () => {
       }),
     }));
     expect(revalidatePath).not.toHaveBeenCalled();
+  });
+});
+
+describe("createProject", () => {
+  it("returns auth errors without throwing so expired sessions can recover in the UI", async () => {
+    (requireOwner as any).mockResolvedValue({ error: "Not authorized." });
+
+    await expect(createProject("New campaign")).resolves.toEqual({ error: "Not authorized." });
+
+    expect(prisma.project.create).not.toHaveBeenCalled();
+    expect(prisma.actionEvent.create).not.toHaveBeenCalled();
+    expect(revalidatePath).not.toHaveBeenCalled();
+  });
+
+  it("creates an owner-scoped project and revalidates after success", async () => {
+    (prisma.project.create as any).mockResolvedValue({ id: "p_new", name: "New campaign" });
+
+    await expect(createProject("New campaign")).resolves.toEqual({ id: "p_new" });
+
+    expect(prisma.project.create).toHaveBeenCalledWith({
+      data: { id: expect.any(String), ownerId: "o1", name: "New campaign" },
+    });
+    expect(prisma.actionEvent.create).toHaveBeenCalledWith(expect.objectContaining({
+      data: expect.objectContaining({
+        ownerId: "o1",
+        projectId: "p_new",
+        type: "project.create",
+        payload: { name: "New campaign" },
+      }),
+    }));
+    expect(revalidatePath).toHaveBeenCalledWith("/", "layout");
   });
 });
