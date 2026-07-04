@@ -3,12 +3,14 @@
 import { prisma } from "@fikirtive/db";
 import { newId } from "@fikirtive/core";
 import { requireOwner } from "./auth-guard";
+import { getGenerationThumbs } from "./data";
+import { canvasNodeDisplayStatus } from "./otto-canvas-bridge-core";
 
 export type CanvasNodeDTO = {
   id: string; type: string; x: number; y: number; w: number; h: number;
   text: string | null; prompt: string | null; generationId: string | null;
   genJobId: string | null; status: string; sourceNodeId: string | null;
-  threadId: string | null;
+  threadId: string | null; url?: string | null;
 };
 export type CreateNodeInput = {
   projectId: string; type: "image" | "video" | "text";
@@ -31,7 +33,28 @@ export async function listCanvasNodes(projectId: string): Promise<CanvasNodeDTO[
   const gate = await requireOwner();
   if ("error" in gate) return gate;
   if (!(await ownedProject(projectId, gate.ownerId))) return { error: "Project not found." };
-  return prisma.canvasNode.findMany({ where: { ownerId: gate.ownerId, projectId }, select: SELECT });
+  const nodes = await prisma.canvasNode.findMany({ where: { ownerId: gate.ownerId, projectId }, select: SELECT });
+  const linkedJobIds = [...new Set(nodes.map((n) => n.genJobId).filter((x): x is string => !!x))];
+  const jobs = linkedJobIds.length
+    ? await prisma.genJob.findMany({
+      where: { id: { in: linkedJobIds }, ownerId: gate.ownerId, projectId },
+      select: { id: true, generationIds: true, status: true },
+    })
+    : [];
+  const jobById = new Map(jobs.map((j) => [j.id, j]));
+  const genIds = [
+    ...nodes.map((n) => n.generationId).filter((x): x is string => !!x),
+    ...jobs.map((j) => j.generationIds[0]).filter((x): x is string => !!x),
+  ];
+  const thumbs = await getGenerationThumbs(gate.ownerId, genIds);
+
+  return nodes.map((n) => {
+    const job = n.genJobId ? jobById.get(n.genJobId) : null;
+    const generationId = n.generationId ?? job?.generationIds[0] ?? null;
+    const url = generationId ? thumbs[generationId]?.src ?? null : null;
+    const status = generationId && !url ? "missing" : canvasNodeDisplayStatus(n.status, job?.status, url);
+    return { ...n, generationId, status, url };
+  });
 }
 
 export async function createCanvasNode(input: CreateNodeInput): Promise<{ id: string } | { error: string }> {
