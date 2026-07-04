@@ -3,8 +3,10 @@ import { revalidatePath } from "next/cache";
 import { prisma } from "@fikirtive/db";
 import {
   canTransition,
+  isValidScheduleTimeZone,
   isScheduleChannel,
   newId,
+  parseScheduleInstant,
   SCHEDULE_CHANNEL_CAPS,
   type ScheduledPostStatus,
   type ScheduleChannel,
@@ -112,7 +114,7 @@ export async function updateScheduledPost(
   // channel gates first-comment capability. A terminal / publishing / failed row is content-frozen.
   const current = await prisma.scheduledPost.findFirst({
     where: { id, ownerId: gate.ownerId, deletedAt: null },
-    select: { status: true, channel: true, firstComment: true },
+    select: { status: true, channel: true, firstComment: true, media: { select: { generationId: true } } },
   });
   if (!current) return { error: "Post not found." };
   if (!EDITABLE_STATUSES.has(current.status as ScheduledPostStatus)) {
@@ -129,6 +131,15 @@ export async function updateScheduledPost(
   // approval = consent to publish (spec §五).
   let material = false;
   if (patch?.channel !== undefined) {
+    const existingMediaCount = current.media?.length ?? 0;
+    if (patch?.media === undefined && existingMediaCount > caps.maxMediaCount) {
+      return {
+        error:
+          caps.maxMediaCount === 1
+            ? `${caps.label} supports a single image or video, not a carousel.`
+            : `A carousel can have at most ${caps.maxMediaCount} items.`,
+      };
+    }
     data.channel = nextChannel;
     material = true;
     // Moving an Instagram draft to Facebook must not leave an impossible first comment behind.
@@ -141,14 +152,14 @@ export async function updateScheduledPost(
     material = true;
   }
   if (patch?.scheduledAt !== undefined) {
-    const d = typeof patch.scheduledAt === "string" ? toDate(patch.scheduledAt) : null;
-    if (!d) return { error: "Pick a valid date and time." };
+    const d = typeof patch.scheduledAt === "string" ? parseScheduleInstant(patch.scheduledAt.trim()) : null;
+    if (!d) return { error: "Pick a valid date and time (include a UTC offset)." };
     data.scheduledAt = d;
     material = true;
   }
   if (patch?.scheduledTz !== undefined) {
     const tz = typeof patch.scheduledTz === "string" ? patch.scheduledTz.trim() : "";
-    if (!tz) return { error: "Pick a time zone." };
+    if (!isValidScheduleTimeZone(tz)) return { error: "Pick a valid time zone." };
     data.scheduledTz = tz;
   }
   if (patch?.firstComment !== undefined) {
@@ -233,7 +244,7 @@ export async function approveScheduledPost(id: string): Promise<{ ok: true } | {
 
   const post = await prisma.scheduledPost.findFirst({
     where: { id, ownerId: gate.ownerId, deletedAt: null },
-    select: { id: true, status: true, channel: true, metaTargetId: true, media: { select: { id: true }, take: 1 } },
+    select: { id: true, status: true, channel: true, metaTargetId: true, media: { select: { generationId: true } } },
   });
   if (!post) return { error: "Post not found." };
 
@@ -244,8 +255,27 @@ export async function approveScheduledPost(id: string): Promise<{ ok: true } | {
   // Consent needs a resolved target that the owner actually owns.
   if (!post.metaTargetId) return { error: "Pick which account to post to before approving." };
   if (!post.media.length) return { error: "Add at least one image or video before approving." };
-
   if (!isScheduleChannel(post.channel)) return { error: "Pick a supported channel." };
+  const caps = SCHEDULE_CHANNEL_CAPS[post.channel];
+  if (post.media.length > caps.maxMediaCount) {
+    return {
+      error:
+        caps.maxMediaCount === 1
+          ? `${caps.label} supports a single image or video, not a carousel.`
+          : `A carousel can have at most ${caps.maxMediaCount} items.`,
+    };
+  }
+  const mediaIds = post.media.map((m) => m.generationId).filter((m): m is string => typeof m === "string" && m.length > 0);
+  if (mediaIds.length !== post.media.length) return { error: "Some selected media isn't yours." };
+  const ownedMedia = await prisma.generation.findMany({
+    where: { id: { in: mediaIds }, ownerId: gate.ownerId, deletedAt: null },
+    select: { id: true },
+  });
+  const ownedMediaIds = new Set(ownedMedia.map((m) => m.id));
+  if (mediaIds.some((mediaId) => !ownedMediaIds.has(mediaId))) {
+    return { error: "Some selected media isn't yours." };
+  }
+
   const adapter = channelRegistry[post.channel];
   if (!adapter) return { error: "Connect your account before approving." };
   const targets = await adapter.listTargets(gate.ownerId);

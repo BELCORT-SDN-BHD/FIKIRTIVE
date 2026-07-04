@@ -286,6 +286,18 @@ describe("updateScheduledPost", () => {
     expect(mockTransaction).not.toHaveBeenCalled();
   });
 
+  it("rejects a channel edit when existing media exceeds the new channel cap", async () => {
+    mockFindFirst.mockResolvedValue({
+      status: "DRAFT",
+      channel: "instagram",
+      firstComment: null,
+      media: [{ generationId: "gen-a" }, { generationId: "gen-b" }],
+    });
+    const res = await updateScheduledPost("p1", { channel: "facebook" });
+    expect(res).toHaveProperty("error");
+    expect(mockTransaction).not.toHaveBeenCalled();
+  });
+
   it("cannot touch another owner's post — status load misses → not found, no write", async () => {
     mockFindFirst.mockResolvedValue(null); // owner-scoped status load misses the foreign row
     const res = await updateScheduledPost("someone-elses", { caption: "hijack" });
@@ -357,6 +369,20 @@ describe("updateScheduledPost", () => {
     expect(mockUpdateMany).not.toHaveBeenCalled();
   });
 
+  it("rejects a naive scheduledAt edit with no timezone designator, writes nothing", async () => {
+    mockFindFirst.mockResolvedValue({ status: "DRAFT", channel: "instagram", firstComment: null });
+    const res = await updateScheduledPost("p1", { scheduledAt: "2026-07-10T09:00:00" });
+    expect(res).toHaveProperty("error");
+    expect(mockUpdateMany).not.toHaveBeenCalled();
+  });
+
+  it("rejects an invalid scheduledTz edit, writes nothing", async () => {
+    mockFindFirst.mockResolvedValue({ status: "DRAFT", channel: "instagram", firstComment: null });
+    const res = await updateScheduledPost("p1", { scheduledTz: "Mars/Phobos" });
+    expect(res).toHaveProperty("error");
+    expect(mockUpdateMany).not.toHaveBeenCalled();
+  });
+
   it("unauthenticated → error, no DB read/write", async () => {
     mockRequireOwner.mockResolvedValue({ error: "Not authorized." });
     const res = await updateScheduledPost("p1", { caption: "x" });
@@ -376,7 +402,7 @@ function draftReady(over: Partial<Record<string, unknown>> = {}) {
     status: "DRAFT",
     channel: "instagram",
     metaTargetId: "page-1",
-    media: [{ id: "m1" }],
+    media: [{ id: "m1", generationId: "gen-a" }],
     ...over,
   };
 }
@@ -453,6 +479,28 @@ describe("approveScheduledPost", () => {
 
   it("rejects when the post has no media rows, no write", async () => {
     mockFindFirst.mockResolvedValue(draftReady({ media: [] }));
+    const res = await approveScheduledPost("p1");
+    expect(res).toHaveProperty("error");
+    expect(mockUpdateMany).not.toHaveBeenCalled();
+  });
+
+  it("rejects when a queued media row no longer belongs to the owner, no write", async () => {
+    mockFindFirst.mockResolvedValue(draftReady({ media: [{ id: "m1", generationId: "gen-a" }] }));
+    mockGenFindMany.mockResolvedValue([]);
+    const res = await approveScheduledPost("p1");
+    expect(res).toHaveProperty("error");
+    expect(mockGenFindMany).toHaveBeenCalledWith({
+      where: { id: { in: ["gen-a"] }, ownerId: OWNER, deletedAt: null },
+      select: { id: true },
+    });
+    expect(mockUpdateMany).not.toHaveBeenCalled();
+  });
+
+  it("rejects approval when existing media exceeds the channel cap, no write", async () => {
+    mockFindFirst.mockResolvedValue(draftReady({
+      channel: "facebook",
+      media: [{ generationId: "gen-a" }, { generationId: "gen-b" }],
+    }));
     const res = await approveScheduledPost("p1");
     expect(res).toHaveProperty("error");
     expect(mockUpdateMany).not.toHaveBeenCalled();

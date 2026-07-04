@@ -121,6 +121,8 @@ export {
   SCHEDULE_CHANNELS,
   SCHEDULE_CHANNEL_CAPS,
   isScheduleChannel,
+  isValidScheduleTimeZone,
+  parseScheduleInstant,
   validateScheduleDraft,
   type ScheduleChannel,
   type ScheduleDraftInput,
