@@ -22,9 +22,11 @@ export function OttoOnboarding({ onGoToStuff, onGoToMemory }: OttoOnboardingProp
   useEffect(() => {
     // Window-guarded localStorage read
     if (typeof window === "undefined") return;
-    if (!window.localStorage.getItem(LS_KEY)) {
+    if (window.localStorage.getItem(LS_KEY)) return;
+    const frame = window.requestAnimationFrame(() => {
       setVisible(true);
-    }
+    });
+    return () => window.cancelAnimationFrame(frame);
   }, []);
 
   function dismiss() {
@@ -56,7 +58,7 @@ export function OttoOnboarding({ onGoToStuff, onGoToMemory }: OttoOnboardingProp
     <div
       role="region"
       aria-label="Getting started"
-      className="gb leading-[1.5] mx-6 mt-5 rounded-[28px] overflow-hidden bg-card shadow-sm"
+      className="gb leading-[1.5] rounded-[28px] overflow-hidden bg-card shadow-sm"
       style={{ border: "1.5px solid var(--border)" }}
     >
       {/* Header row */}
@@ -81,7 +83,7 @@ export function OttoOnboarding({ onGoToStuff, onGoToMemory }: OttoOnboardingProp
 
       {/* Tiles row */}
       <div
-        className="grid grid-cols-2 gap-px"
+        className="grid grid-cols-1 gap-px sm:grid-cols-2"
         style={{ background: "var(--border)" }}
       >
         {tiles.map((tile) => (
