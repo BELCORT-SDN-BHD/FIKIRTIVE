@@ -8,4 +8,3 @@ export default function AdminDashboardV2PreviewPage() {
   if (process.env.NODE_ENV === "production") notFound();
   return <AdminDashboardV2Prototype />;
 }
-

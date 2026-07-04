@@ -1,7 +1,7 @@
 # FIKIRTIVE Admin Dashboard Local Audit
 
-Date: 2026-07-04  
-Scope: official `/admin`, local dev preview, source audit of current admin sections  
+Date: 2026-07-04
+Scope: official `/admin`, local dev preview, source audit of current admin sections
 Goal: provide the latest project context and a deletion/merge/rebuild map for redesigning the official admin dashboard without Figma.
 
 ## Evidence Captured
