@@ -6,6 +6,7 @@ import { requireOwner } from "./auth-guard";
 import { encryptToken, decryptToken } from "./token-encryption";
 import { exchangeCodeForToken, metaGraphGet } from "./meta-graph";
 import { fetchOwnerInsights, type AccountInsights } from "./meta-insights";
+import { isImpersonating } from "@/lib/better-auth/compat";
 
 export type MetaAdAccount = { id: string; name: string; currency: string; status: string };
 
@@ -16,6 +17,7 @@ export async function completeMetaConnect(
 ): Promise<{ ok: true } | { error: string }> {
   const gate = await requireOwner();
   if ("error" in gate) return gate;
+  if (await isImpersonating()) return { error: "Paused while impersonating a customer — exit impersonation to connect Meta." };
   const ex = await exchangeCodeForToken(code, redirectUri);
   if ("error" in ex) return ex;
   const enc = encryptToken(ex.token);
@@ -98,6 +100,7 @@ export async function getMetaConnection(): Promise<
 export async function disconnectMeta(): Promise<{ ok: true } | { error: string }> {
   const gate = await requireOwner();
   if ("error" in gate) return gate;
+  if (await isImpersonating()) return { error: "Paused while impersonating a customer — exit impersonation to disconnect Meta." };
   await prisma.metaConnection.deleteMany({ where: { ownerId: gate.ownerId } });
   return { ok: true };
 }
