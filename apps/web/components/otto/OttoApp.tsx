@@ -68,6 +68,12 @@ export interface OttoAppProps {
 
 export type OttoViewKey = "otto" | "stuff" | "library" | "templates" | "discover" | "memory" | "account" | "connections" | "schedule" | "analytics";
 
+const OTTO_VIEW_KEYS = new Set<OttoViewKey>(["otto", "stuff", "library", "templates", "discover", "memory", "account", "connections", "schedule", "analytics"]);
+
+function parseViewParam(raw: string | null): OttoViewKey {
+  return raw && OTTO_VIEW_KEYS.has(raw as OttoViewKey) ? (raw as OttoViewKey) : "otto";
+}
+
 export function OttoApp({
   projectId,
   projects = [],
@@ -106,8 +112,18 @@ export function OttoApp({
   const [seedText, setSeedText] = useState<string>("");
   const [navCollapsed, setNavCollapsed] = useState(initialNavCollapsed ?? false);
   const [chatCollapsed, setChatCollapsed] = useState(initialChatCollapsed ?? false);
+  const [actionError, setActionError] = useState<string | null>(null);
   // ── Multi-project (campaign = project) navigation ──
   const curProjectId = activeProjectId ?? projectId;
+
+  useEffect(() => {
+    function syncViewFromLocation() {
+      setView(parseViewParam(new URLSearchParams(window.location.search).get("view")));
+      setActionError(null);
+    }
+    window.addEventListener("popstate", syncViewFromLocation);
+    return () => window.removeEventListener("popstate", syncViewFromLocation);
+  }, []);
 
   useEffect(() => {
     setThreads((prev) => {
@@ -153,12 +169,6 @@ export function OttoApp({
     if (a && !("error" in a)) setBalanceCredits(a.balance);
   }, []);
 
-  function handleUseInOtto(prompt: string) {
-    setSeedText(prompt);
-    setActiveThreadId(null);
-    setView("otto");
-  }
-
   const projectHref = useCallback((projId: string, threadId?: string) => {
     const p = new URLSearchParams();
     p.set("project", projId);
@@ -174,6 +184,37 @@ export function OttoApp({
     }
     router.replace(href);
   }, [router]);
+
+  const pushViewHistory = useCallback((href: string) => {
+    if (typeof window === "undefined") return;
+    const current = `${window.location.pathname}${window.location.search}`;
+    if (current !== href) window.history.pushState(null, "", href);
+  }, []);
+
+  const viewHref = useCallback((nextView: OttoViewKey) => {
+    const p = new URLSearchParams();
+    p.set("project", curProjectId);
+    if (nextView !== "otto") {
+      p.set("view", nextView);
+    } else if (activeThreadId) {
+      p.set("thread", activeThreadId);
+    }
+    return `/otto?${p.toString()}`;
+  }, [activeThreadId, curProjectId]);
+
+  const handleViewChange = useCallback((nextView: OttoViewKey) => {
+    setActionError(null);
+    setView(nextView);
+    pushViewHistory(viewHref(nextView));
+  }, [pushViewHistory, viewHref]);
+
+  function handleUseInOtto(prompt: string) {
+    setSeedText(prompt);
+    setActiveThreadId(null);
+    setActionError(null);
+    setView("otto");
+    pushViewHistory(projectHref(curProjectId));
+  }
 
   const handleThreadsChange = useCallback((next: ChatThreadDTO[]) => {
     setThreads(next);
@@ -195,23 +236,47 @@ export function OttoApp({
   }, [curProjectId, handleThreadsChange, projectHref, pushLocalRoute, threads]);
 
   const handleNewCampaign = useCallback(async () => {
+    setActionError(null);
+    const loginHref = `/login?from=${encodeURIComponent(projectHref(curProjectId))}`;
     try {
       const res = await createProject("New campaign");
-      if (res && "id" in res) router.push(projectHref(res.id));
+      if (res && "id" in res) {
+        router.push(projectHref(res.id));
+        return;
+      }
+      if (res && "error" in res) {
+        const message = res.error;
+        if (/not authorized|not authenticated/i.test(message)) {
+          setActionError("Your session expired. Sign in again to continue.");
+          window.location.assign(loginHref);
+        } else {
+          setActionError(message);
+        }
+      }
     } catch (e) {
+      const message = e instanceof Error ? e.message : String(e);
+      if (/unexpected response|not authorized|not authenticated|session/i.test(message)) {
+        setActionError("Your session expired. Sign in again to continue.");
+        window.location.assign(loginHref);
+        return;
+      }
       console.error("[handleNewCampaign] failed:", e);
+      setActionError("Could not create a campaign. Refresh and try again.");
     }
-  }, [router, projectHref]);
+  }, [router, projectHref, curProjectId]);
 
   // Switch to another project (optionally opening a specific thread). Same-project
   // thread clicks are handled by state (snappy); cross-project goes through here.
   const handleSwitchProject = useCallback((projId: string, threadId?: string) => {
     if (projId === curProjectId && !threadId) return;
+    setActionError(null);
     router.push(projectHref(projId, threadId));
   }, [router, projectHref, curProjectId]);
 
   const handleSelectThread = useCallback((threadId: string) => {
+    setActionError(null);
     setActiveThreadId(threadId);
+    setView("otto");
     router.push(projectHref(curProjectId, threadId));
   }, [router, projectHref, curProjectId]);
 
@@ -331,7 +396,7 @@ export function OttoApp({
         collapsed={navCollapsed}
         onToggleCollapse={() => setNavCollapsed((v) => !v)}
         view={view}
-        onViewChange={setView}
+        onViewChange={handleViewChange}
         projects={projects}
         activeProjectId={curProjectId}
         sidebarThreads={sidebarThreadList}
@@ -409,7 +474,7 @@ export function OttoApp({
           analytics={analytics}
           ottoStreamEnabled={ottoStreamEnabled}
           onBalanceRefresh={refreshBalance}
-          onViewChange={setView}
+          onViewChange={handleViewChange}
           onOpenThread={handleSelectThread}
           activity={activity}
           onActivityRefresh={refreshActivity}
@@ -423,6 +488,47 @@ export function OttoApp({
           skin={skin}
         />
       </div>
+      {actionError && (
+        <div
+          role="alert"
+          style={{
+            position: "absolute",
+            left: 16,
+            right: 16,
+            bottom: 16,
+            zIndex: 80,
+            maxWidth: 460,
+            padding: "0.875rem 1rem",
+            borderRadius: 12,
+            border: "1px solid rgba(220,38,38,0.32)",
+            background: "var(--card)",
+            color: "var(--foreground)",
+            boxShadow: "0 18px 40px rgba(0,0,0,0.18)",
+            display: "flex",
+            alignItems: "center",
+            justifyContent: "space-between",
+            gap: "0.75rem",
+          }}
+        >
+          <span style={{ fontSize: "0.875rem", lineHeight: 1.4 }}>{actionError}</span>
+          <button
+            type="button"
+            onClick={() => setActionError(null)}
+            style={{
+              border: "1px solid var(--border)",
+              borderRadius: 9,
+              background: "transparent",
+              color: "var(--foreground)",
+              padding: "0.35rem 0.55rem",
+              fontSize: "0.8125rem",
+              cursor: "pointer",
+              flexShrink: 0,
+            }}
+          >
+            Dismiss
+          </button>
+        </div>
+      )}
 
     </div>
   );

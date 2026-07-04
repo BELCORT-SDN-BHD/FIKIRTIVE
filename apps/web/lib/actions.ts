@@ -116,8 +116,8 @@ export async function getOrCreateDefaultProject(): Promise<{ id: string } | { er
   return { id: project.id };
 }
 
-export async function createProject(name: string) {
-  const gate = await requireOwner(); if ("error" in gate) throw new Error(gate.error);
+export async function createProject(name: string): Promise<{ id: string } | { error: string }> {
+  const gate = await requireOwner(); if ("error" in gate) return gate;
   const { ownerId } = gate;
   const project = await prisma.project.create({
     data: { id: newId(), ownerId, name: name.trim() || "Untitled Project" },
