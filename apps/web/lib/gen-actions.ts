@@ -198,9 +198,9 @@ export async function startGen(raw: unknown): Promise<{ id: string } | { error: 
 
 /** F18: resolve the active image/video models SERVER-side (where OTTO_DEFAULT_VIDEO_MODEL is
  *  actually in the environment). Client components must NOT call activeImageModel()/
- *  activeVideoModel() directly — that env is not bundled, so the browser always computes the
- *  default (veo3.1-lite), which mismatches the prod model (seedance-2-fast) and gets rejected by
- *  the server gate. Clients fetch this instead so their gen requests carry the real model. */
+ *  activeVideoModel() directly — that env is not bundled, so the browser computes the code
+ *  default instead of the server-configured model and can mismatch what the server gate
+ *  accepts. Clients fetch this instead so their gen requests carry the real model. */
 export async function getActiveGenModels(): Promise<{ image: string; video: string }> {
   return { image: activeImageModel(), video: activeVideoModel() };
 }

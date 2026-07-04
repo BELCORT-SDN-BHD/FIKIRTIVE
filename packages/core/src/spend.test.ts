@@ -133,3 +133,38 @@ describe("credit pricing (deterministic CHARGE in internal credits; 1 internal =
     expectMarginAtLeast45(pricedGenCredits(referenceVideo), genSpentUsd(referenceVideo));
   });
 });
+
+// ── 宪法 5 毛利地板守卫:每个可售视频组合 ≥45% ─────────────────────────────────
+// 这个测试是"地板的警报器":BytePlus 成本(videoRateUsdPerSec)涨了、或有人改了
+// VIDEO_CREDITS_BY_RESOLUTION 的售价、或给 flat 名单加了没算过账的模型 —— 任何
+// 一种情况把某个可售组合的毛利打到 45% 以下,这里立刻变红。视频任务恒 count=1
+// (gen-actions 强制),所以按 count=1 逐组合断言。
+import { FLAT_PRICED_VIDEO_MODELS } from "./spend.js";
+import { GEN_VIDEO_MODEL_OPTIONS, type GenVideoModel } from "./gen.js";
+
+describe("margin floor — every sellable video combo keeps ≥45% gross margin (宪法 5)", () => {
+  it("holds for all flat-priced models × durations × resolutions × audio", () => {
+    for (const model of FLAT_PRICED_VIDEO_MODELS) {
+      const opts = GEN_VIDEO_MODEL_OPTIONS[model as GenVideoModel];
+      expect(opts, `flat-priced model ${model} must exist in GEN_VIDEO_MODEL_OPTIONS`).toBeDefined();
+      const resolutions = opts.resolutions.length ? opts.resolutions : [""];
+      const audios = opts.audioToggle ? [true, false] : [false];
+      for (const seconds of opts.durations) {
+        for (const resolution of resolutions) {
+          for (const audio of audios) {
+            const job = { kind: "VIDEO" as const, model, count: 1, videoOptions: { seconds, resolution, audio } };
+            const priceUsd = pricedGenCredits(job) / CREDITS_PER_USD;
+            const costUsd = genSpentUsd(job);
+            const margin = (priceUsd - costUsd) / priceUsd;
+            // 1e-9 = IEEE754 容差:定价可以精确压在 45.0% 地板上(720p 10s 档,
+            // #129 按 Ark 实测成本核定),0.63/1.4 在浮点里是 0.44999999999999996。
+            expect(
+              margin,
+              `${model} ${seconds}s ${resolution || "(default res)"} audio=${audio}: price $${priceUsd} cost $${costUsd} margin ${(margin * 100).toFixed(1)}%`,
+            ).toBeGreaterThanOrEqual(0.45 - 1e-9);
+          }
+        }
+      }
+    }
+  });
+});

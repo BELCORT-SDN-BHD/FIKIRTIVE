@@ -3,7 +3,10 @@
  * the commit point to freeze GenJob.spentUsd / RefGenJob.spentUsd, exactly when
  * money is committed (like Generation.entitySnapshot). NO prisma, NO LLM — pure
  * functions over the price truth in gen.ts/refgen.ts so the money-critical worker
- * write is one byte-stable call. These never gate or influence spend.
+ * write is one byte-stable call. The USD snapshots never gate or influence spend.
+ * EXCEPTION (2026-07-04 宪法 5 margin floor): isFlatPricedVideoModel below IS
+ * consulted by the spend gate (model-config.assertSpendableModel) — only video
+ * models with a flat, margin-floored price are sellable.
  */
 import {
   GEN_PRICE_USD_PER_IMAGE,

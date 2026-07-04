@@ -179,3 +179,74 @@ describe("case 8 — reserve guard: InsufficientCredits on underfunded reserve",
     expect(acc.reserved).toBe(0);
   });
 });
+
+// ── Case 9: 并发双 reserve —— 防重复扣款的核心防线(审计 2026-07-04 补) ────────
+// reserveCredits 的原子条件扣减(WHERE balance >= cost)是"永不双扣/永不负余额"的
+// 唯一守卫。这个测试在真库上并发打它:谁要是把它改成"先读后写"或删掉 gte 条件,
+// 这里立刻红。
+import { grantCredits } from "./index.js";
+
+describe("case 9 — concurrent reserves: only one wins, balance never negative", () => {
+  it("two concurrent 700-reserves on a 1000 balance → exactly one succeeds", async () => {
+    const results = await Promise.allSettled([
+      prisma.$transaction((tx) => reserveCredits(tx, { orgId: ORG, refId: "race-a", cost: 700 })),
+      prisma.$transaction((tx) => reserveCredits(tx, { orgId: ORG, refId: "race-b", cost: 700 })),
+    ]);
+
+    const wins = results.filter((r) => r.status === "fulfilled");
+    const losses = results.filter((r) => r.status === "rejected");
+    expect(wins).toHaveLength(1);
+    expect(losses).toHaveLength(1);
+    expect((losses[0] as PromiseRejectedResult).reason).toBeInstanceOf(InsufficientCredits);
+
+    const acc = await account(ORG);
+    expect(acc.balance).toBe(300);   // 1000 - 700, exactly once
+    expect(acc.reserved).toBe(700);
+    expect(acc.balance).toBeGreaterThanOrEqual(0); // the invariant the WHERE guard exists for
+
+    // 恰一条 RESERVE 账行(输家整个事务回滚,不留痕)
+    const rows = await ledger(ORG);
+    expect(rows.filter((r) => r.kind === "RESERVE")).toHaveLength(1);
+  });
+});
+
+// ── Case 10: grantCredits 幂等 —— 发钱路径的白送钱防线(审计 2026-07-04 补) ────
+// Stripe 对超时/非 2xx 一定会重发 webhook。同一 idempotencyKey 重放/并发,只许
+// 加一次钱。谁要是删了 (orgId, idempotencyKey) 唯一索引或改了"先写账行"的顺序,
+// 这里立刻红。
+describe("case 10 — grantCredits idempotency: a webhook replay never double-grants", () => {
+  it("sequential replay of the same idempotencyKey → {duplicate}, balance +once", async () => {
+    const key = "purchase:evt_stripe_123";
+    const first = await grantCredits({ orgId: ORG, amount: 500, source: "PURCHASE", idempotencyKey: key });
+    const second = await grantCredits({ orgId: ORG, amount: 500, source: "PURCHASE", idempotencyKey: key });
+
+    expect(first).toEqual({ ok: true });
+    expect(second).toEqual({ duplicate: true });
+
+    const acc = await account(ORG);
+    expect(acc.balance).toBe(1500); // 1000 seed + 500, exactly once
+
+    const rows = await ledger(ORG);
+    expect(rows.filter((r) => r.kind === "GRANT" && r.idempotencyKey === key)).toHaveLength(1);
+  });
+
+  it("two CONCURRENT grants with the same idempotencyKey → exactly one applies", async () => {
+    const key = "purchase:evt_stripe_race";
+    const results = await Promise.allSettled([
+      grantCredits({ orgId: ORG, amount: 500, source: "PURCHASE", idempotencyKey: key }),
+      grantCredits({ orgId: ORG, amount: 500, source: "PURCHASE", idempotencyKey: key }),
+    ]);
+
+    // 两个调用都不许抛(P2002 被吞成 {duplicate}),且恰一个 {ok}、恰一个 {duplicate}
+    expect(results.every((r) => r.status === "fulfilled")).toBe(true);
+    const values = results.map((r) => (r as PromiseFulfilledResult<{ ok?: boolean; duplicate?: boolean }>).value);
+    expect(values.filter((v) => v.ok === true)).toHaveLength(1);
+    expect(values.filter((v) => v.duplicate === true)).toHaveLength(1);
+
+    const acc = await account(ORG);
+    expect(acc.balance).toBe(1500); // +500 exactly once
+
+    const rows = await ledger(ORG);
+    expect(rows.filter((r) => r.kind === "GRANT" && r.idempotencyKey === key)).toHaveLength(1);
+  });
+});

@@ -3,13 +3,35 @@ import { Prisma } from "../generated/prisma/client.js";
 /** The owner-scoped models. findMany/findFirst/updateMany/deleteMany on these MUST carry an
  *  ownerId filter (the repository convention). This extension is a BACKSTOP, not the sole
  *  guarantee — documented blind spots (raw SQL, nested writes, findUnique-by-unique-key,
- *  aggregate/groupBy) are owned by the explicit filters + the 2-org isolation test. */
-const TENANT_MODELS = new Set([
+ *  aggregate/groupBy) are owned by the explicit filters + the 2-org isolation test.
+ *  COVERAGE CONTRACT (2026-07-04 审计): every schema model carrying ownerId must be in THIS
+ *  set or in TENANT_GUARD_EXEMPT below — enforced by tenant-guard-coverage.test.ts. */
+export const TENANT_MODELS = new Set([
   "Project", "Entity", "EntityVariant", "ReferenceImage", "Asset", "Shot", "ShotEntityRef",
   "Generation", "RenderJob", "GenJob", "RefGenJob", "ChatThread", "ChatMessage",
   "CaptionJob", "Transcript",
   "Memory", "GenerationBatch", // v1 additive
+  "CanvasNode", // 2026-07-04 审计: canvas is the newest active surface; all queries verified owner-scoped
+  // 2026-07-04 adversarial review: all four below verified fully owner-scoped at every
+  // checked-op call site (schedule-actions, brand-actions, brand-record-actions,
+  // memory-actions, lookup-products, _brand-record) — guarded, not exempt.
+  "ScheduledPost", "BrandKit", "BrandRecord", "BrandRule",
 ]);
+
+/** ownerId models deliberately NOT runtime-guarded — every entry carries its reason.
+ *  A new model must choose: TENANT_MODELS (all list-queries owner-scoped) or here.
+ *  Entries marked "pending guard review" are candidates to move UP into TENANT_MODELS
+ *  after an explicit query sweep — burn this list down, don't let it grow silently. */
+export const TENANT_GUARD_EXEMPT: Record<string, string> = {
+  ActionEvent: "append-only audit log; admin/founder reads are platform-wide by design",
+  MetaActionExecution: "Meta write-execution audit trail; admin audit surface reads platform-wide",
+  MetaConnection: "channel layer (seam 4): worker resolves tokens by connection id; admin ops list is platform-wide",
+  ModelDirective: "founder model-toggle config (admin surface, platform-wide by design)",
+  ModelDirectiveRevision: "revision history of ModelDirective (admin surface, platform-wide)",
+  ModelRegistryOverlay: "founder model-registry overrides (admin surface, platform-wide)",
+  ResearchJob: "worker claims jobs queue-style by id/status (not owner lists); owner scoping lives in research-actions",
+  TemplateBundle: "templates/Discover read official platform-wide bundles",
+};
 
 // Operations we check (those that take a `where`). findUnique is exempt (unique-key access),
 // aggregate/groupBy/count are exempt (admin platform-wide reads use them intentionally).

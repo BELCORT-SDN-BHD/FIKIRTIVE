@@ -77,8 +77,10 @@ export function hasWorkingJob(messages: OttoUiMessage[]): boolean {
 }
 
 /** The durable message kinds that render as an inline card widget. These (and
- *  only these) may be injected live mid-stream / backfilled by appendMissingCards. */
-const CARD_KINDS = new Set(["GEN_CARD", "STORYBOARD_CARD", "ACTION_CARD", "BUILD_CARD", "PERFORMANCE_CARD"]);
+ *  only these) may be injected live mid-stream / backfilled by appendMissingCards.
+ *  LOCKSTEP CONTRACT (seam 4): every live card kind must be here or the card is
+ *  silently dropped until a page refresh — enforced by otto-card-seams.test.ts. */
+export const CARD_KINDS = new Set(["GEN_CARD", "STORYBOARD_CARD", "ACTION_CARD", "BUILD_CARD", "PERFORMANCE_CARD", "RESEARCH_CARD"]);
 
 /** Extract the persisted card id(s) from a `data-tool-propose` part's payload,
  *  tolerant of shape (F23): propose / propose-meta-action / propose-ad-build

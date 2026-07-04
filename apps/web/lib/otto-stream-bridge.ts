@@ -70,8 +70,16 @@ export const OTTO_TEXT_ID = "otto-text";
 export const OTTO_REASONING_ID = "otto-reasoning";
 
 /** Tools whose output carries the id(s) of a durable card they just persisted
- *  (GEN_CARD / ACTION_CARD / BUILD_CARD) — forwarded live as data-tool-propose. */
-const CARD_TOOL_NAMES = new Set(["propose", "proposeStoryboard", "proposePack", "propose-meta-action", "propose-ad-build", "meta-expert"]);
+ *  (GEN_CARD / ACTION_CARD / BUILD_CARD / …) — forwarded live as data-tool-propose.
+ *  LOCKSTEP CONTRACT (seam 5): every no-approval skill that persists a *_CARD —
+ *  directly in packages/otto/src/skills OR through an injected web port (see
+ *  PORT_CARD_TOOLS in otto-card-seams.test.ts) — must be in this set, or its card
+ *  silently won't render until a page refresh (the F23 class — regressed on
+ *  PERFORMANCE_CARD, then RESEARCH_CARD). Approval-gated skills (e.g. generate)
+ *  are exempt: they execute on worker resume, outside the live stream, and deliver
+ *  via the approve flow. The card's KIND must also be in CARD_KINDS (seam 4,
+ *  otto-inject-helpers.ts). Both enforced by otto-card-seams.test.ts. */
+export const CARD_TOOL_NAMES = new Set(["propose", "proposeStoryboard", "proposePack", "propose-meta-action", "propose-ad-build", "meta-expert", "proposeResearch"]);
 
 /** Read the tool name off a run_item event's item, tolerant of item shape. */
 function toolNameOf(item: unknown): string | undefined {
@@ -177,6 +185,7 @@ const TOOL_STEP_LABELS: Record<string, string> = {
   "propose-ad-build": "Planning the campaign build",
   "meta-ad-performance": "Reading your per-ad performance",
   "meta-expert": "Diagnosing your ad performance",
+  proposeResearch: "Planning the research",
   // setTitle stays silent (internal housekeeping).
 };
 
