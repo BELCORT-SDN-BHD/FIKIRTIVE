@@ -99,6 +99,7 @@ export const PARITY_MANIFEST = {
   "canvas-actions.createCanvasNode": { todoSkill: true, reason: "Canvas placement skill is planned but not registered yet." },
   "canvas-actions.moveCanvasNode": { exempt: "VISUAL", reason: "Pure canvas positioning is a visual micro-operation." },
   "canvas-actions.updateTextNode": { todoSkill: true, reason: "Canvas text edits need a canvas editing skill or a reviewed VISUAL exemption." },
+  "canvas-actions.resolveCanvasNode": { todoSkill: true, reason: "Canvas generation-state resolution needs canvas/generation state-management skill parity." },
   "canvas-actions.deleteCanvasNode": { todoSkill: true, reason: "Canvas deletion needs a canvas editing skill with paid-output warnings." },
 
   "cowork-actions.coworkDraftStoryboard": { skill: "proposeStoryboard" },

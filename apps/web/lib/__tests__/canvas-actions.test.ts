@@ -25,7 +25,7 @@ vi.mock("@fikirtive/db", () => ({
 }));
 vi.mock("@fikirtive/core", () => ({ newId: () => "node-1" }));
 
-import { listCanvasNodes, moveCanvasNode, createCanvasNode } from "../canvas-actions";
+import { listCanvasNodes, moveCanvasNode, createCanvasNode, resolveCanvasNode } from "../canvas-actions";
 
 beforeEach(() => {
   vi.clearAllMocks();
@@ -121,5 +121,69 @@ describe("createCanvasNode attribution — generationId/genJobId/sourceNodeId ow
     expect(mockCreate).toHaveBeenCalledWith(
       expect.objectContaining({ data: expect.objectContaining({ generationId: "g-mine" }) }),
     );
+  });
+});
+
+describe("resolveCanvasNode", () => {
+  it("persists a resolved generation only for the owner's node and same project", async () => {
+    mockCanvasNodeFindFirst.mockResolvedValue({ id: "node-1", projectId: "p1" });
+    mockGenerationFindFirst.mockResolvedValue({ id: "g1" });
+    mockUpdateMany.mockResolvedValue({ count: 1 });
+
+    await expect(resolveCanvasNode("node-1", { status: "done", generationId: "g1" })).resolves.toEqual({ ok: true });
+
+    expect(mockCanvasNodeFindFirst).toHaveBeenCalledWith(
+      expect.objectContaining({
+        where: { id: "node-1", ownerId: "u1", type: { in: ["image", "video"] } },
+        select: { id: true, projectId: true },
+      }),
+    );
+    expect(mockGenerationFindFirst).toHaveBeenCalledWith(
+      expect.objectContaining({
+        where: { id: "g1", ownerId: "u1", projectId: "p1", deletedAt: null },
+        select: { id: true },
+      }),
+    );
+    expect(mockUpdateMany).toHaveBeenCalledWith(
+      expect.objectContaining({ where: { id: "node-1", ownerId: "u1" }, data: { status: "done", generationId: "g1" } }),
+    );
+  });
+
+  it("does not attach a generation from another project", async () => {
+    mockCanvasNodeFindFirst.mockResolvedValue({ id: "node-1", projectId: "p1" });
+    mockGenerationFindFirst.mockResolvedValue(null);
+
+    await expect(resolveCanvasNode("node-1", { status: "done", generationId: "g-foreign" })).resolves.toEqual({ error: "Generation not found." });
+    expect(mockUpdateMany).not.toHaveBeenCalled();
+  });
+
+  it("persists terminal failure status without requiring a generation", async () => {
+    mockCanvasNodeFindFirst.mockResolvedValue({ id: "node-1", projectId: "p1" });
+    mockUpdateMany.mockResolvedValue({ count: 1 });
+
+    await expect(resolveCanvasNode("node-1", { status: "failed" })).resolves.toEqual({ ok: true });
+
+    expect(mockGenerationFindFirst).not.toHaveBeenCalled();
+    expect(mockUpdateMany).toHaveBeenCalledWith(
+      expect.objectContaining({ data: { status: "failed", generationId: null } }),
+    );
+  });
+
+  it("rejects unknown resolve statuses", async () => {
+    await expect(resolveCanvasNode("node-1", { status: "weird" })).resolves.toEqual({ error: "Invalid status." });
+    expect(mockCanvasNodeFindFirst).not.toHaveBeenCalled();
+    expect(mockUpdateMany).not.toHaveBeenCalled();
+  });
+
+  it("requires a generation when marking a node done", async () => {
+    await expect(resolveCanvasNode("node-1", { status: "done" })).resolves.toEqual({ error: "Generation required." });
+    expect(mockCanvasNodeFindFirst).not.toHaveBeenCalled();
+    expect(mockUpdateMany).not.toHaveBeenCalled();
+  });
+
+  it("does not attach a generation to non-done status", async () => {
+    await expect(resolveCanvasNode("node-1", { status: "failed", generationId: "g1" })).resolves.toEqual({ error: "Generation only allowed for done status." });
+    expect(mockCanvasNodeFindFirst).not.toHaveBeenCalled();
+    expect(mockUpdateMany).not.toHaveBeenCalled();
   });
 });

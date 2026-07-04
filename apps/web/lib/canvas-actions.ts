@@ -16,10 +16,12 @@ export type CreateNodeInput = {
   text?: string; prompt?: string; generationId?: string; genJobId?: string;
   status?: string; sourceNodeId?: string; threadId?: string;
 };
+type CanvasNodeResolveStatus = "done" | "failed" | "timeout" | "missing";
 
 const SELECT = { id: true, type: true, x: true, y: true, w: true, h: true, text: true,
   prompt: true, generationId: true, genJobId: true, status: true, sourceNodeId: true,
   threadId: true } as const;
+const RESOLVE_STATUSES = new Set<CanvasNodeResolveStatus>(["done", "failed", "timeout", "missing"]);
 
 async function ownedProject(projectId: string, ownerId: string) {
   return prisma.project.findFirst({ where: { id: projectId, ownerId, deletedAt: null } });
@@ -86,6 +88,35 @@ export async function updateTextNode(id: string, text: string) {
   const gate = await requireOwner();
   if ("error" in gate) return gate;
   const r = await prisma.canvasNode.updateMany({ where: { id, ownerId: gate.ownerId, type: "text" }, data: { text } });
+  return r.count === 1 ? { ok: true as const } : { error: "Node not found." };
+}
+
+export async function resolveCanvasNode(id: string, input: { status: string; generationId?: string | null }) {
+  const gate = await requireOwner();
+  if ("error" in gate) return gate;
+  if (!RESOLVE_STATUSES.has(input.status as CanvasNodeResolveStatus)) return { error: "Invalid status." };
+  if (input.status === "done" && !input.generationId) return { error: "Generation required." };
+  if (input.status !== "done" && input.generationId) return { error: "Generation only allowed for done status." };
+  const node = await prisma.canvasNode.findFirst({
+    where: { id, ownerId: gate.ownerId, type: { in: ["image", "video"] } },
+    select: { id: true, projectId: true },
+  });
+  if (!node) return { error: "Node not found." };
+
+  let generationId: string | null = null;
+  if (input.generationId) {
+    const g = await prisma.generation.findFirst({
+      where: { id: input.generationId, ownerId: gate.ownerId, projectId: node.projectId, deletedAt: null },
+      select: { id: true },
+    });
+    if (!g) return { error: "Generation not found." };
+    generationId = g.id;
+  }
+
+  const r = await prisma.canvasNode.updateMany({
+    where: { id, ownerId: gate.ownerId },
+    data: { status: input.status, generationId },
+  });
   return r.count === 1 ? { ok: true as const } : { error: "Node not found." };
 }
 
