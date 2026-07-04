@@ -1,7 +1,7 @@
 # Launch Readiness Audit - 2026-07-04
 
 PR: https://github.com/toolsbbb/FIKIRTIVE/pull/131
-Last code head audited before this follow-up: `3c655e0`
+Last code head audited before latest prod auth/OAuth follow-up: `550e605`
 Merge state: `CLEAN`
 
 This audit consolidates the local QA reports, tracked review docs, PR comments, and CI status for the public-launch readiness goal. It does not replace the per-surface reports; it maps them to the launch requirements and names the remaining gates.
@@ -24,7 +24,7 @@ This audit consolidates the local QA reports, tracked review docs, PR comments, 
 | Mobile layout is launch-safe for tested surfaces | Proven for tested surfaces at 390px | Per-surface mobile checks and screenshots |
 | Margin model is above constitutional floor | Proven from executable pricing and current official BytePlus evidence | `docs/review/MARGIN-PARITY-REPORT-2026-07-04.md` |
 | All changes/reports are handled in PR | Proven for tracked reports and PR comments | PR #131, tracked docs, comments |
-| CI is green | Proven for pushed head `ade0dcd`; pending recheck after `fd7f8e2` push | GitHub checks for `ade0dcd`: typecheck/fences/lockfile, next build, unit + integration all passed |
+| CI is green | Proven for pushed head `550e605` | GitHub checks for `550e605`: typecheck/fences/lockfile, next build, unit + integration all passed |
 | Live paid supplier smoke | Partially proven in production | One real production image generation passed with USD 0.16 COGS; see `docs/review/EXTERNAL-SMOKE-RESULTS-2026-07-04.md`. Video, reference-video, and Otto LLM-only accounting were not run. |
 | Real Stripe checkout/webhook | Not yet proven; checkout failure path hardened | Local QA intentionally avoided real checkout. Commit `fd7f8e2` makes Stripe Checkout Session creation failures return a user-visible retry error instead of an unhandled server action failure. |
 | Real Meta/Google OAuth and connected Meta states | Partially proven for Google initiation; Meta not run | Follow-up Google OAuth reached Google's sign-in page with the Better Auth callback URI; consent/callback and connected OAuth state remain unproven. See `docs/review/EXTERNAL-SMOKE-RESULTS-2026-07-04.md`. |
@@ -272,9 +272,9 @@ External production follow-up:
 
 - Result file: `docs/review/EXTERNAL-SMOKE-RESULTS-2026-07-04.md`
 - One real production image generation completed successfully with USD 0.16 COGS and paired reserve/settle ledger rows.
-- Production Google OAuth initially failed before consent with `redirect_uri_mismatch`; two follow-ups reached Google's sign-in page with `https://fikirtive.com/api/better-auth/callback/google`.
+- Production Google OAuth initially failed before consent with `redirect_uri_mismatch`; three follow-ups reached Google's sign-in page with `https://fikirtive.com/api/better-auth/callback/google`.
 - Production did not yet validate PR #131 admin v2 because the PR-only admin routes returned 404 before merge/deploy.
-- Follow-up replacement admin and normal magic links were invalid at test time across two attempts; earlier fresh magic links had already proven both roles.
+- Follow-up replacement admin and normal magic links were invalid at test time, including the latest `tools@belcort.com` and `nicksgan@gmail.com` links; earlier fresh magic links had already proven both roles.
 - Current production Account sign-out cleared the session but did not visibly navigate until the next protected route load; recheck after deploy.
 
 Local verification for `3c655e0`:
@@ -290,13 +290,11 @@ Local verification for `fd7f8e2`:
 - `pnpm --filter @fikirtive/web typecheck`: pass.
 - Browser checkout was not run because this worktree has no Stripe secret configured; the remaining real checkout/webhook gate still requires an approved Stripe test/live-mode run.
 
-GitHub CI for pushed code head `ade0dcd`:
+GitHub CI for pushed code head `550e605`:
 
 - `typecheck + fences + frozen lockfile`: pass
 - `next build (apps/web)`: pass
 - `unit + integration tests`: pass
-
-GitHub CI for `fd7f8e2` must be rechecked after push.
 
 Recent local verification recorded in the tracked reports includes:
 
