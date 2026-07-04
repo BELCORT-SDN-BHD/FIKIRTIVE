@@ -42,6 +42,15 @@ describe("listCreditPacks", () => {
     await listCreditPacks();
     expect(pricesList).toHaveBeenCalledWith(expect.objectContaining({ limit: 100 }));
   });
+
+  it("does not list fractional-credit prices that checkout would reject", async () => {
+    pricesList.mockResolvedValue({ data: [
+      { id: "price_ok", unit_amount: 1000, currency: "usd", active: true, metadata: { credits: "100" }, product: { name: "100 credits" } },
+      { id: "price_frac", unit_amount: 150, currency: "usd", active: true, metadata: { credits: "1.5" }, product: { name: "bad fractional credits" } },
+    ] });
+    const packs = await listCreditPacks();
+    expect(packs.map((p) => p.priceId)).toEqual(["price_ok"]);
+  });
 });
 
 describe("createTopupCheckout", () => {

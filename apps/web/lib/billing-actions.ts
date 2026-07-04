@@ -14,14 +14,17 @@ export async function listCreditPacks(): Promise<CreditPack[]> {
     // the result to credit packs.
     const res = await stripe.prices.list({ active: true, expand: ["data.product"], limit: 100 });
     return res.data
-      .filter((p) => p.active && p.metadata?.credits && Number(p.metadata.credits) > 0 && typeof p.unit_amount === "number")
-      .map((p) => ({
-        priceId: p.id,
-        credits: Number(p.metadata.credits),
-        amountCents: p.unit_amount as number,
-        currency: p.currency,
-        label: (typeof p.product === "object" && p.product && "name" in p.product ? (p.product.name as string) : `${p.metadata.credits} credits`),
-      }))
+      .flatMap((p) => {
+        const credits = Number(p.metadata?.credits);
+        if (!p.active || !Number.isInteger(credits) || credits <= 0 || typeof p.unit_amount !== "number") return [];
+        return [{
+          priceId: p.id,
+          credits,
+          amountCents: p.unit_amount as number,
+          currency: p.currency,
+          label: (typeof p.product === "object" && p.product && "name" in p.product ? (p.product.name as string) : `${credits} credits`),
+        }];
+      })
       .sort((a, b) => a.amountCents - b.amountCents);
   } catch (e) {
     console.warn("[billing] listCreditPacks failed (Stripe unconfigured or API error):", e);
