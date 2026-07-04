@@ -214,8 +214,12 @@ export function OttoView({
             left: 12px;
             right: 12px;
           }
+          .otto-workspace-first-run:not(.otto-chat-collapsed) .otto-chat-pane {
+            padding-top: 250px;
+            box-sizing: border-box;
+          }
           .otto-workspace-first-run:not(.otto-chat-collapsed) .otto-front-door-inner {
-            padding-top: 230px !important;
+            padding-top: 1rem !important;
           }
           .otto-workspace-first-run:not(.otto-chat-collapsed) .otto-front-door {
             justify-content: flex-start !important;
