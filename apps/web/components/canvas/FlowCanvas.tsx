@@ -305,6 +305,7 @@ export default function FlowCanvas({
   const handleCanvasDrop = useCallback(async (e: React.DragEvent) => {
     e.preventDefault();
     setDragOver(false);
+    if (directToolsLockedRef.current) return;
     const files = Array.from(e.dataTransfer?.files ?? []).filter((f) => f.type.startsWith("image/"));
     if (files.length === 0) return;
     for (const file of files) {
@@ -502,7 +503,17 @@ export default function FlowCanvas({
       ref={canvasHostRef}
       style={{ flex: 1, width: "100%", height: "100%", minHeight: 0, position: "relative", overflow: "hidden" }}
       className={skin === "gb" ? (panMode ? "gb" : "gb cv-select-mode") : undefined}
-      onDragOver={(e) => { if (Array.from(e.dataTransfer?.types ?? []).includes("Files")) { e.preventDefault(); e.dataTransfer.dropEffect = "copy"; setDragOver(true); } }}
+      onDragOver={(e) => {
+        if (!Array.from(e.dataTransfer?.types ?? []).includes("Files")) return;
+        e.preventDefault();
+        if (directToolsLocked) {
+          e.dataTransfer.dropEffect = "none";
+          setDragOver(false);
+          return;
+        }
+        e.dataTransfer.dropEffect = "copy";
+        setDragOver(true);
+      }}
       onDragLeave={(e) => { if (e.currentTarget === e.target) setDragOver(false); }}
       onDrop={handleCanvasDrop}
     >
