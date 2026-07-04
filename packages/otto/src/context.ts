@@ -1,4 +1,4 @@
-import type { GenRequestInput, ProductDraft } from "@fikirtive/core";
+import type { GenRequestInput, ProductDraft, ScheduleDraftInput } from "@fikirtive/core";
 
 /** Minimal structural re-declaration of MetaAdObject for the otto package.
  *  The web type (apps/web/lib/meta-objects.ts) must NOT be imported here. */
@@ -176,6 +176,14 @@ export interface OttoContext {
    *  memory-actions.ts directly (CI fence rule). */
   brandBrain?: {
     context(): Promise<string>;
+  };
+  /** Schedule-draft port (#123) — injected by the web caller. Drafts ONE IG/FB post through the
+   *  SAME shared authority the human action uses (draftScheduledPost: shared core validation +
+   *  owner-scoped media check + create). Skills reach it ONLY via ctx.schedule — never importing
+   *  prisma/schedule-service directly (single-action-layer rule). Absent in the minimal worker
+   *  verdict ctx; the skill degrades gracefully when it is not injected. Never publishes/approves/spends. */
+  schedule?: {
+    draft(input: ScheduleDraftInput): Promise<{ ok: true; id: string } | { error: string }>;
   };
   /** Product-ingest port (P1-01) — injected by the web caller. Fetches a URL (SSRF-hardened)
    *  and runs the deterministic Layer-1 extractor, returning a product DRAFT plus the page text.
