@@ -1,7 +1,8 @@
 # Launch Readiness Audit - 2026-07-04
 
 PR: https://github.com/toolsbbb/FIKIRTIVE/pull/131
-Last pushed code head audited before the Meta connected-fixture follow-up: `971dbec`
+Latest local follow-up head audited in this report: `f8d30e6`
+Last GitHub CI-green pushed head before the Stripe integration follow-up: `4d97137`
 Merge state: `CLEAN`
 
 This audit consolidates the local QA reports, tracked review docs, PR comments, and CI status for the public-launch readiness goal. It does not replace the per-surface reports; it maps them to the launch requirements and names the remaining gates.
@@ -14,6 +15,7 @@ This audit consolidates the local QA reports, tracked review docs, PR comments, 
   - `GENERATION_PROVIDER=mock`
   - `COWORK_PROVIDER=mock`
 - Production smoke explicitly used real generation once and real Google OAuth initiation; local Meta connected-fixture QA now covers post-connect UI states without real Meta writes.
+- Local Stripe webhook integration QA covers the route-to-ledger idempotency path without real Stripe checkout or event delivery.
 
 ## Requirement Status
 
@@ -24,9 +26,9 @@ This audit consolidates the local QA reports, tracked review docs, PR comments, 
 | Mobile layout is launch-safe for tested surfaces | Proven for tested surfaces at 390px | Per-surface mobile checks and screenshots |
 | Margin model is above constitutional floor | Proven from executable pricing and current official BytePlus evidence | `docs/review/MARGIN-PARITY-REPORT-2026-07-04.md` |
 | All changes/reports are handled in PR | Proven for tracked reports and PR comments | PR #131, tracked docs, comments |
-| CI is green | Proven for pushed head `971dbec` | GitHub checks for `971dbec`: typecheck/fences/lockfile, next build, unit + integration all passed |
+| CI is green | Proven for pushed head `4d97137`; latest local follow-up has local verification and awaits PR CI after push | GitHub checks for `4d97137`: typecheck/fences/lockfile, next build, unit + integration all passed |
 | Live paid supplier smoke | Partially proven in production | One real production image generation passed with USD 0.16 COGS; see `docs/review/EXTERNAL-SMOKE-RESULTS-2026-07-04.md`. Video, reference-video, and Otto LLM-only accounting were not run. |
-| Real Stripe checkout/webhook | Not yet proven; checkout failure path hardened | Local QA intentionally avoided real checkout. Commit `fd7f8e2` makes Stripe Checkout Session creation failures return a user-visible retry error instead of an unhandled server action failure. |
+| Real Stripe checkout/webhook | Partially proven locally; hosted checkout and Stripe event delivery still not proven | Commit `fd7f8e2` hardens checkout session creation failures. Commit `f8d30e6` adds DB-backed route integration proving unpaid sessions do not grant, delayed paid sessions grant once, and paid replay does not double-grant. See `docs/review/QA-STRIPE-WEBHOOK-INTEGRATION-2026-07-04.md`. |
 | Real Meta/Google OAuth and connected Meta states | Partially proven | Fourth follow-up Google OAuth reached Google's sign-in page with the Better Auth callback URI and no mismatch. Local Meta fixture QA proves connected Connections/Analytics/autonomy/kill-switch states. Real Google consent/callback and real Meta OAuth/token exchange remain unproven. See `docs/review/EXTERNAL-SMOKE-RESULTS-2026-07-04.md` and `docs/review/QA-META-CONNECTED-FIXTURE-2026-07-04.md`. |
 | Production deploy/canary | Partially proven for current production only | Current production route smoke passed for tested normal/admin routes, but production was not serving PR #131 admin v2. PR #131 is now merge-clean and CI-green; post-merge deploy canary remains required. |
 | Direct admin credit-action cap | Proven locally with tests and browser QA | Commit `3c655e0` enforces the 1,000 displayed-credit direct cap for founder and tenant actions; over-limit Apply buttons are disabled and server actions reject the same input. |
@@ -305,6 +307,7 @@ Load-bearing constraints:
 - `fd7f8e2` - Billing checkout session failures return a friendly retry error.
 - `ee1bd8e` - Local Meta connected fixture and decryptable QA seed token.
 - `172c070` - Analytics insight CTA now pre-fills the Otto composer through the existing seed-text path.
+- `f8d30e6` - Stripe webhook route integration covers real credit-ledger idempotency for delayed-payment replay.
 
 ## Current Verification State
 
@@ -331,7 +334,14 @@ Local verification for `fd7f8e2`:
 - `pnpm --filter @fikirtive/web typecheck`: pass.
 - Browser checkout was not run because this worktree has no Stripe secret configured; the remaining real checkout/webhook gate still requires an approved Stripe test/live-mode run.
 
-GitHub CI for pushed code head `971dbec`:
+Local verification for `f8d30e6`:
+
+- Report: `docs/review/QA-STRIPE-WEBHOOK-INTEGRATION-2026-07-04.md`
+- `DATABASE_URL='postgresql://artlio:artlio@localhost:55432/fikirtive_stripe_webhook_test' pnpm --filter @fikirtive/web exec vitest run lib/__tests__/billing-actions.test.ts lib/__tests__/stripe-webhook.test.ts lib/__tests__/stripe-webhook-integration.test.ts`: pass, 20 tests.
+- `pnpm --filter @fikirtive/web typecheck`: pass.
+- The integration test uses a real test database, the real webhook route, and the real `grantCredits` ledger implementation; only Stripe signature parsing is mocked.
+
+GitHub CI for pushed code head `4d97137` before the Stripe integration follow-up:
 
 - `typecheck + fences + frozen lockfile`: pass
 - `next build (apps/web)`: pass
@@ -359,7 +369,8 @@ These are the only material items not proven by current evidence:
 
 2. Real Stripe checkout and webhook.
    - Local Billing was tested in the unconfigured-pack state.
-   - Real checkout must be tested only with an approved Stripe test/live-mode plan and expected ledger assertion.
+   - Local route-to-ledger integration now proves unpaid checkout events do not grant credits, delayed paid events grant once, and paid replay does not double-grant.
+   - Real hosted checkout and Stripe event delivery must still be tested only with an approved Stripe test/live-mode plan and expected ledger assertion.
    - Execution checklist: `docs/review/EXTERNAL-SMOKE-RUNBOOK-2026-07-04.md`.
 
 3. Real Meta/Google OAuth and connected Meta states.

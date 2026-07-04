@@ -242,7 +242,7 @@ Margin check:
 
 ## Not Run
 
-- Stripe checkout/webhook.
+- Real Stripe hosted checkout and event delivery. Local route-to-ledger webhook idempotency is covered separately in `docs/review/QA-STRIPE-WEBHOOK-INTEGRATION-2026-07-04.md`.
 - Meta OAuth.
 - Real Seedance video.
 - Real reference-video generation.
@@ -263,4 +263,4 @@ Margin check:
 3. Complete Google OAuth through consent/callback with a controlled Google account; initiation now reaches Google and no longer shows `redirect_uri_mismatch`.
 4. Recheck Account `Sign out` on the deployed PR build; current production cleared the session but did not visibly navigate until the next protected route load.
 5. Decide whether the old `/admin/content` route should remain reachable. If yes, remove direct cross-tenant `/files` media previews or replace them with an explicit admin-gated preview route.
-6. Run the remaining approved-but-not-executed gates only if still needed: Stripe test-mode checkout/webhook, Meta OAuth, real video, reference-video, and Otto LLM accounting.
+6. Run the remaining approved-but-not-executed gates only if still needed: Stripe test-mode hosted checkout/event delivery, Meta OAuth, real video, reference-video, and Otto LLM accounting.
