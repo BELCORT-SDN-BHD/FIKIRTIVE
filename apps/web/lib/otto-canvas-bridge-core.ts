@@ -27,6 +27,14 @@ export function canvasNodeDisplayStatus(
   return rowStatus;
 }
 
+export function firstDisplayableGenerationId(
+  generationIds: readonly string[] | null | undefined,
+  thumbs: Record<string, { src?: string | null }>,
+): string | null {
+  if (!generationIds?.length) return null;
+  return generationIds.find((id) => !!thumbs[id]?.src) ?? generationIds[0] ?? null;
+}
+
 /**
  * Decide which canvas nodes to create for a thread's GEN_RESULT messages.
  *

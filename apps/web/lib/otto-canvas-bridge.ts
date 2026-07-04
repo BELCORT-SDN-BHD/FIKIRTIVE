@@ -4,7 +4,7 @@ import { prisma } from "@fikirtive/db";
 import { requireOwner } from "./auth-guard";
 import { getCoworkThread, getGenerationThumbs } from "./data";
 import { createCanvasNode, type CanvasNodeDTO } from "./canvas-actions";
-import { canvasNodeDisplayStatus, planBridgeNodes } from "./otto-canvas-bridge-core";
+import { canvasNodeDisplayStatus, firstDisplayableGenerationId, planBridgeNodes } from "./otto-canvas-bridge-core";
 
 /** A canvas node plus its resolved media URL (display-only). */
 export type CanvasNodeWithUrl = CanvasNodeDTO & { url: string | null };
@@ -97,23 +97,23 @@ export async function syncOttoCanvasNodes(
     ? await prisma.genJob.findMany({ where: { id: { in: linkedJobIds }, ownerId }, select: { id: true, generationIds: true, status: true } })
     : [];
   const jobById = new Map(jobs.map((j) => [j.id, j]));
-  const jobFirstGen = new Map(jobs.map((j) => [j.id, j.generationIds[0]]));
 
   const genIds = [
     ...nodes.map((n) => n.generationId).filter((x): x is string => !!x),
-    ...jobs.map((j) => j.generationIds[0]).filter((x): x is string => !!x),
+    ...jobs.flatMap((j) => j.generationIds),
   ];
   const thumbs = await getGenerationThumbs(ownerId, genIds); // generationId → { src, kind }
 
   return nodes.map((n) => {
-    const gid = n.generationId ?? (n.genJobId ? jobFirstGen.get(n.genJobId) ?? null : null);
+    const job = n.genJobId ? jobById.get(n.genJobId) : null;
+    const gid = n.generationId ?? firstDisplayableGenerationId(job?.generationIds, thumbs);
     // Return the RESOLVED generationId, not the raw row's. A promptbar-created node
     // persists only genJobId (generationId null), so after a reload the client had no
     // generationId for it — Make video / Detail silently no-oped on that primary card
     // (their guard needs nodeDataRef.generationId). Display-only metadata resolution;
-    // the id is the job's OWN first generation (owner-scoped above), no spend logic.
+    // the id is the job's OWN generation (owner-scoped above), no spend logic.
     const url = gid ? thumbs[gid]?.src ?? null : null;
-    const jobStatus = n.genJobId ? jobById.get(n.genJobId)?.status : null;
+    const jobStatus = job?.status;
     const status = gid && !url ? "missing" : canvasNodeDisplayStatus(n.status, jobStatus, url);
     return { ...n, generationId: gid, status, url };
   });
