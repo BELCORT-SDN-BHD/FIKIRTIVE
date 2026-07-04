@@ -1,5 +1,5 @@
 "use client";
-import React, { useEffect, useState } from "react";
+import React, { useState } from "react";
 import { creditsLabel } from "@/lib/credit-format";
 import { Avatar, AvatarFallback } from "@/components/ui/avatar";
 import type { OttoViewKey, ProjectMeta } from "./OttoApp";
@@ -117,8 +117,8 @@ const TOOL_ITEMS: NavItem[] = [
   { key: "account", label: "Account", icon: <IconCircleUser /> },
 ];
 
-const PROJECT_LIMIT = 10;
-const THREAD_LIMIT = 6;
+const PROJECT_LIMIT = 8;
+const THREAD_LIMIT = 4;
 
 function IconLibrary() {
   return (
@@ -214,18 +214,33 @@ export function OttoNav({
   const balanceLabel = creditsLabel(balanceCredits);
   const toolsActive = TOOL_ITEMS.some((item) => item.key === view);
 
-  // Per-project collapse of the nested conversation list (default expanded).
+  // Keep history scannable: current campaign open, older campaigns compact until expanded.
+  const [expandedProjects, setExpandedProjects] = useState<Set<string>>(new Set());
   const [collapsedProjects, setCollapsedProjects] = useState<Set<string>>(new Set());
   const [toolsOpen, setToolsOpen] = useState(toolsActive);
-  useEffect(() => {
-    if (toolsActive) setToolsOpen(true);
-  }, [toolsActive]);
-  const toggleProjectCollapse = (id: string) =>
-    setCollapsedProjects((prev) => {
+  const showTools = toolsActive || toolsOpen;
+
+  const isProjectCollapsed = (id: string) => {
+    if (collapsedProjects.has(id)) return true;
+    if (id === activeProjectId) return false;
+    return !expandedProjects.has(id);
+  };
+
+  const toggleProjectCollapse = (id: string) => {
+    const isCollapsed = isProjectCollapsed(id);
+    setExpandedProjects((prev) => {
       const next = new Set(prev);
-      if (next.has(id)) next.delete(id); else next.add(id);
+      if (isCollapsed) next.add(id);
+      else next.delete(id);
       return next;
     });
+    setCollapsedProjects((prev) => {
+      const next = new Set(prev);
+      if (isCollapsed) next.delete(id);
+      else next.add(id);
+      return next;
+    });
+  };
 
   const navEntries = buildOttoNavEntries({
     projects,
@@ -372,14 +387,14 @@ export function OttoNav({
           <button
             type="button"
             onClick={() => setToolsOpen((v) => !v)}
-            aria-expanded={toolsOpen}
+            aria-expanded={showTools}
             className={`flex items-center gap-[9px] w-full border-0 text-[0.84375rem] px-[9px] py-2 rounded-[9px] cursor-pointer text-left transition-colors duration-150 ${toolsActive ? "bg-secondary text-foreground font-semibold" : "bg-transparent text-muted-foreground font-normal"}`}
           >
             <IconLibrary />
             <span className="flex-1">Tools</span>
-            <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.4" strokeLinecap="round" strokeLinejoin="round" aria-hidden className="transition-transform duration-150" style={{ transform: toolsOpen ? "none" : "rotate(-90deg)" }}><path d="m6 9 6 6 6-6" /></svg>
+            <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.4" strokeLinecap="round" strokeLinejoin="round" aria-hidden className="transition-transform duration-150" style={{ transform: showTools ? "none" : "rotate(-90deg)" }}><path d="m6 9 6 6 6-6" /></svg>
           </button>
-          {toolsOpen && (
+          {showTools && (
             <div className="flex flex-col gap-[1px] pt-1">
               {TOOL_ITEMS.map((item) => {
                 const active = view === item.key;
@@ -426,7 +441,7 @@ export function OttoNav({
                       <span className="truncate min-w-0">{entry.thread.title}</span>
                     </button>
                     <button
-                      className="otto-recent-delete absolute right-2 flex items-center justify-center w-5 h-5 border-0 bg-transparent text-muted-foreground/70 rounded-[10px] cursor-pointer p-0 opacity-0 transition-[opacity,background] duration-150"
+                      className="otto-recent-delete absolute right-2 flex items-center justify-center w-5 h-5 border-0 bg-transparent text-muted-foreground/70 rounded-[10px] cursor-pointer p-0 opacity-0 pointer-events-none transition-[opacity,background] duration-150"
                       aria-label={`Delete ${entry.thread.title}`}
                       onClick={(e) => { e.stopPropagation(); onDeleteThread(entry.thread.id); }}
                     >
@@ -437,7 +452,7 @@ export function OttoNav({
               }
               const p = entry.project;
               const isActiveProject = p.id === activeProjectId;
-              const isCollapsed = collapsedProjects.has(p.id);
+              const isCollapsed = isProjectCollapsed(p.id);
               const canExpand = entry.threads.length > 0;
               return (
                 <div key={`project:${p.id}`} className="mb-1">
@@ -467,7 +482,7 @@ export function OttoNav({
                       <span className="truncate min-w-0 flex-1">{p.name}</span>
                     </button>
                     <button
-                      className="otto-recent-delete absolute right-2 flex items-center justify-center w-5 h-5 border-0 bg-transparent text-muted-foreground/70 rounded-[10px] cursor-pointer p-0 opacity-0 transition-[opacity,background] duration-150"
+                      className="otto-recent-delete absolute right-2 flex items-center justify-center w-5 h-5 border-0 bg-transparent text-muted-foreground/70 rounded-[10px] cursor-pointer p-0 opacity-0 pointer-events-none transition-[opacity,background] duration-150"
                       aria-label={`Delete ${p.name}`}
                       title="Delete campaign"
                       onClick={(e) => { e.stopPropagation(); onDeleteProject(p.id); }}
@@ -495,7 +510,7 @@ export function OttoNav({
                               <span className="truncate min-w-0">{t.title}</span>
                             </button>
                             <button
-                              className="otto-recent-delete absolute right-2 flex items-center justify-center w-5 h-5 border-0 bg-transparent text-muted-foreground/70 rounded-[10px] cursor-pointer p-0 opacity-0 transition-[opacity,background] duration-150"
+                              className="otto-recent-delete absolute right-2 flex items-center justify-center w-5 h-5 border-0 bg-transparent text-muted-foreground/70 rounded-[10px] cursor-pointer p-0 opacity-0 pointer-events-none transition-[opacity,background] duration-150"
                               aria-label={`Delete ${t.title}`}
                               onClick={(e) => { e.stopPropagation(); onDeleteThread(t.id); }}
                             >
@@ -512,7 +527,7 @@ export function OttoNav({
           </div>
           <style>{`
             .otto-recent-row:hover .otto-recent-delete,
-            .otto-recent-row:focus-within .otto-recent-delete { opacity: 1; }
+            .otto-recent-row:focus-within .otto-recent-delete { opacity: 1; pointer-events: auto; }
             .otto-recent-delete:hover { background: var(--surface-hover, rgba(0,0,0,0.07)) !important; color: var(--foreground) !important; }
           `}</style>
           </>
