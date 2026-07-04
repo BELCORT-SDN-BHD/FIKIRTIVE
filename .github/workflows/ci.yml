@@ -95,4 +95,13 @@ jobs:
       # Same as the check job: tests import @fikirtive/* from dist (see comment above).
       - run: pnpm --filter "./packages/*" build
       - run: pnpm --filter @fikirtive/db exec prisma migrate deploy
+      # Schema-drift gate (2026-07-04 审计 high): a schema.prisma edit with NO matching
+      # migration passes typecheck + build green, then explodes on prod with "column does
+      # not exist" (push to main auto-runs `migrate deploy` against prod). After the deploy
+      # above, this DB == the committed migrations; diffing it against schema.prisma turns
+      # that silent prod outage into a red PR. prisma exits 2 on drift (pnpm re-wraps it as
+      # a non-zero exit either way → step fails). SCOPE: datamodel-level drift only — the
+      # hand-written partial-unique indexes in raw migration.sql (finalizer/idempotency)
+      # are invisible to the datamodel diff and stay owned by the credits/idempotency tests.
+      - run: pnpm --filter @fikirtive/db exec prisma migrate diff --from-config-datasource --to-schema prisma/schema.prisma --exit-code
       - run: pnpm -r test

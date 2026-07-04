@@ -49,9 +49,10 @@ describe("suggestModel", () => {
   });
   it("always returns the active video model regardless of hasTail (locked model; tail capability is an accepted tradeoff)", () => {
     // Before: suggestModel would pick a tail-capable model when hasTail=true.
-    // Now: model selection is locked to activeVideoModel() (= veo3.1-lite) by product
-    // decision — the spend gate only allows the active model. hasTail is accepted but
-    // does not reroute to a different model; params are still clamped to veo3.1-lite's options.
+    // Now: model selection is locked to activeVideoModel() (seedance-2-fast by default;
+    // 2026-07-04: only flat margin-floored models are honored) by product decision — the
+    // spend gate only allows the active model. hasTail is accepted but does not reroute
+    // to a different model; params are still clamped to the active model's options.
     const r = suggestModel({ kind: "video", hasTail: true });
     expect(r.model).toBe(activeVideoModel());
     expect((GEN_VIDEO_MODELS as readonly string[]).includes(r.model)).toBe(true);
