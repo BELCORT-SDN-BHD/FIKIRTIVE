@@ -1,7 +1,7 @@
 "use client";
 import { useCallback, useEffect, useRef } from "react";
 import { startGen, getGenJob, getActiveGenModels } from "../../lib/gen-actions";
-import { createCanvasNode } from "../../lib/canvas-actions";
+import { createCanvasNode, resolveCanvasNode } from "../../lib/canvas-actions";
 import { CANVAS_IMAGE_VARIANT_COUNT, canvasGenCostQuote } from "@/lib/canvas-gen-costs";
 
 type Pos = { x: number; y: number; w: number; h: number };
@@ -125,8 +125,13 @@ export function useCanvasGen(
     onNode({ id: created.id, type: "image", pos, status: "pending", prompt });
     poll(started.id, async (urls, status, generationIds) => {
       void onBalanceRefresh?.();
-      if (status !== "done" || urls.length === 0) { onResolve(created.id, null, status); return; }
+      if (status !== "done" || urls.length === 0) {
+        void resolveCanvasNode(created.id, { status });
+        onResolve(created.id, null, status);
+        return;
+      }
       // primary card → first variant
+      void resolveCanvasNode(created.id, { status: "done", generationId: generationIds[0] });
       onResolve(created.id, urls[0], "done", generationIds[0]);
       // one sibling card per remaining variant, laid out in a 2×2 cluster. Each
       // is a plain canvas-node placement of an already-generated (already-charged)
@@ -153,6 +158,7 @@ export function useCanvasGen(
     onNode({ id: created.id, type: "video", pos, status: "pending", prompt, sourceNodeId });
     poll(started.id, (urls, status, generationIds) => {
       void onBalanceRefresh?.();
+      void resolveCanvasNode(created.id, { status, generationId: generationIds[0] });
       onResolve(created.id, urls[0] ?? null, status, generationIds[0]);
     }, cancelledRef);
     return true;
@@ -173,6 +179,7 @@ export function useCanvasGen(
     onNode({ id: created.id, type: "video", pos, status: "pending", prompt });
     poll(started.id, (urls, status, generationIds) => {
       void onBalanceRefresh?.();
+      void resolveCanvasNode(created.id, { status, generationId: generationIds[0] });
       onResolve(created.id, urls[0] ?? null, status, generationIds[0]);
     }, cancelledRef);
     return true;

@@ -264,12 +264,16 @@ export function OttoNav({
             bottom: 0;
             z-index: 200;
             transform: translateX(-100%);
+            visibility: hidden;
+            pointer-events: none;
             transition: transform 0.22s ease;
             box-shadow: var(--shadow-xl, 0 8px 32px rgba(0,0,0,.18));
             width: 280px !important;
           }
           .otto-nav.otto-nav--open {
             transform: translateX(0);
+            visibility: visible;
+            pointer-events: auto;
           }
           .otto-nav-backdrop {
             display: block !important;

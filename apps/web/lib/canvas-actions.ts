@@ -89,6 +89,32 @@ export async function updateTextNode(id: string, text: string) {
   return r.count === 1 ? { ok: true as const } : { error: "Node not found." };
 }
 
+export async function resolveCanvasNode(id: string, input: { status: string; generationId?: string | null }) {
+  const gate = await requireOwner();
+  if ("error" in gate) return gate;
+  const node = await prisma.canvasNode.findFirst({
+    where: { id, ownerId: gate.ownerId, type: { in: ["image", "video"] } },
+    select: { id: true, projectId: true },
+  });
+  if (!node) return { error: "Node not found." };
+
+  let generationId: string | null = null;
+  if (input.generationId) {
+    const g = await prisma.generation.findFirst({
+      where: { id: input.generationId, ownerId: gate.ownerId, projectId: node.projectId, deletedAt: null },
+      select: { id: true },
+    });
+    if (!g) return { error: "Generation not found." };
+    generationId = g.id;
+  }
+
+  const r = await prisma.canvasNode.updateMany({
+    where: { id, ownerId: gate.ownerId },
+    data: { status: input.status, generationId },
+  });
+  return r.count === 1 ? { ok: true as const } : { error: "Node not found." };
+}
+
 export async function deleteCanvasNode(id: string) {
   const gate = await requireOwner();
   if ("error" in gate) return gate;
