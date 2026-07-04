@@ -436,7 +436,7 @@ export function OttoNav({
                           <div key={t.id} className="otto-recent-row relative flex items-center">
                             <button
                               onClick={() => handleNavAction(() => {
-                                if (isActiveProject) { onSelectThread(t.id); onViewChange("otto"); }
+                                if (isActiveProject) { onSelectThread(t.id); }
                                 else { onSwitchProject(p.id, t.id); }
                               })}
                               title={t.title}
