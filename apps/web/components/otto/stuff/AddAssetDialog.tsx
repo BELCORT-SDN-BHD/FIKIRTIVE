@@ -62,6 +62,7 @@ export function AddAssetDialog({
     setName("");
     setType(TYPE_OPTIONS[0]?.value ?? "");
     setFiles(null);
+    setSaving(false);
     setError(null);
     setMode("upload");
     setFmtKey(null);
