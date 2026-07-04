@@ -112,10 +112,12 @@ export function OttoFrontDoor({
   // the parent to clear it (F29) so it can't leak into a later unrelated conversation. Repeat-use
   // of the same idea still works: the parent re-sets seedText ("" → prompt is a real change).
   useEffect(() => {
-    if (seedText) {
+    if (!seedText) return;
+    const frame = window.requestAnimationFrame(() => {
       setText(seedText);
       onSeedConsumed?.();
-    }
+    });
+    return () => window.cancelAnimationFrame(frame);
   }, [seedText, onSeedConsumed]);
   const [pickedMentions, setPickedMentions] = useState<{id: string; name: string}[]>([]);
   const [mentionQuery, setMentionQuery] = useState<string | null>(null);
@@ -253,7 +255,7 @@ export function OttoFrontDoor({
 
   // leading-[1.5] — design-baseline body line-height (Analytics standard)
   return (
-    <div className="gb flex flex-1 flex-col items-center justify-center overflow-auto px-6 py-8 leading-[1.5]">
+    <div className="otto-front-door gb flex flex-1 flex-col items-center justify-center overflow-auto px-6 py-8 leading-[1.5]">
       <style>{`
         @media (max-width: 480px) {
           .otto-goal-grid { grid-template-columns: 1fr !important; }

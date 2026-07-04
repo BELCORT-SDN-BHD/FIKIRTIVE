@@ -15,9 +15,11 @@ import { PerAdPerformance } from "./PerAdPerformance";
 export function OttoAnalytics({
   initial,
   onNavigate,
+  onUseInOtto,
 }: {
   initial: AnalyticsData;
   onNavigate: (view: OttoViewKey) => void;
+  onUseInOtto?: (prompt: string) => void;
 }) {
   const [data, setData] = useState<AnalyticsData>(initial);
   const [pending, startTransition] = useTransition();
@@ -157,15 +159,9 @@ export function OttoAnalytics({
               <button
                 type="button"
                 onClick={() => {
-                  // PREFILL ONLY — no generation, no auto-send, no spend. Drop the prompt
-                  // into sessionStorage and open the OTTO chat; the composer consumes it.
-                  // TODO(analytics Phase B): home composer should consume sessionStorage "otto-prefill"
-                  try {
-                    sessionStorage.setItem("otto-prefill", data.insight!.prefill);
-                  } catch {
-                    /* sessionStorage unavailable (private mode) — just open chat */
-                  }
-                  onNavigate("otto");
+                  // PREFILL ONLY — no generation, no auto-send, no spend.
+                  if (onUseInOtto) onUseInOtto(data.insight!.prefill);
+                  else onNavigate("otto");
                 }}
                 className="h-[38px] rounded-[11px] bg-brand text-white text-[13.5px] font-semibold px-4 whitespace-nowrap"
               >

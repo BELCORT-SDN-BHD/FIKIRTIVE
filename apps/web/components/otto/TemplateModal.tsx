@@ -33,7 +33,10 @@ export default function TemplateModal({
   onClose: () => void;
 }) {
   const cancelledRef = useRef(false);
-  useEffect(() => () => { cancelledRef.current = true; }, []);
+  useEffect(() => {
+    cancelledRef.current = false;
+    return () => { cancelledRef.current = true; };
+  }, []);
 
   const [uploading, setUploading] = useState(false);
   const [sourceGenId, setSourceGenId] = useState<string | null>(null);
@@ -160,6 +163,17 @@ export default function TemplateModal({
       </Button>
     );
 
+  if (detailOpen && resultGenId) {
+    return (
+      <DetailPanel
+        generationId={resultGenId}
+        projectId={projectId}
+        entities={entities}
+        onClose={() => setDetailOpen(false)}
+      />
+    );
+  }
+
   return (
     <>
       {/* leading-[1.5] — design-baseline body line-height (Analytics standard) */}
@@ -200,9 +214,6 @@ export default function TemplateModal({
           <DialogFooter>{footer}</DialogFooter>
         </DialogContent>
       </Dialog>
-      {detailOpen && resultGenId && (
-        <DetailPanel generationId={resultGenId} projectId={projectId} entities={entities} onClose={() => setDetailOpen(false)} />
-      )}
     </>
   );
 }

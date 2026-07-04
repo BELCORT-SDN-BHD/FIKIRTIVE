@@ -9,6 +9,7 @@ import { isFounderAdmin } from "@/lib/allowlist";
 import { isImpersonating } from "@/lib/better-auth/compat";
 
 const ORG_STATUS = new Set(["active", "suspended"]);
+const FINANCE_DIRECT_CREDIT_LIMIT = 1_000;
 
 /** Resolve an org's active members to their Better Auth user ids.
  *  Membership.userId → User.email → BetterAuthUser.id (the two user tables join by email;
@@ -106,10 +107,12 @@ async function ownerBaUserId(orgId: string): Promise<string | null> {
 
 /** Founder-only: become the org owner to debug what they see. Spend is blocked while
  *  impersonating (the 8 web entry-point guards). Audited. */
-export async function impersonateTenant(orgId: string): Promise<{ ok: true } | { error: string }> {
+export async function impersonateTenant(orgId: string, reasonRaw?: unknown): Promise<{ ok: true } | { error: string }> {
   const gate = await requireRole("tenants", "mutate"); if ("error" in gate) return gate;
   if (!isFounderAdmin(gate.email)) return { error: "Only a founder may impersonate." };
   if (typeof orgId !== "string" || !orgId || orgId === FOUNDER_OWNER_ID) return { error: "Invalid org." };
+  const reason = typeof reasonRaw === "string" ? reasonRaw.trim().slice(0, 500) : "";
+  if (reason.length < 8) return { error: "Enter an impersonation reason with at least 8 characters." };
   const baUserId = await ownerBaUserId(orgId);
   if (!baUserId) return { error: "That tenant has no signed-in owner to impersonate yet." };
   try {
@@ -117,7 +120,7 @@ export async function impersonateTenant(orgId: string): Promise<{ ok: true } | {
   } catch (e) {
     return { error: e instanceof Error ? e.message : "Could not start impersonation." };
   }
-  await prisma.actionEvent.create({ data: { id: newId(), ownerId: FOUNDER_OWNER_ID, type: "impersonate.start", payload: { orgId, baUserId, via: gate.email } } }).catch(() => {});
+  await prisma.actionEvent.create({ data: { id: newId(), ownerId: FOUNDER_OWNER_ID, type: "impersonate.start", payload: { orgId, baUserId, reason, via: gate.email } } }).catch(() => {});
   return { ok: true };
 }
 
@@ -146,6 +149,7 @@ export async function grantTenantCredits(raw: unknown): Promise<{ ok: true; dupl
   if (!org) return { error: "Unknown or closed org." }; // NEVER fall back to founder
   const displayedAmount = typeof v?.displayedAmount === "number" ? v.displayedAmount : NaN;
   if (!Number.isInteger(displayedAmount) || displayedAmount === 0 || Math.abs(displayedAmount) > 1_000_000) return { error: "Enter a non-zero whole number of credits (max ±1,000,000)." };
+  if (Math.abs(displayedAmount) > FINANCE_DIRECT_CREDIT_LIMIT) return { error: "Credit actions over 1,000 displayed credits require founder approval." };
   const reason = typeof v?.reason === "string" ? v.reason.slice(0, 500) : "";
   const idempotencyKey = typeof v?.idempotencyKey === "string" ? v.idempotencyKey : "";
   if (idempotencyKey.length < 8 || idempotencyKey.length > 100) return { error: "Invalid request." };

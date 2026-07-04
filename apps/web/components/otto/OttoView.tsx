@@ -130,7 +130,7 @@ export function OttoView({
     return <OttoSchedule stuffItems={stuffItems} onNavigate={onViewChange} />;
   }
   if (view === "analytics") {
-    return <OttoAnalytics initial={analytics} onNavigate={onViewChange} />;
+    return <OttoAnalytics initial={analytics} onNavigate={onViewChange} onUseInOtto={onUseInOtto} />;
   }
   if (view === "stuff") {
     return (
@@ -192,12 +192,65 @@ export function OttoView({
     threads.length === 0;
 
   return (
-    <div style={{ position: "relative", flex: 1, minHeight: 0, height: "100%", display: "flex", flexDirection: "row", overflow: "hidden" }}>
+    <div
+      className={`otto-workspace${chatCollapsed ? " otto-chat-collapsed" : ""}${isFirstRun ? " otto-workspace-first-run" : ""}`}
+      style={{ position: "relative", flex: 1, minHeight: 0, height: "100%", display: "flex", flexDirection: "row", overflow: "hidden" }}
+    >
+      <style>{`
+        .otto-onboarding-overlay {
+          position: absolute;
+          top: 20px;
+          left: var(--otto-onboarding-left);
+          right: 24px;
+          z-index: 20;
+          pointer-events: none;
+        }
+        .otto-onboarding-overlay > * {
+          pointer-events: auto;
+        }
+        @media (max-width: 680px) {
+          .otto-workspace:not(.otto-chat-collapsed) .otto-chat-pane {
+            flex: 1 1 calc(100% - 26px) !important;
+          }
+          .otto-workspace:not(.otto-chat-collapsed) .otto-canvas-pane {
+            flex: 0 0 26px !important;
+            min-width: 26px;
+          }
+          .otto-workspace:not(.otto-chat-collapsed) .otto-canvas-pane > :not(button),
+          .otto-workspace:not(.otto-chat-collapsed) .otto-canvas-pane > :not(button) * {
+            visibility: hidden !important;
+            pointer-events: none;
+          }
+          .otto-chat-collapse-handle {
+            left: 0 !important;
+          }
+          .otto-onboarding-overlay {
+            top: 12px;
+            left: 12px;
+            right: 12px;
+          }
+          .otto-workspace-first-run:not(.otto-chat-collapsed) .otto-chat-pane {
+            padding-top: 250px;
+            box-sizing: border-box;
+          }
+          .otto-workspace-first-run:not(.otto-chat-collapsed) .otto-front-door-inner {
+            padding-top: 1rem !important;
+          }
+          .otto-workspace-first-run:not(.otto-chat-collapsed) .otto-front-door {
+            justify-content: flex-start !important;
+          }
+        }
+      `}</style>
       {isFirstRun && (
-        <OttoOnboarding
-          onGoToStuff={() => onViewChange("stuff")}
-          onGoToMemory={() => onViewChange("memory")}
-        />
+        <div
+          className="otto-onboarding-overlay"
+          style={{ "--otto-onboarding-left": chatCollapsed ? "24px" : "calc(clamp(360px, 38%, 520px) + 24px)" } as React.CSSProperties}
+        >
+          <OttoOnboarding
+            onGoToStuff={() => onViewChange("stuff")}
+            onGoToMemory={() => onViewChange("memory")}
+          />
+        </div>
       )}
       {/* Show-OTTO button — visible only while the OTTO pane is collapsed */}
       {chatCollapsed && (
@@ -213,6 +266,7 @@ export function OttoView({
       )}
       {/* Left pane: agent entry / chat (collapsible) */}
       <div
+        className="otto-chat-pane"
         style={{
           flex: chatCollapsed ? "0 0 0px" : "0 0 clamp(360px, 38%, 520px)",
           minWidth: 0,
@@ -290,7 +344,7 @@ export function OttoView({
       {/* Right pane: canvas. display:flex so FlowCanvas (flex:1) fills the full
           height — without it the canvas pane collapses to 0 height and React Flow
           renders nothing (the "canvas not working" blank-white regression). */}
-      <div style={{ flex: 1, minWidth: 0, minHeight: 0, height: "100%", position: "relative", display: "flex", flexDirection: "column" }}>
+      <div className="otto-canvas-pane" style={{ flex: 1, minWidth: 0, minHeight: 0, height: "100%", position: "relative", display: "flex", flexDirection: "column" }}>
         {/* Collapse handle on the OTTO↔canvas border */}
         {!chatCollapsed && (
           <button
@@ -298,6 +352,7 @@ export function OttoView({
             onClick={onToggleChat}
             title="Collapse OTTO panel"
             aria-label="Collapse OTTO panel"
+            className="otto-chat-collapse-handle"
             style={{ position: "absolute", left: -13, top: 60, zIndex: 30, width: 26, height: 26, borderRadius: "50%", border: "1px solid var(--border)", background: "var(--card)", color: "var(--muted-foreground)", boxShadow: "var(--shadow-sm)", display: "flex", alignItems: "center", justifyContent: "center", cursor: "pointer" }}
           >
             <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" aria-hidden><path d="m15 18-6-6 6-6" /></svg>

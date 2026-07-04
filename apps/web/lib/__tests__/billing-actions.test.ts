@@ -13,6 +13,7 @@ vi.mock("@/lib/stripe", () => ({
 beforeEach(() => {
   vi.clearAllMocks();
   process.env.BETTER_AUTH_URL = "https://app.test";
+  process.env.STRIPE_SECRET_KEY = "sk_test_fake";
 });
 
 const { listCreditPacks, createTopupCheckout } = await import("@/lib/billing-actions");
@@ -29,10 +30,23 @@ describe("listCreditPacks", () => {
     expect(packs[0]).toMatchObject({ priceId: "price_a", credits: 100, amountCents: 1000, currency: "usd", label: "100 credits" });
   });
 
-  it("returns [] when Stripe is unconfigured / prices.list throws", async () => {
+  it("returns [] without touching Stripe when Stripe is unconfigured", async () => {
+    delete process.env.STRIPE_SECRET_KEY;
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+    const packs = await listCreditPacks();
+    expect(packs).toEqual([]);
+    expect(pricesList).not.toHaveBeenCalled();
+    expect(warn).not.toHaveBeenCalled();
+    warn.mockRestore();
+  });
+
+  it("returns [] when prices.list throws", async () => {
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
     pricesList.mockRejectedValue(new Error("STRIPE_SECRET_KEY is not set"));
     const packs = await listCreditPacks();
     expect(packs).toEqual([]);
+    expect(warn).toHaveBeenCalledOnce();
+    warn.mockRestore();
   });
 
   it("requests a high page limit so >10 active prices are not silently truncated (F34)", async () => {
@@ -41,6 +55,15 @@ describe("listCreditPacks", () => {
     pricesList.mockResolvedValue({ data: [] });
     await listCreditPacks();
     expect(pricesList).toHaveBeenCalledWith(expect.objectContaining({ limit: 100 }));
+  });
+
+  it("does not list fractional-credit prices that checkout would reject", async () => {
+    pricesList.mockResolvedValue({ data: [
+      { id: "price_ok", unit_amount: 1000, currency: "usd", active: true, metadata: { credits: "100" }, product: { name: "100 credits" } },
+      { id: "price_frac", unit_amount: 150, currency: "usd", active: true, metadata: { credits: "1.5" }, product: { name: "bad fractional credits" } },
+    ] });
+    const packs = await listCreditPacks();
+    expect(packs.map((p) => p.priceId)).toEqual(["price_ok"]);
   });
 });
 
@@ -92,5 +115,18 @@ describe("createTopupCheckout", () => {
       cancel_url: "https://app.test/billing?status=cancel",
       customer_email: "c@t.test",
     }));
+  });
+
+  it("returns a friendly error when Checkout Session creation fails", async () => {
+    mockRequireOwner.mockResolvedValue({ email: "c@t.test", ownerId: "org_1" });
+    pricesRetrieve.mockResolvedValue({ id: "price_a", active: true, metadata: { credits: "100" } });
+    sessionsCreate.mockRejectedValue(new Error("stripe unavailable"));
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+
+    const res = await createTopupCheckout("price_a");
+
+    expect(res).toEqual({ error: "Could not start checkout — please retry." });
+    expect(warn).toHaveBeenCalledOnce();
+    warn.mockRestore();
   });
 });

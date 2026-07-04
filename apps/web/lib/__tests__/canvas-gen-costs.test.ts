@@ -7,6 +7,6 @@ describe("canvasGenCostQuote", () => {
 
     expect(CANVAS_IMAGE_VARIANT_COUNT).toBe(4);
     expect(quote.imageCredits).toBe(4);
-    expect(quote.videoCredits).toBe(7);
+    expect(quote.videoCredits).toBe(8);
   });
 });

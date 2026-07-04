@@ -90,8 +90,8 @@ describe("handleGen VIDEO — reference video resolution (fail-closed)", () => {
     expect(m.chatMessageCreate.mock.calls[0]![0].data).toMatchObject({ kind: "TURN_ERROR", genJobId: "g1" });
   });
 
-  it("reference video longer than the 2–10s window → fail closed, no spend (margin guard)", async () => {
-    // The client gates 2–10s, but a hand-crafted request could attach a long clip: BytePlus
+  it("reference video longer than the 2–6s window → fail closed, no spend (margin guard)", async () => {
+    // The client gates 2–6s, but a hand-crafted request could attach a long clip: BytePlus
     // bills by input duration while we charge flat per resolution — a margin leak. Ingest's
     // ffprobe stores Asset.durationS; enforce the window server-side when the probe value exists.
     const asset = { ownerId: "o1", contentHash: "a".repeat(64), ext: "mp4", durationS: 25 };
@@ -102,7 +102,7 @@ describe("handleGen VIDEO — reference video resolution (fail-closed)", () => {
     expect(m.generateVideo).not.toHaveBeenCalled();
     const updateCall = m.genJobUpdate.mock.calls.find((c) => c[0]?.data?.status === "FAILED");
     expect(updateCall).toBeTruthy();
-    expect(updateCall![0].data.error).toMatch(/2.*10/);
+    expect(updateCall![0].data.error).toMatch(/2.*6/);
     expect(m.refundReservation).toHaveBeenCalledWith(expect.anything(), { orgId: "o1", refId: "g1" });
   });
 

@@ -1,3 +1,4 @@
+import { notFound } from "next/navigation";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Card, CardHeader, CardTitle, CardDescription } from "@/components/ui/card";
@@ -8,6 +9,8 @@ export const metadata = { title: "Kitchensink · Grok-bright" };
 // Phase 0 proof: renders the new shadcn components + OTTO, themed by globals.css
 // (scoped to `.gb`). Throwaway — delete once the rework is underway.
 export default function Kitchensink() {
+  if (process.env.NODE_ENV === "production") notFound();
+
   return (
     <div className="gb" style={{ minHeight: "100dvh", padding: 40 }}>
       <div style={{ maxWidth: 720, margin: "0 auto", display: "flex", flexDirection: "column", gap: 28 }}>

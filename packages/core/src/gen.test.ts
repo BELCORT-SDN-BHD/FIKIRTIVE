@@ -117,3 +117,31 @@ describe("genRequest.idempotencyKey", () => {
     expect(genRequest.safeParse({ ...base, idempotencyKey: "x".repeat(81) }).success).toBe(false);
   });
 });
+
+describe("genRequest.referenceVideoGenerationId", () => {
+  const base = {
+    projectId: "p1",
+    prompt: "a cat",
+    count: 1,
+    kind: "video",
+    model: "seedance-2-fast",
+    idempotencyKey: "k1",
+  };
+
+  it("accepts a reference video on the fixed 5s video path", () => {
+    expect(genRequest.safeParse({ ...base, referenceVideoGenerationId: "gen_ref", durationSeconds: 5 }).success).toBe(true);
+    expect(genRequest.safeParse({ ...base, referenceVideoGenerationId: "gen_ref" }).success).toBe(true);
+  });
+
+  it("rejects reference video on image generation", () => {
+    expect(genRequest.safeParse({ ...base, kind: "image", model: "seedream", referenceVideoGenerationId: "gen_ref" }).success).toBe(false);
+  });
+
+  it("rejects non-Seedance video jobs with referenceVideoGenerationId", () => {
+    expect(genRequest.safeParse({ ...base, model: "veo3.1-lite", referenceVideoGenerationId: "gen_ref", durationSeconds: 6 }).success).toBe(false);
+  });
+
+  it("rejects 10s reference-video output before spend because the 16cr price is modeled for 5s output", () => {
+    expect(genRequest.safeParse({ ...base, referenceVideoGenerationId: "gen_ref", durationSeconds: 10 }).success).toBe(false);
+  });
+});

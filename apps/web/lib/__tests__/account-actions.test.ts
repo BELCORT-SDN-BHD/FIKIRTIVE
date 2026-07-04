@@ -8,7 +8,14 @@ const mockRequireOwner = vi.fn();
 vi.mock("@/lib/auth-guard", () => ({ requireOwner: mockRequireOwner }));
 // account-actions imports the Better Auth server instance for signOutAction — stub it so the
 // test never constructs the real auth (which pulls in server-only + the prisma adapter).
-vi.mock("@/lib/better-auth/server", () => ({ auth: { api: { signOut: vi.fn() } } }));
+const mockSignOut = vi.fn();
+vi.mock("@/lib/better-auth/server", () => ({ auth: { api: { signOut: mockSignOut } } }));
+const mockHeaders = vi.fn();
+vi.mock("next/headers", () => ({ headers: mockHeaders }));
+const mockRedirect = vi.fn((url: string) => {
+  throw new Error(`NEXT_REDIRECT:${url}`);
+});
+vi.mock("next/navigation", () => ({ redirect: mockRedirect }));
 
 // ONLY read methods are provided — a stray write (create/update/upsert) would throw
 // "is not a function", so this also guards the read-only contract by construction.
@@ -23,14 +30,19 @@ vi.mock("@fikirtive/db", () => ({
   },
 }));
 
-const { getMyAccount } = await import("@/lib/account-actions");
+const { getMyAccount, signOutAction } = await import("@/lib/account-actions");
 
 beforeEach(() => {
   mockRequireOwner.mockReset();
+  mockSignOut.mockReset();
+  mockHeaders.mockReset();
+  mockRedirect.mockClear();
   findUnique.mockReset();
   creditLedgerFindMany.mockReset();
   genJobFindMany.mockReset();
   genJobFindMany.mockResolvedValue([]);
+  mockHeaders.mockResolvedValue(new Headers({ cookie: "better-auth.session_token=test" }));
+  mockSignOut.mockResolvedValue(undefined);
 });
 
 describe("getMyAccount", () => {
@@ -88,5 +100,16 @@ describe("getMyAccount", () => {
     expect(res.balance).toBe(0);
     expect(res.balanceUsd).toBe(0);
     expect(res.recent).toEqual([]);
+  });
+});
+
+describe("signOutAction", () => {
+  it("clears the Better Auth session before redirecting to /login", async () => {
+    await expect(signOutAction()).rejects.toThrow("NEXT_REDIRECT:/login");
+
+    expect(mockHeaders).toHaveBeenCalledTimes(1);
+    expect(mockSignOut).toHaveBeenCalledWith({ headers: await mockHeaders.mock.results[0].value });
+    expect(mockRedirect).toHaveBeenCalledWith("/login");
+    expect(mockSignOut.mock.invocationCallOrder[0]).toBeLessThan(mockRedirect.mock.invocationCallOrder[0]);
   });
 });

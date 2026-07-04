@@ -76,11 +76,12 @@ export const MAX_GEN_COUNT = 4;
 export const MAX_GEN_PROMPT = 2000;
 export const MAX_GEN_ENTITIES = 8;
 export const GEN_VIDEO_SECONDS = 5;
+export const REFERENCE_VIDEO_MODEL: GenVideoModel = "seedance-2-fast";
 /** Whole-clip reference video window: Seedance needs ≥2s; the upper bound protects COGS
  *  (BytePlus bills by input duration, our charge is flat per resolution). Enforced in the
  *  composer AND server-side in the worker (via Asset.durationS from ingest's ffprobe). */
 export const REF_VIDEO_MIN_SECONDS = 2;
-export const REF_VIDEO_MAX_SECONDS = 10;
+export const REF_VIDEO_MAX_SECONDS = 6;
 /** Image price is flat per image; video price is dynamic — see videoPriceUsd
  *  (scales with duration × resolution × audio × count). */
 // F39: this is the RECORD-ONLY COGS basis (spentUsd/margin reporting), not the charge (images
@@ -148,7 +149,7 @@ function videoRateUsdPerSec(model: GenVideoModel, resolution: string, audio: boo
     case "kling": return 0.07;                                             // always silent
     case "kling-2.6": return audio ? 0.14 : 0.07;
     case "kling-3": return audio ? 0.168 : 0.112;
-    case "seedance-2-fast": return 0.03;                                    // F39: BytePlus (~$0.15/5s ≈ $0.03/s per the pricing benchmark; was 0.2419 fal). RECORD-ONLY (COGS/spentUsd) — the CHARGE is flat-per-resolution (FLAT_PRICED_VIDEO_MODELS), so this never changes what the user pays. CONFIRM against the actual Ark invoice.
+    case "seedance-2-fast": return 0.077;                                   // BytePlus bill-backed COGS: 5s≈$0.39, 10s≈$0.77. RECORD-ONLY; charge is in spend.ts.
     case "ltx-2": return resolution === "2160p" ? 0.24 : resolution === "1440p" ? 0.12 : 0.06;
     case "veo3.1-lite": return resolution === "1080p" ? (audio ? 0.08 : 0.05) : (audio ? 0.05 : 0.03);
     case "veo3.1-fast": return audio ? 0.15 : 0.10;
@@ -246,6 +247,13 @@ export const genRequest = z
       if (v.fps != null && !o.fps.includes(v.fps)) bad("fps", "fps not available for this model");
       if (v.audio === false && !o.audioToggle) bad("audio", "this model can't turn audio off");
       if (v.count > o.maxCount) bad("count", "too many clips for this model");
+    }
+    if (v.referenceVideoGenerationId) {
+      if (v.kind !== "video") ctx.addIssue({ code: z.ZodIssueCode.custom, path: ["referenceVideoGenerationId"], message: "reference video is only valid for video generation" });
+      if (v.model !== REFERENCE_VIDEO_MODEL) ctx.addIssue({ code: z.ZodIssueCode.custom, path: ["model"], message: "reference video requires Seedance 2.0 Fast" });
+      if (v.durationSeconds != null && v.durationSeconds !== GEN_VIDEO_SECONDS) {
+        ctx.addIssue({ code: z.ZodIssueCode.custom, path: ["durationSeconds"], message: "reference video output is fixed at 5 seconds" });
+      }
     }
   });
 export type GenRequest = z.infer<typeof genRequest>;

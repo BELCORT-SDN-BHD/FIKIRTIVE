@@ -103,6 +103,7 @@ export async function startGen(raw: unknown): Promise<{ id: string } | { error: 
     kind: kind === "video" ? "VIDEO" : "IMAGE",
     model,
     count: kind === "video" ? 1 : count,
+    referenceVideoGenerationId: referenceVideoGenerationId ?? null,
     videoOptions: videoOptions ?? null,
   });
 

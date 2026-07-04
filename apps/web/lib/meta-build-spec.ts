@@ -186,8 +186,9 @@ export function buildAdBuildCard(
           pageId: input.pageId,
           mode: input.mode,
           adsetId: input.intoExisting?.adsetId ?? null,
-          // F17: bind the CREATIVE and the resolved TARGETING too, so approved ad content /
-          // audience can't drift from what executes. MUST mirror bindingSteps() in
+          startTime: input.startTime ?? null,
+          // F17: bind the CREATIVE, schedule, and resolved TARGETING too, so approved ad content /
+          // audience/timing can't drift from what executes. MUST mirror bindingSteps() in
           // meta-build-actions.ts exactly (same fields, same order) or the hash won't verify.
           creative: {
             kind: input.creative.kind,

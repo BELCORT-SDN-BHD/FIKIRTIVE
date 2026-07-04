@@ -14,7 +14,7 @@ import { INSPIRATIONS, inspirationCategories, type Inspiration } from "@/lib/ins
 export default function OttoDiscover({ onUseInOtto }: { onUseInOtto: (prompt: string) => void }) {
   const [cat, setCat] = useState<string>("All");
   const [active, setActive] = useState<Inspiration | null>(null);
-  const [copied, setCopied] = useState(false);
+  const [copyStatus, setCopyStatus] = useState<"idle" | "copied" | "failed">("idle");
   const copyTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   useEffect(() => () => { if (copyTimer.current) clearTimeout(copyTimer.current); }, []);
 
@@ -22,14 +22,28 @@ export default function OttoDiscover({ onUseInOtto }: { onUseInOtto: (prompt: st
   const shown = cat === "All" ? INSPIRATIONS : INSPIRATIONS.filter((i) => i.category === cat);
 
   async function copy(prompt: string) {
+    let ok = false;
     try {
       await navigator.clipboard.writeText(prompt);
-      setCopied(true);
-      if (copyTimer.current) clearTimeout(copyTimer.current);
-      copyTimer.current = setTimeout(() => setCopied(false), 1500);
+      ok = true;
     } catch {
-      // clipboard may be unavailable; ignore (Copy is best-effort)
+      try {
+        const textarea = document.createElement("textarea");
+        textarea.value = prompt;
+        textarea.setAttribute("readonly", "");
+        textarea.style.position = "fixed";
+        textarea.style.left = "-9999px";
+        document.body.appendChild(textarea);
+        textarea.select();
+        ok = document.execCommand("copy");
+        textarea.remove();
+      } catch {
+        ok = false;
+      }
     }
+    setCopyStatus(ok ? "copied" : "failed");
+    if (copyTimer.current) clearTimeout(copyTimer.current);
+    copyTimer.current = setTimeout(() => setCopyStatus("idle"), 1500);
   }
 
   return (
@@ -84,7 +98,9 @@ export default function OttoDiscover({ onUseInOtto }: { onUseInOtto: (prompt: st
             <div style={{ background: "var(--card)", borderRadius: "14px", padding: "12px", fontSize: "0.8125rem", color: "var(--foreground)", whiteSpace: "pre-wrap" }}>{active.prompt}</div>
             <p style={{ color: "var(--muted-foreground)", fontSize: "0.75rem", marginTop: "8px" }}>Tip: replace [your product] with your product name.</p>
             <DialogFooter>
-              <Button variant="ghost" size="sm" onClick={() => copy(active.prompt)}>{copied ? "Copied" : "Copy prompt"}</Button>
+              <Button variant="ghost" size="sm" onClick={() => copy(active.prompt)}>
+                {copyStatus === "copied" ? "Copied" : copyStatus === "failed" ? "Copy failed" : "Copy prompt"}
+              </Button>
               <Button variant="brand" size="sm" onClick={() => { onUseInOtto(active.prompt); setActive(null); }}>Use in Otto</Button>
             </DialogFooter>
           </DialogContent>

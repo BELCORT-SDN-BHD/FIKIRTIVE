@@ -1,12 +1,12 @@
 import { describe, it, expect } from "vitest";
-import { PARITY_MANIFEST, type ParityEntry } from "./parity-manifest.js";
+import { PARITY_MANIFEST, type ParityManifestEntry } from "./parity-manifest.js";
 import { allSkills } from "./registry.js";
 
 // The 9th seam's core invariant (harmony-02 §二.2): every skill a manifest entry points at must
 // really exist in the registry; every exemption uses one of the four closed classes; every TODO
 // carries a note. This is the load-bearing subset of the future check-parity.sh — a unit test
-// until that lands. `as const` narrows the literal, so widen back to ParityEntry to see all branches.
-const entries = Object.entries(PARITY_MANIFEST) as [string, ParityEntry][];
+// until that lands. `as const` narrows the literal, so widen back to ParityManifestEntry to see all branches.
+const entries = Object.entries(PARITY_MANIFEST) as [string, ParityManifestEntry][];
 
 describe("parity manifest", () => {
   const skillNames = new Set(allSkills.map((s) => s.name));
@@ -31,8 +31,9 @@ describe("parity manifest", () => {
 
   it("every TODO_SKILL debt entry carries a non-empty note", () => {
     for (const [action, entry] of entries) {
-      if ("todo" in entry) {
-        expect(entry.todo.trim().length, `${action} → TODO_SKILL needs a note`).toBeGreaterThan(0);
+      if ("todoSkill" in entry) {
+        expect(entry.todoSkill, `${action} → TODO_SKILL flag must be true`).toBe(true);
+        expect(entry.reason.trim().length, `${action} → TODO_SKILL needs a note`).toBeGreaterThan(0);
       }
     }
   });

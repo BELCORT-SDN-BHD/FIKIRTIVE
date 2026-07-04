@@ -32,6 +32,7 @@ export function buildSettingsSections(args: {
   adsAutonomy: "ASK" | "AUTO";
 }): SettingsSection[] {
   const { account, settings, channels, packs, adsAutonomy } = args;
+  const canChangeAdsAutonomy = channels.some((c) => c.status === "connected");
 
   const toggle =
     (k: keyof OwnerSettings) =>
@@ -195,8 +196,11 @@ export function buildSettingsSections(args: {
           kind: "toggle",
           id: "ads",
           label: "Ask before ad spend",
-          hint: "OTTO checks with you before spending on ads",
+          hint: canChangeAdsAutonomy
+            ? "OTTO checks with you before spending on ads"
+            : "Connect Meta before changing ad-spend autonomy",
           value: adsAutonomy === "ASK",
+          disabled: !canChangeAdsAutonomy,
           onToggle: (v) => setAdsAutonomy(v ? "ASK" : "AUTO"),
         },
         {
