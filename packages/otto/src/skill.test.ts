@@ -48,6 +48,15 @@ describe("defineOttoSkill enforcement", () => {
     ).toThrow(/must not include identity field/i);
   });
 
+  it("throws when parameters contain identity synonyms", () => {
+    expect(() =>
+      defineOttoSkill({
+        name: "tenant-leak", description: "d", cost: "free", effect: "read", reach: "internal",
+        parameters: z.object({ tenantId: z.string(), accountId: z.string() }), execute: noop,
+      }),
+    ).toThrow(/tenantId, accountId/);
+  });
+
   it("throws when a spend skill declares no idempotencyKey", () => {
     expect(() =>
       defineOttoSkill({ ...base, name: "charge", cost: "spend", effect: "write", reach: "internal" }),

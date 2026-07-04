@@ -47,7 +47,20 @@ export interface OttoSkill {
   tool: FunctionTool<OttoContext, any, unknown>;
 }
 
-const IDENTITY_KEYS = ["orgId", "ownerId", "userId"];
+const IDENTITY_KEYS = [
+  "orgId",
+  "ownerId",
+  "userId",
+  "organizationId",
+  "tenantId",
+  "accountId",
+  "org_id",
+  "owner_id",
+  "user_id",
+  "organization_id",
+  "tenant_id",
+  "account_id",
+];
 
 /** Pure: spend OR (external write) needs the boss's approval. */
 export function deriveNeedsApproval(cost: Cost, effect: Effect, reach: Reach): boolean {

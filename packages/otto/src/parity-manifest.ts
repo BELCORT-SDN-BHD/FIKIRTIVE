@@ -27,6 +27,51 @@ export const PARITY_READ_SURFACES = [
     file: "apps/web/lib/admin-v2.ts",
     exportName: "getAdminV2Data",
   },
+  {
+    key: "data.getProjects",
+    file: "apps/web/lib/data.ts",
+    exportName: "getProjects",
+  },
+  {
+    key: "data.getEntities",
+    file: "apps/web/lib/data.ts",
+    exportName: "getEntities",
+  },
+  {
+    key: "data.getCoworkThreads",
+    file: "apps/web/lib/data.ts",
+    exportName: "getCoworkThreads",
+  },
+  {
+    key: "data.getCoworkThread",
+    file: "apps/web/lib/data.ts",
+    exportName: "getCoworkThread",
+  },
+  {
+    key: "data.resolveCoworkResultUrls",
+    file: "apps/web/lib/data.ts",
+    exportName: "resolveCoworkResultUrls",
+  },
+  {
+    key: "data.getMyAds",
+    file: "apps/web/lib/data.ts",
+    exportName: "getMyAds",
+  },
+  {
+    key: "data.getMyAdJobs",
+    file: "apps/web/lib/data.ts",
+    exportName: "getMyAdJobs",
+  },
+  {
+    key: "data.getRecentGenerationThumbs",
+    file: "apps/web/lib/data.ts",
+    exportName: "getRecentGenerationThumbs",
+  },
+  {
+    key: "data.getAllCoworkThreadMetas",
+    file: "apps/web/lib/data.ts",
+    exportName: "getAllCoworkThreadMetas",
+  },
 ] as const;
 
 export const PARITY_MANIFEST = {
@@ -113,6 +158,16 @@ export const PARITY_MANIFEST = {
   "cowork-actions.cancelGenJob": { todoSkill: true, reason: "Generation cancellation needs a guarded Otto/user action parity decision." },
   "cowork-fetch.getCoworkThreadClient": { todoSkill: true, reason: "Thread read surface needs free/read skill parity or retirement with cowork UI." },
   "credit-actions.grantCreditsAction": { exempt: "MONEY_IN", reason: "Admin credit grants mint money-in credits and Otto must not perform them." },
+
+  "data.getProjects": { todoSkill: true, reason: "Otto home project list is page data; project reads need free/read skill parity." },
+  "data.getEntities": { todoSkill: true, reason: "Otto home entity/reference list is page data; entity reads need free/read skill parity." },
+  "data.getCoworkThreads": { todoSkill: true, reason: "Otto home thread list is page data; thread reads need free/read skill parity." },
+  "data.getCoworkThread": { todoSkill: true, reason: "Otto home active-thread detail is page data; thread reads need free/read skill parity." },
+  "data.resolveCoworkResultUrls": { todoSkill: true, reason: "Otto home result URL resolution is page data; generation result reads need free/read skill parity." },
+  "data.getMyAds": { todoSkill: true, reason: "Otto home My Stuff ads list is page data; finished ad reads need free/read skill parity." },
+  "data.getMyAdJobs": { todoSkill: true, reason: "Otto home in-flight ad jobs are page data; generation status reads need free/read skill parity." },
+  "data.getRecentGenerationThumbs": { todoSkill: true, reason: "Otto home history strip is page data; recent generation reads need free/read skill parity." },
+  "data.getAllCoworkThreadMetas": { todoSkill: true, reason: "Otto home global sidebar threads are page data; thread reads need free/read skill parity." },
 
   "gen-actions.startGen": { skill: "generate" },
   "gen-actions.getActiveGenModels": { skill: "generate" },

@@ -103,6 +103,14 @@ describe("hasWorkingJob", () => {
     expect(hasWorkingJob(ui)).toBe(false);
   });
 
+  it("treats locally terminal job ids, such as cancelled jobs, as not working", () => {
+    const ui = threadToUiMessages(
+      thread([msg({ id: "c1", role: "AGENT", kind: "GEN_CARD", genJobId: "job_1" })]),
+    );
+    expect(hasWorkingJob(ui)).toBe(true);
+    expect(hasWorkingJob(ui, new Set(["job_1"]))).toBe(false);
+  });
+
   it("is false for a proposed (not-yet-approved) card with no genJobId", () => {
     const ui = threadToUiMessages(
       thread([msg({ id: "c1", role: "AGENT", kind: "GEN_CARD", genJobId: null })]),

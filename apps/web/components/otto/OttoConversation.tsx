@@ -44,6 +44,7 @@ export function OttoConversation({
   const [error, setError] = useState<string | null>(null);
   const [pendingApprovalCardIds, setPendingApprovalCardIds] = useState<Set<string>>(new Set());
   const [submittedCardIds, setSubmittedCardIds] = useState<Set<string>>(new Set());
+  const [cancelledJobIds, setCancelledJobIds] = useState<Set<string>>(new Set());
   const bottomRef = useRef<HTMLDivElement>(null);
   const busyRef = useRef(false);
 
@@ -57,6 +58,13 @@ export function OttoConversation({
   async function refreshAndUpdate() {
     const fresh = await getCoworkThreadClient(thread.id);
     if (fresh) onThreadUpdate(fresh);
+  }
+
+  function rearmGenerationPoll() {
+    setPollGaveUp(false);
+    setPollTerminal(false);
+    pollCountRef.current = 0;
+    checkAgainUsedRef.current = false;
   }
 
   const mentionSuggestions = mentionQuery !== null
@@ -92,10 +100,7 @@ export function OttoConversation({
     setError(null);
     const entityIds = resolveSentEntityIds(trimmed, pickedMentions);
     // a new turn may queue a new generation — re-arm polling
-    setPollGaveUp(false);
-    setPollTerminal(false);
-    pollCountRef.current = 0;
-    checkAgainUsedRef.current = false;
+    rearmGenerationPoll();
     try {
       const res = await ottoTurn({
         threadId: thread.id,
@@ -187,11 +192,12 @@ export function OttoConversation({
   // A job is "working" once its card is approved (genJobId set) but no terminal
   // message (GEN_RESULT or TURN_ERROR) has landed yet. While any job is working we
   // poll the thread so the async worker result appears without a manual reload.
-  const terminalJobIds = new Set(
-    messages
-      .filter((m) => (m.kind === "GEN_RESULT" || m.kind === "TURN_ERROR") && m.genJobId)
-      .map((m) => m.genJobId as string),
-  );
+  const terminalJobIds = new Set<string>(cancelledJobIds);
+  for (const jobId of messages
+    .filter((m) => (m.kind === "GEN_RESULT" || m.kind === "TURN_ERROR") && m.genJobId)
+    .map((m) => m.genJobId as string)) {
+    terminalJobIds.add(jobId);
+  }
   const hasWorkingJob = messages.some(
     (m) => m.kind === "GEN_CARD" && m.genJobId && !terminalJobIds.has(m.genJobId),
   );
@@ -282,8 +288,7 @@ export function OttoConversation({
                 });
                 // a freshly-approved card queues a new job — re-arm polling even if a
                 // prior job had already hit the give-up cap.
-                setPollGaveUp(false);
-                pollCountRef.current = 0;
+                rearmGenerationPoll();
                 // An approve reserves credits — refresh the nav balance immediately.
                 void onBalanceRefresh?.();
                 refreshAndUpdate();
@@ -303,17 +308,17 @@ export function OttoConversation({
                 // Fresh card spawned — re-arm poll and refetch so it appears.
                 // Reset checkAgainUsedRef too: the retried job gets the full two-round
                 // stall budget, not a one-round dead-end from an earlier "Check again".
-                setPollGaveUp(false);
-                setPollTerminal(false);
-                pollCountRef.current = 0;
-                checkAgainUsedRef.current = false;
+                rearmGenerationPoll();
                 void refreshAndUpdate();
               }}
-              onCancelled={() => void refreshAndUpdate()}
+              onCancelled={(genJobId) => {
+                if (genJobId) setCancelledJobIds((cur) => new Set(cur).add(genJobId));
+                void onBalanceRefresh?.();
+                void refreshAndUpdate();
+              }}
               onMakeAnother={() => {
                 // Fresh card spawned via "Make another" — re-arm poll + refetch.
-                setPollGaveUp(false);
-                pollCountRef.current = 0;
+                rearmGenerationPoll();
                 void refreshAndUpdate();
               }}
             />
@@ -468,7 +473,7 @@ function MessageRow({
   onApproved: (cardId: string) => void;
   onChangeRequest: (seed: string) => void;
   onRetry: () => void;
-  onCancelled: () => void;
+  onCancelled: (genJobId: string | null) => void;
   onMakeAnother: () => void;
 }) {
   const isUser = m.role === "USER";
@@ -521,7 +526,7 @@ function MessageRow({
             onApproved={() => onApproved(m.id)}
             onChangeSomething={onChangeRequest}
             onRetry={onRetry}
-            onCancelled={onCancelled}
+            onCancelled={() => onCancelled(m.genJobId)}
           />
         </div>
       </div>

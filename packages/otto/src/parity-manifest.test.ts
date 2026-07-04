@@ -1,5 +1,8 @@
 import { describe, it, expect } from "vitest";
-import { PARITY_MANIFEST, type ParityManifestEntry } from "./parity-manifest.js";
+import fs from "node:fs";
+import path from "node:path";
+import { fileURLToPath } from "node:url";
+import { PARITY_MANIFEST, PARITY_READ_SURFACES, type ParityManifestEntry } from "./parity-manifest.js";
 import { allSkills } from "./registry.js";
 
 // The 9th seam's core invariant (harmony-02 §二.2): every skill a manifest entry points at must
@@ -7,6 +10,8 @@ import { allSkills } from "./registry.js";
 // carries a note. This is the load-bearing subset of the future check-parity.sh — a unit test
 // until that lands. `as const` narrows the literal, so widen back to ParityManifestEntry to see all branches.
 const entries = Object.entries(PARITY_MANIFEST) as [string, ParityManifestEntry][];
+const HERE = path.dirname(fileURLToPath(import.meta.url)); // packages/otto/src
+const REPO_ROOT = path.resolve(HERE, "../../..");
 
 describe("parity manifest", () => {
   const skillNames = new Set(allSkills.map((s) => s.name));
@@ -35,6 +40,25 @@ describe("parity manifest", () => {
         expect(entry.todoSkill, `${action} → TODO_SKILL flag must be true`).toBe(true);
         expect(entry.reason.trim().length, `${action} → TODO_SKILL needs a note`).toBeGreaterThan(0);
       }
+    }
+  });
+
+  it("Otto page data imports are registered read surfaces", () => {
+    const page = fs.readFileSync(path.join(REPO_ROOT, "apps/web/app/otto/page.tsx"), "utf8");
+    const match = page.match(/import\s+\{([^}]+)\}\s+from\s+"@\/lib\/data";/m);
+    expect(match, "app/otto/page.tsx should keep lib/data imports in one import declaration").not.toBeNull();
+
+    const importedReads = (match?.[1] ?? "")
+      .split(",")
+      .map((raw) => raw.trim().replace(/\s+as\s+\w+$/, ""))
+      .filter(Boolean);
+    const registered = new Set<string>(PARITY_READ_SURFACES.map((surface) => surface.key));
+
+    for (const read of importedReads) {
+      expect(
+        registered.has(`data.${read}`),
+        `app/otto/page.tsx imports ${read} from lib/data, but PARITY_READ_SURFACES has no data.${read} entry.`,
+      ).toBe(true);
     }
   });
 });

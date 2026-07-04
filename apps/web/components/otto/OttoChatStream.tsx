@@ -110,6 +110,9 @@ export function OttoChatStream({
    *  session — drives the optimistic "working" state before the genJobId lands from the
    *  durable thread. Resets on remount (thread switch = component re-key). */
   const [submittedCardIds, setSubmittedCardIds] = useState<Set<string>>(new Set());
+  /** Jobs cancelled in this client session. The server refund path does not persist a
+   *  TURN_ERROR message, so treat these job ids as terminal for the local poll. */
+  const [cancelledJobIds, setCancelledJobIds] = useState<Set<string>>(new Set());
   /** Attachment: a generation created from a user-uploaded file, included as
    *  sourceGenerationId (image) or referenceVideoGenerationId (whole clip) on the
    *  next send. Null when nothing is attached. */
@@ -143,6 +146,13 @@ export function OttoChatStream({
   const pollCountRef = useRef(0);
   /** Track whether the user has already clicked "Check again" once (armed → gave up → terminal). */
   const checkAgainUsedRef = useRef(false);
+
+  function rearmGenerationPoll() {
+    setPollGaveUp(false);
+    setPollTerminal(false);
+    pollCountRef.current = 0;
+    checkAgainUsedRef.current = false;
+  }
 
   // useChat constructs its Chat (and captures `transport` + initial `messages`) ONCE.
   // We build both in a one-time useState initializer so they're stable across renders.
@@ -270,7 +280,7 @@ export function OttoChatStream({
   // and whether any approved job is still working (drives the poll + working state).
   const jobsWithResult = resultJobIds(messages);
   const jobsWithError = errorJobIds(messages);
-  const hasWorkingJob = computeHasWorkingJob(messages);
+  const hasWorkingJob = computeHasWorkingJob(messages, cancelledJobIds);
 
   // Map genJobId → cardId so GEN_RESULT widgets can pass sourceCardId to OttoResult
   // for "Make another" (coworkVaryCard needs the card, not the job).
@@ -321,10 +331,7 @@ export function OttoChatStream({
   useEffect(() => {
     if (prevThreadIdRef.current === thread.id) return;
     prevThreadIdRef.current = thread.id;
-    setPollGaveUp(false);
-    setPollTerminal(false);
-    pollCountRef.current = 0;
-    checkAgainUsedRef.current = false;
+    rearmGenerationPoll();
   }, [thread.id]);
 
   // Bounded poll: a worker that fails-closed without writing a terminal message would
@@ -750,8 +757,7 @@ export function OttoChatStream({
                       return next;
                     });
                   });
-                  setPollGaveUp(false);
-                  pollCountRef.current = 0;
+                  rearmGenerationPoll();
                   void onBalanceRefresh?.();
                   void pollAndInjectResults();
                 };
@@ -811,8 +817,7 @@ export function OttoChatStream({
                         next.delete(durableId);
                         return next;
                       });
-                      setPollGaveUp(false);
-                      pollCountRef.current = 0;
+                      rearmGenerationPoll();
                       // An approve reserves credits — refresh the nav balance immediately.
                       void onBalanceRefresh?.();
                       void pollAndInjectResults();
@@ -832,13 +837,14 @@ export function OttoChatStream({
                       // A fresh card was spawned — re-arm poll and refetch so it appears.
                       // Reset checkAgainUsedRef too: the retried job gets the full two-round
                       // stall budget, not a one-round dead-end from an earlier "Check again".
-                      setPollGaveUp(false);
-                      setPollTerminal(false);
-                      pollCountRef.current = 0;
-                      checkAgainUsedRef.current = false;
+                      rearmGenerationPoll();
                       void refetchAndAppendCards();
                     }}
-                    onCancelled={() => void pollAndInjectResults()}
+                    onCancelled={() => {
+                      if (genJobId) setCancelledJobIds((cur) => new Set(cur).add(genJobId));
+                      void onBalanceRefresh?.();
+                      void pollAndInjectResults();
+                    }}
                   />
                 </WidgetRow>
               );
@@ -874,8 +880,7 @@ export function OttoChatStream({
                     payload={r}
                     sourceCardId={sourceCardId}
                     onMakeAnother={() => {
-                      setPollGaveUp(false);
-                      pollCountRef.current = 0;
+                      rearmGenerationPoll();
                       void refetchAndAppendCards();
                     }}
                   />
