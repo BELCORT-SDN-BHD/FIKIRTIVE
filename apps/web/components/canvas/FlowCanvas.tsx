@@ -260,9 +260,14 @@ export default function FlowCanvas({
         if (n.id !== id) return n;
         const updated: CanvasFlowNode = { ...n, data: { ...n.data, url: url ?? undefined, status } };
         if (generationId) updated.data = { ...updated.data, generationId };
-        // wire onAnimate + onOpenDetail now that generationId is known (if not already set)
-        if (generationId && n.type === "image" && !n.data.onAnimate) {
-          updated.data = { ...updated.data, onAnimate: getOnAnimate(id), onOpenDetail: getOnOpenDetail(id) };
+        // Wire actions now that generationId is known (if not already set).
+        // Videos only need Detail; images also need Make video.
+        if (generationId && (n.type === "image" || n.type === "video")) {
+          updated.data = {
+            ...updated.data,
+            ...(!updated.data.onOpenDetail ? { onOpenDetail: getOnOpenDetail(id) } : {}),
+            ...(n.type === "image" && !updated.data.onAnimate ? { onAnimate: getOnAnimate(id) } : {}),
+          };
         }
         return updated;
       }),
