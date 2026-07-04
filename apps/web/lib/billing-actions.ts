@@ -7,6 +7,12 @@ export type CreditPack = { priceId: string; credits: number; amountCents: number
 /** Active one-time credit packs = active Stripe Prices carrying metadata.credits.
  *  Packs live in Stripe (test/live dashboard) — no redeploy to change them. */
 export async function listCreditPacks(): Promise<CreditPack[]> {
+  if (!process.env.STRIPE_SECRET_KEY) {
+    if (process.env.NODE_ENV === "production") {
+      console.warn("[billing] listCreditPacks unavailable: STRIPE_SECRET_KEY is not set.");
+    }
+    return [];
+  }
   try {
     // limit:100 (Stripe max per page) — the default of 10 silently truncates once the
     // account carries >10 active Prices (test/live packs, currency variants), dropping

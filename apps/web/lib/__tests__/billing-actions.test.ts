@@ -13,6 +13,7 @@ vi.mock("@/lib/stripe", () => ({
 beforeEach(() => {
   vi.clearAllMocks();
   process.env.BETTER_AUTH_URL = "https://app.test";
+  process.env.STRIPE_SECRET_KEY = "sk_test_fake";
 });
 
 const { listCreditPacks, createTopupCheckout } = await import("@/lib/billing-actions");
@@ -29,10 +30,23 @@ describe("listCreditPacks", () => {
     expect(packs[0]).toMatchObject({ priceId: "price_a", credits: 100, amountCents: 1000, currency: "usd", label: "100 credits" });
   });
 
-  it("returns [] when Stripe is unconfigured / prices.list throws", async () => {
+  it("returns [] without touching Stripe when Stripe is unconfigured", async () => {
+    delete process.env.STRIPE_SECRET_KEY;
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+    const packs = await listCreditPacks();
+    expect(packs).toEqual([]);
+    expect(pricesList).not.toHaveBeenCalled();
+    expect(warn).not.toHaveBeenCalled();
+    warn.mockRestore();
+  });
+
+  it("returns [] when prices.list throws", async () => {
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
     pricesList.mockRejectedValue(new Error("STRIPE_SECRET_KEY is not set"));
     const packs = await listCreditPacks();
     expect(packs).toEqual([]);
+    expect(warn).toHaveBeenCalledOnce();
+    warn.mockRestore();
   });
 
   it("requests a high page limit so >10 active prices are not silently truncated (F34)", async () => {
