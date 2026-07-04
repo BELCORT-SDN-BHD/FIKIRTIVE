@@ -257,7 +257,6 @@ export const PARITY_MANIFEST = {
   "tenant-actions.impersonateTenant": { exempt: "ADMIN", reason: "City Hall tenant administration is a permanent blueprint exemption." },
   "tenant-actions.stopImpersonatingTenant": { exempt: "ADMIN", reason: "City Hall tenant administration is a permanent blueprint exemption." },
   "tenant-actions.grantTenantCredits": { exempt: "MONEY_IN", reason: "Admin credit grants mint money-in credits and Otto must not perform them." },
-  "thread-activity.listProjectThreadActivity": { todoSkill: true, reason: "Thread activity read needs free/read skill parity." },
   "upload-actions.authorizeUpload": { todoSkill: true, reason: "Upload authorization needs media/import skill parity or account-security review." },
   "upload-actions.uploadFileFallback": { todoSkill: true, reason: "Upload fallback needs media/import skill parity." },
   "upload-actions.signUploadPart": { todoSkill: true, reason: "Multipart upload signing needs media/import skill parity or account-security review." },
@@ -271,5 +270,6 @@ export const PARITY_MANIFEST = {
   "api:meta/callback.GET": { exempt: "ACCOUNT_SECURITY", reason: "OAuth callback binds external accounts and must stay human-controlled." },
   "api:meta/data-deletion.POST": { exempt: "ACCOUNT_SECURITY", reason: "Meta-initiated data-deletion callback (signed_request auth); unbinds the external account — machine-called, never Otto." },
   "api:otto/stream.POST": { todoSkill: true, reason: "Otto stream is the agent transport; needs a manifest convention separate from individual skills." },
+  "api:otto/thread-activity.GET": { todoSkill: true, reason: "Thread activity read needs free/read skill parity." },
   "api:stripe/webhook.POST": { exempt: "MONEY_IN", reason: "Stripe webhook is money-in and authenticated by Stripe signature, not Otto." },
 } as const satisfies Record<string, ParityManifestEntry>;
