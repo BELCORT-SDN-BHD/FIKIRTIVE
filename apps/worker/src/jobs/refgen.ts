@@ -34,6 +34,7 @@ import {
 } from "@fikirtive/core";
 import { storage } from "../storage.js";
 import { provider } from "../generation.js";
+import { sanitizeError, scrubUrls } from "../redact.js";
 import { isModelDisabled } from "@fikirtive/core";
 import { workerDisabledModels } from "../model-registry.js";
 
@@ -424,7 +425,7 @@ export async function handleRefGen(data: RefGenJobData, retryCount: number): Pro
     await finalizeDone(job.id, job.mode, job.entityId, outputAssetIds[0]);
     console.log(`[refgen] ${job.id}: DONE (${job.mode}) → ${outputAssetIds.length} images via ${provider.name}`);
   } catch (err) {
-    const message = err instanceof Error ? err.message.slice(0, 500) : String(err).slice(0, 500);
+    const message = sanitizeError(err, 500);
     // a failure after the paid call is terminal — retrying would re-spend.
     // `spent` covers post-provider failures here; `charged` covers a failure
     // INSIDE the adapter after fal already billed (it ran the model, then the
@@ -436,7 +437,7 @@ export async function handleRefGen(data: RefGenJobData, retryCount: number): Pro
     // CHARGED job shown FAILED + free the active-job guard, letting a user retry pay a SECOND
     // time. Only a pre-commit failure (committed === false) is terminal.
     const final = !committed && (spent || charged || retryCount >= REFGEN_RETRY_LIMIT);
-    console.error(`[refgen] ${job.id}: ${final ? "FAILED" : committed ? "requeue → resume attach" : "retrying"} — ${message}`);
+    console.error(`[refgen] ${job.id}: ${final ? "FAILED" : committed ? "requeue → resume attach" : "retrying"} — ${scrubUrls(err instanceof Error ? err.message : String(err)).slice(0, 1000)}`);
     if (final) {
       // terminal fail → release the hold (the merchant got no result; the founder absorbs any
       // real fal cost). `final` is by definition pre-commit (committed → final is false), so
@@ -463,7 +464,7 @@ export async function handleRefGen(data: RefGenJobData, retryCount: number): Pro
       });
       if (requeued.count === 0) console.error(`[refgen] ${job.id}: not requeued — a finalizer already owns it (FAILED/DONE); discarding this delivery`);
     }
-    throw err; // pg-boss owns the retry schedule
+    throw new Error(message); // pg-boss serializes thrown errors into job.output; keep it scrubbed
   }
 }
 
