@@ -35,10 +35,24 @@ export default function PrivacyPage() {
             campaigns. Operators may inspect limited account metadata to support, secure, and audit the service.
           </p>
 
-          <h2 className="pt-4 text-lg font-semibold text-foreground">Your choices</h2>
+          <h2 className="pt-4 text-lg font-semibold text-foreground">Where your data lives</h2>
           <p>
-            You can disconnect integrations from the Account area where supported. For access, deletion, or export
-            requests during the beta, contact the Fikirtive team through your invite thread.
+            Fikirtive runs on hosted infrastructure and sub-processors: application hosting and database (Railway,
+            Neon), file storage and networking (Cloudflare), payments (Stripe), email delivery (Resend), AI providers
+            for Otto and generation (Anthropic, BytePlus, fal.ai), and Meta for connected ad accounts. Each processes
+            only the data needed for its role.
+          </p>
+
+          <h2 className="pt-4 text-lg font-semibold text-foreground">Your choices and PDPA rights</h2>
+          <p>
+            You can disconnect integrations from the Account area where supported. If you connected a Meta account,
+            you can also request removal through Meta — see{" "}
+            <Link href="/legal/data-deletion" className="underline underline-offset-4">data deletion</Link>.
+          </p>
+          <p>
+            Fikirtive is operated by Belcort Sdn. Bhd. (Malaysia) and handles personal data in line with the Personal
+            Data Protection Act 2010 (PDPA). For access, correction, deletion, or export requests during the beta,
+            email <a href="mailto:tao@belcort.com" className="underline underline-offset-4">tao@belcort.com</a>.
           </p>
         </section>
       </article>

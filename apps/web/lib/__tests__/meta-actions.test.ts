@@ -50,6 +50,20 @@ describe("completeMetaConnect", () => {
     expect(call.create.canWrite).toBe(false);
     expect(call.create.adsAutonomy).toBe("ASK");
   });
+  it("stores metaUserId from debug_token so the Meta data-deletion callback can match this connection", async () => {
+    // 2026-07-04 对抗审查抓到的 blocker:此前 metaUserId 从不写入 → /api/meta/data-deletion
+    // 的 where:{metaUserId} 永远匹配不到 → 合规回调形同虚设。user_id 已在 debug_token
+    // 响应里(dj.data.user_id),零额外请求即可存。
+    mockFetch
+      .mockResolvedValueOnce(jsonRes({ access_token: "short" }))
+      .mockResolvedValueOnce(jsonRes({ access_token: "LONGTOKEN", expires_in: 5184000 }))
+      .mockResolvedValueOnce(jsonRes({ data: { scopes: ["ads_read"], user_id: "1784512" } }));
+    mockUpsert.mockResolvedValue({ id: "mc-1" });
+    await completeMetaConnect("the-code", "https://app/api/meta/callback");
+    const call = mockUpsert.mock.calls[0][0];
+    expect(call.create.metaUserId).toBe("1784512");
+    expect(call.update.metaUserId).toBe("1784512");
+  });
   it("sets canWrite:true when Meta grants ads_management", async () => {
     mockFetch
       .mockResolvedValueOnce(jsonRes({ access_token: "short" }))

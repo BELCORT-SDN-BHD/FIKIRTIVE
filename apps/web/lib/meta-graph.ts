@@ -275,7 +275,7 @@ export async function listPages(token: string): Promise<{ id: string; name: stri
 export async function exchangeCodeForToken(
   code: string,
   redirectUri: string,
-): Promise<{ token: string; expiresAt: Date | null; grantedScopes: string[] } | { error: string }> {
+): Promise<{ token: string; expiresAt: Date | null; grantedScopes: string[]; metaUserId: string | null } | { error: string }> {
   const appId = process.env.META_APP_ID;
   const secret = process.env.META_APP_SECRET;
   if (!appId || !secret) return { error: "not_configured" };
@@ -304,8 +304,12 @@ export async function exchangeCodeForToken(
   );
   const dj = await dr.json().catch(() => ({}));
   const grantedScopes: string[] = Array.isArray(dj?.data?.scopes) ? dj.data.scopes : [];
+  // debug_token also returns the app-scoped Meta user id — store it so the Meta
+  // data-deletion callback (/api/meta/data-deletion) can match this connection.
+  const uid = dj?.data?.user_id;
+  const metaUserId = typeof uid === "string" ? uid : typeof uid === "number" ? String(uid) : null;
 
-  return { token: lj.access_token, expiresAt, grantedScopes };
+  return { token: lj.access_token, expiresAt, grantedScopes, metaUserId };
 }
 
 /** One day of ad-account metrics (Analytics Phase A). Numbers coerced; missing → 0. */

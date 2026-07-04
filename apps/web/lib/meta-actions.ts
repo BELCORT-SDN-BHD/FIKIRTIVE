@@ -22,7 +22,7 @@ export async function completeMetaConnect(
   const canWrite = ex.grantedScopes.includes("ads_management");
   const canManagePages = ex.grantedScopes.includes("pages_show_list");
   const scope = ex.grantedScopes.length > 0 ? ex.grantedScopes.join(",") : "";
-  const data = { accessTokenEnc: enc, tokenExpiresAt: ex.expiresAt, scope, canWrite, canManagePages, status: "active" as const };
+  const data = { accessTokenEnc: enc, tokenExpiresAt: ex.expiresAt, scope, canWrite, canManagePages, status: "active" as const, metaUserId: ex.metaUserId };
   await prisma.metaConnection.upsert({
     where: { ownerId: gate.ownerId },
     update: data,

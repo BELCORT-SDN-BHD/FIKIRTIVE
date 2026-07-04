@@ -41,6 +41,14 @@ export default function TermsPage() {
             continues. If something looks wrong, stop using the affected feature and contact the Fikirtive team through
             your invite thread.
           </p>
+
+          <h2 className="pt-4 text-lg font-semibold text-foreground">Who you are dealing with</h2>
+          <p>
+            Fikirtive is operated by Belcort Sdn. Bhd. (Malaysia). These beta terms are governed by the laws of
+            Malaysia. Questions:{" "}
+            <a href="mailto:tao@belcort.com" className="underline underline-offset-4">tao@belcort.com</a>. See also our{" "}
+            <Link href="/privacy" className="underline underline-offset-4">Privacy Policy</Link>.
+          </p>
         </section>
       </article>
     </main>

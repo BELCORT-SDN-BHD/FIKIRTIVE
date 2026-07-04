@@ -1173,3 +1173,10 @@ model PublishAttempt {
   // partial index, so no @@unique is declared here.
   @@index([scheduledPostId])
 }
+
+// 2026-07-04 盲区修复(可观测性):worker 活性心跳,单行(id="worker"),worker 每 60s
+// upsert;/api/health 读它给外部监控服务判活。无租户数据(平台级),不进 tenant guard。
+model WorkerHeartbeat {
+  id String   @id
+  at DateTime
+}
