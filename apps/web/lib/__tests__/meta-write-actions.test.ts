@@ -644,4 +644,11 @@ describe("setAdsWritesPaused", () => {
     expect(res).toEqual({ error: "Not authorized." });
     expect(mockConnUpdateMany).not.toHaveBeenCalled();
   });
+
+  it("blocks while impersonating before changing the customer's ad-write controls", async () => {
+    mockIsImpersonating.mockResolvedValue(true);
+    const res = await setAdsWritesPaused(false);
+    expect(res).toEqual({ error: "Paused while impersonating a customer — exit impersonation to change their ad-write controls." });
+    expect(mockConnUpdateMany).not.toHaveBeenCalled();
+  });
 });

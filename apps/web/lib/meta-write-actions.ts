@@ -21,6 +21,7 @@ export async function setAdsAutonomy(mode: "ASK" | "AUTO"): Promise<{ ok: true }
 export async function setAdsWritesPaused(paused: boolean): Promise<{ ok: true } | { error: string }> {
   const gate = await requireOwner();
   if ("error" in gate) return gate;
+  if (await isImpersonating()) return { error: "Paused while impersonating a customer — exit impersonation to change their ad-write controls." };
   const updated = await prisma.metaConnection.updateMany({ where: { ownerId: gate.ownerId }, data: { adsWritesPaused: paused } });
   if (updated.count === 0) return { error: "Connect Meta before changing ad-write controls." };
   return { ok: true };

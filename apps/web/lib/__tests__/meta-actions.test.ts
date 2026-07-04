@@ -1,15 +1,17 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
 
-const { mockOwner, mockFindUnique, mockUpsert, mockUpdate, mockDeleteMany, mockFetch } = vi.hoisted(() => ({
+const { mockOwner, mockFindUnique, mockUpsert, mockUpdate, mockDeleteMany, mockFetch, mockIsImpersonating } = vi.hoisted(() => ({
   mockOwner: vi.fn(),
   mockFindUnique: vi.fn(),
   mockUpsert: vi.fn(),
   mockUpdate: vi.fn(),
   mockDeleteMany: vi.fn(),
   mockFetch: vi.fn(),
+  mockIsImpersonating: vi.fn(),
 }));
 
 vi.mock("../auth-guard", () => ({ requireOwner: mockOwner }));
+vi.mock("@/lib/better-auth/compat", () => ({ isImpersonating: mockIsImpersonating }));
 vi.mock("@fikirtive/db", () => ({
   prisma: { metaConnection: { findUnique: mockFindUnique, upsert: mockUpsert, update: mockUpdate, deleteMany: mockDeleteMany } },
 }));
@@ -25,6 +27,7 @@ beforeEach(() => {
   process.env.META_APP_ID = "APPID";
   process.env.META_APP_SECRET = "APPSECRET";
   mockOwner.mockResolvedValue({ ownerId: "u1", email: "a@b.c" });
+  mockIsImpersonating.mockResolvedValue(false);
   vi.stubGlobal("fetch", mockFetch);
 });
 
@@ -74,6 +77,13 @@ describe("completeMetaConnect", () => {
   it("returns an error when the exchange fails", async () => {
     mockFetch.mockResolvedValueOnce(jsonRes({ error: { message: "bad" } }, false));
     expect(await completeMetaConnect("x", "https://app/cb")).toEqual({ error: "exchange" });
+    expect(mockUpsert).not.toHaveBeenCalled();
+  });
+  it("blocks while impersonating before exchanging or writing tokens", async () => {
+    mockIsImpersonating.mockResolvedValue(true);
+    const res = await completeMetaConnect("the-code", "https://app/api/meta/callback");
+    expect(res).toEqual({ error: "Paused while impersonating a customer — exit impersonation to connect Meta." });
+    expect(mockFetch).not.toHaveBeenCalled();
     expect(mockUpsert).not.toHaveBeenCalled();
   });
   it("sets canWrite:false and scope:'' when debug_token fetch fails", async () => {
@@ -210,5 +220,10 @@ describe("disconnectMeta", () => {
     mockDeleteMany.mockResolvedValue({ count: 1 });
     expect(await disconnectMeta()).toEqual({ ok: true });
     expect(mockDeleteMany).toHaveBeenCalledWith({ where: { ownerId: "u1" } });
+  });
+  it("blocks while impersonating before deleting the customer's connection", async () => {
+    mockIsImpersonating.mockResolvedValue(true);
+    expect(await disconnectMeta()).toEqual({ error: "Paused while impersonating a customer — exit impersonation to disconnect Meta." });
+    expect(mockDeleteMany).not.toHaveBeenCalled();
   });
 });
