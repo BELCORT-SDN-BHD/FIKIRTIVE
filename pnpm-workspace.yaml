@@ -1,3 +1,11 @@
 packages:
   - "apps/*"
   - "packages/*"
+allowBuilds:
+  '@prisma/engines': true
+  '@shotstack/shotstack-canvas': true
+  esbuild: true
+  ffmpeg-static: true
+  prisma: true
+  sharp: true
+  unrs-resolver: true

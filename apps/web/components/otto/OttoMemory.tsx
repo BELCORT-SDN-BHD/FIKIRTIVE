@@ -15,7 +15,7 @@ import { ingestProductFromUrl } from "@/lib/product-ingest-actions";
 import {
   sectionForCategory, diffRows, FACT_SECTION_KEYS, SECTIONS, sectionsTouched,
   type RowDiff, type SectionKey,
-} from "@fikirtive/core";
+} from "@fikirtive/core/memory-sections";
 import { ottoTurn } from "@/lib/otto-client-actions";
 import { getCoworkThreadClient } from "@/lib/cowork-fetch";
 import { FactSection } from "./memory/FactSection";
