@@ -1,8 +1,8 @@
 # Launch Readiness Audit - 2026-07-04
 
 PR: https://github.com/toolsbbb/FIKIRTIVE/pull/131
-Latest local follow-up head audited in this report: `17a10f2`
-Last GitHub CI-green pushed head before the Meta OAuth route follow-up: `6058178`
+Latest pushed head audited in this report: `f4b8a569246d305fc180869473a374d74f32b181`
+Last GitHub CI-green pushed head: `f4b8a569246d305fc180869473a374d74f32b181`
 Merge state: `CLEAN`
 
 This audit consolidates the local QA reports, tracked review docs, PR comments, and CI status for the public-launch readiness goal. It does not replace the per-surface reports; it maps them to the launch requirements and names the remaining gates.
@@ -14,9 +14,9 @@ This audit consolidates the local QA reports, tracked review docs, PR comments, 
 - Local browser QA in this audit used safe boundaries unless explicitly noted:
   - `GENERATION_PROVIDER=mock`
   - `COWORK_PROVIDER=mock`
-- Production smoke explicitly used real generation once and real Google OAuth initiation; local Meta connected-fixture QA now covers post-connect UI states without real Meta writes.
+- Production smoke explicitly used real generation once, real Google OAuth initiation, and one real Otto text-turn attempt; local Meta connected-fixture QA now covers post-connect UI states without real Meta writes.
 - Local Stripe webhook integration QA covers the route-to-ledger idempotency path without real Stripe checkout or event delivery.
-- Local Otto stream route QA covers the insufficient-credit branch for `/api/otto/stream` without real Anthropic/Otto transport.
+- Local Otto stream route QA covers both the insufficient-credit branch and successful-stream usage handoff for `/api/otto/stream` without real Anthropic/Otto transport.
 - Local Meta OAuth route QA covers authorize/callback auth gates, signed owner state, success/error redirects, and the callback URI passed into connection completion without calling real Meta.
 
 ## Requirement Status
@@ -28,12 +28,26 @@ This audit consolidates the local QA reports, tracked review docs, PR comments, 
 | Mobile layout is launch-safe for tested surfaces | Proven for tested surfaces at 390px | Per-surface mobile checks and screenshots |
 | Margin model is above constitutional floor | Proven from executable pricing and current official BytePlus evidence | `docs/review/MARGIN-PARITY-REPORT-2026-07-04.md` |
 | All changes/reports are handled in PR | Proven for tracked reports and PR comments | PR #131, tracked docs, comments |
-| CI is green | Proven for pushed head `6058178`; latest local follow-up has local verification and awaits PR CI after push | GitHub checks for `6058178`: typecheck/fences/lockfile, next build, unit + integration all passed |
-| Live paid supplier smoke | Partially proven in production | One real production image generation passed with USD 0.16 COGS; see `docs/review/EXTERNAL-SMOKE-RESULTS-2026-07-04.md`. Local route QA now covers Otto stream insufficient-credit behavior, but real Anthropic/Otto success accounting, video, and reference-video were not run. |
+| CI is green | Proven for pushed head `f4b8a56` | GitHub checks for `f4b8a56`: typecheck/fences/lockfile, next build, unit + integration all passed |
+| Live paid supplier smoke | Partially proven in production | One real production image generation passed with USD 0.16 COGS; see `docs/review/EXTERNAL-SMOKE-RESULTS-2026-07-04.md`. A real Otto text turn was attempted in production, but Anthropic rejected the call because the Anthropic account credit balance is too low; this blocks real Otto success settlement until provider billing is fixed. Local route QA now covers Otto stream insufficient-credit and success usage handoff behavior. Real video and reference-video were not run. |
 | Real Stripe checkout/webhook | Partially proven locally; hosted checkout and Stripe event delivery still not proven | Commit `fd7f8e2` hardens checkout session creation failures. Commit `f8d30e6` adds DB-backed route integration proving unpaid sessions do not grant, delayed paid sessions grant once, and paid replay does not double-grant. See `docs/review/QA-STRIPE-WEBHOOK-INTEGRATION-2026-07-04.md`. |
-| Real Meta/Google OAuth and connected Meta states | Partially proven | Fourth follow-up Google OAuth reached Google's sign-in page with the Better Auth callback URI and no mismatch. Local Meta fixture QA proves connected Connections/Analytics/autonomy/kill-switch states. Local Meta OAuth route QA proves authorize/callback app-owned boundaries. Real Google consent/callback and real Meta consent/token exchange remain unproven. See `docs/review/EXTERNAL-SMOKE-RESULTS-2026-07-04.md`, `docs/review/QA-META-CONNECTED-FIXTURE-2026-07-04.md`, and `docs/review/QA-META-OAUTH-ROUTE-2026-07-04.md`. |
+| Real Meta/Google OAuth and connected Meta states | Partially proven | Fourth and fifth follow-ups reached Google's sign-in page with the Better Auth callback URI and no mismatch. Local Meta fixture QA proves connected Connections/Analytics/autonomy/kill-switch states. Local Meta OAuth route QA proves authorize/callback app-owned boundaries. Real Google consent/callback and real Meta consent/token exchange remain unproven. See `docs/review/EXTERNAL-SMOKE-RESULTS-2026-07-04.md`, `docs/review/QA-META-CONNECTED-FIXTURE-2026-07-04.md`, and `docs/review/QA-META-OAUTH-ROUTE-2026-07-04.md`. |
 | Production deploy/canary | Partially proven for current production only | Current production route smoke passed for tested normal/admin routes, but production was not serving PR #131 admin v2. PR #131 is now merge-clean and CI-green; post-merge deploy canary remains required. |
 | Direct admin credit-action cap | Proven locally with tests and browser QA | Commit `3c655e0` enforces the 1,000 displayed-credit direct cap for founder and tenant actions; over-limit Apply buttons are disabled and server actions reject the same input. |
+
+## Latest Production Follow-Up
+
+Window: 2026-07-04 09:39-09:47 UTC / 2026-07-04 17:39-17:47 +08.
+
+Results:
+
+- Latest supplied admin and normal magic links were invalid at test time and redirected to `/login` through `/otto?error=INVALID_TOKEN`.
+- Existing local Chrome profile session loaded production `/otto` as `tools@belcort.com` and loaded `/admin/settings`.
+- Google OAuth initiation still reached Google sign-in with redirect URI `https://fikirtive.com/api/better-auth/callback/google`.
+- A real production Otto text-only turn was submitted through the UI. It failed with the user-facing generic error, and Railway logs showed Anthropic provider-account billing as the cause: Anthropic API credit balance too low.
+- Visible Fikirtive credit balance remained `9,999,857.3 credits` after the failed text attempt.
+
+Required action before rerunning Otto success smoke: top up or rotate the production Anthropic account/API key.
 
 ## Browser QA Coverage
 

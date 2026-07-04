@@ -7,10 +7,12 @@ Follow-up window: 2026-07-04 07:27-07:30 UTC / 2026-07-04 15:27-15:30 +08
 Second follow-up window: 2026-07-04 07:41-07:44 UTC / 2026-07-04 15:41-15:44 +08
 Third follow-up window: 2026-07-04 08:06 UTC / 2026-07-04 16:06 +08
 Fourth follow-up window: 2026-07-04 08:31 UTC / 2026-07-04 16:31 +08
+Fifth follow-up window: 2026-07-04 09:39-09:47 UTC / 2026-07-04 17:39-17:47 +08
 PR head observed during first run: `6140e15fa2613d6e9e2150781793fce89c5be9f1`
 PR head observed during follow-up: `f6461fc55fc16f7365d6c0241041204f2ecac2ab`
 PR head observed before the second follow-up: `cdad10936a2ba4da826a7a704359d7df26c62207`
 PR head observed before the third follow-up: `550e605de30addf27dd907360f38bf4496e8697f`
+PR head observed before the fifth follow-up: `f4b8a569246d305fc180869473a374d74f32b181`
 
 ## Approval
 
@@ -30,8 +32,11 @@ Overall result: partial pass.
 - Ledger behavior passed for the real generation: `RESERVE -4 +4 hold` followed by `SETTLE 0 -4 hold`.
 - Google OAuth failed before consent during the first run with Google `redirect_uri_mismatch`; all three follow-ups passed the OAuth initiation boundary and reached Google's sign-in page with the expected Better Auth callback URI.
 - A fourth follow-up repeated the same current Google OAuth result: `POST /api/better-auth/sign-in/social` returned `200`, Google returned `302`, the browser reached Google sign-in, and no `redirect_uri_mismatch` was present.
+- A fifth follow-up repeated the current Google OAuth initiation result from headless browser automation: Better Auth social sign-in returned `200`, Google reached the sign-in page, and the authorization URL used `https://fikirtive.com/api/better-auth/callback/google`.
 - Google consent/callback was not completed because no Google account credentials were available to the browser.
-- Replacement magic links supplied for the follow-ups were already invalid, expired, or consumed; they did not create new sessions.
+- Replacement magic links supplied for the follow-ups were already invalid, expired, or consumed; they did not create new sessions. The fifth follow-up used an existing local Chrome profile session to re-enter production as `tools@belcort.com`.
+- A real production Otto text-only turn was attempted from the `tools@belcort.com` Chrome session. The UI returned `Otto hit a snag - please try again.`
+- Railway web logs for the same window show the upstream cause: Anthropic rejected the API call because the Anthropic account credit balance is too low. This is provider-account billing, not Fikirtive user-credit balance.
 - Production was not running PR #131 admin v2 at the time of the first run: the PR-only admin routes returned 404. PR #131 is now merge-clean and CI-green, but production canary still requires a human merge/deploy.
 
 ## CI And Deploy State
@@ -80,6 +85,8 @@ Initial auth note: an earlier normal-user token produced a Cloudflare 502 from t
 
 Follow-up auth note: replacement admin/normal magic-link pairs redirected through `/otto?error=INVALID_TOKEN` and landed on `/login`. The third and fourth follow-ups repeated the same result for both `tools@belcort.com` and `nicksgan@gmail.com`. They were therefore expired, already consumed, or otherwise invalid at test time. No raw token values are recorded.
 
+Fifth follow-up auth note: the latest supplied admin and normal magic links also redirected through `/otto?error=INVALID_TOKEN` and landed on `/login`; no session cookie was created from either link. An existing local Chrome profile session did still load `/otto` as `tools@belcort.com` with `9,999,857.3 credits`, and `/admin` redirected to `/admin/settings`.
+
 Second follow-up evidence:
 
 - `.gstack/qa-reports/screenshots/prod-smoke-2026-07-04/admin-link-invalid.png`
@@ -94,6 +101,11 @@ Fourth follow-up evidence:
 
 - `.gstack/qa-reports/screenshots/prod-followup-2026-07-04/admin-magic-followup.png`
 - `.gstack/qa-reports/screenshots/prod-followup-2026-07-04/user-magic-followup.png`
+
+Fifth follow-up evidence:
+
+- `.gstack/qa-reports/screenshots/prod-followup-2026-07-04/chrome-otto-tools-session.png`
+- `.gstack/qa-reports/screenshots/prod-followup-2026-07-04/chrome-admin-settings-tools.png`
 
 Follow-up sign-out note: clicking the production Account `Sign out` control cleared the session, but the visible page did not immediately navigate to `/login`; a subsequent protected `/otto` navigation redirected to `/login?from=%2Fotto`. A later local regression test covers the intended server action behavior, but this should still be rechecked after deploy because current production is not PR #131.
 
@@ -152,6 +164,12 @@ Observed follow-up behavior, repeated in the second, third, and fourth follow-up
 - Redirect URI in the Google URL was `https://fikirtive.com/api/better-auth/callback/google`.
 - No console errors were observed.
 
+Fifth follow-up behavior:
+
+- Headless browser automation again reached Google sign-in for `fikirtive.com`.
+- The Google authorization URL contained the Better Auth callback URI `https://fikirtive.com/api/better-auth/callback/google`.
+- The currently open Chrome profile also had Google Cloud access to the `FIKIRTIVE` Google Auth Platform client list, confirming the OAuth client exists in the Google project; no client secret or raw OAuth state was recorded.
+
 Follow-up evidence:
 
 - `.gstack/qa-reports/screenshots/prod-2026-07-04/google-oauth-google-login.png`
@@ -184,6 +202,8 @@ Routes tested and loaded:
 - `/admin/content`
 
 Result: pass for currently deployed admin route load, with one production issue below.
+
+Fifth follow-up result: pass for current production admin access using the local Chrome profile session. `/admin` loaded as `/admin/settings` for `tools@belcort.com`; the page showed runtime Vision settings and the Otto provider selector set to `fal`.
 
 Production issue: `/admin/content` loaded but emitted multiple `/files/u/...` 404s for media previews. The current PR redirects `/admin/content` to `/admin/cases`, so the 404s were observed on the older deployed admin content page, not on the PR #131 admin v2 route. If the old content page remains reachable after deploy, it should avoid direct cross-tenant `/files` previews or serve them through an explicit admin-gated preview path.
 
@@ -242,13 +262,42 @@ Margin check:
 - Gross margin: 60%.
 - Result: above the 45% constitutional floor.
 
+## Real Otto Text Turn
+
+Account: `tools@belcort.com`
+Route: `/otto`
+Action: submitted one short text prompt through the visible Otto composer in Chrome.
+
+Result: fail at upstream provider billing.
+
+Observed UI:
+
+- User message appeared in the conversation.
+- Otto returned the generic app error: `Otto hit a snag - please try again.`
+- The visible balance remained `9,999,857.3 credits`, matching the pre-attempt balance shown in the same session.
+
+Railway web log for the attempt window:
+
+- `[otto/stream] run failed: AI_APICallError | Your credit balance is too low to access the Anthropic API. Please go to Plans & Billing to upgrade or purchase credits. | status=400`
+
+Interpretation:
+
+- This does not prove a successful live Anthropic/Otto settlement.
+- It does prove the current production blocker is upstream Anthropic account billing, not the app's displayed user-credit balance.
+- The app surfaced a generic error rather than leaking provider details to the user, and no visible user-credit decrement was observed.
+
+Evidence:
+
+- `.gstack/qa-reports/screenshots/prod-followup-2026-07-04/chrome-otto-typed-smoke.png`
+- `.gstack/qa-reports/screenshots/prod-followup-2026-07-04/chrome-otto-after-send-error.png`
+
 ## Not Run
 
 - Real Stripe hosted checkout and event delivery. Local route-to-ledger webhook idempotency is covered separately in `docs/review/QA-STRIPE-WEBHOOK-INTEGRATION-2026-07-04.md`.
 - Meta OAuth.
 - Real Seedance video.
 - Real reference-video generation.
-- Real Otto LLM-only spend accounting.
+- Real Otto LLM-only success settlement. A real text turn was attempted, but Anthropic account billing blocked it before success.
 - Production verification of PR #131 admin v2 after deploy.
 
 ## Cleanup
@@ -265,4 +314,5 @@ Margin check:
 3. Complete Google OAuth through consent/callback with a controlled Google account; initiation now reaches Google and no longer shows `redirect_uri_mismatch`, and local config QA now pins the Better Auth callback route shape.
 4. Recheck Account `Sign out` on the deployed PR build; current production cleared the session but did not visibly navigate until the next protected route load, while local regression coverage now pins the expected sign-out-then-redirect action.
 5. Decide whether the old `/admin/content` route should remain reachable. If yes, remove direct cross-tenant `/files` media previews or replace them with an explicit admin-gated preview route.
-6. Run the remaining approved-but-not-executed gates only if still needed: Stripe test-mode hosted checkout/event delivery, Meta OAuth, real video, reference-video, and Otto LLM accounting.
+6. Top up or rotate the Anthropic production account/API key, then rerun the same Otto text-only production smoke to prove successful live settlement.
+7. Run the remaining approved-but-not-executed gates only if still needed: Stripe test-mode hosted checkout/event delivery, Meta OAuth, real video, reference-video, and Otto LLM success accounting.
