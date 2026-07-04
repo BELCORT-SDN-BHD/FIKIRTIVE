@@ -1,8 +1,8 @@
 # Launch Readiness Audit - 2026-07-04
 
 PR: https://github.com/toolsbbb/FIKIRTIVE/pull/131
-Latest local follow-up head audited in this report: `f8d30e6`
-Last GitHub CI-green pushed head before the Stripe integration follow-up: `4d97137`
+Latest local follow-up head audited in this report: `7eef840`
+Last GitHub CI-green pushed head before the Otto stream follow-up: `7d62bb7`
 Merge state: `CLEAN`
 
 This audit consolidates the local QA reports, tracked review docs, PR comments, and CI status for the public-launch readiness goal. It does not replace the per-surface reports; it maps them to the launch requirements and names the remaining gates.
@@ -16,6 +16,7 @@ This audit consolidates the local QA reports, tracked review docs, PR comments, 
   - `COWORK_PROVIDER=mock`
 - Production smoke explicitly used real generation once and real Google OAuth initiation; local Meta connected-fixture QA now covers post-connect UI states without real Meta writes.
 - Local Stripe webhook integration QA covers the route-to-ledger idempotency path without real Stripe checkout or event delivery.
+- Local Otto stream route QA covers the insufficient-credit branch for `/api/otto/stream` without real Anthropic/Otto transport.
 
 ## Requirement Status
 
@@ -26,8 +27,8 @@ This audit consolidates the local QA reports, tracked review docs, PR comments, 
 | Mobile layout is launch-safe for tested surfaces | Proven for tested surfaces at 390px | Per-surface mobile checks and screenshots |
 | Margin model is above constitutional floor | Proven from executable pricing and current official BytePlus evidence | `docs/review/MARGIN-PARITY-REPORT-2026-07-04.md` |
 | All changes/reports are handled in PR | Proven for tracked reports and PR comments | PR #131, tracked docs, comments |
-| CI is green | Proven for pushed head `4d97137`; latest local follow-up has local verification and awaits PR CI after push | GitHub checks for `4d97137`: typecheck/fences/lockfile, next build, unit + integration all passed |
-| Live paid supplier smoke | Partially proven in production | One real production image generation passed with USD 0.16 COGS; see `docs/review/EXTERNAL-SMOKE-RESULTS-2026-07-04.md`. Video, reference-video, and Otto LLM-only accounting were not run. |
+| CI is green | Proven for pushed head `7d62bb7`; latest local follow-up has local verification and awaits PR CI after push | GitHub checks for `7d62bb7`: typecheck/fences/lockfile, next build, unit + integration all passed |
+| Live paid supplier smoke | Partially proven in production | One real production image generation passed with USD 0.16 COGS; see `docs/review/EXTERNAL-SMOKE-RESULTS-2026-07-04.md`. Local route QA now covers Otto stream insufficient-credit behavior, but real Anthropic/Otto success accounting, video, and reference-video were not run. |
 | Real Stripe checkout/webhook | Partially proven locally; hosted checkout and Stripe event delivery still not proven | Commit `fd7f8e2` hardens checkout session creation failures. Commit `f8d30e6` adds DB-backed route integration proving unpaid sessions do not grant, delayed paid sessions grant once, and paid replay does not double-grant. See `docs/review/QA-STRIPE-WEBHOOK-INTEGRATION-2026-07-04.md`. |
 | Real Meta/Google OAuth and connected Meta states | Partially proven | Fourth follow-up Google OAuth reached Google's sign-in page with the Better Auth callback URI and no mismatch. Local Meta fixture QA proves connected Connections/Analytics/autonomy/kill-switch states. Real Google consent/callback and real Meta OAuth/token exchange remain unproven. See `docs/review/EXTERNAL-SMOKE-RESULTS-2026-07-04.md` and `docs/review/QA-META-CONNECTED-FIXTURE-2026-07-04.md`. |
 | Production deploy/canary | Partially proven for current production only | Current production route smoke passed for tested normal/admin routes, but production was not serving PR #131 admin v2. PR #131 is now merge-clean and CI-green; post-merge deploy canary remains required. |
@@ -308,6 +309,7 @@ Load-bearing constraints:
 - `ee1bd8e` - Local Meta connected fixture and decryptable QA seed token.
 - `172c070` - Analytics insight CTA now pre-fills the Otto composer through the existing seed-text path.
 - `f8d30e6` - Stripe webhook route integration covers real credit-ledger idempotency for delayed-payment replay.
+- `7eef840` - Otto stream route test covers insufficient-credit behavior without running Otto or persisting an AGENT reply.
 
 ## Current Verification State
 
@@ -341,7 +343,14 @@ Local verification for `f8d30e6`:
 - `pnpm --filter @fikirtive/web typecheck`: pass.
 - The integration test uses a real test database, the real webhook route, and the real `grantCredits` ledger implementation; only Stripe signature parsing is mocked.
 
-GitHub CI for pushed code head `4d97137` before the Stripe integration follow-up:
+Local verification for `7eef840`:
+
+- Report: `docs/review/QA-OTTO-STREAM-ROUTE-2026-07-04.md`
+- `pnpm --filter @fikirtive/web exec vitest run lib/__tests__/otto-actions.test.ts lib/__tests__/otto-status-helpers.test.ts lib/__tests__/otto-stream-bridge.test.ts lib/__tests__/otto-stream-route.test.ts`: pass, 81 tests.
+- `pnpm --filter @fikirtive/web typecheck`: pass.
+- The route test proves `/api/otto/stream` returns a stream `insufficient_credits` error without calling Otto `run()`, without finalizing the run, and without persisting an AGENT message when metering reserve fails.
+
+GitHub CI for pushed code head `7d62bb7` before the Otto stream follow-up:
 
 - `typecheck + fences + frozen lockfile`: pass
 - `next build (apps/web)`: pass
@@ -363,7 +372,8 @@ These are the only material items not proven by current evidence:
 
 1. Live paid supplier smoke.
    - One real production image generation has passed.
-   - Still needed to prove real Anthropic/Otto LLM, real Seedance video, and real reference-video generation with production-like credentials.
+   - Local route QA proves the Otto stream insufficient-credit branch does not execute Otto or persist an AGENT reply after reserve failure.
+   - Still needed to prove real Anthropic/Otto successful turn accounting, real Seedance video, and real reference-video generation with production-like credentials.
    - Remaining paid calls must stay inside the founder-approved spend cap.
    - Execution checklist: `docs/review/EXTERNAL-SMOKE-RUNBOOK-2026-07-04.md`.
 
