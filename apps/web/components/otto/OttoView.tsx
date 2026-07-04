@@ -124,7 +124,7 @@ export function OttoView({
     return <OttoSchedule stuffItems={stuffItems} onNavigate={onViewChange} />;
   }
   if (view === "analytics") {
-    return <OttoAnalytics initial={analytics} onNavigate={onViewChange} />;
+    return <OttoAnalytics initial={analytics} onNavigate={onViewChange} onUseInOtto={onUseInOtto} />;
   }
   if (view === "stuff") {
     return (
