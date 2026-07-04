@@ -1,8 +1,8 @@
 # Launch Readiness Audit - 2026-07-04
 
 PR: https://github.com/toolsbbb/FIKIRTIVE/pull/131
-Latest local follow-up head audited in this report: `7eef840`
-Last GitHub CI-green pushed head before the Otto stream follow-up: `7d62bb7`
+Latest local follow-up head audited in this report: `17a10f2`
+Last GitHub CI-green pushed head before the Meta OAuth route follow-up: `6058178`
 Merge state: `CLEAN`
 
 This audit consolidates the local QA reports, tracked review docs, PR comments, and CI status for the public-launch readiness goal. It does not replace the per-surface reports; it maps them to the launch requirements and names the remaining gates.
@@ -17,6 +17,7 @@ This audit consolidates the local QA reports, tracked review docs, PR comments, 
 - Production smoke explicitly used real generation once and real Google OAuth initiation; local Meta connected-fixture QA now covers post-connect UI states without real Meta writes.
 - Local Stripe webhook integration QA covers the route-to-ledger idempotency path without real Stripe checkout or event delivery.
 - Local Otto stream route QA covers the insufficient-credit branch for `/api/otto/stream` without real Anthropic/Otto transport.
+- Local Meta OAuth route QA covers authorize/callback auth gates, signed owner state, success/error redirects, and the callback URI passed into connection completion without calling real Meta.
 
 ## Requirement Status
 
@@ -27,10 +28,10 @@ This audit consolidates the local QA reports, tracked review docs, PR comments, 
 | Mobile layout is launch-safe for tested surfaces | Proven for tested surfaces at 390px | Per-surface mobile checks and screenshots |
 | Margin model is above constitutional floor | Proven from executable pricing and current official BytePlus evidence | `docs/review/MARGIN-PARITY-REPORT-2026-07-04.md` |
 | All changes/reports are handled in PR | Proven for tracked reports and PR comments | PR #131, tracked docs, comments |
-| CI is green | Proven for pushed head `7d62bb7`; latest local follow-up has local verification and awaits PR CI after push | GitHub checks for `7d62bb7`: typecheck/fences/lockfile, next build, unit + integration all passed |
+| CI is green | Proven for pushed head `6058178`; latest local follow-up has local verification and awaits PR CI after push | GitHub checks for `6058178`: typecheck/fences/lockfile, next build, unit + integration all passed |
 | Live paid supplier smoke | Partially proven in production | One real production image generation passed with USD 0.16 COGS; see `docs/review/EXTERNAL-SMOKE-RESULTS-2026-07-04.md`. Local route QA now covers Otto stream insufficient-credit behavior, but real Anthropic/Otto success accounting, video, and reference-video were not run. |
 | Real Stripe checkout/webhook | Partially proven locally; hosted checkout and Stripe event delivery still not proven | Commit `fd7f8e2` hardens checkout session creation failures. Commit `f8d30e6` adds DB-backed route integration proving unpaid sessions do not grant, delayed paid sessions grant once, and paid replay does not double-grant. See `docs/review/QA-STRIPE-WEBHOOK-INTEGRATION-2026-07-04.md`. |
-| Real Meta/Google OAuth and connected Meta states | Partially proven | Fourth follow-up Google OAuth reached Google's sign-in page with the Better Auth callback URI and no mismatch. Local Meta fixture QA proves connected Connections/Analytics/autonomy/kill-switch states. Real Google consent/callback and real Meta OAuth/token exchange remain unproven. See `docs/review/EXTERNAL-SMOKE-RESULTS-2026-07-04.md` and `docs/review/QA-META-CONNECTED-FIXTURE-2026-07-04.md`. |
+| Real Meta/Google OAuth and connected Meta states | Partially proven | Fourth follow-up Google OAuth reached Google's sign-in page with the Better Auth callback URI and no mismatch. Local Meta fixture QA proves connected Connections/Analytics/autonomy/kill-switch states. Local Meta OAuth route QA proves authorize/callback app-owned boundaries. Real Google consent/callback and real Meta consent/token exchange remain unproven. See `docs/review/EXTERNAL-SMOKE-RESULTS-2026-07-04.md`, `docs/review/QA-META-CONNECTED-FIXTURE-2026-07-04.md`, and `docs/review/QA-META-OAUTH-ROUTE-2026-07-04.md`. |
 | Production deploy/canary | Partially proven for current production only | Current production route smoke passed for tested normal/admin routes, but production was not serving PR #131 admin v2. PR #131 is now merge-clean and CI-green; post-merge deploy canary remains required. |
 | Direct admin credit-action cap | Proven locally with tests and browser QA | Commit `3c655e0` enforces the 1,000 displayed-credit direct cap for founder and tenant actions; over-limit Apply buttons are disabled and server actions reject the same input. |
 
@@ -310,6 +311,7 @@ Load-bearing constraints:
 - `172c070` - Analytics insight CTA now pre-fills the Otto composer through the existing seed-text path.
 - `f8d30e6` - Stripe webhook route integration covers real credit-ledger idempotency for delayed-payment replay.
 - `7eef840` - Otto stream route test covers insufficient-credit behavior without running Otto or persisting an AGENT reply.
+- `17a10f2` - Meta OAuth route tests cover authorize/callback gates, signed owner state, and success/error redirects.
 
 ## Current Verification State
 
@@ -350,7 +352,14 @@ Local verification for `7eef840`:
 - `pnpm --filter @fikirtive/web typecheck`: pass.
 - The route test proves `/api/otto/stream` returns a stream `insufficient_credits` error without calling Otto `run()`, without finalizing the run, and without persisting an AGENT message when metering reserve fails.
 
-GitHub CI for pushed code head `7d62bb7` before the Otto stream follow-up:
+Local verification for `17a10f2`:
+
+- Report: `docs/review/QA-META-OAUTH-ROUTE-2026-07-04.md`
+- `pnpm --filter @fikirtive/web exec vitest run lib/__tests__/meta-oauth-route.test.ts lib/__tests__/meta-oauth.test.ts lib/__tests__/meta-actions.test.ts`: pass, 31 tests.
+- `pnpm --filter @fikirtive/web typecheck`: pass.
+- The route test proves `/api/meta/authorize` and `/api/meta/callback` enforce auth, build and verify signed owner state, avoid calling connection completion on missing/mismatched state, pass the exact callback URI to `completeMetaConnect`, and return explicit Connections redirects.
+
+GitHub CI for pushed code head `6058178` before the Meta OAuth route follow-up:
 
 - `typecheck + fences + frozen lockfile`: pass
 - `next build (apps/web)`: pass
@@ -386,6 +395,7 @@ These are the only material items not proven by current evidence:
 3. Real Meta/Google OAuth and connected Meta states.
    - Local QA verified links, disconnected states, and fixture-backed connected Connections/Analytics states.
    - Google OAuth initiation now reaches Google sign-in; callback/consent still needs a controlled Google account.
+   - Local Meta OAuth route tests now cover app-owned authorize/callback boundaries up to the `completeMetaConnect` seam.
    - Real Meta OAuth, token exchange, real token persistence, reconnect after expiry, real outage behavior, publish-draft, and real disconnect still need OAuth credentials.
    - Execution checklist: `docs/review/EXTERNAL-SMOKE-RUNBOOK-2026-07-04.md`.
 
