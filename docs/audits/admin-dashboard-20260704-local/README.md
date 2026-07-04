@@ -57,6 +57,12 @@ Follow-up source QA completed after the margin pass:
 - Otto Ops action screenshots were captured as `qa-25-admin-otto-live-actions-prod-desktop.png` and `qa-26-admin-otto-live-actions-prod-mobile.png` in `.gstack/qa-reports/screenshots/`. Desktop and 390px mobile had no browser console errors, no page errors, and no horizontal overflow.
 - Local QA fixture note: `artlio_test` was missing the migration-seeded `Organization(id="founder")`, so the row was restored with the same idempotent seed shape before action QA. The founder org is required by `ActionEvent.ownerId` foreign keys and is seeded by `20260619120000_org_tenant`.
 
+Launch blocker found during constitution cross-check:
+
+- `docs/BLUEPRINT.md` section 2.7 and section 4 require the Parity Manifest seam for every new server action / page data read, with one of four explicit exemptions. Admin is one of the valid exemptions, so Admin v2's data reads and admin actions are conceptually exempt from Otto control.
+- The implementation seam is not present in the repo yet: `packages/otto/src/parity-manifest.ts` and `scripts/check-parity.sh` do not exist. The only source is the design doc `docs/design/2026-07-03-harmony-02-parity-manifest.md`, and `docs/review/EXPANSION-SEAMS.md` still describes CI as "in build".
+- Because the blueprint also says code/blueprint conflicts require stopping and reporting for founder/reviewer裁决, this PR's green CI is not by itself sufficient to call the public-launch audit complete. The open decision is whether to implement the global Parity Manifest rollout now, or explicitly accept this Admin v2 PR under the documented `ADMIN` exemption while a separate Parity Manifest PR lands.
+
 Verification commands:
 
 - `corepack pnpm --filter @fikirtive/web typecheck`
