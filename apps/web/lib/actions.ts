@@ -570,6 +570,7 @@ export async function uploadReference(projectId: string, formData: FormData): Pr
   if (!file) return { error: "No image received." };
   const ext = extFromFilename(file.name);
   if (!REF_IMAGE_EXTS.has(ext)) return { error: "Reference must be a PNG, JPG, or WEBP image." };
+  if (file.size > REF_MAX_BYTES) return { error: "Reference image must be 10 MB or smaller." };
   if (!(await looksLikeImage(file))) return { error: "That file isn't a valid PNG / JPG / WEBP image." };
   const item = await ingestFile(ownerId, file);
   let genId = "";

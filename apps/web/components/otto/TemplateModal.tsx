@@ -11,10 +11,9 @@ import {
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import DetailPanel from "@/components/asset/DetailPanel";
-import { startGen, getGenJob } from "@/lib/gen-actions";
+import { startGen, getGenJob, getActiveGenModels } from "@/lib/gen-actions";
 import { uploadFilesDirect } from "@/lib/direct-upload";
 import { finalizeCandidateUploads } from "@/lib/upload-actions";
-import { activeImageModel } from "@fikirtive/core/model-config";
 import type { EntityDTO } from "@/lib/types";
 import { type Template, buildTemplatePrompt, templateRunCredits } from "@/lib/templates";
 import { creditsLabel } from "@/lib/credit-format";
@@ -33,6 +32,8 @@ export default function TemplateModal({
   onClose: () => void;
 }) {
   const cancelledRef = useRef(false);
+  const inFlightRef = useRef(false);
+  const idempotencyKeyRef = useRef<string | null>(null);
   useEffect(() => {
     cancelledRef.current = false;
     return () => { cancelledRef.current = true; };
@@ -99,35 +100,59 @@ export default function TemplateModal({
   const canGenerate =
     !uploading && !!sourceGenId && (!template.question || answer.trim().length > 0) && phase === "form";
 
+  useEffect(() => {
+    idempotencyKeyRef.current = null;
+  }, [template.id, sourceGenId, answer]);
+
+  function templateRunKey() {
+    const safeTemplateId = template.id.replace(/[^a-zA-Z0-9_-]/g, "").slice(0, 24) || "template";
+    const runId = typeof globalThis.crypto?.randomUUID === "function"
+      ? globalThis.crypto.randomUUID()
+      : Math.random().toString(36).slice(2, 12);
+    idempotencyKeyRef.current ??= `tpl:${safeTemplateId}:${runId}`;
+    return idempotencyKeyRef.current;
+  }
+
   async function onGenerate() {
-    if (!sourceGenId) return;
+    if (!sourceGenId || phase !== "form" || inFlightRef.current) return;
+    inFlightRef.current = true;
     setError(null);
     setConfirming(false);
     setPhase("generating");
-    const started = await startGen({
-      projectId,
-      kind: "image",
-      sourceGenerationId: sourceGenId,
-      prompt: buildTemplatePrompt(template, answer),
-      model: activeImageModel(),
-      count: 1,
-      idempotencyKey: `tpl-${template.id}-${Date.now()}`,
-    });
-    if ("error" in started) {
-      setError(started.error);
-      setPhase("form");
-      return;
+    try {
+      const { image } = await getActiveGenModels();
+      const started = await startGen({
+        projectId,
+        kind: "image",
+        sourceGenerationId: sourceGenId,
+        prompt: buildTemplatePrompt(template, answer),
+        model: image,
+        count: 1,
+        idempotencyKey: templateRunKey(),
+      });
+      if ("error" in started) {
+        setError(started.error);
+        setPhase("form");
+        return;
+      }
+      const out = await pollJob(started.id);
+      if (cancelledRef.current) return;
+      if (!out) {
+        setError("Generation failed — please try again.");
+        setPhase("form");
+        return;
+      }
+      setResultUrl(out.url);
+      setResultGenId(out.genId);
+      setPhase("done");
+    } catch {
+      if (!cancelledRef.current) {
+        setError("Generation failed — please try again.");
+        setPhase("form");
+      }
+    } finally {
+      inFlightRef.current = false;
     }
-    const out = await pollJob(started.id);
-    if (cancelledRef.current) return;
-    if (!out) {
-      setError("Generation failed — please try again.");
-      setPhase("form");
-      return;
-    }
-    setResultUrl(out.url);
-    setResultGenId(out.genId);
-    setPhase("done");
   }
 
   const costLabel = creditsLabel(templateRunCredits());
@@ -136,7 +161,7 @@ export default function TemplateModal({
     phase === "done" ? (
       <>
         <Button type="button" variant="ghost" size="sm" onClick={() => setDetailOpen(true)}>Open in detail</Button>
-        <Button type="button" variant="ghost" size="sm" onClick={() => { setPhase("form"); setResultUrl(null); setResultGenId(null); }}>Make another</Button>
+        <Button type="button" variant="ghost" size="sm" onClick={() => { idempotencyKeyRef.current = null; setPhase("form"); setResultUrl(null); setResultGenId(null); }}>Make another</Button>
         <Button type="button" variant="brand" size="sm" onClick={onClose}>Close</Button>
       </>
     ) : phase === "generating" ? (
