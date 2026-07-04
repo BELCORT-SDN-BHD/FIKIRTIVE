@@ -11,6 +11,13 @@ Aligned executable pricing, quote, reserve, settlement, and recorded COGS with t
 - BytePlus Advanced Creation Rights guide: relevant for the future hidden KYC/high-volume asset-library path, not the public reference-video pricing path.
 - BytePlus private virtual portrait / real-human asset docs: treated as KYC advanced references only; no public-launch feature change was made from these docs.
 
+## Follow-up source audit — 2026-07-04
+
+- Official BytePlus ModelArk pricing page was checked again. It was last updated on 2026-07-02 and still exposes Seedance 2.0 pricing as public ModelArk pricing, while the resource-pack page itself is JS/content-gated in this environment.
+- Official BytePlus Seedance product page still links to pricing/billing and describes resource plans for Dreamina Seedance 2.0 / 2.0 mini, but plan prices render client-side as "Loading pricing..." here.
+- Official Advanced Creation Rights guide was checked again. It lists Advanced Creation Rights at $14,000/year or $1,400/month, Premium at $42,000/year or $4,200/month, larger private asset quotas, higher QPM, non-refundability, and asset deletion after the grace/reclamation window. This is an enterprise/KYC entitlement path, not a current public-launch spend path in code.
+- Official private virtual portrait and real-human asset pages remain accessible only as public shells from this environment; they were not used to change launch pricing or runtime behavior.
+
 ## Changes Made
 
 - `pricedGenCredits` now charges Seedance video from the final model:
@@ -35,6 +42,7 @@ Aligned executable pricing, quote, reserve, settlement, and recorded COGS with t
 - `DATABASE_URL='postgresql://artlio:artlio@localhost:5432/artlio_test' COREPACK_ENABLE_DOWNLOAD_PROMPT=0 corepack pnpm -r test`
 - `DATABASE_URL='postgresql://artlio:artlio@localhost:5432/artlio_test' COREPACK_ENABLE_DOWNLOAD_PROMPT=0 corepack pnpm -r build`
 - `COREPACK_ENABLE_DOWNLOAD_PROMPT=0 corepack pnpm --filter @fikirtive/web exec eslint lib/gen-actions.ts lib/video-frame.ts lib/__tests__/video-frame.test.ts`
+- `COREPACK_ENABLE_DOWNLOAD_PROMPT=0 corepack pnpm --filter @fikirtive/core exec vitest run src/spend.test.ts src/gen.test.ts src/llm-prices.test.ts`
 - `git diff --check`
 
 ## Notes

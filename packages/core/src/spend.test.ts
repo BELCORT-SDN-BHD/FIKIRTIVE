@@ -49,6 +49,12 @@ describe("refgenSpentUsd", () => {
 });
 
 describe("credit pricing (deterministic CHARGE in internal credits; 1 internal = $0.01, 1 displayed = 10 internal)", () => {
+  const revenueUsd = (internalCredits: number) => internalCredits / CREDITS_PER_USD;
+  const expectMarginAtLeast45 = (internalCredits: number, cogsUsd: number) => {
+    const revenue = revenueUsd(internalCredits);
+    expect(cogsUsd).toBeLessThanOrEqual(revenue * 0.55 + 1e-9);
+  };
+
   it("image = 1 displayed credit (10 internal) PER image — flat, with margin over the ~$0.04 true cost", () => {
     expect(pricedGenCredits({ kind: "IMAGE", model: "seedream", count: 1, videoOptions: null })).toBe(10);
     expect(pricedGenCredits({ kind: "IMAGE", model: "seedream", count: 4, videoOptions: null })).toBe(40);
@@ -106,5 +112,24 @@ describe("credit pricing (deterministic CHARGE in internal credits; 1 internal =
   it("beta signup grant is 100 displayed credits (internal = ×INTERNAL_PER_DISPLAY)", () => {
     expect(BETA_INITIAL_GRANT_CREDITS).toBe(100 * INTERNAL_PER_DISPLAY);
     expect(displayCredits(BETA_INITIAL_GRANT_CREDITS)).toBe(100);
+  });
+  it("launch-priced spend points satisfy the constitutional >=45% margin floor", () => {
+    const image = { kind: "IMAGE" as const, model: "seedream", count: 1, videoOptions: null };
+    expectMarginAtLeast45(pricedGenCredits(image), genSpentUsd(image));
+
+    const seedance5s = { kind: "VIDEO" as const, model: "seedance-2-fast", count: 1, videoOptions: { seconds: 5, resolution: "720p", audio: true } };
+    expectMarginAtLeast45(pricedGenCredits(seedance5s), genSpentUsd(seedance5s));
+
+    const seedance10s = { kind: "VIDEO" as const, model: "seedance-2-fast", count: 1, videoOptions: { seconds: 10, resolution: "720p", audio: true } };
+    expectMarginAtLeast45(pricedGenCredits(seedance10s), genSpentUsd(seedance10s));
+
+    const referenceVideo = {
+      kind: "VIDEO" as const,
+      model: "seedance-2-fast",
+      count: 1,
+      referenceVideoGenerationId: "gen_ref",
+      videoOptions: { seconds: 5, resolution: "720p", audio: true },
+    };
+    expectMarginAtLeast45(pricedGenCredits(referenceVideo), genSpentUsd(referenceVideo));
   });
 });
