@@ -17,7 +17,7 @@ export const MAX_BODY = 512 * 1024; // 512KB
  * safety envelope lives in exactly one place.
  */
 async function fetchRawCappedHtml(raw: string): Promise<{ url: string; html: string }> {
-  // SSRF guard — same as researchBrandFromUrl
+  // SSRF guard: every user-supplied URL resolves through the public-only allowlist first.
   const url = await assertPublicHttpUrlResolved(raw);
 
   const response = await fetch(url.href, {

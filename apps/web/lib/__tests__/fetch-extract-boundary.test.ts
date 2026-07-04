@@ -24,11 +24,8 @@ describe("fetchAndExtract module boundary (F16)", () => {
     // and keep the guards above.
     expect(src).toMatch(/export \{[^}]*\bfetchAndExtract\b[^}]*\} from "@fikirtive\/core\/server"/);
   });
-
-  it("brand-research.ts no longer defines/exports fetchAndExtract", () => {
-    const src = read("../brand-research.ts");
-    expect(src).not.toMatch(/export async function fetchAndExtract/);
-  });
+  // (The old brand-research.ts SSRF-reintroduction guard was dropped 2026-07-04 when that
+  //  dead pre-Otto module was deleted — there is no longer a file that could reintroduce it.)
 });
 
 describe("meta-build-actions module boundary (F12)", () => {

@@ -126,18 +126,11 @@ export const PARITY_MANIFEST = {
   "billing-actions.listCreditPacks": { exempt: "MONEY_IN", reason: "Credit purchase/money-in surfaces are never delegated to Otto." },
   "billing-actions.createTopupCheckout": { exempt: "MONEY_IN", reason: "Credit purchase/money-in surfaces are never delegated to Otto." },
 
-  "brand-actions.getBrandKit": { skill: "lookupProducts" },
-  "brand-actions.saveBrandKit": { skill: "rememberBrandFact" },
-  "brand-actions.listBrandRules": { skill: "lookupProducts" },
-  "brand-actions.addBrandRule": { skill: "rememberBrandFact" },
-  "brand-actions.setBrandRuleActive": { skill: "rememberBrandFact" },
-  "brand-actions.deleteBrandRule": { skill: "rememberBrandFact" },
   "brand-record-actions.listMyBrandRecords": { skill: "lookupProducts" },
   "brand-record-actions.listBrandRecords": { skill: "lookupProducts" },
   "brand-record-actions.saveBrandRecord": { skill: "saveProduct" },
   "brand-record-actions.deleteBrandRecord": { todoSkill: true, reason: "Brand record deletion needs a matching brand-memory skill path." },
   "brand-record-actions.restoreBrandRecord": { todoSkill: true, reason: "Brand record restore needs a matching brand-memory skill path." },
-  "brand-research.researchBrandFromUrl": { skill: "researchWeb" },
   "product-ingest-actions.ingestProductFromUrl": { skill: "ingestProduct" },
 
   "canvas-actions.listCanvasNodes": { todoSkill: true, reason: "Canvas read parity needs a canvas read/place skill." },
