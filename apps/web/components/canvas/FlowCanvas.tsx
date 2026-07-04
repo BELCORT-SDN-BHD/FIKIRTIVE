@@ -28,6 +28,7 @@ type FlowCanvasProps = {
   activity?: Set<string>;
   skin?: "gb";
   onBalanceRefresh?: () => void | Promise<void>;
+  onActivityRefresh?: () => void | Promise<void>;
   directToolsLocked?: boolean;
   directToolsLockedReason?: string;
 };
@@ -42,6 +43,7 @@ export default function FlowCanvas({
   activity,
   skin,
   onBalanceRefresh,
+  onActivityRefresh,
   directToolsLocked = false,
   directToolsLockedReason = "Start with Otto first.",
 }: FlowCanvasProps) {
@@ -91,7 +93,12 @@ export default function FlowCanvas({
   const fitTimerRef = useRef<number | null>(null);
   const [flowReady, setFlowReady] = useState(false);
   const [canvasReady, setCanvasReady] = useState(false);
-  const requestReload = useCallback(() => { void reloadRef.current?.(); }, []);
+  const requestReload = useCallback(() => {
+    void (async () => {
+      await reloadRef.current?.();
+      await onActivityRefresh?.();
+    })();
+  }, [onActivityRefresh]);
 
   // Keep a ref to animate() so per-node closures don't go stale
   const animateFnRef = useRef<ReturnType<typeof useCanvasGen>["animate"] | null>(null);

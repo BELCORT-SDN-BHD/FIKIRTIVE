@@ -106,19 +106,28 @@ export function OttoApp({
   const [navCollapsed, setNavCollapsed] = useState(initialNavCollapsed ?? false);
   const [chatCollapsed, setChatCollapsed] = useState(initialChatCollapsed ?? false);
 
+  const applyActivity = useCallback((rows: Array<{ threadId: string; pending: boolean }>) => {
+    setActivity(new Set(rows.filter((r) => r.pending).map((r) => r.threadId)));
+  }, []);
+
+  const refreshActivity = useCallback(async () => {
+    const res = await listProjectThreadActivity(projectId);
+    if (Array.isArray(res)) applyActivity(res);
+  }, [projectId, applyActivity]);
+
   useEffect(() => {
     if (view !== "otto") return;
     let alive = true;
     async function poll() {
       const res = await listProjectThreadActivity(projectId);
       if (alive && Array.isArray(res)) {
-        setActivity(new Set(res.filter((r) => r.pending).map((r) => r.threadId)));
+        applyActivity(res);
       }
     }
     poll();
     const h = setInterval(poll, 4000);
     return () => { alive = false; clearInterval(h); };
-  }, [view, projectId, threads.length]);
+  }, [view, projectId, threads.length, applyActivity]);
 
   const refreshBalance = useCallback(async () => {
     const a = await getMyAccount();
@@ -357,6 +366,7 @@ export function OttoApp({
           onBalanceRefresh={refreshBalance}
           onViewChange={setView}
           activity={activity}
+          onActivityRefresh={refreshActivity}
           onDeleteThread={handleDeleteThread}
           onNewConvo={() => setActiveThreadId(null)}
           seedText={seedText}

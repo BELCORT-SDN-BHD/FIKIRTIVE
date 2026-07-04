@@ -45,6 +45,7 @@ interface OttoViewProps {
   analytics: AnalyticsData;
   ottoStreamEnabled: boolean;
   onBalanceRefresh: () => Promise<void>;
+  onActivityRefresh?: () => Promise<void>;
   onViewChange: (view: OttoViewKey) => void;
   activity: Set<string>;
   onDeleteThread: (id: string) => void;
@@ -78,6 +79,7 @@ export function OttoView({
   analytics,
   ottoStreamEnabled,
   onBalanceRefresh,
+  onActivityRefresh,
   onViewChange,
   activity,
   onDeleteThread,
@@ -311,6 +313,7 @@ export function OttoView({
           activity={activity}
           skin={skin}
           onBalanceRefresh={onBalanceRefresh}
+          onActivityRefresh={onActivityRefresh}
           directToolsLocked={showFrontDoor}
           directToolsLockedReason="Start with Otto to unlock canvas tools."
         />
