@@ -10,11 +10,13 @@ import { assertPublicHttpUrlResolved } from "./url-safety.js";
 export const MAX_BODY = 512 * 1024; // 512KB
 
 /**
- * fetchAndExtract — SSRF-hardened page fetch + HTML-strip.
- * Reusable by the researchWeb skill port (G3a) without auth or LLM overhead.
- * Throws on any fetch/SSRF/network error (caller wraps in try/catch).
+ * fetchRawCappedHtml — the shared SSRF-hardened fetch. Resolves + guards the URL
+ * (lexical + DNS, closing rebinding), fetches with redirect:"error" + 8s timeout,
+ * and caps the decoded body at MAX_BODY. Returns the RAW HTML (no tag-stripping).
+ * Both fetchAndExtract (strips) and fetchRawHtml (keeps markup) build on this so the
+ * safety envelope lives in exactly one place.
  */
-export async function fetchAndExtract(raw: string): Promise<{ url: string; title?: string; text: string }> {
+async function fetchRawCappedHtml(raw: string): Promise<{ url: string; html: string }> {
   // SSRF guard — same as researchBrandFromUrl
   const url = await assertPublicHttpUrlResolved(raw);
 
@@ -30,13 +32,33 @@ export async function fetchAndExtract(raw: string): Promise<{ url: string; title
 
   const buf = await response.arrayBuffer();
   const capped = buf.byteLength > MAX_BODY ? buf.slice(0, MAX_BODY) : buf;
-  const rawText = new TextDecoder().decode(capped);
+  const html = new TextDecoder().decode(capped);
+  return { url: url.href, html };
+}
+
+/**
+ * fetchRawHtml — SSRF-hardened page fetch returning the RAW HTML (markup intact).
+ * Needed by product-page extraction (P1-01): JSON-LD lives in <script> and OG in
+ * <meta>, both of which fetchAndExtract strips away. Throws on any fetch/SSRF/network
+ * error (caller wraps in try/catch).
+ */
+export async function fetchRawHtml(raw: string): Promise<{ url: string; html: string }> {
+  return fetchRawCappedHtml(raw);
+}
+
+/**
+ * fetchAndExtract — SSRF-hardened page fetch + HTML-strip.
+ * Reusable by the researchWeb skill port (G3a) without auth or LLM overhead.
+ * Throws on any fetch/SSRF/network error (caller wraps in try/catch).
+ */
+export async function fetchAndExtract(raw: string): Promise<{ url: string; title?: string; text: string }> {
+  const { url, html } = await fetchRawCappedHtml(raw);
 
   // Extract <title> tag for a human-readable label
-  const titleMatch = rawText.match(/<title[^>]*>([^<]{1,200})<\/title>/i);
+  const titleMatch = html.match(/<title[^>]*>([^<]{1,200})<\/title>/i);
   const title = titleMatch ? titleMatch[1]!.trim() : undefined;
 
-  const text = rawText.replace(/<[^>]*>/g, " ").replace(/\s+/g, " ").trim().slice(0, 6000);
+  const text = html.replace(/<[^>]*>/g, " ").replace(/\s+/g, " ").trim().slice(0, 6000);
 
-  return { url: url.href, title, text };
+  return { url, title, text };
 }

@@ -1,4 +1,4 @@
-import type { GenRequestInput } from "@fikirtive/core";
+import type { GenRequestInput, ProductDraft } from "@fikirtive/core";
 
 /** Minimal structural re-declaration of MetaAdObject for the otto package.
  *  The web type (apps/web/lib/meta-objects.ts) must NOT be imported here. */
@@ -176,5 +176,14 @@ export interface OttoContext {
    *  memory-actions.ts directly (CI fence rule). */
   brandBrain?: {
     context(): Promise<string>;
+  };
+  /** Product-ingest port (P1-01) — injected by the web caller. Fetches a URL (SSRF-hardened)
+   *  and runs the deterministic Layer-1 extractor, returning a product DRAFT plus the page text.
+   *  Otto fills any gaps itself from `text` (no separate LLM call) — that is this path's Layer 2.
+   *  Skills reach it ONLY via ctx.productIngest — never importing fetch-extract/product-extract
+   *  or calling fetch() directly (CI fence rule). Absent in the minimal worker verdict ctx; the
+   *  skill degrades gracefully when it is not injected. */
+  productIngest?: {
+    fromUrl(url: string): Promise<{ draft: ProductDraft; text: string } | { error: string }>;
   };
 }

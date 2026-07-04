@@ -35,6 +35,7 @@ import {
   tavilySearch,
   braveSearch,
   searchWithFallback,
+  extractProductDraft,
 } from "@fikirtive/core";
 import { otto, withLlmBudget, OTTO_DEFAULT_MODEL, run, MaxTurnsExceededError, mapOttoUsage, ottoSimpleModeBlock, buildUserTurn, sanitizeHistory, tryRestoreRunState } from "@fikirtive/otto";
 import type { OttoContext, AgentInputItem } from "@fikirtive/otto";
@@ -44,7 +45,7 @@ import { resolveDisabledModels } from "./model-registry";
 import { startGen } from "./gen-actions";
 import { gatherReferenceImages } from "./otto-ref-images";
 import { getBrandContextText } from "./memory-actions";
-import { fetchAndExtract } from "./fetch-extract";
+import { fetchAndExtract, fetchRawHtml } from "./fetch-extract";
 import { readPageCached } from "./web-page-cache";
 import { fetchOwnerInsights } from "./meta-insights";
 import { fetchOwnerAdPerformance } from "./meta-performance";
@@ -197,6 +198,20 @@ export async function buildOttoContext({
       fetchUrl: fetchAndExtract,
       search,
       readPage: (url: string, page?: number) => readPageCached(url, page),
+    },
+    productIngest: {
+      // Layer 1 only: fetch (SSRF-hardened) + deterministic extract, plus the page text so
+      // Otto itself fills any gaps (that is the skill path's Layer 2 — no separate LLM call).
+      fromUrl: async (url: string) => {
+        try {
+          const { html, url: sourceUrl } = await fetchRawHtml(url);
+          const draft = extractProductDraft(html, sourceUrl);
+          const text = html.replace(/<[^>]*>/g, " ").replace(/\s+/g, " ").trim().slice(0, 6000);
+          return { draft, text };
+        } catch (e) {
+          return { error: e instanceof Error ? e.message : "Couldn't read that URL." };
+        }
+      },
     },
   };
 }

@@ -118,35 +118,8 @@ function PerfRowView({ row, variant }: { row: PerfRow; variant: "winner" | "lose
             {dataGap}
           </div>
         )}
-        <div className="flex gap-2 mt-[9px]">
-          {variant === "winner" ? (
-            <ActionButton variant="recreate">✦ Recreate this</ActionButton>
-          ) : (
-            <>
-              <ActionButton variant="recreate">✦ Make a fresh version</ActionButton>
-              <ActionButton variant="angle">Try a new angle</ActionButton>
-            </>
-          )}
-        </div>
       </div>
     </div>
-  );
-}
-
-function ActionButton({ variant, children }: { variant: "recreate" | "angle"; children: React.ReactNode }) {
-  return (
-    <button
-      type="button"
-      // TODO(P3): wire recreate / new-angle to the creation chain
-      onClick={() => {}}
-      className={
-        variant === "recreate"
-          ? "h-[31px] rounded-[9px] text-[0.75rem] font-semibold px-3 inline-flex items-center gap-[5px] border border-brand text-brand bg-card"
-          : "h-[31px] rounded-[9px] text-[0.75rem] font-semibold px-3 inline-flex items-center gap-[5px] border border-border text-muted-foreground bg-card"
-      }
-    >
-      {children}
-    </button>
   );
 }
 

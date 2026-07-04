@@ -11,6 +11,7 @@ import { saveProductSkill } from "./skills/save-product.js";
 import { saveCustomerSegmentSkill } from "./skills/save-customer-segment.js";
 import { saveOfferSkill } from "./skills/save-offer.js";
 import { lookupProductsSkill } from "./skills/lookup-products.js";
+import { ingestProductSkill } from "./skills/ingest-product.js";
 import { researchWebSkill } from "./skills/research-web.js";
 import { metaInsightsSkill } from "./skills/meta-insights.js";
 import { metaAdPerformanceSkill } from "./skills/meta-ad-performance.js";
@@ -37,6 +38,7 @@ export const allSkills: OttoSkill[] = [
   saveCustomerSegmentSkill,
   saveOfferSkill,
   lookupProductsSkill,
+  ingestProductSkill,
   researchWebSkill,
   metaInsightsSkill,
   metaAdPerformanceSkill,
