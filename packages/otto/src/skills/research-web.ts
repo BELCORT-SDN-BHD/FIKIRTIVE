@@ -8,7 +8,7 @@
  * External reads are NOT gated by the 3-field rule (only external WRITES are).
  *
  * The skill reaches the web ONLY through ctx.research (the injected port). It never
- * imports brand-research.ts or calls fetch() directly — ctx-port rule enforced.
+ * calls fetch() directly — the ctx-port rule is enforced.
  *
  * Two modes:
  *   url   → ctx.research.readPage?(url, page) when wired (cached, page-by-page — Nous-style);

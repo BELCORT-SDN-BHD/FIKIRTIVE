@@ -113,7 +113,9 @@ describe("reaper prefix coverage — every prefixed refId in the codebase is rea
   const inReaper = prefixesInReaper();
 
   it("scanner sanity: finds the known prefixes (a broken regex must not green-wash)", () => {
-    for (const known of ["otto-stream", "otto-turn", "brand-research", "draft", "enhance", "research"]) {
+    // 'brand-research' was dropped 2026-07-04 with the dead pre-Otto module; the reaper still
+    // lists its prefix (harmless — sweeps any historical leaked rows) but source no longer builds it.
+    for (const known of ["otto-stream", "otto-turn", "draft", "enhance", "research"]) {
       expect([...inSource.keys()], `expected the scanner to find "${known}:"`).toContain(known);
     }
     expect(inReaper.size).toBeGreaterThanOrEqual(8);

@@ -13,8 +13,8 @@ export const TENANT_MODELS = new Set([
   "Memory", "GenerationBatch", // v1 additive
   "CanvasNode", // 2026-07-04 审计: canvas is the newest active surface; all queries verified owner-scoped
   // 2026-07-04 adversarial review: all four below verified fully owner-scoped at every
-  // checked-op call site (schedule-actions, brand-actions, brand-record-actions,
-  // memory-actions, lookup-products, _brand-record) — guarded, not exempt.
+  // checked-op call site (schedule-actions, brand-record-actions, memory-actions,
+  // lookup-products, _brand-record) — guarded, not exempt.
   "ScheduledPost", "BrandKit", "BrandRecord", "BrandRule",
 ]);
 
