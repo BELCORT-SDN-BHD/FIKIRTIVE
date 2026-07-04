@@ -313,6 +313,7 @@ Load-bearing constraints:
 - `7eef840` - Otto stream route test covers insufficient-credit behavior without running Otto or persisting an AGENT reply.
 - `17a10f2` - Meta OAuth route tests cover authorize/callback gates, signed owner state, and success/error redirects.
 - `09c700e` - Account sign-out regression test covers Better Auth sign-out before redirecting to `/login`.
+- `3f63598` - Google OAuth config test covers Better Auth callback URL generation for the Google authorization URL.
 
 ## Current Verification State
 
@@ -321,6 +322,7 @@ External production follow-up:
 - Result file: `docs/review/EXTERNAL-SMOKE-RESULTS-2026-07-04.md`
 - One real production image generation completed successfully with USD 0.16 COGS and paired reserve/settle ledger rows.
 - Production Google OAuth initially failed before consent with `redirect_uri_mismatch`; four follow-ups reached Google's sign-in page with `https://fikirtive.com/api/better-auth/callback/google`.
+- Local Google OAuth config QA now pins the Better Auth baseURL/provider wiring that generates the Google `redirect_uri`; real Google consent/callback remains unproven.
 - Local Meta connected-fixture QA passed for connected Connections/Analytics/autonomy/kill-switch states; real Meta OAuth remains unproven.
 - Production did not yet validate PR #131 admin v2 because the PR-only admin routes returned 404 before merge/deploy.
 - Follow-up replacement admin and normal magic links were invalid at test time, including the latest `tools@belcort.com` and `nicksgan@gmail.com` links; earlier fresh magic links had already proven both roles.
@@ -368,6 +370,14 @@ Local verification for `09c700e`:
 - `pnpm --filter @fikirtive/web typecheck`: pass.
 - The regression test proves `signOutAction()` awaits Better Auth `auth.api.signOut({ headers })` before calling `redirect("/login")`.
 
+Local verification for `3f63598`:
+
+- Report: `docs/review/QA-GOOGLE-OAUTH-CONFIG-2026-07-04.md`
+- `pnpm --filter @fikirtive/web exec vitest run lib/__tests__/better-auth-server.test.ts`: pass, 3 tests.
+- `pnpm --filter @fikirtive/web exec vitest run lib/__tests__/better-auth-server.test.ts lib/__tests__/better-auth-client.test.ts lib/__tests__/better-auth-route.test.ts lib/__tests__/better-auth-gate.test.ts`: pass, 16 tests.
+- `pnpm --filter @fikirtive/web typecheck`: pass.
+- The regression test proves the real Better Auth server context registers Google and generates a Google authorization URL whose `redirect_uri` is `{BETTER_AUTH_URL}/api/better-auth/callback/google`.
+
 GitHub CI for pushed code head `6058178` before the Meta OAuth route follow-up:
 
 - `typecheck + fences + frozen lockfile`: pass
@@ -403,7 +413,7 @@ These are the only material items not proven by current evidence:
 
 3. Real Meta/Google OAuth and connected Meta states.
    - Local QA verified links, disconnected states, and fixture-backed connected Connections/Analytics states.
-   - Google OAuth initiation now reaches Google sign-in; callback/consent still needs a controlled Google account.
+   - Google OAuth initiation now reaches Google sign-in; local config QA pins the Better Auth callback URL shape; callback/consent still needs a controlled Google account.
    - Local Meta OAuth route tests now cover app-owned authorize/callback boundaries up to the `completeMetaConnect` seam.
    - Real Meta OAuth, token exchange, real token persistence, reconnect after expiry, real outage behavior, publish-draft, and real disconnect still need OAuth credentials.
    - Execution checklist: `docs/review/EXTERNAL-SMOKE-RUNBOOK-2026-07-04.md`.

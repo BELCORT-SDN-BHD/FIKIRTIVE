@@ -161,6 +161,8 @@ Follow-up evidence:
 
 The earlier `redirect_uri_mismatch` appears fixed in Google Cloud configuration. Full OAuth completion still needs a controlled Google account consent flow.
 
+Local follow-up: `docs/review/QA-GOOGLE-OAUTH-CONFIG-2026-07-04.md` adds a regression test for the app-owned Better Auth configuration that generates the Google authorization `redirect_uri`. It proves the configured route shape, not real Google consent/callback.
+
 ## Admin Route Smoke
 
 Account: `tools@belcort.com`
@@ -260,7 +262,7 @@ Margin check:
 
 1. Have an authorized human merge/deploy PR #131 now that it is `CLEAN` and CI-green.
 2. After deploy, rerun production canary specifically against the PR #131 admin v2 routes.
-3. Complete Google OAuth through consent/callback with a controlled Google account; initiation now reaches Google and no longer shows `redirect_uri_mismatch`.
+3. Complete Google OAuth through consent/callback with a controlled Google account; initiation now reaches Google and no longer shows `redirect_uri_mismatch`, and local config QA now pins the Better Auth callback route shape.
 4. Recheck Account `Sign out` on the deployed PR build; current production cleared the session but did not visibly navigate until the next protected route load, while local regression coverage now pins the expected sign-out-then-redirect action.
 5. Decide whether the old `/admin/content` route should remain reachable. If yes, remove direct cross-tenant `/files` media previews or replace them with an explicit admin-gated preview route.
 6. Run the remaining approved-but-not-executed gates only if still needed: Stripe test-mode hosted checkout/event delivery, Meta OAuth, real video, reference-video, and Otto LLM accounting.
