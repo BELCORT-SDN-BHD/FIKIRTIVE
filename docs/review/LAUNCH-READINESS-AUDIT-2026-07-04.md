@@ -25,10 +25,10 @@ This audit consolidates the local QA reports, tracked review docs, PR comments, 
 | Margin model is above constitutional floor | Proven from executable pricing and current official BytePlus evidence | `docs/review/MARGIN-PARITY-REPORT-2026-07-04.md` |
 | All changes/reports are handled in PR | Proven for tracked reports and PR comments | PR #131, tracked docs, comments |
 | CI is green | Proven | GitHub checks for run `28696231293`: typecheck/fences/lockfile, next build, unit + integration all passed |
-| Live paid supplier smoke | Not yet proven | Requires explicit per-spend founder approval despite the broad $60 allowance |
+| Live paid supplier smoke | Partially proven in production | One real production image generation passed; see `docs/review/EXTERNAL-SMOKE-RESULTS-2026-07-04.md`. Video, reference-video, and Otto LLM-only accounting were not run. |
 | Real Stripe checkout/webhook | Not yet proven | Local QA intentionally avoided real checkout |
-| Real Meta/Google OAuth and connected Meta states | Not yet proven | Local QA checked handoff links and disconnected states only |
-| Production deploy/canary | Not yet proven in this PR | PR is clean and CI green, but no merge/deploy/canary was run |
+| Real Meta/Google OAuth and connected Meta states | Failed for Google; Meta not run | Production Google OAuth failed with `redirect_uri_mismatch`; connected OAuth state remains unproven. See `docs/review/EXTERNAL-SMOKE-RESULTS-2026-07-04.md`. |
+| Production deploy/canary | Partially proven for current production only | Current production route smoke passed for tested normal/admin routes, but production was not serving PR #131 admin v2 and PR merge state later reported `DIRTY`. |
 
 ## Browser QA Coverage
 
@@ -242,6 +242,13 @@ Load-bearing constraints:
 - `0985a94` - Launch readiness audit added.
 
 ## Current Verification State
+
+External production follow-up:
+
+- Result file: `docs/review/EXTERNAL-SMOKE-RESULTS-2026-07-04.md`
+- One real production image generation completed successfully with USD 0.16 COGS and paired reserve/settle ledger rows.
+- Production Google OAuth failed before consent with `redirect_uri_mismatch` for `https://fikirtive.com/api/better-auth/callback/google`.
+- Production did not yet validate PR #131 admin v2 because the PR-only admin routes returned 404 on production and GitHub reported merge state `DIRTY`.
 
 GitHub CI for audited code head `0985a94`:
 
