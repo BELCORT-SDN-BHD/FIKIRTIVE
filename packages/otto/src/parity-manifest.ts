@@ -6,11 +6,11 @@
  * action that SHOULD get a skill but doesn't yet — 欠账清单, not an exemption). This turns 宪法 7
  * ("Otto can operate 100% of what a human can") from prose into structure.
  *
- * STATUS — rollout per harmony-02 §四: this is the initial SEED, registering the P1-01 product-ingest
- * surface, the P-block Meta performance surface, and Schedule slice action surface. Full backfill
- * of every existing action (盘点回填) and the CI enforcer (scripts/check-parity.sh, warn→hard) are
- * separate follow-ups. Keep this a PURE LITERAL (SECTION_MATRIX style) so a diff is one-glance
- * auditable. A new exemption class = a constitution amendment (founder-approved).
+ * STATUS — rollout per harmony-02 §四: this is the initial SEED, registering the Schedule,
+ * P1-01 product-ingest, and P-block Meta performance surfaces. Full backfill of every existing
+ * action (盘点回填) and the CI enforcer (scripts/check-parity.sh, warn→hard) are separate follow-ups.
+ * Keep this a PURE LITERAL (SECTION_MATRIX style) so a diff is one-glance auditable. A new
+ * exemption class = a constitution amendment (founder-approved).
  */
 export type ParityExemptClass = "ADMIN" | "VISUAL" | "MONEY_IN" | "ACCOUNT_SECURITY";
 
@@ -21,8 +21,8 @@ export type ParityEntry =
 
 export const PARITY_MANIFEST = {
   // ── paired (human action → Otto skill) ──
-  // The composer's "Save draft" and Otto's schedulePosts both draft via the SAME shared authority
-  // (draftScheduledPost) — one validation + one create, no divergence.
+  // The Schedule composer's "Save draft" and Otto's schedulePosts both draft via the SAME shared
+  // authority (draftScheduledPost) — one validation + one create, no divergence.
   "schedule-actions.createScheduledPost": { skill: "schedulePosts" },
 
   // P1a/P1b Meta per-ad performance: the human panel action and Otto's read skill both resolve to

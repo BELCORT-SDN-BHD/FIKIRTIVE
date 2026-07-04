@@ -1,9 +1,10 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
 
-const { mockOwner, mockProjectFindFirst, mockGenFindMany } = vi.hoisted(() => ({
+const { mockOwner, mockProjectFindFirst, mockGenFindMany, mockStorageExists } = vi.hoisted(() => ({
   mockOwner: vi.fn(),
   mockProjectFindFirst: vi.fn(),
   mockGenFindMany: vi.fn(),
+  mockStorageExists: vi.fn(),
 }));
 
 vi.mock("../auth-guard", () => ({ requireOwner: mockOwner }));
@@ -16,6 +17,9 @@ vi.mock("@fikirtive/db", () => ({
 vi.mock("@fikirtive/core", () => ({
   storageKey: (o: string, h: string, e: string) => `${o}/${h}.${e}`,
   storageKeyToSrc: (k: string) => `https://cdn/${k}`,
+}));
+vi.mock("../storage", () => ({
+  storage: { exists: mockStorageExists },
 }));
 
 import { getGenerationHistory } from "../library-actions";
@@ -31,6 +35,7 @@ beforeEach(() => {
   vi.clearAllMocks();
   mockOwner.mockResolvedValue({ ownerId: "u1", email: "a@b.c" });
   mockProjectFindFirst.mockResolvedValue({ id: "p1" });
+  mockStorageExists.mockResolvedValue(true);
 });
 
 describe("getGenerationHistory — scoping & errors", () => {
@@ -44,14 +49,14 @@ describe("getGenerationHistory — scoping & errors", () => {
     expect(await getGenerationHistory("pX")).toEqual({ error: "Project not found." });
     expect(mockGenFindMany).not.toHaveBeenCalled();
   });
-  it("always scopes where to owner+project+deletedAt:null, newest-first, over-fetch take+1", async () => {
+  it("always scopes where to owner+project+deletedAt:null, newest-first, over-fetches a scan window", async () => {
     mockGenFindMany.mockResolvedValue([]);
     await getGenerationHistory("p1", { take: 10 });
     expect(mockGenFindMany).toHaveBeenCalledWith(
       expect.objectContaining({
         where: expect.objectContaining({ ownerId: "u1", projectId: "p1", deletedAt: null }),
         orderBy: [{ createdAt: "desc" }, { id: "desc" }],
-        take: 11,
+        take: 31,
       }),
     );
   });
@@ -102,7 +107,19 @@ describe("getGenerationHistory — paging & mapping", () => {
     expect(res.hasMore).toBe(false);
     expect(res.nextCursor).toBe(null);
   });
-  it("sets hasMore + nextCursor when over-fetch returns take+1 rows", async () => {
+  it("filters rows whose storage object is missing", async () => {
+    mockStorageExists.mockImplementation(async (key: string) => !key.includes("h-b.png"));
+    mockGenFindMany.mockResolvedValue([
+      row("a", "png", "2026-01-03T00:00:00.000Z"),
+      row("b", "png", "2026-01-02T00:00:00.000Z"),
+    ]);
+    const res = await getGenerationHistory("p1", { take: 60 });
+    if ("error" in res) throw new Error("unexpected error");
+    expect(res.items.map((item) => item.id)).toEqual(["a"]);
+    expect(mockStorageExists).toHaveBeenCalledWith("u1/h-a.png");
+    expect(mockStorageExists).toHaveBeenCalledWith("u1/h-b.png");
+  });
+  it("sets hasMore + nextCursor when more visible rows exist than requested", async () => {
     mockGenFindMany.mockResolvedValue([
       row("a", "png", "2026-01-03T00:00:00.000Z"),
       row("b", "png", "2026-01-02T00:00:00.000Z"),

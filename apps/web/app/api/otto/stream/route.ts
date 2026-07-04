@@ -55,6 +55,7 @@ import {
 import { validateOwnedGenerationExt } from "@/lib/otto-generation-validate";
 import { bridgeEvent, stepEventOf, OTTO_TEXT_ID, OTTO_REASONING_ID } from "@/lib/otto-stream-bridge";
 import type { OttoStatusData, OttoErrorData } from "@/lib/otto-stream-bridge";
+import { persistStreamTurnError, streamTurnErrorId, streamTurnErrorText } from "@/lib/otto-stream-errors";
 
 const IMAGE_EXTS = ["png", "jpg", "jpeg", "webp"];
 const VIDEO_EXTS = ["mp4", "mov", "webm"];
@@ -292,10 +293,25 @@ export async function POST(req: NextRequest): Promise<Response> {
           writer.write({ type: "data-status", data: { kind: "degraded", text: degradeText } satisfies OttoStatusData });
           return;
         }
-        // Any other run failure: withLlmBudget refunded the reservation. Surface + log.
-        console.error("[otto/stream] run failed:", errSummary(e));
+        // Any other run failure: withLlmBudget refunded the reservation. Persist a
+        // durable TURN_ERROR so reloads do not erase the failure, and give support
+        // a safe reference id without exposing provider details.
+        const errorId = streamTurnErrorId();
+        const text = streamTurnErrorText(errorId);
+        console.error("[otto/stream] run failed:", {
+          errorId,
+          threadId,
+          userMessageId,
+          refId,
+          error: errSummary(e),
+        });
         closeOpenParts();
-        writer.write({ type: "data-error", data: { kind: "error", text: "Otto hit a snag — please try again." } satisfies OttoErrorData });
+        try {
+          await persistStreamTurnError({ ownerId, threadId, seqAfterUser, userMessageId, refId, errorId, text });
+        } catch (persistError) {
+          console.error("[otto/stream] failed to persist TURN_ERROR:", { errorId, error: errSummary(persistError) });
+        }
+        writer.write({ type: "data-error", data: { kind: "error", text } satisfies OttoErrorData });
         return;
       }
 

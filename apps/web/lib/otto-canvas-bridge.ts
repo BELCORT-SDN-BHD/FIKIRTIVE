@@ -4,7 +4,7 @@ import { prisma } from "@fikirtive/db";
 import { requireOwner } from "./auth-guard";
 import { getCoworkThread, getGenerationThumbs } from "./data";
 import { createCanvasNode, type CanvasNodeDTO } from "./canvas-actions";
-import { planBridgeNodes } from "./otto-canvas-bridge-core";
+import { canvasNodeDisplayStatus, planBridgeNodes } from "./otto-canvas-bridge-core";
 
 /** A canvas node plus its resolved media URL (display-only). */
 export type CanvasNodeWithUrl = CanvasNodeDTO & { url: string | null };
@@ -89,13 +89,14 @@ export async function syncOttoCanvasNodes(
   });
 
   // A node's media comes from its generationId, or (for canvas-promptbar nodes,
-  // which persist only the job) from the job's first generation.
-  const jobOnlyIds = [...new Set(
-    nodes.filter((n) => !n.generationId && n.genJobId).map((n) => n.genJobId as string),
-  )];
-  const jobs = jobOnlyIds.length
-    ? await prisma.genJob.findMany({ where: { id: { in: jobOnlyIds }, ownerId }, select: { id: true, generationIds: true } })
+  // which persist only the job) from the job's first generation. Pull status for
+  // every linked job too: CanvasNode.status is not a reliable activity source
+  // after terminal settlement because legacy rows can stay "pending" forever.
+  const linkedJobIds = [...new Set(nodes.map((n) => n.genJobId).filter((x): x is string => !!x))];
+  const jobs = linkedJobIds.length
+    ? await prisma.genJob.findMany({ where: { id: { in: linkedJobIds }, ownerId }, select: { id: true, generationIds: true, status: true } })
     : [];
+  const jobById = new Map(jobs.map((j) => [j.id, j]));
   const jobFirstGen = new Map(jobs.map((j) => [j.id, j.generationIds[0]]));
 
   const genIds = [
@@ -111,6 +112,9 @@ export async function syncOttoCanvasNodes(
     // generationId for it — Make video / Detail silently no-oped on that primary card
     // (their guard needs nodeDataRef.generationId). Display-only metadata resolution;
     // the id is the job's OWN first generation (owner-scoped above), no spend logic.
-    return { ...n, generationId: gid, url: gid ? thumbs[gid]?.src ?? null : null };
+    const url = gid ? thumbs[gid]?.src ?? null : null;
+    const jobStatus = n.genJobId ? jobById.get(n.genJobId)?.status : null;
+    const status = gid && !url ? "missing" : canvasNodeDisplayStatus(n.status, jobStatus, url);
+    return { ...n, generationId: gid, status, url };
   });
 }

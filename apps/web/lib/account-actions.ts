@@ -37,11 +37,30 @@ const KIND_LABEL: Record<string, string> = {
   SETTLE: "Settled",
 };
 
+function videoResolution(videoOptions: unknown): string | null {
+  if (!videoOptions || typeof videoOptions !== "object" || Array.isArray(videoOptions)) return null;
+  const resolution = (videoOptions as { resolution?: unknown }).resolution;
+  return typeof resolution === "string" && resolution.trim() ? resolution.trim() : null;
+}
+
+function genJobActivityLabel(job: { kind: string; count: number; videoOptions: unknown }): string {
+  if (job.kind === "VIDEO") {
+    const resolution = videoResolution(job.videoOptions);
+    return resolution ? `Video generation - ${resolution}` : "Video generation";
+  }
+  const count = Math.max(1, job.count);
+  return `Image generation - ${count} ${count === 1 ? "image" : "images"}`;
+}
+
 /** Otto LLM-turn ledger rows carry an "otto-..." refId (otto-turn/stream/approve/verdict);
  *  media rows carry the GenJob id. Label the conversation cost distinctly so a chat turn
  *  doesn't read as "Generation" in the activity feed. */
-function activityLabel(row: { refId: string | null; reason: string | null; kind: string }): string {
+function activityLabel(
+  row: { refId: string | null; reason: string | null; kind: string },
+  genJobLabels: Map<string, string>,
+): string {
   if (row.refId?.startsWith("otto-")) return "Otto thinking";
+  if (row.refId && genJobLabels.has(row.refId)) return genJobLabels.get(row.refId)!;
   return row.reason?.trim() || KIND_LABEL[row.kind] || row.kind;
 }
 
@@ -64,11 +83,22 @@ export async function getMyAccount(): Promise<AccountInfo | { error: string }> {
     }),
   ]);
 
+  const genJobRefIds = ledger
+    .map((l) => l.refId)
+    .filter((refId): refId is string => !!refId && !refId.startsWith("otto-"));
+  const genJobs = genJobRefIds.length
+    ? await prisma.genJob.findMany({
+        where: { ownerId, id: { in: genJobRefIds } },
+        select: { id: true, kind: true, count: true, videoOptions: true },
+      })
+    : [];
+  const genJobLabels = new Map(genJobs.map((j) => [j.id, genJobActivityLabel(j)]));
+
   const balanceInternal = account?.balance ?? 0;
   // balanceDelta != 0 is filtered in the query above (SETTLE is hold-only).
   const recent: AccountActivity[] = ledger.map((l) => ({
     id: l.id,
-    label: activityLabel(l),
+    label: activityLabel(l, genJobLabels),
     delta: displayCredits(l.balanceDelta),
     at: l.createdAt.toISOString(),
   }));

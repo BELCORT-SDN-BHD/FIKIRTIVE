@@ -9,10 +9,11 @@ export type GenerationDTO = {
   id: string;
   url: string;
   urls: string[];
-  // Sibling variants aligned to `urls`, each with its OWN generation id (F08). The panel must
+  // Sibling variants aligned to `urls`, each with its OWN generation id (F08) and saved state.
+  // The panel must
   // act on the SELECTED variant's id — not the primary `id` — for animate/delete/favorite/edit,
   // or it spends on / mutates the wrong image when a sibling variant is displayed.
-  variants: { id: string; url: string }[];
+  variants: { id: string; url: string; favorite: boolean }[];
   kind: string;
   prompt: string;
   favorite: boolean;
@@ -50,23 +51,23 @@ export async function getGeneration(
   // Resolve sibling variants (id + url) from the producing GenJob's generationIds array
   // (owner-scoped). Kept as an aligned {id, url}[] so the panel can act on the SELECTED
   // variant's own generation id, not just show its url (F08).
-  let variants: { id: string; url: string }[] = [{ id: gen.id, url }];
+  let variants: { id: string; url: string; favorite: boolean }[] = [{ id: gen.id, url, favorite: gen.favorite }];
   if (job && job.generationIds.length > 1) {
     const siblingIds = job.generationIds.filter((id) => id !== generationId);
     const siblings = await prisma.generation.findMany({
       where: { id: { in: siblingIds }, ownerId, deletedAt: null },
-      select: { id: true, asset: { select: { ownerId: true, contentHash: true, ext: true } } },
+      select: { id: true, favorite: true, asset: { select: { ownerId: true, contentHash: true, ext: true } } },
     });
     const siblingMap = new Map(siblings.map((s) => [s.id, s]));
     // Preserve the original generationIds order; each entry carries its own id (a missing
     // sibling — soft-deleted — is dropped as a whole {id,url} pair, so id/url never misalign).
     variants = job.generationIds.flatMap((id) => {
-      if (id === generationId) return [{ id, url }];
+      if (id === generationId) return [{ id, url, favorite: gen.favorite }];
       const sib = siblingMap.get(id);
       if (!sib) return [];
-      return [{ id, url: storage.url(storageKey(sib.asset.ownerId, sib.asset.contentHash, sib.asset.ext)) }];
+      return [{ id, url: storage.url(storageKey(sib.asset.ownerId, sib.asset.contentHash, sib.asset.ext)), favorite: sib.favorite }];
     });
-    if (!variants.some((v) => v.id === generationId)) variants = [{ id: gen.id, url }, ...variants];
+    if (!variants.some((v) => v.id === generationId)) variants = [{ id: gen.id, url, favorite: gen.favorite }, ...variants];
   }
 
   return {

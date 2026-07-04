@@ -198,9 +198,10 @@ export function OttoConversation({
 
   // Bound the polling: a worker that fails-closed without writing a terminal message
   // would otherwise keep hasWorkingJob true forever (poll-forever + a stuck "making
-  // this…" spinner). After ~2 min we stop and show a recoverable fallback.
+  // this…" spinner). Video generations can legitimately take several minutes, so
+  // match the canvas poll budget before showing the recoverable fallback.
   const POLL_MS = 2500;
-  const MAX_POLLS = 48; // ~2 minutes
+  const MAX_POLLS = 192; // ~8 minutes
   const [pollGaveUp, setPollGaveUp] = useState(false);
   /** Set to true after "Check again" exhausts a second MAX_POLLS round — terminal message. */
   const [pollTerminal, setPollTerminal] = useState(false);
@@ -331,7 +332,7 @@ export function OttoConversation({
             <div className="flex items-start gap-3">
               <OttoAvatar size={32} state="thinking" />
               <div className="px-4 py-3 bg-card rounded-[0_20px_20px_20px] border border-border text-[0.875rem] text-muted-foreground italic">
-                Otto is making this — this can take a moment…
+                Otto is making this — video can take a few minutes…
               </div>
             </div>
           )}

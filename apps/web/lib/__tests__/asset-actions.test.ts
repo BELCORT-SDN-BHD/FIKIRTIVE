@@ -216,8 +216,8 @@ describe("getGeneration sibling urls", () => {
       generationIds: ["g1", "g2", "g3"],
     });
     mockGenFindMany.mockResolvedValue([
-      { id: "g2", asset: { ownerId: "u1", contentHash: "hash2", ext: "jpg" } },
-      { id: "g3", asset: { ownerId: "u1", contentHash: "hash3", ext: "jpg" } },
+      { id: "g2", favorite: true, asset: { ownerId: "u1", contentHash: "hash2", ext: "jpg" } },
+      { id: "g3", favorite: false, asset: { ownerId: "u1", contentHash: "hash3", ext: "jpg" } },
     ]);
     const result = await getGeneration("g1") as { urls: string[] };
     expect(result.urls).toHaveLength(3);
@@ -233,12 +233,14 @@ describe("getGeneration sibling urls", () => {
     });
     mockJobFindFirst.mockResolvedValue({ sourceGenerationId: null, generationIds: ["g1", "g2", "g3"] });
     mockGenFindMany.mockResolvedValue([
-      { id: "g2", asset: { ownerId: "u1", contentHash: "hash2", ext: "jpg" } },
-      { id: "g3", asset: { ownerId: "u1", contentHash: "hash3", ext: "jpg" } },
+      { id: "g2", favorite: true, asset: { ownerId: "u1", contentHash: "hash2", ext: "jpg" } },
+      { id: "g3", favorite: false, asset: { ownerId: "u1", contentHash: "hash3", ext: "jpg" } },
     ]);
-    const result = await getGeneration("g1") as { urls: string[]; variants: { id: string; url: string }[] };
+    const result = await getGeneration("g1") as { urls: string[]; variants: { id: string; url: string; favorite: boolean }[] };
     // ids in generationIds order — so variants[selectedIdx].id is the displayed image's real id
     expect(result.variants.map((v) => v.id)).toEqual(["g1", "g2", "g3"]);
+    // favorite state also belongs to the displayed variant, not only the primary generation
+    expect(result.variants.map((v) => v.favorite)).toEqual([false, true, false]);
     // and aligned to urls (each variant's url matches the same index)
     expect(result.variants.map((v) => v.url)).toEqual(result.urls);
   });

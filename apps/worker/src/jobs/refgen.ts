@@ -145,13 +145,13 @@ export async function reapStaleRefGenJobs(): Promise<number> {
   let reaped = 0;
 
   const stuck = await prisma.refGenJob.findMany({
-    where: { status: "GENERATING", startedAt: { lt: cutoff }, outputAssetIds: { isEmpty: true } },
+    where: { ownerId: { not: "" }, status: "GENERATING", startedAt: { lt: cutoff }, outputAssetIds: { isEmpty: true } },
     select: { id: true, ownerId: true },
   });
   for (const job of stuck) {
     await prisma.$transaction(async (tx) => {
       const staled = await tx.refGenJob.updateMany({
-        where: { id: job.id, status: "GENERATING", startedAt: { lt: cutoff }, outputAssetIds: { isEmpty: true } },
+        where: { id: job.id, ownerId: job.ownerId, status: "GENERATING", startedAt: { lt: cutoff }, outputAssetIds: { isEmpty: true } },
         data: { status: "FAILED", error: "stale GENERATING reaped — worker hung or crashed; refunded", finishedAt: new Date() },
       });
       if (staled.count > 0) { await refundReservation(tx, { orgId: job.ownerId, refId: job.id }); reaped++; }
@@ -162,7 +162,7 @@ export async function reapStaleRefGenJobs(): Promise<number> {
   // and then lost its message: it was CHARGED (settled) and has outputs, so fail-closing it
   // would show FAILED on a delivered charge — the committed-but-stuck scan below finishes it.
   const stuckQueued = await prisma.refGenJob.findMany({
-    where: { status: "QUEUED", createdAt: { lt: queuedCutoff }, outputAssetIds: { isEmpty: true } },
+    where: { ownerId: { not: "" }, status: "QUEUED", createdAt: { lt: queuedCutoff }, outputAssetIds: { isEmpty: true } },
     select: { id: true, ownerId: true },
   });
   for (const job of stuckQueued) {
@@ -170,7 +170,7 @@ export async function reapStaleRefGenJobs(): Promise<number> {
     if (await hasLiveRefGenMessage(job.id)) continue;
     await prisma.$transaction(async (tx) => {
       const failed = await tx.refGenJob.updateMany({
-        where: { id: job.id, status: "QUEUED", createdAt: { lt: queuedCutoff }, outputAssetIds: { isEmpty: true } },
+        where: { id: job.id, ownerId: job.ownerId, status: "QUEUED", createdAt: { lt: queuedCutoff }, outputAssetIds: { isEmpty: true } },
         data: { status: "FAILED", error: "queued too long — worker never picked it up; refunded", finishedAt: new Date() },
       });
       if (failed.count > 0) { await refundReservation(tx, { orgId: job.ownerId, refId: job.id }); reaped++; }
@@ -195,7 +195,7 @@ export async function reapStaleRefGenJobs(): Promise<number> {
   // redelivery that resumes one is caught by the free-delivery guard in the helper).
   // Per-job try/catch: one bad row must not halt the sweep — retries next sweep.
   const committedStuck = await prisma.refGenJob.findMany({
-    where: { status: { in: ["QUEUED", "GENERATING"] }, startedAt: { lt: cutoff }, outputAssetIds: { isEmpty: false } },
+    where: { ownerId: { not: "" }, status: { in: ["QUEUED", "GENERATING"] }, startedAt: { lt: cutoff }, outputAssetIds: { isEmpty: false } },
   });
   for (const job of committedStuck) {
     try {
@@ -297,7 +297,7 @@ export async function handleRefGen(data: RefGenJobData, retryCount: number): Pro
     // already happened, so fail the stuck GENERATING row closed (never
     // clobbering a winner's DONE) rather than risk a double charge.
     const claim = await prisma.refGenJob.updateMany({
-      where: { id: job.id, status: "QUEUED" },
+      where: { id: job.id, ownerId: job.ownerId, status: "QUEUED" },
       data: { status: "GENERATING", startedAt: new Date(), attempts: { increment: 1 } },
     });
     if (claim.count === 0) {
@@ -309,7 +309,7 @@ export async function handleRefGen(data: RefGenJobData, retryCount: number): Pro
         const staled = await tx.refGenJob.updateMany({
           // outputAssetIds isEmpty: never fail-close a job that already committed outputs (a
           // redelivery landing in the commit→DONE window) — its resume delivery must win.
-          where: { id: job.id, status: "GENERATING", startedAt: { lt: new Date(Date.now() - REFGEN_STALE_MS) }, outputAssetIds: { isEmpty: true } },
+          where: { id: job.id, ownerId: job.ownerId, status: "GENERATING", startedAt: { lt: new Date(Date.now() - REFGEN_STALE_MS) }, outputAssetIds: { isEmpty: true } },
           data: { status: "FAILED", error: "stale GENERATING after a possible paid call — not retrying, to avoid a double charge", finishedAt: new Date() },
         });
         // refund only if WE just failed it closed (count>0) — never touch an active
@@ -406,7 +406,7 @@ export async function handleRefGen(data: RefGenJobData, retryCount: number): Pro
     // delivery, no DONE-vs-REFUND mismatch). Returning false signals discard.
     const committedRefgen = await prisma.$transaction(async (tx) => {
       const marked = await tx.refGenJob.updateMany({
-        where: { id: job.id, status: "GENERATING" },
+        where: { id: job.id, ownerId: job.ownerId, status: "GENERATING" },
         data: { outputAssetIds, spentUsd: refgenSpentUsd({ model: job.model, count: job.count }) },
       });
       if (marked.count === 0) return false;
@@ -458,7 +458,7 @@ export async function handleRefGen(data: RefGenJobData, retryCount: number): Pro
       // A committed job is still GENERATING here (the commit tx wrote outputAssetIds, not status), so
       // its resume requeue still matches. (Mirror of the gen.ts F04 guard.)
       const requeued = await prisma.refGenJob.updateMany({
-        where: { id: job.id, status: { in: ["QUEUED", "GENERATING"] } },
+        where: { id: job.id, ownerId: job.ownerId, status: { in: ["QUEUED", "GENERATING"] } },
         data: { status: "QUEUED", error: message, progress: 0 },
       });
       if (requeued.count === 0) console.error(`[refgen] ${job.id}: not requeued — a finalizer already owns it (FAILED/DONE); discarding this delivery`);
