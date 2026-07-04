@@ -1,6 +1,6 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
 
-const { mockOwner, mockFindMany, mockCreate, mockUpdateMany, mockDeleteMany, mockProjectFindFirst, mockThreadFindFirst, mockGenerationFindFirst, mockCanvasNodeFindFirst, mockGenJobFindFirst } = vi.hoisted(() => ({
+const { mockOwner, mockFindMany, mockCreate, mockUpdateMany, mockDeleteMany, mockProjectFindFirst, mockThreadFindFirst, mockGenerationFindFirst, mockCanvasNodeFindFirst, mockGenJobFindFirst, mockGenJobFindMany, mockGetGenerationThumbs } = vi.hoisted(() => ({
   mockOwner: vi.fn(),
   mockFindMany: vi.fn(),
   mockCreate: vi.fn(),
@@ -11,16 +11,19 @@ const { mockOwner, mockFindMany, mockCreate, mockUpdateMany, mockDeleteMany, moc
   mockGenerationFindFirst: vi.fn(),
   mockCanvasNodeFindFirst: vi.fn(),
   mockGenJobFindFirst: vi.fn(),
+  mockGenJobFindMany: vi.fn(),
+  mockGetGenerationThumbs: vi.fn(),
 }));
 
 vi.mock("../auth-guard", () => ({ requireOwner: mockOwner }));
+vi.mock("../data", () => ({ getGenerationThumbs: mockGetGenerationThumbs }));
 vi.mock("@fikirtive/db", () => ({
   prisma: {
     canvasNode: { findMany: mockFindMany, create: mockCreate, updateMany: mockUpdateMany, deleteMany: mockDeleteMany, findFirst: mockCanvasNodeFindFirst },
     project: { findFirst: mockProjectFindFirst },
     chatThread: { findFirst: mockThreadFindFirst },
     generation: { findFirst: mockGenerationFindFirst },
-    genJob: { findFirst: mockGenJobFindFirst },
+    genJob: { findFirst: mockGenJobFindFirst, findMany: mockGenJobFindMany },
   },
 }));
 vi.mock("@fikirtive/core", () => ({ newId: () => "node-1" }));
@@ -30,6 +33,8 @@ import { listCanvasNodes, moveCanvasNode, createCanvasNode, resolveCanvasNode } 
 beforeEach(() => {
   vi.clearAllMocks();
   mockOwner.mockResolvedValue({ ownerId: "u1", email: "a@b.c" });
+  mockGenJobFindMany.mockResolvedValue([]);
+  mockGetGenerationThumbs.mockResolvedValue({});
 });
 
 describe("listCanvasNodes", () => {
@@ -44,6 +49,40 @@ describe("listCanvasNodes", () => {
   it("rejects when the project is not owned", async () => {
     mockProjectFindFirst.mockResolvedValue(null);
     expect(await listCanvasNodes("pX")).toEqual({ error: "Project not found." });
+  });
+  it("recovers DONE job media from genJobId when the canvas row is stale", async () => {
+    mockProjectFindFirst.mockResolvedValue({ id: "p1" });
+    mockFindMany.mockResolvedValue([
+      {
+        id: "node-1",
+        type: "image",
+        x: 0,
+        y: 0,
+        w: 320,
+        h: 320,
+        text: null,
+        prompt: "late image",
+        generationId: null,
+        genJobId: "job-1",
+        status: "timeout",
+        sourceNodeId: null,
+        threadId: null,
+      },
+    ]);
+    mockGenJobFindMany.mockResolvedValue([{ id: "job-1", status: "DONE", generationIds: ["gen-1"] }]);
+    mockGetGenerationThumbs.mockResolvedValue({ "gen-1": { src: "/files/u1/hash.png", kind: "image" } });
+
+    await expect(listCanvasNodes("p1")).resolves.toEqual([
+      expect.objectContaining({
+        id: "node-1",
+        generationId: "gen-1",
+        status: "done",
+        url: "/files/u1/hash.png",
+      }),
+    ]);
+    expect(mockGenJobFindMany).toHaveBeenCalledWith(
+      expect.objectContaining({ where: { id: { in: ["job-1"] }, ownerId: "u1", projectId: "p1" } }),
+    );
   });
 });
 
