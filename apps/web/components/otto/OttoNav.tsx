@@ -117,8 +117,8 @@ const TOOL_ITEMS: NavItem[] = [
   { key: "account", label: "Account", icon: <IconCircleUser /> },
 ];
 
-const PROJECT_LIMIT = 8;
-const THREAD_LIMIT = 4;
+const PROJECT_LIMIT = 6;
+const THREAD_LIMIT = 2;
 
 function IconLibrary() {
   return (
@@ -250,7 +250,8 @@ export function OttoNav({
     projectLimit: PROJECT_LIMIT,
     threadLimit: THREAD_LIMIT,
   });
-  const hasSidebar = navEntries.length > 0 || history.length > 0;
+  const hasHistoryContent = navEntries.length > 0 || history.length > 0;
+  const hasSidebar = hasHistoryContent || TOOL_ITEMS.length > 0;
 
   function dotFor(status: ChatThreadDTO["status"]) {
     return status === "working" ? "#f59e0b" : status === "failed" ? "#dc2626" : status === "done" ? "#16a34a" : null;
@@ -366,7 +367,7 @@ export function OttoNav({
         </button>
       </div>
 
-      {/* Primary path + secondary tools */}
+      {/* Primary path */}
       <div className="px-3 flex flex-col gap-2">
         <div className="flex flex-col gap-[1px]">
           {PRIMARY_ITEMS.map((item) => {
@@ -382,35 +383,6 @@ export function OttoNav({
               </button>
             );
           })}
-        </div>
-        <div className="flex flex-col gap-[1px]">
-          <button
-            type="button"
-            onClick={() => setToolsOpen((v) => !v)}
-            aria-expanded={showTools}
-            className={`flex items-center gap-[9px] w-full border-0 text-[0.84375rem] px-[9px] py-2 rounded-[9px] cursor-pointer text-left transition-colors duration-150 ${toolsActive ? "bg-secondary text-foreground font-semibold" : "bg-transparent text-muted-foreground font-normal"}`}
-          >
-            <IconLibrary />
-            <span className="flex-1">Tools</span>
-            <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.4" strokeLinecap="round" strokeLinejoin="round" aria-hidden className="transition-transform duration-150" style={{ transform: showTools ? "none" : "rotate(-90deg)" }}><path d="m6 9 6 6 6-6" /></svg>
-          </button>
-          {showTools && (
-            <div className="flex flex-col gap-[1px] pt-1">
-              {TOOL_ITEMS.map((item) => {
-                const active = view === item.key;
-                return (
-                  <button
-                    key={item.key}
-                    onClick={() => handleNavAction(() => onViewChange(item.key))}
-                    className={`flex items-center gap-[9px] w-full border-0 text-[0.8125rem] pl-8 pr-[9px] py-[7px] rounded-[9px] cursor-pointer text-left transition-colors duration-150 ${active ? "bg-secondary text-foreground font-semibold" : "bg-transparent text-muted-foreground font-normal"}`}
-                  >
-                    {item.icon}
-                    {item.label}
-                  </button>
-                );
-              })}
-            </div>
-          )}
         </div>
       </div>
 
@@ -555,6 +527,35 @@ export function OttoNav({
             </div>
           </>
           )}
+          <div className={`${navEntries.length > 0 || history.length > 0 ? "mt-4 pt-3 border-t border-border" : "mt-0"} flex flex-col gap-[1px]`}>
+            <button
+              type="button"
+              onClick={() => setToolsOpen((v) => !v)}
+              aria-expanded={showTools}
+              className={`flex items-center gap-[9px] w-full border-0 text-[0.8125rem] px-[9px] py-[7px] rounded-[9px] cursor-pointer text-left transition-colors duration-150 ${toolsActive ? "bg-secondary text-foreground font-semibold" : "bg-transparent text-muted-foreground font-normal"}`}
+            >
+              <IconLibrary />
+              <span className="flex-1">Workspace</span>
+              <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.4" strokeLinecap="round" strokeLinejoin="round" aria-hidden className="transition-transform duration-150" style={{ transform: showTools ? "none" : "rotate(-90deg)" }}><path d="m6 9 6 6 6-6" /></svg>
+            </button>
+            {showTools && (
+              <div className="flex flex-col gap-[1px] pt-1">
+                {TOOL_ITEMS.map((item) => {
+                  const active = view === item.key;
+                  return (
+                    <button
+                      key={item.key}
+                      onClick={() => handleNavAction(() => onViewChange(item.key))}
+                      className={`flex items-center gap-[9px] w-full border-0 text-[0.75rem] pl-8 pr-[9px] py-[6px] rounded-[9px] cursor-pointer text-left transition-colors duration-150 ${active ? "bg-secondary text-foreground font-semibold" : "bg-transparent text-muted-foreground font-normal"}`}
+                    >
+                      {item.icon}
+                      {item.label}
+                    </button>
+                  );
+                })}
+              </div>
+            )}
+          </div>
         </div>
       )}
 
