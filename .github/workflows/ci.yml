@@ -46,6 +46,13 @@ jobs:
       - run: pnpm --filter @fikirtive/otto run catalog:check
       # Parity Manifest seam: every server action / API route / registered read surface is registered.
       - run: pnpm lint:parity
+      # Constitution tamper-evidence: docs/BLUEPRINT.md is immutable — this fails if it changed
+      # without an explicit founder amendment (blueprint.sha256 update). Binds any agent, incl.
+      # ones that never read .claude/ (GPT goal-mode).
+      - run: bash scripts/check-blueprint-integrity.sh
+      # Destructive-migration guard: push-to-main auto-migrates prod. A DROP TABLE/COLUMN,
+      # TRUNCATE, or DELETE FROM must carry an explicit "-- DESTRUCTIVE-OK: <reason>" ack.
+      - run: bash scripts/check-destructive-migrations.sh
 
   # `next build` for apps/web — the exact command Railway's Dockerfile runs on deploy.
   # Typecheck can't catch client→server-bundle leaks (a "use client" file value-importing

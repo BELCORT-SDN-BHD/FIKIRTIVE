@@ -1,5 +1,10 @@
 # Artlio — 待办积压（reconciled backlog）
 
+> ⚠️ **已废止(TOMBSTONE 2026-07-04)。** "Artlio"是 pivot 前的项目名;本表(2026-06-13)
+> 早于 FIKIRTIVE 宪法栈,状态判断已过期。**不要据此排优先级。** 权威路线见
+> `docs/BLUEPRINT.md` 第六章 + 判决记录。保留仅供历史考古。
+
+
 来源：2026-06-13 对主力 session `dd98fa86`（claude.ai `cse_01UMYW…` 的本地镜像，55MB）的对账综合。
 核心创作闭环已上线 prod 并真钱验收；下表是**仍未做**的项，按性质分组。强项/已完成不在此表。
 
