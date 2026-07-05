@@ -199,6 +199,7 @@ export const PARITY_MANIFEST = {
 
   "otto-actions.buildOttoContext": { todoSkill: true, reason: "Internal Otto context builder is exported from an action file; review before making scanner narrower." },
   "otto-actions.finalizeOttoRun": { todoSkill: true, reason: "Internal Otto finalizer is exported from an action file; review before making scanner narrower." },
+  "otto-actions.validateOttoTurnReferences": { todoSkill: true, reason: "Internal Otto turn reference validator shared by stream/non-stream routes; not a user operation." },
   "otto-actions.ottoTurn": { todoSkill: true, reason: "Otto turn is the agent loop itself, not a single skill; needs a manifest convention." },
   "otto-actions.ottoApprove": { todoSkill: true, reason: "Otto approval dispatch spans card kinds; needs per-card action parity mapping." },
   "otto-actions.createEmptyCoworkThread": { todoSkill: true, reason: "Thread creation needs thread-management parity." },
