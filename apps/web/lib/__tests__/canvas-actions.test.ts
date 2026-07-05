@@ -1,6 +1,6 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
 
-const { mockOwner, mockFindMany, mockCreate, mockUpdateMany, mockDeleteMany, mockProjectFindFirst, mockThreadFindFirst, mockGenerationFindFirst, mockCanvasNodeFindFirst, mockGenJobFindFirst, mockGenJobFindMany, mockGetGenerationThumbs } = vi.hoisted(() => ({
+const { mockOwner, mockFindMany, mockCreate, mockUpdateMany, mockDeleteMany, mockProjectFindFirst, mockThreadFindFirst, mockGenerationFindFirst, mockCanvasNodeFindFirst, mockGenJobFindFirst, mockGenJobFindMany, mockGetGenerationThumbs, mockNewId } = vi.hoisted(() => ({
   mockOwner: vi.fn(),
   mockFindMany: vi.fn(),
   mockCreate: vi.fn(),
@@ -13,6 +13,7 @@ const { mockOwner, mockFindMany, mockCreate, mockUpdateMany, mockDeleteMany, moc
   mockGenJobFindFirst: vi.fn(),
   mockGenJobFindMany: vi.fn(),
   mockGetGenerationThumbs: vi.fn(),
+  mockNewId: vi.fn(),
 }));
 
 vi.mock("../auth-guard", () => ({ requireOwner: mockOwner }));
@@ -26,7 +27,7 @@ vi.mock("@fikirtive/db", () => ({
     genJob: { findFirst: mockGenJobFindFirst, findMany: mockGenJobFindMany },
   },
 }));
-vi.mock("@fikirtive/core", () => ({ newId: () => "node-1" }));
+vi.mock("@fikirtive/core", () => ({ newId: mockNewId }));
 
 import { listCanvasNodes, moveCanvasNode, createCanvasNode, resolveCanvasNode } from "../canvas-actions";
 
@@ -35,6 +36,7 @@ beforeEach(() => {
   mockOwner.mockResolvedValue({ ownerId: "u1", email: "a@b.c" });
   mockGenJobFindMany.mockResolvedValue([]);
   mockGetGenerationThumbs.mockResolvedValue({});
+  mockNewId.mockReturnValue("node-1");
 });
 
 describe("listCanvasNodes", () => {
@@ -123,6 +125,71 @@ describe("listCanvasNodes", () => {
     expect(mockUpdateMany).toHaveBeenCalledWith({
       where: { id: "node-1", ownerId: "u1", projectId: "p1" },
       data: { status: "done", generationId: "gen-good" },
+    });
+  });
+
+  it("recovers missing sibling nodes for a completed multi-variant canvas job", async () => {
+    mockProjectFindFirst.mockResolvedValue({ id: "p1" });
+    mockNewId
+      .mockReturnValueOnce("node-sib-1")
+      .mockReturnValueOnce("node-sib-2")
+      .mockReturnValueOnce("node-sib-3");
+    mockFindMany.mockResolvedValue([
+      {
+        id: "node-primary",
+        type: "image",
+        x: 100,
+        y: 50,
+        w: 320,
+        h: 320,
+        text: null,
+        prompt: "four variants",
+        generationId: null,
+        genJobId: "job-1",
+        status: "pending",
+        sourceNodeId: null,
+        threadId: "thread-1",
+      },
+    ]);
+    mockGenJobFindMany.mockResolvedValue([
+      { id: "job-1", status: "DONE", generationIds: ["gen-1", "gen-2", "gen-3", "gen-4"] },
+    ]);
+    mockGetGenerationThumbs.mockResolvedValue({
+      "gen-1": { src: "/files/u1/one.jpeg", kind: "image" },
+      "gen-2": { src: "/files/u1/two.jpeg", kind: "image" },
+      "gen-3": { src: "/files/u1/three.jpeg", kind: "image" },
+      "gen-4": { src: "/files/u1/four.jpeg", kind: "image" },
+    });
+
+    await expect(listCanvasNodes("p1")).resolves.toEqual([
+      expect.objectContaining({ id: "node-primary", generationId: "gen-1", status: "done", url: "/files/u1/one.jpeg" }),
+      expect.objectContaining({ id: "node-sib-1", generationId: "gen-2", status: "done", url: "/files/u1/two.jpeg", x: 440, y: 50 }),
+      expect.objectContaining({ id: "node-sib-2", generationId: "gen-3", status: "done", url: "/files/u1/three.jpeg", x: 100, y: 390 }),
+      expect.objectContaining({ id: "node-sib-3", generationId: "gen-4", status: "done", url: "/files/u1/four.jpeg", x: 440, y: 390 }),
+    ]);
+    expect(mockUpdateMany).toHaveBeenCalledWith({
+      where: { id: "node-primary", ownerId: "u1", projectId: "p1" },
+      data: { status: "done", generationId: "gen-1" },
+    });
+    expect(mockCreate).toHaveBeenCalledTimes(3);
+    expect(mockCreate).toHaveBeenNthCalledWith(1, {
+      data: expect.objectContaining({
+        id: "node-sib-1",
+        ownerId: "u1",
+        projectId: "p1",
+        generationId: "gen-2",
+        genJobId: null,
+        status: "done",
+        threadId: "thread-1",
+        x: 440,
+        y: 50,
+      }),
+    });
+    expect(mockCreate).toHaveBeenNthCalledWith(2, {
+      data: expect.objectContaining({ id: "node-sib-2", generationId: "gen-3", x: 100, y: 390 }),
+    });
+    expect(mockCreate).toHaveBeenNthCalledWith(3, {
+      data: expect.objectContaining({ id: "node-sib-3", generationId: "gen-4", x: 440, y: 390 }),
     });
   });
 });

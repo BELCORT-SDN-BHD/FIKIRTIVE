@@ -1,10 +1,11 @@
 "use server";
 
 import { prisma } from "@fikirtive/db";
+import { newId } from "@fikirtive/core";
 import { requireOwner } from "./auth-guard";
 import { getCoworkThread, getGenerationThumbs } from "./data";
 import { createCanvasNode, type CanvasNodeDTO } from "./canvas-actions";
-import { canvasNodeDisplayStatus, firstDisplayableGenerationId, planBridgeNodes, settledCanvasNodeRepairPatch } from "./otto-canvas-bridge-core";
+import { canvasNodeDisplayStatus, firstDisplayableGenerationId, planBridgeNodes, planSettledCanvasJobSiblingNodes, settledCanvasNodeRepairPatch } from "./otto-canvas-bridge-core";
 
 /** A canvas node plus its resolved media URL (display-only). */
 export type CanvasNodeWithUrl = CanvasNodeDTO & { url: string | null };
@@ -126,5 +127,51 @@ export async function syncOttoCanvasNodes(
       data: r.data,
     })));
   }
-  return resolved;
+
+  const siblingPlans = planSettledCanvasJobSiblingNodes(
+    nodes,
+    jobById,
+    thumbs,
+    resolved.map((n) => n.generationId),
+  );
+  const recoveredSiblings: CanvasNodeWithUrl[] = [];
+  for (const plan of siblingPlans) {
+    const id = newId();
+    await prisma.canvasNode.create({
+      data: {
+        id,
+        ownerId,
+        projectId,
+        type: plan.type,
+        x: plan.x,
+        y: plan.y,
+        w: plan.w,
+        h: plan.h,
+        text: null,
+        prompt: plan.prompt,
+        generationId: plan.generationId,
+        genJobId: null,
+        status: "done",
+        sourceNodeId: plan.sourceNodeId,
+        threadId: plan.threadId,
+      },
+    });
+    recoveredSiblings.push({
+      id,
+      type: plan.type,
+      x: plan.x,
+      y: plan.y,
+      w: plan.w,
+      h: plan.h,
+      text: null,
+      prompt: plan.prompt,
+      generationId: plan.generationId,
+      genJobId: null,
+      status: "done",
+      sourceNodeId: plan.sourceNodeId,
+      threadId: plan.threadId,
+      url: plan.url,
+    });
+  }
+  return [...resolved, ...recoveredSiblings];
 }

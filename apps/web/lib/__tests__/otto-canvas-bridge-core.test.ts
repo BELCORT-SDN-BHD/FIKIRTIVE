@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { canvasNodeDisplayStatus, firstDisplayableGenerationId, planBridgeNodes, settledCanvasNodeRepairPatch, type GenResultMsg } from "../otto-canvas-bridge-core";
+import { canvasNodeDisplayStatus, firstDisplayableGenerationId, planBridgeNodes, planSettledCanvasJobSiblingNodes, settledCanvasNodeRepairPatch, type GenResultMsg } from "../otto-canvas-bridge-core";
 
 const msg = (seq: number, genJobId: string | null, kind?: string, text: string | null = null): GenResultMsg => ({
   seq,
@@ -58,6 +58,107 @@ describe("planBridgeNodes", () => {
   it("returns nothing when there are no results or no resolved generations", () => {
     expect(planBridgeNodes([], new Map(), [])).toEqual([]);
     expect(planBridgeNodes([msg(1, "job-a", "image")], new Map(), [])).toEqual([]);
+  });
+});
+
+describe("planSettledCanvasJobSiblingNodes", () => {
+  it("plans only missing displayable siblings using the canvas 2x2 variant layout", () => {
+    const nodes = [
+      {
+        id: "node-primary",
+        type: "image",
+        x: 100,
+        y: 50,
+        w: 320,
+        h: 320,
+        prompt: "four variants",
+        generationId: null,
+        genJobId: "job-1",
+        status: "pending",
+        sourceNodeId: null,
+        threadId: "thread-1",
+      },
+      {
+        id: "node-existing",
+        type: "image",
+        x: 600,
+        y: 50,
+        w: 320,
+        h: 320,
+        prompt: "already there",
+        generationId: "gen-3",
+        genJobId: null,
+        status: "done",
+        sourceNodeId: null,
+        threadId: "thread-1",
+      },
+    ];
+    const jobs = new Map([
+      ["job-1", { id: "job-1", status: "DONE", generationIds: ["gen-1", "gen-2", "gen-3", "gen-4"] }],
+    ]);
+    const thumbs = {
+      "gen-1": { src: "/one.jpeg" },
+      "gen-2": { src: "/two.jpeg" },
+      "gen-3": { src: "/three.jpeg" },
+      "gen-4": { src: "/four.jpeg" },
+    };
+
+    expect(planSettledCanvasJobSiblingNodes(nodes, jobs, thumbs, ["gen-1", "gen-3"])).toEqual([
+      {
+        type: "image",
+        x: 440,
+        y: 50,
+        w: 320,
+        h: 320,
+        prompt: "four variants",
+        generationId: "gen-2",
+        sourceNodeId: null,
+        threadId: "thread-1",
+        url: "/two.jpeg",
+      },
+      {
+        type: "image",
+        x: 440,
+        y: 390,
+        w: 320,
+        h: 320,
+        prompt: "four variants",
+        generationId: "gen-4",
+        sourceNodeId: null,
+        threadId: "thread-1",
+        url: "/four.jpeg",
+      },
+    ]);
+  });
+
+  it("does not recreate siblings after a completed primary card already resolved", () => {
+    const nodes = [
+      {
+        id: "node-primary",
+        type: "image",
+        x: 100,
+        y: 50,
+        w: 320,
+        h: 320,
+        prompt: "four variants",
+        generationId: "gen-1",
+        genJobId: "job-1",
+        status: "done",
+        sourceNodeId: null,
+        threadId: null,
+      },
+    ];
+    const jobs = new Map([
+      ["job-1", { id: "job-1", status: "DONE", generationIds: ["gen-1", "gen-2", "gen-3", "gen-4"] }],
+    ]);
+    const thumbs = {
+      "gen-1": { src: "/one.jpeg" },
+      "gen-2": { src: "/two.jpeg" },
+      "gen-3": { src: "/three.jpeg" },
+      "gen-4": { src: "/four.jpeg" },
+    };
+
+    expect(planSettledCanvasJobSiblingNodes(nodes, jobs, thumbs, ["gen-1"])).toEqual([]);
   });
 });
 

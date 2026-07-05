@@ -4,7 +4,7 @@ import { prisma } from "@fikirtive/db";
 import { newId } from "@fikirtive/core";
 import { requireOwner } from "./auth-guard";
 import { getGenerationThumbs } from "./data";
-import { canvasNodeDisplayStatus, firstDisplayableGenerationId, settledCanvasNodeRepairPatch } from "./otto-canvas-bridge-core";
+import { canvasNodeDisplayStatus, firstDisplayableGenerationId, planSettledCanvasJobSiblingNodes, settledCanvasNodeRepairPatch } from "./otto-canvas-bridge-core";
 
 export type CanvasNodeDTO = {
   id: string; type: string; x: number; y: number; w: number; h: number;
@@ -64,7 +64,53 @@ export async function listCanvasNodes(projectId: string): Promise<CanvasNodeDTO[
       data: r.data,
     })));
   }
-  return resolved;
+
+  const siblingPlans = planSettledCanvasJobSiblingNodes(
+    nodes,
+    jobById,
+    thumbs,
+    resolved.map((n) => n.generationId),
+  );
+  const recoveredSiblings: CanvasNodeDTO[] = [];
+  for (const plan of siblingPlans) {
+    const id = newId();
+    await prisma.canvasNode.create({
+      data: {
+        id,
+        ownerId: gate.ownerId,
+        projectId,
+        type: plan.type,
+        x: plan.x,
+        y: plan.y,
+        w: plan.w,
+        h: plan.h,
+        text: null,
+        prompt: plan.prompt,
+        generationId: plan.generationId,
+        genJobId: null,
+        status: "done",
+        sourceNodeId: plan.sourceNodeId,
+        threadId: plan.threadId,
+      },
+    });
+    recoveredSiblings.push({
+      id,
+      type: plan.type,
+      x: plan.x,
+      y: plan.y,
+      w: plan.w,
+      h: plan.h,
+      text: null,
+      prompt: plan.prompt,
+      generationId: plan.generationId,
+      genJobId: null,
+      status: "done",
+      sourceNodeId: plan.sourceNodeId,
+      threadId: plan.threadId,
+      url: plan.url,
+    });
+  }
+  return [...resolved, ...recoveredSiblings];
 }
 
 export async function createCanvasNode(input: CreateNodeInput): Promise<{ id: string } | { error: string }> {
