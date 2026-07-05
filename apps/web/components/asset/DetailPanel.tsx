@@ -583,6 +583,7 @@ export default function DetailPanel({
                   src={displayUrl}
                   controls
                   playsInline
+                  preload="metadata"
                   style={{ width: "100%", maxHeight: 340, objectFit: "contain" }}
                 />
               ) : (

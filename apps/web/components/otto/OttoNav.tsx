@@ -178,7 +178,7 @@ export interface OttoNavProps {
   balanceCredits: number;
   userName: string;
   userEmail: string;
-  /** Recent generation thumbnails for the History strip (display-only). */
+  /** Deprecated display-only prop. Media now lives under Workspace/Library to keep this rail focused on campaigns. */
   history?: HistoryThumb[];
   /** Mobile: whether the drawer is open (controlled by OttoApp). */
   drawerOpen?: boolean;
@@ -205,7 +205,6 @@ export function OttoNav({
   balanceCredits,
   userName,
   userEmail,
-  history = [],
   drawerOpen = false,
   onDrawerClose,
   collapsed = false,
@@ -252,7 +251,7 @@ export function OttoNav({
     projectLimit: PROJECT_LIMIT,
     threadLimit: THREAD_LIMIT,
   });
-  const hasHistoryContent = navEntries.length > 0 || history.length > 0;
+  const hasHistoryContent = navEntries.length > 0;
   const hasSidebar = hasHistoryContent || TOOL_ITEMS.length > 0;
 
   function dotFor(status: ChatThreadDTO["status"]) {
@@ -514,30 +513,7 @@ export function OttoNav({
           `}</style>
           </>
           )}
-          {history.length > 0 && (
-          <>
-            <div className={`text-[0.65625rem] text-muted-foreground/70 font-semibold uppercase tracking-[0.07em] pl-1 mb-2 ${navEntries.length > 0 ? "mt-4" : "mt-0"}`}>
-              Recent media
-            </div>
-            <div className="grid grid-cols-3 gap-[5px]">
-              {history.map((h) => (
-                <div
-                  key={h.id}
-                  title={h.kind === "video" ? "Video" : "Image"}
-                  className="aspect-square rounded-[10px] overflow-hidden border border-border bg-muted"
-                >
-                  {h.kind === "video" ? (
-                    <video src={h.src} muted preload="metadata" className="w-full h-full object-cover" />
-                  ) : (
-                    // eslint-disable-next-line @next/next/no-img-element
-                    <img src={h.src} alt="" loading="lazy" className="w-full h-full object-cover" />
-                  )}
-                </div>
-              ))}
-            </div>
-          </>
-          )}
-          <div className={`${navEntries.length > 0 || history.length > 0 ? "mt-4 pt-3 border-t border-border" : "mt-0"} flex flex-col gap-[1px]`}>
+          <div className={`${navEntries.length > 0 ? "mt-4 pt-3 border-t border-border" : "mt-0"} flex flex-col gap-[1px]`}>
             <button
               type="button"
               onClick={() => setToolsOpen((v) => !v)}

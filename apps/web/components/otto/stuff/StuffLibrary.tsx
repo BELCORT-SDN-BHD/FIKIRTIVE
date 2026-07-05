@@ -45,7 +45,7 @@ function Thumb({ item }: { item: StuffItem }) {
     );
   }
   if (item.mediaKind === "video") {
-    return <video src={item.url} muted className="h-full w-full object-cover" />;
+    return <video src={item.url} muted playsInline preload="metadata" className="h-full w-full object-cover" />;
   }
   // eslint-disable-next-line @next/next/no-img-element
   return <img src={item.url} alt={item.label} className="h-full w-full object-cover" />;
