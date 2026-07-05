@@ -97,6 +97,38 @@ async function createRefSkippingDup(data: { id: string; ownerId: string; entityI
 
 // ---------- projects ----------
 
+/** Placeholder names a fresh campaign carries until its first conversation names it. */
+const DEFAULT_CAMPAIGN_NAMES = new Set(["New campaign", "Untitled Project"]);
+
+async function findReusableEmptyDefaultProject(ownerId: string, name: string): Promise<{ id: string } | null> {
+  if (!DEFAULT_CAMPAIGN_NAMES.has(name)) return null;
+  const candidates = await prisma.project.findMany({
+    where: { ownerId, name, deletedAt: null },
+    orderBy: { createdAt: "desc" },
+    select: { id: true, editJson: true, coworkBrief: true, brandId: true, campaignId: true },
+    take: 12,
+  });
+  for (const candidate of candidates) {
+    const hasProjectLevelWork = Boolean(
+      candidate.editJson ||
+      candidate.coworkBrief?.trim() ||
+      candidate.brandId?.trim() ||
+      candidate.campaignId?.trim(),
+    );
+    if (hasProjectLevelWork) continue;
+    const [threads, shots, scheduledPosts, nodes, genJobs, generations] = await Promise.all([
+      prisma.chatThread.count({ where: { ownerId, projectId: candidate.id, deletedAt: null } }),
+      prisma.shot.count({ where: { ownerId, projectId: candidate.id, deletedAt: null } }),
+      prisma.scheduledPost.count({ where: { ownerId, projectId: candidate.id, deletedAt: null } }),
+      prisma.canvasNode.count({ where: { ownerId, projectId: candidate.id } }),
+      prisma.genJob.count({ where: { ownerId, projectId: candidate.id } }),
+      prisma.generation.count({ where: { ownerId, projectId: candidate.id, deletedAt: null } }),
+    ]);
+    if (threads === 0 && shots === 0 && scheduledPosts === 0 && nodes === 0 && genJobs === 0 && generations === 0) return candidate;
+  }
+  return null;
+}
+
 /** Idempotent: returns the owner's oldest non-deleted project, or creates one named
  *  "My Videos" if none exist. Used by the /m (Simple Mode) route. Never throws — the
  *  caller surfaces any auth failure via the {error} contract. */
@@ -119,8 +151,11 @@ export async function getOrCreateDefaultProject(): Promise<{ id: string } | { er
 export async function createProject(name: string): Promise<{ id: string } | { error: string }> {
   const gate = await requireOwner(); if ("error" in gate) return gate;
   const { ownerId } = gate;
+  const cleanName = name.trim() || "Untitled Project";
+  const reusable = await findReusableEmptyDefaultProject(ownerId, cleanName);
+  if (reusable) return { id: reusable.id };
   const project = await prisma.project.create({
-    data: { id: newId(), ownerId, name: name.trim() || "Untitled Project" },
+    data: { id: newId(), ownerId, name: cleanName },
   });
   await logAction(ownerId, "project.create", project.id, { name: project.name });
   revalidatePath("/", "layout");
@@ -153,9 +188,6 @@ export async function renameProject(projectId: string, name: string): Promise<{ 
   revalidatePath("/", "layout");
   return { ok: true, name: clean };
 }
-
-/** Placeholder names a fresh campaign carries until its first conversation names it. */
-const DEFAULT_CAMPAIGN_NAMES = new Set(["New campaign", "Untitled Project"]);
 
 /** Auto-title a still-default campaign from its first conversation's title (Grok
  *  pattern: a new agent gets named from the first prompt). Owner-scoped, fail-closed,

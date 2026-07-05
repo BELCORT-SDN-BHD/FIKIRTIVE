@@ -167,6 +167,8 @@ export function OttoApp({
   const [navCollapsed, setNavCollapsed] = useState(initialNavCollapsed ?? false);
   const [chatCollapsed, setChatCollapsed] = useState(initialChatCollapsed ?? false);
   const [actionError, setActionError] = useState<string | null>(null);
+  const [newCampaignPending, setNewCampaignPending] = useState(false);
+  const newCampaignPendingRef = useRef(false);
   // ── Multi-project (campaign = project) navigation ──
   const curProjectId = activeProjectId ?? projectId;
 
@@ -305,6 +307,9 @@ export function OttoApp({
   }, [curProjectId, handleThreadsChange, projectHref, pushLocalRoute, threads]);
 
   const handleNewCampaign = useCallback(async () => {
+    if (newCampaignPendingRef.current) return;
+    newCampaignPendingRef.current = true;
+    setNewCampaignPending(true);
     setActionError(null);
     const loginHref = `/login?from=${encodeURIComponent(projectHref(curProjectId))}`;
     try {
@@ -331,6 +336,9 @@ export function OttoApp({
       }
       console.error("[handleNewCampaign] failed:", e);
       setActionError("Could not create a campaign. Refresh and try again.");
+    } finally {
+      newCampaignPendingRef.current = false;
+      setNewCampaignPending(false);
     }
   }, [router, projectHref, curProjectId]);
 
@@ -475,6 +483,7 @@ export function OttoApp({
         onRenameProject={handleRenameProject}
         onDeleteProject={handleDeleteProject}
         onNewCampaign={handleNewCampaign}
+        newCampaignPending={newCampaignPending}
         onDeleteThread={handleDeleteThread}
         balanceCredits={balanceCredits}
         userName={userName}
