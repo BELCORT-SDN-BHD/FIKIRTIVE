@@ -156,7 +156,7 @@ export interface OttoNavProps {
   onSelectThread: (id: string) => void;
   /** Switch to another project (optionally opening a thread). */
   onSwitchProject: (projectId: string, threadId?: string) => void;
-  /** Start a fresh chat inside a project. */
+  /** Open a project's new-turn front door without exposing a separate "chat" nav action. */
   onNewChat: (projectId: string) => void;
   /** Rename a project (campaign). */
   onRenameProject: (projectId: string, name: string) => void;
@@ -352,7 +352,7 @@ export function OttoNav({
         </button>
       </div>
 
-      {/* New campaign button */}
+      {/* Primary creation action. It creates a campaign and opens the empty Otto front door. */}
       <div className="pt-4 px-3 pb-3">
         <button
           onClick={() => handleNavAction(onNewCampaign)}
@@ -361,7 +361,7 @@ export function OttoNav({
           className={`flex items-center justify-center gap-[7px] w-full h-[38px] border-0 bg-primary text-primary-foreground text-[0.875rem] font-semibold px-3 rounded-[12px] cursor-pointer transition shadow-[0_4px_12px_rgba(236,88,40,0.18)] disabled:pointer-events-none disabled:opacity-60${newCampaignPending ? " cursor-wait" : ""}`}
         >
           <IconPlus />
-          New campaign
+          New
         </button>
       </div>
 
@@ -444,14 +444,6 @@ export function OttoNav({
                   {/* conversations nested under the project (collapsible) */}
                   {canExpand && !isCollapsed && (
                     <div className="flex flex-col gap-px mt-px">
-                      <button
-                        type="button"
-                        onClick={() => handleNavAction(() => onNewChat(p.id))}
-                        className="flex items-center gap-2 border-0 bg-transparent py-[5px] pr-6 pl-7 text-left text-[0.75rem] font-medium text-muted-foreground rounded-[10px] cursor-pointer hover:bg-secondary hover:text-foreground"
-                      >
-                        <IconPlus />
-                        <span className="truncate min-w-0">New chat</span>
-                      </button>
                       {entry.threads.map((t) => {
                         const isActive = isActiveProject && t.id === activeThreadId && view === "otto";
                         const dotColor = dotFor(t.status);
