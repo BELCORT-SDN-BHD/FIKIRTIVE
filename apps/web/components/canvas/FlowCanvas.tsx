@@ -493,6 +493,23 @@ export default function FlowCanvas({
   // Initial load + reload when the active thread changes (re-bridges that thread).
   useEffect(() => { void reload(); }, [reload]);
 
+  const hasInFlightPaidNode = nodes.some((n) => isInFlightPaidGen({
+    type: n.type ?? "",
+    status: n.data?.status as string | undefined,
+    url: n.data?.url as string | null | undefined,
+  }));
+
+  // A direct canvas generation can finish after the original client poll was
+  // interrupted. While a paid image/video card is still unresolved, keep asking
+  // the server reload path to reconcile owned GenJobs into visible media.
+  useEffect(() => {
+    if (!hasInFlightPaidNode) return;
+    const id = window.setInterval(() => {
+      void reloadRef.current?.();
+    }, 5000);
+    return () => window.clearInterval(id);
+  }, [hasInFlightPaidNode]);
+
   // ReactFlow's `fitView` prop only runs on mount, before our async canvas nodes arrive.
   // Fit once per project/thread after nodes load so left-edge node action buttons do not
   // sit underneath the Otto panel and become visible-but-unclickable.
