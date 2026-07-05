@@ -16,7 +16,6 @@ import { OttoAnalytics } from "./OttoAnalytics";
 import { OttoSchedule } from "./OttoSchedule";
 import type { AnalyticsData } from "@/lib/analytics-actions";
 import { OttoOnboarding } from "./OttoOnboarding";
-import OttoLibrary from "./OttoLibrary";
 import OttoTemplates from "./OttoTemplates";
 import OttoDiscover from "./OttoDiscover";
 import OttoConnections from "./OttoConnections";
@@ -49,7 +48,7 @@ interface OttoViewProps {
   onBalanceRefresh: () => Promise<void>;
   onActivityRefresh?: () => Promise<void>;
   onViewChange: (view: OttoViewKey) => void;
-  onOpenThread: (threadId: string) => void;
+  onOpenThread: (threadId: string, projectId?: string) => void;
   activity: Set<string>;
   onDeleteThread: (id: string) => void;
   onNewConvo: () => void;
@@ -100,7 +99,7 @@ export function OttoView({
 }: OttoViewProps) {
   const activeThread = threads.find((t) => t.id === activeThreadId) ?? null;
 
-  // Unified My Stuff items — shared by the Memory product picker and the Stuff library.
+  // Unified Library items — shared by the Memory product picker and the Library surface.
   const stuffItems = useMemo(
     () => buildStuffItems({ entities, history, ads, records }),
     [entities, history, ads, records],
@@ -151,7 +150,7 @@ export function OttoView({
   if (view === "analytics") {
     return <OttoAnalytics initial={analytics} onNavigate={onViewChange} onUseInOtto={onUseInOtto} />;
   }
-  if (view === "stuff") {
+  if (view === "stuff" || view === "library") {
     return (
       <div style={{ flex: 1, display: "flex", flexDirection: "column", overflow: "hidden" }}>
         <OttoStuff
@@ -163,13 +162,6 @@ export function OttoView({
           onOpenThread={onOpenThread}
           onRetryWithOtto={onUseInOtto}
         />
-      </div>
-    );
-  }
-  if (view === "library") {
-    return (
-      <div style={{ flex: 1, display: "flex", flexDirection: "column", overflow: "hidden" }}>
-        <OttoLibrary projectId={projectId} entities={entities} />
       </div>
     );
   }
@@ -266,7 +258,7 @@ export function OttoView({
           style={{ "--otto-onboarding-left": chatCollapsed ? "24px" : "calc(clamp(360px, 38%, 520px) + 24px)" } as React.CSSProperties}
         >
           <OttoOnboarding
-            onGoToStuff={() => onViewChange("stuff")}
+            onGoToStuff={() => onViewChange("library")}
             onGoToMemory={() => onViewChange("memory")}
           />
         </div>

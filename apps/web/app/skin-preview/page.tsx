@@ -44,7 +44,7 @@ export default async function SkinPreviewPage({
     { id: "sp-off2", kind: "offer", data: { title: "Launch promo (over)" }, status: "active", startsAt: null, endsAt: new Date("2026-06-01"), source: "user", pinned: false, updatedAt: new Date() },
   ];
 
-  // My Stuff library mocks. The PRODUCT entity's base ref carries assetId "as-latte",
+  // Library mocks. The PRODUCT entity's base ref carries assetId "as-latte",
   // which sp-prod1.imageAssetId points at — so the ⭐ product tag and its image both
   // render in the library. The CHARACTER entity (Rosa) shows a Cast tile.
   const entities: EntityDTO[] = [
@@ -118,11 +118,21 @@ export default async function SkinPreviewPage({
       history={[
         ...Array.from({ length: 5 }, (_, i) => ({
           id: `h${i}`,
+          projectId: "p1",
+          assetId: `as-h${i}`,
           src: `https://picsum.photos/seed/hist${i}/120/120`,
           kind: "image" as const,
+          prompt: `History image ${i + 1}`,
         })),
-        // One video so the Images/Videos filters in My Stuff both have content.
-        { id: "h-vid", src: "https://storage.googleapis.com/gtv-videos-bucket/sample/BigBuckBunny.mp4", kind: "video" as const },
+        // One video so the Images/Videos filters in Library both have content.
+        {
+          id: "h-vid",
+          projectId: "p1",
+          assetId: "as-h-vid",
+          src: "https://storage.googleapis.com/gtv-videos-bucket/sample/BigBuckBunny.mp4",
+          kind: "video" as const,
+          prompt: "History video",
+        },
       ]}
       ottoStreamEnabled={false}
       initialView={(sp?.view as OttoViewKey | undefined) ?? "otto"}

@@ -285,6 +285,8 @@ model Generation {
   // G5a: unified library keyset — newest-first over ALL of a project's generations
   // (no threadId filter, unlike Generation_media_idx). Additive, no backfill.
   @@index([ownerId, projectId, deletedAt, createdAt, id], map: "Generation_library_idx")
+  // Owner-global Library keyset — newest-first across every project/campaign.
+  @@index([ownerId, deletedAt, createdAt, id], map: "Generation_owner_library_idx")
 }
 
 // ComfyUI 模板注册表（SOP v1.1 A3.5 文件版 registry.json 的站内镜像；

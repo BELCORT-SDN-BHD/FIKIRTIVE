@@ -7,8 +7,8 @@ const {
   mockCanvasCount,
   mockCanvasCreate,
   mockCanvasUpdateMany,
+  mockChatThreadFindMany,
   mockGenJobFindMany,
-  mockGetCoworkThread,
   mockGetGenerationThumbs,
   mockCreateCanvasNode,
   mockNewId,
@@ -19,8 +19,8 @@ const {
   mockCanvasCount: vi.fn(),
   mockCanvasCreate: vi.fn(),
   mockCanvasUpdateMany: vi.fn(),
+  mockChatThreadFindMany: vi.fn(),
   mockGenJobFindMany: vi.fn(),
-  mockGetCoworkThread: vi.fn(),
   mockGetGenerationThumbs: vi.fn(),
   mockCreateCanvasNode: vi.fn(),
   mockNewId: vi.fn(),
@@ -28,7 +28,6 @@ const {
 
 vi.mock("../auth-guard", () => ({ requireOwner: mockOwner }));
 vi.mock("../data", () => ({
-  getCoworkThread: mockGetCoworkThread,
   getGenerationThumbs: mockGetGenerationThumbs,
 }));
 vi.mock("../canvas-actions", () => ({
@@ -44,6 +43,7 @@ vi.mock("@fikirtive/db", () => ({
       create: mockCanvasCreate,
       updateMany: mockCanvasUpdateMany,
     },
+    chatThread: { findMany: mockChatThreadFindMany },
     genJob: { findMany: mockGenJobFindMany },
   },
 }));
@@ -51,12 +51,13 @@ vi.mock("@fikirtive/db", () => ({
 import { syncOttoCanvasNodes } from "../otto-canvas-bridge";
 
 beforeEach(() => {
-  vi.clearAllMocks();
+  vi.resetAllMocks();
   mockOwner.mockResolvedValue({ ownerId: "u1", email: "owner@example.test" });
   mockProjectFindFirst.mockResolvedValue({ id: "p1" });
   mockCanvasCount.mockResolvedValue(0);
   mockCanvasCreate.mockResolvedValue({});
   mockCanvasUpdateMany.mockResolvedValue({ count: 1 });
+  mockChatThreadFindMany.mockResolvedValue([]);
   mockGenJobFindMany.mockResolvedValue([]);
   mockGetGenerationThumbs.mockResolvedValue({});
   mockNewId.mockReturnValue("node-1");
@@ -99,17 +100,19 @@ describe("syncOttoCanvasNodes project scoping", () => {
   });
 
   it("looks up GEN_RESULT jobs within the active project before bridging nodes", async () => {
-    mockGetCoworkThread.mockResolvedValue({
-      projectId: "p1",
-      messages: [
-        { kind: "GEN_RESULT", genJobId: "job-1", seq: 1, payload: { kind: "image" }, text: "prompt" },
-      ],
-    });
+    mockChatThreadFindMany.mockResolvedValue([
+      {
+        id: "thread-1",
+        messages: [
+          { kind: "GEN_RESULT", genJobId: "job-1", seq: 1, payload: { kind: "image" }, text: "prompt" },
+        ],
+      },
+    ]);
     mockCanvasFindMany
       .mockResolvedValueOnce([])
       .mockResolvedValueOnce([]);
 
-    await syncOttoCanvasNodes("p1", "thread-1");
+    await syncOttoCanvasNodes("p1");
 
     expect(mockGenJobFindMany).toHaveBeenCalledWith(
       expect.objectContaining({
@@ -117,6 +120,48 @@ describe("syncOttoCanvasNodes project scoping", () => {
       }),
     );
     expect(mockCreateCanvasNode).not.toHaveBeenCalled();
+  });
+
+  it("bridges GEN_RESULT generations from every live thread in the project", async () => {
+    mockChatThreadFindMany.mockResolvedValue([
+      {
+        id: "thread-1",
+        messages: [
+          { kind: "GEN_RESULT", genJobId: "job-1", seq: 1, payload: { kind: "image" }, text: "first" },
+        ],
+      },
+      {
+        id: "thread-2",
+        messages: [
+          { kind: "GEN_RESULT", genJobId: "job-2", seq: 1, payload: { kind: "video" }, text: "second" },
+        ],
+      },
+    ]);
+    mockCanvasFindMany
+      .mockResolvedValueOnce([])
+      .mockResolvedValueOnce([]);
+    mockGenJobFindMany.mockResolvedValueOnce([
+      { id: "job-1", generationIds: ["gen-1"] },
+      { id: "job-2", generationIds: ["gen-2"] },
+    ]);
+
+    await syncOttoCanvasNodes("p1");
+
+    expect(mockCreateCanvasNode).toHaveBeenCalledTimes(2);
+    expect(mockCreateCanvasNode).toHaveBeenNthCalledWith(1, expect.objectContaining({
+      projectId: "p1",
+      generationId: "gen-1",
+      genJobId: "job-1",
+      threadId: "thread-1",
+      type: "image",
+    }));
+    expect(mockCreateCanvasNode).toHaveBeenNthCalledWith(2, expect.objectContaining({
+      projectId: "p1",
+      generationId: "gen-2",
+      genJobId: "job-2",
+      threadId: "thread-2",
+      type: "video",
+    }));
   });
 
   it("recovers missing sibling nodes for a completed multi-variant promptbar job", async () => {

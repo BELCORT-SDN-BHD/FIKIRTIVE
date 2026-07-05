@@ -418,7 +418,7 @@ export function ProductShowcase({
                     onClick={() => onOpenPicker(r)}
                     className="flex h-[150px] w-full items-center justify-center bg-accent/50 text-[0.8125rem] text-muted-foreground hover:text-foreground"
                   >
-                    Add image · from My Stuff
+                    Add image · from Library
                   </button>
                 )}
                 {r.pinned && (

@@ -515,7 +515,7 @@ export default function FlowCanvas({
   // the original listCanvasNodes (URLs stay client-resolved via generation polls).
   const reload = useCallback(async () => {
     const rows = skin === "gb"
-      ? await syncOttoCanvasNodes(projectId, activeThreadId ?? undefined)
+      ? await syncOttoCanvasNodes(projectId)
       : await listCanvasNodes(projectId);
     if ("error" in (rows as object)) return;
     const mapped = (rows as Array<CanvasNodeDTO & { url?: string | null }>).map((r) => {
@@ -564,10 +564,10 @@ export default function FlowCanvas({
       nodeCountRef.current = all.length;
       return all;
     });
-  }, [skin, projectId, activeThreadId, onTextChange, getOnAnimate, getOnMediaSize, getOnOpenDetail, getOnReferenceInChat, requestReload, withNodeActionLock]);
+  }, [skin, projectId, onTextChange, getOnAnimate, getOnMediaSize, getOnOpenDetail, getOnReferenceInChat, requestReload, withNodeActionLock]);
   reloadRef.current = reload;
 
-  // Initial load + reload when the active thread changes (re-bridges that thread).
+  // Initial load + project-level reload. Under gb this bridges every chat in the project.
   useEffect(() => { void reload(); }, [reload]);
 
   const hasInFlightPaidNode = nodes.some((n) => isInFlightPaidGen({
@@ -588,17 +588,17 @@ export default function FlowCanvas({
   }, [hasInFlightPaidNode]);
 
   // ReactFlow's `fitView` prop only runs on mount, before our async canvas nodes arrive.
-  // Fit once per project/thread after nodes load so left-edge node action buttons do not
+  // Fit once per project after nodes load so left-edge node action buttons do not
   // sit underneath the Otto panel and become visible-but-unclickable.
   useEffect(() => {
     if (!flowReady || !flowRef.current || nodes.length === 0) return;
-    const scope = `${projectId}:${activeThreadId ?? "all"}`;
+    const scope = projectId;
     if (fittedScopeRef.current === scope) return;
     fittedScopeRef.current = scope;
     requestAnimationFrame(() => {
       void flowRef.current?.fitView({ padding: 0.22, duration: 160 });
     });
-  }, [flowReady, nodes.length, projectId, activeThreadId]);
+  }, [flowReady, nodes.length, projectId]);
 
   // When the active thread's OTTO work finishes (pending → done), reload so its
   // freshly-produced results appear on the canvas.

@@ -157,7 +157,7 @@ export const PARITY_MANIFEST = {
   "data.getCoworkThreads": { todoSkill: true, reason: "Otto home thread list is page data; thread reads need free/read skill parity." },
   "data.getCoworkThread": { todoSkill: true, reason: "Otto home active-thread detail is page data; thread reads need free/read skill parity." },
   "data.resolveCoworkResultUrls": { todoSkill: true, reason: "Otto home result URL resolution is page data; generation result reads need free/read skill parity." },
-  "data.getMyAds": { todoSkill: true, reason: "Otto home My Stuff ads list is page data; finished ad reads need free/read skill parity." },
+  "data.getMyAds": { todoSkill: true, reason: "Otto home Library ads list is page data; finished ad reads need free/read skill parity." },
   "data.getMyAdJobs": { todoSkill: true, reason: "Otto home in-flight ad jobs are page data; generation status reads need free/read skill parity." },
   "data.getRecentGenerationThumbs": { todoSkill: true, reason: "Otto home history strip is page data; recent generation reads need free/read skill parity." },
   "data.getAllCoworkThreadMetas": { todoSkill: true, reason: "Otto home global sidebar threads are page data; thread reads need free/read skill parity." },

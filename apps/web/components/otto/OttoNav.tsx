@@ -16,13 +16,6 @@ interface NavItem {
   icon: React.ReactNode;
 }
 
-function IconMessageCircle() {
-  return (
-    <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden>
-      <path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z" />
-    </svg>
-  );
-}
 function IconFolderHeart() {
   return (
     <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden>
@@ -102,13 +95,8 @@ function OttoCloud({ size = 26 }: { size?: number }) {
   );
 }
 
-const PRIMARY_ITEMS: NavItem[] = [
-  { key: "otto", label: "Chat", icon: <IconMessageCircle /> },
-];
-
 const TOOL_ITEMS: NavItem[] = [
   { key: "library", label: "Library", icon: <IconFolderHeart /> },
-  { key: "stuff", label: "My Stuff", icon: <IconFolderHeart /> },
   { key: "memory", label: "Brand memory", icon: <IconBrain /> },
   { key: "templates", label: "Templates", icon: <IconTemplates /> },
   { key: "discover", label: "Discover", icon: <IconCompass /> },
@@ -168,6 +156,8 @@ export interface OttoNavProps {
   onSelectThread: (id: string) => void;
   /** Switch to another project (optionally opening a thread). */
   onSwitchProject: (projectId: string, threadId?: string) => void;
+  /** Start a fresh chat inside a project. */
+  onNewChat: (projectId: string) => void;
   /** Rename a project (campaign). */
   onRenameProject: (projectId: string, name: string) => void;
   /** Delete (soft) a project (campaign). */
@@ -199,6 +189,7 @@ export function OttoNav({
   activeThreadId,
   onSelectThread,
   onSwitchProject,
+  onNewChat,
   onRenameProject,
   onDeleteProject,
   onNewCampaign,
@@ -279,13 +270,7 @@ export function OttoNav({
   }
 
   function openProjectEntry(entry: Extract<OttoNavEntry, { kind: "project" }>) {
-    if (entry.defaultThread) {
-      if (entry.project.id === activeProjectId) onSelectThread(entry.defaultThread.id);
-      else onSwitchProject(entry.project.id, entry.defaultThread.id);
-      return;
-    }
-    if (entry.project.id === activeProjectId) onViewChange("otto");
-    else onSwitchProject(entry.project.id);
+    onNewChat(entry.project.id);
   }
 
   return (
@@ -380,25 +365,6 @@ export function OttoNav({
         </button>
       </div>
 
-      {/* Primary path */}
-      <div className="px-3 flex flex-col gap-2">
-        <div className="flex flex-col gap-[1px]">
-          {PRIMARY_ITEMS.map((item) => {
-            const active = view === item.key;
-            return (
-              <button
-                key={item.key}
-                onClick={() => handleNavAction(() => onViewChange(item.key))}
-                className={`flex items-center gap-[9px] w-full border-0 text-[0.84375rem] px-[9px] py-2 rounded-[9px] cursor-pointer text-left transition-colors duration-150 ${active ? "bg-secondary text-foreground font-semibold" : "bg-transparent text-muted-foreground font-normal"}`}
-              >
-                {item.icon}
-                {item.label}
-              </button>
-            );
-          })}
-        </div>
-      </div>
-
       {/* Projects (campaigns) + History */}
       {hasSidebar && (
         <div className="flex-1 overflow-auto pt-4 px-3 pb-2">
@@ -478,6 +444,14 @@ export function OttoNav({
                   {/* conversations nested under the project (collapsible) */}
                   {canExpand && !isCollapsed && (
                     <div className="flex flex-col gap-px mt-px">
+                      <button
+                        type="button"
+                        onClick={() => handleNavAction(() => onNewChat(p.id))}
+                        className="flex items-center gap-2 border-0 bg-transparent py-[5px] pr-6 pl-7 text-left text-[0.75rem] font-medium text-muted-foreground rounded-[10px] cursor-pointer hover:bg-secondary hover:text-foreground"
+                      >
+                        <IconPlus />
+                        <span className="truncate min-w-0">New chat</span>
+                      </button>
                       {entry.threads.map((t) => {
                         const isActive = isActiveProject && t.id === activeThreadId && view === "otto";
                         const dotColor = dotFor(t.status);

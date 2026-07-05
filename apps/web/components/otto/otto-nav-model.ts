@@ -6,20 +6,6 @@ export type OttoNavEntry =
   | { kind: "project"; project: OttoNavProjectMeta; threads: ChatThreadDTO[]; defaultThread?: ChatThreadDTO }
   | { kind: "thread"; project: OttoNavProjectMeta; thread: ChatThreadDTO };
 
-const DEFAULT_CAMPAIGN_NAMES = new Set(["new campaign", "untitled project"]);
-
-function normalizeName(name: string) {
-  return name.trim().replace(/\s+/g, " ").toLowerCase();
-}
-
-export function isDefaultCampaignName(name: string) {
-  return DEFAULT_CAMPAIGN_NAMES.has(normalizeName(name));
-}
-
-function sameVisibleName(a: string, b: string) {
-  return normalizeName(a) === normalizeName(b);
-}
-
 function visibleThreadsForProject(
   projectThreads: ChatThreadDTO[],
   projectId: string,
@@ -84,12 +70,6 @@ export function buildOttoNavEntries({
   return visibleProjects.map((project) => {
     const projectThreads = threadsByProject.get(project.id) ?? [];
     const threads = visibleThreadsForProject(projectThreads, project.id, activeProjectId, activeThreadId, threadLimit);
-    if (threads.length === 1 && isDefaultCampaignName(project.name)) {
-      return { kind: "thread" as const, project, thread: threads[0]! };
-    }
-    if (threads.length === 1 && sameVisibleName(project.name, threads[0]!.title)) {
-      return { kind: "project" as const, project, threads: [], defaultThread: threads[0]! };
-    }
     return { kind: "project" as const, project, threads };
   });
 }
