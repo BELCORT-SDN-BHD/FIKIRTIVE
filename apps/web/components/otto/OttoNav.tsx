@@ -6,6 +6,7 @@ import type { OttoViewKey, ProjectMeta } from "./OttoApp";
 import type { ChatThreadDTO } from "@/lib/types";
 import type { HistoryThumb } from "@/lib/data";
 import { buildOttoNavEntries, type OttoNavEntry } from "./otto-nav-model";
+import { getOttoNavCollapseAction, getOttoNavCollapseLabel } from "./otto-nav-collapse";
 
 const MOBILE_BP = 680;
 
@@ -219,6 +220,7 @@ export function OttoNav({
   const [collapsedProjects, setCollapsedProjects] = useState<Set<string>>(new Set());
   const [toolsOpen, setToolsOpen] = useState(toolsActive);
   const showTools = toolsActive || toolsOpen;
+  const collapseLabel = getOttoNavCollapseLabel(drawerOpen);
 
   const isProjectCollapsed = (id: string) => {
     if (collapsedProjects.has(id)) return true;
@@ -260,6 +262,14 @@ export function OttoNav({
   function handleNavAction(fn: () => void) {
     fn();
     onDrawerClose?.();
+  }
+
+  function handleCollapseAction() {
+    if (getOttoNavCollapseAction(drawerOpen) === "close-drawer") {
+      onDrawerClose?.();
+      return;
+    }
+    onToggleCollapse?.();
   }
 
   function openThreadEntry(entry: Extract<OttoNavEntry, { kind: "thread" }>) {
@@ -345,9 +355,9 @@ export function OttoNav({
         </div>
         <button
           type="button"
-          onClick={onToggleCollapse}
-          title="Collapse sidebar"
-          aria-label="Collapse sidebar"
+          onClick={handleCollapseAction}
+          title={collapseLabel}
+          aria-label={collapseLabel}
           className="otto-nav-collapse flex shrink-0 items-center justify-center w-7 h-7 rounded-[10px] border-0 bg-transparent text-muted-foreground/70 cursor-pointer"
         >
           <svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.9" aria-hidden>
