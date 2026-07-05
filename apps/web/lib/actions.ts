@@ -105,17 +105,25 @@ async function findReusableEmptyDefaultProject(ownerId: string, name: string): P
   const candidates = await prisma.project.findMany({
     where: { ownerId, name, deletedAt: null },
     orderBy: { createdAt: "desc" },
-    select: { id: true },
+    select: { id: true, editJson: true, coworkBrief: true, brandId: true, campaignId: true },
     take: 12,
   });
   for (const candidate of candidates) {
-    const [threads, nodes, genJobs, generations] = await Promise.all([
+    const hasProjectLevelWork = Boolean(
+      candidate.editJson ||
+      candidate.coworkBrief?.trim() ||
+      candidate.brandId?.trim() ||
+      candidate.campaignId?.trim(),
+    );
+    if (hasProjectLevelWork) continue;
+    const [threads, shots, nodes, genJobs, generations] = await Promise.all([
       prisma.chatThread.count({ where: { ownerId, projectId: candidate.id, deletedAt: null } }),
+      prisma.shot.count({ where: { ownerId, projectId: candidate.id, deletedAt: null } }),
       prisma.canvasNode.count({ where: { ownerId, projectId: candidate.id } }),
       prisma.genJob.count({ where: { ownerId, projectId: candidate.id } }),
       prisma.generation.count({ where: { ownerId, projectId: candidate.id, deletedAt: null } }),
     ]);
-    if (threads === 0 && nodes === 0 && genJobs === 0 && generations === 0) return candidate;
+    if (threads === 0 && shots === 0 && nodes === 0 && genJobs === 0 && generations === 0) return candidate;
   }
   return null;
 }
