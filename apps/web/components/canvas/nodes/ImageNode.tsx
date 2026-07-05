@@ -15,6 +15,7 @@ export function ImageNode({ data, selected }: NodeProps) {
     onDelete?: () => void;
     onOpenDetail?: () => void;
     onRefresh?: () => void;
+    onMediaSize?: (size: { width: number; height: number }) => void;
     directToolsLocked?: boolean;
     directToolsLockedReason?: string;
   };
@@ -79,7 +80,12 @@ export function ImageNode({ data, selected }: NodeProps) {
       ) : d.status === "pending" || !d.url ? (
         <GeneratingBody gb={d.skin === "gb"} kind="image" onRefresh={d.onRefresh} />
       ) : (
-        <img src={d.url} alt={d.prompt ?? ""} style={{ width: "100%", height: "100%", objectFit: "cover" }} />
+        <img
+          src={d.url}
+          alt={d.prompt ?? ""}
+          onLoad={(e) => d.onMediaSize?.({ width: e.currentTarget.naturalWidth, height: e.currentTarget.naturalHeight })}
+          style={{ width: "100%", height: "100%", objectFit: "contain", display: "block", background: "var(--muted)" }}
+        />
       )}
       <Handle type="source" position={Position.Right} />
     </div>

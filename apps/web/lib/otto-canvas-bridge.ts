@@ -119,12 +119,13 @@ export async function syncOttoCanvasNodes(
     // generationId for it — Make video / Detail silently no-oped on that primary card
     // (their guard needs nodeDataRef.generationId). Display-only metadata resolution;
     // the id is the job's OWN generation (owner-scoped above), no spend logic.
-    const url = gid ? thumbs[gid]?.src ?? null : null;
+    const thumb = gid ? thumbs[gid] : undefined;
+    const url = thumb?.src ?? null;
     const jobStatus = job?.status;
     const status = gid && !url ? "missing" : canvasNodeDisplayStatus(n.status, jobStatus, url);
     const patch = settledCanvasNodeRepairPatch(n.status, n.generationId, jobStatus, gid, url);
     if (patch) repairs.push({ id: n.id, status: n.status, generationId: n.generationId, data: patch });
-    return { ...n, generationId: gid, status, url };
+    return { ...n, generationId: gid, status, url, mediaWidth: thumb?.width ?? null, mediaHeight: thumb?.height ?? null };
   });
   const claimedSiblingAnchorIds = new Set<string>();
   if (repairs.length) {
@@ -151,6 +152,7 @@ export async function syncOttoCanvasNodes(
   const recoveredSiblings: CanvasNodeWithUrl[] = [];
   for (const plan of siblingPlans) {
     const id = newId();
+    const thumb = thumbs[plan.generationId];
     await prisma.canvasNode.create({
       data: {
         id,
@@ -185,6 +187,8 @@ export async function syncOttoCanvasNodes(
       sourceNodeId: plan.sourceNodeId,
       threadId: plan.threadId,
       url: plan.url,
+      mediaWidth: thumb?.width ?? null,
+      mediaHeight: thumb?.height ?? null,
     });
   }
   return [...resolved, ...recoveredSiblings];

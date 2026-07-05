@@ -7,17 +7,28 @@ import { threadBadgeFromJobStatus } from "./thread-status";
 import { storage } from "./storage";
 
 const THUMB_VIDEO_EXTS = new Set(["mp4", "mov", "webm", "mkv"]);
+export type GenerationThumb = {
+  src: string;
+  kind: "image" | "video";
+  width: number | null;
+  height: number | null;
+};
 /** Resolve generation ids → { src, kind } thumbnails (segment frame slots). */
-export async function getGenerationThumbs(ownerId: string, ids: string[]): Promise<Record<string, { src: string; kind: "image" | "video" }>> {
+export async function getGenerationThumbs(ownerId: string, ids: string[]): Promise<Record<string, GenerationThumb>> {
   const clean = [...new Set(ids.filter(Boolean))];
   if (!clean.length) return {};
   const gens = await prisma.generation.findMany({ where: { id: { in: clean }, ownerId, deletedAt: null }, include: { asset: true } });
-  const out: Record<string, { src: string; kind: "image" | "video" }> = {};
+  const out: Record<string, GenerationThumb> = {};
   for (const g of gens) {
     const ext = g.asset.ext.toLowerCase();
     const key = storageKey(g.asset.ownerId, g.asset.contentHash, ext);
     if (!(await storage.exists(key))) continue;
-    out[g.id] = { src: storageKeyToSrc(key), kind: THUMB_VIDEO_EXTS.has(ext) ? "video" : "image" };
+    out[g.id] = {
+      src: storageKeyToSrc(key),
+      kind: THUMB_VIDEO_EXTS.has(ext) ? "video" : "image",
+      width: g.asset.width,
+      height: g.asset.height,
+    };
   }
   return out;
 }
