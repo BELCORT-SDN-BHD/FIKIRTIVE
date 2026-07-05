@@ -173,6 +173,7 @@ export interface OttoNavProps {
   /** Delete (soft) a project (campaign). */
   onDeleteProject: (projectId: string) => void;
   onNewCampaign: () => void;
+  newCampaignPending?: boolean;
   onDeleteThread: (id: string) => void;
   /** Spendable balance in DISPLAYED credits (the product shows credits, never dollars). */
   balanceCredits: number;
@@ -201,6 +202,7 @@ export function OttoNav({
   onRenameProject,
   onDeleteProject,
   onNewCampaign,
+  newCampaignPending = false,
   onDeleteThread,
   balanceCredits,
   userName,
@@ -369,7 +371,9 @@ export function OttoNav({
       <div className="pt-4 px-3 pb-3">
         <button
           onClick={() => handleNavAction(onNewCampaign)}
-          className="flex items-center justify-center gap-[7px] w-full h-[38px] border-0 bg-primary text-primary-foreground text-[0.875rem] font-semibold px-3 rounded-[12px] cursor-pointer transition shadow-[0_4px_12px_rgba(236,88,40,0.18)]"
+          disabled={newCampaignPending}
+          aria-busy={newCampaignPending}
+          className={`flex items-center justify-center gap-[7px] w-full h-[38px] border-0 bg-primary text-primary-foreground text-[0.875rem] font-semibold px-3 rounded-[12px] cursor-pointer transition shadow-[0_4px_12px_rgba(236,88,40,0.18)] disabled:pointer-events-none disabled:opacity-60${newCampaignPending ? " cursor-wait" : ""}`}
         >
           <IconPlus />
           New campaign
