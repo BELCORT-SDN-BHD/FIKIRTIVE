@@ -63,6 +63,53 @@ export { mapOttoUsage } from "@fikirtive/otto";
 const IMAGE_EXTS = ["png", "jpg", "jpeg", "webp"];
 const VIDEO_EXTS = ["mp4", "mov", "webm"];
 
+function orderedUniqueIds(ids: Array<string | null | undefined>): string[] {
+  const seen = new Set<string>();
+  const out: string[] = [];
+  for (const id of ids) {
+    if (!id || seen.has(id)) continue;
+    seen.add(id);
+    out.push(id);
+  }
+  return out;
+}
+
+async function validateGenerationRefs(input: {
+  ownerId: string;
+  projectId: string;
+  ids: string[];
+  exts: string[];
+}): Promise<string[]> {
+  const valid: string[] = [];
+  for (const id of input.ids) {
+    const resolved = await validateOwnedGenerationExt(prisma, {
+      id,
+      ownerId: input.ownerId,
+      projectId: input.projectId,
+      exts: input.exts,
+    });
+    if (resolved) valid.push(resolved);
+  }
+  return orderedUniqueIds(valid);
+}
+
+export async function validateOttoTurnReferences(input: {
+  ownerId: string;
+  projectId: string;
+  sourceGenerationId?: string | null;
+  sourceGenerationIds?: string[] | null;
+  referenceVideoGenerationId?: string | null;
+  referenceVideoGenerationIds?: string[] | null;
+}): Promise<{ sourceGenerationIds: string[]; referenceVideoGenerationIds: string[] }> {
+  const sourceIds = orderedUniqueIds([...(input.sourceGenerationIds ?? []), input.sourceGenerationId]);
+  const videoIds = orderedUniqueIds([...(input.referenceVideoGenerationIds ?? []), input.referenceVideoGenerationId]);
+  const [validSourceIds, validVideoIds] = await Promise.all([
+    validateGenerationRefs({ ownerId: input.ownerId, projectId: input.projectId, ids: sourceIds, exts: IMAGE_EXTS }),
+    validateGenerationRefs({ ownerId: input.ownerId, projectId: input.projectId, ids: videoIds, exts: VIDEO_EXTS }),
+  ]);
+  return { sourceGenerationIds: validSourceIds, referenceVideoGenerationIds: validVideoIds };
+}
+
 /**
  * Safe one-line error summary for server logs. Logs name/message/statusCode only —
  * NOT the raw error, whose AI SDK provider fields (e.g. requestBodyValues) can carry
@@ -121,11 +168,17 @@ export function buildContextSystemMessage(ctx: OttoContext): AgentInputItem | nu
       : `the last generation status is ${s}`;
     parts.push(`Current generation status for this conversation: ${human}. Speak about generation progress ONLY based on this.`);
   }
-  if (ctx.referenceVideoGenerationId) {
+  if ((ctx.images?.length ?? 0) > 1) {
+    parts.push(`The user attached ${ctx.images!.length} IMAGE REFERENCES this turn. You can inspect them as input images; compare and use all relevant visual details from the attached references.`);
+  }
+  const referenceVideoCount = ctx.referenceVideoGenerationIds?.length ?? (ctx.referenceVideoGenerationId ? 1 : 0);
+  if (referenceVideoCount > 0) {
     // Per-turn signal: unlike an attached image (which Otto SEES as an input_image part),
     // a reference video is invisible to the model — so tell it one is attached this turn.
     parts.push(
-      `The user attached a REFERENCE VIDEO this turn — you cannot see it; reason from their words. Propose kind:"video" so the clip guides the generation's motion, pacing, and style.`,
+      referenceVideoCount === 1
+        ? `The user attached a REFERENCE VIDEO this turn — you cannot see it; reason from their words. Propose kind:"video" so the clip guides the generation's motion, pacing, and style.`
+        : `The user attached ${referenceVideoCount} REFERENCE VIDEOS this turn — you cannot see the clips; reason from their words. Propose kind:"video" so the primary clip can guide the generation's motion, pacing, and style, and acknowledge when multiple clips may be conflicting references.`,
     );
   }
   return parts.length ? ({ role: "system", content: parts.join("\n\n") } as AgentInputItem) : null;
@@ -140,17 +193,23 @@ export async function buildOttoContext({
   projectId,
   threadId,
   sourceGenerationId,
+  sourceGenerationIds,
   referenceVideoGenerationId,
+  referenceVideoGenerationIds,
   simpleMode,
 }: {
   ownerId: string;
   projectId: string;
   threadId: string;
   sourceGenerationId?: string | null;
+  sourceGenerationIds?: string[] | null;
   referenceVideoGenerationId?: string | null;
+  referenceVideoGenerationIds?: string[] | null;
   simpleMode?: boolean;
 }): Promise<OttoContext> {
   const disabledModels = Array.from(await resolveDisabledModels());
+  const imageRefIds = orderedUniqueIds([...(sourceGenerationIds ?? []), sourceGenerationId]);
+  const videoRefIds = orderedUniqueIds([...(referenceVideoGenerationIds ?? []), referenceVideoGenerationId]);
 
   // Web-search transport (S1). Tavily is primary; Brave is the fallback when both keys
   // are present. With no key configured, `search` is left unwired — researchWeb's query
@@ -172,7 +231,7 @@ export async function buildOttoContext({
       orderBy: { createdAt: "desc" },
       select: { status: true, kind: true, error: true },
     }).catch(() => null),
-    gatherReferenceImages(ownerId, projectId, sourceGenerationId ?? null),
+    gatherReferenceImages(ownerId, projectId, imageRefIds),
   ]);
   return {
     orgId: ownerId,
@@ -180,8 +239,12 @@ export async function buildOttoContext({
     projectId,
     threadId,
     disabledModels,
-    sourceGenerationId: sourceGenerationId ?? null,
-    referenceVideoGenerationId: referenceVideoGenerationId ?? null,
+    // Image refs still go to Otto vision below, but when a reference video is attached
+    // the current paid generation path stays single-primary video-reference only.
+    sourceGenerationId: videoRefIds.length > 0 ? null : imageRefIds[0] ?? null,
+    sourceGenerationIds: imageRefIds,
+    referenceVideoGenerationId: videoRefIds[0] ?? null,
+    referenceVideoGenerationIds: videoRefIds,
     images,
     startGen,
     brandContext,
@@ -403,7 +466,7 @@ export async function ottoTurn(raw: unknown): Promise<
   if (await isImpersonating()) return { error: "Paused while impersonating a customer — exit impersonation to do this." };
   const { ownerId } = gate;
 
-  const { projectId, text, entityIds, variantSel, sourceGenerationId, referenceVideoGenerationId, replyToMessageId } = parsed.data;
+  const { projectId, text, entityIds, variantSel, sourceGenerationId, sourceGenerationIds, referenceVideoGenerationId, referenceVideoGenerationIds, replyToMessageId } = parsed.data;
 
   try {
     const OWNED = { ownerId, deletedAt: null } as const;
@@ -412,27 +475,14 @@ export async function ottoTurn(raw: unknown): Promise<
     const project = await prisma.project.findFirst({ where: { id: projectId, ...OWNED } });
     if (!project) return { error: "Project not found." };
 
-    // Validate sourceGenerationId (owned + in-project + image-ext), else null
-    let validSource: string | null = null;
-    if (sourceGenerationId) {
-      validSource = await validateOwnedGenerationExt(prisma, {
-        id: sourceGenerationId,
-        ownerId,
-        projectId,
-        exts: IMAGE_EXTS,
-      });
-    }
-
-    // Validate referenceVideoGenerationId (owned + in-project + VIDEO-ext), else null
-    let validRefVideo: string | null = null;
-    if (referenceVideoGenerationId) {
-      validRefVideo = await validateOwnedGenerationExt(prisma, {
-        id: referenceVideoGenerationId,
-        ownerId,
-        projectId,
-        exts: VIDEO_EXTS,
-      });
-    }
+    const refs = await validateOttoTurnReferences({
+      ownerId,
+      projectId,
+      sourceGenerationId,
+      sourceGenerationIds,
+      referenceVideoGenerationId,
+      referenceVideoGenerationIds,
+    });
 
     // Resolve thread: new vs existing-owned-and-in-project
     const isNew = !parsed.data.threadId;
@@ -484,13 +534,20 @@ export async function ottoTurn(raw: unknown): Promise<
         kind: "TEXT",
         seq: ++seq,
         text,
-        payload: { entityIds, variantSel },
+        payload: { entityIds, variantSel, sourceGenerationIds: refs.sourceGenerationIds, referenceVideoGenerationIds: refs.referenceVideoGenerationIds },
         replyToMessageId: validReplyId,
       },
     });
 
     // Build context
-    const ctx = await buildOttoContext({ ownerId, projectId, threadId, sourceGenerationId: validSource, referenceVideoGenerationId: validRefVideo, simpleMode: parsed.data.simple });
+    const ctx = await buildOttoContext({
+      ownerId,
+      projectId,
+      threadId,
+      sourceGenerationIds: refs.sourceGenerationIds,
+      referenceVideoGenerationIds: refs.referenceVideoGenerationIds,
+      simpleMode: parsed.data.simple,
+    });
 
     // Goal-intent seeding: on a new thread with a goalKey, append the preset's opening
     // to brandContext so buildContextSystemMessage injects it as a system message.

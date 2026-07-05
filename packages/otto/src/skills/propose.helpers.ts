@@ -106,9 +106,9 @@ export function buildProposeCard(
   let kind = input.kind;
   let entityIds = input.entityIds;
   let variantSel = input.variantSel;
-  const isI2V = kind === "video" && !!ctx.sourceGenerationId;
-  const hasSourceImage = isI2V;
   const isRefVideo = kind === "video" && !!ctx.referenceVideoGenerationId;
+  const isI2V = kind === "video" && !!ctx.sourceGenerationId && !isRefVideo;
+  const hasSourceImage = isI2V;
 
   if (isI2V) {
     // i2v conditions on the start frame, not on entity refs (preserve prior behavior)

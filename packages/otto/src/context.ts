@@ -31,9 +31,15 @@ export interface OttoContext {
   disabledModels: string[];
   /** "Animate this result": a server-validated i2v source frame, if the turn carries one. */
   sourceGenerationId?: string | null;
+  /** All server-validated canvas image references attached to this turn. The first one
+   *  remains `sourceGenerationId` for generation-card compatibility. */
+  sourceGenerationIds?: string[];
   /** Whole-clip reference video for THIS turn (整段视频参考). Server-validated video-ext.
    *  Threaded to the gen ONLY for a video plan; ignored for image plans. */
   referenceVideoGenerationId?: string | null;
+  /** All server-validated whole-clip reference videos attached to this turn. The first
+   *  one remains `referenceVideoGenerationId` for the current single-primary spend path. */
+  referenceVideoGenerationIds?: string[];
   /** Reference images shown to Otto THIS turn (the dropped reference → vision). Bounded +
    *  best-effort (gathered by the web caller). Appended as input_image parts to the CURRENT
    *  user turn only; never persisted into RunState history (stripHistoryImages drops them). */

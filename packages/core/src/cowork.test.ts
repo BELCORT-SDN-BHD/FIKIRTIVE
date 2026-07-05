@@ -19,6 +19,19 @@ describe("coworkTurnRequest sourceGenerationId", () => {
   });
 });
 
+describe("coworkTurnRequest sourceGenerationIds", () => {
+  const base = { projectId: "p1", text: "compare these" };
+  it("accepts multiple bounded image reference ids", () => {
+    const r = coworkTurnRequest.safeParse({ ...base, sourceGenerationIds: ["gen_a", "gen_b"] });
+    expect(r.success).toBe(true);
+    expect(r.success && r.data.sourceGenerationIds).toEqual(["gen_a", "gen_b"]);
+  });
+  it("rejects over-length ids inside sourceGenerationIds", () => {
+    const r = coworkTurnRequest.safeParse({ ...base, sourceGenerationIds: ["gen_a", "x".repeat(65)] });
+    expect(r.success).toBe(false);
+  });
+});
+
 describe("coworkTurnRequest referenceVideoGenerationId", () => {
   const base = { projectId: "p", text: "hi" };
   it("accepts a bounded referenceVideoGenerationId", () => {
@@ -27,6 +40,19 @@ describe("coworkTurnRequest referenceVideoGenerationId", () => {
   });
   it("rejects an over-length referenceVideoGenerationId", () => {
     const r = coworkTurnRequest.safeParse({ ...base, referenceVideoGenerationId: "x".repeat(65) });
+    expect(r.success).toBe(false);
+  });
+});
+
+describe("coworkTurnRequest referenceVideoGenerationIds", () => {
+  const base = { projectId: "p", text: "hi" };
+  it("accepts multiple bounded video reference ids", () => {
+    const r = coworkTurnRequest.safeParse({ ...base, referenceVideoGenerationIds: ["gen_vid_1", "gen_vid_2"] });
+    expect(r.success).toBe(true);
+    expect(r.success && r.data.referenceVideoGenerationIds).toEqual(["gen_vid_1", "gen_vid_2"]);
+  });
+  it("rejects over-length ids inside referenceVideoGenerationIds", () => {
+    const r = coworkTurnRequest.safeParse({ ...base, referenceVideoGenerationIds: ["gen_vid", "x".repeat(65)] });
     expect(r.success).toBe(false);
   });
 });

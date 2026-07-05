@@ -28,6 +28,7 @@ const mocks = vi.hoisted(() => {
     buildOttoContext: vi.fn(),
     buildContextSystemMessage: vi.fn(),
     finalizeOttoRun: vi.fn(),
+    validateOttoTurnReferences: vi.fn(),
     validateOwnedGenerationExt: vi.fn(),
     withLlmBudget: vi.fn(),
     run: vi.fn(),
@@ -49,6 +50,7 @@ vi.mock("@/lib/otto-actions", () => ({
   buildOttoContext: mocks.buildOttoContext,
   buildContextSystemMessage: mocks.buildContextSystemMessage,
   finalizeOttoRun: mocks.finalizeOttoRun,
+  validateOttoTurnReferences: mocks.validateOttoTurnReferences,
 }));
 vi.mock("@/lib/otto-generation-validate", () => ({
   validateOwnedGenerationExt: mocks.validateOwnedGenerationExt,
@@ -140,6 +142,18 @@ beforeEach(() => {
   });
   mocks.buildContextSystemMessage.mockReturnValue(null);
   mocks.finalizeOttoRun.mockResolvedValue({ status: "completed" });
+  mocks.validateOttoTurnReferences.mockImplementation(async (input: {
+    sourceGenerationId?: string | null;
+    sourceGenerationIds?: string[] | null;
+    referenceVideoGenerationId?: string | null;
+    referenceVideoGenerationIds?: string[] | null;
+  }) => ({
+    sourceGenerationIds: [...(input.sourceGenerationIds ?? []), ...(input.sourceGenerationId ? [input.sourceGenerationId] : [])],
+    referenceVideoGenerationIds: [
+      ...(input.referenceVideoGenerationIds ?? []),
+      ...(input.referenceVideoGenerationId ? [input.referenceVideoGenerationId] : []),
+    ],
+  }));
   mocks.withLlmBudget.mockImplementation(
     async (_args: unknown, fn: () => Promise<{ result: unknown; usage?: unknown }>) => {
       const out = await fn();
@@ -219,6 +233,41 @@ describe("POST /api/otto/stream", () => {
         { type: "data-status", data: { kind: "done", threadId } },
       ]),
     );
+  });
+
+  it("validates and threads multiple canvas references into the Otto context", async () => {
+    mocks.run.mockResolvedValue(streamedRunResult({ events: [] }));
+
+    const res = await POST(req({
+      projectId: "proj_stream",
+      text: "Use these refs",
+      sourceGenerationIds: ["gen_img_1", "gen_img_2"],
+      referenceVideoGenerationIds: ["gen_vid_1", "gen_vid_2"],
+    }));
+
+    expect(res.status).toBe(200);
+    expect(mocks.validateOttoTurnReferences).toHaveBeenCalledWith({
+      ownerId: "org_stream",
+      projectId: "proj_stream",
+      sourceGenerationId: undefined,
+      sourceGenerationIds: ["gen_img_1", "gen_img_2"],
+      referenceVideoGenerationId: undefined,
+      referenceVideoGenerationIds: ["gen_vid_1", "gen_vid_2"],
+    });
+    expect(mocks.buildOttoContext).toHaveBeenCalledWith(expect.objectContaining({
+      ownerId: "org_stream",
+      projectId: "proj_stream",
+      sourceGenerationIds: ["gen_img_1", "gen_img_2"],
+      referenceVideoGenerationIds: ["gen_vid_1", "gen_vid_2"],
+    }));
+    expect(mocks.chatMessageCreate).toHaveBeenCalledWith(expect.objectContaining({
+      data: expect.objectContaining({
+        payload: expect.objectContaining({
+          sourceGenerationIds: ["gen_img_1", "gen_img_2"],
+          referenceVideoGenerationIds: ["gen_vid_1", "gen_vid_2"],
+        }),
+      }),
+    }));
   });
 
   it("surfaces insufficient credits as a stream error without running Otto or persisting an AGENT message", async () => {
