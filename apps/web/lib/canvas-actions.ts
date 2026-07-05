@@ -48,25 +48,39 @@ export async function listCanvasNodes(projectId: string): Promise<CanvasNodeDTO[
   ];
   const thumbs = await getGenerationThumbs(gate.ownerId, genIds);
 
-  const repairs: Array<{ id: string; data: NonNullable<ReturnType<typeof settledCanvasNodeRepairPatch>> }> = [];
+  const repairs: Array<{
+    id: string;
+    status: string;
+    generationId: string | null;
+    data: NonNullable<ReturnType<typeof settledCanvasNodeRepairPatch>>;
+  }> = [];
   const resolved = nodes.map((n) => {
     const job = n.genJobId ? jobById.get(n.genJobId) : null;
     const generationId = n.generationId ?? firstDisplayableGenerationId(job?.generationIds, thumbs);
     const url = generationId ? thumbs[generationId]?.src ?? null : null;
     const status = generationId && !url ? "missing" : canvasNodeDisplayStatus(n.status, job?.status, url);
     const patch = settledCanvasNodeRepairPatch(n.status, n.generationId, job?.status, generationId, url);
-    if (patch) repairs.push({ id: n.id, data: patch });
+    if (patch) repairs.push({ id: n.id, status: n.status, generationId: n.generationId, data: patch });
     return { ...n, generationId, status, url };
   });
+  const claimedSiblingAnchorIds = new Set<string>();
   if (repairs.length) {
-    await Promise.all(repairs.map((r) => prisma.canvasNode.updateMany({
-      where: { id: r.id, ownerId: gate.ownerId, projectId },
-      data: r.data,
-    })));
+    const results = await Promise.all(repairs.map(async (r) => {
+      const result = await prisma.canvasNode.updateMany({
+        where: { id: r.id, ownerId: gate.ownerId, projectId, status: r.status, generationId: r.generationId },
+        data: r.data,
+      });
+      return { repair: r, count: result.count };
+    }));
+    for (const { repair, count } of results) {
+      if (count === 1 && repair.status !== "done" && repair.generationId === null && repair.data.status === "done" && repair.data.generationId) {
+        claimedSiblingAnchorIds.add(repair.id);
+      }
+    }
   }
 
   const siblingPlans = planSettledCanvasJobSiblingNodes(
-    nodes,
+    nodes.filter((n) => claimedSiblingAnchorIds.has(n.id)),
     jobById,
     thumbs,
     resolved.map((n) => n.generationId),
