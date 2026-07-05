@@ -5,12 +5,73 @@ import { newId } from "@fikirtive/core";
 import { requireOwner } from "./auth-guard";
 import { getGenerationThumbs } from "./data";
 import { createCanvasNode, type CanvasNodeDTO } from "./canvas-actions";
-import { canvasNodeDisplayStatus, firstDisplayableGenerationId, planBridgeNodes, planSettledCanvasJobSiblingNodes, settledCanvasNodeRepairPatch } from "./otto-canvas-bridge-core";
+import { canvasNodeDisplayStatus, firstDisplayableGenerationId, planBridgeNodes, planPendingJobNodes, planSettledCanvasJobSiblingNodes, settledCanvasNodeRepairPatch } from "./otto-canvas-bridge-core";
 
 /** A canvas node plus its resolved media URL (display-only). */
 export type CanvasNodeWithUrl = CanvasNodeDTO & { url: string | null };
 
 const NODE = { w: 320, h: 320, step: 340, y: 80 } as const;
+
+type BridgeMessage = {
+  id: string;
+  kind: string;
+  seq: number;
+  genJobId: string | null;
+  payload: unknown;
+  text: string | null;
+};
+
+async function createPendingCanvasNodeOnce(input: {
+  ownerId: string;
+  projectId: string;
+  threadId: string;
+  type: "image" | "video";
+  x: number;
+  y: number;
+  w: number;
+  h: number;
+  genJobId: string;
+  prompt: string | null;
+}): Promise<boolean> {
+  const id = newId();
+  const lockKey = `${input.ownerId}:${input.projectId}:${input.genJobId}:pending-canvas`;
+  const inserted = await prisma.$executeRaw`
+    WITH guard AS (
+      SELECT pg_advisory_xact_lock(hashtextextended(${lockKey}, 0::bigint))
+    )
+    INSERT INTO "CanvasNode" (
+      "id", "ownerId", "projectId", "type", "x", "y", "w", "h",
+      "text", "prompt", "generationId", "genJobId", "status",
+      "sourceNodeId", "threadId", "createdAt", "updatedAt"
+    )
+    SELECT
+      ${id}, ${input.ownerId}, ${input.projectId}, ${input.type},
+      ${input.x}, ${input.y}, ${input.w}, ${input.h},
+      NULL, ${input.prompt}, NULL, ${input.genJobId}, 'pending',
+      NULL, ${input.threadId}, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP
+    FROM guard
+    WHERE EXISTS (
+      SELECT 1 FROM "GenJob"
+      WHERE "id" = ${input.genJobId}
+        AND "ownerId" = ${input.ownerId}
+        AND "projectId" = ${input.projectId}
+    )
+      AND EXISTS (
+        SELECT 1 FROM "ChatThread"
+        WHERE "id" = ${input.threadId}
+          AND "ownerId" = ${input.ownerId}
+          AND "projectId" = ${input.projectId}
+          AND "deletedAt" IS NULL
+      )
+      AND NOT EXISTS (
+        SELECT 1 FROM "CanvasNode"
+        WHERE "ownerId" = ${input.ownerId}
+          AND "projectId" = ${input.projectId}
+          AND "genJobId" = ${input.genJobId}
+      )
+  `;
+  return inserted === 1;
+}
 
 /**
  * chat→canvas bridge — DISPLAY-ONLY, NO new spend.
@@ -38,34 +99,51 @@ export async function syncOttoCanvasNodes(
   });
   if (!project) return { error: "Project not found." };
 
-  // ── 1. Ensure a node per generation all project GEN_RESULTs produced ──
+  // ── 1. Ensure project chat generation work appears on the canvas ──
   const threads = await prisma.chatThread.findMany({
     where: { ownerId, projectId, deletedAt: null },
     orderBy: [{ createdAt: "asc" }, { id: "asc" }],
     select: {
       id: true,
       messages: {
-        where: { kind: "GEN_RESULT", genJobId: { not: null }, deletedAt: null },
+        where: { kind: { in: ["GEN_CARD", "GEN_RESULT"] }, deletedAt: null },
         orderBy: { seq: "asc" },
-        select: { seq: true, genJobId: true, payload: true, text: true },
+        select: { id: true, kind: true, seq: true, genJobId: true, payload: true, text: true },
       },
     },
   });
   const existing = await prisma.canvasNode.findMany({
-    where: { ownerId, projectId, generationId: { not: null } },
-    select: { generationId: true },
+    where: { ownerId, projectId },
+    select: { generationId: true, genJobId: true },
   });
   let placed = await prisma.canvasNode.count({ where: { ownerId, projectId } });
-  const jobIds = [...new Set(threads.flatMap((thread) => thread.messages.map((m) => m.genJobId as string)))];
-  const bridgeJobs = jobIds.length
-    ? await prisma.genJob.findMany({ where: { id: { in: jobIds }, ownerId, projectId }, select: { id: true, generationIds: true } })
+  const messages = threads.flatMap((thread) => thread.messages) as BridgeMessage[];
+  const jobIds = [...new Set(messages.map((m) => m.genJobId).filter((id): id is string => !!id))];
+  const cardJobKeys = [...new Set(messages
+    .filter((m) => m.kind === "GEN_CARD")
+    .map((m) => `cowork:${m.id}`))];
+  const jobWhere = [
+    ...(jobIds.length ? [{ id: { in: jobIds } }] : []),
+    ...(cardJobKeys.length ? [{ idempotencyKey: { in: cardJobKeys } }] : []),
+  ];
+  const bridgeJobs = jobWhere.length
+    ? await prisma.genJob.findMany({ where: { ownerId, projectId, OR: jobWhere }, select: { id: true, idempotencyKey: true, generationIds: true } })
     : [];
+  const bridgeJobById = new Map(bridgeJobs.map((j) => [j.id, j]));
+  const bridgeJobByCardId = new Map(
+    bridgeJobs
+      .filter((j) => j.idempotencyKey?.startsWith("cowork:"))
+      .map((j) => [j.idempotencyKey!.slice("cowork:".length), j]),
+  );
   const jobGenIds = new Map(bridgeJobs.map((j) => [j.id, j.generationIds]));
   const have = new Set(existing.map((n) => n.generationId).filter((id): id is string => !!id));
+  const haveJobs = new Set(existing.map((n) => n.genJobId).filter((id): id is string => !!id));
   for (const thread of threads) {
-    const toCreate = planBridgeNodes(thread.messages, jobGenIds, have);
+    const resultMessages = thread.messages.filter((m) => m.kind === "GEN_RESULT");
+    const toCreate = planBridgeNodes(resultMessages, jobGenIds, have);
     for (const node of toCreate) {
       have.add(node.generationId);
+      haveJobs.add(node.genJobId);
       // Reuses the validated, fail-closed insert (owner-scopes threadId /
       // generationId / genJobId). No spend path is touched.
       await createCanvasNode({
@@ -82,6 +160,28 @@ export async function syncOttoCanvasNodes(
         prompt: node.prompt ?? undefined,
       });
       placed += 1;
+    }
+    const cardMessages = (thread.messages as BridgeMessage[])
+      .filter((m) => m.kind === "GEN_CARD")
+      .map((m) => ({ ...m, genJobId: m.genJobId ?? bridgeJobByCardId.get(m.id)?.id ?? null }));
+    const pendingToCreate = planPendingJobNodes(cardMessages, bridgeJobById, have, haveJobs);
+    for (const node of pendingToCreate) {
+      haveJobs.add(node.genJobId);
+      // Pending card for a paid GenJob that already exists. This is a canvas
+      // placement only; the spend happened earlier in startGen.
+      const inserted = await createPendingCanvasNodeOnce({
+        ownerId,
+        projectId,
+        type: node.kind,
+        x: 80 + placed * NODE.step,
+        y: NODE.y,
+        w: NODE.w,
+        h: NODE.h,
+        genJobId: node.genJobId,
+        threadId: thread.id,
+        prompt: node.prompt,
+      });
+      if (inserted) placed += 1;
     }
   }
 

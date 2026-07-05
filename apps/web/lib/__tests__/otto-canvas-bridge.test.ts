@@ -9,6 +9,7 @@ const {
   mockCanvasUpdateMany,
   mockChatThreadFindMany,
   mockGenJobFindMany,
+  mockExecuteRaw,
   mockGetGenerationThumbs,
   mockCreateCanvasNode,
   mockNewId,
@@ -21,6 +22,7 @@ const {
   mockCanvasUpdateMany: vi.fn(),
   mockChatThreadFindMany: vi.fn(),
   mockGenJobFindMany: vi.fn(),
+  mockExecuteRaw: vi.fn(),
   mockGetGenerationThumbs: vi.fn(),
   mockCreateCanvasNode: vi.fn(),
   mockNewId: vi.fn(),
@@ -45,6 +47,7 @@ vi.mock("@fikirtive/db", () => ({
     },
     chatThread: { findMany: mockChatThreadFindMany },
     genJob: { findMany: mockGenJobFindMany },
+    $executeRaw: mockExecuteRaw,
   },
 }));
 
@@ -59,6 +62,7 @@ beforeEach(() => {
   mockCanvasUpdateMany.mockResolvedValue({ count: 1 });
   mockChatThreadFindMany.mockResolvedValue([]);
   mockGenJobFindMany.mockResolvedValue([]);
+  mockExecuteRaw.mockResolvedValue(1);
   mockGetGenerationThumbs.mockResolvedValue({});
   mockNewId.mockReturnValue("node-1");
 });
@@ -116,7 +120,7 @@ describe("syncOttoCanvasNodes project scoping", () => {
 
     expect(mockGenJobFindMany).toHaveBeenCalledWith(
       expect.objectContaining({
-        where: { id: { in: ["job-1"] }, ownerId: "u1", projectId: "p1" },
+        where: { ownerId: "u1", projectId: "p1", OR: [{ id: { in: ["job-1"] } }] },
       }),
     );
     expect(mockCreateCanvasNode).not.toHaveBeenCalled();
@@ -162,6 +166,127 @@ describe("syncOttoCanvasNodes project scoping", () => {
       threadId: "thread-2",
       type: "video",
     }));
+  });
+
+  it("creates a pending canvas node for an approved GEN_CARD before the worker result lands", async () => {
+    mockChatThreadFindMany.mockResolvedValue([
+      {
+        id: "thread-1",
+        messages: [
+          {
+            id: "card-1",
+            kind: "GEN_CARD",
+            genJobId: "job-1",
+            seq: 1,
+            payload: { kind: "video", structuredPrompt: "make the portrait walk through rain" },
+            text: "",
+          },
+        ],
+      },
+    ]);
+    mockCanvasFindMany
+      .mockResolvedValueOnce([])
+      .mockResolvedValueOnce([
+        {
+          id: "node-pending",
+          type: "video",
+          x: 80,
+          y: 80,
+          w: 320,
+          h: 320,
+          text: null,
+          prompt: "make the portrait walk through rain",
+          generationId: null,
+          genJobId: "job-1",
+          status: "pending",
+          sourceNodeId: null,
+          threadId: "thread-1",
+        },
+      ]);
+    mockGenJobFindMany
+      .mockResolvedValueOnce([{ id: "job-1", status: "QUEUED", generationIds: [] }])
+      .mockResolvedValueOnce([{ id: "job-1", status: "QUEUED", generationIds: [] }]);
+
+    await expect(syncOttoCanvasNodes("p1")).resolves.toEqual([
+      expect.objectContaining({
+        id: "node-pending",
+        type: "video",
+        genJobId: "job-1",
+        generationId: null,
+        status: "pending",
+        url: null,
+        threadId: "thread-1",
+      }),
+    ]);
+    expect(mockExecuteRaw).toHaveBeenCalledTimes(1);
+    expect(mockExecuteRaw.mock.calls[0]).toEqual(expect.arrayContaining([
+      "u1:p1:job-1:pending-canvas",
+      "p1",
+      "video",
+      "job-1",
+      "thread-1",
+      "make the portrait walk through rain",
+    ]));
+    expect(mockCreateCanvasNode).not.toHaveBeenCalled();
+  });
+
+  it("falls back to cowork idempotency when the GEN_CARD genJobId stamp is missing", async () => {
+    mockChatThreadFindMany.mockResolvedValue([
+      {
+        id: "thread-1",
+        messages: [
+          {
+            id: "card-1",
+            kind: "GEN_CARD",
+            genJobId: null,
+            seq: 1,
+            payload: { kind: "video", structuredPrompt: "make the portrait walk through rain" },
+            text: "",
+          },
+        ],
+      },
+    ]);
+    mockCanvasFindMany
+      .mockResolvedValueOnce([])
+      .mockResolvedValueOnce([
+        {
+          id: "node-pending",
+          type: "video",
+          x: 80,
+          y: 80,
+          w: 320,
+          h: 320,
+          text: null,
+          prompt: "make the portrait walk through rain",
+          generationId: null,
+          genJobId: "job-fallback",
+          status: "pending",
+          sourceNodeId: null,
+          threadId: "thread-1",
+        },
+      ]);
+    mockGenJobFindMany
+      .mockResolvedValueOnce([{ id: "job-fallback", idempotencyKey: "cowork:card-1", status: "QUEUED", generationIds: [] }])
+      .mockResolvedValueOnce([{ id: "job-fallback", idempotencyKey: "cowork:card-1", status: "QUEUED", generationIds: [] }]);
+
+    await expect(syncOttoCanvasNodes("p1")).resolves.toEqual([
+      expect.objectContaining({
+        id: "node-pending",
+        genJobId: "job-fallback",
+        status: "pending",
+      }),
+    ]);
+    expect(mockChatThreadFindMany).toHaveBeenCalledWith(expect.objectContaining({
+      select: expect.objectContaining({
+        messages: expect.objectContaining({
+          where: { kind: { in: ["GEN_CARD", "GEN_RESULT"] }, deletedAt: null },
+        }),
+      }),
+    }));
+    expect(mockGenJobFindMany).toHaveBeenCalledWith(expect.objectContaining({
+      where: { ownerId: "u1", projectId: "p1", OR: [{ idempotencyKey: { in: ["cowork:card-1"] } }] },
+    }));
+    expect(mockExecuteRaw.mock.calls[0]).toEqual(expect.arrayContaining(["job-fallback"]));
   });
 
   it("recovers missing sibling nodes for a completed multi-variant promptbar job", async () => {
