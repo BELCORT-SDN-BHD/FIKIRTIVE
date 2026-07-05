@@ -1,5 +1,5 @@
 "use client";
-import React, { useMemo, useState } from "react";
+import React, { useCallback, useMemo, useRef, useState } from "react";
 import type { OttoViewKey } from "./OttoApp";
 import type { EntityDTO, ChatThreadDTO } from "@/lib/types";
 import type { MemoryRow } from "@/lib/memory-actions";
@@ -21,6 +21,7 @@ import OttoTemplates from "./OttoTemplates";
 import OttoDiscover from "./OttoDiscover";
 import OttoConnections from "./OttoConnections";
 import type { AdJobItem, HistoryThumb } from "@/lib/data";
+import type { OttoComposerReference } from "@/lib/canvas-chat-reference";
 import { getCoworkThreadClient } from "@/lib/cowork-fetch";
 import FlowCanvas from "../canvas/FlowCanvas";
 import { ConvoTabs } from "./ConvoTabs";
@@ -61,6 +62,8 @@ interface OttoViewProps {
   /** Re-skin flag (?skin=gb) — enables the chat→canvas bridge on the canvas. */
   skin?: "gb";
 }
+
+type ThreadComposerReference = OttoComposerReference & { threadId: string };
 
 export function OttoView({
   view,
@@ -109,6 +112,22 @@ export function OttoView({
   const [pendingFirst, setPendingFirst] = useState<
     { threadId: string; text: string; goalKey?: string; entityIds?: string[] } | null
   >(null);
+  const [composerReference, setComposerReference] = useState<ThreadComposerReference | null>(null);
+  const composerReferenceSeqRef = useRef(0);
+
+  const handleCanvasReference = useCallback((ref: Omit<OttoComposerReference, "requestId">) => {
+    if (!activeThreadId) return;
+    composerReferenceSeqRef.current += 1;
+    setComposerReference({
+      ...ref,
+      threadId: activeThreadId,
+      requestId: `canvas:${activeThreadId}:${ref.generationId}:${composerReferenceSeqRef.current}`,
+    });
+    if (chatCollapsed) onToggleChat?.();
+  }, [activeThreadId, chatCollapsed, onToggleChat]);
+  const handleComposerReferenceConsumed = useCallback((requestId: string) => {
+    setComposerReference((current) => current?.requestId === requestId ? null : current);
+  }, []);
 
   // Refresh a thread and bring it to the top of the list
   async function refreshThread(id: string): Promise<void> {
@@ -325,6 +344,8 @@ export function OttoView({
                   : undefined
               }
               onPendingFirstSent={() => setPendingFirst(null)}
+              composerReference={composerReference?.threadId === activeThread.id ? composerReference : null}
+              onComposerReferenceConsumed={handleComposerReferenceConsumed}
             />
           ) : (
             <OttoConversation
@@ -366,6 +387,7 @@ export function OttoView({
           skin={skin}
           onBalanceRefresh={onBalanceRefresh}
           onActivityRefresh={onActivityRefresh}
+          onReferenceInChat={showFrontDoor ? undefined : handleCanvasReference}
           directToolsLocked={showFrontDoor}
           directToolsLockedReason="Start with Otto to unlock canvas tools."
         />

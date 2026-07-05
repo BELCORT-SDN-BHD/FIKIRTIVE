@@ -14,6 +14,7 @@ export function ImageNode({ data, selected }: NodeProps) {
     onAnimate?: () => void;
     onDelete?: () => void;
     onOpenDetail?: () => void;
+    onReferenceInChat?: () => void;
     onRefresh?: () => void;
     onMediaSize?: (size: { width: number; height: number }) => void;
     directToolsLocked?: boolean;
@@ -22,6 +23,7 @@ export function ImageNode({ data, selected }: NodeProps) {
   const terminal = d.status === "failed" || d.status === "timeout" || d.status === "missing";
   const viewable = !!d.url && !terminal;
   const actionable = viewable && !!d.generationId;
+  const referenceable = actionable && !!d.onReferenceInChat && !d.directToolsLocked;
   const writeLock = getCanvasNodeWriteLock(d);
   return (
     <>
@@ -74,7 +76,20 @@ export function ImageNode({ data, selected }: NodeProps) {
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" aria-hidden><rect x="3" y="3" width="18" height="18" rx="3" /><circle cx="9" cy="9" r="2" /><path d="m21 15-5-5L5 21" /></svg>
         Image
       </span>
-    <div className="al-panel" style={{ width: "100%", height: "100%", overflow: "hidden", borderRadius: 14 }}>
+    <div
+      className="al-panel"
+      role={referenceable ? "button" : undefined}
+      tabIndex={referenceable ? 0 : undefined}
+      aria-label={referenceable ? "Use image as Otto reference" : undefined}
+      title={referenceable ? "Use as Otto reference" : undefined}
+      onClick={referenceable ? () => d.onReferenceInChat?.() : undefined}
+      onKeyDown={referenceable ? (e) => {
+        if (e.key !== "Enter" && e.key !== " ") return;
+        e.preventDefault();
+        d.onReferenceInChat?.();
+      } : undefined}
+      style={{ width: "100%", height: "100%", overflow: "hidden", borderRadius: 14, cursor: referenceable ? "pointer" : undefined }}
+    >
       {terminal ? (
         <FailedBody status={d.status as "failed" | "timeout" | "missing"} onRefresh={d.onRefresh} />
       ) : d.status === "pending" || !d.url ? (

@@ -21,6 +21,7 @@ import { filterNodesByConvo, convoColor } from "@/lib/convo-canvas";
 import { creditsLabel } from "@/lib/credit-format";
 import type { CanvasGenCostQuote } from "@/lib/canvas-gen-costs";
 import { DEFAULT_CANVAS_NODE_LOCK_REASON } from "@/lib/canvas-node-lock";
+import { canvasComposerReferenceForNode, type OttoComposerReference } from "@/lib/canvas-chat-reference";
 import {
   canvasMediaNodeSize,
   DEFAULT_CANVAS_MEDIA_NODE_SIDE,
@@ -38,6 +39,7 @@ type FlowCanvasProps = {
   skin?: "gb";
   onBalanceRefresh?: () => void | Promise<void>;
   onActivityRefresh?: () => void | Promise<void>;
+  onReferenceInChat?: (ref: Omit<OttoComposerReference, "requestId">) => void;
   directToolsLocked?: boolean;
   directToolsLockedReason?: string;
 };
@@ -54,6 +56,7 @@ export default function FlowCanvas({
   skin,
   onBalanceRefresh,
   onActivityRefresh,
+  onReferenceInChat,
   directToolsLocked = false,
   directToolsLockedReason = DEFAULT_CANVAS_NODE_LOCK_REASON,
 }: FlowCanvasProps) {
@@ -98,6 +101,7 @@ export default function FlowCanvas({
   // Per-node data refs so stable onAnimate closures can read current generationId + position
   const nodesRef = useRef<CanvasFlowNode[]>([]);
   const nodeDataRef = useRef<Record<string, { generationId?: string; pos: { x: number; y: number } }>>({});
+  const referenceHandlerRef = useRef<typeof onReferenceInChat>(onReferenceInChat);
   const flowRef = useRef<ReactFlowInstance<CanvasFlowNode, Edge> | null>(null);
   const reloadRef = useRef<(() => Promise<void>) | null>(null);
   const canvasHostRef = useRef<HTMLDivElement | null>(null);
@@ -165,6 +169,10 @@ export default function FlowCanvas({
   useEffect(() => {
     nodesRef.current = nodes;
   }, [nodes]);
+
+  useEffect(() => {
+    referenceHandlerRef.current = onReferenceInChat;
+  }, [onReferenceInChat]);
 
   useLayoutEffect(() => {
     const host = canvasHostRef.current;
@@ -245,6 +253,32 @@ export default function FlowCanvas({
     return onOpenDetailByNode.current[id]!;
   }, []);
 
+  const onReferenceInChatByNode = useRef<Record<string, () => void>>({});
+  const getOnReferenceInChat = useCallback((id: string): (() => void) => {
+    if (!onReferenceInChatByNode.current[id]) {
+      onReferenceInChatByNode.current[id] = () => {
+        if (directToolsLockedRef.current || !referenceHandlerRef.current) {
+          toast.error("Open an Otto chat first.");
+          return;
+        }
+        const node = nodesRef.current.find((n) => n.id === id);
+        const data = node?.data as { generationId?: unknown; url?: unknown } | undefined;
+        const ref = canvasComposerReferenceForNode({
+          type: typeof node?.type === "string" ? node.type : null,
+          generationId: typeof data?.generationId === "string" ? data.generationId : nodeDataRef.current[id]?.generationId ?? null,
+          src: typeof data?.url === "string" ? data.url : null,
+        });
+        if (!ref) {
+          toast.error("This asset is not ready for Otto yet.");
+          return;
+        }
+        referenceHandlerRef.current(ref);
+        toast.success(`${ref.label} added to Otto chat.`);
+      };
+    }
+    return onReferenceInChatByNode.current[id]!;
+  }, []);
+
   const fitMediaNodeToSize = useCallback((id: string, media: CanvasMediaSize) => {
     setNodes((current) => {
       let changed = false;
@@ -300,6 +334,7 @@ export default function FlowCanvas({
           updated.data = {
             ...updated.data,
             ...(!updated.data.onOpenDetail ? { onOpenDetail: getOnOpenDetail(id) } : {}),
+            ...(!updated.data.onReferenceInChat ? { onReferenceInChat: getOnReferenceInChat(id) } : {}),
             ...(n.type === "image" && !updated.data.onAnimate ? { onAnimate: getOnAnimate(id) } : {}),
             ...(!updated.data.onMediaSize ? { onMediaSize: getOnMediaSize(id) } : {}),
           };
@@ -307,7 +342,7 @@ export default function FlowCanvas({
         return updated;
       }),
     );
-  }, [getOnAnimate, getOnMediaSize, getOnOpenDetail]);
+  }, [getOnAnimate, getOnMediaSize, getOnOpenDetail, getOnReferenceInChat]);
 
   const onNewNode = useCallback(
     (n: { id: string; type: "image" | "video"; pos: { x: number; y: number; w: number; h: number }; status: string; prompt: string }) => {
@@ -327,6 +362,7 @@ export default function FlowCanvas({
               onDelete: () => setPendingDeleteId(n.id),
               onRefresh: requestReload,
               onMediaSize: getOnMediaSize(n.id),
+              onReferenceInChat: getOnReferenceInChat(n.id),
               // onAnimate added after generationId arrives via onResolve
             }),
           },
@@ -336,7 +372,7 @@ export default function FlowCanvas({
       ]);
       scheduleFitView();
     },
-    [activeThreadId, getOnMediaSize, requestReload, skin, scheduleFitView, withNodeActionLock],
+    [activeThreadId, getOnMediaSize, getOnReferenceInChat, requestReload, skin, scheduleFitView, withNodeActionLock],
   );
 
   const onGenError = useCallback((msg: string) => { toast.error(msg); }, []);
@@ -431,14 +467,14 @@ export default function FlowCanvas({
           id: created.id,
           type: "image",
           position: { x, y: 80 },
-          data: withNodeActionLock({ status: "done", url: res.src, generationId: res.id, skin, onDelete: () => setPendingDeleteId(created.id), onRefresh: requestReload, onAnimate: getOnAnimate(created.id), onOpenDetail: getOnOpenDetail(created.id), onMediaSize: getOnMediaSize(created.id) }),
+          data: withNodeActionLock({ status: "done", url: res.src, generationId: res.id, skin, onDelete: () => setPendingDeleteId(created.id), onRefresh: requestReload, onAnimate: getOnAnimate(created.id), onOpenDetail: getOnOpenDetail(created.id), onReferenceInChat: getOnReferenceInChat(created.id), onMediaSize: getOnMediaSize(created.id) }),
           style: { width: 320, height: 320, boxShadow: `0 0 0 2px ${convoColor(activeThreadId ?? null)}` },
           threadId: activeThreadId ?? null,
         },
       ]);
       scheduleFitView();
     }
-  }, [projectId, activeThreadId, getOnAnimate, getOnMediaSize, getOnOpenDetail, requestReload, skin, scheduleFitView, withNodeActionLock]);
+  }, [projectId, activeThreadId, getOnAnimate, getOnMediaSize, getOnOpenDetail, getOnReferenceInChat, requestReload, skin, scheduleFitView, withNodeActionLock]);
 
   // Phase 3: text-to-video — the bottom video tool always opens a prompt dialog;
   // image cards own the explicit "Make video" image-to-video path.
@@ -507,6 +543,7 @@ export default function FlowCanvas({
           onChange: r.type === "text" ? (t: string) => onTextChange(r.id, t) : undefined,
           onAnimate: r.type === "image" ? getOnAnimate(r.id) : undefined,
           onOpenDetail: r.type === "image" || r.type === "video" ? getOnOpenDetail(r.id) : undefined,
+          onReferenceInChat: r.type === "image" || r.type === "video" ? getOnReferenceInChat(r.id) : undefined,
           onMediaSize: r.type === "image" || r.type === "video" ? getOnMediaSize(r.id) : undefined,
         }),
         style: { width: nodeSize.w, height: nodeSize.h, boxShadow: `0 0 0 2px ${convoColor(r.threadId ?? null)}` },
@@ -527,7 +564,7 @@ export default function FlowCanvas({
       nodeCountRef.current = all.length;
       return all;
     });
-  }, [skin, projectId, activeThreadId, onTextChange, getOnAnimate, getOnMediaSize, getOnOpenDetail, requestReload, withNodeActionLock]);
+  }, [skin, projectId, activeThreadId, onTextChange, getOnAnimate, getOnMediaSize, getOnOpenDetail, getOnReferenceInChat, requestReload, withNodeActionLock]);
   reloadRef.current = reload;
 
   // Initial load + reload when the active thread changes (re-bridges that thread).
