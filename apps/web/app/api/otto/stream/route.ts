@@ -51,14 +51,11 @@ import {
   buildOttoContext,
   buildContextSystemMessage,
   finalizeOttoRun,
+  validateOttoTurnReferences,
 } from "@/lib/otto-actions";
-import { validateOwnedGenerationExt } from "@/lib/otto-generation-validate";
 import { bridgeEvent, stepEventOf, OTTO_TEXT_ID, OTTO_REASONING_ID } from "@/lib/otto-stream-bridge";
 import type { OttoStatusData, OttoErrorData } from "@/lib/otto-stream-bridge";
 import { persistStreamTurnError, streamTurnErrorId, streamTurnErrorText } from "@/lib/otto-stream-errors";
-
-const IMAGE_EXTS = ["png", "jpg", "jpeg", "webp"];
-const VIDEO_EXTS = ["mp4", "mov", "webm"];
 
 /** Safe one-line error summary for logs (mirrors otto-actions.errSummary). */
 function errSummary(e: unknown): string {
@@ -89,7 +86,7 @@ export async function POST(req: NextRequest): Promise<Response> {
   }
   const { ownerId } = gate;
 
-  const { projectId, text, entityIds, variantSel, sourceGenerationId, referenceVideoGenerationId, replyToMessageId } = parsed.data;
+  const { projectId, text, entityIds, variantSel, sourceGenerationId, sourceGenerationIds, referenceVideoGenerationId, referenceVideoGenerationIds, replyToMessageId } = parsed.data;
   const OWNED = { ownerId, deletedAt: null } as const;
 
   // Pre-stream setup (validation + USER persist) runs BEFORE the SSE opens so a bad
@@ -107,27 +104,14 @@ export async function POST(req: NextRequest): Promise<Response> {
     const project = await prisma.project.findFirst({ where: { id: projectId, ...OWNED } });
     if (!project) return Response.json({ error: "Project not found." }, { status: 404 });
 
-    // Validate sourceGenerationId (owned + in-project + image-ext), else null
-    let validSource: string | null = null;
-    if (sourceGenerationId) {
-      validSource = await validateOwnedGenerationExt(prisma, {
-        id: sourceGenerationId,
-        ownerId,
-        projectId,
-        exts: IMAGE_EXTS,
-      });
-    }
-
-    // Validate referenceVideoGenerationId (owned + in-project + VIDEO-ext), else null
-    let validRefVideo: string | null = null;
-    if (referenceVideoGenerationId) {
-      validRefVideo = await validateOwnedGenerationExt(prisma, {
-        id: referenceVideoGenerationId,
-        ownerId,
-        projectId,
-        exts: VIDEO_EXTS,
-      });
-    }
+    const refs = await validateOttoTurnReferences({
+      ownerId,
+      projectId,
+      sourceGenerationId,
+      sourceGenerationIds,
+      referenceVideoGenerationId,
+      referenceVideoGenerationIds,
+    });
 
     // Resolve thread: new vs existing-owned-and-in-project
     isNew = !parsed.data.threadId;
@@ -178,14 +162,21 @@ export async function POST(req: NextRequest): Promise<Response> {
         kind: "TEXT",
         seq: ++seq,
         text,
-        payload: { entityIds, variantSel },
+        payload: { entityIds, variantSel, sourceGenerationIds: refs.sourceGenerationIds, referenceVideoGenerationIds: refs.referenceVideoGenerationIds },
         replyToMessageId: validReplyId,
       },
     });
     seqAfterUser = seq;
 
     // Build context (mirror ottoTurn)
-    ctx = await buildOttoContext({ ownerId, projectId, threadId, sourceGenerationId: validSource, referenceVideoGenerationId: validRefVideo, simpleMode: parsed.data.simple });
+    ctx = await buildOttoContext({
+      ownerId,
+      projectId,
+      threadId,
+      sourceGenerationIds: refs.sourceGenerationIds,
+      referenceVideoGenerationIds: refs.referenceVideoGenerationIds,
+      simpleMode: parsed.data.simple,
+    });
 
     // Goal-intent seeding on a new thread with a goalKey
     if (!priorOttoState && parsed.data.goalKey && isGoalKey(parsed.data.goalKey)) {

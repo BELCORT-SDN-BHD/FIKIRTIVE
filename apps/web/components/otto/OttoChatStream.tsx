@@ -42,7 +42,7 @@ import { activeMentionQuery, resolveSentEntityIds } from "@/lib/otto-mentions";
 import type { OttoStatusData, OttoStepData } from "@/lib/otto-stream-bridge";
 import type { ReasoningUIPart } from "ai";
 import type { EntityDTO, ChatThreadDTO } from "@/lib/types";
-import type { OttoComposerReference } from "@/lib/canvas-chat-reference";
+import { composerReferencePayload, composerReferencesPlaceholder, removeComposerReference, upsertComposerReference, upsertComposerReferences, type OttoComposerReference } from "@/lib/canvas-chat-reference";
 
 // Re-export the mapping seam so callers/tests can import it from the component too.
 export { threadToUiMessages } from "@/lib/otto-ui-messages";
@@ -66,16 +66,20 @@ export interface OttoChatStreamProps {
   /** Called right after the pendingFirst message is dispatched, so the parent can
    *  clear it (prevents a re-send if this thread is remounted later). */
   onPendingFirstSent?: () => void;
-  /** Canvas-selected image/video reference to attach to the next Otto message. */
-  composerReference?: OttoComposerReference | null;
+  /** Canvas-selected image/video references to attach to the next Otto message. */
+  composerReferences?: OttoComposerReference[] | null;
   /** Clears the parent handoff once this stream has copied it into local composer state. */
-  onComposerReferenceConsumed?: (requestId: string) => void;
+  onComposerReferencesConsumed?: (requestIds: string[]) => void;
 }
 
 type AttachedReference = Omit<OttoComposerReference, "requestId">;
 
 function revokeAttachedPreview(ref: AttachedReference | null): void {
   if (ref?.src.startsWith("blob:")) URL.revokeObjectURL(ref.src);
+}
+
+function revokeAttachedPreviews(refs: AttachedReference[]): void {
+  refs.forEach(revokeAttachedPreview);
 }
 
 /** The latest user message's text — what the strict route body needs for `text`. */
@@ -100,8 +104,8 @@ export function OttoChatStream({
   onBalanceRefresh,
   pendingFirst,
   onPendingFirstSent,
-  composerReference,
-  onComposerReferenceConsumed,
+  composerReferences,
+  onComposerReferencesConsumed,
 }: OttoChatStreamProps) {
   const [text, setText] = useState("");
   const [pickedMentions, setPickedMentions] = useState<{id: string; name: string}[]>([]);
@@ -126,10 +130,9 @@ export function OttoChatStream({
   /** Jobs cancelled in this client session. The server refund path does not persist a
    *  TURN_ERROR message, so treat these job ids as terminal for the local poll. */
   const [cancelledJobIds, setCancelledJobIds] = useState<Set<string>>(new Set());
-  /** Attachment: a generation created from a user-uploaded file, included as
-   *  sourceGenerationId (image) or referenceVideoGenerationId (whole clip) on the
-   *  next send. Null when nothing is attached. */
-  const [attached, setAttached] = useState<AttachedReference | null>(null);
+  /** Attachments: generations created from user uploads or canvas selections,
+   *  included as sourceGenerationIds / referenceVideoGenerationIds on the next send. */
+  const [attachedRefs, setAttachedRefs] = useState<AttachedReference[]>([]);
   /** True while the file is being hashed + uploaded + finalized. */
   const [uploading, setUploading] = useState(false);
   /** Upload error message shown near the attach button; clears on next successful attach. */
@@ -146,7 +149,7 @@ export function OttoChatStream({
   /** The original video File for the current videoPick — used by "Use whole video"
    *  to upload the clip itself (not an extracted frame). */
   const wholeVideoFileRef = useRef<File | null>(null);
-  const lastComposerReferenceIdRef = useRef<string | null>(null);
+  const seenComposerReferenceIdsRef = useRef<Set<string>>(new Set());
 
   // Bounded in-flight poll for the async worker result (ported from OttoConversation):
   // a GEN_CARD whose genJobId is set but with no terminal GEN_RESULT/TURN_ERROR keeps
@@ -184,7 +187,16 @@ export function OttoChatStream({
     transport: new DefaultChatTransport<OttoUiMessage>({
       api: "/api/otto/stream",
       prepareSendMessagesRequest: ({ messages, body }) => {
-        const ids = (body ?? {}) as { projectId?: string; threadId?: string; goalKey?: string; entityIds?: string[]; sourceGenerationId?: string; referenceVideoGenerationId?: string };
+        const ids = (body ?? {}) as {
+          projectId?: string;
+          threadId?: string;
+          goalKey?: string;
+          entityIds?: string[];
+          sourceGenerationId?: string;
+          sourceGenerationIds?: string[];
+          referenceVideoGenerationId?: string;
+          referenceVideoGenerationIds?: string[];
+        };
         return {
           body: {
             projectId: ids.projectId,
@@ -195,9 +207,10 @@ export function OttoChatStream({
             // accepts it as an optional field, so include it only when present.
             ...(ids.goalKey ? { goalKey: ids.goalKey } : {}),
             ...(ids.entityIds?.length ? { entityIds: ids.entityIds } : {}),
-            ...(ids.referenceVideoGenerationId
-              ? { referenceVideoGenerationId: ids.referenceVideoGenerationId }
-              : ids.sourceGenerationId ? { sourceGenerationId: ids.sourceGenerationId } : {}),
+            ...(ids.sourceGenerationIds?.length ? { sourceGenerationIds: ids.sourceGenerationIds } : {}),
+            ...(ids.sourceGenerationId ? { sourceGenerationId: ids.sourceGenerationId } : {}),
+            ...(ids.referenceVideoGenerationIds?.length ? { referenceVideoGenerationIds: ids.referenceVideoGenerationIds } : {}),
+            ...(ids.referenceVideoGenerationId ? { referenceVideoGenerationId: ids.referenceVideoGenerationId } : {}),
           },
         };
       },
@@ -408,11 +421,11 @@ export function OttoChatStream({
     setPollTerminal(false);
     pollCountRef.current = 0;
     checkAgainUsedRef.current = false;
-    // Capture and clear the attachment before send. Revoke the local preview blob URL
+    // Capture and clear attachments before send. Revoke local preview blob URLs
     // (the source is the generationId, not the blob) so repeated attach/send doesn't leak.
-    const attachedNow = attached;
-    revokeAttachedPreview(attachedNow);
-    setAttached(null);
+    const attachedNow = attachedRefs;
+    revokeAttachedPreviews(attachedNow);
+    setAttachedRefs([]);
     // Pass the live projectId/threadId, optional @mention entityIds, and optional
     // sourceGenerationId (attached image) or referenceVideoGenerationId (attached whole
     // clip) via the per-call body; prepareSendMessagesRequest reads them off `body` and
@@ -424,9 +437,7 @@ export function OttoChatStream({
           projectId,
           threadId: thread.id,
           ...(entityIds.length ? { entityIds } : {}),
-          ...(attachedNow?.kind === "refVideo"
-            ? { referenceVideoGenerationId: attachedNow.generationId }
-            : attachedNow ? { sourceGenerationId: attachedNow.generationId } : {}),
+          ...composerReferencePayload(attachedNow),
         },
       },
     );
@@ -462,7 +473,7 @@ export function OttoChatStream({
         setAttachError("error" in res ? res.error : "Could not attach image.");
         return;
       }
-      setAttached({ generationId: res.generationIds[0], src: URL.createObjectURL(file), kind: "image", previewKind: "image", label: "Image ref" });
+      setAttachedRefs((current) => upsertComposerReference(current, { generationId: res.generationIds[0], src: URL.createObjectURL(file), kind: "image", previewKind: "image", label: "Image ref" }));
     } catch (err) {
       setAttachError(err instanceof Error ? err.message : "Upload failed.");
     } finally {
@@ -528,8 +539,11 @@ export function OttoChatStream({
   }
 
   useEffect(() => {
-    if (!composerReference?.requestId || lastComposerReferenceIdRef.current === composerReference.requestId) return;
-    lastComposerReferenceIdRef.current = composerReference.requestId;
+    const incoming = (composerReferences ?? []).filter((ref) => ref.requestId && !seenComposerReferenceIdsRef.current.has(ref.requestId));
+    if (incoming.length === 0) return;
+    incoming.forEach((ref) => {
+      if (ref.requestId) seenComposerReferenceIdsRef.current.add(ref.requestId);
+    });
     setAttachError(null);
     setUploading(false);
     setVideoPick((current) => {
@@ -539,21 +553,18 @@ export function OttoChatStream({
     setFrameTime(0);
     setFrameReady(false);
     wholeVideoFileRef.current = null;
-    setAttached((prev) => {
-      revokeAttachedPreview(prev);
-      return {
-        generationId: composerReference.generationId,
-        src: composerReference.src,
-        kind: composerReference.kind,
-        previewKind: composerReference.previewKind,
-        label: composerReference.label,
-      };
-    });
+    setAttachedRefs((prev) => upsertComposerReferences(prev, incoming.map((ref) => ({
+      generationId: ref.generationId,
+      src: ref.src,
+      kind: ref.kind,
+      previewKind: ref.previewKind,
+      label: ref.label,
+    }))));
     window.requestAnimationFrame(() => {
       document.getElementById("otto-composer")?.focus();
     });
-    onComposerReferenceConsumed?.(composerReference.requestId);
-  }, [composerReference, onComposerReferenceConsumed]);
+    onComposerReferencesConsumed?.(incoming.map((ref) => ref.requestId!).filter(Boolean));
+  }, [composerReferences, onComposerReferencesConsumed]);
 
   async function useSelectedFrame() {
     const c = canvasRef.current;
@@ -574,7 +585,7 @@ export function OttoChatStream({
         setAttachError("error" in r ? r.error : "Could not attach frame.");
         return;
       }
-      setAttached({ generationId: r.generationIds[0], src: preview, kind: "image", previewKind: "image", label: "Image ref" });
+      setAttachedRefs((current) => upsertComposerReference(current, { generationId: r.generationIds[0], src: preview, kind: "image", previewKind: "image", label: "Image ref" }));
       closeVideoPick();
     } catch (err) {
       setAttachError(err instanceof Error ? err.message : "Upload failed.");
@@ -597,7 +608,7 @@ export function OttoChatStream({
       const r = await finalizeCandidateUploads(projectId, "", [], outcome.files);
       if ("error" in r || !r.generationIds?.[0]) { setAttachError("error" in r ? r.error : "Could not attach video."); return; }
       const preview = canvasRef.current?.toDataURL("image/jpeg", FRAME_JPEG_QUALITY) ?? "";
-      setAttached({ generationId: r.generationIds[0], src: preview, kind: "refVideo", previewKind: "image", label: "Video ref" });
+      setAttachedRefs((current) => upsertComposerReference(current, { generationId: r.generationIds[0], src: preview, kind: "refVideo", previewKind: "image", label: "Video ref" }));
       closeVideoPick();
     } catch (err) {
       setAttachError(err instanceof Error ? err.message : "Upload failed.");
@@ -1232,18 +1243,19 @@ export function OttoChatStream({
             </div>
           )}
 
-          {/* Reference chip: shown while uploading or when an image/video is attached */}
-          {(uploading || attached) && (
-            <div className="mb-2 flex items-center gap-2">
+          {/* Reference chips: shown while uploading or when image/video refs are attached */}
+          {(uploading || attachedRefs.length > 0) && (
+            <div className="mb-2 flex flex-wrap items-center gap-2">
               {uploading ? (
                 <div className="inline-flex items-center gap-2 rounded-[14px] border border-border bg-muted px-2 py-1 text-[0.875rem] text-muted-foreground">
                   attaching…
                 </div>
-              ) : attached ? (
-                <div className="inline-flex items-center gap-2 rounded-[14px] border border-border bg-muted px-2 py-1">
-                  {attached.previewKind === "video" ? (
+              ) : null}
+              {attachedRefs.map((ref) => (
+                <div key={ref.generationId} className="inline-flex items-center gap-2 rounded-[14px] border border-border bg-muted px-2 py-1">
+                  {ref.previewKind === "video" ? (
                     <video
-                      src={attached.src}
+                      src={ref.src}
                       muted
                       playsInline
                       preload="metadata"
@@ -1252,28 +1264,28 @@ export function OttoChatStream({
                   ) : (
                     // eslint-disable-next-line @next/next/no-img-element
                     <img
-                      src={attached.src}
+                      src={ref.src}
                       alt="Attached reference"
                       className="h-10 w-10 rounded-[7px] object-cover"
                     />
                   )}
                   <span className="max-w-[110px] truncate text-[0.8125rem] font-medium text-muted-foreground">
-                    {attached.label}
+                    {ref.label}
                   </span>
                   <button
                     type="button"
-                    aria-label="Remove attached reference"
+                    aria-label={`Remove ${ref.label}`}
                     onClick={() => {
-                    revokeAttachedPreview(attached);
-                    setAttached(null);
-                    setAttachError(null);
-                  }}
+                      revokeAttachedPreview(ref);
+                      setAttachedRefs((current) => removeComposerReference(current, ref.generationId));
+                      setAttachError(null);
+                    }}
                     className="border-0 bg-transparent p-0 text-[0.875rem] text-muted-foreground cursor-pointer leading-none"
                   >
                     ×
                   </button>
                 </div>
-              ) : null}
+              ))}
             </div>
           )}
 
@@ -1291,7 +1303,7 @@ export function OttoChatStream({
               onChange={handleTextChange}
               onKeyDown={handleKeyDown}
               disabled={isBusy}
-              placeholder={attached ? `Tell Otto what to do with this ${attached.kind === "refVideo" ? "video" : "image"}…` : "Reply to Otto…"}
+              placeholder={composerReferencesPlaceholder(attachedRefs)}
               rows={2}
               className="w-full resize-none border-0 bg-transparent px-4 py-3 text-[0.90625rem] text-foreground outline-none leading-normal"
             />
@@ -1303,9 +1315,9 @@ export function OttoChatStream({
                 disabled={isBusy || uploading || !!videoPick}
                 onClick={() => fileInputRef.current?.click()}
                 className="inline-flex items-center border-0 bg-transparent p-1 cursor-pointer disabled:cursor-default disabled:opacity-50"
-                style={{ color: attached ? "var(--primary)" : undefined }}
+                style={{ color: attachedRefs.length ? "var(--primary)" : undefined }}
               >
-                <ImageIcon size={18} className={attached ? "text-primary" : "text-muted-foreground"} />
+                <ImageIcon size={18} className={attachedRefs.length ? "text-primary" : "text-muted-foreground"} />
               </button>
               <Button variant="default" size="sm" disabled={isBusy || !text.trim()} onClick={submit}>
                 {isBusy ? "Sending…" : "Send"}

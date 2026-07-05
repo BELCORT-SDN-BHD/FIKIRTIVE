@@ -12,6 +12,7 @@ import { clampVisionInts } from "./runtime-config.js";
 export const MAX_COWORK_IDEA = 4000;
 export const COWORK_MAX_SCENES = 6;
 export const COWORK_MAX_SHOTS_PER_SCENE = 8;
+export const MAX_COWORK_TURN_REFERENCES = 8;
 
 export const coworkRequest = z
   .object({
@@ -53,9 +54,16 @@ export const coworkTurnRequest = z.object({
   // live) before forcing a video proposal, and startGen's checkCast re-validates at
   // spend. Drop/ignore if invalid; never errors the turn.
   sourceGenerationId: z.string().min(1).max(64).optional(),
+  // Multiple canvas-selected image references for the current Otto turn. The first
+  // valid image remains the primary i2v source for backwards-compatible generation
+  // cards; all valid images are passed to Otto vision for this turn.
+  sourceGenerationIds: z.array(z.string().min(1).max(64)).max(MAX_COWORK_TURN_REFERENCES).optional(),
   // whole-clip reference video (整段视频参考). Server-TRUSTED: re-validated owned +
   // in-project + video-ext before use; invalid/foreign/deleted id silently ignored.
   referenceVideoGenerationId: z.string().min(1).max(64).optional(),
+  // Multiple whole-clip reference videos selected on the canvas. Generation remains
+  // single-primary today; the array makes the full reference set visible to Otto.
+  referenceVideoGenerationIds: z.array(z.string().min(1).max(64)).max(MAX_COWORK_TURN_REFERENCES).optional(),
   // "Reply to message" — a prior message in the same thread to quote in context.
   // Server-TRUSTED: coworkTurn re-validates ownership + thread + live before
   // injecting the quote; invalid/foreign/deleted id is silently ignored.

@@ -201,6 +201,19 @@ describe("buildProposeCard — pure helper", () => {
     expect(cardPayload.estimatedCredits).toBe(16);
   });
 
+  it("reference video takes precedence over source image for the paid video payload", () => {
+    const ctx = makeCtx({ sourceGenerationId: "gen_img", referenceVideoGenerationId: "gen_vid" });
+    const { cardPayload } = buildProposeCard(
+      { kind: "video", structuredPrompt: "move like this", entityIds: ["entity-1"], variantSel: { "entity-1": "variant-1" } },
+      ctx,
+      ["entity-1"],
+    );
+
+    expect(cardPayload.kind).toBe("video");
+    expect((cardPayload as Record<string, unknown>)["referenceVideoGenerationId"]).toBe("gen_vid");
+    expect((cardPayload as Record<string, unknown>)["sourceGenerationId"]).toBeUndefined();
+  });
+
   it("reference video: kind=image ignores referenceVideoGenerationId (not in payload)", () => {
     const ctx = makeCtx({ referenceVideoGenerationId: "gen_vid" });
     const { cardPayload } = buildProposeCard(

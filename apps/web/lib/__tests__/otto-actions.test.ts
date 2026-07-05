@@ -346,6 +346,23 @@ describe("buildOttoContext", () => {
     // startGen is the injected port from gen-actions
     expect(ctx.startGen).toBe(mockStartGen);
   });
+
+  it("keeps image refs visible as arrays but hides the image scalar from spend cards when a video ref exists", async () => {
+    mockResolveDisabledModels.mockResolvedValue(new Set());
+
+    const ctx = await buildOttoContext({
+      ownerId: "owner_xyz",
+      projectId: "proj_xyz",
+      threadId: "thread_xyz",
+      sourceGenerationIds: ["gen_img_1", "gen_img_2"],
+      referenceVideoGenerationIds: ["gen_vid_1", "gen_vid_2"],
+    });
+
+    expect(ctx.sourceGenerationIds).toEqual(["gen_img_1", "gen_img_2"]);
+    expect(ctx.referenceVideoGenerationId).toBe("gen_vid_1");
+    expect(ctx.referenceVideoGenerationIds).toEqual(["gen_vid_1", "gen_vid_2"]);
+    expect(ctx.sourceGenerationId).toBeNull();
+  });
 });
 
 // ── Test 3b: research.search env-key wiring (S1) ─────────────────────────────
@@ -1275,6 +1292,13 @@ describe("buildContextSystemMessage — reference video signal", () => {
     expect(result).not.toBeNull();
     const content = (result as { content: string }).content;
     expect(content).toContain("REFERENCE VIDEO");
+    expect(content).toContain('kind:"video"');
+  });
+  it("mentions multiple reference videos when more than one is attached", () => {
+    const result = buildContextSystemMessage({ ...base, referenceVideoGenerationIds: ["gen_vid_1", "gen_vid_2"] });
+    expect(result).not.toBeNull();
+    const content = (result as { content: string }).content;
+    expect(content).toContain("2 REFERENCE VIDEOS");
     expect(content).toContain('kind:"video"');
   });
   it("omits the signal when no reference video is attached", () => {

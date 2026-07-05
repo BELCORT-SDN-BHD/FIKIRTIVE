@@ -21,6 +21,7 @@ import OttoDiscover from "./OttoDiscover";
 import OttoConnections from "./OttoConnections";
 import type { AdJobItem, HistoryThumb } from "@/lib/data";
 import type { OttoComposerReference } from "@/lib/canvas-chat-reference";
+import { upsertComposerReferences } from "@/lib/canvas-chat-reference";
 import { getCoworkThreadClient } from "@/lib/cowork-fetch";
 import FlowCanvas from "../canvas/FlowCanvas";
 import { ConvoTabs } from "./ConvoTabs";
@@ -111,21 +112,27 @@ export function OttoView({
   const [pendingFirst, setPendingFirst] = useState<
     { threadId: string; text: string; goalKey?: string; entityIds?: string[] } | null
   >(null);
-  const [composerReference, setComposerReference] = useState<ThreadComposerReference | null>(null);
+  const [composerReferences, setComposerReferences] = useState<ThreadComposerReference[]>([]);
   const composerReferenceSeqRef = useRef(0);
 
-  const handleCanvasReference = useCallback((ref: Omit<OttoComposerReference, "requestId">) => {
+  const handleCanvasReference = useCallback((refs: Omit<OttoComposerReference, "requestId">[]) => {
     if (!activeThreadId) return;
-    composerReferenceSeqRef.current += 1;
-    setComposerReference({
-      ...ref,
-      threadId: activeThreadId,
-      requestId: `canvas:${activeThreadId}:${ref.generationId}:${composerReferenceSeqRef.current}`,
+    const stamped = refs.map((ref) => {
+      composerReferenceSeqRef.current += 1;
+      return {
+        ...ref,
+        threadId: activeThreadId,
+        requestId: `canvas:${activeThreadId}:${ref.generationId}:${composerReferenceSeqRef.current}`,
+      };
     });
+    setComposerReferences((current) =>
+      upsertComposerReferences(current.filter((ref) => ref.threadId === activeThreadId), stamped),
+    );
     if (chatCollapsed) onToggleChat?.();
   }, [activeThreadId, chatCollapsed, onToggleChat]);
-  const handleComposerReferenceConsumed = useCallback((requestId: string) => {
-    setComposerReference((current) => current?.requestId === requestId ? null : current);
+  const handleComposerReferencesConsumed = useCallback((requestIds: string[]) => {
+    const consumed = new Set(requestIds);
+    setComposerReferences((current) => current.filter((ref) => !ref.requestId || !consumed.has(ref.requestId)));
   }, []);
 
   // Refresh a thread and bring it to the top of the list
@@ -336,8 +343,8 @@ export function OttoView({
                   : undefined
               }
               onPendingFirstSent={() => setPendingFirst(null)}
-              composerReference={composerReference?.threadId === activeThread.id ? composerReference : null}
-              onComposerReferenceConsumed={handleComposerReferenceConsumed}
+              composerReferences={composerReferences.filter((ref) => ref.threadId === activeThread.id)}
+              onComposerReferencesConsumed={handleComposerReferencesConsumed}
             />
           ) : (
             <OttoConversation

@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { canvasComposerReferenceForNode, shouldIgnoreCanvasVideoReferenceClick } from "../canvas-chat-reference";
+import { canvasComposerReferenceForNode, composerReferencePayload, composerReferencesPlaceholder, shouldIgnoreCanvasVideoReferenceClick, upsertComposerReferences } from "../canvas-chat-reference";
 
 describe("canvasComposerReferenceForNode", () => {
   it("maps image canvas nodes to image references for Otto", () => {
@@ -33,5 +33,27 @@ describe("canvasComposerReferenceForNode", () => {
     expect(shouldIgnoreCanvasVideoReferenceClick({ targetTagName: "VIDEO", controlsVisible: true })).toBe(true);
     expect(shouldIgnoreCanvasVideoReferenceClick({ targetTagName: "video", controlsVisible: false })).toBe(false);
     expect(shouldIgnoreCanvasVideoReferenceClick({ targetTagName: "button", controlsVisible: true })).toBe(false);
+  });
+
+  it("appends multiple canvas references without losing earlier selections", () => {
+    const refs = upsertComposerReferences([], [
+      { generationId: "gen-img", kind: "image" as const, previewKind: "image" as const, src: "/img.png", label: "Image ref" },
+      { generationId: "gen-vid", kind: "refVideo" as const, previewKind: "video" as const, src: "/clip.mp4", label: "Video ref" },
+    ]);
+    expect(refs.map((ref) => ref.generationId)).toEqual(["gen-img", "gen-vid"]);
+    expect(composerReferencesPlaceholder(refs)).toBe("Tell Otto what to do with these 2 references…");
+  });
+
+  it("builds the strict Otto turn payload with all selected image and video refs", () => {
+    expect(composerReferencePayload([
+      { generationId: "gen-img-1", kind: "image" },
+      { generationId: "gen-vid-1", kind: "refVideo" },
+      { generationId: "gen-img-2", kind: "image" },
+    ])).toEqual({
+      sourceGenerationId: "gen-img-1",
+      sourceGenerationIds: ["gen-img-1", "gen-img-2"],
+      referenceVideoGenerationId: "gen-vid-1",
+      referenceVideoGenerationIds: ["gen-vid-1"],
+    });
   });
 });

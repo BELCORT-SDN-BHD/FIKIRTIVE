@@ -13,17 +13,38 @@ import { resolveVisionConfig } from "./runtime-config";
 export async function gatherReferenceImages(
   ownerId: string,
   projectId: string,
-  sourceGenerationId: string | null | undefined,
+  sourceGenerationId: string | string[] | null | undefined,
 ): Promise<RefImage[]> {
-  if (!sourceGenerationId) return [];
-  // Single dropped reference by design → only `maxBytes` applies here. `maxImages`
-  // becomes relevant once @-mention entity base images are gathered too (deferred).
-  const { enabled, maxBytes } = await resolveVisionConfig();
+  const requestedIds = Array.isArray(sourceGenerationId)
+    ? [...new Set(sourceGenerationId.filter(Boolean))]
+    : sourceGenerationId ? [sourceGenerationId] : [];
+  if (requestedIds.length === 0) return [];
+  const { enabled, maxImages, maxBytes } = await resolveVisionConfig();
   if (!enabled) return [];
+  const ids = requestedIds.slice(0, Math.max(1, maxImages));
   try {
-    const gen = await prisma.generation.findFirst({
+    if (ids.length === 1) {
+      const gen = await prisma.generation.findFirst({
+        where: {
+          id: ids[0],
+          ownerId,
+          projectId,
+          deletedAt: null,
+          asset: { ext: { in: ["png", "jpg", "jpeg", "webp"] } },
+        },
+        include: { asset: { select: { ownerId: true, contentHash: true, ext: true, sizeBytes: true } } },
+      });
+      const asset = gen?.asset;
+      if (!asset) return [];
+      if (asset.sizeBytes != null && Number(asset.sizeBytes) > maxBytes) return [];
+      const bytes = await storage.get(storageKey(asset.ownerId, asset.contentHash, asset.ext));
+      if (bytes.length > maxBytes) return [];
+      return [{ label: "reference", dataUrl: `data:${mimeOf(asset.ext)};base64,${Buffer.from(bytes).toString("base64")}` }];
+    }
+
+    const gens = await prisma.generation.findMany({
       where: {
-        id: sourceGenerationId,
+        id: { in: ids },
         ownerId,
         projectId,
         deletedAt: null,
@@ -31,12 +52,24 @@ export async function gatherReferenceImages(
       },
       include: { asset: { select: { ownerId: true, contentHash: true, ext: true, sizeBytes: true } } },
     });
-    const asset = gen?.asset;
-    if (!asset) return [];
-    if (asset.sizeBytes != null && Number(asset.sizeBytes) > maxBytes) return [];
-    const bytes = await storage.get(storageKey(asset.ownerId, asset.contentHash, asset.ext));
-    if (bytes.length > maxBytes) return [];
-    return [{ label: "reference", dataUrl: `data:${mimeOf(asset.ext)};base64,${Buffer.from(bytes).toString("base64")}` }];
+    const byId = new Map(gens.map((gen) => [gen.id, gen]));
+    const refs: RefImage[] = [];
+    for (const id of ids) {
+      const asset = byId.get(id)?.asset;
+      if (!asset) continue;
+      if (asset.sizeBytes != null && Number(asset.sizeBytes) > maxBytes) continue;
+      try {
+        const bytes = await storage.get(storageKey(asset.ownerId, asset.contentHash, asset.ext));
+        if (bytes.length > maxBytes) continue;
+        refs.push({
+          label: `reference ${refs.length + 1}`,
+          dataUrl: `data:${mimeOf(asset.ext)};base64,${Buffer.from(bytes).toString("base64")}`,
+        });
+      } catch {
+        // One bad reference should not make Otto blind to the other attached refs.
+      }
+    }
+    return refs;
   } catch {
     return []; // read/query error → skip; NEVER throw the turn
   }

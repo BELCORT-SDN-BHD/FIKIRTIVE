@@ -39,7 +39,7 @@ type FlowCanvasProps = {
   skin?: "gb";
   onBalanceRefresh?: () => void | Promise<void>;
   onActivityRefresh?: () => void | Promise<void>;
-  onReferenceInChat?: (ref: Omit<OttoComposerReference, "requestId">) => void;
+  onReferenceInChat?: (refs: Omit<OttoComposerReference, "requestId">[]) => void;
   directToolsLocked?: boolean;
   directToolsLockedReason?: string;
 };
@@ -261,19 +261,29 @@ export default function FlowCanvas({
           toast.error("Open an Otto chat first.");
           return;
         }
+        const refForNode = (node: CanvasFlowNode | undefined) => {
+          const data = node?.data as { generationId?: unknown; url?: unknown } | undefined;
+          return canvasComposerReferenceForNode({
+            type: typeof node?.type === "string" ? node.type : null,
+            generationId: typeof data?.generationId === "string" ? data.generationId : node?.id ? nodeDataRef.current[node.id]?.generationId ?? null : null,
+            src: typeof data?.url === "string" ? data.url : null,
+          });
+        };
         const node = nodesRef.current.find((n) => n.id === id);
-        const data = node?.data as { generationId?: unknown; url?: unknown } | undefined;
-        const ref = canvasComposerReferenceForNode({
-          type: typeof node?.type === "string" ? node.type : null,
-          generationId: typeof data?.generationId === "string" ? data.generationId : nodeDataRef.current[id]?.generationId ?? null,
-          src: typeof data?.url === "string" ? data.url : null,
-        });
+        const ref = refForNode(node);
         if (!ref) {
           toast.error("This asset is not ready for Otto yet.");
           return;
         }
-        referenceHandlerRef.current(ref);
-        toast.success(`${ref.label} added to Otto chat.`);
+        const selectedRefs = nodesRef.current
+          .filter((n) => n.selected && (n.type === "image" || n.type === "video"))
+          .map((n) => refForNode(n))
+          .filter((item): item is Omit<OttoComposerReference, "requestId"> => !!item);
+        const refs = selectedRefs.length > 1 && selectedRefs.some((item) => item.generationId === ref.generationId)
+          ? selectedRefs
+          : [ref];
+        referenceHandlerRef.current(refs);
+        toast.success(refs.length === 1 ? `${ref.label} added to Otto chat.` : `${refs.length} references added to Otto chat.`);
       };
     }
     return onReferenceInChatByNode.current[id]!;
