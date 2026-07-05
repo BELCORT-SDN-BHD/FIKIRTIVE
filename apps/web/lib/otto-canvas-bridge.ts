@@ -1,10 +1,11 @@
 "use server";
 
 import { prisma } from "@fikirtive/db";
+import { newId } from "@fikirtive/core";
 import { requireOwner } from "./auth-guard";
 import { getCoworkThread, getGenerationThumbs } from "./data";
 import { createCanvasNode, type CanvasNodeDTO } from "./canvas-actions";
-import { canvasNodeDisplayStatus, firstDisplayableGenerationId, planBridgeNodes, settledCanvasNodeRepairPatch } from "./otto-canvas-bridge-core";
+import { canvasNodeDisplayStatus, firstDisplayableGenerationId, planBridgeNodes, planSettledCanvasJobSiblingNodes, settledCanvasNodeRepairPatch } from "./otto-canvas-bridge-core";
 
 /** A canvas node plus its resolved media URL (display-only). */
 export type CanvasNodeWithUrl = CanvasNodeDTO & { url: string | null };
@@ -104,7 +105,12 @@ export async function syncOttoCanvasNodes(
   ];
   const thumbs = await getGenerationThumbs(ownerId, genIds); // generationId → { src, kind }
 
-  const repairs: Array<{ id: string; data: NonNullable<ReturnType<typeof settledCanvasNodeRepairPatch>> }> = [];
+  const repairs: Array<{
+    id: string;
+    status: string;
+    generationId: string | null;
+    data: NonNullable<ReturnType<typeof settledCanvasNodeRepairPatch>>;
+  }> = [];
   const resolved = nodes.map((n) => {
     const job = n.genJobId ? jobById.get(n.genJobId) : null;
     const gid = n.generationId ?? firstDisplayableGenerationId(job?.generationIds, thumbs);
@@ -117,14 +123,69 @@ export async function syncOttoCanvasNodes(
     const jobStatus = job?.status;
     const status = gid && !url ? "missing" : canvasNodeDisplayStatus(n.status, jobStatus, url);
     const patch = settledCanvasNodeRepairPatch(n.status, n.generationId, jobStatus, gid, url);
-    if (patch) repairs.push({ id: n.id, data: patch });
+    if (patch) repairs.push({ id: n.id, status: n.status, generationId: n.generationId, data: patch });
     return { ...n, generationId: gid, status, url };
   });
+  const claimedSiblingAnchorIds = new Set<string>();
   if (repairs.length) {
-    await Promise.all(repairs.map((r) => prisma.canvasNode.updateMany({
-      where: { id: r.id, ownerId, projectId },
-      data: r.data,
-    })));
+    const results = await Promise.all(repairs.map(async (r) => {
+      const result = await prisma.canvasNode.updateMany({
+        where: { id: r.id, ownerId, projectId, status: r.status, generationId: r.generationId },
+        data: r.data,
+      });
+      return { repair: r, count: result.count };
+    }));
+    for (const { repair, count } of results) {
+      if (count === 1 && repair.status !== "done" && repair.generationId === null && repair.data.status === "done" && repair.data.generationId) {
+        claimedSiblingAnchorIds.add(repair.id);
+      }
+    }
   }
-  return resolved;
+
+  const siblingPlans = planSettledCanvasJobSiblingNodes(
+    nodes.filter((n) => claimedSiblingAnchorIds.has(n.id)),
+    jobById,
+    thumbs,
+    resolved.map((n) => n.generationId),
+  );
+  const recoveredSiblings: CanvasNodeWithUrl[] = [];
+  for (const plan of siblingPlans) {
+    const id = newId();
+    await prisma.canvasNode.create({
+      data: {
+        id,
+        ownerId,
+        projectId,
+        type: plan.type,
+        x: plan.x,
+        y: plan.y,
+        w: plan.w,
+        h: plan.h,
+        text: null,
+        prompt: plan.prompt,
+        generationId: plan.generationId,
+        genJobId: null,
+        status: "done",
+        sourceNodeId: plan.sourceNodeId,
+        threadId: plan.threadId,
+      },
+    });
+    recoveredSiblings.push({
+      id,
+      type: plan.type,
+      x: plan.x,
+      y: plan.y,
+      w: plan.w,
+      h: plan.h,
+      text: null,
+      prompt: plan.prompt,
+      generationId: plan.generationId,
+      genJobId: null,
+      status: "done",
+      sourceNodeId: plan.sourceNodeId,
+      threadId: plan.threadId,
+      url: plan.url,
+    });
+  }
+  return [...resolved, ...recoveredSiblings];
 }
