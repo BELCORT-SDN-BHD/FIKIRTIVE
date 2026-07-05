@@ -1,5 +1,5 @@
 "use client";
-import React, { useMemo, useState } from "react";
+import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { ExternalLink, Plus, Film, ImageIcon, RotateCcw, X } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import type { EntityDTO } from "@/lib/types";
@@ -8,13 +8,17 @@ import type { BrandRecordRow } from "@/lib/brand-record-actions";
 import { updateEntity, softDeleteEntity } from "@/lib/actions";
 import { saveBrandRecord } from "@/lib/brand-record-actions";
 import { buildStuffItems } from "@/lib/stuff-items";
+import { getGenerationHistory, type LibraryItem } from "@/lib/library-actions";
 import { StuffLibrary } from "./stuff/StuffLibrary";
 import { AddAssetDialog } from "./stuff/AddAssetDialog";
 import { useRouter } from "next/navigation";
+import DetailPanel from "@/components/asset/DetailPanel";
 
 // Kept as a public export — lib/stuff-items imports this type-only.
 export interface AdTile {
   id: string;
+  projectId: string;
+  assetId: string;
   src: string;
   kind: "image" | "video";
   prompt: string;
@@ -27,8 +31,19 @@ export interface OttoStuffProps {
   adJobs: AdJobItem[];
   records: BrandRecordRow[];
   history: HistoryThumb[];
-  onOpenThread?: (threadId: string) => void;
+  onOpenThread?: (threadId: string, projectId?: string) => void;
   onRetryWithOtto?: (prompt: string) => void;
+}
+
+function libraryItemToHistoryThumb(item: LibraryItem): HistoryThumb {
+  return {
+    id: item.id,
+    projectId: item.projectId,
+    assetId: item.assetId,
+    src: item.url,
+    kind: item.kind,
+    prompt: item.prompt,
+  };
 }
 
 function AdJobCard({
@@ -38,7 +53,7 @@ function AdJobCard({
   onHide,
 }: {
   job: AdJobItem;
-  onOpenThread?: (threadId: string) => void;
+  onOpenThread?: (threadId: string, projectId?: string) => void;
   onRetryWithOtto?: (prompt: string) => void;
   onHide?: (jobId: string) => void;
 }) {
@@ -72,7 +87,7 @@ function AdJobCard({
       )}
       <div className="flex flex-wrap gap-1.5 pt-1">
         {job.threadId && (
-          <Button type="button" size="sm" variant="secondary" className="h-7 px-2 text-[0.75rem]" onClick={() => onOpenThread?.(job.threadId)}>
+          <Button type="button" size="sm" variant="secondary" className="h-7 px-2 text-[0.75rem]" onClick={() => onOpenThread?.(job.threadId, job.projectId)}>
             <ExternalLink size={13} />
             Open conversation
           </Button>
@@ -105,12 +120,49 @@ export function OttoStuff({ entities, ads, adJobs, records, history, onOpenThrea
   }
   const [addOpen, setAddOpen] = useState(false);
   const [chooseProductFor, setChooseProductFor] = useState<string | null>(null);
+  const [detailFor, setDetailFor] = useState<{ generationId: string; projectId: string } | null>(null);
+  const [generationHistory, setGenerationHistory] = useState<HistoryThumb[]>(history);
+  const [historyCursor, setHistoryCursor] = useState<string | null>(null);
+  const [historyHasMore, setHistoryHasMore] = useState(false);
+  const [historyLoading, setHistoryLoading] = useState(false);
+  const [historyError, setHistoryError] = useState<string | null>(null);
+  const historyRequestRef = useRef(0);
   const [deleteError, setDeleteError] = useState<string | null>(null);
   const [hiddenFailedJobs, setHiddenFailedJobs] = useState<Set<string>>(new Set());
 
+  const fetchGenerationHistory = useCallback(async (cursor: string | null, replace: boolean) => {
+    const requestId = ++historyRequestRef.current;
+    setHistoryLoading(true);
+    setHistoryError(null);
+    const res = await getGenerationHistory({ cursor, take: 80 });
+    if (requestId !== historyRequestRef.current) return;
+    if ("error" in res) {
+      setHistoryError(res.error);
+      setHistoryLoading(false);
+      return;
+    }
+    const nextItems = res.items.map(libraryItemToHistoryThumb);
+    setGenerationHistory((prev) => {
+      if (replace) return nextItems;
+      const seen = new Set(prev.map((item) => item.id));
+      return [...prev, ...nextItems.filter((item) => !seen.has(item.id))];
+    });
+    setHistoryCursor(res.nextCursor);
+    setHistoryHasMore(res.hasMore);
+    setHistoryLoading(false);
+  }, []);
+
+  useEffect(() => {
+    setGenerationHistory(history);
+    setHistoryCursor(null);
+    setHistoryHasMore(false);
+    setHistoryError(null);
+    void fetchGenerationHistory(null, true);
+  }, [history, fetchGenerationHistory]);
+
   const items = useMemo(
-    () => buildStuffItems({ entities: entityList, history, ads, records }),
-    [entityList, history, ads, records],
+    () => buildStuffItems({ entities: entityList, history: generationHistory, ads, records }),
+    [entityList, generationHistory, ads, records],
   );
 
   async function handleRename(entityId: string, newName: string) {
@@ -161,10 +213,10 @@ export function OttoStuff({ entities, ads, adJobs, records, history, onOpenThrea
         <div className="mb-4 flex items-start justify-between gap-4">
           <div>
             <h1 className="m-0 text-[1.5rem] font-bold tracking-[-0.02em] text-foreground">
-              My Stuff
+              Library
             </h1>
             <p className="mt-1 mb-0 max-w-[560px] text-[0.9375rem] text-muted-foreground leading-[1.5]">
-              Everything you and Otto have made or saved — reuse any of it in the next campaign.
+              Everything you and Otto have made or saved across every campaign.
             </p>
           </div>
           <Button size="sm" onClick={() => setAddOpen(true)} className="shrink-0">
@@ -193,7 +245,24 @@ export function OttoStuff({ entities, ads, adJobs, records, history, onOpenThrea
           onRename={handleRename}
           onDelete={handleDelete}
           onSetProductImage={(assetId) => setChooseProductFor(assetId)}
+          onOpenGeneration={(generationId, itemProjectId) => setDetailFor({ generationId, projectId: itemProjectId })}
         />
+        <div className="mt-4 flex items-center gap-3">
+          {historyHasMore && (
+            <Button
+              type="button"
+              variant="secondary"
+              size="sm"
+              disabled={historyLoading}
+              onClick={() => void fetchGenerationHistory(historyCursor, false)}
+            >
+              {historyLoading ? "Loading..." : "Load more"}
+            </Button>
+          )}
+          {historyError && (
+            <span className="text-[0.8125rem] text-destructive">{historyError}</span>
+          )}
+        </div>
 
         {failedJobs.length > 0 && (
           <div className="mt-6 rounded-[14px] border border-border bg-card p-4">
@@ -266,6 +335,17 @@ export function OttoStuff({ entities, ads, adJobs, records, history, onOpenThrea
             </div>
           </div>
         </div>
+      )}
+      {detailFor && (
+        <DetailPanel
+          generationId={detailFor.generationId}
+          projectId={detailFor.projectId}
+          entities={entities}
+          onClose={() => {
+            setDetailFor(null);
+            router.refresh();
+          }}
+        />
       )}
     </div>
   );

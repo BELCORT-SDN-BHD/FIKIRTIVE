@@ -76,6 +76,7 @@ export function StuffLibrary({
   onRename,
   onDelete,
   onSetProductImage,
+  onOpenGeneration,
 }: {
   items: StuffItem[];
   mode: "library" | "picker";
@@ -83,6 +84,7 @@ export function StuffLibrary({
   onRename?: (entityId: string, name: string) => void;
   onDelete?: (entityId: string) => void;
   onSetProductImage?: (assetId: string) => void;
+  onOpenGeneration?: (generationId: string, projectId: string) => void;
 }) {
   const [filter, setFilter] = useState<StuffFilter>(mode === "picker" ? "images" : "all");
   const [search, setSearch] = useState("");
@@ -179,7 +181,7 @@ export function StuffLibrary({
           value={search}
           onChange={(e) => setSearch(e.target.value)}
           placeholder="Search…"
-          aria-label="Search stuff"
+          aria-label="Search library"
           className="pl-10"
         />
       </div>
@@ -193,23 +195,41 @@ export function StuffLibrary({
           {filtered.map((item) => {
             const isEntity = item.source === "entity" && !!item.entityId;
             const canSetProduct = !!item.assetId && item.mediaKind === "image";
+            const canOpenGeneration = !!item.generationId && !!item.projectId;
             return (
               <div
                 key={item.id}
                 className="group relative overflow-hidden rounded-[16px] border border-border bg-card"
               >
                 <div className="relative aspect-square bg-muted">
-                  <Thumb item={item} />
-                  <TileChrome item={item} />
+                  {canOpenGeneration ? (
+                    <button
+                      type="button"
+                      aria-label={`Open ${item.label}`}
+                      onClick={() => onOpenGeneration?.(item.generationId!, item.projectId!)}
+                      className="absolute inset-0 block h-full w-full border-0 bg-transparent p-0 text-left cursor-pointer focus-visible:outline-2 focus-visible:outline-brand"
+                    >
+                      <Thumb item={item} />
+                      <TileChrome item={item} />
+                    </button>
+                  ) : (
+                    <>
+                      <Thumb item={item} />
+                      <TileChrome item={item} />
+                    </>
+                  )}
 
                   {/* Hover overlay actions */}
-                  <div className="absolute inset-0 flex flex-col items-center justify-center gap-1.5 bg-black/50 p-2 opacity-0 transition group-hover:opacity-100">
+                  <div className="pointer-events-none absolute inset-0 flex flex-col items-center justify-center gap-1.5 bg-black/50 p-2 opacity-0 transition group-hover:opacity-100">
                     {canSetProduct && onSetProductImage && (
                       <Button
                         size="sm"
                         variant="secondary"
-                        className="w-full"
-                        onClick={() => item.assetId && onSetProductImage(item.assetId)}
+                        className="pointer-events-auto w-full"
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          if (item.assetId) onSetProductImage(item.assetId);
+                        }}
                       >
                         Set as product image
                       </Button>
@@ -218,8 +238,9 @@ export function StuffLibrary({
                       <Button
                         size="sm"
                         variant="secondary"
-                        className="w-full"
-                        onClick={() => {
+                        className="pointer-events-auto w-full"
+                        onClick={(e) => {
+                          e.stopPropagation();
                           const next = window.prompt("Rename", item.label);
                           if (next && next.trim() && item.entityId) onRename(item.entityId, next.trim());
                         }}
@@ -231,17 +252,30 @@ export function StuffLibrary({
                       <Button
                         size="sm"
                         variant="destructive"
-                        className="w-full"
-                        onClick={() => item.entityId && onDelete(item.entityId)}
+                        className="pointer-events-auto w-full"
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          if (item.entityId) onDelete(item.entityId);
+                        }}
                       >
                         Delete
                       </Button>
                     )}
                   </div>
                 </div>
-                <div className="truncate px-2 py-1.5 text-[0.8125rem] font-medium text-foreground">
-                  {item.label}
-                </div>
+                {canOpenGeneration ? (
+                  <button
+                    type="button"
+                    onClick={() => onOpenGeneration?.(item.generationId!, item.projectId!)}
+                    className="block w-full truncate border-0 bg-transparent px-2 py-1.5 text-left text-[0.8125rem] font-medium text-foreground cursor-pointer hover:text-brand focus-visible:outline-2 focus-visible:outline-brand"
+                  >
+                    {item.label}
+                  </button>
+                ) : (
+                  <div className="truncate px-2 py-1.5 text-[0.8125rem] font-medium text-foreground">
+                    {item.label}
+                  </div>
+                )}
               </div>
             );
           })}

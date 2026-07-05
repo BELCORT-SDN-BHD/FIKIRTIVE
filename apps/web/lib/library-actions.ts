@@ -7,6 +7,8 @@ import { storage } from "./storage";
 
 export type LibraryItem = {
   id: string;
+  projectId: string;
+  assetId: string;
   url: string;
   kind: "image" | "video";
   prompt: string;
@@ -18,23 +20,17 @@ export type LibraryPage = { items: LibraryItem[]; nextCursor: string | null; has
 const LIBRARY_VIDEO_EXTS = new Set(["mp4", "mov", "webm", "mkv"]);
 const LIBRARY_SCAN_BUFFER = 20;
 
-async function ownedProject(projectId: string, ownerId: string) {
-  return prisma.project.findFirst({ where: { id: projectId, ownerId, deletedAt: null } });
-}
-
 /**
- * One keyset page of a project's full generation history (every source: cowork, canvas,
+ * One keyset page of the owner's full generation history (every source: cowork, canvas,
  * upload, crop), newest first. Cursor = "<createdAt-iso>|<id>" (id breaks ties so no row is
- * skipped/repeated). Owner+project scoped; read-only. Optional prompt search + favorites filter.
+ * skipped/repeated). Owner-scoped; read-only. Optional prompt search + favorites filter.
  */
 export async function getGenerationHistory(
-  projectId: string,
   opts?: { search?: string; favoriteOnly?: boolean; cursor?: string | null; take?: number },
 ): Promise<LibraryPage | { error: string }> {
   const gate = await requireOwner();
   if ("error" in gate) return gate;
   const { ownerId } = gate;
-  if (!(await ownedProject(projectId, ownerId))) return { error: "Project not found." };
 
   const take = opts?.take ?? 60;
   const scanTake = Math.min(Math.max(take + LIBRARY_SCAN_BUFFER, take + 1), 100);
@@ -53,7 +49,6 @@ export async function getGenerationHistory(
   const rows = await prisma.generation.findMany({
     where: {
       ownerId,
-      projectId,
       deletedAt: null,
       ...(opts?.favoriteOnly ? { favorite: true } : {}),
       ...(search ? { promptText: { contains: search, mode: "insensitive" as const } } : {}),
@@ -73,6 +68,8 @@ export async function getGenerationHistory(
       row: g,
       item: {
         id: g.id,
+        projectId: g.projectId,
+        assetId: g.assetId,
         url: storageKeyToSrc(key),
         kind: LIBRARY_VIDEO_EXTS.has(ext) ? "video" : "image",
         prompt: g.promptText ?? "",

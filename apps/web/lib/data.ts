@@ -169,18 +169,25 @@ async function shotLabelMap(ownerId: string, projectId: string): Promise<Map<str
   return m;
 }
 
-export type HistoryThumb = { id: string; src: string; kind: "image" | "video" };
-/** The most recent generations in a project (OTTO + studio), newest first, for the
- *  sidebar History strip. Display-only: resolves each generation's asset to a media
- *  URL (same resolver as the library/thumbnails). Owner-scoped, soft-deletes excluded. */
+export type HistoryThumb = {
+  id: string;
+  projectId: string;
+  assetId: string;
+  src: string;
+  kind: "image" | "video";
+  prompt: string;
+};
+/** The owner's most recent generations across every project (OTTO + studio),
+ *  newest first, for the global Library surface. Display-only: resolves
+ *  each generation's asset to a media URL (same resolver as the library/thumbnails).
+ *  Owner-scoped, soft-deletes excluded. */
 export async function getRecentGenerationThumbs(
   ownerId: string,
-  projectId: string,
-  take = 9,
+  take = 80,
 ): Promise<HistoryThumb[]> {
-  const queryTake = Math.min(Math.max(take * 3, take), 30);
+  const queryTake = Math.min(Math.max(take * 2, take), 160);
   const rows = await prisma.generation.findMany({
-    where: { ownerId, projectId, ...notDeleted },
+    where: { ownerId, ...notDeleted },
     orderBy: [{ createdAt: "desc" }, { id: "desc" }],
     take: queryTake,
     include: { asset: true },
@@ -191,8 +198,11 @@ export async function getRecentGenerationThumbs(
     if (!(await storage.exists(key))) return null;
     return {
       id: g.id,
+      projectId: g.projectId,
+      assetId: g.assetId,
       src: storageKeyToSrc(key),
       kind: MEDIA_VIDEO_EXTS.has(ext) ? "video" : "image",
+      prompt: g.promptText ?? "",
     };
   }));
   return thumbs.filter((thumb): thumb is HistoryThumb => thumb != null).slice(0, take);
@@ -255,12 +265,12 @@ export async function getMediaPage(
 
 /** Otto's finished ads: cowork-tagged generations (threadId set), newest first.
  *  The mirror of getMediaPage for the Otto surface (which excludes threadId-null
- *  manual-studio gens). Used by My Stuff → Ads. */
-export type AdItem = { id: string; src: string; kind: "image" | "video"; prompt: string; createdAt: string };
-export async function getMyAds(ownerId: string, projectId: string, take = 60): Promise<AdItem[]> {
+ *  manual-studio gens). Used by Library → Ads. */
+export type AdItem = { id: string; projectId: string; assetId: string; src: string; kind: "image" | "video"; prompt: string; createdAt: string };
+export async function getMyAds(ownerId: string, take = 60): Promise<AdItem[]> {
   const scanTake = Math.min(Math.max(take + MEDIA_SCAN_BUFFER, take + 1), 100);
   const rows = await prisma.generation.findMany({
-    where: { ownerId, projectId, threadId: { not: null }, ...notDeleted },
+    where: { ownerId, threadId: { not: null }, ...notDeleted },
     orderBy: [{ createdAt: "desc" }, { id: "desc" }],
     take: scanTake,
     include: { asset: true },
@@ -271,6 +281,8 @@ export async function getMyAds(ownerId: string, projectId: string, take = 60): P
     if (!(await storage.exists(key))) return null;
     return {
       id: g.id,
+      projectId: g.projectId,
+      assetId: g.assetId,
       src: storageKeyToSrc(key),
       kind: MEDIA_VIDEO_EXTS.has(ext) ? ("video" as const) : ("image" as const),
       prompt: g.promptText ?? "",
@@ -280,22 +292,23 @@ export async function getMyAds(ownerId: string, projectId: string, take = 60): P
   return resolved.filter((item): item is AdItem => item != null).slice(0, take);
 }
 
-/** Otto ad jobs that are still running or failed — shown as status cards in My Stuff → Ads.
+/** Otto ad jobs that are still running or failed — shown as status cards in Library → Ads.
  *  DONE jobs are excluded (they show as finished media via getMyAds). */
-export type AdJobItem = { id: string; threadId: string; kind: "image" | "video"; status: "processing" | "failed"; prompt: string; createdAt: string; error: string };
-export async function getMyAdJobs(ownerId: string, projectId: string, take = 30): Promise<AdJobItem[]> {
+export type AdJobItem = { id: string; projectId: string; threadId: string; kind: "image" | "video"; status: "processing" | "failed"; prompt: string; createdAt: string; error: string };
+export async function getMyAdJobs(ownerId: string, take = 30): Promise<AdJobItem[]> {
   const { adJobStatusFromGenStatus } = await import("./ad-job-status");
   const rows = await prisma.genJob.findMany({
-    where: { ownerId, projectId, threadId: { not: null }, status: { in: ["QUEUED", "GENERATING", "FAILED"] } },
+    where: { ownerId, threadId: { not: null }, status: { in: ["QUEUED", "GENERATING", "FAILED"] } },
     orderBy: { createdAt: "desc" },
     take,
-    select: { id: true, threadId: true, kind: true, status: true, prompt: true, error: true, createdAt: true },
+    select: { id: true, projectId: true, threadId: true, kind: true, status: true, prompt: true, error: true, createdAt: true },
   });
   return rows.flatMap((r) => {
     const status = adJobStatusFromGenStatus(r.status);
     if (!status) return [];
     return [{
       id: r.id,
+      projectId: r.projectId,
       threadId: r.threadId ?? "",
       kind: r.kind === "VIDEO" ? ("video" as const) : ("image" as const),
       status,

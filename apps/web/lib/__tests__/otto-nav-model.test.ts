@@ -7,7 +7,7 @@ function thread(id: string, projectId: string, title: string, updatedAt: string)
 }
 
 describe("buildOttoNavEntries", () => {
-  it("shows a default single-thread campaign as one history row, not a duplicate project group", () => {
+  it("keeps a default single-thread campaign as a project group", () => {
     const entries = buildOttoNavEntries({
       projects: [{ id: "p1", name: "New campaign" }],
       sidebarThreads: [thread("t1", "p1", "Oat Milk Launch", "2026-07-04T10:00:00.000Z")],
@@ -18,11 +18,15 @@ describe("buildOttoNavEntries", () => {
     });
 
     expect(entries).toEqual([
-      { kind: "thread", project: { id: "p1", name: "New campaign" }, thread: expect.objectContaining({ id: "t1", title: "Oat Milk Launch" }) },
+      {
+        kind: "project",
+        project: { id: "p1", name: "New campaign" },
+        threads: [expect.objectContaining({ id: "t1", title: "Oat Milk Launch" })],
+      },
     ]);
   });
 
-  it("hides a single child row when the project and thread already have the same visible name", () => {
+  it("keeps a same-name thread nested under its project", () => {
     const entries = buildOttoNavEntries({
       projects: [{ id: "p1", name: "Oat Milk Launch" }],
       sidebarThreads: [thread("t1", "p1", "Oat   Milk Launch", "2026-07-04T10:00:00.000Z")],
@@ -36,8 +40,7 @@ describe("buildOttoNavEntries", () => {
       {
         kind: "project",
         project: { id: "p1", name: "Oat Milk Launch" },
-        threads: [],
-        defaultThread: expect.objectContaining({ id: "t1" }),
+        threads: [expect.objectContaining({ id: "t1" })],
       },
     ]);
   });

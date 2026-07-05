@@ -30,6 +30,7 @@ import type { EntityDTO } from "@/lib/types";
 
 type GenDTO = {
   id: string;
+  projectId: string;
   url: string;
   urls: string[];
   variants: { id: string; url: string; favorite: boolean }[]; // aligned to urls; carries each variant's own id/state (F08)
@@ -197,6 +198,7 @@ export default function DetailPanel({
   // prop. All mutate/spend handlers act on this so a sibling variant isn't animated/deleted/
   // starred/edited against the wrong image (F08/F09). Still an owned id resolved server-side.
   const selectedGenId = gen ? (gen.variants[selectedIdx]?.id ?? gen.id) : generationId;
+  const targetProjectId = gen?.projectId ?? projectId;
   const imageCost = activeModels
     ? displayCredits(pricedGenCredits({ kind: "IMAGE", model: activeModels.image, count: 1, videoOptions: null }))
     : null;
@@ -280,7 +282,7 @@ export default function DetailPanel({
       setRegenStatus("running");
       const { image } = await ensureModels(); // F18: server-resolved model
       const result = await startGen({
-        projectId,
+        projectId: targetProjectId,
         prompt: gen.prompt,
         count: 1,
         kind: "image",
@@ -306,7 +308,7 @@ export default function DetailPanel({
     } finally {
       regenBusyRef.current = false;
     }
-  }, [gen, generationId, projectId, pollJob, reloadFromJob, readOnly]);
+  }, [gen, generationId, targetProjectId, pollJob, reloadFromJob, readOnly]);
 
   const handleAnimate = useCallback(async () => {
     if (readOnly) return;
@@ -319,7 +321,7 @@ export default function DetailPanel({
       // Use user's chosen aspect ratio if set; fall back to videoDefaults
       const effectiveAspect = chosenAspect || vd.aspectRatio;
       const result = await startGen({
-        projectId,
+        projectId: targetProjectId,
         prompt: gen.prompt,
         count: 1,
         kind: "video",
@@ -348,7 +350,7 @@ export default function DetailPanel({
     } finally {
       animBusyRef.current = false;
     }
-  }, [gen, selectedGenId, projectId, pollJob, chosenAspect, reloadFromJob, readOnly]);
+  }, [gen, selectedGenId, targetProjectId, pollJob, chosenAspect, reloadFromJob, readOnly]);
 
   const handleCopyLink = useCallback(async () => {
     if (!gen) return;
@@ -433,7 +435,7 @@ export default function DetailPanel({
       setEditStatus("running");
       const { image } = await ensureModels(); // F18: server-resolved model
       const result = await startGen({
-        projectId,
+        projectId: targetProjectId,
         prompt: editPrompt.trim(),
         entityIds: editIds,
         count: 1,
@@ -462,7 +464,7 @@ export default function DetailPanel({
     } finally {
       editBusyRef.current = false;
     }
-  }, [gen, editPrompt, editIds, editStatus, projectId, pollJob, reloadFromJob, selectedGenId, readOnly]);
+  }, [gen, editPrompt, editIds, editStatus, targetProjectId, pollJob, reloadFromJob, selectedGenId, readOnly]);
 
   const runConfirmedAction = useCallback(() => {
     const action = confirmAction;

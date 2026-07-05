@@ -165,7 +165,7 @@ export function AddAssetDialog({
         onClick={(e) => e.stopPropagation()}
       >
         <div className="mb-4 flex items-center justify-between">
-          <h2 className="m-0 text-[1.125rem] font-semibold text-foreground">Add to My Stuff</h2>
+          <h2 className="m-0 text-[1.125rem] font-semibold text-foreground">Add to Library</h2>
           <button
             type="button"
             aria-label="Close"
@@ -258,7 +258,7 @@ export function AddAssetDialog({
           done ? (
             <div className="flex flex-col gap-4">
               <p className="text-[0.875rem] leading-[1.45] text-foreground">
-                Generating — it will appear in My Stuff shortly.
+                Generating — it will appear in Library shortly.
               </p>
               <div className="flex justify-end">
                 <Button size="sm" onClick={close}>Done</Button>

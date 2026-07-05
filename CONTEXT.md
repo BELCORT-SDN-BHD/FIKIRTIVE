@@ -45,8 +45,9 @@ Reading the table below:
   @mentionable reference asset). _Avoid:_ **design system** (that names Fikirtive's own app UI
   library, not a merchant's identity), brand guidelines (informal), theme, style guide.
 
-- **Project** (项目) — A unit of work under a Brand (a campaign or a video effort); contains Shots,
-  Generations, and one editJson. _Avoid:_ workspace, folder, brand.
+- **Project** (项目) — A unit of work under a Brand (a campaign or a video effort); contains many
+  Chats and one shared Canvas. _Avoid:_ workspace, folder, brand, Campaign (the future marketing
+  Campaign object is separate).
 
 ## References & identity 参考与身份
 
@@ -169,6 +170,17 @@ Reading the table below:
 
 - **Studio** (工作台) — The overall app shell that hosts the surfaces below. _Avoid:_ editor, workspace, dashboard.
 
+- **Canvas** (画布) — The Project-level visual board where the merchant arranges generated media,
+  uploads, text notes, and Otto results. All Chats in a Project share the same Canvas. _Avoid:_
+  per-chat canvas, generation library.
+
+- **Canvas card** (画布卡片) — A placement on the Canvas that points at text or media. Removing a
+  Canvas card removes the placement only; the saved media remains in the Library. _Avoid:_ asset,
+  generation, library item.
+
+- **Chat** (对话) — One Otto conversation inside a Project. A Project can have many Chats, and all
+  of them share the Project Canvas. _Avoid:_ project, campaign.
+
 - **GenSpace** (生成空间) — The free-form surface where the user directly generates images/clips from
   a prompt (a direct spend path). _Avoid:_ generator, canvas, playground.
 
@@ -202,3 +214,7 @@ Reading the table below:
 - **Asset** (资产) — The content-addressed stored bytes of any media file (image/video/audio),
   deduplicated by content hash. The *file*; a Generation/ReferenceImage *points at* an Asset.
   _Avoid:_ file, media, generation, image (those are roles an Asset plays, not the Asset itself).
+
+- **Library** (资产库) — The owner-global saved collection of reusable Elements, products, and
+  generated media across all Projects. Deleting from the Library explicitly removes the saved item
+  from Library views; deleting a Canvas card does not. _Avoid:_ My Stuff, project library.

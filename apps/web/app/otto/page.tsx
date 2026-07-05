@@ -15,11 +15,12 @@ export const metadata = { title: "Otto · Fikirtive" };
 const VALID_VIEWS = ["otto", "stuff", "library", "templates", "discover", "memory", "account", "connections", "schedule", "analytics"] as const;
 type ValidView = (typeof VALID_VIEWS)[number];
 
-export default async function OttoPage({ searchParams }: { searchParams: Promise<{ view?: string; skin?: string; project?: string; thread?: string }> }) {
+export default async function OttoPage({ searchParams }: { searchParams: Promise<{ view?: string; skin?: string; project?: string; thread?: string; new?: string }> }) {
   const sp = await searchParams;
-  const initialView: ValidView | undefined = (VALID_VIEWS as readonly string[]).includes(sp?.view ?? "")
+  const rawInitialView: ValidView | undefined = (VALID_VIEWS as readonly string[]).includes(sp?.view ?? "")
     ? (sp!.view as ValidView)
     : undefined;
+  const initialView: ValidView | undefined = rawInitialView === "stuff" ? "library" : rawInitialView;
   // Grok-bright is now the official default (cutover). ?skin=fk is an internal
   // rollback escape hatch to the legacy look; everything else gets gb.
   const skin = "gb" as const;
@@ -49,9 +50,9 @@ export default async function OttoPage({ searchParams }: { searchParams: Promise
     getMyAccount(),
     listMemory(ownerId),
     listBrandRecords(ownerId),
-    getMyAds(ownerId, projectId),
-    getMyAdJobs(ownerId, projectId).catch(() => [] as Awaited<ReturnType<typeof getMyAdJobs>>),
-    getRecentGenerationThumbs(ownerId, projectId).catch(() => [] as Awaited<ReturnType<typeof getRecentGenerationThumbs>>),
+    getMyAds(ownerId),
+    getMyAdJobs(ownerId).catch(() => [] as Awaited<ReturnType<typeof getMyAdJobs>>),
+    getRecentGenerationThumbs(ownerId).catch(() => [] as Awaited<ReturnType<typeof getRecentGenerationThumbs>>),
     getAllCoworkThreadMetas(ownerId).catch(() => [] as Awaited<ReturnType<typeof getAllCoworkThreadMetas>>),
     // Analytics view payload for the Analytics screen (read-only Meta reads; default 30d range).
     // Refined in Task 5; provided here so the required OttoApp `analytics` prop typechecks.
@@ -60,7 +61,10 @@ export default async function OttoPage({ searchParams }: { searchParams: Promise
 
   // Open the requested thread (?thread=, if it's in this project) or the most recent.
   let threads = threadRows.map(toChatThreadMetaDTO);
-  const openThreadId = (sp?.thread && threadRows.some((t) => t.id === sp.thread)) ? sp.thread : threadRows[0]?.id;
+  const forceNewThread = sp?.new === "1";
+  const openThreadId = forceNewThread
+    ? undefined
+    : (sp?.thread && threadRows.some((t) => t.id === sp.thread)) ? sp.thread : threadRows[0]?.id;
   if (openThreadId) {
     const activeFull = await getCoworkThread(ownerId, openThreadId);
     if (activeFull) {

@@ -428,7 +428,7 @@ export function OttoMemory({ initialMemory, initialRecords, projectId, stuffItem
       {pickerFor && (
         <div className="fixed inset-0 z-50 bg-foreground/40 flex items-center justify-center" onClick={() => setPickerFor(null)}>
           <div className="bg-card rounded-[16px] border border-border p-5 max-w-[720px] w-full max-h-[80vh] overflow-auto" onClick={(e) => e.stopPropagation()}>
-            <h3 className="text-[0.9375rem] font-semibold mb-3">Choose an image from My Stuff</h3>
+            <h3 className="text-[0.9375rem] font-semibold mb-3">Choose an image from Library</h3>
             <StuffLibrary items={stuffItems} mode="picker" onPick={(assetId) => { void prodSetImage(pickerFor, assetId); setPickerFor(null); }} />
           </div>
         </div>

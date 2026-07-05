@@ -3,7 +3,7 @@
 import { prisma } from "@fikirtive/db";
 import { newId } from "@fikirtive/core";
 import { requireOwner } from "./auth-guard";
-import { getCoworkThread, getGenerationThumbs } from "./data";
+import { getGenerationThumbs } from "./data";
 import { createCanvasNode, type CanvasNodeDTO } from "./canvas-actions";
 import { canvasNodeDisplayStatus, firstDisplayableGenerationId, planBridgeNodes, planSettledCanvasJobSiblingNodes, settledCanvasNodeRepairPatch } from "./otto-canvas-bridge-core";
 
@@ -15,8 +15,8 @@ const NODE = { w: 320, h: 320, step: 340, y: 80 } as const;
 /**
  * chat→canvas bridge — DISPLAY-ONLY, NO new spend.
  *
- * Ensures OTTO's chat results (GEN_RESULT messages) for a thread show up as
- * canvas nodes, then returns ALL of this project's canvas nodes with their
+ * Ensures OTTO's chat results (GEN_RESULT messages) for every live thread in
+ * this project show up as canvas nodes, then returns ALL of this project's canvas nodes with their
  * media URLs resolved. It is idempotent (one node per generation; skips
  * generations that already have a node) and it ONLY references generations the
  * worker already produced — it never calls startGen / the provider / the credit
@@ -27,7 +27,6 @@ const NODE = { w: 320, h: 320, step: 340, y: 80 } as const;
  */
 export async function syncOttoCanvasNodes(
   projectId: string,
-  threadId?: string,
 ): Promise<CanvasNodeWithUrl[] | { error: string }> {
   const gate = await requireOwner();
   if ("error" in gate) return gate;
@@ -39,43 +38,50 @@ export async function syncOttoCanvasNodes(
   });
   if (!project) return { error: "Project not found." };
 
-  // ── 1. Ensure a node per generation the thread's GEN_RESULTs produced ──
-  if (threadId) {
-    const thread = await getCoworkThread(ownerId, threadId); // owner-scoped; null if not theirs
-    if (thread && thread.projectId === projectId) {
-      const existing = await prisma.canvasNode.findMany({
-        where: { ownerId, projectId, generationId: { not: null } },
-        select: { generationId: true },
+  // ── 1. Ensure a node per generation all project GEN_RESULTs produced ──
+  const threads = await prisma.chatThread.findMany({
+    where: { ownerId, projectId, deletedAt: null },
+    orderBy: [{ createdAt: "asc" }, { id: "asc" }],
+    select: {
+      id: true,
+      messages: {
+        where: { kind: "GEN_RESULT", genJobId: { not: null }, deletedAt: null },
+        orderBy: { seq: "asc" },
+        select: { seq: true, genJobId: true, payload: true, text: true },
+      },
+    },
+  });
+  const existing = await prisma.canvasNode.findMany({
+    where: { ownerId, projectId, generationId: { not: null } },
+    select: { generationId: true },
+  });
+  let placed = await prisma.canvasNode.count({ where: { ownerId, projectId } });
+  const jobIds = [...new Set(threads.flatMap((thread) => thread.messages.map((m) => m.genJobId as string)))];
+  const bridgeJobs = jobIds.length
+    ? await prisma.genJob.findMany({ where: { id: { in: jobIds }, ownerId, projectId }, select: { id: true, generationIds: true } })
+    : [];
+  const jobGenIds = new Map(bridgeJobs.map((j) => [j.id, j.generationIds]));
+  const have = new Set(existing.map((n) => n.generationId).filter((id): id is string => !!id));
+  for (const thread of threads) {
+    const toCreate = planBridgeNodes(thread.messages, jobGenIds, have);
+    for (const node of toCreate) {
+      have.add(node.generationId);
+      // Reuses the validated, fail-closed insert (owner-scopes threadId /
+      // generationId / genJobId). No spend path is touched.
+      await createCanvasNode({
+        projectId,
+        type: node.kind,
+        x: 80 + placed * NODE.step,
+        y: NODE.y,
+        w: NODE.w,
+        h: NODE.h,
+        generationId: node.generationId,
+        genJobId: node.genJobId,
+        threadId: thread.id,
+        status: "done",
+        prompt: node.prompt ?? undefined,
       });
-      let placed = await prisma.canvasNode.count({ where: { ownerId, projectId } });
-
-      const genResults = thread.messages.filter((m) => m.kind === "GEN_RESULT" && m.genJobId);
-      const jobIds = genResults.map((m) => m.genJobId as string);
-      const jobs = jobIds.length
-        ? await prisma.genJob.findMany({ where: { id: { in: jobIds }, ownerId, projectId }, select: { id: true, generationIds: true } })
-        : [];
-      const jobGenIds = new Map(jobs.map((j) => [j.id, j.generationIds]));
-
-      // Pure decision (tested): which generations still need a node, in order.
-      const toCreate = planBridgeNodes(genResults, jobGenIds, existing.map((n) => n.generationId));
-      for (const node of toCreate) {
-        // Reuses the validated, fail-closed insert (owner-scopes threadId /
-        // generationId / genJobId). No spend path is touched.
-        await createCanvasNode({
-          projectId,
-          type: node.kind,
-          x: 80 + placed * NODE.step,
-          y: NODE.y,
-          w: NODE.w,
-          h: NODE.h,
-          generationId: node.generationId,
-          genJobId: node.genJobId,
-          threadId,
-          status: "done",
-          prompt: node.prompt ?? undefined,
-        });
-        placed += 1;
-      }
+      placed += 1;
     }
   }
 

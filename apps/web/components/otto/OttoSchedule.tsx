@@ -65,7 +65,7 @@ const SCHEDULE_TZS = [
 type ViewKey = "plan" | "calendar" | "queue";
 type ChannelFilter = "all" | ChannelId;
 
-// A generationId → thumbnail lookup, built from My Stuff (gen items). Media rows store
+// A generationId → thumbnail lookup, built from Library gen items. Media rows store
 // generationId; History thumbs carry the same id, so this maps posts to their preview.
 type MediaLookup = Map<string, { url: string | null; kind: StuffItem["mediaKind"] }>;
 

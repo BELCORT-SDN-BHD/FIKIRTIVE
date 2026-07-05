@@ -22,7 +22,7 @@ export default function OttoLibrary({ projectId, entities = [] }: { projectId: s
     async (fromCursor: string | null, replace: boolean) => {
       const myReq = ++reqIdRef.current;
       setLoading(true);
-      const res = await getGenerationHistory(projectId, {
+      const res = await getGenerationHistory({
         search: search.trim() || undefined,
         favoriteOnly,
         cursor: fromCursor,
@@ -38,7 +38,7 @@ export default function OttoLibrary({ projectId, entities = [] }: { projectId: s
       if (myReq !== reqIdRef.current) return;
       setHasMore(res.hasMore);
     },
-    [projectId, search, favoriteOnly],
+    [search, favoriteOnly],
   );
 
   // Initial load + reload (debounced) whenever search/favorites change.
@@ -172,7 +172,7 @@ export default function OttoLibrary({ projectId, entities = [] }: { projectId: s
       {detailFor && (
         <DetailPanel
           generationId={detailFor}
-          projectId={projectId}
+          projectId={items.find((item) => item.id === detailFor)?.projectId ?? projectId}
           entities={entities}
           onClose={() => { setDetailFor(null); void fetchPage(null, true); }}
         />

@@ -125,6 +125,7 @@ export type OttoViewKey = "otto" | "stuff" | "library" | "templates" | "discover
 const OTTO_VIEW_KEYS = new Set<OttoViewKey>(["otto", "stuff", "library", "templates", "discover", "memory", "account", "connections", "schedule", "analytics"]);
 
 function parseViewParam(raw: string | null): OttoViewKey {
+  if (raw === "stuff") return "library";
   return raw && OTTO_VIEW_KEYS.has(raw as OttoViewKey) ? (raw as OttoViewKey) : "otto";
 }
 
@@ -158,7 +159,7 @@ export function OttoApp({
   const [threads, setThreads] = useState<ChatThreadDTO[]>(initialThreads);
   const [sidebarThreadList, setSidebarThreadList] = useState<ChatThreadDTO[]>(sidebarThreads);
   const [activeThreadId, setActiveThreadId] = useState<string | null>(
-    initialActiveThreadId ?? initialThreads[0]?.id ?? null,
+    initialActiveThreadId === undefined ? (initialThreads[0]?.id ?? null) : initialActiveThreadId,
   );
   const [balanceCredits, setBalanceCredits] = useState(initialBalanceCredits);
   const [drawerOpen, setDrawerOpen] = useState(false);
@@ -240,10 +241,11 @@ export function OttoApp({
     if (a && !("error" in a)) setBalanceCredits(a.balance);
   }, []);
 
-  const projectHref = useCallback((projId: string, threadId?: string) => {
+  const projectHref = useCallback((projId: string, threadId?: string, opts?: { newChat?: boolean }) => {
     const p = new URLSearchParams();
     p.set("project", projId);
     if (threadId) p.set("thread", threadId);
+    if (opts?.newChat && !threadId) p.set("new", "1");
     // gb is the default now — no ?skin needed in the URL.
     return `/otto?${p.toString()}`;
   }, []);
@@ -315,7 +317,7 @@ export function OttoApp({
     try {
       const res = await createProject("New campaign");
       if (res && "id" in res) {
-        router.push(projectHref(res.id));
+        router.push(projectHref(res.id, undefined, { newChat: true }));
         return;
       }
       if (res && "error" in res) {
@@ -350,8 +352,23 @@ export function OttoApp({
     router.push(projectHref(projId, threadId));
   }, [router, projectHref, curProjectId]);
 
-  const handleSelectThread = useCallback((threadId: string) => {
+  const handleNewChat = useCallback((projId: string) => {
     setActionError(null);
+    if (projId === curProjectId) {
+      setActiveThreadId(null);
+      setView("otto");
+      pushLocalRoute(projectHref(projId, undefined, { newChat: true }));
+      return;
+    }
+    router.push(projectHref(projId, undefined, { newChat: true }));
+  }, [curProjectId, projectHref, pushLocalRoute, router]);
+
+  const handleSelectThread = useCallback((threadId: string, threadProjectId = curProjectId) => {
+    setActionError(null);
+    if (threadProjectId !== curProjectId) {
+      router.push(projectHref(threadProjectId, threadId));
+      return;
+    }
     setActiveThreadId(threadId);
     setView("otto");
     router.push(projectHref(curProjectId, threadId));
@@ -480,6 +497,7 @@ export function OttoApp({
         activeThreadId={activeThreadId}
         onSelectThread={handleSelectThread}
         onSwitchProject={handleSwitchProject}
+        onNewChat={handleNewChat}
         onRenameProject={handleRenameProject}
         onDeleteProject={handleDeleteProject}
         onNewCampaign={handleNewCampaign}

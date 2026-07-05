@@ -17,21 +17,28 @@ describe("buildStuffItems", () => {
   it("classifies entities, gens and ads with stable unique ids", () => {
     const items = buildStuffItems({
       entities: [ent("e1", "CHARACTER", "Rosa", "as1"), ent("e2", "PRODUCT", "Latte", "as2")],
-      history: [{ id: "g1", src: "/g1.png", kind: "image" }, { id: "g2", src: "/g2.mp4", kind: "video" }],
-      ads: [{ id: "a1", name: "Raya teaser", mediaUrl: "/ad1.mp4", kind: "video" } as never],
+      history: [
+        { id: "g1", projectId: "p1", assetId: "ag1", src: "/g1.png", kind: "image", prompt: "Still" },
+        { id: "g2", projectId: "p2", assetId: "ag2", src: "/g2.mp4", kind: "video", prompt: "Motion" },
+      ],
+      ads: [{ id: "a1", projectId: "p3", assetId: "aa1", src: "/ad1.mp4", kind: "video", prompt: "Raya teaser", createdAt: "2026-01-01T00:00:00.000Z" }],
       records: [rec("Latte", "as2")],
     });
     expect(new Set(items.map((i) => i.id)).size).toBe(items.length);
     expect(items.find((i) => i.entityId === "e2")?.productName).toBe("Latte");
     expect(items.find((i) => i.entityId === "e1")?.assetId).toBe("as1");
-    expect(items.filter((i) => i.source === "gen").every((i) => i.assetId === undefined)).toBe(true);
+    expect(items.find((i) => i.id === "gen:g1")).toMatchObject({ generationId: "g1", projectId: "p1", assetId: "ag1", label: "Still" });
+    expect(items.find((i) => i.id === "ad:a1")).toMatchObject({ generationId: "a1", projectId: "p3", assetId: "aa1", label: "Raya teaser" });
   });
 });
 
 describe("filterStuffItems", () => {
   const items = buildStuffItems({
     entities: [ent("e1", "CHARACTER", "Rosa", "as1"), ent("e2", "PRODUCT", "Latte", "as2"), ent("e3", "LOCATION", "Cafe", "as3")],
-    history: [{ id: "g1", src: "/g1.png", kind: "image" }, { id: "g2", src: "/g2.mp4", kind: "video" }],
+    history: [
+      { id: "g1", projectId: "p1", assetId: "ag1", src: "/g1.png", kind: "image", prompt: "Still" },
+      { id: "g2", projectId: "p1", assetId: "ag2", src: "/g2.mp4", kind: "video", prompt: "Motion" },
+    ],
     ads: [], records: [],
   });
   it("cast/product-assets filter by entity type; location shows in images+all only", () => {

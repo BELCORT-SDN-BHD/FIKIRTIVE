@@ -7,6 +7,7 @@ import { storage, kindOf, extFromFilename, mimeOf } from "./storage";
 
 export type GenerationDTO = {
   id: string;
+  projectId: string;
   url: string;
   urls: string[];
   // Sibling variants aligned to `urls`, each with its OWN generation id (F08) and saved state.
@@ -31,6 +32,7 @@ export async function getGeneration(
     where: { id: generationId, ownerId, deletedAt: null },
     select: {
       id: true,
+      projectId: true,
       promptText: true,
       favorite: true,
       asset: { select: { ownerId: true, contentHash: true, ext: true } },
@@ -72,6 +74,7 @@ export async function getGeneration(
 
   return {
     id: gen.id,
+    projectId: gen.projectId,
     url,
     urls: variants.map((v) => v.url),
     variants,

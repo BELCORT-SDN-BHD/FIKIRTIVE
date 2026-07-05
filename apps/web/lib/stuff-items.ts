@@ -1,4 +1,4 @@
-/** Pure classifier for the unified My Stuff library (spec R3). No IO. */
+/** Pure classifier for the unified Library (spec R3). No IO. */
 import type { EntityDTO } from "./types";
 import type { HistoryThumb } from "./data";
 import type { AdTile } from "@/components/otto/OttoStuff";
@@ -14,6 +14,8 @@ export type StuffItem = {
   mediaKind: "image" | "video" | "other";
   entityId?: string;
   entityType?: EntityDTO["type"];
+  generationId?: string;
+  projectId?: string;
   assetId?: string;
   productName?: string;
 };
@@ -53,10 +55,28 @@ export function buildStuffItems(args: {
     });
   }
   for (const h of args.history) {
-    items.push({ id: `gen:${h.id}`, source: "gen", label: h.id, url: h.src, mediaKind: h.kind });
+    items.push({
+      id: `gen:${h.id}`,
+      source: "gen",
+      label: h.prompt || h.id,
+      url: h.src,
+      mediaKind: h.kind,
+      generationId: h.id,
+      projectId: h.projectId,
+      assetId: h.assetId,
+    });
   }
   for (const a of args.ads) {
-    items.push({ id: `ad:${a.id}`, source: "ad", label: a.prompt, url: a.src, mediaKind: a.kind });
+    items.push({
+      id: `ad:${a.id}`,
+      source: "ad",
+      label: a.prompt || a.id,
+      url: a.src,
+      mediaKind: a.kind,
+      generationId: a.id,
+      projectId: a.projectId,
+      assetId: a.assetId,
+    });
   }
   return items;
 }
