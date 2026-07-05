@@ -41,7 +41,7 @@ export function ContentAdmin({ gens, blocks, filterOrgId }: { gens: GenRow[]; bl
           {gens.map((g) => (
             <div key={g.id} style={{ display: "grid", gap: 4, padding: 8, border: "1px solid var(--border)", borderRadius: 10, background: "var(--muted)" }}>
               {g.kind === "video" ? (
-                <video src={g.src} controls muted playsInline style={{ width: "100%", aspectRatio: "1 / 1", objectFit: "cover", borderRadius: 6, background: "var(--card)" }} />
+                <video src={g.src} controls muted playsInline preload="metadata" style={{ width: "100%", aspectRatio: "1 / 1", objectFit: "cover", borderRadius: 6, background: "var(--card)" }} />
               ) : (
                 // eslint-disable-next-line @next/next/no-img-element
                 <img src={g.src} alt={g.prompt.slice(0, 80)} loading="lazy" style={{ width: "100%", aspectRatio: "1 / 1", objectFit: "cover", borderRadius: 6, background: "var(--card)" }} />

@@ -76,6 +76,7 @@ export function VideoNode({ data, selected }: NodeProps) {
             ref={videoRef}
             src={d.url}
             preload="metadata"
+            playsInline
             controls={playing}
             onPlay={() => setPlaying(true)}
             onPause={() => setPlaying(false)}
@@ -94,7 +95,7 @@ export function VideoNode({ data, selected }: NodeProps) {
           )}
         </div>
       ) : (
-        <video src={d.url} controls style={{ width: "100%", height: "100%", objectFit: "cover" }} />
+        <video src={d.url} controls playsInline preload="metadata" style={{ width: "100%", height: "100%", objectFit: "cover" }} />
       )}
       <Handle type="target" position={Position.Left} />
     </div>

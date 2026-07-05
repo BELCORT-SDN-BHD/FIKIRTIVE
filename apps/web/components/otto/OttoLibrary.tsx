@@ -136,7 +136,7 @@ export default function OttoLibrary({ projectId, entities = [] }: { projectId: s
             {items.map((it) => (
               <div key={it.id} style={{ position: "relative", borderRadius: "14px", overflow: "hidden", border: "1px solid var(--border)", background: "var(--card)", cursor: "pointer" }} onClick={() => setDetailFor(it.id)}>
                 {it.kind === "video" ? (
-                  <video src={it.url} muted style={{ width: "100%", aspectRatio: "1", objectFit: "cover", display: "block" }} />
+                  <video src={it.url} muted playsInline preload="metadata" style={{ width: "100%", aspectRatio: "1", objectFit: "cover", display: "block" }} />
                 ) : (
                   // eslint-disable-next-line @next/next/no-img-element
                   <img src={it.url} alt={it.prompt} style={{ width: "100%", aspectRatio: "1", objectFit: "cover", display: "block" }} />
