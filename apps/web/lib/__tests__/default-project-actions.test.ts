@@ -7,6 +7,7 @@ vi.mock("@fikirtive/db", () => ({
     project: { findFirst: vi.fn(), findMany: vi.fn(), create: vi.fn() },
     chatThread: { count: vi.fn() },
     shot: { count: vi.fn() },
+    scheduledPost: { count: vi.fn() },
     canvasNode: { count: vi.fn() },
     genJob: { count: vi.fn() },
     generation: { count: vi.fn() },
@@ -25,6 +26,7 @@ beforeEach(() => {
   (prisma.project.findMany as any).mockResolvedValue([]);
   (prisma.chatThread.count as any).mockResolvedValue(0);
   (prisma.shot.count as any).mockResolvedValue(0);
+  (prisma.scheduledPost.count as any).mockResolvedValue(0);
   (prisma.canvasNode.count as any).mockResolvedValue(0);
   (prisma.genJob.count as any).mockResolvedValue(0);
   (prisma.generation.count as any).mockResolvedValue(0);
@@ -105,6 +107,7 @@ describe("createProject", () => {
     });
     expect(prisma.chatThread.count).toHaveBeenCalledWith({ where: { ownerId: "o1", projectId: "p_empty", deletedAt: null } });
     expect(prisma.shot.count).toHaveBeenCalledWith({ where: { ownerId: "o1", projectId: "p_empty", deletedAt: null } });
+    expect(prisma.scheduledPost.count).toHaveBeenCalledWith({ where: { ownerId: "o1", projectId: "p_empty", deletedAt: null } });
     expect(prisma.canvasNode.count).toHaveBeenCalledWith({ where: { ownerId: "o1", projectId: "p_empty" } });
     expect(prisma.genJob.count).toHaveBeenCalledWith({ where: { ownerId: "o1", projectId: "p_empty" } });
     expect(prisma.generation.count).toHaveBeenCalledWith({ where: { ownerId: "o1", projectId: "p_empty", deletedAt: null } });
@@ -137,6 +140,18 @@ describe("createProject", () => {
   it("creates a new default campaign when the existing default campaign has storyboard shots", async () => {
     (prisma.project.findMany as any).mockResolvedValue([{ id: "p_storyboard", editJson: null, coworkBrief: null, brandId: null, campaignId: null }]);
     (prisma.shot.count as any).mockResolvedValue(1);
+    (prisma.project.create as any).mockResolvedValue({ id: "p_new", name: "New campaign" });
+
+    await expect(createProject("New campaign")).resolves.toEqual({ id: "p_new" });
+
+    expect(prisma.project.create).toHaveBeenCalledWith({
+      data: { id: expect.any(String), ownerId: "o1", name: "New campaign" },
+    });
+  });
+
+  it("creates a new default campaign when the existing default campaign has scheduled posts", async () => {
+    (prisma.project.findMany as any).mockResolvedValue([{ id: "p_schedule", editJson: null, coworkBrief: null, brandId: null, campaignId: null }]);
+    (prisma.scheduledPost.count as any).mockResolvedValue(1);
     (prisma.project.create as any).mockResolvedValue({ id: "p_new", name: "New campaign" });
 
     await expect(createProject("New campaign")).resolves.toEqual({ id: "p_new" });
