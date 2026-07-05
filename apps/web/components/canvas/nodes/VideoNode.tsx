@@ -1,9 +1,10 @@
 // apps/web/components/canvas/nodes/VideoNode.tsx
-import { useRef, useState } from "react";
+import { useRef, useState, type MouseEvent } from "react";
 import { Handle, NodeToolbar, Position, type NodeProps } from "@xyflow/react";
 import { GeneratingBody, FailedBody } from "./GeneratingBody";
 import { NodeResize } from "./NodeResize";
 import { getCanvasNodeWriteLock } from "@/lib/canvas-node-lock";
+import { shouldIgnoreCanvasVideoReferenceClick } from "@/lib/canvas-chat-reference";
 
 export function VideoNode({ data, selected }: NodeProps) {
   const d = data as {
@@ -13,6 +14,7 @@ export function VideoNode({ data, selected }: NodeProps) {
     skin?: string;
     onDelete?: () => void;
     onOpenDetail?: () => void;
+    onReferenceInChat?: () => void;
     onRefresh?: () => void;
     onMediaSize?: (size: { width: number; height: number }) => void;
     directToolsLocked?: boolean;
@@ -23,10 +25,22 @@ export function VideoNode({ data, selected }: NodeProps) {
   const terminal = d.status === "failed" || d.status === "timeout" || d.status === "missing";
   const viewable = !!d.url && !terminal;
   const actionable = viewable && !!d.generationId;
+  const referenceable = actionable && !!d.onReferenceInChat && !d.directToolsLocked;
   const videoRef = useRef<HTMLVideoElement>(null);
   const [playing, setPlaying] = useState(false);
   const reportMediaSize = (el: HTMLVideoElement) => {
     d.onMediaSize?.({ width: el.videoWidth, height: el.videoHeight });
+  };
+  const handleReferenceClick = (e: MouseEvent<HTMLDivElement>) => {
+    if (
+      shouldIgnoreCanvasVideoReferenceClick({
+        targetTagName: e.target instanceof HTMLElement ? e.target.tagName : null,
+        controlsVisible: !gb || playing,
+      })
+    ) {
+      return;
+    }
+    d.onReferenceInChat?.();
   };
   return (
     <>
@@ -67,7 +81,20 @@ export function VideoNode({ data, selected }: NodeProps) {
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" aria-hidden><rect x="2" y="6" width="14" height="12" rx="2" /><path d="m22 8-6 4 6 4V8z" /></svg>
         Video
       </span>
-    <div className="al-panel" style={{ width: "100%", height: "100%", overflow: "hidden", borderRadius: 14 }}>
+    <div
+      className="al-panel"
+      role={referenceable ? "button" : undefined}
+      tabIndex={referenceable ? 0 : undefined}
+      aria-label={referenceable ? "Use video as Otto reference" : undefined}
+      title={referenceable ? "Use as Otto reference" : undefined}
+      onClick={referenceable ? handleReferenceClick : undefined}
+      onKeyDown={referenceable ? (e) => {
+        if (e.key !== "Enter" && e.key !== " ") return;
+        e.preventDefault();
+        d.onReferenceInChat?.();
+      } : undefined}
+      style={{ width: "100%", height: "100%", overflow: "hidden", borderRadius: 14, cursor: referenceable ? "pointer" : undefined }}
+    >
       {terminal ? (
         <FailedBody status={d.status as "failed" | "timeout" | "missing"} onRefresh={d.onRefresh} />
       ) : d.status === "pending" || !d.url ? (
@@ -93,7 +120,7 @@ export function VideoNode({ data, selected }: NodeProps) {
               type="button"
               aria-label="Play"
               onPointerDown={(e) => e.stopPropagation()}
-              onClick={() => { void videoRef.current?.play(); }}
+              onClick={(e) => { e.stopPropagation(); void videoRef.current?.play(); }}
             >
               <svg width="13" height="13" viewBox="0 0 24 24" fill="currentColor" aria-hidden><path d="M8 5v14l11-7z" /></svg>
             </button>
