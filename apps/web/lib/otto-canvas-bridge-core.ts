@@ -15,6 +15,35 @@ export type BridgeNode = {
   prompt: string | null;
 };
 
+export type GenCardMsg = {
+  seq: number;
+  genJobId: string | null;
+  payload: unknown;
+  text: string | null;
+};
+
+export type PendingBridgeJob = {
+  id: string;
+  generationIds: string[];
+};
+
+export type PendingJobNode = {
+  genJobId: string;
+  kind: "image" | "video";
+  prompt: string | null;
+};
+
+function mediaKindFromPayload(payload: unknown): "image" | "video" {
+  return (payload as { kind?: string } | null)?.kind === "video" ? "video" : "image";
+}
+
+function promptFromCardMessage(message: GenCardMsg): string | null {
+  const payload = message.payload as { structuredPrompt?: unknown; prompt?: unknown } | null;
+  if (typeof payload?.structuredPrompt === "string" && payload.structuredPrompt.trim()) return payload.structuredPrompt;
+  if (typeof payload?.prompt === "string" && payload.prompt.trim()) return payload.prompt;
+  return message.text;
+}
+
 export function canvasNodeDisplayStatus(
   rowStatus: string,
   jobStatus: string | null | undefined,
@@ -166,5 +195,36 @@ export function planBridgeNodes(
       out.push({ generationId: gid, genJobId: m.genJobId, kind, prompt: m.text });
     }
   }
+  return out;
+}
+
+/**
+ * Plan one pending canvas node per approved GEN_CARD before the worker emits a
+ * GEN_RESULT. This is display-only: the GenJob already exists and has already
+ * gone through startGen/reserve. The caller owner/project-scopes `jobs`.
+ */
+export function planPendingJobNodes(
+  genCards: GenCardMsg[],
+  jobs: Map<string, PendingBridgeJob>,
+  haveGenerations: Iterable<string | null>,
+  haveJobs: Iterable<string | null>,
+): PendingJobNode[] {
+  const seenGenerations = new Set<string | null>(haveGenerations);
+  const seenJobs = new Set<string | null>(haveJobs);
+  const out: PendingJobNode[] = [];
+
+  for (const message of [...genCards].sort((a, b) => a.seq - b.seq)) {
+    if (!message.genJobId || seenJobs.has(message.genJobId)) continue;
+    const job = jobs.get(message.genJobId);
+    if (!job) continue;
+    if (job.generationIds.some((id) => seenGenerations.has(id))) continue;
+    seenJobs.add(message.genJobId);
+    out.push({
+      genJobId: message.genJobId,
+      kind: mediaKindFromPayload(message.payload),
+      prompt: promptFromCardMessage(message),
+    });
+  }
+
   return out;
 }

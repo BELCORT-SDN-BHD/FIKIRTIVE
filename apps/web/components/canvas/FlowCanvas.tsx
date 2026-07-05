@@ -600,13 +600,20 @@ export default function FlowCanvas({
     });
   }, [flowReady, nodes.length, projectId]);
 
-  // When the active thread's OTTO work finishes (pending → done), reload so its
-  // freshly-produced results appear on the canvas.
-  const prevPendingRef = useRef(false);
+  // When the active thread's OTTO work starts, reload so the server bridge can
+  // place a pending GenJob card on the canvas. When it finishes, reload again
+  // so the produced media replaces that pending card.
+  const prevActivityRef = useRef<{ threadId: string | null; pending: boolean }>({ threadId: null, pending: false });
   useEffect(() => {
     const pending = !!(activeThreadId && activity?.has(activeThreadId));
-    if (prevPendingRef.current && !pending) void reload();
-    prevPendingRef.current = pending;
+    const prev = prevActivityRef.current;
+    const threadChanged = prev.threadId !== activeThreadId;
+    if (pending && (!prev.pending || threadChanged)) {
+      void reload();
+    } else if (!pending && prev.pending && !threadChanged) {
+      void reload();
+    }
+    prevActivityRef.current = { threadId: activeThreadId, pending };
   }, [activity, activeThreadId, reload]);
 
   // Keep nodeDataRef positions in sync when nodes move (so onAnimate uses fresh coords)

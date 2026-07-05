@@ -1,11 +1,18 @@
 import { describe, it, expect } from "vitest";
-import { canvasNodeDisplayStatus, firstDisplayableGenerationId, planBridgeNodes, planSettledCanvasJobSiblingNodes, settledCanvasNodeRepairPatch, type GenResultMsg } from "../otto-canvas-bridge-core";
+import { canvasNodeDisplayStatus, firstDisplayableGenerationId, planBridgeNodes, planPendingJobNodes, planSettledCanvasJobSiblingNodes, settledCanvasNodeRepairPatch, type GenCardMsg, type GenResultMsg } from "../otto-canvas-bridge-core";
 
 const msg = (seq: number, genJobId: string | null, kind?: string, text: string | null = null): GenResultMsg => ({
   seq,
   genJobId,
   payload: kind ? { kind } : {},
   text,
+});
+
+const card = (seq: number, genJobId: string | null, kind: string, structuredPrompt?: string): GenCardMsg => ({
+  seq,
+  genJobId,
+  payload: { kind, structuredPrompt },
+  text: null,
 });
 
 describe("planBridgeNodes", () => {
@@ -58,6 +65,43 @@ describe("planBridgeNodes", () => {
   it("returns nothing when there are no results or no resolved generations", () => {
     expect(planBridgeNodes([], new Map(), [])).toEqual([]);
     expect(planBridgeNodes([msg(1, "job-a", "image")], new Map(), [])).toEqual([]);
+  });
+});
+
+describe("planPendingJobNodes", () => {
+  it("plans one pending node per approved GEN_CARD before a GEN_RESULT exists", () => {
+    const out = planPendingJobNodes(
+      [card(2, "job-video", "video", "make the portrait walk through rain"), card(1, "job-image", "image", "a still")],
+      new Map([
+        ["job-video", { id: "job-video", generationIds: [] }],
+        ["job-image", { id: "job-image", generationIds: [] }],
+      ]),
+      [],
+      [],
+    );
+    expect(out).toEqual([
+      { genJobId: "job-image", kind: "image", prompt: "a still" },
+      { genJobId: "job-video", kind: "video", prompt: "make the portrait walk through rain" },
+    ]);
+  });
+
+  it("does not duplicate a job or a job whose generation is already on canvas", () => {
+    const out = planPendingJobNodes(
+      [
+        card(1, "job-existing-node", "video", "already pending"),
+        card(2, "job-existing-generation", "image", "already done"),
+        card(3, "job-new", "video", "new"),
+        card(4, "job-new", "video", "duplicate card"),
+      ],
+      new Map([
+        ["job-existing-node", { id: "job-existing-node", generationIds: [] }],
+        ["job-existing-generation", { id: "job-existing-generation", generationIds: ["gen-1"] }],
+        ["job-new", { id: "job-new", generationIds: [] }],
+      ]),
+      ["gen-1"],
+      ["job-existing-node"],
+    );
+    expect(out).toEqual([{ genJobId: "job-new", kind: "video", prompt: "new" }]);
   });
 });
 
