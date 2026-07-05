@@ -10,7 +10,7 @@ export type CanvasNodeDTO = {
   id: string; type: string; x: number; y: number; w: number; h: number;
   text: string | null; prompt: string | null; generationId: string | null;
   genJobId: string | null; status: string; sourceNodeId: string | null;
-  threadId: string | null; url?: string | null;
+  threadId: string | null; url?: string | null; mediaWidth?: number | null; mediaHeight?: number | null;
 };
 export type CreateNodeInput = {
   projectId: string; type: "image" | "video" | "text";
@@ -57,11 +57,12 @@ export async function listCanvasNodes(projectId: string): Promise<CanvasNodeDTO[
   const resolved = nodes.map((n) => {
     const job = n.genJobId ? jobById.get(n.genJobId) : null;
     const generationId = n.generationId ?? firstDisplayableGenerationId(job?.generationIds, thumbs);
-    const url = generationId ? thumbs[generationId]?.src ?? null : null;
+    const thumb = generationId ? thumbs[generationId] : undefined;
+    const url = thumb?.src ?? null;
     const status = generationId && !url ? "missing" : canvasNodeDisplayStatus(n.status, job?.status, url);
     const patch = settledCanvasNodeRepairPatch(n.status, n.generationId, job?.status, generationId, url);
     if (patch) repairs.push({ id: n.id, status: n.status, generationId: n.generationId, data: patch });
-    return { ...n, generationId, status, url };
+    return { ...n, generationId, status, url, mediaWidth: thumb?.width ?? null, mediaHeight: thumb?.height ?? null };
   });
   const claimedSiblingAnchorIds = new Set<string>();
   if (repairs.length) {
@@ -88,6 +89,7 @@ export async function listCanvasNodes(projectId: string): Promise<CanvasNodeDTO[
   const recoveredSiblings: CanvasNodeDTO[] = [];
   for (const plan of siblingPlans) {
     const id = newId();
+    const thumb = thumbs[plan.generationId];
     await prisma.canvasNode.create({
       data: {
         id,
@@ -122,6 +124,8 @@ export async function listCanvasNodes(projectId: string): Promise<CanvasNodeDTO[
       sourceNodeId: plan.sourceNodeId,
       threadId: plan.threadId,
       url: plan.url,
+      mediaWidth: thumb?.width ?? null,
+      mediaHeight: thumb?.height ?? null,
     });
   }
   return [...resolved, ...recoveredSiblings];

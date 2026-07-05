@@ -14,6 +14,7 @@ export function VideoNode({ data, selected }: NodeProps) {
     onDelete?: () => void;
     onOpenDetail?: () => void;
     onRefresh?: () => void;
+    onMediaSize?: (size: { width: number; height: number }) => void;
     directToolsLocked?: boolean;
     directToolsLockedReason?: string;
   };
@@ -24,6 +25,9 @@ export function VideoNode({ data, selected }: NodeProps) {
   const actionable = viewable && !!d.generationId;
   const videoRef = useRef<HTMLVideoElement>(null);
   const [playing, setPlaying] = useState(false);
+  const reportMediaSize = (el: HTMLVideoElement) => {
+    d.onMediaSize?.({ width: el.videoWidth, height: el.videoHeight });
+  };
   return (
     <>
       <NodeResize gb={gb} selected={selected} locked={writeLock.locked} />
@@ -78,9 +82,10 @@ export function VideoNode({ data, selected }: NodeProps) {
             preload="metadata"
             playsInline
             controls={playing}
+            onLoadedMetadata={(e) => reportMediaSize(e.currentTarget)}
             onPlay={() => setPlaying(true)}
             onPause={() => setPlaying(false)}
-            style={{ width: "100%", height: "100%", objectFit: "cover" }}
+            style={{ width: "100%", height: "100%", objectFit: "contain", display: "block", background: "#000" }}
           />
           {!playing && (
             <button
@@ -95,7 +100,14 @@ export function VideoNode({ data, selected }: NodeProps) {
           )}
         </div>
       ) : (
-        <video src={d.url} controls playsInline preload="metadata" style={{ width: "100%", height: "100%", objectFit: "cover" }} />
+        <video
+          src={d.url}
+          controls
+          playsInline
+          preload="metadata"
+          onLoadedMetadata={(e) => reportMediaSize(e.currentTarget)}
+          style={{ width: "100%", height: "100%", objectFit: "contain", display: "block", background: "#000" }}
+        />
       )}
       <Handle type="target" position={Position.Left} />
     </div>

@@ -21,8 +21,15 @@ import { filterNodesByConvo, convoColor } from "@/lib/convo-canvas";
 import { creditsLabel } from "@/lib/credit-format";
 import type { CanvasGenCostQuote } from "@/lib/canvas-gen-costs";
 import { DEFAULT_CANVAS_NODE_LOCK_REASON } from "@/lib/canvas-node-lock";
+import {
+  canvasMediaNodeSize,
+  DEFAULT_CANVAS_MEDIA_NODE_SIDE,
+  hasCanvasNodeSizeChanged,
+  type CanvasMediaDimensions,
+} from "@/lib/canvas-node-size";
 
 type CanvasFlowNode = Node & { threadId: string | null };
+type CanvasMediaSize = Required<Pick<CanvasMediaDimensions, "width" | "height">>;
 type FlowCanvasProps = {
   projectId: string;
   entities?: EntityDTO[];
@@ -238,6 +245,33 @@ export default function FlowCanvas({
     return onOpenDetailByNode.current[id]!;
   }, []);
 
+  const fitMediaNodeToSize = useCallback((id: string, media: CanvasMediaSize) => {
+    setNodes((current) => {
+      let changed = false;
+      const next = current.map((n) => {
+        if (n.id !== id || (n.type !== "image" && n.type !== "video")) return n;
+        const currentSize = {
+          w: Number(n.style?.width ?? DEFAULT_CANVAS_MEDIA_NODE_SIDE),
+          h: Number(n.style?.height ?? DEFAULT_CANVAS_MEDIA_NODE_SIDE),
+        };
+        const fitted = canvasMediaNodeSize(media, currentSize);
+        if (!hasCanvasNodeSizeChanged(currentSize, fitted)) return n;
+        changed = true;
+        return { ...n, style: { ...n.style, width: fitted.w, height: fitted.h } };
+      }) as CanvasFlowNode[];
+      if (changed) nodesRef.current = next;
+      return changed ? next : current;
+    });
+  }, []);
+
+  const onMediaSizeByNode = useRef<Record<string, (size: CanvasMediaSize) => void>>({});
+  const getOnMediaSize = useCallback((id: string): ((size: CanvasMediaSize) => void) => {
+    if (!onMediaSizeByNode.current[id]) {
+      onMediaSizeByNode.current[id] = (size) => fitMediaNodeToSize(id, size);
+    }
+    return onMediaSizeByNode.current[id]!;
+  }, [fitMediaNodeToSize]);
+
   // stable delete
   const deleteNode = useCallback((id: string) => {
     if (directToolsLockedRef.current) return;
@@ -267,15 +301,16 @@ export default function FlowCanvas({
             ...updated.data,
             ...(!updated.data.onOpenDetail ? { onOpenDetail: getOnOpenDetail(id) } : {}),
             ...(n.type === "image" && !updated.data.onAnimate ? { onAnimate: getOnAnimate(id) } : {}),
+            ...(!updated.data.onMediaSize ? { onMediaSize: getOnMediaSize(id) } : {}),
           };
         }
         return updated;
       }),
     );
-  }, [getOnAnimate, getOnOpenDetail]);
+  }, [getOnAnimate, getOnMediaSize, getOnOpenDetail]);
 
   const onNewNode = useCallback(
-    (n: { id: string; type: "image" | "video"; pos: any; status: string; prompt: string }) => {
+    (n: { id: string; type: "image" | "video"; pos: { x: number; y: number; w: number; h: number }; status: string; prompt: string }) => {
       nodeCountRef.current += 1;
       nodeDataRef.current[n.id] = { pos: { x: n.pos.x, y: n.pos.y } };
       setNodes((ns) => [
@@ -291,6 +326,7 @@ export default function FlowCanvas({
               skin,
               onDelete: () => setPendingDeleteId(n.id),
               onRefresh: requestReload,
+              onMediaSize: getOnMediaSize(n.id),
               // onAnimate added after generationId arrives via onResolve
             }),
           },
@@ -300,7 +336,7 @@ export default function FlowCanvas({
       ]);
       scheduleFitView();
     },
-    [activeThreadId, requestReload, skin, scheduleFitView, withNodeActionLock],
+    [activeThreadId, getOnMediaSize, requestReload, skin, scheduleFitView, withNodeActionLock],
   );
 
   const onGenError = useCallback((msg: string) => { toast.error(msg); }, []);
@@ -395,14 +431,14 @@ export default function FlowCanvas({
           id: created.id,
           type: "image",
           position: { x, y: 80 },
-          data: withNodeActionLock({ status: "done", url: res.src, generationId: res.id, skin, onDelete: () => setPendingDeleteId(created.id), onRefresh: requestReload, onAnimate: getOnAnimate(created.id), onOpenDetail: getOnOpenDetail(created.id) }),
+          data: withNodeActionLock({ status: "done", url: res.src, generationId: res.id, skin, onDelete: () => setPendingDeleteId(created.id), onRefresh: requestReload, onAnimate: getOnAnimate(created.id), onOpenDetail: getOnOpenDetail(created.id), onMediaSize: getOnMediaSize(created.id) }),
           style: { width: 320, height: 320, boxShadow: `0 0 0 2px ${convoColor(activeThreadId ?? null)}` },
           threadId: activeThreadId ?? null,
         },
       ]);
       scheduleFitView();
     }
-  }, [projectId, activeThreadId, getOnAnimate, getOnOpenDetail, requestReload, skin, scheduleFitView, withNodeActionLock]);
+  }, [projectId, activeThreadId, getOnAnimate, getOnMediaSize, getOnOpenDetail, requestReload, skin, scheduleFitView, withNodeActionLock]);
 
   // Phase 3: text-to-video — the bottom video tool always opens a prompt dialog;
   // image cards own the explicit "Make video" image-to-video path.
@@ -448,6 +484,9 @@ export default function FlowCanvas({
     if ("error" in (rows as object)) return;
     const mapped = (rows as Array<CanvasNodeDTO & { url?: string | null }>).map((r) => {
       nodeDataRef.current[r.id] = { generationId: r.generationId ?? undefined, pos: { x: r.x, y: r.y } };
+      const nodeSize = (r.type === "image" || r.type === "video")
+        ? canvasMediaNodeSize({ width: r.mediaWidth, height: r.mediaHeight }, { w: r.w, h: r.h })
+        : { w: r.w, h: r.h };
       return {
         id: r.id,
         type: r.type,
@@ -468,8 +507,9 @@ export default function FlowCanvas({
           onChange: r.type === "text" ? (t: string) => onTextChange(r.id, t) : undefined,
           onAnimate: r.type === "image" ? getOnAnimate(r.id) : undefined,
           onOpenDetail: r.type === "image" || r.type === "video" ? getOnOpenDetail(r.id) : undefined,
+          onMediaSize: r.type === "image" || r.type === "video" ? getOnMediaSize(r.id) : undefined,
         }),
-        style: { width: r.w, height: r.h, boxShadow: `0 0 0 2px ${convoColor(r.threadId ?? null)}` },
+        style: { width: nodeSize.w, height: nodeSize.h, boxShadow: `0 0 0 2px ${convoColor(r.threadId ?? null)}` },
         threadId: r.threadId ?? null,
       } as CanvasFlowNode;
     });
@@ -487,7 +527,7 @@ export default function FlowCanvas({
       nodeCountRef.current = all.length;
       return all;
     });
-  }, [skin, projectId, activeThreadId, onTextChange, getOnAnimate, getOnOpenDetail, requestReload, withNodeActionLock]);
+  }, [skin, projectId, activeThreadId, onTextChange, getOnAnimate, getOnMediaSize, getOnOpenDetail, requestReload, withNodeActionLock]);
   reloadRef.current = reload;
 
   // Initial load + reload when the active thread changes (re-bridges that thread).
