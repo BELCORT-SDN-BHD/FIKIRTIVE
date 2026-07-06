@@ -169,6 +169,7 @@ export function OttoApp({
   const [chatCollapsed, setChatCollapsed] = useState(initialChatCollapsed ?? false);
   const [actionError, setActionError] = useState<string | null>(null);
   const [newCampaignPending, setNewCampaignPending] = useState(false);
+  const [campaignNamingActive, setCampaignNamingActive] = useState(false);
   const newCampaignPendingRef = useRef(false);
   // ── Multi-project (campaign = project) navigation ──
   const curProjectId = activeProjectId ?? projectId;
@@ -308,17 +309,24 @@ export function OttoApp({
     pushLocalRoute(projectHref(thread.projectId || curProjectId, thread.id));
   }, [curProjectId, handleThreadsChange, projectHref, pushLocalRoute, threads]);
 
-  const handleNewCampaign = useCallback(async () => {
-    if (newCampaignPendingRef.current) return;
+  const handleCampaignNamingChange = useCallback((active: boolean) => {
+    setCampaignNamingActive(active);
+    if (active) setActionError(null);
+  }, []);
+
+  const handleNewCampaign = useCallback(async (name: string) => {
+    const clean = name.trim();
+    if (!clean || newCampaignPendingRef.current) return false;
     newCampaignPendingRef.current = true;
     setNewCampaignPending(true);
     setActionError(null);
     const loginHref = `/login?from=${encodeURIComponent(projectHref(curProjectId))}`;
     try {
-      const res = await createProject("New campaign");
+      const res = await createProject(clean);
       if (res && "id" in res) {
-        router.push(projectHref(res.id, undefined, { newChat: true }));
-        return;
+        setCampaignNamingActive(false);
+        router.push(projectHref(res.id));
+        return true;
       }
       if (res && "error" in res) {
         const message = res.error;
@@ -329,15 +337,17 @@ export function OttoApp({
           setActionError(message);
         }
       }
+      return false;
     } catch (e) {
       const message = e instanceof Error ? e.message : String(e);
       if (/unexpected response|not authorized|not authenticated|session/i.test(message)) {
         setActionError("Your session expired. Sign in again to continue.");
         window.location.assign(loginHref);
-        return;
+        return false;
       }
       console.error("[handleNewCampaign] failed:", e);
       setActionError("Could not create a campaign. Refresh and try again.");
+      return false;
     } finally {
       newCampaignPendingRef.current = false;
       setNewCampaignPending(false);
@@ -554,6 +564,7 @@ export function OttoApp({
         onSetProjectPinned={handleSetProjectPinned}
         onDeleteProject={handleDeleteProject}
         onNewCampaign={handleNewCampaign}
+        onCampaignNamingChange={handleCampaignNamingChange}
         newCampaignPending={newCampaignPending}
         onRenameThread={handleRenameThread}
         onSetThreadPinned={handleSetThreadPinned}
@@ -634,6 +645,7 @@ export function OttoApp({
           seedText={seedText}
           onSeedConsumed={() => setSeedText("")}
           onUseInOtto={handleUseInOtto}
+          campaignNamingActive={campaignNamingActive}
           chatCollapsed={chatCollapsed}
           onToggleChat={() => setChatCollapsed((v) => !v)}
           skin={skin}
