@@ -1,0 +1,111 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1280" height="720" viewBox="0 0 1280 720" role="img" aria-label="Otto no-mouth mascot reaction system">
+  <rect width="1280" height="720" fill="#FCFCFC"/>
+  <text x="80" y="82" font-family="Inter, Arial, sans-serif" font-size="34" font-weight="760" fill="#0A0A0A">Otto reactions: no-mouth system</text>
+  <text x="80" y="122" font-family="Inter, Arial, sans-serif" font-size="18" fill="#6E6E68">Same coral cloud mark. Personality comes only from eyes, tiny pose shifts, and subtle glow.</text>
+  <defs>
+    <g id="cloud">
+      <g fill="#EC5828">
+        <ellipse cx="60" cy="64" rx="43" ry="22"/>
+        <circle cx="37" cy="52" r="18"/>
+        <circle cx="61" cy="40" r="24"/>
+        <circle cx="85" cy="53" r="17"/>
+      </g>
+    </g>
+    <g id="idle-eyes" fill="#2B1308">
+      <rect x="51" y="48" width="7" height="13" rx="3.5"/>
+      <rect x="66" y="48" width="7" height="13" rx="3.5"/>
+    </g>
+    <g id="thinking-eyes" fill="#2B1308">
+      <ellipse cx="55" cy="49" rx="3.8" ry="4.8"/>
+      <ellipse cx="70" cy="49" rx="3.8" ry="4.8"/>
+      <circle cx="56.3" cy="47.3" r="1" fill="#FFFFFF" opacity="0.55"/>
+      <circle cx="71.3" cy="47.3" r="1" fill="#FFFFFF" opacity="0.55"/>
+    </g>
+    <g id="helpful-eyes" fill="#2B1308">
+      <rect x="48" y="49" width="8" height="12" rx="4"/>
+      <rect x="64" y="49" width="8" height="12" rx="4"/>
+      <circle cx="53.5" cy="51" r="1.1" fill="#FFFFFF" opacity="0.55"/>
+      <circle cx="69.5" cy="51" r="1.1" fill="#FFFFFF" opacity="0.55"/>
+    </g>
+    <g id="success-eyes" fill="none" stroke="#2B1308" stroke-linecap="round" stroke-width="3.6">
+      <path d="M49 57 q5.5 -8 11 0"/>
+      <path d="M64 57 q5.5 -8 11 0"/>
+    </g>
+    <g id="warning-eyes">
+      <path d="M48 46 l12 2" fill="none" stroke="#2B1308" stroke-linecap="round" stroke-width="3"/>
+      <path d="M77 46 l-12 2" fill="none" stroke="#2B1308" stroke-linecap="round" stroke-width="3"/>
+      <ellipse cx="55" cy="55" rx="3.7" ry="5.2" fill="#2B1308"/>
+      <ellipse cx="70" cy="55" rx="3.7" ry="5.2" fill="#2B1308"/>
+    </g>
+    <g id="error-eyes" fill="none" stroke="#2B1308" stroke-linecap="round" stroke-width="3.4">
+      <path d="M50 49 l9 9"/>
+      <path d="M59 49 l-9 9"/>
+      <path d="M66 49 l9 9"/>
+      <path d="M75 49 l-9 9"/>
+    </g>
+    <g id="waiting-eyes" fill="#2B1308">
+      <rect x="50" y="53" width="10" height="4" rx="2"/>
+      <rect x="65" y="53" width="10" height="4" rx="2"/>
+    </g>
+    <g id="approving-eyes" fill="#2B1308">
+      <rect x="50" y="50" width="8" height="11" rx="4"/>
+      <rect x="67" y="50" width="8" height="11" rx="4"/>
+      <path d="M48 47 h11" stroke="#2B1308" stroke-linecap="round" stroke-width="2.8"/>
+      <path d="M66 47 h11" stroke="#2B1308" stroke-linecap="round" stroke-width="2.8"/>
+    </g>
+    <filter id="shadow" x="-40%" y="-40%" width="180%" height="180%">
+      <feDropShadow dx="0" dy="8" stdDeviation="12" flood-color="#141418" flood-opacity="0.10"/>
+    </filter>
+  </defs>
+
+  <g font-family="Inter, Arial, sans-serif">
+    <g transform="translate(76 184)">
+      <rect width="244" height="194" rx="24" fill="#FFFFFF" stroke="#E6E6E3" filter="url(#shadow)"/>
+      <g transform="translate(62 28) scale(1.08)"><use href="#cloud"/><use href="#idle-eyes"/></g>
+      <text x="28" y="152" font-size="18" font-weight="740" fill="#0A0A0A">idle</text>
+      <text x="28" y="176" font-size="13" fill="#6E6E68">Default avatar</text>
+    </g>
+    <g transform="translate(372 184)">
+      <rect width="244" height="194" rx="24" fill="#FFFFFF" stroke="#E6E6E3" filter="url(#shadow)"/>
+      <g transform="translate(62 28) scale(1.08) rotate(-2 60 56)"><use href="#cloud"/><use href="#thinking-eyes"/></g>
+      <text x="28" y="152" font-size="18" font-weight="740" fill="#0A0A0A">thinking</text>
+      <text x="28" y="176" font-size="13" fill="#6E6E68">Generating, checking</text>
+    </g>
+    <g transform="translate(668 184)">
+      <rect width="244" height="194" rx="24" fill="#FFFFFF" stroke="#E6E6E3" filter="url(#shadow)"/>
+      <g transform="translate(62 28) scale(1.08) rotate(2 60 56)"><use href="#cloud"/><use href="#helpful-eyes"/></g>
+      <text x="28" y="152" font-size="18" font-weight="740" fill="#0A0A0A">helpful</text>
+      <text x="28" y="176" font-size="13" fill="#6E6E68">References understood</text>
+    </g>
+    <g transform="translate(964 184)">
+      <rect width="244" height="194" rx="24" fill="#FFFFFF" stroke="#E6E6E3" filter="url(#shadow)"/>
+      <g transform="translate(62 28) scale(1.08)"><use href="#cloud"/><use href="#success-eyes"/></g>
+      <text x="28" y="152" font-size="18" font-weight="740" fill="#0A0A0A">success</text>
+      <text x="28" y="176" font-size="13" fill="#6E6E68">Done, saved, generated</text>
+    </g>
+    <g transform="translate(76 438)">
+      <rect width="244" height="194" rx="24" fill="#FFFFFF" stroke="#E6E6E3" filter="url(#shadow)"/>
+      <g transform="translate(62 28) scale(1.08) rotate(-1 60 56)"><use href="#cloud"/><use href="#warning-eyes"/></g>
+      <text x="28" y="152" font-size="18" font-weight="740" fill="#0A0A0A">warning</text>
+      <text x="28" y="176" font-size="13" fill="#6E6E68">Delete, paid approval</text>
+    </g>
+    <g transform="translate(372 438)">
+      <rect width="244" height="194" rx="24" fill="#FFFFFF" stroke="#E6E6E3" filter="url(#shadow)"/>
+      <g transform="translate(62 28) scale(1.08)"><use href="#cloud"/><use href="#error-eyes"/></g>
+      <text x="28" y="152" font-size="18" font-weight="740" fill="#0A0A0A">error</text>
+      <text x="28" y="176" font-size="13" fill="#6E6E68">Failed, disconnected</text>
+    </g>
+    <g transform="translate(668 438)">
+      <rect width="244" height="194" rx="24" fill="#FFFFFF" stroke="#E6E6E3" filter="url(#shadow)"/>
+      <g transform="translate(62 28) scale(1.08)"><use href="#cloud"/><use href="#waiting-eyes"/></g>
+      <text x="28" y="152" font-size="18" font-weight="740" fill="#0A0A0A">waiting</text>
+      <text x="28" y="176" font-size="13" fill="#6E6E68">Waiting for user</text>
+    </g>
+    <g transform="translate(964 438)">
+      <rect width="244" height="194" rx="24" fill="#FFFFFF" stroke="#E6E6E3" filter="url(#shadow)"/>
+      <g transform="translate(62 28) scale(1.08) rotate(1 60 56)"><use href="#cloud"/><use href="#approving-eyes"/></g>
+      <text x="28" y="152" font-size="18" font-weight="740" fill="#0A0A0A">approving</text>
+      <text x="28" y="176" font-size="13" fill="#6E6E68">Confirmed, executing</text>
+    </g>
+  </g>
+</svg>

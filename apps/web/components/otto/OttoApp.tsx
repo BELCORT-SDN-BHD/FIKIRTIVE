@@ -4,6 +4,7 @@ import { useRouter } from "next/navigation";
 import { createProject, renameProject, deleteProject, autoTitleProjectIfDefault, setProjectPinned } from "@/lib/actions";
 import { OttoNav } from "./OttoNav";
 import { OttoView } from "./OttoView";
+import { OttoConfirmDialog, OttoRenameDialog } from "./OttoPromptDialog";
 import type { AdTile } from "./OttoStuff";
 import type { AdJobItem } from "@/lib/data";
 import type { EntityDTO, ChatThreadDTO } from "@/lib/types";
@@ -170,6 +171,10 @@ export function OttoApp({
   const [actionError, setActionError] = useState<string | null>(null);
   const [newCampaignPending, setNewCampaignPending] = useState(false);
   const [campaignNamingActive, setCampaignNamingActive] = useState(false);
+  const [renameProjectTarget, setRenameProjectTarget] = useState<ProjectMeta | null>(null);
+  const [deleteProjectTarget, setDeleteProjectTarget] = useState<ProjectMeta | null>(null);
+  const [renameThreadTarget, setRenameThreadTarget] = useState<ChatThreadDTO | null>(null);
+  const [deleteThreadTarget, setDeleteThreadTarget] = useState<ChatThreadDTO | null>(null);
   const newCampaignPendingRef = useRef(false);
   // ── Multi-project (campaign = project) navigation ──
   const curProjectId = activeProjectId ?? projectId;
@@ -391,8 +396,6 @@ export function OttoApp({
   }, [router]);
 
   const handleDeleteProject = useCallback(async (projId: string) => {
-    const projectName = projects.find((p) => p.id === projId)?.name ?? "this campaign";
-    if (!window.confirm(`Permanently delete "${projectName}"? This removes the campaign, its chats, canvas nodes, jobs, and project media records. This cannot be undone.`)) return;
     const res = await deleteProject(projId);
     if (!(res && "ok" in res)) {
       if (res && "error" in res) setActionError(res.error);
@@ -407,6 +410,16 @@ export function OttoApp({
       router.refresh();
     }
   }, [router, projectHref, curProjectId, projects]);
+
+  const requestRenameProject = useCallback((projId: string) => {
+    const target = projects.find((p) => p.id === projId);
+    if (target) setRenameProjectTarget(target);
+  }, [projects]);
+
+  const requestDeleteProject = useCallback((projId: string) => {
+    const target = projects.find((p) => p.id === projId);
+    if (target) setDeleteProjectTarget(target);
+  }, [projects]);
 
   const handleSetProjectPinned = useCallback(async (projId: string, pinned: boolean) => {
     const res = await setProjectPinned(projId, pinned);
@@ -468,8 +481,6 @@ export function OttoApp({
   }
 
   async function handleDeleteThread(id: string) {
-    const threadTitle = sidebarThreadList.find((t) => t.id === id)?.title ?? threads.find((t) => t.id === id)?.title ?? "this conversation";
-    if (!window.confirm(`Permanently delete "${threadTitle}"? This removes the conversation and its messages. Generated library assets stay available.`)) return;
     const snapshot = threads;
     const sidebarSnapshot = sidebarThreadList;
     const snapshotActive = activeThreadId;
@@ -494,6 +505,16 @@ export function OttoApp({
     if (snapshotActive === id) {
       router.replace(projectHref(curProjectId, newActive ?? undefined));
     }
+  }
+
+  function requestRenameThread(id: string) {
+    const target = sidebarThreadList.find((t) => t.id === id) ?? threads.find((t) => t.id === id);
+    if (target) setRenameThreadTarget(target);
+  }
+
+  function requestDeleteThread(id: string) {
+    const target = sidebarThreadList.find((t) => t.id === id) ?? threads.find((t) => t.id === id);
+    if (target) setDeleteThreadTarget(target);
   }
 
   return (
@@ -560,15 +581,15 @@ export function OttoApp({
         onSelectThread={handleSelectThread}
         onSwitchProject={handleSwitchProject}
         onNewChat={handleNewChat}
-        onRenameProject={handleRenameProject}
+        onRenameProject={requestRenameProject}
         onSetProjectPinned={handleSetProjectPinned}
-        onDeleteProject={handleDeleteProject}
+        onDeleteProject={requestDeleteProject}
         onNewCampaign={handleNewCampaign}
         onCampaignNamingChange={handleCampaignNamingChange}
         newCampaignPending={newCampaignPending}
-        onRenameThread={handleRenameThread}
+        onRenameThread={requestRenameThread}
         onSetThreadPinned={handleSetThreadPinned}
-        onDeleteThread={handleDeleteThread}
+        onDeleteThread={requestDeleteThread}
         balanceCredits={balanceCredits}
         userName={userName}
         userEmail={userEmail}
@@ -640,7 +661,7 @@ export function OttoApp({
           onOpenThread={handleSelectThread}
           activity={activity}
           onActivityRefresh={refreshActivity}
-          onDeleteThread={handleDeleteThread}
+          onDeleteThread={requestDeleteThread}
           onNewConvo={() => setActiveThreadId(null)}
           seedText={seedText}
           onSeedConsumed={() => setSeedText("")}
@@ -692,6 +713,72 @@ export function OttoApp({
           </button>
         </div>
       )}
+
+      <OttoRenameDialog
+        open={!!renameProjectTarget}
+        onOpenChange={(open) => { if (!open) setRenameProjectTarget(null); }}
+        title="Rename campaign"
+        description="This only changes the sidebar name. Your chats, canvas, and assets stay where they are."
+        label="Campaign name"
+        initialValue={renameProjectTarget?.name ?? ""}
+        onSubmit={async (name) => {
+          if (!renameProjectTarget) return;
+          await handleRenameProject(renameProjectTarget.id, name);
+        }}
+      />
+
+      <OttoConfirmDialog
+        open={!!deleteProjectTarget}
+        onOpenChange={(open) => { if (!open) setDeleteProjectTarget(null); }}
+        title="Permanently delete campaign?"
+        description={deleteProjectTarget ? `Otto will delete "${deleteProjectTarget.name}" and its project-scoped work.` : ""}
+        impacts={[
+          "The campaign record is permanently deleted.",
+          "Its chats, canvas nodes, jobs, and project media records are deleted.",
+          "Global library assets and credit ledger rows are not deleted here.",
+        ]}
+        confirmText={deleteProjectTarget?.name}
+        confirmLabel="Delete campaign"
+        confirmingLabel="Deleting..."
+        tone="danger"
+        onConfirm={async () => {
+          if (!deleteProjectTarget) return;
+          await handleDeleteProject(deleteProjectTarget.id);
+        }}
+      />
+
+      <OttoRenameDialog
+        open={!!renameThreadTarget}
+        onOpenChange={(open) => { if (!open) setRenameThreadTarget(null); }}
+        title="Rename conversation"
+        description="This only changes the label shown in the campaign history."
+        label="Conversation name"
+        initialValue={renameThreadTarget?.title ?? ""}
+        onSubmit={async (title) => {
+          if (!renameThreadTarget) return;
+          await handleRenameThread(renameThreadTarget.id, title);
+        }}
+      />
+
+      <OttoConfirmDialog
+        open={!!deleteThreadTarget}
+        onOpenChange={(open) => { if (!open) setDeleteThreadTarget(null); }}
+        title="Permanently delete conversation?"
+        description={deleteThreadTarget ? `Otto will delete "${deleteThreadTarget.title}" and its messages.` : ""}
+        impacts={[
+          "The conversation and its messages are permanently deleted.",
+          "Canvas nodes and generated media are detached from this conversation.",
+          "Generated library assets stay available.",
+        ]}
+        confirmText={deleteThreadTarget?.title}
+        confirmLabel="Delete conversation"
+        confirmingLabel="Deleting..."
+        tone="danger"
+        onConfirm={async () => {
+          if (!deleteThreadTarget) return;
+          await handleDeleteThread(deleteThreadTarget.id);
+        }}
+      />
 
     </div>
   );

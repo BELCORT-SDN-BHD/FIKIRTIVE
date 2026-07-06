@@ -3,6 +3,7 @@ import React, { useMemo, useState } from "react";
 import { Search } from "lucide-react";
 import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
+import { OttoRenameDialog } from "@/components/otto/OttoPromptDialog";
 import {
   type StuffFilter,
   type StuffItem,
@@ -88,6 +89,7 @@ export function StuffLibrary({
 }) {
   const [filter, setFilter] = useState<StuffFilter>(mode === "picker" ? "images" : "all");
   const [search, setSearch] = useState("");
+  const [renameTarget, setRenameTarget] = useState<StuffItem | null>(null);
 
   // Picker: only image items that carry an assetId are selectable.
   const pickable = useMemo(
@@ -241,8 +243,7 @@ export function StuffLibrary({
                         className="pointer-events-auto w-full"
                         onClick={(e) => {
                           e.stopPropagation();
-                          const next = window.prompt("Rename", item.label);
-                          if (next && next.trim() && item.entityId) onRename(item.entityId, next.trim());
+                          setRenameTarget(item);
                         }}
                       >
                         Rename
@@ -281,6 +282,18 @@ export function StuffLibrary({
           })}
         </div>
       )}
+      <OttoRenameDialog
+        open={!!renameTarget}
+        onOpenChange={(open) => { if (!open) setRenameTarget(null); }}
+        title="Rename item"
+        description="This changes the label you see in Library and My Stuff. It does not edit the original media."
+        label="Item name"
+        initialValue={renameTarget?.label ?? ""}
+        onSubmit={async (name) => {
+          if (!renameTarget?.entityId) return;
+          await onRename?.(renameTarget.entityId, name);
+        }}
+      />
     </div>
   );
 }
