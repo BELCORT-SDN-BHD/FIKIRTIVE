@@ -478,7 +478,13 @@ export function OttoNav({
             </span>
           </div>
           {campaignDraftOpen && (
-            <div className="otto-campaign-draft-row mb-2">
+            <form
+              className="otto-campaign-draft-row mb-2"
+              onSubmit={(e) => {
+                e.preventDefault();
+                void submitCampaignDraft();
+              }}
+            >
               <input
                 ref={campaignDraftInputRef}
                 value={campaignDraftName}
@@ -487,10 +493,7 @@ export function OttoNav({
                   if (!campaignDraftName.trim()) cancelCampaignDraft();
                 }}
                 onKeyDown={(e) => {
-                  if (e.key === "Enter") {
-                    e.preventDefault();
-                    void submitCampaignDraft();
-                  } else if (e.key === "Escape") {
+                  if (e.key === "Escape") {
                     e.preventDefault();
                     cancelCampaignDraft();
                   }
@@ -501,13 +504,12 @@ export function OttoNav({
                 maxLength={80}
               />
               <button
-                type="button"
+                type="submit"
                 className="otto-campaign-draft-control"
                 aria-label="Create campaign"
                 title="Create campaign"
                 disabled={newCampaignPending || !campaignDraftName.trim()}
                 onMouseDown={(e) => e.preventDefault()}
-                onClick={() => void submitCampaignDraft()}
               >
                 <Check size={14} aria-hidden />
               </button>
@@ -522,7 +524,7 @@ export function OttoNav({
               >
                 <X size={14} aria-hidden />
               </button>
-            </div>
+            </form>
           )}
           {navEntries.length > 0 && (
           <div className="flex flex-col gap-0.5">
