@@ -325,7 +325,7 @@ export function OttoApp({
       const res = await createProject(clean);
       if (res && "id" in res) {
         setCampaignNamingActive(false);
-        router.push(projectHref(res.id));
+        window.location.assign(projectHref(res.id));
         return true;
       }
       if (res && "error" in res) {
