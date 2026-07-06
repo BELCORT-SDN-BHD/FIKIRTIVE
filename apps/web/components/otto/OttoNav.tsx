@@ -1,6 +1,6 @@
 "use client";
-import React, { useState } from "react";
-import { MessageSquarePlus, MoreHorizontal, Pencil, Pin, Trash2 } from "lucide-react";
+import React, { useEffect, useRef, useState } from "react";
+import { Check, MessageSquarePlus, MoreHorizontal, Pencil, Pin, Trash2, X } from "lucide-react";
 import { creditsLabel } from "@/lib/credit-format";
 import { Avatar, AvatarFallback } from "@/components/ui/avatar";
 import type { OttoViewKey, ProjectMeta } from "./OttoApp";
@@ -157,7 +157,8 @@ export interface OttoNavProps {
   onSetProjectPinned: (projectId: string, pinned: boolean) => void;
   /** Permanently delete a project (campaign). */
   onDeleteProject: (projectId: string) => void;
-  onNewCampaign: () => void;
+  onNewCampaign: (name: string) => Promise<boolean>;
+  onCampaignNamingChange?: (active: boolean) => void;
   newCampaignPending?: boolean;
   onRenameThread: (id: string, title: string) => void;
   onSetThreadPinned: (id: string, pinned: boolean) => void;
@@ -191,6 +192,7 @@ export function OttoNav({
   onSetProjectPinned,
   onDeleteProject,
   onNewCampaign,
+  onCampaignNamingChange,
   newCampaignPending = false,
   onRenameThread,
   onSetThreadPinned,
@@ -212,6 +214,10 @@ export function OttoNav({
   const [collapsedProjects, setCollapsedProjects] = useState<Set<string>>(new Set());
   const [toolsOpen, setToolsOpen] = useState(toolsActive);
   const [openMenu, setOpenMenu] = useState<string | null>(null);
+  const [campaignDraftOpen, setCampaignDraftOpen] = useState(false);
+  const [campaignDraftName, setCampaignDraftName] = useState("");
+  const campaignDraftInputRef = useRef<HTMLInputElement | null>(null);
+  const campaignDraftSubmittingRef = useRef(false);
   const showTools = toolsActive || toolsOpen;
   const collapseLabel = getOttoNavCollapseLabel(drawerOpen);
 
@@ -246,6 +252,7 @@ export function OttoNav({
     threadLimit: THREAD_LIMIT,
   });
   const hasHistoryContent = navEntries.length > 0;
+  const showHistory = hasHistoryContent || campaignDraftOpen;
   const hasSidebar = hasHistoryContent || TOOL_ITEMS.length > 0;
 
   function dotFor(status: ChatThreadDTO["status"]) {
@@ -254,9 +261,52 @@ export function OttoNav({
 
   function handleNavAction(fn: () => void) {
     setOpenMenu(null);
+    if (campaignDraftOpen) cancelCampaignDraft();
     fn();
     onDrawerClose?.();
   }
+
+  function openCampaignDraft() {
+    setOpenMenu(null);
+    setCampaignDraftOpen(true);
+    setCampaignDraftName("");
+    onCampaignNamingChange?.(true);
+  }
+
+  function cancelCampaignDraft() {
+    if (newCampaignPending) return;
+    setCampaignDraftOpen(false);
+    setCampaignDraftName("");
+    onCampaignNamingChange?.(false);
+  }
+
+  async function submitCampaignDraft() {
+    if (campaignDraftSubmittingRef.current || newCampaignPending) return false;
+    const clean = campaignDraftName.trim();
+    if (!clean) {
+      campaignDraftInputRef.current?.focus();
+      return false;
+    }
+    campaignDraftSubmittingRef.current = true;
+    try {
+      const ok = await onNewCampaign(clean);
+      if (ok) {
+        setCampaignDraftOpen(false);
+        setCampaignDraftName("");
+        onCampaignNamingChange?.(false);
+        onDrawerClose?.();
+      }
+      return ok;
+    } finally {
+      campaignDraftSubmittingRef.current = false;
+    }
+  }
+
+  useEffect(() => {
+    if (!campaignDraftOpen || newCampaignPending) return;
+    campaignDraftInputRef.current?.focus();
+    campaignDraftInputRef.current?.select();
+  }, [campaignDraftOpen, newCampaignPending]);
 
   function promptRenameProject(projectId: string, currentName: string) {
     const next = window.prompt("Rename campaign", currentName);
@@ -404,10 +454,10 @@ export function OttoNav({
         </button>
       </div>
 
-      {/* Primary creation action. It creates a campaign and opens the empty Otto front door. */}
+      {/* Primary creation action. It first names the campaign, then creates the project. */}
       <div className="pt-4 px-3 pb-3">
         <button
-          onClick={() => handleNavAction(onNewCampaign)}
+          onClick={openCampaignDraft}
           disabled={newCampaignPending}
           aria-busy={newCampaignPending}
           className={`flex items-center justify-center gap-[7px] w-full h-[38px] border-0 bg-primary text-primary-foreground text-[0.875rem] font-semibold px-3 rounded-[12px] cursor-pointer transition shadow-[0_4px_12px_rgba(236,88,40,0.18)] disabled:pointer-events-none disabled:opacity-60${newCampaignPending ? " cursor-wait" : ""}`}
@@ -420,13 +470,61 @@ export function OttoNav({
       {/* Projects (campaigns) + History */}
       {hasSidebar && (
         <div className="flex-1 overflow-auto pt-4 px-3 pb-2">
-          {navEntries.length > 0 && (
+          {showHistory && (
           <>
           <div className="flex items-center justify-between mb-2 pl-1">
             <span className="text-[0.65625rem] text-muted-foreground/70 font-semibold uppercase tracking-[0.07em]">
               History
             </span>
           </div>
+          {campaignDraftOpen && (
+            <div className="otto-campaign-draft-row mb-2">
+              <input
+                ref={campaignDraftInputRef}
+                value={campaignDraftName}
+                onChange={(e) => setCampaignDraftName(e.target.value)}
+                onBlur={() => {
+                  if (!campaignDraftName.trim()) cancelCampaignDraft();
+                }}
+                onKeyDown={(e) => {
+                  if (e.key === "Enter") {
+                    e.preventDefault();
+                    void submitCampaignDraft();
+                  } else if (e.key === "Escape") {
+                    e.preventDefault();
+                    cancelCampaignDraft();
+                  }
+                }}
+                disabled={newCampaignPending}
+                aria-label="Campaign name"
+                placeholder="Campaign name"
+                maxLength={80}
+              />
+              <button
+                type="button"
+                className="otto-campaign-draft-control"
+                aria-label="Create campaign"
+                title="Create campaign"
+                disabled={newCampaignPending || !campaignDraftName.trim()}
+                onMouseDown={(e) => e.preventDefault()}
+                onClick={() => void submitCampaignDraft()}
+              >
+                <Check size={14} aria-hidden />
+              </button>
+              <button
+                type="button"
+                className="otto-campaign-draft-control"
+                aria-label="Cancel campaign naming"
+                title="Cancel"
+                disabled={newCampaignPending}
+                onMouseDown={(e) => e.preventDefault()}
+                onClick={cancelCampaignDraft}
+              >
+                <X size={14} aria-hidden />
+              </button>
+            </div>
+          )}
+          {navEntries.length > 0 && (
           <div className="flex flex-col gap-0.5">
             {navEntries.map((entry) => {
               if (entry.kind === "thread") {
@@ -528,7 +626,58 @@ export function OttoNav({
               );
             })}
           </div>
+          )}
           <style>{`
+            .otto-campaign-draft-row {
+              display: flex;
+              align-items: center;
+              min-height: 32px;
+              gap: 3px;
+              padding-left: 18px;
+            }
+            .otto-campaign-draft-row input {
+              width: 100%;
+              height: 32px;
+              border: 1px solid var(--border);
+              border-radius: 10px;
+              background: var(--card);
+              color: var(--foreground);
+              font-size: 13px;
+              font-weight: 600;
+              line-height: 1;
+              outline: none;
+              padding: 0 10px;
+              box-shadow: 0 0 0 3px transparent;
+            }
+            .otto-campaign-draft-row input:focus {
+              border-color: rgba(236,88,40,0.48);
+              box-shadow: 0 0 0 3px rgba(236,88,40,0.12);
+            }
+            .otto-campaign-draft-row input::placeholder {
+              color: var(--muted-foreground);
+              font-weight: 500;
+            }
+            .otto-campaign-draft-control {
+              display: inline-flex;
+              align-items: center;
+              justify-content: center;
+              width: 28px;
+              height: 28px;
+              border: 0;
+              border-radius: 9px;
+              background: transparent;
+              color: var(--muted-foreground);
+              cursor: pointer;
+              flex-shrink: 0;
+            }
+            .otto-campaign-draft-control:hover:not(:disabled) {
+              background: var(--secondary);
+              color: var(--foreground);
+            }
+            .otto-campaign-draft-control:disabled {
+              cursor: default;
+              opacity: 0.42;
+            }
             .otto-row-actions {
               opacity: 0;
               pointer-events: none;

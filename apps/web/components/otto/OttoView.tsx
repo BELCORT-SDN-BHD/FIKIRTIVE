@@ -56,6 +56,8 @@ interface OttoViewProps {
   seedText?: string;
   onSeedConsumed?: () => void;
   onUseInOtto: (prompt: string) => void;
+  /** True while the sidebar is collecting the name for a not-yet-created campaign. */
+  campaignNamingActive?: boolean;
   /** Collapse the OTTO chat pane to give the canvas full width. */
   chatCollapsed?: boolean;
   onToggleChat?: () => void;
@@ -94,6 +96,7 @@ export function OttoView({
   seedText,
   onSeedConsumed,
   onUseInOtto,
+  campaignNamingActive = false,
   chatCollapsed = false,
   onToggleChat,
   skin,
@@ -142,6 +145,50 @@ export function OttoView({
       onThreadsChange([fresh, ...threads.filter((t) => t.id !== fresh.id)]);
       onActiveThreadChange(fresh.id);
     }
+  }
+
+  if (campaignNamingActive) {
+    return (
+      <div
+        style={{
+          flex: 1,
+          minHeight: 0,
+          height: "100%",
+          display: "flex",
+          alignItems: "center",
+          justifyContent: "center",
+          background: "var(--background)",
+          padding: "2rem",
+        }}
+      >
+        <div style={{ width: "min(420px, 100%)", textAlign: "center" }}>
+          <div
+            style={{
+              width: 46,
+              height: 46,
+              margin: "0 auto 1rem",
+              borderRadius: 14,
+              background: "var(--secondary)",
+              color: "var(--foreground)",
+              display: "flex",
+              alignItems: "center",
+              justifyContent: "center",
+            }}
+            aria-hidden
+          >
+            <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.9" strokeLinecap="round" strokeLinejoin="round">
+              <path d="M3 7a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z" />
+            </svg>
+          </div>
+          <h1 style={{ margin: 0, fontSize: "1.5rem", lineHeight: 1.15, letterSpacing: 0, color: "var(--foreground)" }}>
+            Name your campaign
+          </h1>
+          <p style={{ margin: "0.55rem 0 0", fontSize: "0.9375rem", lineHeight: 1.45, color: "var(--muted-foreground)" }}>
+            Then tell Otto what to make.
+          </p>
+        </div>
+      </div>
+    );
   }
 
   if (view === "memory") {
