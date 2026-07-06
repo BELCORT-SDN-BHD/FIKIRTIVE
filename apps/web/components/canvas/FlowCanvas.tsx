@@ -234,6 +234,22 @@ export default function FlowCanvas({
     }
   }, []);
 
+  // Attached "Type to imagine" bar on a selected image card. Image→image editing
+  // (conditioning a new image on THIS generation) isn't in the spend path yet, so the
+  // typed prompt seeds the existing image→video (i2v) confirm — a real, source-bound
+  // evolution that keeps the video cost gate and lineage (sourceNodeId, set by animate()).
+  // One stable handler (the node passes its own id) — no per-id ref, so it's safe to read
+  // during render in the visibleNodes map.
+  const handleEvolve = useCallback((id: string, prompt: string) => {
+    if (directToolsLockedRef.current) return;
+    const text = prompt.trim();
+    if (!text) return;
+    setCostQuote(null);
+    setCustomMotion(text);
+    setMotion("custom");
+    setPendingAnimateId(id);
+  }, []);
+
   // Build a stable per-node onOpenDetail that reads generationId at call time
   const onOpenDetailByNode = useRef<Record<string, () => void>>({});
   const getOnOpenDetail = useCallback((id: string): (() => void) => {
@@ -686,7 +702,9 @@ export default function FlowCanvas({
   const directToolTitle = directToolsLocked ? directToolsLockedReason : undefined;
   const visibleNodes: CanvasFlowNode[] = filterNodesByConvo(nodes, activeThreadId, filterToConvo).map((n) => ({
     ...n,
-    data: withNodeActionLock(n.data),
+    data: n.type === "image"
+      ? { ...withNodeActionLock(n.data), onEvolve: handleEvolve }
+      : withNodeActionLock(n.data),
   }));
 
   return (
