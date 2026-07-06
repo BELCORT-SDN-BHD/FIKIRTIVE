@@ -10,7 +10,9 @@ import {
   ottoApprove as _ottoApprove,
   createEmptyCoworkThread as _createEmptyCoworkThread,
   deleteCoworkThread as _deleteCoworkThread,
+  setCoworkThreadPinned as _setCoworkThreadPinned,
 } from "./otto-actions";
+import { coworkRenameThread as _renameCoworkThread } from "./cowork-actions";
 import { approveMetaActionPlan as _approveMetaActionPlan, setAdsAutonomy as _setAdsAutonomy, setAdsWritesPaused as _setAdsWritesPaused } from "./meta-write-actions";
 import { approveAdBuild as _approveAdBuild, launchAdDraft as _launchAdDraft } from "./meta-build-actions";
 
@@ -28,6 +30,14 @@ export async function createEmptyCoworkThread(raw: unknown) {
 
 export async function deleteCoworkThread(threadId: string) {
   return _deleteCoworkThread(threadId);
+}
+
+export async function renameCoworkThread(threadId: string, title: string) {
+  return _renameCoworkThread({ threadId, title });
+}
+
+export async function setCoworkThreadPinned(threadId: string, pinned: boolean) {
+  return _setCoworkThreadPinned(threadId, pinned);
 }
 
 /** Human-approve gate for a Meta ACTION_CARD plan (G7). The card UI calls this when the

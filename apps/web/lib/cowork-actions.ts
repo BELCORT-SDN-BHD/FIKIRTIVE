@@ -642,12 +642,36 @@ export async function coworkDeleteThread(raw: unknown): Promise<{ ok: true } | {
   const { ownerId } = gate;
   const { threadId } = parsed.data;
   try {
-    const { count } = await prisma.chatThread.updateMany({
+    const thread = await prisma.chatThread.findFirst({
       where: { id: threadId, ownerId, deletedAt: null },
-      data: { deletedAt: new Date() }, // soft-delete: hides from the list; messages + threadId-isolation untouched
+      select: { id: true },
     });
-    if (!count) return { error: "Conversation not found." };
-  } catch { return { error: "Couldn't delete — please try again." }; } // {error} contract, like the sibling actions
+    if (!thread) return { error: "Conversation not found." };
+    await prisma.$transaction(async (tx) => {
+      const threadLockKey = `thread:${threadId}`;
+      await tx.$executeRaw`SELECT pg_advisory_xact_lock(hashtextextended(${threadLockKey}, 0::bigint))`;
+      const liveThread = await tx.chatThread.findFirst({
+        where: { id: threadId, ownerId, deletedAt: null },
+        select: { id: true },
+      });
+      if (!liveThread) throw new Error("THREAD_NOT_FOUND_DURING_DELETE");
+      const activeResearch = await tx.researchJob.findFirst({
+        where: { ownerId, threadId, status: { in: ["QUEUED", "RUNNING"] } },
+        select: { id: true },
+      });
+      if (activeResearch) throw new Error("RESEARCH_RUNNING_DURING_DELETE");
+      await tx.researchJob.deleteMany({ where: { ownerId, threadId } });
+      await tx.canvasNode.updateMany({ where: { ownerId, threadId }, data: { threadId: null } });
+      await tx.generation.updateMany({ where: { ownerId, threadId }, data: { threadId: null } });
+      await tx.genJob.updateMany({ where: { ownerId, threadId }, data: { threadId: null } });
+      await tx.chatMessage.deleteMany({ where: { ownerId, threadId } });
+      await tx.chatThread.deleteMany({ where: { id: threadId, ownerId } });
+    });
+  } catch (e) {
+    if (e instanceof Error && e.message === "THREAD_NOT_FOUND_DURING_DELETE") return { error: "Conversation not found." };
+    if (e instanceof Error && e.message === "RESEARCH_RUNNING_DURING_DELETE") return { error: "Research is still running in this conversation. Delete it after research finishes." };
+    return { error: "Couldn't delete — please try again." };
+  } // {error} contract, like the sibling actions
   revalidatePath("/", "layout");
   return { ok: true };
 }

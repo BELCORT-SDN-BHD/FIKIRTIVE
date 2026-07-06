@@ -76,7 +76,7 @@ export default async function OttoPage({ searchParams }: { searchParams: Promise
 
   // All conversations across every project (metas) for the Grok-style sidebar.
   const sidebarThreads = allThreadRows.map(toChatThreadMetaDTO);
-  const projectList = projects.map((p) => ({ id: p.id, name: p.name }));
+  const projectList = projects.map((p) => ({ id: p.id, name: p.name, pinnedAt: p.pinnedAt ? p.pinnedAt.toISOString() : null }));
 
   const account = "error" in accountResult ? null : accountResult;
   const balanceUsd = account?.balanceUsd ?? 0;

@@ -1,6 +1,6 @@
 import type { ChatThreadDTO } from "@/lib/types";
 
-export type OttoNavProjectMeta = { id: string; name: string };
+export type OttoNavProjectMeta = { id: string; name: string; pinnedAt?: string | null };
 
 export type OttoNavEntry =
   | { kind: "project"; project: OttoNavProjectMeta; threads: ChatThreadDTO[]; defaultThread?: ChatThreadDTO }
@@ -54,6 +54,12 @@ export function buildOttoNavEntries({
   }
 
   const visibleProjects = [...projects].sort((a, b) => {
+    const aPinnedAt = a.pinnedAt ? Date.parse(a.pinnedAt) || 0 : 0;
+    const bPinnedAt = b.pinnedAt ? Date.parse(b.pinnedAt) || 0 : 0;
+    const pin = bPinnedAt - aPinnedAt;
+    if (pin !== 0) return pin;
+    if (a.pinnedAt && !b.pinnedAt) return -1;
+    if (b.pinnedAt && !a.pinnedAt) return 1;
     if (a.id === activeProjectId && b.id !== activeProjectId) return -1;
     if (b.id === activeProjectId && a.id !== activeProjectId) return 1;
     const activity = (projectLastActivity.get(b.id) ?? 0) - (projectLastActivity.get(a.id) ?? 0);

@@ -939,7 +939,7 @@ export async function createEmptyCoworkThread(raw: unknown): Promise<{ id: strin
 }
 
 // ---------------------------------------------------------------------------
-// deleteCoworkThread — soft-delete a conversation (owner-scoped)
+// deleteCoworkThread — permanently delete a conversation record (owner-scoped)
 // ---------------------------------------------------------------------------
 
 export async function deleteCoworkThread(threadId: string): Promise<{ ok: true } | { error: string }> {
@@ -948,13 +948,64 @@ export async function deleteCoworkThread(threadId: string): Promise<{ ok: true }
   const { ownerId } = gate;
 
   try {
-    await prisma.chatThread.updateMany({
+    const thread = await prisma.chatThread.findFirst({
       where: { id: threadId, ownerId, deletedAt: null },
-      data: { deletedAt: new Date() },
+      select: { id: true },
+    });
+    if (!thread) return { error: "Conversation not found." };
+    await prisma.$transaction(async (tx) => {
+      const threadLockKey = `thread:${threadId}`;
+      await tx.$executeRaw`SELECT pg_advisory_xact_lock(hashtextextended(${threadLockKey}, 0::bigint))`;
+      const liveThread = await tx.chatThread.findFirst({
+        where: { id: threadId, ownerId, deletedAt: null },
+        select: { id: true },
+      });
+      if (!liveThread) throw new Error("THREAD_NOT_FOUND_DURING_DELETE");
+      const activeResearch = await tx.researchJob.findFirst({
+        where: { ownerId, threadId, status: { in: ["QUEUED", "RUNNING"] } },
+        select: { id: true },
+      });
+      if (activeResearch) throw new Error("RESEARCH_RUNNING_DURING_DELETE");
+      await tx.researchJob.deleteMany({ where: { ownerId, threadId } });
+      await tx.canvasNode.updateMany({ where: { ownerId, threadId }, data: { threadId: null } });
+      await tx.generation.updateMany({ where: { ownerId, threadId }, data: { threadId: null } });
+      await tx.genJob.updateMany({ where: { ownerId, threadId }, data: { threadId: null } });
+      await tx.chatMessage.deleteMany({ where: { ownerId, threadId } });
+      await tx.chatThread.deleteMany({ where: { id: threadId, ownerId } });
     });
     return { ok: true };
   } catch (e) {
+    if (e instanceof Error && e.message === "THREAD_NOT_FOUND_DURING_DELETE") return { error: "Conversation not found." };
+    if (e instanceof Error && e.message === "RESEARCH_RUNNING_DURING_DELETE") return { error: "Research is still running in this conversation. Delete it after research finishes." };
     console.error("[deleteCoworkThread] failed:", errSummary(e));
     return { error: "Couldn't delete the conversation — please try again." };
+  }
+}
+
+// ---------------------------------------------------------------------------
+// setCoworkThreadPinned — pin/unpin a conversation in the sidebar
+// ---------------------------------------------------------------------------
+
+export async function setCoworkThreadPinned(threadId: string, pinned: boolean): Promise<{ ok: true; pinnedAt: string | null } | { error: string }> {
+  const gate = await requireOwner();
+  if ("error" in gate) return gate;
+  const { ownerId } = gate;
+
+  try {
+    const thread = await prisma.chatThread.findFirst({
+      where: { id: threadId, ownerId, deletedAt: null },
+      select: { id: true },
+    });
+    if (!thread) return { error: "Conversation not found." };
+    const pinnedAt = pinned ? new Date() : null;
+    const { count } = await prisma.chatThread.updateMany({
+      where: { id: thread.id, ownerId },
+      data: { pinnedAt },
+    });
+    if (!count) return { error: "Conversation not found." };
+    return { ok: true, pinnedAt: pinnedAt ? pinnedAt.toISOString() : null };
+  } catch (e) {
+    console.error("[setCoworkThreadPinned] failed:", errSummary(e));
+    return { error: "Couldn't update the conversation — please try again." };
   }
 }

@@ -1,7 +1,7 @@
 "use client";
 import React, { useState, useCallback, useEffect, useRef } from "react";
 import { useRouter } from "next/navigation";
-import { createProject, renameProject, deleteProject, autoTitleProjectIfDefault } from "@/lib/actions";
+import { createProject, renameProject, deleteProject, autoTitleProjectIfDefault, setProjectPinned } from "@/lib/actions";
 import { OttoNav } from "./OttoNav";
 import { OttoView } from "./OttoView";
 import type { AdTile } from "./OttoStuff";
@@ -13,7 +13,7 @@ import type { AccountInfo } from "@/lib/account-actions";
 import type { AnalyticsData } from "@/lib/analytics-actions";
 import type { HistoryThumb } from "@/lib/data";
 import { getMyAccount } from "@/lib/account-actions";
-import { deleteCoworkThread } from "@/lib/otto-client-actions";
+import { deleteCoworkThread, renameCoworkThread, setCoworkThreadPinned } from "@/lib/otto-client-actions";
 import { nextActiveThreadId } from "@/lib/thread-list";
 
 const MOBILE_BP = 680;
@@ -83,7 +83,7 @@ function IconMenu() {
   );
 }
 
-export type ProjectMeta = { id: string; name: string };
+export type ProjectMeta = { id: string; name: string; pinnedAt?: string | null };
 
 export interface OttoAppProps {
   projectId: string;
@@ -377,12 +377,17 @@ export function OttoApp({
   const handleRenameProject = useCallback(async (projId: string, name: string) => {
     const res = await renameProject(projId, name);
     if (res && "ok" in res) router.refresh();
+    else if (res && "error" in res) setActionError(res.error);
   }, [router]);
 
   const handleDeleteProject = useCallback(async (projId: string) => {
-    if (!window.confirm("Delete this campaign? It will be hidden from your sidebar.")) return;
+    const projectName = projects.find((p) => p.id === projId)?.name ?? "this campaign";
+    if (!window.confirm(`Permanently delete "${projectName}"? This removes the campaign, its chats, canvas nodes, jobs, and project media records. This cannot be undone.`)) return;
     const res = await deleteProject(projId);
-    if (!(res && "ok" in res)) return;
+    if (!(res && "ok" in res)) {
+      if (res && "error" in res) setActionError(res.error);
+      return;
+    }
     // If the open project was deleted, move to another one (or the front door).
     if (projId === curProjectId) {
       const next = projects.find((p) => p.id !== projId);
@@ -392,6 +397,12 @@ export function OttoApp({
       router.refresh();
     }
   }, [router, projectHref, curProjectId, projects]);
+
+  const handleSetProjectPinned = useCallback(async (projId: string, pinned: boolean) => {
+    const res = await setProjectPinned(projId, pinned);
+    if (res && "ok" in res) router.refresh();
+    else if (res && "error" in res) setActionError(res.error);
+  }, [router]);
 
   // Auto-title a still-default campaign from its first conversation (Grok pattern).
   // Runs once when the open project is unnamed but already has a titled thread.
@@ -411,11 +422,50 @@ export function OttoApp({
     });
   }, [projects, curProjectId, sidebarThreadList, router]);
 
-  async function handleDeleteThread(id: string) {
+  async function handleRenameThread(id: string, title: string) {
+    const clean = title.trim();
+    if (!clean) return;
     const snapshot = threads;
+    const sidebarSnapshot = sidebarThreadList;
+    const applyTitle = (items: ChatThreadDTO[]) => items.map((t) => (t.id === id ? { ...t, title: clean } : t));
+    setThreads(applyTitle);
+    setSidebarThreadList(applyTitle);
+    const result = await renameCoworkThread(id, clean);
+    if ("error" in result) {
+      console.error("[handleRenameThread] failed:", result.error);
+      setThreads(snapshot);
+      setSidebarThreadList(sidebarSnapshot);
+      setActionError(result.error);
+    }
+  }
+
+  async function handleSetThreadPinned(id: string, pinned: boolean) {
+    const snapshot = threads;
+    const sidebarSnapshot = sidebarThreadList;
+    const pinnedAt = pinned ? new Date().toISOString() : null;
+    const applyPin = (items: ChatThreadDTO[]) => items.map((t) => (t.id === id ? { ...t, pinnedAt } : t));
+    setThreads(applyPin);
+    setSidebarThreadList(applyPin);
+    const result = await setCoworkThreadPinned(id, pinned);
+    if ("error" in result) {
+      console.error("[handleSetThreadPinned] failed:", result.error);
+      setThreads(snapshot);
+      setSidebarThreadList(sidebarSnapshot);
+      setActionError(result.error);
+      return;
+    }
+    router.refresh();
+  }
+
+  async function handleDeleteThread(id: string) {
+    const threadTitle = sidebarThreadList.find((t) => t.id === id)?.title ?? threads.find((t) => t.id === id)?.title ?? "this conversation";
+    if (!window.confirm(`Permanently delete "${threadTitle}"? This removes the conversation and its messages. Generated library assets stay available.`)) return;
+    const snapshot = threads;
+    const sidebarSnapshot = sidebarThreadList;
     const snapshotActive = activeThreadId;
     // Optimistic removal
     handleThreadsChange(threads.filter((t) => t.id !== id));
+    setSidebarThreadList((prev) => prev.filter((t) => t.id !== id));
     const newActive = nextActiveThreadId(threads, id, activeThreadId);
     if (activeThreadId === id) {
       setActiveThreadId(newActive);
@@ -426,7 +476,9 @@ export function OttoApp({
       // Restore on failure
       console.error("[handleDeleteThread] failed:", result.error);
       handleThreadsChange(snapshot);
+      setSidebarThreadList(sidebarSnapshot);
       setActiveThreadId(snapshotActive);
+      setActionError(result.error);
       return;
     }
     if (snapshotActive === id) {
@@ -499,9 +551,12 @@ export function OttoApp({
         onSwitchProject={handleSwitchProject}
         onNewChat={handleNewChat}
         onRenameProject={handleRenameProject}
+        onSetProjectPinned={handleSetProjectPinned}
         onDeleteProject={handleDeleteProject}
         onNewCampaign={handleNewCampaign}
         newCampaignPending={newCampaignPending}
+        onRenameThread={handleRenameThread}
+        onSetThreadPinned={handleSetThreadPinned}
         onDeleteThread={handleDeleteThread}
         balanceCredits={balanceCredits}
         userName={userName}

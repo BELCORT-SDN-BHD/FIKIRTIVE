@@ -17,6 +17,7 @@ const {
   mockResearchUpdate,
   mockCreditFindUnique,
   mockGenJobCreate,
+  mockExecuteRaw,
   mockReserve,
   mockSettle,
   mockBossSend,
@@ -32,11 +33,13 @@ const {
   const mockResearchUpdate = vi.fn();
   const mockCreditFindUnique = vi.fn();
   const mockGenJobCreate = vi.fn();
+  const mockExecuteRaw = vi.fn();
   const db: Record<string, unknown> = {
     chatMessage: { findFirst: mockChatFindFirst, update: mockChatUpdate, updateMany: mockChatUpdateMany },
     researchJob: { create: mockResearchCreate, findFirst: mockResearchFindFirst, update: mockResearchUpdate },
     creditAccount: { findUnique: mockCreditFindUnique },
     genJob: { create: mockGenJobCreate },
+    $executeRaw: mockExecuteRaw,
   };
   // passthrough $transaction: the callback's tx IS the shared db, so writes inside the
   // tx are captured by the same mock fns the assertions read.
@@ -52,6 +55,7 @@ const {
     mockResearchUpdate,
     mockCreditFindUnique,
     mockGenJobCreate,
+    mockExecuteRaw,
     mockReserve: vi.fn(),
     mockSettle: vi.fn(),
     mockBossSend,
@@ -126,6 +130,7 @@ beforeEach(() => {
   mockBossSend.mockResolvedValue("queue-abc");
   mockGetBoss.mockResolvedValue({ send: mockBossSend });
   mockIsImpersonating.mockResolvedValue(false);
+  mockExecuteRaw.mockResolvedValue(undefined);
   // ample balance by default (standard tier estimate = 11, derived from turnBudgetInternal)
   mockCreditFindUnique.mockResolvedValue({ balance: 1000 });
 });
@@ -243,6 +248,17 @@ describe("approveResearch — 拒绝路径(不建 job)", () => {
     const res = await approveResearch({ cardId: "card-1" });
     expect(res).toEqual({ jobId: "job-new-1" });
     expect(mockResearchCreate).toHaveBeenCalledTimes(1);
+  });
+
+  it("卡在线程锁内消失 → Card not found,不建 job/不 enqueue", async () => {
+    const planned = card();
+    mockChatFindFirst
+      .mockResolvedValueOnce(planned)
+      .mockResolvedValueOnce(null);
+    const res = await approveResearch({ cardId: "card-1" });
+    expect(res).toEqual({ error: "Card not found." });
+    expect(mockResearchCreate).not.toHaveBeenCalled();
+    expect(mockBossSend).not.toHaveBeenCalled();
   });
 
   // THE UNIT-MISMATCH REGRESSION: a balance ABOVE the card's DISPLAYED estimate but BELOW the

@@ -65,4 +65,24 @@ describe("buildOttoNavEntries", () => {
     expect(entries.map((e) => e.project.id)).toContain("active");
     expect(entries).toHaveLength(2);
   });
+
+  it("orders pinned projects before unpinned projects", () => {
+    const entries = buildOttoNavEntries({
+      projects: [
+        { id: "active", name: "Active" },
+        { id: "pinned", name: "Pinned", pinnedAt: "2026-07-04T09:00:00.000Z" },
+        { id: "hot", name: "Hot" },
+      ],
+      sidebarThreads: [
+        thread("t-hot", "hot", "Newest", "2026-07-04T12:00:00.000Z"),
+        thread("t-active", "active", "Active", "2026-07-04T08:00:00.000Z"),
+      ],
+      activeProjectId: "active",
+      activeThreadId: "t-active",
+      projectLimit: 10,
+      threadLimit: 6,
+    });
+
+    expect(entries.map((e) => e.project.id)).toEqual(["pinned", "active", "hot"]);
+  });
 });

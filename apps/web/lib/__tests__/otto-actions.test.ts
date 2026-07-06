@@ -20,12 +20,20 @@ const {
   mockChatThreadCreate,
   mockChatThreadUpdate,
   mockChatThreadUpdateMany,
+  mockChatThreadDeleteMany,
   mockChatMessageFindFirst,
   mockChatMessageCreate,
+  mockChatMessageDeleteMany,
   mockGenJobFindFirst,
+  mockGenJobUpdateMany,
+  mockResearchJobFindFirst,
+  mockResearchJobDeleteMany,
+  mockCanvasNodeUpdateMany,
+  mockGenerationUpdateMany,
   mockEntityFindMany,
   mockMemoryFindMany,
   mockGetBrandContextText,
+  mockExecuteRaw,
   mockTransaction,
   mockRun,
   mockRunStateFromString,
@@ -86,12 +94,20 @@ const {
     mockChatThreadCreate: vi.fn(),
     mockChatThreadUpdate: vi.fn(),
     mockChatThreadUpdateMany: vi.fn(),
+    mockChatThreadDeleteMany: vi.fn(),
     mockChatMessageFindFirst: vi.fn(),
     mockChatMessageCreate: vi.fn(),
+    mockChatMessageDeleteMany: vi.fn(),
     mockGenJobFindFirst: vi.fn(),
+    mockGenJobUpdateMany: vi.fn(),
+    mockResearchJobFindFirst: vi.fn(),
+    mockResearchJobDeleteMany: vi.fn(),
+    mockCanvasNodeUpdateMany: vi.fn(),
+    mockGenerationUpdateMany: vi.fn(),
     mockEntityFindMany: vi.fn(),
     mockMemoryFindMany: vi.fn(),
     mockGetBrandContextText: vi.fn(),
+    mockExecuteRaw: vi.fn(),
     mockTransaction: vi.fn(),
     mockRun: vi.fn(),
     mockRunStateFromString,
@@ -119,19 +135,27 @@ vi.mock("@/lib/memory-actions", () => ({ getBrandContextText: mockGetBrandContex
 vi.mock("@fikirtive/db", () => ({
   prisma: {
     project: { findFirst: mockProjectFindFirst },
-    generation: { findFirst: mockGenerationFindFirst },
     chatThread: {
       findFirst: mockChatThreadFindFirst,
       create: mockChatThreadCreate,
       update: mockChatThreadUpdate,
       updateMany: mockChatThreadUpdateMany,
+      deleteMany: mockChatThreadDeleteMany,
     },
     chatMessage: {
       findFirst: mockChatMessageFindFirst,
       create: mockChatMessageCreate,
+      deleteMany: mockChatMessageDeleteMany,
     },
     genJob: {
       findFirst: mockGenJobFindFirst,
+      updateMany: mockGenJobUpdateMany,
+    },
+    researchJob: { findFirst: mockResearchJobFindFirst, deleteMany: mockResearchJobDeleteMany },
+    canvasNode: { updateMany: mockCanvasNodeUpdateMany },
+    generation: {
+      findFirst: mockGenerationFindFirst,
+      updateMany: mockGenerationUpdateMany,
     },
     entity: {
       findMany: mockEntityFindMany,
@@ -139,6 +163,7 @@ vi.mock("@fikirtive/db", () => ({
     memory: {
       findMany: mockMemoryFindMany,
     },
+    $executeRaw: mockExecuteRaw,
     $transaction: mockTransaction,
   },
 }));
@@ -183,7 +208,7 @@ vi.mock("@fikirtive/otto", async (importOriginal) => {
 
 // ── Import SUT after mocks ───────────────────────────────────────────────────
 
-const { ottoTurn, mapOttoUsage, buildOttoContext, ottoApprove, createEmptyCoworkThread, finalizeOttoRun } = await import("@/lib/otto-actions");
+const { ottoTurn, mapOttoUsage, buildOttoContext, ottoApprove, createEmptyCoworkThread, deleteCoworkThread, setCoworkThreadPinned, finalizeOttoRun } = await import("@/lib/otto-actions");
 
 // ── Shared fixtures ──────────────────────────────────────────────────────────
 
@@ -194,6 +219,48 @@ const THREAD_ID = "thread_abc";
 const GATE = { ownerId: OWNER_ID, email: "user@test.com" };
 
 const BASE_INPUT = { projectId: PROJECT_ID, text: "Make something cool" };
+
+const transactionTx = {
+  $executeRaw: mockExecuteRaw,
+  chatThread: {
+    findFirst: mockChatThreadFindFirst,
+    create: mockChatThreadCreate,
+    update: mockChatThreadUpdate,
+    updateMany: mockChatThreadUpdateMany,
+    deleteMany: mockChatThreadDeleteMany,
+  },
+  chatMessage: {
+    findFirst: mockChatMessageFindFirst,
+    create: mockChatMessageCreate,
+    deleteMany: mockChatMessageDeleteMany,
+  },
+  genJob: {
+    findFirst: mockGenJobFindFirst,
+    updateMany: mockGenJobUpdateMany,
+  },
+  researchJob: {
+    findFirst: mockResearchJobFindFirst,
+    deleteMany: mockResearchJobDeleteMany,
+  },
+  canvasNode: { updateMany: mockCanvasNodeUpdateMany },
+  generation: {
+    findFirst: mockGenerationFindFirst,
+    updateMany: mockGenerationUpdateMany,
+  },
+};
+
+async function runTransaction(arg: unknown) {
+  if (typeof arg === "function") {
+    return (arg as (tx: typeof transactionTx) => Promise<unknown>)(transactionTx);
+  }
+  if (Array.isArray(arg)) {
+    for (const op of arg) {
+      if (op !== null && typeof op === "object" && "then" in op && typeof (op as { then?: unknown }).then === "function") {
+        await (op as Promise<unknown>);
+      }
+    }
+  }
+}
 
 function makeMockResult({
   interruptions = [] as unknown[],
@@ -223,13 +290,7 @@ function setupHappyPath() {
   mockChatMessageCreate.mockResolvedValue({});
   mockChatMessageFindFirst.mockResolvedValue(null); // seq=0
   mockRun.mockResolvedValue(makeMockResult());
-  mockTransaction.mockImplementation(async (ops: unknown[]) => {
-    for (const op of ops) {
-      if (op !== null && typeof op === "object" && "then" in op && typeof (op as { then?: unknown }).then === "function") {
-        await (op as Promise<unknown>);
-      }
-    }
-  });
+  mockTransaction.mockImplementation(runTransaction);
   // Re-establish withLlmBudget to call through (cleared by vi.clearAllMocks in beforeEach)
   mockWithLlmBudget.mockImplementation(async (_args: unknown, fn: () => Promise<{ result: unknown; usage?: unknown }>) => {
     const out = await fn();
@@ -240,6 +301,15 @@ function setupHappyPath() {
 beforeEach(() => {
   vi.clearAllMocks();
   mockChatThreadUpdateMany.mockResolvedValue({ count: 1 });
+  mockChatThreadDeleteMany.mockResolvedValue({ count: 1 });
+  mockChatMessageDeleteMany.mockResolvedValue({ count: 1 });
+  mockResearchJobFindFirst.mockResolvedValue(null);
+  mockResearchJobDeleteMany.mockResolvedValue({ count: 0 });
+  mockCanvasNodeUpdateMany.mockResolvedValue({ count: 0 });
+  mockGenerationUpdateMany.mockResolvedValue({ count: 0 });
+  mockGenJobUpdateMany.mockResolvedValue({ count: 0 });
+  mockExecuteRaw.mockResolvedValue(undefined);
+  mockTransaction.mockImplementation(runTransaction);
   // Default: no brand context, no entities, no active job (best-effort baselines)
   mockGetBrandContextText.mockResolvedValue("");
   mockEntityFindMany.mockResolvedValue([]);
@@ -1281,6 +1351,68 @@ describe("createEmptyCoworkThread — success", () => {
         }),
       }),
     );
+  });
+});
+
+describe("deleteCoworkThread — hard delete", () => {
+  it("returns not found without mutating when the thread is not owned/live", async () => {
+    mockRequireOwner.mockResolvedValue(GATE);
+    mockChatThreadFindFirst.mockResolvedValue(null);
+
+    const res = await deleteCoworkThread(THREAD_ID);
+
+    expect(res).toEqual({ error: "Conversation not found." });
+    expect(mockTransaction).not.toHaveBeenCalled();
+    expect(mockChatThreadDeleteMany).not.toHaveBeenCalled();
+  });
+
+  it("deletes messages and the thread instead of soft-deleting deletedAt", async () => {
+    mockRequireOwner.mockResolvedValue(GATE);
+    mockChatThreadFindFirst.mockResolvedValue({ id: THREAD_ID });
+
+    const res = await deleteCoworkThread(THREAD_ID);
+
+    expect(res).toEqual({ ok: true });
+    expect(mockChatThreadFindFirst).toHaveBeenCalledWith(expect.objectContaining({
+      where: { id: THREAD_ID, ownerId: OWNER_ID, deletedAt: null },
+      select: { id: true },
+    }));
+    expect(mockResearchJobDeleteMany).toHaveBeenCalledWith({ where: { ownerId: OWNER_ID, threadId: THREAD_ID } });
+    expect(mockCanvasNodeUpdateMany).toHaveBeenCalledWith({ where: { ownerId: OWNER_ID, threadId: THREAD_ID }, data: { threadId: null } });
+    expect(mockGenerationUpdateMany).toHaveBeenCalledWith({ where: { ownerId: OWNER_ID, threadId: THREAD_ID }, data: { threadId: null } });
+    expect(mockGenJobUpdateMany).toHaveBeenCalledWith({ where: { ownerId: OWNER_ID, threadId: THREAD_ID }, data: { threadId: null } });
+    expect(mockChatMessageDeleteMany).toHaveBeenCalledWith({ where: { ownerId: OWNER_ID, threadId: THREAD_ID } });
+    expect(mockChatThreadDeleteMany).toHaveBeenCalledWith({ where: { id: THREAD_ID, ownerId: OWNER_ID } });
+    expect(mockChatThreadUpdateMany).not.toHaveBeenCalled();
+  });
+
+  it("blocks hard delete while research is still running", async () => {
+    mockRequireOwner.mockResolvedValue(GATE);
+    mockChatThreadFindFirst.mockResolvedValue({ id: THREAD_ID });
+    mockResearchJobFindFirst.mockResolvedValue({ id: "research-live" });
+
+    const res = await deleteCoworkThread(THREAD_ID);
+
+    expect(res).toEqual({ error: "Research is still running in this conversation. Delete it after research finishes." });
+    expect(mockResearchJobDeleteMany).not.toHaveBeenCalled();
+    expect(mockChatMessageDeleteMany).not.toHaveBeenCalled();
+    expect(mockChatThreadDeleteMany).not.toHaveBeenCalled();
+  });
+});
+
+describe("setCoworkThreadPinned", () => {
+  it("updates pinnedAt through an owner-scoped write", async () => {
+    mockRequireOwner.mockResolvedValue(GATE);
+    mockChatThreadFindFirst.mockResolvedValue({ id: THREAD_ID });
+    mockChatThreadUpdateMany.mockResolvedValue({ count: 1 });
+
+    const res = await setCoworkThreadPinned(THREAD_ID, true);
+
+    expect(res).toEqual({ ok: true, pinnedAt: expect.any(String) });
+    expect(mockChatThreadUpdateMany).toHaveBeenCalledWith({
+      where: { id: THREAD_ID, ownerId: OWNER_ID },
+      data: { pinnedAt: expect.any(Date) },
+    });
   });
 });
 

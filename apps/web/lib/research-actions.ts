@@ -128,6 +128,19 @@ export async function approveResearch(raw: unknown): Promise<Ok | Err> {
     // a concurrent same-card approve hits P2002 (caught below).
     jobId = await prisma.$transaction(async (tx) => {
       const id = newId();
+      const threadLockKey = `thread:${card.threadId}`;
+      await tx.$executeRaw`SELECT pg_advisory_xact_lock(hashtextextended(${threadLockKey}, 0::bigint))`;
+      const liveCard = await tx.chatMessage.findFirst({
+        where: { id: card.id, ownerId, kind: "RESEARCH_CARD", deletedAt: null },
+        select: { payload: true, thread: { select: { ownerId: true, deletedAt: true } } },
+      });
+      if (!liveCard || liveCard.thread.ownerId !== ownerId || liveCard.thread.deletedAt) {
+        throw new Error("THREAD_DELETED_DURING_RESEARCH_START");
+      }
+      const livePayload = (liveCard.payload ?? {}) as ResearchPayload;
+      if (livePayload.status !== "planned") {
+        throw new Error("RESEARCH_CARD_NOT_PLANNED_DURING_APPROVE");
+      }
       await tx.researchJob.create({
         data: { id, ownerId, threadId: card.threadId, cardId: card.id, idempotencyKey, tier },
       });
@@ -137,7 +150,7 @@ export async function approveResearch(raw: unknown): Promise<Ok | Err> {
         where: { id: card.id, ownerId, kind: "RESEARCH_CARD", deletedAt: null },
         select: { payload: true },
       });
-      const cur = (fresh?.payload ?? payload) as ResearchPayload;
+      const cur = (fresh?.payload ?? livePayload) as ResearchPayload;
       await tx.chatMessage.update({
         where: { id: card.id },
         data: { payload: { ...cur, status: "running" } as unknown as Prisma.InputJsonObject },
@@ -145,6 +158,12 @@ export async function approveResearch(raw: unknown): Promise<Ok | Err> {
       return id;
     });
   } catch (e) {
+    if (e instanceof Error && e.message === "THREAD_DELETED_DURING_RESEARCH_START") {
+      return { error: "Card not found." };
+    }
+    if (e instanceof Error && e.message === "RESEARCH_CARD_NOT_PLANNED_DURING_APPROVE") {
+      return { error: "This research is already running or done." };
+    }
     // Once-EVER index race: a concurrent same-card approve won the insert → return ITS job id
     // instead of creating a duplicate. The tx rolled back, so this attempt wrote nothing (no
     // second job, no second card flip). research:<cardId> is exactly-once-ever (all-status
