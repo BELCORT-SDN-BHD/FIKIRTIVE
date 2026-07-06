@@ -1,7 +1,7 @@
 "use server";
 
 import { revalidatePath } from "next/cache";
-import { prisma } from "@fikirtive/db";
+import { prisma, refundReservation } from "@fikirtive/db";
 import {
   fikirtiveEdit,
   captionCue,
@@ -31,7 +31,7 @@ import { requireOwner } from "./auth-guard";
 /**
  * M0 server actions. Conventions:
  *  - every substantive action writes an ActionEvent (D23 gate instrumentation)
- *  - deletes are soft (deletedAt) — sweep is the worker's job (D21)
+ *  - most deletes are soft (deletedAt) — project management's explicit delete is the hard-delete exception
  *  - Generation rows are immutable outside the whitelist: shotId, version,
  *    attachedAt, deletedAt
  *  - every mutation is owner-scoped: rows are looked up with ownerId before
@@ -162,15 +162,96 @@ export async function createProject(name: string): Promise<{ id: string } | { er
   return { id: project.id };
 }
 
-/** Soft-delete a project (sets deletedAt → drops out of getProjects' notDeleted filter).
- *  Reversible, touches no generated assets/billing — just hides the project + its surfaces. */
+/** Permanently delete a project and its project-scoped work.
+ *  Global assets/entities/ledger rows are intentionally not deleted here. */
 export async function deleteProject(projectId: string): Promise<{ ok: true } | { error: string }> {
   const gate = await requireOwner(); if ("error" in gate) return gate;
   const { ownerId } = gate;
   const project = await prisma.project.findFirst({ where: { id: projectId, ownerId, deletedAt: null }, select: { id: true, name: true } });
   if (!project) return { error: "Project not found." };
-  await prisma.project.update({ where: { id: project.id }, data: { deletedAt: new Date() } });
-  await logAction(ownerId, "project.delete", project.id, { name: project.name });
+  try {
+    await prisma.$transaction(async (tx) => {
+      const projectLockKey = `project:${project.id}`;
+      await tx.$executeRaw`SELECT pg_advisory_xact_lock(hashtextextended(${projectLockKey}, 0::bigint))`;
+      const activeJobs = await tx.genJob.findMany({
+        where: { ownerId, projectId: project.id, status: { in: ["QUEUED", "GENERATING"] } },
+        select: { id: true, status: true },
+      });
+      if (activeJobs.some((job) => job.status === "GENERATING")) {
+        throw new Error("GENERATION_RUNNING_DURING_DELETE");
+      }
+      for (const job of activeJobs) {
+        const { count } = await tx.genJob.updateMany({
+          where: { id: job.id, ownerId, status: "QUEUED" },
+          data: { status: "FAILED", error: "Cancelled by campaign deletion", finishedAt: new Date() },
+        });
+        if (count !== 1) throw new Error("GENERATION_STARTED_DURING_DELETE");
+        await refundReservation(tx, { orgId: ownerId, refId: job.id });
+      }
+
+      const threads = await tx.chatThread.findMany({
+        where: { ownerId, projectId: project.id },
+        select: { id: true },
+      });
+      const threadIds = threads.map((t) => t.id);
+      if (threadIds.length > 0) {
+        for (const threadId of threadIds) {
+          const threadLockKey = `thread:${threadId}`;
+          await tx.$executeRaw`SELECT pg_advisory_xact_lock(hashtextextended(${threadLockKey}, 0::bigint))`;
+        }
+        const activeResearch = await tx.researchJob.findFirst({
+          where: { ownerId, threadId: { in: threadIds }, status: { in: ["QUEUED", "RUNNING"] } },
+          select: { id: true },
+        });
+        if (activeResearch) throw new Error("RESEARCH_RUNNING_DURING_DELETE");
+        await tx.researchJob.deleteMany({ where: { ownerId, threadId: { in: threadIds } } });
+        await tx.chatMessage.deleteMany({ where: { ownerId, threadId: { in: threadIds } } });
+        await tx.chatThread.deleteMany({ where: { ownerId, id: { in: threadIds } } });
+      }
+
+      const shots = await tx.shot.findMany({
+        where: { ownerId, projectId: project.id },
+        select: { id: true },
+      });
+      const shotIds = shots.map((s) => s.id);
+
+      await tx.canvasNode.deleteMany({ where: { ownerId, projectId: project.id } });
+      await tx.renderJob.deleteMany({ where: { ownerId, projectId: project.id } });
+      await tx.captionJob.deleteMany({ where: { ownerId, projectId: project.id } });
+      await tx.scheduledPost.deleteMany({ where: { ownerId, projectId: project.id } });
+      await tx.generationBatch.deleteMany({ where: { ownerId, projectId: project.id } });
+      await tx.genJob.deleteMany({ where: { ownerId, projectId: project.id } });
+      await tx.generation.deleteMany({ where: { ownerId, projectId: project.id } });
+      if (shotIds.length > 0) {
+        await tx.shotEntityRef.deleteMany({ where: { ownerId, shotId: { in: shotIds } } });
+      }
+      await tx.shot.deleteMany({ where: { ownerId, projectId: project.id } });
+      await tx.actionEvent.deleteMany({ where: { ownerId, projectId: project.id } });
+      const deleted = await tx.project.deleteMany({ where: { id: project.id, ownerId } });
+      if (deleted.count !== 1) throw new Error("Project delete lost owner scope.");
+      await tx.actionEvent.create({
+        data: {
+          id: newId(),
+          ownerId,
+          projectId: null,
+          type: "project.delete",
+          payload: { projectId: project.id, name: project.name, hardDelete: true },
+        },
+      });
+    });
+  } catch (e) {
+    if (e instanceof Error && e.message === "GENERATION_RUNNING_DURING_DELETE") {
+      return { error: "A generation is still running in this campaign. Delete it after the generation finishes." };
+    }
+    if (e instanceof Error && e.message === "GENERATION_STARTED_DURING_DELETE") {
+      return { error: "A generation started while deleting this campaign. Delete it after the generation finishes." };
+    }
+    if (e instanceof Error && e.message === "RESEARCH_RUNNING_DURING_DELETE") {
+      return { error: "Research is still running in this campaign. Delete it after research finishes." };
+    }
+    console.error("[deleteProject] failed:", e);
+    return { error: "Couldn't delete the campaign — please try again." };
+  }
   revalidatePath("/", "layout");
   return { ok: true };
 }
@@ -187,6 +268,20 @@ export async function renameProject(projectId: string, name: string): Promise<{ 
   await logAction(ownerId, "project.rename", project.id, { name: clean });
   revalidatePath("/", "layout");
   return { ok: true, name: clean };
+}
+
+/** Pin/unpin a campaign in the sidebar. Owner-scoped display metadata only. */
+export async function setProjectPinned(projectId: string, pinned: boolean): Promise<{ ok: true; pinnedAt: string | null } | { error: string }> {
+  const gate = await requireOwner(); if ("error" in gate) return gate;
+  const { ownerId } = gate;
+  const project = await prisma.project.findFirst({ where: { id: projectId, ownerId, deletedAt: null }, select: { id: true } });
+  if (!project) return { error: "Project not found." };
+  const pinnedAt = pinned ? new Date() : null;
+  const { count } = await prisma.project.updateMany({ where: { id: project.id, ownerId }, data: { pinnedAt } });
+  if (!count) return { error: "Project not found." };
+  await logAction(ownerId, pinned ? "project.pin" : "project.unpin", project.id);
+  revalidatePath("/", "layout");
+  return { ok: true, pinnedAt: pinnedAt ? pinnedAt.toISOString() : null };
 }
 
 /** Auto-title a still-default campaign from its first conversation's title (Grok

@@ -114,6 +114,13 @@ export async function startGen(raw: unknown): Promise<{ id: string } | { error: 
     // no spend) → the catch returns a friendly out-of-credits message. A concurrent
     // submit can't drive the balance negative (conditional decrement on the account row).
     job = await prisma.$transaction(async (tx) => {
+      const projectLockKey = `project:${projectId}`;
+      await tx.$executeRaw`SELECT pg_advisory_xact_lock(hashtextextended(${projectLockKey}, 0::bigint))`;
+      const liveProject = await tx.project.findFirst({
+        where: { id: projectId, ownerId, deletedAt: null },
+        select: { id: true },
+      });
+      if (!liveProject) throw new Error("PROJECT_DELETED_DURING_GENERATION_START");
       const created = await tx.genJob.create({
         data: {
           id: newId(), ownerId, projectId, shotId: shotId ?? null,
@@ -139,6 +146,9 @@ export async function startGen(raw: unknown): Promise<{ id: string } | { error: 
     // out of credits: the reserve rolled the tx back, so no job was created/queued.
     if (e instanceof InsufficientCredits) {
       return { error: "You've used up your beta credits — reply and we'll top you up." };
+    }
+    if (e instanceof Error && e.message === "PROJECT_DELETED_DURING_GENERATION_START") {
+      return { error: "Project not found." };
     }
     // partial-unique index race: a concurrent same-key submit won the insert → return
     // ITS job instead of creating (and paying for) a duplicate. The tx rolled back, so

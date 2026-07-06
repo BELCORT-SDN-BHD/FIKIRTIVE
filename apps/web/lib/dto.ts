@@ -144,12 +144,13 @@ export function toChatThreadDTO(t: ChatThreadWithMessages, urlsByJob: Map<string
     projectId: t.projectId,
     title: t.title,
     updatedAt: t.updatedAt.toISOString(),
+    pinnedAt: t.pinnedAt ? t.pinnedAt.toISOString() : null,
     messages: t.messages.map((m) => toChatMessageDTO(m, urlsByJob)),
   };
 }
 
 /** Thread-LIST DTO: metadata only, empty messages. The rail renders title + time; the
  *  active thread's messages lazy-load via getCoworkThreadClient. (scale audit 2026-06-20) */
-export function toChatThreadMetaDTO(t: { id: string; projectId: string; title: string; updatedAt: Date; _badge?: "working" | "failed" | "done" | null }): ChatThreadDTO {
-  return { id: t.id, projectId: t.projectId, title: t.title, updatedAt: t.updatedAt.toISOString(), messages: [], status: t._badge ?? null };
+export function toChatThreadMetaDTO(t: { id: string; projectId: string; title: string; updatedAt: Date; pinnedAt?: Date | null; _badge?: "working" | "failed" | "done" | null }): ChatThreadDTO {
+  return { id: t.id, projectId: t.projectId, title: t.title, updatedAt: t.updatedAt.toISOString(), pinnedAt: t.pinnedAt ? t.pinnedAt.toISOString() : null, messages: [], status: t._badge ?? null };
 }

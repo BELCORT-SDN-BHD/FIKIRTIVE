@@ -1,5 +1,6 @@
 "use client";
 import React, { useState } from "react";
+import { MessageSquarePlus, MoreHorizontal, Pencil, Pin, Trash2 } from "lucide-react";
 import { creditsLabel } from "@/lib/credit-format";
 import { Avatar, AvatarFallback } from "@/components/ui/avatar";
 import type { OttoViewKey, ProjectMeta } from "./OttoApp";
@@ -135,14 +136,6 @@ function IconLink() {
     </svg>
   );
 }
-function IconX() {
-  return (
-    <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round" aria-hidden>
-      <path d="M18 6 6 18" /><path d="m6 6 12 12" />
-    </svg>
-  );
-}
-
 export interface OttoNavProps {
   view: OttoViewKey;
   onViewChange: (v: OttoViewKey) => void;
@@ -160,10 +153,14 @@ export interface OttoNavProps {
   onNewChat: (projectId: string) => void;
   /** Rename a project (campaign). */
   onRenameProject: (projectId: string, name: string) => void;
-  /** Delete (soft) a project (campaign). */
+  /** Pin/unpin a project (campaign). */
+  onSetProjectPinned: (projectId: string, pinned: boolean) => void;
+  /** Permanently delete a project (campaign). */
   onDeleteProject: (projectId: string) => void;
   onNewCampaign: () => void;
   newCampaignPending?: boolean;
+  onRenameThread: (id: string, title: string) => void;
+  onSetThreadPinned: (id: string, pinned: boolean) => void;
   onDeleteThread: (id: string) => void;
   /** Spendable balance in DISPLAYED credits (the product shows credits, never dollars). */
   balanceCredits: number;
@@ -191,9 +188,12 @@ export function OttoNav({
   onSwitchProject,
   onNewChat,
   onRenameProject,
+  onSetProjectPinned,
   onDeleteProject,
   onNewCampaign,
   newCampaignPending = false,
+  onRenameThread,
+  onSetThreadPinned,
   onDeleteThread,
   balanceCredits,
   userName,
@@ -211,6 +211,7 @@ export function OttoNav({
   const [expandedProjects, setExpandedProjects] = useState<Set<string>>(new Set());
   const [collapsedProjects, setCollapsedProjects] = useState<Set<string>>(new Set());
   const [toolsOpen, setToolsOpen] = useState(toolsActive);
+  const [openMenu, setOpenMenu] = useState<string | null>(null);
   const showTools = toolsActive || toolsOpen;
   const collapseLabel = getOttoNavCollapseLabel(drawerOpen);
 
@@ -252,8 +253,19 @@ export function OttoNav({
   }
 
   function handleNavAction(fn: () => void) {
+    setOpenMenu(null);
     fn();
     onDrawerClose?.();
+  }
+
+  function promptRenameProject(projectId: string, currentName: string) {
+    const next = window.prompt("Rename campaign", currentName);
+    if (next && next.trim()) onRenameProject(projectId, next.trim());
+  }
+
+  function promptRenameThread(threadId: string, currentTitle: string) {
+    const next = window.prompt("Rename conversation", currentTitle);
+    if (next && next.trim()) onRenameThread(threadId, next.trim());
   }
 
   function handleCollapseAction() {
@@ -264,13 +276,53 @@ export function OttoNav({
     onToggleCollapse?.();
   }
 
-  function openThreadEntry(entry: Extract<OttoNavEntry, { kind: "thread" }>) {
-    if (entry.project.id === activeProjectId) onSelectThread(entry.thread.id);
-    else onSwitchProject(entry.project.id, entry.thread.id);
-  }
-
   function openProjectEntry(entry: Extract<OttoNavEntry, { kind: "project" }>) {
     onNewChat(entry.project.id);
+  }
+
+  function renderThreadRow(thread: ChatThreadDTO, project: ProjectMeta, nested: boolean) {
+    const isActiveProject = project.id === activeProjectId;
+    const isActive = isActiveProject && thread.id === activeThreadId && view === "otto";
+    const dotColor = dotFor(thread.status);
+    const pinned = Boolean(thread.pinnedAt);
+    return (
+      <div key={thread.id} className="otto-recent-row relative flex items-center mb-0.5">
+        <button
+          onClick={() => handleNavAction(() => {
+            if (isActiveProject) onSelectThread(thread.id);
+            else onSwitchProject(project.id, thread.id);
+          })}
+          onDoubleClick={() => promptRenameThread(thread.id, thread.title)}
+          title={thread.title}
+          className={`flex items-center gap-2 flex-1 min-w-0 border-0 rounded-[10px] cursor-pointer text-left transition-colors duration-150 ${nested ? "text-[0.75rem] py-[5px] pr-[54px]" : "text-[0.8125rem] py-[7px] pr-[54px]"} ${isActive ? "bg-secondary text-foreground font-semibold" : "bg-transparent text-muted-foreground font-normal"}`}
+          style={{ paddingLeft: nested ? 28 : 12 }}
+        >
+          {pinned && (<Pin size={11} className="shrink-0" fill="currentColor" aria-hidden />)}
+          {dotColor && (<span className="inline-block shrink-0 w-[7px] h-[7px] rounded-full" style={{ background: dotColor }} />)}
+          <span className="truncate min-w-0">{thread.title}</span>
+        </button>
+        <div className={`otto-row-actions absolute right-1 flex items-center gap-0.5 ${pinned ? "otto-row-actions--pinned" : ""}`}>
+          <button
+            type="button"
+            className="otto-icon-control"
+            aria-label={pinned ? `Unpin ${thread.title}` : `Pin ${thread.title}`}
+            title={pinned ? "Unpin conversation" : "Pin conversation"}
+            onClick={(e) => { e.stopPropagation(); onSetThreadPinned(thread.id, !pinned); }}
+          >
+            <Pin size={13} fill={pinned ? "currentColor" : "none"} aria-hidden />
+          </button>
+          <button
+            type="button"
+            className="otto-icon-control otto-icon-control--danger"
+            aria-label={`Delete ${thread.title}`}
+            title="Delete conversation"
+            onClick={(e) => { e.stopPropagation(); onDeleteThread(thread.id); }}
+          >
+            <Trash2 size={13} aria-hidden />
+          </button>
+        </div>
+      </div>
+    );
   }
 
   return (
@@ -378,38 +430,19 @@ export function OttoNav({
           <div className="flex flex-col gap-0.5">
             {navEntries.map((entry) => {
               if (entry.kind === "thread") {
-                const isActiveProject = entry.project.id === activeProjectId;
-                const isActive = isActiveProject && entry.thread.id === activeThreadId && view === "otto";
-                const dotColor = dotFor(entry.thread.status);
-                return (
-                  <div key={`thread:${entry.thread.id}`} className="otto-recent-row relative flex items-center mb-0.5">
-                    <button
-                      onClick={() => handleNavAction(() => openThreadEntry(entry))}
-                      title={entry.thread.title}
-                      className={`flex items-center gap-2 flex-1 min-w-0 border-0 text-[0.8125rem] py-[7px] pr-6 pl-3 rounded-[10px] cursor-pointer text-left transition-colors duration-150 ${isActive ? "bg-secondary text-foreground font-semibold" : "bg-transparent text-muted-foreground font-normal"}`}
-                    >
-                      {dotColor && (<span className="inline-block shrink-0 w-[7px] h-[7px] rounded-full" style={{ background: dotColor }} />)}
-                      <span className="truncate min-w-0">{entry.thread.title}</span>
-                    </button>
-                    <button
-                      className="otto-recent-delete absolute right-2 flex items-center justify-center w-5 h-5 border-0 bg-transparent text-muted-foreground/70 rounded-[10px] cursor-pointer p-0 opacity-0 pointer-events-none transition-[opacity,background] duration-150"
-                      aria-label={`Delete ${entry.thread.title}`}
-                      onClick={(e) => { e.stopPropagation(); onDeleteThread(entry.thread.id); }}
-                    >
-                      <IconX />
-                    </button>
-                  </div>
-                );
+                return renderThreadRow(entry.thread, entry.project, false);
               }
               const p = entry.project;
               const isActiveProject = p.id === activeProjectId;
               const isCollapsed = isProjectCollapsed(p.id);
               const canExpand = entry.threads.length > 0;
+              const projectPinned = Boolean(p.pinnedAt);
+              const projectMenuKey = `project:${p.id}`;
+              const projectMenuOpen = openMenu === projectMenuKey;
               return (
                 <div key={`project:${p.id}`} className="mb-1">
-                  {/* project (campaign) row — chevron toggles its conversations,
-                      double-click renames, hover-X deletes */}
-                  <div className="otto-recent-row relative flex items-center">
+                  {/* project (campaign) row — chevron toggles conversations; right controls match Codex density. */}
+                  <div className="otto-recent-row relative flex items-center" data-menu-open={projectMenuOpen ? "true" : "false"}>
                     {canExpand ? (
                       <button
                         type="button"
@@ -425,51 +458,70 @@ export function OttoNav({
                     )}
                     <button
                       onClick={() => handleNavAction(() => openProjectEntry(entry))}
-                      onDoubleClick={() => { const n = window.prompt("Rename campaign", p.name); if (n && n.trim()) onRenameProject(p.id, n.trim()); }}
+                      onDoubleClick={() => promptRenameProject(p.id, p.name)}
                       title={p.name}
-                      className={`flex items-center gap-2 flex-1 min-w-0 border-0 text-[0.875rem] font-semibold text-foreground py-1.5 pr-6 pl-2 rounded-[10px] cursor-pointer text-left transition-colors duration-150 ${isActiveProject ? "bg-secondary" : "bg-transparent"}`}
+                      className={`flex items-center gap-2 flex-1 min-w-0 border-0 text-[0.875rem] font-semibold text-foreground py-1.5 pr-[62px] pl-2 rounded-[10px] cursor-pointer text-left transition-colors duration-150 ${isActiveProject ? "bg-secondary" : "bg-transparent"}`}
                     >
                       <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.9" aria-hidden className="shrink-0"><path d="M3 7a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z" /></svg>
+                      {projectPinned && <Pin size={12} className="shrink-0" fill="currentColor" aria-hidden />}
                       <span className="truncate min-w-0 flex-1">{p.name}</span>
                     </button>
-                    <button
-                      className="otto-recent-delete absolute right-2 flex items-center justify-center w-5 h-5 border-0 bg-transparent text-muted-foreground/70 rounded-[10px] cursor-pointer p-0 opacity-0 pointer-events-none transition-[opacity,background] duration-150"
-                      aria-label={`Delete ${p.name}`}
-                      title="Delete campaign"
-                      onClick={(e) => { e.stopPropagation(); onDeleteProject(p.id); }}
-                    >
-                      <IconX />
-                    </button>
+                    <div className={`otto-row-actions absolute right-1 flex items-center gap-0.5 ${(projectPinned || projectMenuOpen) ? "otto-row-actions--pinned" : ""}`}>
+                      <button
+                        type="button"
+                        className="otto-icon-control"
+                        aria-label={`New conversation in ${p.name}`}
+                        title="New conversation"
+                        onClick={(e) => { e.stopPropagation(); handleNavAction(() => onNewChat(p.id)); }}
+                      >
+                        <MessageSquarePlus size={14} aria-hidden />
+                      </button>
+                      <button
+                        type="button"
+                        className="otto-icon-control"
+                        aria-label={`${p.name} controls`}
+                        aria-haspopup="menu"
+                        aria-expanded={projectMenuOpen}
+                        title="Campaign controls"
+                        onClick={(e) => { e.stopPropagation(); setOpenMenu(projectMenuOpen ? null : projectMenuKey); }}
+                      >
+                        <MoreHorizontal size={15} aria-hidden />
+                      </button>
+                    </div>
+                    {projectMenuOpen && (
+                      <div className="otto-row-menu" role="menu" onClick={(e) => e.stopPropagation()}>
+                        <button
+                          type="button"
+                          role="menuitem"
+                          onClick={() => { setOpenMenu(null); onSetProjectPinned(p.id, !projectPinned); }}
+                        >
+                          <Pin size={14} fill={projectPinned ? "currentColor" : "none"} aria-hidden />
+                          {projectPinned ? "Unpin project" : "Pin project"}
+                        </button>
+                        <button
+                          type="button"
+                          role="menuitem"
+                          onClick={() => { setOpenMenu(null); promptRenameProject(p.id, p.name); }}
+                        >
+                          <Pencil size={14} aria-hidden />
+                          Rename project
+                        </button>
+                        <button
+                          type="button"
+                          role="menuitem"
+                          className="otto-row-menu-danger"
+                          onClick={() => { setOpenMenu(null); onDeleteProject(p.id); }}
+                        >
+                          <Trash2 size={14} aria-hidden />
+                          Delete project
+                        </button>
+                      </div>
+                    )}
                   </div>
                   {/* conversations nested under the project (collapsible) */}
                   {canExpand && !isCollapsed && (
                     <div className="flex flex-col gap-px mt-px">
-                      {entry.threads.map((t) => {
-                        const isActive = isActiveProject && t.id === activeThreadId && view === "otto";
-                        const dotColor = dotFor(t.status);
-                        return (
-                          <div key={t.id} className="otto-recent-row relative flex items-center">
-                            <button
-                              onClick={() => handleNavAction(() => {
-                                if (isActiveProject) { onSelectThread(t.id); }
-                                else { onSwitchProject(p.id, t.id); }
-                              })}
-                              title={t.title}
-                              className={`flex items-center gap-2 flex-1 min-w-0 border-0 text-[0.75rem] py-[5px] pr-6 pl-7 rounded-[10px] cursor-pointer text-left transition-colors duration-150 ${isActive ? "bg-secondary text-foreground font-semibold" : "bg-transparent text-muted-foreground font-normal"}`}
-                            >
-                              {dotColor && (<span className="inline-block shrink-0 w-[7px] h-[7px] rounded-full" style={{ background: dotColor }} />)}
-                              <span className="truncate min-w-0">{t.title}</span>
-                            </button>
-                            <button
-                              className="otto-recent-delete absolute right-2 flex items-center justify-center w-5 h-5 border-0 bg-transparent text-muted-foreground/70 rounded-[10px] cursor-pointer p-0 opacity-0 pointer-events-none transition-[opacity,background] duration-150"
-                              aria-label={`Delete ${t.title}`}
-                              onClick={(e) => { e.stopPropagation(); onDeleteThread(t.id); }}
-                            >
-                              <IconX />
-                            </button>
-                          </div>
-                        );
-                      })}
+                      {entry.threads.map((t) => renderThreadRow(t, p, true))}
                     </div>
                   )}
                 </div>
@@ -477,9 +529,82 @@ export function OttoNav({
             })}
           </div>
           <style>{`
-            .otto-recent-row:hover .otto-recent-delete,
-            .otto-recent-row:focus-within .otto-recent-delete { opacity: 1; pointer-events: auto; }
-            .otto-recent-delete:hover { background: var(--surface-hover, rgba(0,0,0,0.07)) !important; color: var(--foreground) !important; }
+            .otto-row-actions {
+              opacity: 0;
+              pointer-events: none;
+              transition: opacity 150ms ease;
+            }
+            .otto-recent-row:hover .otto-row-actions,
+            .otto-recent-row:focus-within .otto-row-actions,
+            .otto-recent-row[data-menu-open="true"] .otto-row-actions,
+            .otto-row-actions--pinned {
+              opacity: 1;
+              pointer-events: auto;
+            }
+            .otto-icon-control {
+              display: inline-flex;
+              align-items: center;
+              justify-content: center;
+              width: 22px;
+              height: 22px;
+              border: 0;
+              border-radius: 8px;
+              background: transparent;
+              color: var(--muted-foreground);
+              cursor: pointer;
+              padding: 0;
+            }
+            .otto-icon-control:hover {
+              background: var(--surface-hover, rgba(0,0,0,0.07));
+              color: var(--foreground);
+            }
+            .otto-icon-control--danger:hover {
+              color: #b42318;
+              background: rgba(180,35,24,0.08);
+            }
+            .otto-row-menu {
+              position: absolute;
+              top: calc(100% + 4px);
+              right: 4px;
+              z-index: 60;
+              min-width: 164px;
+              padding: 6px;
+              border: 1px solid var(--border);
+              border-radius: 10px;
+              background: var(--card);
+              box-shadow: var(--shadow-lg, 0 12px 28px rgba(0,0,0,.12));
+            }
+            .otto-row-menu button {
+              display: flex;
+              align-items: center;
+              gap: 8px;
+              width: 100%;
+              height: 32px;
+              border: 0;
+              border-radius: 8px;
+              background: transparent;
+              color: var(--foreground);
+              font-size: 12px;
+              line-height: 1;
+              cursor: pointer;
+              padding: 0 8px;
+              text-align: left;
+            }
+            .otto-row-menu button:hover {
+              background: var(--surface-hover, rgba(0,0,0,0.07));
+            }
+            .otto-row-menu .otto-row-menu-danger {
+              color: #b42318;
+            }
+            .otto-row-menu .otto-row-menu-danger:hover {
+              background: rgba(180,35,24,0.08);
+            }
+            @media (hover: none) {
+              .otto-row-actions {
+                opacity: 1;
+                pointer-events: auto;
+              }
+            }
           `}</style>
           </>
           )}

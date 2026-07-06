@@ -60,6 +60,7 @@ export interface ProjectDTO {
   id: string;
   name: string;
   coworkBrief: string | null;
+  pinnedAt?: string | null;
 }
 
 export interface ChatMessageDTO {
@@ -78,6 +79,7 @@ export interface ChatThreadDTO {
   projectId: string;
   title: string;
   updatedAt: string;
+  pinnedAt?: string | null;
   messages: ChatMessageDTO[];
   status?: "working" | "failed" | "done" | null;
 }

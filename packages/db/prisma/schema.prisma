@@ -66,12 +66,14 @@ model Project {
   campaignId   String?
   createdAt DateTime  @default(now())
   updatedAt DateTime  @updatedAt
+  pinnedAt  DateTime?
   deletedAt DateTime?
 
   shots       Shot[]
   generations Generation[]
 
   @@index([ownerId, deletedAt])
+  @@index([ownerId, pinnedAt, createdAt], map: "Project_owner_pinned_idx")
 }
 
 // 实体跨项目复用（属于 owner 而非 project）—— journey step 7
@@ -834,12 +836,14 @@ model ChatThread {
   ottoState String?
   createdAt DateTime      @default(now())
   updatedAt DateTime      @updatedAt
+  pinnedAt  DateTime?
   deletedAt DateTime?
   messages  ChatMessage[]
 
   // thread list: a PARTIAL index ON (projectId, ownerId, updatedAt) WHERE deletedAt IS NULL
   // lives in migration.sql (Prisma can't express the WHERE). The full @@index is intentionally
   // omitted — the partial covers every live-thread read; deleted threads are never listed.
+  @@index([ownerId, pinnedAt, updatedAt], map: "ChatThread_owner_pinned_idx")
 }
 
 model ChatMessage {

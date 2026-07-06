@@ -18,10 +18,12 @@ const db = vi.hoisted(() => {
   const actionEventCreate = vi.fn();
   const reserveCredits = vi.fn();
   const refundReservation = vi.fn();
+  const executeRaw = vi.fn();
   const prisma = {
     project: { findFirst: projectFindFirst },
     genJob: { findFirst: genJobFindFirst, create: genJobCreate, update: genJobUpdate },
     actionEvent: { create: actionEventCreate },
+    $executeRaw: executeRaw,
     $transaction: vi.fn(async (fn: (tx: unknown) => Promise<unknown>) => fn(prisma)),
   };
   return {
@@ -33,6 +35,7 @@ const db = vi.hoisted(() => {
     actionEventCreate,
     reserveCredits,
     refundReservation,
+    executeRaw,
   };
 });
 
@@ -69,6 +72,7 @@ beforeEach(() => {
   db.actionEventCreate.mockResolvedValue({});
   db.reserveCredits.mockResolvedValue({ ok: true });
   db.refundReservation.mockResolvedValue({ ok: true });
+  db.executeRaw.mockResolvedValue(undefined);
   mockBossSend.mockResolvedValue("queue-job-1");
   mockCheckCast.mockResolvedValue(null);
 });

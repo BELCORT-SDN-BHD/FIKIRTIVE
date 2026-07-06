@@ -4,20 +4,30 @@ vi.mock("@/lib/auth-guard", () => ({ requireOwner: vi.fn() }));
 vi.mock("next/cache", () => ({ revalidatePath: vi.fn() }));
 vi.mock("@fikirtive/db", () => ({
   prisma: {
-    project: { findFirst: vi.fn(), findMany: vi.fn(), create: vi.fn() },
-    chatThread: { count: vi.fn() },
-    shot: { count: vi.fn() },
-    scheduledPost: { count: vi.fn() },
-    canvasNode: { count: vi.fn() },
-    genJob: { count: vi.fn() },
-    generation: { count: vi.fn() },
-    actionEvent: { create: vi.fn() },
+    project: { findFirst: vi.fn(), findMany: vi.fn(), create: vi.fn(), updateMany: vi.fn(), deleteMany: vi.fn() },
+    chatThread: { count: vi.fn(), findMany: vi.fn(), deleteMany: vi.fn() },
+    chatMessage: { deleteMany: vi.fn() },
+    researchJob: { findFirst: vi.fn(), deleteMany: vi.fn() },
+    shot: { count: vi.fn(), findMany: vi.fn(), deleteMany: vi.fn() },
+    shotEntityRef: { deleteMany: vi.fn() },
+    scheduledPost: { count: vi.fn(), deleteMany: vi.fn() },
+    canvasNode: { count: vi.fn(), deleteMany: vi.fn() },
+    renderJob: { deleteMany: vi.fn() },
+    captionJob: { deleteMany: vi.fn() },
+    generationBatch: { deleteMany: vi.fn() },
+    genJob: { count: vi.fn(), findMany: vi.fn(), updateMany: vi.fn(), deleteMany: vi.fn() },
+    generation: { count: vi.fn(), deleteMany: vi.fn() },
+    actionEvent: { create: vi.fn(), deleteMany: vi.fn() },
+    $executeRaw: vi.fn(),
+    $transaction: vi.fn(),
   },
+  refundReservation: vi.fn(),
 }));
 
-import { createProject, getOrCreateDefaultProject } from "@/lib/actions";
+import { createProject, deleteProject, getOrCreateDefaultProject, setProjectPinned } from "@/lib/actions";
 import { requireOwner } from "@/lib/auth-guard";
 import { prisma } from "@fikirtive/db";
+import { refundReservation } from "@fikirtive/db";
 import { revalidatePath } from "next/cache";
 
 beforeEach(() => {
@@ -30,6 +40,29 @@ beforeEach(() => {
   (prisma.canvasNode.count as any).mockResolvedValue(0);
   (prisma.genJob.count as any).mockResolvedValue(0);
   (prisma.generation.count as any).mockResolvedValue(0);
+  (prisma.genJob.findMany as any).mockResolvedValue([]);
+  (prisma.genJob.updateMany as any).mockResolvedValue({ count: 1 });
+  (prisma.researchJob.findFirst as any).mockResolvedValue(null);
+  (prisma.project.deleteMany as any).mockResolvedValue({ count: 1 });
+  (prisma.project.updateMany as any).mockResolvedValue({ count: 1 });
+  (prisma.chatThread.findMany as any).mockResolvedValue([]);
+  (prisma.shot.findMany as any).mockResolvedValue([]);
+  (prisma.chatThread.deleteMany as any).mockResolvedValue({ count: 0 });
+  (prisma.chatMessage.deleteMany as any).mockResolvedValue({ count: 0 });
+  (prisma.researchJob.deleteMany as any).mockResolvedValue({ count: 0 });
+  (prisma.shot.deleteMany as any).mockResolvedValue({ count: 0 });
+  (prisma.shotEntityRef.deleteMany as any).mockResolvedValue({ count: 0 });
+  (prisma.scheduledPost.deleteMany as any).mockResolvedValue({ count: 0 });
+  (prisma.canvasNode.deleteMany as any).mockResolvedValue({ count: 0 });
+  (prisma.renderJob.deleteMany as any).mockResolvedValue({ count: 0 });
+  (prisma.captionJob.deleteMany as any).mockResolvedValue({ count: 0 });
+  (prisma.generationBatch.deleteMany as any).mockResolvedValue({ count: 0 });
+  (prisma.genJob.deleteMany as any).mockResolvedValue({ count: 0 });
+  (prisma.generation.deleteMany as any).mockResolvedValue({ count: 0 });
+  (prisma.actionEvent.deleteMany as any).mockResolvedValue({ count: 0 });
+  (prisma.$executeRaw as any).mockResolvedValue(undefined);
+  (refundReservation as any).mockResolvedValue({ ok: true });
+  (prisma.$transaction as any).mockImplementation(async (fn: (tx: typeof prisma) => Promise<unknown>) => fn(prisma));
 });
 
 describe("getOrCreateDefaultProject", () => {
@@ -61,6 +94,113 @@ describe("getOrCreateDefaultProject", () => {
       }),
     }));
     expect(revalidatePath).not.toHaveBeenCalled();
+  });
+});
+
+describe("deleteProject", () => {
+  it("returns not found without mutating when the campaign is not owned/live", async () => {
+    (prisma.project.findFirst as any).mockResolvedValue(null);
+
+    await expect(deleteProject("p_missing")).resolves.toEqual({ error: "Project not found." });
+
+    expect(prisma.$transaction).not.toHaveBeenCalled();
+    expect(prisma.project.deleteMany).not.toHaveBeenCalled();
+  });
+
+  it("hard-deletes project-scoped records and the project in one transaction", async () => {
+    (prisma.project.findFirst as any).mockResolvedValue({ id: "p1", name: "Summer launch" });
+    (prisma.chatThread.findMany as any).mockResolvedValue([{ id: "t1" }, { id: "t2" }]);
+    (prisma.shot.findMany as any).mockResolvedValue([{ id: "s1" }]);
+
+    await expect(deleteProject("p1")).resolves.toEqual({ ok: true });
+
+    expect(prisma.$transaction).toHaveBeenCalled();
+    expect(refundReservation).not.toHaveBeenCalled();
+    expect(prisma.researchJob.deleteMany).toHaveBeenCalledWith({ where: { ownerId: "o1", threadId: { in: ["t1", "t2"] } } });
+    expect(prisma.chatMessage.deleteMany).toHaveBeenCalledWith({ where: { ownerId: "o1", threadId: { in: ["t1", "t2"] } } });
+    expect(prisma.chatThread.deleteMany).toHaveBeenCalledWith({ where: { ownerId: "o1", id: { in: ["t1", "t2"] } } });
+    expect(prisma.canvasNode.deleteMany).toHaveBeenCalledWith({ where: { ownerId: "o1", projectId: "p1" } });
+    expect(prisma.renderJob.deleteMany).toHaveBeenCalledWith({ where: { ownerId: "o1", projectId: "p1" } });
+    expect(prisma.captionJob.deleteMany).toHaveBeenCalledWith({ where: { ownerId: "o1", projectId: "p1" } });
+    expect(prisma.scheduledPost.deleteMany).toHaveBeenCalledWith({ where: { ownerId: "o1", projectId: "p1" } });
+    expect(prisma.generationBatch.deleteMany).toHaveBeenCalledWith({ where: { ownerId: "o1", projectId: "p1" } });
+    expect(prisma.genJob.deleteMany).toHaveBeenCalledWith({ where: { ownerId: "o1", projectId: "p1" } });
+    expect(prisma.generation.deleteMany).toHaveBeenCalledWith({ where: { ownerId: "o1", projectId: "p1" } });
+    expect(prisma.shotEntityRef.deleteMany).toHaveBeenCalledWith({ where: { ownerId: "o1", shotId: { in: ["s1"] } } });
+    expect(prisma.shot.deleteMany).toHaveBeenCalledWith({ where: { ownerId: "o1", projectId: "p1" } });
+    expect(prisma.actionEvent.deleteMany).toHaveBeenCalledWith({ where: { ownerId: "o1", projectId: "p1" } });
+    expect(prisma.project.deleteMany).toHaveBeenCalledWith({ where: { id: "p1", ownerId: "o1" } });
+    expect(prisma.project.updateMany).not.toHaveBeenCalled();
+    expect(prisma.actionEvent.create).toHaveBeenCalledWith(expect.objectContaining({
+      data: expect.objectContaining({
+        ownerId: "o1",
+        projectId: null,
+        type: "project.delete",
+        payload: { projectId: "p1", name: "Summer launch", hardDelete: true },
+      }),
+    }));
+    expect(revalidatePath).toHaveBeenCalledWith("/", "layout");
+  });
+
+  it("refunds queued generation reservations before hard-deleting the campaign", async () => {
+    (prisma.project.findFirst as any).mockResolvedValue({ id: "p1", name: "Summer launch" });
+    (prisma.genJob.findMany as any).mockResolvedValue([{ id: "g-queued", status: "QUEUED" }]);
+
+    await expect(deleteProject("p1")).resolves.toEqual({ ok: true });
+
+    expect(prisma.genJob.updateMany).toHaveBeenCalledWith({
+      where: { id: "g-queued", ownerId: "o1", status: "QUEUED" },
+      data: expect.objectContaining({
+        status: "FAILED",
+        error: "Cancelled by campaign deletion",
+        finishedAt: expect.any(Date),
+      }),
+    });
+    expect(refundReservation).toHaveBeenCalledWith(prisma, { orgId: "o1", refId: "g-queued" });
+    expect(prisma.project.deleteMany).toHaveBeenCalledWith({ where: { id: "p1", ownerId: "o1" } });
+  });
+
+  it("blocks hard delete while a generation is already running", async () => {
+    (prisma.project.findFirst as any).mockResolvedValue({ id: "p1", name: "Summer launch" });
+    (prisma.genJob.findMany as any).mockResolvedValue([{ id: "g-live", status: "GENERATING" }]);
+
+    await expect(deleteProject("p1")).resolves.toEqual({
+      error: "A generation is still running in this campaign. Delete it after the generation finishes.",
+    });
+
+    expect(prisma.$transaction).toHaveBeenCalled();
+    expect(refundReservation).not.toHaveBeenCalled();
+    expect(prisma.project.deleteMany).not.toHaveBeenCalled();
+  });
+
+  it("blocks hard delete while research is still running in a conversation", async () => {
+    (prisma.project.findFirst as any).mockResolvedValue({ id: "p1", name: "Summer launch" });
+    (prisma.chatThread.findMany as any).mockResolvedValue([{ id: "t1" }]);
+    (prisma.researchJob.findFirst as any).mockResolvedValue({ id: "r-live" });
+
+    await expect(deleteProject("p1")).resolves.toEqual({
+      error: "Research is still running in this campaign. Delete it after research finishes.",
+    });
+
+    expect(prisma.$transaction).toHaveBeenCalled();
+    expect(prisma.chatMessage.deleteMany).not.toHaveBeenCalled();
+    expect(prisma.project.deleteMany).not.toHaveBeenCalled();
+  });
+});
+
+describe("setProjectPinned", () => {
+  it("pins through an owner-scoped write", async () => {
+    (prisma.project.findFirst as any).mockResolvedValue({ id: "p1" });
+
+    await expect(setProjectPinned("p1", true)).resolves.toEqual({ ok: true, pinnedAt: expect.any(String) });
+
+    expect(prisma.project.updateMany).toHaveBeenCalledWith({
+      where: { id: "p1", ownerId: "o1" },
+      data: { pinnedAt: expect.any(Date) },
+    });
+    expect(prisma.actionEvent.create).toHaveBeenCalledWith(expect.objectContaining({
+      data: expect.objectContaining({ ownerId: "o1", projectId: "p1", type: "project.pin" }),
+    }));
   });
 });
 

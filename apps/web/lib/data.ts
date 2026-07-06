@@ -50,7 +50,7 @@ export async function ensureDefaultProject(ownerId: string) {
 export async function getProjects(ownerId: string) {
   return prisma.project.findMany({
     where: { ownerId, ...notDeleted },
-    orderBy: { createdAt: "asc" },
+    orderBy: [{ pinnedAt: { sort: "desc", nulls: "last" } }, { createdAt: "asc" }],
   });
 }
 
@@ -332,8 +332,8 @@ export type CandidateGen = Awaited<ReturnType<typeof getLooseVideoClips>>[number
 export async function getCoworkThreads(ownerId: string, projectId: string) {
   const threads = await prisma.chatThread.findMany({
     where: { projectId, ownerId, ...notDeleted },
-    orderBy: { updatedAt: "desc" },
-    select: { id: true, projectId: true, title: true, updatedAt: true },
+    orderBy: [{ pinnedAt: { sort: "desc", nulls: "last" } }, { updatedAt: "desc" }],
+    select: { id: true, projectId: true, title: true, updatedAt: true, pinnedAt: true },
   });
 
   // Attach latest GenJob status per thread for nav status badges (best-effort: never throws).
@@ -362,8 +362,8 @@ export async function getCoworkThreads(ownerId: string, projectId: string) {
 export async function getAllCoworkThreadMetas(ownerId: string) {
   const threads = await prisma.chatThread.findMany({
     where: { ownerId, ...notDeleted },
-    orderBy: { updatedAt: "desc" },
-    select: { id: true, projectId: true, title: true, updatedAt: true },
+    orderBy: [{ pinnedAt: { sort: "desc", nulls: "last" } }, { updatedAt: "desc" }],
+    select: { id: true, projectId: true, title: true, updatedAt: true, pinnedAt: true },
   });
   try {
     const threadIds = threads.map((t) => t.id);
