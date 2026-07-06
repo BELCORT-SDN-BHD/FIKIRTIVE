@@ -63,25 +63,25 @@
 
 ## 三、区划图(现状快照 —— 本章豁免"不可改",总审查员随地质报告更新)
 
-> 快照:2026-07-03,基线 main ≈ #117。注:本章 F 指分镜的第 1-4 步,与审计编号 F01-F44 无关。
+> 快照:2026-07-04,基线 main = #129(74d6719;#131/#132 尚未合并,不入本快照)。注:本章 F 指分镜的第 1-4 步,与审计编号 F01-F44 无关。
 
 图例:✅ 通电运营 · 🌙 建成断电(等钥匙:重连/App Review/env)· 🔧 建成没挂门牌(功能全好,导航不可达)· 🚧 空地立了牌子 · 📋 图纸阶段
 
 ### 中央区 —— Otto 本体 ✅
-20 个注册技能(1 个花钱技能 `generate`,唯一)。刨根问底资讯门、seedream/seedance prompt 精通(唯一 prompt 权威)、**分镜卡全链已闭环**(第 1-3 步 $0 + 第 4 步首帧付费 #111 + make-all 闸② #114)、品牌记忆、web research、视觉参考。模型 = sonnet 主力 + 同级 failover;每轮 reserve→settle 计费。
-**待建**:分镜连贯模式;Otto 深化三件(O-04 品牌记忆自养/O-07 绩效周报/O-10 效果反哺闭环,判决均为"要")。
+25 个注册技能(1 个花钱技能 `generate`,唯一)。刨根问底资讯门、seedream/seedance prompt 精通(唯一 prompt 权威)、**分镜卡全链已闭环**(第 1-3 步 $0 + 第 4 步首帧付费 #111 + make-all 闸② #114)、品牌记忆、web research、视觉参考。#117 后新增:**Block S 研究**(researchWeb 轻查 + proposeResearch 深研报告,#118)、**Meta 专家诊断**(56 条带引用知识库 + meta-ad-performance/meta-expert 双技能 —— O-10 判断侧第一批,#128)、排期起草 schedulePosts(只建 DRAFT,#123)、产品建档 ingestProduct(#124)。模型 = sonnet 主力 + 同级 failover;每轮 reserve→settle 计费。
+**待建**:分镜连贯模式;O-04 品牌记忆自养/O-07 绩效周报(判决均为"要");O-10 剩复刻接线(诊断卡按钮→创作链,碰 generate,独立 PR 跟进)。
 
 ### 创作区 —— Canvas 工作台 ✅
-无限画布、4 变体图 + 成本确认、i2v/t2v 视频、多参考图调理(#92)、整段参考视频(#97)、抽帧、付费卡防误删警告、失败态卡片。**这是用户的家(canvas-as-home)。**
+无限画布、4 变体图 + 成本确认(花费精确报价 + 余额即时刷新,#129)、i2v/t2v 视频、多参考图调理(#92)、整段参考视频(#97)、抽帧、付费卡防误删警告、失败态卡片、Otto 流错误可恢复(#129)。**这是用户的家(canvas-as-home)。**
 
-### 资产区 ✅ + 🔧
-My Stuff(统一版,#103)✅、**Brand memory v2**(6-tab 知识库 + living collections + 产品档案与分类,#103/#113)✅;**Library 🔧、Templates(4 个一键付费模板)🔧、Discover(灵感库)🔧 —— 三栋楼全建好了但没挂导航门牌**(已知缺口,等 founder 排优先级)。
+### 资产区 ✅
+My Stuff(统一版,#103;失败任务可恢复,#129)✅、**Brand memory v2**(6-tab 知识库 + living collections + 产品档案与分类,#103/#113;新增**产品链接一键建档** —— 贴 URL 自动预填草稿、双模等价、$0 确定性优先,#124)✅;**Library/Templates/Discover 三栋楼已挂导航门牌**(分组导航 Create/Assets/Operate 上线,#129)—— 原 🔧 缺口已闭。
 
 ### 广告区 —— Meta 🌙(等钥匙)
-读(insights/列表)✅ 已通电;**写**(暂停/预算/ad-write v1)和**建**(整 campaign PAUSED 草稿,build=$0)已建成断电 —— 等 ads_management/pages_show_list 重连 + App Review。TikTok/Lazada/Shopee 是同一条渠道缝上的规划新楼。
+读(insights/列表/**逐条 ad 表现 + 创意**,#128)✅ 已通电;**写**(暂停/预算/ad-write v1)和**建**(整 campaign PAUSED 草稿,build=$0)已建成断电 —— 等 ads_management/pages_show_list 重连 + App Review。TikTok/Lazada/Shopee 是同一条渠道缝上的规划新楼。
 
-### 排期区 🚧 + 分析区 ✅(Phase A)
-排期仍是空地(Buffer 式 3 视图,卡 instagram_content_publish App Review)。**分析区已通电**:Phase A 真实 ad-account KPI + reach 图 + OTTO insight(#116)+ 平台切换器(Meta live,TikTok/Shopee/Google/WhatsApp 占位,#117);剩余范围 = organic + history 全量。
+### 排期区 ✅(UI-first;实发布 🌙)+ 分析区 ✅(Phase A+)
+**排期不再是空地**:Buffer 式 3 视图(Plan+队列混合/日历/队列)+ Composer(账号/媒体选现有成片/时区/first comment)+ 工作级数据模型(ScheduledPost + 媒体连接表 + PublishAttempt 防双发)已通电,只建草稿、零花钱(#123/#129);**实发布 worker 断电等钥匙**(instagram_content_publish + pages_manage_posts App Review,slice 2 升级票)。**分析区已通电**:Phase A 真实 ad-account KPI + reach 图 + OTTO insight(#116)+ 平台切换器(Meta live,TikTok/Shopee/Google/WhatsApp 占位,#117);新增 **Per-ad performance 面板 + Otto 诊断卡**(账户自身均值分赢家/输家、创意原因挂 KB 真引用、不捏造,#128)。剩余范围 = organic(代码就绪,等 App Review)+ history 全量。
 
 ### 住户服务中心 —— Account/Connections ✅
 Account/Settings 页(#74):资料、credits + 消费记录、充值包购买、渠道连接管理(Meta 连接/重连/自治开关/kill-switch)、OTTO 行为设置。
@@ -90,7 +90,7 @@ Account/Settings 页(#74):资料、credits + 消费记录、充值包购买、�
 Admin 11 个 section 全活(模型开关/成本/授信/内容审/会话审/租户管理/冒充/审计日志);Stripe MYR 充值包 LIVE;100 免费 credits/新 org;冒充态禁写(F15 安全默认)。
 
 ### 地下管网 ✅
-pg-boss 五条队列 + 三类回收器(gen/refgen/LLM 预扣)、ingest 哈希复验(D19)、render/caption 管线、R2 内容寻址存储、CI(check/web-build/test 三 job,#105)+ 合并纪律。2026-07-02 全库审计 44 条全闭环。
+pg-boss 五条队列 + 四类回收器(gen/refgen/LLM 预扣/research 滞留,#122)、ingest 哈希复验(D19)、render/caption 管线、R2 内容寻址存储、CI(check/web-build/test 三 job,#105)+ 合并纪律。#117 后加固:冒充态调研审批阻断 + 队列丢发恢复(#126)、session.create 白名单锁测(#127)、node:dns SSRF 守卫移 core/server 子路径 + 客户端导入回归围栏(#125/#130)。2026-07-02 全库审计 44 条全闭环;2026-07-04 本地生产规模 QA 报告落库(`.gstack/qa-reports/`,#130);**2026-07-04 地基审计安全带在途**(PR #132:schema 漂移 CI 闸/视频毛利地板/守卫测试 —— 待 founder 终审,未入本快照)。
 
 ---
 
@@ -169,22 +169,25 @@ pg-boss 五条队列 + 三类回收器(gen/refgen/LLM 预扣)、ingest 哈希复
 
 - 修订 = founder 亲自改,或明确授权总审查员起草 + founder 合并 PR。
 - 每次修订在下表留痕。
+- **批准列写法**:修订行在 PR 分支上一律写「待 founder 终审」;founder 合并 PR 即定稿(与文件头一致),此后由下一次修订把该行批准列**回填**为「已定稿(#PR)」—— 已合并的行不得长期停留在"待终审"。
+- **修订表只按时间追加**:新行永远追加在表尾、按实际发生顺序排列、必须标明版本号;已有行不重排、不改写;漏记的修订用补记行追加并注明(v2.1 行即此例)。
 - agent 若发现代码与蓝图冲突:**停手、报告、等裁决** —— 蓝图错了改蓝图(经 founder),不是"顺手让代码赢"。
 
 | 日期 | 修订 | 批准 |
 |---|---|---|
-| 2026-07-03 | v1 初稿(Fable 5 起草,基线 main #106) | 待 founder 定稿 |
-| 2026-07-03 | v1.1 双模原则入宪(宪法第 7 条)+ 第一章重写 + 第六章新区以 SF/HS 全量分析为底稿(founder 口述修订,总审查员执笔) | 待 founder 定稿 |
-| 2026-07-03 | v1.2 第 7 条升格:Otto 全操控 = 最高设计要求,写入四层结构保证(单一动作层/Parity Manifest/读对等/上下文桥)+ 三类豁免(v1.7 起为四类)(founder 口述,总审查员执笔) | 待 founder 定稿 |
-| 2026-07-03 | v1.3 第六章新增市政厅 v2(团队阶级制度:矩阵驱动权限 + 钱的阶级 + 审批链 + staff 成员制)(founder 口述,总审查员执笔) | 待 founder 定稿 |
-| 2026-07-03 | v1.4 O 区拍板入宪:定价双轨(席位+credits)/skill 永久内部/UIUX 第二支柱(时为第 10 条,v1.7 顺延为第 11 条)/routine 授权模型/建设节奏 = 创作先行赚钱(拍板会第一批,总审查员执笔) | 待 founder 定稿 |
-| 2026-07-03 | v1.5 O 区封卷:对外 MCP 永久不做入第 8 条("操作这座城的 agent 永远只有 Otto");O-09 分域/O-10 要/O-12 Otto 之手/O-13 团队协作(归 G 区) | 待 founder 定稿 |
-| 2026-07-03 | v1.6 G 区封卷入宪:双档席位/功能全开/滚存上限制(costing 先行)/MYR+分市场定价/直传/unlimited 永禁/白标永禁/Agency 顺序 G-09→协作+G-11→G-10 | 待 founder 定稿 |
-| 2026-07-03 | v1.7 C 区封卷:工厂 MVP(升级票纪律)+ money-in 豁免入第 7 条 + 新第 10 条"技能为弱模型设计"(原 10 顺延为 11) | 待 founder 定稿 |
-| 2026-07-03 | v1.8 WHAT-pass 全卷封盘:双模无例外判例 + 租户 RBAC 入第 7 条;通道费独立账道入第 5 条;发布可插拔/CRM 分阶段/独立 Campaign 对象/WhatsApp 第一波/dogfood GTM 入第六章 | 待 founder 定稿 |
-| 2026-07-03 | **v2.0 终稿候选**:harmony 六件套收录(总设计层入金字塔)、第九缝 Parity Manifest 入交通系统、P1→P4 落地顺序 + costing 动工闸入第六章 | **待 founder 终审合并** |
-| 2026-07-03 | v2.1a 第一章定位:SEA = 滩头、终点 = 全球世界级平台(founder 口述;补 v2.1 留痕) | 待 founder 终审 |
-| 2026-07-03 | v2.2 harmony-06 补件(UIUX 设计审可执行版 + 丝滑工程标准 + GM 候选)—— 兑现第 11 条悬空承诺;总设计层改七件 | 待 founder 终审 |
-| 2026-07-03 | v2.2a GM 卷拍板入第 11 条:GM-02/03/04/05 要、GM-01 streak 不要(founder 拍板) | founder 已拍(口头) |
-| 2026-07-03 | v2.3 对标地图入第六章(11 区 × 对标 × 胜负手;第一章对标句改指全量);对标 = 活清单,新增走深研→WHAT-pass | 待 founder 终审 |
-| 2026-07-03 | **v2.1 全量对齐修订**(5 员对抗审查 40+ findings):宪法 5 重写(≥45% 地板/效率良心真入宪,删"视频近成本卖"旧句)/宪法 2 加开发期限定+账本推论/铁律①法币边界/第 4 条两类例外/O-12 之手+O-09 分域入第 7 条/connectors 不要入第 8 条/九条缝改数/区划图刷新至 #117 并豁免不可改/第六章补团队协作+账务透明+包告警+Agency 顺序+叙事节奏/金字塔加判决记录层 | 待 founder 终审 |
+| 2026-07-03 | v1 初稿(Fable 5 起草,基线 main #106) | 已定稿(#109 合并) |
+| 2026-07-03 | v1.1 双模原则入宪(宪法第 7 条)+ 第一章重写 + 第六章新区以 SF/HS 全量分析为底稿(founder 口述修订,总审查员执笔) | 已定稿(#109 合并) |
+| 2026-07-03 | v1.2 第 7 条升格:Otto 全操控 = 最高设计要求,写入四层结构保证(单一动作层/Parity Manifest/读对等/上下文桥)+ 三类豁免(v1.7 起为四类)(founder 口述,总审查员执笔) | 已定稿(#109 合并) |
+| 2026-07-03 | v1.3 第六章新增市政厅 v2(团队阶级制度:矩阵驱动权限 + 钱的阶级 + 审批链 + staff 成员制)(founder 口述,总审查员执笔) | 已定稿(#109 合并) |
+| 2026-07-03 | v1.4 O 区拍板入宪:定价双轨(席位+credits)/skill 永久内部/UIUX 第二支柱(时为第 10 条,v1.7 顺延为第 11 条)/routine 授权模型/建设节奏 = 创作先行赚钱(拍板会第一批,总审查员执笔) | 已定稿(#109 合并) |
+| 2026-07-03 | v1.5 O 区封卷:对外 MCP 永久不做入第 8 条("操作这座城的 agent 永远只有 Otto");O-09 分域/O-10 要/O-12 Otto 之手/O-13 团队协作(归 G 区) | 已定稿(#109 合并) |
+| 2026-07-03 | v1.6 G 区封卷入宪:双档席位/功能全开/滚存上限制(costing 先行)/MYR+分市场定价/直传/unlimited 永禁/白标永禁/Agency 顺序 G-09→协作+G-11→G-10 | 已定稿(#109 合并) |
+| 2026-07-03 | v1.7 C 区封卷:工厂 MVP(升级票纪律)+ money-in 豁免入第 7 条 + 新第 10 条"技能为弱模型设计"(原 10 顺延为 11) | 已定稿(#109 合并) |
+| 2026-07-03 | v1.8 WHAT-pass 全卷封盘:双模无例外判例 + 租户 RBAC 入第 7 条;通道费独立账道入第 5 条;发布可插拔/CRM 分阶段/独立 Campaign 对象/WhatsApp 第一波/dogfood GTM 入第六章 | 已定稿(#109 合并) |
+| 2026-07-03 | **v2.0 终稿候选**:harmony 六件套收录(总设计层入金字塔)、第九缝 Parity Manifest 入交通系统、P1→P4 落地顺序 + costing 动工闸入第六章 | 已定稿(#109 合并) |
+| 2026-07-03 | v2.1a 第一章定位:SEA = 滩头、终点 = 全球世界级平台(founder 口述;补 v2.1 留痕) | 已定稿(#109 合并) |
+| 2026-07-03 | v2.2 harmony-06 补件(UIUX 设计审可执行版 + 丝滑工程标准 + GM 候选)—— 兑现第 11 条悬空承诺;总设计层改七件 | 已定稿(#109 合并) |
+| 2026-07-03 | v2.2a GM 卷拍板入第 11 条:GM-02/03/04/05 要、GM-01 streak 不要(founder 拍板) | 已定稿(#109 合并;founder 口头拍板) |
+| 2026-07-03 | v2.3 对标地图入第六章(11 区 × 对标 × 胜负手;第一章对标句改指全量);对标 = 活清单,新增走深研→WHAT-pass | 已定稿(#109 合并) |
+| 2026-07-03 | **v2.1 全量对齐修订**(补记 —— 修订实际发生在 v2.1a 之前,行为后补,按「只按时间追加」规则留于此位)(5 员对抗审查 40+ findings):宪法 5 重写(≥45% 地板/效率良心真入宪,删"视频近成本卖"旧句)/宪法 2 加开发期限定+账本推论/铁律①法币边界/第 4 条两类例外/O-12 之手+O-09 分域入第 7 条/connectors 不要入第 8 条/九条缝改数/区划图刷新至 #117 并豁免不可改/第六章补团队协作+账务透明+包告警+Agency 顺序+叙事节奏/金字塔加判决记录层 | 已定稿(#109 合并) |
+| 2026-07-04 | v2.4 文书修正(founder 指示,总审查员起草):批准列全量回填(v1–v2.3 均经 #109 合并,按文件头规则即已定稿)+ 第七章新增「批准列写法」「修订表只按时间追加」两条规则 + v2.1 行标注补记。同 PR:第三章区划图刷新至基线 main #129(豁免条款更新,非修订) | 待 founder 终审合并 |
