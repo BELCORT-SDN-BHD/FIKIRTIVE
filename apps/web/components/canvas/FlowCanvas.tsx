@@ -70,9 +70,6 @@ export default function FlowCanvas({
   // gb toolbar: the prompt composer is hidden behind the Generate button (Grok
   // pattern) instead of sitting persistently on the canvas. Display state only.
   const [composerOpen, setComposerOpen] = useState(false);
-  // Phase 2: generating makes 4 variants (4× credits), so submit opens a cost
-  // confirm first — the owner clicks Generate to authorize the spend.
-  const [confirmGen, setConfirmGen] = useState(false);
   // Canvas tool: pan (grab hand, drag pans the board) vs select (arrow cursor,
   // drag box-selects). The toolbar's cursor button toggles this. Display-only.
   const [panMode, setPanMode] = useState(true);
@@ -507,7 +504,6 @@ export default function FlowCanvas({
     directToolsLockedRef.current = directToolsLocked;
     if (directToolsLocked) {
       closeComposer(true);
-      setConfirmGen(false);
       setPendingDeleteId(null);
       setPendingAnimateId(null);
       setT2vOpen(false);
@@ -516,8 +512,8 @@ export default function FlowCanvas({
   }, [directToolsLocked, closeComposer]);
 
   useEffect(() => {
-    if (confirmGen || pendingAnimateId !== null || t2vOpen) refreshCostQuote();
-  }, [confirmGen, pendingAnimateId, t2vOpen, refreshCostQuote]);
+    if (pendingAnimateId !== null || t2vOpen) refreshCostQuote();
+  }, [pendingAnimateId, t2vOpen, refreshCostQuote]);
 
   // Load (and, under the Grok-bright skin, bridge OTTO's chat results onto) the
   // canvas. The gb path resolves each node's media URL and ensures a node exists
@@ -686,7 +682,6 @@ export default function FlowCanvas({
     url: pendingDeleteNode.data?.url as string | undefined,
   });
   const showGraph = canvasReady && (!directToolsLocked || nodes.length > 0 || dragOver);
-  const imageCostLabel = costQuote ? creditsLabel(costQuote.imageCredits) : "checking exact cost";
   const videoCostLabel = costQuote ? creditsLabel(costQuote.videoCredits) : "checking exact cost";
   const directToolTitle = directToolsLocked ? directToolsLockedReason : undefined;
   const visibleNodes: CanvasFlowNode[] = filterNodesByConvo(nodes, activeThreadId, filterToConvo).map((n) => ({
@@ -763,7 +758,7 @@ export default function FlowCanvas({
               ref={composerFormRef}
               className="al-promptbar cv-composer-pop"
               style={{ position: "absolute", bottom: 76, left: "50%", transform: "translateX(-50%)", width: 520 }}
-              onSubmit={(e) => { e.preventDefault(); if (prompt.trim()) { setCostQuote(null); setConfirmGen(true); } }}
+              onSubmit={(e) => { e.preventDefault(); void handleGenerate(); }}
             >
               <div className="al-input-wrap" style={{ flex: 1, minWidth: 0, border: "none", background: "none", padding: 0 }}>
                 <MentionInput
@@ -771,7 +766,7 @@ export default function FlowCanvas({
                   docKey={`canvas-${composerKey}`}
                   placeholder="Describe an image… (@ to reference your stuff)"
                   onChange={(t, ids, vsel) => { setPrompt(t); setPromptIds(ids); setVariantSel(vsel); }}
-                  onSubmit={() => { if (prompt.trim()) { setCostQuote(null); setConfirmGen(true); } }}
+                  onSubmit={() => void handleGenerate()}
                 />
               </div>
               <button className="al-btn al-btn-primary al-btn-sm" type="submit" disabled={submitting || !prompt.trim()}>Generate</button>
@@ -938,22 +933,6 @@ export default function FlowCanvas({
               }}
             >
               {costQuote ? videoSubmitting ? "Starting..." : "Make video" : "Checking cost..."}
-            </Button>
-          </DialogFooter>
-        </DialogContent>
-      </Dialog>
-      <Dialog open={confirmGen} onOpenChange={(open) => { if (!open) setConfirmGen(false); }}>
-        <DialogContent>
-          <DialogHeader>
-            <DialogTitle>Generate 4 variations?</DialogTitle>
-            <DialogDescription>
-              Otto makes 4 images so you can pick the best one. Cost: {imageCostLabel}. No charge until you confirm.
-            </DialogDescription>
-          </DialogHeader>
-          <DialogFooter>
-            <Button variant="ghost" onClick={() => setConfirmGen(false)}>Cancel</Button>
-            <Button disabled={!costQuote} onClick={() => { setConfirmGen(false); void handleGenerate(); }}>
-              {costQuote ? "Generate" : "Checking cost..."}
             </Button>
           </DialogFooter>
         </DialogContent>
