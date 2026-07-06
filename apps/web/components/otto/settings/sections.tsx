@@ -30,8 +30,9 @@ export function buildSettingsSections(args: {
   channels: ChannelState[];
   packs: CreditPack[];
   adsAutonomy: "ASK" | "AUTO";
+  onDeleteAccountRequest: () => void;
 }): SettingsSection[] {
-  const { account, settings, channels, packs, adsAutonomy } = args;
+  const { account, settings, channels, packs, adsAutonomy, onDeleteAccountRequest } = args;
   const canChangeAdsAutonomy = channels.some((c) => c.status === "connected");
 
   const toggle =
@@ -275,13 +276,7 @@ export function buildSettingsSections(args: {
           hint: "Hides your workspace. Contact us to fully erase.",
           button: "Delete",
           tone: "danger",
-          onClick: () => {
-            if (confirm("Delete this account? This hides your workspace.")) {
-              location.assign(
-                "mailto:tao@belcort.com?subject=Delete%20my%20account",
-              );
-            }
-          },
+          onClick: onDeleteAccountRequest,
         },
       ],
     },

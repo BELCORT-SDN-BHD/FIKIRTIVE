@@ -12,7 +12,7 @@ No external codebase, Figma file, or brand kit was provided. This system is an *
 
 - **Fonts:** loaded from Google Fonts CDN (Hanken Grotesk for display + body, JetBrains Mono for code). These are the *chosen brand typefaces*, not stand-ins for an unknown brand font. Swap to self-hosted binaries if licensing requires.
 - **Iconography:** Lucide (CDN) — see ICONOGRAPHY.
-- **OTTO mascot & logos:** original marks in `assets/` (`otto.svg`, `logo-mark.svg`, `logo-wordmark.svg`).
+- **OTTO mascot & logos:** original marks in `assets/` (`otto.svg`, `logo-mark.svg`, `logo-wordmark.svg`). Production source of truth is `apps/web/components/otto/OttoAvatar.tsx`; see `docs/design/2026-07-06-otto-mascot-reactions.md` for the current no-mouth reaction spec.
 
 ---
 
@@ -20,7 +20,7 @@ No external codebase, Figma file, or brand kit was provided. This system is an *
 
 1. **Reassuring, not clever.** We remove fear of AI. Plain language, gentle pacing, "I've got this for you."
 2. **Warm & human, quietly premium.** Slate blue + bone + ink, with coral as OTTO's one warm pop. Rounded everything. Composed, never clinical or cold.
-3. **OTTO is a friend.** A character with personality who guides, never lectures. Always on your side.
+3. **OTTO is a friend.** A character with personality who guides, never lectures. Always on your side. OTTO reactions are no-mouth: personality comes from eyes, pose, and subtle motion only.
 4. **Big and clear.** Generous type, high contrast, large tap targets — designed for everyone, including people who find most software hard.
 5. **Creative payoff.** The output is exciting (campaigns, films!). Moments of delight and color reward the user.
 
@@ -90,7 +90,7 @@ No external codebase, Figma file, or brand kit was provided. This system is an *
 
 - **System:** [Lucide](https://lucide.dev) (CDN). Chosen because its rounded, even-weight, open stroke style matches FIKIRTIVE's friendly geometry. **This is a substitution flag:** no brand icon set was provided; Lucide is the recommended match. Swap if a real set exists.
 - **Style rules:** stroke icons, ~2px stroke, rounded line caps/joins, 20–24px in UI, 32px+ for feature glyphs. Icon color inherits `currentColor` — usually `--text-muted` or `--text-body`, brand coral only when an icon *is* the accent.
-- **OTTO** is the one illustrated character (not an icon) — used as avatar, empty-state hero, and loading presence. Don't redraw OTTO ad-hoc; use `assets/otto.svg` / `logo-mark.svg`.
+- **OTTO** is the one illustrated character (not an icon) — used as avatar, empty-state hero, and loading presence. Don't redraw OTTO ad-hoc; use `OttoAvatar` and its no-mouth `mood` states. Legacy static assets may be used only when they match the same no-mouth rule.
 - **Emoji** appears only as occasional warmth in OTTO's chat copy — never as functional UI icons.
 - **Unicode glyphs** are not used as icons (use Lucide).
 
@@ -117,7 +117,7 @@ Load Lucide in a card/kit:
 **`guidelines/`** — foundation specimen cards (Type, Colors, Spacing, Brand) shown in the Design System tab.
 
 **`components/`** — 16 reusable React primitives. Each has `.jsx`, `.d.ts`, `.prompt.md`, and one `@dsCard` per group.
-- `core/` — Button, IconButton, Badge, Avatar, **OttoAvatar** (the animated agent mascot), Card, Tabs
+- `core/` — Button, IconButton, Badge, Avatar, **OttoAvatar** (the no-mouth animated agent mascot with `idle`, `thinking`, `helpful`, `success`, `warning`, `error`, `waiting`, `approving` moods), Card, Tabs
 - `forms/` — Input, Textarea, Select, Checkbox, Switch
 - `feedback/` — ProgressBar, Toast, Tooltip, Dialog
 
@@ -135,6 +135,6 @@ Load Lucide in a card/kit:
 - Link `styles.css`; everything (tokens + fonts) flows from it.
 - Mount components in `@dsCard`/kit HTML via `const { Button } = window.FIKIRTIVEDesignSystem_2bb27e` after loading `_ds_bundle.js`.
 - Icons: Lucide via CDN (`<i data-lucide="…">` + `lucide.createIcons()`).
-- OTTO: use the `OttoAvatar` component or the `assets/otto.svg` / `logo-mark.svg` files — never redraw.
+- OTTO: use the `OttoAvatar` component and its no-mouth `mood` states — never redraw. If exporting static assets, follow `docs/design/2026-07-06-otto-mascot-reactions.md`.
 
 > Namespace for mounting components in card HTML: `window.FIKIRTIVEDesignSystem_2bb27e`.

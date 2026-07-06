@@ -151,8 +151,8 @@ export interface OttoNavProps {
   onSwitchProject: (projectId: string, threadId?: string) => void;
   /** Open a project's new-turn front door without exposing a separate "chat" nav action. */
   onNewChat: (projectId: string) => void;
-  /** Rename a project (campaign). */
-  onRenameProject: (projectId: string, name: string) => void;
+  /** Open the rename flow for a project (campaign). */
+  onRenameProject: (projectId: string) => void;
   /** Pin/unpin a project (campaign). */
   onSetProjectPinned: (projectId: string, pinned: boolean) => void;
   /** Permanently delete a project (campaign). */
@@ -160,7 +160,7 @@ export interface OttoNavProps {
   onNewCampaign: (name: string) => Promise<boolean>;
   onCampaignNamingChange?: (active: boolean) => void;
   newCampaignPending?: boolean;
-  onRenameThread: (id: string, title: string) => void;
+  onRenameThread: (id: string) => void;
   onSetThreadPinned: (id: string, pinned: boolean) => void;
   onDeleteThread: (id: string) => void;
   /** Spendable balance in DISPLAYED credits (the product shows credits, never dollars). */
@@ -308,16 +308,6 @@ export function OttoNav({
     campaignDraftInputRef.current?.select();
   }, [campaignDraftOpen, newCampaignPending]);
 
-  function promptRenameProject(projectId: string, currentName: string) {
-    const next = window.prompt("Rename campaign", currentName);
-    if (next && next.trim()) onRenameProject(projectId, next.trim());
-  }
-
-  function promptRenameThread(threadId: string, currentTitle: string) {
-    const next = window.prompt("Rename conversation", currentTitle);
-    if (next && next.trim()) onRenameThread(threadId, next.trim());
-  }
-
   function handleCollapseAction() {
     if (getOttoNavCollapseAction(drawerOpen) === "close-drawer") {
       onDrawerClose?.();
@@ -342,7 +332,7 @@ export function OttoNav({
             if (isActiveProject) onSelectThread(thread.id);
             else onSwitchProject(project.id, thread.id);
           })}
-          onDoubleClick={() => promptRenameThread(thread.id, thread.title)}
+          onDoubleClick={() => onRenameThread(thread.id)}
           title={thread.title}
           className={`flex items-center gap-2 flex-1 min-w-0 border-0 rounded-[10px] cursor-pointer text-left transition-colors duration-150 ${nested ? "text-[0.75rem] py-[5px] pr-[54px]" : "text-[0.8125rem] py-[7px] pr-[54px]"} ${isActive ? "bg-secondary text-foreground font-semibold" : "bg-transparent text-muted-foreground font-normal"}`}
           style={{ paddingLeft: nested ? 28 : 12 }}
@@ -558,7 +548,7 @@ export function OttoNav({
                     )}
                     <button
                       onClick={() => handleNavAction(() => openProjectEntry(entry))}
-                      onDoubleClick={() => promptRenameProject(p.id, p.name)}
+                      onDoubleClick={() => onRenameProject(p.id)}
                       title={p.name}
                       className={`flex items-center gap-2 flex-1 min-w-0 border-0 text-[0.875rem] font-semibold text-foreground py-1.5 pr-[62px] pl-2 rounded-[10px] cursor-pointer text-left transition-colors duration-150 ${isActiveProject ? "bg-secondary" : "bg-transparent"}`}
                     >
@@ -601,7 +591,7 @@ export function OttoNav({
                         <button
                           type="button"
                           role="menuitem"
-                          onClick={() => { setOpenMenu(null); promptRenameProject(p.id, p.name); }}
+                          onClick={() => { setOpenMenu(null); onRenameProject(p.id); }}
                         >
                           <Pencil size={14} aria-hidden />
                           Rename project
