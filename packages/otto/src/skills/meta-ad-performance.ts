@@ -4,6 +4,8 @@ import { defineOttoSkill } from "../skill.js";
 import type { OttoContext } from "../context.js";
 
 const NOT_CONNECTED = "Meta isn't connected yet, so I can't read your per-ad performance. Connect Meta in Settings first.";
+const META_UNREACHABLE =
+  "I couldn't reach Meta just now — a temporary hiccup on Meta's side, not a connection problem. Try again in a moment.";
 
 export const metaAdPerformanceInput = z.object({
   datePreset: z.enum(["last_7d", "last_14d", "last_30d", "last_90d"]).default("last_30d")
@@ -18,6 +20,7 @@ export async function executeMetaAdPerformance(
   if (!ctx?.metaPerformance) return { message: NOT_CONNECTED };
   const res = await ctx.metaPerformance.getAds(input.datePreset);
   if ("notConnected" in res || "needsReconnect" in res) return { message: NOT_CONNECTED };
+  if ("transientError" in res) return { message: META_UNREACHABLE };
   return { datePreset: res.datePreset, fetchedAt: res.fetchedAt, truncated: res.truncated, organic: res.organic, ads: res.ads };
 }
 

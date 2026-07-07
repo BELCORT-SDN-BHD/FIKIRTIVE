@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { clampVisionInts, createTransportFromConfig, mergeVisionConfig, effectiveCoworkProvider } from "./runtime-config.js";
+import { clampVisionInts, mergeVisionConfig, effectiveCoworkProvider } from "./runtime-config.js";
 import { runtimeConfigInput } from "./cowork.js";
 
 describe("effectiveCoworkProvider (beta $0 lock)", () => {
@@ -23,20 +23,6 @@ describe("clampVisionInts", () => {
     expect(clampVisionInts({ maxImages: 99, maxBytes: 99_000_000 })).toEqual({ maxImages: 8, maxBytes: 16_000_000 });
     expect(clampVisionInts({ maxImages: 0, maxBytes: -1 })).toEqual({ maxImages: 3, maxBytes: 4_000_000 });
     expect(clampVisionInts({ maxImages: Infinity, maxBytes: NaN })).toEqual({ maxImages: 3, maxBytes: 4_000_000 });
-  });
-});
-
-describe("createTransportFromConfig", () => {
-  it("defaults to mock for unset/unknown provider", () => {
-    expect(createTransportFromConfig({ provider: undefined }).name).toBe("mock");
-    expect(createTransportFromConfig({ provider: "weird" }).name).toBe("mock");
-  });
-  it("builds fal transport when provider=fal + key present", () => {
-    expect(createTransportFromConfig({ provider: "fal", falKey: "k" }).name).toBe("fal:llm");
-  });
-  it("THROWS for a set provider with a missing credential (loud, never silent-mock)", () => {
-    expect(() => createTransportFromConfig({ provider: "fal" })).toThrow(/FAL_KEY/);
-    expect(() => createTransportFromConfig({ provider: "modal", modalEndpoint: "x" })).toThrow(/MODAL_LLM/);
   });
 });
 

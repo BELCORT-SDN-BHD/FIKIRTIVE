@@ -16,6 +16,8 @@ import type { OttoContext } from "../context.js";
 
 const NOT_CONNECTED =
   "Meta isn't connected yet. Ask the user to open Connections and click Connect Meta, then try again.";
+const META_UNREACHABLE =
+  "I couldn't reach Meta just now — a temporary hiccup on Meta's side, not a connection problem. Try again in a moment.";
 
 export const metaInsightsInput = z.object({
   datePreset: z
@@ -38,6 +40,7 @@ export async function executeMetaInsights(
   if (!ctx?.metaInsights) return { message: NOT_CONNECTED };
   const res = await ctx.metaInsights.get(input.datePreset);
   if ("notConnected" in res || "needsReconnect" in res) return { message: NOT_CONNECTED };
+  if ("transientError" in res) return { message: META_UNREACHABLE };
   if (res.accounts.length === 0) {
     return { message: "Meta is connected but no ad accounts returned data for this window." };
   }

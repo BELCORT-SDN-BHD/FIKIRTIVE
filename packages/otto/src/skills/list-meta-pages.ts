@@ -15,6 +15,8 @@ import type { OttoContext } from "../context.js";
 
 const NOT_CONNECTED =
   "Meta isn't connected yet. Ask the user to open Connections and click Connect Meta, then try again.";
+const META_UNREACHABLE =
+  "I couldn't reach Meta just now — a temporary hiccup on Meta's side, not a connection problem. Try again in a moment.";
 
 const NEEDS_PAGE_SCOPE =
   "Reconnect Meta and allow Page access so I can build ads.";
@@ -35,6 +37,7 @@ export async function executeListMetaPages(
   if (!ctx?.metaPages) return { message: NOT_CONNECTED };
   const res = await ctx.metaPages.list();
   if ("notConnected" in res || "needsReconnect" in res) return { message: NOT_CONNECTED };
+  if ("transientError" in res) return { message: META_UNREACHABLE };
   if ("needsPageScope" in res) return { message: NEEDS_PAGE_SCOPE };
   return { pages: res.pages };
 }

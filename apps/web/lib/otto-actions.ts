@@ -37,7 +37,7 @@ import {
   searchWithFallback,
   extractProductDraft,
 } from "@fikirtive/core";
-import { otto, withLlmBudget, OTTO_DEFAULT_MODEL, run, MaxTurnsExceededError, mapOttoUsage, ottoSimpleModeBlock, buildUserTurn, sanitizeHistory, tryRestoreRunState } from "@fikirtive/otto";
+import { otto, withLlmBudget, OTTO_DEFAULT_MODEL, run, MaxTurnsExceededError, mapOttoUsage, ottoSimpleModeBlock, buildUserTurn, sanitizeHistory, tryRestoreRunState, extractText } from "@fikirtive/otto";
 import type { OttoContext, AgentInputItem } from "@fikirtive/otto";
 import { requireOwner } from "./auth-guard";
 import { isImpersonating } from "@/lib/better-auth/compat";
@@ -284,7 +284,8 @@ export async function buildOttoContext({
 }
 
 // ---------------------------------------------------------------------------
-// extractText / finalizeOttoRun — shared post-run persistence
+// finalizeOttoRun — shared post-run persistence
+// (extractText lives in @fikirtive/otto run-output.ts — the single source, 7-14b.)
 //
 // finalizeOttoRun is the EXACT post-run persistence ottoTurn performs after a
 // (non-streaming) run completes, lifted verbatim so the streaming route handler
@@ -297,22 +298,6 @@ export async function buildOttoContext({
 // The CAS guard `updateMany({ where:{ id, ownerId, ottoState: priorOttoState }})`
 // (count 0 ⇒ stale) is preserved. Does NOT call revalidatePath (caller-owned).
 // ---------------------------------------------------------------------------
-
-/** Extract plain-text output from a RunResult's newItems (best-effort). */
-// eslint-disable-next-line @typescript-eslint/no-explicit-any
-export function extractText(r: any): string {
-  if (r.finalOutput != null) return String(r.finalOutput);
-  return (Array.isArray(r.newItems) ? (r.newItems as any[]) : [])
-    .filter((it: any) => it.type === "message_output_item")
-    .map((it: any) => {
-      const content: any[] = it?.rawItem?.content ?? [];
-      return content
-        .filter((c: any) => c.type === "output_text")
-        .map((c: any) => c.text ?? "")
-        .join("");
-    })
-    .join("");
-}
 
 export type FinalizeOttoRunResult =
   | { status: "needs_approval"; pendingCardIds: string[] }
@@ -790,21 +775,7 @@ export async function ottoApprove(raw: unknown): Promise<
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     const result = agentResult as any;
 
-    // Reuse the shared extractText helper pattern from ottoTurn
-    function extractText(r: any): string {
-      if (r.finalOutput != null) return String(r.finalOutput);
-      return (Array.isArray(r.newItems) ? (r.newItems as any[]) : [])
-        .filter((it: any) => it.type === "message_output_item")
-        .map((it: any) => {
-          const content: any[] = it?.rawItem?.content ?? [];
-          return content
-            .filter((c: any) => c.type === "output_text")
-            .map((c: any) => c.text ?? "")
-            .join("");
-        })
-        .join("");
-    }
-
+    // Shared extractText (@fikirtive/otto run-output.ts) — this was a local copy until 7-14b.
     const newOttoState = result.state.toString() as string;
 
     // Handle another interruption (chained approval needed)

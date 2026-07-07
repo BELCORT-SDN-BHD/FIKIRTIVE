@@ -38,8 +38,7 @@ Each check ends on a concrete, checkable verdict. A single failed check blocks t
 - `.strict()` stays on `genRequest` (no silent extra fields), and any new video/param field is range-checked in the `.superRefine` against the model's option set before it can reach the worker.
 
 ### (b) the cowork agent path still creates NO GenJob / never spends
-- `coworkTurn` (`apps/web/lib/cowork-actions.ts`) must remain $0: it persists messages and a **display-only** `GEN_CARD` (`estimatedPriceUsd` is display-only), calls no spend entrypoint, creates no GenJob/RefGenJob. The planner `transport.chat` is mock-$0 in dev and a non-spend LLM call otherwise.
-- The ONLY cowork spend is the user later clicking Generate → `coworkGenerate` → `startGen`. Verdict: the diff adds no GenJob create, no `boss.send(GEN_QUEUE…)`, no fal call to the agent/turn/planner path.
+- The ONLY cowork spend is the user clicking Generate on a persisted card → `coworkGenerate` → `startGen`; the propose side (Otto turns / cards, `estimatedPriceUsd` display-only) must stay $0 on media. Verdict: the diff adds no GenJob create, no `boss.send(GEN_QUEUE…)`, no fal call to the agent/turn/propose path. (The legacy `coworkTurn` action this check originally pinned was deleted in batch-3 7-10.)
 
 ### (c) new/changed spend is additive and cannot double-charge
 - `coworkGenerate` re-spend guard intact: it reads any-status `GenJob` by `idempotencyKey: cowork:<cardId>` and returns the existing job; the race-proof backstop is the all-status unique index `GenJob_cowork_idempotency_once`. A card generates **at most once ever** — retry = a new card, never a silent re-charge.

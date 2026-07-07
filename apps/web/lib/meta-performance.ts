@@ -1,6 +1,7 @@
 import { prisma } from "@fikirtive/db";
 import { decryptToken } from "./token-encryption";
 import { metaGraphGet, getAdInsights, getAdCreative, type AdCreative, type AdInsightsRow } from "./meta-graph";
+import { classifyMetaGraphError } from "./meta-errors";
 
 export const MAX_ADS = 25;
 
@@ -23,7 +24,7 @@ const metricsOf = (r: AdInsightsRow): Record<string, string | null> => ({
  *  (truncated flag stays honest). Organic is scope-gated: pending_permission until App Review + reconnect. */
 export async function fetchOwnerAdPerformance(
   ownerId: string, datePreset: string,
-): Promise<OwnerAdPerformance | { needsReconnect: true } | { notConnected: true }> {
+): Promise<OwnerAdPerformance | { needsReconnect: true } | { transientError: true } | { notConnected: true }> {
   const conn = await prisma.metaConnection.findUnique({ where: { ownerId } });
   if (!conn) return { notConnected: true };
   let token: string;
@@ -42,10 +43,7 @@ export async function fetchOwnerAdPerformance(
       for (const r of rows) all.push({ ...r, accountId });
     }
   } catch (e) {
-    if ((e as { metaError?: { code?: number } })?.metaError?.code === 190) {
-      await prisma.metaConnection.update({ where: { ownerId }, data: { status: "expired" } }).catch(() => {});
-    }
-    return { needsReconnect: true };
+    return classifyMetaGraphError(ownerId, e);
   }
   const sorted = all.slice().sort((x, y) => Number(y.spend ?? 0) - Number(x.spend ?? 0));
   const top = sorted.slice(0, MAX_ADS);

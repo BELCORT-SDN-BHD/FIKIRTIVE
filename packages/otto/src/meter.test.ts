@@ -9,7 +9,6 @@
  *  #5 no usage → settle full reserve (no refund)
  *  #6 reserve happens BEFORE fn BEFORE settle (call order asserted)
  *  #7 actualCostInternal pure math (cached rate, ceiling, 0-token edge)
- *  #8 source audit — enhancePrompt + coworkDraftStoryboard route through withLlmBudget
  */
 import { describe, it, expect, vi, beforeEach } from "vitest";
 
@@ -305,23 +304,3 @@ describe("Test #9 — withLlmBudget usageOnError", () => {
   });
 });
 
-// ---------------------------------------------------------------------------
-// Test #8: source audit — enhancePrompt + coworkDraftStoryboard use withLlmBudget
-// ---------------------------------------------------------------------------
-describe("Test #8 — bypass audit: withLlmBudget wraps the model call in cowork-actions", () => {
-  it("cowork-actions.ts source contains withLlmBudget import and usage around transport.chat", async () => {
-    const { readFileSync } = await import("node:fs");
-    const { fileURLToPath } = await import("node:url");
-    const { resolve, dirname } = await import("node:path");
-
-    // Path from packages/otto/src/meter.test.ts → apps/web/lib/cowork-actions.ts
-    const thisFile = fileURLToPath(import.meta.url);
-    const actionsPath = resolve(dirname(thisFile), "../../../apps/web/lib/cowork-actions.ts");
-    const src = readFileSync(actionsPath, "utf8");
-
-    // withLlmBudget must be imported
-    expect(src).toContain("withLlmBudget");
-    // transport.chat calls in the two metered functions must be inside withLlmBudget
-    expect(src).toMatch(/withLlmBudget[^]*transport\.chat/s);
-  });
-});

@@ -1,12 +1,9 @@
 /**
  * Pure runtime-config helpers (OPT-6 P1a). No prisma — core stays pure. The DB
  * read-through lives in apps/web/lib/runtime-config.ts; this file owns ONLY the
- * clamp (the safety primitive) and the env-free transport switch (one source of
- * truth for createTransport's behavior). Keep the loud-throw on a set provider
- * with a missing credential — a stray key must never silently spend.
+ * clamp (the safety primitive) and the provider money-lock. (The transport
+ * switch it also owned died with the legacy cowork planner actions, batch-3 7-10.)
  */
-import { MockTransport, FalTransport, ModalTransport } from "./cowork-transport.js";
-import type { CoworkTransport } from "./cowork.js";
 
 export const VISION_DEFAULTS = { maxImages: 3, maxBytes: 4_000_000 } as const;
 export const VISION_CEILINGS = { maxImages: 8, maxBytes: 16_000_000 } as const;
@@ -38,8 +35,8 @@ export function mergeVisionConfig(
 
 /** Resolve the EFFECTIVE cowork planner provider, with a beta money-safety lock.
  *  DB provider overrides env, BUT when paid providers are not allowed (the beta
- *  default), any paid provider (fal/modal) is forced to undefined → MockTransport
- *  ($0). This caps cowork LLM spend that the credits ledger does not cover. */
+ *  default), any paid provider (fal/modal) is forced to undefined → mock ($0).
+ *  This caps cowork LLM spend that the credits ledger does not cover. */
 export function effectiveCoworkProvider(args: {
   dbProvider?: string;
   envProvider?: string;
@@ -48,18 +45,4 @@ export function effectiveCoworkProvider(args: {
   const resolved = args.dbProvider ?? args.envProvider;
   if (!args.paidAllowed) return undefined; // locked → mock
   return resolved;
-}
-
-export interface TransportConfig { provider?: string; falKey?: string; modalEndpoint?: string; modalKey?: string; }
-
-export function createTransportFromConfig(cfg: TransportConfig): CoworkTransport {
-  if (cfg.provider === "fal") {
-    if (!cfg.falKey) throw new Error("COWORK_PROVIDER=fal but FAL_KEY is not set");
-    return new FalTransport(cfg.falKey);
-  }
-  if (cfg.provider === "modal") {
-    if (!cfg.modalEndpoint || !cfg.modalKey) throw new Error("COWORK_PROVIDER=modal but MODAL_LLM_ENDPOINT or MODAL_LLM_KEY is not set");
-    return new ModalTransport(cfg.modalEndpoint, cfg.modalKey);
-  }
-  return new MockTransport();
 }
