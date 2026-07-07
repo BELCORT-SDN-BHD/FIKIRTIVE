@@ -99,7 +99,7 @@ agent + project to manage conversations), #35 Spicy/18+ (NSFW).
 
 ## Current-state map — re-audit of main @ fba7882 (post 34-PR integration, 2026-06-27)
 
-Audit of the LIVE code (primary repo `/Users/winnin/Desktop/artlio`, not the stale worktree).
+Audit of the LIVE code (primary repo `/Users/winnin/Desktop/fikirtive`, not the stale worktree).
 This grounds the HOW decision per item. Suggested HOW is the audit's reading of code reality.
 
 ### 可直接复用 / reuse-as-is (16)

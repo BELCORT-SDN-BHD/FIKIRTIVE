@@ -12,13 +12,13 @@ import { writeFile, rm } from "node:fs/promises";
 import { randomBytes, createHash } from "node:crypto";
 
 const BASE = process.env.BASE_URL ?? "http://localhost:3100";
-const DB = process.env.DATABASE_URL ?? "postgresql://artlio:artlio@localhost:5432/artlio";
+const DB = process.env.DATABASE_URL ?? "postgresql://fikirtive:fikirtive@localhost:5432/fikirtive";
 process.env.DATABASE_URL = DB;
 process.env.STORAGE_DRIVER = "r2";
 process.env.R2_ENDPOINT ??= "http://localhost:9000";
 process.env.R2_ACCESS_KEY_ID ??= "minioadmin";
 process.env.R2_SECRET_ACCESS_KEY ??= "minioadmin";
-process.env.R2_BUCKET ??= "artlio";
+process.env.R2_BUCKET ??= "artlio"; // prod bucket still carries the pre-pivot name — flip after the MASTERPLAN P0 bucket migration
 
 const { prisma } = await import("../../packages/db/dist/src/index.js");
 const { createStorage } = await import("../../packages/storage/dist/index.js");
@@ -33,7 +33,7 @@ const step = (msg) => console.log(`✓ ${msg}`);
 /* ---------------- A. browser multipart upload ---------------- */
 
 const BIG = UPLOAD_SINGLE_MAX_BYTES + 2 * 1024 * 1024; // 66 MiB → 2 parts
-const bigFile = "/tmp/artlio-big-upload.mp4";
+const bigFile = "/tmp/fikirtive-big-upload.mp4";
 const bigBytes = randomBytes(BIG);
 const bigHash = createHash("sha256").update(bigBytes).digest("hex");
 await writeFile(bigFile, bigBytes);

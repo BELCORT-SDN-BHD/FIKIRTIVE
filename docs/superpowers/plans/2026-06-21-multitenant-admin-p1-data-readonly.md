@@ -6,7 +6,7 @@
 
 **Architecture:** Mirror the existing admin pattern exactly: a `force-dynamic` server-component page gated by `requireRole("tenants", "read")` that fetches via a new server-only data module and renders a `@/components/admin/*` client component. Cross-tenant reads use the tenant (`Organization`/`Membership`/`CreditAccount`) tables + guard-exempt `count`/`aggregate`/`groupBy` pinned to `ownerId` — never an owner-scoped `findMany` without `ownerId`.
 
-**Tech Stack:** Next.js (app router, RSC + server actions), Prisma 7 (driver-adapter), `@artlio/core` (roles), `@artlio/db` (prisma), vitest.
+**Tech Stack:** Next.js (app router, RSC + server actions), Prisma 7 (driver-adapter), `@fikirtive/core` (roles), `@fikirtive/db` (prisma), vitest.
 
 **Spec:** `docs/superpowers/specs/2026-06-21-multitenant-admin-console-design.md`
 
@@ -50,7 +50,7 @@ describe("tenants section (super-admin only)", () => {
 
 - [ ] **Step 2: Run test to verify it fails**
 
-Run: `pnpm --filter @artlio/core test -- roles`
+Run: `pnpm --filter @fikirtive/core test -- roles`
 Expected: FAIL (`"tenants"` not a valid Section / matrix key undefined).
 
 - [ ] **Step 3: Add the section + matrix row**
@@ -66,13 +66,13 @@ Add the matrix row (super-admin only, via supersede — empty sets, mirrors `tea
 
 - [ ] **Step 4: Run test to verify it passes**
 
-Run: `pnpm --filter @artlio/core test -- roles`
-Expected: PASS. Also run the full core suite (`pnpm --filter @artlio/core test`) — fix any test that asserts a fixed section count (was 7 → now 8).
+Run: `pnpm --filter @fikirtive/core test -- roles`
+Expected: PASS. Also run the full core suite (`pnpm --filter @fikirtive/core test`) — fix any test that asserts a fixed section count (was 7 → now 8).
 
 - [ ] **Step 5: Rebuild core so web sees the new Section type**
 
-Run: `pnpm --filter @artlio/core build`
-(Existing quirk: web type-checks against the built `@artlio/core` dist.)
+Run: `pnpm --filter @fikirtive/core build`
+(Existing quirk: web type-checks against the built `@fikirtive/core` dist.)
 
 - [ ] **Step 6: Commit** (only if the user has authorized committing this phase)
 
@@ -136,7 +136,7 @@ CREATE INDEX "Organization_list_idx" ON "Organization"("deletedAt", "createdAt")
 
 - [ ] **Step 4: Regenerate the Prisma client + typecheck db**
 
-Run: `pnpm --filter @artlio/db build`
+Run: `pnpm --filter @fikirtive/db build`
 Expected: client regenerates (so `prisma.allowedEmail` exists); `tsc` clean.
 
 - [ ] **Step 5: Commit** (if authorized)
@@ -161,7 +161,7 @@ git commit -m "feat(tenants): AllowedEmail table + Organization list index (addi
   - `type TenantDetail = { orgId: string; name: string; ownerEmail: string; status: string; balance: number; reserved: number; spentUsd: number; projectCount: number; genCount: number; ledger: { id: string; kind: string; displayedDelta: number; reason: string; createdAt: string }[]; audit: { id: string; type: string; createdAt: string }[] }`
   - `async function listTenants(): Promise<{ tenants: TenantRow[]; invited: InvitedRow[] }>`
   - `async function getTenantDetail(orgId: string): Promise<TenantDetail | null>`
-- Consumes: `prisma` (`@artlio/db`), `displayCredits`, `FOUNDER_OWNER_ID`, `genSpentUsd`-style cost (use stored `GenJob.spentUsd`/`RefGenJob.spentUsd` sums — record-only true cost), `displayCredits` from `@artlio/core`.
+- Consumes: `prisma` (`@fikirtive/db`), `displayCredits`, `FOUNDER_OWNER_ID`, `genSpentUsd`-style cost (use stored `GenJob.spentUsd`/`RefGenJob.spentUsd` sums — record-only true cost), `displayCredits` from `@fikirtive/core`.
 
 - [ ] **Step 1: Write the failing test** (unit, mocked prisma — pins tenant-scoping + mapping)
 
@@ -173,7 +173,7 @@ const orgFindMany = vi.fn();
 const membershipFindMany = vi.fn();
 const creditAccountFindMany = vi.fn();
 const allowedFindMany = vi.fn();
-vi.mock("@artlio/db", () => ({
+vi.mock("@fikirtive/db", () => ({
   prisma: {
     organization: { findMany: orgFindMany },
     membership: { findMany: membershipFindMany },
@@ -211,8 +211,8 @@ Expected: FAIL (module not found).
 Create `apps/web/lib/tenant-admin.ts`:
 ```ts
 import "server-only";
-import { prisma } from "@artlio/db";
-import { displayCredits, FOUNDER_OWNER_ID } from "@artlio/core";
+import { prisma } from "@fikirtive/db";
+import { displayCredits, FOUNDER_OWNER_ID } from "@fikirtive/core";
 
 export type TenantRow = { orgId: string; name: string; ownerEmail: string; status: string; balance: number; genCount: number; lastActiveAt: string | null };
 export type InvitedRow = { email: string; status: string; invitedBy: string; createdAt: string };
@@ -331,7 +331,7 @@ import { listTenants } from "@/lib/tenant-admin";
 import { TenantsAdmin } from "@/components/admin/TenantsAdmin";
 
 export const dynamic = "force-dynamic";
-export const metadata = { title: "Tenants · Artlio admin" };
+export const metadata = { title: "Tenants · Fikirtive admin" };
 
 export default async function TenantsPage() {
   // §⑧ Tenants — super-admin only (matrix). requireRole audits a denied read.
@@ -426,7 +426,7 @@ import { getTenantDetail } from "@/lib/tenant-admin";
 import { TenantDetail } from "@/components/admin/TenantDetail";
 
 export const dynamic = "force-dynamic";
-export const metadata = { title: "Tenant · Artlio admin" };
+export const metadata = { title: "Tenant · Fikirtive admin" };
 
 export default async function TenantDetailPage({ params }: { params: Promise<{ orgId: string }> }) {
   const gate = await requireRole("tenants", "read");
@@ -504,7 +504,7 @@ Run, expecting all green:
 - `pnpm -r typecheck`
 - `cd apps/web && DATABASE_URL=<local> npx vitest run lib/__tests__/` (incl. the new tenant-admin + isolation assertions)
 - `cd apps/web && npm run build`
-- `pnpm --filter @artlio/core test`
+- `pnpm --filter @fikirtive/core test`
 
 - [ ] **Step 2: Codex review** the P1 diff (read-only), tenancy + correctness lens. Resolve every [P1].
 

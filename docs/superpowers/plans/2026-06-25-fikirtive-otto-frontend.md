@@ -12,7 +12,7 @@
 - **Non-standard Next.js** (`apps/web/AGENTS.md`) — read `apps/web/node_modules/next/dist/docs/` before route/layout code.
 - **Theme isolation:** the light theme MUST NOT bleed into dark `/studio`. Scope all new tokens under a wrapper class (`.fk`) in a NEW `apps/web/app/otto/otto-theme.css`; the OttoApp root carries `className="fk"`. Do NOT edit `globals.css`.
 - **Money path untouched.** All spend stays via the existing `ottoApprove`/`startGen`. New batch work reserves/settles through the existing metered path only.
-- **Cross-package builds:** changing `packages/*` requires `pnpm --filter @fikirtive/<pkg> build` before web sees it (db tests need `DATABASE_URL=postgresql://artlio:artlio@localhost:5432/artlio_test`).
+- **Cross-package builds:** changing `packages/*` requires `pnpm --filter @fikirtive/<pkg> build` before web sees it (db tests need `DATABASE_URL=postgresql://fikirtive:fikirtive@localhost:5432/fikirtive_test`).
 - Recreate the design's **visual output** faithfully (tokens, radii, shadows, spacing, copy/voice). Sentence case; Otto = first person, UI = "you". No jargon.
 
 ## Architecture

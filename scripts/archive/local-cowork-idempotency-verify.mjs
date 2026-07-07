@@ -8,7 +8,7 @@
 // Run:  node scripts/archive/local-cowork-idempotency-verify.mjs
 import { randomUUID } from "node:crypto";
 
-process.env.DATABASE_URL ??= "postgresql://artlio:artlio@localhost:5432/artlio";
+process.env.DATABASE_URL ??= "postgresql://fikirtive:fikirtive@localhost:5432/fikirtive";
 const { prisma } = await import("../../packages/db/dist/src/index.js");
 
 const OWNER = "founder";

@@ -67,7 +67,7 @@ const { setMembershipStatus, cutTenantSessions, inviteTenant, revokeTenantInvite
   await import("@/lib/tenant-actions");
 
 // A resolved gate value returned by requireRole on success.
-const GATE = { email: "admin@artlio.com", role: "super_admin" };
+const GATE = { email: "admin@fikirtive.com", role: "super_admin" };
 const GATE_ERROR = { error: "You don't have access to this." };
 
 beforeEach(() => {

@@ -45,7 +45,7 @@ process.env.GOOGLE_CLIENT_SECRET ||= "test-secret";
 // Deny-by-default allowlist: a founder that is NOT our test subject, and an
 // empty env allowlist. The blocked email (below) is therefore in NONE of
 // FOUNDER_ADMIN_EMAILS, AUTH_ALLOWED_EMAILS, or the AllowedEmail table.
-process.env.FOUNDER_ADMIN_EMAILS = "founder@artlio.test";
+process.env.FOUNDER_ADMIN_EMAILS = "founder@fikirtive.test";
 process.env.AUTH_ALLOWED_EMAILS = "";
 
 const { auth } = await import("@/lib/better-auth/server");

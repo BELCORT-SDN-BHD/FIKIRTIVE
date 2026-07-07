@@ -36,7 +36,7 @@ Per `docs/ui-rework/fk-to-gb-token-map.md`. The nav uses these fk tokens — con
 
 - [ ] **Step 1: Screenshot the current nav** so the conversion can be proven identical. The otto shell is auth-walled; the existing `app/skin-preview/page.tsx` renders the real `OttoApp` (incl. `OttoNav`) with mock data. Run the dev server + browse:
 ```bash
-cd /Users/winnin/Desktop/artlio/.claude/worktrees/gracious-chandrasekhar-72f8c9
+cd /Users/winnin/Desktop/fikirtive/.claude/worktrees/gracious-chandrasekhar-72f8c9
 PORT=3007 pnpm --filter @fikirtive/web dev > /private/tmp/dev-s1a.log 2>&1 &   # wait for ready (poll lsof -ti:3007)
 B="$HOME/.claude/skills/gstack/browse/dist/browse"
 $B viewport 1440x900; $B goto "http://localhost:3007/skin-preview"; $B wait --networkidle; sleep 1

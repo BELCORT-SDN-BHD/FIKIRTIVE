@@ -23,7 +23,7 @@ export function storageKey(ownerId: string, contentHash: string, ext: string): s
 
 export function parseStorageKey(key: string): { ownerId: string; contentHash: string; ext: string } {
   const m = key.match(/^u\/([0-9A-Za-z_-]+)\/([0-9a-f]{64})\.([0-9a-z]{1,8})$/);
-  if (!m) throw new Error(`not an artlio storage key: ${key}`);
+  if (!m) throw new Error(`not a fikirtive storage key: ${key}`);
   return { ownerId: m[1]!, contentHash: m[2]!, ext: m[3]! };
 }
 

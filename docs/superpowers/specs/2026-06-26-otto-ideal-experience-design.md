@@ -78,7 +78,7 @@ These five rules are the spine. Every current surface and every future module ob
 
 ## Relationship to the audit (gap → target)
 
-This document is the **target**. The [41-problem audit](../../ux-audit-2026-06-26-otto.md) is the **gap** between today and this target, and its **8-PR roadmap** is the concrete path. PR 1 (honest money copy + credits, [artlio#11](https://github.com/toolsbbb/artlio/pull/11)) already shipped the first slice of the trustworthy core.
+This document is the **target**. The [41-problem audit](../../ux-audit-2026-06-26-otto.md) is the **gap** between today and this target, and its **8-PR roadmap** is the concrete path. PR 1 (honest money copy + credits, [fikirtive#11](https://github.com/toolsbbb/fikirtive/pull/11)) already shipped the first slice of the trustworthy core.
 
 ---
 

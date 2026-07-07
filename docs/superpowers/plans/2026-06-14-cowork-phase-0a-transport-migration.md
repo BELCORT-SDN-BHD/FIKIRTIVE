@@ -4,7 +4,7 @@
 
 **Goal:** De-tangle cowork's `transport / knowledge / parse` for the two existing skills (`draftStoryboard`, `enhancePrompt`) behind a model-neutral `CoworkTransport`, with parity tests proving byte-for-byte unchanged skill behavior. No new features.
 
-**Architecture:** Model-neutral engine (transport + per-skill runners) lives in **`packages/core/`** (existing package — honors the Railway "no new workspace package" rule, and the only place with a vitest harness). `apps/web` server actions stay the thin money-safety + DB boundary, now importing `createTransport` + `runSkill` from `@artlio/core`. The old `apps/web/lib/cowork-provider.ts` is deleted.
+**Architecture:** Model-neutral engine (transport + per-skill runners) lives in **`packages/core/`** (existing package — honors the Railway "no new workspace package" rule, and the only place with a vitest harness). `apps/web` server actions stay the thin money-safety + DB boundary, now importing `createTransport` + `runSkill` from `@fikirtive/core`. The old `apps/web/lib/cowork-provider.ts` is deleted.
 
 **Tech Stack:** TypeScript (ESM, `.js` import specifiers), zod, vitest (core harness), Next 16 server actions.
 
@@ -64,7 +64,7 @@ export interface CoworkTransport {
 - [x] **T5** — Full verify (core 65 green; core+web+worker typecheck; web lint). Codex reviewed twice → **VERDICT: SHIP**. P2 (enhance clamp) resolved as documented sub-parity. **Not committed** (awaiting go-ahead). `COWORK_PROVIDER=fal` deploy flag raised.
 
 ## Verify commands
-- Core tests: `pnpm --filter @artlio/core test`
-- Core build (so apps/web sees new exports via dist): `pnpm --filter @artlio/core build`
-- Core typecheck: `pnpm --filter @artlio/core typecheck`
+- Core tests: `pnpm --filter @fikirtive/core test`
+- Core build (so apps/web sees new exports via dist): `pnpm --filter @fikirtive/core build`
+- Core typecheck: `pnpm --filter @fikirtive/core typecheck`
 - Web typecheck/lint: (resolve from apps/web package.json during T4)

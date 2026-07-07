@@ -151,7 +151,7 @@ git commit -m "feat(worker): VARIANT i2i refgen path conditioned on base; attach
 
 - [ ] **Step 1: Add the four actions**
 
-In `apps/web/lib/refgen-actions.ts`, add `slugify` to the `@artlio/core` import, and add after `setBaseAsset` (before `getRefGenJobs`):
+In `apps/web/lib/refgen-actions.ts`, add `slugify` to the `@fikirtive/core` import, and add after `setBaseAsset` (before `getRefGenJobs`):
 
 ```ts
 const STALE_MS = 15 * 60 * 1000;
@@ -587,7 +587,7 @@ git commit -m "feat(web): variants grid + add-variant form in entity drawer (pha
 
 - [ ] **Step 1: Full verify**
 
-Run: `pnpm -r typecheck && pnpm --filter @artlio/core test && pnpm --filter web build`
+Run: `pnpm -r typecheck && pnpm --filter @fikirtive/core test && pnpm --filter web build`
 Expected: all clean / green.
 
 - [ ] **Step 2: Codex review**
@@ -596,7 +596,7 @@ Expected: all clean / green.
 
 - [ ] **Step 3: Stop for deploy decision**
 
-Do NOT deploy. Report verified state. Prod deploy is A+B together: `pnpm --filter @artlio/db migrate:deploy` (no new migration in Phase B — schema landed in Phase A) then `railway up --service web` + `--service worker`, on the user's explicit authorization.
+Do NOT deploy. Report verified state. Prod deploy is A+B together: `pnpm --filter @fikirtive/db migrate:deploy` (no new migration in Phase B — schema landed in Phase A) then `railway up --service web` + `--service worker`, on the user's explicit authorization.
 
 ---
 
@@ -612,7 +612,7 @@ Do NOT deploy. Report verified state. Prod deploy is A+B together: `pnpm --filte
 - Validate-before-spend (base live) in createVariant + worker belt → B2 + B1 ✓
 - Fail-closed (variant base unreachable → throw before spend) → B1 ✓
 
-**Type consistency:** `createVariant → { variantId, jobId }`; `regenerateVariant → { jobId }`; `attachOutputs(entityId, ownerId, assetIds, variantId=null)`; `getRefGenJobs(entityId, variantId?)`; `VariantDTO { id, name, handle, prompt, refs }` consumed by `VariantsBlock`. `slugify` imported from `@artlio/core` (Phase A). All consistent.
+**Type consistency:** `createVariant → { variantId, jobId }`; `regenerateVariant → { jobId }`; `attachOutputs(entityId, ownerId, assetIds, variantId=null)`; `getRefGenJobs(entityId, variantId?)`; `VariantDTO { id, name, handle, prompt, refs }` consumed by `VariantsBlock`. `slugify` imported from `@fikirtive/core` (Phase A). All consistent.
 
 **Deferred:** `startRefGen` still rejects `mode=VARIANT` (defensive — variants go through `createVariant`, never `startRefGen`). The contract's VARIANT mode + the refGenRequest superRefine remain valid for any future direct use. Phase C wires @mention of variants (`GenJob.variantSel`, MentionInput, worker conditioning scope, snapshot) — not in this plan.
 

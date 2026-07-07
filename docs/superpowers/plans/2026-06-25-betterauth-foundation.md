@@ -90,8 +90,8 @@ git commit -m "chore(auth): install better-auth@^1.6 + env placeholders (dormant
 describe("isFounderAdmin", () => {
   it("is true for a founder email (case-insensitive), false otherwise", async () => {
     const { isFounderAdmin } = await import("@/lib/allowlist");
-    expect(isFounderAdmin("FOUNDER@artlio.test")).toBe(true); // FOUNDER_ADMIN_EMAILS set in beforeEach
-    expect(isFounderAdmin("merchant@artlio.test")).toBe(false);
+    expect(isFounderAdmin("FOUNDER@fikirtive.test")).toBe(true); // FOUNDER_ADMIN_EMAILS set in beforeEach
+    expect(isFounderAdmin("merchant@fikirtive.test")).toBe(false);
     expect(isFounderAdmin(null)).toBe(false);
   });
 });

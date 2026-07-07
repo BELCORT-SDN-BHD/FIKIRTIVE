@@ -2,11 +2,11 @@
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
-**Goal:** Flip Artlio from single-tenant (`ownerId` hardcoded to the constant `FOUNDER_OWNER_ID = "founder"`) to true multi-tenant, where every spend/data/storage site resolves `ownerId` per-request from the session via a fail-closed `requireOwner()` resolver, with a 2-org isolation test proving no cross-tenant leak.
+**Goal:** Flip Fikirtive from single-tenant (`ownerId` hardcoded to the constant `FOUNDER_OWNER_ID = "founder"`) to true multi-tenant, where every spend/data/storage site resolves `ownerId` per-request from the session via a fail-closed `requireOwner()` resolver, with a 2-org isolation test proving no cross-tenant leak.
 
 **Architecture:** One authoritative resolver `requireOwner()` (sibling to `requireSession`/`requireRole` in `apps/web/lib/auth-guard.ts`) maps `session → { email, ownerId }`, synchronously bootstrapping a personal Organization + Membership(owner) + CreditAccount(beta grant) for any non-founder, and **never** falling back to `"founder"`. `events.signIn` runs the same bootstrap best-effort. Every tenant-data read/write swaps the `FOUNDER_OWNER_ID` constant for the resolved `ownerId`; admin reads stay platform-wide (cross-tenant by design); the `/files` route and `ownedAssetFromSrc` verify the key's embedded owner against the resolved owner; the two `$executeRaw` aliases thread `ownerId` into their WHERE; the schema's `@default("founder")` is removed so a new row can never silently inherit the founder's owner; a Prisma client extension backstops unscoped reads.
 
-**Tech Stack:** Next.js (vendored — read `node_modules/next/dist/docs/` before touching App Router code), next-auth v5 (DB sessions, PrismaAdapter), Prisma 7 (`@prisma/adapter-pg`, `packages/db`), Postgres (local `postgresql://artlio:artlio@localhost:5432/artlio`), Vitest 3 (`packages/core`; we add a runner to `apps/web` for the resolver + isolation tests), `@artlio/core` (`FOUNDER_OWNER_ID`, `ORG_ROLES`, `storageKey`/`parseStorageKey`/`keyOwnerMatches`, `spend.ts`), `@artlio/db` (`prisma`, credit service `grantCredits`/`reserveCredits`/`settleCredits`/`refundReservation`).
+**Tech Stack:** Next.js (vendored — read `node_modules/next/dist/docs/` before touching App Router code), next-auth v5 (DB sessions, PrismaAdapter), Prisma 7 (`@prisma/adapter-pg`, `packages/db`), Postgres (local `postgresql://fikirtive:fikirtive@localhost:5432/fikirtive`), Vitest 3 (`packages/core`; we add a runner to `apps/web` for the resolver + isolation tests), `@fikirtive/core` (`FOUNDER_OWNER_ID`, `ORG_ROLES`, `storageKey`/`parseStorageKey`/`keyOwnerMatches`, `spend.ts`), `@fikirtive/db` (`prisma`, credit service `grantCredits`/`reserveCredits`/`settleCredits`/`refundReservation`).
 
 ---
 
@@ -43,7 +43,7 @@ This is the literal §4 + §7 leak-site list. Each line maps to a Task below; **
 - [ ] **Read `apps/web/AGENTS.md`** — this is a vendored Next.js with breaking changes; read `node_modules/next/dist/docs/` before any App Router edit.
 - [ ] **Confirm the local DB is current** — P1 (`20260619120000_org_tenant`) and P2 (`20260619130000_credits`) migrations must already be applied locally. Run:
   ```bash
-  psql postgresql://artlio:artlio@localhost:5432/artlio -c '\d "Organization"' -c '\d "CreditAccount"'
+  psql postgresql://fikirtive:fikirtive@localhost:5432/fikirtive -c '\d "Organization"' -c '\d "CreditAccount"'
   ```
   Expected: both tables exist; the `founder` org row exists (`SELECT id FROM "Organization" WHERE id='founder';`).
 - [ ] **Kill stale fal workers** before any gen test; all tests use `GENERATION_PROVIDER=mock`.
@@ -140,7 +140,7 @@ import { describe, it, expect } from "vitest";
 describe("smoke", () => { it("runs", () => { expect(1 + 1).toBe(2); }); });
 ```
 
-Run: `pnpm --filter @artlio/web test`
+Run: `pnpm --filter @fikirtive/web test`
 Expected: PASS (1 test). Then delete `smoke.test.ts`.
 
 - [ ] **Step 5: Commit (leave for user)**
@@ -178,7 +178,7 @@ export const BETA_INITIAL_GRANT_CREDITS = 1000 * INTERNAL_PER_DISPLAY;
 
 - [ ] **Step 2: Build core so the constant is importable**
 
-Run: `pnpm --filter @artlio/core build`
+Run: `pnpm --filter @fikirtive/core build`
 Expected: clean build.
 
 - [ ] **Step 3: Export `isFounderAdmin` from auth.ts**
@@ -206,11 +206,11 @@ vi.mock("@/auth", async (importOriginal) => {
   return { ...actual, auth: mockAuth };
 });
 
-const FOUNDER_EMAIL = "founder@artlio.test";
-const NEW_EMAIL = "merchant-a@artlio.test";
+const FOUNDER_EMAIL = "founder@fikirtive.test";
+const NEW_EMAIL = "merchant-a@fikirtive.test";
 
 beforeAll(() => {
-  process.env.AUTH_ALLOWED_EMAILS = `${FOUNDER_EMAIL},${NEW_EMAIL},offlist-but-allowed@artlio.test`;
+  process.env.AUTH_ALLOWED_EMAILS = `${FOUNDER_EMAIL},${NEW_EMAIL},offlist-but-allowed@fikirtive.test`;
   process.env.FOUNDER_ADMIN_EMAILS = FOUNDER_EMAIL;
 });
 
@@ -218,8 +218,8 @@ afterEach(() => { mockAuth.mockReset(); });
 
 // import AFTER the mock + env are in place
 const { requireOwner } = await import("@/lib/auth-guard");
-const { prisma } = await import("@artlio/db");
-const { FOUNDER_OWNER_ID } = await import("@artlio/core");
+const { prisma } = await import("@fikirtive/db");
+const { FOUNDER_OWNER_ID } = await import("@fikirtive/core");
 
 async function ensureUser(email: string): Promise<string> {
   const id = `usr_${randomUUID()}`;
@@ -287,7 +287,7 @@ describe("requireOwner — fail-closed", () => {
 
 - [ ] **Step 5: Run the test to verify it fails**
 
-Run: `pnpm --filter @artlio/web test -- require-owner`
+Run: `pnpm --filter @fikirtive/web test -- require-owner`
 Expected: FAIL — `requireOwner is not a function` / import error (not yet implemented).
 
 - [ ] **Step 6: Implement `requireOwner()`**
@@ -297,7 +297,7 @@ In `apps/web/lib/auth-guard.ts`, update the imports and append the resolver. The
 ```ts
 import "server-only";
 import { auth, allowed, isFounderAdmin } from "@/auth";
-import { prisma, grantCredits } from "@artlio/db";
+import { prisma, grantCredits } from "@fikirtive/db";
 import {
   newId,
   FOUNDER_OWNER_ID,
@@ -307,7 +307,7 @@ import {
   type Section,
   type Action,
   type Role,
-} from "@artlio/core";
+} from "@fikirtive/core";
 ```
 
 Then add at the end of the file:
@@ -398,7 +398,7 @@ export async function bootstrapPersonalOrg(userId: string, email: string): Promi
 
 - [ ] **Step 7: Build core (the constant) + run the test**
 
-Run: `pnpm --filter @artlio/core build && pnpm --filter @artlio/web test -- require-owner`
+Run: `pnpm --filter @fikirtive/core build && pnpm --filter @fikirtive/web test -- require-owner`
 Expected: PASS (all 6 cases), including the CRITICAL `not.toBe(FOUNDER_OWNER_ID)` and the idempotency assertions.
 
 - [ ] **Step 8: Commit (leave for user)**
@@ -441,7 +441,7 @@ In `apps/web/auth.ts`, inside `events.signIn({ user })`, AFTER the existing foun
 
 - [ ] **Step 3: Verify there is no eager import cycle**
 
-Run: `pnpm --filter @artlio/web exec tsc --noEmit -p tsconfig.json` (or the repo's typecheck script)
+Run: `pnpm --filter @fikirtive/web exec tsc --noEmit -p tsconfig.json` (or the repo's typecheck script)
 Expected: no circular-import / type error. The dynamic `import("@/lib/auth-guard")` defers resolution to call time, breaking the cycle.
 
 - [ ] **Step 4: Add a signIn bootstrap test**
@@ -452,7 +452,7 @@ Append to `apps/web/lib/__tests__/require-owner.test.ts`:
 describe("events.signIn convergence", () => {
   it("bootstrapPersonalOrg called directly converges the same org requireOwner would build", async () => {
     const { bootstrapPersonalOrg } = await import("@/lib/auth-guard");
-    const email = `merchant-b-${randomUUID()}@artlio.test`;
+    const email = `merchant-b-${randomUUID()}@fikirtive.test`;
     process.env.AUTH_ALLOWED_EMAILS = `${process.env.AUTH_ALLOWED_EMAILS},${email}`;
     const u = await prisma.user.create({ data: { id: `usr_${randomUUID()}`, email } });
     const orgId = await bootstrapPersonalOrg(u.id, email);
@@ -468,7 +468,7 @@ describe("events.signIn convergence", () => {
 
 - [ ] **Step 5: Run the test**
 
-Run: `pnpm --filter @artlio/web test -- require-owner`
+Run: `pnpm --filter @fikirtive/web test -- require-owner`
 Expected: PASS (all cases incl. the new convergence one).
 
 - [ ] **Step 6: Commit (leave for user)**
@@ -510,7 +510,7 @@ Verify zero remain afterward: `grep -c '@default("founder")' packages/db/prisma/
 The repo can't `prisma migrate dev` (checksum drift forces a reset). Generate the diff against the live schema, then hand-apply. Run from `packages/db`:
 
 ```bash
-pnpm --filter @artlio/db exec prisma migrate diff \
+pnpm --filter @fikirtive/db exec prisma migrate diff \
   --from-schema-datasource prisma/schema.prisma \
   --to-schema-datamodel prisma/schema.prisma \
   --script
@@ -552,7 +552,7 @@ ALTER TABLE "ChatMessage"            ALTER COLUMN "ownerId" DROP DEFAULT;
 Run from `packages/db`:
 
 ```bash
-psql -v ON_ERROR_STOP=1 "postgresql://artlio:artlio@localhost:5432/artlio" \
+psql -v ON_ERROR_STOP=1 "postgresql://fikirtive:fikirtive@localhost:5432/fikirtive" \
   -f prisma/migrations/20260619140000_drop_owner_default/migration.sql
 ```
 
@@ -561,9 +561,9 @@ Expected: 20 `ALTER TABLE` lines, no error.
 - [ ] **Step 4: Mark the migration applied + regenerate the client**
 
 ```bash
-pnpm --filter @artlio/db exec prisma migrate resolve --applied 20260619140000_drop_owner_default
-pnpm --filter @artlio/db exec prisma generate
-pnpm --filter @artlio/db build
+pnpm --filter @fikirtive/db exec prisma migrate resolve --applied 20260619140000_drop_owner_default
+pnpm --filter @fikirtive/db exec prisma generate
+pnpm --filter @fikirtive/db build
 ```
 
 Expected: resolve succeeds; client regenerates; build clean.
@@ -571,7 +571,7 @@ Expected: resolve succeeds; client regenerates; build clean.
 - [ ] **Step 5: Verify the defaults are gone in the DB**
 
 ```bash
-psql "postgresql://artlio:artlio@localhost:5432/artlio" -c \
+psql "postgresql://fikirtive:fikirtive@localhost:5432/fikirtive" -c \
   "SELECT table_name, column_default FROM information_schema.columns WHERE column_name='ownerId' AND column_default IS NOT NULL;"
 ```
 
@@ -781,7 +781,7 @@ Then update the data calls:
 
 - [ ] **Step 4: Typecheck**
 
-Run: `pnpm --filter @artlio/web exec tsc --noEmit`
+Run: `pnpm --filter @fikirtive/web exec tsc --noEmit`
 Expected: no errors (every `data.ts` caller now passes `ownerId`; a missed call site is a TS error — that's the safety net).
 
 - [ ] **Step 5: Commit (leave for user)**
@@ -803,7 +803,7 @@ The representative conversion pattern for the spend/action files: each action ca
 - [ ] **Step 1: Remove the module constant + the `FOUNDER_OWNER_ID` import**
 
 In `apps/web/lib/refgen-actions.ts`:
-- Drop `FOUNDER_OWNER_ID` from the `@artlio/core` import (line 15).
+- Drop `FOUNDER_OWNER_ID` from the `@fikirtive/core` import (line 15).
 - Delete the module constant on line 24: `const OWNED = { ownerId: FOUNDER_OWNER_ID, deletedAt: null } as const;`
 - Change the `requireSession` import (line 21) to `requireOwner`:
   ```ts
@@ -887,7 +887,7 @@ export async function getRefGenJobs(entityId: string, variantId?: string | null)
 - [ ] **Step 6: Verify zero `FOUNDER_OWNER_ID` remain + typecheck**
 
 Run: `grep -c FOUNDER_OWNER_ID apps/web/lib/refgen-actions.ts` → expect `0`.
-Run: `pnpm --filter @artlio/web exec tsc --noEmit` → no errors.
+Run: `pnpm --filter @fikirtive/web exec tsc --noEmit` → no errors.
 
 - [ ] **Step 7: Commit (leave for user)**
 
@@ -907,7 +907,7 @@ Spec §4 explicitly names the second-hop reads `getGenJob` / `getRecentGenResult
 
 - [ ] **Step 1: Remove the module constant + import; swap the gate import**
 
-In `apps/web/lib/gen-actions.ts`: drop `FOUNDER_OWNER_ID` from the `@artlio/core` import (line 14), delete the module `OWNED` (line 27), change `import { requireSession } from "./auth-guard";` → `import { requireOwner } from "./auth-guard";`.
+In `apps/web/lib/gen-actions.ts`: drop `FOUNDER_OWNER_ID` from the `@fikirtive/core` import (line 14), delete the module `OWNED` (line 27), change `import { requireSession } from "./auth-guard";` → `import { requireOwner } from "./auth-guard";`.
 
 - [ ] **Step 2: Convert `startGen`**
 
@@ -981,7 +981,7 @@ export async function getRecentGenResults(projectId: string, limit = 12) {
 - [ ] **Step 5: Verify + typecheck**
 
 Run: `grep -c FOUNDER_OWNER_ID apps/web/lib/gen-actions.ts` → `0`.
-Run: `pnpm --filter @artlio/web exec tsc --noEmit` → no errors (note: `cowork-actions.ts` calls `startGen` — its conversion is Task 10; until then tsc may flag the `checkCast` signature, resolved in Task 10. If running tasks in order, defer the full typecheck to after Task 10, or temporarily keep `checkCast` accepting an optional `ownerId`).
+Run: `pnpm --filter @fikirtive/web exec tsc --noEmit` → no errors (note: `cowork-actions.ts` calls `startGen` — its conversion is Task 10; until then tsc may flag the `checkCast` signature, resolved in Task 10. If running tasks in order, defer the full typecheck to after Task 10, or temporarily keep `checkCast` accepting an optional `ownerId`).
 
 - [ ] **Step 6: Commit (leave for user)**
 
@@ -1121,7 +1121,7 @@ export async function getRenderJobs(projectId: string) {
 - [ ] **Step 6: Verify + typecheck**
 
 Run: `grep -c FOUNDER_OWNER_ID apps/web/lib/actions.ts` → `0`.
-Run: `pnpm --filter @artlio/web exec tsc --noEmit` → no errors.
+Run: `pnpm --filter @fikirtive/web exec tsc --noEmit` → no errors.
 
 - [ ] **Step 7: Commit (leave for user)**
 
@@ -1182,7 +1182,7 @@ export async function finalizeCandidateUploads(/* … */) {
 
 - [ ] **Step 3: Verify + typecheck**
 
-Run: `grep -c FOUNDER_OWNER_ID apps/web/lib/upload-actions.ts` → `0`; `pnpm --filter @artlio/web exec tsc --noEmit` → clean.
+Run: `grep -c FOUNDER_OWNER_ID apps/web/lib/upload-actions.ts` → `0`; `pnpm --filter @fikirtive/web exec tsc --noEmit` → clean.
 
 - [ ] **Step 4: Commit (leave for user)**
 
@@ -1203,7 +1203,7 @@ Cowork is the largest behavioral surface (23 + 4 sites). `coworkGenerate` funnel
 
 - [ ] **Step 1: Convert `cowork-guardian.ts` — `checkCast` takes `ownerId`**
 
-In `apps/web/lib/cowork-guardian.ts`: drop `FOUNDER_OWNER_ID` from the `@artlio/core` import (line 13). Change the signature to accept `ownerId`:
+In `apps/web/lib/cowork-guardian.ts`: drop `FOUNDER_OWNER_ID` from the `@fikirtive/core` import (line 13). Change the signature to accept `ownerId`:
 
 ```ts
 export async function checkCast(req: {
@@ -1227,7 +1227,7 @@ export async function checkCast(req: {
 
 - [ ] **Step 2: Convert `cowork-actions.ts` — remove the constant, swap the gate**
 
-Drop `FOUNDER_OWNER_ID` from the `@artlio/core` import (line 12), delete the module `OWNED` (line 30), change `requireSession` → `requireOwner`.
+Drop `FOUNDER_OWNER_ID` from the `@fikirtive/core` import (line 12), delete the module `OWNED` (line 30), change `requireSession` → `requireOwner`.
 
 - [ ] **Step 3: `assetBytes` (helper, no session) — take `ownerId`**
 
@@ -1268,7 +1268,7 @@ export async function coworkGenerate(raw: unknown): Promise<{ id: string } | { e
 - [ ] **Step 5: Verify + typecheck**
 
 Run: `grep -c FOUNDER_OWNER_ID apps/web/lib/cowork-actions.ts apps/web/lib/cowork-guardian.ts` → both `0`.
-Run: `pnpm --filter @artlio/web exec tsc --noEmit` → clean (this is the run where the Task 7 `checkCast` call type-resolves against the new signature).
+Run: `pnpm --filter @fikirtive/web exec tsc --noEmit` → clean (this is the run where the Task 7 `checkCast` call type-resolves against the new signature).
 
 - [ ] **Step 6: Commit (leave for user)**
 
@@ -1308,7 +1308,7 @@ Then update its callers (in `actions.ts`, `refgen-actions.ts`, `studio-actions.t
 - [ ] **Step 4: Verify + typecheck**
 
 Run: `grep -c FOUNDER_OWNER_ID apps/web/lib/studio-actions.ts apps/web/lib/entity-snapshot.ts` → both `0`.
-Run: `pnpm --filter @artlio/web exec tsc --noEmit` → clean.
+Run: `pnpm --filter @fikirtive/web exec tsc --noEmit` → clean.
 
 - [ ] **Step 5: Commit (leave for user)**
 
@@ -1368,7 +1368,7 @@ describe("/files route — cross-tenant guard", () => {
 
 - [ ] **Step 2: Run — expect FAIL**
 
-Run: `pnpm --filter @artlio/web test -- files`
+Run: `pnpm --filter @fikirtive/web test -- files`
 Expected: FAIL (route still uses `FOUNDER_OWNER_ID`, doesn't call `requireOwner`).
 
 - [ ] **Step 3: Implement the route change**
@@ -1377,7 +1377,7 @@ In `apps/web/app/files/[...key]/route.ts`, change the imports (line 2 drops `FOU
 
 ```ts
 import { storage, mimeOf, kindOf } from "@/lib/storage";
-import { parseStorageKey, keyOwnerMatches } from "@artlio/core";
+import { parseStorageKey, keyOwnerMatches } from "@fikirtive/core";
 import { auth, allowed } from "@/auth";
 import { requireOwner } from "@/lib/auth-guard";
 ```
@@ -1404,7 +1404,7 @@ Replace the gate + owner check (lines 15-25) with:
 
 - [ ] **Step 4: Run — expect PASS**
 
-Run: `pnpm --filter @artlio/web test -- files`
+Run: `pnpm --filter @fikirtive/web test -- files`
 Expected: PASS (all 3 cases).
 
 - [ ] **Step 5: Commit (leave for user)**
@@ -1462,7 +1462,7 @@ No edits. Add a one-line code comment at the top of `admin-actions.ts` (it alrea
 
 - [ ] **Step 5: Typecheck**
 
-Run: `pnpm --filter @artlio/web exec tsc --noEmit` → clean.
+Run: `pnpm --filter @fikirtive/web exec tsc --noEmit` → clean.
 
 - [ ] **Step 6: Commit (leave for user)**
 
@@ -1551,7 +1551,7 @@ Add `apps/web/lib/__tests__/tenant-guard.test.ts`:
 
 ```ts
 import { describe, it, expect } from "vitest";
-const { prisma } = await import("@artlio/db");
+const { prisma } = await import("@fikirtive/db");
 
 describe("tenant-guard backstop (NODE_ENV=test → throws)", () => {
   it("throws on a tenant findMany with no ownerId filter", async () => {
@@ -1568,7 +1568,7 @@ describe("tenant-guard backstop (NODE_ENV=test → throws)", () => {
 
 - [ ] **Step 4: Run the test**
 
-Run: `pnpm --filter @artlio/db build && pnpm --filter @artlio/web test -- tenant-guard`
+Run: `pnpm --filter @fikirtive/db build && pnpm --filter @fikirtive/web test -- tenant-guard`
 Expected: PASS (3 cases).
 
 - [ ] **Step 5: Commit (leave for user)**
@@ -1601,20 +1601,20 @@ vi.mock("@/auth", async (importOriginal) => {
   return { ...actual, auth: mockAuth };
 });
 
-const A_EMAIL = `orgA-${randomUUID()}@artlio.test`;
-const B_EMAIL = `orgB-${randomUUID()}@artlio.test`;
+const A_EMAIL = `orgA-${randomUUID()}@fikirtive.test`;
+const B_EMAIL = `orgB-${randomUUID()}@fikirtive.test`;
 beforeAll(() => {
   process.env.AUTH_ALLOWED_EMAILS = `${A_EMAIL},${B_EMAIL}`;
-  process.env.FOUNDER_ADMIN_EMAILS = "noone@artlio.test"; // neither A nor B is founder
+  process.env.FOUNDER_ADMIN_EMAILS = "noone@fikirtive.test"; // neither A nor B is founder
 });
 
 const { requireOwner } = await import("@/lib/auth-guard");
-const { prisma, grantCredits } = await import("@artlio/db");
+const { prisma, grantCredits } = await import("@fikirtive/db");
 const data = await import("@/lib/data");
 const gen = await import("@/lib/gen-actions");
 const refgen = await import("@/lib/refgen-actions");
 const { GET: filesGET } = await import("@/app/files/[...key]/route");
-const { storageKey } = await import("@artlio/core");
+const { storageKey } = await import("@fikirtive/core");
 
 async function asUser(email: string) { mockAuth.mockResolvedValue({ user: { email } }); }
 async function ensureUser(email: string) {
@@ -1698,7 +1698,7 @@ describe("2-org isolation — org B can never read org A", () => {
     const key = storageKey(orgA, aAssetHash, "png").split("/");
     // storage.get will throw (no real blob on disk) → route returns 404 via its catch, NOT the
     // owner guard. Assert the owner guard PASSED by checking keyOwnerMatches directly instead:
-    const { keyOwnerMatches } = await import("@artlio/core");
+    const { keyOwnerMatches } = await import("@fikirtive/core");
     expect(keyOwnerMatches(key.join("/"), orgA)).toBe(true);
   });
 });
@@ -1720,12 +1720,12 @@ afterAll(async () => {
 
 - [ ] **Step 2: Run the isolation test**
 
-Run: `pnpm --filter @artlio/web test -- isolation`
+Run: `pnpm --filter @fikirtive/web test -- isolation`
 Expected: PASS — every "B can't read A" assertion holds, plus the `/files` 404 and the A-control. A FAIL here is a real cross-tenant leak — STOP and fix the offending flip site before proceeding.
 
 - [ ] **Step 3: Run the full apps/web suite + the typecheck**
 
-Run: `pnpm --filter @artlio/web test && pnpm --filter @artlio/web exec tsc --noEmit`
+Run: `pnpm --filter @fikirtive/web test && pnpm --filter @fikirtive/web exec tsc --noEmit`
 Expected: all green; no `FOUNDER_OWNER_ID` leaks in tenant-data files (`grep -rn FOUNDER_OWNER_ID apps/web/lib/{data,actions,gen-actions,refgen-actions,upload-actions,cowork-actions,cowork-guardian,studio-actions,entity-snapshot}.ts` → no matches).
 
 - [ ] **Step 4: Commit (leave for user)**
@@ -1756,7 +1756,7 @@ Expected: every credit call uses `job.ownerId`. **No worker change needed.**
 
 This was a P0 deliverable; re-assert it survived. Check the effective provider (DB `runtimeConfig.cowork_provider` OVERRIDES the `COWORK_PROVIDER` env):
 ```bash
-psql "postgresql://artlio:artlio@localhost:5432/artlio" -c \
+psql "postgresql://fikirtive:fikirtive@localhost:5432/fikirtive" -c \
   "SELECT key, \"valueJson\" FROM \"RuntimeConfig\" WHERE key='cowork_provider';"
 echo "COWORK_PROVIDER env = $COWORK_PROVIDER"
 ```
@@ -1775,8 +1775,8 @@ P3 is the highest-radius change (security/tenancy + spend sites touched). Run th
 - [ ] **Step 1: Full local verification sweep**
 
 ```bash
-pnpm --filter @artlio/core build && pnpm --filter @artlio/db build
-pnpm --filter @artlio/web exec tsc --noEmit
+pnpm --filter @fikirtive/core build && pnpm --filter @fikirtive/db build
+pnpm --filter @fikirtive/web exec tsc --noEmit
 pnpm -r test
 ```
 Expected: builds clean; typecheck clean; all tests (core + the new apps/web suite) green, including `require-owner`, `isolation`, `tenant-guard`, and the `/files` route test.

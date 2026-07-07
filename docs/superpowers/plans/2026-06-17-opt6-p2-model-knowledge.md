@@ -13,7 +13,7 @@
 **House rules (every task):**
 - **Money-safety #1.** The typed media-spend gate (`genRequest.superRefine` at `packages/core/src/gen.ts:203` + the worker) stays the SOLE authority over which (model,params) may spend. Disable enforcement is **ADDITIVE NARROWING** only — it can reject, never widen. The worker disable check MUST fail the job BEFORE any `provider.generate`/`provider.generateVideo` call.
 - **Worker change = highest-trust edit.** `apps/worker/src/jobs/gen.ts` + `apps/worker/src/jobs/refgen.ts` run with real money in prod. The disable read there is net-new (the worker has NO existing prisma config read today — `provider` is built once from env at module load: `apps/worker/src/generation.ts:5`). Each worker read fail-closed-to-typed-menu (DB fault → treat as "not disabled", since the typed menu is the authority and a DB hiccup must never block a legitimate already-paid-for-in-spirit queued job from completing). Call this out in the Codex gate.
-- **Additive migration LOCAL-only.** Apply to `DATABASE_URL=postgresql://artlio:artlio@localhost:5432/artlio` ONLY, never prod. Author via `prisma migrate diff … --script` (the P1a/idempotency ritual — avoids the LOCAL checksum-drift gotcha that `migrate dev` can hit when prior migrations were hand-authored), apply via `migrate deploy`.
+- **Additive migration LOCAL-only.** Apply to `DATABASE_URL=postgresql://fikirtive:fikirtive@localhost:5432/fikirtive` ONLY, never prod. Author via `prisma migrate diff … --script` (the P1a/idempotency ritual — avoids the LOCAL checksum-drift gotcha that `migrate dev` can hit when prior migrations were hand-authored), apply via `migrate deploy`.
 - **TDD with `packages/core` vitest** for pure logic (disabled-set intersect, composer transform, directive seeds).
 - **Tests run** `GENERATION_PROVIDER=mock` + `COWORK_PROVIDER` unset; **kill stale fal workers first** (`pkill -f 'apps/worker' || true`).
 - **Surgical.** Match existing style; don't refactor adjacent code; remove only orphans your change creates.
@@ -87,8 +87,8 @@ Use the same diff-script ritual the P1a/idempotency migrations used (avoids the 
 
 ```bash
 mkdir -p packages/db/prisma/migrations/20260617130000_model_registry_overlay
-DATABASE_URL="postgresql://artlio:artlio@localhost:5432/artlio" \
-  pnpm --filter @artlio/db exec prisma migrate diff \
+DATABASE_URL="postgresql://fikirtive:fikirtive@localhost:5432/fikirtive" \
+  pnpm --filter @fikirtive/db exec prisma migrate diff \
   --from-schema-datasource packages/db/prisma/schema.prisma \
   --to-schema-datamodel packages/db/prisma/schema.prisma \
   --script > /tmp/mro-diff.sql
@@ -118,15 +118,15 @@ CREATE UNIQUE INDEX "ModelRegistryOverlay_ownerId_modelId_key" ON "ModelRegistry
 - [ ] **Step 3: Apply + regenerate client (LOCAL)**
 
 ```bash
-DATABASE_URL="postgresql://artlio:artlio@localhost:5432/artlio" pnpm --filter @artlio/db exec prisma migrate deploy
-pnpm --filter @artlio/db build
+DATABASE_URL="postgresql://fikirtive:fikirtive@localhost:5432/fikirtive" pnpm --filter @fikirtive/db exec prisma migrate deploy
+pnpm --filter @fikirtive/db build
 ```
 Expected: "1 migration ... applied" (the new one) + the client builds with `modelRegistryOverlay` available on `prisma`.
 
 - [ ] **Step 4: Confirm it's purely additive**
 
 ```bash
-DATABASE_URL="postgresql://artlio:artlio@localhost:5432/artlio" pnpm --filter @artlio/db exec prisma migrate status
+DATABASE_URL="postgresql://fikirtive:fikirtive@localhost:5432/fikirtive" pnpm --filter @fikirtive/db exec prisma migrate status
 ```
 Expected: "Database schema is up to date!" — no drift, no pending.
 
@@ -200,7 +200,7 @@ describe("isModelDisabled / enabledVideoModels (additive narrowing only)", () =>
 - [ ] **Step 2: Run it to verify it fails**
 
 ```bash
-pnpm --filter @artlio/core test -- model-registry
+pnpm --filter @fikirtive/core test -- model-registry
 ```
 Expected: FAIL — `./model-registry.js` not found / symbols not exported.
 
@@ -255,7 +255,7 @@ export * from "./model-registry.js";
 - [ ] **Step 5: Run tests + build**
 
 ```bash
-pnpm --filter @artlio/core test -- model-registry && pnpm --filter @artlio/core build
+pnpm --filter @fikirtive/core test -- model-registry && pnpm --filter @fikirtive/core build
 ```
 Expected: the model-registry tests PASS; all existing core tests still PASS.
 
@@ -317,7 +317,7 @@ describe("composePrompt", () => {
 - [ ] **Step 2: Run it to verify it fails**
 
 ```bash
-pnpm --filter @artlio/core test -- cowork-compose
+pnpm --filter @fikirtive/core test -- cowork-compose
 ```
 Expected: FAIL — `./cowork-compose.js` not found.
 
@@ -357,7 +357,7 @@ export * from "./cowork-compose.js";
 - [ ] **Step 5: Run tests + build + commit (leave for user approval)**
 
 ```bash
-pnpm --filter @artlio/core test -- cowork-compose && pnpm --filter @artlio/core build
+pnpm --filter @fikirtive/core test -- cowork-compose && pnpm --filter @fikirtive/core build
 ```
 Expected: PASS.
 ```bash
@@ -394,7 +394,7 @@ Add `GEN_VIDEO_MODELS` to the test's existing import from `./gen.js`.
 - [ ] **Step 2: Run it to verify it fails**
 
 ```bash
-pnpm --filter @artlio/core test -- cowork-route
+pnpm --filter @fikirtive/core test -- cowork-route
 ```
 Expected: FAIL — `disabled` not honored.
 
@@ -424,7 +424,7 @@ The existing empty-pool fallback (line 62-63: `candidates.length > 0 ? candidate
 - [ ] **Step 4: Run the core test + build**
 
 ```bash
-pnpm --filter @artlio/core test -- cowork-route && pnpm --filter @artlio/core build
+pnpm --filter @fikirtive/core test -- cowork-route && pnpm --filter @fikirtive/core build
 ```
 Expected: PASS (incl. all the existing suggestModel tests — the new predicate is a no-op when `disabled` is absent/empty).
 
@@ -433,8 +433,8 @@ Expected: PASS (incl. all the existing suggestModel tests — the new predicate 
 Mirror `apps/web/lib/runtime-config.ts`'s `readConfig` fail-closed pattern:
 ```ts
 import "server-only";
-import { prisma } from "@artlio/db";
-import { FOUNDER_OWNER_ID } from "@artlio/core";
+import { prisma } from "@fikirtive/db";
+import { FOUNDER_OWNER_ID } from "@fikirtive/core";
 
 /** The set of admin-disabled model ids (overlay rows with enabled=false). Returns
  *  an EMPTY set on any DB fault — fail-closed-to-typed-menu (a config hiccup must
@@ -458,7 +458,7 @@ export async function resolveDisabledModels(): Promise<Set<string>> {
 - [ ] **Step 6: Typecheck + commit (leave for user approval)**
 
 ```bash
-pnpm --filter @artlio/web typecheck
+pnpm --filter @fikirtive/web typecheck
 ```
 Expected: clean (confirms `modelRegistryOverlay` is on the prisma client from Task 1).
 ```bash
@@ -507,7 +507,7 @@ NOTE: image proposals always route to `seedream` (suggestModel hard-wire) — a 
 
 - [ ] **Step 2: (a-spend + composer) Re-check disable AND compose in `coworkGenerate`** (`apps/web/lib/cowork-actions.ts`)
 
-The composer goes between `chosenModel` resolving (line 510) and `req` being built (line 517). Add the imports `getEnhanceDirective` (already imported, line 24) + `composePrompt`, `modelFamily`, `deriveMode`, `MAX_GEN_PROMPT` (all already imported in this file, lines 14, 19) + `isModelDisabled` (add to the `@artlio/core` import) + `resolveDisabledModels` (added in Step 1).
+The composer goes between `chosenModel` resolving (line 510) and `req` being built (line 517). Add the imports `getEnhanceDirective` (already imported, line 24) + `composePrompt`, `modelFamily`, `deriveMode`, `MAX_GEN_PROMPT` (all already imported in this file, lines 14, 19) + `isModelDisabled` (add to the `@fikirtive/core` import) + `resolveDisabledModels` (added in Step 1).
 
 After line 510 (`const chosenModel = modelOverride ?? model;`), insert:
 ```ts
@@ -543,7 +543,7 @@ The composer touches ONLY the prompt; `model`/`kind`/`count`/`desired*`/params a
 
 - [ ] **Step 3: (b) `startGen` disable check** (`apps/web/lib/gen-actions.ts`)
 
-Add to the `@artlio/core` import: `isModelDisabled`. Add the import `import { resolveDisabledModels } from "./model-registry";`. The check goes AFTER `checkCast` (line 71-77) and BEFORE `genJob.create` (line 81). Insert right after the `if (block) { … return { error: block.error }; }` block (line 77):
+Add to the `@fikirtive/core` import: `isModelDisabled`. Add the import `import { resolveDisabledModels } from "./model-registry";`. The check goes AFTER `checkCast` (line 71-77) and BEFORE `genJob.create` (line 81). Insert right after the `if (block) { … return { error: block.error }; }` block (line 77):
 ```ts
   // OPT-6 P2: reject an admin-disabled model BEFORE the spend commit. This is
   // ADDITIVE narrowing — the typed superRefine above stays the authority over
@@ -557,7 +557,7 @@ Add to the `@artlio/core` import: `isModelDisabled`. Add the import `import { re
 
 - [ ] **Step 4: (c) `startRefGen` disable check** (`apps/web/lib/refgen-actions.ts`)
 
-Add to the `@artlio/core` import: `isModelDisabled`. Add `import { resolveDisabledModels } from "./model-registry";`. The check goes after the entity lookup (line 33) — before the in-flight guard (line 50) and `create` (line 69). Insert right after the VARIANT-not-available gate (line 40) (so it applies to BASE/REFSHEET, the only modes that reach here):
+Add to the `@fikirtive/core` import: `isModelDisabled`. Add `import { resolveDisabledModels } from "./model-registry";`. The check goes after the entity lookup (line 33) — before the in-flight guard (line 50) and `create` (line 69). Insert right after the VARIANT-not-available gate (line 40) (so it applies to BASE/REFSHEET, the only modes that reach here):
 ```ts
   // OPT-6 P2: reject an admin-disabled model before the spend commit (additive
   // narrowing; refGenRequest.enum stays the authority). seedream is the only
@@ -584,7 +584,7 @@ Add to the `@artlio/core` import: `isModelDisabled`. Add `import { resolveDisabl
 - [ ] **Step 6: Typecheck**
 
 ```bash
-pnpm --filter @artlio/web typecheck
+pnpm --filter @fikirtive/web typecheck
 ```
 Expected: clean.
 
@@ -592,7 +592,7 @@ Expected: clean.
 
 ```bash
 pkill -f 'apps/worker' 2>/dev/null || true
-DATABASE_URL="postgresql://artlio:artlio@localhost:5432/artlio" GENERATION_PROVIDER=mock node scripts/verify-cowork-turn.mjs
+DATABASE_URL="postgresql://fikirtive:fikirtive@localhost:5432/fikirtive" GENERATION_PROVIDER=mock node scripts/verify-cowork-turn.mjs
 ```
 Expected: still passes (propose-only, $0, zero GenJob) — proves the disable thread + composer didn't change the propose-only invariant.
 
@@ -640,7 +640,7 @@ describe("DIRECTIVE_SEED video-family coverage (OPT-6 P2)", () => {
 - [ ] **Step 2: Run it to verify it fails**
 
 ```bash
-pnpm --filter @artlio/core test -- cowork-directives
+pnpm --filter @fikirtive/core test -- cowork-directives
 ```
 Expected: FAIL — `missing` lists veo, seedance, wan, pixverse, grok, hailuo.
 
@@ -700,7 +700,7 @@ Expected: FAIL — `missing` lists veo, seedance, wan, pixverse, grok, hailuo.
 - [ ] **Step 4: Run the test + the existing directives test**
 
 ```bash
-pnpm --filter @artlio/core test -- cowork-directives && pnpm --filter @artlio/core build
+pnpm --filter @fikirtive/core test -- cowork-directives && pnpm --filter @fikirtive/core build
 ```
 Expected: the coverage test PASSES; the existing `modelDirectiveInput`/seed-shape tests still PASS (the new cells use the same `DirectiveSeed` shape, `family ∈ MODEL_FAMILIES`, `mode ∈ GEN_MODES`).
 
@@ -708,7 +708,7 @@ Expected: the coverage test PASSES; the existing `modelDirectiveInput`/seed-shap
 
 `seedResearchDirectives` (`apps/web/lib/admin-actions.ts:64`) does `createMany({ data: DIRECTIVE_SEED.map(...), skipDuplicates: true })` + a pristine refresh loop — both iterate `DIRECTIVE_SEED`, so the new cells INSERT when absent and never clobber a founder edit. No action-code change needed; document that the operator must click "Seed defaults" (or it runs on next seed) for the new cells to reach the DB. Verify the action still typechecks:
 ```bash
-pnpm --filter @artlio/web typecheck
+pnpm --filter @fikirtive/web typecheck
 ```
 Expected: clean.
 
@@ -732,8 +732,8 @@ This is the highest-trust edit: the worker runs with real money in prod. The wor
 - [ ] **Step 1: Create the worker read-through** (`apps/worker/src/model-registry.ts`)
 
 ```ts
-import { prisma } from "@artlio/db";
-import { FOUNDER_OWNER_ID } from "@artlio/core";
+import { prisma } from "@fikirtive/db";
+import { FOUNDER_OWNER_ID } from "@fikirtive/core";
 
 /** Worker-side admin-disabled model ids. EMPTY set on any DB fault — fail-closed-
  *  to-typed-menu: a config-read hiccup must never fail a legitimate already-queued
@@ -757,7 +757,7 @@ export async function workerDisabledModels(): Promise<Set<string>> {
 
 Add the imports at the top (after line 28 `import { provider } from "../generation.js";`):
 ```ts
-import { isModelDisabled } from "@artlio/core";
+import { isModelDisabled } from "@fikirtive/core";
 import { workerDisabledModels } from "../model-registry.js";
 ```
 The check goes AFTER the resume short-circuit (line 139-145) and the FAILED short-circuit (line 146) — so a committed/resumable job still finishes without re-spend — and BEFORE the atomic spend claim (line 171). Insert right after `if (job.status === "FAILED") return;` (line 146):
@@ -778,7 +778,7 @@ The check goes AFTER the resume short-circuit (line 139-145) and the FAILED shor
 
 Add the imports (after line 34 `import { provider } from "../generation.js";`):
 ```ts
-import { isModelDisabled } from "@artlio/core";
+import { isModelDisabled } from "@fikirtive/core";
 import { workerDisabledModels } from "../model-registry.js";
 ```
 The check goes AFTER the resume short-circuit (line 76-81) and the VARIANT-liveness gate (line 87-100), and BEFORE the atomic spend claim (line 109). Insert right after the VARIANT block's closing `}` (line 100), before the "Atomic spend claim" comment (line 102):
@@ -798,9 +798,9 @@ The check goes AFTER the resume short-circuit (line 76-81) and the VARIANT-liven
 - [ ] **Step 4: Typecheck the worker**
 
 ```bash
-pnpm --filter @artlio/worker typecheck
+pnpm --filter @fikirtive/worker typecheck
 ```
-Expected: clean (confirms `@artlio/core` exports `isModelDisabled` + the worker resolves `modelRegistryOverlay` on prisma).
+Expected: clean (confirms `@fikirtive/core` exports `isModelDisabled` + the worker resolves `modelRegistryOverlay` on prisma).
 
 - [ ] **Step 5: Commit (leave for user approval)**
 
@@ -906,7 +906,7 @@ console.log("\n✓ cowork-knowledge eval: directive-once, idempotent, correct fa
 
 ```bash
 pkill -f 'apps/worker' 2>/dev/null || true
-pnpm --filter @artlio/core build
+pnpm --filter @fikirtive/core build
 node scripts/eval-cowork-knowledge.mjs
 ```
 Expected: all `✓` + the final "cowork-knowledge eval: …" line. (Builds core first so `dist` carries `composePrompt`/`model-registry`.)
@@ -918,7 +918,7 @@ Expected: all `✓` + the final "cowork-knowledge eval: …" line. (Builds core 
 // ignored; empty table = full typed menu. \$0, no worker. Mirrors the resolveDisabled
 // logic against the real DB (no "use server" import — drives core + a raw prisma read).
 // Run: node scripts/local-model-disable-verify.mjs
-process.env.DATABASE_URL ??= "postgresql://artlio:artlio@localhost:5432/artlio";
+process.env.DATABASE_URL ??= "postgresql://fikirtive:fikirtive@localhost:5432/fikirtive";
 const { prisma } = await import("../packages/db/dist/src/index.js");
 const { newId, FOUNDER_OWNER_ID, GEN_VIDEO_MODELS, enabledVideoModels, isModelDisabled } =
   await import("../packages/core/dist/index.js");
@@ -990,7 +990,7 @@ Mirror P1a's `saveRuntimeConfig` (`apps/web/lib/admin-actions.ts:102`): `require
 
 - [ ] **Step 1: Add the action** (`apps/web/lib/admin-actions.ts`)
 
-Add `isKnownModelId` to the `@artlio/core` import (line 10). Add after `saveRuntimeConfig` (line 123):
+Add `isKnownModelId` to the `@fikirtive/core` import (line 10). Add after `saveRuntimeConfig` (line 123):
 ```ts
 /** Enable/disable one typed model in the registry overlay. requireAdmin (P1a) —
  *  P1b scopes section ① to ops. modelId MUST be a known typed model (write-time
@@ -1026,7 +1026,7 @@ export async function saveModelEnabled(raw: unknown): Promise<{ ok: true } | { e
 - [ ] **Step 2: Typecheck + commit (leave for user approval)**
 
 ```bash
-pnpm --filter @artlio/web typecheck
+pnpm --filter @fikirtive/web typecheck
 ```
 Expected: clean.
 ```bash
@@ -1056,14 +1056,14 @@ Mirror the EXISTING `apps/web/app/admin/settings/page.tsx` (it's the canonical P
 ```tsx
 import { auth, allowed } from "@/auth";
 import { redirect } from "next/navigation";
-import { GEN_MODELS, GEN_VIDEO_MODELS, REFGEN_MODELS, MODEL_FAMILIES, modelFamily } from "@artlio/core";
-import { prisma } from "@artlio/db";
-import { FOUNDER_OWNER_ID } from "@artlio/core";
+import { GEN_MODELS, GEN_VIDEO_MODELS, REFGEN_MODELS, MODEL_FAMILIES, modelFamily } from "@fikirtive/core";
+import { prisma } from "@fikirtive/db";
+import { FOUNDER_OWNER_ID } from "@fikirtive/core";
 import { listDirectives } from "@/lib/cowork-knowledge";
 import { ModelsAdmin, type ModelRow } from "@/components/admin/ModelsAdmin";
 
 export const dynamic = "force-dynamic";
-export const metadata = { title: "Models · Artlio admin" };
+export const metadata = { title: "Models · Fikirtive admin" };
 
 export default async function ModelsPage() {
   const session = await auth();
@@ -1190,9 +1190,9 @@ Change line 16 from the disabled placeholder to a live link:
 
 ```bash
 pkill -f 'apps/worker' 2>/dev/null || true
-pnpm --filter @artlio/web typecheck && pnpm --filter @artlio/web build
+pnpm --filter @fikirtive/web typecheck && pnpm --filter @fikirtive/web build
 ```
-Expected: build clean. (Manual: `pnpm --filter @artlio/web dev`, sign in, visit `/admin/models`, toggle a video model, confirm it persists + the coverage metric shows 9/9 families after a "Seed defaults" on the directives page.)
+Expected: build clean. (Manual: `pnpm --filter @fikirtive/web dev`, sign in, visit `/admin/models`, toggle a video model, confirm it persists + the coverage metric shows 9/9 families after a "Seed defaults" on the directives page.)
 
 - [ ] **Step 6: Commit (leave for user approval)**
 
@@ -1236,7 +1236,7 @@ export const runtimeConfigInput = z.discriminatedUnion("key", [
 - [ ] **Step 2: Build core** (so the web client picks up the schema)
 
 ```bash
-pnpm --filter @artlio/core build
+pnpm --filter @fikirtive/core build
 ```
 Expected: clean.
 
@@ -1245,12 +1245,12 @@ Expected: clean.
 ```tsx
 import { auth, allowed } from "@/auth";
 import { redirect } from "next/navigation";
-import { prisma } from "@artlio/db";
-import { COWORK_PLANNER_SYSTEM } from "@artlio/core";
+import { prisma } from "@fikirtive/db";
+import { COWORK_PLANNER_SYSTEM } from "@fikirtive/core";
 import { KnowledgeAdmin } from "@/components/admin/KnowledgeAdmin";
 
 export const dynamic = "force-dynamic";
-export const metadata = { title: "Knowledge · Artlio admin" };
+export const metadata = { title: "Knowledge · Fikirtive admin" };
 
 async function readText(key: string): Promise<string | null> {
   try {
@@ -1343,7 +1343,7 @@ export function KnowledgeAdmin({ plannerSystem, briefDefault, descriptionTemplat
 - [ ] **Step 6: Typecheck + build + commit (leave for user approval)**
 
 ```bash
-pnpm --filter @artlio/web typecheck && pnpm --filter @artlio/web build
+pnpm --filter @fikirtive/web typecheck && pnpm --filter @fikirtive/web build
 ```
 Expected: clean.
 ```bash
@@ -1359,12 +1359,12 @@ git commit -m "feat(opt6): /admin/knowledge — planner-system/brief/template ed
 
 ```bash
 pkill -f 'apps/worker' 2>/dev/null || true
-pnpm --filter @artlio/core test
-pnpm --filter @artlio/core build && pnpm --filter @artlio/db build
-pnpm --filter @artlio/web typecheck && pnpm --filter @artlio/web build
-pnpm --filter @artlio/worker typecheck
+pnpm --filter @fikirtive/core test
+pnpm --filter @fikirtive/core build && pnpm --filter @fikirtive/db build
+pnpm --filter @fikirtive/web typecheck && pnpm --filter @fikirtive/web build
+pnpm --filter @fikirtive/worker typecheck
 node scripts/verify-auth-guards.mjs
-DATABASE_URL="postgresql://artlio:artlio@localhost:5432/artlio" GENERATION_PROVIDER=mock node scripts/verify-cowork-turn.mjs
+DATABASE_URL="postgresql://fikirtive:fikirtive@localhost:5432/fikirtive" GENERATION_PROVIDER=mock node scripts/verify-cowork-turn.mjs
 node scripts/eval-cowork-knowledge.mjs
 node scripts/local-model-disable-verify.mjs
 node scripts/local-cowork-idempotency-verify.mjs
@@ -1401,7 +1401,7 @@ Only after Codex PASS + explicit user authorization: prod = `migrate:deploy` the
 **3. Type consistency:** `ALL_MODEL_IDS`, `isKnownModelId`, `enabledVideoModels`, `isModelDisabled`, `composePrompt`, `COMPOSE_SEP`, `resolveDisabledModels` (web), `workerDisabledModels` (worker), `saveModelEnabled`, the extended `runtimeConfigInput` keys, and `suggestModel`'s new `disabled?: ReadonlySet<string>` are used consistently across tasks. The composer reuses already-imported `modelFamily`/`deriveMode`/`MAX_GEN_PROMPT`/`getEnhanceDirective` in cowork-actions (no new imports needed beyond `composePrompt`+`isModelDisabled`+`resolveDisabledModels`). ✓
 
 **Open caveats for the implementer:**
-- **Worker prisma boundary (verified):** the worker has NO existing prisma-based config read — `provider` is built once from env at module load. The disable read (`workerDisabledModels`) is genuinely net-new; it imports `prisma` from `@artlio/db` directly (the worker already does this in both job handlers). Confirm the worker's `@artlio/core` build carries `isModelDisabled` (Task 7 Step 4 typecheck).
+- **Worker prisma boundary (verified):** the worker has NO existing prisma-based config read — `provider` is built once from env at module load. The disable read (`workerDisabledModels`) is genuinely net-new; it imports `prisma` from `@fikirtive/db` directly (the worker already does this in both job handlers). Confirm the worker's `@fikirtive/core` build carries `isModelDisabled` (Task 7 Step 4 typecheck).
 - **suggestModel threading was NOT invasive (verified):** `suggestModel` is pure with 4 callers (cowork-route.test, verify-cowork-turn.mjs, coworkTurn, the import). Adding an OPTIONAL `disabled` field is backward-compatible — `verify-cowork-turn.mjs` and the existing tests call it without `disabled` and stay green. So the plan threads it as a param (the spec's preferred path) rather than the caller-side fallback.
 - **Image-disable not in suggestModel (by design):** `suggestModel` hard-wires image→seedream and does NOT consult `disabled` for the image branch. A disabled seedream is caught at the spend gates (coworkGenerate re-check, startGen, startRefGen, dispatchVariantJob, worker) — matching the spec's "suggestModel is UX-only; the spend gates are the authority". Documented in Task 4 Step 3 + Task 5 Step 1.
 - **§⑥ knowledge keys persist + read-back only:** Task 11 ships the edit surface + persistence + read-back of `COWORK_PLANNER_SYSTEM`/brief/template, but does NOT re-thread the DB override back into `buildPlannerMessages` (a small money-neutral follow-on, noted in Task 11's scope). These are $0 planner-text keys, not spend gates, so this is a safe partial slice; flag it explicitly at the Codex gate if full wiring is wanted this phase.

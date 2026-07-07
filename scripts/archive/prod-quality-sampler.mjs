@@ -13,7 +13,7 @@ import os from "node:os";
 import { writePngFixture } from "../tools/qa-fixtures.mjs";
 
 const BASE = process.env.BASE_URL ?? "https://web-production-b13a4.up.railway.app";
-const OUT = path.join(os.homedir(), ".gstack/projects/artlio/quality");
+const OUT = path.join(os.homedir(), ".gstack/projects/fikirtive/quality");
 await mkdir(OUT, { recursive: true });
 const SAMPLES = path.join(OUT, "samples.json");
 const SRC_IMG = await writePngFixture(OUT, "qa-start-frame.png", "source");

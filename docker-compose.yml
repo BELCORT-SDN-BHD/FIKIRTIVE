@@ -6,13 +6,16 @@ services:
     # Production is Neon (managed, current major).
     image: postgres:16-alpine
     environment:
-      POSTGRES_USER: artlio
-      POSTGRES_PASSWORD: artlio
-      POSTGRES_DB: artlio
+      POSTGRES_USER: fikirtive
+      POSTGRES_PASSWORD: fikirtive
+      POSTGRES_DB: fikirtive
     ports:
       - "5432:5432"
     volumes:
-      - artlio-pg:/var/lib/postgresql/data
+      # Renamed from artlio-pg (2026-07-07 name purge). Postgres only creates the
+      # user/db on FIRST init, so the rename ships with a fresh volume; the old
+      # artlio-pg volume (and its data) survives untouched — `docker volume ls`.
+      - fikirtive-pg:/var/lib/postgresql/data
 
   # R2 stand-in for local r2-driver verification (S3-compatible).
   # Usage: docker compose up -d minio, then run web/worker with STORAGE_DRIVER=r2.
@@ -29,5 +32,5 @@ services:
       - minio-data:/data
 
 volumes:
-  artlio-pg:
+  fikirtive-pg:
   minio-data:

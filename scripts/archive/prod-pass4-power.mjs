@@ -14,7 +14,7 @@ import os from "node:os";
 import { writePngFixture } from "../tools/qa-fixtures.mjs";
 
 const BASE = process.env.BASE_URL ?? "https://web-production-b13a4.up.railway.app";
-const OUT = path.join(os.homedir(), ".gstack/projects/artlio/prod-pass4");
+const OUT = path.join(os.homedir(), ".gstack/projects/fikirtive/prod-pass4");
 await mkdir(OUT, { recursive: true });
 const SRC_IMG = await writePngFixture(OUT, "qa-start-frame.png", "source");
 const TAIL_IMG = await writePngFixture(OUT, "qa-end-frame.png", "tail");

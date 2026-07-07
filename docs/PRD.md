@@ -1,4 +1,4 @@
-# Artlio Product Requirements Document
+# Fikirtive Product Requirements Document
 
 Status: Draft v1  
 Date: 2026-06-09  
@@ -32,7 +32,7 @@ Expansion path: AI short film and series production
 
 ## How To Use This PRD
 
-This PRD is the master product map. Use it to align on what Artlio is, what the first commercial wedge is, how the AI system should work, how the data model should be structured, and how the product should be built phase by phase.
+This PRD is the master product map. Use it to align on what Fikirtive is, what the first commercial wedge is, how the AI system should work, how the data model should be structured, and how the product should be built phase by phase.
 
 For execution, treat the document in this order:
 
@@ -69,11 +69,11 @@ For execution, treat the document in this order:
 
 ## 1. Executive Summary
 
-Artlio is an agentic AI production studio that helps agencies, creators, and freelancers turn a brand brief or story idea into professional-grade videos through guided briefs, campaign concepts, storyboards, reusable assets, generation history, and an easy timeline editor.
+Fikirtive is an agentic AI production studio that helps agencies, creators, and freelancers turn a brand brief or story idea into professional-grade videos through guided briefs, campaign concepts, storyboards, reusable assets, generation history, and an easy timeline editor.
 
-Artlio should not be positioned as another prompt box. Its core product promise is:
+Fikirtive should not be positioned as another prompt box. Its core product promise is:
 
-> Artlio makes professional AI video production feel like directing with a creative team, not fighting with a prompt box.
+> Fikirtive makes professional AI video production feel like directing with a creative team, not fighting with a prompt box.
 
 The first commercial wedge is agency and brand campaign production. The product should help users create client-ready campaign video packs: product launch ads, brand promos, social variants, UGC-style spots, trailers, and short campaign sequences. The architecture must also support later expansion into AI short films and serialized storytelling.
 
@@ -89,7 +89,7 @@ The first product should optimize for:
 
 Current AI generation tools are powerful but fragmented and hard to learn. Users often need to understand model selection, prompt engineering, aspect ratios, references, motion language, seed behavior, credit costs, output comparison, and editing workflows. Agencies and freelancers then still need to organize generations, present options to clients, revise outputs, and assemble final deliverables.
 
-Artlio should simplify the workflow by wrapping complex AI production in a structured studio:
+Fikirtive should simplify the workflow by wrapping complex AI production in a structured studio:
 
 ```text
 Brief -> Concepts -> Storyboard -> Shots -> Generations -> Gallery -> Timeline -> Client Review -> Export
@@ -108,7 +108,7 @@ clients, brand kits, briefs, concepts, scenes, shots, assets, prompts, model cal
 generation outputs, timelines, approvals, comments, credits, and versions
 ```
 
-This is the foundation for making Artlio easy to use without making it shallow.
+This is the foundation for making Fikirtive easy to use without making it shallow.
 
 ## 3. Research-Informed Direction
 
@@ -124,7 +124,7 @@ Venice validates the agentic chat pattern: one conversational interface that bre
 
 CapCut validates beginner-friendly storyboard and editing workflows: script-to-storyboard, automatic scene and shot breakdown, captions, music, and export.
 
-Recent research on video production agents warns that fully autonomous agents are still weak at real-world post-production tasks, so Artlio should use guided autonomy with human approval. Research on continuity-aware storyboarding confirms the importance of explicit character, location, background, prop, and scene continuity structures for longer-form storytelling.
+Recent research on video production agents warns that fully autonomous agents are still weak at real-world post-production tasks, so Fikirtive should use guided autonomy with human approval. Research on continuity-aware storyboarding confirms the importance of explicit character, location, background, prop, and scene continuity structures for longer-form storytelling.
 
 ### 3.2 AI Architecture Signals
 
@@ -222,7 +222,7 @@ Agentic AI production studio for campaign videos and cinematic content.
 
 ### 5.2 Primary Positioning Statement
 
-Artlio helps agencies and freelancers turn brand briefs into client-ready campaign videos using an AI Copilot, guided storyboards, reusable assets, generation history, and an easy editing timeline.
+Fikirtive helps agencies and freelancers turn brand briefs into client-ready campaign videos using an AI Copilot, guided storyboards, reusable assets, generation history, and an easy editing timeline.
 
 ### 5.3 Short Tagline Options
 
@@ -233,7 +233,7 @@ Artlio helps agencies and freelancers turn brand briefs into client-ready campai
 
 ### 5.4 Differentiation
 
-Artlio should differentiate from general AI video generators by focusing on production workflow, not only generation quality.
+Fikirtive should differentiate from general AI video generators by focusing on production workflow, not only generation quality.
 
 Key differentiators:
 
@@ -252,7 +252,7 @@ Key differentiators:
 4. The storyboard is the source of creative truth.
 5. Creative intent and generated output must be separate records.
 6. Human approval is required before expensive, destructive, or client-facing actions.
-7. Model providers are replaceable; Artlio workflow and memory are the product moat.
+7. Model providers are replaceable; Fikirtive workflow and memory are the product moat.
 8. Agencies need organization, reuse, review, and export as much as generation.
 9. Film and series support should grow from the same object model, not a separate product.
 
@@ -260,7 +260,7 @@ Key differentiators:
 
 ### 7.1 Phase 1 MVP Scope
 
-Phase 1 should prove that Artlio can turn a client or brand brief into organized campaign assets.
+Phase 1 should prove that Fikirtive can turn a client or brand brief into organized campaign assets.
 
 Included:
 
@@ -292,7 +292,7 @@ Not included in Phase 1:
 
 ### 7.2 Phase 2 Scope
 
-Phase 2 should make Artlio usable as a lightweight studio.
+Phase 2 should make Fikirtive usable as a lightweight studio.
 
 Included:
 
@@ -678,7 +678,7 @@ Acceptance criteria:
 
 Requirements:
 
-- Artlio must abstract AI providers behind a model registry.
+- Fikirtive must abstract AI providers behind a model registry.
 - Product logic must not hard-code provider-specific APIs.
 - The system should select models based on task, cost, quality, capability, and user plan.
 
@@ -730,7 +730,7 @@ Acceptance criteria:
 - User approves credit spend before paid generation.
 - System stores provider queue ID.
 - System polls provider result.
-- System saves final media to Artlio storage.
+- System saves final media to Fikirtive storage.
 - System logs cost and usage.
 
 ### 10.11 Generation History
@@ -901,11 +901,11 @@ Acceptance criteria:
 
 ### 11.1 Recommended Pattern
 
-Artlio should not start with many separate autonomous agents. It should start with one visible Copilot using skills, tools, workflows, and approval gates.
+Fikirtive should not start with many separate autonomous agents. It should start with one visible Copilot using skills, tools, workflows, and approval gates.
 
 ```text
 User
-  -> Artlio Copilot
+  -> Fikirtive Copilot
     -> Skill selection
       -> Workflow execution
         -> Tool calls
@@ -1114,7 +1114,7 @@ Approval should be optional or automatic for:
 
 ### 11.6 AI Memory and Context
 
-Artlio should not rely on raw chat history as memory. It should use structured project context.
+Fikirtive should not rely on raw chat history as memory. It should use structured project context.
 
 Context layers:
 
@@ -1819,7 +1819,7 @@ quote(input) -> cost estimate
 queue(input) -> provider job ID
 poll(job ID) -> status/result
 cancel(job ID) -> cancellation result
-normalize(result) -> Artlio generation output
+normalize(result) -> Fikirtive generation output
 ```
 
 Provider-specific data stays in:
@@ -1859,7 +1859,7 @@ Requirements:
 
 ### 14.1 UX Personality
 
-Artlio should feel:
+Fikirtive should feel:
 
 - Professional.
 - Clear.
@@ -2261,7 +2261,7 @@ Product:
 AI:
 
 - Which model providers should Phase 1 support first?
-- Should Artlio start with image generation plus image-to-video, or direct text-to-video?
+- Should Fikirtive start with image generation plus image-to-video, or direct text-to-video?
 - What actions can Copilot auto-execute without approval?
 
 Business:
@@ -2277,7 +2277,7 @@ Technical:
 
 UX:
 
-- Should Artlio's primary workspace be storyboard-first, timeline-first, or hybrid?
+- Should Fikirtive's primary workspace be storyboard-first, timeline-first, or hybrid?
 - How much raw prompt editing should be exposed in Phase 1?
 - Should Copilot live as a right panel, bottom command bar, or full chat workspace?
 

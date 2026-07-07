@@ -11,7 +11,7 @@
 ## Global Constraints
 
 - **MONEY-GUARD (BINDING):** never modify `packages/db/src/credits.ts`, `packages/core/src/spend.ts`, `apps/worker/src/jobs/*`, `apps/web/**/gen-actions.ts`, `refgen-actions.ts`, `cowork-actions.ts`, `**/useCanvasGen.ts`, `packages/generation/*`, `pnpm-lock.yaml`. Zero new spend paths; no migration.
-- Branch `claude/product-categories` (off main `0d9062a`) in worktree `/Users/winnin/Desktop/artlio/.claude/worktrees/brand-memory`. Env already bootstrapped.
+- Branch `claude/product-categories` (off main `0d9062a`) in worktree `/Users/winnin/Desktop/fikirtive/.claude/worktrees/brand-memory`. Env already bootstrapped.
 - Category normalization: store trimmed original casing; compare/group case-insensitively (first-seen casing wins for display).
 - OTTO auto-categorize = auto-live + undoable (existing diff/undo covers it); no new approval gates.
 - Registry/catalog: `saveProduct` description text changes → regen catalog (`pnpm --filter @fikirtive/otto catalog`).

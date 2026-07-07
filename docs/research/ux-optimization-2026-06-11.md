@@ -1,4 +1,4 @@
-# Artlio UX Optimization Research (2026-06-11)
+# Fikirtive UX Optimization Research (2026-06-11)
 
 Two parallel research lines: (1) ultracode workflow — LTX flow reverse-engineered from 86 screenshots + 5-persona simulation on both products; (2) codex — independent expert critique of the as-built UI. Both converged on the same core diagnosis.
 
@@ -18,7 +18,7 @@ The critique is correct and load-bearing. The still-vs-video conflation is the s
 
 ---
 
-# Artlio UX Brief — For the Founder
+# Fikirtive UX Brief — For the Founder
 
 *A discussion document. Opinionated, prioritized, honest about what we don't yet know. Read §6 first if you read nothing else.*
 
@@ -26,7 +26,7 @@ The critique is correct and load-bearing. The still-vs-video conflation is the s
 
 ## 1. Diagnosis
 
-Artlio is a reference-management tool with no reference-powered generation at its center. Users write a prompt with `@Maya @Sneaker @Logo`, look for "Generate," and find only **"Copy resolved prompt"** — which flattens their entities to a bare string, drops every reference image, and ejects them to ComfyUI to re-marshal those references by hand. The product *demonstrably can* generate-and-place pixels — but only in the **Library**, for entity refs (`GenerateRefsBlock` → fal/Seedream → auto-land). The **Workbench**, where shots are actually made, can't reach that capability — it sits 50 feet from where it's needed. The result: three siloed screens (Library, Workbench, Editor) with **no connective tissue carrying the entity through them**, and a wedge ("the same Maya in every shot, on any model") that breaks at the exact click it's supposed to win.
+Fikirtive is a reference-management tool with no reference-powered generation at its center. Users write a prompt with `@Maya @Sneaker @Logo`, look for "Generate," and find only **"Copy resolved prompt"** — which flattens their entities to a bare string, drops every reference image, and ejects them to ComfyUI to re-marshal those references by hand. The product *demonstrably can* generate-and-place pixels — but only in the **Library**, for entity refs (`GenerateRefsBlock` → fal/Seedream → auto-land). The **Workbench**, where shots are actually made, can't reach that capability — it sits 50 feet from where it's needed. The result: three siloed screens (Library, Workbench, Editor) with **no connective tissue carrying the entity through them**, and a wedge ("the same Maya in every shot, on any model") that breaks at the exact click it's supposed to win.
 
 **The hard truth the proposal soft-pedals:** the generation path that exists produces **stills, not video** — a Seedream image-edit call (`refgen.ts`), capped at 15 images, that the editor then pads to a hard-coded 3 seconds (`IMAGE_SECONDS = 3`). Every persona wants *video* (TikTok ad, performance ad, MV, GRWM clip). So "wire up Generate and four of five personas export an ad" is not true as written — they'd export a **slideshow of 3-second stills**, which is exactly the artifact they're trying to escape. The real work is two features the proposal collapsed into one: **(a) in-app generation that carries references** — a real but bounded port, provable on stills — and **(b) image-to-video** — a net-new provider integration (no `veo`/`kling`/`seedance`/`i2v` endpoint exists anywhere in the repo). Separating these is the spine of this brief.
 
@@ -158,15 +158,15 @@ This corrects the proposal on three counts:
 
 I have everything I need. The brief is exhaustive: a verified current-state map, the LTX flow map, and 5 grounded persona simulations. My job is synthesis into a decisive founder-facing proposal, not more code archaeology. I'll write it directly.
 
-# Artlio UX Redesign — Decisive Proposal
+# Fikirtive UX Redesign — Decisive Proposal
 
 ## 1. THE CORE DIAGNOSIS
 
-**Artlio is a reference-management tool with no reference-powered generation at its center — the product's entire value proposition leaks out at the one click that matters.** Every persona, from the ComfyUI-fluent founder archetype to the zero-jargon brand owner, hit the identical wall: they write a prompt with `@Maya @Sneaker @Logo`, look for "Generate," and find only **"Copy resolved prompt"** — which flattens their entities to a bare text string (`"Maya holding Sneaker"`), drops every reference image, and ejects them into ComfyUI to marshal those references by hand. This is the inverse of the pitch: a "Switzerland of references" that abandons the references at the border crossing.
+**Fikirtive is a reference-management tool with no reference-powered generation at its center — the product's entire value proposition leaks out at the one click that matters.** Every persona, from the ComfyUI-fluent founder archetype to the zero-jargon brand owner, hit the identical wall: they write a prompt with `@Maya @Sneaker @Logo`, look for "Generate," and find only **"Copy resolved prompt"** — which flattens their entities to a bare text string (`"Maya holding Sneaker"`), drops every reference image, and ejects them into ComfyUI to marshal those references by hand. This is the inverse of the pitch: a "Switzerland of references" that abandons the references at the border crossing.
 
-The single biggest **structural** problem is not the missing button — it's that **Artlio has three siloed screens (Library, Workbench, Editor) and no connective tissue carrying the entity through them.** Generation already works in-app — but only in the Library, for entity refs (`GenerateRefsBlock` → fal/Seedream → poll → auto-land). The Workbench, where shots are made, can't reach it. So the product *demonstrably can* generate-and-place pixels and *refuses to* for the one job users came for. The capability exists 50 feet away from where it's needed. Everything else (no aspect ratio, no batch, dead "Target" chip, project-context blackout in the Library, "Unattached" bookkeeping) is downstream friction on top of that one missing spine.
+The single biggest **structural** problem is not the missing button — it's that **Fikirtive has three siloed screens (Library, Workbench, Editor) and no connective tissue carrying the entity through them.** Generation already works in-app — but only in the Library, for entity refs (`GenerateRefsBlock` → fal/Seedream → poll → auto-land). The Workbench, where shots are made, can't reach it. So the product *demonstrably can* generate-and-place pixels and *refuses to* for the one job users came for. The capability exists 50 feet away from where it's needed. Everything else (no aspect ratio, no batch, dead "Target" chip, project-context blackout in the Library, "Unattached" bookkeeping) is downstream friction on top of that one missing spine.
 
-**One line: Artlio built the reference layer and the export layer, then left a ComfyUI-shaped hole where the filmmaking goes — and threw away the references on the way out.**
+**One line: Fikirtive built the reference layer and the export layer, then left a ComfyUI-shaped hole where the filmmaking goes — and threw away the references on the way out.**
 
 ---
 
@@ -186,7 +186,7 @@ The fix is to make **the entity travel through every screen as a first-class, ge
 ### Make the shots (`/`, the Composer — THE FIX)
 This is where the redesign lives. The Composer bottom row changes from `[Copy resolved prompt] [Save prompt]` to:
 
-**`[Target ▾: Artlio in-app] ····· [Generate N (~$X)] [Save]`**
+**`[Target ▾: Fikirtive in-app] ····· [Generate N (~$X)] [Save]`**
 
 - **Generate is the primary button.** It calls the *exact* fal/Seedream path the Library already ships (`startRefGen`-style → poll → auto-land), **conditioned on the @-mentioned entities' actual reference image URLs** (the R2 assets are right there; the Library already does "using N images as reference"). The result **auto-attaches to the selected shot as V1** — no "Unattached," no separate attach act. This collapses today's 8-step / 3-handoff loop (copy → leave → load refs by hand → render → re-import → attach) into **one click**.
 - **The "Target" chip becomes a real picker** (`fal/Seedream · hosted ComfyUI · "copy for my own ComfyUI"`), each with a cost badge. This is where the model-neutral wedge becomes visible and clickable instead of a decorative sticker.
@@ -237,22 +237,22 @@ This is where the redesign lives. The Composer bottom row changes from `[Copy re
 
 ## 4. BORROW FROM LTX (adapt, don't clone)
 
-1. **In-app generation as the default verb, model auto-selected** → Artlio's S1, but with the **Target picker exposing the choice** (LTX hides the model; Artlio's wedge is *surfacing* it). Adopt LTX's *frictionlessness*, keep Artlio's *neutrality*.
-2. **Reference health gating ("Please pick a source image") + greyed-Generate-until-valid** → Artlio's integrity gates already exist; surface them **at the board level before batch-rendering**, and grey the Generate button until mentions resolve.
-3. **Anti-perfectionist empty states that teach the next action with examples** (§3.3) → replace every Artlio dead-end ("create one in the Library," "Nothing to cut yet," the ComfyUI sentence) with a concrete next action.
-4. **`@`-mention with live propagation** → Artlio already has the mention graph; the adaptation is to make it **drive generation** (S2) and **propagate edits** (edit Maya's refs → offer to re-roll shots using her). This is the single most-validated LTX pattern and Artlio is one wire from parity.
+1. **In-app generation as the default verb, model auto-selected** → Fikirtive's S1, but with the **Target picker exposing the choice** (LTX hides the model; Fikirtive's wedge is *surfacing* it). Adopt LTX's *frictionlessness*, keep Fikirtive's *neutrality*.
+2. **Reference health gating ("Please pick a source image") + greyed-Generate-until-valid** → Fikirtive's integrity gates already exist; surface them **at the board level before batch-rendering**, and grey the Generate button until mentions resolve.
+3. **Anti-perfectionist empty states that teach the next action with examples** (§3.3) → replace every Fikirtive dead-end ("create one in the Library," "Nothing to cut yet," the ComfyUI sentence) with a concrete next action.
+4. **`@`-mention with live propagation** → Fikirtive already has the mention graph; the adaptation is to make it **drive generation** (S2) and **propagate edits** (edit Maya's refs → offer to re-roll shots using her). This is the single most-validated LTX pattern and Fikirtive is one wire from parity.
 5. **In-context cost badges** → put the price on the Generate button and Target options (the Library already shows "~$X"; extend it to shots).
-6. **Cost/credit transparency without the punishment** → show cost in-context like LTX, but keep Artlio's "free references, pay per generation" model. Do **not** adopt per-retake credit-burn.
+6. **Cost/credit transparency without the punishment** → show cost in-context like LTX, but keep Fikirtive's "free references, pay per generation" model. Do **not** adopt per-retake credit-burn.
 
-**Explicitly do NOT borrow:** auto-cast script-to-storyboard as the *headline* (it's exactly where LTX's identity consistency breaks — "a cousin, not the same person"); a deep NLE (LTX keeps it shallow and exports to Premiere — Artlio's editor is already at the right altitude); aggressive paywalling / credit-burn economics (LTX's #1 user pain and 1.5/5 billing reputation).
+**Explicitly do NOT borrow:** auto-cast script-to-storyboard as the *headline* (it's exactly where LTX's identity consistency breaks — "a cousin, not the same person"); a deep NLE (LTX keeps it shallow and exports to Premiere — Fikirtive's editor is already at the right altitude); aggressive paywalling / credit-burn economics (LTX's #1 user pain and 1.5/5 billing reputation).
 
 ---
 
 ## 5. KEEP THE WEDGE
 
-Artlio's differentiation is **being the model-neutral entity/reference layer that delivers rock-solid identity persistence across any model** — precisely the two things LTX is weakest at (consistency that's "a cousin, not the same person," and iteration that punishes you). The redesign must **amplify**, not dilute, this:
+Fikirtive's differentiation is **being the model-neutral entity/reference layer that delivers rock-solid identity persistence across any model** — precisely the two things LTX is weakest at (consistency that's "a cousin, not the same person," and iteration that punishes you). The redesign must **amplify**, not dilute, this:
 
-- **The Target picker is the wedge made visible.** Generating in-app via fal must coexist with "hand a fully-resolved reference bundle to my own ComfyUI / Veo / Kling." Artlio wins by carrying references *to any model*, not by becoming another walled generator. The founder's ComfyUI users will pay for exactly this — don't abstract the *choice* away, only the *operation*.
+- **The Target picker is the wedge made visible.** Generating in-app via fal must coexist with "hand a fully-resolved reference bundle to my own ComfyUI / Veo / Kling." Fikirtive wins by carrying references *to any model*, not by becoming another walled generator. The founder's ComfyUI users will pay for exactly this — don't abstract the *choice* away, only the *operation*.
 - **S2 is the wedge delivered.** Passing real reference images into generation is what makes "your @Maya is the **same** Maya in every shot" true — the claim LTX structurally can't make. This is the moat; it's also currently the broken line of code.
 - **Identity persistence > generation breadth.** Don't out-feature LTX on keyframes and motion sliders. Double down on locked entities, real ref sets, negative constraints, and reference fidelity conditioning every generation.
 - **Forgiving iteration is a weapon.** "Free references, charge for generation" is *right*. Make re-rolling a shot feel cheap and predictable — the opposite of LTX's meter-anxiety. This is a deliberate competitive attack, not just pricing.
@@ -282,7 +282,7 @@ Artlio's differentiation is **being the model-neutral entity/reference layer tha
 
 I have what I need. The architecture confirms three things the proposal materially understates or gets wrong, and they sharpen the critique decisively. I have enough grounding. Writing the critique now.
 
-# Skeptical Critique: Artlio UX Redesign Proposal
+# Skeptical Critique: Fikirtive UX Redesign Proposal
 
 The proposal is well-argued and the diagnosis (§1) is correct and load-bearing: no generate-on-Workbench, references collapse to text at the handoff. But it is **synthesized at too high an altitude** — it treats "reuse the shipped ref-gen path for shots" (S1+S2) as a clean port when the code says otherwise, and in doing so it buries the single hardest, most important risk under a confident "this is the whole ballgame." Below, the gaps.
 
@@ -294,7 +294,7 @@ The proposal is well-argued and the diagnosis (§1) is correct and load-bearing:
 
 **B. The director's continuity primitive is named but the proposal's own #1 fix can't deliver it.** §2 and §6.6 promote "New version from this shot" / "Maya, now wet" as the narrative wedge. But true continuity (LTX's Retake: "regenerate a 2-16s sub-segment, blended with surrounding frames") is a *video* operation. Cloning `promptDoc` + `entityIds` (what the proposal scopes it as) only re-rolls a fresh still from the same references — it does **not** carry forward the previous frame's lighting/wardrobe/pose. The proposal quietly downgrades the director's actual need ("same look, now soaked, from *this* frame") to "start from a non-blank prompt." That's a real gap it papers over.
 
-**C. Audio is dropped entirely.** Two personas raise it: the UGC creator ("trend audio slapped on") and the MV director ("cuts ride the music," "rain, footsteps"). The UGC persona explicitly flags "Artlio has *no visible audio import path* on its Editor beyond raw Shotstack." The proposal's §2 editor step says "Export MP4 in the chosen aspect ratio… **leave it alone**." For a *short-video ad* tool, shipping silent clips is a real hole, and the proposal doesn't even list it as a known non-goal. At minimum it should be named and deferred, not omitted.
+**C. Audio is dropped entirely.** Two personas raise it: the UGC creator ("trend audio slapped on") and the MV director ("cuts ride the music," "rain, footsteps"). The UGC persona explicitly flags "Fikirtive has *no visible audio import path* on its Editor beyond raw Shotstack." The proposal's §2 editor step says "Export MP4 in the chosen aspect ratio… **leave it alone**." For a *short-video ad* tool, shipping silent clips is a real hole, and the proposal doesn't even list it as a known non-goal. At minimum it should be named and deferred, not omitted.
 
 **D. The "auto-attach" win is overstated.** §2/S3 sell auto-attach as nearly free ("rides S1," "the upload already carries shot provenance"). But `attachGeneration`/upload provenance (`actions.ts` L243–266, L315 "Lands in the candidate zone, shotId = null") is the **manual upload** path. In-app generation from a shot is a *different* code path that doesn't exist yet — there's no shot-scoped refgen job (refgen jobs key to `entityId`, not `shotId`). So "auto-attach" isn't reusing existing provenance plumbing; it's new wiring (generation job needs to carry a `shotId` and land in `shot.generations`). Not hard, but not the freebie the table implies.
 

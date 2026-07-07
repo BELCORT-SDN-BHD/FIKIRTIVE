@@ -6,7 +6,7 @@
 
 **Architecture:** Reuse the existing `ownerId String @default("founder")` scalar on all 20 business tables as the FK to `Organization.id` (no new column on business tables). Seed `Organization{id:"founder"}` in the migration so the FK validates against existing rows with zero backfill. Hot tables get `NOT VALID` + separate `VALIDATE` FKs (hand-edited migration) so Railway auto-migrate never long-locks. `Membership.role` is a code-side zod enum (`org-roles.ts`), not a PG enum.
 
-**Tech Stack:** Prisma 7.8 (`prisma migrate dev`, datasource reads `DATABASE_URL`), Postgres (local `postgresql://artlio:artlio@localhost:5432/artlio`), vitest (core).
+**Tech Stack:** Prisma 7.8 (`prisma migrate dev`, datasource reads `DATABASE_URL`), Postgres (local `postgresql://fikirtive:fikirtive@localhost:5432/fikirtive`), vitest (core).
 
 **House rules:** LOCAL only — **never** run against prod; the migration is additive + reversible; surgical; NO auto-commit/push (git steps "leave for user"). The 20 owner-scoped tables (confirmed via grep): Project, Entity, EntityVariant, ReferenceImage, Asset, Shot, **ShotEntityRef** (verify its ownerId), Generation, TemplateBundle, RenderJob, CaptionJob, Transcript, RefGenJob, GenJob, ActionEvent, ModelDirective, ModelRegistryOverlay, ModelDirectiveRevision, ChatThread, ChatMessage.
 
@@ -36,7 +36,7 @@ describe("ORG_ROLES (per-org membership RBAC — distinct from platform User.rol
 });
 ```
 
-- [ ] **Step 2: Run → FAIL** `pnpm --filter @artlio/core test org-roles`
+- [ ] **Step 2: Run → FAIL** `pnpm --filter @fikirtive/core test org-roles`
 - [ ] **Step 3: Implement** `packages/core/src/org-roles.ts`
 
 ```ts
@@ -51,7 +51,7 @@ export function isOrgRole(x: unknown): x is OrgRole {
 ```
 
 - [ ] **Step 4: Export** — add to `packages/core/src/index.ts`: `export { ORG_ROLES, isOrgRole, type OrgRole } from "./org-roles.js";`
-- [ ] **Step 5: Run → PASS** `pnpm --filter @artlio/core test org-roles` then `pnpm --filter @artlio/core build` (so web/worker see the new export).
+- [ ] **Step 5: Run → PASS** `pnpm --filter @fikirtive/core test org-roles` then `pnpm --filter @fikirtive/core build` (so web/worker see the new export).
 - [ ] **Step 6: (leave for user) commit** `git add packages/core/src/org-roles.ts packages/core/src/org-roles.test.ts packages/core/src/index.ts`
 
 ---
@@ -155,7 +155,7 @@ model Project {
 
 Repeat the single `organization Organization @relation(fields: [ownerId], references: [id])` line in: Project, Entity, EntityVariant, ReferenceImage, Asset, Shot, ShotEntityRef (if it has ownerId), Generation, TemplateBundle, RenderJob, CaptionJob, Transcript, RefGenJob, GenJob, ActionEvent, ModelDirective, ModelRegistryOverlay, ModelDirectiveRevision, ChatThread, ChatMessage. Keep the Organization back-relation list (Step 1) in sync with whichever tables actually get the relation.
 
-- [ ] **Step 5: Validate the schema parses** — `pnpm --filter @artlio/db exec prisma validate` → "The schema is valid". Fix any "missing opposite relation field" errors (every business `organization` field needs its array on Organization, and vice-versa).
+- [ ] **Step 5: Validate the schema parses** — `pnpm --filter @fikirtive/db exec prisma validate` → "The schema is valid". Fix any "missing opposite relation field" errors (every business `organization` field needs its array on Organization, and vice-versa).
 
 ---
 
@@ -165,7 +165,7 @@ Repeat the single `organization Organization @relation(fields: [ownerId], refere
 
 - [ ] **Step 1: Generate WITHOUT applying** (so we can hand-edit before it runs):
 
-Run (from repo root, local DB url explicit): `DATABASE_URL="postgresql://artlio:artlio@localhost:5432/artlio" pnpm --filter @artlio/db exec prisma migrate dev --create-only --name org_tenant`
+Run (from repo root, local DB url explicit): `DATABASE_URL="postgresql://fikirtive:fikirtive@localhost:5432/fikirtive" pnpm --filter @fikirtive/db exec prisma migrate dev --create-only --name org_tenant`
 Expected: a new `migrations/<ts>_org_tenant/migration.sql` is written, NOT applied.
 
 - [ ] **Step 2: Read the generated SQL.** It will contain: `CREATE TABLE "Organization"`, `CREATE TABLE "Membership"`, the unique/index creations, `ALTER TABLE "User" ADD COLUMN "activeOrgId"`, and ~20 `ALTER TABLE "<biz>" ADD CONSTRAINT "<biz>_ownerId_fkey" FOREIGN KEY ("ownerId") REFERENCES "Organization"("id") ...` lines (all validating by default).
@@ -188,14 +188,14 @@ Expected: a new `migrations/<ts>_org_tenant/migration.sql` is written, NOT appli
      (Small tables can keep the single generated validating FK — trivial scan.)
   4. Ensure **no** `ON DELETE CASCADE` from Organization to business tables — keep `ON DELETE RESTRICT` (deleting an org must be deliberate, never an FK side-effect). Prisma's default for a required relation is RESTRICT — confirm it didn't emit CASCADE.
 
-- [ ] **Step 4: Apply to LOCAL only** — `DATABASE_URL="postgresql://artlio:artlio@localhost:5432/artlio" pnpm --filter @artlio/db exec prisma migrate dev` (applies the edited migration; regenerates the client). Expected: migration applies clean, `prisma generate` runs.
+- [ ] **Step 4: Apply to LOCAL only** — `DATABASE_URL="postgresql://fikirtive:fikirtive@localhost:5432/fikirtive" pnpm --filter @fikirtive/db exec prisma migrate dev` (applies the edited migration; regenerates the client). Expected: migration applies clean, `prisma generate` runs.
 
 ---
 
 ### Task 4: Verify the migration (data intact, FKs present, founder org seeded)
 
 - [ ] **Step 1: Founder org exists**
-`psql "postgresql://artlio:artlio@localhost:5432/artlio" -c "SELECT id,name FROM \"Organization\";"` → row `founder | Founder`.
+`psql "postgresql://fikirtive:fikirtive@localhost:5432/fikirtive" -c "SELECT id,name FROM \"Organization\";"` → row `founder | Founder`.
 
 - [ ] **Step 2: Existing rows still valid (FK holds, zero backfill)**
 `psql ... -c "SELECT COUNT(*) FROM \"Project\" WHERE \"ownerId\"='founder';"` and the same for `Generation`, `Asset`, `GenJob` → counts unchanged from before; no FK violation occurred (the migration applied = proof).
@@ -216,7 +216,7 @@ Per spec: the founder `Membership` is created lazily on sign-in (the founder Use
 
 **Files:** Modify `apps/web/auth.ts` (`events.signIn`).
 
-- [ ] **Step 1: Add the membership upsert** next to the existing founder self-heal, same best-effort/never-block contract. Use `newId()` (already imported) + `FOUNDER_OWNER_ID` (import from `@artlio/core`):
+- [ ] **Step 1: Add the membership upsert** next to the existing founder self-heal, same best-effort/never-block contract. Use `newId()` (already imported) + `FOUNDER_OWNER_ID` (import from `@fikirtive/core`):
 
 ```ts
 // (in events.signIn, after the existing isFounderAdmin self-heal block)
@@ -233,7 +233,7 @@ if (isFounderAdmin(user.email) && user.id) {
     .catch(() => {}); // best-effort — never block sign-in on a membership write
 }
 ```
-(Add `FOUNDER_OWNER_ID` to the `@artlio/core` import in auth.ts.)
+(Add `FOUNDER_OWNER_ID` to the `@fikirtive/core` import in auth.ts.)
 
 - [ ] **Step 2: Verify** `pnpm --filter web typecheck` → clean. (Runtime path is dormant; no behavior change for existing flows.)
 - [ ] **Step 3: (leave for user) commit** the schema + migration + auth.ts together.
@@ -242,7 +242,7 @@ if (isFounderAdmin(user.email) && user.id) {
 
 ### Task 6: Phase verify + dual gate
 
-- [ ] **Step 1:** `pnpm -r typecheck` clean; `pnpm --filter @artlio/core test` green (org-roles + all prior).
+- [ ] **Step 1:** `pnpm -r typecheck` clean; `pnpm --filter @fikirtive/core test` green (org-roles + all prior).
 - [ ] **Step 2:** Migration smoke (Task 4) green.
 - [ ] **Step 3: DUAL GATE (per the every-round rule):** capture the P1 diff (`git diff HEAD` on schema.prisma, the new migration.sql, org-roles.ts/index.ts/test, auth.ts) → run **Codex** (read-only, focus: is the migration additive + lock-safe + zero-data-loss; FK ordering seed-before-FK; no CASCADE-from-org; relations complete; `Membership` shape) AND the **workflow code-QA** (dimensions: migration-safety, schema-correctness, dormancy/no-regression). Fix all confirmed BLOCKER/STRONG, re-verify. Then STOP for the user before P2.
 

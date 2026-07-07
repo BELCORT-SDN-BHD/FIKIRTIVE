@@ -24,14 +24,14 @@
 # 1. 从 R2 下载最近一晚的备份(Cloudflare 控制台或任意 S3 客户端)
 # 2. 本地起库并建一个干净的恢复目标库
 docker compose up -d postgres
-docker compose exec postgres psql -U artlio -c 'CREATE DATABASE restore_drill;'
+docker compose exec postgres psql -U fikirtive -c 'CREATE DATABASE restore_drill;'
 # 3. 解压并恢复(custom 格式用 pg_restore,不是 psql)
 gunzip -k fikirtive-<YYYY-MM-DD>.dump.gz
 pg_restore --no-owner --no-privileges \
-  -d 'postgres://artlio:artlio@localhost:5432/restore_drill' \
+  -d 'postgres://fikirtive:fikirtive@localhost:5432/restore_drill' \
   fikirtive-<YYYY-MM-DD>.dump
 # 4. 对账:行数要和 prod 当晚对得上(重点看钱的真相)
-docker compose exec postgres psql -U artlio -d restore_drill \
+docker compose exec postgres psql -U fikirtive -d restore_drill \
   -c 'select count(*) from "CreditLedger";'
 ```
 

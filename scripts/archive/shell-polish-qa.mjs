@@ -5,7 +5,7 @@ import { mkdirSync } from "node:fs";
 import path from "node:path";
 import os from "node:os";
 const BASE = process.env.BASE_URL ?? "http://localhost:3100";
-const OUT = path.join(os.homedir(), ".gstack/projects/artlio/shell-polish");
+const OUT = path.join(os.homedir(), ".gstack/projects/fikirtive/shell-polish");
 mkdirSync(OUT, { recursive: true });
 const browser = await chromium.launch();
 const page = await (await browser.newContext({ viewport: { width: 1512, height: 950 } })).newPage();

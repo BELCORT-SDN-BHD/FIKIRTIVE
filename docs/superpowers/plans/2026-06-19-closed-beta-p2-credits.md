@@ -6,7 +6,7 @@
 
 **Architecture:** Two new tables — `CreditAccount` (hot mutable `balance`+`reserved`, Int internal credits where 1 = $0.01) and `CreditLedger` (append-only audit, **two signed deltas** `balanceDelta`/`reservedDelta`). One credit-service module (`packages/db/src/credits.ts`) exporting `reserveCredits`/`settleCredits`/`refundReservation`/`grantCredits`, the ONLY writers of the account. Reserve = atomic conditional `updateMany(balance>=cost)` inside the existing job-insert `$transaction`. Settle = fold into the worker commit tx. Refund = every terminal-FAILED transition. All idempotent via a partial-unique `(orgId,refId,kind)` index.
 
-**Tech Stack:** Prisma 7.8 (local migration), Postgres, vitest (core math), `@artlio/core` for the pure `pricedCredits`.
+**Tech Stack:** Prisma 7.8 (local migration), Postgres, vitest (core math), `@fikirtive/core` for the pure `pricedCredits`.
 
 **House rules:** LOCAL migration only (never prod); the charge is deterministic so reserve==settle (no variable delta); never expose a raw balance write; surgical; NO auto-commit/push. **The triple gate (Codex + workflow QA + money-safety-review) MUST pass before P2 is done.**
 
@@ -48,7 +48,7 @@ describe("credit pricing (deterministic CHARGE in internal credits; 1 internal =
 });
 ```
 
-- [ ] **Step 2: Run → FAIL** `pnpm --filter @artlio/core test spend`
+- [ ] **Step 2: Run → FAIL** `pnpm --filter @fikirtive/core test spend`
 - [ ] **Step 3: Implement** in `packages/core/src/spend.ts` (append)
 
 ```ts
@@ -83,7 +83,7 @@ export function displayCredits(internal: number): number {
 }
 ```
 
-- [ ] **Step 4: Run → PASS**; `pnpm --filter @artlio/core build`.
+- [ ] **Step 4: Run → PASS**; `pnpm --filter @fikirtive/core build`.
 - [ ] **Step 5: (leave for user) commit.**
 
 ---
@@ -137,7 +137,7 @@ VALUES ('founder', 100000000, 0, CURRENT_TIMESTAMP) ON CONFLICT ("orgId") DO NOT
 INSERT INTO "CreditLedger" ("id","orgId","balanceDelta","reservedDelta","kind","source","reason","idempotencyKey","createdAt")
 VALUES ('seedfounderbeta0000000000', 'founder', 100000000, 0, 'GRANT','BETA','founder beta seed','grant:founder-seed', CURRENT_TIMESTAMP) ON CONFLICT ("orgId","idempotencyKey") DO NOTHING;
 ```
-- [ ] **Step 3: Apply local** via `psql -v ON_ERROR_STOP=1 -f migration.sql`, `migrate resolve --applied`, `prisma generate`, `pnpm --filter @artlio/db build`.
+- [ ] **Step 3: Apply local** via `psql -v ON_ERROR_STOP=1 -f migration.sql`, `migrate resolve --applied`, `prisma generate`, `pnpm --filter @fikirtive/db build`.
 - [ ] **Step 4: Verify** founder CreditAccount balance + the unique index present.
 
 ---
@@ -150,7 +150,7 @@ VALUES ('seedfounderbeta0000000000', 'founder', 100000000, 0, 'GRANT','BETA','fo
 - [ ] `settleCredits(tx, {orgId, refId, cost})`: write SETTLE (`reservedDelta:-cost, balanceDelta:0`) — guarded by the `(orgId,refId,SETTLE)` partial-unique (catch P2002 → no-op, for resume idempotency); update account `reserved:{decrement:cost}`. NOTE: must read the original reserved cost; since `cost` is deterministic (`pricedGenCredits(job)`), pass the same value the worker recomputes. If no matching RESERVE exists (historical job), it's a safe no-op (guard: only settle if a RESERVE row exists for this refId).
 - [ ] `refundReservation(tx, {orgId, refId})`: look up the RESERVE row's cost for this refId; write REFUND (`balanceDelta:+cost, reservedDelta:-cost`); update account; idempotent via `(orgId,refId,REFUND)` (P2002 → no-op). No-op if no RESERVE row (historical).
 - [ ] `grantCredits({orgId, amount, reason, source, createdBy, idempotencyKey})`: tx — write GRANT (`balanceDelta:+amount`) + upsert account `balance:{increment:amount}` + idempotent on `(orgId,idempotencyKey)`.
-- [ ] `InsufficientCredits` error class. Export all from `@artlio/db`.
+- [ ] `InsufficientCredits` error class. Export all from `@fikirtive/db`.
 - [ ] Tests: against the local DB (founder has the big seed): reserve→settle leaves balance=grant-cost,reserved=0; reserve→refund returns to grant,reserved=0; over-balance reserve throws; double settle/refund is a no-op (idempotent). (If a DB-test harness is too heavy, a focused integration smoke script + the worker isolation test cover it; document the choice.)
 
 ---
@@ -185,7 +185,7 @@ VALUES ('seedfounderbeta0000000000', 'founder', 100000000, 0, 'GRANT','BETA','fo
 
 ### Task 7: Phase verify + TRIPLE gate
 
-- [ ] `pnpm -r typecheck` + `pnpm --filter @artlio/core test` green; local DB smoke (reserve/settle/refund/grant arithmetic + idempotency).
+- [ ] `pnpm -r typecheck` + `pnpm --filter @fikirtive/core test` green; local DB smoke (reserve/settle/refund/grant arithmetic + idempotency).
 - [ ] Capture the P2 diff → **Codex** (money-safety focus: double-spend, leaked reservation, all 6 sites covered, reserve==settle, every terminal-FAILED refunds, requeue clean) + **workflow code-QA** (concurrency / ledger-consistency / dormancy-of-display) + **money-safety-review** skill. Fix all confirmed BLOCKER/STRONG; re-verify. STOP for the user before P3.
 
 ---

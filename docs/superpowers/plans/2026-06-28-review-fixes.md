@@ -419,7 +419,7 @@ Expected: PASS. Then `cd apps/web && pnpm exec tsc -p tsconfig.json --noEmit` �
 
 Run: `cd apps/web && pnpm exec vitest run` — expected: green except the pre-existing `DATABASE_URL` integration tests (`require-owner`, `tenant-guard`, `files route`, `isolation`).
 Run: `cd packages/core && pnpm exec vitest run` — expected: all green (model-config + cowork-route).
-Run (repo root `/Users/winnin/Desktop/artlio/.claude/worktrees/otto-g2-editor`): `pnpm -r build 2>&1 | tee /tmp/review-fixes-build.log; grep -E "ƒ /otto|Done|error TS|Failed to compile" /tmp/review-fixes-build.log`
+Run (repo root `/Users/winnin/Desktop/fikirtive/.claude/worktrees/otto-g2-editor`): `pnpm -r build 2>&1 | tee /tmp/review-fixes-build.log; grep -E "ƒ /otto|Done|error TS|Failed to compile" /tmp/review-fixes-build.log`
 Expected: shows `├ ƒ /otto` + `Done`, no `error TS` / `Failed to compile`.
 
 - [ ] **Step 8: Commit**

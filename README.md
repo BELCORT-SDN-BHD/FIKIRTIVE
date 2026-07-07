@@ -9,8 +9,9 @@ generates it. Everything that costs an API call (generation *and* Otto's own LLM
 metered against a per-org **credit ledger**, so spend is capped and auditable.
 
 > Naming note: the product/brand is **Fikirtive**; the npm scope is `@fikirtive/*`
-> (root package `fikirtive`). Some infra names (local DB `artlio`, CI test DB `artlio_test`,
-> R2 bucket) still carry the pre-pivot "artlio" name.
+> (root package `fikirtive`). Local DB and CI test DB are `fikirtive` / `fikirtive_test`
+> (renamed 2026-07-07). The prod R2 bucket still carries the pre-pivot "artlio" name —
+> object migration is tracked in `docs/MASTERPLAN.md` P0.
 
 ## Architecture
 
@@ -62,8 +63,8 @@ ffmpeg (worker) · deployed on Railway.
 
 ```bash
 pnpm install
-docker compose up -d postgres                                   # local Postgres 16 (artlio:artlio@localhost:5432/artlio)
-DATABASE_URL="postgresql://artlio:artlio@localhost:5432/artlio" pnpm --filter @fikirtive/db exec prisma migrate deploy
+docker compose up -d postgres                                   # local Postgres 16 (fikirtive:fikirtive@localhost:5432/fikirtive)
+DATABASE_URL="postgresql://fikirtive:fikirtive@localhost:5432/fikirtive" pnpm --filter @fikirtive/db exec prisma migrate deploy
 pnpm db:generate
 
 # Web + worker read env from a gitignored .env.local at the repo root.

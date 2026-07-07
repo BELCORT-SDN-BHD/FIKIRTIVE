@@ -8,7 +8,7 @@ import path from "node:path";
 import os from "node:os";
 
 const BASE = process.env.BASE_URL ?? "http://localhost:3100";
-const SHOTS = path.join(os.homedir(), ".gstack/projects/artlio/full-journey");
+const SHOTS = path.join(os.homedir(), ".gstack/projects/fikirtive/full-journey");
 mkdirSync(SHOTS, { recursive: true });
 const browser = await chromium.launch();
 const page = await (await browser.newContext({ viewport: { width: 1512, height: 950 } })).newPage();

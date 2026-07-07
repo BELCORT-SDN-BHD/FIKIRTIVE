@@ -6,7 +6,7 @@
 
 **Architecture:** New `ChatThread`/`ChatMessage` Prisma models + `GenJob.threadId`. A pure core `suggestModel` (capability routing with param-snapping). A core `coworkTurnSchema` (the LLM trust boundary) + `COWORK_PLANNER_SYSTEM` + a bounded-retry assembler/parser. The `coworkTurn` web action orchestrates: assemble messages (bounded history + available refs + model summary) → `transport.chat` (json-mode + max_tokens) → parse/validate (≤1 retry) → `suggestModel` → persist user + agent messages in one `$transaction` → audit `cowork.turn`. No media spend. Verified by a mock-$0 script + vitest.
 
-**Tech Stack:** Prisma 7.8 + Neon; `@artlio/core` (`cowork.ts`, `cowork-transport.ts`, `cowork-skills.ts`, `gen.ts`); `@artlio/db`; Next.js server actions; vitest.
+**Tech Stack:** Prisma 7.8 + Neon; `@fikirtive/core` (`cowork.ts`, `cowork-transport.ts`, `cowork-skills.ts`, `gen.ts`); `@fikirtive/db`; Next.js server actions; vitest.
 
 **Spec:** [`../specs/2026-06-15-cowork-agent-loop-design.md`](../specs/2026-06-15-cowork-agent-loop-design.md) (v2, reviewed). This is **Plan-1 of 2**; Plan-2 (the Cowork UI surface + Generate card) is a separate plan that builds on this.
 
@@ -85,7 +85,7 @@ And on `model GenJob`, add (additive, nullable — keeps every existing money gu
 
 - [ ] **Step 2: Generate the migration without applying to prod.** From `packages/db`, create the migration SQL only:
 
-Run: `cd packages/db && DATABASE_URL="postgresql://artlio:artlio@localhost:5432/artlio" pnpm exec prisma migrate dev --name cowork_threads --create-only`
+Run: `cd packages/db && DATABASE_URL="postgresql://fikirtive:fikirtive@localhost:5432/fikirtive" pnpm exec prisma migrate dev --name cowork_threads --create-only`
 Expected: creates `migrations/<timestamp>_cowork_threads/migration.sql` with `CREATE TABLE "ChatThread"`, `CREATE TABLE "ChatMessage"`, the two enums, and `ALTER TABLE "GenJob" ADD COLUMN "threadId"`. (Local DB only; `--create-only` does not apply.)
 
 - [ ] **Step 3: Append a partial live-row index to the migration** (codebase idiom — matches the `WHERE deletedAt IS NULL` partial indexes in earlier migrations). Edit the generated `migration.sql`, append:
@@ -96,14 +96,14 @@ ON "ChatThread"("projectId", "ownerId", "updatedAt") WHERE "deletedAt" IS NULL;
 ```
 
 - [ ] **Step 4: Apply locally + regenerate the client.**
-Run: `cd packages/db && DATABASE_URL="postgresql://artlio:artlio@localhost:5432/artlio" pnpm exec prisma migrate deploy && pnpm --filter @artlio/db build`
+Run: `cd packages/db && DATABASE_URL="postgresql://fikirtive:fikirtive@localhost:5432/fikirtive" pnpm exec prisma migrate deploy && pnpm --filter @fikirtive/db build`
 Expected: "All migrations have been successfully applied." + the Prisma client regenerates with `prisma.chatThread`/`prisma.chatMessage` + `GenJob.threadId`.
 
 - [ ] **Step 5: Verify the tables + index exist locally.**
 Run:
 ```bash
-cd /Users/winnin/Documents/artlio/packages/db && node -e '
-const {Client}=require("pg");const c=new Client({connectionString:"postgresql://artlio:artlio@localhost:5432/artlio"});
+cd /Users/winnin/Documents/fikirtive/packages/db && node -e '
+const {Client}=require("pg");const c=new Client({connectionString:"postgresql://fikirtive:fikirtive@localhost:5432/fikirtive"});
 (async()=>{await c.connect();
 const t=await c.query("SELECT to_regclass($1) a, to_regclass($2) b",["public.\"ChatThread\"","public.\"ChatMessage\""]);
 const i=await c.query("SELECT 1 FROM pg_indexes WHERE indexname=$1",["ChatThread_project_live_idx"]);
@@ -143,7 +143,7 @@ it("FalTransport forwards response_format + max_tokens in the request body", asy
 });
 ```
 
-- [ ] **Step 2: Run → fail.** `pnpm --filter @artlio/core test -- cowork-transport`  Expected: FAIL (opts not forwarded / type error).
+- [ ] **Step 2: Run → fail.** `pnpm --filter @fikirtive/core test -- cowork-transport`  Expected: FAIL (opts not forwarded / type error).
 
 - [ ] **Step 3: Implement.** In `cowork.ts`, extend the two types:
 ```ts
@@ -178,7 +178,7 @@ async chat(_skillId: string, messages: ChatMessage[], opts?: { responseFormat?: 
 }
 ```
 
-- [ ] **Step 4: Run → pass.** `pnpm --filter @artlio/core test -- cowork-transport && pnpm --filter @artlio/core typecheck`  Expected: PASS. (The `"assistant"` role widening must not break existing skills — they only emit `system`/`user`.)
+- [ ] **Step 4: Run → pass.** `pnpm --filter @fikirtive/core test -- cowork-transport && pnpm --filter @fikirtive/core typecheck`  Expected: PASS. (The `"assistant"` role widening must not break existing skills — they only emit `system`/`user`.)
 
 - [ ] **Step 5: Commit (staged).**
 ```bash
@@ -235,7 +235,7 @@ describe("suggestModel", () => {
 });
 ```
 
-- [ ] **Step 2: Run → fail.** `pnpm --filter @artlio/core test -- cowork-route`  Expected: FAIL ("suggestModel is not a function").
+- [ ] **Step 2: Run → fail.** `pnpm --filter @fikirtive/core test -- cowork-route`  Expected: FAIL ("suggestModel is not a function").
 
 - [ ] **Step 3: Implement `cowork-route.ts`.**
 ```ts
@@ -308,7 +308,7 @@ export function suggestModel(input: SuggestModelInput): SuggestModelResult {
 }
 ```
 
-- [ ] **Step 4: Run → pass + typecheck.** `pnpm --filter @artlio/core test -- cowork-route && pnpm --filter @artlio/core typecheck`  Expected: PASS.
+- [ ] **Step 4: Run → pass + typecheck.** `pnpm --filter @fikirtive/core test -- cowork-route && pnpm --filter @fikirtive/core typecheck`  Expected: PASS.
 
 - [ ] **Step 5: Export + commit (staged).** Add `export * from "./cowork-route.js";` to `packages/core/src/index.ts`.
 ```bash
@@ -358,7 +358,7 @@ describe("coworkTurnSchema", () => {
 });
 ```
 
-- [ ] **Step 2: Run → fail.** `pnpm --filter @artlio/core test -- cowork-planner`  Expected: FAIL (module missing).
+- [ ] **Step 2: Run → fail.** `pnpm --filter @fikirtive/core test -- cowork-planner`  Expected: FAIL (module missing).
 
 - [ ] **Step 3: Implement.** In `cowork.ts` add the schema + constants (reuse `MAX_GEN_PROMPT` from `gen.ts`):
 ```ts
@@ -390,7 +390,7 @@ import { coworkTurnSchema, MAX_PLAN_STEPS, type ChatMessage, type CoworkTurn } f
 export { MAX_PLAN_STEPS };
 
 export const COWORK_PLANNER_SYSTEM =
-  `You are Artlio's creative-director agent. The user describes what they want to create. ` +
+  `You are Fikirtive's creative-director agent. The user describes what they want to create. ` +
   `Respond with ONLY a JSON object (no prose, no markdown fences): ` +
   `{"planSteps":["short step", ...],"reply":"a short natural-language message in the user's language","proposal":null | {"kind":"image"|"video","desiredAspect"?:"16:9","desiredDuration"?:5,"desiredAudio"?:true,"structuredPrompt":"a vivid generator prompt","entityIds":["<id>"...],"variantSel":{"<entityId>":"<variantId>"}}}. ` +
   `planSteps: 2-${MAX_PLAN_STEPS} short reasoning steps (what you'll look at, which model class, why). ` +
@@ -448,7 +448,7 @@ export function mockPlannerReply(userText: string): string {
 }
 ```
 
-- [ ] **Step 4: Run → pass + typecheck.** `pnpm --filter @artlio/core test -- cowork-planner && pnpm --filter @artlio/core typecheck`  Expected: PASS.
+- [ ] **Step 4: Run → pass + typecheck.** `pnpm --filter @fikirtive/core test -- cowork-planner && pnpm --filter @fikirtive/core typecheck`  Expected: PASS.
 
 - [ ] **Step 5: Export + commit (staged).** Add `export * from "./cowork-planner.js";` to `index.ts`.
 ```bash
@@ -512,7 +512,7 @@ export async function coworkTurn(raw: unknown): Promise<{ threadId: string } | {
 
   // ≤2 LLM calls total (1 + at most 1 retry). mock-$0 in dev.
   const refIds = availableRefs.map((r) => r.id);
-  let turn: import("@artlio/core").CoworkTurn | null = null;
+  let turn: import("@fikirtive/core").CoworkTurn | null = null;
   for (let attempt = 0; attempt < 2 && !turn; attempt++) {
     try {
       const { text: out } = await transport.chat("coworkPlanner", attempt === 0 ? messages : [...messages, { role: "user", content: "Your previous reply was not valid JSON for the schema. Reply with ONLY the JSON object." }], {
@@ -574,7 +574,7 @@ export async function coworkTurn(raw: unknown): Promise<{ threadId: string } | {
 ```
 Add a `loadAvailableRefs(projectId)` helper near the top (reuse the entity DTO/query — confirm with `codegraph node getEntities`): returns the project's live entities as `{id, name, type}[]`.
 
-- [ ] **Step 3: Build core + typecheck web.** `pnpm --filter @artlio/core build && pnpm --filter web typecheck`  Expected: PASS. (If `videoPriceUsd`'s model arg type complains, import `GenVideoModel` and cast `sm.model as GenVideoModel`.)
+- [ ] **Step 3: Build core + typecheck web.** `pnpm --filter @fikirtive/core build && pnpm --filter web typecheck`  Expected: PASS. (If `videoPriceUsd`'s model arg type complains, import `GenVideoModel` and cast `sm.model as GenVideoModel`.)
 
 - [ ] **Step 4: Static money-safety check — `coworkTurn` must not reference `startGen`/`genJob.create`.**
 Run: `codegraph callers startGen` (confirm `coworkTurn` is NOT a caller) and `grep -n "startGen\|genJob.create\|genRequest" apps/web/lib/cowork-actions.ts`  Expected: **no matches** in `cowork-actions.ts`.
@@ -624,11 +624,11 @@ try {
 ```
 
 - [ ] **Step 2: Build the deps the script imports, then run it.**
-Run: `pnpm --filter @artlio/core build && pnpm --filter @artlio/db build && node --import ./apps/worker/node_modules/tsx/dist/loader.mjs scripts/verify-cowork-turn.mjs 2>&1 | grep -E "✓|✗"`
+Run: `pnpm --filter @fikirtive/core build && pnpm --filter @fikirtive/db build && node --import ./apps/worker/node_modules/tsx/dist/loader.mjs scripts/verify-cowork-turn.mjs 2>&1 | grep -E "✓|✗"`
 Expected: all ✓, ending `✓ coworkTurn: propose-only — thread + card persisted, zero GenJob, $0`.
 
 - [ ] **Step 3: Full gate.**
-Run: `pnpm -r typecheck && pnpm --filter @artlio/core test`
+Run: `pnpm -r typecheck && pnpm --filter @fikirtive/core test`
 Expected: all packages typecheck; core tests pass (incl. the new `cowork-route` + `cowork-planner` suites).
 
 - [ ] **Step 4: Commit (staged).**

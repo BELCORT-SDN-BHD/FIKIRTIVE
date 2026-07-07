@@ -7,11 +7,11 @@
 //
 // Idempotent: re-running overwrites both configs with the same values.
 // Usage (against prod R2, creds from the secrets file):
-//   set -a && source ~/.gstack/projects/artlio/secrets/cloud.env && set +a
+//   set -a && source ~/.gstack/projects/fikirtive/secrets/cloud.env && set +a
 //   APP_ORIGIN=https://web-production-b13a4.up.railway.app node scripts/tools/r2-configure.mjs
 // Or against local MinIO:
 //   STORAGE_DRIVER=r2 R2_ENDPOINT=http://localhost:9000 R2_ACCESS_KEY_ID=minioadmin \
-//   R2_SECRET_ACCESS_KEY=minioadmin R2_BUCKET=artlio APP_ORIGIN=http://localhost:3100 \
+//   R2_SECRET_ACCESS_KEY=minioadmin R2_BUCKET=fikirtive APP_ORIGIN=http://localhost:3100 \
 //   node scripts/tools/r2-configure.mjs
 import { interlock } from "./_interlock.mjs";
 interlock({ prod: "overwrites bucket CORS + lifecycle on the target R2 (the PROD bucket when run with prod creds)" });

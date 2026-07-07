@@ -21,11 +21,11 @@ vi.mock("@/lib/allowlist", () => {
   return { allowed, isFounderAdmin, isAllowedEmail: allowed };
 });
 
-const A_EMAIL = `orgA-${randomUUID()}@artlio.test`;
-const B_EMAIL = `orgB-${randomUUID()}@artlio.test`;
+const A_EMAIL = `orgA-${randomUUID()}@fikirtive.test`;
+const B_EMAIL = `orgB-${randomUUID()}@fikirtive.test`;
 beforeAll(() => {
   process.env.AUTH_ALLOWED_EMAILS = `${A_EMAIL},${B_EMAIL}`;
-  process.env.FOUNDER_ADMIN_EMAILS = "noone@artlio.test"; // neither A nor B is founder
+  process.env.FOUNDER_ADMIN_EMAILS = "noone@fikirtive.test"; // neither A nor B is founder
 });
 
 const { requireOwner } = await import("@/lib/auth-guard");

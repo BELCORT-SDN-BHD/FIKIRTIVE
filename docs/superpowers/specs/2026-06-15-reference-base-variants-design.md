@@ -173,7 +173,7 @@ SET "baseAssetId" = (
 WHERE e."deletedAt" IS NULL AND e."baseAssetId" IS NULL;
 ```
 
-- Prod: `pnpm --filter @artlio/db migrate:deploy` (direct `DATABASE_URL`), before web/worker restart. Secrets read from `~/.gstack/projects/artlio/secrets/cloud.env`, never printed.
+- Prod: `pnpm --filter @fikirtive/db migrate:deploy` (direct `DATABASE_URL`), before web/worker restart. Secrets read from `~/.gstack/projects/fikirtive/secrets/cloud.env`, never printed.
 
 ## Generation flow + money-safety
 

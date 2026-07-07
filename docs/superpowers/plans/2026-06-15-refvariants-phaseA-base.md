@@ -164,7 +164,7 @@ WHERE e."deletedAt" IS NULL AND e."baseAssetId" IS NULL;
 
 - [ ] **Step 4: Apply the migration + regenerate the client**
 
-Run: `cd packages/db && pnpm exec prisma migrate dev` then `pnpm --filter @artlio/db generate`
+Run: `cd packages/db && pnpm exec prisma migrate dev` then `pnpm --filter @fikirtive/db generate`
 Expected: "All migrations have been successfully applied." + "Generated Prisma Client".
 
 - [ ] **Step 5: Write a verification script proving the backfill + defaults**
@@ -199,7 +199,7 @@ try {
 
 - [ ] **Step 6: Run the verification + typecheck**
 
-Run: `node scripts/verify-phaseA-migration.mjs && pnpm --filter @artlio/db typecheck`
+Run: `node scripts/verify-phaseA-migration.mjs && pnpm --filter @fikirtive/db typecheck`
 Expected: "✓ Phase A migration verified" (0 mismatches) + clean typecheck.
 
 - [ ] **Step 7: Commit**
@@ -238,7 +238,7 @@ In `packages/core/src/refgen.test.ts`, add inside the `describe("refGenRequest",
 
 - [ ] **Step 2: Run it to verify it fails**
 
-Run: `pnpm --filter @artlio/core test -- refgen`
+Run: `pnpm --filter @fikirtive/core test -- refgen`
 Expected: FAIL — `mode` is unknown (strict object rejects it) / `.mode` is undefined.
 
 - [ ] **Step 3: Implement the contract change**
@@ -278,7 +278,7 @@ export type RefGenRequest = z.infer<typeof refGenRequest>;
 
 - [ ] **Step 4: Run the tests to verify they pass**
 
-Run: `pnpm --filter @artlio/core test -- refgen`
+Run: `pnpm --filter @fikirtive/core test -- refgen`
 Expected: PASS (all refGenRequest cases green, including the existing ones).
 
 - [ ] **Step 5: Commit**
@@ -346,7 +346,7 @@ describe("basePromptFor", () => {
 
 - [ ] **Step 2: Run it to verify it fails**
 
-Run: `pnpm --filter @artlio/core test -- ref-config`
+Run: `pnpm --filter @fikirtive/core test -- ref-config`
 Expected: FAIL — `Cannot find module './ref-config.js'`.
 
 - [ ] **Step 3: Implement the config**
@@ -453,13 +453,13 @@ export * from "./ref-config.js";
 
 - [ ] **Step 5: Run the tests to verify they pass**
 
-Run: `pnpm --filter @artlio/core test -- ref-config && pnpm --filter @artlio/core typecheck`
+Run: `pnpm --filter @fikirtive/core test -- ref-config && pnpm --filter @fikirtive/core typecheck`
 Expected: PASS + clean typecheck.
 
 - [ ] **Step 6: Replace buildReferencePrompt in Library.tsx**
 
 In `apps/web/components/Library.tsx`:
-- add `basePromptFor` to the `@artlio/core` import (line 5): `import { REFGEN_PRICE_USD_PER_IMAGE, basePromptFor } from "@artlio/core";`
+- add `basePromptFor` to the `@fikirtive/core` import (line 5): `import { REFGEN_PRICE_USD_PER_IMAGE, basePromptFor } from "@fikirtive/core";`
 - delete the whole `buildReferencePrompt` function (lines 404-417).
 - in `GenerateRefsBlock`, change the prompt initializer (line 422) from `useState(() => buildReferencePrompt(entity))` to `useState(() => basePromptFor(entity.type, entity))`.
 
@@ -968,10 +968,10 @@ Replace the entire **reference images** `<div>` block (lines 684-745, from `{/* 
       )}
 ```
 
-Add the `REF_TYPE_CONFIG` import to the `@artlio/core` import line (line 5):
+Add the `REF_TYPE_CONFIG` import to the `@fikirtive/core` import line (line 5):
 
 ```tsx
-import { REFGEN_PRICE_USD_PER_IMAGE, basePromptFor, REF_TYPE_CONFIG } from "@artlio/core";
+import { REFGEN_PRICE_USD_PER_IMAGE, basePromptFor, REF_TYPE_CONFIG } from "@fikirtive/core";
 ```
 
 > The hidden `<input ref={fileRef} …>` (lines 733-741) and `uploadFiles` already exist and stay — uploading still appends a ReferenceImage; the user then clicks "base" on it (or, if it's the entity's first ref, the backfill/empty state leaves them to pick). The `drop-zone` empty-state block is removed (the base block now owns the empty state).
@@ -1005,7 +1005,7 @@ git commit -m "feat(web): base-identity block in entity drawer (phase A)"
 
 - [ ] **Step 1: Whole-repo typecheck + core tests + build**
 
-Run: `pnpm -r typecheck && pnpm --filter @artlio/core test && pnpm --filter web build`
+Run: `pnpm -r typecheck && pnpm --filter @fikirtive/core test && pnpm --filter web build`
 Expected: all clean / green.
 
 - [ ] **Step 2: Codex review of the Phase A diff**
@@ -1014,7 +1014,7 @@ Run the `/codex` review skill against the working diff (house rule: Codex before
 
 - [ ] **Step 3: Stop for deploy decision**
 
-Do NOT deploy automatically. Report the verified state and ask the user before `railway up`. Prod migration runs first: `pnpm --filter @artlio/db migrate:deploy` (direct `DATABASE_URL` from `~/.gstack/projects/artlio/secrets/cloud.env`, never printed), then `railway up --service web` and `--service worker`.
+Do NOT deploy automatically. Report the verified state and ask the user before `railway up`. Prod migration runs first: `pnpm --filter @fikirtive/db migrate:deploy` (direct `DATABASE_URL` from `~/.gstack/projects/fikirtive/secrets/cloud.env`, never printed), then `railway up --service web` and `--service worker`.
 
 ---
 

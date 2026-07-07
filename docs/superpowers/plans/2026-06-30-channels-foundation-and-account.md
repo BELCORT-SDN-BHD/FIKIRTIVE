@@ -758,7 +758,7 @@ Run: `cd apps/web && npx next build` → exit 0.
 - [ ] **Step 4: Visual verify** — add `apps/web/app/skin-preview/account/page.tsx` rendering `<OttoAccount account={MOCK} settings={DEFAULT_SETTINGS} channels={[{id:"instagram",label:"Instagram",status:"connected",targets:["@bloomcoffee"],connectUrl:"#"},{id:"facebook",label:"Facebook",status:"not_connected",targets:[],connectUrl:"#"}]} adsAutonomy="ASK" />` inside the `fk gb-skin` wrapper (mirror `app/skin-preview/page.tsx`; `notFound()` in production). Then:
 
 ```bash
-cd /Users/winnin/Desktop/artlio/.claude/worktrees/gracious-chandrasekhar-72f8c9
+cd /Users/winnin/Desktop/fikirtive/.claude/worktrees/gracious-chandrasekhar-72f8c9
 PORT=3007 pnpm --filter @fikirtive/web dev &  # wait for ready
 B="$HOME/.claude/skills/gstack/browse/dist/browse"
 $B viewport 1440x900; $B goto "http://localhost:3007/skin-preview/account"; $B wait --networkidle

@@ -28,7 +28,7 @@ vi.mock("@fikirtive/db", () => ({
 
 const { saveUserRole } = await import("@/lib/admin-actions");
 
-const GATE = { email: "founder@artlio.com", role: "super-admin" };
+const GATE = { email: "founder@fikirtive.com", role: "super-admin" };
 const GATE_ERROR = { error: "You don't have access to this." };
 
 beforeEach(() => {
@@ -61,7 +61,7 @@ describe("saveUserRole", () => {
 
   it("rejects self-escalation (actor changing their own role)", async () => {
     mockRequireRole.mockResolvedValue(GATE);
-    userFindUnique.mockResolvedValue({ id: "usr_f", email: "founder@artlio.com", role: "super-admin" });
+    userFindUnique.mockResolvedValue({ id: "usr_f", email: "founder@fikirtive.com", role: "super-admin" });
     const result = await saveUserRole({ userId: "usr_f", role: "ops" });
     expect(result).toEqual({ error: "You can't change your own role." });
     expect(userUpdate).not.toHaveBeenCalled();

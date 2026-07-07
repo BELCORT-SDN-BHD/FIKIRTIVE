@@ -3,7 +3,7 @@
 **Date:** 2026-06-19
 **Status:** Design approved (decisions locked); pending user review of this spec → per-phase implementation plans.
 
-**Goal:** Turn Artlio from a single-owner dogfooding tool into a true multi-tenant SaaS ready for a closed beta of invited merchants — building the data foundation *once* so teams/billing/SSO bolt on later with no painful re-migration.
+**Goal:** Turn Fikirtive from a single-owner dogfooding tool into a true multi-tenant SaaS ready for a closed beta of invited merchants — building the data foundation *once* so teams/billing/SSO bolt on later with no painful re-migration.
 
 **North star (the founder's words):** "把基础直接做好，当成完整的 SaaS database 来设计，未来就不用多做一次工作。" The foundation must be designed once. The one thing expensive to change later is **what `ownerId` points at** — so we get that right now, and everything else is additive.
 

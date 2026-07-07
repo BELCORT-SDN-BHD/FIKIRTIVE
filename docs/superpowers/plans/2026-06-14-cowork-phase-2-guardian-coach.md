@@ -4,7 +4,7 @@
 
 **Goal:** Two $0-default read skills. **Guardian** blocks a paid generation before spend when it would obviously waste money (a CHARACTER with no reference images; a missing/deleted entity; a cross-project i2v source/tail). **Coach** shows offline, $0 composer hints tuned to the (family × mode) the user is generating for.
 
-**Architecture:** Pure decision logic in `@artlio/core` (TDD): `lintPrompt(...)` (Coach) and `castFindings(...)` (Guardian's pure part). The web side loads DB state and calls them: `checkCast()` in `startGen`'s validate-before-spend window (returns `{error, report}` for hard findings, **fail-OPEN on its own faults**), and a Coach pill in the composer fed by a rules-map threaded from the page.
+**Architecture:** Pure decision logic in `@fikirtive/core` (TDD): `lintPrompt(...)` (Coach) and `castFindings(...)` (Guardian's pure part). The web side loads DB state and calls them: `checkCast()` in `startGen`'s validate-before-spend window (returns `{error, report}` for hard findings, **fail-OPEN on its own faults**), and a Coach pill in the composer fed by a rules-map threaded from the page.
 
 ## Scope decision (YAGNI vs the master plan)
 - The master plan's SOFT multi-character "Generate anyway" two-call flow is **deferred**. Reason: it needs a new `{warn}` return variant + changes to ~10 `startGen` callers, for a warning that **Coach already surfaces** in the composer. v1: `castSeverity:"block"` → Guardian hard-blocks; `"warn"` → no block (Coach hints it). Documented; revisit if a real block-severity case appears.

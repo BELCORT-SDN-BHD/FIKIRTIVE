@@ -46,7 +46,7 @@
 ```
 (Adjust the `base` fixture to match the existing genRequest required fields — read the current schema at gen.ts:140-194 first and mirror a valid request used elsewhere in the test file.)
 
-- [ ] **Step 2: Run → fail.** `pnpm --filter @artlio/core test -- gen`
+- [ ] **Step 2: Run → fail.** `pnpm --filter @fikirtive/core test -- gen`
 
 - [ ] **Step 3: Implement.** In `packages/core/src/gen.ts`, after the `entityIds` field (line 151) add:
 ```ts
@@ -56,7 +56,7 @@
 ```
 (If this zod version's `z.record` takes a single arg, use `z.record(z.string().min(1).max(64))` for the value schema.)
 
-- [ ] **Step 4: Run → pass.** `pnpm --filter @artlio/core test -- gen && pnpm --filter @artlio/core typecheck`
+- [ ] **Step 4: Run → pass.** `pnpm --filter @fikirtive/core test -- gen && pnpm --filter @fikirtive/core typecheck`
 
 - [ ] **Step 5: Commit.** `git add packages/core/src/gen.ts packages/core/src/gen.test.ts && git commit -m "feat(core): genRequest.variantSel for @mention variants (phase C)"`
 
@@ -188,7 +188,7 @@ entities: entities.map((e) => {
 
 ### Task C7: Integration gate
 
-- [ ] `pnpm -r typecheck && pnpm --filter @artlio/core test && pnpm --filter web build`
+- [ ] `pnpm -r typecheck && pnpm --filter @fikirtive/core test && pnpm --filter web build`
 - [ ] `/codex review` the Phase C diff — money-safety focus: can a variant mention spend on a deleted/empty variant (must fail-closed in BOTH guardian and worker)? Does a bare `@entity` still condition on base refs (backward-compat)? Address P1/P2.
 - [ ] STOP — no deploy. Report for the A+B+C deploy decision.
 

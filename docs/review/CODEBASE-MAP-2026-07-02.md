@@ -356,7 +356,7 @@ Direct-upload hardening (R2Storage):
 - `abortMultipart`: NoSuchUpload swallowed.
 - `put` dedup is Head-then-Put best-effort, race harmless (content-addressed).
 
-Factory `createStorage(localRoot)`: `STORAGE_DRIVER=r2` requires ALL of R2_ENDPOINT/R2_ACCESS_KEY_ID/R2_SECRET_ACCESS_KEY/R2_BUCKET or it THROWS (no silent local fallback in prod). `R2_FORCE_PATH_STYLE !== "false"` → path-style (MinIO test double). Handles: apps/web/lib/storage.ts (`storage`, `extFromFilename` → fallback "bin", `kindOf` image/video/other — video set excludes avi on purpose) and apps/worker/src/storage.ts (`ARTLIO_DATA_DIR` overridable local root).
+Factory `createStorage(localRoot)`: `STORAGE_DRIVER=r2` requires ALL of R2_ENDPOINT/R2_ACCESS_KEY_ID/R2_SECRET_ACCESS_KEY/R2_BUCKET or it THROWS (no silent local fallback in prod). `R2_FORCE_PATH_STYLE !== "false"` → path-style (MinIO test double). Handles: apps/web/lib/storage.ts (`storage`, `extFromFilename` → fallback "bin", `kindOf` image/video/other — video set excludes avi on purpose) and apps/worker/src/storage.ts (`FIKIRTIVE_DATA_DIR` overridable local root).
 
 ## 2. /files/[...key] route contract (apps/web/app/files/[...key]/route.ts)
 

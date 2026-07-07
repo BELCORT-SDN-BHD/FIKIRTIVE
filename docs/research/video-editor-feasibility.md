@@ -1,4 +1,4 @@
-# Artlio Decision Document: The Assembly-Cut Editor
+# Fikirtive Decision Document: The Assembly-Cut Editor
 
 **Date:** June 10, 2026
 **Question:** Is a web video editor "not that hard"? Should we build one now, and how?
@@ -34,7 +34,7 @@ One correction worth flagging from verification: the scary "67 undisposed 4K fra
 
 ### Assembly cut vs. full NLE — explicitly
 
-| | Assembly cut (Artlio's scope) | Full NLE |
+| | Assembly cut (Fikirtive's scope) | Full NLE |
 |---|---|---|
 | Order shots, trim in/out | Days–weeks (data model + UI) | Same |
 | 1 video track + 1–2 audio tracks | Tractable | Multi-track compositing: months |
@@ -43,7 +43,7 @@ One correction worth flagging from verification: the scary "67 undisposed 4K fra
 | Preview | "Approximate preview" or double-buffered `<video>`: days. **Frame-accurate synced preview: the hard part** | Effect-parity preview: the open-ended tail that killed OpenCut v1 |
 | Export MP4 | **Already ~solved by your existing worker** | Client-side everywhere: months of codec tail |
 
-**Artlio has two structural advantages that the war-story victims did not:** (1) inputs are homogeneous AI-generated H.264 MP4s at known resolutions — the ingest nightmare doesn't apply; (2) the server-side ffmpeg worker already exists — the export nightmare doesn't apply. The hard parts that remain are preview sync and timeline feel, and both can be bought or deferred.
+**Fikirtive has two structural advantages that the war-story victims did not:** (1) inputs are homogeneous AI-generated H.264 MP4s at known resolutions — the ingest nightmare doesn't apply; (2) the server-side ffmpeg worker already exists — the export nightmare doesn't apply. The hard parts that remain are preview sync and timeline feel, and both can be bought or deferred.
 
 ---
 
@@ -56,14 +56,14 @@ All pricing and licenses verified against primary sources June 10–11, 2026.
 **A1. Shotstack Studio SDK — the standout (verified: $0)**
 
 - **What it is:** `@shotstack/shotstack-studio` on npm. A real timeline editor UI: canvas preview (PixiJS), drag/resize/snap timeline, playback controls, keyboard shortcuts. Works in Next.js.
-- **License (verified):** PolyForm Shield 1.0.0 — free for commercial embedding; the only restriction is you can't build a product that *competes with Shotstack* (a render API). Artlio doesn't.
+- **License (verified):** PolyForm Shield 1.0.0 — free for commercial embedding; the only restriction is you can't build a product that *competes with Shotstack* (a render API). Fikirtive doesn't.
 - **Export:** dual path — client-side (via Mediabunny/WebCodecs) **or** emit their documented Edit JSON. Critically, that JSON format (tracks/clips/trim/transitions) is simple enough that **your existing ffmpeg worker can render it yourself**, paying Shotstack nothing. Their cloud render is an optional convenience ($0.20/min on a $39/mo plan, 1080p cap).
 - **Maintenance (verified):** very active — v2.11.5 published *today* (June 10, 2026), 8 releases in the last 3 weeks.
 - **Capability fit:** ~95% of the assembly-cut spec out of the box.
 - **Effort:** ~1–2 weeks to integrate, persist Edit JSON per project (fits your version-history model), wire export to your worker.
 - **Cost:** $0. Optionally $39/mo if you want their cloud render while validating.
 - **Lock-in/risk:** Your edit state lives in their JSON schema (simple, documented — migration is feasible). Vendor could change the license for *future* versions (pinned versions keep their grant). Worth one polite email to Shotstack confirming self-rendering their JSON is fine; legally the license doesn't prohibit it.
-- **Failure mode:** the SDK's UI conventions don't match what Artlio's shot-board users expect, and customization hits the limits of someone else's component.
+- **Failure mode:** the SDK's UI conventions don't match what Fikirtive's shot-board users expect, and customization hits the limits of someone else's component.
 
 **A2. Rendley Video SDK — credible runner-up ($150/mo, verified)**
 
@@ -79,7 +79,7 @@ All pricing and licenses verified against primary sources June 10–11, 2026.
 
 | Project | License (verified) | Status | Verdict |
 |---|---|---|---|
-| **OpenCut-classic** | MIT, Next.js 16 + Mediabunny | **Archived 2026-05-17**, frozen, no fixes coming | Best strip-mine source — same stack as Artlio; fork patterns, don't depend |
+| **OpenCut-classic** | MIT, Next.js 16 + Mediabunny | **Archived 2026-05-17**, frozen, no fixes coming | Best strip-mine source — same stack as Fikirtive; fork patterns, don't depend |
 | OpenCut (rewrite) | MIT | Rust-core rewrite, **not functional**, contributions paused | Watch, don't bet |
 | **Mediabunny** | MPL-2.0 (safe for proprietary SaaS) | Very active, industry standard | **Adopt as a building block** (thumbnails, metadata, client media I/O) |
 | Twick | "Sustainable Use License" — **SaaS use requires a commercial agreement** (verified, Section 3 of license) | Active, best feature fit on paper | Only viable after negotiating unpublished pricing with Kiffer AI — not a free option |
@@ -115,7 +115,7 @@ All pricing and licenses verified against primary sources June 10–11, 2026.
 
 ### Option E — Defer entirely
 
-- **Cost:** $0. **Risk:** the shot board produces clips with no path to a watchable cut; users export shots and assemble elsewhere, and you never see whether assembly inside Artlio matters. Given Option D costs ~1–2 weeks on existing infra, full deferral saves little and blinds you to a key validation signal.
+- **Cost:** $0. **Risk:** the shot board produces clips with no path to a watchable cut; users export shots and assemble elsewhere, and you never see whether assembly inside Fikirtive matters. Given Option D costs ~1–2 weeks on existing infra, full deferral saves little and blinds you to a key validation signal.
 
 ---
 
@@ -139,7 +139,7 @@ Five independent teams, one pattern:
 
 ### The verdict on "it isn't that hard"
 
-**The founder is right — for exactly one version of the feature, which happens to be the right version.** A cuts-only assembly export (order + trim + music + server ffmpeg render + approximate preview) is realistically **1–2 focused weeks** on Artlio's existing infrastructure, because the genuinely hard parts of "web video editor" (in-browser encoding, heterogeneous ingest, frame-accurate preview engines) are either already solved by your worker or excluded by your input format.
+**The founder is right — for exactly one version of the feature, which happens to be the right version.** A cuts-only assembly export (order + trim + music + server ffmpeg render + approximate preview) is realistically **1–2 focused weeks** on Fikirtive's existing infrastructure, because the genuinely hard parts of "web video editor" (in-browser encoding, heterogeneous ingest, frame-accurate preview engines) are either already solved by your worker or excluded by your input format.
 
 **The advisor is also right.** A *credible timeline editor* — polished interactions, synced preview, captions, transitions, undo/redo — is 2–4 months even buying components, and history shows it expands without mercy (OpenCut: 11 months → rewrite; Rendley: 2 dev-years; Lightricks: ~2 years to a 2-track timeline). Building that before the validation gate would be exactly the mistake the war stories document.
 
@@ -149,12 +149,12 @@ These don't conflict, because **the cheap version and the expensive version are 
 
 **Phase 0 — now, pre-gate (~1–2 weeks): ship Option D.**
 Per-shot trim in/out on the existing shot board, drag-to-order (exists), one music track, aspect/resolution presets, "Export MP4" as a pg-boss → ffmpeg → R2 job with progress, plus a Premiere XML/OTIO export from the same data model. Sequential `<video>` playthrough as preview. Define the timeline data model (tracks, clips, in/out, order, gain) in Prisma now — it is the durable asset every later option consumes.
-*Verify by:* a real user turns a shot board into a watchable MP4 without leaving Artlio.
+*Verify by:* a real user turns a shot board into a watchable MP4 without leaving Fikirtive.
 
 **Phase 1 — at the validation gate: measure, don't build.**
 Instrument: % of projects that use Export, % that re-export after re-trimming, and explicit asks for transitions/captions/multi-track audio.
 
-**Upgrade trigger (named):** adopt a real timeline editor when **users are demonstrably assembling in Artlio and hitting the wall** — concretely, when a meaningful share of active projects use export AND the top recurring requests are timeline-shaped (transitions, captions, audio layering, precise trimming) rather than generation-shaped. If exports go unused, the advisor's caution is vindicated and you've spent two weeks, not four months.
+**Upgrade trigger (named):** adopt a real timeline editor when **users are demonstrably assembling in Fikirtive and hitting the wall** — concretely, when a meaningful share of active projects use export AND the top recurring requests are timeline-shaped (transitions, captions, audio layering, precise trimming) rather than generation-shaped. If exports go unused, the advisor's caution is vindicated and you've spent two weeks, not four months.
 
 **Phase 2 — when triggered (~2–4 weeks): embed Shotstack Studio SDK (Option A1).**
 $0, npm-installable, actively maintained, real timeline UI. Persist its Edit JSON per project (slots into your version-history model); migrate Phase-0 edit state into it (trivial mapping); render on your own ffmpeg worker — or via Shotstack's API at $0.20/min as a stopgap. Before committing, run the planned one-week head-to-head against Rendley behind the same route — both install in an afternoon — and send Shotstack the one-line email confirming self-rendering their Edit JSON is welcomed. Captions (Whisper job + ASS burn-in) and a fixed transition set (`xfade`/`acrossfade`, "preview is approximate") are 1–2 worker-weeks each, added on demand.

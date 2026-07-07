@@ -32,7 +32,7 @@ Files: `packages/core/src/cowork.ts` (the `ChatMessage`/`CoworkTransport` types)
 - [ ] **Widen `ChatMessage.content`** from `string` to `string | Array<{ type: "text"; text: string } | { type: "image_url"; image_url: { url: string } }>` (OpenAI multimodal shape). Keep `role` unchanged. Add a short comment: the array form is for image-bearing turns only; all current callers pass `string` and are unaffected.
 - [ ] **`MockTransport` + `FalTransport` pass-through:** `MockTransport` ignores messages (unchanged). `FalTransport` already forwards `messages` verbatim into the OpenRouter body — confirm it forwards the array form unchanged (OpenRouter is OpenAI-compatible and accepts image_url content for vision models). No code change should be needed beyond the type widening; verify.
 - [ ] **Test:** a `ChatMessage` with array content (text + image_url) typechecks and round-trips through the transport body shape; existing string-content tests still pass.
-- [ ] **Verify:** `pnpm --filter @artlio/core typecheck && pnpm --filter @artlio/core test`; `pnpm --filter web typecheck` (existing string callers unaffected).
+- [ ] **Verify:** `pnpm --filter @fikirtive/core typecheck && pnpm --filter @fikirtive/core test`; `pnpm --filter web typecheck` (existing string callers unaffected).
 
 ### Task CT-A2: `ModalTransport` (OpenAI-compatible self-host seam)
 

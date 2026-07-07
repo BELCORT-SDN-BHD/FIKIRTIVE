@@ -359,7 +359,7 @@ Local verification for `fd7f8e2`:
 Local verification for `f8d30e6`:
 
 - Report: `docs/review/QA-STRIPE-WEBHOOK-INTEGRATION-2026-07-04.md`
-- `DATABASE_URL='postgresql://artlio:artlio@localhost:55432/fikirtive_stripe_webhook_test' pnpm --filter @fikirtive/web exec vitest run lib/__tests__/billing-actions.test.ts lib/__tests__/stripe-webhook.test.ts lib/__tests__/stripe-webhook-integration.test.ts`: pass, 20 tests.
+- `DATABASE_URL='postgresql://fikirtive:fikirtive@localhost:55432/fikirtive_stripe_webhook_test' pnpm --filter @fikirtive/web exec vitest run lib/__tests__/billing-actions.test.ts lib/__tests__/stripe-webhook.test.ts lib/__tests__/stripe-webhook-integration.test.ts`: pass, 20 tests.
 - `pnpm --filter @fikirtive/web typecheck`: pass.
 - The integration test uses a real test database, the real webhook route, and the real `grantCredits` ledger implementation; only Stripe signature parsing is mocked.
 

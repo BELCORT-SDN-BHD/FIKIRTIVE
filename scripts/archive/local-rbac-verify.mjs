@@ -3,7 +3,7 @@
 // "use server" import (drives core + raw prisma; the action's self/role guards are
 // re-implemented inline to mirror what saveUserRole enforces — keep them in sync).
 // Run: node scripts/archive/local-rbac-verify.mjs
-process.env.DATABASE_URL ??= "postgresql://artlio:artlio@localhost:5432/artlio";
+process.env.DATABASE_URL ??= "postgresql://fikirtive:fikirtive@localhost:5432/fikirtive";
 const { prisma } = await import("../../packages/db/dist/src/index.js");
 const { ROLES, roleAllows, isRole } = await import("../../packages/core/dist/index.js");
 

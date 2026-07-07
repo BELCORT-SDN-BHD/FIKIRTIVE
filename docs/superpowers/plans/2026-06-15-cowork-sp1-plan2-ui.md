@@ -6,7 +6,7 @@
 
 **Architecture:** A new `"cowork"` `StudioView` surface (`Cowork.tsx`) renders a thread's messages (`TEXT`/`PLAN`/`GEN_CARD`/`GEN_RESULT`). The composer reuses `MentionInput` and calls the Plan-1 `coworkTurn` (propose-only). A `GEN_CARD` renders the proposal with a live-re-derived price and an embedded `MentionInput`; its Generate button calls a NEW thin `coworkGenerate` server action that reads the persisted card server-side, builds a fresh `genRequest` server-side (the SOLE spend gate stays `startGen`'s `safeParse` + Guardian), tags the job with the thread id, and dedupes on `idempotencyKey = cowork:<cardId>`. The thread id flows through `genRequest → startGen → GenJob.threadId → Generation.threadId` (worker), and all three GenSpace/Assets/Editor read paths filter `threadId IS NULL` so cowork drafts never leak into the main workspace. On completion the worker best-effort appends a durable `GEN_RESULT` message to the thread.
 
-**Tech Stack:** Next.js 16 (customized — see `apps/web/AGENTS.md`), React client components, Prisma 7.8 + Neon, `@artlio/core` (`gen.ts`, `cowork.ts`, `cowork-route.ts`), `@artlio/db`, server actions, vitest, pg-boss worker.
+**Tech Stack:** Next.js 16 (customized — see `apps/web/AGENTS.md`), React client components, Prisma 7.8 + Neon, `@fikirtive/core` (`gen.ts`, `cowork.ts`, `cowork-route.ts`), `@fikirtive/db`, server actions, vitest, pg-boss worker.
 
 **Spec:** [`../specs/2026-06-15-cowork-agent-loop-design.md`](../specs/2026-06-15-cowork-agent-loop-design.md) (v2, reviewed). This is **Plan-2 of 2**; Plan-1 (headless logic — schema, `suggestModel`, the turn trust boundary, `coworkTurn`) is landed locally on branch `cowork-sp1-plan1` (commits `780b7df..098a7bb`, Codex-clean).
 
@@ -14,7 +14,7 @@
 - **D1 — full `threadId` plumbing (not minimal).** Thread the id through `genRequest → startGen → GenJob.threadId` (additive, behavior-preserving on `startGen`) AND add `Generation.threadId` (worker copies it) + a migration; filter all THREE leak queries (`getRecentGenResults`, `getCandidates`, `getProjectMedia`). The maps' "filter one query" assumption was wrong — the `Generation` table (candidates + Assets + Editor) had no thread link.
 - **D2 — persist `GEN_RESULT`.** When a cowork job completes, the **worker** best-effort appends a `GEN_RESULT` `ChatMessage` (uses the existing `GEN_RESULT` kind + `ChatMessage.genJobId`), so results survive reload. The UI also polls `getGenJob` for live in-session feedback.
 
-**House rules (non-negotiable):** money-safety #1 — the agent NEVER spends; the only media-spend path is the user Generate click through the UNMODIFIED-LOGIC `startGen` (`safeParse` + `checkCast` Guardian are the gate; we only ADD an optional `threadId` tag — no spend-logic change). Reuse `startGen`/`MentionInput`/`coworkTurn`/entity-variant refs. Additive migration only (apply to LOCAL `postgresql://artlio:artlio@localhost:5432/artlio`, never prod). TDD for core (vitest). `GENERATION_PROVIDER=mock` + `COWORK_PROVIDER` unset for any gen/LLM test; **kill stale fal workers first**. Surgical changes. **No auto-commit/push** (the per-task "Commit" steps are staged for the user). `/codex` money-safety review before any deploy.
+**House rules (non-negotiable):** money-safety #1 — the agent NEVER spends; the only media-spend path is the user Generate click through the UNMODIFIED-LOGIC `startGen` (`safeParse` + `checkCast` Guardian are the gate; we only ADD an optional `threadId` tag — no spend-logic change). Reuse `startGen`/`MentionInput`/`coworkTurn`/entity-variant refs. Additive migration only (apply to LOCAL `postgresql://fikirtive:fikirtive@localhost:5432/fikirtive`, never prod). TDD for core (vitest). `GENERATION_PROVIDER=mock` + `COWORK_PROVIDER` unset for any gen/LLM test; **kill stale fal workers first**. Surgical changes. **No auto-commit/push** (the per-task "Commit" steps are staged for the user). `/codex` money-safety review before any deploy.
 
 ---
 
@@ -54,7 +54,7 @@
 ```
 
 - [ ] **Step 2: Create the migration (LOCAL only, no prod).**
-Run: `cd packages/db && DATABASE_URL="postgresql://artlio:artlio@localhost:5432/artlio" pnpm exec prisma migrate dev --name cowork_plan2_schema --create-only`
+Run: `cd packages/db && DATABASE_URL="postgresql://fikirtive:fikirtive@localhost:5432/fikirtive" pnpm exec prisma migrate dev --name cowork_plan2_schema --create-only`
 Expected: a new `migrations/<ts>_cowork_plan2_schema/migration.sql` containing `ALTER TABLE "Generation" ADD COLUMN "threadId" TEXT;`.
 
 - [ ] **Step 3: Append the result-message partial-unique index (raw SQL — repo idiom).** Edit the generated `migration.sql` and append:
@@ -66,14 +66,14 @@ ON "ChatMessage"("genJobId") WHERE "genJobId" IS NOT NULL AND "kind" IN ('GEN_RE
 ```
 
 - [ ] **Step 4: Apply locally + regenerate the client.**
-Run: `cd packages/db && DATABASE_URL="postgresql://artlio:artlio@localhost:5432/artlio" pnpm exec prisma migrate deploy && pnpm --filter @artlio/db build`
+Run: `cd packages/db && DATABASE_URL="postgresql://fikirtive:fikirtive@localhost:5432/fikirtive" pnpm exec prisma migrate deploy && pnpm --filter @fikirtive/db build`
 Expected: "All migrations have been successfully applied." + `prisma.generation` now has `threadId`.
 
 - [ ] **Step 5: Verify the column + index exist.**
 Run:
 ```bash
-cd /Users/winnin/Documents/artlio/packages/db && node -e '
-const {Client}=require("pg");const c=new Client({connectionString:"postgresql://artlio:artlio@localhost:5432/artlio"});
+cd /Users/winnin/Documents/fikirtive/packages/db && node -e '
+const {Client}=require("pg");const c=new Client({connectionString:"postgresql://fikirtive:fikirtive@localhost:5432/fikirtive"});
 (async()=>{await c.connect();
 const g=await c.query("SELECT 1 FROM information_schema.columns WHERE table_name=$1 AND column_name=$2",["Generation","threadId"]);
 const i=await c.query("SELECT 1 FROM pg_indexes WHERE indexname=$1",["ChatMessage_genjob_result_uniq"]);
@@ -106,7 +106,7 @@ it("genRequest accepts an optional threadId (cowork tag) and rejects an over-lon
 });
 ```
 
-- [ ] **Step 2: Run → fail.** `pnpm --filter @artlio/core test -- gen` Expected: FAIL (`threadId` rejected by `.strict()`).
+- [ ] **Step 2: Run → fail.** `pnpm --filter @fikirtive/core test -- gen` Expected: FAIL (`threadId` rejected by `.strict()`).
 
 - [ ] **Step 3: Implement.** In `gen.ts` `genRequest` object, add next to `idempotencyKey` (keep `.strict()`):
 ```ts
@@ -116,7 +116,7 @@ it("genRequest accepts an optional threadId (cowork tag) and rejects an over-lon
     threadId: z.string().min(1).max(64).nullish(),
 ```
 
-- [ ] **Step 4: Run → pass.** `pnpm --filter @artlio/core test -- gen && pnpm --filter @artlio/core build` Expected: PASS.
+- [ ] **Step 4: Run → pass.** `pnpm --filter @fikirtive/core test -- gen && pnpm --filter @fikirtive/core build` Expected: PASS.
 
 - [ ] **Step 5: `startGen` persists it.** In `apps/web/lib/gen-actions.ts`:
   - Add `threadId` to the destructure (line 28): `..., idempotencyKey, variantSel, threadId } = parsed.data;`
@@ -130,7 +130,7 @@ it("genRequest accepts an optional threadId (cowork tag) and rejects an over-lon
     where: { projectId, ownerId: FOUNDER_OWNER_ID, threadId: null },
 ```
 
-- [ ] **Step 7: Typecheck.** `pnpm --filter @artlio/core build && pnpm --filter web typecheck` Expected: PASS.
+- [ ] **Step 7: Typecheck.** `pnpm --filter @fikirtive/core build && pnpm --filter web typecheck` Expected: PASS.
 
 - [ ] **Step 8: Commit (staged).**
 ```bash
@@ -185,7 +185,7 @@ async function appendCoworkResult(job: { id: string; threadId: string | null; ow
   }
 }
 ```
-(`newId` is already imported in this worker file; confirm with `codegraph node` — if not, add it from `@artlio/core`. `role`/`kind` are passed as the string literals Prisma accepts.)
+(`newId` is already imported in this worker file; confirm with `codegraph node` — if not, add it from `@fikirtive/core`. `role`/`kind` are passed as the string literals Prisma accepts.)
 
 - [ ] **Step 3: Write `GEN_RESULT` on every transition to DONE.** AFTER the `status: "DONE"` update (line 353) and the `console.log`, call (idempotent — covers both the happy-path and the resume branch, since both reach this DONE update):
 ```ts
@@ -197,7 +197,7 @@ async function appendCoworkResult(job: { id: string; threadId: string | null; ow
     if (final) await appendCoworkResult(job, "TURN_ERROR", [], message);
 ```
 
-- [ ] **Step 5: Typecheck the worker.** `pnpm --filter @artlio/worker typecheck` (or `pnpm -r typecheck`) Expected: PASS.
+- [ ] **Step 5: Typecheck the worker.** `pnpm --filter @fikirtive/worker typecheck` (or `pnpm -r typecheck`) Expected: PASS.
 
 - [ ] **Step 6: Commit (staged).**
 ```bash
@@ -299,7 +299,7 @@ export interface ChatThreadDTO {
 
 - [ ] **Step 3: DTO transforms with read-validation.** In `dto.ts` add (re-parse a GEN_CARD payload through `coworkProposalSchema` so a malformed/edited JSON can't crash render; resolve GEN_RESULT image urls from the stored `generationIds`). This needs the gen rows for GEN_RESULT — pass a resolved `urlsByJob: Map<jobId, string[]>` built by the caller (Step 4):
 ```ts
-import { coworkProposalSchema } from "@artlio/core";
+import { coworkProposalSchema } from "@fikirtive/core";
 
 export function toChatMessageDTO(m: ChatThreadWithMessages["messages"][number], urlsByJob: Map<string, string[]>): ChatMessageDTO {
   let payload: unknown | null = null;
@@ -324,7 +324,7 @@ export function toChatThreadDTO(t: ChatThreadWithMessages, urlsByJob: Map<string
 
 - [ ] **Step 4: GEN_RESULT url resolver in `data.ts`.** Add a helper that resolves the image urls for the GEN_RESULT messages of a thread (reuse the `getGenJob` url logic — `storageKey`/`storageKeyToSrc`):
 ```ts
-import { storageKey, storageKeyToSrc } from "@artlio/core";
+import { storageKey, storageKeyToSrc } from "@fikirtive/core";
 
 /** Map of genJobId → ordered image urls for the GEN_RESULT messages in these threads. */
 export async function resolveCoworkResultUrls(threads: { messages: { genJobId: string | null; kind: string }[] }[]) {
@@ -425,7 +425,7 @@ export async function coworkGenerate(raw: unknown): Promise<{ id: string } | { e
 }
 ```
 
-- [ ] **Step 3: Build + typecheck.** `pnpm --filter @artlio/core build && pnpm --filter web typecheck` Expected: PASS.
+- [ ] **Step 3: Build + typecheck.** `pnpm --filter @fikirtive/core build && pnpm --filter web typecheck` Expected: PASS.
 
 - [ ] **Step 4: Static money-safety check.** Run `grep -n "genJob.create\|prisma.genJob.create" apps/web/lib/cowork-actions.ts` → **no matches** (coworkGenerate must spend ONLY via `startGen`, never create a GenJob directly). Confirm `startGen` is the only spend call.
 
@@ -594,7 +594,7 @@ import { useRef, useState } from "react";
 import { MentionInput, buildMentionDoc } from "@/components/MentionInput";
 import { coworkGenerate } from "@/lib/cowork-actions";
 import { getGenJob } from "@/lib/gen-actions";
-import { GEN_PRICE_USD_PER_IMAGE, videoPriceUsd, type GenVideoModel } from "@artlio/core";
+import { GEN_PRICE_USD_PER_IMAGE, videoPriceUsd, type GenVideoModel } from "@fikirtive/core";
 import type { EntityDTO } from "@/lib/types";
 
 const POLL_CAP = 120;
@@ -742,10 +742,10 @@ try {
 ```
 
 - [ ] **Step 3: Build deps + run.**
-Run: `pnpm --filter @artlio/core build && pnpm --filter @artlio/db build && node scripts/verify-cowork-plan2.mjs 2>&1 | grep -E "✓|✗"`
+Run: `pnpm --filter @fikirtive/core build && pnpm --filter @fikirtive/db build && node scripts/verify-cowork-plan2.mjs 2>&1 | grep -E "✓|✗"`
 Expected: all ✓, ending `✓ Plan-2: cowork media isolated from all 3 views, double-spend blocked, $0`.
 
-- [ ] **Step 4: Full gate.** `pnpm -r typecheck && pnpm --filter @artlio/core test && pnpm --filter web build` Expected: all green.
+- [ ] **Step 4: Full gate.** `pnpm -r typecheck && pnpm --filter @fikirtive/core test && pnpm --filter web build` Expected: all green.
 
 - [ ] **Step 5: Commit (staged).**
 ```bash

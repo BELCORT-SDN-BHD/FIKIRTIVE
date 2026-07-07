@@ -6,7 +6,7 @@
 
 ## The city's traffic laws (apply to every seam)
 
-1. **Identity comes from the session, never the client/model.** Every action opens with `requireOwner()` (`apps/web/lib/auth-guard.ts`) and uses `gate.ownerId`. Spend + mutations additionally check `isImpersonating()`.
+1. **Identity comes from the session, never the client/model.** Every action opens with `requireOwner()` (`apps/web/lib/auth-guard.ts`) and uses `gate.ownerId`. Spend + mutations additionally check `isImpersonating()`. (Reading boundary: the invariant is "identity from a session gate", not the literal function name — tenant-facing actions open with `requireOwner`; admin surfaces gate with `requireRole`; spend paths gate with `requireSession`/`requireOwner`, never `requireRole`. See the playbook's Admin/Auth checklist.)
 2. **Validate-before-spend.** Typed zod contracts (`.strict()` + `superRefine`) reject anything a provider would mischarge for — BEFORE a job row or reservation exists.
 3. **Money exactly-once = DB partial-unique indexes,** never app-level checks alone. All 10 raw-SQL partial/expression indexes are inventoried in `docs/review/CODEBASE-MAP-2026-07-02.md` §5 (they are invisible to `prisma migrate diff` — schema comments are the only in-schema record).
 4. **Fail closed.** Missing classification → most dangerous value (skills); no session → error, never a default org; misconfigured provider → $0 mock, never silent real spend.
@@ -41,7 +41,7 @@
 2. **Inject the real port** in `apps/web/lib/otto-actions.ts:buildOttoContext` (~line 120; API key, rate-limit, logging). Worker side (`apps/worker/src/otto-resume.ts`) builds a minimal ctx — `startGen` is INTENTIONALLY NOT injected there so a resumed verdict turn can never spend.
 3. **Write the skill:** copy `_template.ts` → `skills/<name>.ts`, fill the 3 fields + `execute`. Also `export const <name> = <name>Skill.tool;`.
 4. **Register:** import + one entry in `registry.ts` `allSkills` (update `registry.test.ts`'s pinned name list).
-5. **Test + catalog:** gate assertion in `migration.test.ts` (or `<name>.test.ts`) + port-required guard; regenerate `CATALOG.md`. (Caveat: `catalog:check` is NOT in CI — a stale CATALOG.md won't block merge; regenerate manually.)
+5. **Test + catalog:** gate assertion in `migration.test.ts` (or `<name>.test.ts`) + port-required guard; regenerate `CATALOG.md`. (`catalog:check` IS in CI — ci.yml runs it, so a stale CATALOG.md fails the build. Corrected 2026-07-07: this line previously claimed the opposite; the playbook's Otto 包 section had already recorded the correction on 2026-07-04.)
 
 **Reference spend skill:** `skills/generate.ts` — the 7-step gate (port required → owner-scoped card recheck → exactly-once via `cowork:<cardId>` + DB index → disabled-model check → pure `buildGenRequestFromCard` with overrides:undefined (the model can never pass spend params) → `ctx.startGen` only → best-effort genJobId patch).
 

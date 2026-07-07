@@ -21,7 +21,7 @@
 import { chromium } from "playwright";
 import { readFile } from "node:fs/promises";
 
-process.env.DATABASE_URL ??= "postgresql://artlio:artlio@localhost:5432/artlio";
+process.env.DATABASE_URL ??= "postgresql://fikirtive:fikirtive@localhost:5432/fikirtive";
 const { prisma } = await import("../../packages/db/dist/src/index.js");
 const { newId } = await import("../../packages/core/dist/index.js");
 const BASE = process.env.BASE_URL ?? "http://localhost:3100";

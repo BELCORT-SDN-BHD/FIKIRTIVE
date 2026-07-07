@@ -12,7 +12,7 @@
 
 - **MONEY-GUARD (BINDING):** NEVER modify `packages/db/src/credits.ts`, `packages/core/src/spend.ts`, `apps/worker/src/jobs/gen.ts`, `apps/worker/src/jobs/refgen.ts`, `apps/web/**/gen-actions.ts`, **`apps/web/lib/refgen-actions.ts`**, `apps/web/**/cowork-actions.ts`, `**/useCanvasGen.ts`, `packages/generation/*`, any idempotency index. `startRefGen` and `createEntity` are CALLED, never edited. After every commit: `git log --stat -1 | grep -E "credits|spend|jobs/gen|jobs/refgen|gen-actions|refgen-actions|cowork-actions|useCanvasGen|packages/generation"` → empty.
 - No new npm deps; `pnpm-lock.yaml` untouched. No DB migration (imageAssetId lives in the JSON `data` column).
-- Worktree `/Users/winnin/Desktop/artlio/.claude/worktrees/brand-memory`, branch `claude/brand-memory-rebuild` (on top of PR #103's commits). All commands run from worktree root. Env is bootstrapped.
+- Worktree `/Users/winnin/Desktop/fikirtive/.claude/worktrees/brand-memory`, branch `claude/brand-memory-rebuild` (on top of PR #103's commits). All commands run from worktree root. Env is bootstrapped.
 - `imageAssetId` is display-only; OTTO skills must NOT accept it as a parameter (UI-managed only), but OTTO updates must PRESERVE it (merge semantics).
 - Manual verification of Generate uses the MOCK transport only — never trigger a real paid generation ("ask before spending real money" is binding).
 - Style = Analytics baseline + existing idioms: tabs `rounded-[14px] bg-muted p-1` (copy from `OttoStuff.tsx:256`), cards `rounded-[16px] border border-border`, section labels 12px/600/+0.05em uppercase muted, coral `text-brand` = OTTO-only, mono price `font-mono`. Match `OttoMemory.tsx` / `memory/*.tsx` class idiom.

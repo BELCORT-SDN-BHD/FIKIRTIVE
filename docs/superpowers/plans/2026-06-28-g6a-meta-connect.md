@@ -841,7 +841,7 @@ Run: `cd apps/web && pnpm exec vitest run` → the 3 new G6a test files pass; th
 
 - [ ] **Step 7: Full monorepo build gate**
 
-Run (repo root `/Users/winnin/Desktop/artlio/.claude/worktrees/otto-g2-editor`): `pnpm -r build 2>&1 | tee /tmp/g6a-build.log; grep -E "ƒ /otto|Done|error TS|Failed to compile" /tmp/g6a-build.log`
+Run (repo root `/Users/winnin/Desktop/fikirtive/.claude/worktrees/otto-g2-editor`): `pnpm -r build 2>&1 | tee /tmp/g6a-build.log; grep -E "ƒ /otto|Done|error TS|Failed to compile" /tmp/g6a-build.log`
 Expected: shows `├ ƒ /otto` + `Done`, no `error TS` / `Failed to compile`.
 
 - [ ] **Step 8: Commit**

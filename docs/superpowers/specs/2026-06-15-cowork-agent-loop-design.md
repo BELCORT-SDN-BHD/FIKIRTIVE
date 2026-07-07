@@ -8,7 +8,7 @@
 
 ## Goal
 
-A **conversational creative-agent** on a new **Cowork** surface: the user states intent in natural language; the agent plans, **suggests a model + writes a structured prompt**, and hands back a **human-gated, editable Generate card**. No **media** spend until the user clicks **Generate**. Captures Hedra's cowork moat on the capabilities Artlio already has.
+A **conversational creative-agent** on a new **Cowork** surface: the user states intent in natural language; the agent plans, **suggests a model + writes a structured prompt**, and hands back a **human-gated, editable Generate card**. No **media** spend until the user clicks **Generate**. Captures Hedra's cowork moat on the capabilities Fikirtive already has.
 
 ## Architecture (one sentence)
 
@@ -16,7 +16,7 @@ A new `Cowork` surface renders a per-project chat thread; `coworkTurn` makes a *
 
 ## Tech stack
 
-Next.js 16 + React; server actions; Prisma 7.8 + Neon; `@artlio/core` cowork modules (`cowork-transport`, `cowork-skills`/`cowork-directives`, `cowork-guardian`); `gen-actions.ts` `startGen`; pg-boss gen worker; MentionInput + Phase A–C entity/variant refs; `GEN_VIDEO_MODEL_INFO/OPTIONS` + `videoPriceUsd`; vitest.
+Next.js 16 + React; server actions; Prisma 7.8 + Neon; `@fikirtive/core` cowork modules (`cowork-transport`, `cowork-skills`/`cowork-directives`, `cowork-guardian`); `gen-actions.ts` `startGen`; pg-boss gen worker; MentionInput + Phase A–C entity/variant refs; `GEN_VIDEO_MODEL_INFO/OPTIONS` + `videoPriceUsd`; vitest.
 
 ---
 
@@ -68,7 +68,7 @@ model ChatMessage {
   kind               ChatMessageKind                       // explicit discriminator (queryable/auditable)
   seq                Int                                    // deterministic intra-thread ordering (not ms createdAt)
   text               String          @default("")
-  // body by kind — a VERSIONED zod discriminated union defined in @artlio/core; never trusted raw.
+  // body by kind — a VERSIONED zod discriminated union defined in @fikirtive/core; never trusted raw.
   payload            Json?
   // provenance (SP3 canvas needs the source→output edge; set on GEN_CARD/GEN_RESULT)
   genJobId           String?         // sole link to produced media; URLs rehydrated at read via getGenJob
@@ -123,7 +123,7 @@ Input (zod `.strict()`): `{ threadId, projectId, text, entityIds?, variantSel? }
 1. Validate project + thread owned/live; load a **bounded memory window** (last N turns; see §memory).
 2. Build the planner input via a **dedicated assembler** (NOT `runSkill(input:string)` — that can't carry history/refs/catalog): the memory window + the project's **available refs** (`{id,name,type}[]`) + a model-catalog summary.
 3. **One LLM call** with a new **`COWORK_PLANNER_SYSTEM`** (model-agnostic; emits the structured turn), `response_format: json_object` + a `max_tokens` bound. Parse via JSON-mode `JSON.parse` (brace-slice `extractJson` demoted to last-ditch). Validate against the **core turn schema** (below). **Bounded retry: ≤1** (attempt 2 appends the zod error); on persistent failure return the **defined terminus** `{ reply: "couldn't structure that — rephrase?", proposal: null }` — **never a card**.
-4. The **core turn schema** (`@artlio/core`, `.strict()`) is the LLM-trust boundary:
+4. The **core turn schema** (`@fikirtive/core`, `.strict()`) is the LLM-trust boundary:
    - `planSteps: string[]` (bounded count/length), `reply: string`.
    - `proposal: null | { kind, desiredAspect?, desiredDuration?, desiredAudio?, structuredPrompt (≤ MAX_GEN_PROMPT), entityIds, variantSel }`.
    - **Constraints enforced in core before use:** `structuredPrompt` clamped to `MAX_GEN_PROMPT`; `desiredAspect`/`desiredDuration` ∈ known catalog values (else dropped → snapped by `suggestModel`); **`entityIds ⊆ availableRefs`** (drop hallucinated ids); **`variantSel` keys ⊆ `entityIds`**; **default to the user's explicitly @mentioned `entityIds`/`variantSel`** (carried in the input) and visually distinguish user-mentioned vs agent-proposed refs.

@@ -10,7 +10,7 @@
 
 **Scope:** P1a ONLY (the spec's first phase). NO 5-role RBAC (that's P1b — P1a keeps the existing allowlist-as-admin gate). NO `modal` provider option in the settings UI (P1b, super-admin-gated). NO model registry / composer / ledger (P2/P3a). Spec: `docs/superpowers/specs/2026-06-17-opt6-admin-dashboard-design.md`.
 
-**House rules (every task):** money-safety #1 — P1a only touches the $0 planner transport + vision config (advisory, non-media); the typed media-spend gate (`genRequest.superRefine` + worker) is NOT edited. Additive migration applied to the LOCAL dev DB only (`DATABASE_URL=postgresql://artlio:artlio@localhost:5432/artlio`, never prod; prod via `migrate:deploy` later with explicit authz). TDD with `packages/core` vitest for pure logic. Gen/LLM-touching checks run `GENERATION_PROVIDER=mock` + `COWORK_PROVIDER` unset; kill stale fal workers first (`pkill -f 'apps/worker' || true`). Surgical, match existing style. NO auto-commit/push — leave each task's commit staged for the user to approve (the `git commit` steps below are written for the user to run/approve, not auto-run). Use codegraph to confirm any symbol before editing. After all tasks: STOP for the `/codex` money-safety gate before any deploy.
+**House rules (every task):** money-safety #1 — P1a only touches the $0 planner transport + vision config (advisory, non-media); the typed media-spend gate (`genRequest.superRefine` + worker) is NOT edited. Additive migration applied to the LOCAL dev DB only (`DATABASE_URL=postgresql://fikirtive:fikirtive@localhost:5432/fikirtive`, never prod; prod via `migrate:deploy` later with explicit authz). TDD with `packages/core` vitest for pure logic. Gen/LLM-touching checks run `GENERATION_PROVIDER=mock` + `COWORK_PROVIDER` unset; kill stale fal workers first (`pkill -f 'apps/worker' || true`). Surgical, match existing style. NO auto-commit/push — leave each task's commit staged for the user to approve (the `git commit` steps below are written for the user to run/approve, not auto-run). Use codegraph to confirm any symbol before editing. After all tasks: STOP for the `/codex` money-safety gate before any deploy.
 
 ---
 
@@ -66,8 +66,8 @@ model RuntimeConfig {
 
 Run:
 ```bash
-DATABASE_URL="postgresql://artlio:artlio@localhost:5432/artlio" \
-  pnpm --filter @artlio/db exec prisma migrate dev --name runtime_config --create-only
+DATABASE_URL="postgresql://fikirtive:fikirtive@localhost:5432/fikirtive" \
+  pnpm --filter @fikirtive/db exec prisma migrate dev --name runtime_config --create-only
 ```
 Expected: a new `migrations/<ts>_runtime_config/migration.sql` containing `CREATE TABLE "RuntimeConfig"`. Open it and confirm it is purely additive (CREATE TABLE only, no DROP/ALTER of existing tables).
 
@@ -75,8 +75,8 @@ Expected: a new `migrations/<ts>_runtime_config/migration.sql` containing `CREAT
 
 Run:
 ```bash
-DATABASE_URL="postgresql://artlio:artlio@localhost:5432/artlio" pnpm --filter @artlio/db exec prisma migrate deploy
-pnpm --filter @artlio/db build
+DATABASE_URL="postgresql://fikirtive:fikirtive@localhost:5432/fikirtive" pnpm --filter @fikirtive/db exec prisma migrate deploy
+pnpm --filter @fikirtive/db build
 ```
 Expected: "All migrations have been successfully applied." + the client builds with `RuntimeConfig` available.
 
@@ -130,7 +130,7 @@ describe("createTransportFromConfig", () => {
 
 - [ ] **Step 2: Run it to verify it fails**
 
-Run: `pnpm --filter @artlio/core test -- runtime-config`
+Run: `pnpm --filter @fikirtive/core test -- runtime-config`
 Expected: FAIL — `clampVisionInts`/`createTransportFromConfig` not exported.
 
 - [ ] **Step 3: Implement `packages/core/src/runtime-config.ts`**
@@ -200,7 +200,7 @@ export function createTransport(): CoworkTransport {
 }
 ```
 Add at the top of the file: `import { createTransportFromConfig } from "./runtime-config.js";`
-(NOTE: runtime-config.ts imports the transport classes from cowork-transport.ts, and cowork-transport.ts imports the function from runtime-config.ts — this is a function-level cycle that resolves fine in ESM since the import is used at call time, not module-init. Confirm `pnpm --filter @artlio/core build` succeeds; if the bundler complains, move the three transport classes' construction into runtime-config via re-export instead.)
+(NOTE: runtime-config.ts imports the transport classes from cowork-transport.ts, and cowork-transport.ts imports the function from runtime-config.ts — this is a function-level cycle that resolves fine in ESM since the import is used at call time, not module-init. Confirm `pnpm --filter @fikirtive/core build` succeeds; if the bundler complains, move the three transport classes' construction into runtime-config via re-export instead.)
 
 - [ ] **Step 5: Make `coworkVisionConfig()` reuse the clamp** (`packages/core/src/cowork.ts`, the function at ~118-134)
 
@@ -225,7 +225,7 @@ Add: `export * from "./runtime-config.js";`
 
 - [ ] **Step 7: Run tests + build**
 
-Run: `pnpm --filter @artlio/core test && pnpm --filter @artlio/core build`
+Run: `pnpm --filter @fikirtive/core test && pnpm --filter @fikirtive/core build`
 Expected: the new runtime-config tests PASS; all existing tests (incl. cowork-reply.test.ts vision assertions + cowork-transport.test.ts) still PASS (behavior is byte-identical).
 
 - [ ] **Step 8: Commit (leave for user approval)**
@@ -246,11 +246,11 @@ git commit -m "feat(opt6): extract pure clamp + env-free transport switch (core 
 
 ```ts
 import "server-only";
-import { prisma } from "@artlio/db";
+import { prisma } from "@fikirtive/db";
 import {
   coworkVisionConfig, clampVisionInts, createTransportFromConfig,
   MockTransport, type CoworkTransport,
-} from "@artlio/core";
+} from "@fikirtive/core";
 
 /** Config keys = a fixed code-side enum (the only writable keys). */
 export const CONFIG_KEYS = { vision: "vision", coworkProvider: "cowork_provider" } as const;
@@ -301,7 +301,7 @@ export async function getTransport(): Promise<CoworkTransport> {
 
 - [ ] **Step 2: Verify it builds + typechecks**
 
-Run: `pnpm --filter @artlio/web typecheck`
+Run: `pnpm --filter @fikirtive/web typecheck`
 Expected: clean (confirms `runtimeConfig` is on the prisma client from Task 1, and the core exports resolve).
 
 - [ ] **Step 3: Commit (leave for user approval)**
@@ -320,7 +320,7 @@ git commit -m "feat(opt6): web runtime-config read-through (vision + provider, f
 
 - [ ] **Step 1: Remove the module-load transport singleton**
 
-Delete line 28 `const transport = createTransport();` and drop `createTransport` from the `@artlio/core` import (line 13). Add `import { getTransport, resolveVisionConfig } from "./runtime-config";`.
+Delete line 28 `const transport = createTransport();` and drop `createTransport` from the `@fikirtive/core` import (line 13). Add `import { getTransport, resolveVisionConfig } from "./runtime-config";`.
 
 - [ ] **Step 2: Resolve the transport once per action, in all 3 consumers**
 
@@ -344,8 +344,8 @@ Expected: no hits in web app code (core keeps them; web now uses the resolver).
 Run:
 ```bash
 pkill -f 'apps/worker' 2>/dev/null || true
-pnpm --filter @artlio/web typecheck
-DATABASE_URL="postgresql://artlio:artlio@localhost:5432/artlio" GENERATION_PROVIDER=mock node scripts/verify-cowork-turn.mjs
+pnpm --filter @fikirtive/web typecheck
+DATABASE_URL="postgresql://fikirtive:fikirtive@localhost:5432/fikirtive" GENERATION_PROVIDER=mock node scripts/verify-cowork-turn.mjs
 ```
 Expected: typecheck clean; the cowork-turn invariant verify still passes (propose-only, $0, no GenJob) — proves the transport refactor didn't change planner behavior.
 
@@ -404,7 +404,7 @@ NOTE: these run inside the proxy wall today (AUTH_ENABLED=true in prod, verified
 
 - [ ] **Step 3: Typecheck**
 
-Run: `pnpm --filter @artlio/web typecheck`
+Run: `pnpm --filter @fikirtive/web typecheck`
 Expected: clean (fix any return-type widening fallout surfaced here).
 
 - [ ] **Step 4: Commit (leave for user approval)**
@@ -486,7 +486,7 @@ Expected: `✓ all exported actions in 8 use-server files are guarded`. (If it l
 
 - [ ] **Step 5: Typecheck + commit (leave for user approval)**
 
-Run: `pnpm --filter @artlio/web typecheck`
+Run: `pnpm --filter @fikirtive/web typecheck`
 ```bash
 git add "apps/web/app/files/[...key]/route.ts" apps/web/app/studio/page.tsx apps/web/app/editor/page.tsx apps/web/app/library/page.tsx scripts/verify-auth-guards.mjs
 git commit -m "feat(opt6): guard /files + data-bearing pages; add source-scan auth-guard check"
@@ -520,7 +520,7 @@ Export it from `packages/core/src/index.ts` (already `export *`-ing cowork — c
 - [ ] **Step 2: Add the action** (`apps/web/lib/admin-actions.ts`)
 
 ```ts
-import { runtimeConfigInput } from "@artlio/core";
+import { runtimeConfigInput } from "@fikirtive/core";
 
 /** Write one runtime-config key. requireAdmin (P1a) — P1b will scope provider to
  *  super-admin. Validates credential presence for a paid provider BEFORE persisting
@@ -552,7 +552,7 @@ export async function saveRuntimeConfig(raw: unknown): Promise<{ ok: true } | { 
 
 - [ ] **Step 3: Typecheck + commit (leave for user approval)**
 
-Run: `pnpm --filter @artlio/core build && pnpm --filter @artlio/web typecheck`
+Run: `pnpm --filter @fikirtive/core build && pnpm --filter @fikirtive/web typecheck`
 ```bash
 git add packages/core/src/cowork.ts packages/core/src/index.ts apps/web/lib/admin-actions.ts
 git commit -m "feat(opt6): saveRuntimeConfig admin action (validated, audited, transactional)"
@@ -608,7 +608,7 @@ Add minimal `.admin-shell/.admin-nav/.admin-nav-link/.admin-content/.is-disabled
 ```tsx
 // apps/web/app/admin/settings/page.tsx
 import { resolveVisionConfig } from "@/lib/runtime-config";
-import { prisma } from "@artlio/db";
+import { prisma } from "@fikirtive/db";
 import { SettingsAdmin } from "@/components/admin/SettingsAdmin";
 
 export default async function SettingsPage() {
@@ -625,9 +625,9 @@ export default async function SettingsPage() {
 Run:
 ```bash
 pkill -f 'apps/worker' 2>/dev/null || true
-pnpm --filter @artlio/web typecheck && pnpm --filter @artlio/web build
+pnpm --filter @fikirtive/web typecheck && pnpm --filter @fikirtive/web build
 ```
-Expected: build clean. (Manual: `pnpm --filter @artlio/web dev`, sign in, visit `/admin/settings`, flip vision maxImages, confirm it persists + the directives page still renders in the shell.)
+Expected: build clean. (Manual: `pnpm --filter @fikirtive/web dev`, sign in, visit `/admin/settings`, flip vision maxImages, confirm it persists + the directives page still renders in the shell.)
 
 - [ ] **Step 4: Commit (leave for user approval)**
 
@@ -648,7 +648,7 @@ git commit -m "feat(opt6): /admin shell + runtime-config Settings page"
 ```js
 // LOCAL: a RuntimeConfig row changes the resolved config; garbage clamps; empty
 // table = env default. $0, no worker. Run: node scripts/local-runtime-config-verify.mjs
-process.env.DATABASE_URL ??= "postgresql://artlio:artlio@localhost:5432/artlio";
+process.env.DATABASE_URL ??= "postgresql://fikirtive:fikirtive@localhost:5432/fikirtive";
 const { prisma } = await import("../packages/db/dist/src/index.js");
 const { resolveVisionConfig } = await import("../apps/web/lib/runtime-config.ts"); // run via tsx, or import the built JS
 const fail = (m) => { throw new Error(m); };
@@ -688,11 +688,11 @@ git commit -m "test(opt6): local runtime-config resolve check"
 
 ```bash
 pkill -f 'apps/worker' 2>/dev/null || true
-pnpm --filter @artlio/core test
-pnpm --filter @artlio/core build && pnpm --filter @artlio/db build
-pnpm --filter @artlio/web typecheck && pnpm --filter @artlio/web build
+pnpm --filter @fikirtive/core test
+pnpm --filter @fikirtive/core build && pnpm --filter @fikirtive/db build
+pnpm --filter @fikirtive/web typecheck && pnpm --filter @fikirtive/web build
 node scripts/verify-auth-guards.mjs
-DATABASE_URL="postgresql://artlio:artlio@localhost:5432/artlio" GENERATION_PROVIDER=mock node scripts/verify-cowork-turn.mjs
+DATABASE_URL="postgresql://fikirtive:fikirtive@localhost:5432/fikirtive" GENERATION_PROVIDER=mock node scripts/verify-cowork-turn.mjs
 node scripts/local-runtime-config-verify.mjs
 ```
 Expected: all green — core tests pass, builds clean, auth-guard passes, cowork-turn invariant holds ($0/no GenJob), runtime-config resolves.

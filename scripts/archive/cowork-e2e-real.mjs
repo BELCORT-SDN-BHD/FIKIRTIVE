@@ -17,10 +17,10 @@ import { readFile, mkdir } from "node:fs/promises";
 import path from "node:path";
 import os from "node:os";
 
-process.env.DATABASE_URL ??= "postgresql://artlio:artlio@localhost:5432/artlio";
+process.env.DATABASE_URL ??= "postgresql://fikirtive:fikirtive@localhost:5432/fikirtive";
 const { prisma } = await import("../../packages/db/dist/src/index.js");
 const BASE = process.env.BASE_URL ?? "http://localhost:3100";
-const OUT = path.join(os.homedir(), ".gstack/projects/artlio/cowork-e2e-real");
+const OUT = path.join(os.homedir(), ".gstack/projects/fikirtive/cowork-e2e-real");
 await mkdir(OUT, { recursive: true });
 const PNG = Buffer.from("iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAAC0lEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg==", "base64");
 

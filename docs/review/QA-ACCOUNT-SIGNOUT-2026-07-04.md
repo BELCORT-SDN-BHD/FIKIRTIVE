@@ -31,7 +31,7 @@ Expected local limitation:
 pnpm --filter @fikirtive/web exec vitest run lib/__tests__/account-actions.test.ts lib/__tests__/better-auth-oauth-session-gate.test.ts lib/__tests__/better-auth-server.test.ts lib/__tests__/better-auth-client.test.ts
 ```
 
-The non-DB tests passed, but `better-auth-oauth-session-gate.test.ts` requires `DATABASE_URL` and failed in this shell before running its integration assertions. GitHub CI supplies Postgres and `DATABASE_URL=postgres://postgres:postgres@localhost:5432/artlio_test`.
+The non-DB tests passed, but `better-auth-oauth-session-gate.test.ts` requires `DATABASE_URL` and failed in this shell before running its integration assertions. GitHub CI supplies Postgres and `DATABASE_URL=postgres://postgres:postgres@localhost:5432/fikirtive_test`.
 
 ## Result
 

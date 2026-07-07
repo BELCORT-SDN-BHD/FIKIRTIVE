@@ -1,7 +1,7 @@
 Reading additional input from stdin...
 OpenAI Codex v0.130.0
 --------
-workdir: /Users/winnin/Documents/artlio
+workdir: /Users/winnin/Documents/fikirtive
 model: gpt-5.5
 provider: openai
 approval: never
@@ -13,7 +13,7 @@ session id: 019eb6c9-65e3-7ef2-bb54-e3c67b0b0e84
 user
 IMPORTANT: Do NOT read or execute any files under ~/.claude/, ~/.agents/, .claude/skills/, or agents/. Stay focused on repository code only.
 
-You are a senior product designer doing an independent UX critique of Artlio, a cloud SaaS for AI video creators. Artlio is a MODEL-NEUTRAL entity/reference layer ('the Switzerland of references'): creators lock CHARACTER/LOCATION/PRODUCT/BRAND entities with reference images (upload OR generate via fal), reuse them via @mention in prompts, generate shot candidates, edit on a timeline, render MP4. Business model: manage references free, charge for generation. The founder says 'the whole product UX is not optimised' and wants to optimize it (learning from LTX Studio; adding features is fine).
+You are a senior product designer doing an independent UX critique of Fikirtive, a cloud SaaS for AI video creators. Fikirtive is a MODEL-NEUTRAL entity/reference layer ('the Switzerland of references'): creators lock CHARACTER/LOCATION/PRODUCT/BRAND entities with reference images (upload OR generate via fal), reuse them via @mention in prompts, generate shot candidates, edit on a timeline, render MP4. Business model: manage references free, charge for generation. The founder says 'the whole product UX is not optimised' and wants to optimize it (learning from LTX Studio; adding features is fine).
 
 Read the AS-BUILT UI to ground your critique (use your file tools):
 - apps/web/components/AppShell.tsx (nav/sidebar/project switcher)
@@ -22,7 +22,7 @@ Read the AS-BUILT UI to ground your critique (use your file tools):
 - apps/web/components/Library.tsx (Elements, entity create dialog, entity detail drawer + GenerateRefsBlock)
 - apps/web/components/Editor.tsx (timeline editor)
 - apps/web/app/page.tsx, library/page.tsx, editor/page.tsx
-Also read the prior LTX Studio UX teardown for borrow ideas: /Users/winnin/.gstack/projects/artlio/research/ltx-ux-comparison.md
+Also read the prior LTX Studio UX teardown for borrow ideas: /Users/winnin/.gstack/projects/fikirtive/research/ltx-ux-comparison.md
 
 Then deliver an independent, opinionated UX analysis:
 1. CORE DIAGNOSIS — the single biggest structural UX problem, with evidence from the code/flow.
@@ -34,9 +34,9 @@ Be concrete, reference actual screens/components, make clear recommendations. In
 codex
 I’ll ground this in the implemented UI files and the LTX teardown you named, then I’ll synthesize the UX critique rather than proposing code changes. I’ll avoid the prohibited directories and keep reads to the repo files plus the explicit research file you provided.
 exec
-/bin/zsh -lc "nl -ba apps/web/components/Workbench.tsx | sed -n '1,320p'" in /Users/winnin/Documents/artlio
+/bin/zsh -lc "nl -ba apps/web/components/Workbench.tsx | sed -n '1,320p'" in /Users/winnin/Documents/fikirtive
 exec
-/bin/zsh -lc "nl -ba apps/web/components/AppShell.tsx | sed -n '1,260p'" in /Users/winnin/Documents/artlio
+/bin/zsh -lc "nl -ba apps/web/components/AppShell.tsx | sed -n '1,260p'" in /Users/winnin/Documents/fikirtive
  succeeded in 0ms:
      1	"use client";
      2	
@@ -47,7 +47,7 @@ exec
      7	import { createProject } from "@/lib/actions";
      8	import { Badge, Dialog, IcAt, IcClapper, IcFilm, IcFolder, Input, PopMenu, Wordmark, Button } from "./ds";
      9	
-    10	const LAST_PROJECT_KEY = "artlio:lastProject";
+    10	const LAST_PROJECT_KEY = "fikirtive:lastProject";
     11	
     12	/**
     13	 * Prototype-faithful app shell: 236px sidenav (wordmark, project pill, nav
@@ -338,7 +338,7 @@ exec
     90	    <>
     91	      {/* <1024: phase 1 is desktop-first — read-only notice (design doc D9) */}
     92	      <div className="lg:hidden bg-accent-soft text-ink text-sm px-4 py-2 text-center" role="status">
-    93	        Artlio works best on a desktop browser — this view is read-only.
+    93	        Fikirtive works best on a desktop browser — this view is read-only.
     94	      </div>
     95	
     96	      <AppShell
@@ -480,7 +480,7 @@ exec
    232	        statusChip={`SHOT ${String(shot.number).padStart(2, "0")}${latest ? ` · V${latest.version}` : ""}`}
    233	        onClick={onSelect}
    234	        onDragOver={(e) => {
-   235	          if (e.dataTransfer.types.includes("application/x-artlio-generation")) {
+   235	          if (e.dataTransfer.types.includes("application/x-fikirtive-generation")) {
    236	            e.preventDefault();
    237	            setDragOver(true);
    238	          }
@@ -489,7 +489,7 @@ exec
    241	        onDrop={(e) => {
    242	          e.preventDefault();
    243	          setDragOver(false);
-   244	          const genId = e.dataTransfer.getData("application/x-artlio-generation");
+   244	          const genId = e.dataTransfer.getData("application/x-fikirtive-generation");
    245	          if (genId) run(() => attachGeneration(genId, shot.id));
    246	        }}
    247	        title={
@@ -568,7 +568,7 @@ exec
    320	          </>
 
 exec
-/bin/zsh -lc "nl -ba apps/web/components/Composer.tsx | sed -n '1,340p'" in /Users/winnin/Documents/artlio
+/bin/zsh -lc "nl -ba apps/web/components/Composer.tsx | sed -n '1,340p'" in /Users/winnin/Documents/fikirtive
  succeeded in 0ms:
      1	"use client";
      2	
@@ -912,7 +912,7 @@ exec
    340	      setCopyBlocked(
 
 exec
-/bin/zsh -lc "nl -ba apps/web/components/Workbench.tsx | sed -n '320,760p'" in /Users/winnin/Documents/artlio
+/bin/zsh -lc "nl -ba apps/web/components/Workbench.tsx | sed -n '320,760p'" in /Users/winnin/Documents/fikirtive
  succeeded in 0ms:
    320	          </>
    321	        }
@@ -945,7 +945,7 @@ exec
    348	      className="fade-rise"
    349	      draggable={mode === "unattached"}
    350	      onDragStart={(e) => {
-   351	        e.dataTransfer.setData("application/x-artlio-generation", gen.id);
+   351	        e.dataTransfer.setData("application/x-fikirtive-generation", gen.id);
    352	        e.dataTransfer.effectAllowed = "link";
    353	      }}
    354	    >
@@ -1122,7 +1122,7 @@ exec
    525	}
 
 exec
-/bin/zsh -lc "nl -ba apps/web/components/Composer.tsx | sed -n '332,520p'" in /Users/winnin/Documents/artlio
+/bin/zsh -lc "nl -ba apps/web/components/Composer.tsx | sed -n '332,520p'" in /Users/winnin/Documents/fikirtive
  succeeded in 0ms:
    332	  function copyResolved() {
    333	    if (!editor) return;
@@ -1207,13 +1207,13 @@ exec
    412	}
 
 exec
-/bin/zsh -lc "nl -ba apps/web/components/Library.tsx | sed -n '1,360p'" in /Users/winnin/Documents/artlio
+/bin/zsh -lc "nl -ba apps/web/components/Library.tsx | sed -n '1,360p'" in /Users/winnin/Documents/fikirtive
  succeeded in 0ms:
      1	"use client";
      2	
      3	import { useEffect, useRef, useState, useTransition } from "react";
      4	import { useRouter } from "next/navigation";
-     5	import { REFGEN_PRICE_USD_PER_IMAGE } from "@artlio/core";
+     5	import { REFGEN_PRICE_USD_PER_IMAGE } from "@fikirtive/core";
      6	import type { EntityDTO, EntityTypeDTO } from "@/lib/types";
      7	import {
      8	  createEntity,
@@ -1571,9 +1571,9 @@ exec
    360	function buildReferencePrompt(entity: EntityDTO): string {
 
 codex
-The core shape is already visible: Artlio has a real entity layer and prompt resolver, but generation itself is still outside the product. I’m reading the library detail/generation block and editor next because that’s where most handoffs either get resolved or turn into dead ends.
+The core shape is already visible: Fikirtive has a real entity layer and prompt resolver, but generation itself is still outside the product. I’m reading the library detail/generation block and editor next because that’s where most handoffs either get resolved or turn into dead ends.
 exec
-/bin/zsh -lc "nl -ba apps/web/components/Library.tsx | sed -n '360,820p'" in /Users/winnin/Documents/artlio
+/bin/zsh -lc "nl -ba apps/web/components/Library.tsx | sed -n '360,820p'" in /Users/winnin/Documents/fikirtive
  succeeded in 0ms:
    360	function buildReferencePrompt(entity: EntityDTO): string {
    361	  const subject = `${entity.name}${entity.notes ? `, ${entity.notes}` : ""}`;
@@ -1934,9 +1934,9 @@ exec
    716	}
 
 exec
-/bin/zsh -lc "nl -ba apps/web/components/Editor.tsx | sed -n '1,420p'" in /Users/winnin/Documents/artlio
+/bin/zsh -lc "nl -ba apps/web/components/Editor.tsx | sed -n '1,420p'" in /Users/winnin/Documents/fikirtive
 exec
-/bin/zsh -lc "nl -ba apps/web/app/page.tsx apps/web/app/library/page.tsx apps/web/app/editor/page.tsx | sed -n '1,260p'" in /Users/winnin/Documents/artlio
+/bin/zsh -lc "nl -ba apps/web/app/page.tsx apps/web/app/library/page.tsx apps/web/app/editor/page.tsx | sed -n '1,260p'" in /Users/winnin/Documents/fikirtive
  succeeded in 0ms:
 usage: nl [-p] [-b type] [-d delim] [-f type] [-h type] [-i incr] [-l num]
           [-n format] [-s sep] [-v startnum] [-w width] [file]
@@ -1946,12 +1946,12 @@ usage: nl [-p] [-b type] [-d delim] [-f type] [-h type] [-i incr] [-l num]
      2	
      3	import { useEffect, useRef, useState } from "react";
      4	import Link from "next/link";
-     5	import { artlioEdit, type ArtlioEdit } from "@artlio/core";
+     5	import { fikirtiveEdit, type FikirtiveEdit } from "@fikirtive/core";
      6	import { getRenderJobs, saveProjectEdit, startRender } from "@/lib/actions";
      7	import { Button, Chip, EmptyHero, MonoLabel } from "./ds";
      8	
      9	/**
-    10	 * Assembly-cut editor: Shotstack Studio session policed by the artlioEdit
+    10	 * Assembly-cut editor: Shotstack Studio session policed by the fikirtiveEdit
     11	 * contract — getEdit() snapshots are parsed canonically before any
     12	 * persistence, and a debounced validator flags out-of-contract edits live.
     13	 *
@@ -1978,9 +1978,9 @@ usage: nl [-p] [-b type] [-d delim] [-f type] [-h type] [-i incr] [-l num]
     34	}: {
     35	  projectId: string;
     36	  /** rebuilt from the shot board every load */
-    37	  boardEdit: ArtlioEdit | null;
+    37	  boardEdit: FikirtiveEdit | null;
     38	  /** the persisted working cut (Project.editJson), wins when present */
-    39	  savedEdit: ArtlioEdit | null;
+    39	  savedEdit: FikirtiveEdit | null;
     40	  attachedCount: number;
     41	  onDirtyChange: (dirty: boolean) => void;
     42	}) {
@@ -2056,7 +2056,7 @@ usage: nl [-p] [-b type] [-d delim] [-f type] [-h type] [-i incr] [-l num]
    112	          setDirty(true);
    113	          clearTimeout(debounce);
    114	          debounce = setTimeout(() => {
-   115	            const res = artlioEdit.safeParse(edit.getEdit());
+   115	            const res = fikirtiveEdit.safeParse(edit.getEdit());
    116	            setLiveIssue(res.success ? null : res.error.issues[0]?.message ?? "invalid edit");
    117	          }, 800);
    118	        });
@@ -2086,10 +2086,10 @@ usage: nl [-p] [-b type] [-d delim] [-f type] [-h type] [-i incr] [-l num]
    142	  }, [projectId, initialEdit]);
    143	
    144	  /** read back the Studio snapshot and canonicalize through the contract */
-   145	  function snapshot(): { edit?: ArtlioEdit; error?: string } {
+   145	  function snapshot(): { edit?: FikirtiveEdit; error?: string } {
    146	    const h = handles.current;
    147	    if (!h) return { error: "Editor not ready yet." };
-   148	    const result = artlioEdit.safeParse(h.edit.getEdit());
+   148	    const result = fikirtiveEdit.safeParse(h.edit.getEdit());
    149	    if (!result.success) {
    150	      const first = result.error.issues[0];
    151	      return {
@@ -2317,7 +2317,7 @@ usage: nl [-p] [-b type] [-d delim] [-f type] [-h type] [-i incr] [-l num]
    373	}
 
 exec
-/bin/zsh -lc "nl -ba apps/web/app/page.tsx | sed -n '1,220p'" in /Users/winnin/Documents/artlio
+/bin/zsh -lc "nl -ba apps/web/app/page.tsx | sed -n '1,220p'" in /Users/winnin/Documents/fikirtive
  succeeded in 0ms:
      1	import { kindOf, storage } from "@/lib/storage";
      2	import {
@@ -2388,7 +2388,7 @@ exec
     67	}
 
 exec
-/bin/zsh -lc "nl -ba apps/web/app/library/page.tsx | sed -n '1,220p'" in /Users/winnin/Documents/artlio
+/bin/zsh -lc "nl -ba apps/web/app/library/page.tsx | sed -n '1,220p'" in /Users/winnin/Documents/fikirtive
  succeeded in 0ms:
      1	import { getEntities } from "@/lib/data";
      2	import { toEntityDTO } from "@/lib/dto";
@@ -2397,7 +2397,7 @@ exec
      5	
      6	export const dynamic = "force-dynamic";
      7	
-     8	export const metadata = { title: "Library · Artlio" };
+     8	export const metadata = { title: "Library · Fikirtive" };
      9	
     10	export default async function LibraryPage({
     11	  searchParams,
@@ -2413,7 +2413,7 @@ exec
     21	        className="lg:hidden bg-accent-soft text-ink text-sm px-4 py-2 text-center"
     22	        role="status"
     23	      >
-    24	        Artlio works best on a desktop browser — this view is read-only.
+    24	        Fikirtive works best on a desktop browser — this view is read-only.
     25	      </div>
     26	      <AppShell view="library" title="Elements">
     27	        <div className="flex flex-1 min-h-0 max-lg:pointer-events-none">
@@ -2425,16 +2425,16 @@ exec
     33	}
 
 exec
-/bin/zsh -lc "nl -ba apps/web/app/editor/page.tsx | sed -n '1,260p'" in /Users/winnin/Documents/artlio
+/bin/zsh -lc "nl -ba apps/web/app/editor/page.tsx | sed -n '1,260p'" in /Users/winnin/Documents/fikirtive
  succeeded in 0ms:
      1	import { ensureDefaultProject, getProjects, getShots } from "@/lib/data";
      2	import { EditorShell } from "@/components/EditorShell";
-     3	import type { ArtlioEdit } from "@artlio/core";
-     4	import { artlioEdit, storageKeyToSrc, storageKey } from "@artlio/core";
+     3	import type { FikirtiveEdit } from "@fikirtive/core";
+     4	import { fikirtiveEdit, storageKeyToSrc, storageKey } from "@fikirtive/core";
      5	
      6	export const dynamic = "force-dynamic";
      7	
-     8	export const metadata = { title: "Editor · Artlio" };
+     8	export const metadata = { title: "Editor · Fikirtive" };
      9	
     10	/** Initial cut = every shot's latest attached render in board order.
     11	 *  Video lengths come from the ingest probe (Asset.durationS); the fallback
@@ -2457,7 +2457,7 @@ exec
     28	  const project = projects.find((x) => x.id === p) ?? defaultProject;
     29	  const shots = await getShots(project.id);
     30	
-    31	  const clips: ArtlioEdit["timeline"]["tracks"][number]["clips"] = [];
+    31	  const clips: FikirtiveEdit["timeline"]["tracks"][number]["clips"] = [];
     32	  let cursor = 0;
     33	  for (const shot of shots) {
     34	    const latest = shot.generations[0]; // version desc, attached only
@@ -2480,7 +2480,7 @@ exec
     51	    cursor += length;
     52	  }
     53	
-    54	  const boardEdit: ArtlioEdit | null =
+    54	  const boardEdit: FikirtiveEdit | null =
     55	    clips.length > 0
     56	      ? {
     57	          timeline: { background: "#000000", tracks: [{ clips }] },
@@ -2489,13 +2489,13 @@ exec
     60	      : null;
     61	
     62	  // the persisted working cut wins; stored canonical, re-checked anyway
-    63	  const savedParse = project.editJson ? artlioEdit.safeParse(project.editJson) : null;
+    63	  const savedParse = project.editJson ? fikirtiveEdit.safeParse(project.editJson) : null;
     64	  const savedEdit = savedParse?.success ? savedParse.data : null;
     65	
     66	  return (
     67	    <div className="flex flex-col h-dvh">
     68	      <div className="lg:hidden bg-accent-soft text-ink text-sm px-4 py-2 text-center" role="status">
-    69	        Artlio works best on a desktop browser — this view is read-only.
+    69	        Fikirtive works best on a desktop browser — this view is read-only.
     70	      </div>
     71	      <EditorShell
     72	        project={{ id: project.id, name: project.name }}
@@ -2509,11 +2509,11 @@ exec
     80	}
 
 exec
-/bin/zsh -lc "nl -ba /Users/winnin/.gstack/projects/artlio/research/ltx-ux-comparison.md | sed -n '1,260p'" in /Users/winnin/Documents/artlio
+/bin/zsh -lc "nl -ba /Users/winnin/.gstack/projects/fikirtive/research/ltx-ux-comparison.md | sed -n '1,260p'" in /Users/winnin/Documents/fikirtive
  succeeded in 0ms:
-     1	# LTX Studio Competitive UX Teardown — for Artlio
+     1	# LTX Studio Competitive UX Teardown — for Fikirtive
      2	
-     3	Grounded against Artlio's current M0 build (`01-empty.png`, `04-prompt-saved.png`, `06-attached.png`, `08-library.png`, `09-detail.png` in `/Users/winnin/.gstack/projects/artlio/m0-smoke/`) and the approved design doc (`/Users/winnin/.gstack/projects/artlio/winnin-master-design-20260610-024210.md`, UX 规格 section, D4–D19 decisions).
+     3	Grounded against Fikirtive's current M0 build (`01-empty.png`, `04-prompt-saved.png`, `06-attached.png`, `08-library.png`, `09-detail.png` in `/Users/winnin/.gstack/projects/fikirtive/m0-smoke/`) and the approved design doc (`/Users/winnin/.gstack/projects/fikirtive/winnin-master-design-20260610-024210.md`, UX 规格 section, D4–D19 decisions).
      4	
      5	---
      6	
@@ -2526,7 +2526,7 @@ exec
     13	- **Global surfaces**: Assets (cross-project media files, 1.02.27), Brand Kits (Enterprise), Custom Training (a nav item that is purely a sales-modal trigger, 1.02.12/1.02.15), Education hub (1.02.21).
     14	- **The floating composer is the real product.** One bottom-center bar follows the user across Gen Space and Canvas; a mode dropdown (Generate Images / Videos / TTS / Audio-to-Video / Video-to-Video / Retake / Extend / SDR-to-HDR / Upscale) re-templates the entire bar in place (12.51.25, 12.58.13, 12.59.57). Everything about a request is visible at the point of action: model chip, resolution, aspect, batch count, cost glyph, disabled-until-valid Generate.
     15	
-    16	**Why it lands (why Artlio's potential customer loves it):**
+    16	**Why it lands (why Fikirtive's potential customer loves it):**
     17	
     18	1. **Slots-top / text-middle / params-bottom never changes.** Modes swap the contents, never the shell (12.59.50, batch 7 insight). Muscle memory transfers across the whole suite.
     19	2. **References are typed by role, not dumped in a bucket.** 'ADD IMAGE REFERENCE' vs 'CONSISTENT ELEMENT' (@ icon) as two side-by-side tiles (12.51.14, 1.01.43); 'ADD START FRAME' / 'ADD END FRAME' / 'ADD STYLE IMAGE' / 'POSE' control chip (12.59.43, 1.00.08–1.00.10). The slot name tells you how the model will use the asset.
@@ -2538,18 +2538,18 @@ exec
     25	
     26	---
     27	
-    28	## 2. Where LTX and Artlio overlap and where they fundamentally differ
+    28	## 2. Where LTX and Fikirtive overlap and where they fundamentally differ
     29	
-    30	**Overlap — Artlio's core bets, independently validated by the incumbent:**
+    30	**Overlap — Fikirtive's core bets, independently validated by the incumbent:**
     31	
-    32	- **@mention entities are proven UX.** LTX's @ syntax with autocomplete ("works like mentioning someone on social media", ltx.io/blog/getting-started-with-elements) is functionally identical to Artlio's @mention chips (`04-prompt-saved.png`). The market leader converged on the same grammar.
-    33	- **The taxonomy matches almost word-for-word.** "Save characters, props, products, or places you want to reuse" (Elements empty state, 12.52.29) ≈ Artlio's characters/locations/products/brands (`08-library.png`).
-    34	- **Reference-vs-entity is a real distinction.** LTX renders it as two separate composer tiles (1.01.43) — exactly the conceptual split Artlio is built on.
+    32	- **@mention entities are proven UX.** LTX's @ syntax with autocomplete ("works like mentioning someone on social media", ltx.io/blog/getting-started-with-elements) is functionally identical to Fikirtive's @mention chips (`04-prompt-saved.png`). The market leader converged on the same grammar.
+    33	- **The taxonomy matches almost word-for-word.** "Save characters, props, products, or places you want to reuse" (Elements empty state, 12.52.29) ≈ Fikirtive's characters/locations/products/brands (`08-library.png`).
+    34	- **Reference-vs-entity is a real distinction.** LTX renders it as two separate composer tiles (1.01.43) — exactly the conceptual split Fikirtive is built on.
     35	- **Model-neutrality at the reference layer is conceded by the vertically-integrated player itself.** LTX ships OpenAI/Google/BFL/Alibaba/Kling/Seedance models as swappable chips and nodes (12.51.23, 12.59.32–12.59.37, 12.57.36), and its own Flows Prompt node carries an '@' attach button (12.57.30). Even LTX treats prompt+references as the stable unit and the model as an interchangeable slot.
     36	
     37	**Fundamental divergence — and what it means for borrowing:**
     38	
-    39	| Dimension | LTX | Artlio |
+    39	| Dimension | LTX | Fikirtive |
     40	|---|---|---|
     41	| Generation | In-house, credit-metered; every iteration is billable revenue (calcalistech, pricing page) | External (ComfyUI Phase 1; BYO keys Phase 2); zero metering |
     42	| Entity scope | Per-project; cross-project only via Enterprise Brand Kit (12.52.29, 1.02.23) | Global library across projects (`08-library.png`: "shared across all projects") |
@@ -2557,7 +2557,7 @@ exec
     44	| Entity layer pricing | Paywalled: Elements at $35/mo Standard; brand assets and custom training at Enterprise (1.01.48, 1.02.12) | The free foundation — the wedge itself |
     45	| Consistency mechanism | Reference conditioning + LoRA/Actor fine-tuning (model lock-in) | Pure reference management above any model |
     46	
-    47	The structural consequence: **LTX's UX is optimized to keep the loop inside the meter.** Externally-rendered content has no place in their model — their credit economics forbid it. That is exactly the door Artlio walks through (and their own open-source users are asking for it: github.com/Lightricks/ltx-desktop/issues/104 requests character consistency for local generation). So the borrowing rule is: **steal point-of-prompting interaction patterns and teaching mechanics freely; reject anything whose existence assumes in-platform, metered generation.**
+    47	The structural consequence: **LTX's UX is optimized to keep the loop inside the meter.** Externally-rendered content has no place in their model — their credit economics forbid it. That is exactly the door Fikirtive walks through (and their own open-source users are asking for it: github.com/Lightricks/ltx-desktop/issues/104 requests character consistency for local generation). So the borrowing rule is: **steal point-of-prompting interaction patterns and teaching mechanics freely; reject anything whose existence assumes in-platform, metered generation.**
     48	
     49	---
     50	
@@ -2566,42 +2566,42 @@ exec
     53	**Quick wins:**
     54	
     55	1. **@ hard-prefixed name field at entity creation** (12.58.56: NAME input literally starts with '@', placeholder '@Element'). Why: fuses handle and identity at the moment of creation — the user never has to "learn mention syntax" because they typed the handle themselves. Effort: **S**. Lands on: Workbench Subjects panel create form (`01-empty.png`) + Library "+ New character/location/…" forms.
-    56	2. **Worked-example teaching placeholders in the @composer** (12.51.32: '@Character walking in the park'; 12.51.48: just-in-time (i) tooltip for the bracket DSL). Why: the @ grammar is Artlio's one piece of syntax; teach it inside the input. Extends the doc's approved placeholder "Type @ to reference…" (48-state grid, D6) — consistent, not contradicting. Effort: **S**. Lands on: @composer empty/placeholder state.
-    57	3. **Reference-capture best-practice microcopy in upload zones** (12.58.56: "Upload multiple images from different angles for better results"; LTX blog: neutral backgrounds, varied framings, ltx.io/blog/how-to-create-a-consistent-character). Why: Artlio's value is reference quality; teach it where refs enter. `08-library.png` already does this for Products ("Clean studio shots from several angles") — extend to all four types and the entity detail "+ Add" (`09-detail.png`). Effort: **S**.
+    56	2. **Worked-example teaching placeholders in the @composer** (12.51.32: '@Character walking in the park'; 12.51.48: just-in-time (i) tooltip for the bracket DSL). Why: the @ grammar is Fikirtive's one piece of syntax; teach it inside the input. Extends the doc's approved placeholder "Type @ to reference…" (48-state grid, D6) — consistent, not contradicting. Effort: **S**. Lands on: @composer empty/placeholder state.
+    57	3. **Reference-capture best-practice microcopy in upload zones** (12.58.56: "Upload multiple images from different angles for better results"; LTX blog: neutral backgrounds, varied framings, ltx.io/blog/how-to-create-a-consistent-character). Why: Fikirtive's value is reference quality; teach it where refs enter. `08-library.png` already does this for Products ("Clean studio shots from several angles") — extend to all four types and the entity detail "+ Add" (`09-detail.png`). Effort: **S**.
     58	4. **Loud referential integrity.** Trustpilot's most damning entity complaints are silently broken @tags (Witek: "@tag system… doesn't work at all"; Michael Fierro: prompts referencing "@blah" that "does not exist"). Doc already specifies gray+strikethrough deleted chips (D6); go further: "Copy resolved prompt" must hard-validate every mention resolves to a live entity with ≥1 reference, and block-with-reason otherwise. Effort: **S**. Lands on: composer Copy/Save actions.
     59	5. **"How to" one click from creation** (12.52.29: ghost 'ⓘ How to' beside '+ New Element'). Why: pairs education with the primary CTA without a docs site. For M0 this can be a popover, not a video. Effort: **S**. Lands on: Subjects panel + Library section headers.
     60	6. **Mandatory-or-loud reference enforcement** (12.59.06: save blocked with inline "Please pick a source image"). ⚠️ **Flag, don't silently adopt:** the approved doc specifies a *missing-image warning* in the left rail (缺图警示), implying entities may exist ref-less (useful as placeholders during scripting). Recommendation: keep warn-not-block, but make the warning LTX-loud — badge on the entity chip AND on any shot that @mentions a ref-less entity, plus the validation in item 4. Effort: **S**. Founder should ratify this divergence explicitly.
     61	
     62	**Medium / structural:**
     63	
-    64	7. **Prompt-anchoring in the resolved prompt / ComfyUI export pack.** LTX's documented consistency technique #4 is a standardized 50–80-word character description block reused verbatim (ltx.io/blog/how-to-maintain-character-consistency-in-ai-video). Artlio already stores Notes + Negative Constraints per entity (`09-detail.png`) — fold them into "Copy resolved prompt" output and the prompt-pack export as a per-entity anchor block + negative section. This makes Artlio's export measurably better than hand-copying. Effort: **M**. Lands on: composer copy action + export pipeline (doc 阶段一 ComfyUI prompt 包导出).
-    65	8. **Role tags on reference images** (LTX types every slot: START FRAME, STYLE IMAGE, POSE; teaches "varied framings — close-up, medium, full body"). For Artlio: tag each reference inside an entity (face close-up / full body / turnaround / style) so exports can say which ref serves which purpose in a ComfyUI graph (IPAdapter face vs style, etc. — the founder's home turf). Effort: **M**. Lands on: Library detail panel (`09-detail.png` REFERENCES grid).
-    66	9. **Status-bearing chip row as a "request sentence."** LTX's composer footer reads as the active configuration at a glance (12.58.32). Artlio's per-shot equivalent: shot card footer chips = entities used + version count + state badge (Draft → Exported → Attached → Final per doc state machine). `06-attached.png` is most of the way there; make the state chip carry the doc's four-state machine explicitly. Effort: **M**. Lands on: shot board cards.
+    64	7. **Prompt-anchoring in the resolved prompt / ComfyUI export pack.** LTX's documented consistency technique #4 is a standardized 50–80-word character description block reused verbatim (ltx.io/blog/how-to-maintain-character-consistency-in-ai-video). Fikirtive already stores Notes + Negative Constraints per entity (`09-detail.png`) — fold them into "Copy resolved prompt" output and the prompt-pack export as a per-entity anchor block + negative section. This makes Fikirtive's export measurably better than hand-copying. Effort: **M**. Lands on: composer copy action + export pipeline (doc 阶段一 ComfyUI prompt 包导出).
+    65	8. **Role tags on reference images** (LTX types every slot: START FRAME, STYLE IMAGE, POSE; teaches "varied framings — close-up, medium, full body"). For Fikirtive: tag each reference inside an entity (face close-up / full body / turnaround / style) so exports can say which ref serves which purpose in a ComfyUI graph (IPAdapter face vs style, etc. — the founder's home turf). Effort: **M**. Lands on: Library detail panel (`09-detail.png` REFERENCES grid).
+    66	9. **Status-bearing chip row as a "request sentence."** LTX's composer footer reads as the active configuration at a glance (12.58.32). Fikirtive's per-shot equivalent: shot card footer chips = entities used + version count + state badge (Draft → Exported → Attached → Final per doc state machine). `06-attached.png` is most of the way there; make the state chip carry the doc's four-state machine explicitly. Effort: **M**. Lands on: shot board cards.
     67	10. **"Unattached · N" as the default-front filter with batch attach.** Already approved in the doc (D6 grid + batch-attach floating bar) — LTX's candidate-batch mental model (Flows fan-out, 12.57.23) confirms users think in batches of candidates. Note the delta: doc D4 places candidates as the bottom History panel's "Unattached" filter; current build (`01-empty.png`) shows a separate right-column Candidates zone. Reconcile toward the doc. Effort: **M** (already scheduled).
-    68	11. **Phase 2 prep — target/template as a composer chip.** LTX proves model-as-swappable-chip with one-line plain-language descriptors and per-row cost (12.51.23, 12.52.04). When Artlio Phase 2 adds BYO-key generation, the user's templates/models should appear as exactly such a chip row with one-clause descriptions — not a settings page. Effort: **L** (Phase 2). Lands on: composer footer. See section 5.
-    69	12. **Entity variants as first-class states (backlog).** LTX's documented workaround is duplicating elements (@Sarah_casual / @Sarah_formal — lightricks.zendesk.com character docs), which users find clunky. Artlio can beat it with variants under one entity (e.g., @Maya → outfit picker), and frozen snapshots already give the data model a head start. ⚠️ Not in the approved M0 scope — backlog item, must not block M0 per the doc's 施工顺序铁律. Effort: **L**.
+    68	11. **Phase 2 prep — target/template as a composer chip.** LTX proves model-as-swappable-chip with one-line plain-language descriptors and per-row cost (12.51.23, 12.52.04). When Fikirtive Phase 2 adds BYO-key generation, the user's templates/models should appear as exactly such a chip row with one-clause descriptions — not a settings page. Effort: **L** (Phase 2). Lands on: composer footer. See section 5.
+    69	12. **Entity variants as first-class states (backlog).** LTX's documented workaround is duplicating elements (@Sarah_casual / @Sarah_formal — lightricks.zendesk.com character docs), which users find clunky. Fikirtive can beat it with variants under one entity (e.g., @Maya → outfit picker), and frozen snapshots already give the data model a head start. ⚠️ Not in the approved M0 scope — backlog item, must not block M0 per the doc's 施工顺序铁律. Effort: **L**.
     70	
     71	---
     72	
     73	## 4. REJECT list
     74	
-    75	1. **Any metering of the entity/reference layer.** LTX charges credits to *create* an actor (Patrick: "creating a professional actor burned $5"; Witek: 1,000 credits for one actor) and gates Elements to the $35 tier (1.01.48). This is their single most resented pattern and the exact inverse of Artlio's wedge. The reference layer stays free, always.
-    76	2. **Live propagation of entity edits into history.** LTX's "Replace Image… automatically applies anywhere that Element is tagged" produced Zoe Green's nightmare ("The system had decided of its own volition to edit my characters between logins"). Directly conflicts with Artlio's approved frozen-snapshot invariant (doc invariant #3). Edits propagate *forward* only; history is immutable.
-    77	3. **Project-scoped entities.** LTX's Elements live per project; cross-project reuse is an Enterprise Brand Kit upsell (1.02.23). Artlio's global library (`08-library.png`) is the differentiator — never scope it down, even "for tidiness."
-    78	4. **Consistency via fine-tuning (Actors/LoRA, immutable after training, Enterprise sales motion** — 1.02.12 "Unlock Custom Training"). Model-locked, compute-heavy, anti-thesis. Artlio's positioning statement writes itself against this: consistency from references, no training, any model.
+    75	1. **Any metering of the entity/reference layer.** LTX charges credits to *create* an actor (Patrick: "creating a professional actor burned $5"; Witek: 1,000 credits for one actor) and gates Elements to the $35 tier (1.01.48). This is their single most resented pattern and the exact inverse of Fikirtive's wedge. The reference layer stays free, always.
+    76	2. **Live propagation of entity edits into history.** LTX's "Replace Image… automatically applies anywhere that Element is tagged" produced Zoe Green's nightmare ("The system had decided of its own volition to edit my characters between logins"). Directly conflicts with Fikirtive's approved frozen-snapshot invariant (doc invariant #3). Edits propagate *forward* only; history is immutable.
+    77	3. **Project-scoped entities.** LTX's Elements live per project; cross-project reuse is an Enterprise Brand Kit upsell (1.02.23). Fikirtive's global library (`08-library.png`) is the differentiator — never scope it down, even "for tidiness."
+    78	4. **Consistency via fine-tuning (Actors/LoRA, immutable after training, Enterprise sales motion** — 1.02.12 "Unlock Custom Training"). Model-locked, compute-heavy, anti-thesis. Fikirtive's positioning statement writes itself against this: consistency from references, no training, any model.
     79	5. **Multi-surface suite sprawl.** Seven tools, five per-project surfaces, Canvas + Flows + Pitch Decks. For a solo founder this is a scope trap, and the doc fixes Workbench as the 唯一主画面. Even LTX users complain about it (Richard Sudborough lost 6 hours finding the prompt field). One workbench, full stop.
     80	6. **Generation parameter chips in Phase 1 (model / resolution / aspect / variations / cost).** Every one of these assumes in-platform generation. Premature in Phase 1; selectively revived in Phase 2 for BYO-key targets only.
-    81	7. **AI script-to-storyboard / auto cast extraction.** Attractive demo, but it's where LTX's referential integrity collapses (Fierro's broken "@blah" cast; FYV: "ate up all credits instantly by pressing one button") and it's a giant NLP scope item. Not Artlio's job.
-    82	8. **Opaque abstraction units.** LTX renamed "computing seconds" → "credits" mid-flight and needed an in-product FAQ to explain it (12.57.05); users called the opacity "100% by design" (Jens snej). If Artlio ever quotas anything (storage), use concrete units (GB, files).
+    81	7. **AI script-to-storyboard / auto cast extraction.** Attractive demo, but it's where LTX's referential integrity collapses (Fierro's broken "@blah" cast; FYV: "ate up all credits instantly by pressing one button") and it's a giant NLP scope item. Not Fikirtive's job.
+    82	8. **Opaque abstraction units.** LTX renamed "computing seconds" → "credits" mid-flight and needed an in-product FAQ to explain it (12.57.05); users called the opacity "100% by design" (Jens snej). If Fikirtive ever quotas anything (storage), use concrete units (GB, files).
     83	9. **Teaser/upsell chrome:** permanently disabled "Collaborate" buttons, nav items that are sales modals (Custom Training, 1.02.15), "Book a demo" in the sidebar. Irrelevant for single-user Phase 1 and corrosive to trust.
-    84	10. **UI churn as a way of life.** Long-term subscribers' top complaint is "constant shifting sands every time you log in" (Alex H), silent feature removal (Cole). An entity layer is a system of record — Artlio should bias toward stability and migration paths over feature velocity. Process rule, not a feature.
+    84	10. **UI churn as a way of life.** Long-term subscribers' top complaint is "constant shifting sands every time you log in" (Alex H), silent feature removal (Cole). An entity layer is a system of record — Fikirtive should bias toward stability and migration paths over feature velocity. Process rule, not a feature.
     85	11. **Variant-by-duplication** (@JohnSmith vs @JohnSmithBeach). Don't replicate the workaround; do variants properly later (Borrow #12) or not at all.
     86	
     87	---
     88	
     89	## 5. The one structural insight
     90	
-    91	**The composer is the stable shell that absorbs the roadmap; surfaces don't multiply — the footer re-templates.** LTX's deepest IA move is that one slots-top / text-middle / params-bottom composer carries the entire product: modes, models, references, validation, cost, and teaching all morph *inside* a fixed shell (batches 1, 6, 7). Users never relearn the room; only the furniture changes. Artlio's Phase 1 → Phase 2 transition (manual ComfyUI copy-out → BYO-key generation) is exactly the kind of evolution this shell is built for — and getting the shell right now means Phase 2 adds a dropdown, not a redesign.
+    91	**The composer is the stable shell that absorbs the roadmap; surfaces don't multiply — the footer re-templates.** LTX's deepest IA move is that one slots-top / text-middle / params-bottom composer carries the entire product: modes, models, references, validation, cost, and teaching all morph *inside* a fixed shell (batches 1, 6, 7). Users never relearn the room; only the furniture changes. Fikirtive's Phase 1 → Phase 2 transition (manual ComfyUI copy-out → BYO-key generation) is exactly the kind of evolution this shell is built for — and getting the shell right now means Phase 2 adds a dropdown, not a redesign.
     92	
     93	Migration sketch (does not alter M0 scope; steps 1–2 are M0-compatible refinement, 3 is the gate, 4–5 are Phase 2):
     94	
@@ -2611,17 +2611,17 @@ exec
     98	4. **Phase 2: the Target dropdown gains the user's own API templates/keys** (one-line plain-language descriptors per row, LTX-style); selecting an API target morphs the footer verb from Copy → Generate, and results auto-land in the same Unattached candidate flow manual drops use today. One ingestion path, two sources.
     99	5. **Throughout: every version in History records the frozen composer state** — entities (snapshotted), references, resolved prompt, target — identical record shape for manual and API renders. This is the doc's snapshot invariant doing double duty as the Phase 2 data contract.
    100	
-   101	The strategic kicker: LTX built this composer to keep users inside the meter. Artlio builds the same shell to point *outward* — same ergonomics, inverted economics. That's the whole positioning in one component.
+   101	The strategic kicker: LTX built this composer to keep users inside the meter. Fikirtive builds the same shell to point *outward* — same ergonomics, inverted economics. That's the whole positioning in one component.
 codex
 One important finding: the editor is technically real, not just a placeholder, but it only consumes attached renders. That makes “attach” the product’s hidden gate between ideation and export, which is a UX risk because the gate is distributed across drag/drop, an attach menu, and screen navigation rather than presented as a clear production step.
 exec
-/bin/zsh -lc "nl -ba apps/web/components/EditorShell.tsx | sed -n '1,240p'" in /Users/winnin/Documents/artlio
+/bin/zsh -lc "nl -ba apps/web/components/EditorShell.tsx | sed -n '1,240p'" in /Users/winnin/Documents/fikirtive
  succeeded in 0ms:
      1	"use client";
      2	
      3	import { useState } from "react";
      4	import type { ProjectDTO } from "@/lib/types";
-     5	import type { ArtlioEdit } from "@artlio/core";
+     5	import type { FikirtiveEdit } from "@fikirtive/core";
      6	import { AppShell } from "./AppShell";
      7	import { Editor } from "./Editor";
      8	
@@ -2636,8 +2636,8 @@ exec
     17	}: {
     18	  project: ProjectDTO;
     19	  projects: ProjectDTO[];
-    20	  boardEdit: ArtlioEdit | null;
-    21	  savedEdit: ArtlioEdit | null;
+    20	  boardEdit: FikirtiveEdit | null;
+    21	  savedEdit: FikirtiveEdit | null;
     22	  attachedCount: number;
     23	}) {
     24	  const [dirty, setDirty] = useState(false);
@@ -2666,7 +2666,7 @@ exec
     47	}
 
 exec
-/bin/zsh -lc "rg -n \"ComfyUI|Target|Attach|attached|Unattached|Nothing to cut|read-only|Generate|Copy resolved|Export MP4|Library|Elements|Workbench|Editor\" apps/web/components apps/web/app -g '*.tsx'" in /Users/winnin/Documents/artlio
+/bin/zsh -lc "rg -n \"ComfyUI|Target|Attach|attached|Unattached|Nothing to cut|read-only|Generate|Copy resolved|Export MP4|Library|Elements|Workbench|Editor\" apps/web/components apps/web/app -g '*.tsx'" in /Users/winnin/Documents/fikirtive
  succeeded in 0ms:
 apps/web/components/EditorShell.tsx:7:import { Editor } from "./Editor";
 apps/web/components/EditorShell.tsx:11:export function EditorShell({
@@ -2688,11 +2688,11 @@ apps/web/components/Library.tsx:467:          {busy ? `Generating ${count}… ${
 apps/web/components/Library.tsx:593:            <GenerateRefsBlock entity={entity} />
 apps/web/components/Library.tsx:626:            <GenerateRefsBlock entity={entity} />
 apps/web/app/editor/page.tsx:2:import { EditorShell } from "@/components/EditorShell";
-apps/web/app/editor/page.tsx:8:export const metadata = { title: "Editor · Artlio" };
+apps/web/app/editor/page.tsx:8:export const metadata = { title: "Editor · Fikirtive" };
 apps/web/app/editor/page.tsx:10:/** Initial cut = every shot's latest attached render in board order.
 apps/web/app/editor/page.tsx:20:export default async function EditorPage({
 apps/web/app/editor/page.tsx:34:    const latest = shot.generations[0]; // version desc, attached only
-apps/web/app/editor/page.tsx:69:        Artlio works best on a desktop browser — this view is read-only.
+apps/web/app/editor/page.tsx:69:        Fikirtive works best on a desktop browser — this view is read-only.
 apps/web/app/editor/page.tsx:71:      <EditorShell
 apps/web/app/editor/page.tsx:76:        attachedCount={clips.length}
 apps/web/components/AppShell.tsx:35:  const [workbenchHref, setWorkbenchHref] = useState("/");
@@ -2725,7 +2725,7 @@ apps/web/components/Workbench.tsx:23:  { value: "ATTACHED", label: "Attached" },
 apps/web/components/Workbench.tsx:45:export function Workbench({
 apps/web/components/Workbench.tsx:62:  const [historyFilter, setHistoryFilter] = useState<"unattached" | "shot">("unattached");
 apps/web/components/Workbench.tsx:91:      {/* <1024: phase 1 is desktop-first — read-only notice (design doc D9) */}
-apps/web/components/Workbench.tsx:93:        Artlio works best on a desktop browser — this view is read-only.
+apps/web/components/Workbench.tsx:93:        Fikirtive works best on a desktop browser — this view is read-only.
 apps/web/components/Workbench.tsx:98:        title="Workbench"
 apps/web/components/Workbench.tsx:130:                          subjects in the <Link href="/library" style={{ color: "var(--fg-1)", textDecoration: "underline", textUnderlineOffset: 3 }}>Library</Link> to @mention them.
 apps/web/components/Workbench.tsx:161:                <Chip selected={historyFilter === "unattached"} onClick={() => setHistoryFilter("unattached")}>
@@ -2743,47 +2743,47 @@ apps/web/components/Workbench.tsx:375:                    onClose={() => setAtta
 apps/web/components/Workbench.tsx:377:                    heading="Attach to"
 apps/web/components/Workbench.tsx:395:                  Detach → unattached
 apps/web/app/library/page.tsx:4:import { Library } from "@/components/Library";
-apps/web/app/library/page.tsx:8:export const metadata = { title: "Library · Artlio" };
+apps/web/app/library/page.tsx:8:export const metadata = { title: "Library · Fikirtive" };
 apps/web/app/library/page.tsx:10:export default async function LibraryPage({
 apps/web/app/library/page.tsx:19:      {/* <1024: phase 1 is desktop-first — read-only, same as the workbench (D9) */}
-apps/web/app/library/page.tsx:24:        Artlio works best on a desktop browser — this view is read-only.
+apps/web/app/library/page.tsx:24:        Fikirtive works best on a desktop browser — this view is read-only.
 apps/web/app/library/page.tsx:26:      <AppShell view="library" title="Elements">
 apps/web/app/library/page.tsx:28:          <Library entities={entities.map(toEntityDTO)} initialSelectedId={e ?? null} />
 
 codex
-The LTX teardown’s relevant lesson is not “copy their suite”; it is that the composer is the stable product surface, with reference slots and target/model parameters exposed at the moment of prompting. Artlio has the seed of that idea in `Composer`, but it is split across Library, Workbench history, and Editor instead of being one continuous generation loop.
+The LTX teardown’s relevant lesson is not “copy their suite”; it is that the composer is the stable product surface, with reference slots and target/model parameters exposed at the moment of prompting. Fikirtive has the seed of that idea in `Composer`, but it is split across Library, Workbench history, and Editor instead of being one continuous generation loop.
 codex
 Assumption: this critiques the current as-built M0 flow, not the intended roadmap.
 
 **1. Core Diagnosis**
 
-Artlio’s biggest structural UX problem is that the creator, not the product, is the workflow engine.
+Fikirtive’s biggest structural UX problem is that the creator, not the product, is the workflow engine.
 
 The product has strong pieces: global Elements, @mentions, reference health, shot cards, upload provenance, and a real MP4 editor. But the central object a creator needs, “this shot generation attempt using these locked references against this target, producing these candidates,” is missing from the UI. So the flow becomes: manage references in one room, write/copy a prompt in another, render elsewhere, upload back, manually attach, then switch to editor.
 
 Evidence:
 
-- Navigation splits the production loop into `Workbench`, `Editor`, and global `Elements` rather than one continuous creation surface: [AppShell.tsx](/Users/winnin/Documents/artlio/apps/web/components/AppShell.tsx:106).
-- The Workbench empty state sends users away to Library before they can meaningfully create: [Workbench.tsx](/Users/winnin/Documents/artlio/apps/web/components/Workbench.tsx:122).
-- The composer’s main action is still `Copy resolved prompt`, with an inert `Target · ComfyUI manual` chip: [Composer.tsx](/Users/winnin/Documents/artlio/apps/web/components/Composer.tsx:392).
-- Returned outputs land as `Unattached` history and require manual attach/drag: [Workbench.tsx](/Users/winnin/Documents/artlio/apps/web/components/Workbench.tsx:160), [Workbench.tsx](/Users/winnin/Documents/artlio/apps/web/components/Workbench.tsx:367).
-- The editor only sees the latest attached render per shot: [page.tsx](/Users/winnin/Documents/artlio/apps/web/app/editor/page.tsx:31). No attachment, no film.
+- Navigation splits the production loop into `Workbench`, `Editor`, and global `Elements` rather than one continuous creation surface: [AppShell.tsx](/Users/winnin/Documents/fikirtive/apps/web/components/AppShell.tsx:106).
+- The Workbench empty state sends users away to Library before they can meaningfully create: [Workbench.tsx](/Users/winnin/Documents/fikirtive/apps/web/components/Workbench.tsx:122).
+- The composer’s main action is still `Copy resolved prompt`, with an inert `Target · ComfyUI manual` chip: [Composer.tsx](/Users/winnin/Documents/fikirtive/apps/web/components/Composer.tsx:392).
+- Returned outputs land as `Unattached` history and require manual attach/drag: [Workbench.tsx](/Users/winnin/Documents/fikirtive/apps/web/components/Workbench.tsx:160), [Workbench.tsx](/Users/winnin/Documents/fikirtive/apps/web/components/Workbench.tsx:367).
+- The editor only sees the latest attached render per shot: [page.tsx](/Users/winnin/Documents/fikirtive/apps/web/app/editor/page.tsx:31). No attachment, no film.
 
-LTX’s useful lesson is not the suite sprawl. It is the stable composer shell: references, prompt, params, validation, and target live at the point of action ([ltx-ux-comparison.md](/Users/winnin/.gstack/projects/artlio/research/ltx-ux-comparison.md:89)). Artlio has the components, but not yet the loop.
+LTX’s useful lesson is not the suite sprawl. It is the stable composer shell: references, prompt, params, validation, and target live at the point of action ([ltx-ux-comparison.md](/Users/winnin/.gstack/projects/fikirtive/research/ltx-ux-comparison.md:89)). Fikirtive has the components, but not yet the loop.
 
 **2. The Broken Seams**
 
 Creator goal: “I want to make a video ad.”
 
-- **Project start:** New project is just a shot board. There is no ad brief, platform, duration, product objective, or target audience. “Plan the film shot by shot” is generic film language, not creator/ad language: [Workbench.tsx](/Users/winnin/Documents/artlio/apps/web/components/Workbench.tsx:125).
-- **Reference setup:** Elements are powerful, but creating them requires leaving the Workbench. The @mention dropdown dead-ends with “create one in the Library” instead of letting the user create inline: [Composer.tsx](/Users/winnin/Documents/artlio/apps/web/components/Composer.tsx:71).
-- **Generate refs inconsistency:** `CreateDialog` says Generate refs will produce a prompt to render in ComfyUI: [Library.tsx](/Users/winnin/Documents/artlio/apps/web/components/Library.tsx:344). But the detail drawer actually generates references in-app via Seedream/fal with price and polling: [Library.tsx](/Users/winnin/Documents/artlio/apps/web/components/Library.tsx:418). That is a real UX contradiction.
-- **Prompting:** @mentions work well, and blocking copy for missing references is correct: [Composer.tsx](/Users/winnin/Documents/artlio/apps/web/components/Composer.tsx:332). But “resolved prompt” resolves mostly to text/name, not a portable reference pack with images, notes, negatives, target metadata, and a ComfyUI-ready manifest: [Composer.tsx](/Users/winnin/Documents/artlio/apps/web/components/Composer.tsx:112).
-- **External render:** The user copies text, leaves Artlio, renders in ComfyUI, then remembers to return. The `Target` chip names the handoff but does not operationalize it.
-- **Return/upload:** Upload preserves selected-shot prompt/entity provenance: [Workbench.tsx](/Users/winnin/Documents/artlio/apps/web/components/Workbench.tsx:425). But it still drops the user into an “Unattached” mental model instead of “candidates for Shot 02.”
+- **Project start:** New project is just a shot board. There is no ad brief, platform, duration, product objective, or target audience. “Plan the film shot by shot” is generic film language, not creator/ad language: [Workbench.tsx](/Users/winnin/Documents/fikirtive/apps/web/components/Workbench.tsx:125).
+- **Reference setup:** Elements are powerful, but creating them requires leaving the Workbench. The @mention dropdown dead-ends with “create one in the Library” instead of letting the user create inline: [Composer.tsx](/Users/winnin/Documents/fikirtive/apps/web/components/Composer.tsx:71).
+- **Generate refs inconsistency:** `CreateDialog` says Generate refs will produce a prompt to render in ComfyUI: [Library.tsx](/Users/winnin/Documents/fikirtive/apps/web/components/Library.tsx:344). But the detail drawer actually generates references in-app via Seedream/fal with price and polling: [Library.tsx](/Users/winnin/Documents/fikirtive/apps/web/components/Library.tsx:418). That is a real UX contradiction.
+- **Prompting:** @mentions work well, and blocking copy for missing references is correct: [Composer.tsx](/Users/winnin/Documents/fikirtive/apps/web/components/Composer.tsx:332). But “resolved prompt” resolves mostly to text/name, not a portable reference pack with images, notes, negatives, target metadata, and a ComfyUI-ready manifest: [Composer.tsx](/Users/winnin/Documents/fikirtive/apps/web/components/Composer.tsx:112).
+- **External render:** The user copies text, leaves Fikirtive, renders in ComfyUI, then remembers to return. The `Target` chip names the handoff but does not operationalize it.
+- **Return/upload:** Upload preserves selected-shot prompt/entity provenance: [Workbench.tsx](/Users/winnin/Documents/fikirtive/apps/web/components/Workbench.tsx:425). But it still drops the user into an “Unattached” mental model instead of “candidates for Shot 02.”
 - **Selection:** Candidate review is really file management. “Attach to shot…” is an implementation action; the creator action is “use this take.”
-- **Editor handoff:** Editor starts from attached latest renders only and shows “Nothing to cut yet” otherwise: [Editor.tsx](/Users/winnin/Documents/artlio/apps/web/components/Editor.tsx:247). This makes attach the hidden gate to MP4.
-- **Export:** Export exists, but `Target · worker ffmpeg` is engineering language: [Editor.tsx](/Users/winnin/Documents/artlio/apps/web/components/Editor.tsx:299). The user should see “MP4 render,” not infrastructure.
+- **Editor handoff:** Editor starts from attached latest renders only and shows “Nothing to cut yet” otherwise: [Editor.tsx](/Users/winnin/Documents/fikirtive/apps/web/components/Editor.tsx:247). This makes attach the hidden gate to MP4.
+- **Export:** Export exists, but `Target · worker ffmpeg` is engineering language: [Editor.tsx](/Users/winnin/Documents/fikirtive/apps/web/components/Editor.tsx:299). The user should see “MP4 render,” not infrastructure.
 
 **3. Optimized Flow**
 
@@ -2793,7 +2793,7 @@ Start with one screen for the ad: project brief, shot list, active shot, candida
 
 **Inline Element Creation**
 
-Typing `@Maya` with no match should offer `Create @Maya` inline. The modal should ask: Character / Location / Product / Brand, then Upload refs or Generate refs in Artlio. No separate Library trip for the happy path.
+Typing `@Maya` with no match should offer `Create @Maya` inline. The modal should ask: Character / Location / Product / Brand, then Upload refs or Generate refs in Fikirtive. No separate Library trip for the happy path.
 
 **Composer As Control Center**
 
@@ -2849,7 +2849,7 @@ Library becomes the global Reference Registry: manage aliases, refs, notes, nega
 
 Do not become LTX.
 
-Artlio’s protected wedge is not “AI video studio.” It is the model-neutral reference layer for creators who use many generation tools.
+Fikirtive’s protected wedge is not “AI video studio.” It is the model-neutral reference layer for creators who use many generation tools.
 
 Protect that by keeping these boundaries:
 
@@ -2869,33 +2869,33 @@ Assumption: this critiques the current as-built M0 flow, not the intended roadma
 
 **1. Core Diagnosis**
 
-Artlio’s biggest structural UX problem is that the creator, not the product, is the workflow engine.
+Fikirtive’s biggest structural UX problem is that the creator, not the product, is the workflow engine.
 
 The product has strong pieces: global Elements, @mentions, reference health, shot cards, upload provenance, and a real MP4 editor. But the central object a creator needs, “this shot generation attempt using these locked references against this target, producing these candidates,” is missing from the UI. So the flow becomes: manage references in one room, write/copy a prompt in another, render elsewhere, upload back, manually attach, then switch to editor.
 
 Evidence:
 
-- Navigation splits the production loop into `Workbench`, `Editor`, and global `Elements` rather than one continuous creation surface: [AppShell.tsx](/Users/winnin/Documents/artlio/apps/web/components/AppShell.tsx:106).
-- The Workbench empty state sends users away to Library before they can meaningfully create: [Workbench.tsx](/Users/winnin/Documents/artlio/apps/web/components/Workbench.tsx:122).
-- The composer’s main action is still `Copy resolved prompt`, with an inert `Target · ComfyUI manual` chip: [Composer.tsx](/Users/winnin/Documents/artlio/apps/web/components/Composer.tsx:392).
-- Returned outputs land as `Unattached` history and require manual attach/drag: [Workbench.tsx](/Users/winnin/Documents/artlio/apps/web/components/Workbench.tsx:160), [Workbench.tsx](/Users/winnin/Documents/artlio/apps/web/components/Workbench.tsx:367).
-- The editor only sees the latest attached render per shot: [page.tsx](/Users/winnin/Documents/artlio/apps/web/app/editor/page.tsx:31). No attachment, no film.
+- Navigation splits the production loop into `Workbench`, `Editor`, and global `Elements` rather than one continuous creation surface: [AppShell.tsx](/Users/winnin/Documents/fikirtive/apps/web/components/AppShell.tsx:106).
+- The Workbench empty state sends users away to Library before they can meaningfully create: [Workbench.tsx](/Users/winnin/Documents/fikirtive/apps/web/components/Workbench.tsx:122).
+- The composer’s main action is still `Copy resolved prompt`, with an inert `Target · ComfyUI manual` chip: [Composer.tsx](/Users/winnin/Documents/fikirtive/apps/web/components/Composer.tsx:392).
+- Returned outputs land as `Unattached` history and require manual attach/drag: [Workbench.tsx](/Users/winnin/Documents/fikirtive/apps/web/components/Workbench.tsx:160), [Workbench.tsx](/Users/winnin/Documents/fikirtive/apps/web/components/Workbench.tsx:367).
+- The editor only sees the latest attached render per shot: [page.tsx](/Users/winnin/Documents/fikirtive/apps/web/app/editor/page.tsx:31). No attachment, no film.
 
-LTX’s useful lesson is not the suite sprawl. It is the stable composer shell: references, prompt, params, validation, and target live at the point of action ([ltx-ux-comparison.md](/Users/winnin/.gstack/projects/artlio/research/ltx-ux-comparison.md:89)). Artlio has the components, but not yet the loop.
+LTX’s useful lesson is not the suite sprawl. It is the stable composer shell: references, prompt, params, validation, and target live at the point of action ([ltx-ux-comparison.md](/Users/winnin/.gstack/projects/fikirtive/research/ltx-ux-comparison.md:89)). Fikirtive has the components, but not yet the loop.
 
 **2. The Broken Seams**
 
 Creator goal: “I want to make a video ad.”
 
-- **Project start:** New project is just a shot board. There is no ad brief, platform, duration, product objective, or target audience. “Plan the film shot by shot” is generic film language, not creator/ad language: [Workbench.tsx](/Users/winnin/Documents/artlio/apps/web/components/Workbench.tsx:125).
-- **Reference setup:** Elements are powerful, but creating them requires leaving the Workbench. The @mention dropdown dead-ends with “create one in the Library” instead of letting the user create inline: [Composer.tsx](/Users/winnin/Documents/artlio/apps/web/components/Composer.tsx:71).
-- **Generate refs inconsistency:** `CreateDialog` says Generate refs will produce a prompt to render in ComfyUI: [Library.tsx](/Users/winnin/Documents/artlio/apps/web/components/Library.tsx:344). But the detail drawer actually generates references in-app via Seedream/fal with price and polling: [Library.tsx](/Users/winnin/Documents/artlio/apps/web/components/Library.tsx:418). That is a real UX contradiction.
-- **Prompting:** @mentions work well, and blocking copy for missing references is correct: [Composer.tsx](/Users/winnin/Documents/artlio/apps/web/components/Composer.tsx:332). But “resolved prompt” resolves mostly to text/name, not a portable reference pack with images, notes, negatives, target metadata, and a ComfyUI-ready manifest: [Composer.tsx](/Users/winnin/Documents/artlio/apps/web/components/Composer.tsx:112).
-- **External render:** The user copies text, leaves Artlio, renders in ComfyUI, then remembers to return. The `Target` chip names the handoff but does not operationalize it.
-- **Return/upload:** Upload preserves selected-shot prompt/entity provenance: [Workbench.tsx](/Users/winnin/Documents/artlio/apps/web/components/Workbench.tsx:425). But it still drops the user into an “Unattached” mental model instead of “candidates for Shot 02.”
+- **Project start:** New project is just a shot board. There is no ad brief, platform, duration, product objective, or target audience. “Plan the film shot by shot” is generic film language, not creator/ad language: [Workbench.tsx](/Users/winnin/Documents/fikirtive/apps/web/components/Workbench.tsx:125).
+- **Reference setup:** Elements are powerful, but creating them requires leaving the Workbench. The @mention dropdown dead-ends with “create one in the Library” instead of letting the user create inline: [Composer.tsx](/Users/winnin/Documents/fikirtive/apps/web/components/Composer.tsx:71).
+- **Generate refs inconsistency:** `CreateDialog` says Generate refs will produce a prompt to render in ComfyUI: [Library.tsx](/Users/winnin/Documents/fikirtive/apps/web/components/Library.tsx:344). But the detail drawer actually generates references in-app via Seedream/fal with price and polling: [Library.tsx](/Users/winnin/Documents/fikirtive/apps/web/components/Library.tsx:418). That is a real UX contradiction.
+- **Prompting:** @mentions work well, and blocking copy for missing references is correct: [Composer.tsx](/Users/winnin/Documents/fikirtive/apps/web/components/Composer.tsx:332). But “resolved prompt” resolves mostly to text/name, not a portable reference pack with images, notes, negatives, target metadata, and a ComfyUI-ready manifest: [Composer.tsx](/Users/winnin/Documents/fikirtive/apps/web/components/Composer.tsx:112).
+- **External render:** The user copies text, leaves Fikirtive, renders in ComfyUI, then remembers to return. The `Target` chip names the handoff but does not operationalize it.
+- **Return/upload:** Upload preserves selected-shot prompt/entity provenance: [Workbench.tsx](/Users/winnin/Documents/fikirtive/apps/web/components/Workbench.tsx:425). But it still drops the user into an “Unattached” mental model instead of “candidates for Shot 02.”
 - **Selection:** Candidate review is really file management. “Attach to shot…” is an implementation action; the creator action is “use this take.”
-- **Editor handoff:** Editor starts from attached latest renders only and shows “Nothing to cut yet” otherwise: [Editor.tsx](/Users/winnin/Documents/artlio/apps/web/components/Editor.tsx:247). This makes attach the hidden gate to MP4.
-- **Export:** Export exists, but `Target · worker ffmpeg` is engineering language: [Editor.tsx](/Users/winnin/Documents/artlio/apps/web/components/Editor.tsx:299). The user should see “MP4 render,” not infrastructure.
+- **Editor handoff:** Editor starts from attached latest renders only and shows “Nothing to cut yet” otherwise: [Editor.tsx](/Users/winnin/Documents/fikirtive/apps/web/components/Editor.tsx:247). This makes attach the hidden gate to MP4.
+- **Export:** Export exists, but `Target · worker ffmpeg` is engineering language: [Editor.tsx](/Users/winnin/Documents/fikirtive/apps/web/components/Editor.tsx:299). The user should see “MP4 render,” not infrastructure.
 
 **3. Optimized Flow**
 
@@ -2905,7 +2905,7 @@ Start with one screen for the ad: project brief, shot list, active shot, candida
 
 **Inline Element Creation**
 
-Typing `@Maya` with no match should offer `Create @Maya` inline. The modal should ask: Character / Location / Product / Brand, then Upload refs or Generate refs in Artlio. No separate Library trip for the happy path.
+Typing `@Maya` with no match should offer `Create @Maya` inline. The modal should ask: Character / Location / Product / Brand, then Upload refs or Generate refs in Fikirtive. No separate Library trip for the happy path.
 
 **Composer As Control Center**
 
@@ -2961,7 +2961,7 @@ Library becomes the global Reference Registry: manage aliases, refs, notes, nega
 
 Do not become LTX.
 
-Artlio’s protected wedge is not “AI video studio.” It is the model-neutral reference layer for creators who use many generation tools.
+Fikirtive’s protected wedge is not “AI video studio.” It is the model-neutral reference layer for creators who use many generation tools.
 
 Protect that by keeping these boundaries:
 

@@ -31,11 +31,11 @@ Both reuse existing server actions. The new work is purely the drag-and-drop wir
 Standard HTML5 drag-and-drop:
 - A draggable source item sets `draggable` + `onDragStart` writing a typed payload.
 - A drop target handles `onDragOver` (preventDefault to allow drop + highlight) and `onDrop` (read payload, run the action).
-- Payload travels on a **custom MIME type** `application/x-artlio-asset` so OS file drags and other content can't trigger our handlers (and our payload doesn't leak into plain-text drops).
+- Payload travels on a **custom MIME type** `application/x-fikirtive-asset` so OS file drags and other content can't trigger our handlers (and our payload doesn't leak into plain-text drops).
 
 ### Shared helper — `apps/web/lib/dnd.ts`
 ```
-export const DND_MIME = "application/x-artlio-asset";
+export const DND_MIME = "application/x-fikirtive-asset";
 export type DndPayload =
   | { kind: "editor-clip"; src: string; clipKind: "image" | "video"; seconds: number }
   | { kind: "candidate-frame"; generationId: string };
@@ -67,7 +67,7 @@ No Shotstack-internal changes; `appendAsset` is unchanged.
 ## Data flow
 
 ```
-Assets item / candidate thumb  --dragstart-->  DataTransfer[application/x-artlio-asset] = payload
+Assets item / candidate thumb  --dragstart-->  DataTransfer[application/x-fikirtive-asset] = payload
 timeline container / frame slot --drop-->      getDnd() --> existing action (appendAsset | setShotFrame) --> refresh
 ```
 No new server action, no new DB column, no migration. The frame attach is a pure DB update (no spend); the editor add is an in-memory Shotstack edit change persisted by the existing save flow.

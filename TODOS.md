@@ -1,6 +1,6 @@
 # TODOS
 
-> ⚠️ **已废止(TOMBSTONE 2026-07-04)。** pivot 前(Artlio)的 backlog,与当前已发布现实
+> ⚠️ **已废止(TOMBSTONE 2026-07-04)。** pivot 前(Fikirtive)的 backlog,与当前已发布现实
 > 矛盾(它列为"未做"的 Stripe/auth/credits 等多已 LIVE)。**不要据此判断现状或排优先级。**
 > 权威顺序见 `AGENTS.md` → `docs/BLUEPRINT.md` → 判决记录。保留仅供历史考古。
 
@@ -16,7 +16,7 @@
 ## P3 — 验证门之后
 
 - [ ] **本地迷你同步器**（M→CC:S，依赖：阶段一上传通道已稳定；来源：eng-review D4）
-  - What: 可选的小型本地程序，监视创始人指定的本地文件夹（如本地 ComfyUI 输出夹、下载夹）自动上传到 Artlio。
+  - What: 可选的小型本地程序，监视创始人指定的本地文件夹（如本地 ComfyUI 输出夹、下载夹）自动上传到 Fikirtive。
   - Why: SaaS 形态下云端看不见本地文件夹；拖拽上传覆盖零散场景后，若本地产出量大，自动化才值得做。
   - Context: 原 E2 watch-folder 方案在形态修正（D3-D5）后的本地残余需求；第一轮调研的 chokidar/写完成检测/哈希结论届时直接复用。
 
@@ -29,10 +29,10 @@
 - [ ] **用户自带 API key vs 平台代付/credits 体系**（L→CC:M，依赖：≥3 外部用户验证 + E5 成本预告牌）
   - What: 决定外部用户用模型 API 的计费模式：BYO-key 还是平台 credits。
   - Why: "all in one"方向（D5 确认）必然遇到；credits 并发/幂等是 PRD 130 问 E 组的已知难题。
-  - Context: PRD §17 定价方向 + `docs/prd-review/Artlio-PRD-Open-Questions.md` E 组；E5 的 cost_rules 是地基。
+  - Context: PRD §17 定价方向 + `docs/prd-review/Fikirtive-PRD-Open-Questions.md` E 组；E5 的 cost_rules 是地基。
 
 - [ ] **浏览器插件级捕获**（M→CC:S，依赖：E2 万源收录总线已上线）
-  - What: 浏览器插件捕获 Kling/Midjourney 等网页工具的产出，自动入 Artlio 候选区。
+  - What: 浏览器插件捕获 Kling/Midjourney 等网页工具的产出，自动入 Fikirtive 候选区。
   - Why: E2 的高级形态——覆盖无法落到本地文件夹的网页生成。
   - Context: E2 已覆盖"任意文件夹监视"；插件是下一层。
 
@@ -44,7 +44,7 @@
 ## 已显式排除（NOT in scope，重提需新评审）
 
 - 视觉连续性引擎（E3）——用户 2026-06-10 明确跳过
-- LoRA 训练纳入 Artlio——D15 例外条款，留在 ComfyUI
+- LoRA 训练纳入 Fikirtive——D15 例外条款，留在 ComfyUI
 - 多租户/auth/credits 并发——P4 验证门前显式延期
 
 ## P3 — 设计债（/plan-design-review 2026-06-10）

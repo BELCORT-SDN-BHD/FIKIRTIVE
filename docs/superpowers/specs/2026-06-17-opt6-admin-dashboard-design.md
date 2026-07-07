@@ -1,6 +1,6 @@
 # OPT-6 — Operator Admin Dashboard + RBAC + Model-Knowledge Layer — Design Spec (v4)
 
-**Goal:** Give the Artlio team a single internal control plane to run the studio — manage models/providers,
+**Goal:** Give the Fikirtive team a single internal control plane to run the studio — manage models/providers,
 see + audit spend, review content, tune prompt knowledge, and govern who-can-do-what — replacing scattered env
 vars + redeploys, WITHOUT ever weakening the money-safety invariant.
 
@@ -44,7 +44,7 @@ phase order foundation→money-obs→model/knowledge→RBAC).
 3. **Typed capability truth.** `GEN_VIDEO_MODELS` / `GEN_VIDEO_MODEL_OPTIONS` / `videoRateUsdPerSec` (gen.ts) +
    `VIDEO_CFG` (generation) remain the compile-time source of truth. A DB row can never ADD a model or RAISE a
    cap — only disable a typed one or carry advisory notes.
-4. **Operator-RBAC, not tenancy.** The dashboard is for the Artlio team only. `ownerId` stays the constant
+4. **Operator-RBAC, not tenancy.** The dashboard is for the Fikirtive team only. `ownerId` stays the constant
    `FOUNDER_OWNER_ID` for all business rows. Roles gate WHO on the team may use which admin section over the
    shared studio data. Per-user data ownership / multi-tenancy is OUT OF SCOPE.
 5. **Fail-closed config.** A runtime-config read returns the safe default on a missing/garbage value; the env
@@ -313,6 +313,6 @@ subscriptions, export) is end-user/business-facing → P5, mostly deferred.
   parallel infra track; the `COWORK_PROVIDER=modal` seam + runtime toggle (P1b-gated) are ready for it.
 - Direct GenSpace/Storyboard prompt composition — the composer here is cowork-card-only.
 - Admin network-layer hardening for formal launch — the dashboard is same-domain `/admin/*` in the web app
-  (auth allowlist + layout gate + P1b RBAC). When Artlio formally launches, OPTIONALLY add Cloudflare Access /
+  (auth allowlist + layout gate + P1b RBAC). When Fikirtive formally launches, OPTIONALLY add Cloudflare Access /
   IP-allowlist over the `/admin/*` path for a network-layer gate (no service split needed). A separate
-  `admin.artlio.com` subdomain/service is explicitly NOT planned (overkill for a team tool). [user 2026-06-17]
+  `admin.fikirtive.com` subdomain/service is explicitly NOT planned (overkill for a team tool). [user 2026-06-17]
