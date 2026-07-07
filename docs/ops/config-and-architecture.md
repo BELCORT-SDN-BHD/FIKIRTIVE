@@ -1,5 +1,10 @@
 # Fikirtive — Config & Architecture Reference
 
+> ⚠️ **已过时快照(TOMBSTONE 2026-07-07)。** 本文验证于 2026-06-22,多处与现实不符
+> (npm scope 已由 `@artlio/*` 改名 `@fikirtive/*`、Better Auth 已上线、BytePlus 已是
+> 生产生成供应商)。**不要据此判断现状。** 现行地图 = 仓库根 `AGENTS.md` +
+> `docs/review/CODEBASE-MAP-2026-07-02.md`。保留仅供历史考古。
+
 The single source of truth for **how this system is wired**: every config switch, the deploy
 flow, the money-safety model, and the naming legend. Read this first if you're a new
 engineer or an AI agent. Verified against `main` on 2026-06-22.

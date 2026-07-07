@@ -15,6 +15,7 @@
     ]
   },
   "scripts": {
+    "prepare": "git config core.hooksPath .githooks || true",
     "dev": "pnpm --parallel --filter ./apps/* dev",
     "build": "pnpm -r build",
     "typecheck": "pnpm -r typecheck",

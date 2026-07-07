@@ -67,6 +67,9 @@ This is a PRIVATE repo on a free GitHub plan — real branch protection is unava
 session must follow them:
 - **Never push directly to `main`.** All changes land via a PR.
 - **Never merge a PR unless ALL CI checks are green** on the current head commit.
+- **CI 不可用时(账单封锁/Actions 宕机)不得以"CI 本来就红"为由合并;必须在本地完整
+  复现三关(check/test/web-build,配方见 `docs/runbooks/local-ci.md`)并把结果贴进 PR,
+  再经 founder 明确批准才可合并。此规则约束所有 agent(claude/codex/任何工具)。**
 - Pushing `main` auto-deploys web + worker to Railway and auto-runs prisma migrations
   on prod — a bad merge ships instantly. When in doubt, don't merge; ask the founder.
 - Spend-path diffs (see `.claude/skills/money-safety-review`) additionally require that

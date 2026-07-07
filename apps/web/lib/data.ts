@@ -97,7 +97,7 @@ export async function getShots(ownerId: string, projectId: string) {
     orderBy: [{ scene: "asc" }, { number: "asc" }],
     include: {
       entityRefs: { include: { entity: true } },
-      // NOT capped: studio/page.tsx reads generations[0] (latest preview) AND scans
+      // NOT capped: callers read generations[0] (latest preview) AND scan
       // ALL versions for an animatable still (hasStill → Animate gate). A `take` cap
       // would wrongly disable Animate when a still is buried under newer videos, so the
       // per-shot version list stays unbounded (bounded in practice by regeneration count;
@@ -177,8 +177,8 @@ export type HistoryThumb = {
   kind: "image" | "video";
   prompt: string;
 };
-/** The owner's most recent generations across every project (OTTO + studio),
- *  newest first, for the global Library surface. Display-only: resolves
+/** The owner's most recent generations across every project (OTTO + pre-pivot
+ *  studio rows), newest first, for the global Library surface. Display-only: resolves
  *  each generation's asset to a media URL (same resolver as the library/thumbnails).
  *  Owner-scoped, soft-deletes excluded. */
 export async function getRecentGenerationThumbs(
@@ -265,7 +265,7 @@ export async function getMediaPage(
 
 /** Otto's finished ads: cowork-tagged generations (threadId set), newest first.
  *  The mirror of getMediaPage for the Otto surface (which excludes threadId-null
- *  manual-studio gens). Used by Library → Ads. */
+ *  gens from the deleted manual studio). Used by Library → Ads. */
 export type AdItem = { id: string; projectId: string; assetId: string; src: string; kind: "image" | "video"; prompt: string; createdAt: string };
 export async function getMyAds(ownerId: string, take = 60): Promise<AdItem[]> {
   const scanTake = Math.min(Math.max(take + MEDIA_SCAN_BUFFER, take + 1), 100);
@@ -325,7 +325,7 @@ export type CandidateGen = Awaited<ReturnType<typeof getLooseVideoClips>>[number
 
 /** Cowork thread LIST (metadata only), newest activity first. No eager messages —
  *  the rail shows title + time, and each thread's messages lazy-load on select via
- *  getCoworkThreadClient. This keeps the studio page load O(threads) instead of
+ *  getCoworkThreadClient. This keeps the Otto page load O(threads) instead of
  *  O(threads × all messages), so a chatty project never blows up the render. All
  *  threads are returned (metadata is light + the partial updatedAt index serves it),
  *  so none become unreachable. (scale audit 2026-06-20) */

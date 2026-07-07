@@ -1,7 +1,8 @@
 // Create (idempotently) the FIKIRTIVE MYR credit packs as Stripe Products + one-time Prices.
 // Each Price carries metadata.credits — that is what listCreditPacks() reads to surface a pack.
-// Run from apps/web so `stripe` resolves; load secrets from the main-checkout env:
-//   node --env-file=/Users/winnin/Desktop/artlio/apps/web/.env.local apps/web/scripts/create-credit-packs.mjs
+// The script lives under apps/web so `stripe` resolves; from the repo root, load
+// secrets from the gitignored env:
+//   node --env-file=apps/web/.env.local apps/web/scripts/create-credit-packs.mjs
 // Idempotent: matches an existing pack by (product name + currency + amount + credits) and skips it.
 // Safety: refuses to run against a LIVE key unless ALLOW_LIVE=1.
 import Stripe from "stripe";
