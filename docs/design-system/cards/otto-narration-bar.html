@@ -1,0 +1,128 @@
+<!-- @dsCard group="Live reflection" -->
+<!-- Otto narration bar — avatar mood (20px) + one line, present tense, sentence case + progress affordance (indeterminate coral bar or mono step counter). One per screen; text updates in place. -->
+<style>
+  :root {
+    --background: #FCFCFC; --foreground: #0A0A0A;
+    --card: #FFFFFF; --border: #E6E6E3;
+    --secondary: #F4F4F3; --muted-foreground: #6E6E68;
+    --brand: #EC5828; --success: #16A34A;
+    --radius: 0.875rem;
+    --shadow-md: 0 6px 16px rgba(20 20 24 / 0.08), 0 2px 6px rgba(20 20 24 / 0.05);
+    --ease-out: cubic-bezier(0.22, 1, 0.36, 1);
+    --font-sans: "Geist", system-ui, -apple-system, sans-serif;
+    --font-mono: "JetBrains Mono", ui-monospace, monospace;
+  }
+  body {
+    margin: 0; min-height: 100vh; display: flex; align-items: center; justify-content: center;
+    background: var(--background); color: var(--foreground); font-family: var(--font-sans);
+  }
+  .stage { display: flex; flex-direction: column; gap: 16px; width: 340px; }
+
+  /* THE PATTERN — floating top-centre pill: avatar + one line + progress. */
+  .narration {
+    display: flex; align-items: center; gap: 10px;
+    background: var(--card); border: 1px solid var(--border);
+    border-radius: 999px; box-shadow: var(--shadow-md);
+    padding: 8px 16px 8px 10px;
+  }
+  .otto { flex: none; display: inline-flex; }
+  .otto svg { display: block; }
+  .otto.thinking svg {
+    filter: drop-shadow(0 2px 6px color-mix(in oklab, var(--brand) 45%, transparent));
+    animation: otto-bob 1.4s ease-in-out infinite alternate;
+  }
+  @keyframes otto-bob { from { transform: translateY(0); } to { transform: translateY(-2px); } }
+
+  .line { flex: 1; min-width: 0; }
+  .text {
+    font-size: 13px; line-height: 18px; font-weight: 500; color: var(--muted-foreground);
+    white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+    transition: opacity 150ms var(--ease-out);
+  }
+  .bar {
+    margin-top: 4px; height: 5px; border-radius: 99px;
+    background: var(--secondary); position: relative; overflow: hidden;
+  }
+  .bar::after {
+    content: ""; position: absolute; top: 0; left: -40%; height: 100%; width: 40%;
+    border-radius: 99px; background: var(--brand);
+    animation: shimmer 1.3s ease-in-out infinite;
+  }
+  @keyframes shimmer { 0% { left: -40%; } 100% { left: 100%; } }
+  .steps {
+    flex: none; font-family: var(--font-mono); font-size: 11px; line-height: 14px;
+    letter-spacing: 0.08em; color: var(--muted-foreground);
+  }
+  .done .bar { display: none; }
+  .done .text { color: var(--success); }
+
+  @media (prefers-reduced-motion: reduce) {
+    .otto.thinking svg { animation: none; }
+    .bar { display: none; } /* shimmer degrades: the text alone carries state */
+  }
+  .cap { font-size: 12px; line-height: 16px; color: var(--muted-foreground); text-align: center; }
+  .cap b { color: var(--brand); font-weight: 600; }
+</style>
+
+<div class="stage">
+  <div class="narration" id="nbar">
+    <span class="otto thinking" id="otto">
+      <!-- OTTO mini mark: flat coral cloud, two eyes, no mouth -->
+      <svg width="24" height="22" viewBox="0 0 120 110" role="img" aria-label="Otto working">
+        <g fill="var(--brand)">
+          <ellipse cx="60" cy="64" rx="43" ry="22"/>
+          <circle cx="37" cy="52" r="18"/>
+          <circle cx="61" cy="40" r="24"/>
+          <circle cx="85" cy="53" r="17"/>
+        </g>
+        <g fill="#2B1308" id="eyes">
+          <rect x="51" y="48" width="7" height="13" rx="3.5"/>
+          <rect x="66" y="48" width="7" height="13" rx="3.5"/>
+        </g>
+      </svg>
+    </span>
+    <span class="line">
+      <span class="text" id="text">Generating storyboard…</span>
+      <span class="bar" id="bar"></span>
+    </span>
+    <span class="steps" id="steps">1/4</span>
+  </div>
+  <div class="cap"><b>Otto narration bar</b> · one per screen, text updates in place, gone ≤400ms after the action settles.</div>
+</div>
+
+<script>
+  // Demo loop: steps update IN PLACE (never stack), then flip to success and restart.
+  const steps = [
+    "Reading brand references…",
+    "Generating storyboard…",
+    "Rendering frame previews…",
+    "Placing cards on canvas…",
+  ];
+  const textEl = document.getElementById("text");
+  const stepsEl = document.getElementById("steps");
+  const bar = document.getElementById("nbar");
+  const otto = document.getElementById("otto");
+  let i = 0;
+  function tick() {
+    if (i < steps.length) {
+      bar.classList.remove("done");
+      otto.classList.add("thinking");
+      textEl.style.opacity = "0";
+      setTimeout(() => {
+        textEl.textContent = steps[i];
+        stepsEl.textContent = (i + 1) + "/" + steps.length;
+        textEl.style.opacity = "1";
+      }, 150);
+      i += 1;
+    } else {
+      // settle: mood flips to success, then the bar would leave the screen
+      otto.classList.remove("thinking");
+      bar.classList.add("done");
+      textEl.textContent = "Storyboard ready";
+      stepsEl.textContent = "4/4";
+      i = 0;
+    }
+  }
+  tick();
+  setInterval(tick, 1600);
+</script>

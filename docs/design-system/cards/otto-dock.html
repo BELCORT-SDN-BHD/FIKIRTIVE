@@ -1,0 +1,147 @@
+<!-- @dsCard group="Live reflection" -->
+<!-- Persistent Otto dock — bottom-right. Collapsed: 48px circle, live mood, coral badge when acting. Expanded: 320px panel, radius 24, narration header + recent actions. Never covers a primary CTA. -->
+<style>
+  :root {
+    --background: #FCFCFC; --foreground: #0A0A0A;
+    --card: #FFFFFF; --border: #E6E6E3;
+    --secondary: #F4F4F3; --muted-foreground: #6E6E68;
+    --brand: #EC5828; --brand-soft: #FBE4D8; --brand-soft-foreground: #9A3A1A;
+    --primary: #0A0A0A; --primary-foreground: #FCFCFC;
+    --radius: 0.875rem; --radius-modal: 1.5rem;
+    --shadow-md: 0 6px 16px rgba(20 20 24 / 0.08), 0 2px 6px rgba(20 20 24 / 0.05);
+    --shadow-lg: 0 14px 34px rgba(20 20 24 / 0.10);
+    --dur-3: 200ms;
+    --ease-spring: cubic-bezier(0.34, 1.56, 0.64, 1);
+    --font-sans: "Geist", system-ui, -apple-system, sans-serif;
+    --font-mono: "JetBrains Mono", ui-monospace, monospace;
+  }
+  body {
+    margin: 0; min-height: 100vh; display: flex; align-items: center; justify-content: center;
+    background: var(--background); color: var(--foreground); font-family: var(--font-sans);
+  }
+  .stage { display: flex; flex-direction: column; gap: 12px; }
+
+  /* Mock app frame so the bottom-right placement reads. */
+  .frame {
+    position: relative; width: 420px; height: 340px; overflow: hidden;
+    background: var(--secondary); border: 1px solid var(--border); border-radius: 16px;
+  }
+  .ghost { position: absolute; background: var(--card); border: 1px solid var(--border); border-radius: 12px; }
+  .cta {
+    position: absolute; left: 16px; bottom: 16px;
+    background: var(--primary); color: var(--primary-foreground);
+    font-size: 13px; font-weight: 600; letter-spacing: -0.006em;
+    border-radius: var(--radius); padding: 10px 18px;
+  }
+
+  /* THE PATTERN — dock, bottom-right, 16px inset, transform-origin bottom-right. */
+  .dock {
+    position: absolute; right: 16px; bottom: 16px;
+    transform-origin: bottom right;
+    transition: width var(--dur-3) var(--ease-spring), height var(--dur-3) var(--ease-spring),
+                border-radius var(--dur-3) var(--ease-spring);
+    background: var(--card); border: 1px solid var(--border);
+    overflow: hidden; box-sizing: border-box;
+  }
+  .dock.collapsed { width: 48px; height: 48px; border-radius: 999px; box-shadow: var(--shadow-md); cursor: pointer; }
+  .dock.expanded  { width: 280px; height: 244px; border-radius: var(--radius-modal); box-shadow: var(--shadow-lg); }
+
+  .face { position: absolute; inset: 0; display: flex; align-items: center; justify-content: center; transition: opacity 150ms ease; }
+  .badge {
+    position: absolute; top: 7px; right: 7px; width: 8px; height: 8px; border-radius: 99px;
+    background: var(--brand); animation: badge-pulse 2s ease-in-out infinite;
+  }
+  @keyframes badge-pulse { 0%, 100% { opacity: 1; } 50% { opacity: 0.35; } }
+
+  .panel { position: absolute; inset: 0; display: flex; flex-direction: column; opacity: 0; transition: opacity 150ms ease 60ms; }
+  .head { display: flex; align-items: center; gap: 8px; padding: 12px 16px 8px; }
+  .head .who { font-size: 13px; line-height: 18px; font-weight: 500; color: var(--muted-foreground); flex: 1; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .head .steps { font-family: var(--font-mono); font-size: 11px; letter-spacing: 0.08em; color: var(--muted-foreground); }
+  .list { flex: 1; padding: 0 8px; overflow: hidden; }
+  .row { display: flex; align-items: baseline; gap: 8px; padding: 8px; border-radius: 10px; font-size: 12px; line-height: 16px; }
+  .row:hover { background: var(--secondary); }
+  .row .what { flex: 1; color: var(--foreground); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .row .when { font-family: var(--font-mono); font-size: 11px; color: var(--muted-foreground); }
+  .row .dot { width: 6px; height: 6px; border-radius: 99px; background: var(--brand); flex: none; align-self: center; }
+  .foot { padding: 8px 16px 12px; border-top: 1px solid var(--border); }
+  .foot a { font-size: 12px; font-weight: 600; color: var(--brand-soft-foreground); text-decoration: none; }
+
+  .dock.collapsed .panel { opacity: 0; pointer-events: none; }
+  .dock.expanded .panel { opacity: 1; }
+  .dock.expanded .face { opacity: 0; }
+  .dock.expanded .badge { display: none; }
+
+  @media (prefers-reduced-motion: reduce) {
+    .dock, .panel, .face { transition: none; }
+    .badge { animation: none; }
+  }
+  .cap { font-size: 12px; line-height: 16px; color: var(--muted-foreground); text-align: center; max-width: 420px; }
+  .cap b { color: var(--brand); font-weight: 600; }
+</style>
+
+<div class="stage">
+  <div class="frame">
+    <div class="ghost" style="left:16px; top:16px; width:180px; height:12px;"></div>
+    <div class="ghost" style="left:16px; top:40px; width:120px; height:12px;"></div>
+    <div class="ghost" style="left:16px; top:72px; width:184px; height:110px;"></div>
+    <div class="ghost" style="left:216px; top:72px; width:184px; height:110px;"></div>
+    <div class="cta">New project</div>
+
+    <div class="dock collapsed" id="dock" role="button" aria-label="Otto">
+      <span class="badge"></span>
+      <span class="face">
+        <!-- OTTO mini mark: flat coral cloud, two eyes, no mouth -->
+        <svg width="28" height="26" viewBox="0 0 120 110" aria-hidden="true">
+          <g fill="var(--brand)">
+            <ellipse cx="60" cy="64" rx="43" ry="22"/>
+            <circle cx="37" cy="52" r="18"/>
+            <circle cx="61" cy="40" r="24"/>
+            <circle cx="85" cy="53" r="17"/>
+          </g>
+          <g fill="#2B1308">
+            <rect x="51" y="48" width="7" height="13" rx="3.5"/>
+            <rect x="66" y="48" width="7" height="13" rx="3.5"/>
+          </g>
+        </svg>
+      </span>
+      <span class="panel">
+        <span class="head">
+          <svg width="20" height="18" viewBox="0 0 120 110" aria-hidden="true">
+            <g fill="var(--brand)">
+              <ellipse cx="60" cy="64" rx="43" ry="22"/>
+              <circle cx="37" cy="52" r="18"/>
+              <circle cx="61" cy="40" r="24"/>
+              <circle cx="85" cy="53" r="17"/>
+            </g>
+            <g fill="#2B1308">
+              <rect x="51" y="48" width="7" height="13" rx="3.5"/>
+              <rect x="66" y="48" width="7" height="13" rx="3.5"/>
+            </g>
+          </svg>
+          <span class="who">Rendering frame previews…</span>
+          <span class="steps">2/4</span>
+        </span>
+        <span class="list">
+          <span class="row"><span class="dot"></span><span class="what">Placed 3 cards on canvas</span><span class="when">now</span></span>
+          <span class="row"><span class="dot"></span><span class="what">Generated storyboard draft</span><span class="when">1m</span></span>
+          <span class="row"><span class="dot"></span><span class="what">Saved brand palette to memory</span><span class="when">6m</span></span>
+        </span>
+        <span class="foot"><a href="#">Open Otto</a></span>
+      </span>
+    </div>
+  </div>
+  <div class="cap"><b>Otto dock</b> · collapsed 48px with live mood + coral badge while acting; expands to the action log in 200ms spring. Never covers the primary CTA. Demo toggles every 2.6s.</div>
+</div>
+
+<script>
+  // Demo loop only — in product the user (or an Otto handoff moment) toggles it.
+  const dock = document.getElementById("dock");
+  let expanded = false;
+  function toggle() {
+    expanded = !expanded;
+    dock.classList.toggle("expanded", expanded);
+    dock.classList.toggle("collapsed", !expanded);
+  }
+  dock.addEventListener("click", toggle);
+  setInterval(toggle, 2600);
+</script>

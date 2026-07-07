@@ -1,0 +1,78 @@
+<!-- @dsCard group="Live reflection" -->
+<!-- Coral sweep highlight — one-shot pulse on the element Otto just touched. ≤600ms, ease-out, never loops (looped here for demo only). -->
+<style>
+  :root {
+    --background: #FCFCFC; --foreground: #0A0A0A;
+    --card: #FFFFFF; --border: #E6E6E3;
+    --secondary: #F4F4F3; --muted-foreground: #6E6E68;
+    --brand: #EC5828; --brand-soft: #FBE4D8;
+    --radius: 0.875rem; --radius-card: 1.125rem;
+    --shadow-sm: 0 1px 3px rgba(20 20 24 / 0.06), 0 1px 2px rgba(20 20 24 / 0.05);
+    --dur-sweep: 600ms;
+    --ease-out: cubic-bezier(0.22, 1, 0.36, 1);
+    --font-sans: "Geist", system-ui, -apple-system, sans-serif;
+    --font-mono: "JetBrains Mono", ui-monospace, monospace;
+  }
+  body {
+    margin: 0; min-height: 100vh; display: flex; align-items: center; justify-content: center;
+    background: var(--background); color: var(--foreground); font-family: var(--font-sans);
+  }
+  .stage { display: flex; flex-direction: column; gap: 16px; width: 320px; }
+  .demo-card {
+    background: var(--card); border: 1px solid var(--border);
+    border-radius: var(--radius-card); box-shadow: var(--shadow-sm);
+    padding: 16px; display: flex; gap: 12px; align-items: center;
+  }
+  .thumb {
+    width: 48px; height: 48px; border-radius: 10px; background: var(--secondary);
+    flex: none; display: flex; align-items: center; justify-content: center;
+    color: var(--muted-foreground); font-size: 11px; font-family: var(--font-mono);
+  }
+  .lines { flex: 1; min-width: 0; }
+  .t { font-size: 14px; font-weight: 600; letter-spacing: -0.006em; line-height: 20px; }
+  .s { font-size: 12px; line-height: 16px; color: var(--muted-foreground); margin-top: 2px; }
+
+  /* THE PATTERN — 2px coral ring + brand-soft tint, both fading out over ≤600ms. */
+  .sweep {
+    animation: coral-sweep var(--dur-sweep) var(--ease-out) 1;
+  }
+  @keyframes coral-sweep {
+    0% {
+      box-shadow: 0 0 0 2px color-mix(in oklab, var(--brand) 55%, transparent),
+                  0 1px 3px rgba(20 20 24 / 0.06);
+      background: color-mix(in oklab, var(--brand-soft) 60%, var(--card));
+    }
+    100% {
+      box-shadow: 0 0 0 2px transparent, 0 1px 3px rgba(20 20 24 / 0.06);
+      background: var(--card);
+    }
+  }
+  @media (prefers-reduced-motion: reduce) {
+    .sweep { animation: none; outline: 2px solid color-mix(in oklab, var(--brand) 55%, transparent); }
+  }
+  .cap { font-size: 12px; line-height: 16px; color: var(--muted-foreground); text-align: center; }
+  .cap b { color: var(--brand); font-weight: 600; }
+</style>
+
+<div class="stage">
+  <div class="demo-card" id="target">
+    <div class="thumb">IMG</div>
+    <div class="lines">
+      <div class="t">Autumn hero shot</div>
+      <div class="s" id="meta">Updated by Otto just now</div>
+    </div>
+  </div>
+  <div class="cap"><b>Coral sweep</b> · 600ms one-shot on the exact element Otto touched. Demo replays every 2.8s.</div>
+</div>
+
+<script>
+  // Demo loop only — in product the sweep fires exactly once per Otto action.
+  const target = document.getElementById("target");
+  function fire() {
+    target.classList.remove("sweep");
+    void target.offsetWidth; // restart the one-shot animation
+    target.classList.add("sweep");
+  }
+  fire();
+  setInterval(fire, 2800);
+</script>

@@ -1,0 +1,96 @@
+<!-- @dsCard group="Live reflection" -->
+<!-- Card landing — how an Otto-authored card enters: opacity 0→1, translateY(8px)→0, scale(0.98)→1, 200ms ease-spring. Space is reserved by a skeleton first, so nothing the user reads gets pushed. -->
+<style>
+  :root {
+    --background: #FCFCFC; --foreground: #0A0A0A;
+    --card: #FFFFFF; --border: #E6E6E3;
+    --secondary: #F4F4F3; --muted-foreground: #6E6E68;
+    --brand: #EC5828; --brand-soft: #FBE4D8; --brand-soft-foreground: #9A3A1A;
+    --radius: 0.875rem; --radius-card: 1.125rem;
+    --shadow-sm: 0 1px 3px rgba(20 20 24 / 0.06), 0 1px 2px rgba(20 20 24 / 0.05);
+    --dur-3: 200ms;
+    --ease-spring: cubic-bezier(0.34, 1.56, 0.64, 1);
+    --font-sans: "Geist", system-ui, -apple-system, sans-serif;
+    --font-mono: "JetBrains Mono", ui-monospace, monospace;
+  }
+  body {
+    margin: 0; min-height: 100vh; display: flex; align-items: center; justify-content: center;
+    background: var(--background); color: var(--foreground); font-family: var(--font-sans);
+  }
+  .stage { display: flex; flex-direction: column; gap: 16px; width: 320px; }
+  .slot { position: relative; height: 120px; }
+
+  /* Skeleton reserves the space before the card lands (skeletons, not spinners). */
+  .skeleton {
+    position: absolute; inset: 0; border-radius: var(--radius-card);
+    border: 1px dashed var(--border); background: var(--secondary);
+    transition: opacity 150ms ease;
+  }
+  .skeleton .bar { height: 10px; border-radius: 5px; background: var(--border); margin: 18px 16px 0; }
+  .skeleton .bar.short { width: 40%; }
+
+  .demo-card {
+    position: absolute; inset: 0;
+    background: var(--card); border: 1px solid var(--border);
+    border-radius: var(--radius-card); box-shadow: var(--shadow-sm);
+    padding: 16px; box-sizing: border-box;
+    display: flex; flex-direction: column; gap: 8px;
+    opacity: 0;
+  }
+  .pill {
+    align-self: flex-start; font-size: 11px; line-height: 14px; font-weight: 500;
+    font-family: var(--font-mono); letter-spacing: 0.08em; text-transform: uppercase;
+    color: var(--brand-soft-foreground); background: var(--brand-soft);
+    border-radius: 999px; padding: 3px 10px;
+  }
+  .t { font-size: 14px; font-weight: 600; letter-spacing: -0.006em; line-height: 20px; }
+  .s { font-size: 12px; line-height: 16px; color: var(--muted-foreground); }
+
+  /* THE PATTERN — 200ms spring landing, transform + opacity only. */
+  .land {
+    animation: card-landing var(--dur-3) var(--ease-spring) both;
+  }
+  @keyframes card-landing {
+    from { opacity: 0; transform: translateY(8px) scale(0.98); }
+    to   { opacity: 1; transform: none; }
+  }
+  @media (prefers-reduced-motion: reduce) {
+    .land { animation: card-landing-fade var(--dur-3) linear both; }
+    @keyframes card-landing-fade { from { opacity: 0; } to { opacity: 1; } }
+  }
+  .cap { font-size: 12px; line-height: 16px; color: var(--muted-foreground); text-align: center; }
+  .cap b { color: var(--brand); font-weight: 600; }
+</style>
+
+<div class="stage">
+  <div class="slot">
+    <div class="skeleton" id="skeleton">
+      <div class="bar"></div><div class="bar short"></div>
+    </div>
+    <div class="demo-card" id="card">
+      <span class="pill">Otto proposal</span>
+      <div class="t">Storyboard: 6-shot product intro</div>
+      <div class="s">$0 to create · review before anything runs</div>
+    </div>
+  </div>
+  <div class="cap"><b>Card landing</b> · skeleton reserves space, card lands in 200ms spring. Demo replays every 3s.</div>
+</div>
+
+<script>
+  // Demo loop only — in product a card lands once.
+  const card = document.getElementById("card");
+  const skeleton = document.getElementById("skeleton");
+  function cycle() {
+    card.classList.remove("land");
+    card.style.opacity = "0";
+    skeleton.style.opacity = "1";
+    setTimeout(() => {
+      void card.offsetWidth;
+      card.style.opacity = "";
+      card.classList.add("land");
+      skeleton.style.opacity = "0";
+    }, 900); // skeleton dwell
+  }
+  cycle();
+  setInterval(cycle, 3000);
+</script>
