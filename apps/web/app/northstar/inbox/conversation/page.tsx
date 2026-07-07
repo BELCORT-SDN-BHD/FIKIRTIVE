@@ -21,7 +21,7 @@ import { Button } from "@/components/ui/button";
 import { Switch } from "@/components/ui/switch";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription } from "@/components/ui/dialog";
 import { OttoAvatar } from "@/components/otto/OttoAvatar";
-import { OttoNarrationBar } from "@/components/northstar/_shared";
+import { MockNote, OttoNarrationBar } from "@/components/northstar/_shared";
 import {
   ChannelTag,
   ContactAvatar,
@@ -331,6 +331,8 @@ export default function Page() {
       />
 
       <SourceDrawer docId={sourceDocId} onClose={() => setSourceDocId(null)} />
+
+      <MockNote path="/northstar/inbox/conversation" />
 
       {/* 转人工 dialog */}
       <Dialog open={handoffOpen} onOpenChange={setHandoffOpen}>
