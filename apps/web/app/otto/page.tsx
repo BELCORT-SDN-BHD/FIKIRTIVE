@@ -15,14 +15,13 @@ export const metadata = { title: "Otto · Fikirtive" };
 const VALID_VIEWS = ["otto", "stuff", "library", "templates", "discover", "memory", "account", "connections", "schedule", "analytics"] as const;
 type ValidView = (typeof VALID_VIEWS)[number];
 
-export default async function OttoPage({ searchParams }: { searchParams: Promise<{ view?: string; skin?: string; project?: string; thread?: string; new?: string }> }) {
+export default async function OttoPage({ searchParams }: { searchParams: Promise<{ view?: string; project?: string; thread?: string; new?: string }> }) {
   const sp = await searchParams;
   const rawInitialView: ValidView | undefined = (VALID_VIEWS as readonly string[]).includes(sp?.view ?? "")
     ? (sp!.view as ValidView)
     : undefined;
   const initialView: ValidView | undefined = rawInitialView === "stuff" ? "library" : rawInitialView;
-  // Grok-bright is now the official default (cutover). ?skin=fk is an internal
-  // rollback escape hatch to the legacy look; everything else gets gb.
+  // Grok-bright ("gb") is the only skin — hardcoded, no rollback param.
   const skin = "gb" as const;
 
   const owner = await requireOwner();

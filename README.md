@@ -8,8 +8,9 @@ Otto proposes what to create, you approve the spend with one click, and a backgr
 generates it. Everything that costs an API call (generation *and* Otto's own LLM turns) is
 metered against a per-org **credit ledger**, so spend is capped and auditable.
 
-> Naming note: the product/brand is **Fikirtive**; the internal npm scope is still
-> `@artlio/*` (a rename is a separate mechanical task, deliberately not bundled into feature work).
+> Naming note: the product/brand is **Fikirtive**; the npm scope is `@fikirtive/*`
+> (root package `fikirtive`). Some infra names (local DB `artlio`, CI test DB `artlio_test`,
+> R2 bucket) still carry the pre-pivot "artlio" name.
 
 ## Architecture
 
@@ -17,15 +18,20 @@ pnpm + TypeScript monorepo. Two long-lived services (web + worker) over one Post
 
 ```
 apps/web          Next.js 16 (App Router) — UI, server actions, auth gate, the Otto chat
-apps/worker       pg-boss consumer — generation jobs (fal), ffmpeg video editing,
-                  and Otto's post-generation "verdict" auto-resume
-packages/otto     Otto — an OpenAI Agents SDK agent: tools (propose / generate /
-                  updateBrief / describeRefs / setTitle), reserve→settle LLM metering,
+apps/worker       pg-boss consumer — generation jobs (BytePlus/fal/mock), ffmpeg video
+                  editing, and Otto's post-generation "verdict" auto-resume
+packages/otto     Otto — an OpenAI Agents SDK agent: 25 skills spanning generation
+                  proposals (propose / proposePack / proposeStoryboard / generate),
+                  brand memory, Meta ads (insights / expert / ad builds / actions),
+                  web research, product ingestion and post scheduling (the full list
+                  is packages/otto/src/skills/CATALOG.md), reserve→settle LLM metering,
                   RunState persisted to Postgres (imported by BOTH web and worker)
 packages/core     shared logic — the genRequest spend gate, pricing/credit units,
                   model registry, cowork/otto helpers, timeline + NLE editor ops
 packages/db       Prisma 7 schema + client — the credit ledger is the single spend authority
-packages/generation  fal image/video providers (mock provider = $0 for local dev)
+packages/generation  image/video providers — byteplus (prod: Seedream image, Seedance
+                  video), fal (legacy fallback), mock ($0 for local dev); picked by
+                  GENERATION_PROVIDER (factory in src/index.ts)
 packages/storage  Cloudflare R2 object storage
 ```
 
@@ -37,8 +43,9 @@ packages/storage  Cloudflare R2 object storage
    on the card. Either path goes through the unchanged `startGen` and is **exactly-once**
    via a per-card idempotency key — a card generates at most once.
 3. `startGen` validates the request (`genRequest` zod gate), **reserves** credits atomically
-   (never-negative), inserts the job, and enqueues it. The `apps/worker` consumer calls fal,
-   stores the result to R2, then **settles** the actual cost.
+   (never-negative), inserts the job, and enqueues it. The `apps/worker` consumer calls the
+   generation provider (BytePlus in prod), stores the result to R2, then **settles** the
+   actual cost.
 4. The worker then runs one Otto follow-up turn that asks a plain verdict question
    ("does this meet your expectation / anything to change?").
 
@@ -47,26 +54,30 @@ call uses **reserve → settle** (reserve a worst-case budget before the call, s
 token cost after, refund the remainder). Generation uses estimate → reserve → settle.
 
 **Stack:** Next.js 16 · TypeScript · Prisma 7 + Postgres (Neon) · Cloudflare R2 · pg-boss ·
-OpenAI Agents SDK (Anthropic via the AI SDK adapter) · fal · server-side ffmpeg (worker) ·
-deployed on Railway.
+OpenAI Agents SDK (Anthropic via the AI SDK adapter) · BytePlus Ark (Seedream image /
+Seedance video — prod; fal is the legacy fallback, mock = $0 local dev) · server-side
+ffmpeg (worker) · deployed on Railway.
 
 ## Dev
 
 ```bash
 pnpm install
 docker compose up -d postgres                                   # local Postgres 16 (artlio:artlio@localhost:5432/artlio)
-DATABASE_URL="postgresql://artlio:artlio@localhost:5432/artlio" pnpm --filter @artlio/db exec prisma migrate deploy
+DATABASE_URL="postgresql://artlio:artlio@localhost:5432/artlio" pnpm --filter @fikirtive/db exec prisma migrate deploy
 pnpm db:generate
 
 # Web + worker read env from a gitignored .env.local at the repo root.
 # Local dev is money-safe by default: GENERATION_PROVIDER=mock (=$0 generation),
 # COWORK_PROVIDER=mock. Otto's own turns use the real Anthropic model, so set
 # ANTHROPIC_API_KEY (and ANTHROPIC_BASE_URL=https://api.anthropic.com/v1) to exercise Otto.
-pnpm --filter @artlio/worker exec tsx watch src/index.ts        # the pg-boss consumer (else gen jobs sit QUEUED)
-pnpm --filter @artlio/web exec next dev -p 3100                 # http://localhost:3100
+pnpm --filter @fikirtive/worker exec tsx watch src/index.ts     # the pg-boss consumer (else gen jobs sit QUEUED)
+pnpm --filter @fikirtive/web exec next dev -p 3100              # http://localhost:3100
 
 pnpm test && pnpm typecheck
 ```
+
+To reproduce all three CI gates locally (check / test / web-build — e.g. when GitHub
+Actions is unavailable), follow `docs/runbooks/local-ci.md`.
 
 Local auth is passwordless: the magic-link URL is written to `.data/last-magic-link.txt`
 (no email sent). An email in `FOUNDER_ADMIN_EMAILS` signs in as a super-admin.

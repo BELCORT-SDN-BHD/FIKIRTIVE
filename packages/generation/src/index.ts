@@ -355,9 +355,11 @@ export function extFromUrl(url: string): string | null {
 /* ---------------- env factory ---------------- */
 
 /**
- * GENERATION_PROVIDER=fal needs FAL_KEY. Anything else (incl. unset) is the
- * mock — safe by default so a misconfigured prod can't silently burn money,
- * and dev/tracer never touch the network.
+ * Three providers: GENERATION_PROVIDER=byteplus (the PROD path — Seedream image /
+ * Seedance video, needs BYTEPLUS_API_KEY, real money), =fal (legacy fallback,
+ * needs FAL_KEY, real money), and anything else (incl. unset) is the mock —
+ * safe by default so a misconfigured prod can't silently burn money, and
+ * dev/tracer never touch the network.
  */
 export function createGenerationProvider(): GenerationProvider {
   if (process.env.GENERATION_PROVIDER === "fal") {

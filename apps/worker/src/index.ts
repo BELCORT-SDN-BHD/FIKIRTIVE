@@ -2,7 +2,9 @@
  * Fikirtive worker — long-lived pg-boss consumer (eng review D6/D9).
  *
  *   Postgres (pgboss schema) ──▶ ingest queue ──▶ hash verify → ffprobe → thumbs
- *                            └─▶ sweep queue  ──▶ D21 refcount purge (cron)
+ *                            └─▶ sweep queue  ──▶ created for future D21 refcount purge;
+ *                                                 NO producer, NO consumer yet (D21 deferred)
+ *                                                 — do not assume it runs
  *
  * pg-boss v12 rules honored here: explicit createQueue() before work(),
  * own `pgboss` schema (excluded from Prisma migrations), generous

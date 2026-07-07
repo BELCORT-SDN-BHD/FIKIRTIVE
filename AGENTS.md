@@ -13,6 +13,9 @@
    repo, free plan); the discipline IS the protection.
 2. **Never merge a PR unless ALL CI checks are green** on the current head commit. Never
    self-merge your own PR — the founder is the final merge authority.
+   **CI 不可用时(账单封锁/Actions 宕机)不得以"CI 本来就红"为由合并;必须在本地完整
+   复现三关(check/test/web-build,配方见 `docs/runbooks/local-ci.md`)并把结果贴进 PR,
+   再经 founder 明确批准才可合并。此规则约束所有 agent(claude/codex/任何工具)。**
 3. **Ask the founder before ANY real paid spend** during development/verification
    (BytePlus/fal/Anthropic verification runs, Stripe live actions). "Asking" is the cap —
    there is deliberately no code cap (宪法 2). Do not spend real money to "just test it".
@@ -51,6 +54,8 @@
 ## Stale-doc warning
 
 Some older docs predate this stack and can mislead: `docs/INDEX.md`, root `TODOS.md`,
-`docs/backlog.md` are pre-pivot artifacts (tombstoned at their headers). The blueprint's
-ch.3 zoning map is a dated snapshot. When a doc and current code disagree on STATUS (not on
-LAW), trust the code + this file's reading order — not the stale snapshot.
+`docs/backlog.md`, and `docs/ops/config-and-architecture.md` are dated artifacts
+(tombstoned at their headers). The blueprint's ch.3 zoning map is a dated snapshot.
+Root `README.md` and `.env.example` were rebuilt against reality on 2026-07-07 and are
+current as of that date. When a doc and current code disagree on STATUS (not on LAW),
+trust the code + this file's reading order — not the stale snapshot.
