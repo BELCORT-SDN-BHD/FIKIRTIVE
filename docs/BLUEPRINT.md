@@ -63,7 +63,7 @@
 8. **明确不盖的楼**(拍板过,别再提案):Build 终端 coding agent、独立通用 Chat、Spicy/18+ NSFW、**开放第三方 skill 生态**(skill 永久 BELCORT 内部编写)、**对外 MCP/API 让外部 agent 操作 FIKIRTIVE**(founder:"如果会用其他 LLM,代表我们的 Otto harness 不够好,就代表 FIKIRTIVE 不好。" —— 操作这座城的 agent 永远只有 Otto)、**白标**(founder 2026-07-03:"我要的就是 FIKIRTIVE 变成世界级别的平台" —— 平台不贴别人的牌,Otto 永不改名换脸)、**任何 unlimited 类报价**(与 Otto 自动化互斥,成本敞口)、**Slack/Notion 类工作工具 connectors**(O-13 拍板:SEA SMB 主场在 WhatsApp/Meta/TikTok/Shopee,不在欧美知识工作者工具)。
 9. **语言约定**:spec/skill 文档用华语(founder 复审);生成 prompt 一律英文;UI 文案 sentence case。
 10. **技能为弱模型设计(2026-07-03 入宪)。** Otto 运行时永远是 cost-efficient 档模型(sonnet 级),不是 Fable/Opus。因此一切 skill 的专业判断必须**冻进确定性代码/schema/模板**(prompt-skills 是范本),质量来自结构不来自模型天赋;换更强模型是加分,不是前提。
-11. **UIUX 是第二支柱(2026-07-03 入宪)。** 除"Otto 全操控"外,UIUX 是留住与吸引用户的核心卖点。质感标杆 = **Apple**;交互趣味参考 Duolingo 但克制 —— 面向专业用户只做 **minimal gamification**(GM 卷已拍 2026-07-03:**GM-02 里程碑/GM-03 目标进度/GM-04 周报语气/GM-05 开店完成度 = 要;GM-01 streak = 不要**;三条边界与方案见 `docs/design/2026-07-03-harmony-06-uiux-gamification.md`)。落地机制:单一设计系统(.gb)不许分叉;每个用户可感的面必须过设计审(不只 runtime QA);设计基准 = Analytics 屏(已有 gold standard)。
+11. **UIUX 是第二支柱(2026-07-03 入宪)。** 除"Otto 全操控"外,UIUX 是留住与吸引用户的核心卖点。质感标杆 = **Apple**;交互趣味参考 Duolingo 但克制 —— 面向专业用户只做 **minimal gamification**(GM 卷已拍 2026-07-03:**GM-02 里程碑/GM-03 目标进度/GM-04 周报语气/GM-05 开店完成度 = 要;GM-01 streak = 不要**;三条边界与方案见 `docs/design/2026-07-03-harmony-06-uiux-gamification.md`)。落地机制:单一设计系统(.gb)不许分叉;每个用户可感的面必须过设计审(不只 runtime QA);设计基准 = Analytics 屏(已有 gold standard)。**Agent-native UI 与 live reflection(v2.6 入宪,founder 与总审查员共同定调 2026-07-07)**:①界面必须实时反映后台与 Otto 的动作(推送/即时刷新;"后台已完成而界面不知"按缺陷处理);②Otto 永远经动作层操作,不做 computer-use 式像素操作(它住在家里,用门不爬窗);③Otto 的动作在界面上对用户可见:coral 高亮 + 简短叙述(与 O-12 同源 —— coral 是 Otto 动作的专属视觉语言);④Otto 是常驻陪伴(在应用内随时可唤起、可看见其工作),不是一个要专门打开的页面。
 
 ---
 
@@ -198,3 +198,4 @@ pg-boss 五条队列 + 四类回收器(gen/refgen/LLM 预扣/research 滞留,#12
 | 2026-07-03 | **v2.1 全量对齐修订**(补记 —— 修订实际发生在 v2.1a 之前,行为后补,按「只按时间追加」规则留于此位)(5 员对抗审查 40+ findings):宪法 5 重写(≥45% 地板/效率良心真入宪,删"视频近成本卖"旧句)/宪法 2 加开发期限定+账本推论/铁律①法币边界/第 4 条两类例外/O-12 之手+O-09 分域入第 7 条/connectors 不要入第 8 条/九条缝改数/区划图刷新至 #117 并豁免不可改/第六章补团队协作+账务透明+包告警+Agency 顺序+叙事节奏/金字塔加判决记录层 | 已定稿(#109 合并) |
 | 2026-07-04 | v2.4 文书修正(founder 指示,总审查员起草):批准列全量回填(v1–v2.3 均经 #109 合并,按文件头规则即已定稿)+ 第七章新增「批准列写法」「修订表只按时间追加」两条规则 + v2.1 行标注补记。同 PR:第三章区划图刷新至基线 main #129(豁免条款更新,非修订) | 已定稿(#134 合并) |
 | 2026-07-07 | v2.5 定位宣言入宪(第一章开头,founder 原话):ALL-IN-ONE marketing power house(全部 feature,对标第六章 18 家)+ 双 100% 操作宣言 + 解读边界(feature 只来自对标+判决,agent 不发明;动工顺序以 MASTERPLAN 为准);同修订回填 v2.4 批准列(founder 授权"B",总审查员起草) | 待 founder 终审合并 |
+| 2026-07-07 | v2.6 第 11 条增补:Agent-native UI 与 live reflection 四原则入宪(界面实时反映/动作层操作/coral 可见性/常驻陪伴)(founder 口述定调,总审查员起草) | 待 founder 终审合并 |
