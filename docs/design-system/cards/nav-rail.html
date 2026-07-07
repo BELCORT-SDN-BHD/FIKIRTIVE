@@ -1,0 +1,195 @@
+<!-- @dsCard group="Navigation" -->
+<!-- Nav rail + state system: 240px rail with the six zones, Create/Assets/Operate taxonomy,
+     active (--secondary + 600) vs hover (--accent) rows, tabs-vs-segmented recipes.
+     Hover any inactive row to feel the state split. Coral appears exactly three times. -->
+<style>
+  :root {
+    --background: #FCFCFC; --foreground: #0A0A0A;
+    --card: #FFFFFF; --border: #E6E6E3;
+    --secondary: #F4F4F3; --accent: #ECECEA; --muted: #F4F4F3;
+    --muted-foreground: #6E6E68;
+    --primary: #0A0A0A; --primary-foreground: #FCFCFC;
+    --brand: #EC5828; --ring: #EC5828;
+    --warning: #D97706; --success: #16A34A;
+    --shadow-xs: 0 1px 2px rgba(20 20 24 / 0.05);
+    --shadow-sm: 0 1px 3px rgba(20 20 24 / 0.06), 0 1px 2px rgba(20 20 24 / 0.05);
+    --font-sans: "Geist", system-ui, -apple-system, sans-serif;
+    --font-mono: "JetBrains Mono", ui-monospace, monospace;
+  }
+  body {
+    margin: 0; min-height: 100vh; display: flex; align-items: center; justify-content: center;
+    background: var(--background); color: var(--foreground); font-family: var(--font-sans); padding: 24px;
+  }
+  .wrap { display: flex; gap: 24px; align-items: flex-start; flex-wrap: wrap; }
+
+  /* ── The rail ── */
+  .rail {
+    width: 240px; background: var(--card); border: 1px solid var(--border);
+    border-radius: 16px; padding: 16px 0; display: flex; flex-direction: column;
+    line-height: normal; overflow: hidden;
+  }
+  .brand { display: flex; align-items: center; gap: 8px; padding: 0 12px 14px 16px; border-bottom: 1px solid var(--border); }
+  .brand .word { font-size: 17px; font-weight: 700; flex: 1; }
+  .brand .collapse {
+    width: 28px; height: 28px; border: 0; background: transparent; border-radius: 10px;
+    color: var(--muted-foreground); display: grid; place-items: center; cursor: pointer;
+  }
+  .brand .collapse:hover { background: var(--accent); color: var(--foreground); }
+
+  .newbtn-row { padding: 14px 12px 12px; }
+  .newbtn {
+    width: 100%; height: 36px; border: 0; border-radius: 14px;
+    background: var(--primary); color: var(--primary-foreground);
+    font: 600 14px var(--font-sans); cursor: pointer;
+    display: flex; align-items: center; justify-content: center; gap: 7px;
+    box-shadow: var(--shadow-xs);
+  }
+
+  .zone { padding: 12px 12px 4px; }
+  .grouplabel {
+    font: 500 11px/14px var(--font-mono); letter-spacing: 0.08em; text-transform: uppercase;
+    color: color-mix(in oklab, var(--muted-foreground) 70%, transparent);
+    padding-left: 4px; margin-bottom: 8px;
+  }
+  .row {
+    display: flex; align-items: center; gap: 8px; width: 100%;
+    border: 0; background: transparent; border-radius: 10px; cursor: pointer;
+    font: 400 13px var(--font-sans); color: var(--muted-foreground);
+    padding: 7px 12px; text-align: left; transition: background 120ms ease-out, color 120ms ease-out;
+  }
+  .row:hover { background: var(--accent); color: var(--foreground); }
+  .row:focus-visible { outline: none; box-shadow: 0 0 0 3px color-mix(in oklab, var(--ring) 35%, transparent); }
+  .row.parent { font-size: 14px; font-weight: 600; color: var(--foreground); }
+  .row.active { background: var(--secondary); color: var(--foreground); font-weight: 600; }
+  .row.nested { font-size: 12px; padding: 5px 12px 5px 28px; }
+  .row svg { flex-shrink: 0; }
+  .row .t { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .dot { width: 7px; height: 7px; border-radius: 999px; flex-shrink: 0; }
+  .dot.working { background: var(--warning); }
+  .dot.otto { width: 6px; height: 6px; background: var(--brand); }
+
+  .foot { border-top: 1px solid var(--border); margin-top: 10px; }
+  .balance { display: flex; align-items: center; gap: 8px; padding: 8px 16px; font-size: 12px; color: var(--muted-foreground); }
+  .balance b { color: var(--foreground); font-weight: 600; }
+  .who { display: flex; align-items: center; gap: 12px; padding: 10px 16px 0; }
+  .who .av {
+    width: 32px; height: 32px; border-radius: 999px; background: var(--accent);
+    display: grid; place-items: center; font: 600 10px var(--font-sans);
+  }
+  .who .n { font-size: 13px; font-weight: 500; }
+  .who .e { font-size: 12px; color: color-mix(in oklab, var(--muted-foreground) 70%, transparent); }
+
+  /* ── Specimens column ── */
+  .spec { display: flex; flex-direction: column; gap: 16px; width: 320px; }
+  .card { background: var(--card); border: 1px solid var(--border); border-radius: 18px; padding: 16px; }
+  .cap {
+    font: 500 11px/14px var(--font-mono); letter-spacing: 0.08em; text-transform: uppercase;
+    color: var(--muted-foreground); margin-bottom: 10px;
+  }
+  /* tabs: --muted well r14 p4, item r10 px16 py8, active --card + shadow-sm + 600 */
+  .tabs { display: inline-flex; gap: 4px; background: var(--muted); border-radius: 14px; padding: 4px; }
+  .tab {
+    border: 0; background: transparent; border-radius: 10px; padding: 8px 16px;
+    font: 400 13px var(--font-sans); color: var(--muted-foreground); cursor: pointer;
+    display: inline-flex; align-items: center; gap: 6px;
+  }
+  .tab.on { background: var(--card); color: var(--foreground); font-weight: 600; box-shadow: var(--shadow-sm); }
+  .tab .count { font-size: 11px; color: color-mix(in oklab, var(--muted-foreground) 70%, transparent); }
+  /* segmented: --card + hairline r10 p2, item h30 r8, active --secondary */
+  .seg { display: inline-flex; background: var(--card); border: 1px solid var(--border); border-radius: 10px; padding: 2px; }
+  .seg button {
+    height: 30px; border: 0; border-radius: 8px; padding: 0 12px;
+    font: 600 12px var(--font-sans); background: transparent; color: var(--muted-foreground); cursor: pointer;
+  }
+  .seg button.on { background: var(--secondary); color: var(--foreground); }
+  .hint { font-size: 12px; color: var(--muted-foreground); margin-top: 8px; line-height: 1.5; }
+</style>
+
+<div class="wrap">
+  <nav class="rail" aria-label="Nav rail — 240px">
+    <div class="brand">
+      <!-- coral #1: the OttoCloud mark -->
+      <svg width="26" height="24" viewBox="0 0 120 110" aria-hidden>
+        <g fill="var(--brand)">
+          <ellipse cx="60" cy="64" rx="43" ry="22"/><circle cx="37" cy="52" r="18"/>
+          <circle cx="61" cy="40" r="24"/><circle cx="85" cy="53" r="17"/>
+        </g>
+        <rect x="51" y="48" width="7" height="13" rx="3.5" fill="#2B1308"/>
+        <rect x="66" y="48" width="7" height="13" rx="3.5" fill="#2B1308"/>
+      </svg>
+      <span class="word">fikirtive</span>
+      <button class="collapse" aria-label="Collapse sidebar">
+        <svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9"><rect x="3" y="3" width="18" height="18" rx="2"/><path d="M9 3v18"/><path d="m14 9-3 3 3 3"/></svg>
+      </button>
+    </div>
+
+    <div class="newbtn-row">
+      <button class="newbtn">
+        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round"><path d="M5 12h14M12 5v14"/></svg>
+        New
+      </button>
+    </div>
+
+    <div class="zone">
+      <div class="grouplabel">History</div>
+      <button class="row parent">
+        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9"><path d="M3 7a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/></svg>
+        <span class="t">Raya launch</span>
+      </button>
+      <button class="row nested active"><span class="t">Hero visuals v2</span></button>
+      <button class="row nested"><span class="dot working"></span><span class="t">TikTok cutdowns</span></button>
+      <button class="row parent">
+        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9"><path d="M3 7a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/></svg>
+        <span class="t">Always-on promos</span>
+      </button>
+    </div>
+
+    <div class="zone">
+      <div class="grouplabel">Create</div>
+      <button class="row"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="3" width="7" height="7" rx="1"/><rect x="14" y="3" width="7" height="7" rx="1"/><rect x="3" y="14" width="7" height="7" rx="1"/><rect x="14" y="14" width="7" height="7" rx="1"/></svg><span class="t">Library</span></button>
+      <button class="row"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="3" width="18" height="18" rx="2"/><path d="M3 9h18M9 21V9"/></svg><span class="t">Templates</span></button>
+      <div class="grouplabel" style="margin-top:10px">Assets</div>
+      <button class="row"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 5a3 3 0 1 0-5.997.125A4 4 0 0 0 3.477 10.9a4 4 0 0 0 .556 6.588A4 4 0 1 0 12 18Z"/><path d="M12 5a3 3 0 1 1 5.997.125 4 4 0 0 1 2.526 5.77 4 4 0 0 1-.556 6.588A4 4 0 1 1 12 18Z"/></svg><span class="t">Brand memory</span><span class="dot otto" title="Otto updated this"></span></button>
+      <div class="grouplabel" style="margin-top:10px">Operate</div>
+      <button class="row"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="4" width="18" height="18" rx="2"/><path d="M16 2v4M8 2v4M3 10h18"/></svg><span class="t">Schedule</span></button>
+      <button class="row"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M3 3v18h18"/><path d="m7 14 4-4 3 3 5-6"/></svg><span class="t">Analytics</span></button>
+    </div>
+
+    <div class="foot">
+      <div class="balance">
+        <!-- coral #3: credits are Otto's fuel -->
+        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="var(--brand)" stroke-width="2"><circle cx="12" cy="12" r="9"/><path d="M12 7v10M9 9.5h4a1.5 1.5 0 0 1 0 3h-2a1.5 1.5 0 0 0 0 3h4"/></svg>
+        <b>1,240 credits</b>
+      </div>
+      <div class="who">
+        <span class="av">NG</span>
+        <span><span class="n">Nicks Gan</span><br><span class="e">nicksgan@belcort.com</span></span>
+      </div>
+    </div>
+  </nav>
+
+  <div class="spec">
+    <div class="card">
+      <div class="cap">Tabs — sections, url-backed</div>
+      <div class="tabs" role="tablist">
+        <button class="tab on" role="tab" aria-selected="true">About</button>
+        <button class="tab" role="tab" aria-selected="false">Products <span class="count">12</span></button>
+        <button class="tab" role="tab" aria-selected="false">Offers <span class="dot otto" title="Otto updated this"></span></button>
+      </div>
+      <div class="hint">Well <code>--muted</code> r14 p4 · item r10 16×8 · active <code>--card</code> + 600 + shadow-sm · persists as <code>?tab=</code>.</div>
+    </div>
+    <div class="card">
+      <div class="cap">Segmented — same data, state-only</div>
+      <div class="seg">
+        <button class="on">Plan</button><button>Calendar</button><button>Queue</button>
+      </div>
+      <div class="hint"><code>--card</code> + hairline r10 p2 · item h30 r8 12px/600 · active <code>--secondary</code> · never routed.</div>
+    </div>
+    <div class="card">
+      <div class="cap">State split</div>
+      <button class="row" style="margin-bottom:2px"><span class="t">Hover me — accent fill</span></button>
+      <button class="row active"><span class="t">Active — secondary fill + 600</span></button>
+      <div class="hint">Hover ≠ active by token, so a hovered row never reads as current. Focus ring: 3px coral at 35% — the one coral global.</div>
+    </div>
+  </div>
+</div>

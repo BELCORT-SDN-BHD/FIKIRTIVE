@@ -1,0 +1,196 @@
+<!-- @dsCard group="Forms" -->
+<!-- Forms & inputs — field anatomy (label 13/600 · 8px · control 44/14px-radius · 8px · help/error 12/500),
+     the F2 state table (rest / hover / focus / filled / disabled / error / loading), and the toggle row
+     (checkbox 16 · radio 16/8 · switch 36×20) — INK checked fills, coral focus ring 3px @ 40%. -->
+<style>
+  :root {
+    --background: #FCFCFC; --foreground: #0A0A0A;
+    --card: #FFFFFF; --border: #E6E6E3; --input: #E6E6E3;
+    --secondary: #F4F4F3; --muted: #F4F4F3; --muted-foreground: #6E6E68;
+    --primary: #0A0A0A; --primary-foreground: #FCFCFC;
+    --accent: #ECECEA;
+    --ring: #EC5828; --brand: #EC5828;
+    --destructive: #E5484D; --error: #E5484D;
+    --error-soft: #FCE9E9; --error-soft-foreground: #B42B30;
+    --success: #16A34A;
+    --radius: 14px;
+    --shadow-xs: 0 1px 2px rgba(20 20 24 / 0.05);
+    --ease-out: cubic-bezier(0.22, 1, 0.36, 1);
+    --ease-spring: cubic-bezier(0.34, 1.56, 0.64, 1);
+    --font-sans: "Geist", system-ui, -apple-system, sans-serif;
+    --font-mono: "JetBrains Mono", ui-monospace, monospace;
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0; min-height: 100vh; display: flex; align-items: center; justify-content: center;
+    background: var(--background); color: var(--foreground); font-family: var(--font-sans);
+    padding: 24px;
+  }
+  .stage { display: flex; flex-direction: column; gap: 20px; width: 360px; }
+
+  /* ── F1 anatomy: label ─8px─ control ─8px─ help/error ── */
+  .field { display: flex; flex-direction: column; gap: 8px; }
+  .label { font-size: 13px; line-height: 18px; font-weight: 600; color: var(--foreground); }
+  .label .opt { font-weight: 400; color: var(--muted-foreground); }
+  .help { font-size: 12px; line-height: 16px; font-weight: 500; color: var(--muted-foreground); }
+  .error-text {
+    display: flex; align-items: center; gap: 4px;
+    font-size: 12px; line-height: 16px; font-weight: 500; color: var(--error);
+  }
+  .error-text svg { flex: none; }
+
+  /* ── F2 state recipe: bg card · 1px --input · radius 14 · shadow-xs ── */
+  .control {
+    height: 44px; width: 100%; padding: 0 14px;
+    font: 400 16px/24px var(--font-sans); color: var(--foreground);
+    background: var(--card); border: 1px solid var(--input);
+    border-radius: var(--radius); box-shadow: var(--shadow-xs);
+    outline: none;
+    transition: border-color 120ms var(--ease-out), box-shadow 120ms var(--ease-out);
+  }
+  .control::placeholder { color: var(--muted-foreground); }
+  .control:hover:not(:disabled):not(:focus):not([aria-invalid="true"]) {
+    border-color: color-mix(in oklab, var(--foreground) 15%, var(--input));
+  }
+  .control:focus {
+    border-color: var(--ring);
+    box-shadow: 0 0 0 3px color-mix(in oklab, var(--ring) 40%, transparent);
+  }
+  .control:disabled { opacity: 0.4; cursor: not-allowed; }
+  .control[aria-invalid="true"] { border-color: var(--destructive); }
+  .control[aria-invalid="true"]:focus {
+    box-shadow: 0 0 0 3px color-mix(in oklab, var(--destructive) 40%, transparent);
+  }
+
+  /* Loading = skeleton, not a disabled input */
+  .skeleton {
+    height: 44px; border-radius: var(--radius);
+    background: var(--muted); position: relative; overflow: hidden;
+  }
+  .skeleton::after {
+    content: ""; position: absolute; inset: 0; left: -40%; width: 40%;
+    background: linear-gradient(90deg, transparent, rgba(20 20 24 / 0.05), transparent);
+    animation: shimmer 1300ms ease-in-out infinite;
+  }
+  @keyframes shimmer { 0% { left: -40%; } 100% { left: 100%; } }
+
+  .row2 { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
+
+  /* ── F7 toggle row: INK checked fills, 12px control→label gap ── */
+  .toggles { display: flex; flex-direction: column; gap: 12px; padding-top: 4px; border-top: 1px solid var(--border); }
+  .trow { display: flex; align-items: center; gap: 12px; cursor: pointer; user-select: none; }
+  .trow .tlabel { font-size: 14px; line-height: 20px; font-weight: 400; color: var(--foreground); }
+  .trow input { position: absolute; opacity: 0; width: 0; height: 0; }
+
+  .cbox {
+    flex: none; width: 16px; height: 16px; border-radius: 4px;
+    border: 1px solid var(--input); background: transparent;
+    display: grid; place-content: center;
+    transition: background 120ms var(--ease-out), border-color 120ms var(--ease-out);
+  }
+  .cbox svg { opacity: 0; }
+  .trow input:checked + .cbox { background: var(--primary); border-color: var(--primary); }
+  .trow input:checked + .cbox svg { opacity: 1; }
+  .trow input:focus-visible + .cbox,
+  .trow input:focus-visible + .radio,
+  .trow input:focus-visible + .track {
+    border-color: var(--ring);
+    box-shadow: 0 0 0 3px color-mix(in oklab, var(--ring) 40%, transparent);
+  }
+
+  .radio {
+    flex: none; width: 16px; height: 16px; border-radius: 999px;
+    border: 1px solid var(--input); display: grid; place-content: center;
+    transition: border-color 120ms var(--ease-out);
+  }
+  .radio::after {
+    content: ""; width: 8px; height: 8px; border-radius: 999px;
+    background: var(--primary); transform: scale(0.6); opacity: 0;
+    transition: transform 150ms var(--ease-spring), opacity 120ms var(--ease-out);
+  }
+  .trow input:checked + .radio { border-color: var(--primary); }
+  .trow input:checked + .radio::after { transform: scale(1); opacity: 1; }
+
+  .track {
+    flex: none; width: 36px; height: 20px; border-radius: 999px;
+    background: var(--input); border: 1px solid transparent;
+    position: relative; transition: background 120ms var(--ease-out);
+  }
+  .track::after {
+    content: ""; position: absolute; top: 1px; left: 1px;
+    width: 16px; height: 16px; border-radius: 999px;
+    background: var(--card); box-shadow: var(--shadow-xs);
+    transition: transform 150ms var(--ease-spring);
+  }
+  .trow input:checked + .track { background: var(--primary); }
+  .trow input:checked + .track::after { transform: translateX(16px); }
+
+  @media (prefers-reduced-motion: reduce) {
+    .skeleton::after { animation: none; }
+    .control, .cbox, .radio, .radio::after, .track, .track::after { transition: none; }
+  }
+</style>
+
+<div class="stage">
+
+  <!-- Rest + help. Focus it: 1px coral border + 3px ring @ 40%. -->
+  <div class="field">
+    <label class="label" for="f-name">Brand name</label>
+    <input class="control" id="f-name" type="text" placeholder="e.g. Fikirtive" autocomplete="off" />
+    <p class="help">Shown on your public page.</p>
+  </div>
+
+  <!-- Error: red border, error line REPLACES help. Focus keeps 3px ring, red family. -->
+  <div class="field">
+    <label class="label" for="f-email">Email</label>
+    <input class="control" id="f-email" type="email" value="nicksgan@belcort" aria-invalid="true"
+           aria-describedby="f-email-err" />
+    <p class="error-text" id="f-email-err" role="alert">
+      <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round">
+        <circle cx="12" cy="12" r="10"/><line x1="12" y1="8" x2="12" y2="12"/><line x1="12" y1="16" x2="12.01" y2="16"/>
+      </svg>
+      Enter a full email address.
+    </p>
+  </div>
+
+  <!-- Disabled (opacity .4, label stays full-contrast) + loading (skeleton, never a disabled input). -->
+  <div class="row2">
+    <div class="field">
+      <label class="label" for="f-plan">Plan <span class="opt">(optional)</span></label>
+      <input class="control" id="f-plan" type="text" value="Starter" disabled />
+    </div>
+    <div class="field">
+      <span class="label">Workspace</span>
+      <div class="skeleton" aria-hidden="true"></div>
+    </div>
+  </div>
+
+  <!-- F7: checkbox 16/r4 · radio 16 + 8px dot · switch 36×20 — checked = INK, never coral. -->
+  <div class="toggles">
+    <label class="trow">
+      <input type="checkbox" checked />
+      <span class="cbox">
+        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="var(--primary-foreground)" stroke-width="3" stroke-linecap="round" stroke-linejoin="round">
+          <polyline points="20 6 9 17 4 12"/>
+        </svg>
+      </span>
+      <span class="tlabel">Email me when a render finishes</span>
+    </label>
+    <label class="trow">
+      <input type="radio" name="fit" checked />
+      <span class="radio"></span>
+      <span class="tlabel">Fit to frame</span>
+    </label>
+    <label class="trow">
+      <input type="radio" name="fit" />
+      <span class="radio"></span>
+      <span class="tlabel">Crop to fill</span>
+    </label>
+    <label class="trow">
+      <input type="checkbox" role="switch" checked />
+      <span class="track"></span>
+      <span class="tlabel">Auto-save drafts</span>
+    </label>
+  </div>
+
+</div>

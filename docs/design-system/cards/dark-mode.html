@@ -1,0 +1,103 @@
+<!-- @dsCard group="Dark mode" -->
+<!-- Dark mode gold standard — the same components rendered on both grounds from tokens alone.
+     Elevation = lightness (0B0B0C → 131315 → 18181B → 1C1C1F), shadows become borders,
+     coral relights #EC5828 → #F26A3C with ink-on-coral text. All ratios measured. -->
+<div class="dm-card">
+  <style>
+    .dm-card { --radius: 14px; --radius-card: 18px; font-family: "Geist", system-ui, sans-serif; display: grid; grid-template-columns: 1fr 1fr; border-radius: var(--radius-card); overflow: hidden; border: 1px solid #E6E6E3; max-width: 860px; }
+    .dm-pane { padding: 24px; background: var(--background); color: var(--foreground); }
+    /* light tokens */
+    .dm-light { --background:#FCFCFC; --foreground:#0A0A0A; --card:#FFFFFF; --popover:#FFFFFF;
+      --primary:#0A0A0A; --primary-foreground:#FCFCFC; --secondary:#F4F4F3; --muted:#F4F4F3;
+      --muted-foreground:#6E6E68; --accent:#ECECEA; --border:#E6E6E3; --ring:#EC5828;
+      --brand:#EC5828; --brand-foreground:#FFFFFF; --brand-soft:#FBE4D8; --brand-soft-foreground:#9A3A1A;
+      --success-soft:#E7F6EC; --success-soft-foreground:#15803D;
+      --error-soft:#FCE9E9; --error-soft-foreground:#B42B30;
+      --shadow-sm: 0 1px 3px rgba(20 20 24 / 0.06), 0 1px 2px rgba(20 20 24 / 0.05);
+      --shadow-md: 0 6px 16px rgba(20 20 24 / 0.08), 0 2px 6px rgba(20 20 24 / 0.05); }
+    /* dark tokens — .gb.dark verbatim + the six shadow overrides this section adds */
+    .dm-dark { --background:#0B0B0C; --foreground:#FAFAFA; --card:#131315; --popover:#18181B;
+      --primary:#FAFAFA; --primary-foreground:#0B0B0C; --secondary:#1C1C1F; --muted:#161619;
+      --muted-foreground:#A1A1A8; --accent:#1C1C1F; --border:#262629; --ring:#F26A3C;
+      --brand:#F26A3C; --brand-foreground:#0B0B0C; --brand-soft:#3A1E12; --brand-soft-foreground:#F4A585;
+      --success-soft:#122A1B; --success-soft-foreground:#5EE0A0;
+      --error-soft:#2A1011; --error-soft-foreground:#F58E92;
+      --shadow-sm: 0 1px 3px rgba(0 0 0 / 0.45), 0 1px 2px rgba(0 0 0 / 0.35);
+      --shadow-md: 0 6px 16px rgba(0 0 0 / 0.50), 0 2px 6px rgba(0 0 0 / 0.40); }
+    .dm-tag { font-family: "JetBrains Mono", ui-monospace, monospace; font-size: 11px; font-weight: 500; letter-spacing: 0.08em; text-transform: uppercase; color: var(--muted-foreground); margin-bottom: 16px; }
+    .dm-surface { background: var(--card); border: 1px solid var(--border); border-radius: var(--radius-card); box-shadow: var(--shadow-sm); padding: 16px; display: flex; flex-direction: column; gap: 12px; }
+    .dm-title { font-size: 14px; font-weight: 600; letter-spacing: -0.006em; }
+    .dm-meta { font-size: 12px; font-weight: 500; color: var(--muted-foreground); }
+    .dm-row { display: flex; gap: 8px; flex-wrap: wrap; align-items: center; }
+    .dm-btn { height: 36px; padding: 0 14px; border-radius: var(--radius); font-size: 13px; font-weight: 600; letter-spacing: -0.01em; border: 1px solid transparent; cursor: pointer; font-family: inherit; }
+    .dm-btn-primary { background: var(--primary); color: var(--primary-foreground); box-shadow: var(--shadow-sm); }
+    .dm-btn-secondary { background: var(--card); color: var(--foreground); border-color: var(--border); }
+    .dm-btn-otto { background: var(--brand); color: var(--brand-foreground); }
+    .dm-btn-focus { outline: none; box-shadow: 0 0 0 3px color-mix(in oklab, var(--ring) 40%, transparent); }
+    .dm-badge { display: inline-flex; align-items: center; gap: 6px; padding: 4px 10px; border-radius: 999px; font-size: 11.5px; font-weight: 500; }
+    .dm-badge i { width: 5px; height: 5px; border-radius: 99px; background: currentColor; }
+    .dm-badge-ok { background: var(--success-soft); color: var(--success-soft-foreground); }
+    .dm-badge-err { background: var(--error-soft); color: var(--error-soft-foreground); }
+    .dm-badge-otto { background: var(--brand-soft); color: var(--brand-soft-foreground); }
+    .dm-pop { background: var(--popover); border: 1px solid var(--border); border-radius: var(--radius); box-shadow: var(--shadow-md); padding: 10px 12px; font-size: 13px; }
+    .dm-pop b { font-weight: 600; }
+    .dm-ratio { font-family: "JetBrains Mono", ui-monospace, monospace; font-size: 10px; color: var(--muted-foreground); letter-spacing: 0.04em; }
+    .dm-ladder { display: flex; gap: 6px; }
+    .dm-step { flex: 1; height: 34px; border-radius: 8px; border: 1px solid var(--border); display: flex; align-items: flex-end; justify-content: center; padding-bottom: 3px; font-family: "JetBrains Mono", ui-monospace, monospace; font-size: 9px; color: var(--muted-foreground); }
+    @media (max-width: 640px) { .dm-card { grid-template-columns: 1fr; } }
+  </style>
+
+  <div class="dm-pane dm-light">
+    <div class="dm-tag">Light · .gb</div>
+    <div class="dm-surface">
+      <div>
+        <div class="dm-title">Campaign review</div>
+        <div class="dm-meta">Edge = shadow-sm + hairline · muted-fg 5.00:1</div>
+      </div>
+      <div class="dm-row">
+        <button class="dm-btn dm-btn-primary">Publish</button>
+        <button class="dm-btn dm-btn-secondary dm-btn-focus">Preview</button>
+        <button class="dm-btn dm-btn-otto">Otto, fix it</button>
+      </div>
+      <div class="dm-row">
+        <span class="dm-badge dm-badge-ok"><i></i>Live</span>
+        <span class="dm-badge dm-badge-err"><i></i>2 failed</span>
+        <span class="dm-badge dm-badge-otto"><i></i>Otto edited</span>
+      </div>
+      <div class="dm-pop"><b>Popover</b> — same white as card; light elevates by shadow. <span class="dm-ratio">ring 3.42:1</span></div>
+      <div class="dm-ladder">
+        <div class="dm-step" style="background:#FCFCFC">FCFCFC</div>
+        <div class="dm-step" style="background:#FFFFFF">FFFFFF</div>
+        <div class="dm-step" style="background:#F4F4F3">F4F4F3</div>
+        <div class="dm-step" style="background:#ECECEA">ECECEA</div>
+      </div>
+    </div>
+  </div>
+
+  <div class="dm-pane dm-dark">
+    <div class="dm-tag">Dark · .gb.dark</div>
+    <div class="dm-surface">
+      <div>
+        <div class="dm-title">Campaign review</div>
+        <div class="dm-meta">Edge = border + surface step · muted-fg 7.66:1</div>
+      </div>
+      <div class="dm-row">
+        <button class="dm-btn dm-btn-primary">Publish</button>
+        <button class="dm-btn dm-btn-secondary dm-btn-focus">Preview</button>
+        <button class="dm-btn dm-btn-otto">Otto, fix it</button>
+      </div>
+      <div class="dm-row">
+        <span class="dm-badge dm-badge-ok"><i></i>Live</span>
+        <span class="dm-badge dm-badge-err"><i></i>2 failed</span>
+        <span class="dm-badge dm-badge-otto"><i></i>Otto edited</span>
+      </div>
+      <div class="dm-pop"><b>Popover</b> — one step lighter (#18181B); dark elevates by lightness. <span class="dm-ratio">ring 6.47:1</span></div>
+      <div class="dm-ladder">
+        <div class="dm-step" style="background:#0B0B0C">0B0B0C</div>
+        <div class="dm-step" style="background:#131315">131315</div>
+        <div class="dm-step" style="background:#18181B">18181B</div>
+        <div class="dm-step" style="background:#1C1C1F">1C1C1F</div>
+      </div>
+    </div>
+  </div>
+</div>

@@ -1,0 +1,114 @@
+<!-- @dsCard group="Foundations" -->
+<style>
+  .tk-root {
+    /* .gb semantic tokens (mirror of apps/web/app/globals.css .gb — values locked) */
+    --background: #FCFCFC; --foreground: #0A0A0A;
+    --card: #FFFFFF; --secondary: #F4F4F3; --muted-foreground: #6E6E68;
+    --accent: #ECECEA; --border: #E6E6E3;
+    --primary: #0A0A0A; --primary-foreground: #FCFCFC;
+    --brand: #EC5828; --brand-foreground: #FFFFFF;
+    --brand-soft: #FBE4D8; --brand-soft-foreground: #9A3A1A;
+    --error: #E5484D;
+    --radius: 14px; --radius-card: 18px;
+    --shadow-sm: 0 1px 3px rgba(20 20 24 / 0.06), 0 1px 2px rgba(20 20 24 / 0.05);
+    --font-sans: "Geist", system-ui, -apple-system, sans-serif;
+    --font-mono: "JetBrains Mono", ui-monospace, "SF Mono", Menlo, monospace;
+
+    font-family: var(--font-sans);
+    color: var(--foreground);
+    background: var(--background);
+    padding: 24px;
+    border-radius: var(--radius-card);
+  }
+  .tk-title { font-size: 14px; font-weight: 600; letter-spacing: -0.006em; margin: 0 0 4px; }
+  .tk-sub { font-size: 12px; line-height: 16px; font-weight: 500; color: var(--muted-foreground); margin: 0 0 20px; }
+
+  .tk-flow { display: flex; align-items: stretch; gap: 0; }
+  .tk-col { flex: 1; min-width: 0; }
+  .tk-colhead {
+    font-family: var(--font-mono); font-size: 11px; line-height: 14px; font-weight: 500;
+    letter-spacing: 0.08em; text-transform: uppercase; color: var(--muted-foreground);
+    margin-bottom: 10px;
+  }
+  .tk-arrow { flex: none; width: 36px; display: flex; align-items: center; justify-content: center; color: var(--muted-foreground); padding-top: 24px; }
+
+  .tk-cell {
+    background: var(--card); border: 1px solid var(--border); border-radius: var(--radius);
+    box-shadow: var(--shadow-sm); padding: 10px 12px; margin-bottom: 8px;
+    display: flex; align-items: center; gap: 8px; min-height: 44px; box-sizing: border-box;
+  }
+  .tk-swatch { width: 16px; height: 16px; border-radius: 5px; flex: none; border: 1px solid rgba(10 10 10 / 0.08); }
+  .tk-mono { font-family: var(--font-mono); font-size: 11px; line-height: 14px; font-weight: 500; }
+  .tk-dim { color: var(--muted-foreground); }
+
+  .tk-btn {
+    display: inline-flex; align-items: center; justify-content: center;
+    height: 28px; padding: 0 12px; border-radius: 10px; border: none;
+    font-family: var(--font-sans); font-size: 12px; font-weight: 600; letter-spacing: -0.006em;
+    cursor: default;
+  }
+  .tk-btn-brand { background: var(--brand); color: var(--brand-foreground); }
+  .tk-btn-ink { background: var(--primary); color: var(--primary-foreground); }
+  .tk-chip {
+    display: inline-flex; align-items: center; height: 28px; padding: 0 12px;
+    border-radius: 999px; background: var(--accent); color: var(--foreground);
+    font-size: 12px; font-weight: 500;
+  }
+
+  .tk-rule {
+    margin-top: 16px; border-top: 1px solid var(--border); padding-top: 12px;
+    display: flex; align-items: center; gap: 8px; flex-wrap: wrap;
+  }
+  .tk-rule-label { font-size: 12px; font-weight: 600; }
+  .tk-place {
+    font-family: var(--font-mono); font-size: 11px; line-height: 14px; font-weight: 500;
+    background: var(--secondary); border: 1px solid var(--border);
+    border-radius: 999px; padding: 4px 10px;
+  }
+  .tk-rule-note { font-size: 12px; color: var(--muted-foreground); flex-basis: 100%; margin-top: 2px; }
+  .tk-no { color: var(--error); font-weight: 600; }
+</style>
+
+<div class="tk-root">
+  <p class="tk-title">Token architecture — three tiers, one direction</p>
+  <p class="tk-sub">Primitive values are assigned once in the .gb block; components only ever speak the semantic names.</p>
+
+  <div class="tk-flow">
+    <div class="tk-col">
+      <div class="tk-colhead">1 · Primitive</div>
+      <div class="tk-cell"><span class="tk-swatch" style="background:#EC5828"></span><span class="tk-mono">#EC5828</span></div>
+      <div class="tk-cell"><span class="tk-swatch" style="background:#0A0A0A"></span><span class="tk-mono">#0A0A0A</span></div>
+      <div class="tk-cell"><span class="tk-swatch" style="background:#ECECEA"></span><span class="tk-mono">#ECECEA</span></div>
+    </div>
+
+    <div class="tk-arrow" aria-hidden="true">
+      <svg width="16" height="16" viewBox="0 0 16 16" fill="none"><path d="M3 8h9m0 0L8.5 4.5M12 8l-3.5 3.5" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/></svg>
+    </div>
+
+    <div class="tk-col">
+      <div class="tk-colhead">2 · Semantic (.gb)</div>
+      <div class="tk-cell"><span class="tk-mono">--brand</span><span class="tk-mono tk-dim">OTTO only</span></div>
+      <div class="tk-cell"><span class="tk-mono">--primary</span><span class="tk-mono tk-dim">human CTA</span></div>
+      <div class="tk-cell"><span class="tk-mono">--accent</span><span class="tk-mono tk-dim">hover tint</span></div>
+    </div>
+
+    <div class="tk-arrow" aria-hidden="true">
+      <svg width="16" height="16" viewBox="0 0 16 16" fill="none"><path d="M3 8h9m0 0L8.5 4.5M12 8l-3.5 3.5" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/></svg>
+    </div>
+
+    <div class="tk-col">
+      <div class="tk-colhead">3 · Component</div>
+      <div class="tk-cell"><button class="tk-btn tk-btn-brand" type="button">Otto acts</button><span class="tk-mono tk-dim">bg-brand</span></div>
+      <div class="tk-cell"><button class="tk-btn tk-btn-ink" type="button">You act</button><span class="tk-mono tk-dim">bg-primary</span></div>
+      <div class="tk-cell"><span class="tk-chip">Hovered row</span><span class="tk-mono tk-dim">bg-accent</span></div>
+    </div>
+  </div>
+
+  <div class="tk-rule">
+    <span class="tk-rule-label">A new token exists in three places:</span>
+    <span class="tk-place">.gb { light }</span>
+    <span class="tk-place">.gb.dark { dark }</span>
+    <span class="tk-place">@theme inline → bg-*</span>
+    <span class="tk-rule-note">Skip the registration and the utility silently no-ops. <span class="tk-no">Never</span> raw hex in a component; <span class="tk-no">never</span> coral on --accent.</span>
+  </div>
+</div>

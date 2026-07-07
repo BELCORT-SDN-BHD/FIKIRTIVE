@@ -1,0 +1,207 @@
+<!-- @dsCard group="Accessibility" -->
+<!-- Accessibility & motion — the two-layer coral focus ring (1px solid keyline 3.42:1 + 3px 40%
+     halo; 40% alone composites to 1.64:1 = fail), target-size floors (44 touch / 36 pointer,
+     hit-area extension on small visuals), and the coral sweep vs its prefers-reduced-motion
+     fallback (static 2px outline held 600ms — no fade, no tint). Narration bar is role="status". -->
+<style>
+  :root {
+    --background: #FCFCFC; --foreground: #0A0A0A;
+    --card: #FFFFFF; --border: #E6E6E3;
+    --secondary: #F4F4F3; --muted: #F4F4F3; --muted-foreground: #6E6E68;
+    --primary: #0A0A0A; --primary-foreground: #FCFCFC;
+    --brand: #EC5828; --brand-soft: #FBE4D8; --brand-soft-foreground: #9A3A1A;
+    --ring: #EC5828;
+    --radius: 14px; --radius-card: 18px;
+    --shadow-sm: 0 1px 3px rgba(20 20 24 / 0.06), 0 1px 2px rgba(20 20 24 / 0.05);
+    --ease-out: cubic-bezier(0.22, 1, 0.36, 1);
+    --ease-spring: cubic-bezier(0.34, 1.56, 0.64, 1);
+    --font-sans: "Geist", system-ui, -apple-system, sans-serif;
+    --font-mono: "JetBrains Mono", ui-monospace, monospace;
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0; min-height: 100vh; display: flex; align-items: center; justify-content: center;
+    background: var(--background); color: var(--foreground); font-family: var(--font-sans);
+    -webkit-font-smoothing: antialiased; padding: 20px;
+  }
+  .stage { width: 400px; display: flex; flex-direction: column; gap: 12px; }
+
+  .panel {
+    background: var(--card); border: 1px solid var(--border);
+    border-radius: var(--radius-card); padding: 16px; box-shadow: var(--shadow-sm);
+  }
+  .panel h3 {
+    margin: 0 0 12px; font-family: var(--font-mono); font-size: 11px; font-weight: 500;
+    letter-spacing: 0.08em; text-transform: uppercase; color: var(--muted-foreground);
+  }
+  .note { font-size: 12px; line-height: 16px; color: var(--muted-foreground); margin-top: 10px; }
+  .note b { color: var(--foreground); font-weight: 500; }
+
+  /* ── 1. Focus ring anatomy — keyline + halo, cycling on/off ── */
+  .focus-row { display: flex; align-items: center; gap: 16px; }
+  .demo-btn {
+    height: 44px; padding: 0 20px; border: none; border-radius: var(--radius);
+    background: var(--primary); color: var(--primary-foreground);
+    font: 600 14px/20px var(--font-sans); letter-spacing: -0.006em; cursor: default;
+    outline: 2px solid transparent; outline-offset: 2px;
+    transition: box-shadow 120ms var(--ease-out);
+  }
+  .demo-btn.ringed {
+    box-shadow: 0 0 0 1px var(--ring),
+                0 0 0 4px color-mix(in oklab, var(--ring) 40%, transparent);
+  }
+  .ring-legend { font-size: 12px; line-height: 18px; color: var(--muted-foreground); }
+  .ring-legend .k { color: var(--foreground); font-weight: 500; }
+  .ring-legend .ratio { font-family: var(--font-mono); font-size: 11px; }
+  .pass { color: #15803D; } .fail { color: #B42B30; }
+
+  /* ── 2. Target floor — small visual, 44px hit area ── */
+  .target-row { display: flex; align-items: center; gap: 24px; }
+  .hit-demo { position: relative; width: 44px; height: 44px; flex: none; }
+  .hit-outline {
+    position: absolute; inset: 0; border: 1px dashed var(--brand);
+    border-radius: 10px; opacity: 0.6;
+  }
+  .hit-visual {
+    position: absolute; top: 50%; left: 50%; transform: translate(-50%, -50%);
+    width: 30px; height: 30px; border-radius: 50%; border: 1px solid var(--border);
+    background: var(--card); box-shadow: var(--shadow-sm);
+    display: flex; align-items: center; justify-content: center;
+  }
+  .hit-visual svg { display: block; }
+
+  /* ── 3. Sweep vs reduced-motion fallback ── */
+  .sweep-row { display: flex; gap: 12px; }
+  .sweep-cell { flex: 1; }
+  .sweep-label {
+    font-family: var(--font-mono); font-size: 10px; letter-spacing: 0.08em;
+    text-transform: uppercase; color: var(--muted-foreground); margin-bottom: 6px;
+  }
+  .sweep-card {
+    height: 56px; border-radius: var(--radius); border: 1px solid var(--border);
+    background: var(--card); padding: 10px 12px;
+    display: flex; flex-direction: column; justify-content: center; gap: 4px;
+  }
+  .sweep-line1 { width: 70%; height: 8px; border-radius: 4px; background: var(--secondary); }
+  .sweep-line2 { width: 45%; height: 8px; border-radius: 4px; background: var(--secondary); }
+  /* full motion: ring + tint fade out over 600ms, one-shot */
+  .sweep-card.sweeping {
+    animation: sweep-fade 600ms var(--ease-out) forwards;
+  }
+  @keyframes sweep-fade {
+    0% {
+      box-shadow: 0 0 0 2px color-mix(in oklab, var(--brand) 55%, transparent);
+      background: color-mix(in oklab, var(--brand-soft) 60%, var(--card));
+    }
+    100% { box-shadow: 0 0 0 2px transparent; background: var(--card); }
+  }
+  /* reduced motion: static outline, held, then removed — zero animation, zero tint */
+  .sweep-card.static-marked {
+    box-shadow: 0 0 0 2px color-mix(in oklab, var(--brand) 55%, transparent);
+  }
+
+  /* ── narration bar (role="status") announcing the sweep ── */
+  .narration {
+    display: flex; align-items: center; gap: 8px;
+    padding: 8px 12px; border: 1px solid var(--border); border-radius: 999px;
+    background: var(--card); box-shadow: var(--shadow-sm);
+  }
+  .narration svg { flex: none; }
+  .narration span { font-size: 13px; line-height: 18px; font-weight: 500; color: var(--muted-foreground); }
+
+  @media (prefers-reduced-motion: reduce) {
+    * { animation-duration: 0.01ms !important; animation-iteration-count: 1 !important;
+        transition-duration: 0.01ms !important; }
+  }
+</style>
+
+<div class="stage">
+
+  <!-- 1. focus ring -->
+  <div class="panel">
+    <h3>Focus ring — two layers</h3>
+    <div class="focus-row">
+      <button class="demo-btn" id="focusBtn" tabindex="-1" aria-hidden="true">Save</button>
+      <div class="ring-legend">
+        <div><span class="k">1px solid --ring</span> <span class="ratio pass">3.42:1 ✓</span> keyline</div>
+        <div><span class="k">3px halo, 40%</span> <span class="ratio fail">1.64:1 alone ✗</span> warmth</div>
+      </div>
+    </div>
+    <div class="note"><b>:focus-visible only</b> — mouse clicks never ring. Halo needs the keyline to pass 3:1.</div>
+  </div>
+
+  <!-- 2. target sizes -->
+  <div class="panel">
+    <h3>Target floor — 44 touch / 36 pointer</h3>
+    <div class="target-row">
+      <div class="hit-demo">
+        <div class="hit-outline"></div>
+        <div class="hit-visual" aria-hidden="true">
+          <svg width="12" height="12" viewBox="0 0 12 12"><path d="M3 1.5 L9.5 6 L3 10.5 Z" fill="var(--foreground)"/></svg>
+        </div>
+      </div>
+      <div class="ring-legend">
+        <div><span class="k">30px visual</span> — the canvas play button</div>
+        <div><span class="k">44px hit area</span> via <span class="ratio">::after inset −7px</span></div>
+      </div>
+    </div>
+    <div class="note">Absolute floor <b>24×24</b> (WCAG 2.2). Switches ride a clickable 44px-tall label row.</div>
+  </div>
+
+  <!-- 3. sweep vs reduced motion -->
+  <div class="panel">
+    <h3>Coral sweep vs reduced motion</h3>
+    <div class="sweep-row">
+      <div class="sweep-cell">
+        <div class="sweep-label">Full — fades ≤600ms</div>
+        <div class="sweep-card" id="sweepFull">
+          <div class="sweep-line1"></div><div class="sweep-line2"></div>
+        </div>
+      </div>
+      <div class="sweep-cell">
+        <div class="sweep-label">Reduced — static, held 600ms</div>
+        <div class="sweep-card" id="sweepStatic">
+          <div class="sweep-line1"></div><div class="sweep-line2"></div>
+        </div>
+      </div>
+    </div>
+    <div style="margin-top: 12px;">
+      <div class="narration" role="status">
+        <svg width="20" height="18" viewBox="0 0 120 110" role="img" aria-label="Otto">
+          <g fill="var(--brand)">
+            <ellipse cx="60" cy="64" rx="43" ry="22"/><circle cx="37" cy="52" r="18"/>
+            <circle cx="61" cy="40" r="24"/><circle cx="85" cy="53" r="17"/>
+          </g>
+          <g fill="#2B1308"><circle cx="55" cy="49" r="4"/><circle cx="70" cy="49" r="4"/></g>
+        </svg>
+        <span id="narrText">Updating scene 4…</span>
+      </div>
+    </div>
+    <div class="note">The sweep is <b>aria-silent</b> — the <b>role="status"</b> bar is its text twin. JS motion gates on <span class="ring-legend ratio">matchMedia(prefers-reduced-motion)</span>.</div>
+  </div>
+
+</div>
+
+<script>
+  // Loop: focus ring on/off · both sweeps fire together · narration text swaps in place.
+  const focusBtn = document.getElementById("focusBtn");
+  const full = document.getElementById("sweepFull");
+  const stat = document.getElementById("sweepStatic");
+  const narr = document.getElementById("narrText");
+  let phase = 0;
+  function tick() {
+    phase = (phase + 1) % 4;
+    focusBtn.classList.toggle("ringed", phase % 2 === 1);
+    if (phase === 1) {
+      narr.textContent = "Updating scene 4…";
+      // full-motion sweep: one-shot animation
+      full.classList.remove("sweeping"); void full.offsetWidth; full.classList.add("sweeping");
+      // reduced-motion path: static outline, held 600ms, removed by timeout — no animation
+      stat.classList.add("static-marked");
+      setTimeout(() => stat.classList.remove("static-marked"), 600);
+    }
+    if (phase === 3) narr.textContent = "Done — scene 4 updated";
+  }
+  setInterval(tick, 1600);
+  tick();
+</script>

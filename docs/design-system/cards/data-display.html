@@ -1,0 +1,155 @@
+<!-- @dsCard group="Data display" -->
+<!-- Data display gold standard — stat card (26/700 value, delta + muted basis), chart panel
+     (ink line 2.2px, 3 horizontal gridlines, coral peaks = Otto-flagged only), hairline list
+     rows (numeric right + tabular-nums, mono ids, — for missing). Cycles ready → refreshing
+     (opacity .6, data kept) → empty (— values, one muted line, flat baseline). -->
+<style>
+  :root {
+    --background: #FCFCFC; --foreground: #0A0A0A;
+    --card: #FFFFFF; --border: #E6E6E3;
+    --secondary: #F4F4F3; --accent: #ECECEA;
+    --muted: #F4F4F3; --muted-foreground: #6E6E68;
+    --brand: #EC5828;
+    --success-soft-foreground: #15803D;
+    --data-label: #86867F;
+    --chart-ink: #0A0A0A; --chart-compare: #A6A6A0;
+    --chart-grid: #F4F4F2; --chart-axis: #EFEFED;
+    --chart-peak: var(--brand);
+    --shadow-md: 0 6px 16px rgba(20 20 24 / 0.08), 0 2px 6px rgba(20 20 24 / 0.05);
+    --ease-out: cubic-bezier(0.22, 1, 0.36, 1);
+    --font-sans: "Geist", system-ui, -apple-system, sans-serif;
+    --font-mono: "JetBrains Mono", ui-monospace, monospace;
+  }
+  body {
+    margin: 0; min-height: 100vh; display: flex; align-items: center; justify-content: center;
+    background: var(--background); color: var(--foreground); font-family: var(--font-sans);
+    -webkit-font-smoothing: antialiased;
+  }
+  .stage { width: 380px; display: flex; flex-direction: column; gap: 12px; }
+
+  /* Stat card — 14px radius, p15, label 12/500 data-label, value 26/700 −0.02em tabular. */
+  .kpis { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
+  .kpi { background: var(--card); border: 1px solid var(--border); border-radius: 14px; padding: 15px; }
+  .kl { font-size: 12px; font-weight: 500; color: var(--data-label); }
+  .kv { font-size: 26px; font-weight: 700; letter-spacing: -0.02em; margin-top: 4px; font-variant-numeric: tabular-nums; }
+  .kd { font-size: 12px; font-weight: 600; margin-top: 5px; color: var(--success-soft-foreground); }
+  .kd .basis { color: var(--data-label); font-weight: 500; }
+
+  /* Chart panel — title 14/600, basis 12 data-label, ink line, coral peaks. */
+  .panel { background: var(--card); border: 1px solid var(--border); border-radius: 18px; padding: 18px; }
+  .pt { font-size: 14px; font-weight: 600; }
+  .ps { font-size: 12px; color: var(--data-label); margin-top: 2px; }
+  .panel svg { width: 100%; height: 96px; margin-top: 10px; display: block; }
+
+  /* Hairline list rows — numeric right, mono id, hover --accent 120ms. */
+  .row {
+    display: flex; align-items: center; gap: 12px; padding: 12px 0;
+    border-top: 1px solid var(--border);
+    transition: background 120ms var(--ease-out);
+  }
+  .rows { margin-top: 6px; }
+  .row:hover { background: var(--accent); }
+  .rn { flex: 1; min-width: 0; }
+  .rname { font-size: 14px; font-weight: 600; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .rid { font-family: var(--font-mono); font-size: 12px; color: var(--muted-foreground); margin-top: 1px; }
+  .rm { text-align: right; }
+  .rmv { font-size: 14px; font-weight: 600; font-variant-numeric: tabular-nums; }
+  .rmv.dash { color: var(--data-label); font-weight: 500; }
+  .rml { font-size: 11px; font-weight: 500; text-transform: uppercase; letter-spacing: 0.03em; color: var(--data-label); }
+  .badge {
+    display: inline-block; font-size: 10px; font-weight: 600; padding: 2px 7px; border-radius: 999px;
+    background: #E7F6EC; color: var(--success-soft-foreground); margin-left: 6px; vertical-align: 1px;
+  }
+  .stamp {
+    float: right; font-size: 11px; font-weight: 500; color: var(--data-label);
+    background: var(--muted); border-radius: 7px; padding: 3px 8px;
+  }
+  .emptyline { font-size: 13px; color: var(--muted-foreground); padding: 12px 0 2px; display: none; }
+
+  /* Refreshing: keep the data, dim the body — never blank, never a spinner. */
+  .body { transition: opacity 200ms var(--ease-out); }
+  .stage.refreshing .body { opacity: 0.6; }
+  .stage.empty .rows, .stage.empty .peaks { display: none; }
+  .stage.empty .emptyline { display: block; }
+
+  .cap { font-size: 12px; line-height: 16px; color: var(--muted-foreground); text-align: center; }
+  .cap b { font-weight: 600; color: var(--foreground); }
+</style>
+
+<div class="stage" id="stage">
+  <div class="body">
+    <div class="kpis">
+      <div class="kpi"><div class="kl">Reach</div><div class="kv" data-v="48.2K">48.2K</div>
+        <div class="kd" data-live>▲ 18% <span class="basis">vs prev. period</span></div></div>
+      <div class="kpi"><div class="kl">Engagement</div><div class="kv" data-v="3,140">3,140</div>
+        <div class="kd" data-live>▲ 9% <span class="basis">vs prev. period</span></div></div>
+    </div>
+
+    <div class="panel" style="margin-top:12px">
+      <span class="stamp">via Meta · read-only</span>
+      <div class="pt">Reach over time</div>
+      <div class="ps">Last 30 days</div>
+      <svg viewBox="0 0 340 100">
+        <defs>
+          <linearGradient id="fill" x1="0" y1="0" x2="0" y2="1">
+            <stop offset="0" stop-color="var(--chart-ink)" stop-opacity="0.10"/>
+            <stop offset="1" stop-color="var(--chart-ink)" stop-opacity="0"/>
+          </linearGradient>
+        </defs>
+        <line x1="0" y1="84" x2="340" y2="84" stroke="var(--chart-axis)"/>
+        <line x1="0" y1="56" x2="340" y2="56" stroke="var(--chart-grid)"/>
+        <line x1="0" y1="28" x2="340" y2="28" stroke="var(--chart-grid)"/>
+        <g class="series">
+          <path d="M0 72 C 28 66, 40 52, 58 55 S 92 38, 110 52 S 146 60, 168 32 S 208 48, 230 42 S 266 20, 288 34 S 326 14, 340 22 L 340 84 L 0 84 Z" fill="url(#fill)"/>
+          <path d="M0 72 C 28 66, 40 52, 58 55 S 92 38, 110 52 S 146 60, 168 32 S 208 48, 230 42 S 266 20, 288 34 S 326 14, 340 22" fill="none" stroke="var(--chart-ink)" stroke-width="2.2"/>
+          <g class="peaks">
+            <circle cx="168" cy="32" r="4" fill="var(--chart-peak)"/>
+            <circle cx="288" cy="34" r="4" fill="var(--chart-peak)"/>
+            <circle cx="340" cy="22" r="4" fill="var(--chart-peak)"/>
+          </g>
+        </g>
+      </svg>
+
+      <div class="rows">
+        <div class="row" style="border-top:none">
+          <div class="rn"><div class="rname">Autumn menu — reel<span class="badge">Best</span></div>
+            <div class="rid">ad_84f2c1 · Jun 26</div></div>
+          <div class="rm"><div class="rmv">21.4K</div><div class="rml">reach</div></div>
+        </div>
+        <div class="row">
+          <div class="rn"><div class="rname">Fresh croissants</div>
+            <div class="rid">ad_19b7e0 · Jun 24</div></div>
+          <div class="rm"><div class="rmv dash">—</div><div class="rml">roas</div></div>
+        </div>
+      </div>
+      <div class="emptyline">No activity in this period yet.</div>
+    </div>
+  </div>
+
+  <div class="cap" id="cap"><b>Ready</b> · ink data, coral = what Otto will speak to.</div>
+</div>
+
+<script>
+  // Cycle the three per-panel states: ready → refreshing (dim, data kept) → empty (—, one line).
+  const stage = document.getElementById("stage");
+  const cap = document.getElementById("cap");
+  const values = [...document.querySelectorAll(".kv")];
+  const deltas = [...document.querySelectorAll("[data-live]")];
+  const states = [
+    { cls: "", cap: "<b>Ready</b> · ink data, coral = what Otto will speak to." },
+    { cls: "refreshing", cap: "<b>Refreshing</b> · old data stays at opacity .6 — never a blank, never a spinner." },
+    { cls: "empty", cap: "<b>Empty</b> · values render — (missing ≠ zero), one muted line, flat baseline." },
+  ];
+  let i = 0;
+  function apply() {
+    const s = states[i];
+    stage.className = "stage" + (s.cls ? " " + s.cls : "");
+    const empty = s.cls === "empty";
+    values.forEach(v => { v.textContent = empty ? "—" : v.dataset.v; });
+    deltas.forEach(d => { d.style.visibility = empty ? "hidden" : "visible"; });
+    cap.innerHTML = s.cap;
+    i = (i + 1) % states.length;
+  }
+  apply();
+  setInterval(apply, 2600);
+</script>

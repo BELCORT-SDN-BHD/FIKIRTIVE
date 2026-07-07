@@ -1,0 +1,107 @@
+<!-- @dsCard group="Voice" -->
+<style>
+  .gb-voice {
+    --background: #FCFCFC;
+    --foreground: #0A0A0A;
+    --card: #FFFFFF;
+    --secondary: #F4F4F3;
+    --muted-foreground: #6E6E68;
+    --border: #E6E6E3;
+    --brand: #EC5828;
+    --brand-soft: #FBE4D8;
+    --error: #E5484D;
+    --success: #16A34A;
+    --error-soft: #FDE7E8;
+    --radius: 14px;
+    --radius-card: 18px;
+    --shadow-sm: 0 1px 3px rgba(20,20,24,.06), 0 1px 2px rgba(20,20,24,.05);
+    font-family: "Geist", -apple-system, "Segoe UI", Roboto, sans-serif;
+    background: var(--background);
+    color: var(--foreground);
+    padding: 24px;
+    border-radius: var(--radius-card);
+    max-width: 680px;
+    font-size: 14px;
+    line-height: 20px;
+    letter-spacing: -0.006em;
+  }
+  .gb-voice * { box-sizing: border-box; margin: 0; }
+  .gb-voice h3 { font-size: 18px; line-height: 24px; font-weight: 600; letter-spacing: -0.012em; margin-bottom: 4px; }
+  .gb-voice .sub { font-size: 13px; line-height: 18px; color: var(--muted-foreground); margin-bottom: 20px; }
+  .gb-voice .grid { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; }
+  .gb-voice .pair-label { font-family: "JetBrains Mono", ui-monospace, monospace; font-size: 11px; line-height: 14px; font-weight: 500; letter-spacing: 0.08em; text-transform: uppercase; margin-bottom: 8px; }
+  .gb-voice .no .pair-label { color: var(--error); }
+  .gb-voice .yes .pair-label { color: var(--success); }
+  .gb-voice .demo { background: var(--card); border: 1px solid var(--border); border-radius: var(--radius); padding: 16px; box-shadow: var(--shadow-sm); min-height: 92px; }
+  .gb-voice .section { font-size: 12px; line-height: 16px; font-weight: 500; color: var(--muted-foreground); margin: 24px 0 8px; }
+  .gb-voice .err-title { font-weight: 600; margin-bottom: 4px; }
+  .gb-voice .muted { color: var(--muted-foreground); font-size: 13px; line-height: 18px; }
+  .gb-voice .btn { display: inline-block; margin-top: 12px; font-size: 14px; font-weight: 600; padding: 8px 20px; border-radius: var(--radius); background: var(--foreground); color: var(--background); border: none; cursor: default; }
+  .gb-voice .btn-soft { background: var(--secondary); color: var(--foreground); }
+  .gb-voice .narr { display: flex; align-items: center; gap: 8px; margin-top: 8px; background: var(--card); border: 1px solid var(--border); border-radius: 999px; padding: 8px 16px; box-shadow: var(--shadow-sm); width: fit-content; }
+  .gb-voice .otto-dot { width: 20px; height: 20px; border-radius: 50%; background: var(--brand); position: relative; flex: none; animation: gbv-bob 1.4s ease-in-out infinite; }
+  .gb-voice .otto-dot::before, .gb-voice .otto-dot::after { content: ""; position: absolute; top: 7px; width: 3px; height: 5px; border-radius: 2px; background: #FCFCFC; }
+  .gb-voice .otto-dot::before { left: 6px; } .gb-voice .otto-dot::after { right: 6px; }
+  .gb-voice .narr-text { font-size: 13px; line-height: 18px; color: var(--muted-foreground); }
+  @keyframes gbv-bob { 0%,100% { transform: translateY(0); } 50% { transform: translateY(-2px); } }
+  @media (prefers-reduced-motion: reduce) { .gb-voice .otto-dot { animation: none; } }
+</style>
+<div class="gb-voice">
+  <h3>Voice &amp; microcopy</h3>
+  <div class="sub">Professional enough to trust with money, warm enough to never scare. Sentence case, no em-dashes, credits always.</div>
+
+  <div class="section">Error: what happened · stakes · what now. Never blame.</div>
+  <div class="grid">
+    <div class="no">
+      <div class="pair-label">Don't</div>
+      <div class="demo">
+        <div class="err-title">ERROR: Generation Failed (500)</div>
+        <div class="muted">Invalid request — please try again later!</div>
+      </div>
+    </div>
+    <div class="yes">
+      <div class="pair-label">Do</div>
+      <div class="demo">
+        <div class="err-title">Generation failed</div>
+        <div class="muted">You weren't charged.</div>
+        <button class="btn btn-soft">Try again</button>
+      </div>
+    </div>
+  </div>
+
+  <div class="section">Empty state: fact + invitation naming the next action.</div>
+  <div class="grid">
+    <div class="no">
+      <div class="pair-label">Don't</div>
+      <div class="demo"><div class="muted">It's a little lonely in here…</div></div>
+    </div>
+    <div class="yes">
+      <div class="pair-label">Do</div>
+      <div class="demo"><div>No posts yet. Add one or ask Otto to plan your week.</div></div>
+    </div>
+  </div>
+
+  <div class="section">Money: exact cost on the button. Never $, never a surprise.</div>
+  <div class="grid">
+    <div class="no">
+      <div class="pair-label">Don't</div>
+      <div class="demo">
+        <div class="muted">Ready to go?</div>
+        <button class="btn">Generate ($2.00)</button>
+      </div>
+    </div>
+    <div class="yes">
+      <div class="pair-label">Do</div>
+      <div class="demo">
+        <div class="muted">Cost: 20 credits. No charge until you confirm.</div>
+        <button class="btn">Confirm generate · 20 credits</button>
+      </div>
+    </div>
+  </div>
+
+  <div class="section">Otto narration: 2–4 words, present tense, no "I", one line per screen.</div>
+  <div class="narr">
+    <span class="otto-dot"></span>
+    <span class="narr-text">Laying out the storyboard…</span>
+  </div>
+</div>

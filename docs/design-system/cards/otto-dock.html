@@ -1,147 +1,238 @@
-<!-- @dsCard group="Live reflection" -->
-<!-- Persistent Otto dock — bottom-right. Collapsed: 48px circle, live mood, coral badge when acting. Expanded: 320px panel, radius 24, narration header + recent actions. Never covers a primary CTA. -->
+<!-- @dsCard group="Otto" -->
+<!-- Otto presence — the dock: 48px collapsed circle (tier-2 shadow, live mood, 8px badge
+     pulsing only for off-surface work), 320px expanded panel (narration header + neutral
+     rows + Open Otto footer). Coral budget: chrome + live activity only. -->
 <style>
   :root {
     --background: #FCFCFC; --foreground: #0A0A0A;
-    --card: #FFFFFF; --border: #E6E6E3;
-    --secondary: #F4F4F3; --muted-foreground: #6E6E68;
-    --brand: #EC5828; --brand-soft: #FBE4D8; --brand-soft-foreground: #9A3A1A;
-    --primary: #0A0A0A; --primary-foreground: #FCFCFC;
-    --radius: 0.875rem; --radius-modal: 1.5rem;
+    --card: #FFFFFF; --popover: #FFFFFF; --border: #E6E6E3;
+    --secondary: #F4F4F3; --accent: #ECECEA; --muted-foreground: #6E6E68;
+    --brand: #EC5828; --brand-soft: #FBE4D8;
+    --success: #16A34A;
+    --radius: 14px; --radius-modal: 24px;
     --shadow-md: 0 6px 16px rgba(20 20 24 / 0.08), 0 2px 6px rgba(20 20 24 / 0.05);
-    --shadow-lg: 0 14px 34px rgba(20 20 24 / 0.10);
-    --dur-3: 200ms;
+    --shadow-xl: 0 26px 60px rgba(20 20 24 / 0.12), 0 8px 20px rgba(20 20 24 / 0.07);
+    --ease-out: cubic-bezier(0.22, 1, 0.36, 1);
     --ease-spring: cubic-bezier(0.34, 1.56, 0.64, 1);
     --font-sans: "Geist", system-ui, -apple-system, sans-serif;
     --font-mono: "JetBrains Mono", ui-monospace, monospace;
   }
+  * { box-sizing: border-box; }
   body {
     margin: 0; min-height: 100vh; display: flex; align-items: center; justify-content: center;
     background: var(--background); color: var(--foreground); font-family: var(--font-sans);
+    padding: 20px;
   }
-  .stage { display: flex; flex-direction: column; gap: 12px; }
+  .stage { display: flex; flex-direction: column; gap: 12px; width: 420px; }
 
-  /* Mock app frame so the bottom-right placement reads. */
-  .frame {
-    position: relative; width: 420px; height: 340px; overflow: hidden;
-    background: var(--secondary); border: 1px solid var(--border); border-radius: 16px;
+  /* mock screen the dock lives on */
+  .viewport {
+    position: relative; height: 320px; overflow: hidden;
+    background: var(--secondary); border: 1px solid var(--border); border-radius: 18px;
   }
-  .ghost { position: absolute; background: var(--card); border: 1px solid var(--border); border-radius: 12px; }
-  .cta {
-    position: absolute; left: 16px; bottom: 16px;
-    background: var(--primary); color: var(--primary-foreground);
-    font-size: 13px; font-weight: 600; letter-spacing: -0.006em;
-    border-radius: var(--radius); padding: 10px 18px;
+  .triggers { position: absolute; top: 12px; left: 12px; display: flex; gap: 6px; flex-wrap: wrap; }
+  .btn {
+    font: 600 13px/1 var(--font-sans); letter-spacing: -0.01em;
+    border: 1px solid var(--border); background: var(--card); color: var(--foreground);
+    border-radius: 10px; padding: 8px 12px; cursor: pointer;
+    transition: background 120ms var(--ease-out), transform 150ms var(--ease-spring);
   }
+  .btn:hover { background: var(--accent); }
+  .btn:active { transform: scale(0.985); }
 
-  /* THE PATTERN — dock, bottom-right, 16px inset, transform-origin bottom-right. */
+  /* ── collapsed dock: 48px circle, 16px inset, tier-2 shadow ── */
   .dock {
-    position: absolute; right: 16px; bottom: 16px;
-    transform-origin: bottom right;
-    transition: width var(--dur-3) var(--ease-spring), height var(--dur-3) var(--ease-spring),
-                border-radius var(--dur-3) var(--ease-spring);
-    background: var(--card); border: 1px solid var(--border);
-    overflow: hidden; box-sizing: border-box;
+    position: absolute; right: 16px; bottom: 16px; z-index: 60;
+    width: 48px; height: 48px; border-radius: 999px;
+    background: var(--card); border: 1px solid var(--border); box-shadow: var(--shadow-md);
+    display: flex; align-items: center; justify-content: center; cursor: pointer; padding: 0;
+    transition: background 120ms var(--ease-out), transform 150ms var(--ease-spring);
   }
-  .dock.collapsed { width: 48px; height: 48px; border-radius: 999px; box-shadow: var(--shadow-md); cursor: pointer; }
-  .dock.expanded  { width: 280px; height: 244px; border-radius: var(--radius-modal); box-shadow: var(--shadow-lg); }
+  .dock:hover { background: var(--accent); }
+  .dock:active { transform: scale(0.96); }
+  .dock:focus-visible { outline: none; box-shadow: var(--shadow-md), 0 0 0 3px color-mix(in oklab, var(--brand) 35%, transparent); }
 
-  .face { position: absolute; inset: 0; display: flex; align-items: center; justify-content: center; transition: opacity 150ms ease; }
+  /* badge: 8px coral dot, 2px background ring; halo pulses only while working off-surface */
   .badge {
-    position: absolute; top: 7px; right: 7px; width: 8px; height: 8px; border-radius: 99px;
-    background: var(--brand); animation: badge-pulse 2s ease-in-out infinite;
+    position: absolute; top: -2px; right: -2px; width: 8px; height: 8px; border-radius: 999px;
+    background: var(--brand); box-shadow: 0 0 0 2px var(--background); display: none;
   }
-  @keyframes badge-pulse { 0%, 100% { opacity: 1; } 50% { opacity: 0.35; } }
+  .dock.working .badge, .dock.unseen .badge { display: block; }
+  .dock.working .badge::after {
+    content: ""; position: absolute; inset: -2px; border-radius: 999px;
+    background: var(--brand); opacity: 0; animation: halo 2000ms var(--ease-out) infinite;
+  }
+  @keyframes halo { 0% { transform: scale(1); opacity: .6; } 100% { transform: scale(1.8); opacity: 0; } }
 
-  .panel { position: absolute; inset: 0; display: flex; flex-direction: column; opacity: 0; transition: opacity 150ms ease 60ms; }
-  .head { display: flex; align-items: center; gap: 8px; padding: 12px 16px 8px; }
-  .head .who { font-size: 13px; line-height: 18px; font-weight: 500; color: var(--muted-foreground); flex: 1; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-  .head .steps { font-family: var(--font-mono); font-size: 11px; letter-spacing: 0.08em; color: var(--muted-foreground); }
-  .list { flex: 1; padding: 0 8px; overflow: hidden; }
-  .row { display: flex; align-items: baseline; gap: 8px; padding: 8px; border-radius: 10px; font-size: 12px; line-height: 16px; }
-  .row:hover { background: var(--secondary); }
-  .row .what { flex: 1; color: var(--foreground); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-  .row .when { font-family: var(--font-mono); font-size: 11px; color: var(--muted-foreground); }
-  .row .dot { width: 6px; height: 6px; border-radius: 99px; background: var(--brand); flex: none; align-self: center; }
-  .foot { padding: 8px 16px 12px; border-top: 1px solid var(--border); }
-  .foot a { font-size: 12px; font-weight: 600; color: var(--brand-soft-foreground); text-decoration: none; }
+  /* ── expanded panel: 320w, radius 24, tier-3, origin bottom-right ── */
+  .panel {
+    position: absolute; right: 16px; bottom: 16px; z-index: 60;
+    width: 320px; max-height: 480px; border-radius: var(--radius-modal);
+    background: var(--popover); border: 1px solid var(--border); box-shadow: var(--shadow-xl);
+    display: none; flex-direction: column; overflow: hidden;
+    transform-origin: bottom right;
+  }
+  .panel.open { display: flex; animation: pop 200ms var(--ease-spring); }
+  @keyframes pop { from { opacity: 0; transform: scale(0.96); } }
 
-  .dock.collapsed .panel { opacity: 0; pointer-events: none; }
-  .dock.expanded .panel { opacity: 1; }
-  .dock.expanded .face { opacity: 0; }
-  .dock.expanded .badge { display: none; }
+  .head {
+    display: flex; align-items: center; gap: 10px; height: 56px; padding: 0 16px;
+    border-bottom: 1px solid var(--border); flex: none;
+  }
+  .head-line { flex: 1; min-width: 0; font: 500 13px/18px var(--font-sans); color: var(--muted-foreground); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  /* 5px coral gen bar — the .cv-gen-bar recipe at 64px */
+  .genbar { width: 64px; height: 5px; border-radius: 99px; background: var(--border); position: relative; overflow: hidden; flex: none; display: none; }
+  .genbar::after {
+    content: ""; position: absolute; top: 0; left: -40%; height: 100%; width: 40%;
+    border-radius: 99px; background: var(--brand); animation: slide 1.3s ease-in-out infinite;
+  }
+  @keyframes slide { 0% { left: -40%; } 100% { left: 100%; } }
+  .panel.working .genbar { display: block; }
+
+  .rows { overflow-y: auto; padding: 6px; display: flex; flex-direction: column; }
+  .row {
+    display: flex; align-items: center; gap: 10px; padding: 10px 12px; border-radius: 10px;
+    cursor: pointer; transition: background 120ms var(--ease-out); border: none; background: none;
+    font-family: var(--font-sans); text-align: left; width: 100%;
+  }
+  .row:hover { background: var(--accent); }
+  .row-txt { flex: 1; min-width: 0; font: 400 13px/18px var(--font-sans); color: var(--foreground); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .row-ts { font: 500 12px/16px var(--font-sans); color: var(--muted-foreground); flex: none; }
+  .empty { padding: 18px 12px; font: 400 13px/18px var(--font-sans); color: var(--muted-foreground); }
+
+  .foot {
+    flex: none; height: 44px; display: flex; align-items: center; padding: 0 16px;
+    border-top: 1px solid var(--border); font: 600 13px/18px var(--font-sans);
+    cursor: pointer; transition: background 120ms var(--ease-out); background: none; border-left: none; border-right: none; border-bottom: none; width: 100%; color: var(--foreground);
+  }
+  .foot:hover { background: var(--accent); }
+
+  /* otto avatar (coral cloud, no mouth) */
+  .otto { display: inline-flex; flex: none; }
+  .otto.bob { animation: bob 1.4s ease-in-out infinite alternate; filter: drop-shadow(0 3px 10px color-mix(in oklab, var(--brand) 45%, transparent)); }
+  @keyframes bob { from { transform: translateY(0); } to { transform: translateY(-3px); } }
+
+  .caption { font: 500 12px/16px var(--font-sans); color: var(--muted-foreground); }
+  .caption code { font: 500 11px/14px var(--font-mono); }
 
   @media (prefers-reduced-motion: reduce) {
-    .dock, .panel, .face { transition: none; }
-    .badge { animation: none; }
+    .dock.working .badge::after, .genbar::after, .otto.bob { animation: none; }
+    .panel.open { animation: none; }
   }
-  .cap { font-size: 12px; line-height: 16px; color: var(--muted-foreground); text-align: center; max-width: 420px; }
-  .cap b { color: var(--brand); font-weight: 600; }
 </style>
 
 <div class="stage">
-  <div class="frame">
-    <div class="ghost" style="left:16px; top:16px; width:180px; height:12px;"></div>
-    <div class="ghost" style="left:16px; top:40px; width:120px; height:12px;"></div>
-    <div class="ghost" style="left:16px; top:72px; width:184px; height:110px;"></div>
-    <div class="ghost" style="left:216px; top:72px; width:184px; height:110px;"></div>
-    <div class="cta">New project</div>
+  <div class="viewport">
+    <div class="triggers">
+      <button class="btn" id="startBtn" type="button">Otto starts off-surface work</button>
+      <button class="btn" id="settleBtn" type="button" disabled>Settle</button>
+    </div>
 
-    <div class="dock collapsed" id="dock" role="button" aria-label="Otto">
+    <!-- collapsed -->
+    <button class="dock" id="dock" type="button" aria-expanded="false" aria-label="Otto — idle">
+      <span class="otto" id="dockOtto"></span>
       <span class="badge"></span>
-      <span class="face">
-        <!-- OTTO mini mark: flat coral cloud, two eyes, no mouth -->
-        <svg width="28" height="26" viewBox="0 0 120 110" aria-hidden="true">
-          <g fill="var(--brand)">
-            <ellipse cx="60" cy="64" rx="43" ry="22"/>
-            <circle cx="37" cy="52" r="18"/>
-            <circle cx="61" cy="40" r="24"/>
-            <circle cx="85" cy="53" r="17"/>
-          </g>
-          <g fill="#2B1308">
-            <rect x="51" y="48" width="7" height="13" rx="3.5"/>
-            <rect x="66" y="48" width="7" height="13" rx="3.5"/>
-          </g>
-        </svg>
-      </span>
-      <span class="panel">
-        <span class="head">
-          <svg width="20" height="18" viewBox="0 0 120 110" aria-hidden="true">
-            <g fill="var(--brand)">
-              <ellipse cx="60" cy="64" rx="43" ry="22"/>
-              <circle cx="37" cy="52" r="18"/>
-              <circle cx="61" cy="40" r="24"/>
-              <circle cx="85" cy="53" r="17"/>
-            </g>
-            <g fill="#2B1308">
-              <rect x="51" y="48" width="7" height="13" rx="3.5"/>
-              <rect x="66" y="48" width="7" height="13" rx="3.5"/>
-            </g>
-          </svg>
-          <span class="who">Rendering frame previews…</span>
-          <span class="steps">2/4</span>
-        </span>
-        <span class="list">
-          <span class="row"><span class="dot"></span><span class="what">Placed 3 cards on canvas</span><span class="when">now</span></span>
-          <span class="row"><span class="dot"></span><span class="what">Generated storyboard draft</span><span class="when">1m</span></span>
-          <span class="row"><span class="dot"></span><span class="what">Saved brand palette to memory</span><span class="when">6m</span></span>
-        </span>
-        <span class="foot"><a href="#">Open Otto</a></span>
-      </span>
+    </button>
+
+    <!-- expanded -->
+    <div class="panel" id="panel" role="dialog" aria-label="Otto activity">
+      <div class="head">
+        <span class="otto" id="headOtto"></span>
+        <span class="head-line" id="headLine">Otto</span>
+        <span class="genbar"></span>
+      </div>
+      <div class="rows" id="rows">
+        <div class="empty" id="emptyRow">All caught up.</div>
+      </div>
+      <button class="foot" type="button">Open Otto</button>
     </div>
   </div>
-  <div class="cap"><b>Otto dock</b> · collapsed 48px with live mood + coral badge while acting; expands to the action log in 200ms spring. Never covers the primary CTA. Demo toggles every 2.6s.</div>
+
+  <div class="caption">
+    Collapsed: 48px circle, 16px inset, tier-2 shadow, 28px live-mood avatar. Badge pulses
+    (2000ms halo) only while Otto works <em>off-surface</em>; steady when results are unseen;
+    clears on expand. Expanded: 320px, radius 24, tier-3, 200ms spring from bottom-right —
+    narration header (13/500 + 5px coral bar), neutral rows (the deep-link sweep is the coral),
+    44px "Open Otto" footer.
+  </div>
 </div>
 
 <script>
-  // Demo loop only — in product the user (or an Otto handoff moment) toggles it.
-  const dock = document.getElementById("dock");
-  let expanded = false;
-  function toggle() {
-    expanded = !expanded;
-    dock.classList.toggle("expanded", expanded);
-    dock.classList.toggle("collapsed", !expanded);
+  // Otto cloud SVG (two eyes, no mouth). Moods: idle | thinking | success.
+  function ottoSvg(size, mood) {
+    var eyes;
+    if (mood === "thinking") {
+      eyes = '<ellipse cx="55" cy="49" rx="3.8" ry="4.8" fill="#2B1308"/><ellipse cx="70" cy="49" rx="3.8" ry="4.8" fill="#2B1308"/>' +
+             '<circle cx="56.3" cy="47.3" r="1" fill="#fff" opacity=".55"/><circle cx="71.3" cy="47.3" r="1" fill="#fff" opacity=".55"/>';
+    } else if (mood === "success") {
+      eyes = '<g fill="none" stroke="#2B1308" stroke-linecap="round" stroke-width="3.6">' +
+             '<path d="M49 57 q5.5 -8 11 0"/><path d="M64 57 q5.5 -8 11 0"/></g>';
+    } else {
+      eyes = '<rect x="51" y="48" width="7" height="13" rx="3.5" fill="#2B1308"/><rect x="66" y="48" width="7" height="13" rx="3.5" fill="#2B1308"/>';
+    }
+    return '<svg width="' + size + '" height="' + Math.round(size * 110 / 120) + '" viewBox="0 0 120 110" aria-hidden="true">' +
+      '<g fill="var(--brand)"><ellipse cx="60" cy="64" rx="43" ry="22"/><circle cx="37" cy="52" r="18"/>' +
+      '<circle cx="61" cy="40" r="24"/><circle cx="85" cy="53" r="17"/></g>' + eyes + '</svg>';
   }
-  dock.addEventListener("click", toggle);
-  setInterval(toggle, 2600);
+
+  var dock = document.getElementById("dock");
+  var panel = document.getElementById("panel");
+  var dockOtto = document.getElementById("dockOtto");
+  var headOtto = document.getElementById("headOtto");
+  var headLine = document.getElementById("headLine");
+  var rows = document.getElementById("rows");
+  var emptyRow = document.getElementById("emptyRow");
+  var startBtn = document.getElementById("startBtn");
+  var settleBtn = document.getElementById("settleBtn");
+
+  var state = { mood: "idle", open: false, working: false };
+
+  function render() {
+    dockOtto.innerHTML = ottoSvg(28, state.mood);
+    headOtto.innerHTML = ottoSvg(24, state.mood);
+    dockOtto.className = "otto" + (state.mood === "thinking" ? " bob" : "");
+    headOtto.className = "otto" + (state.mood === "thinking" ? " bob" : "");
+    headLine.textContent = state.working ? "Generating storyboard…" : "Otto";
+    dock.classList.toggle("working", state.working && !state.open);
+    panel.classList.toggle("working", state.working);
+    dock.setAttribute("aria-label", "Otto — " + (state.working ? "generating storyboard" : "idle"));
+  }
+
+  function setOpen(open) {
+    state.open = open;
+    panel.classList.toggle("open", open);
+    dock.style.visibility = open ? "hidden" : "visible";
+    dock.setAttribute("aria-expanded", String(open));
+    if (open) dock.classList.remove("unseen"); // expand = results seen, badge clears
+    render();
+  }
+
+  dock.addEventListener("click", function () { setOpen(true); });
+  document.addEventListener("keydown", function (e) { if (e.key === "Escape") setOpen(false); });
+  document.addEventListener("click", function (e) {
+    if (state.open && !panel.contains(e.target) && e.target !== dock && !dock.contains(e.target)) setOpen(false);
+  });
+
+  startBtn.addEventListener("click", function () {
+    state.working = true; state.mood = "thinking";
+    startBtn.disabled = true; settleBtn.disabled = false;
+    render();
+  });
+
+  settleBtn.addEventListener("click", function () {
+    state.working = false; state.mood = "success";
+    settleBtn.disabled = true; startBtn.disabled = false;
+    if (!state.open) dock.classList.add("unseen"); // steady dot until seen
+    emptyRow.style.display = "none";
+    var btn = document.createElement("button");
+    btn.type = "button"; btn.className = "row";
+    btn.innerHTML = '<span class="row-txt">Generated storyboard “Raya promo”</span><span class="row-ts">now</span>';
+    btn.title = "Deep-links to the element and re-fires its sweep";
+    rows.prepend(btn);
+    render();
+    // success holds ~4s, then idle
+    setTimeout(function () { if (state.mood === "success") { state.mood = "idle"; render(); } }, 4000);
+  });
+
+  render();
 </script>
