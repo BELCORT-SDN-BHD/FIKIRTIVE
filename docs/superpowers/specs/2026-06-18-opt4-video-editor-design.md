@@ -1,6 +1,6 @@
 # OPT-4 — LTX-style Video Editor (incremental cheap-wins) — Design Spec
 
-**Goal:** Push Artlio's editor from an assembly-cut tool to an LTX-style editor — real transitions, editing feel (split/ripple/snapping), captions + text, music + ducking, approximate preview, and a Premiere/Resolve XML escape hatch — entirely on the existing $0 self-hosted ffmpeg render path, without building a real-time preview engine and without adding any paid-spend path.
+**Goal:** Push Fikirtive's editor from an assembly-cut tool to an LTX-style editor — real transitions, editing feel (split/ripple/snapping), captions + text, music + ducking, approximate preview, and a Premiere/Resolve XML escape hatch — entirely on the existing $0 self-hosted ffmpeg render path, without building a real-time preview engine and without adding any paid-spend path.
 
 **Architecture:** The zod edit contract (`packages/core/src/timeline.ts`) stays the single source of truth and evolves additively. The timeline UI keeps the Shotstack Studio SDK where it can carry the new gestures (probe first, custom-fallback per feature). All new effects are ffmpeg filtergraphs in the existing render worker (`apps/worker/src/jobs/render.ts`). The UI is re-laid-out to the LTX structure (Assets / Sound / Transitions tabs + a top bar). Real-time co-editing ("Collaborate") and multi-tenancy are OUT of scope (a separate platform track).
 
@@ -14,7 +14,7 @@
 
 ## 0. Load-bearing principles (every phase preserves)
 
-1. **The contract is ours + evolves additively.** `timeline.ts` (`ArtlioEdit`) is the source of truth; the worker re-parses `artlioEdit.parse(...)` before render. New fields are additive + bounded (unbounded values validate into impossible ffmpeg argv).
+1. **The contract is ours + evolves additively.** `timeline.ts` (`FikirtiveEdit`) is the source of truth; the worker re-parses `fikirtiveEdit.parse(...)` before render. New fields are additive + bounded (unbounded values validate into impossible ffmpeg argv).
 2. **$0 renders, no spend path added.** All effects are ffmpeg filtergraphs on homogeneous AI-generated H.264; renders run self-hosted in the worker (no fal, no per-render API cost). The one new dependency (captions) uses self-hosted `whisper.cpp` ($0), not a paid transcription API. Money-safety risk on this track is LOW; Codex gates focus on render correctness + "no spend path introduced" + additive contract.
 3. **Probe Shotstack, then custom per-feature.** Keep the Shotstack timeline/canvas where it carries the gesture; where its public API can't (it has no documented pixel→time mapping — see `docs/superpowers/specs/2026-06-13-editor-storyboard-drag-drop-design.md`), build a custom interaction layer over our own contract for that feature.
 4. **Buy-don't-build the real preview engine — and defer it.** No frame-accurate real-time scrub/compositing engine in this track (the "war-story graveyard"). Preview = an approximate sequential-`<video>` playthrough. A real engine (Remotion Player, bought) is gated behind the feasibility doc's validation trigger.
@@ -35,7 +35,7 @@ The editor surface is re-laid-out to mirror LTX Studio's editor:
 - **Center:** preview canvas + transport (play, `mm:ss / mm:ss` timecode, zoom slider, volume, fullscreen).
 - **Bottom timeline:** seconds ruler, a single video track (clip blocks + per-clip audio indicator), `+` to add a clip, zoom.
 
-The left icon rail (storyboard / gen / frames / media / timeline / @elements) is Artlio's existing studio nav — the editor is one surface within it.
+The left icon rail (storyboard / gen / frames / media / timeline / @elements) is Fikirtive's existing studio nav — the editor is one surface within it.
 
 *Visual-parity note (Codex NIT):* we match LTX's STRUCTURE, not pixel-exact chrome. Items visible in the reference but intentionally deferred/visual-only (call out in each plan so they aren't surprise scope): the Sound "Search music" box (upload-first; catalog later), the exact rail iconography, and "Collaborate" (out of scope, §0.6).
 
@@ -51,7 +51,7 @@ track.transitions?: [{ fromClipIndex, toClipIndex, type: "cross"|"slide"|"wipe"|
 ```
 bound `durationMs ≤ TRANSITION_MAX` and `≤ min(adjacent clip lengths)/2`.
 
-**BLOCKER fix — transitions live OUTSIDE Shotstack state (Codex).** The editor round-trips through the Shotstack `Edit` object (`Editor.tsx` `new Edit(startEdit)` → save `edit.getEdit()`), and Shotstack's clip schema is **strict — it strips unknown fields**. So transition data must NOT ride on a Shotstack clip. EP1 keeps transitions in Artlio-owned state (React + the ArtlioEdit `track.transitions` array), and `saveProjectEdit` MERGES: take the clip list from Shotstack's `getEdit()` + the Artlio transition array → the persisted `ArtlioEdit`. The Shotstack `Edit` never carries transitions (so it can't strip them). Consequence: the Shotstack timeline won't natively render the between-clip transition marker — EP1 draws it with our own overlay/indicator (and this is one reason EP2 may move the timeline track custom).
+**BLOCKER fix — transitions live OUTSIDE Shotstack state (Codex).** The editor round-trips through the Shotstack `Edit` object (`Editor.tsx` `new Edit(startEdit)` → save `edit.getEdit()`), and Shotstack's clip schema is **strict — it strips unknown fields**. So transition data must NOT ride on a Shotstack clip. EP1 keeps transitions in Fikirtive-owned state (React + the FikirtiveEdit `track.transitions` array), and `saveProjectEdit` MERGES: take the clip list from Shotstack's `getEdit()` + the Fikirtive transition array → the persisted `FikirtiveEdit`. The Shotstack `Edit` never carries transitions (so it can't strip them). Consequence: the Shotstack timeline won't natively render the between-clip transition marker — EP1 draws it with our own overlay/indicator (and this is one reason EP2 may move the timeline track custom).
 
 **`renderDuration()` is a first-class helper (Codex).** Today `editDuration()` = max(`start+length`) and the worker uses it for audio trim, progress, and the stored asset duration (`render.ts`). With transitions overlapping, the OUTPUT is shorter: add `renderDuration(edit)` = `editDuration − Σ transition durations` and use it everywhere render-output duration matters (audio `atrim`, `-progress` total, the stored `durationS`). `editDuration` stays for the timeline-layout length.
 
@@ -101,14 +101,14 @@ Audio under a video transition uses `acrossfade` over the same overlap.
 ### EP4 — Audio + preview + export (音频 + 预览 + 导出)
 - Audio: the **Sound** tab — and it's more than a tab (Codex): today the editor media query FILTERS AUDIO OUT (`actions.ts` getEditorMedia) and `appendAsset` only appends to visual track 0. EP4 must: surface audio assets (un-filter / add an audio source), add audio UPLOAD (the upload contract already allows audio), and add audio-track creation + placement logic (the contract already allows ≤2 audio tracks + per-clip volume + `amix`). Then **auto-ducking** via ffmpeg `sidechaincompress` (music under voiceover) as a toggle. (Audio must respect the EP1 rendered-time mapping.)
 - Preview: an **approximate** sequential-`<video>` playthrough (double-buffered) so the user can judge the cut — NOT a real engine.
-- Export: keep the existing RenderJob path; ADD a **Premiere/Resolve XML (FCP7 XML / OTIO) export** = a pure `ArtlioEdit` → XML transform (no render). Surface aspect/resolution presets first-class; revisit the 1080 cap (currently downscales to 720 for OOM — ffmpeg memory tuning, not new code).
+- Export: keep the existing RenderJob path; ADD a **Premiere/Resolve XML (FCP7 XML / OTIO) export** = a pure `FikirtiveEdit` → XML transform (no render). Surface aspect/resolution presets first-class; revisit the 1080 cap (currently downscales to 720 for OOM — ffmpeg memory tuning, not new code).
 - Test: ducking render fixture; XML export validates against an FCP7/OTIO schema + round-trips the clip list; preview plays the cut in order.
 
 ---
 
 ## 4. Testing strategy + gates
 
-- **Contract:** zod tests for the between-clip transition, captions, textOverlays — additive, bounded, backward-compat with existing edits; `artlioEdit.parse` round-trips.
+- **Contract:** zod tests for the between-clip transition, captions, textOverlays — additive, bounded, backward-compat with existing edits; `fikirtiveEdit.parse` round-trips.
 - **Render correctness ($0):** per phase, a LOCAL ffmpeg render of a small fixture edit asserting the effect (xfade duration math, caption/text burn-in present, ducking applied, export mp4 valid). No fal, no paid path — `GENERATION_PROVIDER=mock` for any adjacent gen; kill stale fal workers first.
 - **No-spend invariant:** a check that the editor/render path adds NO call into the fal/generation spend path (renders stay self-hosted ffmpeg; whisper is self-hosted).
 - **Codex gate per phase:** focus = render-pipeline correctness + the contract change is additive/bounded + NO spend path introduced + the worker change can't hang/OOM (duration/dimension guards). Plus the standard build/typecheck/test gate.

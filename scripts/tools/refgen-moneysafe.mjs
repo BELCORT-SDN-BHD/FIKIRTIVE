@@ -14,7 +14,7 @@ const { PgBoss } = await import(require.resolve("pg-boss"));
 const { prisma } = await import("../../packages/db/dist/src/index.js");
 const { REFGEN_QUEUE, REFGEN_DLQ, REFGEN_QUEUE_POLICY, newId } = await import("../../packages/core/dist/index.js");
 
-const DB = process.env.DATABASE_URL ?? "postgresql://artlio:artlio@localhost:5432/artlio";
+const DB = process.env.DATABASE_URL ?? "postgresql://fikirtive:fikirtive@localhost:5432/fikirtive";
 process.env.DATABASE_URL = DB;
 const OWNER = "founder";
 const step = (m) => console.log(`✓ ${m}`);

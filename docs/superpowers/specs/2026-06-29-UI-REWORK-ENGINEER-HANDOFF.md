@@ -23,7 +23,7 @@ The design language, OTTO mascot, and 9 hi-fi screens are **locked and approved*
 | **Design system (interactive + tokens + OTTO + components)** | claude.ai/design → project **`0abf8563-147b-494a-8364-1b199c775b7d`** ("FIKIRTIVE — Grok-bright"). Screens are under `ui_kits/canvas/` and `ui_kits/app/`. Theme = `shadcn/theme/globals.css`. |
 | **Roadmap (phases + constraints)** | `docs/superpowers/plans/2026-06-29-fikirtive-ui-rework-roadmap.md` |
 | **This worktree (where Phase 0 lives)** | `…/.claude/worktrees/gracious-chandrasekhar-72f8c9` on branch `claude/gracious-chandrasekhar-72f8c9` |
-| **Main checkout (has in-flight WIP — see §6)** | `/Users/winnin/Desktop/artlio` on `main` |
+| **Main checkout (has in-flight WIP — see §6)** | `/Users/winnin/Desktop/fikirtive` on `main` |
 
 > **None of the new UI is live in the running app yet.** Production (Railway, from `main`) still runs the old dark "Vapor" UI. Phase 0 is committed only to this worktree branch, **not pushed, not merged, not deployed.**
 
@@ -43,7 +43,7 @@ pnpm --filter @fikirtive/web dev   # web only, on http://localhost:3000
 ```
 
 - `pnpm dev` (root) also starts `apps/worker` (pg-boss). Use the `--filter @fikirtive/web` form to run only the UI.
-- **Env is already present** in this worktree: `apps/web/.env.local` + `packages/db/.env` (auth / Stripe / Meta / `DATABASE_URL`). If ever missing, copy from the main checkout (`/Users/winnin/Desktop/artlio/apps/web/.env.local`, `…/packages/db/.env`).
+- **Env is already present** in this worktree: `apps/web/.env.local` + `packages/db/.env` (auth / Stripe / Meta / `DATABASE_URL`). If ever missing, copy from the main checkout (`/Users/winnin/Desktop/fikirtive/apps/web/.env.local`, `…/packages/db/.env`).
 - ⚠️ **Custom Next.js.** `apps/web/AGENTS.md`: *"This is NOT the Next.js you know … read the relevant guide in `node_modules/next/dist/docs/` before writing any code."* (e.g. route `searchParams` is a Promise you must await — see `billing/page.tsx:21-24`.) Docs exist only after `pnpm install`.
 
 ---
@@ -78,11 +78,11 @@ Quoted from the roadmap:
 
 ## 6. Git state & build ordering (read before touching login/canvas)
 
-> ✅ **RESOLVED 2026-06-29:** the colliding WIP described below has been **discarded** (stashed). The main checkout is clean. The collision risk is gone — you only need to rebase Phase 0 onto current `origin/main` before building. To recover the old WIP if ever needed: `git -C /Users/winnin/Desktop/artlio stash list` → `stash pop`. It was an old re-skin of login + Otto-shell on the **rejected Figtree** direction, superseded by these mockups; the only non-styling bits were an orphaned `proxy.ts` `/brand` exclusion and an `OttoNav` thread-search (re-add later if wanted).
+> ✅ **RESOLVED 2026-06-29:** the colliding WIP described below has been **discarded** (stashed). The main checkout is clean. The collision risk is gone — you only need to rebase Phase 0 onto current `origin/main` before building. To recover the old WIP if ever needed: `git -C /Users/winnin/Desktop/fikirtive stash list` → `stash pop`. It was an old re-skin of login + Otto-shell on the **rejected Figtree** direction, superseded by these mockups; the only non-styling bits were an orphaned `proxy.ts` `/brand` exclusion and an `OttoNav` thread-search (re-add later if wanted).
 
 **(Historical, for context)** There was uncommitted WIP in the MAIN checkout that would have collided with the front-door and Otto-canvas screens.
 
-- The main checkout (`/Users/winnin/Desktop/artlio`, on `main` @ `5ad6214`) has **uncommitted Otto-shell + login WIP**: modified `app/layout.tsx`, `app/login/{page,LoginForm}.tsx`, `app/otto/otto-theme.css`, `components/fk/Button.tsx`, `components/otto/{OttoApp,OttoNav,OttoView}.tsx`, `proxy.ts`; untracked `app/login/login.module.css`. **None of it has landed.** It is uncommitted and unbacked-up — commit or stash it before any branch work that touches these files.
+- The main checkout (`/Users/winnin/Desktop/fikirtive`, on `main` @ `5ad6214`) has **uncommitted Otto-shell + login WIP**: modified `app/layout.tsx`, `app/login/{page,LoginForm}.tsx`, `app/otto/otto-theme.css`, `components/fk/Button.tsx`, `components/otto/{OttoApp,OttoNav,OttoView}.tsx`, `proxy.ts`; untracked `app/login/login.module.css`. **None of it has landed.** It is uncommitted and unbacked-up — commit or stash it before any branch work that touches these files.
 - Phase 0 lives only on branch `claude/gracious-chandrasekhar-72f8c9` (HEAD `5b3789d`), **≈4 ahead / 1 behind `origin/main`, NOT pushed.**
 - **The single guaranteed conflict** between Phase 0 and the WIP is `apps/web/app/layout.tsx` (both edit it). Every other Phase 0 file and every other WIP file are disjoint.
 - The new **canvas-home** screen re-skins `OttoApp/OttoNav/OttoView` (+ `otto-theme.css`); the new **login/first-run** re-skins `app/login/*` + `OttoFrontDoor.tsx` — **all of these are dirty in main right now.**

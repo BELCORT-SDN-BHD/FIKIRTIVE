@@ -59,16 +59,16 @@ The 10s Seedance price is exactly at the constitutional floor. Any supplier pric
 
 ## Verification
 
-- `DATABASE_URL='postgresql://artlio:artlio@localhost:5432/artlio_test' COREPACK_ENABLE_DOWNLOAD_PROMPT=0 corepack pnpm -r typecheck`
-- `DATABASE_URL='postgresql://artlio:artlio@localhost:5432/artlio_test' COREPACK_ENABLE_DOWNLOAD_PROMPT=0 corepack pnpm -r test`
-- `DATABASE_URL='postgresql://artlio:artlio@localhost:5432/artlio_test' COREPACK_ENABLE_DOWNLOAD_PROMPT=0 corepack pnpm -r build`
+- `DATABASE_URL='postgresql://fikirtive:fikirtive@localhost:5432/fikirtive_test' COREPACK_ENABLE_DOWNLOAD_PROMPT=0 corepack pnpm -r typecheck`
+- `DATABASE_URL='postgresql://fikirtive:fikirtive@localhost:5432/fikirtive_test' COREPACK_ENABLE_DOWNLOAD_PROMPT=0 corepack pnpm -r test`
+- `DATABASE_URL='postgresql://fikirtive:fikirtive@localhost:5432/fikirtive_test' COREPACK_ENABLE_DOWNLOAD_PROMPT=0 corepack pnpm -r build`
 - `COREPACK_ENABLE_DOWNLOAD_PROMPT=0 corepack pnpm --filter @fikirtive/web exec eslint lib/gen-actions.ts lib/video-frame.ts lib/__tests__/video-frame.test.ts`
 - `COREPACK_ENABLE_DOWNLOAD_PROMPT=0 corepack pnpm --filter @fikirtive/core exec vitest run src/spend.test.ts src/gen.test.ts src/llm-prices.test.ts`
-- `DATABASE_URL='postgresql://artlio:artlio@localhost:5432/artlio_test' COREPACK_ENABLE_DOWNLOAD_PROMPT=0 corepack pnpm --filter @fikirtive/web exec vitest run lib/__tests__/gen-actions.test.ts lib/__tests__/video-frame.test.ts lib/__tests__/otto-generation-validate.test.ts`
-- `DATABASE_URL='postgresql://artlio:artlio@localhost:5432/artlio_test' COREPACK_ENABLE_DOWNLOAD_PROMPT=0 corepack pnpm --filter @fikirtive/core exec vitest run src/spend.test.ts src/gen.test.ts src/gen-from-card.test.ts`
+- `DATABASE_URL='postgresql://fikirtive:fikirtive@localhost:5432/fikirtive_test' COREPACK_ENABLE_DOWNLOAD_PROMPT=0 corepack pnpm --filter @fikirtive/web exec vitest run lib/__tests__/gen-actions.test.ts lib/__tests__/video-frame.test.ts lib/__tests__/otto-generation-validate.test.ts`
+- `DATABASE_URL='postgresql://fikirtive:fikirtive@localhost:5432/fikirtive_test' COREPACK_ENABLE_DOWNLOAD_PROMPT=0 corepack pnpm --filter @fikirtive/core exec vitest run src/spend.test.ts src/gen.test.ts src/gen-from-card.test.ts`
 - `COREPACK_ENABLE_DOWNLOAD_PROMPT=0 corepack pnpm --filter @fikirtive/otto test -- src/skills/propose.test.ts`
 - `COREPACK_ENABLE_DOWNLOAD_PROMPT=0 corepack pnpm --filter @fikirtive/worker test -- src/jobs/gen.test.ts`
-- `DATABASE_URL='postgresql://artlio:artlio@localhost:5432/artlio_test' COREPACK_ENABLE_DOWNLOAD_PROMPT=0 corepack pnpm --filter @fikirtive/web typecheck`
+- `DATABASE_URL='postgresql://fikirtive:fikirtive@localhost:5432/fikirtive_test' COREPACK_ENABLE_DOWNLOAD_PROMPT=0 corepack pnpm --filter @fikirtive/web typecheck`
 - `git diff --check`
 
 ## Notes

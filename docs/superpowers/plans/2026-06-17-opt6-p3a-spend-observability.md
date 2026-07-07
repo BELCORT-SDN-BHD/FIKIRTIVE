@@ -13,7 +13,7 @@
 **House rules (every task):**
 - **Money-safety #1 — `spentUsd` is RECORD-ONLY.** It never gates, narrows, widens, or influences any spend. No code path may read `spentUsd` before a `provider.generate*` call. The typed media-spend gate (`genRequest.superRefine` at `packages/core/src/gen.ts` + the worker claim/commit logic) is UNCHANGED.
 - **Worker change = highest-trust edit.** `apps/worker/src/jobs/gen.ts` + `apps/worker/src/jobs/refgen.ts` run with real money in prod. `spentUsd` MUST ride the SAME `prisma` update/`$transaction` as the EXISTING spend marker (`spent: true` for gen / `outputAssetIds` for refgen) — never add a new write, branch, or `await` that could split the commit, skip the marker, or run twice. Every existing exactly-once / resume / fail-closed invariant must be byte-for-byte preserved; the ONLY delta per write site is adding `spentUsd: <pure helper>` to a `data: {}` object that already updates that row. Call this out explicitly at the Codex gate.
-- **Additive migration LOCAL-only.** Both columns are nullable (`Float?`) → additive. Apply to `DATABASE_URL=postgresql://artlio:artlio@localhost:5432/artlio` ONLY, never prod. Author via the `prisma migrate diff … --script` ritual (the P1a/P2/idempotency convention — avoids the LOCAL checksum-drift that interactive `migrate dev` hits against hand-authored prior migrations), apply via `migrate deploy`.
+- **Additive migration LOCAL-only.** Both columns are nullable (`Float?`) → additive. Apply to `DATABASE_URL=postgresql://fikirtive:fikirtive@localhost:5432/fikirtive` ONLY, never prod. Author via the `prisma migrate diff … --script` ritual (the P1a/P2/idempotency convention — avoids the LOCAL checksum-drift that interactive `migrate dev` hits against hand-authored prior migrations), apply via `migrate deploy`.
 - **Migration ordering (state it).** `prisma migrate deploy` (add the nullable columns) runs BEFORE the worker build that writes them. The columns are additive-nullable, so the reverse order only ERRORS the worker write (`column "spentUsd" does not exist`) — it never loses data and never affects spend — but ship the migration first regardless.
 - **TDD with `packages/core` vitest** for the pure price-snapshot helpers (`genSpentUsd`/`refgenSpentUsd`). Write the failing test first.
 - **Tests run** `GENERATION_PROVIDER=mock` + `COWORK_PROVIDER` unset; **kill stale fal workers first** (`pkill -f 'apps/worker' || true`) — a leftover worker from a prior session can claim a job and burn real money.
@@ -100,8 +100,8 @@ Use the diff-script ritual (avoids the LOCAL checksum-drift interactive `migrate
 
 ```bash
 mkdir -p packages/db/prisma/migrations/20260617140000_spend_ledger
-DATABASE_URL="postgresql://artlio:artlio@localhost:5432/artlio" \
-  pnpm --filter @artlio/db exec prisma migrate diff \
+DATABASE_URL="postgresql://fikirtive:fikirtive@localhost:5432/fikirtive" \
+  pnpm --filter @fikirtive/db exec prisma migrate diff \
   --from-schema-datasource packages/db/prisma/schema.prisma \
   --to-schema-datamodel packages/db/prisma/schema.prisma \
   --script > /tmp/spend-diff.sql
@@ -122,16 +122,16 @@ ALTER TABLE "RefGenJob" ADD COLUMN "spentUsd" DOUBLE PRECISION;
 - [ ] **Step 3: Apply + regenerate client (LOCAL)**
 
 ```bash
-DATABASE_URL="postgresql://artlio:artlio@localhost:5432/artlio" pnpm --filter @artlio/db exec prisma migrate deploy
-pnpm --filter @artlio/db build
+DATABASE_URL="postgresql://fikirtive:fikirtive@localhost:5432/fikirtive" pnpm --filter @fikirtive/db exec prisma migrate deploy
+pnpm --filter @fikirtive/db build
 ```
 Expected: "All migrations have been successfully applied." (the `spend_ledger` migration listed), then the client builds with `genJob.spentUsd` / `refGenJob.spentUsd` available.
 
 - [ ] **Step 4: Verify the columns landed nullable (LOCAL)**
 
 ```bash
-DATABASE_URL="postgresql://artlio:artlio@localhost:5432/artlio" \
-  pnpm --filter @artlio/db exec prisma migrate status
+DATABASE_URL="postgresql://fikirtive:fikirtive@localhost:5432/fikirtive" \
+  pnpm --filter @fikirtive/db exec prisma migrate status
 ```
 Expected: "Database schema is up to date!" — no drift, no pending migration.
 
@@ -189,7 +189,7 @@ describe("refgenSpentUsd", () => {
 
 - [ ] **Step 2: Run it to verify it fails**
 
-Run: `pnpm --filter @artlio/core test -- spend`
+Run: `pnpm --filter @fikirtive/core test -- spend`
 Expected: FAIL — `genSpentUsd`/`refgenSpentUsd` not exported.
 
 - [ ] **Step 3: Implement** (`packages/core/src/spend.ts`)
@@ -256,7 +256,7 @@ Add: `export * from "./spend.js";`
 
 - [ ] **Step 5: Run tests + build**
 
-Run: `pnpm --filter @artlio/core test && pnpm --filter @artlio/core build`
+Run: `pnpm --filter @fikirtive/core test && pnpm --filter @fikirtive/core build`
 Expected: the new `spend` tests PASS; all existing core tests still PASS (the new file is additive — no existing symbol changed).
 
 - [ ] **Step 6: Commit (leave for user approval)**
@@ -277,7 +277,7 @@ git commit -m "feat(opt6): pure genSpentUsd/refgenSpentUsd price-snapshot helper
 
 - [ ] **Step 1: Import the helper**
 
-In the `@artlio/core` import block (gen.ts:17-26), add `genSpentUsd` to the named imports:
+In the `@fikirtive/core` import block (gen.ts:17-26), add `genSpentUsd` to the named imports:
 
 ```ts
 import {
@@ -290,7 +290,7 @@ import {
   type GenJobData,
   type GenModel,
   type GenVideoModel,
-} from "@artlio/core";
+} from "@fikirtive/core";
 ```
 
 - [ ] **Step 2: PRIMARY write — in the SAME commit `$transaction` as the marker**
@@ -366,8 +366,8 @@ Expected: exactly 3 hits, all WRITES (the 3 `data:` objects above). NONE in any 
 
 - [ ] **Step 6: Typecheck the worker**
 
-Run: `pnpm --filter @artlio/worker typecheck`
-Expected: clean (confirms `spentUsd` is on the client + `genSpentUsd` resolves + the `job.videoOptions` cast typechecks). If the worker has no `typecheck` script, run `pnpm --filter @artlio/worker build`.
+Run: `pnpm --filter @fikirtive/worker typecheck`
+Expected: clean (confirms `spentUsd` is on the client + `genSpentUsd` resolves + the `job.videoOptions` cast typechecks). If the worker has no `typecheck` script, run `pnpm --filter @fikirtive/worker build`.
 
 - [ ] **Step 7: Commit (leave for user approval)**
 
@@ -387,7 +387,7 @@ git commit -m "feat(opt6): worker freezes GenJob.spentUsd in the commit tx (reco
 
 - [ ] **Step 1: Import the helper**
 
-In the `@artlio/core` import block (refgen.ts:25-32), add `refgenSpentUsd`:
+In the `@fikirtive/core` import block (refgen.ts:25-32), add `refgenSpentUsd`:
 
 ```ts
 import {
@@ -398,7 +398,7 @@ import {
   refgenSpentUsd,
   type RefGenJobData,
   type RefGenModel,
-} from "@artlio/core";
+} from "@fikirtive/core";
 ```
 
 - [ ] **Step 2: PRIMARY write — in the same update that records the paid outputs**
@@ -484,7 +484,7 @@ Expected: exactly 3 hits — 2 unconditional/guarded writes (Steps 2, 3) + 1 con
 
 - [ ] **Step 6: Typecheck the worker**
 
-Run: `pnpm --filter @artlio/worker typecheck` (or `pnpm --filter @artlio/worker build`)
+Run: `pnpm --filter @fikirtive/worker typecheck` (or `pnpm --filter @fikirtive/worker build`)
 Expected: clean.
 
 - [ ] **Step 7: Commit (leave for user approval)**
@@ -552,7 +552,7 @@ Replace with:
 
 - [ ] **Step 2: Typecheck**
 
-Run: `pnpm --filter @artlio/web typecheck`
+Run: `pnpm --filter @fikirtive/web typecheck`
 Expected: clean.
 
 - [ ] **Step 3: Confirm both variant callers now reach the audit**
@@ -585,13 +585,13 @@ Mirror `apps/web/app/admin/models/page.tsx`: gate, read at request time, pass pl
 ```tsx
 import { auth, allowed } from "@/auth";
 import { redirect } from "next/navigation";
-import { prisma } from "@artlio/db";
-import { FOUNDER_OWNER_ID } from "@artlio/core";
+import { prisma } from "@fikirtive/db";
+import { FOUNDER_OWNER_ID } from "@fikirtive/core";
 import { CostAdmin, type DayRow, type JobRow } from "@/components/admin/CostAdmin";
 
 // reads the DB at request time — never prerender
 export const dynamic = "force-dynamic";
-export const metadata = { title: "Cost · Artlio admin" };
+export const metadata = { title: "Cost · Fikirtive admin" };
 
 const DAY_MS = 24 * 60 * 60 * 1000;
 
@@ -710,7 +710,7 @@ export function CostAdmin({ days, jobs, totalUsd, jobCount, sinceDays }: { days:
 
 - [ ] **Step 3: Build + typecheck**
 
-Run: `pnpm --filter @artlio/web typecheck && pnpm --filter @artlio/web build`
+Run: `pnpm --filter @fikirtive/web typecheck && pnpm --filter @fikirtive/web build`
 Expected: clean (confirms `spentUsd` is on the client select + the `var(--*)` styling matches existing components).
 
 - [ ] **Step 4: Commit (leave for user approval)**
@@ -736,12 +736,12 @@ The money-gate types (all confirmed present in the codebase — see Task 0 / the
 ```tsx
 import { auth, allowed } from "@/auth";
 import { redirect } from "next/navigation";
-import { prisma } from "@artlio/db";
-import { FOUNDER_OWNER_ID } from "@artlio/core";
+import { prisma } from "@fikirtive/db";
+import { FOUNDER_OWNER_ID } from "@fikirtive/core";
 import { AuditAdmin, type AuditRow } from "@/components/admin/AuditAdmin";
 
 export const dynamic = "force-dynamic";
-export const metadata = { title: "Audit · Artlio admin" };
+export const metadata = { title: "Audit · Fikirtive admin" };
 
 // the money-gate taxonomy this viewer surfaces (the spend-relevant ActionEvent types)
 const MONEY_GATE_TYPES = [
@@ -844,8 +844,8 @@ Replace with:
 
 - [ ] **Step 4: Build + typecheck**
 
-Run: `pnpm --filter @artlio/web typecheck && pnpm --filter @artlio/web build`
-Expected: clean. (Manual, optional: `pnpm --filter @artlio/web dev`, sign in, visit `/admin/cost` + `/admin/audit`, confirm both render in the shell with the NAV slots live and the type filter on /audit narrows the list.)
+Run: `pnpm --filter @fikirtive/web typecheck && pnpm --filter @fikirtive/web build`
+Expected: clean. (Manual, optional: `pnpm --filter @fikirtive/web dev`, sign in, visit `/admin/cost` + `/admin/audit`, confirm both render in the shell with the NAV slots live and the type filter on /audit narrows the list.)
 
 - [ ] **Step 5: Commit (leave for user approval)**
 
@@ -870,7 +870,7 @@ Prove — without spending — that a DONE GenJob/RefGenJob gets the correct `sp
 // helper + the real prisma write path. $0 — inserts fake rows + invokes genSpentUsd/
 // refgenSpentUsd directly (NO provider, NO worker, NO queue). Proves the math + write.
 // Run: node scripts/local-spend-snapshot-verify.mjs
-process.env.DATABASE_URL ??= "postgresql://artlio:artlio@localhost:5432/artlio";
+process.env.DATABASE_URL ??= "postgresql://fikirtive:fikirtive@localhost:5432/fikirtive";
 const { prisma } = await import("../packages/db/dist/src/index.js");
 const {
   newId, FOUNDER_OWNER_ID,
@@ -980,16 +980,16 @@ git commit -m "test(opt6): local $0 spend-snapshot verify (helper math + write +
 
 ```bash
 pkill -f 'apps/worker' 2>/dev/null || true
-pnpm --filter @artlio/core test
-pnpm --filter @artlio/core build && pnpm --filter @artlio/db build
-pnpm --filter @artlio/worker typecheck   # or: pnpm --filter @artlio/worker build
-pnpm --filter @artlio/web typecheck && pnpm --filter @artlio/web build
-DATABASE_URL="postgresql://artlio:artlio@localhost:5432/artlio" \
-  pnpm --filter @artlio/db exec prisma migrate status
+pnpm --filter @fikirtive/core test
+pnpm --filter @fikirtive/core build && pnpm --filter @fikirtive/db build
+pnpm --filter @fikirtive/worker typecheck   # or: pnpm --filter @fikirtive/worker build
+pnpm --filter @fikirtive/web typecheck && pnpm --filter @fikirtive/web build
+DATABASE_URL="postgresql://fikirtive:fikirtive@localhost:5432/fikirtive" \
+  pnpm --filter @fikirtive/db exec prisma migrate status
 node scripts/local-spend-snapshot-verify.mjs
 # regression: the money-safety invariants P1a/P2 already guard still hold
 node scripts/verify-auth-guards.mjs
-DATABASE_URL="postgresql://artlio:artlio@localhost:5432/artlio" GENERATION_PROVIDER=mock node scripts/verify-cowork-turn.mjs
+DATABASE_URL="postgresql://fikirtive:fikirtive@localhost:5432/fikirtive" GENERATION_PROVIDER=mock node scripts/verify-cowork-turn.mjs
 node scripts/local-model-disable-verify.mjs
 ```
 Expected: all green — core tests pass (incl. the new `spend` tests), every build/typecheck clean, `migrate status` up to date, the spend-snapshot verify passes ($0), and the P1a auth-guard + cowork-turn ($0/no GenJob) + model-disable regressions still hold.

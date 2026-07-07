@@ -17,7 +17,7 @@
 0. **先读宪法**:`docs/BLUEPRINT.md` 在本手册之上 —— diff 与蓝图冲突 → 停手、报告、等 founder 裁决(手册与蓝图冲突时,蓝图赢)。
 1. **一律 PR + 全部 CI checks 绿**才可合并(见 `.claude/CLAUDE.md`「Merge discipline」)。
 2. **钱路 diff**(genRequest/startGen/startRefGen/dispatch/幂等键/partial-unique 索引/provider 调用)必过 `money-safety-review` skill,逐检查项给结论。
-3. **审查者不自批自己写的 PR** —— 自己的改动要么等 founder,要么换一个 session 审。
+3. **审查者不自批自己写的 PR** —— 自己的改动要么等 founder,要么换一个 session 审。(解读边界:"换一个 session"= 一个**独立**的审查会话从零跑清单;作者自己开个新会话给自己的 PR 盖章仍是自批,同样禁止。)
 4. **UI/客户端 PR**:typecheck+单测不够,合并前需浏览器 runtime QA(谁提出谁验证,PR 里贴证据)。
 5. **每笔真实花费**(fal/BytePlus/Stripe 验证跑)逐笔向 founder 确认 —— 「问」就是上限。
 6. **产品取舍**摆选项+利弊给 founder,不替他拍板。
@@ -183,7 +183,7 @@
 
 ## 钱路清单增补(定价规则,宪法 5)
 - [ ] 任何新收费点/调价 diff 必附 costing 计算并过 **毛利率 ≥45% 地板**(口径 = (售价−成本)/售价;依据 harmony-04)
-- [ ] 费率/价格字面量出现在 config 层之外 = reject;pricing/UI 文案出现 "unlimited" 类字样 = reject(宪法 8)
+- [ ] 费率/价格字面量出现在 config 层之外 = reject;pricing/UI 文案出现 "unlimited" 类字样 = reject(宪法 8)。(解读边界:"config 层"= 集中定价模块 —— core/spend.ts 的定价表、档位 config 等;禁的是业务/UI 代码里散落的裸价数字;测试断言与文档示例不在此列)
 - [ ] BytePlus 资源包余量告警工单(P1 必做)在包相关 diff 时核状态
 - [ ] Search API(3x margin)走 withLlmBudget settle 的 search 项 —— 各费率各自 margin,不并轨;不做每次搜索弹审批
 

@@ -14,7 +14,7 @@ const { prisma } = await import("../../packages/db/dist/src/index.js");
 const { GEN_QUEUE, GEN_DLQ, GEN_QUEUE_POLICY, storageKey, storageKeyToSrc, newId, FOUNDER_OWNER_ID } =
   await import("../../packages/core/dist/index.js");
 
-const DB = process.env.DATABASE_URL ?? "postgresql://artlio:artlio@localhost:5432/artlio";
+const DB = process.env.DATABASE_URL ?? "postgresql://fikirtive:fikirtive@localhost:5432/fikirtive";
 process.env.DATABASE_URL = DB;
 const WEB = process.env.WEB_ORIGIN ?? "http://localhost:3100";
 const OWNER = FOUNDER_OWNER_ID;

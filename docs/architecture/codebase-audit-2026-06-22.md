@@ -38,10 +38,10 @@ All file:line verified against working tree (2026-06-22, main). Verdict notes wh
 
 | Item | Location | Action | Sev |
 |---|---|---|---|
-| **User-facing "Artlio" in demo video** | `demo-remotion/src/scenes/Intro.tsx:38` (wordmark), `Root.tsx:56` (`sub="Artlio"`), `Intro.tsx:4`, `theme.ts:1` | Replace with "Fikirtive". **Only user-visible remnant — fix first.** | med |
-| `@artlio/*` package names | `@artlio/core`, `@artlio/db` (imports everywhere) | Internal only; leave OR mass-rename in one pass. Document the choice. | low |
+| **User-facing "Fikirtive" in demo video** | `demo-remotion/src/scenes/Intro.tsx:38` (wordmark), `Root.tsx:56` (`sub="Fikirtive"`), `Intro.tsx:4`, `theme.ts:1` | Replace with "Fikirtive". **Only user-visible remnant — fix first.** | med |
+| `@fikirtive/*` package names | `@fikirtive/core`, `@fikirtive/db` (imports everywhere) | Internal only; leave OR mass-rename in one pass. Document the choice. | low |
 | `cowork-*` symbols/files (60+) vs user-facing "Otto" | `packages/core/src/cowork*.ts`, `apps/web/lib/cowork-actions.ts`, `lib/data.ts` (`getCoworkThreads`), `cowork-fetch.ts` | **Decide convention:** external=Otto, internal=cowork. Document in an ARCHITECTURE doc. Do NOT rename piecemeal. | low |
-| "Artlio schema" / "Artlio cowork" comments | `packages/db/prisma/schema.prisma:1`, `packages/core/src/cowork.ts:2` | grep+replace in comments only (not identifiers) | low |
+| "Fikirtive schema" / "Fikirtive cowork" comments | `packages/db/prisma/schema.prisma:1`, `packages/core/src/cowork.ts:2` | grep+replace in comments only (not identifiers) | low |
 | `BRAND`→`BRANDMARK` | `apps/web/components/MentionInput.tsx:167-169` (legacy normalize on read) | **Correct as-is.** Add changelog note + cutoff date to remove normalizer later. No fix. | low |
 | Route `/admin/tenants` vs model `Organization` | `apps/web/app/admin/tenants/[orgId]/page.tsx` | Intentional (UI term=Tenant, code=Org). Document mapping. No fix. | low |
 
@@ -112,7 +112,7 @@ Create under `docs/architecture/` and `docs/ops/`:
    - Dep graph: web→{core,db}; worker→{core,db,generation,storage}
    - Infra: Railway (web Next.js + worker pg-boss) · Neon Postgres · Cloudflare R2 · Resend
    - Naming legend: Fikirtive(product) · Otto(agent, internal=cowork-*) ·
-     Org=Tenant · Brandmark(was BRAND) · @artlio/* (legacy pkg names, internal only)
+     Org=Tenant · Brandmark(was BRAND) · @fikirtive/* (legacy pkg names, internal only)
 
 ## 2. Environment variables — grouped, with security boundary
    For each: name · required? · type · example · SPEND GATE? · phase (P0/P1/P2+) · code ref
@@ -130,7 +130,7 @@ Create under `docs/architecture/` and `docs/ops/`:
    ### Vision (Otto Phase C)
      COWORK_VISION_ENABLED (hard kill) ; caps → DB RuntimeConfig 'vision' row (not env)
    ### Storage
-     STORAGE_DRIVER=r2 · R2_* · R2_FORCE_PATH_STYLE · ARTLIO_DATA_DIR (local)
+     STORAGE_DRIVER=r2 · R2_* · R2_FORCE_PATH_STYLE · FIKIRTIVE_DATA_DIR (local)
    ### Worker / Caption
      WHISPER_MODEL_PATH/THREADS/MAX_SECONDS (worker/src/jobs/caption.ts)
    ### Monitoring
@@ -154,6 +154,6 @@ Create under `docs/architecture/` and `docs/ops/`:
 ## 6. Deploy & pre-spend checklist (link → deploy-approval-flow.md)
 ```
 
-**Recommended execution order:** (1) demo-remotion Artlio strings [user-facing], (2) dto.ts:65 kind fix + mock-planner video test, (3) write `config-and-architecture.md` + `money-safety-model.md`, (4) R1 consolidation (behind money-safety-review), (5) remaining naming/docs cleanup.
+**Recommended execution order:** (1) demo-remotion Fikirtive strings [user-facing], (2) dto.ts:65 kind fix + mock-planner video test, (3) write `config-and-architecture.md` + `money-safety-model.md`, (4) R1 consolidation (behind money-safety-review), (5) remaining naming/docs cleanup.
 
 **Audit corrections worth flagging:** `GENERATION_PROVIDER` is NOT dead code; Organization/Membership tables are NOT dormant (P3 shipped). Both were stale assumptions in the input findings.

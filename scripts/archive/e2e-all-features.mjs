@@ -11,7 +11,7 @@ import os from "node:os";
 import { createRequire } from "node:module";
 
 const BASE = process.env.BASE_URL ?? "http://localhost:3100";
-const OUT = path.join(os.homedir(), ".gstack/projects/artlio/e2e");
+const OUT = path.join(os.homedir(), ".gstack/projects/fikirtive/e2e");
 mkdirSync(OUT, { recursive: true });
 const PNG = Buffer.from("iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAAC0lEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg==", "base64");
 const browser = await chromium.launch();
@@ -155,7 +155,7 @@ await browser.close();
 
 // ── DB proof: last-frame job carried BOTH source and tail; storage served ─
 const require = createRequire(new URL("../../apps/worker/package.json", import.meta.url));
-process.env.DATABASE_URL ??= "postgresql://artlio:artlio@localhost:5432/artlio";
+process.env.DATABASE_URL ??= "postgresql://fikirtive:fikirtive@localhost:5432/fikirtive";
 const { prisma } = await import("../../packages/db/dist/src/index.js");
 const lastFrameJob = await prisma.genJob.findFirst({
   where: { projectId, kind: "VIDEO", sourceGenerationId: { not: null }, tailGenerationId: { not: null } },

@@ -12,7 +12,7 @@ import path from "node:path";
 import os from "node:os";
 
 const BASE = process.env.BASE_URL ?? "https://web-production-b13a4.up.railway.app";
-const OUT = path.join(os.homedir(), ".gstack/projects/artlio/prod-pass2");
+const OUT = path.join(os.homedir(), ".gstack/projects/fikirtive/prod-pass2");
 await mkdir(OUT, { recursive: true });
 const PNG = Buffer.from("iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAAC0lEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg==", "base64");
 

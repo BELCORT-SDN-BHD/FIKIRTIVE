@@ -2,7 +2,7 @@
 
 > Execute TDD-first on the pure core surface; the action + call-sites verify via typecheck/lint.
 
-**Goal:** Turn the 0B knowledge base into the first felt win — ✨ Enhance rewrites tuned to the (family × mode) the user is actually generating for. The ✨ chip becomes the visible "Artlio understands the models" proof.
+**Goal:** Turn the 0B knowledge base into the first felt win — ✨ Enhance rewrites tuned to the (family × mode) the user is actually generating for. The ✨ chip becomes the visible "Fikirtive understands the models" proof.
 
 **Architecture:** `enhanceRequest` gains an OPTIONAL gen-shape subset. The enhance **action** derives `family = modelFamily(model)` + `mode = deriveMode(shape)` **server-side** (R3 — client sends shape, not a mode string), best-effort reads `getEnhanceDirective(family,mode)`, and threads it via a new `SkillCtx.directive` into the skill's `buildMessages`, which appends it to the system prompt. **No directive → byte-identical to today** (parity preserved). Best-effort: a knowledge-read hiccup never blocks Enhance.
 

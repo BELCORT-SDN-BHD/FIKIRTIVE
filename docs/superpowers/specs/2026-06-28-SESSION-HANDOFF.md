@@ -49,7 +49,7 @@
 After v1 slice is picked → finish brainstorming → write spec to `docs/superpowers/specs/` → `writing-plans` → `subagent-driven-development`.
 
 ## 5. Local test rig (g6b code)
-- Tested via the **`otto-g2-editor` worktree** (`/Users/winnin/Desktop/artlio/.claude/worktrees/otto-g2-editor`, branch `claude/otto-g6b-meta-insights`) at **localhost:3100**. Synced main's `apps/web/.env.local` + `packages/db/.env` in, ran `prisma migrate deploy`, `pnpm --filter @fikirtive/web exec next dev -p 3100`. **Dev server is stopped.**
+- Tested via the **`otto-g2-editor` worktree** (`/Users/winnin/Desktop/fikirtive/.claude/worktrees/otto-g2-editor`, branch `claude/otto-g6b-meta-insights`) at **localhost:3100**. Synced main's `apps/web/.env.local` + `packages/db/.env` in, ran `prisma migrate deploy`, `pnpm --filter @fikirtive/web exec next dev -p 3100`. **Dev server is stopped.**
 - Local `.env.local` (main checkout + that worktree) now points to the **new app 999242359480685** (local dev `TOKEN_ENCRYPTION_KEY` is a *separate* key from prod).
 - **Local login = magic link** → written to `<worktree>/.data/last-magic-link.txt` AND console-logged `[better-auth] Sign in to Fikirtive for ...: <url>`.
 - **Local Otto chat needs `ANTHROPIC_API_KEY`** (NOT in local env → that's why local chat errored with `AI_LoadAPIKeyError`; prod has it). Add it locally to test the chat skill.

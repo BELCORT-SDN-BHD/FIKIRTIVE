@@ -21,7 +21,7 @@
 - **Exactly-once create:** one `MetaActionExecution` row per created object (`meta-build:<cardId>:<step>`), `appliedValue` = the created id; a re-run reads created ids, never re-creates. Partial-create → stop + report created ids; NO auto-delete.
 - Tests mock the Meta Graph client + storage — no real Meta calls, no real uploads.
 - Test commands: `pnpm --filter @fikirtive/web test <name>`, `pnpm --filter @fikirtive/otto test <name>`. Typecheck a file: `DATABASE_URL="postgresql://u:p@localhost:5432/db" pnpm --filter @fikirtive/web exec tsc --noEmit 2>&1 | grep <file>`. Catalog: `pnpm --filter @fikirtive/otto run catalog`. Fence: `bash scripts/check-skill-imports.sh`.
-- **Worktree env:** work ONLY in `/Users/winnin/Desktop/artlio/.claude/worktrees/distracted-maxwell-7d1884` (branch `claude/g7-v2-build-ads`); deps installed; verify `git rev-parse --show-toplevel` before committing; NEVER touch `/Users/winnin/Desktop/artlio` (main checkout). No live `DATABASE_URL` → migrations are hand-written (see Task 1), validate with `prisma validate`+`generate`.
+- **Worktree env:** work ONLY in `/Users/winnin/Desktop/fikirtive/.claude/worktrees/distracted-maxwell-7d1884` (branch `claude/g7-v2-build-ads`); deps installed; verify `git rev-parse --show-toplevel` before committing; NEVER touch `/Users/winnin/Desktop/fikirtive` (main checkout). No live `DATABASE_URL` → migrations are hand-written (see Task 1), validate with `prisma validate`+`generate`.
 
 ---
 

@@ -2,7 +2,7 @@
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
-**Goal:** Finish the Artlio video editor's audio story and add two zero-render exits. (1) **Sound tab** — surface audio assets (today `getEditorMedia` filters audio out), upload audio (the upload contract already allows it), place audio onto its own audio track (the contract already allows ≤2 audio tracks + per-clip volume + amix), expose per-audio-clip volume, and add **auto-ducking** (music under voiceover) as a per-audio-track toggle rendered with ffmpeg `sidechaincompress`. (2) **NLE XML export** — a PURE `ArtlioEdit → FCP7 XML` transform (no render, $0), downloaded client-side, alongside first-class **aspect/resolution presets** (the contract already has them; the editor never exposed them) and a revisit of the 1080 cap. (3) **Approximate preview** — a sequential `<video>` playthrough fallback (NO real-time compositing engine; Remotion deferred). All of it stays on the existing $0 self-hosted ffmpeg path with **no new spend path**.
+**Goal:** Finish the Fikirtive video editor's audio story and add two zero-render exits. (1) **Sound tab** — surface audio assets (today `getEditorMedia` filters audio out), upload audio (the upload contract already allows it), place audio onto its own audio track (the contract already allows ≤2 audio tracks + per-clip volume + amix), expose per-audio-clip volume, and add **auto-ducking** (music under voiceover) as a per-audio-track toggle rendered with ffmpeg `sidechaincompress`. (2) **NLE XML export** — a PURE `FikirtiveEdit → FCP7 XML` transform (no render, $0), downloaded client-side, alongside first-class **aspect/resolution presets** (the contract already has them; the editor never exposed them) and a revisit of the 1080 cap. (3) **Approximate preview** — a sequential `<video>` playthrough fallback (NO real-time compositing engine; Remotion deferred). All of it stays on the existing $0 self-hosted ffmpeg path with **no new spend path**.
 
 **Architecture:** EP4 builds on the EP1/EP2/EP3 contract. Audio placement reuses the already-capable worker: `apps/worker/src/jobs/render.ts` already renders audio-track clips (volume + per-transition crossfade + `adelay` in RENDERED time + `amix`). EP4's only worker change is **ducking**: thread an audio-track identity into `PlannedInput` so the single flat `amix` can be partitioned into a music sub-mix and a voice sub-mix, then `[bed][voice]sidechaincompress` → re-`amix`, preserving the load-bearing `atrim=0:${renderSeconds}[a]` + `-map [a]` tail untouched. The contract (`packages/core/src/timeline.ts`) gains ONE additive optional field — `track.audioRole?` ("voice" | "music") — validated in `timeline.superRefine` where track composition is in scope; absence = today's flat mix (backward-compat). The UI (`apps/web/components/Editor.tsx`) gets a **Sound aside** (surface + upload + place + per-clip volume + ducking toggle), an **Output control** (aspect/resolution/fps, merged into the persisted edit like EP1 transitions), an **Export XML button** + an **Approx preview toggle**. The XML serializer is a pure function in `packages/core` next to `timeline.ts`. The audio un-filter is a surgical widen of `getEditorMedia` (`apps/web/lib/actions.ts`).
 
@@ -27,13 +27,13 @@ Every task references these by exact symbol/line. All read (codegraph + Read) be
 - `isVisualTrack(t)` L162–163 = `t.clips.some(c => c.asset.type !== "audio")`. A track is "audio" iff every clip is audio.
 - `timeline.superRefine` L173–261: ≤1 visual track (L176–181), **≤2 audio tracks (L182–187)**, per-track overlap reject (L190–193), mixed-track reject (L194–197), between-clip transition rules (L203–252), 30-min cap (L255–260). **`audioRole` validation slots in here** (track composition in scope).
 - `output` zod L263–269: `{ format: literal("mp4"), resolution: enum("sd","hd","1080").default("hd") (L266, "720p cap, 1080 OOM'd ffmpeg; kept for legacy, render caps to hd"), aspectRatio: enum("16:9","9:16","1:1").default("16:9") (L267), fps: union(25,30).default(25) (L268) }`. EP4's Output control reads/writes this; the 1080-cap revisit is Decision 4.
-- `artlioEdit` L273–277 = `{ timeline, output }`. Default zod object **strips unknown top-level keys** → adding `track.audioRole?` (optional) is additive; old stored edits keep parsing.
+- `fikirtiveEdit` L273–277 = `{ timeline, output }`. Default zod object **strips unknown top-level keys** → adding `track.audioRole?` (optional) is additive; old stored edits keep parsing.
 - `editDuration(edit)` L316–321 = `max(start+length)`; `renderDuration(edit)` L328–333 = `editDuration − Σ transitions.durationMs/1000`. **`renderSeconds` (render.ts:249) is the load-bearing audio-placement timebase EP4 ducking must preserve.**
-- `packages/core/src/index.ts` barrel L11–32 re-exports `artlioEdit`, `ArtlioEdit`, `ArtlioClip`, `editDuration`, `renderDuration`, the transition types, etc. EP4 adds `editToFcpXml` + `AudioRole` here.
+- `packages/core/src/index.ts` barrel L11–32 re-exports `fikirtiveEdit`, `FikirtiveEdit`, `FikirtiveClip`, `editDuration`, `renderDuration`, the transition types, etc. EP4 adds `editToFcpXml` + `AudioRole` here.
 
 ### The EP1-shipped worker (`apps/worker/src/jobs/render.ts`, 381 lines) — the audio graph EP4 partitions
 
-- `PlannedInput` interface L43–48: `{ clip: ArtlioClip; file: string; index: number; hasAudio: boolean }`. **EP4 adds `audioRole?: AudioRole` and `trackKind: "visual"|"audio"`** so the mix can partition by track.
+- `PlannedInput` interface L43–48: `{ clip: FikirtiveClip; file: string; index: number; hasAudio: boolean }`. **EP4 adds `audioRole?: AudioRole` and `trackKind: "visual"|"audio"`** so the mix can partition by track.
 - `handleRender` L171; `visualTrack` L195, `audioTracks = tracks.filter(t => t !== visualTrack)` L197. Planning loop L203–212: visual clips first (sorted by start L210), then each audio track's clips L212 — `planned.push({ clip, file, index, hasAudio })` L208. **This is where `audioRole`/`trackKind` get threaded onto the planned input.**
 - `sounded = planned.filter(p => p.hasAudio && (p.clip.asset.volume ?? 1) > 0)` L226–228.
 - `audioChain(p, visualPlanned, transitions)` L136–169: `aresample=async=1:first_pts=0` → `volume` → legacy afade → per-transition crossfade afades (L152–164) → `adelay=${renderedStartSeconds*1000}:all=1` (L166–167). Output `[a${index}]`. **Reused unchanged by ducking** — only the MIX changes.
@@ -55,7 +55,7 @@ Every task references these by exact symbol/line. All read (codegraph + Read) be
 
 ### `apps/web/components/Editor.tsx` (1160 lines) — the EP1/EP2 UI EP4 extends
 
-- Imports L5–8 (`artlioEdit`, ops, `getEditorMedia`, `setDnd/getDnd/hasDnd`, ds). `EditorClip` type L38 = `{ id; src; kind: "image"|"video"; seconds }` — **EP4 widens `kind` to include `"audio"`**.
+- Imports L5–8 (`fikirtiveEdit`, ops, `getEditorMedia`, `setDnd/getDnd/hasDnd`, ds). `EditorClip` type L38 = `{ id; src; kind: "image"|"video"; seconds }` — **EP4 widens `kind` to include `"audio"`**.
 - `EMPTY_EDIT` L57–60 (`output: hd/16:9/25`). `media` state L164, loaded L166–172 (`getEditorMedia(projectId)`).
 - `currentMergedEdit()` L404–422 — merges React `transitions` onto track 0 before parse. **EP4 also merges `output` here** (Output control state lives in React like transitions).
 - `snapshot()` L424–435; `commitState` L442–452; `flushNative` L463–481; `reloadFromEdit(next)` L517–526 (the `loadEdit` + re-seed pattern EP4's `appendAudioAsset` uses to create an audio track); `appendAsset(clip)` L570–585 (`addClip(0, …)` — visual track 0 hard-coded).
@@ -76,7 +76,7 @@ EP4 introduces **NO new pg-boss job/queue/DB row**. Ducking is a filter inside t
 
 1. **Ducking model = a per-audio-track `audioRole` ("voice" | "music"), ducking happens iff EXACTLY ONE track is "music" AND ≥1 source is "voice".** Rationale: the contract has no track "role" today, and ducking needs to know which signal triggers (voice) and which is ducked (music). `audioRole` is the minimum addition — one optional enum on `track`. The trigger ("voice" sidechain) is built from the **voice-role audio track's clips + all native visual-clip audio** (a video clip's own dialogue is the natural sidechain trigger); the ducked bed is the **music-role audio track's clips**. If `audioRole` is absent on every track (every legacy edit, and any edit where the user didn't opt in), the mix stays the EP1 flat `amix` — zero behavior change. If 0 or 2 music tracks, or 0 voice sources, ducking is a no-op flat mix (validated/guarded, never an error). This keeps the contract surface tiny and the feature opt-in.
 2. **Approximate preview = a sequential HTML5 `<video>` playthrough of the VISUAL track only, transitions/overlays/ducking NOT simulated, behind an explicit toggle labeled "Approx preview (no effects)".** Rationale: the Shotstack studio canvas already gives WYSIWYG transport (`Edit.playbackTime`), so a parallel player is NOT a replacement — it's a cheap, dependency-free "does my cut roughly play back-to-back" check (the spec explicitly defers a real compositing engine = buy Remotion later). It plays each visual clip's `src` in `start` order, advancing on `ended`, honoring `trim`(as `currentTime`) and `length`. It does NOT render transitions, captions, overlays, or audio ducking — the label says so. This is honest, $0, and ~40 lines. (A real-time preview of effects is explicitly out of scope.)
-3. **XML export target = FCP7 XML (`xmeml` version 5), one visual track + audio tracks + hard cuts + per-clip fades, transitions/ducking dropped-with-a-comment.** Rationale: FCP7 XML is the broadest NLE interchange — **Premiere Pro AND DaVinci Resolve both import it** (FCPXML 1.x is Apple-only; EDL loses audio/fades; OTIO needs a runtime lib). EP4 maps `ArtlioEdit` → `xmeml`: sequence rate from `output.fps`, frame size from `output.aspectRatio`×`output.resolution` (SIZES), one video track of clipitems (in/out from `trim`×fps, start/end from timeline `start`×fps), audio tracks likewise, per-clip `transition.in/out` → a `<filter>` Cross Dissolve-to-black is **omitted** (FCP7's fade-to-black is a generator, lossy) — instead the mapping is honest: hard cuts + clip in/out/start/end + a top-of-file `<!-- ... -->` comment listing what was dropped (between-clip transitions, ducking, captions). The export is **lossy by nature** (any NLE interchange is) and says so. This is a pure `ArtlioEdit → string` function, fully unit-testable (the output parses as XML and round-trips key fields). Resolve/Premiere re-link media by filename; the `<pathurl>` is the app-relative `/files/...` src (the user re-links on import — documented in the download toast).
+3. **XML export target = FCP7 XML (`xmeml` version 5), one visual track + audio tracks + hard cuts + per-clip fades, transitions/ducking dropped-with-a-comment.** Rationale: FCP7 XML is the broadest NLE interchange — **Premiere Pro AND DaVinci Resolve both import it** (FCPXML 1.x is Apple-only; EDL loses audio/fades; OTIO needs a runtime lib). EP4 maps `FikirtiveEdit` → `xmeml`: sequence rate from `output.fps`, frame size from `output.aspectRatio`×`output.resolution` (SIZES), one video track of clipitems (in/out from `trim`×fps, start/end from timeline `start`×fps), audio tracks likewise, per-clip `transition.in/out` → a `<filter>` Cross Dissolve-to-black is **omitted** (FCP7's fade-to-black is a generator, lossy) — instead the mapping is honest: hard cuts + clip in/out/start/end + a top-of-file `<!-- ... -->` comment listing what was dropped (between-clip transitions, ducking, captions). The export is **lossy by nature** (any NLE interchange is) and says so. This is a pure `FikirtiveEdit → string` function, fully unit-testable (the output parses as XML and round-trips key fields). Resolve/Premiere re-link media by filename; the `<pathurl>` is the app-relative `/files/...` src (the user re-links on import — documented in the download toast).
 
 > **Decision 4 (the 1080 revisit):** KEEP the 720p render cap for now, but make it HONEST in the UI. The cap exists because a 1080 ffmpeg render OOM'd the worker (render.ts:218–220 comment). EP4 does NOT lift it (no infra change in scope; raising it risks the worker OOM the money-safety rule guards against). Instead the Output control's resolution selector shows `1080` as **"1080 (renders at 720 — beta)"** and the XML export uses the TRUE selected resolution (NLE re-renders at full res anyway). This closes the "revisit" honestly without a risky worker change. (If a future infra task gives the worker more memory, lifting the cap is a one-line change at render.ts:220 — flagged, not done here.)
 
@@ -88,7 +88,7 @@ EP4 introduces **NO new pg-boss job/queue/DB row**. Ducking is a filter inside t
 |---|---|---|
 | `packages/core/src/timeline.ts` | Modify | Add `AUDIO_ROLES`/`AudioRole` enum + `audioRole?` to the `track` zod; validate in `timeline.superRefine` (audioRole only on an audio track; ≤1 music track). Additive + backward-compat. |
 | `packages/core/src/timeline.test.ts` | Modify | New describe block: `audioRole` accept (voice/music), reject on a visual track, reject 2 music tracks, legacy edit (no audioRole) still parses, `output` presets parse. |
-| `packages/core/src/nle-export.ts` | **Create** | Pure `editToFcpXml(edit, opts?): string` — `ArtlioEdit → xmeml v5`. No I/O, no spend. |
+| `packages/core/src/nle-export.ts` | **Create** | Pure `editToFcpXml(edit, opts?): string` — `FikirtiveEdit → xmeml v5`. No I/O, no spend. |
 | `packages/core/src/nle-export.test.ts` | **Create** | vitest: output is well-formed XML, has the right `<rate>`/frame size, one clipitem per visual+audio clip with correct in/out/start/end frames, the dropped-features comment is present, an empty/transition edit doesn't throw. |
 | `packages/core/src/index.ts` | Modify | Re-export `editToFcpXml`, `AUDIO_ROLES`, `AudioRole`. |
 | `apps/worker/src/jobs/render.ts` | Modify | Thread `audioRole`/`trackKind` onto `PlannedInput`; when a music+voice pair exists, partition `sounded` into a voice sub-mix + a music sub-mix, `sidechaincompress` the music under the voice, re-`amix` — KEEP the `,aresample…,atrim=0:${renderSeconds}[a]` tail + `-map [a]`. New helper `buildAudioMix(...)`. Bounded; no new input. |
@@ -134,14 +134,14 @@ describe("track.audioRole (ducking opt-in)", () => {
   it("accepts audioRole on an audio track", () => {
     const e = cloneEdit();
     e.timeline.tracks[1].audioRole = "music"; // track[1] is the audio track
-    const parsed = artlioEdit.parse(e);
+    const parsed = fikirtiveEdit.parse(e);
     expect((parsed.timeline.tracks[1] as any).audioRole).toBe("music");
   });
 
   it("rejects audioRole on a visual track", () => {
     const e = cloneEdit();
     e.timeline.tracks[0].audioRole = "voice"; // track[0] is visual
-    expect(() => artlioEdit.parse(e)).toThrow(/audio track|visual/i);
+    expect(() => fikirtiveEdit.parse(e)).toThrow(/audio track|visual/i);
   });
 
   it("rejects more than one music track", () => {
@@ -149,26 +149,26 @@ describe("track.audioRole (ducking opt-in)", () => {
     // add a 2nd audio track and mark both music (timeline allows ≤2 audio tracks)
     e.timeline.tracks[1].audioRole = "music";
     e.timeline.tracks.push({ clips: [{ asset: { type: "audio", src: SRC.replace(".mp4", ".mp3") }, start: 0, length: 4 }], audioRole: "music" });
-    expect(() => artlioEdit.parse(e)).toThrow(/one music|single music/i);
+    expect(() => fikirtiveEdit.parse(e)).toThrow(/one music|single music/i);
   });
 
   it("accepts one music + one voice audio track", () => {
     const e = cloneEdit();
     e.timeline.tracks[1].audioRole = "voice";
     e.timeline.tracks.push({ clips: [{ asset: { type: "audio", src: SRC.replace(".mp4", ".mp3") }, start: 0, length: 4 }], audioRole: "music" });
-    expect(() => artlioEdit.parse(e)).not.toThrow();
+    expect(() => fikirtiveEdit.parse(e)).not.toThrow();
   });
 
   it("still parses a legacy edit with NO audioRole (backward-compat)", () => {
-    expect(() => artlioEdit.parse(validEdit)).not.toThrow();
-    expect((artlioEdit.parse(validEdit).timeline.tracks[1] as any).audioRole).toBeUndefined();
+    expect(() => fikirtiveEdit.parse(validEdit)).not.toThrow();
+    expect((fikirtiveEdit.parse(validEdit).timeline.tracks[1] as any).audioRole).toBeUndefined();
   });
 });
 ```
 
 - [ ] **Step 2: Run the test to verify it fails**
 
-Run: `pnpm --filter @artlio/core test -- timeline`
+Run: `pnpm --filter @fikirtive/core test -- timeline`
 Expected: FAIL — `AUDIO_ROLES` not exported; `audioRole` stripped (unknown field) so the accept case is `undefined`; the guards don't exist.
 
 - [ ] **Step 3: Add the enum + the `track` field** — in `packages/core/src/timeline.ts`, add after `TRANSITION_DIRECTIONS` (after L97):
@@ -216,14 +216,14 @@ Then after the `forEach` closes (after L254, before the 30-min `if (end > MAX_TI
 
 - [ ] **Step 5: Run the test to verify it passes**
 
-Run: `pnpm --filter @artlio/core test -- timeline`
+Run: `pnpm --filter @fikirtive/core test -- timeline`
 Expected: PASS (all `track.audioRole` cases green; every pre-existing test still passes — `validEdit` has no `audioRole` so nothing fires on it).
 
 - [ ] **Step 6: Re-export + typecheck + full core suite**
 
 In `packages/core/src/index.ts`, add `AUDIO_ROLES` to the value exports and `type AudioRole` to the type exports from `./timeline.js` (the block at L11–32).
 
-Run: `pnpm --filter @artlio/core typecheck && pnpm --filter @artlio/core test`
+Run: `pnpm --filter @fikirtive/core typecheck && pnpm --filter @fikirtive/core test`
 Expected: green.
 
 - [ ] **Step 7: Commit** (leave for user approval — do NOT push)
@@ -246,7 +246,7 @@ Ducking partitions the mix by track, but `PlannedInput` (L43–48) doesn't recor
 
 ```ts
 interface PlannedInput {
-  clip: ArtlioClip;
+  clip: FikirtiveClip;
   file: string;
   index: number;
   hasAudio: boolean;
@@ -261,7 +261,7 @@ interface PlannedInput {
 
 ```ts
     const planned: PlannedInput[] = [];
-    const addInput = async (clip: ArtlioClip, trackKind: "visual" | "audio", audioRole?: AudioRole) => {
+    const addInput = async (clip: FikirtiveClip, trackKind: "visual" | "audio", audioRole?: AudioRole) => {
       const file = await storage.ffmpegInput(srcToStorageKey(clip.asset.src));
       const probe = clip.asset.type === "image" ? { hasAudio: false } : await probeFile(file);
       planned.push({ clip, file, index: planned.length, hasAudio: probe.hasAudio, trackKind, audioRole });
@@ -271,11 +271,11 @@ interface PlannedInput {
     for (const t of audioTracks) for (const c of t.clips) await addInput(c, "audio", t.audioRole);
 ```
 
-- [ ] **Step 3: Import `AudioRole`** — add `type AudioRole` to the `@artlio/core` import (L22–34).
+- [ ] **Step 3: Import `AudioRole`** — add `type AudioRole` to the `@fikirtive/core` import (L22–34).
 
 - [ ] **Step 4: Typecheck (build core first so the worker sees the new export)**
 
-Run: `pnpm --filter @artlio/core build && pnpm --filter @artlio/worker typecheck`
+Run: `pnpm --filter @fikirtive/core build && pnpm --filter @fikirtive/worker typecheck`
 Expected: no errors. (The new fields are unused until Task 5 — `trackKind`/`audioRole` are read by `buildAudioMix`; if `noUnusedLocals` complains, Task 5 lands in the same commit, so commit Tasks 2+5 together as noted in Task 5 Step 6.)
 
 > Do NOT commit Task 2 alone — fold into Task 5's commit (the fields are consumed there).
@@ -344,7 +344,7 @@ function buildAudioMix(sounded: PlannedInput[], renderSeconds: number): { lines:
 
 - [ ] **Step 2: Typecheck**
 
-Run: `pnpm --filter @artlio/core build && pnpm --filter @artlio/worker typecheck`
+Run: `pnpm --filter @fikirtive/core build && pnpm --filter @fikirtive/worker typecheck`
 Expected: no errors. (`buildAudioMix` is unused until Task 5; fold its commit into Task 5.)
 
 > Do NOT commit Task 3 alone — fold into Task 5's commit.
@@ -379,7 +379,7 @@ Belt-and-braces: the contract already enforces ≤1 music track (Task 1), but gu
 
 - [ ] **Step 2: Typecheck**
 
-Run: `pnpm --filter @artlio/worker typecheck`
+Run: `pnpm --filter @fikirtive/worker typecheck`
 Expected: no errors. (Fold into Task 5's commit.)
 
 ---
@@ -413,12 +413,12 @@ Expected: no errors. (Fold into Task 5's commit.)
 
 - [ ] **Step 4: Typecheck + build**
 
-Run: `pnpm --filter @artlio/core build && pnpm --filter @artlio/worker typecheck && pnpm --filter @artlio/worker build`
+Run: `pnpm --filter @fikirtive/core build && pnpm --filter @fikirtive/worker typecheck && pnpm --filter @fikirtive/worker build`
 Expected: no errors.
 
 - [ ] **Step 5: Sanity — render an existing non-ducked fixture still works** — if a local fixture render exists from EP1 (`scripts/local-ep1-transitions-verify.mjs`), run it to confirm the flat-mix path is byte-for-byte unchanged:
 
-Run: `pnpm --filter @artlio/core build && node scripts/local-ep1-transitions-verify.mjs` (if present; else skip to Task 9)
+Run: `pnpm --filter @fikirtive/core build && node scripts/local-ep1-transitions-verify.mjs` (if present; else skip to Task 9)
 Expected: the EP1 verify still PASSes (the default mix path is identical — `buildAudioMix` returns the same single `amix … atrim[a]` line when not duckable).
 
 - [ ] **Step 6: Commit Tasks 2+3+4+5 together** (leave for user approval)
@@ -442,13 +442,13 @@ git commit -m "feat(editor): EP4 worker — audioRole ducking (sidechaincompress
 ```ts
 import { describe, expect, it } from "vitest";
 import { editToFcpXml } from "./nle-export.js";
-import type { ArtlioEdit } from "./timeline.js";
+import type { FikirtiveEdit } from "./timeline.js";
 
 const HASH = "a".repeat(64);
 const SRC = `/files/u/founder/${HASH}.mp4`;
 const ASRC = `/files/u/founder/${HASH}.mp3`;
 
-const edit: ArtlioEdit = {
+const edit: FikirtiveEdit = {
   timeline: {
     background: "#000000",
     tracks: [
@@ -491,7 +491,7 @@ describe("editToFcpXml", () => {
   });
 
   it("does not throw on an edit with between-clip transitions (they're dropped)", () => {
-    const e: ArtlioEdit = structuredClone(edit);
+    const e: FikirtiveEdit = structuredClone(edit);
     (e.timeline.tracks[0] as any).transitions = [{ fromClipIndex: 0, toClipIndex: 1, type: "cross", durationMs: 500 }];
     expect(() => editToFcpXml(e)).not.toThrow();
   });
@@ -505,13 +505,13 @@ describe("editToFcpXml", () => {
 
 - [ ] **Step 2: Run the test to verify it fails**
 
-Run: `pnpm --filter @artlio/core test -- nle-export`
+Run: `pnpm --filter @fikirtive/core test -- nle-export`
 Expected: FAIL — `editToFcpXml` not found.
 
 - [ ] **Step 3: Implement** — create `packages/core/src/nle-export.ts`:
 
 ```ts
-import type { ArtlioEdit, ArtlioClip } from "./timeline.js";
+import type { FikirtiveEdit, FikirtiveClip } from "./timeline.js";
 
 /** Frame size per aspect×resolution — mirrors the worker SIZES table
  *  (render.ts:37–41). The XML export uses the TRUE selected resolution (an NLE
@@ -531,20 +531,20 @@ function xmlEscape(s: string): string {
     .replace(/'/g, "&apos;");
 }
 
-const isAudioTrack = (clips: ArtlioClip[]) => clips.every((c) => c.asset.type === "audio");
+const isAudioTrack = (clips: FikirtiveClip[]) => clips.every((c) => c.asset.type === "audio");
 
-/** Serialize an ArtlioEdit to FCP7 XML (xmeml v5) — imports into Premiere Pro and
+/** Serialize a FikirtiveEdit to FCP7 XML (xmeml v5) — imports into Premiere Pro and
  *  DaVinci Resolve. LOSSY by design (any NLE interchange is): between-clip
  *  transitions, audio ducking, and captions/overlays are DROPPED and listed in a
  *  top-of-file comment. Hard cuts + clip in/out/start/end (frame-accurate from
  *  trim/length/start × fps) + per-clip media references are preserved. Media is
  *  referenced by app-relative src in <pathurl>; the user re-links on import.
  *  Pure: no I/O, no spend. */
-export function editToFcpXml(edit: ArtlioEdit, opts?: { sequenceName?: string }): string {
+export function editToFcpXml(edit: FikirtiveEdit, opts?: { sequenceName?: string }): string {
   const fps = edit.output.fps;
   const res = edit.output.resolution;
   const [width, height] = SIZES[edit.output.aspectRatio]?.[res] ?? [1280, 720];
-  const name = xmlEscape(opts?.sequenceName ?? "Artlio cut");
+  const name = xmlEscape(opts?.sequenceName ?? "Fikirtive cut");
   const sec = (s: number) => Math.round(s * fps); // seconds → frames
 
   const dropped: string[] = [];
@@ -556,7 +556,7 @@ export function editToFcpXml(edit: ArtlioEdit, opts?: { sequenceName?: string })
   if ((tl.textOverlays?.length ?? 0) > 0) dropped.push("text overlays");
 
   let fileSeq = 0;
-  const clipItem = (c: ArtlioClip, trackKind: "video" | "audio"): string => {
+  const clipItem = (c: FikirtiveClip, trackKind: "video" | "audio"): string => {
     const inF = sec(c.asset.trim ?? 0);
     const startF = sec(c.start);
     const lenF = sec(c.length);
@@ -594,8 +594,8 @@ export function editToFcpXml(edit: ArtlioEdit, opts?: { sequenceName?: string })
 
   const comment =
     dropped.length > 0
-      ? `<!-- Artlio FCP7 export (lossy): the following were DROPPED and must be re-created in the NLE: ${dropped.join(", ")}. Re-link media by filename on import. -->`
-      : `<!-- Artlio FCP7 export (lossy interchange). Re-link media by filename on import. -->`;
+      ? `<!-- Fikirtive FCP7 export (lossy): the following were DROPPED and must be re-created in the NLE: ${dropped.join(", ")}. Re-link media by filename on import. -->`
+      : `<!-- Fikirtive FCP7 export (lossy interchange). Re-link media by filename on import. -->`;
 
   return [
     `<?xml version="1.0" encoding="UTF-8"?>`,
@@ -617,21 +617,21 @@ export function editToFcpXml(edit: ArtlioEdit, opts?: { sequenceName?: string })
 
 - [ ] **Step 4: Run the test to verify it passes**
 
-Run: `pnpm --filter @artlio/core test -- nle-export`
+Run: `pnpm --filter @fikirtive/core test -- nle-export`
 Expected: PASS.
 
 - [ ] **Step 5: Re-export + typecheck**
 
 In `packages/core/src/index.ts`, add `export { editToFcpXml } from "./nle-export.js";`.
 
-Run: `pnpm --filter @artlio/core typecheck && pnpm --filter @artlio/core test`
+Run: `pnpm --filter @fikirtive/core typecheck && pnpm --filter @fikirtive/core test`
 Expected: green.
 
 - [ ] **Step 6: Commit** (leave for user approval)
 
 ```bash
 git add packages/core/src/nle-export.ts packages/core/src/nle-export.test.ts packages/core/src/index.ts
-git commit -m "feat(editor): EP4 core — editToFcpXml() pure ArtlioEdit→FCP7 XML export ($0, lossy interchange)"
+git commit -m "feat(editor): EP4 core — editToFcpXml() pure FikirtiveEdit→FCP7 XML export ($0, lossy interchange)"
 ```
 
 ---
@@ -697,7 +697,7 @@ type EditorClip = { id: string; src: string; kind: "image" | "video" | "audio"; 
 - [ ] **Step 2: Import the export + upload helpers** — extend the imports (L5–6):
 
 ```ts
-import { artlioEdit, snapEdit, splitClipAt, rippleDeleteClip, reconcileTransitions, editToFcpXml, type ArtlioEdit, type ArtlioClip } from "@artlio/core";
+import { fikirtiveEdit, snapEdit, splitClipAt, rippleDeleteClip, reconcileTransitions, editToFcpXml, type FikirtiveEdit, type FikirtiveClip } from "@fikirtive/core";
 import { getRenderJobs, saveProjectEdit, startRender, getEditorMedia } from "@/lib/actions";
 import { uploadFilesDirect } from "@/lib/direct-upload";
 import { finalizeCandidateUploads } from "@/lib/upload-actions";
@@ -707,8 +707,8 @@ import { finalizeCandidateUploads } from "@/lib/upload-actions";
 
 ```tsx
   // EP4 output presets live in React (like transitions, outside Shotstack) and are
-  // merged into the persisted ArtlioEdit. Seeded from the loaded edit's output.
-  const [output, setOutput] = useState<ArtlioEdit["output"]>(
+  // merged into the persisted FikirtiveEdit. Seeded from the loaded edit's output.
+  const [output, setOutput] = useState<FikirtiveEdit["output"]>(
     () => initialEdit?.output ?? EMPTY_EDIT.output,
   );
 ```
@@ -730,7 +730,7 @@ In `currentMergedEdit()` (L404–422), change the returned object's `output` to 
 
 > The Output control changing should mark the edit dirty: each `setOutput` is paired with `setDirty(true)` in its handler (Step 8).
 
-- [ ] **Step 4: `appendAudioAsset`** — add after `appendAsset` (after L585). It builds the next ArtlioEdit in JS (find/create an audio track) and pushes it via `reloadFromEdit` (the EP2 op pattern — the SDK's `addClip` targets an existing track index and can't reliably create an audio track; Decision in the EP4 grounding):
+- [ ] **Step 4: `appendAudioAsset`** — add after `appendAsset` (after L585). It builds the next FikirtiveEdit in JS (find/create an audio track) and pushes it via `reloadFromEdit` (the EP2 op pattern — the SDK's `addClip` targets an existing track index and can't reliably create an audio track; Decision in the EP4 grounding):
 
 ```tsx
   // EP4: place an audio asset on its OWN audio track (the contract forbids audio
@@ -762,7 +762,7 @@ In `currentMergedEdit()` (L404–422), change the returned object's `output` to 
         tracks.push({ clips: [newClip] });
       }
       const next = { ...base, timeline: { ...base.timeline, tracks } };
-      const parsed = artlioEdit.safeParse(next);
+      const parsed = fikirtiveEdit.safeParse(next);
       if (!parsed.success) {
         setNotice({ tone: "warn", text: parsed.error.issues[0]?.message ?? "Could not place audio." });
         return;
@@ -817,7 +817,7 @@ In `currentMergedEdit()` (L404–422), change the returned object's `output` to 
       if (!base) return;
       const tracks = base.timeline.tracks.map((t, i) => (i === trackIndex ? { ...t, audioRole: role } : t));
       const next = { ...base, timeline: { ...base.timeline, tracks } };
-      const parsed = artlioEdit.safeParse(next);
+      const parsed = fikirtiveEdit.safeParse(next);
       if (!parsed.success) { setNotice({ tone: "warn", text: parsed.error.issues[0]?.message ?? "Invalid role." }); return; }
       commitState(parsed.data);
       selfReload.current = true;
@@ -836,11 +836,11 @@ In `currentMergedEdit()` (L404–422), change the returned object's `output` to 
   function exportXml() {
     const snap = snapshot();
     if (snap.error || !snap.edit) { setNotice({ tone: "warn", text: snap.error ?? "Fix the cut first." }); return; }
-    const xml = editToFcpXml(snap.edit, { sequenceName: "Artlio cut" });
+    const xml = editToFcpXml(snap.edit, { sequenceName: "Fikirtive cut" });
     const blob = new Blob([xml], { type: "application/xml" });
     const url = URL.createObjectURL(blob);
     const a = document.createElement("a");
-    a.href = url; a.download = "artlio-cut.xml";
+    a.href = url; a.download = "fikirtive-cut.xml";
     document.body.appendChild(a); a.click(); a.remove();
     URL.revokeObjectURL(url);
     setNotice({ tone: "ok", text: "Exported FCP7 XML — import into Premiere/Resolve, re-link media by filename." });
@@ -850,13 +850,13 @@ In `currentMergedEdit()` (L404–422), change the returned object's `output` to 
 - [ ] **Step 8: Output control in the toolbar** — add before the Export MP4 button (before L968) three small selects bound to `output`:
 
 ```tsx
-        <select value={output.aspectRatio} onChange={(e) => { setOutput({ ...output, aspectRatio: e.target.value as ArtlioEdit["output"]["aspectRatio"] }); setDirty(true); }} aria-label="Aspect ratio" style={{ font: "var(--text-caption)" }}>
+        <select value={output.aspectRatio} onChange={(e) => { setOutput({ ...output, aspectRatio: e.target.value as FikirtiveEdit["output"]["aspectRatio"] }); setDirty(true); }} aria-label="Aspect ratio" style={{ font: "var(--text-caption)" }}>
           <option value="16:9">16:9</option><option value="9:16">9:16</option><option value="1:1">1:1</option>
         </select>
-        <select value={output.resolution} onChange={(e) => { setOutput({ ...output, resolution: e.target.value as ArtlioEdit["output"]["resolution"] }); setDirty(true); }} aria-label="Resolution" style={{ font: "var(--text-caption)" }}>
+        <select value={output.resolution} onChange={(e) => { setOutput({ ...output, resolution: e.target.value as FikirtiveEdit["output"]["resolution"] }); setDirty(true); }} aria-label="Resolution" style={{ font: "var(--text-caption)" }}>
           <option value="sd">SD</option><option value="hd">HD 720</option><option value="1080">1080 (renders at 720 — beta)</option>
         </select>
-        <select value={output.fps} onChange={(e) => { setOutput({ ...output, fps: Number(e.target.value) as ArtlioEdit["output"]["fps"] }); setDirty(true); }} aria-label="FPS" style={{ font: "var(--text-caption)" }}>
+        <select value={output.fps} onChange={(e) => { setOutput({ ...output, fps: Number(e.target.value) as FikirtiveEdit["output"]["fps"] }); setDirty(true); }} aria-label="FPS" style={{ font: "var(--text-caption)" }}>
           <option value={25}>25fps</option><option value={30}>30fps</option>
         </select>
         <Button variant="glass" size="sm" onClick={exportXml} disabled={status !== "ready" || busy} title="Export FCP7 XML for Premiere/Resolve">Export XML</Button>
@@ -954,7 +954,7 @@ and a sequential `<video>` player rendered ABOVE the studio canvas when `approxP
 Define a small local `ApproxPreview` component (above `Editor` or as a top-level component in the file) that holds an index, renders one `<video>` with `src = clips[idx].src` muted=false, sets `currentTime = trim ?? 0` on `loadedmetadata`, and on `timeupdate` advances when `currentTime >= (trim ?? 0) + length`, looping back to 0 at the end. ~40 lines. (It is read-only; it does not touch the contract or Shotstack.)
 
 ```tsx
-function ApproxPreview({ clips }: { clips: ArtlioClip[] }) {
+function ApproxPreview({ clips }: { clips: FikirtiveClip[] }) {
   const [idx, setIdx] = useState(0);
   const ref = useRef<HTMLVideoElement | null>(null);
   useEffect(() => { setIdx(0); }, [clips]);
@@ -980,7 +980,7 @@ function ApproxPreview({ clips }: { clips: ArtlioClip[] }) {
 
 - [ ] **Step 13: Typecheck the whole web app + core**
 
-Run: `pnpm --filter @artlio/core build && pnpm --filter web typecheck`
+Run: `pnpm --filter @fikirtive/core build && pnpm --filter web typecheck`
 Expected: no errors.
 
 - [ ] **Step 14: Commit** (leave for user approval)
@@ -1006,7 +1006,7 @@ import { execa } from "execa";
 import { mkdtemp, rm, readFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
-import { editToFcpXml, renderDuration, artlioEdit } from "../packages/core/dist/index.js";
+import { editToFcpXml, renderDuration, fikirtiveEdit } from "../packages/core/dist/index.js";
 
 const root = path.resolve(import.meta.dirname, "..");
 const work = await mkdtemp(path.join(tmpdir(), "ep4-verify-"));
@@ -1051,7 +1051,7 @@ try {
 
   // --- 5) XML round-trip: editToFcpXml output XML-parses + has expected frames
   const HASH = "a".repeat(64);
-  const fixture = artlioEdit.parse({
+  const fixture = fikirtiveEdit.parse({
     timeline: { background: "#000000", tracks: [
       { clips: [{ asset: { type: "video", src: `/files/u/founder/${HASH}.mp4`, trim: 1.5 }, start: 0, length: 4 }] },
       { clips: [{ asset: { type: "audio", src: `/files/u/founder/${HASH}.mp3` }, start: 0, length: 4 }], audioRole: "music" },
@@ -1080,7 +1080,7 @@ console.log("PASS no-spend — EP4 files reference no fal/generation/spend path.
 - [ ] **Step 2: Kill stale workers, build core, run the verify**
 
 Run: `pgrep -fl "tsx.*worker|node.*worker/dist" || echo "no worker running"`
-Then: `pnpm --filter @artlio/core build && node scripts/local-ep4-audio-export-verify.mjs`
+Then: `pnpm --filter @fikirtive/core build && node scripts/local-ep4-audio-export-verify.mjs`
 Expected:
 
 ```
@@ -1093,7 +1093,7 @@ PASS no-spend — EP4 files reference no fal/generation/spend path.
 
 - [ ] **Step 3: Full local gate**
 
-Run: `pnpm --filter @artlio/core test && pnpm --filter @artlio/core typecheck && pnpm --filter @artlio/worker typecheck && pnpm --filter @artlio/worker build && pnpm --filter web typecheck && pnpm --filter web build`
+Run: `pnpm --filter @fikirtive/core test && pnpm --filter @fikirtive/core typecheck && pnpm --filter @fikirtive/worker typecheck && pnpm --filter @fikirtive/worker build && pnpm --filter web typecheck && pnpm --filter web build`
 Expected: all green.
 
 - [ ] **Step 4: Commit** (leave for user approval)
@@ -1116,14 +1116,14 @@ git commit -m "test(editor): EP4 $0 verify — ducking RMS proof + editToFcpXml 
   4. **Per-clip volume:** select an audio-track clip → the Inspector "Audio" section shows the volume slider + Mute; changing it persists (Save → no contract error).
   5. **Ducking:** mark the music track "music (duck)" and (if present) the other "voice"; Export MP4 → the rendered mp4's music audibly dips when the voice plays. With NO role set, the mix is unchanged (flat).
   6. **Output presets:** change aspect to 9:16 → Export MP4 → the render is portrait; resolution "1080 (renders at 720 — beta)" still renders (at 720); fps 30 applies. The edit is marked dirty when a preset changes.
-  7. **Export XML:** click "Export XML" → an `artlio-cut.xml` downloads; open it → it's `xmeml version="5"` with one clipitem per visual+audio clip and the lossy comment. (Optionally import into Resolve/Premiere and re-link to confirm.)
+  7. **Export XML:** click "Export XML" → an `fikirtive-cut.xml` downloads; open it → it's `xmeml version="5"` with one clipitem per visual+audio clip and the lossy comment. (Optionally import into Resolve/Premiere and re-link to confirm.)
   8. **Approx preview:** toggle "Approx preview (no effects)" → a `<video>` plays the visual clips back-to-back honoring trim; the label says effects aren't shown. Toggling off returns to the studio canvas.
   9. **No spend:** the Network tab shows NO generation/fal endpoint call during any Sound/Output/Export action — only `getEditorMedia`, `uploadFilesDirect`/`finalizeCandidateUploads` (upload), `saveProjectEdit`/`startRender` (save/export MP4). XML export and approx preview make NO server call at all.
 
 - [ ] **Step 2: Codex gate (REQUIRED before any deploy)** — run `/codex` on the EP4 diff. Gate focus:
   1. **No spend path introduced** (Task 9 grep) — audio upload reuses the UPLOAD/ingest $0 path; ducking is render-only; XML/preview are client-only. No `startGen`/`createGenJob`/fal token anywhere in the diff.
   2. **Worker safety:** ducking adds NO ffmpeg input, the `atrim=0:${renderSeconds}[a]` + `-map [a]` tail is preserved, the flat-mix default is byte-identical for non-ducked edits, the 10-min execa timeout + 720p cap + transition guards are untouched. `sidechaincompress` availability is documented (Task 0 + the render.ts comment). The >1-music-track drift guard throws cleanly into the existing catch.
-  3. **Contract additive + backward-compat:** `track.audioRole?` is optional; absence = flat mix; every legacy stored edit still `artlioEdit.parse`s; `output` presets unchanged. No prisma migration, no new queue/job.
+  3. **Contract additive + backward-compat:** `track.audioRole?` is optional; absence = flat mix; every legacy stored edit still `fikirtiveEdit.parse`s; `output` presets unchanged. No prisma migration, no new queue/job.
   4. **Audio placement correctness:** `appendAudioAsset` never puts audio on the visual track; respects ≤2 audio tracks / ≤3 tracks; the new edit re-parses valid; `audioRole` is plumbed in React (like `transitions`) because Shotstack strips it.
   5. **XML correctness:** frame math (trim/length/start × fps) is right; XML-special chars escaped; the export is honestly labeled lossy with the dropped-features comment.
   6. Standard build/typecheck/test gate green.
@@ -1137,7 +1137,7 @@ git commit -m "test(editor): EP4 $0 verify — ducking RMS proof + editToFcpXml 
 **1. Spec coverage** (against the approved EP4 scope):
 
 - §EP4(1) Sound tab — un-filter audio (`getEditorMedia`) → Task 7; audio upload (existing contract) → Task 8 Steps 5+9; audio-track creation + placement (≤2 audio tracks, per-clip volume, amix) → Task 8 Steps 4+10+11; respect EP1 rendered-time mapping → audio flows through the UNCHANGED `audioChain`/`renderedStartSeconds`/`renderSeconds` (Tasks 2–5 only re-partition the MIX, never the per-clip placement). Auto-ducking via `sidechaincompress` as a toggle → Task 1 (contract) + Tasks 2–5 (worker) + Task 8 Step 6+9 (toggle). ✓
-- §EP4(2) Export — keep RenderJob path (`startRender` untouched) → confirmed (Task grounding); ADD Premiere/Resolve XML = pure `ArtlioEdit → XML` no render → Task 6 (`editToFcpXml`) + Task 8 Step 7 (client download); aspect/resolution presets first-class → Task 8 Steps 3+8; revisit the 1080 cap → Decision 4 (kept honestly, labeled "renders at 720 — beta", XML uses true res). ✓
+- §EP4(2) Export — keep RenderJob path (`startRender` untouched) → confirmed (Task grounding); ADD Premiere/Resolve XML = pure `FikirtiveEdit → XML` no render → Task 6 (`editToFcpXml`) + Task 8 Step 7 (client download); aspect/resolution presets first-class → Task 8 Steps 3+8; revisit the 1080 cap → Decision 4 (kept honestly, labeled "renders at 720 — beta", XML uses true res). ✓
 - §EP4(3) Preview — approximate sequential `<video>` playthrough, NO real-time compositing (Remotion deferred) → Decision 2 + Task 8 Step 12 (`ApproxPreview`, visual track back-to-back, explicitly "no effects"). ✓
 
 **2. House-rule coverage:**
@@ -1162,9 +1162,9 @@ git commit -m "test(editor): EP4 $0 verify — ducking RMS proof + editToFcpXml 
 
 - **The worker is ALREADY audio-capable** — `render.ts` renders audio-track clips with volume, per-transition crossfade, and rendered-time `adelay` + `amix` (EP1). EP4's ONLY worker change is partitioning the single `amix` into a ducked sub-mix. Per-clip audio placement, `renderedStartSeconds`, and `renderSeconds` are reused verbatim — do NOT touch them.
 - **`getEditorMedia` is the ONLY place audio is dropped** — `apps/web/lib/actions.ts:762` `return []; // skip audio/unknown`. Un-filtering there (Task 7) surfaces every already-stored audio Generation (uploads land as `source:"UPLOAD"` Generations with `durationS` from the ingest probe).
-- **Audio CANNOT use the SDK's `addClip`** — `addClip(trackIdx, …)` targets an existing track index and audio is forbidden on track 0 (the visual track). `appendAudioAsset` builds the next `ArtlioEdit` in JS and pushes it via `reloadFromEdit` (the EP2 op pattern) — the robust, SDK-bypassing path.
+- **Audio CANNOT use the SDK's `addClip`** — `addClip(trackIdx, …)` targets an existing track index and audio is forbidden on track 0 (the visual track). `appendAudioAsset` builds the next `FikirtiveEdit` in JS and pushes it via `reloadFromEdit` (the EP2 op pattern) — the robust, SDK-bypassing path.
 - **`audioRole` (and `output`) live in React state and merge in `currentMergedEdit`** exactly like `transitions` — Shotstack strips both. `reloadFromEdit` already re-seeds `transitions` from track 0; the executor adds a parallel re-seed for `audioRoles` and merges `output` (Task 8 Steps 3+6).
 - **No new pg-boss job/queue, no migration, no env var** — ducking is a filter in the existing render job; audio upload is the existing ingest path; XML export + approx preview are client-only. (The whisper.cpp transcription job in the architecture map is an EP3 concern; EP4 does not add it.)
 - **EP3-on-top:** if EP3 has shipped, `editToFcpXml` already lists `captions`/`textOverlays` in its dropped-features comment (Task 6 reads `timeline.captions`/`timeline.textOverlays` defensively via a cast, so it works whether or not EP3 is present). The render-side burn-in seam EP3 added (post-`vLabel`) is on the VIDEO graph; EP4 ducking is on the AUDIO graph — disjoint, no conflict.
-- **`@artlio/core build` before any web/worker typecheck or the verify script** — both consume the BUILT `dist` of core; the verify script imports `packages/core/dist/index.js` directly.
+- **`@fikirtive/core build` before any web/worker typecheck or the verify script** — both consume the BUILT `dist` of core; the verify script imports `packages/core/dist/index.js` directly.
 - **Spend path stays isolated** — `startGen` (`gen-actions.ts`) is reached only from `coworkGenerate`; the editor's save/render/upload/export paths never call it and EP4 adds nothing that does (Task 9 grep proves it).

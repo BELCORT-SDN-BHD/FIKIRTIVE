@@ -6,7 +6,7 @@
 
 **Architecture:** The `getCoworkThreads(projectId)` hydrate already returns every live thread WITH its messages, passed to `Cowork` as `threads: ChatThreadDTO[]`. So the sidebar + thread-switching are pure client-state over that prop (no new fetch to switch). Two new owner-scoped server actions — `coworkRenameThread` + `coworkDeleteThread` (soft-delete) — handle the mutations. New chat = clear the active thread; the first `coworkTurn` with no `threadId` creates one (existing behavior). Titles stay auto-from-first-message (coworkTurn already sets `title = text.slice(0,80)`), now editable via rename.
 
-**Tech Stack:** Next.js 16 (customized), React client components, Prisma, `@artlio/core`/`@artlio/db`, vitest.
+**Tech Stack:** Next.js 16 (customized), React client components, Prisma, `@fikirtive/core`/`@fikirtive/db`, vitest.
 
 **House rules:** rename/delete are NOT spend paths (metadata-only on ChatThread, owner-scoped, soft-delete) — but still owner-guarded + validated. No schema change. Surgical. No auto-commit/push (per-task local commits on a feature branch). `/codex` review before deploy; deploy needs explicit user authorization.
 
@@ -64,7 +64,7 @@ export async function coworkDeleteThread(raw: unknown): Promise<{ ok: true } | {
 }
 ```
 
-- [ ] **Step 3: Build + typecheck.** `pnpm --filter @artlio/core build && pnpm --filter web typecheck` → PASS.
+- [ ] **Step 3: Build + typecheck.** `pnpm --filter @fikirtive/core build && pnpm --filter web typecheck` → PASS.
 
 - [ ] **Step 4: Mock-$0 verify** `scripts/verify-cowork-sessions.mjs` (mirrors the other verify scripts — replicates the actions' DB effects; no `"use server"` import). Proves: rename updates only the owned thread; a cross-owner thread is NOT renamed/deleted; soft-delete sets deletedAt + the thread drops out of the live-list query + its messages remain + ZERO GenJob touched:
 ```js
@@ -108,7 +108,7 @@ try {
   await prisma.$disconnect();
 }
 ```
-Run: `pnpm --filter @artlio/core build && pnpm --filter @artlio/db build && node scripts/verify-cowork-sessions.mjs 2>&1 | grep -E "✓|✗"` → all ✓.
+Run: `pnpm --filter @fikirtive/core build && pnpm --filter @fikirtive/db build && node scripts/verify-cowork-sessions.mjs 2>&1 | grep -E "✓|✗"` → all ✓.
 
 - [ ] **Step 5: Commit (local, no push).** `git add packages/core/src/cowork.ts apps/web/lib/cowork-actions.ts scripts/verify-cowork-sessions.mjs && git commit -m "feat(cowork): rename + soft-delete thread server actions (SP2 sessions)"`
 
@@ -176,7 +176,7 @@ Add the imports: `coworkRenameThread`, `coworkDeleteThread` from `@/lib/cowork-a
 
 ### Task 3: Gate + Codex
 
-- [ ] **Step 1: Full gate.** Kill stale fal workers; `pnpm -r typecheck && pnpm --filter @artlio/core test && pnpm --filter web build && node scripts/verify-cowork-sessions.mjs` → all green.
+- [ ] **Step 1: Full gate.** Kill stale fal workers; `pnpm -r typecheck && pnpm --filter @fikirtive/core test && pnpm --filter web build && node scripts/verify-cowork-sessions.mjs` → all green.
 - [ ] **Step 2: Codex review** the SP2 diff. Focus: rename/delete are owner-scoped (no cross-owner mutation), soft-delete only (no hard delete / no cascade surprise), NOT a spend path (no GenJob/startGen), the UI switch/new/delete can't strand the user or lose the active thread. Address P1/P2.
 - [ ] **Step 3: STOP** — deploy needs explicit user authorization (then the standard `railway up --service web`; no migration this time — no schema change).
 

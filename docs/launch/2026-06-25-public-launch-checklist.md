@@ -58,7 +58,7 @@ Legend: **[req]** required for public prod · **[req-fal]** required once real g
 - `STORAGE_DRIVER=r2` **[req]** for multi-service prod (else local disk, which doesn't share across containers).
 - `R2_ENDPOINT`, `R2_ACCESS_KEY_ID`, `R2_SECRET_ACCESS_KEY`, `R2_BUCKET` **[req with r2]** (all 4 or it throws).
 - `R2_FORCE_PATH_STYLE` **[opt]** — default true; set `false` for vhost-style.
-- `ARTLIO_DATA_DIR` **[opt]** — local-disk root (dev only). *(nit: env name still says ARTLIO.)*
+- `FIKIRTIVE_DATA_DIR` **[opt]** — local-disk root (dev only). *(renamed from the legacy pre-pivot name, 2026-07-07.)*
 
 ### Worker-only (captions)
 - `WHISPER_MODEL_PATH` — set in the worker Dockerfile. `WHISPER_THREADS` / `WHISPER_MAX_SECONDS` **[opt]**.
@@ -93,4 +93,4 @@ Legend: **[req]** required for public prod · **[req-fal]** required once real g
 ## 5. Known gaps (track, not all blockers)
 - **Test coverage** on the new read paths (`getMyAds`, `listMyMemory`) + the React surface is thin — add before scaling.
 - **Workshop** is an intentional stub.
-- Cosmetic: `ARTLIO_DATA_DIR` env name + a couple of "Artlio" strings in `.env.example` survived the rename.
+- Cosmetic: a legacy env name + a couple of pre-pivot strings survived the rename in `.env.example` — resolved 2026-07-07 (name purge; the env var is now `FIKIRTIVE_DATA_DIR`).

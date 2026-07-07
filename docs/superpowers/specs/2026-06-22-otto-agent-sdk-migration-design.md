@@ -59,7 +59,7 @@ The user's draw to EVE was filesystem-first authoring. We reproduce it with our 
 
 Two halves with a hard line between them:
 
-- **Brain (new):** Otto = an OpenAI Agents SDK `Agent`, defined in a **shared package** (e.g. `@artlio/otto`) so **both `apps/web` (interactive turns) and `apps/worker` (auto-resume turns, §8) can import it**. Conversation state (`RunState`) is serialized into **our Neon Postgres**, mapped onto `ChatThread`/`ChatMessage`.
+- **Brain (new):** Otto = an OpenAI Agents SDK `Agent`, defined in a **shared package** (e.g. `@fikirtive/otto`) so **both `apps/web` (interactive turns) and `apps/worker` (auto-resume turns, §8) can import it**. Conversation state (`RunState`) is serialized into **our Neon Postgres**, mapped onto `ChatThread`/`ChatMessage`.
 - **Money machine (mostly unchanged — see §11):** `startGen` → `genRequest` zod gate → `reserveCredits` (atomic, never-negative) + `GenJob` insert **in one $transaction**; `boss.send(GEN_QUEUE)` is a **separate post-commit step** (not in the tx) → the pg-boss worker (`apps/worker/src/jobs/gen.ts`) calls fal, stores to R2, `settleCredits`. Exactly-once via a stable idempotency key + a partial-unique index (§5 #3).
 
 **Identity:** the ledger and ownership are keyed by **`orgId`** (+ `refId`), not `ownerId`; today they coincide via org-as-tenant (`ownerId === orgId`; the worker calls `settleCredits(tx, { orgId: job.ownerId, refId: job.id })`). Otto's tools pass `orgId = the session's org`. There is **no `ctx.session` in the codebase today**; tenant identity is resolved by `requireOwner()`/`auth()` (`apps/web/lib/auth-guard.ts`). The Otto tool wrapper bridges the verified next-auth session into the SDK run context; "`ctx.session`" below means that bridged value, to be built.
@@ -139,9 +139,9 @@ Tenant derived **only** from the verified next-auth session (`requireOwner()`/`a
 Otto reacts to a finished generation without blocking a turn:
 
 - `generate.execute` enqueues the pg-boss job and returns `{ genJobId, status: "queued" }`; the turn ends.
-- When the **worker** finishes the gen job (settles credits, writes `GEN_RESULT` as today), it then **runs one Otto follow-up turn in-process** — it imports `@artlio/otto`, loads the thread's `RunState`, injects the result, and Otto produces a **plain verdict-asking message** ("这版符合你的预期吗?有什么要改的?" — a normal verdict prompt, **not** a salesy upsell), then persists RunState + the message. The user replies via the normal chat UI (web), which resumes the conversation.
-- **Why the worker, not web:** the worker is already the durable (pg-boss) place where the gen job completes; running the resume there avoids web's request-scope problem and any cross-service HTTP. It works because the Otto agent lives in the shared `@artlio/otto` package the worker can import. The worker therefore needs `ANTHROPIC_API_KEY` + DB access (it has DB; add the model key).
-- **Resume needs the live agent:** `RunState.fromString(agent, str)` requires rebuilding the identical agent graph — satisfied by importing `@artlio/otto` in the worker.
+- When the **worker** finishes the gen job (settles credits, writes `GEN_RESULT` as today), it then **runs one Otto follow-up turn in-process** — it imports `@fikirtive/otto`, loads the thread's `RunState`, injects the result, and Otto produces a **plain verdict-asking message** ("这版符合你的预期吗?有什么要改的?" — a normal verdict prompt, **not** a salesy upsell), then persists RunState + the message. The user replies via the normal chat UI (web), which resumes the conversation.
+- **Why the worker, not web:** the worker is already the durable (pg-boss) place where the gen job completes; running the resume there avoids web's request-scope problem and any cross-service HTTP. It works because the Otto agent lives in the shared `@fikirtive/otto` package the worker can import. The worker therefore needs `ANTHROPIC_API_KEY` + DB access (it has DB; add the model key).
+- **Resume needs the live agent:** `RunState.fromString(agent, str)` requires rebuilding the identical agent graph — satisfied by importing `@fikirtive/otto` in the worker.
 - This verdict turn is itself an Otto-LLM call → it reserves→settles credits like any turn (§6).
 
 ## 9. Naming migration (`cowork → otto`) — gated, last
@@ -157,7 +157,7 @@ Otto reacts to a finished generation without blocking a turn:
 
 Blast radius of a brain bug is contained because the GEN money path is unchanged: worst case is "Otto chat misbehaves," recoverable by `git revert` + redeploy.
 
-- **Phase 0 — Spike (go/no-go).** On the local QA stack: (a) `RunState` serialize → persist → rehydrate after a redeploy, AND **single-use** (an approved-then-rehydrated `generate` must NOT re-enter `execute` / is a no-op via the index); (b) the worker imports `@artlio/otto` and runs a resume turn (§8); (c) Anthropic via `@openai/agents-extensions` `aisdk(@ai-sdk/anthropic …)` (beta) works and per-request usage flows via `requestUsageEntries`; (d) the reserve→settle variable-settle ledger capability. Any failure → stop.
+- **Phase 0 — Spike (go/no-go).** On the local QA stack: (a) `RunState` serialize → persist → rehydrate after a redeploy, AND **single-use** (an approved-then-rehydrated `generate` must NOT re-enter `execute` / is a no-op via the index); (b) the worker imports `@fikirtive/otto` and runs a resume turn (§8); (c) Anthropic via `@openai/agents-extensions` `aisdk(@ai-sdk/anthropic …)` (beta) works and per-request usage flows via `requestUsageEntries`; (d) the reserve→settle variable-settle ledger capability. Any failure → stop.
 - **Phase 1 — Build + local QA.** Build `packages/otto`; add the variable-settle ledger capability + per-turn reserve→settle + the 5 guardrails; **wrap every paid-LLM entrypoint** (otto turn, `enhancePrompt`, `coworkDraftStoryboard`) in metering. **Keep `cowork:` idempotency keys** (no rename yet). Verify entirely on the local QA stack (docker postgres + worker + **mock provider = zero spend**): the test plan in §12.
 - **Phase 2 — Cutover (hard gate).** (1) money-machine-touching diffs (variable settle, the generate tool, the metering wraps) pass **`money-safety-review` + Codex**; (2) push to `main` → Railway `NEEDS_APPROVAL`; (3) approve **web → worker**, then **verify live + hand-test one Otto round** (generation runs; GEN credits AND Otto-LLM credits reserve→settle correctly; balance never negative; auto-resume verdict turn fires); (4) on any problem, `git revert` + redeploy.
 - **Phase 3 — Rename + retire R1.** Full `cowork → otto` rename; delete `cowork-transport.ts`/`cowork-planner.ts`/old `coworkTurn` (and their tests); retire `COWORK_PAID_PROVIDERS_ALLOWED` + its Railway env **only after §6 confirms every paid-LLM entrypoint is metered**. The idempotency-prefix change follows §9 (its own money-safety-gated diff).
@@ -191,7 +191,7 @@ HITL
   ├─ approval bound to (cardId, payload-hash); resume with a different cardId is rejected
   └─ approved-then-rehydrated generate is single-use (no re-charge)
 AUTO-RESUME
-  └─ worker loads RunState from @artlio/otto, runs the verdict turn, persists; verdict turn reserves→settles
+  └─ worker loads RunState from @fikirtive/otto, runs the verdict turn, persists; verdict turn reserves→settles
 LLM QUALITY
   └─ [→EVAL] otto instructions.md output quality vs today's planner prompt baseline
 ```

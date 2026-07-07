@@ -91,12 +91,12 @@ describe("selectExpiredBackups (30-day retention, dates parsed from keys)", () =
 
 describe("pgEnvFromUrl (connection via env, NEVER argv)", () => {
   it("splits a plain local URL", () => {
-    expect(pgEnvFromUrl("postgres://artlio:artlio@localhost:5432/artlio_test")).toEqual({
+    expect(pgEnvFromUrl("postgres://fikirtive:fikirtive@localhost:5432/fikirtive_test")).toEqual({
       PGHOST: "localhost",
       PGPORT: "5432",
-      PGUSER: "artlio",
-      PGPASSWORD: "artlio",
-      PGDATABASE: "artlio_test",
+      PGUSER: "fikirtive",
+      PGPASSWORD: "fikirtive",
+      PGDATABASE: "fikirtive_test",
     });
   });
 

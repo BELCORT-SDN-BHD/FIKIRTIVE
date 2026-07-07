@@ -44,14 +44,14 @@
 
 ## ⚠️ founder 待办(S1 收尾,按优先序)
 
-1. **R2 bucket 隔离(agent 无权限,只能 founder 做)。** 本机两套凭证都试过:S3 API
+1. **R2 bucket 隔离(agent 无权限,只能 founder 做)。**(prod bucket `artlio` 本身的改名另见 `docs/MASTERPLAN.md` P0。) 本机两套凭证都试过:S3 API
    `CreateBucket` 与 Cloudflare REST API 均被拒(现有 token 是 bucket 级授权 —— 这本身是好事)。步骤:
-   1. Cloudflare dashboard → R2 → Create bucket → 名字 `artlio-staging`;
-   2. R2 → Manage R2 API Tokens → Create API Token → 权限 Object Read & Write,**只勾 `artlio-staging`**;
+   1. Cloudflare dashboard → R2 → Create bucket → 名字 `fikirtive-staging`;
+   2. R2 → Manage R2 API Tokens → Create API Token → 权限 Object Read & Write,**只勾 `fikirtive-staging`**;
    3. 把新 token 的 Access Key ID / Secret Access Key 填进 Railway `staging` **和** `staging-live`
-      的 web+worker:`R2_ACCESS_KEY_ID`、`R2_SECRET_ACCESS_KEY`,并把 `R2_BUCKET=artlio-staging`;
+      的 web+worker:`R2_ACCESS_KEY_ID`、`R2_SECRET_ACCESS_KEY`,并把 `R2_BUCKET=fikirtive-staging`;
    4. 跑一次 CORS/lifecycle 配置(直传上传必需):
-      `set -a && source <新凭证文件> && set +a && R2_BUCKET=artlio-staging APP_ORIGIN=https://web-staging-7901.up.railway.app I_UNDERSTAND_THIS_TOUCHES_PROD=yes node scripts/tools/r2-configure.mjs`
+      `set -a && source <新凭证文件> && set +a && R2_BUCKET=fikirtive-staging APP_ORIGIN=https://web-staging-7901.up.railway.app I_UNDERSTAND_THIS_TOUCHES_PROD=yes node scripts/tools/r2-configure.mjs`
       (staging-live 的 APP_ORIGIN 再跑一遍)。
    在此之前 staging 资产继续写进与 prod 共用的 `artlio`(内容寻址、低冲击,但备份/清理会掺沙子)。
 2. **Stripe test key 换占位符。** dashboard.stripe.com → 右上角切 **Test mode** → Developers →

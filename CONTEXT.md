@@ -195,7 +195,7 @@ Reading the table below:
 - **Shot** (镜头) — One planned camera shot in a Storyboard, grouped into Scenes; can hold a
   first/last frame and generated media. _Avoid:_ clip (a clip is an editor timeline item), frame, scene.
 
-- **ArtlioEdit / editJson** (剪辑文档) — The single saved document describing a whole edit: the
+- **FikirtiveEdit / editJson** (剪辑文档) — The single saved document describing a whole edit: the
   timeline (tracks + clips) plus output settings. The contract both the editor and the renderer obey.
   _Avoid:_ project (a Project *contains* one editJson), edit list, EDL, timeline (timeline is a field inside it).
 

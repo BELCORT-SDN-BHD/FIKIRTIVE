@@ -9,7 +9,7 @@ import path from "node:path";
 import os from "node:os";
 
 const BASE = process.env.BASE_URL ?? "http://localhost:3100";
-const SHOTS = path.join(os.homedir(), ".gstack/projects/artlio/studio-journey");
+const SHOTS = path.join(os.homedir(), ".gstack/projects/fikirtive/studio-journey");
 mkdirSync(SHOTS, { recursive: true });
 const snap = (n) => page.screenshot({ path: path.join(SHOTS, n) });
 const step = (m) => console.log(`✓ ${m}`);

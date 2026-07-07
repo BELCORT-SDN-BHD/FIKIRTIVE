@@ -9,7 +9,7 @@
 1. **当前序列不变**：T4b 直传 → 创始人真实项目（升级门）。生成 API 不阻塞任何当前工作。
 2. **第一个接的是图像 API，不是视频**——阶段二旗舰=引导式参考图生成（第一个收费点）。工作马 Seedream 5.0 Lite（fal $0.035/张，10 参考图）+ Qwen Multiple-Angles LoRA（确定性 96 相机位姿转角）+ Nano Banana Pro 高级档（$0.15）。一次完整引导流程（master+4 角度+重试）成本 $0.25-0.35，毛利空间充足。
 3. **视频 API 紧随其后，复用同一 fal 适配层**（同一账单/queue/webhook，零新增账务）。
-4. **战略发现（本次调研最大收获）**：2026 年所有头部视频模型都标配 multi-reference，但 schema 完全不互通——Kling 元素库（每元素 4 图多角度）、Seedance 2.0（9图+3视频+3音频）、Veo 3.1 Ingredients、Vidu Q3（4图+2视频）、Wan（150 参考帧）。「@实体 → 自动拆装到目标模型的 reference 槽位（数量裁剪/角度筛选/格式转换）」正是 Artlio 楔子的接口价值；快手自己做 Element Library = 厂商验证了"持久化实体库"方向，但没人做跨模型的那一个。**这应该直接写进产品叙事。**
+4. **战略发现（本次调研最大收获）**：2026 年所有头部视频模型都标配 multi-reference，但 schema 完全不互通——Kling 元素库（每元素 4 图多角度）、Seedance 2.0（9图+3视频+3音频）、Veo 3.1 Ingredients、Vidu Q3（4图+2视频）、Wan（150 参考帧）。「@实体 → 自动拆装到目标模型的 reference 槽位（数量裁剪/角度筛选/格式转换）」正是 Fikirtive 楔子的接口价值；快手自己做 Element Library = 厂商验证了"持久化实体库"方向，但没人做跨模型的那一个。**这应该直接写进产品叙事。**
 
 ### 选型：fal 主渠道 + 适配层做薄留退路
 
@@ -67,7 +67,7 @@
 - HN 实操共识：fal + Replicate 互为 fallback 是独立开发者标配；fal 痛点=CDN 下载慢（2026-05 帖）、新模型报错照扣 credit（2026-02）
 - 2026 上半年风险案例：Sora 2 退场（6 个月窗口）；Seedance 版权风暴（Disney 律师函→3 月暂停→4 月加过滤重开，名人/IP/版权音频全被过滤）；FLUX.2-dev 改 Non-Commercial；Veo 3.1 Lite $0.05/s 官方杀价改变相对性价比
 - 创作者主力（2026-06）：Kling 3.0/O3（角色一致性之王+元素库）、Veo 3.1（物理+48kHz 原生对白）、Seedance 2.0（多 shot 叙事+性价比）；二梯队 Runway Gen-4.5（不上聚合器）、Hailuo 2.3（风格化）、Wan（开源/本地党）、Vidu Q3（动漫+参考一致性）
-- multi-reference schema 全不互通（Kling 元素库 4 图/Seedance 9+3+3/Veo Ingredients/Vidu 4+2/Wan 150 帧）→ Artlio 跨模型实体库=真实断层上的接口价值
+- multi-reference schema 全不互通（Kling 元素库 4 图/Seedance 9+3+3/Veo Ingredients/Vidu 4+2/Wan 150 帧）→ Fikirtive 跨模型实体库=真实断层上的接口价值
 - ComfyUI 重度用户（400 万）：图像尽量本地、视频大量走 API；不反对付费，反对锁定和审查 → 可转化第二人群（reference 资产可导出到本地工作流是吃下他们的钩子）
 
 # 附录 D：参考图生成选型（调研员 4）

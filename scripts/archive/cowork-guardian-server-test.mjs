@@ -3,7 +3,7 @@
 // checkCast() directly against the real DB — proving the backstop BLOCKS a paid
 // generation on a 0-ref CHARACTER and PASSES a character that has a reference.
 // Run: node --import tsx --conditions=react-server scripts/archive/cowork-guardian-server-test.mjs
-process.env.DATABASE_URL ??= "postgresql://artlio:artlio@localhost:5432/artlio";
+process.env.DATABASE_URL ??= "postgresql://fikirtive:fikirtive@localhost:5432/fikirtive";
 const { prisma } = await import("../../packages/db/dist/src/index.js");
 const { newId } = await import("../../packages/core/dist/index.js");
 const { checkCast } = await import("../../apps/web/lib/cowork-guardian.ts");

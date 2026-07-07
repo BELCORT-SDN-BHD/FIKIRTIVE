@@ -60,7 +60,7 @@ This MUST be empty. If ANY of the 5 changed, `git checkout -- <that file>` to re
 
 Run from the repo root:
 ```bash
-cd /Users/winnin/Desktop/artlio/.claude/worktrees/gracious-chandrasekhar-72f8c9
+cd /Users/winnin/Desktop/fikirtive/.claude/worktrees/gracious-chandrasekhar-72f8c9
 git diff --stat -- apps/web/package.json
 pnpm install   # regenerates pnpm-lock.yaml if package.json changed
 git diff --stat -- pnpm-lock.yaml
@@ -72,7 +72,7 @@ Expected: if `apps/web/package.json` gained a dep, `pnpm-lock.yaml` is updated. 
 Run:
 ```bash
 cd apps/web && npx tsc --noEmit
-cd /Users/winnin/Desktop/artlio/.claude/worktrees/gracious-chandrasekhar-72f8c9 && pnpm --filter @fikirtive/web build
+cd /Users/winnin/Desktop/fikirtive/.claude/worktrees/gracious-chandrasekhar-72f8c9 && pnpm --filter @fikirtive/web build
 ```
 Expected: tsc clean; `next build` exit 0. **Note (codex finding #3):** a clean build does NOT prove the components are correctly themed — tailwind v4 silently ignores a `bg-X`/`border-X` whose `--color-X` is unregistered; it does not error. Token completeness is verified in Task 2 (the `@theme inline` audit), not here. This step only confirms the new files compile and nothing else regressed.
 
@@ -111,7 +111,7 @@ Add any further gap the Step-1 audit surfaced, each mapped to its existing `--<n
 
 - [ ] **Step 3: Verify visually** (build can't catch this). Build + screenshot the components proof route:
 ```bash
-cd /Users/winnin/Desktop/artlio/.claude/worktrees/gracious-chandrasekhar-72f8c9 && pnpm --filter @fikirtive/web build
+cd /Users/winnin/Desktop/fikirtive/.claude/worktrees/gracious-chandrasekhar-72f8c9 && pnpm --filter @fikirtive/web build
 PORT=3007 pnpm --filter @fikirtive/web dev   # background; wait for ready
 B="$HOME/.claude/skills/gstack/browse/dist/browse"
 $B goto "http://localhost:3007/kitchensink"; $B wait --networkidle; $B screenshot "/private/tmp/gb-tokens-check.png"; $B console --errors

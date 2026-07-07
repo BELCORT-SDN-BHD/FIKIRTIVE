@@ -18,7 +18,7 @@
 - **Free-credit grant = 100 display credits** (was 1000).
 - **Otto LLM margin default = 1.5×** (was 3).
 - **Stripe stays in TEST mode** — do NOT switch to live keys (founder flips live separately). Env layout: dev secrets = main checkout `apps/web/.env.local`; STRIPE_* keys already wired there (memory `fikirtive-stripe-config`).
-- **Worktree:** work in `/Users/winnin/Desktop/artlio/.claude/worktrees/distracted-maxwell-7d1884` on branch `claude/monetization-credit-packs`; verify `git rev-parse --show-toplevel` + branch before committing; NEVER touch `/Users/winnin/Desktop/artlio`. Tests: `pnpm --filter @fikirtive/core test`, `pnpm --filter @fikirtive/web test`.
+- **Worktree:** work in `/Users/winnin/Desktop/fikirtive/.claude/worktrees/distracted-maxwell-7d1884` on branch `claude/monetization-credit-packs`; verify `git rev-parse --show-toplevel` + branch before committing; NEVER touch `/Users/winnin/Desktop/fikirtive`. Tests: `pnpm --filter @fikirtive/core test`, `pnpm --filter @fikirtive/web test`.
 
 ---
 

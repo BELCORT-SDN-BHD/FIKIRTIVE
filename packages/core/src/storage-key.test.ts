@@ -3,7 +3,7 @@ import { FOUNDER_OWNER_ID, parseStorageKey, storageKey, keyOwnerMatches } from "
 import { sha256Bytes } from "./hash.js";
 import { newId } from "./ids.js";
 
-const HASH = sha256Bytes(new TextEncoder().encode("artlio"));
+const HASH = sha256Bytes(new TextEncoder().encode("fikirtive"));
 
 describe("storageKey", () => {
   it("round-trips owner/hash/ext", () => {
@@ -23,7 +23,7 @@ describe("storageKey", () => {
     expect(() => storageKey("founder", "deadbeef", "png")).toThrow(/invalid content hash/);
     expect(() => storageKey("a/b", HASH, "png")).toThrow(/invalid owner/);
     expect(() => storageKey("founder", HASH, "p!ng")).toThrow(/invalid extension/);
-    expect(() => parseStorageKey("u/founder/nothash.png")).toThrow(/not an artlio storage key/);
+    expect(() => parseStorageKey("u/founder/nothash.png")).toThrow(/not a fikirtive storage key/);
   });
 });
 

@@ -13,7 +13,7 @@ import path from "node:path";
 import os from "node:os";
 
 const BASE = process.env.BASE_URL ?? "https://web-production-b13a4.up.railway.app";
-const OUT = path.join(os.homedir(), ".gstack/projects/artlio/prod-pass5");
+const OUT = path.join(os.homedir(), ".gstack/projects/fikirtive/prod-pass5");
 await mkdir(OUT, { recursive: true });
 const VW = 390, VH = 844;
 

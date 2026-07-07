@@ -46,7 +46,7 @@ describe("FOUNDER_OWNER_ID (R2-orphan guard)", () => {
 
 - [ ] **Step 2: Run it to verify it passes immediately** (the value is already "founder")
 
-Run: `pnpm --filter @artlio/core test storage-key`
+Run: `pnpm --filter @fikirtive/core test storage-key`
 Expected: PASS (this is a regression lock, not a behavior change).
 
 - [ ] **Step 3: Add the warning comment** at `packages/core/src/storage-key.ts:7`
@@ -58,7 +58,7 @@ Expected: PASS (this is a regression lock, not a behavior change).
 export const FOUNDER_OWNER_ID = "founder";
 ```
 
-- [ ] **Step 4: Re-run** `pnpm --filter @artlio/core test storage-key` → PASS.
+- [ ] **Step 4: Re-run** `pnpm --filter @fikirtive/core test storage-key` → PASS.
 - [ ] **Step 5: (leave for user) commit**
 
 ```bash
@@ -101,7 +101,7 @@ describe("keyOwnerMatches (cross-tenant /files guard)", () => {
 
 - [ ] **Step 2: Run to verify it fails**
 
-Run: `pnpm --filter @artlio/core test storage-key`
+Run: `pnpm --filter @fikirtive/core test storage-key`
 Expected: FAIL — `keyOwnerMatches is not a function`.
 
 - [ ] **Step 3: Implement `keyOwnerMatches`** in `packages/core/src/storage-key.ts` (after `parseStorageKey`)
@@ -119,12 +119,12 @@ export function keyOwnerMatches(key: string, ownerId: string): boolean {
 }
 ```
 
-- [ ] **Step 4: Run** `pnpm --filter @artlio/core test storage-key` → PASS.
+- [ ] **Step 4: Run** `pnpm --filter @fikirtive/core test storage-key` → PASS.
 
 - [ ] **Step 5: Apply the `/files` owner check.** In `apps/web/app/files/[...key]/route.ts`, import the guard and the founder owner, and reject before serving. (P0 = single tenant → the owner is `FOUNDER_OWNER_ID`; P3 swaps this one line for `requireOwner()` and inherits the check.)
 
 ```ts
-import { parseStorageKey, keyOwnerMatches } from "@artlio/core";
+import { parseStorageKey, keyOwnerMatches } from "@fikirtive/core";
 import { FOUNDER_OWNER_ID } from "@/lib/storage";
 // ...
   const { key } = await ctx.params;
@@ -157,7 +157,7 @@ async function ownedAssetFromSrc(src: string): Promise<{ id: string; contentHash
   return asset;
 }
 ```
-(Add `keyOwnerMatches` to the existing `@artlio/core` import in `actions.ts`.)
+(Add `keyOwnerMatches` to the existing `@fikirtive/core` import in `actions.ts`.)
 
 - [ ] **Step 7: Verify** `pnpm --filter web typecheck` → no errors.
 - [ ] **Step 8: (leave for user) commit**
@@ -268,7 +268,7 @@ describe("effectiveCoworkProvider (beta $0 lock)", () => {
 
 - [ ] **Step 2: Run to verify it fails**
 
-Run: `pnpm --filter @artlio/core test runtime-config`
+Run: `pnpm --filter @fikirtive/core test runtime-config`
 Expected: FAIL — `effectiveCoworkProvider is not a function`.
 
 - [ ] **Step 3: Implement** in `packages/core/src/runtime-config.ts`
@@ -289,7 +289,7 @@ export function effectiveCoworkProvider(args: {
 }
 ```
 
-- [ ] **Step 4: Run** `pnpm --filter @artlio/core test runtime-config` → PASS.
+- [ ] **Step 4: Run** `pnpm --filter @fikirtive/core test runtime-config` → PASS.
 
 - [ ] **Step 5: Wire it into `getTransport`** (`apps/web/lib/runtime-config.ts`)
 
@@ -297,7 +297,7 @@ export function effectiveCoworkProvider(args: {
 import {
   coworkVisionConfig, mergeVisionConfig, createTransportFromConfig,
   effectiveCoworkProvider, MockTransport, type CoworkTransport,
-} from "@artlio/core";
+} from "@fikirtive/core";
 // ...
 export async function getTransport(): Promise<CoworkTransport> {
   const db = await readConfig(CONFIG_KEYS.coworkProvider);
@@ -321,7 +321,7 @@ export async function getTransport(): Promise<CoworkTransport> {
 }
 ```
 
-- [ ] **Step 6: Verify** `pnpm --filter web typecheck` + `pnpm --filter @artlio/core test` → green.
+- [ ] **Step 6: Verify** `pnpm --filter web typecheck` + `pnpm --filter @fikirtive/core test` → green.
 - [ ] **Step 7: (leave for user) commit**
 
 ```bash
@@ -343,14 +343,14 @@ Stand up the enforcement skeleton so the P3 tenant-scoped repository can be the 
 
 - [ ] **Step 1: Find the existing ESLint config.** Run `ls -a apps/web/eslint.config.* apps/web/.eslintrc* eslint.config.* 2>/dev/null` and read it. If none exists in `apps/web`, the `eslint` command uses a root/shared config — locate it before editing. Do not invent a second config.
 
-- [ ] **Step 2: Add a `no-restricted-imports` rule** scoped to `apps/web/**` that bans importing the raw client `prisma` from `@artlio/db`, with an allow-comment for the future repo. (Exact syntax depends on the flat-config shape you found; the rule:)
+- [ ] **Step 2: Add a `no-restricted-imports` rule** scoped to `apps/web/**` that bans importing the raw client `prisma` from `@fikirtive/db`, with an allow-comment for the future repo. (Exact syntax depends on the flat-config shape you found; the rule:)
 
 ```js
 // in the apps/web override block of the flat config:
 rules: {
   "no-restricted-imports": ["warn", {
     paths: [{
-      name: "@artlio/db",
+      name: "@fikirtive/db",
       importNames: ["prisma"],
       message: "Owner-scoped models must go through the tenant-scoped data layer (packages/db scoped client, P3). Direct `prisma` use in apps/web is being phased out — see the closed-beta foundation spec.",
     }],
@@ -450,7 +450,7 @@ Set in Railway BEFORE inviting any external user / before the first paid endpoin
 - `RESEND_API_KEY=...`       — required so magic-link email actually sends (prod throws without it).
 - `AUTH_ALLOWED_EMAILS=...`  — comma-separated invite allowlist (deny-by-default).
 - `FOUNDER_ADMIN_EMAILS=...` — your founder email(s); seeded to super-admin on sign-in.
-- `AUTH_EMAIL_FROM="Artlio <you@yourdomain>"` — verified Resend sender.
+- `AUTH_EMAIL_FROM="Fikirtive <you@yourdomain>"` — verified Resend sender.
 - `SENTRY_DSN=...`           — error monitoring (optional but recommended for beta).
 - COWORK planner stays $0: do NOT set `COWORK_PAID_PROVIDERS_ALLOWED=true`; ensure the
   DB `runtimeConfig.cowork_provider` row is unset or `mock`. (Money-safety: paid planner
@@ -483,4 +483,4 @@ git commit -m "chore(auth): pin @auth/prisma-adapter + closed-beta env checklist
 
 **Type consistency:** `keyOwnerMatches(key, ownerId)` (Task 2) and `effectiveCoworkProvider({dbProvider, envProvider, paidAllowed})` (Task 4) are used with the same signatures at their call-sites. `FOUNDER_OWNER_ID` is imported from `@/lib/storage` in web files (matching existing imports in `data.ts`/`actions.ts`) and from `./storage-key.js` in core.
 
-**Verify gate before P1:** `pnpm -r typecheck` clean + `pnpm --filter @artlio/core test` green (Tasks 1,2,4 tests) + `pnpm --filter web lint` no new errors. No migration ran. Then STOP for the user before P1.
+**Verify gate before P1:** `pnpm -r typecheck` clean + `pnpm --filter @fikirtive/core test` green (Tasks 1,2,4 tests) + `pnpm --filter web lint` no new errors. No migration ran. Then STOP for the user before P1.

@@ -2,7 +2,7 @@
 // ignored; empty table = full typed menu. $0, no worker. Mirrors the resolveDisabled
 // logic against the real DB (no "use server" import — drives core + a raw prisma read).
 // Run: node scripts/archive/local-model-disable-verify.mjs
-process.env.DATABASE_URL ??= "postgresql://artlio:artlio@localhost:5432/artlio";
+process.env.DATABASE_URL ??= "postgresql://fikirtive:fikirtive@localhost:5432/fikirtive";
 const { prisma } = await import("../../packages/db/dist/src/index.js");
 const { newId, FOUNDER_OWNER_ID, GEN_VIDEO_MODELS, enabledVideoModels, isModelDisabled } =
   await import("../../packages/core/dist/index.js");

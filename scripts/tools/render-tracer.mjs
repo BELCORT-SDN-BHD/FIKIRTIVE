@@ -8,7 +8,7 @@ const { prisma } = await import("../../packages/db/dist/src/index.js");
 const { fikirtiveEdit, RENDER_QUEUE, RENDER_DLQ, RENDER_QUEUE_POLICY, storageKeyToSrc, storageKey, newId } =
   await import("../../packages/core/dist/index.js");
 
-const DB = process.env.DATABASE_URL ?? "postgresql://artlio:artlio@localhost:5432/artlio";
+const DB = process.env.DATABASE_URL ?? "postgresql://fikirtive:fikirtive@localhost:5432/fikirtive";
 process.env.DATABASE_URL = DB;
 const BASE = process.env.BASE_URL ?? "http://localhost:3100";
 

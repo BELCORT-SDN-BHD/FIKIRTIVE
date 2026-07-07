@@ -2,9 +2,9 @@
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
-**Goal:** Give Artlio's video editor CapCut-style editing feel — **split at the playhead**, **ripple-delete**, **snapping**, and **trim polish** — as PURE contract operations on `ArtlioEdit`, plus ONE authoritative undo/redo stack whose source of truth is the contract JSON (not Shotstack's internal command history). Every op returns a `parse`-valid edit that keeps the EP1 `track.transitions[]` array correctly re-indexed. Entirely $0: no spend path, no prisma migration.
+**Goal:** Give Fikirtive's video editor CapCut-style editing feel — **split at the playhead**, **ripple-delete**, **snapping**, and **trim polish** — as PURE contract operations on `FikirtiveEdit`, plus ONE authoritative undo/redo stack whose source of truth is the contract JSON (not Shotstack's internal command history). Every op returns a `parse`-valid edit that keeps the EP1 `track.transitions[]` array correctly re-indexed. Entirely $0: no spend path, no prisma migration.
 
-**Architecture:** The heart of EP2 is a new pure module `packages/core/src/timeline-ops.ts` — `splitClipAt`, `rippleDeleteClip`, `moveClip`, and the transition-reindex helpers they share. Each takes an `ArtlioEdit` (already parsed) and returns a NEW edit that re-parses clean through `artlioEdit.parse` (including the EP1 gapless-adjacency, adjacency `from+1==to`, duplicate-boundary, and "≤ half the shorter clip" guards). The UI (`apps/web/components/Editor.tsx`) wires these ops to gestures: split uses the Shotstack transport playhead (`Edit.playbackTime`) + the selected clip; ripple-delete removes the selected clip; both mutate the Artlio edit and reload it into the Shotstack `Edit` via `Edit.loadEdit(...)`, re-applying the EP1 React transition state. A single bounded undo stack snapshots the merged `ArtlioEdit` and `loadEdit`s a snapshot on undo/redo — Shotstack's own `undo()/redo()` is NOT used (it can't see custom contract ops).
+**Architecture:** The heart of EP2 is a new pure module `packages/core/src/timeline-ops.ts` — `splitClipAt`, `rippleDeleteClip`, `moveClip`, and the transition-reindex helpers they share. Each takes an `FikirtiveEdit` (already parsed) and returns a NEW edit that re-parses clean through `fikirtiveEdit.parse` (including the EP1 gapless-adjacency, adjacency `from+1==to`, duplicate-boundary, and "≤ half the shorter clip" guards). The UI (`apps/web/components/Editor.tsx`) wires these ops to gestures: split uses the Shotstack transport playhead (`Edit.playbackTime`) + the selected clip; ripple-delete removes the selected clip; both mutate the Fikirtive edit and reload it into the Shotstack `Edit` via `Edit.loadEdit(...)`, re-applying the EP1 React transition state. A single bounded undo stack snapshots the merged `FikirtiveEdit` and `loadEdit`s a snapshot on undo/redo — Shotstack's own `undo()/redo()` is NOT used (it can't see custom contract ops).
 
 **Tech Stack:** pnpm monorepo (`packages/core` zod + vitest, `apps/web` Next.js 16 + `@shotstack/shotstack-studio` 2.11.5). `Project.editJson` is a Prisma `Json` column — EP2 adds NO contract FIELDS at all (only pure functions + UI), so **NO migration**. `apps/web` AGENTS.md rule: read `node_modules/next/dist/docs/` before any route/page edit — EP2 touches only a client component (`Editor.tsx`), no routing.
 
@@ -32,7 +32,7 @@ Every task below references these by exact symbol/line. All were read (codegraph
   - 30-min cap L255–260.
 - `editDuration(edit)` L316–321 = `max(start+length)` across all tracks; `renderDuration(edit)` L328–333 = `editDuration − Σ transitions.durationMs/1000`.
 - Bounds: `MAX_CLIPS_PER_TRACK=100` (L30), `MAX_CLIP_SECONDS=60*10` (L31), `MAX_TIMELINE_SECONDS=60*30` (L32), `TRANSITION_MAX_SECONDS=2` (L34).
-- `packages/core/src/index.ts` re-exports the contract symbols + types (`artlioEdit`, `ArtlioEdit`, `ArtlioClip`, `BetweenClipTransition`, `editDuration`, `renderDuration`, …). EP2 adds the new ops to this barrel.
+- `packages/core/src/index.ts` re-exports the contract symbols + types (`fikirtiveEdit`, `FikirtiveEdit`, `FikirtiveClip`, `BetweenClipTransition`, `editDuration`, `renderDuration`, …). EP2 adds the new ops to this barrel.
 
 ### The EP1-shipped test harness (`packages/core/src/timeline.test.ts`, 302 lines) — reuse, don't reinvent
 
@@ -40,7 +40,7 @@ Every task below references these by exact symbol/line. All were read (codegraph
 - `const HASH = "a".repeat(64)` L12; `const SRC = `/files/u/founder/${HASH}.mp4`` L13.
 - `const cloneEdit = (): any => structuredClone(validEdit)` L16 (note: defined BEFORE `validEdit` but only CALLED inside `it(...)`, so hoisting is fine — EP2's new test file will define its own).
 - `validEdit` L18–33: visual track `[{start:0,len:4,trim:1.5}, {start:4,len:3,transition:{in:"fade"}}]` (gapless) + an audio track `[{start:0,len:7}]`.
-- `package.json` scripts (`@artlio/core`): `build`=`tsc -p tsconfig.json`, `typecheck`=`tsc … --noEmit`, `test`=`vitest run`. Run one file with `pnpm --filter @artlio/core test -- <name>`.
+- `package.json` scripts (`@fikirtive/core`): `build`=`tsc -p tsconfig.json`, `typecheck`=`tsc … --noEmit`, `test`=`vitest run`. Run one file with `pnpm --filter @fikirtive/core test -- <name>`.
 
 ### `apps/web/components/Editor.tsx` (697 lines) — the EP1 UI EP2 wires into
 
@@ -49,7 +49,7 @@ Every task below references these by exact symbol/line. All were read (codegraph
 - `const [transitions, setTransitions]` L95–97 — seeded from `initialEdit.timeline.tracks[0].transitions`.
 - `const [selected, setSelected]` L89; `const [boundary, setBoundary]` L99.
 - Studio init effect L127–226: dynamic `import("@shotstack/shotstack-studio")` L147 → `new Edit(startEdit)` L152 → `canvas/ui/timeline/controls` → `edit.events.on("edit:changed", …)` debounced live-validate L181–188 → `edit.events.on("clip:selected", …)` L197–205 (sets `selected` and, for track 0, `setBoundary(r.clipIndex)`) → `handles.current = { edit, dispose }` L209.
-- `snapshot()` L232–253 — reads `h.edit.getEdit()`, **merges** the React `transitions` onto track 0 (L240–242), `artlioEdit.safeParse`. **This is the canonical "merged ArtlioEdit" EP2's undo stack snapshots.**
+- `snapshot()` L232–253 — reads `h.edit.getEdit()`, **merges** the React `transitions` onto track 0 (L240–242), `fikirtiveEdit.safeParse`. **This is the canonical "merged FikirtiveEdit" EP2's undo stack snapshots.**
 - `appendAsset(clip)` L256–267 — `getEdit()` → `addClip(0, {asset,start:end,length})`.
 - `applyTransition`/`applyVolume`/`syncSelectedFromEdit` L273–304 — patch via `updateClip` then re-read.
 - `setBoundaryTransition`/`setBoundaryDuration`/`clearAllTransitions` L308–331 — mutate the React `transitions` array.
@@ -79,11 +79,11 @@ The EP1 plan's grounding **understated** this. Verified in `node_modules/.pnpm/@
 
 | File | Create/Modify | Responsibility in EP2 |
 |---|---|---|
-| `packages/core/src/timeline-ops.ts` | **Create** | The pure heart of EP2: `reindexTransitionsAfterSplit`, `reindexTransitionsAfterDelete`, `reindexTransitionsAfterMove` (transition re-index helpers); `splitClipAt`, `rippleDeleteClip`, `moveClip` (the ops); `snapEdit` (contract-time snapping); `MIN_CLIP_SECONDS`. Every op returns a NEW `ArtlioEdit` that re-parses valid. No I/O, no Shotstack, no spend. |
+| `packages/core/src/timeline-ops.ts` | **Create** | The pure heart of EP2: `reindexTransitionsAfterSplit`, `reindexTransitionsAfterDelete`, `reindexTransitionsAfterMove` (transition re-index helpers); `splitClipAt`, `rippleDeleteClip`, `moveClip` (the ops); `snapEdit` (contract-time snapping); `MIN_CLIP_SECONDS`. Every op returns a NEW `FikirtiveEdit` that re-parses valid. No I/O, no Shotstack, no spend. |
 | `packages/core/src/timeline-ops.test.ts` | **Create** | vitest for every op + every re-index case (split / ripple / move) + snapping + re-parse-valid + backward-compat (no-transition edits) + the subtle transition-index cases (drop the split boundary's transition, decrement indices after a ripple-delete, recompute after a move). This is the bulk of EP2's safety. |
 | `packages/core/src/index.ts` | Modify | Re-export the new ops + `MIN_CLIP_SECONDS` from `./timeline-ops.js`. |
-| `apps/web/components/Editor.tsx` | Modify | Widen `StudioEdit` (add `loadEdit`/`deleteClip`/`playbackTime`/`seek`/`getClip`); add ONE undo/redo stack (bounded) keyed on the merged `ArtlioEdit`; `reloadFromEdit(edit)` helper (`loadEdit` + re-seed React `transitions`); wire Split / Ripple-delete buttons + snap-on-`edit:changed`; keyboard (Cmd/Ctrl+Z / Shift+Cmd/Ctrl+Z, S=split, ripple=delete-selected). All mutate the Artlio edit → reload → keep transitions in sync. $0. |
-| `scripts/local-ep2-ops-verify.mjs` | **Create** | A $0 Node check: import the built ops, run a fuzz of split/ripple/move on random gapless+transition edits asserting every result `artlioEdit.parse`s clean and transitions stay consistent; grep the diff for any spend-path token. (No ffmpeg needed — EP2 changes no render path.) |
+| `apps/web/components/Editor.tsx` | Modify | Widen `StudioEdit` (add `loadEdit`/`deleteClip`/`playbackTime`/`seek`/`getClip`); add ONE undo/redo stack (bounded) keyed on the merged `FikirtiveEdit`; `reloadFromEdit(edit)` helper (`loadEdit` + re-seed React `transitions`); wire Split / Ripple-delete buttons + snap-on-`edit:changed`; keyboard (Cmd/Ctrl+Z / Shift+Cmd/Ctrl+Z, S=split, ripple=delete-selected). All mutate the Fikirtive edit → reload → keep transitions in sync. $0. |
+| `scripts/local-ep2-ops-verify.mjs` | **Create** | A $0 Node check: import the built ops, run a fuzz of split/ripple/move on random gapless+transition edits asserting every result `fikirtiveEdit.parse`s clean and transitions stay consistent; grep the diff for any spend-path token. (No ffmpeg needed — EP2 changes no render path.) |
 
 No new package, **no prisma migration, no new contract field, no new env var, no worker change.**
 
@@ -195,13 +195,13 @@ describe("reindexTransitionsAfterMove", () => {
 
 - [ ] **Step 2: Run the test to verify it fails**
 
-Run: `pnpm --filter @artlio/core test -- timeline-ops`
+Run: `pnpm --filter @fikirtive/core test -- timeline-ops`
 Expected: FAIL — `timeline-ops.js` does not exist (import/resolve error).
 
 - [ ] **Step 3: Write the minimal implementation** — create `packages/core/src/timeline-ops.ts`:
 
 ```ts
-import { artlioEdit, type ArtlioEdit, type ArtlioClip, type BetweenClipTransition } from "./timeline.js";
+import { fikirtiveEdit, type FikirtiveEdit, type FikirtiveClip, type BetweenClipTransition } from "./timeline.js";
 
 /** A split/trim can never produce a clip shorter than this (avoids zero/negative
  *  length and clips too short for a fade). Below the smallest sane edit unit. */
@@ -277,12 +277,12 @@ export function reindexTransitionsAfterMove(
 
 - [ ] **Step 4: Run the test to verify it passes**
 
-Run: `pnpm --filter @artlio/core test -- timeline-ops`
+Run: `pnpm --filter @fikirtive/core test -- timeline-ops`
 Expected: PASS (all re-index + `MIN_CLIP_SECONDS` cases green).
 
 - [ ] **Step 5: Typecheck**
 
-Run: `pnpm --filter @artlio/core typecheck`
+Run: `pnpm --filter @fikirtive/core typecheck`
 Expected: no errors.
 
 - [ ] **Step 6: Commit** (leave for user approval — do NOT push)
@@ -306,13 +306,13 @@ git commit -m "feat(editor): EP2 core — transition re-index helpers (split/del
 
 ```ts
 import { splitClipAt } from "./timeline-ops.js";
-import { artlioEdit, type ArtlioEdit } from "./timeline.js";
+import { fikirtiveEdit, type FikirtiveEdit } from "./timeline.js";
 
 const HASH = "a".repeat(64);
 const SRC = `/files/u/founder/${HASH}.mp4`;
 // a gapless 2-clip visual edit + an audio track, mirroring contract validEdit.
-const baseEdit = (): ArtlioEdit =>
-  artlioEdit.parse({
+const baseEdit = (): FikirtiveEdit =>
+  fikirtiveEdit.parse({
     timeline: {
       tracks: [
         {
@@ -358,7 +358,7 @@ describe("splitClipAt", () => {
 
   it("keeps a transition before the split and re-numbers one after", () => {
     // build [c0,c1,c2] gapless with transitions 0->1 and 1->2; split clip 1.
-    const e = artlioEdit.parse({
+    const e = fikirtiveEdit.parse({
       timeline: {
         tracks: [
           {
@@ -398,7 +398,7 @@ describe("splitClipAt", () => {
 
   it("returns an edit that re-parses clean (incl. EP1 guards)", () => {
     const out = splitClipAt(baseEdit(), 0, 1, 7);
-    expect(() => artlioEdit.parse(out)).not.toThrow();
+    expect(() => fikirtiveEdit.parse(out)).not.toThrow();
   });
 
   it("does not mutate the input edit", () => {
@@ -412,7 +412,7 @@ describe("splitClipAt", () => {
 
 - [ ] **Step 2: Run the test to verify it fails**
 
-Run: `pnpm --filter @artlio/core test -- timeline-ops`
+Run: `pnpm --filter @fikirtive/core test -- timeline-ops`
 Expected: FAIL — `splitClipAt` not exported.
 
 - [ ] **Step 3: Implement `splitClipAt`** — append to `packages/core/src/timeline-ops.ts`:
@@ -423,13 +423,13 @@ Expected: FAIL — `splitClipAt` not exported.
  *  replaced by two gapless halves; the tail's `trim` advances so it continues
  *  the source seamlessly. Transitions are re-indexed (the boundary transition is
  *  dropped). Throws if the split point isn't strictly inside the clip or either
- *  half would be < MIN_CLIP_SECONDS. The result re-parses through artlioEdit. */
+ *  half would be < MIN_CLIP_SECONDS. The result re-parses through fikirtiveEdit. */
 export function splitClipAt(
-  edit: ArtlioEdit,
+  edit: FikirtiveEdit,
   trackIndex: number,
   clipIndex: number,
   atSeconds: number,
-): ArtlioEdit {
+): FikirtiveEdit {
   const track = edit.timeline.tracks[trackIndex];
   if (!track) throw new Error(`split: track ${trackIndex} out of range`);
   // operate in timeline (sorted-by-start) order so indices match the contract
@@ -447,13 +447,13 @@ export function splitClipAt(
     throw new Error(`split: each half must be ≥ ${MIN_CLIP_SECONDS}s (got ${headLen}s / ${tailLen}s — too short)`);
   }
 
-  const head: ArtlioClip = {
+  const head: FikirtiveClip = {
     ...structuredClone(clip),
     length: headLen,
     // head keeps its trim and any legacy fade-IN; drop a legacy fade-OUT (moves to tail)
     transition: clip.transition?.in ? { ...clip.transition, out: undefined } : undefined,
   };
-  const tail: ArtlioClip = {
+  const tail: FikirtiveClip = {
     ...structuredClone(clip),
     start: atSeconds,
     length: tailLen,
@@ -466,24 +466,24 @@ export function splitClipAt(
   const nextTransitions = reindexTransitionsAfterSplit(track.transitions ?? [], clipIndex);
 
   const nextTrack = { ...track, clips: nextClips, transitions: nextTransitions.length ? nextTransitions : undefined };
-  const nextEdit: ArtlioEdit = {
+  const nextEdit: FikirtiveEdit = {
     ...edit,
     timeline: { ...edit.timeline, tracks: edit.timeline.tracks.map((t, i) => (i === trackIndex ? nextTrack : t)) },
   };
-  return artlioEdit.parse(nextEdit); // canonicalize + enforce EP1 guards
+  return fikirtiveEdit.parse(nextEdit); // canonicalize + enforce EP1 guards
 }
 ```
 
-> Note: the legacy per-clip `transition` superRefine (L128) rejects a clip shorter than `2× transition.duration`. If a head/tail keeps a 0.5s fade but is < 1s, `artlioEdit.parse` throws — surfaced honestly as a split error. `MIN_CLIP_SECONDS=0.1` is below the smallest fade-bearing clip, so a non-fade split never trips it; a fade-bearing split that lands too short fails cleanly (the UI shows the contract message). That is correct: you can't keep a 0.5s fade on a 0.3s clip.
+> Note: the legacy per-clip `transition` superRefine (L128) rejects a clip shorter than `2× transition.duration`. If a head/tail keeps a 0.5s fade but is < 1s, `fikirtiveEdit.parse` throws — surfaced honestly as a split error. `MIN_CLIP_SECONDS=0.1` is below the smallest fade-bearing clip, so a non-fade split never trips it; a fade-bearing split that lands too short fails cleanly (the UI shows the contract message). That is correct: you can't keep a 0.5s fade on a 0.3s clip.
 
 - [ ] **Step 4: Run the test to verify it passes**
 
-Run: `pnpm --filter @artlio/core test -- timeline-ops`
+Run: `pnpm --filter @fikirtive/core test -- timeline-ops`
 Expected: PASS.
 
 - [ ] **Step 5: Typecheck + commit** (leave for user approval)
 
-Run: `pnpm --filter @artlio/core typecheck`
+Run: `pnpm --filter @fikirtive/core typecheck`
 
 ```bash
 git add packages/core/src/timeline-ops.ts packages/core/src/timeline-ops.test.ts
@@ -516,7 +516,7 @@ describe("rippleDeleteClip", () => {
   });
 
   it("closes the gap so the track stays gapless", () => {
-    const e = artlioEdit.parse({
+    const e = fikirtiveEdit.parse({
       timeline: {
         tracks: [
           {
@@ -537,7 +537,7 @@ describe("rippleDeleteClip", () => {
   });
 
   it("drops transitions touching the deleted clip and decrements later ones", () => {
-    const e = artlioEdit.parse({
+    const e = fikirtiveEdit.parse({
       timeline: {
         tracks: [
           {
@@ -565,7 +565,7 @@ describe("rippleDeleteClip", () => {
   });
 
   it("rejects deleting the last remaining clip on a track (min 1 clip)", () => {
-    const e = artlioEdit.parse({
+    const e = fikirtiveEdit.parse({
       timeline: { tracks: [{ clips: [{ asset: { type: "video", src: SRC }, start: 0, length: 4 }] }] },
       output: { format: "mp4" },
     });
@@ -576,7 +576,7 @@ describe("rippleDeleteClip", () => {
     const e = baseEdit();
     const before = JSON.stringify(e);
     const out = rippleDeleteClip(e, 0, 0);
-    expect(() => artlioEdit.parse(out)).not.toThrow();
+    expect(() => fikirtiveEdit.parse(out)).not.toThrow();
     expect(JSON.stringify(e)).toBe(before);
   });
 });
@@ -584,7 +584,7 @@ describe("rippleDeleteClip", () => {
 
 - [ ] **Step 2: Run the test to verify it fails**
 
-Run: `pnpm --filter @artlio/core test -- timeline-ops`
+Run: `pnpm --filter @fikirtive/core test -- timeline-ops`
 Expected: FAIL — `rippleDeleteClip` not exported.
 
 - [ ] **Step 3: Implement `rippleDeleteClip`** — append to `packages/core/src/timeline-ops.ts`:
@@ -594,7 +594,7 @@ Expected: FAIL — `rippleDeleteClip` not exported.
  *  shift every downstream clip's start LEFT by the removed length (close the
  *  gap). Transitions touching the removed clip are dropped; later ones decrement.
  *  Throws if it would empty the track (the contract requires ≥1 clip). Re-parses. */
-export function rippleDeleteClip(edit: ArtlioEdit, trackIndex: number, clipIndex: number): ArtlioEdit {
+export function rippleDeleteClip(edit: FikirtiveEdit, trackIndex: number, clipIndex: number): FikirtiveEdit {
   const track = edit.timeline.tracks[trackIndex];
   if (!track) throw new Error(`ripple-delete: track ${trackIndex} out of range`);
   if (track.clips.length <= 1) throw new Error(`ripple-delete: cannot remove the last clip on a track (≥1 required)`);
@@ -609,11 +609,11 @@ export function rippleDeleteClip(edit: ArtlioEdit, trackIndex: number, clipIndex
   const nextTransitions = reindexTransitionsAfterDelete(track.transitions ?? [], clipIndex);
 
   const nextTrack = { ...track, clips: nextClips, transitions: nextTransitions.length ? nextTransitions : undefined };
-  const nextEdit: ArtlioEdit = {
+  const nextEdit: FikirtiveEdit = {
     ...edit,
     timeline: { ...edit.timeline, tracks: edit.timeline.tracks.map((t, i) => (i === trackIndex ? nextTrack : t)) },
   };
-  return artlioEdit.parse(nextEdit);
+  return fikirtiveEdit.parse(nextEdit);
 }
 ```
 
@@ -621,12 +621,12 @@ export function rippleDeleteClip(edit: ArtlioEdit, trackIndex: number, clipIndex
 
 - [ ] **Step 4: Run the test to verify it passes**
 
-Run: `pnpm --filter @artlio/core test -- timeline-ops`
+Run: `pnpm --filter @fikirtive/core test -- timeline-ops`
 Expected: PASS.
 
 - [ ] **Step 5: Typecheck + commit** (leave for user approval)
 
-Run: `pnpm --filter @artlio/core typecheck`
+Run: `pnpm --filter @fikirtive/core typecheck`
 
 ```bash
 git add packages/core/src/timeline-ops.ts packages/core/src/timeline-ops.test.ts
@@ -649,8 +649,8 @@ git commit -m "feat(editor): EP2 core — rippleDeleteClip pure op (close gap, r
 import { moveClip } from "./timeline-ops.js";
 
 describe("moveClip", () => {
-  const threeClip = (): ArtlioEdit =>
-    artlioEdit.parse({
+  const threeClip = (): FikirtiveEdit =>
+    fikirtiveEdit.parse({
       timeline: {
         tracks: [
           {
@@ -691,7 +691,7 @@ describe("moveClip", () => {
   it("is a no-op (re-parse-valid) when from === to", () => {
     const out = moveClip(threeClip(), 0, 1, 1);
     expect(out.timeline.tracks[0]!.clips.map((c) => c.asset.trim)).toEqual([0, 1, 2]);
-    expect(() => artlioEdit.parse(out)).not.toThrow();
+    expect(() => fikirtiveEdit.parse(out)).not.toThrow();
   });
 
   it("rejects out-of-range indices", () => {
@@ -710,7 +710,7 @@ describe("moveClip", () => {
 
 - [ ] **Step 2: Run the test to verify it fails**
 
-Run: `pnpm --filter @artlio/core test -- timeline-ops`
+Run: `pnpm --filter @fikirtive/core test -- timeline-ops`
 Expected: FAIL — `moveClip` not exported.
 
 - [ ] **Step 3: Implement `moveClip`** — append to `packages/core/src/timeline-ops.ts`:
@@ -720,7 +720,7 @@ Expected: FAIL — `moveClip` not exported.
  *  `trackIndex`, then RE-TILE the track gapless from 0 (starts = cumulative
  *  length). Transitions are re-indexed by clip identity — one survives only if
  *  its two clips stay consecutive in the new order. Returns a re-parsed edit. */
-export function moveClip(edit: ArtlioEdit, trackIndex: number, fromIndex: number, toIndex: number): ArtlioEdit {
+export function moveClip(edit: FikirtiveEdit, trackIndex: number, fromIndex: number, toIndex: number): FikirtiveEdit {
   const track = edit.timeline.tracks[trackIndex];
   if (!track) throw new Error(`move: track ${trackIndex} out of range`);
   const ordered = [...track.clips].sort((a, b) => a.start - b.start);
@@ -747,22 +747,22 @@ export function moveClip(edit: ArtlioEdit, trackIndex: number, fromIndex: number
   const nextTransitions = reindexTransitionsAfterMove(track.transitions ?? [], oldIds, newIds);
 
   const nextTrack = { ...track, clips: nextClips, transitions: nextTransitions.length ? nextTransitions : undefined };
-  const nextEdit: ArtlioEdit = {
+  const nextEdit: FikirtiveEdit = {
     ...edit,
     timeline: { ...edit.timeline, tracks: edit.timeline.tracks.map((t, i) => (i === trackIndex ? nextTrack : t)) },
   };
-  return artlioEdit.parse(nextEdit);
+  return fikirtiveEdit.parse(nextEdit);
 }
 ```
 
 - [ ] **Step 4: Run the test to verify it passes**
 
-Run: `pnpm --filter @artlio/core test -- timeline-ops`
+Run: `pnpm --filter @fikirtive/core test -- timeline-ops`
 Expected: PASS.
 
 - [ ] **Step 5: Typecheck + commit** (leave for user approval)
 
-Run: `pnpm --filter @artlio/core typecheck`
+Run: `pnpm --filter @fikirtive/core typecheck`
 
 ```bash
 git add packages/core/src/timeline-ops.ts packages/core/src/timeline-ops.test.ts
@@ -788,7 +788,7 @@ import { snapEdit } from "./timeline-ops.js";
 describe("snapEdit", () => {
   it("closes a sub-threshold gap by re-tiling the visual track", () => {
     // [0..4] then a 0.05s gap [4.05..8.05] — within 0.15 threshold → re-tiled to [4..8].
-    const e = artlioEdit.parse({
+    const e = fikirtiveEdit.parse({
       timeline: {
         tracks: [
           {
@@ -807,7 +807,7 @@ describe("snapEdit", () => {
   });
 
   it("snaps a near-zero first start to exactly 0", () => {
-    const e = artlioEdit.parse({
+    const e = fikirtiveEdit.parse({
       timeline: { tracks: [{ clips: [{ asset: { type: "video", src: SRC }, start: 0.03, length: 4 }] }] },
       output: { format: "mp4" },
     });
@@ -817,7 +817,7 @@ describe("snapEdit", () => {
   it("leaves an already-tiled track unchanged and re-parses valid", () => {
     const out = snapEdit(baseEdit());
     expect(out.timeline.tracks[0]!.clips.map((c) => c.start)).toEqual([0, 4]);
-    expect(() => artlioEdit.parse(out)).not.toThrow();
+    expect(() => fikirtiveEdit.parse(out)).not.toThrow();
   });
 
   it("preserves transitions (re-tiling keeps gapless pairs valid)", () => {
@@ -831,7 +831,7 @@ describe("snapEdit", () => {
 
 - [ ] **Step 2: Run the test to verify it fails**
 
-Run: `pnpm --filter @artlio/core test -- timeline-ops`
+Run: `pnpm --filter @fikirtive/core test -- timeline-ops`
 Expected: FAIL — `snapEdit` not exported.
 
 - [ ] **Step 3: Implement `snapEdit`** — append to `packages/core/src/timeline-ops.ts`:
@@ -845,7 +845,7 @@ export const SNAP_THRESHOLD_SECONDS = 0.15;
  *  `threshold` of being perfectly tiled-from-0, re-tile it exactly (close tiny
  *  gaps, pin the first start to 0). A gap LARGER than threshold is left alone (a
  *  deliberate gap, not a snap miss). Audio tracks are untouched. Re-parses. */
-export function snapEdit(edit: ArtlioEdit, threshold = SNAP_THRESHOLD_SECONDS): ArtlioEdit {
+export function snapEdit(edit: FikirtiveEdit, threshold = SNAP_THRESHOLD_SECONDS): FikirtiveEdit {
   const tracks = edit.timeline.tracks.map((track) => {
     const isVisual = track.clips.some((c) => c.asset.type !== "audio");
     if (!isVisual) return track;
@@ -870,13 +870,13 @@ export function snapEdit(edit: ArtlioEdit, threshold = SNAP_THRESHOLD_SECONDS): 
     });
     return { ...track, clips };
   });
-  return artlioEdit.parse({ ...edit, timeline: { ...edit.timeline, tracks } });
+  return fikirtiveEdit.parse({ ...edit, timeline: { ...edit.timeline, tracks } });
 }
 ```
 
 - [ ] **Step 4: Run the test to verify it passes**
 
-Run: `pnpm --filter @artlio/core test -- timeline-ops`
+Run: `pnpm --filter @fikirtive/core test -- timeline-ops`
 Expected: PASS.
 
 - [ ] **Step 5: Export the ops from the package barrel** — in `packages/core/src/index.ts`, add a new export block after the `./timeline.js` block (after the `} from "./timeline.js";` line):
@@ -897,7 +897,7 @@ export {
 
 - [ ] **Step 6: Typecheck + build + full core suite**
 
-Run: `pnpm --filter @artlio/core typecheck && pnpm --filter @artlio/core build && pnpm --filter @artlio/core test`
+Run: `pnpm --filter @fikirtive/core typecheck && pnpm --filter @fikirtive/core build && pnpm --filter @fikirtive/core test`
 Expected: green (the `build` makes the new exports available to `apps/web` from `dist`).
 
 - [ ] **Step 7: Commit** (leave for user approval)
@@ -914,7 +914,7 @@ git commit -m "feat(editor): EP2 core — snapEdit (contract-time snap) + barrel
 **Files:**
 - Modify: `apps/web/components/Editor.tsx`
 
-This task adds the single source of truth for editing history: a bounded stack of merged `ArtlioEdit` snapshots. Undo/redo `loadEdit`s a snapshot and re-seeds the React `transitions`. Shotstack's own `undo()/redo()` is NOT wired (decision in grounding).
+This task adds the single source of truth for editing history: a bounded stack of merged `FikirtiveEdit` snapshots. Undo/redo `loadEdit`s a snapshot and re-seeds the React `transitions`. Shotstack's own `undo()/redo()` is NOT wired (decision in grounding).
 
 - [ ] **Step 1: Widen the `StudioEdit` interface** — replace L20–25 (`interface StudioEdit { … }`) with the surface EP2 uses (all members verified on the SDK):
 
@@ -937,13 +937,13 @@ interface StudioEdit {
 - [ ] **Step 2: Add the undo/redo stack state** — after the `boundary` state (L99), add:
 
 ```tsx
-  // EP2 ONE authoritative history: a bounded stack of merged-ArtlioEdit snapshots.
+  // EP2 ONE authoritative history: a bounded stack of merged-FikirtiveEdit snapshots.
   // Shotstack's own undo()/redo() is NOT used — it only records Shotstack-issued
   // commands and can't see our custom split/ripple contract ops (which we apply
   // via loadEdit). Mixing the two stacks = two sources of truth; we keep one.
   const HISTORY_MAX = 50;
-  const undoStack = useRef<ArtlioEdit[]>([]);
-  const redoStack = useRef<ArtlioEdit[]>([]);
+  const undoStack = useRef<FikirtiveEdit[]>([]);
+  const redoStack = useRef<FikirtiveEdit[]>([]);
   const [canUndo, setCanUndo] = useState(false);
   const [canRedo, setCanRedo] = useState(false);
   const syncHistoryButtons = () => {
@@ -957,10 +957,10 @@ interface StudioEdit {
 ```tsx
   /** the live Shotstack edit MERGED with the React transitions (no parse) — the
    *  exact object the undo stack snapshots and the ops consume. */
-  function currentMergedEdit(): ArtlioEdit | null {
+  function currentMergedEdit(): FikirtiveEdit | null {
     const h = handles.current;
     if (!h) return null;
-    const raw = h.edit.getEdit() as ArtlioEdit;
+    const raw = h.edit.getEdit() as FikirtiveEdit;
     return {
       ...raw,
       timeline: {
@@ -983,11 +983,11 @@ interface StudioEdit {
     syncHistoryButtons();
   }
 
-  /** load a post-op ArtlioEdit into the live editor: hot-reload Shotstack with the
+  /** load a post-op FikirtiveEdit into the live editor: hot-reload Shotstack with the
    *  clips/output, then re-seed the React transition state from the edit (Shotstack
    *  strips track-level transitions, so they live in React — re-seed on every
    *  reload to keep them in sync). */
-  async function reloadFromEdit(next: ArtlioEdit) {
+  async function reloadFromEdit(next: FikirtiveEdit) {
     const h = handles.current;
     if (!h) return;
     await h.edit.loadEdit(next);
@@ -1000,10 +1000,10 @@ interface StudioEdit {
 - [ ] **Step 4: Update `snapshot()` to reuse `currentMergedEdit`** — replace the body of `snapshot()` (L232–253) so the merge isn't duplicated:
 
 ```tsx
-  function snapshot(): { edit?: ArtlioEdit; error?: string } {
+  function snapshot(): { edit?: FikirtiveEdit; error?: string } {
     const merged = currentMergedEdit();
     if (!merged) return { error: "Editor not ready yet." };
-    const result = artlioEdit.safeParse(merged);
+    const result = fikirtiveEdit.safeParse(merged);
     if (!result.success) {
       const first = result.error.issues[0];
       return {
@@ -1037,7 +1037,7 @@ interface StudioEdit {
 
 - [ ] **Step 6: Typecheck + build** (the SDK widening + history wiring; no UI buttons yet — Task 8)
 
-Run: `pnpm --filter @artlio/core build && pnpm --filter web typecheck`
+Run: `pnpm --filter @fikirtive/core build && pnpm --filter web typecheck`
 Expected: no errors. (`handles.current.edit` is cast to `StudioEdit` at L209 — `edit as unknown as StudioEdit` — so the widened members are visible. `playbackTime` is a field, not a method, so the cast carries it through.)
 
 > Note: `clip:selected` already sets `boundary` for track 0 (L203); EP2's split/ripple read `selected` for the clip index. No new selection plumbing needed in this task.
@@ -1077,7 +1077,7 @@ Shotstack's built-in clip drag (trim edge / move) fires `edit:changed`. EP2 hook
             void (async () => {
               const merged = currentMergedEdit();
               if (!merged) return;
-              const res = artlioEdit.safeParse(merged);
+              const res = fikirtiveEdit.safeParse(merged);
               setLiveIssue(res.success ? null : res.error.issues[0]?.message ?? "invalid edit");
               if (!res.success) return; // don't snap an invalid edit
               const snapped = snapEdit(res.data);
@@ -1096,17 +1096,17 @@ Shotstack's built-in clip drag (trim edge / move) fires `edit:changed`. EP2 hook
         });
 ```
 
-- [ ] **Step 3: Import `snapEdit`** — extend the `@artlio/core` import at L5 (`import { artlioEdit, type ArtlioEdit } from "@artlio/core";`) to:
+- [ ] **Step 3: Import `snapEdit`** — extend the `@fikirtive/core` import at L5 (`import { fikirtiveEdit, type FikirtiveEdit } from "@fikirtive/core";`) to:
 
 ```tsx
-import { artlioEdit, snapEdit, splitClipAt, rippleDeleteClip, type ArtlioEdit } from "@artlio/core";
+import { fikirtiveEdit, snapEdit, splitClipAt, rippleDeleteClip, type FikirtiveEdit } from "@fikirtive/core";
 ```
 
 (`splitClipAt`/`rippleDeleteClip` are used in Task 8 — importing them here keeps one import edit; if you split the work, add them in Task 8 instead.)
 
 - [ ] **Step 4: Typecheck + build**
 
-Run: `pnpm --filter @artlio/core build && pnpm --filter web typecheck && pnpm --filter web build`
+Run: `pnpm --filter @fikirtive/core build && pnpm --filter web typecheck && pnpm --filter web build`
 Expected: no errors.
 
 - [ ] **Step 5: Commit** (leave for user approval)
@@ -1229,7 +1229,7 @@ Wire the gestures. Split uses `Edit.playbackTime` (the transport playhead) + the
 
 - [ ] **Step 5: Typecheck + build**
 
-Run: `pnpm --filter @artlio/core build && pnpm --filter web typecheck && pnpm --filter web build`
+Run: `pnpm --filter @fikirtive/core build && pnpm --filter web typecheck && pnpm --filter web build`
 Expected: no errors. (Read `apps/web/node_modules/next/dist/docs/` only if you touch a route/page — this task edits a client component only.)
 
 - [ ] **Step 6: Commit** (leave for user approval)
@@ -1246,7 +1246,7 @@ git commit -m "feat(editor): EP2 UI — split-at-playhead, ripple-delete, undo/r
 **Files:**
 - Create: `scripts/local-ep2-ops-verify.mjs`
 
-EP2 changes no render path, so verification is contract-level: every op result must `artlioEdit.parse` clean and keep transitions consistent across many random edits. No ffmpeg needed. Plus the no-spend grep on the EP2-touched files.
+EP2 changes no render path, so verification is contract-level: every op result must `fikirtiveEdit.parse` clean and keep transitions consistent across many random edits. No ffmpeg needed. Plus the no-spend grep on the EP2-touched files.
 
 - [ ] **Step 1: Kill stale fal workers first (money-safety habit)**
 
@@ -1268,9 +1268,9 @@ import { promisify } from "node:util";
 const run = promisify(execFile);
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 
-// import from the BUILT core (run `pnpm --filter @artlio/core build` first)
+// import from the BUILT core (run `pnpm --filter @fikirtive/core build` first)
 const core = await import(path.join(root, "packages/core/dist/index.js"));
-const { artlioEdit, splitClipAt, rippleDeleteClip, moveClip, snapEdit, MIN_CLIP_SECONDS } = core;
+const { fikirtiveEdit, splitClipAt, rippleDeleteClip, moveClip, snapEdit, MIN_CLIP_SECONDS } = core;
 
 const HASH = "a".repeat(64);
 const SRC = `/files/u/founder/${HASH}.mp4`;
@@ -1293,7 +1293,7 @@ function randomEdit() {
     const durationMs = Math.max(100, Math.min(2000, Math.floor(half * 1000)));
     transitions.push({ fromClipIndex: b, toClipIndex: b + 1, type: "cross", durationMs });
   }
-  return artlioEdit.parse({
+  return fikirtiveEdit.parse({
     timeline: {
       tracks: [
         { clips, transitions },
@@ -1307,7 +1307,7 @@ function randomEdit() {
 function assertConsistent(edit, label) {
   // re-parse must not throw (covers gapless-pair + adjacency + duplicate-boundary
   // + ≤half + overlap + min-clip guards)
-  artlioEdit.parse(edit);
+  fikirtiveEdit.parse(edit);
   const t0 = edit.timeline.tracks[0];
   const ordered = [...t0.clips].sort((a, b) => a.start - b.start);
   for (const tr of t0.transitions ?? []) {
@@ -1345,7 +1345,7 @@ for (let i = 0; i < ITER; i++) {
   try {
     const perturbed = structuredClone(e);
     perturbed.timeline.tracks[0].clips.forEach((c, idx) => { if (idx > 0) c.start += 0.05; });
-    assertConsistent(snapEdit(artlioEdit.parse(perturbed)), "snap");
+    assertConsistent(snapEdit(fikirtiveEdit.parse(perturbed)), "snap");
   } catch (err) { console.error("SNAP FAIL", err.message); process.exit(1); }
   ok++;
 }
@@ -1361,7 +1361,7 @@ console.log("PASS no-spend  EP2 files reference no fal/generation/spend path.");
 
 - [ ] **Step 3: Build core, then run the verify script**
 
-Run: `pnpm --filter @artlio/core build && node scripts/local-ep2-ops-verify.mjs`
+Run: `pnpm --filter @fikirtive/core build && node scripts/local-ep2-ops-verify.mjs`
 Expected:
 
 ```
@@ -1371,7 +1371,7 @@ PASS no-spend  EP2 files reference no fal/generation/spend path.
 
 - [ ] **Step 4: Full local gate**
 
-Run: `pnpm --filter @artlio/core test && pnpm --filter @artlio/core typecheck && pnpm --filter web typecheck && pnpm --filter web build`
+Run: `pnpm --filter @fikirtive/core test && pnpm --filter @fikirtive/core typecheck && pnpm --filter web typecheck && pnpm --filter web build`
 Expected: all green.
 
 - [ ] **Step 5: Commit** (leave for user approval)
@@ -1399,7 +1399,7 @@ git commit -m "test(editor): EP2 $0 ops fuzz — split/ripple/move/snap re-parse
 - [ ] **Step 2: Codex gate (REQUIRED before any deploy)** — run `/codex` on the EP2 diff. Gate focus (from the brief + spec §4):
   1. **Contract-op correctness:** split sums lengths + advances trim + both halves ≥ MIN; ripple closes the gap; move re-tiles; every op returns a `parse`-valid edit (incl. EP1 gapless-pair / adjacency / duplicate-boundary / ≤-half guards).
   2. **Transition re-index correctness on EVERY index-changing op:** split drops the boundary transition + shifts later; ripple drops touching + decrements; move recomputes by identity + drops non-adjacent. (The fuzz in Task 9 is the evidence.)
-  3. **Undo single-source:** ONE stack on the merged `ArtlioEdit`; Shotstack's `undo()/redo()` is NOT wired; restore = `loadEdit` + re-seed React transitions; bounded depth; redo cleared on a new op.
+  3. **Undo single-source:** ONE stack on the merged `FikirtiveEdit`; Shotstack's `undo()/redo()` is NOT wired; restore = `loadEdit` + re-seed React transitions; bounded depth; redo cleared on a new op.
   4. **No spend path introduced** (Task 9 grep) and **no worker/contract-field/migration change**.
   5. Standard build/typecheck/test gate green.
 
@@ -1417,7 +1417,7 @@ git commit -m "test(editor): EP2 $0 ops fuzz — split/ripple/move/snap re-parse
 - Brief 1 CRITICAL transition re-indexing on EVERY index-changing op (split drop/keep; ripple drop+decrement; move recompute) → Task 1 helpers (TDD'd in isolation) + woven into Tasks 2/3/4 + the Task 9 fuzz. Each op `parse`s valid incl. EP1 gapless+unique-boundary guards. ✓
 - Brief 1 TDD list (split sums+trim+reindex; ripple closes+reindex; move reorder+reindex; re-parse valid; backward-compat no-transition) → Tasks 1–4 tests cover every bullet (no-transition edits exercised in Task 9 fuzz + the "returns []"/empty-transition paths). ✓
 - Brief 2 undo ONE authoritative stack on the contract JSON (not Shotstack undo); snapshot on each op (debounced for native edits); restore = reload into Shotstack `Edit` + re-apply EP1 transition state; bounded depth; trigger + restore defined → Task 6 (stack, `pushHistory`, `reloadFromEdit`, `undo`/`redo`) + Task 7 (debounced snapshot on native `edit:changed`) + Task 8 (snapshot before each gesture op). ✓
-- Brief 3 wire ops into Editor.tsx: split-at-playhead via `Edit.playbackTime` + selected clip → Task 8; ripple-delete selected → Task 8; snapping described + chosen approach (contract-time snap-on-commit, since no pixel→time map) → Task 5 (`snapEdit`) + Task 7 (snap-on-`edit:changed`); trim polish (keep Shotstack drag-trim + contract post-process) → decision 2 + Task 7. All mutate the Artlio edit + reload + keep transitions in sync. ✓
+- Brief 3 wire ops into Editor.tsx: split-at-playhead via `Edit.playbackTime` + selected clip → Task 8; ripple-delete selected → Task 8; snapping described + chosen approach (contract-time snap-on-commit, since no pixel→time map) → Task 5 (`snapEdit`) + Task 7 (snap-on-`edit:changed`); trim polish (keep Shotstack drag-trim + contract post-process) → decision 2 + Task 7. All mutate the Fikirtive edit + reload + keep transitions in sync. ✓
 - Brief 4 verify: core vitest for pure ops + transition reindex (Tasks 1–5) + manual-QA checklist (Task 10 Step 1) + confirm no fal/spend path (Task 9 grep + Task 10 Step 2.4). ✓
 - §0.3 "probe Shotstack then custom": the plan PROBED (full SDK read) → SDK does expose playhead/clip-ops/loadEdit/undo, so split/ripple are custom contract ops applied via `loadEdit`; snapping is custom because no pixel→time map exists (the one capability the SDK lacks). ✓
 - §0.2 $0 / no spend; §1 visual-parity (structure, not pixel chrome — EP2 adds header buttons, no LTX re-skin) → honored. ✓
@@ -1428,7 +1428,7 @@ git commit -m "test(editor): EP2 $0 ops fuzz — split/ripple/move/snap re-parse
 **3. Type consistency:** `splitClipAt(edit, trackIndex, clipIndex, atSeconds)`, `rippleDeleteClip(edit, trackIndex, clipIndex)`, `moveClip(edit, trackIndex, fromIndex, toIndex)`, `snapEdit(edit, threshold?)`, `reindexTransitionsAfter{Split,Delete,Move}`, `MIN_CLIP_SECONDS`, `SNAP_THRESHOLD_SECONDS` — names identical across core (Tasks 1–5), the barrel (Task 5 Step 5), the UI import (Task 7 Step 3), and the verify script (Task 9). The UI `UiTransition` (Editor.tsx L37) mirrors the contract `BetweenClipTransition` and is what `reloadFromEdit` re-seeds. `currentMergedEdit()` is the single merge used by `snapshot()`, `pushHistory()`, and every gesture — no divergent merge copies. `handles.current.edit` is `StudioEdit` (widened in Task 6 Step 1), so `playbackTime`/`loadEdit`/`deleteClip` are typed.
 
 **4. The two correctness invariants the brief singled out (explicitly handled):**
-- (a) **Undo single-source:** Task 6 builds ONE stack of merged `ArtlioEdit`s; the grounding + Task 6 Step 2 comment + Task 10 gate 3 state Shotstack's `undo()/redo()` is deliberately NOT wired (it can't see custom ops applied via `loadEdit`). Restore = `loadEdit` + re-seed React transitions. Bounded (`HISTORY_MAX=50`); redo cleared on a new op; reset on project switch (Task 8 Step 4). ✓
+- (a) **Undo single-source:** Task 6 builds ONE stack of merged `FikirtiveEdit`s; the grounding + Task 6 Step 2 comment + Task 10 gate 3 state Shotstack's `undo()/redo()` is deliberately NOT wired (it can't see custom ops applied via `loadEdit`). Restore = `loadEdit` + re-seed React transitions. Bounded (`HISTORY_MAX=50`); redo cleared on a new op; reset on project switch (Task 8 Step 4). ✓
 - (b) **Transition re-index on every index-changing op:** Task 1 builds + TDDs the three helpers IN ISOLATION (the subtlest risk), then Tasks 2/3/4 call them and re-parse, and Task 9 fuzzes 400 random edits asserting each surviving transition still references a gapless-adjacent in-range pair. The "drop boundary transition on split" choice is documented + tested. ✓
 
 ---
@@ -1440,5 +1440,5 @@ git commit -m "test(editor): EP2 $0 ops fuzz — split/ripple/move/snap re-parse
 - **The SHIPPED EP1 contract enforces gapless LOCALLY (per transitioned pair), not a global gapless reject** — `timeline.superRefine` L235–242 only requires the two clips of an actual transition to abut; a track may otherwise have gaps (legacy edits). It ALSO has a **duplicate-boundary guard** (`seenFrom` Set, L212–221) and **adjacency** (`from+1==to`, L222) the brief didn't mention. EP2's ops + the Task 9 fuzz are written against ALL of these, not just the brief's summary. (This is why ripple/move re-tile and split re-numbers — to keep transitioned pairs abutting.)
 - **The merge-on-save is REAL and already factored-friendly:** Editor.tsx `snapshot()` (L232–253) merges the React `transitions` onto track 0 before `safeParse`. EP2 factors that merge into `currentMergedEdit()` so history + ops + save share ONE merge; `reloadFromEdit` re-seeds the React `transitions` after every `loadEdit` (Shotstack strips the track-level array, so it must live in React and be re-pushed on each reload).
 - **No worker change, no contract field, no migration:** EP2 is pure ops + UI. The worker already renders `track.transitions` (EP1, commit on the contract); EP2 only changes how the contract is EDITED. Deploy is web-only (Task 10 Step 3).
-- **`@artlio/core build` before the web typecheck/verify:** the web app and the Node verify script consume the BUILT `dist` of core (the verify script imports `packages/core/dist/index.js` directly). Every typecheck/verify step that needs the new exports runs `pnpm --filter @artlio/core build` first.
+- **`@fikirtive/core build` before the web typecheck/verify:** the web app and the Node verify script consume the BUILT `dist` of core (the verify script imports `packages/core/dist/index.js` directly). Every typecheck/verify step that needs the new exports runs `pnpm --filter @fikirtive/core build` first.
 - **Spend path is fully isolated (verified):** `startGen` is in `apps/web/lib/gen-actions.ts:28`, reached only from `coworkGenerate` (`cowork-actions.ts:563`, "the ONLY spend path"). The editor's `saveProjectEdit`/`startRender` never call it; EP2 adds nothing that does.

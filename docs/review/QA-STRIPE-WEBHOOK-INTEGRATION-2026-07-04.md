@@ -44,7 +44,7 @@ The integration test creates a temporary organization and sends three route-leve
 Command:
 
 ```bash
-DATABASE_URL='postgresql://artlio:artlio@localhost:55432/fikirtive_stripe_webhook_test' pnpm --filter @fikirtive/web exec vitest run lib/__tests__/billing-actions.test.ts lib/__tests__/stripe-webhook.test.ts lib/__tests__/stripe-webhook-integration.test.ts
+DATABASE_URL='postgresql://fikirtive:fikirtive@localhost:55432/fikirtive_stripe_webhook_test' pnpm --filter @fikirtive/web exec vitest run lib/__tests__/billing-actions.test.ts lib/__tests__/stripe-webhook.test.ts lib/__tests__/stripe-webhook-integration.test.ts
 ```
 
 Result:

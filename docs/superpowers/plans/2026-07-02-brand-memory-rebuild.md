@@ -17,7 +17,7 @@
 - **MONEY-GUARD (BINDING):** NEVER modify: `packages/db/src/credits.ts`, `packages/core/src/spend.ts`, `apps/worker/src/jobs/gen.ts`, `apps/worker/src/jobs/refgen.ts`, `apps/web/**/gen-actions.ts`, `apps/web/**/refgen-actions.ts`, `apps/web/**/cowork-actions.ts`, `**/useCanvasGen.ts`, `packages/generation/*`, any idempotency index. After EVERY commit run: `git log --stat -1 | grep -E "credits|spend|jobs/gen|gen-actions|refgen|cowork-actions|useCanvasGen|packages/generation"` → must output NOTHING.
 - All 4 new skills are `cost: "free"` — zero new spend paths. `price` on products is a display-only string; it must never reach any billing/credits code.
 - No new npm dependencies (zod already in `packages/core`). Do NOT touch `pnpm-lock.yaml` (a stale lockfile breaks worker Docker builds).
-- Work in worktree `/Users/winnin/Desktop/artlio/.claude/worktrees/brand-memory`, branch `claude/brand-memory-rebuild`. ALL commands below run from that worktree root.
+- Work in worktree `/Users/winnin/Desktop/fikirtive/.claude/worktrees/brand-memory`, branch `claude/brand-memory-rebuild`. ALL commands below run from that worktree root.
 - UI follows the Analytics design baseline: section labels 12px/600/+0.05em/uppercase/muted; cards `rounded-[16px] border border-border`; body rows 14px `leading-[1.45]`; coral (`text-brand`) is OTTO-only signal. Match the existing class idiom in `apps/web/components/otto/OttoMemory.tsx` (Tailwind arbitrary values + shadcn `Button`/`Textarea`).
 - Copy stays plain-English friendly ("Your customers", never "ICP/segments"). Code/identifiers English.
 - Keep `export function threadToBubbles` in `OttoMemory.tsx` — other files import it.
@@ -31,9 +31,9 @@
 - [ ] **Step 1: Install + generate + build packages**
 
 ```bash
-cd /Users/winnin/Desktop/artlio/.claude/worktrees/brand-memory
+cd /Users/winnin/Desktop/fikirtive/.claude/worktrees/brand-memory
 pnpm install --frozen-lockfile
-cp /Users/winnin/Desktop/artlio/packages/db/.env packages/db/.env   # dev DATABASE_URL lives only in the main checkout
+cp /Users/winnin/Desktop/fikirtive/packages/db/.env packages/db/.env   # dev DATABASE_URL lives only in the main checkout
 pnpm --filter @fikirtive/db generate
 pnpm --filter @fikirtive/core build && pnpm --filter @fikirtive/db build && pnpm --filter @fikirtive/otto build
 ```

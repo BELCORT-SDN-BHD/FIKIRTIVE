@@ -6,7 +6,7 @@
 
 **Architecture:** New `"use server"` actions gated `requireRole("tenants","mutate")` (super-admin). Three security-critical auth-gate changes in `apps/web/auth.ts` + `apps/web/lib/auth-guard.ts`, each found+confirmed by the design's Codex + workflow review. Control UI wired into the existing `/admin/tenants` pages.
 
-**Tech Stack:** Next.js (server actions, RSC), Prisma 7, next-auth v5, `@artlio/core` (roles), vitest.
+**Tech Stack:** Next.js (server actions, RSC), Prisma 7, next-auth v5, `@fikirtive/core` (roles), vitest.
 
 **Spec:** `docs/superpowers/specs/2026-06-21-multitenant-admin-console-design.md`
 
@@ -36,7 +36,7 @@
 ```ts
 import { describe, it, expect, vi, beforeEach } from "vitest";
 const findUnique = vi.fn();
-vi.mock("@artlio/db", () => ({ prisma: { allowedEmail: { findUnique } } }));
+vi.mock("@fikirtive/db", () => ({ prisma: { allowedEmail: { findUnique } } }));
 const { allowed } = await import("@/auth"); // NOTE: importing @/auth needs the vitest next/server + server-only stubs already configured in vitest.config
 beforeEach(() => { findUnique.mockReset(); process.env.AUTH_ALLOWED_EMAILS = "founder@x"; process.env.FOUNDER_ADMIN_EMAILS = "founder@x"; });
 
@@ -81,7 +81,7 @@ export async function allowed(email: string | null | undefined): Promise<boolean
   return !!row && row.status !== "revoked";
 }
 ```
-Add `import { prisma } from "@artlio/db";` if not present (it is). Then convert EVERY caller to `await allowed(...)`:
+Add `import { prisma } from "@fikirtive/db";` if not present (it is). Then convert EVERY caller to `await allowed(...)`:
 - `auth.ts` signIn callback: `async signIn({ user }) { return await allowed(user?.email); }`
 - `auth-guard.ts` lines 12, 27, 52: `if (!email || !(await allowed(email)))`
 - `admin/layout.tsx:27`: `if (!(await allowed(session?.user?.email))) redirect("/login");`
@@ -168,8 +168,8 @@ await tx.membership.upsert({
 - [ ] **Step 3: Implement** `apps/web/lib/tenant-actions.ts`:
 ```ts
 "use server";
-import { prisma } from "@artlio/db";
-import { newId, FOUNDER_OWNER_ID } from "@artlio/core";
+import { prisma } from "@fikirtive/db";
+import { newId, FOUNDER_OWNER_ID } from "@fikirtive/core";
 import { requireRole } from "./auth-guard";
 import { revalidatePath } from "next/cache";
 
@@ -243,8 +243,8 @@ VERIFY while implementing: the next-auth `Session` model name + `userId` field i
 
 - [ ] **Step 3: Implement** (mirror `credit-actions.ts` validation; gate on tenants/mutate; add org check):
 ```ts
-import { grantCredits, InsufficientCredits } from "@artlio/db";
-import { INTERNAL_PER_DISPLAY } from "@artlio/core";
+import { grantCredits, InsufficientCredits } from "@fikirtive/db";
+import { INTERNAL_PER_DISPLAY } from "@fikirtive/core";
 
 export async function grantTenantCredits(raw: unknown): Promise<{ ok: true; duplicate?: boolean } | { error: string }> {
   const gate = await requireRole("tenants", "mutate"); if ("error" in gate) return gate; // super-admin only (cross-tenant minting)
@@ -291,7 +291,7 @@ export async function grantTenantCredits(raw: unknown): Promise<{ ok: true; dupl
 
 ### Task 7: P2 triple gate (Codex + workflow QA + money-safety) → fix → commit/push
 
-- [ ] **Step 1: Self-verify:** `pnpm -r typecheck`; `cd apps/web && DATABASE_URL=<local> npx vitest run lib/__tests__/`; `pnpm --filter @artlio/core test`; `cd apps/web && npm run build`. All green.
+- [ ] **Step 1: Self-verify:** `pnpm -r typecheck`; `cd apps/web && DATABASE_URL=<local> npx vitest run lib/__tests__/`; `pnpm --filter @fikirtive/core test`; `cd apps/web && npm run build`. All green.
 - [ ] **Step 2: Codex** review the P2 diff — auth-gate + money-safety lens. Resolve every [P1].
 - [ ] **Step 3: Independent workflow QA** — dimensions: auth-gate safety (suspend sticks across signIn; allowed() every caller awaited; founder anti-lockout), money-safety (per-org grant: org validation, super-admin gate, idempotency, no founder fallback, negative-adjust), tenant-isolation, completeness vs spec. Verify each finding. Resolve confirmed BLOCKER/STRONG.
 - [ ] **Step 4: money-safety-review** standard on the grant path.

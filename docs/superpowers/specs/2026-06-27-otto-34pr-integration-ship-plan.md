@@ -54,7 +54,7 @@ Trickiest: **#28** moves `propose`/`generate` tools into `skills/`, conflicting 
 
 ## Per-batch gate
 
-`pnpm install && pnpm --filter @artlio/db exec prisma generate && pnpm -r typecheck && pnpm -r test`
+`pnpm install && pnpm --filter @fikirtive/db exec prisma generate && pnpm -r typecheck && pnpm -r test`
 — fix breakage in place. Run `money-safety-review` on #22/#24/#30/#34/#45/#46.
 
 ## Deliverable & sign-off

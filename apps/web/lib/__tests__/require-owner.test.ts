@@ -27,11 +27,11 @@ vi.mock("@/lib/allowlist", () => {
   return { allowed, isFounderAdmin, isAllowedEmail: allowed };
 });
 
-const FOUNDER_EMAIL = "founder@artlio.test";
-const NEW_EMAIL = "merchant-a@artlio.test";
+const FOUNDER_EMAIL = "founder@fikirtive.test";
+const NEW_EMAIL = "merchant-a@fikirtive.test";
 
 beforeAll(() => {
-  process.env.AUTH_ALLOWED_EMAILS = `${FOUNDER_EMAIL},${NEW_EMAIL},offlist-but-allowed@artlio.test`;
+  process.env.AUTH_ALLOWED_EMAILS = `${FOUNDER_EMAIL},${NEW_EMAIL},offlist-but-allowed@fikirtive.test`;
   process.env.FOUNDER_ADMIN_EMAILS = FOUNDER_EMAIL;
 });
 
@@ -104,7 +104,7 @@ describe("requireOwner — fail-closed", () => {
 
 describe("suspension / revocation gates (Fix A + Fix B)", () => {
   it("(Fix B) requireOwner returns { error } for a suspended member and does NOT create a second org", async () => {
-    const suspEmail = `suspended-${randomUUID()}@artlio.test`;
+    const suspEmail = `suspended-${randomUUID()}@fikirtive.test`;
     process.env.AUTH_ALLOWED_EMAILS = `${process.env.AUTH_ALLOWED_EMAILS},${suspEmail}`;
     const { bootstrapPersonalOrg } = await import("@/lib/auth-guard");
 
@@ -128,7 +128,7 @@ describe("suspension / revocation gates (Fix A + Fix B)", () => {
   });
 
   it("(Fix B) active member returns { ownerId } equal to their org", async () => {
-    const activeEmail = `active-${randomUUID()}@artlio.test`;
+    const activeEmail = `active-${randomUUID()}@fikirtive.test`;
     process.env.AUTH_ALLOWED_EMAILS = `${process.env.AUTH_ALLOWED_EMAILS},${activeEmail}`;
     const { bootstrapPersonalOrg } = await import("@/lib/auth-guard");
 
@@ -144,7 +144,7 @@ describe("suspension / revocation gates (Fix A + Fix B)", () => {
   });
 
   it("(Fix A) bootstrapPersonalOrg does NOT flip status back to active on a suspended membership", async () => {
-    const fixAEmail = `fix-a-${randomUUID()}@artlio.test`;
+    const fixAEmail = `fix-a-${randomUUID()}@fikirtive.test`;
     const { bootstrapPersonalOrg } = await import("@/lib/auth-guard");
 
     const userId = (await prisma.user.create({ data: { id: `usr_${randomUUID()}`, email: fixAEmail } })).id;
@@ -171,7 +171,7 @@ describe("suspension / revocation gates (Fix A + Fix B)", () => {
 
 describe("soft-deleted + suspended defense-in-depth (Fix 1)", () => {
   it("requireOwner returns {error} for a membership that is BOTH soft-deleted AND suspended", async () => {
-    const email = `soft-susp-${randomUUID()}@artlio.test`;
+    const email = `soft-susp-${randomUUID()}@fikirtive.test`;
     process.env.AUTH_ALLOWED_EMAILS = `${process.env.AUTH_ALLOWED_EMAILS},${email}`;
     const { bootstrapPersonalOrg } = await import("@/lib/auth-guard");
 
@@ -195,7 +195,7 @@ describe("soft-deleted + suspended defense-in-depth (Fix 1)", () => {
   });
 
   it("requireOwner revives a soft-deleted active membership (account reopening) and returns its ownerId", async () => {
-    const email = `soft-active-${randomUUID()}@artlio.test`;
+    const email = `soft-active-${randomUUID()}@fikirtive.test`;
     process.env.AUTH_ALLOWED_EMAILS = `${process.env.AUTH_ALLOWED_EMAILS},${email}`;
     const { bootstrapPersonalOrg } = await import("@/lib/auth-guard");
 
@@ -224,7 +224,7 @@ describe("soft-deleted + suspended defense-in-depth (Fix 1)", () => {
 describe("events.signIn convergence", () => {
   it("bootstrapPersonalOrg called directly converges the same org requireOwner would build", async () => {
     const { bootstrapPersonalOrg } = await import("@/lib/auth-guard");
-    const email = `merchant-b-${randomUUID()}@artlio.test`;
+    const email = `merchant-b-${randomUUID()}@fikirtive.test`;
     process.env.AUTH_ALLOWED_EMAILS = `${process.env.AUTH_ALLOWED_EMAILS},${email}`;
     const u = await prisma.user.create({ data: { id: `usr_${randomUUID()}`, email } });
     const orgId = await bootstrapPersonalOrg(u.id, email);

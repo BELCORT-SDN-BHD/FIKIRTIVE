@@ -19,7 +19,7 @@
 - **Charge (founder-confirmed):** image **1 cr** (10 internal); video **720p = 7 cr** (70 internal), **1080p = 16 cr** (160 internal). Flat per (kind, resolution). 1 displayed credit = 10 internal (`INTERNAL_PER_DISPLAY`).
 - **Money-safety:** a provider failure AFTER the paid call must `throw chargedError(...)` (terminal-fail, never retry-and-re-charge); a failure BEFORE the paid call throws a plain Error (worker may retry). Do NOT touch `startGen`, `reserveCredits`, `settleCredits`, the ledger, or `assertSpendableModel`.
 - **Active models:** `activeImageModel()` is already `"seedream"`. The cutover sets `OTTO_DEFAULT_VIDEO_MODEL=seedance-2-fast` so `activeVideoModel()`/`assertSpendableModel` allow it. Don't change the gate logic.
-- **Worktree:** `/Users/winnin/Desktop/artlio/.claude/worktrees/distracted-maxwell-7d1884` on branch `claude/phase2-byteplus`; verify `git rev-parse --show-toplevel` + branch before committing; NEVER touch `/Users/winnin/Desktop/artlio`. Build a changed package before tsc sees it: `pnpm --filter @fikirtive/<pkg> run build`. Tests: `pnpm --filter @fikirtive/generation test`, `pnpm --filter @fikirtive/core test`.
+- **Worktree:** `/Users/winnin/Desktop/fikirtive/.claude/worktrees/distracted-maxwell-7d1884` on branch `claude/phase2-byteplus`; verify `git rev-parse --show-toplevel` + branch before committing; NEVER touch `/Users/winnin/Desktop/fikirtive`. Build a changed package before tsc sees it: `pnpm --filter @fikirtive/<pkg> run build`. Tests: `pnpm --filter @fikirtive/generation test`, `pnpm --filter @fikirtive/core test`.
 
 ---
 

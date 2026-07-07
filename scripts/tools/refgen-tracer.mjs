@@ -14,14 +14,14 @@ const { REFGEN_QUEUE, REFGEN_DLQ, REFGEN_QUEUE_POLICY, storageKey, newId } = awa
   "../../packages/core/dist/index.js"
 );
 
-const DB = process.env.DATABASE_URL ?? "postgresql://artlio:artlio@localhost:5432/artlio";
+const DB = process.env.DATABASE_URL ?? "postgresql://fikirtive:fikirtive@localhost:5432/fikirtive";
 process.env.DATABASE_URL = DB;
 // match the worker's storage backend (MinIO) so exists()/put() hit the same bucket
 process.env.STORAGE_DRIVER = "r2";
 process.env.R2_ENDPOINT ??= "http://localhost:9000";
 process.env.R2_ACCESS_KEY_ID ??= "minioadmin";
 process.env.R2_SECRET_ACCESS_KEY ??= "minioadmin";
-process.env.R2_BUCKET ??= "artlio";
+process.env.R2_BUCKET ??= "artlio"; // prod bucket still carries the pre-pivot name — flip after the MASTERPLAN P0 bucket migration
 const storage = createStorage("/tmp/unused");
 const step = (m) => console.log(`✓ ${m}`);
 const OWNER = "founder";

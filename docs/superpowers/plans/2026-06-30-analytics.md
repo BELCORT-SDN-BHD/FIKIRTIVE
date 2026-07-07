@@ -624,7 +624,7 @@ git commit -m "feat(analytics): gb styles for the analytics page"
 
 (`onUseInOtto` is already destructured in `OttoView` — reuse it; do NOT add a new seeding path.)
 
-- [ ] **Step 3: Typecheck + build** — `cd apps/web && npx tsc --noEmit` → clean. `cd /Users/winnin/Desktop/artlio/.claude/worktrees/gracious-chandrasekhar-72f8c9 && pnpm --filter @fikirtive/web build` → exit 0.
+- [ ] **Step 3: Typecheck + build** — `cd apps/web && npx tsc --noEmit` → clean. `cd /Users/winnin/Desktop/fikirtive/.claude/worktrees/gracious-chandrasekhar-72f8c9 && pnpm --filter @fikirtive/web build` → exit 0.
 
 - [ ] **Step 4: Commit**
 
@@ -680,7 +680,7 @@ export default function AnalyticsPreview() {
 - [ ] **Step 3: Screenshot.** Run the dev server + browse:
 
 ```bash
-cd /Users/winnin/Desktop/artlio/.claude/worktrees/gracious-chandrasekhar-72f8c9
+cd /Users/winnin/Desktop/fikirtive/.claude/worktrees/gracious-chandrasekhar-72f8c9
 PORT=3007 pnpm --filter @fikirtive/web dev   # background; wait for ready
 B="$HOME/.claude/skills/gstack/browse/dist/browse"
 $B viewport 1440x1600; $B goto "http://localhost:3007/skin-preview/analytics"; $B wait --networkidle

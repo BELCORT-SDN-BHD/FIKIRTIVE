@@ -11,7 +11,7 @@
 ## Global Constraints
 
 - **MONEY-GUARD (BINDING):** never modify `packages/db/src/credits.ts`, `packages/core/src/spend.ts`, `apps/worker/src/jobs/*`, `apps/web/**/gen-actions.ts`, `refgen-actions.ts`, `cowork-actions.ts`, `**/useCanvasGen.ts`, `packages/generation/*`, `pnpm-lock.yaml`. Feature is 100% read-only; the OTTO-insight CTA only PREFILLS text (no auto-send, no spend).
-- Branch `claude/analytics-page` (off main `38b61a2`) in worktree `/Users/winnin/Desktop/artlio/.claude/worktrees/brand-memory`. Env bootstrapped.
+- Branch `claude/analytics-page` (off main `38b61a2`) in worktree `/Users/winnin/Desktop/fikirtive/.claude/worktrees/brand-memory`. Env bootstrapped.
 - `apps/web/lib/meta-graph.ts` + `meta-insights.ts`: ADDITIVE ONLY — new exports; existing functions byte-unchanged (live prod read connector).
 - Design: match `docs/design-refs/analytics-ui-kit.html` EXACTLY (kpi card radius 14/padding 15, `kl` 12px #86867F 500, `kv` 26px/700/-0.02em, delta 12px/600 green #15803D / flat #86867F, panel radius 16/padding 18, insight banner bg #FFF6F2 border #FBD9C9 text #9A3A1A 14px/1.45 + coral #EC5828 CTA h38 radius 11, range control h34 radius 10 13px/600, chart mono #0A0A0A stroke 2.2 + gradient fill + coral r4 peak dots, top-list rows 13.5/600 name + 11.5 muted meta + right-aligned 14/700 value with 10.5 label, "Best" pill #E7F6EC/#15803D). Use `.gb` tokens where they equal these values; arbitrary values otherwise (house idiom).
 - No new npm deps. Chart = hand-built SVG path (like the ui_kit).

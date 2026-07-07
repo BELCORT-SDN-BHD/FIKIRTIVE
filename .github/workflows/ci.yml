@@ -86,14 +86,14 @@ jobs:
         env:
           POSTGRES_USER: postgres
           POSTGRES_PASSWORD: postgres
-          POSTGRES_DB: artlio_test
+          POSTGRES_DB: fikirtive_test
         ports:
           - 5432:5432
         options: >-
           --health-cmd pg_isready --health-interval 10s --health-timeout 5s --health-retries 5
     env:
       # Database name ends in _test — required by the packages/db and apps/web (F35) guards.
-      DATABASE_URL: postgres://postgres:postgres@localhost:5432/artlio_test
+      DATABASE_URL: postgres://postgres:postgres@localhost:5432/fikirtive_test
     steps:
       - uses: actions/checkout@v4
       - uses: pnpm/action-setup@v4 # version from package.json `packageManager` (see check job)

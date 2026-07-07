@@ -6,7 +6,7 @@ Environment:
 - `GENERATION_PROVIDER=mock`
 - `COWORK_PROVIDER=mock`
 - `OTTO_DEFAULT_VIDEO_MODEL=seedance-2-fast`
-- Local Better Auth magic-link login as `founder@artlio.test`
+- Local Better Auth magic-link login as `founder@fikirtive.test`
 - No real supplier calls made.
 
 ## Findings

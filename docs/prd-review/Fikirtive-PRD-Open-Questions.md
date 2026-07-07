@@ -1,6 +1,6 @@
-# Artlio PRD —— 开放问题与决策清单
+# Fikirtive PRD —— 开放问题与决策清单
 
-> 本文档汇总 Artlio PRD（docs/PRD.md）逐节 review 后的开放问题与待决策点，按主题分类、按严重度排序。标 🔁 的为跨多处影响的高优先级项。
+> 本文档汇总 Fikirtive PRD（docs/PRD.md）逐节 review 后的开放问题与待决策点，按主题分类、按严重度排序。标 🔁 的为跨多处影响的高优先级项。
 
 ---
 
@@ -189,7 +189,7 @@
 
 ## B. Features / 功能与对象生命周期
 
-> **最致命**：(1) `variant`（aspect ratio / hook / audience / platform 派生）是 Artlio 区别于普通生成器的核心卖点，却在 Section 12 完全没有承载表或字段——120 条 generation 会变成无法分组的散件（B1/B2）；(2) 7 种 project type 声称「guide default workflow」却从未定义差异，可能只是个装饰性 enum（B5）。
+> **最致命**：(1) `variant`（aspect ratio / hook / audience / platform 派生）是 Fikirtive 区别于普通生成器的核心卖点，却在 Section 12 完全没有承载表或字段——120 条 generation 会变成无法分组的散件（B1/B2）；(2) 7 种 project type 声称「guide default workflow」却从未定义差异，可能只是个装饰性 enum（B5）。
 
 ### B1. `variant` / `variant_group` 是什么数据对象？ `🔁 高优先级（多处交叉影响）`
 - **问题**：8.18 / 7.2 / 7.3 把 variant 列为核心，但 Section 12 没有 `variants` / `variant_group` 表，也没有任何字段标记一个对象是另一个的变体。一个 variant 是新 project、新 storyboard、新 generation、还是 `generations` 上加一个 `variant_group_id`？它和源对象用什么 FK 关联？同源关系（同一 hook 的 9:16 和 1:1）靠什么表达？建议统一成一个 `variant_group`（一行=一个投放矩阵）+ `variant`（一格，带 `dimensions_json:{ratio,hook,audience}`）抽象。
@@ -373,13 +373,13 @@
 
 ## D. Provider / 生成可靠性
 
-> **最致命**：(1) poll vs webhook 没定 + `queue()` 调用丢响应（钱已扣 provider、Artlio 没拿到 job_id）会产生永久对不上账的「幽灵 job」，这是整个 worker 架构和计费正确性的地基（D1）；(2) provider 产物多为 1-24 小时过期的临时 URL，下载失败兜底规则缺失会导致「用户付了钱、generation 显示 completed、文件 404」（D3）。
+> **最致命**：(1) poll vs webhook 没定 + `queue()` 调用丢响应（钱已扣 provider、Fikirtive 没拿到 job_id）会产生永久对不上账的「幽灵 job」，这是整个 worker 架构和计费正确性的地基（D1）；(2) provider 产物多为 1-24 小时过期的临时 URL，下载失败兜底规则缺失会导致「用户付了钱、generation 显示 completed、文件 404」（D3）。
 
 ### D1. poll vs webhook + `queue()` 提交丢响应的对账（idempotency key） `🔁 高优先级（多处交叉影响）`
 - **问题**：13.3 provider 接口是 `poll(jobID)`，13.2 worker 也写 polling，但 15 又要求「polling must not overload provider APIs」；且有些 provider 只用 webhook/callback 交付（接口里没有 webhook 入口）。到底主动 poll 还是接 webhook？poll 间隔、指数退避、单 job 最大轮询时长、超时判 failed 策略是什么？更关键：`queue()` 调用因网络中断没拿到 `provider_job_id`（钱可能已扣 provider）时怎么对账？`generations`/`model_invocations` 都没有 `idempotency_key` 字段，provider 接口也没要求传幂等键。重试 = 重复提交 = 重复扣费。idempotency key 是 per-generation 还是 per-attempt？provider 不支持传幂等键时怎么对账？
-- **为什么重要**：poll 还是 webhook 决定整个 worker 架构（常驻 polling worker pool vs 无状态 webhook handler + in-flight 表），定错要整体返工。一个 8 秒视频 provider 端要跑 3-10 分钟，固定 5 秒 poll 一个 30 分钟 job = 360 次/job，1000 并发就是每秒上千次请求会被限流甚至封 key。丢失 `provider_job_id` 的 job 变成幽灵——provider 在跑、扣了钱，Artlio 这边 status 卡在 queued 永远 poll 不到、credit hold 不释放。
+- **为什么重要**：poll 还是 webhook 决定整个 worker 架构（常驻 polling worker pool vs 无状态 webhook handler + in-flight 表），定错要整体返工。一个 8 秒视频 provider 端要跑 3-10 分钟，固定 5 秒 poll 一个 30 分钟 job = 360 次/job，1000 并发就是每秒上千次请求会被限流甚至封 key。丢失 `provider_job_id` 的 job 变成幽灵——provider 在跑、扣了钱，Fikirtive 这边 status 卡在 queued 永远 poll 不到、credit hold 不释放。
 - **什么场景触发**：worker 调 fal/Runway 的 queue API，provider 后端已接单开始计费，但响应在 ELB 超时被丢弃，worker 收到 timeout 触发自动重试；或一次 batch 30 个 shot 集中在 6 分钟内 3300 次 poll 打向同一 endpoint。
-- **举例**：`gen_789` 第一次提交 provider 生成了 job 'rw_001'（已计费 $0.40），Artlio 没收到响应重试又生成 'rw_002'（再计费）。需要 `generations` 有 `unique(idempotency_key)`、worker 调 provider 前先写一条 `model_invocations(status='submitting', idempotency_key=gen_789:attempt-key)`，重试命中已有记录改为 reconcile。改成 webhook + 兜底 poll（每 30 秒、最多 20 分钟、超时标 failed 退 hold）还是纯 poll？
+- **举例**：`gen_789` 第一次提交 provider 生成了 job 'rw_001'（已计费 $0.40），Fikirtive 没收到响应重试又生成 'rw_002'（再计费）。需要 `generations` 有 `unique(idempotency_key)`、worker 调 provider 前先写一条 `model_invocations(status='submitting', idempotency_key=gen_789:attempt-key)`，重试命中已有记录改为 reconcile。改成 webhook + 兜底 poll（每 30 秒、最多 20 分钟、超时标 failed 退 hold）还是纯 poll？
 - **严重度**：Blocker
 - **PRD 引用**：13.1, 13.2, 13.3, 15, 12.3
 
@@ -392,8 +392,8 @@
 - **PRD 引用**：10.16, 11.4, 13.2, 12.3
 
 ### D3. provider 产物临时 URL 过期 + 下载失败兜底 `🔁 高优先级（多处交叉影响）`
-- **问题**：provider 产物几乎都是临时 signed URL（Kling 24 小时、Runway 14 天，差 14 倍）。worker 必须及时下载到 Artlio storage。下载失败的重试窗口和退避策略是什么？在 URL 过期前所有重试都失败、产物永久丢失但 generation 已扣费，按什么规则退款 / 重生成？下载失败时 generation 停在哪个中间态（需不需要 `downloading`/`download_failed` 状态）？generation_outputs 是先插空壳再回填 storage_url，还是下载成功后才插入？
-- **为什么重要**：15 只说「media download should retry safely」但没定窗口。临时 URL 过期是硬 deadline——错过就再也拿不回来，而 provider 那边已算完钱。指数退避重试到几小时后可能恰好越过过期点，导致「用户付了钱、generation 显示 completed、output 文件 404」。这直接违反 PRD 自己的「No completed generation is lost」（10.11）。worker 的下载 SLA 必须按最短的 provider（Kling 24h）设计。「completed」的定义是「provider 完成」还是「Artlio 已落盘」？
+- **问题**：provider 产物几乎都是临时 signed URL（Kling 24 小时、Runway 14 天，差 14 倍）。worker 必须及时下载到 Fikirtive storage。下载失败的重试窗口和退避策略是什么？在 URL 过期前所有重试都失败、产物永久丢失但 generation 已扣费，按什么规则退款 / 重生成？下载失败时 generation 停在哪个中间态（需不需要 `downloading`/`download_failed` 状态）？generation_outputs 是先插空壳再回填 storage_url，还是下载成功后才插入？
+- **为什么重要**：15 只说「media download should retry safely」但没定窗口。临时 URL 过期是硬 deadline——错过就再也拿不回来，而 provider 那边已算完钱。指数退避重试到几小时后可能恰好越过过期点，导致「用户付了钱、generation 显示 completed、output 文件 404」。这直接违反 PRD 自己的「No completed generation is lost」（10.11）。worker 的下载 SLA 必须按最短的 provider（Kling 24h）设计。「completed」的定义是「provider 完成」还是「Fikirtive 已落盘」？
 - **什么场景触发**：周五晚上一批 Kling 生成完成，worker 因队列积压没在 24 小时内下载完；周一用户回来发现 generation 是 completed 但 output 打不开、credits 已扣。
 - **举例**：`generation_outputs` 该写入 8MB mp4，但 storage_url 拉取得到 403/404，`actual_cost_credits` 已记 10。需明确：检测到下载终态失败 → 写一条 `generation_refund(+10)` 并标 generation 'failed'（原因 media_lost）？还是免费重生成？下载重试硬上限（总窗口 ≤ min(provider URL TTL − 安全余量, 2h)）是多少？
 - **严重度**：Blocker
@@ -425,22 +425,22 @@
 
 ### D7. `normalize(result)` 的目标规格与容差（分辨率 / 帧率 / 时长 / 水印不达标）
 - **问题**：provider 实际产出的分辨率 / 帧率 / 时长 / 水印与 shot 要求不一致时（要 8s 给 5s、要 1080p 给 720p），`normalize` 是「如实记录差异」、「补帧 / 拉伸到目标」、还是「标记 partial 并触发退款」？`generation_outputs` 有 width/height/duration_seconds 但没有 `requested_*`，无法判断「达标」。不同 provider codec/container/fps/色彩空间不同（H.264 vs VP9、mp4 vs webm），timeline 预览和 export 前要不要统一转码？normalize 是只归一元数据还是也归一媒体编码？转码在 worker 哪一步、存几份？generation_outputs 要不要存「原始」和「统一转码后」两个 storage_url + metadata_json 记 codec/fps/colorspace？
-- **为什么重要**：13.3 只写 `normalize(result) -> Artlio generation output` 一行，没定义归一目标和容差。不答的话：timeline clip 时长对不上 storyboard 的 duration_estimate 自动拼接有黑帧 / 跳切；用户付了 8s 的钱拿到 5s 不知该不该退；不同 provider 水印（免费层常带）混进客户交付物。timeline 把 H.264 mp4 和 VP9 webm 混排，某些浏览器不解码、FFmpeg export 时 fps 不一会跳帧 / 音画不同步。Phase 2 做 timeline export 时才发现各 provider 产物没法直接拼是大返工。
+- **为什么重要**：13.3 只写 `normalize(result) -> Fikirtive generation output` 一行，没定义归一目标和容差。不答的话：timeline clip 时长对不上 storyboard 的 duration_estimate 自动拼接有黑帧 / 跳切；用户付了 8s 的钱拿到 5s 不知该不该退；不同 provider 水印（免费层常带）混进客户交付物。timeline 把 H.264 mp4 和 VP9 webm 混排，某些浏览器不解码、FFmpeg export 时 fps 不一会跳帧 / 音画不同步。Phase 2 做 timeline export 时才发现各 provider 产物没法直接拼是大返工。
 - **什么场景触发**：用户把 6 个分别来自 3 个 provider 的 output 拖进 timeline 做 9:16 导出，2 个是 25fps VP9/webm、3 个是 30fps H.264/mp4、1 个是 24fps 带 alpha 的 mov。
 - **举例**：`Shot.duration_estimate=8s, aspect=9:16, target 1080p`，Provider 回 5.2s/1280×720（非 9:16）/带水印。timeline 自动排布时 2.8s 缺口怎么填？aspect 不对要不要自动 crop？credit 按 8s 还是 5.2s 收费？
 - **严重度**：High
 - **PRD 引用**：10.8, 10.13, 13.2, 13.3, 12.3
 
 ### D8. parameters_json 存中立参数还是 provider 原生参数？（跨 model 重生成映射）
-- **问题**：10.8 说「same shot can be compiled for different models」，但 seed / cfg / motion_strength / guidance 在不同 model 里语义和取值域完全不同。`parameters_json` 存「Artlio 中立参数」还是「provider 原生参数」？跨 model 重新生成时这套参数怎么映射，映射不了的（如 seed 不通用）怎么处理？需不需要 `model_param_mappings` 表？
+- **问题**：10.8 说「same shot can be compiled for different models」，但 seed / cfg / motion_strength / guidance 在不同 model 里语义和取值域完全不同。`parameters_json` 存「Fikirtive 中立参数」还是「provider 原生参数」？跨 model 重新生成时这套参数怎么映射，映射不了的（如 seed 不通用）怎么处理？需不需要 `model_param_mappings` 表？
 - **为什么重要**：存原生参数则「换 model 重生成」没法复用，每换一个 model 用户要重填；存中立参数则需要 per-provider 映射层（PRD 没提）。用户在 ModelA 调好的 motion=0.7 换到 ModelB 变成完全不同的运动幅度，10.11「compare variants」会拿不可比的东西对比。
 - **什么场景触发**：用户对 Shot5 在 ModelA 反复调参得到满意结果，想用更贵的 ModelB 重生成做高质量版本，期望运动感 / 构图差不多。
-- **举例**：ModelA `motion_strength∈[0,1]=0.7, seed=12345, cfg=7`，ModelB 叫 `motion_bucket_id∈[1,255]`、没 cfg 只有 `guidance_scale∈[1,20]`、seed 是 64-bit。Artlio 把 0.7 映射成 179（0.7×255）？seed 12345 在 ModelB 完全无意义，丢弃还是报「无法保证一致」？
+- **举例**：ModelA `motion_strength∈[0,1]=0.7, seed=12345, cfg=7`，ModelB 叫 `motion_bucket_id∈[1,255]`、没 cfg 只有 `guidance_scale∈[1,20]`、seed 是 64-bit。Fikirtive 把 0.7 映射成 179（0.7×255）？seed 12345 在 ModelB 完全无意义，丢弃还是报「无法保证一致」？
 - **严重度**：High
 - **PRD 引用**：10.8, 12.3
 
 ### D9. provider error 分类法（taxonomy）与统一 error_category
-- **问题**：13.3 接口 quote/queue/poll/cancel/normalize 没有错误分类法。要区分「可重试瞬时错误」vs「不可重试 provider 内容被拒 / 参数非法」vs「provider 永久故障」，谁来归一不同 provider 千奇百怪的 error code？`model_invocations.error_code` 存 provider 原始码还是 Artlio 统一码？`generations` 缺 `failure_reason` 字段（error_code 只在 model_invocations 上，但 download 失败发生在 model_invocation 成功之后）。
+- **问题**：13.3 接口 quote/queue/poll/cancel/normalize 没有错误分类法。要区分「可重试瞬时错误」vs「不可重试 provider 内容被拒 / 参数非法」vs「provider 永久故障」，谁来归一不同 provider 千奇百怪的 error code？`model_invocations.error_code` 存 provider 原始码还是 Fikirtive 统一码？`generations` 缺 `failure_reason` 字段（error_code 只在 model_invocations 上，但 download 失败发生在 model_invocation 成功之后）。
 - **为什么重要**：退款逻辑（generation_refund）和重试逻辑完全依赖错误分类：provider 内容被拒（用户的错，可能不退）vs provider 超时（系统的错，必须退 / 重试）必须区分。只给 error_code/error_message 两个自由字段没有统一枚举，所有 failed 走同一条路——乱退款（provider 内容被拒也退被刷）或乱重试（参数非法重试 10 次烧 quota）。10.16「failed eligible refunds」里的「eligible」完全没定义。`generations` 需要统一 `failure_reason`（如 user_content / transient / provider_down / invalid_params）+ per-provider error mapping。
 - **什么场景触发**：用户生成含品牌名的 shot，ProviderA 因内容政策返回 'SAFETY_BLOCK'，同秒另一 job 因 provider 超时（返回 'ETIMEDOUT'）。
 - **举例**：系统怎么知道前者不该重试也不该全额退款，后者该自动重试 3 次且失败后全额 release hold？UI 要显示 9 个失败里哪些「provider 超时可重试」、哪些「provider 内容被拒请改 prompt」、哪些「下载失败正在自动重试」——`generations` 没有 `failure_reason` 列就只能显示统一的「失败」。
@@ -492,32 +492,32 @@
 - **PRD 引用**：10.16, 11.4, 13.1, 13.2, 12.3
 
 ### E3. credit→$ 和 credit→provider-cost 两套映射表 + provider 涨价归属 `🔁 高优先级（多处交叉影响）`
-- **问题**：credit→$ 和 credit→provider-cost 两套映射在哪维护？10.9 `model_registry` 只有一个 `cost_rules` 字段，没说存的是 credits 还是真实 provider 价格。`quote_generation_cost` 算 credits 用哪张表、哪个版本的汇率（versioned，provider 改价时旧 quote 要能复现）？provider 在 quote 之后、generation 完成之前涨价了谁吃亏——quote 是 binding 的（Artlio 吃涨价）还是 actual 可高于 quote（用户被多扣）？`generations` 只有 cost_estimate/actual_cost（都是 credits），没有「quoted_at 时的 provider 单价快照」。Section 16「Gross margin per generation」需要真实 provider 美元成本，但 `model_invocations` 也没有 `provider_cost_usd` 字段（埋在 response_payload_json 里无法 SQL 聚合）。
-- **为什么重要**：缺这些字段算不出 quote 也算不出毛利这个核心商业指标。两套必须分开存且 versioned，否则 markup 一改历史毛利全错。provider 半夜从 $0.10/s 涨到 $0.15/s，已 hold 40 credits 的 job 跑完真实成本 60 credits 等值——Artlio 自己倒贴 50%。2026 实测 Veo 3.1 Standard $0.75/s vs Fast $0.10/s vs Lite $0.05/s 差 15 倍；一分钟成片成本 $4-$36；还有 progressive cost curves（长 clip 不成比例地更贵）。报价必须绑定档位+分辨率+时长+audio。
+- **问题**：credit→$ 和 credit→provider-cost 两套映射在哪维护？10.9 `model_registry` 只有一个 `cost_rules` 字段，没说存的是 credits 还是真实 provider 价格。`quote_generation_cost` 算 credits 用哪张表、哪个版本的汇率（versioned，provider 改价时旧 quote 要能复现）？provider 在 quote 之后、generation 完成之前涨价了谁吃亏——quote 是 binding 的（Fikirtive 吃涨价）还是 actual 可高于 quote（用户被多扣）？`generations` 只有 cost_estimate/actual_cost（都是 credits），没有「quoted_at 时的 provider 单价快照」。Section 16「Gross margin per generation」需要真实 provider 美元成本，但 `model_invocations` 也没有 `provider_cost_usd` 字段（埋在 response_payload_json 里无法 SQL 聚合）。
+- **为什么重要**：缺这些字段算不出 quote 也算不出毛利这个核心商业指标。两套必须分开存且 versioned，否则 markup 一改历史毛利全错。provider 半夜从 $0.10/s 涨到 $0.15/s，已 hold 40 credits 的 job 跑完真实成本 60 credits 等值——Fikirtive 自己倒贴 50%。2026 实测 Veo 3.1 Standard $0.75/s vs Fast $0.10/s vs Lite $0.05/s 差 15 倍；一分钟成片成本 $4-$36；还有 progressive cost curves（长 clip 不成比例地更贵）。报价必须绑定档位+分辨率+时长+audio。
 - **什么场景触发**：Producer 周一对 Veo 5s 1080p 点 quote 报 40 credits（这 40 怎么从 $0.50/秒 推出？markup 多少存哪）；或晚上 11 点批准 100 个 shot 的 batch（每个 quote 40），凌晨 2 点跑到第 60 个时 provider 涨价 50%。
 - **举例**：`model_registry.cost_rules={provider_usd_per_second:0.10, credit_markup:2.5x}`，5 秒 = $0.50 provider = 50 credits 卖用户（1 credit=$0.02）。但 PRD 没有 `provider_usd_per_second` / `credit_markup` / `credit_usd_value` / `provider_cost_usd` 任何一个字段。
 - **严重度**：Blocker
 - **PRD 引用**：10.9, 10.16, 13.3, 16, 12.3
 
 ### E4. 估算偏差归属（actual > estimate 补扣还是封顶？） `🔁 高优先级（多处交叉影响）`
-- **问题**：`cost_estimate_credits=40` 但 `actual_cost_credits=55`（provider 多收，视频长了一帧 / 重试了一次），多出的 15 从哪扣？反过来 estimate=40、actual=30，多 hold 的 10 自动退还吗？actual > hold 住的金额时补扣（可能扣成负数）、封顶在 estimate（Artlio 吃差价）、还是 actual 但封顶在 quote？hold 时是否按 `estimate × buffer`（如 1.2 倍）多冻一点吸收偏差？
-- **为什么重要**：hold 的是预估值但结算用实际值。直接补扣 org 余额可能变负或余额不足时结算失败留悬空 generation；封顶在 estimate 则差价 Artlio 全吃长期侵蚀毛利。10.16「user sees estimated cost before generation」和「completed generation deducts credits」之间这个差额规则缺失，会导致 hold 释放金额和 charge 金额不一致、balance_after 算错。
+- **问题**：`cost_estimate_credits=40` 但 `actual_cost_credits=55`（provider 多收，视频长了一帧 / 重试了一次），多出的 15 从哪扣？反过来 estimate=40、actual=30，多 hold 的 10 自动退还吗？actual > hold 住的金额时补扣（可能扣成负数）、封顶在 estimate（Fikirtive 吃差价）、还是 actual 但封顶在 quote？hold 时是否按 `estimate × buffer`（如 1.2 倍）多冻一点吸收偏差？
+- **为什么重要**：hold 的是预估值但结算用实际值。直接补扣 org 余额可能变负或余额不足时结算失败留悬空 generation；封顶在 estimate 则差价 Fikirtive 全吃长期侵蚀毛利。10.16「user sees estimated cost before generation」和「completed generation deducts credits」之间这个差额规则缺失，会导致 hold 释放金额和 charge 金额不一致、balance_after 算错。
 - **什么场景触发**：quote 估 40（按 8 秒），provider 实际生成 8.7 秒按真实时长计费 actual=55；或图生视频因 provider 内部重试两次按调用次数计费实际 55。
-- **举例**：`credit_ledger` 里 `generation_hold=-40`，`generation_charge` 应该是 -40 还是 -55？是 -55 但只 hold 40 → 余额负数或第二笔扣款；是 -40 → Artlio 每次低估亏 15 credits × 成千上万次 = 系统性毛利侵蚀。
+- **举例**：`credit_ledger` 里 `generation_hold=-40`，`generation_charge` 应该是 -40 还是 -55？是 -55 但只 hold 40 → 余额负数或第二笔扣款；是 -40 → Fikirtive 每次低估亏 15 credits × 成千上万次 = 系统性毛利侵蚀。
 - **严重度**：Blocker
 - **PRD 引用**：10.16, 11.4, 12.3
 
 ### E5. refund 触发条件矩阵（eligible 没定义；provider 内容被拒 / 创意性 reject / 部分失败） `🔁 高优先级（多处交叉影响）`
-- **问题**：10.16 只说「Failed eligible generation refunds」，但 eligible 没定义。下列哪些退、退多少：(a) provider 返回 error 全程没产出；(b) 部分产物可用（batch 10 个成功 7 个）；(c) provider 在 generation 之后内容被拒（provider 调用已花钱）；(d) 用户主观不满意 / 客户创意性 reject（技术上 completed 但客户不要）？退费规则统一对用户兜底还是透传 provider 政策？`credit_ledger` 的 event_type 只有一个 `generation_refund`，但需区分 `release_hold`（没花钱）和 `refund`（花了钱退用户、Artlio 吞成本）。
-- **为什么重要**：写不出 `release_credit_hold` vs `generation_refund` 的分支逻辑，也无法决定哪些 provider 成本由 Artlio 自己吞。provider 内容被拒尤其关键：provider 已收 Artlio 的钱，还退用户 credits 就双倍亏损。创意性 reject 退则平台白送算力，不退则 agency 觉得「没用上还扣钱」。各家政策分裂——Kling/Seedance 对内容被拒不收费，多数平台 prompt 被 provider 内容过滤拒绝时照扣 credits。「eligible refund」口径不定，ledger 逻辑和毛利模型都建在流沙上。
+- **问题**：10.16 只说「Failed eligible generation refunds」，但 eligible 没定义。下列哪些退、退多少：(a) provider 返回 error 全程没产出；(b) 部分产物可用（batch 10 个成功 7 个）；(c) provider 在 generation 之后内容被拒（provider 调用已花钱）；(d) 用户主观不满意 / 客户创意性 reject（技术上 completed 但客户不要）？退费规则统一对用户兜底还是透传 provider 政策？`credit_ledger` 的 event_type 只有一个 `generation_refund`，但需区分 `release_hold`（没花钱）和 `refund`（花了钱退用户、Fikirtive 吞成本）。
+- **为什么重要**：写不出 `release_credit_hold` vs `generation_refund` 的分支逻辑，也无法决定哪些 provider 成本由 Fikirtive 自己吞。provider 内容被拒尤其关键：provider 已收 Fikirtive 的钱，还退用户 credits 就双倍亏损。创意性 reject 退则平台白送算力，不退则 agency 觉得「没用上还扣钱」。各家政策分裂——Kling/Seedance 对内容被拒不收费，多数平台 prompt 被 provider 内容过滤拒绝时照扣 credits。「eligible refund」口径不定，ledger 逻辑和毛利模型都建在流沙上。
 - **什么场景触发**：用户批准 8 个变体 batch（hold 320），6 个成功、1 个 provider 超时、1 个产出后被 provider 内容拒绝；或客户在 share link reject 2 个已 completed 的 shot 各 30 credits，Maya 申请退 60。
-- **举例**：超时那个 provider 没出账→release 40；被 provider 内容拒绝的那个 provider 已出账 40 真实成本——退用户 40 则 Artlio 净亏 40。`credit_ledger.event_type` 需要区分 release_hold 和 refund 两种事件，但枚举里只有一个。
+- **举例**：超时那个 provider 没出账→release 40；被 provider 内容拒绝的那个 provider 已出账 40 真实成本——退用户 40 则 Fikirtive 净亏 40。`credit_ledger.event_type` 需要区分 release_hold 和 refund 两种事件，但枚举里只有一个。
 - **严重度**：High
 - **PRD 引用**：10.16, 11.4, 13.5, 12.3
 
 ### E6. credit lot / 批次（订阅赠送月底过期 vs 购买不过期的扣减顺序）
 - **问题**：`credit_ledger` 有 `subscription_grant`/`credit_purchase`/`expiration` 三种 event，但没有「credit 桶/批次（lot）」概念。订阅赠送月底过期、购买的不过期，混在同一个 balance_after 里——消耗时按什么顺序扣（先扣会过期的？FIFO？）？`expiration` 事件怎么知道还剩多少未用的赠送 credits 该清零？降级 / 订阅取消时 grant credits 立即作废还是用到期？Stripe 扣款失败（past_due）时正在 running 的 generation 取消退 hold 还是跑完照 charge？
-- **为什么重要**：单一 balance_after 标量无法区分「这 50 是这个月订阅送的（月底清零）还是去年买的（永久）」。需要 lot-level 跟踪（每个 grant 一个 lot 带 expires_at 和 remaining），否则 expiration 算不出该扣多少。用户取消订阅但赠送 credits 还能花（Artlio 继续付 provider 成本）、或降级瞬间把进行中的 job 全杀掉（用户已在等的产出没了）。
+- **为什么重要**：单一 balance_after 标量无法区分「这 50 是这个月订阅送的（月底清零）还是去年买的（永久）」。需要 lot-level 跟踪（每个 grant 一个 lot 带 expires_at 和 remaining），否则 expiration 算不出该扣多少。用户取消订阅但赠送 credits 还能花（Fikirtive 继续付 provider 成本）、或降级瞬间把进行中的 job 全杀掉（用户已在等的产出没了）。
 - **什么场景触发**：Pro 用户月初订阅送 500（月底过期），中途又买 200（不过期），这个月用了 600；或月中点取消订阅（周期末生效），剩余 1500 grant credits 立刻清零还是用到周期末。
 - **举例**：消耗优先扣会过期的 grant：600 = 先扣 500 grant + 100 purchase，月底 expiration=0，剩 100 purchase。FIFO 不区分则可能把 200 永久 credits 先花了、月底把没花的 grant 清零、用户白白损失。`balance_after` 单值记不住，必须有 `credit_lots` 表。
 - **严重度**：High
@@ -555,9 +555,9 @@
 - **严重度**：Blocker
 - **PRD 引用**：10.16, 11.5, 12.3
 
-### E11. export / render 扣不扣 credits？（Artlio 自有 FFmpeg 算力成本）
-- **问题**：10.15 export 异步跑、13.2 是 FFmpeg worker（Artlio 自己的算力不是 provider）。render 一个 4K 多轨 timeline 有真实计算成本，10.16 说「每个 paid generation OR export 创建 usage 记录」（说明 export 算计费），那 export 的 credits 怎么定价（按时长 / 分辨率 / render 秒数）？`usage_events.event_type` 枚举里没有 export。免费则重度用户狂 render 4K 吃掉算力成本；收费则需要 quote export 成本的流程（PRD 完全没有）。
-- **为什么重要**：漏掉一整类计费 / 成本，`usage_events` 表建不对。export 是 Artlio 自有成本（不像 generation 是 provider 成本），定价逻辑完全不同（按 FFmpeg CPU 秒还是固定费率）。10.16 acceptance 只覆盖 generation 的 hold/charge/refund，完全没有 export 的计费流程定义。
+### E11. export / render 扣不扣 credits？（Fikirtive 自有 FFmpeg 算力成本）
+- **问题**：10.15 export 异步跑、13.2 是 FFmpeg worker（Fikirtive 自己的算力不是 provider）。render 一个 4K 多轨 timeline 有真实计算成本，10.16 说「每个 paid generation OR export 创建 usage 记录」（说明 export 算计费），那 export 的 credits 怎么定价（按时长 / 分辨率 / render 秒数）？`usage_events.event_type` 枚举里没有 export。免费则重度用户狂 render 4K 吃掉算力成本；收费则需要 quote export 成本的流程（PRD 完全没有）。
+- **为什么重要**：漏掉一整类计费 / 成本，`usage_events` 表建不对。export 是 Fikirtive 自有成本（不像 generation 是 provider 成本），定价逻辑完全不同（按 FFmpeg CPU 秒还是固定费率）。10.16 acceptance 只覆盖 generation 的 hold/charge/refund，完全没有 export 的计费流程定义。
 - **什么场景触发**：用户把一个 60 秒、4 轨、4K 的 timeline 反复 export 20 次调字幕位置（≈ 10 分钟算力）。
 - **举例**：`usage_events` 该不该记 `event_type='export'`？credits 收 0（免费但成本谁担）还是按 `render_seconds × 费率`？
 - **严重度**：High
@@ -678,7 +678,7 @@
 ### G1. 外部 reviewer 没有 user_id：comments / approval / audit 的 FK 怎么填？ `🔁 高优先级（多处交叉影响）`
 - **问题**：外部 client reviewer 通过 share_link 评论和审批，但 `comments.author_user_id`、`approval_requests.approver_user_id`、`audit_logs.actor_user_id` 三个都是指向 users 的 FK。外部评审者的身份怎么落库——(a) 给每个外部评审者建 stub user 行、(b) 把 FK 改 nullable 并新增 `external_reviewer_email`/`share_link_id`/`actor_type` 列、还是 (c) 新建 `review_participants` 表？10.2 说「Client records should support future external reviewer accounts」。
 - **为什么重要**：保持 NOT NULL FK 则外部评论根本写不进去（违反 FK 约束），10.14「Viewer can leave comments / Approval is stored and auditable」直接做不出来。建 stub user 会污染 memberships、auth、billing seat 计数、能不能登录。三选一影响这三张表 schema 和所有 join 逻辑。审计在最关键的外部审批场景（有合同意义的 deliverable approval）失效——actor_user_id 对外部人只能填 null，身份信息只能塞进 metadata_json 无法可靠查询。
-- **什么场景触发**：client 品牌方市场总监 Sarah（sarah@acme.com，无 Artlio 账号）打开 share_link，在第 3 个 storyboard scene 下留言「把 logo 放大」然后点 Approve；6 个月后客户质疑「你们说我们 approve 了这条广告，证据呢」。
+- **什么场景触发**：client 品牌方市场总监 Sarah（sarah@acme.com，无 Fikirtive 账号）打开 share_link，在第 3 个 storyboard scene 下留言「把 logo 放大」然后点 Approve；6 个月后客户质疑「你们说我们 approve 了这条广告，证据呢」。
 - **举例**：`comments.author_user_id` 该填什么？建 stub user 会不会出现在 org 成员列表、被计入 seat 计费、能不能登录？理想外部审计行需要 `actor_type=external_reviewer, actor_email, share_link_id, ip, created_at`，但当前 schema 只有 actor_user_id（对外部人填 null）。
 - **严重度**：Blocker
 - **PRD 引用**：10.2, 10.14, 13.4, 12.3
@@ -914,7 +914,7 @@
 > **最致命**：(1) Auth provider（Clerk/Auth.js/Supabase/custom）未定，而 users 表是几乎所有表的外键根——选哪个决定 schema、安全面、外部 reviewer 影子身份方案，是「建第一个 migration」的前置阻塞决策（J1）；(2) 整个产品没有任何 email / 通知基础设施，但团队邀请、share_link 发客户、generation 完成提醒等 6 个核心闭环刚性依赖它，被整份 PRD 遗漏（J2）。
 
 ### J1. Auth 层未定（users 表是外键根，决定影子身份方案） `🔁 高优先级（多处交叉影响）`
-- **问题**：13.1 把 Auth 列成「Clerk/Auth.js/Supabase/custom 都行」的开放选项，Section 20 还在问 Supabase vs custom。但这决定 email 验证、密码重置 token、session/JWT、SSO（Enterprise 要 advanced permissions / security review），以及 users 表由 Artlio 自己管还是外部 auth provider 托管（若托管，`users.id` 是外部 IDP 的 sub 还是本地 UUID？外部 reviewer 的 stub user 怎么和它共存）？
+- **问题**：13.1 把 Auth 列成「Clerk/Auth.js/Supabase/custom 都行」的开放选项，Section 20 还在问 Supabase vs custom。但这决定 email 验证、密码重置 token、session/JWT、SSO（Enterprise 要 advanced permissions / security review），以及 users 表由 Fikirtive 自己管还是外部 auth provider 托管（若托管，`users.id` 是外部 IDP 的 sub 还是本地 UUID？外部 reviewer 的 stub user 怎么和它共存）？
 - **为什么重要**：users 表是几乎所有表的外键根。选 Clerk/Supabase Auth 意味着身份在外部、本地只存映射；选 custom 意味着要自建密码哈希 / 重置 / 验证 / session。两条路 schema、安全面、外部 reviewer 影子身份方案完全不同。这是「建第一个 migration」的前置阻塞决策，不能拖到实现。
 - **什么场景触发**：团队要开始写第一个 migration，需要定义 users 表和登录方式，但 auth provider 还没选。
 - **举例**：用 Clerk 则 users 可能只是 `(id=clerk_user_id, email, ...)` 镜像，password 不在本地、密码重置走 Clerk、外部 reviewer 没 Clerk 账号要单独建影子身份；用 custom 则要自建 password_hash/reset_token/email_verified 字段和邮件流程。两者不可互换。
@@ -932,7 +932,7 @@
 ### J3. 团队邀请流程整条链缺失（invitations 表）
 - **问题**：10.1 验收说「owner 能邀请团队成员」，`memberships` 有 `invited_by_user_id` 和 status，但没有 `invitations` 表（待接受的邀请、邀请 token、目标 email、过期时间、角色），也没有 email 发送机制。被邀请人此刻还没有 users 行（没注册），邀请怎么落库、怎么发出去、对方点链接注册后怎么把新 user 绑回这条邀请并建 membership？同一 email 被重复邀请 / 已是成员再被邀请怎么处理？
 - **为什么重要**：agency/team 是核心商业 wedge（4.1），多人协作是付费前提。没有 invitations 表，「邀请」就只能在双方都已注册时手动加 membership，无法支持真实的「发邮件邀请陌生 email 加入 org」。这是建表前必须补的一张表 + 一套 email 基础设施。
-- **什么场景触发**：Maya 注册后想把同事 Tom（还没 Artlio 账号）拉进 org，输入 tom@agency.com 点「邀请」。
+- **什么场景触发**：Maya 注册后想把同事 Tom（还没 Fikirtive 账号）拉进 org，输入 tom@agency.com 点「邀请」。
 - **举例**：需要 `invitations(id, org_id, email, role, token_hash, invited_by, status[pending/accepted/expired/revoked], expires_at)`。Tom 收到邮件点链接→注册→系统按 email 匹配这条 pending invitation→创建 membership(role 来自邀请)→标 invitation accepted。这一整套现在 PRD 里零定义。
 - **严重度**：High
 - **PRD 引用**：10.1, 12.3

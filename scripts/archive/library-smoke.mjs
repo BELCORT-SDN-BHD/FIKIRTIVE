@@ -7,7 +7,7 @@ import os from "node:os";
 import path from "node:path";
 
 const BASE = process.env.BASE_URL ?? "http://localhost:3000";
-const SHOTS = path.join(os.homedir(), ".gstack/projects/artlio/m0-smoke");
+const SHOTS = path.join(os.homedir(), ".gstack/projects/fikirtive/m0-smoke");
 mkdirSync(SHOTS, { recursive: true });
 
 const browser = await chromium.launch();

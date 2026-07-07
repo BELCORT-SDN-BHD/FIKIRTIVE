@@ -70,6 +70,7 @@ P0 与 P0.5/P1 可并行(不同文件面);P0.75 严格在 P0.5 之后;P1½ 以�
 | P0-3 | **ESLint 128 errors 清理并接 CI**:`pnpm lint` 当前 128 errors,且 CI 不跑 lint(ci.yml 只有 lint:parity) | 审计发现(2026-07-07);判决④(2026-07-07,见第六章)"最好的全都做" | 逐包清理,禁止顺手改逻辑(surgical) | `pnpm lint` 0 error;ci.yml 增加 lint job 且全绿 | M | 可开工 |
 | P0-4 | **批次 3 清理** —— 五个子项,**每一子项单独待 founder 逐项批**;明细见下方 1.1 小节 | `docs/review/DEAD-CODE-INVENTORY-2026-07-04.md` §1/§5 明文要求"founder 逐项显式批准";判决⑤(2026-07-07)只授权了批次 1/2(PR #179/#180),批次 3 未授权 | 见 1.1 | 见 1.1 | 见 1.1 | 已拍板全批(判决记录 2026-07-07 第二批 7-10~7-14);3a/3c/3d/3e **在途(施工中)**;3b 排队:等备份 PR 合并 |
 | P0-5 | **parity 扫描器盲区修补**:`scripts/check-parity.mjs:43` 只认 `export async function`,不认 `export const x = async` 形状(与 verify-auth-guards 已支持的两形状对齐);`apps/web/lib/data.ts` 的 8 个读面补登记 | 审计发现(2026-07-07);第九缝本义(宪法第 7 条机器围栏,`docs/design/2026-07-03-harmony-02-parity-manifest.md`) | 缝 9 | `pnpm lint:parity` 绿;自测:临时加一个 `export const x = async` 形状的未登记 action 必须红 | S | 可开工 |
+| P0-6 | **prod R2 bucket `artlio` → `fikirtive` 对象迁移**(2026-07-07 名字清剿的唯一代码外遗留;真数据,**founder 排期,agent 不得擅动 prod**)。步骤:① Cloudflare 建新 bucket `fikirtive` + 跑 `scripts/tools/r2-configure.mjs` 配 CORS/lifecycle;② 对象同步 old→new(rclone / wrangler;内容寻址 key 原样保留);③ flip Railway env `R2_BUCKET=fikirtive`(prod web+worker;staging 待办①的新 bucket 直接用 `fikirtive-staging`)并翻转代码内三处指针(`.env.example`、`scripts/tools/refgen-tracer.mjs`、`scripts/tools/upload-tracer.mjs`)与 `README.md`/`docs/runbooks/staging.md` 注记;④ 全链路验证(上传→生成→/files 服务 + 对象计数/抽样比对);⑤ 旧 bucket 观察 7 天无缺失后 retire。同批「改不了/无需改」清单:Railway postgres volume 名(dashboard 核实)、Neon 库名(`neondb`,不含旧名,核实即可)、本机 `.gbrain-source` id(`gstack-code-artlio-…`,重跑 `/sync-gbrain` 重建)、历史 PR/commit 文本(不可变,N/A) | 2026-07-07 founder 名字清剿指令(代码/文档/CI 可安全项已在同日 PR 清完) | 无(平台操作,不走缝) | 新 bucket 上传/生成/文件服务全绿;对象计数与抽样 hash 一致;旧 bucket 观察期内零 404 | S(操作)但真数据 | 待 founder 排期 |
 
 ### 1.1 批次 3 子项明细(对应第七章 7-10~7-14)
 
@@ -235,7 +236,7 @@ P0 与 P0.5/P1 可并行(不同文件面);P0.75 严格在 P0.5 之后;P1½ 以�
 
 ## 八、执行协议(给 runner 模型的作业规则 —— 引用而不复制,以被引文件为准)
 
-1. **取活**:只从本文件取"可开工"项;"待拍板"未批不碰;同一时间一个 PR 一件事。
+1. **取活**:只从本文件取"可开工"项;"待拍板"未批不碰;同一时间一个 PR 一件事。(解读边界:"一个 PR 一件事"约束的是**单个会话/单个 PR** 的范围,不禁止多条线并行 —— 并行边界见 §〇点五/〇点六,前提是互不踩同一文件面。)
 2. **图纸先行**:动工前出 spec(华语,`docs/superpowers/specs/`)→ **founder 过目**(蓝图第五章第 1 条)。
 3. **施工**:TDD(RED→GREEN)、小批提交、走对应的缝(`docs/review/EXPANSION-SEAMS.md` + 缝 9 = harmony-02)、不越图纸改邻居的楼(蓝图第五章第 2 条)。
 4. **验收三关**:CI 全绿 → 总审查员按 `docs/review/REVIEWER-PLAYBOOK.md` 区域清单终审 → UI 改动附浏览器 runtime QA + 设计审证据(playbook 协议 #4 扩)。
@@ -243,7 +244,7 @@ P0 与 P0.5/P1 可并行(不同文件面);P0.75 严格在 P0.5 之后;P1½ 以�
 6. **禁止事项**:蓝图第八条"明确不盖的楼"永不提案;蓝图第五章第 6 条(不直推 main、不自批自己的 PR、不绕缝、skill 不 import 花钱包);发现代码与蓝图冲突 → 停手、报告、等裁决(蓝图第七章)。
 7. **入册**:合并后大变更由总审查员更新地质报告层与本文件状态列(蓝图不动)。
 8. **状态列流转规则**:待拍板 →(founder 批)→ 可开工 →(PR 开出)→ 在途 →(合并)→ 从表中移入"已完成"归档节(由总审查员操作);**只有 founder 能把"待拍板"翻成"可开工"**;runner 发现表与现实不符(如 PR 已合并但状态未更新)→ 报总审查员,不自行改表。
-9. **市场定位不是工程推理依据**(见判决记录 2026-07-07 工作规矩①):agent 的建取舍只看 founder 判决 + 工程质量,不得以市场定位(SEA 等)作为推理依据。
+9. **市场定位不是工程推理依据**(见判决记录 2026-07-07 工作规矩①):agent 的建取舍只看 founder 判决 + 工程质量,不得以市场定位(SEA 等)作为推理依据。(解读边界:已拍板的本地化判决 —— WhatsApp-first、MYR-first、SEA 选角库等 —— 是 founder 决定,照做不误;本条禁止的是 agent **自行**拿市场定位当论据去发明或否决工作项。)
 10. **与 founder 的一切沟通与面向 founder 的文档使用人话**(规矩②):不用 harmony-xx / Wave-N / F-xx 类内部代号;给 founder 读的文档须带人话对照表(见本文件开头)。
 
 ---

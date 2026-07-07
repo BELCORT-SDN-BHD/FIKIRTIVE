@@ -27,7 +27,7 @@ URL:https://web-staging-7901.up.railway.app 。不另起新平台。
 **四条铁律(staging 的存在意义):**
 1. **绝不连 prod 数据库。** 现状✅ —— staging 用自己的 Railway Postgres(`postgres.railway.internal`),prod 的 Neon 不被引用。
 2. **staging 永不花真钱(宪法 2)。** 现状❌ —— 生成 provider 仍是 `byteplus`。待建🔨:`GENERATION_PROVIDER=mock`(代码已内建 $0 确定性 mock provider,且无法识别的值一律回落 mock —— fail-safe,`packages/generation/src/index.ts`);Stripe 换 `sk_test_…` + staging 自己的 webhook secret(环境复制自 prod,**大概率带着 live key,需第一时间核实**);Meta 侧 `META_GRAPH_MOCK=1`。
-3. **存储与 prod 隔离。** 现状❌(共用 bucket `artlio`,内容寻址所以低风险,但备份任务与清理策略会互相掺沙子)。待建🔨:独立 R2 bucket `artlio-staging`(同一 Cloudflare 账号,新建 API token 只授这个 bucket)。不用 local driver —— Railway 容器无持久盘,重部署即丢文件。
+3. **存储与 prod 隔离。** 现状❌(共用 bucket `fikirtive`,内容寻址所以低风险,但备份任务与清理策略会互相掺沙子)。待建🔨:独立 R2 bucket `fikirtive-staging`(同一 Cloudflare 账号,新建 API token 只授这个 bucket)。不用 local driver —— Railway 容器无持久盘,重部署即丢文件。
 4. **不对公网裸奔。** 现状✅(基本满足)—— Better Auth 登录墙在 production build 下 fail-closed(`apps/web/proxy.ts`),且注册后还需邮箱在 `AUTH_ALLOWED_EMAILS` 白名单内才可用。待建🔨(可选,优先级低):HTTP basic-auth 外层(挡爬虫与登录页探测);现有登录墙已挡住实质访问,此项不阻塞其它切片。
 
 **env 差异表(prod vs staging 目标值):**
@@ -39,7 +39,7 @@ URL:https://web-staging-7901.up.railway.app 。不另起新平台。
 | `BYTEPLUS_API_KEY` / `FAL_KEY` | 真 key | 删除/留空(mock 不读) | ❌ 复制自 prod |
 | `STRIPE_SECRET_KEY` | `sk_live_…` | `sk_test_…` | ⚠️ 未核实(疑为 live) |
 | `STRIPE_WEBHOOK_SECRET` | prod endpoint 的 | staging 自建 test-mode endpoint 的 | ⚠️ 未核实 |
-| `R2_BUCKET`(及 R2 凭证) | `artlio` | `artlio-staging` | ❌ 共用 |
+| `R2_BUCKET`(及 R2 凭证) | `fikirtive` | `fikirtive-staging` | ❌ 共用 |
 | `BETTER_AUTH_URL` 等三个 URL | prod 域名 | staging URL | ✅ 已覆盖 |
 | `AUTH_ALLOWED_EMAILS` | 真用户 | 只留 founder + 测试员 | ⚠️ 未核实 |
 | `META_APP_ID/SECRET` | 真 app | `META_GRAPH_MOCK=1`,凭证留空 | ⚠️ 未核实 |
@@ -136,7 +136,7 @@ migration 已先在 staging 库跑过一遍。
 
 | 切片 | 内容 | 性质 |
 |---|---|---|
-| **S1 · staging 断真钱 + 隔离补齐** | Railway staging env 改:`GENERATION_PROVIDER=mock`、清 BYTEPLUS/FAL key、Stripe 换 test key + test webhook、建 `artlio-staging` bucket 并换 R2 凭证、核实表格里全部 ⚠️ 项;结果回填 runbook(文档 PR 随行) | env 操作(founder 或授权 agent)+ docs PR |
+| **S1 · staging 断真钱 + 隔离补齐** | Railway staging env 改:`GENERATION_PROVIDER=mock`、清 BYTEPLUS/FAL key、Stripe 换 test key + test webhook、建 `fikirtive-staging` bucket 并换 R2 凭证、核实表格里全部 ⚠️ 项;结果回填 runbook(文档 PR 随行) | env 操作(founder 或授权 agent)+ docs PR |
 | **S2 · staging 自动部署 + 冒烟清单落地** | Railway staging web+worker 接 GitHub track `main` 开 auto-deploy;冒烟清单定稿进 `docs/runbooks/staging.md`;AGENTS.md 补发版纪律一节(顺带修正「无分支保护」过时表述) | Railway 操作 + docs PR |
 | **S3 · prod 改线 release 分支 + 首次正式发版** | §2.2 迁移步骤 1-4;首个 tag `vYYYY.MM.DD-1` + GitHub Release;做一次回滚演练(redeploy 上一部署)并记入 runbook | Railway 操作 + docs PR |
 

@@ -4,7 +4,7 @@
 
 **Goal:** Replace Otto's hand-rolled `cowork` planner pipeline with a multi-step agent built on the OpenAI Agents SDK, while keeping the money machine external and metering all paid-API spend (generation + every LLM call) through the credits ledger.
 
-**Architecture:** Otto is an OpenAI Agents SDK `Agent` in a shared `@artlio/otto` package imported by both `apps/web` (interactive turns) and `apps/worker` (auto-resume turns). `RunState` persists to Neon Postgres on `ChatThread`. Spend stays in the existing `startGen`/credits/pg-boss path; Otto only proposes ($0) and triggers `generate` behind a `needsApproval` human gate. Otto-LLM tokens are metered via reserve→settle on the credits ledger.
+**Architecture:** Otto is an OpenAI Agents SDK `Agent` in a shared `@fikirtive/otto` package imported by both `apps/web` (interactive turns) and `apps/worker` (auto-resume turns). `RunState` persists to Neon Postgres on `ChatThread`. Spend stays in the existing `startGen`/credits/pg-boss path; Otto only proposes ($0) and triggers `generate` behind a `needsApproval` human gate. Otto-LLM tokens are metered via reserve→settle on the credits ledger.
 
 **Tech Stack:** TypeScript, pnpm monorepo, Next.js 16 (`apps/web`), pg-boss worker (`apps/worker`), Prisma 7 + Neon, vitest, `@openai/agents` + `@openai/agents-extensions` + `@ai-sdk/anthropic` (NEW), Cloudflare R2, fal.
 
@@ -153,7 +153,7 @@ GO if: rehydrate succeeds across a fresh process AND the tool `execute` fires ex
 - [ ] **Step 1: Simulate the worker path — a standalone script imports the agent and runs a turn from a serialized RunState**
 
 ```ts
-// spike/otto-agents/worker-resume.ts  (stands in for apps/worker importing @artlio/otto)
+// spike/otto-agents/worker-resume.ts  (stands in for apps/worker importing @fikirtive/otto)
 import { run, RunState } from "@openai/agents";
 import { agent } from "./approval.js";
 const serialized = require("node:fs").readFileSync("/tmp/otto-runstate.json","utf8");
@@ -164,7 +164,7 @@ console.log("WORKER RAN OTTO TURN:", r.finalOutput);
 
 - [ ] **Step 2: Record GO/NO-GO**
 
-GO if a non-web Node process that imports the agent module can run a turn. NO-GO if the agent requires web-only globals. (This confirms §8: auto-resume runs in the worker via the shared `@artlio/otto` package.)
+GO if a non-web Node process that imports the agent module can run a turn. NO-GO if the agent requires web-only globals. (This confirms §8: auto-resume runs in the worker via the shared `@fikirtive/otto` package.)
 
 ### Task 0.4: Variable-settle ledger prototype (graduates to Phase 1)
 
@@ -189,7 +189,7 @@ it("variable settle releases the unspent remainder", async () => {
 });
 ```
 
-- [ ] **Step 3: Run it, confirm it fails** (`settleReservation` not defined). Run: `pnpm --filter @artlio/db test -- credits.spike`
+- [ ] **Step 3: Run it, confirm it fails** (`settleReservation` not defined). Run: `pnpm --filter @fikirtive/db test -- credits.spike`
 
 - [ ] **Step 4: Record GO/NO-GO**
 
@@ -206,7 +206,7 @@ GO if the variable-settle semantics are implementable with the existing schema (
 
 > All Phase 1 work is verified on the local QA stack with the mock provider (zero real spend). Money-machine tasks (1.3, 1.5, 1.7) run `money-safety-review` before their commit. The exact `@openai/agents` call shapes in 1.6/1.8/1.9 use the signatures confirmed in Phase 0.
 
-### Task 1.1: Scaffold the `@artlio/otto` package
+### Task 1.1: Scaffold the `@fikirtive/otto` package
 
 **Files:**
 - Create: `packages/otto/package.json`, `packages/otto/tsconfig.json`, `packages/otto/src/index.ts`, `packages/otto/src/instructions.md`, `packages/otto/src/otto.ts`
@@ -220,7 +220,7 @@ GO if the variable-settle semantics are implementable with the existing schema (
 ```json
 // packages/otto/package.json
 {
-  "name": "@artlio/otto",
+  "name": "@fikirtive/otto",
   "version": "0.0.0",
   "private": true,
   "type": "module",
@@ -228,7 +228,7 @@ GO if the variable-settle semantics are implementable with the existing schema (
   "scripts": { "test": "vitest run" },
   "dependencies": {
     "@openai/agents": "*", "@openai/agents-extensions": "*", "@ai-sdk/anthropic": "*",
-    "@artlio/core": "workspace:*", "@artlio/db": "workspace:*", "zod": "*"
+    "@fikirtive/core": "workspace:*", "@fikirtive/db": "workspace:*", "zod": "*"
   }
 }
 ```
@@ -240,7 +240,7 @@ GO if the variable-settle semantics are implementable with the existing schema (
 - [ ] **Step 4: Commit**
 
 ```bash
-git add packages/otto && git commit -m "feat(otto): scaffold @artlio/otto shared agent package"
+git add packages/otto && git commit -m "feat(otto): scaffold @fikirtive/otto shared agent package"
 ```
 
 ### Task 1.2: Config constants (caps + per-category margin lookup)
@@ -265,7 +265,7 @@ it("turn budget = maxSteps * floor", () => {
 });
 ```
 
-- [ ] **Step 2: Run → fail.** `pnpm --filter @artlio/core test -- otto-budget`
+- [ ] **Step 2: Run → fail.** `pnpm --filter @fikirtive/core test -- otto-budget`
 - [ ] **Step 3: Implement** using `CREDITS_PER_USD`/`INTERNAL_PER_DISPLAY` from `spend.ts` (import, don't hardcode 0.01). Prices come from the model registry; margin from runtime config (per category).
 - [ ] **Step 4: Run → pass. Step 5: Commit** `feat(otto): per-turn credit budget math (internal units)`.
 
@@ -423,7 +423,7 @@ it("turn budget = maxSteps * floor", () => {
 **0.2 (RunState pause / rehydrate / single-use) — GO, confirms the design:**
 - `needsApproval: true` parks the turn as a `RunToolApprovalItem`; **the tool does NOT execute before approval** (verified: `exec.log` empty at park). This is the structural propose-only guarantee.
 - `RunState`: serialize via `state.toString()` (~12KB, contains `$schemaVersion`), rehydrate via `await RunState.fromString(agent, str)`; approve via `state.getInterruptions()` → `state.approve(it)` → `run(agent, state)`.
-- **Cross-process rehydrate + approve + run works** (fresh process resumed and executed once) → worker auto-resume (§8) is viable; the worker imports `@artlio/otto` and runs `run(agent, RunState.fromString(...))`.
+- **Cross-process rehydrate + approve + run works** (fresh process resumed and executed once) → worker auto-resume (§8) is viable; the worker imports `@fikirtive/otto` and runs `run(agent, RunState.fromString(...))`.
 - ⚠️ **The SDK is NOT exactly-once:** replaying the SAME saved pre-approval state in two fresh processes executed the tool TWICE. → Exactly-once MUST come from our DB layer, never the SDK approval. Confirms guardrail #3 / Option 1: GEN spend stays a server action behind the all-status `cowork:<cardId>` index; Otto-LLM reserve keyed on a stable per-turn `refId` (DB unique). The plan already assumes this — no change, but it is now empirically load-bearing, not theoretical.
 
 **0.3 (worker resume) — GO:** a plain Node process (no web globals) imported the agent and ran a turn from a serialized `RunState`. The worker can host the §8 auto-resume.

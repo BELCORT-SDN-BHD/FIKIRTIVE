@@ -2,9 +2,9 @@
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
-**Goal:** Add real between-clip transitions (cross / slide / wipe / flip / clockwipe / iris + the legacy fade) to Artlio's video editor — a track-level contract field, a chained-`xfade` render path in the worker, and an LTX-style Transitions tab — entirely on the existing $0 self-hosted ffmpeg path, with no spend path and no prisma migration.
+**Goal:** Add real between-clip transitions (cross / slide / wipe / flip / clockwipe / iris + the legacy fade) to Fikirtive's video editor — a track-level contract field, a chained-`xfade` render path in the worker, and an LTX-style Transitions tab — entirely on the existing $0 self-hosted ffmpeg path, with no spend path and no prisma migration.
 
-**Architecture:** The `ArtlioEdit` zod contract (`packages/core/src/timeline.ts`) gains a TRACK-LEVEL `transitions?` array (NOT a clip field — Shotstack strips unknown clip fields), a `renderDuration()` helper, and gapless-adjacency enforcement on the visual track. The worker (`apps/worker/src/jobs/render.ts`) rewrites its `concat` filtergraph into a chained `xfade` (hard cuts still concat) with audio re-mapped to the shorter rendered timeline. The UI (`apps/web/components/Editor.tsx`) adds a Transitions tab whose state lives OUTSIDE the Shotstack `Edit` and is merged into the persisted `ArtlioEdit` on save.
+**Architecture:** The `FikirtiveEdit` zod contract (`packages/core/src/timeline.ts`) gains a TRACK-LEVEL `transitions?` array (NOT a clip field — Shotstack strips unknown clip fields), a `renderDuration()` helper, and gapless-adjacency enforcement on the visual track. The worker (`apps/worker/src/jobs/render.ts`) rewrites its `concat` filtergraph into a chained `xfade` (hard cuts still concat) with audio re-mapped to the shorter rendered timeline. The UI (`apps/web/components/Editor.tsx`) adds a Transitions tab whose state lives OUTSIDE the Shotstack `Edit` and is merged into the persisted `FikirtiveEdit` on save.
 
 **Tech Stack:** pnpm monorepo (`packages/core` zod + vitest, `apps/worker` ffmpeg via execa, `apps/web` Next.js 16 + Shotstack Studio SDK 2.11.5). ffmpeg `xfade`/`acrossfade`/`anullsrc`/`aresample` (all confirmed present in the local + worker ffmpeg build). `Project.editJson` is a Prisma `Json` column — the contract change is backward-compat additive, **NO migration**.
 
@@ -16,14 +16,14 @@
 
 These anchors were read before writing — every task below references them by exact line.
 
-- **`packages/core/src/timeline.ts`** — the full `ArtlioEdit` zod:
+- **`packages/core/src/timeline.ts`** — the full `FikirtiveEdit` zod:
   - Bounds: `MAX_CLIPS_PER_TRACK=100` (L30), `MAX_TIMELINE_SECONDS=60*30` (L32), `TRANSITION_MAX_SECONDS=2` (L34), `TRANSITION_DEFAULT_SECONDS=0.5` (L35).
   - `transition` zod (the legacy per-clip in/out fade-to-black) L83–88: `{ in?: "fade", out?: "fade", duration: number .gt(0).max(2).default(0.5) }`.
   - `clip` zod L90–113, with a `.superRefine` (L101) that rejects transitions on audio clips and clips shorter than `2× fade duration`.
   - `track` zod L115–117 = `{ clips: array(clip).min(1).max(100) }`.
   - `clipsOverlap()` L119–127 (sort-by-start, EPS=1e-6 overlap check), `isVisualTrack()` L129–130.
   - `timeline` zod L132–172 with the cross-track `.superRefine` (L140): at most 1 visual track (L143), ≤2 audio tracks (L149), per-track overlap (L157), mixed-track rejection (L160), 30-min cap (L166).
-  - `output` zod L174–180; `artlioEdit` L184–187; `editDuration(edit)` L226–232 = `max(start+length)` across all tracks.
+  - `output` zod L174–180; `fikirtiveEdit` L184–187; `editDuration(edit)` L226–232 = `max(start+length)` across all tracks.
 - **`apps/worker/src/jobs/render.ts`** — `handleRender` L80:
   - `SIZES` table L34–38; `inputArgs()` L47–52 (`-loop 1` for images, `-ss` trim before `-i`, `-t length`).
   - `videoChain()` L55–66: `scale`/`pad`|`crop` + `setsar=1` + `fps=${fps}` (+ legacy per-clip `fade=t=in/out` L63–64). Output label `[v${index}]`.
@@ -33,7 +33,7 @@ These anchors were read before writing — every task below references them by e
   - Final argv L154–159: `-filter_complex`, `-map [v]`, optional `-map [a] -c:a aac -b:a 192k`, `-c:v libx264 -pix_fmt yuv420p -movflags +faststart -progress pipe:1 -nostats`.
   - execa timeout L166 = `1000*60*10` (10 min). Visual clips are sorted by `start` (L119) before planning.
 - **`apps/web/components/Editor.tsx`** — `new Edit(startEdit)` L131, `edit.getEdit()` snapshot+parse L164/L206, `appendAsset` L217–228 (`addClip(0, …)`), the right Inspector (legacy per-clip Transition checkboxes) L515–548, `applyTransition` L241–250.
-- **`apps/web/lib/actions.ts`** — `saveProjectEdit` L576–591 (canonicalizing `artlioEdit.parse`, persists `editJson`), `startRender` L660–703, `getEditorMedia` L750–770 (NOT touched by EP1).
+- **`apps/web/lib/actions.ts`** — `saveProjectEdit` L576–591 (canonicalizing `fikirtiveEdit.parse`, persists `editJson`), `startRender` L660–703, `getEditorMedia` L750–770 (NOT touched by EP1).
 - **Shotstack SDK 2.11.5** (`node_modules/.pnpm/@shotstack+shotstack-studio@2.11.5/.../dist/index.d.ts`): `Edit.getEdit()` L184, `addClip(trackIdx, clip: Clip)` L211, `updateClip(...)` L261, `undo()/redo()` L255–256. Shotstack's `Transition` is a per-clip in/out concept only (`@shotstack/schemas` `schema.d.ts` L1396: "In and out transitions for a clip"). **There is no track-level between-clip transition in Shotstack's schema** — confirming EP1's track-level array must live outside the Shotstack `Edit`.
 - **`docs/backlog.md` §E** L27: "导出忽略时间线空隙 → 黑帧填补" (export ignores timeline gaps). EP1's gapless enforcement closes this item; this plan marks it done in §E.
 - **Local toolchain:** `ffmpeg`/`ffprobe` on PATH (`/opt/homebrew/bin`); `xfade`, `acrossfade`, `anullsrc`, `aresample` all present; `xfade transition=` enum includes `fade, wipeleft/right/up/down, slideleft/right/up/down, radial, circleopen, circleclose, dissolve, vertopen/vertclose, horzopen/horzclose, pixelize`.
@@ -52,7 +52,7 @@ These anchors were read before writing — every task below references them by e
 | `packages/core/src/timeline.ts` | Modify | Add `TransitionType`/`TransitionDirection` enums + `betweenClipTransition` zod; add `transitions?` array to `track`; gapless-adjacency enforcement on the visual track; `renderDuration(edit)` helper. Legacy per-clip `transition` (L83) stays untouched. |
 | `packages/core/src/timeline.test.ts` | Modify | New describe block for the between-clip transition: accept/reject (gap, overlap, dangling index, non-adjacent, duration too long), `renderDuration` math incl. the ms→s `/1000` unit, gapless enforce, legacy fade edit parses unchanged. |
 | `apps/worker/src/jobs/render.ts` | Modify | Rewrite the video filtergraph from `concat` to chained `xfade` (hard cuts still concat); per-clip normalization adds `format=yuv420p,settb=AVTB,setpts=PTS-STARTPTS`; audio re-mapped to rendered time with `acrossfade` + `anullsrc` silence-fill + `aresample`; use `renderDuration()` for `-progress` total + stored `durationS`. New helper `buildVideoGraph()` + `transitionToXfade()`. |
-| `apps/web/components/Editor.tsx` | Modify | Add a Transitions tab (7 tiles + Clear all) beside the Assets panel; boundary selection; transition state in React (outside Shotstack); merge into `ArtlioEdit` in `snapshot()`; an overlay marker between clips; a "Close gaps" affordance for legacy gappy cuts. |
+| `apps/web/components/Editor.tsx` | Modify | Add a Transitions tab (7 tiles + Clear all) beside the Assets panel; boundary selection; transition state in React (outside Shotstack); merge into `FikirtiveEdit` in `snapshot()`; an overlay marker between clips; a "Close gaps" affordance for legacy gappy cuts. |
 | `scripts/local-ep1-transitions-verify.mjs` | Create | $0 local ffmpeg render of small fixtures (one per transition type) asserting a valid mp4 whose ffprobe duration == `renderDuration` (Σ clip − Σ transition) within tolerance; greps the diff for any new fal/spend path. |
 
 No new package, no prisma migration, no new env var.
@@ -100,7 +100,7 @@ describe("betweenClipTransition zod", () => {
 
 - [ ] **Step 2: Run the test to verify it fails**
 
-Run: `pnpm --filter @artlio/core test -- timeline`
+Run: `pnpm --filter @fikirtive/core test -- timeline`
 Expected: FAIL — `betweenClipTransition` is not exported (import error / undefined).
 
 - [ ] **Step 3: Write the minimal implementation** — in `packages/core/src/timeline.ts`, insert after the legacy `transition` zod (after L88):
@@ -135,12 +135,12 @@ export type BetweenClipTransition = z.infer<typeof betweenClipTransition>;
 
 - [ ] **Step 4: Run the test to verify it passes**
 
-Run: `pnpm --filter @artlio/core test -- timeline`
+Run: `pnpm --filter @fikirtive/core test -- timeline`
 Expected: PASS (all `betweenClipTransition zod` cases green; pre-existing tests unchanged).
 
 - [ ] **Step 5: Typecheck**
 
-Run: `pnpm --filter @artlio/core typecheck`
+Run: `pnpm --filter @fikirtive/core typecheck`
 Expected: no errors.
 
 - [ ] **Step 6: Commit** (leave for user approval — do NOT push)
@@ -170,12 +170,12 @@ describe("track.transitions (between-clip)", () => {
   };
 
   it("accepts a transition between two gapless-adjacent visual clips", () => {
-    const parsed = artlioEdit.parse(withTransitions([{ fromClipIndex: 0, toClipIndex: 1, type: "cross", durationMs: 500 }]));
+    const parsed = fikirtiveEdit.parse(withTransitions([{ fromClipIndex: 0, toClipIndex: 1, type: "cross", durationMs: 500 }]));
     expect(parsed.timeline.tracks[0]!.transitions?.[0]?.type).toBe("cross");
   });
 
   it("rejects a dangling clip index", () => {
-    expect(() => artlioEdit.parse(withTransitions([{ fromClipIndex: 0, toClipIndex: 5, type: "cross", durationMs: 500 }]))).toThrow(/index/i);
+    expect(() => fikirtiveEdit.parse(withTransitions([{ fromClipIndex: 0, toClipIndex: 5, type: "cross", durationMs: 500 }]))).toThrow(/index/i);
   });
 
   it("rejects a non-consecutive pair (from+1 != to)", () => {
@@ -183,32 +183,32 @@ describe("track.transitions (between-clip)", () => {
     const e = cloneEdit();
     e.timeline.tracks[0].clips.push({ asset: { type: "video", src: SRC }, start: 7, length: 3 });
     e.timeline.tracks[0].transitions = [{ fromClipIndex: 0, toClipIndex: 2, type: "cross", durationMs: 500 }];
-    expect(() => artlioEdit.parse(e)).toThrow(/adjacent|consecutive/i);
+    expect(() => fikirtiveEdit.parse(e)).toThrow(/adjacent|consecutive/i);
   });
 
   it("rejects a transition that references the audio track", () => {
     const e = cloneEdit();
     e.timeline.tracks[1].transitions = [{ fromClipIndex: 0, toClipIndex: 1, type: "cross", durationMs: 500 }];
-    expect(() => artlioEdit.parse(e)).toThrow(/visual/i);
+    expect(() => fikirtiveEdit.parse(e)).toThrow(/visual/i);
   });
 
   it("rejects a duration longer than half the shorter adjacent clip", () => {
     // shorter adjacent clip is clip 1 (3s) → half = 1500ms; 1600ms must fail
-    expect(() => artlioEdit.parse(withTransitions([{ fromClipIndex: 0, toClipIndex: 1, type: "cross", durationMs: 1600 }]))).toThrow(/too long|half|clip/i);
+    expect(() => fikirtiveEdit.parse(withTransitions([{ fromClipIndex: 0, toClipIndex: 1, type: "cross", durationMs: 1600 }]))).toThrow(/too long|half|clip/i);
   });
 
   it("rejects a gap on the visual track (gapless enforcement)", () => {
     const e = cloneEdit();
     e.timeline.tracks[0].clips[1].start = 5; // [0..4] then [5..8] → 1s gap
-    expect(() => artlioEdit.parse(e)).toThrow(/gap|tile|contiguous/i);
+    expect(() => fikirtiveEdit.parse(e)).toThrow(/gap|tile|contiguous/i);
   });
 
   it("still accepts a gapless visual track with NO transitions (backward-compat)", () => {
-    expect(() => artlioEdit.parse(validEdit)).not.toThrow();
+    expect(() => fikirtiveEdit.parse(validEdit)).not.toThrow();
   });
 
   it("parses a legacy per-clip fade-to-black edit unchanged", () => {
-    const parsed = artlioEdit.parse(validEdit); // clip[1] has transition:{in:"fade"}
+    const parsed = fikirtiveEdit.parse(validEdit); // clip[1] has transition:{in:"fade"}
     expect(parsed.timeline.tracks[0]!.clips[1]!.transition?.in).toBe("fade");
     expect(parsed.timeline.tracks[0]!.transitions).toBeUndefined();
   });
@@ -217,7 +217,7 @@ describe("track.transitions (between-clip)", () => {
 
 - [ ] **Step 2: Run the test to verify it fails**
 
-Run: `pnpm --filter @artlio/core test -- timeline`
+Run: `pnpm --filter @fikirtive/core test -- timeline`
 Expected: FAIL — `transitions` is stripped (unknown field) so the accept case reports `undefined`, and none of the new guards exist.
 
 - [ ] **Step 3: Add `transitions` to the `track` zod** — replace L115–117:
@@ -295,12 +295,12 @@ Then extend the per-track loop inside `timeline.superRefine` (currently L156–1
 
 - [ ] **Step 5: Run the test to verify it passes**
 
-Run: `pnpm --filter @artlio/core test -- timeline`
+Run: `pnpm --filter @fikirtive/core test -- timeline`
 Expected: PASS (all `track.transitions (between-clip)` cases green; the legacy `transition rules:` test at L125 and every pre-existing test still pass — `validEdit` is already gapless so the gapless reject doesn't fire on it).
 
 - [ ] **Step 6: Typecheck + full core suite**
 
-Run: `pnpm --filter @artlio/core typecheck && pnpm --filter @artlio/core test`
+Run: `pnpm --filter @fikirtive/core typecheck && pnpm --filter @fikirtive/core test`
 Expected: green.
 
 - [ ] **Step 7: Commit** (leave for user approval)
@@ -325,14 +325,14 @@ import { renderDuration } from "./timeline.js";
 
 describe("renderDuration", () => {
   it("equals editDuration when there are no transitions", () => {
-    const parsed = artlioEdit.parse(validEdit); // editDuration = 7
+    const parsed = fikirtiveEdit.parse(validEdit); // editDuration = 7
     expect(renderDuration(parsed)).toBe(7);
   });
 
   it("subtracts the sum of transition durations, converting ms→seconds (Codex NIT)", () => {
     const e = cloneEdit();
     e.timeline.tracks[0].transitions = [{ fromClipIndex: 0, toClipIndex: 1, type: "cross", durationMs: 500 }];
-    const parsed = artlioEdit.parse(e);
+    const parsed = fikirtiveEdit.parse(e);
     // 7s timeline − 0.5s overlap = 6.5s rendered
     expect(renderDuration(parsed)).toBeCloseTo(6.5, 6);
   });
@@ -349,7 +349,7 @@ describe("renderDuration", () => {
       { fromClipIndex: 0, toClipIndex: 1, type: "cross", durationMs: 500 },
       { fromClipIndex: 1, toClipIndex: 2, type: "wipe", durationMs: 1000 },
     ];
-    const parsed = artlioEdit.parse(e);
+    const parsed = fikirtiveEdit.parse(e);
     // 12s − (0.5 + 1.0) = 10.5s
     expect(renderDuration(parsed)).toBeCloseTo(10.5, 6);
   });
@@ -358,7 +358,7 @@ describe("renderDuration", () => {
 
 - [ ] **Step 2: Run the test to verify it fails**
 
-Run: `pnpm --filter @artlio/core test -- timeline`
+Run: `pnpm --filter @fikirtive/core test -- timeline`
 Expected: FAIL — `renderDuration` not exported.
 
 - [ ] **Step 3: Implement** — append to `packages/core/src/timeline.ts` after `editDuration` (after L232):
@@ -369,7 +369,7 @@ Expected: FAIL — `renderDuration` not exported.
  *  Used by the worker for the audio mix length, the -progress total, and the
  *  stored asset durationS. durationMs is divided by 1000 (contract is ms; the
  *  worker renders in seconds — Codex NIT). */
-export function renderDuration(edit: ArtlioEdit): number {
+export function renderDuration(edit: FikirtiveEdit): number {
   let overlapMs = 0;
   for (const t of edit.timeline.tracks)
     for (const tr of t.transitions ?? []) overlapMs += tr.durationMs;
@@ -379,12 +379,12 @@ export function renderDuration(edit: ArtlioEdit): number {
 
 - [ ] **Step 4: Run the test to verify it passes**
 
-Run: `pnpm --filter @artlio/core test -- timeline`
+Run: `pnpm --filter @fikirtive/core test -- timeline`
 Expected: PASS.
 
 - [ ] **Step 5: Typecheck + commit** (leave for user approval)
 
-Run: `pnpm --filter @artlio/core typecheck`
+Run: `pnpm --filter @fikirtive/core typecheck`
 
 ```bash
 git add packages/core/src/timeline.ts packages/core/src/timeline.test.ts
@@ -403,9 +403,9 @@ git commit -m "feat(editor): EP1 contract — renderDuration() helper (ms→s)"
 - [ ] **Step 1: Add the mapping helper** — in `apps/worker/src/jobs/render.ts`, after `videoChain` (after L66), add:
 
 ```ts
-import type { BetweenClipTransition, TransitionDirection } from "@artlio/core";
+import type { BetweenClipTransition, TransitionDirection } from "@fikirtive/core";
 
-/** Map an Artlio between-clip transition to an ffmpeg xfade `transition=` value.
+/** Map a Fikirtive between-clip transition to an ffmpeg xfade `transition=` value.
  *  All values verified present in the worker's ffmpeg build. Directional types
  *  default to "left" when no direction is given. Flip has no native xfade — we
  *  approximate it with `vertopen` (a vertical card-flip-ish reveal); swapping
@@ -433,7 +433,7 @@ function transitionToXfade(tr: BetweenClipTransition): string {
 
 - [ ] **Step 2: Typecheck the worker**
 
-Run: `pnpm --filter @artlio/worker typecheck`
+Run: `pnpm --filter @fikirtive/worker typecheck`
 Expected: no errors (the helper is unused until Task 5 — TypeScript with `noUnusedLocals` may warn; if so, Task 5 lands in the same commit, so commit Tasks 4+5 together as noted below).
 
 > Because `transitionToXfade` is consumed by Task 5, do not commit Task 4 alone — fold its commit into Task 5 Step 7.
@@ -598,28 +598,28 @@ function buildVideoGraph(
   - The stored asset `durationS` (L210): change `durationS: totalSeconds` to `durationS: renderSeconds`.
   - The empty-edit guard at L125 (`if (!(totalSeconds > 0))`): keep it on `totalSeconds` (`editDuration`) — layout length, not output length; a transition can't make a non-empty edit render to ≤0 because `durationMs ≤ half the shorter clip` guarantees positive output. Leave L103 `const totalSeconds = editDuration(edit);` in place (still used by the guard).
 
-- [ ] **Step 5: Update the imports** — at the top of `render.ts` (L22–31), add `renderDuration` to the `@artlio/core` import and the types from Task 4:
+- [ ] **Step 5: Update the imports** — at the top of `render.ts` (L22–31), add `renderDuration` to the `@fikirtive/core` import and the types from Task 4:
 
 ```ts
 import {
-  artlioEdit,
+  fikirtiveEdit,
   editDuration,
   renderDuration,
   newId,
   srcToStorageKey,
   RENDER_RETRY_LIMIT,
-  type ArtlioEdit,
-  type ArtlioClip,
+  type FikirtiveEdit,
+  type FikirtiveClip,
   type BetweenClipTransition,
   type TransitionDirection,
   type RenderJobData,
-} from "@artlio/core";
+} from "@fikirtive/core";
 ```
 
 - [ ] **Step 6: Typecheck the worker + core (exports reachable)**
 
-Run: `pnpm --filter @artlio/core build && pnpm --filter @artlio/worker typecheck`
-Expected: no errors. (`@artlio/core build` first so the worker sees the new exports from its compiled dist.)
+Run: `pnpm --filter @fikirtive/core build && pnpm --filter @fikirtive/worker typecheck`
+Expected: no errors. (`@fikirtive/core build` first so the worker sees the new exports from its compiled dist.)
 
 - [ ] **Step 7: Commit Tasks 4+5 together** (leave for user approval)
 
@@ -645,7 +645,7 @@ Once video transitions overlap clips, the rendered timeline is SHORTER than the 
  *  Audio-track clips (not on the visual track) shift by the full overlap that
  *  precedes their edit-time start. */
 function renderedStartSeconds(
-  clip: ArtlioClip,
+  clip: FikirtiveClip,
   visualPlanned: PlannedInput[],
   transitions: BetweenClipTransition[],
 ): number {
@@ -692,7 +692,7 @@ function audioChain(
 
 - [ ] **Step 2: Typecheck**
 
-Run: `pnpm --filter @artlio/core build && pnpm --filter @artlio/worker typecheck`
+Run: `pnpm --filter @fikirtive/core build && pnpm --filter @fikirtive/worker typecheck`
 Expected: no errors. (The `audioChain` call site was already updated in Task 5 Step 3 to `audioChain(p, visualPlanned, transitions)`.)
 
 - [ ] **Step 3: Commit** (leave for user approval)
@@ -709,7 +709,7 @@ git commit -m "feat(editor): EP1 worker — audio re-mapped to rendered timeline
 **Files:**
 - Modify: `apps/worker/src/jobs/render.ts` — in `handleRender`, right after `const transitions = visualTrack.transitions ?? [];` (Task 5 Step 3).
 
-The contract already enforces gapless + duration ≤ half-shorter-clip + adjacency at `artlioEdit.parse` (L102). These worker guards are belt-and-braces against schema drift and the one thing the contract can't see: rendered dimensions are uniform (they are — every clip is scaled to the same `w×h` by `videoChain`, so xfade's "both inputs same size" requirement is met by construction). Add a defensive check that each transition's offset stays strictly inside both clips.
+The contract already enforces gapless + duration ≤ half-shorter-clip + adjacency at `fikirtiveEdit.parse` (L102). These worker guards are belt-and-braces against schema drift and the one thing the contract can't see: rendered dimensions are uniform (they are — every clip is scaled to the same `w×h` by `videoChain`, so xfade's "both inputs same size" requirement is met by construction). Add a defensive check that each transition's offset stays strictly inside both clips.
 
 - [ ] **Step 1: Add the guard** — after `const transitions = visualTrack.transitions ?? [];`:
 
@@ -735,7 +735,7 @@ The contract already enforces gapless + duration ≤ half-shorter-clip + adjacen
 
 - [ ] **Step 2: Typecheck**
 
-Run: `pnpm --filter @artlio/worker typecheck`
+Run: `pnpm --filter @fikirtive/worker typecheck`
 Expected: no errors.
 
 - [ ] **Step 3: Commit** (leave for user approval)
@@ -752,7 +752,7 @@ git commit -m "feat(editor): EP1 worker — defensive transition guards before f
 **Files:**
 - Modify: `apps/web/components/Editor.tsx` — add a Transitions tab beside Assets (L429–447 is the Assets aside), transition React state, the `snapshot()` merge (L203–214), an overlay marker on the timeline (L455–475 is the timeline container), and a "Close gaps" affordance.
 
-The transition library does NOT touch the Shotstack `Edit`. It edits an Artlio-owned `transitions` array in React state, keyed to the current visual track's clip order. On `snapshot()`/save the array is merged into the `ArtlioEdit` BEFORE `artlioEdit.safeParse`. The Shotstack `getEdit()` never carries it (Shotstack would strip it).
+The transition library does NOT touch the Shotstack `Edit`. It edits a Fikirtive-owned `transitions` array in React state, keyed to the current visual track's clip order. On `snapshot()`/save the array is merged into the `FikirtiveEdit` BEFORE `fikirtiveEdit.safeParse`. The Shotstack `getEdit()` never carries it (Shotstack would strip it).
 
 - [ ] **Step 1: Add transition state + the selected boundary** — after the `selected` state (L78) add:
 
@@ -793,12 +793,12 @@ The transition library does NOT touch the Shotstack `Edit`. It edits an Artlio-o
 - [ ] **Step 3: Merge transitions into the snapshot** — modify `snapshot()` (L203–214) to inject the array before parsing:
 
 ```tsx
-  /** read back the Studio snapshot, MERGE the Artlio-owned transitions, and
+  /** read back the Studio snapshot, MERGE the Fikirtive-owned transitions, and
    *  canonicalize through the contract (Shotstack never carries transitions). */
-  function snapshot(): { edit?: ArtlioEdit; error?: string } {
+  function snapshot(): { edit?: FikirtiveEdit; error?: string } {
     const h = handles.current;
     if (!h) return { error: "Editor not ready yet." };
-    const raw = h.edit.getEdit() as ArtlioEdit;
+    const raw = h.edit.getEdit() as FikirtiveEdit;
     // merge our transitions onto the visual track (track 0) before parsing
     const merged = {
       ...raw,
@@ -809,7 +809,7 @@ The transition library does NOT touch the Shotstack `Edit`. It edits an Artlio-o
         ),
       },
     };
-    const result = artlioEdit.safeParse(merged);
+    const result = fikirtiveEdit.safeParse(merged);
     if (!result.success) {
       const first = result.error.issues[0];
       return {
@@ -883,7 +883,7 @@ The transition library does NOT touch the Shotstack `Edit`. It edits an Artlio-o
   async function closeGaps() {
     const h = handles.current;
     if (!h || status !== "ready") return;
-    const cur = h.edit.getEdit() as ArtlioEdit;
+    const cur = h.edit.getEdit() as FikirtiveEdit;
     const t0 = cur.timeline.tracks[0]?.clips ?? [];
     const ordered = [...t0].sort((a, b) => a.start - b.start);
     let cursor = 0;
@@ -931,7 +931,7 @@ git commit -m "feat(editor): EP1 UI — Transitions tab, boundary apply, overlay
 **Files:**
 - Create: `scripts/local-ep1-transitions-verify.mjs`
 
-This is the render-correctness gate. It builds tiny fixtures with `ffmpeg` (color sources), constructs an `ArtlioEdit` per transition type, invokes the SAME filtergraph logic the worker uses (imported from the built `@artlio/core` for `renderDuration`, and a local copy of `transitionToXfade`/the chain — or, preferred, by running the worker's `handleRender` against a mock storage). To stay surgical and avoid wiring the worker's storage/prisma, the script reproduces the chain inline and asserts the OUTPUT duration matches `renderDuration`. It runs `GENERATION_PROVIDER=mock` and greps the diff for any new spend path.
+This is the render-correctness gate. It builds tiny fixtures with `ffmpeg` (color sources), constructs an `FikirtiveEdit` per transition type, invokes the SAME filtergraph logic the worker uses (imported from the built `@fikirtive/core` for `renderDuration`, and a local copy of `transitionToXfade`/the chain — or, preferred, by running the worker's `handleRender` against a mock storage). To stay surgical and avoid wiring the worker's storage/prisma, the script reproduces the chain inline and asserts the OUTPUT duration matches `renderDuration`. It runs `GENERATION_PROVIDER=mock` and greps the diff for any new spend path.
 
 - [ ] **Step 1: Kill stale fal workers first (money-safety habit)**
 
@@ -1054,7 +1054,7 @@ Expected: `NO spend-path token added by EP1`.
 
 - [ ] **Step 5: Full local gate**
 
-Run: `pnpm --filter @artlio/core test && pnpm --filter @artlio/core typecheck && pnpm --filter @artlio/worker typecheck && pnpm --filter web typecheck && pnpm --filter web build`
+Run: `pnpm --filter @fikirtive/core test && pnpm --filter @fikirtive/core typecheck && pnpm --filter @fikirtive/worker typecheck && pnpm --filter web typecheck && pnpm --filter web build`
 Expected: all green.
 
 - [ ] **Step 6: Commit** (leave for user approval)
@@ -1121,7 +1121,7 @@ git commit -m "docs: EP1 closes backlog §E timeline-gap bug via gapless enforce
 
 **2. Placeholder scan:** No "TBD/TODO/handle edge cases/similar to Task N". Every code step has full code; every run step has an exact command + expected output. One illustrative-only helper (`buildVideoGraph` in Task 5 Step 2) is explicitly marked "do not ship — Step 3 is authoritative" to avoid a divergent second copy; the shipped chain is Task 5 Step 3.
 
-**3. Type consistency:** `betweenClipTransition`/`BetweenClipTransition`, `TransitionType`/`TRANSITION_TYPES`, `TransitionDirection`/`TRANSITION_DIRECTIONS`, `renderDuration`, `transitionToXfade`, `renderedStartSeconds`, `audioChain(p, visualPlanned, transitions)`, `videoChain(p, w, h, fps)` — names match across Tasks 1–9. `durationMs` (contract, ms) vs `durS = durationMs/1000` (ffmpeg, s) is consistent everywhere. The UI `UiTransition` shape mirrors the contract fields exactly and is parsed by `artlioEdit` on save. The worker imports `renderDuration` + types in Task 5 Step 5 (one import block, no duplicates).
+**3. Type consistency:** `betweenClipTransition`/`BetweenClipTransition`, `TransitionType`/`TRANSITION_TYPES`, `TransitionDirection`/`TRANSITION_DIRECTIONS`, `renderDuration`, `transitionToXfade`, `renderedStartSeconds`, `audioChain(p, visualPlanned, transitions)`, `videoChain(p, w, h, fps)` — names match across Tasks 1–9. `durationMs` (contract, ms) vs `durS = durationMs/1000` (ffmpeg, s) is consistent everywhere. The UI `UiTransition` shape mirrors the contract fields exactly and is parsed by `fikirtiveEdit` on save. The worker imports `renderDuration` + types in Task 5 Step 5 (one import block, no duplicates).
 
 **4. The two Codex NITs (explicitly handled):**
 - (a) **renderDuration unit = ms→s `/1000`:** Task 1 comment states the contract is ms and the worker divides by 1000; Task 3 `renderDuration` does `overlapMs/1000`; Task 3 has a dedicated test "converting ms→seconds (Codex NIT)"; Task 5/6 use `durationMs/1000` for every ffmpeg arg. ✓
@@ -1131,7 +1131,7 @@ git commit -m "docs: EP1 closes backlog §E timeline-gap bug via gapless enforce
 
 ## Notes for the executor (real-code deltas vs the brief's assumptions)
 
-- **Shotstack `Edit` vs `ArtlioEdit` are NOT the same object — they're structurally compatible by design.** `ArtlioEdit` is a documented SUBSET of Shotstack's Edit JSON (timeline.ts header L6–9). `new Edit(startEdit)` is fed an `ArtlioEdit`; `getEdit()` returns a Shotstack-shaped object that `artlioEdit.parse` strips back down. A track-level `transitions` array is NOT in Shotstack's schema (its `Transition` is per-clip in/out only — verified), so `getEdit()` will never carry it: the merge-on-save in Task 8 Step 3 is mandatory, exactly as the spec's BLOCKER fix says.
+- **Shotstack `Edit` vs `FikirtiveEdit` are NOT the same object — they're structurally compatible by design.** `FikirtiveEdit` is a documented SUBSET of Shotstack's Edit JSON (timeline.ts header L6–9). `new Edit(startEdit)` is fed an `FikirtiveEdit`; `getEdit()` returns a Shotstack-shaped object that `fikirtiveEdit.parse` strips back down. A track-level `transitions` array is NOT in Shotstack's schema (its `Transition` is per-clip in/out only — verified), so `getEdit()` will never carry it: the merge-on-save in Task 8 Step 3 is mandatory, exactly as the spec's BLOCKER fix says.
 - **`editDuration` callers:** verified via codegraph — `handleRender` (the output-duration uses → switch to `renderDuration`), `saveProjectEdit` (logging only → stays `editDuration`), and the test. No other caller needs touching.
 - **Worker has no vitest suite** (no `vitest.config.*`, no `*.test.ts` under `apps/worker`); EP1 does not add one — the worker filtergraph is verified by the Task 9 render script. Contract logic is fully unit-tested in core.
 - **Gapless = validation-reject** (locked, with rationale) — better than normalize-on-save here because overlap is already a hard reject and a silent normalize could move a clip out from under a placed transition. The UI ships a "Close gaps" button so legacy gappy cuts are one click from valid.

@@ -1,6 +1,6 @@
 ---
 name: money-safety-review
-description: Spend-path gate for Artlio. Use when a diff touches AI-generation spend — the typed genRequest gate, startGen, startRefGen, dispatchVariantJob/createVariant/regenerateVariant, coworkGenerate, idempotencyKey/dedup, the partial-unique idempotency indexes, or the fal provider call in apps/worker/src/jobs/gen.ts. Auto-fire when reviewing or writing any change that could create/charge a GenJob or RefGenJob, or alter exactly-once dedup. Skip entirely for UI/CSS/docs/non-spend changes.
+description: Spend-path gate for Fikirtive. Use when a diff touches AI-generation spend — the typed genRequest gate, startGen, startRefGen, dispatchVariantJob/createVariant/regenerateVariant, coworkGenerate, idempotencyKey/dedup, the partial-unique idempotency indexes, or the fal provider call in apps/worker/src/jobs/gen.ts. Auto-fire when reviewing or writing any change that could create/charge a GenJob or RefGenJob, or alter exactly-once dedup. Skip entirely for UI/CSS/docs/non-spend changes.
 ---
 
 Real money is spent on AI generation (BytePlus/fal provider) and Otto LLM turns (Anthropic). This gate exists to keep the **spend path** exactly-once and single-authority. It is **not** a universal checklist — apply **proportional rigor**: max scrutiny on the spend path, nothing on everything else.

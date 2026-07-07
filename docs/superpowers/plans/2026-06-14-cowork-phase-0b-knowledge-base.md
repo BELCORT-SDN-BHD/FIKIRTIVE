@@ -4,7 +4,7 @@
 
 **Goal:** Stand up the per-(family×mode) `ModelDirective` knowledge base the moat depends on — schema + history + a fresh DB read + a founder admin panel to curate directives live (no redeploy) + a thin research seed — plus the pure taxonomy spine (`modelFamily`/`deriveMode`). 0B does **not** yet change Enhance behavior; wiring the directive into the enhance skill is Phase 1.
 
-**Architecture:** Pure taxonomy helpers in `@artlio/core` (TDD). `ModelDirective` + `ModelDirectiveRevision` Prisma models (R5 structured `rules Json`, R6 revision history). `getEnhanceDirective(family,mode)` = fresh DB read (R6: no TTL cache). `/admin/directives` server-component grid + `saveModelDirective` action, each `auth()`-gated with an allowlisted email **inside the handler** (R7), reusing the existing `AUTH_ALLOWED_EMAILS` allowlist. Seed = the ~5 cited (untested) research directives, insert-when-absent.
+**Architecture:** Pure taxonomy helpers in `@fikirtive/core` (TDD). `ModelDirective` + `ModelDirectiveRevision` Prisma models (R5 structured `rules Json`, R6 revision history). `getEnhanceDirective(family,mode)` = fresh DB read (R6: no TTL cache). `/admin/directives` server-component grid + `saveModelDirective` action, each `auth()`-gated with an allowlisted email **inside the handler** (R7), reusing the existing `AUTH_ALLOWED_EMAILS` allowlist. Seed = the ~5 cited (untested) research directives, insert-when-absent.
 
 **Tech Stack:** Prisma 7.8.0 (`prisma-client` generator, adapter-pg, Neon), Next 16 App Router server actions, Auth.js v5, vitest (core).
 

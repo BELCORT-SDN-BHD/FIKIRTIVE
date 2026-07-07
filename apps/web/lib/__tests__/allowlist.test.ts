@@ -13,9 +13,9 @@ vi.mock("@fikirtive/db", () => ({
 // Import AFTER mock is in place
 const { isAllowedEmail } = await import("@/lib/allowlist");
 
-const FOUNDER_EMAIL = "founder@artlio.test";
-const ENV_EMAIL = "merchant@artlio.test";
-const DB_EMAIL = "invited@artlio.test";
+const FOUNDER_EMAIL = "founder@fikirtive.test";
+const ENV_EMAIL = "merchant@fikirtive.test";
+const DB_EMAIL = "invited@fikirtive.test";
 
 const savedEnv: Record<string, string | undefined> = {};
 
@@ -36,8 +36,8 @@ afterEach(() => {
 describe("isFounderAdmin", () => {
   it("is true for a founder email (case-insensitive), false otherwise", async () => {
     const { isFounderAdmin } = await import("@/lib/allowlist");
-    expect(isFounderAdmin("FOUNDER@artlio.test")).toBe(true); // FOUNDER_ADMIN_EMAILS set in beforeEach
-    expect(isFounderAdmin("merchant@artlio.test")).toBe(false);
+    expect(isFounderAdmin("FOUNDER@fikirtive.test")).toBe(true); // FOUNDER_ADMIN_EMAILS set in beforeEach
+    expect(isFounderAdmin("merchant@fikirtive.test")).toBe(false);
     expect(isFounderAdmin(null)).toBe(false);
   });
 });
@@ -100,9 +100,9 @@ describe("isAllowedEmail", () => {
 
   it("queries DB with lowercased email", async () => {
     mockFindUnique.mockResolvedValueOnce({ status: "active" });
-    await isAllowedEmail("Invited@Artlio.test");
+    await isAllowedEmail("Invited@Fikirtive.test");
     expect(mockFindUnique).toHaveBeenCalledWith({
-      where: { email: "invited@artlio.test" },
+      where: { email: "invited@fikirtive.test" },
       select: { status: true },
     });
   });

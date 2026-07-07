@@ -1,7 +1,7 @@
 # Fikirtive — Config & Architecture Reference
 
 > ⚠️ **已过时快照(TOMBSTONE 2026-07-07)。** 本文验证于 2026-06-22,多处与现实不符
-> (npm scope 已由 `@artlio/*` 改名 `@fikirtive/*`、Better Auth 已上线、BytePlus 已是
+> (npm scope 已改名 `@fikirtive/*`、Better Auth 已上线、BytePlus 已是
 > 生产生成供应商)。**不要据此判断现状。** 现行地图 = 仓库根 `AGENTS.md` +
 > `docs/review/CODEBASE-MAP-2026-07-02.md`。保留仅供历史考古。
 
@@ -22,12 +22,12 @@ See also: [`docs/architecture/codebase-audit-2026-06-22.md`](../architecture/cod
 - **Naming legend** (so the codebase reads consistently):
   | You see | It means |
   |---|---|
-  | **Fikirtive** | the product (was "Artlio") |
+  | **Fikirtive** | the product (pre-pivot name retired 2026-07-07; only the prod R2 bucket still carries it — migration: `docs/MASTERPLAN.md` P0) |
   | **Otto** | the agent (the user-facing name) |
   | `cowork-*` | Otto's code symbols/files (internal name; predates the Otto rename) |
   | **Org = Tenant** | one customer workspace; UI says "Tenant", code/DB say `Organization`/`orgId` |
   | **Brandmark** | a brand entity (`EntityType.BRANDMARK`, was `BRAND`) |
-  | `@artlio/*` | legacy internal package scope (`@artlio/core` etc.) — **internal only, never user-visible**; not yet renamed (see §5) |
+  | `@fikirtive/*` | internal package scope — renamed from the legacy pre-pivot scope (see §5) |
 
 ---
 
@@ -61,7 +61,7 @@ Legend: **SPEND** = touches money · **P0/P1/P2** = closed-beta phase it matters
 - `COWORK_VISION_ENABLED` — hard kill-switch. The caps (`COWORK_VISION_MAX_IMAGES`, `COWORK_VISION_MAX_BYTES`) also exist as env but the DB `runtimeConfig.vision` row is the live control (admin Settings writes it). *(audit rec: keep the kill-switch in env, caps in DB only.)*
 
 ### Storage
-- `STORAGE_DRIVER=r2` + `R2_ENDPOINT` / `R2_ACCESS_KEY_ID` / `R2_SECRET_ACCESS_KEY` / `R2_BUCKET` (+ optional `R2_FORCE_PATH_STYLE`). Anything other than `r2` → local disk at `ARTLIO_DATA_DIR` (default `.data/storage`). (`packages/storage/src/index.ts`)
+- `STORAGE_DRIVER=r2` + `R2_ENDPOINT` / `R2_ACCESS_KEY_ID` / `R2_SECRET_ACCESS_KEY` / `R2_BUCKET` (+ optional `R2_FORCE_PATH_STYLE`). Anything other than `r2` → local disk at `FIKIRTIVE_DATA_DIR` (default `.data/storage`). (`packages/storage/src/index.ts`)
 
 ### Worker / caption
 - `WHISPER_MODEL_PATH` / `WHISPER_THREADS` / `WHISPER_MAX_SECONDS` — whisper.cpp captioning bounds (`apps/worker/src/jobs/caption.ts`).
@@ -105,7 +105,7 @@ Legend: **SPEND** = touches money · **P0/P1/P2** = closed-beta phase it matters
 | **R1 — `COWORK_PAID_PROVIDERS_ALLOWED` redundant double-lock** | `packages/core/src/runtime-config.ts` `effectiveCoworkProvider`; `apps/web/lib/runtime-config.ts` `getTransport` | Remove the boolean; `COWORK_PROVIDER` + the credential-throw already gate it. **Deferred to the Otto→EVE migration** (EVE replaces the transport layer — don't churn it twice). |
 | **Otto → Vercel EVE migration** | the whole `cowork-*` planner/transport pipeline | Planned next session — replace the hand-rolled planner with [EVE](https://eve.dev). Defer all Otto-internal cleanup until then. |
 | `cowork-*` symbols vs user-facing "Otto" | `packages/core/src/cowork*.ts`, `apps/web/lib/cowork-*.ts` | Decided convention: **external = Otto, internal = cowork**. Don't rename piecemeal (EVE may replace it). |
-| `@artlio/*` package scope + `ArtlioEdit`/`ArtlioClip` type (130 occ) | pkg names + `apps/web/components/Editor*.tsx` | Internal-only, no user impact. Dedicated mechanical-rename pass OR leave (documented here as "legacy = Fikirtive"). |
+| ~~legacy package scope + `FikirtiveEdit`/`FikirtiveClip` type rename~~ | pkg names + `apps/web/components/Editor*.tsx` | **DONE** — scope and types renamed; the last in-code legacy strings (test fixtures, comments, local DB/CI names) purged 2026-07-07. |
 | `VARIANT` refgen mode | `packages/core/src/refgen.ts` (in contract, rejected at `refgen-actions.ts`) | Phase A fail-closed (no spend leak). Finish Phase B worker path or remove from contract. |
 | `BRAND`→`BRANDMARK` read-normalizer | `apps/web/components/MentionInput.tsx` | Correct as-is (legacy data). Remove after a cutoff date. |
 

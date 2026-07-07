@@ -2,7 +2,7 @@
 // helper + the real prisma write path. $0 — inserts fake rows + invokes genSpentUsd/
 // refgenSpentUsd directly (NO provider, NO worker, NO queue). Proves the math + write.
 // Run: node scripts/archive/local-spend-snapshot-verify.mjs
-process.env.DATABASE_URL ??= "postgresql://artlio:artlio@localhost:5432/artlio";
+process.env.DATABASE_URL ??= "postgresql://fikirtive:fikirtive@localhost:5432/fikirtive";
 const { prisma } = await import("../../packages/db/dist/src/index.js");
 const {
   newId, FOUNDER_OWNER_ID,

@@ -2,7 +2,7 @@
 
 /*
  * Vapor design system — ported verbatim from the founder's Claude Design
- * handoff (claude.ai/design, "Artlio Studio" prototype). Tokens, the al-*
+ * handoff (claude.ai/design, "Fikirtive Studio" prototype). Tokens, the al-*
  * component recipes, and the prototype's layout CSS are kept pixel-faithful;
  * the only deliberate divergences are flagged A11Y (audited contrast fixes).
  * Entity hues are ours: functional wayfinding color, not chrome.
@@ -381,7 +381,7 @@ h1, h2, h3 { font-family: var(--font-sans); font-weight: 600; letter-spacing: va
 @keyframes fade-rise { from { opacity: 0; transform: translateY(8px); } to { opacity: 1; transform: none; } }
 @media (prefers-reduced-motion: reduce) { .fade-rise { animation: none; } }
 
-/* ---------- Artlio-specific: Tiptap inside the prompt bar ---------- */
+/* ---------- Fikirtive-specific: Tiptap inside the prompt bar ---------- */
 .al-promptbar .tiptap {
   min-height: 44px;
   outline: none;
@@ -437,7 +437,7 @@ h1, h2, h3 { font-family: var(--font-sans); font-weight: 600; letter-spacing: va
 .alias-chip[data-entity-type="PRODUCT"]   { border-color: color-mix(in srgb, var(--hue-product) 45%, transparent);   color: var(--hue-product); }
 .alias-chip[data-entity-type="BRANDMARK"] { border-color: color-mix(in srgb, var(--hue-brand) 45%, transparent);     color: var(--hue-brand); }
 
-/* ── redesign shell additions (Artlio Studio design) ───────────────── */
+/* ── redesign shell additions (Fikirtive Studio design) ───────────────── */
 .al-avatar {
   display: inline-flex; align-items: center; justify-content: center;
   border-radius: 999px; flex: none;

@@ -6,7 +6,7 @@ Set in Railway BEFORE inviting any external user / before the first paid endpoin
 - `RESEND_API_KEY=...`       — required so magic-link email actually sends (prod throws without it).
 - `AUTH_ALLOWED_EMAILS=...`  — comma-separated invite allowlist (deny-by-default).
 - `FOUNDER_ADMIN_EMAILS=...` — your founder email(s); seeded to super-admin on sign-in.
-- `AUTH_EMAIL_FROM="Artlio <you@yourdomain>"` — verified Resend sender.
+- `AUTH_EMAIL_FROM="Fikirtive <you@yourdomain>"` — verified Resend sender.
 - `SENTRY_DSN=...`           — error monitoring (optional but recommended for beta; no-op if unset).
 - COWORK planner stays $0: do NOT set `COWORK_PAID_PROVIDERS_ALLOWED=true`; ensure the DB
   `runtimeConfig.cowork_provider` row is unset or `mock`. (Money-safety: the paid planner is

@@ -17,7 +17,7 @@ vi.mock("@fikirtive/db", () => ({
 // ---------------------------------------------------------------------------
 const { assertAllowedEmail, assertAllowedForUserId } = await import("@/lib/better-auth/gate");
 
-const ALLOWED_EMAIL = "founder@artlio.test";
+const ALLOWED_EMAIL = "founder@fikirtive.test";
 const BLOCKED_EMAIL = "stranger@example.com";
 
 const savedEnv: Record<string, string | undefined> = {};
@@ -61,19 +61,19 @@ describe("assertAllowedEmail (user.create.before gate)", () => {
   });
 
   it("allows an email in AUTH_ALLOWED_EMAILS env list", async () => {
-    process.env.AUTH_ALLOWED_EMAILS = "merchant@artlio.test";
-    await expect(assertAllowedEmail("merchant@artlio.test")).resolves.toBeUndefined();
+    process.env.AUTH_ALLOWED_EMAILS = "merchant@fikirtive.test";
+    await expect(assertAllowedEmail("merchant@fikirtive.test")).resolves.toBeUndefined();
     expect(mockFindUnique).not.toHaveBeenCalled();
   });
 
   it("allows an email with an active DB row", async () => {
     mockFindUnique.mockResolvedValueOnce({ status: "active" });
-    await expect(assertAllowedEmail("invited@artlio.test")).resolves.toBeUndefined();
+    await expect(assertAllowedEmail("invited@fikirtive.test")).resolves.toBeUndefined();
   });
 
   it("throws for an email with a revoked DB row", async () => {
     mockFindUnique.mockResolvedValueOnce({ status: "revoked" });
-    await expect(assertAllowedEmail("revoked@artlio.test")).rejects.toBeInstanceOf(APIError);
+    await expect(assertAllowedEmail("revoked@fikirtive.test")).rejects.toBeInstanceOf(APIError);
   });
 });
 
@@ -101,7 +101,7 @@ describe("assertAllowedForUserId (session.create.before gate)", () => {
   });
 
   it("throws for a userId whose email was revoked", async () => {
-    mockFindUnique.mockResolvedValueOnce({ email: "revoked@artlio.test" }); // betterAuthUser
+    mockFindUnique.mockResolvedValueOnce({ email: "revoked@fikirtive.test" }); // betterAuthUser
     mockFindUnique.mockResolvedValueOnce({ status: "revoked" }); // allowedEmail DB check
     await expect(assertAllowedForUserId("user-revoked")).rejects.toBeInstanceOf(APIError);
   });

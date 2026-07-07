@@ -4,7 +4,7 @@
 
 **Goal:** Add drag-and-drop in two spots — drag an editor Assets item onto the timeline (append), and drag a Storyboard candidate image onto a shot's Start/End frame slot (attach) — reusing existing actions, no new server action and no migration.
 
-**Architecture:** Standard HTML5 drag-and-drop. A shared `apps/web/lib/dnd.ts` encodes a typed payload on a custom MIME (`application/x-artlio-asset`) so OS-file drags can't trigger our handlers. Drop handlers read the payload, branch on `kind`, and call existing actions: editor → `appendAsset` (`addClip(0,…)` append); Storyboard → `setShotFrame(shotId, slot, generationId)`. No Shotstack canvas-coordinate logic.
+**Architecture:** Standard HTML5 drag-and-drop. A shared `apps/web/lib/dnd.ts` encodes a typed payload on a custom MIME (`application/x-fikirtive-asset`) so OS-file drags can't trigger our handlers. Drop handlers read the payload, branch on `kind`, and call existing actions: editor → `appendAsset` (`addClip(0,…)` append); Storyboard → `setShotFrame(shotId, slot, generationId)`. No Shotstack canvas-coordinate logic.
 
 **Tech Stack:** Next.js 16 (App Router), React client components, Shotstack Studio SDK 2.11.5 (editor), Prisma. Web has no unit-test runner (test script is a no-op) — web-side behaviour is verified with Playwright against the local dev server in mock ($0) mode, matching the repo's existing tracer pattern.
 
@@ -35,7 +35,7 @@ No other files change. No new server action. No DB migration.
 // Typed drag-and-drop payloads carried on a custom MIME type so OS file drags
 // (and other content) can never trigger our drop handlers. Both editor and
 // Storyboard drops use this; handlers branch on `kind`.
-export const DND_MIME = "application/x-artlio-asset";
+export const DND_MIME = "application/x-fikirtive-asset";
 
 export type DndPayload =
   | { kind: "editor-clip"; src: string; clipKind: "image" | "video"; seconds: number }
@@ -67,7 +67,7 @@ export function hasDnd(dt: DataTransfer | null): boolean {
 
 - [ ] **Step 2: Typecheck**
 
-Run: `pnpm --filter @artlio/web typecheck`
+Run: `pnpm --filter @fikirtive/web typecheck`
 Expected: exit 0 (no errors).
 
 ---
@@ -98,7 +98,7 @@ console.log('editor canvas present:', before > 0, '| drag completed without erro
 await b.close();
 ```
 
-Run (needs `AUTH_ENABLED=false pnpm --filter @artlio/web dev` running): `node ._dnd-editor.mjs`
+Run (needs `AUTH_ENABLED=false pnpm --filter @fikirtive/web dev` running): `node ._dnd-editor.mjs`
 Expected: FAILS — `aside [draggable="true"]` / `[data-dnd="timeline"]` not found yet.
 
 - [ ] **Step 2: Make the Assets item a drag source**
@@ -139,7 +139,7 @@ Expected: PASS — drag source + target found, drag completes, no console error.
 
 - [ ] **Step 5: Typecheck + lint**
 
-Run: `pnpm --filter @artlio/web typecheck && pnpm --filter @artlio/web lint`
+Run: `pnpm --filter @fikirtive/web typecheck && pnpm --filter @fikirtive/web lint`
 Expected: both exit 0.
 
 ---
@@ -200,7 +200,7 @@ At the top of the scrolling area (above the `scenes.map(...)`), render a sticky 
 
 - [ ] **Step 4: Typecheck**
 
-Run: `pnpm --filter @artlio/web typecheck`
+Run: `pnpm --filter @fikirtive/web typecheck`
 Expected: exit 0. (Strip renders but isn't a drop target yet — that's Task 4.)
 
 ---
@@ -239,7 +239,7 @@ Expected: FAILS — `[data-dnd="candidate"]` / `[data-dnd="slot-first"]` not pre
 On the slot container element (the per-slot media box that holds the `genFrame`/`uploadFrame`/`clearFrame` buttons; rendered once per `slot` of `"first" | "last"`), add `data-dnd={`slot-${slot}`}` and:
 
 ```tsx
-onDragOver={(e) => { if (e.dataTransfer.types.includes("application/x-artlio-asset") && !busy && !slotBusy) { e.preventDefault(); setDropSlot(slot); } }}
+onDragOver={(e) => { if (e.dataTransfer.types.includes("application/x-fikirtive-asset") && !busy && !slotBusy) { e.preventDefault(); setDropSlot(slot); } }}
 onDragLeave={() => setDropSlot(null)}
 onDrop={(e) => {
   e.preventDefault(); setDropSlot(null);
@@ -263,7 +263,7 @@ Expected: PASS — after dropping a candidate on the Start slot and reloading, t
 
 - [ ] **Step 5: Typecheck + lint**
 
-Run: `pnpm --filter @artlio/web typecheck && pnpm --filter @artlio/web lint`
+Run: `pnpm --filter @fikirtive/web typecheck && pnpm --filter @fikirtive/web lint`
 Expected: both exit 0.
 
 ---
@@ -272,7 +272,7 @@ Expected: both exit 0.
 
 - [ ] **Step 1: Full verification**
 
-Run: `pnpm --filter @artlio/core build && pnpm -r typecheck && pnpm --filter @artlio/web lint && pnpm --filter @artlio/core test`
+Run: `pnpm --filter @fikirtive/core build && pnpm -r typecheck && pnpm --filter @fikirtive/web lint && pnpm --filter @fikirtive/core test`
 Expected: all green (core build clean, all packages typecheck, web lint clean, 47 core tests pass).
 
 - [ ] **Step 2: Codex review (house rule, before any deploy)**

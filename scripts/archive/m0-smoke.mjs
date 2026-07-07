@@ -1,15 +1,15 @@
 // M0 full-journey smoke: elements dialog → shot board → @composer dock →
 // candidate upload → attach via pop menu → history filters → detach.
-// Screenshots to ~/.gstack/projects/artlio/m0-smoke/
+// Screenshots to ~/.gstack/projects/fikirtive/m0-smoke/
 // Expects a fresh DB (re-runs collide with leftover entities):
-//   docker exec artlio-postgres-1 psql -U artlio -d artlio -c 'TRUNCATE "ActionEvent","Generation","ShotEntityRef","Shot","ReferenceImage","Asset","Entity","TemplateBundle","Project" CASCADE;'
+//   docker exec fikirtive-postgres-1 psql -U fikirtive -d fikirtive -c 'TRUNCATE "ActionEvent","Generation","ShotEntityRef","Shot","ReferenceImage","Asset","Entity","TemplateBundle","Project" CASCADE;'
 import { chromium } from "playwright";
 import { mkdirSync } from "node:fs";
 import os from "node:os";
 import path from "node:path";
 
 const BASE = process.env.BASE_URL ?? "http://localhost:3000";
-const SHOTS = path.join(os.homedir(), ".gstack/projects/artlio/m0-smoke");
+const SHOTS = path.join(os.homedir(), ".gstack/projects/fikirtive/m0-smoke");
 mkdirSync(SHOTS, { recursive: true });
 
 const browser = await chromium.launch();
