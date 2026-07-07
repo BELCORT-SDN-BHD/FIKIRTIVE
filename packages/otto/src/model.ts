@@ -79,7 +79,107 @@ export function withOverloadFailover(primary: LanguageModel, fallback: LanguageM
   };
 }
 
-/** Otto's model: primary with same-tier 529-failover, adapted for the OpenAI Agents SDK. */
+// ── Prompt caching (engine spec §2.2, injection point B) ────────────────────────────────────
+//
+// The @openai/agents aisdk adapter builds the system message as a bare
+// `{ role: "system", content: instructions }` and tools without providerOptions, so the
+// standard @ai-sdk/anthropic per-message providerOptions channel does NOT flow through from
+// the Agent config (verified against @openai/agents-extensions@0.11.8). Instead we inject at
+// the LanguageModel layer — the same layer withOverloadFailover already wraps — which is
+// invisible to the Agent and to RunState: fresh-turn, approve, and worker-resume paths are
+// all covered without touching the run() call sites.
+
+type CallOptions = Parameters<LanguageModel["doGenerate"]>[0];
+
+/** Anthropic ephemeral cache marker, read by @ai-sdk/anthropic's CacheControlValidator from
+ *  `providerOptions.anthropic.cacheControl` on system messages and function tools. */
+const EPHEMERAL_CACHE_CONTROL = { type: "ephemeral" } as const;
+
+/**
+ * Kill switch (engine spec §2.8): OTTO_PROMPT_CACHE — default ON.
+ * "0" / "false" / "off" (case-insensitive) bypasses the caching middleware entirely, making
+ * the request byte-identical to pre-caching behavior. Read per-call so a redeploy with the
+ * env flag flipped takes effect without code changes.
+ */
+export function ottoPromptCacheEnabled(): boolean {
+  const v = (process.env.OTTO_PROMPT_CACHE ?? "").trim().toLowerCase();
+  return v !== "0" && v !== "false" && v !== "off";
+}
+
+/**
+ * Pure transform: mark Otto's CONSTANT prompt prefix with Anthropic ephemeral cache_control.
+ * Exactly two breakpoints per request (limit is 4):
+ *
+ *  1. The LAST function tool — caches the ~7.7k-token tool-schema block (tools precede
+ *     system in Anthropic's request layout, so this breakpoint stands even if the system
+ *     text ever changes).
+ *  2. The LEADING system message (Otto's inlined instructions, ~4.7k tokens) — a breakpoint
+ *     here caches everything up to and including it, i.e. tools + system: the full ~12.4k
+ *     constant prefix. Steps 2..N of a turn (and turns within Anthropic's 5-min TTL) then
+ *     read the prefix at the cached rate.
+ *
+ * Per-turn conversation history is deliberately NOT marked (engine spec §三点五·3).
+ * Never mutates its input: options, prompt, and tools arrays are copied on write.
+ */
+export function injectPromptCacheControl(options: CallOptions): CallOptions {
+  const out: CallOptions = { ...options };
+
+  if (Array.isArray(out.tools) && out.tools.length > 0) {
+    const last = out.tools[out.tools.length - 1]!;
+    if (last.type === "function") {
+      const tools = out.tools.slice();
+      tools[tools.length - 1] = {
+        ...last,
+        providerOptions: {
+          ...last.providerOptions,
+          anthropic: { ...last.providerOptions?.anthropic, cacheControl: EPHEMERAL_CACHE_CONTROL },
+        },
+      };
+      out.tools = tools;
+    }
+  }
+
+  const first = out.prompt[0];
+  if (first && first.role === "system") {
+    const prompt = out.prompt.slice();
+    prompt[0] = {
+      ...first,
+      providerOptions: {
+        ...first.providerOptions,
+        anthropic: { ...first.providerOptions?.anthropic, cacheControl: EPHEMERAL_CACHE_CONTROL },
+      },
+    };
+    out.prompt = prompt;
+  }
+
+  return out;
+}
+
+/**
+ * LanguageModel middleware: transformParams-style cache_control injection on every
+ * doGenerate/doStream call. Wraps OUTSIDE withOverloadFailover so a single transform covers
+ * both the primary and the 529-fallback model (both are sonnet-tier; caching markers are
+ * valid on both, and price lookup stays OTTO_DEFAULT_MODEL either way).
+ * When the kill switch is off, options pass through UNTOUCHED (same reference).
+ */
+export function withPromptCaching(model: LanguageModel): LanguageModel {
+  return {
+    specificationVersion: model.specificationVersion,
+    provider: model.provider,
+    modelId: model.modelId,
+    supportedUrls: model.supportedUrls,
+    async doGenerate(options: CallOptions) {
+      return model.doGenerate(ottoPromptCacheEnabled() ? injectPromptCacheControl(options) : options);
+    },
+    async doStream(options: CallOptions) {
+      return model.doStream(ottoPromptCacheEnabled() ? injectPromptCacheControl(options) : options);
+    },
+  };
+}
+
+/** Otto's model: prompt-cache marking over same-tier 529-failover, adapted for the OpenAI Agents SDK. */
 export const ottoModel = aisdk(
-  withOverloadFailover(anthropic(OTTO_PRIMARY_MODEL), anthropic(OTTO_FALLBACK_MODEL)),
+  withPromptCaching(
+    withOverloadFailover(anthropic(OTTO_PRIMARY_MODEL), anthropic(OTTO_FALLBACK_MODEL)),
+  ),
 );
