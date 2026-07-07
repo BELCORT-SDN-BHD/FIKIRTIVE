@@ -137,11 +137,11 @@ export const NS_PAGES: NsPage[] = [
   { zoneSlug: "account", page: "channel-wallet", title: "通道费钱包页", purpose: "第二账道人工面(通道费 MYR 直传,永不混 credits)", path: "/northstar/account/channel-wallet", priority: "P2", current: "未建", status: "stub", sources: "红旗五判决;宪法 5;harmony-05" },
 
   // ── 十二 Onboarding + 登录 ──
-  { zoneSlug: "onboarding", page: "login", title: "登录 / 注册页", purpose: "进城的门", path: "/northstar/onboarding/login", priority: "P0", current: "live·revamp", status: "stub", sources: "区划图·地下管网 / 住户服务(#74);design-rules §3" },
-  { zoneSlug: "onboarding", page: "checklist", title: "开店完成度(onboarding)", purpose: "新店主的开店 checklist(做完即消失)", path: "/northstar/onboarding/checklist", priority: "P1", current: "未建", status: "stub", sources: "GM-05 判决「要」;harmony-06 §三" },
+  { zoneSlug: "onboarding", page: "login", title: "登录 / 注册页", purpose: "进城的门", path: "/northstar/onboarding/login", priority: "P0", current: "live·revamp", status: "draft", sources: "区划图·地下管网 / 住户服务(#74);design-rules §3" },
+  { zoneSlug: "onboarding", page: "checklist", title: "开店完成度(onboarding)", purpose: "新店主的开店 checklist(做完即消失)", path: "/northstar/onboarding/checklist", priority: "P1", current: "未建", status: "draft", sources: "GM-05 判决「要」;harmony-06 §三" },
 
   // ── 十三 市政厅 ──
-  { zoneSlug: "cityhall", page: "admin", title: "市政厅全后台(admin,单列)", purpose: "运营与账房(仅 BELCORT 内部,Otto 永久豁免)", path: "/northstar/cityhall/admin", priority: "降级", current: "live(11 section);v2 未建", status: "stub", sources: "区划图·市政厅;蓝图第六章·市政厅 v2;X-01~X-05 判决" },
+  { zoneSlug: "cityhall", page: "admin", title: "市政厅全后台(admin,单列)", purpose: "运营与账房(仅 BELCORT 内部,Otto 永久豁免)", path: "/northstar/cityhall/admin", priority: "降级", current: "live(11 section);v2 未建", status: "draft", sources: "区划图·市政厅;蓝图第六章·市政厅 v2;X-01~X-05 判决" },
 ];
 
 export function nsZone(slug: string): NsZone {
