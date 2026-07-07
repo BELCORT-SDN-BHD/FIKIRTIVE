@@ -157,3 +157,15 @@
 **可直接纳入的 12 项**(founder 未反对,总审查员折进地基):AI 配乐+音效(并 C-07 扩为视频声音全家桶)、多机位一键出图、视频换脸/换角、卡点模板(创作区)、冷启动时段种子表(A/S 区)、营业时间自动回复原语(M 区)、consent/勿扰字段(CRM)、字段变更留痕(复用 ActionEvent)、消息互动信号触发源(L-07)、单帖可分享预览 URL(排期区)等 —— 各随所属区 spec 落地。
 
 **从本轮推断的 founder 决策原则(入 [[present-options-dont-decide]] 精神)**:①能让 Otto 做的别建手动工具;②太深奥/企业级不碰;③重叠即砍;④依赖未来能力的推迟;⑤创作区保持丰富(赚钱先锋)。
+
+## 追加判决(2026-07-07)
+
+> 来源 = founder 2026-07-07 拍板(会话内),由总审查员经 PR 入档;founder 合并本 PR = 确认。执行层挂靠见 `docs/MASTERPLAN.md`。
+
+| 项 | 判决 | 内容 |
+|---|---|---|
+| Otto 对话计费模式 | **维持每轮 reserve→settle;origami"思考免费"原则不采纳** | founder 原话:"OTTO对话还是要扣credit的,这个是我们的costing那边要cover的" —— Otto 劳动 margin(2.0x)是利润主场(宪法 5/定价终案),对话轮计费是 costing 模型的收入项,不做免费化 |
+| 基础设施选型 | **不迁 Sevalla;Railway + Neon 维持** | Sevalla 贵 2-3 倍 + 迁移风险不值;现架构成本已核(harmony-04 §5b:固定层薄,对定价几乎无约束) |
+| GitHub 组织与保护 | **迁 BELCORT-SDN-BHD org + 升 Team 档 + main ruleset 硬保护** | 补上"私库 free 档无分支保护"的老缺口(合并纪律从约定强制升级为机器强制)。org 迁移已生效(origin 已指向 BELCORT-SDN-BHD/FIKIRTIVE);Team 档与 ruleset 落地后由总审查员同步更新 `.claude/CLAUDE.md` 的相关表述 |
+| 引擎与债务的顺序 | **改进路线 = "最好的全都做";顺序 = 先修引擎(prompt caching + 技能分域装载)再规模化清偿对等债务** | 质量效率优先;引擎 spec = `docs/superpowers/specs/2026-07-07-otto-engine-caching-scoped-loading-design.md`(动工前待 founder 过目,宪法第五章);对等债 84 条分批表见 MASTERPLAN 第三章 |
+| 2026-07-07 审计清理授权 | **批次 1/2 已授权执行(PR #179 / #180);批次 3 未授权,逐项另批** | #179 = 已验证死码删除;#180 = 说谎文档修正 + parity 债务棘轮(基线 84)。批次 3(死付费端点/死表 DROP/脚本确认锁/scripts 归档/重复代码统一)逐项见 MASTERPLAN 第七章待拍板清单 7-10~7-14 |
