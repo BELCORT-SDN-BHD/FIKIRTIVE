@@ -191,3 +191,12 @@
 - [ ] **效率良心(宪法 5 附则)**:触及 turn 循环/上下文组装/skill 步数的 diff,增查是否引入用户侧 token 浪费(冗余重发/臃肿上下文/多余步数)—— 是 = **缺陷级 reject**,不是"优化建议"。已知三工单勿重报:①prompt caching(前置:meter 补 cache_write 计量)②verdict 轮重发 base64 图 ③skill 确定性化
 - [ ] **技能为弱模型设计(宪法 10)**:新 skill 的专业判断必须冻进确定性代码/schema/模板,不靠模型天赋(prompt-skills 范本)
 - [ ] 注册处所从五处改**六处**:registry.ts / registry.test / migration.test / CATALOG.md(已入 CI catalog:check)/ instructions.ts / **Parity Manifest**
+
+---
+
+# 增补(2026-07-07,随宪法 v2.6 生效)
+
+## Web 界面清单增补 —— live reflection(宪法 11 v2.6)
+- [ ] 任何"后台状态会变化"的用户可见面(生成/发布/研究/Otto 写操作),diff 必须回答:界面如何**实时**得知变化?(推送、失效刷新、或有明确上限的短轮询)——"后台已完成而界面不知"按**缺陷级 reject**(参照 2026-07-07 吐槽清单头号痛点:生成 DONE 但卡片停在 On it)
+- [ ] Otto 的写操作落到界面时必须走 coral 视觉语言(高亮 + 简短叙述),不得默默变更(O-12/v2.6 ③)
+- [ ] 任何给 Otto 的新操作能力 = 动作层调用;出现"模拟点击/像素操作/DOM 驱动"类实现 = 违宪 v2.6 ②,一票否决
