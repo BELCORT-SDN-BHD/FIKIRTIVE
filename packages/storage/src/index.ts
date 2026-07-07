@@ -24,6 +24,7 @@ import {
   UploadPartCommand,
   CompleteMultipartUploadCommand,
   AbortMultipartUploadCommand,
+  ListObjectsV2Command,
 } from "@aws-sdk/client-s3";
 import { getSignedUrl } from "@aws-sdk/s3-request-presigner";
 import { parseStorageKey, storageKey, mimeOf } from "@fikirtive/core";
@@ -407,6 +408,113 @@ export class R2Storage implements Storage {
       { expiresIn },
     );
   }
+}
+
+/* ---------------- ops bucket (backups/ — OUTSIDE the u/ content scheme) ---------------- */
+
+/**
+ * Ops-artifact surface over the SAME R2 bucket + credentials as R2Storage
+ * (P0-1② nightly DB backups). Keys live under `backups/` — deliberately
+ * OUTSIDE the u/<ownerId>/ content-addressed scheme: parseStorageKey rejects
+ * them, and the web /files route serves only keys that pass keyOwnerMatches
+ * (u/<owner>/…), so an ops object can never be reached from any browser-facing
+ * path. This class is the only surface allowed to touch non-u/ keys, and it
+ * refuses anything outside its own prefix.
+ */
+export const OPS_PREFIX = "backups/";
+
+export interface OpsObject {
+  key: string;
+  lastModified: Date | null;
+}
+
+export class R2OpsBucket {
+  private client: S3Client;
+
+  constructor(private cfg: R2Config) {
+    // same client settings as R2Storage — one R2 config, two key namespaces
+    this.client = new S3Client({
+      region: "auto",
+      endpoint: cfg.endpoint,
+      credentials: { accessKeyId: cfg.accessKeyId, secretAccessKey: cfg.secretAccessKey },
+      forcePathStyle: cfg.forcePathStyle ?? true,
+    });
+  }
+
+  private checkKey(key: string): void {
+    if (!key.startsWith(OPS_PREFIX)) throw new Error(`not an ops key: ${key}`);
+  }
+
+  async exists(key: string): Promise<boolean> {
+    this.checkKey(key);
+    try {
+      await this.client.send(new HeadObjectCommand({ Bucket: this.cfg.bucket, Key: key }));
+      return true;
+    } catch (err) {
+      // only a missing object means "absent" — same discipline as R2Storage.exists
+      const status = (err as { $metadata?: { httpStatusCode?: number } })?.$metadata?.httpStatusCode;
+      const name = (err as { name?: string })?.name ?? "";
+      if (status === 404 || name === "NotFound" || name === "NoSuchKey") return false;
+      throw err;
+    }
+  }
+
+  /** Stream a local file up (known length — no multipart machinery needed). */
+  async putFile(key: string, filePath: string, contentType: string): Promise<void> {
+    this.checkKey(key);
+    const { size } = await stat(filePath);
+    await this.client.send(
+      new PutObjectCommand({
+        Bucket: this.cfg.bucket,
+        Key: key,
+        Body: createReadStream(filePath),
+        ContentLength: size,
+        ContentType: contentType,
+      }),
+    );
+  }
+
+  async list(prefix: string): Promise<OpsObject[]> {
+    this.checkKey(prefix);
+    const out: OpsObject[] = [];
+    let token: string | undefined;
+    do {
+      const res = await this.client.send(
+        new ListObjectsV2Command({ Bucket: this.cfg.bucket, Prefix: prefix, ContinuationToken: token }),
+      );
+      for (const obj of res.Contents ?? []) {
+        if (obj.Key) out.push({ key: obj.Key, lastModified: obj.LastModified ?? null });
+      }
+      token = res.IsTruncated ? res.NextContinuationToken : undefined;
+    } while (token);
+    return out;
+  }
+
+  async deleteObject(key: string): Promise<void> {
+    this.checkKey(key);
+    // S3 DeleteObject is idempotent — deleting a missing key succeeds
+    await this.client.send(new DeleteObjectCommand({ Bucket: this.cfg.bucket, Key: key }));
+  }
+}
+
+/**
+ * Env-driven ops bucket — SAME env family as createStorage (no second R2
+ * config). Returns null when the storage driver isn't r2 (local dev): there is
+ * no backup target, and callers are expected to no-op.
+ */
+export function createOpsBucket(): R2OpsBucket | null {
+  if (process.env.STORAGE_DRIVER !== "r2") return null;
+  const { R2_ENDPOINT, R2_ACCESS_KEY_ID, R2_SECRET_ACCESS_KEY, R2_BUCKET } = process.env;
+  if (!R2_ENDPOINT || !R2_ACCESS_KEY_ID || !R2_SECRET_ACCESS_KEY || !R2_BUCKET) {
+    throw new Error("STORAGE_DRIVER=r2 but R2_ENDPOINT/R2_ACCESS_KEY_ID/R2_SECRET_ACCESS_KEY/R2_BUCKET are not all set");
+  }
+  return new R2OpsBucket({
+    endpoint: R2_ENDPOINT,
+    accessKeyId: R2_ACCESS_KEY_ID,
+    secretAccessKey: R2_SECRET_ACCESS_KEY,
+    bucket: R2_BUCKET,
+    forcePathStyle: process.env.R2_FORCE_PATH_STYLE !== "false",
+  });
 }
 
 /* ---------------- env factory ---------------- */

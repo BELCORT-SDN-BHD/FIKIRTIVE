@@ -26,11 +26,20 @@ export type TokenUsage = {
   inputTokens: number;
   outputTokens: number;
   cachedInputTokens?: number;
+  /** Anthropic prompt-cache WRITE tokens (cache_creation_input_tokens), billed at 1.25× input. */
+  cacheWriteInputTokens?: number;
 };
 
 /**
  * mapOttoUsage — map an OpenAI Agents SDK RunResult usage object to withLlmBudget's TokenUsage.
  * Pure helper shared by apps/web (ottoTurn) and apps/worker (resumeOttoAfterGen).
+ *
+ * Field provenance (verified against installed @ai-sdk/anthropic@3.0.85 +
+ * @openai/agents-extensions@0.11.8): the Anthropic provider returns V3 usage
+ * `inputTokens: { total, noCache, cacheRead, cacheWrite }` where `total` INCLUDES cache
+ * read + write tokens; the aisdk adapter maps cacheRead → inputTokensDetails.cached_tokens
+ * and cacheWrite → inputTokensDetails.cache_write_tokens, and takes `.total` as the entry's
+ * inputTokens. So cached + cacheWrite ⊆ inputTokens here by construction.
  */
 export function mapOttoUsage(usage: {
   inputTokens: number;
@@ -42,23 +51,32 @@ export function mapOttoUsage(usage: {
   }>;
 }): TokenUsage {
   let cachedInputTokens = 0;
+  let cacheWriteInputTokens = 0;
   if (usage.requestUsageEntries) {
     for (const entry of usage.requestUsageEntries) {
       cachedInputTokens += entry.inputTokensDetails?.cached_tokens ?? 0;
+      cacheWriteInputTokens += entry.inputTokensDetails?.cache_write_tokens ?? 0;
     }
   }
   return {
     inputTokens: usage.inputTokens,
     outputTokens: usage.outputTokens,
     cachedInputTokens: cachedInputTokens > 0 ? cachedInputTokens : undefined,
+    cacheWriteInputTokens: cacheWriteInputTokens > 0 ? cacheWriteInputTokens : undefined,
   };
 }
 
 /**
  * Pure helper: compute actual internal-credit cost from real token usage.
  *
- * Cached tokens are a SUBSET of inputTokens, priced at the cheaper cached rate.
- * Non-cached input = (inputTokens - cachedInputTokens) × inputPerToken.
+ * Cached (read) and cache-write tokens are SUBSETS of inputTokens (see mapOttoUsage:
+ * the adapter's per-entry inputTokens is the Anthropic `total` incl. cache read + write).
+ * Cache reads are priced at the cheaper cached rate; cache writes at the 1.25× write
+ * premium (engine spec §2.3). Both are clamped so cached + cacheWrite never exceeds input
+ * (consistency guard — malformed usage can shift tokens between rate tiers but never
+ * fabricate token counts beyond inputTokens; the settle-side ≤-reserve clamp in
+ * settleCredits remains the hard charge ceiling).
+ * Non-cached input = (inputTokens - cached - cacheWrite) × inputPerToken.
  * Result is always a non-negative integer (Math.ceil).
  */
 export function actualCostInternal(
@@ -69,8 +87,13 @@ export function actualCostInternal(
   const input = Math.max(0, Number(usage.inputTokens) || 0);
   const output = Math.max(0, Number(usage.outputTokens) || 0);
   const cached = Math.min(Math.max(0, Number(usage.cachedInputTokens) || 0), input); // cached ⊆ input
-  const nonCachedInput = input - cached;
-  const usd = nonCachedInput * prices.inputPerToken + cached * prices.cachedInputPerToken + output * prices.outputPerToken;
+  const cacheWrite = Math.min(Math.max(0, Number(usage.cacheWriteInputTokens) || 0), input - cached); // cached + cacheWrite ⊆ input
+  const nonCachedInput = input - cached - cacheWrite;
+  const usd =
+    nonCachedInput * prices.inputPerToken +
+    cached * prices.cachedInputPerToken +
+    cacheWrite * prices.cacheWriteInputPerToken +
+    output * prices.outputPerToken;
   const result = Math.ceil(usd * margin * CREDITS_PER_USD);
   return Number.isFinite(result) ? Math.max(0, result) : 0;
 }

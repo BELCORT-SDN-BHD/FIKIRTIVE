@@ -11,6 +11,12 @@ export const OTTO_MAX_STEPS = 10;
  * Worst-case internal-credit cost for a single Otto LLM step, rounded up.
  * "Floor" in the sense of a minimum reserve — never under-reserves.
  *
+ * DELIBERATELY prompt-cache-UNAWARE (engine spec §2.4): the reserve is a worst-case floor
+ * and must never assume a cache hit — a cold cache (first step, expired 5-min TTL, or
+ * OTTO_PROMPT_CACHE off) pays full input price, so pricing the reserve at cached rates
+ * would under-reserve exactly when the cache misses. Fail-safe direction: reserve ≥ actual,
+ * settleCredits clamps and refunds the difference. Do NOT add cache terms here.
+ *
  * Formula:
  *   oneStepMaxUsd = OTTO_CONTEXT_CAP_TOKENS * prices.inputPerToken
  *                 + OTTO_OUTPUT_CAP_TOKENS  * prices.outputPerToken

@@ -20,6 +20,7 @@ import { handleGen, reapStaleGenJobs } from "./jobs/gen.js";
 import { reapStaleLlmReservations } from "./jobs/llm-reservation-reaper.js";
 import { handleCaption } from "./jobs/caption.js";
 import { handleResearch, reapStaleResearchJobs } from "./jobs/research.js";
+import { maybeRunNightlyBackup } from "./db-backup.js";
 import {
   RENDER_DLQ,
   RENDER_QUEUE_POLICY,
@@ -219,8 +220,12 @@ async function main(): Promise<void> {
       reaping = false;
     }
   };
-  setInterval(() => { void reap(); }, 5 * 60_000);
+  // Nightly DB backup (P0-1②) rides the same 5-min tick: fail-soft by contract
+  // (never throws), own re-entrancy flag inside the module, and its trigger rule
+  // (KL >= 03:00 + key-not-in-R2) makes every extra call a cheap no-op.
+  setInterval(() => { void reap(); void maybeRunNightlyBackup(); }, 5 * 60_000);
   void reap(); // also sweep once on startup (clears anything stranded by a prior crash)
+  void maybeRunNightlyBackup(); // startup check too — a worker restart must not skip a missed night
 
   console.log("[worker] started — queues:", Object.values(QUEUES).join(", "));
 }
