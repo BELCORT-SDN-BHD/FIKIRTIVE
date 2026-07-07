@@ -247,13 +247,6 @@ export const PARITY_MANIFEST = {
   "storyboard-gate1-actions.syncStoryboardMedia": { skill: "proposeStoryboard" },
   "storyboard-gate1-actions.prepareStoryboardVideos": { skill: "proposeStoryboard" },
   "storyboard-gate1-actions.regenShotVideoCard": { skill: "proposeStoryboard" },
-  "studio-actions.addShot": { skill: "proposeStoryboard" },
-  "studio-actions.deleteShot": { todoSkill: true, reason: "Studio shot deletion needs edit-storyboard skill parity." },
-  "studio-actions.moveShot": { todoSkill: true, reason: "Studio shot ordering needs edit-storyboard skill parity." },
-  "studio-actions.addScene": { skill: "proposeStoryboard" },
-  "studio-actions.setShotPromptText": { todoSkill: true, reason: "Studio prompt editing needs edit-storyboard skill parity." },
-  "studio-actions.setShotFrame": { skill: "proposeStoryboard" },
-  "studio-actions.setShotTransition": { skill: "proposeStoryboard" },
 
   "tenant-actions.setMembershipStatus": { exempt: "ADMIN", reason: "City Hall tenant administration is a permanent blueprint exemption." },
   "tenant-actions.cutTenantSessions": { exempt: "ADMIN", reason: "City Hall tenant administration is a permanent blueprint exemption." },

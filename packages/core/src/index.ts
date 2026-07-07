@@ -3,12 +3,6 @@ export { storageKey, parseStorageKey, keyOwnerMatches, FOUNDER_OWNER_ID } from "
 export { ORG_ROLES, isOrgRole, type OrgRole } from "./org-roles.js";
 export { sha256Stream, sha256Bytes } from "./hash.js";
 export {
-  ARTLIO_SLOT_PREFIX,
-  BUNDLE_SCHEMA_VERSION,
-  type SlotBinding,
-  type BundleManifest,
-} from "./template-bundle.js";
-export {
   fikirtiveEdit,
   betweenClipTransition,
   captionCue,
@@ -54,20 +48,6 @@ export {
   type RenderStatus,
   type CaptionJobData,
 } from "./timeline.js";
-export { editToFcpXml } from "./nle-export.js";
-export {
-  splitClipAt,
-  rippleDeleteClip,
-  moveClip,
-  snapEdit,
-  reindexTransitionsAfterSplit,
-  reindexTransitionsAfterDelete,
-  reindexTransitionsAfterMove,
-  reconcileTransitions,
-  dropTransitionsTooShort,
-  MIN_CLIP_SECONDS,
-  SNAP_THRESHOLD_SECONDS,
-} from "./timeline-ops.js";
 export * from "./upload.js";
 export * from "./refgen.js";
 export * from "./ref-config.js";
@@ -81,7 +61,6 @@ export * from "./roles.js";
 export * from "./cowork-compose.js";
 export * from "./cowork-skills.js";
 export * from "./cowork-directives.js";
-export * from "./cowork-coach.js";
 export * from "./cowork-guardian.js";
 export * from "./cowork-route.js";
 export { COWORK_PLANNER_SYSTEM, buildPlannerMessages, parseCoworkTurn, mockPlannerReply } from "./cowork-planner.js";
