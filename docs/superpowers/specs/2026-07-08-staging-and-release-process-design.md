@@ -144,6 +144,13 @@ migration 已先在 staging 库跑过一遍。
 自动部署就位后 prod 才好断开 main)。全部 Railway 操作凡涉及 production 环境,执行前必
 `railway status` 确认环境,并逐项知会 founder。
 
+> **S1 状态回填(2026-07-07):已执行**,且按 founder 当日指示升级为**两级 staging**
+> (第一级全 mock 的 `staging` + 第二级像 prod 的 `staging-live`,后者 = 上 prod 前最后一道
+> 人肉检查;真实花费仍逐笔问,宪法 2)。已完成:两级环境就位、`GENERATION_PROVIDER`
+> 按级设定、staging 的 live Stripe key 已替换为 test 占位符、⚠️ 项全部核实回填。
+> 剩余 founder 待办(R2 bucket 隔离、Stripe test key 填真值、第一级清真钱 key、staging-live
+> 首发):见 `docs/runbooks/staging.md` 待办节 —— 现状以 runbook 为准。
+
 ---
 
 ## 5. 与宪法/现有闸的关系

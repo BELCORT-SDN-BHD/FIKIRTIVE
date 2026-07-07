@@ -55,7 +55,7 @@ P0 与 P0.5/P1 可并行(不同文件面);P0.75 严格在 P0.5 之后;P1½ 以�
 
 | 线 | 内容(按序) | 状态 |
 |---|---|---|
-| A | staging + 发版流程设计 → #178 canvas 收尾 → 吐槽清单 + 全产品挑刺 → 上线闸 | 进行中 |
+| A | staging + 发版流程设计 → #178 canvas 收尾 → 吐槽清单 + 全产品挑刺 → 上线闸 | 进行中(S1 两级 staging 已落地 2026-07-07,剩 founder 待办若干,见 `docs/runbooks/staging.md`;S2/S3 未动) |
 | B | X(Twitter)发布 spec(`docs/superpowers/specs/2026-07-07-x-publishing-design.md`)→ founder 过目 → 施工 | spec 在途(本 PR) |
 | C | Otto Campaign 策划师 spec(Otto 研究 trend → 建议或直接设计整个专业 campaign → 几小时排好) | spec 在途(另一 PR) |
 
