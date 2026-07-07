@@ -23,6 +23,8 @@
  * console credit balance BEFORE and AFTER this run to get the real per-gen COGS, and compare to $1.60 (16cr).
  */
 
+import { interlock } from "../../../scripts/tools/_interlock.mjs";
+interlock({ spends: "one real BytePlus (Ark) video generation" });
 const ARK_BASE = "https://ark.ap-southeast.bytepluses.com/api/v3";
 const MODEL = "dreamina-seedance-2-0-fast-260128"; // = VIDEO_MODEL_MAP["seedance-2-fast"]
 
