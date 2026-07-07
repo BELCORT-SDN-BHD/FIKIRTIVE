@@ -205,3 +205,13 @@
 | ③ credits = 平台唯一硬通货 | **确认** | founder 原话:"credit 这个制度就是在 FIKIRTIVE 平台上,硬通货/货币" —— 平台上一切对用户的收费以 credits 计价(money-in 显示法币、通道费独立账道两条宪法既有边界不变);新渠道(含 X)收费点一律走 credits 账本 |
 | ④ staging + 发版流程正规化 | **要,设计先行** | founder 原话:"关于 staging 的,那个也请你设计好,包括接下来每个版本要如何设计" —— staging 环境与每个版本的发版流程出正式设计(A 线第一件) |
 | ⑤ Otto Campaign 策划师 | **方向确认,spec 在途(另一 PR)** | founder 口述:Otto 研究 trend → 建议或直接设计整个专业 campaign(跨度数天到数月)→ 几小时排好整个 campaign;spec 动工前照例待 founder 过目 |
+
+## 追加判决(2026-07-07 第四批)
+
+> 来源 = founder 2026-07-07 拍板(同日,会话内),由总审查员经 PR 入档;founder 合并本 PR = 确认。
+
+| 项 | 判决 | 内容 |
+|---|---|---|
+| X(Twitter)发布收费 | **方案 A 拍板** | 发推不带链接 = **1 显示 credit/条**;带链接 = **4 显示 credits/条**。founder:"可以的,要算好就行"。口径确认:**1 USD = 10 显示 credits**。数字进 config 层(宪法 5),毛利以 costing 核算为准。 |
+| Campaign 专属工作台 + 趋势数据层 | **要,纳入 C 线 spec**(founder 口述) | ①专属结构化入口 —— founder:"没有可能让 user 直接和 OTTO 随机聊天然后 prompt 到……直接做一个专属这个 feature 的地方":Campaign 区自己的房间,表单发起 + 日历工作台,按钮与 Otto 走同一动作层(O-12);②趋势数据层 —— founder:"设计要如何消化储存那些 trends 或任何数据,方便未来 otto refer":TrendSnapshot 最薄存储(缝 5,ownerId 隔离)。两条已增补进 `docs/superpowers/specs/2026-07-08-otto-campaign-planner-design.md` §五 |
+| 全产品 UX 原则:live reflection | **定调**(founder 与总审查员共同结论,2026-07-07) | Otto 经**动作层**操作(headless,毫秒级、确定性)+ **UI 实时反映**(推送/即时刷新 + coral 高亮 + 一行叙述);**不做 computer-use 式像素操作**(慢/脆/lag —— founder 的担心成立)。视觉效果 = 用户"看着 Otto 在界面上干活",工程本质 = headless 操作 + live UI reflection。吐槽清单头号痛点(生成完成但界面不刷新)与此同根 —— 修它 = 给这个愿景打地基。既有依据:宪法 7 的 O-12(就地按钮 = Otto 的手)与上下文桥 |
