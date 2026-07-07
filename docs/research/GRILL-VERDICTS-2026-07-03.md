@@ -194,6 +194,18 @@
 1. **市场归 founder,工程归 agents**:"要如何 market 那些是我的问题,不是 coding agents 的问题,只要做好我要的 features 就行了" —— agent 的建取舍只看 founder 判决 + 工程质量,不得以市场定位(SEA 等)作为推理依据。
 2. **对 founder 沟通用人话**:不用 harmony-xx / Wave-N / F-xx 类内部代号;给 founder 读的文档须带人话对照表。
 
+## 追加判决(2026-07-07 第三批)
+
+> 来源 = founder 2026-07-07 拍板(同日第三批,会话内),由总审查员经 PR 入档;founder 合并本 PR = 确认。执行层挂靠见 `docs/MASTERPLAN.md` §〇点六「冲刺」。
+
+| 项 | 判决 | 内容 |
+|---|---|---|
+| ① 冲刺开跑 | **双线开跑**(founder 原话:"好的。冲刺。") | A 线(staging+发版流程设计 → #178 canvas 收尾 → 吐槽清单+全产品挑刺 → 上线闸)与 B 线(X 发布 spec → 过目 → 施工)并行;C 线方向另见⑤;工厂第二步排冲刺后 |
+| ② X/Twitter 采纳为新渠道 | **要**(founder 产品判决) | 用户 OAuth 模式(用户永不需要自己的 API),平台(BELCORT)养一个开发者应用;走渠道缝(Meta 范本);spec = `docs/superpowers/specs/2026-07-07-x-publishing-design.md`(待 founder 过目后动工) |
+| ③ credits = 平台唯一硬通货 | **确认** | founder 原话:"credit 这个制度就是在 FIKIRTIVE 平台上,硬通货/货币" —— 平台上一切对用户的收费以 credits 计价(money-in 显示法币、通道费独立账道两条宪法既有边界不变);新渠道(含 X)收费点一律走 credits 账本 |
+| ④ staging + 发版流程正规化 | **要,设计先行** | founder 原话:"关于 staging 的,那个也请你设计好,包括接下来每个版本要如何设计" —— staging 环境与每个版本的发版流程出正式设计(A 线第一件) |
+| ⑤ Otto Campaign 策划师 | **方向确认,spec 在途(另一 PR)** | founder 口述:Otto 研究 trend → 建议或直接设计整个专业 campaign(跨度数天到数月)→ 几小时排好整个 campaign;spec 动工前照例待 founder 过目 |
+
 ## 追加判决(2026-07-07 第四批)
 
 > 来源 = founder 2026-07-07 拍板(同日,会话内),由总审查员经 PR 入档;founder 合并本 PR = 确认。
