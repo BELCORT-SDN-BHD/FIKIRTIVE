@@ -1,0 +1,167 @@
+"use client";
+
+/**
+ * 沉浸式 · Onboarding 登录 / 注册(entry surface)
+ *
+ * gallery 里 onboarding/login 还是 stub;内容照 account-ops 先例现建。这是一块设计降级的入口卡:
+ * 一个居中 420 表单列(§L3 width ladder),email + 邮件魔链(演示,不发真请求)、社交入口占位、
+ * 登录/注册两态井切换(§N4 segmented)。无 Otto、无 coral(继续按钮走 INK)、零后台。
+ *
+ * 走完 CTA 进产品流:注册 → onboarding/checklist(首跑引导),登录 → create/home。
+ */
+
+import * as React from "react";
+import Link from "next/link";
+import { ArrowRight, Mail } from "lucide-react";
+import { cn } from "@/lib/utils";
+import { Button } from "@/components/ui/button";
+import { OttoAvatar } from "@/components/otto/OttoAvatar";
+import { NS_BRAND } from "@/components/northstar/_mock";
+
+const BASE = "/northstar-immersive";
+
+type Mode = "signin" | "signup";
+
+const MODES: { value: Mode; label: string }[] = [
+  { value: "signin", label: "Sign in" },
+  { value: "signup", label: "Create account" },
+];
+
+export function OnboardingLogin() {
+  const [mode, setMode] = React.useState<Mode>("signin");
+  const [email, setEmail] = React.useState("");
+  const [sent, setSent] = React.useState(false);
+
+  const modeRefs = React.useRef<(HTMLButtonElement | null)[]>([]);
+  const activeIdx = MODES.findIndex((m) => m.value === mode);
+
+  const onModeKey = (e: React.KeyboardEvent) => {
+    if (e.key !== "ArrowLeft" && e.key !== "ArrowRight") return;
+    e.preventDefault();
+    const dir = e.key === "ArrowRight" ? 1 : -1;
+    const next = (activeIdx + dir + MODES.length) % MODES.length;
+    setMode(MODES[next].value);
+    modeRefs.current[next]?.focus();
+  };
+
+  // 演示:提交 = 展示「魔链已发」态,不发真请求。进产品的门在魔链后的按钮上。
+  const nextHref = mode === "signup" ? `${BASE}/onboarding/checklist` : `${BASE}/create/home`;
+
+  return (
+    <div className="mx-auto flex min-h-full w-full max-w-[460px] flex-col justify-center px-6 py-16">
+      {/* 品牌头 */}
+      <div className="flex flex-col items-center text-center">
+        <OttoAvatar size={44} mood="idle" />
+        <h1 className="mt-4 text-2xl leading-[30px] font-bold tracking-[-0.02em] text-foreground">
+          {mode === "signin" ? "Welcome back" : "Create your account"}
+        </h1>
+        <p className="mt-1 text-sm text-muted-foreground">
+          {mode === "signin"
+            ? "Sign in to pick up where you left off."
+            : "One brand, every channel — Otto does the heavy lifting."}
+        </p>
+      </div>
+
+      {/* 登录 / 注册井 */}
+      <div
+        role="tablist"
+        aria-label="Sign in or create account"
+        onKeyDown={onModeKey}
+        className="mt-8 inline-flex items-center gap-0.5 self-center rounded-[10px] border border-border bg-card p-0.5"
+      >
+        {MODES.map((m, i) => {
+          const active = m.value === mode;
+          return (
+            <button
+              key={m.value}
+              ref={(el) => {
+                modeRefs.current[i] = el;
+              }}
+              type="button"
+              role="tab"
+              aria-selected={active}
+              tabIndex={active ? 0 : -1}
+              onClick={() => {
+                setMode(m.value);
+                setSent(false);
+              }}
+              className={cn(
+                "h-[30px] rounded-[8px] px-4 text-xs font-semibold transition-colors duration-[120ms]",
+                active ? "bg-secondary text-foreground" : "text-muted-foreground hover:bg-accent hover:text-foreground",
+              )}
+            >
+              {m.label}
+            </button>
+          );
+        })}
+      </div>
+
+      {/* 表单卡 */}
+      <div className="mt-6 rounded-[18px] border border-border bg-card p-6">
+        {sent ? (
+          <div className="flex flex-col items-center gap-4 py-4 text-center">
+            <span className="flex size-11 items-center justify-center rounded-full bg-secondary">
+              <Mail className="size-5 text-foreground" strokeWidth={2} />
+            </span>
+            <div>
+              <p className="text-[15px] leading-[22px] font-semibold text-foreground">Check your email</p>
+              <p className="mt-1 text-sm text-muted-foreground">
+                We sent a sign-in link to <span className="font-medium text-foreground">{email || NS_BRAND.email}</span>.
+              </p>
+            </div>
+            <Button asChild className="w-full">
+              <Link href={nextHref}>
+                Continue
+                <ArrowRight strokeWidth={2} />
+              </Link>
+            </Button>
+            <button
+              type="button"
+              onClick={() => setSent(false)}
+              className="text-xs font-medium text-muted-foreground hover:text-foreground"
+            >
+              Use a different email
+            </button>
+          </div>
+        ) : (
+          <form
+            onSubmit={(e) => {
+              e.preventDefault();
+              setSent(true);
+            }}
+            className="flex flex-col gap-4"
+          >
+            <label className="flex flex-col gap-1.5">
+              <span className="text-xs font-semibold text-foreground">Email</span>
+              <input
+                type="email"
+                required
+                value={email}
+                onChange={(e) => setEmail(e.target.value)}
+                placeholder="you@yourbrand.my"
+                autoComplete="email"
+                className="h-11 w-full rounded-[10px] border border-border bg-background px-3.5 text-[15px] leading-[22px] text-foreground outline-none transition-colors duration-[120ms] placeholder:text-muted-foreground focus-visible:border-foreground/40 focus-visible:ring-2 focus-visible:ring-ring"
+              />
+            </label>
+            <Button type="submit" className="w-full">
+              {mode === "signin" ? "Send sign-in link" : "Create account"}
+              <ArrowRight strokeWidth={2} />
+            </Button>
+            <p className="text-center text-xs text-muted-foreground">
+              We&rsquo;ll email you a secure link — no password to remember.
+            </p>
+          </form>
+        )}
+      </div>
+
+      {/* 法务尾注 → 沉浸式 legal */}
+      <p className="mt-6 text-center text-xs text-muted-foreground">
+        By continuing you agree to our{" "}
+        <Link href={`${BASE}/global/legal`} className="font-medium text-foreground underline underline-offset-2">
+          terms and privacy policy
+        </Link>
+        .
+      </p>
+    </div>
+  );
+}
