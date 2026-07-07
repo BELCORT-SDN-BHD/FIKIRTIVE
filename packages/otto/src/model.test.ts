@@ -1,5 +1,11 @@
-import { describe, it, expect, vi } from "vitest";
-import { isOverloadError, withOverloadFailover } from "./model.js";
+import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
+import {
+  isOverloadError,
+  withOverloadFailover,
+  injectPromptCacheControl,
+  ottoPromptCacheEnabled,
+  withPromptCaching,
+} from "./model.js";
 
 describe("isOverloadError", () => {
   it("detects a raw 529 status code", () => {
@@ -121,5 +127,163 @@ describe("withOverloadFailover", () => {
     const w = withOverloadFailover(primary, fallback);
     await expect(w.doGenerate({} as never)).rejects.toBe(authErr);
     expect(fallback.doGenerate).not.toHaveBeenCalled();
+  });
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Prompt caching (engine spec §2.2 Phase 1)
+// ─────────────────────────────────────────────────────────────────────────────
+
+/** Realistic CallOptions shape: leading system message (Otto instructions) + history + tools. */
+function callOptions() {
+  return {
+    prompt: [
+      { role: "system", content: "You are Otto." },
+      { role: "user", content: [{ type: "text", text: "hi" }] },
+      { role: "assistant", content: [{ type: "text", text: "hello" }] },
+    ],
+    tools: [
+      { type: "function", name: "propose", description: "d", inputSchema: {} },
+      { type: "function", name: "generate", description: "d", inputSchema: {} },
+      { type: "function", name: "setTitle", description: "d", inputSchema: {} },
+    ],
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  } as any;
+}
+
+/** Count entries carrying the anthropic ephemeral marker. */
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+function cacheMarkers(entries: any[]): number {
+  return entries.filter((e) => e?.providerOptions?.anthropic?.cacheControl?.type === "ephemeral").length;
+}
+
+const ENV_KEY = "OTTO_PROMPT_CACHE";
+let savedEnv: string | undefined;
+beforeEach(() => { savedEnv = process.env[ENV_KEY]; delete process.env[ENV_KEY]; });
+afterEach(() => {
+  if (savedEnv === undefined) delete process.env[ENV_KEY];
+  else process.env[ENV_KEY] = savedEnv;
+});
+
+describe("ottoPromptCacheEnabled (kill switch)", () => {
+  it("defaults ON when the env var is unset", () => {
+    expect(ottoPromptCacheEnabled()).toBe(true);
+  });
+
+  it.each(["0", "false", "off", "FALSE", "Off", " 0 "])("'%s' disables it", (v) => {
+    process.env[ENV_KEY] = v;
+    expect(ottoPromptCacheEnabled()).toBe(false);
+  });
+
+  it.each(["1", "true", "on", "yes", ""])("'%s' keeps it enabled", (v) => {
+    process.env[ENV_KEY] = v;
+    expect(ottoPromptCacheEnabled()).toBe(true);
+  });
+});
+
+describe("injectPromptCacheControl", () => {
+  it("marks EXACTLY the system + last-tool boundary: one marker on the leading system message, one on the last tool", () => {
+    const out = injectPromptCacheControl(callOptions()) as ReturnType<typeof callOptions>;
+
+    // system boundary: exactly one marked message, and it is prompt[0]
+    expect(cacheMarkers(out.prompt)).toBe(1);
+    expect(out.prompt[0].role).toBe("system");
+    expect(out.prompt[0].providerOptions.anthropic.cacheControl).toEqual({ type: "ephemeral" });
+
+    // tools boundary: exactly one marked tool, and it is the LAST one
+    expect(cacheMarkers(out.tools)).toBe(1);
+    expect(out.tools[2].providerOptions.anthropic.cacheControl).toEqual({ type: "ephemeral" });
+    expect(out.tools[0].providerOptions).toBeUndefined();
+    expect(out.tools[1].providerOptions).toBeUndefined();
+  });
+
+  it("leaves history messages (user/assistant) unmarked — only the constant prefix is cached", () => {
+    const out = injectPromptCacheControl(callOptions()) as ReturnType<typeof callOptions>;
+    expect(out.prompt[1].providerOptions).toBeUndefined();
+    expect(out.prompt[2].providerOptions).toBeUndefined();
+  });
+
+  it("does NOT mutate its input (copy-on-write)", () => {
+    const options = callOptions();
+    const snapshot = JSON.parse(JSON.stringify(options));
+    injectPromptCacheControl(options);
+    expect(options).toEqual(snapshot);
+  });
+
+  it("skips the system marker when the first message is not a system message", () => {
+    const options = callOptions();
+    options.prompt = options.prompt.slice(1); // no leading system
+    const out = injectPromptCacheControl(options) as ReturnType<typeof callOptions>;
+    expect(cacheMarkers(out.prompt)).toBe(0);
+    expect(cacheMarkers(out.tools)).toBe(1); // tools boundary still marked
+  });
+
+  it("skips the tool marker when there are no tools", () => {
+    const options = callOptions();
+    delete options.tools;
+    const out = injectPromptCacheControl(options) as ReturnType<typeof callOptions>;
+    expect(out.tools).toBeUndefined();
+    expect(cacheMarkers(out.prompt)).toBe(1);
+  });
+
+  it("preserves pre-existing providerOptions keys when merging the marker", () => {
+    const options = callOptions();
+    options.prompt[0] = { ...options.prompt[0], providerOptions: { anthropic: { other: "x" }, someProvider: { y: 1 } } };
+    const out = injectPromptCacheControl(options) as ReturnType<typeof callOptions>;
+    expect(out.prompt[0].providerOptions.anthropic.other).toBe("x");
+    expect(out.prompt[0].providerOptions.someProvider).toEqual({ y: 1 });
+    expect(out.prompt[0].providerOptions.anthropic.cacheControl).toEqual({ type: "ephemeral" });
+  });
+});
+
+describe("withPromptCaching", () => {
+  it("delegates identity members to the wrapped model", () => {
+    const inner = stubModel();
+    const w = withPromptCaching(inner);
+    expect(w.specificationVersion).toBe("v2");
+    expect(w.provider).toBe("anthropic.messages");
+    expect(w.modelId).toBe("stub-model");
+  });
+
+  it("ON (default): doGenerate receives transformed params with both markers, injected exactly once", async () => {
+    const inner = stubModel();
+    const w = withPromptCaching(inner);
+    await w.doGenerate(callOptions());
+    const passed = inner.doGenerate.mock.calls[0][0];
+    expect(cacheMarkers(passed.prompt)).toBe(1);
+    expect(cacheMarkers(passed.tools)).toBe(1);
+  });
+
+  it("ON (default): doStream receives transformed params with both markers", async () => {
+    const inner = stubModel();
+    const w = withPromptCaching(inner);
+    await w.doStream(callOptions());
+    const passed = inner.doStream.mock.calls[0][0];
+    expect(cacheMarkers(passed.prompt)).toBe(1);
+    expect(cacheMarkers(passed.tools)).toBe(1);
+  });
+
+  it.each(["0", "false", "off"])("kill switch '%s': params pass through UNTOUCHED (same reference, no markers)", async (v) => {
+    process.env[ENV_KEY] = v;
+    const inner = stubModel();
+    const w = withPromptCaching(inner);
+    const options = callOptions();
+    await w.doGenerate(options);
+    await w.doStream(options);
+    // Bypass = byte-identical request: the very same object, zero markers added.
+    expect(inner.doGenerate.mock.calls[0][0]).toBe(options);
+    expect(inner.doStream.mock.calls[0][0]).toBe(options);
+    expect(cacheMarkers(options.prompt)).toBe(0);
+    expect(cacheMarkers(options.tools)).toBe(0);
+  });
+
+  it("composes with withOverloadFailover: markers reach the fallback on a 529 (V3)", async () => {
+    const primary = stubModel({ doGenerate: vi.fn(async () => { throw { statusCode: 529 }; }) });
+    const fallback = stubModel();
+    const w = withPromptCaching(withOverloadFailover(primary, fallback));
+    await w.doGenerate(callOptions());
+    const passedToFallback = fallback.doGenerate.mock.calls[0][0];
+    expect(cacheMarkers(passedToFallback.prompt)).toBe(1);
+    expect(cacheMarkers(passedToFallback.tools)).toBe(1);
   });
 });

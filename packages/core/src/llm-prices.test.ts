@@ -3,11 +3,11 @@ import { llmPricesFor, ottoLlmMargin, OTTO_LLM_MARGIN_DEFAULT } from "./llm-pric
 
 describe("llmPricesFor — never priced free (metering-hole guard)", () => {
   it("canonical sonnet id → sonnet rates", () => {
-    expect(llmPricesFor("claude-sonnet-4-6")).toEqual({ inputPerToken: 3e-6, outputPerToken: 15e-6, cachedInputPerToken: 0.3e-6 });
+    expect(llmPricesFor("claude-sonnet-4-6")).toEqual({ inputPerToken: 3e-6, outputPerToken: 15e-6, cachedInputPerToken: 0.3e-6, cacheWriteInputPerToken: 3.75e-6 });
   });
 
   it("canonical opus id → opus rates", () => {
-    expect(llmPricesFor("claude-opus-4-8")).toEqual({ inputPerToken: 5e-6, outputPerToken: 25e-6, cachedInputPerToken: 0.5e-6 });
+    expect(llmPricesFor("claude-opus-4-8")).toEqual({ inputPerToken: 5e-6, outputPerToken: 25e-6, cachedInputPerToken: 0.5e-6, cacheWriteInputPerToken: 6.25e-6 });
   });
 
   it("provider-prefixed fal sonnet id (anthropic/claude-sonnet-4.5) → sonnet rates, NOT zero", () => {
@@ -17,7 +17,7 @@ describe("llmPricesFor — never priced free (metering-hole guard)", () => {
   });
 
   it("provider-prefixed opus id → opus rates (substring match)", () => {
-    expect(llmPricesFor("anthropic/claude-opus-4-8")).toEqual({ inputPerToken: 5e-6, outputPerToken: 25e-6, cachedInputPerToken: 0.5e-6 });
+    expect(llmPricesFor("anthropic/claude-opus-4-8")).toEqual({ inputPerToken: 5e-6, outputPerToken: 25e-6, cachedInputPerToken: 0.5e-6, cacheWriteInputPerToken: 6.25e-6 });
   });
 
   it("completely unknown model → non-zero default (sonnet), NEVER zero", () => {
@@ -26,12 +26,21 @@ describe("llmPricesFor — never priced free (metering-hole guard)", () => {
     expect(p.outputPerToken).toBe(15e-6);
   });
 
-  it("EVERY resolved price has all three fields strictly > 0 (the money invariant: a paid call can never cost 0)", () => {
+  it("EVERY resolved price has all four fields strictly > 0 (the money invariant: a paid call can never cost 0)", () => {
     for (const model of ["claude-sonnet-4-6", "claude-opus-4-8", "anthropic/claude-sonnet-4.5", "", "x", "gpt-something"]) {
       const p = llmPricesFor(model);
       expect(p.inputPerToken).toBeGreaterThan(0);
       expect(p.outputPerToken).toBeGreaterThan(0);
       expect(p.cachedInputPerToken).toBeGreaterThan(0);
+      expect(p.cacheWriteInputPerToken).toBeGreaterThan(0);
+    }
+  });
+
+  it("cache-write premium is exactly 1.25× input, and cache-read is strictly cheaper than input (Anthropic pricing shape)", () => {
+    for (const model of ["claude-sonnet-4-6", "claude-opus-4-8"]) {
+      const p = llmPricesFor(model);
+      expect(p.cacheWriteInputPerToken).toBeCloseTo(p.inputPerToken * 1.25, 12);
+      expect(p.cachedInputPerToken).toBeLessThan(p.inputPerToken);
     }
   });
 });

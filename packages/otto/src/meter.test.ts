@@ -42,7 +42,7 @@ vi.mock("@fikirtive/db", () => ({
 // ---------------------------------------------------------------------------
 // Now import the module under test (after mock is registered)
 // ---------------------------------------------------------------------------
-import { withLlmBudget, actualCostInternal } from "./meter.js";
+import { withLlmBudget, actualCostInternal, mapOttoUsage } from "./meter.js";
 import { llmPricesFor, CREDITS_PER_USD, turnBudgetInternal } from "@fikirtive/core";
 
 // ---------------------------------------------------------------------------
@@ -302,6 +302,129 @@ describe("Test #9 — withLlmBudget usageOnError", () => {
 
     expect(mocks.refundReservation).toHaveBeenCalledTimes(1);
     expect(mocks.settleCredits).not.toHaveBeenCalled();
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Test #10: prompt-cache metering (engine spec §2.3 — Phase 1)
+// Field names verified against installed @ai-sdk/anthropic@3.0.85 +
+// @openai/agents-extensions@0.11.8: the adapter emits inputTokensDetails
+// { cached_tokens, cache_write_tokens }, and each entry's inputTokens is the
+// Anthropic TOTAL (noCache + cacheRead + cacheWrite).
+// ---------------------------------------------------------------------------
+describe("Test #10a — mapOttoUsage cache read/write mapping", () => {
+  it("sums cached_tokens AND cache_write_tokens across request entries", () => {
+    const stateUsage: Parameters<typeof mapOttoUsage>[0] = {
+      inputTokens: 26_000,
+      outputTokens: 400,
+      requestUsageEntries: [
+        // step 1: cold cache — the prefix is WRITTEN
+        { inputTokens: 13_000, outputTokens: 200, inputTokensDetails: { cache_write_tokens: 12_400 } },
+        // step 2: warm cache — the prefix is READ
+        { inputTokens: 13_000, outputTokens: 200, inputTokensDetails: { cached_tokens: 12_400 } },
+      ],
+    };
+    expect(mapOttoUsage(stateUsage)).toEqual({
+      inputTokens: 26_000,
+      outputTokens: 400,
+      cachedInputTokens: 12_400,
+      cacheWriteInputTokens: 12_400,
+    });
+  });
+
+  it("no cache fields → both undefined (pre-caching behavior unchanged)", () => {
+    const stateUsage = {
+      inputTokens: 500,
+      outputTokens: 100,
+      requestUsageEntries: [{ inputTokens: 500, outputTokens: 100, inputTokensDetails: {} }],
+    };
+    const out = mapOttoUsage(stateUsage);
+    expect(out.cachedInputTokens).toBeUndefined();
+    expect(out.cacheWriteInputTokens).toBeUndefined();
+  });
+
+  it("missing requestUsageEntries → totals pass through, no cache fields", () => {
+    expect(mapOttoUsage({ inputTokens: 300, outputTokens: 150 })).toEqual({
+      inputTokens: 300,
+      outputTokens: 150,
+      cachedInputTokens: undefined,
+      cacheWriteInputTokens: undefined,
+    });
+  });
+});
+
+describe("Test #10b — actualCostInternal cache-write pricing (1.25× input)", () => {
+  const prices = llmPricesFor(MODEL); // sonnet: 3e-6 in / 15e-6 out / 0.3e-6 cached / 3.75e-6 cache-write
+
+  it("price table sanity: cacheWriteInputPerToken = 1.25 × inputPerToken", () => {
+    expect(prices.cacheWriteInputPerToken).toBeCloseTo(prices.inputPerToken * 1.25, 12);
+  });
+
+  it("{no cache}: unchanged pricing — all input at the regular rate", () => {
+    const usage = { inputTokens: 10_000, outputTokens: 500 };
+    const expectedUsd = 10_000 * 3e-6 + 500 * 15e-6;
+    expect(actualCostInternal(usage, prices, MARGIN)).toBe(Math.ceil(expectedUsd * MARGIN * CREDITS_PER_USD));
+  });
+
+  it("{read-heavy}: cached reads bill at the cached rate", () => {
+    const usage = { inputTokens: 13_000, outputTokens: 500, cachedInputTokens: 12_400 };
+    const expectedUsd = (13_000 - 12_400) * 3e-6 + 12_400 * 0.3e-6 + 500 * 15e-6;
+    expect(actualCostInternal(usage, prices, MARGIN)).toBe(Math.ceil(expectedUsd * MARGIN * CREDITS_PER_USD));
+  });
+
+  it("{write+read}: cache writes bill the 1.25× premium, reads the cached rate — exact internal-credit total", () => {
+    // A realistic 10-step turn: step 1 writes the 12.4k prefix, steps 2-10 read it.
+    const usage = {
+      inputTokens: 130_000, // 10 × (12.4k prefix + 0.6k history), totals incl. cache tokens
+      outputTokens: 2_000,
+      cachedInputTokens: 111_600, // 9 reads × 12.4k
+      cacheWriteInputTokens: 12_400, // 1 write × 12.4k
+    };
+    const nonCached = 130_000 - 111_600 - 12_400; // 6_000
+    const expectedUsd = nonCached * 3e-6 + 111_600 * 0.3e-6 + 12_400 * 3.75e-6 + 2_000 * 15e-6;
+    expect(actualCostInternal(usage, prices, MARGIN)).toBe(Math.ceil(expectedUsd * MARGIN * CREDITS_PER_USD));
+  });
+
+  it("cached path is CHEAPER than uncached for the SAME token counts (the whole point of Phase 1)", () => {
+    const base = { inputTokens: 130_000, outputTokens: 2_000 };
+    const uncached = actualCostInternal(base, prices, MARGIN);
+    const cached = actualCostInternal(
+      { ...base, cachedInputTokens: 111_600, cacheWriteInputTokens: 12_400 },
+      prices,
+      MARGIN,
+    );
+    expect(cached).toBeLessThan(uncached);
+  });
+
+  it("clamp guard: cacheWrite is capped at input − cached (cached + cacheWrite never exceeds input)", () => {
+    // Malformed usage: 800 cached + 900 write > 1000 input → write clamps to 200.
+    const usage = { inputTokens: 1_000, outputTokens: 0, cachedInputTokens: 800, cacheWriteInputTokens: 900 };
+    const expectedUsd = 0 * 3e-6 + 800 * 0.3e-6 + 200 * 3.75e-6;
+    expect(actualCostInternal(usage, prices, MARGIN)).toBe(Math.ceil(expectedUsd * MARGIN * CREDITS_PER_USD));
+  });
+
+  it("NaN/negative cacheWrite → treated as 0", () => {
+    const clean = actualCostInternal({ inputTokens: 1_000, outputTokens: 100 }, prices, MARGIN);
+    expect(actualCostInternal({ inputTokens: 1_000, outputTokens: 100, cacheWriteInputTokens: NaN }, prices, MARGIN)).toBe(clean);
+    expect(actualCostInternal({ inputTokens: 1_000, outputTokens: 100, cacheWriteInputTokens: -50 }, prices, MARGIN)).toBe(clean);
+  });
+});
+
+describe("Test #10c — withLlmBudget settles write+read usage correctly (≤ reserve)", () => {
+  it("settleCredits receives the exact write+read internal total; settle ≤ reserve", async () => {
+    // One metered step whose input fits the 12k reserve assumption (warm-cache step).
+    const usage = { inputTokens: 11_000, outputTokens: 200, cachedInputTokens: 10_000, cacheWriteInputTokens: 500 };
+    const fn = vi.fn().mockResolvedValue({ result: "ok", usage });
+
+    await withLlmBudget(makeArgs(), fn);
+
+    const prices = llmPricesFor(MODEL);
+    const expectedActual = actualCostInternal(usage, prices, MARGIN);
+    const settleCall = mocks.settleCredits.mock.calls[0] as [unknown, { actualInternal: number }];
+    expect(settleCall[1].actualInternal).toBe(expectedActual);
+
+    const reserve = turnBudgetInternal(prices, MARGIN, 1);
+    expect(expectedActual).toBeLessThanOrEqual(reserve);
   });
 });
 

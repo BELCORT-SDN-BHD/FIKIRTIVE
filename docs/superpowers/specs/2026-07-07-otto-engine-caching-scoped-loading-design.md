@@ -24,6 +24,8 @@
 
 ## 二、Phase 1 —— Prompt caching
 
+> **状态(2026-07-07)**:founder 已批准动工("批准且若有更好的方法都批准")。§2.3 meter 前置与 §2.2 注入按批示合并为一个 PR 施工(在途 → 本 PR);§2.5-V1 真实验证花费($1 内)已批,合并后执行。
+
 ### 2.1 设计目标
 - system prompt(instructions)+ tools schema 组成的**恒定前缀**打上 Anthropic `cache_control`;一轮内第 2-10 步、以及 5 分钟窗口内的后续轮,前缀走 cache read($0.30/M)。
 - 计量、定价、明细全部如实反映 cache write/read(计费透明,铁律①)。
