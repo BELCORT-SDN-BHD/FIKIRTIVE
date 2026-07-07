@@ -12,7 +12,7 @@ import { cn } from "@/lib/utils"
  * 14px radius, coral focus ring, a little spring on press.
  */
 const buttonVariants = cva(
-  "inline-flex items-center justify-center gap-2 whitespace-nowrap rounded-lg text-sm font-semibold tracking-[-0.01em] transition-[color,background-color,box-shadow,transform] duration-150 ease-[cubic-bezier(0.34,1.56,0.64,1)] outline-none focus-visible:ring-[3px] focus-visible:ring-ring/40 active:scale-[0.985] disabled:pointer-events-none disabled:opacity-40 [&_svg]:size-[1.1em] [&_svg]:shrink-0",
+  "inline-flex items-center justify-center gap-2 whitespace-nowrap rounded-lg text-sm font-semibold tracking-[-0.01em] transition-[color,background-color,box-shadow,transform] duration-[var(--dur-2)] ease-[var(--ease-spring)] outline-none focus-visible:ring-[3px] focus-visible:ring-ring/40 active:scale-[0.985] disabled:pointer-events-none disabled:opacity-40 [&_svg]:size-[1.1em] [&_svg]:shrink-0",
   {
     variants: {
       variant: {
