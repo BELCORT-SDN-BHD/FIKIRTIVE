@@ -5,6 +5,18 @@ RUN apt-get update \
   && apt-get install -y --no-install-recommends ffmpeg ca-certificates fonts-dejavu-core fontconfig libgomp1 \
   && rm -rf /var/lib/apt/lists/*
 RUN corepack enable
+# --- nightly DB backup (P0-1②): pg_dump from pgdg, pinned to major 17 ---
+# pg_dump's major must be >= the server major (Neon runs the current major;
+# 17-dumps-16 is fine, 16-dumps-17 is not). pgdg (not the Debian archive) so
+# the pin holds regardless of what trixie ships. Additive block — nothing
+# above or below this may change (see REVIEWER-PLAYBOOK Dockerfile invariants).
+RUN apt-get update \
+  && apt-get install -y --no-install-recommends curl \
+  && curl -fsSL https://www.postgresql.org/media/keys/ACCC4CF8.asc -o /usr/share/keyrings/pgdg.asc \
+  && echo "deb [signed-by=/usr/share/keyrings/pgdg.asc] https://apt.postgresql.org/pub/repos/apt trixie-pgdg main" > /etc/apt/sources.list.d/pgdg.list \
+  && apt-get update \
+  && apt-get install -y --no-install-recommends postgresql-client-17 \
+  && rm -rf /var/lib/apt/lists/*
 
 FROM base AS build
 # --- whisper.cpp: self-hosted $0 transcription (no apt package on trixie) ---
