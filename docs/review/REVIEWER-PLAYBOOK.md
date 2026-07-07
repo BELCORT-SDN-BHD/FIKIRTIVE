@@ -200,3 +200,17 @@
 - [ ] 任何"后台状态会变化"的用户可见面(生成/发布/研究/Otto 写操作),diff 必须回答:界面如何**实时**得知变化?(推送、失效刷新、或有明确上限的短轮询)——"后台已完成而界面不知"按**缺陷级 reject**(参照 2026-07-07 吐槽清单头号痛点:生成 DONE 但卡片停在 On it)
 - [ ] Otto 的写操作落到界面时必须走 coral 视觉语言(高亮 + 简短叙述),不得默默变更(O-12/v2.6 ③)
 - [ ] 任何给 Otto 的新操作能力 = 动作层调用;出现"模拟点击/像素操作/DOM 驱动"类实现 = 违宪 v2.6 ②,一票否决
+
+---
+
+# 增补(2026-07-07,随北极星原型判决生效)
+
+> 依据:founder 2026-07-07 北极星原型全权授权(判决转录于 `docs/northstar/PROGRAM.md` §一);页面清单 = `docs/northstar/PAGE-INVENTORY.md`;批准台账 = `docs/northstar/APPROVALS.md`。
+
+## 北极星 design contract(已批准原型页 = 有约束力的施工图)
+
+- [ ] **approved 北极星页面 = design contract**:任何 PR 使已批准页面对应的真实页面 UIUX 偏离原型(布局结构 / 设计 token 用法 / 交互模式)= **挡**,除非 PR 附 founder 重新设计审批记录(`docs/northstar/APPROVALS.md` 新行)。后台/功能施工只能在原型的外观与交互之内做工程 —— "顺手改一下布局/间距/交互"不存在。
+- [ ] **原型目录只经设计流程修改**:改任何原型页(`apps/web/app/northstar/` 与 `docs/northstar/`)= 设计 PR + founder 重新拍板;功能/后台 PR 触碰原型目录 = 挡。
+- [ ] **"哪些页已批准"的判断口径** = `docs/northstar/APPROVALS.md`(台账)+ 页内 `@nsPage` 元数据 `status="approved"` 双口径;两者不一致 = 文档 bug,先修台账再审。
+- [ ] **原型页零后台依赖**:原型页永远零 server action / 零 DB / 零 auth / 零队列(硬编码示例数据)。任何往原型页里接真实数据或动作的 diff = 挡 —— 那是"点亮"施工,走对应板块的 spec 流程(第五章 + 九缝 + parity),不在原型目录里发生。
+- [ ] **原型 PR 的审查两问**(替代后台清单):①是否 100% 落在 `docs/design-system/design-rules.md` 内(逐条对 harmony-06 §一 设计审六条,三态齐全)?②是否只动了原型目录?任一为否 = 挡。
