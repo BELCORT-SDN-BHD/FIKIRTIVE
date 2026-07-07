@@ -2,14 +2,10 @@
 import { useCallback, useEffect, useRef } from "react";
 import { startGen, getGenJob, getActiveGenModels } from "../../lib/gen-actions";
 import { createCanvasNode, resolveCanvasNode } from "../../lib/canvas-actions";
-import { CANVAS_IMAGE_VARIANT_COUNT, canvasGenCostQuote } from "@/lib/canvas-gen-costs";
+import { CANVAS_IMAGE_DEFAULT_COUNT, canvasGenCostQuote, clampImageVariantCount } from "@/lib/canvas-gen-costs";
 
 type Pos = { x: number; y: number; w: number; h: number };
 type OnNode = (node: { id: string; type: "image" | "video"; pos: Pos; status: string; url?: string; prompt: string; sourceNodeId?: string }) => void;
-
-/** Phase 2: how many image variants a single canvas generation produces. Must be
- *  ≤ MAX_GEN_COUNT (4) — the gate rejects more, and the charge scales by count. */
-const IMAGE_VARIANT_COUNT = CANVAS_IMAGE_VARIANT_COUNT;
 
 /** createCanvasNode with a small retry. By the time we place a paid GenJob's card,
  *  startGen has already reserved/queued it — so a transient node-create failure must
@@ -109,14 +105,15 @@ export function useCanvasGen(
   // second charge attempt (F19/F20).
   const fail = (msg: string) => onError?.(msg || "That didn't go through — please try again.");
 
-  const generateImage = useCallback(async (prompt: string, pos: Pos, entityIds: string[] = [], variantSel: Record<string, string> = {}) => {
+  const generateImage = useCallback(async (prompt: string, pos: Pos, entityIds: string[] = [], variantSel: Record<string, string> = {}, count: number = CANVAS_IMAGE_DEFAULT_COUNT) => {
     const vsel = Object.keys(variantSel).length ? variantSel : undefined;
-    // Phase 2: request 4 variants in one job. count is a priced/gated/capped
-    // parameter (MAX_GEN_COUNT=4) and the charge scales by it — this is the ONLY
-    // spend change. The owner keeps one card and deletes the rest; all 4 stay in
-    // the library. Sibling cards below are pure placement (no extra spend).
+    // Default one image; the owner can request more variants (up to MAX_GEN_COUNT=4).
+    // count is a priced/gated/capped spend parameter and the charge scales by it, so it's
+    // clamped to [1, MAX] here and re-validated by the server genRequest gate. Any sibling
+    // cards below are pure placement of already-charged variants (no extra spend).
+    const safeCount = clampImageVariantCount(count);
     const { image } = await ensureModels();
-    const req = { projectId, prompt, count: IMAGE_VARIANT_COUNT, kind: "image" as const, model: image, entityIds, ...(vsel && { variantSel: vsel }), idempotencyKey: `img-${Date.now()}` };
+    const req = { projectId, prompt, count: safeCount, kind: "image" as const, model: image, entityIds, ...(vsel && { variantSel: vsel }), idempotencyKey: `img-${Date.now()}` };
     const started = await startGen(req);
     if ("error" in started) { fail(started.error); return; }
     void onBalanceRefresh?.();
