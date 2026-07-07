@@ -1,10 +1,9 @@
-/* @nsPage district="住户服务中心" page="connections" status="stub"
+/* @nsPage district="住户服务中心" page="connections" status="draft"
    sources="区划图·住户服务中心;X spec §四/§六;红旗一" approvedAt="" pr="" */
 "use client";
 
-// 占位 stub — zone builder 按 PAGE-INVENTORY 行整页替换,并同步 @nsPage 与 _registry.ts。
-import { NsStub } from "@/components/northstar/_shared";
+import { ConnectionsPage } from "@/components/northstar/account/connections-page";
 
 export default function Page() {
-  return <NsStub path="/northstar/account/connections" />;
+  return <ConnectionsPage />;
 }
