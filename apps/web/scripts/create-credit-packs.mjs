@@ -5,6 +5,8 @@
 //   node --env-file=apps/web/.env.local apps/web/scripts/create-credit-packs.mjs
 // Idempotent: matches an existing pack by (product name + currency + amount + credits) and skips it.
 // Safety: refuses to run against a LIVE key unless ALLOW_LIVE=1.
+import { interlock } from "../../../scripts/tools/_interlock.mjs";
+interlock({ spends: "Stripe API writes — creates Products/Prices; with a LIVE key (+ALLOW_LIVE=1) these are real live billing objects" });
 import Stripe from "stripe";
 
 const CURRENCY = "myr";
