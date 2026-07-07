@@ -63,5 +63,8 @@ export const config = {
   // api/meta/data-deletion excluded — Meta calls it unauthenticated; the signed_request is its auth.
   // skin-preview: dev-only visual harness for the UI re-skin (the page itself 404s in
   // production), excluded here so it renders without a session in dev. Throwaway.
-  matcher: ["/((?!login|terms|privacy|legal|skin-preview|api/better-auth|api/stripe|api/health|api/meta/data-deletion|_next/static|_next/image|favicon.ico).*)"],
+  // northstar: the design-only prototype city + immersive app (zero backend, zero auth) —
+  // same precedent as skin-preview. The `northstar` prefix also covers `northstar-immersive`.
+  // Both layouts 404 in production unless NORTHSTAR_PREVIEW=1, so exempting auth is safe.
+  matcher: ["/((?!login|terms|privacy|legal|skin-preview|northstar|api/better-auth|api/stripe|api/health|api/meta/data-deletion|_next/static|_next/image|favicon.ico).*)"],
 };
