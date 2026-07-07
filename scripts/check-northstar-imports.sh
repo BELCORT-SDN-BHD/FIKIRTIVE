@@ -6,7 +6,7 @@
 # Not wired into ci.yml yet — run manually / wire with the first prototype-page PR.
 set -uo pipefail
 
-DIRS="apps/web/app/northstar apps/web/components/northstar"
+DIRS="apps/web/app/northstar apps/web/app/northstar-immersive apps/web/components/northstar"
 
 bad=$(grep -rnE "from [\"'][^\"']*(-actions|auth-guard|server-only)([\"']|/)|from [\"']@fikirtive/(db|generation)|from [\"'][^\"']*lib/auth" \
   $DIRS --include='*.ts' --include='*.tsx' 2>/dev/null | grep -vE ':\s*(\*|//)' || true)

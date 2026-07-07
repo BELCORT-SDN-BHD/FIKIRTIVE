@@ -16,6 +16,7 @@
 
 import * as React from "react";
 import { cn } from "@/lib/utils";
+import { useInsideImmersive } from "../immersive/_context";
 
 /* ── zone keyframes(注入一次) ── */
 const KEYFRAMES_ID = "ns-analytics-ads-keyframes";
@@ -231,6 +232,9 @@ export function DemoStateBar({
   states?: NsDemoState[];
   className?: string;
 }) {
+  // 沉浸式产品外壳里,画廊三态切换器不出现。
+  const insideImmersive = useInsideImmersive();
+  if (insideImmersive) return null;
   return (
     <div
       className={cn(

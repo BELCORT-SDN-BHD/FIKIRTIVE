@@ -21,6 +21,7 @@ import { cn } from "@/lib/utils";
 import { OttoAvatar, type OttoMood } from "@/components/otto/OttoAvatar";
 import { nsPage, nsZone } from "./_registry";
 import { NS_OTTO_ACTIONS, type NsOttoAction } from "./_mock";
+import { useInsideImmersive } from "./immersive/_context";
 
 /* ── shared keyframes(注入一次;.gb reduced-motion clamp 会冻结循环) ── */
 const NS_KEYFRAMES_ID = "ns-shared-keyframes";
@@ -357,7 +358,10 @@ export function EmptyState({ icon: Icon, title, body, action, className }: Empty
  * MockNote — 原型角标:链回总目录该板块锚点(= PAGE-INVENTORY 行的活映射)
  * ──────────────────────────────────────────────────────────────────────── */
 export function MockNote({ path, className }: { path: string; className?: string }) {
+  // 沉浸式产品外壳里,画廊角标不出现(§设计稿 chrome 仅属画廊)。
+  const insideImmersive = useInsideImmersive();
   const p = nsPage(path);
+  if (insideImmersive) return null;
   const z = nsZone(p.zoneSlug);
   return (
     <Link

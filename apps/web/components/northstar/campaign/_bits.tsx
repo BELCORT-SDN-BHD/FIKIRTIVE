@@ -14,6 +14,7 @@ import { cn } from "@/lib/utils";
 import { Badge } from "@/components/ui/badge";
 import type { NsCampaignEntry } from "../_mock";
 import { FORMAT_META, PLATFORM_META, type CampaignStatus } from "./_data";
+import { useInsideImmersive } from "../immersive/_context";
 
 /* ── 注入一次的 keyframes(.gb reduced-motion clamp 会压平/冻结) ── */
 const KEYFRAMES_ID = "ns-campaign-keyframes";
@@ -178,12 +179,15 @@ export function DemoStates({
   states?: DemoState[];
   className?: string;
 }) {
+  // 沉浸式产品外壳里,画廊三态切换器不出现。
+  const insideImmersive = useInsideImmersive();
   const labels: Record<DemoState, string> = {
     default: "正常",
     loading: "加载",
     empty: "空态",
     error: "错误",
   };
+  if (insideImmersive) return null;
   return (
     <div
       className={cn(
