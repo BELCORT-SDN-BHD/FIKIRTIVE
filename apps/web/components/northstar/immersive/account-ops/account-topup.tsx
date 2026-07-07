@@ -1,0 +1,169 @@
+"use client";
+
+/**
+ * 充值 —— 选档 → 确认 → 到账。credits 是 credits(§V5),付款价才用 RM;买额度是人的动作,
+ * 用 INK 主按钮(§F7 paid flip confirm before),不是 coral(coral 只属于 Otto)。
+ * 交叉链接:到账后可回 credits 看流水,或直接去 canvas 开始花。
+ */
+
+import * as React from "react";
+import Link from "next/link";
+import { ArrowRight, Check } from "lucide-react";
+import { Button } from "@/components/ui/button";
+import { Badge } from "@/components/ui/badge";
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+} from "@/components/ui/dialog";
+import { PageHeader } from "@/components/northstar/_shared";
+import { NS_BRAND } from "@/components/northstar/_mock";
+import { ACCOUNT_OPS_BASE as BASE, AccountNav } from "./kit";
+import { NS_TOPUP_PACKS, type NsTopUpPack } from "./data";
+
+function PackCard({
+  pack,
+  selected,
+  onSelect,
+}: {
+  pack: NsTopUpPack;
+  selected: boolean;
+  onSelect: () => void;
+}) {
+  return (
+    <button
+      type="button"
+      onClick={onSelect}
+      aria-pressed={selected}
+      className={
+        "flex flex-col items-start gap-1 rounded-[18px] border bg-card p-5 text-left transition-colors duration-[120ms] focus-visible:outline-2 focus-visible:outline-ring " +
+        (selected ? "border-primary ring-[3px] ring-ring/40" : "border-border hover:bg-accent")
+      }
+    >
+      <div className="flex w-full items-center gap-2">
+        <span className="text-[26px] leading-8 font-bold tracking-[-0.02em] text-foreground tabular-nums">
+          {pack.credits.toLocaleString("en-MY")}
+        </span>
+        <span className="text-sm font-medium text-muted-foreground">credits</span>
+        {pack.best && <Badge variant="success" className="ml-auto">Best value</Badge>}
+      </div>
+      <p className="text-sm font-semibold text-foreground tabular-nums">RM {pack.priceMyr}</p>
+      <p className="text-xs text-muted-foreground">{pack.roughly}</p>
+    </button>
+  );
+}
+
+export function AccountTopUp() {
+  const [selectedId, setSelectedId] = React.useState(NS_TOPUP_PACKS.find((p) => p.best)?.id ?? NS_TOPUP_PACKS[0].id);
+  const [confirming, setConfirming] = React.useState(false);
+  const [pending, setPending] = React.useState(false);
+  const [doneCredits, setDoneCredits] = React.useState<number | null>(null);
+
+  const pack = NS_TOPUP_PACKS.find((p) => p.id === selectedId)!;
+  const newBalance = NS_BRAND.creditBalance + (doneCredits ?? 0);
+
+  const confirm = () => {
+    setPending(true);
+    window.setTimeout(() => {
+      setDoneCredits(pack.credits);
+      setPending(false);
+      setConfirming(false);
+    }, 700);
+  };
+
+  if (doneCredits !== null) {
+    return (
+      <div className="mx-auto flex min-h-full w-full max-w-[880px] flex-col px-6 pt-6 pb-16">
+        <PageHeader title="Top up" subtitle="One wallet for every generation." actions={<AccountNav />} />
+        <div className="mt-10 flex flex-col items-center gap-4 rounded-[18px] border border-border bg-card px-6 py-12 text-center">
+          <span className="flex size-12 items-center justify-center rounded-full bg-success-soft">
+            <Check className="size-6 text-success-soft-foreground" strokeWidth={2.5} />
+          </span>
+          <p className="text-lg font-semibold text-foreground">{doneCredits.toLocaleString("en-MY")} credits added</p>
+          <p className="max-w-[420px] text-sm text-muted-foreground">
+            Your balance is now {newBalance.toLocaleString("en-MY")} credits. Nothing publishes or generates until you approve it.
+          </p>
+          <div className="mt-2 flex flex-wrap items-center justify-center gap-3">
+            <Button size="sm" asChild>
+              <Link href={`${BASE}/create/canvas`}>
+                Start creating
+                <ArrowRight strokeWidth={2} />
+              </Link>
+            </Button>
+            <Button variant="secondary" size="sm" asChild>
+              <Link href={`${BASE}/account/credits`}>View activity</Link>
+            </Button>
+          </div>
+        </div>
+      </div>
+    );
+  }
+
+  return (
+    <div className="mx-auto flex min-h-full w-full max-w-[880px] flex-col px-6 pt-6 pb-16">
+      <PageHeader
+        title="Top up"
+        subtitle="Pick a pack. Credits land instantly and never expire."
+        actions={<AccountNav />}
+      />
+
+      <div className="mt-6 flex items-center gap-2 rounded-[18px] border border-border bg-secondary/60 px-4 py-3">
+        <span aria-hidden className="size-3.5 shrink-0 rounded-full bg-brand" />
+        <p className="text-[13px] leading-[18px] text-foreground">
+          Current balance {NS_BRAND.creditBalance.toLocaleString("en-MY")} credits.
+        </p>
+      </div>
+
+      <div className="mt-6 grid grid-cols-1 gap-3 sm:grid-cols-3">
+        {NS_TOPUP_PACKS.map((p) => (
+          <PackCard key={p.id} pack={p} selected={p.id === selectedId} onSelect={() => setSelectedId(p.id)} />
+        ))}
+      </div>
+
+      <div className="mt-6 flex flex-wrap items-center gap-3 rounded-[18px] border border-border bg-card px-4 py-4">
+        <div className="min-w-0">
+          <p className="text-sm font-semibold text-foreground tabular-nums">
+            {pack.credits.toLocaleString("en-MY")} credits · RM {pack.priceMyr}
+          </p>
+          <p className="mt-0.5 text-xs text-muted-foreground">{pack.roughly}</p>
+        </div>
+        <Button className="ml-auto" size="sm" onClick={() => setConfirming(true)}>
+          Continue to payment
+        </Button>
+      </div>
+
+      <p className="mt-3 text-xs text-muted-foreground">
+        Card and FPX supported. You can manage the wallet for each ad channel in{" "}
+        <Link href={`${BASE}/account/channel-wallet`} className="font-semibold text-foreground hover:underline">
+          channel wallet
+        </Link>
+        .
+      </p>
+
+      <Dialog open={confirming} onOpenChange={(open) => !open && !pending && setConfirming(false)}>
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>Confirm top up</DialogTitle>
+            <DialogDescription>
+              {pack.credits.toLocaleString("en-MY")} credits for RM {pack.priceMyr}. Credits land instantly and never expire.
+            </DialogDescription>
+          </DialogHeader>
+          <div className="rounded-[14px] bg-secondary/70 p-3 text-[13px] leading-[18px] text-foreground">
+            New balance will be {(NS_BRAND.creditBalance + pack.credits).toLocaleString("en-MY")} credits.
+          </div>
+          <DialogFooter className="flex-row justify-end gap-3">
+            <Button variant="secondary" size="sm" disabled={pending} onClick={() => setConfirming(false)}>
+              Cancel
+            </Button>
+            <Button size="sm" disabled={pending} onClick={confirm}>
+              {pending ? "Processing…" : `Pay RM ${pack.priceMyr}`}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+    </div>
+  );
+}
