@@ -1,10 +1,9 @@
-/* @nsPage district="创作区" page="ideas" status="stub"
+/* @nsPage district="创作区" page="ideas" status="draft"
    sources="N (Buffer) Ideas 判决;campaign spec §一.3" approvedAt="" pr="" */
 "use client";
 
-// 占位 stub — zone builder 按 PAGE-INVENTORY 行整页替换,并同步 @nsPage 与 _registry.ts。
-import { NsStub } from "@/components/northstar/_shared";
+import { IdeasPage } from "@/components/northstar/create/ideas-page";
 
 export default function Page() {
-  return <NsStub path="/northstar/create/ideas" />;
+  return <IdeasPage />;
 }
