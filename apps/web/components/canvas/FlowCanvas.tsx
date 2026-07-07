@@ -403,8 +403,8 @@ export default function FlowCanvas({
   const refreshCostQuote = useCallback(() => {
     void quoteCosts().then(setCostQuote).catch(() => setCostQuote(null));
   }, [quoteCosts]);
-  // keep animateFnRef current
-  animateFnRef.current = animate;
+  // keep animateFnRef current (in an effect — refs must not be written during render)
+  useEffect(() => { animateFnRef.current = animate; }, [animate]);
 
   // Shared submit handler — used by form onSubmit and MentionInput onSubmit
   const handleGenerate = useCallback(async () => {
@@ -518,6 +518,12 @@ export default function FlowCanvas({
 
   useEffect(() => {
     directToolsLockedRef.current = directToolsLocked;
+  }, [directToolsLocked]);
+  // When the lock engages, close the composer and every open spend dialog. Render-phase
+  // "adjust state when a prop changes" (React docs pattern) — not setState-in-effect.
+  const [prevToolsLocked, setPrevToolsLocked] = useState(directToolsLocked);
+  if (prevToolsLocked !== directToolsLocked) {
+    setPrevToolsLocked(directToolsLocked);
     if (directToolsLocked) {
       closeComposer(true);
       setPendingDeleteId(null);
@@ -525,11 +531,15 @@ export default function FlowCanvas({
       setT2vOpen(false);
       setT2vPrompt("");
     }
-  }, [directToolsLocked, closeComposer]);
+  }
 
+  // Cost transparency (宪法 3): images generate with no confirm dialog, so the quote
+  // must be loaded while the composer is visible — its cost label sits next to the
+  // Generate button. Video/t2v quotes still load when their confirm dialogs open.
+  const composerVisible = skin === "gb" ? composerOpen : !directToolsLocked;
   useEffect(() => {
-    if (pendingAnimateId !== null || t2vOpen) refreshCostQuote();
-  }, [pendingAnimateId, t2vOpen, refreshCostQuote]);
+    if (composerVisible || pendingAnimateId !== null || t2vOpen) refreshCostQuote();
+  }, [composerVisible, pendingAnimateId, t2vOpen, refreshCostQuote]);
 
   // Load (and, under the Grok-bright skin, bridge OTTO's chat results onto) the
   // canvas. The gb path resolves each node's media URL and ensures a node exists
@@ -587,7 +597,9 @@ export default function FlowCanvas({
       return all;
     });
   }, [skin, projectId, onTextChange, getOnAnimate, getOnMediaSize, getOnOpenDetail, getOnReferenceInChat, requestReload, withNodeActionLock]);
-  reloadRef.current = reload;
+  // keep reloadRef current (in an effect — refs must not be written during render);
+  // declared before the consumers below, so it runs first within any commit.
+  useEffect(() => { reloadRef.current = reload; }, [reload]);
 
   // Initial load + project-level reload. Under gb this bridges every chat in the project.
   useEffect(() => { void reload(); }, [reload]);
@@ -699,6 +711,9 @@ export default function FlowCanvas({
   });
   const showGraph = canvasReady && (!directToolsLocked || nodes.length > 0 || dragOver);
   const videoCostLabel = costQuote ? creditsLabel(costQuote.videoCredits) : "checking exact cost";
+  // Image generation has no confirm dialog (founder 2026-07-06, constitutional exception ①
+  // "balance is the gate"), so the cost must be visible AT the input before submit (宪法 3).
+  const imageCostHint = costQuote ? `Cost: ${creditsLabel(costQuote.imageCredits)}` : "Checking cost…";
   const directToolTitle = directToolsLocked ? directToolsLockedReason : undefined;
   const visibleNodes: CanvasFlowNode[] = filterNodesByConvo(nodes, activeThreadId, filterToConvo).map((n) => ({
     ...n,
@@ -787,6 +802,7 @@ export default function FlowCanvas({
                   onSubmit={() => void handleGenerate()}
                 />
               </div>
+              <span className="text-[0.75rem] text-muted-foreground" style={{ whiteSpace: "nowrap" }} title="Charged when you press Generate">{imageCostHint}</span>
               <button className="al-btn al-btn-primary al-btn-sm" type="submit" disabled={submitting || !prompt.trim()}>Generate</button>
               <button
                 className="al-btn al-btn-sm"
@@ -864,6 +880,7 @@ export default function FlowCanvas({
               onSubmit={handleGenerate}
             />
           </div>
+          <span className="text-[0.75rem] text-muted-foreground" style={{ whiteSpace: "nowrap" }} title="Charged when you press Generate">{imageCostHint}</span>
           <button className="al-btn al-btn-primary al-btn-sm" type="submit" disabled={submitting || !prompt.trim()}>Generate</button>
           {activeThreadId && (
             <button
