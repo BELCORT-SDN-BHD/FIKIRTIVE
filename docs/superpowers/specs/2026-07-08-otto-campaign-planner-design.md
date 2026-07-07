@@ -15,6 +15,9 @@
 | O-10 | "投放效果数据反哺创作"判决(要) |
 | routine 四件套 | 预算上限 + 范围声明 + kill switch + 事后摘要(自动化预授权的必配件) |
 | 7-3 / 7-7 | 2026-07-07 判决:批量出片必须显示总价确认页 / Otto 花大钱前先复述理解+报价 |
+| task-specific surface / 结构化入口 | 专属 Campaign 工作台:填表就能发起策划,不用会"聊天 prompt" |
+| TrendSnapshot | 趋势快照存档:研究结论落档成行,Otto 以后策划随时翻 |
+| live reflection | "看着 Otto 干活":Otto 走后台动作层干活,界面实时亮出来给你看 |
 
 ---
 
@@ -136,12 +139,57 @@
 
 ---
 
-## 五、分期与验收
+## 五、founder 增补(2026-07-07 口述)
+
+> founder 过目初稿后的三条增补,忠实转录原话要点。前两条是本 spec 的新增交付件;第三条是**全产品级**设计原则,在此入档(适用范围超出 campaign),判决记录见 GRILL-VERDICTS 2026-07-07 第四批。
+
+### 5.1 专属 Campaign 工作台(结构化入口)
+
+> **founder 原话**:"没有可能让 user 直接和 OTTO 随机聊天然后 prompt 到……直接做一个专属这个 feature 的地方。"
+
+策划 campaign 不能只靠用户"会聊天" —— Campaign 区要有**自己的房间**(宪法 7 双模原则本来就要求人工面:人工可完整操作,Otto 不在也是能打的产品):
+
+- **结构化表单入口**:目标 / 周期 / 预算 / 平台,四项填表即发起策划,不需要用户想 prompt。
+- **提案卡工作台**:日历视图,逐条批 / 改 / 删 —— 与聊天里的 CAMPAIGN_CARD 是**同一份数据**(Campaign 最薄行 + planJson,§2.4),不建第二份副本。
+- **一切按钮走与 Otto 相同的动作层**(宪法 7 的 O-12"就地按钮 = Otto 的手"):表单入口与聊天入口**殊途同归** —— 都落到同一个 `proposeCampaign` 动作,server 端同一套校验、同一张卡、同一行 Campaign;人工面新按钮出生即登记 parity manifest(缝 9)。
+- 落地期:第一期随 CAMPAIGN_CARD 交付最小工作台(表单发起 + 日历批改);打包批确认页(第二期)与 routine 管理面(第三期)长在同一个房间里。
+- 专业名词:**task-specific surface(任务专属界面)/ 结构化入口(structured entry)**。
+
+### 5.2 趋势数据层(TrendSnapshot,缝 5)
+
+> **founder 原话**:"设计要如何消化储存那些 trends 或任何数据,方便未来 otto refer。"
+
+研究结果不能只活在聊天卡里 —— 要有一个 Otto 未来随时能翻的存档层:
+
+- **新增最薄 `TrendSnapshot` 表**(缝 5 全套:`ownerId` + organization 关系进 TENANT_MODELS、requireOwner、2-org 隔离测试)。最小字段:`id / ownerId / summary(结论)/ sources(来源引用,JSON)/ capturedAt(日期)/ campaignId?(可空外键,关联 campaign)/ createdAt / deletedAt`。
+- **写入点**:深研管线(#118)研究报告完成时提炼一行快照;`proposeCampaign` 的 `rationale` 引用的 trend 依据同步落档。快照只存**结论层**(结论 + 来源引用);正文仍在 WebPageCache / RESEARCH_REPORT,**不复制正文**(harmony-01 第一原则:禁止影子副本)。
+- **读取点**:配对读技能(缝 1,$0,free/read/internal,如 `listTrendSnapshots`;缝 9 登记)—— Otto 下次策划先翻自家存档,再决定要不要重新查。
+- 定位:与品牌记忆并列,同为 **"Otto 的长期资料库"** —— 品牌记忆 = 懂这家店,TrendSnapshot = 懂市场当下。
+- 落地期:**建议第一期就带最薄版**(表 + 两个写入点 + 读技能);检索排序 / 自动过期 / 趋势对比等长成体,后续期再议。
+
+### 5.3 「看着 Otto 干活」设计原则(live reflection —— 全产品级,不只 campaign)
+
+> **founder 原话**:"otto 直接 live 操作,用户也能看到……otto 直接活在 fikirtive,所以他能更直接效率的看到。"
+
+founder 的愿景成立,担心(computer-use 式操作会 lag)也成立 —— 正确架构把两者都成全:
+
+- **Otto 不走 computer-use 式像素操作**(截屏 → 找按钮 → 移鼠标 → 点击):慢、脆、会 lag —— 那是"活在别人平台上的 agent"不得已的妥协。Otto 活在 FIKIRTIVE 自己家里,不需要装一双假人手。
+- **Otto 走动作层**(宪法 7 单一动作层):毫秒级、确定性、可测试 —— 工程本质 = **headless 操作**。
+- **UI 实时反映 Otto 的动作**:推送 / 即时刷新 + coral 高亮(coral 只属于 Otto,缝 7)+ 一行人话叙述("Otto 正在放第 3 张卡…")。
+- 一句话:**视觉效果 = 用户"看着 Otto 在界面上干活";工程本质 = headless 操作 + live UI reflection。** 又快又看得见,不必二选一。
+- **既有依据**(宪法 7):O-12"就地按钮 = Otto 的手"(人的手伸进 Otto 的动作层)与上下文桥(人看到的视图注入 Otto 的对话)—— live reflection 是同一条设计线的第三面:**Otto 的动作实时映回人看的界面**。三者合起来 = 人与 Otto 共用同一个工作台。
+- **与吐槽清单的关系**:上线用户吐槽头号痛点"生成完成但界面不刷新"与此**同根** —— 都是"server 发生了事,界面不知道"。修它不只是修 bug:同一条推送 / 刷新通道,先服务"生成完成了",再服务"Otto 正在干活" —— **修它 = 给这个愿景打地基**。
+- 专业名词:**agent-native UI / shared workspace(人机共用工作台)/ live reflection(实时反映)**。
+- 适用范围:**全产品级**设计原则 —— campaign 只是第一个受益者;排期、生成、品牌记忆、未来一切 Otto 动作面同理。
+
+---
+
+## 六、分期与验收
 
 > 依赖总览:**第一/二期零外部依赖**(草稿与生成全可用);"真发布"依赖 **B 线 X 发布**(第一个能真发的渠道)或 Meta App Review 到钥匙;第三期依赖 P1½-3 Routine 模型(方向已拍,spec 另过 founder)。
 
 ### 第一期 —— 提案卡 + 手动逐条批(最小可卖)
-- 交付:proposeCampaign skill(六处登记)+ CAMPAIGN_CARD(五道缝全穿)+ Campaign 最薄行(缝 5 全套:TENANT_MODELS、requireOwner、2-org 隔离测试)+ ScheduledPost/Generation 补 campaignId 可空外键(加性 migration)。
+- 交付:proposeCampaign skill(六处登记)+ CAMPAIGN_CARD(五道缝全穿)+ Campaign 最薄行(缝 5 全套:TENANT_MODELS、requireOwner、2-org 隔离测试)+ ScheduledPost/Generation 补 campaignId 可空外键(加性 migration)+ 专属工作台最小版(表单发起 + 日历批改,§5.1)+ TrendSnapshot 最薄版(§5.2,建议随第一期)。
 - 流程:研究(现有)→ 提案卡 → 用户批 → proposePack 分批铺卡 → **逐条批生成** → schedulePosts 草稿。
 - 验收:①对话"帮我策划下个月的 campaign"→ 流式 UI 出活卡(非死占位,F23 反例);②卡上改/删条目后批准,铺出的 GEN_CARD 与日历一致;③生成后排期区三视图可见 N 条 DRAFT 且带 campaign 归组;④`pnpm lint:parity` 绿 + registry.test 钉 26 名单 + catalog 重生成;⑤全程真实花费为 0 的 e2e(mock provider)。
 
@@ -155,7 +203,7 @@
 
 ---
 
-## 六、costing 概算与毛利口径
+## 七、costing 概算与毛利口径
 
 **本 spec 零新收费点** —— 全部复用既有费率,不触发"新收费点 costing 先行"闸。若未来要做"campaign 一口价打包 SKU"(A4 族),届时 costing 先行(宪法 5),不在本 spec。
 
@@ -180,7 +228,7 @@
 
 ---
 
-## 七、明确不在本 spec 范围
+## 八、明确不在本 spec 范围
 
 - Campaign 完全体(预算/归因/UTM/campaign 级报表)= P3(红旗六判决原样);本 spec 只用最薄行 + 可空外键归组。
 - 发布 worker、渠道 adapter(X = B 线;Meta 实发布等 App Review)。

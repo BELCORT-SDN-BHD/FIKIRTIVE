@@ -193,3 +193,13 @@
 
 1. **市场归 founder,工程归 agents**:"要如何 market 那些是我的问题,不是 coding agents 的问题,只要做好我要的 features 就行了" —— agent 的建取舍只看 founder 判决 + 工程质量,不得以市场定位(SEA 等)作为推理依据。
 2. **对 founder 沟通用人话**:不用 harmony-xx / Wave-N / F-xx 类内部代号;给 founder 读的文档须带人话对照表。
+
+## 追加判决(2026-07-07 第四批)
+
+> 来源 = founder 2026-07-07 拍板(同日,会话内),由总审查员经 PR 入档;founder 合并本 PR = 确认。
+
+| 项 | 判决 | 内容 |
+|---|---|---|
+| X(Twitter)发布收费 | **方案 A 拍板** | 发推不带链接 = **1 显示 credit/条**;带链接 = **4 显示 credits/条**。founder:"可以的,要算好就行"。口径确认:**1 USD = 10 显示 credits**。数字进 config 层(宪法 5),毛利以 costing 核算为准。 |
+| Campaign 专属工作台 + 趋势数据层 | **要,纳入 C 线 spec**(founder 口述) | ①专属结构化入口 —— founder:"没有可能让 user 直接和 OTTO 随机聊天然后 prompt 到……直接做一个专属这个 feature 的地方":Campaign 区自己的房间,表单发起 + 日历工作台,按钮与 Otto 走同一动作层(O-12);②趋势数据层 —— founder:"设计要如何消化储存那些 trends 或任何数据,方便未来 otto refer":TrendSnapshot 最薄存储(缝 5,ownerId 隔离)。两条已增补进 `docs/superpowers/specs/2026-07-08-otto-campaign-planner-design.md` §五 |
+| 全产品 UX 原则:live reflection | **定调**(founder 与总审查员共同结论,2026-07-07) | Otto 经**动作层**操作(headless,毫秒级、确定性)+ **UI 实时反映**(推送/即时刷新 + coral 高亮 + 一行叙述);**不做 computer-use 式像素操作**(慢/脆/lag —— founder 的担心成立)。视觉效果 = 用户"看着 Otto 在界面上干活",工程本质 = headless 操作 + live UI reflection。吐槽清单头号痛点(生成完成但界面不刷新)与此同根 —— 修它 = 给这个愿景打地基。既有依据:宪法 7 的 O-12(就地按钮 = Otto 的手)与上下文桥 |
