@@ -11,18 +11,16 @@ export const dynamic = "force-dynamic";
 export const metadata = { title: "Skin preview (dev)" };
 
 /**
- * DEV-ONLY visual harness for the Grok-bright re-skin.
- * Renders the REAL OttoApp shell with mock data so it can be screenshotted
- * without auth (/otto is auth-walled). 404s in production. THROWAWAY — delete
- * once the re-skin ships.
- *   ?skin=fk         show the old look (default is gb)
+ * DEV-ONLY visual harness for the Otto shell (Grok-bright is the only skin now —
+ * no ?skin rollback param exists). Renders the REAL OttoApp shell with mock data
+ * so it can be screenshotted without auth (/otto is auth-walled). 404s in production.
  *   ?nav=collapsed   start with the sidebar collapsed
  *   ?chat=collapsed  start with the OTTO pane collapsed
  */
 export default async function SkinPreviewPage({
   searchParams,
 }: {
-  searchParams: Promise<{ skin?: string; nav?: string; chat?: string; view?: string }>;
+  searchParams: Promise<{ nav?: string; chat?: string; view?: string }>;
 }) {
   if (process.env.NODE_ENV === "production") notFound();
   const sp = await searchParams;

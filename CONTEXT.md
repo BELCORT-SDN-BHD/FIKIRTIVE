@@ -1,7 +1,7 @@
-# CONTEXT.md — Artlio Domain Glossary 词汇表
+# CONTEXT.md — FIKIRTIVE Domain Glossary 词汇表
 
 This is the **shared vocabulary** the agent and the user (founder) use when talking about
-Artlio. It exists to **kill naming drift** (one thing, one name) and to let a non-programmer
+FIKIRTIVE. It exists to **kill naming drift** (one thing, one name) and to let a non-programmer
 read the domain in plain language. When code, chat, or UI disagree on what something is
 called, **this file wins** — rename to match it, or update this file in the same change.
 

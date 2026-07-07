@@ -24,6 +24,7 @@ export async function proposeAdBuildForOwner(
   | { cardId: string; autoBuilt: boolean }
   | { notConnected: true }
   | { needsReconnect: true }
+  | { transientError: true }
   | { needsPageScope: true }
   | { invalid: Array<{ field: string; reason: string }> }
 > {
@@ -31,6 +32,7 @@ export async function proposeAdBuildForOwner(
   const pagesResult = await fetchOwnerPages(ownerId);
   if ("notConnected" in pagesResult) return { notConnected: true };
   if ("needsReconnect" in pagesResult) return { needsReconnect: true };
+  if ("transientError" in pagesResult) return { transientError: true };
   if ("needsPageScope" in pagesResult) return { needsPageScope: true };
   const { pages } = pagesResult;
 
@@ -40,6 +42,7 @@ export async function proposeAdBuildForOwner(
   const accountsResult = await fetchOwnerAdAccounts(ownerId);
   if ("notConnected" in accountsResult) return { notConnected: true };
   if ("needsReconnect" in accountsResult) return { needsReconnect: true };
+  if ("transientError" in accountsResult) return { transientError: true };
   const { accounts } = accountsResult;
   if (accounts.length === 0) {
     return {
@@ -54,6 +57,7 @@ export async function proposeAdBuildForOwner(
   // If ad objects can't be fetched, treat as notConnected (same token)
   if ("notConnected" in objectsResult) return { notConnected: true };
   if ("needsReconnect" in objectsResult) return { needsReconnect: true };
+  if ("transientError" in objectsResult) return { transientError: true };
   const { objects } = objectsResult;
 
   // 3. Resolve asset ownership + kind

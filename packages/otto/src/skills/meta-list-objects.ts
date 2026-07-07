@@ -16,6 +16,8 @@ import type { OttoContext } from "../context.js";
 
 const NOT_CONNECTED =
   "Meta isn't connected yet. Ask the user to open Connections and click Connect Meta, then try again.";
+const META_UNREACHABLE =
+  "I couldn't reach Meta just now — a temporary hiccup on Meta's side, not a connection problem. Try again in a moment.";
 
 const metaListObjectsInput = z.object({});
 
@@ -33,6 +35,7 @@ export async function executeMetaListObjects(
   if (!ctx?.metaAds) return { message: NOT_CONNECTED };
   const res = await ctx.metaAds.list();
   if ("notConnected" in res || "needsReconnect" in res) return { message: NOT_CONNECTED };
+  if ("transientError" in res) return { message: META_UNREACHABLE };
   return { objects: res.objects };
 }
 

@@ -5,6 +5,7 @@ import { newId } from "@fikirtive/core";
 import { requireOwner } from "./auth-guard";
 import { encryptToken, decryptToken } from "./token-encryption";
 import { exchangeCodeForToken, metaGraphGet } from "./meta-graph";
+import { classifyMetaGraphError } from "./meta-errors";
 import { fetchOwnerInsights, type AccountInsights } from "./meta-insights";
 import { isImpersonating } from "@/lib/better-auth/compat";
 
@@ -34,9 +35,8 @@ export async function completeMetaConnect(
 }
 
 /** Read-only: the owner's connected ad accounts via their decrypted token. Never returns the token.
- *  F37: only a REAL token failure (Meta code 190/102) reports needsReconnect; any other thrown
- *  error (network blip, Graph 5xx, rate limit — code 4/17/32 are type OAuthException too, so we
- *  branch on code, not type) is transientError so the UI offers a retry, not a redundant OAuth. */
+ *  F37: only a REAL token failure (Meta code 190/102) reports needsReconnect; anything else is
+ *  transientError so the UI offers a retry, not a redundant OAuth (see classifyMetaGraphError). */
 async function getMyAdAccounts(
   ownerId: string,
 ): Promise<{ accounts: MetaAdAccount[] } | { needsReconnect: true } | { transientError: true }> {
@@ -58,14 +58,7 @@ async function getMyAdAccounts(
     }));
     return { accounts };
   } catch (e) {
-    const code = (e as { metaError?: { code?: number } })?.metaError?.code;
-    if (code === 190 || code === 102) {
-      if (code === 190) {
-        await prisma.metaConnection.update({ where: { ownerId }, data: { status: "expired" } }).catch(() => {});
-      }
-      return { needsReconnect: true };
-    }
-    return { transientError: true };
+    return classifyMetaGraphError(ownerId, e);
   }
 }
 
@@ -107,7 +100,7 @@ export async function disconnectMeta(): Promise<{ ok: true } | { error: string }
 
 export async function getMetaInsights(
   datePreset?: string,
-): Promise<{ accounts: AccountInsights[] } | { needsReconnect: true } | { notConnected: true } | { error: string }> {
+): Promise<{ accounts: AccountInsights[] } | { needsReconnect: true } | { transientError: true } | { notConnected: true } | { error: string }> {
   const gate = await requireOwner();
   if ("error" in gate) return gate;
   return fetchOwnerInsights(gate.ownerId, datePreset ?? "last_30d");

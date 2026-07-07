@@ -11,14 +11,18 @@ export interface LlmPrices {
   inputPerToken: number;
   outputPerToken: number;
   cachedInputPerToken: number;
+  /** Anthropic bills prompt-cache WRITES (cache_creation_input_tokens) at 1.25× input.
+   *  Required BEFORE enabling prompt caching — without it the 1.25× write premium is unmetered
+   *  (效率工单① 前置, engine spec §2.3). */
+  cacheWriteInputPerToken: number;
 }
 
 // $/1M ÷ 1e6 = $/token
-// Opus 4.8:   $5 in / $25 out / ~$0.50 cached
-// Sonnet 4.6: $3 in / $15 out / ~$0.30 cached
+// Opus 4.8:   $5 in / $25 out / ~$0.50 cached / $6.25 cache-write (1.25×)
+// Sonnet 4.6: $3 in / $15 out / ~$0.30 cached / $3.75 cache-write (1.25×)
 const TABLE: Record<string, LlmPrices> = {
-  "claude-opus-4-8":   { inputPerToken: 5e-6,  outputPerToken: 25e-6, cachedInputPerToken: 0.5e-6 },
-  "claude-sonnet-4-6": { inputPerToken: 3e-6,  outputPerToken: 15e-6, cachedInputPerToken: 0.3e-6 },
+  "claude-opus-4-8":   { inputPerToken: 5e-6,  outputPerToken: 25e-6, cachedInputPerToken: 0.5e-6, cacheWriteInputPerToken: 6.25e-6 },
+  "claude-sonnet-4-6": { inputPerToken: 3e-6,  outputPerToken: 15e-6, cachedInputPerToken: 0.3e-6, cacheWriteInputPerToken: 3.75e-6 },
 };
 
 /** Unknown model → sonnet pricing. NEVER returns zero prices. */

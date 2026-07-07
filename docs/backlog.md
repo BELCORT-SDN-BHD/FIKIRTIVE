@@ -33,7 +33,7 @@
 - [ ] editor 保存 CAS（旧标签页保存覆盖新段；`addSegment` 已加乐观 CAS，保存路径未加）。
 - [ ] R2 孤儿字节清扫（事务失败留下的对象）。
 - [ ] 统一队列过期策略对 prod 现有队列行生效（需重建队列行）。
-- [ ] Shotstack Controls 无 teardown API（SDK 升级时检查）。
+- [ ] Shotstack Studio Controls 无 teardown API（已向前兼容 dispose?.()）——SDK 升级时检查是否已加，或给上游提 issue。（2026-07-07 自 TODOS.md 移入,仍是活项）
 - [ ] AppShell `LAST_PROJECT_KEY` 未校验（旧壳死码，低风险）。
 
 ## F. 功能补全/差异化（延后到 v2/验证后）

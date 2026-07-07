@@ -54,4 +54,12 @@ describe("getMetaInsights", () => {
     mockUpdate.mockResolvedValue({});
     expect(await getMetaInsights("last_30d")).toEqual({ needsReconnect: true });
   });
+
+  it("returns transientError (F37) on a non-auth Graph error — never a false reconnect", async () => {
+    const { encryptToken } = await import("../token-encryption");
+    mockFindUnique.mockResolvedValue({ accessTokenEnc: encryptToken("LONGTOKEN"), status: "active" });
+    mockFetch.mockResolvedValueOnce(jsonRes({ error: { message: "server error", code: 2 } }, false));
+    expect(await getMetaInsights("last_30d")).toEqual({ transientError: true });
+    expect(mockUpdate).not.toHaveBeenCalled();
+  });
 });

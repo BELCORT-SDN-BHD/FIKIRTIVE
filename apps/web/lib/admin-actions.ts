@@ -92,8 +92,10 @@ export async function seedResearchDirectives(): Promise<{ ok: true; inserted: nu
 /** Write one runtime-config key. Base gate requireRole("model","mutate") (=ops) covers
  *  every NON-modal key. provider=modal is a per-VALUE exception: super-admin only (the
  *  uncensored self-hosted-planner content/ToS surface) AND a write-time credential check
- *  (mirroring the fal check) so getTransport never builds a throwing transport at request
- *  time. Audited; a cowork_provider write records the provider for high-sensitivity audit. */
+ *  (mirroring the fal check) so a provider this env can't build is never persisted.
+ *  Audited; a cowork_provider write records the provider for high-sensitivity audit.
+ *  NOTE: cowork_provider is INERT since batch-3 7-10 (its only reader, getTransport,
+ *  was deleted); knob + UI stay until removed via 市政厅 v2. */
 export async function saveRuntimeConfig(raw: unknown): Promise<{ ok: true } | { error: string }> {
   const gate = await requireRole("model", "mutate");      // ops can write all NON-modal keys
   if ("error" in gate) return gate;

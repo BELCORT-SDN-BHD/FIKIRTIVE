@@ -1,7 +1,8 @@
 "use client";
 /**
- * OPT-6 P1a runtime-config settings (the writable knobs in resolveVisionConfig /
- * getTransport). Mirrors DirectivesAdmin: a client component calling the server
+ * OPT-6 P1a runtime-config settings (the writable knobs in resolveVisionConfig +
+ * the cowork_provider knob — INERT since batch-3 7-10 deleted getTransport; kept
+ * until removed via 市政厅 v2). Mirrors DirectivesAdmin: a client component calling the server
  * action with an object and surfacing {ok}|{error}. Two cards — vision caps and
  * the cowork provider (mock|fal; modal shown to super-admin only, P1b). Worker-side env keys aren't
  * editable here (restart-required), only the DB-backed runtime config.

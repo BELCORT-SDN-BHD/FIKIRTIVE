@@ -17,9 +17,6 @@ vi.mock("@fikirtive/db", () => ({
   },
   reserveCredits, refundReservation: vi.fn(), InsufficientCredits: class extends Error {},
 }));
-const withLlmBudget = vi.fn();
-vi.mock("@fikirtive/otto", () => ({ withLlmBudget }));
-
 beforeEach(() => { vi.clearAllMocks(); mockRequireOwner.mockResolvedValue({ email: "founder@t.test", ownerId: "founder" }); });
 
 describe("spend is blocked while impersonating", () => {
@@ -31,14 +28,6 @@ describe("spend is blocked while impersonating", () => {
     const res = await startGen({});
     expect(res).toEqual({ error: GUARD_MSG });
     expect(reserveCredits).not.toHaveBeenCalled();
-  });
-  it("coworkDraftStoryboard refuses with the guard message + never meters", async () => {
-    mockIsImpersonating.mockResolvedValue(true);
-    // coworkDraftStoryboard validates BEFORE the guard, so pass valid input to reach it.
-    const mod = await import("@/lib/cowork-actions");
-    const res = await mod.coworkDraftStoryboard({ projectId: "p1", idea: "a robot in a forest" });
-    expect(res).toEqual({ error: GUARD_MSG });
-    expect(withLlmBudget).not.toHaveBeenCalled();
   });
   it("regenerateVariant refuses with the guard message + never reserves (variant spend path)", async () => {
     mockIsImpersonating.mockResolvedValue(true);

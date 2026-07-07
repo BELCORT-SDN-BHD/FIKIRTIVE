@@ -71,6 +71,18 @@ describe("getAnalytics — state mapping", () => {
     mockFetchSeries.mockResolvedValue({ needsReconnect: true });
     expect(await getAnalytics({ range: "30d" })).toEqual({ state: "needsReconnect" });
   });
+
+  it("either fetcher transientError (F37) → transientError, never a false reconnect", async () => {
+    mockFetchInsights.mockResolvedValue({ transientError: true });
+    mockFetchSeries.mockResolvedValue({ series: [] });
+    expect(await getAnalytics({ range: "30d" })).toEqual({ state: "transientError" });
+  });
+
+  it("needsReconnect takes precedence over transientError (real token signal wins)", async () => {
+    mockFetchInsights.mockResolvedValue({ needsReconnect: true });
+    mockFetchSeries.mockResolvedValue({ transientError: true });
+    expect(await getAnalytics({ range: "30d" })).toEqual({ state: "needsReconnect" });
+  });
 });
 
 describe("getAnalytics — ready payload", () => {

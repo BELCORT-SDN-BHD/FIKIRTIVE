@@ -157,9 +157,26 @@ if (errors.length) {
   process.exit(1);
 }
 
+// Debt ratchet: TODO_SKILL count may only go down. The baseline is a checked-in
+// literal; lower it in the same PR that clears debt.
+const { maxTodoSkill } = JSON.parse(
+  fs.readFileSync(path.join(root, "scripts/parity-debt-baseline.json"), "utf8"),
+);
+if (todoCount > maxTodoSkill) {
+  fail(
+    `TODO_SKILL debt grew: ${todoCount} > baseline ${maxTodoSkill} (+${todoCount - maxTodoSkill}). ` +
+      `New surfaces need a real skill entry or an exemption — not more todoSkill debt.`,
+  );
+}
+
 console.log(
   `[parity] OK: ${manifestKeys.size} entries cover ${actionKeys.size} action exports, ${apiKeys.size} API exports, ${readKeys.size} registered read surface(s).`,
 );
 if (todoCount > 0) {
   console.warn(`[parity] TODO_SKILL entries remain: ${todoCount}. They are registered debt, not exemptions.`);
+}
+if (todoCount < maxTodoSkill) {
+  console.warn(
+    `[parity] TODO_SKILL count (${todoCount}) is below the baseline (${maxTodoSkill}) — lower maxTodoSkill in scripts/parity-debt-baseline.json in this same PR to lock in the cleared debt.`,
+  );
 }

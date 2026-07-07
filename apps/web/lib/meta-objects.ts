@@ -1,6 +1,7 @@
 import { prisma } from "@fikirtive/db";
 import { decryptToken } from "./token-encryption";
 import { metaGraphGet, listCampaigns, listAdSets, listAds } from "./meta-graph";
+import { classifyMetaGraphError } from "./meta-errors";
 
 export type MetaAdObject = {
   id: string;
@@ -20,7 +21,7 @@ export type MetaAdAccount = { id: string; name: string; currency: string };
 /** Owner-scoped list of ad accounts. Plain server fn — NOT a "use server" action. */
 export async function fetchOwnerAdAccounts(
   ownerId: string,
-): Promise<{ accounts: MetaAdAccount[] } | { needsReconnect: true } | { notConnected: true }> {
+): Promise<{ accounts: MetaAdAccount[] } | { needsReconnect: true } | { transientError: true } | { notConnected: true }> {
   const conn = await prisma.metaConnection.findUnique({ where: { ownerId } });
   if (!conn) return { notConnected: true };
   let token: string;
@@ -38,11 +39,7 @@ export async function fetchOwnerAdAccounts(
     }));
     return { accounts };
   } catch (e) {
-    const code = (e as { metaError?: { code?: number } })?.metaError?.code;
-    if (code === 190) {
-      await prisma.metaConnection.update({ where: { ownerId }, data: { status: "expired" } }).catch(() => {});
-    }
-    return { needsReconnect: true };
+    return classifyMetaGraphError(ownerId, e);
   }
 }
 
@@ -50,7 +47,7 @@ export async function fetchOwnerAdAccounts(
  *  Plain server fn — NOT a "use server" action — so there is no IDOR surface. Token stays here. */
 export async function fetchOwnerAdObjects(
   ownerId: string,
-): Promise<{ objects: MetaAdObject[] } | { needsReconnect: true } | { notConnected: true }> {
+): Promise<{ objects: MetaAdObject[] } | { needsReconnect: true } | { transientError: true } | { notConnected: true }> {
   const conn = await prisma.metaConnection.findUnique({ where: { ownerId } });
   if (!conn) return { notConnected: true };
 
@@ -131,10 +128,6 @@ export async function fetchOwnerAdObjects(
 
     return { objects };
   } catch (e) {
-    const code = (e as { metaError?: { code?: number } })?.metaError?.code;
-    if (code === 190) {
-      await prisma.metaConnection.update({ where: { ownerId }, data: { status: "expired" } }).catch(() => {});
-    }
-    return { needsReconnect: true };
+    return classifyMetaGraphError(ownerId, e);
   }
 }

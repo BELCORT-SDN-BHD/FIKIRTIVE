@@ -90,6 +90,13 @@ describe("proposeMetaActionForOwner", () => {
     expect(mockCreate).not.toHaveBeenCalled();
   });
 
+  it("passes through transientError (F37) when fetchOwnerAdObjects returns it", async () => {
+    mockFetchOwnerAdObjects.mockResolvedValue({ transientError: true });
+    const res = await proposeMetaActionForOwner("org1", "thread1", pauseInput);
+    expect(res).toEqual({ transientError: true });
+    expect(mockCreate).not.toHaveBeenCalled();
+  });
+
   it("returns unknownTargets and does NOT persist a card when a target id is not owned", async () => {
     mockFetchOwnerAdObjects.mockResolvedValue({ objects: adObjects });
     mockFindUnique.mockResolvedValue({ adsAutonomy: "ASK" });

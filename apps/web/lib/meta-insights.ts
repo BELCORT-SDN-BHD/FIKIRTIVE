@@ -1,6 +1,7 @@
 import { prisma } from "@fikirtive/db";
 import { decryptToken } from "./token-encryption";
 import { metaGraphGet, getAccountInsights, getAccountInsightsSeries, type AccountMetrics, type DailyMetric } from "./meta-graph";
+import { classifyMetaGraphError } from "./meta-errors";
 
 export type AccountInsights = { accountId: string; name: string; metrics: AccountMetrics };
 
@@ -9,7 +10,7 @@ export type AccountInsights = { accountId: string; name: string; metrics: Accoun
 export async function fetchOwnerInsights(
   ownerId: string,
   datePreset: string,
-): Promise<{ accounts: AccountInsights[] } | { needsReconnect: true } | { notConnected: true }> {
+): Promise<{ accounts: AccountInsights[] } | { needsReconnect: true } | { transientError: true } | { notConnected: true }> {
   const conn = await prisma.metaConnection.findUnique({ where: { ownerId } });
   if (!conn) return { notConnected: true };
   let token: string;
@@ -31,23 +32,17 @@ export async function fetchOwnerInsights(
     }
     return { accounts };
   } catch (e) {
-    // Only mark expired on a real Meta auth error (code 190) — a transient 5xx/rate-limit
-    // shouldn't force every user to reconnect. (Mirrors getMyAdAccounts in meta-actions.ts.)
-    const code = (e as { metaError?: { code?: number } })?.metaError?.code;
-    if (code === 190) {
-      await prisma.metaConnection.update({ where: { ownerId }, data: { status: "expired" } }).catch(() => {});
-    }
-    return { needsReconnect: true };
+    return classifyMetaGraphError(ownerId, e);
   }
 }
 
 /** Owner-scoped daily insights series (Analytics Phase A). Mirrors fetchOwnerInsights exactly —
- *  same conn lookup / token decrypt / code-190 needsReconnect handling — but fetches a per-day
+ *  same conn lookup / token decrypt / classifyMetaGraphError handling — but fetches a per-day
  *  series per account and merges by date (summing metrics), returned sorted date asc. Read-only. */
 export async function fetchOwnerInsightsSeries(
   ownerId: string,
   datePreset: string,
-): Promise<{ series: DailyMetric[] } | { needsReconnect: true } | { notConnected: true }> {
+): Promise<{ series: DailyMetric[] } | { needsReconnect: true } | { transientError: true } | { notConnected: true }> {
   const conn = await prisma.metaConnection.findUnique({ where: { ownerId } });
   if (!conn) return { notConnected: true };
   let token: string;
@@ -80,12 +75,6 @@ export async function fetchOwnerInsightsSeries(
     const series = [...byDate.values()].sort((x, y) => x.date.localeCompare(y.date));
     return { series };
   } catch (e) {
-    // Only mark expired on a real Meta auth error (code 190) — a transient 5xx/rate-limit
-    // shouldn't force every user to reconnect. (Mirrors getMyAdAccounts in meta-actions.ts.)
-    const code = (e as { metaError?: { code?: number } })?.metaError?.code;
-    if (code === 190) {
-      await prisma.metaConnection.update({ where: { ownerId }, data: { status: "expired" } }).catch(() => {});
-    }
-    return { needsReconnect: true };
+    return classifyMetaGraphError(ownerId, e);
   }
 }

@@ -45,6 +45,7 @@ jobs:
       # Skill catalog must match the registry (Seam 1 step 5) — a stale CATALOG.md fails here.
       - run: pnpm --filter @fikirtive/otto run catalog:check
       # Parity Manifest seam: every server action / API route / registered read surface is registered.
+      # Also a debt ratchet: TODO_SKILL count may only go down (baseline in scripts/parity-debt-baseline.json).
       - run: pnpm lint:parity
       # Constitution tamper-evidence: docs/BLUEPRINT.md is immutable — this fails if it changed
       # without an explicit founder amendment (blueprint.sha256 update). Binds any agent, incl.

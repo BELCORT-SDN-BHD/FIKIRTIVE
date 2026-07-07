@@ -16,6 +16,8 @@ import type { OttoContext } from "../context.js";
 
 const NOT_CONNECTED =
   "Meta isn't connected yet. Ask the user to open Connections and click Connect Meta, then try again.";
+const META_UNREACHABLE =
+  "I couldn't reach Meta just now — a temporary hiccup on Meta's side, not a connection problem. Try again in a moment.";
 
 const NEEDS_PAGE_SCOPE =
   "I need permission to manage your Facebook Pages. Ask the user to reconnect Meta and grant page management access, then try again.";
@@ -81,6 +83,10 @@ export async function executeProposeAdBuild(
 
   if ("notConnected" in res || "needsReconnect" in res) {
     return { message: NOT_CONNECTED };
+  }
+
+  if ("transientError" in res) {
+    return { message: META_UNREACHABLE };
   }
 
   if ("needsPageScope" in res) {

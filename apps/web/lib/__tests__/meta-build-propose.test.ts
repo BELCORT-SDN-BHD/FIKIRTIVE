@@ -94,6 +94,13 @@ describe("proposeAdBuildForOwner", () => {
     expect(mockCreate).not.toHaveBeenCalled();
   });
 
+  it("passes through transientError (F37) when fetchOwnerPages returns it", async () => {
+    mockFetchOwnerPages.mockResolvedValue({ transientError: true });
+    const res = await proposeAdBuildForOwner("org1", "thread1", VALID_INPUT);
+    expect(res).toEqual({ transientError: true });
+    expect(mockCreate).not.toHaveBeenCalled();
+  });
+
   it("passes through needsPageScope when fetchOwnerPages returns it", async () => {
     mockFetchOwnerPages.mockResolvedValue({ needsPageScope: true });
     const res = await proposeAdBuildForOwner("org1", "thread1", VALID_INPUT);

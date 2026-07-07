@@ -115,6 +115,17 @@ export function OttoAnalytics({
         {isMeta && data.state === "needsReconnect" && (
           <ConnectPanel kind="reconnect" onNavigate={onNavigate} />
         )}
+        {/* F37: transient Graph failure — the token is fine, so offer a retry, never a reconnect. */}
+        {isMeta && data.state === "transientError" && (
+          <div className="rounded-[16px] border border-border bg-card p-[18px] text-center flex flex-col items-center gap-3 py-14">
+            <div className="text-[1.5rem] font-bold tracking-[-0.02em]">
+              Couldn't reach Meta just now
+            </div>
+            <div className="text-[13px] text-muted-foreground" style={{ maxWidth: 360 }}>
+              This is usually a temporary hiccup on Meta's side — your connection is fine. Try again in a moment.
+            </div>
+          </div>
+        )}
 
         {isReady && (
         <div className={pending ? "opacity-60 transition-opacity" : "transition-opacity"}>
