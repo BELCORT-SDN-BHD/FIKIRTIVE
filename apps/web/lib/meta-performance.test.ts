@@ -30,7 +30,7 @@ describe("fetchOwnerAdPerformance", () => {
       impressions: null, reach: null, frequency: null, clicks: null, cpc: null, cpm: null, purchaseRoas: null }]);
     h.getAdCreative.mockResolvedValue({ imageUrl: "http://i", body: "b", title: "t", videoId: null });
     const r = await fetchOwnerAdPerformance("o1", "last_30d");
-    if ("needsReconnect" in r || "notConnected" in r) throw new Error("unexpected");
+    if ("needsReconnect" in r || "notConnected" in r || "transientError" in r) throw new Error("unexpected");
     expect(r.ads).toHaveLength(1);
     expect(r.ads[0]).toMatchObject({ adId: "a1", accountId: "act_1", creative: { imageUrl: "http://i" } });
     expect(r.ads[0]!.metrics.spend).toBe("10");
@@ -47,7 +47,7 @@ describe("fetchOwnerAdPerformance", () => {
     h.getAdInsights.mockResolvedValue(many);
     h.getAdCreative.mockResolvedValue(null);
     const r = await fetchOwnerAdPerformance("o1", "last_30d");
-    if ("needsReconnect" in r || "notConnected" in r) throw new Error("unexpected");
+    if ("needsReconnect" in r || "notConnected" in r || "transientError" in r) throw new Error("unexpected");
     expect(r.ads).toHaveLength(MAX_ADS);
     expect(r.truncated).toBe(true);
     expect(r.ads[0]!.adId).toBe(`a${MAX_ADS + 4}`); // highest spend first
@@ -63,21 +63,21 @@ describe("fetchOwnerAdPerformance", () => {
     expect(h.update).toHaveBeenCalledWith({ where: { ownerId: "o1" }, data: { status: "expired" } });
   });
 
-  it("needsReconnect without marking expired when me/adaccounts throws a non-190 error", async () => {
+  it("transientError (F37) without marking expired when me/adaccounts throws a non-auth Graph error", async () => {
     h.findUnique.mockResolvedValue({ ownerId: "o1", accessTokenEnc: "x", scope: "ads_read" });
     const err = new Error("rate limited");
     (err as { metaError?: { code?: number } }).metaError = { code: 1 };
     h.metaGraphGet.mockRejectedValue(err);
     const r = await fetchOwnerAdPerformance("o1", "last_30d");
-    expect(r).toEqual({ needsReconnect: true });
+    expect(r).toEqual({ transientError: true });
     expect(h.update).not.toHaveBeenCalled();
   });
 
-  it("needsReconnect without throwing when me/adaccounts throws a plain Error (no metaError)", async () => {
+  it("transientError (F37) without throwing when me/adaccounts throws a plain Error (no metaError)", async () => {
     h.findUnique.mockResolvedValue({ ownerId: "o1", accessTokenEnc: "x", scope: "ads_read" });
     h.metaGraphGet.mockRejectedValue(new Error("network down"));
     const r = await fetchOwnerAdPerformance("o1", "last_30d");
-    expect(r).toEqual({ needsReconnect: true });
+    expect(r).toEqual({ transientError: true });
     expect(h.update).not.toHaveBeenCalled();
   });
 
@@ -86,7 +86,7 @@ describe("fetchOwnerAdPerformance", () => {
     h.metaGraphGet.mockResolvedValue({ data: [{ id: "act_1" }] });
     h.getAdInsights.mockResolvedValue([]);
     const r = await fetchOwnerAdPerformance("o1", "last_30d");
-    if ("needsReconnect" in r || "notConnected" in r) throw new Error("unexpected");
+    if ("needsReconnect" in r || "notConnected" in r || "transientError" in r) throw new Error("unexpected");
     expect(r.organic).toEqual({ posts: [] });
   });
 });

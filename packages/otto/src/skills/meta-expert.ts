@@ -17,6 +17,8 @@ import { buildPerformanceCardPayload } from "./meta-expert.helpers.js";
 
 const NOT_CONNECTED =
   "Meta isn't connected yet. Ask the user to open Connections and click Connect Meta, then try again.";
+const META_UNREACHABLE =
+  "I couldn't reach Meta just now — a temporary hiccup on Meta's side, not a connection problem. Try again in a moment.";
 
 export const metaExpertInput = z.object({
   datePreset: z
@@ -40,6 +42,7 @@ export async function executeMetaExpert(
 
   const res = await ctx.metaPerformance.getAds(input.datePreset);
   if ("notConnected" in res || "needsReconnect" in res) return { message: NOT_CONNECTED };
+  if ("transientError" in res) return { message: META_UNREACHABLE };
   if (res.ads.length === 0) {
     return { message: "Meta is connected, but no ads ran in this window to diagnose yet." };
   }

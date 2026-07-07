@@ -81,3 +81,10 @@ it("returns needsReconnect on code-190", async () => {
   mockListCampaigns.mockRejectedValue({ metaError: { code: 190 } });
   expect(await fetchOwnerAdObjects("org1")).toEqual({ needsReconnect: true });
 });
+
+it("returns transientError (F37) on a non-auth Graph error — never a false reconnect", async () => {
+  mockFindUnique.mockResolvedValue({ accessTokenEnc: "e" });
+  mockListCampaigns.mockRejectedValue(new Error("Graph 500"));
+  expect(await fetchOwnerAdObjects("org1")).toEqual({ transientError: true });
+  expect(mockUpdate).not.toHaveBeenCalled();
+});

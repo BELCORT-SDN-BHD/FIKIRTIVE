@@ -141,9 +141,6 @@ export const PARITY_MANIFEST = {
   "canvas-actions.resolveCanvasNode": { todoSkill: true, reason: "Canvas generation-state resolution needs canvas/generation state-management skill parity." },
   "canvas-actions.deleteCanvasNode": { todoSkill: true, reason: "Canvas deletion needs a canvas editing skill with paid-output warnings." },
 
-  "cowork-actions.coworkDraftStoryboard": { skill: "proposeStoryboard" },
-  "cowork-actions.enhancePrompt": { skill: "seedreamPrompt" },
-  "cowork-actions.coworkTurn": { todoSkill: true, reason: "Legacy cowork turn is superseded by Otto but still exported; retire or map before clearing debt." },
   "cowork-actions.coworkGenerate": { skill: "generate" },
   "cowork-actions.coworkRenameThread": { skill: "setTitle" },
   "cowork-actions.coworkDeleteThread": { todoSkill: true, reason: "Thread deletion needs Otto thread-management parity." },

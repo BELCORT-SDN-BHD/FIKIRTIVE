@@ -121,6 +121,9 @@ vi.mock("@fikirtive/otto", () => ({
   sanitizeHistory: (h: Array<{ role?: string }>) => h.filter((i) => i?.role !== "system"),
   MaxTurnsExceededError: mocks.MaxTurnsExceededError,
   mapOttoUsage: mocks.mapOttoUsage,
+  // 7-14b: otto-resume imports the shared extractText from @fikirtive/otto; these tests only
+  // ever set finalOutput (newItems: []), so a finalOutput-faithful stub is sufficient.
+  extractText: (r: { finalOutput?: unknown }) => (r?.finalOutput != null ? String(r.finalOutput) : ""),
 }));
 
 // Import AFTER mocks are registered

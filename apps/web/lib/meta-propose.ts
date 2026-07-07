@@ -23,6 +23,7 @@ export async function proposeMetaActionForOwner(
   | { cardId: string; autoEligible: boolean; autoRan?: boolean }
   | { notConnected: true }
   | { needsReconnect: true }
+  | { transientError: true }
   | { unknownTargets: string[] }
   | { invalidSteps: Array<{ targetId: string; reason: string }> }
 > {
@@ -30,6 +31,7 @@ export async function proposeMetaActionForOwner(
   const objectsResult = await fetchOwnerAdObjects(ownerId);
   if ("notConnected" in objectsResult) return { notConnected: true };
   if ("needsReconnect" in objectsResult) return { needsReconnect: true };
+  if ("transientError" in objectsResult) return { transientError: true };
   const { objects } = objectsResult;
 
   // 2. Owner-validate every targetId — collect unknownTargets (do NOT persist if any)

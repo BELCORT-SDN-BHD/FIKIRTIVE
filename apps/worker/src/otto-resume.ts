@@ -15,7 +15,7 @@
  */
 import { prisma } from "@fikirtive/db";
 import { newId, OTTO_MAX_STEPS } from "@fikirtive/core";
-import { otto, withLlmBudget, OTTO_DEFAULT_MODEL, run, MaxTurnsExceededError, mapOttoUsage, sanitizeHistory, tryRestoreRunState } from "@fikirtive/otto";
+import { otto, withLlmBudget, OTTO_DEFAULT_MODEL, run, MaxTurnsExceededError, mapOttoUsage, sanitizeHistory, tryRestoreRunState, extractText } from "@fikirtive/otto";
 import type { OttoContext } from "@fikirtive/otto";
 
 export async function resumeOttoAfterGen(job: {
@@ -109,20 +109,7 @@ export async function resumeOttoAfterGen(job: {
     const result = agentResult as any;
     const newOttoState: string = result.state.toString();
 
-    // Extract text output (same pattern as ottoTurn)
-    function extractText(r: any): string {
-      if (r.finalOutput != null) return String(r.finalOutput);
-      return (Array.isArray(r.newItems) ? (r.newItems as any[]) : [])
-        .filter((it: any) => it.type === "message_output_item")
-        .map((it: any) => {
-          const content: any[] = it?.rawItem?.content ?? [];
-          return content
-            .filter((c: any) => c.type === "output_text")
-            .map((c: any) => c.text ?? "")
-            .join("");
-        })
-        .join("");
-    }
+    // Text extraction: shared extractText (@fikirtive/otto run-output.ts) — was a local copy until 7-14b.
 
     // Determine next seq
     const lastMsg = await prisma.chatMessage.findFirst({

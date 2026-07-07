@@ -62,7 +62,7 @@ export interface OttoContext {
   /** Meta ad objects port (G7) — injected by the web caller; lists the owner's connected ad objects
    *  (campaigns, ad sets, ads). Skills reach it ONLY via ctx.metaAds, never importing meta-objects.ts. */
   metaAds?: {
-    list(): Promise<{ objects: MetaAdObject[] } | { needsReconnect: true } | { notConnected: true }>;
+    list(): Promise<{ objects: MetaAdObject[] } | { needsReconnect: true } | { transientError: true } | { notConnected: true }>;
   };
   /** Meta pages port (G7 v2) — injected by the web caller; lists the owner's connected Facebook Pages.
    *  Skills reach it ONLY via ctx.metaPages, never importing meta-pages.ts. */
@@ -70,6 +70,7 @@ export interface OttoContext {
     list(): Promise<
       | { pages: { id: string; name: string }[] }
       | { needsReconnect: true }
+      | { transientError: true }
       | { notConnected: true }
       | { needsPageScope: true }
     >;
@@ -80,6 +81,7 @@ export interface OttoContext {
     get(datePreset: string): Promise<
       | { accounts: { accountId: string; name: string; metrics: Record<string, string | null> }[] }
       | { needsReconnect: true }
+      | { transientError: true }
       | { notConnected: true }
     >;
   };
@@ -103,6 +105,7 @@ export interface OttoContext {
           fetchedAt: string;
         }
       | { needsReconnect: true }
+      | { transientError: true }
       | { notConnected: true }
     >;
   };
@@ -137,6 +140,7 @@ export interface OttoContext {
     | { cardId: string; autoEligible: boolean }
     | { notConnected: true }
     | { needsReconnect: true }
+    | { transientError: true }
     | { unknownTargets: string[] }
     | { invalidSteps: Array<{ targetId: string; reason: string }> }
   >;
@@ -173,6 +177,7 @@ export interface OttoContext {
       | { cardId: string; autoBuilt: boolean }
       | { notConnected: true }
       | { needsReconnect: true }
+      | { transientError: true }
       | { needsPageScope: true }
       | { invalid: Array<{ field: string; reason: string }> }
     >;

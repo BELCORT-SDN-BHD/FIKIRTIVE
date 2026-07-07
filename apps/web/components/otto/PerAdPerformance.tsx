@@ -10,7 +10,7 @@ import { RANGES, type RangeKey } from "@/lib/analytics-view";
  *  Winner/loser judgment = P2 (expert card); recreate = P3. */
 export function PerAdPerformance({ range }: { range: RangeKey }) {
   const [view, setView] = useState<PerAdView | null>(null);
-  const [gone, setGone] = useState(false); // notConnected/needsReconnect → render nothing (Analytics body already shows the wall)
+  const [gone, setGone] = useState(false); // notConnected/needsReconnect/transientError → render nothing (Analytics body already shows the wall)
   const [pending, start] = useTransition();
 
   useEffect(() => {
@@ -18,7 +18,7 @@ export function PerAdPerformance({ range }: { range: RangeKey }) {
     const preset = RANGES.find((r) => r.key === range)?.preset ?? "last_30d";
     start(async () => {
       const res = await getAdPerformance(preset);
-      if (!res || "error" in res || "notConnected" in res || "needsReconnect" in res) { setGone(true); return; }
+      if (!res || "error" in res || "notConnected" in res || "needsReconnect" in res || "transientError" in res) { setGone(true); return; }
       setGone(false);
       setView(buildPerAdView(res));
     });

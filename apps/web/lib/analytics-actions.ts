@@ -7,6 +7,7 @@ import { requireOwner } from "./auth-guard";
 export type AnalyticsData =
   | { state: "notConnected" }
   | { state: "needsReconnect" }
+  | { state: "transientError" } // F37: Meta unreachable (network/5xx/rate limit) — retry, NOT reconnect
   | {
       state: "ready";
       range: RangeKey;
@@ -55,6 +56,8 @@ export async function getAnalytics(raw: unknown): Promise<AnalyticsData> {
   // see the connect prompt, never a "reconnect" one).
   if ("notConnected" in insightsResult || "notConnected" in seriesResult) return { state: "notConnected" };
   if ("needsReconnect" in insightsResult || "needsReconnect" in seriesResult) return { state: "needsReconnect" };
+  // F37: a transient Graph failure (either shape) surfaces a retry, never a false reconnect.
+  if ("transientError" in insightsResult || "transientError" in seriesResult) return { state: "transientError" };
 
   const series = seriesResult.series;
   const totals = insightsResult.accounts.map((a) => a.metrics);

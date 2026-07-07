@@ -9,7 +9,6 @@
  *  #5 no usage → settle full reserve (no refund)
  *  #6 reserve happens BEFORE fn BEFORE settle (call order asserted)
  *  #7 actualCostInternal pure math (cached rate, ceiling, 0-token edge)
- *  #8 source audit — enhancePrompt + coworkDraftStoryboard route through withLlmBudget
  */
 import { describe, it, expect, vi, beforeEach } from "vitest";
 
@@ -429,10 +428,14 @@ describe("Test #10c — withLlmBudget settles write+read usage correctly (≤ re
 });
 
 // ---------------------------------------------------------------------------
-// Test #8: source audit — enhancePrompt + coworkDraftStoryboard use withLlmBudget
+// Test #8: source audit — cowork-actions must stay free of raw LLM entry points.
+// History: enhancePrompt/coworkDraftStoryboard/coworkTurn once called transport.chat here
+// (wrapped in withLlmBudget); batch-3 surgery (7-10, 2026-07-07) deleted those dead paid
+// endpoints. This fence now asserts they STAY deleted: any reintroduced transport/LLM call
+// in this action file must come back through packages/otto metering, not a raw client.
 // ---------------------------------------------------------------------------
-describe("Test #8 — bypass audit: withLlmBudget wraps the model call in cowork-actions", () => {
-  it("cowork-actions.ts source contains withLlmBudget import and usage around transport.chat", async () => {
+describe("Test #8 — bypass audit: no unmetered LLM entry points in cowork-actions", () => {
+  it("cowork-actions.ts source contains no transport.chat / getTransport call sites", async () => {
     const { readFileSync } = await import("node:fs");
     const { fileURLToPath } = await import("node:url");
     const { resolve, dirname } = await import("node:path");
@@ -442,9 +445,7 @@ describe("Test #8 — bypass audit: withLlmBudget wraps the model call in cowork
     const actionsPath = resolve(dirname(thisFile), "../../../apps/web/lib/cowork-actions.ts");
     const src = readFileSync(actionsPath, "utf8");
 
-    // withLlmBudget must be imported
-    expect(src).toContain("withLlmBudget");
-    // transport.chat calls in the two metered functions must be inside withLlmBudget
-    expect(src).toMatch(/withLlmBudget[^]*transport\.chat/s);
+    expect(src).not.toContain("transport.chat");
+    expect(src).not.toContain("getTransport");
   });
 });

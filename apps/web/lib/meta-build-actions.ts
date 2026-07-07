@@ -484,6 +484,7 @@ export async function launchAdDraft(
 
   if ("notConnected" in result) return { error: "Meta isn't connected — reconnect and try again." };
   if ("needsReconnect" in result) return { error: "Meta token expired — reconnect and try again." };
+  if ("transientError" in result) return { error: "Couldn't reach Meta just now — try again in a moment." };
   if ("unknownTargets" in result) return { metaFallback: true };
   if ("invalidSteps" in result) return { metaFallback: true };
 
