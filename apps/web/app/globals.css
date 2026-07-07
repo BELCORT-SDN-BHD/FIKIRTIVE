@@ -206,6 +206,7 @@ h1, h2, h3 { font-family: var(--font-sans); font-weight: 600; letter-spacing: va
    admin (and any .gb surface) renders ds Button/Badge, so re-point them to .gb
    light tokens. Scoped to .gb only — the legacy dark Studio (not under .gb) is
    unaffected. Added with the S2 admin dark→light migration. */
+.gb .al-btn{transition:background var(--dur-1) var(--ease-out),box-shadow var(--dur-1) var(--ease-out),transform var(--dur-1) var(--ease-out),color var(--dur-1) var(--ease-out);}
 .gb .al-btn-primary{background:var(--primary);color:var(--primary-foreground);box-shadow:none;}
 .gb .al-btn-primary:hover:not(:disabled){background:#1A1A18;box-shadow:none;}
 .gb .al-btn-glass{background:var(--card);border-color:var(--border);color:var(--foreground);-webkit-backdrop-filter:none;backdrop-filter:none;box-shadow:var(--shadow-sm);}
@@ -214,7 +215,6 @@ h1, h2, h3 { font-family: var(--font-sans); font-weight: 600; letter-spacing: va
 .gb .al-btn-ghost:hover:not(:disabled){background:var(--accent);color:var(--foreground);}
 .gb .al-btn-danger{background:color-mix(in oklab,var(--error) 9%,transparent);border-color:color-mix(in oklab,var(--error) 25%,transparent);color:var(--error);}
 .gb .al-btn-danger:hover:not(:disabled){background:color-mix(in oklab,var(--error) 16%,transparent);}
-.gb .al-btn:focus-visible{box-shadow:0 0 0 3px color-mix(in oklab, var(--ring) 35%, transparent);}
 .gb .al-badge{border-color:var(--border);background:var(--secondary);color:var(--muted-foreground);}
 .gb .al-badge-accent{color:var(--foreground);border-color:var(--border);background:var(--accent);}
 .gb .al-badge-positive{color:var(--success);border-color:color-mix(in oklab,var(--success) 28%,transparent);background:color-mix(in oklab,var(--success) 9%,transparent);}
@@ -231,7 +231,7 @@ h1, h2, h3 { font-family: var(--font-sans); font-weight: 600; letter-spacing: va
 .gb .al-field-hint{color:var(--muted-foreground);}
 .gb .al-input-wrap{background:var(--card);border-color:var(--border);}
 .gb .al-input-wrap:hover{background:var(--card);}
-.gb .al-input-wrap:focus-within{border-color:var(--ring);box-shadow:0 0 0 3px color-mix(in oklab,var(--ring) 35%,transparent);background:var(--card);}
+.gb .al-input-wrap:focus-within{border-color:var(--ring);box-shadow:0 0 0 3px color-mix(in oklab,var(--ring) 40%,transparent);background:var(--card);}
 .gb .al-input-wrap input{color:var(--foreground);}
 .gb .al-input-wrap input::placeholder{color:var(--muted-foreground);}
 .gb .al-input-affix{color:var(--muted-foreground);}
@@ -461,7 +461,7 @@ h1, h2, h3 { font-family: var(--font-sans); font-weight: 600; letter-spacing: va
   background: var(--glass-3, rgba(20,23,28,.96)); border: 1px solid var(--line-1);
   color: var(--fg-1); font: var(--text-caption); white-space: nowrap;
   padding: 4px 8px; border-radius: var(--radius-sm); box-shadow: var(--shadow-pop, 0 8px 24px rgba(0,0,0,.4));
-  opacity: 0; pointer-events: none; transition: opacity .12s ease, transform .12s ease; z-index: 60;
+  opacity: 0; pointer-events: none; transition: opacity var(--dur-1) var(--ease-out), transform var(--dur-1) var(--ease-out); z-index: 60;
 }
 .al-tooltip-shortcut { margin-left: 6px; color: var(--fg-3); font-family: var(--font-mono); }
 .al-tooltip-wrap:hover .al-tooltip { opacity: 1; transform: translateX(-50%) translateY(0); }
@@ -511,7 +511,6 @@ h1, h2, h3 { font-family: var(--font-sans); font-weight: 600; letter-spacing: va
 .admin-nav { flex: none; width: 220px; display: flex; flex-direction: column; gap: 2px; padding: 18px 12px; border-right: 1px solid var(--border); }
 .admin-nav-link { display: block; padding: 9px 12px; border-radius: 14px; font: var(--text-body-medium); color: var(--muted-foreground); text-decoration: none; transition: background var(--dur-fast) var(--ease-out), color var(--dur-fast) var(--ease-out); }
 .admin-nav-link:hover { background: var(--accent); color: var(--foreground); }
-.admin-nav-link:focus-visible { outline: none; box-shadow: 0 0 0 3px color-mix(in oklab, var(--ring) 35%, transparent); }
 .admin-nav-link.is-disabled { color: color-mix(in oklab, var(--muted-foreground) 55%, transparent); cursor: default; }
 .admin-nav-link.is-disabled:hover { background: transparent; color: color-mix(in oklab, var(--muted-foreground) 55%, transparent); }
 .admin-content { flex: 1; min-width: 0; overflow: auto; }
@@ -542,7 +541,9 @@ h1, h2, h3 { font-family: var(--font-sans); font-weight: 600; letter-spacing: va
   --brand-soft: #FBE4D8;  --brand-soft-foreground: #9A3A1A;
 
   --success: #16A34A; --success-soft: #E7F6EC; --success-soft-foreground: #15803D;
-  --warning: #D97706; --warning-soft: #FBF0DD; --warning-soft-foreground: #B45309;
+  /* --warning-soft-foreground #B45309 → #92400E: AA fix (4.45→6.28:1), design-rules v3 §A1.8,
+     founder-approved 2026-07-07. Dark value already passes — unchanged. */
+  --warning: #D97706; --warning-soft: #FBF0DD; --warning-soft-foreground: #92400E;
   --error:   #E5484D; --error-soft:   #FCE9E9; --error-soft-foreground:   #B42B30;
   --info:    #3B6FE6; --info-soft:    #E7EEFD; --info-soft-foreground:    #1D4ED8;
 
@@ -552,6 +553,23 @@ h1, h2, h3 { font-family: var(--font-sans); font-weight: 600; letter-spacing: va
   --shadow-lg: 0 14px 34px rgba(20 20 24 / 0.10);
   --shadow-xl: 0 26px 60px rgba(20 20 24 / 0.12), 0 8px 20px rgba(20 20 24 / 0.07);
   --shadow-brand: 0 8px 22px rgba(236 88 40 / 0.26);
+
+  /* Motion — design-rules v3 §6: two easings, four durations. Non-colour tokens,
+     consumed as var(--…) / arbitrary values (no @theme registration needed, §T5). */
+  --dur-1: 120ms;
+  --dur-2: 150ms;
+  --dur-3: 200ms;
+  --dur-sweep: 600ms;
+  --ease-out: cubic-bezier(0.22, 1, 0.36, 1);
+  --ease-spring: cubic-bezier(0.34, 1.56, 0.64, 1);
+
+  /* Data display — design-rules v3 §D5: data is ink, emphasis is coral, state is semantic. */
+  --chart-ink: #0A0A0A;
+  --chart-compare: #A6A6A0;
+  --chart-grid: #F4F4F2;
+  --chart-axis: #EFEFED;
+  --chart-peak: var(--brand);
+  --data-label: #86867F;
 
   /* Type: Geist sans + JetBrains mono (matches design system 0abf8563) — point the
      legacy --text-* / --font-mono tokens at Geist/JetBrains here so they stop leaking
@@ -574,6 +592,16 @@ h1, h2, h3 { font-family: var(--font-sans); font-weight: 600; letter-spacing: va
   --warning:#E0A82B; --warning-soft:#2A1E08; --warning-soft-foreground:#F0C463;
   --error:#F2555A; --error-soft:#2A1011; --error-soft-foreground:#F58E92;
   --info:#5A8DF0; --info-soft:#0F1A33; --info-soft-foreground:#A8C2F7;
+  --chart-ink:#FAFAFA; --chart-compare:#5E5E66; --chart-grid:#1C1C1F;
+  --chart-axis:#262629; --chart-peak:var(--brand); --data-label:#8E8E96;
+  /* Dark shadows — design-rules v3 §K1: the light rgba(20 20 24 / …) values are
+     invisible on #0B0B0C; dark shadows ground, borders define edges (§K2.2). */
+  --shadow-xs: 0 1px 2px rgba(0 0 0 / 0.40);
+  --shadow-sm: 0 1px 3px rgba(0 0 0 / 0.45), 0 1px 2px rgba(0 0 0 / 0.35);
+  --shadow-md: 0 6px 16px rgba(0 0 0 / 0.50), 0 2px 6px rgba(0 0 0 / 0.40);
+  --shadow-lg: 0 14px 34px rgba(0 0 0 / 0.55);
+  --shadow-xl: 0 26px 60px rgba(0 0 0 / 0.60), 0 8px 20px rgba(0 0 0 / 0.45);
+  --shadow-brand: 0 8px 22px rgba(242 106 60 / 0.20);
 }
 
 /* Register the shadcn utilities the new components use (names Vapor doesn't map,
@@ -592,10 +620,40 @@ h1, h2, h3 { font-family: var(--font-sans); font-weight: 600; letter-spacing: va
   --color-input: var(--input);               --color-ring: var(--ring);
   --color-brand: var(--brand);               --color-brand-foreground: var(--brand-foreground);
   --color-brand-soft: var(--brand-soft);     --color-brand-soft-foreground: var(--brand-soft-foreground);
+  /* State base colours — three-place rule (§T5): without these registrations Tailwind v4
+     silently generates nothing for text-success / bg-error / text-info etc. (code-gaps #11).
+     --color-warning re-registers the Vapor mapping under the same var — kept for completeness. */
+  --color-success: var(--success);           --color-warning: var(--warning);
+  --color-error: var(--error);               --color-info: var(--info);
   --color-success-soft: var(--success-soft); --color-success-soft-foreground: var(--success-soft-foreground);
   --color-warning-soft: var(--warning-soft); --color-warning-soft-foreground: var(--warning-soft-foreground);
   --color-error-soft: var(--error-soft);     --color-error-soft-foreground: var(--error-soft-foreground);
   --color-info-soft: var(--info-soft);       --color-info-soft-foreground: var(--info-soft-foreground);
+  /* Chart / data-viz tokens — design-rules v3 §D5 */
+  --color-chart-ink: var(--chart-ink);       --color-chart-compare: var(--chart-compare);
+  --color-chart-grid: var(--chart-grid);     --color-chart-axis: var(--chart-axis);
+  --color-chart-peak: var(--chart-peak);     --color-data-label: var(--data-label);
+  /* Control radius — design-rules v3 §5: rounded-lg must render the 14px control radius.
+     Supersedes the Vapor @theme registration above (--radius-lg: 20px), which made every
+     rounded-lg control render 20px (polish-delta #1). Utility-only re-point: Vapor recipes
+     reading var(--radius-lg) still get 20px from the authored :root, which wins by source
+     order over Tailwind's emitted :root,:host theme block. */
+  --radius-lg: var(--radius);
+}
+
+/* Global focus ring — design-rules v3 §A2, verbatim. Two layers: 1px solid keyline
+   (3.42:1) + 40% coral halo (the 40% halo alone composites to 1.64:1 — invisible to
+   low vision). Supersedes the Vapor white --ring-focus (invisible on .gb light ground)
+   and the per-component 35% color-mix scatter. :focus-visible only — mouse clicks
+   never ring. Must stay AFTER every same-specificity :focus-visible recipe above so
+   it wins the cascade under .gb. Bordered fields keep the §A2 field variant
+   (ring-coloured 1px border + 3px 40% halo — see .gb .al-input-wrap:focus-within). */
+.gb :focus-visible {
+  outline: 2px solid transparent;   /* keeps the system indicator in forced-colors */
+  outline-offset: 2px;
+  box-shadow:
+    0 0 0 1px var(--ring),                                        /* keyline — 3.42:1 */
+    0 0 0 4px color-mix(in oklab, var(--ring) 40%, transparent);  /* halo — the warmth */
 }
 
 /* ===== Canvas + Account/Settings rules — moved from otto-theme.css in the S4b teardown.
@@ -682,7 +740,7 @@ h1, h2, h3 { font-family: var(--font-sans); font-weight: 600; letter-spacing: va
 
 /* Node action buttons (detail / make-video / delete) reveal on hover or when the
    node is selected — Grok-clean, but still reachable without hover via select. */
-.gb .cv-node-actions { opacity: 0; transition: opacity 0.12s ease; }
+.gb .cv-node-actions { opacity: 0; transition: opacity var(--dur-1) var(--ease-out); }
 .gb .react-flow__node:hover .cv-node-actions,
 .gb .react-flow__node.selected .cv-node-actions { opacity: 1; }
 
@@ -875,8 +933,8 @@ h1, h2, h3 { font-family: var(--font-sans); font-weight: 600; letter-spacing: va
 }
 
 /* ── Settings toggle (no shadcn switch exists; gb-styled). */
-.gb .cv-switch { width: 40px; height: 23px; border-radius: 999px; border: none; background: var(--border); position: relative; cursor: pointer; transition: background 140ms cubic-bezier(0.22, 1, 0.36, 1); }
-.gb .cv-switch::after { content: ""; position: absolute; top: 3px; left: 3px; width: 17px; height: 17px; border-radius: 50%; background: #fff; box-shadow: var(--shadow-sm); transition: left 140ms cubic-bezier(0.22, 1, 0.36, 1); }
+.gb .cv-switch { width: 40px; height: 23px; border-radius: 999px; border: none; background: var(--border); position: relative; cursor: pointer; transition: background var(--dur-2) var(--ease-out); }
+.gb .cv-switch::after { content: ""; position: absolute; top: 3px; left: 3px; width: 17px; height: 17px; border-radius: 50%; background: #fff; box-shadow: var(--shadow-sm); transition: left var(--dur-2) var(--ease-out); }
 .gb .cv-switch.on { background: var(--primary); }
 .gb .cv-switch.on::after { left: 20px; }
 .gb .cv-switch:disabled { cursor: not-allowed; opacity: 1; background: var(--border); }
