@@ -1,0 +1,203 @@
+<!-- @dsCard group="Layout & grid" -->
+<!-- Layout & grid at a glance — left: the five page archetypes as mini wireframes with exact
+     widths; right: the ten-layer z-index ladder bound to shadow tiers. Click a layer to flash
+     its element in the demo frame. -->
+<style>
+  :root {
+    --background: #FCFCFC; --foreground: #0A0A0A;
+    --card: #FFFFFF; --border: #E6E6E3;
+    --secondary: #F4F4F3; --accent: #ECECEA; --muted-foreground: #6E6E68;
+    --brand: #EC5828; --brand-soft: #FBE4D8;
+    --primary: #0A0A0A; --primary-foreground: #FCFCFC;
+    --radius: 0.875rem; --radius-card: 1.125rem;
+    --shadow-sm: 0 1px 3px rgba(20 20 24 / 0.06), 0 1px 2px rgba(20 20 24 / 0.05);
+    --shadow-md: 0 6px 16px rgba(20 20 24 / 0.08), 0 2px 6px rgba(20 20 24 / 0.05);
+    --shadow-lg: 0 14px 34px rgba(20 20 24 / 0.10);
+    --shadow-xl: 0 26px 60px rgba(20 20 24 / 0.12), 0 8px 20px rgba(20 20 24 / 0.07);
+    --font-sans: "Geist", system-ui, -apple-system, sans-serif;
+    --font-mono: "JetBrains Mono", ui-monospace, monospace;
+  }
+  body {
+    margin: 0; min-height: 100vh; display: flex; align-items: center; justify-content: center;
+    background: var(--background); color: var(--foreground); font-family: var(--font-sans);
+    padding: 24px; box-sizing: border-box;
+  }
+  .stage { display: flex; gap: 24px; align-items: flex-start; flex-wrap: wrap; justify-content: center; }
+  .col { display: flex; flex-direction: column; gap: 12px; }
+  .h {
+    font-family: var(--font-mono); font-size: 11px; font-weight: 500;
+    letter-spacing: 0.08em; text-transform: uppercase; color: var(--muted-foreground);
+  }
+
+  /* ── Archetype wireframes ─────────────────────────────── */
+  .arche { display: grid; grid-template-columns: repeat(2, 168px); gap: 12px; }
+  .aframe {
+    width: 168px; height: 104px; box-sizing: border-box; position: relative;
+    background: var(--card); border: 1px solid var(--border); border-radius: 10px;
+    overflow: hidden; box-shadow: var(--shadow-sm);
+  }
+  .aframe .lbl {
+    position: absolute; left: 6px; bottom: 5px; z-index: 2;
+    font-size: 10px; font-weight: 600; letter-spacing: -0.006em;
+    background: var(--primary); color: var(--primary-foreground);
+    padding: 2px 7px; border-radius: 999px;
+  }
+  .aframe .w {
+    position: absolute; right: 6px; top: 5px; z-index: 2;
+    font-family: var(--font-mono); font-size: 8.5px; color: var(--muted-foreground);
+  }
+  .rail { position: absolute; top: 0; bottom: 0; left: 0; background: var(--secondary); border-right: 1px solid var(--border); }
+  .blk  { position: absolute; background: var(--secondary); border-radius: 4px; }
+  .line { position: absolute; height: 5px; background: var(--accent); border-radius: 3px; }
+
+  /* ── Z ladder ─────────────────────────────────────────── */
+  .ladder { display: flex; flex-direction: column-reverse; gap: 4px; width: 264px; }
+  .rung {
+    display: flex; align-items: center; gap: 8px; cursor: pointer;
+    background: var(--card); border: 1px solid var(--border); border-radius: 9px;
+    padding: 6px 10px; transition: transform 120ms cubic-bezier(0.22,1,0.36,1),
+      box-shadow 120ms cubic-bezier(0.22,1,0.36,1);
+  }
+  .rung:hover { transform: translateX(4px); box-shadow: var(--shadow-md); }
+  .rung .z {
+    font-family: var(--font-mono); font-size: 10px; font-weight: 500; width: 30px;
+    color: var(--muted-foreground); flex: none;
+  }
+  .rung .nm { font-size: 12px; font-weight: 600; letter-spacing: -0.006em; flex: 1; }
+  .rung .tier {
+    font-family: var(--font-mono); font-size: 8.5px; letter-spacing: 0.08em;
+    text-transform: uppercase; color: var(--muted-foreground);
+  }
+  .rung[data-t="t1"] { box-shadow: none; }
+  .rung[data-t="t2"] { box-shadow: var(--shadow-md); }
+  .rung[data-t="t3"] { box-shadow: var(--shadow-lg); }
+  .rung[data-t="xl"] { box-shadow: var(--shadow-xl); }
+
+  /* ── Live layering demo frame ─────────────────────────── */
+  .demo {
+    position: relative; width: 264px; height: 176px; overflow: hidden;
+    background: var(--background); border: 1px solid var(--border);
+    border-radius: var(--radius-card); box-shadow: var(--shadow-sm);
+  }
+  .demo .d-rail { position: absolute; top: 0; bottom: 0; left: 0; width: 44px; z-index: 40;
+    background: var(--card); border-right: 1px solid var(--border); }
+  .demo .d-sticky { position: absolute; top: 0; left: 44px; right: 0; height: 24px; z-index: 30;
+    background: var(--card); border-bottom: 1px solid var(--border); }
+  .demo .d-drop { position: absolute; top: 30px; right: 12px; width: 84px; height: 58px; z-index: 50;
+    background: var(--card); border: 1px solid var(--border); border-radius: 9px; box-shadow: var(--shadow-lg); }
+  .demo .d-modal { position: absolute; left: 50%; top: 54%; transform: translate(-32%, -50%);
+    width: 108px; height: 72px; z-index: 100; background: var(--card);
+    border: 1px solid var(--border); border-radius: 12px; box-shadow: var(--shadow-xl); }
+  .demo .d-toast { position: absolute; right: 8px; bottom: 8px; width: 96px; height: 26px; z-index: 120;
+    background: var(--primary); border-radius: 8px; box-shadow: var(--shadow-lg); }
+  .demo .d-dock { position: absolute; left: 52px; bottom: 8px; width: 24px; height: 24px; z-index: 70;
+    background: var(--brand-soft); border: 1px solid var(--brand); border-radius: 999px;
+    box-shadow: var(--shadow-md); }
+  .demo .tag {
+    position: absolute; inset: auto auto 3px 4px;
+    font-family: var(--font-mono); font-size: 8px; color: var(--muted-foreground);
+  }
+  .demo .d-toast .tag { color: var(--primary-foreground); }
+  .flash { animation: flash 600ms cubic-bezier(0.22,1,0.36,1) 1; }
+  @keyframes flash {
+    0% { outline: 2px solid var(--brand); outline-offset: 2px; }
+    100% { outline: 2px solid transparent; outline-offset: 2px; }
+  }
+  @media (prefers-reduced-motion: reduce) {
+    .rung, .flash { transition: none; animation: none; }
+  }
+</style>
+
+<div class="stage">
+  <!-- Archetypes -->
+  <div class="col">
+    <div class="h">Page archetypes</div>
+    <div class="arche">
+      <!-- Workbench: 240 rail + chat clamp + canvas -->
+      <div class="aframe">
+        <div class="rail" style="width:26px"></div>
+        <div class="blk" style="left:26px;top:0;bottom:0;width:52px;border-radius:0;border-right:1px solid var(--border);background:var(--card)"></div>
+        <div class="line" style="left:32px;top:12px;width:38px"></div>
+        <div class="line" style="left:32px;top:24px;width:30px"></div>
+        <div class="blk" style="left:90px;top:14px;width:66px;height:44px;background:var(--card);border:1px solid var(--border)"></div>
+        <span class="w">240 · clamp(360,38%,520) · 1fr</span>
+        <span class="lbl">Workbench</span>
+      </div>
+      <!-- List -->
+      <div class="aframe">
+        <div class="blk" style="left:0;right:0;top:0;height:20px;border-radius:0;border-bottom:1px solid var(--border);background:var(--card)"></div>
+        <div class="blk" style="left:10px;top:28px;width:44px;height:30px"></div>
+        <div class="blk" style="left:62px;top:28px;width:44px;height:30px"></div>
+        <div class="blk" style="left:114px;top:28px;width:44px;height:30px"></div>
+        <div class="blk" style="left:10px;top:64px;width:44px;height:30px"></div>
+        <div class="blk" style="left:62px;top:64px;width:44px;height:30px"></div>
+        <div class="blk" style="left:114px;top:64px;width:44px;height:30px"></div>
+        <span class="w">minmax(220,1fr) gap 12</span>
+        <span class="lbl">List</span>
+      </div>
+      <!-- Settings -->
+      <div class="aframe">
+        <div class="rail" style="width:38px;background:var(--card)"></div>
+        <div class="line" style="left:5px;top:10px;width:26px"></div>
+        <div class="line" style="left:5px;top:22px;width:22px;background:var(--secondary)"></div>
+        <div class="blk" style="left:50px;top:12px;width:96px;height:26px;background:var(--card);border:1px solid var(--border)"></div>
+        <div class="blk" style="left:50px;top:46px;width:96px;height:26px;background:var(--card);border:1px solid var(--border)"></div>
+        <span class="w">216 + 760</span>
+        <span class="lbl">Settings</span>
+      </div>
+      <!-- Auth -->
+      <div class="aframe">
+        <div class="rail" style="width:56%;background:#F7F5F2"></div>
+        <div class="line" style="left:8px;top:34px;width:60px;height:7px"></div>
+        <div class="line" style="left:8px;top:48px;width:44px"></div>
+        <div class="blk" style="left:108px;top:28px;width:48px;height:48px;background:var(--card);border:1px solid var(--border)"></div>
+        <span class="w">1.15 : 1 · form 360</span>
+        <span class="lbl">Auth</span>
+      </div>
+    </div>
+  </div>
+
+  <!-- Layering demo -->
+  <div class="col">
+    <div class="h">Layers live</div>
+    <div class="demo" id="demo">
+      <div class="d-rail" data-l="40"><span class="tag">nav 40</span></div>
+      <div class="d-sticky" data-l="30"><span class="tag">sticky 30</span></div>
+      <div class="d-drop" data-l="50"><span class="tag">dropdown 50</span></div>
+      <div class="d-dock" data-l="70"></div>
+      <div class="d-modal" data-l="100"><span class="tag">modal 100</span></div>
+      <div class="d-toast" data-l="120"><span class="tag">toast 120</span></div>
+    </div>
+    <div class="h" style="letter-spacing:0.04em;text-transform:none">Dock 70 = coral ring · modal beats drawer, toast beats all</div>
+  </div>
+
+  <!-- Ladder -->
+  <div class="col">
+    <div class="h">Z ladder · shadow bound to layer</div>
+    <div class="ladder">
+      <div class="rung" data-t="t1" data-l="0"><span class="z">0</span><span class="nm">base</span><span class="tier">tier 1</span></div>
+      <div class="rung" data-t="t2" data-l="10"><span class="z">10</span><span class="nm">raised</span><span class="tier">tier 2</span></div>
+      <div class="rung" data-t="t1" data-l="30"><span class="z">30</span><span class="nm">sticky</span><span class="tier">sm on scroll</span></div>
+      <div class="rung" data-t="t2" data-l="40"><span class="z">40</span><span class="nm">nav</span><span class="tier">tier 2</span></div>
+      <div class="rung" data-t="t3" data-l="50"><span class="z">50</span><span class="nm">dropdown</span><span class="tier">tier 3</span></div>
+      <div class="rung" data-t="t3" data-l="60"><span class="z">60</span><span class="nm">tooltip</span><span class="tier">tier 3</span></div>
+      <div class="rung" data-t="t2" data-l="70"><span class="z">70</span><span class="nm">otto dock</span><span class="tier">2 / 3</span></div>
+      <div class="rung" data-t="t3" data-l="80"><span class="z">80</span><span class="nm">drawer</span><span class="tier">tier 3</span></div>
+      <div class="rung" data-t="xl" data-l="100"><span class="z">100</span><span class="nm">modal</span><span class="tier">xl</span></div>
+      <div class="rung" data-t="t3" data-l="120"><span class="z">120</span><span class="nm">toast</span><span class="tier">tier 3</span></div>
+    </div>
+  </div>
+</div>
+
+<script>
+  // Click a ladder rung → flash the matching element in the demo frame.
+  document.querySelectorAll(".rung").forEach(function (r) {
+    r.addEventListener("click", function () {
+      var el = document.querySelector('#demo [data-l="' + r.dataset.l + '"]');
+      if (!el) return;
+      el.classList.remove("flash");
+      void el.offsetWidth;
+      el.classList.add("flash");
+    });
+  });
+</script>
