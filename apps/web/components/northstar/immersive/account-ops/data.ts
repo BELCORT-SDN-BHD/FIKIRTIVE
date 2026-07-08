@@ -8,8 +8,11 @@
  * 零后台 import;确定性(无 Date.now / 无 Math.random)。
  */
 
-import { NS_BRAND, NS_CREDIT_LEDGER } from "@/components/northstar/_mock";
+import { NS_BRAND } from "@/components/northstar/_mock";
 import type { NsChannel } from "./kit";
+
+/* 额度概览:单一实现在共享 selector(蓝图 §3.2),这里 re-export 保持 import 路径不变 */
+export { creditSummary } from "../_selectors";
 
 /* ── 连接(渠道账号) ────────────────────────────────────────────────────── */
 export interface NsConnection {
@@ -189,14 +192,3 @@ export const ROLE_CAN: Record<NsMember["role"], string> = {
   Manager: "Create, schedule, approve spend and posts",
   Editor: "Create and draft — spend and posts need approval",
 };
-
-/* ── 额度概览(派生自 NS_BRAND + NS_CREDIT_LEDGER) ─────────────────────── */
-export function creditSummary() {
-  const spent = NS_CREDIT_LEDGER.filter((r) => r.credits < 0).reduce((s, r) => s + -r.credits, 0);
-  const toppedUp = NS_CREDIT_LEDGER.filter((r) => r.credits > 0).reduce((s, r) => s + r.credits, 0);
-  return {
-    balance: NS_BRAND.creditBalance,
-    spentThisWeek: spent,
-    toppedUp,
-  };
-}

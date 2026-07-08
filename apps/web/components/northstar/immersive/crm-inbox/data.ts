@@ -18,6 +18,7 @@ import {
   type NsContact,
   type NsConversation,
 } from "@/components/northstar/_mock";
+import { dealAmountMyr } from "../_selectors";
 
 /* ── 联系人:直接透传 mock,方便组内各页取用 ────────────────────────────── */
 export const CONTACTS: NsContact[] = NS_CONTACTS;
@@ -59,13 +60,15 @@ export interface NsDeal {
 /**
  * 成交由 mock 对话 + 联系人推出来的产品口径(非新品牌事实):
  * 每个联系人一张最近的成交单,阶段跟着他们最近一次对话/下单情况走。
+ * 金额单一源:从脊梁的 totalOrdersMyr 派生(dealAmountMyr),同一客户在 contacts
+ * 页与 deals 页显示同一笔钱(蓝图 §3.2 修金额漂移)—— 永不再硬编码。
  */
 export const DEALS: NsDeal[] = [
-  { id: "deal-01", contactId: "ct-01", title: "Friday office croissants ×20", stage: "confirmed", amountMyr: 170, updatedAt: "2026-07-07" },
-  { id: "deal-02", contactId: "ct-02", title: "Wholesale restock ×60 boxes", stage: "quote", amountMyr: 1080, updatedAt: "2026-07-05" },
-  { id: "deal-03", contactId: "ct-03", title: "Pandan gula melaka cake", stage: "lead", amountMyr: 88, updatedAt: "2026-07-07" },
-  { id: "deal-04", contactId: "ct-04", title: "Catering — 4 platters", stage: "delivered", amountMyr: 620, updatedAt: "2026-06-30" },
-  { id: "deal-05", contactId: "ct-05", title: "Raya cookie gift boxes ×5", stage: "delivered", amountMyr: 340, updatedAt: "2026-07-04" },
+  { id: "deal-01", contactId: "ct-01", title: "Friday office croissants ×20", stage: "confirmed", amountMyr: dealAmountMyr("ct-01"), updatedAt: "2026-07-07" },
+  { id: "deal-02", contactId: "ct-02", title: "Wholesale restock ×60 boxes", stage: "quote", amountMyr: dealAmountMyr("ct-02"), updatedAt: "2026-07-05" },
+  { id: "deal-03", contactId: "ct-03", title: "Pandan gula melaka cake", stage: "lead", amountMyr: dealAmountMyr("ct-03"), updatedAt: "2026-07-07" },
+  { id: "deal-04", contactId: "ct-04", title: "Catering — 4 platters", stage: "delivered", amountMyr: dealAmountMyr("ct-04"), updatedAt: "2026-06-30" },
+  { id: "deal-05", contactId: "ct-05", title: "Raya cookie gift boxes ×5", stage: "delivered", amountMyr: dealAmountMyr("ct-05"), updatedAt: "2026-07-04" },
 ];
 
 export function dealsForContact(contactId: string): NsDeal[] {

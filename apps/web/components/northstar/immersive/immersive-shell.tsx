@@ -88,8 +88,15 @@ export function ImmersiveShell({ children }: { children: React.ReactNode }) {
     [openOtto],
   );
 
-  // Otto 全屏页在沉浸式里也常驻 dock —— 全屏页与 dock 是两个入口,同一个 Otto。
   const fullHref = "/northstar-immersive/otto";
+
+  // dock 不出现的两类面:
+  //  ① §O3 Otto 自己的全屏面(/otto + /global/otto-chat)—— 否则两个 Otto 同屏;
+  //  ② 宪法 7 市政厅(/cityhall/admin)—— Otto 永久豁免,内部运维台不得出现 coral/dock。
+  const hideDock =
+    pathname === "/northstar-immersive/otto" ||
+    pathname === "/northstar-immersive/global/otto-chat" ||
+    pathname === "/northstar-immersive/cityhall/admin";
 
   return (
     <ImmersiveProvider value={ctx}>
@@ -105,7 +112,7 @@ export function ImmersiveShell({ children }: { children: React.ReactNode }) {
             {children}
           </main>
         </div>
-        <ImmersiveDock ref={dockRef} fullHref={fullHref} />
+        {!hideDock && <ImmersiveDock ref={dockRef} fullHref={fullHref} />}
       </div>
     </ImmersiveProvider>
   );
