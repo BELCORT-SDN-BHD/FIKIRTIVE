@@ -74,9 +74,9 @@ export default function Page() {
   return (
     <div className="mx-auto flex min-h-full w-full max-w-[680px] flex-col px-6 pt-6 pb-10">
       <PageHeader
-        title="Campaign proposal card"
-        subtitle="How Otto hands over a full plan in chat. Same data as the calendar workbench."
-        meta={["CAMPAIGN_CARD · $0"]}
+        title="Campaign plan"
+        subtitle="Otto drafts the whole month. Review, edit or remove any post, then approve."
+        meta={[NS_CAMPAIGN.name]}
       />
 
       {/* 聊天流(演示切片) */}

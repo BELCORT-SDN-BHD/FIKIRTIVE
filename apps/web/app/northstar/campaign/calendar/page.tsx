@@ -185,7 +185,7 @@ export default function Page() {
           ))}
         </div>
         <p className="text-xs text-muted-foreground">
-          Same data as the proposal card in chat. Edits here show up there.
+          Edit any post here or in Otto&apos;s chat — it stays in sync.
         </p>
         <div className="flex-1" />
         {!landed && !isEmpty && !isError && (

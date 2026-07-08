@@ -91,7 +91,6 @@ export default function Page() {
       <PageHeader
         title="Campaign workbench"
         subtitle="Fill four fields and Otto plans the whole campaign. No prompt writing needed."
-        meta={["C line · phase 1"]}
       />
 
       {/* 叙述条:钉在被作用面的顶部(§8c),一屏一条 */}
