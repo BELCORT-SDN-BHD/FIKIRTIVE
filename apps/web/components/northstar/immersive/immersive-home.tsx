@@ -44,7 +44,8 @@ export function ImmersiveHome() {
   const immersive = useImmersive();
   const recent = NS_ASSETS.filter((a) => a.status === "ready").slice(0, 4);
   const nextPosts = NS_SCHEDULED_POSTS.slice(0, 3);
-  const reach28 = NS_ANALYTICS.reach.reduce((s, p) => s + p.value, 0);
+  // Reach 卡与分析区同源(NS_ANALYTICS.kpis[0]),避免同屏「招呼条 18% vs 卡片 9%」一店两数。
+  const reachKpi = NS_ANALYTICS.kpis[0];
 
   return (
     <div className="mx-auto w-full max-w-[1080px] px-6 pt-6 pb-24">
@@ -80,7 +81,7 @@ export function ImmersiveHome() {
       {/* KPI 三卡 → 分析区 */}
       <div className="mt-5 grid grid-cols-1 gap-3 sm:grid-cols-3">
         <Link href={`${BASE}/analytics/overview`} className="rounded-[14px] focus-visible:outline-2 focus-visible:outline-ring">
-          <StatCard label="Reach · 28 days" value={reach28.toLocaleString("en-MY")} delta={{ dir: "up", text: "▲ 9% vs prev." }} />
+          <StatCard label="Reach · 28 days" value={reachKpi.value} delta={reachKpi.delta} />
         </Link>
         <Link href={`${BASE}/schedule/plan`} className="rounded-[14px] focus-visible:outline-2 focus-visible:outline-ring">
           <StatCard label="Scheduled posts" value={String(NS_SCHEDULED_POSTS.length)} delta={{ dir: "flat", text: "Next up in 2h" }} />

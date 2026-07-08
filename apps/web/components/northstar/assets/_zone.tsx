@@ -20,6 +20,7 @@
 import * as React from "react";
 import { CircleAlert, Search } from "lucide-react";
 import { cn } from "@/lib/utils";
+import { useInsideImmersive } from "../immersive/_context";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { OttoAvatar } from "@/components/otto/OttoAvatar";
@@ -395,6 +396,8 @@ export function DemoStateBar({
   state: DemoState;
   onChange: (s: DemoState) => void;
 }) {
+  // 沉浸式产品外壳内不出现原型三态演示 chrome。
+  if (useInsideImmersive()) return null;
   return (
     <div className="fixed bottom-4 left-1/2 z-[10] flex -translate-x-1/2 items-center gap-2 rounded-full border border-border bg-card py-1 pr-1 pl-3 shadow-[var(--shadow-sm)]">
       <span className="font-mono text-[10px] leading-[14px] font-medium tracking-[0.06em] text-muted-foreground">

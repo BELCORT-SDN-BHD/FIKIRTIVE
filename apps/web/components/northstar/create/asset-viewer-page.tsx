@@ -19,6 +19,7 @@ import {
   Volume2,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
+import { useInsideImmersive } from "../immersive/_context";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { MockNote, OttoNarrationBar } from "../_shared";
@@ -37,6 +38,7 @@ import {
 
 export function AssetViewerPage() {
   useCreateKeyframes();
+  const insideImmersive = useInsideImmersive();
   const [versions, setVersions] = React.useState<NsViewerVersion[]>(NS_VIEWER_VERSIONS);
   const [activeVersion, setActiveVersion] = React.useState<string>(NS_VIEWER_VERSIONS[0].id);
   const [playing, setPlaying] = React.useState(false);
@@ -85,9 +87,11 @@ export function AssetViewerPage() {
           Canvas
         </Link>
         <span className="truncate text-sm font-semibold text-foreground">{NS_VIEWER_ASSET.title}</span>
-        <Badge variant="outline" className="hidden text-muted-foreground sm:inline-flex">
-          ?asset={NS_VIEWER_ASSET.id}
-        </Badge>
+        {!insideImmersive && (
+          <Badge variant="outline" className="hidden text-muted-foreground sm:inline-flex">
+            ?asset={NS_VIEWER_ASSET.id}
+          </Badge>
+        )}
         <div className="flex-1" />
         <DemoStateBar state={demo} onChange={setDemo} />
       </div>

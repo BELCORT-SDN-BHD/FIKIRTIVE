@@ -41,6 +41,7 @@ import { cn } from "@/lib/utils";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip";
+import { useInsideImmersive } from "../immersive/_context";
 import { MockNote } from "../_shared";
 import { NS_BRAND } from "../_mock";
 import {
@@ -110,6 +111,9 @@ export function CanvasPage() {
   const [feedback, setFeedback] = React.useState<Record<string, FeedbackValue>>({});
   const [sideTab, setSideTab] = React.useState<SideTab>("chat");
   const [sideSearch, setSideSearch] = React.useState("");
+  // 沉浸式外壳内:壳级 240 导航已提供 New 与 History,画布 A3 栏收敛为「工作区上下文」
+  // (Search + Chat 会话 + Projects),不再并列成第二条全局导航(蓝图 canvas double-rail 修法)。
+  const insideImmersive = useInsideImmersive();
 
   // ── 生成 / 花费状态 ──
   const [balance, setBalance] = React.useState<number>(NS_BRAND.creditBalance);
@@ -412,8 +416,14 @@ export function CanvasPage() {
   return (
     <TooltipProvider>
     <div className="flex h-full min-h-0">
-      {/* ── A3 左栏:Search / New generation / Chat / Projects / History ── */}
-      <aside className="flex w-56 shrink-0 flex-col border-r border-border">
+      {/* ── A3 左栏:Search / New generation / Chat / Projects / History ──
+         沉浸式外壳内去掉硬右框、换极淡底色,读作 chat 的会话侧栏而非第二条导航 rail。 */}
+      <aside
+        className={cn(
+          "flex w-56 shrink-0 flex-col",
+          insideImmersive ? "bg-muted/40" : "border-r border-border",
+        )}
+      >
         <div className="flex flex-col gap-2 p-3">
           <div className="relative">
             <Search className="pointer-events-none absolute top-1/2 left-2.5 size-4 -translate-y-1/2 text-muted-foreground" strokeWidth={2} />
@@ -424,13 +434,19 @@ export function CanvasPage() {
               className="h-9 w-full rounded-[10px] border border-input bg-card pr-2 pl-8 text-[13px] text-foreground shadow-[var(--shadow-xs)] outline-none placeholder:text-muted-foreground focus-visible:border-ring focus-visible:ring-[3px] focus-visible:ring-ring/40"
             />
           </div>
-          <Button size="sm" className="w-full" onClick={() => setSelected([])}>
+          <Button
+            size="sm"
+            variant={insideImmersive ? "outline" : "default"}
+            className="w-full"
+            onClick={() => setSelected([])}
+          >
             <Plus className="size-4" strokeWidth={2.2} />
             New generation
           </Button>
         </div>
         <div className="flex gap-1 px-3">
-          {(["chat", "projects", "history"] as SideTab[]).map((t) => (
+          {/* 沉浸式外壳内隐藏 A3「History」页签 —— 壳级 HISTORY 已在;画布历史走 Library。 */}
+          {((insideImmersive ? ["chat", "projects"] : ["chat", "projects", "history"]) as SideTab[]).map((t) => (
             <button
               key={t}
               type="button"

@@ -17,6 +17,7 @@ import Link from "next/link";
 import { usePathname } from "next/navigation";
 import { Check, CircleAlert, Megaphone, ShieldCheck } from "lucide-react";
 import { cn } from "@/lib/utils";
+import { useInsideImmersive } from "../immersive/_context";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import {
@@ -241,6 +242,8 @@ export function DemoStateBar({
   options?: { key: string; label: string }[];
   className?: string;
 }) {
+  // 沉浸式产品外壳内不出现原型三态演示 chrome。
+  if (useInsideImmersive()) return null;
   const opts = options ?? [
     { key: "data", label: "Data" },
     { key: "loading", label: "Loading" },

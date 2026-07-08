@@ -16,6 +16,7 @@
 import * as React from "react";
 import { CircleAlert, Flag, ThumbsDown, ThumbsUp } from "lucide-react";
 import { cn } from "@/lib/utils";
+import { useInsideImmersive } from "../immersive/_context";
 import { Button } from "@/components/ui/button";
 import {
   Dialog,
@@ -88,6 +89,8 @@ export function DemoStateBar({
   onChange: (s: DemoState) => void;
   className?: string;
 }) {
+  // 沉浸式产品外壳内不出现原型三态演示 chrome(与 _shared/analytics/campaign 同规矩)。
+  if (useInsideImmersive()) return null;
   const states: DemoState[] = ["live", "loading", "empty", "error"];
   return (
     <div className={cn("flex items-center gap-2", className)}>
