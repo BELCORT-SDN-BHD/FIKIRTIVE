@@ -126,7 +126,7 @@ export function ImmersiveShell({ children }: { children: React.ReactNode }) {
   const bareLayout = pathname === "/northstar-immersive/onboarding/login";
   if (bareLayout) {
     return (
-      <div className="gb flex h-dvh flex-col bg-background text-foreground">
+      <div className="gb ns-immersive flex h-dvh flex-col bg-background text-foreground">
         <main
           className="min-h-0 flex-1 overflow-y-auto"
           style={reduced ? undefined : { animation: "ns-immersive-fade 220ms ease-out" }}
@@ -139,7 +139,7 @@ export function ImmersiveShell({ children }: { children: React.ReactNode }) {
 
   return (
     <ImmersiveProvider value={ctx}>
-      <div ref={rootRef} className="gb flex h-dvh flex-col bg-background text-foreground">
+      <div ref={rootRef} className="gb ns-immersive flex h-dvh flex-col bg-background text-foreground">
         {/* §L4 ≤680 顶栏:汉堡开抽屉 + 品牌回首页;>680 桌面常驻栏自带 header,故隐藏此条。 */}
         <div className="flex h-[52px] shrink-0 items-center gap-1.5 border-b border-border px-2 min-[681px]:hidden">
           <button

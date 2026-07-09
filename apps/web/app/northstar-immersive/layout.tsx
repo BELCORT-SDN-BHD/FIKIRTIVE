@@ -1,5 +1,8 @@
 import { notFound } from "next/navigation";
 import { ImmersiveShell } from "@/components/northstar/immersive/immersive-shell";
+// 双声部 scoped token 层(Wave C · C-D · f1-tokens):蓝人手声部 + 手感工具类,只作用于
+// `.gb.ns-immersive` 根容器,全局 token 值不动、live 产品不受影响。见 design-rules §2 修正案。
+import "./immersive-tokens.css";
 
 /**
  * 北极星沉浸式外壳路由组 —— 一个真能上手开的产品外壳,不是页面画廊。
