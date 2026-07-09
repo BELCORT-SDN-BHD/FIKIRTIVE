@@ -53,6 +53,7 @@ import { useInsideImmersive } from "../immersive/_context";
 import { useQueryParam } from "../immersive/_kit";
 import {
   balance as getBalance,
+  castPersonas,
   ottoWorking as setOttoWorking,
   promoteToCampaign,
   promotedCampaignsOf,
@@ -196,7 +197,9 @@ export function CanvasPage() {
       if (seg) return { name: seg.name, prefix: `For ${seg.name}: ` };
     }
     if (personaParam) {
-      const ps = PERSONAS.find((p) => p.id === personaParam);
+      // castPersonas() 优先:cast 新建/训练好的人设已迁 store,静态 PERSONAS 只作种子兜底 ——
+      // 否则新训人设点「Use in a video」到画布拿不到上下文(chip / prompt 前缀双丢)。
+      const ps = castPersonas().find((p) => p.id === personaParam) ?? PERSONAS.find((p) => p.id === personaParam);
       if (ps) return { name: ps.name, prefix: `Starring ${ps.name}: ` };
     }
     return null;

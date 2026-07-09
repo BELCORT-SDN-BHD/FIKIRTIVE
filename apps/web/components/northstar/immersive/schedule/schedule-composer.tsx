@@ -44,7 +44,7 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 import { EmptyState, PageHeader } from "@/components/northstar/_shared";
-import { NS_ASSETS, NS_SCHEDULED_POSTS, nsImage, type NsAsset, type NsContact } from "@/components/northstar/_mock";
+import { NS_ASSETS, NS_SCHEDULED_POSTS, nsImage, type NsAsset, type NsContact, type NsScheduledPost } from "@/components/northstar/_mock";
 import {
   BASE,
   PLATFORMS,
@@ -150,11 +150,18 @@ export function ScheduleComposer() {
   const tabRefs = React.useRef<(HTMLButtonElement | null)[]>([]);
 
   const prefillPostId = useQueryParam("post");
+  // 记住整条源帖:保存时把不在表单里的上下文字段(campaignId / 原 media / crossPostIds)
+  // 一并带回 —— 否则「整对象替换」会把它们静默丢弃(帖从 campaign 详情消失、图变兜底图)。
+  const prefillSource = React.useRef<NsScheduledPost | null>(null);
   React.useEffect(() => {
-    if (!prefillPostId) return;
+    if (!prefillPostId) {
+      prefillSource.current = null;
+      return;
+    }
     // store live 优先(运行时新建的 post-live-*/post-draft-*/sched-* 打开满字段),静态种子兜底。
     const p = scheduledPosts().find((x) => x.id === prefillPostId) ?? NS_SCHEDULED_POSTS.find((x) => x.id === prefillPostId);
     if (!p) return;
+    prefillSource.current = p;
     setCaption(p.caption);
     if (p.firstComment) setFirstComment(p.firstComment);
     if (p.altText) setAltText(p.altText);
@@ -164,8 +171,8 @@ export function ScheduleComposer() {
     if (hhmm && TIMES.includes(hhmm)) setTime(hhmm);
     setTargets([p.platform]);
     setActiveTab(p.platform);
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
+    // 依赖 prefillPostId:同组件内切换 ?post= 时重新回填(依赖数组曾为空 → 不重填)。
+  }, [prefillPostId]);
 
   const toggleTarget = (p: NsPlatform) => {
     setFormError(null);
@@ -242,12 +249,16 @@ export function ScheduleComposer() {
       // 打开一条运行时帖再保存会当新帖处理、变重复帖。命中则沿用同 id → schedulePost 就地更新。
       const existing = prefillPostId && scheduledPosts().some((p) => p.id === prefillPostId);
       const id = existing ? prefillPostId! : `post-live-${Date.now()}`;
+      // 编辑既有帖:以源帖为底,只覆盖表单里编辑过的字段 —— campaignId / crossPostIds 等
+      // 上下文保留;媒体未换则沿用原图,不再回落兜底图。
+      const source = existing && prefillSource.current?.id === prefillPostId ? prefillSource.current : null;
       schedulePost({
+        ...(source ?? {}),
         id,
         scheduledAt: `${date}T${time}:00+08:00`,
         platform: targets[0],
         caption: caption.trim() + tagLine,
-        media: media?.thumb ?? nsImage("bakery", 3),
+        media: media?.thumb ?? source?.media ?? nsImage("bakery", 3),
         status: "scheduled",
         firstComment: firstComment.trim() || undefined,
         altText: altText.trim() || undefined,
@@ -263,12 +274,15 @@ export function ScheduleComposer() {
     }
     const existing = prefillPostId && scheduledPosts().some((p) => p.id === prefillPostId);
     const id = existing ? prefillPostId! : `post-draft-${Date.now()}`;
+    // 同 confirmSchedule:编辑既有帖时以源帖为底,保留 campaignId / 原 media 等上下文。
+    const source = existing && prefillSource.current?.id === prefillPostId ? prefillSource.current : null;
     saveDraft({
+      ...(source ?? {}),
       id,
       scheduledAt: `${date}T${time}:00+08:00`,
       platform: targets[0],
       caption: caption.trim() + tagLine,
-      media: media?.thumb ?? nsImage("bakery", 3),
+      media: media?.thumb ?? source?.media ?? nsImage("bakery", 3),
       status: "draft",
       firstComment: firstComment.trim() || undefined,
       altText: altText.trim() || undefined,
