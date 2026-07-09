@@ -8,7 +8,6 @@
 
 import * as React from "react";
 import Link from "next/link";
-import { useRouter } from "next/navigation";
 import {
   ArrowUp,
   Bot,
@@ -29,6 +28,7 @@ import {
   DialogTitle,
 } from "@/components/ui/dialog";
 import { MockNote } from "../_shared";
+import { useImmersiveRouter } from "../immersive/_kit";
 import { NS_BRAND } from "../_mock";
 import { NS_DISCOVER, NS_TEMPLATES } from "./_fixtures";
 import {
@@ -65,7 +65,8 @@ const MODE_META: Record<Mode, { icon: React.ElementType; label: string; placehol
 
 export function CreateHomePage() {
   useCreateKeyframes();
-  const router = useRouter();
+  // 壳内 push 改写到 /northstar-immersive/*(不弹出常驻壳);壳外原样跳画廊。
+  const { push } = useImmersiveRouter();
   const [mode, setMode] = React.useState<Mode>("image");
   const [prompt, setPrompt] = React.useState("");
   const [chip, setChip] = React.useState<string>("1:1");
@@ -83,7 +84,7 @@ export function CreateHomePage() {
 
   const submit = (e: React.FormEvent) => {
     e.preventDefault();
-    router.push("/northstar/create/canvas");
+    push("/northstar/create/canvas");
   };
 
   return (
@@ -202,7 +203,7 @@ export function CreateHomePage() {
                   variant="secondary"
                   size="sm"
                   className="h-8 px-3 text-xs"
-                  onClick={() => router.push("/northstar/create/canvas")}
+                  onClick={() => push("/northstar/create/canvas")}
                 >
                   Use
                 </Button>
@@ -250,7 +251,7 @@ export function CreateHomePage() {
               <button
                 key={d.id}
                 type="button"
-                onClick={() => router.push("/northstar/create/canvas")}
+                onClick={() => push("/northstar/create/canvas")}
                 onMouseEnter={() => d.kind === "video" && setPlaying(d.id)}
                 onMouseLeave={() => setPlaying((p) => (p === d.id ? null : p))}
                 className="group relative block w-full break-inside-avoid overflow-hidden rounded-[18px] border border-border bg-card text-left shadow-[var(--shadow-xs)] transition-shadow duration-[150ms] hover:shadow-[var(--shadow-md)] focus-visible:ring-[3px] focus-visible:ring-ring/40 outline-none"

@@ -16,11 +16,53 @@
 
 import * as React from "react";
 import Link from "next/link";
-import { usePathname } from "next/navigation";
+import { usePathname, useRouter } from "next/navigation";
 import { cn } from "@/lib/utils";
+import { useInsideImmersive } from "./_context";
 
 /* ── 唯一 base-path 常量(收敛 ACCOUNT_OPS_BASE + CRM_INBOX_BASE) ─────────── */
 export const IMMERSIVE_BASE = "/northstar-immersive";
+
+const GALLERY_PREFIX = "/northstar/";
+const IMMERSIVE_PREFIX = "/northstar-immersive/";
+
+/**
+ * 沉浸式内的程序化导航(§流转不跳出壳)。
+ *
+ * 外壳的 useKeepInsideImmersive 只拦 <a> 点击、拦不到 router.push。复用的画廊页里
+ * 硬编码着 `/northstar/*` 的 router.push,会把用户弹出常驻壳。这个 hook 把 push 的
+ * `/northstar/*` 目标在壳内改写成 `/northstar-immersive/*`(壳外原样),泛化自
+ * immersive-search 里验证过的 immersiveHref 改写。
+ */
+export function useImmersiveRouter(): { push: (href: string) => void } {
+  const router = useRouter();
+  const inside = useInsideImmersive();
+  const push = React.useCallback(
+    (href: string) => {
+      if (inside && href.startsWith(GALLERY_PREFIX)) {
+        router.push(IMMERSIVE_PREFIX + href.slice(GALLERY_PREFIX.length));
+      } else {
+        router.push(href);
+      }
+    },
+    [router, inside],
+  );
+  return { push };
+}
+
+/**
+ * 挂载时读一次 URL query param(prefill / 深链用)。
+ *
+ * 用 window.location 而非 useSearchParams —— 后者要求 Suspense 边界,否则 next build
+ * 会因缺边界报错拦住 web-build 关。这里只在挂载读一次(prefill 语义足够),SSR 返回 null。
+ */
+export function useQueryParam(key: string): string | null {
+  const [value] = React.useState<string | null>(() => {
+    if (typeof window === "undefined") return null;
+    return new URLSearchParams(window.location.search).get(key);
+  });
+  return value;
+}
 
 /* ── 复用 _shared 的 §N6/§D3/§V4 原语(禁止 fork;home/account/crm 共用一份) ── */
 export { PageHeader, StatCard, EmptyState } from "@/components/northstar/_shared";

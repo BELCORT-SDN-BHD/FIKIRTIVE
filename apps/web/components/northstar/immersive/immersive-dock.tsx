@@ -19,7 +19,9 @@ import { cn } from "@/lib/utils";
 import { Button } from "@/components/ui/button";
 import { OttoAvatar, type OttoMood } from "@/components/otto/OttoAvatar";
 import { ChatCard } from "@/components/northstar/global/chat-cards";
-import { NS_CHAT_THREADS, type NsChatMessage } from "@/components/northstar/global/_data";
+import { type NsChatMessage } from "@/components/northstar/global/_data";
+import { useImmersive } from "./_context";
+import { appendChatMessage, chatThreads, recentEvents, useStore } from "./_store";
 
 const REDUCED_MOTION_QUERY = "(prefers-reduced-motion: reduce)";
 function useReducedMotion(): boolean {
@@ -89,19 +91,24 @@ export interface ImmersiveDockHandle {
 export const ImmersiveDock = React.forwardRef<
   ImmersiveDockHandle,
   { working?: boolean; fullHref: string }
->(function ImmersiveDock({ working = false, fullHref }, ref) {
+>(function ImmersiveDock({ working: workingProp = false, fullHref }, ref) {
   useKeyframes();
+  useStore(); // 订阅共享 store:otto 工作态 / 事件流 / 聊天 append 都触发重渲染
   const reduced = useReducedMotion();
+  const immersive = useImmersive();
+  // working 来自 shell 注入的 context(store 的 otto_working 事件),不再靠外部 prop 喂。
+  const working = immersive?.ottoWorking ?? workingProp;
   const [open, setOpen] = React.useState(false);
   const [draft, setDraft] = React.useState("");
-  const [sent, setSent] = React.useState<NsChatMessage[]>([]);
   const [thinking, setThinking] = React.useState(false);
   const panelRef = React.useRef<HTMLDivElement>(null);
   const scrollRef = React.useRef<HTMLDivElement>(null);
   const inputRef = React.useRef<HTMLTextAreaElement>(null);
   const timerRef = React.useRef<number | null>(null);
 
-  const thread = NS_CHAT_THREADS[0];
+  // dock 与 otto-chat 全页共读 store 的同一份 chatThreads[0](「share one state」为真)。
+  const thread = chatThreads()[0];
+  const lastEvent = recentEvents(1)[0];
 
   React.useImperativeHandle(ref, () => ({
     open(prompt?: string) {
@@ -123,7 +130,7 @@ export const ImmersiveDock = React.forwardRef<
 
   React.useEffect(() => {
     if (open && scrollRef.current) scrollRef.current.scrollTop = scrollRef.current.scrollHeight;
-  }, [open, sent, thinking]);
+  }, [open, thread.messages, thinking]);
 
   React.useEffect(() => () => {
     if (timerRef.current) window.clearTimeout(timerRef.current);
@@ -132,19 +139,17 @@ export const ImmersiveDock = React.forwardRef<
   function send() {
     const text = draft.trim();
     if (!text || thinking) return;
-    setSent((prev) => [...prev, { id: `u-${prev.length}`, role: "user", text }]);
+    // append 到共享 store thread → otto-chat 全页也看得到这条(状态同源)
+    appendChatMessage(thread.id, { id: `u-${Date.now()}`, role: "user", text });
     setDraft("");
     setThinking(true);
     timerRef.current = window.setTimeout(() => {
       setThinking(false);
-      setSent((prev) => [
-        ...prev,
-        {
-          id: `o-${prev.length}`,
-          role: "otto",
-          text: "Got it. I can draft that as a post or a full pack. Open the full workspace and I'll lay out the options.",
-        },
-      ]);
+      appendChatMessage(thread.id, {
+        id: `o-${Date.now()}`,
+        role: "otto",
+        text: "Got it. I can draft that as a post or a full pack. Open the full workspace and I'll lay out the options.",
+      });
     }, 1400);
   }
 
@@ -200,9 +205,6 @@ export const ImmersiveDock = React.forwardRef<
                 .map((m) => (
                   <DockMessage key={m.id} m={m} />
                 ))}
-              {sent.map((m) => (
-                <DockMessage key={m.id} m={m} />
-              ))}
               {thinking && (
                 <div className="flex items-center gap-2 text-[13px] text-muted-foreground">
                   <OttoAvatar size={16} mood="thinking" />
@@ -253,6 +255,13 @@ export const ImmersiveDock = React.forwardRef<
               Shift+Enter to send · Enter for a new line
             </p>
           </div>
+        </div>
+      )}
+
+      {/* 「Just now」事件条:收起时显示 store 最近一条事件的人话(recentEvents(1)) */}
+      {!open && lastEvent && (
+        <div className="max-w-[260px] truncate rounded-full border border-border bg-card px-3 py-1.5 text-[11px] font-medium text-muted-foreground shadow-[var(--shadow-sm)]">
+          Just now · {lastEvent.label}
         </div>
       )}
 

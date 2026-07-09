@@ -19,7 +19,14 @@ import { OttoAvatar } from "@/components/otto/OttoAvatar";
 import { MockNote } from "@/components/northstar/_shared";
 import { ApprovalFlow, ChatCard } from "@/components/northstar/global/chat-cards";
 import { GenBar, useLanding } from "@/components/northstar/global/_fx";
-import { NS_APPROVALS, NS_CHAT_THREADS, type NsChatMessage } from "@/components/northstar/global/_data";
+import { NS_APPROVALS, type NsChatMessage } from "@/components/northstar/global/_data";
+import {
+  appendChatMessage,
+  chatThreads,
+  startChatThread,
+  useStore,
+} from "@/components/northstar/immersive/_store";
+import { useQueryParam } from "@/components/northstar/immersive/_kit";
 
 /* ── 命名思考子步骤(GOAL H0):进行中逐步点亮,完成后整块保留为 trace ── */
 function ThinkingSteps({ steps, activeIndex }: { steps: string[]; activeIndex: number }) {
@@ -139,8 +146,16 @@ const LIVE_REPLY =
 type Phase = "idle" | "thinking" | "streaming";
 
 export default function Page() {
-  const [threadId, setThreadId] = React.useState(NS_CHAT_THREADS[0].id);
-  const [extra, setExtra] = React.useState<Record<string, NsChatMessage[]>>({});
+  useStore(); // 与 dock 共读同一份 store chatThreads(§「Dock and this chat share one state」为真)
+  const initialThread = useQueryParam("thread"); // 深链 ?thread → 初始选中(替代硬编码 [0])
+  const [threadId, setThreadId] = React.useState<string>(() => chatThreads()[0].id);
+  // ?thread 在挂载后应用(避免 SSR/client 初值不一致的 hydration 抖动)
+  React.useEffect(() => {
+    if (initialThread && chatThreads().some((t) => t.id === initialThread)) {
+      setThreadId(initialThread);
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
   const [phase, setPhase] = React.useState<Phase>("idle");
   const [stepIdx, setStepIdx] = React.useState(0);
   const [liveText, setLiveText] = React.useState("");
@@ -148,10 +163,10 @@ export default function Page() {
   const timers = React.useRef<number[]>([]);
   const scrollRef = React.useRef<HTMLDivElement>(null);
 
-  const thread = NS_CHAT_THREADS.find((t) => t.id === threadId);
+  const threads = chatThreads();
+  const thread = threads.find((t) => t.id === threadId);
   const baseMessages = thread?.messages ?? [];
-  const extraMessages = extra[threadId] ?? [];
-  const isNewChat = !thread;
+  const isNewChat = !!thread && thread.messages.length === 0;
 
   const clearTimers = React.useCallback(() => {
     for (const t of timers.current) window.clearInterval(t);
@@ -159,8 +174,9 @@ export default function Page() {
   }, []);
   React.useEffect(() => clearTimers, [clearTimers]);
 
+  // append 进共享 store thread(dock 与本页同源;canvas 生成事件另经 eventLog)
   const pushExtra = React.useCallback(
-    (m: NsChatMessage) => setExtra((e) => ({ ...e, [threadId]: [...(e[threadId] ?? []), m] })),
+    (m: NsChatMessage) => appendChatMessage(threadId, m),
     [threadId],
   );
 
@@ -233,7 +249,7 @@ export default function Page() {
 
   const newChat = () => {
     if (phase !== "idle") stop();
-    setThreadId("th-new");
+    setThreadId(startChatThread()); // 在共享 store 里真开一条 thread(dock 也看得到)
   };
 
   const onComposerKeyDown = (e: React.KeyboardEvent<HTMLTextAreaElement>) => {
@@ -260,7 +276,7 @@ export default function Page() {
           </button>
         </div>
         <div className="min-h-0 flex-1 overflow-y-auto p-2">
-          {NS_CHAT_THREADS.map((t) => {
+          {threads.map((t) => {
             const active = t.id === threadId;
             return (
               <button
@@ -285,13 +301,6 @@ export default function Page() {
               </button>
             );
           })}
-          {isNewChat && (
-            <div className="flex w-full items-baseline gap-2 rounded-[10px] bg-secondary px-3 py-2.5">
-              <span className="min-w-0 flex-1 truncate text-[13px] leading-[18px] font-semibold text-foreground">
-                New chat
-              </span>
-            </div>
-          )}
         </div>
       </aside>
 
@@ -300,13 +309,13 @@ export default function Page() {
         <div className="flex h-[52px] shrink-0 items-center gap-3 border-b border-border px-6">
           <h1 className="min-w-0 truncate text-sm font-semibold text-foreground">{thread?.title ?? "New chat"}</h1>
           <span className="hidden shrink-0 rounded-full border border-border bg-card px-2.5 py-0.5 text-xs font-medium text-muted-foreground md:inline">
-            Chat and canvas share one state
+            Dock and this chat share one state
           </span>
         </div>
 
         <div ref={scrollRef} role="log" className="min-h-0 flex-1 overflow-y-auto">
           <div className="mx-auto w-full max-w-[680px] space-y-5 px-6 py-6">
-            {isNewChat && extraMessages.length === 0 && phase === "idle" && (
+            {isNewChat && phase === "idle" && (
               <div className="flex flex-col items-center gap-3 py-20 text-center">
                 <OttoAvatar size={64} mood="idle" />
                 <p className="text-[28px] leading-[34px] font-bold tracking-[-0.02em] text-foreground">
@@ -317,11 +326,9 @@ export default function Page() {
                 </p>
               </div>
             )}
+            {/* 已含 dock / 本页 append 的 live 消息(store 同源);live 消息(id 前缀 x-)带落地动效 */}
             {baseMessages.map((m) => (
-              <Message key={m.id} m={m} />
-            ))}
-            {extraMessages.map((m) => (
-              <Message key={m.id} m={m} land />
+              <Message key={m.id} m={m} land={m.id.startsWith("x-")} />
             ))}
             {phase === "thinking" && <ThinkingSteps steps={LIVE_SUBSTEPS} activeIndex={stepIdx} />}
             {phase === "streaming" && <OttoText text={liveText} streaming />}

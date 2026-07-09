@@ -34,7 +34,7 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 import { EmptyState, MockNote, PageHeader } from "@/components/northstar/_shared";
-import { NS_ASSETS, type NsAsset } from "@/components/northstar/_mock";
+import { NS_ASSETS, NS_SCHEDULED_POSTS, type NsAsset } from "@/components/northstar/_mock";
 import {
   DemoStateBar,
   ErrorPanel,
@@ -47,6 +47,8 @@ import {
   type DemoState,
   type NsPlatform,
 } from "@/components/northstar/schedule/kit";
+import { schedulePost } from "@/components/northstar/immersive/_store";
+import { useQueryParam } from "@/components/northstar/immersive/_kit";
 
 const ALL_TARGETS: NsPlatform[] = ["instagram", "facebook", "tiktok", "x"];
 const TIMES = ["07:00", "08:00", "09:00", "10:00", "12:00", "17:00", "19:00", "21:00"];
@@ -106,6 +108,23 @@ export default function Page() {
   const captionRef = React.useRef<HTMLTextAreaElement>(null);
   const tabRefs = React.useRef<(HTMLButtonElement | null)[]>([]);
 
+  // 深链 ?post → 从排期里带出这条帖的内容预填(挂载后应用,避免 hydration 抖动)
+  const prefillPostId = useQueryParam("post");
+  React.useEffect(() => {
+    if (!prefillPostId) return;
+    const p = NS_SCHEDULED_POSTS.find((x) => x.id === prefillPostId);
+    if (!p) return;
+    setCaption(p.caption);
+    if (p.firstComment) setFirstComment(p.firstComment);
+    const [d, t] = p.scheduledAt.split("T");
+    setDate(d);
+    const hhmm = t?.slice(0, 5);
+    if (hhmm && TIMES.includes(hhmm)) setTime(hhmm);
+    setTargets([p.platform]);
+    setActiveTab(p.platform);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
   const toggleTarget = (p: NsPlatform) => {
     setFormError(null);
     setTargets((prev) => {
@@ -146,6 +165,17 @@ export default function Page() {
       setPending(false);
       setConfirmOpen(false);
       setScheduled(true);
+      // 排期落进共享 store → home「Up next」立刻反映(闭环,不再是死按钮)
+      const existing = prefillPostId && NS_SCHEDULED_POSTS.some((p) => p.id === prefillPostId);
+      schedulePost({
+        id: existing ? prefillPostId! : `post-live-${Date.now()}`,
+        scheduledAt: `${date}T${time}:00+08:00`,
+        platform: targets[0],
+        caption: caption.trim(),
+        media: media?.thumb ?? "",
+        status: "scheduled",
+        firstComment: firstComment.trim() || undefined,
+      });
     }, 800);
   };
 

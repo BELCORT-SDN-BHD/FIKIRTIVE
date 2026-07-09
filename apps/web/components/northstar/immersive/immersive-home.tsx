@@ -20,9 +20,9 @@ import {
   NS_ASSETS,
   NS_BRAND,
   NS_CAMPAIGN,
-  NS_SCHEDULED_POSTS,
 } from "@/components/northstar/_mock";
 import { useImmersive } from "./_context";
+import { pendingApprovals, upNext, useStore } from "./_store";
 
 const BASE = "/northstar-immersive";
 
@@ -42,8 +42,12 @@ const QUICK_STARTS = [
 
 export function ImmersiveHome() {
   const immersive = useImmersive();
+  useStore(); // 订阅共享 store:排期 / 审批变化即时反映到本屏
   const recent = NS_ASSETS.filter((a) => a.status === "ready").slice(0, 4);
-  const nextPosts = NS_SCHEDULED_POSTS.slice(0, 3);
+  // Up next 读 store 的排期(scheduled + draft),不再直接读 _mock 静态数组。
+  const queued = upNext();
+  const nextPosts = queued.slice(0, 3);
+  const approvals = pendingApprovals();
   // Reach 卡与分析区同源(NS_ANALYTICS.kpis[0]),避免同屏「招呼条 18% vs 卡片 9%」一店两数。
   const reachKpi = NS_ANALYTICS.kpis[0];
 
@@ -84,7 +88,7 @@ export function ImmersiveHome() {
           <StatCard label="Reach · 28 days" value={reachKpi.value} delta={reachKpi.delta} />
         </Link>
         <Link href={`${BASE}/schedule/plan`} className="rounded-[14px] focus-visible:outline-2 focus-visible:outline-ring">
-          <StatCard label="Scheduled posts" value={String(NS_SCHEDULED_POSTS.length)} delta={{ dir: "flat", text: "Next up in 2h" }} />
+          <StatCard label="Scheduled posts" value={String(queued.length)} delta={{ dir: "flat", text: "Next up in 2h" }} />
         </Link>
         <Link href={`${BASE}/account/credits`} className="rounded-[14px] focus-visible:outline-2 focus-visible:outline-ring">
           <StatCard label="Credit balance" value={NS_BRAND.creditBalance.toLocaleString("en-MY")} delta={{ dir: "flat", text: "MYR wallet" }} />
@@ -182,7 +186,11 @@ export function ImmersiveHome() {
               <p className="truncate text-[13px] font-semibold text-foreground">{NS_CAMPAIGN.name}</p>
               <p className="mt-0.5 text-[11px] text-muted-foreground">{NS_CAMPAIGN.goal}</p>
             </div>
-            <Badge variant="warning">Awaiting approval</Badge>
+            {approvals.length > 0 ? (
+              <Badge variant="warning">{approvals.length} awaiting approval</Badge>
+            ) : (
+              <Badge variant="success">All approved</Badge>
+            )}
           </Link>
         </section>
       </div>

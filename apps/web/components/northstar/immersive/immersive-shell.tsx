@@ -17,6 +17,7 @@ import { usePathname, useRouter } from "next/navigation";
 import { ImmersiveProvider } from "./_context";
 import { ImmersiveNav } from "./immersive-nav";
 import { ImmersiveDock, type ImmersiveDockHandle } from "./immersive-dock";
+import { useOttoWorking } from "./_store";
 
 const GALLERY_PREFIX = "/northstar/";
 const IMMERSIVE_PREFIX = "/northstar-immersive/";
@@ -83,9 +84,12 @@ export function ImmersiveShell({ children }: { children: React.ReactNode }) {
     dockRef.current?.open(prompt);
   }, []);
 
+  // Otto 工作态来自共享 store(otto_working / otto_idle 事件),不再硬编码 false。
+  const { working: ottoWorking } = useOttoWorking();
+
   const ctx = React.useMemo(
-    () => ({ insideImmersive: true, ottoWorking: false, openOtto }),
-    [openOtto],
+    () => ({ insideImmersive: true, ottoWorking, openOtto }),
+    [openOtto, ottoWorking],
   );
 
   const fullHref = "/northstar-immersive/otto";
@@ -112,7 +116,11 @@ export function ImmersiveShell({ children }: { children: React.ReactNode }) {
             {children}
           </main>
         </div>
-        {!hideDock && <ImmersiveDock ref={dockRef} fullHref={fullHref} />}
+        {/* dock 常驻挂载:在 hideDock 的 3 条路由上只做视觉隐藏(display:none),
+            不卸载 —— 保住聊天草稿 / 已发消息等 dock 内部 state(§状态不因换页丢失)。 */}
+        <div className={hideDock ? "hidden" : undefined}>
+          <ImmersiveDock ref={dockRef} fullHref={fullHref} />
+        </div>
       </div>
     </ImmersiveProvider>
   );
