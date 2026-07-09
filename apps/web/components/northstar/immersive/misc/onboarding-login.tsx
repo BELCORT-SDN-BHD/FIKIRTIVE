@@ -29,7 +29,9 @@ const MODES: { value: Mode; label: string }[] = [
 
 export function OnboardingLogin() {
   const router = useRouter();
-  const [mode, setMode] = React.useState<Mode>("signin");
+  // STALL #16:进城第一屏别把新人当老客。无 session 的首访默认落「Create account」+ 中性欢迎语,
+  // 回访用户再手切「Sign in」。原型无真 auth,故首访 = signup 是诚实默认。
+  const [mode, setMode] = React.useState<Mode>("signup");
   const [email, setEmail] = React.useState("");
   const [pending, setPending] = React.useState(false);
 

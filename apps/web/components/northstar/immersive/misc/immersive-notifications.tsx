@@ -28,7 +28,9 @@ import {
   recentEvents,
   streamFor,
   useStore,
+  type NsAssistIntent,
 } from "@/components/northstar/immersive/_store";
+import { OttoAssist } from "@/components/northstar/immersive/otto-assist";
 
 const BASE = "/northstar-immersive";
 const GALLERY_PREFIX = "/northstar/";
@@ -54,6 +56,29 @@ export function ImmersiveNotifications() {
     .reverse()
     .slice(0, 6);
   const timers = React.useRef<number[]>([]);
+
+  // §O7 Otto 帮我:一屏审批 + 时间线,老板不确定先动哪个。给零打字出路:Otto 用真实队列答。
+  const assistIntents = React.useMemo<NsAssistIntent[]>(() => {
+    const first = queue[0];
+    return [
+      {
+        id: "notif-triage",
+        label: "What should I do first?",
+        prompt: "What needs me most right now?",
+        reply: first
+          ? `Start with "${first.title}". ${first.credits ? `It spends ${first.credits} credits, so it waits for your ok. ` : ""}${queue.length > 1 ? `${queue.length - 1} more after that.` : "That's the only one waiting."}`
+          : "Nothing is waiting on you, you're all caught up. I'll ask here before anything spends credits or goes out.",
+      },
+      {
+        id: "notif-recap",
+        label: "Recap what Otto did",
+        prompt: "Recap what you did today",
+        reply: ottoActions.length
+          ? `Today I handled ${ottoActions.length} ${ottoActions.length === 1 ? "thing" : "things"}. The latest was "${ottoActions[0].text}". Tap any row below to see exactly what changed.`
+          : "I haven't done anything yet today. Anything I do will show up here and in the dock.",
+      },
+    ];
+  }, [queue, ottoActions]);
 
   React.useEffect(
     () => () => {
@@ -93,6 +118,8 @@ export function ImmersiveNotifications() {
           {queue.length} waiting
         </span>
         <div className="flex-1" />
+        {/* 不确定先动哪个?让 Otto 带上下文帮你分诊(§O7,零打字意图 chip 在 dock) */}
+        <OttoAssist zone="Inbox" label="Ask Otto" intents={assistIntents} />
         <Button variant="ghost" size="sm" asChild>
           <Link href={`${BASE}/otto`}>
             <Sparkles strokeWidth={2} />

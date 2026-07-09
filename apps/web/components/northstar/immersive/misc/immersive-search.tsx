@@ -29,7 +29,9 @@ import {
   type NsSearchGroup,
   type NsSearchItem,
 } from "@/components/northstar/global/_data";
-import { streamFor, useStore } from "@/components/northstar/immersive/_store";
+import { streamFor, useStore, type NsAssistIntent } from "@/components/northstar/immersive/_store";
+import { dormantHighValue, ordersThisWeek } from "@/components/northstar/immersive/_selectors";
+import { OttoAssist } from "@/components/northstar/immersive/otto-assist";
 
 const GALLERY_PREFIX = "/northstar/";
 const IMMERSIVE_PREFIX = "/northstar-immersive/";
@@ -171,12 +173,52 @@ export function ImmersiveSearch() {
 
   let runningIdx = -1;
 
+  // §O7 Otto 帮我:一块空搜索框最不会用 —— 卖面包的老板不知道该搜什么词。给零打字出路:
+  // 3 个真起手意图,Otto 用真实数据答 + escort 到现场(§8e),不逼人先学系统的说法。
+  const searchIntents = React.useMemo<NsAssistIntent[]>(() => {
+    const dormant = dormantHighValue(1000);
+    const dormantNames = dormant.map((c) => c.name.split(" ")[0]).join(" and ");
+    const dormantAtRisk = dormant.reduce((s, c) => s + c.totalOrdersMyr, 0);
+    const orders = ordersThisWeek();
+    return [
+      {
+        id: "search-dormant",
+        label: "Who's gone quiet?",
+        prompt: "Which of my customers have gone quiet?",
+        reply: dormant.length
+          ? `${dormantNames} have gone quiet. RM${dormantAtRisk.toLocaleString("en-MY")} in past orders is at risk. Opening your contacts so you can win them back.`
+          : "No big accounts have gone quiet right now. Opening your contacts.",
+        landsOn: { surface: `${IMMERSIVE_PREFIX}crm/contacts`, label: "Contacts" },
+      },
+      {
+        id: "search-orders",
+        label: "What did I sell this week?",
+        prompt: "What orders have I confirmed this week?",
+        reply: `You've confirmed ${orders.orderCount} ${orders.orderCount === 1 ? "order" : "orders"} in the inbox this week, RM${orders.revenueMyr.toLocaleString("en-MY")} in all. Opening your inbox.`,
+        landsOn: { surface: `${IMMERSIVE_PREFIX}inbox/shared`, label: "Inbox" },
+      },
+      {
+        id: "search-merdeka",
+        label: "Open my Merdeka campaign",
+        prompt: "Take me to my Merdeka campaign",
+        reply: "Here's your Merdeka week bakes campaign. Pre-orders, posts and results in one place.",
+        landsOn: { surface: `${IMMERSIVE_PREFIX}campaign/detail?id=camp-merdeka-01`, label: "Merdeka week bakes" },
+      },
+    ];
+  }, []);
+
   return (
     <div className="mx-auto flex h-full w-full max-w-[720px] flex-col px-6 pt-6 pb-10">
-      <h1 className="text-2xl leading-[30px] font-bold tracking-[-0.02em] text-foreground">Search</h1>
-      <p className="mt-1 text-sm text-muted-foreground">
-        Find your campaigns, studio work and Otto chats — start typing.
-      </p>
+      <div className="flex items-start justify-between gap-3">
+        <div className="min-w-0">
+          <h1 className="text-2xl leading-[30px] font-bold tracking-[-0.02em] text-foreground">Search</h1>
+          <p className="mt-1 text-sm text-muted-foreground">
+            Find your campaigns, studio work and Otto chats — start typing.
+          </p>
+        </div>
+        {/* 不知道搜什么?让 Otto 带上下文帮你找(§O7 意图 chip 在 dock 里,零打字) */}
+        <OttoAssist zone="Home" label="Not sure? Ask Otto" intents={searchIntents} className="mt-0.5 shrink-0" />
+      </div>
 
       {/* 命令面板:一个干净表面,占满剩余高度 */}
       <div

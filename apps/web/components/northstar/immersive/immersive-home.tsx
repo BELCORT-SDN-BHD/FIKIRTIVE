@@ -1,33 +1,42 @@
 "use client";
 
 /**
- * 北极星 · 沉浸式首页(the real front door)—— ENDGAME D1/D2 重排
+ * 北极星 · 沉浸式首页(the real front door)—— Wave C「生意状态 → 今日决策队列 → 工作面」重排
  *
- * 进城第一屏,只围绕老板脑里的三样东西:「我在办的事」(Campaign)、「我随手做的东西」
- * (Studio)、「我的员工」(Otto)。composition(总令 Z1):
- *   招呼条(唯一 coral statement)→ KPI 三卡 → 「进行中的事」campaign 卡列(D1 唯一「事」容器)
- *   → Studio recents 真图网格(D1 自由创作台)→ Up next。
- * 每张卡都是通向真实流程的 `<Link>`,读面永不是死胡同;「问 Otto」把预填送进常驻 dock(不花钱)。
- * 一切状态经 _store / _mock,零本地副本。图片只从 NS_IMAGES(经 NS_ASSETS / NS_CAMPAIGNS.hero)。
+ * 老板开门第一眼要答的是两句话:「这周赚了吗」+「现在该干嘛」。ENDGAME D1/D2 的三容器
+ * (Campaign / Studio / Otto)仍是骨架,但首屏顺序按 Wave C 判决重排:
+ *   招呼条(唯一 coral statement,落到生意结果不是触达)
+ *   → 生意状态:营收头卡(真成交,不是花掉的 credit)+ 触达 + FIKIRTIVE credits(明标、降级)
+ *   → 今日决策队列「Needs you」:回一句就变钱的最高 ROI 动作按在险金额排,深链现场(蓝=人手)
+ *   → 工作面:进行中的 campaign(running 只数 ACTIVE)+ Studio recents + Up next。
+ * 每张卡都是通向真实流程的 `<Link>`,读面永不是死胡同。一切状态经 _store / _selectors / _mock,
+ * 零本地副本;图片只从 NS_IMAGES(经 NS_ASSETS / NS_CAMPAIGNS.hero)。
  */
 
 import * as React from "react";
 import Link from "next/link";
-import { ArrowRight, PartyPopper, Play, Sparkles } from "lucide-react";
+import { ArrowRight, Clock, PartyPopper, Play, Reply, RotateCcw, Sparkles } from "lucide-react";
 import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { OttoAvatar } from "@/components/otto/OttoAvatar";
 import { PageHeader, StatCard } from "@/components/northstar/_shared";
 import {
-  NS_ANALYTICS,
   NS_ASSETS,
   NS_BRAND,
   NS_CAMPAIGN,
   NS_CAMPAIGNS,
+  NS_CONTACTS,
+  NS_ANALYTICS,
   type NsCampaignStatus,
   type NsCampaignSummary,
 } from "@/components/northstar/_mock";
+import {
+  avgOrderValue,
+  dormantHighValue,
+  needsOwnerConversations,
+  ordersThisWeek,
+} from "./_selectors";
 import { useImmersive } from "./_context";
 import {
   balance,
@@ -46,6 +55,28 @@ function whenLabel(iso: string): string {
   const [date, time] = iso.split("T");
   const hhmm = time?.slice(0, 5) ?? "";
   return `${date.slice(5)} · ${hhmm}`;
+}
+
+/** waitingFor 短码("22m"/"1h"/"3d")→ 人话("waiting 22 min")。确定性,纯字符串。 */
+function humanWait(w?: string): string {
+  if (!w) return "waiting on you";
+  const n = w.slice(0, -1);
+  const u = w.slice(-1);
+  const unit = u === "m" ? "min" : u === "h" ? "hr" : u === "d" ? "days" : "";
+  return unit ? `waiting ${n} ${unit}` : "waiting on you";
+}
+
+const CONTACT_BY_ID = new Map(NS_CONTACTS.map((c) => [c.id, c]));
+
+/** 一行今日决策(回一句就变钱)。stake = 在险 / 预计进账金额,用于排序 + 头部合计。 */
+interface TriageRow {
+  key: string;
+  name: string;
+  reason: string;
+  wait: string;
+  stakeMyr: number;
+  href: string;
+  action: "reply" | "winback";
 }
 
 /** campaign 状态 → badge(D1「事」容器三态,coral 严守只属 Otto,这里全走中性/语义色)。 */
@@ -119,7 +150,9 @@ export function ImmersiveHome() {
     () => [...NS_CAMPAIGNS].sort((a, b) => STATUS_ORDER[a.status] - STATUS_ORDER[b.status]),
     [],
   );
-  const activeCount = campaigns.filter((c) => c.status !== "DONE").length;
+  // running 只数真正在跑的(ACTIVE);DRAFT(提案还没批)单独标,别把没上线的算进「进行中」。
+  const runningCount = campaigns.filter((c) => c.status === "ACTIVE").length;
+  const draftCount = campaigns.filter((c) => c.status === "DRAFT").length;
 
   // Studio recents(D1 自由创作台):不挂 campaign 的随手创作,最新在前,真图网格。
   const studioRecents = React.useMemo(
@@ -131,12 +164,49 @@ export function ImmersiveHome() {
     [],
   );
 
+  // ── 生意状态:本周真成交(诚实读收件箱里被确认的订单,不是花掉的 credit) ──
+  const orders = ordersThisWeek();
+  // Reach 卡与分析区同源(NS_ANALYTICS.kpis[0]),避免同屏「招呼条 18% vs 卡片 9%」一店两数。
+  const reachKpi = NS_ANALYTICS.kpis[0];
+
+  // ── 今日决策队列「Needs you」:等店主回 + 大客户静默;按在险金额排,回一句就变钱 ──
+  const triage = React.useMemo<TriageRow[]>(() => {
+    const byContact = new Map<string, TriageRow>();
+    // ① 等店主回 / 超时的对话 → 回复行(stake = 预计进账,即该客下一单价值)。
+    for (const cv of needsOwnerConversations()) {
+      const c = CONTACT_BY_ID.get(cv.contactId);
+      const stake = c?.predictedNextMyr || avgOrderValue(cv.contactId) || 0;
+      byContact.set(cv.contactId, {
+        key: cv.id,
+        name: c?.name ?? "A customer",
+        reason: cv.subject,
+        wait: humanWait(cv.waitingFor),
+        stakeMyr: stake,
+        href: `${BASE}/inbox/conversation?id=${cv.id}`,
+        action: "reply",
+      });
+    }
+    // ② 静默的大客户 → 唤回行(stake = 生涯在险金额;比"下一单"更值钱,覆盖同一人的回复行)。
+    for (const c of dormantHighValue(1000)) {
+      byContact.set(c.id, {
+        key: `winback-${c.id}`,
+        name: c.name,
+        reason: c.note ?? "Big account gone quiet",
+        wait: "gone quiet, worth a nudge",
+        stakeMyr: c.totalOrdersMyr,
+        href: `${BASE}/crm/contact-profile?id=${c.id}`,
+        action: "winback",
+      });
+    }
+    // 按在险金额降序(GOOSEWORKS §CRM:最大值先浮上来,散客降到低优先),取前 5 条。
+    return [...byContact.values()].sort((a, b) => b.stakeMyr - a.stakeMyr).slice(0, 5);
+  }, []);
+  const triageTotal = triage.reduce((s, r) => s + r.stakeMyr, 0);
+
   // Up next 读 store 的排期(scheduled + draft),不再直接读 _mock 静态数组。
   const queued = upNext();
   const nextPosts = queued.slice(0, 4);
   const approvals = pendingApprovals();
-  // Reach 卡与分析区同源(NS_ANALYTICS.kpis[0]),避免同屏「招呼条 18% vs 卡片 9%」一店两数。
-  const reachKpi = NS_ANALYTICS.kpis[0];
 
   return (
     <div className="mx-auto w-full max-w-[1080px] px-6 pt-6 pb-24">
@@ -153,40 +223,91 @@ export function ImmersiveHome() {
         }
       />
 
-      {/* Otto 招呼条:本屏唯一 coral statement;按钮把预填送进 dock */}
+      {/* Otto 招呼条:本屏唯一 coral statement;洞察落到生意结果(订单 DM),不锚触达 */}
       <div className="mt-5 flex flex-wrap items-center gap-3 rounded-[var(--radius-card)] border border-brand-soft bg-brand-soft/50 px-4 py-3.5">
         <OttoAvatar size={32} mood="helpful" />
         <span className="min-w-0 flex-1 basis-64 text-sm leading-[1.45] text-brand-soft-foreground">
-          {NS_ANALYTICS.insight}{" "}Want me to turn that into this week&apos;s posts?
+          Your Sunday croissant reels pulled the most order DMs this week. Want me to line up two more?
         </span>
         <Button
           variant="brand"
           size="sm"
-          onClick={() => immersive?.openOtto("Turn last week's best post into this week's plan")}
+          className="ns-pressable"
+          onClick={() => immersive?.openOtto("Line up two more Sunday croissant reels like the ones that pulled the most order DMs")}
         >
           <Sparkles />
           Ask Otto
         </Button>
       </div>
 
-      {/* KPI 三卡 → 分析 / 排期 / 额度 */}
+      {/* ── 生意状态:营收头卡 → 触达 → FIKIRTIVE credits(明标、降为次要) ── */}
       <div className="mt-5 grid grid-cols-1 gap-3 sm:grid-cols-3">
-        <Link href={`${BASE}/analytics/overview`} className="rounded-[14px] focus-visible:outline-2 focus-visible:outline-ring">
-          <StatCard label="Reach · 28 days" value={reachKpi.value} delta={reachKpi.delta} />
+        <Link href={`${BASE}/inbox/shared`} className="rounded-[14px] focus-visible:outline-2 focus-visible:outline-ring">
+          <StatCard
+            label="Orders this week"
+            value={`RM${orders.revenueMyr.toLocaleString("en-MY")}`}
+            delta={{
+              dir: "flat",
+              text: orders.orderCount === 1 ? "1 confirmed in the inbox" : `${orders.orderCount} confirmed in the inbox`,
+            }}
+          />
         </Link>
-        <Link href={`${BASE}/schedule/plan`} className="rounded-[14px] focus-visible:outline-2 focus-visible:outline-ring">
-          <StatCard label="Scheduled posts" value={String(queued.length)} delta={{ dir: "flat", text: "Next up in 2h" }} />
+        <Link href={`${BASE}/analytics/overview`} className="rounded-[14px] focus-visible:outline-2 focus-visible:outline-ring">
+          <StatCard label="People reached · 28 days" value={reachKpi.value} delta={reachKpi.delta} />
         </Link>
         <Link href={`${BASE}/account/credits`} className="rounded-[14px] focus-visible:outline-2 focus-visible:outline-ring">
-          <StatCard label="Credit balance" value={balance().toLocaleString("en-MY")} delta={{ dir: "flat", text: "MYR wallet" }} />
+          <StatCard label="FIKIRTIVE credits" value={balance().toLocaleString("en-MY")} delta={{ dir: "flat", text: "Tap to top up" }} />
         </Link>
       </div>
+
+      {/* ── 今日决策队列「Needs you」:回一句就变钱,按在险金额排,深链现场(蓝=人手声部) ── */}
+      {triage.length > 0 && (
+        <>
+          <div className="mt-8 flex items-baseline gap-2">
+            <h2 className="text-sm font-semibold text-foreground">Needs you</h2>
+            <span className="text-xs text-muted-foreground">reply and it turns into money</span>
+            <span className="ml-auto font-mono text-[11px] text-foreground tabular-nums">
+              RM{triageTotal.toLocaleString("en-MY")} waiting
+            </span>
+          </div>
+          <div className="mt-3 overflow-hidden rounded-[14px] border border-border bg-card">
+            {triage.map((r, i) => (
+              <Link
+                key={r.key}
+                href={r.href}
+                className={`flex items-center gap-3 px-4 py-3 transition-colors duration-[120ms] hover:bg-accent ${i > 0 ? "border-t border-border" : ""}`}
+              >
+                <span className="w-16 shrink-0 font-mono text-[13px] font-semibold text-foreground tabular-nums">
+                  RM{r.stakeMyr.toLocaleString("en-MY")}
+                </span>
+                <span className="min-w-0 flex-1">
+                  <span className="block truncate text-[13px] font-medium text-foreground">{r.name}</span>
+                  <span className="mt-0.5 flex items-center gap-1.5 text-[11px] text-muted-foreground">
+                    <Clock className="size-3 shrink-0" strokeWidth={2} />
+                    <span className="truncate">
+                      {r.reason} · {r.wait}
+                    </span>
+                  </span>
+                </span>
+                <span className="ns-human-soft inline-flex shrink-0 items-center gap-1 rounded-full px-2.5 py-1 text-[11px] font-semibold">
+                  {r.action === "winback" ? (
+                    <RotateCcw className="size-3" strokeWidth={2} />
+                  ) : (
+                    <Reply className="size-3" strokeWidth={2} />
+                  )}
+                  {r.action === "winback" ? "Win back" : "Reply"}
+                </span>
+              </Link>
+            ))}
+          </div>
+        </>
+      )}
 
       {/* ── 进行中的事(D1:Campaign = 唯一「事」容器;为它发生的一切自动长在它身上) ── */}
       <div className="mt-8 flex items-baseline gap-2">
         <h2 className="text-sm font-semibold text-foreground">In progress</h2>
         <span className="font-mono text-[11px] text-muted-foreground tabular-nums">
-          {activeCount} running
+          {runningCount} running{draftCount > 0 ? ` · ${draftCount} draft` : ""}
         </span>
         <Link href={`${BASE}/campaign/list`} className="ml-auto text-xs font-semibold text-muted-foreground hover:text-foreground">
           All campaigns

@@ -165,3 +165,35 @@ export function avgOrderValue(contactId: string): number {
 export function needsOwnerConversations(): NsConversation[] {
   return NS_CONVERSATIONS.filter((c) => c.state === "waiting-owner" || c.state === "overdue");
 }
+
+/* ── [wave-c Z1-home-global] 本周已确认订单(首页「生意状态」头卡:诚实读真实成交) ──
+ * 老板开门第一问是「这周赚了几单」,不是「花了多少 credit」。全城唯一诚实的「已成交」
+ * 信号 = 收件箱里被确认下来的订单(Otto/店主报价 → 客户确认)。这里只从对话消息里读
+ * 结构化的 RM 金额,刻意不碰跨区 deals 表 —— 那张表的金额是 lifetime 总额(dealAmountMyr),
+ * 拿来当「本周」会把数字注水、还会和收件箱里同客户的单笔报价打架(一店两数)。
+ * 诚实优先于好看:数字小是 mock 只编了两笔确认单,不是把它吹大。确定性:无 Date.now。 */
+export interface NsOrdersThisWeek {
+  revenueMyr: number;
+  orderCount: number;
+}
+const ORDER_CONFIRM_RE = /confirm/i;
+const ORDER_RM_RE = /RM\s?([\d,]+)/;
+export function ordersThisWeek(): NsOrdersThisWeek {
+  let revenueMyr = 0;
+  let orderCount = 0;
+  for (const c of NS_CONVERSATIONS) {
+    // 一笔算数的订单 = 某条 Otto/店主消息同时含「confirm」与一个 RM 金额(报价被落实)。
+    const hit = c.messages.find(
+      (m) =>
+        (m.from === "otto" || m.from === "owner") &&
+        ORDER_CONFIRM_RE.test(m.text) &&
+        ORDER_RM_RE.test(m.text),
+    );
+    if (!hit) continue;
+    const amount = Number(ORDER_RM_RE.exec(hit.text)?.[1].replace(/,/g, "") ?? "0");
+    if (amount <= 0) continue;
+    revenueMyr += amount;
+    orderCount += 1;
+  }
+  return { revenueMyr, orderCount };
+}
