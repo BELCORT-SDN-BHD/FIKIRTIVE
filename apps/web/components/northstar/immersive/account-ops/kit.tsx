@@ -46,6 +46,7 @@ const AUTOMATION_VIEWS = [
 const TEAM_VIEWS = [
   { href: `${BASE}/team/members`, label: "Members" },
   { href: `${BASE}/team/approvals`, label: "Approvals" },
+  { href: `${BASE}/team/agency`, label: "Agency" },
 ];
 
 export function AccountNav() {

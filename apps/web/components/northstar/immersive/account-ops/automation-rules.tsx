@@ -22,7 +22,7 @@ import {
 } from "@/components/ui/dialog";
 import { OttoAvatar } from "@/components/otto/OttoAvatar";
 import { PageHeader } from "@/components/northstar/_shared";
-import { addRule, aiHandledCount, askOttoInline, rules, toggleAutomationRule, useStore } from "../_store";
+import { addRule, aiHandledCount, askOttoInline, businessHoursView, rules, toggleAutomationRule, useStore } from "../_store";
 import { ACCOUNT_OPS_BASE as BASE, AutomationNav, Card } from "./kit";
 import { type NsRule } from "./data";
 
@@ -107,10 +107,31 @@ function RuleCard({
   );
 }
 
+/** 24h "HH:MM" → 人话 "9am" / "6pm"(营业时间铁律行显示用)。 */
+function toClock(hhmm: string): string {
+  const [h, m] = hhmm.split(":").map(Number);
+  const period = h >= 12 ? "pm" : "am";
+  const hour = h % 12 === 0 ? 12 : h % 12;
+  return m === 0 ? `${hour}${period}` : `${hour}:${String(m).padStart(2, "0")}${period}`;
+}
+
 export function AutomationRules() {
   useStore();
   const list = rules();
   const aiHandled = aiHandledCount();
+  const hours = businessHoursView();
+
+  // 营业时间(N-20)在规则文本旁明示:开启时把它作为一条常驻平台铁律显示(读自共享 store,
+  // 收件箱设置改时段这里即时反映)。[wave-b] 营业时间明示
+  const ironLaws = hours.enabled
+    ? [
+        ...IRON_LAWS,
+        {
+          title: `Outside business hours, Otto sends your away message`,
+          detail: `You're open ${toClock(hours.open)}–${toClock(hours.close)}. Messages that land after hours get your away note first, then wait for you — no rule pings people while you're closed.`,
+        },
+      ]
+    : IRON_LAWS;
 
   const [draft, setDraft] = React.useState<RuleDraft | null>(null);
   const canSave = draft ? draft.name.trim() && draft.when.trim() && draft.then.trim() : false;
@@ -147,7 +168,7 @@ export function AutomationRules() {
           </span>
         </div>
         <ul className="divide-y divide-border">
-          {IRON_LAWS.map((law) => (
+          {ironLaws.map((law) => (
             <li key={law.title} className="flex items-start gap-3 px-4 py-3">
               <span className="mt-0.5 flex size-5 shrink-0 items-center justify-center rounded-full bg-secondary">
                 <Lock className="size-3 text-muted-foreground" strokeWidth={2} />

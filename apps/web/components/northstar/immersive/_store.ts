@@ -2283,3 +2283,178 @@ export function captureLeadContact(input: {
 export function isLeadContact(id: string): boolean {
   return crmState.leadContactIds.includes(id);
 }
+
+/* ═══════════════════════════════════════════════════════════════════════════
+ * [Z10 settings-ops] 审批第三动作 + Agency 楼层(多客户伞层)—— 文件尾追加,零改动上文。
+ *
+ * 两块:①「退回并留言」= approve/decline 之外的第三条路(老板想让小编改一处再发,
+ * 不必直接拒绝重来);消费同一条 approvals 队列,退回 = 移出队列 + 带 note 的事件流。
+ * ② Agency 楼层(WHATPASS 八章:整城 registry 空白的最大缺口)—— 多客户伞层的**占位体**:
+ * 客户切换器 / 客户健康卡墙 / 一键开新客户 org(走行业开店模板)。primary client = 真租户
+ * (NS_BRAND,不新造品牌事实);其余为 agency-preview 占位客户(图从 NS_IMAGES 按 seed 取,
+ * 组件侧解析,故本段不新增 import)。铁律不变:纯 client、零后台 import;coral 只属于 Otto。
+ * ═══════════════════════════════════════════════════════════════════════════ */
+
+/** [wave-b] 审批加「退回并留言」:移出队列 + 一条带 note 的事件(小编那头读作 needs changes)。 */
+export function returnApproval(id: string, note: string): void {
+  const req = state.approvals.find((a) => a.id === id);
+  if (!req) return;
+  state.approvals = state.approvals.filter((a) => a.id !== id);
+  const trimmed = note.trim();
+  logEvent(
+    "approval_settled",
+    trimmed ? `Sent back: ${req.title} — “${trimmed}”` : `Sent back: ${req.title}`,
+    { id, decision: "returned", note: trimmed },
+  );
+  notify();
+}
+
+/* ── Agency 楼层数据(占位体;primary = 真租户,其余 agency-preview 客户) ─────── */
+export interface NsAgencyClient {
+  id: string;
+  name: string;
+  owner: string;
+  city: string;
+  /** NS_IMAGES.storefront 的确定性索引(组件调 nsImage 解析,store 不 import 图) */
+  logoSeed: number;
+  /** NS_IMAGES.portrait 的确定性索引(店主头像) */
+  avatarSeed: number;
+  pendingApprovals: number;
+  creditBalance: number;
+  lastPublished: string;
+  health: "good" | "attention";
+  /** 真租户(不可切走/不可删;读作「你自己的店」) */
+  isPrimary?: boolean;
+  /** 从哪个行业模板开出来的(新开客户带来源) */
+  fromSnapshot?: string;
+}
+
+/** [wave-b] 行业开店模板(Snapshots,G-09):导入即预填一整套骨架,预览「会写什么」。 */
+export interface NsAgencySnapshot {
+  id: string;
+  name: string;
+  desc: string;
+  /** 导入前预览:即将写入的字段清单(FB5 影响清单先行) */
+  writes: string[];
+}
+
+export const NS_AGENCY_SNAPSHOTS: NsAgencySnapshot[] = [
+  {
+    id: "snap-fnb",
+    name: "Malaysian café & bakery",
+    desc: "For kopitiams, bakeries and dessert spots. The setup Roti Bulan runs on.",
+    writes: [
+      "Brand kit: warm neighbourhood voice, food-first look",
+      "5 starter campaigns (Merdeka, Raya, weekend pre-orders, new-item, slow-day)",
+      "Auto-replies for pricing, pickup and halal questions",
+      "Otto skills: menu photos, promo captions, order follow-ups",
+    ],
+  },
+  {
+    id: "snap-beauty",
+    name: "Salon & beauty",
+    desc: "For salons, spas and nail studios. Booking-led, before/after heavy.",
+    writes: [
+      "Brand kit: clean, aspirational, service-menu look",
+      "5 starter campaigns (grand-open, promo of the month, referral, slow-weekday, festive)",
+      "Auto-replies for booking, price list and location",
+      "Otto skills: before/after reels, appointment reminders, review asks",
+    ],
+  },
+  {
+    id: "snap-tuition",
+    name: "Tuition & enrichment",
+    desc: "For tuition centres and enrichment classes. Trust and results-led.",
+    writes: [
+      "Brand kit: trustworthy, parent-facing, results look",
+      "5 starter campaigns (enrolment, results day, open house, trial class, referral)",
+      "Auto-replies for fees, schedule and registration",
+      "Otto skills: results posters, class reminders, parent updates",
+    ],
+  },
+];
+
+// 模块级镜像(与 state 顶层同规矩:append-only,notify 驱动重渲染)。primary 用真租户口径。
+let agencyClients: NsAgencyClient[] = [
+  {
+    id: "cl-primary",
+    name: NS_BRAND.name,
+    owner: NS_BRAND.owner,
+    city: NS_BRAND.city,
+    logoSeed: 0,
+    avatarSeed: 0,
+    pendingApprovals: 2,
+    creditBalance: NS_BRAND.creditBalance,
+    lastPublished: "Today",
+    health: "good",
+    isPrimary: true,
+  },
+  {
+    id: "cl-nasi",
+    name: "Nasi Lemak Antarabangsa",
+    owner: "Hafiz Kamal",
+    city: "Shah Alam",
+    logoSeed: 3,
+    avatarSeed: 4,
+    pendingApprovals: 4,
+    creditBalance: 320,
+    lastPublished: "Yesterday",
+    health: "attention",
+  },
+  {
+    id: "cl-kopi",
+    name: "Kopitiam Lapan Lapan",
+    owner: "Michelle Tan",
+    city: "Petaling Jaya",
+    logoSeed: 6,
+    avatarSeed: 9,
+    pendingApprovals: 0,
+    creditBalance: 890,
+    lastPublished: "2 days ago",
+    health: "good",
+  },
+];
+let activeAgencyClientId = "cl-primary";
+
+/** [wave-b] 客户切换器:切到某客户 org(占位:整台数据会换成该 org,原型先落 active + 事件)。 */
+export function switchAgencyClient(id: string): void {
+  const client = agencyClients.find((c) => c.id === id);
+  if (!client || activeAgencyClientId === id) return;
+  activeAgencyClientId = id;
+  logEvent("member_updated", `Switched to ${client.name}`, { id, agency: true });
+  notify();
+}
+
+/** [wave-b] 一键开新客户 org(走行业开店模板):append 一个健康新客户 + 里程碑事件。返回新 id。 */
+export function addAgencyClient(input: { name: string; owner: string; city: string; snapshotId: string }): string {
+  const snap = NS_AGENCY_SNAPSHOTS.find((s) => s.id === input.snapshotId);
+  seq += 1;
+  const id = `cl-live-${seq}`;
+  const client: NsAgencyClient = {
+    id,
+    name: input.name.trim() || "New client",
+    owner: input.owner.trim() || "—",
+    city: input.city.trim() || "—",
+    logoSeed: agencyClients.length + 2,
+    avatarSeed: agencyClients.length + 5,
+    pendingApprovals: 0,
+    creditBalance: 0,
+    lastPublished: "Just set up",
+    health: "good",
+    fromSnapshot: snap?.name,
+  };
+  agencyClients = [...agencyClients, client];
+  logEvent("member_invited", `Opened ${client.name} from the ${snap?.name ?? "starter"} template`, { id, agency: true });
+  notify();
+  return id;
+}
+
+/** Agency 客户列表(切换器 + 健康卡墙的单一源;最新客户在尾)。 */
+export function agencyClientsView(): NsAgencyClient[] {
+  return agencyClients;
+}
+
+/** 当前选中的客户 org。 */
+export function activeAgencyClient(): NsAgencyClient {
+  return agencyClients.find((c) => c.id === activeAgencyClientId) ?? agencyClients[0];
+}

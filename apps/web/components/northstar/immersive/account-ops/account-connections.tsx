@@ -127,6 +127,7 @@ export function AccountConnections() {
 
   const dialogMeta = dialogChannel ? CHANNELS[dialogChannel] : null;
   const isMeta = dialogChannel ? CHANNELS[dialogChannel].group === "meta" : false;
+  const isX = dialogChannel === "x";
   const disconnectMeta = disconnectTarget ? CHANNELS[disconnectTarget] : null;
 
   return (
@@ -187,6 +188,12 @@ export function AccountConnections() {
           <div className="rounded-[14px] bg-secondary/70 p-3 text-[13px] leading-[18px] text-foreground">
             Otto never posts without your approval. You can disconnect any time.
           </div>
+          {/* X 零钥匙感:老板不碰开发者门户/API key,一次登录即连(spec §四/§六) */}
+          {isX && (
+            <p className="text-[13px] leading-[18px] text-muted-foreground">
+              No developer account, app keys or API setup — just sign in with X once and Otto handles the rest.
+            </p>
+          )}
           <DialogFooter className="flex-row justify-end gap-3">
             <Button variant="secondary" size="sm" disabled={pending} onClick={() => setDialogChannel(null)}>
               Cancel

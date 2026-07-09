@@ -13,7 +13,7 @@ import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { PageHeader, StatCard } from "@/components/northstar/_shared";
 import { type NsCreditRow } from "@/components/northstar/_mock";
-import { balance, creditLedger, useStore } from "../_store";
+import { balance, creditLedger, creditSpendByCategory, useStore } from "../_store";
 import { ACCOUNT_OPS_BASE as BASE, AccountNav, Card, CardHeader, fmtStamp } from "./kit";
 
 /** 每类花费的关联对象落点 + 人话链接文案(明细卡里「去看那笔花在哪」)。 */
@@ -109,6 +109,8 @@ export function AccountCredits() {
   useStore();
   const ledger = creditLedger();
   const currentBalance = balance();
+  const byCategory = creditSpendByCategory();
+  const categoryTotal = byCategory.reduce((s, r) => s + r.credits, 0);
   const [openId, setOpenId] = React.useState<string | null>(null);
 
   const c = {
@@ -182,6 +184,42 @@ export function AccountCredits() {
           </li>
         </ul>
       </div>
+
+      {/* 分类明细:credits 花在哪(单一源 creditSpendByCategory,与流水同源;每类深链去看那批产物) */}
+      {byCategory.length > 0 && (
+        <div className="mt-8">
+          <Card>
+            <CardHeader title="Where credits went" desc="This month's spend, grouped by what Otto made." />
+            {byCategory.map((cat) => {
+              const link = CATEGORY_LINK[cat.label as NsCreditRow["category"]];
+              const pct = categoryTotal > 0 ? Math.round((cat.credits / categoryTotal) * 100) : 0;
+              return (
+                <div key={cat.label} className="flex items-center gap-3 border-t border-border px-4 py-3 first:border-t-0">
+                  <Badge variant="outline">{cat.label}</Badge>
+                  <div className="min-w-0 flex-1">
+                    <div
+                      role="progressbar"
+                      aria-valuenow={cat.credits}
+                      aria-valuemin={0}
+                      aria-valuemax={categoryTotal}
+                      aria-label={`${cat.label} spend`}
+                      className="h-1.5 w-full overflow-hidden rounded-full bg-secondary"
+                    >
+                      <div className="h-full rounded-full bg-foreground transition-[width] duration-300" style={{ width: `${pct}%` }} />
+                    </div>
+                  </div>
+                  <span className="shrink-0 text-sm font-semibold text-foreground tabular-nums">{cat.credits} credits</span>
+                  <Button variant="ghost" size="sm" asChild className="shrink-0">
+                    <Link href={link.href} aria-label={`${link.label} for ${cat.label}`}>
+                      <ArrowUpRight strokeWidth={2} />
+                    </Link>
+                  </Button>
+                </div>
+              );
+            })}
+          </Card>
+        </div>
+      )}
 
       <div className="mt-8">
         <Card>

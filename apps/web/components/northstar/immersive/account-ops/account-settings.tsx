@@ -13,7 +13,7 @@ import { Button } from "@/components/ui/button";
 import { Switch } from "@/components/ui/switch";
 import { PageHeader, StatCard } from "@/components/northstar/_shared";
 import { NS_BRAND } from "@/components/northstar/_mock";
-import { balance, connections, ottoBehavior, setOttoBehavior, useStore } from "../_store";
+import { balance, connections, ottoBehavior, setOttoBehavior, teamMembers, useStore } from "../_store";
 import {
   ACCOUNT_OPS_BASE as BASE,
   AccountNav,
@@ -66,6 +66,8 @@ export function AccountSettings() {
   const conns = connections();
   const creditBalance = balance();
   const behavior = ottoBehavior();
+  const memberCount = teamMembers().length;
+  const pendingMembers = teamMembers().filter((m) => m.status === "pending").length;
   const connectedCount = conns.filter((c) => c.status === "connected").length;
   const attentionCount = conns.filter((c) => c.status === "action").length;
 
@@ -99,8 +101,10 @@ export function AccountSettings() {
             <Users className="size-4" strokeWidth={2} />
             Team
           </div>
-          <div className="mt-1 text-[26px] leading-8 font-bold tracking-[-0.02em] text-foreground tabular-nums">3</div>
-          <div className="mt-1 text-xs font-semibold text-muted-foreground">Manage members</div>
+          <div className="mt-1 text-[26px] leading-8 font-bold tracking-[-0.02em] text-foreground tabular-nums">{memberCount}</div>
+          <div className="mt-1 text-xs font-semibold text-muted-foreground">
+            {pendingMembers > 0 ? `${pendingMembers} invite${pendingMembers > 1 ? "s" : ""} pending` : "Manage members"}
+          </div>
         </Link>
       </div>
 

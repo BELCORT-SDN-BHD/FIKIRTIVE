@@ -9,17 +9,18 @@
 
 import * as React from "react";
 import Link from "next/link";
-import { ArrowRight, Check, Send, X } from "lucide-react";
+import { ArrowRight, Check, CornerUpLeft, Send, X } from "lucide-react";
 import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { OttoAvatar } from "@/components/otto/OttoAvatar";
 import { EmptyState, PageHeader } from "@/components/northstar/_shared";
 import { type NsApprovalRequest } from "@/components/northstar/global/_data";
-import { approveRequest, pendingApprovals, useStore } from "../_store";
+import { approveRequest, pendingApprovals, returnApproval, useStore } from "../_store";
 import { ACCOUNT_OPS_BASE as BASE, TeamNav, Card, useSweep } from "./kit";
 
-type Decision = "pending" | "approved" | "declined";
+type Decision = "pending" | "approved" | "declined" | "returned";
+type QueueFilter = "all" | "generation" | "schedule";
 
 // 落定后留一拍展示回执,再提交进共享 store(单一源:队列全城缩短、花钱联动)
 const SETTLE_MS = 1600;
@@ -33,6 +34,9 @@ const REVIEW_HREF: Record<NsApprovalRequest["kind"], { href: string; label: stri
 function ApprovalCard({ req }: { req: NsApprovalRequest }) {
   const [decision, setDecision] = React.useState<Decision>("pending");
   const [pending, setPending] = React.useState(false);
+  // [wave-b] 审批加「退回并留言」:开一个内联留言框,让老板说清改哪再退回给小编。
+  const [returning, setReturning] = React.useState(false);
+  const [note, setNote] = React.useState("");
   const sweep = useSweep();
   const isGen = req.kind === "generation";
   const review = REVIEW_HREF[req.kind];
@@ -53,6 +57,14 @@ function ApprovalCard({ req }: { req: NsApprovalRequest }) {
       // 落定后提交进共享 store:队列全城缩短(通知页同步)、生成类真扣额度(全城联动)
       window.setTimeout(() => approveRequest(req.id, d === "approved" ? "approve" : "decline"), SETTLE_MS);
     }, 600);
+  };
+
+  const sendBack = () => {
+    setDecision("returned");
+    setReturning(false);
+    toast("Sent back for changes", { description: note.trim() ? `“${note.trim()}”` : req.title });
+    // 落定后提交进共享 store:退回 = 移出队列 + 带 note 的事件(小编那头读作 needs changes)
+    window.setTimeout(() => returnApproval(req.id, note), SETTLE_MS);
   };
 
   return (
@@ -106,6 +118,10 @@ function ApprovalCard({ req }: { req: NsApprovalRequest }) {
         <div className="ml-auto flex items-center gap-2">
           {decision === "pending" ? (
             <>
+              <Button variant="ghost" size="sm" disabled={pending} onClick={() => setReturning((v) => !v)}>
+                <CornerUpLeft strokeWidth={2} />
+                Send back
+              </Button>
               <Button variant="secondary" size="sm" disabled={pending} onClick={() => decide("declined")}>
                 <X strokeWidth={2} />
                 Decline
@@ -116,12 +132,46 @@ function ApprovalCard({ req }: { req: NsApprovalRequest }) {
               </Button>
             </>
           ) : (
-            <Badge variant={decision === "approved" ? "success" : "outline"}>
-              {decision === "approved" ? (isGen ? "Approved · generating" : "Approved · scheduled") : "Declined"}
+            <Badge
+              variant={decision === "approved" ? "success" : decision === "returned" ? "warning" : "outline"}
+            >
+              {decision === "approved"
+                ? isGen
+                  ? "Approved · generating"
+                  : "Approved · scheduled"
+                : decision === "returned"
+                  ? "Sent back · needs changes"
+                  : "Declined"}
             </Badge>
           )}
         </div>
       </div>
+
+      {/* 退回留言框:说清改哪一处,退回给原提交人(不直接拒绝重来) */}
+      {returning && decision === "pending" && (
+        <div className="flex flex-col gap-2 border-t border-border bg-secondary/30 px-4 py-3">
+          <label className="text-xs font-semibold text-foreground" htmlFor={`note-${req.id}`}>
+            What should they change?
+          </label>
+          <textarea
+            id={`note-${req.id}`}
+            value={note}
+            onChange={(e) => setNote(e.target.value)}
+            rows={2}
+            placeholder="e.g. Swap the hero photo and soften the caption — then resend."
+            className="w-full resize-none rounded-[10px] border border-border bg-background px-3 py-2 text-[13px] leading-[18px] text-foreground outline-none transition-colors duration-[120ms] placeholder:text-muted-foreground focus-visible:border-foreground/40 focus-visible:ring-2 focus-visible:ring-ring"
+          />
+          <div className="flex items-center justify-end gap-2">
+            <Button variant="ghost" size="sm" onClick={() => setReturning(false)}>
+              Cancel
+            </Button>
+            <Button size="sm" onClick={sendBack}>
+              <CornerUpLeft strokeWidth={2} />
+              Send back
+            </Button>
+          </div>
+        </div>
+      )}
     </Card>
   );
 }
@@ -130,6 +180,15 @@ export function TeamApprovals() {
   useStore(); // 订阅共享 store:审批队列的单一源(通知页 / 首页数字同源)
   const queue = pendingApprovals();
   const scheduleWaiting = queue.filter((r) => r.kind === "schedule").length;
+  // [wave-b] 审批队列筛选(按类型):老板一天批很多单,先看花钱的或先看排期的
+  const [filter, setFilter] = React.useState<QueueFilter>("all");
+  const genCount = queue.filter((r) => r.kind === "generation").length;
+  const shown = filter === "all" ? queue : queue.filter((r) => r.kind === filter);
+  const FILTERS: { value: QueueFilter; label: string; count: number }[] = [
+    { value: "all", label: "All", count: queue.length },
+    { value: "generation", label: "Spend", count: genCount },
+    { value: "schedule", label: "Schedule", count: scheduleWaiting },
+  ];
   return (
     <div className="mx-auto flex min-h-full w-full max-w-[880px] flex-col px-6 pt-6 pb-16">
       <PageHeader
@@ -158,11 +217,45 @@ export function TeamApprovals() {
           className="mt-6"
         />
       ) : (
-        <div className="mt-6 grid grid-cols-1 gap-3">
-          {queue.map((req) => (
-            <ApprovalCard key={req.id} req={req} />
-          ))}
-        </div>
+        <>
+          <div role="tablist" aria-label="Filter approvals" className="mt-6 flex flex-wrap gap-1.5">
+            {FILTERS.map((f) => {
+              const active = filter === f.value;
+              return (
+                <button
+                  key={f.value}
+                  type="button"
+                  role="tab"
+                  aria-selected={active}
+                  onClick={() => setFilter(f.value)}
+                  className={
+                    "inline-flex items-center gap-1.5 rounded-full border px-3 py-1.5 text-xs font-semibold transition-colors duration-[120ms] focus-visible:outline-2 focus-visible:outline-ring " +
+                    (active
+                      ? "border-primary bg-secondary text-foreground ring-[2px] ring-ring/40"
+                      : "border-border bg-card text-muted-foreground hover:bg-accent hover:text-foreground")
+                  }
+                >
+                  {f.label}
+                  <span className="tabular-nums text-muted-foreground">{f.count}</span>
+                </button>
+              );
+            })}
+          </div>
+          {shown.length === 0 ? (
+            <EmptyState
+              icon={Check}
+              title="Nothing here"
+              body="No approvals of this type right now. Switch the filter to see the rest."
+              className="mt-4"
+            />
+          ) : (
+            <div className="mt-4 grid grid-cols-1 gap-3">
+              {shown.map((req) => (
+                <ApprovalCard key={req.id} req={req} />
+              ))}
+            </div>
+          )}
+        </>
       )}
 
       <p className="mt-4 text-xs text-muted-foreground">
