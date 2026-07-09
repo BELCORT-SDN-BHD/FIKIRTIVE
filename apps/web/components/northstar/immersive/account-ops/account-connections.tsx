@@ -163,9 +163,9 @@ export function AccountConnections() {
       </div>
 
       <p className="mt-4 text-xs text-muted-foreground">
-        Ad spend for each channel lives in{" "}
+        WhatsApp conversation fees live in{" "}
         <Link href={`${BASE}/account/channel-wallet`} className="font-semibold text-foreground hover:underline">
-          channel wallet
+          channel fees
         </Link>
         . Generation credits are one shared wallet in{" "}
         <Link href={`${BASE}/account/credits`} className="font-semibold text-foreground hover:underline">

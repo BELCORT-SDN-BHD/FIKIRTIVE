@@ -102,6 +102,19 @@ export interface NsOttoContext {
   selectedLabel?: string;
 }
 
+/* ── Otto 行为设置(账户 · Otto 行为面写它;dock 读它,行为可见地随设置变)。
+ * 自主级别 = 逐次批 / routine 内自动;花费确认阈值 = 单笔 ≥ 此额度必先问;
+ * 勿扰时段 = 该时段 Otto 不主动打扰(dock 收起态显示,不再冒「Just now」)。 */
+export type NsOttoAutonomy = "review-each" | "auto-in-routines";
+export interface NsOttoBehavior {
+  /** 逐次批(默认,最稳)/ routine 内自动(仅你设过的例程里免逐次批) */
+  autonomy: NsOttoAutonomy;
+  /** 单笔花费 ≥ 此额度(credits)时,Otto 一定先问再花;0 = 任何花费都先问 */
+  spendConfirmThreshold: number;
+  /** 勿扰时段:该时段内 Otto 只做不打扰,不冒主动提示 */
+  quietHours: { enabled: boolean; from: string; to: string };
+}
+
 /* ── store 状态(全部从 _mock / 区级视图派生的可变镜像) ────────────────────── */
 interface StoreState {
   creditBalance: number;
@@ -132,6 +145,8 @@ interface StoreState {
   campaignDraft: NsCampaignDraft | null;
   /** Otto 上下文桥:当前在看什么(null = 未设定,dock 不显示 chip)。 */
   ottoContext: NsOttoContext | null;
+  /** Otto 行为设置(账户 · Otto 行为面写它;dock 读它反映当前作风)。 */
+  ottoBehavior: NsOttoBehavior;
 }
 
 // 浅拷贝顶层数组做可变镜像:动作永不原地改 _mock 里的对象,只在本层 replace。
@@ -159,6 +174,12 @@ const state: StoreState = {
   eventLog: [],
   campaignDraft: null,
   ottoContext: null,
+  // 默认最稳:逐次批 + 单笔 ≥50 credits 先问 + 勿扰关(founder 打开设置即可改，dock 立刻反映)。
+  ottoBehavior: {
+    autonomy: "review-each",
+    spendConfirmThreshold: 50,
+    quietHours: { enabled: false, from: "22:00", to: "07:00" },
+  },
 };
 
 /* ── 订阅机制(version tick:每次 notify 递增,useSyncExternalStore 读它触发重渲染) ── */
@@ -570,6 +591,12 @@ export function setOttoContext(ctx: NsOttoContext | null) {
   notify();
 }
 
+/** Otto 行为设置:账户 · Otto 行为面写它(浅合并,quietHours 整体替换)。dock 立即反映。 */
+export function setOttoBehavior(patch: Partial<NsOttoBehavior>) {
+  state.ottoBehavior = { ...state.ottoBehavior, ...patch };
+  notify();
+}
+
 /** 新开一个空 thread,返回它的 id(dock / otto-chat 的「New chat」共用)。 */
 export function startChatThread(title = "New chat"): string {
   const id = `th-live-${seq + 1}`;
@@ -615,6 +642,11 @@ export function pendingApprovals(): NsApprovalRequest[] {
 /** 当前 Otto 上下文(dock 展开时读它显示「Looking at: …」并注入回复前缀)。 */
 export function ottoContext(): NsOttoContext | null {
   return state.ottoContext;
+}
+
+/** 当前 Otto 行为设置(dock 读它反映作风;Otto 行为面读它回显控件)。 */
+export function ottoBehavior(): NsOttoBehavior {
+  return state.ottoBehavior;
 }
 
 /** 最近 n 条事件,最新在前。 */

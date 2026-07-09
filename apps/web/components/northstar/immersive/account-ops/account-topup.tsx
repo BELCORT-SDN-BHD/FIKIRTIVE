@@ -109,7 +109,7 @@ export function AccountTopUp() {
     <div className="mx-auto flex min-h-full w-full max-w-[880px] flex-col px-6 pt-6 pb-16">
       <PageHeader
         title="Top up"
-        subtitle="Pick a pack. Credits land instantly and never expire."
+        subtitle="Pick a pack. Credits land instantly and roll over month to month."
         actions={<AccountNav />}
       />
 
@@ -139,9 +139,9 @@ export function AccountTopUp() {
       </div>
 
       <p className="mt-3 text-xs text-muted-foreground">
-        Card and FPX supported. You can manage the wallet for each ad channel in{" "}
+        Card and FPX supported. WhatsApp conversation fees are a separate wallet in{" "}
         <Link href={`${BASE}/account/channel-wallet`} className="font-semibold text-foreground hover:underline">
-          channel wallet
+          channel fees
         </Link>
         .
       </p>
@@ -151,7 +151,7 @@ export function AccountTopUp() {
           <DialogHeader>
             <DialogTitle>Confirm top up</DialogTitle>
             <DialogDescription>
-              {pack.credits.toLocaleString("en-MY")} credits for RM {pack.priceMyr}. Credits land instantly and never expire.
+              {pack.credits.toLocaleString("en-MY")} credits for RM {pack.priceMyr}. Credits land instantly and roll over month to month.
             </DialogDescription>
           </DialogHeader>
           <div className="rounded-[14px] bg-secondary/70 p-3 text-[13px] leading-[18px] text-foreground">

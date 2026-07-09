@@ -33,6 +33,7 @@
   `contactEventsFor(id)`(contact-profile「From the inbox」时间线)。
 - `adSubmissions()` —— 待审广告事件(广告区 submit 派生;performance 待审 chip + multi-platform「审核中」读它)。
 - `creditSpendByCategory()` —— 从 `creditLedger` 派生的分类消费(分析区报表读它,取代手抄常量)。
+- `ottoBehavior()` —— Otto 行为设置(自主级别 / 花费确认阈值 / 勿扰时段);账户 · Otto 行为面写它,dock 读它反映作风。
 
 ## 动作(纯函数:改 store + append event + notify;做一次到处生效)
 `spendCredits(n,label,category?)` · `topUp(n)` · `schedulePost(post)` ·
@@ -41,7 +42,8 @@
 `toggleAutomationRule(id,on)` · `addRule({name,when,then})` · `toggleRoutine(id,on)` · `addRoutine({name,cadence,step})` ·
 `submitAd(payload)`(payload 带 platform/label,派生「审核中」)· `castTrained(name)`(cast 训练完成落事件流)· `ottoWorking(on,label?)` ·
 `appendChatMessage(threadId,msg)` · `startChatThread(title?)` · `setCampaignDraft(draft)`(工作台提交时写)·
-`inviteMember(email)`(真 append 一条 pending Editor;team 页 pending chip / 计数由此派生)。
+`inviteMember(email)`(真 append 一条 pending Editor;team 页 pending chip / 计数由此派生)·
+`setOttoBehavior(patch)`(账户 · Otto 行为面写自主级别 / 花费阈值 / 勿扰时段;dock 立即反映)。
 crm-inbox 身份链动作:`sendConversationMessage(id,text)`(append owner 消息 + 人工插手→该会话 AI
 暂停)· `setConversationAi(id,paused)`(Otto 自动接管开关,dispatch automation 事件)·
 `advanceDealStage(id,current,dir,title)`(阶段推进/回退,金额仍走 dealAmountMyr)·
@@ -77,8 +79,12 @@ crm-inbox 身份链动作:`sendConversationMessage(id,text)`(append owner 消息
 - nav:余额读 `balance()`,变动时短暂高亮(充值/花费在导航栏可见地跳动)。
 - top-up:确认调 `topUp(credits)` → nav / credits 流水 / home 卡片同源跳动;credits 页
   余额 + 流水读 `balance()` / `creditLedger()`。
-- channel-wallet:「Add funds」是本地 RM 投放钱(与 credits 两套账,仅此页可见,故用本地
-  state 而非共享 store);Add funds / auto reload 均真实生效。
+- channel-wallet(= Channel fees):WhatsApp 会话过路费第二账道(红旗五 / harmony-05),
+  透明直传零加价、MYR 实价、Meta 价目可核对;「Add funds」是本地 RM(与 credits 物理隔离,
+  仅此页可见,故用本地 state 而非共享 store);Add funds / auto reload 均真实生效。
+- settings:Otto 行为面(自主级别 / 花费阈值 / 勿扰时段)调 `setOttoBehavior`,dock 的作风
+  提示与勿扰/工作态收起条随之可见变化;例程授权入口深链 automation/routines。
+- credits:每行可展开明细卡(类型 / 时间 / 关联对象链接 / 花费前后余额),滚存规则卡(G-03)。
 - connections:连接调 `connectChannel`(Meta 一处点亮 IG+FB),断开调 `disconnectChannel`;
   settings「已连 X/N」派生自 `connections()`。
 - automation:规则/例程开关调 `toggleAutomationRule` / `toggleRoutine`(跨导航持久);

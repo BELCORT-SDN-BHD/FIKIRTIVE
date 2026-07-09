@@ -21,7 +21,7 @@ import { OttoAvatar, type OttoMood } from "@/components/otto/OttoAvatar";
 import { ChatCard } from "@/components/northstar/global/chat-cards";
 import { type NsChatMessage } from "@/components/northstar/global/_data";
 import { useImmersive } from "./_context";
-import { appendChatMessage, chatThreads, ottoContext, recentEvents, useStore } from "./_store";
+import { appendChatMessage, chatThreads, ottoBehavior, ottoContext, recentEvents, useStore } from "./_store";
 
 const REDUCED_MOTION_QUERY = "(prefers-reduced-motion: reduce)";
 function useReducedMotion(): boolean {
@@ -166,9 +166,19 @@ export const ImmersiveDock = React.forwardRef<
     }
   }
 
+  // Otto 行为设置(账户 · Otto 行为面写它):dock 的作风提示随它可见地变。
+  const behavior = ottoBehavior();
+  const quiet = behavior.quietHours.enabled;
   const mood: OttoMood = working || thinking ? "thinking" : "idle";
-  const badge = working || thinking;
-  const label = working ? "Otto — working" : "Otto — idle";
+  const badge = (working || thinking) && !quiet;
+  // working 提示语随「自主级别」变;idle 时勿扰优先,其次回落静默。
+  const label = working
+    ? behavior.autonomy === "auto-in-routines"
+      ? "Otto — working on your routines"
+      : "Otto — working, will ask before it spends"
+    : quiet
+      ? `Otto — quiet until ${behavior.quietHours.to}`
+      : "Otto — idle";
 
   return (
     <div ref={panelRef} className="fixed right-4 bottom-4 z-[70] flex flex-col items-end gap-2">
@@ -273,12 +283,20 @@ export const ImmersiveDock = React.forwardRef<
         </div>
       )}
 
-      {/* 「Just now」事件条:收起时显示 store 最近一条事件的人话(recentEvents(1)) */}
-      {!open && lastEvent && (
+      {/* 收起态提示条:勿扰 > 工作态 > 最近一条事件。三者都读 store,设置改了立刻反映。 */}
+      {!open && quiet ? (
+        <div className="max-w-[260px] truncate rounded-full border border-border bg-secondary px-3 py-1.5 text-[11px] font-medium text-muted-foreground shadow-[var(--shadow-sm)]">
+          Quiet hours · won&apos;t ping until {behavior.quietHours.to}
+        </div>
+      ) : !open && working ? (
+        <div className="max-w-[260px] truncate rounded-full border border-border bg-card px-3 py-1.5 text-[11px] font-medium text-foreground shadow-[var(--shadow-sm)]">
+          {label}
+        </div>
+      ) : !open && lastEvent ? (
         <div className="max-w-[260px] truncate rounded-full border border-border bg-card px-3 py-1.5 text-[11px] font-medium text-muted-foreground shadow-[var(--shadow-sm)]">
           Just now · {lastEvent.label}
         </div>
-      )}
+      ) : null}
 
       {/* 收起圆点(48) */}
       <button

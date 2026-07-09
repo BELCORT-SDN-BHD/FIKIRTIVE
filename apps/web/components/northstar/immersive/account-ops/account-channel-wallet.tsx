@@ -1,14 +1,14 @@
 "use client";
 
 /**
- * 渠道钱包 —— 每个投放渠道的广告余额、本月花费、自动续费。
- * 这里是「投放钱」(RM),和生成额度(credits)是两码事 —— 页面顶部把这点讲清楚,
- * 并把生成额度指回 credits。§D3 数据卡 + §D4 hairline 行 + §F7 即时开关。
+ * 通道费(红旗五 / harmony-05)—— WhatsApp 等平台按会话收的过路费,单独一条账道。
+ * 透明直传、零加价:MYR 实价,可对 Meta 价目核对。与生成 credits 是两码事,页顶讲清楚。
+ * §D3 数据卡 + §D4 hairline 行 + §F7 即时开关。仅此页可见,RM 本地状态即真值。
  */
 
 import * as React from "react";
 import Link from "next/link";
-import { ArrowRight } from "lucide-react";
+import { ArrowRight, ExternalLink, ShieldCheck } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import {
@@ -21,126 +21,159 @@ import {
 } from "@/components/ui/dialog";
 import { PageHeader, StatCard } from "@/components/northstar/_shared";
 import { Switch } from "@/components/ui/switch";
-import { ACCOUNT_OPS_BASE as BASE, AccountNav, Card, CardHeader, ChannelTag, CHANNELS } from "./kit";
-import { NS_CHANNEL_WALLETS, type NsChannelWallet } from "./data";
+import { ACCOUNT_OPS_BASE as BASE, AccountNav, Card, CardHeader } from "./kit";
+import {
+  META_PRICING_URL,
+  NS_CHANNEL_FEE_LEDGER,
+  NS_CHANNEL_FEE_WALLET,
+  type NsChannelFeeRow,
+} from "./data";
 
-const ADD_FUND_AMOUNTS = [50, 100, 200];
+const ADD_FUND_AMOUNTS = [30, 60, 120];
 
-function WalletRow({
-  wallet,
-  onToggle,
-  onAddFunds,
-}: {
-  wallet: NsChannelWallet;
-  onToggle: (v: boolean) => void;
-  onAddFunds: () => void;
-}) {
-  const meta = CHANNELS[wallet.channel];
-  const low = wallet.balanceMyr < wallet.monthSpendMyr;
+function rowAmount(row: NsChannelFeeRow): number {
+  return Math.round(row.conversations * row.rateMyr * 100) / 100;
+}
+
+function FeeRow({ row }: { row: NsChannelFeeRow }) {
+  const amount = rowAmount(row);
+  const free = row.rateMyr === 0;
   return (
     <div className="flex flex-wrap items-center gap-3 border-t border-border px-4 py-3.5 first:border-t-0">
-      <ChannelTag channel={wallet.channel} />
+      <Badge variant={free ? "success" : "outline"}>{row.category}</Badge>
       <div className="min-w-0 flex-1">
-        <p className="truncate text-sm font-semibold text-foreground">{meta.label}</p>
+        <p className="truncate text-sm font-medium text-foreground">{row.desc}</p>
         <p className="mt-0.5 text-xs text-muted-foreground tabular-nums">
-          Spent this month RM {wallet.monthSpendMyr}
+          {row.conversations.toLocaleString("en-MY")} conversations
+          {free ? " · free within 24h" : ` · RM ${row.rateMyr.toFixed(2)} each at Meta's rate`}
         </p>
       </div>
-      <div className="text-right">
-        <p className="text-sm font-semibold text-foreground tabular-nums">RM {wallet.balanceMyr}</p>
-        {low && <Badge variant="warning" className="mt-0.5">Low</Badge>}
-      </div>
-      <div className="flex items-center gap-2 pl-2">
-        <span className="text-xs text-muted-foreground">Auto reload</span>
-        <Switch checked={wallet.autoReload} onCheckedChange={onToggle} aria-label={`Auto reload ${meta.label}`} />
-      </div>
-      <Button variant="secondary" size="sm" onClick={onAddFunds}>Add funds</Button>
+      <p className="shrink-0 text-sm font-semibold text-foreground tabular-nums">
+        {free ? "Free" : `RM ${amount.toFixed(2)}`}
+      </p>
     </div>
   );
 }
 
 export function AccountChannelWallet() {
-  // 渠道钱包是投放钱(RM),与生成 credits 是两套账;仅此页可见,本地状态即真值。
-  const [wallets, setWallets] = React.useState<NsChannelWallet[]>(() => NS_CHANNEL_WALLETS.map((w) => ({ ...w })));
-  const [fundsTarget, setFundsTarget] = React.useState<NsChannelWallet["channel"] | null>(null);
+  // 通道费是垫付给平台的过路费(MYR),与生成 credits 两套账;仅此页可见,本地状态即真值。
+  const [balanceMyr, setBalanceMyr] = React.useState(NS_CHANNEL_FEE_WALLET.balanceMyr);
+  const [autoReload, setAutoReload] = React.useState(NS_CHANNEL_FEE_WALLET.autoReload);
+  const [adding, setAdding] = React.useState(false);
   const [fundsAmount, setFundsAmount] = React.useState(ADD_FUND_AMOUNTS[1]);
 
-  const toggleReload = (channel: NsChannelWallet["channel"], v: boolean) =>
-    setWallets((ws) => ws.map((w) => (w.channel === channel ? { ...w, autoReload: v } : w)));
+  const monthSpend =
+    Math.round(NS_CHANNEL_FEE_LEDGER.reduce((s, r) => s + rowAmount(r), 0) * 100) / 100;
+  const totalConversations = NS_CHANNEL_FEE_LEDGER.reduce((s, r) => s + r.conversations, 0);
+  const low = balanceMyr < monthSpend;
 
-  const openAddFunds = (channel: NsChannelWallet["channel"]) => {
+  const openAddFunds = () => {
     setFundsAmount(ADD_FUND_AMOUNTS[1]);
-    setFundsTarget(channel);
+    setAdding(true);
   };
-
   const confirmAddFunds = () => {
-    if (!fundsTarget) return;
-    setWallets((ws) => ws.map((w) => (w.channel === fundsTarget ? { ...w, balanceMyr: w.balanceMyr + fundsAmount } : w)));
-    setFundsTarget(null);
+    setBalanceMyr((b) => b + fundsAmount);
+    setAdding(false);
   };
-
-  const fundsMeta = fundsTarget ? CHANNELS[fundsTarget] : null;
-  const totalBalance = wallets.reduce((s, w) => s + w.balanceMyr, 0);
-  const totalSpend = wallets.reduce((s, w) => s + w.monthSpendMyr, 0);
 
   return (
     <div className="mx-auto flex min-h-full w-full max-w-[880px] flex-col px-6 pt-6 pb-16">
       <PageHeader
-        title="Channel wallet"
-        subtitle="Ad spend for each channel, kept separate from your generation credits."
+        title="Channel fees"
+        subtitle="What WhatsApp charges to send messages — passed straight through, no markup."
         actions={<AccountNav />}
       />
 
-      {/* 区分说明:投放钱 vs 生成额度 */}
-      <Link
-        href={`${BASE}/account/credits`}
-        className="mt-6 flex items-center gap-3 rounded-[18px] border border-border bg-secondary/60 px-4 py-3.5 transition-colors duration-[120ms] hover:bg-secondary"
-      >
-        <p className="min-w-0 flex-1 text-[13px] leading-[18px] text-foreground">
-          This wallet pays the ad platforms in ringgit. Making posts and videos uses credits, which are a separate shared wallet.
-        </p>
-        <span className="flex shrink-0 items-center gap-1 text-xs font-semibold text-foreground">
-          Open credits
-          <ArrowRight className="size-4" strokeWidth={2} />
-        </span>
-      </Link>
+      {/* 两条账道分账道说明(红旗五人话):credits = 我们的服务;通道费 = 代收过路费 */}
+      <div className="mt-6 rounded-[18px] border border-border bg-secondary/60 p-4">
+        <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
+          <div className="rounded-[14px] border border-border bg-card p-3.5">
+            <p className="text-xs font-semibold text-foreground">Credits — our service</p>
+            <p className="mt-1 text-[13px] leading-[18px] text-muted-foreground">
+              What you spend on Otto making posts, images and videos. One shared wallet.
+            </p>
+            <Link
+              href={`${BASE}/account/credits`}
+              className="mt-2 inline-flex items-center gap-1 text-xs font-semibold text-foreground hover:underline"
+            >
+              Open credits
+              <ArrowRight className="size-3.5" strokeWidth={2} />
+            </Link>
+          </div>
+          <div className="rounded-[14px] border border-border bg-card p-3.5">
+            <p className="text-xs font-semibold text-foreground">Channel fees — a toll we collect for you</p>
+            <p className="mt-1 text-[13px] leading-[18px] text-muted-foreground">
+              WhatsApp charges per conversation. We pay Meta and pass the exact cost to you — nothing added.
+            </p>
+          </div>
+        </div>
+      </div>
 
-      <div className="mt-6 grid grid-cols-1 gap-3 sm:grid-cols-2">
-        <StatCard label="Total ad balance" value={`RM ${totalBalance}`} delta={{ dir: "flat", text: "Across 3 channels" }} />
-        <StatCard label="Spent this month" value={`RM ${totalSpend}`} delta={{ dir: "up", text: "▲ 12% vs last month" }} />
+      <div className="mt-6 grid grid-cols-1 gap-3 sm:grid-cols-3">
+        <StatCard
+          label="Fee balance"
+          value={`RM ${balanceMyr}`}
+          delta={low ? { dir: "down", text: "Low — below this month's fees" } : { dir: "flat", text: "Covers this month" }}
+        />
+        <StatCard label="Fees this month" value={`RM ${monthSpend.toFixed(2)}`} delta={{ dir: "flat", text: "Paid to Meta, at cost" }} />
+        <StatCard label="Conversations" value={totalConversations.toLocaleString("en-MY")} delta={{ dir: "flat", text: "This month, all types" }} />
+      </div>
+
+      <div className="mt-4 flex flex-wrap items-center gap-3 rounded-[18px] border border-border bg-card px-4 py-3.5">
+        <div className="flex items-center gap-2">
+          <span className="text-xs text-muted-foreground">Auto reload when low</span>
+          <Switch checked={autoReload} onCheckedChange={setAutoReload} aria-label="Auto reload channel fees" />
+        </div>
+        <Button variant="secondary" size="sm" className="ml-auto" onClick={openAddFunds}>
+          Add funds
+        </Button>
       </div>
 
       <div className="mt-8">
         <Card>
           <CardHeader
-            title="By channel"
-            desc="Top up per channel or let auto reload keep them funded."
+            title="By conversation type"
+            desc="Meta prices WhatsApp by conversation category. This is what you were charged."
           />
-          {wallets.map((w) => (
-            <WalletRow
-              key={w.channel}
-              wallet={w}
-              onToggle={(v) => toggleReload(w.channel, v)}
-              onAddFunds={() => openAddFunds(w.channel)}
-            />
+          {NS_CHANNEL_FEE_LEDGER.map((row) => (
+            <FeeRow key={row.id} row={row} />
           ))}
         </Card>
       </div>
 
+      {/* 不加价声明 + Meta 价目链接(透明可验证 = 卖点) */}
+      <div className="mt-4 flex flex-wrap items-center gap-3 rounded-[18px] border border-border bg-card px-4 py-4">
+        <span className="flex size-9 shrink-0 items-center justify-center rounded-full bg-success-soft">
+          <ShieldCheck className="size-5 text-success-soft-foreground" strokeWidth={2} />
+        </span>
+        <div className="min-w-0 flex-1">
+          <p className="text-sm font-semibold text-foreground">We don&apos;t add a cent</p>
+          <p className="mt-0.5 text-[13px] leading-[18px] text-muted-foreground">
+            You pay Meta&apos;s exact rate. Check it against their published price list any time.
+          </p>
+        </div>
+        <Button variant="ghost" size="sm" asChild className="shrink-0">
+          <a href={META_PRICING_URL} target="_blank" rel="noreferrer">
+            Meta price list
+            <ExternalLink strokeWidth={2} />
+          </a>
+        </Button>
+      </div>
+
       <p className="mt-4 text-xs text-muted-foreground">
-        Not seeing a channel? Link it first in{" "}
+        Only WhatsApp charges per conversation today. Connect it in{" "}
         <Link href={`${BASE}/account/connections`} className="font-semibold text-foreground hover:underline">
           connections
         </Link>
         .
       </p>
 
-      <Dialog open={fundsTarget !== null} onOpenChange={(open) => !open && setFundsTarget(null)}>
+      <Dialog open={adding} onOpenChange={(open) => !open && setAdding(false)}>
         <DialogContent>
           <DialogHeader>
-            <DialogTitle>Add funds to {fundsMeta?.label}</DialogTitle>
+            <DialogTitle>Add fee funds</DialogTitle>
             <DialogDescription>
-              This tops up the ad-spend wallet for {fundsMeta?.label} in ringgit. It does not touch your generation credits.
+              This tops up your channel-fee balance in ringgit to cover WhatsApp charges. It does not touch your generation credits.
             </DialogDescription>
           </DialogHeader>
           <div className="grid grid-cols-3 gap-2">
@@ -162,7 +195,7 @@ export function AccountChannelWallet() {
             ))}
           </div>
           <DialogFooter className="flex-row justify-end gap-3">
-            <Button variant="secondary" size="sm" onClick={() => setFundsTarget(null)}>
+            <Button variant="secondary" size="sm" onClick={() => setAdding(false)}>
               Cancel
             </Button>
             <Button size="sm" onClick={confirmAddFunds}>

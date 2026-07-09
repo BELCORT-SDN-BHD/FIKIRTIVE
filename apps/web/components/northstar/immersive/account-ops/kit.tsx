@@ -35,7 +35,7 @@ const ACCOUNT_VIEWS = [
   { href: `${BASE}/account/settings`, label: "Settings" },
   { href: `${BASE}/account/credits`, label: "Credits" },
   { href: `${BASE}/account/connections`, label: "Connections" },
-  { href: `${BASE}/account/channel-wallet`, label: "Channel wallet" },
+  { href: `${BASE}/account/channel-wallet`, label: "Channel fees" },
 ];
 
 const AUTOMATION_VIEWS = [

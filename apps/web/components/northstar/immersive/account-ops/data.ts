@@ -47,19 +47,39 @@ export const NS_TOPUP_PACKS: NsTopUpPack[] = [
   { id: "tp-pro", credits: 3000, priceMyr: 260, roughly: "About 75 videos or 250 images" },
 ];
 
-/* ── 渠道钱包(每个渠道的投放余额;派生自品牌币种口径) ────────────────── */
-export interface NsChannelWallet {
-  channel: NsChannel;
+/* ── 通道费账道(红旗五 / harmony-05):WhatsApp 等平台按会话收的过路费,
+ * 与生成 credits 是两套账。透明直传、零加价 —— MYR 实价,可对 Meta 价目核对。
+ * 这里只是原型的用户面口径(会话数 × Meta 费率),不是新造品牌事实。 */
+export type NsMetaFeeCategory = "Marketing" | "Utility" | "Service";
+
+export interface NsChannelFeeRow {
+  id: string;
+  category: NsMetaFeeCategory;
+  /** 人话一句:这类会话是什么 */
+  desc: string;
+  /** 本月这类会话数 */
+  conversations: number;
+  /** Meta 每会话费率(MYR,直传;0 = 服务窗口内免费) */
+  rateMyr: number;
+}
+
+/** WhatsApp 会话费明细(本月,按 Meta 会话类目)。金额 = conversations × rateMyr。 */
+export const NS_CHANNEL_FEE_LEDGER: NsChannelFeeRow[] = [
+  { id: "cf-mkt", category: "Marketing", desc: "Promos and broadcasts you sent to customers", conversations: 214, rateMyr: 0.32 },
+  { id: "cf-util", category: "Utility", desc: "Order updates and reminders", conversations: 156, rateMyr: 0.09 },
+  { id: "cf-svc", category: "Service", desc: "Replies within 24h of a customer message", conversations: 320, rateMyr: 0 },
+];
+
+/** 通道费钱包(MYR 实价;仅此页可见,与 credits 物理隔离)。 */
+export interface NsChannelFeeWallet {
   balanceMyr: number;
-  monthSpendMyr: number;
   autoReload: boolean;
 }
 
-export const NS_CHANNEL_WALLETS: NsChannelWallet[] = [
-  { channel: "facebook", balanceMyr: 240, monthSpendMyr: 180, autoReload: true },
-  { channel: "instagram", balanceMyr: 240, monthSpendMyr: 180, autoReload: true },
-  { channel: "tiktok", balanceMyr: 60, monthSpendMyr: 95, autoReload: false },
-];
+export const NS_CHANNEL_FEE_WALLET: NsChannelFeeWallet = { balanceMyr: 84, autoReload: true };
+
+/** Meta 官方 WhatsApp 价目(用户可自行核对"我们不加价")。 */
+export const META_PRICING_URL = "https://developers.facebook.com/docs/whatsapp/pricing";
 
 /* ── 自动化规则(when → then;派生自真实店内动作) ───────────────────────── */
 export interface NsRule {

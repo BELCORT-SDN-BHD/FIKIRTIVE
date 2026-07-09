@@ -1,19 +1,19 @@
 "use client";
 
 /**
- * 账户设置 —— 品牌资料 + 通知 + 语言/时区偏好。
- * 交叉链接:额度卡 → credits;连接 → connections;团队 → team/members。
- * §F7 开关即时生效(无 Save);§N6 页头 + §D4 hairline 行。
+ * 账户设置 —— 品牌资料 + Otto 行为设置 + 通知 + 偏好。
+ * Otto 行为(自主级别 / 花费确认阈值 / 勿扰时段)全接共享 store,dock 立刻反映(§F7 无 Save)。
+ * 交叉链接:额度卡 → credits;连接 → connections;团队 → team/members;例程授权 → automation/routines。
  */
 
 import * as React from "react";
 import Link from "next/link";
-import { ArrowRight, Plug, Users } from "lucide-react";
+import { ArrowRight, Moon, Plug, Repeat, Users } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Switch } from "@/components/ui/switch";
 import { PageHeader, StatCard } from "@/components/northstar/_shared";
 import { NS_BRAND } from "@/components/northstar/_mock";
-import { balance, connections, useStore } from "../_store";
+import { balance, connections, ottoBehavior, setOttoBehavior, useStore } from "../_store";
 import {
   ACCOUNT_OPS_BASE as BASE,
   AccountNav,
@@ -22,11 +22,50 @@ import {
   SettingRow,
 } from "./kit";
 
+/** 单选药丸组(自主级别 / 花费阈值共用;人话选项 + 无术语)。 */
+function PillGroup<T extends string | number>({
+  options,
+  value,
+  onChange,
+  ariaLabel,
+}: {
+  options: { value: T; label: string }[];
+  value: T;
+  onChange: (v: T) => void;
+  ariaLabel: string;
+}) {
+  return (
+    <div role="radiogroup" aria-label={ariaLabel} className="flex flex-wrap gap-1.5">
+      {options.map((opt) => {
+        const active = opt.value === value;
+        return (
+          <button
+            key={String(opt.value)}
+            type="button"
+            role="radio"
+            aria-checked={active}
+            onClick={() => onChange(opt.value)}
+            className={
+              "rounded-full border px-3 py-1.5 text-xs font-semibold transition-colors duration-[120ms] focus-visible:outline-2 focus-visible:outline-ring " +
+              (active
+                ? "border-primary bg-secondary text-foreground ring-[2px] ring-ring/40"
+                : "border-border bg-card text-muted-foreground hover:bg-accent hover:text-foreground")
+            }
+          >
+            {opt.label}
+          </button>
+        );
+      })}
+    </div>
+  );
+}
+
 export function AccountSettings() {
   useStore();
   const [notify, setNotify] = React.useState({ approvals: true, publishFails: true, weekly: false });
   const conns = connections();
   const creditBalance = balance();
+  const behavior = ottoBehavior();
   const connectedCount = conns.filter((c) => c.status === "connected").length;
   const attentionCount = conns.filter((c) => c.status === "action").length;
 
@@ -34,7 +73,7 @@ export function AccountSettings() {
     <div className="mx-auto flex min-h-full w-full max-w-[880px] flex-col px-6 pt-6 pb-16">
       <PageHeader
         title="Account"
-        subtitle="Your brand, your team, and how Otto reaches you."
+        subtitle="Your brand, your team, and how Otto works for you."
         actions={<AccountNav />}
       />
 
@@ -65,8 +104,121 @@ export function AccountSettings() {
         </Link>
       </div>
 
-      {/* 品牌资料 */}
       <div className="mt-8 flex flex-col gap-6">
+        {/* Otto 行为设置(founder 最在意:自主 / 花钱 / 勿扰;全接 store,dock 立刻变) */}
+        <Card>
+          <CardHeader
+            title="Otto behavior"
+            desc="How much Otto does on its own, and when it should hold off. Changes take effect right away."
+          />
+          <SettingRow
+            title="How Otto works"
+            desc={
+              behavior.autonomy === "review-each"
+                ? "Otto drafts everything and waits for your tap. Safest — nothing goes out without you."
+                : "Otto runs the routines you set up on its own. Everything else still waits for you."
+            }
+            control={
+              <PillGroup
+                ariaLabel="How Otto works"
+                value={behavior.autonomy}
+                onChange={(v) => setOttoBehavior({ autonomy: v })}
+                options={[
+                  { value: "review-each", label: "Ask me each time" },
+                  { value: "auto-in-routines", label: "Auto in routines" },
+                ]}
+              />
+            }
+          />
+          <SettingRow
+            title="Ask before spending"
+            desc={
+              behavior.spendConfirmThreshold === 0
+                ? "Otto checks with you before spending any credits."
+                : `Otto checks with you before any single job that costs ${behavior.spendConfirmThreshold} credits or more.`
+            }
+            control={
+              <PillGroup
+                ariaLabel="Ask before spending"
+                value={behavior.spendConfirmThreshold}
+                onChange={(v) => setOttoBehavior({ spendConfirmThreshold: v })}
+                options={[
+                  { value: 0, label: "Always" },
+                  { value: 50, label: "50+" },
+                  { value: 100, label: "100+" },
+                  { value: 200, label: "200+" },
+                ]}
+              />
+            }
+          />
+          <SettingRow
+            title="Quiet hours"
+            desc={
+              behavior.quietHours.enabled
+                ? `Otto won't ping you between ${behavior.quietHours.from} and ${behavior.quietHours.to}. It still works — it just holds the updates.`
+                : "Otto can ping you any time. Turn on to mute it overnight."
+            }
+            control={
+              <div className="flex items-center gap-2">
+                {behavior.quietHours.enabled && (
+                  <>
+                    <input
+                      type="time"
+                      value={behavior.quietHours.from}
+                      onChange={(e) =>
+                        setOttoBehavior({ quietHours: { ...behavior.quietHours, from: e.target.value } })
+                      }
+                      aria-label="Quiet hours start"
+                      className="h-8 rounded-[10px] border border-border bg-background px-2 text-xs font-medium text-foreground tabular-nums outline-none focus-visible:border-foreground/40 focus-visible:ring-2 focus-visible:ring-ring"
+                    />
+                    <span className="text-xs text-muted-foreground">to</span>
+                    <input
+                      type="time"
+                      value={behavior.quietHours.to}
+                      onChange={(e) =>
+                        setOttoBehavior({ quietHours: { ...behavior.quietHours, to: e.target.value } })
+                      }
+                      aria-label="Quiet hours end"
+                      className="h-8 rounded-[10px] border border-border bg-background px-2 text-xs font-medium text-foreground tabular-nums outline-none focus-visible:border-foreground/40 focus-visible:ring-2 focus-visible:ring-ring"
+                    />
+                  </>
+                )}
+                <Switch
+                  checked={behavior.quietHours.enabled}
+                  onCheckedChange={(v) =>
+                    setOttoBehavior({ quietHours: { ...behavior.quietHours, enabled: v } })
+                  }
+                  aria-label="Quiet hours"
+                />
+              </div>
+            }
+          />
+          <div className="flex items-center gap-2 border-t border-border px-4 py-3">
+            <Moon className="size-3.5 text-muted-foreground" strokeWidth={2} />
+            <p className="text-xs text-muted-foreground">
+              These settings show up on Otto&apos;s dock — watch the label change when you switch them.
+            </p>
+          </div>
+        </Card>
+
+        {/* 例程授权入口(account 侧;实体管理面在 automation/routines,四件套安全闸建在那) */}
+        <Link
+          href={`${BASE}/automation/routines`}
+          className="group flex items-center gap-3 rounded-[18px] border border-border bg-card px-4 py-4 transition-colors duration-[120ms] hover:bg-accent focus-visible:outline-2 focus-visible:outline-ring"
+        >
+          <span className="flex size-9 shrink-0 items-center justify-center rounded-full bg-secondary">
+            <Repeat className="size-5 text-foreground" strokeWidth={2} />
+          </span>
+          <div className="min-w-0 flex-1">
+            <p className="text-sm font-semibold text-foreground">Otto&apos;s routines</p>
+            <p className="mt-0.5 text-[13px] leading-[18px] text-muted-foreground">
+              The standing jobs you&apos;ve let Otto run on a schedule — each with its own budget cap and off switch.
+            </p>
+          </div>
+          <ArrowRight className="size-4 shrink-0 text-muted-foreground transition-transform duration-[120ms] group-hover:translate-x-0.5" strokeWidth={2} />
+        </Link>
+
+        {/* 品牌资料 */}
         <Card>
           <CardHeader title="Brand profile" desc="How you show up across every channel." />
           <SettingRow title="Business name" desc={NS_BRAND.name} control={<Button variant="secondary" size="sm">Edit</Button>} />
