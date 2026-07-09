@@ -16,8 +16,21 @@ import {
   NS_SCHEDULED_POSTS,
   NS_PRODUCTS,
   NS_CONTACTS,
+  NS_CAMPAIGNS,
+  NS_TRENDS,
+  NS_ASSETS,
+  NS_CONVERSATIONS,
+  NS_OTTO_STREAM,
   type NsScheduledPost,
   type NsProduct,
+  type NsContact,
+  type NsCampaignSummary,
+  type NsCampaignStatus,
+  type NsTrendSnapshot,
+  type NsAsset,
+  type NsConversation,
+  type NsOttoStreamMessage,
+  type NsLifecycle,
 } from "@/components/northstar/_mock";
 
 /* ── 额度概览(派生自 NS_BRAND + NS_CREDIT_LEDGER) ─────────────────────────── */
@@ -51,4 +64,74 @@ export function bestSellers(): NsProduct[] {
  * 必须显示同一笔钱。deal 金额从这里派生,不再各写各的硬编码。未知客户返回 0。 */
 export function dealAmountMyr(contactId: string): number {
   return NS_CONTACTS.find((c) => c.id === contactId)?.totalOrdersMyr ?? 0;
+}
+
+/* ═══════════════════════════════════════════════════════════════════════════
+ * F1 世界圣经收敛:跨区派生读的单一源(campaign 容器 / Otto 单流 / research 燃料 / CRM)。
+ * 各区调这些,不再各自 filter/sum;全部纯函数、确定性、只从 _mock 派生。
+ * ═══════════════════════════════════════════════════════════════════════════ */
+
+/* ── Campaign 容器(D1):按状态取 / 单个查 ─────────────────────────────────── */
+export function campaignsByStatus(status: NsCampaignStatus): NsCampaignSummary[] {
+  return NS_CAMPAIGNS.filter((c) => c.status === status);
+}
+export function activeCampaign(): NsCampaignSummary | undefined {
+  return NS_CAMPAIGNS.find((c) => c.status === "ACTIVE");
+}
+/** campaign 预算余额(budget − spent;详情页 + 列表卡「headroom」读它)。 */
+export function campaignHeadroom(c: NsCampaignSummary): number {
+  return c.budgetCredits - c.spentCredits;
+}
+
+/* ── Otto 单流(D2):同一条流,按 campaign 过滤的视图(campaign 详情「对话」tab 用)。
+ * 这就是 D2 的核心 —— 不是另一条对话,是这条流的一种看法。无 campaignId 即全流。 */
+export function ottoStreamForCampaign(campaignId: string): NsOttoStreamMessage[] {
+  return NS_OTTO_STREAM.filter((m) => m.context.campaignId === campaignId);
+}
+/** Otto 流按区过滤(某区的 context chip 深链回来时,只看该区的往来)。 */
+export function ottoStreamForZone(zone: NsOttoStreamMessage["context"]["zone"]): NsOttoStreamMessage[] {
+  return NS_OTTO_STREAM.filter((m) => m.context.zone === zone);
+}
+/** dock 小窗显示末尾 n 条(与 /otto 全屏同源,只是窗口大小不同)。 */
+export function ottoStreamTail(n: number): NsOttoStreamMessage[] {
+  return NS_OTTO_STREAM.slice(Math.max(0, NS_OTTO_STREAM.length - n));
+}
+
+/* ── Research 燃料(D3):某 campaign 引用的 trends / 独立 trends ───────────── */
+export function trendsForCampaign(campaignId: string): NsTrendSnapshot[] {
+  return NS_TRENDS.filter((t) => t.campaignId === campaignId);
+}
+/** 不挂任何 campaign 的独立趋势("这周什么在火",D3:research 可独立存在)。 */
+export function standaloneTrends(): NsTrendSnapshot[] {
+  return NS_TRENDS.filter((t) => !t.campaignId);
+}
+
+/* ── Campaign 自动收纳(D1):切片自动长在 campaign 上 —— 资产 / 帖子 / 对话 ── */
+export function assetsForCampaign(campaignId: string): NsAsset[] {
+  return NS_ASSETS.filter((a) => a.campaignId === campaignId);
+}
+export function postsForCampaign(campaignId: string): NsScheduledPost[] {
+  return NS_SCHEDULED_POSTS.filter((p) => p.campaignId === campaignId);
+}
+export function conversationsForCampaign(campaignId: string): NsConversation[] {
+  return NS_CONVERSATIONS.filter((c) => c.campaignId === campaignId);
+}
+
+/* ── CRM 派生(单一源) ─────────────────────────────────────────────────────── */
+export function contactsByLifecycle(stage: NsLifecycle): NsContact[] {
+  return NS_CONTACTS.filter((c) => c.lifecycle === stage);
+}
+/** 久未下单的大客户(win-back 提示 / 大单提醒;dormant + 历史订单额 ≥ 门槛)。 */
+export function dormantHighValue(minMyr = 1000): NsContact[] {
+  return NS_CONTACTS.filter((c) => c.lifecycle === "dormant" && c.totalOrdersMyr >= minMyr);
+}
+/** 平均客单价(totalOrdersMyr / orderCount;CRM 档案 + 预测字段读它,无单则 0)。 */
+export function avgOrderValue(contactId: string): number {
+  const c = NS_CONTACTS.find((x) => x.id === contactId);
+  if (!c || !c.orderCount || c.orderCount <= 0) return 0;
+  return Math.round(c.totalOrdersMyr / c.orderCount);
+}
+/** 收件箱未答清单(等店主 / 超时;收件箱「需要你」计数读它)。 */
+export function needsOwnerConversations(): NsConversation[] {
+  return NS_CONVERSATIONS.filter((c) => c.state === "waiting-owner" || c.state === "overdue");
 }
