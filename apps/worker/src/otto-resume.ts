@@ -6,16 +6,20 @@
  * before the LLM call — a redelivery or duplicate finds count=0 and returns immediately.
  *
  * MONEY invariants:
- *  - The verdict turn IS metered (LLM token cost via withLlmBudget reserve→settle).
- *  - The verdict turn NEVER spends on generation: startGen is NOT injected into OttoContext.
- *    If Otto somehow calls `generate`, it parks (needsApproval interruption) → we persist the
- *    paused state. The user can approve later via web. No generation spend happens here.
+ *  - The verdict turn IS metered (LLM token cost via withLlmBudget reserve→settle) — but as a
+ *    SINGLE step: it reserves maxSteps:1 (one LLM call) and runs maxTurns:1, not OTTO_MAX_STEPS.
+ *  - The verdict turn NEVER spends on generation. TWO independent guards: (1) it runs the tool-less
+ *    `ottoVerdict` profile, so NO tool — generate or any write/spend — can be reached at all; and
+ *    (2) startGen is not injected into OttoContext either (belt-and-suspenders). The interruption/
+ *    park path below is therefore defensively unreachable in production, kept only as a safety net.
  *  - A throw AFTER the claim is swallowed (best-effort). withLlmBudget refunds the reservation
  *    on throw, so no credit charge on failure.
  */
 import { prisma } from "@fikirtive/db";
-import { newId, OTTO_MAX_STEPS } from "@fikirtive/core";
-import { otto, withLlmBudget, OTTO_DEFAULT_MODEL, run, MaxTurnsExceededError, mapOttoUsage, sanitizeHistory, tryRestoreRunState, extractText } from "@fikirtive/otto";
+import { newId } from "@fikirtive/core";
+// `otto` (full toolset) is used ONLY to rehydrate the prior RunState (history extraction);
+// `ottoVerdict` (tool-less, single-step) is the profile the verdict turn actually runs.
+import { otto, ottoVerdict, withLlmBudget, OTTO_DEFAULT_MODEL, run, MaxTurnsExceededError, mapOttoUsage, sanitizeHistory, tryRestoreRunState, extractText } from "@fikirtive/otto";
 import type { OttoContext } from "@fikirtive/otto";
 
 export async function resumeOttoAfterGen(job: {
@@ -46,10 +50,13 @@ export async function resumeOttoAfterGen(job: {
 
   // From here: best-effort. A throw is swallowed — the gen already succeeded.
   try {
-    // Build a worker OttoContext: no startGen injected (verdict turn must not spend).
-    // If Otto calls `generate`, it parks (needsApproval) — we persist the paused state.
+    // Build a worker OttoContext: no startGen injected (verdict turn must not spend). Combined with
+    // the tool-less ottoVerdict profile (the `generate` tool does not exist on it), the park path
+    // below is defensively unreachable — kept only as a safety net.
     const ctx: OttoContext = {
       orgId: job.ownerId,
+      // Worker has no session — only job.ownerId. userId is the owner/tenant scope (= orgId),
+      // NOT a distinct verified per-user id. See OttoContext.userId doc.
       userId: job.ownerId,
       projectId: job.projectId,
       threadId: job.threadId,
@@ -84,13 +91,17 @@ export async function resumeOttoAfterGen(job: {
           refId,
           model: OTTO_DEFAULT_MODEL,
           paid: true,
-          maxSteps: OTTO_MAX_STEPS,
+          // Single step: the verdict is one spoken sentence. Reserve exactly one LLM call, not
+          // OTTO_MAX_STEPS — smaller hold, and no false InsufficientCredits from a 10-step reserve.
+          maxSteps: 1,
           usageOnError: (e) => (e instanceof MaxTurnsExceededError && (e as { state?: { usage?: unknown } }).state?.usage)
             ? mapOttoUsage((e as { state: { usage: Parameters<typeof mapOttoUsage>[0] } }).state.usage)
             : null,
         },
         async () => {
-          const r = await run(otto, runInput, { context: ctx, maxTurns: OTTO_MAX_STEPS });
+          // Tool-less ottoVerdict profile, capped at a single turn: the verdict cannot loop across
+          // billed turns and cannot reach any write/spend tool. Restoration still uses `otto`.
+          const r = await run(ottoVerdict, runInput, { context: ctx, maxTurns: 1 });
           return { result: r, usage: mapOttoUsage(r.state.usage) };
         },
       );
