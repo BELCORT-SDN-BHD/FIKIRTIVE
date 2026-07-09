@@ -59,6 +59,7 @@ import { bestTimesFor, buildUtm, checkLinks, type SPlatform } from "./data";
 import {
   saveDraft,
   schedulePost,
+  scheduledPosts,
   setPostMeta,
   channelGroups,
   addChannelGroup,
@@ -151,7 +152,8 @@ export function ScheduleComposer() {
   const prefillPostId = useQueryParam("post");
   React.useEffect(() => {
     if (!prefillPostId) return;
-    const p = NS_SCHEDULED_POSTS.find((x) => x.id === prefillPostId);
+    // store live 优先(运行时新建的 post-live-*/post-draft-*/sched-* 打开满字段),静态种子兜底。
+    const p = scheduledPosts().find((x) => x.id === prefillPostId) ?? NS_SCHEDULED_POSTS.find((x) => x.id === prefillPostId);
     if (!p) return;
     setCaption(p.caption);
     if (p.firstComment) setFirstComment(p.firstComment);
@@ -236,7 +238,9 @@ export function ScheduleComposer() {
       setPending(false);
       setConfirmOpen(false);
       setScheduled(true);
-      const existing = prefillPostId && NS_SCHEDULED_POSTS.some((p) => p.id === prefillPostId);
+      // 判定「已存在→就地更新」查 store live(含运行时新建帖),不再只认静态种子 —— 否则
+      // 打开一条运行时帖再保存会当新帖处理、变重复帖。命中则沿用同 id → schedulePost 就地更新。
+      const existing = prefillPostId && scheduledPosts().some((p) => p.id === prefillPostId);
       const id = existing ? prefillPostId! : `post-live-${Date.now()}`;
       schedulePost({
         id,
@@ -257,7 +261,7 @@ export function ScheduleComposer() {
       setFormError("Pick at least one channel to save this draft for.");
       return;
     }
-    const existing = prefillPostId && NS_SCHEDULED_POSTS.some((p) => p.id === prefillPostId);
+    const existing = prefillPostId && scheduledPosts().some((p) => p.id === prefillPostId);
     const id = existing ? prefillPostId! : `post-draft-${Date.now()}`;
     saveDraft({
       id,

@@ -14,6 +14,7 @@ import {
   NS_CREDIT_LEDGER,
   NS_ANALYTICS,
   NS_SCHEDULED_POSTS,
+  NS_CAMPAIGN,
   NS_PRODUCTS,
   NS_CONTACTS,
   NS_CAMPAIGNS,
@@ -32,6 +33,9 @@ import {
   type NsOttoStreamMessage,
   type NsLifecycle,
 } from "@/components/northstar/_mock";
+// 队 cx-campaign-schedule:postsForCampaign 改从 store live 源派生(见下)。_store 是同目录
+// 的纯 client 内存单例(非后台),读它不违反 fence;仍无 Date.now / Math.random。
+import { scheduledPosts, campaignEntries } from "./_store";
 
 /* ── 额度概览(派生自 NS_BRAND + NS_CREDIT_LEDGER) ─────────────────────────── */
 export function creditSummary(): { balance: number; spentThisWeek: number; toppedUp: number } {
@@ -110,8 +114,34 @@ export function standaloneTrends(): NsTrendSnapshot[] {
 export function assetsForCampaign(campaignId: string): NsAsset[] {
   return NS_ASSETS.filter((a) => a.campaignId === campaignId);
 }
+/**
+ * 队 cx-campaign-schedule(断层 4 修复):postsForCampaign 从 store live 源派生。
+ * 此前读静态 NS_SCHEDULED_POSTS,而排期区读 live campaignEntries —— 同一 campaign
+ * 在详情/列表与排期两屏数字互相矛盾。改为:该 campaign 的 live 帖(scheduledPosts)
+ * ∪ 归组的日历条目(campaignEntries,无 campaignId 字段 → 全部归 NS_CAMPAIGN),去重
+ * (pack-confirm 生成后条目落成 sched-<entryId> live 帖,同 id 只计一次)。两页计数与
+ * campaign 详情 Calendar tab 从此同源。
+ * 「proposed」条目还只是提案、不算已承诺的帖 —— 故不计入;approve 一条(proposed→approved)
+ * 即成帖,campaign 列表/详情计数当场 +1(founder 走城验证路径)。
+ */
 export function postsForCampaign(campaignId: string): NsScheduledPost[] {
-  return NS_SCHEDULED_POSTS.filter((p) => p.campaignId === campaignId);
+  const live = scheduledPosts().filter((p) => p.campaignId === campaignId);
+  const liveIds = new Set(live.map((p) => p.id));
+  const entryPosts: NsScheduledPost[] =
+    campaignId === NS_CAMPAIGN.id
+      ? campaignEntries()
+          .filter((e) => e.status !== "proposed")
+          .map((e) => ({
+            id: `sched-${e.id}`,
+            scheduledAt: `${e.date}T09:00:00+08:00`,
+            platform: e.platform,
+            caption: e.hook,
+            media: "",
+            status: e.status === "published" ? "published" : e.status === "scheduled" ? "scheduled" : "draft",
+            campaignId,
+          }))
+      : [];
+  return [...live, ...entryPosts.filter((p) => !liveIds.has(p.id))];
 }
 export function conversationsForCampaign(campaignId: string): NsConversation[] {
   return NS_CONVERSATIONS.filter((c) => c.campaignId === campaignId);

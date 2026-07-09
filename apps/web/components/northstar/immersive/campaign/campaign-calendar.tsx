@@ -20,7 +20,7 @@ import { EmptyState, OttoNarrationBar, PageHeader, StatCard } from "@/components
 import { NS_CAMPAIGN, type NsCampaignEntry } from "@/components/northstar/_mock";
 import { FORMAT_META, PLATFORM_META } from "@/components/northstar/campaign/_data";
 import { EntryStatusBadge } from "@/components/northstar/campaign/_bits";
-import { approveCampaignEntry, campaignEntries, useStore } from "../_store";
+import { approveCampaignEntry, campaignEntries, removeCampaignEntry, updateCampaignEntry, useStore } from "../_store";
 import { CAMP_BASE as BASE, Landed, PlatformPill, SkeletonBlock, fmtCredits, fmtDay } from "./kit";
 
 interface GridDay {
@@ -45,20 +45,17 @@ const AUGUST_WEEKS = buildAugustWeeks();
 const WEEKDAYS = ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"] as const;
 const FORMAT_CREDITS: Record<NsCampaignEntry["format"], number> = { image: 12, video: 40, carousel: 24 };
 const LAND_STEPS = ["Reading the proposal…", "Laying out the calendar…"] as const;
-type EntryEdit = Partial<Pick<NsCampaignEntry, "date" | "platform" | "format" | "estCredits" | "hook">>;
 
 export function CampaignCalendar() {
   useStore();
-  const [edits, setEdits] = React.useState<Record<string, EntryEdit>>({});
-  const [removed, setRemoved] = React.useState<Set<string>>(new Set());
+  // Dialog 里只留输入框草稿态(draft);保存/删除/改期一律经 store,campaignEntries()
+  // 成为唯一事实 —— pack-confirm 与排期视图读同一份,不再各持一层本地覆盖。
   const [view, setView] = React.useState<"calendar" | "list">("calendar");
   const [landed, setLanded] = React.useState(false);
   const [editingId, setEditingId] = React.useState<string | null>(null);
   const [draft, setDraft] = React.useState<NsCampaignEntry | null>(null);
 
-  const entries: NsCampaignEntry[] = campaignEntries()
-    .filter((e) => !removed.has(e.id))
-    .map((e) => (edits[e.id] ? { ...e, ...edits[e.id] } : e));
+  const entries: NsCampaignEntry[] = campaignEntries();
   const editing = entries.find((e) => e.id === editingId) ?? null;
   const total = entries.reduce((s, e) => s + e.estCredits, 0);
   const approvedCount = entries.filter((e) => e.status !== "proposed").length;
@@ -78,12 +75,12 @@ export function CampaignCalendar() {
   function saveDraft(approve: boolean) {
     if (!draft) return;
     const { date, platform, format, estCredits, hook } = draft;
-    setEdits((prev) => ({ ...prev, [draft.id]: { date, platform, format, estCredits, hook } }));
+    updateCampaignEntry(draft.id, { date, platform, format, estCredits, hook });
     if (approve) approveCampaignEntry(draft.id);
     closeEdit();
   }
   function removeEntry(id: string) {
-    setRemoved((prev) => new Set(prev).add(id));
+    removeCampaignEntry(id);
     if (editingId === id) closeEdit();
   }
   function approveRemaining() {

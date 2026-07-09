@@ -2573,3 +2573,30 @@ export function deriveCampaignName(goal: string): string {
   const words = goal.trim().split(/\s+/).slice(0, 6).join(" ");
   return words ? words.charAt(0).toUpperCase() + words.slice(1) : "New campaign";
 }
+
+/* ══════════════════════════════════════════════════════════════════════════
+ * 队 cx-campaign-schedule:campaign 条目编辑/删除落 store(断层 1 修复,文件尾追加)
+ * proposal-card / calendar 此前把改期/改 hook/改格式/删条目只写进组件本地 useState
+ * 覆盖层,store 只翻 status。结果:走到 pack-confirm(读 campaignEntries())时删掉的
+ * 复活、改过的回退,而日历页文案还宣称「it stays in sync」。收进 store 后
+ * campaignEntries() 成为唯一事实,两页与 pack-confirm / schedule 视图自然同源。
+ * event 复用 post_scheduled(承 movePostDate 的先例:campaign 条目变更走同型事件)。
+ * ══════════════════════════════════════════════════════════════════════════ */
+export function updateCampaignEntry(
+  id: string,
+  patch: Partial<Pick<NsCampaignEntry, "date" | "platform" | "format" | "estCredits" | "hook">>,
+) {
+  const entry = state.campaignEntries.find((e) => e.id === id);
+  if (!entry) return;
+  state.campaignEntries = state.campaignEntries.map((e) => (e.id === id ? { ...e, ...patch } : e));
+  logEvent("post_scheduled", `Edited a campaign post · ${patch.hook ?? entry.hook}`, { id, ...patch });
+  notify();
+}
+
+export function removeCampaignEntry(id: string) {
+  const entry = state.campaignEntries.find((e) => e.id === id);
+  if (!entry) return;
+  state.campaignEntries = state.campaignEntries.filter((e) => e.id !== id);
+  logEvent("post_scheduled", `Removed a campaign post · ${entry.hook}`, { id, removed: true });
+  notify();
+}

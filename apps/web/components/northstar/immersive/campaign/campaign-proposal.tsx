@@ -19,7 +19,7 @@ import { OttoAvatar } from "@/components/otto/OttoAvatar";
 import { EmptyState, OttoNarrationBar, PageHeader } from "@/components/northstar/_shared";
 import { NS_CAMPAIGN, type NsCampaignEntry } from "@/components/northstar/_mock";
 import { BACKUP_IDEAS, PROPOSAL_RATIONALE, trendById } from "@/components/northstar/campaign/_data";
-import { campaignDraft, campaignEntries, deriveCampaignName, useStore } from "../_store";
+import { campaignDraft, campaignEntries, deriveCampaignName, removeCampaignEntry, updateCampaignEntry, useStore } from "../_store";
 import { CAMP_BASE as BASE, Landed, PlatformPill, SkeletonBlock, fmtCredits, fmtDay } from "./kit";
 
 const RESEARCH_STEPS = [
@@ -35,14 +35,11 @@ type Phase = "researching" | "proposed" | "approved" | "preparing" | "prepared";
 export function CampaignProposal() {
   useStore();
   const [phase, setPhase] = React.useState<Phase>("researching");
-  const [hookEdits, setHookEdits] = React.useState<Record<string, string>>({});
-  const [removed, setRemoved] = React.useState<Set<string>>(new Set());
+  // 只留输入框草稿态(editingId + hookDraft);改/删的事实一律经 store,pack-confirm 同源。
   const [editingId, setEditingId] = React.useState<string | null>(null);
   const [hookDraft, setHookDraft] = React.useState("");
 
-  const entries: NsCampaignEntry[] = campaignEntries()
-    .filter((e) => !removed.has(e.id))
-    .map((e) => (hookEdits[e.id] ? { ...e, hook: hookEdits[e.id] } : e));
+  const entries: NsCampaignEntry[] = campaignEntries();
 
   const draft = campaignDraft();
   const goalText = draft?.goal ?? NS_CAMPAIGN.goal;
@@ -62,11 +59,11 @@ export function CampaignProposal() {
   }
   function commitEdit() {
     if (editingId == null) return;
-    if (hookDraft.trim()) setHookEdits((prev) => ({ ...prev, [editingId]: hookDraft.trim() }));
+    if (hookDraft.trim()) updateCampaignEntry(editingId, { hook: hookDraft.trim() });
     setEditingId(null);
   }
   function removeEntry(id: string) {
-    setRemoved((prev) => new Set(prev).add(id));
+    removeCampaignEntry(id);
     if (editingId === id) setEditingId(null);
   }
 
