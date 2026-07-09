@@ -21,7 +21,7 @@ import { OttoAvatar, type OttoMood } from "@/components/otto/OttoAvatar";
 import { ChatCard } from "@/components/northstar/global/chat-cards";
 import { type NsChatMessage } from "@/components/northstar/global/_data";
 import { useImmersive } from "./_context";
-import { appendChatMessage, chatThreads, recentEvents, useStore } from "./_store";
+import { appendChatMessage, chatThreads, ottoContext, recentEvents, useStore } from "./_store";
 
 const REDUCED_MOTION_QUERY = "(prefers-reduced-motion: reduce)";
 function useReducedMotion(): boolean {
@@ -109,6 +109,9 @@ export const ImmersiveDock = React.forwardRef<
   // dock 与 otto-chat 全页共读 store 的同一份 chatThreads[0](「share one state」为真)。
   const thread = chatThreads()[0];
   const lastEvent = recentEvents(1)[0];
+  // 上下文桥(宪法 7):当前在看什么 → chip 显示 + 注入回复前缀,「这个」可解析。
+  const ctx = ottoContext();
+  const ctxLabel = ctx ? ctx.selectedLabel ?? ctx.view : null;
 
   React.useImperativeHandle(ref, () => ({
     open(prompt?: string) {
@@ -143,12 +146,14 @@ export const ImmersiveDock = React.forwardRef<
     appendChatMessage(thread.id, { id: `u-${Date.now()}`, role: "user", text });
     setDraft("");
     setThinking(true);
+    // 上下文桥:知道正在看什么就把它当回复前缀,让「这个」有着落。
+    const prefix = ctxLabel ? `On ${ctxLabel} — ` : "";
     timerRef.current = window.setTimeout(() => {
       setThinking(false);
       appendChatMessage(thread.id, {
         id: `o-${Date.now()}`,
         role: "otto",
-        text: "Got it. I can draft that as a post or a full pack. Open the full workspace and I'll lay out the options.",
+        text: `${prefix}got it. I can draft that as a post or a full pack. Open the full workspace and I'll lay out the options.`,
       });
     }, 1400);
   }
@@ -193,6 +198,16 @@ export const ImmersiveDock = React.forwardRef<
               <X className="size-4" strokeWidth={2} />
             </button>
           </div>
+
+          {/* 上下文桥 chip:正在看什么(宪法 7);无 context 不占位 */}
+          {ctxLabel && (
+            <div className="flex shrink-0 items-center gap-1.5 border-b border-border px-4 py-2">
+              <span className="text-[11px] font-medium text-muted-foreground">Looking at</span>
+              <span className="min-w-0 truncate rounded-full bg-secondary px-2 py-0.5 text-[11px] font-semibold text-foreground">
+                {ctxLabel}
+              </span>
+            </div>
+          )}
 
           {/* messages */}
           <div ref={scrollRef} role="log" className="min-h-0 flex-1 overflow-y-auto px-4 py-4">

@@ -15,17 +15,24 @@
 
 import * as React from "react";
 import Link from "next/link";
-import { usePathname } from "next/navigation";
+import { usePathname, useRouter } from "next/navigation";
 import {
+  Bell,
   BookOpen,
   CalendarDays,
+  Clapperboard,
   Compass,
+  FileBarChart,
   Folder,
   Frame,
+  Inbox,
   Library,
   LayoutTemplate,
+  Megaphone,
+  Palette,
   Plug,
   Plus,
+  Search,
   Settings,
   Sparkles,
   TrendingUp,
@@ -36,7 +43,7 @@ import { cn } from "@/lib/utils";
 import { Button } from "@/components/ui/button";
 import { OttoAvatar } from "@/components/otto/OttoAvatar";
 import { NS_BRAND, NS_CAMPAIGN, NS_CHAT_THREADS } from "@/components/northstar/global/_data";
-import { balance, useStore } from "./_store";
+import { balance, pendingApprovals, useStore } from "./_store";
 
 const BASE = "/northstar-immersive";
 
@@ -63,15 +70,20 @@ export const NAV_GROUPS: { label: string; tools: NavTool[] }[] = [
     tools: [
       { label: "My stuff", icon: Folder, href: `${BASE}/assets/my-stuff` },
       { label: "Brand memory", icon: BookOpen, href: `${BASE}/assets/brand-memory` },
+      { label: "Brand kit", icon: Palette, href: `${BASE}/assets/brand-kit` },
+      { label: "Cast", icon: Clapperboard, href: `${BASE}/assets/cast` },
     ],
   },
   {
     label: "Operate",
     tools: [
       { label: "Schedule", icon: CalendarDays, href: `${BASE}/schedule/plan` },
-      { label: "Analytics", icon: TrendingUp, href: `${BASE}/analytics/overview` },
+      { label: "Inbox", icon: Inbox, href: `${BASE}/inbox/shared` },
       { label: "Campaigns", icon: Sparkles, href: `${BASE}/campaign/proposal-card` },
       { label: "Contacts", icon: Users, href: `${BASE}/crm/contacts` },
+      { label: "Analytics", icon: TrendingUp, href: `${BASE}/analytics/overview` },
+      { label: "Reports", icon: FileBarChart, href: `${BASE}/analytics/reports` },
+      { label: "Ads", icon: Megaphone, href: `${BASE}/ads/performance` },
       { label: "Connections", icon: Plug, href: `${BASE}/account/connections` },
       { label: "Account", icon: Settings, href: `${BASE}/account/settings` },
     ],
@@ -97,10 +109,27 @@ function ToolRow({ tool, active }: { tool: NavTool; active: boolean }) {
   );
 }
 
+const SEARCH_HREF = `${BASE}/global/search`;
+const NOTIFICATIONS_HREF = `${BASE}/global/notifications`;
+
 export function ImmersiveNav({ className }: { className?: string }) {
   const pathname = usePathname();
+  const router = useRouter();
   useStore();
   const bal = balance();
+  const pendingCount = pendingApprovals().length;
+
+  // 全局搜索快捷键:⌘K / Ctrl-K 从任意路由打开搜索面板(与搜索图标同一目的地)。
+  React.useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === "k") {
+        e.preventDefault();
+        router.push(SEARCH_HREF);
+      }
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [router]);
   // 余额变动(充值/花费)时短暂高亮,让「钱包统一」在导航栏可见地跳动
   const [flash, setFlash] = React.useState(false);
   const prevBal = React.useRef(bal);
@@ -113,12 +142,47 @@ export function ImmersiveNav({ className }: { className?: string }) {
   }, [bal]);
   return (
     <nav className={cn("flex h-full w-60 shrink-0 flex-col border-r border-border bg-background", className)}>
-      {/* ① Brand — 回沉浸式首页 */}
+      {/* ① Brand — 回沉浸式首页 + 全局搜索 / 通知铃铛 */}
       <div className="flex h-[52px] shrink-0 items-center gap-2 px-4">
-        <Link href={BASE} className="flex items-center gap-2" aria-label="FIKIRTIVE home">
+        <Link href={BASE} className="flex min-w-0 items-center gap-2" aria-label="FIKIRTIVE home">
           <OttoAvatar size={26} mood="idle" />
-          <span className="text-[17px] font-bold tracking-[-0.01em] text-foreground">FIKIRTIVE</span>
+          <span className="truncate text-[17px] font-bold tracking-[-0.01em] text-foreground">FIKIRTIVE</span>
         </Link>
+        <div className="ml-auto flex shrink-0 items-center gap-0.5">
+          <Link
+            href={SEARCH_HREF}
+            aria-label="Search (⌘K)"
+            title="Search — ⌘K"
+            aria-current={pathname === SEARCH_HREF ? "page" : undefined}
+            className={cn(
+              "flex size-8 items-center justify-center rounded-[10px] transition-colors duration-[120ms]",
+              pathname === SEARCH_HREF
+                ? "bg-secondary text-foreground"
+                : "text-muted-foreground hover:bg-accent hover:text-foreground",
+            )}
+          >
+            <Search className="size-[18px]" strokeWidth={2} />
+          </Link>
+          <Link
+            href={NOTIFICATIONS_HREF}
+            aria-label={pendingCount > 0 ? `Notifications, ${pendingCount} to review` : "Notifications"}
+            title="Notifications"
+            aria-current={pathname === NOTIFICATIONS_HREF ? "page" : undefined}
+            className={cn(
+              "relative flex size-8 items-center justify-center rounded-[10px] transition-colors duration-[120ms]",
+              pathname === NOTIFICATIONS_HREF
+                ? "bg-secondary text-foreground"
+                : "text-muted-foreground hover:bg-accent hover:text-foreground",
+            )}
+          >
+            <Bell className="size-[18px]" strokeWidth={2} />
+            {pendingCount > 0 && (
+              <span className="absolute -top-0.5 -right-0.5 flex min-w-4 items-center justify-center rounded-full bg-foreground px-1 text-[10px] leading-4 font-semibold text-background tabular-nums ring-2 ring-background">
+                {pendingCount > 9 ? "9+" : pendingCount}
+              </span>
+            )}
+          </Link>
+        </div>
       </div>
 
       {/* ② New(唯一主动作;INK)→ 创作首页 */}

@@ -71,7 +71,8 @@ export type NsEventType =
   | "otto_idle"
   | "ad_submitted"
   | "member_invited"
-  | "cast_trained";
+  | "cast_trained"
+  | "approval_requested";
 
 export interface NsEvent {
   type: NsEventType;
@@ -88,6 +89,17 @@ export interface NsCampaignDraft {
   end: string;
   budgetCredits: number;
   platforms: string[];
+}
+
+/* ── Otto 上下文桥(宪法 7):当前在看什么,让「把这个改成 9:16」的「这个」可解析。
+ * 各区在选中/进页时 setOttoContext(...);dock 展开显示「Looking at: …」并注入回复前缀。 */
+export interface NsOttoContext {
+  /** 当前视图的人话名(如 "Canvas"、"Merdeka week bakes")。 */
+  view: string;
+  /** 选中对象 id(可选;供 zone worker 把动作落到具体对象)。 */
+  selectedId?: string;
+  /** 选中对象的人话标签(chip 优先显示它,回退到 view)。 */
+  selectedLabel?: string;
 }
 
 /* ── store 状态(全部从 _mock / 区级视图派生的可变镜像) ────────────────────── */
@@ -118,6 +130,8 @@ interface StoreState {
   ottoLabel: string;
   eventLog: NsEvent[];
   campaignDraft: NsCampaignDraft | null;
+  /** Otto 上下文桥:当前在看什么(null = 未设定,dock 不显示 chip)。 */
+  ottoContext: NsOttoContext | null;
 }
 
 // 浅拷贝顶层数组做可变镜像:动作永不原地改 _mock 里的对象,只在本层 replace。
@@ -144,6 +158,7 @@ const state: StoreState = {
   ottoLabel: "Otto — idle",
   eventLog: [],
   campaignDraft: null,
+  ottoContext: null,
 };
 
 /* ── 订阅机制(version tick:每次 notify 递增,useSyncExternalStore 读它触发重渲染) ── */
@@ -198,6 +213,18 @@ export function topUp(n: number) {
     ...state.creditLedger,
   ];
   logEvent("credits_topped_up", `Topped up ${n.toLocaleString("en-MY")} credits`, { n });
+  // 大额充值(≥3,000 credits)留一条老板确认条(记录/风控口径)。
+  if (n >= 3000) {
+    appendApproval({
+      title: "Review a large top-up",
+      detail: `${n.toLocaleString("en-MY")} credits were added to your balance`,
+      impacts: [
+        `${n.toLocaleString("en-MY")} credits are already in your balance`,
+        "Approve to acknowledge, decline to flag for finance",
+      ],
+      kind: "schedule",
+    });
+  }
   notify();
 }
 
@@ -209,6 +236,15 @@ export function schedulePost(post: NsScheduledPost) {
       ? state.scheduledPosts.map((p) => (p.id === post.id ? scheduled : p))
       : [scheduled, ...state.scheduledPosts];
   logEvent("post_scheduled", `Scheduled a post for ${post.platform}`, { id: post.id, platform: post.platform });
+  // 编辑席视角:新排的帖进审批队列等老板批(重排既有帖不重复推)。
+  if (idx < 0) {
+    appendApproval({
+      title: "Review a scheduled post",
+      detail: `An editor queued a ${post.platform} post for you to approve`,
+      impacts: ["Publishes on schedule once you approve", "Decline keeps it as a draft to edit"],
+      kind: "schedule",
+    });
+  }
   notify();
 }
 
@@ -219,6 +255,20 @@ export function approveCampaignEntry(id: string) {
     e.id === id ? { ...e, status: "approved" } : e,
   );
   logEvent("campaign_entry_approved", `Approved a campaign post · ${entry.hook}`, { id });
+  // 大额条目(≥60 credits)需要一次生成花费的独立老板签字 → push 一条待批。
+  if (entry.estCredits >= 60) {
+    appendApproval({
+      title: `Generate assets for “${entry.hook}”`,
+      detail: `${entry.platform} · uses ${entry.estCredits} credits`,
+      impacts: [
+        `Creates the ${entry.format} in your Library`,
+        `Uses ${entry.estCredits} credits when you approve`,
+        "Nothing is posted until you schedule it",
+      ],
+      kind: "generation",
+      credits: entry.estCredits,
+    });
+  }
   notify();
 }
 
@@ -237,6 +287,41 @@ export function approveRequest(id: string, decision: "approve" | "decline") {
     return; // spendCredits 已 notify
   }
   notify();
+}
+
+/* ── 审批环(G-11):其他区动作 push 新条目 → team-approvals / notifications / home
+ * 卡零改动即活。approveRequest 消费,这里生产,「小编做→老板批」闭环真的能演一整圈。 */
+export interface NsApprovalInput {
+  title: string;
+  detail: string;
+  impacts: string[];
+  kind: NsApprovalRequest["kind"];
+  credits?: number;
+  requestedAt?: string;
+}
+
+// 追加一条待批(不 notify;供内部动作在自己的 notify 前搭车),返回新 id。
+function appendApproval(item: NsApprovalInput): string {
+  const id = `ap-live-${seq + 1}`;
+  const req: NsApprovalRequest = {
+    id,
+    title: item.title,
+    detail: item.detail,
+    impacts: item.impacts,
+    kind: item.kind,
+    credits: item.credits,
+    requestedAt: item.requestedAt ?? "Just now",
+  };
+  state.approvals = [req, ...state.approvals];
+  logEvent("approval_requested", `New approval · ${item.title}`, { id, kind: item.kind });
+  return id;
+}
+
+/** 公开轨道:任意区把一条待批推进审批队列(独立调用时自己 notify)。 */
+export function pushApproval(item: NsApprovalInput): string {
+  const id = appendApproval(item);
+  notify();
+  return id;
 }
 
 export function connectChannel(id: string) {
@@ -420,6 +505,13 @@ export function submitAd(payload: { id?: string; label?: string; platform?: stri
     payload.label ? `Submitted ${payload.label} for review` : "Submitted an ad for review",
     { id, platform, label: payload.label ?? "New campaign" },
   );
+  // 广告提交进审批队列等老板放行(广告待批)。
+  appendApproval({
+    title: `Approve ad · ${payload.label ?? "New campaign"}`,
+    detail: `${platform} · submitted for your review`,
+    impacts: ["Goes live on the channel once you approve", "Decline sends it back to drafts"],
+    kind: "schedule",
+  });
   notify();
 }
 
@@ -472,6 +564,12 @@ export function setCampaignDraft(draft: NsCampaignDraft) {
   notify();
 }
 
+/** Otto 上下文桥:各区在选中对象/进页时告诉 Otto「现在在看什么」。传 null 清空。 */
+export function setOttoContext(ctx: NsOttoContext | null) {
+  state.ottoContext = ctx;
+  notify();
+}
+
 /** 新开一个空 thread,返回它的 id(dock / otto-chat 的「New chat」共用)。 */
 export function startChatThread(title = "New chat"): string {
   const id = `th-live-${seq + 1}`;
@@ -512,6 +610,11 @@ export function campaignDraft(): NsCampaignDraft | null {
 
 export function pendingApprovals(): NsApprovalRequest[] {
   return state.approvals;
+}
+
+/** 当前 Otto 上下文(dock 展开时读它显示「Looking at: …」并注入回复前缀)。 */
+export function ottoContext(): NsOttoContext | null {
+  return state.ottoContext;
 }
 
 /** 最近 n 条事件,最新在前。 */
@@ -617,4 +720,30 @@ export function useStore(): void {
 export function useOttoWorking(): { working: boolean; label: string } {
   useStore();
   return { working: state.ottoWorking, label: state.ottoLabel };
+}
+
+/* ── 演示种子(client-only,模块首次加载后触发一次)──────────────────────────
+ * 让 founder 打开原型后不用先做动作,审批队列也会自动来两条,核心闭环总有得演。 */
+if (typeof window !== "undefined") {
+  window.setTimeout(() => {
+    pushApproval({
+      title: "Approve 2 replies Otto drafted",
+      detail: "WhatsApp · order questions from 2 customers",
+      impacts: ["Sends both replies once you approve", "Decline keeps them as drafts to edit"],
+      kind: "schedule",
+    });
+  }, 30_000);
+  window.setTimeout(() => {
+    pushApproval({
+      title: "Generate 2 weekend story videos",
+      detail: "For Merdeka week bakes · entries 4 and 5",
+      impacts: [
+        "Creates 2 videos in your Library",
+        "Uses 80 credits when you approve",
+        "Nothing is posted until you schedule it",
+      ],
+      kind: "generation",
+      credits: 80,
+    });
+  }, 90_000);
 }

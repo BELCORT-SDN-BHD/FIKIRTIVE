@@ -17,7 +17,7 @@ import { usePathname, useRouter } from "next/navigation";
 import { ImmersiveProvider } from "./_context";
 import { ImmersiveNav } from "./immersive-nav";
 import { ImmersiveDock, type ImmersiveDockHandle } from "./immersive-dock";
-import { useOttoWorking } from "./_store";
+import { setOttoContext, useOttoWorking, type NsOttoContext } from "./_store";
 
 const GALLERY_PREFIX = "/northstar/";
 const IMMERSIVE_PREFIX = "/northstar-immersive/";
@@ -80,7 +80,9 @@ export function ImmersiveShell({ children }: { children: React.ReactNode }) {
     document.head.appendChild(el);
   }, []);
 
-  const openOtto = React.useCallback((prompt?: string) => {
+  const openOtto = React.useCallback((prompt?: string, context?: NsOttoContext) => {
+    // 上下文桥:带 context 就先落进共享 store(dock chip / 回复前缀读它),再展开面板。
+    if (context !== undefined) setOttoContext(context);
     dockRef.current?.open(prompt);
   }, []);
 
@@ -101,6 +103,22 @@ export function ImmersiveShell({ children }: { children: React.ReactNode }) {
     pathname === "/northstar-immersive/otto" ||
     pathname === "/northstar-immersive/global/otto-chat" ||
     pathname === "/northstar-immersive/cityhall/admin";
+
+  // 登录闸(global gap#1):未登录的 /onboarding/login 是干净的未登录态 —— 不渲染
+  // nav 的身份栏/余额/历史,也不挂常驻 Otto dock。登录提交后才进完整壳。
+  const bareLayout = pathname === "/northstar-immersive/onboarding/login";
+  if (bareLayout) {
+    return (
+      <div className="gb flex h-dvh flex-col bg-background text-foreground">
+        <main
+          className="min-h-0 flex-1 overflow-y-auto"
+          style={reduced ? undefined : { animation: "ns-immersive-fade 220ms ease-out" }}
+        >
+          {children}
+        </main>
+      </div>
+    );
+  }
 
   return (
     <ImmersiveProvider value={ctx}>

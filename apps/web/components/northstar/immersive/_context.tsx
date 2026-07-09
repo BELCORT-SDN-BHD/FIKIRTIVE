@@ -13,14 +13,19 @@
  */
 
 import * as React from "react";
+import type { NsOttoContext } from "./_store";
 
 export interface ImmersiveContextValue {
   /** 是否运行在沉浸式产品外壳内(画廊 chrome 据此隐藏) */
   insideImmersive: boolean;
   /** Otto 是否正在后台工作(dock coral 徽点脉冲) */
   ottoWorking: boolean;
-  /** 打开 Otto dock 聊天面板;可带一句预填 prompt(不自动发送) */
-  openOtto: (prompt?: string) => void;
+  /**
+   * 打开 Otto dock 聊天面板;可带一句预填 prompt(不自动发送)。
+   * 第二参 context 走上下文桥(宪法 7):dock 显示「Looking at: …」并把它注入回复前缀,
+   * 让「把这个改成 9:16」的「这个」可解析。
+   */
+  openOtto: (prompt?: string, context?: NsOttoContext) => void;
 }
 
 const ImmersiveContext = React.createContext<ImmersiveContextValue | null>(null);
