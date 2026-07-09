@@ -2016,3 +2016,270 @@ export function inboxPerformance(): { open: number; ottoAnswered: number; resolv
   const resolutionRate = all.length ? Math.round((resolved / all.length) * 100) : 0;
   return { open, ottoAnswered, resolved, resolutionRate };
 }
+
+/* ═══════════════════════════════════════════════════════════════════════════
+ * [endgame CRM · Z7] CRM 区状态切片 —— 文件尾追加(注明区名 CRM;不改文件中段)
+ *
+ * 自定义字段 / 待办任务 / 报价单 / 大单门槛 / CSV 导入 + 来源建档,是 CRM 区独有的
+ * 可变状态。放在这一块独立切片(crmState)里,复用上面同一套 notify/subscribe/seq/
+ * logEvent/addContactEvent/logContactChange —— 组件在 useStore() 下调本节的选择器,
+ * 任何动作 notify() 后全城即时反映。ES import 提升,置于文件尾合法且不动中段。
+ *
+ * 铁律不变:纯 client、零后台 import;coral 只属于 Otto;金额只从 totalOrdersMyr 派生。
+ * ═══════════════════════════════════════════════════════════════════════════ */
+
+import { nsImage, type NsHeat, type NsLifecycle } from "@/components/northstar/_mock";
+
+/* ── 类型 ─────────────────────────────────────────────────────────────────── */
+export type NsCustomFieldType = "text" | "number" | "date" | "select";
+/** [wave-b] 自定义字段:每行行业要记的客户属性不一样(保单到期日 / 上次疗程日期…)。 */
+export interface NsCustomField {
+  id: string;
+  label: string;
+  type: NsCustomFieldType;
+  value: string;
+}
+/** [wave-b] 待办任务:「明天记得跟进这个客户」设个提醒。 */
+export interface NsCrmTodo {
+  id: string;
+  contactId: string;
+  title: string;
+  due: string; // ISO date（可空串 = 无到期）
+  done: boolean;
+  at: number;
+}
+export interface NsQuoteLine {
+  productId: string;
+  name: string;
+  qty: number;
+  priceMyr: number;
+}
+/** [wave-b] 极简报价单 + 收款链接(资金不经 FIKIRTIVE,链接跳商家自己账户)。 */
+export interface NsQuote {
+  id: string;
+  contactId: string;
+  lines: NsQuoteLine[];
+  note: string;
+  status: "sent" | "paid";
+  payLink: string;
+  at: number;
+}
+
+interface CrmSlice {
+  customFields: Record<string, NsCustomField[]>;
+  todos: NsCrmTodo[];
+  quotes: NsQuote[];
+  /** [wave-b] 大单提醒门槛(金额超此值的成交主动提醒;老板可调) */
+  bigDealThreshold: number;
+  /** [wave-b] 进线自动建档:CSV 导入 / 广告表单补建的联系人 id(来源标注读它) */
+  leadContactIds: string[];
+}
+
+const crmState: CrmSlice = {
+  customFields: {},
+  todos: [],
+  quotes: [],
+  bigDealThreshold: 1000,
+  leadContactIds: [],
+};
+
+let crmSeq = 0;
+
+/* ── 自定义字段(变更进档案「变更历史」——复用 logContactChange 单一留痕管道) ──── */
+export function addContactField(contactId: string, label: string, type: NsCustomFieldType, value: string) {
+  const l = label.trim();
+  if (!l) return;
+  crmSeq += 1;
+  seq += 1;
+  const field: NsCustomField = { id: `cf-${crmSeq}`, label: l, type, value: value.trim() };
+  crmState.customFields[contactId] = [...(crmState.customFields[contactId] ?? []), field];
+  logContactChange(contactId, `Added field “${l}”${field.value ? ` · ${field.value}` : ""}`);
+  logEvent("contact_field_changed", `Added field “${l}” to a contact`, { contactId, field: l });
+  notify();
+}
+
+export function updateContactField(contactId: string, fieldId: string, value: string) {
+  const fields = crmState.customFields[contactId];
+  if (!fields) return;
+  const f = fields.find((x) => x.id === fieldId);
+  if (!f || f.value === value.trim()) return;
+  crmState.customFields[contactId] = fields.map((x) => (x.id === fieldId ? { ...x, value: value.trim() } : x));
+  seq += 1;
+  logContactChange(contactId, `Updated “${f.label}” to ${value.trim() || "—"}`);
+  notify();
+}
+
+export function removeContactField(contactId: string, fieldId: string) {
+  const fields = crmState.customFields[contactId];
+  if (!fields) return;
+  const f = fields.find((x) => x.id === fieldId);
+  if (!f) return;
+  crmState.customFields[contactId] = fields.filter((x) => x.id !== fieldId);
+  seq += 1;
+  logContactChange(contactId, `Removed field “${f.label}”`);
+  notify();
+}
+
+export function contactFieldsFor(id: string): NsCustomField[] {
+  return crmState.customFields[id] ?? [];
+}
+
+/* ── 待办任务(挂联系人;到期展示;完成勾选) ────────────────────────────────── */
+export function addContactTodo(contactId: string, title: string, due: string) {
+  const t = title.trim();
+  if (!t) return;
+  crmSeq += 1;
+  seq += 1;
+  const todo: NsCrmTodo = { id: `todo-${crmSeq}`, contactId, title: t, due: due.trim(), done: false, at: seq };
+  crmState.todos = [todo, ...crmState.todos];
+  addContactEvent(contactId, `Added a task · ${t}`);
+  notify();
+}
+
+export function toggleContactTodo(id: string) {
+  const todo = crmState.todos.find((x) => x.id === id);
+  if (!todo) return;
+  crmState.todos = crmState.todos.map((x) => (x.id === id ? { ...x, done: !x.done } : x));
+  notify();
+}
+
+export function contactTodosFor(id: string): NsCrmTodo[] {
+  return crmState.todos.filter((t) => t.contactId === id);
+}
+
+export function allOpenTodos(): NsCrmTodo[] {
+  return crmState.todos.filter((t) => !t.done);
+}
+
+/* ── 报价单 + 收款链接(接商家自己的收款渠道;资金不经 FIKIRTIVE) ──────────────── */
+export function createQuote(input: { contactId: string; lines: NsQuoteLine[]; note: string }): string {
+  const total = input.lines.reduce((s, l) => s + l.priceMyr * l.qty, 0);
+  crmSeq += 1;
+  seq += 1;
+  const id = `q-${crmSeq}`;
+  const quote: NsQuote = {
+    id,
+    contactId: input.contactId,
+    lines: input.lines,
+    note: input.note.trim(),
+    status: "sent",
+    payLink: `https://pay.rotibulan.my/q/${id}`,
+    at: seq,
+  };
+  crmState.quotes = [quote, ...crmState.quotes];
+  addContactEvent(input.contactId, `Sent a quote · RM${total.toLocaleString("en-MY")}`);
+  logEvent("contact_field_changed", `Sent a quote to a contact · RM${total.toLocaleString("en-MY")}`, {
+    contactId: input.contactId,
+    total,
+  });
+  notify();
+  return id;
+}
+
+export function markQuotePaid(id: string) {
+  const q = crmState.quotes.find((x) => x.id === id);
+  if (!q || q.status === "paid") return;
+  crmState.quotes = crmState.quotes.map((x) => (x.id === id ? { ...x, status: "paid" } : x));
+  const total = q.lines.reduce((s, l) => s + l.priceMyr * l.qty, 0);
+  addContactEvent(q.contactId, `Payment received · RM${total.toLocaleString("en-MY")}`);
+  notify();
+}
+
+export function quotesFor(id: string): NsQuote[] {
+  return crmState.quotes.filter((q) => q.contactId === id);
+}
+
+/* ── 大单提醒门槛 ───────────────────────────────────────────────────────────── */
+export function setBigDealThreshold(n: number) {
+  const v = Math.max(0, Math.round(n));
+  if (crmState.bigDealThreshold === v) return;
+  crmState.bigDealThreshold = v;
+  notify();
+}
+
+export function bigDealThresholdValue(): number {
+  return crmState.bigDealThreshold;
+}
+
+/* ── 进线自动建档 + 来源标注(CSV 导入 / 广告表单)——头像取 NS_IMAGES ────────────
+ * 查重:名字与现有联系人首词相同即视作可能重复,由调用方在预览里决定是否跳过。 */
+export function importContacts(
+  rows: { name: string; phone?: string; channel: NsContact["channels"][number]; tags?: string[]; source?: string }[],
+): { added: number; skipped: number } {
+  const existing = contactsView();
+  let added = 0;
+  let skipped = 0;
+  const fresh: NsContact[] = [];
+  for (const row of rows) {
+    const name = row.name.trim();
+    if (!name) continue;
+    const dup = existing.some((c) => c.name.replace(/^@/, "").toLowerCase() === name.toLowerCase());
+    if (dup) {
+      skipped += 1;
+      continue;
+    }
+    crmSeq += 1;
+    seq += 1;
+    const id = `ct-imp-${crmSeq}`;
+    const contact: NsContact = {
+      id,
+      name,
+      channels: [row.channel],
+      lastSeen: "2026-07-08",
+      tags: row.tags && row.tags.length ? row.tags : ["new"],
+      doNotDisturb: false,
+      totalOrdersMyr: 0,
+      avatar: nsImage("portrait", 23 + crmSeq),
+      lifecycle: "new" as NsLifecycle,
+      heat: "warm" as NsHeat,
+      source: row.source ?? "Imported list",
+      phone: row.phone?.trim() || undefined,
+    };
+    fresh.push(contact);
+    if (!crmState.leadContactIds.includes(id)) crmState.leadContactIds.push(id);
+    state.inboxContactIds = [...state.inboxContactIds, id];
+    addContactEvent(id, `Imported from a spreadsheet · ${row.source ?? "customer list"}`);
+    added += 1;
+  }
+  if (fresh.length) {
+    state.contacts = [...fresh, ...state.contacts];
+    logEvent("contact_created", `Imported ${added} contact${added === 1 ? "" : "s"}`, { added, skipped });
+  }
+  notify();
+  return { added, skipped };
+}
+
+/** 广告/表单单条进线自动建档(来源标注):CTWA 点击 → 一条带来源的新客户记录。 */
+export function captureLeadContact(input: {
+  name: string;
+  channel: NsContact["channels"][number];
+  source: string;
+}): string {
+  crmSeq += 1;
+  seq += 1;
+  const id = `ct-lead-${crmSeq}`;
+  const contact: NsContact = {
+    id,
+    name: input.name.trim(),
+    channels: [input.channel],
+    lastSeen: "2026-07-08",
+    tags: ["new"],
+    doNotDisturb: false,
+    totalOrdersMyr: 0,
+    avatar: nsImage("portrait", 27 + crmSeq),
+    lifecycle: "new",
+    heat: "warm",
+    source: input.source,
+  };
+  state.contacts = [contact, ...state.contacts];
+  state.inboxContactIds = [...state.inboxContactIds, id];
+  if (!crmState.leadContactIds.includes(id)) crmState.leadContactIds.push(id);
+  logEvent("contact_created", `New lead auto-added · ${contact.name}`, { id, source: input.source });
+  addContactEvent(id, `Auto-added from ${input.source}`);
+  notify();
+  return id;
+}
+
+export function isLeadContact(id: string): boolean {
+  return crmState.leadContactIds.includes(id);
+}

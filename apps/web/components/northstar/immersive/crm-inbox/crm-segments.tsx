@@ -1,19 +1,22 @@
 "use client";
 
 /**
- * 分群 —— 存好的客户筛选器,计数是真的从共享 store 的联系人过滤出来的(不硬编码)。
- * 「New segment」用人话描述这群人 → 确定性规则编译成 chip 预览 + 实时命中数 → 存进 store,
- * 之后可选可删(判决核心「用人话描述→规则编译」的原型体现)。
- * 选一个分群 → 右侧列出命中的客户,每个连回档案;勿扰者标出禁用态(不进群发)。
- * 「Post to this group」带 ?segment= 进排期 composer,受众 chip 已预选。
+ * 分群 —— 存好的客户筛选器(Z7 endgame)。计数真从共享 store 的联系人过滤,不硬编码。
+ * 「New segment」用人话描述 → 确定性规则编译成 chip 预览 + 实时命中数 → 存进 store。
+ * 选一个分群 → 右侧命中客户,每个连回档案;勿扰者标出禁用态。「Post to this group」→ 排期。
+ *
+ * WHATPASS 一·D/F 落点(每条 [wave-b]):
+ *  · lifecycle 分群一等公民:内建「Win-back / Hot right now」    [wave-b] lifecycle+流失唤回
+ *  · 预建生命周期自动化配方库(欢迎新客 / 唤回 / 复购 / 生日)   [wave-b] 配方库
  */
 
 import * as React from "react";
 import Link from "next/link";
-import { ArrowRight, Plus, Send, Sparkles, Trash2, Users } from "lucide-react";
+import { ArrowRight, Plus, Send, Sparkles, Trash2, Users, Wand2 } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
+import { Switch } from "@/components/ui/switch";
 import { Textarea } from "@/components/ui/textarea";
 import {
   Dialog,
@@ -25,20 +28,24 @@ import {
 } from "@/components/ui/dialog";
 import { cn } from "@/lib/utils";
 import { PageHeader } from "@/components/northstar/_shared";
-import { CRM_INBOX_BASE as BASE, CrmNav, Card, CardHeader, fmtMyr, Initials } from "./kit";
+import { CRM_INBOX_BASE as BASE, CrmNav, Card, CardHeader, fmtMyr } from "./kit";
+import { ContactAvatar } from "./crm-kit";
 import {
-  SEGMENTS,
   compileSegmentPhrase,
   contactMatchesRules,
   ruleLabel,
   type NsSegmentRule,
 } from "./data";
+import { ALL_SEGMENTS, LIFECYCLE_RECIPES } from "./crm-data";
 import {
   useStore,
   contactsView,
   customSegments,
   addCustomSegment,
   removeCustomSegment,
+  rules as storeRules,
+  addRule,
+  toggleAutomationRule,
 } from "../_store";
 import type { NsContact } from "@/components/northstar/_mock";
 
@@ -58,12 +65,12 @@ const EXAMPLES = [
 ];
 
 export function CrmSegments() {
-  useStore(); // 订阅共享 store:新联系人 / 自建分群 / 勿扰改动即刻反映
+  useStore(); // 订阅共享 store:新联系人 / 自建分群 / 勿扰 / 配方即刻反映
   const contacts = contactsView();
   const custom = customSegments();
 
   const segments = React.useMemo<UnifiedSegment[]>(() => {
-    const builtIn: UnifiedSegment[] = SEGMENTS.map((s) => ({
+    const builtIn: UnifiedSegment[] = ALL_SEGMENTS.map((s) => ({
       id: s.id,
       name: s.name,
       desc: s.desc,
@@ -89,7 +96,7 @@ export function CrmSegments() {
   const [builderOpen, setBuilderOpen] = React.useState(false);
 
   return (
-    <div className="mx-auto flex min-h-full w-full max-w-[1000px] flex-col px-6 pt-6 pb-16">
+    <div className="mx-auto flex min-h-full w-full max-w-[880px] flex-col px-6 pt-6 pb-16">
       <PageHeader
         title="Segments"
         subtitle="Saved filters over your contacts. Counts update from who's in your book."
@@ -104,7 +111,7 @@ export function CrmSegments() {
         }
       />
 
-      <div className="mt-6 grid grid-cols-1 gap-6 lg:grid-cols-[320px_1fr]">
+      <div className="mt-6 grid grid-cols-1 gap-6 lg:grid-cols-[300px_1fr]">
         <Card className="h-fit overflow-hidden">
           <CardHeader title="Saved segments" desc={`${segments.length} filters`} />
           {segments.map((seg) => {
@@ -146,7 +153,7 @@ export function CrmSegments() {
                     size="sm"
                     onClick={() => {
                       removeCustomSegment(active.id);
-                      setActiveId(SEGMENTS[0]?.id ?? "");
+                      setActiveId(ALL_SEGMENTS[0]?.id ?? "");
                     }}
                     aria-label={`Delete ${active.name}`}
                   >
@@ -189,7 +196,7 @@ export function CrmSegments() {
                 href={`${BASE}/crm/contact-profile?id=${c.id}`}
                 className="group flex items-center gap-3 border-t border-border px-4 py-3 transition-colors hover:bg-accent"
               >
-                <Initials name={c.name} />
+                <ContactAvatar contact={c} />
                 <div className="min-w-0 flex-1">
                   <div className="flex min-w-0 items-center gap-2">
                     <p className="truncate text-sm font-semibold text-foreground">{c.name}</p>
@@ -210,6 +217,9 @@ export function CrmSegments() {
         </Card>
       </div>
 
+      {/* 生命周期自动化配方库 */}
+      <RecipeLibrary />
+
       <SegmentBuilder
         open={builderOpen}
         onOpenChange={setBuilderOpen}
@@ -217,6 +227,56 @@ export function CrmSegments() {
         onSaved={(id) => setActiveId(id)}
       />
     </div>
+  );
+}
+
+/* ── 配方库:开一个开关就在跑;写进共享 store 的 rules(automation 区可见) ────── */
+function RecipeLibrary() {
+  useStore();
+  const rules = storeRules();
+  // recipeId → 已创建的 rule id(本会话开过的);用规则名回连,跨挂载存活。
+  const ruleFor = (recipeName: string) => rules.find((r) => r.name === recipeName);
+
+  return (
+    <Card className="mt-6 overflow-hidden">
+      <CardHeader
+        title="Lifecycle recipes"
+        desc="Ready-made follow-ups. Flip one on and Otto runs it — no flowchart to build."
+        action={
+          <Button variant="ghost" size="sm" asChild>
+            <Link href={`${BASE}/automation/rules`}>
+              Manage
+              <ArrowRight strokeWidth={2} />
+            </Link>
+          </Button>
+        }
+      />
+      {LIFECYCLE_RECIPES.map((recipe) => {
+        const rule = ruleFor(recipe.name);
+        const on = rule?.enabled ?? false;
+        const toggle = (v: boolean) => {
+          if (rule) {
+            toggleAutomationRule(rule.id, v);
+          } else if (v) {
+            addRule({ name: recipe.name, when: recipe.when, then: recipe.then });
+          }
+        };
+        return (
+          <div key={recipe.id} className="flex items-center gap-3 border-t border-border px-4 py-3">
+            <span className="flex size-8 shrink-0 items-center justify-center rounded-[10px] bg-secondary">
+              <Wand2 className="size-4 text-muted-foreground" strokeWidth={2} />
+            </span>
+            <div className="min-w-0 flex-1">
+              <p className="text-sm font-semibold text-foreground">{recipe.name}</p>
+              <p className="mt-0.5 text-xs text-muted-foreground">
+                When {recipe.when.toLowerCase()} → {recipe.then}
+              </p>
+            </div>
+            <Switch checked={on} onCheckedChange={toggle} aria-label={`Turn on ${recipe.name}`} />
+          </div>
+        );
+      })}
+    </Card>
   );
 }
 

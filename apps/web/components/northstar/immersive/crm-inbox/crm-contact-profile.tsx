@@ -1,14 +1,17 @@
 "use client";
 
 /**
- * 客户档案 —— 一个客户的全貌。上半是身份 + 生涯价值,下半把他们的对话与成交
- * 连起来(profile → conversation、profile → deals)。?id= 选人,缺省取第一个。
+ * 客户档案 —— 一个客户的全貌(Z7 endgame)。头像用 NS_IMAGES;金额永远走单一源。
  *
- * 判决核心补齐(harmony-01 #7/#13):
- * - 多渠道身份卡:把这个人在 WhatsApp/IG/评论上的锚点摊开,可「合并重复联系人」
- *   (选一条 → 字段对比 → 合并),命中「同一人的另一渠道」这个差异化卖点。
- * - consent / 勿扰:档案上的开关写 store,列表 badge + 群发/排期选择器读同一字段。
- * - 字段变更留痕:每次改标签 / 勿扰 / 合并都进「Change history」折叠区。
+ * WHATPASS 一章落点(每条 [wave-b]):
+ *  · 多渠道身份合并 + consent/勿扰 + 字段变更留痕(已有,保留)
+ *  · Otto 热度 + 生命周期 + 流失风险 + 来源(header chips)      [wave-b] 热度/预测/来源
+ *  · 预测字段(avg order / predicted next)作为 stat            [wave-b] 预测字段标签
+ *  · 自定义字段(加字段:文本/数字/日期/下拉)                  [wave-b] 自定义字段
+ *  · 待办任务(挂客户、到期、勾完成)                          [wave-b] 待办任务
+ *  · 极简报价单 + 收款链接(接商家自己账户)                    [wave-b] 报价单+收款链接
+ *  · B2B 公司档案链接                                          [wave-b] B2B 公司
+ *  · 活动时间线(导入/回复/报价/任务汇成一条流)               [wave-b] 活动时间线
  */
 
 import * as React from "react";
@@ -17,13 +20,20 @@ import { useSearchParams } from "next/navigation";
 import {
   ArrowLeft,
   ArrowRight,
+  Building2,
+  Check,
   ChevronDown,
+  CircleDollarSign,
+  Clock,
+  Copy,
   GitMerge,
   History,
   Inbox,
+  ListTodo,
   MessageSquare,
   Plus,
   Receipt,
+  SlidersHorizontal,
   X,
 } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
@@ -47,10 +57,12 @@ import {
   CardHeader,
   fmtDate,
   fmtMyr,
-  Initials,
   type NsInboxChannel,
 } from "./kit";
-import { dealsForContact, DEAL_STAGES, contactIdentities } from "./data";
+import { ContactAvatar, HeatBadge, LifecycleBadge, ChurnBadge, heatReason } from "./crm-kit";
+import { DEAL_STAGES, contactIdentities } from "./data";
+import { allDealsForContact, companyForContact, quoteProducts } from "./crm-data";
+import { avgOrderValue } from "../_selectors";
 import {
   useStore,
   contactByIdView,
@@ -65,6 +77,17 @@ import {
   addContactTag,
   removeContactTag,
   mergeContacts,
+  contactFieldsFor,
+  addContactField,
+  removeContactField,
+  contactTodosFor,
+  addContactTodo,
+  toggleContactTodo,
+  quotesFor,
+  createQuote,
+  markQuotePaid,
+  type NsCustomFieldType,
+  type NsQuoteLine,
 } from "../_store";
 import type { NsContact } from "@/components/northstar/_mock";
 
@@ -77,7 +100,7 @@ function StageBadge({ stage }: { stage: (typeof DEAL_STAGES)[number]["id"] }) {
 
 export function CrmContactProfile() {
   const params = useSearchParams();
-  useStore(); // 订阅共享 store:身份 / 对话 / 收件箱时间线 / 字段编辑即时反映
+  useStore(); // 订阅共享 store:身份 / 对话 / 字段 / 任务 / 报价即时反映
   const contacts = contactsView();
   const id = params.get("id") ?? contacts[0]?.id ?? "";
   const contact = contactByIdView(id) ?? contacts[0];
@@ -86,6 +109,7 @@ export function CrmContactProfile() {
   const [tagDraft, setTagDraft] = React.useState("");
   const [mergeOpen, setMergeOpen] = React.useState(false);
   const [historyOpen, setHistoryOpen] = React.useState(false);
+  const [quoteOpen, setQuoteOpen] = React.useState(false);
 
   if (!contact) {
     return (
@@ -96,11 +120,16 @@ export function CrmContactProfile() {
   }
 
   const conversations = conversationsForContactView(contact.id);
-  const deals = dealsForContact(contact.id).map((d) => ({ ...d, stage: dealStageOf(d.id, d.stage) }));
+  const deals = allDealsForContact(contact.id).map((d) => ({ ...d, stage: dealStageOf(d.id, d.stage) }));
   const delivered = deals.filter((d) => d.stage === "delivered").reduce((s, d) => s + d.amountMyr, 0);
   const timeline = contactEventsFor(contact.id);
   const changes = contactChangesFor(contact.id);
   const identities = contactIdentities(contact);
+  const fields = contactFieldsFor(contact.id);
+  const todos = contactTodosFor(contact.id);
+  const quotes = quotesFor(contact.id);
+  const company = companyForContact(contact.id);
+  const avg = avgOrderValue(contact.id);
 
   const commitTag = () => {
     const t = tagDraft.trim();
@@ -125,7 +154,7 @@ export function CrmContactProfile() {
 
       <Card className="mt-6 p-5">
         <div className="flex items-start gap-4">
-          <Initials name={contact.name} className="size-14 text-lg" />
+          <ContactAvatar contact={contact} className="size-14" />
           <div className="min-w-0 flex-1">
             <div className="flex flex-wrap items-center gap-2">
               <h2 className="text-xl font-bold tracking-[-0.02em] text-foreground">{contact.name}</h2>
@@ -133,7 +162,28 @@ export function CrmContactProfile() {
               {contact.doNotDisturb && <Badge variant="outline">Do not disturb</Badge>}
             </div>
 
-            {/* 可编辑标签(留痕):X 移除、+ 新增 */}
+            <div className="mt-2 flex flex-wrap items-center gap-1.5">
+              <HeatBadge heat={contact.heat} />
+              <LifecycleBadge stage={contact.lifecycle} />
+              <ChurnBadge contact={contact} />
+              {company && (
+                <Link
+                  href={`${BASE}/crm/contact-profile?id=${company.contactIds[0]}`}
+                  className="inline-flex items-center gap-1 rounded-full border border-border px-2 py-0.5 text-[11px] font-medium text-muted-foreground hover:bg-accent hover:text-foreground"
+                >
+                  <Building2 className="size-3" strokeWidth={2} />
+                  {company.name}
+                </Link>
+              )}
+            </div>
+
+            {/* Otto 的一句判断(数据楼,零 coral) */}
+            <p className="mt-2 text-xs leading-4 text-muted-foreground">
+              <span className="font-semibold text-foreground">Otto's read:</span> {heatReason(contact)}
+              {contact.source ? ` Came in via ${contact.source}.` : ""}
+            </p>
+
+            {/* 可编辑标签(留痕) */}
             <div className="mt-3 flex flex-wrap items-center gap-1.5">
               {contact.tags.map((t) => (
                 <span
@@ -182,9 +232,11 @@ export function CrmContactProfile() {
         </div>
       </Card>
 
-      <div className="mt-4 grid grid-cols-1 gap-3 sm:grid-cols-3">
+      {/* §D3 四张数据卡(含预测字段) */}
+      <div className="mt-4 grid grid-cols-2 gap-3 lg:grid-cols-4">
         <StatCard label="Lifetime orders" value={fmtMyr(contact.totalOrdersMyr)} />
-        <StatCard label="Delivered value" value={fmtMyr(delivered)} />
+        <StatCard label="Avg order" value={avg ? fmtMyr(avg) : "—"} />
+        <StatCard label="Predicted next" value={contact.predictedNextMyr ? fmtMyr(contact.predictedNextMyr) : "—"} />
         <StatCard label="Last seen" value={fmtDate(contact.lastSeen)} />
       </div>
 
@@ -202,10 +254,7 @@ export function CrmContactProfile() {
             }
           />
           {identities.map((idn) => (
-            <div
-              key={idn.channel}
-              className="flex items-center gap-3 border-t border-border px-4 py-3"
-            >
+            <div key={idn.channel} className="flex items-center gap-3 border-t border-border px-4 py-3">
               <ChannelTag channel={idn.channel as NsInboxChannel} />
               <div className="min-w-0 flex-1">
                 <p className="truncate text-sm font-semibold text-foreground">{idn.label}</p>
@@ -215,7 +264,6 @@ export function CrmContactProfile() {
             </div>
           ))}
 
-          {/* consent / 勿扰开关(写 store;列表 badge + 群发选择器读同一字段) */}
           <div className="flex items-center justify-between gap-3 border-t border-border px-4 py-3">
             <div className="min-w-0">
               <p className="text-sm font-semibold text-foreground">Okay to message</p>
@@ -232,6 +280,18 @@ export function CrmContactProfile() {
             />
           </div>
         </Card>
+
+        {/* 自定义字段 */}
+        <CustomFieldsCard contactId={contact.id} fields={fields} />
+
+        {/* 待办任务 */}
+        <TasksCard contactId={contact.id} todos={todos} firstName={contact.name.split(" ")[0]} />
+
+        {/* 极简报价单 + 收款链接 */}
+        <QuotesCard
+          quotes={quotes}
+          onNew={() => setQuoteOpen(true)}
+        />
 
         {/* 字段变更留痕(折叠) */}
         {changes.length > 0 && (
@@ -252,20 +312,14 @@ export function CrmContactProfile() {
                 </p>
               </div>
               <ChevronDown
-                className={cn(
-                  "size-4 shrink-0 text-muted-foreground transition-transform",
-                  historyOpen && "rotate-180",
-                )}
+                className={cn("size-4 shrink-0 text-muted-foreground transition-transform", historyOpen && "rotate-180")}
                 strokeWidth={2}
               />
             </button>
             {historyOpen && (
               <ol className="px-4 pb-3">
                 {[...changes].reverse().map((e, i) => (
-                  <li
-                    key={`${e.at}-${i}`}
-                    className="flex items-center gap-3 border-t border-border py-2.5 first:border-t-0"
-                  >
+                  <li key={`${e.at}-${i}`} className="flex items-center gap-3 border-t border-border py-2.5 first:border-t-0">
                     <span className="size-1.5 shrink-0 rounded-full bg-muted-foreground/50" />
                     <p className="min-w-0 flex-1 text-sm text-foreground">{e.label}</p>
                   </li>
@@ -275,9 +329,10 @@ export function CrmContactProfile() {
           </Card>
         )}
 
+        {/* 活动时间线(来源 / 导入 / 回复 / 报价 / 任务汇成一条流) */}
         {timeline.length > 0 && (
           <Card>
-            <CardHeader title="From the inbox" desc="Where this contact came from and what's happened since" />
+            <CardHeader title="Activity" desc="Where this contact came from and everything since" />
             <ol className="px-4 pb-3">
               {[...timeline].reverse().map((e) => (
                 <li key={e.at} className="flex items-center gap-3 border-t border-border py-3 first:border-t-0">
@@ -364,10 +419,314 @@ export function CrmContactProfile() {
         primary={contact}
         candidates={mergeCandidatesView(contact.id)}
       />
+      <QuoteDialog open={quoteOpen} onOpenChange={setQuoteOpen} contactId={contact.id} />
     </div>
   );
 }
 
+/* ── 自定义字段卡 ─────────────────────────────────────────────────────────── */
+const FIELD_TYPES: { id: NsCustomFieldType; label: string }[] = [
+  { id: "text", label: "Text" },
+  { id: "number", label: "Number" },
+  { id: "date", label: "Date" },
+  { id: "select", label: "Choice" },
+];
+
+function CustomFieldsCard({
+  contactId,
+  fields,
+}: {
+  contactId: string;
+  fields: { id: string; label: string; type: NsCustomFieldType; value: string }[];
+}) {
+  const [adding, setAdding] = React.useState(false);
+  const [label, setLabel] = React.useState("");
+  const [type, setType] = React.useState<NsCustomFieldType>("text");
+  const [value, setValue] = React.useState("");
+
+  const save = () => {
+    if (!label.trim()) return;
+    addContactField(contactId, label, type, value);
+    setLabel("");
+    setValue("");
+    setType("text");
+    setAdding(false);
+  };
+
+  return (
+    <Card>
+      <CardHeader
+        title="Custom fields"
+        desc="Track whatever matters for your trade — a due date, a preference, a size."
+        action={
+          !adding && (
+            <Button variant="secondary" size="sm" onClick={() => setAdding(true)}>
+              <Plus strokeWidth={2} />
+              Add field
+            </Button>
+          )
+        }
+      />
+      {fields.map((f) => (
+        <div key={f.id} className="flex items-center gap-3 border-t border-border px-4 py-3">
+          <SlidersHorizontal className="size-4 shrink-0 text-muted-foreground" strokeWidth={2} />
+          <div className="min-w-0 flex-1">
+            <p className="truncate text-sm font-medium text-foreground">{f.label}</p>
+            <p className="truncate text-xs text-muted-foreground">{f.value || "—"}</p>
+          </div>
+          <Badge variant="outline">{f.type}</Badge>
+          <button
+            type="button"
+            onClick={() => removeContactField(contactId, f.id)}
+            aria-label={`Remove ${f.label}`}
+            className="text-muted-foreground hover:text-foreground"
+          >
+            <X className="size-3.5" strokeWidth={2.5} />
+          </button>
+        </div>
+      ))}
+      {adding && (
+        <div className="flex flex-col gap-3 border-t border-border bg-muted/40 px-4 py-3">
+          <div className="flex flex-wrap gap-2">
+            <Input value={label} onChange={(e) => setLabel(e.target.value)} placeholder="Field name (e.g. Policy renewal)" className="h-9 min-w-40 flex-1" autoFocus />
+            <Input value={value} onChange={(e) => setValue(e.target.value)} placeholder="Value" className="h-9 min-w-32 flex-1" />
+          </div>
+          <div className="flex flex-wrap items-center gap-1.5">
+            {FIELD_TYPES.map((t) => (
+              <button
+                key={t.id}
+                type="button"
+                onClick={() => setType(t.id)}
+                className={cn(
+                  "rounded-full border px-2.5 py-1 text-[11px] font-semibold transition-colors",
+                  type === t.id ? "border-transparent bg-secondary text-foreground" : "border-border text-muted-foreground hover:bg-accent",
+                )}
+              >
+                {t.label}
+              </button>
+            ))}
+            <div className="ml-auto flex items-center gap-2">
+              <Button variant="ghost" size="sm" onClick={() => setAdding(false)}>Cancel</Button>
+              <Button size="sm" disabled={!label.trim()} onClick={save}>Add</Button>
+            </div>
+          </div>
+        </div>
+      )}
+      {fields.length === 0 && !adding && (
+        <p className="border-t border-border px-4 py-3 text-xs text-muted-foreground">
+          No custom fields yet. Need a whole record type like “equipment” or “courses”? That's coming.
+        </p>
+      )}
+    </Card>
+  );
+}
+
+/* ── 待办任务卡 ───────────────────────────────────────────────────────────── */
+function TasksCard({
+  contactId,
+  todos,
+  firstName,
+}: {
+  contactId: string;
+  todos: { id: string; title: string; due: string; done: boolean }[];
+  firstName: string;
+}) {
+  const [adding, setAdding] = React.useState(false);
+  const [title, setTitle] = React.useState("");
+  const [due, setDue] = React.useState("");
+
+  const save = () => {
+    if (!title.trim()) return;
+    addContactTodo(contactId, title, due);
+    setTitle("");
+    setDue("");
+    setAdding(false);
+  };
+
+  const open = todos.filter((t) => !t.done);
+
+  return (
+    <Card>
+      <CardHeader
+        title="Tasks"
+        desc={open.length ? `${open.length} to do for ${firstName}` : "Set a reminder so nothing slips"}
+        action={
+          !adding && (
+            <Button variant="secondary" size="sm" onClick={() => setAdding(true)}>
+              <Plus strokeWidth={2} />
+              Add task
+            </Button>
+          )
+        }
+      />
+      {todos.map((t) => (
+        <div key={t.id} className="flex items-center gap-3 border-t border-border px-4 py-3">
+          <button
+            type="button"
+            onClick={() => toggleContactTodo(t.id)}
+            aria-label={t.done ? "Mark as not done" : "Mark as done"}
+            className={cn(
+              "flex size-5 shrink-0 items-center justify-center rounded-[6px] border transition-colors",
+              t.done ? "border-transparent bg-primary text-primary-foreground" : "border-border hover:bg-accent",
+            )}
+          >
+            {t.done && <Check className="size-3.5" strokeWidth={3} />}
+          </button>
+          <div className="min-w-0 flex-1">
+            <p className={cn("truncate text-sm text-foreground", t.done && "text-muted-foreground line-through")}>{t.title}</p>
+            {t.due && (
+              <p className="flex items-center gap-1 text-xs text-muted-foreground">
+                <Clock className="size-3" strokeWidth={2} />
+                Due {fmtDate(t.due)}
+              </p>
+            )}
+          </div>
+        </div>
+      ))}
+      {adding && (
+        <div className="flex flex-wrap items-center gap-2 border-t border-border bg-muted/40 px-4 py-3">
+          <Input value={title} onChange={(e) => setTitle(e.target.value)} placeholder="Follow up about the wholesale order" className="h-9 min-w-40 flex-1" autoFocus />
+          <Input type="date" value={due} onChange={(e) => setDue(e.target.value)} className="h-9 w-40" aria-label="Due date" />
+          <Button variant="ghost" size="sm" onClick={() => setAdding(false)}>Cancel</Button>
+          <Button size="sm" disabled={!title.trim()} onClick={save}>Add</Button>
+        </div>
+      )}
+      {todos.length === 0 && !adding && (
+        <p className="border-t border-border px-4 py-3 text-xs text-muted-foreground">No tasks yet.</p>
+      )}
+    </Card>
+  );
+}
+
+/* ── 报价单 + 收款链接卡 ──────────────────────────────────────────────────── */
+function QuotesCard({
+  quotes,
+  onNew,
+}: {
+  quotes: { id: string; lines: NsQuoteLine[]; note: string; status: "sent" | "paid"; payLink: string }[];
+  onNew: () => void;
+}) {
+  const [copied, setCopied] = React.useState<string | null>(null);
+  const copy = (id: string, link: string) => {
+    if (typeof navigator !== "undefined" && navigator.clipboard) navigator.clipboard.writeText(link);
+    setCopied(id);
+    window.setTimeout(() => setCopied((c) => (c === id ? null : c)), 1500);
+  };
+
+  return (
+    <Card>
+      <CardHeader
+        title="Quotes & payment"
+        desc="Build a quick quote and send a pay link straight to their WhatsApp."
+        action={
+          <Button variant="secondary" size="sm" onClick={onNew}>
+            <CircleDollarSign strokeWidth={2} />
+            New quote
+          </Button>
+        }
+      />
+      {quotes.length > 0 ? (
+        quotes.map((q) => {
+          const total = q.lines.reduce((s, l) => s + l.priceMyr * l.qty, 0);
+          return (
+            <div key={q.id} className="flex flex-col gap-2 border-t border-border px-4 py-3">
+              <div className="flex items-center gap-2">
+                <p className="min-w-0 flex-1 truncate text-sm font-medium text-foreground">
+                  {q.lines.map((l) => `${l.qty}× ${l.name}`).join(", ")}
+                </p>
+                {q.status === "paid" ? <Badge variant="success">Paid</Badge> : <Badge variant="warning">Sent</Badge>}
+                <span className="shrink-0 text-sm font-semibold tabular-nums text-foreground">{fmtMyr(total)}</span>
+              </div>
+              <div className="flex flex-wrap items-center gap-2">
+                <span className="min-w-0 flex-1 truncate rounded-[8px] bg-muted px-2 py-1 font-mono text-[11px] text-muted-foreground">{q.payLink}</span>
+                <Button variant="ghost" size="sm" onClick={() => copy(q.id, q.payLink)}>
+                  {copied === q.id ? <Check strokeWidth={2} /> : <Copy strokeWidth={2} />}
+                  {copied === q.id ? "Copied" : "Copy link"}
+                </Button>
+                {q.status !== "paid" && (
+                  <Button variant="secondary" size="sm" onClick={() => markQuotePaid(q.id)}>Mark paid</Button>
+                )}
+              </div>
+            </div>
+          );
+        })
+      ) : (
+        <p className="border-t border-border px-4 py-3 text-xs text-muted-foreground">
+          No quotes yet. Money goes straight to your own account — FIKIRTIVE never touches it.
+        </p>
+      )}
+    </Card>
+  );
+}
+
+function QuoteDialog({
+  open,
+  onOpenChange,
+  contactId,
+}: {
+  open: boolean;
+  onOpenChange: (v: boolean) => void;
+  contactId: string;
+}) {
+  const products = React.useMemo(() => quoteProducts(), []);
+  const [qty, setQty] = React.useState<Record<string, number>>({});
+  const [note, setNote] = React.useState("");
+
+  const lines: NsQuoteLine[] = products
+    .filter((p) => (qty[p.id] ?? 0) > 0)
+    .map((p) => ({ productId: p.id, name: p.name, qty: qty[p.id], priceMyr: p.priceMyr }));
+  const total = lines.reduce((s, l) => s + l.priceMyr * l.qty, 0);
+
+  const reset = () => {
+    setQty({});
+    setNote("");
+  };
+  const send = () => {
+    if (lines.length === 0) return;
+    createQuote({ contactId, lines, note });
+    reset();
+    onOpenChange(false);
+  };
+  const bump = (id: string, d: number) => setQty((q) => ({ ...q, [id]: Math.max(0, (q[id] ?? 0) + d) }));
+
+  return (
+    <Dialog open={open} onOpenChange={(v) => { if (!v) reset(); onOpenChange(v); }}>
+      <DialogContent className="max-w-[min(560px,calc(100vw-2rem))]">
+        <DialogHeader>
+          <DialogTitle>New quote</DialogTitle>
+          <DialogDescription>
+            Pick what they're buying. We total it and generate a pay link to your own account.
+          </DialogDescription>
+        </DialogHeader>
+        <div className="flex max-h-[42vh] flex-col overflow-y-auto rounded-[14px] border border-border">
+          {products.map((p) => (
+            <div key={p.id} className="flex items-center gap-3 border-t border-border px-3 py-2.5 first:border-t-0">
+              <div className="min-w-0 flex-1">
+                <p className="truncate text-sm font-medium text-foreground">{p.name}</p>
+                <p className="text-xs text-muted-foreground">{fmtMyr(p.priceMyr)}</p>
+              </div>
+              <div className="flex items-center gap-1.5">
+                <Button variant="ghost" size="sm" onClick={() => bump(p.id, -1)} disabled={(qty[p.id] ?? 0) === 0} aria-label={`Fewer ${p.name}`}>−</Button>
+                <span className="w-6 text-center text-sm font-semibold tabular-nums text-foreground">{qty[p.id] ?? 0}</span>
+                <Button variant="ghost" size="sm" onClick={() => bump(p.id, 1)} aria-label={`More ${p.name}`}>+</Button>
+              </div>
+            </div>
+          ))}
+        </div>
+        <Input value={note} onChange={(e) => setNote(e.target.value)} placeholder="Note (optional) — e.g. pickup Friday 9am" />
+        <DialogFooter className="flex-row items-center justify-between gap-3">
+          <span className="text-sm font-semibold text-foreground">Total {fmtMyr(total)}</span>
+          <div className="flex items-center gap-3">
+            <Button variant="secondary" size="sm" onClick={() => onOpenChange(false)}>Cancel</Button>
+            <Button size="sm" disabled={lines.length === 0} onClick={send}>Send quote</Button>
+          </div>
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
+  );
+}
+
+/* ── 合并对话框(保留) ────────────────────────────────────────────────────── */
 function MergeDialog({
   open,
   onOpenChange,
@@ -393,9 +752,7 @@ function MergeDialog({
     close();
   };
 
-  const mergedChannels = picked
-    ? Array.from(new Set([...primary.channels, ...picked.channels]))
-    : primary.channels;
+  const mergedChannels = picked ? Array.from(new Set([...primary.channels, ...picked.channels])) : primary.channels;
   const mergedTags = picked ? Array.from(new Set([...primary.tags, ...picked.tags])) : primary.tags;
   const mergedOrders = picked ? primary.totalOrdersMyr + picked.totalOrdersMyr : primary.totalOrdersMyr;
 
@@ -420,7 +777,7 @@ function MergeDialog({
                   onClick={() => setPickedId(c.id)}
                   className="flex items-center gap-3 border-t border-border px-3 py-2.5 text-left first:border-t-0 hover:bg-accent"
                 >
-                  <Initials name={c.name} className="size-9 text-xs" />
+                  <ContactAvatar contact={c} />
                   <div className="min-w-0 flex-1">
                     <p className="truncate text-sm font-semibold text-foreground">{c.name}</p>
                     <p className="truncate text-xs text-muted-foreground">
@@ -431,9 +788,7 @@ function MergeDialog({
                 </button>
               ))
             ) : (
-              <p className="px-4 py-8 text-center text-sm text-muted-foreground">
-                No other contacts to merge with.
-              </p>
+              <p className="px-4 py-8 text-center text-sm text-muted-foreground">No other contacts to merge with.</p>
             )}
           </div>
         ) : (
@@ -458,17 +813,11 @@ function MergeDialog({
         <DialogFooter className="flex-row justify-end gap-3">
           {picked ? (
             <>
-              <Button variant="secondary" size="sm" onClick={() => setPickedId(null)}>
-                Back
-              </Button>
-              <Button size="sm" onClick={confirm}>
-                Merge into {primary.name.split(" ")[0]}
-              </Button>
+              <Button variant="secondary" size="sm" onClick={() => setPickedId(null)}>Back</Button>
+              <Button size="sm" onClick={confirm}>Merge into {primary.name.split(" ")[0]}</Button>
             </>
           ) : (
-            <Button variant="secondary" size="sm" onClick={close}>
-              Cancel
-            </Button>
+            <Button variant="secondary" size="sm" onClick={close}>Cancel</Button>
           )}
         </DialogFooter>
       </DialogContent>
@@ -488,12 +837,7 @@ function ComparePane({
   highlight?: boolean;
 }) {
   return (
-    <div
-      className={cn(
-        "flex flex-col gap-2 rounded-[14px] border p-3",
-        highlight ? "border-foreground/30 bg-card" : "border-border bg-card",
-      )}
-    >
+    <div className={cn("flex flex-col gap-2 rounded-[14px] border p-3", highlight ? "border-foreground/30 bg-card" : "border-border bg-card")}>
       <span className="text-[11px] font-semibold uppercase tracking-wide text-muted-foreground">{title}</span>
       <p className="truncate text-sm font-semibold text-foreground">{name}</p>
       <p className="text-xs text-muted-foreground">{contact.channels.join(" · ")}</p>
