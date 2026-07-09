@@ -50,6 +50,7 @@ import {
   type NsDraftAdset,
   type NsDraftCampaign,
 } from "@/components/northstar/ads/mock-ads";
+import { submitAd } from "@/components/northstar/immersive/_store";
 
 type Selection =
   | { kind: "campaign" }
@@ -560,6 +561,12 @@ export default function Page() {
               onClick={() => {
                 setSubmitted(true);
                 setConfirmOpen(false);
+                // 提交落进共享事件流:performance 顶部出「待审」chip + 行,multi-platform Meta 卡亮「审核中」
+                submitAd({
+                  id: "ns-builder-campaign",
+                  label: effectiveDraft?.name || "Untitled campaign",
+                  platform: "meta",
+                });
               }}
             >
               Submit for approval

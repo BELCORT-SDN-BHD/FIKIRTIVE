@@ -26,12 +26,15 @@
   `isAiPaused(id)`(对话页横幅)· `isResolved(id)`(Resolve 按钮态)· `isInboxContact(id)`
   (CRM「New」chip)· `dealStageOf(dealId, fallback)`(阶段实时值,金额不漂移)·
   `contactEventsFor(id)`(contact-profile「From the inbox」时间线)。
+- `adSubmissions()` —— 待审广告事件(广告区 submit 派生;performance 待审 chip + multi-platform「审核中」读它)。
+- `creditSpendByCategory()` —— 从 `creditLedger` 派生的分类消费(分析区报表读它,取代手抄常量)。
 
 ## 动作(纯函数:改 store + append event + notify;做一次到处生效)
 `spendCredits(n,label,category?)` · `topUp(n)` · `schedulePost(post)` ·
 `approveCampaignEntry(id)` · `approveRequest(id, "approve"|"decline")`(approve 花钱生成会真扣额度)·
 `connectChannel(id)` · `resolveConversation(id)`(缺联系人则补建 + 记「New」+ 追加时间线)·
-`toggleAutomationRule(id,on)` · `submitAd(payload)` · `ottoWorking(on,label?)` ·
+`toggleAutomationRule(id,on)` · `submitAd(payload)`(payload 带 platform/label,派生「审核中」)·
+`castTrained(name)`(cast 训练完成落事件流)· `ottoWorking(on,label?)` ·
 `appendChatMessage(threadId,msg)` · `startChatThread(title?)` · `inviteMember(email)`
 (真 append 一条 pending Editor;team 页 pending chip / 计数由此派生)。
 crm-inbox 身份链动作:`sendConversationMessage(id,text)`(append owner 消息 + 人工插手→该会话 AI
@@ -44,7 +47,7 @@ crm-inbox 身份链动作:`sendConversationMessage(id,text)`(append owner 消息
 `credits_spent` · `credits_topped_up` · `post_scheduled` · `campaign_entry_approved` ·
 `approval_settled` · `channel_connected` · `conversation_resolved` · `conversation_replied` ·
 `conversation_ai_toggled` · `deal_stage_changed` · `contact_created` · `automation_toggled` ·
-`otto_working` · `otto_idle` · `ad_submitted` · `member_invited`。
+`otto_working` · `otto_idle` · `ad_submitted` · `member_invited` · `cast_trained`。
 
 ## 已接线的表面(Wave 1)
 - shell:`ottoWorking` 来自 store,不再硬编码 false;dock 在 3 条 hideDock 路由上只

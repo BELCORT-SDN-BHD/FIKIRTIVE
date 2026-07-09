@@ -133,7 +133,7 @@ export default function Page() {
                   Cancel
                 </Button>
                 <Button asChild>
-                  <Link href="/northstar/create/canvas">Use template</Link>
+                  <Link href={`/northstar/create/canvas?from=${open.id}`}>Use template</Link>
                 </Button>
               </DialogFooter>
             </>

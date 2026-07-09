@@ -64,7 +64,8 @@ export type NsEventType =
   | "otto_working"
   | "otto_idle"
   | "ad_submitted"
-  | "member_invited";
+  | "member_invited"
+  | "cast_trained";
 
 export interface NsEvent {
   type: NsEventType;
@@ -338,12 +339,21 @@ export function toggleAutomationRule(id: string, on: boolean) {
   notify();
 }
 
-export function submitAd(payload: { id?: string; label?: string }) {
+export function submitAd(payload: { id?: string; label?: string; platform?: string }) {
   const id = payload.id ?? `ad-live-${seq + 1}`;
   if (!state.submittedAdIds.includes(id)) state.submittedAdIds = [...state.submittedAdIds, id];
-  logEvent("ad_submitted", payload.label ? `Submitted ad · ${payload.label}` : "Submitted an ad for review", {
-    id,
-  });
+  const platform = payload.platform ?? "meta";
+  logEvent(
+    "ad_submitted",
+    payload.label ? `Submitted ${payload.label} for review` : "Submitted an ad for review",
+    { id, platform, label: payload.label ?? "New campaign" },
+  );
+  notify();
+}
+
+/** 训练完成落到事件流(cast 页在 training → ready 的瞬间调它;分析区实时活动读它)。 */
+export function castTrained(name: string) {
+  logEvent("cast_trained", `Trained ${name} · face locked`, { name });
   notify();
 }
 
@@ -471,6 +481,23 @@ export function isInboxContact(id: string): boolean {
 /** 该联系人的「来自收件箱」时间线条目(最早在前)。 */
 export function contactEventsFor(id: string): { at: number; label: string }[] {
   return state.contactEvents[id] ?? [];
+}
+
+/** 待审广告(广告区 submit 落进事件流;performance/multi-platform 从这里派生「审核中」)。 */
+export function adSubmissions(): NsEvent[] {
+  return state.eventLog.filter((e) => e.type === "ad_submitted");
+}
+
+/** 分类消费(单一源:从 creditLedger 派生,取代手抄常量;分析区报表读它)。
+ * 固定分类顺序保证确定性;只留有消费的分类。充值(正数)不计。 */
+const SPEND_CATEGORY_ORDER: NsCreditRow["category"][] = ["Video", "Image", "Otto chat", "Search"];
+export function creditSpendByCategory(): { label: string; credits: number }[] {
+  return SPEND_CATEGORY_ORDER.map((cat) => ({
+    label: cat,
+    credits: state.creditLedger
+      .filter((r) => r.category === cat && r.credits < 0)
+      .reduce((s, r) => s + -r.credits, 0),
+  })).filter((row) => row.credits > 0);
 }
 
 /* ── 订阅 hook(pattern precedent:useReducedMotion / useSyncExternalStore) ────

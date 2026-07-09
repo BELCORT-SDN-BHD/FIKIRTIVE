@@ -26,6 +26,7 @@ import {
   type NsDemoState,
 } from "@/components/northstar/analytics/zone-kit";
 import { NS_AD_PLATFORMS, type NsAdPlatform } from "@/components/northstar/ads/mock-ads";
+import { adSubmissions, useStore } from "@/components/northstar/immersive/_store";
 
 const STATUS_BADGE: Record<NsAdPlatform["status"], "success" | "info" | "default"> = {
   connected: "success",
@@ -37,10 +38,13 @@ const STATUS_BADGE: Record<NsAdPlatform["status"], "success" | "info" | "default
 function PlatformCard({
   platform,
   selected,
+  pendingCount,
   onSelect,
 }: {
   platform: NsAdPlatform;
   selected: boolean;
+  /** 这个平台上待审的草稿数(广告构建器提交 → Meta 卡亮「审核中」) */
+  pendingCount: number;
   onSelect: () => void;
 }) {
   return (
@@ -57,7 +61,12 @@ function PlatformCard({
         {platform.label.slice(0, 2)}
       </span>
       <span className="text-sm font-semibold text-foreground">{platform.label}</span>
-      <Badge variant={STATUS_BADGE[platform.status]}>{platform.statusLabel}</Badge>
+      <div className="flex flex-wrap items-center gap-1.5">
+        <Badge variant={STATUS_BADGE[platform.status]}>{platform.statusLabel}</Badge>
+        {pendingCount > 0 && (
+          <Badge variant="warning">{pendingCount} in review</Badge>
+        )}
+      </div>
     </button>
   );
 }
@@ -86,6 +95,14 @@ function AdapterParams({ platform }: { platform: NsAdPlatform }) {
 export default function Page() {
   const [demo, setDemo] = React.useState<NsDemoState>("ready");
   const [platformId, setPlatformId] = React.useState<string>("meta");
+
+  // 待审草稿按平台计数(广告构建器 submit 落进共享事件流)。
+  useStore();
+  const pendingByPlatform = adSubmissions().reduce<Record<string, number>>((acc, e) => {
+    const key = String(e.payload.platform ?? "meta");
+    acc[key] = (acc[key] ?? 0) + 1;
+    return acc;
+  }, {});
 
   const platform = NS_AD_PLATFORMS.find((p) => p.id === platformId) ?? NS_AD_PLATFORMS[0]!;
 
@@ -132,6 +149,7 @@ export default function Page() {
                 key={p.id}
                 platform={p}
                 selected={p.id === platformId}
+                pendingCount={pendingByPlatform[p.id] ?? 0}
                 onSelect={() => setPlatformId(p.id)}
               />
             ))}

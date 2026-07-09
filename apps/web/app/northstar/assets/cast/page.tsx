@@ -34,6 +34,7 @@ import {
 import { PERSONAS, SCENE_PACKS, type Persona } from "@/components/northstar/assets/_data";
 import { EmptyState, MockNote, PageHeader } from "@/components/northstar/_shared";
 import { nsPlaceholder } from "@/components/northstar/_mock";
+import { castTrained } from "@/components/northstar/immersive/_store";
 
 const NEW_PERSONA: Persona = {
   id: "ps-new",
@@ -80,6 +81,8 @@ export default function Page() {
         ...l,
         ...Object.fromEntries(newlyReady.map((p) => [p.id, true as const])),
       }));
+      // 训练完成落进共享事件流(分析区实时活动读它)。
+      newlyReady.forEach((p) => castTrained(p.name));
     }
     prevStatuses.current = Object.fromEntries(personas.map((p) => [p.id, p.status]));
   }, [personas]);

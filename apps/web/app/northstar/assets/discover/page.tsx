@@ -141,7 +141,7 @@ function DiscoverCard({ item }: { item: DiscoverItem }) {
       {/* 转创作入口:悬停/focus 显现(触屏由 focus-within 兜底,§N2 同源) */}
       <div className="absolute inset-x-2 bottom-12 flex justify-center opacity-0 transition-opacity duration-150 group-focus-within:opacity-100 group-hover:opacity-100">
         <Button variant="secondary" size="sm" asChild>
-          <Link href="/northstar/create/canvas">
+          <Link href={`/northstar/create/canvas?from=${item.id}`}>
             <Sparkles strokeWidth={2} />
             Make this yours
           </Link>

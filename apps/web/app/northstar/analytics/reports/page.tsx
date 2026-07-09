@@ -12,6 +12,7 @@
  */
 
 import * as React from "react";
+import { toast } from "sonner";
 import { Download, FileText } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Switch } from "@/components/ui/switch";
@@ -37,6 +38,7 @@ import {
 } from "@/components/northstar/analytics/zone-kit";
 import { NsLineChart } from "@/components/northstar/analytics/line-chart";
 import { NS_AD_ACCOUNT, NS_ADS } from "@/components/northstar/ads/mock-ads";
+import { creditSpendByCategory, useStore } from "@/components/northstar/immersive/_store";
 
 type Phase = "empty" | "building" | "ready" | "error";
 
@@ -66,13 +68,6 @@ const WEEKLY_READ =
   "A good week. Reach climbed 18% and your Sunday croissant reels did most of the lifting. " +
   "One ad has gone stale, worth a refresh before Merdeka week. Nothing else needs your attention.";
 
-const CREDIT_SPEND_ROWS = [
-  { label: "Video", credits: 40 },
-  { label: "Image", credits: 20 },
-  { label: "Otto chat", credits: 6 },
-  { label: "Search", credits: 4 },
-] as const;
-
 function ReportStat({ label, value, delta }: { label: string; value: string; delta?: string }) {
   return (
     <div className="rounded-[10px] border border-border bg-background p-3">
@@ -99,11 +94,30 @@ export default function Page() {
   const [ottoRead, setOttoRead] = React.useState(true);
   const [buildId, setBuildId] = React.useState(0); // 叙述条重挂载 key
   const [sweepKey, setSweepKey] = React.useState(0);
+  const [downloading, setDownloading] = React.useState(false);
+  const [barFull, setBarFull] = React.useState(false);
+
+  // Credit spend 块从共享 creditLedger 派生(消灭手抄漂移;live 消费即时反映)。
+  useStore();
+  const creditSpendRows = creditSpendByCategory();
 
   const anyBlock = Object.values(blocks).some(Boolean);
   const publishedPosts = NS_SCHEDULED_POSTS.filter((p) => p.status === "published");
   const topAds = [...NS_ADS].sort((a, b) => b.ctr - a.ctr).slice(0, 3);
   const periodLabel = PERIODS.find((p) => p.key === period)?.label ?? "";
+
+  // Download PDF:决定式假下载(进度条 0→100 → 完成 toast);原型无真实文件。
+  function downloadPdf() {
+    if (downloading) return;
+    setDownloading(true);
+    setBarFull(false);
+    requestAnimationFrame(() => setBarFull(true));
+    window.setTimeout(() => {
+      setDownloading(false);
+      setBarFull(false);
+      toast("Report downloaded", { description: "Saved to your downloads (prototype)" });
+    }, 1300);
+  }
 
   function startBuild() {
     setBuildId((n) => n + 1);
@@ -220,10 +234,20 @@ export default function Page() {
             <ProvenancePill text="internal preview · no share link" />
             <div className="flex-1" />
             {phase === "ready" && (
-              <Button variant="secondary" size="sm">
-                <Download />
-                Download PDF
-              </Button>
+              <div className="flex items-center gap-2">
+                {downloading && (
+                  <div aria-hidden className="h-1 w-20 overflow-hidden rounded-full bg-secondary">
+                    <div
+                      className="h-full rounded-full bg-foreground transition-[width] duration-[1200ms] ease-out"
+                      style={{ width: barFull ? "100%" : "0%" }}
+                    />
+                  </div>
+                )}
+                <Button variant="secondary" size="sm" disabled={downloading} onClick={downloadPdf}>
+                  <Download />
+                  {downloading ? "Preparing…" : "Download PDF"}
+                </Button>
+              </div>
             )}
           </div>
 
@@ -386,7 +410,7 @@ export default function Page() {
                     <h3 className="text-sm font-semibold text-foreground">Credit spend</h3>
                     <p className="text-xs text-muted-foreground">This period · by category</p>
                     <div className="mt-2">
-                      {CREDIT_SPEND_ROWS.map((r) => (
+                      {creditSpendRows.map((r) => (
                         <div
                           key={r.label}
                           className="flex items-baseline gap-3 border-t border-border py-2.5 first:border-t-0"

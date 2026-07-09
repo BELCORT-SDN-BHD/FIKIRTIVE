@@ -159,7 +159,7 @@ export default function Page() {
                   Download
                 </Button>
                 <Button asChild>
-                  <Link href="/northstar/create/canvas">Open in canvas</Link>
+                  <Link href={`/northstar/create/canvas?from=${open.id}`}>Open in canvas</Link>
                 </Button>
               </DialogFooter>
             </>

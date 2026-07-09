@@ -30,6 +30,7 @@ import {
   type NsDemoState,
 } from "@/components/northstar/analytics/zone-kit";
 import { NS_AD_ACCOUNT, NS_ADS, type NsAd } from "@/components/northstar/ads/mock-ads";
+import { adSubmissions, useStore } from "@/components/northstar/immersive/_store";
 
 const DIAGNOSE_STEPS = ["Reading this ad's numbers…", "Checking your creative playbook…"] as const;
 
@@ -177,6 +178,10 @@ export default function Page() {
   const [openId, setOpenId] = React.useState<string | null>(null);
   const [diagnosed, setDiagnosed] = React.useState<Set<string>>(new Set());
 
+  // 广告构建器提交的草稿从共享事件流里读回:顶部出「待审」chip + pending 行。
+  useStore();
+  const pending = adSubmissions();
+
   const winners = NS_ADS.filter((a) => a.ctr >= NS_AD_ACCOUNT.avgCtr);
   const laggards = NS_ADS.filter((a) => a.ctr < NS_AD_ACCOUNT.avgCtr);
 
@@ -202,6 +207,34 @@ export default function Page() {
       <div className="mt-2">
         <ProvenancePill text="via Meta · read-only" />
       </div>
+
+      {/* 待审(广告构建器提交的草稿):顶部 chip + pending 行,无数字(还没跑) */}
+      {pending.length > 0 && (
+        <section className="mt-3.5 rounded-[var(--radius-card)] border border-border bg-card">
+          <div className="flex flex-wrap items-center gap-2 px-4 pt-4 pb-2">
+            <h2 className="text-sm font-semibold text-foreground">Submitted for approval</h2>
+            <Badge variant="warning">
+              {pending.length} pending {pending.length === 1 ? "review" : "reviews"}
+            </Badge>
+          </div>
+          {pending.map((e) => (
+            <div key={e.at} className="flex items-center gap-3 border-t border-border px-4 py-3">
+              <span className="flex size-9 shrink-0 items-center justify-center rounded-[10px] bg-secondary">
+                <Megaphone className="size-[18px] text-muted-foreground" strokeWidth={2} />
+              </span>
+              <div className="min-w-0 flex-1">
+                <div className="truncate text-sm font-semibold text-foreground">
+                  {String(e.payload.label ?? "New campaign")}
+                </div>
+                <div className="text-xs text-muted-foreground">
+                  Waiting for approval. Stays paused until then.
+                </div>
+              </div>
+              <Badge variant="warning">In review</Badge>
+            </div>
+          ))}
+        </section>
+      )}
 
       {demo === "error" && (
         <div className="mt-6 flex flex-col items-center gap-3 rounded-[var(--radius-card)] border border-border bg-card px-6 py-14 text-center">

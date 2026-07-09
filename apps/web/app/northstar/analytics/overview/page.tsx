@@ -37,6 +37,7 @@ import {
   type NsDemoState,
 } from "@/components/northstar/analytics/zone-kit";
 import { NsLineChart } from "@/components/northstar/analytics/line-chart";
+import { recentEvents, useStore } from "@/components/northstar/immersive/_store";
 
 /* ── 平台切换器(Meta live;其余占位) ── */
 const PLATFORMS = [
@@ -105,6 +106,10 @@ export default function Page() {
   const [platform, setPlatform] = React.useState<string>("meta");
   const [range, setRange] = React.useState<RangeKey>("28d");
   const [refreshing, setRefreshing] = React.useState(false);
+
+  // 实时活动:订阅共享事件流,任意区的动作(排期/充值/提交广告/训练完成)即时上榜。
+  useStore();
+  const events = recentEvents(6);
 
   const isMeta = platform === "meta";
   const selected = PLATFORMS.find((p) => p.id === platform);
@@ -263,6 +268,35 @@ export default function Page() {
               automatically once approved. Nothing for you to do.
             </p>
           </Panel>
+
+          {/* 实时活动(§循环系统):共享事件流,newest first;空态诚实 */}
+          {demo === "ready" && (
+            <Panel
+              title="Live activity"
+              basis="Actions across your workspace, newest first"
+              className="mt-3.5"
+            >
+              {events.length === 0 ? (
+                <p className="mt-1 text-[13px] leading-[18px] text-muted-foreground">
+                  Nothing yet. Anything you or Otto does shows up here live.
+                </p>
+              ) : (
+                <ul className="mt-2 flex flex-col">
+                  {events.map((e) => (
+                    <li
+                      key={e.at}
+                      className="flex items-center gap-3 border-t border-border py-2.5 first:border-t-0"
+                    >
+                      <span aria-hidden className="size-1.5 shrink-0 rounded-full bg-muted-foreground" />
+                      <span className="min-w-0 flex-1 truncate text-[13px] leading-[18px] text-foreground">
+                        {e.label}
+                      </span>
+                    </li>
+                  ))}
+                </ul>
+              )}
+            </Panel>
+          )}
         </div>
       )}
 
