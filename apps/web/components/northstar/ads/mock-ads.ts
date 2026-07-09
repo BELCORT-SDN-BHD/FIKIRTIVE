@@ -31,8 +31,13 @@ export const NS_AD_ACCOUNT = {
 export interface NsAdCitation {
   /** 引用内容(结论或数字) */
   label: string;
-  /** 来源(KB 文档 / Meta insights) */
-  source: string;
+  /**
+   * 真实 KB 条目 id(→ NS_META_KB)。挂了它 = 可点开验证的第一方 Meta 官方来源(O-10 不捏造)。
+   * 与 `source` 二选一:KB 条目走这条,live 数字走 `source`。
+   */
+  knowledgeId?: string;
+  /** live 数据出处(数字从 Meta 读回,不是 KB 文档)—— 渲染成不可点的 provenance pill */
+  source?: string;
 }
 
 export interface NsAdDiagnosis {
@@ -86,7 +91,7 @@ export const NS_ADS: NsAd[] = [
         "86 purchases over 14 days",
       ],
       citations: [
-        { label: "Show the product in the first 2 seconds", source: "KB · Meta creative playbook §hooks" },
+        { label: "The hook lands in the first seconds", knowledgeId: "creative-reels-hook-first-seconds" },
         { label: "CTR and CPC read from this period", source: "Meta insights · read-only" },
       ],
       action: "Make 3 more hooks in this style",
@@ -128,7 +133,10 @@ export const NS_ADS: NsAd[] = [
     diagnosis: {
       summary: "Card 2 gets the most swipes. The bulk-order angle lands with office crowds.",
       evidence: ["CTR 2.2% vs account average 1.8%", "38 order messages started"],
-      citations: [{ label: "Per-card engagement, this period", source: "Meta insights · read-only" }],
+      citations: [
+        { label: "Per-card engagement, this period", source: "Meta insights · read-only" },
+        { label: "Break performance down by card and placement", knowledgeId: "diagnosis-breakdowns-analysis" },
+      ],
       action: "Lead with card 2 in a new version",
     },
   },
@@ -148,7 +156,9 @@ export const NS_ADS: NsAd[] = [
     diagnosis: {
       summary: "Just above your average and steady. Nothing to fix, worth a fresh angle to keep it fresh.",
       evidence: ["CTR 1.9% vs account average 1.8%", "Steady clicks across 12 days"],
-      citations: [{ label: "Refresh creative before day 14", source: "KB · Meta creative playbook §fatigue" }],
+      citations: [
+        { label: "Refresh creative before fatigue sets in", knowledgeId: "diagnosis-creative-fatigue-frequency" },
+      ],
       action: "Make a seasonal variant",
     },
   },
@@ -173,7 +183,7 @@ export const NS_ADS: NsAd[] = [
         "Most drop-off in the first 5 seconds",
       ],
       citations: [
-        { label: "Front-load the payoff shot", source: "KB · Meta creative playbook §hooks" },
+        { label: "Front-load the payoff in the first seconds", knowledgeId: "creative-reels-hook-first-seconds" },
         { label: "Video drop-off curve, this period", source: "Meta insights · read-only" },
       ],
       action: "Recut with the payoff first",
@@ -195,7 +205,9 @@ export const NS_ADS: NsAd[] = [
     diagnosis: {
       summary: "This one has gone stale. It ran 16 days and clicks fell by half in week 2.",
       evidence: ["CTR 0.9% vs account average 1.8%", "Week 2 clicks down 52% vs week 1", "16 days running"],
-      citations: [{ label: "Refresh creative before day 14", source: "KB · Meta creative playbook §fatigue" }],
+      citations: [
+        { label: "CTR falling as frequency rises = creative fatigue", knowledgeId: "diagnosis-creative-fatigue-frequency" },
+      ],
       action: "Make a fresh version of this offer",
     },
   },
@@ -216,7 +228,7 @@ export const NS_ADS: NsAd[] = [
       summary: "Too much text on the image. It reads like a menu, not a treat, and people scroll past.",
       evidence: ["CTR 0.7% vs account average 1.8%", "Lowest thumb-stop rate in the account this period"],
       citations: [
-        { label: "Keep image text under 20%", source: "KB · Meta creative playbook §imagery" },
+        { label: "Cluttered creative can lower quality ranking and raise cost", knowledgeId: "diagnosis-quality-ranking-impact" },
         { label: "Thumb-stop rate, this period", source: "Meta insights · read-only" },
       ],
       action: "Rebuild around a product close-up",
@@ -242,7 +254,10 @@ export const NS_ADS: NsAd[] = [
         "71% of reach outside Kuala Lumpur",
         "2 purchases from 7,800 impressions",
       ],
-      citations: [{ label: "Reach by region, this period", source: "Meta insights · read-only" }],
+      citations: [
+        { label: "Reach by region, this period", source: "Meta insights · read-only" },
+        { label: "Location is a hard targeting constraint you can pin", knowledgeId: "targeting-advantage-plus-constraints" },
+      ],
       action: "Retarget to KL and remake the opener",
     },
   },

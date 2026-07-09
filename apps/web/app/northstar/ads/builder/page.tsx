@@ -42,6 +42,7 @@ import {
   Panel,
   type NsDemoState,
 } from "@/components/northstar/analytics/zone-kit";
+import { AdsTabs } from "@/components/northstar/ads/ads-tabs";
 import {
   NS_AD_CTAS,
   NS_AD_DRAFT,
@@ -237,6 +238,9 @@ export default function Page() {
           )
         }
       />
+      <div className="mt-2">
+        <AdsTabs />
+      </div>
 
       {demo === "error" && (
         <div className="mt-6 flex flex-col items-center gap-3 rounded-[var(--radius-card)] border border-border bg-card px-6 py-14 text-center">

@@ -14,12 +14,21 @@
 import * as React from "react";
 import Link from "next/link";
 import Image from "next/image";
-import { ChevronDown, Megaphone, Sparkles } from "lucide-react";
+import { BookOpen, ChevronDown, ExternalLink, Megaphone, Sparkles } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogHeader,
+  DialogTitle,
+  DialogTrigger,
+} from "@/components/ui/dialog";
 import { cn } from "@/lib/utils";
 import { OttoAvatar } from "@/components/otto/OttoAvatar";
 import { EmptyState, MockNote, OttoNarrationBar, PageHeader } from "@/components/northstar/_shared";
+import { metaKbEntry } from "@/components/northstar/ads/meta-kb";
 import {
   DemoStateBar,
   LandIn,
@@ -29,10 +38,87 @@ import {
   fmtMoney,
   type NsDemoState,
 } from "@/components/northstar/analytics/zone-kit";
-import { NS_AD_ACCOUNT, NS_ADS, type NsAd } from "@/components/northstar/ads/mock-ads";
+import { AdsTabs } from "@/components/northstar/ads/ads-tabs";
+import { NS_AD_ACCOUNT, NS_ADS, type NsAd, type NsAdCitation } from "@/components/northstar/ads/mock-ads";
 import { adSubmissions, useStore } from "@/components/northstar/immersive/_store";
 
 const DIAGNOSE_STEPS = ["Reading this ad's numbers…", "Checking your creative playbook…"] as const;
+
+/**
+ * 诊断卡引用芯片(O-10:不捏造 — 每条引用要么可点开验证的第一方 Meta 官方来源,
+ * 要么是 live 数字出处的诚实印章)。挂 knowledgeId 的走真 KB → 点开看真条目 + 真链接;
+ * 只有 source 的是「数字从 Meta 读回」的 provenance pill,不可点(它本就不是文档)。
+ */
+function CitationChip({ citation }: { citation: NsAdCitation }) {
+  const entry = citation.knowledgeId ? metaKbEntry(citation.knowledgeId) : undefined;
+
+  // live 数字出处,或 knowledgeId 意外查无(诚实空态,不捏造):不可点的印章
+  if (!entry) {
+    return (
+      <span
+        className="inline-flex items-center rounded-full border border-border bg-card px-2.5 py-1 font-mono text-[11px] leading-[14px] font-medium tracking-[0.02em] text-muted-foreground"
+        title={citation.label}
+      >
+        {citation.source ?? citation.label}
+      </span>
+    );
+  }
+
+  return (
+    <Dialog>
+      <DialogTrigger asChild>
+        <button
+          type="button"
+          className="inline-flex items-center gap-1.5 rounded-full border border-border bg-card px-2.5 py-1 text-[11px] leading-[14px] font-medium tracking-[0.01em] text-foreground transition-colors duration-[120ms] hover:bg-accent focus-visible:ring-2 focus-visible:ring-ring focus-visible:outline-none"
+        >
+          <BookOpen className="size-3 shrink-0 text-muted-foreground" strokeWidth={2} />
+          <span className="min-w-0 truncate">{citation.label}</span>
+        </button>
+      </DialogTrigger>
+      <DialogContent className="max-w-[520px]">
+        <DialogHeader>
+          <div className="flex flex-wrap items-center gap-2">
+            <Badge variant="info">Meta official</Badge>
+            <span className="font-mono text-[11px] leading-[14px] font-medium tracking-[0.06em] text-muted-foreground uppercase">
+              {entry.domain}
+            </span>
+          </div>
+          <DialogTitle className="mt-2 text-base leading-[1.4]">{citation.label}</DialogTitle>
+          <DialogDescription className="sr-only">
+            Verified Meta advertising guidance behind this citation
+          </DialogDescription>
+        </DialogHeader>
+
+        <p className="text-sm leading-[1.55] text-foreground">{entry.claim}</p>
+        {entry.detail && (
+          <p className="text-[13px] leading-[1.5] text-muted-foreground">{entry.detail}</p>
+        )}
+        {entry.benchmark && (
+          <p className="rounded-[10px] bg-secondary px-3 py-2 text-[13px] leading-[1.5] font-medium text-foreground">
+            {entry.benchmark}
+          </p>
+        )}
+
+        <a
+          href={entry.source.url}
+          target="_blank"
+          rel="noopener noreferrer"
+          className="mt-1 flex items-start gap-2 rounded-[12px] border border-border bg-card px-3 py-2.5 text-left transition-colors duration-[120ms] hover:bg-accent"
+        >
+          <ExternalLink className="mt-0.5 size-4 shrink-0 text-muted-foreground" strokeWidth={2} />
+          <span className="min-w-0 flex-1">
+            <span className="block text-[13px] leading-[18px] font-semibold text-foreground">
+              {entry.source.title}
+            </span>
+            <span className="block text-[11px] leading-4 text-muted-foreground">
+              facebook.com · retrieved {entry.source.retrievedAt}
+            </span>
+          </span>
+        </a>
+      </DialogContent>
+    </Dialog>
+  );
+}
 
 function MetricCell({ label, value }: { label: string; value: string }) {
   return (
@@ -138,16 +224,10 @@ function AdRow({
                         </li>
                       ))}
                     </ul>
-                    {/* 引用带来源(不捏造):KB / Meta insights */}
+                    {/* 引用带来源(不捏造):KB 条目可点开验证 / Meta insights 数字出处 */}
                     <div className="mt-3 flex flex-wrap gap-1.5">
                       {ad.diagnosis.citations.map((c) => (
-                        <span
-                          key={c.label}
-                          className="inline-flex items-center rounded-full border border-border bg-card px-2.5 py-1 font-mono text-[11px] leading-[14px] font-medium tracking-[0.02em] text-muted-foreground"
-                          title={c.label}
-                        >
-                          {c.source}
-                        </span>
+                        <CitationChip key={c.label} citation={c} />
                       ))}
                     </div>
                     <div className="mt-3 flex flex-wrap items-center gap-2">
@@ -204,7 +284,8 @@ export default function Page() {
     <div className="mx-auto w-full max-w-[880px] px-6 pt-6 pb-24">
       {/* 页头永远渲染(§D1⑤) */}
       <PageHeader title="Ad performance" meta={["9 Jun to 6 Jul"]} />
-      <div className="mt-2">
+      <div className="mt-2 flex flex-wrap items-center gap-2">
+        <AdsTabs />
         <ProvenancePill text="via Meta · read-only" />
       </div>
 

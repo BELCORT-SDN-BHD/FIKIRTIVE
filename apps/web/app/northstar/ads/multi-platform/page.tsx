@@ -25,8 +25,10 @@ import {
   ProvenancePill,
   type NsDemoState,
 } from "@/components/northstar/analytics/zone-kit";
+import { AdsTabs } from "@/components/northstar/ads/ads-tabs";
 import { NS_AD_PLATFORMS, type NsAdPlatform } from "@/components/northstar/ads/mock-ads";
-import { adSubmissions, useStore } from "@/components/northstar/immersive/_store";
+import { adSubmissions, connections, useStore } from "@/components/northstar/immersive/_store";
+import type { NsConnection } from "@/components/northstar/immersive/account-ops/data";
 
 const STATUS_BADGE: Record<NsAdPlatform["status"], "success" | "info" | "default"> = {
   connected: "success",
@@ -34,14 +36,49 @@ const STATUS_BADGE: Record<NsAdPlatform["status"], "success" | "info" | "default
   planned: "default",
 };
 
+/**
+ * 广告平台 → 底层渠道连接(共享 store.connections)映射。
+ * Meta 广告投放靠 Facebook + Instagram 渠道;TikTok Ads 靠 TikTok 渠道。
+ * Lazada / Shopee 还没进连接注册表 —— 没映射 = 保持静态「Planned」(诚实缺口,不假装)。
+ */
+const PLATFORM_CHANNELS: Record<string, NsConnection["channel"][]> = {
+  meta: ["facebook", "instagram"],
+  tiktok: ["tiktok"],
+};
+
+interface LiveStatus {
+  status: NsAdPlatform["status"];
+  label: string;
+  /** action/未连接时,给连接卡的一句人话(优先用渠道自己的 note) */
+  hint?: string;
+}
+
+/** 平台卡状态读 store.connections:连上/需重连/未连都跟着共享连接实时变。 */
+function liveStatus(platform: NsAdPlatform, conns: NsConnection[]): LiveStatus {
+  const channels = PLATFORM_CHANNELS[platform.id];
+  // 未映射到渠道(Lazada / Shopee):保持数据里的静态状态,不捏造连接
+  if (!channels) return { status: platform.status, label: platform.statusLabel };
+
+  const mapped = conns.filter((c) => channels.includes(c.channel));
+  const allConnected = mapped.length > 0 && mapped.every((c) => c.status === "connected");
+  if (allConnected) return { status: "connected", label: "Connected" };
+
+  const action = mapped.find((c) => c.status === "action");
+  if (action) return { status: "next", label: "Reconnect", hint: action.note };
+  return { status: "next", label: "Connect" };
+}
+
 /** 平台连接卡 — 卡即切换器(aria-pressed;选中 = border-foreground,不用 coral) */
 function PlatformCard({
   platform,
+  live,
   selected,
   pendingCount,
   onSelect,
 }: {
   platform: NsAdPlatform;
+  /** 从 store.connections 派生的实时状态(不再读死数据) */
+  live: LiveStatus;
   selected: boolean;
   /** 这个平台上待审的草稿数(广告构建器提交 → Meta 卡亮「审核中」) */
   pendingCount: number;
@@ -62,7 +99,7 @@ function PlatformCard({
       </span>
       <span className="text-sm font-semibold text-foreground">{platform.label}</span>
       <div className="flex flex-wrap items-center gap-1.5">
-        <Badge variant={STATUS_BADGE[platform.status]}>{platform.statusLabel}</Badge>
+        <Badge variant={STATUS_BADGE[live.status]}>{live.label}</Badge>
         {pendingCount > 0 && (
           <Badge variant="warning">{pendingCount} in review</Badge>
         )}
@@ -98,6 +135,7 @@ export default function Page() {
 
   // 待审草稿按平台计数(广告构建器 submit 落进共享事件流)。
   useStore();
+  const conns = connections();
   const pendingByPlatform = adSubmissions().reduce<Record<string, number>>((acc, e) => {
     const key = String(e.payload.platform ?? "meta");
     acc[key] = (acc[key] ?? 0) + 1;
@@ -105,6 +143,8 @@ export default function Page() {
   }, {});
 
   const platform = NS_AD_PLATFORMS.find((p) => p.id === platformId) ?? NS_AD_PLATFORMS[0]!;
+  // 选中平台的实时状态(读共享 store.connections;在 Connections 连/断 → 这里即时翻牌)
+  const live = liveStatus(platform, conns);
 
   return (
     <div className="mx-auto w-full max-w-[880px] px-6 pt-6 pb-24">
@@ -113,6 +153,9 @@ export default function Page() {
         title="Ad platforms"
         subtitle="One workbench, one adapter per platform. TikTok first, then Lazada, then Shopee."
       />
+      <div className="mt-2">
+        <AdsTabs />
+      </div>
 
       {demo === "error" && (
         <div className="mt-6 flex flex-col items-center gap-3 rounded-[var(--radius-card)] border border-border bg-card px-6 py-14 text-center">
@@ -148,6 +191,7 @@ export default function Page() {
               <PlatformCard
                 key={p.id}
                 platform={p}
+                live={liveStatus(p, conns)}
                 selected={p.id === platformId}
                 pendingCount={pendingByPlatform[p.id] ?? 0}
                 onSelect={() => setPlatformId(p.id)}
@@ -159,13 +203,13 @@ export default function Page() {
           <Panel
             title={`${platform.label} adapter`}
             basis="Platform-specific slots. Adding a platform adds an adapter, not a new page."
-            stamp={platform.status === "connected" ? "connected · read-write" : undefined}
+            stamp={live.status === "connected" ? "connected · read-write" : undefined}
             className="mt-4"
           >
             <p className="mt-3 text-[13px] leading-[18px] text-muted-foreground">{platform.note}</p>
             <AdapterParams platform={platform} />
 
-            {platform.status === "connected" && (
+            {live.status === "connected" && (
               <div className="mt-4 flex flex-wrap items-center gap-2 border-t border-border pt-4">
                 <Button asChild variant="secondary" size="sm">
                   <Link href="/northstar/ads/builder">Open ad builder</Link>
@@ -176,19 +220,20 @@ export default function Page() {
               </div>
             )}
 
-            {platform.status === "next" && (
+            {live.status === "next" && (
               <div className="mt-4 flex flex-wrap items-center gap-2 border-t border-border pt-4">
-                {/* 连接入口住 Connections(清单注:registry 驱动,不重复计) */}
+                {/* 连接动作跳住户服务中心 · Connections(清单注:registry 驱动,不重复计) */}
                 <Button asChild variant="secondary" size="sm">
                   <Link href="/northstar/account/connections">Open Connections</Link>
                 </Button>
                 <span className="text-xs text-muted-foreground">
-                  Connecting happens in Connections. This page lights up by itself after that.
+                  {live.hint ??
+                    "Connecting happens in Connections. This page lights up by itself after that."}
                 </span>
               </div>
             )}
 
-            {platform.status === "planned" && (
+            {live.status === "planned" && (
               <p className="mt-4 border-t border-border pt-4 text-xs text-muted-foreground">
                 Planned. The slots above are the whole integration surface, they fill in when this
                 platform connects.
