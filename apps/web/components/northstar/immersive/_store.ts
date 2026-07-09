@@ -1566,3 +1566,40 @@ export function dropCampaignIdeas() {
 export function studioLogGen(text: string, label: string) {
   appendToStream({ role: "otto", text, context: { zone: "Studio", label } });
 }
+
+/* ═══════════════════════════════════════════════════════════════════════════
+ * [campaign-spine] Z4 Campaign 脊梁 —— 文件尾追加(O-12 同一动作层 + D2 对话落流)
+ *
+ * workbench 四项表单与 Otto 殊途同归都落到 proposeCampaign:存草稿(proposal-card 读)+
+ * 在单流落一轮 Campaign context 的往来(D2:这件事的对话自动长在它身上)。detail「对话」
+ * tab 的 composer 走 sendCampaignMessage,同一条流按 campaignId 过滤即得该视图。
+ * 铁律不变:纯 client、零后台 import;coral 只属于 Otto;数据只从 _mock 派生。
+ * ═══════════════════════════════════════════════════════════════════════════ */
+
+/** O-12:workbench/Otto 同一动作层。存草稿 + 在单流落一轮往来(找旧对话 = 去那件事的页面看)。 */
+export function proposeCampaign(draft: NsCampaignDraft): void {
+  state.campaignDraft = draft;
+  const platforms = draft.platforms.length;
+  appendToStream({
+    role: "owner",
+    text: `Plan a campaign — ${draft.goal}`,
+    context: { zone: "Campaign", label: "New campaign", campaignId: "camp-merdeka-01" },
+  });
+  appendToStream({
+    role: "otto",
+    text: `On it — I'll draft a full plan for "${draft.goal}" across ${platforms} platform${platforms > 1 ? "s" : ""}, kept inside ${draft.budgetCredits} credits. Every post stays a draft until you approve.`,
+    context: {
+      zone: "Campaign",
+      label: "New campaign",
+      campaignId: "camp-merdeka-01",
+      href: "/northstar-immersive/campaign/proposal-card",
+    },
+  });
+}
+
+/** detail「对话」tab composer:owner 消息落进同一条流,带该 campaign 的 context chip。 */
+export function sendCampaignMessage(campaignId: string, label: string, text: string): void {
+  const t = text.trim();
+  if (!t) return;
+  appendToStream({ role: "owner", text: t, context: { zone: "Campaign", label, campaignId } });
+}

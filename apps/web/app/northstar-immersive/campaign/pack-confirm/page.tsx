@@ -1,18 +1,9 @@
 "use client";
 
-/**
- * 沉浸式 · Campaign 区 /pack-confirm(打包确认 · 过闸花钱)—— 复用画廊页内容,套进常驻外壳。
- * 页内 `/northstar/*` 交叉链接由外壳 useKeepInsideImmersive 自动改跳沉浸式路由
- * (proposal → pack-confirm → schedule 的花钱闸口流靠它连起来)。
- */
+/** 沉浸式 · Campaign 区 /pack-confirm —— 大单确认花钱闸(逐条失败退款),原生重建。 */
 
-import GalleryPage from "@/app/northstar/campaign/pack-confirm/page";
-import { GalleryFrame } from "@/components/northstar/immersive/schedule-assets-ads/gallery-frame";
+import { CampaignPackConfirm } from "@/components/northstar/immersive/campaign/campaign-pack-confirm";
 
 export default function Page() {
-  return (
-    <GalleryFrame>
-      <GalleryPage />
-    </GalleryFrame>
-  );
+  return <CampaignPackConfirm />;
 }

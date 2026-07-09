@@ -1,17 +1,9 @@
 "use client";
 
-/**
- * 沉浸式 · Campaign 区 /list —— 复用画廊页内容,套进常驻外壳(nav + Otto dock + 流转)。
- * 页内 `/northstar/*` 交叉链接由外壳 useKeepInsideImmersive 自动改跳沉浸式路由。
- */
+/** 沉浸式 · Campaign 区 /list —— 「进行中的事」总览(D1 容器门面),原生重建。 */
 
-import GalleryPage from "@/app/northstar/campaign/list/page";
-import { GalleryFrame } from "@/components/northstar/immersive/schedule-assets-ads/gallery-frame";
+import { CampaignList } from "@/components/northstar/immersive/campaign/campaign-list";
 
 export default function Page() {
-  return (
-    <GalleryFrame>
-      <GalleryPage />
-    </GalleryFrame>
-  );
+  return <CampaignList />;
 }
