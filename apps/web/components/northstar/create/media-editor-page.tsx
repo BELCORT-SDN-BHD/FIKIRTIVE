@@ -138,16 +138,19 @@ function ImageEditor({ asset }: { asset: CvObject | null }) {
     timers.current.push(
       window.setTimeout(() => {
         setLifecycle("generating");
+        // 进度与阶段切换分离:setPct updater 保持纯,过 84% 的收口(clearInterval / 阶段切换 /
+        // 排 ready)在 interval 回调体里做一次 —— 否则塞进 updater 会被 StrictMode 双调,导致
+        // 「成像完成」阶段与 ready 定时器触发两次(media-editor 生成气泡渲染两次)。
+        let p = 0;
         const iv = window.setInterval(() => {
-          setPct((p) => {
-            if (p >= 84) {
-              window.clearInterval(iv);
-              setLifecycle("noise");
-              timers.current.push(window.setTimeout(() => setLifecycle("ready"), 1200));
-              return p;
-            }
-            return p + 7;
-          });
+          if (p >= 84) {
+            window.clearInterval(iv);
+            setLifecycle("noise");
+            timers.current.push(window.setTimeout(() => setLifecycle("ready"), 1200));
+            return;
+          }
+          p += 7;
+          setPct(p);
         }, 240);
         timers.current.push(iv);
       }, 800),

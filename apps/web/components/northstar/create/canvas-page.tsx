@@ -362,31 +362,33 @@ export function CanvasPage() {
       setJobs((prev) => [...prev, ...newObjects.map((o) => ({ objectId: o.id, pct: 0 }))]);
       setNarration(narrationText);
       setOttoWorking(true, narrationText.replace(/…$/, "")); // 生成开始 → dock 徽点脉冲
+      // 进度与完成判定放在 updater 之外(setJobs updater 必须纯):进度存闭包 progress,
+      // remaining 收敛到 0 时收口一次。否则把 setObjects/setSweepId/setOttoWorking/onAllDone
+      // 等副作用塞进 setJobs updater 会在 render 阶段写 ImmersiveNav 订阅的共享 store —— 触发
+      // 「Cannot update ImmersiveNav while rendering CanvasPage」;且 StrictMode 双调 updater
+      // 会把「All N are ready」气泡 / onAllDone 触发两次。
+      const progress = new Map<string, number>(newObjects.map((o) => [o.id, 0]));
+      let remaining = newObjects.length;
       newObjects.forEach((obj, i) => {
         const timer = window.setInterval(() => {
-          setJobs((prev) => {
-            const next = prev.map((j) =>
-              j.objectId === obj.id ? { ...j, pct: Math.min(100, j.pct + 6 + i * 2) } : j,
-            );
-            const mine = next.find((j) => j.objectId === obj.id);
-            if (mine && mine.pct >= 100) {
-              window.clearInterval(timer);
-              setObjects((os) => os.map((o) => (o.id === obj.id ? { ...o, status: "ready" } : o)));
-              setSweepId(obj.id);
-              window.setTimeout(() => setSweepId((s) => (s === obj.id ? null : s)), 650);
-              setHistoryNew((n) => n + 1);
-              const stillRunning = next.filter((j) => j.pct < 100).length;
-              if (stillRunning === 0) {
-                window.setTimeout(() => {
-                  setNarration(null);
-                  setJobs([]);
-                }, 400);
-                setOttoWorking(false); // 全部完成 → Otto idle
-                onAllDone?.();
-              }
-            }
-            return next;
-          });
+          const pct = Math.min(100, (progress.get(obj.id) ?? 0) + 6 + i * 2);
+          progress.set(obj.id, pct);
+          setJobs((prev) => prev.map((j) => (j.objectId === obj.id ? { ...j, pct } : j)));
+          if (pct < 100) return;
+          window.clearInterval(timer);
+          setObjects((os) => os.map((o) => (o.id === obj.id ? { ...o, status: "ready" } : o)));
+          setSweepId(obj.id);
+          window.setTimeout(() => setSweepId((s) => (s === obj.id ? null : s)), 650);
+          setHistoryNew((n) => n + 1);
+          remaining -= 1;
+          if (remaining === 0) {
+            window.setTimeout(() => {
+              setNarration(null);
+              setJobs([]);
+            }, 400);
+            setOttoWorking(false); // 全部完成 → Otto idle
+            onAllDone?.();
+          }
         }, 220 + i * 60);
         timersRef.current.push(timer);
       });
