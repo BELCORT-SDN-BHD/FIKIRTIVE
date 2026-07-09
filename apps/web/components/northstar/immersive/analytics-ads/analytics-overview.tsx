@@ -37,7 +37,7 @@ import {
   fmtMoney,
 } from "@/components/northstar/analytics/zone-kit";
 import { NsLineChart } from "@/components/northstar/analytics/line-chart";
-import { NS_AD_ACCOUNT } from "@/components/northstar/ads/mock-ads";
+import { NS_AD_ACCOUNT, accountMoney } from "@/components/northstar/ads/mock-ads";
 import {
   aiHandledCount,
   conversationsView,
@@ -88,11 +88,14 @@ function creatorKpis(range: RangeKey): Kpi[] {
 }
 
 function ownerKpis(): Kpi[] {
+  // 生意口径:钱化汇总(诚实分母——cost-per-order 只数订单,咨询单列;return = 营收÷花费)
+  const acct = accountMoney();
+  const cur = NS_AD_ACCOUNT.currencyPrefix;
   return [
-    { label: "Ad spend", value: fmtMoney(NS_AD_ACCOUNT.currencyPrefix, NS_AD_ACCOUNT.kpis.spendMyr) },
-    { label: "Orders", value: String(NS_AD_ACCOUNT.kpis.results), delta: { dir: "up", text: "▲ 12%" } },
-    { label: "Cost per order", value: fmtMoney(NS_AD_ACCOUNT.currencyPrefix, NS_AD_ACCOUNT.kpis.spendMyr / NS_AD_ACCOUNT.kpis.results) },
-    { label: "Reach", value: NS_ANALYTICS.kpis[0]!.value, delta: { dir: "up", text: "▲ 18%" } },
+    { label: "Sales", value: fmtMoney(cur, acct.revenueMyr), delta: { dir: "up", text: "▲ 14%" } },
+    { label: "Orders", value: String(acct.orders), delta: { dir: "up", text: "▲ 12%" } },
+    { label: "Cost per order", value: fmtMoney(cur, acct.costPerOrderMyr) },
+    { label: "Return", value: `${acct.returnMultiple.toFixed(1)}×`, delta: { dir: "flat", text: `on ${fmtMoney(cur, acct.totalSpendMyr)} spent` } },
   ];
 }
 
@@ -128,11 +131,12 @@ const GRADE_STYLE: Record<Grade, string> = {
   Fair: "text-muted-foreground",
   Poor: "text-error-soft-foreground",
 };
-const BENCHMARKS: { metric: string; you: string; baseline: string; grade: Grade }[] = [
-  { metric: "Reach growth", you: "▲ 18%", baseline: "≈ 6%", grade: "Excellent" },
-  { metric: "Engagement rate", you: "3.2%", baseline: "2.1%", grade: "Good" },
-  { metric: "Ad CTR", you: "1.8%", baseline: "1.6%", grade: "Good" },
-  { metric: "Cost per result", you: "RM 6.00", baseline: "RM 5.20", grade: "Fair" },
+/* 砍掉不可跨行业对标的 reach-growth(ledger gap 5);每行挂口径来源,别用最软指标打最高分 */
+const BENCHMARKS: { metric: string; you: string; baseline: string; grade: Grade; source: string }[] = [
+  { metric: "Ad CTR", you: "1.8%", baseline: "1.6%", grade: "Good", source: "Meta F&B avg" },
+  { metric: "Cost per order", you: "RM 6.80", baseline: "RM 7.40", grade: "Good", source: "Meta F&B avg" },
+  { metric: "Engagement rate", you: "3.2%", baseline: "2.1%", grade: "Good", source: "IG bakery avg" },
+  { metric: "Return on ad spend", you: "5.9×", baseline: "3.5×", grade: "Excellent", source: "SEA F&B typical" },
 ];
 
 /* ── 每 campaign 一行 ROI（含制作成本 credits）—— [wave-b] Campaign Dashboard + ROI + 横向对比 ── */
@@ -164,7 +168,8 @@ export default function AnalyticsOverview() {
   const [demo, setDemo] = React.useState<Demo>("ready");
   const [platform, setPlatform] = React.useState<string>("meta");
   const [range, setRange] = React.useState<RangeKey>("28d");
-  const [view, setView] = React.useState<ViewPreset>("creator");
+  // stall #11:「看生意」默认落 Owner 口径(钱先行),Creator 退为可切的第二视角
+  const [view, setView] = React.useState<ViewPreset>("owner");
   const [attribution, setAttribution] = React.useState<Attribution>("last");
   const [refreshing, setRefreshing] = React.useState(false);
   const [ask, setAsk] = React.useState("");
@@ -212,6 +217,7 @@ export default function AnalyticsOverview() {
                   type="button"
                   aria-pressed={view === v}
                   onClick={() => setView(v)}
+                  title={v === "owner" ? "Owner — the money: sales, orders, cost, return" : "Creator — the content: reach, engagement, clicks"}
                   className={cn(
                     "flex h-[30px] items-center rounded-[8px] px-3 text-xs font-semibold capitalize transition-colors duration-[120ms]",
                     view === v ? "bg-secondary text-foreground" : "text-muted-foreground hover:bg-accent hover:text-foreground",
@@ -305,13 +311,19 @@ export default function AnalyticsOverview() {
 
         {isMeta && (demo === "ready" || demo === "empty") && (
           <div className={cn("mt-1 flex flex-col gap-3.5 transition-opacity", refreshing && "opacity-60")}>
-            {/* [wave-b] Otto 主动异常播报:一条中性 heads-up(读面不 coral;statement 留给 insight) */}
+            {/* [wave-b] Otto 主动异常播报 + stall #69:报忧就给可点的下一步(直达那条广告) */}
             {demo === "ready" && (
-              <div className="flex items-start gap-2 rounded-[12px] bg-secondary/70 px-4 py-2.5">
+              <div className="flex flex-wrap items-center gap-x-2 gap-y-1 rounded-[12px] bg-secondary/70 px-4 py-2.5">
                 <span aria-hidden className="mt-1.5 size-1.5 shrink-0 rounded-full bg-warning" />
-                <p className="text-[13px] leading-[18px] text-foreground">
-                  Heads up — link clicks dipped 4% this period. One ad has gone stale; the rest is healthy.
+                <p className="min-w-0 flex-1 basis-64 text-[13px] leading-[18px] text-foreground">
+                  Heads up — link clicks dipped 4% this period. One ad is losing money; the rest is healthy.
                 </p>
+                <Link
+                  href="/northstar-immersive/ads/performance"
+                  className="ns-human-text shrink-0 text-[13px] font-semibold underline-offset-2 hover:underline"
+                >
+                  See which one →
+                </Link>
               </div>
             )}
 
@@ -323,12 +335,14 @@ export default function AnalyticsOverview() {
             </div>
             {demo === "empty" && <p className="-mt-1 text-xs text-muted-foreground">No activity in this period yet.</p>}
 
-            {/* ⑦ Otto insight banner —— 本屏唯一 coral statement(§O3;§O4) */}
+            {/* ⑦ Otto insight banner —— 本屏唯一 coral statement(§O3;§O4);gap 4:洞察跟视角走 */}
             {demo === "ready" && (
               <div className="flex flex-wrap items-center gap-3 rounded-[var(--radius-card)] border border-brand-soft bg-brand-soft/50 px-4 py-3.5">
                 <OttoAvatar size={32} mood="helpful" />
                 <span className="min-w-0 flex-1 basis-52 text-sm leading-[1.45] text-brand-soft-foreground">
-                  {NS_ANALYTICS.insight}
+                  {view === "owner"
+                    ? "Your Merdeka unboxing reel made each RM 68 box for RM 3.60 in ad spend — your cheapest orders this month. Want two more like it?"
+                    : NS_ANALYTICS.insight}
                 </span>
                 <Button asChild variant="brand" size="sm">
                   <Link href="/northstar-immersive/create/canvas">
@@ -372,7 +386,10 @@ export default function AnalyticsOverview() {
               title="Campaign performance"
               basis="Organic posts, ad spend and return — one row per campaign"
               actions={
-                <div className="inline-flex items-center gap-0.5 rounded-[10px] border border-border bg-card p-0.5">
+                <div className="inline-flex items-center gap-1.5">
+                  {/* stall #46:专业词先配一句人话 */}
+                  <span className="hidden text-[11px] font-medium text-muted-foreground sm:inline">Credit which ad?</span>
+                  <div className="inline-flex items-center gap-0.5 rounded-[10px] border border-border bg-card p-0.5">
                   {(["last", "first"] as Attribution[]).map((a) => (
                     <button
                       key={a}
@@ -387,14 +404,15 @@ export default function AnalyticsOverview() {
                       {a === "last" ? "Last touch" : "First touch"}
                     </button>
                   ))}
+                  </div>
                 </div>
               }
             >
-              {/* [wave-b] 归因口径切换 + 首触归因(最轻:单触点,一句话说清口径) */}
+              {/* [wave-b] 归因口径切换 + 首触归因;stall #46:口径改人话 */}
               <p className="mt-1 text-xs text-muted-foreground">
                 {attribution === "last"
-                  ? "Crediting the last ad clicked before an order — simplest for short sales cycles."
-                  : "Crediting the first ad that brought each customer in — good for judging what starts demand."}
+                  ? "Counts the last ad someone clicked before ordering — simplest, and right for most bakeries."
+                  : "Counts the first ad that brought a customer in — good for judging what starts demand."}
               </p>
               <div className="mt-2">
                 <div className="hidden grid-cols-[minmax(0,1fr)_88px_112px_72px] gap-3 border-b border-border pb-2 sm:grid">
@@ -435,16 +453,26 @@ export default function AnalyticsOverview() {
                 ))}
               </div>
               <p className="mt-2 text-xs text-muted-foreground">
-                Made = credits spent generating the content. ROI counts that as cost, so it's the true return.
+                Made = credits spent generating the content. ROI counts that as cost, so it&apos;s the true return.
               </p>
             </Panel>
 
-            {/* [wave-b] 同行对标 Benchmark(4 项评级;冷启动降级说清) */}
-            <Panel title="How you compare" basis="Against a public bakery-industry baseline while your peer pool grows">
+            {/* [wave-b] 同行对标 Benchmark;gap 5:每行挂口径来源,不用软指标打高分 */}
+            <Panel title="How you compare" basis="Against public industry baselines while your own peer pool grows">
               <div className="mt-2">
+                <div className="hidden grid-cols-[minmax(0,1fr)_64px_64px_76px] gap-3 border-b border-border pb-1.5 sm:grid">
+                  {["Metric", "You", "Baseline", ""].map((h, i) => (
+                    <span key={h || i} className={cn("font-mono text-[10px] font-medium tracking-[0.06em] text-muted-foreground uppercase", i > 0 && "text-right")}>
+                      {h}
+                    </span>
+                  ))}
+                </div>
                 {BENCHMARKS.map((b) => (
-                  <div key={b.metric} className="flex items-center gap-3 border-t border-border py-2.5 first:border-t-0">
-                    <span className="min-w-0 flex-1 text-sm text-foreground">{b.metric}</span>
+                  <div key={b.metric} className="flex items-center gap-3 border-t border-border py-2.5">
+                    <span className="min-w-0 flex-1">
+                      <span className="block text-sm text-foreground">{b.metric}</span>
+                      <span className="block text-[11px] text-muted-foreground">{b.source}</span>
+                    </span>
                     <span className="w-16 shrink-0 text-right text-sm font-semibold text-foreground tabular-nums">{b.you}</span>
                     <span className="w-16 shrink-0 text-right text-[13px] text-muted-foreground tabular-nums">{b.baseline}</span>
                     <span className={cn("w-[76px] shrink-0 text-right text-xs font-semibold", GRADE_STYLE[b.grade])}>{b.grade}</span>

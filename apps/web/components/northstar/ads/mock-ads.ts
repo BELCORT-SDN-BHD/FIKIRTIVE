@@ -406,3 +406,211 @@ export const NS_AD_PLATFORMS: NsAdPlatform[] = [
     params: [{ key: "Shop ID" }, { key: "Product feed" }, { key: "Campaign type" }],
   },
 ];
+
+/* ═══════════════════════════════════════════════════════════════════════════
+ * 广告钱化模型(Z8-analytics-ads-aeo · Wave C)—— 把「界面数字」翻成「生意数字」
+ *
+ * 病根(EFFECTIVENESS-LEDGER 工具 6):诊断只讲 CTR/CPC,从不换算「每单花多少/赚多少」;
+ * 动作永远只有「再造一条/换一版」,缺加预算(放量赢家)与暂停(止血输家)。
+ *
+ * 抄 GOOSEWORKS `ad-campaign-analyzer` 的「钱 + 判决 + 显著性」+ `ad-spend-allocator`
+ * 的 Efficiency Index。判断层我们自己铸(§一成色抽审五条硬标准):
+ *   ① 每个结论都从下方 NS_ADS 的确定性数字 + 产品经济学派生,可逐条指回(不拍脑袋);
+ *   ② 显著性带样本门槛(100 clicks / 30 conversions per Meta 常用口径),数据不够如实标注;
+ *   ③ 净利建立在产品价 + 烘焙成本(COGS)上 —— COGS 是「行业默认档」,冷启动前来自 Settings,
+ *      故 UI 明标「按行业默认成本估算,填入你的成本后更准」(诚实假设 + 验证法);
+ *   ④ 明确 stop/scale/hold 门槛(见 adMoneyFor 的判决规则),不是模糊「表现不错」;
+ *   ⑤ verdict 三档对上三种钱动作:Scale=加预算放量 · Optimize=修/转化 · Pause=零成本止血。
+ * ═══════════════════════════════════════════════════════════════════════════ */
+
+export interface NsAdEconomics {
+  /** 这条广告卖的产品(人话) */
+  productLabel: string;
+  /** 售价(RM) */
+  unitPriceMyr: number;
+  /** 单件烘焙成本 COGS(RM)—— 行业默认档,真实值来自 Settings */
+  unitCostMyr: number;
+  /** results 是「咨询」而非「成交」(ad-03 office bulk):不算进订单分母 */
+  isEnquiry?: boolean;
+}
+
+/** 每条广告的产品经济学(与 NS_ADS 同店同批;数字确定,便于逐条核对)。 */
+export const NS_AD_ECONOMICS: Record<string, NsAdEconomics> = {
+  "ad-01": { productLabel: "Merdeka gift box", unitPriceMyr: 68, unitCostMyr: 40 },
+  "ad-02": { productLabel: "Kaya croissant", unitPriceMyr: 8.5, unitCostMyr: 3.5 },
+  "ad-03": { productLabel: "Office bulk order", unitPriceMyr: 0, unitCostMyr: 0, isEnquiry: true },
+  "ad-04": { productLabel: "Pandan cake", unitPriceMyr: 32, unitCostMyr: 16 },
+  "ad-05": { productLabel: "Kaya croissant", unitPriceMyr: 8.5, unitCostMyr: 3.5 },
+  "ad-06": { productLabel: "Raya cookie box", unitPriceMyr: 55, unitCostMyr: 30 },
+  "ad-07": { productLabel: "Kopi tiramisu", unitPriceMyr: 18, unitCostMyr: 8 },
+  "ad-08": { productLabel: "Merdeka gift box", unitPriceMyr: 68, unitCostMyr: 40 },
+};
+
+export type NsAdVerdict = "scale" | "optimize" | "pause";
+
+export interface NsAdMoney {
+  verdict: NsAdVerdict;
+  productLabel: string;
+  unitPriceMyr: number;
+  isEnquiry: boolean;
+  /** spend ÷ results(每个结果花多少) */
+  costPerResultMyr: number;
+  /** 转化份额 ÷ 花费份额(>1 = 该加预算 / <1 = 过度投入),仅成交口径 */
+  efficiencyIndex: number;
+  /** results×(price−cost) − spend;enquiry 无此值(null) */
+  netMarginMyr: number | null;
+  /** 显著性:solid=够下结论 · thin=样本偏薄 · scarce=数据太少(诚实降权) */
+  significance: "solid" | "thin" | "scarce";
+  sampleNote: string;
+  /** evidence 顶部那行钱(人话) */
+  moneyLine: string;
+  /** verdict 主动作文案(加预算 / 暂停 / 修) */
+  actionLabel: string;
+}
+
+function myr(n: number): string {
+  return `RM ${n.toFixed(n < 10 ? 2 : 0)}`;
+}
+
+/** 账户口径:总成交单数(排除 enquiry)+ 成交广告的总花费。 */
+function accountBasis(ads: readonly NsAd[]) {
+  let purchases = 0;
+  let purchaseSpend = 0;
+  let totalSpend = 0;
+  for (const a of ads) {
+    const e = NS_AD_ECONOMICS[a.id];
+    totalSpend += a.spendMyr;
+    if (e && !e.isEnquiry) {
+      purchases += a.results;
+      purchaseSpend += a.spendMyr;
+    }
+  }
+  return { purchases, purchaseSpend, totalSpend };
+}
+
+/**
+ * 逐条广告钱化 —— 判决 + Efficiency Index + 净利 + 显著性。
+ * 判决门槛(明确、可证伪):
+ *   enquiry → optimize(把咨询转成订单);
+ *   净利 ≤ 0 → pause(在亏钱,零成本止血);
+ *   净利 > 0 且 EI ≥ 1.4 → scale(赢家,验证过就放量);
+ *   其余(赚钱但效率一般 / 疲劳)→ optimize(修一版)。
+ */
+export function adMoneyFor(ad: NsAd, ads: readonly NsAd[] = NS_ADS): NsAdMoney {
+  const e = NS_AD_ECONOMICS[ad.id] ?? { productLabel: ad.name, unitPriceMyr: 0, unitCostMyr: 0 };
+  const { purchases, totalSpend } = accountBasis(ads);
+  const isEnquiry = Boolean(e.isEnquiry);
+  const costPerResultMyr = ad.results > 0 ? ad.spendMyr / ad.results : ad.spendMyr;
+  const convShare = isEnquiry || purchases === 0 ? 0 : ad.results / purchases;
+  const spendShare = totalSpend > 0 ? ad.spendMyr / totalSpend : 0;
+  const efficiencyIndex = spendShare > 0 ? convShare / spendShare : 0;
+  const netMarginMyr = isEnquiry ? null : ad.results * (e.unitPriceMyr - e.unitCostMyr) - ad.spendMyr;
+
+  let verdict: NsAdVerdict;
+  if (isEnquiry) verdict = "optimize";
+  else if ((netMarginMyr ?? 0) <= 0) verdict = "pause";
+  else if (efficiencyIndex >= 1.4) verdict = "scale";
+  else verdict = "optimize";
+
+  // 显著性(Meta 常用门槛:CTR 看点击、CPA 看转化)
+  let significance: NsAdMoney["significance"];
+  if (ad.clicks < 100) significance = "scarce";
+  else if (!isEnquiry && ad.results < 30) significance = "thin";
+  else significance = "solid";
+  const sampleNote =
+    significance === "solid"
+      ? `Solid read — ${ad.clicks} clicks, ${ad.results} ${ad.resultLabel}.`
+      : significance === "thin"
+        ? `Fewer than 30 ${ad.resultLabel} so far — treat the cost as a strong hint, not final.`
+        : `Only ${ad.clicks} clicks — thin data. ${(netMarginMyr ?? 0) < 0 ? "But the money is plainly not converting." : "Give it more runway before judging."}`;
+
+  // 钱话一行
+  let moneyLine: string;
+  if (isEnquiry) {
+    moneyLine = `${myr(costPerResultMyr)} per enquiry — ${ad.results} people asked. None are orders yet.`;
+  } else if (verdict === "pause") {
+    const red = Math.abs(netMarginMyr ?? 0);
+    moneyLine = `${myr(costPerResultMyr)} to sell a ${myr(e.unitPriceMyr)} ${e.productLabel.toLowerCase()} — about ${myr(red)} in the red this period.`;
+  } else {
+    moneyLine = `${myr(costPerResultMyr)} to make each ${myr(e.unitPriceMyr)} sale · ${efficiencyIndex.toFixed(1)}× efficiency.`;
+  }
+
+  const actionLabel =
+    verdict === "scale"
+      ? "Put more budget behind this"
+      : verdict === "pause"
+        ? "Pause this ad"
+        : isEnquiry
+          ? "Turn these chats into orders"
+          : ad.diagnosis.action;
+
+  return {
+    verdict,
+    productLabel: e.productLabel,
+    unitPriceMyr: e.unitPriceMyr,
+    isEnquiry,
+    costPerResultMyr,
+    efficiencyIndex,
+    netMarginMyr,
+    significance,
+    sampleNote,
+    moneyLine,
+    actionLabel,
+  };
+}
+
+export interface NsAccountMoney {
+  orders: number;
+  enquiries: number;
+  revenueMyr: number;
+  totalSpendMyr: number;
+  /** 成交广告花费 ÷ 订单数(诚实分母:不把咨询摊进来) */
+  costPerOrderMyr: number;
+  /** 订单营收 ÷ 广告花费(ROAS) */
+  returnMultiple: number;
+  /** 亏钱广告的净亏总和(硬钱数);pct = 占总花费比 */
+  wasteMyr: number;
+  wastePct: number;
+  pauseCount: number;
+}
+
+/** 账户级钱化汇总(KPI 卡 + 浪费横幅 + 周报都读它)。 */
+export function accountMoney(ads: readonly NsAd[] = NS_ADS): NsAccountMoney {
+  const { purchases, purchaseSpend, totalSpend } = accountBasis(ads);
+  let revenue = 0;
+  let enquiries = 0;
+  let waste = 0;
+  let pauseCount = 0;
+  for (const a of ads) {
+    const e = NS_AD_ECONOMICS[a.id];
+    if (!e) continue;
+    if (e.isEnquiry) {
+      enquiries += a.results;
+      continue;
+    }
+    revenue += a.results * e.unitPriceMyr;
+    const m = adMoneyFor(a, ads);
+    if (m.verdict === "pause" && (m.netMarginMyr ?? 0) < 0) {
+      waste += Math.abs(m.netMarginMyr ?? 0);
+      pauseCount += 1;
+    }
+  }
+  return {
+    orders: purchases,
+    enquiries,
+    revenueMyr: revenue,
+    totalSpendMyr: totalSpend,
+    costPerOrderMyr: purchases > 0 ? purchaseSpend / purchases : 0,
+    returnMultiple: totalSpend > 0 ? revenue / totalSpend : 0,
+    wasteMyr: waste,
+    wastePct: totalSpend > 0 ? (waste / totalSpend) * 100 : 0,
+    pauseCount,
+  };
+}
+
+/** verdict 的人话名 + 语义色角色(供 UI 映射;coral 只归 Otto,这里用语义/中性)。 */
+export const NS_VERDICT_META: Record<NsAdVerdict, { label: string; tone: "scale" | "pause" | "hold" }> = {
+  scale: { label: "Scale", tone: "scale" },
+  optimize: { label: "Optimize", tone: "hold" },
+  pause: { label: "Pause", tone: "pause" },
+};

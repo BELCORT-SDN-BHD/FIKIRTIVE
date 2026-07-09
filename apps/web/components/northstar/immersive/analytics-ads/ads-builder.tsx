@@ -496,16 +496,16 @@ export default function AdsBuilder() {
                   </Panel>
                 )}
 
-                {/* [wave-b] Conversions API 接入向导:先做「是否已连接」状态展示 */}
-                <Panel title="Conversions API" basis="Sends real orders back to Meta so ads keep getting sharper" className="mt-4" stamp="Meta · setup">
+                {/* [wave-b] Conversions API 向导;stall #70:缩写换人话 + 明说是可选加分项(badge 降为中性) */}
+                <Panel title="Send real orders back to Meta (optional)" basis="An advanced extra — your ads run fine without it. Set it up and Meta learns from real sales, so ads get sharper over time." className="mt-4" stamp="Meta · optional">
                   <div className="mt-2 flex flex-wrap items-center gap-3">
-                    <Badge variant="success">Pixel connected</Badge>
-                    <Badge variant="warning">CAPI not set up</Badge>
+                    <Badge variant="success">Order tracking connected</Badge>
+                    <Badge variant="info">Sales feedback not set up yet</Badge>
                     <span className="min-w-0 flex-1 text-[13px] leading-[18px] text-muted-foreground">
-                      A guided setup — no developer docs. We&apos;ll walk you through it step by step.
+                      A guided setup — no developer docs, no code. Optional; skip it and everything still works.
                     </span>
                     <Button variant="secondary" size="sm">
-                      Start setup
+                      Set it up later
                     </Button>
                   </div>
                 </Panel>

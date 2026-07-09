@@ -18,6 +18,7 @@ import { usePathname, useRouter } from "next/navigation";
 import {
   BarChart3,
   Bell,
+  Bot,
   BookOpen,
   CalendarDays,
   Clapperboard,
@@ -102,6 +103,7 @@ export const NAV_SECTIONS: NavSection[] = [
     items: [
       { label: "Overview", icon: BarChart3, href: `${BASE}/analytics/overview` },
       { label: "Reports", icon: FileBarChart, href: `${BASE}/analytics/reports` },
+      { label: "AI visibility", icon: Bot, href: `${BASE}/analytics/aeo` },
       { label: "Ads", icon: Target, href: `${BASE}/ads/performance` },
     ],
   },

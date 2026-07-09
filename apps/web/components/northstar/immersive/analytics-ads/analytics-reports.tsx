@@ -37,7 +37,7 @@ import {
   fmtMoney,
 } from "@/components/northstar/analytics/zone-kit";
 import { NsLineChart } from "@/components/northstar/analytics/line-chart";
-import { NS_AD_ACCOUNT, NS_ADS } from "@/components/northstar/ads/mock-ads";
+import { NS_AD_ACCOUNT, NS_ADS, accountMoney, adMoneyFor } from "@/components/northstar/ads/mock-ads";
 import {
   cancelReportSubscription,
   creditSpendByCategory,
@@ -45,6 +45,7 @@ import {
   scheduleReport,
   useStore,
 } from "@/components/northstar/immersive/_store";
+import { OttoAssist } from "../otto-assist";
 import { AnalyticsNav, PinnedHeader, ZoneBody } from "./kit";
 
 // 读面型生命周期:build 只读已加载的本地对象面(红旗二无新表),不发生真实失败 —— 故无 error 态。
@@ -62,6 +63,7 @@ const CADENCES = [
 
 /** 报表块注册:每块只读一个现有对象面(红旗二:报表自身无新表) */
 const BLOCKS = [
+  { id: "results", label: "Results (orders + return)", source: "reads Ads" },
   { id: "kpis", label: "Overview KPIs", source: "reads Analytics" },
   { id: "reach", label: "Reach chart", source: "reads Analytics" },
   { id: "ads", label: "Ad results", source: "reads Ads" },
@@ -71,12 +73,58 @@ const BLOCKS = [
 ] as const;
 type BlockId = (typeof BLOCKS)[number]["id"];
 
-const BUILD_STEPS = ["Reading your analytics…", "Pulling ad results…", "Writing the weekly read…"] as const;
+const BUILD_STEPS = ["Reading your orders + spend…", "Ranking ads by return…", "Writing this week's orders…"] as const;
 
-/** GM-04 周报语气(O-07):人话、有温度、不夸张,数字全部可回指 mock */
-const WEEKLY_READ =
-  "A good week. Reach climbed 18% and your Sunday croissant reels did most of the lifting. " +
-  "One ad has gone stale, worth a refresh before Merdeka week. Nothing else needs your attention.";
+/** 周报指挥式(GM-04 人话 + `periodic-sales-performance-review` 的三件套骨架):
+ * 不是「一切安好」的安慰,是四条点名的指令 —— Keep / Stop today / Fix today / Approve next。
+ * 内容从真实钱化派生(点名哪条广告怎么改),下滑就说下滑(link clicks −4% 不藏)。 */
+type DirectiveLane = { key: "keep" | "stop" | "fix" | "approve"; label: string; body: string };
+
+function weeklyDirective(): DirectiveLane[] {
+  const cur = NS_AD_ACCOUNT.currencyPrefix;
+  const scored = NS_ADS.map((a) => ({ ad: a, m: adMoneyFor(a, NS_ADS) }));
+  const keep = scored
+    .filter((r) => r.m.verdict === "scale")
+    .sort((a, b) => b.m.efficiencyIndex - a.m.efficiencyIndex)[0];
+  const stop = scored
+    .filter((r) => r.m.verdict === "pause")
+    .sort((a, b) => (a.m.netMarginMyr ?? 0) - (b.m.netMarginMyr ?? 0))[0];
+
+  const lanes: DirectiveLane[] = [];
+  if (keep) {
+    lanes.push({
+      key: "keep",
+      label: "Keep running",
+      body: `${keep.ad.name} — ${fmtMoney(cur, keep.m.costPerResultMyr)} a sale, your best converter this week (${keep.m.efficiencyIndex.toFixed(1)}× efficiency). Lifting its budget.`,
+    });
+  }
+  if (stop) {
+    const red = Math.abs(stop.m.netMarginMyr ?? 0);
+    lanes.push({
+      key: "stop",
+      label: "Stop today",
+      body: `${stop.ad.name} — ${fmtMoney(cur, stop.m.costPerResultMyr)} to sell a ${fmtMoney(cur, stop.m.unitPriceMyr)} item, about ${fmtMoney(cur, red)} in the red. Pause it; it's the biggest leak.`,
+    });
+  }
+  lanes.push({
+    key: "fix",
+    label: "Fix today",
+    body: "Link clicks slipped 4% — more people saw you, fewer clicked through to order. Your next reel needs a clearer \"order now\" line. Clicks are the one number that predicts sales, so this matters.",
+  });
+  lanes.push({
+    key: "approve",
+    label: "Approve next",
+    body: "A B2B corporate-gifting post for Merdeka — your Raya data shows Facebook drove the bulk orders, and there's no B2B post planned yet. Waiting on your yes.",
+  });
+  return lanes;
+}
+
+const DIRECTIVE_STYLE: Record<DirectiveLane["key"], { dot: string; label: string }> = {
+  keep: { dot: "bg-success", label: "text-success-soft-foreground" },
+  stop: { dot: "bg-error", label: "text-error-soft-foreground" },
+  fix: { dot: "bg-warning", label: "text-warning-soft-foreground" },
+  approve: { dot: "bg-[var(--human)]", label: "ns-human-text" },
+};
 
 /* [wave-b] 属性级创意归因:LLM 给已发布素材打属性标签 × 表现,轻量相关性 */
 const CREATIVE_ATTRIBUTES = [
@@ -97,10 +145,12 @@ function ReportStat({ label, value, delta }: { label: string; value: string; del
 }
 
 export default function AnalyticsReports() {
-  const [phase, setPhase] = React.useState<Phase>("empty");
+  // stall #12:首访即 building → 自动呈现一份默认周报(答案先行),无需老板先当组装工
+  const [phase, setPhase] = React.useState<Phase>("building");
   const [period, setPeriod] = React.useState<string>("week");
   const [cadence, setCadence] = React.useState<string>("weekly");
   const [blocks, setBlocks] = React.useState<Record<BlockId, boolean>>({
+    results: true,
     kpis: true,
     reach: true,
     ads: true,
@@ -110,7 +160,7 @@ export default function AnalyticsReports() {
   });
   const [branded, setBranded] = React.useState(true);
   const [ottoRead, setOttoRead] = React.useState(true);
-  const [buildId, setBuildId] = React.useState(0);
+  const [buildId, setBuildId] = React.useState(1);
   const [sweepKey, setSweepKey] = React.useState(0);
   const [downloading, setDownloading] = React.useState(false);
   const [barFull, setBarFull] = React.useState(false);
@@ -121,7 +171,12 @@ export default function AnalyticsReports() {
 
   const anyBlock = Object.values(blocks).some(Boolean);
   const publishedPosts = NS_SCHEDULED_POSTS.filter((p) => p.status === "published");
-  const topAds = [...NS_ADS].sort((a, b) => b.ctr - a.ctr).slice(0, 3);
+  const cur = NS_AD_ACCOUNT.currencyPrefix;
+  const acct = accountMoney(NS_ADS);
+  const directive = weeklyDirective();
+  // 广告块按「回本」排(而非 CTR),带 verdict:回答「该留还是该停」
+  const rankedAds = NS_ADS.map((a) => ({ ad: a, m: adMoneyFor(a, NS_ADS) }))
+    .sort((a, b) => (b.m.netMarginMyr ?? -Infinity) - (a.m.netMarginMyr ?? -Infinity));
   const periodLabel = PERIODS.find((p) => p.key === period)?.label ?? "";
   const cadenceLabel = CADENCES.find((c) => c.key === cadence)?.label ?? "";
   const reportName = `${NS_BRAND.name} report`;
@@ -217,16 +272,62 @@ export default function AnalyticsReports() {
                     </span>
                   </label>
                   <label className="flex min-h-11 cursor-pointer items-center gap-3 border-t border-border py-2">
-                    <Switch checked={ottoRead} onCheckedChange={setOttoRead} aria-label="Otto's weekly read" />
+                    <Switch checked={ottoRead} onCheckedChange={setOttoRead} aria-label="Otto's this-week orders" />
                     <span className="min-w-0 flex-1">
-                      <span className="block text-sm text-foreground">Otto&apos;s weekly read</span>
-                      <span className="block text-xs text-muted-foreground">Two sentences in plain words, no jargon</span>
+                      <span className="block text-sm text-foreground">Otto&apos;s this-week orders</span>
+                      <span className="block text-xs text-muted-foreground">Keep / stop / fix / approve — named, in plain words</span>
                     </span>
                   </label>
                 </div>
               </div>
 
-              <Button className="mt-5 w-full" size="sm" disabled={phase === "building" || !anyBlock} onClick={startBuild}>
+              {/* §O7 Otto 帮我:替老板配一版报告(stall #27) */}
+              <div className="mt-4 flex justify-end">
+                <OttoAssist
+                  zone="Analytics"
+                  entityLabel="Report builder"
+                  label="Ask Otto to set it up"
+                  formState={{ blocks, branded, ottoRead, period }}
+                  intents={[
+                    {
+                      id: "client-clean",
+                      label: "A clean version for a client",
+                      prompt: "Set up a clean report I can send a client — results, the reach chart, and my best ads.",
+                      reply:
+                        "Done — I turned on Results, Reach and Ad results, kept the branded header, and left credit spend off (clients don't need your costs). Build it when you're ready.",
+                      apply: {
+                        summary: "Client version — Results + Reach + Ads, branded",
+                        patch: { preset: "client" },
+                      },
+                    },
+                    {
+                      id: "just-orders",
+                      label: "Just this week's orders",
+                      prompt: "I only want to see what to do this week — the orders and the directive.",
+                      reply:
+                        "Set it to Results plus my this-week orders (keep / stop / fix / approve) and nothing else. That's your 30-second read.",
+                      apply: {
+                        summary: "Orders + directive only",
+                        patch: { preset: "orders" },
+                      },
+                    },
+                  ]}
+                  onApply={(a) => {
+                    const preset = (a.patch as { preset?: string }).preset;
+                    if (preset === "client") {
+                      setBlocks({ results: true, kpis: true, reach: true, ads: true, creative: false, posts: true, credits: false });
+                      setBranded(true);
+                      setOttoRead(true);
+                    } else if (preset === "orders") {
+                      setBlocks({ results: true, kpis: false, reach: false, ads: false, creative: false, posts: false, credits: false });
+                      setOttoRead(true);
+                    }
+                    toast("Report set up", { description: a.summary });
+                  }}
+                />
+              </div>
+
+              <Button className="mt-2 w-full" size="sm" disabled={phase === "building" || !anyBlock} onClick={startBuild}>
                 {phase === "building" ? "Building…" : phase === "ready" ? "Rebuild report" : "Build report"}
               </Button>
               {!anyBlock && <p className="mt-2 text-xs text-muted-foreground">Pick at least one block first.</p>}
@@ -353,10 +454,38 @@ export default function AnalyticsReports() {
                     </div>
                   )}
 
+                  {/* Results 顶到最上:订单 / 营收 / 回报(读的是钱,不是虚荣数) */}
+                  {blocks.results && (
+                    <div className="mt-4 rounded-[14px] border border-border bg-background p-4">
+                      <h3 className="text-sm font-semibold text-foreground">Results from your ads</h3>
+                      <div className="mt-2 grid grid-cols-3 gap-3">
+                        <ReportStat label="Orders" value={String(acct.orders)} delta={`+ ${acct.enquiries} enquiries`} />
+                        <ReportStat label="Sales" value={fmtMoney(cur, acct.revenueMyr)} delta={`${fmtMoney(cur, acct.totalSpendMyr)} spent`} />
+                        <ReportStat label="Return" value={`${acct.returnMultiple.toFixed(1)}×`} delta={`${fmtMoney(cur, acct.costPerOrderMyr)} / order`} />
+                      </div>
+                    </div>
+                  )}
+
+                  {/* 周报指挥式:Keep / Stop today / Fix today / Approve next(点名广告,下滑照说) */}
                   {ottoRead && (
-                    <div className="mt-4 flex items-start gap-3 rounded-[14px] bg-secondary/70 p-4">
-                      <OttoAvatar size={22} mood="helpful" />
-                      <p className="min-w-0 flex-1 text-sm leading-[1.5] text-foreground">{WEEKLY_READ}</p>
+                    <div className="mt-4 rounded-[14px] bg-secondary/70 p-4">
+                      <div className="flex items-center gap-2">
+                        <OttoAvatar size={22} mood="helpful" />
+                        <span className="text-sm font-semibold text-foreground">This week — what to do</span>
+                      </div>
+                      <ul className="mt-3 flex flex-col gap-2.5">
+                        {directive.map((lane) => {
+                          const s = DIRECTIVE_STYLE[lane.key];
+                          return (
+                            <li key={lane.key} className="flex items-start gap-2.5">
+                              <span aria-hidden className={cn("mt-1.5 size-2 shrink-0 rounded-full", s.dot)} />
+                              <span className="min-w-0 flex-1 text-[13px] leading-[18px] text-foreground">
+                                <span className={cn("font-semibold", s.label)}>{lane.label}:</span> {lane.body}
+                              </span>
+                            </li>
+                          );
+                        })}
+                      </ul>
                     </div>
                   )}
 
@@ -382,14 +511,27 @@ export default function AnalyticsReports() {
                   {blocks.ads && (
                     <div className="mt-5">
                       <h3 className="text-sm font-semibold text-foreground">Ad results</h3>
-                      <p className="text-xs text-muted-foreground">Your 3 best ads of {NS_ADS.length} · by click-through rate</p>
+                      <p className="text-xs text-muted-foreground">All {NS_ADS.length} ads · ranked by what each earned this period · keep or stop</p>
                       <div className="mt-2">
-                        {topAds.map((ad) => (
+                        {rankedAds.map(({ ad, m }) => (
                           <div key={ad.id} className="flex items-baseline gap-3 border-t border-border py-2.5 first:border-t-0">
                             <span className="min-w-0 flex-1 truncate text-sm font-semibold text-foreground">{ad.name}</span>
-                            <span className="shrink-0 text-sm font-semibold text-foreground tabular-nums">{ad.ctr.toFixed(1)}% CTR</span>
-                            <span className="w-24 shrink-0 text-right text-sm text-muted-foreground tabular-nums">
-                              {fmtMoney(NS_AD_ACCOUNT.currencyPrefix, ad.spendMyr)}
+                            <span
+                              className={cn(
+                                "shrink-0 text-sm font-semibold tabular-nums",
+                                m.netMarginMyr === null
+                                  ? "text-muted-foreground"
+                                  : m.netMarginMyr >= 0
+                                    ? "text-success-soft-foreground"
+                                    : "text-error-soft-foreground",
+                              )}
+                            >
+                              {m.netMarginMyr === null
+                                ? "enquiries"
+                                : `${m.netMarginMyr >= 0 ? "+" : "−"}${fmtMoney(cur, Math.abs(m.netMarginMyr))}`}
+                            </span>
+                            <span className="w-16 shrink-0 text-right text-xs font-semibold text-muted-foreground">
+                              {m.verdict === "scale" ? "Keep" : m.verdict === "pause" ? "Stop" : "Fix"}
                             </span>
                           </div>
                         ))}

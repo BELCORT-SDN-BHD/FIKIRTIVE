@@ -26,6 +26,7 @@ export const ANALYTICS_ADS_BASE = BASE;
 const ANALYTICS_VIEWS = [
   { href: `${BASE}/analytics/overview`, label: "Overview", match: (p: string) => p === `${BASE}/analytics/overview` },
   { href: `${BASE}/analytics/reports`, label: "Reports", match: (p: string) => p === `${BASE}/analytics/reports` },
+  { href: `${BASE}/analytics/aeo`, label: "AI visibility", match: (p: string) => p === `${BASE}/analytics/aeo` },
   { href: `${BASE}/ads/performance`, label: "Ads", match: (p: string) => p.startsWith(`${BASE}/ads/`) },
 ] as const;
 
