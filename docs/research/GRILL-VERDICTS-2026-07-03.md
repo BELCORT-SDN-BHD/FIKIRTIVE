@@ -215,3 +215,12 @@
 | X(Twitter)发布收费 | **方案 A 拍板** | 发推不带链接 = **1 显示 credit/条**;带链接 = **4 显示 credits/条**。founder:"可以的,要算好就行"。口径确认:**1 USD = 10 显示 credits**。数字进 config 层(宪法 5),毛利以 costing 核算为准。 |
 | Campaign 专属工作台 + 趋势数据层 | **要,纳入 C 线 spec**(founder 口述) | ①专属结构化入口 —— founder:"没有可能让 user 直接和 OTTO 随机聊天然后 prompt 到……直接做一个专属这个 feature 的地方":Campaign 区自己的房间,表单发起 + 日历工作台,按钮与 Otto 走同一动作层(O-12);②趋势数据层 —— founder:"设计要如何消化储存那些 trends 或任何数据,方便未来 otto refer":TrendSnapshot 最薄存储(缝 5,ownerId 隔离)。两条已增补进 `docs/superpowers/specs/2026-07-08-otto-campaign-planner-design.md` §五 |
 | 全产品 UX 原则:live reflection | **定调**(founder 与总审查员共同结论,2026-07-07) | Otto 经**动作层**操作(headless,毫秒级、确定性)+ **UI 实时反映**(推送/即时刷新 + coral 高亮 + 一行叙述);**不做 computer-use 式像素操作**(慢/脆/lag —— founder 的担心成立)。视觉效果 = 用户"看着 Otto 在界面上干活",工程本质 = headless 操作 + live UI reflection。吐槽清单头号痛点(生成完成但界面不刷新)与此同根 —— 修它 = 给这个愿景打地基。既有依据:宪法 7 的 O-12(就地按钮 = Otto 的手)与上下文桥 |
+
+## 2026-07-10 双脑对谈批(founder 逐条口裁)
+
+- **定位语(founder 原话)**:"FIKIRTIVE 不一样的地方是,我们能集中全部渠道,能做出大局观。" —— 对平台免费 agent(Meta Business Agent 等)的可守位置:替商家打工不替平台打工,跨渠道大局观是单一平台永远给不了的。
+- **释宪 v2.10(已开 #206 待 founder 亲合)**:平台官方协议(含平台 MCP)作为我方消费接口、经自家动作层调用,不在"对外 MCP"禁区。
+- **定价**:维持现行 credits 模式,不做双轨实验("目前就走原本的就好")。
+- **回执与税务疑虑**:判"多想了" —— 不做恐惧化设计;**商家数据安全本来就是 FIKIRTIVE 的卖点,直接讲**。
+- **收件箱法务**:"不会有大问题,直接做就行" —— 执行口径:先走零成本路径(BSP 伙伴合规指引+条款自审),真要花律师钱时按宪法 2 逐笔报价。
+- **品牌三版 A/B 与点亮闭环形状**:待 founder 听完人话解释后裁(见双脑备忘录决策①⑥)。
