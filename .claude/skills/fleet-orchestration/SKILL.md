@@ -60,11 +60,13 @@ Workflow 工具要点:`meta` 纯字面量;默认 `pipeline()`,只有真需要全
 
 ```bash
 codex exec --skip-git-repo-check -c model_reasoning_effort=<low|medium|high|xhigh> "<工单>"
-# 对抗审查模板:
-codex exec -C <repo> "You are an adversarial reviewer. Review diff <range> for real defects only
-(correctness, money paths, state bugs). Try to REFUTE that this code is correct.
-Output: file:line + defect + concrete failure scenario. No style nits."
 ```
+
+**第四闸标准流程(每次大舰队 Ship 前平行点火,实战版 2026-07-09)**:
+1. 时机:质检打分收尾后、founder 验收前,与部署收尾**平行**跑(不占关键路径);Bash `run_in_background` 发射。
+2. 工单形状(实战验证过的五类靶子,按严重度排):①**状态该写没写**(UI 文案宣称效果但 store 从未落数据 = 表面联通,founder 最恨)②断头链接/不存在的路由与参数 ③引用不存在的 mock id / 写死数字与数据源打架 ④React 正确性(unstable key/依赖缺失/hydration)⑤持 useState 私藏 mock 副本违反 store 单源。
+3. 硬约束写进工单:READ ONLY 不许改代码;唯一允许的写 = 把发现输出到指定报告文件;**禁风格意见、禁重构建议**;每条 = file:line + 缺陷 + 用户点击时会踩到的具体失败场景;结尾按严重度计数。
+4. 交卷后**总指挥逐条甄别**:真缺陷 → 修复工单(走城/上线前修掉);误报 → 驳回。给 founder 的汇报带"采纳/驳回判决"。
 
 - 计费走 founder 的 ChatGPT 订阅(priority tier),非逐笔钱路;**重活(整分支审查/长跑)先跟 founder 打一声招呼**,别烧光他的 plan 限额。
 - repo 规矩对 Codex 一视同仁:永不推 main、PR+CI 绿灯、playbook 检查单。
