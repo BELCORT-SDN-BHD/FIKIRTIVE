@@ -70,7 +70,7 @@ export const SNIPPETS: NsSnippet[] = [
   { id: "sn-hours", shortcut: "/hours", title: "Pickup hours", text: "We're open 9am–6pm daily. Fresh bakes are out by 8am and popular items sell out by noon 🥐", usedThisWeek: 23 },
   { id: "sn-deliver", shortcut: "/deliver", title: "Delivery info", text: `We deliver across ${NS_BRAND.city} — RM8 flat within 10km, free over RM120. Pickup is free from the shop.`, usedThisWeek: 19 },
   { id: "sn-pay", shortcut: "/pay", title: "How to pay", text: "We take DuitNow QR, bank transfer, and cash on pickup. For orders over RM200 we ask for a 50% deposit.", usedThisWeek: 14 },
-  { id: "sn-halal", shortcut: "/halal", title: "Halal", text: `Everything at ${NS_BRAND.name} is halal — our kitchen is pork- and alcohol-free.`, usedThisWeek: 12 },
+  { id: "sn-halal", shortcut: "/halal", title: "Halal", text: "Our bakes are pork-free and alcohol-free. We're not JAKIM-certified yet — for strict certified-halal requirements, please confirm before ordering.", usedThisWeek: 12 },
   { id: "sn-thanks", shortcut: "/thanks", title: "Thank you", text: "Terima kasih for your order! We'll have it fresh and ready for you 💛", usedThisWeek: 31 },
   { id: "sn-deposit", shortcut: "/deposit", title: "Deposit ask", text: "To lock in this order we take a 50% deposit — DuitNow QR works great. I'll confirm the moment it's in 🙏", usedThisWeek: 8 },
 ];

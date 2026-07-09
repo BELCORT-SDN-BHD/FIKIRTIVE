@@ -1779,7 +1779,7 @@ function ClarifyCard({
         {clarify.step === -1 ? (
           <>
             <p className="mt-1.5 text-sm text-foreground">
-              Sounds like a <span className="font-semibold capitalize">{clarify.intent}</span> job. Right, or something else?
+              Sounds like{/^[aeiou]/i.test(clarify.intent) ? " an " : " a "}<span className="font-semibold capitalize">{clarify.intent}</span> job. Right, or something else?
             </p>
             <div className="mt-2 flex flex-wrap gap-1.5">
               {(["image", "edit", "video"] as AgentIntent[]).map((it) => (

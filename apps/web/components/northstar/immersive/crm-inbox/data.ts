@@ -296,7 +296,7 @@ export const KNOWLEDGE: NsKnowledgeEntry[] = [
   {
     id: "kb-01",
     question: "Is everything halal?",
-    answer: `Yes — everything at ${NS_BRAND.name} is halal. Our kitchen is pork- and alcohol-free.`,
+    answer: "Our bakes are pork-free and alcohol-free. We are not JAKIM-certified yet — for strict certified-halal requirements, please confirm before ordering.",
     category: "Brand",
     usedThisWeek: 12,
   },

@@ -102,7 +102,7 @@ export interface MemoryFact {
 
 export const MEMORY_FACTS: MemoryFact[] = [
   { id: "mf-01", text: "Family-run bakery in Bangsar, baking since 2019.", tab: "about", source: "owner", addedAt: "2026-06-12" },
-  { id: "mf-02", text: "Halal-certified kitchen. Certificate renewed March 2026.", tab: "about", source: "owner", addedAt: "2026-06-12" },
+  { id: "mf-02", text: "Pork-free and alcohol-free kitchen. Not JAKIM-certified yet — confirm before ordering if a customer needs strict certified-halal.", tab: "about", source: "owner", addedAt: "2026-06-12" },
   { id: "mf-03", text: "Pickup at the shop or Lalamove delivery within KL.", tab: "about", source: "otto", addedAt: "2026-07-05" },
   { id: "mf-04", text: "Best known for the pandan gula melaka cake. It sells out most weekends.", tab: "about", source: "otto", addedAt: "2026-07-05" },
   { id: "mf-05", text: "Warm cream and pandan green. Film-grain photos, never studio-flat.", tab: "look", source: "owner", addedAt: "2026-06-14" },
@@ -111,7 +111,7 @@ export const MEMORY_FACTS: MemoryFact[] = [
   { id: "mf-08", text: "10% off pre-orders placed before Friday 6pm.", tab: "offers", source: "owner", addedAt: "2026-07-01" },
   { id: "mf-09", text: "Free delivery within KL for orders above RM150.", tab: "offers", source: "owner", addedAt: "2026-06-20" },
   { id: "mf-10", text: "Raya cookie gift box early-bird price until 15 Aug.", tab: "offers", source: "otto", addedAt: "2026-07-06" },
-  { id: "mf-11", text: "Do mention halal certification when a customer asks.", tab: "rules", source: "owner", addedAt: "2026-06-12" },
+  { id: "mf-11", text: "When asked about halal, say we're pork-free and alcohol-free but not JAKIM-certified yet — confirm before ordering for strict certified-halal.", tab: "rules", source: "owner", addedAt: "2026-06-12" },
   { id: "mf-12", text: "Do reply in the language the customer used.", tab: "rules", source: "owner", addedAt: "2026-06-12" },
   { id: "mf-13", text: "Don't promise same-day custom cakes. Minimum 3 days notice.", tab: "rules", source: "owner", addedAt: "2026-06-15" },
   { id: "mf-14", text: "Don't offer discounts beyond the published offers.", tab: "rules", source: "owner", addedAt: "2026-06-15" },

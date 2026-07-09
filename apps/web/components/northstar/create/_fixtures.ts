@@ -48,19 +48,19 @@ export const CV_SEED_OBJECTS: CvObject[] = [
   {
     id: "cv-img-1", ref: "Image 1", kind: "image", title: "Merdeka box hero shot",
     prompt: "Overhead studio shot of a festive Malaysian cookie gift box, warm morning light, red and white ribbon, marble table",
-    src: cvImage("image", 5),
+    src: cvImage("image", 14),
     x: 40, y: 60, w: 224, h: 224, status: "ready", credits: 12,
   },
   {
     id: "cv-img-2", ref: "Image 2", kind: "image", title: "Hero shot · warmer light",
     prompt: "Same gift box, golden hour side light, steam rising from fresh bakes in the background",
-    src: cvImage("image", 12),
+    src: cvImage("image", 17),
     x: 320, y: 24, w: 200, h: 200, status: "ready", parentId: "cv-img-1", fork: "A", credits: 12,
   },
   {
     id: "cv-img-3", ref: "Image 3", kind: "image", title: "Hero shot · top-down flat lay",
     prompt: "Same gift box, top-down flat lay with scattered cookies and batik cloth",
-    src: cvImage("image", 20),
+    src: cvImage("image", 10),
     x: 320, y: 260, w: 200, h: 200, status: "ready", parentId: "cv-img-1", fork: "B", credits: 12,
   },
   {

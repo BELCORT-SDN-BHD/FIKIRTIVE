@@ -157,7 +157,7 @@ export function ImmersiveHome() {
       <div className="mt-5 flex flex-wrap items-center gap-3 rounded-[var(--radius-card)] border border-brand-soft bg-brand-soft/50 px-4 py-3.5">
         <OttoAvatar size={32} mood="helpful" />
         <span className="min-w-0 flex-1 basis-64 text-sm leading-[1.45] text-brand-soft-foreground">
-          {NS_ANALYTICS.insight} Want me to turn that into this week&apos;s posts?
+          {NS_ANALYTICS.insight}{" "}Want me to turn that into this week&apos;s posts?
         </span>
         <Button
           variant="brand"

@@ -378,7 +378,7 @@ export default function AdsPerformance() {
               <div className="flex items-start gap-2 rounded-[12px] bg-warning-soft/60 px-4 py-2.5">
                 <Flame className="mt-0.5 size-4 shrink-0 text-warning-soft-foreground" strokeWidth={2} />
                 <p className="text-[13px] leading-[18px] text-foreground">
-                  {fatiguedCount} {fatiguedCount === 1 ? "ad has" : "ads have"} gone stale — open the row to see Otto&apos;s
+                  {fatiguedCount} {fatiguedCount === 1 ? "ad has" : "ads have"}{" "}gone stale — open the row to see Otto&apos;s
                   read and make a fresh version.
                 </p>
               </div>
