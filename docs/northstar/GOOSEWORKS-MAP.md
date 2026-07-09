@@ -658,3 +658,5 @@ playbooks)。第一节是 Wave C 内容工程的直接施工素材;第二节供 
 4. 明确的 **stop/scale/hold 门槛** 与不确定性标注(置信度 高/中/低);
 5. 预测/外推必须有估算模型,不许拍脑袋数字。
 质检官对内容工程判"站得住"时,以上五条逐条验。
+
+> **金标准参考**:`docs/northstar/REFERENCE-PROPOSAL-MERDEKA.md`(Sol 试工卷,评 A)—— Campaign 提案内容工程与质检以它为对照样。
