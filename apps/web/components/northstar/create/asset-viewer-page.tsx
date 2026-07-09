@@ -21,7 +21,13 @@ import {
 import { cn } from "@/lib/utils";
 import { useInsideImmersive } from "../immersive/_context";
 import { useQueryParam } from "../immersive/_kit";
-import { ottoWorking as setOttoWorking, spendCredits } from "../immersive/_store";
+import {
+  brandPreferences,
+  ottoWorking as setOttoWorking,
+  setBrandPreference,
+  spendCredits,
+  useStore,
+} from "../immersive/_store";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { MockNote, OttoNarrationBar } from "../_shared";
@@ -30,16 +36,19 @@ import { CV_ALL_SEED_OBJECTS, NS_VIEWER_ASSET, NS_VIEWER_FRAMES, NS_VIEWER_VERSI
 import {
   DemoStateBar,
   ErrorPanel,
+  FeedbackControls,
   LAND_STYLE,
   SectionLabel,
   Skeleton,
   SWEEP_STYLE,
   useCreateKeyframes,
   type DemoState,
+  type FeedbackValue,
 } from "./_create-ui";
 
 export function AssetViewerPage() {
   useCreateKeyframes();
+  useStore();
   const insideImmersive = useInsideImmersive();
   // 深链 ?asset=<id> → 展示那个画布对象;缺省回到示意资产(GOAL §4)
   const assetId = useQueryParam("asset");
@@ -68,6 +77,17 @@ export function AssetViewerPage() {
   React.useEffect(() => () => timersRef.current.forEach((t) => window.clearTimeout(t)), []);
 
   const active = versions.find((v) => v.id === activeVersion) ?? versions[0];
+
+  // 连接器 O-04:赞/踩状态从共享 store 派生(回来仍记得),onChange 回灌 brand-memory。
+  const pref = brandPreferences().find((p) => p.assetTitle === view.title && p.source === "Asset viewer");
+  const feedback: FeedbackValue = pref ? (pref.feedback === "like" ? "up" : "down") : null;
+  const rate = (v: FeedbackValue) =>
+    setBrandPreference({
+      assetId: view.id,
+      assetTitle: view.title,
+      source: "Asset viewer",
+      feedback: v === "up" ? "like" : v === "down" ? "dislike" : null,
+    });
 
   const continueWrite = (note: string) => {
     if (working) return;
@@ -300,6 +320,14 @@ export function AssetViewerPage() {
             <div className="rounded-[14px] border border-border bg-card p-4">
               <SectionLabel>Prompt</SectionLabel>
               <p className="mt-2 text-[13px] leading-[18px] text-foreground">{view.prompt}</p>
+            </div>
+            {/* 连接器 O-04:赞/踩 → Otto 学一条偏好,回灌 Brand memory */}
+            <div className="rounded-[14px] border border-border bg-card p-4">
+              <SectionLabel>Rate this take</SectionLabel>
+              <FeedbackControls className="mt-2" value={feedback} onChange={rate} />
+              <p className="mt-2 text-[11px] leading-4 text-muted-foreground">
+                Otto remembers this in Brand memory and leans your way next time.
+              </p>
             </div>
           </aside>
         </div>

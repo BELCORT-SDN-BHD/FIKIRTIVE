@@ -23,6 +23,8 @@ import {
 } from "@/components/ui/dialog";
 import { DemoStateBar, ErrorPanel, GenBar, OttoMark, SearchField, SegChips, SkeletonGrid, type DemoState } from "@/components/northstar/assets/_zone";
 import { GEN_RECORDS, LIBRARY_DAY_LABELS, type GenRecord } from "@/components/northstar/assets/_data";
+import { FeedbackControls, type FeedbackValue } from "@/components/northstar/create/_create-ui";
+import { brandPreferences, setBrandPreference, useStore } from "@/components/northstar/immersive/_store";
 import { EmptyState, MockNote, PageHeader } from "@/components/northstar/_shared";
 
 const KIND_FILTERS = [
@@ -41,6 +43,7 @@ const KIND_ICONS: Record<GenRecord["kind"], React.ComponentType<{ className?: st
 const DAY_ORDER: GenRecord["day"][] = ["today", "yesterday", "earlier"];
 
 export default function Page() {
+  useStore();
   const [demo, setDemo] = React.useState<DemoState>("normal");
   const [kind, setKind] = React.useState("all");
   const [query, setQuery] = React.useState("");
@@ -52,6 +55,12 @@ export default function Page() {
       (query.trim() === "" || r.title.toLowerCase().includes(query.trim().toLowerCase())),
   );
   const open = GEN_RECORDS.find((r) => r.id === openId) ?? null;
+
+  // 连接器 O-04:详情弹窗赞/踩 → Otto 学一条偏好,回灌 Brand memory(状态从共享 store 派生)。
+  const openPref = open
+    ? brandPreferences().find((p) => p.assetTitle === open.title && p.source === "Library")
+    : null;
+  const openFeedback: FeedbackValue = openPref ? (openPref.feedback === "like" ? "up" : "down") : null;
 
   return (
     <div className="mx-auto flex min-h-full w-full max-w-[1280px] flex-col px-6 pt-6 pb-10">
@@ -149,6 +158,26 @@ export default function Page() {
                     <dd className="font-medium text-foreground">{open.byOtto ? "Otto" : "You"}</dd>
                   </div>
                 </dl>
+                {/* 连接器 O-04:赞/踩 → Otto 学一条偏好,回灌 Brand memory */}
+                <div className="flex items-center justify-between gap-3 rounded-[14px] border border-border bg-card p-3">
+                  <div className="min-w-0">
+                    <p className="text-[13px] font-medium text-foreground">Was this a good result?</p>
+                    <p className="text-[11px] leading-4 text-muted-foreground">
+                      Otto remembers it in Brand memory.
+                    </p>
+                  </div>
+                  <FeedbackControls
+                    value={openFeedback}
+                    onChange={(v) =>
+                      setBrandPreference({
+                        assetId: open.id,
+                        assetTitle: open.title,
+                        source: "Library",
+                        feedback: v === "up" ? "like" : v === "down" ? "dislike" : null,
+                      })
+                    }
+                  />
+                </div>
               </div>
               <DialogFooter>
                 <Button variant="secondary" onClick={() => setOpenId(null)}>

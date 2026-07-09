@@ -37,6 +37,7 @@
 - `adSubmissions()` —— 待审广告事件(广告区 submit 派生;performance 待审 chip + multi-platform「审核中」读它)。
 - `creditSpendByCategory()` —— 从 `creditLedger` 派生的分类消费(分析区报表读它,取代手抄常量)。
 - `ottoBehavior()` —— Otto 行为设置(自主级别 / 花费确认阈值 / 勿扰时段);账户 · Otto 行为面写它,dock 读它反映作风。
+- `brandPreferences()` —— Otto 从赞/踩学到的品牌偏好(最新在前;资产区 brand-memory「Otto 学到的偏好」区读它,带来源)。
 
 ## 动作(纯函数:改 store + append event + notify;做一次到处生效)
 `spendCredits(n,label,category?)` · `topUp(n)` · `schedulePost(post)` ·
@@ -46,7 +47,8 @@
 `submitAd(payload)`(payload 带 platform/label,派生「审核中」)· `castTrained(name)`(cast 训练完成落事件流)· `ottoWorking(on,label?)` ·
 `appendChatMessage(threadId,msg)` · `startChatThread(title?)` · `setCampaignDraft(draft)`(工作台提交时写)·
 `inviteMember(email)`(真 append 一条 pending Editor;team 页 pending chip / 计数由此派生)·
-`setOttoBehavior(patch)`(账户 · Otto 行为面写自主级别 / 花费阈值 / 勿扰时段;dock 立即反映)。
+`setOttoBehavior(patch)`(账户 · Otto 行为面写自主级别 / 花费阈值 / 勿扰时段;dock 立即反映)·
+`setBrandPreference({assetId,assetTitle,source,feedback})`(资产 asset-viewer / library 赞踩 → Otto 学一条偏好;feedback=null 撤销;同资产同来源不重复)。
 crm-inbox 身份链动作:`sendConversationMessage(id,text)`(append owner 消息 + 人工插手→该会话 AI
 暂停)· `setConversationAi(id,paused)`(Otto 自动接管开关,dispatch automation 事件)·
 `advanceDealStage(id,current,dir,title)`(阶段推进/回退,金额仍走 dealAmountMyr)·
@@ -63,7 +65,8 @@ crm 字段/身份/分群动作(每次改动都进字段留痕):`setContactDnd(id
 `conversation_replied` · `conversation_ai_toggled` · `deal_stage_changed` · `contact_created` ·
 `automation_toggled` · `automation_rule_created` · `routine_toggled` · `routine_created` ·
 `otto_working` · `otto_idle` · `ad_submitted` · `member_invited` · `cast_trained` ·
-`contact_field_changed` · `contacts_merged` · `segment_created` · `segment_deleted`。
+`contact_field_changed` · `contacts_merged` · `segment_created` · `segment_deleted` ·
+`brand_preference_learned`。
 
 ## 已接线的表面(Wave 1)
 - shell:`ottoWorking` 来自 store,不再硬编码 false;dock 在 3 条 hideDock 路由上只
@@ -109,3 +112,13 @@ crm 字段/身份/分群动作(每次改动都进字段留痕):`setContactDnd(id
   规则「Answer order questions」的 runsThisWeek 派生自 `aiHandledCount()`。
 - onboarding checklist:「Connect a channel」步完成态派生自 `connections()`(kill 手写 defaultDone)。
 - onboarding login:提交 → 进度指示 → `router.push` 进产品(注册去引导清单,登录去 create/home;仍无真 auth)。
+
+## 已接线的表面(Wave · 资产/品牌三连接器)
+- 一键进画布(连接器 1):Templates / Discover / Library / My-stuff 四页 CTA 全带 `?from=<id>`;
+  `assets/_data.ts:resolveCanvasFromSeed(id)` 是「参数与 id 真实存在」的单一源(四张真表派生),
+  canvas 挂载时读它预置会话(消费侧由创作区 canvas-page 实现)。
+- 生成时校验(连接器 2 · C-08):`assets/_data.ts:brandCheckChips(seedText)` 确定性假规则;
+  `create/_create-ui.tsx:SpendConfirmDialog` 生成前渲染 pass/warn 品牌校验 chips(logo 安全区 /
+  品牌色偏离),四个创作区花费弹窗一处接线全覆盖。
+- 审批学习回灌(连接器 3 · O-04):asset-viewer / library 的赞踩调 `setBrandPreference`,
+  brand-memory「Otto 学到的偏好」区读 `brandPreferences()` 显示新条目(带来源)。

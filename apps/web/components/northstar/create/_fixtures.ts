@@ -7,6 +7,7 @@
  */
 
 import { NS_ASSETS, NS_BRAND, NS_PRODUCTS, nsPlaceholder } from "../_mock";
+import { resolveCanvasFromSeed } from "../assets/_data";
 
 export { NS_ASSETS, NS_BRAND, NS_PRODUCTS, nsPlaceholder };
 
@@ -278,6 +279,13 @@ export function resolveCanvasSeed(fromId: string | null): CvObject | null {
   if (asset) {
     const kind: CvKind = asset.kind === "video" ? "video" : "image";
     return seedFromExternal(asset.id, kind, asset.title, asset.title, asset.thumb, asset.credits);
+  }
+  // 5) 资产区 nav 可达页(Templates/Discover/Library/My-stuff 全量表,id 空间 tpl-/dv-0/gen-/st-)
+  //    —— 与 create/home 内联迷你货架(tp-/dv-)不同 id 空间,委托资产区单一解析源补齐。
+  const fromAssets = resolveCanvasFromSeed(fromId);
+  if (fromAssets) {
+    const kind: CvKind = fromAssets.kind === "video" ? "video" : "image";
+    return seedFromExternal(fromAssets.id, kind, fromAssets.title, fromAssets.firstMessage, fromAssets.thumb);
   }
   return null;
 }

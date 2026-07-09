@@ -301,3 +301,120 @@ export const TRAIN_STEPS = [
   "Learning the face…",
   "Locking identity…",
 ] as const;
+
+/* ── 连接器 1 · 一键进画布:CTA ?from=<id> → canvas 种子 ────────────────────
+ * Templates/Discover/Library/My-stuff 四页 CTA 发出的 `?from=<id>` 全部在此解析。
+ * 创作区 canvas 挂载时 `resolveCanvasFromSeed(from)` 读它预置会话(create worker 消费侧)。
+ * 种子确定性派生自本文件四张真数据表 —— 这就是「保证参数与 id 真实存在」的单一源:
+ * 任何 CTA 能发出的 id,这里都查得到;查不到的 id,任何 CTA 都发不出。 */
+export interface CanvasFromSeed {
+  /** 源 id(回链 / 调试用) */
+  id: string;
+  /** 来源类型(canvas 首条叙述用人话说清「从哪来的」) */
+  origin: "template" | "idea" | "generation" | "asset";
+  /** 新会话名(canvas 顶栏 / history) */
+  title: string;
+  /** 画布首条用户消息(prefill 到 chat composer) */
+  firstMessage: string;
+  kind: "image" | "video" | "storyboard";
+  /** 缩略图(canvas 可选作首个对象占位图) */
+  thumb: string;
+}
+
+export function resolveCanvasFromSeed(fromId: string): CanvasFromSeed | null {
+  const tpl = TEMPLATE_ITEMS.find((t) => t.id === fromId);
+  if (tpl) {
+    return {
+      id: tpl.id,
+      origin: "template",
+      title: tpl.name,
+      firstMessage: `Start from the “${tpl.name}” template. ${tpl.blurb}`,
+      kind: /reel/i.test(tpl.surface) ? "video" : "image",
+      thumb: tpl.preview,
+    };
+  }
+  const dv = DISCOVER_ITEMS.find((d) => d.id === fromId);
+  if (dv) {
+    return {
+      id: dv.id,
+      origin: "idea",
+      title: dv.title,
+      firstMessage: `Make my own version of “${dv.title}”.`,
+      kind: dv.kind,
+      thumb: dv.thumb,
+    };
+  }
+  const gen = GEN_RECORDS.find((g) => g.id === fromId);
+  if (gen) {
+    return {
+      id: gen.id,
+      origin: "generation",
+      title: gen.title,
+      firstMessage: `Keep working on “${gen.title}”. ${gen.prompt}`,
+      kind: gen.kind,
+      thumb: gen.thumb,
+    };
+  }
+  const st = STUFF_ITEMS.find((s) => s.id === fromId);
+  if (st) {
+    return {
+      id: st.id,
+      origin: "asset",
+      title: st.title,
+      firstMessage: `Use “${st.title}” as the starting point.`,
+      kind: st.kind === "upload" ? "image" : st.kind,
+      thumb: st.thumb,
+    };
+  }
+  return null;
+}
+
+/* ── 连接器 2 · 生成时校验(C-08):品牌校验 chips ─────────────────────────
+ * 花费确认弹窗生成前对着 BRAND_KIT 跑的确定性假规则(纯前端、零随机):同一段
+ * seedText 永远同结果。logo 安全区 / 品牌色偏离出 warn chip,其余出 pass chip。
+ * 不是真校验,是把「Otto 生成前替你对了一遍品牌」这件事画出来给 founder 看。 */
+export interface BrandCheckChip {
+  id: string;
+  level: "pass" | "warn";
+  label: string;
+}
+
+/** 明显偏离 BRAND_KIT.colours 的色词(命中即 warn 一条品牌色偏离) */
+const OFF_KIT_COLOUR_WORDS = [
+  "neon",
+  "black background",
+  "hot pink",
+  "electric blue",
+  "monochrome",
+  "greyscale",
+  "grayscale",
+] as const;
+
+export function brandCheckChips(seedText: string): BrandCheckChip[] {
+  const text = seedText.toLowerCase();
+  const chips: BrandCheckChip[] = [];
+
+  // logo 安全区:默认留足(pass);文案要把 logo 压到边角 / 全出血才 warn。
+  const logoAtRisk =
+    /(edge|corner|full[- ]?bleed|crop|cut off)/.test(text) && /logo|wordmark|mark/.test(text);
+  chips.push(
+    logoAtRisk
+      ? { id: "bc-logo", level: "warn", label: "Logo may fall inside its clear space" }
+      : { id: "bc-logo", level: "pass", label: "Logo clear space kept" },
+  );
+
+  // 品牌色偏离:命中非 kit 色词 → warn;否则 pass(点名 kit 里的主色)。
+  const offKit = OFF_KIT_COLOUR_WORDS.find((c) => text.includes(c));
+  chips.push(
+    offKit
+      ? { id: "bc-colour", level: "warn", label: `“${offKit}” is off your kit palette` }
+      : { id: "bc-colour", level: "pass", label: `Colours stay on kit — ${BRAND_KIT.colours[0].name}, ${BRAND_KIT.colours[1].name}` },
+  );
+
+  // 视频 / reel:字幕字体在导出时才最终定 → 一条温和提示(不是错,是提醒)。
+  if (/video|reel|clip|9:16|stitch/.test(text)) {
+    chips.push({ id: "bc-font", level: "warn", label: "Caption font locks on export — check it there" });
+  }
+
+  return chips;
+}

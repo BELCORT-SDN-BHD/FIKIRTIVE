@@ -82,7 +82,8 @@ export type NsEventType =
   | "segment_deleted"
   | "comment_to_dm"
   | "knowledge_added"
-  | "business_hours_set";
+  | "business_hours_set"
+  | "brand_preference_learned";
 
 export interface NsEvent {
   type: NsEventType;
@@ -115,6 +116,23 @@ export interface NsOttoContext {
 /* ── Otto 行为设置(账户 · Otto 行为面写它;dock 读它,行为可见地随设置变)。
  * 自主级别 = 逐次批 / routine 内自动;花费确认阈值 = 单笔 ≥ 此额度必先问;
  * 勿扰时段 = 该时段 Otto 不主动打扰(dock 收起态显示,不再冒「Just now」)。 */
+/* ── Otto 学到的偏好(连接器 O-04):asset-viewer / library 的赞/踩落进这里,
+ * brand-memory「Otto 学到的偏好」区读它显示新条目(带来源)。审批(赞/踩)→ 学习
+ * 回灌的一整圈,是这条循环系统里资产区自己的那段血管。 */
+export type NsBrandFeedback = "like" | "dislike";
+export interface NsBrandPreference {
+  /** 稳定 id(同一资产同一来源只留一条,方向翻转即替换) */
+  id: string;
+  feedback: NsBrandFeedback;
+  /** 被赞/踩的资产人话名(来源行显示它) */
+  assetTitle: string;
+  /** 来源面(如 "Asset viewer" / "Library";来源行显示它) */
+  source: string;
+  /** Otto 学到的偏好一句话(sentence case、英文 UI) */
+  note: string;
+  at: number;
+}
+
 export type NsOttoAutonomy = "review-each" | "auto-in-routines";
 export interface NsOttoBehavior {
   /** 逐次批(默认,最稳)/ routine 内自动(仅你设过的例程里免逐次批) */
@@ -205,6 +223,8 @@ interface StoreState {
   addedKnowledge: NsKnowledgeAddition[];
   /** 已庆祝过的一次性开店里程碑 key(GM-02/03/05;克制:每个 key 只 toast 一次)。 */
   seenMilestones: string[];
+  /** Otto 从赞/踩学到的品牌偏好(brand-memory「Otto 学到的偏好」区读它)。 */
+  brandPreferences: NsBrandPreference[];
 }
 
 // 浅拷贝顶层数组做可变镜像:动作永不原地改 _mock 里的对象,只在本层 replace。
@@ -254,6 +274,7 @@ const state: StoreState = {
   conversationDrafts: {},
   addedKnowledge: [],
   seenMilestones: [],
+  brandPreferences: [],
 };
 
 /* ── 订阅机制(version tick:每次 notify 递增,useSyncExternalStore 读它触发重渲染) ── */
@@ -844,6 +865,46 @@ export function submitAd(payload: { id?: string; label?: string; platform?: stri
   notify();
 }
 
+/** 连接器 O-04:赞/踩一个资产 → Otto 学到一条品牌偏好(brand-memory 现新条目)。
+ * feedback=null(取消赞/踩)则撤掉该资产从该来源学到的那条;同资产同来源永不重复。 */
+export function setBrandPreference(input: {
+  assetId: string;
+  assetTitle: string;
+  source: string;
+  feedback: NsBrandFeedback | null;
+}) {
+  const rest = state.brandPreferences.filter(
+    (p) => !(p.assetTitle === input.assetTitle && p.source === input.source),
+  );
+  if (input.feedback === null) {
+    if (rest.length === state.brandPreferences.length) return; // 无变化
+    state.brandPreferences = rest;
+    logEvent("brand_preference_learned", `Otto unlearned a preference · ${input.assetTitle}`, {
+      assetId: input.assetId,
+    });
+    notify();
+    return;
+  }
+  const note =
+    input.feedback === "like"
+      ? `Do more like “${input.assetTitle}”.`
+      : `Ease off directions like “${input.assetTitle}”.`;
+  const pref: NsBrandPreference = {
+    id: `bp-${input.source}-${input.assetId}`,
+    feedback: input.feedback,
+    assetTitle: input.assetTitle,
+    source: input.source,
+    note,
+    at: seq + 1,
+  };
+  state.brandPreferences = [pref, ...rest];
+  logEvent("brand_preference_learned", `Otto learned · ${note}`, {
+    assetId: input.assetId,
+    feedback: input.feedback,
+  });
+  notify();
+}
+
 /** 训练完成落到事件流(cast 页在 training → ready 的瞬间调它;分析区实时活动读它)。 */
 export function castTrained(name: string) {
   logEvent("cast_trained", `Trained ${name} · face locked`, { name });
@@ -1019,6 +1080,11 @@ export function ottoContext(): NsOttoContext | null {
 /** 当前 Otto 行为设置(dock 读它反映作风;Otto 行为面读它回显控件)。 */
 export function ottoBehavior(): NsOttoBehavior {
   return state.ottoBehavior;
+}
+
+/** Otto 从赞/踩学到的品牌偏好(最新在前;brand-memory「Otto 学到的偏好」区读它)。 */
+export function brandPreferences(): NsBrandPreference[] {
+  return state.brandPreferences;
 }
 
 /** 最近 n 条事件,最新在前。 */

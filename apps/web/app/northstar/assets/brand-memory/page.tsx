@@ -12,7 +12,7 @@
 
 import * as React from "react";
 import { toast } from "sonner";
-import { BookOpen, Link2, Pencil, Plus, Trash2 } from "lucide-react";
+import { BookOpen, Link2, Pencil, Plus, ThumbsDown, ThumbsUp, Trash2 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Input } from "@/components/ui/input";
@@ -41,6 +41,7 @@ import {
   type MemoryTabKey,
 } from "@/components/northstar/assets/_data";
 import { EmptyState, MockNote, OttoNarrationBar, PageHeader } from "@/components/northstar/_shared";
+import { brandPreferences, useStore } from "@/components/northstar/immersive/_store";
 import type { NsProduct } from "@/components/northstar/_mock";
 import { useImmersive } from "@/components/northstar/immersive/_context";
 import { askOttoInline } from "@/components/northstar/immersive/_store";
@@ -49,8 +50,11 @@ const FACT_TABS: MemoryTabKey[] = ["about", "look", "offers", "rules"];
 
 export default function Page() {
   const immersive = useImmersive();
+  useStore();
   const [demo, setDemo] = React.useState<DemoState>("normal");
   const [tab, setTab] = React.useState<MemoryTabKey>("about");
+  // 连接器 O-04:asset-viewer / library 的赞踩回灌到这里(带来源)。
+  const learned = brandPreferences();
   const [facts, setFacts] = React.useState<MemoryFact[]>(MEMORY_FACTS);
   const [products, setProducts] = React.useState<NsProduct[]>(MEMORY_PRODUCTS);
   const [productCat, setProductCat] = React.useState("All");
@@ -164,6 +168,46 @@ export default function Page() {
           onSettle={finishResearch}
           className="mt-4 self-start"
         />
+      )}
+
+      {/* 连接器 O-04:Otto 从赞/踩学到的偏好(带来源)。空则不出现;赞踩即刻现新条目。 */}
+      {learned.length > 0 && (
+        <section className="mt-6 rounded-[var(--radius-card)] border border-border bg-card p-4">
+          <div className="flex items-center gap-2">
+            <OttoMark label="What Otto learned from your feedback" />
+            <span className="ml-auto font-mono text-[10px] leading-[14px] font-medium tracking-[0.06em] text-muted-foreground tabular-nums">
+              {learned.length}
+            </span>
+          </div>
+          <ul className="mt-3 flex flex-col gap-2">
+            {learned.map((p) => (
+              <li
+                key={p.id}
+                className="flex items-start gap-3 rounded-[14px] bg-secondary/60 px-3 py-2.5"
+              >
+                <span
+                  className={
+                    p.feedback === "like"
+                      ? "mt-0.5 flex size-6 shrink-0 items-center justify-center rounded-lg bg-success-soft text-success-soft-foreground"
+                      : "mt-0.5 flex size-6 shrink-0 items-center justify-center rounded-lg bg-error-soft text-error-soft-foreground"
+                  }
+                >
+                  {p.feedback === "like" ? (
+                    <ThumbsUp className="size-3.5" strokeWidth={2} />
+                  ) : (
+                    <ThumbsDown className="size-3.5" strokeWidth={2} />
+                  )}
+                </span>
+                <div className="min-w-0 flex-1">
+                  <p className="text-sm leading-[20px] text-foreground">{p.note}</p>
+                  <p className="mt-0.5 text-[11px] leading-4 text-muted-foreground">
+                    From {p.source} · {p.assetTitle}
+                  </p>
+                </div>
+              </li>
+            ))}
+          </ul>
+        </section>
       )}
 
       <ZoneTabs

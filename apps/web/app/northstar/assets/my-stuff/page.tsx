@@ -19,6 +19,7 @@ import {
   Image as ImageIcon,
   LayoutGrid,
   Layers,
+  Sparkles,
   Trash2,
   Upload,
 } from "lucide-react";
@@ -280,6 +281,14 @@ function StuffCard({
         {/* 悬停动作:触屏常显由 focus-within 兜底(§N2 行动作规则同源) */}
         {!failed && !generating && (
           <div className="absolute top-2 right-2 flex gap-1 opacity-0 transition-opacity duration-150 group-focus-within:opacity-100 group-hover:opacity-100">
+            {/* 连接器 1:一键进画布(?from=<id> → canvas 预置会话) */}
+            <Link
+              href={`/northstar/create/canvas?from=${item.id}`}
+              aria-label={`Open ${item.title} in canvas`}
+              className="flex size-9 items-center justify-center rounded-[10px] border border-border bg-card text-muted-foreground shadow-[var(--shadow-sm)] outline-none hover:bg-accent hover:text-foreground focus-visible:ring-[3px] focus-visible:ring-ring/40"
+            >
+              <Sparkles className="size-4" strokeWidth={2} />
+            </Link>
             <button
               type="button"
               aria-label={`Download ${item.title}`}

@@ -14,9 +14,10 @@
  */
 
 import * as React from "react";
-import { CircleAlert, Flag, ThumbsDown, ThumbsUp } from "lucide-react";
+import { Check, CircleAlert, Flag, ThumbsDown, ThumbsUp, TriangleAlert } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { useInsideImmersive } from "../immersive/_context";
+import { brandCheckChips } from "../assets/_data";
 import { Button } from "@/components/ui/button";
 import {
   Dialog,
@@ -343,8 +344,45 @@ export function FeedbackControls({
 }
 
 /* ────────────────────────────────────────────────────────────────────────
+ * BrandCheckRow — 连接器 2(C-08):生成前品牌校验一行 pass/warn chips。
+ * 确定性假规则(assets/_data.brandCheckChips),读 BRAND_KIT;不是 Otto 的作品,
+ * 所以零 coral —— pass 走 success-soft、warn 走 warning-soft。
+ * ──────────────────────────────────────────────────────────────────────── */
+function BrandCheckRow({ seedText }: { seedText: string }) {
+  const chips = React.useMemo(() => brandCheckChips(seedText), [seedText]);
+  if (chips.length === 0) return null;
+  return (
+    <div className="rounded-[14px] border border-border bg-card p-4">
+      <p className="text-xs font-semibold text-muted-foreground">Brand check</p>
+      <div className="mt-2 flex flex-wrap gap-1.5">
+        {chips.map((c) => (
+          <span
+            key={c.id}
+            className={cn(
+              "inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-[11px] leading-[16px] font-medium",
+              c.level === "warn"
+                ? "bg-warning-soft text-warning-soft-foreground"
+                : "bg-success-soft text-success-soft-foreground",
+            )}
+          >
+            {c.level === "warn" ? (
+              <TriangleAlert className="size-3 shrink-0" strokeWidth={2} />
+            ) : (
+              <Check className="size-3 shrink-0" strokeWidth={2} />
+            )}
+            {c.label}
+          </span>
+        ))}
+      </div>
+    </div>
+  );
+}
+
+/* ────────────────────────────────────────────────────────────────────────
  * SpendConfirmDialog — §FB6 tier 3 money + §V5 spend arc ④⑤
  * brand 主键:确认即启动 Otto 生成工作(FB5 允许的唯一 brand 场景)。
+ * `subject` = 正在生成什么(prompt / 素材名),供品牌校验行判 logo/色偏离;
+ * 缺省回落 title,四个创作区花费弹窗零改动也带上校验(连接器 2 一处接线全覆盖)。
  * ──────────────────────────────────────────────────────────────────────── */
 export type GenTier = "speed" | "quality";
 
@@ -363,6 +401,7 @@ export function SpendConfirmDialog({
   onConfirm,
   baseCredits,
   onConfirmTier,
+  subject,
 }: {
   open: boolean;
   onOpenChange: (v: boolean) => void;
@@ -374,6 +413,8 @@ export function SpendConfirmDialog({
   /** 传入 = 启用 Speed/Quality 双档;dialog 自算价差、把选中档与最终 credits 交回 onConfirmTier。 */
   baseCredits?: number;
   onConfirmTier?: (tier: GenTier, credits: number) => void;
+  /** 生成什么(prompt / 素材名),供品牌校验行判 logo/色偏离;缺省回落 title。 */
+  subject?: string;
 }) {
   const tiered = typeof baseCredits === "number" && !!onConfirmTier;
   const [tier, setTier] = React.useState<GenTier>("speed");
@@ -400,6 +441,7 @@ export function SpendConfirmDialog({
             ))}
           </ul>
         </div>
+        <BrandCheckRow seedText={subject ?? title} />
         {tiered && (
           <div>
             <p className="text-xs font-semibold text-muted-foreground">Speed or quality</p>
