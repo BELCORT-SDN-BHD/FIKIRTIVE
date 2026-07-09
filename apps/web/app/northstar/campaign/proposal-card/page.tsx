@@ -18,7 +18,7 @@ import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { OttoAvatar } from "@/components/otto/OttoAvatar";
 import { EmptyState, MockNote, OttoNarrationBar, PageHeader } from "@/components/northstar/_shared";
-import { NS_CAMPAIGN, NS_CAMPAIGN_ENTRIES, type NsCampaignEntry } from "@/components/northstar/_mock";
+import { NS_CAMPAIGN, type NsCampaignEntry } from "@/components/northstar/_mock";
 import { BACKUP_IDEAS, PROPOSAL_RATIONALE, trendById } from "@/components/northstar/campaign/_data";
 import {
   DemoStates,
@@ -29,6 +29,7 @@ import {
   fmtDay,
   type DemoState,
 } from "@/components/northstar/campaign/_bits";
+import { campaignDraft, campaignEntries, useStore } from "@/components/northstar/immersive/_store";
 
 const RESEARCH_STEPS = [
   "Checking your trend archive…",
@@ -42,11 +43,29 @@ const PREPARE_STEPS = ["Laying generation cards…", "Estimating the pack…"] a
 type Phase = "researching" | "proposed" | "approved" | "preparing" | "prepared";
 
 export default function Page() {
+  useStore();
   const [demo, setDemo] = React.useState<DemoState>("default");
   const [phase, setPhase] = React.useState<Phase>("researching");
-  const [entries, setEntries] = React.useState<NsCampaignEntry[]>(() => NS_CAMPAIGN_ENTRIES.map((e) => ({ ...e })));
+  // 条目 = 共享 store(单一源);页内改标题/删除叠一层本地覆盖(不 fork mock)
+  const [hookEdits, setHookEdits] = React.useState<Record<string, string>>({});
+  const [removed, setRemoved] = React.useState<Set<string>>(new Set());
   const [editingId, setEditingId] = React.useState<string | null>(null);
   const [hookDraft, setHookDraft] = React.useState("");
+
+  const entries: NsCampaignEntry[] = campaignEntries()
+    .filter((e) => !removed.has(e.id))
+    .map((e) => (hookEdits[e.id] ? { ...e, hook: hookEdits[e.id] } : e));
+
+  // 工作台草稿(缺省回落 NS_CAMPAIGN);目标/日期/预算/平台真实呈现
+  const draft = campaignDraft();
+  const goalText = draft?.goal ?? NS_CAMPAIGN.goal;
+  const periodText = draft ? `${fmtDay(draft.start)} to ${fmtDay(draft.end)}, 2026` : "Aug 24 to 31, 2026";
+  const budgetCredits = draft?.budgetCredits ?? NS_CAMPAIGN.budgetCredits;
+  const draftPlatforms = (draft?.platforms as NsCampaignEntry["platform"][] | undefined) ?? [
+    "instagram",
+    "facebook",
+    "tiktok",
+  ];
 
   const total = entries.reduce((s, e) => s + e.estCredits, 0);
   const cardVisible = phase !== "researching";
@@ -59,12 +78,12 @@ export default function Page() {
 
   function commitEdit() {
     if (editingId == null) return;
-    setEntries((prev) => prev.map((e) => (e.id === editingId && hookDraft.trim() ? { ...e, hook: hookDraft.trim() } : e)));
+    if (hookDraft.trim()) setHookEdits((prev) => ({ ...prev, [editingId]: hookDraft.trim() }));
     setEditingId(null);
   }
 
   function removeEntry(id: string) {
-    setEntries((prev) => prev.filter((e) => e.id !== id));
+    setRemoved((prev) => new Set(prev).add(id));
     if (editingId === id) setEditingId(null);
   }
 
@@ -172,20 +191,20 @@ export default function Page() {
                       <div className="grid grid-cols-2 gap-x-4 gap-y-3 px-5 py-4">
                         <div>
                           <div className="text-xs font-medium text-muted-foreground">Goal</div>
-                          <div className="mt-0.5 text-sm text-foreground">{NS_CAMPAIGN.goal}</div>
+                          <div className="mt-0.5 text-sm text-foreground">{goalText}</div>
                         </div>
                         <div>
                           <div className="text-xs font-medium text-muted-foreground">Period</div>
-                          <div className="mt-0.5 text-sm text-foreground">Aug 24 to 31, 2026</div>
+                          <div className="mt-0.5 text-sm text-foreground">{periodText}</div>
                         </div>
                         <div>
-                          <div className="text-xs font-medium text-muted-foreground">Cadence</div>
-                          <div className="mt-0.5 text-sm text-foreground">{PROPOSAL_RATIONALE.cadence}</div>
+                          <div className="text-xs font-medium text-muted-foreground">Budget</div>
+                          <div className="mt-0.5 text-sm text-foreground tabular-nums">{fmtCredits(budgetCredits)}</div>
                         </div>
                         <div>
                           <div className="text-xs font-medium text-muted-foreground">Platforms</div>
                           <div className="mt-1 flex flex-wrap gap-1">
-                            {(["instagram", "facebook", "tiktok"] as const).map((p) => (
+                            {draftPlatforms.map((p) => (
                               <PlatformPill key={p} platform={p} full />
                             ))}
                           </div>

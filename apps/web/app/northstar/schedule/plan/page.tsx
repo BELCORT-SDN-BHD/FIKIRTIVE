@@ -32,14 +32,16 @@ import {
   Skeleton,
   ViewSwitch,
   addDaysIso,
-  basePosts,
   campaignPosts,
   fmtDate,
   fmtDateLong,
+  livePosts,
+  toScheduled,
   useSweep,
   type DemoState,
   type SPost,
 } from "@/components/northstar/schedule/kit";
+import { recentEvents, schedulePost, useStore } from "@/components/northstar/immersive/_store";
 
 /** 本周从周一起算:2026-07-07(二)所在周 = 7-06 至 7-12 */
 const WEEK_START = "2026-07-06";
@@ -49,9 +51,16 @@ function weekDays(start: string): string[] {
 }
 
 export default function Page() {
+  useStore();
   const [demo, setDemo] = React.useState<DemoState>("data");
-  const [posts, setPosts] = React.useState<SPost[]>(basePosts);
-  const campaign = React.useMemo(campaignPosts, []);
+  const posts = livePosts();
+  const campaign = campaignPosts();
+  // composer 刚排的新帖 → 高亮 landing(读最近一条 post_scheduled 事件的帖子 id)
+  const landingId = React.useMemo(
+    () => recentEvents(20).find((e) => e.type === "post_scheduled")?.payload.id as string | undefined,
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [posts.length],
+  );
 
   // Otto 模拟:进页 1.4s 后开始草拟 campaign 帖(叙述条),走完后 5 张提案卡着陆
   const [ottoPhase, setOttoPhase] = React.useState<"idle" | "working" | "done">("idle");
@@ -76,8 +85,11 @@ export default function Page() {
   }, [campaign.proposed, groupSweep]);
 
   const [approving, setApproving] = React.useState<SPost | null>(null);
-  const approve = (id: string) =>
-    setPosts((prev) => prev.map((p) => (p.id === id ? { ...p, status: "scheduled" } : p)));
+  // 审批 = 入库(draft → scheduled)经共享 store,queue/calendar/home 同步反映
+  const approve = (id: string) => {
+    const post = posts.find((p) => p.id === id);
+    if (post) schedulePost(toScheduled(post));
+  };
 
   const thisWeek = weekDays(WEEK_START);
   const nextWeek = weekDays(addDaysIso(WEEK_START, 7));
@@ -172,6 +184,7 @@ export default function Page() {
             days={thisWeek}
             posts={posts}
             onApprove={setApproving}
+            landingId={landingId}
           />
 
           {/* 周区块:下周(真空态,§V4) */}
@@ -181,6 +194,7 @@ export default function Page() {
             posts={posts}
             onApprove={setApproving}
             emptyText="Nothing scheduled next week. Add a post or ask Otto to plan it."
+            landingId={landingId}
           />
 
           {/* campaign 归组区块 */}
@@ -226,12 +240,14 @@ function WeekBlock({
   posts,
   onApprove,
   emptyText,
+  landingId,
 }: {
   label: string;
   days: string[];
   posts: SPost[];
   onApprove: (post: SPost) => void;
   emptyText?: string;
+  landingId?: string;
 }) {
   const byDay = days
     .map((d) => ({
@@ -263,7 +279,7 @@ function WeekBlock({
                 </span>
               </div>
               {g.posts.map((p) => (
-                <PostRow key={p.id} post={p} onApprove={onApprove} />
+                <PostRow key={p.id} post={p} onApprove={onApprove} landing={p.id === landingId} />
               ))}
             </div>
           ))}

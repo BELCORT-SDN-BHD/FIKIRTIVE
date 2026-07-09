@@ -22,6 +22,7 @@ import { MockNote, OttoNarrationBar, PageHeader } from "@/components/northstar/_
 import { NS_BRAND, NS_CAMPAIGN, NS_CAMPAIGN_ENTRIES } from "@/components/northstar/_mock";
 import { BACKUP_IDEAS, CAMPAIGN_TOTAL_EST, PLATFORM_META } from "@/components/northstar/campaign/_data";
 import { DemoStates, Landed, fmtCredits, type DemoState } from "@/components/northstar/campaign/_bits";
+import { setCampaignDraft } from "@/components/northstar/immersive/_store";
 
 const PLATFORM_KEYS = ["instagram", "facebook", "tiktok", "x"] as const;
 
@@ -81,6 +82,14 @@ export default function Page() {
     const next = validate();
     setErrors(next);
     if (Object.keys(next).length > 0) return;
+    // 表单值经共享 store 草稿传给 proposal-card(目标/日期/预算/平台真实呈现)
+    setCampaignDraft({
+      goal: goal.trim(),
+      start,
+      end,
+      budgetCredits: Number(budget),
+      platforms: [...platforms],
+    });
     setPhase("planning");
   }
 

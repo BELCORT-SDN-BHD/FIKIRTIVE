@@ -28,12 +28,8 @@ import {
   DialogHeader,
   DialogTitle,
 } from "@/components/ui/dialog";
-import {
-  NS_CAMPAIGN,
-  NS_CAMPAIGN_ENTRIES,
-  NS_SCHEDULED_POSTS,
-  nsPlaceholder,
-} from "@/components/northstar/_mock";
+import { NS_CAMPAIGN, nsPlaceholder, type NsScheduledPost } from "@/components/northstar/_mock";
+import { campaignEntries, scheduledPosts } from "@/components/northstar/immersive/_store";
 
 /* ── 原型固定「今天」(与 _mock 锚点一致,保证确定性渲染) ──────────────── */
 export const NS_TODAY = "2026-07-07";
@@ -90,36 +86,54 @@ export interface SPost {
 
 const ENTRY_TIME: Record<string, string> = { video: "19:00", image: "10:00", carousel: "12:00" };
 
-/** 6 条排期帖(_mock NS_SCHEDULED_POSTS)→ 视图模型;published 带 PublishAttempt 记录 */
-export function basePosts(): SPost[] {
-  return NS_SCHEDULED_POSTS.map((p) => {
-    const attempts: SAttempt[] | undefined =
-      p.status === "published"
-        ? p.id === "post-06"
-          ? [
-              { n: 1, at: "18:00:09", result: "failed" },
-              { n: 2, at: "18:02:31", result: "delivered" },
-            ]
-          : [{ n: 1, at: "09:00:04", result: "delivered" }]
-        : undefined;
-    return {
-      id: p.id,
-      date: p.scheduledAt.slice(0, 10),
-      time: p.scheduledAt.slice(11, 16),
-      platform: p.platform,
-      caption: p.caption,
-      media: p.media,
-      status: p.status,
-      campaignId: p.campaignId,
-      firstComment: p.firstComment,
-      attempts,
-    };
-  });
+/** 一条排期帖(NsScheduledPost)→ 视图模型;published 带 PublishAttempt 记录 */
+export function toSPost(p: NsScheduledPost): SPost {
+  const attempts: SAttempt[] | undefined =
+    p.status === "published"
+      ? p.id === "post-06"
+        ? [
+            { n: 1, at: "18:00:09", result: "failed" },
+            { n: 2, at: "18:02:31", result: "delivered" },
+          ]
+        : [{ n: 1, at: "09:00:04", result: "delivered" }]
+      : undefined;
+  return {
+    id: p.id,
+    date: p.scheduledAt.slice(0, 10),
+    time: p.scheduledAt.slice(11, 16),
+    platform: p.platform,
+    caption: p.caption,
+    media: p.media,
+    status: p.status,
+    campaignId: p.campaignId,
+    campaignName: p.campaignId === NS_CAMPAIGN.id ? NS_CAMPAIGN.name : undefined,
+    firstComment: p.firstComment,
+    attempts,
+  };
 }
 
-/** Campaign 日历条目 → 帖子(approved = 已排期,proposed = 待审) */
+/** 全部排期帖(共享 store)→ 视图模型。组件须先 useStore() 才随排期变化重渲染。 */
+export function livePosts(): SPost[] {
+  return scheduledPosts().map(toSPost);
+}
+
+/** 视图模型 → NsScheduledPost(审批入库用;schedulePost 会把 status 落成 scheduled)。 */
+export function toScheduled(p: SPost): NsScheduledPost {
+  return {
+    id: p.id,
+    scheduledAt: `${p.date}T${p.time}:00+08:00`,
+    platform: p.platform,
+    caption: p.caption,
+    media: p.media,
+    status: "scheduled",
+    campaignId: p.campaignId,
+    firstComment: p.firstComment,
+  };
+}
+
+/** Campaign 日历条目(共享 store)→ 帖子(approved = 已排期,proposed = 待审) */
 export function campaignPosts(): { scheduled: SPost[]; proposed: SPost[] } {
-  const all = NS_CAMPAIGN_ENTRIES.map((e): SPost => {
+  const all = campaignEntries().map((e): SPost => {
     const portrait = e.format === "video";
     return {
       id: e.id,

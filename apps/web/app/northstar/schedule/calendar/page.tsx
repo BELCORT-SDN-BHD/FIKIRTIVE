@@ -36,15 +36,16 @@ import {
   StatusBadge,
   ViewSwitch,
   addDaysIso,
-  basePosts,
   campaignPosts,
   dow,
   fmtDateLong,
   fmtTime,
+  livePosts,
   type DemoState,
   type SPost,
   type SStatus,
 } from "@/components/northstar/schedule/kit";
+import { recentEvents, useStore } from "@/components/northstar/immersive/_store";
 
 /** 原型只开放 2026 年 7-8 月(mock 数据所在区间) */
 const MONTHS: { year: number; month: number }[] = [
@@ -75,15 +76,20 @@ function monthCells(year: number, month: number): { date: string; inMonth: boole
 }
 
 export default function Page() {
+  useStore();
   const [demo, setDemo] = React.useState<DemoState>("data");
   const [mode, setMode] = React.useState<"month" | "week">("month");
   const [monthIdx, setMonthIdx] = React.useState(0);
-  const [posts, setPosts] = React.useState<SPost[]>(() => {
-    const camp = campaignPosts();
-    return [...basePosts(), ...camp.scheduled, ...camp.proposed];
-  });
+  // 拖动改期 = 本地覆盖层(叠在共享 store 派生的排期之上;不 fork mock)
+  const [moved, setMoved] = React.useState<Record<string, string>>({});
   const [detail, setDetail] = React.useState<SPost | null>(null);
   const [dropTarget, setDropTarget] = React.useState<string | null>(null);
+
+  const camp = campaignPosts();
+  const posts = [...livePosts(), ...camp.scheduled, ...camp.proposed].map((p) =>
+    moved[p.id] ? { ...p, date: moved[p.id] } : p,
+  );
+  const landingId = recentEvents(20).find((e) => e.type === "post_scheduled")?.payload.id as string | undefined;
 
   const { year, month } = MONTHS[monthIdx];
   const cells = React.useMemo(() => monthCells(year, month), [year, month]);
@@ -99,10 +105,11 @@ export default function Page() {
     }
     for (const list of map.values()) list.sort((a, b) => a.time.localeCompare(b.time));
     return map;
-  }, [posts]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [posts.map((p) => `${p.id}@${p.date}`).join(",")]);
 
   const movePost = (id: string, date: string) => {
-    setPosts((prev) => prev.map((p) => (p.id === id ? { ...p, date } : p)));
+    setMoved((prev) => ({ ...prev, [id]: date }));
   };
 
   const dropHandlers = (date: string) => ({
@@ -127,6 +134,11 @@ export default function Page() {
       onDragStart={(e) => e.dataTransfer.setData("text/plain", p.id)}
       onClick={() => setDetail(p)}
       title={`${PLATFORMS[p.platform].label} · ${fmtTime(p.time)} · ${p.caption}`}
+      style={
+        p.id === landingId
+          ? { animation: "fade-rise 220ms cubic-bezier(0.34, 1.56, 0.64, 1) both" }
+          : undefined
+      }
       className={cn(
         "flex w-full min-w-0 items-center gap-1 rounded-[8px] px-1.5 py-0.5 text-left text-[11px] leading-4 font-medium",
         STATUS_CHIP[p.status],

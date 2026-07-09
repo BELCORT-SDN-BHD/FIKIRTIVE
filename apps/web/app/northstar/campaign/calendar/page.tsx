@@ -32,8 +32,9 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 import { EmptyState, MockNote, OttoNarrationBar, PageHeader, StatCard } from "@/components/northstar/_shared";
-import { NS_CAMPAIGN, NS_CAMPAIGN_ENTRIES, type NsCampaignEntry } from "@/components/northstar/_mock";
+import { NS_CAMPAIGN, type NsCampaignEntry } from "@/components/northstar/_mock";
 import { FORMAT_META, PLATFORM_META } from "@/components/northstar/campaign/_data";
+import { approveCampaignEntry, campaignEntries, useStore } from "@/components/northstar/immersive/_store";
 import {
   DemoStates,
   EntryStatusBadge,
@@ -74,15 +75,25 @@ const FORMAT_CREDITS: Record<NsCampaignEntry["format"], number> = { image: 12, v
 
 const LAND_STEPS = ["Reading the proposal…", "Laying out the calendar…"] as const;
 
+// 可就地改的字段(状态归共享 store,其余是页内演示编辑)
+type EntryEdit = Partial<Pick<NsCampaignEntry, "date" | "platform" | "format" | "estCredits" | "hook">>;
+
 export default function Page() {
+  useStore();
   const [demo, setDemo] = React.useState<DemoState>("default");
-  const [entries, setEntries] = React.useState<NsCampaignEntry[]>(() => NS_CAMPAIGN_ENTRIES.map((e) => ({ ...e })));
+  // 条目 = 共享 store(单一源);改字段/删除叠一层本地覆盖,批准写回 store
+  const [edits, setEdits] = React.useState<Record<string, EntryEdit>>({});
+  const [removed, setRemoved] = React.useState<Set<string>>(new Set());
   const [view, setView] = React.useState<"calendar" | "list">("calendar");
   const [landed, setLanded] = React.useState(false);
   const [editingId, setEditingId] = React.useState<string | null>(null);
 
   // 编辑草稿(dialog 内)
   const [draft, setDraft] = React.useState<NsCampaignEntry | null>(null);
+
+  const entries: NsCampaignEntry[] = campaignEntries()
+    .filter((e) => !removed.has(e.id))
+    .map((e) => (edits[e.id] ? { ...e, ...edits[e.id] } : e));
 
   const editing = entries.find((e) => e.id === editingId) ?? null;
 
@@ -105,23 +116,23 @@ export default function Page() {
 
   function saveDraft(approve: boolean) {
     if (!draft) return;
-    setEntries((prev) =>
-      prev.map((e) => (e.id === draft.id ? { ...draft, status: approve ? "approved" : draft.status } : e)),
-    );
+    const { date, platform, format, estCredits, hook } = draft;
+    setEdits((prev) => ({ ...prev, [draft.id]: { date, platform, format, estCredits, hook } }));
+    if (approve) approveCampaignEntry(draft.id);
     closeEdit();
   }
 
   function removeEntry(id: string) {
-    setEntries((prev) => prev.filter((e) => e.id !== id));
+    setRemoved((prev) => new Set(prev).add(id));
     if (editingId === id) closeEdit();
   }
 
   function approveEntry(id: string) {
-    setEntries((prev) => prev.map((e) => (e.id === id ? { ...e, status: "approved" } : e)));
+    approveCampaignEntry(id);
   }
 
   function approveRemaining() {
-    setEntries((prev) => prev.map((e) => (e.status === "proposed" ? { ...e, status: "approved" } : e)));
+    entries.filter((e) => e.status === "proposed").forEach((e) => approveCampaignEntry(e.id));
   }
 
   const byDate = new Map<string, NsCampaignEntry[]>();

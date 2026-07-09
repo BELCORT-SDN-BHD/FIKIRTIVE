@@ -81,6 +81,15 @@ export interface NsEvent {
   label: string;
 }
 
+/* ── Campaign 草稿(workbench 表单 → proposal-card 跨路由传值;客户端换路由存活) ── */
+export interface NsCampaignDraft {
+  goal: string;
+  start: string;
+  end: string;
+  budgetCredits: number;
+  platforms: string[];
+}
+
 /* ── store 状态(全部从 _mock / 区级视图派生的可变镜像) ────────────────────── */
 interface StoreState {
   creditBalance: number;
@@ -108,6 +117,7 @@ interface StoreState {
   ottoWorking: boolean;
   ottoLabel: string;
   eventLog: NsEvent[];
+  campaignDraft: NsCampaignDraft | null;
 }
 
 // 浅拷贝顶层数组做可变镜像:动作永不原地改 _mock 里的对象,只在本层 replace。
@@ -133,6 +143,7 @@ const state: StoreState = {
   ottoWorking: false,
   ottoLabel: "Otto — idle",
   eventLog: [],
+  campaignDraft: null,
 };
 
 /* ── 订阅机制(version tick:每次 notify 递增,useSyncExternalStore 读它触发重渲染) ── */
@@ -455,6 +466,12 @@ export function appendChatMessage(threadId: string, message: NsChatMessage) {
   notify();
 }
 
+/** Campaign 工作台交出的草稿(workbench 提交时写,proposal-card 读它真实呈现目标/日期/预算)。 */
+export function setCampaignDraft(draft: NsCampaignDraft) {
+  state.campaignDraft = draft;
+  notify();
+}
+
 /** 新开一个空 thread,返回它的 id(dock / otto-chat 的「New chat」共用)。 */
 export function startChatThread(title = "New chat"): string {
   const id = `th-live-${seq + 1}`;
@@ -473,9 +490,24 @@ export function creditLedger(): NsCreditRow[] {
   return state.creditLedger;
 }
 
+/** 全部排期帖(排期区三视图的单一源:base + composer 新排 + campaign 生成的草稿)。 */
+export function scheduledPosts(): NsScheduledPost[] {
+  return state.scheduledPosts;
+}
+
 /** 未发出的排期帖(scheduled + draft),home「Up next」用。 */
 export function upNext(): NsScheduledPost[] {
   return state.scheduledPosts.filter((p) => p.status === "scheduled" || p.status === "draft");
+}
+
+/** 全部 campaign 日历条目(campaign 区 + 排期区 campaign 归组的单一源;approve/生成后状态在这里变)。 */
+export function campaignEntries(): NsCampaignEntry[] {
+  return state.campaignEntries;
+}
+
+/** Campaign 工作台草稿(无则 null;proposal-card 读它,缺省回落 _mock 的 NS_CAMPAIGN)。 */
+export function campaignDraft(): NsCampaignDraft | null {
+  return state.campaignDraft;
 }
 
 export function pendingApprovals(): NsApprovalRequest[] {

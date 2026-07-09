@@ -17,8 +17,15 @@ import { cn } from "@/lib/utils";
 import { Button } from "@/components/ui/button";
 import { OttoAvatar } from "@/components/otto/OttoAvatar";
 import { EmptyState, MockNote, PageHeader } from "@/components/northstar/_shared";
-import { NS_BRAND, NS_CAMPAIGN, NS_CAMPAIGN_ENTRIES } from "@/components/northstar/_mock";
+import { NS_CAMPAIGN } from "@/components/northstar/_mock";
 import { FORMAT_META } from "@/components/northstar/campaign/_data";
+import {
+  approveCampaignEntry,
+  balance,
+  campaignEntries,
+  spendCredits,
+  useStore,
+} from "@/components/northstar/immersive/_store";
 import {
   DemoStates,
   GenBar,
@@ -35,16 +42,23 @@ type RunState = "queued" | "generating" | "done" | "failed";
 const FAIL_ID = "ce-06"; // 演示:一条失败 → 自动退款 → Retry
 
 export default function Page() {
+  useStore();
   const [demo, setDemo] = React.useState<DemoState>("default");
   const [phase, setPhase] = React.useState<Phase>("review");
   const [excluded, setExcluded] = React.useState<Set<string>>(new Set());
   const [run, setRun] = React.useState<Record<string, RunState>>({});
   const [spent, setSpent] = React.useState(0);
 
-  const items = NS_CAMPAIGN_ENTRIES;
+  const items = campaignEntries();
   const included = items.filter((e) => !excluded.has(e.id));
   const total = included.reduce((s, e) => s + e.estCredits, 0);
-  const balance = NS_BRAND.creditBalance - spent;
+  const liveBalance = balance();
+
+  // 一条生成成功 = 真扣额度 + 把这条 campaign 帖提交进排期(campaign 归组立即可见)
+  function commitGenerated(entryId: string, credits: number, hook: string) {
+    spendCredits(credits, `Campaign generation · ${hook}`, "Video");
+    approveCampaignEntry(entryId);
+  }
 
   const doneCount = included.filter((e) => run[e.id] === "done").length;
   const failedItems = included.filter((e) => run[e.id] === "failed");
@@ -64,6 +78,11 @@ export default function Page() {
   React.useEffect(() => {
     runRef.current = run;
   }, [run]);
+  // items 现在来自 store(approve 会换引用);用 ref 读最新值,让跑批 effect 只依赖 phase
+  const itemsRef = React.useRef(items);
+  React.useEffect(() => {
+    itemsRef.current = items;
+  }, [items]);
   const packIdsRef = React.useRef<string[]>([]);
   const failedOnceRef = React.useRef(false);
 
@@ -90,13 +109,16 @@ export default function Page() {
       const activeId = ids.find((id) => cur[id] === "generating");
       const nextQueued = ids.find((id) => cur[id] === "queued");
       if (activeId) {
-        const item = items.find((e) => e.id === activeId);
+        const item = itemsRef.current.find((e) => e.id === activeId);
         if (activeId === FAIL_ID && !failedOnceRef.current) {
           failedOnceRef.current = true;
           setRun((prev) => ({ ...prev, [activeId]: "failed" }));
         } else {
           setRun((prev) => ({ ...prev, [activeId]: "done" }));
-          if (item) setSpent((s) => s + item.estCredits);
+          if (item) {
+            setSpent((s) => s + item.estCredits);
+            commitGenerated(item.id, item.estCredits, item.hook);
+          }
         }
       } else if (nextQueued) {
         setRun((prev) => ({ ...prev, [nextQueued]: "generating" }));
@@ -106,7 +128,8 @@ export default function Page() {
       }
     }, 1100);
     return () => window.clearInterval(timer);
-  }, [phase, items]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [phase]);
 
   // 全部 done = complete(派生,不进 effect)
   const complete = phase === "settled" && included.length > 0 && included.every((e) => run[e.id] === "done");
@@ -118,6 +141,7 @@ export default function Page() {
     window.setTimeout(() => {
       setRun((prev) => ({ ...prev, [id]: "done" }));
       setSpent((s) => s + item.estCredits);
+      commitGenerated(item.id, item.estCredits, item.hook);
     }, 1400);
   }
 
@@ -259,12 +283,12 @@ export default function Page() {
               <span className="text-lg font-semibold tracking-[-0.012em] text-foreground tabular-nums">
                 Total · {fmtCredits(total)}
               </span>
-              <span className="text-xs text-muted-foreground tabular-nums">Your balance · {fmtCredits(balance)}</span>
+              <span className="text-xs text-muted-foreground tabular-nums">Your balance · {fmtCredits(liveBalance)}</span>
             </div>
             <ul className="mt-3 flex flex-col gap-1.5 text-[13px] leading-[18px] text-muted-foreground">
               <li>The server recalculates this total from the stored card when you confirm. Card estimates are display only.</li>
               <li>If an item fails, that item refunds automatically and the rest continue.</li>
-              <li>Finished pieces land in your schedule as drafts. Nothing publishes without you.</li>
+              <li>Finished pieces land in your schedule as scheduled posts. Nothing publishes without you.</li>
               {phase === "review" && <li className="text-foreground">No charge until you confirm.</li>}
             </ul>
 
@@ -293,8 +317,8 @@ export default function Page() {
                 <Landed className="w-full rounded-[14px]">
                   <div className="flex flex-wrap items-center gap-3 rounded-[14px] bg-success-soft px-4 py-3">
                     <p className="min-w-0 flex-1 text-[13px] leading-[18px] font-medium text-success-soft-foreground">
-                      Pack complete. You approved this batch and it used {fmtCredits(spent)}. {included.length} drafts
-                      are in your schedule, none published.
+                      Pack complete. You approved this batch and it used {fmtCredits(spent)}. {doneCount} posts are in
+                      your schedule, none published.
                     </p>
                     <Button asChild size="sm">
                       <Link href="/northstar/schedule/plan">Open schedule</Link>

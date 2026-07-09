@@ -34,7 +34,7 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 import { EmptyState, MockNote, PageHeader } from "@/components/northstar/_shared";
-import { NS_ASSETS, NS_SCHEDULED_POSTS, type NsAsset } from "@/components/northstar/_mock";
+import { NS_ASSETS, NS_SCHEDULED_POSTS, nsPlaceholder, type NsAsset } from "@/components/northstar/_mock";
 import {
   DemoStateBar,
   ErrorPanel,
@@ -172,7 +172,7 @@ export default function Page() {
         scheduledAt: `${date}T${time}:00+08:00`,
         platform: targets[0],
         caption: caption.trim(),
-        media: media?.thumb ?? "",
+        media: media?.thumb ?? nsPlaceholder("New post", 640, 640, "neutral"),
         status: "scheduled",
         firstComment: firstComment.trim() || undefined,
       });

@@ -39,11 +39,12 @@ import {
   Skeleton,
   StatusBadge,
   addDaysIso,
-  basePosts,
   fmtDate,
   fmtDateLong,
   fmtTime,
+  livePosts,
 } from "@/components/northstar/schedule/kit";
+import { useStore } from "@/components/northstar/immersive/_store";
 
 type ShareDemo = "data" | "loading" | "expired" | "error";
 
@@ -59,13 +60,14 @@ const EXPIRY_OPTIONS = [
 ];
 
 export default function Page() {
+  useStore();
   const [demo, setDemo] = React.useState<ShareDemo>("data");
   const [tokenIdx, setTokenIdx] = React.useState(0);
   const [expiryDays, setExpiryDays] = React.useState("7");
   const [regenOpen, setRegenOpen] = React.useState(false);
   const [regenPending, setRegenPending] = React.useState(false);
 
-  const post = React.useMemo(() => basePosts().find((p) => p.id === SHARED_POST_ID)!, []);
+  const post = livePosts().find((p) => p.id === SHARED_POST_ID)!;
   const token = TOKENS[tokenIdx % TOKENS.length];
   const url = `https://fikirtive.app/p/${token}`;
   const expiresOn = addDaysIso(NS_TODAY, Number(expiryDays));

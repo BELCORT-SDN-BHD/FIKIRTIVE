@@ -13,7 +13,7 @@
 
 import * as React from "react";
 import Link from "next/link";
-import { Archive, ChevronDown, Globe, Search } from "lucide-react";
+import { Activity, Archive, ChevronDown, Globe, Search } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -27,6 +27,10 @@ import {
   SkeletonBlock,
   type DemoState,
 } from "@/components/northstar/campaign/_bits";
+import { recentEvents, useStore, type NsEventType } from "@/components/northstar/immersive/_store";
+
+/* ── 「最近 campaign 活动」读共享 eventLog(工作台批准 / 打包生成花费 / 排期落地) ── */
+const CAMPAIGN_EVENT_TYPES = new Set<NsEventType>(["campaign_entry_approved", "credits_spent", "post_scheduled"]);
 
 const ARCHIVE_STEPS = ["Summarising today's research…", "Filing sources…"] as const;
 
@@ -114,6 +118,7 @@ function SnapshotRow({
 }
 
 export default function Page() {
+  useStore();
   const [demo, setDemo] = React.useState<DemoState>("default");
   const [query, setQuery] = React.useState("");
   const [via, setVia] = React.useState<ViaFilter>("all");
@@ -139,6 +144,8 @@ export default function Page() {
   const hasFilter = q.length > 0 || via !== "all";
   const olderRows = hasFilter ? filtered : filtered.filter((s) => s.id !== NEWEST.id);
 
+  const activity = recentEvents(40).filter((e) => CAMPAIGN_EVENT_TYPES.has(e.type)).slice(0, 6);
+
   return (
     <div className="mx-auto flex min-h-full w-full max-w-[880px] flex-col px-6 pt-6 pb-10">
       <PageHeader
@@ -146,6 +153,31 @@ export default function Page() {
         subtitle="What's working in your market right now. Otto files every research run here and checks it before planning."
         meta={["via Otto research · read-only"]}
       />
+
+      {/* 最近 campaign 活动:读共享 eventLog(工作台批准 / 打包生成花费 / 排期落地) */}
+      <div className="mt-6 overflow-hidden rounded-[var(--radius-card)] border border-border bg-card">
+        <div className="flex items-center gap-2 border-b border-border px-4 py-3">
+          <Activity className="size-4 text-muted-foreground" strokeWidth={2} />
+          <span className="text-sm font-semibold text-foreground">Recent campaign activity</span>
+        </div>
+        {activity.length === 0 ? (
+          <p className="px-4 py-4 text-[13px] leading-[18px] text-muted-foreground">
+            No campaign activity yet. Approve a plan or run a pack and it shows up here.
+          </p>
+        ) : (
+          <ul className="flex flex-col">
+            {activity.map((e) => (
+              <li
+                key={e.at}
+                className="flex items-center gap-3 border-t border-border px-4 py-2.5 first:border-t-0"
+              >
+                <span aria-hidden className="size-1.5 shrink-0 rounded-full bg-success" />
+                <span className="min-w-0 flex-1 truncate text-[13px] leading-[18px] text-foreground">{e.label}</span>
+              </li>
+            ))}
+          </ul>
+        )}
+      </div>
 
       {/* 工具行:搜索 + via 过滤(segmented,§N4:同一份内容换看法) */}
       <div className="mt-6 flex flex-wrap items-center gap-3">

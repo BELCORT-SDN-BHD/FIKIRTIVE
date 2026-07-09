@@ -18,9 +18,12 @@
 ## 选择器(派生读的单一源)
 - `balance()` —— 当前额度(导航栏 / home「Credit balance」/ credits / settings 同源读它)。
 - `creditLedger()` —— 额度流水(种子 + 本次会话新增行,最新在前;credits 页读它)。
+- `scheduledPosts()` —— 全部排期帖(排期区三视图的单一源:base + composer 新排 + campaign 生成)。
 - `upNext()` —— 未发出的排期帖(scheduled + draft),home「Up next」用。
+- `campaignEntries()` —— 全部 campaign 日历条目(campaign 区 + 排期区 campaign 归组;approve/生成后状态在这里变)。
+- `campaignDraft()` —— campaign 工作台交出的草稿(无则 null;proposal-card 读它,缺省回落 NS_CAMPAIGN)。
 - `pendingApprovals()` —— 待办审批队列。
-- `recentEvents(n)` —— 最近 n 条事件,最新在前(dock「Just now」条读 `recentEvents(1)`)。
+- `recentEvents(n)` —— 最近 n 条事件,最新在前(dock「Just now」条读 `recentEvents(1)`;trends「最近 campaign 活动」读它过滤)。
 - `chatThreads()` / `connections()` / `rules()` / `routines()` / `teamMembers()` —— 对应镜像的当前值。
 - `aiHandledCount()` —— Otto 已自动应答的会话数(automation 规则「Answer order questions」的 runsThisWeek 派生自它,不写死)。
 - crm-inbox 身份链读:`conversationsView()` / `conversationByIdView(id)` /
@@ -37,8 +40,8 @@
 `connectChannel(id)` · `disconnectChannel(id)` · `resolveConversation(id)`(缺联系人则补建 + 记「New」+ 追加时间线)·
 `toggleAutomationRule(id,on)` · `addRule({name,when,then})` · `toggleRoutine(id,on)` · `addRoutine({name,cadence,step})` ·
 `submitAd(payload)`(payload 带 platform/label,派生「审核中」)· `castTrained(name)`(cast 训练完成落事件流)· `ottoWorking(on,label?)` ·
-`appendChatMessage(threadId,msg)` · `startChatThread(title?)` · `inviteMember(email)`
-(真 append 一条 pending Editor;team 页 pending chip / 计数由此派生)。
+`appendChatMessage(threadId,msg)` · `startChatThread(title?)` · `setCampaignDraft(draft)`(工作台提交时写)·
+`inviteMember(email)`(真 append 一条 pending Editor;team 页 pending chip / 计数由此派生)。
 crm-inbox 身份链动作:`sendConversationMessage(id,text)`(append owner 消息 + 人工插手→该会话 AI
 暂停)· `setConversationAi(id,paused)`(Otto 自动接管开关,dispatch automation 事件)·
 `advanceDealStage(id,current,dir,title)`(阶段推进/回退,金额仍走 dealAmountMyr)·

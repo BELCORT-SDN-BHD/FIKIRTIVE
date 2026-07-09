@@ -23,12 +23,14 @@ import {
   PostRowsSkeleton,
   Skeleton,
   ViewSwitch,
-  basePosts,
   campaignPosts,
   fmtDateLong,
+  livePosts,
+  toScheduled,
   type DemoState,
   type SPost,
 } from "@/components/northstar/schedule/kit";
+import { recentEvents, schedulePost, useStore } from "@/components/northstar/immersive/_store";
 
 function groupByDate(posts: SPost[]): { date: string; posts: SPost[] }[] {
   const map = new Map<string, SPost[]>();
@@ -43,12 +45,21 @@ function groupByDate(posts: SPost[]): { date: string; posts: SPost[] }[] {
 }
 
 export default function Page() {
+  useStore();
   const [demo, setDemo] = React.useState<DemoState>("data");
-  const [posts, setPosts] = React.useState<SPost[]>(() => [...basePosts(), ...campaignPosts().scheduled]);
+  const posts = [...livePosts(), ...campaignPosts().scheduled];
   const [approving, setApproving] = React.useState<SPost | null>(null);
+  const landingId = React.useMemo(
+    () => recentEvents(20).find((e) => e.type === "post_scheduled")?.payload.id as string | undefined,
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [posts.length],
+  );
 
-  const approve = (id: string) =>
-    setPosts((prev) => prev.map((p) => (p.id === id ? { ...p, status: "scheduled" } : p)));
+  // 审批 = 入库(draft → scheduled)经共享 store,plan/calendar/home 同步反映
+  const approve = (id: string) => {
+    const post = posts.find((p) => p.id === id);
+    if (post) schedulePost(toScheduled(post));
+  };
 
   const upcoming = groupByDate(posts.filter((p) => p.status === "scheduled" || p.status === "draft"));
   const published = groupByDate(posts.filter((p) => p.status === "published" || p.status === "failed")).reverse();
@@ -123,7 +134,7 @@ export default function Page() {
                     </span>
                   </div>
                   {g.posts.map((p) => (
-                    <PostRow key={p.id} post={p} onApprove={setApproving} />
+                    <PostRow key={p.id} post={p} onApprove={setApproving} landing={p.id === landingId} />
                   ))}
                 </div>
               ))}
