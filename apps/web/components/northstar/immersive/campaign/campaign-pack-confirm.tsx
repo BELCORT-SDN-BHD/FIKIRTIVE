@@ -18,9 +18,17 @@ import { Button } from "@/components/ui/button";
 import { OttoAvatar } from "@/components/otto/OttoAvatar";
 import { EmptyState, PageHeader } from "@/components/northstar/_shared";
 import { NS_CAMPAIGN, nsImage, type NsCampaignEntry } from "@/components/northstar/_mock";
-import { FORMAT_META } from "@/components/northstar/campaign/_data";
-import { approveCampaignEntry, balance, campaignEntries, saveDraft, spendCredits, useStore } from "../_store";
+import { FORMAT_META, PLATFORM_META } from "@/components/northstar/campaign/_data";
+import { approveCampaignEntry, balance, campaignDraft, campaignEntries, deriveCampaignName, saveDraft, spendCredits, useStore } from "../_store";
 import { CAMP_BASE as BASE, GenBar, Landed, PlatformPill, fmtCredits, fmtDay } from "./kit";
+
+/** 平台数组 → 人话串（"Instagram, Facebook and TikTok"）。 */
+function joinPlatforms(platforms: string[]): string {
+  const labels = platforms.map((p) => PLATFORM_META[p as NsCampaignEntry["platform"]]?.label ?? p);
+  if (labels.length === 0) return "your channels";
+  if (labels.length === 1) return labels[0]!;
+  return `${labels.slice(0, -1).join(", ")} and ${labels[labels.length - 1]}`;
+}
 
 type Phase = "review" | "confirming" | "running" | "settled";
 type RunState = "queued" | "generating" | "done" | "failed";
@@ -37,6 +45,17 @@ export function CampaignPackConfirm() {
   const included = items.filter((e) => !excluded.has(e.id));
   const total = included.reduce((s, e) => s + e.estCredits, 0);
   const liveBalance = balance();
+
+  // STALL #58:复述条读真实草稿(goal / period / platforms / 条数),不再写死 Merdeka。
+  const draft = campaignDraft();
+  const reciteName = draft ? deriveCampaignName(draft.goal) : NS_CAMPAIGN.name;
+  const recitePeriod = draft ? `${fmtDay(draft.start)} to ${fmtDay(draft.end)}` : "Aug 24 to 31";
+  const recitePlatforms = joinPlatforms((draft?.platforms as string[] | undefined) ?? [...NS_CAMPAIGN.platforms]);
+  const reciteGoal = draft?.goal ?? NS_CAMPAIGN.goal;
+
+  // STALL #59:余额不足分支(合计 > 余额 → 提示差额 + 引导充值,不静默扣到 0)。
+  const shortfall = Math.max(0, total - liveBalance);
+  const canAfford = total <= liveBalance;
 
   function commitGenerated(entry: NsCampaignEntry) {
     spendCredits(entry.estCredits, `Campaign generation · ${entry.hook}`, "Video");
@@ -77,6 +96,7 @@ export function CampaignPackConfirm() {
 
   function confirmPack() {
     if (included.length === 0) return;
+    if (total > liveBalance) return; // STALL #59:兜底,余额不足永不进入扣费流
     packIdsRef.current = included.map((e) => e.id);
     setPhase("confirming");
     setRun(Object.fromEntries(included.map((e) => [e.id, "queued" as RunState])));
@@ -152,8 +172,7 @@ export function CampaignPackConfirm() {
           <div className="mt-6 flex items-start gap-3 rounded-[14px] bg-secondary/70 px-4 py-3">
             <OttoAvatar size={16} mood={ottoMood} className="mt-0.5 shrink-0" />
             <p className="text-[13px] leading-[18px] text-foreground">
-              My understanding: {included.length} posts for Merdeka week, Aug 24 to 31, across Instagram, Facebook and
-              TikTok, to drive gift box pre-orders. The total below is the exact quote for this batch.
+              My understanding: {included.length} post{included.length === 1 ? "" : "s"} for {reciteName}, {recitePeriod}, across {recitePlatforms}, to {reciteGoal.charAt(0).toLowerCase() + reciteGoal.slice(1)}. The total below is the exact quote for this batch.
             </p>
           </div>
 
@@ -214,6 +233,16 @@ export function CampaignPackConfirm() {
               <span className="text-lg font-semibold tracking-[-0.012em] text-foreground tabular-nums">Total · {fmtCredits(total)}</span>
               <span className="text-xs text-muted-foreground tabular-nums">Your balance · {fmtCredits(liveBalance)}</span>
             </div>
+
+            {/* STALL #59:合计 > 余额 → 显式差额 + 去充值,不让「Confirm」把余额静默压到 0 */}
+            {phase === "review" && !canAfford && (
+              <div role="alert" className="mt-3 flex flex-wrap items-center gap-3 rounded-[12px] bg-warning-soft px-4 py-3">
+                <p className="min-w-0 flex-1 text-[13px] font-medium text-warning-soft-foreground tabular-nums">
+                  You&apos;re {fmtCredits(shortfall)} short for this batch. Top up, or untick a few posts to fit {fmtCredits(liveBalance)}.
+                </p>
+              </div>
+            )}
+
             <ul className="mt-3 flex flex-col gap-1.5 text-[13px] leading-[18px] text-muted-foreground">
               <li>The server recalculates this total from the stored card when you confirm. Card estimates are display only.</li>
               <li>If an item fails, that item refunds automatically and the rest continue.</li>
@@ -225,7 +254,11 @@ export function CampaignPackConfirm() {
               {phase === "review" && (
                 <>
                   <Button asChild variant="secondary" size="sm"><Link href={`${BASE}/campaign/calendar`}>Cancel</Link></Button>
-                  <Button size="sm" onClick={confirmPack} disabled={included.length === 0}>Confirm pack · {total} credits</Button>
+                  {canAfford ? (
+                    <Button size="sm" onClick={confirmPack} disabled={included.length === 0}>Confirm pack · {total} credits</Button>
+                  ) : (
+                    <Button asChild size="sm"><Link href={`${BASE}/account/top-up`}>Top up first · short {shortfall} credits</Link></Button>
+                  )}
                 </>
               )}
               {busy && <Button size="sm" disabled>{phase === "confirming" ? "Confirming…" : `Generating… ${doneCount}/${included.length}`}</Button>}

@@ -18,10 +18,11 @@ import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, D
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { EmptyState, OttoNarrationBar, PageHeader, StatCard } from "@/components/northstar/_shared";
 import { NS_CAMPAIGN, type NsCampaignEntry } from "@/components/northstar/_mock";
-import { FORMAT_META, PLATFORM_META } from "@/components/northstar/campaign/_data";
+import { FORMAT_META, PLATFORM_META, entryStrategy } from "@/components/northstar/campaign/_data";
 import { EntryStatusBadge } from "@/components/northstar/campaign/_bits";
-import { approveCampaignEntry, campaignEntries, removeCampaignEntry, updateCampaignEntry, useStore } from "../_store";
-import { CAMP_BASE as BASE, Landed, PlatformPill, SkeletonBlock, fmtCredits, fmtDay } from "./kit";
+import { applyCampaignTemplate, approveCampaignEntry, campaignDraft, campaignEntries, deriveCampaignName, removeCampaignEntry, updateCampaignEntry, useStore } from "../_store";
+import { OttoAssist } from "../otto-assist";
+import { CAMP_BASE as BASE, Landed, PlatformPill, RoleBadge, SkeletonBlock, fmtCredits, fmtDay } from "./kit";
 
 interface GridDay {
   iso: string;
@@ -56,6 +57,7 @@ export function CampaignCalendar() {
   const [draft, setDraft] = React.useState<NsCampaignEntry | null>(null);
 
   const entries: NsCampaignEntry[] = campaignEntries();
+  const campDraft = campaignDraft(); // 提案草稿(与下方编辑对话的 `draft` 是两回事)
   const editing = entries.find((e) => e.id === editingId) ?? null;
   const total = entries.reduce((s, e) => s + e.estCredits, 0);
   const approvedCount = entries.filter((e) => e.status !== "proposed").length;
@@ -188,12 +190,15 @@ export function CampaignCalendar() {
                 <SkeletonBlock className="h-12 w-full" shimmer={false} />
               </div>
             ) : (
-              entries.map((e, i) => (
+              entries.map((e, i) => {
+                const strat = entryStrategy(e.id);
+                return (
                 <div key={e.id} className={cn("group flex items-center gap-3 px-4 py-3 focus-within:bg-accent/50 hover:bg-accent/50", i > 0 && "border-t border-border")}>
                   <span className="w-14 shrink-0 font-mono text-xs font-medium text-muted-foreground tabular-nums">{fmtDay(e.date)}</span>
                   <PlatformPill platform={e.platform} />
-                  <span className="hidden w-16 shrink-0 text-xs text-muted-foreground sm:block">{FORMAT_META[e.format].label}</span>
+                  {strat && <span className="hidden sm:inline"><RoleBadge role={strat.role} /></span>}
                   <span className="min-w-0 flex-1 truncate text-sm font-semibold text-foreground">{e.hook}</span>
+                  {strat && <span className="hidden shrink-0 font-mono text-[11px] font-medium text-muted-foreground lg:inline">{strat.suggestedTime}</span>}
                   <span className="shrink-0 font-mono text-xs font-medium text-muted-foreground tabular-nums">{e.estCredits} cr</span>
                   <EntryStatusBadge status={e.status} />
                   <span className="flex shrink-0 items-center gap-1 opacity-0 transition-opacity group-focus-within:opacity-100 group-hover:opacity-100">
@@ -204,9 +209,24 @@ export function CampaignCalendar() {
                     <button type="button" aria-label={`Remove ${e.hook}`} onClick={() => removeEntry(e.id)} className="flex size-7 items-center justify-center rounded-lg text-muted-foreground hover:bg-error-soft hover:text-error-soft-foreground"><Trash2 className="size-4" strokeWidth={2} /></button>
                   </span>
                 </div>
-              ))
+                );
+              })
             )}
-            {showEntries && entries.length === 0 && <p className="px-4 py-8 text-center text-[13px] text-muted-foreground">Every post was removed. Ask Otto to redraft the plan.</p>}
+            {showEntries && entries.length === 0 && (
+              <div className="flex flex-wrap items-center justify-center gap-3 px-4 py-8 text-center">
+                <p className="text-[13px] text-muted-foreground">Every post was removed.</p>
+                <OttoAssist
+                  zone="Campaign"
+                  entityLabel={campDraft ? deriveCampaignName(campDraft.goal) : NS_CAMPAIGN.name}
+                  formState={{ goal: campDraft?.goal ?? NS_CAMPAIGN.goal }}
+                  label="Redraft with Otto"
+                  intents={[
+                    { id: "redraft-cal", label: "Redraft the whole plan", prompt: `Redraft the plan for "${campDraft?.goal ?? NS_CAMPAIGN.goal}".`, reply: "On it — here's a fresh plan. Apply it to bring the posts back onto the calendar.", apply: { summary: "Restore the plan", patch: { redraft: true } } },
+                  ]}
+                  onApply={() => applyCampaignTemplate(campDraft?.goal ?? NS_CAMPAIGN.goal)}
+                />
+              </div>
+            )}
           </div>
         )}
       </div>

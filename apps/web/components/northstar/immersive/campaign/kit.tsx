@@ -107,6 +107,22 @@ export function GoalBar({
   );
 }
 
+/* ── [wave-c] 漏斗角色徽标(让 7 条帖成一条弧线;中性灰,不抢 coral/blue) ────────── */
+export function RoleBadge({ role }: { role: string }) {
+  return (
+    <span className="inline-flex h-5 shrink-0 items-center rounded-full bg-secondary px-2 font-mono text-[10px] leading-none font-semibold tracking-[0.08em] text-muted-foreground uppercase">
+      {role}
+    </span>
+  );
+}
+
+/* ── [wave-c] 趋势置信度小标(High/Watch/Cooling;语义色,冷启动诚实) ────────────── */
+export function ConfidenceBadge({ level }: { level: "High" | "Watch" | "Cooling" }) {
+  if (level === "High") return <Badge variant="success">Confidence · high</Badge>;
+  if (level === "Watch") return <Badge variant="warning">Confidence · watch</Badge>;
+  return <Badge variant="outline">Confidence · cooling</Badge>;
+}
+
 /* ── ROI 一行结论(#3:花费 vs 归因收入 vs ROI%;只用平台自身 insight) ─────────
  * [wave-b] Campaign ROI 一行结论 */
 export function roiLine(spentCredits: number, revenueMyr: number): { text: string; positive: boolean } {

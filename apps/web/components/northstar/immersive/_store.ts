@@ -2997,3 +2997,22 @@ export function refundCredits(n: number, label: string): void {
   logEvent("credits_topped_up", `Refunded ${n} credits · ${label}`, { n, label, refund: true });
   notify();
 }
+
+/* ═══════════════════════════════════════════════════════════════════════════
+ * [wave-c · Z4 campaign-trends] Campaign 模板换产出 —— 文件尾追加(注明队名)
+ *
+ * workbench 目标真的改变产出:goal 命中唤回/复购/新客关键词 → 换入对应模板的 entries,
+ * proposal / calendar / pack-confirm 读同一份 campaignEntries() 即见差异化的一整套帖(受众/
+ * 卖点/价/CTA/KPI/产能约束在 campaign/_data.ts 的策略层按 id 对齐)。resolveCampaignTemplate
+ * 是纯函数(campaign/_data 只 import ../_mock,不反向 import 本文件,无循环)。
+ * 铁律不变:纯 client、零后台;只换 entries,不碰 credits/世界圣经。
+ * ═══════════════════════════════════════════════════════════════════════════ */
+import { resolveCampaignTemplate } from "@/components/northstar/campaign/_data";
+
+/** 按 goal 选模板并换入 entries(workbench 提交后调;proposal 读它成为唯一事实)。 */
+export function applyCampaignTemplate(goal: string): void {
+  const template = resolveCampaignTemplate(goal);
+  // 深拷贝一份(store 是唯一可改事实源;模板常量不被后续 edit/删除污染)。
+  state.campaignEntries = template.entries.map((e) => ({ ...e }));
+  notify();
+}

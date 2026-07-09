@@ -19,7 +19,8 @@ import { Textarea } from "@/components/ui/textarea";
 import { OttoAvatar } from "@/components/otto/OttoAvatar";
 import { PageHeader, OttoNarrationBar } from "@/components/northstar/_shared";
 import { NS_BRAND, NS_CAMPAIGN_ENTRIES, NS_CAMPAIGNS } from "@/components/northstar/_mock";
-import { deriveCampaignName, proposeCampaign } from "../_store";
+import { applyCampaignTemplate, deriveCampaignName, proposeCampaign } from "../_store";
+import { OttoAssist } from "../otto-assist";
 import { useQueryParam } from "../_kit";
 import { CAMP_BASE as BASE, CampaignNav, fmtCredits } from "./kit";
 
@@ -100,8 +101,14 @@ export function CampaignWorkbench() {
     if (Object.keys(next).length > 0) return;
     // O-12:同一动作层 —— 存草稿 + 单流落一轮往来(proposal-card 读草稿真实呈现)
     proposeCampaign({ goal: goal.trim(), start, end, budgetCredits: Number(budget), platforms: [...platforms] });
+    // goal 换模板:唤回/复购/新客三套帖差异化(proposal/calendar/pack 读同一份 campaignEntries)
+    applyCampaignTemplate(goal.trim());
     setPhase("planning");
   }
+
+  // 预算实物换算(STALL #43:把抽象 credit 立刻锚成「几条帖」)。视频 ~40 / 图 ~12,取中值 ~24。
+  const budgetNum = Number(budget);
+  const budgetPosts = Number.isFinite(budgetNum) && budgetNum > 0 ? Math.round(budgetNum / 24) : 0;
 
   return (
     <div className="mx-auto flex min-h-full w-full max-w-[760px] flex-col px-6 pt-6 pb-16">
@@ -117,6 +124,29 @@ export function CampaignWorkbench() {
 
       <form onSubmit={onSubmit} noValidate className="mt-6">
         <div className="flex flex-col gap-5 rounded-[18px] border border-border bg-card p-5">
+          {/* §O7 就地 Otto 帮我(STALL #26:不用会写 prompt,零打字也能填 goal 起一个) */}
+          <div className="flex items-center justify-between gap-3 border-b border-border pb-4">
+            <p className="min-w-0 text-[13px] text-muted-foreground">Not sure what to write? Otto can start one for you.</p>
+            <OttoAssist
+              zone="Campaign"
+              entityLabel="Campaign workbench"
+              formState={{ goal, start, end, budget, platforms: [...platforms] }}
+              label="Ask Otto"
+              intents={[
+                { id: "bestseller", label: "Start one around my bestseller", prompt: "Start a campaign around my best-selling product.", reply: "Your Merdeka gift box is your proven seller — here's a pre-order launch aimed at 100 boxes. I filled the goal in for you.", apply: { summary: "Fill in a Merdeka gift-box pre-order goal", patch: { goal: "Drive pre-orders for the Merdeka gift box" } } },
+                { id: "repeat", label: "Repeat what sold best last week", prompt: "Base a campaign on whatever sold best last week.", reply: "Your weekday office orders are pacing well — here's a repeat plan to defend that rhythm. Goal filled in.", apply: { summary: "Fill in a repeat office-orders goal", patch: { goal: "Repeat the weekday office orders" } } },
+                { id: "winback", label: "Win back quiet customers", prompt: "Win back customers who've gone quiet.", reply: "You've got about RM5,510 of dormant value — here's a ranked win-back sequence. Goal filled in.", apply: { summary: "Fill in a win-back goal", patch: { goal: "Win back customers who haven't ordered in a while" } } },
+              ]}
+              onApply={(apply) => {
+                const g = apply.patch.goal;
+                if (typeof g === "string") {
+                  setGoal(g);
+                  setPhase("idle");
+                  setErrors((er) => ({ ...er, goal: undefined }));
+                }
+              }}
+            />
+          </div>
           {/* 目标 */}
           <div>
             <label htmlFor="camp-goal" className="text-[13px] font-semibold text-foreground">Goal</label>
@@ -163,7 +193,9 @@ export function CampaignWorkbench() {
               <span className="pointer-events-none absolute inset-y-0 right-3.5 flex items-center border-l border-border pl-3 text-sm text-muted-foreground">credits</span>
             </div>
             <p className={cn("mt-2 text-xs font-medium", errors.budget ? "text-error-soft-foreground" : "text-muted-foreground")}>
-              {errors.budget ?? `Otto keeps the plan inside this cap. Your balance · ${NS_BRAND.creditBalance.toLocaleString("en-MY")} credits.`}
+              {errors.budget ?? (budgetPosts > 0
+                ? `≈ about ${budgetPosts} posts (video ~40 · image ~12). Otto keeps the plan inside this cap. Your balance · ${NS_BRAND.creditBalance.toLocaleString("en-MY")} credits.`
+                : `Otto keeps the plan inside this cap. Your balance · ${NS_BRAND.creditBalance.toLocaleString("en-MY")} credits.`)}
             </p>
           </div>
 
@@ -174,7 +206,7 @@ export function CampaignWorkbench() {
               {PLATFORM_KEYS.map((key) => {
                 const on = platforms.has(key);
                 return (
-                  <button key={key} type="button" onClick={() => togglePlatform(key)} aria-pressed={on} className={cn("inline-flex h-9 items-center gap-1.5 rounded-full border px-3.5 text-[13px] transition-colors", on ? "border-transparent bg-secondary font-semibold text-foreground" : "border-border bg-card font-medium text-muted-foreground hover:bg-accent hover:text-foreground")}>
+                  <button key={key} type="button" onClick={() => togglePlatform(key)} aria-pressed={on} className={cn("ns-pressable inline-flex h-9 items-center gap-1.5 rounded-full border px-3.5 text-[13px]", on ? "border-transparent bg-secondary font-semibold text-foreground" : "border-border bg-card font-medium text-muted-foreground hover:text-foreground")}>
                     {on && <Check className="size-3.5" strokeWidth={2.5} />}
                     {PLATFORM_LABEL[key]}
                   </button>
@@ -241,12 +273,16 @@ export function CampaignWorkbench() {
                 {p.label} <span className="font-mono text-[10px] uppercase">soon</span>
               </span>
             ) : (
-              <button key={p.label} type="button" onClick={() => { setGoal(p.goal); setPhase("idle"); }} className="inline-flex items-center rounded-full border border-border bg-background px-3 py-1.5 text-xs font-medium text-foreground transition-colors hover:bg-accent">
+              <button key={p.label} type="button" onClick={() => { setGoal(p.goal); setPhase("idle"); setErrors((er) => ({ ...er, goal: undefined })); }} className="ns-pressable inline-flex items-center rounded-full border border-border bg-background px-3 py-1.5 text-xs font-medium text-foreground hover:bg-accent">
                 {p.label}
               </button>
             ),
           )}
         </div>
+        {/* STALL #18 冷启动诚实标注:依赖过往数据的 playbook,首次用会更空 */}
+        <p className="mt-3 text-xs text-muted-foreground">
+          Repeat and win-back use what past campaigns learned — they get sharper after your first campaign runs.
+        </p>
       </section>
 
       {/* 提案 ready 卡 */}

@@ -11,14 +11,15 @@
 
 import * as React from "react";
 import Link from "next/link";
-import { Activity, Archive, ChevronDown, Globe, Search } from "lucide-react";
+import { Activity, ArrowRight, ChevronDown, Globe, Search, TriangleAlert } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { Input } from "@/components/ui/input";
 import { Badge } from "@/components/ui/badge";
 import { PageHeader, OttoNarrationBar } from "@/components/northstar/_shared";
 import { NS_TRENDS, campaignSummaryById, type NsTrendSnapshot } from "@/components/northstar/_mock";
+import { trendIntel } from "@/components/northstar/campaign/_data";
 import { recentEvents, useStore, type NsEventType } from "../_store";
-import { CAMP_BASE as BASE, CampaignNav, Landed, SkeletonBlock } from "./kit";
+import { CAMP_BASE as BASE, CampaignNav, ConfidenceBadge, Landed, SkeletonBlock } from "./kit";
 
 const CAMPAIGN_EVENT_TYPES = new Set<NsEventType>(["campaign_entry_approved", "credits_spent", "post_scheduled"]);
 const ARCHIVE_STEPS = ["Summarising today's research…", "Filing sources…"] as const;
@@ -33,18 +34,43 @@ const VIA_OPTIONS: { key: ViaFilter; label: string }[] = [
 
 function SnapshotRow({ snap, open, onToggle, first }: { snap: NsTrendSnapshot; open: boolean; onToggle: () => void; first: boolean }) {
   const campaign = snap.campaignId ? campaignSummaryById(snap.campaignId) : undefined;
+  const intel = trendIntel(snap.id);
   return (
     <div className={cn(!first && "border-t border-border")}>
       <button type="button" aria-expanded={open} onClick={onToggle} className="flex w-full items-center gap-3 px-4 py-3 text-left transition-colors hover:bg-accent">
         <span className="w-20 shrink-0 font-mono text-[11px] font-medium text-muted-foreground tabular-nums">{snap.capturedAt}</span>
         <span className="min-w-0 flex-1 truncate text-sm font-semibold text-foreground">{snap.title}</span>
-        {snap.stat && <span className="hidden shrink-0 font-mono text-[11px] font-medium text-muted-foreground sm:inline">{snap.stat.value}</span>}
+        {intel && <span className="hidden sm:inline"><ConfidenceBadge level={intel.confidence} /></span>}
         {snap.via === "Deep research" ? <Badge variant="info">Deep research</Badge> : <Badge>Quick search</Badge>}
         <ChevronDown aria-hidden className={cn("size-4 shrink-0 text-muted-foreground transition-transform", open && "rotate-180")} strokeWidth={2} />
       </button>
       {open && (
         <div className="border-t border-border bg-secondary/40 px-4 py-4 sm:pl-[7.75rem]">
-          <p className="max-w-[560px] text-[13px] leading-[18px] text-foreground">{snap.summary}</p>
+          {/* 证据句(带基线/样本/日期)领头,替裸摘要 */}
+          <p className="max-w-[600px] text-[13px] leading-[18px] text-foreground">{intel?.evidence ?? snap.summary}</p>
+
+          {intel && (
+            <>
+              {/* 置信度 + 复核 */}
+              <div className="mt-2.5 flex flex-wrap items-center gap-x-3 gap-y-1">
+                <span className="sm:hidden"><ConfidenceBadge level={intel.confidence} /></span>
+                <span className="text-xs text-muted-foreground">{intel.recheck}</span>
+              </div>
+
+              {/* 「别追这个」—— 本地反例 / 可反驳边界 */}
+              <div className="mt-3 flex items-start gap-2 rounded-[10px] bg-warning-soft px-3 py-2">
+                <TriangleAlert aria-hidden className="mt-0.5 size-3.5 shrink-0 text-warning-soft-foreground" strokeWidth={2} />
+                <p className="min-w-0 text-[12px] leading-[16px] text-warning-soft-foreground"><span className="font-semibold">Don&apos;t chase this: </span>{intel.dontChase}</p>
+              </div>
+
+              {/* 洞察 → 动作桥 */}
+              <div className="mt-2 flex items-start gap-2 rounded-[10px] bg-card px-3 py-2">
+                <ArrowRight aria-hidden className="mt-0.5 size-3.5 shrink-0 text-muted-foreground" strokeWidth={2} />
+                <p className="min-w-0 text-[12px] leading-[16px] text-foreground"><span className="font-semibold">Applied as: </span>{intel.appliedAs}</p>
+              </div>
+            </>
+          )}
+
           <div className="mt-3">
             <div className="font-mono text-[10px] font-medium tracking-[0.08em] text-muted-foreground uppercase">Sources</div>
             <ul className="mt-1.5 flex flex-col gap-1">
@@ -56,11 +82,13 @@ function SnapshotRow({ snap, open, onToggle, first }: { snap: NsTrendSnapshot; o
                 </li>
               ))}
             </ul>
+            {intel?.method && <p className="mt-1.5 text-[11px] leading-[14px] text-muted-foreground">Method: {intel.method}</p>}
           </div>
+
           <div className="mt-3 flex items-center gap-2">
             <span className="text-xs font-medium text-muted-foreground">Used by</span>
             {campaign ? (
-              <Link href={`${BASE}/campaign/detail?id=${campaign.id}`} className="inline-flex h-6 items-center rounded-full border border-border bg-card px-2.5 text-xs font-semibold text-foreground transition-colors hover:bg-accent">
+              <Link href={`${BASE}/campaign/detail?id=${campaign.id}`} className="ns-pressable inline-flex h-6 items-center rounded-full border border-border bg-card px-2.5 text-xs font-semibold text-foreground hover:bg-accent">
                 {campaign.name}
               </Link>
             ) : (
