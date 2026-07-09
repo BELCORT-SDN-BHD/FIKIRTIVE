@@ -1603,3 +1603,178 @@ export function sendCampaignMessage(campaignId: string, label: string, text: str
   if (!t) return;
   appendToStream({ role: "owner", text: t, context: { zone: "Campaign", label, campaignId } });
 }
+
+/* ══════════════════════════════════════════════════════════════════════════
+ * 排期区(Z5)· Wave B 附加状态（文件尾追加；自带惰性单例 + 复用 notify）
+ * ENDGAME 铁律:一切状态经 _store.ts。这些是排期区独有的原型对象（槽位/频道组/
+ * hashtag 组/常青清单/帖标签UTM/提醒发布标记），不属于 _mock 世界圣经，故由区级
+ * seed 注入（seedScheduleExtras），品牌事实仍留在区的 data.ts，状态与 notify 留这里。
+ * ══════════════════════════════════════════════════════════════════════════ */
+
+export interface NsPostingSlot {
+  id: string;
+  /** 0=Mon … 6=Sun */
+  day: number;
+  /** HH:mm */
+  time: string;
+  channel: NsScheduledPost["platform"];
+}
+export interface NsChannelGroup {
+  id: string;
+  name: string;
+  channels: NsScheduledPost["platform"][];
+}
+export interface NsHashtagGroup {
+  id: string;
+  name: string;
+  tags: string[];
+}
+export interface NsEvergreenList {
+  id: string;
+  name: string;
+  cadenceDays: number;
+  items: string[];
+  active: boolean;
+}
+export interface NsPostMeta {
+  tags?: string[];
+  utm?: string;
+  altText?: string;
+  reminder?: boolean;
+}
+interface ScheduleExtras {
+  slots: NsPostingSlot[];
+  channelGroups: NsChannelGroup[];
+  hashtagGroups: NsHashtagGroup[];
+  evergreen: NsEvergreenList[];
+  postMeta: Record<string, NsPostMeta>;
+  remindered: string[];
+}
+
+let scheduleExtras: ScheduleExtras | null = null;
+
+/** 惰性 seed（第一次进任意排期页时注入；幂等）。种子来自区的 data.ts，非 store 造。 */
+export function seedScheduleExtras(seed: () => Omit<ScheduleExtras, "postMeta" | "remindered">) {
+  if (scheduleExtras) return;
+  const base = seed();
+  scheduleExtras = { ...base, postMeta: {}, remindered: [] };
+}
+function extras(): ScheduleExtras {
+  return scheduleExtras ?? { slots: [], channelGroups: [], hashtagGroups: [], evergreen: [], postMeta: {}, remindered: [] };
+}
+
+/* ── 队列槽位（Posting Slots · [wave-b] 槽位配置） ─────────────────────────── */
+export function postingSlots(): NsPostingSlot[] {
+  return extras().slots;
+}
+export function addPostingSlot(day: number, time: string, channel: NsScheduledPost["platform"]) {
+  const e = extras();
+  const id = `slot-${day}-${time}-${channel}`;
+  if (e.slots.some((s) => s.id === id)) return;
+  e.slots = [...e.slots, { id, day, time, channel }].sort((a, b) => a.day - b.day || a.time.localeCompare(b.time));
+  logEvent("post_scheduled", `Added a posting slot ${time} for ${channel}`, { slot: id });
+  notify();
+}
+export function removePostingSlot(id: string) {
+  const e = extras();
+  e.slots = e.slots.filter((s) => s.id !== id);
+  notify();
+}
+
+/* ── 频道组（Channel Groups · [wave-b] 常用频道组合） ─────────────────────── */
+export function channelGroups(): NsChannelGroup[] {
+  return extras().channelGroups;
+}
+export function addChannelGroup(name: string, channels: NsScheduledPost["platform"][]) {
+  const e = extras();
+  e.channelGroups = [...e.channelGroups, { id: `cg-${seq + 1}-${Date.now()}`, name, channels }];
+  logEvent("post_scheduled", `Saved channel group ${name}`, { group: name });
+  notify();
+}
+export function removeChannelGroup(id: string) {
+  const e = extras();
+  e.channelGroups = e.channelGroups.filter((g) => g.id !== id);
+  notify();
+}
+
+/* ── Hashtag 组（[wave-b] hashtag 组管理） ────────────────────────────────── */
+export function hashtagGroups(): NsHashtagGroup[] {
+  return extras().hashtagGroups;
+}
+export function addHashtagGroup(name: string, tags: string[]) {
+  const e = extras();
+  e.hashtagGroups = [...e.hashtagGroups, { id: `hg-${seq + 1}-${Date.now()}`, name, tags }];
+  logEvent("post_scheduled", `Saved hashtag group ${name}`, { group: name });
+  notify();
+}
+export function removeHashtagGroup(id: string) {
+  const e = extras();
+  e.hashtagGroups = e.hashtagGroups.filter((g) => g.id !== id);
+  notify();
+}
+
+/* ── 常青循环清单（[wave-b] Evergreen recycling） ─────────────────────────── */
+export function evergreenLists(): NsEvergreenList[] {
+  return extras().evergreen;
+}
+export function addEvergreenList(name: string, cadenceDays: number, items: string[]) {
+  const e = extras();
+  e.evergreen = [...e.evergreen, { id: `ev-${seq + 1}-${Date.now()}`, name, cadenceDays, items, active: true }];
+  logEvent("routine_created", `Started evergreen list ${name}`, { list: name });
+  notify();
+}
+export function toggleEvergreenList(id: string, on: boolean) {
+  const e = extras();
+  e.evergreen = e.evergreen.map((l) => (l.id === id ? { ...l, active: on } : l));
+  notify();
+}
+
+/* ── 帖级标签 / UTM / alt / 提醒发布（[wave-b] tags+UTM / alt / reminder） ─── */
+export function postMetaFor(id: string): NsPostMeta {
+  return extras().postMeta[id] ?? {};
+}
+export function setPostMeta(id: string, patch: Partial<NsPostMeta>) {
+  const e = extras();
+  e.postMeta = { ...e.postMeta, [id]: { ...(e.postMeta[id] ?? {}), ...patch } };
+  notify();
+}
+export function isRemindered(id: string): boolean {
+  return extras().remindered.includes(id);
+}
+export function markRemindered(id: string) {
+  const e = extras();
+  if (e.remindered.includes(id)) return;
+  e.remindered = [...e.remindered, id];
+  logEvent("post_scheduled", `Marked a post as manually published`, { id, reminder: true });
+  notify();
+}
+
+/* ── 队列内改时间（[wave-b] move-to-top/bottom;movePostDate 只改日期，这里改时刻） ── */
+export function setPostTime(id: string, time: string) {
+  const sIdx = state.scheduledPosts.findIndex((p) => p.id === id);
+  if (sIdx < 0) return;
+  const platform = state.scheduledPosts[sIdx].platform;
+  state.scheduledPosts = state.scheduledPosts.map((p) =>
+    p.id === id ? { ...p, scheduledAt: `${p.scheduledAt.slice(0, 11)}${time}:00${p.scheduledAt.slice(19)}` } : p,
+  );
+  logEvent("post_scheduled", `Reordered a ${platform} post to ${time}`, { id, time, moved: true });
+  notify();
+}
+
+/* ── 草稿→请求审批（[wave-b] Drafts & Approvals tab） ─────────────────────── */
+export function requestPostApproval(post: NsScheduledPost, note?: string) {
+  saveDraft(post); // 落成草稿（真写库，queue「Drafts」可见）
+  pushApproval({
+    title: "Review a scheduled post",
+    detail: note?.trim()
+      ? `An editor asks: ${note.trim()}`
+      : `An editor drafted a ${post.platform} post and wants your approval`,
+    impacts: ["Publishes on schedule once you approve", "Send back keeps it as a draft to edit"],
+    kind: "schedule",
+  });
+}
+
+/* ── 批量导入（[wave-b] Bulk CSV import）→ 逐条真写草稿（复用 saveDraft） ─── */
+export function bulkImportDrafts(rows: NsScheduledPost[]) {
+  rows.forEach((r) => saveDraft(r));
+}

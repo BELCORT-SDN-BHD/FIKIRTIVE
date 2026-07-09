@@ -1,17 +1,9 @@
 "use client";
 
-/**
- * 沉浸式 · 排期区 /calendar —— 复用画廊页内容,套进常驻外壳(nav + Otto dock + 流转)。
- * 页内 `/northstar/*` 交叉链接由外壳 useKeepInsideImmersive 自动改跳沉浸式路由。
- */
+/** 沉浸式 · 排期区 /calendar —— 原生重建(Z5)。内容组件在 immersive/schedule 组。 */
 
-import GalleryPage from "@/app/northstar/schedule/calendar/page";
-import { GalleryFrame } from "@/components/northstar/immersive/schedule-assets-ads/gallery-frame";
+import { ScheduleCalendar } from "@/components/northstar/immersive/schedule/schedule-calendar";
 
 export default function Page() {
-  return (
-    <GalleryFrame>
-      <GalleryPage />
-    </GalleryFrame>
-  );
+  return <ScheduleCalendar />;
 }
