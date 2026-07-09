@@ -20,8 +20,8 @@ import {
 import { cn } from "@/lib/utils";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
-import { useQueryParam } from "../immersive/_kit";
-import { ottoWorking as setOttoWorking, spendCredits } from "../immersive/_store";
+import { useSearchParams } from "next/navigation";
+import { canvasObjectById, ottoWorking as setOttoWorking, spendCredits } from "../immersive/_store";
 import { MockNote, OttoNarrationBar, PageHeader } from "../_shared";
 import { cvImage, CV_ALL_SEED_OBJECTS, NS_ASSETS, type CvObject } from "./_fixtures";
 import {
@@ -41,8 +41,34 @@ type Lifecycle = "ready" | "queued" | "generating" | "noise" | "extracting";
 export function MediaEditorPage() {
   useCreateKeyframes();
   // 深链 ?asset=<id> → 载入那个画布对象;缺省回到示意资产(GOAL §4)
-  const assetId = useQueryParam("asset");
-  const asset = React.useMemo(() => CV_ALL_SEED_OBJECTS.find((o) => o.id === assetId) ?? null, [assetId]);
+  // [cx-canvas-runtime] 断层 3/5 ①:解析顺序 = store 运行时注册表 → 画布种子。运行时对象(画布刚
+  // 生成/复制的)只活在 store 注册表 —— 从注册表复原成 CvObject,让 Crop / Trim 打开的是同一张,
+  // 而不是回落到示意资产。查无则回落种子对象(Library / My stuff 深链)。
+  // [cx-canvas-runtime] ?asset= 走 useSearchParams(reactive):client-nav 过来才拿得到深链 id
+  // (window.location 快照在 App Router 客户端跳转时读的是上一页,id 丢失)。
+  const assetId = useSearchParams().get("asset");
+  const asset = React.useMemo<CvObject | null>(() => {
+    const runtime = canvasObjectById(assetId);
+    if (runtime) {
+      return {
+        id: runtime.id,
+        ref: runtime.ref ?? runtime.title,
+        kind: runtime.kind,
+        title: runtime.title,
+        prompt: runtime.prompt,
+        src: runtime.kind === "video" ? runtime.posterUrl : runtime.imageUrl,
+        x: 0,
+        y: 0,
+        w: 0,
+        h: 0,
+        status: "ready",
+        parentId: runtime.lineage,
+        duration: runtime.duration,
+        credits: runtime.credits ?? 0,
+      };
+    }
+    return CV_ALL_SEED_OBJECTS.find((o) => o.id === assetId) ?? null;
+  }, [assetId]);
   const [tab, setTab] = React.useState<Tab>(asset?.kind ?? "video");
 
   return (

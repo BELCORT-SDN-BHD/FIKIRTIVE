@@ -6,8 +6,14 @@
  * (canvas 对象 → asset-viewer / media-editor 的流靠它连起来)。
  */
 
+import { Suspense } from "react";
 import { CanvasPage } from "@/components/northstar/create/canvas-page";
 
+// [cx-canvas-runtime] Suspense 边界:CanvasPage 用 useSearchParams 读 ?audience=/?persona=。
 export default function Page() {
-  return <CanvasPage />;
+  return (
+    <Suspense fallback={null}>
+      <CanvasPage />
+    </Suspense>
+  );
 }

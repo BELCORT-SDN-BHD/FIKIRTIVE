@@ -13,6 +13,7 @@
 
 import * as React from "react";
 import Link from "next/link";
+import { useSearchParams } from "next/navigation";
 import {
   ArrowUp,
   Bot,
@@ -36,6 +37,7 @@ import {
   Scan,
   Scissors,
   Search,
+  Sparkles,
   Square,
   Trash2,
   Video,
@@ -55,11 +57,16 @@ import {
   promoteToCampaign,
   promotedCampaignsOf,
   recentEvents,
+  registerCanvasObject,
   spendCredits,
   useStore,
 } from "../immersive/_store";
 import { MockNote } from "../_shared";
 import { NS_CAMPAIGNS } from "../_mock";
+// [cx-canvas-runtime] 断层 3/5 ②:品牌记忆「Make for them」带 ?audience=,选角「Make with this face」
+// 带 ?persona=;canvas 读它解析出上下文名,显示可关 context chip 并预填进 prompt 前缀。
+import { AUDIENCE_PROFILES } from "../immersive/assets/data";
+import { PERSONAS } from "../assets/_data";
 import {
   CV_HISTORY,
   CV_PROJECTS,
@@ -174,6 +181,27 @@ export function CanvasPage() {
   // from=<id> 解析成真实对象 → 一张只含它的干净画布;prompt 预填首句。
   const fromParam = useQueryParam("from");
   const promptParam = useQueryParam("prompt");
+  // [cx-canvas-runtime] ②:?audience=<seg id>(品牌记忆)/ ?persona=<persona id>(选角)落地画布。
+  // id 从对应表解析出人名;查不到就优雅忽略(不显 chip、不改 prompt)。chip 显示「For: 名」,
+  // prompt 前缀预填(audience = 卖给谁;persona = 出镜的脸),让按钮承诺的上下文真的带进画布。
+  // 走 useSearchParams(reactive)而非 useQueryParam(window.location 快照):品牌记忆/选角的
+  // 「Make …」是 client-nav Link,App Router 在 URL commit 前就渲染,窗口快照读到上一页 → 参数丢、
+  // chip 不显。useSearchParams 反映当前路由 query,client-nav 过来才拿得到 audience/persona。
+  const searchParams = useSearchParams();
+  const audienceParam = searchParams.get("audience");
+  const personaParam = searchParams.get("persona");
+  const canvasContext = React.useMemo(() => {
+    if (audienceParam) {
+      const seg = AUDIENCE_PROFILES.find((a) => a.id === audienceParam);
+      if (seg) return { name: seg.name, prefix: `For ${seg.name}: ` };
+    }
+    if (personaParam) {
+      const ps = PERSONAS.find((p) => p.id === personaParam);
+      if (ps) return { name: ps.name, prefix: `Starring ${ps.name}: ` };
+    }
+    return null;
+  }, [audienceParam, personaParam]);
+  const [contextDismissed, setContextDismissed] = React.useState(false);
   const bootSeed = React.useMemo(() => resolveCanvasSeed(fromParam), [fromParam]);
   const bootSessionId = "cv-boot";
   const bootObjects = React.useMemo(() => (bootSeed ? [bootSeed] : null), [bootSeed]);
@@ -227,7 +255,8 @@ export function CanvasPage() {
   const [sessionMenu, setSessionMenu] = React.useState(false);
   const [turns, setTurns] = React.useState<CvChatTurn[]>(bootTurns ?? CV_SESSION_SEEDS[firstSession].turns);
   const [mode, setMode] = React.useState<Mode>("agent");
-  const [draft, setDraft] = React.useState(promptParam ?? "");
+  // context 前缀 + ?prompt 一起作为输入框初值(context chip 承诺的上下文一落地就预填)。
+  const [draft, setDraft] = React.useState((canvasContext?.prefix ?? "") + (promptParam ?? ""));
   const [streaming, setStreaming] = React.useState(false);
   const [streamSteps, setStreamSteps] = React.useState<string[]>([]);
   const [mentionOpen, setMentionOpen] = React.useState(false);
@@ -313,6 +342,23 @@ export function CanvasPage() {
   const startGeneration = React.useCallback(
     (newObjects: CvObject[], narrationText: string, onAllDone?: () => void) => {
       setObjects((prev) => [...prev, ...newObjects]);
+      // [cx-canvas-runtime] 断层 3/5 ①:evolve / make-video / A-B / stitch / agent-plan 五处生成
+      // 全部经此收口,统一登记进共享 store 运行时注册表,让贴附工具条深链到的 asset-viewer /
+      // media-editor 能按同一 id 取回同一张(而不是打开 fallback 样例)。
+      newObjects.forEach((o) =>
+        registerCanvasObject({
+          id: o.id,
+          kind: o.kind,
+          imageUrl: o.src,
+          posterUrl: o.src,
+          prompt: o.prompt,
+          title: o.title,
+          lineage: o.parentId,
+          ref: o.ref,
+          duration: o.duration,
+          credits: o.credits,
+        }),
+      );
       setJobs((prev) => [...prev, ...newObjects.map((o) => ({ objectId: o.id, pct: 0 }))]);
       setNarration(narrationText);
       setOttoWorking(true, narrationText.replace(/…$/, "")); // 生成开始 → dock 徽点脉冲
@@ -681,6 +727,21 @@ export function CanvasPage() {
       };
     });
     setObjects((prev) => [...prev, ...clones]);
+    // [cx-canvas-runtime] ①:复制出的对象也可寻址、也会被工具条深链 —— 一并登记,免得深链回落 fallback。
+    clones.forEach((o) =>
+      registerCanvasObject({
+        id: o.id,
+        kind: o.kind,
+        imageUrl: o.src,
+        posterUrl: o.src,
+        prompt: o.prompt,
+        title: o.title,
+        lineage: o.parentId,
+        ref: o.ref,
+        duration: o.duration,
+        credits: o.credits,
+      }),
+    );
     setSelected(clones.map((c) => c.id));
     showFlash(`Duplicated ${clones.length} ${clones.length === 1 ? "object" : "objects"}`);
   };
@@ -969,6 +1030,26 @@ export function CanvasPage() {
             </div>
           )}
         </div>
+
+        {/* [cx-canvas-runtime] ② context chip:从品牌记忆/选角点「Make …」过来,顶部显示为谁做,
+           可关(关只是收起提示,已预填进输入框的前缀留给用户自己改)。 */}
+        {canvasContext && !contextDismissed && (
+          <div className="flex shrink-0 items-center gap-2 border-b border-border bg-muted/40 px-4 py-2">
+            <span className="flex min-w-0 items-center gap-1.5 text-[13px] text-foreground">
+              <Sparkles className="size-3.5 shrink-0 text-muted-foreground" strokeWidth={2} />
+              <span className="text-muted-foreground">For:</span>
+              <span className="truncate font-semibold">{canvasContext.name}</span>
+            </span>
+            <button
+              type="button"
+              aria-label="Clear context"
+              onClick={() => setContextDismissed(true)}
+              className="ml-auto flex size-6 shrink-0 items-center justify-center rounded-full text-muted-foreground hover:bg-accent hover:text-foreground"
+            >
+              <X className="size-3.5" strokeWidth={2} />
+            </button>
+          </div>
+        )}
 
         {/* 消息流(H0/H4:chat 与 canvas 同一状态两视图) */}
         <div className="min-h-0 flex-1 space-y-4 overflow-y-auto p-4">

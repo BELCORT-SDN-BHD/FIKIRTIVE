@@ -19,11 +19,12 @@ import {
   Volume2,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
+import { useSearchParams } from "next/navigation";
 import { useInsideImmersive } from "../immersive/_context";
-import { useQueryParam } from "../immersive/_kit";
 import { FolderPlus } from "lucide-react";
 import {
   brandPreferences,
+  canvasObjectById,
   ottoWorking as setOttoWorking,
   promoteToCampaign,
   promotedCampaignsOf,
@@ -57,21 +58,30 @@ export function AssetViewerPage() {
   useStore();
   const insideImmersive = useInsideImmersive();
   // 深链 ?asset=<id> → 展示那个画布对象;缺省回到示意资产(GOAL §4)
-  const assetId = useQueryParam("asset");
-  // 深链解析:先查画布种子对象,再查世界圣经资产(Library / My stuff 真图深链),都缺再回落示意资产。
-  const linked = React.useMemo(() => CV_ALL_SEED_OBJECTS.find((o) => o.id === assetId) ?? null, [assetId]);
+  // [cx-canvas-runtime] 断层 3/5:?asset= 必须走 useSearchParams(reactive)而非 window.location
+  // 快照 —— App Router 客户端跳转在 URL commit 前就渲染目标页,窗口快照读到的是上一页(null),
+  // 深链的 id 永远丢。useSearchParams 反映当前路由的 query,贴附工具条 client-nav 过来才拿得到 id。
+  const assetId = useSearchParams().get("asset");
+  // [cx-canvas-runtime] 断层 3/5 ①:深链解析顺序 = store 运行时注册表 → 画布种子 → 世界圣经资产
+  // (Library / My stuff 真图)→ 兜底示意资产。运行时对象(画布刚生成/复制的)只活在 store 注册表,
+  // 必须第一顺位命中,否则 Full screen 打开的是 fallback 样例而不是用户刚点的那张。
+  const runtime = canvasObjectById(assetId);
+  const linked = React.useMemo(
+    () => (runtime ? null : CV_ALL_SEED_OBJECTS.find((o) => o.id === assetId) ?? null),
+    [runtime, assetId],
+  );
   const linkedAsset = React.useMemo(
-    () => (linked ? null : NS_ASSETS.find((a) => a.id === assetId) ?? null),
-    [linked, assetId],
+    () => (runtime || linked ? null : NS_ASSETS.find((a) => a.id === assetId) ?? null),
+    [runtime, linked, assetId],
   );
   const view = {
-    id: linked?.id ?? linkedAsset?.id ?? NS_VIEWER_ASSET.id,
-    title: linked?.title ?? linkedAsset?.title ?? NS_VIEWER_ASSET.title,
-    poster: linked?.src ?? linkedAsset?.thumb ?? NS_VIEWER_ASSET.poster,
-    prompt: linked?.prompt ?? linkedAsset?.prompt ?? NS_VIEWER_ASSET.prompt,
-    kind: (linked?.kind ?? (linkedAsset?.kind === "video" ? "video" : linkedAsset ? "image" : NS_VIEWER_ASSET.kind)) as "image" | "video",
-    duration: linked?.duration ?? NS_VIEWER_ASSET.duration,
-    credits: linked?.credits ?? linkedAsset?.credits ?? NS_VIEWER_ASSET.credits,
+    id: runtime?.id ?? linked?.id ?? linkedAsset?.id ?? NS_VIEWER_ASSET.id,
+    title: runtime?.title ?? linked?.title ?? linkedAsset?.title ?? NS_VIEWER_ASSET.title,
+    poster: runtime?.posterUrl ?? runtime?.imageUrl ?? linked?.src ?? linkedAsset?.thumb ?? NS_VIEWER_ASSET.poster,
+    prompt: runtime?.prompt ?? linked?.prompt ?? linkedAsset?.prompt ?? NS_VIEWER_ASSET.prompt,
+    kind: (runtime?.kind ?? linked?.kind ?? (linkedAsset?.kind === "video" ? "video" : linkedAsset ? "image" : NS_VIEWER_ASSET.kind)) as "image" | "video",
+    duration: runtime?.duration ?? linked?.duration ?? NS_VIEWER_ASSET.duration,
+    credits: runtime?.credits ?? linked?.credits ?? linkedAsset?.credits ?? NS_VIEWER_ASSET.credits,
     resolution: NS_VIEWER_ASSET.resolution,
   };
   const [versions, setVersions] = React.useState<NsViewerVersion[]>(NS_VIEWER_VERSIONS);

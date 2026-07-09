@@ -6,8 +6,14 @@
  * canvas 对象 Trim / Extract → 这里(?asset=id 深链)。
  */
 
+import { Suspense } from "react";
 import { MediaEditorPage } from "@/components/northstar/create/media-editor-page";
 
+// [cx-canvas-runtime] Suspense 边界:MediaEditorPage 用 useSearchParams 读 ?asset= 深链 id。
 export default function Page() {
-  return <MediaEditorPage />;
+  return (
+    <Suspense fallback={null}>
+      <MediaEditorPage />
+    </Suspense>
+  );
 }

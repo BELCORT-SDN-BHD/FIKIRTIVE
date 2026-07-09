@@ -2815,3 +2815,47 @@ export function channelWalletSetAutoReload(on: boolean) {
   channelWalletStore = { ...cur, autoReload: on };
   notify();
 }
+
+/* ═══════════════════════════════════════════════════════════════════════════
+ * [cx-canvas-runtime] 画布运行时对象注册表 —— 文件尾追加(注明队名 cx-canvas-runtime)
+ *
+ * 断层 3/5:画布上新生成的对象(cv-img-*-* / cv-vid-*-*)只活在 canvas-page 的本地
+ * `objects` state。贴附工具条把这些运行时 id 深链到 asset-viewer / media-editor,但那两页
+ * 原本只解析种子(CV_ALL_SEED_OBJECTS)/ NS_ASSETS,于是 Full screen / Crop / Trim 打开的是
+ * fallback 样例,不是用户刚点的那张。此注册表把每次生成/复制的对象登记进共享 store 的内存
+ * 单例(client 换路由存活,与 store 纪律一致),让深链两页能按同一个 id 取回同一张。
+ *
+ * 铁律不变:纯 client、零后台 import;不新造品牌事实(图仍来自 canvas 对象自己的 src,
+ * 即 cvImage → NS_IMAGES 产出)。本段仅在文件尾追加,未改动任何既有代码。
+ * ═══════════════════════════════════════════════════════════════════════════ */
+export interface NsCanvasObject {
+  id: string;
+  kind: "image" | "video";
+  /** 主图 URL(image = 成品图;video = 海报帧)。 */
+  imageUrl: string;
+  /** 海报 URL(video 的封面;image 与 imageUrl 相同)。 */
+  posterUrl: string;
+  prompt: string;
+  title: string;
+  /** 谱系:父对象 id(evolve / A-B 分叉 / stitch 的来源)。 */
+  lineage?: string;
+  /** 可寻址名(Image 3 / Video 2 …),深链两页显示用。 */
+  ref?: string;
+  duration?: number;
+  credits?: number;
+}
+
+// 模块级注册表(内存单例;append/upsert by id,notify 驱动订阅重渲染)。
+const canvasObjects = new Map<string, NsCanvasObject>();
+
+/** 登记一个运行时画布对象(canvas 每次生成/复制调它;同 id 覆盖)。 */
+export function registerCanvasObject(obj: NsCanvasObject): void {
+  canvasObjects.set(obj.id, obj);
+  notify();
+}
+
+/** 按 id 取回运行时画布对象(asset-viewer / media-editor 深链解析第一顺位;查无回 null)。 */
+export function canvasObjectById(id: string | null | undefined): NsCanvasObject | null {
+  if (!id) return null;
+  return canvasObjects.get(id) ?? null;
+}
