@@ -1,17 +1,9 @@
 "use client";
 
-/**
- * 沉浸式 · 创作区 /factory(批量工厂)—— 复用画廊工厂页,套进常驻外壳。
- * 页内 `/northstar/*` 交叉链接由外壳 useKeepInsideImmersive 自动改跳沉浸式路由。
- */
+/** 沉浸式 · 工厂出片间 —— 原生重建(ENDGAME §五 一区;不再 GalleryFrame 套壳)。 */
 
-import GalleryPage from "@/app/northstar/create/factory/page";
-import { GalleryFrame } from "@/components/northstar/immersive/schedule-assets-ads/gallery-frame";
+import { StudioFactory } from "@/components/northstar/immersive/studio-factory/studio-factory";
 
 export default function Page() {
-  return (
-    <GalleryFrame>
-      <GalleryPage />
-    </GalleryFrame>
-  );
+  return <StudioFactory />;
 }

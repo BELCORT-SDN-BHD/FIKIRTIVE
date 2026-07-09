@@ -1,17 +1,9 @@
 "use client";
 
-/**
- * 沉浸式 · 创作区 /storyboard —— 复用画廊页内容,套进常驻外壳。
- * 页内 `/northstar/*` 交叉链接由外壳 useKeepInsideImmersive 自动改跳沉浸式路由。
- */
+/** 沉浸式 · 分镜工作台 —— 原生重建(ENDGAME §五 一区;不再 GalleryFrame 套壳)。 */
 
-import GalleryPage from "@/app/northstar/create/storyboard/page";
-import { GalleryFrame } from "@/components/northstar/immersive/schedule-assets-ads/gallery-frame";
+import { StudioStoryboard } from "@/components/northstar/immersive/studio-factory/studio-storyboard";
 
 export default function Page() {
-  return (
-    <GalleryFrame>
-      <GalleryPage />
-    </GalleryFrame>
-  );
+  return <StudioStoryboard />;
 }

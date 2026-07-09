@@ -1463,3 +1463,106 @@ export function promotedAssetsView(campaignId?: string): NsPromotedAsset[] {
 export function promotedCampaignsOf(assetId: string): string[] {
   return promotedAssets.filter((p) => p.assetId === assetId).map((p) => p.campaignName);
 }
+
+/* ═══════════════════════════════════════════════════════════════════════════
+ * [Z3 Studio 量产间] ideas slice + gen 记账助手 —— 文件尾追加,零改动上文。
+ *
+ * 想法清单是本区自留(其它区不改写它),但 campaign 侧会把落选备胎"落进"这里、
+ * home/canvas 从这里读,所以它必须进单例循环系统(而不是页面 useState 持有 mock 副本)。
+ * 复用主 store 的 notify()/getVersion:组件 useStore() 即可订阅、live 反映。
+ * ═══════════════════════════════════════════════════════════════════════════ */
+
+export interface NsStudioIdea {
+  id: string;
+  text: string;
+  source: "you" | "otto";
+  addedAt: string;
+  converted: boolean;
+  /** campaign 备选点子自动落入 → 标注来源 campaign(缝 5/9 同数据) */
+  campaign?: string;
+}
+
+const Z3_IDEA_SEED: NsStudioIdea[] = [
+  { id: "id-1", text: "Film the 6am croissant fold as a slow reel", source: "you", addedAt: "6 Jul", converted: false },
+  { id: "id-2", text: "Merdeka box unboxing from a customer's desk", source: "otto", addedAt: "6 Jul", converted: false },
+  { id: "id-3", text: "Pandan cake cross-section macro for the menu", source: "you", addedAt: "5 Jul", converted: true },
+  { id: "id-4", text: "Ask regulars which retired bake to bring back", source: "otto", addedAt: "4 Jul", converted: false },
+  { id: "id-5", text: "Kopi pairing chart: which brew with which bake", source: "otto", addedAt: "3 Jul", converted: false },
+];
+
+/** campaign 备选点子(Otto 策划时的落选备胎,首次进 ideas 页时"落卡")。 */
+export const Z3_IDEA_DROPS: NsStudioIdea[] = [
+  { id: "id-c1", text: "Office pre-order bundle teaser: one box on every desk", source: "otto", addedAt: "7 Jul", converted: false, campaign: "Merdeka week bakes" },
+  { id: "id-c2", text: "Morning timelapse: flag up, ovens on, first batch out", source: "otto", addedAt: "7 Jul", converted: false, campaign: "Merdeka week bakes" },
+];
+
+let z3Ideas: NsStudioIdea[] | null = null;
+let z3IdeaSeq = 0;
+
+function z3EnsureIdeas(): NsStudioIdea[] {
+  if (z3Ideas === null) z3Ideas = [...Z3_IDEA_SEED];
+  return z3Ideas;
+}
+
+/** 想法清单(单一源;ideas 页 + home「Up next」+ canvas 转创作都读它)。 */
+export function studioIdeas(): NsStudioIdea[] {
+  return z3EnsureIdeas();
+}
+
+/** 记一条想法(店主手记;Enter 提交)。返回新 id。 */
+export function addStudioIdea(text: string): string {
+  z3IdeaSeq += 1;
+  const idea: NsStudioIdea = {
+    id: `id-live-${z3IdeaSeq}`,
+    text,
+    source: "you",
+    addedAt: "Just now",
+    converted: false,
+  };
+  z3Ideas = [idea, ...z3EnsureIdeas()];
+  notify();
+  return idea.id;
+}
+
+/** 一键转创作(标记 converted;$0,生成在 canvas 才花钱)。Otto 单流留痕。 */
+export function convertStudioIdea(id: string) {
+  const list = z3EnsureIdeas();
+  const idea = list.find((i) => i.id === id);
+  z3Ideas = list.map((i) => (i.id === id ? { ...i, converted: true } : i));
+  if (idea) {
+    appendToStream({
+      role: "otto",
+      text: `Opened “${idea.text}” on the canvas. Nothing spent yet — generation asks first.`,
+      context: { zone: "Studio", label: "Ideas" },
+    });
+  }
+  notify();
+}
+
+/** 删除一条想法(ideas 页 Undo 用 restoreStudioIdea 回填)。 */
+export function removeStudioIdea(id: string) {
+  z3Ideas = z3EnsureIdeas().filter((i) => i.id !== id);
+  notify();
+}
+
+/** 回填一条被删的想法(Undo)。 */
+export function restoreStudioIdea(idea: NsStudioIdea) {
+  z3Ideas = [idea, ...z3EnsureIdeas()];
+  notify();
+}
+
+/** campaign 备选备胎落卡(ideas 页首访一次;Otto 叙述条走完调用)。 */
+export function dropCampaignIdeas() {
+  const list = z3EnsureIdeas();
+  const have = new Set(list.map((i) => i.id));
+  const fresh = Z3_IDEA_DROPS.filter((d) => !have.has(d.id));
+  if (fresh.length === 0) return;
+  z3Ideas = [...fresh, ...list];
+  notify();
+}
+
+/** 出片间/分镜的生成记账 + Otto 单流留痕(spend 已由 spendCredits 入账,这里补一条流)。
+ * 一处接线,factory/storyboard 完工都落一条 Otto「刚做了什么」进单流(dock/otto 立刻反映)。 */
+export function studioLogGen(text: string, label: string) {
+  appendToStream({ role: "otto", text, context: { zone: "Studio", label } });
+}
