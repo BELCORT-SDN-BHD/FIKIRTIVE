@@ -16,7 +16,7 @@
 
 import * as React from "react";
 import Link from "next/link";
-import { usePathname, useRouter } from "next/navigation";
+import { usePathname, useRouter, useSearchParams } from "next/navigation";
 import { cn } from "@/lib/utils";
 import { useInsideImmersive } from "./_context";
 
@@ -51,17 +51,19 @@ export function useImmersiveRouter(): { push: (href: string) => void } {
 }
 
 /**
- * 挂载时读一次 URL query param(prefill / 深链用)。
+ * 读 URL query param(prefill / 深链用),reactive。
  *
- * 用 window.location 而非 useSearchParams —— 后者要求 Suspense 边界,否则 next build
- * 会因缺边界报错拦住 web-build 关。这里只在挂载读一次(prefill 语义足够),SSR 返回 null。
+ * 走 useSearchParams 而非 window.location 快照:App Router 的 client-nav 在 URL commit 前
+ * 就渲染目标页,挂载时读 window.location 会拿到上一页的 query,深链参数在 client-nav 时永远
+ * 丢失(cx-canvas-runtime 定位的根因)。useSearchParams 反映当前路由 query,client-nav 过来
+ * 也读得到。
+ *
+ * 代价:调用方必须被 <Suspense> 边界包着,否则 next build 静态生成会报错。渲染本 hook 调用方的
+ * route page 都已包 Suspense(create/canvas、schedule/composer|share-preview、campaign/
+ * workbench|detail、global/otto-chat)。
  */
 export function useQueryParam(key: string): string | null {
-  const [value] = React.useState<string | null>(() => {
-    if (typeof window === "undefined") return null;
-    return new URLSearchParams(window.location.search).get(key);
-  });
-  return value;
+  return useSearchParams().get(key);
 }
 
 /* ── 复用 _shared 的 §N6/§D3/§V4 原语(禁止 fork;home/account/crm 共用一份) ── */

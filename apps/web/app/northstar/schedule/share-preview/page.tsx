@@ -62,7 +62,7 @@ const EXPIRY_OPTIONS = [
   { value: "30", label: "30 days" },
 ];
 
-export default function Page() {
+function SharePreviewContent() {
   useStore();
   const [demo, setDemo] = React.useState<ShareDemo>("data");
   const [tokenIdx, setTokenIdx] = React.useState(0);
@@ -257,5 +257,14 @@ export default function Page() {
       />
       <MockNote path="/northstar/schedule/share-preview" />
     </div>
+  );
+}
+
+// Suspense 边界:SharePreviewContent 用 useQueryParam(useSearchParams)读 ?post=。
+export default function Page() {
+  return (
+    <React.Suspense fallback={null}>
+      <SharePreviewContent />
+    </React.Suspense>
   );
 }

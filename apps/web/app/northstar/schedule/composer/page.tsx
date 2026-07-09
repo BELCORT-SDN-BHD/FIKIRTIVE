@@ -90,7 +90,7 @@ function Field({
   );
 }
 
-export default function Page() {
+function ComposerContent() {
   const [demo, setDemo] = React.useState<DemoState>("data");
 
   const [targets, setTargets] = React.useState<NsPlatform[]>(["instagram", "x"]);
@@ -658,5 +658,14 @@ export default function Page() {
       <DemoStateBar value={demo} onChange={(v) => setDemo(v as DemoState)} />
       <MockNote path="/northstar/schedule/composer" />
     </div>
+  );
+}
+
+// Suspense 边界:ComposerContent 用 useQueryParam(useSearchParams)读 ?segment=/?post=。
+export default function Page() {
+  return (
+    <React.Suspense fallback={null}>
+      <ComposerContent />
+    </React.Suspense>
   );
 }

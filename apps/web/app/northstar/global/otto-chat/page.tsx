@@ -150,7 +150,7 @@ const LIVE_REPLY =
 
 type Phase = "idle" | "thinking" | "streaming";
 
-export default function Page() {
+function OttoChatContent() {
   useStore(); // 与 dock 共读同一份 store chatThreads(§「Dock and this chat share one state」为真)
   const otto = useOttoWorking(); // 订阅全城 Otto 工作态(status 行 + dock 同源)
   const initialThread = useQueryParam("thread"); // 深链 ?thread → 初始选中(替代硬编码 [0])
@@ -401,5 +401,14 @@ export default function Page() {
 
       <MockNote path="/northstar/global/otto-chat" />
     </div>
+  );
+}
+
+// Suspense 边界:OttoChatContent 用 useQueryParam(useSearchParams)读 ?thread=。
+export default function Page() {
+  return (
+    <React.Suspense fallback={null}>
+      <OttoChatContent />
+    </React.Suspense>
   );
 }
