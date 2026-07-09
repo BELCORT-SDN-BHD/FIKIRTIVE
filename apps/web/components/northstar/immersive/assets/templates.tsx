@@ -164,7 +164,7 @@ export function AssetsTemplates() {
                   <Plus strokeWidth={2} />
                   Save as my template
                 </Button>
-                <Button asChild>
+                <Button className="ns-pressable" asChild>
                   <Link href={`${ASSETS_BASE}/create/canvas?from=${open.id}`}>Use template</Link>
                 </Button>
               </DialogFooter>
@@ -250,7 +250,7 @@ function MyTemplateCard({ template }: { template: MyTemplate }) {
           Locked
         </span>
         <div className="absolute inset-x-2 bottom-2 flex justify-end opacity-0 transition-opacity duration-150 group-hover:opacity-100">
-          <Button size="sm" asChild>
+          <Button size="sm" className="ns-pressable" asChild>
             <Link href={`${ASSETS_BASE}/create/canvas?from=${template.id.replace(/^my-/, "").replace(/-\d+$/, "")}`}>
               Use
             </Link>

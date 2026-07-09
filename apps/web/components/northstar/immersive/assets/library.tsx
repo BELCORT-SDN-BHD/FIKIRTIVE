@@ -91,7 +91,7 @@ export function AssetsLibrary() {
           className={cn(
             "h-7 rounded-full border px-3 text-xs font-semibold outline-none focus-visible:ring-[3px] focus-visible:ring-ring/40",
             tagFilter === null
-              ? "border-transparent bg-secondary text-foreground"
+              ? "ns-human-soft border-transparent"
               : "border-border text-muted-foreground hover:bg-accent hover:text-foreground",
           )}
         >
@@ -105,7 +105,7 @@ export function AssetsLibrary() {
             className={cn(
               "h-7 rounded-full border px-3 text-xs font-semibold outline-none focus-visible:ring-[3px] focus-visible:ring-ring/40",
               tagFilter === tag
-                ? "border-transparent bg-secondary text-foreground"
+                ? "ns-human-soft border-transparent"
                 : "border-border text-muted-foreground hover:bg-accent hover:text-foreground",
             )}
           >
@@ -219,7 +219,7 @@ export function AssetsLibrary() {
                   <Download strokeWidth={2} />
                   Download
                 </Button>
-                <Button asChild>
+                <Button className="ns-pressable" asChild>
                   <Link href={`${ASSETS_BASE}/create/canvas?from=${open.id}`}>Open in canvas</Link>
                 </Button>
               </DialogFooter>

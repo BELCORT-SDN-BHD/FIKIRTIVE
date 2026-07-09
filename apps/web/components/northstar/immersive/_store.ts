@@ -2630,6 +2630,7 @@ import {
   type Persona,
 } from "@/components/northstar/assets/_data";
 import { NS_CHANNEL_FEE_WALLET } from "./account-ops/data";
+import type { BrandProfile } from "./assets/data";
 import type { NsProduct } from "@/components/northstar/_mock";
 
 /* ── brand-memory:品牌事实 + 产品档案(brand-memory.tsx facts/products 单源) ─── */
@@ -3014,5 +3015,29 @@ export function applyCampaignTemplate(goal: string): void {
   const template = resolveCampaignTemplate(goal);
   // 深拷贝一份(store 是唯一可改事实源;模板常量不被后续 edit/删除污染)。
   state.campaignEntries = template.entries.map((e) => ({ ...e }));
+  notify();
+}
+
+/* ── [wave-c · Z10-assets-extractor] 品牌记忆对象(B-06/B-04 提取器落地的持久成品)──────
+ * GOOSEWORKS-MAP §二 B4/B6:「Research my site」抽出的语气 + 视觉 = 一个持久对象,
+ * 每次生成读它按品牌(治「产品盲/通用句」)。这里只存那个对象,跨页存活;生成侧接线
+ * 由创作区 worker 消费同一 getter(单一源),本区只负责「抽出来 + 存下来 + 演示喂给生成」。
+ * 铁律:不新造品牌真相 —— profile 的内容全部由 assets/_data 的 BRAND_EXTRACT(它又派生自
+ * BRAND_KIT + MEMORY_FACTS)喂进来;store 只做持久化。 */
+let brandProfileStore: BrandProfile | null = null;
+
+/** 当前品牌记忆对象(生成侧读它按品牌;null = 还没提取过,用 brand memory 事实兜底)。 */
+export function brandProfileView(): BrandProfile | null {
+  return brandProfileStore;
+}
+
+/** 提取器落地:把抽到的品牌记忆对象存成单一源,落一条 knowledge_added 反射。 */
+export function setBrandProfile(profile: BrandProfile): void {
+  brandProfileStore = profile;
+  logEvent(
+    "knowledge_added",
+    `Otto extracted your brand voice and visuals from ${profile.sourceUrl} — now used in every generation`,
+    { source: profile.sourceUrl },
+  );
   notify();
 }

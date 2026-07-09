@@ -39,6 +39,8 @@ import { OttoNarrationBar } from "@/components/northstar/_shared";
 import { BRAND_CHECK_STEPS, BRAND_KIT } from "@/components/northstar/assets/_data";
 import { nsImage } from "@/components/northstar/_mock";
 import { useStore, brandKitLogos, brandKitVoice, brandKitAddLogo, brandKitSaveVoice } from "../_store";
+import { OttoAssist } from "../otto-assist";
+import type { NsAssistApply } from "../_store";
 import { BRAND_CONTEXTS, BRAND_GUIDELINES, REFERENCE_STYLES } from "./data";
 import { PageHeader, SectionTitle, AssetsNav, ASSETS_BASE } from "./kit";
 
@@ -91,6 +93,18 @@ export function AssetsBrandKit() {
     }, 600);
   };
 
+  // §O7 Otto 帮我:Apply 只填 voice 草稿,店主再亲手 Save(发/花永不由 Apply 触发)。
+  const onVoiceApply = (apply: NsAssistApply) => {
+    const text = apply.patch.text;
+    if (typeof text === "string") setVoice(text);
+  };
+
+  // 从提取器读数拼一份「更像你」的语气草稿(不新造真相,复用 BRAND_EXTRACT 的 Do/忌用词)。
+  const voiceDraft =
+    "Warm and neighbourly, a little playful — never salesy. Mix English and Malay the way KL actually talks. " +
+    "Short sentences, prices plainly in RM. Lead with fresh, morning-batch, pickup or Lalamove. " +
+    "Never “Dear customer” or “limited time only!!!”.";
+
   const addLogo = () => {
     setLogoDialogOpen(false);
     brandKitAddLogo(NEW_LOGO);
@@ -123,7 +137,7 @@ export function AssetsBrandKit() {
               </SelectContent>
             </Select>
             <AssetsNav />
-            <Button variant="brand" size="sm" disabled={check === "checking"} onClick={() => setCheck("checking")}>
+            <Button variant="brand" size="sm" className="ns-pressable" disabled={check === "checking"} onClick={() => setCheck("checking")}>
               {check === "checking" ? "Checking…" : "Check recent visuals"}
             </Button>
           </div>
@@ -283,7 +297,34 @@ export function AssetsBrandKit() {
 
         {/* ── Voice ── */}
         <section aria-labelledby="bk-voice">
-          <SectionTitle>Voice</SectionTitle>
+          <div className="flex items-center gap-2">
+            <SectionTitle>Voice</SectionTitle>
+            {/* §O7 一颗 Otto 帮我:带上当前 voice 草稿 → 意图 chip → Apply 落回文本框 */}
+            <OttoAssist
+              zone="Assets"
+              entityLabel="your brand voice"
+              formState={{ voice }}
+              onApply={onVoiceApply}
+              className="ml-auto"
+              intents={[
+                {
+                  id: "bk-voice-draft",
+                  label: "Sharpen my brand voice",
+                  prompt: "Rewrite my brand voice so Otto sounds more like me.",
+                  reply:
+                    "Here's a tighter version built from how your site actually reads — warm, KL code-switching, short, prices in RM, no “Dear customer”. Apply drops it into the box; edit and hit Save when it sounds right.",
+                  apply: { summary: "Fill a sharper brand voice", patch: { kind: "voice", text: voiceDraft } },
+                },
+                {
+                  id: "bk-voice-why",
+                  label: "What makes a good brand voice?",
+                  prompt: "What should a brand voice cover?",
+                  reply:
+                    "Three things: how formal you are (yours is casual), the words you love and avoid (fresh, morning-batch — never “cheap”), and one rule you never break (never claim JAKIM-certified). Do a quick “Research my site” in Brand memory and I'll read all of that for you.",
+                },
+              ]}
+            />
+          </div>
           <div className="mt-3 flex flex-col gap-2">
             <label htmlFor="bk-voice-text" className="text-[13px] leading-[18px] font-semibold text-foreground">
               How your brand talks
@@ -291,7 +332,7 @@ export function AssetsBrandKit() {
             <Textarea id="bk-voice-text" value={voice} onChange={(e) => setVoice(e.target.value)} rows={3} />
             <p className="text-xs font-medium text-muted-foreground">Otto follows this in captions and replies.</p>
             <div className="flex justify-end">
-              <Button size="sm" disabled={savingVoice || voice === savedVoice} onClick={saveVoice}>
+              <Button size="sm" className="ns-pressable" disabled={savingVoice || voice === savedVoice} onClick={saveVoice}>
                 {savingVoice ? "Saving…" : "Save"}
               </Button>
             </div>
@@ -315,14 +356,14 @@ export function AssetsBrandKit() {
                   aria-pressed={active}
                   className={cn(
                     "group flex flex-col overflow-hidden rounded-[var(--radius-card)] border bg-card text-left outline-none focus-visible:ring-[3px] focus-visible:ring-ring/40",
-                    active ? "border-foreground" : "border-border hover:border-muted-foreground",
+                    active ? "border-[var(--human)]" : "border-border hover:border-muted-foreground",
                   )}
                 >
                   <div className="relative">
                     {/* eslint-disable-next-line @next/next/no-img-element -- 原型层用 <img> 热链 NS_IMAGES */}
                     <img src={s.thumb} alt={s.name} className="aspect-[4/3] w-full object-cover" />
                     {active && (
-                      <span className="absolute top-2 right-2 flex size-6 items-center justify-center rounded-full bg-foreground text-background">
+                      <span className="ns-human-fill absolute top-2 right-2 flex size-6 items-center justify-center rounded-full">
                         <Check className="size-3.5" strokeWidth={2.5} />
                       </span>
                     )}

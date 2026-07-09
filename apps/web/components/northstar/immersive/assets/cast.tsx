@@ -26,6 +26,7 @@ import { SweepIn } from "@/components/northstar/assets/_zone";
 import { SCENE_PACKS, type Persona } from "@/components/northstar/assets/_data";
 import { nsImage } from "@/components/northstar/_mock";
 import { castTrained, useStore, castPersonas, castAddPersona, castStartTraining, castAdvanceTraining } from "../_store";
+import { OttoAssist } from "../otto-assist";
 import { PageHeader, EmptyState, SectionTitle, AssetsNav, ASSETS_BASE } from "./kit";
 
 const NEW_PERSONA: Persona = {
@@ -84,7 +85,28 @@ export function AssetsCast() {
         actions={
           <div className="flex items-center gap-2">
             <AssetsNav />
-            <Button size="sm" onClick={() => setDialogOpen(true)}>
+            {/* §O7 一颗 Otto 帮我:选角没头绪时给方向(纯建议,零打字路径) */}
+            <OttoAssist
+              zone="Assets"
+              entityLabel="your cast"
+              intents={[
+                {
+                  id: "cast-who",
+                  label: "Which persona suits my shop?",
+                  prompt: "Who should I put in my videos?",
+                  reply:
+                    "For a Bangsar bakery, a warm home-baker aunty carries the most trust — she reads as the person behind the counter. A young office worker works for weekday “grab-and-go” reels. Train the aunty first; she'll show up in the most posts.",
+                },
+                {
+                  id: "cast-scenes",
+                  label: "What scenes fit a KL bakery?",
+                  prompt: "Which scene packs should I use?",
+                  reply:
+                    "Kopitiam mornings for your everyday bakes, Pasar malam for festive pushes, Office pantry KL for the weekday office-order crowd. Pick a persona, then pair them with one pack per campaign so the look stays consistent.",
+                },
+              ]}
+            />
+            <Button size="sm" className="ns-pressable" onClick={() => setDialogOpen(true)}>
               <Plus strokeWidth={2} />
               New persona
             </Button>
@@ -188,7 +210,7 @@ export function AssetsCast() {
               <Button type="button" variant="secondary" onClick={() => setDialogOpen(false)}>
                 Cancel
               </Button>
-              <Button type="submit">Start training</Button>
+              <Button type="submit" className="ns-pressable">Start training</Button>
             </DialogFooter>
           </form>
         </DialogContent>
@@ -219,7 +241,7 @@ function PersonaCard({ persona, onTrain }: { persona: Persona; onTrain: () => vo
               Face locked · trained {shortDate(persona.trainedAt ?? "")}
               {typeof persona.scenes === "number" && persona.scenes > 0 ? ` · ${persona.scenes} scenes` : ""}
             </p>
-            <Button variant="secondary" size="sm" className="mt-2 self-start" asChild>
+            <Button variant="secondary" size="sm" className="ns-pressable mt-2 self-start" asChild>
               <Link href={`${ASSETS_BASE}/create/canvas?persona=${persona.id}`}>
                 <Sparkles strokeWidth={2} />
                 Use in a video

@@ -90,7 +90,7 @@ function DiscoverCard({ item }: { item: DiscoverItem }) {
       <div className="absolute inset-x-2 bottom-12 flex justify-center opacity-0 transition-opacity duration-150 group-focus-within:opacity-100 group-hover:opacity-100">
         <Link
           href={`${ASSETS_BASE}/create/canvas?from=${item.id}`}
-          className="inline-flex h-8 items-center gap-1.5 rounded-[10px] border border-border bg-card px-3 text-[13px] font-semibold text-foreground shadow-[var(--shadow-sm)] outline-none hover:bg-accent focus-visible:ring-[3px] focus-visible:ring-ring/40"
+          className="ns-pressable inline-flex h-8 items-center gap-1.5 rounded-[10px] border border-border bg-card px-3 text-[13px] font-semibold text-foreground outline-none hover:bg-accent focus-visible:ring-[3px] focus-visible:ring-ring/40"
         >
           <Sparkles className="size-4" strokeWidth={2} />
           Make this yours

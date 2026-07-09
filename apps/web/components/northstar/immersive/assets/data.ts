@@ -8,7 +8,7 @@
  */
 
 import { nsImage } from "@/components/northstar/_mock";
-import { GEN_RECORDS, type GenRecord } from "@/components/northstar/assets/_data";
+import { BRAND_KIT, GEN_RECORDS, type GenRecord } from "@/components/northstar/assets/_data";
 
 /* ── B-06 资产库自动打标:每条生成物的 AI 标签(内容/颜色/用途) ──────────────
  * 确定性派生自 kind + prompt 关键词,演示「旧图直接搜标签复用省 credits」。 */
@@ -124,3 +124,119 @@ export const BRAND_CONTEXTS: BrandContext[] = [
   { id: "brand-02", name: "Kopi Kravers KL", kind: "client", mark: "KK" },
   { id: "brand-03", name: "Nyonya Nook", kind: "client", mark: "NN" },
 ];
+
+/* ══════════════════════════════════════════════════════════════════════════
+ * B-06/B-04 · 品牌语气 + 视觉提取器(「Research my site」升级)
+ * ──────────────────────────────────────────────────────────────────────────
+ * 法源:GOOSEWORKS-MAP §二 B4/B6 —— 抄 `brand-voice-extractor`(6 维语气 +
+ * Do/Don't 块 + 爱用/忌用词表)+ `visual-brand-extractor`(色源优先级 + 吐一个
+ * {primary_color, accent_color, font_heading, font_body...} JSON)。提取一次 → 一个
+ * 持久「品牌记忆」对象 → 每次生成自动按品牌(治「产品盲/通用句」病根)。
+ *
+ * 判断层自铸(GOOSEWORKS §五 硬标准):每维语气不给光秃的进度点,给「读数 +
+ * 证据句」(证据来自本店真实文案),满足「结论必须挂证据」这条。色板/字体的每个值
+ * 标「从哪儿抽到的」(色源优先级),满足「代理指标须标来源」。全部从 BRAND_KIT +
+ * MEMORY_FACTS 单源派生 —— 不新造品牌真相,提取器只是把已知真相结构化吐出来喂生成。
+ *
+ * 诚实标注:这是「读你自己的网站」得来的(合法一手数据源),不是行业默认套话;
+ * 原型层无真爬虫,mock 演示完整流,面板明说「read from rotibulan.my」。
+ * ════════════════════════════════════════════════════════════════════════ */
+
+/** 一条语气维度:读数 + 证据句(证据挂 §五 硬标准)。 */
+export interface VoiceDimension {
+  key: string;
+  /** 维度人话名(sentence case) */
+  label: string;
+  /** 读数(High / Medium / Low 三档) */
+  reading: "High" | "Medium" | "Low";
+  /** 支撑这条读数的本店真实文案证据(不是拍脑袋) */
+  evidence: string;
+}
+
+/** 视觉 token:值 + 从哪个来源抽到的(色源优先级 = visual-brand-extractor 方法)。 */
+export interface VisualToken {
+  key: string;
+  label: string;
+  /** hex 或字体名(用户品牌数据,数据级豁免) */
+  value: string;
+  /** 抽取来源(色源优先级:logo SVG → theme-color meta → 显式 CSS → 计算样式) */
+  source: string;
+}
+
+export interface BrandExtract {
+  /** 抽取源(诚实标注:读的是商家自己的站) */
+  sourceUrl: string;
+  /** 6 维语气读数(带证据) */
+  voice: VoiceDimension[];
+  /** Do 规则(生成时正向遵循) */
+  dos: string[];
+  /** Don't 规则(生成时硬避开) */
+  donts: string[];
+  /** 爱用词(生成默认往这些词靠) */
+  favouriteWords: string[];
+  /** 忌用词(生成默认避开) */
+  avoidWords: string[];
+  /** 视觉 token(色板 + 字体,带来源) */
+  visual: VisualToken[];
+  /** 治「产品盲/通用句」的对照证据:同一条 caption,喂品牌前 vs 后 */
+  beforeAfter: { before: string; after: string };
+}
+
+/* palette/fonts 全部指向 BRAND_KIT 单源(用户品牌数据),提取器只补「从哪抽到的」。 */
+export const BRAND_EXTRACT: BrandExtract = {
+  sourceUrl: "rotibulan.my",
+  voice: [
+    { key: "warmth", label: "Warmth", reading: "High", evidence: "“Family-run bakery in Bangsar, baking since 2019.”" },
+    { key: "formality", label: "Formality", reading: "Low", evidence: "Greets in mixed English and Malay — never “Dear customer”." },
+    { key: "playfulness", label: "Playfulness", reading: "Medium", evidence: "Light and a little cheeky, but never gimmicky." },
+    { key: "directness", label: "Directness", reading: "High", evidence: "Prices stated plainly in RM, short sentences." },
+    { key: "enthusiasm", label: "Enthusiasm", reading: "Medium", evidence: "Warm, but never salesy or shouty (no “!!!”)." },
+    { key: "locality", label: "Local voice", reading: "High", evidence: "KL code-switching, kopitiam and pasar references." },
+  ],
+  dos: [
+    "Mix English and Malay the way KL actually talks.",
+    "Keep sentences short. State prices plainly in RM.",
+    "Reply in the language the customer used.",
+    "Lead with fresh, morning-batch, pickup or Lalamove.",
+  ],
+  donts: [
+    "Don't sound salesy or use “limited time only!!!”.",
+    "Don't say “Dear customer” — it's cold for a KL bakery.",
+    "Don't promise same-day custom cakes (min 3 days).",
+    "Don't claim JAKIM-certified — say pork-free and alcohol-free instead.",
+  ],
+  favouriteWords: ["fresh", "morning batch", "pickup", "Lalamove", "pre-order", "kaya", "pandan"],
+  avoidWords: ["cheap", "limited time only", "guaranteed", "Dear customer", "world-class"],
+  visual: [
+    { key: "primary_color", label: "Primary", value: BRAND_KIT.colours[0].hex, source: "logo SVG fill" },
+    { key: "accent_color", label: "Accent", value: BRAND_KIT.colours[2].hex, source: "headline CSS colour" },
+    { key: "surface_color", label: "Surface", value: BRAND_KIT.colours[1].hex, source: "<meta theme-color>" },
+    { key: "ink_color", label: "Ink", value: BRAND_KIT.colours[3].hex, source: "computed body colour" },
+    { key: "font_heading", label: "Heading font", value: BRAND_KIT.fonts[0].family, source: "computed CSS · h1" },
+    { key: "font_body", label: "Body font", value: BRAND_KIT.fonts[1].family, source: "computed CSS · body" },
+  ],
+  beforeAfter: {
+    before: "Delicious pastries available now! Order today! 🎉 Best in town!!!",
+    after: "Fresh kaya croissants, morning batch. Pickup or Lalamove around KL 🥐 RM8.50.",
+  },
+};
+
+/** 提取器的叙述步(读站 → 读语气 → 抽色板字体 → 存成品牌记忆)。 */
+export const EXTRACT_STEPS = [
+  "Reading rotibulan.my…",
+  "Listening for your voice…",
+  "Pulling colours and fonts…",
+  "Saving it as brand memory…",
+] as const;
+
+/** 提取器落地的「品牌记忆对象」(生成侧单一源;persisted 到 store 后每次生成读它)。 */
+export interface BrandProfile {
+  sourceUrl: string;
+  extractedAt: string;
+  voice: VoiceDimension[];
+  dos: string[];
+  donts: string[];
+  favouriteWords: string[];
+  avoidWords: string[];
+  visual: VisualToken[];
+}

@@ -160,7 +160,7 @@ export function AssetsMyStuff() {
             onClick={() => setCompact(false)}
             className={cn(
               "flex size-[30px] items-center justify-center rounded-[8px] outline-none focus-visible:ring-[3px] focus-visible:ring-ring/40",
-              !compact ? "bg-secondary text-foreground" : "text-muted-foreground hover:bg-accent hover:text-foreground",
+              !compact ? "ns-human-soft" : "text-muted-foreground hover:bg-accent hover:text-foreground",
             )}
           >
             <LayoutGrid className="size-4" strokeWidth={2} />
@@ -172,7 +172,7 @@ export function AssetsMyStuff() {
             onClick={() => setCompact(true)}
             className={cn(
               "flex size-[30px] items-center justify-center rounded-[8px] outline-none focus-visible:ring-[3px] focus-visible:ring-ring/40",
-              compact ? "bg-secondary text-foreground" : "text-muted-foreground hover:bg-accent hover:text-foreground",
+              compact ? "ns-human-soft" : "text-muted-foreground hover:bg-accent hover:text-foreground",
             )}
           >
             <Grid3x3 className="size-4" strokeWidth={2} />
@@ -295,6 +295,7 @@ function BulkCreateDialog({ open, onOpenChange }: { open: boolean; onOpenChange:
           </Button>
           <Button
             variant="brand"
+            className="ns-pressable"
             onClick={() => {
               onOpenChange(false);
               toast(`Otto queued ${rows.length} images`, { description: `Confirm the ${total}-credit cost in Otto to run.` });
