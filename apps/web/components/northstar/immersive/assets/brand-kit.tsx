@@ -38,6 +38,7 @@ import { SweepIn } from "@/components/northstar/assets/_zone";
 import { OttoNarrationBar } from "@/components/northstar/_shared";
 import { BRAND_CHECK_STEPS, BRAND_KIT } from "@/components/northstar/assets/_data";
 import { nsImage } from "@/components/northstar/_mock";
+import { useStore, brandKitLogos, brandKitVoice, brandKitAddLogo, brandKitSaveVoice } from "../_store";
 import { BRAND_CONTEXTS, BRAND_GUIDELINES, REFERENCE_STYLES } from "./data";
 import { PageHeader, SectionTitle, AssetsNav, ASSETS_BASE } from "./kit";
 
@@ -63,16 +64,19 @@ const CHECK_RESULTS = [
 ];
 
 export function AssetsBrandKit() {
+  useStore();
   const [brandId, setBrandId] = React.useState(BRAND_CONTEXTS[0].id);
-  const [logos, setLogos] = React.useState<LogoEntry[]>([...BRAND_KIT.logos]);
+  // 单源:logos + 已保存的 voice 读共享 store(跨页存活),不再私藏 useState 副本。
+  const logos = brandKitLogos();
+  const savedVoice = brandKitVoice();
   const [logoDialogOpen, setLogoDialogOpen] = React.useState(false);
   const [landedLogo, setLandedLogo] = React.useState<string | null>(null);
   const [check, setCheck] = React.useState<"idle" | "checking" | "done">("idle");
   const [enforce, setEnforce] = React.useState(false);
   const [refStyle, setRefStyle] = React.useState<string | null>("rs-01");
 
-  const [voice, setVoice] = React.useState<string>(BRAND_KIT.voice);
-  const [savedVoice, setSavedVoice] = React.useState<string>(BRAND_KIT.voice);
+  // voice 是可编辑草稿(纯 UI 态,初值取自 store 的已保存值);Save 才写回 store。
+  const [voice, setVoice] = React.useState<string>(savedVoice);
   const [savingVoice, setSavingVoice] = React.useState(false);
   const voiceTimer = React.useRef<number | null>(null);
   React.useEffect(() => () => {
@@ -82,14 +86,14 @@ export function AssetsBrandKit() {
   const saveVoice = () => {
     setSavingVoice(true);
     voiceTimer.current = window.setTimeout(() => {
-      setSavedVoice(voice);
+      brandKitSaveVoice(voice);
       setSavingVoice(false);
     }, 600);
   };
 
   const addLogo = () => {
     setLogoDialogOpen(false);
-    setLogos((prev) => (prev.some((l) => l.id === NEW_LOGO.id) ? prev : [...prev, NEW_LOGO]));
+    brandKitAddLogo(NEW_LOGO);
     setLandedLogo(NEW_LOGO.id);
   };
 

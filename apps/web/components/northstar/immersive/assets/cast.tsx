@@ -23,9 +23,9 @@ import {
   DialogTitle,
 } from "@/components/ui/dialog";
 import { SweepIn } from "@/components/northstar/assets/_zone";
-import { PERSONAS, SCENE_PACKS, type Persona } from "@/components/northstar/assets/_data";
+import { SCENE_PACKS, type Persona } from "@/components/northstar/assets/_data";
 import { nsImage } from "@/components/northstar/_mock";
-import { castTrained } from "../_store";
+import { castTrained, useStore, castPersonas, castAddPersona, castStartTraining, castAdvanceTraining } from "../_store";
 import { PageHeader, EmptyState, SectionTitle, AssetsNav, ASSETS_BASE } from "./kit";
 
 const NEW_PERSONA: Persona = {
@@ -38,7 +38,9 @@ const NEW_PERSONA: Persona = {
 };
 
 export function AssetsCast() {
-  const [personas, setPersonas] = React.useState<Persona[]>(PERSONAS);
+  useStore();
+  // 单源:人设列表 + 训练态读共享 store(新建/进度/锁脸跨页存活),不再私藏副本。
+  const personas = castPersonas();
   const [dialogOpen, setDialogOpen] = React.useState(false);
   const [landed, setLanded] = React.useState<Record<string, true>>({});
 
@@ -46,16 +48,7 @@ export function AssetsCast() {
     const hasTraining = personas.some((p) => p.status === "training");
     if (!hasTraining) return;
     const timer = window.setInterval(() => {
-      setPersonas((prev) =>
-        prev.map((p) => {
-          if (p.status !== "training") return p;
-          const next = Math.min(100, (p.progress ?? 0) + 4);
-          if (next >= 100) {
-            return { ...p, status: "ready", progress: undefined, trainedAt: "2026-07-07", scenes: 0 };
-          }
-          return { ...p, progress: next };
-        }),
-      );
+      castAdvanceTraining();
     }, 600);
     return () => window.clearInterval(timer);
   }, [personas]);
@@ -73,12 +66,12 @@ export function AssetsCast() {
   }, [personas]);
 
   const startTraining = (id: string) => {
-    setPersonas((prev) => prev.map((p) => (p.id === id ? { ...p, status: "training", progress: 0 } : p)));
+    castStartTraining(id);
   };
 
   const addPersona = () => {
     setDialogOpen(false);
-    setPersonas((prev) => (prev.some((p) => p.id === NEW_PERSONA.id) ? prev : [{ ...NEW_PERSONA }, ...prev]));
+    castAddPersona({ ...NEW_PERSONA });
   };
 
   const readyCount = personas.filter((p) => p.status === "ready").length;

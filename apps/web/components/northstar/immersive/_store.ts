@@ -2600,3 +2600,218 @@ export function removeCampaignEntry(id: string) {
   logEvent("post_scheduled", `Removed a campaign post · ${entry.hook}`, { id, removed: true });
   notify();
 }
+
+/* ═══════════════════════════════════════════════════════════════════════════
+ * [cx-store-migration] 断层 6 修复 —— 五处 useState 私藏 mock 副本迁进单源
+ *
+ * 违反 IMMERSIVE-STORE.md 单源契约的五处资产/设置面(改动一离开页面就回滚):
+ * brand-memory(facts/products)· brand-kit(logos/voice)· my-stuff(items)·
+ * cast(personas/训练态)· channel-wallet(RM 余额/auto-reload)。之前各自 fork
+ * useState from _mock —— 跨页导航即丢。现全部读这一份单例,写走下面的 action,
+ * 换路由存活(刷新即重置 = spec,PROGRAM.md)。
+ *
+ * 惰性初始化:每个 slice 首次读时才从 mock 常量种子化(避免任何模块 init 顺序问题)。
+ * 铁律不变:纯 client、零后台 import;coral 只属于 Otto;数据只从 _mock 派生;
+ * credits 永远是 credits(channel-wallet 是独立 RM 账道,永不并入 creditBalance —
+ * 保住 IMMERSIVE-STORE.md 的 credits 物理隔离原则,只是把「只此页可见的本地 state」
+ * 升格为跨页存活的独立 slice,修掉离页回滚)。本段仅文件尾追加,未改任何既有代码。
+ * ═══════════════════════════════════════════════════════════════════════════ */
+
+// 尾部 top-level import(ESM 提升,与顶部 import 等价;_data / account-ops/data 均不
+// 反向 import 本文件,无循环)。种子常量与类型从各区 mock 单源取。
+import {
+  MEMORY_FACTS,
+  MEMORY_PRODUCTS,
+  BRAND_KIT,
+  STUFF_ITEMS,
+  PERSONAS,
+  type MemoryFact,
+  type StuffItem,
+  type Persona,
+} from "@/components/northstar/assets/_data";
+import { NS_CHANNEL_FEE_WALLET } from "./account-ops/data";
+import type { NsProduct } from "@/components/northstar/_mock";
+
+/* ── brand-memory:品牌事实 + 产品档案(brand-memory.tsx facts/products 单源) ─── */
+let brandFactsStore: MemoryFact[] | null = null;
+let brandProductsStore: NsProduct[] | null = null;
+
+/** 品牌事实(brand-memory 四个事实 tab 读它;增改删跨页存活)。 */
+export function brandFacts(): MemoryFact[] {
+  if (brandFactsStore === null) brandFactsStore = [...MEMORY_FACTS];
+  return brandFactsStore;
+}
+/** 产品档案(brand-memory「Products」tab 读它;URL 建档新增跨页存活)。 */
+export function brandProducts(): NsProduct[] {
+  if (brandProductsStore === null) brandProductsStore = [...MEMORY_PRODUCTS];
+  return brandProductsStore;
+}
+/** 手动加一条品牌事实(FactList「Add」)。落 knowledge_added 事件 → dock 反射。 */
+export function brandMemoryAddFact(fact: MemoryFact) {
+  brandFactsStore = [...brandFacts(), fact];
+  logEvent("knowledge_added", `Added a note to brand memory · ${fact.text.slice(0, 40)}`, { id: fact.id });
+  notify();
+}
+/** 批量加事实(Research my site 抽取的一组;去重 id、新条在前)。落一条事件反射。 */
+export function brandMemoryAddFacts(facts: MemoryFact[]) {
+  const cur = brandFacts();
+  const fresh = facts.filter((f) => !cur.some((p) => p.id === f.id));
+  if (fresh.length === 0) return;
+  brandFactsStore = [...fresh, ...cur];
+  logEvent("knowledge_added", `Otto added ${fresh.length} facts to brand memory`, { count: fresh.length });
+  notify();
+}
+/** 就地改一条事实文案(FactRow「Save」)。纯编辑不落事件,只更新单源。 */
+export function brandMemoryUpdateFact(id: string, text: string) {
+  brandFactsStore = brandFacts().map((f) => (f.id === id ? { ...f, text } : f));
+  notify();
+}
+/** 删一条事实(带 Undo:见 restore)。删除不落事件(可能被撤销),只更新单源。 */
+export function brandMemoryRemoveFact(id: string) {
+  brandFactsStore = brandFacts().filter((f) => f.id !== id);
+  notify();
+}
+/** 撤销删除:把事实插回原下标(Undo toast)。 */
+export function brandMemoryRestoreFact(fact: MemoryFact, index: number) {
+  const next = [...brandFacts()];
+  next.splice(Math.min(index, next.length), 0, fact);
+  brandFactsStore = next;
+  notify();
+}
+/** 加一条产品档案(URL 一键建档;已存在则不重复)。落一条事件反射。 */
+export function brandMemoryAddProduct(product: NsProduct) {
+  const cur = brandProducts();
+  if (cur.some((p) => p.id === product.id)) return;
+  brandProductsStore = [product, ...cur];
+  logEvent("knowledge_added", `Added ${product.name} to brand memory`, { id: product.id });
+  notify();
+}
+
+/* ── brand-kit:logos + voice(brand-kit.tsx logos/voice 保存单源) ───────────── */
+export interface NsBrandLogo {
+  id: string;
+  name: string;
+  note: string;
+  image: string;
+}
+let brandKitLogosStore: NsBrandLogo[] | null = null;
+let brandKitVoiceStore: string | null = null;
+
+/** 品牌 logo 列表(brand-kit「Logos」读它;新增跨页存活)。 */
+export function brandKitLogos(): NsBrandLogo[] {
+  if (brandKitLogosStore === null) brandKitLogosStore = [...BRAND_KIT.logos];
+  return brandKitLogosStore;
+}
+/** 已保存的品牌语气(brand-kit「Voice」的 committed 值;跨页存活,草稿仍是本地 state)。 */
+export function brandKitVoice(): string {
+  if (brandKitVoiceStore === null) brandKitVoiceStore = BRAND_KIT.voice;
+  return brandKitVoiceStore;
+}
+/** 加一个 logo(上传对话框;已存在则不重复)。落一条事件反射。 */
+export function brandKitAddLogo(logo: NsBrandLogo) {
+  const cur = brandKitLogos();
+  if (cur.some((l) => l.id === logo.id)) return;
+  brandKitLogosStore = [...cur, logo];
+  logEvent("knowledge_added", `Added a logo to brand kit · ${logo.name}`, { id: logo.id });
+  notify();
+}
+/** 保存品牌语气(「Save」确认后)。落一条事件反射(品牌记忆更新)。 */
+export function brandKitSaveVoice(voice: string) {
+  brandKitVoiceStore = voice;
+  logEvent("knowledge_added", "Updated your brand voice", {});
+  notify();
+}
+
+/* ── my-stuff:素材库(my-stuff.tsx items 增删/重试单源) ──────────────────── */
+let myStuffItemsStore: StuffItem[] | null = null;
+
+/** 全部素材(my-stuff 网格读它;上传/重试/删除跨页存活)。 */
+export function myStuffItems(): StuffItem[] {
+  if (myStuffItemsStore === null) myStuffItemsStore = [...STUFF_ITEMS];
+  return myStuffItemsStore;
+}
+/** 加一条素材(上传;已存在则移到最前)。不落事件(个人素材库操作,无匹配类型)。 */
+export function myStuffAddItem(item: StuffItem) {
+  myStuffItemsStore = [item, ...myStuffItems().filter((it) => it.id !== item.id)];
+  notify();
+}
+/** 重试成功:把失败任务标记为 ready(跨页存活)。 */
+export function myStuffRetrySuccess(id: string) {
+  myStuffItemsStore = myStuffItems().map((it) => (it.id === id ? { ...it, status: "ready" } : it));
+  notify();
+}
+/** 删一条素材(带 Undo:见 restore)。 */
+export function myStuffRemoveItem(id: string) {
+  myStuffItemsStore = myStuffItems().filter((it) => it.id !== id);
+  notify();
+}
+/** 撤销删除:把素材插回原下标(Undo toast)。 */
+export function myStuffRestoreItem(item: StuffItem, index: number) {
+  const next = [...myStuffItems()];
+  next.splice(Math.min(index, next.length), 0, item);
+  myStuffItemsStore = next;
+  notify();
+}
+
+/* ── cast:训练型人设(cast.tsx personas 新建/训练态单源) ──────────────────── */
+let castPersonasStore: Persona[] | null = null;
+
+/** 人设列表(cast「Your cast」读它;新建/训练进度/锁脸态跨页存活)。 */
+export function castPersonas(): Persona[] {
+  if (castPersonasStore === null) castPersonasStore = [...PERSONAS];
+  return castPersonasStore;
+}
+/** 新建一个人设(进 training 态;已存在则不重复)。训练完成事件由 castTrained 落。 */
+export function castAddPersona(persona: Persona) {
+  const cur = castPersonas();
+  if (cur.some((p) => p.id === persona.id)) return;
+  castPersonasStore = [persona, ...cur];
+  notify();
+}
+/** 从 draft 开始训练一个人设(status → training,progress 0)。 */
+export function castStartTraining(id: string) {
+  castPersonasStore = castPersonas().map((p) =>
+    p.id === id ? { ...p, status: "training", progress: 0 } : p,
+  );
+  notify();
+}
+/** 推进训练进度一格(+4%;到 100 锁脸完成 → ready)。组件定时器每格调它;完成
+ * 事件(cast_trained)由组件侦测「新变 ready」后调 castTrained 落(单次)。 */
+export function castAdvanceTraining() {
+  let changed = false;
+  castPersonasStore = castPersonas().map((p) => {
+    if (p.status !== "training") return p;
+    changed = true;
+    const next = Math.min(100, (p.progress ?? 0) + 4);
+    if (next >= 100) {
+      return { ...p, status: "ready", progress: undefined, trainedAt: "2026-07-07", scenes: 0 };
+    }
+    return { ...p, progress: next };
+  });
+  if (changed) notify();
+}
+
+/* ── channel-wallet:通道费 RM 账道(account-channel-wallet.tsx 余额/auto-reload) ─
+ * 与 credits 物理隔离(独立 slice,永不并入 creditBalance);升格为跨页存活单源,
+ * 修掉「Add funds 后离页回滚」。仅此页读它,但仍是单一源(再有别处读也同源)。 */
+let channelWalletStore: { balanceMyr: number; autoReload: boolean } | null = null;
+
+/** 通道费钱包当前值(余额 MYR + auto-reload;跨页存活)。 */
+export function channelWallet(): { balanceMyr: number; autoReload: boolean } {
+  if (channelWalletStore === null) {
+    channelWalletStore = { balanceMyr: NS_CHANNEL_FEE_WALLET.balanceMyr, autoReload: NS_CHANNEL_FEE_WALLET.autoReload };
+  }
+  return channelWalletStore;
+}
+/** 充值通道费余额(RM;不落事件、不碰 credits — 独立账道)。 */
+export function channelWalletAddFunds(amountMyr: number) {
+  const cur = channelWallet();
+  channelWalletStore = { ...cur, balanceMyr: cur.balanceMyr + amountMyr };
+  notify();
+}
+/** 切换 auto-reload(跨页存活)。 */
+export function channelWalletSetAutoReload(on: boolean) {
+  const cur = channelWallet();
+  channelWalletStore = { ...cur, autoReload: on };
+  notify();
+}

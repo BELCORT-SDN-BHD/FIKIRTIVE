@@ -22,10 +22,10 @@ import {
 import { PageHeader, StatCard } from "@/components/northstar/_shared";
 import { Switch } from "@/components/ui/switch";
 import { ACCOUNT_OPS_BASE as BASE, AccountNav, Card, CardHeader } from "./kit";
+import { useStore, channelWallet, channelWalletAddFunds, channelWalletSetAutoReload } from "../_store";
 import {
   META_PRICING_URL,
   NS_CHANNEL_FEE_LEDGER,
-  NS_CHANNEL_FEE_WALLET,
   type NsChannelFeeRow,
 } from "./data";
 
@@ -56,9 +56,10 @@ function FeeRow({ row }: { row: NsChannelFeeRow }) {
 }
 
 export function AccountChannelWallet() {
-  // 通道费是垫付给平台的过路费(MYR),与生成 credits 两套账;仅此页可见,本地状态即真值。
-  const [balanceMyr, setBalanceMyr] = React.useState(NS_CHANNEL_FEE_WALLET.balanceMyr);
-  const [autoReload, setAutoReload] = React.useState(NS_CHANNEL_FEE_WALLET.autoReload);
+  useStore();
+  // 通道费是垫付给平台的过路费(MYR),与生成 credits 两套账、独立 slice(永不并入
+  // creditBalance);升格进共享 store 单源后跨页存活(修掉「Add funds 后离页回滚」)。
+  const { balanceMyr, autoReload } = channelWallet();
   const [adding, setAdding] = React.useState(false);
   const [fundsAmount, setFundsAmount] = React.useState(ADD_FUND_AMOUNTS[1]);
 
@@ -72,7 +73,7 @@ export function AccountChannelWallet() {
     setAdding(true);
   };
   const confirmAddFunds = () => {
-    setBalanceMyr((b) => b + fundsAmount);
+    channelWalletAddFunds(fundsAmount);
     setAdding(false);
   };
 
@@ -122,7 +123,7 @@ export function AccountChannelWallet() {
       <div className="mt-4 flex flex-wrap items-center gap-3 rounded-[18px] border border-border bg-card px-4 py-3.5">
         <div className="flex items-center gap-2">
           <span className="text-xs text-muted-foreground">Auto reload when low</span>
-          <Switch checked={autoReload} onCheckedChange={setAutoReload} aria-label="Auto reload channel fees" />
+          <Switch checked={autoReload} onCheckedChange={channelWalletSetAutoReload} aria-label="Auto reload channel fees" />
         </div>
         <Button variant="secondary" size="sm" className="ml-auto" onClick={openAddFunds}>
           Add funds

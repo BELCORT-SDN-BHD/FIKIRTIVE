@@ -40,8 +40,16 @@ import {
   SegChips,
   SweepIn,
 } from "@/components/northstar/assets/_zone";
-import { STUFF_ITEMS, type StuffItem, type StuffKind } from "@/components/northstar/assets/_data";
+import { type StuffItem, type StuffKind } from "@/components/northstar/assets/_data";
 import { nsImage } from "@/components/northstar/_mock";
+import {
+  useStore,
+  myStuffItems,
+  myStuffAddItem,
+  myStuffRetrySuccess,
+  myStuffRemoveItem,
+  myStuffRestoreItem,
+} from "../_store";
 import { BULK_CREDITS_PER_ROW, BULK_SAMPLE_ROWS } from "./data";
 import { PageHeader, EmptyState, AssetsNav, ASSETS_BASE, fmtMyr } from "./kit";
 
@@ -71,7 +79,9 @@ const UPLOADED_ITEM: StuffItem = {
 };
 
 export function AssetsMyStuff() {
-  const [items, setItems] = React.useState<StuffItem[]>(STUFF_ITEMS);
+  useStore();
+  // 单源:全部素材读共享 store(上传/重试/删除跨页存活),不再私藏 useState 副本。
+  const items = myStuffItems();
   const [kind, setKind] = React.useState("all");
   const [query, setQuery] = React.useState("");
   const [compact, setCompact] = React.useState(false);
@@ -94,7 +104,7 @@ export function AssetsMyStuff() {
   const retry = (id: string) => {
     setRetrying(id);
     retryTimer.current = window.setTimeout(() => {
-      setItems((prev) => prev.map((it) => (it.id === id ? { ...it, status: "ready" } : it)));
+      myStuffRetrySuccess(id);
       setJustLanded((prev) => ({ ...prev, [id]: "sweep" }));
       setRetrying(null);
     }, 3200);
@@ -102,24 +112,19 @@ export function AssetsMyStuff() {
 
   const remove = (item: StuffItem) => {
     const idx = items.findIndex((it) => it.id === item.id);
-    setItems((prev) => prev.filter((it) => it.id !== item.id));
+    myStuffRemoveItem(item.id);
     toast(`Removed "${item.title}"`, {
       duration: 8000,
       action: {
         label: "Undo",
-        onClick: () =>
-          setItems((prev) => {
-            const next = [...prev];
-            next.splice(Math.min(idx, next.length), 0, item);
-            return next;
-          }),
+        onClick: () => myStuffRestoreItem(item, idx),
       },
     });
   };
 
   const addUpload = () => {
     setUploadOpen(false);
-    setItems((prev) => [UPLOADED_ITEM, ...prev.filter((it) => it.id !== UPLOADED_ITEM.id)]);
+    myStuffAddItem(UPLOADED_ITEM);
     setJustLanded((prev) => ({ ...prev, [UPLOADED_ITEM.id]: "land" }));
   };
 

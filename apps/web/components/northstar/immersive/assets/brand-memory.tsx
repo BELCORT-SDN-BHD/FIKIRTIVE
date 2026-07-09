@@ -21,9 +21,7 @@ import { OttoMark, SegChips, SweepIn, ZoneTabs } from "@/components/northstar/as
 import {
   INGESTED_PRODUCT,
   INGEST_STEPS,
-  MEMORY_FACTS,
   MEMORY_PRODUCT_CATEGORIES,
-  MEMORY_PRODUCTS,
   MEMORY_TABS,
   RESEARCHED_FACTS,
   RESEARCH_STEPS,
@@ -31,7 +29,19 @@ import {
   type MemoryTabKey,
 } from "@/components/northstar/assets/_data";
 import { EmptyState, OttoNarrationBar } from "@/components/northstar/_shared";
-import { brandPreferences, useStore, askOttoInline } from "../_store";
+import {
+  brandPreferences,
+  useStore,
+  askOttoInline,
+  brandFacts,
+  brandProducts,
+  brandMemoryAddFact,
+  brandMemoryAddFacts,
+  brandMemoryUpdateFact,
+  brandMemoryRemoveFact,
+  brandMemoryRestoreFact,
+  brandMemoryAddProduct,
+} from "../_store";
 import { useImmersive } from "../_context";
 import { AUDIENCE_PROFILES } from "./data";
 import type { NsProduct } from "@/components/northstar/_mock";
@@ -44,8 +54,9 @@ export function AssetsBrandMemory() {
   useStore();
   const [tab, setTab] = React.useState<MemoryTabKey>("about");
   const learned = brandPreferences();
-  const [facts, setFacts] = React.useState<MemoryFact[]>(MEMORY_FACTS);
-  const [products, setProducts] = React.useState<NsProduct[]>(MEMORY_PRODUCTS);
+  // 单源:facts/products 读共享 store(跨页存活),不再私藏 useState 副本。
+  const facts = brandFacts();
+  const products = brandProducts();
   const [productCat, setProductCat] = React.useState("All");
 
   const [ottoJob, setOttoJob] = React.useState<"research" | "ingest" | null>(null);
@@ -59,7 +70,7 @@ export function AssetsBrandMemory() {
   }, []);
 
   const finishResearch = () => {
-    setFacts((prev) => [...RESEARCHED_FACTS.filter((f) => !prev.some((p) => p.id === f.id)), ...prev]);
+    brandMemoryAddFacts(RESEARCHED_FACTS);
     setLanded((prev) => ({
       ...prev,
       ...Object.fromEntries(RESEARCHED_FACTS.map((f) => [f.id, "sweep" as const])),
@@ -78,7 +89,7 @@ export function AssetsBrandMemory() {
   };
 
   const finishIngest = () => {
-    setProducts((prev) => (prev.some((p) => p.id === INGESTED_PRODUCT.id) ? prev : [INGESTED_PRODUCT, ...prev]));
+    brandMemoryAddProduct(INGESTED_PRODUCT);
     setLanded((prev) => ({ ...prev, [INGESTED_PRODUCT.id]: "sweep" }));
     setOttoJob(null);
     setIngestUrl("");
@@ -86,27 +97,22 @@ export function AssetsBrandMemory() {
 
   const addFact = (tabKey: MemoryTabKey, text: string) => {
     const id = `mf-new-${tabKey}-${text.length}-${facts.length}`;
-    setFacts((prev) => [...prev, { id, text, tab: tabKey, source: "owner", addedAt: "2026-07-07" }]);
+    brandMemoryAddFact({ id, text, tab: tabKey, source: "owner", addedAt: "2026-07-07" });
     setLanded((prev) => ({ ...prev, [id]: "land" }));
   };
 
   const updateFact = (id: string, text: string) => {
-    setFacts((prev) => prev.map((f) => (f.id === id ? { ...f, text } : f)));
+    brandMemoryUpdateFact(id, text);
   };
 
   const removeFact = (fact: MemoryFact) => {
     const idx = facts.findIndex((f) => f.id === fact.id);
-    setFacts((prev) => prev.filter((f) => f.id !== fact.id));
+    brandMemoryRemoveFact(fact.id);
     toast("Removed from brand memory", {
       duration: 8000,
       action: {
         label: "Undo",
-        onClick: () =>
-          setFacts((prev) => {
-            const next = [...prev];
-            next.splice(Math.min(idx, next.length), 0, fact);
-            return next;
-          }),
+        onClick: () => brandMemoryRestoreFact(fact, idx),
       },
     });
   };
