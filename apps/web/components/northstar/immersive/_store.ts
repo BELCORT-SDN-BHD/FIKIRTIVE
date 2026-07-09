@@ -45,7 +45,7 @@ import {
   type NsSeatType,
   type NsRoutine,
 } from "./account-ops/data";
-import type { NsDealStage } from "./crm-inbox/data";
+import type { NsDealStage, NsSegmentRule } from "./crm-inbox/data";
 
 /** 成交阶段推进顺序(单一源,advanceDealStage 与 crm 页共用) */
 const DEAL_STAGE_ORDER: NsDealStage[] = ["lead", "quote", "confirmed", "delivered"];
@@ -75,7 +75,11 @@ export type NsEventType =
   | "member_updated"
   | "member_removed"
   | "cast_trained"
-  | "approval_requested";
+  | "approval_requested"
+  | "contact_field_changed"
+  | "contacts_merged"
+  | "segment_created"
+  | "segment_deleted";
 
 export interface NsEvent {
   type: NsEventType;
@@ -118,6 +122,15 @@ export interface NsOttoBehavior {
   quietHours: { enabled: boolean; from: string; to: string };
 }
 
+/* ── 自建分群(人话 → 规则编译后存这里;分群页列表读它、可删) ─────────────── */
+export interface NsCustomSegment {
+  id: string;
+  name: string;
+  /** 店主输入的人话描述(编译成 rules 的原句;列表副标题显示它) */
+  phrase: string;
+  rules: NsSegmentRule[];
+}
+
 /* ── store 状态(全部从 _mock / 区级视图派生的可变镜像) ────────────────────── */
 interface StoreState {
   creditBalance: number;
@@ -142,6 +155,16 @@ interface StoreState {
   inboxContactIds: string[];
   /** 每个联系人的「来自收件箱」时间线条目(contact-profile 读它) */
   contactEvents: Record<string, { at: number; label: string }[]>;
+  /** 联系人字段补丁(勿扰/标签编辑 + 合并累加;contactsView/contactByIdView 叠加它) */
+  contactPatches: Record<string, Partial<NsContact>>;
+  /** 每个联系人的字段变更留痕(档案「变更历史」折叠区读它,最早在前) */
+  contactChanges: Record<string, { at: number; label: string }[]>;
+  /** 已被合并进别人的联系人 id(从列表隐藏;对其引用回落到主联系人) */
+  mergedContactIds: string[];
+  /** 从属联系人 id → 主联系人 id(对话归属 + 档案引用重定向) */
+  mergedInto: Record<string, string>;
+  /** 店主自建分群(人话编译成规则后存这里) */
+  customSegments: NsCustomSegment[];
   ottoWorking: boolean;
   ottoLabel: string;
   eventLog: NsEvent[];
@@ -172,6 +195,11 @@ const state: StoreState = {
   dealStageOverrides: {},
   inboxContactIds: [],
   contactEvents: {},
+  contactPatches: {},
+  contactChanges: {},
+  mergedContactIds: [],
+  mergedInto: {},
+  customSegments: [],
   ottoWorking: false,
   ottoLabel: "Otto — idle",
   eventLog: [],
@@ -215,6 +243,18 @@ function logEvent(type: NsEventType, label: string, payload: Record<string, unkn
 function addContactEvent(contactId: string, label: string) {
   const prev = state.contactEvents[contactId] ?? [];
   state.contactEvents = { ...state.contactEvents, [contactId]: [...prev, { at: seq, label }] };
+}
+
+/** 给某联系人追加一条字段变更留痕(档案「变更历史」读它;seq 已由外层 logEvent 递增) */
+function logContactChange(contactId: string, label: string) {
+  const prev = state.contactChanges[contactId] ?? [];
+  state.contactChanges = { ...state.contactChanges, [contactId]: [...prev, { at: seq, label }] };
+}
+
+/** 叠加字段补丁的联系人视图(勿扰/标签/合并累加都走这层)。 */
+function applyContactPatch(c: NsContact): NsContact {
+  const patch = state.contactPatches[c.id];
+  return patch ? { ...c, ...patch } : c;
 }
 
 /* ── 动作(纯函数:改 store + append event + notify) ──────────────────────────
@@ -466,6 +506,99 @@ export function ensureContactFromComment(
   state.inboxContactIds = [...state.inboxContactIds, id];
   logEvent("contact_created", `Added @${handle} to contacts`, { id });
   addContactEvent(id, note);
+  notify();
+}
+
+/* ── CRM 联系人字段编辑(勿扰 / 标签)——每次改动都留痕(档案「变更历史」)。 ──── */
+
+/** 勿扰(consent)开关:写补丁 + 留痕 + 事件流。勿扰者在群发/排期受众选择器里禁用。 */
+export function setContactDnd(id: string, on: boolean) {
+  const c = contactByIdView(id);
+  if (!c || c.doNotDisturb === on) return;
+  state.contactPatches = {
+    ...state.contactPatches,
+    [c.id]: { ...state.contactPatches[c.id], doNotDisturb: on },
+  };
+  const label = on ? "Turned on do not disturb" : "Turned off do not disturb";
+  logEvent("contact_field_changed", `${label} · ${c.name}`, { id: c.id, field: "doNotDisturb", on });
+  logContactChange(c.id, label);
+  notify();
+}
+
+/** 加一个标签(小写去重)。 */
+export function addContactTag(id: string, tag: string) {
+  const t = tag.trim().toLowerCase();
+  if (!t) return;
+  const c = contactByIdView(id);
+  if (!c || c.tags.includes(t)) return;
+  state.contactPatches = {
+    ...state.contactPatches,
+    [c.id]: { ...state.contactPatches[c.id], tags: [...c.tags, t] },
+  };
+  logEvent("contact_field_changed", `Tagged ${c.name} “${t}”`, { id: c.id, field: "tags", tag: t });
+  logContactChange(c.id, `Added tag “${t}”`);
+  notify();
+}
+
+/** 去掉一个标签。 */
+export function removeContactTag(id: string, tag: string) {
+  const c = contactByIdView(id);
+  if (!c || !c.tags.includes(tag)) return;
+  state.contactPatches = {
+    ...state.contactPatches,
+    [c.id]: { ...state.contactPatches[c.id], tags: c.tags.filter((x) => x !== tag) },
+  };
+  logEvent("contact_field_changed", `Removed “${tag}” from ${c.name}`, { id: c.id, field: "tags", tag });
+  logContactChange(c.id, `Removed tag “${tag}”`);
+  notify();
+}
+
+/** 合并两个联系人:并渠道/标签、累加订单额、取最近 lastSeen、勿扰取并集;从属方隐藏,
+ * 其对话/引用重定向到主联系人。判决核心「同一人的另一渠道」差异化卖点的原型体现。 */
+export function mergeContacts(primaryId: string, secondaryId: string) {
+  if (primaryId === secondaryId) return;
+  const primary = contactByIdView(primaryId);
+  const secondary = contactByIdView(secondaryId);
+  if (!primary || !secondary) return;
+  const channels = Array.from(new Set([...primary.channels, ...secondary.channels]));
+  const tags = Array.from(new Set([...primary.tags, ...secondary.tags]));
+  state.contactPatches = {
+    ...state.contactPatches,
+    [primaryId]: {
+      ...state.contactPatches[primaryId],
+      channels,
+      tags,
+      totalOrdersMyr: primary.totalOrdersMyr + secondary.totalOrdersMyr,
+      lastSeen: primary.lastSeen >= secondary.lastSeen ? primary.lastSeen : secondary.lastSeen,
+      doNotDisturb: primary.doNotDisturb || secondary.doNotDisturb,
+    },
+  };
+  if (!state.mergedContactIds.includes(secondaryId)) {
+    state.mergedContactIds = [...state.mergedContactIds, secondaryId];
+  }
+  state.mergedInto = { ...state.mergedInto, [secondaryId]: primaryId };
+  logEvent("contacts_merged", `Merged ${secondary.name} into ${primary.name}`, { primaryId, secondaryId });
+  logContactChange(
+    primaryId,
+    `Merged ${secondary.name} in · +${secondary.channels.length} channel${secondary.channels.length > 1 ? "s" : ""}, +RM${secondary.totalOrdersMyr.toLocaleString("en-MY")} orders`,
+  );
+  notify();
+}
+
+/* ── 自建分群:人话编译成的规则存这里(可用可删) ───────────────────────────── */
+export function addCustomSegment(input: { name: string; phrase: string; rules: NsSegmentRule[] }): string {
+  const id = `seg-live-${seq + 1}`;
+  state.customSegments = [{ id, name: input.name, phrase: input.phrase, rules: input.rules }, ...state.customSegments];
+  logEvent("segment_created", `Created segment · ${input.name}`, { id });
+  notify();
+  return id;
+}
+
+export function removeCustomSegment(id: string) {
+  const seg = state.customSegments.find((s) => s.id === id);
+  if (!seg) return;
+  state.customSegments = state.customSegments.filter((s) => s.id !== id);
+  logEvent("segment_deleted", `Deleted segment · ${seg.name}`, { id });
   notify();
 }
 
@@ -722,15 +855,36 @@ export function conversationByIdView(id: string): NsConversation | undefined {
 }
 
 export function contactsView(): NsContact[] {
-  return state.contacts;
+  return state.contacts
+    .filter((c) => !state.mergedContactIds.includes(c.id))
+    .map(applyContactPatch);
 }
 
 export function contactByIdView(id: string): NsContact | undefined {
-  return state.contacts.find((c) => c.id === id);
+  const resolvedId = state.mergedInto[id] ?? id;
+  const c = state.contacts.find((x) => x.id === resolvedId);
+  return c ? applyContactPatch(c) : undefined;
 }
 
 export function conversationsForContactView(contactId: string): NsConversation[] {
-  return state.conversations.filter((c) => c.contactId === contactId);
+  return state.conversations.filter(
+    (c) => (state.mergedInto[c.contactId] ?? c.contactId) === contactId,
+  );
+}
+
+/** 店主自建分群(分群页列表读它)。 */
+export function customSegments(): NsCustomSegment[] {
+  return state.customSegments;
+}
+
+/** 该联系人的字段变更留痕(最早在前;档案「变更历史」读它)。 */
+export function contactChangesFor(id: string): { at: number; label: string }[] {
+  return state.contactChanges[id] ?? [];
+}
+
+/** 可合并的重复候选:除自己、除已合并者之外的联系人(合并流程选人读它)。 */
+export function mergeCandidatesView(id: string): NsContact[] {
+  return contactsView().filter((c) => c.id !== id);
 }
 
 /** 该会话 Otto 自动回复是否被人工暂停(对话页横幅 / 开关读它)。 */

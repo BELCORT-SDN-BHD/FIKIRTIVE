@@ -106,6 +106,136 @@ export function contactsInSegment(seg: NsSegment, source: NsContact[] = NS_CONTA
   return source.filter(seg.match);
 }
 
+/* ── 自建分群:人话 → 确定性规则(判决核心「用人话描述→规则编译」的原型体现) ───
+ * 店主用一句人话描述这群人(「wholesale buyers who spent over RM1,000 on WhatsApp」),
+ * 这里用纯关键词匹配把它编译成一串确定性规则 chip。零 LLM、零后台、可预期 —— 同一句
+ * 话永远编出同一串规则。规则再喂进 contactMatchesRules 过滤联系人(与内建分群同口径)。 */
+export type NsSegmentRule =
+  | { kind: "spend_over"; value: number }
+  | { kind: "channel"; value: NsContact["channels"][number] }
+  | { kind: "tag"; value: string }
+  | { kind: "active_within"; days: number }
+  | { kind: "contactable" };
+
+/** 相对锚点:mock 联系人 lastSeen 最新到 2026-07-07,品牌「今天」= 2026-07-08(确定性)。 */
+export const SEGMENT_TODAY = "2026-07-08";
+
+/** 分群规则可识别的标签词表(与 NS_CONTACTS.tags 口径一致)。 */
+const SEGMENT_TAG_VOCAB = ["office orders", "wholesale", "catering", "regular", "vip", "new"];
+
+const CHANNEL_LABEL: Record<NsContact["channels"][number], string> = {
+  whatsapp: "WhatsApp",
+  instagram: "Instagram",
+  facebook: "Facebook",
+};
+
+/** 把一条规则翻成人话 chip 文案(新建预览与已存分群列表共用一句)。 */
+export function ruleLabel(rule: NsSegmentRule): string {
+  switch (rule.kind) {
+    case "spend_over":
+      return `Spent over RM${rule.value.toLocaleString("en-MY")}`;
+    case "channel":
+      return `Reaches on ${CHANNEL_LABEL[rule.value]}`;
+    case "tag":
+      return `Tagged “${rule.value}”`;
+    case "active_within":
+      return `Active in last ${rule.days} days`;
+    case "contactable":
+      return "Okay to message";
+  }
+}
+
+function pushUnique(rules: NsSegmentRule[], rule: NsSegmentRule) {
+  const key = JSON.stringify(rule);
+  if (!rules.some((r) => JSON.stringify(r) === key)) rules.push(rule);
+}
+
+/** 人话 → 确定性规则串(关键词匹配;同输入永远同输出)。 */
+export function compileSegmentPhrase(phrase: string): NsSegmentRule[] {
+  const t = ` ${phrase.toLowerCase()} `;
+  const rules: NsSegmentRule[] = [];
+
+  // 消费门槛:出现 spend/spent/over RM/big spender/top/vip/high value 等 → 取句中数字(默认 1,000)
+  if (/(spent|spend|spender|over rm|above rm|more than|rm\s*\d|ringgit|big buyer|high[- ]?value|top spender|\bvip\b)/.test(t)) {
+    const m = t.match(/(?:rm|over|above|than)\s*rm?\s*([\d,]{2,})/) ?? t.match(/([\d,]{3,})/);
+    const value = m ? parseInt(m[1].replace(/,/g, ""), 10) : 1000;
+    if (!Number.isNaN(value) && value > 0) pushUnique(rules, { kind: "spend_over", value });
+  }
+
+  // 来源渠道
+  if (/(instagram|insta|\big\b)/.test(t)) pushUnique(rules, { kind: "channel", value: "instagram" });
+  if (/(whatsapp|whats app|\bwa\b)/.test(t)) pushUnique(rules, { kind: "channel", value: "whatsapp" });
+  if (/(facebook|messenger|\bfb\b)/.test(t)) pushUnique(rules, { kind: "channel", value: "facebook" });
+
+  // N 天活跃:出现 active/recent/engaged/lately/seen → 取「N day(s)」(默认 30)
+  if (/(active|recent|engaged|lately|seen|this week|this month)/.test(t)) {
+    const d = t.match(/(\d{1,3})\s*day/);
+    pushUnique(rules, { kind: "active_within", days: d ? parseInt(d[1], 10) : 30 });
+  }
+
+  // 标签词表(长词优先,避免 "office orders" 被 "regular" 抢先)
+  for (const tag of SEGMENT_TAG_VOCAB) {
+    if (t.includes(tag)) pushUnique(rules, { kind: "tag", value: tag });
+  }
+
+  // 可联系(排除勿扰名单)
+  if (/(contactable|reachable|can message|okay to message|not dnd|opt[- ]?in|marketing)/.test(t)) {
+    pushUnique(rules, { kind: "contactable" });
+  }
+
+  return rules;
+}
+
+function daysBetween(a: string, b: string): number {
+  const da = Date.parse(`${a}T00:00:00+08:00`);
+  const db = Date.parse(`${b}T00:00:00+08:00`);
+  if (Number.isNaN(da) || Number.isNaN(db)) return Number.POSITIVE_INFINITY;
+  return Math.abs(db - da) / 86_400_000;
+}
+
+/** 联系人是否命中一串规则(全部满足;空规则视为不命中,避免「新建空群」误收全体)。 */
+export function contactMatchesRules(c: NsContact, rules: NsSegmentRule[]): boolean {
+  if (rules.length === 0) return false;
+  return rules.every((r) => {
+    switch (r.kind) {
+      case "spend_over":
+        return c.totalOrdersMyr > r.value;
+      case "channel":
+        return c.channels.includes(r.value);
+      case "tag":
+        return c.tags.includes(r.value);
+      case "active_within":
+        return daysBetween(c.lastSeen, SEGMENT_TODAY) <= r.days;
+      case "contactable":
+        return !c.doNotDisturb;
+    }
+  });
+}
+
+/* ── 多渠道身份:把一个联系人在各渠道上的锚点摊开(身份合并卡读它) ───────────
+ * channels 数组就是这个人的多渠道身份。handle 是为原型派生的展示串(社媒取名字首词,
+ * WhatsApp 取显示名)—— 不新造后台事实,只把已有 channels 渲染成可读的身份行。 */
+export interface NsIdentity {
+  channel: NsContact["channels"][number];
+  label: string;
+  handle: string;
+}
+
+export function contactIdentities(c: NsContact): NsIdentity[] {
+  const bare = c.name.replace(/^@/, "");
+  const first = bare.split(/\s+/)[0]?.toLowerCase() ?? bare.toLowerCase();
+  return c.channels.map((ch) => ({
+    channel: ch,
+    label: CHANNEL_LABEL[ch],
+    handle:
+      ch === "whatsapp"
+        ? bare
+        : c.name.startsWith("@")
+          ? c.name
+          : `@${first}`,
+  }));
+}
+
 /* ── 评论(社媒帖子下的公开评论;派生自 NS_SCHEDULED_POSTS 已发帖) ──────── */
 export interface NsComment {
   id: string;

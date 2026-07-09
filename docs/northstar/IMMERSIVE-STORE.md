@@ -27,10 +27,13 @@
 - `chatThreads()` / `connections()` / `rules()` / `routines()` / `teamMembers()` —— 对应镜像的当前值。
 - `aiHandledCount()` —— Otto 已自动应答的会话数(automation 规则「Answer order questions」的 runsThisWeek 派生自它,不写死)。
 - crm-inbox 身份链读:`conversationsView()` / `conversationByIdView(id)` /
-  `conversationsForContactView(contactId)` / `contactsView()` / `contactByIdView(id)` ·
+  `conversationsForContactView(contactId)`(合并后从属方的对话并入主联系人)/ `contactsView()`
+  (已叠加字段补丁、隐藏已合并者)/ `contactByIdView(id)`(引用已合并 id 回落到主联系人)·
   `isAiPaused(id)`(对话页横幅)· `isResolved(id)`(Resolve 按钮态)· `isInboxContact(id)`
   (CRM「New」chip)· `dealStageOf(dealId, fallback)`(阶段实时值,金额不漂移)·
-  `contactEventsFor(id)`(contact-profile「From the inbox」时间线)。
+  `contactEventsFor(id)`(contact-profile「From the inbox」时间线)·
+  `contactChangesFor(id)`(档案「Change history」折叠区读的字段变更留痕)·
+  `mergeCandidatesView(id)`(合并流程可选的重复候选)· `customSegments()`(店主自建分群列表)。
 - `adSubmissions()` —— 待审广告事件(广告区 submit 派生;performance 待审 chip + multi-platform「审核中」读它)。
 - `creditSpendByCategory()` —— 从 `creditLedger` 派生的分类消费(分析区报表读它,取代手抄常量)。
 - `ottoBehavior()` —— Otto 行为设置(自主级别 / 花费确认阈值 / 勿扰时段);账户 · Otto 行为面写它,dock 读它反映作风。
@@ -48,6 +51,10 @@ crm-inbox 身份链动作:`sendConversationMessage(id,text)`(append owner 消息
 暂停)· `setConversationAi(id,paused)`(Otto 自动接管开关,dispatch automation 事件)·
 `advanceDealStage(id,current,dir,title)`(阶段推进/回退,金额仍走 dealAmountMyr)·
 `ensureContactFromComment(handle,channel,lastSeen,note)`(评论作者身份锚点→补建 CRM 联系人)。
+crm 字段/身份/分群动作(每次改动都进字段留痕):`setContactDnd(id,on)`(consent/勿扰开关,
+勿扰者在群发/排期受众选择器里禁用)· `addContactTag(id,tag)` / `removeContactTag(id,tag)` ·
+`mergeContacts(primaryId,secondaryId)`(并渠道/标签、累加订单、对话重定向;从属方隐藏)·
+`addCustomSegment({name,phrase,rules})`(人话编译成的规则存入)/ `removeCustomSegment(id)`。
 
 ## 事件流(append-only,`{ type, payload, at:seq, label }`)
 `label` 是人话一行(sentence case、英文 UI),dock / 通知直接显示。类型:
@@ -55,7 +62,8 @@ crm-inbox 身份链动作:`sendConversationMessage(id,text)`(append owner 消息
 `approval_settled` · `channel_connected` · `channel_disconnected` · `conversation_resolved` ·
 `conversation_replied` · `conversation_ai_toggled` · `deal_stage_changed` · `contact_created` ·
 `automation_toggled` · `automation_rule_created` · `routine_toggled` · `routine_created` ·
-`otto_working` · `otto_idle` · `ad_submitted` · `member_invited` · `cast_trained`。
+`otto_working` · `otto_idle` · `ad_submitted` · `member_invited` · `cast_trained` ·
+`contact_field_changed` · `contacts_merged` · `segment_created` · `segment_deleted`。
 
 ## 已接线的表面(Wave 1)
 - shell:`ottoWorking` 来自 store,不再硬编码 false;dock 在 3 条 hideDock 路由上只
@@ -74,6 +82,15 @@ crm-inbox 身份链动作:`sendConversationMessage(id,text)`(append owner 消息
 - crm-contacts / crm-segments:读 `contactsView()`,收件箱补建的联系人带「New」chip 且计入分群。
 - crm-contact-profile:身份/对话读 store;「From the inbox」时间线读 `contactEventsFor`;deal 阶段读 `dealStageOf`。
 - crm-deals:卡片推进/回退控件写 `advanceDealStage`,分组与三张数据卡读实时阶段;金额恒走 `dealAmountMyr`。
+
+## 已接线的表面(Wave 3 · CRM respond.io 级地板)
+- crm-segments:「New segment」人话 → `compileSegmentPhrase` 确定性编译成规则 chip + 实时命中数,
+  `addCustomSegment` 存进 store,列表可选可删(`removeCustomSegment`);内建 + 自建同口径过滤。
+- crm-contact-profile:多渠道身份卡读 `contactIdentities`;「Merge duplicate」选候选→字段对比→
+  `mergeContacts`;标签 X/+ 写 `add/removeContactTag`;consent 开关写 `setContactDnd`;每次改动进
+  `contactChangesFor` 的「Change history」折叠区。
+- schedule/composer:CRM「Post to this group」带 `?segment=` → 预选受众 chip(内建走 `SEGMENTS`、
+  自建走 `customSegments`),勿扰联系人在受众列表里显禁用态、不计入群发人数。
 
 ## 已接线的表面(Wave 2 · 钱包统一 + 设置真值)
 - nav:余额读 `balance()`,变动时短暂高亮(充值/花费在导航栏可见地跳动)。

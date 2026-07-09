@@ -12,7 +12,7 @@
 
 import * as React from "react";
 import Link from "next/link";
-import { CalendarCheck, Check, Image as ImageIcon, Info, X as XIcon } from "lucide-react";
+import { BellOff, CalendarCheck, Check, Image as ImageIcon, Info, Users, X as XIcon } from "lucide-react";
 import { toast } from "sonner";
 import { cn } from "@/lib/utils";
 import { Button } from "@/components/ui/button";
@@ -47,8 +47,11 @@ import {
   type DemoState,
   type NsPlatform,
 } from "@/components/northstar/schedule/kit";
-import { schedulePost } from "@/components/northstar/immersive/_store";
+import { schedulePost, useStore, contactsView, customSegments } from "@/components/northstar/immersive/_store";
 import { useQueryParam } from "@/components/northstar/immersive/_kit";
+import { SEGMENTS, contactMatchesRules } from "@/components/northstar/immersive/crm-inbox/data";
+import { Initials } from "@/components/northstar/immersive/_kit";
+import type { NsContact } from "@/components/northstar/_mock";
 
 const ALL_TARGETS: NsPlatform[] = ["instagram", "facebook", "tiktok", "x"];
 const TIMES = ["07:00", "08:00", "09:00", "10:00", "12:00", "17:00", "19:00", "21:00"];
@@ -104,6 +107,14 @@ export default function Page() {
   const [confirmOpen, setConfirmOpen] = React.useState(false);
   const [pending, setPending] = React.useState(false);
   const [scheduled, setScheduled] = React.useState(false);
+
+  // 受众:CRM「Post to this group」带 ?segment= 进来 → 预选受众 chip;勿扰者禁用不群发
+  useStore(); // 订阅共享 store:受众按当前联系人 / 勿扰状态实时算
+  const querySegment = useQueryParam("segment");
+  const [segmentId, setSegmentId] = React.useState<string | null>(null);
+  const [audienceDismissed, setAudienceDismissed] = React.useState(false);
+  // 挂载后再应用(与 ?post prefill 同法,避免 SSR/client 首帧不一致)
+  React.useEffect(() => setSegmentId(querySegment), [querySegment]);
 
   const captionRef = React.useRef<HTMLTextAreaElement>(null);
   const tabRefs = React.useRef<(HTMLButtonElement | null)[]>([]);
@@ -203,6 +214,19 @@ export default function Page() {
   const previewCaption = (overrides[activeTab]?.trim() || caption).trim();
   const xLen = xText.length;
 
+  // 受众解析:自建分群优先(store),否则内建分群(SEGMENTS);勿扰者拆出禁用态
+  const segmentAudience = ((): { name: string; members: NsContact[] } | null => {
+    if (!segmentId || audienceDismissed) return null;
+    const all = contactsView();
+    const custom = customSegments().find((s) => s.id === segmentId);
+    if (custom) return { name: custom.name, members: all.filter((c) => contactMatchesRules(c, custom.rules)) };
+    const builtIn = SEGMENTS.find((s) => s.id === segmentId);
+    if (builtIn) return { name: builtIn.name, members: all.filter(builtIn.match) };
+    return null;
+  })();
+  const audienceReach = segmentAudience ? segmentAudience.members.filter((c) => !c.doNotDisturb) : [];
+  const audienceDnd = segmentAudience ? segmentAudience.members.filter((c) => c.doNotDisturb) : [];
+
   return (
     <div className="mx-auto flex min-h-full w-full max-w-[880px] flex-col px-6 pt-6 pb-16">
       <PageHeader
@@ -270,6 +294,57 @@ export default function Page() {
       {demo === "data" && !scheduled && (
         <div className="mt-6 grid gap-8 lg:grid-cols-[minmax(0,1fr)_300px]">
           <div className="flex min-w-0 flex-col gap-5">
+            {/* 受众(CRM 分群带过来的预选 chip;勿扰者禁用不群发) */}
+            {segmentAudience && (
+              <div className="flex flex-col gap-3 rounded-[14px] border border-border bg-secondary/40 p-4">
+                <div className="flex items-center gap-2">
+                  <Users className="size-4 text-muted-foreground" strokeWidth={2} />
+                  <span className="text-[13px] font-semibold text-foreground">Audience</span>
+                  <span className="inline-flex items-center gap-1.5 rounded-full bg-card px-2.5 py-1 text-xs font-semibold text-foreground ring-1 ring-border">
+                    {segmentAudience.name}
+                    <button
+                      type="button"
+                      onClick={() => setAudienceDismissed(true)}
+                      aria-label="Clear audience"
+                      className="text-muted-foreground hover:text-foreground"
+                    >
+                      <XIcon className="size-3" strokeWidth={2.5} />
+                    </button>
+                  </span>
+                  <span className="ml-auto text-xs text-muted-foreground">
+                    {audienceReach.length} will get this
+                  </span>
+                </div>
+                <div className="flex flex-wrap gap-1.5">
+                  {segmentAudience.members.map((c) => (
+                    <span
+                      key={c.id}
+                      title={c.doNotDisturb ? `${c.name} is on do not disturb — left out` : c.name}
+                      className={cn(
+                        "inline-flex items-center gap-1.5 rounded-full border px-2 py-1 text-[11px] font-medium",
+                        c.doNotDisturb
+                          ? "border-dashed border-border text-muted-foreground line-through opacity-60"
+                          : "border-border bg-card text-foreground",
+                      )}
+                    >
+                      <Initials name={c.name} className="size-4 text-[8px]" />
+                      {c.name}
+                      {c.doNotDisturb && <BellOff className="size-3" strokeWidth={2} />}
+                    </span>
+                  ))}
+                  {segmentAudience.members.length === 0 && (
+                    <span className="text-xs text-muted-foreground">No contacts match this segment right now.</span>
+                  )}
+                </div>
+                {audienceDnd.length > 0 && (
+                  <p className="text-xs text-muted-foreground">
+                    {audienceDnd.length} contact{audienceDnd.length > 1 ? "s" : ""} on do not disturb{" "}
+                    {audienceDnd.length > 1 ? "are" : "is"} left out — change that on their profile.
+                  </p>
+                )}
+              </div>
+            )}
+
             {/* 账号选择(多目标;X + IG 判决核心) */}
             <Field
               label="Channels"
