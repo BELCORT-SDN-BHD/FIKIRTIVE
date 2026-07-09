@@ -20,7 +20,7 @@ import { OttoAvatar } from "@/components/otto/OttoAvatar";
 import { ImmersiveProvider } from "./_context";
 import { ImmersiveNav } from "./immersive-nav";
 import { ImmersiveDock, type ImmersiveDockHandle } from "./immersive-dock";
-import { setOttoContext, useOttoWorking, type NsOttoContext } from "./_store";
+import { currentEscort, setOttoContext, useOttoWorking, type NsOttoContext } from "./_store";
 
 const GALLERY_PREFIX = "/northstar/";
 const IMMERSIVE_PREFIX = "/northstar-immersive/";
@@ -70,10 +70,24 @@ const FADE_KF = `@keyframes ns-immersive-fade { from { opacity: 0; transform: tr
 
 export function ImmersiveShell({ children }: { children: React.ReactNode }) {
   const pathname = usePathname();
+  const router = useRouter();
   const reduced = useReducedMotion();
   const dockRef = React.useRef<ImmersiveDockHandle>(null);
   const rootRef = React.useRef<HTMLDivElement>(null);
   useKeepInsideImmersive(rootRef);
+
+  // §8e 首次直播 escort 导航器:唯一常驻件,故 acted-id 存它的 ref。新鲜前台指示(escortTo)
+  // 的每个 id 只导航一次;离开不拉回(不产生新 id 就不再 push);返回续播是结构性的(store 是源)。
+  const escort = currentEscort();
+  const actedEscortRef = React.useRef(0);
+  React.useEffect(() => {
+    if (!escort || escort.id <= actedEscortRef.current) return;
+    actedEscortRef.current = escort.id;
+    const surface = escort.surface.startsWith(GALLERY_PREFIX)
+      ? IMMERSIVE_PREFIX + escort.surface.slice(GALLERY_PREFIX.length)
+      : escort.surface;
+    router.push(surface);
+  }, [escort, router]);
 
   React.useEffect(() => {
     if (document.getElementById(FADE_KF_ID)) return;

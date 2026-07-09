@@ -165,3 +165,59 @@ WhatsApp 单聊 —— 一条时间线,没有「多线程管理」。store 层�
 - **`/otto`(+ `/global/otto-chat`)全屏**:原生重建(不再套画廊页)。左 = 这条流(可按 campaign /
   区过滤,composer 调 `appendToStream`) · 右 = 当前 context 摘要(在看什么 · 过滤这条流 ·
   Otto 状态 · 待批深链 · 最近活动 · 余额)。§O3:两路径上 dock 由外壳隐藏,不会两个 Otto 同屏。
+
+## C-C 新原语(f2-primitives)· 全城 10 个 zone worker 直接可用
+
+两件 founder 已批的共享原语,地基已铺(store + 组件 + dock 承接 + 外壳导航器),zone
+worker 只需**挂一颗组件**即得完整承接。铁律不变:coral 只属于 Otto;发/花永不由 Apply
+触发(Apply 只填字段);冷启动诚实——intents/reply 由你写实,不夸口。
+
+### ①「Otto 帮我」assist(§O7)—— 每个动脑面挂一颗
+
+物理形态 = 一颗 ghost 小钮 + 无眼云 glyph 14px(算一个 coral mark set,§O budget:一面
+一颗)。点开 = dock 带 `{zone, entityId, formState}` 上下文自动展开、上方浮出你写的 2-3 个
+一键意图 chip(零打字路径永远在)、Otto 回应可带 `Apply` 一键回填本表面。
+
+组件:`components/northstar/immersive/otto-assist.tsx` · `<OttoAssist />`
+Props:
+- `zone` — `NsOttoZone`(`"Inbox"` / `"CRM"` / `"Campaign"` …);context chip + 单流 zone 归属。
+- `entityId?` / `entityLabel?` — 选中/编辑对象;`entityLabel` 进 dock「Looking at」chip。
+- `formState?` — 当前表单/选区快照(Otto「看见」的现场;透传给你写的 `intents`/`onApply`,原语不解释)。
+- `intents` — `NsAssistIntent[]`(2-3 个):`{ id, label, prompt, reply, apply?, landsOn? }`。
+  `label`=chip 文案(祈使 sentence case);`prompt`=落进单流的店主话;`reply`=Otto 的回应(写实)。
+  `apply?`=`{ summary, patch }` 有值则回应带 Apply;`landsOn?`=`{ surface, label }` 有值则触发 §8e escort。
+- `onApply?(apply)` — Apply 回填:把 `apply.patch` 填回本表面 + 自己 `fire()` 一次 §8a sweep(`useSweep`);**只填字段,店主再亲手发**。
+
+三行接入(收件箱回复框为例):
+```tsx
+import { OttoAssist } from "@/components/northstar/immersive/otto-assist";
+import { useSweep } from "@/components/northstar/immersive/_kit";
+const sweep = useSweep(); // 把 sweep.style 挂在被回填的输入框上
+<OttoAssist zone="Inbox" entityId={cv.id} entityLabel={cv.subject}
+  formState={{ draft, lastCustomerMsg }}
+  intents={[
+    { id: "reply", label: "Draft a reply", prompt: "Draft a reply to this customer", reply: "Here's a friendly reply that answers their question and nudges the order.", apply: { summary: "Fill the reply box", patch: { draft: "Hi! Yes we have that in stock…" } } },
+    { id: "price", label: "Answer the price question", prompt: "What's our price for this?", reply: "Pulled it from your knowledge base — RM12 each, RM60 for a box of six." },
+  ]}
+  onApply={(a) => { setDraft(String(a.patch.draft ?? "")); sweep.fire(); }} />
+```
+Store API(dock 已内建承接,zone 一般只用组件;直调见下):`openAssist(owner, ctx, onApply?)`
+· `clearAssist(owner?)` · `assistContextView()` · `runAssistApply(apply)`。
+
+### ② 首次直播 escort(§8e)—— 新鲜前台指示带到现场看落地
+
+`escortTo(surface, label)`:仅**新鲜、前台、可执行、工作落在别的表面**的指示才调它,导航
+**一次**到 `surface`(沉浸式 href;画廊前缀自动改写)。外壳导航器每个 id 只导一次;**离开
+不拉回**(不产生新 id 就不再 push);**返回续播**是结构性的(工作落进 store,回到该面即重读)。
+background / routine / re-run 永不调它——那是 dock 徽点的活(§O5)。
+
+zone 一般**不直接调** `escortTo`:在 `OttoAssist` 的意图上写 `landsOn: { surface, label }`,
+dock 跑该意图时自动 escort(发送处判定已内建)。示例:
+```tsx
+intents={[{ id: "plan", label: "Turn this into next week's plan",
+  prompt: "Turn last week's best post into next week's plan",
+  reply: "Laying out the week on your schedule now — every post stays a draft until you approve.",
+  landsOn: { surface: "/northstar-immersive/schedule/calendar", label: "Next week's plan" } }]}
+```
+需要在非 assist 场景手动带现场(如 home 大动作按钮),直调 `escortTo(surface, label)` 即可;
+`currentEscort()` 供外壳导航器读(zone 不用管)。

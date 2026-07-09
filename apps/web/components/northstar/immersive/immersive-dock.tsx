@@ -21,11 +21,16 @@ import { OttoAvatar, type OttoMood } from "@/components/otto/OttoAvatar";
 import { useImmersive } from "./_context";
 import {
   appendToStream,
+  assistContextView,
+  escortTo,
   ottoBehavior,
   ottoContext,
   recentEvents,
+  runAssistApply,
   streamFor,
   useStore,
+  type NsAssistApply,
+  type NsAssistIntent,
   type NsStreamMsg,
 } from "./_store";
 
@@ -143,6 +148,8 @@ export const ImmersiveDock = React.forwardRef<
   const [open, setOpen] = React.useState(false);
   const [draft, setDraft] = React.useState("");
   const [thinking, setThinking] = React.useState(false);
+  // §O7 Apply:跑完一个带 apply 的意图后暂存产出,composer 上方浮出一颗 Apply 钮。
+  const [pendingApply, setPendingApply] = React.useState<NsAssistApply | null>(null);
   const panelRef = React.useRef<HTMLDivElement>(null);
   const scrollRef = React.useRef<HTMLDivElement>(null);
   const inputRef = React.useRef<HTMLTextAreaElement>(null);
@@ -154,6 +161,9 @@ export const ImmersiveDock = React.forwardRef<
   // 上下文桥(宪法 7):当前在看什么 → chip 显示 + 注入回复前缀,「这个」可解析。
   const ctx = ottoContext();
   const ctxLabel = ctx ? ctx.selectedLabel ?? ctx.view : null;
+  // §O7 assist 承接:某个动脑面点开了「Otto 帮我」→ 拿它带来的意图 chip / Apply 上下文。
+  const assist = assistContextView();
+  const assistLabel = assist?.entityLabel ?? assist?.zone ?? ctxLabel;
 
   React.useImperativeHandle(ref, () => ({
     open(prompt?: string) {
@@ -180,6 +190,38 @@ export const ImmersiveDock = React.forwardRef<
   React.useEffect(() => () => {
     if (timerRef.current) window.clearTimeout(timerRef.current);
   }, []);
+
+  // §O7 意图 chip:一键跑一个 surface-specific 意图(零打字)。落一轮往来进单流;
+  // 带 apply 则浮出 Apply 钮;带 landsOn 则 §8e escort 到现场看它落地。
+  function runIntent(intent: NsAssistIntent) {
+    if (thinking) return;
+    appendToStream({ role: "owner", text: intent.prompt });
+    setThinking(true);
+    setPendingApply(null);
+    // §8e 发送处接线判定:意图声明了「工作落在别处」= 新鲜前台可执行指示 → 导航一次。
+    // (自由打字不 escort:没有诚实的目标信号,导航只跟随已声明的 landsOn。)
+    if (intent.landsOn) escortTo(intent.landsOn.surface, intent.landsOn.label);
+    if (timerRef.current) window.clearTimeout(timerRef.current);
+    timerRef.current = window.setTimeout(() => {
+      setThinking(false);
+      appendToStream({ role: "otto", text: intent.reply });
+      if (intent.apply) setPendingApply(intent.apply);
+    }, 1400);
+  }
+
+  // §O7 Apply:把 Otto 产出交回原表面(zone 的 onApply 填字段 + fire useSweep)。
+  // 只填字段,不发不花——落回后留一条确认,提醒店主亲手发。
+  function applyPending() {
+    if (!pendingApply) return;
+    runAssistApply(pendingApply);
+    appendToStream({
+      role: "otto",
+      text: assistLabel
+        ? `Filled it into ${assistLabel}. Review it there and send when you're ready — nothing goes out until you do.`
+        : "Filled it in. Review and send when you're ready — nothing goes out until you do.",
+    });
+    setPendingApply(null);
+  }
 
   function send() {
     const text = draft.trim();
@@ -278,6 +320,35 @@ export const ImmersiveDock = React.forwardRef<
               )}
             </div>
           </div>
+
+          {/* §O7 意图 chip:某个动脑面点开「Otto 帮我」时浮出的 2-3 个零打字路径 */}
+          {assist && assist.intents.length > 0 && (
+            <div className="flex shrink-0 flex-wrap gap-1.5 border-t border-border px-3 pt-2.5">
+              {assist.intents.map((intent) => (
+                <button
+                  key={intent.id}
+                  type="button"
+                  onClick={() => runIntent(intent)}
+                  disabled={thinking}
+                  className="rounded-full bg-secondary px-2.5 py-1 text-[12px] font-medium text-secondary-foreground transition-colors duration-[120ms] hover:bg-accent hover:text-foreground disabled:opacity-50 focus-visible:outline-none focus-visible:ring-[3px] focus-visible:ring-ring/40"
+                >
+                  {intent.label}
+                </button>
+              ))}
+            </div>
+          )}
+
+          {/* §O7 Apply:Otto 产出回填原表面(只填字段;发/花仍要店主点) */}
+          {pendingApply && (
+            <div className="flex shrink-0 items-center gap-2 border-t border-border px-3 pt-2.5">
+              <span className="min-w-0 flex-1 truncate text-[12px] font-medium text-muted-foreground">
+                {pendingApply.summary}
+              </span>
+              <Button size="sm" className="h-8 shrink-0" onClick={applyPending}>
+                Apply
+              </Button>
+            </div>
+          )}
 
           {/* composer */}
           <div className="shrink-0 border-t border-border p-3">

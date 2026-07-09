@@ -2859,3 +2859,125 @@ export function canvasObjectById(id: string | null | undefined): NsCanvasObject 
   if (!id) return null;
   return canvasObjects.get(id) ?? null;
 }
+
+/* ═══════════════════════════════════════════════════════════════════════════
+ * [f2-primitives] C-C 新原语地基 —— 文件尾追加(注明队名 f2-primitives;零改动上文)
+ *
+ * 两件全城共享原语的 store 层:
+ *  ①「Otto 帮我」assist 承接(§O7):任意动脑面挂一颗 ghost 小钮 → 打开 dock 时把
+ *     {zone, entityId, formState} 上下文自动带上、渲染 2-3 个意图 chip、Apply 回填回调。
+ *  ② 首次直播 escort(§8e):新鲜前台指示的工作落在别的表面时,导航一次到现场看它落地;
+ *     离开不拉回,返回续播(store 是单一源,故「续播」结构性成立,无需特判)。
+ *
+ * 铁律不变:纯 client、零后台 import;coral 只属于 Otto;数据只从区/_mock 派生,原语自身
+ * 不造品牌事实;涉钱/误发不由 Apply 触发(Apply 只填字段,发/花仍要店主亲手点)。
+ * ═══════════════════════════════════════════════════════════════════════════ */
+
+/* ── ①「Otto 帮我」assist(§O7)──────────────────────────────────────────────── */
+
+/** 一个一键意图 chip(surface-specific;零打字路径)。运行 = 落一轮往来进单流。 */
+export interface NsAssistIntent {
+  id: string;
+  /** chip 文案(祈使、sentence case;如 "Write 3 caption options") */
+  label: string;
+  /** 点 chip 时作为 owner 消息落进单流的话 */
+  prompt: string;
+  /** Otto 的回应(落进单流;原型无真模型,故由 zone 作者写实、不夸口) */
+  reply: string;
+  /** 有值 = Otto 的回应带「Apply」:一键把产出回填原表面(onApply 落地 + §8a sweep) */
+  apply?: NsAssistApply;
+  /** 有值 = 这条是「工作落在别处」的新鲜前台指示 → 运行时 escort 到现场看它落地(§8e) */
+  landsOn?: { surface: string; label: string };
+}
+
+/** Apply 回填载荷(zone 自定义 patch 形状;发/花永不由此触发——只填字段)。 */
+export interface NsAssistApply {
+  /** 人话一行:Apply 会填什么(按钮说明 / sweep 文案) */
+  summary: string;
+  /** 回填补丁(形状由 zone 的 onApply 约定;原语不解释内容) */
+  patch: Record<string, unknown>;
+}
+
+/** dock 打开时自动带上的 assist 上下文(§O7:zone + entity + 当前表单/选区快照 + 意图)。 */
+export interface NsAssistContext {
+  zone: NsOttoZone;
+  /** 选中/编辑对象 id(可选;onApply 把产出落到具体对象) */
+  entityId?: string;
+  /** 对象人话名(dock「Looking at」chip 显示它,回退到 zone) */
+  entityLabel?: string;
+  /** 当前表单/选区快照(Otto「看见」的现场状态;原语不解释内容,只透传给作者的 reply/apply) */
+  formState?: Record<string, unknown>;
+  /** 2-3 个 surface-specific 意图 chip(零打字路径) */
+  intents: NsAssistIntent[];
+}
+
+let assistContext: NsAssistContext | null = null;
+let assistOwner: string | null = null;
+let assistApplyHandler: ((apply: NsAssistApply) => void) | null = null;
+
+/** OttoAssist 小钮点开时调它:登记 assist 上下文 + Apply 回调,并点亮上下文桥(dock 读它)。 */
+export function openAssist(
+  owner: string,
+  ctx: NsAssistContext,
+  onApply?: (apply: NsAssistApply) => void,
+): void {
+  assistOwner = owner;
+  assistContext = ctx;
+  assistApplyHandler = onApply ?? null;
+  // 复用既有上下文桥:dock「Looking at」+ streamContextFromOtto 的 zone 派生都靠它。
+  state.ottoContext = {
+    view: ctx.zone,
+    selectedId: ctx.entityId,
+    selectedLabel: ctx.entityLabel ?? ctx.zone,
+  };
+  notify();
+}
+
+/** 原表面卸载时调它(owner 匹配才清,避免旧表面的卸载抹掉新表面刚设的 assist)。 */
+export function clearAssist(owner?: string): void {
+  if (owner && owner !== assistOwner) return;
+  if (!assistContext && !assistOwner) return;
+  assistContext = null;
+  assistOwner = null;
+  assistApplyHandler = null;
+  notify();
+}
+
+/** 当前 assist 上下文(dock 读它渲染意图 chip / Apply;无 = dock 走普通聊天)。 */
+export function assistContextView(): NsAssistContext | null {
+  return assistContext;
+}
+
+/** dock 的 Apply 钮调它:把产出交回原表面的 onApply(填字段 + sweep)。发/花仍要店主亲手点。 */
+export function runAssistApply(apply: NsAssistApply): void {
+  assistApplyHandler?.(apply);
+}
+
+/* ── ② 首次直播 escort(§8e)──────────────────────────────────────────────────
+ * 只有「新鲜、前台、可执行、工作落在别的表面」的指示才导航一次。escortTo 只写一个带
+ * 单调 id 的请求;真正的 router.push 由外壳的导航器执行、每个 id 只执行一次(外壳是唯一
+ * 常驻件,acted-id 存它的 ref)。离开不拉回(不产生新 id 就不再导航);返回续播是结构性的
+ * ——工作落进 store,回到该表面即重读,原语无需特判。 */
+export interface NsEscortRequest {
+  id: number;
+  /** 目标表面(沉浸式 href;导航器负责把画廊前缀改写成沉浸式) */
+  surface: string;
+  /** 落在那里的东西(§8c 叙述用一行人话) */
+  label: string;
+  at: number;
+}
+
+let escortSeq = 0;
+let escortRequest: NsEscortRequest | null = null;
+
+/** 发一次 escort(新鲜前台指示专用;background/routine/re-run 永不调它——那是 dock 徽点的活)。 */
+export function escortTo(surface: string, label: string): void {
+  escortSeq += 1;
+  escortRequest = { id: escortSeq, surface, label, at: seq };
+  notify();
+}
+
+/** 当前 escort 请求(外壳导航器读它;比对 id 决定是否执行一次导航)。 */
+export function currentEscort(): NsEscortRequest | null {
+  return escortRequest;
+}
