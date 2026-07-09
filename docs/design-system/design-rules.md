@@ -118,6 +118,13 @@ Radii (unchanged): `--radius` 14px controls · `--radius-card` 18px · `--radius
 `--shadow-brand` (`0 8px 22px rgba(236 88 40 / .26)`) exists solely under coral OTTO CTAs.
 Hairlines: 1px `--border`, always (the 1.5px input border is drift). Selection emphasis = 2px `--brand` border, canvas nodes only. Dark-mode shadow values: §K1.
 
+### 5a. Tactility & ground — founder rulings 2026-07-09(手感四法)
+
+1. **Flat surfaces, raised controls(面平钮凸).** Reading surfaces (cards, data panels) stay flat — §5/§D6 unchanged. Anything pressable must *look* pressable: soft small shadow + 1px top highlight edge + the §6 press class (`:active` scale). Clickable = raised; readable = flat — this is the primary "what can I click" signal.
+2. **No plate behind buttons(钮不穿底衣).** In-flow toolbars / chip rows sit directly on the page surface — tinted container strips behind them are banned. The raised control IS the affordance.
+3. **Glass only floats(玻璃只给悬浮件).** `backdrop-filter` material is legal only on chrome that floats OVER scrolling content (dock panel, sticky bars, drawers) — never on static cards; `prefers-reduced-transparency` fallback per §G8.
+4. **The ground is never warm(地面永远不发暖).** Canvas and section grounds are neutral-cool greys (existing token family #FCFCFC/#F4F4F3; #F7F7F8 family for deeper separation). Cream/beige/manila tints are banned everywhere. Warmth comes only from content imagery, Otto's coral, and small-area semantic colour. (Full palette proposal「双声部」— blue as the human interactive voice — awaits founder verdict on the visual; these four laws stand regardless.)
+
 ## 6. Motion
 
 Two easings, four durations. Tokens (to live in `.gb`):
@@ -165,6 +172,10 @@ Placement: pinned to the top of the surface Otto is acting on (canvas: floating 
 ### d. Persistent Otto dock
 Otto's ever-present home on every screen. Collapsed: 48px circle, bottom-right, 16px inset; `OttoAvatar` with live mood; an 8px coral dot badge (subtle 2s pulse) when Otto is acting in the background; tier-2 shadow. Expanded: 320px wide, max 480px tall panel; radius `--radius-modal` 24px; tier-3 shadow; header = narration anatomy (c); body = recent Otto actions with timestamps, each row deep-links to the touched element (clicking re-fires its sweep); footer = "Open Otto" link to the full chat. Transition: 200ms ease-spring, transform-origin bottom-right.
 Rules: **never covers a primary CTA** — surfaces with a bottom-right CTA shift the dock up past it; z = `--z-dock` (§L8), above content, below modals/toasts. Mobile: collapsed sits above the bottom bar (12px inset); expanded becomes a full-width bottom sheet (radius 24 top corners). Full buildable spec: §O6.
+
+### 8e. First-run live escort(首次直播,founder-approved 2026-07-09)
+
+When the user gives Otto a **fresh, foreground, actionable instruction** (dock or full-page) whose work lands on another surface (schedule, campaign, canvas): navigate **once** to that surface and let the work land live there (§8c narration + §8b staggered landings). Rules: fresh foreground instructions only — background/routine/re-run work never navigates (dock badge only, §O5); if the user navigates away, never pull them back (work continues; badge pulses); if they return before completion, the live state resumes (structural — the store is the single source). Reduced motion: the navigation still happens; landings follow §A5 fallbacks. This does not violate "永不抢占主场": at the moment of a fresh instruction, this task IS the user's主场.
 
 ## 9. Anti-slop
 
@@ -425,6 +436,14 @@ Size ladder: `16 · 22 · 26 · 32 · 40 · 48 · 64`, plus 34 only inside the 4
 *Expanded:* 320w × max 480h, radius 24, `--popover` + `--shadow-xl`; origin bottom-right, in 200ms spring / out 150ms; reduced motion snaps. Header 56px = narration anatomy (24px avatar + 13/18 500 line + 64px gen bar or `micro-mono` counter; idle: "Otto", no bar). Body: last ≤20 actions, newest first; rows py 10 px 12 radius 10 — text `footnote` truncated + `caption` timestamp; click deep-links and re-fires the sweep; **rows are neutral, zero coral** (the sweep at the destination is the coral); empty: "All caught up." Footer: 44px "Open Otto" row. Esc/outside-click collapses; expanding never pauses work; one dock per app, ever.
 *A11y:* trigger `<button aria-expanded>` named "Otto — {narration | 'idle'}"; panel `role="dialog" aria-label="Otto activity"`; badge changes announce via a visually-hidden `role="status"` line.
 *Mobile:* collapsed 48 stays, inset 12 + safe-area, above any bottom bar. Expanded = full-width bottom sheet (top radii 24, max-h 60vh, 36×4 grabber, scrim, drag-down closes; rows py 12). The budget does not scale down — a phone screen usually shows chrome only.
+
+### O7. Otto assist affordance(「Otto 帮我」,founder-approved 2026-07-09 — 零学习曲线检查① 的物理形态)
+
+Every "thinking-required" surface (forms, dialogs, composers, builders, editors, error states) carries **one** small Otto-assist button (ghost style, Otto glyph ≤16px — counts as one coral mark set in the §O budget). Tap →
+1. the dock opens with **context auto-attached**: zone + entity id + current form/selection state — Otto never asks "which one / where are you";
+2. **2-3 scenario intent chips** (one-tap, surface-specific) sit above the composer — a zero-typing path always exists;
+3. free typing remains available.
+Otto's answer carries **Apply** where applicable: output lands back into the origin surface (fields filled, draft inserted) with an §8a sweep on the touched fields; sends/spends still require the user's tap (money law unchanged). The exchange enters the single stream with context chips (D2), so it is findable later from campaign/zone filtered views.
 
 ## K. Dark mode
 
