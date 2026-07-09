@@ -2458,3 +2458,89 @@ export function agencyClientsView(): NsAgencyClient[] {
 export function activeAgencyClient(): NsAgencyClient {
   return agencyClients.find((c) => c.id === activeAgencyClientId) ?? agencyClients[0];
 }
+
+/* ═══════════════════════════════════════════════════════════════════════════
+ * [Z8 分析+广告] 分析区读面动作 + 广告区受众动作(WHATPASS 六章/五章 ads 侧落点)
+ *
+ * 分析区是全 app 最静的读面(§D6:若发光即说谎)—— 这里的动作永不设 ottoWorking、
+ * 永不出审批 mood;它们只把「Otto 帮你办了」落进同一条单流(dock/otto 立刻可见)+
+ * 一条 Live activity 事件(recentEvents 读它)。事件类型复用既有 union 值(routine =
+ * 定时报告是一种例程;segment = lookalike 受众与分群同构),不新造后台事实。
+ *
+ * 铁律不变:纯 client、零后台 import;coral 只属于 Otto;数据只从 _mock 派生;
+ * credits 永远是 credits。本段仅在文件尾追加,未改动任何既有代码。
+ * ═══════════════════════════════════════════════════════════════════════════ */
+
+/** 已订阅的定时报告(reports 页「Schedule」写它;分析读面显示活动条,dock/otto 可见)。 */
+export interface NsReportSubscription {
+  id: string;
+  name: string;
+  cadence: string;
+  at: number;
+}
+let reportSubscriptions: NsReportSubscription[] = [];
+
+/** 品牌化报告定时订阅(reports 页 [wave-b] 报表订阅/定时推送)。幂等:同名同频不重复。 */
+export function scheduleReport(input: { name: string; cadence: string }): string {
+  const dup = reportSubscriptions.find((r) => r.name === input.name && r.cadence === input.cadence);
+  if (dup) return dup.id;
+  seq += 1;
+  const id = `rep-live-${seq}`;
+  reportSubscriptions = [{ id, name: input.name, cadence: input.cadence, at: seq }, ...reportSubscriptions];
+  // Live activity 事件(routine = 定时例程的一种;recentEvents/dock 读它)。
+  logEvent("routine_created", `Scheduled the ${input.name} · ${input.cadence.toLowerCase()}`, {
+    id,
+    kind: "report_subscription",
+  });
+  // D2 单流:Otto 一句人话确认(读面不 thinking,只把已成的事说清)。
+  appendToStream({
+    role: "otto",
+    text: `Done. I'll prepare the ${input.name} ${input.cadence.toLowerCase()} and drop it here — nothing leaves your workspace until you send it.`,
+    context: { zone: "Analytics", label: "Reports" },
+  });
+  return id;
+}
+
+/** 已订阅的定时报告(reports 页读它显示「Scheduled」状态,可取消)。最新在前。 */
+export function reportSubscriptionsView(): NsReportSubscription[] {
+  return reportSubscriptions;
+}
+
+/** 取消一个报告订阅(reports 页可撤销,不留死状态)。 */
+export function cancelReportSubscription(id: string) {
+  const sub = reportSubscriptions.find((r) => r.id === id);
+  if (!sub) return;
+  reportSubscriptions = reportSubscriptions.filter((r) => r.id !== id);
+  logEvent("routine_toggled", `Stopped the ${sub.name}`, { id, kind: "report_subscription" });
+  notify();
+}
+
+/** 已建的 lookalike 受众(广告 builder [wave-b] Lookalike 一键生成写它)。 */
+export interface NsLookalikeAudience {
+  id: string;
+  sourceLabel: string;
+  at: number;
+}
+let lookalikeAudiences: NsLookalikeAudience[] = [];
+
+/** 从现有客户名单一键建相似受众(广告 builder [wave-b] Lookalike;$0,只建受众不投放)。 */
+export function buildLookalike(input: { sourceLabel: string }): string {
+  const dup = lookalikeAudiences.find((a) => a.sourceLabel === input.sourceLabel);
+  if (dup) return dup.id;
+  seq += 1;
+  const id = `lal-live-${seq}`;
+  lookalikeAudiences = [{ id, sourceLabel: input.sourceLabel, at: seq }, ...lookalikeAudiences];
+  // segment_created:相似受众与分群同构(Live activity + dock 读它)。
+  logEvent("segment_created", `Built a lookalike audience from ${input.sourceLabel}`, { id, kind: "lookalike" });
+  appendToStream({
+    role: "otto",
+    text: `Built a lookalike from ${input.sourceLabel}. It's ready to pick in any ad set — nothing runs until you submit and approve the campaign.`,
+    context: { zone: "Analytics", label: "Ad builder" },
+  });
+  return id;
+}
+
+/** 已建的 lookalike 受众(广告 builder ad set 受众选择器读它,可选进草稿)。 */
+export function lookalikeAudiencesView(): NsLookalikeAudience[] {
+  return lookalikeAudiences;
+}
