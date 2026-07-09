@@ -122,3 +122,44 @@ crm 字段/身份/分群动作(每次改动都进字段留痕):`setContactDnd(id
   品牌色偏离),四个创作区花费弹窗一处接线全覆盖。
 - 审批学习回灌(连接器 3 · O-04):asset-viewer / library 的赞踩调 `setBrandPreference`,
   brand-memory「Otto 学到的偏好」区读 `brandPreferences()` 显示新条目(带来源)。
+
+## D2 单流 API(F2 循环系统 · 全城 10 个 zone worker 直接可用)
+
+ENDGAME §D2:Otto = **一条连续对话流**(零收纳、零线程管理)。心智 = 你和某个员工的
+WhatsApp 单聊 —— 一条时间线,没有「多线程管理」。store 层唯一源是 `state.ottoStream`
+(append-only,种子 = `_mock.ts` 的 `NS_OTTO_STREAM` 62 条跨三周历史)。**dock 小窗 /
+`/otto` 全屏 / campaign 详情「对话」tab 都是这条流的过滤视图,永不是第二条对话。**
+
+每条消息 = `NsStreamMsg`(继承 `NsOttoStreamMessage`):
+`{ id, role: "owner"|"otto", text, at, context: { zone, label, campaignId?, href? }, card?, substeps?, error? }`。
+`context` 就是 chip 数据 —— 发生在哪个区 / 哪个 campaign;`href` 有值即可点(深链回现场)。
+
+### 选择器(读同一条流的不同看法)
+- `streamFor(filter?)` —— **主选择器**。`filter = { zone?, campaignId? }`;空 filter = 整条流。
+  dock 小窗、campaign-tab、区级往来都调它。
+- `threadForContext(campaignId?)` —— campaign 详情「对话」tab 用(= `streamFor({campaignId})` 别名;
+  语义:找旧对话 = 去那件事的页面看,而不是管理线程)。传空回落全流。
+- `streamTail(n)` —— 末尾 n 条(dock 小窗 / 摘要用)。
+- `ottoStreamView()` —— 整条流(`/otto` 全屏读它;live append 实时反映)。
+
+### 动作
+- `appendToStream({ role, text, context?, card?, substeps?, error? })` —— **唯一 append 入口**。
+  不传 `context` 则从当前 `ottoContext()` 派生 chip(zone 走 view 映射,默认 `Studio`;label
+  取 `selectedLabel ?? view`)。返回新消息 id、notify。任意区把一条往来落进同一条流用它。
+- `OTTO_STREAM_THREAD_ID` —— 单流唯一 thread id 常量(兼容层用;单流里没有第二条)。
+
+### 兼容层(旧 thread API 全部落进同一条流,签名不变)
+- `appendChatMessage(threadId, msg)` —— threadId 忽略,`msg` 映射进 `ottoStream`(role user→owner)。
+- `askOttoInline(prompt, reply, context?)` —— 就地触点:append owner + otto 两条进流,chip 由 context 派生。
+- `startChatThread()` —— 返回 `OTTO_STREAM_THREAD_ID`(「New chat」= 回到这条流,不新开线程)。
+- `chatThreads()` —— 把单流包成「一条线程」交给旧的 thread-shaped 消费者(gallery otto-chat);
+  单一源仍是 `ottoStream`,只做 owner→user 角色映射。
+
+### 已接线的表面(Wave · D2 单流 + 新壳)
+- **nav(D1 新 IA)**:废除 HISTORY 分组 / Projects,组 = 首页 · Studio · Campaigns · 排期 ·
+  收件箱 · CRM · 分析 · 资产 · 设置;Balance 钉底;Create(唯一 INK)→ Studio canvas;路由保持现有路径。
+- **dock 小窗**:展开 380×520 = `streamFor()` 全流小窗;每条带 context chip,点 chip 深链
+  (`/northstar/*` 改写成沉浸式路由);Send 调 `appendToStream`;Maximize2 → `/otto`。
+- **`/otto`(+ `/global/otto-chat`)全屏**:原生重建(不再套画廊页)。左 = 这条流(可按 campaign /
+  区过滤,composer 调 `appendToStream`) · 右 = 当前 context 摘要(在看什么 · 过滤这条流 ·
+  Otto 状态 · 待批深链 · 最近活动 · 余额)。§O3:两路径上 dock 由外壳隐藏,不会两个 Otto 同屏。

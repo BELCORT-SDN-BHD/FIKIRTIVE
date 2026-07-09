@@ -20,19 +20,23 @@ import {
   NS_CAMPAIGN_ENTRIES,
   NS_CONTACTS,
   NS_CONVERSATIONS,
+  NS_OTTO_STREAM,
   type NsCreditRow,
   type NsScheduledPost,
   type NsCampaignEntry,
   type NsContact,
   type NsConversation,
   type NsMessage,
+  type NsOttoStreamMessage,
+  type NsOttoStreamContext,
+  type NsOttoZone,
 } from "@/components/northstar/_mock";
 import {
   NS_APPROVALS,
-  NS_CHAT_THREADS,
   type NsApprovalRequest,
   type NsChatThread,
   type NsChatMessage,
+  type NsChatCardKind,
 } from "@/components/northstar/global/_data";
 import {
   NS_CONNECTIONS,
@@ -91,6 +95,24 @@ export interface NsEvent {
   at: number;
   /** 人话一行(dock「Just now」条 / 通知直接显示这句;sentence case、英文 UI) */
   label: string;
+}
+
+/* ── D2 单流(F2 循环系统):Otto = 一条 append-only 消息流 ─────────────────────
+ * 心智 = 你和某个员工的 WhatsApp 单聊:一条时间线,零线程管理。每条自动带 context
+ * chip {zone, campaignId?, label, href?};dock 小窗 / `/otto` 全屏 / campaign 详情
+ * 「对话」tab 都是这条流的**过滤视图**(streamFor),不是另一条对话。种子 = _mock 的
+ * NS_OTTO_STREAM(62 条跨三周历史),live 发送 append 在尾部。 */
+export interface NsStreamMsg extends NsOttoStreamMessage {
+  /** 富卡(可选;live 发送 / 就地触点演示用) */
+  card?: NsChatCardKind;
+  /** 已完成的命名思考子步骤(可选) */
+  substeps?: string[];
+  error?: boolean;
+}
+/** 单流过滤器:按区 / 按 campaign 收窄同一条流(空 = 全流)。 */
+export interface NsStreamFilter {
+  zone?: NsOttoZone;
+  campaignId?: string;
 }
 
 /* ── Campaign 草稿(workbench 表单 → proposal-card 跨路由传值;客户端换路由存活) ── */
@@ -181,7 +203,8 @@ interface StoreState {
   connections: NsConnection[];
   contacts: NsContact[];
   conversations: NsConversation[];
-  chatThreads: NsChatThread[];
+  /** D2 单流:一条 append-only Otto 消息流(dock / /otto / campaign-tab 的单一源)。 */
+  ottoStream: NsStreamMsg[];
   rules: NsRule[];
   members: NsMember[];
   routines: NsRoutine[];
@@ -237,7 +260,8 @@ const state: StoreState = {
   connections: [...NS_CONNECTIONS],
   contacts: [...NS_CONTACTS],
   conversations: [...NS_CONVERSATIONS],
-  chatThreads: NS_CHAT_THREADS.map((t) => ({ ...t, messages: [...t.messages] })),
+  // D2 单流种子:F1 世界圣经的 62 条 Otto 历史(旧→新),live 发送 append 尾部。
+  ottoStream: [...NS_OTTO_STREAM],
   rules: [...NS_RULES],
   members: [...NS_MEMBERS],
   routines: [...NS_ROUTINES],
@@ -966,14 +990,17 @@ export function ottoWorking(on: boolean, label?: string) {
   notify();
 }
 
-/* ── 聊天(dock 与 otto-chat 共读同一份 chatThreads → 「share one state」为真) ── */
-export function appendChatMessage(threadId: string, message: NsChatMessage) {
-  const idx = state.chatThreads.findIndex((t) => t.id === threadId);
-  if (idx < 0) return;
-  state.chatThreads = state.chatThreads.map((t) =>
-    t.id === threadId ? { ...t, messages: [...t.messages, message] } : t,
-  );
-  notify();
+/* ── 聊天(D2 兼容层:旧的 thread API 现在都落进同一条 ottoStream) ─────────────
+ * dock / otto-chat / 就地触点共读同一条流 → 「share one state」为真。threadId 在单流
+ * 模型里已无意义,兼容签名保留但忽略(所有消息进同一条流)。 */
+export function appendChatMessage(_threadId: string, message: NsChatMessage) {
+  appendToStream({
+    role: message.role === "user" ? "owner" : "otto",
+    text: message.text ?? "",
+    card: message.card,
+    substeps: message.substeps,
+    error: message.error,
+  });
 }
 
 /** 就地 AI 触点统一入口(O-12 / 宪法 7):任意区的就地「问 Otto」按钮调它 —— 请求与回复
@@ -981,23 +1008,10 @@ export function appendChatMessage(threadId: string, message: NsChatMessage) {
  * 传 context 顺带点亮上下文桥。组件随后调 openOtto() 把 dock 展开给店主看见这轮对话。 */
 export function askOttoInline(prompt: string, reply: string, context?: NsOttoContext) {
   if (context) state.ottoContext = context;
-  const thread = state.chatThreads[0];
-  if (thread) {
-    const now = Date.now();
-    state.chatThreads = state.chatThreads.map((t) =>
-      t.id === thread.id
-        ? {
-            ...t,
-            messages: [
-              ...t.messages,
-              { id: `u-${now}`, role: "user" as const, text: prompt },
-              { id: `o-${now + 1}`, role: "otto" as const, text: reply },
-            ],
-          }
-        : t,
-    );
-  }
-  notify();
+  // D2:就地触点 append 进同一条 ottoStream(dock / /otto 立刻可见);context chip
+  // 由当前 ottoContext 派生(zone + label),让这轮往来知道发生在哪个现场。
+  appendToStream({ role: "owner", text: prompt });
+  appendToStream({ role: "otto", text: reply });
 }
 
 /** Campaign 工作台交出的草稿(workbench 提交时写,proposal-card 读它真实呈现目标/日期/预算)。 */
@@ -1030,12 +1044,10 @@ export function hasMilestone(key: string): boolean {
   return state.seenMilestones.includes(key);
 }
 
-/** 新开一个空 thread,返回它的 id(dock / otto-chat 的「New chat」共用)。 */
-export function startChatThread(title = "New chat"): string {
-  const id = `th-live-${seq + 1}`;
-  state.chatThreads = [...state.chatThreads, { id, title, updatedAt: "Now", messages: [] }];
-  notify();
-  return id;
+/** D2 兼容:单流模型里没有「多线程」。保留签名(gallery otto-chat 仍调它),返回
+ * 唯一的流 id —— 「New chat」= 回到这条连续的流,而不是新开一条要管理的线程。 */
+export function startChatThread(_title = "New chat"): string {
+  return OTTO_STREAM_THREAD_ID;
 }
 
 /* ── 选择器(跨区派生读的单一源;组件在 useStore() 下调用) ────────────────── */
@@ -1092,8 +1104,24 @@ export function recentEvents(n: number): NsEvent[] {
   return state.eventLog.slice(-n).reverse();
 }
 
+/** D2 兼容:把单流包成「一条线程」交给旧的 thread-shaped 消费者(gallery otto-chat)。
+ * 单一源仍是 ottoStream —— 这里只是把 owner→user 的角色映射回 NsChatMessage 形状。 */
 export function chatThreads(): NsChatThread[] {
-  return state.chatThreads;
+  return [
+    {
+      id: OTTO_STREAM_THREAD_ID,
+      title: "Otto",
+      updatedAt: "Now",
+      messages: state.ottoStream.map((m) => ({
+        id: m.id,
+        role: m.role === "owner" ? ("user" as const) : ("otto" as const),
+        text: m.text,
+        card: m.card,
+        substeps: m.substeps,
+        error: m.error,
+      })),
+    },
+  ];
 }
 
 export function connections(): NsConnection[] {
@@ -1270,4 +1298,99 @@ if (typeof window !== "undefined") {
       credits: 80,
     });
   }, 90_000);
+}
+
+/* ═══════════════════════════════════════════════════════════════════════════
+ * [F2 循环系统] D2 单流 API —— 全城 10 个 zone worker 直接可用
+ *
+ * 一条 append-only Otto 消息流(state.ottoStream)是唯一源;dock 小窗 / `/otto` 全屏 /
+ * campaign 详情「对话」tab 都是它的**过滤视图**。zones 用法:
+ *   - 读全流:            streamFor()            // 无过滤 = 整条
+ *   - 读某 campaign:     streamFor({ campaignId }) 或 threadForContext(campaignId)
+ *   - 读某区往来:        streamFor({ zone: "Inbox" })
+ *   - dock 小窗末尾几条: streamTail(n)
+ *   - append 一条:      appendToStream({ role, text, context? })
+ * 铁律不变:纯 client、零后台 import;coral 只属于 Otto;数据只从 _mock 派生。
+ * ═══════════════════════════════════════════════════════════════════════════ */
+
+/** 单流唯一 thread id(兼容层 chatThreads()/startChatThread() 用;单流里没有第二条)。 */
+export const OTTO_STREAM_THREAD_ID = "otto-stream";
+
+// live append 的单调计数(种子 id 为 os-NN,live 为 os-live-NN,互不撞)。
+let streamSeq = 0;
+
+/** 就地触点的 NsOttoContext(view/selectedLabel)映射到单流 context 的区。默认 Studio。 */
+const VIEW_ZONE: Record<string, NsOttoZone> = {
+  Home: "Home",
+  Studio: "Studio",
+  Canvas: "Canvas",
+  Campaign: "Campaign",
+  Campaigns: "Campaign",
+  Schedule: "Schedule",
+  Inbox: "Inbox",
+  CRM: "CRM",
+  Contacts: "CRM",
+  Analytics: "Analytics",
+  Assets: "Assets",
+  Library: "Assets",
+  Settings: "Settings",
+  Connections: "Settings",
+};
+
+/** 从当前 ottoContext 派生一条 live 消息的 context chip(dock 发送时 zone 未知走这里)。 */
+function streamContextFromOtto(): NsOttoStreamContext {
+  const ctx = state.ottoContext;
+  const label = ctx?.selectedLabel ?? ctx?.view ?? "Otto";
+  const zone = (ctx && VIEW_ZONE[ctx.view]) ?? "Studio";
+  return { zone, label };
+}
+
+/** 单流唯一 append 入口:任意区把一条消息落进同一条流(dock / /otto / 过滤视图立刻反映)。
+ * 不传 context 则从当前 ottoContext 派生。返回新消息 id。 */
+export function appendToStream(input: {
+  role: "owner" | "otto";
+  text: string;
+  context?: NsOttoStreamContext;
+  card?: NsChatCardKind;
+  substeps?: string[];
+  error?: boolean;
+}): string {
+  streamSeq += 1;
+  const msg: NsStreamMsg = {
+    id: `os-live-${streamSeq}`,
+    role: input.role,
+    text: input.text,
+    at: "Just now",
+    context: input.context ?? streamContextFromOtto(),
+    card: input.card,
+    substeps: input.substeps,
+    error: input.error,
+  };
+  state.ottoStream = [...state.ottoStream, msg];
+  notify();
+  return msg.id;
+}
+
+/** 单流过滤视图(D2 核心):同一条流,按 zone / campaign 收窄。无 filter = 整条流。 */
+export function streamFor(filter?: NsStreamFilter): NsStreamMsg[] {
+  let s = state.ottoStream;
+  if (filter?.zone) s = s.filter((m) => m.context.zone === filter.zone);
+  if (filter?.campaignId) s = s.filter((m) => m.context.campaignId === filter.campaignId);
+  return s;
+}
+
+/** campaign 详情「对话」tab 用:这条全局流按该 campaign 过滤后的视图(= streamFor 的别名)。
+ * 不传 campaignId 则回落全流。语义:找旧对话 = 去那件事的页面看,而不是管理线程。 */
+export function threadForContext(campaignId?: string): NsStreamMsg[] {
+  return streamFor(campaignId ? { campaignId } : undefined);
+}
+
+/** dock 小窗显示末尾 n 条(与 /otto 全屏同源,只是窗口大小不同)。 */
+export function streamTail(n: number): NsStreamMsg[] {
+  return state.ottoStream.slice(Math.max(0, state.ottoStream.length - n));
+}
+
+/** 整条 Otto 流(/otto 全屏读它;live append 实时反映)。 */
+export function ottoStreamView(): NsStreamMsg[] {
+  return state.ottoStream;
 }

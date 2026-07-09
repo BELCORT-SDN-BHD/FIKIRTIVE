@@ -1,15 +1,15 @@
 "use client";
 
 /**
- * 北极星 · 沉浸式常驻 Otto dock(§8d / §O6)
+ * 北极星 · 沉浸式常驻 Otto dock(§8d / §O6 · D2 单流小窗)
  *
- * 跟随每一条路由(fixed 右下角);收起 48 圆点 ⇄ 展开为「聊天面板」(不是画廊的
- * 动作历史列表 + 「Open Otto」文字,而是真能打字、Otto 真会流式回话的一小块工作面)。
- * openOtto(prompt?) 由外壳注入:任意页面点「问 Otto」都能带一句预填开面板(不自动发送)。
+ * 收起 48 圆点 ⇄ 展开 380×520 小窗。小窗 = 全局 Otto 单流的**小窗视图**(dock 小窗 /
+ * `/otto` 全屏 / campaign 详情「对话」tab 都是同一条 ottoStream 的不同看法,永不是两个对话)。
+ * 每条消息自动带 context chip(发生在哪个区 / 哪个 campaign);点 chip 深链回那个现场。
+ * 右上 Maximize2 → `/otto` 全屏大窗(同一条流)。§O3:/otto 路径上 dock 由外壳隐藏。
  *
- * 复用:气泡/卡片来自 global/chat-cards(ChatCard、ApprovalFlow)与 OttoAvatar;
- * 收起圆点与徽点脉冲照抄 global/demo-dock 的 DockButton 视觉规格。
- * 铁律:coral 只属于 Otto;动效 gate 在 prefers-reduced-motion;零后台。
+ * 铁律:coral 只属于 Otto(chip / 行中性,hover=accent 不 coral);动效 gate 在
+ * prefers-reduced-motion;零后台 import。
  */
 
 import * as React from "react";
@@ -18,10 +18,16 @@ import { ArrowUp, Check, Maximize2, Square, X } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { Button } from "@/components/ui/button";
 import { OttoAvatar, type OttoMood } from "@/components/otto/OttoAvatar";
-import { ChatCard } from "@/components/northstar/global/chat-cards";
-import { type NsChatMessage } from "@/components/northstar/global/_data";
 import { useImmersive } from "./_context";
-import { appendChatMessage, chatThreads, ottoBehavior, ottoContext, recentEvents, useStore } from "./_store";
+import {
+  appendToStream,
+  ottoBehavior,
+  ottoContext,
+  recentEvents,
+  streamFor,
+  useStore,
+  type NsStreamMsg,
+} from "./_store";
 
 const REDUCED_MOTION_QUERY = "(prefers-reduced-motion: reduce)";
 function useReducedMotion(): boolean {
@@ -49,21 +55,57 @@ function useKeyframes() {
   }, []);
 }
 
-/* ── 面板里的一行消息(紧凑版气泡 + 复用 ChatCard) ── */
-function DockMessage({ m }: { m: NsChatMessage }) {
-  if (m.role === "user") {
+const GALLERY_PREFIX = "/northstar/";
+const IMMERSIVE_PREFIX = "/northstar-immersive/";
+/** context chip 深链:把种子里的 /northstar/* href 改写成沉浸式路由(壳内不跳出)。 */
+function immersiveHref(href: string): string {
+  return href.startsWith(GALLERY_PREFIX) ? IMMERSIVE_PREFIX + href.slice(GALLERY_PREFIX.length) : href;
+}
+
+/* ── 一条消息的 context chip(点 chip 深链回现场;无 href 则静态展示) ── */
+function ContextChip({ ctx, onNavigate }: { ctx: NsStreamMsg["context"]; onNavigate: () => void }) {
+  const body = (
+    <>
+      <span className="font-mono text-[9px] font-semibold tracking-[0.06em] text-muted-foreground uppercase">
+        {ctx.zone}
+      </span>
+      <span className="min-w-0 truncate">{ctx.label}</span>
+    </>
+  );
+  if (!ctx.href) {
     return (
-      <div className="flex justify-end">
+      <span className="inline-flex max-w-full items-center gap-1 rounded-full bg-secondary px-2 py-0.5 text-[10px] font-medium text-muted-foreground">
+        {body}
+      </span>
+    );
+  }
+  return (
+    <Link
+      href={immersiveHref(ctx.href)}
+      onClick={onNavigate}
+      className="inline-flex max-w-full items-center gap-1 rounded-full bg-secondary px-2 py-0.5 text-[10px] font-medium text-secondary-foreground transition-colors duration-[120ms] hover:bg-accent hover:text-foreground"
+    >
+      {body}
+    </Link>
+  );
+}
+
+/* ── 面板里的一行消息(单流消息:owner 右 / otto 左 + context chip) ── */
+function DockMessage({ m, onNavigate }: { m: NsStreamMsg; onNavigate: () => void }) {
+  if (m.role === "owner") {
+    return (
+      <div className="flex flex-col items-end gap-1">
         <p className="max-w-[85%] rounded-[16px] rounded-br-[6px] bg-primary px-3 py-2 text-[13px] leading-[19px] text-primary-foreground">
           {m.text}
         </p>
+        <ContextChip ctx={m.context} onNavigate={onNavigate} />
       </div>
     );
   }
   return (
     <div className="flex items-start gap-2">
       <OttoAvatar size={20} mood={m.error ? "error" : "idle"} className="mt-0.5 shrink-0" />
-      <div className="min-w-0 flex-1 space-y-2">
+      <div className="flex min-w-0 flex-1 flex-col items-start gap-1">
         {m.text && (
           <p
             className={cn(
@@ -74,7 +116,7 @@ function DockMessage({ m }: { m: NsChatMessage }) {
             {m.text}
           </p>
         )}
-        {m.card && <ChatCard kind={m.card} />}
+        <ContextChip ctx={m.context} onNavigate={onNavigate} />
       </div>
     </div>
   );
@@ -86,14 +128,14 @@ export interface ImmersiveDockHandle {
 
 /**
  * 常驻 dock。ref 暴露 open(prompt?);working 控制徽点脉冲。
- * fullHref = 全屏 Otto 页(点右上角放大跳过去,面板与全页同一份 thread)。
+ * fullHref = 全屏 Otto 页(点右上角放大跳过去,小窗与全屏读同一条 ottoStream)。
  */
 export const ImmersiveDock = React.forwardRef<
   ImmersiveDockHandle,
   { working?: boolean; fullHref: string }
 >(function ImmersiveDock({ working: workingProp = false, fullHref }, ref) {
   useKeyframes();
-  useStore(); // 订阅共享 store:otto 工作态 / 事件流 / 聊天 append 都触发重渲染
+  useStore(); // 订阅共享 store:otto 工作态 / 事件流 / 单流 append 都触发重渲染
   const reduced = useReducedMotion();
   const immersive = useImmersive();
   // working 来自 shell 注入的 context(store 的 otto_working 事件),不再靠外部 prop 喂。
@@ -106,8 +148,8 @@ export const ImmersiveDock = React.forwardRef<
   const inputRef = React.useRef<HTMLTextAreaElement>(null);
   const timerRef = React.useRef<number | null>(null);
 
-  // dock 与 otto-chat 全页共读 store 的同一份 chatThreads[0](「share one state」为真)。
-  const thread = chatThreads()[0];
+  // dock 小窗与 /otto 全屏读同一条 ottoStream(「share one state」为真)。
+  const stream = streamFor();
   const lastEvent = recentEvents(1)[0];
   // 上下文桥(宪法 7):当前在看什么 → chip 显示 + 注入回复前缀,「这个」可解析。
   const ctx = ottoContext();
@@ -133,7 +175,7 @@ export const ImmersiveDock = React.forwardRef<
 
   React.useEffect(() => {
     if (open && scrollRef.current) scrollRef.current.scrollTop = scrollRef.current.scrollHeight;
-  }, [open, thread.messages, thinking]);
+  }, [open, stream, thinking]);
 
   React.useEffect(() => () => {
     if (timerRef.current) window.clearTimeout(timerRef.current);
@@ -142,16 +184,16 @@ export const ImmersiveDock = React.forwardRef<
   function send() {
     const text = draft.trim();
     if (!text || thinking) return;
-    // append 到共享 store thread → otto-chat 全页也看得到这条(状态同源)
-    appendChatMessage(thread.id, { id: `u-${Date.now()}`, role: "user", text });
+    // append 到共享 ottoStream(owner)→ /otto 全屏也看得到这条(状态同源)。
+    // context chip 由当前 ottoContext 派生(zone + label),让这轮往来知道发生在哪个现场。
+    appendToStream({ role: "owner", text });
     setDraft("");
     setThinking(true);
     // 上下文桥:知道正在看什么就把它当回复前缀,让「这个」有着落。
     const prefix = ctxLabel ? `On ${ctxLabel} — ` : "";
     timerRef.current = window.setTimeout(() => {
       setThinking(false);
-      appendChatMessage(thread.id, {
-        id: `o-${Date.now()}`,
+      appendToStream({
         role: "otto",
         text: `${prefix}got it. I can draft that as a post or a full pack. Open the full workspace and I'll lay out the options.`,
       });
@@ -219,17 +261,15 @@ export const ImmersiveDock = React.forwardRef<
             </div>
           )}
 
-          {/* messages */}
+          {/* messages = 全局单流(小窗视图) */}
           <div ref={scrollRef} role="log" className="min-h-0 flex-1 overflow-y-auto px-4 py-4">
             <div className="space-y-4">
               <p className="text-[11px] font-medium tracking-[0.04em] text-muted-foreground uppercase">
-                {thread.title}
+                One thread with Otto
               </p>
-              {thread.messages
-                .filter((m) => !m.approval)
-                .map((m) => (
-                  <DockMessage key={m.id} m={m} />
-                ))}
+              {stream.map((m) => (
+                <DockMessage key={m.id} m={m} onNavigate={() => setOpen(false)} />
+              ))}
               {thinking && (
                 <div className="flex items-center gap-2 text-[13px] text-muted-foreground">
                   <OttoAvatar size={16} mood="thinking" />

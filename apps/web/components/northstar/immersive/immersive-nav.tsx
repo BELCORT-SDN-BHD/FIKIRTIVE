@@ -3,31 +3,37 @@
 /**
  * 北极星 · 沉浸式产品导航(persistent app nav)
  *
- * 这是产品级导航,不是画廊的 57 项 P0/P1 目录轨:六区解剖(§N2)固定顺序 —
- * ① Brand ② New(INK 唯一主动作)③ History(campaign + 嵌套会话)
- * ④ 工具三组(Create → Assets → Operate,#129 分组税则)⑤ Balance ⑥ Identity。
- * 行状态 = §N3 单一状态系统:hover=--accent,active=--secondary+600,导航零 coral。
- * 每行是真 <Link>,点了在沉浸式路由间平滑流转。
+ * D1 新 IA(ENDGAME-CITY-ORDER §D1):老板脑子里只有三样东西 —— 我在办的事(Campaign)、
+ * 我随手做的东西(Studio)、我的员工(Otto)。导航废除 HISTORY 分组、Projects 树、任何第三种
+ * 收纳容器。组 = 首页 · Studio · Campaigns · 排期 · 收件箱 · CRM · 分析 · 资产 · 设置;
+ * Otto 入口 = 右下常驻 dock(不入 nav);Balance 钉底。路由**保持现有路径**,只改组织。
  *
- * 复用:结构照抄 components/northstar/global/product-rail.tsx(那版吃 onSelect 回调,
- * 这版换成路由 <Link>,让页面真正连起来)。
+ * 行状态 = §N3 单一状态系统:hover=--accent,active=--secondary+600,导航零 coral。
+ * 每行是真 <Link>,点了在沉浸式路由间平滑流转。Create 是唯一 INK 主按钮 → Studio canvas。
  */
 
 import * as React from "react";
 import Link from "next/link";
 import { usePathname, useRouter } from "next/navigation";
 import {
+  BarChart3,
   Bell,
   BookOpen,
   CalendarDays,
   Clapperboard,
   Compass,
+  Contact,
+  CreditCard,
+  Factory,
   FileBarChart,
   Folder,
   Frame,
+  Home,
   Inbox,
-  Library,
+  LayoutGrid,
   LayoutTemplate,
+  Library,
+  Lightbulb,
   Megaphone,
   Palette,
   Plug,
@@ -35,62 +41,97 @@ import {
   Search,
   Settings,
   Sparkles,
+  Target,
   TrendingUp,
   Users,
+  UsersRound,
+  Wallet,
   type LucideIcon,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { Button } from "@/components/ui/button";
 import { OttoAvatar } from "@/components/otto/OttoAvatar";
-import { NS_BRAND, NS_CAMPAIGN, NS_CHAT_THREADS } from "@/components/northstar/global/_data";
+import { NS_BRAND } from "@/components/northstar/global/_data";
 import { balance, pendingApprovals, useStore } from "./_store";
 
 const BASE = "/northstar-immersive";
 
-interface NavTool {
+interface NavItem {
   label: string;
   icon: LucideIcon;
   href: string;
 }
 
-/** 工具三组(Create → Assets → Operate);href 指向沉浸式路由。 */
-export const NAV_GROUPS: { label: string; tools: NavTool[] }[] = [
+/** 一段导航:单行(lone destination)或带标题的组(§组内多页)。 */
+type NavSection =
+  | { kind: "item"; item: NavItem }
+  | { kind: "group"; label: string; items: NavItem[] };
+
+/**
+ * D1 IA 固定顺序:首页 · Studio · Campaigns · 排期 · 收件箱 · CRM · 分析 · 资产 · 设置。
+ * 单页区是一行;多页区是一组(组内路由保持现有路径)。
+ */
+export const NAV_SECTIONS: NavSection[] = [
+  { kind: "item", item: { label: "Home", icon: Home, href: BASE } },
   {
-    label: "Create",
-    tools: [
+    kind: "group",
+    label: "Studio",
+    items: [
       { label: "Canvas", icon: Frame, href: `${BASE}/create/canvas` },
-      { label: "Storyboard", icon: Sparkles, href: `${BASE}/create/storyboard` },
+      { label: "Storyboard", icon: Clapperboard, href: `${BASE}/create/storyboard` },
+      { label: "Factory", icon: Factory, href: `${BASE}/create/factory` },
+      { label: "Ideas", icon: Lightbulb, href: `${BASE}/create/ideas` },
+      { label: "Create home", icon: LayoutGrid, href: `${BASE}/create/home` },
+    ],
+  },
+  {
+    kind: "group",
+    label: "Campaigns",
+    items: [
+      { label: "Campaigns", icon: Megaphone, href: `${BASE}/campaign/list` },
+      { label: "Trends", icon: TrendingUp, href: `${BASE}/campaign/trends` },
+    ],
+  },
+  { kind: "item", item: { label: "Schedule", icon: CalendarDays, href: `${BASE}/schedule/plan` } },
+  { kind: "item", item: { label: "Inbox", icon: Inbox, href: `${BASE}/inbox/shared` } },
+  { kind: "item", item: { label: "CRM", icon: Users, href: `${BASE}/crm/contacts` } },
+  {
+    kind: "group",
+    label: "Analytics",
+    items: [
+      { label: "Overview", icon: BarChart3, href: `${BASE}/analytics/overview` },
+      { label: "Reports", icon: FileBarChart, href: `${BASE}/analytics/reports` },
+      { label: "Ads", icon: Target, href: `${BASE}/ads/performance` },
+    ],
+  },
+  {
+    kind: "group",
+    label: "Assets",
+    items: [
+      { label: "My stuff", icon: Folder, href: `${BASE}/assets/my-stuff` },
       { label: "Library", icon: Library, href: `${BASE}/assets/library` },
       { label: "Templates", icon: LayoutTemplate, href: `${BASE}/assets/templates` },
       { label: "Discover", icon: Compass, href: `${BASE}/assets/discover` },
-    ],
-  },
-  {
-    label: "Assets",
-    tools: [
-      { label: "My stuff", icon: Folder, href: `${BASE}/assets/my-stuff` },
       { label: "Brand memory", icon: BookOpen, href: `${BASE}/assets/brand-memory` },
       { label: "Brand kit", icon: Palette, href: `${BASE}/assets/brand-kit` },
-      { label: "Cast", icon: Clapperboard, href: `${BASE}/assets/cast` },
+      { label: "Cast", icon: Contact, href: `${BASE}/assets/cast` },
     ],
   },
   {
-    label: "Operate",
-    tools: [
-      { label: "Schedule", icon: CalendarDays, href: `${BASE}/schedule/plan` },
-      { label: "Inbox", icon: Inbox, href: `${BASE}/inbox/shared` },
-      { label: "Campaigns", icon: Sparkles, href: `${BASE}/campaign/proposal-card` },
-      { label: "Contacts", icon: Users, href: `${BASE}/crm/contacts` },
-      { label: "Analytics", icon: TrendingUp, href: `${BASE}/analytics/overview` },
-      { label: "Reports", icon: FileBarChart, href: `${BASE}/analytics/reports` },
-      { label: "Ads", icon: Megaphone, href: `${BASE}/ads/performance` },
-      { label: "Connections", icon: Plug, href: `${BASE}/account/connections` },
+    kind: "group",
+    label: "Settings",
+    items: [
       { label: "Account", icon: Settings, href: `${BASE}/account/settings` },
+      { label: "Credits", icon: CreditCard, href: `${BASE}/account/credits` },
+      { label: "Connections", icon: Plug, href: `${BASE}/account/connections` },
+      { label: "Wallet", icon: Wallet, href: `${BASE}/account/channel-wallet` },
+      { label: "Automation", icon: Sparkles, href: `${BASE}/automation/rules` },
+      { label: "Team", icon: UsersRound, href: `${BASE}/team/members` },
     ],
   },
 ];
 
-function ToolRow({ tool, active }: { tool: NavTool; active: boolean }) {
+function ToolRow({ tool, active }: { tool: NavItem; active: boolean }) {
   const Icon = tool.icon;
   return (
     <Link
@@ -111,6 +152,12 @@ function ToolRow({ tool, active }: { tool: NavTool; active: boolean }) {
 
 const SEARCH_HREF = `${BASE}/global/search`;
 const NOTIFICATIONS_HREF = `${BASE}/global/notifications`;
+
+/** Home 行 active 判定:只有精确落在 BASE 时高亮(避免所有子路由都点亮首页)。 */
+function isActive(href: string, pathname: string): boolean {
+  if (href === BASE) return pathname === BASE || pathname === `${BASE}/`;
+  return pathname === href;
+}
 
 export function ImmersiveNav({ className }: { className?: string }) {
   const pathname = usePathname();
@@ -185,51 +232,37 @@ export function ImmersiveNav({ className }: { className?: string }) {
         </div>
       </div>
 
-      {/* ② New(唯一主动作;INK)→ 创作首页 */}
+      {/* ② Create(唯一主动作;INK)→ Studio canvas(自由创作台的家) */}
       <div className="px-3 pb-2">
         <Button asChild size="sm" className="w-full shadow-none">
-          <Link href={`${BASE}/create/home`}>
+          <Link href={`${BASE}/create/canvas`}>
             <Plus strokeWidth={2.5} />
-            New
+            Create
           </Link>
         </Button>
       </div>
 
-      {/* ③④ 滚动区:History + 工具三组 */}
-      <div className="min-h-0 flex-1 overflow-y-auto px-3 pb-2">
-        <div className="px-3 pt-3 pb-1 font-mono text-[11px] leading-[14px] font-medium tracking-[0.08em] text-muted-foreground uppercase">
-          History
-        </div>
-        <Link
-          href={`${BASE}/campaign/proposal-card`}
-          className="flex h-9 w-full items-center gap-2 rounded-[10px] px-3 text-sm font-semibold text-foreground transition-colors duration-[120ms] hover:bg-accent"
-        >
-          <span className="min-w-0 truncate">{NS_CAMPAIGN.name}</span>
-        </Link>
-        {NS_CHAT_THREADS.map((t, i) => (
-          <Link
-            key={t.id}
-            href={`${BASE}/otto?thread=${t.id}`}
-            className="flex h-8 w-full items-center gap-2 rounded-[10px] py-1 pr-3 pl-6 text-[13px] font-normal text-muted-foreground transition-colors duration-[120ms] hover:bg-accent hover:text-foreground"
-          >
-            <span className="min-w-0 truncate">{t.title}</span>
-            {i === 0 && <span aria-hidden className="ml-auto size-1.5 shrink-0 rounded-full bg-brand" />}
-          </Link>
-        ))}
-
-        {NAV_GROUPS.map((g) => (
-          <div key={g.label} className="mt-4">
-            <div className="px-3 pb-1 font-mono text-[11px] leading-[14px] font-medium tracking-[0.08em] text-muted-foreground uppercase">
-              {g.label}
+      {/* ③ 滚动区:D1 九段 IA(零 HISTORY 分组) */}
+      <div className="min-h-0 flex-1 overflow-y-auto px-3 pt-1 pb-2">
+        {NAV_SECTIONS.map((section, i) =>
+          section.kind === "item" ? (
+            <div key={section.item.href} className={i === 0 ? undefined : "mt-1"}>
+              <ToolRow tool={section.item} active={isActive(section.item.href, pathname)} />
             </div>
-            {g.tools.map((tool) => (
-              <ToolRow key={tool.href} tool={tool} active={pathname === tool.href} />
-            ))}
-          </div>
-        ))}
+          ) : (
+            <div key={section.label} className="mt-4">
+              <div className="px-3 pb-1 font-mono text-[11px] leading-[14px] font-medium tracking-[0.08em] text-muted-foreground uppercase">
+                {section.label}
+              </div>
+              {section.items.map((tool) => (
+                <ToolRow key={tool.href} tool={tool} active={isActive(tool.href, pathname)} />
+              ))}
+            </div>
+          ),
+        )}
       </div>
 
-      {/* ⑤ Balance(钉底;14px coral credit 币) */}
+      {/* ④ Balance(钉底;14px coral credit 币) */}
       <div className="flex shrink-0 items-center gap-2 border-t border-border px-4 py-3">
         <span aria-hidden className="size-3.5 shrink-0 rounded-full bg-brand" />
         <span
@@ -248,7 +281,7 @@ export function ImmersiveNav({ className }: { className?: string }) {
         </Link>
       </div>
 
-      {/* ⑥ Identity */}
+      {/* ⑤ Identity */}
       <Link
         href={`${BASE}/account/settings`}
         className="flex shrink-0 items-center gap-2.5 border-t border-border px-4 py-3 transition-colors duration-[120ms] hover:bg-accent"
