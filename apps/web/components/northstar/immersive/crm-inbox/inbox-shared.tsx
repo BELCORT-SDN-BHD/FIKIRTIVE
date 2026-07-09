@@ -11,7 +11,7 @@
 
 import * as React from "react";
 import Link from "next/link";
-import { ArrowRight, Clock, Inbox, Moon, Sparkles } from "lucide-react";
+import { AlarmClock, ArrowRight, Clock, Inbox, Moon, Sparkles, Zap } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -23,9 +23,11 @@ import {
   ChannelTag,
   InboxNav,
   Card,
+  CardHeader,
   fmtStamp,
   Initials,
 } from "./kit";
+import { KEYWORD_RULES } from "./lifecycle-data";
 import {
   useStore,
   conversationsView,
@@ -33,14 +35,21 @@ import {
   businessHoursView,
   setBusinessHours,
   isAfterHoursConversation,
+  assignmentFor,
+  inboxPerformance,
+  isKeywordRuleOn,
+  toggleKeywordRule,
+  isAutoCloseIdle,
+  toggleAutoCloseIdle,
 } from "../_store";
 
-type Filter = "all" | "unread" | "otto";
+type Filter = "all" | "unread" | "otto" | "overdue";
 
 const FILTERS: { id: Filter; label: string }[] = [
   { id: "all", label: "All" },
   { id: "unread", label: "Unread" },
   { id: "otto", label: "Otto handled" },
+  { id: "overdue", label: "Needs follow-up" },
 ];
 
 /** Otto 一键入口(零学习曲线三查):一句写好的 away 文案,点了真填进去。 */
@@ -142,14 +151,68 @@ function BusinessHoursCard() {
   );
 }
 
+/** [wave-b] 关键词/规则自动回复(触发词→回复,file-system 风格)。 */
+function InstantReplyCard() {
+  const [open, setOpen] = React.useState(false);
+  const onCount = KEYWORD_RULES.filter((r) => isKeywordRuleOn(r.id, r.defaultOn)).length;
+  return (
+    <Card className="mt-4 overflow-hidden">
+      <div className="flex items-center gap-3 px-4 py-3.5">
+        <span className="flex size-9 shrink-0 items-center justify-center rounded-[12px] bg-secondary">
+          <Zap className="size-4 text-muted-foreground" strokeWidth={2} />
+        </span>
+        <div className="min-w-0 flex-1">
+          <p className="text-sm font-semibold text-foreground">Instant replies</p>
+          <p className="mt-0.5 text-xs text-muted-foreground">{onCount} of {KEYWORD_RULES.length} keyword rules on — common questions answer themselves</p>
+        </div>
+        <Button variant="ghost" size="sm" onClick={() => setOpen((v) => !v)}>{open ? "Done" : "Edit"}</Button>
+      </div>
+      {open && (
+        <div className="border-t border-border">
+          {KEYWORD_RULES.map((r) => (
+            <div key={r.id} className="flex items-center gap-3 border-t border-border px-4 py-3 first:border-t-0">
+              <div className="min-w-0 flex-1">
+                <p className="text-sm font-medium text-foreground">When they say “{r.keyword}”</p>
+                <p className="mt-0.5 text-xs text-muted-foreground">{r.reply}</p>
+              </div>
+              <Switch checked={isKeywordRuleOn(r.id, r.defaultOn)} onCheckedChange={(on) => toggleKeywordRule(r.id, on)} aria-label={`Auto-reply for ${r.keyword}`} />
+            </div>
+          ))}
+        </div>
+      )}
+    </Card>
+  );
+}
+
+/** [wave-b] 不活跃会话自动关闭 + AI 摘要。 */
+function AutoCloseCard() {
+  const on = isAutoCloseIdle();
+  return (
+    <Card className="mt-4 overflow-hidden">
+      <div className="flex items-center gap-3 px-4 py-3.5">
+        <span className="flex size-9 shrink-0 items-center justify-center rounded-[12px] bg-secondary">
+          <AlarmClock className="size-4 text-muted-foreground" strokeWidth={2} />
+        </span>
+        <div className="min-w-0 flex-1">
+          <p className="text-sm font-semibold text-foreground">Auto-close idle chats</p>
+          <p className="mt-0.5 text-xs text-muted-foreground">After 3 quiet days Otto sums up the thread and archives it — nothing piles up.</p>
+        </div>
+        <Switch checked={on} onCheckedChange={toggleAutoCloseIdle} aria-label="Auto-close idle chats" />
+      </div>
+    </Card>
+  );
+}
+
 export function InboxShared() {
   const [filter, setFilter] = React.useState<Filter>("all");
   useStore(); // 订阅共享 store:已读/联系人/营业时间变化即时反映
   const conversations = conversationsView();
+  const perf = inboxPerformance();
 
   const shown = conversations.filter((cv) => {
     if (filter === "unread") return cv.unread;
     if (filter === "otto") return cv.aiHandled;
+    if (filter === "overdue") return cv.state === "overdue";
     return true;
   });
 
@@ -157,20 +220,24 @@ export function InboxShared() {
   const ottoCount = conversations.filter((c) => c.aiHandled).length;
 
   return (
-    <div className="mx-auto flex min-h-full w-full max-w-[920px] flex-col px-6 pt-6 pb-16">
+    <div className="mx-auto flex min-h-full w-full max-w-[880px] flex-col px-6 pt-6 pb-16">
       <PageHeader
         title="Shared inbox"
         subtitle="Every channel in one thread. Otto drafts; you tap to send."
         actions={<InboxNav />}
       />
 
-      <div className="mt-6 grid grid-cols-1 gap-3 sm:grid-cols-3">
-        <StatCard label="Open threads" value={String(conversations.length)} />
+      {/* [wave-b] 客服/AI 绩效小面板(派生自会话镜像,不写死) */}
+      <div className="mt-6 grid grid-cols-2 gap-3 sm:grid-cols-4">
+        <StatCard label="Open threads" value={String(perf.open)} />
         <StatCard label="Unread" value={String(unreadCount)} />
         <StatCard label="Otto handled" value={String(ottoCount)} />
+        <StatCard label="Resolution rate" value={`${perf.resolutionRate}%`} />
       </div>
 
       <BusinessHoursCard />
+      <InstantReplyCard />
+      <AutoCloseCard />
 
       <div className="mt-6 inline-flex items-center gap-0.5 self-start rounded-[10px] border border-border bg-card p-0.5">
         {FILTERS.map((f) => (
@@ -197,6 +264,9 @@ export function InboxShared() {
             const contact = contactByIdView(cv.contactId);
             const last = cv.messages[cv.messages.length - 1];
             const afterHours = isAfterHoursConversation(cv);
+            const overdue = cv.state === "overdue";
+            // [wave-b] 谁在接:你 / Otto / 队友
+            const answering = assignmentFor(cv.id, cv.aiHandled ? "Otto" : "You");
             return (
               <Link
                 key={cv.id}
@@ -210,6 +280,7 @@ export function InboxShared() {
                     <p className="truncate text-sm font-semibold text-foreground">{contact?.name ?? cv.subject}</p>
                     {cv.unread && <Badge variant="warning">Unread</Badge>}
                     {cv.aiHandled && <Badge variant="success">Otto answered</Badge>}
+                    {overdue && <Badge variant="warning">Overdue {cv.waitingFor ?? ""}</Badge>}
                     {afterHours && (
                       <Badge variant="outline">
                         <Moon className="size-3" strokeWidth={2} />
@@ -219,6 +290,16 @@ export function InboxShared() {
                   </div>
                   <p className="mt-0.5 truncate text-xs text-muted-foreground">{last?.text}</p>
                 </div>
+                {/* [wave-b] 谁在接的头像列(点名缺口补齐) */}
+                <span className="hidden shrink-0 items-center gap-1.5 sm:flex" title={`${answering} is on this`}>
+                  {answering === "Otto" ? (
+                    <span className="flex size-6 items-center justify-center rounded-full bg-secondary text-muted-foreground">
+                      <Sparkles className="size-3" strokeWidth={2} />
+                    </span>
+                  ) : (
+                    <Initials name={answering} className="size-6 text-[10px]" />
+                  )}
+                </span>
                 <span className="hidden shrink-0 text-xs text-muted-foreground sm:block">{last ? (last.at.includes("T") ? fmtStamp(last.at) : last.at) : ""}</span>
                 <ArrowRight className="size-4 shrink-0 text-muted-foreground opacity-0 transition-opacity group-hover:opacity-100" strokeWidth={2} />
               </Link>

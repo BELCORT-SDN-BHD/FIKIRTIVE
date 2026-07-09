@@ -9,13 +9,50 @@
 import * as React from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
-import { ArrowRight, MessageCircle, Send, Sparkles } from "lucide-react";
+import { ArrowRight, AtSign, Heart, MessageCircle, Radio, Send, Sparkles, Zap } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
+import { Switch } from "@/components/ui/switch";
 import { PageHeader, StatCard } from "@/components/northstar/_shared";
-import { CRM_INBOX_BASE as BASE, InboxNav, Card, fmtStamp, useSweep } from "./kit";
+import { CRM_INBOX_BASE as BASE, InboxNav, Card, CardHeader, fmtStamp, useSweep } from "./kit";
 import { COMMENTS, type NsComment } from "./data";
-import { useStore, askOttoInline, ensureContactFromComment, startDmFromComment, commentThreadFor } from "../_store";
+import { COMMENT_HOOKS } from "./lifecycle-data";
+import { useStore, askOttoInline, ensureContactFromComment, startDmFromComment, commentThreadFor, isCommentHookOn, toggleCommentHook } from "../_store";
+
+const HOOK_ICON: Record<string, React.ComponentType<{ className?: string; strokeWidth?: number }>> = {
+  comment: MessageCircle,
+  story: AtSign,
+  follow: Heart,
+  live: Radio,
+  share: Send,
+};
+
+/** [wave-b] 增长钩子:评论/Story/关注/直播 → 自动私信(Quick Automations 3 步预设,不进画布)。 */
+function GrowthHooksCard() {
+  return (
+    <Card className="mt-6 overflow-hidden">
+      <CardHeader title="Turn engagement into DMs" desc="Otto watches for these and starts a private chat automatically." />
+      {COMMENT_HOOKS.map((h) => {
+        const Icon = HOOK_ICON[h.event] ?? Zap;
+        return (
+          <div key={h.id} className="flex items-center gap-3 border-t border-border px-4 py-3.5 first:border-t-0">
+            <span className="flex size-9 shrink-0 items-center justify-center rounded-[12px] bg-secondary">
+              <Icon className="size-4 text-muted-foreground" strokeWidth={2} />
+            </span>
+            <div className="min-w-0 flex-1">
+              <p className="text-sm font-semibold text-foreground">{h.label}</p>
+              <p className="mt-0.5 text-xs leading-4 text-muted-foreground">{h.detail}</p>
+            </div>
+            <Switch checked={isCommentHookOn(h.id, h.defaultOn)} onCheckedChange={(on) => toggleCommentHook(h.id, on)} aria-label={h.label} />
+          </div>
+        );
+      })}
+      <div className="border-t border-border px-4 py-2.5 text-[11px] text-muted-foreground">
+        Three-step presets — pick a post, pick a keyword, pick the reply. No flow builder to learn.
+      </div>
+    </Card>
+  );
+}
 
 function CommentRow({ comment }: { comment: NsComment }) {
   const sweep = useSweep();
@@ -127,6 +164,8 @@ export function InboxComments() {
         <StatCard label="Comments" value={String(COMMENTS.length)} />
         <StatCard label="Waiting on you" value={String(newCount)} />
       </div>
+
+      <GrowthHooksCard />
 
       <Card className="mt-6 overflow-hidden">
         {COMMENTS.length > 0 ? (

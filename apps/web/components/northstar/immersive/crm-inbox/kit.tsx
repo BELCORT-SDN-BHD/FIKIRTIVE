@@ -56,7 +56,10 @@ const CRM_VIEWS = [
 const INBOX_VIEWS = [
   { href: `${BASE}/inbox/shared`, label: "Shared inbox" },
   { href: `${BASE}/inbox/comments`, label: "Comments" },
+  { href: `${BASE}/inbox/broadcast`, label: "Broadcast" },
+  { href: `${BASE}/inbox/templates`, label: "Templates" },
   { href: `${BASE}/inbox/knowledge`, label: "Knowledge" },
+  { href: `${BASE}/inbox/recipes`, label: "Recipes" },
   { href: `${BASE}/inbox/test-drive`, label: "Test drive" },
 ];
 
@@ -64,5 +67,10 @@ export function CrmNav() {
   return <SegNav views={CRM_VIEWS} />;
 }
 export function InboxNav() {
-  return <SegNav views={INBOX_VIEWS} />;
+  // 七个子页:窄屏横向滚动收纳,不撑破页宽(§L1 wide content scrolls in its own box)。
+  return (
+    <div className="max-w-full overflow-x-auto">
+      <SegNav views={INBOX_VIEWS} />
+    </div>
+  );
 }

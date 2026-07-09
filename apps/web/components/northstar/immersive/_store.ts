@@ -1778,3 +1778,241 @@ export function requestPostApproval(post: NsScheduledPost, note?: string) {
 export function bulkImportDrafts(rows: NsScheduledPost[]) {
   rows.forEach((r) => saveDraft(r));
 }
+
+/* ═══════════════════════════════════════════════════════════════════════════
+ * [收件箱 + 生命周期区 · Z6 · 尾部追加] Inbox lifecycle Wave B state
+ *
+ * ENDGAME §二 Z6:WHATPASS 二章 63 条的可变状态层。全部是模块级 `let` 镜像 + 纯函数
+ * 动作(改镜像 + notify;必要时借用现有 logEvent / appendOwnerMessage)。只在文件尾追加,
+ * 不改中段。种子静态口径在 crm-inbox/lifecycle-data.ts,这里只存「店主改过什么」的覆盖。
+ * 铁律不变:纯 client、零后台;coral 只属于 Otto;数据只从 _mock / 区级视图派生。
+ * ═══════════════════════════════════════════════════════════════════════════ */
+
+export interface NsBroadcastRun {
+  id: string;
+  templateName: string;
+  segmentName: string;
+  total: number;
+  failed: number;
+  resent: number;
+  followUpKeyword?: string;
+  at: string;
+}
+
+const ilState = {
+  /** WABA 模板送审状态覆盖(种子在 lifecycle-data;submit 演出成 pending) */
+  templateStatus: {} as Record<string, "approved" | "pending" | "rejected" | "draft">,
+  flowPublished: {} as Record<string, boolean>,
+  broadcasts: [] as NsBroadcastRun[],
+  recipeOn: {} as Record<string, boolean>,
+  keywordRuleOn: {} as Record<string, boolean>,
+  commentHookOn: {} as Record<string, boolean>,
+  guardrailOn: {} as Record<string, boolean>,
+  dataSourceConnected: {} as Record<string, boolean>,
+  satisfaction: {} as Record<string, number>,
+  assignments: {} as Record<string, string>,
+  internalNotes: {} as Record<string, { at: number; author: string; text: string }[]>,
+  ticketStatus: {} as Record<string, "open" | "followup" | "resolved">,
+  escalatedIds: [] as string[],
+  kbPatchDecisions: {} as Record<string, "approved" | "rejected">,
+  maskPhone: false,
+  autoCloseIdle: true,
+  emailChannelOn: false,
+  reviewsOn: false,
+  weeklyCap: 3,
+  abTest: false,
+};
+
+/** 收件箱专用:给一条对话追加一条 owner 消息(商品卡/收款链接/弃购提醒共用;可带图)。 */
+function appendOwnerMessage(conversationId: string, text: string, imageUrl?: string) {
+  const cv = state.conversations.find((c) => c.id === conversationId);
+  if (!cv) return;
+  const message: NsMessage = { id: `m-live-${seq + 1}`, from: "owner", text, at: "Just now", imageUrl };
+  state.conversations = state.conversations.map((c) =>
+    c.id === conversationId ? { ...c, messages: [...c.messages, message], unread: false } : c,
+  );
+  seq += 1;
+}
+
+/* ── 动作 ─────────────────────────────────────────────────────────────────── */
+
+/** [wave-b] WABA 模板送审:草稿 → 送审(pending),模板库即刻显示送审中。 */
+export function submitTemplate(id: string) {
+  ilState.templateStatus = { ...ilState.templateStatus, [id]: "pending" };
+  logEvent("automation_rule_created", "Sent a WhatsApp template for review", { id });
+  notify();
+}
+
+/** [wave-b] WhatsApp Flow 表单发布/收回。 */
+export function toggleFlowPublished(id: string, on: boolean) {
+  ilState.flowPublished = { ...ilState.flowPublished, [id]: on };
+  notify();
+}
+
+/** [wave-b] 分群群发:失败数确定性派生(号码质量透传),生成一条送达报表行。 */
+export function sendBroadcast(input: { templateName: string; segmentName: string; total: number; followUpKeyword?: string }) {
+  const failed = Math.min(3, Math.floor(input.total / 12));
+  const run: NsBroadcastRun = {
+    id: `bc-${seq + 1}`,
+    templateName: input.templateName,
+    segmentName: input.segmentName,
+    total: input.total,
+    failed,
+    resent: 0,
+    followUpKeyword: input.followUpKeyword,
+    at: "Just now",
+  };
+  ilState.broadcasts = [run, ...ilState.broadcasts];
+  logEvent("conversation_replied", `Broadcast sent to ${input.segmentName} · ${input.total} people`, { id: run.id });
+  notify();
+}
+
+/** [wave-b] 失败重发:把该批 failed 归零、resent 累加。 */
+export function resendFailed(runId: string) {
+  ilState.broadcasts = ilState.broadcasts.map((b) =>
+    b.id === runId ? { ...b, resent: b.resent + b.failed, failed: 0 } : b,
+  );
+  notify();
+}
+
+/** [wave-b] 生命周期配方开关(启用不花钱;每次真花仍走审批)。 */
+export function toggleRecipe(id: string, on: boolean) {
+  ilState.recipeOn = { ...ilState.recipeOn, [id]: on };
+  logEvent("automation_toggled", on ? "Turned on a lifecycle recipe" : "Turned off a lifecycle recipe", { id, on });
+  notify();
+}
+
+export function toggleKeywordRule(id: string, on: boolean) { ilState.keywordRuleOn = { ...ilState.keywordRuleOn, [id]: on }; notify(); }
+export function toggleCommentHook(id: string, on: boolean) { ilState.commentHookOn = { ...ilState.commentHookOn, [id]: on }; notify(); }
+export function toggleGuardrail(id: string, on: boolean) { ilState.guardrailOn = { ...ilState.guardrailOn, [id]: on }; notify(); }
+export function toggleEmailChannel(on: boolean) { ilState.emailChannelOn = on; notify(); }
+export function toggleReviews(on: boolean) { ilState.reviewsOn = on; notify(); }
+export function toggleMaskPhone(on: boolean) { ilState.maskPhone = on; notify(); }
+export function toggleAutoCloseIdle(on: boolean) { ilState.autoCloseIdle = on; notify(); }
+export function setWeeklyCap(n: number) { ilState.weeklyCap = Math.max(1, n); notify(); }
+export function toggleAbTest(on: boolean) { ilState.abTest = on; notify(); }
+
+/** [wave-b] 触发数据源连接(订单/行为事件;连上后依赖它的配方解灰)。 */
+export function connectDataSource(id: string) {
+  ilState.dataSourceConnected = { ...ilState.dataSourceConnected, [id]: true };
+  logEvent("channel_connected", "Connected an order data source", { id });
+  notify();
+}
+
+/** [wave-b] 会话满意度(店主模拟客户 1–5 分回填;挂对话档案)。 */
+export function setSatisfaction(conversationId: string, score: number) {
+  ilState.satisfaction = { ...ilState.satisfaction, [conversationId]: score };
+  const cv = state.conversations.find((c) => c.id === conversationId);
+  if (cv) addContactEvent(cv.contactId, `Rated this chat ${score}/5`);
+  notify();
+}
+
+/** [wave-b] 会话认领/指派(谁在接:你 / Otto / 队友)。 */
+export function assignConversation(conversationId: string, who: string) {
+  ilState.assignments = { ...ilState.assignments, [conversationId]: who };
+  logEvent("conversation_replied", `Assigned a chat to ${who}`, { id: conversationId, who });
+  notify();
+}
+
+/** [wave-b] 内部备注(私密,不发给客户)。 */
+export function addInternalNote(conversationId: string, author: string, text: string) {
+  const t = text.trim();
+  if (!t) return;
+  const prev = ilState.internalNotes[conversationId] ?? [];
+  ilState.internalNotes = { ...ilState.internalNotes, [conversationId]: [...prev, { at: seq + 1, author, text: t }] };
+  seq += 1;
+  notify();
+}
+
+/** [wave-b] 三态工单:处理中 / 待跟进 / 已解决(resolved 复用 resolveConversation)。 */
+export function setTicketStatus(conversationId: string, status: "open" | "followup" | "resolved") {
+  ilState.ticketStatus = { ...ilState.ticketStatus, [conversationId]: status };
+  if (status === "resolved") {
+    resolveConversation(conversationId);
+    return; // resolveConversation 已 notify
+  }
+  notify();
+}
+
+/** [wave-b] 转人工升级:标记 + 暂停该会话 Otto(护栏落地:AI 不硬撑)。 */
+export function escalateConversation(conversationId: string) {
+  if (!ilState.escalatedIds.includes(conversationId)) {
+    ilState.escalatedIds = [...ilState.escalatedIds, conversationId];
+  }
+  setConversationAi(conversationId, true); // 已 notify
+}
+
+/** [wave-b] 自愈知识库:审批一条 Otto 起草的知识补丁(approve → 真进知识库)。 */
+export function decideKbPatch(patch: { id: string; question: string; answer: string; category: NsKnowledgeEntry["category"]; sourceLabel: string; sourceConversationId: string }, decision: "approved" | "rejected") {
+  ilState.kbPatchDecisions = { ...ilState.kbPatchDecisions, [patch.id]: decision };
+  if (decision === "approved") {
+    addKnowledgeEntry({
+      question: patch.question,
+      answer: patch.answer,
+      category: patch.category,
+      sourceConversationId: patch.sourceConversationId,
+      sourceLabel: patch.sourceLabel,
+    }); // 已 notify
+    return;
+  }
+  notify();
+}
+
+/** [wave-b] 聊天内商务:发一张商品卡(真图 + 名称价格),append 进对话。 */
+export function sendCatalogCard(conversationId: string, card: { name: string; priceMyr: number; image: string }) {
+  appendOwnerMessage(conversationId, `${card.name} — RM${card.priceMyr.toLocaleString("en-MY")}. Reply to reserve 🛒`, card.image);
+  logEvent("conversation_replied", `Sent a product card · ${card.name}`, { id: conversationId });
+  notify();
+}
+
+/** [wave-b] 聊天内收款链接(跳商家自己账户;原型不经 FIKIRTIVE 钱路)。 */
+export function sendPayLink(conversationId: string, amountMyr: number) {
+  appendOwnerMessage(conversationId, `Here's your secure payment link for RM${amountMyr.toLocaleString("en-MY")} → pay.rotibulan.my/${(seq + 1).toString(36)}`);
+  logEvent("conversation_replied", `Sent a payment link · RM${amountMyr}`, { id: conversationId });
+  notify();
+}
+
+/** [wave-b] 弃购挽回:发一条温和的「还想要吗」提醒。 */
+export function sendAbandonedNudge(conversationId: string, item: string) {
+  appendOwnerMessage(conversationId, `Still thinking about the ${item}? I can hold one for you till end of day — just say the word 🙂`);
+  logEvent("conversation_replied", `Sent an abandoned-cart nudge · ${item}`, { id: conversationId });
+  notify();
+}
+
+/* ── 选择器(种子来自 lifecycle-data;这里只叠加店主覆盖) ──────────────────────── */
+export function templateStatusFor(id: string, seed: "approved" | "pending" | "rejected" | "draft"): "approved" | "pending" | "rejected" | "draft" {
+  return ilState.templateStatus[id] ?? seed;
+}
+export function isFlowPublished(id: string, seed: boolean): boolean {
+  return ilState.flowPublished[id] ?? seed;
+}
+export function broadcastsView(): NsBroadcastRun[] { return ilState.broadcasts; }
+export function isRecipeOn(id: string, seed: boolean): boolean { return ilState.recipeOn[id] ?? seed; }
+export function isKeywordRuleOn(id: string, seed: boolean): boolean { return ilState.keywordRuleOn[id] ?? seed; }
+export function isCommentHookOn(id: string, seed: boolean): boolean { return ilState.commentHookOn[id] ?? seed; }
+export function isGuardrailOn(id: string, seed: boolean): boolean { return ilState.guardrailOn[id] ?? seed; }
+export function isDataSourceConnected(id: string, seed: boolean): boolean { return ilState.dataSourceConnected[id] ?? seed; }
+export function satisfactionFor(conversationId: string): number | undefined { return ilState.satisfaction[conversationId]; }
+export function assignmentFor(conversationId: string, fallback: string): string { return ilState.assignments[conversationId] ?? fallback; }
+export function internalNotesFor(conversationId: string): { at: number; author: string; text: string }[] { return ilState.internalNotes[conversationId] ?? []; }
+export function ticketStatusFor(conversationId: string, seed: "open" | "followup" | "resolved"): "open" | "followup" | "resolved" {
+  if (state.resolvedConversationIds.includes(conversationId)) return "resolved";
+  return ilState.ticketStatus[conversationId] ?? seed;
+}
+export function isEscalated(conversationId: string): boolean { return ilState.escalatedIds.includes(conversationId); }
+export function isMaskPhone(): boolean { return ilState.maskPhone; }
+export function isAutoCloseIdle(): boolean { return ilState.autoCloseIdle; }
+export function isEmailChannelOn(): boolean { return ilState.emailChannelOn; }
+export function isReviewsOn(): boolean { return ilState.reviewsOn; }
+export function kbPatchDecision(id: string): "approved" | "rejected" | undefined { return ilState.kbPatchDecisions[id]; }
+export function recipeSendSettings(): { weeklyCap: number; abTest: boolean } { return { weeklyCap: ilState.weeklyCap, abTest: ilState.abTest }; }
+
+/** [wave-b] 客服/AI 绩效小面板(全部派生自会话镜像,不写死)。 */
+export function inboxPerformance(): { open: number; ottoAnswered: number; resolved: number; resolutionRate: number } {
+  const all = state.conversations;
+  const ottoAnswered = all.filter((c) => c.aiHandled).length;
+  const resolved = all.filter((c) => state.resolvedConversationIds.includes(c.id) || c.state === "resolved").length;
+  const open = all.length - resolved;
+  const resolutionRate = all.length ? Math.round((resolved / all.length) * 100) : 0;
+  return { open, ottoAnswered, resolved, resolutionRate };
+}

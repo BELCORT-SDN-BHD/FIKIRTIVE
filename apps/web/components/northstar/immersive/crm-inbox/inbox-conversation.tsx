@@ -19,9 +19,10 @@
 import * as React from "react";
 import Link from "next/link";
 import { useSearchParams } from "next/navigation";
-import { AlertTriangle, ArrowLeft, BookOpen, Check, Moon, Send, Sparkles, User } from "lucide-react";
+import { AlertTriangle, ArrowLeft, BookOpen, Check, CreditCard, Languages, Moon, ShieldAlert, ShoppingBag, Send, Sparkles, StickyNote, User, Users, Wand2, Zap } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
+import { Input } from "@/components/ui/input";
 import { Switch } from "@/components/ui/switch";
 import { Textarea } from "@/components/ui/textarea";
 import { EmptyState } from "@/components/northstar/_shared";
@@ -34,6 +35,17 @@ import {
   useSweep,
 } from "./kit";
 import { matchKnowledge } from "./data";
+import {
+  SNIPPETS,
+  CATALOG_CARDS,
+  TONES,
+  applyTone,
+  draftReplyFor,
+  translateDraft,
+  detectLanguage,
+  escalationSignal,
+  type NsTone,
+} from "./lifecycle-data";
 import {
   useStore,
   askOttoInline,
@@ -49,9 +61,34 @@ import {
   conversationDraftFor,
   addKnowledgeEntry,
   isAfterHoursConversation,
+  teamMembers,
+  assignmentFor,
+  assignConversation,
+  internalNotesFor,
+  addInternalNote,
+  ticketStatusFor,
+  setTicketStatus,
+  isEscalated,
+  escalateConversation,
+  satisfactionFor,
+  setSatisfaction,
+  sendCatalogCard,
+  sendPayLink,
+  sendAbandonedNudge,
+  isMaskPhone,
 } from "../_store";
 
-function Bubble({ from, text, at }: { from: "customer" | "owner" | "otto"; text: string; at: string }) {
+/** 号码遮罩(防飞单):保留前 3 位与后 2 位,中间打点。 */
+function maskNumber(phone: string): string {
+  const total = (phone.match(/\d/g) ?? []).length;
+  let seen = 0;
+  return phone.replace(/\d/g, (d) => {
+    seen += 1;
+    return seen <= 3 || seen > total - 2 ? d : "•";
+  });
+}
+
+function Bubble({ from, text, at, imageUrl }: { from: "customer" | "owner" | "otto"; text: string; at: string; imageUrl?: string }) {
   const mine = from === "owner" || from === "otto";
   // 实时发出的消息 at = "Just now"(非 ISO);种子消息才走 fmtStamp
   const stamp = at.includes("T") ? fmtStamp(at) : at;
@@ -59,7 +96,7 @@ function Bubble({ from, text, at }: { from: "customer" | "owner" | "otto"; text:
     <div className={"flex flex-col gap-1 " + (mine ? "items-end" : "items-start")}>
       <div
         className={
-          "max-w-[76%] rounded-[16px] px-3.5 py-2.5 text-sm leading-5 " +
+          "max-w-[76%] overflow-hidden rounded-[16px] text-sm leading-5 " +
           (from === "customer"
             ? "bg-secondary text-foreground"
             : from === "owner"
@@ -67,13 +104,22 @@ function Bubble({ from, text, at }: { from: "customer" | "owner" | "otto"; text:
               : "border border-border bg-card text-foreground")
         }
       >
-        {from === "otto" && (
-          <span className="mb-1 flex items-center gap-1 text-[11px] font-semibold text-muted-foreground">
-            <Sparkles className="size-3" strokeWidth={2} />
-            Otto
-          </span>
+        {/* 图片消息(真图,取自 NS_IMAGES;固定 4:3 容器防布局跳动) */}
+        {imageUrl && (
+          <div className="aspect-[4/3] w-[220px] max-w-full bg-secondary">
+            {/* eslint-disable-next-line @next/next/no-img-element */}
+            <img src={imageUrl} alt="Shared in chat" className="h-full w-full object-cover" loading="lazy" />
+          </div>
         )}
-        {text}
+        <div className="px-3.5 py-2.5">
+          {from === "otto" && (
+            <span className="mb-1 flex items-center gap-1 text-[11px] font-semibold text-muted-foreground">
+              <Sparkles className="size-3" strokeWidth={2} />
+              Otto
+            </span>
+          )}
+          {text}
+        </div>
       </div>
       <span className="px-1 text-[11px] text-muted-foreground">{stamp}</span>
     </div>
@@ -97,6 +143,11 @@ export function InboxConversation() {
   const [teach, setTeach] = React.useState<{ question: string; answer: string } | null>(null);
   // 已存进知识库(显示「Saved → Knowledge」链接)
   const [savedId, setSavedId] = React.useState<string | null>(null);
+  // 坐席辅助 / 商务面板局部 UI 态(纯 UI,不持 mock 副本)
+  const [assistOpen, setAssistOpen] = React.useState<null | "snippets" | "catalog">(null);
+  const [showNotes, setShowNotes] = React.useState(false);
+  const [noteDraft, setNoteDraft] = React.useState("");
+  const [tone, setTone] = React.useState<NsTone>("casual");
 
   // Comment-to-DM 生成的草稿:首次进这条对话时 seed 到输入框一次
   const seededFor = React.useRef<string>("");
@@ -133,6 +184,23 @@ export function InboxConversation() {
   // O-06:建议回复的依据 —— 从最近一条客户消息匹配知识库(命中才建议)
   const source = awaitingReply ? matchKnowledge(lastMsg.text) : undefined;
 
+  // [wave-b] 连续轮次/置信度双闸 + 三类人在环升级信号(护栏落地:AI 不硬撑)
+  const escalation = escalationSignal(conversation);
+  const escalated = isEscalated(conversation.id);
+  // [wave-b] 会话认领/指派(默认:Otto 在管 → Otto,否则你)
+  const defaultAssignee = conversation.aiHandled && !paused ? "Otto" : "You";
+  const assignee = assignmentFor(conversation.id, defaultAssignee);
+  const team = teamMembers();
+  const assignChoices = ["You", "Otto", ...team.map((m) => m.name)];
+  // [wave-b] 三态工单
+  const seedStatus: "open" | "followup" | "resolved" = resolved ? "resolved" : conversation.state === "overdue" ? "followup" : "open";
+  const ticketStatus = ticketStatusFor(conversation.id, seedStatus);
+  const notes = internalNotesFor(conversation.id);
+  const csat = satisfactionFor(conversation.id);
+  const masked = isMaskPhone();
+  // [wave-b] 自动语言检测(Manglish/马来/英)
+  const detectedLang = awaitingReply ? detectLanguage(lastMsg.text) : undefined;
+
   function send() {
     const sent = draft.trim();
     if (!sent) return;
@@ -151,7 +219,7 @@ export function InboxConversation() {
 
   return (
     <div className="mx-auto flex min-h-full w-full max-w-[760px] flex-col px-6 pt-6 pb-16">
-      <div className="flex items-center gap-3">
+      <div className="flex flex-wrap items-center gap-3">
         <Button variant="secondary" size="sm" asChild>
           <Link href={`${BASE}/inbox/shared`}>
             <ArrowLeft strokeWidth={2} />
@@ -159,6 +227,20 @@ export function InboxConversation() {
           </Link>
         </Button>
         <div className="flex-1" />
+        {/* [wave-b] 会话认领/指派(谁在接) */}
+        <label className="flex items-center gap-1.5 text-xs font-medium text-muted-foreground">
+          <Users className="size-3.5" strokeWidth={2} />
+          <select
+            value={assignee}
+            onChange={(e) => assignConversation(conversation.id, e.target.value)}
+            className="h-8 rounded-[8px] border border-border bg-card px-2 text-xs font-semibold text-foreground"
+            aria-label="Assign this chat"
+          >
+            {assignChoices.map((c) => (
+              <option key={c} value={c}>{c}</option>
+            ))}
+          </select>
+        </label>
         <label className="flex items-center gap-2 text-xs font-medium text-muted-foreground">
           Otto auto-reply
           <Switch
@@ -167,16 +249,75 @@ export function InboxConversation() {
             aria-label="Let Otto reply automatically on this thread"
           />
         </label>
-        <Button
-          variant={resolved ? "ghost" : "secondary"}
-          size="sm"
-          disabled={resolved}
-          onClick={() => resolveConversation(conversation.id)}
-        >
-          <Check strokeWidth={2} />
-          {resolved ? "Resolved" : "Resolve"}
+      </div>
+
+      {/* [wave-b] 三态工单(处理中 / 待跟进 / 已解决)+ 内部备注入口 */}
+      <div className="mt-3 flex flex-wrap items-center gap-2">
+        <div className="inline-flex items-center gap-0.5 rounded-[10px] border border-border bg-card p-0.5">
+          {([
+            { id: "open", label: "Open" },
+            { id: "followup", label: "Follow up" },
+            { id: "resolved", label: "Resolved" },
+          ] as const).map((s) => (
+            <button
+              key={s.id}
+              type="button"
+              onClick={() => setTicketStatus(conversation.id, s.id)}
+              aria-current={ticketStatus === s.id ? "true" : undefined}
+              className={
+                "flex h-[30px] items-center rounded-[8px] px-3 text-xs font-semibold transition-colors duration-[120ms] " +
+                (ticketStatus === s.id ? "bg-secondary text-foreground" : "text-muted-foreground hover:bg-accent hover:text-foreground")
+              }
+            >
+              {s.label}
+            </button>
+          ))}
+        </div>
+        {conversation.waitingFor && ticketStatus !== "resolved" && (
+          <Badge variant={conversation.state === "overdue" ? "warning" : "outline"}>
+            Waiting {conversation.waitingFor}
+          </Badge>
+        )}
+        <div className="flex-1" />
+        <Button variant="ghost" size="sm" onClick={() => setShowNotes((v) => !v)}>
+          <StickyNote strokeWidth={2} />
+          Notes{notes.length > 0 ? ` (${notes.length})` : ""}
         </Button>
       </div>
+
+      {/* [wave-b] 内部协作:私密备注(不发给客户) */}
+      {showNotes && (
+        <div className="mt-3 rounded-[16px] border border-dashed border-border bg-secondary/40 p-3">
+          <p className="mb-2 text-[11px] font-semibold text-muted-foreground">Private notes — only your team sees these</p>
+          {notes.length > 0 && (
+            <div className="mb-2 flex flex-col gap-1.5">
+              {notes.map((n) => (
+                <div key={n.at} className="rounded-[10px] bg-card px-3 py-2 text-[13px] leading-[18px] text-foreground">
+                  <span className="mr-1.5 text-[11px] font-semibold text-muted-foreground">{n.author}</span>
+                  {n.text}
+                </div>
+              ))}
+            </div>
+          )}
+          <div className="flex items-center gap-2">
+            <Input
+              value={noteDraft}
+              onChange={(e) => setNoteDraft(e.target.value)}
+              placeholder="Add a note or @mention a teammate…"
+              className="h-9"
+              onKeyDown={(e) => {
+                if (e.key === "Enter") {
+                  addInternalNote(conversation.id, "You", noteDraft);
+                  setNoteDraft("");
+                }
+              }}
+            />
+            <Button size="sm" variant="secondary" disabled={!noteDraft.trim()} onClick={() => { addInternalNote(conversation.id, "You", noteDraft); setNoteDraft(""); }}>
+              Add
+            </Button>
+          </div>
+        </div>
+      )}
 
       {/* 线程头:客户 → 档案 */}
       <div className="mt-4 flex items-center gap-3 rounded-[16px] border border-border bg-card px-4 py-3">
@@ -195,6 +336,12 @@ export function InboxConversation() {
           </div>
           <p className="mt-0.5 truncate text-xs text-muted-foreground">
             {conversation.subject} · {INBOX_CHANNELS[conversation.channel].label}
+            {contact?.phone && (
+              <>
+                {" · "}
+                <span className="font-mono">{masked ? maskNumber(contact.phone) : contact.phone}</span>
+              </>
+            )}
           </p>
         </div>
         {contact && (
@@ -226,6 +373,26 @@ export function InboxConversation() {
         </div>
       )}
 
+      {/* [wave-b] 升级信号:双闸 / 三类人在环 —— Otto 主动交回人类,不硬撑装懂 */}
+      {escalation.tripped && !paused && !escalated && (
+        <div className="mt-3 flex items-start gap-2.5 rounded-[16px] border border-warning-soft-foreground/25 bg-warning-soft/40 p-3.5">
+          <ShieldAlert className="mt-0.5 size-4 shrink-0 text-warning-soft-foreground" strokeWidth={2} />
+          <div className="min-w-0 flex-1">
+            <p className="text-sm font-semibold text-foreground">Otto flagged this for a human</p>
+            <p className="mt-0.5 text-xs leading-4 text-muted-foreground">{escalation.reason}</p>
+          </div>
+          <Button size="sm" variant="secondary" onClick={() => escalateConversation(conversation.id)}>
+            Take over
+          </Button>
+        </div>
+      )}
+      {escalated && (
+        <div className="mt-3 flex items-center gap-2 rounded-[12px] border border-border bg-secondary/60 px-4 py-2.5">
+          <ShieldAlert className="size-4 shrink-0 text-muted-foreground" strokeWidth={2} />
+          <p className="min-w-0 flex-1 text-xs leading-4 text-foreground">Escalated to you — Otto is standing by, not replying automatically.</p>
+        </div>
+      )}
+
       {/* 人工插手 → 自动停(横幅为真) */}
       {paused && (
         <div className="mt-3 flex items-center gap-3 rounded-[12px] border border-border bg-secondary/60 px-4 py-2.5">
@@ -241,7 +408,7 @@ export function InboxConversation() {
       {/* 消息流 */}
       <div className="mt-4 flex flex-col gap-3">
         {conversation.messages.map((m) => (
-          <Bubble key={m.id} from={m.from} text={m.text} at={m.at} />
+          <Bubble key={m.id} from={m.from} text={m.text} at={m.at} imageUrl={m.imageUrl} />
         ))}
         <div ref={endRef} />
       </div>
@@ -340,8 +507,106 @@ export function InboxConversation() {
         </div>
       )}
 
+      {/* [wave-b] 会话后满意度小问:已解决 → 一条评分请求(店主可模拟客户回填) */}
+      {resolved && (
+        <div className="mt-4 rounded-[16px] border border-border bg-secondary/40 px-4 py-3">
+          <div className="flex items-center gap-1.5 text-[11px] font-semibold text-muted-foreground">
+            <Sparkles className="size-3.5" strokeWidth={2} />
+            Otto sent a quick rating request when you resolved this
+          </div>
+          {csat ? (
+            <p className="mt-2 text-sm text-foreground">{contact?.name?.split(" ")[0] ?? "The customer"} rated this chat <span className="font-semibold">{csat}/5</span> 💛</p>
+          ) : (
+            <div className="mt-2 flex items-center gap-2">
+              <span className="text-xs text-muted-foreground">Preview their reply:</span>
+              {[1, 2, 3, 4, 5].map((n) => (
+                <button
+                  key={n}
+                  type="button"
+                  onClick={() => setSatisfaction(conversation.id, n)}
+                  className="flex size-8 items-center justify-center rounded-full border border-border text-sm font-semibold text-muted-foreground transition-colors hover:bg-accent hover:text-foreground"
+                  aria-label={`Rate ${n} of 5`}
+                >
+                  {n}
+                </button>
+              ))}
+            </div>
+          )}
+        </div>
+      )}
+
+      {/* [wave-b] 聊天内商务:商品目录卡 grid(点即发真图商品卡) */}
+      {assistOpen === "catalog" && (
+        <div className="mt-4 rounded-[16px] border border-border bg-card p-3">
+          <p className="mb-2 text-[11px] font-semibold text-muted-foreground">Send a product card</p>
+          <div className="grid grid-cols-2 gap-2 sm:grid-cols-3">
+            {CATALOG_CARDS.map((c) => (
+              <button
+                key={c.productId}
+                type="button"
+                onClick={() => { sendCatalogCard(conversation.id, c); setAssistOpen(null); }}
+                className="overflow-hidden rounded-[12px] border border-border text-left transition-colors hover:bg-accent"
+              >
+                <div className="aspect-[4/3] w-full bg-secondary">
+                  {/* eslint-disable-next-line @next/next/no-img-element */}
+                  <img src={c.image} alt={c.name} className="h-full w-full object-cover" loading="lazy" />
+                </div>
+                <div className="px-2 py-1.5">
+                  <p className="truncate text-[12px] font-semibold text-foreground">{c.name}</p>
+                  <p className="text-[11px] text-muted-foreground">RM{c.priceMyr.toLocaleString("en-MY")}</p>
+                </div>
+              </button>
+            ))}
+          </div>
+        </div>
+      )}
+
+      {/* [wave-b] 快捷话术库:点即插入草稿 */}
+      {assistOpen === "snippets" && (
+        <div className="mt-4 rounded-[16px] border border-border bg-card p-2">
+          <p className="px-2 pt-1 pb-2 text-[11px] font-semibold text-muted-foreground">Quick replies — tap to insert</p>
+          {SNIPPETS.map((s) => (
+            <button
+              key={s.id}
+              type="button"
+              onClick={() => { setDraft((d) => (d ? `${d} ${s.text}` : s.text)); setAssistOpen(null); }}
+              className="flex w-full items-center gap-2 rounded-[10px] px-2 py-2 text-left transition-colors hover:bg-accent"
+            >
+              <code className="rounded-[6px] bg-secondary px-1.5 py-0.5 font-mono text-[11px] text-secondary-foreground">{s.shortcut}</code>
+              <span className="min-w-0 flex-1 truncate text-[13px] text-foreground">{s.text}</span>
+            </button>
+          ))}
+        </div>
+      )}
+
       {/* 输入框:Send 真发(append 到 store、清空、滚到底) */}
       <div className="mt-4 rounded-[16px] border border-border bg-card p-2">
+        {/* [wave-b] 坐席辅助工具条:帮写 / 翻译 / 三档语气 / 话术 / 商品 / 收款 / 弃购提醒 */}
+        <div className="flex flex-wrap items-center gap-1 px-1 pb-2">
+          <ToolbarButton icon={Wand2} label="Write" onClick={() => { const t = draftReplyFor(awaitingReply ? lastMsg.text : ""); setDraft(t); setAdopted(t); }} />
+          <ToolbarButton icon={Languages} label="Translate" onClick={() => setDraft((d) => translateDraft(d || (awaitingReply ? lastMsg.text : "")))} disabled={!draft.trim() && !awaitingReply} />
+          <ToolbarButton icon={Zap} label="Snippets" onClick={() => setAssistOpen((v) => (v === "snippets" ? null : "snippets"))} />
+          <ToolbarButton icon={ShoppingBag} label="Product" onClick={() => setAssistOpen((v) => (v === "catalog" ? null : "catalog"))} />
+          <ToolbarButton icon={CreditCard} label="Pay link" onClick={() => sendPayLink(conversation.id, contact?.predictedNextMyr ?? 50)} />
+          <div className="mx-1 h-4 w-px bg-border" />
+          {/* 三档语气 */}
+          <div className="inline-flex items-center gap-0.5 rounded-[8px] border border-border p-0.5">
+            {TONES.map((t) => (
+              <button
+                key={t.id}
+                type="button"
+                onClick={() => { setTone(t.id); setDraft((d) => (d.trim() ? applyTone(d, t.id) : d)); }}
+                aria-current={tone === t.id ? "true" : undefined}
+                className={"rounded-[6px] px-2 py-1 text-[11px] font-semibold transition-colors " + (tone === t.id ? "bg-secondary text-foreground" : "text-muted-foreground hover:bg-accent hover:text-foreground")}
+              >
+                {t.label}
+              </button>
+            ))}
+          </div>
+          {detectedLang && (
+            <span className="ml-auto rounded-full border border-border bg-secondary/50 px-2 py-0.5 text-[11px] text-muted-foreground">Detected: {detectedLang}</span>
+          )}
+        </div>
         <Textarea
           value={draft}
           onChange={(e) => setDraft(e.target.value)}
@@ -354,7 +619,12 @@ export function InboxConversation() {
           placeholder={`Reply to ${contact?.name?.split(" ")[0] ?? "customer"}…`}
           className="min-h-[64px] resize-none border-0 bg-transparent shadow-none focus-visible:ring-0"
         />
-        <div className="flex items-center justify-end gap-2 px-1 pb-1">
+        <div className="flex items-center gap-2 px-1 pb-1">
+          {/* [wave-b] 弃购挽回:一键温和提醒 */}
+          <Button size="sm" variant="ghost" onClick={() => sendAbandonedNudge(conversation.id, "your order")}>
+            Send a nudge
+          </Button>
+          <div className="flex-1" />
           <Button size="sm" disabled={!draft.trim()} onClick={send}>
             <Send strokeWidth={2} />
             Send
@@ -362,5 +632,20 @@ export function InboxConversation() {
         </div>
       </div>
     </div>
+  );
+}
+
+/** 坐席辅助工具条按钮(§F 图标+文案 chip)。 */
+function ToolbarButton({ icon: Icon, label, onClick, disabled }: { icon: React.ComponentType<{ className?: string; strokeWidth?: number }>; label: string; onClick: () => void; disabled?: boolean }) {
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      disabled={disabled}
+      className="inline-flex items-center gap-1 rounded-[8px] px-2 py-1 text-[11px] font-semibold text-muted-foreground transition-colors hover:bg-accent hover:text-foreground disabled:opacity-40"
+    >
+      <Icon className="size-3.5" strokeWidth={2} />
+      {label}
+    </button>
   );
 }
