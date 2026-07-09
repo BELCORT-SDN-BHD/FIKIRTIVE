@@ -61,8 +61,10 @@ export default function Page() {
     if (post) schedulePost(toScheduled(post));
   };
 
-  const upcoming = groupByDate(posts.filter((p) => p.status === "scheduled" || p.status === "draft"));
+  const drafts = groupByDate(posts.filter((p) => p.status === "draft"));
+  const upcoming = groupByDate(posts.filter((p) => p.status === "scheduled"));
   const published = groupByDate(posts.filter((p) => p.status === "published" || p.status === "failed")).reverse();
+  const shareHref = (id: string) => `/northstar/schedule/share-preview?post=${id}`;
 
   return (
     <div className="mx-auto flex min-h-full w-full max-w-[880px] flex-col px-6 pt-6 pb-16">
@@ -122,6 +124,37 @@ export default function Page() {
 
       {demo === "data" && (
         <div className="mt-6 flex flex-col gap-8">
+          {/* Drafts:未提交排期的草稿(composer「Save draft」落进来),单独一组,可就地审批 */}
+          {drafts.length > 0 && (
+            <section>
+              <h2 className="text-sm font-semibold text-foreground">Drafts</h2>
+              <p className="mt-1 text-xs text-muted-foreground">
+                Saved but not scheduled yet. Approve to line one up, or share it for a quick review first.
+              </p>
+              <div className="mt-3 flex flex-col gap-4">
+                {drafts.map((g) => (
+                  <div key={g.date} className="rounded-[18px] border border-dashed border-border bg-card px-4 pb-1">
+                    <div className="flex items-center gap-2 border-b border-border py-2.5">
+                      <span className="text-[13px] font-semibold text-foreground">{fmtDateLong(g.date)}</span>
+                      <span className="ml-auto text-xs text-muted-foreground tabular-nums">
+                        {g.posts.length} {g.posts.length === 1 ? "draft" : "drafts"}
+                      </span>
+                    </div>
+                    {g.posts.map((p) => (
+                      <PostRow
+                        key={p.id}
+                        post={p}
+                        onApprove={setApproving}
+                        landing={p.id === landingId}
+                        shareHref={shareHref(p.id)}
+                      />
+                    ))}
+                  </div>
+                ))}
+              </div>
+            </section>
+          )}
+
           <section>
             <h2 className="text-sm font-semibold text-foreground">Upcoming</h2>
             <div className="mt-3 flex flex-col gap-4">
@@ -134,7 +167,13 @@ export default function Page() {
                     </span>
                   </div>
                   {g.posts.map((p) => (
-                    <PostRow key={p.id} post={p} onApprove={setApproving} landing={p.id === landingId} />
+                    <PostRow
+                      key={p.id}
+                      post={p}
+                      onApprove={setApproving}
+                      landing={p.id === landingId}
+                      shareHref={shareHref(p.id)}
+                    />
                   ))}
                 </div>
               ))}

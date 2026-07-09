@@ -39,17 +39,20 @@ import {
   Skeleton,
   StatusBadge,
   addDaysIso,
+  campaignPosts,
   fmtDate,
   fmtDateLong,
   fmtTime,
   livePosts,
 } from "@/components/northstar/schedule/kit";
 import { useStore } from "@/components/northstar/immersive/_store";
+import { useQueryParam } from "@/components/northstar/immersive/_kit";
 
 type ShareDemo = "data" | "loading" | "expired" | "error";
 
-/** 分享的帖子:post-04(IG 草稿,带 first comment)— 正是「发之前给人看一眼」的对象 */
-const SHARED_POST_ID = "post-04";
+/** 缺省分享对象:post-04(IG 草稿,带 first comment)— 正是「发之前给人看一眼」的样例;
+ * queue/plan 每帖的「Share preview」入口带 ?post=<id> 覆盖它,故任意一帖都可外审。 */
+const DEFAULT_POST_ID = "post-04";
 
 const TOKENS = ["rb-7f3k9d2m1x", "rb-2p8w5q0j4t"];
 
@@ -67,7 +70,15 @@ export default function Page() {
   const [regenOpen, setRegenOpen] = React.useState(false);
   const [regenPending, setRegenPending] = React.useState(false);
 
-  const post = livePosts().find((p) => p.id === SHARED_POST_ID)!;
+  // 深链 ?post=<id> 选中要外审的那一帖(queue/plan 每帖的「Share preview」入口带过来);
+  // 覆盖 base + campaign 全部帖,找不到就回落缺省样例,永不空白。
+  const wantId = useQueryParam("post");
+  const camp = campaignPosts();
+  const allPosts = [...livePosts(), ...camp.scheduled, ...camp.proposed];
+  const post =
+    (wantId ? allPosts.find((p) => p.id === wantId) : undefined) ??
+    allPosts.find((p) => p.id === DEFAULT_POST_ID) ??
+    allPosts[0]!;
   const token = TOKENS[tokenIdx % TOKENS.length];
   const url = `https://fikirtive.app/p/${token}`;
   const expiresOn = addDaysIso(NS_TODAY, Number(expiryDays));

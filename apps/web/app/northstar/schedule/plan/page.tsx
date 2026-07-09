@@ -218,7 +218,12 @@ export default function Page() {
                   </p>
                 ) : (
                   groupRows.map((p, i) => (
-                    <PostRow key={p.id} post={p} landing={i >= campaign.scheduled.length} />
+                    <PostRow
+                      key={p.id}
+                      post={p}
+                      landing={i >= campaign.scheduled.length}
+                      shareHref={`/northstar/schedule/share-preview?post=${p.id}`}
+                    />
                   ))
                 )}
               </div>
@@ -279,7 +284,13 @@ function WeekBlock({
                 </span>
               </div>
               {g.posts.map((p) => (
-                <PostRow key={p.id} post={p} onApprove={onApprove} landing={p.id === landingId} />
+                <PostRow
+                  key={p.id}
+                  post={p}
+                  onApprove={onApprove}
+                  landing={p.id === landingId}
+                  shareHref={`/northstar/schedule/share-preview?post=${p.id}`}
+                />
               ))}
             </div>
           ))}

@@ -47,7 +47,7 @@ import {
   type DemoState,
   type NsPlatform,
 } from "@/components/northstar/schedule/kit";
-import { schedulePost, useStore, contactsView, customSegments } from "@/components/northstar/immersive/_store";
+import { saveDraft, schedulePost, useStore, contactsView, customSegments } from "@/components/northstar/immersive/_store";
 import { useQueryParam } from "@/components/northstar/immersive/_kit";
 import { SEGMENTS, contactMatchesRules } from "@/components/northstar/immersive/crm-inbox/data";
 import { Initials } from "@/components/northstar/immersive/_kit";
@@ -188,6 +188,25 @@ export default function Page() {
         firstComment: firstComment.trim() || undefined,
       });
     }, 800);
+  };
+
+  // Save draft:真写共享 store(status draft),queue「Drafts」分组与 home「Up next」立刻反映。
+  const onSaveDraft = () => {
+    if (targets.length === 0) {
+      setFormError("Pick at least one channel to save this draft for.");
+      return;
+    }
+    const existing = prefillPostId && NS_SCHEDULED_POSTS.some((p) => p.id === prefillPostId);
+    saveDraft({
+      id: existing ? prefillPostId! : `post-draft-${Date.now()}`,
+      scheduledAt: `${date}T${time}:00+08:00`,
+      platform: targets[0],
+      caption: caption.trim(),
+      media: media?.thumb ?? nsPlaceholder("Draft", 640, 640, "neutral"),
+      status: "draft",
+      firstComment: firstComment.trim() || undefined,
+    });
+    toast("Draft saved", { description: "Find it in the queue under Drafts." });
   };
 
   const resetForm = () => {
@@ -537,11 +556,7 @@ export default function Page() {
                 </span>
               )}
               <div className="flex-1" />
-              <Button
-                variant="secondary"
-                size="sm"
-                onClick={() => toast("Draft saved", { description: "Find it in the queue under drafts." })}
-              >
+              <Button variant="secondary" size="sm" onClick={onSaveDraft}>
                 Save draft
               </Button>
               <Button size="sm" onClick={onSchedule}>

@@ -22,7 +22,7 @@ import {
 } from "@/components/ui/dialog";
 import { OttoAvatar } from "@/components/otto/OttoAvatar";
 import { PageHeader } from "@/components/northstar/_shared";
-import { addRule, aiHandledCount, rules, toggleAutomationRule, useStore } from "../_store";
+import { addRule, aiHandledCount, askOttoInline, rules, toggleAutomationRule, useStore } from "../_store";
 import { ACCOUNT_OPS_BASE as BASE, AutomationNav, Card } from "./kit";
 import { type NsRule } from "./data";
 
@@ -167,7 +167,20 @@ export function AutomationRules() {
         <p className="min-w-0 flex-1 basis-64 text-[13px] leading-[1.45] text-brand-soft-foreground">
           You reply to most WhatsApp order questions the same way. Want a rule for that?
         </p>
-        <Button variant="brand" size="sm" onClick={() => setDraft({ ...OTTO_DRAFT })}>
+        <Button
+          variant="brand"
+          size="sm"
+          onClick={() => {
+            setDraft({ ...OTTO_DRAFT });
+            // 就地 Otto 统一(O-12):Otto 起草的这条规则进共享 dock/otto-chat 同一线程,
+            // 不再是自动化页自开的匿名小 AI。
+            askOttoInline(
+              "Draft an automation rule for my repeated WhatsApp replies.",
+              `Here's a draft: “${OTTO_DRAFT.name}” — when ${OTTO_DRAFT.when.toLowerCase()}, ${OTTO_DRAFT.then.toLowerCase()}. Review and save it in the dialog.`,
+              { view: "Automation" },
+            );
+          }}
+        >
           <Sparkles strokeWidth={2} />
           Draft a rule
         </Button>

@@ -209,6 +209,11 @@ export function CanvasPage() {
   const flashTimer = React.useRef<number | null>(null);
 
   // ── 会话 / chat 状态 ──
+  // 会话列表用本地 state(种子 + boot 会话 + 「New agent」新建的会话),让切换器/侧栏读同一份可增长列表。
+  const [sessions, setSessions] = React.useState<{ id: string; name: string }[]>(() => {
+    const base = CV_SESSIONS.map((s) => ({ id: s.id, name: s.name }));
+    return bootSeed ? [{ id: bootSessionId, name: "New canvas" }, ...base] : base;
+  });
   const [sessionId, setSessionId] = React.useState<string>(bootSeed ? bootSessionId : firstSession);
   const [sessionMenu, setSessionMenu] = React.useState(false);
   const [turns, setTurns] = React.useState<CvChatTurn[]>(bootTurns ?? CV_SESSION_SEEDS[firstSession].turns);
@@ -635,6 +640,17 @@ export function CanvasPage() {
     setCompareIds(null);
   };
 
+  // 「New agent」真建一个空会话(不是关菜单的死按钮):种子空 pool → 切过去 → 空白画布起新一轮。
+  const newAgent = () => {
+    const id = `ss-new-${nextUid()}`;
+    const n = sessions.filter((s) => s.name.startsWith("New agent")).length;
+    const name = n === 0 ? "New agent" : `New agent ${n + 1}`;
+    poolRef.current[id] = { objects: [], turns: [] };
+    setSessions((prev) => [...prev, { id, name }]);
+    setSessionMenu(false);
+    switchSession(id);
+  };
+
   /* ── 多选批量条动作(F1:全部接线,零死按钮) ── */
   const duplicateSelected = () => {
     const clones = selectedObjects.map((o) => {
@@ -790,7 +806,7 @@ export function CanvasPage() {
         <div className="min-h-0 flex-1 overflow-y-auto p-3">
           {sideTab === "chat" && (
             <div className="flex flex-col gap-1">
-              {CV_SESSIONS.map((s) => (
+              {sessions.map((s) => (
                 <button
                   key={s.id}
                   type="button"
@@ -891,17 +907,17 @@ export function CanvasPage() {
             aria-expanded={sessionMenu}
             className="flex min-w-0 items-center gap-1 rounded-[10px] px-2 py-1 text-sm font-semibold text-foreground hover:bg-accent"
           >
-            <span className="truncate">{CV_SESSIONS.find((s) => s.id === sessionId)?.name ?? "New canvas"}</span>
+            <span className="truncate">{sessions.find((s) => s.id === sessionId)?.name ?? "New canvas"}</span>
             <ChevronDown className="size-4 shrink-0 text-muted-foreground" strokeWidth={2} />
           </button>
           <div className="flex-1" />
-          <Button variant="secondary" size="sm" className="h-8 px-3 text-xs" onClick={() => setSessionMenu(false)}>
+          <Button variant="secondary" size="sm" className="h-8 px-3 text-xs" onClick={newAgent}>
             <Plus className="size-3.5" strokeWidth={2.2} />
             New agent
           </Button>
           {sessionMenu && (
             <div className="absolute top-12 left-4 z-50 w-56 rounded-[14px] border border-border bg-popover p-1 shadow-[var(--shadow-lg)]">
-              {CV_SESSIONS.map((s) => (
+              {sessions.map((s) => (
                 <button
                   key={s.id}
                   type="button"
@@ -1096,7 +1112,7 @@ export function CanvasPage() {
         {/* 顶条:项目名 + 余额 + 进度胶囊 */}
         <div className="flex h-[52px] shrink-0 items-center gap-3 border-b border-border px-4">
           <span className="truncate text-sm font-semibold text-foreground">
-            Untitled project · {CV_SESSIONS.find((s) => s.id === sessionId)?.name ?? "New canvas"}
+            Untitled project · {sessions.find((s) => s.id === sessionId)?.name ?? "New canvas"}
           </span>
           {/* 'Auto-saved' 徽章接 store 事件流:有过动作即读作「刚保存」,tooltip 显示上一条 */}
           <Tooltip>

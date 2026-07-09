@@ -42,10 +42,13 @@ import {
 } from "@/components/northstar/assets/_data";
 import { EmptyState, MockNote, OttoNarrationBar, PageHeader } from "@/components/northstar/_shared";
 import type { NsProduct } from "@/components/northstar/_mock";
+import { useImmersive } from "@/components/northstar/immersive/_context";
+import { askOttoInline } from "@/components/northstar/immersive/_store";
 
 const FACT_TABS: MemoryTabKey[] = ["about", "look", "offers", "rules"];
 
 export default function Page() {
+  const immersive = useImmersive();
   const [demo, setDemo] = React.useState<DemoState>("normal");
   const [tab, setTab] = React.useState<MemoryTabKey>("about");
   const [facts, setFacts] = React.useState<MemoryFact[]>(MEMORY_FACTS);
@@ -75,6 +78,14 @@ export default function Page() {
       setAboutDot(true);
       dotTimer.current = window.setTimeout(() => setAboutDot(false), 4000);
     }
+    // 就地 Otto 统一(O-12):这轮研究进共享 dock/otto-chat 的同一根线程,不再是匿名小 AI;
+    // 顺手点亮上下文桥 + 展开 dock,让店主看见「同一个 Otto」刚做了这件事。
+    askOttoInline(
+      "Research my site and refresh brand memory.",
+      `Done — I read your site and added ${RESEARCHED_FACTS.length} facts to brand memory. Review them in the About, Offers and Rules tabs.`,
+      { view: "Brand memory" },
+    );
+    immersive?.openOtto();
   };
 
   const finishIngest = () => {

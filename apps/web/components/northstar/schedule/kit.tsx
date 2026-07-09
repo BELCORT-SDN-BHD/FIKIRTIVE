@@ -15,7 +15,7 @@
 import * as React from "react";
 import Link from "next/link";
 import { usePathname } from "next/navigation";
-import { Check, CircleAlert, Megaphone, ShieldCheck } from "lucide-react";
+import { Check, CircleAlert, Megaphone, Share2, ShieldCheck } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { useInsideImmersive } from "../immersive/_context";
 import { Badge } from "@/components/ui/badge";
@@ -426,11 +426,14 @@ export function PostRow({
   onApprove,
   showAttempts = false,
   landing = false,
+  shareHref,
 }: {
   post: SPost;
   onApprove?: (post: SPost) => void;
   showAttempts?: boolean;
   landing?: boolean;
+  /** 给它一个 URL 就在行尾挂一个「Share preview」入口(单帖外审链接页,带 ?post=id) */
+  shareHref?: string;
 }) {
   const reduced = useReducedMotion();
   const meta = PLATFORMS[post.platform];
@@ -483,6 +486,14 @@ export function PostRow({
         </span>
       )}
       <StatusBadge status={post.status} />
+      {shareHref && (
+        <Button variant="ghost" size="sm" asChild aria-label="Share preview">
+          <Link href={shareHref} title="Share a read-only preview for outside review">
+            <Share2 strokeWidth={2} />
+            <span className="hidden sm:inline">Share preview</span>
+          </Link>
+        </Button>
+      )}
       {post.status === "draft" && onApprove && (
         <Button variant="secondary" size="sm" onClick={() => onApprove(post)}>
           <Check strokeWidth={2} />

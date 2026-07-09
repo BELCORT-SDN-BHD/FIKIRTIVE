@@ -45,7 +45,7 @@ import {
   type SPost,
   type SStatus,
 } from "@/components/northstar/schedule/kit";
-import { recentEvents, useStore } from "@/components/northstar/immersive/_store";
+import { movePostDate, recentEvents, useStore } from "@/components/northstar/immersive/_store";
 
 /** 原型只开放 2026 年 7-8 月(mock 数据所在区间) */
 const MONTHS: { year: number; month: number }[] = [
@@ -80,15 +80,12 @@ export default function Page() {
   const [demo, setDemo] = React.useState<DemoState>("data");
   const [mode, setMode] = React.useState<"month" | "week">("month");
   const [monthIdx, setMonthIdx] = React.useState(0);
-  // 拖动改期 = 本地覆盖层(叠在共享 store 派生的排期之上;不 fork mock)
-  const [moved, setMoved] = React.useState<Record<string, string>>({});
   const [detail, setDetail] = React.useState<SPost | null>(null);
   const [dropTarget, setDropTarget] = React.useState<string | null>(null);
 
   const camp = campaignPosts();
-  const posts = [...livePosts(), ...camp.scheduled, ...camp.proposed].map((p) =>
-    moved[p.id] ? { ...p, date: moved[p.id] } : p,
-  );
+  // 拖动改期直接写回共享 store(movePostDate),故日期永远从 store 派生 —— 跨页/换视图持久。
+  const posts = [...livePosts(), ...camp.scheduled, ...camp.proposed];
   const landingId = recentEvents(20).find((e) => e.type === "post_scheduled")?.payload.id as string | undefined;
 
   const { year, month } = MONTHS[monthIdx];
@@ -109,7 +106,7 @@ export default function Page() {
   }, [posts.map((p) => `${p.id}@${p.date}`).join(",")]);
 
   const movePost = (id: string, date: string) => {
-    setMoved((prev) => ({ ...prev, [id]: date }));
+    movePostDate(id, date);
   };
 
   const dropHandlers = (date: string) => ({

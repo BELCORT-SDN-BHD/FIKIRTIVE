@@ -203,6 +203,8 @@ interface StoreState {
   conversationDrafts: Record<string, string>;
   /** 知识反向回路:人工存进知识库的新条目(知识库页 = 种子 KNOWLEDGE + 这些)。 */
   addedKnowledge: NsKnowledgeAddition[];
+  /** 已庆祝过的一次性开店里程碑 key(GM-02/03/05;克制:每个 key 只 toast 一次)。 */
+  seenMilestones: string[];
 }
 
 // 浅拷贝顶层数组做可变镜像:动作永不原地改 _mock 里的对象,只在本层 replace。
@@ -251,6 +253,7 @@ const state: StoreState = {
   commentThreads: {},
   conversationDrafts: {},
   addedKnowledge: [],
+  seenMilestones: [],
 };
 
 /* ── 订阅机制(version tick:每次 notify 递增,useSyncExternalStore 读它触发重渲染) ── */
@@ -350,6 +353,40 @@ export function schedulePost(post: NsScheduledPost) {
     });
   }
   notify();
+}
+
+/** 存草稿(composer「Save draft」):落进同一份 scheduledPosts,状态 draft(不入审批队列)。
+ * queue 分组「Drafts」读它;home「Up next」的 upNext() 也含 draft。真写库,非死按钮。 */
+export function saveDraft(post: NsScheduledPost) {
+  const draft: NsScheduledPost = { ...post, status: "draft" };
+  const idx = state.scheduledPosts.findIndex((p) => p.id === post.id);
+  state.scheduledPosts =
+    idx >= 0
+      ? state.scheduledPosts.map((p) => (p.id === post.id ? draft : p))
+      : [draft, ...state.scheduledPosts];
+  logEvent("post_scheduled", `Saved a draft for ${post.platform}`, { id: post.id, platform: post.platform, draft: true });
+  notify();
+}
+
+/** 日历拖动改期:把一条帖/一条 campaign 条目改到新日期,写回共享 store(跨页持久,
+ * 刷新前不丢)。只改日期,保留时间与状态 —— 拖 draft 不会变 scheduled。 */
+export function movePostDate(id: string, date: string) {
+  const sIdx = state.scheduledPosts.findIndex((p) => p.id === id);
+  if (sIdx >= 0) {
+    const platform = state.scheduledPosts[sIdx].platform;
+    state.scheduledPosts = state.scheduledPosts.map((p) =>
+      p.id === id ? { ...p, scheduledAt: `${date}T${p.scheduledAt.slice(11)}` } : p,
+    );
+    logEvent("post_scheduled", `Moved a ${platform} post to ${date}`, { id, date, moved: true });
+    notify();
+    return;
+  }
+  const cIdx = state.campaignEntries.findIndex((e) => e.id === id);
+  if (cIdx >= 0) {
+    state.campaignEntries = state.campaignEntries.map((e) => (e.id === id ? { ...e, date } : e));
+    logEvent("post_scheduled", `Moved a campaign post to ${date}`, { id, date, moved: true });
+    notify();
+  }
 }
 
 export function approveCampaignEntry(id: string) {
@@ -878,6 +915,30 @@ export function appendChatMessage(threadId: string, message: NsChatMessage) {
   notify();
 }
 
+/** 就地 AI 触点统一入口(O-12 / 宪法 7):任意区的就地「问 Otto」按钮调它 —— 请求与回复
+ * 落进共享 dock/otto-chat 的同一根线程(chatThreads[0]),不再各页开匿名小 AI。
+ * 传 context 顺带点亮上下文桥。组件随后调 openOtto() 把 dock 展开给店主看见这轮对话。 */
+export function askOttoInline(prompt: string, reply: string, context?: NsOttoContext) {
+  if (context) state.ottoContext = context;
+  const thread = state.chatThreads[0];
+  if (thread) {
+    const now = Date.now();
+    state.chatThreads = state.chatThreads.map((t) =>
+      t.id === thread.id
+        ? {
+            ...t,
+            messages: [
+              ...t.messages,
+              { id: `u-${now}`, role: "user" as const, text: prompt },
+              { id: `o-${now + 1}`, role: "otto" as const, text: reply },
+            ],
+          }
+        : t,
+    );
+  }
+  notify();
+}
+
 /** Campaign 工作台交出的草稿(workbench 提交时写,proposal-card 读它真实呈现目标/日期/预算)。 */
 export function setCampaignDraft(draft: NsCampaignDraft) {
   state.campaignDraft = draft;
@@ -894,6 +955,18 @@ export function setOttoContext(ctx: NsOttoContext | null) {
 export function setOttoBehavior(patch: Partial<NsOttoBehavior>) {
   state.ottoBehavior = { ...state.ottoBehavior, ...patch };
   notify();
+}
+
+/** 开店里程碑(GM-02/03/05):标记一个一次性里程碑已庆祝过(幂等;克制:每 key 只 toast 一次)。 */
+export function markMilestone(key: string) {
+  if (state.seenMilestones.includes(key)) return;
+  state.seenMilestones = [...state.seenMilestones, key];
+  notify();
+}
+
+/** 该里程碑是否已庆祝过(home 里程碑 toast 的一次性守卫;跨路由存活,重挂载不重放)。 */
+export function hasMilestone(key: string): boolean {
+  return state.seenMilestones.includes(key);
 }
 
 /** 新开一个空 thread,返回它的 id(dock / otto-chat 的「New chat」共用)。 */

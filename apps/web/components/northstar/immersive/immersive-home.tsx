@@ -10,7 +10,8 @@
 
 import * as React from "react";
 import Link from "next/link";
-import { ArrowRight, CalendarDays, Compass, Frame, Sparkles, TrendingUp } from "lucide-react";
+import { ArrowRight, CalendarDays, Check, Compass, Frame, PartyPopper, Sparkles, Store, TrendingUp } from "lucide-react";
+import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { OttoAvatar } from "@/components/otto/OttoAvatar";
@@ -22,7 +23,18 @@ import {
   NS_CAMPAIGN,
 } from "@/components/northstar/_mock";
 import { useImmersive } from "./_context";
-import { balance, pendingApprovals, upNext, useStore } from "./_store";
+import {
+  balance,
+  campaignEntries,
+  connections,
+  hasMilestone,
+  markMilestone,
+  pendingApprovals,
+  recentEvents,
+  scheduledPosts,
+  upNext,
+  useStore,
+} from "./_store";
 
 const BASE = "/northstar-immersive";
 
@@ -40,9 +52,87 @@ const QUICK_STARTS = [
   { label: "Find inspiration", desc: "Templates and trending ideas", icon: Compass, href: `${BASE}/assets/discover` },
 ] as const;
 
+/** 开店完成度进度卡(GM-02/03/05):读共享 store 的真实开店状态,不写死。
+ * 三步各链一个真实流程;全部完成时收成一行「Storefront ready」的克制态。 */
+function StorefrontProgress() {
+  const channelDone = connections().some((c) => c.status === "connected");
+  const postDone = scheduledPosts().some((p) => p.status === "scheduled" || p.status === "published");
+  const campaignDone = campaignEntries().some(
+    (e) => e.status === "approved" || e.status === "scheduled" || e.status === "published",
+  );
+  const steps = [
+    { key: "channel", done: channelDone, label: "Connect a channel", href: `${BASE}/account/connections` },
+    { key: "post", done: postDone, label: "Schedule your first post", href: `${BASE}/schedule/composer` },
+    { key: "campaign", done: campaignDone, label: "Launch your first campaign", href: `${BASE}/campaign/proposal-card` },
+  ];
+  const done = steps.filter((s) => s.done).length;
+  const allDone = done === steps.length;
+
+  if (allDone) {
+    return (
+      <div className="mt-5 flex items-center gap-2.5 rounded-[14px] border border-border bg-card px-4 py-3">
+        <span className="flex size-7 shrink-0 items-center justify-center rounded-full bg-success-soft">
+          <Store className="size-[15px] text-success-soft-foreground" strokeWidth={2} />
+        </span>
+        <span className="text-[13px] font-medium text-foreground">Storefront ready · all set up</span>
+        <span className="ml-auto font-mono text-[11px] text-muted-foreground tabular-nums">3/3</span>
+      </div>
+    );
+  }
+
+  return (
+    <section className="mt-5 rounded-[14px] border border-border bg-card p-4">
+      <div className="flex items-center gap-2">
+        <Store className="size-4 text-foreground" strokeWidth={2} />
+        <h2 className="text-sm font-semibold text-foreground">Finish setting up your storefront</h2>
+        <span className="ml-auto font-mono text-[11px] text-muted-foreground tabular-nums">{done}/{steps.length}</span>
+      </div>
+      <div className="mt-3 h-1.5 w-full overflow-hidden rounded-full bg-muted">
+        <div
+          className="h-full rounded-full bg-brand transition-[width] duration-500"
+          style={{ width: `${(done / steps.length) * 100}%` }}
+        />
+      </div>
+      <div className="mt-3 flex flex-col gap-1">
+        {steps.map((s) => (
+          <Link
+            key={s.key}
+            href={s.href}
+            className="flex items-center gap-2.5 rounded-[10px] px-2 py-1.5 transition-colors duration-[120ms] hover:bg-accent"
+          >
+            <span
+              className={`flex size-5 shrink-0 items-center justify-center rounded-full border ${
+                s.done ? "border-transparent bg-success-soft" : "border-border"
+              }`}
+            >
+              {s.done && <Check className="size-3 text-success-soft-foreground" strokeWidth={2.5} />}
+            </span>
+            <span className={`text-[13px] ${s.done ? "text-muted-foreground line-through" : "font-medium text-foreground"}`}>
+              {s.label}
+            </span>
+            {!s.done && <ArrowRight className="ml-auto size-3.5 text-muted-foreground" strokeWidth={2} />}
+          </Link>
+        ))}
+      </div>
+    </section>
+  );
+}
+
 export function ImmersiveHome() {
   const immersive = useImmersive();
   useStore(); // 订阅共享 store:排期 / 审批变化即时反映到本屏
+
+  // GM 里程碑(GM-05):店主本会话第一次批准 campaign 帖 → 一次性庆祝 toast(克制,跨页只放一次)。
+  const campaignLaunched = recentEvents(50).some((e) => e.type === "campaign_entry_approved");
+  React.useEffect(() => {
+    if (campaignLaunched && !hasMilestone("first-campaign")) {
+      markMilestone("first-campaign");
+      toast("Your first campaign is live", {
+        icon: <PartyPopper className="size-4 text-brand" strokeWidth={2} />,
+        description: "Otto will keep the posts moving. You can watch it in the campaign calendar.",
+      });
+    }
+  }, [campaignLaunched]);
   const recent = NS_ASSETS.filter((a) => a.status === "ready").slice(0, 4);
   // Up next 读 store 的排期(scheduled + draft),不再直接读 _mock 静态数组。
   const queued = upNext();
@@ -94,6 +184,9 @@ export function ImmersiveHome() {
           <StatCard label="Credit balance" value={balance().toLocaleString("en-MY")} delta={{ dir: "flat", text: "MYR wallet" }} />
         </Link>
       </div>
+
+      {/* 开店完成度(GM-02/03/05):读真实开店状态,每步链一个真流程 */}
+      <StorefrontProgress />
 
       {/* Quick starts */}
       <h2 className="mt-8 text-sm font-semibold text-foreground">Start something</h2>

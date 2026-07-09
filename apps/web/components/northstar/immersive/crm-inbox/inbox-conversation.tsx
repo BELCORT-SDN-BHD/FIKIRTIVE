@@ -36,6 +36,7 @@ import {
 import { matchKnowledge } from "./data";
 import {
   useStore,
+  askOttoInline,
   conversationByIdView,
   contactByIdView,
   conversationsView,
@@ -270,6 +271,17 @@ export function InboxConversation() {
                   setDraft(source.answer);
                   setAdopted(source.answer);
                   sweep.fire();
+                  // 就地 Otto 统一(O-12):这条建议进共享 dock/otto-chat 同一线程 + 点亮上下文桥,
+                  // 不再是每个对话各开一个匿名小 AI。
+                  askOttoInline(
+                    `Draft a reply to ${contact?.name ?? "this customer"} in the inbox.`,
+                    source.answer,
+                    {
+                      view: "Inbox",
+                      selectedId: conversation.id,
+                      selectedLabel: contact?.name ? `Chat with ${contact.name}` : "Inbox thread",
+                    },
+                  );
                 }}
               >
                 Use this draft

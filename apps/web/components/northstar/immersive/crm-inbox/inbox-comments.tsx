@@ -15,7 +15,7 @@ import { Button } from "@/components/ui/button";
 import { PageHeader, StatCard } from "@/components/northstar/_shared";
 import { CRM_INBOX_BASE as BASE, InboxNav, Card, fmtStamp, useSweep } from "./kit";
 import { COMMENTS, type NsComment } from "./data";
-import { useStore, ensureContactFromComment, startDmFromComment, commentThreadFor } from "../_store";
+import { useStore, askOttoInline, ensureContactFromComment, startDmFromComment, commentThreadFor } from "../_store";
 
 function CommentRow({ comment }: { comment: NsComment }) {
   const sweep = useSweep();
@@ -64,6 +64,13 @@ function CommentRow({ comment }: { comment: NsComment }) {
               "instagram",
               comment.at.slice(0, 10),
               `Came in from a comment on “${comment.postCaption}”`,
+            );
+            // 就地 Otto 统一(O-12):Otto 对这条评论的建议进共享 dock/otto-chat 同一线程,
+            // 不再是评论页各自的匿名小 AI。
+            askOttoInline(
+              `Draft a reply to @${comment.author}'s comment on “${comment.postCaption}”.`,
+              comment.suggested,
+              { view: "Comments", selectedLabel: `@${comment.author}` },
             );
           }}
         >
