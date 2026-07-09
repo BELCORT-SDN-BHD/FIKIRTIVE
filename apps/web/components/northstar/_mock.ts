@@ -245,6 +245,14 @@ export const NS_SCHEDULED_POSTS: NsScheduledPost[] = [
   { id: "post-d05", scheduledAt: "2026-07-24T09:00:00+08:00", platform: "instagram", caption: "Behind the croffle: 48 layers, one waffle iron.", media: nsImage("storefront", 12), status: "draft", campaignId: "camp-croffle-01", altText: "Croffle dough layers" },
   // ── 失败(防双发/断链自愈样例) ───────────────────────────────────────────────
   { id: "post-f01", scheduledAt: "2026-07-07T15:00:00+08:00", platform: "facebook", caption: "Flash sale: last kopi-O tiramisu cups, 30% off till 5pm.", media: nsImage("bakery", 10), status: "failed", failReason: "Facebook token expired — reconnect to retry", campaignId: "camp-office-01", altText: "Tiramisu cups flash sale" },
+  // ── Raya open house 礼盒(camp-raya-01,DONE:已发历史帖,Feb–Mar 2026) ──────────
+  //    该战役已完结(售罄早 3 天、312 盒),日历 tab 读这些 published 帖,非空状态。
+  { id: "post-r01", scheduledAt: "2026-02-24T09:00:00+08:00", platform: "instagram", caption: "Raya pre-orders open — our open house cookie boxes, early-bird pricing till Mar 1.", media: nsImage("campaign", 3), status: "published", campaignId: "camp-raya-01", altText: "Raya open house cookie gift box" },
+  { id: "post-r02", scheduledAt: "2026-02-27T12:00:00+08:00", platform: "facebook", caption: "Corporate Raya hampers for the office — bulk orders close Mar 10.", media: nsImage("bakery", 24), status: "published", campaignId: "camp-raya-01", altText: "Raya hamper for corporate gifting" },
+  { id: "post-r03", scheduledAt: "2026-03-02T18:00:00+08:00", platform: "instagram", caption: "The lid reveal everyone waits for. Raya open house box, packed by hand.", media: nsImage("campaign", 3), status: "published", campaignId: "camp-raya-01", altText: "Hands opening a Raya cookie gift box" },
+  { id: "post-r04", scheduledAt: "2026-03-06T09:00:00+08:00", platform: "instagram", caption: "Eight kuih raya favourites, one box. Made for the open house table.", media: nsImage("bakery", 20), status: "published", campaignId: "camp-raya-01", altText: "Flat lay of assorted raya cookies" },
+  { id: "post-r05", scheduledAt: "2026-03-12T12:00:00+08:00", platform: "facebook", caption: "Last call — Raya boxes close this Friday. A few slots left.", media: nsImage("bakery", 24), status: "published", campaignId: "camp-raya-01", altText: "Raya cookie box last-call card" },
+  { id: "post-r06", scheduledAt: "2026-03-17T17:00:00+08:00", platform: "instagram", caption: "Sold out 3 days early. Terima kasih — 312 boxes off to your open houses.", media: nsImage("bakery", 25), status: "published", campaignId: "camp-raya-01", altText: "Stacked raya gift boxes ready to ship" },
 ];
 
 // ── 联系人 ──────────────────────────────────────────────────────────────────
@@ -633,6 +641,8 @@ export interface NsCampaignPhase {
 /** DONE campaign 的效果回流(详情页「结果」tab + 喂下一次提案的 learnings)。 */
 export interface NsCampaignResult {
   headline: string;
+  /** 归因订单额(MYR;ROI 一行结论从此派生,不再硬编码字面量) */
+  attributedRevenueMyr: number;
   kpis: { label: string; value: string; delta?: string }[];
   learnings: string[];
 }
@@ -708,6 +718,7 @@ export const NS_CAMPAIGNS: NsCampaignSummary[] = [
     ],
     result: {
       headline: "Sold out 3 days early — 312 boxes, RM21,216 in orders",
+      attributedRevenueMyr: 21216,
       kpis: [
         { label: "Boxes sold", value: "312", delta: "104% of goal" },
         { label: "Order value", value: "RM21,216" },
@@ -799,7 +810,7 @@ export const NS_TRENDS: NsTrendSnapshot[] = [
     stat: { label: "Format", value: "Croffle + matcha" },
   },
   {
-    id: "ts-04", capturedAt: "2026-06-14", via: "Quick search", campaignId: "camp-office-01",
+    id: "ts-04", capturedAt: "2026-06-14", via: "Quick search",
     title: "Weekday pre-order posts convert best 9–10am",
     summary: "For KL office-area food businesses, pre-order CTA posts published between 9 and 10am on weekdays drive the most same-day orders. Weekend mornings favour lifestyle content over direct offers.",
     sources: [

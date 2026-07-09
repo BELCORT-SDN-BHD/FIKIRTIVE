@@ -2,11 +2,12 @@
 
 /**
  * 打包确认页(大单确认)—— Otto 花大钱前复述理解 + 报价,一次点头。
- * review 逐条(可剔除,server 重算)→ spend 按钮带准确价「Confirm pack · N credits」(唯一 statement 级
- * brand 按钮)→ running 逐条过 generate 闸(一条失败自动退该条 + Retry,其余不累)→ 成片 schedulePosts
+ * review 逐条(可剔除,server 重算)→ spend 按钮带准确价「Confirm pack · N credits」(§F10 花钱守
+ * INK,非 coral)→ running 逐条过 generate 闸(一条失败自动退该条 + Retry,其余不累)→ 成片 schedulePosts
  * 只建草稿 → schedule/plan。§FB6 blocking money 确认。
  *
- * 铁律:纯 client、零后台 import;§V5 spend 面只显示 credits;coral 预算:brand 按钮 = 本页唯一 statement。
+ * 铁律:纯 client、零后台 import;§V5 spend 面只显示 credits;coral 预算:花钱按钮 INK(§F10),
+ * 页面 coral 只在 running 的 Otto live activity(narration pill + GenBar),settle 后归零。
  */
 
 import * as React from "react";
@@ -212,10 +213,10 @@ export function CampaignPackConfirm() {
               {phase === "review" && (
                 <>
                   <Button asChild variant="secondary" size="sm"><Link href={`${BASE}/campaign/calendar`}>Cancel</Link></Button>
-                  <Button variant="brand" size="sm" onClick={confirmPack} disabled={included.length === 0}>Confirm pack · {total} credits</Button>
+                  <Button size="sm" onClick={confirmPack} disabled={included.length === 0}>Confirm pack · {total} credits</Button>
                 </>
               )}
-              {busy && <Button variant="brand" size="sm" disabled>{phase === "confirming" ? "Confirming…" : `Generating… ${doneCount}/${included.length}`}</Button>}
+              {busy && <Button size="sm" disabled>{phase === "confirming" ? "Confirming…" : `Generating… ${doneCount}/${included.length}`}</Button>}
               {phase === "settled" && !complete && failedItems.length > 0 && (
                 <p className="text-[13px] text-muted-foreground">{doneCount} of {included.length} done. Retry the failed item above, or leave it out.</p>
               )}

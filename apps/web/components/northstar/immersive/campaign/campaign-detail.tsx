@@ -102,7 +102,7 @@ function OverviewTab({ c }: { c: NsCampaignSummary }) {
   const posts = postsForCampaign(c.id);
   const assets = assetsForCampaign(c.id);
   const pct = c.goalProgress.target > 0 ? Math.round((c.goalProgress.current / c.goalProgress.target) * 100) : 0;
-  const roi = c.result ? roiLine(c.spentCredits, 21216) : null;
+  const roi = c.result ? roiLine(c.spentCredits, c.result.attributedRevenueMyr) : null;
   return (
     <div className="space-y-4">
       <div className="grid grid-cols-2 gap-3 lg:grid-cols-4">

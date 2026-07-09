@@ -1580,10 +1580,12 @@ export function studioLogGen(text: string, label: string) {
 export function proposeCampaign(draft: NsCampaignDraft): void {
   state.campaignDraft = draft;
   const platforms = draft.platforms.length;
+  // 新草稿尚未成为任何 canonical campaign,故不打 campaignId(避免误标为 Merdeka):
+  // 这两条只落全局单流(dock/otto),不进任何 campaign 详情「对话」过滤视图。
   appendToStream({
     role: "owner",
     text: `Plan a campaign — ${draft.goal}`,
-    context: { zone: "Campaign", label: "New campaign", campaignId: "camp-merdeka-01" },
+    context: { zone: "Campaign", label: "New campaign" },
   });
   appendToStream({
     role: "otto",
@@ -1591,7 +1593,6 @@ export function proposeCampaign(draft: NsCampaignDraft): void {
     context: {
       zone: "Campaign",
       label: "New campaign",
-      campaignId: "camp-merdeka-01",
       href: "/northstar-immersive/campaign/proposal-card",
     },
   });

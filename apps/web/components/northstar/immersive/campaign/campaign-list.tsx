@@ -65,7 +65,7 @@ function CampaignCard({
   onToggle: () => void;
 }) {
   const { content, posts } = counts(c);
-  const roi = c.result ? roiLine(c.spentCredits, 21216) : null; // DONE:用 result 的真实订单额
+  const roi = c.result ? roiLine(c.spentCredits, c.result.attributedRevenueMyr) : null; // DONE:归因订单额从 result 派生
   const headroom = campaignHeadroom(c);
   const inner = (
     <>
@@ -175,7 +175,7 @@ function CompareTable({ ids }: { ids: string[] }) {
               c.goalProgress.target > 0
                 ? Math.round((c.goalProgress.current / c.goalProgress.target) * 100)
                 : 0;
-            const roi = c.result ? roiLine(c.spentCredits, 21216).text : "—";
+            const roi = c.result ? roiLine(c.spentCredits, c.result.attributedRevenueMyr).text : "—";
             return (
               <tr key={c.id} className="border-b border-border last:border-0">
                 <td className="px-4 py-3 font-semibold text-foreground">{c.name}</td>
