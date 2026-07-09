@@ -235,6 +235,8 @@ export async function buildOttoContext({
   ]);
   return {
     orgId: ownerId,
+    // userId is the owner/tenant scope (= orgId), not a distinct verified per-user id — no per-user
+    // token is threaded here. See OttoContext.userId doc. Do not treat as an individual-member id.
     userId: ownerId,
     projectId,
     threadId,

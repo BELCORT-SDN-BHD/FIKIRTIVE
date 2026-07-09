@@ -50,6 +50,8 @@ export async function resumeOttoAfterGen(job: {
     // If Otto calls `generate`, it parks (needsApproval) — we persist the paused state.
     const ctx: OttoContext = {
       orgId: job.ownerId,
+      // Worker has no session — only job.ownerId. userId is the owner/tenant scope (= orgId),
+      // NOT a distinct verified per-user id. See OttoContext.userId doc.
       userId: job.ownerId,
       projectId: job.projectId,
       threadId: job.threadId,
