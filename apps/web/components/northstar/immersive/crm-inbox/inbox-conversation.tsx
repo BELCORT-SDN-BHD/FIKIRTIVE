@@ -19,7 +19,7 @@
 import * as React from "react";
 import Link from "next/link";
 import { useSearchParams } from "next/navigation";
-import { AlertTriangle, ArrowLeft, BookOpen, Check, CreditCard, Languages, Moon, ShieldAlert, ShoppingBag, Send, Sparkles, StickyNote, User, Users, Wand2, Zap } from "lucide-react";
+import { ArrowLeft, BookOpen, Check, CreditCard, Languages, Moon, ShieldAlert, ShoppingBag, Send, Sparkles, StickyNote, User, Users, Wand2, Zap } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -41,11 +41,14 @@ import {
   CATALOG_CARDS,
   TONES,
   applyTone,
-  draftReplyFor,
-  translateDraft,
+  composeReply,
+  composeQuote,
+  composeConfirm,
+  composeNudge,
   detectLanguage,
   escalationSignal,
   type NsTone,
+  type NsBilingualDraft,
 } from "./lifecycle-data";
 import {
   useStore,
@@ -55,7 +58,6 @@ import {
   conversationsView,
   isAiPaused,
   isResolved,
-  resolveConversation,
   sendConversationMessage,
   setConversationAi,
   businessHoursView,
@@ -75,8 +77,9 @@ import {
   setSatisfaction,
   sendCatalogCard,
   sendPayLink,
-  sendAbandonedNudge,
   isMaskPhone,
+  type NsAssistIntent,
+  type NsAssistApply,
 } from "../_store";
 
 /** 号码遮罩(防飞单):保留前 3 位与后 2 位,中间打点。 */
@@ -150,6 +153,13 @@ export function InboxConversation() {
   const [showNotes, setShowNotes] = React.useState(false);
   const [noteDraft, setNoteDraft] = React.useState("");
   const [tone, setTone] = React.useState<NsTone>("casual");
+  // [wave-c · Z6] Otto 草稿的双语孪生(翻译在 en/bm 间真切换,不假造);showLang = 当前显示
+  const [pair, setPair] = React.useState<{ en: string; bm: string } | null>(null);
+  const [showLang, setShowLang] = React.useState<"en" | "bm">("en");
+  // [wave-c · Z6] #55 收款前金额一眼可核对 · #56 提醒前原文一眼可核对(money-law:真发前可核对)
+  const [payOpen, setPayOpen] = React.useState(false);
+  const [payAmount, setPayAmount] = React.useState("");
+  const [nudgeOpen, setNudgeOpen] = React.useState(false);
 
   // Comment-to-DM 生成的草稿:首次进这条对话时 seed 到输入框一次
   const seededFor = React.useRef<string>("");
@@ -183,8 +193,12 @@ export function InboxConversation() {
 
   const lastMsg = conversation.messages[conversation.messages.length - 1];
   const awaitingReply = lastMsg?.from === "customer";
-  // O-06:建议回复的依据 —— 从最近一条客户消息匹配知识库(命中才建议)
+  // O-06:建议回复的依据 —— 从最近一条客户消息匹配知识库(命中挂可点「依据」chip)
   const source = awaitingReply ? matchKnowledge(lastMsg.text) : undefined;
+  // [wave-c · Z6] 可直发级草稿:带客户名 + 这条对话的具体上下文(数量/价格/日期),
+  // 缺知识时问尖锐的澄清问题而不是「我查查」。answer/confirm/clarify 三型。
+  const reply = awaitingReply ? composeReply(conversation, contact?.name) : null;
+  const firstName = contact?.name?.replace(/^@/, "").split(" ")[0] ?? "customer";
 
   // [wave-b] 连续轮次/置信度双闸 + 三类人在环升级信号(护栏落地:AI 不硬撑)
   const escalation = escalationSignal(conversation);
@@ -217,18 +231,52 @@ export function InboxConversation() {
       setSavedId(null);
     }
     setAdopted(null);
+    setPair(null);
   }
 
-  // §O7 Otto 帮我(composer):意图产出回填输入框(只填草稿,发送仍要坐席亲手点)。
-  // 记为 adopted → 坐席改写后发送会触发「存进知识库?」回路,与 Write 按钮同源。
-  const onComposerApply = (apply: { patch: Record<string, unknown> }) => {
-    const next = apply.patch.draft;
-    if (typeof next === "string") {
-      setDraft(next);
-      setAdopted(next);
-      composerSweep.fire();
-    }
+  // [wave-c · Z6] 把一条 Otto 双语草稿落进输入框(记住孪生,供翻译切换)+ coral sweep 收尾。
+  function applyDraft(d: NsBilingualDraft) {
+    setDraft(d.en);
+    setPair({ en: d.en, bm: d.bm });
+    setShowLang("en");
+    setAdopted(d.en);
+    sweep.fire();
+  }
+
+  // §O7 OttoAssist(composer)Apply 回填:把意图产出的双语草稿落进输入框(只填草稿,发送仍要
+  // 坐席亲手点)。记为 adopted → 坐席改写后发送触发「存进知识库?」回路;带 bm 时也记孪生供翻译。
+  const onComposerApply = (apply: NsAssistApply) => {
+    const en = apply.patch.draft;
+    const bm = apply.patch.bm;
+    if (typeof en !== "string") return;
+    setDraft(en);
+    setAdopted(en);
+    if (typeof bm === "string") { setPair({ en, bm }); setShowLang("en"); }
+    else setPair(null);
+    composerSweep.fire();
   };
+
+  // [wave-c · Z6] 翻译按钮:在草稿的 en/bm 孪生间真切换(只有 Otto 草稿有孪生,自由文本禁用)。
+  const canTranslate = !!pair && draft === pair[showLang];
+  function toggleTranslate() {
+    if (!pair) return;
+    const next: "en" | "bm" = showLang === "en" ? "bm" : "en";
+    setShowLang(next);
+    setDraft(pair[next]);
+    setAdopted(pair[next]); // 翻译成孪生仍是 Otto 草稿,不算人工改写
+    sweep.fire();
+  }
+
+  // [wave-c · Z6] OttoAssist 意图 chip 的产出 = 我的内容引擎双语草稿(带客户上下文;patch 带 bm 供翻译)。
+  const draftReply = composeReply(conversation, contact?.name);
+  const quoteDraft = composeQuote(contact?.name);
+  const confirmDraft = composeConfirm(conversation, contact?.name);
+  const looksOrder = awaitingReply && /confirm|order|book|same as|\b\d{1,3}\b|platter|box|cake/i.test(lastMsg?.text ?? "");
+  const ottoIntents: NsAssistIntent[] = [
+    { id: "reply", label: "Write a reply", prompt: `Draft a reply to ${firstName} in the inbox.`, reply: "Here's a reply you can send as-is or tweak — I kept it specific to their message:", apply: { summary: "Put Otto's draft in your reply box", patch: { draft: draftReply.en, bm: draftReply.bm } } },
+    { id: "quote", label: "Quote a price", prompt: `Draft a price reply for ${firstName}.`, reply: "Here are your real prices, ready to send:", apply: { summary: "Fill the reply box with a price quote", patch: { draft: quoteDraft.en, bm: quoteDraft.bm } } },
+    ...(looksOrder ? [{ id: "confirm", label: "Confirm the order", prompt: `Draft an order confirmation for ${firstName}.`, reply: "Here's an order confirmation to send:", apply: { summary: "Fill the reply box with an order confirmation", patch: { draft: confirmDraft.en, bm: confirmDraft.bm } } }] : []),
+  ].slice(0, 3);
 
   return (
     <div className="mx-auto flex min-h-full w-full max-w-[760px] flex-col px-6 pt-6 pb-16">
@@ -426,60 +474,58 @@ export function InboxConversation() {
         <div ref={endRef} />
       </div>
 
-      {/* Otto 起草 + 采用(O-06:命中知识库才建议,并挂可点依据;未命中显示无把握) */}
-      {awaitingReply &&
-        (source ? (
-          <div className="mt-6 rounded-[16px] border border-border bg-card p-3" style={sweep.style}>
-            <div className="flex items-center gap-1.5 text-[11px] font-semibold text-muted-foreground">
-              <Sparkles className="size-3.5" strokeWidth={2} />
-              Otto suggests a reply
-            </div>
-            <p className="mt-1.5 text-sm leading-5 text-foreground">{source.answer}</p>
-            {/* 依据 chip:点开知识库对应那一条(O-06 溯源可点验证) */}
+      {/* [wave-c · Z6] Otto 可直发级草稿(带客户上下文;clarify=问尖锐问题而非硬答)。
+          O-06:命中知识库时挂可点「依据」chip。coral = Otto 的声音(§2)。
+          护栏:客户不高兴 / 问 Otto 无权答应的价格(sentiment/authority 升级)时不越俎起草,整块交人。 */}
+      {awaitingReply && reply && !(escalation.tripped && (escalation.kind === "sentiment" || escalation.kind === "authority")) && (
+        <div className="mt-6 rounded-[16px] border border-border bg-card p-3" style={sweep.style}>
+          <div className="flex items-center gap-1.5 text-[11px] font-semibold text-brand-soft-foreground">
+            <Sparkles className="size-3.5 text-brand" strokeWidth={2} />
+            {reply.kind === "confirm"
+              ? "Otto drafted a confirmation"
+              : reply.kind === "clarify"
+                ? "Otto drafted a reply — it asks for the details it needs"
+                : "Otto suggests a reply"}
+          </div>
+          <p className="mt-1.5 whitespace-pre-line text-sm leading-5 text-foreground">{reply.en}</p>
+          {/* 依据 chip:命中知识库那一条(O-06 溯源可点);未命中不假造依据 */}
+          {source ? (
             <Link
               href={`${BASE}/inbox/knowledge?highlight=${source.id}`}
-              className="mt-2 inline-flex items-center gap-1.5 rounded-full border border-border bg-secondary/60 px-2.5 py-1 text-[11px] font-semibold text-muted-foreground transition-colors hover:bg-accent hover:text-foreground"
+              className="ns-pressable mt-2 inline-flex items-center gap-1.5 rounded-full border border-border bg-card px-2.5 py-1 text-[11px] font-semibold text-muted-foreground transition-colors hover:text-foreground"
             >
               <BookOpen className="size-3" strokeWidth={2} />
               Based on “{source.question}”
             </Link>
-            <div className="mt-2.5">
-              <Button
-                variant="secondary"
-                size="sm"
-                onClick={() => {
-                  setDraft(source.answer);
-                  setAdopted(source.answer);
-                  sweep.fire();
-                  // 就地 Otto 统一(O-12):这条建议进共享 dock/otto-chat 同一线程 + 点亮上下文桥,
-                  // 不再是每个对话各开一个匿名小 AI。
-                  askOttoInline(
-                    `Draft a reply to ${contact?.name ?? "this customer"} in the inbox.`,
-                    source.answer,
-                    {
-                      view: "Inbox",
-                      selectedId: conversation.id,
-                      selectedLabel: contact?.name ? `Chat with ${contact.name}` : "Inbox thread",
-                    },
-                  );
-                }}
-              >
-                Use this draft
-              </Button>
-            </div>
+          ) : reply.kind === "clarify" ? (
+            <p className="mt-2 text-[11px] leading-4 text-muted-foreground">
+              Nothing in your Knowledge covers this yet, so Otto asks instead of guessing — send this, or teach Otto the answer after.
+            </p>
+          ) : null}
+          <div className="mt-2.5">
+            <Button
+              variant="secondary"
+              size="sm"
+              className="ns-pressable"
+              onClick={() => {
+                applyDraft(reply);
+                // 就地 Otto 统一(O-12):进共享 dock/otto-chat 同一线程 + 点亮上下文桥。
+                askOttoInline(
+                  `Draft a reply to ${contact?.name ?? "this customer"} in the inbox.`,
+                  reply.en,
+                  {
+                    view: "Inbox",
+                    selectedId: conversation.id,
+                    selectedLabel: contact?.name ? `Chat with ${contact.name}` : "Inbox thread",
+                  },
+                );
+              }}
+            >
+              Use this draft
+            </Button>
           </div>
-        ) : (
-          <div className="mt-6 flex items-start gap-2.5 rounded-[16px] border border-border bg-secondary/40 p-3.5">
-            <AlertTriangle className="mt-0.5 size-4 shrink-0 text-muted-foreground" strokeWidth={2} />
-            <div className="min-w-0">
-              <p className="text-sm font-semibold text-foreground">Otto isn’t sure about this one</p>
-              <p className="mt-0.5 text-xs leading-4 text-muted-foreground">
-                Nothing in your Knowledge matches this question, so Otto won’t guess. Best to reply in your own words —
-                you can teach Otto the answer afterwards.
-              </p>
-            </div>
-          </div>
-        ))}
+        </div>
+      )}
 
       {/* 知识反向回路:人工改写草稿 / 亲手答无依据问题后 → 存进知识库? */}
       {teach && !savedId && (
@@ -592,12 +638,68 @@ export function InboxConversation() {
         </div>
       )}
 
+      {/* [wave-c · Z6 · #55] 收款前一眼可核对金额(money-law:改成真实单价、看清楚再发) */}
+      {payOpen && (
+        <div className="mt-4 rounded-[16px] border border-border bg-card p-3.5">
+          <p className="text-sm font-semibold text-foreground">Send a payment request</p>
+          <p className="mt-0.5 text-xs leading-4 text-muted-foreground">
+            Check the amount before it goes to {firstName} — nothing is sent until you tap Send.
+          </p>
+          <div className="mt-2.5 flex items-center gap-2">
+            <span className="text-sm font-semibold text-muted-foreground">RM</span>
+            <Input
+              type="number"
+              inputMode="decimal"
+              min={0}
+              value={payAmount}
+              onChange={(e) => setPayAmount(e.target.value)}
+              className="h-10 max-w-[140px]"
+              aria-label="Payment amount in ringgit"
+            />
+            <div className="flex-1" />
+            <Button size="sm" variant="ghost" onClick={() => setPayOpen(false)}>Cancel</Button>
+            <Button
+              size="sm"
+              className="ns-human-fill ns-pressable"
+              disabled={!(Number(payAmount) > 0)}
+              onClick={() => { sendPayLink(conversation.id, Number(payAmount)); setPayOpen(false); }}
+            >
+              Send RM{Number(payAmount) > 0 ? Number(payAmount).toLocaleString("en-MY") : "…"}
+            </Button>
+          </div>
+        </div>
+      )}
+
+      {/* [wave-c · Z6 · #56] 提醒前一眼可核对原文(客户名 + 具体单;确认再发,防误发) */}
+      {nudgeOpen && (
+        <div className="mt-4 rounded-[16px] border border-border bg-card p-3.5">
+          <p className="text-sm font-semibold text-foreground">Send a follow-up nudge</p>
+          <p className="mt-0.5 text-xs leading-4 text-muted-foreground">Here’s exactly what {firstName} will get — nothing sends until you confirm.</p>
+          <div className="mt-2 rounded-[12px] bg-secondary/60 px-3 py-2 text-[13px] leading-[18px] text-foreground">
+            {composeNudge(conversation, contact?.name)}
+          </div>
+          <div className="mt-2.5 flex items-center gap-2">
+            <div className="flex-1" />
+            <Button size="sm" variant="ghost" onClick={() => setNudgeOpen(false)}>Cancel</Button>
+            <Button
+              size="sm"
+              variant="secondary"
+              className="ns-pressable"
+              onClick={() => { sendConversationMessage(conversation.id, composeNudge(conversation, contact?.name)); setNudgeOpen(false); }}
+            >
+              <Send strokeWidth={2} />
+              Send nudge
+            </Button>
+          </div>
+        </div>
+      )}
+
       {/* 输入框:Send 真发(append 到 store、清空、滚到底) */}
       <div className="mt-4 rounded-[16px] border border-border bg-card p-2" style={composerSweep.style}>
-        {/* [wave-b] 坐席辅助工具条:帮写 / 翻译 / 三档语气 / 话术 / 商品 / 收款 / 弃购提醒 */}
+        {/* [wave-c] 坐席辅助工具条:Otto 帮我(§O7 共享原语)/ 帮写 / 翻译 / 三档语气 / 话术 / 商品 / 收款 */}
         <div className="flex flex-wrap items-center gap-1 px-1 pb-2">
-          {/* [wave-c] §O7 Otto 帮我:醒目入口(旧 Write 只是个小魔杖,读不出「帮我写」)。
-              带上下文=这条对话+客户名,意图 chip 零打字起草,Apply 回填输入框。 */}
+          {/* §O7 Otto 帮我:全城共享 affordance(dock 带上下文自动展开 + 意图 chip 零打字起草)。
+              这条工具条上唯一的 coral mark(Otto 的声音);意图产出 = Z6 内容引擎的双语草稿。 */}
           <OttoAssist
             zone="Inbox"
             entityId={conversation.id}
@@ -605,68 +707,37 @@ export function InboxConversation() {
             formState={{ awaitingReply, lastCustomerMessage: awaitingReply ? lastMsg.text : undefined, detectedLang }}
             label="Ask Otto to write"
             className="ns-pressable bg-card"
-            intents={[
-              {
-                id: "reply-friendly",
-                label: "Write a friendly reply",
-                prompt: `Draft a friendly reply to ${contact?.name?.split(" ")[0] ?? "this customer"}.`,
-                reply: "Here's a warm reply you can send as-is or tweak:",
-                apply: {
-                  summary: "Fill the reply box with a friendly draft",
-                  patch: { draft: draftReplyFor(awaitingReply ? lastMsg.text : "") },
-                },
-              },
-              {
-                id: "reply-price",
-                label: "Quote a price",
-                prompt: "Draft a reply that quotes the price and asks how many they'd like.",
-                reply: "A price reply lands best with the number and a next step. Set the real item and price:",
-                apply: {
-                  summary: "Fill the reply box with a price quote",
-                  patch: { draft: `Thanks for asking! [Item] is RM[price] each. Let me know how many you'd like and I'll confirm your order.` },
-                },
-              },
-              {
-                id: "reply-confirm",
-                label: "Confirm the order",
-                prompt: "Draft a reply that confirms the order and pickup.",
-                reply: "Here's an order confirmation — fill in the item and pickup time:",
-                apply: {
-                  summary: "Fill the reply box with an order confirmation",
-                  patch: { draft: `Order confirmed! I've noted [items]. Ready by [time] — pay on pickup, or I can send a payment link, whichever's easier.` },
-                },
-              },
-            ]}
+            intents={ottoIntents}
             onApply={onComposerApply}
           />
           <div className="mx-1 h-4 w-px bg-border" />
-          <ToolbarButton icon={Wand2} label="Write" onClick={() => { const t = draftReplyFor(awaitingReply ? lastMsg.text : ""); setDraft(t); setAdopted(t); }} />
-          <ToolbarButton icon={Languages} label="Translate" onClick={() => setDraft((d) => translateDraft(d || (awaitingReply ? lastMsg.text : "")))} disabled={!draft.trim() && !awaitingReply} />
+          <ToolbarButton icon={Wand2} label="Write" onClick={() => { if (reply) applyDraft(reply); }} disabled={!reply} />
+          <ToolbarButton icon={Languages} label={showLang === "en" ? "Translate" : "Back to English"} onClick={toggleTranslate} disabled={!canTranslate} />
           <ToolbarButton icon={Zap} label="Snippets" onClick={() => setAssistOpen((v) => (v === "snippets" ? null : "snippets"))} />
           <ToolbarButton icon={ShoppingBag} label="Product" onClick={() => setAssistOpen((v) => (v === "catalog" ? null : "catalog"))} />
-          <ToolbarButton icon={CreditCard} label="Pay link" onClick={() => sendPayLink(conversation.id, contact?.predictedNextMyr ?? 50)} />
+          <ToolbarButton icon={CreditCard} label="Pay link" onClick={() => { setPayAmount(String(contact?.predictedNextMyr ?? 50)); setPayOpen((v) => !v); }} />
           <div className="mx-1 h-4 w-px bg-border" />
-          {/* 三档语气 */}
+          {/* 三档语气(真语域重写;选中态用蓝软片 = 人手的选择,§2 双声部) */}
           <div className="inline-flex items-center gap-0.5 rounded-[8px] border border-border p-0.5">
             {TONES.map((t) => (
               <button
                 key={t.id}
                 type="button"
-                onClick={() => { setTone(t.id); setDraft((d) => (d.trim() ? applyTone(d, t.id) : d)); }}
+                onClick={() => { setTone(t.id); setDraft((d) => (d.trim() ? applyTone(d, t.id, firstName) : d)); setPair(null); }}
                 aria-current={tone === t.id ? "true" : undefined}
-                className={"rounded-[6px] px-2 py-1 text-[11px] font-semibold transition-colors " + (tone === t.id ? "bg-secondary text-foreground" : "text-muted-foreground hover:bg-accent hover:text-foreground")}
+                className={"ns-pressable rounded-[6px] px-2 py-1 text-[11px] font-semibold transition-colors " + (tone === t.id ? "ns-human-soft" : "text-muted-foreground hover:bg-accent hover:text-foreground")}
               >
                 {t.label}
               </button>
             ))}
           </div>
           {detectedLang && (
-            <span className="ml-auto rounded-full border border-border bg-secondary/50 px-2 py-0.5 text-[11px] text-muted-foreground">Detected: {detectedLang}</span>
+            <span className="ml-auto rounded-full border border-border bg-card px-2 py-0.5 text-[11px] text-muted-foreground">Detected: {detectedLang}</span>
           )}
         </div>
         <Textarea
           value={draft}
-          onChange={(e) => setDraft(e.target.value)}
+          onChange={(e) => { setDraft(e.target.value); setPair(null); }}
           onKeyDown={(e) => {
             // [wave-c] #38 修零提示卡点:Cmd/Ctrl+↵ 与 Shift+↵(项目 §10 约定)都发送;
             // 裸 Enter 故意留作换行——客服回复框宁可不误发(安全 > 效率)。
@@ -675,12 +746,12 @@ export function InboxConversation() {
               send();
             }
           }}
-          placeholder={`Reply to ${contact?.name?.split(" ")[0] ?? "customer"}…`}
+          placeholder={`Reply to ${firstName}…`}
           className="min-h-[64px] resize-none border-0 bg-transparent shadow-none focus-visible:ring-0"
         />
         <div className="flex items-center gap-2 px-1 pb-1">
-          {/* [wave-b] 弃购挽回:一键温和提醒 */}
-          <Button size="sm" variant="ghost" onClick={() => sendAbandonedNudge(conversation.id, "your order")}>
+          {/* [wave-c · #56] 挽回提醒:先预览原文再发(不再一键误发写死的「your order」) */}
+          <Button size="sm" variant="ghost" className="ns-pressable" onClick={() => setNudgeOpen((v) => !v)}>
             Send a nudge
           </Button>
           <div className="flex-1" />
@@ -688,7 +759,8 @@ export function InboxConversation() {
           <span className="hidden text-[11px] text-muted-foreground sm:inline">
             Enter for a new line · ⌘↵ or Shift+↵ to send
           </span>
-          <Button size="sm" className="ns-pressable" disabled={!draft.trim()} onClick={send}>
+          {/* Send = 蓝实心(§2 双声部:人手主动作 = 蓝的声音) */}
+          <Button size="sm" className="ns-human-fill ns-pressable" disabled={!draft.trim()} onClick={send}>
             <Send strokeWidth={2} />
             Send
           </Button>
@@ -705,7 +777,7 @@ function ToolbarButton({ icon: Icon, label, onClick, disabled }: { icon: React.C
       type="button"
       onClick={onClick}
       disabled={disabled}
-      className="inline-flex items-center gap-1 rounded-[8px] px-2 py-1 text-[11px] font-semibold text-muted-foreground transition-colors hover:bg-accent hover:text-foreground disabled:opacity-40"
+      className="ns-pressable inline-flex items-center gap-1 rounded-[8px] border border-border bg-card px-2 py-1 text-[11px] font-semibold text-muted-foreground transition-colors hover:text-foreground disabled:pointer-events-none disabled:opacity-40 disabled:shadow-none"
     >
       <Icon className="size-3.5" strokeWidth={2} />
       {label}

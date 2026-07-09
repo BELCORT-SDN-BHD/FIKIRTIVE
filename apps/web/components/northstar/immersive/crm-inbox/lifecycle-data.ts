@@ -197,7 +197,10 @@ export const GUARDRAILS: NsGuardrail[] = [
   { id: "gr-refund", label: "Handle refunds & complaints", detail: "Off by default — these always go to you", defaultOn: false },
 ];
 
-/* ── [wave-b] 三档语气 + AI 帮写/翻译(确定性文本变换,非真 LLM) ───────────────── */
+/* ── [wave-c · Z6-inbox] 客服内容工程:可直发级草稿 + 真语气重写 + 绑定式翻译 ───────
+ * 判决口径:草稿要「可直发」——带客户名 + 这条对话的具体上下文(数量/价格/日期),缺知识时
+ * 问尖锐的澄清问题,而不是「我查查再回你」。语气三档是真语域重写(不是贴前后缀),翻译绑到
+ * Otto 起草的那条草稿的马来版孪生(不凭空造)。全部确定性:无 Date.now / 无 Math.random。 */
 export type NsTone = "casual" | "semi" | "formal";
 
 export const TONES: { id: NsTone; label: string }[] = [
@@ -206,35 +209,192 @@ export const TONES: { id: NsTone; label: string }[] = [
   { id: "formal", label: "Formal" },
 ];
 
-/** 给一段草稿套语气(原型:确定性前后缀 + 收尾,不动核心句意)。 */
-export function applyTone(text: string, tone: NsTone): string {
-  const core = text.replace(/\s+$/,"");
-  if (!core) return core;
+/** 双语草稿:en/bm 一对孪生(翻译按钮在两者间切换,真有马来版,不假造)。 */
+export interface NsBilingualDraft {
+  en: string;
+  bm: string;
+  /** answer=有把握直答 · confirm=确认订单 · clarify=先问清楚(尖锐澄清,不硬答) */
+  kind: "answer" | "confirm" | "clarify";
+}
+
+function firstNameOf(name?: string): string {
+  if (!name) return "there";
+  return name.replace(/^@/, "").split(/\s+/)[0] || "there";
+}
+
+function priceOf(id: string, fallback: number): number {
+  return NS_PRODUCTS.find((p) => p.id === id)?.priceMyr ?? fallback;
+}
+
+/**
+ * 可直发级草稿库(按对话 id;每条都是带上下文的完整答复,专业顾问看了会点头)。
+ * 覆盖所有「最后一句是客户在等回复」的对话:直答 / 确认订单 / 尖锐澄清三型。
+ * 没有键中的对话回落到 clarifyFallback —— 依旧是问尖锐问题,绝不「我查查」。
+ */
+const REPLY_LIBRARY: Record<string, NsBilingualDraft> = {
+  // cv-01 Mei Ling — 确认 20 个可颂,周五 9am,RM170(收尾 + 定金一眼可核对)
+  "cv-01": {
+    kind: "confirm",
+    en: "Confirmed, Mei Ling! 🥐 20 kaya butter croissants, Friday 9am pickup — RM170. I'll have them boxed and waiting at the counter. A 50% deposit (RM85) locks it in — DuitNow QR or transfer both work. See you Friday!",
+    bm: "Confirmed, Mei Ling! 🥐 20 kaya butter croissant, ambil Jumaat 9 pagi — RM170. Saya siapkan dalam kotak, tunggu di kaunter. Deposit 50% (RM85) untuk sahkan tempahan — DuitNow QR atau transfer boleh. Jumpa Jumaat!",
+  },
+  // cv-02 Priya — halal 认证(合规诚实版:不冒充 JAKIM,附价格与下一步)
+  "cv-02": {
+    kind: "answer",
+    en: "Thanks for checking, Priya! 🙏 All our ingredients are halal-sourced and our kitchen is completely pork- and alcohol-free. To be upfront: we're not JAKIM-certified yet, so if you need certified-halal for an event, I want you to know that before you order. Happy to share our supplier list if it helps — and the pandan gula melaka cake is RM88, serves 8–10.",
+    bm: "Terima kasih sebab tanya, Priya! 🙏 Semua bahan kami dari sumber halal dan dapur kami bebas khinzir serta alkohol sepenuhnya. Nak berterus terang: kami belum ada sijil JAKIM lagi, jadi kalau perlu halal bersijil untuk majlis, elok tahu dulu sebelum tempah. Boleh kongsi senarai pembekal kalau membantu — kek pandan gula melaka RM88, untuk 8–10 orang.",
+  },
+  // cv-05 Farah — 会议室早餐 15 pax / RM300 / 周三(尖锐澄清:要哪种组合 + 送达时间)
+  "cv-05": {
+    kind: "clarify",
+    en: "Morning Farah! A spread like this for 15 pax sits comfortably within RM300 — we'd usually mix kaya croissants, onde-onde puffs and a pandan cake centrepiece. Two quick things so I quote exactly: do you want it mostly pastries, or a fuller breakfast with savouries too — and should we deliver to your office for 8am, or earlier? Tell me and I'll send the itemised quote today.",
+    bm: "Selamat pagi Farah! Hidangan macam ni untuk 15 orang muat elok dalam RM300 — biasanya kami campur kaya croissant, onde-onde puff dan kek pandan sebagai centrepiece. Dua perkara supaya saya boleh quote tepat: nak lebih pastri, atau breakfast penuh dengan savoury sekali — dan nak hantar ke pejabat pukul 8 pagi atau lebih awal? Beritahu saya dan saya hantar quote berperincian hari ni.",
+  },
+  // cv-06 Zulaikha — 「Perfect thanks」收尾
+  "cv-06": {
+    kind: "answer",
+    en: "Anytime, Zulaikha! 🙌 Thursday 8:30am, 24 kaya butter croissants — all set. I'll message you the moment they're boxed. Have a good week!",
+    bm: "Sama-sama, Zulaikha! 🙌 Khamis 8:30 pagi, 24 kaya butter croissant — semua dah set. Saya mesej sebaik saja siap dalam kotak. Selamat menjalani minggu!",
+  },
+  // cv-07 Muthu — 沉睡 6 周大批发户回头(热情 + 尖锐:几箱/哪周,不乱报价)
+  "cv-07": {
+    kind: "clarify",
+    en: "Muthu! Good to hear from you 🙌 Yes — wholesale cookie boxes are very much still on, and I can hold your usual Tuesday delivery. How many boxes this round, and which week? I'll keep the same rate as your last order and get it scheduled straight away.",
+    bm: "Muthu! Gembira dengar khabar 🙌 Ya — kotak biskut borong masih ada, dan saya boleh simpan slot hantar Selasa macam biasa. Berapa kotak kali ni, dan minggu mana? Saya kekalkan kadar sama macam tempahan lepas dan terus jadualkan.",
+  },
+  // cv-09 Jason — catering「Approved」收尾
+  "cv-09": {
+    kind: "confirm",
+    en: "Perfect, Jason — 4 assorted platters, RM1,450, delivered 9am on the 30th. It's locked in and I'll send a reminder the day before. Thank you! 🙏",
+    bm: "Baik, Jason — 4 platter campuran, RM1,450, hantar 9 pagi pada 30hb. Dah disahkan dan saya akan hantar peringatan sehari sebelum. Terima kasih! 🙏",
+  },
+  // cv-12 Aisyah — 生日蛋糕照片 / 10 人 / 周六(尖锐:口味 + 字样 + 自取或送)
+  "cv-12": {
+    kind: "clarify",
+    en: "Love this, Aisyah! 🎂 We can absolutely make a cake like this for Saturday, serving 10. Our closest match is the pandan gula melaka (RM88, serves 8–10); a fully custom design to match the photo, I'd quote once I know the details. Two quick things so I confirm today: what flavour would you like, and should we write a name or message on top? And is this pickup or delivery?",
+    bm: "Suka betul, Aisyah! 🎂 Kami boleh buat kek macam ni untuk Sabtu, untuk 10 orang. Paling hampir ialah pandan gula melaka (RM88, untuk 8–10 orang); untuk reka bentuk custom ikut gambar, saya quote bila dah tahu butiran. Dua perkara supaya boleh sahkan hari ni: perisa apa yang dinak, dan nak tulis nama atau mesej atas kek? Ambil sendiri atau hantar?",
+  },
+  // cv-13 Kavitha — catering 报价跟进(逾期 5 天:道歉 + 报价仍有效 + 尖锐确认)
+  "cv-13": {
+    kind: "clarify",
+    en: "Hi Kavitha — apologies for the wait 🙏 Yes, your June-event quote is still valid. To pick it back up: are the date and headcount still the same as before? Send me any changes and I'll refresh the quote and hold your slot today.",
+    bm: "Hi Kavitha — maaf lambat balas 🙏 Ya, quote untuk majlis Jun masih sah. Untuk sambung semula: tarikh dan bilangan tetamu masih sama? Beritahu jika ada perubahan, saya kemas kini quote dan simpan slot hari ni.",
+  },
+};
+
+/** 尖锐澄清回落(未键中的对话):依旧问具体细节,绝不「我查查再回你」。 */
+function clarifyFallback(first: string): NsBilingualDraft {
+  return {
+    kind: "clarify",
+    en: `Thanks, ${first}! I want to get this right rather than guess — could you share a couple of details: which item, how many, and when you need it? Once I have that, I'll confirm and send a price straight away.`,
+    bm: `Terima kasih, ${first}! Saya nak buat betul-betul, bukan teka — boleh kongsi sikit butiran: item mana, berapa banyak, dan bila perlu? Bila dah tahu, saya sahkan dan hantar harga terus.`,
+  };
+}
+
+/** 可直发级草稿:先查对话专属库,回落到尖锐澄清(带客户名)。 */
+export function composeReply(cv: NsConversation, contactName?: string): NsBilingualDraft {
+  return REPLY_LIBRARY[cv.id] ?? clarifyFallback(firstNameOf(contactName));
+}
+
+/** 报价草稿(OttoAssist「报个价」):用真实产品价,不凭空造。 */
+export function composeQuote(contactName?: string): NsBilingualDraft {
+  const first = firstNameOf(contactName);
+  const cake = priceOf("prod-01", 88);
+  const crois = priceOf("prod-02", 8.5);
+  const tira = priceOf("prod-05", 14);
+  const box = priceOf("prod-06", 68);
+  return {
+    kind: "answer",
+    en: `Here are our most-loved bakes, ${first}: pandan gula melaka cake RM${cake} (serves 8–10), kaya butter croissant RM${crois}, kopi-O tiramisu cup RM${tira}, and the 12-piece gift box RM${box}. Delivery is RM8 flat across ${NS_BRAND.city}, free over RM120. Want me to put a box together for you?`,
+    bm: `Ni antara bakes paling popular, ${first}: kek pandan gula melaka RM${cake} (untuk 8–10 orang), kaya butter croissant RM${crois}, kopi-O tiramisu cup RM${tira}, dan kotak hadiah 12 biji RM${box}. Penghantaran RM8 rata seluruh ${NS_BRAND.city}, percuma jika lebih RM120. Nak saya sediakan satu kotak untuk anda?`,
+  };
+}
+
+/** 确认订单草稿(OttoAssist「确认订单」):对话有专属确认词就用它,否则给稳妥确认框架。 */
+export function composeConfirm(cv: NsConversation, contactName?: string): NsBilingualDraft {
+  const keyed = REPLY_LIBRARY[cv.id];
+  if (keyed && keyed.kind === "confirm") return keyed;
+  const first = firstNameOf(contactName);
+  return {
+    kind: "confirm",
+    en: `Just to confirm, ${first}: I've noted your order and I'll have it ready as we discussed. A 50% deposit locks it in — DuitNow QR or transfer both work. Shall I go ahead?`,
+    bm: `Sekadar sahkan, ${first}: tempahan dah saya catat dan akan disiapkan seperti dibincang. Deposit 50% untuk sahkan — DuitNow QR atau transfer boleh. Nak saya teruskan?`,
+  };
+}
+
+/** #56 挽回提醒:按对话上下文拼出具体一句(客户名 + 他们问的东西),预览=真发,一眼可核对。 */
+export function composeNudge(cv: NsConversation, contactName?: string): string {
+  const first = firstNameOf(contactName);
+  const item = nudgeItemFor(cv);
+  return `Hi ${first}! Just following up on ${item} — I can still hold it for you and get it ready whenever suits. Want me to lock it in? 🙂`;
+}
+
+/** 从对话推出「要提醒的是哪一单」(不硬编码「your order」)。 */
+function nudgeItemFor(cv: NsConversation): string {
+  const hay = `${cv.subject} ${cv.messages.map((m) => m.text).join(" ")}`.toLowerCase();
+  if (/wholesale|boxes|borong/.test(hay)) return "your wholesale cookie boxes";
+  if (/cater|platter|event|breakfast|boardroom/.test(hay)) return "your catering order";
+  const prod = NS_PRODUCTS.find((p) => hay.includes(p.name.toLowerCase()));
+  if (prod) return `the ${prod.name.toLowerCase()}`;
+  return "the order you were asking about";
+}
+
+/* ── 语气三档:真语域重写(先剥掉旧问候/尾 emoji,再按语域重建;§EFFECTIVENESS gap 3) ───
+ * casual=保留缩写 + 一颗 emoji;semi=Hi + 友好收尾;formal=展开缩写、去 emoji、句号收尾 + Thank you。
+ * 不再贴「Dear customer」,不再叠出重复问候/emoji。确定性,同输入同输出。 */
+const EMOJI_TEST = /[\u{1F000}-\u{1FAFF}\u{2600}-\u{27BF}\u{2190}-\u{21FF}\u{2B00}-\u{2BFF}\u{FE0F}\u{2764}]/u;
+const EMOJI_ALL = /[\u{1F000}-\u{1FAFF}\u{2600}-\u{27BF}\u{2190}-\u{21FF}\u{2B00}-\u{2BFF}\u{FE0F}\u{200D}\u{2764}]/gu;
+const CONTRACTIONS: [RegExp, string][] = [
+  [/\bwe're\b/gi, "we are"], [/\bwe'll\b/gi, "we will"], [/\bwe've\b/gi, "we have"], [/\bwe'd\b/gi, "we would"],
+  [/\bI'll\b/g, "I will"], [/\bI'm\b/g, "I am"], [/\bI'd\b/g, "I would"], [/\bI've\b/g, "I have"],
+  [/\byou're\b/gi, "you are"], [/\byou'll\b/gi, "you will"], [/\byou've\b/gi, "you have"],
+  [/\bdon't\b/gi, "do not"], [/\bcan't\b/gi, "cannot"], [/\bwon't\b/gi, "will not"], [/\bisn't\b/gi, "is not"],
+  [/\bit's\b/gi, "it is"], [/\bthat's\b/gi, "that is"], [/\bhere's\b/gi, "here is"], [/\blet's\b/gi, "let us"],
+];
+
+const GREETING_LEAD = /^\s*(hey there|hi there|hey|hi|hello|dear customer|dear|good (morning|afternoon|evening)|morning|afternoon|evening)\b[^.!?—-]*?[!,—–-]+\s*/i;
+/** 剥掉开头的问候子句(含跟在后面的人名),避免叠出「Hey Mei Ling! Mei Ling! …」。 */
+function stripLeadGreeting(s: string): string {
+  const clause = s.replace(GREETING_LEAD, "");
+  if (clause !== s) return clause;
+  // 无分隔符的裸问候词兜底(如「Hi」独立开头)
+  return s.replace(/^\s*(hey there|hi there|hey|hi|hello)\b[\s,]*/i, "");
+}
+function stripEmoji(s: string): string {
+  return s.replace(EMOJI_ALL, "").replace(/\s+([.!?])/g, "$1").replace(/\s{2,}/g, " ").trim();
+}
+/** 句首及句号后重新大写(修缩写展开把「We're→we are」降格的小病)。 */
+function recapitalize(s: string): string {
+  return s.replace(/(^|[.!?]\s+)([a-z])/g, (_m, p, c) => p + c.toUpperCase());
+}
+
+/** 给一段草稿套语气 —— 真语域重写(不是贴前后缀)。firstName 让问候带上人名。 */
+export function applyTone(text: string, tone: NsTone, firstName?: string): string {
+  const core = stripLeadGreeting(text.trim()).trim();
+  if (!core) return text.trim();
+  const named = firstName && firstName !== "there" ? firstName : "";
+  // 若正文开头已带这个名字,问候就不重复挂名(避免名字出现两次)
+  const nameAlready = named && core.slice(0, 24).toLowerCase().includes(named.toLowerCase());
+  const who = named && !nameAlready ? ` ${named}` : "";
   switch (tone) {
-    case "casual":
-      return `Hey! ${core} 🥐`;
-    case "semi":
-      return `Hi there — ${core} Let me know if that works!`;
-    case "formal":
-      return `Dear customer, ${core} Thank you for choosing ${NS_BRAND.name}.`;
+    case "casual": {
+      const out = `Hey${who}! ${core}`;
+      return EMOJI_TEST.test(out) ? out : `${out} 🥐`;
+    }
+    case "semi": {
+      const out = `Hi${who}, ${core}`;
+      const closed = /[?]\s*$/.test(core) || /let me know|happy to|shall i|want me to/i.test(core);
+      return closed ? out : `${out} Let me know if that works 🙂`;
+    }
+    case "formal": {
+      let body = stripEmoji(core);
+      for (const [re, rep] of CONTRACTIONS) body = body.replace(re, rep);
+      body = recapitalize(body);
+      let out = `Hi${who}, ${body}`;
+      if (!/[.!?]$/.test(out)) out += ".";
+      return `${out} Thank you.`;
+    }
   }
-}
-
-/** AI 帮写:从最近一条客户问题起草一句(命中知识库取答案,否则给稳妥占位)。 */
-export function draftReplyFor(question: string): string {
-  const hit = matchKnowledge(question);
-  if (hit) return hit.answer;
-  return "Thanks for your message! Let me check on that and get right back to you 🙏";
-}
-
-/** 翻译(原型:英⇄马来的固定对照演示,证明按钮真的做事)。 */
-export function translateDraft(text: string): string {
-  const t = text.toLowerCase();
-  const looksMalay = /\b(saya|boleh|terima kasih|ada|nak|bila|berapa)\b/.test(t);
-  if (looksMalay) {
-    return "Sure! We're open 9am–6pm daily. Would you like to place an order?";
-  }
-  return "Baik! Kami buka 9 pagi–6 petang setiap hari. Nak buat tempahan?";
 }
 
 /** 语言检测(原型:关键词 → 展示 chip;支持马来/英/Manglish 口语)。 */
