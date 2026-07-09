@@ -12,20 +12,43 @@ import Link from "next/link";
 import { ArrowRight, Plus, Sparkles } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Switch } from "@/components/ui/switch";
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+} from "@/components/ui/dialog";
 import { OttoAvatar } from "@/components/otto/OttoAvatar";
 import { PageHeader } from "@/components/northstar/_shared";
+import { addRule, aiHandledCount, rules, toggleAutomationRule, useStore } from "../_store";
 import { ACCOUNT_OPS_BASE as BASE, AutomationNav, Card } from "./kit";
-import { NS_RULES, type NsRule } from "./data";
+import { type NsRule } from "./data";
+
+/** 「Draft a rule」按钮的预填(照 Otto 的建议条口径,让草稿看起来像真的从建议来的) */
+const OTTO_DRAFT: RuleDraft = {
+  name: "Answer order questions",
+  when: "A new WhatsApp chat asks about pricing or pickup",
+  then: "Otto drafts a reply and waits for your tap to send",
+};
+
+interface RuleDraft {
+  name: string;
+  when: string;
+  then: string;
+}
 
 function RuleCard({
   rule,
-  enabled,
+  runs,
   onToggle,
 }: {
   rule: NsRule;
-  enabled: boolean;
+  runs: number;
   onToggle: (v: boolean) => void;
 }) {
+  const enabled = rule.enabled;
   return (
     <Card className="p-4">
       <div className="flex items-start gap-3">
@@ -54,7 +77,7 @@ function RuleCard({
       </div>
       <div className="mt-3 flex items-center gap-2 border-t border-border pt-3">
         <span className="text-xs text-muted-foreground tabular-nums">
-          {enabled ? `Ran ${rule.runsThisWeek}× this week` : "Paused"}
+          {enabled ? `Ran ${runs}× this week` : "Paused"}
         </span>
         <Button variant="ghost" size="sm" className="ml-auto" asChild>
           <Link href={`${BASE}/inbox/shared`}>
@@ -68,9 +91,18 @@ function RuleCard({
 }
 
 export function AutomationRules() {
-  const [enabled, setEnabled] = React.useState<Record<string, boolean>>(
-    () => Object.fromEntries(NS_RULES.map((r) => [r.id, r.enabled])),
-  );
+  useStore();
+  const list = rules();
+  const aiHandled = aiHandledCount();
+
+  const [draft, setDraft] = React.useState<RuleDraft | null>(null);
+  const canSave = draft ? draft.name.trim() && draft.when.trim() && draft.then.trim() : false;
+
+  const save = () => {
+    if (!draft || !canSave) return;
+    addRule({ name: draft.name.trim(), when: draft.when.trim(), then: draft.then.trim() });
+    setDraft(null);
+  };
 
   return (
     <div className="mx-auto flex min-h-full w-full max-w-[880px] flex-col px-6 pt-6 pb-16">
@@ -80,7 +112,7 @@ export function AutomationRules() {
         actions={
           <>
             <AutomationNav />
-            <Button size="sm">
+            <Button size="sm" onClick={() => setDraft({ name: "", when: "", then: "" })}>
               <Plus strokeWidth={2} />
               New rule
             </Button>
@@ -88,21 +120,26 @@ export function AutomationRules() {
         }
       />
 
-      {/* Otto 建议条(本屏唯一 coral statement;把预填送不进这里,给个真去处) */}
+      {/* Otto 建议条(本屏唯一 coral statement;「Draft a rule」预填 Otto 建议进创建弹窗) */}
       <div className="mt-6 flex flex-wrap items-center gap-3 rounded-[18px] border border-brand-soft bg-brand-soft/50 px-4 py-3.5">
         <OttoAvatar size={28} mood="helpful" />
         <p className="min-w-0 flex-1 basis-64 text-[13px] leading-[1.45] text-brand-soft-foreground">
           You reply to most WhatsApp order questions the same way. Want a rule for that?
         </p>
-        <Button variant="brand" size="sm">
+        <Button variant="brand" size="sm" onClick={() => setDraft({ ...OTTO_DRAFT })}>
           <Sparkles strokeWidth={2} />
           Draft a rule
         </Button>
       </div>
 
       <div className="mt-6 grid grid-cols-1 gap-3">
-        {NS_RULES.map((r) => (
-          <RuleCard key={r.id} rule={r} enabled={enabled[r.id]} onToggle={(v) => setEnabled((s) => ({ ...s, [r.id]: v }))} />
+        {list.map((r) => (
+          <RuleCard
+            key={r.id}
+            rule={r}
+            runs={r.runsFromChats ? aiHandled : r.runsThisWeek}
+            onToggle={(v) => toggleAutomationRule(r.id, v)}
+          />
         ))}
       </div>
 
@@ -113,6 +150,57 @@ export function AutomationRules() {
         </Link>
         .
       </p>
+
+      <Dialog open={draft !== null} onOpenChange={(open) => !open && setDraft(null)}>
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>New rule</DialogTitle>
+            <DialogDescription>
+              One trigger, one action. Otto runs it for you. Anything that spends still waits for your tap.
+            </DialogDescription>
+          </DialogHeader>
+          <div className="flex flex-col gap-4">
+            <label className="flex flex-col gap-1.5">
+              <span className="text-xs font-semibold text-foreground">Name</span>
+              <input
+                type="text"
+                value={draft?.name ?? ""}
+                onChange={(e) => setDraft((d) => (d ? { ...d, name: e.target.value } : d))}
+                placeholder="Answer order questions"
+                className="h-11 w-full rounded-[10px] border border-border bg-background px-3.5 text-[15px] leading-[22px] text-foreground outline-none transition-colors duration-[120ms] placeholder:text-muted-foreground focus-visible:border-foreground/40 focus-visible:ring-2 focus-visible:ring-ring"
+              />
+            </label>
+            <label className="flex flex-col gap-1.5">
+              <span className="text-xs font-semibold text-foreground">When</span>
+              <input
+                type="text"
+                value={draft?.when ?? ""}
+                onChange={(e) => setDraft((d) => (d ? { ...d, when: e.target.value } : d))}
+                placeholder="A new WhatsApp chat asks about pricing"
+                className="h-11 w-full rounded-[10px] border border-border bg-background px-3.5 text-[15px] leading-[22px] text-foreground outline-none transition-colors duration-[120ms] placeholder:text-muted-foreground focus-visible:border-foreground/40 focus-visible:ring-2 focus-visible:ring-ring"
+              />
+            </label>
+            <label className="flex flex-col gap-1.5">
+              <span className="text-xs font-semibold text-foreground">Then</span>
+              <input
+                type="text"
+                value={draft?.then ?? ""}
+                onChange={(e) => setDraft((d) => (d ? { ...d, then: e.target.value } : d))}
+                placeholder="Otto drafts a reply and waits for your tap"
+                className="h-11 w-full rounded-[10px] border border-border bg-background px-3.5 text-[15px] leading-[22px] text-foreground outline-none transition-colors duration-[120ms] placeholder:text-muted-foreground focus-visible:border-foreground/40 focus-visible:ring-2 focus-visible:ring-ring"
+              />
+            </label>
+          </div>
+          <DialogFooter className="flex-row justify-end gap-3">
+            <Button variant="secondary" size="sm" onClick={() => setDraft(null)}>
+              Cancel
+            </Button>
+            <Button size="sm" disabled={!canSave} onClick={save}>
+              Create rule
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
     </div>
   );
 }

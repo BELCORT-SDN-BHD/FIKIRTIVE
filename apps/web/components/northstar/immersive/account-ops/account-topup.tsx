@@ -20,7 +20,7 @@ import {
   DialogTitle,
 } from "@/components/ui/dialog";
 import { PageHeader } from "@/components/northstar/_shared";
-import { NS_BRAND } from "@/components/northstar/_mock";
+import { balance, topUp, useStore } from "../_store";
 import { ACCOUNT_OPS_BASE as BASE, AccountNav } from "./kit";
 import { NS_TOPUP_PACKS, type NsTopUpPack } from "./data";
 
@@ -57,17 +57,20 @@ function PackCard({
 }
 
 export function AccountTopUp() {
+  useStore();
   const [selectedId, setSelectedId] = React.useState(NS_TOPUP_PACKS.find((p) => p.best)?.id ?? NS_TOPUP_PACKS[0].id);
   const [confirming, setConfirming] = React.useState(false);
   const [pending, setPending] = React.useState(false);
   const [doneCredits, setDoneCredits] = React.useState<number | null>(null);
 
   const pack = NS_TOPUP_PACKS.find((p) => p.id === selectedId)!;
-  const newBalance = NS_BRAND.creditBalance + (doneCredits ?? 0);
+  const currentBalance = balance();
 
   const confirm = () => {
     setPending(true);
     window.setTimeout(() => {
+      // 一次写入,处处生效:导航栏余额 / credits 流水 / home 卡片同源跳动
+      topUp(pack.credits);
       setDoneCredits(pack.credits);
       setPending(false);
       setConfirming(false);
@@ -84,7 +87,7 @@ export function AccountTopUp() {
           </span>
           <p className="text-lg font-semibold text-foreground">{doneCredits.toLocaleString("en-MY")} credits added</p>
           <p className="max-w-[420px] text-sm text-muted-foreground">
-            Your balance is now {newBalance.toLocaleString("en-MY")} credits. Nothing publishes or generates until you approve it.
+            Your balance is now {currentBalance.toLocaleString("en-MY")} credits. Nothing publishes or generates until you approve it.
           </p>
           <div className="mt-2 flex flex-wrap items-center justify-center gap-3">
             <Button size="sm" asChild>
@@ -113,7 +116,7 @@ export function AccountTopUp() {
       <div className="mt-6 flex items-center gap-2 rounded-[18px] border border-border bg-secondary/60 px-4 py-3">
         <span aria-hidden className="size-3.5 shrink-0 rounded-full bg-brand" />
         <p className="text-[13px] leading-[18px] text-foreground">
-          Current balance {NS_BRAND.creditBalance.toLocaleString("en-MY")} credits.
+          Current balance {currentBalance.toLocaleString("en-MY")} credits.
         </p>
       </div>
 
@@ -152,7 +155,7 @@ export function AccountTopUp() {
             </DialogDescription>
           </DialogHeader>
           <div className="rounded-[14px] bg-secondary/70 p-3 text-[13px] leading-[18px] text-foreground">
-            New balance will be {(NS_BRAND.creditBalance + pack.credits).toLocaleString("en-MY")} credits.
+            New balance will be {(currentBalance + pack.credits).toLocaleString("en-MY")} credits.
           </div>
           <DialogFooter className="flex-row justify-end gap-3">
             <Button variant="secondary" size="sm" disabled={pending} onClick={() => setConfirming(false)}>

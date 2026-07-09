@@ -20,8 +20,9 @@ import {
   DialogTitle,
 } from "@/components/ui/dialog";
 import { PageHeader } from "@/components/northstar/_shared";
+import { connectChannel, connections, disconnectChannel, useStore } from "../_store";
 import { ACCOUNT_OPS_BASE as BASE, AccountNav, Card, CardHeader, ChannelTag, CHANNELS, type NsChannel } from "./kit";
-import { NS_CONNECTIONS, type NsConnection } from "./data";
+import { type NsConnection } from "./data";
 
 const USE_HREF: Record<NsConnection["channel"], { href: string; label: string }> = {
   instagram: { href: `${BASE}/schedule/plan`, label: "Schedule a post" },
@@ -39,15 +40,15 @@ function StatusBadge({ status }: { status: NsConnection["status"] }) {
 
 function ConnectionRow({
   conn,
-  connectedNow,
   onConnect,
+  onDisconnect,
 }: {
   conn: NsConnection;
-  connectedNow: boolean;
   onConnect: (channel: NsChannel) => void;
+  onDisconnect: (channel: NsChannel) => void;
 }) {
   const meta = CHANNELS[conn.channel];
-  const status = connectedNow ? "connected" : conn.status;
+  const status = conn.status;
   return (
     <div className="flex items-center gap-3 border-t border-border px-4 py-3.5 first:border-t-0">
       <ChannelTag channel={conn.channel} />
@@ -62,17 +63,27 @@ function ConnectionRow({
             (status === "action" ? "text-warning-soft-foreground" : "text-muted-foreground")
           }
         >
-          {connectedNow ? "Just connected" : conn.note}
+          {conn.note}
         </p>
       </div>
       <StatusBadge status={status} />
       {status === "connected" ? (
-        <Button variant="ghost" size="sm" asChild>
-          <Link href={USE_HREF[conn.channel].href}>
-            {USE_HREF[conn.channel].label}
-            <ArrowRight strokeWidth={2} />
-          </Link>
-        </Button>
+        <>
+          <Button variant="ghost" size="sm" asChild>
+            <Link href={USE_HREF[conn.channel].href}>
+              {USE_HREF[conn.channel].label}
+              <ArrowRight strokeWidth={2} />
+            </Link>
+          </Button>
+          <Button
+            variant="ghost"
+            size="sm"
+            className="text-muted-foreground"
+            onClick={() => onDisconnect(conn.channel)}
+          >
+            Disconnect
+          </Button>
+        </>
       ) : (
         <Button variant={status === "action" ? "default" : "secondary"} size="sm" onClick={() => onConnect(conn.channel)}>
           {status === "action" ? "Reconnect" : "Connect"}
@@ -83,12 +94,14 @@ function ConnectionRow({
 }
 
 export function AccountConnections() {
-  const [connected, setConnected] = React.useState<Set<NsChannel>>(new Set());
+  useStore();
+  const conns = connections();
   const [dialogChannel, setDialogChannel] = React.useState<NsChannel | null>(null);
+  const [disconnectTarget, setDisconnectTarget] = React.useState<NsChannel | null>(null);
   const [pending, setPending] = React.useState(false);
 
-  const meta = NS_CONNECTIONS.filter((c) => CHANNELS[c.channel].group === "meta");
-  const others = NS_CONNECTIONS.filter((c) => CHANNELS[c.channel].group !== "meta");
+  const meta = conns.filter((c) => CHANNELS[c.channel].group === "meta");
+  const others = conns.filter((c) => CHANNELS[c.channel].group !== "meta");
 
   const openConnect = (channel: NsChannel) => setDialogChannel(channel);
 
@@ -100,18 +113,21 @@ export function AccountConnections() {
     const toLight: NsChannel[] =
       CHANNELS[channel].group === "meta" ? ["instagram", "facebook"] : [channel];
     window.setTimeout(() => {
-      setConnected((prev) => {
-        const next = new Set(prev);
-        toLight.forEach((c) => next.add(c));
-        return next;
-      });
+      toLight.forEach((c) => connectChannel(c));
       setPending(false);
       setDialogChannel(null);
     }, 800);
   };
 
+  const confirmDisconnect = () => {
+    if (!disconnectTarget) return;
+    disconnectChannel(disconnectTarget);
+    setDisconnectTarget(null);
+  };
+
   const dialogMeta = dialogChannel ? CHANNELS[dialogChannel] : null;
   const isMeta = dialogChannel ? CHANNELS[dialogChannel].group === "meta" : false;
+  const disconnectMeta = disconnectTarget ? CHANNELS[disconnectTarget] : null;
 
   return (
     <div className="mx-auto flex min-h-full w-full max-w-[880px] flex-col px-6 pt-6 pb-16">
@@ -134,14 +150,14 @@ export function AccountConnections() {
             }
           />
           {meta.map((c) => (
-            <ConnectionRow key={c.channel} conn={c} connectedNow={connected.has(c.channel)} onConnect={openConnect} />
+            <ConnectionRow key={c.channel} conn={c} onConnect={openConnect} onDisconnect={setDisconnectTarget} />
           ))}
         </Card>
 
         <Card>
           <CardHeader title="Other channels" />
           {others.map((c) => (
-            <ConnectionRow key={c.channel} conn={c} connectedNow={connected.has(c.channel)} onConnect={openConnect} />
+            <ConnectionRow key={c.channel} conn={c} onConnect={openConnect} onDisconnect={setDisconnectTarget} />
           ))}
         </Card>
       </div>
@@ -177,6 +193,25 @@ export function AccountConnections() {
             </Button>
             <Button size="sm" disabled={pending} onClick={confirmConnect}>
               {pending ? "Connecting…" : `Continue to ${isMeta ? "Meta" : dialogMeta?.label}`}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      <Dialog open={disconnectTarget !== null} onOpenChange={(open) => !open && setDisconnectTarget(null)}>
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>Disconnect {disconnectMeta?.label}?</DialogTitle>
+            <DialogDescription>
+              Otto stops publishing and listening on {disconnectMeta?.label}. Scheduled posts for this channel will pause until you reconnect.
+            </DialogDescription>
+          </DialogHeader>
+          <DialogFooter className="flex-row justify-end gap-3">
+            <Button variant="secondary" size="sm" onClick={() => setDisconnectTarget(null)}>
+              Keep connected
+            </Button>
+            <Button variant="destructive" size="sm" onClick={confirmDisconnect}>
+              Disconnect
             </Button>
           </DialogFooter>
         </DialogContent>

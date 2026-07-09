@@ -22,7 +22,7 @@ import {
   NS_CAMPAIGN,
 } from "@/components/northstar/_mock";
 import { useImmersive } from "./_context";
-import { pendingApprovals, upNext, useStore } from "./_store";
+import { balance, pendingApprovals, upNext, useStore } from "./_store";
 
 const BASE = "/northstar-immersive";
 
@@ -91,7 +91,7 @@ export function ImmersiveHome() {
           <StatCard label="Scheduled posts" value={String(queued.length)} delta={{ dir: "flat", text: "Next up in 2h" }} />
         </Link>
         <Link href={`${BASE}/account/credits`} className="rounded-[14px] focus-visible:outline-2 focus-visible:outline-ring">
-          <StatCard label="Credit balance" value={NS_BRAND.creditBalance.toLocaleString("en-MY")} delta={{ dir: "flat", text: "MYR wallet" }} />
+          <StatCard label="Credit balance" value={balance().toLocaleString("en-MY")} delta={{ dir: "flat", text: "MYR wallet" }} />
         </Link>
       </div>
 

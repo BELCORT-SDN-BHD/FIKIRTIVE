@@ -20,6 +20,7 @@ import { cn } from "@/lib/utils";
 import { Button } from "@/components/ui/button";
 import { PageHeader } from "@/components/northstar/_shared";
 import { NS_BRAND } from "@/components/northstar/_mock";
+import { connections, useStore } from "../_store";
 
 const BASE = "/northstar-immersive";
 
@@ -30,8 +31,8 @@ interface Step {
   body: string;
   cta: string;
   href: string;
-  /** 演示里预设已完成的步骤(连接渠道在注册流已走过一半) */
-  defaultDone?: boolean;
+  /** 该步的完成态由 store 真实连接态派生(勾选不可手动改),而非写死的布尔 */
+  fromConnections?: boolean;
 }
 
 const STEPS: Step[] = [
@@ -42,7 +43,7 @@ const STEPS: Step[] = [
     body: "Link Instagram, Facebook, TikTok or WhatsApp so Otto can post for you.",
     cta: "Manage connections",
     href: `${BASE}/account/connections`,
-    defaultDone: true,
+    fromConnections: true,
   },
   {
     id: "product",
@@ -71,11 +72,14 @@ const STEPS: Step[] = [
 ];
 
 export function OnboardingChecklist() {
-  const [done, setDone] = React.useState<Record<string, boolean>>(() =>
-    Object.fromEntries(STEPS.filter((s) => s.defaultDone).map((s) => [s.id, true])),
-  );
+  useStore();
+  // 「连接渠道」步真读 store 连接态:任一渠道已连即视为完成(kill 手写 defaultDone)
+  const channelConnected = connections().some((c) => c.status === "connected");
+  const [done, setDone] = React.useState<Record<string, boolean>>({});
 
-  const doneCount = STEPS.filter((s) => done[s.id]).length;
+  const isStepDone = (step: Step) => (step.fromConnections ? channelConnected : Boolean(done[step.id]));
+
+  const doneCount = STEPS.filter((s) => isStepDone(s)).length;
   const pct = Math.round((doneCount / STEPS.length) * 100);
   const allDone = doneCount === STEPS.length;
 
@@ -101,28 +105,40 @@ export function OnboardingChecklist() {
       {/* 步骤行 */}
       <div className="mt-8 overflow-hidden rounded-[18px] border border-border bg-card">
         {STEPS.map((step, i) => {
-          const isDone = Boolean(done[step.id]);
+          const isDone = isStepDone(step);
           const Icon = step.icon;
+          const circleClass = cn(
+            "mt-0.5 flex size-7 shrink-0 items-center justify-center rounded-full border transition-colors duration-[120ms]",
+            isDone
+              ? "border-brand bg-brand text-brand-foreground"
+              : "border-border bg-background text-muted-foreground",
+          );
+          const circleInner = isDone ? (
+            <Check className="size-4" strokeWidth={2.5} />
+          ) : (
+            <Icon className="size-4" strokeWidth={2} />
+          );
           return (
             <div
               key={step.id}
               className={cn("flex items-start gap-4 px-5 py-5", i > 0 && "border-t border-border")}
             >
-              {/* 勾选圈:点了即时完成(演示反馈) */}
-              <button
-                type="button"
-                aria-pressed={isDone}
-                aria-label={isDone ? `Mark ${step.title} not done` : `Mark ${step.title} done`}
-                onClick={() => setDone((d) => ({ ...d, [step.id]: !d[step.id] }))}
-                className={cn(
-                  "mt-0.5 flex size-7 shrink-0 items-center justify-center rounded-full border transition-colors duration-[120ms]",
-                  isDone
-                    ? "border-brand bg-brand text-brand-foreground"
-                    : "border-border bg-background text-muted-foreground hover:border-foreground/40",
-                )}
-              >
-                {isDone ? <Check className="size-4" strokeWidth={2.5} /> : <Icon className="size-4" strokeWidth={2} />}
-              </button>
+              {/* 连接步:圈是 store 派生的真实状态(用 CTA 去连,不手动勾);其余步:点了即时完成(演示反馈) */}
+              {step.fromConnections ? (
+                <span aria-hidden className={circleClass}>
+                  {circleInner}
+                </span>
+              ) : (
+                <button
+                  type="button"
+                  aria-pressed={isDone}
+                  aria-label={isDone ? `Mark ${step.title} not done` : `Mark ${step.title} done`}
+                  onClick={() => setDone((d) => ({ ...d, [step.id]: !d[step.id] }))}
+                  className={cn(circleClass, "hover:border-foreground/40")}
+                >
+                  {circleInner}
+                </button>
+              )}
 
               <div className="min-w-0 flex-1">
                 <p

@@ -10,9 +10,9 @@ import { ArrowUpRight, Plus } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { PageHeader, StatCard } from "@/components/northstar/_shared";
-import { NS_CREDIT_LEDGER, type NsCreditRow } from "@/components/northstar/_mock";
+import { type NsCreditRow } from "@/components/northstar/_mock";
+import { balance, creditLedger, useStore } from "../_store";
 import { ACCOUNT_OPS_BASE as BASE, AccountNav, Card, CardHeader, fmtStamp } from "./kit";
-import { creditSummary } from "./data";
 
 const CATEGORY_HREF: Record<NsCreditRow["category"], string> = {
   "Otto chat": `${BASE}/otto`,
@@ -33,7 +33,7 @@ function LedgerRow({ row }: { row: NsCreditRow }) {
       <div className="min-w-0 flex-1">
         <p className="truncate text-sm font-medium text-foreground">{row.description}</p>
         <p className="mt-0.5 font-mono text-[11px] leading-[14px] font-medium tracking-[0.02em] text-muted-foreground tabular-nums">
-          {fmtStamp(row.at)}
+          {row.at ? fmtStamp(row.at) : "Just now"}
         </p>
       </div>
       <span
@@ -50,7 +50,13 @@ function LedgerRow({ row }: { row: NsCreditRow }) {
 }
 
 export function AccountCredits() {
-  const c = creditSummary();
+  useStore();
+  const ledger = creditLedger();
+  const c = {
+    balance: balance(),
+    spentThisWeek: ledger.filter((r) => r.credits < 0).reduce((s, r) => s + -r.credits, 0),
+    toppedUp: ledger.filter((r) => r.credits > 0).reduce((s, r) => s + r.credits, 0),
+  };
   return (
     <div className="mx-auto flex min-h-full w-full max-w-[880px] flex-col px-6 pt-6 pb-16">
       <PageHeader
@@ -98,7 +104,7 @@ export function AccountCredits() {
               </Button>
             }
           />
-          {NS_CREDIT_LEDGER.map((row) => (
+          {ledger.map((row) => (
             <LedgerRow key={row.id} row={row} />
           ))}
         </Card>

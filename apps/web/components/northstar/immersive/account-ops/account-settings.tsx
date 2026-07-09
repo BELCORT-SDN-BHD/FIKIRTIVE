@@ -13,6 +13,7 @@ import { Button } from "@/components/ui/button";
 import { Switch } from "@/components/ui/switch";
 import { PageHeader, StatCard } from "@/components/northstar/_shared";
 import { NS_BRAND } from "@/components/northstar/_mock";
+import { balance, connections, useStore } from "../_store";
 import {
   ACCOUNT_OPS_BASE as BASE,
   AccountNav,
@@ -20,13 +21,14 @@ import {
   CardHeader,
   SettingRow,
 } from "./kit";
-import { creditSummary, NS_CONNECTIONS } from "./data";
 
 export function AccountSettings() {
+  useStore();
   const [notify, setNotify] = React.useState({ approvals: true, publishFails: true, weekly: false });
-  const credits = creditSummary();
-  const connectedCount = NS_CONNECTIONS.filter((c) => c.status === "connected").length;
-  const attentionCount = NS_CONNECTIONS.filter((c) => c.status === "action").length;
+  const conns = connections();
+  const creditBalance = balance();
+  const connectedCount = conns.filter((c) => c.status === "connected").length;
+  const attentionCount = conns.filter((c) => c.status === "action").length;
 
   return (
     <div className="mx-auto flex min-h-full w-full max-w-[880px] flex-col px-6 pt-6 pb-16">
@@ -41,7 +43,7 @@ export function AccountSettings() {
         <Link href={`${BASE}/account/credits`} className="rounded-[14px] focus-visible:outline-2 focus-visible:outline-ring">
           <StatCard
             label="Credit balance"
-            value={credits.balance.toLocaleString("en-MY")}
+            value={creditBalance.toLocaleString("en-MY")}
             delta={{ dir: "flat", text: "Manage credits" }}
           />
         </Link>
@@ -50,7 +52,7 @@ export function AccountSettings() {
             <Plug className="size-4" strokeWidth={2} />
             Connections
           </div>
-          <div className="mt-1 text-[26px] leading-8 font-bold tracking-[-0.02em] text-foreground tabular-nums">{connectedCount} / {NS_CONNECTIONS.length}</div>
+          <div className="mt-1 text-[26px] leading-8 font-bold tracking-[-0.02em] text-foreground tabular-nums">{connectedCount} / {conns.length}</div>
           <div className="mt-1 text-xs font-semibold text-warning-soft-foreground">{attentionCount} needs attention</div>
         </Link>
         <Link href={`${BASE}/team/members`} className="group rounded-[14px] border border-border bg-card p-4 transition-colors duration-[120ms] hover:bg-accent focus-visible:outline-2 focus-visible:outline-ring">

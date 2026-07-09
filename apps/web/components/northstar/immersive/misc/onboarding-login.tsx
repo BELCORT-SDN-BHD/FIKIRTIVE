@@ -12,11 +12,11 @@
 
 import * as React from "react";
 import Link from "next/link";
-import { ArrowRight, Mail } from "lucide-react";
+import { useRouter } from "next/navigation";
+import { ArrowRight, Loader2 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { Button } from "@/components/ui/button";
 import { OttoAvatar } from "@/components/otto/OttoAvatar";
-import { NS_BRAND } from "@/components/northstar/_mock";
 
 const BASE = "/northstar-immersive";
 
@@ -28,9 +28,10 @@ const MODES: { value: Mode; label: string }[] = [
 ];
 
 export function OnboardingLogin() {
+  const router = useRouter();
   const [mode, setMode] = React.useState<Mode>("signin");
   const [email, setEmail] = React.useState("");
-  const [sent, setSent] = React.useState(false);
+  const [pending, setPending] = React.useState(false);
 
   const modeRefs = React.useRef<(HTMLButtonElement | null)[]>([]);
   const activeIdx = MODES.findIndex((m) => m.value === mode);
@@ -44,8 +45,15 @@ export function OnboardingLogin() {
     modeRefs.current[next]?.focus();
   };
 
-  // 演示:提交 = 展示「魔链已发」态,不发真请求。进产品的门在魔链后的按钮上。
+  // 演示:无真 auth。提交 → 进度指示 → 进产品流(注册去引导清单,登录去 create/home)。
   const nextHref = mode === "signup" ? `${BASE}/onboarding/checklist` : `${BASE}/create/home`;
+
+  const onSubmit = (e: React.FormEvent) => {
+    e.preventDefault();
+    if (pending) return;
+    setPending(true);
+    window.setTimeout(() => router.push(nextHref), 800);
+  };
 
   return (
     <div className="mx-auto flex min-h-full w-full max-w-[460px] flex-col justify-center px-6 py-16">
@@ -81,10 +89,7 @@ export function OnboardingLogin() {
               role="tab"
               aria-selected={active}
               tabIndex={active ? 0 : -1}
-              onClick={() => {
-                setMode(m.value);
-                setSent(false);
-              }}
+              onClick={() => setMode(m.value)}
               className={cn(
                 "h-[30px] rounded-[8px] px-4 text-xs font-semibold transition-colors duration-[120ms]",
                 active ? "bg-secondary text-foreground" : "text-muted-foreground hover:bg-accent hover:text-foreground",
@@ -98,60 +103,37 @@ export function OnboardingLogin() {
 
       {/* 表单卡 */}
       <div className="mt-6 rounded-[18px] border border-border bg-card p-6">
-        {sent ? (
-          <div className="flex flex-col items-center gap-4 py-4 text-center">
-            <span className="flex size-11 items-center justify-center rounded-full bg-secondary">
-              <Mail className="size-5 text-foreground" strokeWidth={2} />
-            </span>
-            <div>
-              <p className="text-[15px] leading-[22px] font-semibold text-foreground">Check your email</p>
-              <p className="mt-1 text-sm text-muted-foreground">
-                We sent a sign-in link to <span className="font-medium text-foreground">{email || NS_BRAND.email}</span>.
-              </p>
-            </div>
-            <Button asChild className="w-full">
-              <Link href={nextHref}>
-                Continue
+        <form onSubmit={onSubmit} className="flex flex-col gap-4">
+          <label className="flex flex-col gap-1.5">
+            <span className="text-xs font-semibold text-foreground">Email</span>
+            <input
+              type="email"
+              required
+              disabled={pending}
+              value={email}
+              onChange={(e) => setEmail(e.target.value)}
+              placeholder="you@yourbrand.my"
+              autoComplete="email"
+              className="h-11 w-full rounded-[10px] border border-border bg-background px-3.5 text-[15px] leading-[22px] text-foreground outline-none transition-colors duration-[120ms] placeholder:text-muted-foreground focus-visible:border-foreground/40 focus-visible:ring-2 focus-visible:ring-ring disabled:opacity-60"
+            />
+          </label>
+          <Button type="submit" className="w-full" disabled={pending}>
+            {pending ? (
+              <>
+                <Loader2 className="animate-spin" strokeWidth={2} />
+                {mode === "signin" ? "Signing you in…" : "Creating your account…"}
+              </>
+            ) : (
+              <>
+                {mode === "signin" ? "Send sign-in link" : "Create account"}
                 <ArrowRight strokeWidth={2} />
-              </Link>
-            </Button>
-            <button
-              type="button"
-              onClick={() => setSent(false)}
-              className="text-xs font-medium text-muted-foreground hover:text-foreground"
-            >
-              Use a different email
-            </button>
-          </div>
-        ) : (
-          <form
-            onSubmit={(e) => {
-              e.preventDefault();
-              setSent(true);
-            }}
-            className="flex flex-col gap-4"
-          >
-            <label className="flex flex-col gap-1.5">
-              <span className="text-xs font-semibold text-foreground">Email</span>
-              <input
-                type="email"
-                required
-                value={email}
-                onChange={(e) => setEmail(e.target.value)}
-                placeholder="you@yourbrand.my"
-                autoComplete="email"
-                className="h-11 w-full rounded-[10px] border border-border bg-background px-3.5 text-[15px] leading-[22px] text-foreground outline-none transition-colors duration-[120ms] placeholder:text-muted-foreground focus-visible:border-foreground/40 focus-visible:ring-2 focus-visible:ring-ring"
-              />
-            </label>
-            <Button type="submit" className="w-full">
-              {mode === "signin" ? "Send sign-in link" : "Create account"}
-              <ArrowRight strokeWidth={2} />
-            </Button>
-            <p className="text-center text-xs text-muted-foreground">
-              We&rsquo;ll email you a secure link — no password to remember.
-            </p>
-          </form>
-        )}
+              </>
+            )}
+          </Button>
+          <p className="text-center text-xs text-muted-foreground">
+            We&rsquo;ll email you a secure link. No password to remember.
+          </p>
+        </form>
       </div>
 
       {/* 法务尾注 → 沉浸式 legal */}

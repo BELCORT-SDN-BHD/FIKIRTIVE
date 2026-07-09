@@ -38,9 +38,11 @@ import {
   NS_CONNECTIONS,
   NS_RULES,
   NS_MEMBERS,
+  NS_ROUTINES,
   type NsConnection,
   type NsRule,
   type NsMember,
+  type NsRoutine,
 } from "./account-ops/data";
 import type { NsDealStage } from "./crm-inbox/data";
 
@@ -55,12 +57,16 @@ export type NsEventType =
   | "campaign_entry_approved"
   | "approval_settled"
   | "channel_connected"
+  | "channel_disconnected"
   | "conversation_resolved"
   | "conversation_replied"
   | "conversation_ai_toggled"
   | "deal_stage_changed"
   | "contact_created"
   | "automation_toggled"
+  | "automation_rule_created"
+  | "routine_toggled"
+  | "routine_created"
   | "otto_working"
   | "otto_idle"
   | "ad_submitted"
@@ -88,6 +94,7 @@ interface StoreState {
   chatThreads: NsChatThread[];
   rules: NsRule[];
   members: NsMember[];
+  routines: NsRoutine[];
   resolvedConversationIds: string[];
   submittedAdIds: string[];
   /** 人工插手 → 该会话 Otto 自动回复暂停(对话页横幅读它) */
@@ -116,6 +123,7 @@ const state: StoreState = {
   chatThreads: NS_CHAT_THREADS.map((t) => ({ ...t, messages: [...t.messages] })),
   rules: [...NS_RULES],
   members: [...NS_MEMBERS],
+  routines: [...NS_ROUTINES],
   resolvedConversationIds: [],
   submittedAdIds: [],
   pausedAiConversationIds: [],
@@ -230,6 +238,16 @@ export function connectChannel(id: string) {
   notify();
 }
 
+export function disconnectChannel(id: string) {
+  const conn = state.connections.find((c) => c.channel === id);
+  if (!conn) return;
+  state.connections = state.connections.map((c) =>
+    c.channel === id ? { ...c, status: "disconnected", note: "Not connected yet", connectedAt: undefined } : c,
+  );
+  logEvent("channel_disconnected", `Disconnected ${id}`, { id });
+  notify();
+}
+
 /** 从对话身份补建联系人(缺则 contact_created),再标记会话已解决。 */
 export function resolveConversation(id: string) {
   const cv = state.conversations.find((c) => c.id === id);
@@ -339,6 +357,49 @@ export function toggleAutomationRule(id: string, on: boolean) {
   notify();
 }
 
+/** 新建一条 when → then 规则(automation/rules 的三字段弹窗写入)。新规则默认启用、本周 0 次、不花额度。 */
+export function addRule(input: { name: string; when: string; then: string }): string {
+  const id = `rule-live-${seq + 1}`;
+  const rule: NsRule = {
+    id,
+    name: input.name,
+    when: input.when,
+    then: input.then,
+    enabled: true,
+    runsThisWeek: 0,
+    costs: false,
+  };
+  state.rules = [rule, ...state.rules];
+  logEvent("automation_rule_created", `Created rule · ${input.name}`, { id });
+  notify();
+  return id;
+}
+
+export function toggleRoutine(id: string, on: boolean) {
+  const routine = state.routines.find((r) => r.id === id);
+  if (!routine) return;
+  state.routines = state.routines.map((r) => (r.id === id ? { ...r, enabled: on } : r));
+  logEvent("routine_toggled", `${on ? "Turned on" : "Turned off"} ${routine.name}`, { id, on });
+  notify();
+}
+
+/** 新建一条多步例程(automation/routines 的三字段弹窗写入)。触发即 cadence,动作即首步。 */
+export function addRoutine(input: { name: string; cadence: string; step: string }): string {
+  const id = `rtn-live-${seq + 1}`;
+  const routine: NsRoutine = {
+    id,
+    name: input.name,
+    cadence: input.cadence,
+    steps: [input.step],
+    enabled: true,
+    nextRun: "Scheduled",
+  };
+  state.routines = [routine, ...state.routines];
+  logEvent("routine_created", `Created routine · ${input.name}`, { id });
+  notify();
+  return id;
+}
+
 export function submitAd(payload: { id?: string; label?: string; platform?: string }) {
   const id = payload.id ?? `ad-live-${seq + 1}`;
   if (!state.submittedAdIds.includes(id)) state.submittedAdIds = [...state.submittedAdIds, id];
@@ -405,6 +466,11 @@ export function startChatThread(title = "New chat"): string {
 /* ── 选择器(跨区派生读的单一源;组件在 useStore() 下调用) ────────────────── */
 export function balance(): number {
   return state.creditBalance;
+}
+
+/** 额度流水(种子 + 本次会话新增行,最新在前;credits 页读它,与 balance 同源) */
+export function creditLedger(): NsCreditRow[] {
+  return state.creditLedger;
 }
 
 /** 未发出的排期帖(scheduled + draft),home「Up next」用。 */
@@ -498,6 +564,15 @@ export function creditSpendByCategory(): { label: string; credits: number }[] {
       .filter((r) => r.category === cat && r.credits < 0)
       .reduce((s, r) => s + -r.credits, 0),
   })).filter((row) => row.credits > 0);
+}
+
+export function routines(): NsRoutine[] {
+  return state.routines;
+}
+
+/** Otto 已自动应答的会话数(automation「Answer order questions」的 runsThisWeek 由它派生) */
+export function aiHandledCount(): number {
+  return state.conversations.filter((c) => c.aiHandled).length;
 }
 
 /* ── 订阅 hook(pattern precedent:useReducedMotion / useSyncExternalStore) ────

@@ -36,6 +36,7 @@ import { cn } from "@/lib/utils";
 import { Button } from "@/components/ui/button";
 import { OttoAvatar } from "@/components/otto/OttoAvatar";
 import { NS_BRAND, NS_CAMPAIGN, NS_CHAT_THREADS } from "@/components/northstar/global/_data";
+import { balance, useStore } from "./_store";
 
 const BASE = "/northstar-immersive";
 
@@ -98,6 +99,18 @@ function ToolRow({ tool, active }: { tool: NavTool; active: boolean }) {
 
 export function ImmersiveNav({ className }: { className?: string }) {
   const pathname = usePathname();
+  useStore();
+  const bal = balance();
+  // 余额变动(充值/花费)时短暂高亮,让「钱包统一」在导航栏可见地跳动
+  const [flash, setFlash] = React.useState(false);
+  const prevBal = React.useRef(bal);
+  React.useEffect(() => {
+    if (prevBal.current === bal) return;
+    prevBal.current = bal;
+    setFlash(true);
+    const t = window.setTimeout(() => setFlash(false), 900);
+    return () => window.clearTimeout(t);
+  }, [bal]);
   return (
     <nav className={cn("flex h-full w-60 shrink-0 flex-col border-r border-border bg-background", className)}>
       {/* ① Brand — 回沉浸式首页 */}
@@ -155,8 +168,13 @@ export function ImmersiveNav({ className }: { className?: string }) {
       {/* ⑤ Balance(钉底;14px coral credit 币) */}
       <div className="flex shrink-0 items-center gap-2 border-t border-border px-4 py-3">
         <span aria-hidden className="size-3.5 shrink-0 rounded-full bg-brand" />
-        <span className="text-[13px] leading-[18px] font-medium text-foreground tabular-nums">
-          {NS_BRAND.creditBalance.toLocaleString("en-MY")} credits
+        <span
+          className={cn(
+            "rounded-md px-1 text-[13px] leading-[18px] font-medium tabular-nums transition-colors duration-700",
+            flash ? "bg-success-soft text-success-soft-foreground" : "text-foreground",
+          )}
+        >
+          {bal.toLocaleString("en-MY")} credits
         </span>
         <Link
           href={`${BASE}/account/top-up`}

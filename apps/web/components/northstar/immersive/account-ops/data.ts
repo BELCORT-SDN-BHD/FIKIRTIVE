@@ -71,6 +71,8 @@ export interface NsRule {
   runsThisWeek: number;
   /** true = 会花额度(coral 提示);false = 只做安排/回复 */
   costs: boolean;
+  /** true = 命中次数由 store 里 Otto 自动应答的会话数派生(不写死),见 aiHandledCount */
+  runsFromChats?: boolean;
 }
 
 export const NS_RULES: NsRule[] = [
@@ -80,8 +82,9 @@ export const NS_RULES: NsRule[] = [
     when: "A new WhatsApp chat asks about pricing or pickup",
     then: "Otto drafts a reply and waits for your tap to send",
     enabled: true,
-    runsThisWeek: 34,
+    runsThisWeek: 0,
     costs: false,
+    runsFromChats: true,
   },
   {
     id: "rule-02",
