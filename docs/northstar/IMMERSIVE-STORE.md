@@ -21,20 +21,30 @@
 - `pendingApprovals()` —— 待办审批队列。
 - `recentEvents(n)` —— 最近 n 条事件,最新在前(dock「Just now」条读 `recentEvents(1)`)。
 - `chatThreads()` / `connections()` / `rules()` / `teamMembers()` —— 对应镜像的当前值。
+- crm-inbox 身份链读:`conversationsView()` / `conversationByIdView(id)` /
+  `conversationsForContactView(contactId)` / `contactsView()` / `contactByIdView(id)` ·
+  `isAiPaused(id)`(对话页横幅)· `isResolved(id)`(Resolve 按钮态)· `isInboxContact(id)`
+  (CRM「New」chip)· `dealStageOf(dealId, fallback)`(阶段实时值,金额不漂移)·
+  `contactEventsFor(id)`(contact-profile「From the inbox」时间线)。
 
 ## 动作(纯函数:改 store + append event + notify;做一次到处生效)
 `spendCredits(n,label,category?)` · `topUp(n)` · `schedulePost(post)` ·
 `approveCampaignEntry(id)` · `approveRequest(id, "approve"|"decline")`(approve 花钱生成会真扣额度)·
-`connectChannel(id)` · `resolveConversation(id)`(缺联系人则 `ensureContact` → 补建)·
+`connectChannel(id)` · `resolveConversation(id)`(缺联系人则补建 + 记「New」+ 追加时间线)·
 `toggleAutomationRule(id,on)` · `submitAd(payload)` · `ottoWorking(on,label?)` ·
 `appendChatMessage(threadId,msg)` · `startChatThread(title?)` · `inviteMember(email)`
 (真 append 一条 pending Editor;team 页 pending chip / 计数由此派生)。
+crm-inbox 身份链动作:`sendConversationMessage(id,text)`(append owner 消息 + 人工插手→该会话 AI
+暂停)· `setConversationAi(id,paused)`(Otto 自动接管开关,dispatch automation 事件)·
+`advanceDealStage(id,current,dir,title)`(阶段推进/回退,金额仍走 dealAmountMyr)·
+`ensureContactFromComment(handle,channel,lastSeen,note)`(评论作者身份锚点→补建 CRM 联系人)。
 
 ## 事件流(append-only,`{ type, payload, at:seq, label }`)
 `label` 是人话一行(sentence case、英文 UI),dock / 通知直接显示。类型:
 `credits_spent` · `credits_topped_up` · `post_scheduled` · `campaign_entry_approved` ·
-`approval_settled` · `channel_connected` · `conversation_resolved` · `contact_created` ·
-`automation_toggled` · `otto_working` · `otto_idle` · `ad_submitted` · `member_invited`。
+`approval_settled` · `channel_connected` · `conversation_resolved` · `conversation_replied` ·
+`conversation_ai_toggled` · `deal_stage_changed` · `contact_created` · `automation_toggled` ·
+`otto_working` · `otto_idle` · `ad_submitted` · `member_invited`。
 
 ## 已接线的表面(Wave 1)
 - shell:`ottoWorking` 来自 store,不再硬编码 false;dock 在 3 条 hideDock 路由上只
@@ -44,3 +54,12 @@
   state」因此为真);`?thread` 深链选中初始 thread。
 - home:「Up next」读 `upNext()`,「Awaiting approval」读 `pendingApprovals()`。
 - composer:`?post` 预填;确认排期调 `schedulePost` → home「Up next」闭环。
+
+## 已接线的表面(Wave 2 · crm-inbox 身份链)
+- inbox-conversation:消息流/联系人读 store;Send 真发(append + 清空 + 滚到底);人工发送即
+  暂停该会话 AI,顶部横幅为真;Otto auto-reply 开关 = `setConversationAi`;Resolve = `resolveConversation`。
+- inbox-shared:线程/未读计数读 `conversationsView()`,Resolve/回复即刻反映。
+- inbox-comments:Post reply → `ensureContactFromComment`,评论作者即刻成为 CRM 联系人。
+- crm-contacts / crm-segments:读 `contactsView()`,收件箱补建的联系人带「New」chip 且计入分群。
+- crm-contact-profile:身份/对话读 store;「From the inbox」时间线读 `contactEventsFor`;deal 阶段读 `dealStageOf`。
+- crm-deals:卡片推进/回退控件写 `advanceDealStage`,分组与三张数据卡读实时阶段;金额恒走 `dealAmountMyr`。

@@ -12,30 +12,15 @@
 import {
   NS_BRAND,
   NS_CONTACTS,
-  NS_CONVERSATIONS,
   NS_PRODUCTS,
   NS_SCHEDULED_POSTS,
   type NsContact,
-  type NsConversation,
 } from "@/components/northstar/_mock";
 import { dealAmountMyr } from "../_selectors";
 
-/* ── 联系人:直接透传 mock,方便组内各页取用 ────────────────────────────── */
-export const CONTACTS: NsContact[] = NS_CONTACTS;
-
+/* ── 联系人:deals 卡按 id 取名(身份链的实时读走共享 store) ──────────────── */
 export function contactById(id: string): NsContact | undefined {
   return NS_CONTACTS.find((c) => c.id === id);
-}
-
-/* ── 对话:透传 + 按联系人过滤(客户档案 → 该客户的所有对话) ───────────── */
-export const CONVERSATIONS: NsConversation[] = NS_CONVERSATIONS;
-
-export function conversationById(id: string): NsConversation | undefined {
-  return NS_CONVERSATIONS.find((c) => c.id === id);
-}
-
-export function conversationsForContact(contactId: string): NsConversation[] {
-  return NS_CONVERSATIONS.filter((c) => c.contactId === contactId);
 }
 
 /* ── 成交(pipeline;金额派生自 totalOrdersMyr,不新造品牌事实) ─────────── */
@@ -117,8 +102,8 @@ export const SEGMENTS: NsSegment[] = [
   },
 ];
 
-export function contactsInSegment(seg: NsSegment): NsContact[] {
-  return NS_CONTACTS.filter(seg.match);
+export function contactsInSegment(seg: NsSegment, source: NsContact[] = NS_CONTACTS): NsContact[] {
+  return source.filter(seg.match);
 }
 
 /* ── 评论(社媒帖子下的公开评论;派生自 NS_SCHEDULED_POSTS 已发帖) ──────── */

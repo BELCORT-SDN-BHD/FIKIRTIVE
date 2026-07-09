@@ -14,6 +14,7 @@ import { Button } from "@/components/ui/button";
 import { PageHeader, StatCard } from "@/components/northstar/_shared";
 import { CRM_INBOX_BASE as BASE, InboxNav, Card, fmtStamp, useSweep } from "./kit";
 import { COMMENTS, type NsComment } from "./data";
+import { ensureContactFromComment } from "../_store";
 
 function CommentRow({ comment }: { comment: NsComment }) {
   const sweep = useSweep();
@@ -53,6 +54,13 @@ function CommentRow({ comment }: { comment: NsComment }) {
           onClick={() => {
             setReplied(true);
             sweep.fire();
+            // 评论作者身份锚点:回复即把 @handle 补建成 CRM 联系人(缺则新建)
+            ensureContactFromComment(
+              comment.author,
+              "instagram",
+              comment.at.slice(0, 10),
+              `Came in from a comment on “${comment.postCaption}”`,
+            );
           }}
         >
           {replied ? "Replied" : "Post reply"}

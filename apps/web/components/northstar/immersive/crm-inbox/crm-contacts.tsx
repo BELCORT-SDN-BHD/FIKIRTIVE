@@ -21,9 +21,10 @@ import {
   Initials,
   type NsInboxChannel,
 } from "./kit";
-import { CONTACTS } from "./data";
+import { useStore, contactsView, isInboxContact } from "../_store";
+import type { NsContact } from "@/components/northstar/_mock";
 
-function ContactRow({ contact }: { contact: (typeof CONTACTS)[number] }) {
+function ContactRow({ contact }: { contact: NsContact }) {
   return (
     <Link
       href={`${BASE}/crm/contact-profile?id=${contact.id}`}
@@ -33,6 +34,7 @@ function ContactRow({ contact }: { contact: (typeof CONTACTS)[number] }) {
       <div className="min-w-0 flex-1">
         <div className="flex min-w-0 items-center gap-2">
           <p className="truncate text-sm font-semibold text-foreground">{contact.name}</p>
+          {isInboxContact(contact.id) && <Badge variant="warning">New</Badge>}
           {contact.doNotDisturb && <Badge variant="outline">Do not disturb</Badge>}
         </div>
         <div className="mt-1 flex flex-wrap items-center gap-1.5">
@@ -59,16 +61,18 @@ function ContactRow({ contact }: { contact: (typeof CONTACTS)[number] }) {
 
 export function CrmContacts() {
   const [query, setQuery] = React.useState("");
+  useStore(); // 订阅共享 store:收件箱补建的联系人即刻出现
+  const contacts = contactsView();
   const filtered = React.useMemo(() => {
     const q = query.trim().toLowerCase();
-    if (!q) return CONTACTS;
-    return CONTACTS.filter(
+    if (!q) return contacts;
+    return contacts.filter(
       (c) => c.name.toLowerCase().includes(q) || c.tags.some((t) => t.toLowerCase().includes(q)),
     );
-  }, [query]);
+  }, [query, contacts]);
 
-  const totalLtv = CONTACTS.reduce((sum, c) => sum + c.totalOrdersMyr, 0);
-  const onWhatsapp = CONTACTS.filter((c) => c.channels.includes("whatsapp")).length;
+  const totalLtv = contacts.reduce((sum, c) => sum + c.totalOrdersMyr, 0);
+  const onWhatsapp = contacts.filter((c) => c.channels.includes("whatsapp")).length;
 
   return (
     <div className="mx-auto flex min-h-full w-full max-w-[920px] flex-col px-6 pt-6 pb-16">
@@ -79,7 +83,7 @@ export function CrmContacts() {
       />
 
       <div className="mt-6 grid grid-cols-1 gap-3 sm:grid-cols-3">
-        <StatCard label="Contacts" value={String(CONTACTS.length)} />
+        <StatCard label="Contacts" value={String(contacts.length)} />
         <StatCard label="Lifetime orders" value={fmtMyr(totalLtv)} />
         <StatCard label="On WhatsApp" value={String(onWhatsapp)} />
       </div>

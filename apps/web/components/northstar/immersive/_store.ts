@@ -25,6 +25,7 @@ import {
   type NsCampaignEntry,
   type NsContact,
   type NsConversation,
+  type NsMessage,
 } from "@/components/northstar/_mock";
 import {
   NS_APPROVALS,
@@ -41,6 +42,10 @@ import {
   type NsRule,
   type NsMember,
 } from "./account-ops/data";
+import type { NsDealStage } from "./crm-inbox/data";
+
+/** 成交阶段推进顺序(单一源,advanceDealStage 与 crm 页共用) */
+const DEAL_STAGE_ORDER: NsDealStage[] = ["lead", "quote", "confirmed", "delivered"];
 
 /* ── 事件流(append-only;at = 单调递增 seq) ──────────────────────────────── */
 export type NsEventType =
@@ -51,6 +56,9 @@ export type NsEventType =
   | "approval_settled"
   | "channel_connected"
   | "conversation_resolved"
+  | "conversation_replied"
+  | "conversation_ai_toggled"
+  | "deal_stage_changed"
   | "contact_created"
   | "automation_toggled"
   | "otto_working"
@@ -81,6 +89,14 @@ interface StoreState {
   members: NsMember[];
   resolvedConversationIds: string[];
   submittedAdIds: string[];
+  /** 人工插手 → 该会话 Otto 自动回复暂停(对话页横幅读它) */
+  pausedAiConversationIds: string[];
+  /** 成交阶段推进/回退的覆盖(金额仍走 dealAmountMyr,永不漂移) */
+  dealStageOverrides: Record<string, NsDealStage>;
+  /** 从收件箱/评论补建的联系人 id(CRM 列表打「New」chip) */
+  inboxContactIds: string[];
+  /** 每个联系人的「来自收件箱」时间线条目(contact-profile 读它) */
+  contactEvents: Record<string, { at: number; label: string }[]>;
   ottoWorking: boolean;
   ottoLabel: string;
   eventLog: NsEvent[];
@@ -101,6 +117,10 @@ const state: StoreState = {
   members: [...NS_MEMBERS],
   resolvedConversationIds: [],
   submittedAdIds: [],
+  pausedAiConversationIds: [],
+  dealStageOverrides: {},
+  inboxContactIds: [],
+  contactEvents: {},
   ottoWorking: false,
   ottoLabel: "Otto — idle",
   eventLog: [],
@@ -130,6 +150,12 @@ function getVersion() {
 function logEvent(type: NsEventType, label: string, payload: Record<string, unknown> = {}) {
   seq += 1;
   state.eventLog = [...state.eventLog, { type, payload, at: seq, label }];
+}
+
+/** 给某联系人追加一条「来自收件箱」时间线条目(contact-profile 读它) */
+function addContactEvent(contactId: string, label: string) {
+  const prev = state.contactEvents[contactId] ?? [];
+  state.contactEvents = { ...state.contactEvents, [contactId]: [...prev, { at: seq, label }] };
 }
 
 /* ── 动作(纯函数:改 store + append event + notify) ──────────────────────────
@@ -213,19 +239,94 @@ export function resolveConversation(id: string) {
       id: cv.contactId,
       name: cv.subject || cv.contactId,
       channels: [cv.channel],
-      lastSeen: "",
+      lastSeen: cv.messages[cv.messages.length - 1]?.at.slice(0, 10) ?? "",
       tags: ["new"],
       doNotDisturb: false,
       totalOrdersMyr: 0,
     };
     state.contacts = [contact, ...state.contacts];
+    if (!state.inboxContactIds.includes(contact.id)) {
+      state.inboxContactIds = [...state.inboxContactIds, contact.id];
+    }
     logEvent("contact_created", `Added ${contact.name} to contacts`, { id: contact.id });
+    addContactEvent(contact.id, "Added from the inbox");
   }
   if (!state.resolvedConversationIds.includes(id)) {
     state.resolvedConversationIds = [...state.resolvedConversationIds, id];
   }
   state.conversations = state.conversations.map((c) => (c.id === id ? { ...c, unread: false } : c));
   logEvent("conversation_resolved", `Resolved ${cv.subject}`, { id });
+  addContactEvent(cv.contactId, `Resolved from the inbox · ${cv.subject}`);
+  notify();
+}
+
+/** 收件箱回复:append owner 消息 + 人工插手 → 该会话 Otto 自动暂停(横幅为真)。 */
+export function sendConversationMessage(conversationId: string, text: string) {
+  const trimmed = text.trim();
+  if (!trimmed) return;
+  const cv = state.conversations.find((c) => c.id === conversationId);
+  if (!cv) return;
+  const message: NsMessage = { id: `m-live-${seq + 1}`, from: "owner", text: trimmed, at: "Just now" };
+  state.conversations = state.conversations.map((c) =>
+    c.id === conversationId ? { ...c, messages: [...c.messages, message], unread: false } : c,
+  );
+  if (!state.pausedAiConversationIds.includes(conversationId)) {
+    state.pausedAiConversationIds = [...state.pausedAiConversationIds, conversationId];
+  }
+  logEvent("conversation_replied", `You replied · ${cv.subject}`, { id: conversationId });
+  addContactEvent(cv.contactId, `You replied from the inbox · ${cv.subject}`);
+  notify();
+}
+
+/** Otto 自动接管开关(dispatch automation 事件;暂停/恢复该会话的自动回复)。 */
+export function setConversationAi(conversationId: string, paused: boolean) {
+  const cv = state.conversations.find((c) => c.id === conversationId);
+  if (!cv) return;
+  const has = state.pausedAiConversationIds.includes(conversationId);
+  if (paused && !has) state.pausedAiConversationIds = [...state.pausedAiConversationIds, conversationId];
+  if (!paused && has) state.pausedAiConversationIds = state.pausedAiConversationIds.filter((x) => x !== conversationId);
+  logEvent(
+    "conversation_ai_toggled",
+    paused ? `Paused Otto on ${cv.subject}` : `Otto is handling ${cv.subject} again`,
+    { id: conversationId, paused },
+  );
+  notify();
+}
+
+/** 成交阶段推进/回退(写覆盖;金额仍走 dealAmountMyr,永不漂移)。 */
+export function advanceDealStage(dealId: string, current: NsDealStage, dir: "forward" | "back", title: string) {
+  const i = DEAL_STAGE_ORDER.indexOf(current);
+  const nextIdx = dir === "forward" ? Math.min(i + 1, DEAL_STAGE_ORDER.length - 1) : Math.max(i - 1, 0);
+  if (nextIdx === i) return;
+  const stage = DEAL_STAGE_ORDER[nextIdx];
+  state.dealStageOverrides = { ...state.dealStageOverrides, [dealId]: stage };
+  logEvent("deal_stage_changed", `Moved ${title} to ${stage}`, { id: dealId, stage });
+  notify();
+}
+
+/** 评论作者身份锚点:回复公开评论 → 若该 handle 无联系人则补建(CRM 打「New」chip)。 */
+export function ensureContactFromComment(
+  handle: string,
+  channel: NsContact["channels"][number],
+  lastSeen: string,
+  note: string,
+) {
+  const id = `ct-cm-${handle}`;
+  const exists = state.contacts.some((c) => c.id === id || c.name === `@${handle}`);
+  if (exists) return;
+  const contact: NsContact = {
+    id,
+    name: `@${handle}`,
+    channels: [channel],
+    lastSeen,
+    tags: ["new"],
+    doNotDisturb: false,
+    totalOrdersMyr: 0,
+  };
+  state.contacts = [contact, ...state.contacts];
+  state.inboxContactIds = [...state.inboxContactIds, id];
+  logEvent("contact_created", `Added @${handle} to contacts`, { id });
+  addContactEvent(id, note);
   notify();
 }
 
@@ -324,6 +425,52 @@ export function rules(): NsRule[] {
 
 export function teamMembers(): NsMember[] {
   return state.members;
+}
+
+/* ── crm-inbox 跨区读(身份链:收件箱动作即刻现于 CRM) ────────────────────── */
+export function conversationsView(): NsConversation[] {
+  return state.conversations;
+}
+
+export function conversationByIdView(id: string): NsConversation | undefined {
+  return state.conversations.find((c) => c.id === id);
+}
+
+export function contactsView(): NsContact[] {
+  return state.contacts;
+}
+
+export function contactByIdView(id: string): NsContact | undefined {
+  return state.contacts.find((c) => c.id === id);
+}
+
+export function conversationsForContactView(contactId: string): NsConversation[] {
+  return state.conversations.filter((c) => c.contactId === contactId);
+}
+
+/** 该会话 Otto 自动回复是否被人工暂停(对话页横幅 / 开关读它)。 */
+export function isAiPaused(conversationId: string): boolean {
+  return state.pausedAiConversationIds.includes(conversationId);
+}
+
+/** 该会话是否已解决(对话页 Resolve 按钮态读它)。 */
+export function isResolved(conversationId: string): boolean {
+  return state.resolvedConversationIds.includes(conversationId);
+}
+
+/** deal 当前阶段(覆盖优先,否则回落静态种子)。 */
+export function dealStageOf(dealId: string, fallback: NsDealStage): NsDealStage {
+  return state.dealStageOverrides[dealId] ?? fallback;
+}
+
+/** 该联系人是否从收件箱/评论补建(CRM 打「New」chip)。 */
+export function isInboxContact(id: string): boolean {
+  return state.inboxContactIds.includes(id);
+}
+
+/** 该联系人的「来自收件箱」时间线条目(最早在前)。 */
+export function contactEventsFor(id: string): { at: number; label: string }[] {
+  return state.contactEvents[id] ?? [];
 }
 
 /* ── 订阅 hook(pattern precedent:useReducedMotion / useSyncExternalStore) ────

@@ -15,11 +15,14 @@ import { cn } from "@/lib/utils";
 import { PageHeader } from "@/components/northstar/_shared";
 import { CRM_INBOX_BASE as BASE, CrmNav, Card, CardHeader, fmtMyr, Initials } from "./kit";
 import { SEGMENTS, contactsInSegment } from "./data";
+import { useStore, contactsView } from "../_store";
 
 export function CrmSegments() {
   const [activeId, setActiveId] = React.useState(SEGMENTS[0]?.id ?? "");
+  useStore(); // 订阅共享 store:新联系人即刻计入分群
+  const contacts = contactsView();
   const active = SEGMENTS.find((s) => s.id === activeId) ?? SEGMENTS[0];
-  const members = active ? contactsInSegment(active) : [];
+  const members = active ? contactsInSegment(active, contacts) : [];
 
   return (
     <div className="mx-auto flex min-h-full w-full max-w-[1000px] flex-col px-6 pt-6 pb-16">
@@ -33,7 +36,7 @@ export function CrmSegments() {
         <Card className="h-fit overflow-hidden">
           <CardHeader title="Saved segments" desc={`${SEGMENTS.length} filters`} />
           {SEGMENTS.map((seg) => {
-            const count = contactsInSegment(seg).length;
+            const count = contactsInSegment(seg, contacts).length;
             const isActive = seg.id === activeId;
             return (
               <button

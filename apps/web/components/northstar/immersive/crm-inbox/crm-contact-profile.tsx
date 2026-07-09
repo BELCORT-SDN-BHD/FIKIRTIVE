@@ -9,7 +9,7 @@
 import * as React from "react";
 import Link from "next/link";
 import { useSearchParams } from "next/navigation";
-import { ArrowLeft, ArrowRight, MessageSquare, Receipt } from "lucide-react";
+import { ArrowLeft, ArrowRight, Inbox, MessageSquare, Receipt } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { PageHeader, StatCard, EmptyState } from "@/components/northstar/_shared";
@@ -23,13 +23,16 @@ import {
   Initials,
   type NsInboxChannel,
 } from "./kit";
+import { dealsForContact, DEAL_STAGES } from "./data";
 import {
-  CONTACTS,
-  contactById,
-  conversationsForContact,
-  dealsForContact,
-  DEAL_STAGES,
-} from "./data";
+  useStore,
+  contactByIdView,
+  contactsView,
+  conversationsForContactView,
+  contactEventsFor,
+  isInboxContact,
+  dealStageOf,
+} from "../_store";
 
 function StageBadge({ stage }: { stage: (typeof DEAL_STAGES)[number]["id"] }) {
   if (stage === "delivered") return <Badge variant="success">Delivered</Badge>;
@@ -40,8 +43,10 @@ function StageBadge({ stage }: { stage: (typeof DEAL_STAGES)[number]["id"] }) {
 
 export function CrmContactProfile() {
   const params = useSearchParams();
-  const id = params.get("id") ?? CONTACTS[0]?.id ?? "";
-  const contact = contactById(id) ?? CONTACTS[0];
+  useStore(); // 订阅共享 store:身份 / 对话 / 收件箱时间线即时反映
+  const contacts = contactsView();
+  const id = params.get("id") ?? contacts[0]?.id ?? "";
+  const contact = contactByIdView(id) ?? contacts[0];
 
   if (!contact) {
     return (
@@ -51,9 +56,10 @@ export function CrmContactProfile() {
     );
   }
 
-  const conversations = conversationsForContact(contact.id);
-  const deals = dealsForContact(contact.id);
+  const conversations = conversationsForContactView(contact.id);
+  const deals = dealsForContact(contact.id).map((d) => ({ ...d, stage: dealStageOf(d.id, d.stage) }));
   const delivered = deals.filter((d) => d.stage === "delivered").reduce((s, d) => s + d.amountMyr, 0);
+  const timeline = contactEventsFor(contact.id);
 
   return (
     <div className="mx-auto flex min-h-full w-full max-w-[880px] flex-col px-6 pt-6 pb-16">
@@ -75,6 +81,7 @@ export function CrmContactProfile() {
           <div className="min-w-0 flex-1">
             <div className="flex flex-wrap items-center gap-2">
               <h2 className="text-xl font-bold tracking-[-0.02em] text-foreground">{contact.name}</h2>
+              {isInboxContact(contact.id) && <Badge variant="warning">New</Badge>}
               {contact.doNotDisturb && <Badge variant="outline">Do not disturb</Badge>}
             </div>
             <div className="mt-2 flex flex-wrap items-center gap-1.5">
@@ -103,6 +110,22 @@ export function CrmContactProfile() {
       </div>
 
       <div className="mt-6 flex flex-col gap-6">
+        {timeline.length > 0 && (
+          <Card>
+            <CardHeader title="From the inbox" desc="Where this contact came from and what's happened since" />
+            <ol className="px-4 pb-3">
+              {[...timeline].reverse().map((e) => (
+                <li key={e.at} className="flex items-center gap-3 border-t border-border py-3 first:border-t-0">
+                  <span className="flex size-8 shrink-0 items-center justify-center rounded-full bg-secondary">
+                    <Inbox className="size-4 text-muted-foreground" strokeWidth={2} />
+                  </span>
+                  <p className="min-w-0 flex-1 text-sm text-foreground">{e.label}</p>
+                </li>
+              ))}
+            </ol>
+          </Card>
+        )}
+
         <Card>
           <CardHeader
             title="Conversations"

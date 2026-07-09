@@ -19,7 +19,7 @@ import {
   fmtStamp,
   Initials,
 } from "./kit";
-import { CONVERSATIONS, contactById } from "./data";
+import { useStore, conversationsView, contactByIdView } from "../_store";
 
 type Filter = "all" | "unread" | "otto";
 
@@ -31,15 +31,17 @@ const FILTERS: { id: Filter; label: string }[] = [
 
 export function InboxShared() {
   const [filter, setFilter] = React.useState<Filter>("all");
+  useStore(); // 订阅共享 store:已读/联系人变化即时反映
+  const conversations = conversationsView();
 
-  const shown = CONVERSATIONS.filter((cv) => {
+  const shown = conversations.filter((cv) => {
     if (filter === "unread") return cv.unread;
     if (filter === "otto") return cv.aiHandled;
     return true;
   });
 
-  const unreadCount = CONVERSATIONS.filter((c) => c.unread).length;
-  const ottoCount = CONVERSATIONS.filter((c) => c.aiHandled).length;
+  const unreadCount = conversations.filter((c) => c.unread).length;
+  const ottoCount = conversations.filter((c) => c.aiHandled).length;
 
   return (
     <div className="mx-auto flex min-h-full w-full max-w-[920px] flex-col px-6 pt-6 pb-16">
@@ -50,7 +52,7 @@ export function InboxShared() {
       />
 
       <div className="mt-6 grid grid-cols-1 gap-3 sm:grid-cols-3">
-        <StatCard label="Open threads" value={String(CONVERSATIONS.length)} />
+        <StatCard label="Open threads" value={String(conversations.length)} />
         <StatCard label="Unread" value={String(unreadCount)} />
         <StatCard label="Otto handled" value={String(ottoCount)} />
       </div>
@@ -77,7 +79,7 @@ export function InboxShared() {
       <Card className="mt-4 overflow-hidden">
         {shown.length > 0 ? (
           shown.map((cv) => {
-            const contact = contactById(cv.contactId);
+            const contact = contactByIdView(cv.contactId);
             const last = cv.messages[cv.messages.length - 1];
             return (
               <Link
@@ -95,7 +97,7 @@ export function InboxShared() {
                   </div>
                   <p className="mt-0.5 truncate text-xs text-muted-foreground">{last?.text}</p>
                 </div>
-                <span className="hidden shrink-0 text-xs text-muted-foreground sm:block">{last ? fmtStamp(last.at) : ""}</span>
+                <span className="hidden shrink-0 text-xs text-muted-foreground sm:block">{last ? (last.at.includes("T") ? fmtStamp(last.at) : last.at) : ""}</span>
                 <ArrowRight className="size-4 shrink-0 text-muted-foreground opacity-0 transition-opacity group-hover:opacity-100" strokeWidth={2} />
               </Link>
             );
