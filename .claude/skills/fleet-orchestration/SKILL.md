@@ -35,6 +35,10 @@ Foundation(串行,承重墙:共享数据/store/壳,后续全员依赖)
 
 Workflow 工具要点:`meta` 纯字面量;默认 `pipeline()`,只有真需要全量结果才 `parallel()` 加栅栏;脚本内禁 `Date.now()/Math.random()`;中断后用 `resumeFromRunId` 吃缓存;体验件 `{model:'opus', effort:'high'}`;质检官带 JSON schema(grade/summary/defects[file,issue])。
 
+## 二·五、上线就绪五关(founder 2026-07-09 定制;每次大版本/板块点亮必走)
+
+①**机器闸**(typecheck/围栏/单测/build)→ ②**场景实测**(E2E:人物剧本在真浏览器从头点到尾,盯 console/死按钮/裂图/断头路)→ ③**认知走查**(宕机点三类:还没开始就懵/半路卡/出错慌,产出接法台账)→ ④**效果过堂**(产出实质双镜审:挑剔商家+专业顾问,判"站得住/勉强/站不住" —— 行业标准 QAQC 没有这层,是我们的护城河审法)→ ⑤**founder 验收**(UAT 走城)。Codex 异族审查横切全程;改完必回归(②重跑受影响剧本)。对应行业名:Launch Readiness / Release Quality Gate;③=cognitive walkthrough,⑤=UAT。
+
 ## 三、worker 施工样板(写进每张工单)
 
 1. `git fetch origin <branch>` → `git worktree add <scratch>/wt-<name> origin/<branch> --detach`(锁冲突 sleep 5 重试 ×5)
