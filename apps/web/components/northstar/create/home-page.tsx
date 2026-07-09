@@ -29,7 +29,7 @@ import {
 } from "@/components/ui/dialog";
 import { MockNote } from "../_shared";
 import { useImmersiveRouter } from "../immersive/_kit";
-import { NS_BRAND } from "../_mock";
+import { balance as getBalance, useStore } from "../immersive/_store";
 import { NS_DISCOVER, NS_TEMPLATES } from "./_fixtures";
 import {
   DemoStateBar,
@@ -47,7 +47,7 @@ const MODE_META: Record<Mode, { icon: React.ElementType; label: string; placehol
     icon: ImageIcon,
     label: "Image",
     placeholder: "Describe the image you want to make…",
-    chips: ["1:1", "4:5", "9:16", "4 variants"],
+    chips: ["1:1", "4:5", "9:16", "A/B pair"],
   },
   video: {
     icon: Video,
@@ -65,6 +65,7 @@ const MODE_META: Record<Mode, { icon: React.ElementType; label: string; placehol
 
 export function CreateHomePage() {
   useCreateKeyframes();
+  useStore(); // 订阅共享余额(与画布/工厂同一数字,不再读静态 mock)
   // 壳内 push 改写到 /northstar-immersive/*(不弹出常驻壳);壳外原样跳画廊。
   const { push } = useImmersiveRouter();
   const [mode, setMode] = React.useState<Mode>("image");
@@ -84,7 +85,9 @@ export function CreateHomePage() {
 
   const submit = (e: React.FormEvent) => {
     e.preventDefault();
-    push("/northstar/create/canvas");
+    // composer 提交把 prompt 带进画布(canvas 挂载时预填首句)—— 断头路全通
+    const q = prompt.trim();
+    push(q ? `/northstar/create/canvas?prompt=${encodeURIComponent(q)}` : "/northstar/create/canvas");
   };
 
   return (
@@ -130,7 +133,7 @@ export function CreateHomePage() {
                 })}
               </div>
               <span className="font-mono text-[11px] leading-[14px] font-medium tracking-[0.08em] text-muted-foreground tabular-nums">
-                {NS_BRAND.creditBalance.toLocaleString()} credits
+                {getBalance().toLocaleString()} credits
               </span>
             </div>
 
@@ -203,7 +206,7 @@ export function CreateHomePage() {
                   variant="secondary"
                   size="sm"
                   className="h-8 px-3 text-xs"
-                  onClick={() => push("/northstar/create/canvas")}
+                  onClick={() => push(`/northstar/create/canvas?from=${t.id}`)}
                 >
                   Use
                 </Button>
@@ -251,7 +254,7 @@ export function CreateHomePage() {
               <button
                 key={d.id}
                 type="button"
-                onClick={() => push("/northstar/create/canvas")}
+                onClick={() => push(`/northstar/create/canvas?from=${d.id}`)}
                 onMouseEnter={() => d.kind === "video" && setPlaying(d.id)}
                 onMouseLeave={() => setPlaying((p) => (p === d.id ? null : p))}
                 className="group relative block w-full break-inside-avoid overflow-hidden rounded-[18px] border border-border bg-card text-left shadow-[var(--shadow-xs)] transition-shadow duration-[150ms] hover:shadow-[var(--shadow-md)] focus-visible:ring-[3px] focus-visible:ring-ring/40 outline-none"

@@ -21,6 +21,7 @@ import { cn } from "@/lib/utils";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { useQueryParam } from "../immersive/_kit";
+import { ottoWorking as setOttoWorking, spendCredits } from "../immersive/_store";
 import { MockNote, OttoNarrationBar, PageHeader } from "../_shared";
 import { nsPlaceholder } from "../_mock";
 import { CV_ALL_SEED_OBJECTS, NS_ASSETS, type CvObject } from "./_fixtures";
@@ -304,9 +305,11 @@ function VideoEditor({ asset }: { asset: CvObject | null }) {
 
   const extractFrame = () => {
     setExtracting(true);
+    setOttoWorking(true, "Extracting frame…"); // 免费但 Otto 在干活 → dock 反映
     timers.current.push(
       window.setTimeout(() => {
         setExtracting(false);
+        setOttoWorking(false);
         setExtracted((prev) => [...prev, `ex-${prev.length + 1}`]);
         setSweep(true);
         timers.current.push(window.setTimeout(() => setSweep(false), 650));
@@ -482,10 +485,14 @@ function VideoEditor({ asset }: { asset: CvObject | null }) {
         onConfirm={() => {
           setTrimAsk(false);
           setTrimming(true);
+          setOttoWorking(true, "Trimming the clip…"); // dock 徽点脉冲
           timers.current.push(
             window.setTimeout(() => {
+              // 重渲染完成即入账(共享 store;余额即时刷新)
+              spendCredits(TRIM_COST, `Trim · ${secs}s`, "Video");
               setTrimming(false);
               setTrimmed(true);
+              setOttoWorking(false);
             }, 2800),
           );
         }}

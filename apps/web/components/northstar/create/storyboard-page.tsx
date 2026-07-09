@@ -27,6 +27,7 @@ import {
 } from "@/components/ui/dialog";
 import { MockNote, OttoNarrationBar, PageHeader, EmptyState } from "../_shared";
 import { NS_PRODUCTS } from "../_mock";
+import { ottoWorking as setOttoWorking, spendCredits } from "../immersive/_store";
 import { NS_SCENES, type NsScene } from "./_fixtures";
 import {
   DemoStateBar,
@@ -65,7 +66,10 @@ export function StoryboardPage() {
   const totalCredits = scenes.reduce((s, sc) => s + sc.credits, 0);
   const totalSeconds = scenes.reduce((s, sc) => s + sc.duration, 0);
 
-  const startRender = () => {
+  const startRender = (credits: number) => {
+    // 第 4 步是唯一付费点:确认即入账 + Otto 进工作态(共享 store)
+    spendCredits(credits, `Storyboard · ${scenes.length} scenes`, "Video");
+    setOttoWorking(true, "Rendering scenes…");
     setRenderState("rendering");
     setStep(4);
     scenes.forEach((sc, i) => {
@@ -82,7 +86,10 @@ export function StoryboardPage() {
               setSweepId(sc.id);
               window.setTimeout(() => setSweepId((s) => (s === sc.id ? null : s)), 650);
               if (i === scenes.length - 1) {
-                window.setTimeout(() => setRenderState("done"), 500);
+                window.setTimeout(() => {
+                  setRenderState("done");
+                  setOttoWorking(false); // 全部渲染完 → Otto idle
+                }, 500);
               }
             }
             return next;
@@ -446,7 +453,12 @@ export function StoryboardPage() {
         confirmLabel={`Confirm render · ${totalCredits} credits`}
         onConfirm={() => {
           setMakeAllAsk(false);
-          startRender();
+          startRender(totalCredits);
+        }}
+        baseCredits={totalCredits}
+        onConfirmTier={(_tier, credits) => {
+          setMakeAllAsk(false);
+          startRender(credits);
         }}
       />
 

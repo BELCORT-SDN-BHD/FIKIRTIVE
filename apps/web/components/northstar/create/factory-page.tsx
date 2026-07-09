@@ -12,7 +12,13 @@ import { cn } from "@/lib/utils";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { MockNote, OttoNarrationBar, PageHeader } from "../_shared";
-import { NS_BRAND, NS_PRODUCTS } from "../_mock";
+import { NS_PRODUCTS } from "../_mock";
+import {
+  balance as getBalance,
+  ottoWorking as setOttoWorking,
+  spendCredits,
+  useStore,
+} from "../immersive/_store";
 import {
   NS_FACTORY_CREDITS_PER_VARIANT,
   NS_FACTORY_HOOKS,
@@ -37,6 +43,7 @@ type BatchState = "idle" | "running" | "done";
 
 export function FactoryPage() {
   useCreateKeyframes();
+  useStore(); // 订阅共享 store —— 余额/工作态走同一循环系统,不再本地 fork
   const [productId, setProductId] = React.useState(NS_PRODUCTS[5].id);
   const [modeId, setModeId] = React.useState<string>(NS_FACTORY_MODES[0].id);
   const [styleId, setStyleId] = React.useState<string>(NS_FACTORY_STYLES[0].id);
@@ -47,7 +54,7 @@ export function FactoryPage() {
   const [batchAsk, setBatchAsk] = React.useState(false);
   const [batch, setBatch] = React.useState<BatchState>("idle");
   const [cellPct, setCellPct] = React.useState<Record<string, number>>({});
-  const [balance, setBalance] = React.useState<number>(NS_BRAND.creditBalance);
+  const balance = getBalance(); // 共享余额(单一源)
   const [demo, setDemo] = React.useState<DemoState>("live");
   const timers = React.useRef<number[]>([]);
   React.useEffect(() => () => timers.current.forEach((t) => window.clearInterval(t)), []);
@@ -67,8 +74,10 @@ export function FactoryPage() {
     timers.current.push(t);
   };
 
-  const runBatch = () => {
-    setBalance((b) => b - totalCredits);
+  const runBatch = (credits: number) => {
+    // 确认即入账 + Otto 进工作态(共享 store;dock 徽点脉冲 + 余额即时刷新)
+    spendCredits(credits, `${variantCount} variants · ${product.name}`, "Image");
+    setOttoWorking(true, "Rendering variants…");
     setBatch("running");
     cells.forEach((key, i) => {
       const t = window.setTimeout(() => {
@@ -81,7 +90,10 @@ export function FactoryPage() {
             }
             const next = { ...prev, [key]: Math.min(100, cur + 8) };
             if (next[key] === 100 && i === cells.length - 1) {
-              window.setTimeout(() => setBatch("done"), 500);
+              window.setTimeout(() => {
+                setBatch("done");
+                setOttoWorking(false); // 全部完成 → Otto idle
+              }, 500);
             }
             return next;
           });
@@ -393,7 +405,12 @@ export function FactoryPage() {
         confirmLabel={`Confirm batch · ${totalCredits} credits`}
         onConfirm={() => {
           setBatchAsk(false);
-          runBatch();
+          runBatch(totalCredits);
+        }}
+        baseCredits={totalCredits}
+        onConfirmTier={(_tier, credits) => {
+          setBatchAsk(false);
+          runBatch(credits);
         }}
       />
 

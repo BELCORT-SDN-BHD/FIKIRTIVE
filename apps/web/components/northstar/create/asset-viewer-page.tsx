@@ -21,6 +21,7 @@ import {
 import { cn } from "@/lib/utils";
 import { useInsideImmersive } from "../immersive/_context";
 import { useQueryParam } from "../immersive/_kit";
+import { ottoWorking as setOttoWorking, spendCredits } from "../immersive/_store";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { MockNote, OttoNarrationBar } from "../_shared";
@@ -71,6 +72,7 @@ export function AssetViewerPage() {
   const continueWrite = (note: string) => {
     if (working) return;
     setWorking(true);
+    setOttoWorking(true, "Generating the next version…"); // dock 徽点脉冲
     const t = window.setTimeout(() => {
       const n = versions.length + 1;
       const nv: NsViewerVersion = {
@@ -84,7 +86,10 @@ export function AssetViewerPage() {
       setActiveVersion(nv.id);
       setSweepId(nv.id);
       window.setTimeout(() => setSweepId(null), 650);
+      // 新版本出炉即入账(共享 store;余额即时刷新 = live reflection)
+      spendCredits(view.credits, `New version · ${view.title}`, view.kind === "video" ? "Video" : "Image");
       setWorking(false);
+      setOttoWorking(false);
     }, 4200);
     timersRef.current.push(t);
   };

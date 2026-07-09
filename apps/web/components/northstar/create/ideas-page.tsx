@@ -222,7 +222,7 @@ export function IdeasPage() {
                           On canvas
                         </Badge>
                         <Link
-                          href="/northstar/create/canvas"
+                          href={`/northstar/create/canvas?prompt=${encodeURIComponent(idea.text)}`}
                           className="flex h-8 shrink-0 items-center gap-1 rounded-[10px] px-2 text-[13px] font-medium text-muted-foreground hover:bg-accent hover:text-foreground"
                         >
                           Open

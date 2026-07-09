@@ -46,6 +46,7 @@ import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip";
 import { useInsideImmersive } from "../immersive/_context";
+import { useQueryParam } from "../immersive/_kit";
 import {
   balance as getBalance,
   ottoWorking as setOttoWorking,
@@ -60,6 +61,7 @@ import {
   CV_SESSION_SEEDS,
   CV_SESSIONS,
   nsPlaceholder,
+  resolveCanvasSeed,
   type CvChatTurn,
   type CvObject,
 } from "./_fixtures";
@@ -71,6 +73,7 @@ import {
   SWEEP_STYLE,
   useCreateKeyframes,
   type FeedbackValue,
+  type GenTier,
 } from "./_create-ui";
 
 type Mode = "image" | "video" | "agent";
@@ -78,10 +81,50 @@ type SideTab = "chat" | "projects" | "history" | "tree";
 
 const VIDEO_COST = 40;
 const IMAGE_COST = 12;
-const CLIP_COUNT = 4;
 const STITCH_COST = 20;
 const ZOOM_MIN = 0.25;
 const ZOOM_MAX = 3;
+
+/* ── Agent 澄清脑回路(GOAL H1a/H1b:确定性规则,不是真 LLM) ────────────────
+ * runAgent 不再固定出 4 clip。先按用户输入粗分意图(H1a),再最多两轮结构化追问
+ * (H1b),数量/预算随答案变化。 */
+type AgentIntent = "image" | "edit" | "video";
+
+interface ClarifyQ {
+  key: string;
+  prompt: string;
+  options: { label: string; value: string }[];
+}
+
+/** H1a:意图粗分(关键词规则)。 */
+function detectIntent(text: string): AgentIntent {
+  const t = text.toLowerCase();
+  if (/\b(edit|change|tweak|fix|retouch|adjust|remove|replace|recolor|recolour|crop|swap)\b/.test(t)) return "edit";
+  if (/\b(video|reel|clip|animate|animation|motion|footage|tiktok|film|shoot)\b/.test(t)) return "video";
+  return "image";
+}
+
+/** H1b:每种意图挑最相关的两维追问(卡片式确定性选项)。 */
+const CLARIFY_QUESTIONS: Record<AgentIntent, ClarifyQ[]> = {
+  video: [
+    { key: "count", prompt: "How many clips?", options: [{ label: "1 clip", value: "1" }, { label: "2 clips", value: "2" }, { label: "4 clips", value: "4" }] },
+    { key: "length", prompt: "How long each?", options: [{ label: "6s", value: "6" }, { label: "10s", value: "10" }] },
+  ],
+  image: [
+    { key: "count", prompt: "How many to try?", options: [{ label: "1", value: "1" }, { label: "2 (A/B)", value: "2" }, { label: "4", value: "4" }] },
+    { key: "ratio", prompt: "What shape?", options: [{ label: "1:1", value: "1:1" }, { label: "4:5", value: "4:5" }, { label: "9:16", value: "9:16" }] },
+  ],
+  edit: [
+    { key: "target", prompt: "What should change?", options: [{ label: "Background", value: "background" }, { label: "Colours", value: "colours" }, { label: "Text", value: "text" }, { label: "Crop", value: "crop" }] },
+    { key: "count", prompt: "How many options?", options: [{ label: "1", value: "1" }, { label: "2 (A/B)", value: "2" }] },
+  ],
+};
+
+const INTENT_META: Record<AgentIntent, { unit: string; costEach: number; category: "Video" | "Image" }> = {
+  video: { unit: "clip", costEach: VIDEO_COST, category: "Video" },
+  image: { unit: "image", costEach: IMAGE_COST, category: "Image" },
+  edit: { unit: "edit", costEach: IMAGE_COST, category: "Image" },
+};
 
 interface GenJob {
   objectId: string;
@@ -118,8 +161,31 @@ export function CanvasPage() {
   useStore(); // 订阅共享 store(余额 / Otto 工作态 / 事件流 = 单一循环系统)
 
   const firstSession = CV_SESSIONS[0].id;
-  // 可寻址名计数(C2:Image 1/2… Video 1/2…)— 只在事件处理器里改;从首个会话种子派生
-  const refCounter = React.useRef(deriveCounters(CV_SESSION_SEEDS[firstSession].objects));
+
+  // ── ?from / ?prompt 落地画布(create gap#4:断头路全通)──
+  // from=<id> 解析成真实对象 → 一张只含它的干净画布;prompt 预填首句。
+  const fromParam = useQueryParam("from");
+  const promptParam = useQueryParam("prompt");
+  const bootSeed = React.useMemo(() => resolveCanvasSeed(fromParam), [fromParam]);
+  const bootSessionId = "cv-boot";
+  const bootObjects = React.useMemo(() => (bootSeed ? [bootSeed] : null), [bootSeed]);
+  const bootTurns = React.useMemo<CvChatTurn[] | null>(
+    () =>
+      bootSeed
+        ? [
+            {
+              id: "t-boot",
+              from: "otto",
+              text: `Brought “${bootSeed.title}” onto a fresh canvas. Evolve it, animate it, or tell me what to change.`,
+              objectIds: [bootSeed.id],
+            },
+          ]
+        : null,
+    [bootSeed],
+  );
+
+  // 可寻址名计数(C2:Image 1/2… Video 1/2…)— 只在事件处理器里改;从起始画布对象派生
+  const refCounter = React.useRef(deriveCounters(bootObjects ?? CV_SESSION_SEEDS[firstSession].objects));
   const uidCounter = React.useRef(0);
   const nextUid = () => {
     uidCounter.current += 1;
@@ -127,7 +193,7 @@ export function CanvasPage() {
   };
 
   // ── 画布状态 ──
-  const [objects, setObjects] = React.useState<CvObject[]>(CV_SESSION_SEEDS[firstSession].objects);
+  const [objects, setObjects] = React.useState<CvObject[]>(bootObjects ?? CV_SESSION_SEEDS[firstSession].objects);
   const [selected, setSelected] = React.useState<string[]>([]);
   const [zoom, setZoom] = React.useState(1);
   const [pan, setPan] = React.useState({ x: 0, y: 0 });
@@ -143,11 +209,11 @@ export function CanvasPage() {
   const flashTimer = React.useRef<number | null>(null);
 
   // ── 会话 / chat 状态 ──
-  const [sessionId, setSessionId] = React.useState<string>(firstSession);
+  const [sessionId, setSessionId] = React.useState<string>(bootSeed ? bootSessionId : firstSession);
   const [sessionMenu, setSessionMenu] = React.useState(false);
-  const [turns, setTurns] = React.useState<CvChatTurn[]>(CV_SESSION_SEEDS[firstSession].turns);
+  const [turns, setTurns] = React.useState<CvChatTurn[]>(bootTurns ?? CV_SESSION_SEEDS[firstSession].turns);
   const [mode, setMode] = React.useState<Mode>("agent");
-  const [draft, setDraft] = React.useState("");
+  const [draft, setDraft] = React.useState(promptParam ?? "");
   const [streaming, setStreaming] = React.useState(false);
   const [streamSteps, setStreamSteps] = React.useState<string[]>([]);
   const [mentionOpen, setMentionOpen] = React.useState(false);
@@ -166,10 +232,17 @@ export function CanvasPage() {
   const [spendAsk, setSpendAsk] = React.useState<
     | { kind: "make-video"; sourceId: string }
     | { kind: "evolve-video"; sourceId: string; prompt: string }
-    | { kind: "agent-batch"; prompt: string }
+    | { kind: "agent-plan"; intent: AgentIntent; brief: string; count: number }
     | { kind: "stitch"; ids: string[] }
     | null
   >(null);
+  // Agent 澄清脑回路状态(H1a/H1b):step -1 = 意图确认卡;0..n = 结构化追问
+  const [clarify, setClarify] = React.useState<{
+    intent: AgentIntent;
+    brief: string;
+    step: number;
+    answers: Record<string, string>;
+  } | null>(null);
 
   // 轻量 toast(诚实反馈:download / play both 等无真产物的动作)—— 复用底部居中 chip。
   const showFlash = React.useCallback((msg: string) => {
@@ -212,7 +285,7 @@ export function CanvasPage() {
 
   React.useEffect(() => {
     chatEndRef.current?.scrollIntoView({ block: "end" });
-  }, [turns, streamSteps]);
+  }, [turns, streamSteps, clarify]);
 
   const selectedObjects = objects.filter((o) => selected.includes(o.id));
   const singleSelected = selectedObjects.length === 1 ? selectedObjects[0] : null;
@@ -288,11 +361,11 @@ export function CanvasPage() {
     );
   };
 
-  const makeVideo = (source: CvObject, prompt: string) => {
+  const makeVideo = (source: CvObject, prompt: string, credits: number = VIDEO_COST) => {
     refCounter.current.video += 1;
     const n = refCounter.current.video;
     const id = `cv-vid-${n}-${nextUid()}`;
-    spendCredits(VIDEO_COST, prompt.slice(0, 40) || "New video", "Video"); // 边界 A:确认后立即入账,余额即时刷新
+    spendCredits(credits, prompt.slice(0, 40) || "New video", "Video"); // 边界 A:确认后立即入账,余额即时刷新
     startGeneration(
       [
         {
@@ -309,79 +382,147 @@ export function CanvasPage() {
           status: "generating",
           parentId: source.id,
           duration: 6,
-          credits: VIDEO_COST,
+          credits,
         },
       ],
       "Generating video…",
     );
   };
 
-  /* ── Agent 并行批量(H3):流式子步骤 → 花费确认 → 4 clip 落同带 ── */
+  /* ── 图 A/B 分叉(GOAL §6 / N-Grok「A/B=要」):一次出两版并排,fork A/B,自动选中 → Compare 条即出 ── */
+  const evolveImageAB = (source: CvObject | null, prompt: string) => {
+    const baseX = source ? source.x + source.w + 56 : 96;
+    const baseY = source ? source.y : 120;
+    const w = source ? source.w : 200;
+    const h = source ? source.h : 200;
+    spendCredits(2 * IMAGE_COST, `A/B · ${prompt.slice(0, 32) || "New image"}`, "Image"); // 图直出:余额即闸
+    const pair: CvObject[] = (["A", "B"] as const).map((fork, i) => {
+      refCounter.current.image += 1;
+      const n = refCounter.current.image;
+      return {
+        id: `cv-img-${n}-${nextUid()}`,
+        ref: `Image ${n}`,
+        kind: "image" as const,
+        title: `${prompt.slice(0, 36) || "New image"} · ${fork}`,
+        prompt,
+        src: nsPlaceholder(`Image ${n} · ${fork}`, 640, 640, i === 0 ? "pandan" : "crust"),
+        x: baseX + i * (w + 32),
+        y: baseY,
+        w,
+        h,
+        status: "generating" as const,
+        parentId: source?.id, // 同父 → comparable(GOAL §6 并排对比闸)
+        fork,
+        credits: IMAGE_COST,
+      };
+    });
+    // 无源时让 B 挂到 A 上,两版仍可比(comparable:b.parentId === a.id)
+    if (!source) pair[1] = { ...pair[1], parentId: pair[0].id };
+    startGeneration(pair, "Generating A and B…", () => setSelected(pair.map((o) => o.id)));
+  };
+
+  /* ── Agent 澄清脑回路(H1a/H1b):粗分意图 → 结构化追问 → 计划随答案变 → 花费确认 ── */
   const runAgent = (text: string) => {
+    // 先跑一小段「读你的话」的思考,再弹澄清卡(不是固定 4-clip)
     setStreaming(true);
     setStreamSteps([]);
-    const steps = ["Thinking", "Analyzing your brief", `Planning ${CLIP_COUNT} clips`];
+    const steps = ["Reading your brief", "Working out what you need"];
     steps.forEach((s, i) => {
-      const t = window.setTimeout(() => setStreamSteps((prev) => [...prev, s]), 700 * (i + 1));
+      const t = window.setTimeout(() => setStreamSteps((prev) => [...prev, s]), 500 * (i + 1));
       timersRef.current.push(t as unknown as number);
     });
     const done = window.setTimeout(() => {
       setStreaming(false);
-      setTurns((prev) => [
-        ...prev,
-        {
-          id: `t-${prev.length + 1}`,
-          from: "otto",
-          text: `I'll make ${CLIP_COUNT} clips for that. Total is ${CLIP_COUNT * VIDEO_COST} credits. Confirm to start.`,
-          steps,
-        },
-      ]);
-      setSpendAsk({ kind: "agent-batch", prompt: text });
-    }, 700 * (steps.length + 1));
+      setClarify({ intent: detectIntent(text), brief: text, step: -1, answers: {} });
+    }, 500 * (steps.length + 1));
     timersRef.current.push(done as unknown as number);
   };
 
-  const confirmAgentBatch = (prompt: string) => {
-    spendCredits(CLIP_COUNT * VIDEO_COST, `${CLIP_COUNT} clips · ${prompt.slice(0, 28)}`, "Video");
+  // 意图确认(H1a):用户可改 Otto 的粗分
+  const pickIntent = (intent: AgentIntent) =>
+    setClarify((c) => (c ? { ...c, intent, step: 0 } : c));
+
+  // 回答一维追问(H1b);答完最后一维 → 出计划 + 花费确认
+  const answerClarify = (key: string, value: string) => {
+    setClarify((c) => {
+      if (!c) return c;
+      const answers = { ...c.answers, [key]: value };
+      const qs = CLARIFY_QUESTIONS[c.intent];
+      const nextStep = c.step + 1;
+      if (nextStep >= qs.length) {
+        finishClarify(c.intent, c.brief, answers);
+        return null;
+      }
+      return { ...c, answers, step: nextStep };
+    });
+  };
+
+  const cancelClarify = () => {
+    setClarify(null);
+    setTurns((prev) => [...prev, { id: `t-${prev.length + 1}`, from: "otto", text: "No problem — nothing was made or charged." }]);
+  };
+
+  // 计划:数量/预算随答案变化,不再固定
+  const finishClarify = (intent: AgentIntent, brief: string, answers: Record<string, string>) => {
+    const count = Math.max(1, Number(answers.count ?? "1") || 1);
+    const total = count * INTENT_META[intent].costEach;
+    const detail =
+      intent === "video"
+        ? `${count} ${count === 1 ? "clip" : "clips"}, ${answers.length ?? "6"}s each`
+        : intent === "image"
+          ? `${count} ${count === 1 ? "image" : "images"}${answers.ratio ? ` · ${answers.ratio}` : ""}`
+          : `${count} edit ${count === 1 ? "option" : "options"}${answers.target ? ` · ${answers.target}` : ""}`;
+    setTurns((prev) => [
+      ...prev,
+      { id: `t-${prev.length + 1}`, from: "otto", text: `Got it — ${detail}. That's ${total} credits. Confirm to start.` },
+    ]);
+    setSpendAsk({ kind: "agent-plan", intent, brief, count });
+  };
+
+  const confirmAgentPlan = (intent: AgentIntent, brief: string, count: number, credits: number) => {
+    spendCredits(credits, `${count} ${INTENT_META[intent].unit}${count > 1 ? "s" : ""} · ${brief.slice(0, 24)}`, INTENT_META[intent].category);
+    const isVid = intent === "video";
     const bandY = 540;
-    const clips: CvObject[] = Array.from({ length: CLIP_COUNT }, (_, i) => {
-      refCounter.current.video += 1;
-      const n = refCounter.current.video;
+    const forks: (("A" | "B") | undefined)[] = count === 2 ? ["A", "B"] : Array(count).fill(undefined);
+    const items: CvObject[] = Array.from({ length: count }, (_, i) => {
+      if (isVid) refCounter.current.video += 1;
+      else refCounter.current.image += 1;
+      const n = isVid ? refCounter.current.video : refCounter.current.image;
+      const tag = forks[i] ? ` · ${forks[i]}` : count > 1 ? ` · ${i + 1}` : "";
       return {
-        id: `cv-vid-${n}-${nextUid()}`,
-        ref: `Video ${n}`,
-        kind: "video" as const,
-        title: `${prompt.slice(0, 28)} · clip ${i + 1}`,
-        prompt: `${prompt} — clip ${i + 1} of ${CLIP_COUNT}`,
-        src: nsPlaceholder(`Clip ${i + 1}`, 360, 640, "video"),
-        x: 40 + i * 196,
+        id: `cv-${isVid ? "vid" : "img"}-${n}-${nextUid()}`,
+        ref: `${isVid ? "Video" : "Image"} ${n}`,
+        kind: isVid ? ("video" as const) : ("image" as const),
+        title: `${brief.slice(0, 28)}${tag}`,
+        prompt: brief,
+        src: nsPlaceholder(`${isVid ? "Clip" : "Image"} ${i + 1}`, isVid ? 360 : 640, isVid ? 640 : 640, isVid ? "video" : "pandan"),
+        x: 40 + i * (isVid ? 196 : 232),
         y: bandY,
-        w: 168,
-        h: 300,
+        w: isVid ? 168 : 200,
+        h: isVid ? 300 : 200,
         status: "generating" as const,
-        duration: 6,
-        credits: VIDEO_COST,
+        fork: forks[i],
+        duration: isVid ? 6 : undefined,
+        credits: INTENT_META[intent].costEach,
       };
     });
-    startGeneration(clips, `Generating ${CLIP_COUNT} clips…`, () => {
+    // A/B(count===2)让两版可比:B 挂到 A → Compare 条即出
+    if (count === 2) items[1] = { ...items[1], parentId: items[0].id };
+    startGeneration(items, `Generating ${count} ${INTENT_META[intent].unit}${count > 1 ? "s" : ""}…`, () => {
       setTurns((prev) => [
         ...prev,
         {
           id: `t-${prev.length + 1}`,
           from: "otto",
-          text: `All ${CLIP_COUNT} clips are ready on the canvas. You approved this. It used ${CLIP_COUNT * VIDEO_COST} credits.`,
-          objectIds: clips.map((c) => c.id),
+          text: `All ${count} ${count > 1 ? "are" : "is"} ready on the canvas. You approved this. It used ${credits} credits.`,
+          objectIds: items.map((c) => c.id),
         },
       ]);
+      if (count === 2) setSelected(items.map((c) => c.id)); // A/B → 自动选中,Compare 条即出
     });
     setTurns((prev) => [
       ...prev,
-      {
-        id: `t-${prev.length + 1}`,
-        from: "otto",
-        text: `Generating ${CLIP_COUNT} clips in parallel. Each shows its own progress on the canvas.`,
-        objectIds: clips.map((c) => c.id),
-      },
+      { id: `t-${prev.length + 1}`, from: "otto", text: `Generating ${count} ${INTENT_META[intent].unit}${count > 1 ? "s" : ""} in parallel. Each shows its own progress on the canvas.`, objectIds: items.map((c) => c.id) },
     ]);
   };
 
@@ -394,11 +535,12 @@ export function CanvasPage() {
     if (mode === "agent") {
       runAgent(text);
     } else if (mode === "image") {
-      const source = singleSelected ?? objects.find((o) => o.kind === "image");
-      if (source) evolveImage(source, text);
+      // 图模式 = 一次出 A/B 两版并排(N-Grok 判决头号差异化点),自动选中 → Compare 条即出
+      const source = singleSelected ?? objects.find((o) => o.kind === "image") ?? null;
+      evolveImageAB(source, text);
       setTurns((prev) => [
         ...prev,
-        { id: `t-${prev.length + 1}`, from: "otto", text: "On it. The new image lands next to its source.", steps: ["Generating image"] },
+        { id: `t-${prev.length + 1}`, from: "otto", text: "Making an A and a B version so you can compare. Balance is the gate.", steps: ["Generating A and B"] },
       ]);
     } else {
       setSpendAsk({ kind: "evolve-video", sourceId: singleSelected?.id ?? objects[0].id, prompt: text });
@@ -749,7 +891,7 @@ export function CanvasPage() {
             aria-expanded={sessionMenu}
             className="flex min-w-0 items-center gap-1 rounded-[10px] px-2 py-1 text-sm font-semibold text-foreground hover:bg-accent"
           >
-            <span className="truncate">{CV_SESSIONS.find((s) => s.id === sessionId)?.name}</span>
+            <span className="truncate">{CV_SESSIONS.find((s) => s.id === sessionId)?.name ?? "New canvas"}</span>
             <ChevronDown className="size-4 shrink-0 text-muted-foreground" strokeWidth={2} />
           </button>
           <div className="flex-1" />
@@ -848,6 +990,14 @@ export function CanvasPage() {
               {streamSteps.length === 0 && <span className="text-xs text-muted-foreground">Thinking…</span>}
             </div>
           )}
+          {clarify && (
+            <ClarifyCard
+              clarify={clarify}
+              onPickIntent={pickIntent}
+              onAnswer={answerClarify}
+              onCancel={cancelClarify}
+            />
+          )}
           <div ref={chatEndRef} />
         </div>
 
@@ -922,7 +1072,7 @@ export function CanvasPage() {
               </div>
               {/* 参数栏随模式重排(A1) */}
               <span className="min-w-0 flex-1 truncate text-xs text-muted-foreground">
-                {mode === "image" && "1:1 · 4 variants · direct, balance is the gate"}
+                {mode === "image" && "1:1 · A/B pair · compare side by side, balance is the gate"}
                 {mode === "video" && "6s · 720p · asks before spending"}
                 {mode === "agent" && "Plans first · asks before spending"}
               </span>
@@ -946,7 +1096,7 @@ export function CanvasPage() {
         {/* 顶条:项目名 + 余额 + 进度胶囊 */}
         <div className="flex h-[52px] shrink-0 items-center gap-3 border-b border-border px-4">
           <span className="truncate text-sm font-semibold text-foreground">
-            Untitled project · {CV_SESSIONS.find((s) => s.id === sessionId)?.name}
+            Untitled project · {CV_SESSIONS.find((s) => s.id === sessionId)?.name ?? "New canvas"}
           </span>
           {/* 'Auto-saved' 徽章接 store 事件流:有过动作即读作「刚保存」,tooltip 显示上一条 */}
           <Tooltip>
@@ -1358,30 +1508,30 @@ export function CanvasPage() {
         </div>
       </section>
 
-      {/* 花费确认(§FB6 money + §V5) */}
+      {/* 花费确认(§FB6 money + §V5;video / agent = Speed/Quality 双档,stitch = 定价再渲染不双档) */}
       <SpendConfirmDialog
         open={spendAsk !== null}
         onOpenChange={(v) => !v && setSpendAsk(null)}
         title={
-          spendAsk?.kind === "agent-batch"
-            ? `Generate ${CLIP_COUNT} clips?`
+          spendAsk?.kind === "agent-plan"
+            ? `Generate ${spendAsk.count} ${INTENT_META[spendAsk.intent].unit}${spendAsk.count > 1 ? "s" : ""}?`
             : spendAsk?.kind === "stitch"
               ? "Stitch these clips?"
               : "Generate this video?"
         }
         ask={
-          spendAsk?.kind === "agent-batch"
-            ? `Otto will generate ${CLIP_COUNT} clips in parallel. This will spend real credits.`
+          spendAsk?.kind === "agent-plan"
+            ? `Otto will generate ${spendAsk.count} ${INTENT_META[spendAsk.intent].unit}${spendAsk.count > 1 ? "s" : ""} in parallel. This will spend real credits.`
             : spendAsk?.kind === "stitch"
               ? "Stitching re-renders the clips into one. This will spend real credits."
               : "This will spend real credits."
         }
         impacts={
-          spendAsk?.kind === "agent-batch"
+          spendAsk?.kind === "agent-plan"
             ? [
-                `Cost: ${CLIP_COUNT * VIDEO_COST} credits (${CLIP_COUNT} clips × ${VIDEO_COST}). No charge until you confirm.`,
-                "Each clip shows its own progress and can be deleted after.",
-                "If a clip fails, you aren't charged for it.",
+                `${spendAsk.count} ${INTENT_META[spendAsk.intent].unit}${spendAsk.count > 1 ? "s" : ""} × ${INTENT_META[spendAsk.intent].costEach} credits each. No charge until you confirm.`,
+                spendAsk.count === 2 ? "A and B land side by side so you can compare." : "Each shows its own progress and can be deleted after.",
+                "Anything that fails isn't charged.",
               ]
             : spendAsk?.kind === "stitch"
               ? [
@@ -1390,27 +1540,34 @@ export function CanvasPage() {
                   "The source clips stay on the canvas.",
                 ]
               : [
-                  `Cost: ${VIDEO_COST} credits. No charge until you confirm.`,
                   "The video lands next to its source with a lineage line.",
+                  "Speed is a quick draft; Quality is sharper but slower.",
                   "If it fails, you aren't charged.",
                 ]
         }
         confirmLabel={
-          spendAsk?.kind === "agent-batch"
-            ? `Confirm generate · ${CLIP_COUNT * VIDEO_COST} credits`
-            : spendAsk?.kind === "stitch"
-              ? `Confirm stitch · ${STITCH_COST} credits`
-              : `Confirm generate · ${VIDEO_COST} credits`
+          spendAsk?.kind === "stitch" ? `Confirm stitch · ${STITCH_COST} credits` : `Confirm generate`
         }
         onConfirm={() => {
           const ask = spendAsk;
           setSpendAsk(null);
+          if (ask?.kind === "stitch") stitchVideos(ask.ids);
+        }}
+        baseCredits={
+          spendAsk?.kind === "agent-plan"
+            ? spendAsk.count * INTENT_META[spendAsk.intent].costEach
+            : spendAsk?.kind === "make-video" || spendAsk?.kind === "evolve-video"
+              ? VIDEO_COST
+              : undefined
+        }
+        onConfirmTier={(_tier: GenTier, credits: number) => {
+          const ask = spendAsk;
+          setSpendAsk(null);
           if (!ask) return;
-          if (ask.kind === "agent-batch") confirmAgentBatch(ask.prompt);
-          else if (ask.kind === "stitch") stitchVideos(ask.ids);
-          else {
+          if (ask.kind === "agent-plan") confirmAgentPlan(ask.intent, ask.brief, ask.count, credits);
+          else if (ask.kind === "make-video" || ask.kind === "evolve-video") {
             const source = objects.find((o) => o.id === ask.sourceId);
-            if (source) makeVideo(source, ask.kind === "evolve-video" ? ask.prompt : `Animate: ${source.prompt}`);
+            if (source) makeVideo(source, ask.kind === "evolve-video" ? ask.prompt : `Animate: ${source.prompt}`, credits);
           }
         }}
       />
@@ -1418,6 +1575,83 @@ export function CanvasPage() {
       <MockNote path="/northstar/create/canvas" />
     </div>
     </TooltipProvider>
+  );
+}
+
+/* ────────────────────────────────────────────────────────────────────────
+ * ClarifyCard — Agent 澄清脑回路卡(H1a 意图确认 → H1b 结构化追问)
+ * 确定性选项;答完最后一维由父级出计划 + 花费确认。
+ * ──────────────────────────────────────────────────────────────────────── */
+function ClarifyCard({
+  clarify,
+  onPickIntent,
+  onAnswer,
+  onCancel,
+}: {
+  clarify: { intent: AgentIntent; brief: string; step: number; answers: Record<string, string> };
+  onPickIntent: (intent: AgentIntent) => void;
+  onAnswer: (key: string, value: string) => void;
+  onCancel: () => void;
+}) {
+  const qs = CLARIFY_QUESTIONS[clarify.intent];
+  const q = clarify.step >= 0 ? qs[clarify.step] : null;
+  const roundLabel = clarify.step >= 0 ? `Question ${clarify.step + 1} of ${qs.length}` : "Quick check";
+  return (
+    <div className="flex flex-col items-start">
+      <div className="w-full max-w-[85%] rounded-[14px] border border-border bg-card p-3">
+        <div className="flex items-center gap-1.5 text-xs font-medium text-muted-foreground">
+          <Bot className="size-3.5" strokeWidth={2} />
+          {roundLabel}
+        </div>
+        {clarify.step === -1 ? (
+          <>
+            <p className="mt-1.5 text-sm text-foreground">
+              Sounds like a <span className="font-semibold capitalize">{clarify.intent}</span> job. Right, or something else?
+            </p>
+            <div className="mt-2 flex flex-wrap gap-1.5">
+              {(["image", "edit", "video"] as AgentIntent[]).map((it) => (
+                <button
+                  key={it}
+                  type="button"
+                  onClick={() => onPickIntent(it)}
+                  className={cn(
+                    "h-8 rounded-full border px-3 text-xs font-semibold capitalize transition-colors duration-[120ms]",
+                    it === clarify.intent
+                      ? "border-foreground bg-secondary text-foreground"
+                      : "border-border text-muted-foreground hover:bg-accent hover:text-foreground",
+                  )}
+                >
+                  {it}
+                </button>
+              ))}
+            </div>
+          </>
+        ) : q ? (
+          <>
+            <p className="mt-1.5 text-sm text-foreground">{q.prompt}</p>
+            <div className="mt-2 flex flex-wrap gap-1.5">
+              {q.options.map((opt) => (
+                <button
+                  key={opt.value}
+                  type="button"
+                  onClick={() => onAnswer(q.key, opt.value)}
+                  className="h-8 rounded-full border border-border px-3 text-xs font-semibold text-foreground transition-colors duration-[120ms] hover:border-foreground hover:bg-secondary"
+                >
+                  {opt.label}
+                </button>
+              ))}
+            </div>
+          </>
+        ) : null}
+        <button
+          type="button"
+          onClick={onCancel}
+          className="mt-2.5 text-xs font-medium text-muted-foreground hover:text-foreground"
+        >
+          Cancel
+        </button>
+      </div>
+    </div>
   );
 }
 

@@ -252,6 +252,7 @@ export function FeedbackControls({
   const [noteOpen, setNoteOpen] = React.useState(false);
   const [note, setNote] = React.useState("");
   const [noteSaved, setNoteSaved] = React.useState(false);
+  const [flagged, setFlagged] = React.useState(false);
 
   return (
     <div className={cn("flex flex-col gap-1.5", className)}>
@@ -296,13 +297,23 @@ export function FeedbackControls({
           <button
             type="button"
             aria-label="Flag this result"
-            className="flex size-7 items-center justify-center rounded-lg text-muted-foreground transition-colors duration-[120ms] hover:bg-accent hover:text-foreground"
+            aria-pressed={flagged}
+            onClick={() => setFlagged((f) => !f)}
+            className={cn(
+              "flex size-7 items-center justify-center rounded-lg transition-colors duration-[120ms]",
+              flagged
+                ? "bg-error-soft text-error-soft-foreground"
+                : "text-muted-foreground hover:bg-accent hover:text-foreground",
+            )}
           >
             <Flag className="size-3.5" strokeWidth={2} />
           </button>
         )}
         {value === "down" && (
           <span className="text-xs font-medium text-error-soft-foreground">Bad result</span>
+        )}
+        {flagged && value !== "down" && (
+          <span className="text-xs font-medium text-error-soft-foreground">Flagged for review</span>
         )}
       </div>
       {value === "up" && noteOpen && !noteSaved && (
@@ -335,6 +346,13 @@ export function FeedbackControls({
  * SpendConfirmDialog — §FB6 tier 3 money + §V5 spend arc ④⑤
  * brand 主键:确认即启动 Otto 生成工作(FB5 允许的唯一 brand 场景)。
  * ──────────────────────────────────────────────────────────────────────── */
+export type GenTier = "speed" | "quality";
+
+/** Quality 档在 Speed 基础上加 50% credits(N-Grok「双档=要」判决;确定性,不猜价)。 */
+export function tierCredits(baseCredits: number, tier: GenTier): number {
+  return tier === "quality" ? Math.round(baseCredits * 1.5) : baseCredits;
+}
+
 export function SpendConfirmDialog({
   open,
   onOpenChange,
@@ -343,6 +361,8 @@ export function SpendConfirmDialog({
   impacts,
   confirmLabel,
   onConfirm,
+  baseCredits,
+  onConfirmTier,
 }: {
   open: boolean;
   onOpenChange: (v: boolean) => void;
@@ -351,7 +371,18 @@ export function SpendConfirmDialog({
   impacts: string[];
   confirmLabel: string;
   onConfirm: () => void;
+  /** 传入 = 启用 Speed/Quality 双档;dialog 自算价差、把选中档与最终 credits 交回 onConfirmTier。 */
+  baseCredits?: number;
+  onConfirmTier?: (tier: GenTier, credits: number) => void;
 }) {
+  const tiered = typeof baseCredits === "number" && !!onConfirmTier;
+  const [tier, setTier] = React.useState<GenTier>("speed");
+  // 每次开弹窗回到 Speed(便宜档),不跨次残留上一次选择。
+  React.useEffect(() => {
+    if (open) setTier("speed");
+  }, [open]);
+  const finalCredits = tiered ? tierCredits(baseCredits!, tier) : 0;
+
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
       <DialogContent>
@@ -369,12 +400,48 @@ export function SpendConfirmDialog({
             ))}
           </ul>
         </div>
+        {tiered && (
+          <div>
+            <p className="text-xs font-semibold text-muted-foreground">Speed or quality</p>
+            <div className="mt-2 grid grid-cols-2 gap-2">
+              {([
+                { id: "speed" as GenTier, label: "Speed", sub: "Faster draft" },
+                { id: "quality" as GenTier, label: "Quality", sub: "Sharper, slower" },
+              ]).map((t) => {
+                const c = tierCredits(baseCredits!, t.id);
+                const on = tier === t.id;
+                return (
+                  <button
+                    key={t.id}
+                    type="button"
+                    aria-pressed={on}
+                    onClick={() => setTier(t.id)}
+                    className={cn(
+                      "flex flex-col items-start gap-0.5 rounded-[14px] border p-3 text-left transition-colors duration-[120ms]",
+                      on ? "border-foreground bg-secondary" : "border-border hover:bg-accent",
+                    )}
+                  >
+                    <span className="text-sm font-semibold text-foreground">{t.label}</span>
+                    <span className="text-xs text-muted-foreground">{t.sub}</span>
+                    <span className="mt-1 font-mono text-[11px] leading-[14px] font-medium text-foreground tabular-nums">
+                      {c} credits
+                    </span>
+                  </button>
+                );
+              })}
+            </div>
+          </div>
+        )}
         <DialogFooter className="flex-row justify-end gap-3">
           <Button variant="secondary" size="sm" onClick={() => onOpenChange(false)}>
             Cancel
           </Button>
-          <Button variant="brand" size="sm" onClick={onConfirm}>
-            {confirmLabel}
+          <Button
+            variant="brand"
+            size="sm"
+            onClick={() => (tiered ? onConfirmTier!(tier, finalCredits) : onConfirm())}
+          >
+            {tiered ? `Confirm generate · ${finalCredits} credits` : confirmLabel}
           </Button>
         </DialogFooter>
       </DialogContent>

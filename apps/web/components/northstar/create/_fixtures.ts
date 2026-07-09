@@ -233,6 +233,55 @@ export const NS_DISCOVER: NsDiscoverItem[] = [
   { id: "dv-8", title: "Sunday bake sale", by: "Community pick", kind: "image", thumb: nsPlaceholder("Bake sale", 360, 360, "pandan"), tall: false },
 ];
 
+// ── ?from=<id> 落地画布(GOAL A2/I2:断头路全通)──────────────────────────
+// 模板 / Discover / Library / 画布资产的 id → 一个真实画布对象。canvas 挂载时预载它,
+// 让「Use template / Make this yours / Open in canvas」落地的画布真有那个对象,而不是
+// 随便新开一个种子会话(create gap#4 根因)。null = 无法解析 → canvas 回落默认会话。
+function seedFromExternal(
+  id: string,
+  kind: CvKind,
+  title: string,
+  prompt: string,
+  src: string,
+  credits = kind === "video" ? 40 : 12,
+): CvObject {
+  const isVid = kind === "video";
+  return {
+    id: `cv-from-${id}`,
+    ref: isVid ? "Video 1" : "Image 1",
+    kind,
+    title,
+    prompt,
+    src,
+    x: 96,
+    y: 120,
+    w: isVid ? 168 : 240,
+    h: isVid ? 300 : 240,
+    status: "ready",
+    credits,
+  };
+}
+
+export function resolveCanvasSeed(fromId: string | null): CvObject | null {
+  if (!fromId) return null;
+  // 1) 画布种子对象(Library / asset-viewer 深链)—— 原样搬上一张干净画布
+  const seed = CV_ALL_SEED_OBJECTS.find((o) => o.id === fromId);
+  if (seed) return { ...seed, x: 96, y: 120, parentId: undefined, fork: undefined, status: "ready" };
+  // 2) 首页模板
+  const tpl = NS_TEMPLATES.find((t) => t.id === fromId);
+  if (tpl) return seedFromExternal(tpl.id, tpl.kind, tpl.name, `Start from the “${tpl.name}” template`, tpl.thumb);
+  // 3) Discover
+  const dv = NS_DISCOVER.find((d) => d.id === fromId);
+  if (dv) return seedFromExternal(dv.id, dv.kind, dv.title, `Make “${dv.title}” your own`, dv.thumb);
+  // 4) Library 资产(storyboard 归到 image 处理)
+  const asset = NS_ASSETS.find((a) => a.id === fromId);
+  if (asset) {
+    const kind: CvKind = asset.kind === "video" ? "video" : "image";
+    return seedFromExternal(asset.id, kind, asset.title, asset.title, asset.thumb, asset.credits);
+  }
+  return null;
+}
+
 // ── 全屏查看器(GOAL G1):版本 / 帧轨 ─────────────────────────────────────
 export interface NsViewerVersion {
   id: string;
