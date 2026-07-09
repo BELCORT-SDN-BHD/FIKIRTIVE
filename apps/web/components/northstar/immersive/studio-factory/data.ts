@@ -8,7 +8,7 @@
  * 铁律:纯 client、零后台 import;这里只组合展示结构,状态一律经 _store.ts。
  */
 
-import { nsImage, NS_ASSETS, type NsAsset } from "@/components/northstar/_mock";
+import { nsImage, NS_ASSETS, type NsAsset, type NsProduct } from "@/components/northstar/_mock";
 
 /* ── 首页:Featured 模板横排 ──────────────────────────────────────────────── */
 export interface StudioTemplate {
@@ -155,22 +155,151 @@ export interface StudioStyle {
   id: string;
   name: string;
   thumb: string;
+  /** 一行「适合什么」—— 去掉盲选(EFFECTIVENESS 工具3 gap 4) */
+  goodFor: string;
 }
 
 export const STUDIO_STYLES: StudioStyle[] = [
-  { id: "sty-warm", name: "Warm bakery", thumb: nsImage("bakery", 0) },
-  { id: "sty-fresh", name: "Pandan fresh", thumb: nsImage("bakery", 5) },
-  { id: "sty-retro", name: "Kopitiam retro", thumb: nsImage("storefront", 6) },
-  { id: "sty-min", name: "Studio minimal", thumb: nsImage("bakery", 24) },
+  { id: "sty-warm", name: "Warm bakery", thumb: nsImage("bakery", 0), goodFor: "Cosy, golden light — everyday bakes and comfort food" },
+  { id: "sty-fresh", name: "Pandan fresh", thumb: nsImage("bakery", 5), goodFor: "Bright and clean — pandan, fruit and anything you want to look fresh" },
+  { id: "sty-retro", name: "Kopitiam retro", thumb: nsImage("storefront", 6), goodFor: "Old-shop nostalgia — kopi, kaya toast, heritage story posts" },
+  { id: "sty-min", name: "Studio minimal", thumb: nsImage("bakery", 24), goodFor: "Plain background, product front and centre — price cards and catalogues" },
 ];
 
-export const STUDIO_HOOKS: string[] = [
-  "The box that sells out every Merdeka",
-  "RM68 feeds the whole office",
-  "12 bakes, 1 box, zero regrets",
-  "Your 3pm meeting just got better",
-  "Pre-orders close Friday 6pm",
-];
+/* ── Hook 生成器:角度库法(GOOSEWORKS-MAP §一 工具3 · REFERENCE 金标准)──────────────
+ * 病根:旧 STUDIO_HOOKS 是写死清单,无视 productId(给 RM8.5 可颂吐 RM68 礼盒文案)。
+ * 重做:hook = f(品类 × 价位 × 卖点)。每条 = 角度(register)+ 产品真文案 + 「为什么推荐」
+ * + 建议格式。角度 = 人群×异议×场景×证据(ad-angle-miner 方法)。
+ *
+ * §五 判断层纪律:文案与「为什么」逐产品原型真造(非通用套话);格式信号标为「品类信号,
+ * 未学你的账号」(冷启动诚实,铁律)。这是原型 mock —— 真数据接通前照这骨架长。 */
+export interface StudioHook {
+  id: string;
+  /** 角度短标(如 "Scarcity" / "Sensory")—— badge 主字 */
+  angle: string;
+  /** 广告 register(ad-angle-miner 分类:Fear/Outcome/Identity/Social proof/Value/Contrast) */
+  register: string;
+  /** Ad Power 档(Very high / High / Med)—— 排序与推荐依据,不是拍脑袋:见 ad-angle-miner 表 */
+  power: "Very high" | "High" | "Med";
+  /** 产品真文案(interpolate 名字/价格,读起来自然) */
+  line: string;
+  /** 为什么值得测 —— 绑这个产品这个角度的机制,不是通用最佳实践 */
+  why: string;
+  /** 建议拍法(轻信号;品类默认,非学自账号) */
+  format: string;
+}
+
+export interface StudioHookSet {
+  /** 角度组合抬头:产品 · 价 · 原型 → angles: A + B + C */
+  frame: string;
+  hooks: StudioHook[];
+  /** 配对建议:挑互补两条,别挑两条同角度(trending-ad-hook-spotter) */
+  pairing: string;
+}
+
+/** 冷启动诚实标注(铁律):格式信号是品类默认,发满帖后才学你的账号。 */
+export const HOOK_COLDSTART_NOTE =
+  "Format hints are category signals (POV short-form runs strong on TikTok MY this month) — not learned from your account yet. They'll sharpen once you've posted a few.";
+
+type Archetype = "box" | "centrepiece" | "grab";
+
+function archetypeOf(p: NsProduct): Archetype {
+  if (p.category === "Seasonal" || p.priceMyr >= 50) return "box";
+  if (p.category === "Cakes") return "centrepiece";
+  return "grab";
+}
+
+const ARCHETYPE_LABEL: Record<Archetype, string> = {
+  box: "festive gift box",
+  centrepiece: "celebration centrepiece",
+  grab: "grab-and-go single",
+};
+
+/** 生成器:按产品原型吐一组带角度 + 「为什么」的 hook(product-aware,修「产品盲」)。 */
+export function studioHooks(p: NsProduct): StudioHookSet {
+  const arch = archetypeOf(p);
+  const price = Number.isInteger(p.priceMyr) ? `${p.priceMyr}` : p.priceMyr.toFixed(2);
+  // 整词映射(避免 "Pastries"→"pastrie" 这类去尾复数的破词)
+  const catWord: string =
+    ({ Pastries: "pastry", Cookies: "cookie", Desserts: "dessert", Cakes: "cake", Seasonal: "box" } as Record<string, string>)[
+      p.category
+    ] ?? "treat";
+
+  let hooks: StudioHook[];
+  let angles: string;
+  let pairing: string;
+
+  if (arch === "box") {
+    hooks = [
+      { id: "h-gift", angle: "Gifting", register: "Outcome", power: "High",
+        line: `One box, twelve bakes — the gift that looks like you tried.`,
+        why: `Gift buyers pay for the reaction, not the cookies. Lead with the moment it's opened, not the contents list.`,
+        format: "Unboxing reel" },
+      { id: "h-office", angle: "Office share", register: "Identity", power: "Med",
+        line: `RM${price} feeds the whole office at 3pm.`,
+        why: `Reframes the ticket as per-head value for bulk buyers — the cheapest way to look generous at work.`,
+        format: "Hands-reaching-in shot" },
+      { id: "h-scarcity", angle: "Festive scarcity", register: "Fear", power: "Very high",
+        line: `We ribbon 40 boxes a day. Pre-orders close Friday 6pm.`,
+        why: `Festive demand spikes then vanishes. A real cut-off turns "maybe later" into "order now" — the highest-power angle for a seasonal box.`,
+        format: "Countdown text-over" },
+      { id: "h-proof", angle: "Social proof", register: "Social proof", power: "High",
+        line: `Last festive run these sold out in 3 days. Same box, back now.`,
+        why: `Returning buyers trust what already sold out. Proof beats adjectives — say it sold out, don't call it "popular".`,
+        format: "'Sold out' screenshot + restock" },
+    ];
+    angles = "Gifting + Office share + Festive scarcity + Social proof";
+    pairing = "Pick the Festive scarcity hook + one soft-sell angle (Gifting or Office) — don't run two soft angles against each other.";
+  } else if (arch === "centrepiece") {
+    hooks = [
+      { id: "h-occasion", angle: "Occasion", register: "Outcome", power: "High",
+        line: `The ${catWord} people photograph before they cut it.`,
+        why: `Celebration cakes sell on the table moment. Lead with the centrepiece, not the flavour notes.`,
+        format: "Candle-lit reveal" },
+      { id: "h-sensory", angle: "Sensory", register: "Outcome", power: "High",
+        line: `The drizzle, still warm, breaking over the sponge.`,
+        why: `At RM${price} this is an indulgence buy — the drip shot does the persuading, not the caption.`,
+        format: "Macro rack-focus" },
+      { id: "h-craft", angle: "Craft proof", register: "Social proof", power: "High",
+        line: `Baked to order every morning in KL — never off a shelf.`,
+        why: `At this price buyers need to believe it's fresh, not mass-made. Proof of craft justifies the ticket.`,
+        format: "Behind-the-counter" },
+      { id: "h-contrast", angle: "Contrast", register: "Contrast", power: "High",
+        line: `Supermarket cake vs one layered by hand. You can taste the RM${price}.`,
+        why: `Contrast reframes the price as "worth it" next to the cheap alternative — the classic displacement angle.`,
+        format: "Side-by-side" },
+    ];
+    angles = "Occasion + Sensory + Craft proof + Contrast";
+    pairing = "Pick the Occasion hook + the Sensory hook — one sells the table, one sells the bite. Don't test two outcome lines that say the same thing.";
+  } else {
+    hooks = [
+      { id: "h-sensory", angle: "Sensory", register: "Outcome", power: "High",
+        line: `That first bite of a fresh ${p.name.toLowerCase()}, still warm from the morning batch.`,
+        why: `A single ${catWord} sells on impulse — amplify the one warm second, not the ingredient list.`,
+        format: "Close-up video" },
+      { id: "h-daily", angle: "Daily scarcity", register: "Fear", power: "High",
+        line: `We make a small batch of ${p.name.toLowerCase()} each morning. Gone by noon.`,
+        why: `Cheap treats rarely feel urgent. A daily sell-out gives even RM${price} a real FOMO.`,
+        format: "Empty-tray shot" },
+      { id: "h-scene", angle: "Scene", register: "Identity", power: "Med",
+        line: `Your 3pm pick-me-up before the meeting, sorted.`,
+        why: `Tie it to an office-crowd daily habit so the ${catWord} becomes a routine, not a one-off.`,
+        format: "Desk POV" },
+      { id: "h-value", angle: "Value", register: "Value", power: "Med",
+        line: `RM${price}, and it eats like a café ${catWord} twice the price.`,
+        why: `On a low ticket, anchoring against pricier cafés makes it read like a steal.`,
+        format: "Price card over hero" },
+    ];
+    angles = "Sensory + Daily scarcity + Scene + Value";
+    pairing = "Pick the Daily scarcity hook + the Sensory hook — don't test two flavour-led lines against each other.";
+  }
+
+  return {
+    frame: `${p.name} · RM${price} · ${ARCHETYPE_LABEL[arch]} → angles: ${angles}`,
+    hooks,
+    pairing,
+  };
+}
 
 export const STUDIO_PLATFORMS = ["Instagram", "Facebook", "TikTok"] as const;
 export const STUDIO_SIZES = ["1:1", "4:5", "9:16"] as const;

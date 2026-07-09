@@ -2981,3 +2981,19 @@ export function escortTo(surface: string, label: string): void {
 export function currentEscort(): NsEscortRequest | null {
   return escortRequest;
 }
+
+/* ── [wave-c · Z3-studio-factory] 失败退款(兑现「失败不收费」承诺)──────────────────
+ * STALL-LEDGER #57:render/batch 弹窗承诺「失败不收费」,但从无失败分支,承诺无从兑现。
+ * 单场/单格失败 → 调它把那一份 credits 退回并落一条可核对的 ledger 行。money-law:钱的每
+ * 一次进出都看得见。 */
+export function refundCredits(n: number, label: string): void {
+  if (n <= 0) return;
+  state.creditBalance += n;
+  state.creditLedger = [
+    { id: `cl-live-${seq + 1}`, at: "", category: "Top up", description: `Refund · ${label}`, credits: n },
+    ...state.creditLedger,
+  ];
+  // 复用既有事件类型(退款 = 余额回增;不新增 NsEventType 以免动共享联合类型)。
+  logEvent("credits_topped_up", `Refunded ${n} credits · ${label}`, { n, label, refund: true });
+  notify();
+}

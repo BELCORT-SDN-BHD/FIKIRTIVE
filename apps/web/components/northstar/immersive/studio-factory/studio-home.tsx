@@ -24,6 +24,7 @@ import {
 import { nsImage } from "@/components/northstar/_mock";
 import { SectionLabel } from "@/components/northstar/create/_create-ui";
 import { IMMERSIVE_BASE } from "../_kit";
+import { OttoAssist } from "../otto-assist";
 import { balance as getBalance, useStore } from "../_store";
 import {
   STUDIO_DISCOVER,
@@ -57,7 +58,23 @@ export function StudioHome() {
   const [stockOpen, setStockOpen] = React.useState(false);
   const [workflow, setWorkflow] = React.useState<StudioWorkflow | null>(null);
 
+  // #2(懵):真·首跑不弹「上次访问以来的更新」—— 首访只记 seen,更新记录留给回访用户。
   React.useEffect(() => {
+    const KEY = "ns-studio-home-seen";
+    let seen = false;
+    try {
+      seen = window.localStorage.getItem(KEY) === "1";
+    } catch {
+      seen = false;
+    }
+    if (!seen) {
+      try {
+        window.localStorage.setItem(KEY, "1");
+      } catch {
+        /* private mode — just skip the dialog */
+      }
+      return;
+    }
     const t = window.setTimeout(() => setWhatsNew(true), 500);
     return () => window.clearTimeout(t);
   }, []);
@@ -166,6 +183,31 @@ export function StudioHome() {
             <ImageIcon className="size-3.5" strokeWidth={2} />
             Start from a stock photo
           </Button>
+          {/* §O7「Otto 帮我」:空框不逼人从零写 —— Apply 把起手 prompt 填进 composer */}
+          <OttoAssist
+            zone="Studio"
+            entityLabel="a new creation"
+            formState={{ mode, prompt }}
+            intents={[
+              {
+                id: "home-idea",
+                label: "Give me a post idea",
+                prompt: "What should I post this week?",
+                reply: "A quick winner: a close-up of your bestseller with a one-line hook. Apply drops a starting prompt into the box — tweak it and hit go.",
+                apply: { summary: "Fill a starter prompt", patch: { kind: "prompt", text: "A warm close-up of my bestseller pastry, fresh from the morning batch, with space for a one-line hook" } },
+              },
+              {
+                id: "home-stuck",
+                label: "I don't know where to start",
+                prompt: "I'm not sure what to make.",
+                reply: "Pick one product and one moment. \"My kaya croissant at 7am\" is enough — Otto turns a plain line like that into a full image or short. You don't need to write like a copywriter.",
+              },
+            ]}
+            onApply={(a) => {
+              const patch = a.patch as { kind?: string; text?: string };
+              if (patch.kind === "prompt" && patch.text) setPrompt(patch.text);
+            }}
+          />
         </div>
       </section>
 

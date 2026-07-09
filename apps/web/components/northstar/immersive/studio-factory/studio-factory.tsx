@@ -13,6 +13,7 @@ import { useRouter } from "next/navigation";
 import {
   BadgeCheck,
   Check,
+  Clapperboard,
   FileText,
   Grid3x3,
   Layers,
@@ -37,18 +38,21 @@ import {
 import { OttoNarrationBar, PageHeader } from "@/components/northstar/_shared";
 import { NS_PRODUCTS, nsImage } from "@/components/northstar/_mock";
 import { SectionLabel, SpendConfirmDialog, useCreateKeyframes } from "@/components/northstar/create/_create-ui";
-import { IMMERSIVE_BASE } from "../_kit";
+import { IMMERSIVE_BASE, useSweep } from "../_kit";
 import { balance as getBalance, ottoWorking as setOttoWorking, spendCredits, studioLogGen, useStore } from "../_store";
+import { OttoAssist } from "../otto-assist";
 import {
+  HOOK_COLDSTART_NOTE,
   STUDIO_AUDIENCES,
   STUDIO_BULK_TASKS,
   STUDIO_CREDITS_PER_VARIANT,
   STUDIO_EDIT_TOOLS,
-  STUDIO_HOOKS,
   STUDIO_MODES,
   STUDIO_PLATFORMS,
   STUDIO_SIZES,
   STUDIO_STYLES,
+  studioHooks,
+  type StudioHook,
 } from "./data";
 
 type CellKey = string; // `${platform}|${size}`
@@ -59,6 +63,7 @@ export function StudioFactory() {
   useCreateKeyframes();
   useStore();
   const router = useRouter();
+  const hookSweep = useSweep();
   const [tool, setTool] = React.useState<Tool>("batch");
 
   // 主流水线状态
@@ -66,9 +71,9 @@ export function StudioFactory() {
   const [modeId, setModeId] = React.useState(STUDIO_MODES[0].id);
   const [lockedShots, setLockedShots] = React.useState<number[]>([]); // [wave-b] money-shot 锁定的产品照片
   const [styleId, setStyleId] = React.useState(STUDIO_STYLES[0].id);
-  const [hooks, setHooks] = React.useState<string[]>([]);
+  const [hooks, setHooks] = React.useState<StudioHook[]>([]);
   const [hooksWorking, setHooksWorking] = React.useState(false);
-  const [selectedHooks, setSelectedHooks] = React.useState<string[]>([]);
+  const [selectedHookIds, setSelectedHookIds] = React.useState<string[]>([]);
   const [audience, setAudience] = React.useState<string | null>(null); // [wave-b] 受众改写
   const [cells, setCells] = React.useState<CellKey[]>(["Instagram|4:5", "Instagram|9:16", "TikTok|9:16"]);
   const [batchAsk, setBatchAsk] = React.useState(false);
@@ -86,15 +91,31 @@ export function StudioFactory() {
   const balance = getBalance();
   const product = NS_PRODUCTS.find((p) => p.id === productId) ?? NS_PRODUCTS[0];
   const mode = STUDIO_MODES.find((m) => m.id === modeId) ?? STUDIO_MODES[0];
+  const hookSet = React.useMemo(() => studioHooks(product), [product]);
+  const selectedHooks = hooks.filter((h) => selectedHookIds.includes(h.id));
   const variantCount = cells.length * Math.max(1, selectedHooks.length);
   const totalCredits = variantCount * STUDIO_CREDITS_PER_VARIANT;
+
+  // 换产品 = 换 hook(hook = f(产品);不留上一个产品的文案冒充这一个)。在选产品处清,
+  // 不用 effect(避免 render 内同步 setState)。
+  const pickProduct = (id: string) => {
+    if (id === productId) return;
+    setProductId(id);
+    setHooks([]);
+    setSelectedHookIds([]);
+    setPreflight("none");
+  };
+
+  const applyHooks = (set: ReturnType<typeof studioHooks>) => {
+    setHooks(set.hooks);
+    setSelectedHookIds([set.hooks[0].id]);
+  };
 
   const generateHooks = () => {
     setHooksWorking(true);
     setHooks([]);
     const t = window.setTimeout(() => {
-      setHooks([...STUDIO_HOOKS]);
-      setSelectedHooks([STUDIO_HOOKS[0]]);
+      applyHooks(hookSet);
       setHooksWorking(false);
     }, 3400);
     timers.current.push(t);
@@ -182,10 +203,10 @@ export function StudioFactory() {
                   key={p.id}
                   type="button"
                   aria-pressed={productId === p.id}
-                  onClick={() => setProductId(p.id)}
+                  onClick={() => pickProduct(p.id)}
                   className={cn(
-                    "w-40 shrink-0 overflow-hidden rounded-[14px] border text-left transition-colors duration-[120ms]",
-                    productId === p.id ? "border-foreground" : "border-border hover:bg-accent",
+                    "ns-pressable w-40 shrink-0 overflow-hidden rounded-[14px] border text-left",
+                    productId === p.id ? "border-[var(--human)]" : "border-border",
                   )}
                 >
                   {/* eslint-disable-next-line @next/next/no-img-element */}
@@ -213,8 +234,10 @@ export function StudioFactory() {
                     aria-pressed={modeId === m.id}
                     onClick={() => setModeId(m.id)}
                     className={cn(
-                      "relative flex flex-col gap-1 rounded-[14px] border p-4 text-left transition-colors duration-[120ms]",
-                      locked ? "border-dashed border-border opacity-70" : modeId === m.id ? "border-foreground bg-secondary" : "border-border hover:bg-accent",
+                      "relative flex flex-col gap-1 rounded-[14px] border p-4 text-left",
+                      locked
+                        ? "border-dashed border-border opacity-70 transition-colors duration-[120ms]"
+                        : cn("ns-pressable", modeId === m.id ? "border-[var(--human)] bg-secondary" : "border-border"),
                     )}
                   >
                     <span className="flex items-center gap-1.5 text-sm font-semibold text-foreground">
@@ -276,13 +299,20 @@ export function StudioFactory() {
                   type="button"
                   aria-pressed={styleId === s.id}
                   onClick={() => setStyleId(s.id)}
-                  className={cn("overflow-hidden rounded-[14px] border text-left transition-colors duration-[120ms]", styleId === s.id ? "border-foreground" : "border-border hover:bg-accent")}
+                  className={cn(
+                    "ns-pressable overflow-hidden rounded-[14px] border text-left",
+                    styleId === s.id ? "border-[var(--human)]" : "border-border",
+                  )}
                 >
                   {/* eslint-disable-next-line @next/next/no-img-element */}
                   <img src={s.thumb} alt={s.name} className="aspect-[8/5] w-full object-cover" />
-                  <div className="flex items-center justify-between p-2.5">
-                    <span className="text-[13px] font-semibold text-foreground">{s.name}</span>
-                    {styleId === s.id && <Check className="size-4 text-foreground" strokeWidth={2.2} />}
+                  <div className="p-2.5">
+                    <span className="flex items-center justify-between gap-2">
+                      <span className="text-[13px] font-semibold text-foreground">{s.name}</span>
+                      {styleId === s.id && <Check className="size-4 shrink-0 text-[var(--human)]" strokeWidth={2.2} />}
+                    </span>
+                    {/* 去盲选:每卡一行「适合什么」 */}
+                    <span className="mt-1 block text-xs leading-4 text-muted-foreground">{s.goodFor}</span>
                   </div>
                 </button>
               ))}
@@ -301,40 +331,100 @@ export function StudioFactory() {
             </div>
           </section>
 
-          {/* ④ Hook 生成器 + [wave-b] 受众画像一键改写 */}
-          <section>
-            <div className="flex items-center gap-3">
+          {/* ④ Hook 生成器(角度库法)+ [wave-b] 受众画像一键改写 */}
+          <section style={hookSweep.style}>
+            <div className="flex flex-wrap items-center gap-3">
               <SectionLabel>4 · Hooks</SectionLabel>
-              {hooksWorking && <OttoNarrationBar steps={["Reading your brand voice…", "Writing hooks…"]} stepMs={1600} className="w-fit" />}
+              {hooksWorking && <OttoNarrationBar steps={[`Mining angles for ${product.name}…`, "Writing hooks per angle…"]} stepMs={1600} className="w-fit" />}
+              <div className="flex-1" />
+              {/* §O7「Otto 帮我」—— 每个动脑面一颗;Apply 把角度回填 Hooks 列表 */}
+              <OttoAssist
+                zone="Studio"
+                entityId={product.id}
+                entityLabel={product.name}
+                formState={{ style: styleId, mode: modeId, selected: selectedHookIds }}
+                intents={[
+                  {
+                    id: "st-gen-hooks",
+                    label: `Write hooks for ${product.name}`,
+                    prompt: `Write ad hooks for ${product.name} (RM${product.priceMyr}).`,
+                    reply: `${hookSet.frame}. Each hook is a different audience × objection × scene, so you're testing angles — not reworded versions of one line. Apply drops them into your Hooks list.`,
+                    apply: { summary: `Fill ${hookSet.hooks.length} angle-based hooks`, patch: { kind: "fill-hooks" } },
+                  },
+                  {
+                    id: "st-pair",
+                    label: "Which two should I test?",
+                    prompt: "Which two hooks should I run against each other?",
+                    reply: hookSet.pairing,
+                  },
+                  {
+                    id: "st-bm",
+                    label: "Adapt these for Bahasa Melayu",
+                    prompt: "Rewrite the hooks in Bahasa Melayu.",
+                    reply: "I can carry each angle into natural BM once translation is wired — for now the English angles are ready to test. I won't machine-translate blindly and risk a wrong price or claim.",
+                  },
+                ]}
+                onApply={(a) => {
+                  if ((a.patch as { kind?: string }).kind === "fill-hooks") {
+                    applyHooks(hookSet);
+                    hookSweep.fire();
+                  }
+                }}
+              />
             </div>
             {hooks.length === 0 && !hooksWorking && (
               <div className="mt-3 flex items-center gap-3">
                 <Button variant="brand" size="sm" onClick={generateHooks}>Generate hooks · free</Button>
-                <p className="text-[13px] text-muted-foreground">Otto writes 5 opening lines for {product.name}. Pick the ones worth testing.</p>
+                <p className="text-[13px] text-muted-foreground">Otto mines the angles for {product.name} — its price, category and what makes it worth buying. Pick the ones worth testing.</p>
               </div>
             )}
             {hooks.length > 0 && (
               <>
+                {/* 角度组合抬头(product-aware,证明不是写死清单) */}
+                <p className="mt-3 text-[13px] leading-[18px] font-medium text-foreground">{hookSet.frame}</p>
                 <div className="mt-3 flex flex-col gap-2">
-                  {hooks.map((h, i) => {
-                    const on = selectedHooks.includes(h);
+                  {hooks.map((h) => {
+                    const on = selectedHookIds.includes(h.id);
                     return (
                       <button
-                        key={h}
+                        key={h.id}
                         type="button"
                         aria-pressed={on}
-                        onClick={() => setSelectedHooks((prev) => (on ? prev.filter((x) => x !== h) : [...prev, h]))}
-                        className={cn("flex h-11 items-center gap-3 rounded-[14px] border px-4 text-left transition-colors duration-[120ms]", on ? "border-foreground bg-secondary" : "border-border hover:bg-accent")}
+                        onClick={() => setSelectedHookIds((prev) => (on ? prev.filter((x) => x !== h.id) : [...prev, h.id]))}
+                        className={cn(
+                          "ns-pressable flex items-start gap-3 rounded-[14px] border px-4 py-3 text-left",
+                          on ? "border-[var(--human)]" : "border-border",
+                        )}
                       >
-                        <span className={cn("flex size-5 items-center justify-center rounded-md border", on ? "border-transparent bg-primary text-primary-foreground" : "border-border")}>
+                        <span className={cn("mt-0.5 flex size-5 shrink-0 items-center justify-center rounded-md border", on ? "border-transparent bg-[var(--human)] text-white" : "border-border")}>
                           {on && <Check className="size-3" strokeWidth={2.5} />}
                         </span>
-                        <span className="min-w-0 flex-1 truncate text-sm text-foreground">{h}</span>
-                        <span className="font-mono text-[10px] leading-4 text-muted-foreground">hook {i + 1}</span>
+                        <span className="min-w-0 flex-1">
+                          <span className="flex flex-wrap items-center gap-1.5">
+                            <span className="inline-flex items-center gap-1 rounded-full bg-secondary px-2 py-0.5 font-mono text-[10px] leading-4 font-medium tracking-[0.04em] text-muted-foreground uppercase">
+                              {h.angle} · {h.register}
+                            </span>
+                            {h.power === "Very high" && (
+                              <span className="inline-flex items-center rounded-full bg-warning-soft px-2 py-0.5 font-mono text-[10px] leading-4 font-medium tracking-[0.04em] text-warning-soft-foreground uppercase">
+                                Top angle
+                              </span>
+                            )}
+                          </span>
+                          <span className="mt-1.5 block text-sm leading-[20px] font-medium text-foreground">{h.line}</span>
+                          {/* 为什么推荐(判断层:绑这个产品这个角度的机制,非通用套话) */}
+                          <span className="mt-1 block text-xs leading-[16px] text-muted-foreground">Why: {h.why}</span>
+                          <span className="mt-1.5 inline-flex items-center gap-1 text-[11px] leading-4 font-medium text-muted-foreground">
+                            <Clapperboard className="size-3" strokeWidth={2} />
+                            {h.format}
+                          </span>
+                        </span>
                       </button>
                     );
                   })}
                 </div>
+                {/* 配对建议 + 冷启动诚实标注 */}
+                <p className="mt-2.5 text-[13px] leading-[18px] text-foreground"><span className="font-semibold">Test pair:</span> {hookSet.pairing}</p>
+                <p className="mt-1 text-xs leading-[16px] text-muted-foreground">{HOOK_COLDSTART_NOTE}</p>
                 {/* [wave-b] 受众画像一键改写(Jasper Audiences):同一素材按客群换措辞 */}
                 <div className="mt-3">
                   <p className="text-xs font-semibold text-muted-foreground">Rewrite for an audience</p>
@@ -425,17 +515,33 @@ export function StudioFactory() {
                     <ShieldCheck className="size-3.5 text-muted-foreground" strokeWidth={2} />
                     Pre-flight check · free
                   </p>
-                  <p className="text-[13px] text-muted-foreground">Otto rates the hook&apos;s viral potential and flags look-alikes before you spend.</p>
+                  <p className="text-[13px] text-muted-foreground">Otto rates your top hook&apos;s open and flags look-alikes before you spend.</p>
                 </div>
                 {preflight === "none" && <Button variant="secondary" size="sm" onClick={runPreflight}>Run pre-flight</Button>}
-                {preflight === "running" && <OttoNarrationBar steps={["Scoring the hook…", "Checking for look-alikes…"]} stepMs={900} className="w-fit" />}
+                {preflight === "running" && <OttoNarrationBar steps={[`Scoring the "${selectedHooks[0]?.angle ?? "opening"}" hook…`, "Checking your last 20 posts for look-alikes…"]} stepMs={900} className="w-fit" />}
               </div>
-              {preflight === "done" && (
-                <div className="mt-3 flex flex-wrap gap-2">
-                  <span className="inline-flex items-center gap-1 rounded-full bg-success-soft px-2.5 py-1 text-xs font-medium text-success-soft-foreground">Virality: strong hook</span>
-                  <span className="inline-flex items-center gap-1 rounded-full bg-success-soft px-2.5 py-1 text-xs font-medium text-success-soft-foreground">Similarity: no close matches</span>
-                </div>
-              )}
+              {preflight === "done" && (() => {
+                const top = selectedHooks[0];
+                const strong = top ? top.power !== "Med" : false;
+                return (
+                  <div className="mt-3">
+                    <div className="flex flex-wrap gap-2">
+                      <span className={cn("inline-flex items-center gap-1 rounded-full px-2.5 py-1 text-xs font-medium", strong ? "bg-success-soft text-success-soft-foreground" : "bg-warning-soft text-warning-soft-foreground")}>
+                        {top
+                          ? strong
+                            ? `Virality: strong — the "${top.angle}" angle opens on the hook, not a logo, so it lands in the first 2s`
+                            : `Virality: fair — "${top.angle}" is a softer open; the test pair above hardens it`
+                          : "Virality: pick a hook to score"}
+                      </span>
+                      <span className="inline-flex items-center gap-1 rounded-full bg-success-soft px-2.5 py-1 text-xs font-medium text-success-soft-foreground">
+                        Similarity: clear — no look-alike in your last 20 posts
+                      </span>
+                    </div>
+                    {/* §五 判断层:标明依据 + 不确定性,不假装精确 */}
+                    <p className="mt-2 text-xs leading-4 text-muted-foreground">Scored on the hook&apos;s structure and your 20 most recent posts — a directional read before you spend, not a guarantee.</p>
+                  </div>
+                );
+              })()}
             </section>
           )}
 
@@ -487,7 +593,7 @@ export function StudioFactory() {
         onOpenChange={setBatchAsk}
         title={`Generate ${variantCount} variants?`}
         ask="This will spend real credits."
-        subject={selectedHooks[0] ?? product.name}
+        subject={selectedHooks[0]?.line ?? product.name}
         impacts={[
           `Cost: ${totalCredits} credits (${variantCount} variants × ${STUDIO_CREDITS_PER_VARIANT}). No charge until you confirm.`,
           `${cells.length} placements across ${STUDIO_PLATFORMS.length} platforms, ${Math.max(1, selectedHooks.length)} hooks each.`,

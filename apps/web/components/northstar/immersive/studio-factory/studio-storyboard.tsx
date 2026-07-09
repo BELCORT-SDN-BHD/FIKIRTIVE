@@ -26,7 +26,8 @@ import { EmptyState, OttoNarrationBar, PageHeader } from "@/components/northstar
 import { NS_PRODUCTS } from "@/components/northstar/_mock";
 import { SectionLabel, SpendConfirmDialog, SWEEP_STYLE, useCreateKeyframes } from "@/components/northstar/create/_create-ui";
 import { IMMERSIVE_BASE } from "../_kit";
-import { ottoWorking as setOttoWorking, spendCredits, studioLogGen, useStore } from "../_store";
+import { OttoAssist } from "../otto-assist";
+import { ottoWorking as setOttoWorking, refundCredits, spendCredits, studioLogGen, useStore } from "../_store";
 import { STUDIO_CAMERA_PRESETS, STUDIO_DUB_LANGS, STUDIO_SCENES, type StudioScene } from "./data";
 
 const STEPS = [
@@ -50,6 +51,8 @@ export function StudioStoryboard() {
   const [makeAllAsk, setMakeAllAsk] = React.useState(false);
   const [renderState, setRenderState] = React.useState<RenderState>("idle");
   const [renderPct, setRenderPct] = React.useState<Record<string, number>>({});
+  const [failedIds, setFailedIds] = React.useState<string[]>([]); // #57 单场失败,已退款
+  const failedOnceRef = React.useRef(false); // 只在首次渲染演示一次失败态,之后全成功(别让 demo 显得常坏)
   const [sweepId, setSweepId] = React.useState<string | null>(null);
   const [importOpen, setImportOpen] = React.useState(false);
   // [wave-b] 动态分镜预览:先出低成本粗看
@@ -69,14 +72,34 @@ export function StudioStoryboard() {
     setOttoWorking(true, "Rendering scenes…");
     studioLogGen(`Rendering your ${scenes.length}-scene video (${totalSeconds}s). I'll ping you when it's cut.`, "Storyboard");
     setRenderState("rendering");
+    setFailedIds([]);
     setStep(4);
+    // #57 兑现「失败不收费」:首次渲染让第 3 场(或最后一场)当面失败一次,退回它的 credits +
+    // 落一行看得见的失败态 + 重试。之后的渲染/重试全成功,不把 demo 弄成常坏。
+    const failId = !failedOnceRef.current ? (scenes[2]?.id ?? scenes[scenes.length - 1]?.id ?? null) : null;
     scenes.forEach((sc, i) => {
+      const willFail = sc.id === failId;
       const t = window.setTimeout(() => {
         const iv = window.setInterval(() => {
           setRenderPct((prev) => {
             const cur = prev[sc.id] ?? 0;
             if (cur >= 100) {
               window.clearInterval(iv);
+              return prev;
+            }
+            // 失败场:卡到 ~60% 后落失败,退款,不再前进。
+            if (willFail && cur >= 54) {
+              window.clearInterval(iv);
+              failedOnceRef.current = true;
+              const failed = scenes.find((s) => s.id === sc.id);
+              if (failed) refundCredits(failed.credits, `Scene ${i + 1} didn't render`);
+              setFailedIds((f) => (f.includes(sc.id) ? f : [...f, sc.id]));
+              if (i === scenes.length - 1) {
+                window.setTimeout(() => {
+                  setRenderState("done");
+                  setOttoWorking(false);
+                }, 500);
+              }
               return prev;
             }
             const next = { ...prev, [sc.id]: Math.min(100, cur + 9) };
@@ -97,6 +120,31 @@ export function StudioStoryboard() {
       }, i * 1400);
       timers.current.push(t);
     });
+  };
+
+  // #57 重试单场:重新扣这一场的 credits(之前失败已退,重试即重新付),渲到成功。
+  const retryScene = (sc: StudioScene) => {
+    spendCredits(sc.credits, `Retry · ${sc.title}`, "Video");
+    setFailedIds((f) => f.filter((id) => id !== sc.id));
+    setRenderPct((prev) => ({ ...prev, [sc.id]: 0 }));
+    setOttoWorking(true, "Re-rendering one scene…");
+    const iv = window.setInterval(() => {
+      setRenderPct((prev) => {
+        const cur = prev[sc.id] ?? 0;
+        if (cur >= 100) {
+          window.clearInterval(iv);
+          return prev;
+        }
+        const next = { ...prev, [sc.id]: Math.min(100, cur + 9) };
+        if (next[sc.id] === 100) {
+          setSweepId(sc.id);
+          window.setTimeout(() => setSweepId((s) => (s === sc.id ? null : s)), 650);
+          window.setTimeout(() => setOttoWorking(false), 400);
+        }
+        return next;
+      });
+    }, 200);
+    timers.current.push(iv);
   };
 
   const runAnimatic = () => {
@@ -126,6 +174,27 @@ export function StudioStoryboard() {
         title="Storyboard"
         subtitle="Plan the whole video free. Pay once, at the render step."
         meta={[`${scenes.length} scenes`, `${totalSeconds}s total`]}
+        actions={
+          <OttoAssist
+            zone="Studio"
+            entityLabel="this storyboard"
+            formState={{ step, scenes: scenes.length }}
+            intents={[
+              {
+                id: "sb-provenance",
+                label: "Where did these scenes come from?",
+                prompt: "Where did these six scenes come from?",
+                reply: "I drafted them from your last brief — a Merdeka gift-box pre-order push. Nothing here is locked: edit, reorder or delete any scene, and nothing costs a credit until the render step.",
+              },
+              {
+                id: "sb-tighten",
+                label: "Tighten it to 6 seconds",
+                prompt: "Can we make this shorter?",
+                reply: "For a first ad I'd cut to the hook, the product reveal and the cut-off — three scenes, ~9s. Shorter openings hold better on TikTok. Trim the middle scenes and I'll keep the pacing even.",
+              },
+            ]}
+          />
+        }
       />
 
       {/* 四步导航 */}
@@ -215,7 +284,11 @@ export function StudioStoryboard() {
       {/* Step 2 — Scenes */}
       {step === 2 && (
         <>
-          <div className="mt-6 grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
+          {/* #8 交代来历(懵):谁做的这几场 + 随便改 + 第 4 步前不花钱 */}
+          <p className="mt-4 text-[13px] leading-[18px] text-muted-foreground">
+            Otto drafted these from your last brief — edit, reorder or delete any scene. Nothing costs a credit until the render step.
+          </p>
+          <div className="mt-4 grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
             {scenes.map((sc, i) => (
               <div key={sc.id} className="group overflow-hidden rounded-[18px] border border-border bg-card shadow-[var(--shadow-xs)]">
                 <div className="relative">
@@ -364,6 +437,7 @@ export function StudioStoryboard() {
           <div className="overflow-hidden rounded-[18px] border border-border bg-card">
             {scenes.map((sc, i) => {
               const pct = renderPct[sc.id] ?? 0;
+              const failed = failedIds.includes(sc.id);
               return (
                 <div
                   key={sc.id}
@@ -374,20 +448,31 @@ export function StudioStoryboard() {
                   <img src={sc.thumb} alt="" aria-hidden className="h-10 w-[71px] shrink-0 rounded-[10px] border border-border object-cover" />
                   <div className="min-w-0 flex-1">
                     <p className="truncate text-sm font-semibold text-foreground">Scene {i + 1} · {sc.title}</p>
-                    <p className="text-xs text-muted-foreground">{sc.duration}s · {sc.camera}</p>
+                    {/* #57 失败态:一行人话把「失败不收费」承诺兑现成看得见的事 */}
+                    {failed ? (
+                      <p className="text-xs font-medium text-error-soft-foreground">This scene didn&apos;t render. You weren&apos;t charged for it — {sc.credits} credits went back.</p>
+                    ) : (
+                      <p className="text-xs text-muted-foreground">{sc.duration}s · {sc.camera}</p>
+                    )}
                   </div>
                   {renderState === "idle" && (
                     <span className="font-mono text-[11px] leading-[14px] text-muted-foreground tabular-nums">{sc.credits} credits</span>
                   )}
-                  {renderState !== "idle" && pct < 100 && (
-                    <span className="flex items-center gap-2">
-                      <span className="relative h-[5px] w-20 overflow-hidden rounded-full border border-border bg-background">
-                        <span className="absolute top-0 left-0 h-full rounded-full bg-brand" style={{ width: `${pct}%` }} />
-                      </span>
-                      <span className="w-9 text-right font-mono text-[11px] leading-[14px] text-muted-foreground tabular-nums">{pct}%</span>
-                    </span>
+                  {failed ? (
+                    <Button variant="secondary" size="sm" onClick={() => retryScene(sc)}>Retry · {sc.credits} credits</Button>
+                  ) : (
+                    <>
+                      {renderState !== "idle" && pct < 100 && (
+                        <span className="flex items-center gap-2">
+                          <span className="relative h-[5px] w-20 overflow-hidden rounded-full border border-border bg-background">
+                            <span className="absolute top-0 left-0 h-full rounded-full bg-brand" style={{ width: `${pct}%` }} />
+                          </span>
+                          <span className="w-9 text-right font-mono text-[11px] leading-[14px] text-muted-foreground tabular-nums">{pct}%</span>
+                        </span>
+                      )}
+                      {renderState !== "idle" && pct >= 100 && <Badge variant="success">Rendered</Badge>}
+                    </>
                   )}
-                  {renderState !== "idle" && pct >= 100 && <Badge variant="success">Rendered</Badge>}
                 </div>
               );
             })}
@@ -404,8 +489,17 @@ export function StudioStoryboard() {
             )}
             {renderState === "done" && (
               <>
-                <Badge variant="success">All scenes rendered</Badge>
-                <p className="text-[13px] text-muted-foreground">You approved this. It used {totalCredits} credits.</p>
+                {failedIds.length > 0 ? (
+                  <>
+                    <Badge variant="warning">{scenes.length - failedIds.length} of {scenes.length} rendered</Badge>
+                    <p className="text-[13px] text-muted-foreground">You were charged {totalCredits - scenes.filter((s) => failedIds.includes(s.id)).reduce((a, s) => a + s.credits, 0)} credits — the failed scene was refunded. Retry it above.</p>
+                  </>
+                ) : (
+                  <>
+                    <Badge variant="success">All scenes rendered</Badge>
+                    <p className="text-[13px] text-muted-foreground">You approved this. It used {totalCredits} credits.</p>
+                  </>
+                )}
                 <div className="flex-1" />
                 <Button variant="secondary" size="sm" onClick={() => router.push(`${IMMERSIVE_BASE}/schedule/composer`)}>
                   Schedule this

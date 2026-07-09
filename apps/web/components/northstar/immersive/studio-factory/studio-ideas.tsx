@@ -17,6 +17,7 @@ import { OttoAvatar } from "@/components/otto/OttoAvatar";
 import { EmptyState, OttoNarrationBar, PageHeader } from "@/components/northstar/_shared";
 import { SWEEP_STYLE, LAND_STYLE, useCreateKeyframes } from "@/components/northstar/create/_create-ui";
 import { IMMERSIVE_BASE } from "../_kit";
+import { OttoAssist } from "../otto-assist";
 import {
   addStudioIdea,
   convertStudioIdea,
@@ -93,6 +94,44 @@ export function StudioIdeas() {
         title="Ideas"
         subtitle="A light list so ideas don't sink. One tap turns one into a creation."
         meta={[`${openCount} open`]}
+        actions={
+          <OttoAssist
+            zone="Studio"
+            entityLabel="your idea list"
+            formState={{ open: openCount }}
+            intents={[
+              {
+                id: "idea-suggest",
+                label: "Suggest 3 ideas for this week",
+                prompt: "Suggest 3 content ideas for this week.",
+                reply: "Based on what's worked for KL bakeries lately, three worth a shot: a 3pm croissant POV, a kaya-toast steam macro, and a 'sold out by noon' restock teaser. Apply drops them into your list.",
+                apply: {
+                  summary: "Add 3 idea suggestions",
+                  patch: {
+                    kind: "add-ideas",
+                    ideas: [
+                      "POV: the 3pm croissant craving — desk shot",
+                      "Kaya toast steam macro, close-up",
+                      "'Sold out by noon' — restock teaser",
+                    ],
+                  },
+                },
+              },
+              {
+                id: "idea-none",
+                label: "I'm out of ideas",
+                prompt: "I don't know what to post.",
+                reply: "That's normal. Start from what sells: film the thing customers ask for most, once. One honest close-up of your bestseller beats a clever concept you'll never shoot.",
+              },
+            ]}
+            onApply={(a) => {
+              const patch = a.patch as { kind?: string; ideas?: string[] };
+              if (patch.kind === "add-ideas" && patch.ideas) {
+                patch.ideas.forEach((t) => addStudioIdea(t));
+              }
+            }}
+          />
+        }
       />
 
       {/* 记一条(单行输入:Enter 提交) */}
