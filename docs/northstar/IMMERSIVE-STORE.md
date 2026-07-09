@@ -20,20 +20,21 @@
 - `upNext()` —— 未发出的排期帖(scheduled + draft),home「Up next」用。
 - `pendingApprovals()` —— 待办审批队列。
 - `recentEvents(n)` —— 最近 n 条事件,最新在前(dock「Just now」条读 `recentEvents(1)`)。
-- `chatThreads()` / `connections()` / `rules()` —— 对应镜像的当前值。
+- `chatThreads()` / `connections()` / `rules()` / `teamMembers()` —— 对应镜像的当前值。
 
 ## 动作(纯函数:改 store + append event + notify;做一次到处生效)
 `spendCredits(n,label,category?)` · `topUp(n)` · `schedulePost(post)` ·
 `approveCampaignEntry(id)` · `approveRequest(id, "approve"|"decline")`(approve 花钱生成会真扣额度)·
 `connectChannel(id)` · `resolveConversation(id)`(缺联系人则 `ensureContact` → 补建)·
 `toggleAutomationRule(id,on)` · `submitAd(payload)` · `ottoWorking(on,label?)` ·
-`appendChatMessage(threadId,msg)` · `startChatThread(title?)`。
+`appendChatMessage(threadId,msg)` · `startChatThread(title?)` · `inviteMember(email)`
+(真 append 一条 pending Editor;team 页 pending chip / 计数由此派生)。
 
 ## 事件流(append-only,`{ type, payload, at:seq, label }`)
 `label` 是人话一行(sentence case、英文 UI),dock / 通知直接显示。类型:
 `credits_spent` · `credits_topped_up` · `post_scheduled` · `campaign_entry_approved` ·
 `approval_settled` · `channel_connected` · `conversation_resolved` · `contact_created` ·
-`automation_toggled` · `otto_working` · `otto_idle` · `ad_submitted`。
+`automation_toggled` · `otto_working` · `otto_idle` · `ad_submitted` · `member_invited`。
 
 ## 已接线的表面(Wave 1)
 - shell:`ottoWorking` 来自 store,不再硬编码 false;dock 在 3 条 hideDock 路由上只

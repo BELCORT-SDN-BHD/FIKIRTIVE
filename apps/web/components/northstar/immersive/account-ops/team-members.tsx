@@ -21,8 +21,9 @@ import {
   DialogTitle,
 } from "@/components/ui/dialog";
 import { PageHeader } from "@/components/northstar/_shared";
+import { inviteMember, pendingApprovals, teamMembers, useStore } from "../_store";
 import { ACCOUNT_OPS_BASE as BASE, TeamNav, Card, CardHeader, SettingRow } from "./kit";
-import { NS_MEMBERS, ROLE_CAN, type NsMember } from "./data";
+import { ROLE_CAN, type NsMember } from "./data";
 
 function MemberRow({ member }: { member: NsMember }) {
   return (
@@ -49,14 +50,19 @@ function MemberRow({ member }: { member: NsMember }) {
 }
 
 export function TeamMembers() {
+  useStore(); // 成员列表 + 待批计数的单一源(邀请真 append、审批数派生)
+  const members = teamMembers();
+  const approvalsWaiting = pendingApprovals().length;
   const [inviting, setInviting] = React.useState(false);
   const [email, setEmail] = React.useState("");
   const [pending, setPending] = React.useState(false);
-  const pendingCount = NS_MEMBERS.filter((m) => m.status === "pending").length;
 
   const sendInvite = () => {
+    const invitee = email.trim();
+    if (!invitee) return;
     setPending(true);
     window.setTimeout(() => {
+      inviteMember(invitee); // 真 append 一条 pending Editor 进共享 store(列表即时长出)
       setPending(false);
       setInviting(false);
       setEmail("");
@@ -79,13 +85,15 @@ export function TeamMembers() {
         }
       />
 
-      {pendingCount > 0 && (
+      {approvalsWaiting > 0 && (
         <Link
           href={`${BASE}/team/approvals`}
           className="mt-6 flex items-center gap-3 rounded-[18px] border border-border bg-secondary/60 px-4 py-3.5 transition-colors duration-[120ms] hover:bg-secondary"
         >
           <p className="min-w-0 flex-1 text-[13px] leading-[18px] text-foreground">
-            2 requests are waiting for someone to approve — spend and a batch of posts.
+            {approvalsWaiting === 1
+              ? "1 request is waiting for someone to approve."
+              : `${approvalsWaiting} requests are waiting for someone to approve.`}
           </p>
           <span className="flex shrink-0 items-center gap-1 text-xs font-semibold text-foreground">
             Review approvals
@@ -96,8 +104,8 @@ export function TeamMembers() {
 
       <div className="mt-6">
         <Card>
-          <CardHeader title="Members" desc={`${NS_MEMBERS.length} people`} />
-          {NS_MEMBERS.map((m) => (
+          <CardHeader title="Members" desc={`${members.length} people`} />
+          {members.map((m) => (
             <MemberRow key={m.id} member={m} />
           ))}
         </Card>

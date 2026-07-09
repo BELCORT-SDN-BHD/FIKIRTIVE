@@ -14,10 +14,14 @@ import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { OttoAvatar } from "@/components/otto/OttoAvatar";
 import { EmptyState, PageHeader } from "@/components/northstar/_shared";
-import { NS_APPROVALS, type NsApprovalRequest } from "@/components/northstar/global/_data";
+import { type NsApprovalRequest } from "@/components/northstar/global/_data";
+import { approveRequest, pendingApprovals, useStore } from "../_store";
 import { ACCOUNT_OPS_BASE as BASE, TeamNav, Card, useSweep } from "./kit";
 
 type Decision = "pending" | "approved" | "declined";
+
+// 落定后留一拍展示回执,再提交进共享 store(单一源:队列全城缩短、花钱联动)
+const SETTLE_MS = 1600;
 
 /** 被审对象的去处:生成 → 活动提案卡;排期 → 排期计划 */
 const REVIEW_HREF: Record<NsApprovalRequest["kind"], { href: string; label: string }> = {
@@ -39,6 +43,8 @@ function ApprovalCard({ req }: { req: NsApprovalRequest }) {
       setPending(false);
       // 生成类批准 = Otto 开始干活 → coral sweep;排期/拒绝不带 coral
       if (d === "approved" && isGen) sweep.fire();
+      // 落定后提交进共享 store:队列全城缩短(通知页同步)、生成类真扣额度(全城联动)
+      window.setTimeout(() => approveRequest(req.id, d === "approved" ? "approve" : "decline"), SETTLE_MS);
     }, 600);
   };
 
@@ -114,6 +120,8 @@ function ApprovalCard({ req }: { req: NsApprovalRequest }) {
 }
 
 export function TeamApprovals() {
+  useStore(); // 订阅共享 store:审批队列的单一源(通知页 / 首页数字同源)
+  const queue = pendingApprovals();
   return (
     <div className="mx-auto flex min-h-full w-full max-w-[880px] flex-col px-6 pt-6 pb-16">
       <PageHeader
@@ -122,7 +130,7 @@ export function TeamApprovals() {
         actions={<TeamNav />}
       />
 
-      {NS_APPROVALS.length === 0 ? (
+      {queue.length === 0 ? (
         <EmptyState
           icon={Check}
           title="All caught up"
@@ -131,7 +139,7 @@ export function TeamApprovals() {
         />
       ) : (
         <div className="mt-6 grid grid-cols-1 gap-3">
-          {NS_APPROVALS.map((req) => (
+          {queue.map((req) => (
             <ApprovalCard key={req.id} req={req} />
           ))}
         </div>

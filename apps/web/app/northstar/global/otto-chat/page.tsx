@@ -22,8 +22,11 @@ import { GenBar, useLanding } from "@/components/northstar/global/_fx";
 import { NS_APPROVALS, type NsChatMessage } from "@/components/northstar/global/_data";
 import {
   appendChatMessage,
+  approveRequest,
   chatThreads,
+  ottoWorking,
   startChatThread,
+  useOttoWorking,
   useStore,
 } from "@/components/northstar/immersive/_store";
 import { useQueryParam } from "@/components/northstar/immersive/_kit";
@@ -131,6 +134,8 @@ function Message({ m, land }: { m: NsChatMessage; land?: boolean }) {
             impacts={NS_APPROVALS[0].impacts}
             credits={NS_APPROVALS[0].credits}
             kind="generation"
+            // 批准 = 真扣 120 credits(全城联动)+ 从共享队列收走该条(通知/团队页同步)
+            onSettled={(state) => approveRequest(NS_APPROVALS[0].id, state === "done" ? "approve" : "decline")}
           />
         </div>
       )}
@@ -147,6 +152,7 @@ type Phase = "idle" | "thinking" | "streaming";
 
 export default function Page() {
   useStore(); // 与 dock 共读同一份 store chatThreads(§「Dock and this chat share one state」为真)
+  const otto = useOttoWorking(); // 订阅全城 Otto 工作态(status 行 + dock 同源)
   const initialThread = useQueryParam("thread"); // 深链 ?thread → 初始选中(替代硬编码 [0])
   const [threadId, setThreadId] = React.useState<string>(() => chatThreads()[0].id);
   // ?thread 在挂载后应用(避免 SSR/client 初值不一致的 hydration 抖动)
@@ -189,6 +195,7 @@ export default function Page() {
   const settle = (finalText: string) => {
     setPhase("idle");
     setLiveText("");
+    ottoWorking(false); // 全城神经:Otto 收工(dock 徽点熄灭 + 活动流落一条)
     pushExtra({ id: `x-${Date.now()}-otto`, role: "otto", substeps: LIVE_SUBSTEPS, text: finalText });
     scrollToEnd();
   };
@@ -214,6 +221,7 @@ export default function Page() {
     if (!text || phase !== "idle") return;
     setDraft("");
     pushExtra({ id: `x-${Date.now()}`, role: "user", text });
+    ottoWorking(true, "Otto is drafting a reply"); // 全城神经:Otto 开工(dock 徽点脉冲)
     setPhase("thinking");
     setStepIdx(0);
     setLiveText("");
@@ -235,6 +243,7 @@ export default function Page() {
     const partial = liveText;
     setPhase("idle");
     setLiveText("");
+    ottoWorking(false); // 中断也让全城神经归位
     pushExtra(
       partial
         ? { id: `x-${Date.now()}-stop`, role: "otto", text: `${partial}…` }
@@ -308,9 +317,20 @@ export default function Page() {
       <section className="flex min-w-0 flex-1 flex-col">
         <div className="flex h-[52px] shrink-0 items-center gap-3 border-b border-border px-6">
           <h1 className="min-w-0 truncate text-sm font-semibold text-foreground">{thread?.title ?? "New chat"}</h1>
-          <span className="hidden shrink-0 rounded-full border border-border bg-card px-2.5 py-0.5 text-xs font-medium text-muted-foreground md:inline">
-            Dock and this chat share one state
-          </span>
+          {/* 全城 Otto 工作态:working 时亮起(与 dock 徽点同源),否则显示同源提示 */}
+          {otto.working ? (
+            <span
+              role="status"
+              className="hidden shrink-0 items-center gap-1.5 rounded-full border border-brand/30 bg-brand/10 px-2.5 py-0.5 text-xs font-medium text-brand md:inline-flex"
+            >
+              <OttoAvatar size={14} mood="thinking" />
+              {otto.label}
+            </span>
+          ) : (
+            <span className="hidden shrink-0 rounded-full border border-border bg-card px-2.5 py-0.5 text-xs font-medium text-muted-foreground md:inline">
+              Dock and this chat share one state
+            </span>
+          )}
         </div>
 
         <div ref={scrollRef} role="log" className="min-h-0 flex-1 overflow-y-auto">

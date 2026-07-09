@@ -33,7 +33,14 @@ import {
   type NsChatThread,
   type NsChatMessage,
 } from "@/components/northstar/global/_data";
-import { NS_CONNECTIONS, NS_RULES, type NsConnection, type NsRule } from "./account-ops/data";
+import {
+  NS_CONNECTIONS,
+  NS_RULES,
+  NS_MEMBERS,
+  type NsConnection,
+  type NsRule,
+  type NsMember,
+} from "./account-ops/data";
 
 /* ── 事件流(append-only;at = 单调递增 seq) ──────────────────────────────── */
 export type NsEventType =
@@ -48,7 +55,8 @@ export type NsEventType =
   | "automation_toggled"
   | "otto_working"
   | "otto_idle"
-  | "ad_submitted";
+  | "ad_submitted"
+  | "member_invited";
 
 export interface NsEvent {
   type: NsEventType;
@@ -70,6 +78,7 @@ interface StoreState {
   conversations: NsConversation[];
   chatThreads: NsChatThread[];
   rules: NsRule[];
+  members: NsMember[];
   resolvedConversationIds: string[];
   submittedAdIds: string[];
   ottoWorking: boolean;
@@ -89,6 +98,7 @@ const state: StoreState = {
   conversations: [...NS_CONVERSATIONS],
   chatThreads: NS_CHAT_THREADS.map((t) => ({ ...t, messages: [...t.messages] })),
   rules: [...NS_RULES],
+  members: [...NS_MEMBERS],
   resolvedConversationIds: [],
   submittedAdIds: [],
   ottoWorking: false,
@@ -236,6 +246,26 @@ export function submitAd(payload: { id?: string; label?: string }) {
   notify();
 }
 
+/** 邀请同事:真 append 一条 pending Editor 到成员列表(team 页派生 pending chip / 计数)。 */
+export function inviteMember(email: string) {
+  const trimmed = email.trim();
+  if (!trimmed) return;
+  const local = trimmed.split("@")[0] || trimmed;
+  const initials = local.replace(/[^a-zA-Z]/g, "").slice(0, 2).toUpperCase() || "??";
+  const member: NsMember = {
+    id: `mb-live-${seq + 1}`,
+    name: local,
+    email: trimmed,
+    role: "Editor",
+    initials,
+    status: "pending",
+    lastActive: "Invited just now",
+  };
+  state.members = [...state.members, member];
+  logEvent("member_invited", `Invited ${trimmed} as an editor`, { email: trimmed });
+  notify();
+}
+
 export function ottoWorking(on: boolean, label?: string) {
   state.ottoWorking = on;
   state.ottoLabel = on ? label ?? "Otto — working" : "Otto — idle";
@@ -290,6 +320,10 @@ export function connections(): NsConnection[] {
 
 export function rules(): NsRule[] {
   return state.rules;
+}
+
+export function teamMembers(): NsMember[] {
+  return state.members;
 }
 
 /* ── 订阅 hook(pattern precedent:useReducedMotion / useSyncExternalStore) ────

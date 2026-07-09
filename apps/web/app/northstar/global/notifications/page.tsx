@@ -14,20 +14,21 @@
 
 import * as React from "react";
 import Link from "next/link";
-import { BellOff, MessageSquare } from "lucide-react";
+import { Activity, BellOff, MessageSquare } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { Button } from "@/components/ui/button";
 import { EmptyState, MockNote } from "@/components/northstar/_shared";
 import { ApprovalFlow } from "@/components/northstar/global/chat-cards";
 import { useLanding } from "@/components/northstar/global/_fx";
+import { NS_OTTO_ACTIONS, type NsApprovalRequest, type NsOttoAction } from "@/components/northstar/global/_data";
 import {
-  NS_APPROVALS,
-  NS_OTTO_ACTIONS,
-  type NsApprovalRequest,
-  type NsOttoAction,
-} from "@/components/northstar/global/_data";
+  approveRequest,
+  pendingApprovals,
+  recentEvents,
+  useStore,
+} from "@/components/northstar/immersive/_store";
 
-/** 落定后离队的缓冲(收据看得见,再让位给空态) */
+/** 落定后离队的缓冲(收据看得见,再让共享 store 收走该条) */
 const LEAVE_MS = 2200;
 
 function TimelineRow({ action, land }: { action: NsOttoAction; land?: boolean }) {
@@ -45,9 +46,9 @@ function TimelineRow({ action, land }: { action: NsOttoAction; land?: boolean })
 }
 
 export default function Page() {
-  const [queue, setQueue] = React.useState<NsApprovalRequest[]>(NS_APPROVALS);
-  const [timeline, setTimeline] = React.useState<NsOttoAction[]>(NS_OTTO_ACTIONS);
-  const [landedIds, setLandedIds] = React.useState<string[]>([]);
+  useStore(); // 审批队列 + 活动流的单一源(团队页 / 首页数字同源)
+  const queue = pendingApprovals();
+  const events = recentEvents(20);
   const timers = React.useRef<number[]>([]);
 
   React.useEffect(
@@ -58,20 +59,11 @@ export default function Page() {
   );
 
   const settle = (req: NsApprovalRequest, state: "done" | "cancelled") => {
-    if (state === "done") {
-      const entry: NsOttoAction = {
-        id: `oa-live-${req.id}`,
-        text: req.kind === "generation" ? "Generated 3 Merdeka videos" : "Scheduled 2 approved posts",
-        at: "just now",
-        href: req.kind === "generation" ? "/northstar/assets/library" : "/northstar/schedule/plan",
-      };
-      setTimeline((t) => [entry, ...t]);
-      setLandedIds((ids) => [...ids, entry.id]);
-    }
-    // 收据留一拍再离队(§FB6:结果即反馈,不需要 toast)
+    // 卡内回执留一拍(§FB6:结果即反馈),再提交进共享 store —— 队列全城缩短、
+    // 生成类真扣额度(全城联动),落定事件进活动流。
     timers.current.push(
       window.setTimeout(() => {
-        setQueue((qs) => qs.filter((r) => r.id !== req.id));
+        approveRequest(req.id, state === "done" ? "approve" : "decline");
       }, LEAVE_MS),
     );
   };
@@ -143,13 +135,43 @@ export default function Page() {
         </p>
       </div>
       <div className="mt-2 -mx-3">
-        {timeline.map((a, i) => (
+        {NS_OTTO_ACTIONS.map((a, i) => (
           <React.Fragment key={a.id}>
             {i > 0 && <div className="mx-3 border-t border-border" />}
-            <TimelineRow action={a} land={landedIds.includes(a.id)} />
+            <TimelineRow action={a} />
           </React.Fragment>
         ))}
       </div>
+
+      {/* ── 活动流(共享 store eventLog 实时渲染:你在城里做的每件事,一行一条) ── */}
+      <div className="mt-10 flex items-baseline gap-3">
+        <h2 className="text-xl leading-[26px] font-semibold tracking-[-0.017em] text-foreground">Activity</h2>
+        <p className="min-w-0 flex-1 truncate text-xs font-medium text-muted-foreground">
+          Live from this session · newest first
+        </p>
+      </div>
+      {events.length === 0 ? (
+        <p className="mt-3 flex items-center gap-2 rounded-[14px] border border-border bg-card px-4 py-3.5 text-[13px] leading-[18px] text-muted-foreground">
+          <Activity className="size-4 shrink-0" strokeWidth={2} />
+          Nothing yet. Anything you approve, spend or connect shows up here live.
+        </p>
+      ) : (
+        <ul className="mt-2 -mx-3">
+          {events.map((e, i) => (
+            <li
+              key={e.at}
+              className={cn(
+                "flex items-baseline gap-3 px-3 py-3",
+                i > 0 && "border-t border-border",
+              )}
+            >
+              <span aria-hidden className="mt-[7px] size-1.5 shrink-0 rounded-full bg-muted-foreground" />
+              <span className="min-w-0 flex-1 text-sm text-foreground">{e.label}</span>
+              <span className="shrink-0 text-xs font-medium text-muted-foreground">just now</span>
+            </li>
+          ))}
+        </ul>
+      )}
 
       <p className="mt-10 font-mono text-[11px] leading-[16px] tracking-[0.02em] text-muted-foreground">
         规则回执:ApprovalRequest 一个原语两个表面(此页与聊天同卡)· 时间线与 dock 同源,
