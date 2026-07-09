@@ -13,7 +13,10 @@
  */
 
 import * as React from "react";
+import Link from "next/link";
 import { usePathname, useRouter } from "next/navigation";
+import { Menu } from "lucide-react";
+import { OttoAvatar } from "@/components/otto/OttoAvatar";
 import { ImmersiveProvider } from "./_context";
 import { ImmersiveNav } from "./immersive-nav";
 import { ImmersiveDock, type ImmersiveDockHandle } from "./immersive-dock";
@@ -80,6 +83,20 @@ export function ImmersiveShell({ children }: { children: React.ReactNode }) {
     document.head.appendChild(el);
   }, []);
 
+  // §L4 移动抽屉:≤680 侧栏脱离流成抽屉,由顶栏汉堡开合。换路由自动收起(点导航即跳即关),
+  // Esc 也收。桌面(>680)常驻栏不受此 state 影响(纯 CSS 断点决定形态)。
+  const [drawerOpen, setDrawerOpen] = React.useState(false);
+  const closeDrawer = React.useCallback(() => setDrawerOpen(false), []);
+  React.useEffect(() => setDrawerOpen(false), [pathname]);
+  React.useEffect(() => {
+    if (!drawerOpen) return;
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === "Escape") setDrawerOpen(false);
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [drawerOpen]);
+
   const openOtto = React.useCallback((prompt?: string, context?: NsOttoContext) => {
     // 上下文桥:带 context 就先落进共享 store(dock chip / 回复前缀读它),再展开面板。
     if (context !== undefined) setOttoContext(context);
@@ -123,8 +140,34 @@ export function ImmersiveShell({ children }: { children: React.ReactNode }) {
   return (
     <ImmersiveProvider value={ctx}>
       <div ref={rootRef} className="gb flex h-dvh flex-col bg-background text-foreground">
+        {/* §L4 ≤680 顶栏:汉堡开抽屉 + 品牌回首页;>680 桌面常驻栏自带 header,故隐藏此条。 */}
+        <div className="flex h-[52px] shrink-0 items-center gap-1.5 border-b border-border px-2 min-[681px]:hidden">
+          <button
+            type="button"
+            onClick={() => setDrawerOpen(true)}
+            aria-label="Open menu"
+            aria-expanded={drawerOpen}
+            className="flex size-9 items-center justify-center rounded-[10px] text-muted-foreground transition-colors duration-[120ms] hover:bg-accent hover:text-foreground"
+          >
+            <Menu className="size-5" strokeWidth={2} />
+          </button>
+          <Link href="/northstar-immersive" className="flex min-w-0 items-center gap-2" aria-label="FIKIRTIVE home">
+            <OttoAvatar size={24} mood="idle" />
+            <span className="truncate text-[16px] font-bold tracking-[-0.01em] text-foreground">FIKIRTIVE</span>
+          </Link>
+        </div>
         <div className="flex min-h-0 flex-1">
-          <ImmersiveNav />
+          {/* ≤680 抽屉打开时的遮罩(点击关闭);>680 永不出现。 */}
+          {drawerOpen && (
+            <button
+              type="button"
+              aria-label="Close menu"
+              tabIndex={-1}
+              onClick={closeDrawer}
+              className="fixed inset-0 z-[75] bg-foreground/40 min-[681px]:hidden"
+            />
+          )}
+          <ImmersiveNav mobileOpen={drawerOpen} onCloseMobile={closeDrawer} />
           {/* 内容 pane:唯一滚动所有者;换路由 = 换 key 做一次轻 fade */}
           <main
             key={pathname}

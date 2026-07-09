@@ -46,6 +46,7 @@ import {
   Users,
   UsersRound,
   Wallet,
+  X,
   type LucideIcon,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
@@ -159,7 +160,16 @@ function isActive(href: string, pathname: string): boolean {
   return pathname === href;
 }
 
-export function ImmersiveNav({ className }: { className?: string }) {
+export function ImmersiveNav({
+  className,
+  mobileOpen = false,
+  onCloseMobile,
+}: {
+  className?: string;
+  /** ≤680 抽屉形态:外壳注入的开合态 + 关闭回调(§L4)。桌面(>680)常驻栏忽略这两项。 */
+  mobileOpen?: boolean;
+  onCloseMobile?: () => void;
+}) {
   const pathname = usePathname();
   const router = useRouter();
   useStore();
@@ -188,7 +198,15 @@ export function ImmersiveNav({ className }: { className?: string }) {
     return () => window.clearTimeout(t);
   }, [bal]);
   return (
-    <nav className={cn("flex h-full w-60 shrink-0 flex-col border-r border-border bg-background", className)}>
+    <nav
+      className={cn(
+        "flex h-full w-60 shrink-0 flex-col border-r border-border bg-background",
+        // §L4:≤680 脱离流成 280 抽屉(fixed 覆盖 + translate 滑入/出);>680 保持 240 常驻栏。
+        "max-[680px]:fixed max-[680px]:inset-y-0 max-[680px]:left-0 max-[680px]:z-[80] max-[680px]:w-[280px] max-[680px]:shadow-[var(--shadow-xl)] max-[680px]:transition-transform max-[680px]:duration-200 motion-reduce:max-[680px]:transition-none",
+        mobileOpen ? "max-[680px]:translate-x-0" : "max-[680px]:-translate-x-full",
+        className,
+      )}
+    >
       {/* ① Brand — 回沉浸式首页 + 全局搜索 / 通知铃铛 */}
       <div className="flex h-[52px] shrink-0 items-center gap-2 px-4">
         <Link href={BASE} className="flex min-w-0 items-center gap-2" aria-label="FIKIRTIVE home">
@@ -229,6 +247,15 @@ export function ImmersiveNav({ className }: { className?: string }) {
               </span>
             )}
           </Link>
+          {/* §L4:抽屉形态的显式关闭键,只在 ≤680 出现;桌面常驻栏隐藏。 */}
+          <button
+            type="button"
+            onClick={onCloseMobile}
+            aria-label="Close menu"
+            className="flex size-8 items-center justify-center rounded-[10px] text-muted-foreground transition-colors duration-[120ms] hover:bg-accent hover:text-foreground min-[681px]:hidden"
+          >
+            <X className="size-[18px]" strokeWidth={2} />
+          </button>
         </div>
       </div>
 
