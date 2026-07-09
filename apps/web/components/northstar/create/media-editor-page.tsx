@@ -7,8 +7,10 @@
  */
 
 import * as React from "react";
+import Link from "next/link";
 import {
   Check,
+  FolderOpen,
   Image as ImageIcon,
   Pause,
   Play,
@@ -111,7 +113,37 @@ export function MediaEditorPage() {
         }
       />
 
-      <div className="mt-6">{tab === "image" ? <ImageEditor asset={asset} /> : <VideoEditor asset={asset} />}</div>
+      {/* [wave-c] STALL #9:asset 为空时不再静默回落到一段没选过的种子视频(会误以为按下就扣钱)。
+         改出诚实空态 —— 明说没有打开的素材,给两条真出路(去画布 / 去素材库),断掉死胡同。 */}
+      {asset ? (
+        <div className="mt-6">{tab === "image" ? <ImageEditor asset={asset} /> : <VideoEditor asset={asset} />}</div>
+      ) : (
+        <div className="mt-6 flex flex-col items-center justify-center rounded-[18px] border border-dashed border-border bg-card px-6 py-16 text-center">
+          <span className="flex size-12 items-center justify-center rounded-full bg-muted text-muted-foreground">
+            <FolderOpen className="size-6" strokeWidth={1.75} />
+          </span>
+          <h2 className="mt-4 text-[18px] leading-[24px] font-semibold tracking-[-0.012em] text-foreground">
+            Nothing open to edit yet
+          </h2>
+          <p className="mt-1.5 max-w-[380px] text-[13px] leading-[18px] text-muted-foreground">
+            Pick an image or clip to crop, trim, or extract a frame from. Open one from your canvas, or from your library.
+          </p>
+          <div className="mt-5 flex flex-wrap items-center justify-center gap-2">
+            <Button asChild size="sm" className="ns-pressable">
+              <Link href="/northstar/create/canvas">
+                <Sparkles className="size-4" strokeWidth={2} />
+                Go to canvas
+              </Link>
+            </Button>
+            <Button asChild size="sm" variant="outline" className="ns-pressable">
+              <Link href="/northstar/assets/library">
+                <FolderOpen className="size-4" strokeWidth={2} />
+                Open library
+              </Link>
+            </Button>
+          </div>
+        </div>
+      )}
 
       <MockNote path="/northstar/create/media-editor" />
     </div>

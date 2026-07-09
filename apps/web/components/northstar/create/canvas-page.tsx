@@ -50,7 +50,11 @@ import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip";
 import { useInsideImmersive } from "../immersive/_context";
-import { useQueryParam } from "../immersive/_kit";
+import { useQueryParam, useSweep } from "../immersive/_kit";
+// [wave-c] §O7「Otto 帮我」共享原语 —— composer 挂一颗即得 dock 承接 + 意图 chip + Apply 回填。
+import { OttoAssist } from "../immersive/otto-assist";
+// [wave-c] 空态 hero 的 Otto 云(≥16px 用有眼 avatar,§O1;idle 心情)。
+import { OttoAvatar } from "@/components/otto/OttoAvatar";
 import {
   balance as getBalance,
   castPersonas,
@@ -100,6 +104,40 @@ const IMAGE_COST = 12;
 const STITCH_COST = 20;
 const ZOOM_MIN = 0.25;
 const ZOOM_MAX = 3;
+
+// [wave-c] Studio canvas · 无参进入 = 一张真正的空画布(STALL #1/#6:第一眼不再落进别人的
+// 示例会话);种子会话(Merdeka / Croissant / Menu)降为侧栏「示例」。
+const FRESH_SESSION_ID = "cv-fresh";
+
+/** [wave-c] 空画布起步的零打字起手式(STALL #6/#7)。一份源同时喂空态 chip 与 §O7 意图。
+ * 诚实:只是把示例文案填进 composer,店主再亲手发;冷启动无个人数据,用「行业默认」口吻,
+ * 不假装懂这家店。`reply` 是 Otto 在 dock 里的回应(原型无真模型,写实、不夸口)。 */
+const CANVAS_STARTERS: { id: string; label: string; mode: Mode; draft: string; prompt: string; reply: string }[] = [
+  {
+    id: "product",
+    label: "A product photo of my bake",
+    mode: "image",
+    draft: "A clean product photo of my bake on a wooden board, soft morning light, plain background",
+    prompt: "Help me describe a product photo of my bake",
+    reply: "Here's a prompt to start from — tweak anything before you send: a clean product photo of your bake on a wooden board, soft morning light, plain background.",
+  },
+  {
+    id: "reel",
+    label: "A short reel of my shop",
+    mode: "video",
+    draft: "A 6-second reel of my bakery counter in the morning, warm light, close on the fresh bakes",
+    prompt: "Help me describe a short reel of my shop",
+    reply: "Try this one: a 6-second reel of your bakery counter in the morning, warm light, close on the fresh bakes. Video asks before it spends.",
+  },
+  {
+    id: "ideas",
+    label: "3 post ideas for this week",
+    mode: "agent",
+    draft: "Give me 3 post ideas for this week",
+    prompt: "Give me 3 post ideas for this week",
+    reply: "On it — I'll lay out three post ideas you can turn into images or a reel. Nothing's charged until you pick one and confirm.",
+  },
+];
 
 /* ── Agent 澄清脑回路(GOAL H1a/H1b:确定性规则,不是真 LLM) ────────────────
  * runAgent 不再固定出 4 clip。先按用户输入粗分意图(H1a),再最多两轮结构化追问
@@ -176,8 +214,6 @@ export function CanvasPage() {
   useCreateKeyframes();
   useStore(); // 订阅共享 store(余额 / Otto 工作态 / 事件流 = 单一循环系统)
 
-  const firstSession = CV_SESSIONS[0].id;
-
   // ── ?from / ?prompt 落地画布(create gap#4:断头路全通)──
   // from=<id> 解析成真实对象 → 一张只含它的干净画布;prompt 预填首句。
   const fromParam = useQueryParam("from");
@@ -223,8 +259,26 @@ export function CanvasPage() {
     [bootSeed],
   );
 
+  // [wave-c] 空画布起步的 Otto 开场白(STALL #6 + §8e 续播)。三态:①带受众/选角上下文
+  // (品牌记忆 / 选角接力)②带 ?prompt 前台指示(从别处 escort 过来,如广告「换个素材」——
+  // 把指示放进 composer,承接现场)③冷启动全空(引导零打字起手式)。不夸口、不假装有历史。
+  const welcomeTurns = React.useMemo<CvChatTurn[]>(
+    () => [
+      {
+        id: "t-welcome",
+        from: "otto",
+        text: canvasContext
+          ? `Fresh canvas, set up for ${canvasContext.name}. Tell me what to make, or tap a starter below — I ask before anything costs credits.`
+          : promptParam
+            ? `Picking up where you were — I dropped your note in the composer. Tweak it and send when you're ready. Nothing's charged yet.`
+            : `Blank canvas, all yours. Tell me what to make on the left, or tap a starter below. I'll always ask before anything costs credits.`,
+      },
+    ],
+    [canvasContext, promptParam],
+  );
+
   // 可寻址名计数(C2:Image 1/2… Video 1/2…)— 只在事件处理器里改;从起始画布对象派生
-  const refCounter = React.useRef(deriveCounters(bootObjects ?? CV_SESSION_SEEDS[firstSession].objects));
+  const refCounter = React.useRef(deriveCounters(bootObjects ?? []));
   const uidCounter = React.useRef(0);
   const nextUid = () => {
     uidCounter.current += 1;
@@ -232,7 +286,7 @@ export function CanvasPage() {
   };
 
   // ── 画布状态 ──
-  const [objects, setObjects] = React.useState<CvObject[]>(bootObjects ?? CV_SESSION_SEEDS[firstSession].objects);
+  const [objects, setObjects] = React.useState<CvObject[]>(bootObjects ?? []);
   const [selected, setSelected] = React.useState<string[]>([]);
   const [zoom, setZoom] = React.useState(1);
   const [pan, setPan] = React.useState({ x: 0, y: 0 });
@@ -252,11 +306,12 @@ export function CanvasPage() {
   // 会话列表用本地 state(种子 + boot 会话 + 「New agent」新建的会话),让切换器/侧栏读同一份可增长列表。
   const [sessions, setSessions] = React.useState<{ id: string; name: string }[]>(() => {
     const base = CV_SESSIONS.map((s) => ({ id: s.id, name: s.name }));
-    return bootSeed ? [{ id: bootSessionId, name: "New canvas" }, ...base] : base;
+    // [wave-c] 侧栏第一条永远是本人的空「New canvas」;种子 ss-* 留作可点的示例。
+    return [{ id: bootSeed ? bootSessionId : FRESH_SESSION_ID, name: "New canvas" }, ...base];
   });
-  const [sessionId, setSessionId] = React.useState<string>(bootSeed ? bootSessionId : firstSession);
+  const [sessionId, setSessionId] = React.useState<string>(bootSeed ? bootSessionId : FRESH_SESSION_ID);
   const [sessionMenu, setSessionMenu] = React.useState(false);
-  const [turns, setTurns] = React.useState<CvChatTurn[]>(bootTurns ?? CV_SESSION_SEEDS[firstSession].turns);
+  const [turns, setTurns] = React.useState<CvChatTurn[]>(bootTurns ?? welcomeTurns);
   const [mode, setMode] = React.useState<Mode>("agent");
   // context 前缀 + ?prompt 一起作为输入框初值(context chip 承诺的上下文一落地就预填)。
   const [draft, setDraft] = React.useState((canvasContext?.prefix ?? "") + (promptParam ?? ""));
@@ -278,6 +333,8 @@ export function CanvasPage() {
   const [spendAsk, setSpendAsk] = React.useState<
     | { kind: "make-video"; sourceId: string }
     | { kind: "evolve-video"; sourceId: string; prompt: string }
+    // [wave-c] 空画布直接要视频(无源):STALL 空态起步接住 —— 仍走花费确认(钱法不变)。
+    | { kind: "make-fresh-video"; prompt: string }
     | { kind: "agent-plan"; intent: AgentIntent; brief: string; count: number }
     | { kind: "stitch"; ids: string[] }
     | null
@@ -303,6 +360,23 @@ export function CanvasPage() {
 
   const canvasRef = React.useRef<HTMLDivElement>(null);
   const chatEndRef = React.useRef<HTMLDivElement>(null);
+  const composerRef = React.useRef<HTMLTextAreaElement>(null);
+  // [wave-c] §O7 Apply / 空态起手式回填 composer 时的一次性 coral sweep(§8a)。
+  const composerSweep = useSweep();
+
+  /** [wave-c] 把一段起手式填进 composer(空态 chip / Otto Apply 共用):设模式 + 草稿 +
+   * 焦点 + sweep。只填字段,店主再亲手发(§O7:发/花永不由此触发)。 */
+  const prefillComposer = React.useCallback((nextMode: Mode, text: string) => {
+    setMode(nextMode);
+    setDraft(text);
+    composerSweep.fire();
+    window.requestAnimationFrame(() => {
+      const el = composerRef.current;
+      if (!el) return;
+      el.focus();
+      el.setSelectionRange(text.length, text.length);
+    });
+  }, [composerSweep]);
 
   // 滚轮 zoom(B1)— 非 passive 监听
   React.useEffect(() => {
@@ -447,6 +521,34 @@ export function CanvasPage() {
           h: 300,
           status: "generating",
           parentId: source.id,
+          duration: 6,
+          credits,
+        },
+      ],
+      "Generating video…",
+    );
+  };
+
+  // [wave-c] 空画布无源视频:落在画布左上默认位,无父;定位有别于 evolve(不需要 source)。
+  const makeFreshVideo = (prompt: string, credits: number = VIDEO_COST) => {
+    refCounter.current.video += 1;
+    const n = refCounter.current.video;
+    const id = `cv-vid-${n}-${nextUid()}`;
+    spendCredits(credits, prompt.slice(0, 40) || "New video", "Video");
+    startGeneration(
+      [
+        {
+          id,
+          ref: `Video ${n}`,
+          kind: "video",
+          title: prompt.slice(0, 40) || "New video",
+          prompt,
+          src: cvImage("video", n),
+          x: 96,
+          y: 120,
+          w: 168,
+          h: 300,
+          status: "generating",
           duration: 6,
           credits,
         },
@@ -606,10 +708,13 @@ export function CanvasPage() {
       evolveImageAB(source, text);
       setTurns((prev) => [
         ...prev,
-        { id: `t-${prev.length + 1}`, from: "otto", text: "Making an A and a B version so you can compare. Balance is the gate.", steps: ["Generating A and B"] },
+        { id: `t-${prev.length + 1}`, from: "otto", text: "Making an A and a B take side by side, so you can pick the winner.", steps: ["Generating A and B"] },
       ]);
     } else {
-      setSpendAsk({ kind: "evolve-video", sourceId: singleSelected?.id ?? objects[0].id, prompt: text });
+      // 视频过花费确认;空画布(无源)走 make-fresh-video,别再 objects[0] 崩。
+      const source = singleSelected ?? objects.find((o) => o.kind === "video") ?? objects.find((o) => o.kind === "image") ?? null;
+      if (source) setSpendAsk({ kind: "evolve-video", sourceId: source.id, prompt: text });
+      else setSpendAsk({ kind: "make-fresh-video", prompt: text });
     }
   };
 
@@ -686,7 +791,8 @@ export function CanvasPage() {
     timersRef.current = [];
     const cleaned = objects.map((o) => (o.status === "generating" ? { ...o, status: "ready" as const } : o));
     poolRef.current[sessionId] = { objects: cleaned, turns };
-    const next = poolRef.current[id] ?? CV_SESSION_SEEDS[id];
+    // [wave-c] 未知 id(如空「New canvas」)回落到空画布 + 欢迎语,永不 undefined 崩。
+    const next = poolRef.current[id] ?? CV_SESSION_SEEDS[id] ?? { objects: [], turns: welcomeTurns };
     setObjects(next.objects);
     setTurns(next.turns);
     refCounter.current = deriveCounters(next.objects);
@@ -704,8 +810,9 @@ export function CanvasPage() {
   // 「New agent」真建一个空会话(不是关菜单的死按钮):种子空 pool → 切过去 → 空白画布起新一轮。
   const newAgent = () => {
     const id = `ss-new-${nextUid()}`;
-    const n = sessions.filter((s) => s.name.startsWith("New agent")).length;
-    const name = n === 0 ? "New agent" : `New agent ${n + 1}`;
+    // 侧栏第一条已是一张「New canvas」,故新建从 2 起编号,避免同名重复。
+    const n = sessions.filter((s) => s.name.startsWith("New canvas")).length;
+    const name = n === 0 ? "New canvas" : `New canvas ${n + 1}`;
     poolRef.current[id] = { objects: [], turns: [] };
     setSessions((prev) => [...prev, { id, name }]);
     setSessionMenu(false);
@@ -872,10 +979,15 @@ export function CanvasPage() {
             size="sm"
             variant={insideImmersive ? "outline" : "default"}
             className="w-full"
-            onClick={() => setSelected([])}
+            // [wave-c] STALL #46:此前只做取消选中却叫「New generation」——名不副实。
+            // 改为真起一张空画布(新会话)并把焦点落到 composer,承诺兑现。
+            onClick={() => {
+              newAgent();
+              window.requestAnimationFrame(() => composerRef.current?.focus());
+            }}
           >
             <Plus className="size-4" strokeWidth={2.2} />
-            New generation
+            New canvas
           </Button>
         </div>
         <div className="flex gap-1 px-3">
@@ -905,21 +1017,30 @@ export function CanvasPage() {
         <div className="min-h-0 flex-1 overflow-y-auto p-3">
           {sideTab === "chat" && (
             <div className="flex flex-col gap-1">
-              {sessions.map((s) => (
+              {sessions.map((s) => {
+                // [wave-c] 种子 ss-* 是示例(不是这位店主做的)——挂「Example」灰签,诚实标注。
+                const isExample = s.id.startsWith("ss-");
+                return (
                 <button
                   key={s.id}
                   type="button"
                   onClick={() => switchSession(s.id)}
                   className={cn(
-                    "flex h-9 items-center rounded-[10px] px-3 text-left text-[13px] transition-colors duration-[120ms]",
+                    "flex h-9 items-center gap-2 rounded-[10px] px-3 text-left text-[13px] transition-colors duration-[120ms]",
                     sessionId === s.id
                       ? "bg-secondary font-semibold text-foreground"
                       : "text-muted-foreground hover:bg-accent hover:text-foreground",
                   )}
                 >
                   <span className="truncate">{s.name}</span>
+                  {isExample && (
+                    <span className="ml-auto shrink-0 rounded-full bg-muted px-1.5 font-mono text-[9px] leading-4 tracking-[0.06em] text-muted-foreground uppercase">
+                      Example
+                    </span>
+                  )}
                 </button>
-              ))}
+                );
+              })}
             </div>
           )}
           {sideTab === "projects" && (
@@ -1012,7 +1133,7 @@ export function CanvasPage() {
           <div className="flex-1" />
           <Button variant="secondary" size="sm" className="h-8 px-3 text-xs" onClick={newAgent}>
             <Plus className="size-3.5" strokeWidth={2.2} />
-            New agent
+            New canvas
           </Button>
           {sessionMenu && (
             <div className="absolute top-12 left-4 z-50 w-56 rounded-[14px] border border-border bg-popover p-1 shadow-[var(--shadow-lg)]">
@@ -1138,7 +1259,10 @@ export function CanvasPage() {
 
         {/* Composer(A1 三模式 + J2 @mention + H0 ↑↔■) */}
         <div className="shrink-0 border-t border-border p-3">
-          <div className="relative rounded-[14px] border border-input bg-card shadow-[var(--shadow-xs)] focus-within:border-ring focus-within:ring-[3px] focus-within:ring-ring/40">
+          <div
+            style={composerSweep.style}
+            className="relative rounded-[14px] border border-input bg-card shadow-[var(--shadow-xs)] focus-within:border-ring focus-within:ring-[3px] focus-within:ring-ring/40"
+          >
             {mentionOpen && (
               <div className="absolute bottom-full left-3 z-50 mb-2 w-56 rounded-[14px] border border-border bg-popover p-1 shadow-[var(--shadow-lg)]">
                 <p className="px-3 py-1.5 text-xs font-medium text-muted-foreground">Reference a canvas object</p>
@@ -1159,6 +1283,7 @@ export function CanvasPage() {
               </div>
             )}
             <textarea
+              ref={composerRef}
               value={draft}
               onChange={(e) => {
                 setDraft(e.target.value);
@@ -1181,6 +1306,22 @@ export function CanvasPage() {
               className="max-h-40 w-full resize-none bg-transparent px-3.5 pt-3 text-[15px] leading-[22px] text-foreground outline-none placeholder:text-muted-foreground"
             />
             <div className="flex items-center gap-2 px-2.5 pb-2.5">
+              {/* [wave-c] §O7 一颗「Ask Otto」—— 点开带 {zone,选中对象,mode,draft} 上下文,
+                 dock 浮出意图 chip;Apply 只回填 composer,发/花仍要店主亲手点。 */}
+              <OttoAssist
+                zone="Canvas"
+                entityId={singleSelected?.id}
+                entityLabel={singleSelected ? `${singleSelected.ref} · ${singleSelected.title}` : "your canvas"}
+                formState={{ mode, draft, selected: singleSelected?.ref }}
+                intents={CANVAS_STARTERS.map((s) => ({
+                  id: s.id,
+                  label: s.label,
+                  prompt: s.prompt,
+                  reply: s.reply,
+                  apply: { summary: "Fill the composer", patch: { mode: s.mode, draft: s.draft } },
+                }))}
+                onApply={(a) => prefillComposer((a.patch.mode as Mode) ?? "image", String(a.patch.draft ?? ""))}
+              />
               <div className="flex rounded-[10px] border border-border bg-card p-0.5">
                 {(["image", "video", "agent"] as Mode[]).map((m) => {
                   const Icon = m === "image" ? ImageIcon : m === "video" ? Video : Bot;
@@ -1205,11 +1346,11 @@ export function CanvasPage() {
                   );
                 })}
               </div>
-              {/* 参数栏随模式重排(A1) */}
+              {/* 参数栏随模式重排(A1)· 人话,不用行话(STALL #47) */}
               <span className="min-w-0 flex-1 truncate text-xs text-muted-foreground">
-                {mode === "image" && "1:1 · A/B pair · compare side by side, balance is the gate"}
-                {mode === "video" && "6s · 720p · asks before spending"}
-                {mode === "agent" && "Plans first · asks before spending"}
+                {mode === "image" && "Two takes side by side, so you can pick"}
+                {mode === "video" && "6s clip · asks before spending"}
+                {mode === "agent" && "Otto plans it first · asks before spending"}
               </span>
               <span className="hidden text-[11px] text-muted-foreground/70 sm:inline">Shift+Enter to send</span>
               {streaming ? (
@@ -1495,13 +1636,49 @@ export function CanvasPage() {
             })}
           </div>
 
+          {/* [wave-c] 空画布起步态(STALL #6):不再只有一片灰点点。居中 Otto 云 + 一句人话
+             + 零打字起手式(点一下填进 composer,店主再亲手发)。跟随视口居中(不进 pan/zoom
+             变换),reduced-motion 无动画。pointer-events 只给卡片,画布其余处仍可 pan。 */}
+          {objects.length === 0 && !streaming && (
+            <div className="pointer-events-none absolute inset-0 z-[5] flex items-center justify-center p-6">
+              <div className="pointer-events-auto flex w-full max-w-[420px] flex-col items-center text-center">
+                <OttoAvatar size={48} mood="idle" />
+                <h2 className="mt-4 text-[20px] leading-[26px] font-semibold tracking-[-0.017em] text-foreground">
+                  A blank canvas, all yours
+                </h2>
+                <p className="mt-1.5 max-w-[320px] text-[13px] leading-[18px] text-muted-foreground">
+                  Tell Otto what to make in the box on the left — or tap a starter to fill it in. I always ask before anything costs credits.
+                </p>
+                <div className="mt-5 flex flex-wrap items-center justify-center gap-2">
+                  {CANVAS_STARTERS.map((s) => (
+                    <button
+                      key={s.id}
+                      type="button"
+                      onClick={() => prefillComposer(s.mode, s.draft)}
+                      className="ns-pressable flex h-9 items-center gap-1.5 rounded-full border border-border bg-card px-3.5 text-[13px] font-medium text-foreground transition-colors duration-[120ms] hover:text-foreground focus-visible:outline-none focus-visible:ring-[3px] focus-visible:ring-ring/40"
+                    >
+                      {s.mode === "image" ? (
+                        <ImageIcon className="size-3.5 text-muted-foreground" strokeWidth={2} />
+                      ) : s.mode === "video" ? (
+                        <Video className="size-3.5 text-muted-foreground" strokeWidth={2} />
+                      ) : (
+                        <Sparkles className="size-3.5 text-muted-foreground" strokeWidth={2} />
+                      )}
+                      {s.label}
+                    </button>
+                  ))}
+                </div>
+              </div>
+            </div>
+          )}
+
           {/* 缩放器(B1:25%–300% + Zoom-to-fit) */}
           <div className="absolute bottom-4 left-4 z-[10] flex items-center gap-1 rounded-full border border-border bg-card px-1.5 py-1 shadow-[var(--shadow-md)]">
             <button
               type="button"
               aria-label="Zoom out"
               onClick={() => setZoom((z) => Math.max(ZOOM_MIN, Math.round((z - 0.2) * 10) / 10))}
-              className="flex size-7 items-center justify-center rounded-full text-muted-foreground hover:bg-accent hover:text-foreground"
+              className="flex size-7 items-center justify-center rounded-full text-muted-foreground transition-[transform,background-color,color] duration-[120ms] hover:bg-accent hover:text-foreground active:scale-[0.9]"
             >
               <Minus className="size-4" strokeWidth={2} />
             </button>
@@ -1512,7 +1689,7 @@ export function CanvasPage() {
               type="button"
               aria-label="Zoom in"
               onClick={() => setZoom((z) => Math.min(ZOOM_MAX, Math.round((z + 0.2) * 10) / 10))}
-              className="flex size-7 items-center justify-center rounded-full text-muted-foreground hover:bg-accent hover:text-foreground"
+              className="flex size-7 items-center justify-center rounded-full text-muted-foreground transition-[transform,background-color,color] duration-[120ms] hover:bg-accent hover:text-foreground active:scale-[0.9]"
             >
               <Plus className="size-4" strokeWidth={2} />
             </button>
@@ -1523,7 +1700,7 @@ export function CanvasPage() {
                   type="button"
                   aria-label="Zoom to fit"
                   onClick={zoomToFit}
-                  className="flex size-7 items-center justify-center rounded-full text-muted-foreground hover:bg-accent hover:text-foreground"
+                  className="flex size-7 items-center justify-center rounded-full text-muted-foreground transition-[transform,background-color,color] duration-[120ms] hover:bg-accent hover:text-foreground active:scale-[0.9]"
                 >
                   <Scan className="size-4" strokeWidth={2} />
                 </button>
@@ -1718,7 +1895,9 @@ export function CanvasPage() {
                   "The source clips stay on the canvas.",
                 ]
               : [
-                  "The video lands next to its source with a lineage line.",
+                  spendAsk?.kind === "make-fresh-video"
+                    ? "The video lands on your canvas — evolve it from there."
+                    : "The video lands next to its source with a lineage line.",
                   "Speed is a quick draft; Quality is sharper but slower.",
                   "If it fails, you aren't charged.",
                 ]
@@ -1734,7 +1913,7 @@ export function CanvasPage() {
         baseCredits={
           spendAsk?.kind === "agent-plan"
             ? spendAsk.count * INTENT_META[spendAsk.intent].costEach
-            : spendAsk?.kind === "make-video" || spendAsk?.kind === "evolve-video"
+            : spendAsk?.kind === "make-video" || spendAsk?.kind === "evolve-video" || spendAsk?.kind === "make-fresh-video"
               ? VIDEO_COST
               : undefined
         }
@@ -1743,6 +1922,7 @@ export function CanvasPage() {
           setSpendAsk(null);
           if (!ask) return;
           if (ask.kind === "agent-plan") confirmAgentPlan(ask.intent, ask.brief, ask.count, credits);
+          else if (ask.kind === "make-fresh-video") makeFreshVideo(ask.prompt, credits);
           else if (ask.kind === "make-video" || ask.kind === "evolve-video") {
             const source = objects.find((o) => o.id === ask.sourceId);
             if (source) makeVideo(source, ask.kind === "evolve-video" ? ask.prompt : `Animate: ${source.prompt}`, credits);
@@ -1870,8 +2050,9 @@ function ObjectToolbar({
   const [promoteOpen, setPromoteOpen] = React.useState(false);
 
   const tool = (label: string, icon: React.ReactNode, onClick?: () => void, href?: string, danger?: boolean) => {
+    // [wave-c] §G1 pointer-down 手感:按下即缩(active scale),reduced-motion 由全局 clamp 压平。
     const cls = cn(
-      "flex size-8 items-center justify-center rounded-[10px] transition-colors duration-[120ms]",
+      "flex size-8 items-center justify-center rounded-[10px] transition-[transform,background-color,color] duration-[120ms] active:scale-[0.92]",
       danger
         ? "text-error-soft-foreground hover:bg-error-soft"
         : "text-muted-foreground hover:bg-accent hover:text-foreground",
