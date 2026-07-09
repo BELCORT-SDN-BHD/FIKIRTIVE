@@ -359,3 +359,25 @@ export const TEST_PROMPTS: NsTestPrompt[] = [
 export function knowledgeAnswer(knowledgeId: string): string {
   return KNOWLEDGE.find((k) => k.id === knowledgeId)?.answer ?? "";
 }
+
+/**
+ * 答案溯源(O-06):把一句客户问题匹配到知识库里的一条依据。
+ * 命中 → 返回该条(Otto 的建议回复从它取答案、卡上挂可点「依据」);
+ * 未命中 → undefined(调用方显示「无把握,请人工」,不捏造)。
+ * 极简确定性关键词匹配(无 Date.now / 无 Math.random),口径与 test-drive 一致。
+ */
+const KNOWLEDGE_CUES: { id: string; cues: string[] }[] = [
+  { id: "kb-01", cues: ["halal", "pork", "alcohol"] },
+  { id: "kb-02", cues: ["best seller", "best-seller", "recommend", "try first", "popular", "favourite", "favorite"] },
+  { id: "kb-03", cues: ["pandan", "gula melaka", "cake price", "how much"] },
+  { id: "kb-04", cues: ["deliver", "delivery", "postage", "shipping", "bangsar", "area"] },
+  { id: "kb-05", cues: ["pickup", "pick up", "hours", "open", "collect"] },
+  { id: "kb-06", cues: ["pay", "payment", "duitnow", "deposit", "transfer", "cash"] },
+];
+
+export function matchKnowledge(question: string): NsKnowledgeEntry | undefined {
+  const q = question.toLowerCase();
+  const hit = KNOWLEDGE_CUES.find((k) => k.cues.some((c) => q.includes(c)));
+  if (!hit) return undefined;
+  return KNOWLEDGE.find((k) => k.id === hit.id);
+}

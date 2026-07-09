@@ -45,7 +45,7 @@ import {
   type NsSeatType,
   type NsRoutine,
 } from "./account-ops/data";
-import type { NsDealStage, NsSegmentRule } from "./crm-inbox/data";
+import type { NsDealStage, NsSegmentRule, NsKnowledgeEntry } from "./crm-inbox/data";
 
 /** 成交阶段推进顺序(单一源,advanceDealStage 与 crm 页共用) */
 const DEAL_STAGE_ORDER: NsDealStage[] = ["lead", "quote", "confirmed", "delivered"];
@@ -79,7 +79,10 @@ export type NsEventType =
   | "contact_field_changed"
   | "contacts_merged"
   | "segment_created"
-  | "segment_deleted";
+  | "segment_deleted"
+  | "comment_to_dm"
+  | "knowledge_added"
+  | "business_hours_set";
 
 export interface NsEvent {
   type: NsEventType;
@@ -131,6 +134,25 @@ export interface NsCustomSegment {
   rules: NsSegmentRule[];
 }
 
+/* ── 营业时间(收件箱离时自动回复;时段 + away 文案,店主可改) ────────────────
+ * 派生用途:非营业时段进来的对话在收件箱打「After hours」标 + 对话页演示 away 气泡。 */
+export interface NsBusinessHours {
+  enabled: boolean;
+  /** 24h HH:MM,零填充,字符串比较即可判时段(确定性,无 Date.now)。 */
+  open: string;
+  close: string;
+  /** 闭店时段自动回复文案(away message)。 */
+  awayMessage: string;
+}
+
+/** 知识反向回路:人工改写 Otto 草稿后存进知识库的新条目(带来源对话链接)。 */
+export interface NsKnowledgeAddition extends NsKnowledgeEntry {
+  /** 来源对话 id(知识库页「From a conversation」链接回它)。 */
+  sourceConversationId?: string;
+  /** 来源人话标签(对话标题;chip 显示)。 */
+  sourceLabel?: string;
+}
+
 /* ── store 状态(全部从 _mock / 区级视图派生的可变镜像) ────────────────────── */
 interface StoreState {
   creditBalance: number;
@@ -173,6 +195,14 @@ interface StoreState {
   ottoContext: NsOttoContext | null;
   /** Otto 行为设置(账户 · Otto 行为面写它;dock 读它反映当前作风)。 */
   ottoBehavior: NsOttoBehavior;
+  /** 营业时间设置(离时自动回复;收件箱设置卡读/写它)。 */
+  businessHours: NsBusinessHours;
+  /** 评论 → 私信:commentId → 生成的对话 id(评论页显示「In DM」链接,不重复转)。 */
+  commentThreads: Record<string, string>;
+  /** 对话预填草稿:conversationId → 待填文案(Comment-to-DM 生成的 DM 草稿,对话页 seed 一次)。 */
+  conversationDrafts: Record<string, string>;
+  /** 知识反向回路:人工存进知识库的新条目(知识库页 = 种子 KNOWLEDGE + 这些)。 */
+  addedKnowledge: NsKnowledgeAddition[];
 }
 
 // 浅拷贝顶层数组做可变镜像:动作永不原地改 _mock 里的对象,只在本层 replace。
@@ -211,6 +241,16 @@ const state: StoreState = {
     spendConfirmThreshold: 50,
     quietHours: { enabled: false, from: "22:00", to: "07:00" },
   },
+  businessHours: {
+    enabled: true,
+    open: "09:00",
+    close: "18:00",
+    awayMessage:
+      "Thanks for messaging! We're closed right now (open 9am–6pm daily). Otto will reply first thing — or leave your order and we'll confirm when we open 🥐",
+  },
+  commentThreads: {},
+  conversationDrafts: {},
+  addedKnowledge: [],
 };
 
 /* ── 订阅机制(version tick:每次 notify 递增,useSyncExternalStore 读它触发重渲染) ── */
@@ -594,6 +634,90 @@ export function addCustomSegment(input: { name: string; phrase: string; rules: N
   return id;
 }
 
+/** Comment-to-DM(蓝图第六章增长钩):把一条公开评论转成私信对话草稿。
+ * 补建评论作者为联系人 → 新建一条对话(评论正文当客户首条)→ 存 DM 草稿(Otto 建议)→
+ * 返回对话 id 供页面跳转。幂等:同一评论已转过则回落既有对话,不重复建。 */
+export function startDmFromComment(input: {
+  commentId: string;
+  handle: string;
+  channel: NsContact["channels"][number];
+  postCaption: string;
+  commentText: string;
+  suggested: string;
+  at: string;
+}): string {
+  const existing = state.commentThreads[input.commentId];
+  if (existing) return existing;
+  const contactId = `ct-cm-${input.handle}`;
+  const hasContact = state.contacts.some((c) => c.id === contactId || c.name === `@${input.handle}`);
+  if (!hasContact) {
+    const contact: NsContact = {
+      id: contactId,
+      name: `@${input.handle}`,
+      channels: [input.channel],
+      lastSeen: input.at.slice(0, 10),
+      tags: ["new"],
+      doNotDisturb: false,
+      totalOrdersMyr: 0,
+    };
+    state.contacts = [contact, ...state.contacts];
+    state.inboxContactIds = [...state.inboxContactIds, contactId];
+    logEvent("contact_created", `Added @${input.handle} to contacts`, { id: contactId });
+  }
+  const cvId = `cv-dm-${seq + 1}`;
+  const conversation: NsConversation = {
+    id: cvId,
+    contactId,
+    channel: input.channel,
+    subject: `DM · ${input.postCaption}`,
+    unread: false,
+    aiHandled: false,
+    messages: [
+      { id: `m-dm-${seq + 1}`, from: "customer", text: input.commentText, at: "Just now" },
+    ],
+  };
+  state.conversations = [conversation, ...state.conversations];
+  state.commentThreads = { ...state.commentThreads, [input.commentId]: cvId };
+  // 人工插手态:DM 从人工发起,Otto 自动回复默认暂停(横幅为真)。
+  state.pausedAiConversationIds = [...state.pausedAiConversationIds, cvId];
+  state.conversationDrafts = { ...state.conversationDrafts, [cvId]: input.suggested };
+  logEvent("comment_to_dm", `Moved @${input.handle}'s comment to a DM`, { commentId: input.commentId, cvId });
+  addContactEvent(contactId, `Moved a public comment to a private DM`);
+  notify();
+  return cvId;
+}
+
+/** 营业时间设置(离时自动回复):店主改时段/away 文案,收件箱与对话页即时反映。 */
+export function setBusinessHours(patch: Partial<NsBusinessHours>) {
+  state.businessHours = { ...state.businessHours, ...patch };
+  logEvent("business_hours_set", "Updated business hours", { ...patch });
+  notify();
+}
+
+/** 知识反向回路:人工把改写后的答案存进知识库(带来源对话链接)。返回新条目 id。 */
+export function addKnowledgeEntry(input: {
+  question: string;
+  answer: string;
+  category?: NsKnowledgeEntry["category"];
+  sourceConversationId?: string;
+  sourceLabel?: string;
+}): string {
+  const id = `kb-live-${seq + 1}`;
+  const entry: NsKnowledgeAddition = {
+    id,
+    question: input.question.trim(),
+    answer: input.answer.trim(),
+    category: input.category ?? "Products",
+    usedThisWeek: 0,
+    sourceConversationId: input.sourceConversationId,
+    sourceLabel: input.sourceLabel,
+  };
+  state.addedKnowledge = [entry, ...state.addedKnowledge];
+  logEvent("knowledge_added", `Saved a new answer to Knowledge · ${entry.question}`, { id });
+  notify();
+  return id;
+}
+
 export function removeCustomSegment(id: string) {
   const seg = state.customSegments.find((s) => s.id === id);
   if (!seg) return;
@@ -910,6 +1034,39 @@ export function isInboxContact(id: string): boolean {
 /** 该联系人的「来自收件箱」时间线条目(最早在前)。 */
 export function contactEventsFor(id: string): { at: number; label: string }[] {
   return state.contactEvents[id] ?? [];
+}
+
+/** 营业时间设置(收件箱设置卡 / 对话页 away 演示读它)。 */
+export function businessHoursView(): NsBusinessHours {
+  return state.businessHours;
+}
+
+/** 某评论是否已转为私信(评论页显示「In DM」链接,回落对话 id)。 */
+export function commentThreadFor(commentId: string): string | undefined {
+  return state.commentThreads[commentId];
+}
+
+/** 某对话的待填草稿(Comment-to-DM 生成;对话页首次挂载 seed 到输入框)。 */
+export function conversationDraftFor(conversationId: string): string | undefined {
+  return state.conversationDrafts[conversationId];
+}
+
+/** 人工存进知识库的新条目(知识库页 = 种子 KNOWLEDGE + 这些)。 */
+export function addedKnowledgeView(): NsKnowledgeAddition[] {
+  return state.addedKnowledge;
+}
+
+/** 一条对话是否在非营业时段进来的(取首条客户消息的 HH:MM,与时段字符串比较)。
+ * away 关或无 ISO 时间戳(实时消息)→ false。确定性,无 Date.now。 */
+export function isAfterHoursConversation(conversation: NsConversation): boolean {
+  const bh = state.businessHours;
+  if (!bh.enabled) return false;
+  const firstCustomer = conversation.messages.find((m) => m.from === "customer");
+  const at = firstCustomer?.at ?? "";
+  if (!at.includes("T")) return false;
+  const hhmm = at.slice(11, 16); // "08:12"
+  if (hhmm.length !== 5) return false;
+  return hhmm < bh.open || hhmm >= bh.close;
 }
 
 /** 待审广告(广告区 submit 落进事件流;performance/multi-platform 从这里派生「审核中」)。 */

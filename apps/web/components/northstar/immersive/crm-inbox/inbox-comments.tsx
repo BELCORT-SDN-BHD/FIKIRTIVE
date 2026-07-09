@@ -8,17 +8,20 @@
 
 import * as React from "react";
 import Link from "next/link";
-import { MessageCircle, Sparkles } from "lucide-react";
+import { useRouter } from "next/navigation";
+import { ArrowRight, MessageCircle, Send, Sparkles } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { PageHeader, StatCard } from "@/components/northstar/_shared";
 import { CRM_INBOX_BASE as BASE, InboxNav, Card, fmtStamp, useSweep } from "./kit";
 import { COMMENTS, type NsComment } from "./data";
-import { ensureContactFromComment } from "../_store";
+import { useStore, ensureContactFromComment, startDmFromComment, commentThreadFor } from "../_store";
 
 function CommentRow({ comment }: { comment: NsComment }) {
   const sweep = useSweep();
+  const router = useRouter();
   const [replied, setReplied] = React.useState(comment.status === "replied");
+  const dmThreadId = commentThreadFor(comment.id);
 
   return (
     <div className="border-t border-border px-4 py-3.5 first:border-t-0" style={sweep.style}>
@@ -30,6 +33,7 @@ function CommentRow({ comment }: { comment: NsComment }) {
           <div className="flex items-center gap-2">
             <p className="truncate text-sm font-semibold text-foreground">@{comment.author}</p>
             {replied ? <Badge variant="success">Replied</Badge> : <Badge variant="warning">New</Badge>}
+            {dmThreadId && <Badge variant="outline">In DM</Badge>}
           </div>
           <p className="truncate text-[11px] text-muted-foreground">on “{comment.postCaption}”</p>
         </div>
@@ -46,7 +50,7 @@ function CommentRow({ comment }: { comment: NsComment }) {
         <p className="mt-1 text-[13px] leading-[18px] text-foreground">{comment.suggested}</p>
       </div>
 
-      <div className="mt-2.5 flex items-center gap-2">
+      <div className="mt-2.5 flex flex-wrap items-center gap-2">
         <Button
           variant={replied ? "ghost" : "secondary"}
           size="sm"
@@ -65,12 +69,43 @@ function CommentRow({ comment }: { comment: NsComment }) {
         >
           {replied ? "Replied" : "Post reply"}
         </Button>
+
+        {/* Comment-to-DM 增长钩:转成私信 → 生成 DM 草稿 → 进对话视图 */}
+        {dmThreadId ? (
+          <Button variant="ghost" size="sm" asChild>
+            <Link href={`${BASE}/inbox/conversation?id=${dmThreadId}`}>
+              Open DM
+              <ArrowRight strokeWidth={2} />
+            </Link>
+          </Button>
+        ) : (
+          <Button
+            variant="ghost"
+            size="sm"
+            onClick={() => {
+              const cvId = startDmFromComment({
+                commentId: comment.id,
+                handle: comment.author,
+                channel: "instagram",
+                postCaption: comment.postCaption,
+                commentText: comment.text,
+                suggested: comment.suggested,
+                at: comment.at,
+              });
+              router.push(`${BASE}/inbox/conversation?id=${cvId}`);
+            }}
+          >
+            <Send strokeWidth={2} />
+            Message in DM
+          </Button>
+        )}
       </div>
     </div>
   );
 }
 
 export function InboxComments() {
+  useStore(); // 订阅:某评论转为 DM 后即刻显示「In DM / Open DM」
   const newCount = COMMENTS.filter((c) => c.status === "new").length;
 
   return (
