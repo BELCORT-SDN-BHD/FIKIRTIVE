@@ -2,11 +2,12 @@
  * 北极星原型 — 广告区示例数据(基于共享 _mock 的场景:Roti Bulan Bakery,KL)
  *
  * 共享 mock 模块(components/northstar/_mock.ts)没有 per-ad / 平台 adapter 数据,
- * 本文件是广告区的补充口径:同一家店、同一批产品、确定性数值、占位图走 nsPlaceholder。
+ * 本文件是广告区的补充口径:同一家店、同一批产品、确定性数值、缩略图走 NS_IMAGES 真图。
+ * 图片纪律(ENDGAME §一):全城只从 NS_IMAGES 取图 —— 每条 ad 缩略图对到它所描绘的真实产品/主视觉。
  * 规矩不变:诊断不捏造 — 每条诊断证据均可指回下方数字;引用带来源(O-10 判决)。
  */
 
-import { nsPlaceholder } from "@/components/northstar/_mock";
+import { nsImage } from "@/components/northstar/_mock";
 
 /* ── 账户口径(赢家 / 输家用账户自身均值切,PAGE-INVENTORY 广告表现页行) ── */
 
@@ -73,7 +74,7 @@ export const NS_ADS: NsAd[] = [
     id: "ad-01",
     name: "Merdeka gift box · unboxing 15s",
     format: "video",
-    thumb: nsPlaceholder("Unboxing", 120, 120, "crust"),
+    thumb: nsImage("campaign", 0),
     daysRunning: 14,
     spendMyr: 310.4,
     impressions: 28200,
@@ -101,7 +102,7 @@ export const NS_ADS: NsAd[] = [
     id: "ad-02",
     name: "Kaya croissant morning reel",
     format: "video",
-    thumb: nsPlaceholder("Morning reel", 120, 120, "crust"),
+    thumb: nsImage("bakery", 1),
     daysRunning: 10,
     spendMyr: 186.2,
     impressions: 19800,
@@ -121,7 +122,7 @@ export const NS_ADS: NsAd[] = [
     id: "ad-03",
     name: "Office order teaser · carousel",
     format: "carousel",
-    thumb: nsPlaceholder("Office teaser", 120, 120, "kopi"),
+    thumb: nsImage("bakery", 12),
     daysRunning: 8,
     spendMyr: 142.8,
     impressions: 14600,
@@ -144,7 +145,7 @@ export const NS_ADS: NsAd[] = [
     id: "ad-04",
     name: "Pandan cake close-up",
     format: "image",
-    thumb: nsPlaceholder("Pandan close-up", 120, 120, "pandan"),
+    thumb: nsImage("bakery", 5),
     daysRunning: 12,
     spendMyr: 168.0,
     impressions: 15200,
@@ -166,7 +167,7 @@ export const NS_ADS: NsAd[] = [
     id: "ad-05",
     name: "Croissant fold timelapse 30s",
     format: "video",
-    thumb: nsPlaceholder("Timelapse", 120, 120, "video"),
+    thumb: nsImage("bakery", 8),
     daysRunning: 9,
     spendMyr: 156.4,
     impressions: 9800,
@@ -193,7 +194,7 @@ export const NS_ADS: NsAd[] = [
     id: "ad-06",
     name: "Raya cookie box · static",
     format: "image",
-    thumb: nsPlaceholder("Raya box", 120, 120, "crust"),
+    thumb: nsImage("bakery", 20),
     daysRunning: 16,
     spendMyr: 148.6,
     impressions: 11400,
@@ -215,7 +216,7 @@ export const NS_ADS: NsAd[] = [
     id: "ad-07",
     name: "Kopi tiramisu menu card",
     format: "image",
-    thumb: nsPlaceholder("Menu card", 120, 120, "kopi"),
+    thumb: nsImage("bakery", 10),
     daysRunning: 7,
     spendMyr: 96.2,
     impressions: 8600,
@@ -238,7 +239,7 @@ export const NS_ADS: NsAd[] = [
     id: "ad-08",
     name: "Weekend promo · storyboard cut",
     format: "video",
-    thumb: nsPlaceholder("Promo cut", 120, 120, "video"),
+    thumb: nsImage("campaign", 4),
     daysRunning: 5,
     spendMyr: 76.0,
     impressions: 7800,

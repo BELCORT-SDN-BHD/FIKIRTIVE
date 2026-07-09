@@ -47,7 +47,8 @@ import {
 } from "@/components/northstar/immersive/_store";
 import { AnalyticsNav, PinnedHeader, ZoneBody } from "./kit";
 
-type Phase = "empty" | "building" | "ready" | "error";
+// 读面型生命周期:build 只读已加载的本地对象面(红旗二无新表),不发生真实失败 —— 故无 error 态。
+type Phase = "empty" | "building" | "ready";
 
 const PERIODS = [
   { key: "week", label: "This week · 30 Jun to 6 Jul" },
@@ -305,16 +306,6 @@ export default function AnalyticsReports() {
                   title="No report yet"
                   body="Pick blocks on the left and build one. Otto writes the read for you."
                 />
-              </div>
-            )}
-
-            {phase === "error" && (
-              <div className="mt-3 flex flex-col items-center gap-3 rounded-[var(--radius-card)] border border-border bg-card px-6 py-14 text-center">
-                <div className="text-lg font-semibold text-foreground">Couldn&apos;t build the report</div>
-                <p className="max-w-[380px] text-[13px] leading-[18px] text-muted-foreground">Your data is unchanged. Try again.</p>
-                <Button variant="ghost" size="sm" onClick={startBuild}>
-                  Retry
-                </Button>
               </div>
             )}
 
