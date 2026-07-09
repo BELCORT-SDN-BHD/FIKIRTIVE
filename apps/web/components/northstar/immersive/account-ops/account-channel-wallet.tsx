@@ -26,6 +26,7 @@ import { useStore, channelWallet, channelWalletAddFunds, channelWalletSetAutoRel
 import {
   META_PRICING_URL,
   NS_CHANNEL_FEE_LEDGER,
+  NS_CHANNEL_FEE_RELOAD,
   type NsChannelFeeRow,
 } from "./data";
 
@@ -120,14 +121,33 @@ export function AccountChannelWallet() {
         <StatCard label="Conversations" value={totalConversations.toLocaleString("en-MY")} delta={{ dir: "flat", text: "This month, all types" }} />
       </div>
 
-      <div className="mt-4 flex flex-wrap items-center gap-3 rounded-[18px] border border-border bg-card px-4 py-3.5">
-        <div className="flex items-center gap-2">
-          <span className="text-xs text-muted-foreground">Auto reload when low</span>
-          <Switch checked={autoReload} onCheckedChange={channelWalletSetAutoReload} aria-label="Auto reload channel fees" />
+      {/* STALL #65:会自己扣银行卡的动作默认关,规则常驻可见(安全 > 效率)。开关旁永远
+          写清「低于多少、充多少、从哪张卡」—— 不是黑箱,老板自己决定要不要开。 */}
+      <div className="mt-4 flex flex-col gap-2 rounded-[18px] border border-border bg-card px-4 py-3.5">
+        <div className="flex flex-wrap items-center gap-3">
+          <div className="flex items-center gap-2">
+            <span className="text-sm font-medium text-foreground">Auto reload when low</span>
+            <Switch checked={autoReload} onCheckedChange={channelWalletSetAutoReload} aria-label="Auto reload channel fees" />
+          </div>
+          <Button variant="secondary" size="sm" className="ml-auto" onClick={openAddFunds}>
+            Add funds
+          </Button>
         </div>
-        <Button variant="secondary" size="sm" className="ml-auto" onClick={openAddFunds}>
-          Add funds
-        </Button>
+        <p className="text-[13px] leading-[18px] text-muted-foreground">
+          {autoReload ? (
+            <>
+              <span className="font-medium text-foreground">On.</span> When your balance drops below RM{" "}
+              {NS_CHANNEL_FEE_RELOAD.thresholdMyr}, we top up RM {NS_CHANNEL_FEE_RELOAD.amountMyr} from{" "}
+              {NS_CHANNEL_FEE_RELOAD.source}. Turn it off any time.
+            </>
+          ) : (
+            <>
+              <span className="font-medium text-foreground">Off — you top up yourself.</span> Turn it on and we&apos;ll
+              add RM {NS_CHANNEL_FEE_RELOAD.amountMyr} from {NS_CHANNEL_FEE_RELOAD.source} whenever your balance drops
+              below RM {NS_CHANNEL_FEE_RELOAD.thresholdMyr} — nothing auto-charges until you do.
+            </>
+          )}
+        </p>
       </div>
 
       <div className="mt-8">

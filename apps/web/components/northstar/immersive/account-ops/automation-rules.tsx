@@ -43,11 +43,12 @@ const IRON_LAWS: { title: string; detail: string }[] = [
   },
 ];
 
-/** 「Draft a rule」按钮的预填(照 Otto 的建议条口径,让草稿看起来像真的从建议来的) */
+/** 「Draft a rule」按钮的预填。gap4:Otto 建议一条她**还没有、从真实行为长出来**的规则
+ * (不再和已启用的 rule-01「Answer order questions」一字不差)——她上周手动做过的那件事。 */
 const OTTO_DRAFT: RuleDraft = {
-  name: "Answer order questions",
-  when: "A new WhatsApp chat asks about pricing or pickup",
-  then: "Otto drafts a reply and waits for your tap to send",
+  name: "Pickup-ready ping",
+  when: "An order is marked ready for pickup",
+  then: "Otto drafts a 'your order's ready' message and waits for your tap to send",
 };
 
 interface RuleDraft {
@@ -72,6 +73,12 @@ function RuleCard({
         <div className="min-w-0 flex-1">
           <div className="flex flex-wrap items-center gap-2">
             <h3 className="text-sm font-semibold text-foreground">{rule.name}</h3>
+            {/* gap5:最有牙齿的一条带 Recommended 标(蓝声部 = 给你的推荐,非 Otto 动作故不用 coral) */}
+            {rule.recommended && (
+              <span className="inline-flex items-center rounded-full bg-[var(--human-soft)] px-2 py-0.5 text-[11px] font-medium text-[var(--human-soft-foreground)]">
+                Recommended
+              </span>
+            )}
             {rule.costs && (
               <span className="inline-flex items-center gap-1 rounded-full border border-brand-soft bg-brand-soft/50 px-2 py-0.5 text-[11px] font-medium text-brand-soft-foreground">
                 <OttoAvatar size={12} mood="idle" />
@@ -103,6 +110,10 @@ function RuleCard({
           </Link>
         </Button>
       </div>
+      {/* gap5:结果导向的一句(冷启动=同类店铺基准,诚实标注) */}
+      {enabled && rule.outcome && (
+        <p className="mt-2 text-[13px] leading-[18px] text-muted-foreground">{rule.outcome}</p>
+      )}
     </Card>
   );
 }
@@ -186,7 +197,8 @@ export function AutomationRules() {
       <div className="mt-6 flex flex-wrap items-center gap-3 rounded-[18px] border border-brand-soft bg-brand-soft/50 px-4 py-3.5">
         <OttoAvatar size={28} mood="helpful" />
         <p className="min-w-0 flex-1 basis-64 text-[13px] leading-[1.45] text-brand-soft-foreground">
-          You reply to most WhatsApp order questions the same way. Want a rule for that?
+          Last week you messaged 6 customers by hand that their pre-order was ready. Want a rule that drafts that pickup
+          ping for you?
         </p>
         <Button
           variant="brand"

@@ -39,6 +39,7 @@ const ACCOUNT_VIEWS = [
 ];
 
 const AUTOMATION_VIEWS = [
+  { href: `${BASE}/automation/recipes`, label: "Recipes" },
   { href: `${BASE}/automation/rules`, label: "Rules" },
   { href: `${BASE}/automation/routines`, label: "Routines" },
 ];

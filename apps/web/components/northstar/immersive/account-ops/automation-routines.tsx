@@ -179,6 +179,13 @@ function RoutineCard({
                       </span>
                     </div>
                     <span className="text-[13px] leading-[18px] text-foreground">{run.summary}</span>
+                    {/* gap1:记「赚了什么」不只「干了什么」—— 结果一行,与花费并排看得见回报 */}
+                    {run.outcome && (
+                      <span className="flex items-start gap-1 text-[13px] leading-[18px] text-success-soft-foreground">
+                        <ArrowRight className="mt-[3px] size-3 shrink-0" strokeWidth={2.5} />
+                        {run.outcome}
+                      </span>
+                    )}
                   </li>
                 ))}
               </ul>

@@ -3041,3 +3041,28 @@ export function setBrandProfile(profile: BrandProfile): void {
   );
   notify();
 }
+
+/* ── [wave-c · Z9-settings-automation] 自动化配方库 install 状态 ──────────────────
+ * EFFECTIVENESS gap2:配方目录里每张卡可一键安装。install = 让配方以「信任四件套」的
+ * 姿态开始运行(花费闸/急停/范围/历史)。镜像 crm 的 recipeOn 惯例:纯 client、单一 slice,
+ * seed 由卡自己的 defaultInstalled 决定(冷启动 = 只有 Recommended 那条默认在跑)。
+ * 复用既有 automation_toggled 事件,不动共享 NsEventType 联合类型。 */
+let recipeInstallState: Record<string, boolean> = {};
+
+export function installRecipe(id: string, title: string): void {
+  if (recipeInstallState[id]) return;
+  recipeInstallState = { ...recipeInstallState, [id]: true };
+  logEvent("automation_toggled", `Installed recipe · ${title}`, { id, installed: true });
+  notify();
+}
+
+export function uninstallRecipe(id: string, title: string): void {
+  recipeInstallState = { ...recipeInstallState, [id]: false };
+  logEvent("automation_toggled", `Turned off recipe · ${title}`, { id, installed: false });
+  notify();
+}
+
+/** 配方是否在跑(未登记则回退到卡自己的 defaultInstalled 种子)。 */
+export function recipeInstalled(id: string, seed: boolean): boolean {
+  return recipeInstallState[id] ?? seed;
+}

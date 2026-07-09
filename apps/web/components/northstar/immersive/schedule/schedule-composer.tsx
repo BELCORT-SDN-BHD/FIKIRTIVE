@@ -126,7 +126,9 @@ function Field({
 
 export function ScheduleComposer() {
   useStore();
-  const [targets, setTargets] = React.useState<NsPlatform[]>(["instagram", "x"]);
+  // STALL #66:默认只勾已连且免费的渠道(Instagram);付费的 X 每条扣 credit,不默认替老板
+  // 把手伸进钱包 —— 要发 X 得他自己点亮。
+  const [targets, setTargets] = React.useState<NsPlatform[]>(["instagram"]);
   const [caption, setCaption] = React.useState("");
   const [captionError, setCaptionError] = React.useState<string | null>(null);
   const [formError, setFormError] = React.useState<string | null>(null);

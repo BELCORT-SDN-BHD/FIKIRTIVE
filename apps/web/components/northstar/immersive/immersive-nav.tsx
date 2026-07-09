@@ -126,7 +126,7 @@ export const NAV_SECTIONS: NavSection[] = [
       { label: "Credits", icon: CreditCard, href: `${BASE}/account/credits` },
       { label: "Connections", icon: Plug, href: `${BASE}/account/connections` },
       { label: "Wallet", icon: Wallet, href: `${BASE}/account/channel-wallet` },
-      { label: "Automation", icon: Sparkles, href: `${BASE}/automation/rules` },
+      { label: "Automation", icon: Sparkles, href: `${BASE}/automation/recipes` },
       { label: "Team", icon: UsersRound, href: `${BASE}/team/members` },
     ],
   },

@@ -76,7 +76,16 @@ export interface NsChannelFeeWallet {
   autoReload: boolean;
 }
 
-export const NS_CHANNEL_FEE_WALLET: NsChannelFeeWallet = { balanceMyr: 84, autoReload: true };
+// STALL #65:会自己扣银行卡的动作默认关(安全 > 效率)。规则常驻可见 —— 老板一眼看到
+// 「低于多少、充多少、从哪张卡」,再自己决定要不要开。
+export const NS_CHANNEL_FEE_WALLET: NsChannelFeeWallet = { balanceMyr: 84, autoReload: false };
+
+/** 自动充值规则(常驻显示;开关默认关,规则永远可见,不是黑箱)。 */
+export const NS_CHANNEL_FEE_RELOAD = {
+  thresholdMyr: 20,
+  amountMyr: 60,
+  source: "your saved Visa ···4242",
+} as const;
 
 /** Meta 官方 WhatsApp 价目(用户可自行核对"我们不加价")。 */
 export const META_PRICING_URL = "https://developers.facebook.com/docs/whatsapp/pricing";
@@ -93,6 +102,10 @@ export interface NsRule {
   costs: boolean;
   /** true = 命中次数由 store 里 Otto 自动应答的会话数派生(不写死),见 aiHandledCount */
   runsFromChats?: boolean;
+  /** STALL/EFF gap5:有牙齿的那条默认亮起 + Recommended 标 + 结果导向的一句(冷启动=行业基准) */
+  recommended?: boolean;
+  /** 一行「换回了什么」,冷启动阶段标明是同类店铺基准、非本账号真数 */
+  outcome?: string;
 }
 
 export const NS_RULES: NsRule[] = [
@@ -120,9 +133,12 @@ export const NS_RULES: NsRule[] = [
     name: "Sold-out follow up",
     when: "A post caption says sold out",
     then: "Otto pins a first comment with the next pre-order date",
-    enabled: false,
+    // gap5:最有牙齿的一条默认亮起 + Recommended 标 + 结果导向(不再默认关、没人推销)。
+    enabled: true,
     runsThisWeek: 0,
     costs: false,
+    recommended: true,
+    outcome: "Shops like yours turn about 1 in 5 sold-out posts into pre-orders — your own numbers replace this once it has run 20 times",
   },
 ];
 
@@ -134,8 +150,11 @@ export const NS_RULES: NsRule[] = [
 export interface NsRoutineRun {
   /** 这次跑的人话时间(如「Today · 7:30 am」) */
   at: string;
-  /** 一句白话:这次做了什么 */
+  /** 一句白话:这次做了什么(活动) */
   summary: string;
+  /** 这次换回了什么(结果:观看/询问/订单)。gap1:run 历史记「赚了什么」不只「干了什么」。
+   *  这些是本账号(Aisyah)的运行结果,非跨店基准,故可显具体数。 */
+  outcome?: string;
   /** 这次花掉的额度(0 = 没花钱) */
   spent: number;
 }
@@ -169,9 +188,9 @@ export const NS_ROUTINES: NsRoutine[] = [
     budgetCapCredits: 200,
     spentThisMonth: 96,
     runs: [
-      { at: "Today · 7:30 am", summary: "Posted the kaya-croissant story, flagged 2 chats for you", spent: 8 },
-      { at: "Yesterday · 7:30 am", summary: "Posted the sourdough story, no chats needed you", spent: 8 },
-      { at: "Mon · 7:30 am", summary: "Posted the weekend recap story", spent: 8 },
+      { at: "Today · 7:30 am", summary: "Posted the kaya-croissant story, flagged 2 chats for you", outcome: "340 views · 12 DMs · 3 pickup orders", spent: 8 },
+      { at: "Yesterday · 7:30 am", summary: "Posted the sourdough story, no chats needed you", outcome: "210 views · 4 DMs", spent: 8 },
+      { at: "Mon · 7:30 am", summary: "Posted the weekend recap story", outcome: "180 views · 2 DMs", spent: 8 },
     ],
   },
   {
@@ -185,8 +204,9 @@ export const NS_ROUTINES: NsRoutine[] = [
     budgetCapCredits: 400,
     spentThisMonth: 180,
     runs: [
-      { at: "Mon 6 Jul · 9:00 am", summary: "Drafted 5 posts, sent them for your approval", spent: 60 },
-      { at: "Mon 29 Jun · 9:00 am", summary: "Drafted 4 posts, sent them for your approval", spent: 48 },
+      // gap3:「读数据→起草」的真反映 —— 上周表现真的驱动了这周排什么。
+      { at: "Mon 6 Jul · 9:00 am", summary: "Read last week: Tue reels pulled 3× the DMs and durian sold out by noon — so I front-loaded 2 reels Tue/Thu and opened durian pre-orders Monday", outcome: "5 posts sent for approval · 4 approved", spent: 60 },
+      { at: "Mon 29 Jun · 9:00 am", summary: "Read last week: weekend brunch posts drove the most orders — kept the batch weekend-heavy", outcome: "4 posts sent for approval · all approved", spent: 48 },
     ],
   },
   {
@@ -200,8 +220,144 @@ export const NS_ROUTINES: NsRoutine[] = [
     budgetCapCredits: 0,
     spentThisMonth: 0,
     runs: [
-      { at: "Merdeka week · wrap", summary: "Summarised results, saved 3 winning posts to brand memory", spent: 0 },
+      { at: "Merdeka week · wrap", summary: "Summarised results, saved 3 winning posts to brand memory", outcome: "312 boxes sold (104% of goal) · 3 winners saved", spent: 0 },
     ],
+  },
+];
+
+/* ── 自动化配方库(真目录)────────────────────────────────────────────────
+ * EFFECTIVENESS gap2/5 + GOOSEWORKS §一·工具10:把「3+3 预设死 + 空白表单」升级成一排
+ * 按结果分类、可一键安装的配方卡。每条配方带 client-onboarding 的机器可读 schema
+ * (pattern / estCost / estOutcome / cadence)＋五件产品护栏:
+ *   ① 资格条件(eligibility:这配方适合谁 / 什么时候有用)
+ *   ② 真文案(sampleCopy:它真会发给客户的那句话,不是占位符)
+ *   ③ 停发规则(stopRules:什么时候闭嘴 —— 防骚扰 / 防误发)
+ *   ④ 守护栏(信任四件套:花费闸 budgetCap / 急停 kill switch / 范围 scope / 历史 outcome)
+ *   ⑤ 成功指标(successMetric,冷启动=同类店铺基准,明确标注非本账号真数)
+ * 铁律:coral 只属于 Otto;冷启动诚实 —— 未跑够次数前只显行业默认,不假装已学会你的账号。 */
+export type NsRecipePattern =
+  | "lifecycle-timing"
+  | "win-back"
+  | "campaign"
+  | "sold-out-waitlist";
+
+export interface NsRecipe {
+  id: string;
+  /** 人话名(sentence case) */
+  title: string;
+  /** 机器可读打法枚举(client-onboarding execution schema) */
+  pattern: NsRecipePattern;
+  /** 结果分类的一句话:装上它是为了赚回/救回什么 */
+  goal: string;
+  /** ① 资格条件:这配方适合谁、什么触发它有用 */
+  eligibility: string;
+  /** 一行机制:它到底做什么 */
+  whatItDoes: string;
+  /** ② 真文案:它真会替你发的那句(占位符 {…} 由真实字段填,店主可改) */
+  sampleCopy: string;
+  /** ③ 停发规则:什么时候停(防骚扰 / 防误发) */
+  stopRules: string[];
+  /** ④ 守护栏·范围:被允许碰什么(scope chips) */
+  scope: string[];
+  /** ④ 守护栏·花费闸:本月额度上限(0 = 不花额度) */
+  budgetCapCredits: number;
+  /** 机器可读成本预估(卡面一行) */
+  estCostPerRun: string;
+  /** ⑤ 成功指标(同类店铺基准;冷启动诚实标注) */
+  successMetric: string;
+  /** 节律(cadence) */
+  cadence: string;
+  /** true = Recommended(最有牙齿的一条,默认亮起) */
+  recommended?: boolean;
+  /** 默认已安装(种子;冷启动 seed for recipeInstalled) */
+  defaultInstalled?: boolean;
+  /** 已安装且跑过的最近一次结果(仅默认安装的示范;新装的显示「还没跑」) */
+  lastRun?: { at: string; outcome: string; spent: number };
+}
+
+export const NS_RECIPES: NsRecipe[] = [
+  {
+    id: "rcp-soldout",
+    title: "Sold-out → waitlist",
+    pattern: "sold-out-waitlist",
+    goal: "Recover lost buyers",
+    recommended: true,
+    defaultInstalled: true,
+    eligibility: "Best for shops that sell out fast — when a product's gone, new askers usually just leave.",
+    whatItDoes: "When a product sells out, Otto auto-replies new askers with a pre-order waitlist instead of losing them.",
+    sampleCopy:
+      "Hi {name}! Our {product} sold out for today 😅 I've put you on the waitlist for the next batch on {date} — want me to hold one for you?",
+    stopRules: [
+      "Stops the moment you restock",
+      "One message per person — never nags",
+      "Skips anyone on your do-not-disturb list",
+    ],
+    scope: ["Read new WhatsApp asks", "Reply with a waitlist offer", "Add to a pre-order list"],
+    budgetCapCredits: 0,
+    estCostPerRun: "No credits — replies only",
+    successMetric: "Shops like yours recover about 1 in 5 lost buyers",
+    cadence: "Runs whenever a post says sold out",
+    lastRun: { at: "Yesterday · 2:10 pm", outcome: "6 askers waitlisted · 2 pre-orders", spent: 0 },
+  },
+  {
+    id: "rcp-deposit",
+    title: "Recover unpaid pre-orders",
+    pattern: "lifecycle-timing",
+    goal: "Get held orders paid",
+    eligibility: "Best if you take pre-orders that sometimes sit unpaid — a gentle nudge saves the sale without chasing.",
+    whatItDoes: "When a pre-order sits unpaid for 24 hours, Otto drafts one warm payment reminder for you to send.",
+    sampleCopy:
+      "Hi {name}! Your {product} order is still held for you — just RM {amount} to lock it in. Here's the pay link, and I'll set it aside for pickup on {date} 🥐",
+    stopRules: [
+      "At most 2 reminders, then it stops",
+      "Stops the instant they pay or reply",
+      "Never sends after your business hours",
+    ],
+    scope: ["Read unpaid pre-orders", "Draft a payment reminder", "Wait for your tap to send"],
+    budgetCapCredits: 40,
+    estCostPerRun: "About 2 credits a reminder",
+    successMetric: "Similar bakeries recover about 1 in 3 unpaid holds",
+    cadence: "Checks pre-orders every morning",
+  },
+  {
+    id: "rcp-winback",
+    title: "Win back quiet regulars",
+    pattern: "win-back",
+    goal: "Bring regulars back",
+    eligibility: "Best if you have regulars with a rhythm — when a weekly buyer goes quiet past their usual, this reaches out.",
+    whatItDoes: "When a regular goes silent past their normal cadence, Otto drafts a warm come-back note with their usual order.",
+    sampleCopy:
+      "Hi {name}! Your usual {product} slot is open again this week — want me to pencil you in for {day}? 🥐",
+    stopRules: [
+      "Only after they pass their own usual rhythm (×1.5)",
+      "One message per quiet spell — never nags",
+      "Skips anyone on your do-not-disturb list",
+    ],
+    scope: ["Read order history", "Spot who's overdue", "Draft a come-back note"],
+    budgetCapCredits: 40,
+    estCostPerRun: "About 2 credits a note",
+    successMetric: "About 1 in 4 quiet regulars re-order within a week at shops like yours",
+    cadence: "Checks for overdue regulars weekly",
+  },
+  {
+    id: "rcp-festive",
+    title: "Festive pre-order + waitlist",
+    pattern: "campaign",
+    goal: "Open a festival window",
+    eligibility: "Best before a festival — opens a pre-order window, then waitlists extra demand once your batch cap is hit.",
+    whatItDoes: "Opens a dated pre-order window for a festival, then auto-waitlists new orders once the batch is full.",
+    sampleCopy:
+      "Merdeka {product} pre-orders are open until {date} 🇲🇾 RM {amount} a box — reply YES and I'll hold yours. First {cap} boxes only.",
+    stopRules: [
+      "Closes on the cut-off date you set",
+      "Switches to waitlist once the batch cap is reached",
+      "One confirmation per order — no double-asks",
+    ],
+    scope: ["Post the pre-order opener", "Log replies as orders", "Waitlist once full"],
+    budgetCapCredits: 120,
+    estCostPerRun: "About 8 credits to open a window",
+    successMetric: "Your last Raya window filled 104% of its goal — a festival play tends to repeat",
+    cadence: "You start it before a festival",
   },
 ];
 

@@ -22,7 +22,7 @@ import {
 import { PageHeader } from "@/components/northstar/_shared";
 import { balance, topUp, useStore } from "../_store";
 import { ACCOUNT_OPS_BASE as BASE, AccountNav } from "./kit";
-import { NS_TOPUP_PACKS, type NsTopUpPack } from "./data";
+import { NS_CHANNEL_FEE_RELOAD, NS_TOPUP_PACKS, type NsTopUpPack } from "./data";
 
 function PackCard({
   pack,
@@ -61,14 +61,26 @@ export function AccountTopUp() {
   const [selectedId, setSelectedId] = React.useState(NS_TOPUP_PACKS.find((p) => p.best)?.id ?? NS_TOPUP_PACKS[0].id);
   const [confirming, setConfirming] = React.useState(false);
   const [pending, setPending] = React.useState(false);
+  const [failed, setFailed] = React.useState(false);
   const [doneCredits, setDoneCredits] = React.useState<number | null>(null);
+  // STALL #64:整条充值流程原本零失败处理。演示一次失败态(卡被拒 / FPX 超时),
+  // 让「没扣到钱 + 再试」这条安全网看得见——首次尝试落在失败态,Try again 即成功。
+  const failedOnceRef = React.useRef(false);
 
   const pack = NS_TOPUP_PACKS.find((p) => p.id === selectedId)!;
   const currentBalance = balance();
 
   const confirm = () => {
     setPending(true);
+    setFailed(false);
     window.setTimeout(() => {
+      if (!failedOnceRef.current) {
+        // 首次:演示付款失败——余额一分没动,给人话 + 出路。
+        failedOnceRef.current = true;
+        setPending(false);
+        setFailed(true);
+        return;
+      }
       // 一次写入,处处生效:导航栏余额 / credits 流水 / home 卡片同源跳动
       topUp(pack.credits);
       setDoneCredits(pack.credits);
@@ -146,24 +158,53 @@ export function AccountTopUp() {
         .
       </p>
 
-      <Dialog open={confirming} onOpenChange={(open) => !open && !pending && setConfirming(false)}>
+      <Dialog open={confirming} onOpenChange={(open) => { if (!open && !pending) { setConfirming(false); setFailed(false); } }}>
         <DialogContent>
           <DialogHeader>
-            <DialogTitle>Confirm top up</DialogTitle>
+            <DialogTitle>{failed ? "Payment didn't go through" : "Confirm top up"}</DialogTitle>
             <DialogDescription>
-              {pack.credits.toLocaleString("en-MY")} credits for RM {pack.priceMyr}. Credits land instantly and roll over month to month.
+              {failed
+                ? "Your card was declined or the bank timed out. Nothing was charged."
+                : `${pack.credits.toLocaleString("en-MY")} credits for RM ${pack.priceMyr}. Credits land instantly and roll over month to month.`}
             </DialogDescription>
           </DialogHeader>
-          <div className="rounded-[14px] bg-secondary/70 p-3 text-[13px] leading-[18px] text-foreground">
-            New balance will be {(currentBalance + pack.credits).toLocaleString("en-MY")} credits.
-          </div>
+
+          {failed ? (
+            // STALL #64:失败态 —— 一句人话(没扣到钱 + 余额没动)+ 两条出路(再试 / 换付款方式)。
+            <div role="alert" className="rounded-[14px] border border-error-soft bg-error-soft/40 p-3 text-[13px] leading-[18px] text-error-soft-foreground">
+              No money was taken and your balance is still {currentBalance.toLocaleString("en-MY")} credits. Try again, or
+              use a different card or FPX bank.
+            </div>
+          ) : (
+            <div className="flex flex-col gap-2">
+              <div className="rounded-[14px] bg-secondary/70 p-3 text-[13px] leading-[18px] text-foreground">
+                New balance will be {(currentBalance + pack.credits).toLocaleString("en-MY")} credits.
+              </div>
+              {/* 付款来源透明:老板一眼知道扣哪张卡(#63 相邻的诚实垫底) */}
+              <p className="text-xs text-muted-foreground">Paying with {NS_CHANNEL_FEE_RELOAD.source}.</p>
+            </div>
+          )}
+
           <DialogFooter className="flex-row justify-end gap-3">
-            <Button variant="secondary" size="sm" disabled={pending} onClick={() => setConfirming(false)}>
-              Cancel
-            </Button>
-            <Button size="sm" disabled={pending} onClick={confirm}>
-              {pending ? "Processing…" : `Pay RM ${pack.priceMyr}`}
-            </Button>
+            {failed ? (
+              <>
+                <Button variant="secondary" size="sm" onClick={() => { setFailed(false); setConfirming(false); }}>
+                  Change payment method
+                </Button>
+                <Button size="sm" onClick={confirm}>
+                  Try again
+                </Button>
+              </>
+            ) : (
+              <>
+                <Button variant="secondary" size="sm" disabled={pending} onClick={() => setConfirming(false)}>
+                  Cancel
+                </Button>
+                <Button size="sm" disabled={pending} onClick={confirm}>
+                  {pending ? "Processing…" : `Pay RM ${pack.priceMyr}`}
+                </Button>
+              </>
+            )}
           </DialogFooter>
         </DialogContent>
       </Dialog>
