@@ -495,6 +495,48 @@ Hard rules: **motion is never the only signal** — every animated state change 
 
 ---
 
+## G. Fluid gesture & spring motion(流体手感)
+
+Adopted 2026-07-09 from the `/apple-design` skill (Emil Kowalski's WWDC distillation, MIT; mirrored at `.claude/skills/apple-design/`) — founder directive "会升华就全面 implement". §6 still governs one-shot, non-grabbable motion (its tokens and 200ms cap unchanged). **§G governs anything the user can grab**: canvas objects/pan/zoom, trim handles, drag-to-reschedule, sheets/drawers, the dock panel, sliders, swipes. On conflict, this document wins over the skill (three resolutions logged in G8).
+
+**G1. Response.** Feedback fires on pointer-**down**, never on release (§6 press scale already complies). During a gesture the surface tracks the pointer **1:1 the whole way** — animating only at gesture-end is a defect. Nothing non-essential sits on the input path (no debounce/timer between pointer and pixels).
+
+**G2. Direct manipulation.** Pointer Events + `setPointerCapture`; respect the **grab offset** (never snap to element center on grab); keep a short position+timestamp history so release velocity exists. ~10px hysteresis before committing a drag direction; plausible gestures are detected in parallel and losers cancelled — never final-state-only recognizers.
+
+**G3. Interruptibility — the law of laws.** Any grabbable surface must be catchable and reversible **mid-flight**: never lock input during a transition; always animate from the *presentation* (live on-screen) value, never the logical target; a closing sheet re-grabbed follows the finger. CSS transitions/`@keyframes` are **banned for gesture-driven motion** (they cannot be grabbed) — springs only. Decompose 2D motion into independent X/Y springs.
+
+**G4. Springs — house values** (Apple's damping/response, mapped to Motion's `bounce`/`duration`):
+
+| Interaction | Damping (bounce) | Response |
+|---|---|---|
+| Default UI spring — everything | `1.0` (`bounce: 0`) | `0.3–0.4s` |
+| Move / reposition (canvas object) | `1.0` (`0`) | `0.4s` |
+| Drawer / sheet / dock panel | `0.8` (`~0.2`) | `0.3s` |
+| Momentum release (flick/throw) | `~0.8` (`≤0.2`) | `0.3–0.4s` |
+
+Overshoot/bounce is legal **only when the user's gesture carried momentum**. A menu that faded in never bounces. Staged adoption: the prototype layer may approximate with §6 tokens, but the *interaction contract* (G1–G3) already binds it; the spring implementation (Motion lib — currently not a dependency; adding it = its own work order) becomes mandatory at 点亮 for the canvas flagship, dock, and sheets.
+
+**G5. Velocity handoff & momentum projection.** On release, the spring starts at the finger's exact velocity (no seam between drag and animation). Land where the gesture was *going*, not where it stopped: `projected = current + (v/1000)·d/(1−d)`, `d ≈ 0.998`; snap to the target nearest the projection. **Commit-vs-cancel is decided by velocity *sign* at release, not position.**
+
+**G6. Rubber-band boundaries.** Drag surfaces never hard-stop at an edge — resistance grows past the bound: `rubberband(o, dim, c=0.55) = (o·dim·c)/(dim + c·|o|)`. Applies to canvas pan edges, trim handles, sheet overdrag.
+
+**G7. Spatial consistency.** Enter and exit along the **same path** (in-from-right ⇒ out-to-right); menus/popovers/dock panel scale from their **trigger** (`transform-origin` anchored, never center); reversible transitions mirror their easing; in-between frames hint *toward* the gesture's outcome. Wayfinding on every screen: where am I / where can I go / what's there / how do I get out — never trap. Labels are specific ("Campaigns", "Library"), never generic umbrellas.
+
+**G8. Materials & depth — restricted adoption (conflict resolutions, final):**
+1. Skill §12 translucency/depth **does not** overturn §5 flat cards or §D6 ("if it glows it lies") — cards and data surfaces stay flat and quiet. Translucent blur material is legal **only on floating chrome**: dock panel, mobile drawer, sticky-header scroll-edge fade (which may replace the 1px divider, per-surface work order). Never stack two translucent surfaces; `prefers-reduced-transparency` fallback mandatory (frosty → solid).
+2. Skill §13 sound/haptics: **not adopted** at prototype layer (web, restraint law); revisit per-surface at 点亮 with founder approval.
+3. Skill §15 system-font default: **not adopted** — our brand type stack stands; the *discipline* is adopted: tracking is size-specific (display ≤ `-0.02em`, body ~`0`, small captions slightly positive — one fixed `letter-spacing` for all sizes is a defect), leading inverse to size, hierarchy = weight+size+leading as a set, spacing in rem so Dynamic-Type-style scaling never breaks layout.
+
+**G9. Reduced motion.** Every G-class interaction has its §A5 twin: springs → cross-fade or instant with static state twin; projection/rubber-band still *function* (position math) with animation clamped. JS springs gate on `matchMedia` like all JS motion.
+
+**G10. Review checklist additions** (append to A7):
+- [ ] Grabbable surface: feedback on pointer-down, 1:1 tracking, grab-offset respected
+- [ ] Mid-flight grab reverses cleanly (no lockout, no jump-to-target, no velocity brick-wall)
+- [ ] Release: velocity handed to spring; commit/cancel by velocity sign; flick lands via projection
+- [ ] Bounds rubber-band, never hard-stop; bounce only after user momentum
+- [ ] Popovers/sheets originate from trigger; exit path mirrors entry
+- [ ] Tracking/leading size-specific; no single letter-spacing across the scale
+
 ## Changelog — v2 → v3 conflict resolutions
 
 v3 merges ten domain sections onto the v2 base. Where sections disagreed, these resolutions are final:

@@ -39,6 +39,7 @@ Workflow 工具要点:`meta` 纯字面量;默认 `pipeline()`,只有真需要全
 2. `pnpm install --prefer-offline`(失败去掉 flag 重试一次)
 3. 必读文档按序列全(总令 → 分区契约 → 设计法 → store 规则),写明路径
 4. 铁律写死:目录围栏(只动哪些路径)/一切状态经 store(共享文件**只许尾部追加**并注明区名)/禁 fork useState 持 mock 副本/图片只从已验证目录取
+   **凡涉及手感/动效/gesture 的工单(canvas/拖拽/sheet/dock/滑块),必读 `.claude/skills/apple-design/` + design-rules §G 流体手感法**;质检官对这类面加验 §G10 清单(跟手/可中途抓住/速度接力/橡皮筋/origin 锚定)
 5. 自验:围栏脚本 + `tsc --noEmit` 必绿才许 push
 6. push 重试循环 ×6:`git pull --rebase && git push --no-verify origin HEAD:<branch>`(--no-verify 仅限 worktree 缺依赖挡 hook 且已自验过;rebase 冲突"尾部追加型"= 两段都保留)
 7. `git worktree remove --force` 收尾;最终文本只返回 SHA+改动数+建成清单+自验结果
