@@ -100,8 +100,10 @@ crm 字段/身份/分群动作(每次改动都进字段留痕):`setContactDnd(id
 - top-up:确认调 `topUp(credits)` → nav / credits 流水 / home 卡片同源跳动;credits 页
   余额 + 流水读 `balance()` / `creditLedger()`。
 - channel-wallet(= Channel fees):WhatsApp 会话过路费第二账道(红旗五 / harmony-05),
-  透明直传零加价、MYR 实价、Meta 价目可核对;「Add funds」是本地 RM(与 credits 物理隔离,
-  仅此页可见,故用本地 state 而非共享 store);Add funds / auto reload 均真实生效。
+  透明直传零加价、MYR 实价、Meta 价目可核对;钱包是 store 内**独立 RM slice**
+  (`channelWallet()` + `channelWalletAddFunds/SetAutoReload`,与 credits 物理隔离、永不并入
+  `creditBalance`;2026-07-09 第四闸修正——早期"用本地 state"的写法导致 Add funds 一离页
+  就回滚,已废);Add funds / auto reload 均真实生效且跨页持久。
 - settings:Otto 行为面(自主级别 / 花费阈值 / 勿扰时段)调 `setOttoBehavior`,dock 的作风
   提示与勿扰/工作态收起条随之可见变化;例程授权入口深链 automation/routines。
 - credits:每行可展开明细卡(类型 / 时间 / 关联对象链接 / 花费前后余额),滚存规则卡(G-03)。
