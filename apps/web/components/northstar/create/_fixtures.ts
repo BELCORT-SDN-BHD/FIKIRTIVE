@@ -6,10 +6,17 @@
  * 全部确定性(无 Date.now / 无随机)。
  */
 
-import { NS_ASSETS, NS_BRAND, NS_PRODUCTS, nsPlaceholder } from "../_mock";
+import { NS_ASSETS, NS_BRAND, NS_PRODUCTS, nsImage, nsPlaceholder } from "../_mock";
 import { resolveCanvasFromSeed } from "../assets/_data";
 
-export { NS_ASSETS, NS_BRAND, NS_PRODUCTS, nsPlaceholder };
+export { NS_ASSETS, NS_BRAND, NS_PRODUCTS, nsImage, nsPlaceholder };
+
+// ── 画布产物真图(§一 图片纪律:全城只从 NS_IMAGES 取图,零 placeholder 灰块) ──────
+// canvas 对象 / viewer take 的确定性取图:图→烘焙产品,视频海报→店景/出品过程。seed 稳定,
+// 同一对象跨会话/重生成图不跳。种子对象与运行时新生成对象(canvas-page)共用这一个入口。
+export function cvImage(kind: CvKind, seed: number): string {
+  return kind === "video" ? nsImage("storefront", seed) : nsImage("bakery", seed);
+}
 
 // ── Canvas 画布对象(GOAL B/C/D:对象 = 有状态一等公民) ────────────────────
 export type CvKind = "image" | "video";
@@ -41,25 +48,25 @@ export const CV_SEED_OBJECTS: CvObject[] = [
   {
     id: "cv-img-1", ref: "Image 1", kind: "image", title: "Merdeka box hero shot",
     prompt: "Overhead studio shot of a festive Malaysian cookie gift box, warm morning light, red and white ribbon, marble table",
-    src: nsPlaceholder("Image 1 · hero", 640, 640, "crust"),
+    src: cvImage("image", 5),
     x: 40, y: 60, w: 224, h: 224, status: "ready", credits: 12,
   },
   {
     id: "cv-img-2", ref: "Image 2", kind: "image", title: "Hero shot · warmer light",
     prompt: "Same gift box, golden hour side light, steam rising from fresh bakes in the background",
-    src: nsPlaceholder("Image 2 · A", 640, 640, "pandan"),
+    src: cvImage("image", 12),
     x: 320, y: 24, w: 200, h: 200, status: "ready", parentId: "cv-img-1", fork: "A", credits: 12,
   },
   {
     id: "cv-img-3", ref: "Image 3", kind: "image", title: "Hero shot · top-down flat lay",
     prompt: "Same gift box, top-down flat lay with scattered cookies and batik cloth",
-    src: nsPlaceholder("Image 3 · B", 640, 640, "kopi"),
+    src: cvImage("image", 20),
     x: 320, y: 260, w: 200, h: 200, status: "ready", parentId: "cv-img-1", fork: "B", credits: 12,
   },
   {
     id: "cv-vid-1", ref: "Video 1", kind: "video", title: "Croissant fold reel",
     prompt: "Hands folding croissant dough on a floured counter, close-up, 6 seconds, soft kitchen light",
-    src: nsPlaceholder("Video 1 · 9:16", 360, 640, "video"),
+    src: cvImage("video", 4),
     x: 590, y: 60, w: 168, h: 300, status: "ready", duration: 6, credits: 40,
   },
 ];
@@ -109,19 +116,19 @@ const CV_SEED_OBJECTS_SS2: CvObject[] = [
   {
     id: "cv2-vid-1", ref: "Video 1", kind: "video", title: "6am croissant fold",
     prompt: "Hands folding croissant dough on a floured counter at dawn, slow reel, warm kitchen light",
-    src: nsPlaceholder("Video 1 · fold", 360, 640, "video"),
+    src: cvImage("video", 6),
     x: 40, y: 60, w: 168, h: 300, status: "ready", duration: 6, credits: 40,
   },
   {
     id: "cv2-vid-2", ref: "Video 2", kind: "video", title: "Lamination close-up",
     prompt: "Macro of butter layers in laminated dough being rolled, steam, soft morning light",
-    src: nsPlaceholder("Video 2 · A", 360, 640, "video"),
+    src: cvImage("video", 9),
     x: 280, y: 40, w: 168, h: 300, status: "ready", parentId: "cv2-vid-1", fork: "A", duration: 6, credits: 40,
   },
   {
     id: "cv2-img-1", ref: "Image 1", kind: "image", title: "Finished croissant hero",
     prompt: "A single glossy croissant on brown paper, top light, crumbs, shallow depth of field",
-    src: nsPlaceholder("Image 1 · hero", 640, 640, "crust"),
+    src: cvImage("image", 1),
     x: 520, y: 80, w: 224, h: 224, status: "ready", credits: 12,
   },
 ];
@@ -140,19 +147,19 @@ const CV_SEED_OBJECTS_SS3: CvObject[] = [
   {
     id: "cv3-img-1", ref: "Image 1", kind: "image", title: "Menu card base",
     prompt: "Clean menu card layout on kraft paper, batik border, hand-lettered header, top-down",
-    src: nsPlaceholder("Image 1 · card", 640, 640, "neutral"),
+    src: cvImage("image", 11),
     x: 40, y: 60, w: 224, h: 224, status: "ready", credits: 12,
   },
   {
     id: "cv3-img-2", ref: "Image 2", kind: "image", title: "Card · pandan palette",
     prompt: "Same menu card, pandan-green accent palette, softer type, morning light",
-    src: nsPlaceholder("Image 2 · A", 640, 640, "pandan"),
+    src: cvImage("image", 14),
     x: 320, y: 24, w: 200, h: 200, status: "ready", parentId: "cv3-img-1", fork: "A", credits: 12,
   },
   {
     id: "cv3-img-3", ref: "Image 3", kind: "image", title: "Card · kopi palette",
     prompt: "Same menu card, warm kopi-brown palette, retro kopitiam type, top-down",
-    src: nsPlaceholder("Image 3 · B", 640, 640, "kopi"),
+    src: cvImage("image", 21),
     x: 320, y: 260, w: 200, h: 200, status: "ready", parentId: "cv3-img-1", fork: "B", credits: 12,
   },
 ];
@@ -184,9 +191,9 @@ export const CV_ALL_SEED_OBJECTS: CvObject[] = [
 // ── Projects / History(GOAL A3/I2) ────────────────────────────────────────
 // project → 打开对应 session(点缩略图切工作区;campaign/archive 各映到一个会话)。
 export const CV_PROJECTS = [
-  { id: "pj-1", name: "Merdeka week bakes", count: 9, thumb: nsPlaceholder("Project", 320, 200, "crust"), sessionId: "ss-1" },
-  { id: "pj-2", name: "Everyday menu", count: 14, thumb: nsPlaceholder("Project", 320, 200, "pandan"), sessionId: "ss-3" },
-  { id: "pj-3", name: "Raya archive", count: 22, thumb: nsPlaceholder("Project", 320, 200, "kopi"), sessionId: "ss-2" },
+  { id: "pj-1", name: "Merdeka week bakes", count: 9, thumb: nsImage("campaign", 0), sessionId: "ss-1" },
+  { id: "pj-2", name: "Everyday menu", count: 14, thumb: nsImage("bakery", 11), sessionId: "ss-3" },
+  { id: "pj-3", name: "Raya archive", count: 22, thumb: nsImage("campaign", 3), sessionId: "ss-2" },
 ] as const;
 
 export const CV_HISTORY = NS_ASSETS.map((a) => ({
@@ -307,19 +314,19 @@ export const NS_VIEWER_ASSET = {
   resolution: "720p",
   credits: 40,
   prompt: "Hands folding croissant dough on a floured counter, close-up, 6 seconds, soft kitchen light",
-  poster: nsPlaceholder("Croissant reel · 720p", 1280, 720, "video"),
+  poster: cvImage("video", 4),
 };
 
 export const NS_VIEWER_VERSIONS: NsViewerVersion[] = [
-  { id: "vv-3", label: "v3 · current", thumb: nsPlaceholder("v3", 240, 135, "video"), note: "Slower fold, warmer light", current: true },
-  { id: "vv-2", label: "v2", thumb: nsPlaceholder("v2", 240, 135, "video"), note: "Added flour dust", current: false },
-  { id: "vv-1", label: "v1", thumb: nsPlaceholder("v1", 240, 135, "video"), note: "First take", current: false },
+  { id: "vv-3", label: "v3 · current", thumb: cvImage("video", 4), note: "Slower fold, warmer light", current: true },
+  { id: "vv-2", label: "v2", thumb: cvImage("video", 12), note: "Added flour dust", current: false },
+  { id: "vv-1", label: "v1", thumb: cvImage("video", 0), note: "First take", current: false },
 ];
 
 export const NS_VIEWER_FRAMES = [0, 1, 2, 3, 4, 5].map((s) => ({
   id: `fr-${s}`,
   at: `${s}s`,
-  thumb: nsPlaceholder(`${s}s`, 160, 90, "video"),
+  thumb: cvImage("video", s),
 }));
 
 // ── 分镜工作台(storyboard F1-F4) ─────────────────────────────────────────

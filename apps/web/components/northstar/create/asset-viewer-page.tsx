@@ -21,9 +21,12 @@ import {
 import { cn } from "@/lib/utils";
 import { useInsideImmersive } from "../immersive/_context";
 import { useQueryParam } from "../immersive/_kit";
+import { FolderPlus } from "lucide-react";
 import {
   brandPreferences,
   ottoWorking as setOttoWorking,
+  promoteToCampaign,
+  promotedCampaignsOf,
   setBrandPreference,
   spendCredits,
   useStore,
@@ -31,8 +34,8 @@ import {
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { MockNote, OttoNarrationBar } from "../_shared";
-import { nsPlaceholder } from "../_mock";
-import { CV_ALL_SEED_OBJECTS, NS_VIEWER_ASSET, NS_VIEWER_FRAMES, NS_VIEWER_VERSIONS, type NsViewerVersion } from "./_fixtures";
+import { NS_ASSETS, NS_CAMPAIGNS } from "../_mock";
+import { cvImage, CV_ALL_SEED_OBJECTS, NS_VIEWER_ASSET, NS_VIEWER_FRAMES, NS_VIEWER_VERSIONS, type NsViewerVersion } from "./_fixtures";
 import {
   DemoStateBar,
   ErrorPanel,
@@ -46,21 +49,29 @@ import {
   type FeedbackValue,
 } from "./_create-ui";
 
+/** [wave-b] Add to campaign — D1 升格目标(ACTIVE / DRAFT)。 */
+const VIEWER_PROMOTE_TARGETS = NS_CAMPAIGNS.filter((c) => c.status !== "DONE");
+
 export function AssetViewerPage() {
   useCreateKeyframes();
   useStore();
   const insideImmersive = useInsideImmersive();
   // 深链 ?asset=<id> → 展示那个画布对象;缺省回到示意资产(GOAL §4)
   const assetId = useQueryParam("asset");
+  // 深链解析:先查画布种子对象,再查世界圣经资产(Library / My stuff 真图深链),都缺再回落示意资产。
   const linked = React.useMemo(() => CV_ALL_SEED_OBJECTS.find((o) => o.id === assetId) ?? null, [assetId]);
+  const linkedAsset = React.useMemo(
+    () => (linked ? null : NS_ASSETS.find((a) => a.id === assetId) ?? null),
+    [linked, assetId],
+  );
   const view = {
-    id: linked?.id ?? NS_VIEWER_ASSET.id,
-    title: linked?.title ?? NS_VIEWER_ASSET.title,
-    poster: linked?.src ?? NS_VIEWER_ASSET.poster,
-    prompt: linked?.prompt ?? NS_VIEWER_ASSET.prompt,
-    kind: linked?.kind ?? NS_VIEWER_ASSET.kind,
+    id: linked?.id ?? linkedAsset?.id ?? NS_VIEWER_ASSET.id,
+    title: linked?.title ?? linkedAsset?.title ?? NS_VIEWER_ASSET.title,
+    poster: linked?.src ?? linkedAsset?.thumb ?? NS_VIEWER_ASSET.poster,
+    prompt: linked?.prompt ?? linkedAsset?.prompt ?? NS_VIEWER_ASSET.prompt,
+    kind: (linked?.kind ?? (linkedAsset?.kind === "video" ? "video" : linkedAsset ? "image" : NS_VIEWER_ASSET.kind)) as "image" | "video",
     duration: linked?.duration ?? NS_VIEWER_ASSET.duration,
-    credits: linked?.credits ?? NS_VIEWER_ASSET.credits,
+    credits: linked?.credits ?? linkedAsset?.credits ?? NS_VIEWER_ASSET.credits,
     resolution: NS_VIEWER_ASSET.resolution,
   };
   const [versions, setVersions] = React.useState<NsViewerVersion[]>(NS_VIEWER_VERSIONS);
@@ -72,6 +83,7 @@ export function AssetViewerPage() {
   const [working, setWorking] = React.useState(false);
   const [sweepId, setSweepId] = React.useState<string | null>(null);
   const [demo, setDemo] = React.useState<DemoState>("live");
+  const [promoteOpen, setPromoteOpen] = React.useState(false); // [wave-b] Add to campaign
 
   const timersRef = React.useRef<number[]>([]);
   React.useEffect(() => () => timersRef.current.forEach((t) => window.clearTimeout(t)), []);
@@ -98,7 +110,7 @@ export function AssetViewerPage() {
       const nv: NsViewerVersion = {
         id: `vv-${n}`,
         label: `v${n} · current`,
-        thumb: nsPlaceholder(`v${n}`, 240, 135, "video"),
+        thumb: cvImage(view.kind, n + 2),
         note: note.slice(0, 42) || "Continued take",
         current: true,
       };
@@ -320,6 +332,55 @@ export function AssetViewerPage() {
             <div className="rounded-[14px] border border-border bg-card p-4">
               <SectionLabel>Prompt</SectionLabel>
               <p className="mt-2 text-[13px] leading-[18px] text-foreground">{view.prompt}</p>
+            </div>
+            {/* [wave-b] Add to campaign — D1 升格:把这个 take 挂进某 campaign($0,仍留在 Studio) */}
+            <div className="rounded-[14px] border border-border bg-card p-4">
+              <SectionLabel>Add to campaign</SectionLabel>
+              {promotedCampaignsOf(view.id).length > 0 && (
+                <p className="mt-2 flex items-center gap-1.5 text-[12px] font-medium text-foreground">
+                  <FolderPlus className="size-3.5 shrink-0 text-muted-foreground" strokeWidth={2} />
+                  In {promotedCampaignsOf(view.id).join(", ")}
+                </p>
+              )}
+              {promoteOpen ? (
+                <div className="mt-2 flex flex-col gap-1">
+                  {VIEWER_PROMOTE_TARGETS.map((c) => {
+                    const already = promotedCampaignsOf(view.id).includes(c.name);
+                    return (
+                      <button
+                        key={c.id}
+                        type="button"
+                        disabled={already}
+                        onClick={() => {
+                          promoteToCampaign({
+                            assetId: view.id,
+                            title: view.title,
+                            kind: view.kind,
+                            thumb: view.poster,
+                            campaignId: c.id,
+                            campaignName: c.name,
+                          });
+                          setPromoteOpen(false);
+                        }}
+                        className="flex items-center gap-2 rounded-[10px] border border-border px-2 py-2 text-left hover:bg-accent disabled:opacity-60 disabled:hover:bg-transparent"
+                      >
+                        {/* eslint-disable-next-line @next/next/no-img-element */}
+                        <img src={c.hero} alt="" className="size-8 shrink-0 rounded-md object-cover" />
+                        <span className="min-w-0 flex-1 truncate text-[13px] font-semibold text-foreground">{c.name}</span>
+                        <span className="shrink-0 text-[11px] text-muted-foreground">{c.status === "ACTIVE" ? "In progress" : "Draft"}</span>
+                      </button>
+                    );
+                  })}
+                </div>
+              ) : (
+                <Button variant="secondary" size="sm" className="mt-2 w-full" onClick={() => setPromoteOpen(true)}>
+                  <FolderPlus className="size-4" strokeWidth={2} />
+                  Add to a campaign
+                </Button>
+              )}
+              <p className="mt-2 text-[11px] leading-4 text-muted-foreground">
+                It still lives in your Studio — this just files it under that campaign too. No credits.
+              </p>
             </div>
             {/* 连接器 O-04:赞/踩 → Otto 学一条偏好,回灌 Brand memory */}
             <div className="rounded-[14px] border border-border bg-card p-4">

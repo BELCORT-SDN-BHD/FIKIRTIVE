@@ -23,8 +23,7 @@ import { Badge } from "@/components/ui/badge";
 import { useQueryParam } from "../immersive/_kit";
 import { ottoWorking as setOttoWorking, spendCredits } from "../immersive/_store";
 import { MockNote, OttoNarrationBar, PageHeader } from "../_shared";
-import { nsPlaceholder } from "../_mock";
-import { CV_ALL_SEED_OBJECTS, NS_ASSETS, type CvObject } from "./_fixtures";
+import { cvImage, CV_ALL_SEED_OBJECTS, NS_ASSETS, type CvObject } from "./_fixtures";
 import {
   SectionLabel,
   SpendConfirmDialog,
@@ -275,7 +274,7 @@ function ImageEditor({ asset }: { asset: CvObject | null }) {
 
 /* ── 视频编辑:Trim / Extract frame / 特效(D5/E2/E3) ────────────────── */
 function VideoEditor({ asset }: { asset: CvObject | null }) {
-  const posterSrc = asset?.kind === "video" ? asset.src : nsPlaceholder("Croissant reel · frame", 1280, 720, "video");
+  const posterSrc = asset?.kind === "video" ? asset.src : cvImage("video", 4);
   const posterAlt = asset?.kind === "video" ? asset.title : "Croissant fold reel";
   const totalFrames = 36; // 6s × 6fps 帧轨示意
   const [inFrame, setInFrame] = React.useState(4);
@@ -365,7 +364,7 @@ function VideoEditor({ asset }: { asset: CvObject | null }) {
           >
             {Array.from({ length: 12 }, (_, i) => (
               // eslint-disable-next-line @next/next/no-img-element
-              <img key={i} src={nsPlaceholder(`${i}`, 80, 56, "video")} alt="" aria-hidden className="h-full w-[8.333%] object-cover" />
+              <img key={i} src={cvImage("video", i)} alt="" aria-hidden className="h-full w-[8.333%] object-cover" />
             ))}
             {/* 遮罩 + 双把手 */}
             <span aria-hidden className="absolute inset-y-0 left-0 bg-background/70" style={{ width: `${(inFrame / totalFrames) * 100}%` }} />
@@ -413,7 +412,7 @@ function VideoEditor({ asset }: { asset: CvObject | null }) {
                 // eslint-disable-next-line @next/next/no-img-element
                 <img
                   key={id}
-                  src={nsPlaceholder(`Frame ${i + 1}`, 160, 90, "crust")}
+                  src={cvImage("image", i + 1)}
                   alt={`Extracted frame ${i + 1}`}
                   className="h-16 rounded-[10px] border border-border object-cover"
                 />

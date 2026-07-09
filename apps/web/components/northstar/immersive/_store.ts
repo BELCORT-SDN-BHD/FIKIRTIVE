@@ -1394,3 +1394,72 @@ export function streamTail(n: number): NsStreamMsg[] {
 export function ottoStreamView(): NsStreamMsg[] {
   return state.ottoStream;
 }
+
+/* ═══════════════════════════════════════════════════════════════════════════
+ * [Z2 Studio·画布] D1 升格:Studio 画布产物「挂进 campaign」
+ *
+ * D1 唯一「事」容器 = Campaign;Studio 是自由创作台。任何 Studio 产物(canvas 对象 /
+ * asset-viewer 里的 take)可一键**升格挂进 campaign** —— 升格不是搬家:产物仍在 Studio,
+ * 只是也归到那件事名下。零花费($0)。落一条真记录 + 一条带 campaign context 的 Otto 单流
+ * 确认(dock/otto 立刻可见)+ 一条 home/dock 事件。幂等:同产物挂同 campaign 不重复。
+ *
+ * 铁律不变:纯 client、零后台 import;coral 只属于 Otto;不新造品牌事实(campaign 来自
+ * _mock 的 NS_CAMPAIGNS)。本段仅在文件尾追加,未改动任何既有代码。
+ * ═══════════════════════════════════════════════════════════════════════════ */
+export interface NsPromotedAsset {
+  id: string;
+  /** 被升格的产物 id(canvas 对象 id / 资产 id) */
+  assetId: string;
+  title: string;
+  kind: "image" | "video";
+  /** 缩略图(NS_IMAGES 真图;campaign 详情「内容」tab 可显示) */
+  thumb: string;
+  campaignId: string;
+  campaignName: string;
+  at: number;
+}
+
+// 模块级镜像(与 state 顶层数组同规矩:append-only,notify 驱动重渲染)。
+let promotedAssets: NsPromotedAsset[] = [];
+
+/** 把一个 Studio 产物升格挂进某 campaign(一键、$0)。返回记录 id(幂等回落既有)。 */
+export function promoteToCampaign(input: {
+  assetId: string;
+  title: string;
+  kind: "image" | "video";
+  thumb: string;
+  campaignId: string;
+  campaignName: string;
+}): string {
+  const dup = promotedAssets.find(
+    (p) => p.assetId === input.assetId && p.campaignId === input.campaignId,
+  );
+  if (dup) return dup.id;
+  seq += 1;
+  const id = `pc-live-${seq}`;
+  promotedAssets = [{ id, ...input, at: seq }, ...promotedAssets];
+  // home/dock 事件流(recentEvents 读它显示「Just now」条);升格 = 归档动作,不扣额度。
+  logEvent("campaign_entry_approved", `Added “${input.title}” to ${input.campaignName}`, {
+    assetId: input.assetId,
+    campaignId: input.campaignId,
+    promoted: true,
+  });
+  // D2 单流:留一条带该 campaign context 的 Otto 确认(dock/otto/campaign「对话」tab 可见)。
+  appendToStream({
+    role: "otto",
+    text: `Added “${input.title}” to ${input.campaignName}. It still lives in your Studio — now it’s part of that campaign too.`,
+    context: { zone: "Campaign", campaignId: input.campaignId, label: input.campaignName },
+  });
+  // appendToStream 已 notify()。
+  return id;
+}
+
+/** 升格记录视图(不传 campaignId = 全部;campaign 详情按 id 过滤)。最新在前。 */
+export function promotedAssetsView(campaignId?: string): NsPromotedAsset[] {
+  return campaignId ? promotedAssets.filter((p) => p.campaignId === campaignId) : promotedAssets;
+}
+
+/** 某产物已挂进哪些 campaign 名(canvas 卡显示「In Merdeka week bakes」;空 = 未升格)。 */
+export function promotedCampaignsOf(assetId: string): string[] {
+  return promotedAssets.filter((p) => p.assetId === assetId).map((p) => p.campaignName);
+}

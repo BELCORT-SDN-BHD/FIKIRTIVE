@@ -1,18 +1,12 @@
 "use client";
 
 /**
- * 沉浸式 · 创作区 /asset-viewer —— 复用画廊页内容,套进常驻外壳。
- * 页内 `/northstar/*` 交叉链接由外壳 useKeepInsideImmersive 自动改跳沉浸式路由
- * (canvas 资产 → viewer 的流靠它连起来)。
+ * 沉浸式 · 创作区 /asset-viewer —— 原生内容组件直接挂进常驻外壳(不再套 GalleryFrame)。
+ * canvas 对象 Full screen → 这里(?asset=id 深链);Back 单层回 canvas。
  */
 
-import GalleryPage from "@/app/northstar/create/asset-viewer/page";
-import { GalleryFrame } from "@/components/northstar/immersive/schedule-assets-ads/gallery-frame";
+import { AssetViewerPage } from "@/components/northstar/create/asset-viewer-page";
 
 export default function Page() {
-  return (
-    <GalleryFrame>
-      <GalleryPage />
-    </GalleryFrame>
-  );
+  return <AssetViewerPage />;
 }

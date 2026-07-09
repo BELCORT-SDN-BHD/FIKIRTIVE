@@ -16,11 +16,13 @@ import Link from "next/link";
 import {
   ArrowUp,
   Bot,
+  Check,
   ChevronDown,
   Columns2,
   Copy,
   Crop,
   Download,
+  FolderPlus,
   GitBranch,
   Image as ImageIcon,
   Layers,
@@ -50,21 +52,27 @@ import { useQueryParam } from "../immersive/_kit";
 import {
   balance as getBalance,
   ottoWorking as setOttoWorking,
+  promoteToCampaign,
+  promotedCampaignsOf,
   recentEvents,
   spendCredits,
   useStore,
 } from "../immersive/_store";
 import { MockNote } from "../_shared";
+import { NS_CAMPAIGNS } from "../_mock";
 import {
   CV_HISTORY,
   CV_PROJECTS,
   CV_SESSION_SEEDS,
   CV_SESSIONS,
-  nsPlaceholder,
+  cvImage,
   resolveCanvasSeed,
   type CvChatTurn,
   type CvObject,
 } from "./_fixtures";
+
+/** [wave-b] Add to campaign — D1 升格目标:ACTIVE / DRAFT 的 campaign(DONE 已完结不可再挂)。 */
+const PROMOTE_TARGETS = NS_CAMPAIGNS.filter((c) => c.status !== "DONE");
 import {
   FeedbackControls,
   InkNarrationPill,
@@ -205,6 +213,7 @@ export function CanvasPage() {
   const [undoChip, setUndoChip] = React.useState<CvObject[] | null>(null);
   const [groups, setGroups] = React.useState<CvGroup[]>([]);
   const [compareIds, setCompareIds] = React.useState<string[] | null>(null);
+  const [batchPromoteOpen, setBatchPromoteOpen] = React.useState(false); // [wave-b] Add to campaign(多选批量升格)
   const [flash, setFlash] = React.useState<string | null>(null);
   const flashTimer = React.useRef<number | null>(null);
 
@@ -281,12 +290,13 @@ export function CanvasPage() {
       if (e.key !== "Escape") return;
       if (sessionMenu) setSessionMenu(false);
       else if (mentionOpen) setMentionOpen(false);
+      else if (batchPromoteOpen) setBatchPromoteOpen(false);
       else if (promptFor) setPromptFor(null);
       else setSelected([]);
     };
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
-  }, [sessionMenu, mentionOpen, promptFor]);
+  }, [sessionMenu, mentionOpen, batchPromoteOpen, promptFor]);
 
   React.useEffect(() => {
     chatEndRef.current?.scrollIntoView({ block: "end" });
@@ -352,7 +362,7 @@ export function CanvasPage() {
           kind: "image",
           title: prompt.slice(0, 40),
           prompt,
-          src: nsPlaceholder(`Image ${n}`, 640, 640, "pandan"),
+          src: cvImage("image", n),
           x: source.x + source.w + 56,
           y: source.y,
           w: source.w,
@@ -379,7 +389,7 @@ export function CanvasPage() {
           kind: "video",
           title: prompt.slice(0, 40),
           prompt,
-          src: nsPlaceholder(`Video ${n}`, 360, 640, "video"),
+          src: cvImage("video", n),
           x: source.x + source.w + 56,
           y: source.y - 20,
           w: 168,
@@ -410,7 +420,7 @@ export function CanvasPage() {
         kind: "image" as const,
         title: `${prompt.slice(0, 36) || "New image"} · ${fork}`,
         prompt,
-        src: nsPlaceholder(`Image ${n} · ${fork}`, 640, 640, i === 0 ? "pandan" : "crust"),
+        src: cvImage("image", n),
         x: baseX + i * (w + 32),
         y: baseY,
         w,
@@ -500,7 +510,7 @@ export function CanvasPage() {
         kind: isVid ? ("video" as const) : ("image" as const),
         title: `${brief.slice(0, 28)}${tag}`,
         prompt: brief,
-        src: nsPlaceholder(`${isVid ? "Clip" : "Image"} ${i + 1}`, isVid ? 360 : 640, isVid ? 640 : 640, isVid ? "video" : "pandan"),
+        src: cvImage(isVid ? "video" : "image", n),
         x: 40 + i * (isVid ? 196 : 232),
         y: bandY,
         w: isVid ? 168 : 200,
@@ -701,7 +711,7 @@ export function CanvasPage() {
           kind: "video",
           title: `Stitched ${parts.map((p) => p.ref).join(" + ")}`,
           prompt: `Stitch of ${parts.map((p) => p.ref).join(" and ")} into one continuous clip`,
-          src: nsPlaceholder(`Video ${n} · stitch`, 360, 640, "video"),
+          src: cvImage("video", n),
           x: anchor.x,
           y: Math.max(...parts.map((p) => p.y + p.h)) + 48,
           w: 168,
@@ -715,6 +725,29 @@ export function CanvasPage() {
       "Stitching clips…",
     );
     setSelected([]);
+  };
+
+  /* ── [wave-b] Add to campaign(D1 升格):Studio 画布产物一键挂进 campaign。
+   * 升格不是搬家 —— 产物仍在画布,只是也归到那件事名下。$0(余额不动),经共享 store
+   * 落记录 + Otto 单流带 campaign context 的确认(dock/otto 立刻可见)。读面不死胡同:
+   * 升格后对象上现「In <campaign>」chip,深链回那件事。 */
+  const promoteObjects = (objs: CvObject[], campaignId: string, campaignName: string) => {
+    objs.forEach((o) =>
+      promoteToCampaign({
+        assetId: o.id,
+        title: o.title || o.ref,
+        kind: o.kind,
+        thumb: o.src,
+        campaignId,
+        campaignName,
+      }),
+    );
+    showFlash(
+      objs.length === 1
+        ? `Added ${objs[0].ref} to ${campaignName}`
+        : `Added ${objs.length} objects to ${campaignName}`,
+    );
+    setBatchPromoteOpen(false);
   };
 
   /* ── Zoom-to-fit(B1:框住所有对象,居中缩放到视口) ── */
@@ -1295,6 +1328,14 @@ export function CanvasPage() {
                       )}
                     </span>
 
+                    {/* [wave-b] Add to campaign — D1 升格反射:挂进 campaign 后现「In …」chip */}
+                    {promotedCampaignsOf(obj.id).length > 0 && (
+                      <span className="absolute top-2 right-2 flex h-5 max-w-[70%] items-center gap-1 rounded-full bg-card/90 px-1.5 font-mono text-[10px] leading-none font-medium text-foreground shadow-[var(--shadow-xs)]">
+                        <FolderPlus className="size-3 shrink-0" strokeWidth={2} />
+                        <span className="truncate">In {promotedCampaignsOf(obj.id)[0]}</span>
+                      </span>
+                    )}
+
                     {/* 视频内嵌播放器 chrome(C3) */}
                     {obj.kind === "video" && obj.status === "ready" && (
                       <div className="absolute inset-x-2 bottom-2 flex items-center gap-1.5 rounded-[10px] bg-primary/75 px-2 py-1">
@@ -1359,6 +1400,8 @@ export function CanvasPage() {
                         if (obj.kind === "image") evolveImage(obj, text);
                         else setSpendAsk({ kind: "evolve-video", sourceId: obj.id, prompt: text });
                       }}
+                      promotedNames={promotedCampaignsOf(obj.id)}
+                      onPromote={(campaignId, campaignName) => promoteObjects([obj], campaignId, campaignName)}
                     />
                   )}
                 </div>
@@ -1406,6 +1449,29 @@ export function CanvasPage() {
           {/* 多选批量条(F1)— 右下;恰好 2 视频 → Stitch + play;同源 2 对象 → Compare */}
           {selectedObjects.length > 1 && (
             <div className="absolute right-4 bottom-4 z-[10] flex items-center gap-1 rounded-[14px] border border-border bg-card p-1.5 shadow-[var(--shadow-md)]" style={LAND_STYLE}>
+              {/* [wave-b] Add to campaign — 批量升格 popover */}
+              {batchPromoteOpen && (
+                <div className="absolute right-0 bottom-full mb-2 w-64 rounded-[14px] border border-border bg-popover p-1.5 shadow-[var(--shadow-lg)]" style={LAND_STYLE}>
+                  <p className="px-2 py-1.5 text-xs font-medium text-muted-foreground">
+                    Add {selectedObjects.length} objects to a campaign
+                  </p>
+                  {PROMOTE_TARGETS.map((c) => (
+                    <button
+                      key={c.id}
+                      type="button"
+                      onClick={() => promoteObjects(selectedObjects, c.id, c.name)}
+                      className="flex w-full items-center gap-2 rounded-[10px] px-2 py-2 text-left hover:bg-accent"
+                    >
+                      {/* eslint-disable-next-line @next/next/no-img-element */}
+                      <img src={c.hero} alt="" className="size-8 shrink-0 rounded-md object-cover" />
+                      <span className="min-w-0 flex-1">
+                        <span className="block truncate text-[13px] font-semibold text-foreground">{c.name}</span>
+                        <span className="block truncate text-[11px] text-muted-foreground">{c.status === "ACTIVE" ? "In progress" : "Draft"}</span>
+                      </span>
+                    </button>
+                  ))}
+                </div>
+              )}
               <span className="px-2 font-mono text-[11px] leading-[14px] font-medium text-muted-foreground tabular-nums">
                 {selectedObjects.length} selected
               </span>
@@ -1422,6 +1488,16 @@ export function CanvasPage() {
               <Button variant="ghost" size="sm" className="h-8 px-2.5 text-xs" onClick={duplicateSelected}>
                 <Copy className="size-3.5" strokeWidth={2} />
                 Duplicate
+              </Button>
+              <Button
+                variant="ghost"
+                size="sm"
+                className="h-8 px-2.5 text-xs"
+                aria-expanded={batchPromoteOpen}
+                onClick={() => setBatchPromoteOpen((v) => !v)}
+              >
+                <FolderPlus className="size-3.5" strokeWidth={2} />
+                Add to campaign
               </Button>
               <Button
                 variant="ghost"
@@ -1686,6 +1762,8 @@ function ObjectToolbar({
   copied,
   onCopy,
   onImagine,
+  promotedNames,
+  onPromote,
 }: {
   obj: CvObject;
   feedback: FeedbackValue;
@@ -1698,8 +1776,12 @@ function ObjectToolbar({
   copied: boolean;
   onCopy: () => void;
   onImagine: (text: string) => void;
+  /** [wave-b] Add to campaign — 已挂进的 campaign 名(现勾) */
+  promotedNames: string[];
+  onPromote: (campaignId: string, campaignName: string) => void;
 }) {
   const [text, setText] = React.useState("");
+  const [promoteOpen, setPromoteOpen] = React.useState(false);
 
   const tool = (label: string, icon: React.ReactNode, onClick?: () => void, href?: string, danger?: boolean) => {
     const cls = cn(
@@ -1742,6 +1824,11 @@ function ObjectToolbar({
           </>
         )}
         {tool("Full screen", <Maximize2 className="size-4" strokeWidth={2} />, undefined, `/northstar/create/asset-viewer?asset=${obj.id}`)}
+        {tool(
+          promotedNames.length ? `In ${promotedNames.join(", ")} · add to another` : "Add to campaign",
+          <FolderPlus className="size-4" strokeWidth={2} />,
+          () => setPromoteOpen((v) => !v),
+        )}
         {tool("Prompt", <Menu className="size-4" strokeWidth={2} />, onPrompt)}
         {tool("Download", <Download className="size-4" strokeWidth={2} />, onDownload)}
         <span className="mx-0.5 h-5 w-px bg-border" />
@@ -1749,6 +1836,38 @@ function ObjectToolbar({
         <span className="mx-0.5 h-5 w-px bg-border" />
         {tool("Delete", <Trash2 className="size-4" strokeWidth={2} />, onDelete, undefined, true)}
       </div>
+
+      {/* [wave-b] Add to campaign — D1 升格 picker(升格不是搬家;$0,产物仍在画布) */}
+      {promoteOpen && (
+        <div className="mt-2 w-72 rounded-[14px] border border-border bg-popover p-1.5 shadow-[var(--shadow-lg)]" style={LAND_STYLE}>
+          <p className="px-2 py-1.5 text-xs font-medium text-muted-foreground">
+            Add {obj.ref} to a campaign · it still lives in your Studio
+          </p>
+          {PROMOTE_TARGETS.map((c) => {
+            const already = promotedNames.includes(c.name);
+            return (
+              <button
+                key={c.id}
+                type="button"
+                disabled={already}
+                onClick={() => {
+                  onPromote(c.id, c.name);
+                  setPromoteOpen(false);
+                }}
+                className="flex w-full items-center gap-2 rounded-[10px] px-2 py-2 text-left hover:bg-accent disabled:cursor-default disabled:opacity-60 disabled:hover:bg-transparent"
+              >
+                {/* eslint-disable-next-line @next/next/no-img-element */}
+                <img src={c.hero} alt="" className="size-9 shrink-0 rounded-md object-cover" />
+                <span className="min-w-0 flex-1">
+                  <span className="block truncate text-[13px] font-semibold text-foreground">{c.name}</span>
+                  <span className="block truncate text-[11px] text-muted-foreground">{c.status === "ACTIVE" ? "In progress" : "Draft"}</span>
+                </span>
+                {already && <Check className="size-4 shrink-0 text-muted-foreground" strokeWidth={2.2} />}
+              </button>
+            );
+          })}
+        </div>
+      )}
 
       {/* ☰ prompt 卡(C2) */}
       {promptOpen && (
