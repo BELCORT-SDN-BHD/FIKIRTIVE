@@ -1,16 +1,19 @@
 "use client";
 
 /**
- * 北极星 · 沉浸式首页(the real front door)
+ * 北极星 · 沉浸式首页(the real front door)—— ENDGAME D1/D2 重排
  *
- * 进城第一屏:招呼店主 → 一眼看到今天该做什么 → 每张卡都通向一个真实流程。
- * 「问 Otto」把预填 prompt 送进常驻 dock(openOtto),不自动花钱。
- * 复用:PageHeader/StatCard(_shared)、OttoAvatar、mock 数据;全部真 <Link> 交叉跳转。
+ * 进城第一屏,只围绕老板脑里的三样东西:「我在办的事」(Campaign)、「我随手做的东西」
+ * (Studio)、「我的员工」(Otto)。composition(总令 Z1):
+ *   招呼条(唯一 coral statement)→ KPI 三卡 → 「进行中的事」campaign 卡列(D1 唯一「事」容器)
+ *   → Studio recents 真图网格(D1 自由创作台)→ Up next。
+ * 每张卡都是通向真实流程的 `<Link>`,读面永不是死胡同;「问 Otto」把预填送进常驻 dock(不花钱)。
+ * 一切状态经 _store / _mock,零本地副本。图片只从 NS_IMAGES(经 NS_ASSETS / NS_CAMPAIGNS.hero)。
  */
 
 import * as React from "react";
 import Link from "next/link";
-import { ArrowRight, CalendarDays, Check, Compass, Frame, PartyPopper, Sparkles, Store, TrendingUp } from "lucide-react";
+import { ArrowRight, PartyPopper, Play, Sparkles } from "lucide-react";
 import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
@@ -21,17 +24,17 @@ import {
   NS_ASSETS,
   NS_BRAND,
   NS_CAMPAIGN,
+  NS_CAMPAIGNS,
+  type NsCampaignStatus,
+  type NsCampaignSummary,
 } from "@/components/northstar/_mock";
 import { useImmersive } from "./_context";
 import {
   balance,
-  campaignEntries,
-  connections,
   hasMilestone,
   markMilestone,
   pendingApprovals,
   recentEvents,
-  scheduledPosts,
   upNext,
   useStore,
 } from "./_store";
@@ -45,82 +48,59 @@ function whenLabel(iso: string): string {
   return `${date.slice(5)} · ${hhmm}`;
 }
 
-const QUICK_STARTS = [
-  { label: "Open canvas", desc: "Make a post from scratch", icon: Frame, href: `${BASE}/create/canvas` },
-  { label: "Storyboard a reel", desc: "Four steps, one paid render", icon: Sparkles, href: `${BASE}/create/storyboard` },
-  { label: "Plan a campaign", desc: "Otto drafts the whole calendar", icon: CalendarDays, href: `${BASE}/campaign/proposal-card` },
-  { label: "Find inspiration", desc: "Templates and trending ideas", icon: Compass, href: `${BASE}/assets/discover` },
-] as const;
+/** campaign 状态 → badge(D1「事」容器三态,coral 严守只属 Otto,这里全走中性/语义色)。 */
+const STATUS_BADGE: Record<NsCampaignStatus, { label: string; variant: "success" | "warning" | "outline" }> = {
+  ACTIVE: { label: "Active", variant: "success" },
+  DRAFT: { label: "Draft", variant: "warning" },
+  DONE: { label: "Done", variant: "outline" },
+};
 
-/** 开店完成度进度卡(GM-02/03/05):读共享 store 的真实开店状态,不写死。
- * 三步各链一个真实流程;全部完成时收成一行「Storefront ready」的克制态。 */
-function StorefrontProgress() {
-  const channelDone = connections().some((c) => c.status === "connected");
-  const postDone = scheduledPosts().some((p) => p.status === "scheduled" || p.status === "published");
-  const campaignDone = campaignEntries().some(
-    (e) => e.status === "approved" || e.status === "scheduled" || e.status === "published",
-  );
-  const steps = [
-    { key: "channel", done: channelDone, label: "Connect a channel", href: `${BASE}/account/connections` },
-    { key: "post", done: postDone, label: "Schedule your first post", href: `${BASE}/schedule/composer` },
-    { key: "campaign", done: campaignDone, label: "Launch your first campaign", href: `${BASE}/campaign/proposal-card` },
-  ];
-  const done = steps.filter((s) => s.done).length;
-  const allDone = done === steps.length;
+/** D1 排序:进行中的先看到 → 待起的 → 已完结的。 */
+const STATUS_ORDER: Record<NsCampaignStatus, number> = { ACTIVE: 0, DRAFT: 1, DONE: 2 };
 
-  if (allDone) {
-    return (
-      <div className="mt-5 flex items-center gap-2.5 rounded-[14px] border border-border bg-card px-4 py-3">
-        <span className="flex size-7 shrink-0 items-center justify-center rounded-full bg-success-soft">
-          <Store className="size-[15px] text-success-soft-foreground" strokeWidth={2} />
-        </span>
-        <span className="text-[13px] font-medium text-foreground">Storefront ready · all set up</span>
-        <span className="ml-auto font-mono text-[11px] text-muted-foreground tabular-nums">3/3</span>
-      </div>
-    );
-  }
-
+/** 「进行中的事」一张 campaign 卡:hero 真图 + 状态 + 目标进度;整卡 → Campaign 容器。 */
+function CampaignCard({ c }: { c: NsCampaignSummary }) {
+  const badge = STATUS_BADGE[c.status];
+  const pct = Math.min(100, Math.round((c.goalProgress.current / c.goalProgress.target) * 100));
   return (
-    <section className="mt-5 rounded-[14px] border border-border bg-card p-4">
-      <div className="flex items-center gap-2">
-        <Store className="size-4 text-foreground" strokeWidth={2} />
-        <h2 className="text-sm font-semibold text-foreground">Finish setting up your storefront</h2>
-        <span className="ml-auto font-mono text-[11px] text-muted-foreground tabular-nums">{done}/{steps.length}</span>
+    <Link
+      href={`${BASE}/campaign/list`}
+      className="group flex flex-col overflow-hidden rounded-[14px] border border-border bg-card transition-colors duration-[120ms] hover:bg-accent"
+    >
+      <div className="relative aspect-[16/9] w-full overflow-hidden bg-secondary">
+        {/* eslint-disable-next-line @next/next/no-img-element -- 原型层用 <img>(北极星约定) */}
+        <img src={c.hero} alt={c.name} className="size-full object-cover" />
+        <span className="absolute top-2 left-2">
+          <Badge variant={badge.variant} className="bg-card/90 backdrop-blur">
+            {badge.label}
+          </Badge>
+        </span>
       </div>
-      <div className="mt-3 h-1.5 w-full overflow-hidden rounded-full bg-muted">
-        <div
-          className="h-full rounded-full bg-brand transition-[width] duration-500"
-          style={{ width: `${(done / steps.length) * 100}%` }}
-        />
-      </div>
-      <div className="mt-3 flex flex-col gap-1">
-        {steps.map((s) => (
-          <Link
-            key={s.key}
-            href={s.href}
-            className="flex items-center gap-2.5 rounded-[10px] px-2 py-1.5 transition-colors duration-[120ms] hover:bg-accent"
-          >
-            <span
-              className={`flex size-5 shrink-0 items-center justify-center rounded-full border ${
-                s.done ? "border-transparent bg-success-soft" : "border-border"
-              }`}
-            >
-              {s.done && <Check className="size-3 text-success-soft-foreground" strokeWidth={2.5} />}
+      <div className="flex flex-1 flex-col gap-2 p-4">
+        <p className="text-sm font-semibold text-foreground">{c.name}</p>
+        <p className="line-clamp-2 text-xs leading-[1.45] text-muted-foreground">{c.goal}</p>
+        <div className="mt-auto pt-1">
+          <div className="flex items-baseline justify-between">
+            <span className="text-[11px] text-muted-foreground">{c.goalProgress.label}</span>
+            <span className="font-mono text-[11px] text-foreground tabular-nums">
+              {c.goalProgress.current}/{c.goalProgress.target}
             </span>
-            <span className={`text-[13px] ${s.done ? "text-muted-foreground line-through" : "font-medium text-foreground"}`}>
-              {s.label}
-            </span>
-            {!s.done && <ArrowRight className="ml-auto size-3.5 text-muted-foreground" strokeWidth={2} />}
-          </Link>
-        ))}
+          </div>
+          <div className="mt-1.5 h-1.5 w-full overflow-hidden rounded-full bg-muted">
+            <div
+              className={`h-full rounded-full transition-[width] duration-500 ${c.status === "DONE" ? "bg-success-soft-foreground/70" : "bg-brand"}`}
+              style={{ width: `${pct}%` }}
+            />
+          </div>
+        </div>
       </div>
-    </section>
+    </Link>
   );
 }
 
 export function ImmersiveHome() {
   const immersive = useImmersive();
-  useStore(); // 订阅共享 store:排期 / 审批变化即时反映到本屏
+  useStore(); // 订阅共享 store:排期 / 审批 / 事件变化即时反映到本屏
 
   // GM 里程碑(GM-05):店主本会话第一次批准 campaign 帖 → 一次性庆祝 toast(克制,跨页只放一次)。
   const campaignLaunched = recentEvents(50).some((e) => e.type === "campaign_entry_approved");
@@ -133,10 +113,27 @@ export function ImmersiveHome() {
       });
     }
   }, [campaignLaunched]);
-  const recent = NS_ASSETS.filter((a) => a.status === "ready").slice(0, 4);
+
+  // 「进行中的事」= D1 唯一「事」容器,三状态,进行中优先。
+  const campaigns = React.useMemo(
+    () => [...NS_CAMPAIGNS].sort((a, b) => STATUS_ORDER[a.status] - STATUS_ORDER[b.status]),
+    [],
+  );
+  const activeCount = campaigns.filter((c) => c.status !== "DONE").length;
+
+  // Studio recents(D1 自由创作台):不挂 campaign 的随手创作,最新在前,真图网格。
+  const studioRecents = React.useMemo(
+    () =>
+      NS_ASSETS.filter((a) => a.status === "ready" && !a.campaignId)
+        .slice()
+        .sort((a, b) => b.createdAt.localeCompare(a.createdAt))
+        .slice(0, 8),
+    [],
+  );
+
   // Up next 读 store 的排期(scheduled + draft),不再直接读 _mock 静态数组。
   const queued = upNext();
-  const nextPosts = queued.slice(0, 3);
+  const nextPosts = queued.slice(0, 4);
   const approvals = pendingApprovals();
   // Reach 卡与分析区同源(NS_ANALYTICS.kpis[0]),避免同屏「招呼条 18% vs 卡片 9%」一店两数。
   const reachKpi = NS_ANALYTICS.kpis[0];
@@ -148,8 +145,8 @@ export function ImmersiveHome() {
         subtitle={`${NS_BRAND.name} · ${NS_BRAND.city}`}
         actions={
           <Button asChild size="sm">
-            <Link href={`${BASE}/create/home`}>
-              New
+            <Link href={`${BASE}/create/canvas`}>
+              Create
               <ArrowRight />
             </Link>
           </Button>
@@ -172,7 +169,7 @@ export function ImmersiveHome() {
         </Button>
       </div>
 
-      {/* KPI 三卡 → 分析区 */}
+      {/* KPI 三卡 → 分析 / 排期 / 额度 */}
       <div className="mt-5 grid grid-cols-1 gap-3 sm:grid-cols-3">
         <Link href={`${BASE}/analytics/overview`} className="rounded-[14px] focus-visible:outline-2 focus-visible:outline-ring">
           <StatCard label="Reach · 28 days" value={reachKpi.value} delta={reachKpi.delta} />
@@ -185,107 +182,92 @@ export function ImmersiveHome() {
         </Link>
       </div>
 
-      {/* 开店完成度(GM-02/03/05):读真实开店状态,每步链一个真流程 */}
-      <StorefrontProgress />
-
-      {/* Quick starts */}
-      <h2 className="mt-8 text-sm font-semibold text-foreground">Start something</h2>
-      <div className="mt-3 grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-4">
-        {QUICK_STARTS.map((q) => {
-          const Icon = q.icon;
-          return (
-            <Link
-              key={q.label}
-              href={q.href}
-              className="group flex flex-col gap-2 rounded-[14px] border border-border bg-card p-4 transition-colors duration-[120ms] hover:bg-accent"
-            >
-              <span className="flex size-9 items-center justify-center rounded-[10px] bg-secondary">
-                <Icon className="size-[18px] text-foreground" strokeWidth={2} />
-              </span>
-              <span className="mt-1 text-sm font-semibold text-foreground">{q.label}</span>
-              <span className="text-xs text-muted-foreground">{q.desc}</span>
-            </Link>
-          );
-        })}
+      {/* ── 进行中的事(D1:Campaign = 唯一「事」容器;为它发生的一切自动长在它身上) ── */}
+      <div className="mt-8 flex items-baseline gap-2">
+        <h2 className="text-sm font-semibold text-foreground">In progress</h2>
+        <span className="font-mono text-[11px] text-muted-foreground tabular-nums">
+          {activeCount} running
+        </span>
+        <Link href={`${BASE}/campaign/list`} className="ml-auto text-xs font-semibold text-muted-foreground hover:text-foreground">
+          All campaigns
+        </Link>
+      </div>
+      <div className="mt-3 grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-3">
+        {campaigns.map((c) => (
+          <CampaignCard key={c.id} c={c} />
+        ))}
       </div>
 
-      <div className="mt-8 grid grid-cols-1 gap-6 lg:grid-cols-5">
-        {/* Recent work → asset viewer */}
-        <section className="lg:col-span-3">
-          <div className="flex items-baseline gap-2">
-            <h2 className="text-sm font-semibold text-foreground">Recent work</h2>
-            <Link href={`${BASE}/assets/library`} className="ml-auto text-xs font-semibold text-muted-foreground hover:text-foreground">
-              Open library
-            </Link>
-          </div>
-          <div className="mt-3 grid grid-cols-2 gap-3 sm:grid-cols-4">
-            {recent.map((a) => (
-              <Link
-                key={a.id}
-                href={`${BASE}/create/asset-viewer?asset=${a.id}`}
-                className="group overflow-hidden rounded-[14px] border border-border bg-card transition-colors duration-[120ms] hover:bg-accent"
-              >
-                <div className="relative aspect-square w-full overflow-hidden bg-secondary">
-                  {/* eslint-disable-next-line @next/next/no-img-element -- mock data URI(北极星约定) */}
-                  <img src={a.thumb} alt={a.title} className="size-full object-cover" />
-                  {a.byOtto && (
-                    <span className="absolute top-1.5 left-1.5 flex size-5 items-center justify-center rounded-full bg-card/90">
-                      <OttoAvatar size={14} mood="idle" />
-                    </span>
-                  )}
-                </div>
-                <div className="p-2.5">
-                  <p className="truncate text-xs font-medium text-foreground">{a.title}</p>
-                  <p className="mt-0.5 text-[11px] text-muted-foreground capitalize">{a.kind}</p>
-                </div>
-              </Link>
-            ))}
-          </div>
-        </section>
-
-        {/* Up next → schedule + campaign */}
-        <section className="lg:col-span-2">
-          <div className="flex items-baseline gap-2">
-            <h2 className="text-sm font-semibold text-foreground">Up next</h2>
-            <Link href={`${BASE}/schedule/queue`} className="ml-auto text-xs font-semibold text-muted-foreground hover:text-foreground">
-              Open queue
-            </Link>
-          </div>
-          <div className="mt-3 overflow-hidden rounded-[14px] border border-border bg-card">
-            {nextPosts.map((p, i) => (
-              <Link
-                key={p.id}
-                href={`${BASE}/schedule/composer?post=${p.id}`}
-                className={`flex items-center gap-3 px-4 py-3 transition-colors duration-[120ms] hover:bg-accent ${i > 0 ? "border-t border-border" : ""}`}
-              >
-                <div className="min-w-0 flex-1">
-                  <p className="truncate text-[13px] font-medium text-foreground">{p.caption}</p>
-                  <p className="mt-0.5 text-[11px] text-muted-foreground tabular-nums">{whenLabel(p.scheduledAt)}</p>
-                </div>
-                <TrendingUp className="size-4 shrink-0 text-muted-foreground" strokeWidth={2} />
-              </Link>
-            ))}
-          </div>
-
-          {/* Active campaign → proposal card */}
+      {/* ── Studio recents(D1:自由创作台;随手做的东西,零整理压力) ── */}
+      <div className="mt-8 flex items-baseline gap-2">
+        <h2 className="text-sm font-semibold text-foreground">Studio recents</h2>
+        <Link href={`${BASE}/create/canvas`} className="ml-auto text-xs font-semibold text-muted-foreground hover:text-foreground">
+          Open studio
+        </Link>
+      </div>
+      <div className="mt-3 grid grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-4">
+        {studioRecents.map((a) => (
           <Link
-            href={`${BASE}/campaign/proposal-card`}
-            className="mt-3 flex items-center gap-3 rounded-[14px] border border-border bg-card px-4 py-3.5 transition-colors duration-[120ms] hover:bg-accent"
+            key={a.id}
+            href={`${BASE}/create/asset-viewer?asset=${a.id}`}
+            className="group overflow-hidden rounded-[14px] border border-border bg-card transition-colors duration-[120ms] hover:bg-accent"
           >
-            <span className="flex size-9 shrink-0 items-center justify-center rounded-[10px] bg-secondary">
-              <Sparkles className="size-[18px] text-foreground" strokeWidth={2} />
-            </span>
-            <div className="min-w-0 flex-1">
-              <p className="truncate text-[13px] font-semibold text-foreground">{NS_CAMPAIGN.name}</p>
-              <p className="mt-0.5 text-[11px] text-muted-foreground">{NS_CAMPAIGN.goal}</p>
+            <div className="relative aspect-square w-full overflow-hidden bg-secondary">
+              {/* eslint-disable-next-line @next/next/no-img-element -- 原型层用 <img>(北极星约定) */}
+              <img src={a.thumb} alt={a.title} className="size-full object-cover" />
+              {a.kind === "video" && (
+                <span className="absolute right-1.5 bottom-1.5 flex size-5 items-center justify-center rounded-full bg-card/85">
+                  <Play className="size-3 text-foreground" strokeWidth={2} fill="currentColor" />
+                </span>
+              )}
+              {a.byOtto && (
+                <span className="absolute top-1.5 left-1.5 flex size-5 items-center justify-center rounded-full bg-card/90">
+                  <OttoAvatar size={14} mood="idle" />
+                </span>
+              )}
             </div>
-            {approvals.length > 0 ? (
-              <Badge variant="warning">{approvals.length} awaiting approval</Badge>
-            ) : (
-              <Badge variant="success">All approved</Badge>
-            )}
+            <div className="p-2.5">
+              <p className="truncate text-xs font-medium text-foreground">{a.title}</p>
+              <p className="mt-0.5 text-[11px] text-muted-foreground capitalize">{a.kind}</p>
+            </div>
           </Link>
-        </section>
+        ))}
+      </div>
+
+      {/* ── Up next(排期即将发出的;每行 → composer 深链) ── */}
+      <div className="mt-8 flex items-baseline gap-2">
+        <h2 className="text-sm font-semibold text-foreground">Up next</h2>
+        {approvals.length > 0 ? (
+          <Badge variant="warning">{approvals.length} awaiting approval</Badge>
+        ) : (
+          <Badge variant="success">{NS_CAMPAIGN.name} · all approved</Badge>
+        )}
+        <Link href={`${BASE}/schedule/queue`} className="ml-auto text-xs font-semibold text-muted-foreground hover:text-foreground">
+          Open queue
+        </Link>
+      </div>
+      <div className="mt-3 overflow-hidden rounded-[14px] border border-border bg-card">
+        {nextPosts.length === 0 ? (
+          <Link
+            href={`${BASE}/schedule/composer`}
+            className="flex items-center gap-3 px-4 py-4 text-[13px] text-muted-foreground transition-colors duration-[120ms] hover:bg-accent"
+          >
+            Nothing queued yet — schedule your first post
+            <ArrowRight className="ml-auto size-4 shrink-0" strokeWidth={2} />
+          </Link>
+        ) : (
+          nextPosts.map((p, i) => (
+            <Link
+              key={p.id}
+              href={`${BASE}/schedule/composer?post=${p.id}`}
+              className={`flex items-center gap-3 px-4 py-3 transition-colors duration-[120ms] hover:bg-accent ${i > 0 ? "border-t border-border" : ""}`}
+            >
+              <span className="font-mono text-[11px] text-muted-foreground tabular-nums">{whenLabel(p.scheduledAt)}</span>
+              <span className="min-w-0 flex-1 truncate text-[13px] font-medium text-foreground">{p.caption}</span>
+              <span className="shrink-0 text-[11px] text-muted-foreground capitalize">{p.platform}</span>
+            </Link>
+          ))
+        )}
       </div>
     </div>
   );

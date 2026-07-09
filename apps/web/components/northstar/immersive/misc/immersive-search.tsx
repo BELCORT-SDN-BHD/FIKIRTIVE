@@ -6,8 +6,11 @@
  * gallery 的 search 页把命令面板套进 DemoFrame 图纸框、并列演示两次(嵌入 + ⌘K overlay)——
  * 那是设计稿陈列。产品里搜索只有一个表面:一块干净的命令面板,占满内容 pane。
  *
- * 复用口径(照 account-ops 先例):语料直接派生自 global 的 NS_SEARCH_ITEMS(GOAL A3 三组:
- * Projects / History / Chat),骨架行复用 global 的 SkeletonRow。唯一改动是导航前缀 ——
+ * 语料两源:① global 的 NS_SEARCH_ITEMS(Projects / History / Chat);② ENDGAME D2 新增
+ * 「Otto chat」组 —— 直接搜这条连续对话流(store.streamFor()),因为 D1 废除了 HISTORY
+ * 收纳,「找旧对话 = 全局流里搜」。选中 Otto 结果:有 context.href 深链回现场,否则进 /otto
+ * 全屏读这条流。骨架行复用 global 的 SkeletonRow。
+ *
  * 命令面板在产品里用 router.push 程序化跳转,外壳的 useKeepInsideImmersive 只拦 <a> 点击、
  * 拦不到 push,所以这里把 `/northstar/*` 目标改写成 `/northstar-immersive/*`,让选中即留在壳内。
  *
@@ -17,7 +20,7 @@
 
 import * as React from "react";
 import { useRouter } from "next/navigation";
-import { Clock, Folder, MessageSquare, Search, type LucideIcon } from "lucide-react";
+import { Clock, Folder, MessageSquare, Search, Sparkles, type LucideIcon } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { SkeletonRow } from "@/components/northstar/global/_fx";
 import {
@@ -25,9 +28,11 @@ import {
   type NsSearchGroup,
   type NsSearchItem,
 } from "@/components/northstar/global/_data";
+import { streamFor, useStore } from "@/components/northstar/immersive/_store";
 
 const GALLERY_PREFIX = "/northstar/";
 const IMMERSIVE_PREFIX = "/northstar-immersive/";
+const OTTO_HREF = "/northstar-immersive/otto";
 
 /** 把画廊语料的 `/northstar/*` 目标改写成沉浸式路由(其余原样)。 */
 function immersiveHref(href: string): string {
@@ -45,31 +50,37 @@ const GROUP_ICON: Record<NsSearchGroup, LucideIcon> = {
 /** 空词时的「Recent」清单(确定性子集,混三组;照 search-palette 先例) */
 const RECENT_IDS = ["sc-1", "sh-1", "sp-01", "sh-2", "sc-2"];
 
-function matches(item: NsSearchItem, q: string): boolean {
+/** 归一化后的一行结果:两种语料(搜索项 / Otto 流消息)都投影成它,键盘导航统一遍历。 */
+interface SearchRow {
+  key: string;
+  title: string;
+  meta: string;
+  icon: LucideIcon;
+  href: string;
+}
+interface ResultGroup {
+  label: string;
+  rows: SearchRow[];
+}
+
+function itemMatches(item: NsSearchItem, q: string): boolean {
   const needle = q.toLowerCase();
   return item.title.toLowerCase().includes(needle) || item.meta.toLowerCase().includes(needle);
 }
 
-interface ResultGroup {
-  label: string;
-  items: NsSearchItem[];
-}
-
-function buildGroups(q: string): ResultGroup[] {
-  if (!q) {
-    const recent = RECENT_IDS.map((id) => NS_SEARCH_ITEMS.find((i) => i.id === id)).filter(
-      (i): i is NsSearchItem => Boolean(i),
-    );
-    return [{ label: "Recent", items: recent }];
-  }
-  return GROUP_ORDER.map((g) => ({
-    label: g,
-    items: NS_SEARCH_ITEMS.filter((i) => i.group === g && matches(i, q)).slice(0, 5),
-  })).filter((g) => g.items.length > 0);
+function itemRow(item: NsSearchItem): SearchRow {
+  return {
+    key: `it-${item.id}`,
+    title: item.title,
+    meta: item.meta,
+    icon: GROUP_ICON[item.group],
+    href: immersiveHref(item.href),
+  };
 }
 
 export function ImmersiveSearch() {
   const router = useRouter();
+  useStore(); // Otto 流是 live 的(dock / 各区 append):订阅它,搜得到刚发生的对话
   const [q, setQ] = React.useState("");
   const [committedQ, setCommittedQ] = React.useState("");
   const [loading, setLoading] = React.useState(false);
@@ -89,15 +100,40 @@ export function ImmersiveSearch() {
     return () => window.clearTimeout(t);
   }, [q, committedQ]);
 
-  const groups = React.useMemo(() => buildGroups(committedQ), [committedQ]);
-  const flat = React.useMemo(() => groups.flatMap((g) => g.items), [groups]);
+  const groups = React.useMemo<ResultGroup[]>(() => {
+    // 空词:Recent(确定性子集,混三组)
+    if (!committedQ) {
+      const recent = RECENT_IDS.map((id) => NS_SEARCH_ITEMS.find((i) => i.id === id))
+        .filter((i): i is NsSearchItem => Boolean(i))
+        .map(itemRow);
+      return [{ label: "Recent", rows: recent }];
+    }
+    const needle = committedQ.toLowerCase();
+    // ① Projects / History / Chat 三组(gallery 语料)
+    const itemGroups: ResultGroup[] = GROUP_ORDER.map((g) => ({
+      label: g,
+      rows: NS_SEARCH_ITEMS.filter((i) => i.group === g && itemMatches(i, committedQ)).slice(0, 5).map(itemRow),
+    })).filter((g) => g.rows.length > 0);
+    // ② [wave-b] Otto 流内搜 —— 直接搜这条连续对话流(D2),找旧对话 = 全局流里搜(D1)
+    const ottoRows: SearchRow[] = streamFor()
+      .filter((m) => m.text.toLowerCase().includes(needle) || m.context.label.toLowerCase().includes(needle))
+      .slice()
+      .reverse() // 最新在前
+      .slice(0, 5)
+      .map((m) => ({
+        key: `otto-${m.id}`,
+        title: m.text,
+        meta: m.context.label,
+        icon: Sparkles,
+        href: m.context.href ? immersiveHref(m.context.href) : OTTO_HREF,
+      }));
+    const ottoGroup: ResultGroup[] = ottoRows.length > 0 ? [{ label: "Otto chat", rows: ottoRows }] : [];
+    return [...itemGroups, ...ottoGroup];
+  }, [committedQ]);
 
-  const go = React.useCallback(
-    (item: NsSearchItem) => {
-      router.push(immersiveHref(item.href));
-    },
-    [router],
-  );
+  const flat = React.useMemo(() => groups.flatMap((g) => g.rows), [groups]);
+
+  const go = React.useCallback((row: SearchRow) => router.push(row.href), [router]);
 
   const onKeyDown = (e: React.KeyboardEvent) => {
     if (e.key === "ArrowDown" || e.key === "ArrowUp") {
@@ -109,8 +145,8 @@ export function ImmersiveSearch() {
       listRef.current?.querySelector(`[data-idx="${next}"]`)?.scrollIntoView({ block: "nearest" });
     } else if (e.key === "Enter") {
       e.preventDefault();
-      const item = flat[activeIdx];
-      if (item) go(item);
+      const row = flat[activeIdx];
+      if (row) go(row);
     } else if (e.key === "Escape") {
       // §N8:一次剥一层 — 有词先清词(产品里面板常驻,清空即止)
       if (q) {
@@ -127,7 +163,7 @@ export function ImmersiveSearch() {
     <div className="mx-auto flex h-full w-full max-w-[720px] flex-col px-6 pt-6 pb-10">
       <h1 className="text-2xl leading-[30px] font-bold tracking-[-0.02em] text-foreground">Search</h1>
       <p className="mt-1 text-sm text-muted-foreground">
-        Find your projects, generation history and chats — start typing.
+        Find your projects, generation history and Otto chats — start typing.
       </p>
 
       {/* 命令面板:一个干净表面,占满剩余高度 */}
@@ -143,8 +179,8 @@ export function ImmersiveSearch() {
             autoFocus
             value={q}
             onChange={(e) => setQ(e.target.value)}
-            placeholder="Search projects, history and chats"
-            aria-label="Search projects, history and chats"
+            placeholder="Search projects, history and Otto chats"
+            aria-label="Search projects, history and Otto chats"
             className="h-full w-full min-w-0 bg-transparent text-[15px] leading-[22px] text-foreground outline-none placeholder:text-muted-foreground"
           />
           {q && (
@@ -178,19 +214,19 @@ export function ImmersiveSearch() {
                 <div className="px-3 pt-2 pb-1 font-mono text-[11px] leading-[14px] font-medium tracking-[0.08em] text-muted-foreground uppercase">
                   {g.label}
                 </div>
-                {g.items.map((item) => {
+                {g.rows.map((row) => {
                   runningIdx += 1;
                   const idx = runningIdx;
                   const active = idx === activeIdx;
-                  const Icon = GROUP_ICON[item.group];
+                  const Icon = row.icon;
                   return (
                     <button
-                      key={item.id}
+                      key={row.key}
                       type="button"
                       data-idx={idx}
                       role="option"
                       aria-selected={active}
-                      onClick={() => go(item)}
+                      onClick={() => go(row)}
                       onMouseMove={() => setActiveIdx(idx)}
                       className={cn(
                         "flex min-h-9 w-full items-center gap-2.5 rounded-[10px] px-3 py-2 text-left transition-colors duration-[120ms]",
@@ -198,9 +234,9 @@ export function ImmersiveSearch() {
                       )}
                     >
                       <Icon className="size-4 shrink-0 text-muted-foreground" strokeWidth={2} />
-                      <span className="min-w-0 flex-1 truncate text-sm text-foreground">{item.title}</span>
-                      <span className="shrink-0 text-xs font-medium text-muted-foreground tabular-nums">
-                        {item.meta}
+                      <span className="min-w-0 flex-1 truncate text-sm text-foreground">{row.title}</span>
+                      <span className="shrink-0 max-w-[40%] truncate text-xs font-medium text-muted-foreground tabular-nums">
+                        {row.meta}
                       </span>
                     </button>
                   );
@@ -213,7 +249,7 @@ export function ImmersiveSearch() {
         {/* 页脚:范围声明 + 键盘提示 */}
         <div className="flex shrink-0 flex-wrap items-center gap-x-3 gap-y-1 border-t border-border px-4 py-2.5">
           <p className="min-w-0 flex-1 truncate text-xs font-medium text-muted-foreground">
-            Searches your projects, generation history and chats
+            Searches your projects, generation history and Otto chats
           </p>
           <p className="shrink-0 font-mono text-[11px] leading-[14px] font-medium tracking-[0.08em] text-muted-foreground">
             ↑↓ · Enter · Esc
