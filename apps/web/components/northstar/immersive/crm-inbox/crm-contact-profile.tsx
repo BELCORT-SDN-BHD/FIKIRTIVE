@@ -61,8 +61,18 @@ import {
 } from "./kit";
 import { ContactAvatar, HeatBadge, LifecycleBadge, ChurnBadge, heatReason } from "./crm-kit";
 import { DEAL_STAGES, contactIdentities } from "./data";
-import { allDealsForContact, companyForContact, quoteProducts } from "./crm-data";
+import {
+  allDealsForContact,
+  companyForContact,
+  quoteProducts,
+  predictedNext,
+  predictBasisLabel,
+  churnResult,
+  winBackDraft,
+} from "./crm-data";
+import { OttoAssist } from "../otto-assist";
 import { avgOrderValue } from "../_selectors";
+import type { NsAssistApply } from "../_store";
 import {
   useStore,
   contactByIdView,
@@ -130,6 +140,14 @@ export function CrmContactProfile() {
   const quotes = quotesFor(contact.id);
   const company = companyForContact(contact.id);
   const avg = avgOrderValue(contact.id);
+  const predict = predictedNext(contact);
+  const churn = churnResult(contact);
+
+  // [wave-c] Otto 帮我(§O7):档案面挂一颗,drafts 用真实字段拼、Apply 落成一条待办(不自动发)
+  const onOttoApply = (apply: NsAssistApply) => {
+    const todo = apply.patch.todo;
+    if (typeof todo === "string" && todo.trim()) addContactTodo(contact.id, todo, "");
+  };
 
   const commitTag = () => {
     const t = tagDraft.trim();
@@ -143,12 +161,51 @@ export function CrmContactProfile() {
       <PageHeader
         title="Contact"
         actions={
-          <Button variant="secondary" size="sm" asChild>
-            <Link href={`${BASE}/crm/contacts`}>
-              <ArrowLeft strokeWidth={2} />
-              All contacts
-            </Link>
-          </Button>
+          <div className="flex items-center gap-2">
+            <OttoAssist
+              zone="CRM"
+              entityId={contact.id}
+              entityLabel={contact.name}
+              formState={{ lifecycle: contact.lifecycle, heat: contact.heat, churnBand: churn.band }}
+              intents={[
+                {
+                  id: "crm-winback",
+                  label: "Draft a win-back message",
+                  prompt: `Draft a gentle win-back message for ${contact.name}.`,
+                  reply: `Here's a nudge built from their history — tweak a word and send it yourself:\n\n"${winBackDraft(contact)}"`,
+                  apply: {
+                    summary: "Add a win-back follow-up task",
+                    patch: { todo: `Send ${contact.name.split(" ")[0]} a win-back nudge` },
+                  },
+                },
+                {
+                  id: "crm-reorder",
+                  label: "Suggest their usual reorder",
+                  prompt: `What's ${contact.name}'s usual order and when is it due?`,
+                  reply: avg
+                    ? `Their orders run about RM${avg} each across ${contact.orderCount ?? 0} so far. A reorder at that size looks like the natural next step.`
+                    : `Not enough order history yet to suggest a usual — worth asking what they'd like.`,
+                  apply: {
+                    summary: "Add a reorder follow-up task",
+                    patch: { todo: `Set up ${contact.name.split(" ")[0]}'s usual reorder${avg ? ` (~RM${avg})` : ""}` },
+                  },
+                },
+                {
+                  id: "crm-summary",
+                  label: "Summarise this customer",
+                  prompt: `Give me a one-line read on ${contact.name}.`,
+                  reply: `${contact.name}: ${heatReason(contact)} ${churn.band !== "green" ? `Churn — ${churn.bandLabel.toLowerCase()}, ${churn.actionBy.toLowerCase()}.` : "Churn — healthy."}`,
+                },
+              ]}
+              onApply={onOttoApply}
+            />
+            <Button variant="secondary" size="sm" asChild>
+              <Link href={`${BASE}/crm/contacts`}>
+                <ArrowLeft strokeWidth={2} />
+                All contacts
+              </Link>
+            </Button>
+          </div>
         }
       />
 
@@ -182,6 +239,23 @@ export function CrmContactProfile() {
               <span className="font-semibold text-foreground">Otto's read:</span> {heatReason(contact)}
               {contact.source ? ` Came in via ${contact.source}.` : ""}
             </p>
+
+            {/* [wave-c] 在险解释:churn 分数怎么来的(每条信号带权重,顾问能问「为什么」) */}
+            {(churn.band === "orange" || churn.band === "red") && (
+              <div className="mt-2 rounded-[10px] border border-border bg-muted/40 px-3 py-2">
+                <p className="text-[11px] font-semibold text-error-soft-foreground">
+                  {churn.bandLabel} · {fmtMyr(churn.atRiskMyr)} at stake · {churn.actionBy}
+                </p>
+                <ul className="mt-1 flex flex-col gap-0.5">
+                  {churn.signals.map((s) => (
+                    <li key={s.id} className="flex items-baseline gap-1.5 text-[11px] text-muted-foreground">
+                      <span className="font-mono tabular-nums text-foreground">+{s.weight}</span>
+                      <span className="min-w-0 flex-1">{s.label}</span>
+                    </li>
+                  ))}
+                </ul>
+              </div>
+            )}
 
             {/* 可编辑标签(留痕) */}
             <div className="mt-3 flex flex-wrap items-center gap-1.5">
@@ -232,11 +306,15 @@ export function CrmContactProfile() {
         </div>
       </Card>
 
-      {/* §D3 四张数据卡(含预测字段) */}
+      {/* §D3 四张数据卡(含预测字段) —— [wave-c] 预测走 predictedNext:静默大客不再显示 RM0 */}
       <div className="mt-4 grid grid-cols-2 gap-3 lg:grid-cols-4">
         <StatCard label="Lifetime orders" value={fmtMyr(contact.totalOrdersMyr)} />
         <StatCard label="Avg order" value={avg ? fmtMyr(avg) : "—"} />
-        <StatCard label="Predicted next" value={contact.predictedNextMyr ? fmtMyr(contact.predictedNextMyr) : "—"} />
+        <StatCard
+          label="Predicted next"
+          value={predict.amountMyr > 0 ? fmtMyr(predict.amountMyr) : "—"}
+          delta={predict.amountMyr > 0 ? { dir: "flat", text: predictBasisLabel(predict.basis) } : undefined}
+        />
         <StatCard label="Last seen" value={fmtDate(contact.lastSeen)} />
       </div>
 

@@ -17,6 +17,7 @@ import * as React from "react";
 import { cn } from "@/lib/utils";
 import { Badge } from "@/components/ui/badge";
 import { Initials } from "./kit";
+import { churnResult, daysSince, QUIET_THRESHOLD_DAYS } from "./crm-data";
 import type { NsContact, NsHeat, NsLifecycle } from "@/components/northstar/_mock";
 
 /* ── 头像(NS_IMAGES;固定宽高比容器防跳动;缺图回落首字母) ────────────────── */
@@ -72,31 +73,47 @@ export function HeatBadge({ heat }: { heat?: NsHeat }) {
   return <Badge variant={variant}>{HEAT_LABEL[heat]}</Badge>;
 }
 
-/** 每个热度一句人话理由(Otto 的判断;确定性派生自已有字段,不新造事实)。 */
+/** 每个热度一句人话理由(Otto 的判断;[wave-c] 现读真实字段带数字,不再死查表)。
+ * hot = 该补货的算式;warm = 稳但转淡;cold = 静默天数 + 在险金额。治 ledger gap#2。 */
 export function heatReason(c: NsContact): string {
+  const orders = c.orderCount ?? 0;
+  const avg = orders > 0 ? Math.round(c.totalOrdersMyr / orders) : 0;
+  const days = daysSince(c.lastSeen);
   if (c.heat === "hot") {
-    if (c.lifecycle === "new") return "New this week and already asking about products.";
-    if ((c.predictedNextMyr ?? 0) >= 200) return "Orders often — a big reorder looks due.";
-    return "Messaged recently and ordering regularly.";
+    if (c.lifecycle === "new") return `New this week — first order in, ordered ${days}d ago. Keep them close.`;
+    if (orders >= 2 && avg > 0) return `${orders} orders, ~RM${avg} each — last one ${days}d ago, a reorder looks due. Stock up.`;
+    return `Messaged in the last few days — reply while you're top of mind.`;
   }
   if (c.heat === "warm") {
-    if (c.lifecycle === "new") return "Just reached out — worth a friendly nudge.";
+    if (c.lifecycle === "new") return "Just reached out — a friendly nudge could land the first order.";
+    if (orders > 0) return `Steady — ${orders} order${orders === 1 ? "" : "s"}, last seen ${days}d ago. A little quiet lately.`;
     return "Steady customer, a little quiet lately.";
   }
-  if (c.lifecycle === "dormant") return "Hasn't ordered in weeks — a win-back could help.";
-  return "Gone quiet — no recent activity.";
+  // cold
+  if (days > QUIET_THRESHOLD_DAYS) {
+    return `Quiet ${days} days (past the ~${QUIET_THRESHOLD_DAYS}-day line) — RM${c.totalOrdersMyr.toLocaleString("en-MY")} at stake. Worth a win-back.`;
+  }
+  return "Gone cold — no recent messages.";
 }
 
-/* ── 流失风险(WHATPASS 一·D「预测字段」)——[wave-b] 预测字段标签 ────────────────
- * 冷启动数据不够时用规则近似,显示为档案上的标签而非报表数字。可当筛选属性用。 */
+/* ── 流失风险(WHATPASS 一·D)——[wave-c] 换成加权打分引擎(churnResult),带算式解释 ──
+ * 冷启动口径明说(见 crm-data QUIET_THRESHOLD_DAYS / CADENCE_NOTE)。可当筛选属性用。 */
 export function churnRisk(c: NsContact): { level: "low" | "medium" | "high"; label: string } {
-  if (c.lifecycle === "dormant") return { level: "high", label: "High" };
-  if (c.heat === "cold") return { level: "medium", label: "Medium" };
-  return { level: "low", label: "Low" };
+  const r = churnResult(c);
+  const level = r.band === "red" || r.band === "orange" ? "high" : r.band === "yellow" ? "medium" : "low";
+  return { level, label: r.bandLabel };
 }
 
 export function ChurnBadge({ contact }: { contact: NsContact }) {
-  const risk = churnRisk(contact);
-  const variant = risk.level === "high" ? "destructive" : risk.level === "medium" ? "warning" : "success";
-  return <Badge variant={variant}>{risk.label} churn risk</Badge>;
+  const r = churnResult(contact);
+  const variant =
+    r.band === "red" ? "destructive" : r.band === "orange" ? "warning" : r.band === "yellow" ? "soft" : "success";
+  const title = r.signals.length
+    ? `${r.actionBy} · ${r.signals.map((s) => s.label).join("; ")}`
+    : r.actionBy;
+  return (
+    <span title={title}>
+      <Badge variant={variant}>{r.bandLabel}</Badge>
+    </span>
+  );
 }

@@ -219,8 +219,38 @@ export const CRM_EXTRA_SEGMENTS: NsSegment[] = [
   },
 ];
 
-/** 分群页读的完整分群(内建 + lifecycle 侧;自建分群仍来自 store)。 */
-export const ALL_SEGMENTS: NsSegment[] = [...CRM_EXTRA_SEGMENTS, ...SEGMENTS];
+/* ── 价值分离分群(治 ledger「高终身价值/高近期价值/季节大宗分开」)——[wave-c] ──────
+ * 三个群按不同的钱分开,不再一个「Top spenders」糊在一起。各带经营读数(segmentValueRead)。 */
+export const VALUE_SEGMENTS: NsSegment[] = [
+  {
+    id: "seg-ltv",
+    name: "High lifetime value",
+    desc: "Your biggest earners over all time — protect these",
+    match: (c) => c.totalOrdersMyr >= 1500,
+  },
+  {
+    id: "seg-recent",
+    name: "High recent value",
+    desc: "Hot right now and spending big — strike while warm",
+    match: (c) => c.heat === "hot" && (c.predictedNextMyr ?? 0) >= 200,
+  },
+  {
+    id: "seg-seasonal",
+    name: "Seasonal bulk buyers",
+    desc: "Wholesale & catering — big periodic orders (Raya, events)",
+    match: (c) => c.tags.includes("wholesale") || c.tags.includes("catering"),
+  },
+];
+
+/** 分群页读的完整分群(价值分离 + lifecycle 侧 + 通用内建;自建分群仍来自 store)。
+ * 通用 SEGMENTS 里被 VALUE_SEGMENTS 更利索取代的两个(seg-vip / seg-wholesale)去重,
+ * 避免「Top spenders」和「High lifetime value」并列的冗余(不改共享 data.ts)。 */
+const SUPERSEDED = new Set(["seg-vip", "seg-wholesale"]);
+export const ALL_SEGMENTS: NsSegment[] = [
+  ...VALUE_SEGMENTS,
+  ...CRM_EXTRA_SEGMENTS,
+  ...SEGMENTS.filter((s) => !SUPERSEDED.has(s.id)),
+];
 
 /* ── 报价单可选商品(WHATPASS 一·G)——[wave-b] 极简报价单+收款链接 ─────────────── */
 export function quoteProducts() {
@@ -233,4 +263,199 @@ export function daysSince(iso: string): number {
   const now = Date.parse(`${SEGMENT_TODAY}T00:00:00+08:00`);
   if (Number.isNaN(then) || Number.isNaN(now)) return 0;
   return Math.max(0, Math.round((now - then) / 86_400_000));
+}
+
+/* ═══════════════════════════════════════════════════════════════════════════
+ * [wave-c] CRM 内容工程 · Z7-crm —— 三套加权打分 + 诚实预测(GOOSEWORKS-MAP §一·工具2)
+ *
+ * 把「智能层」从死查表升级成可解释的加权打分:每个结论都由真实字段现算,带得出算式,
+ * 顾问抽查能问「为什么」。全部确定性、纯函数、零 Math.random / 零 Date.now。
+ *
+ * 冷启动诚实(founder 铁律):我们还没有每单的日期历史,所以「正常复购节律」用一条
+ * 全店默认线 QUIET_THRESHOLD_DAYS,并在 UI 明说是行业默认 —— 等 Otto 见过一个账号
+ * 几张单后再收紧到它自己的节律。绝不谎报还不存在的 per-account 节律。
+ * ═══════════════════════════════════════════════════════════════════════════ */
+
+/** 平均客单价(totalOrdersMyr / orderCount;无单则 0)。本地算,自足不外借。 */
+function avgOrder(c: NsContact): number {
+  const n = c.orderCount ?? 0;
+  return n > 0 ? Math.round(c.totalOrdersMyr / n) : 0;
+}
+
+/** 全店默认「静默线」——单一自洽阈值(治 ledger gap#5「三套 dormant 定义」)。
+ * 三处(名册唤回条 / 热度理由 / 档案预测)共用它;「静默」由 daysSince 现算,不再看
+ * 硬编码 lifecycle。21 天是一家面包店的默认线,标注为行业默认,学到账号节律后收紧。 */
+export const QUIET_THRESHOLD_DAYS = 21;
+
+/** 诚实提示语:凡显示节律/静默线处附上它(冷启动标注)。 */
+export const CADENCE_NOTE =
+  "The quiet line below is a bakery default until Otto has seen a few of each account's orders — then it tightens to their real rhythm.";
+
+/** 某客是否「该被唤回」= 有过订单 + 静默超过默认线(自洽,不看 lifecycle 硬标)。 */
+export function isQuiet(c: NsContact): boolean {
+  return (c.orderCount ?? 0) > 0 && daysSince(c.lastSeen) > QUIET_THRESHOLD_DAYS;
+}
+
+/* ── 公式一 · 流失风险(churn)= Σ(signal_weight × signal_present) ────────────────
+ * 权重 Critical=25 / High=15 / Medium=8 / Low=3;分档 Red 70-100 / Orange 40-69 /
+ * Yellow 20-39 / Green 0-19,每档配行动窗。每条信号是一句能解释「为什么在险」的人话。 */
+const CHURN_WEIGHT = { critical: 25, high: 15, medium: 8, low: 3 } as const;
+
+export interface NsChurnSignal {
+  id: string;
+  label: string;
+  weight: number;
+}
+export interface NsChurnResult {
+  score: number;
+  band: "green" | "yellow" | "orange" | "red";
+  bandLabel: string;
+  /** 行动窗一句人话(每档配截止节奏) */
+  actionBy: string;
+  /** 命中的信号(带权重;顺序 = 权重降序) */
+  signals: NsChurnSignal[];
+  /** 在险金额:该客的生涯往来(丢了要重新赚回的钱) */
+  atRiskMyr: number;
+}
+
+export function churnResult(c: NsContact): NsChurnResult {
+  const days = daysSince(c.lastSeen);
+  const quiet = days > QUIET_THRESHOLD_DAYS;
+  const longQuiet = days > QUIET_THRESHOLD_DAYS * 2;
+  const bigValue = c.totalOrdersMyr >= 1500 || c.tags.includes("wholesale");
+  const value = c.totalOrdersMyr.toLocaleString("en-MY");
+  const signals: NsChurnSignal[] = [];
+
+  if (longQuiet) {
+    signals.push({ id: "long-quiet", label: `No order in ${days} days — well past the ${QUIET_THRESHOLD_DAYS}-day line`, weight: CHURN_WEIGHT.high });
+  } else if (quiet) {
+    signals.push({ id: "quiet", label: `Quiet ${days} days — past the ${QUIET_THRESHOLD_DAYS}-day line`, weight: CHURN_WEIGHT.medium });
+  }
+  if (quiet && bigValue) {
+    signals.push({ id: "big-at-stake", label: `RM${value} account at stake — costly to replace`, weight: CHURN_WEIGHT.critical });
+  }
+  if (quiet && (c.tags.includes("wholesale") || c.lifecycle === "vip")) {
+    signals.push({ id: "anchor", label: "Anchor account — wholesale/VIP you'd rather not lose", weight: CHURN_WEIGHT.high });
+  }
+  if (c.heat === "cold") {
+    signals.push({ id: "cold", label: "Gone cold — no recent messages", weight: CHURN_WEIGHT.medium });
+  } else if (c.heat === "warm" && quiet) {
+    signals.push({ id: "cooling", label: "Cooling off — quieter than their usual", weight: CHURN_WEIGHT.low });
+  }
+  if ((c.orderCount ?? 0) === 1 && quiet) {
+    signals.push({ id: "fragile", label: "Only one order so far — the habit hasn't formed", weight: CHURN_WEIGHT.low });
+  }
+
+  signals.sort((a, b) => b.weight - a.weight);
+  const score = Math.min(100, signals.reduce((s, x) => s + x.weight, 0));
+
+  let band: NsChurnResult["band"];
+  let bandLabel: string;
+  let actionBy: string;
+  if (score >= 70) { band = "red"; bandLabel = "High risk"; actionBy = "Reach out this week"; }
+  else if (score >= 40) { band = "orange"; bandLabel = "At risk"; actionBy = "Reach out in the next few days"; }
+  else if (score >= 20) { band = "yellow"; bandLabel = "Watch"; actionBy = "Keep an eye on them"; }
+  else { band = "green"; bandLabel = "Healthy"; actionBy = "No action needed"; }
+
+  return { score, band, bandLabel, actionBy, signals, atRiskMyr: quiet ? c.totalOrdersMyr : 0 };
+}
+
+/** 全书在险总额:静默客生涯往来求和 + 占全书百分比(卡头「Total at-risk = RM X (Y%)」)。 */
+export function atRiskSummary(contacts: NsContact[]): { count: number; totalMyr: number; pctOfBook: number } {
+  const book = contacts.reduce((s, c) => s + c.totalOrdersMyr, 0);
+  const atRisk = contacts.filter(isQuiet);
+  const totalMyr = atRisk.reduce((s, c) => s + c.totalOrdersMyr, 0);
+  return { count: atRisk.length, totalMyr, pctOfBook: book > 0 ? Math.round((totalMyr / book) * 100) : 0 };
+}
+
+/* ── 公式二 · 唤回排序(win-back)= Account Value × Addressability / Time Decay ──────
+ * 借 expansion-signal-spotter 的乘法排序 + win-back-sequencer 的时间衰减:让最大值 ×
+ * 最可触达 × 离得最近的客户浮到最顶,治 ledger gap#3(唤回不按在险金额排,散客乱入)。 */
+function timeDecay(days: number): number {
+  if (days <= 45) return 1.0;   // 甜区:刚静默,最好救
+  if (days <= 90) return 1.2;
+  if (days <= 180) return 1.5;
+  return 2.0;                    // 走太久,救回概率低
+}
+
+export function winBackScore(c: NsContact): number {
+  const days = daysSince(c.lastSeen);
+  const addressability = c.doNotDisturb ? 0.5 : 1.0; // 勿扰名单更难触达
+  return Math.round((c.totalOrdersMyr * addressability) / timeDecay(days));
+}
+
+/** 该被唤回的客户,按 winBackScore 降序(最大在险浮顶;散客沉底)。 */
+export function winBackList(contacts: NsContact[]): NsContact[] {
+  return contacts.filter(isQuiet).sort((a, b) => winBackScore(b) - winBackScore(a));
+}
+
+/** 唤回「为什么现在」一句(现读字段,带金额/单数/天数,不露馅)。 */
+export function winBackWhy(c: NsContact): string {
+  const days = daysSince(c.lastSeen);
+  const value = c.totalOrdersMyr.toLocaleString("en-MY");
+  const orders = c.orderCount ?? 0;
+  if (c.totalOrdersMyr >= 1500) {
+    return `One of your biggest accounts — RM${value} across ${orders} orders, quiet ${days} days.`;
+  }
+  return `RM${value} across ${orders} order${orders === 1 ? "" : "s"}, quiet ${days} days.`;
+}
+
+/** 唤回预填草稿(金额/节律/渠道全从真字段拼;店主改一句就能发)。治 ledger gap#4(空待办)。
+ * 冷启动诚实:只用真知道的(分群类型 + 平均客单),不编造「60 箱/周二」这类没有的细节。 */
+export function winBackDraft(c: NsContact): string {
+  const first = c.name.replace(/^@/, "").split(/\s+/)[0];
+  const avg = avgOrder(c);
+  const avgPhrase = avg > 0 ? ` (your last few ran about RM${avg})` : "";
+  if (c.tags.includes("wholesale")) {
+    return `Hi ${first}! It's been a while — your wholesale slot is open again this week. Want me to line up your usual restock${avgPhrase}? 🥐`;
+  }
+  if (c.tags.includes("catering")) {
+    return `Hi ${first}! Anything coming up we can cater? Happy to hold a slot for you${avgPhrase} — just say the date. 🎉`;
+  }
+  if (c.tags.includes("office orders") || c.tags.includes("regular")) {
+    return `Hi ${first}! We've missed your orders lately — should I set up your usual for this week${avgPhrase}? 🥐`;
+  }
+  return `Hi ${first}! It's been a little while — anything I can bake for you this week${avgPhrase}? 😊`;
+}
+
+/* ── 公式三 · 增购潜力(expansion)= Signal Strength × Account Value × Timing ────────
+ * 借 expansion-signal-spotter 的乘法:哪些活跃客值得先推一单更大的。驱动热度理由的
+ * 「为什么是热 / 该补货了」判断,治 ledger gap#2(热度理由死查表)。 */
+export function expansionScore(c: NsContact): number {
+  const strength = c.heat === "hot" ? 1.0 : c.heat === "warm" ? 0.6 : 0.2;
+  const accountValue = c.totalOrdersMyr >= 1500 ? 2.0 : c.totalOrdersMyr >= 500 ? 1.5 : 1.0;
+  const days = daysSince(c.lastSeen);
+  // Timing:离上次越近、且订过多次 = 复购窗口正开着,现在推最省力
+  const timing = days <= QUIET_THRESHOLD_DAYS && (c.orderCount ?? 0) >= 2 ? 2.0 : days <= QUIET_THRESHOLD_DAYS ? 1.5 : 1.0;
+  return Math.round(strength * accountValue * timing * 10) / 10;
+}
+
+/* ── 诚实的「预计下次」——治 ledger gap#1(最大批发户 RM3,120 被标预测 RM0 的矛盾) ─────
+ * 活跃客用脊梁的 predictedNextMyr;静默客该字段是 0(还没排下一单)→ 改显示「复购潜力」
+ * = 平均客单价。永不对最大客户显示 RM0。basis 让 UI 说清这数字是怎么来的。 */
+export type NsPredictBasis = "scheduled" | "repeat-potential" | "first-order" | "unknown";
+
+export function predictedNext(c: NsContact): { amountMyr: number; basis: NsPredictBasis } {
+  const raw = c.predictedNextMyr ?? 0;
+  if (raw > 0) return { amountMyr: raw, basis: (c.orderCount ?? 0) <= 1 ? "first-order" : "scheduled" };
+  const avg = avgOrder(c);
+  if (avg > 0) return { amountMyr: avg, basis: "repeat-potential" };
+  return { amountMyr: 0, basis: "unknown" };
+}
+
+/** 「预计下次」的人话依据(档案 stat 副行 / tooltip)。 */
+export function predictBasisLabel(basis: NsPredictBasis): string {
+  switch (basis) {
+    case "scheduled": return "next order due";
+    case "repeat-potential": return "repeat potential";
+    case "first-order": return "first order pending";
+    case "unknown": return "no history yet";
+  }
+}
+
+/** 一个分群的经营读数:生涯往来 + 预计下一轮总额(分群头显示,列表可按它排)。 */
+export function segmentValueRead(members: NsContact[]): { lifetimeMyr: number; nextMyr: number } {
+  const lifetimeMyr = members.reduce((s, c) => s + c.totalOrdersMyr, 0);
+  const nextMyr = members.reduce((s, c) => s + predictedNext(c).amountMyr, 0);
+  return { lifetimeMyr, nextMyr };
 }

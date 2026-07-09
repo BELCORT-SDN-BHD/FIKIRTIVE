@@ -18,6 +18,8 @@ import Link from "next/link";
 import {
   ArrowRight,
   Building2,
+  Check,
+  Copy,
   GitMerge,
   Search,
   Sparkles,
@@ -47,8 +49,13 @@ import {
   companyOrdersMyr,
   duplicatePairs,
   findDuplicate,
-  daysSince,
   parseCsv,
+  predictedNext,
+  atRiskSummary,
+  winBackList,
+  winBackWhy,
+  winBackDraft,
+  QUIET_THRESHOLD_DAYS,
   SAMPLE_CSV,
 } from "./crm-data";
 import {
@@ -62,6 +69,56 @@ import {
 import type { NsContact, NsHeat } from "@/components/northstar/_mock";
 
 type HeatFilter = "all" | NsHeat;
+
+/* ── [wave-c] 唤回行:为什么现在 + 预填草稿(可复制) + 一条具体待办 ─────────────────
+ * 草稿金额/节律全从字段拼(winBackDraft),店主改一句就发。「Add follow-up」建的是有内容的
+ * 待办(具体动作),不再是空白「Win back X」。发/花永不自动触发 —— 只帮起草,店主亲手发。 */
+function WinBackRow({ contact: c }: { contact: NsContact }) {
+  const [copied, setCopied] = React.useState(false);
+  const draft = winBackDraft(c);
+  const first = c.name.replace(/^@/, "").split(/\s+/)[0];
+
+  const copy = () => {
+    if (typeof navigator !== "undefined" && navigator.clipboard) navigator.clipboard.writeText(draft);
+    setCopied(true);
+    window.setTimeout(() => setCopied(false), 1500);
+  };
+
+  return (
+    <div className="flex flex-col gap-2 border-t border-border px-4 py-3">
+      <div className="flex items-center gap-3">
+        <ContactAvatar contact={c} className="size-8" />
+        <div className="min-w-0 flex-1">
+          <div className="flex min-w-0 items-center gap-2">
+            <Link href={`${BASE}/crm/contact-profile?id=${c.id}`} className="truncate text-sm font-semibold text-foreground hover:underline">
+              {c.name}
+            </Link>
+            {c.doNotDisturb && <Badge variant="outline">Do not disturb</Badge>}
+          </div>
+          <p className="truncate text-xs text-muted-foreground">{winBackWhy(c)}</p>
+        </div>
+        <span className="shrink-0 text-sm font-semibold tabular-nums text-error-soft-foreground">{fmtMyr(c.totalOrdersMyr)}</span>
+      </div>
+      {/* 预填草稿:真字段拼成,可复制;发仍要店主亲手点(Apply/复制不发) */}
+      <div className="flex items-start gap-2 rounded-[10px] border border-border bg-muted/40 px-3 py-2">
+        <p className="min-w-0 flex-1 text-xs leading-5 text-foreground">{draft}</p>
+        <Button variant="ghost" size="sm" className="shrink-0" onClick={copy}>
+          {copied ? <Check strokeWidth={2} /> : <Copy strokeWidth={2} />}
+          {copied ? "Copied" : "Copy"}
+        </Button>
+      </div>
+      <div className="flex items-center justify-end">
+        <Button
+          variant="secondary"
+          size="sm"
+          onClick={() => addContactTodo(c.id, `Win back ${first} — send the ${fmtMyr(c.totalOrdersMyr)} account a nudge`, "")}
+        >
+          Add follow-up
+        </Button>
+      </div>
+    </div>
+  );
+}
 
 function ContactRow({ contact }: { contact: NsContact }) {
   return (
@@ -93,11 +150,14 @@ function ContactRow({ contact }: { contact: NsContact }) {
       </div>
       <div className="w-28 shrink-0 text-right">
         <p className="text-sm font-semibold tabular-nums text-foreground">{fmtMyr(contact.totalOrdersMyr)}</p>
-        {contact.predictedNextMyr ? (
-          <p className="text-[11px] text-muted-foreground">Next ~{fmtMyr(contact.predictedNextMyr)}</p>
-        ) : (
-          <p className="text-[11px] text-muted-foreground">Seen {fmtDate(contact.lastSeen)}</p>
-        )}
+        {(() => {
+          const p = predictedNext(contact);
+          return p.amountMyr > 0 ? (
+            <p className="text-[11px] text-muted-foreground">Next ~{fmtMyr(p.amountMyr)}</p>
+          ) : (
+            <p className="text-[11px] text-muted-foreground">Seen {fmtDate(contact.lastSeen)}</p>
+          );
+        })()}
       </div>
       <ArrowRight className="size-4 shrink-0 text-muted-foreground opacity-0 transition-opacity group-hover:opacity-100" strokeWidth={2} />
     </Link>
@@ -127,7 +187,9 @@ export function CrmContacts() {
 
   const totalLtv = contacts.reduce((sum, c) => sum + c.totalOrdersMyr, 0);
   const hotCount = contacts.filter((c) => c.heat === "hot").length;
-  const winBack = contacts.filter((c) => c.lifecycle === "dormant");
+  // [wave-c] 唤回名单按在险金额降序(winBackScore),不再按 lifecycle 硬标 slice(0,3)。
+  const winBack = winBackList(contacts);
+  const atRisk = atRiskSummary(contacts);
   const dupPairs = duplicatePairs(contacts);
 
   const heatChips: { id: HeatFilter; label: string }[] = [
@@ -162,7 +224,15 @@ export function CrmContacts() {
         <StatCard label="Contacts" value={String(contacts.length)} />
         <StatCard label="Lifetime orders" value={fmtMyr(totalLtv)} />
         <StatCard label="Hot right now" value={String(hotCount)} />
-        <StatCard label="Need a win-back" value={String(winBack.length)} />
+        <StatCard
+          label="At risk"
+          value={atRisk.count > 0 ? fmtMyr(atRisk.totalMyr) : "—"}
+          delta={
+            atRisk.count > 0
+              ? { dir: "down", text: `${atRisk.count} quiet · ${atRisk.pctOfBook}% of book` }
+              : undefined
+          }
+        />
       </div>
 
       {/* Otto 洞察条(CRM 唯一 coral 触点:一句人话,不是数字打分) */}
@@ -189,33 +259,21 @@ export function CrmContacts() {
         </div>
       )}
 
-      {/* 流失唤回条 */}
+      {/* 流失唤回条 —— [wave-c] 按在险金额排 + 硬钱数卡头 + 预填草稿(治 ledger gap#3/#4) */}
       {winBack.length > 0 && (
         <Card className="mt-3 overflow-hidden">
           <CardHeader
-            title="Win-back list"
-            desc={`${winBack.length} good customer${winBack.length === 1 ? "" : "s"} have gone quiet`}
+            title="Needs a win-back"
+            desc={`${winBack.length} quiet · ${fmtMyr(atRisk.totalMyr)} at risk (${atRisk.pctOfBook}% of your book). Biggest at-risk first. Quiet line: ~${QUIET_THRESHOLD_DAYS} days (bakery default — Otto tightens it per account).`}
           />
           {winBack.slice(0, 3).map((c) => (
-            <div key={c.id} className="flex items-center gap-3 border-t border-border px-4 py-3">
-              <ContactAvatar contact={c} className="size-8" />
-              <div className="min-w-0 flex-1">
-                <Link href={`${BASE}/crm/contact-profile?id=${c.id}`} className="truncate text-sm font-semibold text-foreground hover:underline">
-                  {c.name}
-                </Link>
-                <p className="text-xs text-muted-foreground">
-                  Quiet {daysSince(c.lastSeen)} days · {fmtMyr(c.totalOrdersMyr)} lifetime
-                </p>
-              </div>
-              <Button
-                variant="secondary"
-                size="sm"
-                onClick={() => addContactTodo(c.id, `Win back ${c.name.split(" ")[0]}`, "")}
-              >
-                Add follow-up
-              </Button>
-            </div>
+            <WinBackRow key={c.id} contact={c} />
           ))}
+          {winBack.length > 3 && (
+            <p className="border-t border-border px-4 py-2.5 text-xs text-muted-foreground">
+              +{winBack.length - 3} more quiet, smaller accounts below the fold.
+            </p>
+          )}
         </Card>
       )}
 
@@ -237,8 +295,9 @@ export function CrmContacts() {
                 onClick={() => setHeat(chip.id)}
                 aria-pressed={heat === chip.id}
                 className={cn(
-                  "rounded-full px-2.5 py-1 text-[11px] font-semibold transition-colors",
-                  heat === chip.id ? "bg-secondary text-foreground" : "text-muted-foreground hover:bg-accent",
+                  // §5a 手感:可点 chip 用 ns-pressable;§2 双声部:选中 = 人手动作 → 低调蓝
+                  "ns-pressable rounded-full px-2.5 py-1 text-[11px] font-semibold transition-colors",
+                  heat === chip.id ? "ns-human-soft" : "text-muted-foreground hover:bg-accent",
                 )}
               >
                 {chip.label}
@@ -289,9 +348,9 @@ export function CrmContacts() {
 
       <p className="mt-4 text-xs text-muted-foreground">
         Group contacts into{" "}
-        <Link href={`${BASE}/crm/segments`} className="font-semibold text-foreground hover:underline">segments</Link>{" "}
+        <Link href={`${BASE}/crm/segments`} className="ns-human-text font-semibold hover:underline">segments</Link>{" "}
         or track orders in{" "}
-        <Link href={`${BASE}/crm/deals`} className="font-semibold text-foreground hover:underline">deals</Link>.
+        <Link href={`${BASE}/crm/deals`} className="ns-human-text font-semibold hover:underline">deals</Link>.
       </p>
 
       <ImportWizard open={importOpen} onOpenChange={setImportOpen} existing={contacts} />

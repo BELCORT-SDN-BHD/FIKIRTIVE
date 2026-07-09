@@ -12,7 +12,7 @@
 
 import * as React from "react";
 import Link from "next/link";
-import { ArrowRight, Plus, Send, Sparkles, Trash2, Users, Wand2 } from "lucide-react";
+import { ArrowRight, Megaphone, Plus, Send, Sparkles, Trash2, Users, Wand2 } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -36,7 +36,9 @@ import {
   ruleLabel,
   type NsSegmentRule,
 } from "./data";
-import { ALL_SEGMENTS, LIFECYCLE_RECIPES } from "./crm-data";
+import { ALL_SEGMENTS, LIFECYCLE_RECIPES, segmentValueRead } from "./crm-data";
+import { OttoAssist } from "../otto-assist";
+import type { NsAssistApply } from "../_store";
 import {
   useStore,
   contactsView,
@@ -91,6 +93,7 @@ export function CrmSegments() {
   const [activeId, setActiveId] = React.useState(segments[0]?.id ?? "");
   const active = segments.find((s) => s.id === activeId) ?? segments[0];
   const members = active ? contacts.filter(active.filter) : [];
+  const memberRead = segmentValueRead(members);
   const reachable = members.filter((c) => !c.doNotDisturb).length;
 
   const [builderOpen, setBuilderOpen] = React.useState(false);
@@ -115,7 +118,9 @@ export function CrmSegments() {
         <Card className="h-fit overflow-hidden">
           <CardHeader title="Saved segments" desc={`${segments.length} filters`} />
           {segments.map((seg) => {
-            const count = contacts.filter(seg.filter).length;
+            const segMembers = contacts.filter(seg.filter);
+            const count = segMembers.length;
+            const read = segmentValueRead(segMembers); // [wave-c] 每群一行钱(治 ledger gap#7)
             const isActive = seg.id === activeId;
             return (
               <button
@@ -133,7 +138,13 @@ export function CrmSegments() {
                     <p className="truncate text-sm font-semibold text-foreground">{seg.name}</p>
                     {seg.custom && <Badge variant="soft">Yours</Badge>}
                   </div>
-                  <p className="mt-0.5 truncate text-xs text-muted-foreground">{seg.desc}</p>
+                  {count > 0 ? (
+                    <p className="mt-0.5 truncate text-xs text-muted-foreground">
+                      {fmtMyr(read.lifetimeMyr)} lifetime · ~{fmtMyr(read.nextMyr)} next order
+                    </p>
+                  ) : (
+                    <p className="mt-0.5 truncate text-xs text-muted-foreground">{seg.desc}</p>
+                  )}
                 </div>
                 <Badge variant={isActive ? "default" : "outline"}>{count}</Badge>
               </button>
@@ -144,9 +155,13 @@ export function CrmSegments() {
         <Card className="overflow-hidden">
           <CardHeader
             title={active?.name ?? "Segment"}
-            desc={active?.desc}
+            desc={
+              members.length > 0
+                ? `${fmtMyr(memberRead.lifetimeMyr)} lifetime · ~${fmtMyr(memberRead.nextMyr)} next order across ${members.length}`
+                : active?.desc
+            }
             action={
-              <div className="flex items-center gap-2">
+              <div className="flex flex-wrap items-center gap-2">
                 {active?.custom && (
                   <Button
                     variant="ghost"
@@ -161,6 +176,13 @@ export function CrmSegments() {
                     Delete
                   </Button>
                 )}
+                {/* [wave-c] stall#32:WhatsApp 群发有了明确入口,与「发社媒帖」分清两条路 */}
+                <Button variant="secondary" size="sm" asChild>
+                  <Link href={`${BASE}/inbox/broadcast?segment=${active?.id ?? ""}`}>
+                    <Megaphone strokeWidth={2} />
+                    Broadcast to this group
+                  </Link>
+                </Button>
                 <Button variant="secondary" size="sm" asChild>
                   <Link href={`${BASE}/schedule/composer?segment=${active?.id ?? ""}`}>
                     <Send strokeWidth={2} />
@@ -306,6 +328,12 @@ function SegmentBuilder({
     setName("");
   };
 
+  // [wave-c] Otto 帮我把老板原话落回描述框(编译成 rule 预览在下方实时更新);不自动保存。
+  const onPhraseApply = (apply: NsAssistApply) => {
+    const next = apply.patch.phrase;
+    if (typeof next === "string") setPhrase(next);
+  };
+
   const save = () => {
     if (rules.length === 0) return;
     const finalName = name.trim() || defaultName(rules);
@@ -334,7 +362,49 @@ function SegmentBuilder({
 
         <div className="flex flex-col gap-4">
           <div className="flex flex-col gap-2">
-            <span className="text-[13px] font-semibold text-foreground">Who are you looking for?</span>
+            <div className="flex items-center justify-between gap-2">
+              <span className="text-[13px] font-semibold text-foreground">Who are you looking for?</span>
+              {/* [wave-c] stall#34:词不中时给「Otto 帮我」——把老板原话编译成一句能命中的描述 */}
+              <OttoAssist
+                zone="CRM"
+                entityLabel="New segment"
+                formState={{ phrase }}
+                label="Otto, help me"
+                intents={[
+                  {
+                    id: "seg-wholesale",
+                    label: "Find my wholesale regulars",
+                    prompt: "Help me build a segment of my wholesale regulars.",
+                    reply: "Try this — it turns into rules you can see before saving:",
+                    apply: {
+                      summary: "Fill the description with wholesale regulars",
+                      patch: { phrase: "Wholesale buyers on WhatsApp who are okay to message" },
+                    },
+                  },
+                  {
+                    id: "seg-quiet",
+                    label: "Who's gone quiet",
+                    prompt: "Help me find good customers who've gone quiet.",
+                    reply: "Here's a starting description for quiet spenders — tweak the numbers to taste:",
+                    apply: {
+                      summary: "Fill the description with quiet spenders",
+                      patch: { phrase: "Spent over RM500, active in last 90 days" },
+                    },
+                  },
+                  {
+                    id: "seg-top",
+                    label: "Top spenders I can message",
+                    prompt: "Help me build a segment of top spenders I'm allowed to message.",
+                    reply: "This one targets your biggest, contactable customers:",
+                    apply: {
+                      summary: "Fill the description with contactable top spenders",
+                      patch: { phrase: "Spent over RM1,000 and okay to message" },
+                    },
+                  },
+                ]}
+                onApply={onPhraseApply}
+              />
+            </div>
             <Textarea
               value={phrase}
               onChange={(e) => setPhrase(e.target.value)}
@@ -347,7 +417,7 @@ function SegmentBuilder({
                   key={ex}
                   type="button"
                   onClick={() => setPhrase(ex)}
-                  className="rounded-full border border-border px-2.5 py-1 text-[11px] font-medium text-muted-foreground hover:bg-accent hover:text-foreground"
+                  className="ns-pressable rounded-full border border-border px-2.5 py-1 text-[11px] font-medium text-muted-foreground hover:bg-accent hover:text-foreground"
                 >
                   {ex}
                 </button>
