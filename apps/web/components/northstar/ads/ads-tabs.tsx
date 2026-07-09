@@ -15,6 +15,7 @@ import { cn } from "@/lib/utils";
 
 const TABS = [
   { key: "performance", label: "Performance", href: "/northstar/ads/performance" },
+  { key: "competitors", label: "Competitors", href: "/northstar/ads/competitors" },
   { key: "builder", label: "Builder", href: "/northstar/ads/builder" },
   { key: "multi-platform", label: "Platforms", href: "/northstar/ads/multi-platform" },
 ] as const;

@@ -31,6 +31,7 @@ const ANALYTICS_VIEWS = [
 
 const ADS_VIEWS = [
   { href: `${BASE}/ads/performance`, label: "Performance" },
+  { href: `${BASE}/ads/competitors`, label: "Competitors" },
   { href: `${BASE}/ads/builder`, label: "Builder" },
   { href: `${BASE}/ads/multi-platform`, label: "Platforms" },
 ] as const;

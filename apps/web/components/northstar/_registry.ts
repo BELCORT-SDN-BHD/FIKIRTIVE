@@ -99,6 +99,7 @@ export const NS_PAGES: NsPage[] = [
   { zoneSlug: "ads", page: "performance", title: "广告表现页", purpose: "逐条 ad 表现与 Otto 诊断(不捏造,带 KB 引用)", path: "/northstar/ads/performance", priority: "P0", current: "live·revamp(今挂分析区视图)", status: "stub", sources: "区划图·广告区/分析区(#128);O-10 判决" },
   { zoneSlug: "ads", page: "builder", title: "广告构建工作台", purpose: "人工建整 campaign 草稿(build=$0,PAUSED)与 ad-write", path: "/northstar/ads/builder", priority: "P1", current: "断电(Otto 卡片流已建)", status: "stub", sources: "区划图·广告区;G7 v2 spec(2026-06-29);宪法 7 双模" },
   { zoneSlug: "ads", page: "multi-platform", title: "多平台投放扩展", purpose: "TikTok → Lazada → Shopee 逐平台连接与投放", path: "/northstar/ads/multi-platform", priority: "P2", current: "未建", status: "stub", sources: "红旗一判决(全要 + 可插拔);蓝图第六章·多平台广告区" },
+  { zoneSlug: "ads", page: "competitors", title: "同行广告透视", purpose: "同城同类对手此刻在投什么(Ad Library 公开数据)→ 按 hook 聚类 → 借角度进创作", path: "/northstar/ads/competitors", priority: "P2", current: "未建", status: "draft", sources: "GOOSEWORKS-MAP §二 B1;Wave-C 总单 C-E" },
 
   // ── 六 Campaign 区 ──
   { zoneSlug: "campaign", page: "workbench", title: "Campaign 工作台(结构化入口)", purpose: "填表即可发起策划,不用会「聊天 prompt」", path: "/northstar/campaign/workbench", priority: "P1", current: "未建", status: "stub", sources: "campaign spec §5.1;第四批判决(专属工作台「要」)" },
