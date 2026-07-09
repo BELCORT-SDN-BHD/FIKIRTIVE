@@ -126,7 +126,20 @@ export const NS_RULES: NsRule[] = [
   },
 ];
 
-/* ── 例程(每日/每周的固定动作序列) ───────────────────────────────────── */
+/* ── 例程(每日/每周的固定动作序列) ─────────────────────────────────────
+ * 授权四件套(O-02+O-05,自动的手要有闸的钱包):每条例程带
+ * ① 预算上限(budgetCapCredits + spentThisMonth,进度条)② 范围声明(scope chips,
+ * 讲清它被允许碰什么)③ kill switch(即 enabled 开关,展开面里点名为「急停闸」)
+ * ④ 事后摘要 / run 历史(runs,最近在前:做了什么 + 花了多少)。 */
+export interface NsRoutineRun {
+  /** 这次跑的人话时间(如「Today · 7:30 am」) */
+  at: string;
+  /** 一句白话:这次做了什么 */
+  summary: string;
+  /** 这次花掉的额度(0 = 没花钱) */
+  spent: number;
+}
+
 export interface NsRoutine {
   id: string;
   name: string;
@@ -134,6 +147,14 @@ export interface NsRoutine {
   steps: string[];
   enabled: boolean;
   nextRun: string;
+  /** 范围声明:这条例程被允许碰的动作面(chips) */
+  scope: string[];
+  /** 本月额度上限(0 = 不花钱的例程) */
+  budgetCapCredits: number;
+  /** 本月已用额度 */
+  spentThisMonth: number;
+  /** 每次运行的事后摘要(最近在前;前 3 条即「最近 3 次 run」) */
+  runs: NsRoutineRun[];
 }
 
 export const NS_ROUTINES: NsRoutine[] = [
@@ -144,6 +165,14 @@ export const NS_ROUTINES: NsRoutine[] = [
     steps: ["Check overnight chats", "Post the day's fresh-bake story", "Flag anything needing you"],
     enabled: true,
     nextRun: "Tomorrow 7:30 am",
+    scope: ["Read WhatsApp chats", "Post one story", "Flag for you"],
+    budgetCapCredits: 200,
+    spentThisMonth: 96,
+    runs: [
+      { at: "Today · 7:30 am", summary: "Posted the kaya-croissant story, flagged 2 chats for you", spent: 8 },
+      { at: "Yesterday · 7:30 am", summary: "Posted the sourdough story, no chats needed you", spent: 8 },
+      { at: "Mon · 7:30 am", summary: "Posted the weekend recap story", spent: 8 },
+    ],
   },
   {
     id: "rtn-02",
@@ -152,6 +181,13 @@ export const NS_ROUTINES: NsRoutine[] = [
     steps: ["Read last week's numbers", "Draft the week's posts", "Line them up for approval"],
     enabled: true,
     nextRun: "Mon 13 Jul 9:00 am",
+    scope: ["Read analytics", "Draft posts", "Send for approval"],
+    budgetCapCredits: 400,
+    spentThisMonth: 180,
+    runs: [
+      { at: "Mon 6 Jul · 9:00 am", summary: "Drafted 5 posts, sent them for your approval", spent: 60 },
+      { at: "Mon 29 Jun · 9:00 am", summary: "Drafted 4 posts, sent them for your approval", spent: 48 },
+    ],
   },
   {
     id: "rtn-03",
@@ -160,15 +196,27 @@ export const NS_ROUTINES: NsRoutine[] = [
     steps: ["Summarise results", "Save the winning posts to brand memory"],
     enabled: false,
     nextRun: "Paused",
+    scope: ["Read campaign results", "Write to brand memory"],
+    budgetCapCredits: 0,
+    spentThisMonth: 0,
+    runs: [
+      { at: "Merdeka week · wrap", summary: "Summarised results, saved 3 winning posts to brand memory", spent: 0 },
+    ],
   },
 ];
 
-/* ── 团队成员(店主取自 NS_BRAND;同事为这一组口径) ───────────────────── */
+/* ── 团队成员(店主取自 NS_BRAND;同事为这一组口径) ─────────────────────
+ * 双档席位(G-01):每个成员占一个席位 —— creator(创作席,全功能:生成/排期/创作)
+ * 或 approver(审批席,只看 + 批,便宜到老板愿意把全店都拉进来)。席位与角色正交:
+ * 一个只负责放行的老板可以是 Manager 角色 + 审批席。 */
+export type NsSeatType = "creator" | "approver";
+
 export interface NsMember {
   id: string;
   name: string;
   email: string;
   role: "Owner" | "Manager" | "Editor";
+  seatType: NsSeatType;
   initials: string;
   /** pending = 已邀请未接受 */
   status: "active" | "pending";
@@ -181,6 +229,7 @@ export const NS_MEMBERS: NsMember[] = [
     name: NS_BRAND.owner,
     email: NS_BRAND.email,
     role: "Owner",
+    seatType: "creator",
     initials: NS_BRAND.owner
       .split(" ")
       .map((w) => w[0])
@@ -195,6 +244,7 @@ export const NS_MEMBERS: NsMember[] = [
     name: "Farah Idris",
     email: "farah@rotibulan.my",
     role: "Manager",
+    seatType: "approver",
     initials: "FI",
     status: "active",
     lastActive: "2h ago",
@@ -204,6 +254,7 @@ export const NS_MEMBERS: NsMember[] = [
     name: "Danish Lim",
     email: "danish@rotibulan.my",
     role: "Editor",
+    seatType: "creator",
     initials: "DL",
     status: "pending",
     lastActive: "Invited 2 days ago",
@@ -214,4 +265,27 @@ export const ROLE_CAN: Record<NsMember["role"], string> = {
   Owner: "Everything, including billing and team",
   Manager: "Create, schedule, approve spend and posts",
   Editor: "Create and draft — spend and posts need approval",
+};
+
+/** 双档席位口径(G-01:审批席更便宜,好让老板把全员拉进来只为放行) */
+export interface NsSeatTier {
+  type: NsSeatType;
+  label: string;
+  priceMyr: number;
+  can: string;
+}
+
+export const SEAT_TIERS: Record<NsSeatType, NsSeatTier> = {
+  creator: {
+    type: "creator",
+    label: "Creator seat",
+    priceMyr: 39,
+    can: "Full studio — generate, edit, schedule, run campaigns",
+  },
+  approver: {
+    type: "approver",
+    label: "Approver seat",
+    priceMyr: 9,
+    can: "View and approve only — no spending, no publishing on their own",
+  },
 };

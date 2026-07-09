@@ -9,7 +9,8 @@
 
 import * as React from "react";
 import Link from "next/link";
-import { ArrowRight, Check, X } from "lucide-react";
+import { ArrowRight, Check, Send, X } from "lucide-react";
+import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { OttoAvatar } from "@/components/otto/OttoAvatar";
@@ -43,6 +44,12 @@ function ApprovalCard({ req }: { req: NsApprovalRequest }) {
       setPending(false);
       // 生成类批准 = Otto 开始干活 → coral sweep;排期/拒绝不带 coral
       if (d === "approved" && isGen) sweep.fire();
+      // toast 回执:批/驳都给一句人话(§FB toast)
+      if (d === "approved") {
+        toast(isGen ? "Approved · Otto is generating" : "Approved · scheduled", { description: req.title });
+      } else {
+        toast("Declined · sent back", { description: req.title });
+      }
       // 落定后提交进共享 store:队列全城缩短(通知页同步)、生成类真扣额度(全城联动)
       window.setTimeout(() => approveRequest(req.id, d === "approved" ? "approve" : "decline"), SETTLE_MS);
     }, 600);
@@ -122,6 +129,7 @@ function ApprovalCard({ req }: { req: NsApprovalRequest }) {
 export function TeamApprovals() {
   useStore(); // 订阅共享 store:审批队列的单一源(通知页 / 首页数字同源)
   const queue = pendingApprovals();
+  const scheduleWaiting = queue.filter((r) => r.kind === "schedule").length;
   return (
     <div className="mx-auto flex min-h-full w-full max-w-[880px] flex-col px-6 pt-6 pb-16">
       <PageHeader
@@ -129,6 +137,18 @@ export function TeamApprovals() {
         subtitle="The queue of things that need a person. Nothing spends or publishes until you approve it."
         actions={<TeamNav />}
       />
+
+      {/* Editor 视角提示条:让老板看见小编那头看到的是什么(「你的排期已送审」) */}
+      {scheduleWaiting > 0 && (
+        <div className="mt-6 flex items-start gap-2.5 rounded-[14px] border border-info-soft bg-info-soft/40 px-4 py-3">
+          <Send className="mt-0.5 size-4 shrink-0 text-info-soft-foreground" strokeWidth={2} />
+          <p className="text-[13px] leading-[18px] text-foreground">
+            <span className="font-semibold">From your editor’s side:</span> their post reads{" "}
+            <span className="font-medium">“Sent for approval”</span> and won’t publish until you tap approve.
+            {scheduleWaiting === 1 ? " One is waiting now." : ` ${scheduleWaiting} are waiting now.`}
+          </p>
+        </div>
+      )}
 
       {queue.length === 0 ? (
         <EmptyState

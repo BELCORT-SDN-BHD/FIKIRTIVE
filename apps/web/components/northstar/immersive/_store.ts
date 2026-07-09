@@ -42,6 +42,7 @@ import {
   type NsConnection,
   type NsRule,
   type NsMember,
+  type NsSeatType,
   type NsRoutine,
 } from "./account-ops/data";
 import type { NsDealStage } from "./crm-inbox/data";
@@ -71,6 +72,8 @@ export type NsEventType =
   | "otto_idle"
   | "ad_submitted"
   | "member_invited"
+  | "member_updated"
+  | "member_removed"
   | "cast_trained"
   | "approval_requested";
 
@@ -500,8 +503,15 @@ export function toggleRoutine(id: string, on: boolean) {
   notify();
 }
 
-/** 新建一条多步例程(automation/routines 的三字段弹窗写入)。触发即 cadence,动作即首步。 */
-export function addRoutine(input: { name: string; cadence: string; step: string }): string {
+/** 新建一条多步例程(automation/routines 的向导写入)。触发即 cadence,动作即首步,
+ * 并带上授权四件套的两件可配项:范围声明 + 本月预算上限(O-02+O-05)。 */
+export function addRoutine(input: {
+  name: string;
+  cadence: string;
+  step: string;
+  scope?: string[];
+  budgetCapCredits?: number;
+}): string {
   const id = `rtn-live-${seq + 1}`;
   const routine: NsRoutine = {
     id,
@@ -510,6 +520,10 @@ export function addRoutine(input: { name: string; cadence: string; step: string 
     steps: [input.step],
     enabled: true,
     nextRun: "Scheduled",
+    scope: input.scope && input.scope.length ? input.scope : [input.step],
+    budgetCapCredits: input.budgetCapCredits ?? 0,
+    spentThisMonth: 0,
+    runs: [],
   };
   state.routines = [routine, ...state.routines];
   logEvent("routine_created", `Created routine · ${input.name}`, { id });
@@ -553,12 +567,40 @@ export function inviteMember(email: string) {
     name: local,
     email: trimmed,
     role: "Editor",
+    seatType: "creator",
     initials,
     status: "pending",
     lastActive: "Invited just now",
   };
   state.members = [...state.members, member];
   logEvent("member_invited", `Invited ${trimmed} as an editor`, { email: trimmed });
+  notify();
+}
+
+/** 改成员角色(Manage 弹窗;Owner 不可改) */
+export function setMemberRole(id: string, role: NsMember["role"]) {
+  const m = state.members.find((x) => x.id === id);
+  if (!m || m.role === "Owner") return;
+  state.members = state.members.map((x) => (x.id === id ? { ...x, role } : x));
+  logEvent("member_updated", `Changed ${m.name}'s role to ${role.toLowerCase()}`, { id, role });
+  notify();
+}
+
+/** 改成员席位档(creator 创作席 / approver 审批席;Owner 恒为 creator) */
+export function setMemberSeat(id: string, seatType: NsSeatType) {
+  const m = state.members.find((x) => x.id === id);
+  if (!m || m.role === "Owner") return;
+  state.members = state.members.map((x) => (x.id === id ? { ...x, seatType } : x));
+  logEvent("member_updated", `Moved ${m.name} to the ${seatType} seat`, { id, seatType });
+  notify();
+}
+
+/** 移出团队(Manage 弹窗;Owner 不可移) */
+export function removeMember(id: string) {
+  const m = state.members.find((x) => x.id === id);
+  if (!m || m.role === "Owner") return;
+  state.members = state.members.filter((x) => x.id !== id);
+  logEvent("member_removed", `Removed ${m.name} from the team`, { id });
   notify();
 }
 

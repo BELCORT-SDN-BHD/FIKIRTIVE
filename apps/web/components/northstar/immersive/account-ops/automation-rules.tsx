@@ -9,7 +9,7 @@
 
 import * as React from "react";
 import Link from "next/link";
-import { ArrowRight, Plus, Sparkles } from "lucide-react";
+import { ArrowRight, Lock, Plus, Sparkles } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Switch } from "@/components/ui/switch";
 import {
@@ -25,6 +25,23 @@ import { PageHeader } from "@/components/northstar/_shared";
 import { addRule, aiHandledCount, rules, toggleAutomationRule, useStore } from "../_store";
 import { ACCOUNT_OPS_BASE as BASE, AutomationNav, Card } from "./kit";
 import { type NsRule } from "./data";
+
+/** 平台铁律(宪法硬约束:不可关、不可配,与下方可配置规则视觉分区)。
+ * 这些永远优先于任何自定义规则 —— 人插手即停、勿扰名单、花钱先审。 */
+const IRON_LAWS: { title: string; detail: string }[] = [
+  {
+    title: "You reply, Otto steps back",
+    detail: "The moment you type in a chat, Otto stops auto-answering that person until you hand it back.",
+  },
+  {
+    title: "The do-not-disturb list is never messaged",
+    detail: "Anyone you mark do-not-disturb is off-limits to every rule and routine — no exceptions.",
+  },
+  {
+    title: "Nothing spends or publishes on its own",
+    detail: "Any action that costs credits or posts publicly waits for a person to approve it.",
+  },
+];
 
 /** 「Draft a rule」按钮的预填(照 Otto 的建议条口径,让草稿看起来像真的从建议来的) */
 const OTTO_DRAFT: RuleDraft = {
@@ -119,6 +136,30 @@ export function AutomationRules() {
           </>
         }
       />
+
+      {/* 平台铁律区(硬约束,不可关;与下方可配置规则视觉区分:locked 框 + Always on 标) */}
+      <section className="mt-6 rounded-[18px] border border-border bg-secondary/40" aria-label="Platform rules">
+        <div className="flex items-center gap-2 border-b border-border px-4 py-3">
+          <Lock className="size-4 text-muted-foreground" strokeWidth={2} />
+          <h2 className="text-sm font-semibold text-foreground">Platform rules</h2>
+          <span className="ml-auto inline-flex items-center rounded-full bg-secondary px-2.5 py-0.5 font-mono text-[10px] leading-[14px] font-medium tracking-[0.06em] text-muted-foreground uppercase">
+            Always on
+          </span>
+        </div>
+        <ul className="divide-y divide-border">
+          {IRON_LAWS.map((law) => (
+            <li key={law.title} className="flex items-start gap-3 px-4 py-3">
+              <span className="mt-0.5 flex size-5 shrink-0 items-center justify-center rounded-full bg-secondary">
+                <Lock className="size-3 text-muted-foreground" strokeWidth={2} />
+              </span>
+              <div className="min-w-0">
+                <p className="text-[13px] leading-[18px] font-semibold text-foreground">{law.title}</p>
+                <p className="mt-0.5 text-[13px] leading-[18px] text-muted-foreground">{law.detail}</p>
+              </div>
+            </li>
+          ))}
+        </ul>
+      </section>
 
       {/* Otto 建议条(本屏唯一 coral statement;「Draft a rule」预填 Otto 建议进创建弹窗) */}
       <div className="mt-6 flex flex-wrap items-center gap-3 rounded-[18px] border border-brand-soft bg-brand-soft/50 px-4 py-3.5">
