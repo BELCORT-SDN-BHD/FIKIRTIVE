@@ -20,9 +20,10 @@ import {
 import { cn } from "@/lib/utils";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
+import { useQueryParam } from "../immersive/_kit";
 import { MockNote, OttoNarrationBar, PageHeader } from "../_shared";
 import { nsPlaceholder } from "../_mock";
-import { NS_ASSETS } from "./_fixtures";
+import { CV_ALL_SEED_OBJECTS, NS_ASSETS, type CvObject } from "./_fixtures";
 import {
   SectionLabel,
   SpendConfirmDialog,
@@ -39,38 +40,52 @@ type Lifecycle = "ready" | "queued" | "generating" | "noise" | "extracting";
 
 export function MediaEditorPage() {
   useCreateKeyframes();
-  const [tab, setTab] = React.useState<Tab>("video");
+  // 深链 ?asset=<id> → 载入那个画布对象;缺省回到示意资产(GOAL §4)
+  const assetId = useQueryParam("asset");
+  const asset = React.useMemo(() => CV_ALL_SEED_OBJECTS.find((o) => o.id === assetId) ?? null, [assetId]);
+  const [tab, setTab] = React.useState<Tab>(asset?.kind ?? "video");
 
   return (
     <div className="mx-auto flex min-h-full w-full max-w-[1280px] flex-col px-6 pt-6 pb-10">
       <PageHeader
         title="Media editor"
-        subtitle="Fix and cut a generated object in place. Edits stay on the object, versions stay in its history."
+        subtitle={
+          asset
+            ? `Editing ${asset.ref} · ${asset.title}. Edits stay on the object, versions stay in its history.`
+            : "Fix and cut a generated object in place. Edits stay on the object, versions stay in its history."
+        }
         actions={
-          <div className="flex rounded-[10px] border border-border bg-card p-0.5">
-            {(["image", "video"] as Tab[]).map((t) => {
-              const Icon = t === "image" ? ImageIcon : Video;
-              return (
-                <button
-                  key={t}
-                  type="button"
-                  aria-pressed={tab === t}
-                  onClick={() => setTab(t)}
-                  className={cn(
-                    "flex h-[30px] items-center gap-1.5 rounded-lg px-3 text-xs font-semibold capitalize transition-colors duration-[120ms]",
-                    tab === t ? "bg-secondary text-foreground" : "text-muted-foreground hover:text-foreground",
-                  )}
-                >
-                  <Icon className="size-3.5" strokeWidth={2} />
-                  {t}
-                </button>
-              );
-            })}
+          <div className="flex items-center gap-2">
+            {asset && (
+              <Badge variant="outline" className="hidden font-mono text-muted-foreground sm:inline-flex">
+                {asset.ref}
+              </Badge>
+            )}
+            <div className="flex rounded-[10px] border border-border bg-card p-0.5">
+              {(["image", "video"] as Tab[]).map((t) => {
+                const Icon = t === "image" ? ImageIcon : Video;
+                return (
+                  <button
+                    key={t}
+                    type="button"
+                    aria-pressed={tab === t}
+                    onClick={() => setTab(t)}
+                    className={cn(
+                      "flex h-[30px] items-center gap-1.5 rounded-lg px-3 text-xs font-semibold capitalize transition-colors duration-[120ms]",
+                      tab === t ? "bg-secondary text-foreground" : "text-muted-foreground hover:text-foreground",
+                    )}
+                  >
+                    <Icon className="size-3.5" strokeWidth={2} />
+                    {t}
+                  </button>
+                );
+              })}
+            </div>
           </div>
         }
       />
 
-      <div className="mt-6">{tab === "image" ? <ImageEditor /> : <VideoEditor />}</div>
+      <div className="mt-6">{tab === "image" ? <ImageEditor asset={asset} /> : <VideoEditor asset={asset} />}</div>
 
       <MockNote path="/northstar/create/media-editor" />
     </div>
@@ -78,7 +93,9 @@ export function MediaEditorPage() {
 }
 
 /* ── 图编辑:Crop + 修图(D4) ─────────────────────────────────────────── */
-function ImageEditor() {
+function ImageEditor({ asset }: { asset: CvObject | null }) {
+  const imgSrc = asset?.kind === "image" ? asset.src : NS_ASSETS[0].thumb;
+  const imgAlt = asset?.kind === "image" ? asset.title : NS_ASSETS[0].title;
   const [aspect, setAspect] = React.useState<(typeof ASPECTS)[number]>("1:1");
   const [brightness, setBrightness] = React.useState(0);
   const [contrast, setContrast] = React.useState(0);
@@ -122,8 +139,8 @@ function ImageEditor() {
           <>
             {/* eslint-disable-next-line @next/next/no-img-element */}
             <img
-              src={NS_ASSETS[0].thumb}
-              alt={NS_ASSETS[0].title}
+              src={imgSrc}
+              alt={imgAlt}
               className={cn("aspect-square w-full object-cover", lifecycle === "noise" && "opacity-60 blur-[2px]")}
               style={{ filter: `brightness(${1 + brightness / 100}) contrast(${1 + contrast / 100})` }}
             />
@@ -256,7 +273,9 @@ function ImageEditor() {
 }
 
 /* ── 视频编辑:Trim / Extract frame / 特效(D5/E2/E3) ────────────────── */
-function VideoEditor() {
+function VideoEditor({ asset }: { asset: CvObject | null }) {
+  const posterSrc = asset?.kind === "video" ? asset.src : nsPlaceholder("Croissant reel · frame", 1280, 720, "video");
+  const posterAlt = asset?.kind === "video" ? asset.title : "Croissant fold reel";
   const totalFrames = 36; // 6s × 6fps 帧轨示意
   const [inFrame, setInFrame] = React.useState(4);
   const [outFrame, setOutFrame] = React.useState(30);
@@ -302,8 +321,8 @@ function VideoEditor() {
         <div className="relative overflow-hidden rounded-[18px] border border-border bg-card">
           {/* eslint-disable-next-line @next/next/no-img-element */}
           <img
-            src={nsPlaceholder("Croissant reel · frame", 1280, 720, "video")}
-            alt="Croissant fold reel"
+            src={posterSrc}
+            alt={posterAlt}
             className="aspect-video w-full object-cover"
           />
           <span className="absolute top-3 left-3 rounded-full bg-primary/75 px-2 py-0.5 font-mono text-[10px] leading-4 font-medium text-primary-foreground tabular-nums">

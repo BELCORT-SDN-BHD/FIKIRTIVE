@@ -20,11 +20,12 @@ import {
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { useInsideImmersive } from "../immersive/_context";
+import { useQueryParam } from "../immersive/_kit";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { MockNote, OttoNarrationBar } from "../_shared";
 import { nsPlaceholder } from "../_mock";
-import { NS_VIEWER_ASSET, NS_VIEWER_FRAMES, NS_VIEWER_VERSIONS, type NsViewerVersion } from "./_fixtures";
+import { CV_ALL_SEED_OBJECTS, NS_VIEWER_ASSET, NS_VIEWER_FRAMES, NS_VIEWER_VERSIONS, type NsViewerVersion } from "./_fixtures";
 import {
   DemoStateBar,
   ErrorPanel,
@@ -39,6 +40,19 @@ import {
 export function AssetViewerPage() {
   useCreateKeyframes();
   const insideImmersive = useInsideImmersive();
+  // 深链 ?asset=<id> → 展示那个画布对象;缺省回到示意资产(GOAL §4)
+  const assetId = useQueryParam("asset");
+  const linked = React.useMemo(() => CV_ALL_SEED_OBJECTS.find((o) => o.id === assetId) ?? null, [assetId]);
+  const view = {
+    id: linked?.id ?? NS_VIEWER_ASSET.id,
+    title: linked?.title ?? NS_VIEWER_ASSET.title,
+    poster: linked?.src ?? NS_VIEWER_ASSET.poster,
+    prompt: linked?.prompt ?? NS_VIEWER_ASSET.prompt,
+    kind: linked?.kind ?? NS_VIEWER_ASSET.kind,
+    duration: linked?.duration ?? NS_VIEWER_ASSET.duration,
+    credits: linked?.credits ?? NS_VIEWER_ASSET.credits,
+    resolution: NS_VIEWER_ASSET.resolution,
+  };
   const [versions, setVersions] = React.useState<NsViewerVersion[]>(NS_VIEWER_VERSIONS);
   const [activeVersion, setActiveVersion] = React.useState<string>(NS_VIEWER_VERSIONS[0].id);
   const [playing, setPlaying] = React.useState(false);
@@ -86,10 +100,10 @@ export function AssetViewerPage() {
           <ArrowLeft className="size-4" strokeWidth={2} />
           Canvas
         </Link>
-        <span className="truncate text-sm font-semibold text-foreground">{NS_VIEWER_ASSET.title}</span>
+        <span className="truncate text-sm font-semibold text-foreground">{view.title}</span>
         {!insideImmersive && (
           <Badge variant="outline" className="hidden text-muted-foreground sm:inline-flex">
-            ?asset={NS_VIEWER_ASSET.id}
+            ?asset={view.id}
           </Badge>
         )}
         <div className="flex-1" />
@@ -160,7 +174,7 @@ export function AssetViewerPage() {
               ) : (
                 <div className="relative w-full max-w-[840px] overflow-hidden rounded-[18px] border border-border bg-card" style={LAND_STYLE}>
                   {/* eslint-disable-next-line @next/next/no-img-element */}
-                  <img src={NS_VIEWER_ASSET.poster} alt={NS_VIEWER_ASSET.title} className="aspect-video w-full object-cover" />
+                  <img src={view.poster} alt={view.title} className="aspect-video w-full object-cover" />
                   <span className="absolute top-3 left-3 rounded-full bg-primary/75 px-2 py-0.5 font-mono text-[10px] leading-4 font-medium text-primary-foreground">
                     {active.label}
                   </span>
@@ -172,7 +186,7 @@ export function AssetViewerPage() {
                       <span className={cn("block h-full rounded-full bg-primary-foreground transition-all duration-[200ms]", playing ? "w-3/4" : "w-1/4")} />
                     </span>
                     <span className="font-mono text-[11px] leading-[14px] text-primary-foreground tabular-nums">
-                      {playing ? "4.5s" : "1.5s"} / {NS_VIEWER_ASSET.duration}s
+                      {playing ? "4.5s" : "1.5s"} / {view.duration}s
                     </span>
                     <Volume2 className="size-4 text-primary-foreground" strokeWidth={2} />
                     <Repeat className="size-4 text-primary-foreground/70" strokeWidth={2} />
@@ -237,7 +251,7 @@ export function AssetViewerPage() {
                   </Button>
                 </div>
                 <Button type="button" variant="secondary" size="sm" className="h-9" disabled={working} onClick={() => continueWrite("Regenerated take")}>
-                  {working ? "Regenerating…" : `Regenerate · ${NS_VIEWER_ASSET.credits} credits`}
+                  {working ? "Regenerating…" : `Regenerate · ${view.credits} credits`}
                 </Button>
               </form>
               <p className="mx-auto mt-1.5 max-w-[840px] text-[11px] text-muted-foreground">
@@ -265,10 +279,10 @@ export function AssetViewerPage() {
               <SectionLabel>Details</SectionLabel>
               <dl className="mt-2 space-y-2">
                 {[
-                  ["Kind", "Video"],
-                  ["Duration", `${NS_VIEWER_ASSET.duration}s`],
-                  ["Resolution", NS_VIEWER_ASSET.resolution],
-                  ["Cost", `${NS_VIEWER_ASSET.credits} credits`],
+                  ["Kind", view.kind === "image" ? "Image" : "Video"],
+                  ["Duration", `${view.duration}s`],
+                  ["Resolution", view.resolution],
+                  ["Cost", `${view.credits} credits`],
                   ["Versions", String(versions.length)],
                 ].map(([k, v]) => (
                   <div key={k} className="flex items-baseline justify-between gap-2">
@@ -280,7 +294,7 @@ export function AssetViewerPage() {
             </div>
             <div className="rounded-[14px] border border-border bg-card p-4">
               <SectionLabel>Prompt</SectionLabel>
-              <p className="mt-2 text-[13px] leading-[18px] text-foreground">{NS_VIEWER_ASSET.prompt}</p>
+              <p className="mt-2 text-[13px] leading-[18px] text-foreground">{view.prompt}</p>
             </div>
           </aside>
         </div>

@@ -97,11 +97,95 @@ export const CV_SEED_TURNS: CvChatTurn[] = [
   },
 ];
 
+// ── 每 session 独立的画布 / chat 池(切换即换内容;GOAL A3 sessions 真实化) ──
+// 各 session 有自己的 objects/turns;切会话 = 换整块工作区内容,不再共用一份 seed。
+export interface CvSessionSeed {
+  objects: CvObject[];
+  turns: CvChatTurn[];
+}
+
+const CV_SEED_OBJECTS_SS2: CvObject[] = [
+  {
+    id: "cv2-vid-1", ref: "Video 1", kind: "video", title: "6am croissant fold",
+    prompt: "Hands folding croissant dough on a floured counter at dawn, slow reel, warm kitchen light",
+    src: nsPlaceholder("Video 1 · fold", 360, 640, "video"),
+    x: 40, y: 60, w: 168, h: 300, status: "ready", duration: 6, credits: 40,
+  },
+  {
+    id: "cv2-vid-2", ref: "Video 2", kind: "video", title: "Lamination close-up",
+    prompt: "Macro of butter layers in laminated dough being rolled, steam, soft morning light",
+    src: nsPlaceholder("Video 2 · A", 360, 640, "video"),
+    x: 280, y: 40, w: 168, h: 300, status: "ready", parentId: "cv2-vid-1", fork: "A", duration: 6, credits: 40,
+  },
+  {
+    id: "cv2-img-1", ref: "Image 1", kind: "image", title: "Finished croissant hero",
+    prompt: "A single glossy croissant on brown paper, top light, crumbs, shallow depth of field",
+    src: nsPlaceholder("Image 1 · hero", 640, 640, "crust"),
+    x: 520, y: 80, w: 224, h: 224, status: "ready", credits: 12,
+  },
+];
+
+const CV_SEED_TURNS_SS2: CvChatTurn[] = [
+  { id: "t2-1", from: "user", text: "Let's build the croissant reel. Start with the 6am fold." },
+  {
+    id: "t2-2", from: "otto",
+    text: "Here's the fold clip. I kept it slow and warm so the lamination reads.",
+    steps: ["Thinking", "Reading brand memory", "Generating Video 1"],
+    objectIds: ["cv2-vid-1"],
+  },
+];
+
+const CV_SEED_OBJECTS_SS3: CvObject[] = [
+  {
+    id: "cv3-img-1", ref: "Image 1", kind: "image", title: "Menu card base",
+    prompt: "Clean menu card layout on kraft paper, batik border, hand-lettered header, top-down",
+    src: nsPlaceholder("Image 1 · card", 640, 640, "neutral"),
+    x: 40, y: 60, w: 224, h: 224, status: "ready", credits: 12,
+  },
+  {
+    id: "cv3-img-2", ref: "Image 2", kind: "image", title: "Card · pandan palette",
+    prompt: "Same menu card, pandan-green accent palette, softer type, morning light",
+    src: nsPlaceholder("Image 2 · A", 640, 640, "pandan"),
+    x: 320, y: 24, w: 200, h: 200, status: "ready", parentId: "cv3-img-1", fork: "A", credits: 12,
+  },
+  {
+    id: "cv3-img-3", ref: "Image 3", kind: "image", title: "Card · kopi palette",
+    prompt: "Same menu card, warm kopi-brown palette, retro kopitiam type, top-down",
+    src: nsPlaceholder("Image 3 · B", 640, 640, "kopi"),
+    x: 320, y: 260, w: 200, h: 200, status: "ready", parentId: "cv3-img-1", fork: "B", credits: 12,
+  },
+];
+
+const CV_SEED_TURNS_SS3: CvChatTurn[] = [
+  { id: "t3-1", from: "user", text: "Refresh the menu card. Try a pandan and a kopi palette." },
+  {
+    id: "t3-2", from: "otto",
+    text: "Two directions branched from the base card: Image 2 is pandan-green, Image 3 is kopi-brown.",
+    steps: ["Reading the base card", "Generating Image 2", "Generating Image 3"],
+    objectIds: ["cv3-img-2", "cv3-img-3"],
+  },
+];
+
+/** 每 session 的初始画布内容(首次切入时用;之后 canvas 在内存里保留本会话编辑)。 */
+export const CV_SESSION_SEEDS: Record<string, CvSessionSeed> = {
+  "ss-1": { objects: CV_SEED_OBJECTS, turns: CV_SEED_TURNS },
+  "ss-2": { objects: CV_SEED_OBJECTS_SS2, turns: CV_SEED_TURNS_SS2 },
+  "ss-3": { objects: CV_SEED_OBJECTS_SS3, turns: CV_SEED_TURNS_SS3 },
+};
+
+/** 全 session 的种子对象拍平 —— 深链(?asset=id)按 id 查找的单一源。 */
+export const CV_ALL_SEED_OBJECTS: CvObject[] = [
+  ...CV_SEED_OBJECTS,
+  ...CV_SEED_OBJECTS_SS2,
+  ...CV_SEED_OBJECTS_SS3,
+];
+
 // ── Projects / History(GOAL A3/I2) ────────────────────────────────────────
+// project → 打开对应 session(点缩略图切工作区;campaign/archive 各映到一个会话)。
 export const CV_PROJECTS = [
-  { id: "pj-1", name: "Merdeka week bakes", count: 9, thumb: nsPlaceholder("Project", 320, 200, "crust") },
-  { id: "pj-2", name: "Everyday menu", count: 14, thumb: nsPlaceholder("Project", 320, 200, "pandan") },
-  { id: "pj-3", name: "Raya archive", count: 22, thumb: nsPlaceholder("Project", 320, 200, "kopi") },
+  { id: "pj-1", name: "Merdeka week bakes", count: 9, thumb: nsPlaceholder("Project", 320, 200, "crust"), sessionId: "ss-1" },
+  { id: "pj-2", name: "Everyday menu", count: 14, thumb: nsPlaceholder("Project", 320, 200, "pandan"), sessionId: "ss-3" },
+  { id: "pj-3", name: "Raya archive", count: 22, thumb: nsPlaceholder("Project", 320, 200, "kopi"), sessionId: "ss-2" },
 ] as const;
 
 export const CV_HISTORY = NS_ASSETS.map((a) => ({

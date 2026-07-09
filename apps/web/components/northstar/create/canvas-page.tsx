@@ -17,9 +17,11 @@ import {
   ArrowUp,
   Bot,
   ChevronDown,
+  Columns2,
   Copy,
   Crop,
   Download,
+  GitBranch,
   Image as ImageIcon,
   Layers,
   Maximize2,
@@ -29,6 +31,7 @@ import {
   Play,
   Plus,
   Repeat,
+  Scan,
   Scissors,
   Search,
   Square,
@@ -36,19 +39,25 @@ import {
   Video,
   Volume2,
   Wand2,
+  X,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip";
 import { useInsideImmersive } from "../immersive/_context";
+import {
+  balance as getBalance,
+  ottoWorking as setOttoWorking,
+  recentEvents,
+  spendCredits,
+  useStore,
+} from "../immersive/_store";
 import { MockNote } from "../_shared";
-import { NS_BRAND } from "../_mock";
 import {
   CV_HISTORY,
   CV_PROJECTS,
-  CV_SEED_OBJECTS,
-  CV_SEED_TURNS,
+  CV_SESSION_SEEDS,
   CV_SESSIONS,
   nsPlaceholder,
   type CvChatTurn,
@@ -65,22 +74,52 @@ import {
 } from "./_create-ui";
 
 type Mode = "image" | "video" | "agent";
-type SideTab = "chat" | "projects" | "history";
+type SideTab = "chat" | "projects" | "history" | "tree";
 
 const VIDEO_COST = 40;
 const IMAGE_COST = 12;
 const CLIP_COUNT = 4;
+const STITCH_COST = 20;
+const ZOOM_MIN = 0.25;
+const ZOOM_MAX = 3;
 
 interface GenJob {
   objectId: string;
   pct: number;
 }
 
+/** 视觉 group frame(F1:Group)—— 记录成员 + 一个 label,画布画外框。 */
+interface CvGroup {
+  id: string;
+  objectIds: string[];
+  label: string;
+}
+
+/** 两对象是否同源可比(父子 / 同父兄弟)—— evolve 分叉并排对比闸(GOAL §6)。 */
+function comparable(a: CvObject, b: CvObject): boolean {
+  if (a.kind !== b.kind) return false;
+  return a.parentId === b.id || b.parentId === a.id || (!!a.parentId && a.parentId === b.parentId);
+}
+
+/** 从一组对象派生下一个可寻址名的计数(切会话后名号接得上)。 */
+function deriveCounters(objs: CvObject[]): { image: number; video: number } {
+  let image = 0;
+  let video = 0;
+  for (const o of objs) {
+    const n = Number(o.ref.replace(/\D+/g, "")) || 0;
+    if (o.kind === "image") image = Math.max(image, n);
+    else video = Math.max(video, n);
+  }
+  return { image, video };
+}
+
 export function CanvasPage() {
   useCreateKeyframes();
+  useStore(); // 订阅共享 store(余额 / Otto 工作态 / 事件流 = 单一循环系统)
 
-  // 可寻址名计数(C2:Image 1/2… Video 1/2…)— 只在事件处理器里改
-  const refCounter = React.useRef({ image: 3, video: 1 });
+  const firstSession = CV_SESSIONS[0].id;
+  // 可寻址名计数(C2:Image 1/2… Video 1/2…)— 只在事件处理器里改;从首个会话种子派生
+  const refCounter = React.useRef(deriveCounters(CV_SESSION_SEEDS[firstSession].objects));
   const uidCounter = React.useRef(0);
   const nextUid = () => {
     uidCounter.current += 1;
@@ -88,7 +127,7 @@ export function CanvasPage() {
   };
 
   // ── 画布状态 ──
-  const [objects, setObjects] = React.useState<CvObject[]>(CV_SEED_OBJECTS);
+  const [objects, setObjects] = React.useState<CvObject[]>(CV_SESSION_SEEDS[firstSession].objects);
   const [selected, setSelected] = React.useState<string[]>([]);
   const [zoom, setZoom] = React.useState(1);
   const [pan, setPan] = React.useState({ x: 0, y: 0 });
@@ -98,11 +137,15 @@ export function CanvasPage() {
   const [copied, setCopied] = React.useState(false);
   const [playingVideo, setPlayingVideo] = React.useState<string | null>(null);
   const [undoChip, setUndoChip] = React.useState<CvObject[] | null>(null);
+  const [groups, setGroups] = React.useState<CvGroup[]>([]);
+  const [compareIds, setCompareIds] = React.useState<string[] | null>(null);
+  const [flash, setFlash] = React.useState<string | null>(null);
+  const flashTimer = React.useRef<number | null>(null);
 
   // ── 会话 / chat 状态 ──
-  const [sessionId, setSessionId] = React.useState<string>(CV_SESSIONS[0].id);
+  const [sessionId, setSessionId] = React.useState<string>(firstSession);
   const [sessionMenu, setSessionMenu] = React.useState(false);
-  const [turns, setTurns] = React.useState<CvChatTurn[]>(CV_SEED_TURNS);
+  const [turns, setTurns] = React.useState<CvChatTurn[]>(CV_SESSION_SEEDS[firstSession].turns);
   const [mode, setMode] = React.useState<Mode>("agent");
   const [draft, setDraft] = React.useState("");
   const [streaming, setStreaming] = React.useState(false);
@@ -115,8 +158,8 @@ export function CanvasPage() {
   // (Search + Chat 会话 + Projects),不再并列成第二条全局导航(蓝图 canvas double-rail 修法)。
   const insideImmersive = useInsideImmersive();
 
-  // ── 生成 / 花费状态 ──
-  const [balance, setBalance] = React.useState<number>(NS_BRAND.creditBalance);
+  // ── 生成 / 花费状态 ──（余额是 store 的,不再本地 fork）
+  const bal = getBalance();
   const [jobs, setJobs] = React.useState<GenJob[]>([]);
   const [narration, setNarration] = React.useState<string | null>(null);
   const [historyNew, setHistoryNew] = React.useState(0);
@@ -124,8 +167,17 @@ export function CanvasPage() {
     | { kind: "make-video"; sourceId: string }
     | { kind: "evolve-video"; sourceId: string; prompt: string }
     | { kind: "agent-batch"; prompt: string }
+    | { kind: "stitch"; ids: string[] }
     | null
   >(null);
+
+  // 轻量 toast(诚实反馈:download / play both 等无真产物的动作)—— 复用底部居中 chip。
+  const showFlash = React.useCallback((msg: string) => {
+    setFlash(msg);
+    if (flashTimer.current) window.clearTimeout(flashTimer.current);
+    flashTimer.current = window.setTimeout(() => setFlash(null), 2600);
+  }, []);
+  React.useEffect(() => () => { if (flashTimer.current) window.clearTimeout(flashTimer.current); }, []);
 
   const timersRef = React.useRef<number[]>([]);
   React.useEffect(() => () => timersRef.current.forEach((t) => window.clearInterval(t)), []);
@@ -139,7 +191,7 @@ export function CanvasPage() {
     if (!el) return;
     const onWheel = (e: WheelEvent) => {
       e.preventDefault();
-      setZoom((z) => Math.min(1.6, Math.max(0.4, z - Math.sign(e.deltaY) * 0.1)));
+      setZoom((z) => Math.min(ZOOM_MAX, Math.max(ZOOM_MIN, z - Math.sign(e.deltaY) * 0.1)));
     };
     el.addEventListener("wheel", onWheel, { passive: false });
     return () => el.removeEventListener("wheel", onWheel);
@@ -175,6 +227,7 @@ export function CanvasPage() {
       setObjects((prev) => [...prev, ...newObjects]);
       setJobs((prev) => [...prev, ...newObjects.map((o) => ({ objectId: o.id, pct: 0 }))]);
       setNarration(narrationText);
+      setOttoWorking(true, narrationText.replace(/…$/, "")); // 生成开始 → dock 徽点脉冲
       newObjects.forEach((obj, i) => {
         const timer = window.setInterval(() => {
           setJobs((prev) => {
@@ -194,6 +247,7 @@ export function CanvasPage() {
                   setNarration(null);
                   setJobs([]);
                 }, 400);
+                setOttoWorking(false); // 全部完成 → Otto idle
                 onAllDone?.();
               }
             }
@@ -211,7 +265,7 @@ export function CanvasPage() {
     refCounter.current.image += 1;
     const n = refCounter.current.image;
     const id = `cv-img-${n}-${nextUid()}`;
-    setBalance((b) => b - IMAGE_COST); // 图直出:余额即闸,立即入账
+    spendCredits(IMAGE_COST, prompt.slice(0, 40) || "New image", "Image"); // 图直出:余额即闸,store 立即入账
     startGeneration(
       [
         {
@@ -238,7 +292,7 @@ export function CanvasPage() {
     refCounter.current.video += 1;
     const n = refCounter.current.video;
     const id = `cv-vid-${n}-${nextUid()}`;
-    setBalance((b) => b - VIDEO_COST); // 边界 A:确认后立即入账,余额即时刷新
+    spendCredits(VIDEO_COST, prompt.slice(0, 40) || "New video", "Video"); // 边界 A:确认后立即入账,余额即时刷新
     startGeneration(
       [
         {
@@ -288,7 +342,7 @@ export function CanvasPage() {
   };
 
   const confirmAgentBatch = (prompt: string) => {
-    setBalance((b) => b - CLIP_COUNT * VIDEO_COST);
+    spendCredits(CLIP_COUNT * VIDEO_COST, `${CLIP_COUNT} clips · ${prompt.slice(0, 28)}`, "Video");
     const bandY = 540;
     const clips: CvObject[] = Array.from({ length: CLIP_COUNT }, (_, i) => {
       refCounter.current.video += 1;
@@ -404,14 +458,137 @@ export function CanvasPage() {
   const deleteObjects = (ids: string[]) => {
     const removed = objects.filter((o) => ids.includes(o.id));
     setObjects((prev) => prev.filter((o) => !ids.includes(o.id)));
+    setGroups((prev) =>
+      prev
+        .map((g) => ({ ...g, objectIds: g.objectIds.filter((id) => !ids.includes(id)) }))
+        .filter((g) => g.objectIds.length > 1),
+    );
     setSelected([]);
     setUndoChip(removed);
     window.setTimeout(() => setUndoChip((u) => (u === removed ? null : u)), 8000);
   };
 
+  /* ── 会话切换(GOAL §2:每 session 独立 objects/turns 池;切换即换内容) ──
+   * 把当前会话内容 stash 进 poolRef,载入目标会话(首访用种子,回访保留本会话编辑)。 */
+  const poolRef = React.useRef<Record<string, { objects: CvObject[]; turns: CvChatTurn[] }>>({});
+  const switchSession = (id: string) => {
+    if (id === sessionId) return;
+    // 停掉本会话在跑的生成计时器,快照落地为 ready —— 不让跨会话的 setState 污染下一屏
+    timersRef.current.forEach((t) => window.clearInterval(t));
+    timersRef.current = [];
+    const cleaned = objects.map((o) => (o.status === "generating" ? { ...o, status: "ready" as const } : o));
+    poolRef.current[sessionId] = { objects: cleaned, turns };
+    const next = poolRef.current[id] ?? CV_SESSION_SEEDS[id];
+    setObjects(next.objects);
+    setTurns(next.turns);
+    refCounter.current = deriveCounters(next.objects);
+    setSessionId(id);
+    setJobs([]);
+    setNarration(null);
+    setOttoWorking(false);
+    setSelected([]);
+    setGroups([]);
+    setPromptFor(null);
+    setPlayingVideo(null);
+    setCompareIds(null);
+  };
+
+  /* ── 多选批量条动作(F1:全部接线,零死按钮) ── */
+  const duplicateSelected = () => {
+    const clones = selectedObjects.map((o) => {
+      const isImg = o.kind === "image";
+      if (isImg) refCounter.current.image += 1;
+      else refCounter.current.video += 1;
+      const n = isImg ? refCounter.current.image : refCounter.current.video;
+      return {
+        ...o,
+        id: `${o.kind === "image" ? "cv-img" : "cv-vid"}-${n}-${nextUid()}`,
+        ref: `${isImg ? "Image" : "Video"} ${n}`,
+        title: `${o.title} copy`,
+        x: o.x + 32,
+        y: o.y + 32,
+        parentId: undefined,
+        fork: undefined,
+        status: "ready" as const,
+      };
+    });
+    setObjects((prev) => [...prev, ...clones]);
+    setSelected(clones.map((c) => c.id));
+    showFlash(`Duplicated ${clones.length} ${clones.length === 1 ? "object" : "objects"}`);
+  };
+
+  const groupSelected = () => {
+    const ids = selected.slice();
+    if (ids.length < 2) return;
+    setGroups((prev) => [
+      ...prev,
+      { id: `grp-${nextUid()}`, objectIds: ids, label: `Group ${prev.length + 1}` },
+    ]);
+    showFlash(`Grouped ${ids.length} objects`);
+  };
+
+  const stitchVideos = (ids: string[]) => {
+    const parts = objects.filter((o) => ids.includes(o.id));
+    if (parts.length < 2) return;
+    refCounter.current.video += 1;
+    const n = refCounter.current.video;
+    const anchor = parts[0];
+    const totalDur = parts.reduce((s, p) => s + (p.duration ?? 6), 0);
+    spendCredits(STITCH_COST, `Stitch ${parts.map((p) => p.ref).join(" + ")}`, "Video");
+    startGeneration(
+      [
+        {
+          id: `cv-vid-${n}-${nextUid()}`,
+          ref: `Video ${n}`,
+          kind: "video",
+          title: `Stitched ${parts.map((p) => p.ref).join(" + ")}`,
+          prompt: `Stitch of ${parts.map((p) => p.ref).join(" and ")} into one continuous clip`,
+          src: nsPlaceholder(`Video ${n} · stitch`, 360, 640, "video"),
+          x: anchor.x,
+          y: Math.max(...parts.map((p) => p.y + p.h)) + 48,
+          w: 168,
+          h: 300,
+          status: "generating",
+          parentId: anchor.id,
+          duration: totalDur,
+          credits: STITCH_COST,
+        },
+      ],
+      "Stitching clips…",
+    );
+    setSelected([]);
+  };
+
+  /* ── Zoom-to-fit(B1:框住所有对象,居中缩放到视口) ── */
+  const zoomToFit = () => {
+    if (objects.length === 0) return;
+    const el = canvasRef.current;
+    if (!el) return;
+    const vw = el.clientWidth;
+    const vh = el.clientHeight;
+    const minX = Math.min(...objects.map((o) => o.x));
+    const minY = Math.min(...objects.map((o) => o.y));
+    const maxX = Math.max(...objects.map((o) => o.x + o.w));
+    const maxY = Math.max(...objects.map((o) => o.y + o.h));
+    const pad = 80;
+    const bw = maxX - minX + pad * 2;
+    const bh = maxY - minY + pad * 2;
+    const z = Math.min(ZOOM_MAX, Math.max(ZOOM_MIN, Math.min(vw / bw, vh / bh)));
+    setZoom(z);
+    setPan({
+      x: (vw - (maxX - minX) * z) / 2 - minX * z,
+      y: (vh - (maxY - minY) * z) / 2 - minY * z,
+    });
+  };
+
   const mentionables = objects.filter((o) => o.status === "ready");
   const historyItems = CV_HISTORY.filter((h) => h.title.toLowerCase().includes(sideSearch.toLowerCase()));
   const exactlyTwoVideos = selectedObjects.length === 2 && selectedObjects.every((o) => o.kind === "video");
+  const canCompare = selectedObjects.length === 2 && comparable(selectedObjects[0], selectedObjects[1]);
+  const compareObjects = compareIds
+    ? (compareIds.map((id) => objects.find((o) => o.id === id)).filter(Boolean) as CvObject[])
+    : [];
+  const lastEvent = recentEvents(1)[0];
 
   return (
     <TooltipProvider>
@@ -446,7 +623,7 @@ export function CanvasPage() {
         </div>
         <div className="flex gap-1 px-3">
           {/* 沉浸式外壳内隐藏 A3「History」页签 —— 壳级 HISTORY 已在;画布历史走 Library。 */}
-          {((insideImmersive ? ["chat", "projects"] : ["chat", "projects", "history"]) as SideTab[]).map((t) => (
+          {((insideImmersive ? ["chat", "projects", "tree"] : ["chat", "projects", "history", "tree"]) as SideTab[]).map((t) => (
             <button
               key={t}
               type="button"
@@ -475,7 +652,7 @@ export function CanvasPage() {
                 <button
                   key={s.id}
                   type="button"
-                  onClick={() => setSessionId(s.id)}
+                  onClick={() => switchSession(s.id)}
                   className={cn(
                     "flex h-9 items-center rounded-[10px] px-3 text-left text-[13px] transition-colors duration-[120ms]",
                     sessionId === s.id
@@ -490,16 +667,54 @@ export function CanvasPage() {
           )}
           {sideTab === "projects" && (
             <div className="flex flex-col gap-3">
-              {CV_PROJECTS.map((p) => (
-                <button key={p.id} type="button" className="group overflow-hidden rounded-[14px] border border-border bg-card text-left shadow-[var(--shadow-xs)] transition-shadow duration-[150ms] hover:shadow-[var(--shadow-md)]">
-                  {/* eslint-disable-next-line @next/next/no-img-element */}
-                  <img src={p.thumb} alt="" className="aspect-[8/5] w-full object-cover" />
-                  <div className="flex items-center justify-between p-2.5">
-                    <span className="truncate text-[13px] font-semibold text-foreground">{p.name}</span>
-                    <span className="font-mono text-[11px] text-muted-foreground tabular-nums">{p.count}</span>
-                  </div>
-                </button>
-              ))}
+              {CV_PROJECTS.map((p) => {
+                const active = p.sessionId === sessionId;
+                return (
+                  <button
+                    key={p.id}
+                    type="button"
+                    onClick={() => {
+                      switchSession(p.sessionId);
+                      setSideTab("chat");
+                    }}
+                    className={cn(
+                      "group overflow-hidden rounded-[14px] border bg-card text-left shadow-[var(--shadow-xs)] transition-shadow duration-[150ms] hover:shadow-[var(--shadow-md)]",
+                      active ? "border-brand border-2" : "border-border",
+                    )}
+                  >
+                    {/* eslint-disable-next-line @next/next/no-img-element */}
+                    <img src={p.thumb} alt="" className="aspect-[8/5] w-full object-cover" />
+                    <div className="flex items-center justify-between p-2.5">
+                      <span className="truncate text-[13px] font-semibold text-foreground">{p.name}</span>
+                      <span className="font-mono text-[11px] text-muted-foreground tabular-nums">{p.count}</span>
+                    </div>
+                  </button>
+                );
+              })}
+            </div>
+          )}
+          {sideTab === "tree" && (
+            <div className="flex flex-col gap-0.5">
+              {/* 血缘树 mini 视图(GOAL §5:父子分支可点选 → 选中该对象) */}
+              {objects.length === 0 ? (
+                <p className="px-1 py-4 text-[13px] text-muted-foreground">This session is empty.</p>
+              ) : (
+                objects
+                  .filter((o) => !o.parentId || !objects.some((p) => p.id === o.parentId))
+                  .map((root) => {
+                    const children = objects.filter((c) => c.parentId === root.id);
+                    return (
+                      <div key={root.id} className="flex flex-col">
+                        <LineageRow obj={root} selected={selected.includes(root.id)} onSelect={() => setSelected([root.id])} />
+                        {children.map((c) => (
+                          <div key={c.id} className="ml-3 border-l border-border pl-2">
+                            <LineageRow obj={c} selected={selected.includes(c.id)} onSelect={() => setSelected([c.id])} />
+                          </div>
+                        ))}
+                      </div>
+                    );
+                  })
+              )}
             </div>
           )}
           {sideTab === "history" && (
@@ -549,7 +764,7 @@ export function CanvasPage() {
                   key={s.id}
                   type="button"
                   onClick={() => {
-                    setSessionId(s.id);
+                    switchSession(s.id);
                     setSessionMenu(false);
                   }}
                   className={cn(
@@ -730,8 +945,18 @@ export function CanvasPage() {
       <section className="relative flex min-w-0 flex-1 flex-col">
         {/* 顶条:项目名 + 余额 + 进度胶囊 */}
         <div className="flex h-[52px] shrink-0 items-center gap-3 border-b border-border px-4">
-          <span className="truncate text-sm font-semibold text-foreground">Untitled project · Merdeka box shots</span>
-          <Badge variant="outline" className="hidden text-muted-foreground md:inline-flex">Auto-saved</Badge>
+          <span className="truncate text-sm font-semibold text-foreground">
+            Untitled project · {CV_SESSIONS.find((s) => s.id === sessionId)?.name}
+          </span>
+          {/* 'Auto-saved' 徽章接 store 事件流:有过动作即读作「刚保存」,tooltip 显示上一条 */}
+          <Tooltip>
+            <TooltipTrigger asChild>
+              <Badge variant="outline" className="hidden text-muted-foreground md:inline-flex">
+                {lastEvent ? "Saved just now" : "Auto-saved"}
+              </Badge>
+            </TooltipTrigger>
+            <TooltipContent>{lastEvent ? lastEvent.label : "Every change saves to this session"}</TooltipContent>
+          </Tooltip>
           <div className="flex-1" />
           {runningJobs.length > 0 && (
             <span className="flex items-center gap-2 rounded-full border border-border bg-card px-3 py-1 shadow-[var(--shadow-xs)]">
@@ -741,7 +966,7 @@ export function CanvasPage() {
             </span>
           )}
           <span className="font-mono text-[11px] leading-[14px] font-medium tracking-[0.08em] text-muted-foreground tabular-nums">
-            {balance.toLocaleString()} credits
+            {bal.toLocaleString()} credits
           </span>
         </div>
 
@@ -806,6 +1031,29 @@ export function CanvasPage() {
                 <line x1={-200} y1={guideY} x2={2400} y2={guideY} stroke="var(--info)" strokeWidth={1} strokeDasharray="6 4" />
               )}
             </svg>
+
+            {/* 视觉 group frame(F1:Group)—— 框住成员,随成员移动重算 */}
+            {groups.map((g) => {
+              const members = objects.filter((o) => g.objectIds.includes(o.id));
+              if (members.length < 2) return null;
+              const minX = Math.min(...members.map((o) => o.x));
+              const minY = Math.min(...members.map((o) => o.y));
+              const maxX = Math.max(...members.map((o) => o.x + o.w));
+              const maxY = Math.max(...members.map((o) => o.y + o.h));
+              const pad = 14;
+              return (
+                <div
+                  key={g.id}
+                  aria-hidden
+                  className="pointer-events-none absolute rounded-[18px] border border-dashed border-muted-foreground/50"
+                  style={{ left: minX - pad, top: minY - pad, width: maxX - minX + pad * 2, height: maxY - minY + pad * 2 }}
+                >
+                  <span className="absolute -top-2.5 left-3 rounded-full bg-card px-2 font-mono text-[10px] leading-4 font-medium text-muted-foreground">
+                    {g.label}
+                  </span>
+                </div>
+              );
+            })}
 
             {/* 对象(B3 生成中也可选) */}
             {objects.map((obj) => {
@@ -930,6 +1178,7 @@ export function CanvasPage() {
                       onFeedback={(v) => setFeedback((f) => ({ ...f, [obj.id]: v }))}
                       onMakeVideo={() => setSpendAsk({ kind: "make-video", sourceId: obj.id })}
                       onDelete={() => deleteObjects([obj.id])}
+                      onDownload={() => showFlash(`Preparing download · ${obj.ref}`)}
                       onPrompt={() => {
                         setPromptFor((p) => (p === obj.id ? null : obj.id));
                         setCopied(false);
@@ -951,12 +1200,12 @@ export function CanvasPage() {
             })}
           </div>
 
-          {/* 缩放器(B1) */}
+          {/* 缩放器(B1:25%–300% + Zoom-to-fit) */}
           <div className="absolute bottom-4 left-4 z-[10] flex items-center gap-1 rounded-full border border-border bg-card px-1.5 py-1 shadow-[var(--shadow-md)]">
             <button
               type="button"
               aria-label="Zoom out"
-              onClick={() => setZoom((z) => Math.max(0.4, Math.round((z - 0.2) * 10) / 10))}
+              onClick={() => setZoom((z) => Math.max(ZOOM_MIN, Math.round((z - 0.2) * 10) / 10))}
               className="flex size-7 items-center justify-center rounded-full text-muted-foreground hover:bg-accent hover:text-foreground"
             >
               <Minus className="size-4" strokeWidth={2} />
@@ -967,38 +1216,63 @@ export function CanvasPage() {
             <button
               type="button"
               aria-label="Zoom in"
-              onClick={() => setZoom((z) => Math.min(1.6, Math.round((z + 0.2) * 10) / 10))}
+              onClick={() => setZoom((z) => Math.min(ZOOM_MAX, Math.round((z + 0.2) * 10) / 10))}
               className="flex size-7 items-center justify-center rounded-full text-muted-foreground hover:bg-accent hover:text-foreground"
             >
               <Plus className="size-4" strokeWidth={2} />
             </button>
+            <span className="mx-0.5 h-4 w-px bg-border" />
+            <Tooltip>
+              <TooltipTrigger asChild>
+                <button
+                  type="button"
+                  aria-label="Zoom to fit"
+                  onClick={zoomToFit}
+                  className="flex size-7 items-center justify-center rounded-full text-muted-foreground hover:bg-accent hover:text-foreground"
+                >
+                  <Scan className="size-4" strokeWidth={2} />
+                </button>
+              </TooltipTrigger>
+              <TooltipContent>Zoom to fit</TooltipContent>
+            </Tooltip>
           </div>
 
-          {/* 多选批量条(F1)— 右下;恰好 2 视频 → Stitch + play */}
+          {/* 多选批量条(F1)— 右下;恰好 2 视频 → Stitch + play;同源 2 对象 → Compare */}
           {selectedObjects.length > 1 && (
             <div className="absolute right-4 bottom-4 z-[10] flex items-center gap-1 rounded-[14px] border border-border bg-card p-1.5 shadow-[var(--shadow-md)]" style={LAND_STYLE}>
               <span className="px-2 font-mono text-[11px] leading-[14px] font-medium text-muted-foreground tabular-nums">
                 {selectedObjects.length} selected
               </span>
-              <Button variant="ghost" size="sm" className="h-8 px-2.5 text-xs">
+              {canCompare && (
+                <Button variant="secondary" size="sm" className="h-8 px-2.5 text-xs" onClick={() => setCompareIds(selected.slice())}>
+                  <Columns2 className="size-3.5" strokeWidth={2} />
+                  Compare
+                </Button>
+              )}
+              <Button variant="ghost" size="sm" className="h-8 px-2.5 text-xs" onClick={groupSelected}>
                 <Layers className="size-3.5" strokeWidth={2} />
                 Group
               </Button>
-              <Button variant="ghost" size="sm" className="h-8 px-2.5 text-xs">
+              <Button variant="ghost" size="sm" className="h-8 px-2.5 text-xs" onClick={duplicateSelected}>
                 <Copy className="size-3.5" strokeWidth={2} />
                 Duplicate
               </Button>
-              <Button variant="ghost" size="sm" className="h-8 px-2.5 text-xs">
+              <Button
+                variant="ghost"
+                size="sm"
+                className="h-8 px-2.5 text-xs"
+                onClick={() => showFlash(`Preparing download · ${selectedObjects.length} objects`)}
+              >
                 <Download className="size-3.5" strokeWidth={2} />
                 Download
               </Button>
               {exactlyTwoVideos && (
                 <>
-                  <Button variant="secondary" size="sm" className="h-8 px-2.5 text-xs">
+                  <Button variant="secondary" size="sm" className="h-8 px-2.5 text-xs" onClick={() => setSpendAsk({ kind: "stitch", ids: selected.slice() })}>
                     <Scissors className="size-3.5" strokeWidth={2} />
                     Stitch
                   </Button>
-                  <Button variant="ghost" size="sm" className="h-8 px-2.5 text-xs" aria-label="Play both">
+                  <Button variant="ghost" size="sm" className="h-8 px-2.5 text-xs" aria-label="Play both" onClick={() => showFlash("Playing both clips in sequence")}>
                     <Play className="size-3.5" strokeWidth={2} />
                   </Button>
                 </>
@@ -1028,6 +1302,59 @@ export function CanvasPage() {
               </button>
             </div>
           )}
+
+          {/* 轻量 toast(诚实反馈条) */}
+          {flash && (
+            <div
+              role="status"
+              className="absolute bottom-16 left-1/2 z-[10] flex -translate-x-1/2 items-center rounded-full border border-border bg-card px-3 py-1.5 shadow-[var(--shadow-md)]"
+              style={LAND_STYLE}
+            >
+              <span className="text-[13px] text-foreground">{flash}</span>
+            </div>
+          )}
+
+          {/* evolve 分叉并排对比(GOAL §6:选中父+子 → Compare → 两版同屏) */}
+          {compareObjects.length === 2 && (
+            <div className="absolute inset-0 z-30 flex flex-col bg-background/80 p-6 backdrop-blur-sm" style={LAND_STYLE}>
+              <div className="flex items-center justify-between pb-4">
+                <span className="text-sm font-semibold text-foreground">
+                  Comparing {compareObjects[0].ref} and {compareObjects[1].ref}
+                </span>
+                <button
+                  type="button"
+                  aria-label="Close compare"
+                  onClick={() => setCompareIds(null)}
+                  className="flex size-8 items-center justify-center rounded-[10px] text-muted-foreground hover:bg-accent hover:text-foreground"
+                >
+                  <X className="size-4" strokeWidth={2} />
+                </button>
+              </div>
+              <div className="grid min-h-0 flex-1 grid-cols-2 gap-4">
+                {compareObjects.map((o) => (
+                  <div key={o.id} className="flex min-h-0 flex-col overflow-hidden rounded-[18px] border border-border bg-card">
+                    <div className="flex items-center gap-2 border-b border-border px-3 py-2">
+                      <span className="flex h-5 items-center gap-1 rounded-full bg-primary/75 px-1.5 font-mono text-[10px] leading-none font-medium text-primary-foreground">
+                        {o.kind === "image" ? <ImageIcon className="size-3" strokeWidth={2} /> : <Video className="size-3" strokeWidth={2} />}
+                        {o.ref}
+                      </span>
+                      {o.fork && (
+                        <span className="flex h-5 items-center rounded-full bg-secondary px-1.5 font-mono text-[10px] leading-none font-medium text-secondary-foreground">
+                          {o.fork}
+                        </span>
+                      )}
+                      <span className="truncate text-[13px] font-medium text-foreground">{o.title}</span>
+                    </div>
+                    <div className="flex min-h-0 flex-1 items-center justify-center overflow-hidden p-3">
+                      {/* eslint-disable-next-line @next/next/no-img-element */}
+                      <img src={o.src} alt={o.title} className="max-h-full max-w-full rounded-[10px] object-contain" />
+                    </div>
+                    <p className="border-t border-border px-3 py-2 text-[12px] leading-[16px] text-muted-foreground">{o.prompt}</p>
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
         </div>
       </section>
 
@@ -1035,11 +1362,19 @@ export function CanvasPage() {
       <SpendConfirmDialog
         open={spendAsk !== null}
         onOpenChange={(v) => !v && setSpendAsk(null)}
-        title={spendAsk?.kind === "agent-batch" ? `Generate ${CLIP_COUNT} clips?` : "Generate this video?"}
+        title={
+          spendAsk?.kind === "agent-batch"
+            ? `Generate ${CLIP_COUNT} clips?`
+            : spendAsk?.kind === "stitch"
+              ? "Stitch these clips?"
+              : "Generate this video?"
+        }
         ask={
           spendAsk?.kind === "agent-batch"
             ? `Otto will generate ${CLIP_COUNT} clips in parallel. This will spend real credits.`
-            : "This will spend real credits."
+            : spendAsk?.kind === "stitch"
+              ? "Stitching re-renders the clips into one. This will spend real credits."
+              : "This will spend real credits."
         }
         impacts={
           spendAsk?.kind === "agent-batch"
@@ -1048,22 +1383,31 @@ export function CanvasPage() {
                 "Each clip shows its own progress and can be deleted after.",
                 "If a clip fails, you aren't charged for it.",
               ]
-            : [
-                `Cost: ${VIDEO_COST} credits. No charge until you confirm.`,
-                "The video lands next to its source with a lineage line.",
-                "If it fails, you aren't charged.",
-              ]
+            : spendAsk?.kind === "stitch"
+              ? [
+                  `Cost: ${STITCH_COST} credits. No charge until you confirm.`,
+                  "The stitched clip lands as a new object below the sources.",
+                  "The source clips stay on the canvas.",
+                ]
+              : [
+                  `Cost: ${VIDEO_COST} credits. No charge until you confirm.`,
+                  "The video lands next to its source with a lineage line.",
+                  "If it fails, you aren't charged.",
+                ]
         }
         confirmLabel={
           spendAsk?.kind === "agent-batch"
             ? `Confirm generate · ${CLIP_COUNT * VIDEO_COST} credits`
-            : `Confirm generate · ${VIDEO_COST} credits`
+            : spendAsk?.kind === "stitch"
+              ? `Confirm stitch · ${STITCH_COST} credits`
+              : `Confirm generate · ${VIDEO_COST} credits`
         }
         onConfirm={() => {
           const ask = spendAsk;
           setSpendAsk(null);
           if (!ask) return;
           if (ask.kind === "agent-batch") confirmAgentBatch(ask.prompt);
+          else if (ask.kind === "stitch") stitchVideos(ask.ids);
           else {
             const source = objects.find((o) => o.id === ask.sourceId);
             if (source) makeVideo(source, ask.kind === "evolve-video" ? ask.prompt : `Animate: ${source.prompt}`);
@@ -1086,6 +1430,7 @@ function ObjectToolbar({
   onFeedback,
   onMakeVideo,
   onDelete,
+  onDownload,
   onPrompt,
   promptOpen,
   copied,
@@ -1097,6 +1442,7 @@ function ObjectToolbar({
   onFeedback: (v: FeedbackValue) => void;
   onMakeVideo: () => void;
   onDelete: () => void;
+  onDownload: () => void;
   onPrompt: () => void;
   promptOpen: boolean;
   copied: boolean;
@@ -1136,18 +1482,18 @@ function ObjectToolbar({
         {obj.kind === "image" ? (
           <>
             {tool("Make video · 40 credits", <Video className="size-4" strokeWidth={2} />, onMakeVideo)}
-            {tool("Crop", <Crop className="size-4" strokeWidth={2} />, undefined, "/northstar/create/media-editor")}
+            {tool("Crop", <Crop className="size-4" strokeWidth={2} />, undefined, `/northstar/create/media-editor?asset=${obj.id}`)}
           </>
         ) : (
           <>
-            {tool("Trim", <Scissors className="size-4" strokeWidth={2} />, undefined, "/northstar/create/media-editor")}
-            {tool("Extract frame", <ImageIcon className="size-4" strokeWidth={2} />, undefined, "/northstar/create/media-editor")}
-            {tool("Effects", <Wand2 className="size-4" strokeWidth={2} />, undefined, "/northstar/create/media-editor")}
+            {tool("Trim", <Scissors className="size-4" strokeWidth={2} />, undefined, `/northstar/create/media-editor?asset=${obj.id}`)}
+            {tool("Extract frame", <ImageIcon className="size-4" strokeWidth={2} />, undefined, `/northstar/create/media-editor?asset=${obj.id}`)}
+            {tool("Effects", <Wand2 className="size-4" strokeWidth={2} />, undefined, `/northstar/create/media-editor?asset=${obj.id}`)}
           </>
         )}
         {tool("Full screen", <Maximize2 className="size-4" strokeWidth={2} />, undefined, `/northstar/create/asset-viewer?asset=${obj.id}`)}
         {tool("Prompt", <Menu className="size-4" strokeWidth={2} />, onPrompt)}
-        {tool("Download", <Download className="size-4" strokeWidth={2} />, () => undefined)}
+        {tool("Download", <Download className="size-4" strokeWidth={2} />, onDownload)}
         <span className="mx-0.5 h-5 w-px bg-border" />
         <FeedbackControls value={feedback} onChange={onFeedback} />
         <span className="mx-0.5 h-5 w-px bg-border" />
@@ -1198,5 +1544,34 @@ function ObjectToolbar({
         </Button>
       </form>
     </div>
+  );
+}
+
+/* ────────────────────────────────────────────────────────────────────────
+ * LineageRow — 血缘树 mini 视图的一行(GOAL §5:点选即选中画布对象)
+ * ──────────────────────────────────────────────────────────────────────── */
+function LineageRow({ obj, selected, onSelect }: { obj: CvObject; selected: boolean; onSelect: () => void }) {
+  return (
+    <button
+      type="button"
+      onClick={onSelect}
+      className={cn(
+        "flex h-8 w-full items-center gap-1.5 rounded-[8px] px-2 text-left text-[12px] transition-colors duration-[120ms]",
+        selected ? "bg-secondary font-semibold text-foreground" : "text-muted-foreground hover:bg-accent hover:text-foreground",
+      )}
+    >
+      {obj.parentId ? (
+        <GitBranch className="size-3.5 shrink-0 text-muted-foreground" strokeWidth={2} />
+      ) : obj.kind === "image" ? (
+        <ImageIcon className="size-3.5 shrink-0 text-muted-foreground" strokeWidth={2} />
+      ) : (
+        <Video className="size-3.5 shrink-0 text-muted-foreground" strokeWidth={2} />
+      )}
+      <span className="shrink-0 font-mono text-[11px] tabular-nums">{obj.ref}</span>
+      <span className="truncate">{obj.title}</span>
+      {obj.fork && (
+        <span className="ml-auto shrink-0 rounded-full bg-secondary px-1 font-mono text-[9px] leading-4 text-secondary-foreground">{obj.fork}</span>
+      )}
+    </button>
   );
 }
