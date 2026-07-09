@@ -93,7 +93,8 @@ export function campaignHref(id: string, base: string): string {
   return `${base}/campaign/calendar?campaign=${id}`;
 }
 export function allCampaignIds(): string[] {
-  return [...NS_CAMPAIGNS.map((c) => c.id), "camp-office-01"];
+  // camp-office-01 现已是 NS_CAMPAIGNS 的正式成员,无需再手动补挂(避免重复)。
+  return NS_CAMPAIGNS.map((c) => c.id);
 }
 
 /* ── 断链检查([wave-b] 相邻/链接健康;WHATPASS「断链检查」) ────────────────

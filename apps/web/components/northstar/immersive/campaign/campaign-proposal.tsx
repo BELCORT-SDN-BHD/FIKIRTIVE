@@ -19,7 +19,7 @@ import { OttoAvatar } from "@/components/otto/OttoAvatar";
 import { EmptyState, OttoNarrationBar, PageHeader } from "@/components/northstar/_shared";
 import { NS_CAMPAIGN, type NsCampaignEntry } from "@/components/northstar/_mock";
 import { BACKUP_IDEAS, PROPOSAL_RATIONALE, trendById } from "@/components/northstar/campaign/_data";
-import { campaignDraft, campaignEntries, useStore } from "../_store";
+import { campaignDraft, campaignEntries, deriveCampaignName, useStore } from "../_store";
 import { CAMP_BASE as BASE, Landed, PlatformPill, SkeletonBlock, fmtCredits, fmtDay } from "./kit";
 
 const RESEARCH_STEPS = [
@@ -46,6 +46,8 @@ export function CampaignProposal() {
 
   const draft = campaignDraft();
   const goalText = draft?.goal ?? NS_CAMPAIGN.goal;
+  // 标题按 draft.goal 派生(从 Deepavali/CNY/自填目标起草不再误标 Merdeka)。
+  const campaignName = draft ? deriveCampaignName(draft.goal) : NS_CAMPAIGN.name;
   const periodText = draft ? `${fmtDay(draft.start)} to ${fmtDay(draft.end)}, 2026` : "Aug 24 to 31, 2026";
   const budgetCredits = draft?.budgetCredits ?? NS_CAMPAIGN.budgetCredits;
   const draftPlatforms = (draft?.platforms as NsCampaignEntry["platform"][] | undefined) ?? ["instagram", "facebook", "tiktok"];
@@ -73,7 +75,7 @@ export function CampaignProposal() {
       <PageHeader
         title="Campaign plan"
         subtitle="Otto drafts the whole month. Review, edit or remove any post, then approve."
-        meta={[NS_CAMPAIGN.name]}
+        meta={[campaignName]}
       />
 
       <div className="mt-6 flex flex-col gap-4" role="log" aria-label="Chat excerpt">
@@ -108,7 +110,7 @@ export function CampaignProposal() {
                   <div className="flex items-center gap-3 border-b border-border px-5 py-4">
                     <div className="min-w-0 flex-1">
                       <div className="font-mono text-[10px] font-medium tracking-[0.08em] text-muted-foreground uppercase">Campaign proposal</div>
-                      <div className="truncate text-lg font-semibold tracking-[-0.012em] text-foreground">{NS_CAMPAIGN.name}</div>
+                      <div className="truncate text-lg font-semibold tracking-[-0.012em] text-foreground">{campaignName}</div>
                     </div>
                     {approved ? <Badge variant="success">Approved</Badge> : <Badge variant="warning">Awaiting your approval</Badge>}
                   </div>

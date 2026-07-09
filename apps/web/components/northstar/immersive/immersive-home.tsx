@@ -64,7 +64,7 @@ function CampaignCard({ c }: { c: NsCampaignSummary }) {
   const pct = Math.min(100, Math.round((c.goalProgress.current / c.goalProgress.target) * 100));
   return (
     <Link
-      href={`${BASE}/campaign/list`}
+      href={`${BASE}/campaign/detail?id=${c.id}`}
       className="group flex flex-col overflow-hidden rounded-[14px] border border-border bg-card transition-colors duration-[120ms] hover:bg-accent"
     >
       <div className="relative aspect-[16/9] w-full overflow-hidden bg-secondary">
@@ -88,7 +88,7 @@ function CampaignCard({ c }: { c: NsCampaignSummary }) {
           </div>
           <div className="mt-1.5 h-1.5 w-full overflow-hidden rounded-full bg-muted">
             <div
-              className={`h-full rounded-full transition-[width] duration-500 ${c.status === "DONE" ? "bg-success-soft-foreground/70" : "bg-brand"}`}
+              className={`h-full rounded-full transition-[width] duration-500 ${c.status === "DONE" ? "bg-success-soft-foreground/70" : "bg-primary"}`}
               style={{ width: `${pct}%` }}
             />
           </div>

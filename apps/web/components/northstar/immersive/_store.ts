@@ -1580,19 +1580,20 @@ export function studioLogGen(text: string, label: string) {
 export function proposeCampaign(draft: NsCampaignDraft): void {
   state.campaignDraft = draft;
   const platforms = draft.platforms.length;
-  // 新草稿尚未成为任何 canonical campaign,故不打 campaignId(避免误标为 Merdeka):
-  // 这两条只落全局单流(dock/otto),不进任何 campaign 详情「对话」过滤视图。
+  // context 用 goal 派生名(不再硬编 New campaign / Merdeka)。仍不打 campaignId:
+  // 尚未成为 canonical campaign,故这两条只落全局单流,不进任何 campaign「对话」过滤视图。
+  const derivedName = deriveCampaignName(draft.goal);
   appendToStream({
     role: "owner",
     text: `Plan a campaign — ${draft.goal}`,
-    context: { zone: "Campaign", label: "New campaign" },
+    context: { zone: "Campaign", label: derivedName },
   });
   appendToStream({
     role: "otto",
     text: `On it — I'll draft a full plan for "${draft.goal}" across ${platforms} platform${platforms > 1 ? "s" : ""}, kept inside ${draft.budgetCredits} credits. Every post stays a draft until you approve.`,
     context: {
       zone: "Campaign",
-      label: "New campaign",
+      label: derivedName,
       href: "/northstar-immersive/campaign/proposal-card",
     },
   });
@@ -2544,4 +2545,31 @@ export function buildLookalike(input: { sourceLabel: string }): string {
 /** 已建的 lookalike 受众(广告 builder ad set 受众选择器读它,可选进草稿)。 */
 export function lookalikeAudiencesView(): NsLookalikeAudience[] {
   return lookalikeAudiences;
+}
+
+/* ══════════════════════════════════════════════════════════════════════════
+ * [campaign-spine] 终验补修 —— 提案命名(文件尾追加,不改中段)
+ * proposeCampaign 起草的 ready 卡 / proposal-card 标题 / 单流 context 之前硬编码
+ * NS_CAMPAIGN.name(Merdeka),从 Deepavali/CNY/自填目标起草会误标。改由 goal 派生:
+ * 命中节庆关键词 → 好名字,否则回落目标前几词。纯函数、零后台、零副作用。
+ * ══════════════════════════════════════════════════════════════════════════ */
+const CAMPAIGN_NAME_BY_KEYWORD: { key: string; name: string }[] = [
+  { key: "merdeka", name: "Merdeka week bakes" },
+  { key: "raya", name: "Raya open house" },
+  { key: "deepavali", name: "Deepavali gift boxes" },
+  { key: "diwali", name: "Deepavali gift boxes" },
+  { key: "chinese new year", name: "CNY gift boxes" },
+  { key: "cny", name: "CNY gift boxes" },
+  { key: "christmas", name: "Christmas bakes" },
+  { key: "croffle", name: "Matcha croffle launch" },
+];
+
+/** 从 campaign goal 派生一个简短展示名(命中节庆关键词优先,否则取目标前几词)。 */
+export function deriveCampaignName(goal: string): string {
+  const g = goal.trim().toLowerCase();
+  for (const { key, name } of CAMPAIGN_NAME_BY_KEYWORD) {
+    if (g.includes(key)) return name;
+  }
+  const words = goal.trim().split(/\s+/).slice(0, 6).join(" ");
+  return words ? words.charAt(0).toUpperCase() + words.slice(1) : "New campaign";
 }

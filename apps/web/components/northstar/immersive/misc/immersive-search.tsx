@@ -6,10 +6,11 @@
  * gallery 的 search 页把命令面板套进 DemoFrame 图纸框、并列演示两次(嵌入 + ⌘K overlay)——
  * 那是设计稿陈列。产品里搜索只有一个表面:一块干净的命令面板,占满内容 pane。
  *
- * 语料两源:① global 的 NS_SEARCH_ITEMS(Projects / History / Chat);② ENDGAME D2 新增
- * 「Otto chat」组 —— 直接搜这条连续对话流(store.streamFor()),因为 D1 废除了 HISTORY
- * 收纳,「找旧对话 = 全局流里搜」。选中 Otto 结果:有 context.href 深链回现场,否则进 /otto
- * 全屏读这条流。骨架行复用 global 的 SkeletonRow。
+ * 语料两源:① global 的 NS_SEARCH_ITEMS —— D1 已废除 Projects/History 两个容器,故按 D1
+ * 三容器重贴标签:Projects→Campaigns、History→Studio、旧 Chat 并入 Otto chat;② ENDGAME
+ * D2「Otto chat」组 —— 直接搜这条连续对话流(store.streamFor()),因为「找旧对话 = 全局流
+ * 里搜」。选中 Otto 结果:有 context.href 深链回现场,否则进 /otto 全屏读这条流。骨架行复用
+ * global 的 SkeletonRow。
  *
  * 命令面板在产品里用 router.push 程序化跳转,外壳的 useKeepInsideImmersive 只拦 <a> 点击、
  * 拦不到 push,所以这里把 `/northstar/*` 目标改写成 `/northstar-immersive/*`,让选中即留在壳内。
@@ -39,7 +40,14 @@ function immersiveHref(href: string): string {
   return href.startsWith(GALLERY_PREFIX) ? IMMERSIVE_PREFIX + href.slice(GALLERY_PREFIX.length) : href;
 }
 
-const GROUP_ORDER: NsSearchGroup[] = ["Projects", "History", "Chat"];
+// D1 已废除 Projects/History 容器 —— 旧 gallery 语料按 D1 三容器重贴展示标签。
+// Projects/History 作为独立命中组渲染;旧 Chat 并入 live 的 Otto chat(D2 单流),不再单列。
+const ITEM_GROUP_ORDER: NsSearchGroup[] = ["Projects", "History"];
+const DISPLAY_LABEL: Record<NsSearchGroup, string> = {
+  Projects: "Campaigns",
+  History: "Studio",
+  Chat: "Otto chat",
+};
 
 const GROUP_ICON: Record<NsSearchGroup, LucideIcon> = {
   Projects: Folder,
@@ -109,13 +117,16 @@ export function ImmersiveSearch() {
       return [{ label: "Recent", rows: recent }];
     }
     const needle = committedQ.toLowerCase();
-    // ① Projects / History / Chat 三组(gallery 语料)
-    const itemGroups: ResultGroup[] = GROUP_ORDER.map((g) => ({
-      label: g,
+    // ① Campaigns / Studio 两组(gallery 语料,按 D1 重贴标签;旧 Chat 组不单列,下面并入 Otto)
+    const itemGroups: ResultGroup[] = ITEM_GROUP_ORDER.map((g) => ({
+      label: DISPLAY_LABEL[g],
       rows: NS_SEARCH_ITEMS.filter((i) => i.group === g && itemMatches(i, committedQ)).slice(0, 5).map(itemRow),
     })).filter((g) => g.rows.length > 0);
-    // ② [wave-b] Otto 流内搜 —— 直接搜这条连续对话流(D2),找旧对话 = 全局流里搜(D1)
-    const ottoRows: SearchRow[] = streamFor()
+    // ② Otto chat(D2 单流):旧 gallery Chat 命中 + live 流命中,并成同一组(找旧对话 = 全局流里搜)
+    const chatItemRows: SearchRow[] = NS_SEARCH_ITEMS.filter(
+      (i) => i.group === "Chat" && itemMatches(i, committedQ),
+    ).slice(0, 5).map(itemRow);
+    const ottoStreamRows: SearchRow[] = streamFor()
       .filter((m) => m.text.toLowerCase().includes(needle) || m.context.label.toLowerCase().includes(needle))
       .slice()
       .reverse() // 最新在前
@@ -127,6 +138,7 @@ export function ImmersiveSearch() {
         icon: Sparkles,
         href: m.context.href ? immersiveHref(m.context.href) : OTTO_HREF,
       }));
+    const ottoRows = [...chatItemRows, ...ottoStreamRows];
     const ottoGroup: ResultGroup[] = ottoRows.length > 0 ? [{ label: "Otto chat", rows: ottoRows }] : [];
     return [...itemGroups, ...ottoGroup];
   }, [committedQ]);
@@ -163,7 +175,7 @@ export function ImmersiveSearch() {
     <div className="mx-auto flex h-full w-full max-w-[720px] flex-col px-6 pt-6 pb-10">
       <h1 className="text-2xl leading-[30px] font-bold tracking-[-0.02em] text-foreground">Search</h1>
       <p className="mt-1 text-sm text-muted-foreground">
-        Find your projects, generation history and Otto chats — start typing.
+        Find your campaigns, studio work and Otto chats — start typing.
       </p>
 
       {/* 命令面板:一个干净表面,占满剩余高度 */}
@@ -179,8 +191,8 @@ export function ImmersiveSearch() {
             autoFocus
             value={q}
             onChange={(e) => setQ(e.target.value)}
-            placeholder="Search projects, history and Otto chats"
-            aria-label="Search projects, history and Otto chats"
+            placeholder="Search campaigns, studio and Otto chats"
+            aria-label="Search campaigns, studio and Otto chats"
             className="h-full w-full min-w-0 bg-transparent text-[15px] leading-[22px] text-foreground outline-none placeholder:text-muted-foreground"
           />
           {q && (
@@ -249,7 +261,7 @@ export function ImmersiveSearch() {
         {/* 页脚:范围声明 + 键盘提示 */}
         <div className="flex shrink-0 flex-wrap items-center gap-x-3 gap-y-1 border-t border-border px-4 py-2.5">
           <p className="min-w-0 flex-1 truncate text-xs font-medium text-muted-foreground">
-            Searches your projects, generation history and Otto chats
+            Searches your campaigns, studio work and Otto chats
           </p>
           <p className="shrink-0 font-mono text-[11px] leading-[14px] font-medium tracking-[0.08em] text-muted-foreground">
             ↑↓ · Enter · Esc

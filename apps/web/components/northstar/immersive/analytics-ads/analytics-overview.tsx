@@ -139,7 +139,15 @@ const BENCHMARKS: { metric: string; you: string; baseline: string; grade: Grade 
 function campaignRoiRows() {
   return NS_CAMPAIGNS.map((c) => {
     const revenue = c.result?.kpis.find((k) => k.label === "Order value")?.value;
-    const roi = c.status === "DONE" ? "3.9×" : c.status === "ACTIVE" ? "—" : "Not started";
+    // ROI 从 result.attributedRevenueMyr / 制作花费派生(house 口径 1 credit≈RM1,与
+    // campaign roiLine 同源),不再硬编 3.9×。只有 DONE 才有归因收入。
+    const rev = c.result?.attributedRevenueMyr;
+    const roi =
+      c.status === "DONE" && rev && c.spentCredits > 0
+        ? `${(rev / c.spentCredits).toFixed(1)}×`
+        : c.status === "ACTIVE"
+          ? "—"
+          : "Not started";
     return {
       id: c.id,
       name: c.name,

@@ -753,6 +753,29 @@ export const NS_CAMPAIGNS: NsCampaignSummary[] = [
       { key: "results", label: "Results", done: false },
     ],
   },
+  {
+    // 第 4 个 ACTIVE:常年跑的工作日办公订单(os-16 叙述「pacing at 46 of 60」= goalProgress)。
+    // 4 资产 / 6 帖 / 6 流消息早已引用 camp-office-01;补齐容器,campaignSummaryById 不再 undefined。
+    id: "camp-office-01",
+    name: "Weekday office orders",
+    status: "ACTIVE",
+    goal: "Keep weekday office pickups and lunch orders flowing",
+    goalProgress: { label: "Office orders this month", current: 46, target: 60 },
+    period: "Rolling · monthly",
+    budgetCredits: 200,
+    spentCredits: 88,
+    platforms: ["instagram", "facebook"],
+    hero: nsImage("campaign", 4),
+    trendIds: ["ts-04"],
+    phases: [
+      { key: "goal", label: "Goal set", done: true },
+      { key: "research", label: "Research pulled", done: true },
+      { key: "proposal", label: "Proposal approved", done: true },
+      { key: "content", label: "Content made", done: true },
+      { key: "schedule", label: "Scheduling", done: true },
+      { key: "results", label: "Results in", done: false },
+    ],
+  },
 ];
 
 export function campaignSummaryById(id: string): NsCampaignSummary | undefined {

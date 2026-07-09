@@ -17,9 +17,9 @@ import { cn } from "@/lib/utils";
 import { Button } from "@/components/ui/button";
 import { OttoAvatar } from "@/components/otto/OttoAvatar";
 import { EmptyState, PageHeader } from "@/components/northstar/_shared";
-import { NS_CAMPAIGN } from "@/components/northstar/_mock";
+import { NS_CAMPAIGN, nsImage, type NsCampaignEntry } from "@/components/northstar/_mock";
 import { FORMAT_META } from "@/components/northstar/campaign/_data";
-import { approveCampaignEntry, balance, campaignEntries, spendCredits, useStore } from "../_store";
+import { approveCampaignEntry, balance, campaignEntries, saveDraft, spendCredits, useStore } from "../_store";
 import { CAMP_BASE as BASE, GenBar, Landed, PlatformPill, fmtCredits, fmtDay } from "./kit";
 
 type Phase = "review" | "confirming" | "running" | "settled";
@@ -38,9 +38,21 @@ export function CampaignPackConfirm() {
   const total = included.reduce((s, e) => s + e.estCredits, 0);
   const liveBalance = balance();
 
-  function commitGenerated(entryId: string, credits: number, hook: string) {
-    spendCredits(credits, `Campaign generation · ${hook}`, "Video");
-    approveCampaignEntry(entryId);
+  function commitGenerated(entry: NsCampaignEntry) {
+    spendCredits(entry.estCredits, `Campaign generation · ${entry.hook}`, "Video");
+    approveCampaignEntry(entry.id);
+    // 兑现文案承诺:每条生成的 pack item 真的落进排期(DRAFT、归组本 campaign、日期沿 entry)。
+    // 「Open schedule」即见新帖;同 id 重试幂等(saveDraft 就地更新,不双写)。
+    saveDraft({
+      id: `sched-${entry.id}`,
+      scheduledAt: `${entry.date}T09:00:00+08:00`,
+      platform: entry.platform,
+      caption: entry.hook,
+      media: nsImage("campaign", Number(entry.id.replace(/\D/g, "")) || 0),
+      status: "draft",
+      campaignId: NS_CAMPAIGN.id,
+      altText: entry.hook,
+    });
   }
 
   const doneCount = included.filter((e) => run[e.id] === "done").length;
@@ -92,7 +104,7 @@ export function CampaignPackConfirm() {
           setRun((prev) => ({ ...prev, [activeId]: "done" }));
           if (item) {
             setSpent((s) => s + item.estCredits);
-            commitGenerated(item.id, item.estCredits, item.hook);
+            commitGenerated(item);
           }
         }
       } else if (nextQueued) {
@@ -115,7 +127,7 @@ export function CampaignPackConfirm() {
     window.setTimeout(() => {
       setRun((prev) => ({ ...prev, [id]: "done" }));
       setSpent((s) => s + item.estCredits);
-      commitGenerated(item.id, item.estCredits, item.hook);
+      commitGenerated(item);
     }, 1400);
   }
 

@@ -18,8 +18,8 @@ import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
 import { OttoAvatar } from "@/components/otto/OttoAvatar";
 import { PageHeader, OttoNarrationBar } from "@/components/northstar/_shared";
-import { NS_BRAND, NS_CAMPAIGN, NS_CAMPAIGN_ENTRIES, NS_CAMPAIGNS } from "@/components/northstar/_mock";
-import { proposeCampaign } from "../_store";
+import { NS_BRAND, NS_CAMPAIGN_ENTRIES, NS_CAMPAIGNS } from "@/components/northstar/_mock";
+import { deriveCampaignName, proposeCampaign } from "../_store";
 import { useQueryParam } from "../_kit";
 import { CAMP_BASE as BASE, CampaignNav, fmtCredits } from "./kit";
 
@@ -257,7 +257,7 @@ export function CampaignWorkbench() {
             <div className="min-w-0">
               <div className="text-lg font-semibold tracking-[-0.012em] text-foreground">Proposal ready</div>
               <p className="text-sm text-muted-foreground">
-                {NS_CAMPAIGN.name} · {NS_CAMPAIGN_ENTRIES.length} posts · estimated {fmtCredits(CAMPAIGN_TOTAL_EST)}
+                {deriveCampaignName(goal)} · {NS_CAMPAIGN_ENTRIES.length} posts · estimated {fmtCredits(CAMPAIGN_TOTAL_EST)}
               </p>
             </div>
           </div>
