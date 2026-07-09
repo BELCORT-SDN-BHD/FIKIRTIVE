@@ -46,13 +46,15 @@ import {
   ViewSwitch,
   addDaysIso,
   campaignPosts,
+  dowMon,
   fmtDate,
   fmtDateLong,
   livePosts,
   toScheduled,
   type SPost,
 } from "./kit";
-import { campaignHref, campaignName, type SPlatform } from "./data";
+import { bestTimesForType, campaignHref, campaignName, type SPlatform } from "./data";
+import { OttoAssist } from "../otto-assist";
 
 const WEEK_START = "2026-07-06";
 const NS_CAMPAIGN_NAME = campaignName("camp-merdeka-01") ?? "Merdeka week bakes";
@@ -194,7 +196,7 @@ export function SchedulePlan() {
           days={nextWeek}
           posts={posts}
           onApprove={setApproving}
-          emptyText="Nothing scheduled next week. Add a post or ask Otto to plan it."
+          emptyText="Next week is still open — write the first post, or let Otto plan it."
           landingId={landingId}
         />
 
@@ -255,16 +257,70 @@ function WeekBlock({
   emptyText?: string;
   landingId?: string;
 }) {
+  const planSweep = useSweep();
   const byDay = days
     .map((d) => ({ date: d, posts: posts.filter((p) => p.date === d).sort((a, b) => a.time.localeCompare(b.time)) }))
     .filter((g) => g.posts.length > 0);
+
+  // §8e escort 目标面:让 Otto「排这一周」的工作在本页现场落地。Apply → 从常青清单 +
+  // KL best-time 窗口起 3 条草稿(status: draft,不发不花);landsOn 声明本页 = 现场直播落点。
+  const weekLabel = label.split(" · ")[0];
+  const planWeek = () => {
+    const items = evergreenLists().flatMap((l) => l.items);
+    const seeds = (items.length ? items : ["Signature bakes this week", "Fresh out of the oven today", "Weekend pre-orders open"]).slice(0, 3);
+    const windows = bestTimesForType("fresh");
+    seeds.forEach((caption, i) => {
+      const w = windows[i % windows.length];
+      const target = days.find((d) => dowMon(d) === w.day) ?? days[i % days.length];
+      saveDraft({
+        id: `post-plan-${Date.now()}-${i}`,
+        scheduledAt: `${target}T${w.time}:00+08:00`,
+        platform: "instagram",
+        caption,
+        media: nsImage("bakery", i),
+        status: "draft",
+      });
+    });
+    planSweep.fire();
+  };
+
   return (
     <section>
       <h2 className="text-sm font-semibold text-foreground">{label}</h2>
       {byDay.length === 0 ? (
-        <p className="mt-3 rounded-[14px] border border-dashed border-border px-4 py-6 text-center text-[13px] text-muted-foreground">
-          {emptyText ?? "Nothing scheduled."}
-        </p>
+        <div
+          style={planSweep.style}
+          className="mt-3 flex flex-col items-center gap-3 rounded-[14px] border border-dashed border-border px-4 py-8 text-center"
+        >
+          <p className="text-[13px] text-muted-foreground">
+            {emptyText ?? `${weekLabel} is still open — write the first post, or let Otto plan it.`}
+          </p>
+          <div className="flex flex-wrap items-center justify-center gap-2">
+            <Button variant="secondary" size="sm" asChild>
+              <Link href={`${BASE}/schedule/composer`}>
+                <Plus strokeWidth={2} />
+                New post
+              </Link>
+            </Button>
+            <OttoAssist
+              zone="Schedule"
+              entityLabel={weekLabel}
+              label="Ask Otto to plan"
+              intents={[
+                {
+                  id: "plan-week",
+                  label: `Plan ${weekLabel.toLowerCase()} for me`,
+                  prompt: `Plan ${weekLabel.toLowerCase()} from my evergreen list and best posting times.`,
+                  reply:
+                    "I lined up 3 drafts from your evergreen list and KL best-time windows. They land here as drafts — nothing sends until you approve.",
+                  apply: { summary: `Add 3 drafts to ${weekLabel.toLowerCase()}`, patch: { plan: weekLabel } },
+                  landsOn: { surface: `${BASE}/schedule/plan`, label: `${weekLabel.toLowerCase()} drafts` },
+                },
+              ]}
+              onApply={planWeek}
+            />
+          </div>
+        </div>
       ) : (
         <div className="mt-3 flex flex-col gap-4">
           {byDay.map((g) => (

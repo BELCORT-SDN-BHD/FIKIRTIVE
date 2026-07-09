@@ -35,6 +35,7 @@ import {
   useSweep,
 } from "./kit";
 import { matchKnowledge } from "./data";
+import { OttoAssist } from "../otto-assist";
 import {
   SNIPPETS,
   CATALOG_CARDS,
@@ -133,6 +134,7 @@ export function InboxConversation() {
   const id = params.get("id") ?? conversations[0]?.id ?? "";
   const conversation = conversationByIdView(id) ?? conversations[0];
   const sweep = useSweep();
+  const composerSweep = useSweep();
   const [draft, setDraft] = React.useState("");
   const endRef = React.useRef<HTMLDivElement>(null);
   const count = conversation?.messages.length ?? 0;
@@ -216,6 +218,17 @@ export function InboxConversation() {
     }
     setAdopted(null);
   }
+
+  // §O7 Otto 帮我(composer):意图产出回填输入框(只填草稿,发送仍要坐席亲手点)。
+  // 记为 adopted → 坐席改写后发送会触发「存进知识库?」回路,与 Write 按钮同源。
+  const onComposerApply = (apply: { patch: Record<string, unknown> }) => {
+    const next = apply.patch.draft;
+    if (typeof next === "string") {
+      setDraft(next);
+      setAdopted(next);
+      composerSweep.fire();
+    }
+  };
 
   return (
     <div className="mx-auto flex min-h-full w-full max-w-[760px] flex-col px-6 pt-6 pb-16">
@@ -580,9 +593,53 @@ export function InboxConversation() {
       )}
 
       {/* 输入框:Send 真发(append 到 store、清空、滚到底) */}
-      <div className="mt-4 rounded-[16px] border border-border bg-card p-2">
+      <div className="mt-4 rounded-[16px] border border-border bg-card p-2" style={composerSweep.style}>
         {/* [wave-b] 坐席辅助工具条:帮写 / 翻译 / 三档语气 / 话术 / 商品 / 收款 / 弃购提醒 */}
         <div className="flex flex-wrap items-center gap-1 px-1 pb-2">
+          {/* [wave-c] §O7 Otto 帮我:醒目入口(旧 Write 只是个小魔杖,读不出「帮我写」)。
+              带上下文=这条对话+客户名,意图 chip 零打字起草,Apply 回填输入框。 */}
+          <OttoAssist
+            zone="Inbox"
+            entityId={conversation.id}
+            entityLabel={contact?.name}
+            formState={{ awaitingReply, lastCustomerMessage: awaitingReply ? lastMsg.text : undefined, detectedLang }}
+            label="Ask Otto to write"
+            className="ns-pressable bg-card"
+            intents={[
+              {
+                id: "reply-friendly",
+                label: "Write a friendly reply",
+                prompt: `Draft a friendly reply to ${contact?.name?.split(" ")[0] ?? "this customer"}.`,
+                reply: "Here's a warm reply you can send as-is or tweak:",
+                apply: {
+                  summary: "Fill the reply box with a friendly draft",
+                  patch: { draft: draftReplyFor(awaitingReply ? lastMsg.text : "") },
+                },
+              },
+              {
+                id: "reply-price",
+                label: "Quote a price",
+                prompt: "Draft a reply that quotes the price and asks how many they'd like.",
+                reply: "A price reply lands best with the number and a next step. Set the real item and price:",
+                apply: {
+                  summary: "Fill the reply box with a price quote",
+                  patch: { draft: `Thanks for asking! [Item] is RM[price] each. Let me know how many you'd like and I'll confirm your order.` },
+                },
+              },
+              {
+                id: "reply-confirm",
+                label: "Confirm the order",
+                prompt: "Draft a reply that confirms the order and pickup.",
+                reply: "Here's an order confirmation — fill in the item and pickup time:",
+                apply: {
+                  summary: "Fill the reply box with an order confirmation",
+                  patch: { draft: `Order confirmed! I've noted [items]. Ready by [time] — pay on pickup, or I can send a payment link, whichever's easier.` },
+                },
+              },
+            ]}
+            onApply={onComposerApply}
+          />
+          <div className="mx-1 h-4 w-px bg-border" />
           <ToolbarButton icon={Wand2} label="Write" onClick={() => { const t = draftReplyFor(awaitingReply ? lastMsg.text : ""); setDraft(t); setAdopted(t); }} />
           <ToolbarButton icon={Languages} label="Translate" onClick={() => setDraft((d) => translateDraft(d || (awaitingReply ? lastMsg.text : "")))} disabled={!draft.trim() && !awaitingReply} />
           <ToolbarButton icon={Zap} label="Snippets" onClick={() => setAssistOpen((v) => (v === "snippets" ? null : "snippets"))} />
@@ -611,7 +668,9 @@ export function InboxConversation() {
           value={draft}
           onChange={(e) => setDraft(e.target.value)}
           onKeyDown={(e) => {
-            if (e.key === "Enter" && (e.metaKey || e.ctrlKey)) {
+            // [wave-c] #38 修零提示卡点:Cmd/Ctrl+↵ 与 Shift+↵(项目 §10 约定)都发送;
+            // 裸 Enter 故意留作换行——客服回复框宁可不误发(安全 > 效率)。
+            if (e.key === "Enter" && (e.metaKey || e.ctrlKey || e.shiftKey)) {
               e.preventDefault();
               send();
             }
@@ -625,7 +684,11 @@ export function InboxConversation() {
             Send a nudge
           </Button>
           <div className="flex-1" />
-          <Button size="sm" disabled={!draft.trim()} onClick={send}>
+          {/* [wave-c] #38 明说怎么发:WhatsApp 肌肉记忆是 Enter=发,这里 Enter=换行,零提示必卡人 */}
+          <span className="hidden text-[11px] text-muted-foreground sm:inline">
+            Enter for a new line · ⌘↵ or Shift+↵ to send
+          </span>
+          <Button size="sm" className="ns-pressable" disabled={!draft.trim()} onClick={send}>
             <Send strokeWidth={2} />
             Send
           </Button>

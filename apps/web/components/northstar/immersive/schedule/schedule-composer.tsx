@@ -47,15 +47,22 @@ import { EmptyState, PageHeader } from "@/components/northstar/_shared";
 import { NS_ASSETS, NS_SCHEDULED_POSTS, nsImage, type NsAsset, type NsContact, type NsScheduledPost } from "@/components/northstar/_mock";
 import {
   BASE,
+  DOW_MON,
+  NS_TODAY,
   PLATFORMS,
   PlatformTag,
   ViewSwitch,
+  addDaysIso,
+  dowMon,
   fmtDateLong,
   fmtTime,
   livePosts,
   type NsPlatform,
 } from "./kit";
-import { bestTimesFor, buildUtm, checkLinks, type SPlatform } from "./data";
+import { POST_TYPES, bestTimesForType, buildUtm, checkLinks, type PostType } from "./data";
+import { OttoAssist } from "../otto-assist";
+import { useSweep } from "../_kit";
+import type { NsAssistApply } from "../_store";
 import {
   saveDraft,
   schedulePost,
@@ -73,7 +80,7 @@ import { useQueryParam, Initials } from "../_kit";
 import { SEGMENTS, contactMatchesRules } from "../crm-inbox/data";
 
 const ALL_TARGETS: NsPlatform[] = ["instagram", "facebook", "tiktok", "x"];
-const TIMES = ["07:00", "08:00", "09:00", "10:00", "12:00", "12:30", "17:00", "18:00", "19:00", "21:00"];
+const TIMES = ["07:00", "08:00", "09:00", "10:00", "12:00", "12:30", "17:00", "18:00", "19:00", "20:00", "21:00"];
 const RATIOS = [
   { key: "1:1", label: "Square 1:1", cls: "aspect-square" },
   { key: "4:5", label: "Portrait 4:5", cls: "aspect-[4/5]" },
@@ -129,6 +136,8 @@ export function ScheduleComposer() {
   const [gridOpen, setGridOpen] = React.useState(false);
   const [date, setDate] = React.useState("2026-07-08");
   const [time, setTime] = React.useState("09:00");
+  const [postType, setPostType] = React.useState<PostType>("fresh");
+  const captionSweep = useSweep();
   const [firstComment, setFirstComment] = React.useState("");
   const [altText, setAltText] = React.useState("");
   const [tags, setTags] = React.useState<string[]>([]);
@@ -337,7 +346,27 @@ export function ScheduleComposer() {
 
   const cGroups = channelGroups();
   const hGroups = hashtagGroups();
-  const recommended = bestTimesFor(activeTab as SPlatform);
+  // 按内容类型给窗口(而非平台均值);冷启动行业默认,理由挂 KL bakery 口径。
+  const recommended = bestTimesForType(postType);
+
+  // 建议 chip 带「日」一起落——点「Sat 9am」同时 set 日期 + 时间(修 EFFECTIVENESS #176:
+  // 旧 chip 只 setTime 丢 day,把对的建议半应用成错的结果)。日期取 ≥ 今天的最近一个该星期几。
+  const applyBestTime = (b: { day: number; time: string }) => {
+    const cur = dowMon(NS_TODAY);
+    const nextDate = addDaysIso(NS_TODAY, (b.day - cur + 7) % 7);
+    setDate(nextDate);
+    if (TIMES.includes(b.time)) setTime(b.time);
+  };
+
+  // §O7 caption Otto-assist:意图产出的草稿回填 caption(只填字段,发/花仍要店主点)。
+  const onCaptionApply = (apply: NsAssistApply) => {
+    const next = apply.patch.caption;
+    if (typeof next === "string") {
+      setCaption(next);
+      setCaptionError(null);
+      captionSweep.fire();
+    }
+  };
 
   return (
     <div className="mx-auto flex min-h-full w-full max-w-[880px] flex-col px-6 pt-6 pb-16">
@@ -453,19 +482,66 @@ export function ScheduleComposer() {
               </div>
             </Field>
 
-            {/* 主文案 */}
-            <Field label="Caption" error={captionError}>
-              <Textarea
-                ref={captionRef}
-                value={caption}
-                onChange={(e) => {
-                  setCaption(e.target.value);
-                  if (captionError && e.target.value.trim()) setCaptionError(null);
-                }}
-                aria-invalid={captionError ? true : undefined}
-                placeholder="Fresh out of the oven: kaya butter croissants till 11am."
-                className="min-h-24 rounded-[14px] bg-card text-[15px] leading-[22px]"
-              />
+            {/* 主文案 —— [wave-c] 挂一颗 Otto 帮我(§O7:带 zone+当前表单快照,意图 chip 零打字起草) */}
+            <Field
+              label="Caption"
+              error={captionError}
+              action={
+                <OttoAssist
+                  zone="Schedule"
+                  entityLabel="New post"
+                  formState={{ hasMedia: !!media, channels: targets, postType }}
+                  intents={[
+                    {
+                      id: "cap-fresh",
+                      label: "Draft today's fresh bake",
+                      prompt: "Write a caption for what's fresh out of the oven today.",
+                      reply: "Here's a starter — swap in today's actual bake and cut-off time before you post:",
+                      apply: {
+                        summary: "Fill the caption with a fresh-bake draft",
+                        patch: { caption: "Fresh out of the oven: [today's bake] till 11am. Walk in or pre-order — link in bio." },
+                      },
+                    },
+                    {
+                      id: "cap-promo",
+                      label: "Write a promo",
+                      prompt: "Write a short promo caption with a clear offer and cut-off.",
+                      reply: "A promo needs one offer and one deadline. Here's a draft — set the real discount and date:",
+                      apply: {
+                        summary: "Fill the caption with a promo draft",
+                        patch: { caption: "[X]% off [product] till [day] 6pm. Order on WhatsApp or link in bio — while stock lasts." },
+                      },
+                    },
+                    {
+                      id: "cap-caption-photo",
+                      label: "Caption this photo",
+                      prompt: "Write a caption that matches the photo I've attached.",
+                      reply: media
+                        ? "Based on the visual you picked, here's a caption you can trim to taste:"
+                        : "Pick a photo first and I'll match the caption to it. Here's a general one meanwhile:",
+                      apply: {
+                        summary: "Fill the caption to match the photo",
+                        patch: { caption: "Made fresh this morning. Tag someone you'd share this with — pre-orders open, link in bio." },
+                      },
+                    },
+                  ]}
+                  onApply={onCaptionApply}
+                />
+              }
+            >
+              <div style={captionSweep.style} className="rounded-[14px]">
+                <Textarea
+                  ref={captionRef}
+                  value={caption}
+                  onChange={(e) => {
+                    setCaption(e.target.value);
+                    if (captionError && e.target.value.trim()) setCaptionError(null);
+                  }}
+                  aria-invalid={captionError ? true : undefined}
+                  placeholder="Fresh out of the oven: kaya butter croissants till 11am."
+                  className="min-h-24 rounded-[14px] bg-card text-[15px] leading-[22px]"
+                />
+              </div>
             </Field>
 
             {/* [wave-b] Hashtag 组 + 标签 */}
@@ -612,26 +688,61 @@ export function ScheduleComposer() {
                 </Select>
               </Field>
             </div>
-            {recommended.length > 0 && (
-              <div className="flex flex-wrap items-center gap-1.5">
-                <span className="inline-flex items-center gap-1 text-xs font-medium text-muted-foreground">
+            {/* [wave-c] 按内容类型分时段 + 冷启动诚实标注(§O7 姊妹:best-time 不装聪明) */}
+            <div className="flex flex-col gap-2 rounded-[14px] border border-border bg-card p-3">
+              <div className="flex flex-wrap items-center gap-2">
+                <span className="inline-flex items-center gap-1 text-xs font-semibold text-foreground">
                   <Sparkles className="size-3.5" strokeWidth={2} />
-                  Best times for {PLATFORMS[activeTab].label}
+                  Best time to post
                 </span>
-                {recommended.map((b) => (
-                  <button
-                    key={b.time}
-                    type="button"
-                    onClick={() => TIMES.includes(b.time) && setTime(b.time)}
-                    title={b.reason}
-                    className="rounded-full border border-dashed border-border px-2.5 py-0.5 text-[11px] font-medium text-foreground hover:bg-accent"
-                  >
-                    {fmtTime(b.time)}
-                  </button>
-                ))}
-                <span className="text-[11px] text-muted-foreground">Based on KL bakery averages — no account data needed</span>
+                <span className="text-[11px] text-muted-foreground">What kind of post is this?</span>
               </div>
-            )}
+              {/* 内容类型选择(人手可动 → 选中态走蓝声部 §2) */}
+              <div className="flex flex-wrap gap-1.5">
+                {POST_TYPES.map((pt) => {
+                  const on = postType === pt.id;
+                  return (
+                    <button
+                      key={pt.id}
+                      type="button"
+                      aria-pressed={on}
+                      onClick={() => setPostType(pt.id)}
+                      title={pt.hint}
+                      className={cn(
+                        "ns-pressable rounded-full px-3 py-1 text-[12px] font-medium",
+                        on ? "ns-human-soft" : "bg-card text-muted-foreground hover:text-foreground",
+                      )}
+                    >
+                      {pt.label}
+                    </button>
+                  );
+                })}
+              </div>
+              {/* 该类型的推荐窗口:chip 带「日」,点一下同时 set 日期 + 时间 */}
+              <div className="flex flex-wrap items-center gap-1.5">
+                {recommended.map((b) => {
+                  const active = dowMon(date) === b.day && time === b.time;
+                  return (
+                    <button
+                      key={`${b.day}-${b.time}`}
+                      type="button"
+                      onClick={() => applyBestTime(b)}
+                      title={b.reason}
+                      className={cn(
+                        "ns-pressable rounded-full px-2.5 py-1 text-[11px] font-medium tabular-nums",
+                        active ? "ns-human-soft" : "bg-card text-foreground",
+                      )}
+                    >
+                      {DOW_MON[b.day]} {fmtTime(b.time)}
+                    </button>
+                  );
+                })}
+              </div>
+              <p className="text-[11px] leading-4 text-muted-foreground">
+                Industry default for KL bakeries — not tuned to you yet. Otto learns your own best times once your post
+                analytics go live.
+              </p>
+            </div>
 
             {/* first comment */}
             <Field label="First comment" help="Instagram only. Posts right after the main post." optional>

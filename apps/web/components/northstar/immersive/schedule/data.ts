@@ -79,6 +79,59 @@ export function bestTimesFor(platform: SPlatform): BestTime[] {
   return BEST_TIMES[platform] ?? [];
 }
 
+/* ── 按内容类型分时段 · 冷启动诚实标注（[wave-c] Z5-schedule）───────────────────
+ * 病根(EFFECTIVENESS #174):best-time 是一张冻结的行业默认表,从不读账号自己的表现,
+ * 「Sunday brunch browsing」任何店都能贴。冷启动态现在能诚实做的两件事:
+ *   ① 诚实标注来源——这是「KL 烘焙行业默认」,不是你的数据;个人化态等分析区真管线上线
+ *      (line 253:mock 里编个人化假数字=自欺,故此处只做诚实的冷启动态)。
+ *   ② 按内容类型分时段——老板真正在想的是「我这条促销该几点发」,不是抽象的平台均值。
+ * 每个窗口 day(0=Mon..6=Sun)+ time + 一句能站住的理由(KL 面包店社媒常识,非品牌事实)。 */
+export type PostType = "fresh" | "promo" | "behind" | "weekend";
+
+export interface PostTypeMeta {
+  id: PostType;
+  /** chip 文案(人话,sentence case) */
+  label: string;
+  /** 一句解释这类内容是什么 */
+  hint: string;
+}
+
+export const POST_TYPES: PostTypeMeta[] = [
+  { id: "fresh", label: "Fresh bake", hint: "Daily drops — what is out of the oven now" },
+  { id: "promo", label: "Promo", hint: "Sales, discounts, pre-order pushes" },
+  { id: "behind", label: "Behind the scenes", hint: "Team, process, story-style posts" },
+  { id: "weekend", label: "Weekend special", hint: "Weekend menus and pre-orders" },
+];
+
+/** 冷启动行业默认时段表,按内容类型切(而非只按平台)。理由挂来源口径「KL bakery」。 */
+export const BEST_TIMES_BY_TYPE: Record<PostType, BestTime[]> = {
+  fresh: [
+    { day: 0, time: "07:00", reason: "Monday commute scroll — start the week's pre-orders" },
+    { day: 3, time: "08:00", reason: "Thursday top-up, before the weekend rush" },
+    { day: 4, time: "07:00", reason: "Friday morning — people plan the weekend's treats" },
+  ],
+  promo: [
+    { day: 1, time: "12:00", reason: "Tuesday lunch break — office orders get placed" },
+    { day: 4, time: "17:00", reason: "Friday payday wind-down, weekend planning" },
+    { day: 6, time: "20:00", reason: "Sunday night cravings — next-day pickup" },
+  ],
+  behind: [
+    { day: 2, time: "20:00", reason: "Midweek evening scroll — story content lands" },
+    { day: 5, time: "10:00", reason: "Saturday slow morning — people browse, not buy" },
+    { day: 6, time: "21:00", reason: "Sunday wind-down — higher watch-through on process clips" },
+  ],
+  weekend: [
+    { day: 4, time: "17:00", reason: "Friday evening — open the weekend pre-order window" },
+    { day: 5, time: "09:00", reason: "Saturday brunch browsing" },
+    { day: 6, time: "10:00", reason: "Sunday brunch — walk-in and same-day orders" },
+  ],
+};
+
+/** 某内容类型的推荐窗口(composer 建议面用;冷启动行业默认,非个人化)。 */
+export function bestTimesForType(type: PostType): BestTime[] {
+  return BEST_TIMES_BY_TYPE[type] ?? [];
+}
+
 /* ── campaign 归组解析(角标 + 深链回容器) ──────────────────────────────────
  * 帖卡上的 campaign 角标点进 campaign 容器(D1:Campaign 是唯一「事」容器)。 */
 const OFFICE_FALLBACK: Record<string, string> = {
