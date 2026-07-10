@@ -614,3 +614,78 @@ export const NS_VERDICT_META: Record<NsAdVerdict, { label: string; tone: "scale"
   optimize: { label: "Optimize", tone: "hold" },
   pause: { label: "Pause", tone: "pause" },
 };
+
+/* ═══════════════════════════════════════════════════════════════════════════
+ * 属性级创意归因(Z8-analytics-ads-aeo · Wave C · [analytics-ads-aeo 区])
+ *
+ * 病根(重修前):报表把 +38% / +21% CTR 当「对你自己广告的实测」写死,可 mock 里 8 条
+ * 广告根本没有 per-attribute 打标 —— 这些精确百分比无法从任何数字派生,违反本文件第 7 行
+ * 「诊断不捏造 — 每条诊断证据均可指回下方数字」。
+ *
+ * 修法(照金标准 REFERENCE-PROPOSAL 的「代理指标要标注 + 样本要露 + 不冒充受控实验」):
+ *   ① 每条属性显式列出它命中哪几条真实广告(adIds → NS_ADS,可逐条核对);每个标注都锚定
+ *      那条 ad 的 diagnosis 实据(见下方注释),不是拍脑袋;
+ *   ② lift 现算 —— 带该属性广告的均值 CTR vs 账户均值 CTR(NS_AD_ACCOUNT.avgCtr,来自数据),
+ *      不写死任何百分比;
+ *   ③ 露样本量(n 条广告);单条命中 = 只作「一条广告的提示」不作「趋势」(诚实降权);
+ *   ④ 表现为方向性百分点(pts),不冒充受控 A/B 实测。
+ * ═══════════════════════════════════════════════════════════════════════════ */
+
+export interface NsCreativeAttribute {
+  /** 人话属性名 */
+  attribute: string;
+  /** 命中的真实广告 id(→ NS_ADS)。锚定各 ad 的 diagnosis,可点回核对。 */
+  adIds: string[];
+}
+
+/** 从真实广告 diagnosis 派生的属性标注(可核对到 NS_ADS 每条的判读)。 */
+export const NS_CREATIVE_ATTRIBUTES: NsCreativeAttribute[] = [
+  // ad-01「the box opens in the first two seconds」· ad-02「the steam shot is doing the work」(morning reel 产品前置)
+  // · ad-04 pandan cake close-up(开场即产品特写)。
+  { attribute: "Opens on the product in the first seconds", adIds: ["ad-01", "ad-02", "ad-04"] },
+  // ad-05「the first 5 seconds show dough, not the croissant, and most viewers leave there」。
+  { attribute: "Slow open — no product up front", adIds: ["ad-05"] },
+  // ad-07「too much text on the image ... it reads like a menu, not a treat」。
+  { attribute: "Text-heavy image", adIds: ["ad-07"] },
+];
+
+export interface NsCreativeRead {
+  attribute: string;
+  /** 带该属性广告的均值 CTR(%) */
+  withCtr: number;
+  /** 账户均值 CTR(%,来自 NS_AD_ACCOUNT.avgCtr) */
+  accountCtr: number;
+  /** withCtr − accountCtr(百分点;方向性,非受控实测) */
+  deltaPts: number;
+  /** 样本量(命中广告数) */
+  n: number;
+  tone: "up" | "down";
+  /** 单条广告命中 = 只是提示,不是趋势 */
+  weak: boolean;
+}
+
+/**
+ * 现算每条创意属性的方向性读数(带该属性广告的均值 CTR vs 账户均值 CTR),露样本量。
+ * 每个数字都能指回 NS_ADS + NS_AD_ACCOUNT.avgCtr —— 不写死任何百分比。
+ */
+export function creativeAttributeReads(ads: readonly NsAd[] = NS_ADS): NsCreativeRead[] {
+  const byId = new Map(ads.map((a) => [a.id, a]));
+  const accountCtr = NS_AD_ACCOUNT.avgCtr;
+  const reads: NsCreativeRead[] = [];
+  for (const attr of NS_CREATIVE_ATTRIBUTES) {
+    const hit = attr.adIds.map((id) => byId.get(id)).filter((a): a is NsAd => Boolean(a));
+    if (hit.length === 0) continue;
+    const withCtr = hit.reduce((s, a) => s + a.ctr, 0) / hit.length;
+    const deltaPts = Math.round((withCtr - accountCtr) * 10) / 10;
+    reads.push({
+      attribute: attr.attribute,
+      withCtr: Math.round(withCtr * 10) / 10,
+      accountCtr,
+      deltaPts,
+      n: hit.length,
+      tone: deltaPts >= 0 ? "up" : "down",
+      weak: hit.length < 2,
+    });
+  }
+  return reads;
+}

@@ -28,18 +28,23 @@ import { AnalyticsNav, PinnedHeader, ZoneBody } from "./kit";
 
 const ENGINES = ["ChatGPT", "Perplexity", "Gemini"] as const;
 
-/** 50 问里抽 10 条代表(买家真会对 AI 问的话;可编辑成你店的口径)。hits = 三引擎是否提到你。 */
+/**
+ * 50 问里抽 10 条代表(买家真会对 AI 问的话;可编辑成你店的口径)。hits = 三引擎是否提到你。
+ * 代表性(铁律):抽样命中率必须贴合头条 mention rate 24%(12/50)—— 这批 10 条里只有 2 条被点名
+ * (20%),而且集中在店家真正强的品类(Raya / Merdeka 礼盒);泛化查询大多落空。这才诚实反映
+ * 「你还基本不被 AI 推荐」的现状,而不是满屏对勾把可见度高估成 70%。
+ */
 const AEO_QUESTIONS: { q: string; hits: [boolean, boolean, boolean] }[] = [
-  { q: "Best kaya croissant in Kuala Lumpur?", hits: [true, true, false] },
+  { q: "Best kaya croissant in Kuala Lumpur?", hits: [false, false, false] },
   { q: "Where to order a Merdeka gift box in KL?", hits: [true, false, false] },
-  { q: "Halal bakery for office breakfast delivery KL?", hits: [false, true, false] },
-  { q: "Good bakery near KLCC for corporate orders?", hits: [true, false, false] },
+  { q: "Halal bakery for office breakfast delivery KL?", hits: [false, false, false] },
+  { q: "Good bakery near KLCC for corporate orders?", hits: [false, false, false] },
   { q: "Where to buy pandan cake in Kuala Lumpur?", hits: [false, false, false] },
-  { q: "Best Raya cookie boxes to pre-order in Malaysia?", hits: [true, true, true] },
+  { q: "Best Raya cookie boxes to pre-order in Malaysia?", hits: [true, true, false] },
   { q: "Artisan croissant shop KL open early morning?", hits: [false, false, false] },
-  { q: "Bakery that does bulk kaya buns for events KL?", hits: [true, false, false] },
+  { q: "Bakery that does bulk kaya buns for events KL?", hits: [false, false, false] },
   { q: "Where to get a birthday cake same-day in KL?", hits: [false, false, false] },
-  { q: "Malaysian bakery with gift boxes for Merdeka?", hits: [true, true, false] },
+  { q: "Malaysian bakery with gift boxes for Merdeka?", hits: [false, false, false] },
 ];
 
 /** 全 50 问的汇总(演示数字;真跑后由引擎回填)。 */
@@ -98,6 +103,8 @@ export default function AnalyticsAeo() {
   const avgSiteScore = Math.round(
     (SITE_DIMENSIONS.reduce((a, b) => a + b.score, 0) / SITE_DIMENSIONS.length) * 10,
   ) / 10;
+  // 抽样命中数(现算)—— 用来在表下把「这 10 条命中几次」和头条 24% 明确挂钩,消除高估错觉。
+  const sampleNamed = AEO_QUESTIONS.filter((r) => r.hits.some(Boolean)).length;
 
   return (
     <>
@@ -128,8 +135,9 @@ export default function AnalyticsAeo() {
                 id: "which-fix",
                 label: "Which fix helps most?",
                 prompt: "Of the site fixes, which one gets me recommended by AI the fastest?",
-                reply:
-                  "Add an FAQ block first — it's your lowest score (4/10) and AI assistants quote FAQs more than any other page section. A \"best Merdeka gift boxes in KL\" comparison page is the next biggest lever.",
+                // 从 topFixes() 现算,和上方「fix these 3 first」的排名一致(不自相矛盾):
+                // #1 = Comparison content 3/10(最低分)· #2 = Structured content 4/10。
+                reply: `Start with ${fixes[0].dim.toLowerCase()} — at ${fixes[0].score}/10 it's your lowest score, and a "best Merdeka gift boxes in KL" comparison page is what AI quotes most. ${fixes[1].dim} (an FAQ block) is the next lever at ${fixes[1].score}/10.`,
               },
               {
                 id: "edit-questions",
@@ -264,7 +272,9 @@ export default function AnalyticsAeo() {
               })}
             </div>
             <p className="mt-3 text-xs text-muted-foreground">
-              These are industry-typical questions to start. Ask Otto to rewrite them in the words your own customers use
+              This slice names you in {sampleNamed} of {AEO_QUESTIONS.length} — across all {AEO_SUMMARY.totalQuestions}{" "}
+              questions it&apos;s {AEO_SUMMARY.mentioned} ({AEO_SUMMARY.mentionRatePct}%), so most searches still skip you.
+              These are industry-typical questions to start; ask Otto to rewrite them in the words your own customers use
               before a real run.
             </p>
           </Panel>

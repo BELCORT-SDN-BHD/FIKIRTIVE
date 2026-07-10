@@ -27,7 +27,7 @@ import {
 } from "@/components/ui/select";
 import { OttoAvatar } from "@/components/otto/OttoAvatar";
 import { EmptyState, OttoNarrationBar } from "@/components/northstar/_shared";
-import { NS_ANALYTICS, NS_BRAND, NS_SCHEDULED_POSTS } from "@/components/northstar/_mock";
+import { NS_ANALYTICS, NS_BRAND, NS_CAMPAIGNS, NS_SCHEDULED_POSTS } from "@/components/northstar/_mock";
 import {
   LandIn,
   NsSkeleton,
@@ -37,7 +37,7 @@ import {
   fmtMoney,
 } from "@/components/northstar/analytics/zone-kit";
 import { NsLineChart } from "@/components/northstar/analytics/line-chart";
-import { NS_AD_ACCOUNT, NS_ADS, accountMoney, adMoneyFor } from "@/components/northstar/ads/mock-ads";
+import { NS_AD_ACCOUNT, NS_ADS, accountMoney, adMoneyFor, creativeAttributeReads } from "@/components/northstar/ads/mock-ads";
 import {
   cancelReportSubscription,
   creditSpendByCategory,
@@ -106,16 +106,37 @@ function weeklyDirective(): DirectiveLane[] {
       body: `${stop.ad.name} — ${fmtMoney(cur, stop.m.costPerResultMyr)} to sell a ${fmtMoney(cur, stop.m.unitPriceMyr)} item, about ${fmtMoney(cur, red)} in the red. Pause it; it's the biggest leak.`,
     });
   }
-  lanes.push({
-    key: "fix",
-    label: "Fix today",
-    body: "Link clicks slipped 4% — more people saw you, fewer clicked through to order. Your next reel needs a clearer \"order now\" line. Clicks are the one number that predicts sales, so this matters.",
-  });
-  lanes.push({
-    key: "approve",
-    label: "Approve next",
-    body: "A B2B corporate-gifting post for Merdeka — your Raya data shows Facebook drove the bulk orders, and there's no B2B post planned yet. Waiting on your yes.",
-  });
+  // Fix today —— 锚到 NS_ANALYTICS.kpis(reach ▲ / link clicks ▼,来自数据),不写死百分比。
+  const clicksKpi = NS_ANALYTICS.kpis.find((k) => k.label === "Link clicks");
+  const reachKpi = NS_ANALYTICS.kpis.find((k) => k.label === "Reach");
+  if (clicksKpi && clicksKpi.delta.dir === "down") {
+    const clicksPct = clicksKpi.delta.text.replace(/[^\d]/g, "");
+    const reachClause =
+      reachKpi && reachKpi.delta.dir === "up"
+        ? `reach is up ${reachKpi.delta.text.replace(/[^\d]/g, "")}%`
+        : "reach held up";
+    lanes.push({
+      key: "fix",
+      label: "Fix today",
+      body: `Link clicks are down ${clicksPct}% (${clicksKpi.value} this period) while ${reachClause} — more people saw you, fewer clicked through to order. Your next reel needs a clearer "order now" line; clicks are the number that predicts sales.`,
+    });
+  }
+  // Approve next —— 锚到真实 B2B 需求(office 广告的 enquiries)+ Raya 复盘 learning(NS_CAMPAIGNS,原话引用),
+  // 且 Merdeka 排期里确无 B2B 帖(NS_SCHEDULED_POSTS 现查),不凭空断言。
+  const rayaB2B = NS_CAMPAIGNS.find((c) => c.id === "camp-raya-01")?.result?.learnings.find((l) =>
+    /B2B|corporate/i.test(l),
+  );
+  const enquiries = accountMoney(NS_ADS).enquiries;
+  const merdekaHasB2B = NS_SCHEDULED_POSTS.some(
+    (p) => p.campaignId === "camp-merdeka-01" && /corporate|office|b2b|bulk|hamper/i.test(p.caption),
+  );
+  if (rayaB2B && enquiries > 0 && !merdekaHasB2B) {
+    lanes.push({
+      key: "approve",
+      label: "Approve next",
+      body: `A B2B corporate-gifting post for Merdeka — your office ad already pulled ${enquiries} enquiries this period, and your Raya readout logged "${rayaB2B}" There's no B2B post in the Merdeka schedule yet. Waiting on your yes.`,
+    });
+  }
   return lanes;
 }
 
@@ -125,14 +146,6 @@ const DIRECTIVE_STYLE: Record<DirectiveLane["key"], { dot: string; label: string
   fix: { dot: "bg-warning", label: "text-warning-soft-foreground" },
   approve: { dot: "bg-[var(--human)]", label: "ns-human-text" },
 };
-
-/* [wave-b] 属性级创意归因:LLM 给已发布素材打属性标签 × 表现,轻量相关性 */
-const CREATIVE_ATTRIBUTES = [
-  { attribute: "Hook in first 2 seconds", lift: "+38% CTR", tone: "up" as const },
-  { attribute: "Real person on camera", lift: "+21% CTR", tone: "up" as const },
-  { attribute: "Limited-time wording", lift: "+14% CTR", tone: "up" as const },
-  { attribute: "Text-heavy image", lift: "−26% CTR", tone: "down" as const },
-];
 
 function ReportStat({ label, value, delta }: { label: string; value: string; delta?: string }) {
   return (
@@ -174,6 +187,8 @@ export default function AnalyticsReports() {
   const cur = NS_AD_ACCOUNT.currencyPrefix;
   const acct = accountMoney(NS_ADS);
   const directive = weeklyDirective();
+  // 属性级创意归因:现算 vs 账户均值 CTR,每行可指回 NS_ADS(方向性,非受控实测)
+  const creativeReads = creativeAttributeReads();
   // 广告块按「回本」排(而非 CTR),带 verdict:回答「该留还是该停」
   const rankedAds = NS_ADS.map((a) => ({ ad: a, m: adMoneyFor(a, NS_ADS) }))
     .sort((a, b) => (b.m.netMarginMyr ?? -Infinity) - (a.m.netMarginMyr ?? -Infinity));
@@ -539,22 +554,31 @@ export default function AnalyticsReports() {
                     </div>
                   )}
 
-                  {/* [wave-b] 属性级创意归因:哪种元素带动效果 */}
+                  {/* [wave-b] 属性级创意归因:哪种元素带动效果(方向性,现算 vs 账户均值 CTR) */}
                   {blocks.creative && (
                     <div className="mt-5">
                       <h3 className="text-sm font-semibold text-foreground">What&apos;s working in creative</h3>
-                      <p className="text-xs text-muted-foreground">Which elements move the numbers · across your published ads</p>
+                      <p className="text-xs text-muted-foreground">
+                        Directional read across your {NS_ADS.length} published ads · CTR vs your {NS_AD_ACCOUNT.avgCtr}%
+                        account average · not a controlled test
+                      </p>
                       <div className="mt-2">
-                        {CREATIVE_ATTRIBUTES.map((c) => (
+                        {creativeReads.map((c) => (
                           <div key={c.attribute} className="flex items-baseline gap-3 border-t border-border py-2.5 first:border-t-0">
-                            <span className="min-w-0 flex-1 text-sm text-foreground">{c.attribute}</span>
+                            <span className="min-w-0 flex-1 text-sm text-foreground">
+                              {c.attribute}
+                              <span className="ml-2 text-xs text-muted-foreground">
+                                {c.n === 1 ? "1 ad · a hint, not a trend" : `${c.n} ads · ${c.withCtr}% CTR`}
+                              </span>
+                            </span>
                             <span
                               className={cn(
                                 "shrink-0 text-sm font-semibold tabular-nums",
                                 c.tone === "up" ? "text-success-soft-foreground" : "text-error-soft-foreground",
                               )}
                             >
-                              {c.lift}
+                              {c.tone === "up" ? "+" : "−"}
+                              {Math.abs(c.deltaPts).toFixed(1)} pts
                             </span>
                           </div>
                         ))}
