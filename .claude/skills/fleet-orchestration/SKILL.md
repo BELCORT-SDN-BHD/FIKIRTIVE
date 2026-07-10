@@ -81,3 +81,5 @@ codex exec --skip-git-repo-check -c model_reasoning_effort=<low|medium|high|xhig
 - 计费走 founder 的 ChatGPT 订阅(priority tier),非逐笔钱路;**重活(整分支审查/长跑)先跟 founder 打一声招呼**,别烧光他的 plan 限额。
 - repo 规矩对 Codex 一视同仁:永不推 main、PR+CI 绿灯、playbook 检查单。
 - plugin 命令(`/codex:review` 等)需重启会话才注册;CLI `codex exec` 永远直接可用。
+
+12. **借鉴先行律(founder 2026-07-10 常设)**:遇平台政策雷/接口关门/合规红线,第一步=查龙头活法(官方源+龙头自家文档),产出"抄什么/改什么/为什么我们不同"再设计我方解法;禁止未查先创。范例:docs/research/LEADER-PLAYBOOK-2026-07-10.md。
