@@ -22,20 +22,55 @@ export interface MetaGraphPort {
 
 export type PublishOk = { externalId: string };
 export type PublishFail = { error: string; retryable: boolean };
-export type PublishResult = PublishOk | PublishFail;
+/**
+ * The request MAY have crossed Meta's external side-effect point (a publish POST that timed out /
+ * dropped its connection / returned 5xx / succeeded but gave us no id). The post might already be
+ * live and we CANNOT tell from here. This is NEVER a `retryable` fail: blindly re-sending it would
+ * risk a second live post (double-post). The caller must keep its APPLYING claim and reconcile
+ * Meta's TRUTH (IG: the stored creationId anchor; FB: recent posts) before deciding — or fail
+ * closed to NEEDS_ATTENTION. See the worker handler's `"ambiguous" in result` branch.
+ */
+export type PublishAmbiguous = { ambiguous: true; error: string };
+export type PublishResult = PublishOk | PublishFail | PublishAmbiguous;
 
 /** Transient Meta error codes → retry (six-state ④). Everything else is a hard reject (③).
  *  1/2 = transient API, 4/17/32/613 = rate limits, 341 = app-level throttling, 368 temporary block. */
 const TRANSIENT_CODES = new Set([1, 2, 4, 17, 32, 341, 368, 613]);
+
+/** An aborted/timed-out fetch (AbortSignal.timeout → "TimeoutError"; manual abort → "AbortError"). */
+function isAbort(e: unknown): boolean {
+  const name = (e as { name?: string })?.name;
+  return name === "TimeoutError" || name === "AbortError";
+}
+
+/**
+ * Did this failure leave the publish outcome UNKNOWN — i.e. the request may have already crossed
+ * Meta's side-effect point? A well-formed Meta error body (a numeric `metaError.code`) at ANY 4xx
+ * (including 429 throttling) is a definitive rejection: Meta received the request and refused it
+ * before acting, so nothing was published (safe to hard-fail / retry per the code). Everything else
+ * — a network drop, a timeout/abort, a 5xx server error, or no structured 4xx body — means we never
+ * got a definitive answer, so the outcome is ambiguous and MUST NOT be blindly retried.
+ */
+function crossedSideEffectPoint(e: unknown): boolean {
+  if (isAbort(e)) return true;
+  const err = e as { metaError?: { code?: number }; status?: number };
+  const status = err?.status;
+  const hasMetaCode = typeof err?.metaError?.code === "number";
+  if (hasMetaCode && typeof status === "number" && status >= 400 && status < 500) {
+    return false; // definitive 4xx rejection — the publish did NOT happen
+  }
+  return true; // 5xx / network / timeout / no structured 4xx body → unknown
+}
 
 function classify(e: unknown): PublishFail {
   const err = e as { message?: string; metaError?: { code?: number; message?: string }; status?: number };
   const code = err?.metaError?.code;
   const status = err?.status;
   const retryable =
+    isAbort(e) ||
     (typeof status === "number" && (status === 429 || status >= 500)) ||
     (typeof code === "number" && TRANSIENT_CODES.has(code));
-  const error = err?.metaError?.message || err?.message || "Meta publish failed";
+  const error = err?.metaError?.message || (isAbort(e) ? "Meta request timed out" : err?.message) || "Meta publish failed";
   return { error, retryable };
 }
 
@@ -124,8 +159,18 @@ export async function publishInstagram(graph: MetaGraphPort, args: InstagramPubl
     return classify(e);
   }
 
-  // Persist the container id BEFORE publishing — recovery re-checks THIS exact container.
-  if (args.onCreationId) await args.onCreationId(creationId);
+  // Persist the container id BEFORE publishing — recovery re-checks THIS exact container. This is a
+  // HARD precondition (spec §四D lock 3 / §四F): if we can't durably store the recovery anchor we
+  // MUST NOT publish, because a lost receipt afterwards would be unrecoverable (reconcile would
+  // have no container to check → a blind retry would double-post). We're still BEFORE media_publish,
+  // so nothing is live yet — aborting here is safe and retryable (a retry rebuilds a fresh container).
+  if (args.onCreationId) {
+    try {
+      await args.onCreationId(creationId);
+    } catch (e) {
+      return { error: `couldn't persist the publish anchor before going live: ${(e as Error)?.message ?? "store failed"}`, retryable: true };
+    }
+  }
 
   const polled = await pollContainer(graph, creationId, maxTries, sleep, delay);
   if ("error" in polled) return polled;
@@ -134,10 +179,15 @@ export async function publishInstagram(graph: MetaGraphPort, args: InstagramPubl
   try {
     const published = await graph.post(`${igUserId}/media_publish`, { creation_id: creationId });
     const mid = idOf(published);
-    if (!mid) return { error: "publish returned no post id", retryable: true };
+    // We got a 2xx but no id: the publish may or may not have taken. Ambiguous, never blind-retry.
+    if (!mid) return { ambiguous: true, error: "media_publish returned no post id — the post may already be live" };
     mediaId = mid;
   } catch (e) {
-    return classify(e);
+    // We are PAST the point of no return: media_publish left our process. A timeout / dropped
+    // connection / 5xx means the post MAY already be live → ambiguous (reconcile via creationId),
+    // NEVER a blind retry. Only a definitive Meta rejection (4xx with a code) means it did NOT
+    // publish and is safe to classify normally.
+    return crossedSideEffectPoint(e) ? { ambiguous: true, error: classify(e).error } : classify(e);
   }
 
   // First comment is best-effort — the post is already live, so a comment failure never fails it.
@@ -166,16 +216,19 @@ export async function publishFacebook(graph: MetaGraphPort, args: FacebookPublis
     if (args.mediaUrls.length >= 1) {
       const r = await graph.post(`${args.pageId}/photos`, { url: args.mediaUrls[0]!, caption: args.message });
       const id = idOf(r);
-      if (!id) return { error: "photo post returned no id", retryable: true };
+      // 2xx but no id → the post may already be live. Ambiguous, never blind-retry (double-post).
+      if (!id) return { ambiguous: true, error: "photo post returned no id — the post may already be live" };
       return { externalId: id };
     }
     const body: Record<string, string> = { message: args.message };
     if (args.link) body.link = args.link;
     const r = await graph.post(`${args.pageId}/feed`, body);
     const id = idOf(r);
-    if (!id) return { error: "feed post returned no id", retryable: true };
+    if (!id) return { ambiguous: true, error: "feed post returned no id — the post may already be live" };
     return { externalId: id };
   } catch (e) {
-    return classify(e);
+    // Past the side-effect point on a lost/5xx receipt → ambiguous (the worker reconciles, never
+    // blind-reposts /feed). A definitive 4xx rejection means nothing posted → classify normally.
+    return crossedSideEffectPoint(e) ? { ambiguous: true, error: classify(e).error } : classify(e);
   }
 }
