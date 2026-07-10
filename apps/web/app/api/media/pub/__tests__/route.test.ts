@@ -33,7 +33,7 @@ describe("/api/media/pub/[token] — signed media proxy (fail-closed)", () => {
     expect(res.status).toBe(200);
     // next/server is stubbed in web tests (lib/__tests__/__stubs__/next-server.ts): headers is the
     // plain object we passed, not a Headers instance — assert against it directly.
-    const headers = res.headers as Record<string, string>;
+    const headers = res.headers as unknown as Record<string, string>;
     expect(headers["Content-Type"]).toBe("image/jpeg");
     expect(headers["Cache-Control"]).toContain("no-store");
     expect(mockGet).toHaveBeenCalledWith(KEY);
