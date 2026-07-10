@@ -12,8 +12,18 @@
    2026-07-10) and `prisma migrate deploy` runs against prod on deploy — a bad merge ships
    verbatim on the next deploy. `main` now has an active org ruleset (`protect-main`,
    BELCORT-SDN-BHD org) as hard protection, but the discipline stays: PR only, CI green.
-2. **Never merge a PR unless ALL CI checks are green** on the current head commit. Never
-   self-merge your own PR — the founder is the final merge authority.
+2. **Never merge a PR unless ALL CI checks are green** on the current head commit. Merge
+   authority is split by risk after the founder merges the governance transition in PR #228:
+   - **Founder-only:** governance/merge-policy changes, product identity or brand, blueprint or
+     constitutional amendments, irreversible architecture, schema/migration, money/tenant paths,
+     security credentials or permissions, production/deployment, external publishing/spend/delete,
+     unusually large or disputed PRs, and anything whose tier is uncertain.
+   - **Delegated ordinary merge:** the Codex control plane may merge a bounded, reversible PR only
+     when it did not author the diff, current-head CI is all green, an independent cross-family
+     review has no unresolved P0/P1, the PR contains no founder-only category, and the merge result
+     is verified against `main`. No auto-merge or merge watcher.
+   - **Separation of duties:** the session/agent that authored or materially edited a diff may not
+     execute its merge. PR #228 itself changes this law, so it remains founder-only.
    **CI 不可用时(账单封锁/Actions 宕机)不得以"CI 本来就红"为由合并;必须在本地完整
    复现三关(check/test/web-build,配方见 `docs/runbooks/local-ci.md`)并把结果贴进 PR,
    再经 founder 明确批准才可合并。此规则约束所有 agent(claude/codex/任何工具)。**
@@ -57,9 +67,10 @@
 When a session is asked to orchestrate multi-agent work, resume an interrupted program, or make
 product/architecture/design/audit decisions, it must also read
 `.claude/skills/orchestration/SKILL.md` and `docs/ops/ORCHESTRATOR-STATE.md`. Codex is the recoverable
-control plane, Fable 5 is the verified judgment co-orchestrator, and the founder remains the final
-authority. This does not relax any rule above; in particular, no agent may self-merge, auto-merge,
-deploy, spend, or modify `docs/BLUEPRINT.md`.
+control plane at the highest available orchestrator effort, Fable 5 is the max-effort verified
+judgment co-orchestrator, and the founder remains the final authority for founder-only categories.
+This does not relax any rule above; in particular, no authoring agent may merge its own diff,
+auto-merge, deploy, spend, or modify `docs/BLUEPRINT.md`.
 
 ## Stale-doc warning
 
