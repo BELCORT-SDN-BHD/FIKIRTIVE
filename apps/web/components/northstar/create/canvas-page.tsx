@@ -115,19 +115,19 @@ const FRESH_SESSION_ID = "cv-fresh";
 const CANVAS_STARTERS: { id: string; label: string; mode: Mode; draft: string; prompt: string; reply: string }[] = [
   {
     id: "product",
-    label: "A product photo of my bake",
+    label: "A product photo of what I sell",
     mode: "image",
-    draft: "A clean product photo of my bake on a wooden board, soft morning light, plain background",
-    prompt: "Help me describe a product photo of my bake",
-    reply: "Here's a prompt to start from — tweak anything before you send: a clean product photo of your bake on a wooden board, soft morning light, plain background.",
+    draft: "A clean product photo of what I sell on a plain surface, soft morning light, simple background",
+    prompt: "Help me describe a product photo of what I sell",
+    reply: "Here's a prompt to start from — tweak anything before you send: a clean product photo of what you sell on a plain surface, soft morning light, simple background. You'll see the cost before it generates.",
   },
   {
     id: "reel",
     label: "A short reel of my shop",
     mode: "video",
-    draft: "A 6-second reel of my bakery counter in the morning, warm light, close on the fresh bakes",
+    draft: "A 6-second reel of my shop counter in the morning, warm light, close on what I sell",
     prompt: "Help me describe a short reel of my shop",
-    reply: "Try this one: a 6-second reel of your bakery counter in the morning, warm light, close on the fresh bakes. Video asks before it spends.",
+    reply: "Try this one: a 6-second reel of your shop counter in the morning, warm light, close on what you sell. Video asks before it spends.",
   },
   {
     id: "ideas",
@@ -268,10 +268,10 @@ export function CanvasPage() {
         id: "t-welcome",
         from: "otto",
         text: canvasContext
-          ? `Fresh canvas, set up for ${canvasContext.name}. Tell me what to make, or tap a starter below — I ask before anything costs credits.`
+          ? `Fresh canvas, set up for ${canvasContext.name}. Tell me what to make, or tap a starter below. Video and Otto's plans ask before spending; images show their cost before you send.`
           : promptParam
             ? `Picking up where you were — I dropped your note in the composer. Tweak it and send when you're ready. Nothing's charged yet.`
-            : `Blank canvas, all yours. Tell me what to make on the left, or tap a starter below. I'll always ask before anything costs credits.`,
+            : `Blank canvas, all yours. Tell me what to make on the left, or tap a starter below. Video and Otto's plans ask before spending; images show their cost before you send.`,
       },
     ],
     [canvasContext, promptParam],
@@ -809,7 +809,9 @@ export function CanvasPage() {
 
   // 「New agent」真建一个空会话(不是关菜单的死按钮):种子空 pool → 切过去 → 空白画布起新一轮。
   const newAgent = () => {
-    const id = `ss-new-${nextUid()}`;
+    // [wave-c-audit] 本店主新建的画布用 cv- 前缀,别撞侧栏 `startsWith("ss-")` 的示例判定
+    // (ss-* 是种子示例;这张是店主自己刚建的活,绝不该挂「Example」灰签)。
+    const id = `cv-new-${nextUid()}`;
     // 侧栏第一条已是一张「New canvas」,故新建从 2 起编号,避免同名重复。
     const n = sessions.filter((s) => s.name.startsWith("New canvas")).length;
     const name = n === 0 ? "New canvas" : `New canvas ${n + 1}`;
@@ -1348,7 +1350,7 @@ export function CanvasPage() {
               </div>
               {/* 参数栏随模式重排(A1)· 人话,不用行话(STALL #47) */}
               <span className="min-w-0 flex-1 truncate text-xs text-muted-foreground">
-                {mode === "image" && "Two takes side by side, so you can pick"}
+                {mode === "image" && `Two takes side by side · ${2 * IMAGE_COST} credits on send`}
                 {mode === "video" && "6s clip · asks before spending"}
                 {mode === "agent" && "Otto plans it first · asks before spending"}
               </span>
@@ -1646,8 +1648,8 @@ export function CanvasPage() {
                 <h2 className="mt-4 text-[20px] leading-[26px] font-semibold tracking-[-0.017em] text-foreground">
                   A blank canvas, all yours
                 </h2>
-                <p className="mt-1.5 max-w-[320px] text-[13px] leading-[18px] text-muted-foreground">
-                  Tell Otto what to make in the box on the left — or tap a starter to fill it in. I always ask before anything costs credits.
+                <p className="mt-1.5 max-w-[340px] text-[13px] leading-[18px] text-muted-foreground">
+                  Tell Otto what to make in the box on the left — or tap a starter to fill it in. Video and Otto&apos;s plans ask before spending; images show their cost before you send.
                 </p>
                 <div className="mt-5 flex flex-wrap items-center justify-center gap-2">
                   {CANVAS_STARTERS.map((s) => (
