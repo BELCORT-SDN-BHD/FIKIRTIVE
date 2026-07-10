@@ -7,6 +7,7 @@ description: FIKIRTIVE 编排总手册（三合一）—— 总纲：会话主�
 
 > **founder 总纲（2026-07-11 亲定，一句话就是全部规矩）**：
 > **「你是 orchestrator，GPT Sol Ultra 是你的 advisor，其他剩下的交给 Opus、Sonnet 或 GPT-5.6。」**
+> **升格(2026-07-11)**:Sol Ultra 是**并肩** advisor —— 每个决策/审计/设计/规划/深度规划两脑紧密协作,不是偶尔开;只有"不需 Fable/Sol 级理解的执行"才纯下沉工人。
 > 以下三章是这句话的执行细则。原 fleet-orchestration / model-routing / two-brain 三本合并于此（founder 2026-07-11："为什么需要三个 skill？一个不就好了"）。与蓝图/playbook 冲突时蓝图赢。
 
 # 第一章 · 谁干什么（模型选派）
@@ -136,7 +137,7 @@ codex exec --skip-git-repo-check -c model_reasoning_effort=<low|medium|high|xhig
 
 # 双脑对谈制(Fable × Sol@ultra)
 
-> 何时开:重大产品/架构/战略决策、设计定稿前、完整性扫描、founder 点名"问问 Sol"。日常工程不开(浪费);小分歧用第四闸对抗审查即可。
+> 何时开(founder 2026-07-11 升格):**所有判断级工作都开——每个决策/审计/设计/规划/深度规划,Fable 与 Sol Ultra 并肩协作,这是常态不是例外**。判据=要不要 Fable/Sol 级理解:要则两脑一起,纯执行(不需理解的代码/机械活)下沉工人。诚实边界:Sol 异步跑(分钟级、evidence-pack-first),别为微执行空转,但一切实质判断(战略/架构/完整性/风险/设计定稿/深度规划)必开。
 
 ## 标准回合结构
 
