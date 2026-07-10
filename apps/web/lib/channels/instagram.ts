@@ -2,6 +2,7 @@ import type { Channel, ChannelPost } from "./types";
 import { disconnectMeta } from "../meta-actions";
 import { fetchOwnerPages } from "../meta-pages";
 import { metaStatus, notImpl } from "./meta-shared";
+import { publishViaMeta } from "./meta-publish-adapter";
 
 export const instagram: Channel = {
   id: "instagram",
@@ -21,5 +22,9 @@ export const instagram: Channel = {
   },
   autoPublishable: (post: ChannelPost) =>
     post.postType === "reel" || post.postType === "story" ? "reminder" : "auto",
-  publish: notImpl, fetchAccountInsights: notImpl, listPublishedPosts: notImpl, fetchPostInsights: notImpl,
+  // L1: real organic publish — fail-closed until App Review grants the scopes (canPublish=false ⇒
+  // refuse, no Meta call). The shared orchestration in @fikirtive/core/server is the single
+  // implementation the publish worker also drives (spec §五). Insights stay stubbed (Analytics plan).
+  publish: (ownerId, target, post) => publishViaMeta(ownerId, target, post, "instagram"),
+  fetchAccountInsights: notImpl, listPublishedPosts: notImpl, fetchPostInsights: notImpl,
 };
