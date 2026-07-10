@@ -22,6 +22,7 @@ import { handleCaption } from "./jobs/caption.js";
 import { handleResearch, reapStaleResearchJobs } from "./jobs/research.js";
 import { handlePublish, reapStalePublishAttempts, scanDuePublishPosts } from "./jobs/publish.js";
 import { maybeRunNightlyBackup } from "./db-backup.js";
+import { publishChainWarning } from "./publish-env-check.js";
 import {
   RENDER_DLQ,
   RENDER_QUEUE_POLICY,
@@ -54,6 +55,15 @@ const connectionString = process.env.DATABASE_URL || process.env.DATABASE_URL_PO
 if (!connectionString) {
   console.error("[worker] DATABASE_URL is not set — exiting");
   process.exit(1);
+}
+
+// L1 publish-chain contract (spec §四), fail-SOFT: a half-configured chain (some secrets set, one
+// missing) would silently fail every publish as an opaque NEEDS_ATTENTION, so surface it LOUDLY at
+// boot — by variable NAME, never value. Never exits: the chain is inert until Meta App Review, so a
+// fully-unset chain is the normal pre-launch state and must not take the whole worker down.
+{
+  const warning = publishChainWarning(process.env);
+  if (warning) console.warn(warning);
 }
 
 // Minimal error monitoring (closed-beta P0). No-op unless SENTRY_DSN is set.
