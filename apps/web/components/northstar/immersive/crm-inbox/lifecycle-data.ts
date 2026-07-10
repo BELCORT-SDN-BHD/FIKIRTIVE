@@ -368,31 +368,49 @@ function recapitalize(s: string): string {
   return s.replace(/(^|[.!?]\s+)([a-z])/g, (_m, p, c) => p + c.toUpperCase());
 }
 
-/** 给一段草稿套语气 —— 真语域重写(不是贴前后缀)。firstName 让问候带上人名。 */
+/** 草稿开场句(首个句末标点/破折号前)是否已直呼客户名 —— 是则不再叠一层问候。
+ * 逐字符转义人名后按词界匹配,只看开场那一句(避免正文深处偶现同名误判)。 */
+function addressesByName(text: string, name: string): boolean {
+  const opener = text.split(/[.!?—–]/)[0] ?? text;
+  const safe = name.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+  return new RegExp(`\\b${safe}\\b`, "i").test(opener);
+}
+
+/** 给一段草稿套语气 —— 真语域重写(不是贴前后缀)。firstName 让问候带上人名。
+ * 草稿开场若已直呼客户名(如「Confirmed, Mei Ling!」「Muthu! …」「Thanks for checking, Priya!」),
+ * 就地重塑语域、不再前置问候 —— 否则会叠出「Hey Priya! Thanks for checking, Priya! …」的重复挂名,
+ * 或「Hi, Confirmed, Mei Ling! …」这类逗号拼接的别扭开场;开场是通用问候(Hi/Hey/Morning)时才
+ * 剥掉并按语域重挂一个带名问候。确定性,同输入同输出。 */
 export function applyTone(text: string, tone: NsTone, firstName?: string): string {
-  const core = stripLeadGreeting(text.trim()).trim();
-  if (!core) return text.trim();
+  const trimmed = text.trim();
+  if (!trimmed) return trimmed;
   const named = firstName && firstName !== "there" ? firstName : "";
-  // 若正文开头已带这个名字,问候就不重复挂名(避免名字出现两次)
-  const nameAlready = named && core.slice(0, 24).toLowerCase().includes(named.toLowerCase());
-  const who = named && !nameAlready ? ` ${named}` : "";
+  // 开场已直呼其名 → 保留草稿自带的问候/称呼,只重塑语域,不再前置一层问候
+  const addressed = !!named && addressesByName(trimmed, named);
+  const body = addressed ? trimmed : stripLeadGreeting(trimmed).trim();
+  if (!body) return trimmed;
+  // 剥掉通用问候后,正文若仍以该名开头,问候也不重复挂名
+  const who = !addressed && named && !addressesByName(body, named) ? ` ${named}` : "";
   switch (tone) {
     case "casual": {
-      const out = `Hey${who}! ${core}`;
+      const out = addressed ? body : `Hey${who}! ${body}`;
       return EMOJI_TEST.test(out) ? out : `${out} 🥐`;
     }
     case "semi": {
-      const out = `Hi${who}, ${core}`;
-      const closed = /[?]\s*$/.test(core) || /let me know|happy to|shall i|want me to/i.test(core);
-      return closed ? out : `${out} Let me know if that works 🙂`;
+      const out = addressed ? body : `Hi${who}, ${body}`;
+      // 已带问句/邀约/道谢/收尾 emoji 即视为已收束,不再叠一句收尾
+      const signedOff =
+        /[?]\s*$/.test(out) || /let me know|happy to|shall i|want me to|thank/i.test(out) || EMOJI_TEST.test(out.slice(-2));
+      return signedOff ? out : `${out} Let me know if that works 🙂`;
     }
     case "formal": {
-      let body = stripEmoji(core);
-      for (const [re, rep] of CONTRACTIONS) body = body.replace(re, rep);
-      body = recapitalize(body);
-      let out = `Hi${who}, ${body}`;
+      let b = stripEmoji(body);
+      for (const [re, rep] of CONTRACTIONS) b = b.replace(re, rep);
+      b = recapitalize(b);
+      let out = addressed ? b : `Hi${who}, ${b}`;
       if (!/[.!?]$/.test(out)) out += ".";
-      return `${out} Thank you.`;
+      // 草稿结尾若已道谢,就不再叠一句 Thank you
+      return /(thank you|thanks)[.!]?\s*$/i.test(out) ? out : `${out} Thank you.`;
     }
   }
 }
@@ -417,6 +435,12 @@ export interface NsEscalationSignal {
 const NEGATIVE_CUES = ["refund", "angry", "terrible", "complaint", "cancel", "wrong", "late", "disappointed", "bad"];
 const AUTHORITY_CUES = ["discount", "refund", "cancel", "wholesale price", "special price", "cheaper"];
 
+/** 客户收尾寒暄(道谢/满意收束,且不含提问)—— 没有待答问题,不该判「转人工」。 */
+const CLOSING_RE = /\b(thanks?|thank you|terima kasih|perfect|great|awesome|noted|got it|sounds good|see you|cheers|appreciate|all good)\b/i;
+function looksClosing(text: string): boolean {
+  return !text.includes("?") && CLOSING_RE.test(text);
+}
+
 export function escalationSignal(cv: NsConversation): NsEscalationSignal {
   const msgs = cv.messages;
   const lastCustomer = [...msgs].reverse().find((m) => m.from === "customer");
@@ -430,8 +454,9 @@ export function escalationSignal(cv: NsConversation): NsEscalationSignal {
   if (AUTHORITY_CUES.some((c) => lastText.includes(c))) {
     return { tripped: true, kind: "authority", reason: "They're asking about pricing Otto can't promise on its own" };
   }
-  // 能力边界 + 置信度闸:最后一句客户问题无知识依据 → 转人工
-  if (lastCustomer && !matchKnowledge(lastText)) {
+  // 能力边界 + 置信度闸:最后一句是客户在问、且无知识依据 → 转人工。
+  // 但客户若只是道谢收尾(无待答问题)则不判 —— 否则会对已收束的对话既「转人工」又起草回复,自相矛盾。
+  if (lastCustomer && !looksClosing(lastText) && !matchKnowledge(lastText)) {
     return { tripped: true, kind: "confidence", reason: "Nothing in Knowledge covers this — best answered by you" };
   }
   // 连续轮次闸:客户连发 3+ 条 Otto 都没解决 → 转人工

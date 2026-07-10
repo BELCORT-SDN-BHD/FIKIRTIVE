@@ -271,7 +271,11 @@ export function InboxConversation() {
   const draftReply = composeReply(conversation, contact?.name);
   const quoteDraft = composeQuote(contact?.name);
   const confirmDraft = composeConfirm(conversation, contact?.name);
-  const looksOrder = awaitingReply && /confirm|order|book|same as|\b\d{1,3}\b|platter|box|cake/i.test(lastMsg?.text ?? "");
+  // [wave-c · #56 防误发]「确认订单」chip 只在本线程确有可确认的订单时出现 —— 以 Otto 起草的
+  // 回复类型(confirm)为准,而非关键词猜测。cv-07(问「货还在不在」)、cv-12(问「能否做蛋糕」)
+  // 仍是 clarify 阶段:关键词 box/10 会误命中,但订单从未下过、条款从未谈过 —— 若出此 chip 即起草
+  // 谎称「已记录订单、如所商定」的确认稿,一发即凭空确认不存在的订单。绑到 draftReply.kind 杜绝误发。
+  const looksOrder = awaitingReply && draftReply.kind === "confirm";
   const ottoIntents: NsAssistIntent[] = [
     { id: "reply", label: "Write a reply", prompt: `Draft a reply to ${firstName} in the inbox.`, reply: "Here's a reply you can send as-is or tweak — I kept it specific to their message:", apply: { summary: "Put Otto's draft in your reply box", patch: { draft: draftReply.en, bm: draftReply.bm } } },
     { id: "quote", label: "Quote a price", prompt: `Draft a price reply for ${firstName}.`, reply: "Here are your real prices, ready to send:", apply: { summary: "Fill the reply box with a price quote", patch: { draft: quoteDraft.en, bm: quoteDraft.bm } } },
