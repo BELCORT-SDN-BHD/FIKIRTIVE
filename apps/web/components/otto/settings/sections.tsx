@@ -158,7 +158,7 @@ export function buildSettingsSections(args: {
       id: "connections",
       title: "Connections",
       subtitle:
-        "Connect Instagram and Facebook so OTTO can publish and read results.",
+        "Connect Instagram and Facebook so OTTO can schedule posts, remind you to post, and read results — auto-publish is coming soon.",
       fields: channels.map((c) => ({
         kind: "custom" as const,
         id: `conn-${c.id}`,

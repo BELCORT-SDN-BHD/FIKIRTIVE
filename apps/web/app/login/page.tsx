@@ -60,7 +60,7 @@ export default async function LoginPage({
             {[
               "From idea to a ready-to-post ad pack in minutes",
               "You only pay when a generation finishes, never on errors",
-              "Publishes straight to Instagram and Facebook",
+              "Schedules across Instagram and Facebook, with reminders to post — direct publish is coming soon",
             ].map((t) => (
               <li key={t} className="flex items-center gap-[11px] text-[14.5px] font-medium text-[#3A3A38]">
                 <span className="flex size-[22px] shrink-0 items-center justify-center rounded-full bg-success-soft text-success-soft-foreground">
