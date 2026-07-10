@@ -169,37 +169,47 @@ export function ImmersiveHome() {
   // Reach 卡与分析区同源(NS_ANALYTICS.kpis[0]),避免同屏「招呼条 18% vs 卡片 9%」一店两数。
   const reachKpi = NS_ANALYTICS.kpis[0];
 
-  // ── 今日决策队列「Needs you」:等店主回 + 大客户静默;按在险金额排,回一句就变钱 ──
+  // ── 今日决策队列「Needs you」:等店主回 + 大客户静默;stake = 此刻在这段关系上在险的钱 ──
   const triage = React.useMemo<TriageRow[]>(() => {
     const byContact = new Map<string, TriageRow>();
-    // ① 等店主回 / 超时的对话 → 回复行(stake = 预计进账,即该客下一单价值)。
+    // ① 等店主回 / 超时的对话 → 回复行(现场在收件箱,深链到那条等回的对话)。
+    //   stake = 此刻在险的关系价值:普通活跃客 = 预计下一单(predictedNextMyr / 均单价);
+    //   但「静默大客户又亲自回到线上问要不要再下单」= 整段生涯关系正被重新激活、此刻真的在险,
+    //   用 totalOrdersMyr(不是一单的小数)——最快变钱的动作(回大客户一句)因此浮到最上,
+    //   且仍留在收件箱现场,不被下面的冷唤回覆盖、也不被送去 CRM 档案。
     for (const cv of needsOwnerConversations()) {
       const c = CONTACT_BY_ID.get(cv.contactId);
-      const stake = c?.predictedNextMyr || avgOrderValue(cv.contactId) || 0;
+      const reengagingWhale = !!c && c.lifecycle === "dormant" && c.totalOrdersMyr >= 1000;
+      const stake = reengagingWhale && c ? c.totalOrdersMyr : c?.predictedNextMyr || avgOrderValue(cv.contactId) || 0;
       byContact.set(cv.contactId, {
         key: cv.id,
         name: c?.name ?? "A customer",
-        reason: cv.subject,
+        reason: reengagingWhale ? `High-value account · ${cv.subject}` : cv.subject,
         wait: humanWait(cv.waitingFor),
         stakeMyr: stake,
         href: `${BASE}/inbox/conversation?id=${cv.id}`,
         action: "reply",
       });
     }
-    // ② 静默的大客户 → 唤回行(stake = 生涯在险金额;比"下一单"更值钱,覆盖同一人的回复行)。
+    // ② 静默的大客户但没有在途对话 → 唤回行(现场在 CRM 档案,冷启动一条 nudge)。
+    //   stake = 预计下一单(前瞻;不是生涯总额 —— 那笔钱已经赚过了,拿来当"即将进账"会注水)。
+    //   已经作为回复行浮现的(客户已亲自回到线上)不再重复成冷唤回:reply 覆盖 winback。
     for (const c of dormantHighValue(1000)) {
+      if (byContact.has(c.id)) continue;
       byContact.set(c.id, {
         key: `winback-${c.id}`,
         name: c.name,
         reason: c.note ?? "Big account gone quiet",
         wait: "gone quiet, worth a nudge",
-        stakeMyr: c.totalOrdersMyr,
+        stakeMyr: c.predictedNextMyr || avgOrderValue(c.id) || 0,
         href: `${BASE}/crm/contact-profile?id=${c.id}`,
         action: "winback",
       });
     }
-    // 按在险金额降序(GOOSEWORKS §CRM:最大值先浮上来,散客降到低优先),取前 5 条。
-    return [...byContact.values()].sort((a, b) => b.stakeMyr - a.stakeMyr).slice(0, 5);
+    // 活跃回复(有人正等,时间敏感)排在冷唤回(投机)之上;同组内按在险金额降序。取前 5 条。
+    return [...byContact.values()]
+      .sort((a, b) => (a.action !== b.action ? (a.action === "reply" ? -1 : 1) : b.stakeMyr - a.stakeMyr))
+      .slice(0, 5);
   }, []);
   const triageTotal = triage.reduce((s, r) => s + r.stakeMyr, 0);
 
@@ -223,17 +233,19 @@ export function ImmersiveHome() {
         }
       />
 
-      {/* Otto 招呼条:本屏唯一 coral statement;洞察落到生意结果(订单 DM),不锚触达 */}
+      {/* Otto 招呼条:本屏唯一 coral statement;洞察锚在真实存在的信号 —— 那条 Sunday croissant
+          reel 的本周触达(_mock 的 NS_ANALYTICS.insight + Otto 单流 os-53:12.4K reach、本周最佳)。
+          mock 里没有帖级「订单 DM」归因数据,故不编一个查不到的业务结果;宁可诚实报可核对的触达。 */}
       <div className="mt-5 flex flex-wrap items-center gap-3 rounded-[var(--radius-card)] border border-brand-soft bg-brand-soft/50 px-4 py-3.5">
         <OttoAvatar size={32} mood="helpful" />
         <span className="min-w-0 flex-1 basis-64 text-sm leading-[1.45] text-brand-soft-foreground">
-          Your Sunday croissant reels pulled the most order DMs this week. Want me to line up two more?
+          Your Sunday croissant reel was your top post this week — 12.4K reach. Want two more in the same style?
         </span>
         <Button
           variant="brand"
           size="sm"
           className="ns-pressable"
-          onClick={() => immersive?.openOtto("Line up two more Sunday croissant reels like the ones that pulled the most order DMs")}
+          onClick={() => immersive?.openOtto("Line up two more reels in the style of my top Sunday croissant reel — it hit 12.4K reach this week")}
         >
           <Sparkles />
           Ask Otto
@@ -267,7 +279,7 @@ export function ImmersiveHome() {
             <h2 className="text-sm font-semibold text-foreground">Needs you</h2>
             <span className="text-xs text-muted-foreground">reply and it turns into money</span>
             <span className="ml-auto font-mono text-[11px] text-foreground tabular-nums">
-              RM{triageTotal.toLocaleString("en-MY")} waiting
+              RM{triageTotal.toLocaleString("en-MY")} in play
             </span>
           </div>
           <div className="mt-3 overflow-hidden rounded-[14px] border border-border bg-card">

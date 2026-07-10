@@ -168,30 +168,54 @@ export function needsOwnerConversations(): NsConversation[] {
 
 /* ── [wave-c Z1-home-global] 本周已确认订单(首页「生意状态」头卡:诚实读真实成交) ──
  * 老板开门第一问是「这周赚了几单」,不是「花了多少 credit」。全城唯一诚实的「已成交」
- * 信号 = 收件箱里被确认下来的订单(Otto/店主报价 → 客户确认)。这里只从对话消息里读
- * 结构化的 RM 金额,刻意不碰跨区 deals 表 —— 那张表的金额是 lifetime 总额(dealAmountMyr),
- * 拿来当「本周」会把数字注水、还会和收件箱里同客户的单笔报价打架(一店两数)。
- * 诚实优先于好看:数字小是 mock 只编了两笔确认单,不是把它吹大。确定性:无 Date.now。 */
+ * 信号 = 收件箱里被确认下来的订单。这里只从对话消息里读结构化的 RM 金额,刻意不碰跨区
+ * deals 表 —— 那张表的金额是 lifetime 总额(dealAmountMyr),拿来当「本周」会注水、还会和
+ * 收件箱里同客户的单笔报价打架(一店两数)。
+ *
+ * 判成交的键是「客户接受」,不是「Otto/店主说了 confirm」(参考金标准 REFERENCE-PROPOSAL-MERDEKA:
+ * commercial truth = confirmed orders,买家点头才算)。一笔算数需要两件事都成立:
+ *   (a) 有 Otto/店主给出的带 RM 金额的报价;
+ *   (b) 这单被落实 —— 客户明确接受(confirm/approved/deal…),或 Otto/店主陈述式确认
+ *       (Confirmed / booked / ready for…),但排除只是「Shall I confirm?」这种提议式反问。
+ * 金额取报价里的 RM;仅计本周落定的(最近一条消息在本周窗口内),避免把十天前的旧单
+ * (如 cv-09 客户 6/28 Approved 的 RM1,450)误算进「本周」。确定性:纯字符串比较,无 Date.now。 */
 export interface NsOrdersThisWeek {
   revenueMyr: number;
   orderCount: number;
 }
-const ORDER_CONFIRM_RE = /confirm/i;
-const ORDER_RM_RE = /RM\s?([\d,]+)/;
+// 本周窗口起点(mock 的「现在」≈ 2026-07-07;本周 = 07-01 起,YYYY-MM-DD 字符串直接比较)。
+const ORDERS_WEEK_START = "2026-07-01";
+const QUOTE_RM_RE = /RM\s?([\d,]+)/; // 带价的报价
+// 客户接受一份报价(买家点头 = commercial truth)。
+const CUSTOMER_ACCEPT_RE = /\b(confirm|confirmed|approve|approved|deal|go ahead|sounds good)\b/i;
+// Otto/店主陈述式确认(这单已定),而不是「shall I…?」式的提议反问。
+const OWNER_SETTLED_RE = /\b(confirmed|booked|see you then|ready for|all set)\b/i;
+const OWNER_PROPOSAL_RE = /\b(shall i|want me to|should i|do you want)\b/i;
 export function ordersThisWeek(): NsOrdersThisWeek {
   let revenueMyr = 0;
   let orderCount = 0;
   for (const c of NS_CONVERSATIONS) {
-    // 一笔算数的订单 = 某条 Otto/店主消息同时含「confirm」与一个 RM 金额(报价被落实)。
-    const hit = c.messages.find(
+    // (a) 本对话里 Otto/店主给出的带价报价。
+    const quote = c.messages.find(
+      (m) => (m.from === "otto" || m.from === "owner") && QUOTE_RM_RE.test(m.text),
+    );
+    if (!quote) continue;
+    const amount = Number(QUOTE_RM_RE.exec(quote.text)?.[1].replace(/,/g, "") ?? "0");
+    if (amount <= 0) continue;
+    // (b) 落实 = 客户接受,或 Otto/店主陈述式确认(排除提议反问)。
+    const customerAccepted = c.messages.some(
+      (m) => m.from === "customer" && CUSTOMER_ACCEPT_RE.test(m.text),
+    );
+    const ownerSettled = c.messages.some(
       (m) =>
         (m.from === "otto" || m.from === "owner") &&
-        ORDER_CONFIRM_RE.test(m.text) &&
-        ORDER_RM_RE.test(m.text),
+        OWNER_SETTLED_RE.test(m.text) &&
+        !OWNER_PROPOSAL_RE.test(m.text),
     );
-    if (!hit) continue;
-    const amount = Number(ORDER_RM_RE.exec(hit.text)?.[1].replace(/,/g, "") ?? "0");
-    if (amount <= 0) continue;
+    if (!customerAccepted && !ownerSettled) continue;
+    // 只计本周落定的(最近一条消息在本周窗口内)。
+    const latest = c.messages[c.messages.length - 1]?.at.slice(0, 10) ?? "";
+    if (latest < ORDERS_WEEK_START) continue;
     revenueMyr += amount;
     orderCount += 1;
   }

@@ -72,10 +72,12 @@ export function ImmersiveNotifications() {
       {
         id: "notif-recap",
         label: "Recap what Otto did",
-        prompt: "Recap what you did today",
+        prompt: "Recap what you did",
+        // 锚在流里每条消息自带的真实相对时间戳(ottoActions[0].at,如 "18m ago"),不硬报「今天」——
+        // 这只是流的最近 N 条,并非「今天办的 N 件事」,谎报时间会把几小时前甚至更早的动作说成今天。
         reply: ottoActions.length
-          ? `Today I handled ${ottoActions.length} ${ottoActions.length === 1 ? "thing" : "things"}. The latest was "${ottoActions[0].text}". Tap any row below to see exactly what changed.`
-          : "I haven't done anything yet today. Anything I do will show up here and in the dock.",
+          ? `Here are the last ${ottoActions.length} ${ottoActions.length === 1 ? "thing" : "things"} I did — newest first. The most recent, ${ottoActions[0].at}, was "${ottoActions[0].text}". Tap any row below to see exactly what changed.`
+          : "I haven't done anything yet. Anything I do will show up here and in the dock.",
       },
     ];
   }, [queue, ottoActions]);
