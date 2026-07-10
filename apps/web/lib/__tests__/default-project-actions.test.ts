@@ -1,4 +1,4 @@
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import { beforeEach, describe, expect, it, vi, type Mock } from "vitest";
 
 vi.mock("@/lib/auth-guard", () => ({ requireOwner: vi.fn() }));
 vi.mock("next/cache", () => ({ revalidatePath: vi.fn() }));
@@ -32,42 +32,42 @@ import { revalidatePath } from "next/cache";
 
 beforeEach(() => {
   vi.clearAllMocks();
-  (requireOwner as any).mockResolvedValue({ ownerId: "o1", email: "owner@example.test" });
-  (prisma.project.findMany as any).mockResolvedValue([]);
-  (prisma.chatThread.count as any).mockResolvedValue(0);
-  (prisma.shot.count as any).mockResolvedValue(0);
-  (prisma.scheduledPost.count as any).mockResolvedValue(0);
-  (prisma.canvasNode.count as any).mockResolvedValue(0);
-  (prisma.genJob.count as any).mockResolvedValue(0);
-  (prisma.generation.count as any).mockResolvedValue(0);
-  (prisma.genJob.findMany as any).mockResolvedValue([]);
-  (prisma.genJob.updateMany as any).mockResolvedValue({ count: 1 });
-  (prisma.researchJob.findFirst as any).mockResolvedValue(null);
-  (prisma.project.deleteMany as any).mockResolvedValue({ count: 1 });
-  (prisma.project.updateMany as any).mockResolvedValue({ count: 1 });
-  (prisma.chatThread.findMany as any).mockResolvedValue([]);
-  (prisma.shot.findMany as any).mockResolvedValue([]);
-  (prisma.chatThread.deleteMany as any).mockResolvedValue({ count: 0 });
-  (prisma.chatMessage.deleteMany as any).mockResolvedValue({ count: 0 });
-  (prisma.researchJob.deleteMany as any).mockResolvedValue({ count: 0 });
-  (prisma.shot.deleteMany as any).mockResolvedValue({ count: 0 });
-  (prisma.shotEntityRef.deleteMany as any).mockResolvedValue({ count: 0 });
-  (prisma.scheduledPost.deleteMany as any).mockResolvedValue({ count: 0 });
-  (prisma.canvasNode.deleteMany as any).mockResolvedValue({ count: 0 });
-  (prisma.renderJob.deleteMany as any).mockResolvedValue({ count: 0 });
-  (prisma.captionJob.deleteMany as any).mockResolvedValue({ count: 0 });
-  (prisma.generationBatch.deleteMany as any).mockResolvedValue({ count: 0 });
-  (prisma.genJob.deleteMany as any).mockResolvedValue({ count: 0 });
-  (prisma.generation.deleteMany as any).mockResolvedValue({ count: 0 });
-  (prisma.actionEvent.deleteMany as any).mockResolvedValue({ count: 0 });
-  (prisma.$executeRaw as any).mockResolvedValue(undefined);
-  (refundReservation as any).mockResolvedValue({ ok: true });
-  (prisma.$transaction as any).mockImplementation(async (fn: (tx: typeof prisma) => Promise<unknown>) => fn(prisma));
+  (requireOwner as Mock).mockResolvedValue({ ownerId: "o1", email: "owner@example.test" });
+  (prisma.project.findMany as Mock).mockResolvedValue([]);
+  (prisma.chatThread.count as Mock).mockResolvedValue(0);
+  (prisma.shot.count as Mock).mockResolvedValue(0);
+  (prisma.scheduledPost.count as Mock).mockResolvedValue(0);
+  (prisma.canvasNode.count as Mock).mockResolvedValue(0);
+  (prisma.genJob.count as Mock).mockResolvedValue(0);
+  (prisma.generation.count as Mock).mockResolvedValue(0);
+  (prisma.genJob.findMany as Mock).mockResolvedValue([]);
+  (prisma.genJob.updateMany as Mock).mockResolvedValue({ count: 1 });
+  (prisma.researchJob.findFirst as Mock).mockResolvedValue(null);
+  (prisma.project.deleteMany as Mock).mockResolvedValue({ count: 1 });
+  (prisma.project.updateMany as Mock).mockResolvedValue({ count: 1 });
+  (prisma.chatThread.findMany as Mock).mockResolvedValue([]);
+  (prisma.shot.findMany as Mock).mockResolvedValue([]);
+  (prisma.chatThread.deleteMany as Mock).mockResolvedValue({ count: 0 });
+  (prisma.chatMessage.deleteMany as Mock).mockResolvedValue({ count: 0 });
+  (prisma.researchJob.deleteMany as Mock).mockResolvedValue({ count: 0 });
+  (prisma.shot.deleteMany as Mock).mockResolvedValue({ count: 0 });
+  (prisma.shotEntityRef.deleteMany as Mock).mockResolvedValue({ count: 0 });
+  (prisma.scheduledPost.deleteMany as Mock).mockResolvedValue({ count: 0 });
+  (prisma.canvasNode.deleteMany as Mock).mockResolvedValue({ count: 0 });
+  (prisma.renderJob.deleteMany as Mock).mockResolvedValue({ count: 0 });
+  (prisma.captionJob.deleteMany as Mock).mockResolvedValue({ count: 0 });
+  (prisma.generationBatch.deleteMany as Mock).mockResolvedValue({ count: 0 });
+  (prisma.genJob.deleteMany as Mock).mockResolvedValue({ count: 0 });
+  (prisma.generation.deleteMany as Mock).mockResolvedValue({ count: 0 });
+  (prisma.actionEvent.deleteMany as Mock).mockResolvedValue({ count: 0 });
+  (prisma.$executeRaw as Mock).mockResolvedValue(undefined);
+  (refundReservation as Mock).mockResolvedValue({ ok: true });
+  (prisma.$transaction as Mock).mockImplementation(async (fn: (tx: typeof prisma) => Promise<unknown>) => fn(prisma));
 });
 
 describe("getOrCreateDefaultProject", () => {
   it("returns the oldest existing project without mutating", async () => {
-    (prisma.project.findFirst as any).mockResolvedValue({ id: "p_existing" });
+    (prisma.project.findFirst as Mock).mockResolvedValue({ id: "p_existing" });
 
     await expect(getOrCreateDefaultProject()).resolves.toEqual({ id: "p_existing" });
 
@@ -77,8 +77,8 @@ describe("getOrCreateDefaultProject", () => {
   });
 
   it("creates the first project without render-time revalidation", async () => {
-    (prisma.project.findFirst as any).mockResolvedValue(null);
-    (prisma.project.create as any).mockResolvedValue({ id: "p_new", name: "My Videos" });
+    (prisma.project.findFirst as Mock).mockResolvedValue(null);
+    (prisma.project.create as Mock).mockResolvedValue({ id: "p_new", name: "My Videos" });
 
     await expect(getOrCreateDefaultProject()).resolves.toEqual({ id: "p_new" });
 
@@ -99,7 +99,7 @@ describe("getOrCreateDefaultProject", () => {
 
 describe("deleteProject", () => {
   it("returns not found without mutating when the campaign is not owned/live", async () => {
-    (prisma.project.findFirst as any).mockResolvedValue(null);
+    (prisma.project.findFirst as Mock).mockResolvedValue(null);
 
     await expect(deleteProject("p_missing")).resolves.toEqual({ error: "Project not found." });
 
@@ -108,9 +108,9 @@ describe("deleteProject", () => {
   });
 
   it("hard-deletes project-scoped records and the project in one transaction", async () => {
-    (prisma.project.findFirst as any).mockResolvedValue({ id: "p1", name: "Summer launch" });
-    (prisma.chatThread.findMany as any).mockResolvedValue([{ id: "t1" }, { id: "t2" }]);
-    (prisma.shot.findMany as any).mockResolvedValue([{ id: "s1" }]);
+    (prisma.project.findFirst as Mock).mockResolvedValue({ id: "p1", name: "Summer launch" });
+    (prisma.chatThread.findMany as Mock).mockResolvedValue([{ id: "t1" }, { id: "t2" }]);
+    (prisma.shot.findMany as Mock).mockResolvedValue([{ id: "s1" }]);
 
     await expect(deleteProject("p1")).resolves.toEqual({ ok: true });
 
@@ -143,8 +143,8 @@ describe("deleteProject", () => {
   });
 
   it("refunds queued generation reservations before hard-deleting the campaign", async () => {
-    (prisma.project.findFirst as any).mockResolvedValue({ id: "p1", name: "Summer launch" });
-    (prisma.genJob.findMany as any).mockResolvedValue([{ id: "g-queued", status: "QUEUED" }]);
+    (prisma.project.findFirst as Mock).mockResolvedValue({ id: "p1", name: "Summer launch" });
+    (prisma.genJob.findMany as Mock).mockResolvedValue([{ id: "g-queued", status: "QUEUED" }]);
 
     await expect(deleteProject("p1")).resolves.toEqual({ ok: true });
 
@@ -161,8 +161,8 @@ describe("deleteProject", () => {
   });
 
   it("blocks hard delete while a generation is already running", async () => {
-    (prisma.project.findFirst as any).mockResolvedValue({ id: "p1", name: "Summer launch" });
-    (prisma.genJob.findMany as any).mockResolvedValue([{ id: "g-live", status: "GENERATING" }]);
+    (prisma.project.findFirst as Mock).mockResolvedValue({ id: "p1", name: "Summer launch" });
+    (prisma.genJob.findMany as Mock).mockResolvedValue([{ id: "g-live", status: "GENERATING" }]);
 
     await expect(deleteProject("p1")).resolves.toEqual({
       error: "A generation is still running in this campaign. Delete it after the generation finishes.",
@@ -174,9 +174,9 @@ describe("deleteProject", () => {
   });
 
   it("blocks hard delete while research is still running in a conversation", async () => {
-    (prisma.project.findFirst as any).mockResolvedValue({ id: "p1", name: "Summer launch" });
-    (prisma.chatThread.findMany as any).mockResolvedValue([{ id: "t1" }]);
-    (prisma.researchJob.findFirst as any).mockResolvedValue({ id: "r-live" });
+    (prisma.project.findFirst as Mock).mockResolvedValue({ id: "p1", name: "Summer launch" });
+    (prisma.chatThread.findMany as Mock).mockResolvedValue([{ id: "t1" }]);
+    (prisma.researchJob.findFirst as Mock).mockResolvedValue({ id: "r-live" });
 
     await expect(deleteProject("p1")).resolves.toEqual({
       error: "Research is still running in this campaign. Delete it after research finishes.",
@@ -190,7 +190,7 @@ describe("deleteProject", () => {
 
 describe("setProjectPinned", () => {
   it("pins through an owner-scoped write", async () => {
-    (prisma.project.findFirst as any).mockResolvedValue({ id: "p1" });
+    (prisma.project.findFirst as Mock).mockResolvedValue({ id: "p1" });
 
     await expect(setProjectPinned("p1", true)).resolves.toEqual({ ok: true, pinnedAt: expect.any(String) });
 
@@ -206,7 +206,7 @@ describe("setProjectPinned", () => {
 
 describe("createProject", () => {
   it("returns auth errors without throwing so expired sessions can recover in the UI", async () => {
-    (requireOwner as any).mockResolvedValue({ error: "Not authorized." });
+    (requireOwner as Mock).mockResolvedValue({ error: "Not authorized." });
 
     await expect(createProject("New campaign")).resolves.toEqual({ error: "Not authorized." });
 
@@ -216,7 +216,7 @@ describe("createProject", () => {
   });
 
   it("creates an owner-scoped project and revalidates after success", async () => {
-    (prisma.project.create as any).mockResolvedValue({ id: "p_new", name: "New campaign" });
+    (prisma.project.create as Mock).mockResolvedValue({ id: "p_new", name: "New campaign" });
 
     await expect(createProject("New campaign")).resolves.toEqual({ id: "p_new" });
 
@@ -235,7 +235,7 @@ describe("createProject", () => {
   });
 
   it("reuses an empty default campaign instead of creating duplicate sidebar rows", async () => {
-    (prisma.project.findMany as any).mockResolvedValue([{ id: "p_empty", editJson: null, coworkBrief: null, brandId: null, campaignId: null }]);
+    (prisma.project.findMany as Mock).mockResolvedValue([{ id: "p_empty", editJson: null, coworkBrief: null, brandId: null, campaignId: null }]);
 
     await expect(createProject("New campaign")).resolves.toEqual({ id: "p_empty" });
 
@@ -257,9 +257,9 @@ describe("createProject", () => {
   });
 
   it("creates a new default campaign when the existing default campaign has work", async () => {
-    (prisma.project.findMany as any).mockResolvedValue([{ id: "p_used", editJson: null, coworkBrief: null, brandId: null, campaignId: null }]);
-    (prisma.canvasNode.count as any).mockResolvedValue(1);
-    (prisma.project.create as any).mockResolvedValue({ id: "p_new", name: "New campaign" });
+    (prisma.project.findMany as Mock).mockResolvedValue([{ id: "p_used", editJson: null, coworkBrief: null, brandId: null, campaignId: null }]);
+    (prisma.canvasNode.count as Mock).mockResolvedValue(1);
+    (prisma.project.create as Mock).mockResolvedValue({ id: "p_new", name: "New campaign" });
 
     await expect(createProject("New campaign")).resolves.toEqual({ id: "p_new" });
 
@@ -278,9 +278,9 @@ describe("createProject", () => {
   });
 
   it("creates a new default campaign when the existing default campaign has storyboard shots", async () => {
-    (prisma.project.findMany as any).mockResolvedValue([{ id: "p_storyboard", editJson: null, coworkBrief: null, brandId: null, campaignId: null }]);
-    (prisma.shot.count as any).mockResolvedValue(1);
-    (prisma.project.create as any).mockResolvedValue({ id: "p_new", name: "New campaign" });
+    (prisma.project.findMany as Mock).mockResolvedValue([{ id: "p_storyboard", editJson: null, coworkBrief: null, brandId: null, campaignId: null }]);
+    (prisma.shot.count as Mock).mockResolvedValue(1);
+    (prisma.project.create as Mock).mockResolvedValue({ id: "p_new", name: "New campaign" });
 
     await expect(createProject("New campaign")).resolves.toEqual({ id: "p_new" });
 
@@ -290,9 +290,9 @@ describe("createProject", () => {
   });
 
   it("creates a new default campaign when the existing default campaign has scheduled posts", async () => {
-    (prisma.project.findMany as any).mockResolvedValue([{ id: "p_schedule", editJson: null, coworkBrief: null, brandId: null, campaignId: null }]);
-    (prisma.scheduledPost.count as any).mockResolvedValue(1);
-    (prisma.project.create as any).mockResolvedValue({ id: "p_new", name: "New campaign" });
+    (prisma.project.findMany as Mock).mockResolvedValue([{ id: "p_schedule", editJson: null, coworkBrief: null, brandId: null, campaignId: null }]);
+    (prisma.scheduledPost.count as Mock).mockResolvedValue(1);
+    (prisma.project.create as Mock).mockResolvedValue({ id: "p_new", name: "New campaign" });
 
     await expect(createProject("New campaign")).resolves.toEqual({ id: "p_new" });
 
@@ -302,11 +302,11 @@ describe("createProject", () => {
   });
 
   it("creates a new default campaign when the existing default campaign has project-level work", async () => {
-    (prisma.project.findMany as any).mockResolvedValue([
+    (prisma.project.findMany as Mock).mockResolvedValue([
       { id: "p_brief", editJson: null, coworkBrief: "Use neon product closeups", brandId: null, campaignId: null },
       { id: "p_edit", editJson: { timeline: { clips: [] } }, coworkBrief: null, brandId: null, campaignId: null },
     ]);
-    (prisma.project.create as any).mockResolvedValue({ id: "p_new", name: "New campaign" });
+    (prisma.project.create as Mock).mockResolvedValue({ id: "p_new", name: "New campaign" });
 
     await expect(createProject("New campaign")).resolves.toEqual({ id: "p_new" });
 
@@ -317,7 +317,7 @@ describe("createProject", () => {
   });
 
   it("does not reuse campaigns for explicit custom names", async () => {
-    (prisma.project.create as any).mockResolvedValue({ id: "p_custom", name: "Summer launch" });
+    (prisma.project.create as Mock).mockResolvedValue({ id: "p_custom", name: "Summer launch" });
 
     await expect(createProject("Summer launch")).resolves.toEqual({ id: "p_custom" });
 

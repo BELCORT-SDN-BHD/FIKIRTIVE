@@ -69,7 +69,7 @@ export function ReasoningPart({ part }: ReasoningPartProps) {
           >
             ▶
           </span>
-          Otto's thinking
+          Otto&apos;s thinking
         </button>
 
         {open && (

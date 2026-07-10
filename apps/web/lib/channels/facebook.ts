@@ -1,4 +1,4 @@
-import type { Channel, ChannelPost, ChannelTarget, ConnectionStatus } from "./types";
+import type { Channel } from "./types";
 import { disconnectMeta } from "../meta-actions";
 import { fetchOwnerPages } from "../meta-pages";
 import { metaStatus, notImpl } from "./meta-shared";
@@ -8,7 +8,7 @@ export const facebook: Channel = {
   label: "Facebook",
   icon: null, // page supplies the brand glyph
   capabilities: { postTypes: ["feed-image", "text-link"], maxMediaCount: 1, supportsFirstComment: false, supportsNativeSchedule: true },
-  connectionStatus: async (_ownerId) => metaStatus(),
+  connectionStatus: async () => metaStatus(),
   connectUrl: () => "/api/meta/authorize",
   disconnect: () => disconnectMeta(),
   listTargets: async (ownerId) => {

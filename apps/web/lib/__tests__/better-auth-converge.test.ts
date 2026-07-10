@@ -1,4 +1,4 @@
-import { describe, it, expect, vi, beforeEach } from "vitest";
+import { describe, it, expect, vi, beforeEach, type Mock } from "vitest";
 const db = {
   user: { findUnique: vi.fn(), create: vi.fn(), updateMany: vi.fn() },
   membership: { upsert: vi.fn() },
@@ -11,9 +11,13 @@ const mockBootstrap = vi.fn();
 vi.mock("@/lib/auth-guard", () => ({ bootstrapPersonalOrg: mockBootstrap }));
 
 beforeEach(() => {
-  Object.values(db).forEach((m) => Object.values(m).forEach((f: any) => f.mockReset?.()));
+  Object.values(db).forEach((m) => Object.values(m).forEach((f) => (f as Mock).mockReset?.()));
   db.$transaction.mockReset();
-  db.$transaction.mockImplementation(async (fn: any) =>
+  db.$transaction.mockImplementation(async (fn: (tx: {
+    user: { updateMany: Mock };
+    betterAuthUser: { updateMany: Mock };
+    membership: { upsert: Mock };
+  }) => Promise<unknown>) =>
     fn({
       user: { updateMany: db.user.updateMany },
       betterAuthUser: { updateMany: db.betterAuthUser.updateMany },

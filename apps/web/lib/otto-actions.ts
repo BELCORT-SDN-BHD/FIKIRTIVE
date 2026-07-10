@@ -306,6 +306,16 @@ export type FinalizeOttoRunResult =
   | { status: "done"; reply: string }
   | { status: "stale" };
 
+type OttoInterruption = {
+  name?: string;
+  rawItem?: { name?: string };
+  arguments?: string;
+};
+
+function asOttoInterruption(value: unknown): OttoInterruption {
+  return typeof value === "object" && value !== null ? value as OttoInterruption : {};
+}
+
 /**
  * Persist a completed/interrupted Otto run, with the SAME CAS + seq semantics as
  * ottoTurn. `seqAfterUser` is the seq value AFTER the USER message was written;
@@ -342,11 +352,11 @@ export async function finalizeOttoRun({
   // Handle interruption (generate tool parked for approval)
   if (Array.isArray(result.interruptions) && result.interruptions.length > 0) {
     const pendingCardIds: string[] = [];
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    for (const interruption of result.interruptions as any[]) {
+    for (const value of result.interruptions as unknown[]) {
+      const interruption = asOttoInterruption(value);
       // Accept either the SDK `.name` getter or the raw item name (robust to item-shape
       // differences between RunState.getInterruptions() items and RunResult.interruptions).
-      const nm = (interruption as any).name ?? (interruption.rawItem as any)?.name;
+      const nm = interruption.name ?? interruption.rawItem?.name;
       if (nm === "generate") {
         try {
           const args = JSON.parse(interruption.arguments ?? "{}") as { cardId?: string };
@@ -783,10 +793,11 @@ export async function ottoApprove(raw: unknown): Promise<
     // Handle another interruption (chained approval needed)
     if (Array.isArray(result.interruptions) && result.interruptions.length > 0) {
       const pendingCardIds: string[] = [];
-      for (const interruption of result.interruptions as any[]) {
+      for (const value of result.interruptions as unknown[]) {
+        const interruption = asOttoInterruption(value);
         // Accept either the SDK `.name` getter or the raw item name (robust to item-shape
         // differences between RunState.getInterruptions() items and RunResult.interruptions).
-        const nm = (interruption as any).name ?? (interruption.rawItem as any)?.name;
+        const nm = interruption.name ?? interruption.rawItem?.name;
         if (nm === "generate") {
           try {
             const args = JSON.parse(interruption.arguments ?? "{}") as { cardId?: string };

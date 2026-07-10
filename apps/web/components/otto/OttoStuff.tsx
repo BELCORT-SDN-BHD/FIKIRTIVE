@@ -153,11 +153,13 @@ export function OttoStuff({ entities, ads, adJobs, records, history, onOpenThrea
   }, []);
 
   useEffect(() => {
-    setGenerationHistory(history);
-    setHistoryCursor(null);
-    setHistoryHasMore(false);
-    setHistoryError(null);
-    void fetchGenerationHistory(null, true);
+    queueMicrotask(() => {
+      setGenerationHistory(history);
+      setHistoryCursor(null);
+      setHistoryHasMore(false);
+      setHistoryError(null);
+      void fetchGenerationHistory(null, true);
+    });
   }, [history, fetchGenerationHistory]);
 
   const items = useMemo(

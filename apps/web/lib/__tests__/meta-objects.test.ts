@@ -1,4 +1,4 @@
-import { describe, it, expect, vi, beforeEach } from "vitest";
+import { it, expect, vi, beforeEach } from "vitest";
 
 const { mockFindUnique, mockUpdate, mockListCampaigns, mockListAdSets, mockListAds, mockMetaGraphGet } = vi.hoisted(() => ({
   mockFindUnique: vi.fn(),

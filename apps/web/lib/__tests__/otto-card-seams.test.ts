@@ -163,8 +163,7 @@ describe("card seams — CARD_TOOL_NAMES (seam 5) and CARD_KINDS (seam 4) stay i
       const helper = src.match(/function rearmGenerationPoll\(\) \{([\s\S]*?)\n  \}/)?.[1] ?? "";
       expect(helper).toContain("setPollGaveUp(false)");
       expect(helper).toContain("setPollTerminal(false)");
-      expect(helper).toContain("pollCountRef.current = 0");
-      expect(helper).toContain("checkAgainUsedRef.current = false");
+      expect(helper).toContain('setPollRound("initial")');
       expect((src.match(/rearmGenerationPoll\(\);/g) ?? []).length).toBeGreaterThanOrEqual(4);
       expect(src).toMatch(/onCancelled=\{[\s\S]*setCancelledJobIds[\s\S]*onBalanceRefresh\?\.\(\)[\s\S]*(pollAndInjectResults|refreshAndUpdate)/);
     }

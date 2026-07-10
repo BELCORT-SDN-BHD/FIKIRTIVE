@@ -43,8 +43,12 @@ export function applyEditShotPrompt(
     if (i !== index) return s;
     // 视频两键始终作废(改帧/改视频文字/改时长都令旧视频过期)。
     // 帧两键仅在 frameStale 时作废——editing video text/duration must not invalidate the paid frame.
-    const { videoCardId: _v1, videoGenerationId: _v2, ...noVideo } = s;
-    const { firstFrameCardId: _f1, firstFrameGenerationId: _f2, ...noFrame } = noVideo;
+    const noVideo = { ...s };
+    delete noVideo.videoCardId;
+    delete noVideo.videoGenerationId;
+    const noFrame = { ...noVideo };
+    delete noFrame.firstFrameCardId;
+    delete noFrame.firstFrameGenerationId;
     const rest = frameStale ? noFrame : noVideo;
     return {
       ...rest,

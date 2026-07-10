@@ -1,11 +1,11 @@
-import { describe, it, expect } from "vitest";
-import { hashSteps, buildApproval, verifyApproval, canonicalizeSteps } from "../meta-approval";
+import { it, expect } from "vitest";
+import { hashSteps, buildApproval, verifyApproval } from "../meta-approval";
 
 const steps = [{ index: 0, op: "budget_up" as const, targetId: "s1", targetValue: { dailyBudgetMinor: 2000 } }];
 
 it("hash is stable regardless of key order / number formatting", () => {
   const a = hashSteps(steps);
-  const b = hashSteps([{ index: 0, op: "budget_up", targetId: "s1", targetValue: { dailyBudgetMinor: 2000.0 } } as any]);
+  const b = hashSteps([{ index: 0, op: "budget_up", targetId: "s1", targetValue: { dailyBudgetMinor: 2000.0 } }]);
   expect(a).toBe(b);
 });
 it("verify ok for the bound steps + actor within ttl", () => {

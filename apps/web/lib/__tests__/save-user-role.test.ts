@@ -1,5 +1,4 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
-import { FOUNDER_OWNER_ID } from "@fikirtive/core";
 
 // Unit test (no DB): mock requireRole + prisma + next/cache so the saveUserRole
 // invariants are pinned — gate-first, self-escalation guard, and ba_user.role mirror.

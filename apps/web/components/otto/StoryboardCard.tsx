@@ -88,10 +88,14 @@ export function StoryboardCard({ cardId, payload, balanceUsd, onBalanceRefresh }
   // Refs so the sync loop reads live values without re-subscribing the interval.
   const replacingBaselineRef = useRef<Record<string, string | undefined>>({});
   const replacingShotIdsRef = useRef<Set<string>>(replacingShotIds);
-  replacingShotIdsRef.current = replacingShotIds;
   const replacingVideoBaselineRef = useRef<Record<string, string | undefined>>({});
   const replacingVideoShotIdsRef = useRef<Set<string>>(replacingVideoShotIds);
-  replacingVideoShotIdsRef.current = replacingVideoShotIds;
+  useEffect(() => {
+    replacingShotIdsRef.current = replacingShotIds;
+  }, [replacingShotIds]);
+  useEffect(() => {
+    replacingVideoShotIdsRef.current = replacingVideoShotIds;
+  }, [replacingVideoShotIds]);
 
   const pollTriesRef = useRef(0);
 
@@ -172,7 +176,6 @@ export function StoryboardCard({ cardId, payload, balanceUsd, onBalanceRefresh }
     if (prevPayloadRef.current === payload) return;
     prevPayloadRef.current = payload;
     resetPrepared();
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [payload]);
 
   const runSyncOnce = useCallback(async (): Promise<boolean> => {

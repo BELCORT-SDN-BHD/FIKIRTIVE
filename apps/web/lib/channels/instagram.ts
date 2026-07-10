@@ -1,4 +1,4 @@
-import type { Channel, ChannelPost, ChannelTarget, ConnectionStatus } from "./types";
+import type { Channel, ChannelPost } from "./types";
 import { disconnectMeta } from "../meta-actions";
 import { fetchOwnerPages } from "../meta-pages";
 import { metaStatus, notImpl } from "./meta-shared";
@@ -8,7 +8,7 @@ export const instagram: Channel = {
   label: "Instagram",
   icon: null,
   capabilities: { postTypes: ["feed-image", "carousel", "reel", "story"], maxMediaCount: 10, supportsFirstComment: true, supportsNativeSchedule: false, rateLimitPer24h: 25 },
-  connectionStatus: async (_ownerId) => metaStatus(),
+  connectionStatus: async () => metaStatus(),
   connectUrl: () => "/api/meta/authorize",
   disconnect: () => disconnectMeta(),
   // IG business accounts hang off FB pages. For the connect surface we list the
