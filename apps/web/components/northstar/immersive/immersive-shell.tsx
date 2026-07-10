@@ -20,7 +20,14 @@ import { OttoAvatar } from "@/components/otto/OttoAvatar";
 import { ImmersiveProvider } from "./_context";
 import { ImmersiveNav } from "./immersive-nav";
 import { ImmersiveDock, type ImmersiveDockHandle } from "./immersive-dock";
-import { currentEscort, setOttoContext, useOttoWorking, type NsOttoContext } from "./_store";
+import {
+  currentEscort,
+  escortActedId,
+  markEscortActed,
+  setOttoContext,
+  useOttoWorking,
+  type NsOttoContext,
+} from "./_store";
 
 const GALLERY_PREFIX = "/northstar/";
 const IMMERSIVE_PREFIX = "/northstar-immersive/";
@@ -76,13 +83,14 @@ export function ImmersiveShell({ children }: { children: React.ReactNode }) {
   const rootRef = React.useRef<HTMLDivElement>(null);
   useKeepInsideImmersive(rootRef);
 
-  // §8e 首次直播 escort 导航器:唯一常驻件,故 acted-id 存它的 ref。新鲜前台指示(escortTo)
-  // 的每个 id 只导航一次;离开不拉回(不产生新 id 就不再 push);返回续播是结构性的(store 是源)。
+  // §8e 首次直播 escort 导航器。每个新鲜前台指示(escortTo)的 id 只导航一次;离开不拉回
+  // (不产生新 id 就不再 push);返回续播是结构性的(store 是源)。已导航高水位线存在模块级
+  // (escortActedId),不存组件 ref —— 外壳在 SPA 离开/回到路由组时会卸载重挂,ref 会归零
+  // 让陈旧 escort 被当新指示重放;模块级高水位与 escortRequest 同寿命,remount 后不再拉回。
   const escort = currentEscort();
-  const actedEscortRef = React.useRef(0);
   React.useEffect(() => {
-    if (!escort || escort.id <= actedEscortRef.current) return;
-    actedEscortRef.current = escort.id;
+    if (!escort || escort.id <= escortActedId()) return;
+    markEscortActed(escort.id);
     const surface = escort.surface.startsWith(GALLERY_PREFIX)
       ? IMMERSIVE_PREFIX + escort.surface.slice(GALLERY_PREFIX.length)
       : escort.surface;

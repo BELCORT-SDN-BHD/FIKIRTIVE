@@ -23,6 +23,7 @@ import {
   appendToStream,
   assistContextView,
   escortTo,
+  hasAssistApplyHandler,
   ottoBehavior,
   ottoContext,
   recentEvents,
@@ -200,12 +201,16 @@ export const ImmersiveDock = React.forwardRef<
     setPendingApply(null);
     // §8e 发送处接线判定:意图声明了「工作落在别处」= 新鲜前台可执行指示 → 导航一次。
     // (自由打字不 escort:没有诚实的目标信号,导航只跟随已声明的 landsOn。)
+    // 护栏:landsOn 与 in-place Apply 互斥。escort 会导航离开源表面 → 源 OttoAssist 卸载、
+    // 其 onApply 回调随之失效。故 escort 意图绝不浮出 in-place Apply 钮(即便 zone 作者误把
+    // 两字段都写在同一意图上),否则那颗钮点了只会空转 + 打假成功(缺陷#2)。
+    const escorting = Boolean(intent.landsOn);
     if (intent.landsOn) escortTo(intent.landsOn.surface, intent.landsOn.label);
     if (timerRef.current) window.clearTimeout(timerRef.current);
     timerRef.current = window.setTimeout(() => {
       setThinking(false);
       appendToStream({ role: "otto", text: intent.reply });
-      if (intent.apply) setPendingApply(intent.apply);
+      if (intent.apply && !escorting) setPendingApply(intent.apply);
     }, 1400);
   }
 
@@ -213,6 +218,18 @@ export const ImmersiveDock = React.forwardRef<
   // 只填字段,不发不花——落回后留一条确认,提醒店主亲手发。
   function applyPending() {
     if (!pendingApply) return;
+    // 护栏:源表面若已卸载(onApply 回调被 clearAssist 置 null),这颗钮无处可填。别对 null
+    // handler 空转还宣称「Filled it into …」的假成功 —— 诚实告知那屏已关、指路重开(缺陷#2)。
+    if (!hasAssistApplyHandler()) {
+      appendToStream({
+        role: "otto",
+        text: assistLabel
+          ? `${assistLabel} isn't open anymore, so I couldn't fill it in. Open it again and I'll drop this straight in.`
+          : "That screen isn't open anymore, so I couldn't fill it in. Open it again and I'll drop this straight in.",
+      });
+      setPendingApply(null);
+      return;
+    }
     runAssistApply(pendingApply);
     appendToStream({
       role: "otto",

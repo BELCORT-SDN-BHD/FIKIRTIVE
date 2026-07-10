@@ -3066,3 +3066,32 @@ export function uninstallRecipe(id: string, title: string): void {
 export function recipeInstalled(id: string, seed: boolean): boolean {
   return recipeInstallState[id] ?? seed;
 }
+
+/* ── [fix wave-c-audit/foundation] 两件原语护栏 —— 文件尾追加(注明队名 f2-primitives)──
+ * 修 §8e escort / §O7 assist 的两处结构缺陷。纯 client、零后台 import;只读高水位线 +
+ * 存活探针,不改上文任何既有函数签名。
+ *
+ * ① escort 已导航高水位线(缺陷#1):acted-id 原存外壳组件 ref。外壳在离开/回到
+ *    /northstar-immersive 路由组时会卸载重挂(SPA 后退退出 → 再点回),ref 归零,而
+ *    escortRequest 是模块级永存单例 → 陈旧 escort 被当新指示重放,把店主凭空拽回他没
+ *    要求返回的表面(如 /create/canvas)。修法:把「已导航到此 id」的高水位线搬到模块级,
+ *    与 escortRequest 同寿命。外壳导航器读它而非 ref → remount 后 escort.id ≤ 高水位
+ *    即不再 push;结构性续播不变(工作落在 store,回到表面即重读,原语无需特判)。 */
+let escortActedHighWater = 0;
+
+/** 已导航到过的最大 escort id(外壳导航器比对它,而非会随 remount 归零的组件 ref)。 */
+export function escortActedId(): number {
+  return escortActedHighWater;
+}
+
+/** 标记某 escort id 已导航过(单调抬升;远端调用不 notify,只是导航守卫的高水位线)。 */
+export function markEscortActed(id: number): void {
+  if (id > escortActedHighWater) escortActedHighWater = id;
+}
+
+/** ② Apply 回调是否仍活着(缺陷#2):源表面卸载后 assistApplyHandler 被 clearAssist 置 null。
+ *  dock 点 Apply 前先问它 —— 回调已死就别对着 null handler 空转还打「Filled it into …」的
+ *  假成功(诚实化:没真填就不宣称填了)。 */
+export function hasAssistApplyHandler(): boolean {
+  return assistApplyHandler !== null;
+}
