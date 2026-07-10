@@ -52,6 +52,15 @@
   second app or a bypass.
 - Present product options to the founder; don't decide them yourself.
 
+## Orchestration control plane (conditional)
+
+When a session is asked to orchestrate multi-agent work, resume an interrupted program, or make
+product/architecture/design/audit decisions, it must also read
+`.claude/skills/orchestration/SKILL.md` and `docs/ops/ORCHESTRATOR-STATE.md`. Codex is the recoverable
+control plane, Fable 5 is the verified judgment co-orchestrator, and the founder remains the final
+authority. This does not relax any rule above; in particular, no agent may self-merge, auto-merge,
+deploy, spend, or modify `docs/BLUEPRINT.md`.
+
 ## Stale-doc warning
 
 Some older docs predate this stack and can mislead: `docs/INDEX.md`, root `TODOS.md`,
