@@ -70,8 +70,10 @@ session must follow them:
 - **CI 不可用时(账单封锁/Actions 宕机)不得以"CI 本来就红"为由合并;必须在本地完整
   复现三关(check/test/web-build,配方见 `docs/runbooks/local-ci.md`)并把结果贴进 PR,
   再经 founder 明确批准才可合并。此规则约束所有 agent(claude/codex/任何工具)。**
-- Pushing `main` auto-deploys web + worker to Railway and auto-runs prisma migrations
-  on prod — a bad merge ships instantly. When in doubt, don't merge; ask the founder.
+- Production deploys are MANUAL (`railway up -s web|worker -e production`); pushing `main`
+  no longer auto-deploys (verified 2026-07-10: four main pushes on 07-09, zero auto deploys).
+  Merged code still ships verbatim on the next manual deploy — a bad merge is a delayed
+  incident, not a prevented one. When in doubt, don't merge; ask the founder.
 - Spend-path diffs (see `.claude/skills/money-safety-review`) additionally require that
   skill's checks to pass before merge.
 

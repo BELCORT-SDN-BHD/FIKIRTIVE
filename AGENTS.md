@@ -7,10 +7,11 @@
 
 ## Non-negotiable rules (violating these = reverted / incident)
 
-1. **Never push directly to `main`.** All changes land via a PR. Pushing `main`
-   **auto-deploys web + worker to Railway AND auto-runs `prisma migrate deploy` on prod** —
-   a bad merge ships instantly, with no human gate. There is no branch protection (private
-   repo, free plan); the discipline IS the protection.
+1. **Never push directly to `main`.** All changes land via a PR. `main` is production-bound:
+   deploys are MANUAL (`railway up -s web|worker -e production`; auto-deploy verified dead
+   2026-07-10) and `prisma migrate deploy` runs against prod on deploy — a bad merge ships
+   verbatim on the next deploy. `main` now has an active org ruleset (`protect-main`,
+   BELCORT-SDN-BHD org) as hard protection, but the discipline stays: PR only, CI green.
 2. **Never merge a PR unless ALL CI checks are green** on the current head commit. Never
    self-merge your own PR — the founder is the final merge authority.
    **CI 不可用时(账单封锁/Actions 宕机)不得以"CI 本来就红"为由合并;必须在本地完整
