@@ -28,7 +28,7 @@ import { SectionLabel, SpendConfirmDialog, SWEEP_STYLE, useCreateKeyframes } fro
 import { IMMERSIVE_BASE } from "../_kit";
 import { OttoAssist } from "../otto-assist";
 import { ottoWorking as setOttoWorking, refundCredits, spendCredits, studioLogGen, useStore } from "../_store";
-import { STUDIO_CAMERA_PRESETS, STUDIO_DUB_LANGS, STUDIO_SCENES, type StudioScene } from "./data";
+import { defaultStoryboardGoal, STUDIO_CAMERA_PRESETS, STUDIO_DUB_LANGS, studioStoryboard, type StudioScene } from "./data";
 
 const STEPS = [
   { n: 1, name: "Brief", cost: "$0" },
@@ -44,7 +44,12 @@ export function StudioStoryboard() {
   useStore();
   const router = useRouter();
   const [step, setStep] = React.useState<1 | 2 | 3 | 4>(2);
-  const [scenes, setScenes] = React.useState<StudioScene[]>(STUDIO_SCENES);
+  // #8 修「产品盲」:Step 1 的产品/目标现在受控,分镜 = studioStoryboard(选中产品)。
+  const [productId, setProductId] = React.useState(NS_PRODUCTS[5].id);
+  const product = NS_PRODUCTS.find((p) => p.id === productId) ?? NS_PRODUCTS[5];
+  const board = React.useMemo(() => studioStoryboard(product), [product]);
+  const [goal, setGoal] = React.useState(() => defaultStoryboardGoal(NS_PRODUCTS[5]));
+  const [scenes, setScenes] = React.useState<StudioScene[]>(() => studioStoryboard(NS_PRODUCTS[5]).scenes);
   const [editing, setEditing] = React.useState<StudioScene | null>(null);
   const [retakeScene, setRetakeScene] = React.useState<StudioScene | null>(null);
   const [coherence, setCoherence] = React.useState(true);
@@ -168,6 +173,19 @@ export function StudioStoryboard() {
     setScenes((prev) => prev.map((s) => (s.id === id ? { ...s, camera } : s)));
   };
 
+  // #8 换产品 = 换整套分镜(script = f(产品),不留上一个产品的礼盒分镜冒充这一个)+ 重播目标默认值。
+  // 与工厂 pickProduct 同法:选产品即重播派生态,provenance 永远与 scenes 对齐。
+  const pickBriefProduct = (id: string) => {
+    if (id === productId) return;
+    const next = NS_PRODUCTS.find((p) => p.id === id) ?? product;
+    setProductId(id);
+    setScenes(studioStoryboard(next).scenes);
+    setGoal(defaultStoryboardGoal(next));
+    setRenderState("idle");
+    setRenderPct({});
+    setFailedIds([]);
+  };
+
   return (
     <div className="mx-auto flex min-h-full w-full max-w-[1280px] flex-col px-6 pt-6 pb-16">
       <PageHeader
@@ -177,14 +195,15 @@ export function StudioStoryboard() {
         actions={
           <OttoAssist
             zone="Studio"
+            entityId={product.id}
             entityLabel="this storyboard"
-            formState={{ step, scenes: scenes.length }}
+            formState={{ step, product: product.name, scenes: scenes.length }}
             intents={[
               {
                 id: "sb-provenance",
                 label: "Where did these scenes come from?",
-                prompt: "Where did these six scenes come from?",
-                reply: "I drafted them from your last brief — a Merdeka gift-box pre-order push. Nothing here is locked: edit, reorder or delete any scene, and nothing costs a credit until the render step.",
+                prompt: `Where did these ${scenes.length} scenes come from?`,
+                reply: board.provenance,
               },
               {
                 id: "sb-tighten",
@@ -236,7 +255,8 @@ export function StudioStoryboard() {
               <label htmlFor="sb-product" className="text-[13px] leading-[18px] font-semibold text-foreground">Product</label>
               <select
                 id="sb-product"
-                defaultValue={NS_PRODUCTS[5].id}
+                value={productId}
+                onChange={(e) => pickBriefProduct(e.target.value)}
                 className="mt-2 h-11 w-full rounded-[14px] border border-input bg-card px-3.5 text-base text-foreground shadow-[var(--shadow-xs)] outline-none focus-visible:border-ring focus-visible:ring-[3px] focus-visible:ring-ring/40"
               >
                 {NS_PRODUCTS.map((p) => (
@@ -249,7 +269,8 @@ export function StudioStoryboard() {
               <textarea
                 id="sb-goal"
                 rows={3}
-                defaultValue="Drive pre-orders for the Merdeka gift box before Friday."
+                value={goal}
+                onChange={(e) => setGoal(e.target.value)}
                 className="mt-2 w-full resize-none rounded-[14px] border border-input bg-card px-3.5 py-3 text-base leading-6 text-foreground shadow-[var(--shadow-xs)] outline-none focus-visible:border-ring focus-visible:ring-[3px] focus-visible:ring-ring/40"
               />
               <p className="mt-2 text-xs text-muted-foreground">One goal per video works best.</p>
@@ -275,7 +296,8 @@ export function StudioStoryboard() {
               </button>
             </div>
             <div className="flex justify-end">
-              <Button onClick={() => setStep(2)}>Draft scenes · $0</Button>
+              {/* #8 按钮真读产品:从当前 brief 的产品重新拆分镜(不再只 setStep,无视产品/目标) */}
+              <Button onClick={() => { setScenes(studioStoryboard(product).scenes); setStep(2); }}>Draft scenes · $0</Button>
             </div>
           </div>
         </div>
@@ -284,10 +306,8 @@ export function StudioStoryboard() {
       {/* Step 2 — Scenes */}
       {step === 2 && (
         <>
-          {/* #8 交代来历(懵):谁做的这几场 + 随便改 + 第 4 步前不花钱 */}
-          <p className="mt-4 text-[13px] leading-[18px] text-muted-foreground">
-            Otto drafted these from your last brief — edit, reorder or delete any scene. Nothing costs a credit until the render step.
-          </p>
+          {/* #8 交代来历(懵):这是给哪个产品/什么原型的分镜 + 随便改 + 第 4 步前不花钱 */}
+          <p className="mt-4 text-[13px] leading-[18px] text-muted-foreground">{board.brief}</p>
           <div className="mt-4 grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
             {scenes.map((sc, i) => (
               <div key={sc.id} className="group overflow-hidden rounded-[18px] border border-border bg-card shadow-[var(--shadow-xs)]">
@@ -565,7 +585,7 @@ export function StudioStoryboard() {
         onOpenChange={setImportOpen}
         onSplit={() => {
           setImportOpen(false);
-          setScenes(STUDIO_SCENES);
+          setScenes(studioStoryboard(product).scenes);
           setStep(2);
         }}
       />

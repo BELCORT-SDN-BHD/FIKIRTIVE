@@ -8,7 +8,7 @@
  * 铁律:纯 client、零后台 import;这里只组合展示结构,状态一律经 _store.ts。
  */
 
-import { nsImage, NS_ASSETS, type NsAsset, type NsProduct } from "@/components/northstar/_mock";
+import { nsImage, NS_ASSETS, NS_BRAND, type NsAsset, type NsProduct } from "@/components/northstar/_mock";
 
 /* ── 首页:Featured 模板横排 ──────────────────────────────────────────────── */
 export interface StudioTemplate {
@@ -103,14 +103,14 @@ export interface StudioScene {
   camera: string;
 }
 
-export const STUDIO_SCENES: StudioScene[] = [
-  { id: "sc-1", order: 1, title: "Opening hook", shot: "Ribbon pulled off the Merdeka gift box", voiceover: "The box that sells out every Merdeka.", duration: 3, thumb: nsImage("campaign", 0), credits: 16, camera: "Close-up · static" },
-  { id: "sc-2", order: 2, title: "Product reveal", shot: "Lid opens on 12 assorted cookies", voiceover: "Twelve bakes. One box.", duration: 4, thumb: nsImage("bakery", 20), credits: 16, camera: "Top-down · slow push" },
-  { id: "sc-3", order: 3, title: "Texture moment", shot: "Gula melaka drizzle over pandan cake", voiceover: "Made fresh in KL, every morning.", duration: 4, thumb: nsImage("bakery", 5), credits: 16, camera: "Macro · rack focus" },
-  { id: "sc-4", order: 4, title: "People beat", shot: "Office team sharing the box at 3pm", voiceover: "Perfect for the office order.", duration: 4, thumb: nsImage("storefront", 3), credits: 16, camera: "Handheld · medium" },
-  { id: "sc-5", order: 5, title: "Urgency", shot: "Text-over: pre-orders close Friday 6pm", voiceover: "Pre-orders close Friday.", duration: 3, thumb: nsImage("campaign", 4), credits: 16, camera: "Static · text card" },
-  { id: "sc-6", order: 6, title: "Close", shot: "Logo lockup over warm bakery counter", voiceover: "Roti Bulan Bakery. Fresh bakes, KL heart.", duration: 2, thumb: nsImage("storefront", 1), credits: 16, camera: "Wide · slow drift" },
-];
+/**
+ * 分镜脚本 = f(产品原型)—— 修「产品盲」(与 studioHooks 同架构:box/centrepiece/grab)。
+ * 病根:旧 STUDIO_SCENES 是写死的礼盒清单,无视选中产品(给 kaya croissant 也吐礼盒预购分镜)。
+ * 重做:每个原型一套六镜(hook→reveal→texture/scene→people/value→urgency→close),
+ * 文案 interpolate 真名/真价、缩图取产品原型对应目录。Otto「来历」话术随原型走,不再嘴硬 Merdeka。
+ * 定义在下方 studioStoryboard(),与 studioHooks 并排(共用 archetypeOf / ARCHETYPE_LABEL)。
+ */
+export const STUDIO_STORYBOARD_CREDITS_PER_SCENE = 16;
 
 /* ── [wave-b] 结构化镜头控制:运镜/景别预设库(扩到几十个的形态,列头几十项之样例) ── */
 export const STUDIO_CAMERA_PRESETS: string[] = [
@@ -309,6 +309,83 @@ export function studioHooks(p: NsProduct): StudioHookSet {
     pairing,
     cta: ARCHETYPE_CTA[arch],
   };
+}
+
+/* ── 分镜脚本生成器:script = f(产品原型)—— 修 studio-storyboard Step 1「产品盲」──────
+ * 与 studioHooks 同法:box / centrepiece / grab 各一套六镜,文案带真名/真价,缩图取产品图 +
+ * 原型对应目录。Otto「来历」话术(provenance)也随原型走,不再写死 Merdeka 礼盒。 */
+export interface StudioStoryboardSet {
+  scenes: StudioScene[];
+  /** Otto「这几场哪来的」:绑当前产品原型与意图,永不与刚填的 brief 矛盾 */
+  provenance: string;
+  /** Step 2 副标:一行交代这是给哪个产品、什么原型的分镜 */
+  brief: string;
+}
+
+/** Step 1 目标框的产品感知默认值 —— 换产品即重播,不留上一个产品的目标冒充这一个。 */
+export function defaultStoryboardGoal(p: NsProduct): string {
+  switch (archetypeOf(p)) {
+    case "box":
+      return `Drive pre-orders for the ${p.name} before the festive cut-off.`;
+    case "centrepiece":
+      return `Get the ${p.name} reserved for weekend celebrations.`;
+    default:
+      return `Turn the ${p.name} into a weekday grab-and-go habit — drive daily foot traffic.`;
+  }
+}
+
+export function studioStoryboard(p: NsProduct): StudioStoryboardSet {
+  const arch = archetypeOf(p);
+  const price = Number.isInteger(p.priceMyr) ? `${p.priceMyr}` : p.priceMyr.toFixed(2);
+  const lower = p.name.toLowerCase();
+  const C = STUDIO_STORYBOARD_CREDITS_PER_SCENE;
+  const closer: StudioScene = {
+    id: "sc-6", order: 6, title: "Close",
+    shot: `Logo lockup over the ${NS_BRAND.city} counter`,
+    voiceover: `${NS_BRAND.name}. ${NS_BRAND.tagline}.`,
+    duration: 2, thumb: nsImage("storefront", 1), credits: C, camera: "Wide · slow drift",
+  };
+
+  let scenes: StudioScene[];
+  if (arch === "box") {
+    scenes = [
+      { id: "sc-1", order: 1, title: "Opening hook", shot: `Ribbon pulled off the ${lower}`, voiceover: "The box that sells out every festive run.", duration: 3, thumb: nsImage("campaign", 0), credits: C, camera: "Close-up · static" },
+      { id: "sc-2", order: 2, title: "Product reveal", shot: "Lid lifts on the full assortment inside", voiceover: "Every piece, in one box.", duration: 4, thumb: p.image, credits: C, camera: "Top-down · slow push" },
+      { id: "sc-3", order: 3, title: "Texture moment", shot: "Macro along the pieces nestled in the tray", voiceover: "Made fresh in KL, every morning.", duration: 4, thumb: nsImage("bakery", 5), credits: C, camera: "Macro · rack focus" },
+      { id: "sc-4", order: 4, title: "People beat", shot: "Office team passing the box around at 3pm", voiceover: `RM${price} that feeds the whole table.`, duration: 4, thumb: nsImage("storefront", 3), credits: C, camera: "Handheld · medium" },
+      { id: "sc-5", order: 5, title: "Urgency", shot: "Text-over: pre-orders close Friday 6pm", voiceover: "Pre-orders close Friday.", duration: 3, thumb: nsImage("campaign", 4), credits: C, camera: "Static · text card" },
+      closer,
+    ];
+  } else if (arch === "centrepiece") {
+    scenes = [
+      { id: "sc-1", order: 1, title: "Opening hook", shot: `The ${lower} carried in, candles lit`, voiceover: `The ${lower} people photograph before they cut it.`, duration: 3, thumb: p.image, credits: C, camera: "Wide · slow drift" },
+      { id: "sc-2", order: 2, title: "Product reveal", shot: "First slice lifted, the layers showing", voiceover: "Layered by hand, every morning.", duration: 4, thumb: nsImage("bakery", 5), credits: C, camera: "Macro · rack focus" },
+      { id: "sc-3", order: 3, title: "Texture moment", shot: "Warm drizzle breaking over the sponge", voiceover: "The drizzle, still warm, over the sponge.", duration: 4, thumb: nsImage("bakery", 11), credits: C, camera: "Macro · rack focus" },
+      { id: "sc-4", order: 4, title: "People beat", shot: "The table moment — the room reacts", voiceover: "The centrepiece the table remembers.", duration: 4, thumb: nsImage("storefront", 3), credits: C, camera: "Handheld · medium" },
+      { id: "sc-5", order: 5, title: "Urgency", shot: `Text-over: reserve your date · RM${price}`, voiceover: "Baked to order — reserve your date.", duration: 3, thumb: nsImage("campaign", 4), credits: C, camera: "Static · text card" },
+      closer,
+    ];
+  } else {
+    scenes = [
+      { id: "sc-1", order: 1, title: "Opening hook", shot: `First bite of a warm ${lower}, straight off the morning batch`, voiceover: `That first bite of a fresh ${lower}.`, duration: 3, thumb: p.image, credits: C, camera: "Close-up · static" },
+      { id: "sc-2", order: 2, title: "Product reveal", shot: `The ${lower} pulled apart, steam rising`, voiceover: "Still warm from the morning bake.", duration: 3, thumb: nsImage("bakery", 1), credits: C, camera: "Macro · rack focus" },
+      { id: "sc-3", order: 3, title: "Scene beat", shot: "On a desk beside a kopi at 3pm", voiceover: "Your 3pm pick-me-up, sorted.", duration: 4, thumb: nsImage("storefront", 5), credits: C, camera: "Handheld · medium" },
+      { id: "sc-4", order: 4, title: "Value", shot: `Price card over the hero: RM${price}`, voiceover: `RM${price}, and it eats like a café treat twice the price.`, duration: 3, thumb: nsImage("bakery", 24), credits: C, camera: "Static · text card" },
+      { id: "sc-5", order: 5, title: "Urgency", shot: "Empty tray by noon, text-over: baked fresh daily", voiceover: "We bake a small batch each morning. Gone by noon.", duration: 3, thumb: nsImage("campaign", 4), credits: C, camera: "Static · text card" },
+      closer,
+    ];
+  }
+
+  const totalSeconds = scenes.reduce((s, sc) => s + sc.duration, 0);
+  const provenance =
+    arch === "box"
+      ? `I drafted these from your brief — a festive gift-box push for the ${lower}: the ribbon-and-reveal sequence that unboxing reels win on, retimed to ${totalSeconds}s across ${scenes.length} scenes. Nothing's locked — edit, reorder or delete any scene, and nothing costs a credit until the render step.`
+      : arch === "centrepiece"
+        ? `I drafted these from your brief — a celebration-centrepiece push for the ${lower}: the table reveal, the warm drizzle, then the RM${price} it's worth. ${scenes.length} scenes, ${totalSeconds}s. Nothing's locked — edit, reorder or delete any scene, and nothing costs a credit until the render step.`
+        : `I drafted these from your brief — a daily grab-and-go push for the ${lower}: open on the bite, land the RM${price} value, close on today's batch. ${scenes.length} scenes, ${totalSeconds}s. Nothing's locked — edit, reorder or delete any scene, and nothing costs a credit until the render step.`;
+  const brief = `Otto drafted a ${ARCHETYPE_LABEL[arch]} storyboard for the ${lower} — edit, reorder or delete any scene. Nothing costs a credit until the render step.`;
+
+  return { scenes, provenance, brief };
 }
 
 export const STUDIO_PLATFORMS = ["Instagram", "Facebook", "TikTok"] as const;

@@ -61,6 +61,18 @@ type CellKey = string; // `${platform}|${size}`
 type BatchState = "idle" | "running" | "done";
 type Tool = "batch" | "bulk";
 
+/** 分享链接 slug:小写、非字母数字→连字符(确定性,无 locale API 副作用)。 */
+function slug(s: string): string {
+  return s.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/(^-|-$)/g, "") || "batch";
+}
+
+/** #2 缺口按实际交付的尺寸算,不写死「缺 9:16」。每个尺寸一句真话。 */
+const SIZE_GAP: Record<string, string> = {
+  "9:16": "a vertical 9:16 story frame — the format that runs strongest on TikTok MY this month",
+  "1:1": "a square 1:1 feed post to round out the set",
+  "4:5": "a portrait 4:5 feed post to round out the set",
+};
+
 export function StudioFactory() {
   useCreateKeyframes();
   useStore();
@@ -91,6 +103,8 @@ export function StudioFactory() {
     hook: StudioHook;
     cta: string;
     cellCount: number;
+    /** #2 冻结实际交付的placements,成品资产板据此算真缺口(而非写死「缺 9:16」) */
+    cells: CellKey[];
     perCellCredits: number;
     totalCredits: number;
   } | null>(null);
@@ -166,7 +180,7 @@ export function StudioFactory() {
     // #1 交付快照:成品广告卡读这一版的产品+首个选中钩子+CTA,冻结账目。
     const hook = selectedHooks[0] ?? null;
     setDelivered(
-      hook ? { product, hook, cta: hookSet.cta, cellCount: cells.length, perCellCredits, totalCredits } : null,
+      hook ? { product, hook, cta: hookSet.cta, cellCount: cells.length, cells: [...cells], perCellCredits, totalCredits } : null,
     );
     setBatch("running");
     setFailedCells([]);
@@ -688,6 +702,7 @@ export function StudioFactory() {
               product={delivered.product}
               headline={delivered.hook.line}
               cta={delivered.cta}
+              cells={delivered.cells}
               onEditTool={setEditTool}
               onLicense={() => setLicenseOpen(true)}
               onSaveTpl={() => setSaveTplOpen(true)}
@@ -799,6 +814,7 @@ function DoneExtras({
   product,
   headline,
   cta,
+  cells,
   onEditTool,
   onLicense,
   onSaveTpl,
@@ -809,11 +825,17 @@ function DoneExtras({
   headline: string;
   /** #1 CTA 按产品原型走(礼盒预购 / 蛋糕订期 / 单品即买) */
   cta: string;
+  /** #2 实际交付的 placements（`${platform}|${size}`）—— 缺口据此真算,不写死 */
+  cells: CellKey[];
   onEditTool: (id: string) => void;
   onLicense: () => void;
   onSaveTpl: () => void;
   onSchedule: () => void;
 }) {
+  // #2 真缺口:成品覆盖哪些尺寸,就据此报缺(默认两张 9:16 已在,缺的是 1:1),不再假报「缺 9:16」。
+  const deliveredSizes = new Set(cells.map((k) => k.split("|")[1]));
+  const missing = STUDIO_SIZES.filter((s) => !deliveredSizes.has(s));
+  const primaryGap = missing.includes("9:16") ? "9:16" : missing[0];
   return (
     <div className="grid gap-4 lg:grid-cols-2">
       {/* [wave-b] 整版广告一体化产出(Adobe Create Canvas):图+标题+CTA+logo 排版成品 */}
@@ -861,13 +883,19 @@ function DoneExtras({
             <img key={k} src={nsImage(k % 2 === 0 ? "campaign" : "bakery", i)} alt="" aria-hidden className="aspect-square w-full rounded-[10px] object-cover" />
           ))}
         </div>
-        <div className="mx-3 mb-3 rounded-[10px] bg-warning-soft px-3 py-2 text-xs font-medium text-warning-soft-foreground">
-          Otto suggests: still missing a vertical 9:16 story frame.
-        </div>
+        {primaryGap ? (
+          <div className="mx-3 mb-3 rounded-[10px] bg-warning-soft px-3 py-2 text-xs font-medium text-warning-soft-foreground">
+            Otto suggests: add {SIZE_GAP[primaryGap]}.
+          </div>
+        ) : (
+          <div className="mx-3 mb-3 rounded-[10px] bg-success-soft px-3 py-2 text-xs font-medium text-success-soft-foreground">
+            Otto: all three ratios covered — square feed, portrait and 9:16 story. Ready to schedule.
+          </div>
+        )}
         <div className="mt-auto flex flex-wrap items-center gap-2 border-t border-border p-3">
           <div className="flex items-center gap-2 rounded-[10px] border border-border bg-secondary/60 px-3 py-2 text-[13px] text-muted-foreground">
             <Link2 className="size-3.5 shrink-0" strokeWidth={2} />
-            fikirtive.app/b/merdeka-week
+            fikirtive.app/b/{slug(product.name)}
           </div>
           <div className="flex-1" />
           <Button variant="secondary" size="sm" onClick={onSchedule}>Schedule these</Button>
@@ -890,21 +918,45 @@ function BulkGrid() {
   const [tasks, setTasks] = React.useState<Record<string, boolean>>({ "bt-desc": true, "bt-image": true, "bt-translate": false, "bt-caption": false });
   const [ask, setAsk] = React.useState(false);
   const [done, setDone] = React.useState(false);
+  // #3 兑现「失败不收费」:bulk grid 也真有失败分支 + 退款(和分镜 / 变体批同口径,不再只承诺)。
+  // 图片任务才会失败(文本任务免费、不落 credits);首批演示一格失败一次,之后全成功。
+  const [failedRows, setFailedRows] = React.useState<string[]>([]); // 图片任务失败并已退款的产品 id
+  const failedOnceRef = React.useRef(false);
   useStore();
 
   const activeTasks = STUDIO_BULK_TASKS.filter((t) => tasks[t.id]);
   // 只有图片任务耗 credits(文本任务免费),确定性算价。
   const imageJobs = tasks["bt-image"] ? rows.length : 0;
   const total = imageJobs * STUDIO_CREDITS_PER_VARIANT;
+  const PER = STUDIO_CREDITS_PER_VARIANT; // 一个产品的图片任务价
 
   const toggleRow = (id: string) => setRows((prev) => (prev.includes(id) ? prev.filter((x) => x !== id) : [...prev, id]));
 
   const run = (credits: number) => {
+    setFailedRows([]);
     if (credits > 0) {
       spendCredits(credits, `Bulk grid · ${rows.length} products`, "Image");
-      studioLogGen(`Ran the bulk grid over ${rows.length} products (${activeTasks.length} tasks each).`, "Factory");
+      // #3 首批让一个产品的图片任务当面失败一次 —— 退回它那份 credits(可核对的 ledger 行),
+      // 落可见失败态 + 可重试。之后的批次全成功,不把 demo 弄成常坏。
+      if (!failedOnceRef.current && imageJobs > 0) {
+        failedOnceRef.current = true;
+        const failId = rows[1] ?? rows[0];
+        const failName = NS_PRODUCTS.find((p) => p.id === failId)?.name ?? "one product";
+        refundCredits(PER, `${failName} image job didn't render`);
+        setFailedRows([failId]);
+        studioLogGen(`Ran the bulk grid over ${rows.length} products (${activeTasks.length} tasks each). One image job failed and wasn't charged — ${PER} credits refunded.`, "Factory");
+      } else {
+        studioLogGen(`Ran the bulk grid over ${rows.length} products (${activeTasks.length} tasks each).`, "Factory");
+      }
     }
     setDone(true);
+  };
+
+  // #3 重试单个产品的图片任务:重新扣它那份钱(之前失败已退,重试即重新付),渲到成功。
+  const retryRow = (id: string) => {
+    const name = NS_PRODUCTS.find((p) => p.id === id)?.name ?? "product";
+    spendCredits(PER, `Retry · ${name} image`, "Image");
+    setFailedRows((f) => f.filter((x) => x !== id));
   };
 
   return (
@@ -947,13 +999,23 @@ function BulkGrid() {
                     <img src={p.image} alt="" aria-hidden className="size-8 shrink-0 rounded-[8px] object-cover" />
                     <span className="min-w-0 truncate text-[13px] font-medium text-foreground">{p.name}</span>
                   </button>
-                  {(activeTasks.length ? activeTasks : [{ id: "none" }]).map((t) => (
-                    <div key={t.id} className="flex items-center justify-center border-b border-l border-border last:border-b-0">
-                      {on && activeTasks.length > 0 ? (
-                        done ? <Check className="size-4 text-success-soft-foreground" strokeWidth={2.5} /> : <span className="size-2 rounded-full bg-muted-foreground/40" />
-                      ) : null}
-                    </div>
-                  ))}
+                  {(activeTasks.length ? activeTasks : [{ id: "none" }]).map((t) => {
+                    // #3 只有图片任务会失败;失败格显警告(其余文本任务照常成功)。
+                    const failedHere = t.id === "bt-image" && failedRows.includes(p.id);
+                    return (
+                      <div key={t.id} className="flex items-center justify-center border-b border-l border-border last:border-b-0">
+                        {on && activeTasks.length > 0 ? (
+                          failedHere ? (
+                            <TriangleAlert className="size-4 text-warning-soft-foreground" strokeWidth={2} />
+                          ) : done ? (
+                            <Check className="size-4 text-success-soft-foreground" strokeWidth={2.5} />
+                          ) : (
+                            <span className="size-2 rounded-full bg-muted-foreground/40" />
+                          )
+                        ) : null}
+                      </div>
+                    );
+                  })}
                 </React.Fragment>
               );
             })}
@@ -971,6 +1033,18 @@ function BulkGrid() {
             <Button variant="brand" disabled={rows.length === 0 || activeTasks.length === 0} onClick={() => (total > 0 ? setAsk(true) : run(0))}>
               {total > 0 ? `Run bulk · ${total} credits` : "Run bulk · free"}
             </Button>
+          </>
+        ) : failedRows.length > 0 ? (
+          <>
+            <Badge variant="warning">{rows.length - failedRows.length} of {rows.length} image jobs rendered</Badge>
+            <p className="min-w-0 flex-1 text-[13px] text-muted-foreground">
+              One image job failed and wasn&apos;t charged — {failedRows.length * PER} credits went back. Text jobs and the rest are in your Library.
+            </p>
+            <Button variant="secondary" size="sm" onClick={() => failedRows.forEach((id) => retryRow(id))}>
+              <RotateCcw className="size-3.5" strokeWidth={2} />
+              Retry image · {failedRows.length * PER} credits
+            </Button>
+            <Button variant="secondary" size="sm" onClick={() => router.push(`${IMMERSIVE_BASE}/assets/library`)}>Open Library</Button>
           </>
         ) : (
           <>
