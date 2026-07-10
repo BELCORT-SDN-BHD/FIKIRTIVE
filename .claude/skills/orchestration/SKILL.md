@@ -1,7 +1,56 @@
 ---
-name: fleet-orchestration
-description: FIKIRTIVE 舰队编排官方手册 —— 凡多 agent 作业(全城建造/大规模审计/迁移/多区并行)或派单 Codex 时必读;含分档用工表、标准舰队形状、worker 施工样板、教训清单
+name: orchestration
+description: FIKIRTIVE 编排总手册（三合一）—— 总纲：会话主脑=总指挥只编排不铺码，GPT Sol@ultra=对抗顾问，施工交给 Opus/Sonnet/GPT-5.6。凡开舰队、派任何单、选模型、重大决策要双脑对谈，必读本手册。机器闸=settings.local.json 的 orchestrator hook（skill 是手册，hook 是门禁）。
 ---
+
+# 编排总手册
+
+> **founder 总纲（2026-07-11 亲定，一句话就是全部规矩）**：
+> **「你是 orchestrator，GPT Sol Ultra 是你的 advisor，其他剩下的交给 Opus、Sonnet 或 GPT-5.6。」**
+> 以下三章是这句话的执行细则。原 fleet-orchestration / model-routing / two-brain 三本合并于此（founder 2026-07-11："为什么需要三个 skill？一个不就好了"）。与蓝图/playbook 冲突时蓝图赢。
+
+# 第一章 · 谁干什么（模型选派）
+
+# 逐能力模型选派表(2026-07-10)
+
+> 铁律:选派**只认试工打分 + 上岗记分**,不听发布会(见 fleet-orchestration 晋升铁律)。本表随新模型入职考更新;每格标"依据"= 试工/档案/性格红线。名单会过时,制度不会。
+> 安全前置:**Sol/GPT 家族全岗位默认只读**(METR 实测最高作弊率+越权删资源);要写码=隔离分支+Claude 全 diff 反作弊审+永不 main/prod/DB/钱路。
+
+## 一、逐能力表(能力 → 首选 / 备选 / 禁用)
+
+| 能力 | 首选 | 备选 | 不用 / 红线 | 依据 |
+|---|---|---|---|---|
+| **掌舵编排**(架构/写工单/终审/拍板对接) | **Fable 5**(主脑亲任) | — | 不外包;Sol 可当对抗预审(只读) | 会话主脑;判断密度最高处 |
+| **灵魂施工**(壳/连通/canvas/旗舰页/钱路形态) | **Opus 4.8** | Fable(体验关键件亲导) | Sonnet(曾"盖楼被退货");Sol(写权限红线) | 体验工作实测过硬 |
+| **量产施工**(mock/变体/重复件/文档) | **Sonnet 5** | Haiku 4.5 | — | 幻觉/谄媚低于 4.6,同价 |
+| **机械大扫**(URL 验活/清单核对/grep 汇总) | **Luna@medium** | Haiku 4.5 · Terra | — | Luna 试工 A(78 URL+143 内链 6 秒) |
+| **对抗审查/第四闸**(soul·钱路大 diff 抓真缺陷) | **Sol@xhigh**(只读) | Opus(异族不可得时) | — | Sol 双 A;抓交叉修复 bug 强于分区质检 |
+| **全量终审第四闸**(整分支级大 diff) | **Sol@ultra**(只读) | — | — | ultra=判断之巅,只上刀刃(单应答烧万级 token) |
+| **效果过堂**(产出实质"站得住"判定) | **Opus 4.8 主审** | Sol 降第二意见对照 | Sol 独任(判断岗忌作弊倾向) | 档案 2026-07 修正 |
+| **内容金标准/文案**(提案/hook/周报示范级) | **Fable 5 亲笔** | Opus | Sol 仅作对照样(无文案基准);GPT 多语言零证据 | 现役最强写手 |
+| **视觉设计/品味关键件** | **Fable 5 亲导** | Opus | — | 视觉 SOTA 维 |
+| **UIUX 前端施工** | **Opus 4.8** | Sonnet 5(量产页) | — | 前端工艺 |
+| **后端/系统/数据模型** | **Opus 4.8** | Sonnet 5 | — | 系统维 |
+| **测试编写/QA 剧本** | **Opus 4.8**(真浏览器 QA) | Sonnet 5(单测) | — | 场景实测靠判断 |
+| **研究/长上下文读盘** | **Opus 4.8** | Gemini 3.1 Pro(仅"只读大脑",绝不编辑) | Grok(暂缓) | 长上下文最可靠 |
+| **成色抽审/量产审计** | **Terra@high**(只读) | Luna | — | Terra 试工 A(Gooseworks 抽审,便宜犀利) |
+| **长线可验收磨活**(清 ESLint 债/追偶现 bug) | **Sol `/goal`**(护栏:隔离 worktree/永不 main/可验完成条件/预算封顶/产出永不自动合并) | Opus | — | Terminal-Bench SOTA;省 token |
+
+## 二、多语言警戒(SEA 关键)
+
+华语/马来语/rojak:**GPT 家族零公开证据**。用它产 SEA 内容前必先过自测小卷;首选 Fable/Opus。
+
+## 三、成本纪律
+
+- Codex 计费走 founder ChatGPT plan(非逐笔钱路,但大量后台跑吃 plan 限额)→ 重活/长跑先打招呼,ultra 大单与长跑错峰派。
+- Fable 的 token 只花在判断密度最高处;读盘/机械一律下沉便宜档。
+- 每类活记分(成本/被采纳率/误报率/返工)入 MODEL-DOSSIER,定期用固定基准复考,证据驱动升降档。
+
+## 四、地平线(约考候补)
+
+Gemini 3.1 Pro(只读大脑候选)· 开源三强(Qwen/V4,自托管压成本备胎)· Grok 4.5(暂缓)。新模型 public → research 真长处 → 标准试工 → 成绩定档 → **本表 + fleet-orchestration 分档表同步更新**。
+
+# 第二章 · 舰队怎么开（编排手册）
 
 # 舰队编排(fleet-orchestration)
 
@@ -82,3 +131,34 @@ codex exec --skip-git-repo-check -c model_reasoning_effort=<low|medium|high|xhig
 - 计费走 founder 的 ChatGPT 订阅(priority tier),非逐笔钱路;**重活(整分支审查/长跑)先跟 founder 打一声招呼**,别烧光他的 plan 限额。
 - repo 规矩对 Codex 一视同仁:永不推 main、PR+CI 绿灯、playbook 检查单。
 - plugin 命令(`/codex:review` 等)需重启会话才注册;CLI `codex exec` 永远直接可用。
+
+# 第三章 · 重大决策怎么谈（双脑制）
+
+# 双脑对谈制(Fable × Sol@ultra)
+
+> 何时开:重大产品/架构/战略决策、设计定稿前、完整性扫描、founder 点名"问问 Sol"。日常工程不开(浪费);小分歧用第四闸对抗审查即可。
+
+## 标准回合结构
+
+1. **Fable 亮论纲**(主脑先押注,给对抗脑一个靶):把自己的完整立场写进 prompt,绝不空手问"你怎么看"。
+2. **Sol 四题**(ultra 档,读 repo 只读,唯一写=scratchpad 报告文件):①独立第一性答案(不看论纲先自答)②对抗攻击论纲(禁客气)③unknown unknowns(founder 和 Fable 都漏的)④险牌(每张带成本+止损门槛)。
+3. **Fable 逐条裁定**(这是主脑的核心职责,不许外包):采纳/改造采纳/驳回,每条带理由;**它不懂我们的宪法与历史,裁定时补上下文**;它的重大事实主张(竞品动作/条款/数据)必须独立核验至少一条最重的。
+4. **归档双件套**:Sol 原稿存 `docs/strategy/SOL-R<n>-*.md`(原文一字不改);裁定写进 `docs/strategy/TWO-BRAIN-MEMO-*.md`(共识/分歧+裁定/险牌+注/给 founder 决策清单)。
+5. **founder 拍板**:产出永远是提案;决策清单逐条可单批单毙;触宪法的只标注,修宪案另开 PR founder 亲合。
+6. **确定即固化,但带生命周期**(R4 A-04 修正):固化物标状态 `proposal → trial → accepted → deprecated`;产品/策略类假设入法前须带成功指标+过期日+退役条件,**只有安全类法条可跳过 trial 直接 accepted**。共识≠生产证据 —— 别让试验性假设变成昂贵的化石。判决进 GRILL-VERDICTS。
+7. **证据包先行**(R4 A-05 修正):多脑作业前,先由一个便宜 agent 产出**不可变证据包**(事实/命令输出/计数/引文/未知项),各脑基于同一包独立设计、禁互读提案 —— 省掉重复考古,引文口径统一。
+
+## 派单口径
+
+```bash
+codex exec --skip-git-repo-check --model gpt-5.6-sol -c model_reasoning_effort=ultra "<论纲+四题+repo 路径+唯一写文件>"
+```
+- 战略/设计题用 **ultra**;代码审查用 xhigh(见 fleet-orchestration 第四闸)。
+- Sol 全程只读(写权限红线,权威落点见 model-routing);后台跑,长思考勿催。
+- 大单先跟 founder 打招呼(吃他 ChatGPT plan 限额)。
+
+## 教训(append-only)
+
+1. Sol 的判词犀利但**不知道 founder 的开发方法论**(城=非技术 founder 的决策介质、mock 即 spec)——凡涉"该不该建"的判词先过这层滤镜再采纳。
+2. 它引用的官方链接可信度高,但**基准/竞品数字必须抽核**(R1 的 Meta Business Agent 经独立核实为真,才升格为战略输入)。
+3. 已确定成果:R1=授权-回执脊柱+竞争格局改判;R2=Otto 存在契约(一个 Otto 多份档案/dock 注意力面/认识论动词/试用班);均已裁定归档。
