@@ -69,6 +69,8 @@ const mocks = vi.hoisted(() => {
 
   // otto mock (just a sentinel value)
   const otto = { name: "Otto" };
+  // ottoVerdict mock — the tool-less, single-step verdict profile the run actually uses
+  const ottoVerdict = { name: "Otto", tools: [] };
 
   // newId mock
   const newId = vi.fn(() => `msg-${Math.random().toString(36).slice(2)}`);
@@ -82,6 +84,7 @@ const mocks = vi.hoisted(() => {
     MaxTurnsExceededError,
     mapOttoUsage,
     otto,
+    ottoVerdict,
     newId,
     chatThreadFindFirst,
     chatThreadUpdateMany,
@@ -105,6 +108,7 @@ vi.mock("@fikirtive/core", () => ({
 
 vi.mock("@fikirtive/otto", () => ({
   otto: mocks.otto,
+  ottoVerdict: mocks.ottoVerdict,
   withLlmBudget: mocks.withLlmBudget,
   OTTO_DEFAULT_MODEL: "claude-sonnet-4-6",
   run: mocks.run,
@@ -280,10 +284,14 @@ describe("Test #4 — happy verdict path", () => {
     expect(budgetArgs.orgId).toBe(JOB.ownerId);
     expect(budgetArgs.refId).toBe(`otto-verdict:${JOB.id}`);
     expect(budgetArgs.paid).toBe(true);
-    expect(budgetArgs.maxSteps).toBe(10);
+    // R4 O-11: verdict reserves a SINGLE step (was OTTO_MAX_STEPS=10)
+    expect(budgetArgs.maxSteps).toBe(1);
 
-    // run was called (inside withLlmBudget)
+    // run was called (inside withLlmBudget) with the tool-less, single-turn verdict profile
     expect(mocks.run).toHaveBeenCalledOnce();
+    const [runAgent, , runOpts] = mocks.run.mock.calls[0] as [unknown, unknown, { maxTurns: number }];
+    expect(runAgent).toBe(mocks.ottoVerdict); // NOT the full-toolset `otto`
+    expect(runOpts.maxTurns).toBe(1);
 
     // CAS: chatThread.updateMany must be called for the state write
     expect(mocks.chatThreadUpdateMany).toHaveBeenCalledOnce();

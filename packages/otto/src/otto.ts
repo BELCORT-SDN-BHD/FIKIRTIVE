@@ -20,3 +20,22 @@ export const otto = new Agent<OttoContext>({
   tools: allSkills.map((s) => s.tool),
   // maxTurns is a run() option, not an Agent constructor option — passed by the caller in Tasks 1.8/1.9
 });
+
+/**
+ * ottoVerdict — an INDEPENDENT system profile used ONLY by the worker's post-generation verdict
+ * turn (apps/worker/src/otto-resume.ts). It shares Otto's durable identity (ottoInstructions),
+ * model, and output cap — so the verdict copy keeps Otto's voice — but carries ZERO tools.
+ *
+ * Why a separate profile: the verdict turn only speaks one sentence ("does this look right?").
+ * Running the full `otto` (all 25 skills, up to OTTO_MAX_STEPS billed turns) just to say that is
+ * COGS waste AND an over-privilege surface (a write/spend tool could be reached). An empty toolset
+ * removes that surface entirely — no tool can be called — and lets the run finish in a single step
+ * (the caller runs it with maxTurns:1 and reserves maxSteps:1). Do NOT add tools here.
+ */
+export const ottoVerdict = new Agent<OttoContext>({
+  name: "Otto",
+  instructions: ottoInstructions,
+  model: ottoModel,
+  modelSettings: { maxTokens: OTTO_OUTPUT_CAP_TOKENS },
+  tools: [],
+});

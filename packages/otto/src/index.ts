@@ -1,4 +1,4 @@
-export { otto, ottoInstructions, OTTO_DEFAULT_MODEL } from "./otto.js";
+export { otto, ottoVerdict, ottoInstructions, OTTO_DEFAULT_MODEL } from "./otto.js";
 export { ottoSimpleModeBlock } from "./instructions.js";
 export { propose } from "./skills/propose.js";
 // buildProposeCard — the pure $0 card-payload helper (no DB/SDK). Exposed for the

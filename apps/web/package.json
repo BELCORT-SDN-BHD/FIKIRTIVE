@@ -17,7 +17,6 @@
     "@fikirtive/otto": "workspace:*",
     "@fikirtive/storage": "workspace:^",
     "@sentry/node": "^10.58.0",
-    "@shotstack/shotstack-studio": "^2.11.5",
     "@tiptap/extension-mention": "^3.26.0",
     "@tiptap/extensions": "^3.26.0",
     "@tiptap/react": "^3.26.0",

@@ -425,6 +425,10 @@ export function OttoView({
             <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" aria-hidden><path d="m15 18-6-6 6-6" /></svg>
           </button>
         )}
+        {/* Canvas-first (Grok): the canvas is usable immediately — you can generate directly
+            on it without starting a chat first (directToolsLocked={false}); the front door
+            stays available in the left pane. Canvas gens with no active thread attach to the
+            project (threadId null), exactly like a thread-scoped gen minus the thread tag. */}
         <FlowCanvas
           projectId={projectId}
           entities={entities}
@@ -434,7 +438,7 @@ export function OttoView({
           onBalanceRefresh={onBalanceRefresh}
           onActivityRefresh={onActivityRefresh}
           onReferenceInChat={showFrontDoor ? undefined : handleCanvasReference}
-          directToolsLocked={showFrontDoor}
+          directToolsLocked={false}
           directToolsLockedReason="Start with Otto to unlock canvas tools."
         />
       </div>

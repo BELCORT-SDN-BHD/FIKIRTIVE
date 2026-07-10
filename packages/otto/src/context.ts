@@ -21,7 +21,11 @@ export type MetaAdObject = {
 export interface OttoContext {
   /** = ownerId under org-as-tenant. Ledger key + ownership scope. From the verified session, NEVER the model. */
   orgId: string;
-  /** Verified user id (audit). */
+  /** Owner/tenant scope for this run — set to ownerId (= orgId) at every construction site, because
+   *  that is the only identity in scope: the web caller has the session's ownerId and the worker
+   *  resume path (otto-resume.ts) has only job.ownerId (no session, no per-user token). This is NOT
+   *  a distinct verified per-user id — do not use it to attribute an action to an individual member.
+   *  Threading a real actor would need the actor persisted on the job; deferred (no consumer today). */
   userId: string;
   /** The active, owned project. */
   projectId: string;
