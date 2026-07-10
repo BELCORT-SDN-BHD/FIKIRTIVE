@@ -356,7 +356,10 @@ export function ScheduleComposer() {
     setLinkUrl("");
     setReminder(false);
     setOverrides({});
-    setTargets(["instagram", "x"]);
+    // [wave-c-audit] 与 STALL#66 初装态(line 171)一致:reset 也只勾免费 Instagram,不替
+    // 老板重新武装付费 X —— 否则「New post」开第二条时 X 已被无声勾上,若没留意就按行业默认
+    // 时段发出,每条 X 扣 1–4 credit。要发 X 得他自己再点亮。
+    setTargets(["instagram"]);
     setActiveTab("instagram");
   };
 
