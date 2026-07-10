@@ -21,6 +21,28 @@ export type PublishJobData = z.infer<typeof publishJobData>;
  *  NEEDS_ATTENTION (fail-closed, never a silent FAILED) — this is the pg-boss ceiling. */
 export const PUBLISH_RETRY_LIMIT = 4;
 
+/**
+ * Per-request deadline for a SINGLE Meta HTTP call (AbortSignal.timeout). A hung socket must not
+ * pin the worker; this bounds one create/poll/publish request well under the whole-execution
+ * deadline so polling can still make progress.
+ */
+export const META_REQUEST_TIMEOUT_MS = 30 * 1000;
+
+/**
+ * Hard ceiling on ONE publish execution end-to-end (the worker arms an AbortSignal.timeout at this
+ * value and threads it into every Meta request). The ordering below is LOAD-BEARING and must hold:
+ *
+ *     META_REQUEST_TIMEOUT_MS  <  PUBLISH_EXECUTION_DEADLINE_MS  <  expireInSeconds
+ *                                                                <  reaper stale cutoff (apps/worker)
+ *
+ * Because the execution is aborted at PUBLISH_EXECUTION_DEADLINE_MS (< the pg-boss `expireInSeconds`
+ * below), a still-running handler — including any in-flight Meta write — is definitively cancelled
+ * BEFORE pg-boss can expire + redeliver the job. And the worker's reaper cutoff sits above BOTH, so
+ * by the time the reaper reconciles a dangling attempt the original execution is guaranteed to have
+ * terminated — the reaper never reclaims external-write ownership from a live handler (§四F, H7).
+ */
+export const PUBLISH_EXECUTION_DEADLINE_MS = 4 * 60 * 1000; // 240s < expireInSeconds (300s)
+
 export const PUBLISH_QUEUE_POLICY = {
   retryLimit: PUBLISH_RETRY_LIMIT,
   retryBackoff: true,

@@ -29,7 +29,14 @@ import {
   type MetaGraphPort,
   type PublishResult,
 } from "@fikirtive/core/server";
-import { storageKey, newId, PUBLISH_RETRY_LIMIT, type PublishJobData } from "@fikirtive/core";
+import {
+  storageKey,
+  newId,
+  PUBLISH_RETRY_LIMIT,
+  META_REQUEST_TIMEOUT_MS,
+  PUBLISH_EXECUTION_DEADLINE_MS,
+  type PublishJobData,
+} from "@fikirtive/core";
 import { execa } from "execa";
 import { storage } from "../storage.js";
 import { sanitizeError } from "../redact.js";
@@ -58,11 +65,27 @@ function mediaProxySecret(): string {
 
 /* ── minimal worker-side Meta Graph client (throws with metaError+status like the web one) ── */
 
-async function graphPost(token: string, path: string, body: Record<string, string>): Promise<Record<string, unknown>> {
+// Every Meta request carries an AbortSignal so a hung socket can never pin the worker past the
+// queue's expire window (H7). Each request gets its own per-request timeout, AND — when an overall
+// execution deadline is supplied — is also bound to it, so once the whole-publish deadline fires
+// every in-flight and subsequent request aborts. A fetch that aborts throws a TimeoutError, which
+// the core classify() treats as retryable/ambiguous depending on where it happened.
+function metaSignal(overall?: AbortSignal): AbortSignal {
+  const perRequest = AbortSignal.timeout(META_REQUEST_TIMEOUT_MS);
+  return overall ? AbortSignal.any([overall, perRequest]) : perRequest;
+}
+
+async function graphPost(
+  token: string,
+  path: string,
+  body: Record<string, string>,
+  signal?: AbortSignal,
+): Promise<Record<string, unknown>> {
   const r = await fetch(`${GRAPH_BASE}/${path}`, {
     method: "POST",
     headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/x-www-form-urlencoded" },
     body: new URLSearchParams(body).toString(),
+    signal: metaSignal(signal),
   });
   const j = (await r.json().catch(() => ({}))) as Record<string, unknown> & { error?: { message?: string; code?: number } };
   if (!r.ok || j?.error) {
@@ -74,10 +97,17 @@ async function graphPost(token: string, path: string, body: Record<string, strin
   return j;
 }
 
-async function graphGet(token: string, path: string, params: Record<string, string>): Promise<Record<string, unknown>> {
+async function graphGet(
+  token: string,
+  path: string,
+  params: Record<string, string>,
+  signal?: AbortSignal,
+): Promise<Record<string, unknown>> {
   const u = new URL(`${GRAPH_BASE}/${path}`);
   for (const [k, v] of Object.entries(params)) u.searchParams.set(k, v);
-  const r = await fetch(u.toString(), { headers: { Authorization: `Bearer ${token}` } });
+  // A reconcile GET (reaper) passes no overall signal → it still gets the per-request timeout, so a
+  // hung read can never hang the reaper itself (H7).
+  const r = await fetch(u.toString(), { headers: { Authorization: `Bearer ${token}` }, signal: metaSignal(signal) });
   const j = (await r.json().catch(() => ({}))) as Record<string, unknown> & { error?: { message?: string; code?: number } };
   if (!r.ok || j?.error) {
     const e = new Error(j?.error?.message || "graph error") as Error & { metaError?: unknown; status?: number };
@@ -88,8 +118,8 @@ async function graphGet(token: string, path: string, params: Record<string, stri
   return j;
 }
 
-function portFor(token: string): MetaGraphPort {
-  return { post: (p, b) => graphPost(token, p, b), get: (p, pa) => graphGet(token, p, pa) };
+function portFor(token: string, signal?: AbortSignal): MetaGraphPort {
+  return { post: (p, b) => graphPost(token, p, b, signal), get: (p, pa) => graphGet(token, p, pa, signal) };
 }
 
 /* ── connection + target resolution (server-only; the page token never leaves the worker) ── */
@@ -118,14 +148,17 @@ async function authorize(ownerId: string): Promise<ResolvedConn | { refuse: stri
 async function resolvePage(
   userToken: string,
   targetId: string,
+  signal?: AbortSignal,
 ): Promise<{ pageToken: string; igUserId: string | null } | { error: string; retryable: boolean }> {
   let pages: Record<string, unknown>[];
   try {
-    const r = await graphGet(userToken, "me/accounts", { fields: "id,name,access_token,instagram_business_account{id}" });
+    const r = await graphGet(userToken, "me/accounts", { fields: "id,name,access_token,instagram_business_account{id}" }, signal);
     pages = (r.data as Record<string, unknown>[]) ?? [];
   } catch (e) {
     const status = (e as { status?: number }).status;
-    return { error: "Couldn't resolve the page from Meta.", retryable: !!status && (status === 429 || status >= 500) };
+    // A timeout/abort here is pre-side-effect (no publish yet) → retryable, not a hard FAILED.
+    const aborted = (e as { name?: string }).name === "TimeoutError" || (e as { name?: string }).name === "AbortError";
+    return { error: "Couldn't resolve the page from Meta.", retryable: aborted || (!!status && (status === 429 || status >= 500)) };
   }
   const page = pages.find((p) => String(p.id ?? "") === targetId);
   const pageToken = page && typeof page.access_token === "string" ? page.access_token : "";
@@ -192,10 +225,18 @@ export async function buildMediaUrls(
 
 /* ── the publish EXECUTOR: resolve → build media → drive the shared orchestration ── */
 
+/**
+ * A DETERMINISTIC authorization/config refusal (no connection / publishing not enabled / paused /
+ * expired / no target account). Re-posting can NEVER fix it, so the handler must NOT record it as
+ * FAILED (③, which means "platform rejected the content"); it is six-state ② → NEEDS_ATTENTION.
+ * It is produced BEFORE any Meta port is built, so it guarantees ZERO external calls (M1).
+ */
+export type PublishAuthRefused = { authFailed: true; error: string };
+
 export type PublishExecutor = (
   post: DuePost,
   attemptId: string,
-) => Promise<PublishResult>;
+) => Promise<PublishResult | PublishAuthRefused>;
 
 type DuePost = {
   id: string;
@@ -207,20 +248,33 @@ type DuePost = {
 };
 
 /** The real executor. Persists the IG creationId onto the attempt BEFORE media_publish (lock 3). */
-async function realExecute(post: DuePost, attemptId: string): Promise<PublishResult> {
-  if (!post.metaTargetId) return { error: "This post has no target account.", retryable: false };
+async function realExecute(post: DuePost, attemptId: string): Promise<PublishResult | PublishAuthRefused> {
+  // Config/authorization refusals → NEEDS_ATTENTION (M1), and they short-circuit BEFORE any Meta
+  // port exists, so no external call is ever made on this path.
+  if (!post.metaTargetId) return { authFailed: true, error: "This post has no target account — pick a connected channel before publishing." };
   const auth = await authorize(post.ownerId);
-  if ("refuse" in auth) return { error: auth.refuse, retryable: false };
+  if ("refuse" in auth) return { authFailed: true, error: auth.refuse };
 
-  const page = await resolvePage(auth.userToken, post.metaTargetId);
+  // Arm the whole-execution deadline (H7): every Meta request below is bound to it, so a hung
+  // publish is aborted well before pg-boss can expire + redeliver the job.
+  const deadline = AbortSignal.timeout(PUBLISH_EXECUTION_DEADLINE_MS);
+
+  const page = await resolvePage(auth.userToken, post.metaTargetId, deadline);
   if ("error" in page) return page;
 
   const media = await buildMediaUrls(post.ownerId, post.id, post.channel);
   if ("error" in media) return { error: media.error, retryable: false };
 
-  const port = portFor(page.pageToken);
+  const port = portFor(page.pageToken, deadline);
+  // The creationId anchor is a HARD precondition for going live (H6): store it with an attempt CAS
+  // (only while WE still hold the APPLYING claim). If the row moved (reaped) or the write fails, we
+  // THROW — publishInstagram catches this BEFORE media_publish and aborts, so nothing is published.
   const onCreationId = async (creationId: string) => {
-    await prisma.publishAttempt.update({ where: { id: attemptId }, data: { creationId } }).catch(() => {});
+    const r = await prisma.publishAttempt.updateMany({
+      where: { id: attemptId, state: "APPLYING" },
+      data: { creationId },
+    });
+    if (r.count !== 1) throw new Error("attempt is no longer APPLYING — aborting before publish");
   };
 
   if (post.channel === "instagram") {
@@ -240,10 +294,17 @@ async function realExecute(post: DuePost, attemptId: string): Promise<PublishRes
 
 const DUE_SELECT = { id: true, ownerId: true, channel: true, metaTargetId: true, caption: true, firstComment: true } as const;
 
+/** The reconcile step, injectable so the handler stays hermetic under test (default: query Meta). */
+type ReconcileFn = (
+  attempt: { id: string; scheduledPostId: string; creationId: string | null },
+  post: { ownerId: string; channel: string; metaTargetId: string | null; metaPostId: string | null },
+) => Promise<"published" | "needs_attention">;
+
 export async function handlePublish(
   data: PublishJobData,
   retryCount: number,
   execute: PublishExecutor = realExecute,
+  reconcile: ReconcileFn = reconcileAttempt,
 ): Promise<void> {
   const post = await prisma.scheduledPost.findUnique({
     where: { id: data.scheduledPostId },
@@ -280,10 +341,27 @@ export async function handlePublish(
     throw e;
   }
 
-  // Move SCHEDULED → PUBLISHING (idempotent if already PUBLISHING on a redelivery).
-  await prisma.scheduledPost.updateMany({ where: { id: post.id, status: "SCHEDULED" }, data: { status: "PUBLISHING" } });
+  // H4 — the fail-closed status CAS, the sole gate on reaching Meta. Our `post` snapshot is STALE:
+  // between the read and now the post may have been cancelled, edited back to DRAFT, deleted, or
+  // published by another path. This single atomic UPDATE both (a) transitions SCHEDULED→PUBLISHING
+  // on the fresh row and (b) proves the row is STILL publishable (SCHEDULED, or PUBLISHING on a
+  // legit redelivery) with no metaPostId and not soft-deleted. Only count === 1 authorizes ANY Meta
+  // call — otherwise we'd fire a publish the DB no longer wants (a ghost post). On a miss we release
+  // the APPLYING claim and stop, never calling Meta.
+  const claimed = await prisma.scheduledPost.updateMany({
+    where: { id: post.id, status: { in: ["SCHEDULED", "PUBLISHING"] }, metaPostId: null, deletedAt: null },
+    data: { status: "PUBLISHING" },
+  });
+  if (claimed.count !== 1) {
+    await prisma.publishAttempt.update({
+      where: { id: attemptId },
+      data: { state: "FAILED", error: "post no longer publishable at claim time (cancelled/edited/published/deleted)", finishedAt: new Date() },
+    });
+    console.warn(`[publish] ${post.id}: not publishable at claim (count=${claimed.count}) — releasing lock, NO Meta call`);
+    return;
+  }
 
-  let result: PublishResult;
+  let result: PublishResult | PublishAuthRefused;
   try {
     result = await execute(post, attemptId);
   } catch (err) {
@@ -291,11 +369,33 @@ export async function handlePublish(
     result = { error: sanitizeError(err), retryable: true };
   }
 
-  if ("externalId" in result) {
-    // ① success — set metaPostId (lock 1 for the future) + PUBLISHED + APPLIED, together.
+  if ("authFailed" in result) {
+    // M1 — deterministic authorization/config refusal. ZERO Meta calls happened (the executor
+    // refused before building the port). Re-posting can't fix it → six-state ② NEEDS_ATTENTION,
+    // never FAILED. CAS-scoped so a concurrently-resolved row is never clobbered.
+    const reason = sanitizeError(result.error);
     await prisma.$transaction([
       prisma.scheduledPost.updateMany({
-        where: { id: post.id, status: "PUBLISHING" },
+        where: { id: post.id, status: "PUBLISHING", metaPostId: null },
+        data: { status: "NEEDS_ATTENTION", lastError: reason },
+      }),
+      prisma.publishAttempt.updateMany({
+        where: { id: attemptId, state: "APPLYING" },
+        data: { state: "FAILED", error: reason, finishedAt: new Date() },
+      }),
+    ]);
+    console.warn(`[publish] ${post.id}: NEEDS_ATTENTION (authorization) — ${reason}`);
+    return;
+  }
+
+  if ("externalId" in result) {
+    // ① success. Stamp the metaPostId ANCHOR durably (lock 1 for any future delivery) + APPLIED.
+    // The CAS keys on metaPostId=null (the anchor), NOT status: even if a racing reaper/cancel moved
+    // the row out of PUBLISHING, we must still record the id — losing it would risk a future
+    // double-post. count !== 1 means the anchor was already set (another path won) → surface it.
+    const [stamped] = await prisma.$transaction([
+      prisma.scheduledPost.updateMany({
+        where: { id: post.id, metaPostId: null },
         data: { status: "PUBLISHED", metaPostId: result.externalId, lastError: null },
       }),
       prisma.publishAttempt.update({
@@ -303,7 +403,42 @@ export async function handlePublish(
         data: { state: "APPLIED", metaPostId: result.externalId, finishedAt: new Date() },
       }),
     ]);
+    if (stamped.count !== 1) {
+      console.warn(`[publish] ${post.id}: published ${result.externalId} but the post row had already moved (count=${stamped.count}); the attempt records the anchor`);
+    }
     console.log(`[publish] ${post.id}: PUBLISHED → ${result.externalId}`);
+    return;
+  }
+
+  if ("ambiguous" in result) {
+    // H5 — the publish request MAY have already crossed Meta's side-effect point (timeout / dropped
+    // connection / 5xx / success-without-id). NEVER free the lock and retry — that risks a second
+    // live post. Reconcile Meta's TRUTH first (IG: the creationId anchor; FB: NEEDS_ATTENTION for
+    // now). Only a confirmed post becomes PUBLISHED; otherwise a human decides. The reconcile uses
+    // GETs only (idempotent — they can't double-post). Status stays PUBLISHING until we know.
+    const reason = sanitizeError(result.error);
+    const attempt = await prisma.publishAttempt.findUnique({
+      where: { id: attemptId },
+      select: { id: true, scheduledPostId: true, creationId: true },
+    });
+    const verdict = attempt
+      ? await reconcile(attempt, { ownerId: post.ownerId, channel: post.channel, metaTargetId: post.metaTargetId, metaPostId: null })
+      : "needs_attention";
+    if (verdict === "published") {
+      console.log(`[publish] ${post.id}: ambiguous publish reconciled → confirmed live`);
+      return;
+    }
+    await prisma.$transaction([
+      prisma.scheduledPost.updateMany({
+        where: { id: post.id, status: "PUBLISHING", metaPostId: null },
+        data: { status: "NEEDS_ATTENTION", lastError: reason },
+      }),
+      prisma.publishAttempt.updateMany({
+        where: { id: attemptId, state: "APPLYING" },
+        data: { state: "FAILED", error: reason, finishedAt: new Date() },
+      }),
+    ]);
+    console.warn(`[publish] ${post.id}: NEEDS_ATTENTION — publish outcome unconfirmed, NOT retried: ${reason}`);
     return;
   }
 
@@ -334,15 +469,27 @@ export async function handlePublish(
 /* ── reconcile + reaper (spec §四F, six-state ⑥) ── */
 
 /** Query Meta's TRUTH for a dangling attempt, then decide — NEVER blindly re-publish.
- *  IG: the stored creationId lets us confirm the container was published (its media exists). If we
- *  can't confirm, NEEDS_ATTENTION. FB has no creationId → recent-posts match is future work; for now
- *  a dangling FB attempt is always NEEDS_ATTENTION (never a blind /feed re-post = double-post risk). */
+ *  IG: the stored creationId lets us CONFIRM the container went live, but the container id is NOT
+ *  the post's media id (distinct objects). We cannot recover the real media id from the container
+ *  alone (that needs a correlated /media lookup — deferred), and stamping the container id as the
+ *  metaPostId would record a wrong reference (M2). So even a confirmed-live container fails closed
+ *  to NEEDS_ATTENTION — a human confirms + links the real post — rather than an incorrect PUBLISHED.
+ *  FB has no creationId → recent-posts match is future work; a dangling FB attempt is likewise
+ *  always NEEDS_ATTENTION (never a blind /feed re-post = double-post risk). */
 export async function reconcileAttempt(
   attempt: { id: string; scheduledPostId: string; creationId: string | null },
   post: { ownerId: string; channel: string; metaTargetId: string | null; metaPostId: string | null },
   graphGetImpl: (token: string, path: string, params: Record<string, string>) => Promise<Record<string, unknown>> = graphGet,
 ): Promise<"published" | "needs_attention"> {
-  if (post.metaPostId) return "published"; // already resolved elsewhere
+  if (post.metaPostId) {
+    // Already resolved elsewhere (e.g. the success path stamped the anchor). CONVERGE this dangling
+    // attempt so it doesn't leak an APPLYING claim forever (M3). CAS: only touch it while APPLYING.
+    await prisma.publishAttempt.updateMany({
+      where: { id: attempt.id, state: "APPLYING" },
+      data: { state: "APPLIED", metaPostId: post.metaPostId, finishedAt: new Date() },
+    });
+    return "published";
+  }
 
   if (post.channel === "instagram" && attempt.creationId && post.metaTargetId) {
     const auth = await authorize(post.ownerId);
@@ -350,16 +497,14 @@ export async function reconcileAttempt(
     const page = await resolvePage(auth.userToken, post.metaTargetId);
     if ("error" in page) return "needs_attention";
     try {
-      // A published container reports status_code=PUBLISHED (and/or exposes its media id). If we
-      // can read it and it's PUBLISHED, the post went out despite the lost receipt.
+      // Truth query: is the stored container actually PUBLISHED? We log the answer for the human,
+      // but the verdict is NEEDS_ATTENTION either way — we will NOT stamp the container id as the
+      // media id (M2), and we have no other id to record here.
       const r = await graphGetImpl(page.pageToken, attempt.creationId, { fields: "status_code" });
       if (String(r.status_code ?? "") === "PUBLISHED") {
-        await prisma.scheduledPost.updateMany({
-          where: { id: attempt.scheduledPostId, metaPostId: null },
-          data: { status: "PUBLISHED", metaPostId: attempt.creationId },
-        });
-        await prisma.publishAttempt.update({ where: { id: attempt.id }, data: { state: "APPLIED", metaPostId: attempt.creationId, finishedAt: new Date() } });
-        return "published";
+        console.warn(
+          `[publish] ${attempt.scheduledPostId}: IG container ${attempt.creationId} is PUBLISHED, but its media id can't be recovered from the container — surfacing NEEDS_ATTENTION for a human to confirm/link (never stamping the container id).`,
+        );
       }
     } catch {
       // fall through to fail-closed
@@ -385,15 +530,23 @@ export async function reapStalePublishAttempts(): Promise<number> {
     if (!post) continue;
     const verdict = await reconcileAttempt(attempt, post);
     if (verdict === "needs_attention") {
-      // Release the lock + surface it. Don't clobber a PUBLISHED the reconcile just set.
-      await prisma.publishAttempt.updateMany({
-        where: { id: attempt.id, state: "APPLYING" },
-        data: { state: "FAILED", error: "publish interrupted — reconcile couldn't confirm it went out", finishedAt: new Date() },
-      });
-      await prisma.scheduledPost.updateMany({
-        where: { id: attempt.scheduledPostId, status: "PUBLISHING", metaPostId: null },
-        data: { status: "NEEDS_ATTENTION", lastError: "Publishing was interrupted — please review before retrying." },
-      });
+      // Release the lock + surface it, ATOMICALLY (M3): a mid-way DB failure between the two writes
+      // would otherwise strand the post PUBLISHING forever or the attempt APPLYING forever. Both
+      // writes are CAS-scoped so a PUBLISHED the reconcile just set is never clobbered; a zero row
+      // count means the state moved underneath us (safe no-op) and is logged, not forced.
+      const [attemptWrite, postWrite] = await prisma.$transaction([
+        prisma.publishAttempt.updateMany({
+          where: { id: attempt.id, state: "APPLYING" },
+          data: { state: "FAILED", error: "publish interrupted — reconcile couldn't confirm it went out", finishedAt: new Date() },
+        }),
+        prisma.scheduledPost.updateMany({
+          where: { id: attempt.scheduledPostId, status: "PUBLISHING", metaPostId: null },
+          data: { status: "NEEDS_ATTENTION", lastError: "Publishing was interrupted — please review before retrying." },
+        }),
+      ]);
+      if (attemptWrite.count !== 1 || postWrite.count !== 1) {
+        console.warn(`[publish] ${attempt.scheduledPostId}: reaper CAS partial (attempt=${attemptWrite.count}, post=${postWrite.count}) — state moved concurrently`);
+      }
     }
     reaped++;
   }

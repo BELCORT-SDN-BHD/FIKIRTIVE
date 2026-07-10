@@ -31,6 +31,26 @@ function metaError(code: number, message = "meta says no") {
   return e;
 }
 
+/** A structured Meta 4xx rejection (Meta received + refused the request → nothing was published). */
+function metaReject(code: number, status = 400, message = "rejected") {
+  const e = new Error(message) as Error & { metaError?: { code: number; message: string }; status?: number };
+  e.metaError = { code, message };
+  e.status = status;
+  return e;
+}
+/** A bare HTTP error with a status but no structured Meta body (e.g. a 5xx / gateway error). */
+function httpError(status: number, message = "server error") {
+  const e = new Error(message) as Error & { status?: number };
+  e.status = status;
+  return e;
+}
+/** A timed-out / aborted fetch (AbortSignal.timeout → DOMException name "TimeoutError"). */
+function timeoutError() {
+  const e = new Error("request timed out") as Error & { name: string };
+  e.name = "TimeoutError";
+  return e;
+}
+
 describe("publishInstagram", () => {
   it("single image: create → poll FINISHED → media_publish → externalId", async () => {
     const { port, posts } = mockPort({ postReplies: [{ id: "container_1" }, { id: "media_9" }], status: "FINISHED" });
@@ -105,6 +125,51 @@ describe("publishInstagram", () => {
     const { port } = mockPort({});
     expect(await publishInstagram(port, { igUserId: "ig1", mediaUrls: [], caption: "hi" })).toMatchObject({ retryable: false });
   });
+
+  // ── H5: media_publish MAY have crossed the side-effect point → AMBIGUOUS, never a blind retry ──
+  it("H5: media_publish 5xx → AMBIGUOUS (not retryable) — the caller must reconcile, never re-send", async () => {
+    const { port } = mockPort({ postReplies: [{ id: "container_1" }, httpError(500)] });
+    const res = await publishInstagram(port, { igUserId: "ig1", mediaUrls: ["https://x/a.jpg"], caption: "hi", sleep: noSleep });
+    expect(res).toMatchObject({ ambiguous: true });
+    // crucially NOT a retryable fail — a retryable result would drive a blind re-send = double-post
+    expect("retryable" in res).toBe(false);
+  });
+
+  it("H5: media_publish timeout/abort → AMBIGUOUS (post may be live) — no blind retry", async () => {
+    const { port } = mockPort({ postReplies: [{ id: "container_1" }, timeoutError()] });
+    const res = await publishInstagram(port, { igUserId: "ig1", mediaUrls: ["https://x/a.jpg"], caption: "hi", sleep: noSleep });
+    expect(res).toMatchObject({ ambiguous: true });
+    expect("retryable" in res).toBe(false);
+  });
+
+  it("H5: media_publish 2xx but NO id → AMBIGUOUS (may have taken) — no blind retry", async () => {
+    const { port } = mockPort({ postReplies: [{ id: "container_1" }, {}] });
+    const res = await publishInstagram(port, { igUserId: "ig1", mediaUrls: ["https://x/a.jpg"], caption: "hi", sleep: noSleep });
+    expect(res).toMatchObject({ ambiguous: true });
+    expect("retryable" in res).toBe(false);
+  });
+
+  it("H5: a DEFINITIVE Meta 4xx at media_publish is NOT ambiguous (Meta refused → nothing posted)", async () => {
+    const { port } = mockPort({ postReplies: [{ id: "container_1" }, metaReject(100, 400, "invalid creation_id")] });
+    const res = await publishInstagram(port, { igUserId: "ig1", mediaUrls: ["https://x/a.jpg"], caption: "hi", sleep: noSleep });
+    expect("ambiguous" in res).toBe(false);
+    expect(res).toMatchObject({ retryable: false });
+  });
+
+  // ── H6: persisting the creationId anchor is a HARD precondition — a failure stops BEFORE publish ──
+  it("H6: onCreationId failure aborts BEFORE media_publish (nothing goes live), retryable", async () => {
+    const onCreationId = vi.fn().mockRejectedValue(new Error("attempt is no longer APPLYING"));
+    const { port, posts } = mockPort({ postReplies: [{ id: "container_1" }, { id: "media_9" }] });
+    const res = await publishInstagram(port, {
+      igUserId: "ig1", mediaUrls: ["https://x/a.jpg"], caption: "hi", onCreationId, sleep: noSleep,
+    });
+    // no media_publish (or any post past the container) ever happened → Meta has nothing published
+    expect(posts.some((p) => p.path.endsWith("/media_publish"))).toBe(false);
+    expect(posts).toHaveLength(1); // only the container create
+    // pre-side-effect → safe to retry (a retry rebuilds a fresh container)
+    expect(res).toMatchObject({ retryable: true });
+    expect("ambiguous" in res).toBe(false);
+  });
 });
 
 describe("publishFacebook", () => {
@@ -125,9 +190,34 @@ describe("publishFacebook", () => {
     expect(posts[0]!.body.link).toBe("https://x/y");
   });
 
-  it("Meta hard reject → not retryable", async () => {
-    const { port } = mockPort({ postReplies: [metaError(200, "no CREATE_CONTENT permission")] });
+  it("Meta hard reject (structured 4xx) → not retryable, not ambiguous", async () => {
+    // Our graph client always stamps the HTTP status on a Meta error; a 4xx with a code is a
+    // DEFINITIVE rejection (Meta refused before acting → nothing posted), so it's safe to hard-fail.
+    const { port } = mockPort({ postReplies: [metaReject(200, 403, "no CREATE_CONTENT permission")] });
     const res = await publishFacebook(port, { pageId: "pg1", message: "hi", mediaUrls: ["https://x/a.jpg"] });
+    expect(res).toMatchObject({ retryable: false });
+    expect("ambiguous" in res).toBe(false);
+  });
+
+  // ── H5 (FB): a lost/5xx receipt at /photos or /feed is AMBIGUOUS, never a blind re-post ──
+  it("H5: /photos 5xx → AMBIGUOUS (post may be live) — never a blind /photos re-post", async () => {
+    const { port } = mockPort({ postReplies: [httpError(502)] });
+    const res = await publishFacebook(port, { pageId: "pg1", message: "hi", mediaUrls: ["https://x/a.jpg"] });
+    expect(res).toMatchObject({ ambiguous: true });
+    expect("retryable" in res).toBe(false);
+  });
+
+  it("H5: /feed 2xx but no id → AMBIGUOUS — never a blind /feed re-post", async () => {
+    const { port } = mockPort({ postReplies: [{}] });
+    const res = await publishFacebook(port, { pageId: "pg1", message: "hi", mediaUrls: [] });
+    expect(res).toMatchObject({ ambiguous: true });
+    expect("retryable" in res).toBe(false);
+  });
+
+  it("H5: a DEFINITIVE Meta 4xx at /feed is NOT ambiguous (Meta refused → nothing posted)", async () => {
+    const { port } = mockPort({ postReplies: [metaReject(200, 403, "no permission")] });
+    const res = await publishFacebook(port, { pageId: "pg1", message: "hi", mediaUrls: [] });
+    expect("ambiguous" in res).toBe(false);
     expect(res).toMatchObject({ retryable: false });
   });
 });
