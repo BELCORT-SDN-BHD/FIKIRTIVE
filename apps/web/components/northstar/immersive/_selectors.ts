@@ -35,7 +35,10 @@ import {
 } from "@/components/northstar/_mock";
 // 队 cx-campaign-schedule:postsForCampaign 改从 store live 源派生(见下)。_store 是同目录
 // 的纯 client 内存单例(非后台),读它不违反 fence;仍无 Date.now / Math.random。
-import { scheduledPosts, campaignEntries } from "./_store";
+// [gate4/M2] conversationsView/contactsView/contactByIdView 同理:收件箱/CRM 的运行时改动
+// (回复、合并、字段补丁)必须在首页读到 —— 静态 NS_CONVERSATIONS/NS_CONTACTS 只作 store 的
+// 初始种子(_store.ts 用它们初始化 state),永不再被这里直接旁路读。
+import { scheduledPosts, campaignEntries, conversationsView, contactsView, contactByIdView } from "./_store";
 
 /* ── 额度概览(派生自 NS_BRAND + NS_CREDIT_LEDGER) ─────────────────────────── */
 export function creditSummary(): { balance: number; spentThisWeek: number; toppedUp: number } {
@@ -151,19 +154,24 @@ export function conversationsForCampaign(campaignId: string): NsConversation[] {
 export function contactsByLifecycle(stage: NsLifecycle): NsContact[] {
   return NS_CONTACTS.filter((c) => c.lifecycle === stage);
 }
-/** 久未下单的大客户(win-back 提示 / 大单提醒;dormant + 历史订单额 ≥ 门槛)。 */
+/** 久未下单的大客户(win-back 提示 / 大单提醒;dormant + 历史订单额 ≥ 门槛)。
+ * [gate4/M2] 读 store live 的 contactsView(),不再直读静态 NS_CONTACTS —— CRM 里的合并/
+ * 字段补丁/新建联系人从此在首页「久未下单」提醒里同步现身。 */
 export function dormantHighValue(minMyr = 1000): NsContact[] {
-  return NS_CONTACTS.filter((c) => c.lifecycle === "dormant" && c.totalOrdersMyr >= minMyr);
+  return contactsView().filter((c) => c.lifecycle === "dormant" && c.totalOrdersMyr >= minMyr);
 }
-/** 平均客单价(totalOrdersMyr / orderCount;CRM 档案 + 预测字段读它,无单则 0)。 */
+/** 平均客单价(totalOrdersMyr / orderCount;CRM 档案 + 预测字段读它,无单则 0)。
+ * [gate4/M2] 用 contactByIdView(同 store 的合并/补丁解析),不再直读静态 NS_CONTACTS。 */
 export function avgOrderValue(contactId: string): number {
-  const c = NS_CONTACTS.find((x) => x.id === contactId);
+  const c = contactByIdView(contactId);
   if (!c || !c.orderCount || c.orderCount <= 0) return 0;
   return Math.round(c.totalOrdersMyr / c.orderCount);
 }
-/** 收件箱未答清单(等店主 / 超时;收件箱「需要你」计数读它)。 */
+/** 收件箱未答清单(等店主 / 超时;收件箱「需要你」计数读它)。
+ * [gate4/M2] 读 store live 的 conversationsView(),不再直读静态 NS_CONVERSATIONS —— 收件箱
+ * 里的回复/解决/新会话从此在首页「需要你」清单里同步现身。 */
 export function needsOwnerConversations(): NsConversation[] {
-  return NS_CONVERSATIONS.filter((c) => c.state === "waiting-owner" || c.state === "overdue");
+  return conversationsView().filter((c) => c.state === "waiting-owner" || c.state === "overdue");
 }
 
 /* ── [wave-c Z1-home-global] 本周已确认订单(首页「生意状态」头卡:诚实读真实成交) ──
@@ -191,10 +199,12 @@ const CUSTOMER_ACCEPT_RE = /\b(confirm|confirmed|approve|approved|deal|go ahead|
 // Otto/店主陈述式确认(这单已定),而不是「shall I…?」式的提议反问。
 const OWNER_SETTLED_RE = /\b(confirmed|booked|see you then|ready for|all set)\b/i;
 const OWNER_PROPOSAL_RE = /\b(shall i|want me to|should i|do you want)\b/i;
+// [gate4/M2] conversationsView() 是 store live 源(种子=NS_CONVERSATIONS + 收件箱运行时改动);
+// 不再直读静态表,否则收件箱里新落定的成交永远算不进「本周」。
 export function ordersThisWeek(): NsOrdersThisWeek {
   let revenueMyr = 0;
   let orderCount = 0;
-  for (const c of NS_CONVERSATIONS) {
+  for (const c of conversationsView()) {
     // (a) 本对话里 Otto/店主给出的带价报价。
     const quote = c.messages.find(
       (m) => (m.from === "otto" || m.from === "owner") && QUOTE_RM_RE.test(m.text),

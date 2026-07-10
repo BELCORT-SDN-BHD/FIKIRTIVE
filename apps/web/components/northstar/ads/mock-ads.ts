@@ -640,9 +640,10 @@ export interface NsCreativeAttribute {
 
 /** 从真实广告 diagnosis 派生的属性标注(可核对到 NS_ADS 每条的判读)。 */
 export const NS_CREATIVE_ATTRIBUTES: NsCreativeAttribute[] = [
-  // ad-01「the box opens in the first two seconds」· ad-02「the steam shot is doing the work」(morning reel 产品前置)
-  // · ad-04 pandan cake close-up(开场即产品特写)。
-  { attribute: "Opens on the product in the first seconds", adIds: ["ad-01", "ad-02", "ad-04"] },
+  // ad-01「the box opens in the first two seconds」· ad-02「the steam shot is doing the work」(morning reel 产品前置)。
+  // [gate4/L1] ad-04(pandan cake close-up)已从此样本移除:它 format 是 "image"(见上方定义),
+  // 没有「开场几秒」这回事 —— 静态图不适用「seconds」属性,留着会让 n/证据与广告本身自相矛盾。
+  { attribute: "Opens on the product in the first seconds", adIds: ["ad-01", "ad-02"] },
   // ad-05「the first 5 seconds show dough, not the croissant, and most viewers leave there」。
   { attribute: "Slow open — no product up front", adIds: ["ad-05"] },
   // ad-07「too much text on the image ... it reads like a menu, not a treat」。
