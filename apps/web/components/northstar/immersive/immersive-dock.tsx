@@ -22,6 +22,7 @@ import { useImmersive } from "./_context";
 import {
   appendToStream,
   assistContextView,
+  assistOwnerToken,
   escortTo,
   hasAssistApplyHandler,
   ottoBehavior,
@@ -150,7 +151,13 @@ export const ImmersiveDock = React.forwardRef<
   const [draft, setDraft] = React.useState("");
   const [thinking, setThinking] = React.useState(false);
   // §O7 Apply:跑完一个带 apply 的意图后暂存产出,composer 上方浮出一颗 Apply 钮。
-  const [pendingApply, setPendingApply] = React.useState<NsAssistApply | null>(null);
+  // 绑定产出它的源 owner token + 源表面人话名(缺陷#2 二轮):Apply 只能填回那个源表面,
+  // 换页/换面后既不错填别面、也不谎报成功;honest 消息用 sourceLabel 指名回哪一屏重开。
+  const [pendingApply, setPendingApply] = React.useState<{
+    apply: NsAssistApply;
+    owner: string;
+    sourceLabel: string | null;
+  } | null>(null);
   const panelRef = React.useRef<HTMLDivElement>(null);
   const scrollRef = React.useRef<HTMLDivElement>(null);
   const inputRef = React.useRef<HTMLTextAreaElement>(null);
@@ -165,6 +172,8 @@ export const ImmersiveDock = React.forwardRef<
   // §O7 assist 承接:某个动脑面点开了「Otto 帮我」→ 拿它带来的意图 chip / Apply 上下文。
   const assist = assistContextView();
   const assistLabel = assist?.entityLabel ?? assist?.zone ?? ctxLabel;
+  // 当前登记的源 owner token(缺陷#2 二轮的跨表面守卫读它)。
+  const currentAssistOwner = assistOwnerToken();
 
   React.useImperativeHandle(ref, () => ({
     open(prompt?: string) {
@@ -192,6 +201,13 @@ export const ImmersiveDock = React.forwardRef<
     if (timerRef.current) window.clearTimeout(timerRef.current);
   }, []);
 
+  // 跨表面守卫(缺陷#2 二轮):登记的 assist owner 换了(导航去别的动脑面 → 源面卸载 owner→null,
+  // 或别面点开 Otto → owner→新 token)就清掉上一面残留的 pendingApply。那颗写着 A 摘要的 Apply
+  // 钮不再飘到 B 上诱点(点了本会错填 B 或空转打假成功)。dock 订阅 store,故 owner 一变即触发。
+  React.useEffect(() => {
+    setPendingApply((prev) => (prev && prev.owner !== currentAssistOwner ? null : prev));
+  }, [currentAssistOwner]);
+
   // §O7 意图 chip:一键跑一个 surface-specific 意图(零打字)。落一轮往来进单流;
   // 带 apply 则浮出 Apply 钮;带 landsOn 则 §8e escort 到现场看它落地。
   function runIntent(intent: NsAssistIntent) {
@@ -206,11 +222,17 @@ export const ImmersiveDock = React.forwardRef<
     // 两字段都写在同一意图上),否则那颗钮点了只会空转 + 打假成功(缺陷#2)。
     const escorting = Boolean(intent.landsOn);
     if (intent.landsOn) escortTo(intent.landsOn.surface, intent.landsOn.label);
+    // 缺陷#2 二轮:把这颗意图绑定到当前登记的源 owner + 源表面名(意图 chip 只来自当前 assist,
+    // 故此刻的 owner/label 就是产出方)。Apply 落回时凭它校验同源,拒绝跨表面错填。
+    const sourceOwner = assistOwnerToken();
+    const sourceLabel = assistLabel;
     if (timerRef.current) window.clearTimeout(timerRef.current);
     timerRef.current = window.setTimeout(() => {
       setThinking(false);
       appendToStream({ role: "otto", text: intent.reply });
-      if (intent.apply && !escorting) setPendingApply(intent.apply);
+      if (intent.apply && !escorting && sourceOwner) {
+        setPendingApply({ apply: intent.apply, owner: sourceOwner, sourceLabel });
+      }
     }, 1400);
   }
 
@@ -218,23 +240,27 @@ export const ImmersiveDock = React.forwardRef<
   // 只填字段,不发不花——落回后留一条确认,提醒店主亲手发。
   function applyPending() {
     if (!pendingApply) return;
-    // 护栏:源表面若已卸载(onApply 回调被 clearAssist 置 null),这颗钮无处可填。别对 null
-    // handler 空转还宣称「Filled it into …」的假成功 —— 诚实告知那屏已关、指路重开(缺陷#2)。
-    if (!hasAssistApplyHandler()) {
+    // 护栏:这颗产出只能填回产出它的那个源表面。两道门一起关(缺陷#2 二轮):
+    //  (a) 源表面已卸载 → assistApplyHandler 被 clearAssist 置 null(hasAssistApplyHandler 为假);
+    //  (b) 源表面被别的动脑面顶替 → assistApplyHandler 现在是 B 的 onApply(owner token 变了)。
+    // 任一门开着都别回填 —— 对 null handler 空转、或把 A 的 patch 灌进 B 的 onApply(patch 形状
+    // 各区自解释,B 读到不认识的键 = 垃圾填充)都是「打假成功」。诚实告知、指名回哪屏重开。
+    const sameSource = hasAssistApplyHandler() && assistOwnerToken() === pendingApply.owner;
+    if (!sameSource) {
       appendToStream({
         role: "otto",
-        text: assistLabel
-          ? `${assistLabel} isn't open anymore, so I couldn't fill it in. Open it again and I'll drop this straight in.`
+        text: pendingApply.sourceLabel
+          ? `${pendingApply.sourceLabel} isn't open anymore, so I couldn't fill it in. Open it again and I'll drop this straight in.`
           : "That screen isn't open anymore, so I couldn't fill it in. Open it again and I'll drop this straight in.",
       });
       setPendingApply(null);
       return;
     }
-    runAssistApply(pendingApply);
+    runAssistApply(pendingApply.apply);
     appendToStream({
       role: "otto",
-      text: assistLabel
-        ? `Filled it into ${assistLabel}. Review it there and send when you're ready — nothing goes out until you do.`
+      text: pendingApply.sourceLabel
+        ? `Filled it into ${pendingApply.sourceLabel}. Review it there and send when you're ready — nothing goes out until you do.`
         : "Filled it in. Review and send when you're ready — nothing goes out until you do.",
     });
     setPendingApply(null);
@@ -359,7 +385,7 @@ export const ImmersiveDock = React.forwardRef<
           {pendingApply && (
             <div className="flex shrink-0 items-center gap-2 border-t border-border px-3 pt-2.5">
               <span className="min-w-0 flex-1 truncate text-[12px] font-medium text-muted-foreground">
-                {pendingApply.summary}
+                {pendingApply.apply.summary}
               </span>
               <Button size="sm" className="h-8 shrink-0" onClick={applyPending}>
                 Apply

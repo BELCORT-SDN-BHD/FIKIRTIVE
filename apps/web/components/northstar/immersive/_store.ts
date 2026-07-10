@@ -3095,3 +3095,11 @@ export function markEscortActed(id: number): void {
 export function hasAssistApplyHandler(): boolean {
   return assistApplyHandler !== null;
 }
+
+/** ③ 当前登记 assist 的 owner token(缺陷#2 二轮 · 跨表面陈旧 Apply):dock 把 pendingApply
+ *  绑定到产出它的源 owner —— 点 Apply 前比对本值。owner 变了(别的表面顶替、handler 已换成
+ *  它的 onApply)或 handler 已死都拒填,不再把源表面 A 的 patch 灌进现表面 B 的 onApply
+ *  还谎报「Filled it into B」。null = 当前无任何 assist 登记(队名 f2-primitives)。 */
+export function assistOwnerToken(): string | null {
+  return assistOwner;
+}
