@@ -50,4 +50,11 @@ describe("buildAuthorizeUrl", () => {
     expect(url).toContain("pages_show_list");
     expect(url).toContain("business_management");
   });
+  it("authorize url requests the L1 organic-publish scopes (App-Review gated)", () => {
+    const scope = new URL(buildAuthorizeUrl("APPID", "https://app/api/meta/callback", "STATE"))
+      .searchParams.get("scope") ?? "";
+    for (const s of ["instagram_content_publish", "pages_manage_posts", "instagram_basic", "pages_read_engagement"]) {
+      expect(scope.split(",")).toContain(s);
+    }
+  });
 });
