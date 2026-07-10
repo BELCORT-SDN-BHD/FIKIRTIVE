@@ -65,6 +65,50 @@ palette moves. This is completion, not redesign.
 
 Rules (unchanged): coral law; semantic = state, never decoration; no raw hex outside the `.gb` block; new tokens go into `.gb` **and** the `@theme inline` registration, light **and** dark.
 
+### 2 修正案 — 双声部(dual-voice;founder-approved 2026-07-10,入城实测中)
+
+**这是 scoped 覆盖,不是全局改动。** §2 的表值一个字节都没动;下面这一层只在北极星沉浸壳的
+根容器 `.gb.ns-immersive` 上重新赋值几个 token —— 靠 CSS 自定义属性的继承下传,壳内所有工具
+类(`ring-ring`/`bg-info-soft`/…)自动拿到新值,壳外(live 产品、`/northstar` 画廊)完全不受
+影响。实现:`apps/web/app/northstar-immersive/immersive-tokens.css`(由该路由组 layout 导入),
+选择器 `.gb.ns-immersive`(0,2,0)压过 globals 的 `.gb`(0,1,0),不论加载顺序都稳赢。
+
+**两个声部,一句话记住:coral = Otto 的声音(§2 coral law 不动),blue = 人手的声音**
+(交互、焦点、"这是你能点/能动的")。信息蓝在壳内被撤销 —— 蓝只许有一个意思。
+
+| 覆盖项 | ns 内新值 | 为什么 · §A1 比值(算出来的,非目测) |
+|---|---|---|
+| `--background`(画布) | `#F5F6F8` | 中性冷灰底(§5a 法四;冷 = B 通道最高)。白卡 `--card #FFF` 浮其上 = 面平钮凸的地基。别名 `--ns-canvas` 同值,嵌套 well 想显式引用画布灰时用它 |
+| `--human`(蓝声部 base) | `#2563EB` | 人手声部主色。作文字压画布 **5.01:1 ✓AA-small**;作焦点键线/圆点/进度条 **5.17:1 ✓**。与 coral 不同,蓝 base **可以**当小字文字用 |
+| `--human-soft` | `#DBEAFE` | 蓝软片填充底 |
+| `--human-soft-foreground` | `#1D4ED8` | 软片底上文字 **5.49:1 ✓**;画布上蓝标签文字 **6.5:1 ✓** |
+| `--ring`(焦点环) | `#2563EB` | 焦点/键盘 = 人手动作 → 蓝。覆盖一处,globals `.gb :focus-visible` 双层键线 + `ring-ring`/`outline-ring`/`border-ring` 全部转蓝。键线压白 **5.17:1 ✓**(coral 是 3.42) |
+| `--info` | `= --muted-foreground` | 信息蓝撤销 → 中性灰。圆点/图标/≥19px,压白 **4.6:1 ✓**。不新造 hex(§T1) |
+| `--info-soft` | `= --secondary` | 中性淡底(替原 `#E7EEFD` 蓝) |
+| `--info-soft-foreground` | `= --muted-foreground` | 压 `--secondary` **4.65:1 ✓AA**(注:muted-fg 压 `--accent` 才是 4.34 ✗,压更亮的 secondary 过关) |
+
+dark 值已镜像备好(`--human #3B82F6` / soft `#16243D` / soft-fg `#93C5FD` / `--ring #3B82F6` /
+画布 `#0B0C0E`,info 同样中性化),原型层暂不开 dark,先备着保证入 dark 不塌。
+
+**给 10 个 zone worker 的用法(直接抄,别手搓 hex)：**
+
+*蓝声部 —— 三个 ready 类,挂在元素上即可:*
+- `.ns-human-text` → 蓝文字(base,合法小字)。人手可动的链接/强调/标注。
+- `.ns-human-fill` → 蓝实心 + 白字(5.17:1,白字 <19px 合法,coral 做不到)。人手**主动作**按钮的蓝身份。
+- `.ns-human-soft` → 淡蓝底 + 深蓝字。chip / 选中态 / 人手区块的低调蓝。
+- 想用原子 token 也行:`bg-[var(--human)]` `text-[var(--human-soft-foreground)]` `border-[var(--human)]`(消费阶梯②,§T4)。
+- **焦点不用你管**:继续写你惯用的 `focus-visible:ring-ring` / `focus-visible:outline-ring` / `focus-visible:border-ring`,壳内自动是蓝。别再手写 coral/ring 的十六进制。
+
+*信息提示 —— 撤蓝改中性:*
+- 壳内**不要**再用蓝色做"提示/信息"底色或图标。中性通知直接 `bg-info-soft text-info-soft-foreground`(现在自动是灰),或用 `--muted-foreground` + `--secondary`。蓝只留给"可交互"。
+
+*手感四法(§5a)—— 两个工具类:*
+- `.ns-pressable` → 装在**任何可点控件**上:浮起(shadow-sm→hover shadow-md)+ 1px 顶部高光边 + 按下 `scale(0.97)`。这是"可点 = 凸,可读 = 平"的主信号(§5a 法一);reduced-motion 由全局 clamp 自动压瞬时(§A5),你不用再写媒体查询。**静态阅读卡片不要挂**(法一:可读 = 平)。
+- `.ns-glass` → **只给悬浮 OVER 滚动内容的 chrome**(dock 面板 / 贴顶栏 / 抽屉):`backdrop-blur` + 半透;`prefers-reduced-transparency` 下自动退实色(§G8 强制)。**静态卡片 / 数据面禁用**(§5a 法三:玻璃只给悬浮件)。
+- 法二(钮不穿底衣)、法四(地面不发暖)是纪律不是类:in-flow 工具条/chip 行直接坐在页面面上,别加着色底衣条;画布灰已是冷的,别再往里调暖米色。
+
+*新增蓝对(pair)要过闸:* 若你要在壳内引入新的 `--human-*` 变体,先把压底比值算进本表(§A7 复核清单第一条),4.5 / 3:1 不到不许上。
+
 ## 3. Type — the scale
 
 Geist for everything; JetBrains Mono only for `micro-mono`. Whole-pixel sizes only — the half-pixel Vapor sizes (14.5 / 13.5 / 12.5 / 11.5) are legacy and quantise on touch.
@@ -118,6 +162,13 @@ Radii (unchanged): `--radius` 14px controls · `--radius-card` 18px · `--radius
 `--shadow-brand` (`0 8px 22px rgba(236 88 40 / .26)`) exists solely under coral OTTO CTAs.
 Hairlines: 1px `--border`, always (the 1.5px input border is drift). Selection emphasis = 2px `--brand` border, canvas nodes only. Dark-mode shadow values: §K1.
 
+### 5a. Tactility & ground — founder rulings 2026-07-09(手感四法)
+
+1. **Flat surfaces, raised controls(面平钮凸).** Reading surfaces (cards, data panels) stay flat — §5/§D6 unchanged. Anything pressable must *look* pressable: soft small shadow + 1px top highlight edge + the §6 press class (`:active` scale). Clickable = raised; readable = flat — this is the primary "what can I click" signal.
+2. **No plate behind buttons(钮不穿底衣).** In-flow toolbars / chip rows sit directly on the page surface — tinted container strips behind them are banned. The raised control IS the affordance.
+3. **Glass only floats(玻璃只给悬浮件).** `backdrop-filter` material is legal only on chrome that floats OVER scrolling content (dock panel, sticky bars, drawers) — never on static cards; `prefers-reduced-transparency` fallback per §G8.
+4. **The ground is never warm(地面永远不发暖).** Canvas and section grounds are neutral-cool greys (existing token family #FCFCFC/#F4F4F3; #F7F7F8 family for deeper separation). Cream/beige/manila tints are banned everywhere. Warmth comes only from content imagery, Otto's coral, and small-area semantic colour. (Full palette proposal「双声部」— blue as the human interactive voice — founder-approved 2026-07-10 and scoped-implemented on `.gb.ns-immersive`, see §2 修正案; these four laws stand regardless.)
+
 ## 6. Motion
 
 Two easings, four durations. Tokens (to live in `.gb`):
@@ -165,6 +216,10 @@ Placement: pinned to the top of the surface Otto is acting on (canvas: floating 
 ### d. Persistent Otto dock
 Otto's ever-present home on every screen. Collapsed: 48px circle, bottom-right, 16px inset; `OttoAvatar` with live mood; an 8px coral dot badge (subtle 2s pulse) when Otto is acting in the background; tier-2 shadow. Expanded: 320px wide, max 480px tall panel; radius `--radius-modal` 24px; tier-3 shadow; header = narration anatomy (c); body = recent Otto actions with timestamps, each row deep-links to the touched element (clicking re-fires its sweep); footer = "Open Otto" link to the full chat. Transition: 200ms ease-spring, transform-origin bottom-right.
 Rules: **never covers a primary CTA** — surfaces with a bottom-right CTA shift the dock up past it; z = `--z-dock` (§L8), above content, below modals/toasts. Mobile: collapsed sits above the bottom bar (12px inset); expanded becomes a full-width bottom sheet (radius 24 top corners). Full buildable spec: §O6.
+
+### 8e. First-run live escort(首次直播,founder-approved 2026-07-09)
+
+When the user gives Otto a **fresh, foreground, actionable instruction** (dock or full-page) whose work lands on another surface (schedule, campaign, canvas): navigate **once** to that surface and let the work land live there (§8c narration + §8b staggered landings). Rules: fresh foreground instructions only — background/routine/re-run work never navigates (dock badge only, §O5); if the user navigates away, never pull them back (work continues; badge pulses); if they return before completion, the live state resumes (structural — the store is the single source). Reduced motion: the navigation still happens; landings follow §A5 fallbacks. This does not violate "永不抢占主场": at the moment of a fresh instruction, this task IS the user's主场.
 
 ## 9. Anti-slop
 
@@ -426,6 +481,14 @@ Size ladder: `16 · 22 · 26 · 32 · 40 · 48 · 64`, plus 34 only inside the 4
 *A11y:* trigger `<button aria-expanded>` named "Otto — {narration | 'idle'}"; panel `role="dialog" aria-label="Otto activity"`; badge changes announce via a visually-hidden `role="status"` line.
 *Mobile:* collapsed 48 stays, inset 12 + safe-area, above any bottom bar. Expanded = full-width bottom sheet (top radii 24, max-h 60vh, 36×4 grabber, scrim, drag-down closes; rows py 12). The budget does not scale down — a phone screen usually shows chrome only.
 
+### O7. Otto assist affordance(「Otto 帮我」,founder-approved 2026-07-09 — 零学习曲线检查① 的物理形态)
+
+Every "thinking-required" surface (forms, dialogs, composers, builders, editors, error states) carries **one** small Otto-assist button (ghost style, Otto glyph ≤16px — counts as one coral mark set in the §O budget). Tap →
+1. the dock opens with **context auto-attached**: zone + entity id + current form/selection state — Otto never asks "which one / where are you";
+2. **2-3 scenario intent chips** (one-tap, surface-specific) sit above the composer — a zero-typing path always exists;
+3. free typing remains available.
+Otto's answer carries **Apply** where applicable: output lands back into the origin surface (fields filled, draft inserted) with an §8a sweep on the touched fields; sends/spends still require the user's tap (money law unchanged). The exchange enters the single stream with context chips (D2), so it is findable later from campaign/zone filtered views.
+
 ## K. Dark mode
 
 **Status: the `.gb.dark` block exists and is ~90% sound, but it is dead code** — nothing sets `class="dark"`; `next-themes` is installed but no provider is mounted. Dark = the same system at inverted luminance; geometry and type never theme.
@@ -494,6 +557,48 @@ Hard rules: **motion is never the only signal** — every animated state change 
 - [ ] Icon-only buttons have `aria-label`; errors `role="alert"`, progress never assertive
 
 ---
+
+## G. Fluid gesture & spring motion(流体手感)
+
+Adopted 2026-07-09 from the `/apple-design` skill (Emil Kowalski's WWDC distillation, MIT; mirrored at `.claude/skills/apple-design/`) — founder directive "会升华就全面 implement". §6 still governs one-shot, non-grabbable motion (its tokens and 200ms cap unchanged). **§G governs anything the user can grab**: canvas objects/pan/zoom, trim handles, drag-to-reschedule, sheets/drawers, the dock panel, sliders, swipes. On conflict, this document wins over the skill (three resolutions logged in G8).
+
+**G1. Response.** Feedback fires on pointer-**down**, never on release (§6 press scale already complies). During a gesture the surface tracks the pointer **1:1 the whole way** — animating only at gesture-end is a defect. Nothing non-essential sits on the input path (no debounce/timer between pointer and pixels).
+
+**G2. Direct manipulation.** Pointer Events + `setPointerCapture`; respect the **grab offset** (never snap to element center on grab); keep a short position+timestamp history so release velocity exists. ~10px hysteresis before committing a drag direction; plausible gestures are detected in parallel and losers cancelled — never final-state-only recognizers.
+
+**G3. Interruptibility — the law of laws.** Any grabbable surface must be catchable and reversible **mid-flight**: never lock input during a transition; always animate from the *presentation* (live on-screen) value, never the logical target; a closing sheet re-grabbed follows the finger. CSS transitions/`@keyframes` are **banned for gesture-driven motion** (they cannot be grabbed) — springs only. Decompose 2D motion into independent X/Y springs.
+
+**G4. Springs — house values** (Apple's damping/response, mapped to Motion's `bounce`/`duration`):
+
+| Interaction | Damping (bounce) | Response |
+|---|---|---|
+| Default UI spring — everything | `1.0` (`bounce: 0`) | `0.3–0.4s` |
+| Move / reposition (canvas object) | `1.0` (`0`) | `0.4s` |
+| Drawer / sheet / dock panel | `0.8` (`~0.2`) | `0.3s` |
+| Momentum release (flick/throw) | `~0.8` (`≤0.2`) | `0.3–0.4s` |
+
+Overshoot/bounce is legal **only when the user's gesture carried momentum**. A menu that faded in never bounces. Staged adoption: the prototype layer may approximate with §6 tokens, but the *interaction contract* (G1–G3) already binds it; the spring implementation (Motion lib — currently not a dependency; adding it = its own work order) becomes mandatory at 点亮 for the canvas flagship, dock, and sheets.
+
+**G5. Velocity handoff & momentum projection.** On release, the spring starts at the finger's exact velocity (no seam between drag and animation). Land where the gesture was *going*, not where it stopped: `projected = current + (v/1000)·d/(1−d)`, `d ≈ 0.998`; snap to the target nearest the projection. **Commit-vs-cancel is decided by velocity *sign* at release, not position.**
+
+**G6. Rubber-band boundaries.** Drag surfaces never hard-stop at an edge — resistance grows past the bound: `rubberband(o, dim, c=0.55) = (o·dim·c)/(dim + c·|o|)`. Applies to canvas pan edges, trim handles, sheet overdrag.
+
+**G7. Spatial consistency.** Enter and exit along the **same path** (in-from-right ⇒ out-to-right); menus/popovers/dock panel scale from their **trigger** (`transform-origin` anchored, never center); reversible transitions mirror their easing; in-between frames hint *toward* the gesture's outcome. Wayfinding on every screen: where am I / where can I go / what's there / how do I get out — never trap. Labels are specific ("Campaigns", "Library"), never generic umbrellas.
+
+**G8. Materials & depth — restricted adoption (conflict resolutions, final):**
+1. Skill §12 translucency/depth **does not** overturn §5 flat cards or §D6 ("if it glows it lies") — cards and data surfaces stay flat and quiet. Translucent blur material is legal **only on floating chrome**: dock panel, mobile drawer, sticky-header scroll-edge fade (which may replace the 1px divider, per-surface work order). Never stack two translucent surfaces; `prefers-reduced-transparency` fallback mandatory (frosty → solid).
+2. Skill §13 sound/haptics: **not adopted** at prototype layer (web, restraint law); revisit per-surface at 点亮 with founder approval.
+3. Skill §15 system-font default: **not adopted** — our brand type stack stands; the *discipline* is adopted: tracking is size-specific (display ≤ `-0.02em`, body ~`0`, small captions slightly positive — one fixed `letter-spacing` for all sizes is a defect), leading inverse to size, hierarchy = weight+size+leading as a set, spacing in rem so Dynamic-Type-style scaling never breaks layout.
+
+**G9. Reduced motion.** Every G-class interaction has its §A5 twin: springs → cross-fade or instant with static state twin; projection/rubber-band still *function* (position math) with animation clamped. JS springs gate on `matchMedia` like all JS motion.
+
+**G10. Review checklist additions** (append to A7):
+- [ ] Grabbable surface: feedback on pointer-down, 1:1 tracking, grab-offset respected
+- [ ] Mid-flight grab reverses cleanly (no lockout, no jump-to-target, no velocity brick-wall)
+- [ ] Release: velocity handed to spring; commit/cancel by velocity sign; flick lands via projection
+- [ ] Bounds rubber-band, never hard-stop; bounce only after user momentum
+- [ ] Popovers/sheets originate from trigger; exit path mirrors entry
+- [ ] Tracking/leading size-specific; no single letter-spacing across the scale
 
 ## Changelog — v2 → v3 conflict resolutions
 
