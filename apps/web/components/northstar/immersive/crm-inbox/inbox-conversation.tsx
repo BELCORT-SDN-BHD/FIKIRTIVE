@@ -200,7 +200,8 @@ export function InboxConversation() {
   const reply = awaitingReply ? composeReply(conversation, contact?.name) : null;
   const firstName = contact?.name?.replace(/^@/, "").split(" ")[0] ?? "customer";
 
-  // [wave-b] 连续轮次/置信度双闸 + 三类人在环升级信号(护栏落地:AI 不硬撑)
+  // [wave-b→c] 升级信号(护栏落地:AI 不硬撑)。只余情绪/授权两类 = Otto 整块交人、不再起草;
+  // 置信度/连续轮次闸已退役(它们与其下可直发澄清草稿信号自相矛盾,见 lifecycle-data escalationSignal)。
   const escalation = escalationSignal(conversation);
   const escalated = isEscalated(conversation.id);
   // [wave-b] 会话认领/指派(默认:Otto 在管 → Otto,否则你)
@@ -438,7 +439,7 @@ export function InboxConversation() {
         </div>
       )}
 
-      {/* [wave-b] 升级信号:双闸 / 三类人在环 —— Otto 主动交回人类,不硬撑装懂 */}
+      {/* [wave-b→c] 升级信号:情绪/授权 —— Otto 整块交回人类、不再起草(草稿卡随之隐藏,二者互斥不打架) */}
       {escalation.tripped && !paused && !escalated && (
         <div className="mt-3 flex items-start gap-2.5 rounded-[16px] border border-warning-soft-foreground/25 bg-warning-soft/40 p-3.5">
           <ShieldAlert className="mt-0.5 size-4 shrink-0 text-warning-soft-foreground" strokeWidth={2} />

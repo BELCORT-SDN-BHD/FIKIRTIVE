@@ -232,11 +232,13 @@ function priceOf(id: string, fallback: number): number {
  * 没有键中的对话回落到 clarifyFallback —— 依旧是问尖锐问题,绝不「我查查」。
  */
 const REPLY_LIBRARY: Record<string, NsBilingualDraft> = {
-  // cv-01 Mei Ling — 确认 20 个可颂,周五 9am,RM170(收尾 + 定金一眼可核对)
+  // cv-01 Mei Ling — 确认 20 个可颂,周五 9am(20×RM8.50=RM170,一眼可核对)。
+  // 定金政策(kb-06 / sn-pay)= 只对 >RM200 的单收 50%;RM170 在门槛之下,且 Mei Ling 是每周
+  // 下办公室单的常客 —— 不索订金、到店结账才与本店自有政策一致,否则常客一句「不是超 RM200 才要订金?」即拆台。
   "cv-01": {
     kind: "confirm",
-    en: "Confirmed, Mei Ling! 🥐 20 kaya butter croissants, Friday 9am pickup — RM170. I'll have them boxed and waiting at the counter. A 50% deposit (RM85) locks it in — DuitNow QR or transfer both work. See you Friday!",
-    bm: "Confirmed, Mei Ling! 🥐 20 kaya butter croissant, ambil Jumaat 9 pagi — RM170. Saya siapkan dalam kotak, tunggu di kaunter. Deposit 50% (RM85) untuk sahkan tempahan — DuitNow QR atau transfer boleh. Jumpa Jumaat!",
+    en: "Confirmed, Mei Ling! 🥐 20 kaya butter croissants (20 × RM8.50 = RM170), Friday 9am pickup — I'll have them boxed and waiting at the counter. Just settle by DuitNow QR or cash when you collect, same as every week. See you Friday!",
+    bm: "Confirmed, Mei Ling! 🥐 20 kaya butter croissant (20 × RM8.50 = RM170), ambil Jumaat 9 pagi — saya siapkan dalam kotak, tunggu di kaunter. Bayar guna DuitNow QR atau tunai masa ambil, macam biasa tiap minggu. Jumpa Jumaat!",
   },
   // cv-02 Priya — halal 认证(合规诚实版:不冒充 JAKIM,附价格与下一步)
   "cv-02": {
@@ -341,7 +343,9 @@ function nudgeItemFor(cv: NsConversation): string {
 
 /* ── 语气三档:真语域重写(先剥掉旧问候/尾 emoji,再按语域重建;§EFFECTIVENESS gap 3) ───
  * casual=保留缩写 + 一颗 emoji;semi=Hi + 友好收尾;formal=展开缩写、去 emoji、句号收尾 + Thank you。
- * 不再贴「Dear customer」,不再叠出重复问候/emoji。确定性,同输入同输出。 */
+ * 不再贴「Dear customer」,不再叠出重复问候/emoji。确定性,同输入同输出。
+ * 随草稿语言走:马来/Manglish 草稿(翻译后再调语气)收尾/问候用马来语,不把英文
+ * 「Let me know if that works」「Thank you.」胶到马来正文上(否则产出夹生 Manglish)。 */
 const EMOJI_TEST = /[\u{1F000}-\u{1FAFF}\u{2600}-\u{27BF}\u{2190}-\u{21FF}\u{2B00}-\u{2BFF}\u{FE0F}\u{2764}]/u;
 const EMOJI_ALL = /[\u{1F000}-\u{1FAFF}\u{2600}-\u{27BF}\u{2190}-\u{21FF}\u{2B00}-\u{2BFF}\u{FE0F}\u{200D}\u{2764}]/gu;
 const CONTRACTIONS: [RegExp, string][] = [
@@ -391,17 +395,22 @@ export function applyTone(text: string, tone: NsTone, firstName?: string): strin
   if (!body) return trimmed;
   // 剥掉通用问候后,正文若仍以该名开头,问候也不重复挂名
   const who = !addressed && named && !addressesByName(body, named) ? ` ${named}` : "";
+  // 语域收尾/问候随草稿语言走(马来/Manglish → 马来语;否则英文),避免夹生 Manglish
+  const ms = detectLanguage(body) !== "English";
   switch (tone) {
     case "casual": {
-      const out = addressed ? body : `Hey${who}! ${body}`;
+      const out = addressed ? body : `${ms ? "Hai" : "Hey"}${who}! ${body}`;
       return EMOJI_TEST.test(out) ? out : `${out} 🥐`;
     }
     case "semi": {
       const out = addressed ? body : `Hi${who}, ${body}`;
-      // 已带问句/邀约/道谢/收尾 emoji 即视为已收束,不再叠一句收尾
-      const signedOff =
-        /[?]\s*$/.test(out) || /let me know|happy to|shall i|want me to|thank/i.test(out) || EMOJI_TEST.test(out.slice(-2));
-      return signedOff ? out : `${out} Let me know if that works 🙂`;
+      // 已带问句/邀约/道谢/收尾 emoji 即视为已收束,不再叠一句收尾(收束线索按语言)
+      const closedCues = ms
+        ? /beritahu saya|nak saya|boleh saya|terima kasih|jumpa|sama-sama|selamat/i
+        : /let me know|happy to|shall i|want me to|thank/i;
+      const signedOff = /[?]\s*$/.test(out) || closedCues.test(out) || EMOJI_TEST.test(out.slice(-2));
+      if (signedOff) return out;
+      return `${out} ${ms ? "Beritahu saya kalau sesuai ya 🙂" : "Let me know if that works 🙂"}`;
     }
     case "formal": {
       let b = stripEmoji(body);
@@ -409,8 +418,10 @@ export function applyTone(text: string, tone: NsTone, firstName?: string): strin
       b = recapitalize(b);
       let out = addressed ? b : `Hi${who}, ${b}`;
       if (!/[.!?]$/.test(out)) out += ".";
-      // 草稿结尾若已道谢,就不再叠一句 Thank you
-      return /(thank you|thanks)[.!]?\s*$/i.test(out) ? out : `${out} Thank you.`;
+      // 草稿结尾若已道谢,就不再叠一句道谢(道谢语按语言)
+      const thanked = ms ? /(terima kasih)[.!]?\s*$/i.test(out) : /(thank you|thanks)[.!]?\s*$/i.test(out);
+      if (thanked) return out;
+      return `${out} ${ms ? "Terima kasih." : "Thank you."}`;
     }
   }
 }
@@ -423,9 +434,10 @@ export function detectLanguage(text: string): string {
   return "English";
 }
 
-/* ── [wave-b] 连续轮次 + 置信度双闸 · 三类人在环升级(确定性信号,非真 LLM) ───────
- * 从一条对话的消息流派生升级信号:任一命中即建议转人工。护栏行为的原型体现。 */
-export type NsEscalationKind = "confidence" | "rounds" | "sentiment" | "authority";
+/* ── [wave-b→c] 情绪 / 授权升级(确定性信号,非真 LLM;Otto 整块交人、不再起草的两类) ───────
+ * 从一条对话的消息流派生升级信号:命中即 Otto 退场、把整条线交回人类(渲染层随之藏起草稿卡)。
+ * 详见 escalationSignal:置信度闸 / 连续轮次闸 已于 wave-c 退役(与可直发澄清草稿信号相矛盾)。 */
+export type NsEscalationKind = "sentiment" | "authority";
 export interface NsEscalationSignal {
   tripped: boolean;
   kind: NsEscalationKind | null;
@@ -434,12 +446,6 @@ export interface NsEscalationSignal {
 
 const NEGATIVE_CUES = ["refund", "angry", "terrible", "complaint", "cancel", "wrong", "late", "disappointed", "bad"];
 const AUTHORITY_CUES = ["discount", "refund", "cancel", "wholesale price", "special price", "cheaper"];
-
-/** 客户收尾寒暄(道谢/满意收束,且不含提问)—— 没有待答问题,不该判「转人工」。 */
-const CLOSING_RE = /\b(thanks?|thank you|terima kasih|perfect|great|awesome|noted|got it|sounds good|see you|cheers|appreciate|all good)\b/i;
-function looksClosing(text: string): boolean {
-  return !text.includes("?") && CLOSING_RE.test(text);
-}
 
 export function escalationSignal(cv: NsConversation): NsEscalationSignal {
   const msgs = cv.messages;
@@ -454,26 +460,12 @@ export function escalationSignal(cv: NsConversation): NsEscalationSignal {
   if (AUTHORITY_CUES.some((c) => lastText.includes(c))) {
     return { tripped: true, kind: "authority", reason: "They're asking about pricing Otto can't promise on its own" };
   }
-  // 能力边界 + 置信度闸:最后一句是客户在问、且无知识依据 → 转人工。
-  // 但客户若只是道谢收尾(无待答问题)则不判 —— 否则会对已收束的对话既「转人工」又起草回复,自相矛盾。
-  if (lastCustomer && !looksClosing(lastText) && !matchKnowledge(lastText)) {
-    return { tripped: true, kind: "confidence", reason: "Nothing in Knowledge covers this — best answered by you" };
-  }
-  // 连续轮次闸:客户连发 3+ 条 Otto 都没解决 → 转人工
-  const customerRun = countTrailingCustomer(msgs);
-  if (customerRun >= 2) {
-    return { tripped: true, kind: "rounds", reason: "A few messages in and still going — time for a human touch" };
-  }
+  // [wave-c 退役] 「置信度闸」(无知识命中)与「连续轮次闸」(客户连发)都已移除:两者只会在「末句是客户
+  // 在等回复」的线程上触发 —— 而那种线程 Otto 一定已起草一条可直发的澄清草稿(问而不猜)。再挂一条
+  // 「转人工/最好你来答」黄条,与其下『Use this draft』信号自相矛盾(商家困惑「它都写好了为什么还叫我接手」)。
+  // 升级信号自此只保留「Otto 整块交人、不再起草」的两类:情绪(客户不高兴)与授权(Otto 无权答应的价格),
+  // 这两类恰好也是渲染层唯一会藏起草稿卡的两类 —— 于是黄条与草稿卡天然互斥,不再并列自打脸。
   return { tripped: false, kind: null, reason: "" };
-}
-
-function countTrailingCustomer(msgs: NsConversation["messages"]): number {
-  let n = 0;
-  for (let i = msgs.length - 1; i >= 0; i--) {
-    if (msgs[i].from === "customer") n++;
-    else break;
-  }
-  return n;
 }
 
 /* ── [wave-b] 自愈知识库:从已解决对话起草待审批补丁(HubSpot KB Agent 反向回路) ───
