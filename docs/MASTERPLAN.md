@@ -75,6 +75,7 @@ P0 与 P0.5/P1 可并行(不同文件面);P0.75 严格在 P0.5 之后;P1½ 以�
 | # | 环 | 内容 | 来源 | 缝 | 验收(可执行) | 规模 | 状态 |
 |---|---|---|---|---|---|---|---|
 | **L0** | 量测原语(第 0 大陆) | 短链 + QR + 优惠码 token + UTM + 来源确认 + 退款回卷 —— 所有环共用仪表,先装表再开车 | R5 D4 批复;借鉴书(合规请评的载体) | 记账缝 + 渠道缝(新原语) | 一条码全链可点:生成→印出→扫码→进联系人(带来源标签)→关联单据出现在归因流 | M | **可开工** |
+| **L-C** | 创作区(第 1 环点亮) | immersive 创作区七页原型接真后台:canvas 接 gen 链 / 工厂 variant-矩阵+bulk 批量编排(挂已有 GenerationBatch,零新钱路)/ storyboard 接 gate1 帧→视频 / 媒体编辑接 $0 render 管线 / 资产查看接续拍;gate4 诚实契约(报价三数一致/失败即退/Library 真落库/批量 partial 退款)逐条映射真账本 | **founder 2026-07-10 亲令**(走城判词:immersive 创作区是唯一"能接受"的区);每环最强(宪法级);harmony-03 Wave 1;spec=`docs/superpowers/specs/2026-07-10-lc-creation-zone-lighting.md` | 记账缝(3)+ 生成缝(2)+ 队列缝(6)+ 设计缝(7)+ Parity(9)+ Otto 技能缝(1) | staging 真号一条 canvas 图/视频全链 reserve→settle 可查 + 工厂批量 partial-fail「N-1 收 1 退」总价三数一致可查(真钱逐笔待 founder 批) | L | **spec 在途**(过目后可开工) |
 | **L1** | 发布链(Meta organic publish) | publish worker 切片(notImpl→真):六态设计(成功/无权限/平台拒/超时/部分成功/恢复)+发布配额+公网媒体 URL+JPEG 约束 → 内测 → **递 Meta App Review(~1 周外部等待,最长前置)** | 真闭环第 2 环;PLATFORM-TRUTH Meta 页;notImpl 桩(`meta-shared.ts:15`) | 渠道缝(channel adapter) | staging 真发一帖到测试主页(SHA 可查)+App Review 提交回执截图 | L | **spec 在途**(2026-07-10 平行点火) |
 | **L2** | WhatsApp 询单 | 以 **BSP 客户身份**(借鉴书姿态②)接 WABA → 收件箱真对话 + 模板送审 + 防误发护栏(#55/#56)上真 + Otto 措辞纪律(姿态①)落 UI | 真闭环第 3 环;作战图工单#1 | 渠道缝 | 真号发进 WhatsApp→收件箱可见可回;首批模板过 Meta 审 | L | **待钥匙**(WABA 接入授权) |
 | **L3** | 回执脊柱最小版 | Mandate/Action/ExternalEffect/BusinessEvent/Receipt 最小对象集 + **EasyStore 只读**接入(订单/顾客/交易/积分;webhook 不保证送达→必配 reconciliation) | R5 Q1 1.7 采纳;PLATFORM-TRUTH EasyStore 附页 | 记账缝 + 第十缝 | 顾客一号一笔真订单出现在回执流,字段可溯源 | L | **待钥匙**(EasyStore 后台) |
@@ -295,3 +296,4 @@ P0 与 P0.5/P1 可并行(不同文件面);P0.75 严格在 P0.5 之后;P1½ 以�
 | 2026-07-07 | 冲刺小节新增(§〇点六:A/B/C 三线开跑;B 线 X 发布 spec 随同 PR 交付;判决原文 = GRILL-VERDICTS「追加判决(2026-07-07 第三批)」节) | founder 2026-07-07 拍板(会话内);合并本 PR = 入档确认 |
 | 2026-07-09 | §〇点六 追加 Wave B(扩容施工)引用行,指向新增 `docs/northstar/WHATPASS-V2-CANDIDATES.md`(WHAT-pass v2 扩容候选总表) | founder 2026-07-09 定调"原型层默认全做,闸门搬到点亮";合并本 PR = 入档确认 |
 | 2026-07-10 | **点亮章 v2 入册(§〇点七)**:一条真闭环先通(载体=顾客一号 concierge-assisted)取代工厂优先序(R3-P01 兑现);L0-L4 点亮令牌表+四并行泳道+一板块一验证协议+收钱条件句;§〇点五/〇点六排序标注被取代;三份研究底稿(平台真相/顾客一号作战图/缺失大陆地图)随册入 docs/research/。依据=founder 2026-07-10 走城判词与"直接开始点亮,一个一个验证"口令 | 待 founder 终审(合并本 PR 即生效) |
+| 2026-07-10 | **§〇点七点亮令牌表追加 L-C 行**(创作区,插 L0 后):immersive 创作区七页原型接真后台;founder 2026-07-10 亲令立项(走城判词唯一"能接受"的区);状态=spec 在途→过目后可开工;spec=`docs/superpowers/specs/2026-07-10-lc-creation-zone-lighting.md` | 待 founder 过目(合并本 PR 即入表) |
