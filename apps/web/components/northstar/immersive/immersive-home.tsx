@@ -68,13 +68,16 @@ function humanWait(w?: string): string {
 
 const CONTACT_BY_ID = new Map(NS_CONTACTS.map((c) => [c.id, c]));
 
-/** 一行今日决策(回一句就变钱)。stake = 在险 / 预计进账金额,用于排序 + 头部合计。 */
+/** 一行今日决策(回一句就变钱)。
+ *  stakeMyr = 前瞻在险值(回这一句近期真能进账多少)—— 唯一进「in play」头部合计的数;
+ *  rankMyr  = 仅排序用的优先级权重(大客户回流用生涯额置顶,不进合计、不做展示)。 */
 interface TriageRow {
   key: string;
   name: string;
   reason: string;
   wait: string;
   stakeMyr: number;
+  rankMyr: number;
   href: string;
   action: "reply" | "winback";
 }
@@ -169,24 +172,33 @@ export function ImmersiveHome() {
   // Reach 卡与分析区同源(NS_ANALYTICS.kpis[0]),避免同屏「招呼条 18% vs 卡片 9%」一店两数。
   const reachKpi = NS_ANALYTICS.kpis[0];
 
-  // ── 今日决策队列「Needs you」:等店主回 + 大客户静默;stake = 此刻在这段关系上在险的钱 ──
+  // ── 今日决策队列「Needs you」:等店主回 + 大客户静默 ──
+  //   头部「in play」合计与每行 stake 只用【前瞻在险值】:回这一句近期真能进账多少。
+  //   已经赚过的生涯总额(totalOrdersMyr)绝不冒充待回款——它只用来给大客户回流【排序】置顶
+  //   (排序 ≠ 合计),并作已标注的历史上下文出现在理由行,不注水「in play」。
   const triage = React.useMemo<TriageRow[]>(() => {
     const byContact = new Map<string, TriageRow>();
     // ① 等店主回 / 超时的对话 → 回复行(现场在收件箱,深链到那条等回的对话)。
-    //   stake = 此刻在险的关系价值:普通活跃客 = 预计下一单(predictedNextMyr / 均单价);
-    //   但「静默大客户又亲自回到线上问要不要再下单」= 整段生涯关系正被重新激活、此刻真的在险,
-    //   用 totalOrdersMyr(不是一单的小数)——最快变钱的动作(回大客户一句)因此浮到最上,
-    //   且仍留在收件箱现场,不被下面的冷唤回覆盖、也不被送去 CRM 档案。
+    //   前瞻在险值:活跃客 = 预计下一单(predictedNextMyr);静默客该字段归零 → 退化到均单价
+    //   = 复购潜力(与 crm-data.predictedNext / crm-segments 同模型,同一客户全城不再两数)。
     for (const cv of needsOwnerConversations()) {
       const c = CONTACT_BY_ID.get(cv.contactId);
       const reengagingWhale = !!c && c.lifecycle === "dormant" && c.totalOrdersMyr >= 1000;
-      const stake = reengagingWhale && c ? c.totalOrdersMyr : c?.predictedNextMyr || avgOrderValue(cv.contactId) || 0;
+      // 前瞻在险值(唯一进合计的数):刻意保守,只认「下一单」,绝不外推到整段生涯。
+      const forwardStake = c?.predictedNextMyr || avgOrderValue(cv.contactId) || 0;
       byContact.set(cv.contactId, {
         key: cv.id,
         name: c?.name ?? "A customer",
-        reason: reengagingWhale ? `High-value account · ${cv.subject}` : cv.subject,
+        // 大客户亲自回到线上 = 整段关系在重启;把生涯往来 + 单数作为已标注的历史锚点
+        //   (清楚是 lifetime,不是即将进账),既解释「为何排第一」又不冒充待回款。
+        reason:
+          reengagingWhale && c
+            ? `Biggest account back online · RM${c.totalOrdersMyr.toLocaleString("en-MY")} lifetime · ${c.orderCount ?? 0} orders`
+            : cv.subject,
         wait: humanWait(cv.waitingFor),
-        stakeMyr: stake,
+        stakeMyr: forwardStake,
+        // 排序权重:大客户回流用生涯额置顶(reviewer 许可);其余按前瞻额。只排序,不进合计、不展示。
+        rankMyr: reengagingWhale && c ? c.totalOrdersMyr : forwardStake,
         href: `${BASE}/inbox/conversation?id=${cv.id}`,
         action: "reply",
       });
@@ -196,21 +208,25 @@ export function ImmersiveHome() {
     //   已经作为回复行浮现的(客户已亲自回到线上)不再重复成冷唤回:reply 覆盖 winback。
     for (const c of dormantHighValue(1000)) {
       if (byContact.has(c.id)) continue;
+      const forwardStake = c.predictedNextMyr || avgOrderValue(c.id) || 0;
       byContact.set(c.id, {
         key: `winback-${c.id}`,
         name: c.name,
         reason: c.note ?? "Big account gone quiet",
         wait: "gone quiet, worth a nudge",
-        stakeMyr: c.predictedNextMyr || avgOrderValue(c.id) || 0,
+        stakeMyr: forwardStake,
+        rankMyr: forwardStake,
         href: `${BASE}/crm/contact-profile?id=${c.id}`,
         action: "winback",
       });
     }
-    // 活跃回复(有人正等,时间敏感)排在冷唤回(投机)之上;同组内按在险金额降序。取前 5 条。
+    // 活跃回复(有人正等,时间敏感)排在冷唤回(投机)之上;同组内按优先级权重 rankMyr 降序
+    //   (大客户回流因生涯额置顶,但它的展示 stake / 头部合计仍只是前瞻额)。取前 5 条。
     return [...byContact.values()]
-      .sort((a, b) => (a.action !== b.action ? (a.action === "reply" ? -1 : 1) : b.stakeMyr - a.stakeMyr))
+      .sort((a, b) => (a.action !== b.action ? (a.action === "reply" ? -1 : 1) : b.rankMyr - a.rankMyr))
       .slice(0, 5);
   }, []);
+  // 头部「in play」= 前瞻在险额之和(每行 stakeMyr 都是前瞻额,生涯总额不在其中)。
   const triageTotal = triage.reduce((s, r) => s + r.stakeMyr, 0);
 
   // Up next 读 store 的排期(scheduled + draft),不再直接读 _mock 静态数组。
