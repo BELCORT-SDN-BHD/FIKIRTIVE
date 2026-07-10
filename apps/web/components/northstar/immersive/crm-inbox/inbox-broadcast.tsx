@@ -107,7 +107,12 @@ export function InboxBroadcast() {
   const [followUp, setFollowUp] = React.useState("");
   const [importRaw, setImportRaw] = React.useState("");
 
-  const seg = segmentOptions.find((s) => s.id === segId) ?? segmentOptions[0];
+  // [gate4/H3] 解析:store-live 自建分群与内建同源于 segmentOptions;命不中即 undefined ——
+  // 绝不回落 segmentOptions[0],否则深链带来的未知/已失效分群会把消息静默发给第一内建群。
+  const seg = segmentOptions.find((s) => s.id === segId);
+  // 深链 ?segment= 带来的分群解析不到(最常见:运行时自建分群 seg-live-* 刷新即失):
+  // 不静默换靶,而是明确告知并禁用发送(seg=undefined → Send 按钮已自动 disabled)。点任一 chip 即恢复。
+  const deepLinkUnresolved = !!querySegment && segId === querySegment && !seg;
   const template = WABA_TEMPLATES.find((t) => t.id === templateId) ?? WABA_TEMPLATES[0];
   const imported = parseImportedNumbers(importRaw);
 
@@ -155,6 +160,14 @@ export function InboxBroadcast() {
               </button>
             ))}
           </div>
+
+          {/* [gate4/H3] 深链分群解析失败:诚实告知 + 禁用发送,绝不静默发给第一内建群。 */}
+          {deepLinkUnresolved && (
+            <p role="alert" className="mt-2 flex items-center gap-1.5 rounded-[10px] border border-warning-soft-foreground/30 bg-warning-soft/50 px-3 py-2 text-xs font-medium text-warning-soft-foreground">
+              <AlertTriangle className="size-3.5 shrink-0" strokeWidth={2} />
+              That group isn’t available anymore — it may have been lost when the page refreshed. Pick a group above to continue.
+            </p>
+          )}
 
           <p className="mt-4 mb-2 text-xs font-semibold text-muted-foreground">Message template</p>
           <div className="flex flex-wrap gap-2">

@@ -74,6 +74,9 @@ import {
   addHashtagGroup,
   contactsView,
   customSegments,
+  setPostAudience,
+  clearPostAudience,
+  postAudienceFor,
   useStore,
 } from "../_store";
 import { useQueryParam, Initials } from "../_kit";
@@ -222,6 +225,13 @@ export function ScheduleComposer() {
     if (hhmm && TIMES.includes(hhmm)) setTime(hhmm);
     setTargets([p.platform]);
     setActiveTab(p.platform);
+    // [gate4/H4] 恢复该帖保存时绑定的分群受众:Queue/home 用 ?post= 重开不带 ?segment=,
+    // 靠它把受众卡找回 ——「N will get this」不再是保存即失的纯展示。
+    const savedAudience = postAudienceFor(prefillPostId);
+    if (savedAudience) {
+      setSegmentId(savedAudience.segmentId);
+      setAudienceDismissed(false);
+    }
     // 依赖 prefillPostId:同组件内切换 ?post= 时重新回填(依赖数组曾为空 → 不重填)。
   }, [prefillPostId]);
 
@@ -315,6 +325,13 @@ export function ScheduleComposer() {
         altText: altText.trim() || undefined,
       });
       persistMeta(id);
+      // [gate4/H4] 把「这条帖发给哪个分群、当时触达几人」作为真数据绑在帖 id 上 —— Queue 重开
+      // 能靠它恢复受众卡;受众被清掉(dismiss)则解除关联,不留陈旧受众。
+      if (segmentId && segmentAudience) {
+        setPostAudience(id, { segmentId, segmentName: segmentAudience.name, reach: audienceReach.length });
+      } else {
+        clearPostAudience(id);
+      }
     }, 800);
   };
 
@@ -339,6 +356,12 @@ export function ScheduleComposer() {
       altText: altText.trim() || undefined,
     });
     persistMeta(id);
+    // [gate4/H4] 同 confirmSchedule:草稿也把受众关联落成真数据,重开草稿能恢复受众卡。
+    if (segmentId && segmentAudience) {
+      setPostAudience(id, { segmentId, segmentName: segmentAudience.name, reach: audienceReach.length });
+    } else {
+      clearPostAudience(id);
+    }
     toast(reminder ? "Draft saved · publish by reminder" : "Draft saved", {
       description: "Find it in the queue under Drafts.",
     });

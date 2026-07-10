@@ -3103,3 +3103,38 @@ export function hasAssistApplyHandler(): boolean {
 export function assistOwnerToken(): string | null {
   return assistOwner;
 }
+
+/* ── [gate4/H4] 帖 → 分群受众关联(尾部追加,不改 NsScheduledPost/_mock) ──────────
+ * 缺陷:composer 从 crm 分群深链进来只渲染 Audience 卡,schedulePost/saveDraft 存下的帖
+ * 对象却不带 segmentId/受众字段 —— 保存后关联即失,「N will get this」纯展示,Queue 重开
+ * 无从恢复。修法:把「这条帖是发给哪个分群、当时触达几人」作为一条真数据键在 post id 上,
+ * 与 postMeta 同构的 side-store。composer 保存后写它;prefill(?post=)时读它把受众卡找回。
+ * 持久化口径同全 store:内存单例、client 换路由存活、刷新即重置(与帖本身同寿命)。 */
+export interface NsPostAudience {
+  /** 关联的分群 id(store-live 自建 seg-live-* 或内建 ALL_SEGMENTS id)。 */
+  segmentId: string;
+  /** 保存当时的分群人话名(受众快照;不依赖分群仍存活即可显示这条帖发给了谁)。 */
+  segmentName: string;
+  /** 保存当时的可触达人数(排除勿扰后),即「N will get this」落成的真数。 */
+  reach: number;
+}
+
+const postAudiences: Record<string, NsPostAudience> = {};
+
+/** 读某帖存下的受众关联(无则 null;composer prefill 用它把 Audience 卡找回)。 */
+export function postAudienceFor(id: string): NsPostAudience | null {
+  return postAudiences[id] ?? null;
+}
+
+/** 把一条帖与其分群受众绑定(schedulePost/saveDraft 之后调;写真数据,非展示)。 */
+export function setPostAudience(id: string, audience: NsPostAudience): void {
+  postAudiences[id] = audience;
+  notify();
+}
+
+/** 解除某帖的受众关联(编辑时清掉受众再保存 → 关联也要跟着清,不留陈旧受众)。 */
+export function clearPostAudience(id: string): void {
+  if (!(id in postAudiences)) return;
+  delete postAudiences[id];
+  notify();
+}
