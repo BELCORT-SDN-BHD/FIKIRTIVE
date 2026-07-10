@@ -16,6 +16,10 @@ export const TENANT_MODELS = new Set([
   // checked-op call site (schedule-actions, brand-record-actions, memory-actions,
   // lookup-products, _brand-record) — guarded, not exempt.
   "ScheduledPost", "BrandKit", "BrandRecord", "BrandRule",
+  // L0 量测原语(2026-07-10, PR-L0a):六个 owner-scoped 对象。出生即登记(spec §二 硬约束)。
+  // 重定向/扫码端点是公共匿名的,但写事件一律 server 侧 scope 到 link.ownerId —— 未来切片的
+  // list-query 全部 owner-scoped,故进 TENANT_MODELS(非 EXEMPT)。
+  "TrackedLink", "QrAsset", "QrPlacement", "VoucherToken", "SourceTag", "AttributionEvent",
 ]);
 
 /** ownerId models deliberately NOT runtime-guarded — every entry carries its reason.

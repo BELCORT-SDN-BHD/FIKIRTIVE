@@ -623,6 +623,13 @@ model Organization {
   metaConnection          MetaConnection?
   researchJobs            ResearchJob[]
   scheduledPosts          ScheduledPost[]
+  // L0 量测原语(六条 back-relation;Seam 5 要求,否则 prisma generate 失败——fail-loud)
+  trackedLinks            TrackedLink[]
+  qrAssets                QrAsset[]
+  qrPlacements            QrPlacement[]
+  voucherTokens           VoucherToken[]
+  sourceTags              SourceTag[]
+  attributionEvents       AttributionEvent[]
 }
 
 // User <-> Organization join, carrying the per-org role. role/status are code-validated
@@ -1185,4 +1192,191 @@ model PublishAttempt {
 model WorkerHeartbeat {
   id String   @id
   at DateTime
+}
+
+// ─── L0 量测原语(第 0 大陆:所有环共用的水表)────────────────────────────────
+// docs/superpowers/specs/2026-07-10-l0-measurement-primitives.md。PR-L0a:六模型 + 迁移。
+// 六件一等公民由 5 个 owner-scoped 对象 + 1 张 placement 支撑表实现。全 $0(不走记账缝),
+// 全 ownerId 隔离(六个模型名进 TENANT_MODELS)。本切片只落对象与迁移,无重定向/无写入器。
+
+// L0 量测原语:owner-scoped 短链。重定向端点是公共热路径(匿名点击者),但每条链接
+// ownerId 全链隔离 + 目标 allowlist 焊死开放跳转。QR 永远编码短链 URL(不编码 targetUrl),
+// 这样吊销短链即可让已印刷的码集中失效,无需重印(物理攻击面对策,§六)。生成 = $0,不扣 credits。
+model TrackedLink {
+  id           String    @id // ULID
+  ownerId      String
+  organization Organization @relation(fields: [ownerId], references: [id])
+  // v1 additive:未来 agency/campaign 层的 nullable 软引用(无 FK、无 backfill;house 惯例,见 GenerationBatch)
+  brandId       String?
+  campaignId    String?
+  domain        String    // 短链域名(config 层选型,§十);多域名就绪
+  slug          String    // 短码,如 "raya-h7";server 铸造 / 校验唯一,永不信客户端裸传
+  targetUrl     String    // 最终目的地;写入时刻必过 allowlist,重定向时刻再校验一次(纵深防御)
+  targetKind    String    // 'wa' | 'shopee' | 'easystore' | 'gbp_review' | 'own_site' | 'other'(封闭类目,校验用)
+  utmJson       Json?     // { source, medium, campaign, content, term };重定向时附加到 targetUrl
+  purpose       String    @default("generic") // 'generic' | 'review_request' | 'winback' | 'promo'(报表分组;'review_request' 触发请评护栏 §七)
+  title         String    @default("") // 人话标签
+  status        String    @default("active") // 'active' | 'revoked'(code-validated String,非 PG enum;house style)
+  revokedAt     DateTime?
+  revokedReason String?
+  source        String    // 'otto' | 'owner'(谁建的)
+  createdAt     DateTime  @default(now())
+  updatedAt     DateTime  @updatedAt
+  deletedAt     DateTime? // 软删除——永不硬删历史
+
+  qrAssets QrAsset[]
+
+  // 重定向解析 (domain, slug) → link,与 owner 无关(点击者匿名),故唯一约束在 (domain, slug)。
+  // 一条 raw partial UNIQUE INDEX ON (domain, slug) WHERE deletedAt IS NULL 落 migration
+  // (Prisma 无法表达 partial index;同 BrandRecord.nameKey / PublishAttempt 手法)。
+  @@index([ownerId, createdAt])
+  @@index([ownerId, purpose, createdAt]) // 报表:按用途聚合
+}
+
+// QR 永远编码一条 TrackedLink 的短链 URL(linkId 必填),绝不编码 targetUrl —— 这是可吊销性的根:
+// 撤链接即让所有印出去的码集中跳向品牌中间页,无需重印。渲染出的 QR PNG 走内容寻址存储
+// (storageKey(ownerId, sha256, "png"));生成 = $0。
+model QrAsset {
+  id           String    @id // ULID
+  ownerId      String
+  organization Organization @relation(fields: [ownerId], references: [id])
+  brandId      String?
+  campaignId   String?
+  linkId       String    // FK→TrackedLink;QR 的一切扫码事件经这条短链抄表
+  link         TrackedLink @relation(fields: [linkId], references: [id], onDelete: Cascade)
+  label        String    // "Raya 海报 / GM Klang 门店橱窗"
+  imageAssetId String?   // 渲染好的 QR PNG(R2,可选;也可前端即时渲染)
+  status        String    @default("active") // 'active' | 'revoked'
+  revokedAt     DateTime?
+  revokedReason String?
+  source        String    // 'otto' | 'owner'
+  createdAt     DateTime  @default(now())
+  updatedAt     DateTime  @updatedAt
+  deletedAt     DateTime?
+
+  placements QrPlacement[]
+
+  @@index([ownerId, linkId])
+}
+
+// placement ledger:一张码贴在哪、第几版、印刷/铺设/召回到哪一步。码一旦印刷,
+// 错误无法靠部署回滚(R5 Q3 3.7),故物理放置本身是「有版本、有位置、有撤销成本」的资产。
+model QrPlacement {
+  id           String    @id // ULID
+  ownerId      String    // 反范式冗余,供 tenant guard 直接过滤
+  organization Organization @relation(fields: [ownerId], references: [id])
+  qrAssetId    String
+  qr           QrAsset   @relation(fields: [qrAssetId], references: [id], onDelete: Cascade)
+  location     String    // 人话:"GM Klang 门店橱窗" / "Raya 海报 A 批"
+  version      Int       @default(1) // 重印版本;换码即 version+1
+  printStatus  String    @default("DRAFT") // 'DRAFT' | 'PRINTED' | 'DEPLOYED' | 'RECALLED'(code-validated;状态机是纯 helper)
+  quantity     Int?      // 印了多少张贴纸/海报
+  deployedAt   DateTime?
+  recalledAt   DateTime?
+  note         String?
+  createdAt    DateTime  @default(now())
+  updatedAt    DateTime  @updatedAt
+
+  @@index([ownerId, qrAssetId, printStatus])
+}
+
+// 商家发给自家顾客的一次性营销码,顾客在商家店里核销。二值生命周期(issued→redeemed/void/expired
+// + clawed_back),不是余额账本(与 loyalty 积分余额严格区分:后者只读自商家店铺,L0 不建)。
+// 核销/回卷的**事实**来自 source-observed(店铺 webhook)或 merchant-confirmed;不经手资金。
+// 生成 = $0。⚠️ 宪法第 8 条 v2.11:优惠/奖励与「请评」永久分离——voucher 永不可挂在写评价动作上(§七)。
+model VoucherToken {
+  id           String    @id // ULID
+  ownerId      String
+  organization Organization @relation(fields: [ownerId], references: [id])
+  brandId      String?
+  campaignId   String?
+  code         String    // 可核销码,如 "RAYA-9F3K";server 铸造 / 校验唯一
+  kind         String    @default("no_discount") // 'no_discount' | 'percent' | 'amount' | 'gift'
+                         // 默认无折扣(§八 量测即干预:优先无折扣 token,折扣是会改变行为的 treatment)
+  discountJson Json?     // { percent } | { amountMinor, currency } | { giftSku };no_discount 时为 null
+  linkId       String?   // 可选:优惠码经某条短链/QR 派发(软引用,无 FK)
+  status       String    @default("issued") // 'issued' | 'redeemed' | 'clawed_back' | 'void' | 'expired'
+  issuedAt     DateTime  @default(now())
+  redeemedAt   DateTime?
+  clawedBackAt DateTime?
+  startsAt     DateTime? // 有效期起(读时判过期,永不后台 job;同 BrandRecord offers 手法)
+  endsAt       DateTime?
+  externalOrderId    String? // 核销对应的商家订单号(source-observed 真相锚点)
+  redemptionEvidence String? // 'source_observed' | 'merchant_confirmed'(核销事实的证据级别)
+  source       String    // 'otto' | 'owner'
+  createdAt    DateTime  @default(now())
+  updatedAt    DateTime  @updatedAt
+  deletedAt    DateTime?
+
+  // 一条 raw partial UNIQUE INDEX ON (ownerId, code) WHERE deletedAt IS NULL 落 migration —— 每 owner 一个活码。
+  @@index([ownerId, status, endsAt])
+}
+
+// 某人扫码/点链后又成为联系人(WhatsApp 找上门等),把「他从哪张码来」贴到这个主体上。
+// CRM/Contact 尚未进 live 库(Sol 已核 schema),故 subjectRef 用 nullable 软引用形态承接:
+// 现在挂 phone/wa_id/anon 会话键,CRM 落地后经同一列 scope 到 contactId,零迁移。
+model SourceTag {
+  id           String    @id // ULID
+  ownerId      String
+  organization Organization @relation(fields: [ownerId], references: [id])
+  brandId      String?
+  campaignId   String?
+  subjectKind  String    // 'contact' | 'phone' | 'wa_id' | 'anon'(打标对象类型)
+  subjectRef   String    // 未来 CRM contactId 软引用 | 电话 | wa_id | 匿名会话键
+  linkId       String?   // 来源短链(软引用,无 FK)
+  qrAssetId    String?   // 来源 QR(软引用,无 FK)
+  voucherId    String?   // 在场的优惠码(软引用,无 FK)
+  utmSnapshot  Json?     // 成为来源那一刻捕获的 UTM
+  evidence     String    // 'source_observed'(扫/点已记录) | 'merchant_confirmed'
+  firstSeenAt  DateTime  @default(now())
+  source       String    // 'otto' | 'owner'
+  createdAt    DateTime  @default(now())
+  updatedAt    DateTime  @updatedAt
+  deletedAt    DateTime?
+
+  @@index([ownerId, subjectKind, subjectRef])
+  @@index([ownerId, linkId])
+}
+
+// 只进不改的流水账(append-only),承载全部量测事件。核心纪律(R5 D4):evidence 是**二值封闭集**
+// { 'observed' | 'attributed' } —— 写入器**硬拒** 'incremental' 及任何集外值(fail-closed):
+// L0 无对照实验,一个被核销的码永远不是「Otto 造成了这单」的证据。这与 ModelRegistryOverlay
+// 「只能收窄、永不能加」同构:证据字段永远够不到 incremental 那一格。
+// outcomeDelta 用**有符号增量**让退款回卷干净反冲(镜像 CreditLedger 的双 delta 可重建不变量):
+// redeem 事件 +1,clawback 事件 -1,净归因 = Σ outcomeDelta。
+model AttributionEvent {
+  id           String    @id // ULID
+  ownerId      String
+  organization Organization @relation(fields: [ownerId], references: [id])
+  brandId      String?
+  campaignId   String?
+  kind         String    // 'scan' | 'click' | 'source_tag' | 'redeem' | 'clawback' | 'outcome_link'(封闭集)
+  // 产生它的仪表(软引用,按 kind 至少一个非空):
+  linkId       String?
+  qrAssetId    String?
+  voucherId    String?
+  sourceTagId  String?
+  // 证据:二值——'observed'(亲眼看到的事件)| 'attributed'(经启发式/模型关联到下游成果)。
+  // 'incremental' 永久禁写。细鳞(源观测/商家确认/关联/模型归因)折进 evidenceRung 供内部报表,
+  // 但对外报表桶只有 observed / attributed 两格。写入器封闭校验在 PR-L0d 落地(本切片只落列)。
+  evidence     String    // 'observed' | 'attributed'(写入器封闭校验,拒 'incremental')
+  evidenceRung String?   // 'source_observed' | 'merchant_confirmed' | 'associated' | 'model_attributed'(内部细分,永不含 incremental)
+  outcomeDelta Int       @default(0) // +1 归因成果 / -1 回卷 / 0(scan/click/source_tag)
+  valueMinor   Int?      // 订单金额(minor units,source-observed);未知则 null
+  valueCurrency String?
+  utmSnapshot  Json?     // 抄表那一刻的 UTM
+  // 反滥用可观测性(§六 异常扫描)—— 只存粗粒度、隐私安全信号(PDPA,§十):
+  geoBucket    String?   // 粗区域桶(国家/州),永不精确定位
+  deviceBucket String?   // 粗设备类,永不指纹
+  ipHashPrefix String?   // 截断+哈希,仅限速率/异常,不作身份
+  idempotencyKey String  // 精确一次:'redeem:<voucherId>' | 'clawback:<externalOrderId>' | 'scan:<dedupHash>'
+  occurredAt   DateTime  @default(now())
+  createdAt    DateTime  @default(now())
+
+  // 精确一次(双 webhook / 双扫防重放):(ownerId, idempotencyKey) 全域唯一。idempotencyKey NOT NULL、
+  // 无 partial 谓词,故用 Prisma @@unique 建模(镜像 CreditLedger.@@unique([orgId, idempotencyKey]));
+  // 这样漂移门可见、迁移由 prisma 自动生成——与「raw 仅用于 Prisma 表达不了的 partial 索引」的房规一致。
+  @@unique([ownerId, idempotencyKey])
+  @@index([ownerId, kind, occurredAt])
+  @@index([ownerId, campaignId, occurredAt]) // campaign 级报表
 }
