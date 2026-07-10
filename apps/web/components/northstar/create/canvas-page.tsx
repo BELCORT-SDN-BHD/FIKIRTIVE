@@ -335,6 +335,10 @@ export function CanvasPage() {
     | { kind: "evolve-video"; sourceId: string; prompt: string }
     // [wave-c] 空画布直接要视频(无源):STALL 空态起步接住 —— 仍走花费确认(钱法不变)。
     | { kind: "make-fresh-video"; prompt: string }
+    // [wave-c-audit R1] 空画布/无源的头一张图也先问后花(安全 > 效率):图直出(余额即闸)
+    // 只保留给「就地进化既有图」;冷启动店主的第一次花费必须被问,兑现宪法「花钱前先问」,
+    // 别让刚被告知的店主在没被问的情况下被扣 2×IMAGE_COST。
+    | { kind: "make-fresh-image"; prompt: string }
     | { kind: "agent-plan"; intent: AgentIntent; brief: string; count: number }
     | { kind: "stitch"; ids: string[] }
     | null
@@ -703,13 +707,20 @@ export function CanvasPage() {
     if (mode === "agent") {
       runAgent(text);
     } else if (mode === "image") {
-      // 图模式 = 一次出 A/B 两版并排(N-Grok 判决头号差异化点),自动选中 → Compare 条即出
+      // 图模式 = 一次出 A/B 两版并排(N-Grok 判决头号差异化点),自动选中 → Compare 条即出。
       const source = singleSelected ?? objects.find((o) => o.kind === "image") ?? null;
-      evolveImageAB(source, text);
-      setTurns((prev) => [
-        ...prev,
-        { id: `t-${prev.length + 1}`, from: "otto", text: "Making an A and a B take side by side, so you can pick the winner.", steps: ["Generating A and B"] },
-      ]);
+      if (source) {
+        // 就地进化既有图 = 图直出(既定边界 A:余额即闸)—— 店主正看着这张、亲手改,非埋伏。
+        evolveImageAB(source, text);
+        setTurns((prev) => [
+          ...prev,
+          { id: `t-${prev.length + 1}`, from: "otto", text: "Making an A and a B take side by side, so you can pick the winner.", steps: ["Generating A and B"] },
+        ]);
+      } else {
+        // [wave-c-audit R1] 空画布/无源的头一张图:先问后花(安全 > 效率)。冷启动店主刚被
+        // 告知「花钱前先问」,不能在没被问的情况下被扣 2×IMAGE_COST —— 走花费确认再出 A/B。
+        setSpendAsk({ kind: "make-fresh-image", prompt: text });
+      }
     } else {
       // 视频过花费确认;空画布(无源)走 make-fresh-video,别再 objects[0] 崩。
       const source = singleSelected ?? objects.find((o) => o.kind === "video") ?? objects.find((o) => o.kind === "image") ?? null;
@@ -1874,14 +1885,18 @@ export function CanvasPage() {
             ? `Generate ${spendAsk.count} ${INTENT_META[spendAsk.intent].unit}${spendAsk.count > 1 ? "s" : ""}?`
             : spendAsk?.kind === "stitch"
               ? "Stitch these clips?"
-              : "Generate this video?"
+              : spendAsk?.kind === "make-fresh-image"
+                ? "Generate two images?"
+                : "Generate this video?"
         }
         ask={
           spendAsk?.kind === "agent-plan"
             ? `Otto will generate ${spendAsk.count} ${INTENT_META[spendAsk.intent].unit}${spendAsk.count > 1 ? "s" : ""} in parallel. This will spend real credits.`
             : spendAsk?.kind === "stitch"
               ? "Stitching re-renders the clips into one. This will spend real credits."
-              : "This will spend real credits."
+              : spendAsk?.kind === "make-fresh-image"
+                ? "You'll get an A and a B side by side to pick from. This will spend real credits."
+                : "This will spend real credits."
         }
         impacts={
           spendAsk?.kind === "agent-plan"
@@ -1896,21 +1911,39 @@ export function CanvasPage() {
                   "The stitched clip lands as a new object below the sources.",
                   "The source clips stay on the canvas.",
                 ]
-              : [
-                  spendAsk?.kind === "make-fresh-video"
-                    ? "The video lands on your canvas — evolve it from there."
-                    : "The video lands next to its source with a lineage line.",
-                  "Speed is a quick draft; Quality is sharper but slower.",
-                  "If it fails, you aren't charged.",
-                ]
+              : spendAsk?.kind === "make-fresh-image"
+                ? [
+                    `Two takes, A and B: ${IMAGE_COST} credits each, ${2 * IMAGE_COST} total. No charge until you confirm.`,
+                    "They land side by side so you can pick the winner.",
+                    "Evolving an image from there generates on send; anything that fails isn't charged.",
+                  ]
+                : [
+                    spendAsk?.kind === "make-fresh-video"
+                      ? "The video lands on your canvas — evolve it from there."
+                      : "The video lands next to its source with a lineage line.",
+                    "Speed is a quick draft; Quality is sharper but slower.",
+                    "If it fails, you aren't charged.",
+                  ]
         }
         confirmLabel={
-          spendAsk?.kind === "stitch" ? `Confirm stitch · ${STITCH_COST} credits` : `Confirm generate`
+          spendAsk?.kind === "stitch"
+            ? `Confirm stitch · ${STITCH_COST} credits`
+            : spendAsk?.kind === "make-fresh-image"
+              ? `Confirm generate · ${2 * IMAGE_COST} credits`
+              : `Confirm generate`
         }
         onConfirm={() => {
           const ask = spendAsk;
           setSpendAsk(null);
           if (ask?.kind === "stitch") stitchVideos(ask.ids);
+          else if (ask?.kind === "make-fresh-image") {
+            // 确认后才出 A/B 并扣费(evolveImageAB 内 spendCredits)——先问后花闭环。
+            evolveImageAB(null, ask.prompt);
+            setTurns((prev) => [
+              ...prev,
+              { id: `t-${prev.length + 1}`, from: "otto", text: "Making an A and a B take side by side, so you can pick the winner.", steps: ["Generating A and B"] },
+            ]);
+          }
         }}
         baseCredits={
           spendAsk?.kind === "agent-plan"
