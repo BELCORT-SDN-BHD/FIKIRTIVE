@@ -1,4 +1,5 @@
 import { describe, it, expect, vi } from "vitest";
+import { NextRequest } from "next/server";
 
 const mockRequireOwner = vi.fn();
 vi.mock("@/lib/auth-guard", () => ({ requireOwner: mockRequireOwner }));
@@ -13,7 +14,9 @@ vi.mock("@/lib/storage", () => ({
 const { GET } = await import("@/app/files/[...key]/route");
 const HASH = "a".repeat(64);
 
-function reqFor(): any { return { headers: { get: () => null }, url: "http://x/files" }; }
+function reqFor(): NextRequest {
+  return { headers: { get: () => null }, url: "http://x/files" } as unknown as NextRequest;
+}
 
 describe("/files route — cross-tenant guard", () => {
   it("404s when the key's owner != the resolved owner", async () => {

@@ -1,7 +1,8 @@
-import { describe, it, expect } from "vitest";
+import { it, expect } from "vitest";
 import { buildMetaPlanCard } from "../meta-plan-card";
+import type { MetaAdObject } from "../meta-objects";
 
-const objects = [{ id: "s1", level: "adset", name: "Set 1", status: "ACTIVE", dailyBudgetMinor: 1000, currency: "USD", accountId: "act_1" }] as any;
+const objects: MetaAdObject[] = [{ id: "s1", level: "adset", name: "Set 1", status: "ACTIVE", dailyBudgetMinor: 1000, currency: "USD", accountId: "act_1" }];
 
 it("resolves set_budget→budget_up (spend) when target>current; → ask not auto even in AUTO", () => {
   const card = buildMetaPlanCard(
@@ -44,14 +45,14 @@ it("throws on a set_budget with NO amount (never auto-zeroes a budget)", () => {
 });
 
 it("throws on a set_budget against an object with no daily budget (ad/lifetime)", () => {
-  const adObjects = [{ id: "a1", level: "ad", name: "Ad", status: "ACTIVE", currency: "USD", accountId: "act_1" }] as any;
+  const adObjects: MetaAdObject[] = [{ id: "a1", level: "ad", name: "Ad", status: "ACTIVE", currency: "USD", accountId: "act_1" }];
   expect(() => buildMetaPlanCard(
     { planTitle: "p", steps: [{ op: "set_budget", targetId: "a1", intent: { dailyBudgetMinor: 2000 } }] },
     adObjects, "ASK", "org1", "2026-06-28T00:00:00Z")).toThrow(/budget/i);
 });
 
 it("totalSpendImpactDisplay uses MYR currency and major units for a budget_up step", () => {
-  const myrObjects = [{ id: "s2", level: "adset", name: "MYR Set", status: "ACTIVE", dailyBudgetMinor: 1000, currency: "MYR", accountId: "act_2" }] as any;
+  const myrObjects: MetaAdObject[] = [{ id: "s2", level: "adset", name: "MYR Set", status: "ACTIVE", dailyBudgetMinor: 1000, currency: "MYR", accountId: "act_2" }];
   const card = buildMetaPlanCard(
     { planTitle: "p", steps: [{ op: "set_budget", targetId: "s2", intent: { dailyBudgetMinor: 2000 } }] },
     myrObjects, "ASK", "org1", "2026-06-28T00:00:00Z");
@@ -65,7 +66,7 @@ it("totalSpendImpactDisplay uses MYR currency and major units for a budget_up st
 
 // ── FIX B guard: an empty/invalid currency must NEVER throw (Intl rejects "") ──
 it("does not throw when the object currency is empty — falls back to a plain number", () => {
-  const noCur = [{ id: "s3", level: "adset", name: "No-cur Set", status: "ACTIVE", dailyBudgetMinor: 1000, currency: "", accountId: "act_3" }] as any;
+  const noCur: MetaAdObject[] = [{ id: "s3", level: "adset", name: "No-cur Set", status: "ACTIVE", dailyBudgetMinor: 1000, currency: "", accountId: "act_3" }];
   let card: ReturnType<typeof buildMetaPlanCard>;
   expect(() => {
     card = buildMetaPlanCard(
@@ -87,7 +88,7 @@ it("totalSpendImpactDisplay shows no added spend text (no hardcoded $) when ther
 // ── FIX E: a `resume` of a budgeted campaign restarts its daily spend → counts as spend impact ──
 it("totalSpendImpactDisplay includes a resume's current daily budget (not 'no added spend')", () => {
   // A PAUSED campaign carrying a daily budget; resuming it restarts that daily spend.
-  const pausedBudgeted = [{ id: "c9", level: "campaign", name: "Paused Camp", status: "PAUSED", dailyBudgetMinor: 3000, currency: "MYR", accountId: "act_9" }] as any;
+  const pausedBudgeted: MetaAdObject[] = [{ id: "c9", level: "campaign", name: "Paused Camp", status: "PAUSED", dailyBudgetMinor: 3000, currency: "MYR", accountId: "act_9" }];
   const card = buildMetaPlanCard(
     { planTitle: "p", steps: [{ op: "resume", targetId: "c9", intent: {} }] },
     pausedBudgeted, "ASK", "org1", "2026-06-28T00:00:00Z");

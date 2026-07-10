@@ -103,7 +103,10 @@ export function useCanvasGen(
   // guardian block, or a node-create that never recovered) must tell the user — otherwise they
   // see nothing, assume the app broke, and re-click, minting a fresh idempotencyKey → a real
   // second charge attempt (F19/F20).
-  const fail = (msg: string) => onError?.(msg || "That didn't go through — please try again.");
+  const fail = useCallback(
+    (msg: string) => onError?.(msg || "That didn't go through — please try again."),
+    [onError],
+  );
 
   const generateImage = useCallback(async (prompt: string, pos: Pos, entityIds: string[] = [], variantSel: Record<string, string> = {}, count: number = CANVAS_IMAGE_DEFAULT_COUNT) => {
     const vsel = Object.keys(variantSel).length ? variantSel : undefined;
@@ -150,7 +153,7 @@ export function useCanvasGen(
         onResolve(sib.id, urls[i], "done", generationId);
       }
     }, cancelledRef);
-  }, [projectId, onNode, onResolve, activeThreadId, onError, onBalanceRefresh]);
+  }, [projectId, onNode, onResolve, activeThreadId, fail, onBalanceRefresh]);
 
   const animate = useCallback(async (sourceGenerationId: string, sourceNodeId: string, prompt: string, pos: Pos): Promise<boolean> => {
     const { video } = await ensureModels();
@@ -169,7 +172,7 @@ export function useCanvasGen(
       onResolve(created.id, urls[0] ?? null, resolvedStatus, generationId);
     }, cancelledRef);
     return true;
-  }, [projectId, onNode, onResolve, activeThreadId, onError, onBalanceRefresh]);
+  }, [projectId, onNode, onResolve, activeThreadId, fail, onBalanceRefresh]);
 
   // Phase 3: text-to-video. The same paid video path as animate(), minus the
   // source frame — the gate allows video without sourceGenerationId (it's the
@@ -192,7 +195,7 @@ export function useCanvasGen(
       onResolve(created.id, urls[0] ?? null, resolvedStatus, generationId);
     }, cancelledRef);
     return true;
-  }, [projectId, onNode, onResolve, activeThreadId, onError, onBalanceRefresh]);
+  }, [projectId, onNode, onResolve, activeThreadId, fail, onBalanceRefresh]);
 
   return { generateImage, animate, generateVideoFromText, quoteCosts, cancelledRef };
 }

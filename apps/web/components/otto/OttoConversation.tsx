@@ -32,7 +32,6 @@ export function OttoConversation({
   entities,
   thread,
   balanceUsd,
-  onRefresh,
   onThreadUpdate,
   onBalanceRefresh,
 }: OttoConversationProps) {
@@ -63,8 +62,8 @@ export function OttoConversation({
   function rearmGenerationPoll() {
     setPollGaveUp(false);
     setPollTerminal(false);
-    pollCountRef.current = 0;
-    checkAgainUsedRef.current = false;
+    setPollRound("initial");
+    setPollNonce((n) => n + 1);
   }
 
   const mentionSuggestions = mentionQuery !== null
@@ -211,23 +210,26 @@ export function OttoConversation({
   const [pollGaveUp, setPollGaveUp] = useState(false);
   /** Set to true after "Check again" exhausts a second MAX_POLLS round — terminal message. */
   const [pollTerminal, setPollTerminal] = useState(false);
-  const pollCountRef = useRef(0);
-  const checkAgainUsedRef = useRef(false);
+  const [pollRound, setPollRound] = useState<"initial" | "retry">("initial");
+  /** Monotonic re-arm token — see OttoChatStream. Bumped on every rearm so the poll
+   *  effect always re-runs and resets its local pollCount to 0, even when the other
+   *  reset setters are no-ops (React would otherwise bail out and keep the stale window). */
+  const [pollNonce, setPollNonce] = useState(0);
 
   // Reset the give-up state whenever we switch threads.
   useEffect(() => {
     setPollGaveUp(false);
     setPollTerminal(false);
-    pollCountRef.current = 0;
-    checkAgainUsedRef.current = false;
+    setPollRound("initial");
   }, [thread.id]);
 
   useEffect(() => {
     if (!hasWorkingJob || pollGaveUp) return;
+    let pollCount = 0;
     const t = setInterval(() => {
-      pollCountRef.current += 1;
-      if (pollCountRef.current >= MAX_POLLS) {
-        if (checkAgainUsedRef.current) setPollTerminal(true);
+      pollCount += 1;
+      if (pollCount >= MAX_POLLS) {
+        if (pollRound === "retry") setPollTerminal(true);
         setPollGaveUp(true);
         clearInterval(t);
         return;
@@ -236,7 +238,7 @@ export function OttoConversation({
     }, POLL_MS);
     return () => clearInterval(t);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [hasWorkingJob, thread.id, pollGaveUp]);
+  }, [hasWorkingJob, thread.id, pollGaveUp, pollRound, pollNonce]);
 
   // leading-[1.5] — design-baseline body line-height (Analytics standard)
   return (
@@ -277,7 +279,6 @@ export function OttoConversation({
               cardIdByJobId={cardIdByJobId}
               submittedCardIds={submittedCardIds}
               pendingApprovalCardIds={pendingApprovalCardIds}
-              busy={busy}
               onApproved={(cardId) => {
                 // Record submission so the card flips to "working" optimistically.
                 setSubmittedCardIds((cur) => new Set(cur).add(cardId));
@@ -306,7 +307,7 @@ export function OttoConversation({
               }}
               onRetry={() => {
                 // Fresh card spawned — re-arm poll and refetch so it appears.
-                // Reset checkAgainUsedRef too: the retried job gets the full two-round
+                // Reset the poll round too: the retried job gets the full two-round
                 // stall budget, not a one-round dead-end from an earlier "Check again".
                 rearmGenerationPoll();
                 void refreshAndUpdate();
@@ -350,9 +351,8 @@ export function OttoConversation({
                 <button
                   type="button"
                   onClick={() => {
-                    checkAgainUsedRef.current = true;
+                    setPollRound("retry");
                     setPollGaveUp(false);
-                    pollCountRef.current = 0;
                     void refreshAndUpdate();
                   }}
                   className="bg-transparent border-0 p-0 text-primary font-semibold cursor-pointer underline"
@@ -450,7 +450,6 @@ function MessageRow({
   cardIdByJobId,
   submittedCardIds,
   pendingApprovalCardIds,
-  busy,
   onApproved,
   onChangeRequest,
   onRetry,
@@ -469,7 +468,6 @@ function MessageRow({
   cardIdByJobId: Map<string, string>;
   submittedCardIds: Set<string>;
   pendingApprovalCardIds: Set<string>;
-  busy: boolean;
   onApproved: (cardId: string) => void;
   onChangeRequest: (seed: string) => void;
   onRetry: () => void;

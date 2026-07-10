@@ -226,7 +226,7 @@ export function ProductShowcase({
       }
     }
     return out;
-  }, [catSel, categories, catCounts.uncat]);
+  }, [catSel, categories, catCounts]);
 
   const filtered = useMemo(() => {
     const q = query.trim().toLowerCase();

@@ -42,7 +42,7 @@ export function ResearchCard({ cardId, payload, balanceUsd, onBalanceRefresh, on
   const [approving, setApproving] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [insufficient, setInsufficient] = useState(false);
-  const [polling, setPolling] = useState(false);
+  const [polling, setPolling] = useState(view.status === "running");
   const pollTriesRef = useRef(0);
 
   // Re-seed local status when the parent injects a fresh payload (identity change), UNLESS we're
@@ -54,7 +54,6 @@ export function ResearchCard({ cardId, payload, balanceUsd, onBalanceRefresh, on
     prevPayloadRef.current = payload;
     if (localAdvancedRef.current) return;
     setStatus(parseResearchCardPayload(payload).status);
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [payload]);
 
   const estimate = view.estimatedCredits; // DISPLAYED credits (derived from the worker's reserve)
@@ -92,15 +91,6 @@ export function ResearchCard({ cardId, payload, balanceUsd, onBalanceRefresh, on
     }, POLL_INTERVAL_MS);
     return () => { cancelled = true; clearInterval(timer); };
   }, [polling, pollOnce]);
-
-  // Reload-mid-research recovery: if we mount already "running", start polling (never spends).
-  const didMountRef = useRef(false);
-  useEffect(() => {
-    if (didMountRef.current) return;
-    didMountRef.current = true;
-    if (status === "running") { pollTriesRef.current = 0; setPolling(true); }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
 
   // --- The ONLY spend trigger in this component (approve itself is $0 server-side) -----
   async function confirmApprove() {

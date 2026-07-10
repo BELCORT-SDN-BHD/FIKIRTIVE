@@ -5,7 +5,7 @@
  * Opens as an absolute overlay inside the canvas container (not position:fixed).
  * Escape or click-on-backdrop closes; clicking the panel itself does not.
  */
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useEffectEvent, useRef, useState } from "react";
 import Cropper from "react-easy-crop";
 import type { Area } from "react-easy-crop";
 import { getGeneration } from "@/lib/asset-actions";
@@ -130,16 +130,21 @@ export default function DetailPanel({
     setActiveModels(modelsRef.current);
     return modelsRef.current;
   };
-  useEffect(() => { void ensureModels(); /* eslint-disable-next-line react-hooks/exhaustive-deps */ }, []);
+  useEffect(() => { void ensureModels(); }, []);
   const videoModel = (activeModels?.video ?? activeVideoModel()) as GenVideoModel;
+  const currentVideoModel = useEffectEvent(() => videoModel);
 
   useEffect(() => {
+    const loadVideoModel = currentVideoModel();
     cancelledRef.current = false;
-    setState("loading");
-    setGen(null);
-    setSelectedIdx(0);
-    setCropOpen(false);
-    setEditStatus("idle");
+    queueMicrotask(() => {
+      if (cancelledRef.current) return;
+      setState("loading");
+      setGen(null);
+      setSelectedIdx(0);
+      setCropOpen(false);
+      setEditStatus("idle");
+    });
     getGeneration(generationId).then((result) => {
       if (cancelledRef.current) return;
       if ("error" in result) {
@@ -158,7 +163,7 @@ export default function DetailPanel({
 
       // Init aspect picker default (F18: use the server-resolved model, falling back to the
       // client default only until it loads — display-only, the spend paths await the real model)
-      const vm = videoModel;
+      const vm = loadVideoModel;
       const opts = GEN_VIDEO_MODEL_OPTIONS[vm];
       if (opts?.aspectRatios?.length) {
         const def = videoDefaults(vm).aspectRatio || opts.aspectRatios[0]!;
@@ -172,14 +177,16 @@ export default function DetailPanel({
 
   // Clear edit composer on generation change
   useEffect(() => {
-    setEditPrompt("");
-    setEditIds([]);
-    setComposerKey(String(Date.now()));
+    queueMicrotask(() => {
+      setEditPrompt("");
+      setEditIds([]);
+      setComposerKey(String(Date.now()));
+    });
   }, [gen?.id]);
 
   useEffect(() => {
     if (!gen) return;
-    setFavoriteLocal(gen.variants[selectedIdx]?.favorite ?? gen.favorite);
+    queueMicrotask(() => setFavoriteLocal(gen.variants[selectedIdx]?.favorite ?? gen.favorite));
   }, [gen, selectedIdx]);
 
   // Esc key

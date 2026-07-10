@@ -579,7 +579,9 @@ export async function syncStoryboardMedia(
         // frame, so it no longer represents the shot. So: cascade ⇒ omit videoCardId +
         // videoGenerationId (key-omission), and do NOT apply the staged video write.
         if (cascadeShots.has(s.shotId)) {
-          const { videoCardId: _drop1, videoGenerationId: _drop2, ...rest } = s;
+          const rest = { ...s };
+          delete rest.videoCardId;
+          delete rest.videoGenerationId;
           return { ...rest, firstFrameGenerationId: frameGen! };
         }
         const next = { ...s };

@@ -88,7 +88,7 @@ describe("requireOwner — fail-closed", () => {
   });
 
   it("is idempotent — a second call returns the same org and does not re-grant", async () => {
-    const userId = await ensureUser(NEW_EMAIL);
+    await ensureUser(NEW_EMAIL);
     mockAuth.mockResolvedValue({ user: { email: NEW_EMAIL } });
     const first = await requireOwner();
     if ("error" in first) throw new Error(first.error);

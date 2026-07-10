@@ -4,6 +4,7 @@
 export class NextRequest {
   nextUrl: URL;
   constructor(url: string, init?: RequestInit) {
+    void init;
     this.nextUrl = new URL(url);
   }
 }

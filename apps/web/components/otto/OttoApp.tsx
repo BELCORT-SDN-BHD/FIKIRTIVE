@@ -204,18 +204,22 @@ export function OttoApp({
   }, []);
 
   useEffect(() => {
-    setThreads((prev) => {
-      if (!activeThreadId || initialThreads.some((t) => t.id === activeThreadId)) return initialThreads;
-      const active = prev.find((t) => t.id === activeThreadId && t.projectId === curProjectId);
-      return active ? [active, ...initialThreads] : initialThreads;
+    queueMicrotask(() => {
+      setThreads((prev) => {
+        if (!activeThreadId || initialThreads.some((t) => t.id === activeThreadId)) return initialThreads;
+        const active = prev.find((t) => t.id === activeThreadId && t.projectId === curProjectId);
+        return active ? [active, ...initialThreads] : initialThreads;
+      });
     });
   }, [activeThreadId, curProjectId, initialThreads]);
 
   useEffect(() => {
-    setSidebarThreadList((prev) => {
-      if (!activeThreadId || sidebarThreads.some((t) => t.id === activeThreadId)) return sidebarThreads;
-      const active = prev.find((t) => t.id === activeThreadId && t.projectId === curProjectId);
-      return active ? [active, ...sidebarThreads] : sidebarThreads;
+    queueMicrotask(() => {
+      setSidebarThreadList((prev) => {
+        if (!activeThreadId || sidebarThreads.some((t) => t.id === activeThreadId)) return sidebarThreads;
+        const active = prev.find((t) => t.id === activeThreadId && t.projectId === curProjectId);
+        return active ? [active, ...sidebarThreads] : sidebarThreads;
+      });
     });
   }, [activeThreadId, curProjectId, sidebarThreads]);
 
@@ -357,7 +361,7 @@ export function OttoApp({
       newCampaignPendingRef.current = false;
       setNewCampaignPending(false);
     }
-  }, [router, projectHref, curProjectId]);
+  }, [projectHref, curProjectId]);
 
   // Switch to another project (optionally opening a specific thread). Same-project
   // thread clicks are handled by state (snappy); cross-project goes through here.

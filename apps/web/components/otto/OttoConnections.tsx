@@ -21,6 +21,7 @@ export default function OttoConnections() {
   const [saveError, setSaveError] = useState<string | null>(null);
 
   async function load() {
+    await Promise.resolve();
     setState({ phase: "loading" });
     try {
       const res = await getMetaConnection();
@@ -69,7 +70,7 @@ export default function OttoConnections() {
       setSaveError(res.error);
     }
   }
-  useEffect(() => { void load(); }, []);
+  useEffect(() => { queueMicrotask(() => void load()); }, []);
 
   useEffect(() => {
     if (state.phase !== "connected") return;

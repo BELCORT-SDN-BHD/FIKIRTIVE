@@ -172,16 +172,18 @@ export function OttoResult({ payload, onTweak, sourceCardId, onMakeAnother }: Ot
     return null;
   });
   useEffect(() => {
-    if (urls.length === 1) {
-      setSelected(0);
-      return;
-    }
-    if (pickKey) {
-      const stored = readPick(pickKey);
-      setSelected(stored !== null && stored >= 0 && stored < urls.length ? stored : null);
-      return;
-    }
-    setSelected(null);
+    queueMicrotask(() => {
+      if (urls.length === 1) {
+        setSelected(0);
+        return;
+      }
+      if (pickKey) {
+        const stored = readPick(pickKey);
+        setSelected(stored !== null && stored >= 0 && stored < urls.length ? stored : null);
+        return;
+      }
+      setSelected(null);
+    });
   }, [pickKey, urls.length]);
 
   // Keep localStorage in sync when the user picks
@@ -193,7 +195,7 @@ export function OttoResult({ payload, onTweak, sourceCardId, onMakeAnother }: Ot
   // Fix #2 — honest copy state
   const [copyState, setCopyState] = useState<CopyState>("idle");
   useEffect(() => {
-    setCopyState("idle");
+    queueMicrotask(() => setCopyState("idle"));
   }, [selected]);
 
   async function copyLink(url: string) {

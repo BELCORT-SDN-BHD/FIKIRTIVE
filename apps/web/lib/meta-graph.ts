@@ -2,13 +2,27 @@ import { META_GRAPH_VERSION } from "./meta-oauth";
 
 export type AdFile = { bytes: Buffer | Uint8Array; filename: string; contentType: string };
 
+type MetaGraphResponse = {
+  [key: string]: unknown;
+  data?: Record<string, unknown>[];
+  error?: { message?: string };
+  paging?: { next?: string };
+  id?: unknown;
+  images?: Record<string, { hash?: string; url?: string }>;
+  creative?: Record<string, unknown>;
+};
+
+function graphResponse(value: unknown): MetaGraphResponse {
+  return typeof value === "object" && value !== null ? value as MetaGraphResponse : {};
+}
+
 /** Multipart POST to the Graph API. Same auth + `metaError`/code-190 contract as `metaGraphPost`. */
 export async function metaGraphUpload(
   token: string,
   path: string,
   fields: Record<string, string>,
   file: AdFile,
-): Promise<any> {
+): Promise<MetaGraphResponse> {
   const u = `https://graph.facebook.com/${META_GRAPH_VERSION}/${path}`;
   const fd = new FormData();
   for (const [k, v] of Object.entries(fields)) fd.append(k, v);
@@ -19,7 +33,7 @@ export async function metaGraphUpload(
     headers: { Authorization: `Bearer ${token}` },
     body: fd,
   });
-  const j = await r.json();
+  const j = graphResponse(await r.json());
   if (!r.ok || j?.error) {
     const e = new Error(j?.error?.message || "graph error");
     (e as { metaError?: unknown }).metaError = j?.error;
@@ -55,7 +69,7 @@ export async function uploadAdVideo(token: string, accountId: string, file: AdFi
 }
 
 /** Write Graph POST. Throws on a non-200 or a Meta `error` body (carries `metaError`). */
-export async function metaGraphPost(token: string, path: string, body: Record<string, string | number>): Promise<any> {
+export async function metaGraphPost(token: string, path: string, body: Record<string, string | number>): Promise<MetaGraphResponse> {
   const u = `https://graph.facebook.com/${META_GRAPH_VERSION}/${path}`;
   const params: Record<string, string> = {};
   for (const [k, v] of Object.entries(body)) params[k] = String(v);
@@ -64,7 +78,7 @@ export async function metaGraphPost(token: string, path: string, body: Record<st
     headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/x-www-form-urlencoded" },
     body: new URLSearchParams(params).toString(),
   });
-  const j = await r.json();
+  const j = graphResponse(await r.json());
   if (!r.ok || j?.error) {
     const e = new Error(j?.error?.message || "graph error");
     (e as { metaError?: unknown }).metaError = j?.error;
@@ -74,23 +88,27 @@ export async function metaGraphPost(token: string, path: string, body: Record<st
 }
 
 /** Read-only Graph GET. Throws on a non-200 or a Meta `error` body (carries `metaError`). */
-export async function metaGraphGet(token: string, path: string, params: Record<string, string>): Promise<any> {
+export async function metaGraphGet<T extends MetaGraphResponse = MetaGraphResponse>(
+  token: string,
+  path: string,
+  params: Record<string, string>,
+): Promise<T> {
   const fixture = metaGraphFixture(path, params);
-  if (fixture) return fixture;
+  if (fixture) return fixture as T;
 
   const u = new URL(`https://graph.facebook.com/${META_GRAPH_VERSION}/${path}`);
   for (const [k, v] of Object.entries(params)) u.searchParams.set(k, v);
   const r = await fetch(u.toString(), { headers: { Authorization: `Bearer ${token}` } });
-  const j = await r.json();
+  const j = graphResponse(await r.json());
   if (!r.ok || j?.error) {
     const e = new Error(j?.error?.message || "graph error");
     (e as { metaError?: unknown }).metaError = j?.error;
     throw e;
   }
-  return j;
+  return j as T;
 }
 
-function metaGraphFixture(path: string, params: Record<string, string>): any | null {
+function metaGraphFixture(path: string, params: Record<string, string>): MetaGraphResponse | null {
   if (process.env.NODE_ENV === "production" || process.env.META_GRAPH_MOCK !== "fixture") return null;
 
   if (path === "me/adaccounts") {
@@ -176,15 +194,13 @@ function metaGraphFixture(path: string, params: Record<string, string>): any | n
  *  cap so lists longer than one page (Meta defaults to 25) aren't silently truncated. Best-effort:
  *  a mid-pagination error returns what was collected so far rather than discarding page 1.
  *  Requests limit=100 to minimize round-trips. */
-// eslint-disable-next-line @typescript-eslint/no-explicit-any
-export async function metaGraphGetAll(token: string, path: string, params: Record<string, string>, maxPages = 10): Promise<any[]> {
+export async function metaGraphGetAll(token: string, path: string, params: Record<string, string>, maxPages = 10): Promise<Record<string, unknown>[]> {
   const first = await metaGraphGet(token, path, { limit: "100", ...params });
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  let out: any[] = first.data ?? [];
+  let out = first.data ?? [];
   let next: string | undefined = first.paging?.next;
   for (let i = 1; i < maxPages && next; i++) {
     const r = await fetch(next, { headers: { Authorization: `Bearer ${token}` } });
-    const j = await r.json();
+    const j = graphResponse(await r.json());
     if (!r.ok || j?.error) break;
     out = out.concat(j.data ?? []);
     next = j.paging?.next;

@@ -160,15 +160,19 @@ export function OttoChatStream({
   /** Set to true after the user has clicked "Check again" and the second MAX_POLLS round
    *  also exhausted — shows a terminal message instead of re-arming indefinitely. */
   const [pollTerminal, setPollTerminal] = useState(false);
-  const pollCountRef = useRef(0);
-  /** Track whether the user has already clicked "Check again" once (armed → gave up → terminal). */
-  const checkAgainUsedRef = useRef(false);
+  const [pollRound, setPollRound] = useState<"initial" | "retry">("initial");
+  /** Monotonic re-arm token. Bumped on every rearm so the bounded-poll effect below
+   *  ALWAYS re-runs (resetting its local pollCount to 0), even when pollGaveUp /
+   *  pollTerminal / pollRound are already at their reset values — otherwise React
+   *  bails out and a mid-flight poll window carries its spent budget into a
+   *  freshly-approved generation, showing "Check again" early. */
+  const [pollNonce, setPollNonce] = useState(0);
 
   function rearmGenerationPoll() {
     setPollGaveUp(false);
     setPollTerminal(false);
-    pollCountRef.current = 0;
-    checkAgainUsedRef.current = false;
+    setPollRound("initial");
+    setPollNonce((n) => n + 1);
   }
 
   // useChat constructs its Chat (and captures `transport` + initial `messages`) ONCE.
@@ -223,8 +227,8 @@ export function OttoChatStream({
   // ARRIVE during this session (optimistic echo, streamed replies, injected results).
   // This component is keyed by thread.id in OttoView, so a thread switch remounts
   // with a fresh seed — the new thread's history won't waterfall-animate either.
-  const initialIdsRef = useRef<Set<string>>(new Set(chatInit.messages.map((m) => m.id)));
-  const isNewMessage = (id: string) => !initialIdsRef.current.has(id);
+  const [initialIds] = useState(() => new Set(chatInit.messages.map((m) => m.id)));
+  const isNewMessage = (id: string) => !initialIds.has(id);
 
   const { messages, setMessages, sendMessage, status, error } = useChat<OttoUiMessage>({
     transport: chatInit.transport,
@@ -364,13 +368,14 @@ export function OttoChatStream({
   // Bounded poll: a worker that fails-closed without writing a terminal message would
   // otherwise keep hasWorkingJob true forever. After ~2 min we stop and show "Check again".
   // If the user clicks "Check again" and we exhaust again, show a terminal message
-  // instead of looping forever (checkAgainUsedRef guards the second exhaustion).
+  // instead of looping forever (pollRound tracks the second exhaustion).
   useEffect(() => {
     if (!hasWorkingJob || pollGaveUp) return;
+    let pollCount = 0;
     const t = setInterval(() => {
-      pollCountRef.current += 1;
-      if (pollCountRef.current >= MAX_POLLS) {
-        if (checkAgainUsedRef.current) {
+      pollCount += 1;
+      if (pollCount >= MAX_POLLS) {
+        if (pollRound === "retry") {
           // Second exhaustion after "Check again" → terminal, stop re-arming.
           setPollTerminal(true);
         }
@@ -382,7 +387,7 @@ export function OttoChatStream({
     }, POLL_MS);
     return () => clearInterval(t);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [hasWorkingJob, thread.id, pollGaveUp]);
+  }, [hasWorkingJob, thread.id, pollGaveUp, pollRound, pollNonce]);
 
   const { scrollRef, contentRef, isAtBottom, scrollToBottom } = useStickToBottom();
 
@@ -417,10 +422,7 @@ export function OttoChatStream({
     setRetryDraft(null);
     setAttachError(null);
     // A new turn may queue a new generation — re-arm polling (mirror OttoConversation).
-    setPollGaveUp(false);
-    setPollTerminal(false);
-    pollCountRef.current = 0;
-    checkAgainUsedRef.current = false;
+    rearmGenerationPoll();
     // Capture and clear attachments before send. Revoke local preview blob URLs
     // (the source is the generationId, not the blob) so repeated attach/send doesn't leak.
     const attachedNow = attachedRefs;
@@ -888,7 +890,7 @@ export function OttoChatStream({
                     }}
                     onRetry={() => {
                       // A fresh card was spawned — re-arm poll and refetch so it appears.
-                      // Reset checkAgainUsedRef too: the retried job gets the full two-round
+                      // Reset the poll round too: the retried job gets the full two-round
                       // stall budget, not a one-round dead-end from an earlier "Check again".
                       rearmGenerationPoll();
                       void refetchAndAppendCards();
@@ -1077,9 +1079,8 @@ export function OttoChatStream({
                 <button
                   type="button"
                   onClick={() => {
-                    checkAgainUsedRef.current = true;
+                    setPollRound("retry");
                     setPollGaveUp(false);
-                    pollCountRef.current = 0;
                     void pollAndInjectResults();
                   }}
                   className="border-0 bg-transparent p-0 text-primary font-semibold cursor-pointer underline"

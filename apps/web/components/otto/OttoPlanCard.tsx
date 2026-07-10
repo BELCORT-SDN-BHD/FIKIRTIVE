@@ -64,14 +64,17 @@ export function OttoPlanCard({
   const [confirming, setConfirming] = useState(false);
 
   useEffect(() => {
-    if (cardState !== "working") { setElapsed(0); return; }
+    if (cardState !== "working") {
+      queueMicrotask(() => setElapsed(0));
+      return;
+    }
     const start = Date.now();
     const t = setInterval(() => setElapsed(Math.floor((Date.now() - start) / 1000)), 1000);
     return () => clearInterval(t);
   }, [cardState]);
 
   useEffect(() => {
-    if (cardState !== "idle") setConfirming(false);
+    if (cardState !== "idle") queueMicrotask(() => setConfirming(false));
   }, [cardState]);
 
   const isVideo = p.kind === "video";

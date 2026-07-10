@@ -37,7 +37,7 @@ describe("metaGraphGet fixture", () => {
 
     expect(fetchMock).not.toHaveBeenCalled();
     expect(accounts.data).toHaveLength(2);
-    expect(accounts.data[0]).toMatchObject({ id: "act_qa_1", name: "Kaia Cafe QA Ads", currency: "MYR" });
+    expect(accounts.data?.[0]).toMatchObject({ id: "act_qa_1", name: "Kaia Cafe QA Ads", currency: "MYR" });
     expect(metrics).toMatchObject({ spend: "48.75", impressions: "18342", purchaseRoas: "3.1" });
     expect(series.map((d) => d.date)).toEqual(["2026-06-28", "2026-06-29", "2026-06-30"]);
     expect(ads.map((ad) => ad.adId)).toEqual(["ad_qa_1", "ad_qa_2"]);

@@ -60,7 +60,6 @@ export async function coworkGenerate(raw: unknown): Promise<{ id: string } | { e
   const proposal = coworkProposalSchema.safeParse({ kind: p.kind, desiredAspect: p.desiredAspect, desiredDuration: p.desiredDuration, desiredAudio: p.desiredAudio, structuredPrompt: p.structuredPrompt, entityIds: p.entityIds ?? [], variantSel: p.variantSel ?? {} });
   if (!proposal.success) return { error: "This card is no longer valid." };
   const model = typeof p.model === "string" ? p.model : null;
-  const params = (p.params ?? {}) as { aspectRatio?: string; resolution?: string; durationSeconds?: number; audio?: boolean; count?: number };
   if (!model) return { error: "This card is missing a model." };
   // i2v source frame: server-trusted (it was owner+project validated when the card was
   // persisted). startGen.checkCast re-validates it at spend (the backstop).

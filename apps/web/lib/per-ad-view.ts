@@ -29,7 +29,7 @@ function rangeLabel(preset: string): string {
 }
 function fmtDate(iso: string): string {
   // iso date only — avoid locale/timezone surprises: "2026-07-03" → "Jul 3"
-  const [y, m, d] = iso.slice(0, 10).split("-");
+  const [, m, d] = iso.slice(0, 10).split("-");
   const mon = ["", "Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"][Number(m)];
   return `${mon} ${Number(d)}`;
 }
