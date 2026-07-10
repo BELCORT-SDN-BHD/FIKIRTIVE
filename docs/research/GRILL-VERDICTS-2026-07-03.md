@@ -236,3 +236,12 @@
   ③ **Shopee 收件箱真话表**：站内聊天代管明写"不支持"（聊天 API 对新 ISV 已关门，龙头全体绕行）；主攻仍开放的 listing/订单/促销/广告 API + 合规导流 WhatsApp；窄门备用=Qiscus 式单店自助凭证路线。
   ④ **请评/群发产品形态**：照抄借鉴书十条清单（Birdeye 三把锁：全量触达无情感预检/奖励永不挂评价/反 gating 入商家条款;SleekFlow 安全网：发前额度预检/掉档弹横幅/天数化降速剧本;ManyChat 逐国费率透明）；**差异化立项候选**：质量分驱动的自动爬坡调度器（全行业空白，Otto 独门）。
 - **借鉴先行律（founder 2026-07-10 常设指令："记得之后遇到这样的问题，先借鉴"）**：凡遇平台政策雷/接口关门/合规红线类问题，第一步永远是查**龙头怎么活的**（官方源+龙头自家条款与帮助文档），产出"抄什么/改什么/为什么我们不同"再设计我方解法；禁止未查先创。已同步入 fleet-orchestration 教训清单。
+
+## 追加判决（2026-07-11，founder 六答，Fable 裁定归档）
+
+- **连接器自助化（founder 原话："让他们自己 login 然后 connect 就好，我们做的就是那个 connector"）**：五把钥匙**不是 founder 手工搬运的差事**——L2(WhatsApp)/L3(EasyStore) 及 GBP/Shopee 的接入，正确形态=**产品内的 connector：商家自己登录、授权连接（OAuth/embedded signup）**。founder 从关键路径移出；这本身就是"连后台即成品"要卖的东西。点亮章 L2/L3 状态由「待 founder 拿钥匙」改为「建 connector（商家自助连）」。首商家 Saranghaeyo 由店主自己点连接（founder 协调即可，不代交密钥）。
+- **创作区 L-C 开建**（founder "是的"）：已派 Opus 施工（首片 $0 接线 + canvas 核心钱路；钱路片必过 money-safety-review + 第四闸）。
+- **Quality 档 ×1.5 倍率——撤（founder 质疑"这个选项合理吗"，Fable 查证后裁）**：真后台只有 seedream(图)/seedance-2-fast(视频)两模型，无独立 quality 模型；原型"Quality=Speed+50%"是无成本依据的凭空加价，撞宪法5"永不赚在浪费上"。**一律走 pricedGenCredits 按真实模型成本×毛利(≥45%地板)收**；Speed/Quality toggle 仅当映射到真实更贵参数（更高分辨率/更长时长）才保留，否则本期撤。
+- **视频拼接（stitch）先做 $0 版**（founder "ok"）：简单顺序拼接免费；AI 转场收费版待下一波 costing。
+- **第一笔钱组合 = 创作(L-C) + 发布(L1) + 会员唤回(L4)**（founder "可以"）：三者跑通 + 生产三闸过即对 Saranghaeyo 开收（收钱条件句，非日期）。
+- **误建空项目 wt-prod-deploy**：Railway CLI 后台不一致，多次 delete 报 not found 但 list 仍显示；需 founder 网页版手删（无成本，非阻断）。
