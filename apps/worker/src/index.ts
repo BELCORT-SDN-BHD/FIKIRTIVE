@@ -20,7 +20,9 @@ import { handleGen, reapStaleGenJobs } from "./jobs/gen.js";
 import { reapStaleLlmReservations } from "./jobs/llm-reservation-reaper.js";
 import { handleCaption } from "./jobs/caption.js";
 import { handleResearch, reapStaleResearchJobs } from "./jobs/research.js";
+import { handlePublish, reapStalePublishAttempts, scanDuePublishPosts } from "./jobs/publish.js";
 import { maybeRunNightlyBackup } from "./db-backup.js";
+import { publishChainWarning } from "./publish-env-check.js";
 import {
   RENDER_DLQ,
   RENDER_QUEUE_POLICY,
@@ -35,11 +37,15 @@ import {
   RESEARCH_QUEUE,
   RESEARCH_DLQ,
   RESEARCH_QUEUE_POLICY,
+  PUBLISH_QUEUE,
+  PUBLISH_DLQ,
+  PUBLISH_QUEUE_POLICY,
   type RenderJobData,
   type RefGenJobData,
   type GenJobData,
   type CaptionJobData,
   type ResearchJobData,
+  type PublishJobData,
 } from "@fikirtive/core";
 import { prisma } from "@fikirtive/db";
 
@@ -49,6 +55,15 @@ const connectionString = process.env.DATABASE_URL || process.env.DATABASE_URL_PO
 if (!connectionString) {
   console.error("[worker] DATABASE_URL is not set — exiting");
   process.exit(1);
+}
+
+// L1 publish-chain contract (spec §四), fail-SOFT: a half-configured chain (some secrets set, one
+// missing) would silently fail every publish as an opaque NEEDS_ATTENTION, so surface it LOUDLY at
+// boot — by variable NAME, never value. Never exits: the chain is inert until Meta App Review, so a
+// fully-unset chain is the normal pre-launch state and must not take the whole worker down.
+{
+  const warning = publishChainWarning(process.env);
+  if (warning) console.warn(warning);
 }
 
 // Minimal error monitoring (closed-beta P0). No-op unless SENTRY_DSN is set.
@@ -106,6 +121,11 @@ async function main(): Promise<void> {
   await boss.createQueue(QUEUES.caption, { ...CAPTION_QUEUE_POLICY });
   await boss.createQueue(RESEARCH_DLQ);
   await boss.createQueue(RESEARCH_QUEUE, { ...RESEARCH_QUEUE_POLICY });
+  // L1 publish queue (Seam 6): SAME policy object as web (apps/web/lib/queue.ts) so boot order
+  // can't split them. The consumer (boss.work) + scheduler + reaper land in the publish-worker
+  // energize slice; for now the queue exists but nothing produces to it (fail-closed, inert).
+  await boss.createQueue(PUBLISH_DLQ);
+  await boss.createQueue(PUBLISH_QUEUE, { ...PUBLISH_QUEUE_POLICY });
 
   await boss.work<IngestJobData>(QUEUES.ingest, { batchSize: 1 }, async ([job]) => {
     if (!job) return;
@@ -175,6 +195,20 @@ async function main(): Promise<void> {
     },
   );
 
+  // L1 organic publish (spec §四A). One due, approved ScheduledPost per job → drives the shared
+  // adapter orchestration. Fail-closed by construction: the scheduler below only enqueues posts
+  // whose connection can publish RIGHT NOW, and the handler re-checks + triple-locks idempotency.
+  await boss.work<PublishJobData>(
+    PUBLISH_QUEUE,
+    { batchSize: 1, includeMetadata: true },
+    async ([job]) => {
+      if (!job) return;
+      console.log(`[worker] publish job ${job.id} start (try ${job.retryCount + 1})`, job.data);
+      await runHandler(() => handlePublish(job.data, job.retryCount));
+      console.log(`[worker] publish job ${job.id} done`);
+    },
+  );
+
   // Heartbeat: the status panel's "worker alive" signal (appendix A) + the durable
   // liveness row /api/health reads (2026-07-04 可观测性盲区修复). A failed write is
   // logged but never crashes the worker — health degrades to "stale", which is the signal.
@@ -207,6 +241,10 @@ async function main(): Promise<void> {
       // this flips the stranded RUNNING job → FAILED + its card → failed (pure UX, $0).
       const sn = await reapStaleResearchJobs();
       if (sn) console.log(`[worker] reaped ${sn} stale research job(s)`);
+      // L1 publish (spec §四F): reconcile dangling APPLYING attempts (worker crashed mid-publish) —
+      // query Meta's truth first, then PUBLISHED vs NEEDS_ATTENTION, never a blind re-post.
+      const pn = await reapStalePublishAttempts();
+      if (pn) console.log(`[worker] reconciled ${pn} dangling publish attempt(s)`);
       // F41(c): recover uploads whose ingest dispatch was lost (finalize commits
       // rows before the send). singletonKey dedupes while a re-send is in flight.
       const ri = await redispatchLostIngest((assetId) =>
@@ -226,6 +264,30 @@ async function main(): Promise<void> {
   setInterval(() => { void reap(); void maybeRunNightlyBackup(); }, 5 * 60_000);
   void reap(); // also sweep once on startup (clears anything stranded by a prior crash)
   void maybeRunNightlyBackup(); // startup check too — a worker restart must not skip a missed night
+
+  // L1 publish scheduler (spec §四A): IG has no native scheduling, so we poll for due, approved
+  // posts and enqueue them. The scan is canPublish-gated → before App Review it returns nothing,
+  // so this is an inert no-op in prod (zero behavior change). singletonKey dedupes an id whose
+  // previous publish is still in flight; the handler's triple idempotency is the real guard.
+  let scheduling = false;
+  const schedule = async () => {
+    if (scheduling) return;
+    scheduling = true;
+    try {
+      const due = await scanDuePublishPosts();
+      for (const scheduledPostId of due) {
+        await boss.send(PUBLISH_QUEUE, { scheduledPostId } satisfies PublishJobData, { singletonKey: `publish:${scheduledPostId}` });
+      }
+      if (due.length) console.log(`[worker] enqueued ${due.length} due publish job(s)`);
+    } catch (e) {
+      console.error("[worker] publish scheduler error:", e);
+      captureError(e);
+    } finally {
+      scheduling = false;
+    }
+  };
+  setInterval(() => void schedule(), 60_000);
+  void schedule(); // sweep due posts once on startup too
 
   console.log("[worker] started — queues:", Object.values(QUEUES).join(", "));
 }

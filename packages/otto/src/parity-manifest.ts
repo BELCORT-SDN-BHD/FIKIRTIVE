@@ -264,6 +264,7 @@ export const PARITY_MANIFEST = {
   "api:meta/authorize.GET": { exempt: "ACCOUNT_SECURITY", reason: "OAuth authorization starts external account binding." },
   "api:meta/callback.GET": { exempt: "ACCOUNT_SECURITY", reason: "OAuth callback binds external accounts and must stay human-controlled." },
   "api:meta/data-deletion.POST": { exempt: "ACCOUNT_SECURITY", reason: "Meta-initiated data-deletion callback (signed_request auth); unbinds the external account — machine-called, never Otto." },
+  "api:media/pub/[token].GET": { exempt: "ADMIN", reason: "L1 signed media proxy (HMAC token) Meta's servers fetch during an already-approved publish; machine-called infra/ops surface — streams owner-scoped media bytes, exposes no Otto-operable user capability (the human already approved the post that references it)." },
   "api:otto/stream.POST": { todoSkill: true, reason: "Otto stream is the agent transport; needs a manifest convention separate from individual skills." },
   "api:otto/thread-activity.GET": { todoSkill: true, reason: "Thread activity read needs free/read skill parity." },
   "api:stripe/webhook.POST": { exempt: "MONEY_IN", reason: "Stripe webhook is money-in and authenticated by Stripe signature, not Otto." },

@@ -1181,6 +1181,11 @@ model PublishAttempt {
   startedAt       DateTime      @default(now())
   finishedAt      DateTime?
   metaPostId      String?       // set when state = 'APPLIED'
+  // L1 (spec §四D lock 3 + §四F recovery): the IG media container id from step ①/② (create+poll),
+  // stored BEFORE the media_publish call. On a crash/redelivery the reaper's reconcile re-checks
+  // this exact container (idempotent) rather than rebuilding + re-publishing → never double-posts.
+  // Null for FB (its /feed has no creation_id; recovery falls back to a recent-posts query).
+  creationId      String?
   error           String?
 
   // A raw partial UNIQUE INDEX on (scheduledPostId) WHERE state = 'APPLYING' lives in the

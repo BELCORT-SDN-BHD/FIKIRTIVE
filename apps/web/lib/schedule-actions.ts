@@ -12,9 +12,16 @@ import {
   type ScheduleChannel,
 } from "@fikirtive/core";
 import { requireOwner } from "./auth-guard";
+import { isImpersonating } from "@/lib/better-auth/compat";
 import { draftScheduledPost } from "./schedule-service";
 import { channelRegistry } from "./channels/registry";
 import type { ChannelId } from "./channels/types";
+
+// F15 / L1: staff impersonating a customer must never MUTATE that customer's schedule — approve in
+// particular consents to a real, IRREVERSIBLE external publish on the tenant's behalf, forging their
+// consent (spec §五). Impersonation is for SEEING what they see, not acting as them; reads stay open.
+// Same guard + string as the money-safety spend paths (meta-write-actions.ts approveMetaActionPlan).
+const IMPERSONATION_BLOCK = "Paused while impersonating a customer — exit impersonation to do this.";
 
 // Statuses whose CONTENT the owner may still edit. DRAFT is freely editable; a material edit to an
 // approved (SCHEDULED) post revokes consent (drops to DRAFT). Everything else (PUBLISHING / terminal
@@ -80,6 +87,7 @@ export async function createScheduledPost(
 ): Promise<{ ok: true; id: string } | { error: string }> {
   const gate = await requireOwner();
   if ("error" in gate) return gate;
+  if (await isImpersonating()) return { error: IMPERSONATION_BLOCK };
 
   const res = await draftScheduledPost({
     ownerId: gate.ownerId, // from the SESSION — client-supplied owner ids are ignored
@@ -109,6 +117,7 @@ export async function updateScheduledPost(
   if (typeof id !== "string" || !id) return { error: "Invalid request." };
   const gate = await requireOwner();
   if ("error" in gate) return gate;
+  if (await isImpersonating()) return { error: IMPERSONATION_BLOCK };
 
   // Read the current row FIRST: status gates editability (server-side, not just the UI), and
   // channel gates first-comment capability. A terminal / publishing / failed row is content-frozen.
@@ -241,6 +250,9 @@ export async function approveScheduledPost(id: string): Promise<{ ok: true } | {
   if (typeof id !== "string" || !id) return { error: "Invalid request." };
   const gate = await requireOwner();
   if ("error" in gate) return gate;
+  // Approve = consent to a real, irreversible external publish (spec §五). An impersonating admin
+  // must NOT forge the tenant's consent — refuse BEFORE any Meta target lookup or DB write.
+  if (await isImpersonating()) return { error: IMPERSONATION_BLOCK };
 
   const post = await prisma.scheduledPost.findFirst({
     where: { id, ownerId: gate.ownerId, deletedAt: null },
@@ -306,6 +318,7 @@ export async function cancelScheduledPost(id: string): Promise<{ ok: true } | { 
   if (typeof id !== "string" || !id) return { error: "Invalid request." };
   const gate = await requireOwner();
   if ("error" in gate) return gate;
+  if (await isImpersonating()) return { error: IMPERSONATION_BLOCK };
 
   const post = await prisma.scheduledPost.findFirst({
     where: { id, ownerId: gate.ownerId, deletedAt: null },
