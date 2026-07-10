@@ -217,12 +217,8 @@ export const ImmersiveDock = React.forwardRef<
     setPendingApply(null);
     // §8e 发送处接线判定:意图声明了「工作落在别处」= 新鲜前台可执行指示 → 导航一次。
     // (自由打字不 escort:没有诚实的目标信号,导航只跟随已声明的 landsOn。)
-    // 护栏:landsOn 与 in-place Apply 互斥。escort 会导航离开源表面 → 源 OttoAssist 卸载、
-    // 其 onApply 回调随之失效。故 escort 意图绝不浮出 in-place Apply 钮(即便 zone 作者误把
-    // 两字段都写在同一意图上),否则那颗钮点了只会空转 + 打假成功(缺陷#2)。
-    const escorting = Boolean(intent.landsOn);
     if (intent.landsOn) escortTo(intent.landsOn.surface, intent.landsOn.label);
-    // 缺陷#2 二轮:把这颗意图绑定到当前登记的源 owner + 源表面名(意图 chip 只来自当前 assist,
+    // 缺陷#2 绑源:把这颗意图绑定到当前登记的源 owner + 源表面名(意图 chip 只来自当前 assist,
     // 故此刻的 owner/label 就是产出方)。Apply 落回时凭它校验同源,拒绝跨表面错填。
     const sourceOwner = assistOwnerToken();
     const sourceLabel = assistLabel;
@@ -230,7 +226,17 @@ export const ImmersiveDock = React.forwardRef<
     timerRef.current = window.setTimeout(() => {
       setThinking(false);
       appendToStream({ role: "otto", text: intent.reply });
-      if (intent.apply && !escorting && sourceOwner) {
+      // 护栏(缺陷#2 修正):Apply 只在「产出它的源表面此刻仍是当前登记的 assist owner」时浮出——
+      // owner-precise,取代旧的 `!escorting` 一刀切(那刀把 landsOn 与 apply 判为互斥,连合法的同面
+      // 落地一并吞掉)。escort 分两路,凭 owner 而非 escort 标志分辨:
+      //  · escort 去『别的』表面 → 源 OttoAssist 卸载 → clearAssist 置空 owner →
+      //    assistOwnerToken()≠sourceOwner → 不浮出(那颗 Apply 的 handler 已死,浮出=陈旧假成功)。
+      //  · escort 回『本』表面现场落地(shell 的 <main key={pathname}> 同 path 不 remount,源仍在)
+      //    → owner 不变 → 正常浮出、点 Apply 真填。这正是 schedule/plan「排这一周」把 landsOn(本页)
+      //    + apply(planWeek 落 3 条草稿)同挂一颗意图的合法用法;旧 `!escorting` 会让它导航却一条
+      //    不落,而 Otto 回复仍说「排好 3 条草稿」——那本身就是另一种假成功。
+      //  applyPending 的同源门(hasAssistApplyHandler + owner 比对)仍是点击时的终极兜底:任何路径都不谎报。
+      if (intent.apply && sourceOwner && assistOwnerToken() === sourceOwner) {
         setPendingApply({ apply: intent.apply, owner: sourceOwner, sourceLabel });
       }
     }, 1400);
