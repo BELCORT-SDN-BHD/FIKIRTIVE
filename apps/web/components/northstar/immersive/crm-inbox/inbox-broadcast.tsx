@@ -22,7 +22,11 @@ import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
 import { PageHeader, StatCard } from "@/components/northstar/_shared";
 import { CRM_INBOX_BASE as BASE, InboxNav, Card, CardHeader } from "./kit";
-import { SEGMENTS, contactMatchesRules, type NsSegment } from "./data";
+import { contactMatchesRules, type NsSegment } from "./data";
+// [wave-c-integration] 群发受众选择器改用 ALL_SEGMENTS(与 crm/segments 页同源):价值分离 +
+// lifecycle + 通用内建。旧版只读基础 SEGMENTS,segments 页能看的价值/生命周期分群在这里选不到。
+import { ALL_SEGMENTS } from "./crm-data";
+import { useQueryParam } from "../_kit";
 import type { NsContact } from "@/components/northstar/_mock";
 import { WABA_TEMPLATES, parseImportedNumbers } from "./lifecycle-data";
 import {
@@ -82,7 +86,7 @@ export function InboxBroadcast() {
 
   // 内建 + 自建分群,统一成 {id,name,count,match} 供选择器
   const segmentOptions = React.useMemo(() => {
-    const built = SEGMENTS.map((s: NsSegment) => ({ id: s.id, name: s.name, count: reachable(s.match) }));
+    const built = ALL_SEGMENTS.map((s: NsSegment) => ({ id: s.id, name: s.name, count: reachable(s.match) }));
     const own = custom.map((s) => ({
       id: s.id,
       name: s.name,
@@ -92,7 +96,13 @@ export function InboxBroadcast() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [custom, runs]);
 
-  const [segId, setSegId] = React.useState(segmentOptions[0]?.id ?? "");
+  // [wave-c-integration] 接住 crm/segments「Broadcast to this group」深链:?segment=<id> 预选该分群。
+  // 旧版完全不读此参数 —— 从分群页点「群发到本群」落地后默认选中第一项,静默丢了老板的意图。
+  const querySegment = useQueryParam("segment");
+  const [segId, setSegId] = React.useState(querySegment ?? segmentOptions[0]?.id ?? "");
+  React.useEffect(() => {
+    if (querySegment) setSegId(querySegment);
+  }, [querySegment]);
   const [templateId, setTemplateId] = React.useState(WABA_TEMPLATES.find((t) => t.category === "Marketing")?.id ?? WABA_TEMPLATES[0].id);
   const [followUp, setFollowUp] = React.useState("");
   const [importRaw, setImportRaw] = React.useState("");

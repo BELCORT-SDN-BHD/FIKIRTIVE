@@ -77,7 +77,11 @@ import {
   useStore,
 } from "../_store";
 import { useQueryParam, Initials } from "../_kit";
-import { SEGMENTS, contactMatchesRules } from "../crm-inbox/data";
+import { contactMatchesRules } from "../crm-inbox/data";
+// [wave-c-integration] 受众解析改用 ALL_SEGMENTS(价值分离 + lifecycle + 通用内建):
+// crm/segments 的「Post to this group」深链会带 seg-ltv/seg-recent/seg-seasonal/seg-winback/seg-hot
+// 这些价值/生命周期分群 id;旧解析只查基础 SEGMENTS,命不中即静默无受众。改超集即解析得到。
+import { ALL_SEGMENTS } from "../crm-inbox/crm-data";
 
 const ALL_TARGETS: NsPlatform[] = ["instagram", "facebook", "tiktok", "x"];
 const TIMES = ["07:00", "08:00", "09:00", "10:00", "12:00", "12:30", "17:00", "18:00", "19:00", "20:00", "21:00"];
@@ -339,7 +343,7 @@ export function ScheduleComposer() {
     const all = contactsView();
     const custom = customSegments().find((s) => s.id === segmentId);
     if (custom) return { name: custom.name, members: all.filter((c) => contactMatchesRules(c, custom.rules)) };
-    const builtIn = SEGMENTS.find((s) => s.id === segmentId);
+    const builtIn = ALL_SEGMENTS.find((s) => s.id === segmentId);
     if (builtIn) return { name: builtIn.name, members: all.filter(builtIn.match) };
     return null;
   })();
