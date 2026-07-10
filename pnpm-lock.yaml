@@ -32,6 +32,9 @@ importers:
       '@fikirtive/storage':
         specifier: workspace:^
         version: link:../../packages/storage
+      '@fikirtive/token-crypto':
+        specifier: workspace:*
+        version: link:../../packages/token-crypto
       '@sentry/node':
         specifier: ^10.58.0
         version: 10.58.0
@@ -162,6 +165,9 @@ importers:
       '@fikirtive/storage':
         specifier: workspace:^
         version: link:../../packages/storage
+      '@fikirtive/token-crypto':
+        specifier: workspace:*
+        version: link:../../packages/token-crypto
       '@sentry/node':
         specifier: ^10.58.0
         version: 10.58.0
@@ -306,6 +312,18 @@ importers:
       typescript:
         specifier: ^5.9.0
         version: 5.9.3
+
+  packages/token-crypto:
+    devDependencies:
+      '@types/node':
+        specifier: ^22
+        version: 22.19.20
+      typescript:
+        specifier: ^5.9.0
+        version: 5.9.3
+      vitest:
+        specifier: ^3.2.0
+        version: 3.2.6(@types/node@22.19.20)(jiti@2.7.0)(lightningcss@1.32.0)(tsx@4.22.4)
 
 packages:
 
