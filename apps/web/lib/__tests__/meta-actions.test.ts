@@ -134,6 +134,38 @@ describe("completeMetaConnect", () => {
     expect(call.create.canManagePages).toBe(false);
     expect(call.create.defaultPageId).toBeNull();
   });
+  it("L1: sets canPublish:true ONLY when Meta grants BOTH instagram_content_publish + pages_manage_posts", async () => {
+    mockFetch
+      .mockResolvedValueOnce(jsonRes({ access_token: "short" }))
+      .mockResolvedValueOnce(jsonRes({ access_token: "LONGTOKEN", expires_in: 5184000 }))
+      .mockResolvedValueOnce(jsonRes({ data: { scopes: ["pages_show_list", "instagram_content_publish", "pages_manage_posts"] } }));
+    mockUpsert.mockResolvedValue({ id: "mc-1" });
+    await completeMetaConnect("the-code", "https://app/api/meta/callback");
+    const call = mockUpsert.mock.calls[0][0];
+    expect(call.create.canPublish).toBe(true);
+    // additive default kill-switch is not set on connect (defaults false at the DB layer)
+    expect(call.create.organicPublishPaused).toBeUndefined();
+  });
+  it("L1: canPublish stays false when only ONE post scope is granted (fail-closed until App Review)", async () => {
+    mockFetch
+      .mockResolvedValueOnce(jsonRes({ access_token: "short" }))
+      .mockResolvedValueOnce(jsonRes({ access_token: "LONGTOKEN", expires_in: 5184000 }))
+      .mockResolvedValueOnce(jsonRes({ data: { scopes: ["ads_read", "instagram_content_publish"] } }));
+    mockUpsert.mockResolvedValue({ id: "mc-1" });
+    await completeMetaConnect("the-code", "https://app/api/meta/callback");
+    const call = mockUpsert.mock.calls[0][0];
+    expect(call.create.canPublish).toBe(false);
+  });
+  it("L1: canPublish is false for a legacy ads-only grant (zero behavior change for existing connections)", async () => {
+    mockFetch
+      .mockResolvedValueOnce(jsonRes({ access_token: "short" }))
+      .mockResolvedValueOnce(jsonRes({ access_token: "LONGTOKEN", expires_in: 5184000 }))
+      .mockResolvedValueOnce(jsonRes({ data: { scopes: ["ads_read", "ads_management", "pages_show_list", "business_management"] } }));
+    mockUpsert.mockResolvedValue({ id: "mc-1" });
+    await completeMetaConnect("the-code", "https://app/api/meta/callback");
+    const call = mockUpsert.mock.calls[0][0];
+    expect(call.create.canPublish).toBe(false);
+  });
 });
 
 describe("getMetaConnection", () => {

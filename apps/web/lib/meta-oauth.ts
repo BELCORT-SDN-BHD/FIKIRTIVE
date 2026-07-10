@@ -41,13 +41,23 @@ export function verifyState(state: string, now: number = Date.now()): { ownerId:
   return { ownerId: parsed.o };
 }
 
-/** The Meta OAuth consent URL — requests ads + page scopes (user may decline individual ones). */
+/** The Meta OAuth consent URL — requests ads + page + organic-publish scopes (user may decline
+ *  individual ones; debug_token in the callback records what was ACTUALLY granted, never what we
+ *  requested). The four publish scopes are pending Meta App Review (L1 spec §六): until Advanced
+ *  Access is granted, Meta withholds them and `canPublish` stays false → fail-closed, no behavior
+ *  change. Adding them here is what lets the App-Review demo exercise the whole publish flow. */
 export function buildAuthorizeUrl(appId: string, redirectUri: string, state: string): string {
   const u = new URL(`https://www.facebook.com/${META_GRAPH_VERSION}/dialog/oauth`);
   u.searchParams.set("client_id", appId);
   u.searchParams.set("redirect_uri", redirectUri);
   u.searchParams.set("state", state);
-  u.searchParams.set("scope", "ads_read,ads_management,pages_show_list,business_management");
+  u.searchParams.set(
+    "scope",
+    // ads/pages (existing) + organic-publish (L1): instagram_content_publish (IG post),
+    // pages_manage_posts (FB page post), instagram_basic (resolve IG business account),
+    // pages_read_engagement (publish receipt / comments).
+    "ads_read,ads_management,pages_show_list,business_management,instagram_content_publish,pages_manage_posts,instagram_basic,pages_read_engagement",
+  );
   u.searchParams.set("response_type", "code");
   return u.toString();
 }

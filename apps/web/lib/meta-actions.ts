@@ -24,8 +24,13 @@ export async function completeMetaConnect(
   const enc = encryptToken(ex.token);
   const canWrite = ex.grantedScopes.includes("ads_management");
   const canManagePages = ex.grantedScopes.includes("pages_show_list");
+  // L1 organic publish: true ONLY when Meta actually granted BOTH post scopes (IG + FB). Until App
+  // Review passes, Meta withholds them → canPublish stays false → the publish worker fail-closes and
+  // refuses to publish (spec §一.4). Derived from grantedScopes (debug_token truth), never requested.
+  const canPublish =
+    ex.grantedScopes.includes("instagram_content_publish") && ex.grantedScopes.includes("pages_manage_posts");
   const scope = ex.grantedScopes.length > 0 ? ex.grantedScopes.join(",") : "";
-  const data = { accessTokenEnc: enc, tokenExpiresAt: ex.expiresAt, scope, canWrite, canManagePages, status: "active" as const, metaUserId: ex.metaUserId };
+  const data = { accessTokenEnc: enc, tokenExpiresAt: ex.expiresAt, scope, canWrite, canManagePages, canPublish, status: "active" as const, metaUserId: ex.metaUserId };
   await prisma.metaConnection.upsert({
     where: { ownerId: gate.ownerId },
     update: data,

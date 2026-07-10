@@ -1073,8 +1073,10 @@ model MetaConnection {
   status         String       @default("active") // "active" | "expired"
   adsAutonomy    AdsAutonomy  @default(ASK)      // per-org Ask/Auto; lost on disconnect → resets to ASK
   adsWritesPaused Boolean     @default(false)    // kill-switch: when true, executor refuses all writes
+  organicPublishPaused Boolean @default(false)   // L1 kill-switch (mirrors adsWritesPaused): true ⇒ publish worker refuses all organic publishes
   canWrite       Boolean      @default(false)    // true only if Meta actually granted ads_management
   canManagePages Boolean      @default(false)    // true if Meta granted pages_manage_ads / pages_read_engagement
+  canPublish     Boolean      @default(false)    // L1: true only if Meta actually granted instagram_content_publish + pages_manage_posts (App-Review gated; fail-closed until then)
   defaultPageId  String?                         // FB Page the org wants to post to by default
   createdAt      DateTime     @default(now())
   updatedAt      DateTime     @updatedAt
