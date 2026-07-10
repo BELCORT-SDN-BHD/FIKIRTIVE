@@ -62,7 +62,7 @@ import {
 import { POST_TYPES, bestTimesForType, buildUtm, checkLinks, type PostType } from "./data";
 import { OttoAssist } from "../otto-assist";
 import { useSweep } from "../_kit";
-import type { NsAssistApply } from "../_store";
+import type { NsAssistApply, NsAssistIntent } from "../_store";
 import {
   saveDraft,
   schedulePost,
@@ -91,6 +91,42 @@ const RATIOS = [
   { key: "9:16", label: "Story 9:16", cls: "aspect-[9/16]" },
 ] as const;
 const X_LIMIT = 280;
+
+/* ── [wave-c] caption Otto 意图随 postType 走 ──────────────────────────────────
+ * 修:老板在 best-time 选了内容类型(Promo/Behind/Weekend),Caption 的「零打字起草」chip
+ * 却恒定 fresh——formState 传了 postType 却没人读。现在同一 postType 同时驱动 best-time 窗口
+ * 与 caption 草稿,一个真相源。每型一句能站住的起草模板(占位符待老板填真事实,不编品牌数字)。*/
+type CaptionDraft = { label: string; prompt: string; reply: string; summary: string; caption: string };
+const CAPTION_DRAFTS: Record<PostType, CaptionDraft> = {
+  fresh: {
+    label: "Draft today's fresh bake",
+    prompt: "Write a caption for what's fresh out of the oven today.",
+    reply: "Here's a starter — swap in today's actual bake and cut-off time before you post:",
+    summary: "Fill the caption with a fresh-bake draft",
+    caption: "Fresh out of the oven: [today's bake] till 11am. Walk in or pre-order — link in bio.",
+  },
+  promo: {
+    label: "Write a promo",
+    prompt: "Write a short promo caption with a clear offer and cut-off.",
+    reply: "A promo needs one offer and one deadline. Here's a draft — set the real discount and date:",
+    summary: "Fill the caption with a promo draft",
+    caption: "[X]% off [product] till [day] 6pm. Order on WhatsApp or link in bio — while stock lasts.",
+  },
+  behind: {
+    label: "Draft a behind-the-scenes",
+    prompt: "Write a behind-the-scenes caption about how today's bake is made.",
+    reply: "Behind-the-scenes lands on story and process. Here's a draft — put your own detail in:",
+    summary: "Fill the caption with a behind-the-scenes draft",
+    caption: "Since 5am: [what you're making], shaped by hand, no shortcuts. This is what goes into every [product].",
+  },
+  weekend: {
+    label: "Draft a weekend special",
+    prompt: "Write a caption for this weekend's special with a pre-order cut-off.",
+    reply: "A weekend special needs the item and a pre-order deadline. Here's a draft — set both:",
+    summary: "Fill the caption with a weekend-special draft",
+    caption: "This weekend only: [weekend bake]. Pre-order by Friday 6pm — we bake to order, link in bio.",
+  },
+};
 
 function Field({
   label,
@@ -374,6 +410,31 @@ export function ScheduleComposer() {
     }
   };
 
+  // [wave-c] caption 意图跟随所选 postType:主起草 chip = 该内容类型的草稿,
+  // 再加一颗通用「Caption this photo」(随 media 变辞)。修 postType 只驱动 best-time 的不连贯。
+  const draft = CAPTION_DRAFTS[postType];
+  const captionIntents: NsAssistIntent[] = [
+    {
+      id: `cap-${postType}`,
+      label: draft.label,
+      prompt: draft.prompt,
+      reply: draft.reply,
+      apply: { summary: draft.summary, patch: { caption: draft.caption } },
+    },
+    {
+      id: "cap-caption-photo",
+      label: "Caption this photo",
+      prompt: "Write a caption that matches the photo I've attached.",
+      reply: media
+        ? "Based on the visual you picked, here's a caption you can trim to taste:"
+        : "Pick a photo first and I'll match the caption to it. Here's a general one meanwhile:",
+      apply: {
+        summary: "Fill the caption to match the photo",
+        patch: { caption: "Made fresh this morning. Tag someone you'd share this with — pre-orders open, link in bio." },
+      },
+    },
+  ];
+
   return (
     <div className="mx-auto flex min-h-full w-full max-w-[880px] flex-col px-6 pt-6 pb-16">
       <PageHeader title="New post" subtitle="Write once, tune per platform, pick a time." actions={<ViewSwitch />} />
@@ -497,40 +558,7 @@ export function ScheduleComposer() {
                   zone="Schedule"
                   entityLabel="New post"
                   formState={{ hasMedia: !!media, channels: targets, postType }}
-                  intents={[
-                    {
-                      id: "cap-fresh",
-                      label: "Draft today's fresh bake",
-                      prompt: "Write a caption for what's fresh out of the oven today.",
-                      reply: "Here's a starter — swap in today's actual bake and cut-off time before you post:",
-                      apply: {
-                        summary: "Fill the caption with a fresh-bake draft",
-                        patch: { caption: "Fresh out of the oven: [today's bake] till 11am. Walk in or pre-order — link in bio." },
-                      },
-                    },
-                    {
-                      id: "cap-promo",
-                      label: "Write a promo",
-                      prompt: "Write a short promo caption with a clear offer and cut-off.",
-                      reply: "A promo needs one offer and one deadline. Here's a draft — set the real discount and date:",
-                      apply: {
-                        summary: "Fill the caption with a promo draft",
-                        patch: { caption: "[X]% off [product] till [day] 6pm. Order on WhatsApp or link in bio — while stock lasts." },
-                      },
-                    },
-                    {
-                      id: "cap-caption-photo",
-                      label: "Caption this photo",
-                      prompt: "Write a caption that matches the photo I've attached.",
-                      reply: media
-                        ? "Based on the visual you picked, here's a caption you can trim to taste:"
-                        : "Pick a photo first and I'll match the caption to it. Here's a general one meanwhile:",
-                      apply: {
-                        summary: "Fill the caption to match the photo",
-                        patch: { caption: "Made fresh this morning. Tag someone you'd share this with — pre-orders open, link in bio." },
-                      },
-                    },
-                  ]}
+                  intents={captionIntents}
                   onApply={onCaptionApply}
                 />
               }

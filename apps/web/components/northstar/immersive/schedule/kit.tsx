@@ -39,7 +39,7 @@ import {
 } from "@/components/northstar/_mock";
 import { IMMERSIVE_BASE, useReducedMotion } from "../_kit";
 import { campaignEntries, scheduledPosts, postMetaFor, isRemindered, seedScheduleExtras } from "../_store";
-import { campaignName, campaignHref, postMetrics, fmtReach, scheduleExtrasSeed, type SPlatform } from "./data";
+import { campaignName, campaignHref, engBenchmark, scheduleExtrasSeed, type SPlatform } from "./data";
 
 // Wave B 原型对象惰性 seed(幂等;首次 client 端导入排期区任意页时注入,brand 事实留 data.ts）。
 seedScheduleExtras(scheduleExtrasSeed);
@@ -343,13 +343,23 @@ export function CampaignPill({
   return <span className={cls}>{body}</span>;
 }
 
-/* ── 逐帖轻量表现小结（[wave-b] published 卡叠加 reach/互动小字） ─────────────── */
-export function PostPerf({ id }: { id: string }) {
-  const m = postMetrics(id);
+/* ── 逐帖表现小结 · 冷启动诚实标注（[wave-c] Sent 卡不编个人战绩,只给行业基准） ────
+ * 旧版用 postMetrics(id) 把 hash 假数字当「你这条帖 12.3K reach」摆出=自欺。改为平台级
+ * F&B 互动率行业基准区间 + 明标「not your own yet」,与同区 best-time 冷启动标注同一诚实
+ * 口径;个人化战绩等分析区真管线接上再做(见 data.ts engBenchmark)。 */
+export function PostPerf({ platform }: { platform: NsPlatform }) {
+  const b = engBenchmark(platform);
+  const label = PLATFORMS[platform].label;
   return (
-    <span className="inline-flex items-center gap-1 font-mono text-[11px] leading-[14px] font-medium tracking-[0.02em] text-muted-foreground tabular-nums">
-      <BarChart3 className="size-3" strokeWidth={2} />
-      {fmtReach(m.reach)} reach · {m.engagementPct}% eng
+    <span
+      className="inline-flex items-center gap-1 text-[11px] leading-[14px] font-medium text-muted-foreground"
+      title={`Industry-typical engagement for ${label} F&B accounts, not this post's own numbers. Connect analytics to see your real reach and engagement.`}
+    >
+      <BarChart3 className="size-3 shrink-0" strokeWidth={2} />
+      <span className="font-mono tabular-nums tracking-[0.02em]">
+        {b.low}–{b.high}%
+      </span>
+      typical eng · KL bakery benchmark, not your own yet
     </span>
   );
 }
@@ -396,7 +406,7 @@ export function PostRow({
             {meta.label} · {meta.handle}
           </span>
           {post.campaignName && <CampaignPill id={post.campaignId} name={post.campaignName} />}
-          {showPerf && post.status === "published" && <PostPerf id={post.id} />}
+          {showPerf && post.status === "published" && <PostPerf platform={post.platform} />}
         </div>
         {post.status === "failed" && post.failReason && (
           <div className="mt-1.5 flex items-center gap-1 text-[11px] leading-[14px] font-medium text-error-soft-foreground">

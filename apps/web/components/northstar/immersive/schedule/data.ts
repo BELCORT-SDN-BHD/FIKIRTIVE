@@ -185,15 +185,26 @@ export function buildUtm(baseUrl: string, source: SPlatform, tags: string[]): st
   return `${baseUrl}${sep}${params}`;
 }
 
-/* ── 逐帖轻量表现小结([wave-b] published 卡叠加 reach/互动小字) ────────────
- * 分析区拥有真管线;此处只做确定性展示派生(同一帖每次一致),不重建 pipeline。 */
-export function postMetrics(id: string): { reach: number; engagementPct: number } {
-  let h = 0;
-  for (let i = 0; i < id.length; i++) h = (h * 31 + id.charCodeAt(i)) >>> 0;
-  const reach = 1800 + (h % 13600); // 1.8K–15.4K
-  const engagementPct = 2 + ((h >> 8) % 70) / 10; // 2.0%–8.9%
-  return { reach, engagementPct: Math.round(engagementPct * 10) / 10 };
+/* ── 逐帖表现 · 冷启动只给「行业基准」不编个人战绩（[wave-c] Z5-schedule）─────────
+ * 病根(EFFECTIVENESS #174 / #253):旧 postMetrics 用帖 id 做 hash 编出每帖 reach/互动
+ * (「12.3K reach · 5.2% eng」),摆在 Sent 卡上真商家会当自己帖子的真实战绩读——正是
+ * 「报界面数字不报生意数字」,且与同区 best-time『not tuned to you yet』的诚实标注自相矛盾。
+ * 冷启动能诚实做的只有:给平台级行业互动率区间(锚点=平台;区间=对不确定性诚实)+ 明标
+ * 「不是你的数据」;个人化战绩(这条帖到底多少 reach)等分析区真管线接上已发帖表现再做,
+ * 否则是自欺。互动「率」与受众规模无关,故平台级 F&B 区间可站住;reach 依赖粉丝数(我们
+ * 没有),故不编 reach。数字为社媒 F&B 常识区间,非品牌事实、非个人战绩。 */
+export interface EngBenchmark {
+  /** 该平台 F&B 常见互动率下界(%) */
+  low: number;
+  /** 上界(%) */
+  high: number;
 }
-export function fmtReach(n: number): string {
-  return n >= 1000 ? `${(n / 1000).toFixed(1)}K` : String(n);
+export const ENGAGEMENT_BENCHMARKS: Record<SPlatform, EngBenchmark> = {
+  instagram: { low: 1.0, high: 3.0 },
+  facebook: { low: 0.5, high: 1.5 },
+  tiktok: { low: 4.0, high: 8.0 },
+  x: { low: 0.3, high: 1.0 },
+};
+export function engBenchmark(platform: SPlatform): EngBenchmark {
+  return ENGAGEMENT_BENCHMARKS[platform];
 }
