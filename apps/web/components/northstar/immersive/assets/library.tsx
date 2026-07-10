@@ -24,7 +24,7 @@ import { toast } from "sonner";
 import { GenBar, OttoMark, SearchField, SegChips } from "@/components/northstar/assets/_zone";
 import { GEN_RECORDS, LIBRARY_DAY_LABELS, type GenRecord } from "@/components/northstar/assets/_data";
 import { FeedbackControls, type FeedbackValue } from "@/components/northstar/create/_create-ui";
-import { brandPreferences, setBrandPreference, useStore } from "../_store";
+import { brandPreferences, setBrandPreference, studioGenRecords, useStore } from "../_store";
 import { autoTagsFor, libraryTagCounts } from "./data";
 import { PageHeader, EmptyState, AssetsNav, ASSETS_BASE } from "./kit";
 
@@ -52,13 +52,35 @@ export function AssetsLibrary() {
 
   const tagCounts = React.useMemo(() => libraryTagCounts(), []);
 
-  const visible = GEN_RECORDS.filter((r) => {
+  // [fix gate4/factory H2] 合并渲染:运行时工厂产物(共享 store)+ 静态种子 GEN_RECORDS。
+  // Factory/Bulk 完工把成品 push 进 studioGenRecords();这里映射成 GenRecord 形状排在最前。
+  // 每次渲染即读(记录仅几条,不 memo):useStore() 使 push 后的 notify 触发本页重渲染,
+  // 新产物立刻现;记录活在模块级单例,离开工厂再回来仍在。
+  const records: GenRecord[] = [
+    ...studioGenRecords().map((g): GenRecord => ({
+      id: g.id,
+      title: g.title,
+      kind: g.kind,
+      prompt: g.prompt,
+      canvas: "Factory",
+      createdAt: g.createdAt,
+      day: "today",
+      thumb: g.thumb,
+      credits: g.credits,
+      byOtto: true,
+      variants: g.variants,
+      status: "ready",
+    })),
+    ...GEN_RECORDS,
+  ];
+
+  const visible = records.filter((r) => {
     if (kind !== "all" && r.kind !== kind) return false;
     if (query.trim() !== "" && !r.title.toLowerCase().includes(query.trim().toLowerCase())) return false;
     if (tagFilter && !autoTagsFor(r).includes(tagFilter as never)) return false;
     return true;
   });
-  const open = GEN_RECORDS.find((r) => r.id === openId) ?? null;
+  const open = records.find((r) => r.id === openId) ?? null;
 
   const openPref = open
     ? brandPreferences().find((p) => p.assetTitle === open.title && p.source === "Library")
@@ -76,7 +98,7 @@ export function AssetsLibrary() {
       <div className="mt-6 flex flex-wrap items-center gap-3">
         <SearchField value={query} onChange={setQuery} placeholder="Search generations" />
         <SegChips options={KIND_FILTERS} value={kind} onChange={setKind} ariaLabel="Filter by type" />
-        <span className="text-xs text-muted-foreground">{GEN_RECORDS.length} generations</span>
+        <span className="text-xs text-muted-foreground">{records.length} generations</span>
       </div>
 
       {/* [wave-b] B-06:AI 自动标签筛选 —— Otto 打好的标签,一键搜旧图复用 */}

@@ -47,8 +47,11 @@ export function StudioStoryboard() {
   // #8 修「产品盲」:Step 1 的产品/目标现在受控,分镜 = studioStoryboard(选中产品)。
   const [productId, setProductId] = React.useState(NS_PRODUCTS[5].id);
   const product = NS_PRODUCTS.find((p) => p.id === productId) ?? NS_PRODUCTS[5];
-  const board = React.useMemo(() => studioStoryboard(product), [product]);
   const [goal, setGoal] = React.useState(() => defaultStoryboardGoal(NS_PRODUCTS[5]));
+  // [fix gate4/factory M4] draftedGoal = 生成当前 scenes 时所用的 goal。board(brief/provenance)
+  // 读它而非 live goal,使框架文案与场景严格对齐(编辑 goal 未重拆时不会两头不一致)。
+  const [draftedGoal, setDraftedGoal] = React.useState(() => defaultStoryboardGoal(NS_PRODUCTS[5]));
+  const board = React.useMemo(() => studioStoryboard(product, draftedGoal), [product, draftedGoal]);
   const [scenes, setScenes] = React.useState<StudioScene[]>(() => studioStoryboard(NS_PRODUCTS[5]).scenes);
   const [editing, setEditing] = React.useState<StudioScene | null>(null);
   const [retakeScene, setRetakeScene] = React.useState<StudioScene | null>(null);
@@ -178,9 +181,12 @@ export function StudioStoryboard() {
   const pickBriefProduct = (id: string) => {
     if (id === productId) return;
     const next = NS_PRODUCTS.find((p) => p.id === id) ?? product;
+    // [fix gate4/factory M4] 换产品重播目标默认值,并用它重拆分镜 —— goal 真参与产出。
+    const dg = defaultStoryboardGoal(next);
     setProductId(id);
-    setScenes(studioStoryboard(next).scenes);
-    setGoal(defaultStoryboardGoal(next));
+    setScenes(studioStoryboard(next, dg).scenes);
+    setGoal(dg);
+    setDraftedGoal(dg);
     setRenderState("idle");
     setRenderPct({});
     setFailedIds([]);
@@ -297,7 +303,7 @@ export function StudioStoryboard() {
             </div>
             <div className="flex justify-end">
               {/* #8 按钮真读产品:从当前 brief 的产品重新拆分镜(不再只 setStep,无视产品/目标) */}
-              <Button onClick={() => { setScenes(studioStoryboard(product).scenes); setStep(2); }}>Draft scenes · $0</Button>
+              <Button onClick={() => { setScenes(studioStoryboard(product, goal).scenes); setDraftedGoal(goal); setStep(2); }}>Draft scenes · $0</Button>
             </div>
           </div>
         </div>
@@ -585,7 +591,8 @@ export function StudioStoryboard() {
         onOpenChange={setImportOpen}
         onSplit={() => {
           setImportOpen(false);
-          setScenes(studioStoryboard(product).scenes);
+          setScenes(studioStoryboard(product, goal).scenes);
+          setDraftedGoal(goal);
           setStep(2);
         }}
       />

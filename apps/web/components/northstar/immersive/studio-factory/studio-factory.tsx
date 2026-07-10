@@ -39,9 +39,9 @@ import {
 } from "@/components/ui/dialog";
 import { OttoNarrationBar, PageHeader } from "@/components/northstar/_shared";
 import { NS_BRAND, NS_PRODUCTS, nsImage, type NsProduct } from "@/components/northstar/_mock";
-import { SectionLabel, SpendConfirmDialog, useCreateKeyframes } from "@/components/northstar/create/_create-ui";
+import { SectionLabel, SpendConfirmDialog, tierCredits, useCreateKeyframes, type GenTier } from "@/components/northstar/create/_create-ui";
 import { IMMERSIVE_BASE, useSweep } from "../_kit";
-import { balance as getBalance, ottoWorking as setOttoWorking, refundCredits, spendCredits, studioLogGen, useStore } from "../_store";
+import { balance as getBalance, ottoWorking as setOttoWorking, pushStudioGen, refundCredits, spendCredits, studioLogGen, useStore } from "../_store";
 import { OttoAssist } from "../otto-assist";
 import {
   HOOK_COLDSTART_NOTE,
@@ -94,8 +94,10 @@ export function StudioFactory() {
   const [batch, setBatch] = React.useState<BatchState>("idle");
   const [cellPct, setCellPct] = React.useState<Record<string, number>>({});
   const [failedCells, setFailedCells] = React.useState<CellKey[]>([]); // #57 单格失败,已退款(兑现「失败不收费」)
+  const [retrying, setRetrying] = React.useState<CellKey[]>([]); // [fix gate4 M1] 正在重跑的格:完成态只在真渲完后现,重试期间不谎报「Batch complete」
   const failedOnceRef = React.useRef(false); // 只在首批演示一次失败,之后全成功(别让 demo 显得常坏)
   const refundedRef = React.useRef<Set<string>>(new Set()); // 每格只退一次(防 StrictMode updater 双跑重复退款)
+  const pushedRef = React.useRef(false); // [fix gate4 H2] 每批只入库一次(完工时把成功格 push 进共享 Library)
   // 交付快照:成品广告卡/结账账目冻结成批次那一刻的产品+钩子+CTA(换产品换文案在成品处也成立;
   // 之后再拨钩子/产品都不改已交付的这版)。
   const [delivered, setDelivered] = React.useState<{
@@ -170,20 +172,29 @@ export function StudioFactory() {
     timers.current.push(t);
   };
 
-  // 一格的价 = 该格跑的变体数(= 选中钩子数)× 单价。退款/结账都按这个锚,和分镜 #57 同口径。
+  // 一格的价 = 该格跑的变体数(= 选中钩子数)× 单价(Speed 基价)。退款/结账都按这个锚,和分镜 #57 同口径。
   const perCellCredits = Math.max(1, selectedHooks.length) * STUDIO_CREDITS_PER_VARIANT;
 
-  const runBatch = (credits: number) => {
-    spendCredits(credits, `${variantCount} variants · ${product.name}`, "Image");
+  // [fix gate4 H1] 全链路按所选档位计价 —— 扣多少、退多少、界面说多少三者一致。
+  // 旧病:runBatch 收了 tier 调整后的 credits 去扣款,却把 delivered.perCellCredits/totalCredits、
+  // 退款、重试价全冻结在 Speed 基价 → Quality 批「failed job wasn't charged」变假(退的比扣的少)。
+  // 现在:tier 决定单格价 cellCredits,总价 = cellCredits × 格数(与花费弹窗显示的 finalCredits 恒等,
+  // 因单格价 = 12 的整数倍,×1.5 无小数);delivered/退款/重试全读同一档位价。
+  const runBatch = (tier: GenTier) => {
+    const cellCredits = tierCredits(perCellCredits, tier);
+    const batchCredits = cellCredits * cells.length;
+    spendCredits(batchCredits, `${variantCount} variants · ${product.name}`, "Image");
     setOttoWorking(true, "Rendering variants…");
     studioLogGen(`Cutting ${variantCount} ad variants of ${product.name}. Failed ones aren't charged.`, "Factory");
-    // #1 交付快照:成品广告卡读这一版的产品+首个选中钩子+CTA,冻结账目。
+    // #1 交付快照:成品广告卡读这一版的产品+首个选中钩子+CTA,冻结账目(冻的是所选档位价)。
     const hook = selectedHooks[0] ?? null;
     setDelivered(
-      hook ? { product, hook, cta: hookSet.cta, cellCount: cells.length, cells: [...cells], perCellCredits, totalCredits } : null,
+      hook ? { product, hook, cta: hookSet.cta, cellCount: cells.length, cells: [...cells], perCellCredits: cellCredits, totalCredits: batchCredits } : null,
     );
     setBatch("running");
     setFailedCells([]);
+    setRetrying([]);
+    pushedRef.current = false;
     refundedRef.current = new Set();
     // #57 兑现「失败不收费」:首批让一格当面失败一次 —— 退回那格的 credits(可核对的 ledger 行)+
     // 可见失败态 + 可重试。之后的批次/重试全成功,不把 demo 弄成常坏。
@@ -204,7 +215,8 @@ export function StudioFactory() {
               failedOnceRef.current = true;
               if (!refundedRef.current.has(key)) {
                 refundedRef.current.add(key);
-                refundCredits(perCellCredits, `${key} placement didn't render`);
+                // [fix gate4 H1] 退所选档位的单格价(与扣款、与 delivered.perCellCredits 同一数)。
+                refundCredits(cellCredits, `${key} placement didn't render`);
               }
               setFailedCells((f) => (f.includes(key) ? f : [...f, key]));
               if (i === cells.length - 1) {
@@ -233,9 +245,12 @@ export function StudioFactory() {
 
   // #57 重试单格:重新扣这格的钱(之前失败已退,重试即重新付),渲到成功。用交付快照冻结的
   // 单格价,和当初退的数对得上(哪怕交付后又拨过钩子选择)。
+  // [fix gate4 M1] 重试走真实进度生命周期:标 retrying → 跑 interval → 真到 100% 才落成功态。
+  // 旧病:删 failedCells 后摘要立刻翻「Batch complete」,而这格进度条其实还在爬。
   const retryCell = (key: CellKey) => {
     spendCredits(delivered?.perCellCredits ?? perCellCredits, `Retry · ${key} placement`, "Image");
     setFailedCells((f) => f.filter((k) => k !== key));
+    setRetrying((r) => (r.includes(key) ? r : [...r, key]));
     setCellPct((prev) => ({ ...prev, [key]: 0 }));
     setOttoWorking(true, "Re-rendering one placement…");
     const iv = window.setInterval(() => {
@@ -246,12 +261,32 @@ export function StudioFactory() {
           return prev;
         }
         const next = { ...prev, [key]: Math.min(100, cur + 9) };
-        if (next[key] === 100) window.setTimeout(() => setOttoWorking(false), 400);
+        if (next[key] === 100) {
+          setRetrying((r) => r.filter((k) => k !== key)); // 真渲完才移出重试集 → 摘要此刻才可显完成
+          window.setTimeout(() => setOttoWorking(false), 400);
+        }
         return next;
       });
     }, 200);
     timers.current.push(iv);
   };
+
+  // [fix gate4 H2] 批次完工把成功格入库(共享 store → Library 合并渲染,离开工厂再回来仍在)。
+  // 只在有 ≥1 成功格时入库一次;失败格已退款、不入库(诚实:没成品的格不进 Library)。
+  React.useEffect(() => {
+    if (batch !== "done" || !delivered || pushedRef.current) return;
+    const successCount = delivered.cellCount - failedCells.length;
+    if (successCount <= 0) return;
+    pushedRef.current = true;
+    pushStudioGen({
+      title: `${delivered.product.name} · ad batch`,
+      kind: "image",
+      prompt: delivered.hook.line,
+      thumb: delivered.product.image,
+      credits: successCount * delivered.perCellCredits,
+      variants: successCount,
+    });
+  }, [batch, delivered, failedCells]);
 
   const toggleCell = (key: CellKey) => {
     if (batch !== "idle") return;
@@ -686,7 +721,15 @@ export function StudioFactory() {
                 <Button variant="secondary" size="sm" onClick={() => router.push(`${IMMERSIVE_BASE}/assets/library`)}>Open Library</Button>
               </>
             )}
-            {batch === "done" && failedCells.length === 0 && (
+            {/* [fix gate4 M1] 重试进行中(无失败格但有格在重跑)—— 摘要显真实进行态,不谎报完成。 */}
+            {batch === "done" && failedCells.length === 0 && retrying.length > 0 && (
+              <>
+                <OttoNarrationBar steps={["Re-rendering one placement…"]} stepMs={1100} className="w-fit" />
+                <div className="flex-1" />
+                <span className="font-mono text-[11px] leading-[14px] text-muted-foreground tabular-nums">{balance.toLocaleString()} credits left</span>
+              </>
+            )}
+            {batch === "done" && failedCells.length === 0 && retrying.length === 0 && (
               <>
                 <Badge variant="success">Batch complete</Badge>
                 <p className="min-w-0 flex-1 text-[13px] text-muted-foreground">You approved this. It used {delivered?.totalCredits ?? totalCredits} credits. The variants are in your Library.</p>
@@ -702,7 +745,9 @@ export function StudioFactory() {
               product={delivered.product}
               headline={delivered.hook.line}
               cta={delivered.cta}
-              cells={delivered.cells}
+              // [fix gate4 M5] 覆盖声明只基于成功交付的格:剔除失败/重跑中的格,
+              // 「all three ratios covered」不再把没渲出的比例算成已覆盖(诚实报缺口)。
+              cells={delivered.cells.filter((c) => !failedCells.includes(c) && !retrying.includes(c))}
               onEditTool={setEditTool}
               onLicense={() => setLicenseOpen(true)}
               onSaveTpl={() => setSaveTplOpen(true)}
@@ -727,12 +772,13 @@ export function StudioFactory() {
         confirmLabel={`Confirm batch · ${totalCredits} credits`}
         onConfirm={() => {
           setBatchAsk(false);
-          runBatch(totalCredits);
+          runBatch("speed");
         }}
         baseCredits={totalCredits}
-        onConfirmTier={(_tier, credits) => {
+        onConfirmTier={(tier) => {
+          // [fix gate4 H1] 把所选档位交给 runBatch,由它按档位算全批价(扣/退/结账同源)。
           setBatchAsk(false);
-          runBatch(credits);
+          runBatch(tier);
         }}
       />
 
@@ -762,7 +808,8 @@ export function StudioFactory() {
             <DialogDescription>A one-page PDF stating this is AI-generated and how it can be used — handy when you deliver to a client.</DialogDescription>
           </DialogHeader>
           <div className="rounded-[14px] border border-border bg-card p-4 text-[13px] text-foreground">
-            <p className="font-semibold">{NS_BRAND.name} — {product.name}</p>
+            {/* [fix gate4 M7] 凭证同读交付快照 —— 与成品广告卡一致,不因交付后换产品而漂到别的产品名。 */}
+            <p className="font-semibold">{NS_BRAND.name} — {delivered?.product.name ?? product.name}</p>
             <p className="mt-1 text-muted-foreground">Generated with FIKIRTIVE · commercial use granted to the account owner · {new Date().getFullYear()}.</p>
           </div>
           <DialogFooter className="flex-row justify-end gap-3">
@@ -921,42 +968,80 @@ function BulkGrid() {
   // #3 兑现「失败不收费」:bulk grid 也真有失败分支 + 退款(和分镜 / 变体批同口径,不再只承诺)。
   // 图片任务才会失败(文本任务免费、不落 credits);首批演示一格失败一次,之后全成功。
   const [failedRows, setFailedRows] = React.useState<string[]>([]); // 图片任务失败并已退款的产品 id
+  const [retryingRows, setRetryingRows] = React.useState<string[]>([]); // [fix gate4 M1] 正在重跑图片的产品:完成态只在真渲完后现
+  // [fix gate4 M6] 运行快照:完成时冻结「跑了哪些产品 / 几项任务 / 每图单价」。摘要与重试都读它 ——
+  // 事后改勾选不再篡改历史,重试也只认快照里失败的那批(不对已取消的产品扣款)。
+  const [snap, setSnap] = React.useState<{ rows: string[]; taskCount: number; perImage: number } | null>(null);
   const failedOnceRef = React.useRef(false);
+  const timers = React.useRef<number[]>([]);
+  React.useEffect(() => () => timers.current.forEach((t) => window.clearTimeout(t)), []);
   useStore();
 
   const activeTasks = STUDIO_BULK_TASKS.filter((t) => tasks[t.id]);
   // 只有图片任务耗 credits(文本任务免费),确定性算价。
   const imageJobs = tasks["bt-image"] ? rows.length : 0;
-  const total = imageJobs * STUDIO_CREDITS_PER_VARIANT;
-  const PER = STUDIO_CREDITS_PER_VARIANT; // 一个产品的图片任务价
+  const total = imageJobs * STUDIO_CREDITS_PER_VARIANT; // Speed 基价预估(花费弹窗据此出双档)
+  const PER = STUDIO_CREDITS_PER_VARIANT; // 一个产品图片任务的 Speed 基价
 
-  const toggleRow = (id: string) => setRows((prev) => (prev.includes(id) ? prev.filter((x) => x !== id) : [...prev, id]));
+  // [fix gate4 M6] 完成后锁定网格:done 即不再可切勾选,让网格恒等于刚才真跑的那一批。
+  const toggleRow = (id: string) => {
+    if (done) return;
+    setRows((prev) => (prev.includes(id) ? prev.filter((x) => x !== id) : [...prev, id]));
+  };
 
-  const run = (credits: number) => {
+  // [fix gate4 H1] run 收所选档位,按档位算每图单价与总价(扣款/退款/结账/入库同源);
+  // [fix gate4 M6] 完成即冻结运行快照;[fix gate4 H2] 成功的图片产物入库。
+  const run = (tier: GenTier) => {
+    const perImage = tierCredits(PER, tier);
+    const rowsSnap = [...rows];
+    const taskCount = activeTasks.length;
+    const imageOn = !!tasks["bt-image"];
+    const imageJobsNow = imageOn ? rowsSnap.length : 0;
+    const totalNow = imageJobsNow * perImage;
     setFailedRows([]);
-    if (credits > 0) {
-      spendCredits(credits, `Bulk grid · ${rows.length} products`, "Image");
+    setSnap({ rows: rowsSnap, taskCount, perImage });
+    let failId: string | null = null;
+    if (totalNow > 0) {
+      spendCredits(totalNow, `Bulk grid · ${rowsSnap.length} products`, "Image");
       // #3 首批让一个产品的图片任务当面失败一次 —— 退回它那份 credits(可核对的 ledger 行),
       // 落可见失败态 + 可重试。之后的批次全成功,不把 demo 弄成常坏。
-      if (!failedOnceRef.current && imageJobs > 0) {
+      if (!failedOnceRef.current && imageJobsNow > 0) {
         failedOnceRef.current = true;
-        const failId = rows[1] ?? rows[0];
+        failId = rowsSnap[1] ?? rowsSnap[0];
         const failName = NS_PRODUCTS.find((p) => p.id === failId)?.name ?? "one product";
-        refundCredits(PER, `${failName} image job didn't render`);
-        setFailedRows([failId]);
-        studioLogGen(`Ran the bulk grid over ${rows.length} products (${activeTasks.length} tasks each). One image job failed and wasn't charged — ${PER} credits refunded.`, "Factory");
+        refundCredits(perImage, `${failName} image job didn't render`);
+        setFailedRows(failId ? [failId] : []);
+        studioLogGen(`Ran the bulk grid over ${rowsSnap.length} products (${taskCount} tasks each). One image job failed and wasn't charged — ${perImage} credits refunded.`, "Factory");
       } else {
-        studioLogGen(`Ran the bulk grid over ${rows.length} products (${activeTasks.length} tasks each).`, "Factory");
+        studioLogGen(`Ran the bulk grid over ${rowsSnap.length} products (${taskCount} tasks each).`, "Factory");
+      }
+    }
+    // [fix gate4 H2] 成功的图片任务入库(失败/退款那格不入库);离开工厂再回来 Library 里仍在。
+    if (imageOn) {
+      for (const id of rowsSnap) {
+        if (id === failId) continue;
+        const prod = NS_PRODUCTS.find((p) => p.id === id);
+        if (!prod) continue;
+        pushStudioGen({ title: `${prod.name} · hero image`, kind: "image", prompt: `Bulk hero image · ${prod.name}`, thumb: prod.image, credits: perImage, variants: 1 });
       }
     }
     setDone(true);
   };
 
-  // #3 重试单个产品的图片任务:重新扣它那份钱(之前失败已退,重试即重新付),渲到成功。
+  // #3 + [fix gate4 M1/H2] 重试单个产品的图片任务:按快照单价重新扣款(之前失败已退),走真实
+  // 重跑生命周期(标 retrying → 渲染 → 真完成才落 Check 并入库),不再删完 failed 就直接显完成。
   const retryRow = (id: string) => {
-    const name = NS_PRODUCTS.find((p) => p.id === id)?.name ?? "product";
-    spendCredits(PER, `Retry · ${name} image`, "Image");
+    const prod = NS_PRODUCTS.find((p) => p.id === id);
+    const name = prod?.name ?? "product";
+    const per = snap?.perImage ?? PER;
+    spendCredits(per, `Retry · ${name} image`, "Image");
     setFailedRows((f) => f.filter((x) => x !== id));
+    setRetryingRows((r) => (r.includes(id) ? r : [...r, id]));
+    const t = window.setTimeout(() => {
+      setRetryingRows((r) => r.filter((x) => x !== id));
+      if (prod) pushStudioGen({ title: `${prod.name} · hero image`, kind: "image", prompt: `Bulk hero image · ${prod.name}`, thumb: prod.image, credits: per, variants: 1 });
+    }, 900);
+    timers.current.push(t);
   };
 
   return (
@@ -971,8 +1056,9 @@ function BulkGrid() {
               key={t.id}
               type="button"
               aria-pressed={on}
-              onClick={() => setTasks((prev) => ({ ...prev, [t.id]: !prev[t.id] }))}
-              className={cn("h-8 rounded-full border px-3 text-xs font-semibold transition-colors duration-[120ms]", on ? "border-transparent bg-secondary text-foreground" : "border-border bg-card text-muted-foreground hover:text-foreground")}
+              disabled={done}
+              onClick={() => { if (!done) setTasks((prev) => ({ ...prev, [t.id]: !prev[t.id] })); }}
+              className={cn("h-8 rounded-full border px-3 text-xs font-semibold transition-colors duration-[120ms] disabled:opacity-60", on ? "border-transparent bg-secondary text-foreground" : "border-border bg-card text-muted-foreground hover:text-foreground")}
             >
               {t.label}
             </button>
@@ -1002,10 +1088,14 @@ function BulkGrid() {
                   {(activeTasks.length ? activeTasks : [{ id: "none" }]).map((t) => {
                     // #3 只有图片任务会失败;失败格显警告(其余文本任务照常成功)。
                     const failedHere = t.id === "bt-image" && failedRows.includes(p.id);
+                    // [fix gate4 M1] 重跑中的图片格显进行态(脉冲点),真渲完才翻成功 Check。
+                    const retryingHere = t.id === "bt-image" && retryingRows.includes(p.id);
                     return (
                       <div key={t.id} className="flex items-center justify-center border-b border-l border-border last:border-b-0">
                         {on && activeTasks.length > 0 ? (
-                          failedHere ? (
+                          retryingHere ? (
+                            <span className="size-2 animate-pulse rounded-full bg-brand" />
+                          ) : failedHere ? (
                             <TriangleAlert className="size-4 text-warning-soft-foreground" strokeWidth={2} />
                           ) : done ? (
                             <Check className="size-4 text-success-soft-foreground" strokeWidth={2.5} />
@@ -1024,32 +1114,40 @@ function BulkGrid() {
       </div>
 
       <div className="mt-4 flex flex-wrap items-center gap-3 rounded-[18px] border border-border bg-card p-4">
-        {!done ? (
+        {!done || !snap ? (
           <>
             <div className="min-w-0 flex-1">
               <p className="text-sm font-semibold text-foreground">{rows.length} products × {activeTasks.length} tasks</p>
               <p className="text-[13px] text-muted-foreground">{total > 0 ? `${total} credits (images only; text jobs are free).` : "Text-only jobs are free."} Nothing charged until you confirm.</p>
             </div>
-            <Button variant="brand" disabled={rows.length === 0 || activeTasks.length === 0} onClick={() => (total > 0 ? setAsk(true) : run(0))}>
+            <Button variant="brand" disabled={rows.length === 0 || activeTasks.length === 0} onClick={() => (total > 0 ? setAsk(true) : run("speed"))}>
               {total > 0 ? `Run bulk · ${total} credits` : "Run bulk · free"}
             </Button>
           </>
         ) : failedRows.length > 0 ? (
           <>
-            <Badge variant="warning">{rows.length - failedRows.length} of {rows.length} image jobs rendered</Badge>
+            {/* [fix gate4 M6] 摘要读运行快照(snap),不读 live rows —— 事后改勾选不篡改历史;
+                [fix gate4 H1] 退款/重试价读快照单价 snap.perImage(与扣款、与 ledger 同源)。 */}
+            <Badge variant="warning">{snap.rows.length - failedRows.length} of {snap.rows.length} image jobs rendered</Badge>
             <p className="min-w-0 flex-1 text-[13px] text-muted-foreground">
-              One image job failed and wasn&apos;t charged — {failedRows.length * PER} credits went back. Text jobs and the rest are in your Library.
+              One image job failed and wasn&apos;t charged — {failedRows.length * snap.perImage} credits went back. Text jobs and the rest are in your Library.
             </p>
             <Button variant="secondary" size="sm" onClick={() => failedRows.forEach((id) => retryRow(id))}>
               <RotateCcw className="size-3.5" strokeWidth={2} />
-              Retry image · {failedRows.length * PER} credits
+              Retry image · {failedRows.length * snap.perImage} credits
             </Button>
             <Button variant="secondary" size="sm" onClick={() => router.push(`${IMMERSIVE_BASE}/assets/library`)}>Open Library</Button>
+          </>
+        ) : retryingRows.length > 0 ? (
+          <>
+            {/* [fix gate4 M1] 重跑进行中:显真实进行态,不谎报「Bulk complete」。 */}
+            <OttoNarrationBar steps={["Re-rendering one image…"]} stepMs={1100} className="w-fit" />
+            <div className="flex-1" />
           </>
         ) : (
           <>
             <Badge variant="success">Bulk complete</Badge>
-            <p className="min-w-0 flex-1 text-[13px] text-muted-foreground">{rows.length} products done. Results are in your Library.</p>
+            <p className="min-w-0 flex-1 text-[13px] text-muted-foreground">{snap.rows.length} products done. Results are in your Library.</p>
             <Button variant="secondary" size="sm" onClick={() => router.push(`${IMMERSIVE_BASE}/assets/library`)}>Open Library</Button>
           </>
         )}
@@ -1068,12 +1166,13 @@ function BulkGrid() {
         confirmLabel={`Confirm · ${total} credits`}
         onConfirm={() => {
           setAsk(false);
-          run(total);
+          run("speed");
         }}
         baseCredits={total}
-        onConfirmTier={(_tier, credits) => {
+        onConfirmTier={(tier) => {
+          // [fix gate4 H1] 交所选档位给 run,由它按档位算每图单价与总价(扣/退/结账/入库同源)。
           setAsk(false);
-          run(credits);
+          run(tier);
         }}
       />
     </div>

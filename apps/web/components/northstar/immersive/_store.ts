@@ -3138,3 +3138,38 @@ export function clearPostAudience(id: string): void {
   delete postAudiences[id];
   notify();
 }
+
+/* ── [fix gate4/factory H2] 工厂产物落进共享 Library —— 文件尾追加(队名 gate4-studio)──
+ * 缺陷 H2:批次/批量完工只写组件内 delivered,宣称「in your Library」却是假的 —— library.tsx
+ * 只读静态 GEN_RECORDS,离开工厂再回来成品不在。这里加一条运行时生成记录集合:factory/bulk
+ * 完工 push,library 合并渲染(静态种子 + 运行时产物)。模块级单例,跨路由存活(与 z3Ideas/
+ * escort 高水位线同寿命 —— SPA 换路由不丢,刷新才重置,这就是 spec)。复用主 store 的
+ * notify()/getVersion:组件 useStore() 即可订阅、live 反映。纯 client、零后台 import。 */
+export interface NsStudioGen {
+  id: string;
+  title: string;
+  kind: "image" | "video" | "storyboard";
+  prompt: string;
+  thumb: string;
+  credits: number;
+  variants: number;
+  /** 落库时刻的 ISO 时间戳(library 卡片显示 HH:MM、详情显示日期;这是 live 用户动作,允许 new Date)。 */
+  createdAt: string;
+}
+
+let studioGens: NsStudioGen[] = [];
+let studioGenSeq = 0;
+
+/** 运行时工厂产物(最新在前;library 合并到静态 GEN_RECORDS 顶部)。 */
+export function studioGenRecords(): NsStudioGen[] {
+  return studioGens;
+}
+
+/** 工厂/批量完工落一条 Library 记录(跨路由存活)。返回新 id。 */
+export function pushStudioGen(input: Omit<NsStudioGen, "id" | "createdAt">): string {
+  studioGenSeq += 1;
+  const rec: NsStudioGen = { id: `studio-gen-${studioGenSeq}`, createdAt: new Date().toISOString(), ...input };
+  studioGens = [rec, ...studioGens];
+  notify();
+  return rec.id;
+}

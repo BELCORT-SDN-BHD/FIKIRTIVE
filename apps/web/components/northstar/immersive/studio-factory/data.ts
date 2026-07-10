@@ -206,8 +206,11 @@ export const HOOK_COLDSTART_NOTE =
 type Archetype = "box" | "centrepiece" | "grab";
 
 function archetypeOf(p: NsProduct): Archetype {
-  if (p.category === "Seasonal" || p.priceMyr >= 50) return "box";
+  // [fix gate4/factory M3] 品类判断先于价位判断:一块 RM88 的蛋糕是 celebration centrepiece,
+  // 不是 gift box。旧序先判 priceMyr>=50 → 高价蛋糕永远错落 box 分支(吐礼盒预购文案/CTA)。
+  // 现在 Cakes 恒走 centrepiece(无论多贵);Seasonal 或高价(≥RM50)的非蛋糕才归 box;其余 grab。
   if (p.category === "Cakes") return "centrepiece";
+  if (p.category === "Seasonal" || p.priceMyr >= 50) return "box";
   return "grab";
 }
 
@@ -334,11 +337,34 @@ export function defaultStoryboardGoal(p: NsProduct): string {
   }
 }
 
-export function studioStoryboard(p: NsProduct): StudioStoryboardSet {
+/** [fix gate4/factory M4] Step 1「这条视频要做什么」→ 分镜强调点。修:storyboard 从此真读 goal,
+ * 不再收了输入却无视它。命中意图关键词就改开场 hook(sc-1)与收尾 CTA 场(sc-5)的口播 ——
+ * 看得见的变化;未命中则回 null(不硬塞用户原句进口播),但 goal 仍逐字进 brief(始终可见)。
+ * 确定性、纯关键词映射,零 LLM 调用。 */
+function goalIntent(goal: string): { open: string; close: string } | null {
+  const g = goal.toLowerCase();
+  if (/pre-?order|order ahead|cut-?off|festive|deadline/.test(g))
+    return { open: "Lock your pre-order in before this run sells out.", close: "Pre-orders close soon — reserve yours now." };
+  if (/reserve|book|celebrat|weekend|birthday|party|\bdate\b/.test(g))
+    return { open: "The centrepiece worth reserving your date for.", close: "Baked to order — reserve your date." };
+  if (/foot|walk-?in|traffic|daily|habit|grab|everyday|weekday/.test(g))
+    return { open: "Your daily reason to stop by the counter.", close: "Fresh batch every morning — come grab yours." };
+  if (/launch|new drop|introduc|announce|debut/.test(g))
+    return { open: "Say hello to what just landed on the counter.", close: "New in this week — be first to try it." };
+  if (/aware|brand|reach|discover|know us|new customer/.test(g))
+    return { open: "Meet the KL bakery people keep coming back to.", close: "Come taste what everyone's talking about." };
+  return null;
+}
+
+export function studioStoryboard(p: NsProduct, goal?: string): StudioStoryboardSet {
   const arch = archetypeOf(p);
   const price = Number.isInteger(p.priceMyr) ? `${p.priceMyr}` : p.priceMyr.toFixed(2);
   const lower = p.name.toLowerCase();
   const C = STUDIO_STORYBOARD_CREDITS_PER_SCENE;
+  // [fix gate4/factory M4] 空/缺省 goal 回落到产品原型默认目标 —— brief 始终有目标可引,
+  // 且默认输出与「不传 goal」时保持一致(defaultStoryboardGoal 本就派生自同一原型)。
+  const effectiveGoal = (goal ?? "").trim() || defaultStoryboardGoal(p);
+  const intent = goalIntent(effectiveGoal);
   const closer: StudioScene = {
     id: "sc-6", order: 6, title: "Close",
     shot: `Logo lockup over the ${NS_BRAND.city} counter`,
@@ -376,14 +402,28 @@ export function studioStoryboard(p: NsProduct): StudioStoryboardSet {
     ];
   }
 
+  // [fix gate4/factory M4] goal 命中意图 → 覆盖开场 hook(sc-1)与收尾 CTA 场(sc-5)的口播,
+  // 让「这条视频要做什么」真的落到分镜产出上(改 goal 即改开场/收尾,看得见)。
+  if (intent) {
+    scenes = scenes.map((sc) =>
+      sc.id === "sc-1"
+        ? { ...sc, voiceover: intent.open }
+        : sc.id === "sc-5"
+          ? { ...sc, voiceover: intent.close }
+          : sc,
+    );
+  }
+
   const totalSeconds = scenes.reduce((s, sc) => s + sc.duration, 0);
   const provenance =
     arch === "box"
-      ? `I drafted these from your brief — a festive gift-box push for the ${lower}: the ribbon-and-reveal sequence that unboxing reels win on, retimed to ${totalSeconds}s across ${scenes.length} scenes. Nothing's locked — edit, reorder or delete any scene, and nothing costs a credit until the render step.`
+      ? `I drafted these from your brief — a festive gift-box push for the ${lower}, aimed at “${effectiveGoal}”: the ribbon-and-reveal sequence that unboxing reels win on, retimed to ${totalSeconds}s across ${scenes.length} scenes. Nothing's locked — edit, reorder or delete any scene, and nothing costs a credit until the render step.`
       : arch === "centrepiece"
-        ? `I drafted these from your brief — a celebration-centrepiece push for the ${lower}: the table reveal, the warm drizzle, then the RM${price} it's worth. ${scenes.length} scenes, ${totalSeconds}s. Nothing's locked — edit, reorder or delete any scene, and nothing costs a credit until the render step.`
-        : `I drafted these from your brief — a daily grab-and-go push for the ${lower}: open on the bite, land the RM${price} value, close on today's batch. ${scenes.length} scenes, ${totalSeconds}s. Nothing's locked — edit, reorder or delete any scene, and nothing costs a credit until the render step.`;
-  const brief = `Otto drafted a ${ARCHETYPE_LABEL[arch]} storyboard for the ${lower} — edit, reorder or delete any scene. Nothing costs a credit until the render step.`;
+        ? `I drafted these from your brief — a celebration-centrepiece push for the ${lower}, aimed at “${effectiveGoal}”: the table reveal, the warm drizzle, then the RM${price} it's worth. ${scenes.length} scenes, ${totalSeconds}s. Nothing's locked — edit, reorder or delete any scene, and nothing costs a credit until the render step.`
+        : `I drafted these from your brief — a daily grab-and-go push for the ${lower}, aimed at “${effectiveGoal}”: open on the bite, land the RM${price} value, close on today's batch. ${scenes.length} scenes, ${totalSeconds}s. Nothing's locked — edit, reorder or delete any scene, and nothing costs a credit until the render step.`;
+  // [fix gate4/factory M4] brief 逐字引 goal —— 任何目标文本都在此可见(Step 2 顶部常显),
+  // 命中意图的还额外改了开场/收尾场,双保险兑现「goal 真影响产出」。
+  const brief = `Otto drafted a ${ARCHETYPE_LABEL[arch]} storyboard for the ${lower}, built around your goal: “${effectiveGoal}”. Edit, reorder or delete any scene — nothing costs a credit until the render step.`;
 
   return { scenes, provenance, brief };
 }
