@@ -9,6 +9,7 @@ import { describe, it, expect, vi, beforeEach } from "vitest";
 // ---------------------------------------------------------------------------
 const {
   mockRequireOwner,
+  mockIsImpersonating,
   mockTransaction,
   mockFindMany,
   mockFindFirst,
@@ -22,6 +23,7 @@ const {
   mockFbListTargets,
 } = vi.hoisted(() => ({
   mockRequireOwner: vi.fn(),
+  mockIsImpersonating: vi.fn(),
   mockTransaction: vi.fn(),
   mockFindMany: vi.fn(),
   mockFindFirst: vi.fn(),
@@ -38,6 +40,7 @@ const {
 // createScheduledPost now delegates to schedule-service.ts, which is `import "server-only"`.
 vi.mock("server-only", () => ({}));
 vi.mock("@/lib/auth-guard", () => ({ requireOwner: mockRequireOwner }));
+vi.mock("@/lib/better-auth/compat", () => ({ isImpersonating: mockIsImpersonating }));
 vi.mock("@fikirtive/db", () => ({
   prisma: {
     $transaction: mockTransaction,
@@ -87,6 +90,7 @@ beforeEach(() => {
   vi.clearAllMocks();
   idCounter = 0;
   mockRequireOwner.mockResolvedValue({ ownerId: OWNER, email: "a@b.co" });
+  mockIsImpersonating.mockResolvedValue(false); // default: a real owner session, not staff-impersonating
   mockFetchOwnerPages.mockResolvedValue({ pages: [{ id: "page-1", name: "My Page" }] });
   mockTransaction.mockImplementation(async (fn: (tx: unknown) => unknown) =>
     fn({
@@ -569,6 +573,50 @@ describe("cancelScheduledPost", () => {
     mockRequireOwner.mockResolvedValue({ error: "Not authorized." });
     const res = await cancelScheduledPost("p1");
     expect(res).toEqual({ error: "Not authorized." });
+    expect(mockFindFirst).not.toHaveBeenCalled();
+    expect(mockUpdateMany).not.toHaveBeenCalled();
+  });
+});
+
+// --- impersonation block (H3) ----------------------------------------------
+// Staff impersonating a customer must never MUTATE the customer's schedule. approve in particular
+// would forge the tenant's consent to a real, irreversible external publish (spec §五). Every
+// mutation refuses BEFORE any DB write; approve refuses BEFORE any Meta target lookup (zero Meta).
+
+describe("schedule mutations refuse while impersonating a customer", () => {
+  beforeEach(() => {
+    mockIsImpersonating.mockResolvedValue(true); // staff is impersonating for these cases
+  });
+
+  it("approve → refuses with ZERO Meta calls and no DB read/write", async () => {
+    // Even a fully approve-ready post must not go out under an impersonation session.
+    mockFindFirst.mockResolvedValue(draftReady());
+    const res = await approveScheduledPost("p1");
+    expect(res).toEqual({ error: "Paused while impersonating a customer — exit impersonation to do this." });
+    // zero Meta: neither channel adapter's listTargets was consulted
+    expect(mockIgListTargets).not.toHaveBeenCalled();
+    expect(mockFbListTargets).not.toHaveBeenCalled();
+    // guard is BEFORE the owner-scoped read + the CAS write
+    expect(mockFindFirst).not.toHaveBeenCalled();
+    expect(mockUpdateMany).not.toHaveBeenCalled();
+  });
+
+  it("create → refuses, writes nothing", async () => {
+    const res = await createScheduledPost({ channel: "instagram", caption: "x", scheduledAt: AT, scheduledTz: "UTC" });
+    expect(res).toHaveProperty("error");
+    expect(mockCreate).not.toHaveBeenCalled();
+  });
+
+  it("update → refuses, no read or write", async () => {
+    const res = await updateScheduledPost("p1", { caption: "x" });
+    expect(res).toHaveProperty("error");
+    expect(mockFindFirst).not.toHaveBeenCalled();
+    expect(mockUpdateMany).not.toHaveBeenCalled();
+  });
+
+  it("cancel → refuses, no read or write", async () => {
+    const res = await cancelScheduledPost("p1");
+    expect(res).toHaveProperty("error");
     expect(mockFindFirst).not.toHaveBeenCalled();
     expect(mockUpdateMany).not.toHaveBeenCalled();
   });

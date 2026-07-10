@@ -61,7 +61,11 @@ export const config = {
   // api/stripe excluded — the webhook is unauthenticated (Stripe calls it; the signature is its auth).
   // api/health excluded — external uptime monitors probe it; it returns only up/stale, no data.
   // api/meta/data-deletion excluded — Meta calls it unauthenticated; the signed_request is its auth.
+  // api/media/pub excluded — the ONLY caller is Meta's async media-fetch server (no session, ever).
+  //   The route's HMAC token (signed by the publish worker over ownerId+key+expiry) is its SOLE
+  //   authorization; verifyMediaToken fail-closes to 404 on any bad/expired/forged token. This
+  //   exception is scoped to exactly /api/media/pub/* (the [token] route) — it opens nothing else.
   // skin-preview: dev-only visual harness for the UI re-skin (the page itself 404s in
   // production), excluded here so it renders without a session in dev. Throwaway.
-  matcher: ["/((?!login|terms|privacy|legal|skin-preview|api/better-auth|api/stripe|api/health|api/meta/data-deletion|_next/static|_next/image|favicon.ico).*)"],
+  matcher: ["/((?!login|terms|privacy|legal|skin-preview|api/better-auth|api/stripe|api/health|api/meta/data-deletion|api/media/pub|_next/static|_next/image|favicon.ico).*)"],
 };

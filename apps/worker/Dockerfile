@@ -38,6 +38,7 @@ RUN apt-get update \
 WORKDIR /repo
 COPY pnpm-workspace.yaml package.json pnpm-lock.yaml ./
 COPY packages/core/package.json packages/core/
+COPY packages/token-crypto/package.json packages/token-crypto/
 COPY packages/storage/package.json packages/storage/
 COPY packages/generation/package.json packages/generation/
 COPY packages/db/package.json packages/db/
@@ -46,12 +47,17 @@ COPY apps/worker/package.json apps/worker/
 RUN pnpm install --frozen-lockfile --filter @fikirtive/worker...
 COPY tsconfig.base.json ./
 COPY packages/core packages/core
+COPY packages/token-crypto packages/token-crypto
 COPY packages/storage packages/storage
 COPY packages/generation packages/generation
 COPY packages/db packages/db
 COPY packages/otto packages/otto
 COPY apps/worker apps/worker
+# token-crypto (AES-256-GCM + signed media-proxy token) is a workspace dep of @fikirtive/worker
+# (jobs/publish.ts decrypts the Meta page token + signs media URLs). Build it before worker or the
+# skinny image can't resolve @fikirtive/token-crypto.
 RUN pnpm --filter @fikirtive/core build \
+  && pnpm --filter @fikirtive/token-crypto build \
   && pnpm --filter @fikirtive/storage build \
   && pnpm --filter @fikirtive/generation build \
   && pnpm --filter @fikirtive/db build \
