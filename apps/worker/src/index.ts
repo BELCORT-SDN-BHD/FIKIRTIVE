@@ -35,6 +35,9 @@ import {
   RESEARCH_QUEUE,
   RESEARCH_DLQ,
   RESEARCH_QUEUE_POLICY,
+  PUBLISH_QUEUE,
+  PUBLISH_DLQ,
+  PUBLISH_QUEUE_POLICY,
   type RenderJobData,
   type RefGenJobData,
   type GenJobData,
@@ -106,6 +109,11 @@ async function main(): Promise<void> {
   await boss.createQueue(QUEUES.caption, { ...CAPTION_QUEUE_POLICY });
   await boss.createQueue(RESEARCH_DLQ);
   await boss.createQueue(RESEARCH_QUEUE, { ...RESEARCH_QUEUE_POLICY });
+  // L1 publish queue (Seam 6): SAME policy object as web (apps/web/lib/queue.ts) so boot order
+  // can't split them. The consumer (boss.work) + scheduler + reaper land in the publish-worker
+  // energize slice; for now the queue exists but nothing produces to it (fail-closed, inert).
+  await boss.createQueue(PUBLISH_DLQ);
+  await boss.createQueue(PUBLISH_QUEUE, { ...PUBLISH_QUEUE_POLICY });
 
   await boss.work<IngestJobData>(QUEUES.ingest, { batchSize: 1 }, async ([job]) => {
     if (!job) return;
