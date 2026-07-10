@@ -18,3 +18,16 @@
 // stays in the main barrel — it has no node/network dependencies.
 export { assertPublicHttpUrl, assertPublicHttpUrlResolved } from "./url-safety.js";
 export { fetchAndExtract, fetchRawHtml, MAX_BODY } from "./fetch-extract.js";
+// Meta organic-publish orchestration (L1). Pure (injected MetaGraphPort) but kept in the server
+// barrel — it is server-side publish logic shared by the web adapter + the publish worker, never
+// a client concern.
+export {
+  publishInstagram,
+  publishFacebook,
+  type MetaGraphPort,
+  type PublishResult,
+  type PublishOk,
+  type PublishFail,
+  type InstagramPublishArgs,
+  type FacebookPublishArgs,
+} from "./meta-publish.js";
