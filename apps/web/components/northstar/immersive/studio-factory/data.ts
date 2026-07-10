@@ -195,6 +195,8 @@ export interface StudioHookSet {
   hooks: StudioHook[];
   /** 配对建议:挑互补两条,别挑两条同角度(trending-ad-hook-spotter) */
   pairing: string;
+  /** 成品广告 CTA(按原型:礼盒预购 / 蛋糕订期 / 单品即买)—— DoneExtras 成品卡用,兑现「换产品换 CTA」 */
+  cta: string;
 }
 
 /** 冷启动诚实标注(铁律):格式信号是品类默认,发满帖后才学你的账号。 */
@@ -213,6 +215,13 @@ const ARCHETYPE_LABEL: Record<Archetype, string> = {
   box: "festive gift box",
   centrepiece: "celebration centrepiece",
   grab: "grab-and-go single",
+};
+
+// 成品广告 CTA 按原型走:礼盒是预购、蛋糕按日期订、单品当天即买。换产品 → 换 CTA。
+const ARCHETYPE_CTA: Record<Archetype, string> = {
+  box: "Pre-order now",
+  centrepiece: "Reserve your date",
+  grab: "Order today",
 };
 
 /** 生成器:按产品原型吐一组带角度 + 「为什么」的 hook(product-aware,修「产品盲」)。 */
@@ -298,6 +307,7 @@ export function studioHooks(p: NsProduct): StudioHookSet {
     frame: `${p.name} · RM${price} · ${ARCHETYPE_LABEL[arch]} → angles: ${angles}`,
     hooks,
     pairing,
+    cta: ARCHETYPE_CTA[arch],
   };
 }
 

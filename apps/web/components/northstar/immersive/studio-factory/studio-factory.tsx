@@ -20,8 +20,10 @@ import {
   Link2,
   Lock,
   Mic,
+  RotateCcw,
   ShieldCheck,
   Ticket,
+  TriangleAlert,
   Wand2,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
@@ -36,10 +38,10 @@ import {
   DialogTitle,
 } from "@/components/ui/dialog";
 import { OttoNarrationBar, PageHeader } from "@/components/northstar/_shared";
-import { NS_PRODUCTS, nsImage } from "@/components/northstar/_mock";
+import { NS_BRAND, NS_PRODUCTS, nsImage, type NsProduct } from "@/components/northstar/_mock";
 import { SectionLabel, SpendConfirmDialog, useCreateKeyframes } from "@/components/northstar/create/_create-ui";
 import { IMMERSIVE_BASE, useSweep } from "../_kit";
-import { balance as getBalance, ottoWorking as setOttoWorking, spendCredits, studioLogGen, useStore } from "../_store";
+import { balance as getBalance, ottoWorking as setOttoWorking, refundCredits, spendCredits, studioLogGen, useStore } from "../_store";
 import { OttoAssist } from "../otto-assist";
 import {
   HOOK_COLDSTART_NOTE,
@@ -79,6 +81,20 @@ export function StudioFactory() {
   const [batchAsk, setBatchAsk] = React.useState(false);
   const [batch, setBatch] = React.useState<BatchState>("idle");
   const [cellPct, setCellPct] = React.useState<Record<string, number>>({});
+  const [failedCells, setFailedCells] = React.useState<CellKey[]>([]); // #57 单格失败,已退款(兑现「失败不收费」)
+  const failedOnceRef = React.useRef(false); // 只在首批演示一次失败,之后全成功(别让 demo 显得常坏)
+  const refundedRef = React.useRef<Set<string>>(new Set()); // 每格只退一次(防 StrictMode updater 双跑重复退款)
+  // 交付快照:成品广告卡/结账账目冻结成批次那一刻的产品+钩子+CTA(换产品换文案在成品处也成立;
+  // 之后再拨钩子/产品都不改已交付的这版)。
+  const [delivered, setDelivered] = React.useState<{
+    product: NsProduct;
+    hook: StudioHook;
+    cta: string;
+    cellCount: number;
+    perCellCredits: number;
+    totalCredits: number;
+  } | null>(null);
+  const hooksTimer = React.useRef<number | null>(null); // #4 待触发的 hook 生成 timeout(换产品要取消它,别用旧产品文案回填)
   const [preflight, setPreflight] = React.useState<"none" | "running" | "done">("none"); // [wave-b] 双重体检
   const [factsOpen, setFactsOpen] = React.useState(false);
   const [voiceOpen, setVoiceOpen] = React.useState(false);
@@ -95,11 +111,21 @@ export function StudioFactory() {
   const selectedHooks = hooks.filter((h) => selectedHookIds.includes(h.id));
   const variantCount = cells.length * Math.max(1, selectedHooks.length);
   const totalCredits = variantCount * STUDIO_CREDITS_PER_VARIANT;
+  // #5 Money-shot 承诺「锁产品才保真」:锁不满 4 张就不许跑批,否则交付的成品并没按承诺锁定包装/logo。
+  const MIN_LOCKED_SHOTS = 4;
+  const productLockUnmet = mode.productLock === true && lockedShots.length < MIN_LOCKED_SHOTS;
 
   // 换产品 = 换 hook(hook = f(产品);不留上一个产品的文案冒充这一个)。在选产品处清,
   // 不用 effect(避免 render 内同步 setState)。
   const pickProduct = (id: string) => {
     if (id === productId) return;
+    // #4 换产品必须取消上一个产品还在飞的 hook 生成:否则过期 timeout 会把旧产品的钩子回填,
+    // 而抬头已跟新产品走 —— 正是本区要杀的「产品盲」错配。同时把「挖角度」状态一并落下。
+    if (hooksTimer.current !== null) {
+      window.clearTimeout(hooksTimer.current);
+      hooksTimer.current = null;
+    }
+    setHooksWorking(false);
     setProductId(id);
     setHooks([]);
     setSelectedHookIds([]);
@@ -114,10 +140,13 @@ export function StudioFactory() {
   const generateHooks = () => {
     setHooksWorking(true);
     setHooks([]);
+    if (hooksTimer.current !== null) window.clearTimeout(hooksTimer.current);
     const t = window.setTimeout(() => {
       applyHooks(hookSet);
       setHooksWorking(false);
+      hooksTimer.current = null;
     }, 3400);
+    hooksTimer.current = t;
     timers.current.push(t);
   };
 
@@ -127,18 +156,49 @@ export function StudioFactory() {
     timers.current.push(t);
   };
 
+  // 一格的价 = 该格跑的变体数(= 选中钩子数)× 单价。退款/结账都按这个锚,和分镜 #57 同口径。
+  const perCellCredits = Math.max(1, selectedHooks.length) * STUDIO_CREDITS_PER_VARIANT;
+
   const runBatch = (credits: number) => {
     spendCredits(credits, `${variantCount} variants · ${product.name}`, "Image");
     setOttoWorking(true, "Rendering variants…");
     studioLogGen(`Cutting ${variantCount} ad variants of ${product.name}. Failed ones aren't charged.`, "Factory");
+    // #1 交付快照:成品广告卡读这一版的产品+首个选中钩子+CTA,冻结账目。
+    const hook = selectedHooks[0] ?? null;
+    setDelivered(
+      hook ? { product, hook, cta: hookSet.cta, cellCount: cells.length, perCellCredits, totalCredits } : null,
+    );
     setBatch("running");
+    setFailedCells([]);
+    refundedRef.current = new Set();
+    // #57 兑现「失败不收费」:首批让一格当面失败一次 —— 退回那格的 credits(可核对的 ledger 行)+
+    // 可见失败态 + 可重试。之后的批次/重试全成功,不把 demo 弄成常坏。
+    const failKey = !failedOnceRef.current ? (cells.length > 1 ? cells[1] : cells[0]) : null;
     cells.forEach((key, i) => {
+      const willFail = key === failKey;
       const t = window.setTimeout(() => {
         const iv = window.setInterval(() => {
           setCellPct((prev) => {
             const cur = prev[key] ?? 0;
             if (cur >= 100) {
               window.clearInterval(iv);
+              return prev;
+            }
+            // 失败格:卡到 ~54% 落失败,退这格的钱,不再前进。
+            if (willFail && cur >= 54) {
+              window.clearInterval(iv);
+              failedOnceRef.current = true;
+              if (!refundedRef.current.has(key)) {
+                refundedRef.current.add(key);
+                refundCredits(perCellCredits, `${key} placement didn't render`);
+              }
+              setFailedCells((f) => (f.includes(key) ? f : [...f, key]));
+              if (i === cells.length - 1) {
+                window.setTimeout(() => {
+                  setBatch("done");
+                  setOttoWorking(false);
+                }, 500);
+              }
               return prev;
             }
             const next = { ...prev, [key]: Math.min(100, cur + 8) };
@@ -155,6 +215,28 @@ export function StudioFactory() {
       }, i * 900);
       timers.current.push(t);
     });
+  };
+
+  // #57 重试单格:重新扣这格的钱(之前失败已退,重试即重新付),渲到成功。用交付快照冻结的
+  // 单格价,和当初退的数对得上(哪怕交付后又拨过钩子选择)。
+  const retryCell = (key: CellKey) => {
+    spendCredits(delivered?.perCellCredits ?? perCellCredits, `Retry · ${key} placement`, "Image");
+    setFailedCells((f) => f.filter((k) => k !== key));
+    setCellPct((prev) => ({ ...prev, [key]: 0 }));
+    setOttoWorking(true, "Re-rendering one placement…");
+    const iv = window.setInterval(() => {
+      setCellPct((prev) => {
+        const cur = prev[key] ?? 0;
+        if (cur >= 100) {
+          window.clearInterval(iv);
+          return prev;
+        }
+        const next = { ...prev, [key]: Math.min(100, cur + 9) };
+        if (next[key] === 100) window.setTimeout(() => setOttoWorking(false), 400);
+        return next;
+      });
+    }, 200);
+    timers.current.push(iv);
   };
 
   const toggleCell = (key: CellKey) => {
@@ -477,7 +559,9 @@ export function StudioFactory() {
                             onClick={() => toggleCell(key)}
                             className={cn("flex h-14 items-center justify-center border-b border-l border-border transition-colors duration-[120ms] last:border-b-0", on ? "bg-secondary" : "hover:bg-accent")}
                           >
-                            {batch !== "idle" && on ? (
+                            {failedCells.includes(key) ? (
+                              <TriangleAlert className="size-4 text-warning-soft-foreground" strokeWidth={2} />
+                            ) : batch !== "idle" && on ? (
                               pct === 100 ? (
                                 <Check className="size-4 text-success-soft-foreground" strokeWidth={2.5} />
                               ) : (
@@ -515,14 +599,18 @@ export function StudioFactory() {
                     <ShieldCheck className="size-3.5 text-muted-foreground" strokeWidth={2} />
                     Pre-flight check · free
                   </p>
-                  <p className="text-[13px] text-muted-foreground">Otto rates your top hook&apos;s open and flags look-alikes before you spend.</p>
+                  <p className="text-[13px] text-muted-foreground">Otto rates your top hook&apos;s open and flags a one-angle batch before you spend.</p>
                 </div>
                 {preflight === "none" && <Button variant="secondary" size="sm" onClick={runPreflight}>Run pre-flight</Button>}
-                {preflight === "running" && <OttoNarrationBar steps={[`Scoring the "${selectedHooks[0]?.angle ?? "opening"}" hook…`, "Checking your last 20 posts for look-alikes…"]} stepMs={900} className="w-fit" />}
+                {preflight === "running" && <OttoNarrationBar steps={[`Scoring the "${selectedHooks[0]?.angle ?? "opening"}" hook…`, "Checking the batch's angle spread…"]} stepMs={900} className="w-fit" />}
               </div>
               {preflight === "done" && (() => {
                 const top = selectedHooks[0];
                 const strong = top ? top.power !== "Med" : false;
+                // #2 相似度不再写死「你最近 20 帖没撞脸」(那是我们没有的历史数据、还永远显 clear)。
+                // 改成能真算的锚:这一批跨几个不同角度 —— 一个角度铺满 N 个尺寸就是「一版复用」。
+                const distinctAngles = new Set(selectedHooks.map((h) => h.angle)).size;
+                const varied = distinctAngles >= 2;
                 return (
                   <div className="mt-3">
                     <div className="flex flex-wrap gap-2">
@@ -533,12 +621,14 @@ export function StudioFactory() {
                             : `Virality: fair — "${top.angle}" is a softer open; the test pair above hardens it`
                           : "Virality: pick a hook to score"}
                       </span>
-                      <span className="inline-flex items-center gap-1 rounded-full bg-success-soft px-2.5 py-1 text-xs font-medium text-success-soft-foreground">
-                        Similarity: clear — no look-alike in your last 20 posts
+                      <span className={cn("inline-flex items-center gap-1 rounded-full px-2.5 py-1 text-xs font-medium", varied ? "bg-success-soft text-success-soft-foreground" : "bg-secondary text-muted-foreground")}>
+                        {varied
+                          ? `Similarity: varied — ${distinctAngles} angles across ${variantCount} variants, not one line reskinned`
+                          : `Similarity: one angle — ${variantCount} variants of a single hook; add a second so you test angles, not sizes`}
                       </span>
                     </div>
-                    {/* §五 判断层:标明依据 + 不确定性,不假装精确 */}
-                    <p className="mt-2 text-xs leading-4 text-muted-foreground">Scored on the hook&apos;s structure and your 20 most recent posts — a directional read before you spend, not a guarantee.</p>
+                    {/* §五 判断层:标明依据(能算的:本批角度铺开)+ 不确定性 + 承认没接账号历史,不假装精确 */}
+                    <p className="mt-2 text-xs leading-4 text-muted-foreground">A structural read on this batch&apos;s angle spread and the top hook&apos;s open — a proxy for freshness before you spend, not a match against your past posts (that needs your account connected).</p>
                   </div>
                 );
               })()}
@@ -551,9 +641,13 @@ export function StudioFactory() {
               <>
                 <div className="min-w-0 flex-1">
                   <p className="text-sm font-semibold text-foreground">{variantCount} variants · {totalCredits} credits total</p>
-                  <p className="text-[13px] text-muted-foreground">One confirm covers the whole batch. Nothing is charged until you say go.</p>
+                  <p className="text-[13px] text-muted-foreground">
+                    {productLockUnmet
+                      ? `Lock ${MIN_LOCKED_SHOTS - lockedShots.length} more product photo${MIN_LOCKED_SHOTS - lockedShots.length === 1 ? "" : "s"} up in step 2b first — money-shot mode can't keep your packaging and logo true without them.`
+                      : "One confirm covers the whole batch. Nothing is charged until you say go."}
+                  </p>
                 </div>
-                <Button variant="brand" disabled={variantCount === 0 || selectedHooks.length === 0} onClick={() => setBatchAsk(true)}>
+                <Button variant="brand" disabled={variantCount === 0 || selectedHooks.length === 0 || productLockUnmet} onClick={() => setBatchAsk(true)}>
                   Confirm batch · {totalCredits} credits
                 </Button>
               </>
@@ -565,19 +659,35 @@ export function StudioFactory() {
                 <span className="font-mono text-[11px] leading-[14px] text-muted-foreground tabular-nums">{balance.toLocaleString()} credits left</span>
               </>
             )}
-            {batch === "done" && (
+            {batch === "done" && delivered && failedCells.length > 0 && (
+              <>
+                <Badge variant="warning">{delivered.cellCount - failedCells.length} of {delivered.cellCount} placements rendered</Badge>
+                <p className="min-w-0 flex-1 text-[13px] text-muted-foreground">
+                  You were charged {(delivered.cellCount - failedCells.length) * delivered.perCellCredits} credits — the failed placement was refunded. Retry it, or open what rendered.
+                </p>
+                <Button variant="secondary" size="sm" onClick={() => failedCells.forEach((key) => retryCell(key))}>
+                  <RotateCcw className="size-3.5" strokeWidth={2} />
+                  Retry placement · {failedCells.length * (delivered?.perCellCredits ?? perCellCredits)} credits
+                </Button>
+                <Button variant="secondary" size="sm" onClick={() => router.push(`${IMMERSIVE_BASE}/assets/library`)}>Open Library</Button>
+              </>
+            )}
+            {batch === "done" && failedCells.length === 0 && (
               <>
                 <Badge variant="success">Batch complete</Badge>
-                <p className="min-w-0 flex-1 text-[13px] text-muted-foreground">You approved this. It used {totalCredits} credits. The variants are in your Library.</p>
+                <p className="min-w-0 flex-1 text-[13px] text-muted-foreground">You approved this. It used {delivered?.totalCredits ?? totalCredits} credits. The variants are in your Library.</p>
                 <Button variant="secondary" size="sm" onClick={() => router.push(`${IMMERSIVE_BASE}/assets/library`)}>Open Library</Button>
               </>
             )}
           </section>
 
-          {/* 完工后:一体化广告 / 资产板 / 编辑工具箱 / 凭证 / 存模板 */}
-          {batch === "done" && (
+          {/* 完工后:一体化广告 / 资产板 / 编辑工具箱 / 凭证 / 存模板。成品读交付快照(冻结的
+              产品 + 首个钩子 + CTA),兑现「换产品换文案」直到真正要发的成品处。 */}
+          {batch === "done" && delivered && (
             <DoneExtras
-              product={product}
+              product={delivered.product}
+              headline={delivered.hook.line}
+              cta={delivered.cta}
               onEditTool={setEditTool}
               onLicense={() => setLicenseOpen(true)}
               onSaveTpl={() => setSaveTplOpen(true)}
@@ -637,7 +747,7 @@ export function StudioFactory() {
             <DialogDescription>A one-page PDF stating this is AI-generated and how it can be used — handy when you deliver to a client.</DialogDescription>
           </DialogHeader>
           <div className="rounded-[14px] border border-border bg-card p-4 text-[13px] text-foreground">
-            <p className="font-semibold">Roti Bulan Bakery — {product.name}</p>
+            <p className="font-semibold">{NS_BRAND.name} — {product.name}</p>
             <p className="mt-1 text-muted-foreground">Generated with FIKIRTIVE · commercial use granted to the account owner · {new Date().getFullYear()}.</p>
           </div>
           <DialogFooter className="flex-row justify-end gap-3">
@@ -687,12 +797,18 @@ export function StudioFactory() {
 /* ── 完工后附加动作:一体化广告版式 / 资产板 / 编辑工具箱 / 凭证 / 存模板 ── */
 function DoneExtras({
   product,
+  headline,
+  cta,
   onEditTool,
   onLicense,
   onSaveTpl,
   onSchedule,
 }: {
   product: (typeof NS_PRODUCTS)[number];
+  /** #1 成品标题 = 这一版真正选中的钩子文案(不再写死 Merdeka 礼盒句) */
+  headline: string;
+  /** #1 CTA 按产品原型走(礼盒预购 / 蛋糕订期 / 单品即买) */
+  cta: string;
   onEditTool: (id: string) => void;
   onLicense: () => void;
   onSaveTpl: () => void;
@@ -710,10 +826,10 @@ function DoneExtras({
           {/* eslint-disable-next-line @next/next/no-img-element */}
           <img src={product.image} alt="" aria-hidden className="aspect-[4/5] w-full object-cover" />
           <span className="absolute inset-x-0 bottom-0 flex flex-col gap-2 bg-gradient-to-t from-[rgba(10,10,12,0.72)] to-transparent p-4 pt-10">
-            <span className="text-base font-bold text-primary-foreground">The box that sells out every Merdeka</span>
+            <span className="text-base font-bold text-primary-foreground">{headline}</span>
             <span className="flex items-center gap-2">
-              <span className="rounded-full bg-card px-3 py-1 text-xs font-semibold text-foreground">Pre-order now</span>
-              <span className="ml-auto text-[11px] font-semibold text-primary-foreground/80">Roti Bulan Bakery</span>
+              <span className="rounded-full bg-card px-3 py-1 text-xs font-semibold text-foreground">{cta}</span>
+              <span className="ml-auto text-[11px] font-semibold text-primary-foreground/80">{NS_BRAND.name}</span>
             </span>
           </span>
         </div>
