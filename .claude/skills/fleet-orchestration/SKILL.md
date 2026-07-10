@@ -65,6 +65,7 @@ Workflow 工具要点:`meta` 纯字面量;默认 `pipeline()`,只有真需要全
 9. **给 founder 的汇报 = 人话 + 可查证据**(部署 SHA、逐页 HTTP 状态、测试输出),不说"我验证过了";禁内部代号。
 10. 机器闸不许因赶工跳过;CI 红 = 本地三关复现(见 `docs/runbooks/local-ci.md`)+ founder 批准才可动。
 11. **分区质检的结构性盲区 = 跨页状态断层**(A 页改了、B 页读不到:本地 useState 覆盖层不落 store、深链解析不认运行时新对象、同一数据两页两个源)。一区一官的打分抓不到这类;**缝合队工单必须专列"跨页状态连续性"清单逐条点击验证,第四闸(Codex)的五类靶子里它排第一**。(2026-07-09 首战实证:全区 A 之后 Codex 仍抓出 3 High 全属此类。)
+12. **借鉴先行律(founder 2026-07-10 常设)**:遇平台政策雷/接口关门/合规红线,第一步=查龙头活法(官方源+龙头自家条款与帮助文档),产出"抄什么/改什么/为什么我们不同"再设计我方解法;**禁止未查先创**。范例:docs/research/LEADER-PLAYBOOK-2026-07-10.md(三颗雷五路研究+证据分级)。
 
 ## 五、Codex 派单配方
 
@@ -81,5 +82,3 @@ codex exec --skip-git-repo-check -c model_reasoning_effort=<low|medium|high|xhig
 - 计费走 founder 的 ChatGPT 订阅(priority tier),非逐笔钱路;**重活(整分支审查/长跑)先跟 founder 打一声招呼**,别烧光他的 plan 限额。
 - repo 规矩对 Codex 一视同仁:永不推 main、PR+CI 绿灯、playbook 检查单。
 - plugin 命令(`/codex:review` 等)需重启会话才注册;CLI `codex exec` 永远直接可用。
-
-12. **借鉴先行律(founder 2026-07-10 常设)**:遇平台政策雷/接口关门/合规红线,第一步=查龙头活法(官方源+龙头自家文档),产出"抄什么/改什么/为什么我们不同"再设计我方解法;禁止未查先创。范例:docs/research/LEADER-PLAYBOOK-2026-07-10.md。
