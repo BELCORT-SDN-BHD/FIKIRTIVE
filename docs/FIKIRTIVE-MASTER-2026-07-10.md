@@ -73,7 +73,7 @@
 
 ## 十一、模型选派(如何用对人)
 
-见 `.claude/skills/model-routing/SKILL.md`(逐能力表)+ `docs/ops/MODEL-DOSSIER-2026-07.md`(全维档案)+ fleet-orchestration(分档/五关/工单样板)。双脑制:`.claude/skills/two-brain`。
+见 `.claude/skills/orchestration/SKILL.md(第一章·模型选派)`(逐能力表)+ `docs/ops/MODEL-DOSSIER-2026-07.md`(全维档案)+ fleet-orchestration(分档/五关/工单样板)。双脑制:`.claude/skills/orchestration(第三章)`。
 
 ---
 
