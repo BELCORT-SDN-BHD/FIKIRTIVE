@@ -161,11 +161,18 @@ export function OttoChatStream({
    *  also exhausted — shows a terminal message instead of re-arming indefinitely. */
   const [pollTerminal, setPollTerminal] = useState(false);
   const [pollRound, setPollRound] = useState<"initial" | "retry">("initial");
+  /** Monotonic re-arm token. Bumped on every rearm so the bounded-poll effect below
+   *  ALWAYS re-runs (resetting its local pollCount to 0), even when pollGaveUp /
+   *  pollTerminal / pollRound are already at their reset values — otherwise React
+   *  bails out and a mid-flight poll window carries its spent budget into a
+   *  freshly-approved generation, showing "Check again" early. */
+  const [pollNonce, setPollNonce] = useState(0);
 
   function rearmGenerationPoll() {
     setPollGaveUp(false);
     setPollTerminal(false);
     setPollRound("initial");
+    setPollNonce((n) => n + 1);
   }
 
   // useChat constructs its Chat (and captures `transport` + initial `messages`) ONCE.
@@ -380,7 +387,7 @@ export function OttoChatStream({
     }, POLL_MS);
     return () => clearInterval(t);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [hasWorkingJob, thread.id, pollGaveUp, pollRound]);
+  }, [hasWorkingJob, thread.id, pollGaveUp, pollRound, pollNonce]);
 
   const { scrollRef, contentRef, isAtBottom, scrollToBottom } = useStickToBottom();
 

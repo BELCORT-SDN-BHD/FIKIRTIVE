@@ -157,13 +157,32 @@ describe("card seams — CARD_TOOL_NAMES (seam 5) and CARD_KINDS (seam 4) stay i
     }
   });
 
-  it("stream approval/cancel paths fully re-arm poll state and refresh after cancel", () => {
+  it("stream approval/cancel paths fully re-arm poll state, restart the poll window, and refresh after cancel", () => {
     for (const component of [OTTO_CHAT_STREAM, OTTO_CONVERSATION]) {
       const src = fs.readFileSync(component, "utf8");
       const helper = src.match(/function rearmGenerationPoll\(\) \{([\s\S]*?)\n  \}/)?.[1] ?? "";
       expect(helper).toContain("setPollGaveUp(false)");
       expect(helper).toContain("setPollTerminal(false)");
       expect(helper).toContain('setPollRound("initial")');
+      // Window-restart guard (NOTE-1 regression): rearm must UNCONDITIONALLY restart the
+      // poll window so a freshly-approved/retried generation gets the full MAX_POLLS
+      // budget — not just the remainder of a poll already mid-flight. The three setters
+      // above are no-ops (React bail-out) when already at their reset values, so the
+      // reset must ride a monotonic nonce that the bounded-poll effect depends on.
+      // Assert the whole wiring, not merely that a setter was called:
+      //   1. rearm bumps a monotonic nonce (functional +1 → always a new value),
+      //   2. the nonce is real useState-backed state, and
+      //   3. it is a dependency of the effect that resets `pollCount = 0` on every run.
+      expect(
+        helper,
+        "rearmGenerationPoll must bump a monotonic poll nonce so the poll effect re-runs",
+      ).toMatch(/setPollNonce\(\s*\(?\w+\)?\s*=>\s*\w+\s*\+\s*1\s*\)/);
+      expect(src).toMatch(/const \[pollNonce, setPollNonce\] = useState\(0\)/);
+      const pollEffectDeps = src.match(/let pollCount = 0[\s\S]*?\},\s*\[([^\]]*)\]\)/)?.[1] ?? "";
+      expect(
+        pollEffectDeps,
+        "the bounded-poll effect (let pollCount = 0) must list pollNonce in its deps, or the bump won't restart the window",
+      ).toContain("pollNonce");
       expect((src.match(/rearmGenerationPoll\(\);/g) ?? []).length).toBeGreaterThanOrEqual(4);
       expect(src).toMatch(/onCancelled=\{[\s\S]*setCancelledJobIds[\s\S]*onBalanceRefresh\?\.\(\)[\s\S]*(pollAndInjectResults|refreshAndUpdate)/);
     }

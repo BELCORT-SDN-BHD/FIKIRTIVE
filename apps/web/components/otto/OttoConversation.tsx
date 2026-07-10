@@ -63,6 +63,7 @@ export function OttoConversation({
     setPollGaveUp(false);
     setPollTerminal(false);
     setPollRound("initial");
+    setPollNonce((n) => n + 1);
   }
 
   const mentionSuggestions = mentionQuery !== null
@@ -210,6 +211,10 @@ export function OttoConversation({
   /** Set to true after "Check again" exhausts a second MAX_POLLS round — terminal message. */
   const [pollTerminal, setPollTerminal] = useState(false);
   const [pollRound, setPollRound] = useState<"initial" | "retry">("initial");
+  /** Monotonic re-arm token — see OttoChatStream. Bumped on every rearm so the poll
+   *  effect always re-runs and resets its local pollCount to 0, even when the other
+   *  reset setters are no-ops (React would otherwise bail out and keep the stale window). */
+  const [pollNonce, setPollNonce] = useState(0);
 
   // Reset the give-up state whenever we switch threads.
   useEffect(() => {
@@ -233,7 +238,7 @@ export function OttoConversation({
     }, POLL_MS);
     return () => clearInterval(t);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [hasWorkingJob, thread.id, pollGaveUp, pollRound]);
+  }, [hasWorkingJob, thread.id, pollGaveUp, pollRound, pollNonce]);
 
   // leading-[1.5] — design-baseline body line-height (Analytics standard)
   return (
