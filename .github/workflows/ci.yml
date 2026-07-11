@@ -130,3 +130,33 @@ jobs:
       # are invisible to the datamodel diff and stay owned by the credits/idempotency tests.
       - run: pnpm --filter @fikirtive/db exec prisma migrate diff --from-config-datasource --to-schema prisma/schema.prisma --exit-code
       - run: pnpm -r test
+
+  # ESLint gate (route 乙 B10 · P0-3): `pnpm lint` was never wired into CI (128 errors accrued
+  # silently, MASTERPLAN.md P0-3). Kept as its own job — NOT appended to `check` — because
+  # `check`'s docstring above frames it as the fast typecheck+fences gate; lint is a separate
+  # concern with its own (slower, output-heavy) failure mode. Only needs the workspace packages
+  # built (apps/web's `no-restricted-imports` rule matches on the import specifier text, not
+  # resolved types, but @typescript-eslint parsing still expects the workspace packages'
+  # published shapes to exist) — no DB, no `next build`.
+  #
+  # STATUS (2026-07-12, PR that added this job): a mechanical-only pass reduced `pnpm lint` from
+  # 128 (2026-07-07 baseline) to 71 problems (7 errors, 64 warnings) with zero behavioral changes
+  # (unused-var / dead-import / stale eslint-disable-comment removals only). The remaining 7
+  # errors (react-hooks/set-state-in-effect ×5, react-hooks/purity ×2) all require an actual
+  # effect/render-timing refactor — real behavior changes, out of scope for a surgical cleanup —
+  # so this job is EXPECTED RED until the control plane adjudicates those 7 (see the PR
+  # description for the full file:line list). Do not silence them with eslint-disable to turn
+  # this green; that would hide the exact regression this job exists to catch.
+  lint:
+    name: eslint (apps/web)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4 # version from package.json `packageManager` (see check job)
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm --filter "./packages/*" build
+      - run: pnpm lint
