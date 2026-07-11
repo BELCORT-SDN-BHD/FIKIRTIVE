@@ -93,7 +93,7 @@
 
 ## 3. 精细分工矩阵提案(FIKIRTIVE 每类活 × 首选/备选 + 与现行编制的差异)
 
-**现行编制来源**:`.claude/skills/orchestration(第二章)/SKILL.md` 一·分档用工表(总指挥=Fable / 灵魂=Opus / 量产=Sonnet / 编外对抗队=Codex Sol@xhigh·Terra@high·Luna@medium / 质检官=Opus)。
+**历史编制来源**：本段保留 2026-07-10 的旧矩阵作证据对照；现行席位与 effort 已由全局 `orchestration` skill、`.claude/skills/fikirtive-orchestration-overlay/SKILL.md` 和 `MODEL-ROUTING-2026-07-11.md` 取代。
 
 ### 3.1 提案矩阵
 

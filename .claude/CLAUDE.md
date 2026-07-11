@@ -61,10 +61,10 @@ Both are active and do NOT conflict (separate storage, separate tools):
   plus non-code knowledge (this repo's plans/PRDs/research). Reach for it for
   fuzzy/conceptual questions and for searching docs/decisions.
 
-## Merge discipline (branch protection substitute)
-This is a PRIVATE repo on a free GitHub plan — real branch protection is unavailable
-(and the founder chose not to upgrade). These rules ARE the protection; every agent
-session must follow them:
+## Merge discipline
+`main` has the active org ruleset `protect-main`, but the rules below remain mandatory defense in
+depth. `AGENTS.md` is the current authority for founder-only versus delegated ordinary merge;
+every agent session must follow it:
 - **Never push directly to `main`.** All changes land via a PR.
 - **Never merge a PR unless ALL CI checks are green** on the current head commit.
 - **CI 不可用时(账单封锁/Actions 宕机)不得以"CI 本来就红"为由合并;必须在本地完整
@@ -108,11 +108,17 @@ Summary of constitution articles (on conflict, `docs/BLUEPRINT.md` wins):
   files + simple toggles, nothing buried).
 
 ## Fresh agent bootstrap (new machine / new session — read in this order)
-1. `docs/BLUEPRINT.md` — the constitution (NEVER edit; conflicts → stop and report)
-2. `docs/review/REVIEWER-PLAYBOOK.md` — review checklists before touching any PR
-3. `docs/research/GRILL-VERDICTS-2026-07-03.md` — the 2026-07-03 WHAT-pass verdicts
+1. `AGENTS.md` — cross-harness project law and current merge authority
+2. `docs/BLUEPRINT.md` — the constitution (NEVER edit; conflicts → stop and report)
+3. `docs/review/REVIEWER-PLAYBOOK.md` — review checklists before touching any PR
+4. `docs/research/GRILL-VERDICTS-2026-07-03.md` — the 2026-07-03 WHAT-pass verdicts
    (earlier decisions: `docs/review/DECISION-INVENTORY-2026-07-02.md`)
-4. `docs/design/2026-07-03-harmony-0*.md` — data model, parity manifest, factory roadmap,
+5. `docs/design/2026-07-03-harmony-0*.md` — data model, parity manifest, factory roadmap,
    costing (inputs + model), channel-fee ledger
-5. `docs/review/EXPANSION-SEAMS.md` — the recipe for whatever you're about to build
+6. `docs/review/EXPANSION-SEAMS.md` — the recipe for whatever you're about to build
 Everything an agent needs to build correctly is in the repo; no chat history required.
+
+When asked to orchestrate, resume an interrupted program, coordinate models, or make product/
+architecture/design/audit decisions, also read the globally installed `orchestration` skill,
+`.claude/skills/fikirtive-orchestration-overlay/SKILL.md`, and
+`docs/ops/ORCHESTRATOR-STATE.md` before dispatching work.
