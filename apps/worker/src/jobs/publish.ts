@@ -185,13 +185,24 @@ async function transcodeToJpeg(ownerId: string, key: string): Promise<string> {
   return jpgKey;
 }
 
+/**
+ * A DETERMINISTIC IG media-contract violation: the asset's stored MIME isn't image/* (video,
+ * audio, or empty/unknown), so it can never legitimately reach IG's JPEG-only image path.
+ * Re-attempting can't fix it (the asset itself is wrong for this channel), so — like
+ * PublishAuthRefused — this is six-state ② → NEEDS_ATTENTION, never ③ FAILED. Produced by
+ * buildMediaUrls() BEFORE transcodeToJpeg()/any Graph call, guaranteeing zero ffmpeg + zero
+ * external calls on this path.
+ */
+export type PublishMediaContractRefused = { mediaContractRefused: true; error: string };
+
 /** Build public, signed proxy URLs Meta can fetch for a post's media, in carousel order.
- *  IG needs JPEG → non-JPEG images are transcoded first. Returns { urls } or a refusal. */
+ *  IG needs JPEG → non-JPEG *images* are transcoded first; non-image MIME is refused outright.
+ *  Returns { urls }, a generic refusal, or a media-contract refusal. */
 export async function buildMediaUrls(
   ownerId: string,
   scheduledPostId: string,
   channel: string,
-): Promise<{ urls: string[] } | { error: string }> {
+): Promise<{ urls: string[] } | { error: string } | PublishMediaContractRefused> {
   const base = publicBaseUrl();
   const secret = mediaProxySecret();
   if (!base || !secret) return { error: "Media proxy isn't configured (base URL / secret)." };
@@ -205,7 +216,7 @@ export async function buildMediaUrls(
 
   const gens = await prisma.generation.findMany({
     where: { id: { in: rows.map((r) => r.generationId) }, ownerId, deletedAt: null },
-    select: { id: true, asset: { select: { ownerId: true, contentHash: true, ext: true } } },
+    select: { id: true, asset: { select: { ownerId: true, contentHash: true, ext: true, mime: true } } },
   });
   const byId = new Map(gens.map((g) => [g.id, g.asset]));
 
@@ -213,6 +224,16 @@ export async function buildMediaUrls(
   for (const r of rows) {
     const asset = byId.get(r.generationId);
     if (!asset) return { error: "Some of this post's media is missing." };
+    // IG media contract: the whitelist is Asset.mime (image/*), never the file extension — an
+    // ext can lie about what was actually stored. Anything that isn't a known image/* MIME must
+    // NEVER reach transcodeToJpeg() (a single-frame ffmpeg extraction would silently turn a video
+    // post into a static image) or any Graph call, so this check runs before both.
+    if (channel === "instagram" && !asset.mime.startsWith("image/")) {
+      return {
+        mediaContractRefused: true,
+        error: "This post's media isn't a publishable image for Instagram — replace it and try again.",
+      };
+    }
     let key = storageKey(asset.ownerId, asset.contentHash, asset.ext);
     if (channel === "instagram" && !IMG_JPEG.has(asset.ext.toLowerCase())) {
       key = await transcodeToJpeg(ownerId, key);
@@ -236,7 +257,7 @@ export type PublishAuthRefused = { authFailed: true; error: string };
 export type PublishExecutor = (
   post: DuePost,
   attemptId: string,
-) => Promise<PublishResult | PublishAuthRefused>;
+) => Promise<PublishResult | PublishAuthRefused | PublishMediaContractRefused>;
 
 type DuePost = {
   id: string;
@@ -248,7 +269,7 @@ type DuePost = {
 };
 
 /** The real executor. Persists the IG creationId onto the attempt BEFORE media_publish (lock 3). */
-async function realExecute(post: DuePost, attemptId: string): Promise<PublishResult | PublishAuthRefused> {
+async function realExecute(post: DuePost, attemptId: string): Promise<PublishResult | PublishAuthRefused | PublishMediaContractRefused> {
   // Config/authorization refusals → NEEDS_ATTENTION (M1), and they short-circuit BEFORE any Meta
   // port exists, so no external call is ever made on this path.
   if (!post.metaTargetId) return { authFailed: true, error: "This post has no target account — pick a connected channel before publishing." };
@@ -263,6 +284,7 @@ async function realExecute(post: DuePost, attemptId: string): Promise<PublishRes
   if ("error" in page) return page;
 
   const media = await buildMediaUrls(post.ownerId, post.id, post.channel);
+  if ("mediaContractRefused" in media) return media;
   if ("error" in media) return { error: media.error, retryable: false };
 
   const port = portFor(page.pageToken, deadline);
@@ -361,7 +383,7 @@ export async function handlePublish(
     return;
   }
 
-  let result: PublishResult | PublishAuthRefused;
+  let result: PublishResult | PublishAuthRefused | PublishMediaContractRefused;
   try {
     result = await execute(post, attemptId);
   } catch (err) {
@@ -369,10 +391,11 @@ export async function handlePublish(
     result = { error: sanitizeError(err), retryable: true };
   }
 
-  if ("authFailed" in result) {
-    // M1 — deterministic authorization/config refusal. ZERO Meta calls happened (the executor
-    // refused before building the port). Re-posting can't fix it → six-state ② NEEDS_ATTENTION,
-    // never FAILED. CAS-scoped so a concurrently-resolved row is never clobbered.
+  if ("authFailed" in result || "mediaContractRefused" in result) {
+    // M1 — deterministic authorization/config refusal, OR a deterministic IG media-contract
+    // refusal (buildMediaUrls rejected a non-image/* asset before transcodeToJpeg()/any Graph
+    // call). ZERO Meta calls happened either way. Re-posting can't fix it → six-state ②
+    // NEEDS_ATTENTION, never FAILED. CAS-scoped so a concurrently-resolved row is never clobbered.
     const reason = sanitizeError(result.error);
     await prisma.$transaction([
       prisma.scheduledPost.updateMany({
