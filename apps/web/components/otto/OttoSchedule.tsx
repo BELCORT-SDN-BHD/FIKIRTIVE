@@ -1,5 +1,5 @@
 "use client";
-import React, { useState, useEffect, useMemo, useCallback, useTransition } from "react";
+import React, { useState, useEffect, useMemo, useCallback, useRef, useTransition } from "react";
 import { Plus, X, Check, Pencil } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Switch } from "@/components/ui/switch";
@@ -177,8 +177,14 @@ export function OttoSchedule({
     [stuffItems],
   );
 
+  // focus/visibilitychange/60s-poll can all fire reload() concurrently; a slower older
+  // request landing after a newer one would clobber fresh data. Sequence guard: only the
+  // still-latest call is allowed to write state.
+  const reloadSeq = useRef(0);
   const reload = useCallback(async () => {
+    const seq = ++reloadSeq.current;
     const rows = await listScheduledPosts();
+    if (seq !== reloadSeq.current) return;
     setPosts(rows);
     setLoading(false);
     // Keep an open composer's status/lastError current (e.g. a NEEDS_ATTENTION landing
