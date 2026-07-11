@@ -220,20 +220,27 @@ export async function buildMediaUrls(
   });
   const byId = new Map(gens.map((g) => [g.id, g.asset]));
 
-  const urls: string[] = [];
+  // Pass 1 (P1b): validate EVERY asset's mime BEFORE any ffmpeg/storage work. A mixed carousel
+  // with even one non-image/* asset (video, audio, empty/unknown mime) is refused as a whole —
+  // transcoding the OTHER, valid assets first would waste ffmpeg calls + storage writes on a post
+  // that can never legitimately publish. The whitelist is Asset.mime, never the file extension —
+  // an ext can lie about what was actually stored.
+  const assets: (typeof gens)[number]["asset"][] = [];
   for (const r of rows) {
     const asset = byId.get(r.generationId);
     if (!asset) return { error: "Some of this post's media is missing." };
-    // IG media contract: the whitelist is Asset.mime (image/*), never the file extension — an
-    // ext can lie about what was actually stored. Anything that isn't a known image/* MIME must
-    // NEVER reach transcodeToJpeg() (a single-frame ffmpeg extraction would silently turn a video
-    // post into a static image) or any Graph call, so this check runs before both.
     if (channel === "instagram" && !asset.mime.startsWith("image/")) {
       return {
         mediaContractRefused: true,
         error: "This post's media isn't a publishable image for Instagram — replace it and try again.",
       };
     }
+    assets.push(asset);
+  }
+
+  // Pass 2 — every asset in the post passed the contract; only now transcode/build URLs.
+  const urls: string[] = [];
+  for (const asset of assets) {
     let key = storageKey(asset.ownerId, asset.contentHash, asset.ext);
     if (channel === "instagram" && !IMG_JPEG.has(asset.ext.toLowerCase())) {
       key = await transcodeToJpeg(ownerId, key);
@@ -280,12 +287,17 @@ async function realExecute(post: DuePost, attemptId: string): Promise<PublishRes
   // publish is aborted well before pg-boss can expire + redeliver the job.
   const deadline = AbortSignal.timeout(PUBLISH_EXECUTION_DEADLINE_MS);
 
-  const page = await resolvePage(auth.userToken, post.metaTargetId, deadline);
-  if ("error" in page) return page;
-
+  // Media-contract guard runs BEFORE resolvePage (P1a): buildMediaUrls touches only prisma/storage/
+  // ffmpeg, never Meta, so a refused post makes ZERO Graph calls — not even the read-only
+  // me/accounts lookup below. (A generic media error, e.g. proxy misconfigured, now also short-
+  // circuits before that read-only call instead of after it — same {error,retryable:false} outcome,
+  // just one fewer wasted Graph call on the way to it.)
   const media = await buildMediaUrls(post.ownerId, post.id, post.channel);
   if ("mediaContractRefused" in media) return media;
   if ("error" in media) return { error: media.error, retryable: false };
+
+  const page = await resolvePage(auth.userToken, post.metaTargetId, deadline);
+  if ("error" in page) return page;
 
   const port = portFor(page.pageToken, deadline);
   // The creationId anchor is a HARD precondition for going live (H6): store it with an attempt CAS

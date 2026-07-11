@@ -97,4 +97,21 @@ describe("buildMediaUrls — IG media contract for video assets (publish.ts:190-
     expect(bin).toBe("ffmpeg");
     expect(args).toContain("-frames:v");
   });
+
+  it("P1b two-pass: a mixed carousel [image/png, video/mp4] is refused as a WHOLE with zero ffmpeg + zero storage writes", async () => {
+    // The valid image is position 0 (would be transcoded first under a single-pass loop) — proves
+    // pass 1 validates every asset's mime BEFORE pass 2 touches ffmpeg/storage for any of them.
+    m.scheduledPostMediaFindMany.mockResolvedValue([{ generationId: "gen-img" }, { generationId: "gen-vid" }]);
+    m.generationFindMany.mockResolvedValue([
+      { id: "gen-img", asset: { ownerId: OWNER, contentHash: CONTENT_HASH, ext: "png", mime: "image/png" } },
+      { id: "gen-vid", asset: { ownerId: OWNER, contentHash: CONTENT_HASH, ext: "mp4", mime: "video/mp4" } },
+    ]);
+
+    const result = await buildMediaUrls(OWNER, "sp1", "instagram");
+
+    expect("urls" in result).toBe(false);
+    expect("mediaContractRefused" in result && result.mediaContractRefused).toBe(true);
+    expect(execaMock).not.toHaveBeenCalled();
+    expect(storageMocks.put).not.toHaveBeenCalled();
+  });
 });
