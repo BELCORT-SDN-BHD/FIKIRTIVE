@@ -37,11 +37,14 @@ function slash(p) {
   return p.split(path.sep).join("/");
 }
 
+// Catches both `export async function NAME` and `export const NAME = async` action
+// shapes (ported from the verified pattern in scripts/verify-auth-guards.mjs).
 function exportedAsyncFunctions(file) {
   const source = fs.readFileSync(file, "utf8");
   const names = [];
-  for (const match of source.matchAll(/^export\s+async\s+function\s+([A-Za-z0-9_]+)\b/gm)) {
-    names.push(match[1]);
+  const re = /^export\s+(?:async\s+function\s+([A-Za-z0-9_]+)|const\s+([A-Za-z0-9_]+)\s*(?::[^=]+)?=\s*async\b)/gm;
+  for (const match of source.matchAll(re)) {
+    names.push(match[1] ?? match[2]);
   }
   return names;
 }
