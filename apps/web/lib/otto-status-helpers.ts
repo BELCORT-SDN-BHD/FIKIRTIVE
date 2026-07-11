@@ -45,6 +45,25 @@ export function asErrorData(part: RawDataPart): OttoErrorData | null {
   return part.data as OttoErrorData;
 }
 
+/**
+ * Return the first `data-error` payload carried by a message's parts, or null.
+ *
+ * A run failure streams a NON-transient `data-error` part, which AI SDK v6 both fires
+ * on `onData` AND persists into the assistant message's `parts` (verified against the
+ * installed ai@6.0.208: processUIMessageStream pushes the part to message.parts and
+ * calls onData for non-transient data chunks). The live `onData` handler mirrors it
+ * into React state for the alert; this reads the SAME error off the DURABLE part so the
+ * renderer can surface it even if that ephemeral state was ever missed — state honesty
+ * (宪法 11) must not hinge on a single one-shot callback. Pure + unit-tested.
+ */
+export function dataErrorOf(parts: readonly RawDataPart[]): OttoErrorData | null {
+  for (const part of parts) {
+    const err = asErrorData(part);
+    if (err) return err;
+  }
+  return null;
+}
+
 /** Narrow a raw part to `OttoStepData` if its type is "data-step", else null. */
 export function asStepData(part: RawDataPart): OttoStepData | null {
   if (part.type !== "data-step") return null;

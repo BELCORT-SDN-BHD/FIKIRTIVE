@@ -4,7 +4,7 @@
  * SDK construction, runs in the node harness.
  */
 import { describe, it, expect } from "vitest";
-import { pickLiveStatusText, asStatusData, asErrorData, asStepData, deriveTraceSteps } from "@/lib/otto-status-helpers";
+import { pickLiveStatusText, asStatusData, asErrorData, dataErrorOf, asStepData, deriveTraceSteps } from "@/lib/otto-status-helpers";
 import type { OttoStatusData, OttoStepData } from "@/lib/otto-stream-bridge";
 
 const startStep = (id: string, label: string): OttoStepData => ({ id, label, phase: "start" });
@@ -53,6 +53,43 @@ describe("asErrorData", () => {
 
   it("returns null for non-data-error parts", () => {
     expect(asErrorData({ type: "data-status", data: { kind: "planning", text: "…" } })).toBeNull();
+  });
+});
+
+describe("dataErrorOf", () => {
+  // Loosely-typed message parts (a UIMessage's parts carry `text` on text parts, `data`
+  // on data-* parts) — mirrors what the OttoChatStream renderer passes.
+  type Part = { type: string; text?: string; data?: unknown };
+
+  it("returns the error payload carried by a message's parts (the durable data-error part)", () => {
+    const parts: Part[] = [
+      { type: "step-start" },
+      { type: "text", text: "" },
+      { type: "data-error", data: { kind: "error", text: "Otto hit a snag - please try again. Reference: OTTO-ABCD1234" } },
+    ];
+    expect(dataErrorOf(parts)).toEqual({ kind: "error", text: "Otto hit a snag - please try again. Reference: OTTO-ABCD1234" });
+  });
+
+  it("surfaces insufficient_credits from message parts", () => {
+    const parts: Part[] = [{ type: "data-error", data: { kind: "insufficient_credits", text: "You're out of credits." } }];
+    expect(dataErrorOf(parts)).toEqual({ kind: "insufficient_credits", text: "You're out of credits." });
+  });
+
+  it("returns null when no part is a data-error (text-only assistant message)", () => {
+    const parts: Part[] = [{ type: "text", text: "hi" }, { type: "data-status", data: { kind: "done", threadId: "t" } }];
+    expect(dataErrorOf(parts)).toBeNull();
+  });
+
+  it("returns null for an empty parts array", () => {
+    expect(dataErrorOf([])).toBeNull();
+  });
+
+  it("returns the first data-error when a turn streamed partial text before failing", () => {
+    const parts: Part[] = [
+      { type: "text", text: "Here's a start" },
+      { type: "data-error", data: { kind: "error", text: "Otto hit a snag" } },
+    ];
+    expect(dataErrorOf(parts)).toEqual({ kind: "error", text: "Otto hit a snag" });
   });
 });
 

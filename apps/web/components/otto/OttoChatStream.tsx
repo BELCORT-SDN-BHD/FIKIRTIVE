@@ -37,7 +37,7 @@ import { TextPart } from "./parts/TextPart";
 import { StatusLine } from "./parts/StatusLine";
 import { OttoTrace } from "./OttoTrace";
 import { ReasoningPart } from "./parts/ReasoningPart";
-import { asStatusData, asErrorData, asStepData, deriveTraceSteps } from "@/lib/otto-status-helpers";
+import { asStatusData, asErrorData, asStepData, dataErrorOf, deriveTraceSteps } from "@/lib/otto-status-helpers";
 import { activeMentionQuery, resolveSentEntityIds } from "@/lib/otto-mentions";
 import type { OttoStatusData, OttoStepData } from "@/lib/otto-stream-bridge";
 import type { ReasoningUIPart } from "ai";
@@ -1009,6 +1009,12 @@ export function OttoChatStream({
             const reasoningParts = m.parts.filter(
               (p): p is ReasoningUIPart => p.type === "reasoning",
             );
+            // State honesty (宪法 11): a run failure streams a durable `data-error` part
+            // into this assistant message. onData mirrors it into `streamError` (the bottom
+            // alert); render it here too, off the DURABLE part, so the error still surfaces
+            // if that ephemeral state was ever missed. Gated on `!streamError` so it never
+            // doubles the live alert; appended AFTER any partial text the turn produced.
+            const partError = dataErrorOf(m.parts as ReadonlyArray<{ type: string; data?: unknown }>);
             return [
               ...textParts.map((p, pi) => {
                 const isLastTextPart = pi === textParts.length - 1;
@@ -1028,6 +1034,24 @@ export function OttoChatStream({
                 // Graceful: only rendered when reasoning arrives; most models omit it.
                 <ReasoningPart key={`${m.id}:r${ri}`} part={p} />
               )),
+              ...(partError && !streamError
+                ? [
+                    <div key={`${m.id}:err`} className="flex items-start gap-3" style={isNewMessage(m.id) ? MSG_ENTER_STYLE : undefined}>
+                      <OttoAvatar size={26} state="idle" />
+                      <div role="alert" className="rounded-[5px_14px_14px_14px] bg-error-soft px-[13px] py-[10px] text-[0.875rem] leading-normal text-[var(--error-soft-foreground)]">
+                        {partError.text}
+                        {partError.kind === "insufficient_credits" && (
+                          <>
+                            {" "}
+                            <a href="/billing" className="font-semibold text-[var(--error-soft-foreground)] underline">
+                              Top up
+                            </a>
+                          </>
+                        )}
+                      </div>
+                    </div>,
+                  ]
+                : []),
             ];
             }); // end renderItems.map
           })()} {/* end IIFE */}
