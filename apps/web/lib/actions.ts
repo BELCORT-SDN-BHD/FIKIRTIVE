@@ -79,11 +79,15 @@ async function ingestFile(ownerId: string, file: File) {
 }
 
 function assetUpsert(ownerId: string, ingested: Awaited<ReturnType<typeof ingestFile>>) {
+  const { ext, mime, sizeBytes, originalFilename } = ingested.create;
   return prisma.asset.upsert({
     where: {
       ownerId_contentHash: { ownerId, contentHash: ingested.contentHash },
     },
-    update: { deletedAt: null }, // re-upload inside the 30-day window resurrects
+    // re-upload inside the 30-day window resurrects AND realigns the row to the byte-derived
+    // canonical values — a previously poisoned Asset (client-trusted ext/mime) is repaired by
+    // re-upload (mirrors upload-actions.ts's direct-upload path).
+    update: { deletedAt: null, ext, mime, sizeBytes, originalFilename },
     create: ingested.create,
   });
 }
@@ -634,7 +638,14 @@ export async function uploadCandidates(projectId: string, formData: FormData) {
         where: {
           ownerId_contentHash: { ownerId, contentHash: item.contentHash },
         },
-        update: { deletedAt: null },
+        // resurrect AND realign to the byte-derived canonical values (repairs a poisoned prior row)
+        update: {
+          deletedAt: null,
+          ext: item.create.ext,
+          mime: item.create.mime,
+          sizeBytes: item.create.sizeBytes,
+          originalFilename: item.create.originalFilename,
+        },
         create: item.create,
       });
       await tx.generation.create({
@@ -711,7 +722,14 @@ export async function uploadReference(projectId: string, formData: FormData): Pr
   await prisma.$transaction(async (tx) => {
     const asset = await tx.asset.upsert({
       where: { ownerId_contentHash: { ownerId, contentHash: item.contentHash } },
-      update: { deletedAt: null },
+      // resurrect AND realign to the byte-derived canonical values (repairs a poisoned prior row)
+      update: {
+        deletedAt: null,
+        ext: item.create.ext,
+        mime: item.create.mime,
+        sizeBytes: item.create.sizeBytes,
+        originalFilename: item.create.originalFilename,
+      },
       create: item.create,
     });
     const gen = await tx.generation.create({

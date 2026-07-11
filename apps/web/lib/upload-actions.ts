@@ -189,28 +189,38 @@ export async function finalizeCandidateUploads(
   // 工单 F: byte-verify each finalized IMAGE upload against the stored object — the browser declared
   // the ext, the bytes decide the persisted mime (a video renamed x.png → application/octet-stream,
   // not image/png). Only image exts are read (the static-image sniffer can't verify video/audio,
-  // which keep their ext→mime). Read OUTSIDE the transaction. Best-effort: a transient read failure
-  // degrades to the ext mime — the worker publish gate re-verifies bytes at the IG boundary anyway.
+  // which keep their ext→mime). Read OUTSIDE the transaction. A storage READ failure is NOT a media
+  // verdict — it is a retryable operational error (mirrors the worker publish gate). We never persist
+  // a mime we couldn't derive from bytes: the client ext is the claim we distrust, and a blanket
+  // octet-stream would poison the SHARED content-addressed row (the resurrect-realign below overwrites
+  // mime). So a file we couldn't read is deferred to `failures` for the client to retry, not persisted.
   const mimeByKey = new Map<string, string>();
+  const persistable: typeof verified = [];
   for (const { key, file } of verified) {
     if (!isStaticImageExt(file.ext)) {
       mimeByKey.set(key, mimeOf(file.ext));
+      persistable.push({ key, file });
       continue;
     }
     try {
       const prefix = await readBoundedPrefix(storage, key, MEDIA_SNIFF_BYTES);
       mimeByKey.set(key, resolveUploadMime(prefix, file.ext));
+      persistable.push({ key, file });
     } catch (e) {
-      console.error(`[upload] mime byte-check read failed for ${key}, keeping ext mime:`, e instanceof Error ? e.message : e);
-      mimeByKey.set(key, mimeOf(file.ext));
+      console.error(`[upload] mime byte-check read failed for ${key}, deferring (retryable):`, e instanceof Error ? e.message : e);
+      failures.push({ filename: file.originalFilename, reason: "couldn't verify media — please retry" });
     }
+  }
+
+  if (persistable.length === 0) {
+    return { error: failures[0]?.reason ?? "No files could be finalized." };
   }
 
   const assetIds: string[] = [];
   const generationIds: string[] = [];
   await prisma.$transaction(async (tx) => {
-    for (const { key, file } of verified) {
-      const mime = mimeByKey.get(key) ?? mimeOf(file.ext);
+    for (const { key, file } of persistable) {
+      const mime = mimeByKey.get(key) ?? "application/octet-stream";
       const asset = await tx.asset.upsert({
         where: { ownerId_contentHash: { ownerId, contentHash: file.sha256 } },
         // resurrect AND realign to the object we just HEAD-verified: a prior
@@ -258,7 +268,7 @@ export async function finalizeCandidateUploads(
         ownerId,
         projectId,
         type: "generation.upload",
-        payload: { count: verified.length, entityIds, direct: true },
+        payload: { count: persistable.length, entityIds, direct: true },
       },
     });
   });
@@ -277,5 +287,5 @@ export async function finalizeCandidateUploads(
     console.error("[upload] UNVERIFIED — ingest dispatch failed for", assetIds, ":", e instanceof Error ? e.message : e);
   }
   revalidatePath("/", "layout");
-  return { ok: true, count: verified.length, failures, generationIds };
+  return { ok: true, count: persistable.length, failures, generationIds };
 }

@@ -4,6 +4,7 @@ import {
   resolveUploadMime,
   normalizeImageMime,
   isStaticImageExt,
+  MEDIA_SNIFF_BYTES,
 } from "./media-sniff.js";
 
 /* ── byte fixtures ── */
@@ -33,6 +34,8 @@ const WEBP_SIMPLE = webp("VP8 ");
 const WEBP_LOSSLESS = webp("VP8L");
 const WEBP_STATIC_X = webp("VP8X", 0x10); // alpha flag only, no animation
 const WEBP_ANIMATED = webp("VP8X", 0x02); // animation flag set
+const WEBP_VP8X_TRUNC = webp("VP8X"); // VP8X FourCC but no feature-flags byte (20 bytes < 21)
+const WEBP_JUNK = webp("JUNK"); // RIFF/WEBP container with an unrecognized first chunk
 
 const MP4 = new Uint8Array([0, 0, 0, 0x20, 0x66, 0x74, 0x79, 0x70, 0x69, 0x73, 0x6f, 0x6d, 0, 0, 0, 0]);
 const AVIF = new Uint8Array([0, 0, 0, 0x1c, 0x66, 0x74, 0x79, 0x70, 0x61, 0x76, 0x69, 0x66, 0, 0, 0, 0]);
@@ -53,6 +56,11 @@ describe("classifyImageBytes — whitelist static images", () => {
     expect(classifyImageBytes(GIF)).toBe("unknown");
   });
 
+  it("rejects a truncated VP8X and an unrecognized WebP first chunk → unknown (never guess static)", () => {
+    expect(classifyImageBytes(WEBP_VP8X_TRUNC)).toBe("unknown"); // no feature-flags byte to prove static
+    expect(classifyImageBytes(WEBP_JUNK)).toBe("unknown"); // RIFF/WEBP but first chunk isn't VP8 /VP8L/VP8X
+  });
+
   it("rejects video/other containers and empty/truncated → unknown (never guesses)", () => {
     expect(classifyImageBytes(MP4)).toBe("unknown");
     expect(classifyImageBytes(AVIF)).toBe("unknown"); // ISOBMFF like mp4 — not in the whitelist
@@ -61,12 +69,21 @@ describe("classifyImageBytes — whitelist static images", () => {
     expect(classifyImageBytes(new Uint8Array([1, 2, 3, 4, 5]))).toBe("unknown");
   });
 
-  it("APNG beyond the sniff window is the KNOWN RESIDUAL — admitted as static PNG", () => {
-    // acTL pushed past 4096 bytes by a giant leading ancillary chunk (e.g. iCCP).
-    const filler = chunk("iCCP", 5000);
-    const late = png(new Uint8Array([...IHDR, ...filler, ...chunk("acTL", 8), ...chunk("IDAT", 4)]));
-    const windowed = late.subarray(0, 4096); // what a bounded reader would actually pass in
-    expect(classifyImageBytes(windowed)).toBe("image/png");
+  it("window exhausted before IDAT → unknown (fail-closed; never guess static)", () => {
+    // IDAT pushed past the sniff window by a giant leading ancillary chunk (e.g. an iCCP colour
+    // profile). A bounded reader hands us only the window; with no IDAT proven, we must NOT guess
+    // "static PNG" — an APNG could hide its acTL just past the boundary (the #229 bug class).
+    const filler = chunk("iCCP", MEDIA_SNIFF_BYTES + 4000);
+    const late = png(new Uint8Array([...IHDR, ...filler, ...chunk("IDAT", 4)]));
+    const windowed = late.subarray(0, MEDIA_SNIFF_BYTES); // what a bounded reader would actually pass in
+    expect(classifyImageBytes(windowed)).toBe("unknown");
+  });
+
+  it("static PNG whose ancillary chunk (iCCP) fits inside the window still → image/png", () => {
+    // A colour-managed PNG's ICC profile precedes IDAT; the 64 KiB window keeps such legit images green.
+    const iccp = chunk("iCCP", 5000);
+    const p = png(new Uint8Array([...IHDR, ...iccp, ...chunk("IDAT", 4)]));
+    expect(classifyImageBytes(p)).toBe("image/png");
   });
 });
 

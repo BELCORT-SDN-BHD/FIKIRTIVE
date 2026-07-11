@@ -39,11 +39,13 @@ vi.mock("next/cache", () => ({ revalidatePath: vi.fn() }));
 
 import { authorizeUpload, uploadFileFallback, finalizeCandidateUploads } from "../upload-actions";
 
-// A valid static-PNG prefix (signature + IHDR) so finalize's 工单 F byte-check reads a real image.
+// A valid static-PNG prefix (signature + IHDR + a zero-length IDAT) so finalize's 工单 F byte-check
+// reads a real image (the sniffer requires reaching IDAT before it calls a PNG static).
 const PNG_PREFIX = new Uint8Array([
   0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a,
   0x00, 0x00, 0x00, 0x0d, 0x49, 0x48, 0x44, 0x52,
   0, 0, 0, 1, 0, 0, 0, 1, 8, 6, 0, 0, 0, 0x1f, 0x15, 0xc4, 0x89,
+  0x00, 0x00, 0x00, 0x00, 0x49, 0x44, 0x41, 0x54, 0x00, 0x00, 0x00, 0x00,
 ]);
 
 beforeEach(() => {

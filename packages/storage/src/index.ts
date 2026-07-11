@@ -96,17 +96,21 @@ export async function readBoundedPrefix(
   const chunks: Uint8Array[] = [];
   let total = 0;
   for await (const chunk of stream) {
-    chunks.push(chunk);
-    total += chunk.length;
+    const remaining = maxBytes - total;
+    if (remaining <= 0) break;
+    // Cap EACH chunk before retaining it: a driver that returns the whole object in one giant chunk
+    // must not park it in memory. `.slice()` COPIES (a `.subarray()` view would pin the whole source
+    // buffer alive), so a single multi-GB chunk shrinks to at most `remaining` bytes right here.
+    const piece = chunk.length > remaining ? chunk.slice(0, remaining) : chunk;
+    chunks.push(piece);
+    total += piece.length;
     if (total >= maxBytes) break; // closes the underlying stream (async iterator .return())
   }
-  const out = new Uint8Array(Math.min(total, maxBytes));
+  const out = new Uint8Array(total); // total is now guaranteed ≤ maxBytes
   let off = 0;
   for (const chunk of chunks) {
-    if (off >= out.length) break;
-    const take = Math.min(chunk.length, out.length - off);
-    out.set(chunk.subarray(0, take), off);
-    off += take;
+    out.set(chunk, off);
+    off += chunk.length;
   }
   return out;
 }

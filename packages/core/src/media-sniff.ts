@@ -15,10 +15,13 @@
  */
 import { mimeOf } from "./upload.js";
 
-/** How many leading bytes callers should sniff. Large enough that a PNG's `acTL` (APNG marker), which
- *  sits among the first chunks, is virtually always inside the window; an `acTL` beyond it is a KNOWN
- *  RESIDUAL (admitted as static PNG). Also bounds the read/allocation on multi-GB objects. */
-export const MEDIA_SNIFF_BYTES = 4096;
+/** How many leading bytes callers should sniff. 64 KiB — large enough that a real static PNG's first
+ *  `IDAT` (which trails the header plus any ancillary chunks, e.g. a multi-KB `iCCP` colour profile)
+ *  is virtually always inside the window, and that an APNG's `acTL` (which must precede that `IDAT`)
+ *  is seen and rejected. Still bounds the read/allocation on multi-GB objects. When the window is
+ *  exhausted before `IDAT` we fail CLOSED (unknown), never guess static — so a larger window only
+ *  ever REDUCES false rejections of legitimate images. */
+export const MEDIA_SNIFF_BYTES = 64 * 1024;
 
 export type CanonicalImageMime = "image/jpeg" | "image/png" | "image/webp";
 export type SniffResult = CanonicalImageMime | "unknown";
@@ -60,12 +63,17 @@ export function classifyImageBytes(prefix: Uint8Array): SniffResult {
   // JPEG — SOI + first marker: FF D8 FF
   if (matches(prefix, [0xff, 0xd8, 0xff])) return "image/jpeg";
 
-  // PNG — 8-byte signature; reject APNG (an `acTL` chunk appears before the first `IDAT`).
-  if (matches(prefix, PNG_SIG)) return pngIsApng(prefix) ? "unknown" : "image/png";
+  // PNG — 8-byte signature. Static ONLY if we positively reach the first `IDAT` with no `acTL`
+  // (APNG animation-control chunk) before it. An acTL-first stream, or a window exhausted before
+  // IDAT, fails closed (unknown); we never call a PNG static without proof.
+  if (matches(prefix, PNG_SIG)) return pngIsStatic(prefix) ? "image/png" : "unknown";
 
-  // WebP — "RIFF" <size> "WEBP"; reject the animated variant (VP8X with the animation flag set).
+  // WebP — "RIFF" <size> "WEBP" followed by a recognizable first chunk. Simple `VP8 ` / lossless
+  // `VP8L` are always a single static frame; extended `VP8X` is static only if its feature-flags byte
+  // is present AND the animation flag is clear. A truncated VP8X, or any unrecognized first chunk,
+  // fails closed (unknown) — we never call a WebP static without proof.
   if (fourCC(prefix, 0, "RIFF") && fourCC(prefix, 8, "WEBP")) {
-    return webpIsAnimated(prefix) ? "unknown" : "image/webp";
+    return classifyWebp(prefix);
   }
 
   // GIF, MP4/MOV (`ftyp`), AVIF (`ftyp` brand), audio, empty, truncated, anything else → not a
@@ -79,29 +87,37 @@ function u32be(b: Uint8Array, pos: number): number {
   return b[pos]! * 0x1000000 + (b[pos + 1]! << 16) + (b[pos + 2]! << 8) + b[pos + 3]!;
 }
 
-/** Walk the PNG chunk stream within the sniff window: an `acTL` chunk BEFORE the first `IDAT` marks
- *  an APNG (animation) → reject. Reaching `IDAT` first, or exhausting the window, means static PNG.
- *  An `acTL` past the window is the documented known residual (admitted as static). */
-function pngIsApng(prefix: Uint8Array): boolean {
+/** Walk the PNG chunk stream within the sniff window looking for PROOF of a static image. The PNG
+ *  spec permits the `acTL` (APNG animation-control) chunk anywhere before the first `IDAT`, so we scan
+ *  chunk-by-chunk: reaching `IDAT` with no `acTL` seen → static (true); an `acTL` first → APNG
+ *  (false). Exhausting the window — or a malformed/oversized chunk length that overshoots it — before
+ *  `IDAT` → fail closed (false): with a 64 KiB window this only strikes pathological files, and
+ *  guessing "static" there is exactly the #229 first-frame-of-an-animation bug we refuse to reopen. */
+function pngIsStatic(prefix: Uint8Array): boolean {
   let pos = PNG_SIG.length; // first chunk starts right after the 8-byte signature
   // each chunk = [4-byte length][4-byte type][length bytes of data][4-byte CRC]
   while (pos + 8 <= prefix.length) {
     const len = u32be(prefix, pos);
     const type = String.fromCharCode(prefix[pos + 4]!, prefix[pos + 5]!, prefix[pos + 6]!, prefix[pos + 7]!);
-    if (type === "acTL") return true; // animation control chunk → APNG
-    if (type === "IDAT") return false; // reached image data with no acTL → static PNG
+    if (type === "acTL") return false; // animation control chunk before IDAT → APNG
+    if (type === "IDAT") return true; // reached image data with no acTL → static PNG
     pos += 12 + len; // 4 (len) + 4 (type) + len (data) + 4 (crc)
   }
-  return false; // window exhausted before acTL/IDAT → treat as static (known residual)
+  return false; // window exhausted before IDAT → not proven static → fail closed
 }
 
-/** VP8X extended WebP with the animation flag (0x02) set in its feature byte → animated → reject.
- *  Simple `VP8 ` / lossless `VP8L` WebP are never animated. */
-function webpIsAnimated(prefix: Uint8Array): boolean {
-  if (!fourCC(prefix, 12, "VP8X")) return false; // only the extended format can be animated
-  // Layout: "VP8X"(12) + chunkSize(16..19) + flags(20). Animation flag = bit 1 (0x02).
-  if (prefix.length < 21) return false;
-  return (prefix[20]! & 0x02) !== 0;
+/** Classify the first chunk of a "RIFF"…"WEBP" container. Simple `VP8 ` (lossy) and lossless `VP8L`
+ *  are always a single static frame → image/webp. Extended `VP8X` carries a feature-flags byte at
+ *  offset 20 (12 + 4 FourCC + 4 chunk-size); the animation flag is bit 1 (0x02). A VP8X truncated
+ *  before that byte can't be proven static → unknown. Any other (or absent — container truncated
+ *  before the FourCC) first chunk is unrecognized → unknown. */
+function classifyWebp(prefix: Uint8Array): SniffResult {
+  if (fourCC(prefix, 12, "VP8 ") || fourCC(prefix, 12, "VP8L")) return "image/webp";
+  if (fourCC(prefix, 12, "VP8X")) {
+    if (prefix.length < 21) return "unknown"; // truncated before the feature-flags byte
+    return (prefix[20]! & 0x02) !== 0 ? "unknown" : "image/webp"; // animation flag set → animated
+  }
+  return "unknown"; // unrecognized first chunk
 }
 
 /**

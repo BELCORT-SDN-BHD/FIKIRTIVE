@@ -136,7 +136,14 @@ export async function saveCroppedGeneration(
   await prisma.$transaction(async (tx) => {
     const asset = await tx.asset.upsert({
       where: { ownerId_contentHash: { ownerId, contentHash } },
-      update: { deletedAt: null },
+      // resurrect AND realign to the byte-derived canonical values (repairs a poisoned prior row)
+      update: {
+        deletedAt: null,
+        ext: assetCreate.ext,
+        mime: assetCreate.mime,
+        sizeBytes: assetCreate.sizeBytes,
+        originalFilename: assetCreate.originalFilename,
+      },
       create: assetCreate,
     });
     const gen = await tx.generation.create({

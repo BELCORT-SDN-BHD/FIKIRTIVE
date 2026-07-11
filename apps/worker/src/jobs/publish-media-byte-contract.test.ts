@@ -48,11 +48,13 @@ const CONTENT_HASH = "a".repeat(64); // storageKey() requires a 64-char hex cont
 
 /* ── byte fixtures (leading magic numbers only; enough for classification) ── */
 const JPEG = new Uint8Array([0xff, 0xd8, 0xff, 0xe0, 0, 16, 0x4a, 0x46, 0x49, 0x46]);
-// PNG signature + a minimal IHDR chunk (len 13, "IHDR", 13 data, 4 crc) — no acTL → static PNG.
+// PNG signature + IHDR (len 13) + a zero-length IDAT — no acTL and a positive IDAT → static PNG.
+// (The sniffer now requires reaching IDAT before it will call a PNG static, so IHDR alone is unknown.)
 const PNG = new Uint8Array([
   0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a,
   0x00, 0x00, 0x00, 0x0d, 0x49, 0x48, 0x44, 0x52,
   0, 0, 0, 1, 0, 0, 0, 1, 8, 6, 0, 0, 0, 0x1f, 0x15, 0xc4, 0x89,
+  0x00, 0x00, 0x00, 0x00, 0x49, 0x44, 0x41, 0x54, 0x00, 0x00, 0x00, 0x00,
 ]);
 // WebP: "RIFF" <size> "WEBP" "VP8 " (simple lossy, non-animated).
 const WEBP = new Uint8Array([
