@@ -1,5 +1,5 @@
 // Source-scan guard (no DB): every exported server action in a file-level
-// "use server" lib file must call requireSession/requireRole/requireAdmin BEFORE
+// "use server" lib file must call requireSession/requireRole/requireAdmin/requireOwner BEFORE
 // its first sensitive op (prisma / storage / getBoss). Dynamically enumerates files
 // so a NEW use-server file can't silently bypass the wall. Catches both
 // `export async function` and `export const x = async` action shapes, and treats
@@ -9,7 +9,7 @@ import { readFileSync, readdirSync } from "node:fs";
 import { join } from "node:path";
 
 const LIB = "apps/web/lib";
-const GUARDS = /\b(requireSession|requireRole|requireAdmin)\s*\(/;
+const GUARDS = /\b(requireSession|requireRole|requireAdmin|requireOwner)\s*\(/;
 const SENSITIVE = /\bprisma\.|\bstorage\.|\bgetBoss\s*\(/; // DB | object storage | job queue
 
 const files = readdirSync(LIB).filter((f) => f.endsWith(".ts"))

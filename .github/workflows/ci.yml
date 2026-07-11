@@ -58,6 +58,10 @@ jobs:
       # Destructive-migration guard: push-to-main auto-migrates prod. A DROP TABLE/COLUMN,
       # TRUNCATE, or DELETE FROM must carry an explicit "-- DESTRUCTIVE-OK: <reason>" ack.
       - run: bash scripts/check-destructive-migrations.sh
+      # Auth-guard fence (P0-2): every exported server action in a "use server" apps/web/lib
+      # file must call requireSession/requireRole/requireAdmin/requireOwner before any
+      # prisma/storage/getBoss access.
+      - run: node scripts/verify-auth-guards.mjs
       # Route-B release contract (B0): coverage matrix invariants — unique IDs, no blank cells,
       # closed-set statuses, all 84 parity debts mapped exactly once, MISSING adjudications closed.
       - run: node scripts/route-b-matrix-check.mjs
