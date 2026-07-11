@@ -35,6 +35,10 @@ vi.mock("@fikirtive/db", () => ({
 }));
 vi.mock("@fikirtive/core", () => ({
   newId: () => `id-${Math.random().toString(36).slice(2)}`,
+  // used by ingestFile: byte-derived mime (工单 F) — stubbed to a stable image mime here (these
+  // tests assert P2002 dedup, not mime resolution; the real classifier is covered in media-sniff).
+  resolveUploadMime: (_bytes: Uint8Array, ext: string) => `image/${ext}`,
+  MEDIA_SNIFF_BYTES: 4096,
   // unused-by-these-actions exports imported at module top level:
   fikirtiveEdit: {}, captionCue: {}, editDuration: {}, parseStorageKey: () => ({}),
   keyOwnerMatches: () => true, srcToStorageKey: () => "", storageKey: () => "", storageKeyToSrc: () => "",

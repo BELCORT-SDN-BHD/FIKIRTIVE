@@ -23,6 +23,9 @@ import {
   finalizeUploadsInput,
   storageKey,
   mimeOf,
+  resolveUploadMime,
+  isStaticImageExt,
+  MEDIA_SNIFF_BYTES,
   newId,
   uploadExtFromFilename,
   INGEST_QUEUE,
@@ -33,6 +36,7 @@ import {
   type AuthorizeUploadResult,
   type FinalizedUpload,
 } from "@fikirtive/core";
+import { readBoundedPrefix } from "@fikirtive/storage";
 import { storage } from "@/lib/storage";
 import { getBoss } from "@/lib/queue";
 import { buildEntitySnapshot } from "@/lib/entity-snapshot";
@@ -182,10 +186,41 @@ export async function finalizeCandidateUploads(
     return { error: failures[0]?.reason ?? "No files could be finalized." };
   }
 
+  // 工单 F: byte-verify each finalized IMAGE upload against the stored object — the browser declared
+  // the ext, the bytes decide the persisted mime (a video renamed x.png → application/octet-stream,
+  // not image/png). Only image exts are read (the static-image sniffer can't verify video/audio,
+  // which keep their ext→mime). Read OUTSIDE the transaction. A storage READ failure is NOT a media
+  // verdict — it is a retryable operational error (mirrors the worker publish gate). We never persist
+  // a mime we couldn't derive from bytes: the client ext is the claim we distrust, and a blanket
+  // octet-stream would poison the SHARED content-addressed row (the resurrect-realign below overwrites
+  // mime). So a file we couldn't read is deferred to `failures` for the client to retry, not persisted.
+  const mimeByKey = new Map<string, string>();
+  const persistable: typeof verified = [];
+  for (const { key, file } of verified) {
+    if (!isStaticImageExt(file.ext)) {
+      mimeByKey.set(key, mimeOf(file.ext));
+      persistable.push({ key, file });
+      continue;
+    }
+    try {
+      const prefix = await readBoundedPrefix(storage, key, MEDIA_SNIFF_BYTES);
+      mimeByKey.set(key, resolveUploadMime(prefix, file.ext));
+      persistable.push({ key, file });
+    } catch (e) {
+      console.error(`[upload] mime byte-check read failed for ${key}, deferring (retryable):`, e instanceof Error ? e.message : e);
+      failures.push({ filename: file.originalFilename, reason: "couldn't verify media — please retry" });
+    }
+  }
+
+  if (persistable.length === 0) {
+    return { error: failures[0]?.reason ?? "No files could be finalized." };
+  }
+
   const assetIds: string[] = [];
   const generationIds: string[] = [];
   await prisma.$transaction(async (tx) => {
-    for (const { file } of verified) {
+    for (const { key, file } of persistable) {
+      const mime = mimeByKey.get(key) ?? "application/octet-stream";
       const asset = await tx.asset.upsert({
         where: { ownerId_contentHash: { ownerId, contentHash: file.sha256 } },
         // resurrect AND realign to the object we just HEAD-verified: a prior
@@ -196,7 +231,7 @@ export async function finalizeCandidateUploads(
         update: {
           deletedAt: null,
           ext: file.ext,
-          mime: mimeOf(file.ext),
+          mime,
           sizeBytes: BigInt(file.sizeBytes),
           originalFilename: file.originalFilename,
         },
@@ -205,7 +240,7 @@ export async function finalizeCandidateUploads(
           ownerId,
           contentHash: file.sha256,
           ext: file.ext,
-          mime: mimeOf(file.ext),
+          mime,
           sizeBytes: BigInt(file.sizeBytes),
           originalFilename: file.originalFilename,
           source: "UPLOAD" as const,
@@ -233,7 +268,7 @@ export async function finalizeCandidateUploads(
         ownerId,
         projectId,
         type: "generation.upload",
-        payload: { count: verified.length, entityIds, direct: true },
+        payload: { count: persistable.length, entityIds, direct: true },
       },
     });
   });
@@ -252,5 +287,5 @@ export async function finalizeCandidateUploads(
     console.error("[upload] UNVERIFIED — ingest dispatch failed for", assetIds, ":", e instanceof Error ? e.message : e);
   }
   revalidatePath("/", "layout");
-  return { ok: true, count: verified.length, failures, generationIds };
+  return { ok: true, count: persistable.length, failures, generationIds };
 }

@@ -1,9 +1,9 @@
 "use server";
 
 import { prisma } from "@fikirtive/db";
-import { storageKey, newId } from "@fikirtive/core";
+import { storageKey, newId, resolveUploadMime, MEDIA_SNIFF_BYTES } from "@fikirtive/core";
 import { requireOwner } from "./auth-guard";
-import { storage, kindOf, extFromFilename, mimeOf } from "./storage";
+import { storage, kindOf, extFromFilename } from "./storage";
 
 export type GenerationDTO = {
   id: string;
@@ -107,7 +107,6 @@ export async function saveCroppedGeneration(
   // Parse the data URL: data:image/<ext>;base64,<data>
   const match = dataUrl.match(/^data:image\/([a-zA-Z0-9+]+);base64,(.+)$/);
   if (!match) return { error: "Invalid data URL." };
-  const mimeType = `image/${match[1]}`;
   const base64Data = match[2];
   if (!/^[A-Za-z0-9+/]+={0,2}$/.test(base64Data) || base64Data.length % 4 !== 0) {
     return { error: "Invalid data URL." };
@@ -125,7 +124,9 @@ export async function saveCroppedGeneration(
     ownerId,
     contentHash,
     ext,
-    mime: mimeType || mimeOf(ext),
+    // 工单 F: byte-derived mime — the data URL's declared image/<ext> is a client claim; the bytes
+    // decide. A crafted data:image/png;base64,<mp4> lands as application/octet-stream, not image/png.
+    mime: resolveUploadMime(bytes.subarray(0, MEDIA_SNIFF_BYTES), ext),
     sizeBytes: BigInt(bytes.byteLength),
     originalFilename: `cropped.${ext}`,
     source: "UPLOAD" as const,
@@ -135,7 +136,14 @@ export async function saveCroppedGeneration(
   await prisma.$transaction(async (tx) => {
     const asset = await tx.asset.upsert({
       where: { ownerId_contentHash: { ownerId, contentHash } },
-      update: { deletedAt: null },
+      // resurrect AND realign to the byte-derived canonical values (repairs a poisoned prior row)
+      update: {
+        deletedAt: null,
+        ext: assetCreate.ext,
+        mime: assetCreate.mime,
+        sizeBytes: assetCreate.sizeBytes,
+        originalFilename: assetCreate.originalFilename,
+      },
       create: assetCreate,
     });
     const gen = await tx.generation.create({

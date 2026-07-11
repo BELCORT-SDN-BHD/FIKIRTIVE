@@ -12,6 +12,8 @@ import {
   srcToStorageKey,
   storageKey,
   storageKeyToSrc,
+  resolveUploadMime,
+  MEDIA_SNIFF_BYTES,
   INGEST_QUEUE,
   RENDER_QUEUE,
   CAPTION_QUEUE,
@@ -21,7 +23,7 @@ import {
   type RenderJobData,
 } from "@fikirtive/core";
 import type { EntityType, ShotStatus } from "@fikirtive/db";
-import { storage, extFromFilename, mimeOf } from "./storage";
+import { storage, extFromFilename } from "./storage";
 import { getBoss } from "./queue";
 import { buildEntitySnapshot } from "./entity-snapshot";
 import { buildBoardEdit, transitionFor } from "./edit";
@@ -63,7 +65,12 @@ async function ingestFile(ownerId: string, file: File) {
       ownerId,
       contentHash,
       ext,
-      mime: file.type || mimeOf(ext),
+      // 工单 F: persist the mime the BYTES prove, not client File.type. A confirmed static image →
+      // its canonical mime; an image-ext file whose bytes aren't that image → application/octet-
+      // stream (a caught lie, naturally unpublishable); video/audio keep their ext→mime mapping.
+      // File.type is only a hint now and is no longer stored. The worker publish gate re-verifies
+      // bytes at the IG boundary regardless.
+      mime: resolveUploadMime(bytes.subarray(0, MEDIA_SNIFF_BYTES), ext),
       sizeBytes: BigInt(bytes.byteLength),
       originalFilename: file.name,
       source: "UPLOAD" as const,
@@ -72,11 +79,15 @@ async function ingestFile(ownerId: string, file: File) {
 }
 
 function assetUpsert(ownerId: string, ingested: Awaited<ReturnType<typeof ingestFile>>) {
+  const { ext, mime, sizeBytes, originalFilename } = ingested.create;
   return prisma.asset.upsert({
     where: {
       ownerId_contentHash: { ownerId, contentHash: ingested.contentHash },
     },
-    update: { deletedAt: null }, // re-upload inside the 30-day window resurrects
+    // re-upload inside the 30-day window resurrects AND realigns the row to the byte-derived
+    // canonical values — a previously poisoned Asset (client-trusted ext/mime) is repaired by
+    // re-upload (mirrors upload-actions.ts's direct-upload path).
+    update: { deletedAt: null, ext, mime, sizeBytes, originalFilename },
     create: ingested.create,
   });
 }
@@ -627,7 +638,14 @@ export async function uploadCandidates(projectId: string, formData: FormData) {
         where: {
           ownerId_contentHash: { ownerId, contentHash: item.contentHash },
         },
-        update: { deletedAt: null },
+        // resurrect AND realign to the byte-derived canonical values (repairs a poisoned prior row)
+        update: {
+          deletedAt: null,
+          ext: item.create.ext,
+          mime: item.create.mime,
+          sizeBytes: item.create.sizeBytes,
+          originalFilename: item.create.originalFilename,
+        },
         create: item.create,
       });
       await tx.generation.create({
@@ -704,7 +722,14 @@ export async function uploadReference(projectId: string, formData: FormData): Pr
   await prisma.$transaction(async (tx) => {
     const asset = await tx.asset.upsert({
       where: { ownerId_contentHash: { ownerId, contentHash: item.contentHash } },
-      update: { deletedAt: null },
+      // resurrect AND realign to the byte-derived canonical values (repairs a poisoned prior row)
+      update: {
+        deletedAt: null,
+        ext: item.create.ext,
+        mime: item.create.mime,
+        sizeBytes: item.create.sizeBytes,
+        originalFilename: item.create.originalFilename,
+      },
       create: item.create,
     });
     const gen = await tx.generation.create({

@@ -79,6 +79,42 @@ function hashOf(bytes: Uint8Array): string {
   return createHash("sha256").update(bytes).digest("hex");
 }
 
+/**
+ * Read at most `maxBytes` from the START of an object, then stop — the bounded prefix the byte-sniff
+ * media gate (工单 F) and ingest hand to the classifier. Reads via `readStream` and caps client-side,
+ * so it is correct even if the driver ignores Range: the whole-object GET is abandoned once the cap
+ * is reached (its iterator is closed by breaking the loop). Storage / network / auth failures THROW
+ * — a failed read is an operational error the caller must treat as retryable, never as a media
+ * verdict, and never a reason to fall back to a client-reported MIME.
+ */
+export async function readBoundedPrefix(
+  store: Pick<Storage, "readStream">,
+  key: string,
+  maxBytes: number,
+): Promise<Uint8Array> {
+  const stream = await store.readStream(key);
+  const chunks: Uint8Array[] = [];
+  let total = 0;
+  for await (const chunk of stream) {
+    const remaining = maxBytes - total;
+    if (remaining <= 0) break;
+    // Cap EACH chunk before retaining it: a driver that returns the whole object in one giant chunk
+    // must not park it in memory. `.slice()` COPIES (a `.subarray()` view would pin the whole source
+    // buffer alive), so a single multi-GB chunk shrinks to at most `remaining` bytes right here.
+    const piece = chunk.length > remaining ? chunk.slice(0, remaining) : chunk;
+    chunks.push(piece);
+    total += piece.length;
+    if (total >= maxBytes) break; // closes the underlying stream (async iterator .return())
+  }
+  const out = new Uint8Array(total); // total is now guaranteed ≤ maxBytes
+  let off = 0;
+  for (const chunk of chunks) {
+    out.set(chunk, off);
+    off += chunk.length;
+  }
+  return out;
+}
+
 /* ---------------- local disk ---------------- */
 
 export class LocalDiskStorage implements Storage {

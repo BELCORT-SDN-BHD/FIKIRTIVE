@@ -26,9 +26,20 @@ const m = vi.hoisted(() => {
 vi.mock("@fikirtive/db", () => ({ prisma: m.prisma }));
 vi.mock("@fikirtive/token-crypto", () => ({ decryptToken: () => "user-token", signMediaToken: () => "sig" }));
 
+// A minimal static-PNG prefix (signature + IHDR + a zero-length IDAT) so the 工单 F byte-gate in
+// pass 1b confirms the png sanity control below as image/png. The sniffer requires reaching IDAT
+// before it calls a PNG static, so the IDAT chunk is load-bearing here. The video / empty-mime /
+// mixed-carousel cases are refused at pass 1a (mime pre-filter) and never reach a read.
+const PNG_PREFIX = new Uint8Array([
+  0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a,
+  0x00, 0x00, 0x00, 0x0d, 0x49, 0x48, 0x44, 0x52,
+  0, 0, 0, 1, 0, 0, 0, 1, 8, 6, 0, 0, 0, 0x1f, 0x15, 0xc4, 0x89,
+  0x00, 0x00, 0x00, 0x00, 0x49, 0x44, 0x41, 0x54, 0x00, 0x00, 0x00, 0x00,
+]);
 const storageMocks = vi.hoisted(() => ({
   ffmpegInput: vi.fn().mockResolvedValue("https://presigned.example/input"),
   put: vi.fn(),
+  readStream: vi.fn(),
 }));
 vi.mock("../storage.js", () => ({ storage: storageMocks }));
 
@@ -48,6 +59,11 @@ beforeEach(() => {
   process.env.MEDIA_PROXY_SECRET = "test-secret";
   execaMock.mockResolvedValue({ stdout: Buffer.from("fake-jpeg-frame-bytes") });
   storageMocks.put.mockResolvedValue({ key: `${OWNER}/${CONTENT_HASH}.jpg` });
+  storageMocks.readStream.mockImplementation(async () =>
+    (async function* () {
+      yield PNG_PREFIX;
+    })(),
+  );
 });
 
 afterEach(() => {

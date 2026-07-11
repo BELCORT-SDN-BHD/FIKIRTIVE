@@ -36,6 +36,8 @@ vi.mock("@fikirtive/core", () => ({
   storageKey: (ownerId: string, contentHash: string, ext: string) =>
     `u/${ownerId}/${contentHash}.${ext}`,
   newId: () => "new-id-stub",
+  resolveUploadMime: (_bytes: Uint8Array, ext: string) => `image/${ext}`,
+  MEDIA_SNIFF_BYTES: 4096,
 }));
 // storage.url is called by getGeneration; stub it to return a predictable URL
 vi.mock("../storage", () => ({
