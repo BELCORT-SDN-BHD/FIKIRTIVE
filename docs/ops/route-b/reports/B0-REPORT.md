@@ -50,7 +50,7 @@ n/a（无 UI）。等价物 = 双向机器校验：`node scripts/route-b-matrix-
 ## ⑪ 异族评审
 
 - 分解方案：SOL ultra 首轮 `incomplete: empty output`（session `019f5214`，留痕）→ fallback **Fable max complete**（方案 D 全采纳，`coverage-audit/advisor-b0-plan/`）。
-- 产物复审：SOL ultra 复审（跨族第二意见，因产物依 Fable 建议编制）——provenance 在 `coverage-audit/advisor-b0-review/`（复审后回填结论）。
+- 产物复审：SOL ultra 两次尝试均 `unavailable: capacity`（codex 额度触顶，events 原文为证）→ 按协议 fallback **Fable max（complete）**：裁定「有条件可签，置信 88%」，四条件（迁移损伤/校验器盲洞/💰计数口径/证据链收口）已全部修复闭环（D-013）；111 存量行迁移保真逐格比对 PASS。同族闭环风险已披露——**跨族复审可在 codex 额度恢复后补跑，是否等待请 founder 一句话**。provenance 在 `coverage-audit/advisor-b0-review/`。
 - 代码级异族评审：n/a（零产品代码）；CI 一行 + 校验脚本随 PR 评审。
 
 ## ⑫ 已知限制与待裁（没有写「无」）
@@ -60,6 +60,7 @@ n/a（无 UI）。等价物 = 双向机器校验：`node scripts/route-b-matrix-
 3. 待裁 R-001~R-008（`RISKS-PENDING.md`）：X 归 B4、A/B 分叉出处、AEO 翻案、竞品透视出处、Telegram、分市场定价、增长实验形态、报表引擎壳处置——全部为隔离项，不阻塞开工。
 4. 沉浸城 65 页中 6 页（aeo/competitors 等）能力按 OUT-deferred 留壳，founder 改判即回表。
 5. H1 九缝 / OM1 off-main 两分片未逐行入矩阵（缝=横切条款 CC-SEAMS；off-main=A′ 策略已裁），若 founder 要求逐缝立行可增补。
+6. **判决全集（GRILL/DECISION-INVENTORY）为经由 V0 与 MASTERPLAN 的二阶覆盖**，未作为独立源逐条扫（复审 memo 判断点 5 披露）；harmony-0x 设计文档同为引用侧覆盖。若任一单条判决被两层都漏，B1-B13 块 spec 对锚时是下一道网。
 
 ## ⑬ 录像时间码 + founder 10 分钟自查脚本
 

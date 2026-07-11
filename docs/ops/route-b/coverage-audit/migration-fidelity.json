@@ -1,0 +1,6 @@
+{
+ "checked_legacy_rows": 111,
+ "transform": "仅两类声明变换：**剥除 + 管道符→全角；gateOverride 2 行（E4-14/AF1-07，决策日志留痕）",
+ "mismatches": [],
+ "verdict": "PASS"
+}
