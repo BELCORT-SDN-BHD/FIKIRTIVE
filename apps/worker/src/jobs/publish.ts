@@ -35,8 +35,12 @@ import {
   PUBLISH_RETRY_LIMIT,
   META_REQUEST_TIMEOUT_MS,
   PUBLISH_EXECUTION_DEADLINE_MS,
+  classifyImageBytes,
+  normalizeImageMime,
+  MEDIA_SNIFF_BYTES,
   type PublishJobData,
 } from "@fikirtive/core";
+import { readBoundedPrefix } from "@fikirtive/storage";
 import { execa } from "execa";
 import { storage } from "../storage.js";
 import { sanitizeError } from "../redact.js";
@@ -202,7 +206,7 @@ export async function buildMediaUrls(
   ownerId: string,
   scheduledPostId: string,
   channel: string,
-): Promise<{ urls: string[] } | { error: string } | PublishMediaContractRefused> {
+): Promise<{ urls: string[] } | { error: string; retryable?: boolean } | PublishMediaContractRefused> {
   const base = publicBaseUrl();
   const secret = mediaProxySecret();
   if (!base || !secret) return { error: "Media proxy isn't configured (base URL / secret)." };
@@ -220,11 +224,9 @@ export async function buildMediaUrls(
   });
   const byId = new Map(gens.map((g) => [g.id, g.asset]));
 
-  // Pass 1 (P1b): validate EVERY asset's mime BEFORE any ffmpeg/storage work. A mixed carousel
-  // with even one non-image/* asset (video, audio, empty/unknown mime) is refused as a whole —
-  // transcoding the OTHER, valid assets first would waste ffmpeg calls + storage writes on a post
-  // that can never legitimately publish. The whitelist is Asset.mime, never the file extension —
-  // an ext can lie about what was actually stored.
+  // Pass 1a: cheap mime pre-filter. A mixed carousel with even one non-image/* asset (video, audio,
+  // empty/unknown mime) is refused as a whole BEFORE any read/ffmpeg/storage work — transcoding the
+  // OTHER, valid assets first would waste calls on a post that can never legitimately publish.
   const assets: (typeof gens)[number]["asset"][] = [];
   for (const r of rows) {
     const asset = byId.get(r.generationId);
@@ -236,6 +238,34 @@ export async function buildMediaUrls(
       };
     }
     assets.push(asset);
+  }
+
+  // Pass 1b (工单 F): BYTE-verify each IG asset against the object that will ACTUALLY be published.
+  // Asset.mime is client-reported (persisted from File.type / the client filename ext at upload), so
+  // a real mp4 can claim image/png and sail through pass 1a (#229's whitelist). Read a bounded prefix
+  // of the SAME storage object pass 2 transcodes/signs and require the bytes to (①) classify as a
+  // whitelist static image AND (②) match the stored mime once normalized. Either failing is a
+  // deterministic media-contract refusal (NEEDS_ATTENTION; zero ffmpeg, zero Graph). A storage READ
+  // failure is NOT a media verdict — it is a retryable operational error; we never fall back to
+  // trusting the stored mime.
+  if (channel === "instagram") {
+    for (const asset of assets) {
+      const key = storageKey(asset.ownerId, asset.contentHash, asset.ext);
+      let prefix: Uint8Array;
+      try {
+        prefix = await readBoundedPrefix(storage, key, MEDIA_SNIFF_BYTES);
+      } catch {
+        // storage timeout / auth / read failure → retryable, and no external call has happened yet.
+        return { error: "Couldn't read this post's media to verify it before publishing.", retryable: true };
+      }
+      const sniffed = classifyImageBytes(prefix);
+      if (sniffed === "unknown" || sniffed !== normalizeImageMime(asset.mime)) {
+        return {
+          mediaContractRefused: true,
+          error: "This post's media isn't a publishable image for Instagram — replace it and try again.",
+        };
+      }
+    }
   }
 
   // Pass 2 — every asset in the post passed the contract; only now transcode/build URLs.
@@ -294,7 +324,10 @@ async function realExecute(post: DuePost, attemptId: string): Promise<PublishRes
   // just one fewer wasted Graph call on the way to it.)
   const media = await buildMediaUrls(post.ownerId, post.id, post.channel);
   if ("mediaContractRefused" in media) return media;
-  if ("error" in media) return { error: media.error, retryable: false };
+  // A media build error is non-retryable config (proxy misconfigured / missing media) UNLESS
+  // buildMediaUrls flagged it retryable — a storage READ failure during byte-verification (工单 F),
+  // which must retry rather than hard-FAIL or be mistaken for a content rejection.
+  if ("error" in media) return { error: media.error, retryable: media.retryable ?? false };
 
   const page = await resolvePage(auth.userToken, post.metaTargetId, deadline);
   if ("error" in page) return page;

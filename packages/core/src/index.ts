@@ -49,6 +49,7 @@ export {
   type CaptionJobData,
 } from "./timeline.js";
 export * from "./upload.js";
+export * from "./media-sniff.js";
 export * from "./refgen.js";
 export * from "./ref-config.js";
 export * from "./gen.js";
