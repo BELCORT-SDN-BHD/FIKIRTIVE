@@ -149,3 +149,37 @@ Global council 两路收到同一份 evidence pack，SHA-256 `4b81eafde5d230fd10
 - 每个一级/二级判断都有完整 advisor provenance；Fable / clean-room fallback / founder override 不混标；
 - 中断后一次恢复，不遗失 dirty worktree/worker；
 - 不再把设计壳、已合代码、已部署能力、已验证效果混为同一状态。
+
+## 五、2026-07-11 晚间批次（epoch claude-20260711-02 控制面）
+
+### Lane split（founder 指令两 session 并行）
+- **FIK-1**（本控制面，session `3e104495`）：唯一控制面；L1/发布链、A′ 落地、状态账写权。
+- **FIK-2**（session `local_f993a106`）：D7 只读审计取证；无 claim、无写 worker、无合并权、不写本账。
+- Founder 沟通铁律（新增）：凡要 founder 决定，给具体例子 + 简短汇报（已转告 FIK-2）。
+
+### 防呆闸（founder 经 FIK-2 Gate 1 裁决,镜像入账,verbatim）
+> ≥3 份外部需求物证（访谈录音/客测录屏/真实支付）入库前，禁止给任何 thesis 重打分、禁止建任何新页面/新区/新 thesis 表面。
+适用性说明（待 founder 如有异议纠正）：A′ 落地的是**既有** 65 页冻结城（founder 同日已批），控制面解读"落地≠新建"，A′ 车道继续；全新表面一律受闸。
+
+### 基座裁决 A′（founder 批复 2026-07-11 晚）
+- 裁定：#203 冻结为设计基准 `54c1de0b`（永不整包合并）；城经"从 main 切旅程 PR"重建落地；合并递增、**65 页齐才手动发版**。D2 保持有效,A′ 为其执行细则。
+- 顾问证据：Sol ultra memo session `019f50db-0317-7481-b6b3-49a5495cac95`（complete,置信 88%）。
+- 落地舱单 v1：272 文件分类（239 可搬/7 地基/18 排除/0 存疑），18 个 mock-变真风险点（6 个💰须过 money-safety-review）。PR-0 地基已合（#232）。#202 待核实覆盖后关闭。
+
+### L1 发布链修复批次（异族评审机制全程运转,共 5 PR）
+- **#229 已合**（founder 亲批）：IG 视频静默抽首帧守卫（mime 白名单,NEEDS_ATTENTION 通道）。
+- **#231 已合**（founder 批）：排期/批准/编辑三入口前置拦截 + 并发 CAS 加固（4 轮评审）。
+- **#232 已合**（founder 批）：A′ 地基 17 文件逐字节移植 + proxy 一行豁免（首轮 PASS）。
+- **#230 待合**（founder-only）：UNCONFIRMED + Lock 4 双发防线 + 原因可见 + 有界轮询（4 轮评审 PASS;已披露代价:人工处置工具前只能取消重建——后续工单）。
+- **#233 待合**：媒体字节验真双层（Sol 裁决 C 方案;2 轮评审 PASS + 终轮微修中）。**Meta App Review 通电前必合**（Sol 明令）。
+- 递延项备忘（评审记录在案,不阻塞）：#230 同毫秒 updatedAt 残余竞态（治本需 revision 列=schema 变更,另立工单）；#233 若干 P3。
+
+### 顾问与评审事件（协议合规记录）
+- Sol ultra：本批次 4 次 consult complete（provenance 均存档于控制面 scratchpad + 各 PR 描述）；1 次 `incomplete: empty output`（L1 修复策略轮）→ 按协议启用 fallback Fable max（memo 全程标注 fallback,未冒充）。
+- codex 异族评审：quota 中断 1 次（19:01 恢复,如实记录未伪造 PASS）；全批次 BLOCK→修→PASS 循环 5 个 PR 共 11 轮,每轮发现均经控制面核实后才派修。
+
+### D5 凭据
+- 只读盘点完成并入库：`docs/ops/CREDENTIAL-INVENTORY-2026-07-11.md`（无值）。Cloudflare Global Key 位置坐实 `~/.cloudflare/token`（账户根权限,最大单项）。轮换仍逐供应商等 founder 批。
+
+### 下一步关键路径
+A′ 切片 1（壳契约 ~44 文件）→ 切片 2-8 → 65 页齐 → founder 手动发版。并行:#230/#233 落地、L2 connector 设计、D5 轮换排期、FIK-2 的 P0（Otto 报错三处,已确认与本车道零文件重叠）。
