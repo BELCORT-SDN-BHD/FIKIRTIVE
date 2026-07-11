@@ -195,12 +195,28 @@ export async function updateScheduledPost(
     if (nextMedia.length) {
       const owned = await prisma.generation.findMany({
         where: { id: { in: nextMedia }, ownerId: gate.ownerId, deletedAt: null },
-        select: { id: true },
+        select: { id: true, asset: { select: { mime: true } } },
       });
-      const ownedIds = new Set(owned.map((g) => g.id));
-      if (nextMedia.some((mediaId) => !ownedIds.has(mediaId))) return { error: "Some selected media isn't yours." };
+      const ownedById = new Map(owned.map((g) => [g.id, g]));
+      if (nextMedia.some((mediaId) => !ownedById.has(mediaId))) return { error: "Some selected media isn't yours." };
+      // Same judgment as draftScheduledPost / approveScheduledPost (#229): a media swap must not
+      // leave a non-image attached to an Instagram post — this callable boundary is a real gate,
+      // not just the composer's affordance.
+      if (nextChannel === "instagram" && nextMedia.some((mediaId) => !ownedById.get(mediaId)!.asset.mime.startsWith("image/"))) {
+        return { error: IG_IMAGE_ONLY_ERROR };
+      }
     }
     material = true;
+  } else if (nextChannel === "instagram" && patch?.channel !== undefined && current.media?.length) {
+    // Switching an existing draft's channel TO instagram without touching media: media that was
+    // fine for its old channel may not be image-only — check the same contract here too, not just
+    // at approve-time.
+    const existingIds = current.media.map((m) => m.generationId);
+    const owned = await prisma.generation.findMany({
+      where: { id: { in: existingIds }, ownerId: gate.ownerId, deletedAt: null },
+      select: { id: true, asset: { select: { mime: true } } },
+    });
+    if (owned.some((g) => !g.asset.mime.startsWith("image/"))) return { error: IG_IMAGE_ONLY_ERROR };
   }
   if (patch?.metaTargetId !== undefined) {
     data.metaTargetId = typeof patch.metaTargetId === "string" && patch.metaTargetId ? patch.metaTargetId : null;
@@ -256,7 +272,10 @@ export async function approveScheduledPost(id: string): Promise<{ ok: true } | {
 
   const post = await prisma.scheduledPost.findFirst({
     where: { id, ownerId: gate.ownerId, deletedAt: null },
-    select: { id: true, status: true, channel: true, metaTargetId: true, media: { select: { generationId: true } } },
+    select: {
+      id: true, status: true, channel: true, metaTargetId: true, updatedAt: true,
+      media: { select: { generationId: true } },
+    },
   });
   if (!post) return { error: "Post not found." };
 
@@ -306,11 +325,15 @@ export async function approveScheduledPost(id: string): Promise<{ ok: true } | {
   }
 
   try {
-    // Atomic transition: pin the status we read + validated (post.status) in the WHERE. If a
-    // concurrent cancel/edit changed it between the read and here, count===0 → stale/conflict,
-    // so we never resurrect a CANCELLED post into SCHEDULED (the read-then-write race).
+    // Atomic transition: pin the status we read + validated (post.status) AND updatedAt in the
+    // WHERE. status alone isn't enough — a concurrent updateScheduledPost can swap this DRAFT's
+    // media (or channel/metaTargetId) without changing status, which would let approval sail through
+    // on the media/mime snapshot we validated above instead of what's actually attached now. Pinning
+    // updatedAt (bumped by any edit, incl. a media-only one — see updateScheduledPost) closes that:
+    // count===0 → stale/conflict, so we never approve content we didn't just validate, and never
+    // resurrect a CANCELLED post into SCHEDULED either (the read-then-write race).
     const { count } = await prisma.scheduledPost.updateMany({
-      where: { id, ownerId: gate.ownerId, deletedAt: null, status: post.status },
+      where: { id, ownerId: gate.ownerId, deletedAt: null, status: post.status, updatedAt: post.updatedAt },
       data: { status: "SCHEDULED", approvedAt: new Date() },
     });
     if (!count) return { error: "This post just changed — please refresh and try again." };

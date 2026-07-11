@@ -27,7 +27,7 @@ export type DraftScheduledPostArgs = {
 // buildMediaUrls, #229): Asset.mime image/* whitelist, not an extension blacklist. Surfaced
 // here too so the owner is stopped at schedule-time instead of only at publish-time — the
 // worker guard stays as the fail-closed last line of defense.
-export const IG_IMAGE_ONLY_ERROR = "Instagram posts currently support images only — remove the video to schedule this post.";
+export const IG_IMAGE_ONLY_ERROR = "Choose images only to schedule this Instagram post.";
 
 export async function draftScheduledPost(
   args: DraftScheduledPostArgs,
