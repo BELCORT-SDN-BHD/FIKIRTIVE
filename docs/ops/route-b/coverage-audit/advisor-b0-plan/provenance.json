@@ -1,0 +1,14 @@
+{
+  "role": "fable",
+  "status": "complete",
+  "exit_code": 0,
+  "requested_model": "fable",
+  "requested_effort": "max",
+  "observed_model": "claude-fable-5,claude-haiku-4-5-20251001",
+  "observed_effort": "unknown",
+  "session_id": "6712944e-bbfe-46b5-8e2d-ea7e67450c42",
+  "started": "2026-07-11T16:48:42Z",
+  "ended": "2026-07-11T16:54:53Z",
+  "prompt_sha256": "f88bcf29e93ebc1fc68de2a9a5167bcc7f6de3e0a951c46f98939bdfba75dd52",
+  "memo_sha256": "4a6d38f0125760e31779a78c133241cee4a30e9073ea89e38a57a9fa99d4b292"
+}

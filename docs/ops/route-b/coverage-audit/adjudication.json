@@ -1,0 +1,1932 @@
+{
+ "note": "每条 MISSING 的裁决闭合；resolution.row_id 指矩阵行，out_id 指留痕条目",
+ "sources": [
+  {
+   "source": "bp",
+   "counts": {
+    "total": 70,
+    "hit": 18,
+    "missing": 19,
+    "out_suggest": 10,
+    "crosscut": 23
+   },
+   "items": [
+    {
+     "item": "本体负责-研究(research)",
+     "citation": "BLUEPRINT.md:47",
+     "verdict": "HIT",
+     "row_id": "E2-13"
+    },
+    {
+     "item": "本体负责-内容创作",
+     "citation": "BLUEPRINT.md:47",
+     "verdict": "HIT",
+     "row_id": "E1-01..E1-20,E2-14"
+    },
+    {
+     "item": "本体负责-排期发布与广告",
+     "citation": "BLUEPRINT.md:47",
+     "verdict": "HIT",
+     "row_id": "E4-01..E4-16"
+    },
+    {
+     "item": "本体负责-本地发现(搜索&地图)",
+     "citation": "BLUEPRINT.md:47",
+     "verdict": "MISSING",
+     "resolution": {
+      "row_id": "B0-75"
+     }
+    },
+    {
+     "item": "本体负责-请评",
+     "citation": "BLUEPRINT.md:47",
+     "verdict": "MISSING",
+     "resolution": {
+      "row_id": "B0-63"
+     }
+    },
+    {
+     "item": "本体负责-推荐(referral)",
+     "citation": "BLUEPRINT.md:47",
+     "verdict": "MISSING",
+     "resolution": {
+      "row_id": "B0-66"
+     }
+    },
+    {
+     "item": "本体负责-增长实验",
+     "citation": "BLUEPRINT.md:47",
+     "verdict": "MISSING",
+     "resolution": {
+      "row_id": "B0-76"
+     }
+    },
+    {
+     "item": "边界表-读取并验证(订单/付款/退款/库存/履约/积分只读,类比pixel tracking)",
+     "citation": "BLUEPRINT.md:48",
+     "verdict": "MISSING",
+     "resolution": {
+      "row_id": "B0-42"
+     }
+    },
+    {
+     "item": "边界表-明确交接(售后工单/退换货/物流/开票/催收/税务,read→trigger→handoff→receipt契约)",
+     "citation": "BLUEPRINT.md:49",
+     "verdict": "CROSSCUT"
+    },
+    {
+     "item": "边界表-永久不做(代持商家资金/税务工资系统/宪法第8条全部)",
+     "citation": "BLUEPRINT.md:50",
+     "verdict": "CROSSCUT"
+    },
+    {
+     "item": "边界表-释义三句(自动回复归售前面/售前订金付款链接不犯money-in豁免/FIKIRTIVE自身订阅费与本表无关)",
+     "citation": "BLUEPRINT.md:52",
+     "verdict": "CROSSCUT"
+    },
+    {
+     "item": "只有一扇门(/simple+/pro双门已废除,Pro/agency是楼层不是并排门)",
+     "citation": "BLUEPRINT.md:54",
+     "verdict": "CROSSCUT"
+    },
+    {
+     "item": "宪法1:安全>效率>founder易管理,顺序不可倒",
+     "citation": "BLUEPRINT.md:60",
+     "verdict": "CROSSCUT"
+    },
+    {
+     "item": "宪法2:钱路(money-in唯一入口grantCredits;spend path必过money-safety-review;开发期真实花费逐笔问founder;账本推论新花费点必进同账本)",
+     "citation": "BLUEPRINT.md:61",
+     "verdict": "CROSSCUT"
+    },
+    {
+     "item": "宪法3:Otto运营契约五条铁律(计费透明/花钱前必审批/状态诚实/建议按钮引导下一步/One Otto新能力=新skill)",
+     "citation": "BLUEPRINT.md:62",
+     "verdict": "CROSSCUT"
+    },
+    {
+     "item": "宪法4:needsApproval派生公式(cost=spend ∥ effect=write∧reach=external,fail-closed)",
+     "citation": "BLUEPRINT.md:63",
+     "verdict": "HIT",
+     "row_id": "E2-02"
+    },
+    {
+     "item": "宪法5:定价哲学总纲(永不硬编码/毛利地板政策/内容生成定位中下/利润主场Otto+seats/双轨结构/MYR+分市场政策)",
+     "citation": "BLUEPRINT.md:64",
+     "verdict": "CROSSCUT"
+    },
+    {
+     "item": "宪法5:效率良心条款(margin赚在倍率不赚在浪费,降本工程优先于涨价)",
+     "citation": "BLUEPRINT.md:64",
+     "verdict": "HIT",
+     "row_id": "E2-18"
+    },
+    {
+     "item": "宪法5:通道费独立账道(透明直传+单独账道,永不混入credits)",
+     "citation": "BLUEPRINT.md:64",
+     "verdict": "MISSING",
+     "resolution": {
+      "row_id": "B0-86"
+     }
+    },
+    {
+     "item": "宪法6:租户铁幕(ownerId隔离,requireOwner,跨租户读一字节=事故)",
+     "citation": "BLUEPRINT.md:65",
+     "verdict": "HIT",
+     "row_id": "E3-12,E3-13"
+    },
+    {
+     "item": "宪法7:上下文桥(当前视图/选中项注入每轮对话)",
+     "citation": "BLUEPRINT.md:70",
+     "verdict": "HIT",
+     "row_id": "E2-20"
+    },
+    {
+     "item": "宪法7:Parity Manifest(action↔skill对照表+明示豁免,CI扫描)",
+     "citation": "BLUEPRINT.md:68",
+     "verdict": "HIT",
+     "row_id": "E2-15"
+    },
+    {
+     "item": "宪法7:live reflection(界面实时反映后台/Otto动作)",
+     "citation": "BLUEPRINT.md:78",
+     "verdict": "HIT",
+     "row_id": "E2-21"
+    },
+    {
+     "item": "宪法7:其余五项结构保证(单一动作层/读的对等/就地按钮O-12/builder分域O-09/豁免写死四类/审批经济学不变)",
+     "citation": "BLUEPRINT.md:67,69,71,72,73,74",
+     "verdict": "CROSSCUT"
+    },
+    {
+     "item": "宪法8:明确不盖-Build终端coding agent",
+     "citation": "BLUEPRINT.md:75",
+     "verdict": "OUT_SUGGEST"
+    },
+    {
+     "item": "宪法8:明确不盖-独立通用Chat",
+     "citation": "BLUEPRINT.md:75",
+     "verdict": "OUT_SUGGEST"
+    },
+    {
+     "item": "宪法8:明确不盖-Spicy/18+ NSFW",
+     "citation": "BLUEPRINT.md:75",
+     "verdict": "OUT_SUGGEST"
+    },
+    {
+     "item": "宪法8:明确不盖-开放第三方skill生态",
+     "citation": "BLUEPRINT.md:75",
+     "verdict": "OUT_SUGGEST"
+    },
+    {
+     "item": "宪法8:明确不盖-对外MCP/API让外部agent操作FIKIRTIVE",
+     "citation": "BLUEPRINT.md:75",
+     "verdict": "OUT_SUGGEST"
+    },
+    {
+     "item": "宪法8:明确不盖-白标",
+     "citation": "BLUEPRINT.md:75",
+     "verdict": "OUT_SUGGEST"
+    },
+    {
+     "item": "宪法5/8:永久禁止unlimited类报价",
+     "citation": "BLUEPRINT.md:64,75",
+     "verdict": "OUT_SUGGEST"
+    },
+    {
+     "item": "宪法8:明确不盖-Slack/Notion类工作工具connectors(O-13拍板)",
+     "citation": "BLUEPRINT.md:75",
+     "verdict": "OUT_SUGGEST"
+    },
+    {
+     "item": "宪法8:明确不盖-『评价×奖励』合体流(v2.11二裁)",
+     "citation": "BLUEPRINT.md:75",
+     "verdict": "OUT_SUGGEST"
+    },
+    {
+     "item": "宪法9:语言约定(spec/skill华语,生成prompt英文,UI文案sentence case)",
+     "citation": "BLUEPRINT.md:76",
+     "verdict": "CROSSCUT"
+    },
+    {
+     "item": "宪法10:技能为弱模型设计(Otto运行时永远sonnet级,专业判断冻进确定性代码)",
+     "citation": "BLUEPRINT.md:77",
+     "verdict": "CROSSCUT"
+    },
+    {
+     "item": "宪法11:GM-02里程碑",
+     "citation": "BLUEPRINT.md:78",
+     "verdict": "HIT",
+     "row_id": "draft-matrix E5-13"
+    },
+    {
+     "item": "宪法11:GM-03目标进度",
+     "citation": "BLUEPRINT.md:78",
+     "verdict": "HIT",
+     "row_id": "draft-matrix E5-13"
+    },
+    {
+     "item": "宪法11:GM-04周报语气",
+     "citation": "BLUEPRINT.md:78",
+     "verdict": "HIT",
+     "row_id": "draft-matrix E5-13"
+    },
+    {
+     "item": "宪法11:GM-05开店完成度",
+     "citation": "BLUEPRINT.md:78",
+     "verdict": "HIT",
+     "row_id": "draft-matrix E5-12"
+    },
+    {
+     "item": "宪法11:GM-01 streak(founder拍板不要)",
+     "citation": "BLUEPRINT.md:78",
+     "verdict": "OUT_SUGGEST"
+    },
+    {
+     "item": "宪法11:零学习曲线三查(①每专业功能必有Otto一键入口②人工面自解释③注册到首个成果≤一次会话)",
+     "citation": "BLUEPRINT.md:78",
+     "verdict": "MISSING",
+     "resolution": {
+      "out_id": "CC-3CHA"
+     }
+    },
+    {
+     "item": "宪法11:落地机制(单一设计系统.gb不许分叉/每个用户可感的面须过设计审/设计基准=Analytics屏)",
+     "citation": "BLUEPRINT.md:78",
+     "verdict": "CROSSCUT"
+    },
+    {
+     "item": "宪法11:信任阶梯注(学习曲线归零但信任曲线不抹除,审批闸是安全带)",
+     "citation": "BLUEPRINT.md:78",
+     "verdict": "CROSSCUT"
+    },
+    {
+     "item": "第二章解读边界附则(七句:豁免只管Otto半边/租户间vs平台侧/实时=秒级/开发花费vs routine预算/webhook非操作面/credits-only限用户面/官方协议消费方例外)",
+     "citation": "BLUEPRINT.md:80-87",
+     "verdict": "CROSSCUT"
+    },
+    {
+     "item": "缝1 defineOttoSkill(Otto新能力=新skill文件,3字段+注册五步)",
+     "citation": "BLUEPRINT.md:130",
+     "verdict": "CROSSCUT"
+    },
+    {
+     "item": "缝2 GenerationProvider(模型三表联动+provider映射,pre-charge/charged错误边界)",
+     "citation": "BLUEPRINT.md:131",
+     "verdict": "CROSSCUT"
+    },
+    {
+     "item": "缝3 Credit ledger(reserve→settle/refund+幂等键+partial-unique索引)",
+     "citation": "BLUEPRINT.md:132",
+     "verdict": "CROSSCUT"
+    },
+    {
+     "item": "缝4 Channel foundation(OAuth+加密token+Organization.settings,Meta为范本)",
+     "citation": "BLUEPRINT.md:133",
+     "verdict": "CROSSCUT"
+    },
+    {
+     "item": "缝5 Tenant model(requireOwner+ownerId全链路+TENANT_MODELS守卫)",
+     "citation": "BLUEPRINT.md:134",
+     "verdict": "CROSSCUT"
+    },
+    {
+     "item": "缝6 Queue/worker(core定义策略→两端createQueue→handler+回收器时间链)",
+     "citation": "BLUEPRINT.md:135",
+     "verdict": "CROSSCUT"
+    },
+    {
+     "item": "缝7 .gb+shadcn(单一设计系统,coral只属于Otto)",
+     "citation": "BLUEPRINT.md:136",
+     "verdict": "CROSSCUT"
+    },
+    {
+     "item": "缝8 ChatMessage卡片五道缝(kind联合→占位→双渲染器→注入过滤→流桥名单)",
+     "citation": "BLUEPRINT.md:137",
+     "verdict": "CROSSCUT"
+    },
+    {
+     "item": "缝9 Parity Manifest(每个新action出生即配skill或明示豁免,CI拦截)",
+     "citation": "BLUEPRINT.md:138",
+     "verdict": "CROSSCUT"
+    },
+    {
+     "item": "对标区-CRM(respond.io级SMB-lite起步→Salesforce级深度;联系人从对话/广告自动进来,WhatsApp-first;起步不碰资金流)",
+     "citation": "BLUEPRINT.md:47,171,179",
+     "verdict": "MISSING",
+     "resolution": {
+      "row_id": "B0-59"
+     }
+    },
+    {
+     "item": "对标区-Campaign管理(独立Campaign对象,不升格project;预算/编排/归因/UTM/campaign级报表)",
+     "citation": "BLUEPRINT.md:47,172,180",
+     "verdict": "MISSING",
+     "resolution": {
+      "row_id": "B0-51"
+     }
+    },
+    {
+     "item": "售前对话与成交促进+自动回复/客服区WhatsApp部分(答价/数量价/定制proof/订金付款链接;共享收件箱/Comment-to-DM/AI客服O-06护栏;WhatsApp-first)",
+     "citation": "BLUEPRINT.md:47,52,173,184",
+     "verdict": "MISSING",
+     "resolution": {
+      "row_id": "B0-37"
+     }
+    },
+    {
+     "item": "自动回复/客服区-email渠道(『以后但必须建』)",
+     "citation": "BLUEPRINT.md:184",
+     "verdict": "MISSING",
+     "resolution": {
+      "row_id": "B0-05"
+     }
+    },
+    {
+     "item": "复购与唤回(边界表本体负责项+终局链『口碑与复购/唤回』)",
+     "citation": "BLUEPRINT.md:41,47",
+     "verdict": "MISSING",
+     "resolution": {
+      "row_id": "B0-43"
+     }
+    },
+    {
+     "item": "生命周期自动化/routine授权模型(用户创建routine一次性预授权;预算上限/范围声明/kill switch/事后摘要四件不可少)",
+     "citation": "BLUEPRINT.md:188",
+     "verdict": "MISSING",
+     "resolution": {
+      "row_id": "B0-47"
+     }
+    },
+    {
+     "item": "团队协作+审批流(租户侧RBAC,O-13/G-11拍板;多席位协作/『小编做→老板批→才发布』/评论交接)",
+     "citation": "BLUEPRINT.md:185",
+     "verdict": "MISSING",
+     "resolution": {
+      "row_id": "B0-04"
+     }
+    },
+    {
+     "item": "账务透明(credit消费明细,用户侧Account→Credits分类,可展开单笔;官方侧/admin/cost同口径聚合)",
+     "citation": "BLUEPRINT.md:186",
+     "verdict": "HIT",
+     "row_id": "E3-10"
+    },
+    {
+     "item": "订阅层(Stripe Phase4,利润在Otto定价哲学落地处)",
+     "citation": "BLUEPRINT.md:187",
+     "verdict": "MISSING",
+     "resolution": {
+      "row_id": "B0-03"
+     }
+    },
+    {
+     "item": "手机App(远期,routine管理与审批移动面)",
+     "citation": "BLUEPRINT.md:189",
+     "verdict": "MISSING",
+     "resolution": {
+      "out_id": "OUT-APP"
+     }
+    },
+    {
+     "item": "Agency/Pro楼层(多品牌管理,盖在现有楼上;开工顺序G-09行业开店模板→团队协作+G-11审批→G-10多客户伞层)",
+     "citation": "BLUEPRINT.md:176,190",
+     "verdict": "MISSING",
+     "resolution": {
+      "out_id": "OUT-AGENCY"
+     }
+    },
+    {
+     "item": "市政厅v2(团队阶级制度:SECTION_MATRIX+钱的阶级+邀请审计+staff成员制+冒充权限收紧+Otto永久豁免)",
+     "citation": "BLUEPRINT.md:191",
+     "verdict": "HIT",
+     "row_id": "E3-14"
+    },
+    {
+     "item": "资产/品牌区胜负手-品牌记忆自养(从生成反馈自我学习,区别于既有Brand memory v2静态记录)",
+     "citation": "BLUEPRINT.md:175",
+     "verdict": "MISSING",
+     "resolution": {
+      "row_id": "B0-26"
+     }
+    },
+    {
+     "item": "定价结构胜负手-分市场差异定价(超MYR外的多市场定价体系)",
+     "citation": "BLUEPRINT.md:177",
+     "verdict": "MISSING",
+     "resolution": {
+      "out_id": "OUT-MKT2"
+     }
+    },
+    {
+     "item": "多平台广告区扩建(TikTok→Lazada→Shopee)",
+     "citation": "BLUEPRINT.md:181",
+     "verdict": "HIT",
+     "row_id": "E4-15"
+    },
+    {
+     "item": "排期发布区平台可插拔(FB/IG先行,加新平台=加adapter不改核心)",
+     "citation": "BLUEPRINT.md:182",
+     "verdict": "HIT",
+     "row_id": "E4-16"
+    },
+    {
+     "item": "全量分析区(深化,对标Metricool/HubSpot归因,Otto主动洞察+真实投放反哺O-10)",
+     "citation": "BLUEPRINT.md:170,183",
+     "verdict": "HIT",
+     "row_id": "E5-01,E5-03,E5-04,E5-06"
+    }
+   ]
+  },
+  {
+   "source": "mp",
+   "counts": {
+    "total": 60,
+    "hit": 18,
+    "missing": 37,
+    "out_suggest": 3,
+    "crosscut": 2
+   },
+   "items": [
+    {
+     "item": "L0 量测原语第0大陆(短链+QR+优惠码token+UTM+来源确认+退款回卷,一条码全链可点验收)",
+     "citation": "docs/MASTERPLAN.md:77",
+     "verdict": "HIT",
+     "row_id": "E5-06,E5-07"
+    },
+    {
+     "item": "L-C 创作区(第1环点亮):canvas接gen链/工厂variant矩阵+bulk批量/storyboard接gate1帧→视频/媒体编辑接$0 render/资产查看接续拍;gate4诚实契约四条",
+     "citation": "docs/MASTERPLAN.md:78",
+     "verdict": "HIT",
+     "row_id": "E1-01,E1-02,E1-08,E1-09,E1-13,E1-17"
+    },
+    {
+     "item": "L1 发布链(Meta organic publish):六态设计+发布配额+公网媒体URL+JPEG约束→App Review",
+     "citation": "docs/MASTERPLAN.md:79",
+     "verdict": "HIT",
+     "row_id": "E4-04,E4-05,E4-06,E4-08"
+    },
+    {
+     "item": "L2 WhatsApp询单:BSP客户身份接WABA+收件箱真对话+模板送审+防误发护栏+Otto措辞纪律",
+     "citation": "docs/MASTERPLAN.md:80",
+     "verdict": "MISSING",
+     "resolution": {
+      "row_id": "B0-31"
+     }
+    },
+    {
+     "item": "L3 回执脊柱最小版:Mandate/Action/ExternalEffect/BusinessEvent/Receipt最小对象集+EasyStore只读接入+reconciliation",
+     "citation": "docs/MASTERPLAN.md:81",
+     "verdict": "MISSING",
+     "resolution": {
+      "row_id": "B0-41"
+     }
+    },
+    {
+     "item": "L4 会员唤回:EasyStore积分只读→到期唤回broadcast(走L2+L0优惠码归因;发前额度预检/掉档横幅/降速剧本)",
+     "citation": "docs/MASTERPLAN.md:82",
+     "verdict": "MISSING",
+     "resolution": {
+      "row_id": "B0-43"
+     }
+    },
+    {
+     "item": "并行泳道-GBP薄试:API接入申请即刻递(官方14天)+请评/奖励三隔离(宪法第8条)",
+     "citation": "docs/MASTERPLAN.md:86",
+     "verdict": "MISSING",
+     "resolution": {
+      "row_id": "B0-75"
+     }
+    },
+    {
+     "item": "并行泳道-Otto契约小pass(R2采纳清单:认识论动词/授权格/dock注意力面/fail-closed过滤)",
+     "citation": "docs/MASTERPLAN.md:87",
+     "verdict": "MISSING",
+     "resolution": {
+      "row_id": "B0-80"
+     }
+    },
+    {
+     "item": "并行泳道-收钱三闸(R4):发布控制/失败遏制/可执行UAT,原§一P0安全带项并入",
+     "citation": "docs/MASTERPLAN.md:88",
+     "verdict": "MISSING",
+     "resolution": {
+      "out_id": "CC-GATE3"
+     }
+    },
+    {
+     "item": "并行泳道-缺失大陆设计全图:MISSING-CONTINENTS前五按大陆出设计",
+     "citation": "docs/MASTERPLAN.md:89",
+     "verdict": "MISSING",
+     "resolution": {
+      "out_id": "CC-DESIGN"
+     }
+    },
+    {
+     "item": "一板块一验证协议:上线就绪五关(机器闸/E2E/认知走查/效果过堂/founder15分钟亲点)+过关才点下一环串行律",
+     "citation": "docs/MASTERPLAN.md:92-94",
+     "verdict": "CROSSCUT"
+    },
+    {
+     "item": "收钱条件句(R5 D5):一条签约能力单元真实成立+生产三闸通过即可收,不许拿宏大设计抵账",
+     "citation": "docs/MASTERPLAN.md:96-98",
+     "verdict": "CROSSCUT"
+    },
+    {
+     "item": "P0-1 数据库夜间备份(Neon PITR③都做/$0 pg_dump→R2)+真实恢复演练",
+     "citation": "docs/MASTERPLAN.md:106",
+     "verdict": "HIT",
+     "row_id": "E3-19"
+    },
+    {
+     "item": "P0-2 verify-auth-guards.mjs修复(补认requireOwner)并接CI",
+     "citation": "docs/MASTERPLAN.md:107",
+     "verdict": "MISSING",
+     "resolution": {
+      "row_id": "B0-81"
+     }
+    },
+    {
+     "item": "P0-3 ESLint 128 errors清理并接CI(ci.yml增lint job)",
+     "citation": "docs/MASTERPLAN.md:108",
+     "verdict": "MISSING",
+     "resolution": {
+      "row_id": "B0-82"
+     }
+    },
+    {
+     "item": "批次3a 删3个死付费端点(coworkTurn/enhancePrompt/coworkDraftStoryboard)",
+     "citation": "docs/MASTERPLAN.md:109,117",
+     "verdict": "MISSING",
+     "resolution": {
+      "row_id": "E3-20"
+     }
+    },
+    {
+     "item": "批次3b NextAuth 3张死表(Account/Session/VerificationToken)DROP迁移",
+     "citation": "docs/MASTERPLAN.md:109,118",
+     "verdict": "MISSING",
+     "resolution": {
+      "row_id": "E3-20"
+     }
+    },
+    {
+     "item": "批次3c 11个花钱/prod脚本加确认锁",
+     "citation": "docs/MASTERPLAN.md:109,119",
+     "verdict": "MISSING",
+     "resolution": {
+      "row_id": "E3-20"
+     }
+    },
+    {
+     "item": "批次3d scripts/分层归档(活跃/存档/花钱脚本三层)",
+     "citation": "docs/MASTERPLAN.md:109,120",
+     "verdict": "MISSING",
+     "resolution": {
+      "row_id": "E3-20"
+     }
+    },
+    {
+     "item": "批次3e 重复代码统一(Meta错误处理6处+extractText三副本)",
+     "citation": "docs/MASTERPLAN.md:109,121",
+     "verdict": "MISSING",
+     "resolution": {
+      "row_id": "E3-20"
+     }
+    },
+    {
+     "item": "P0-5 parity扫描器盲区修补(check-parity.mjs认export const形状+data.ts 8个读面补登记)",
+     "citation": "docs/MASTERPLAN.md:110",
+     "verdict": "MISSING",
+     "resolution": {
+      "row_id": "B0-83"
+     }
+    },
+    {
+     "item": "P0-6 prod R2 bucket artlio→fikirtive对象迁移(founder排期)",
+     "citation": "docs/MASTERPLAN.md:111",
+     "verdict": "MISSING",
+     "resolution": {
+      "row_id": "B0-84"
+     }
+    },
+    {
+     "item": "P0.5-1 Otto引擎Phase1:Anthropic prompt caching",
+     "citation": "docs/MASTERPLAN.md:129",
+     "verdict": "HIT",
+     "row_id": "E2-18"
+    },
+    {
+     "item": "P0.5-2 Otto引擎Phase2:技能分域装载",
+     "citation": "docs/MASTERPLAN.md:130",
+     "verdict": "HIT",
+     "row_id": "E2-19"
+    },
+    {
+     "item": "D1批 排期读+写(读优先)~5条todoSkill",
+     "citation": "docs/MASTERPLAN.md:146",
+     "verdict": "HIT",
+     "row_id": "E2-16"
+    },
+    {
+     "item": "D2批 Library/资产/账户读~9条todoSkill",
+     "citation": "docs/MASTERPLAN.md:147",
+     "verdict": "HIT",
+     "row_id": "E2-16"
+    },
+    {
+     "item": "D3批 Analytics/Ads读~3条todoSkill",
+     "citation": "docs/MASTERPLAN.md:148",
+     "verdict": "HIT",
+     "row_id": "E2-16"
+    },
+    {
+     "item": "D4批 项目/thread管理~12条todoSkill",
+     "citation": "docs/MASTERPLAN.md:149",
+     "verdict": "HIT",
+     "row_id": "E2-16"
+    },
+    {
+     "item": "D5批 画布~6条todoSkill",
+     "citation": "docs/MASTERPLAN.md:150",
+     "verdict": "HIT",
+     "row_id": "E2-16"
+    },
+    {
+     "item": "D6批 上传/媒体~7条todoSkill",
+     "citation": "docs/MASTERPLAN.md:151",
+     "verdict": "HIT",
+     "row_id": "E2-16"
+    },
+    {
+     "item": "D7批 分镜/编辑器~10条todoSkill",
+     "citation": "docs/MASTERPLAN.md:152",
+     "verdict": "HIT",
+     "row_id": "E2-16"
+    },
+    {
+     "item": "D8批 生成生命周期+杂项写~12条todoSkill",
+     "citation": "docs/MASTERPLAN.md:153",
+     "verdict": "HIT",
+     "row_id": "E2-16"
+    },
+    {
+     "item": "D9批 Otto自身机件甄别~8条todoSkill(特殊:或需新豁免类别,修宪须停手报founder)",
+     "citation": "docs/MASTERPLAN.md:154",
+     "verdict": "HIT",
+     "row_id": "E2-16"
+    },
+    {
+     "item": "P1-0 BytePlus资源包余量告警(毛利45%→13%护栏)",
+     "citation": "docs/MASTERPLAN.md:173",
+     "verdict": "HIT",
+     "row_id": "E3-08"
+    },
+    {
+     "item": "P1-1 Wave1创作变现:Product建档+3模式无口播成片+风格卡片+全流程Otto可驱动",
+     "citation": "docs/MASTERPLAN.md:174",
+     "verdict": "HIT",
+     "row_id": "E1-01,E1-02,E1-08,E1-09,E1-13,E1-17"
+    },
+    {
+     "item": "P1-2 Wave2:口播(lipsync/TTS三硬标准)+UGC口播模式×2+改台词不重拍+升级票U-1",
+     "citation": "docs/MASTERPLAN.md:175",
+     "verdict": "MISSING",
+     "resolution": {
+      "row_id": "B0-17"
+     }
+    },
+    {
+     "item": "P1-3 Wave3:Ad Reference逆向拆解+一稿多尺寸+三语套装+Avatar选角库+效果反哺O-10",
+     "citation": "docs/MASTERPLAN.md:176",
+     "verdict": "MISSING",
+     "resolution": {
+      "row_id": "B0-18"
+     }
+    },
+    {
+     "item": "A1 Hook生成器(前3秒钩子文案/画面变体,独立于Wave2 Hook模板)",
+     "citation": "docs/MASTERPLAN.md:182",
+     "verdict": "MISSING",
+     "resolution": {
+      "row_id": "B0-19"
+     }
+    },
+    {
+     "item": "A2 批量变体矩阵(一次brief×N平台×N尺寸×N钩子出片,硬性附带总价确认页)",
+     "citation": "docs/MASTERPLAN.md:183",
+     "verdict": "MISSING",
+     "resolution": {
+      "row_id": "B0-20"
+     }
+    },
+    {
+     "item": "A3 改台词不重拍折价SKU(costing先行)",
+     "citation": "docs/MASTERPLAN.md:184",
+     "verdict": "MISSING",
+     "resolution": {
+      "row_id": "B0-87"
+     }
+    },
+    {
+     "item": "A4 成品广告打包SKU('N条可投广告'一价打包,costing先行)",
+     "citation": "docs/MASTERPLAN.md:185",
+     "verdict": "MISSING",
+     "resolution": {
+      "row_id": "B0-88"
+     }
+    },
+    {
+     "item": "A5 SEA本地化选角库(判决:按Wave3原节奏不提前,Wave2期间$0预备:选角标准+肖像授权法务框架调研)",
+     "citation": "docs/MASTERPLAN.md:186",
+     "verdict": "MISSING",
+     "resolution": {
+      "row_id": "B0-18"
+     }
+    },
+    {
+     "item": "P1½-1 ScheduledPost(+PostVariant)全量+实发布worker通电(FB/IG先行,平台可插拔)",
+     "citation": "docs/MASTERPLAN.md:198",
+     "verdict": "HIT",
+     "row_id": "E4-01,E4-02,E4-05"
+    },
+    {
+     "item": "P1½-2 ChannelConnection通用渠道连接(kind开放串+加密token,Meta日后择机迁入)",
+     "citation": "docs/MASTERPLAN.md:199",
+     "verdict": "MISSING",
+     "resolution": {
+      "row_id": "B0-30"
+     }
+    },
+    {
+     "item": "P1½-3 Routine/RoutineRun(范围声明/预算上限/kill switch全为字段+DB约束)",
+     "citation": "docs/MASTERPLAN.md:200",
+     "verdict": "MISSING",
+     "resolution": {
+      "row_id": "B0-47"
+     }
+    },
+    {
+     "item": "P1½-4 ApprovalRequest最小版(kind=PUBLISH,随排期提前,payload hash绑定)",
+     "citation": "docs/MASTERPLAN.md:201",
+     "verdict": "MISSING",
+     "resolution": {
+      "row_id": "B0-29"
+     }
+    },
+    {
+     "item": "P2-1 WhatsApp BSP接入(M区第一波入场券,BSP供应商选型)",
+     "citation": "docs/MASTERPLAN.md:207",
+     "verdict": "MISSING",
+     "resolution": {
+      "row_id": "B0-31"
+     }
+    },
+    {
+     "item": "P2-2 Contact/ContactIdentity+Conversation/CustomerMessage(与ChatMessage零交叉)+KnowledgeDoc",
+     "citation": "docs/MASTERPLAN.md:208",
+     "verdict": "MISSING",
+     "resolution": {
+      "row_id": "B0-59"
+     }
+    },
+    {
+     "item": "P2-3 第二账道ChannelFeeWallet/ChannelFeeLedger(MYR实价,与CreditLedger零共享)",
+     "citation": "docs/MASTERPLAN.md:209",
+     "verdict": "MISSING",
+     "resolution": {
+      "row_id": "B0-86"
+     }
+    },
+    {
+     "item": "P2-4 O-06护栏+试驾场(对客AI硬前置)+公开评论收件箱",
+     "citation": "docs/MASTERPLAN.md:210",
+     "verdict": "MISSING",
+     "resolution": {
+      "row_id": "B0-34"
+     }
+    },
+    {
+     "item": "origami:人回复自动暂停自动化(M区设计原则)",
+     "citation": "docs/MASTERPLAN.md:212",
+     "verdict": "MISSING",
+     "resolution": {
+      "row_id": "B0-38"
+     }
+    },
+    {
+     "item": "origami:勿扰名单硬编码进agent运行(consent字段升级为运行时硬约束)",
+     "citation": "docs/MASTERPLAN.md:212",
+     "verdict": "MISSING",
+     "resolution": {
+      "row_id": "B0-45"
+     }
+    },
+    {
+     "item": "P3-1 Campaign独立对象(目标/预算/周期/状态机/UTM基串,归组=可空外键)",
+     "citation": "docs/MASTERPLAN.md:218",
+     "verdict": "MISSING",
+     "resolution": {
+      "row_id": "B0-51"
+     }
+    },
+    {
+     "item": "P3-2 Deal/PipelineConfig+Segment(NL→确定性规则编译)",
+     "citation": "docs/MASTERPLAN.md:219",
+     "verdict": "MISSING",
+     "resolution": {
+      "out_id": "OUT-DEAL"
+     }
+    },
+    {
+     "item": "P3-3 ApprovalRequest全量+团队协作/审批流(创作席/审批席RBAC)",
+     "citation": "docs/MASTERPLAN.md:220",
+     "verdict": "OUT_SUGGEST"
+    },
+    {
+     "item": "P4-1 报表引擎数据面+G-12品牌化报告",
+     "citation": "docs/MASTERPLAN.md:231",
+     "verdict": "MISSING",
+     "resolution": {
+      "row_id": "B0-07"
+     }
+    },
+    {
+     "item": "P4-2 Company(B2B档案)",
+     "citation": "docs/MASTERPLAN.md:232",
+     "verdict": "MISSING",
+     "resolution": {
+      "out_id": "OUT-COMPANY"
+     }
+    },
+    {
+     "item": "P4-3 Agency伞层(G-09→团队协作+G-11→G-10多客户伞)",
+     "citation": "docs/MASTERPLAN.md:233",
+     "verdict": "OUT_SUGGEST"
+    },
+    {
+     "item": "P4-4 市政厅v2(团队阶级制度:SECTION_MATRIX扩展+钱的阶级+staff成员制)",
+     "citation": "docs/MASTERPLAN.md:234",
+     "verdict": "OUT_SUGGEST"
+    },
+    {
+     "item": "7-7 origami:贵活前brief预检+报价确认页(大额生成前Otto先复述理解+报价,首落点=批量变体)",
+     "citation": "docs/MASTERPLAN.md:264",
+     "verdict": "MISSING",
+     "resolution": {
+      "row_id": "B0-21"
+     }
+    }
+   ]
+  },
+  {
+   "source": "ap",
+   "counts": {
+    "total": 98,
+    "hit": 29,
+    "missing": 50,
+    "out_suggest": 2,
+    "crosscut": 17
+   },
+   "items": [
+    {
+     "item": "account/channel-wallet 通道费钱包页(第二账道)",
+     "citation": "immersive-65-pages.txt:1",
+     "verdict": "MISSING",
+     "resolution": {
+      "row_id": "B0-86"
+     }
+    },
+    {
+     "item": "account/connections 渠道连接管理页",
+     "citation": "immersive-65-pages.txt:2",
+     "verdict": "HIT",
+     "row_id": "E4-09"
+    },
+    {
+     "item": "account/credits 消费明细页",
+     "citation": "immersive-65-pages.txt:3",
+     "verdict": "HIT",
+     "row_id": "E3-10"
+    },
+    {
+     "item": "account/settings 资料+Otto行为设置",
+     "citation": "immersive-65-pages.txt:4",
+     "verdict": "MISSING",
+     "resolution": {
+      "row_id": "B0-85"
+     }
+    },
+    {
+     "item": "account/top-up 充值/购买页(💰)",
+     "citation": "immersive-65-pages.txt:5",
+     "verdict": "HIT",
+     "row_id": "E3-09"
+    },
+    {
+     "item": "ads/builder 广告构建工作台(建campaign草稿$0/PAUSED)",
+     "citation": "immersive-65-pages.txt:6",
+     "verdict": "MISSING",
+     "resolution": {
+      "row_id": "B0-27"
+     }
+    },
+    {
+     "item": "ads/competitors 同行广告透视(Ad Library聚类借角度)",
+     "citation": "immersive-65-pages.txt:7",
+     "verdict": "MISSING",
+     "resolution": {
+      "out_id": "OUT-COMPET"
+     }
+    },
+    {
+     "item": "ads/multi-platform 多平台投放扩展(TikTok/Lazada/Shopee)",
+     "citation": "immersive-65-pages.txt:8",
+     "verdict": "HIT",
+     "row_id": "E4-15"
+    },
+    {
+     "item": "ads/performance 广告表现页(逐ad+诊断)",
+     "citation": "immersive-65-pages.txt:9",
+     "verdict": "HIT",
+     "row_id": "E5-03,E5-04,E4-11,E4-12"
+    },
+    {
+     "item": "analytics/aeo",
+     "citation": "immersive-65-pages.txt:10",
+     "verdict": "MISSING",
+     "resolution": {
+      "out_id": "OUT-AEO"
+     }
+    },
+    {
+     "item": "analytics/overview 分析总览(真实KPI)",
+     "citation": "immersive-65-pages.txt:11",
+     "verdict": "HIT",
+     "row_id": "E5-01"
+    },
+    {
+     "item": "analytics/reports 报表引擎+品牌化报告",
+     "citation": "immersive-65-pages.txt:12",
+     "verdict": "MISSING",
+     "resolution": {
+      "row_id": "B0-07"
+     }
+    },
+    {
+     "item": "assets/brand-kit 品牌包页(结构化)",
+     "citation": "immersive-65-pages.txt:13",
+     "verdict": "MISSING",
+     "resolution": {
+      "row_id": "B0-25"
+     }
+    },
+    {
+     "item": "assets/brand-memory 品牌记忆(6-tab)+产品链接建档",
+     "citation": "immersive-65-pages.txt:14",
+     "verdict": "HIT",
+     "row_id": "E1-11,E1-12,E1-13"
+    },
+    {
+     "item": "assets/cast 选角库(训练锁脸)",
+     "citation": "immersive-65-pages.txt:15",
+     "verdict": "MISSING",
+     "resolution": {
+      "row_id": "B0-18"
+     }
+    },
+    {
+     "item": "assets/discover 灵感瀑布流",
+     "citation": "immersive-65-pages.txt:16",
+     "verdict": "HIT",
+     "row_id": "E1-16"
+    },
+    {
+     "item": "assets/library 生成历史",
+     "citation": "immersive-65-pages.txt:17",
+     "verdict": "HIT",
+     "row_id": "E1-14,E5-17"
+    },
+    {
+     "item": "assets/my-stuff 统一素材管理",
+     "citation": "immersive-65-pages.txt:18",
+     "verdict": "HIT",
+     "row_id": "E1-10,E1-17,E1-18"
+    },
+    {
+     "item": "assets/templates 官方模板库",
+     "citation": "immersive-65-pages.txt:19",
+     "verdict": "HIT",
+     "row_id": "E1-15"
+    },
+    {
+     "item": "automation/recipes 自动化预制流程",
+     "citation": "immersive-65-pages.txt:20",
+     "verdict": "MISSING",
+     "resolution": {
+      "row_id": "B0-06"
+     }
+    },
+    {
+     "item": "automation/routines Routine管理面(授权书)",
+     "citation": "immersive-65-pages.txt:21",
+     "verdict": "MISSING",
+     "resolution": {
+      "row_id": "B0-47"
+     }
+    },
+    {
+     "item": "automation/rules 规则文件编辑器",
+     "citation": "immersive-65-pages.txt:22",
+     "verdict": "MISSING",
+     "resolution": {
+      "row_id": "B0-48"
+     }
+    },
+    {
+     "item": "campaign/calendar Campaign日历工作台",
+     "citation": "immersive-65-pages.txt:23",
+     "verdict": "MISSING",
+     "resolution": {
+      "row_id": "B0-54"
+     }
+    },
+    {
+     "item": "campaign/detail Campaign详情页",
+     "citation": "immersive-65-pages.txt:24",
+     "verdict": "MISSING",
+     "resolution": {
+      "row_id": "B0-55"
+     }
+    },
+    {
+     "item": "campaign/list Campaign列表与详情(完全体)",
+     "citation": "immersive-65-pages.txt:25",
+     "verdict": "MISSING",
+     "resolution": {
+      "row_id": "B0-55"
+     }
+    },
+    {
+     "item": "campaign/pack-confirm 打包确认页(大单花费闸,💰)",
+     "citation": "immersive-65-pages.txt:26",
+     "verdict": "MISSING",
+     "resolution": {
+      "row_id": "B0-57"
+     }
+    },
+    {
+     "item": "campaign/proposal-card Campaign提案卡(聊天内)",
+     "citation": "immersive-65-pages.txt:27",
+     "verdict": "MISSING",
+     "resolution": {
+      "row_id": "B0-56"
+     }
+    },
+    {
+     "item": "campaign/trends 趋势存档页",
+     "citation": "immersive-65-pages.txt:28",
+     "verdict": "MISSING",
+     "resolution": {
+      "row_id": "B0-58"
+     }
+    },
+    {
+     "item": "campaign/workbench Campaign工作台(结构化入口)",
+     "citation": "immersive-65-pages.txt:29",
+     "verdict": "MISSING",
+     "resolution": {
+      "row_id": "B0-53"
+     }
+    },
+    {
+     "item": "cityhall/admin 市政厅全后台",
+     "citation": "immersive-65-pages.txt:30",
+     "verdict": "HIT",
+     "row_id": "E3-14,E3-15,E3-20"
+    },
+    {
+     "item": "create/asset-viewer 全屏资产查看器",
+     "citation": "immersive-65-pages.txt:31",
+     "verdict": "MISSING",
+     "resolution": {
+      "row_id": "B0-24"
+     }
+    },
+    {
+     "item": "create/canvas Canvas主场(💰)",
+     "citation": "immersive-65-pages.txt:32",
+     "verdict": "HIT",
+     "row_id": "E1-01,E1-02,E1-03,E1-04,E1-05,E1-06,E1-07,E1-09,E1-19"
+    },
+    {
+     "item": "create/factory 工厂出片间",
+     "citation": "immersive-65-pages.txt:33",
+     "verdict": "MISSING",
+     "resolution": {
+      "row_id": "B0-16"
+     }
+    },
+    {
+     "item": "create/home 创作首页(front door)",
+     "citation": "immersive-65-pages.txt:34",
+     "verdict": "MISSING",
+     "resolution": {
+      "row_id": "B0-22"
+     }
+    },
+    {
+     "item": "create/ideas 想法清单",
+     "citation": "immersive-65-pages.txt:35",
+     "verdict": "MISSING",
+     "resolution": {
+      "row_id": "B0-23"
+     }
+    },
+    {
+     "item": "create/media-editor 素材编辑面(💰)",
+     "citation": "immersive-65-pages.txt:36",
+     "verdict": "MISSING",
+     "resolution": {
+      "row_id": "B0-14"
+     }
+    },
+    {
+     "item": "create/storyboard 分镜工作台",
+     "citation": "immersive-65-pages.txt:37",
+     "verdict": "HIT",
+     "row_id": "E1-08"
+    },
+    {
+     "item": "crm/contact-profile 联系人档案",
+     "citation": "immersive-65-pages.txt:38",
+     "verdict": "MISSING",
+     "resolution": {
+      "row_id": "B0-60"
+     }
+    },
+    {
+     "item": "crm/contacts 联系人列表",
+     "citation": "immersive-65-pages.txt:39",
+     "verdict": "MISSING",
+     "resolution": {
+      "row_id": "B0-59"
+     }
+    },
+    {
+     "item": "crm/deals Deal看板(SMB-lite交易管道)",
+     "citation": "immersive-65-pages.txt:40",
+     "verdict": "OUT_SUGGEST"
+    },
+    {
+     "item": "crm/segments 分群页",
+     "citation": "immersive-65-pages.txt:41",
+     "verdict": "MISSING",
+     "resolution": {
+      "row_id": "B0-61"
+     }
+    },
+    {
+     "item": "global/legal 法务页(隐私/ToS/数据删除回调)",
+     "citation": "immersive-65-pages.txt:42",
+     "verdict": "MISSING",
+     "resolution": {
+      "row_id": "B0-89"
+     }
+    },
+    {
+     "item": "global/notifications 通知与审批入口",
+     "citation": "immersive-65-pages.txt:43",
+     "verdict": "HIT",
+     "row_id": "E2-08"
+    },
+    {
+     "item": "global/otto-chat Otto全屏对话工作面",
+     "citation": "immersive-65-pages.txt:44",
+     "verdict": "HIT",
+     "row_id": "E2-04,E2-08,E2-09,E2-11,E2-20,E2-21"
+    },
+    {
+     "item": "global/search 全局搜索",
+     "citation": "immersive-65-pages.txt:45",
+     "verdict": "MISSING",
+     "resolution": {
+      "row_id": "B0-01"
+     }
+    },
+    {
+     "item": "inbox/broadcast WhatsApp批量外呼",
+     "citation": "immersive-65-pages.txt:46",
+     "verdict": "MISSING",
+     "resolution": {
+      "row_id": "B0-43"
+     }
+    },
+    {
+     "item": "inbox/comments 公开评论收件箱",
+     "citation": "immersive-65-pages.txt:47",
+     "verdict": "MISSING",
+     "resolution": {
+      "row_id": "B0-36"
+     }
+    },
+    {
+     "item": "inbox/conversation 对话视图(人+Otto同台)",
+     "citation": "immersive-65-pages.txt:48",
+     "verdict": "MISSING",
+     "resolution": {
+      "row_id": "B0-38"
+     }
+    },
+    {
+     "item": "inbox/knowledge AI客服知识库页",
+     "citation": "immersive-65-pages.txt:49",
+     "verdict": "MISSING",
+     "resolution": {
+      "row_id": "B0-35"
+     }
+    },
+    {
+     "item": "inbox/recipes 收件箱自动化recipes",
+     "citation": "immersive-65-pages.txt:50",
+     "verdict": "MISSING",
+     "resolution": {
+      "row_id": "B0-40"
+     }
+    },
+    {
+     "item": "inbox/shared 共享收件箱(WhatsApp-first)",
+     "citation": "immersive-65-pages.txt:51",
+     "verdict": "MISSING",
+     "resolution": {
+      "row_id": "B0-31"
+     }
+    },
+    {
+     "item": "inbox/templates 回复模板库",
+     "citation": "immersive-65-pages.txt:52",
+     "verdict": "MISSING",
+     "resolution": {
+      "row_id": "B0-32"
+     }
+    },
+    {
+     "item": "inbox/test-drive 试驾场(上线前测试)",
+     "citation": "immersive-65-pages.txt:53",
+     "verdict": "MISSING",
+     "resolution": {
+      "row_id": "B0-34"
+     }
+    },
+    {
+     "item": "onboarding/checklist 开店完成度",
+     "citation": "immersive-65-pages.txt:54",
+     "verdict": "HIT",
+     "row_id": "E5-12"
+    },
+    {
+     "item": "onboarding/login 登录/注册页",
+     "citation": "immersive-65-pages.txt:55",
+     "verdict": "HIT",
+     "row_id": "E5-08,E5-09,E5-10,E5-11"
+    },
+    {
+     "item": "otto/page.tsx (沉浸城otto根页)",
+     "citation": "immersive-65-pages.txt:56",
+     "verdict": "CROSSCUT"
+    },
+    {
+     "item": "page.tsx (沉浸城根索引/城市地图)",
+     "citation": "immersive-65-pages.txt:57",
+     "verdict": "CROSSCUT"
+    },
+    {
+     "item": "schedule/calendar 日历视图",
+     "citation": "immersive-65-pages.txt:58",
+     "verdict": "HIT",
+     "row_id": "E4-01"
+    },
+    {
+     "item": "schedule/composer Composer撰写器(💰)",
+     "citation": "immersive-65-pages.txt:59",
+     "verdict": "HIT",
+     "row_id": "E4-01,E4-14,AF1-07"
+    },
+    {
+     "item": "schedule/plan Plan视图",
+     "citation": "immersive-65-pages.txt:60",
+     "verdict": "HIT",
+     "row_id": "E4-01"
+    },
+    {
+     "item": "schedule/queue 队列视图",
+     "citation": "immersive-65-pages.txt:61",
+     "verdict": "HIT",
+     "row_id": "E4-01"
+    },
+    {
+     "item": "schedule/share-preview 单帖分享预览页",
+     "citation": "immersive-65-pages.txt:62",
+     "verdict": "MISSING",
+     "resolution": {
+      "row_id": "B0-28"
+     }
+    },
+    {
+     "item": "team/agency Agency楼层",
+     "citation": "immersive-65-pages.txt:63",
+     "verdict": "OUT_SUGGEST"
+    },
+    {
+     "item": "team/approvals 审批工作台",
+     "citation": "immersive-65-pages.txt:64",
+     "verdict": "MISSING",
+     "resolution": {
+      "row_id": "B0-04"
+     }
+    },
+    {
+     "item": "team/members 成员与席位管理",
+     "citation": "immersive-65-pages.txt:65",
+     "verdict": "MISSING",
+     "resolution": {
+      "row_id": "B0-04"
+     }
+    },
+    {
+     "item": "[地基1/7] northstar/layout.tsx 路由组根layout+生产门禁",
+     "citation": "docs/ops/APRIME-MANIFEST-2026-07-11.md:27",
+     "verdict": "CROSSCUT"
+    },
+    {
+     "item": "[地基2/7] northstar/page.tsx 全城地图总目录页",
+     "citation": "docs/ops/APRIME-MANIFEST-2026-07-11.md:30",
+     "verdict": "CROSSCUT"
+    },
+    {
+     "item": "[地基3/7] _registry.ts 全城65页注册表",
+     "citation": "docs/ops/APRIME-MANIFEST-2026-07-11.md:31",
+     "verdict": "CROSSCUT"
+    },
+    {
+     "item": "[地基4/7] _shell.tsx 全局外壳(顶栏+左轨+Otto dock)",
+     "citation": "docs/ops/APRIME-MANIFEST-2026-07-11.md:32",
+     "verdict": "CROSSCUT"
+    },
+    {
+     "item": "[地基5/7] _shared.tsx 全城复用组件库",
+     "citation": "docs/ops/APRIME-MANIFEST-2026-07-11.md:35",
+     "verdict": "CROSSCUT"
+    },
+    {
+     "item": "[地基6/7] _mock.ts 977行全城共享mock数据源",
+     "citation": "docs/ops/APRIME-MANIFEST-2026-07-11.md:38",
+     "verdict": "CROSSCUT"
+    },
+    {
+     "item": "[地基7/7] proxy.ts 全站Better Auth中间件",
+     "citation": "docs/ops/APRIME-MANIFEST-2026-07-11.md:41",
+     "verdict": "CROSSCUT"
+    },
+    {
+     "item": "[切片1/8] 壳契约+全局横切(~44文件)",
+     "citation": "docs/ops/APRIME-MANIFEST-2026-07-11.md:90",
+     "verdict": "CROSSCUT"
+    },
+    {
+     "item": "[切片2/8] 创作(create/studio)(~29文件)",
+     "citation": "docs/ops/APRIME-MANIFEST-2026-07-11.md:91",
+     "verdict": "CROSSCUT"
+    },
+    {
+     "item": "[切片3/8] 素材(assets)(~26文件)",
+     "citation": "docs/ops/APRIME-MANIFEST-2026-07-11.md:92",
+     "verdict": "CROSSCUT"
+    },
+    {
+     "item": "[切片4/8] Campaign(~23文件)",
+     "citation": "docs/ops/APRIME-MANIFEST-2026-07-11.md:93",
+     "verdict": "CROSSCUT"
+    },
+    {
+     "item": "[切片5/8] 排期(schedule)(~18文件)",
+     "citation": "docs/ops/APRIME-MANIFEST-2026-07-11.md:94",
+     "verdict": "CROSSCUT"
+    },
+    {
+     "item": "[切片6/8] 分析+广告(analytics/ads)(~28文件)",
+     "citation": "docs/ops/APRIME-MANIFEST-2026-07-11.md:95",
+     "verdict": "CROSSCUT"
+    },
+    {
+     "item": "[切片7/8] CRM+收件箱(crm/inbox)(~38文件)",
+     "citation": "docs/ops/APRIME-MANIFEST-2026-07-11.md:96",
+     "verdict": "CROSSCUT"
+    },
+    {
+     "item": "[切片8/8] 账务/团队/自动化(account-ops)(~33文件)",
+     "citation": "docs/ops/APRIME-MANIFEST-2026-07-11.md:97",
+     "verdict": "CROSSCUT"
+    },
+    {
+     "item": "[mock风险1/18] account/top-up 充值流程(💰)",
+     "citation": "docs/ops/APRIME-MANIFEST-2026-07-11.md:109",
+     "verdict": "HIT",
+     "row_id": "E3-09"
+    },
+    {
+     "item": "[mock风险2/18] campaign/pack-confirm 大单花费闸(💰)",
+     "citation": "docs/ops/APRIME-MANIFEST-2026-07-11.md:110",
+     "verdict": "MISSING",
+     "resolution": {
+      "row_id": "B0-57"
+     }
+    },
+    {
+     "item": "[mock风险3/18] create/canvas startGeneration/spendCredits(💰)",
+     "citation": "docs/ops/APRIME-MANIFEST-2026-07-11.md:111",
+     "verdict": "HIT",
+     "row_id": "E1-02,E1-03,E3-01,E3-07"
+    },
+    {
+     "item": "[mock风险4/18] create/media-editor regenerate/spendCredits(💰)",
+     "citation": "docs/ops/APRIME-MANIFEST-2026-07-11.md:112",
+     "verdict": "MISSING",
+     "resolution": {
+      "row_id": "B0-14"
+     }
+    },
+    {
+     "item": "[mock风险5/18] schedule/composer schedulePost+X计费(💰)",
+     "citation": "docs/ops/APRIME-MANIFEST-2026-07-11.md:113",
+     "verdict": "HIT",
+     "row_id": "E4-01,E4-14,AF1-07"
+    },
+    {
+     "item": "[mock风险6/18] campaign/calendar auto-publish提及",
+     "citation": "docs/ops/APRIME-MANIFEST-2026-07-11.md:114",
+     "verdict": "MISSING",
+     "resolution": {
+      "row_id": "B0-54"
+     }
+    },
+    {
+     "item": "[mock风险7/18] campaign/workbench X pricing/generated-or-published静态文案",
+     "citation": "docs/ops/APRIME-MANIFEST-2026-07-11.md:115",
+     "verdict": "MISSING",
+     "resolution": {
+      "row_id": "B0-53"
+     }
+    },
+    {
+     "item": "[mock风险8/18] analytics/reports 假PDF下载进度条",
+     "citation": "docs/ops/APRIME-MANIFEST-2026-07-11.md:116",
+     "verdict": "MISSING",
+     "resolution": {
+      "row_id": "B0-07"
+     }
+    },
+    {
+     "item": "[mock风险9/18] assets/brand-memory 产品链接建档form mock",
+     "citation": "docs/ops/APRIME-MANIFEST-2026-07-11.md:117",
+     "verdict": "HIT",
+     "row_id": "E1-13"
+    },
+    {
+     "item": "[mock风险10/18] assets/cast 训练进度setInterval mock",
+     "citation": "docs/ops/APRIME-MANIFEST-2026-07-11.md:118",
+     "verdict": "MISSING",
+     "resolution": {
+      "row_id": "B0-18"
+     }
+    },
+    {
+     "item": "[mock风险11/18] assets/brand-kit 'Check recent visuals'校验mock",
+     "citation": "docs/ops/APRIME-MANIFEST-2026-07-11.md:119",
+     "verdict": "MISSING",
+     "resolution": {
+      "row_id": "B0-25"
+     }
+    },
+    {
+     "item": "[mock风险12/18] assets/my-stuff Retry/Upload/Delete mock",
+     "citation": "docs/ops/APRIME-MANIFEST-2026-07-11.md:120",
+     "verdict": "HIT",
+     "row_id": "E1-17,E1-18"
+    },
+    {
+     "item": "[mock风险13/18] ads/builder submitAd() mock",
+     "citation": "docs/ops/APRIME-MANIFEST-2026-07-11.md:121",
+     "verdict": "MISSING",
+     "resolution": {
+      "row_id": "B0-27"
+     }
+    },
+    {
+     "item": "[mock风险14/18] schedule/share-preview 分享token写死",
+     "citation": "docs/ops/APRIME-MANIFEST-2026-07-11.md:122",
+     "verdict": "MISSING",
+     "resolution": {
+      "row_id": "B0-28"
+     }
+    },
+    {
+     "item": "[mock风险15/18] global/otto-chat 流式回复setInterval mock",
+     "citation": "docs/ops/APRIME-MANIFEST-2026-07-11.md:123",
+     "verdict": "HIT",
+     "row_id": "E2-04,E2-21"
+    },
+    {
+     "item": "[mock风险16/18] global/notifications approveRequest mock",
+     "citation": "docs/ops/APRIME-MANIFEST-2026-07-11.md:124",
+     "verdict": "HIT",
+     "row_id": "E2-08"
+    },
+    {
+     "item": "[mock风险17/18] create/asset-viewer Regenerate mock",
+     "citation": "docs/ops/APRIME-MANIFEST-2026-07-11.md:125",
+     "verdict": "MISSING",
+     "resolution": {
+      "row_id": "B0-24"
+     }
+    },
+    {
+     "item": "[mock风险18/18] components/northstar/schedule/kit.tsx Approve setTimeout mock",
+     "citation": "docs/ops/APRIME-MANIFEST-2026-07-11.md:126",
+     "verdict": "MISSING",
+     "resolution": {
+      "row_id": "B0-29"
+     }
+    }
+   ]
+  },
+  {
+   "source": "mc",
+   "counts": {
+    "total": 47,
+    "hit": 4,
+    "missing": 39,
+    "out_suggest": 3,
+    "crosscut": 1
+   },
+   "items": [
+    {
+     "item": "生成QR+短链的联系人入口(扫码→进WhatsApp/关注IG/入群)",
+     "citation": "docs/research/MISSING-CONTINENTS-2026-07-10.md:40",
+     "verdict": "HIT",
+     "row_id": "E5-06,E5-07"
+    },
+    {
+     "item": "把QR/短链入口输出成可打印实体物料(海报/贴纸/名片/传单/易拉宝)",
+     "citation": "docs/research/MISSING-CONTINENTS-2026-07-10.md:41",
+     "verdict": "MISSING",
+     "resolution": {
+      "row_id": "B0-62"
+     }
+    },
+    {
+     "item": "按贴放位置做来源归因(哪个位置带来多少新客)",
+     "citation": "docs/research/MISSING-CONTINENTS-2026-07-10.md:42",
+     "verdict": "HIT",
+     "row_id": "E5-06"
+    },
+    {
+     "item": "快闪摊位/市集现场把当场客流转成日后能再联系的名单",
+     "citation": "docs/research/MISSING-CONTINENTS-2026-07-10.md:43",
+     "verdict": "MISSING",
+     "resolution": {
+      "row_id": "B0-50"
+     }
+    },
+    {
+     "item": "扫码新联系人立刻收欢迎语+打来源标签+接入现有对话/档案",
+     "citation": "docs/research/MISSING-CONTINENTS-2026-07-10.md:44",
+     "verdict": "MISSING",
+     "resolution": {
+      "row_id": "B0-50"
+     }
+    },
+    {
+     "item": "成交后主动请顾客留评价(不干等)",
+     "citation": "docs/research/MISSING-CONTINENTS-2026-07-10.md:56",
+     "verdict": "MISSING",
+     "resolution": {
+      "row_id": "B0-63"
+     }
+    },
+    {
+     "item": "多平台评价统一监控+差评预警(Google/FB/Shopee/Lazada)",
+     "citation": "docs/research/MISSING-CONTINENTS-2026-07-10.md:57",
+     "verdict": "MISSING",
+     "resolution": {
+      "row_id": "B0-64"
+     }
+    },
+    {
+     "item": "把好评转成对外可展示的信任凭证(星级/证言)",
+     "citation": "docs/research/MISSING-CONTINENTS-2026-07-10.md:58",
+     "verdict": "MISSING",
+     "resolution": {
+      "row_id": "B0-65"
+     }
+    },
+    {
+     "item": "设计'老客带新客'转介绍奖励并追踪谁介绍了谁/发多少奖",
+     "citation": "docs/research/MISSING-CONTINENTS-2026-07-10.md:59",
+     "verdict": "MISSING",
+     "resolution": {
+      "row_id": "B0-66"
+     }
+    },
+    {
+     "item": "会员积分/等级忠诚计划(老客户攒积分/升级持续回购)",
+     "citation": "docs/research/MISSING-CONTINENTS-2026-07-10.md:60",
+     "verdict": "MISSING",
+     "resolution": {
+      "row_id": "B0-67"
+     }
+    },
+    {
+     "item": "识别高价值/常客/VIP并针对性维系",
+     "citation": "docs/research/MISSING-CONTINENTS-2026-07-10.md:61",
+     "verdict": "MISSING",
+     "resolution": {
+      "row_id": "B0-61"
+     }
+    },
+    {
+     "item": "衡量口碑/转介绍/忠诚的实际效果(新客数/NPS/复购率)",
+     "citation": "docs/research/MISSING-CONTINENTS-2026-07-10.md:62",
+     "verdict": "MISSING",
+     "resolution": {
+      "row_id": "B0-09"
+     }
+    },
+    {
+     "item": "listing关键词/标题/属性/图片优化(站内搜索排前面)",
+     "citation": "docs/research/MISSING-CONTINENTS-2026-07-10.md:75",
+     "verdict": "MISSING",
+     "resolution": {
+      "row_id": "B0-68"
+     }
+    },
+    {
+     "item": "店铺主页与分类页装修(banner/导航/促销楼层)",
+     "citation": "docs/research/MISSING-CONTINENTS-2026-07-10.md:76",
+     "verdict": "MISSING",
+     "resolution": {
+      "row_id": "B0-69"
+     }
+    },
+    {
+     "item": "站内竞价广告(关键词广告/推荐位)",
+     "citation": "docs/research/MISSING-CONTINENTS-2026-07-10.md:77",
+     "verdict": "MISSING",
+     "resolution": {
+      "row_id": "B0-70"
+     }
+    },
+    {
+     "item": "商品评价与评分经营(催评+差评应对,评分是排名因子)",
+     "citation": "docs/research/MISSING-CONTINENTS-2026-07-10.md:78",
+     "verdict": "MISSING",
+     "resolution": {
+      "row_id": "B0-64"
+     }
+    },
+    {
+     "item": "报名/蹭官方大促(11.11/Payday/官方券/flash sale)",
+     "citation": "docs/research/MISSING-CONTINENTS-2026-07-10.md:79",
+     "verdict": "MISSING",
+     "resolution": {
+      "row_id": "B0-71"
+     }
+    },
+    {
+     "item": "站内直播/短视频挂车(Shopee Live/TikTok Shop Live)",
+     "citation": "docs/research/MISSING-CONTINENTS-2026-07-10.md:80",
+     "verdict": "MISSING",
+     "resolution": {
+      "row_id": "B0-72"
+     }
+    },
+    {
+     "item": "IG/TikTok bio唯一链接=没官网时的替代官网",
+     "citation": "docs/research/MISSING-CONTINENTS-2026-07-10.md:93",
+     "verdict": "MISSING",
+     "resolution": {
+      "row_id": "B0-73"
+     }
+    },
+    {
+     "item": "迷你落地页可直接完成动作(菜单/商品按钮/WhatsApp一键开聊/预约)",
+     "citation": "docs/research/MISSING-CONTINENTS-2026-07-10.md:94",
+     "verdict": "MISSING",
+     "resolution": {
+      "row_id": "B0-73"
+     }
+    },
+    {
+     "item": "为一次性活动/促销单独做收线索落地页+表单",
+     "citation": "docs/research/MISSING-CONTINENTS-2026-07-10.md:95",
+     "verdict": "MISSING",
+     "resolution": {
+      "row_id": "B0-74"
+     }
+    },
+    {
+     "item": "知道这条链接/落地页有没有人点、从哪个渠道来",
+     "citation": "docs/research/MISSING-CONTINENTS-2026-07-10.md:96",
+     "verdict": "HIT",
+     "row_id": "E5-06,E5-07"
+    },
+    {
+     "item": "页面随生意变化自动跟着更新(新品上架/换季自动换文案)",
+     "citation": "docs/research/MISSING-CONTINENTS-2026-07-10.md:97",
+     "verdict": "MISSING",
+     "resolution": {
+      "row_id": "B0-73"
+     }
+    },
+    {
+     "item": "WhatsApp Status(24小时朋友圈式动态)发新品/优惠/幕后",
+     "citation": "docs/research/MISSING-CONTINENTS-2026-07-10.md:110",
+     "verdict": "MISSING",
+     "resolution": {
+      "row_id": "B0-39"
+     }
+    },
+    {
+     "item": "经营WhatsApp群组/Telegram频道做订阅式广播",
+     "citation": "docs/research/MISSING-CONTINENTS-2026-07-10.md:111",
+     "verdict": "MISSING",
+     "resolution": {
+      "out_id": "OUT-TG"
+     }
+    },
+    {
+     "item": "GBP商家档案认领+发帖/回评/照片文案(Otto承接)",
+     "citation": "docs/research/MISSING-CONTINENTS-2026-07-10.md:121",
+     "verdict": "MISSING",
+     "resolution": {
+      "row_id": "B0-75"
+     }
+    },
+    {
+     "item": "社媒直播卖货(TikTok Shop Live/Shopee Live开播工具)",
+     "citation": "docs/research/MISSING-CONTINENTS-2026-07-10.md:122",
+     "verdict": "OUT_SUGGEST"
+    },
+    {
+     "item": "Google搜索广告(关键词广告)",
+     "citation": "docs/research/MISSING-CONTINENTS-2026-07-10.md:123",
+     "verdict": "OUT_SUGGEST"
+    },
+    {
+     "item": "AEO可见度功能本体(六维评分+FAQ/对比页补内容生成)",
+     "citation": "docs/research/MISSING-CONTINENTS-2026-07-10.md:12-13,131",
+     "verdict": "OUT_SUGGEST"
+    },
+    {
+     "item": "AEO治理反转本身(2026-07-03排除判词 vs 2026-07-10同日新建候选未被引用回应;附B6/B4编号错位)",
+     "citation": "docs/research/MISSING-CONTINENTS-2026-07-10.md:150-158",
+     "verdict": "CROSSCUT"
+    },
+    {
+     "item": "Otto Campaign策划师(研究trend→CAMPAIGN_CARD提案:主题/目标/跨度/节奏/日历→用户改/批)",
+     "citation": "docs/superpowers/specs/2026-07-08-otto-campaign-planner-design.md §一,§2.1",
+     "verdict": "MISSING",
+     "resolution": {
+      "row_id": "B0-56"
+     }
+    },
+    {
+     "item": "Campaign最薄容器对象(独立不升格project;id/ownerId/name/status/goal/period/planJson)",
+     "citation": "docs/superpowers/specs/2026-07-08-otto-campaign-planner-design.md §2.4;docs/research/GRILL-VERDICTS-2026-07-03.md:80",
+     "verdict": "MISSING",
+     "resolution": {
+      "row_id": "B0-51"
+     }
+    },
+    {
+     "item": "Campaign归组(Project/ScheduledPost/Generation的campaignId可空外键接线)",
+     "citation": "docs/superpowers/specs/2026-07-08-otto-campaign-planner-design.md §2.4",
+     "verdict": "MISSING",
+     "resolution": {
+      "row_id": "B0-52"
+     }
+    },
+    {
+     "item": "Campaign批量生成打包总价确认(逐条明细,判决7-3/7-7落地)",
+     "citation": "docs/superpowers/specs/2026-07-08-otto-campaign-planner-design.md §2.5",
+     "verdict": "MISSING",
+     "resolution": {
+      "row_id": "B0-57"
+     }
+    },
+    {
+     "item": "Campaign专属工作台结构化入口(表单发起+日历,不靠聊天prompt)",
+     "citation": "docs/research/GRILL-VERDICTS-2026-07-03.md:216",
+     "verdict": "MISSING",
+     "resolution": {
+      "row_id": "B0-53"
+     }
+    },
+    {
+     "item": "TrendSnapshot趋势数据层最薄存储(ownerId隔离,供Otto未来refer)",
+     "citation": "docs/research/GRILL-VERDICTS-2026-07-03.md:216;docs/superpowers/specs/2026-07-08-otto-campaign-planner-design.md §五",
+     "verdict": "MISSING",
+     "resolution": {
+      "row_id": "B0-58"
+     }
+    },
+    {
+     "item": "联系人自动进来(跨渠道互动自动生成/更新联系人档案)",
+     "citation": "docs/ops/ROUTE-B-MASTER-PLAN-2026-07-12.md §二'CRM起步形态'行",
+     "verdict": "MISSING",
+     "resolution": {
+      "row_id": "B0-59"
+     }
+    },
+    {
+     "item": "联系人分群(按标签/属性/行为分组供群发/唤回定向)",
+     "citation": "docs/ops/ROUTE-B-MASTER-PLAN-2026-07-12.md §二'CRM起步形态'行",
+     "verdict": "MISSING",
+     "resolution": {
+      "row_id": "B0-61"
+     }
+    },
+    {
+     "item": "同意(opt-in)记录+退订(opt-out)处理",
+     "citation": "docs/ops/ROUTE-B-MASTER-PLAN-2026-07-12.md §二'CRM起步形态'行;§三 B7'前置补:同意/…/退订/…'",
+     "verdict": "MISSING",
+     "resolution": {
+      "row_id": "B0-44"
+     }
+    },
+    {
+     "item": "抑制名单(suppression list:退订/黑名单联系人自动排除出群发/唤回对象)",
+     "citation": "docs/ops/ROUTE-B-MASTER-PLAN-2026-07-12.md §二'CRM起步形态'行;§三 B7'…/去重'",
+     "verdict": "MISSING",
+     "resolution": {
+      "row_id": "B0-45"
+     }
+    },
+    {
+     "item": "routine预授权自动化四件套(预算上限/范围声明/kill switch/事后摘要)——唤回最小版",
+     "citation": "docs/ops/ROUTE-B-MASTER-PLAN-2026-07-12.md §二'生命周期自动化'行;§三 B7",
+     "verdict": "MISSING",
+     "resolution": {
+      "row_id": "B0-47"
+     }
+    },
+    {
+     "item": "频控(同一联系人短期内限制触达次数)",
+     "citation": "docs/ops/ROUTE-B-MASTER-PLAN-2026-07-12.md §三 B7'前置补:…频控…'",
+     "verdict": "MISSING",
+     "resolution": {
+      "row_id": "B0-46"
+     }
+    },
+    {
+     "item": "旅程(journey:唤回多步触发序列)",
+     "citation": "docs/ops/ROUTE-B-MASTER-PLAN-2026-07-12.md §二'生命周期自动化(routine/旅程/频控)'行",
+     "verdict": "MISSING",
+     "resolution": {
+      "row_id": "B0-49"
+     }
+    },
+    {
+     "item": "账务透明明细(纯只读,判决「要」)",
+     "citation": "docs/ops/ROUTE-B-MASTER-PLAN-2026-07-12.md §二'账务透明明细'行",
+     "verdict": "HIT",
+     "row_id": "E3-10"
+    },
+    {
+     "item": "订阅层/席位UI壳+Coming soon占位(不实扣费,Q1裁定'A只收credits')",
+     "citation": "docs/ops/ROUTE-B-MASTER-PLAN-2026-07-12.md 冻结记录②;§二'订阅层/席位'行",
+     "verdict": "MISSING",
+     "resolution": {
+      "row_id": "B0-03"
+     }
+    },
+    {
+     "item": "团队协作+审批流UI壳+Coming soon占位(租户RBAC债记入宪章)",
+     "citation": "docs/ops/ROUTE-B-MASTER-PLAN-2026-07-12.md §二'团队协作+审批流'行",
+     "verdict": "MISSING",
+     "resolution": {
+      "row_id": "B0-04"
+     }
+    },
+    {
+     "item": "email渠道连接入口壳(NS_CONNECTIONS加email选项,标Coming soon)",
+     "citation": "docs/ops/ROUTE-B-MASTER-PLAN-2026-07-12.md 冻结记录⑤'email=挂壳Coming soon';docs/research/MISSING-CONTINENTS-2026-07-10.md:18",
+     "verdict": "MISSING",
+     "resolution": {
+      "row_id": "B0-05"
+     }
+    }
+   ]
+  }
+ ]
+}

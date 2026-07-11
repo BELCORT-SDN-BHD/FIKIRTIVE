@@ -58,6 +58,9 @@ jobs:
       # Destructive-migration guard: push-to-main auto-migrates prod. A DROP TABLE/COLUMN,
       # TRUNCATE, or DELETE FROM must carry an explicit "-- DESTRUCTIVE-OK: <reason>" ack.
       - run: bash scripts/check-destructive-migrations.sh
+      # Route-B release contract (B0): coverage matrix invariants — unique IDs, no blank cells,
+      # closed-set statuses, all 84 parity debts mapped exactly once, MISSING adjudications closed.
+      - run: node scripts/route-b-matrix-check.mjs
 
   # `next build` for apps/web — the exact command Railway's Dockerfile runs on deploy.
   # Typecheck can't catch client→server-bundle leaks (a "use client" file value-importing

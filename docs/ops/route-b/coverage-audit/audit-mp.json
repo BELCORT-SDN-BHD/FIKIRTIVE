@@ -1,0 +1,420 @@
+{
+ "counts": {
+  "total": 60,
+  "hit": 18,
+  "missing": 37,
+  "out_suggest": 3,
+  "crosscut": 2
+ },
+ "source": "docs/MASTERPLAN.md",
+ "items": [
+  {
+   "item": "L0 量测原语第0大陆(短链+QR+优惠码token+UTM+来源确认+退款回卷,一条码全链可点验收)",
+   "citation": "docs/MASTERPLAN.md:77",
+   "verdict": "HIT",
+   "row_id": "E5-06,E5-07",
+   "note": "六原语表+短链redirect已覆盖;退款回卷子项未见专项验收行,归入AttributionEvent概念内,B2验收时建议钉一条"
+  },
+  {
+   "item": "L-C 创作区(第1环点亮):canvas接gen链/工厂variant矩阵+bulk批量/storyboard接gate1帧→视频/媒体编辑接$0 render/资产查看接续拍;gate4诚实契约四条",
+   "citation": "docs/MASTERPLAN.md:78",
+   "verdict": "HIT",
+   "row_id": "E1-01,E1-02,E1-08,E1-09,E1-13,E1-17",
+   "note": "harmony-03 Wave1同物,见P1-1合并说明;gate4诚实契约(报价三数一致/失败即退/批量partial退款)未见专项矩阵行,B3验收清单建议逐条钉入"
+  },
+  {
+   "item": "L1 发布链(Meta organic publish):六态设计+发布配额+公网媒体URL+JPEG约束→App Review",
+   "citation": "docs/MASTERPLAN.md:79",
+   "verdict": "HIT",
+   "row_id": "E4-04,E4-05,E4-06,E4-08",
+   "note": "发布配额(rate limit)子项与I1-13限流覆盖是否已含publish quota未逐一核实"
+  },
+  {
+   "item": "L2 WhatsApp询单:BSP客户身份接WABA+收件箱真对话+模板送审+防误发护栏+Otto措辞纪律",
+   "citation": "docs/MASTERPLAN.md:80",
+   "verdict": "MISSING",
+   "block_suggest": "B5",
+   "note": "矩阵E1-E5/AF1/I1全谱系无一行涉及WhatsApp/WABA/BSP;与§五P2-1同源(同一能力两处出现)"
+  },
+  {
+   "item": "L3 回执脊柱最小版:Mandate/Action/ExternalEffect/BusinessEvent/Receipt最小对象集+EasyStore只读接入+reconciliation",
+   "citation": "docs/MASTERPLAN.md:81",
+   "verdict": "MISSING",
+   "block_suggest": "B6",
+   "note": "矩阵无回执脊柱/EasyStore相关行"
+  },
+  {
+   "item": "L4 会员唤回:EasyStore积分只读→到期唤回broadcast(走L2+L0优惠码归因;发前额度预检/掉档横幅/降速剧本)",
+   "citation": "docs/MASTERPLAN.md:82",
+   "verdict": "MISSING",
+   "block_suggest": "B7",
+   "note": "依赖L2/L3,矩阵均无对应行"
+  },
+  {
+   "item": "并行泳道-GBP薄试:API接入申请即刻递(官方14天)+请评/奖励三隔离(宪法第8条)",
+   "citation": "docs/MASTERPLAN.md:86",
+   "verdict": "MISSING",
+   "block_suggest": "B8",
+   "note": "ROUTE-B §三 B8 明文'GBP归并行泳道薄试';矩阵无对应行"
+  },
+  {
+   "item": "并行泳道-Otto契约小pass(R2采纳清单:认识论动词/授权格/dock注意力面/fail-closed过滤)",
+   "citation": "docs/MASTERPLAN.md:87",
+   "verdict": "MISSING",
+   "block_suggest": "B9",
+   "note": "矩阵E2-*系列覆盖Otto引擎既有机件,但R2这份具体采纳清单未见专项行"
+  },
+  {
+   "item": "并行泳道-收钱三闸(R4):发布控制/失败遏制/可执行UAT,原§一P0安全带项并入",
+   "citation": "docs/MASTERPLAN.md:88",
+   "verdict": "MISSING",
+   "block_suggest": "B12",
+   "note": "ROUTE-B B12描述已逐字含'收钱三闸'一词,但draft矩阵本身无对应行;建议B12验收时钉入三闸清单"
+  },
+  {
+   "item": "并行泳道-缺失大陆设计全图:MISSING-CONTINENTS前五按大陆出设计",
+   "citation": "docs/MASTERPLAN.md:89",
+   "verdict": "MISSING",
+   "block_suggest": "B8",
+   "note": "矩阵无对应行;ROUTE-B B8已纳入'缺失大陆前五'"
+  },
+  {
+   "item": "一板块一验证协议:上线就绪五关(机器闸/E2E/认知走查/效果过堂/founder15分钟亲点)+过关才点下一环串行律",
+   "citation": "docs/MASTERPLAN.md:92-94",
+   "verdict": "CROSSCUT",
+   "superseded_by": "docs/ops/ROUTE-B-MASTER-PLAN-2026-07-12.md §九 改判表:'点亮章五关「founder15分钟亲点」→每块报告+自查脚本,founder终验一次(依据Q2)';'点亮章「过关才点下一环」串行律→三道并行+六级状态(依据乙裁决)'",
+   "note": "应落入交接合同§七板块报告标准+§四顺序v3"
+  },
+  {
+   "item": "收钱条件句(R5 D5):一条签约能力单元真实成立+生产三闸通过即可收,不许拿宏大设计抵账",
+   "citation": "docs/MASTERPLAN.md:96-98",
+   "verdict": "CROSSCUT",
+   "superseded_by": "docs/ops/ROUTE-B-MASTER-PLAN-2026-07-12.md §九 改判表:'R5 D5收钱条件句(一单元成立即可收)→建完才收(依据Q1)'",
+   "note": "应落入执行合同§〇 founder七裁决/Q1节"
+  },
+  {
+   "item": "P0-1 数据库夜间备份(Neon PITR③都做/$0 pg_dump→R2)+真实恢复演练",
+   "citation": "docs/MASTERPLAN.md:106",
+   "verdict": "HIT",
+   "row_id": "E3-19",
+   "note": "与I1-09同物已在矩阵内并入E3-19;亦与§七7-1(MASTERPLAN.md:258)同源判决,不重复计数"
+  },
+  {
+   "item": "P0-2 verify-auth-guards.mjs修复(补认requireOwner)并接CI",
+   "citation": "docs/MASTERPLAN.md:107",
+   "verdict": "MISSING",
+   "block_suggest": "B10"
+  },
+  {
+   "item": "P0-3 ESLint 128 errors清理并接CI(ci.yml增lint job)",
+   "citation": "docs/MASTERPLAN.md:108",
+   "verdict": "MISSING",
+   "block_suggest": "B10"
+  },
+  {
+   "item": "批次3a 删3个死付费端点(coworkTurn/enhancePrompt/coworkDraftStoryboard)",
+   "citation": "docs/MASTERPLAN.md:109,117",
+   "verdict": "MISSING",
+   "block_suggest": "B10",
+   "note": "与§七7-10(MASTERPLAN.md:267)同源判决,不重复计数"
+  },
+  {
+   "item": "批次3b NextAuth 3张死表(Account/Session/VerificationToken)DROP迁移",
+   "citation": "docs/MASTERPLAN.md:109,118",
+   "verdict": "MISSING",
+   "block_suggest": "B10",
+   "note": "与§七7-11(MASTERPLAN.md:268)同源判决;前置=P0-1备份落地"
+  },
+  {
+   "item": "批次3c 11个花钱/prod脚本加确认锁",
+   "citation": "docs/MASTERPLAN.md:109,119",
+   "verdict": "MISSING",
+   "block_suggest": "B10",
+   "note": "与§七7-12(MASTERPLAN.md:269)同源判决"
+  },
+  {
+   "item": "批次3d scripts/分层归档(活跃/存档/花钱脚本三层)",
+   "citation": "docs/MASTERPLAN.md:109,120",
+   "verdict": "MISSING",
+   "block_suggest": "B10",
+   "note": "与§七7-13(MASTERPLAN.md:270)同源判决"
+  },
+  {
+   "item": "批次3e 重复代码统一(Meta错误处理6处+extractText三副本)",
+   "citation": "docs/MASTERPLAN.md:109,121",
+   "verdict": "MISSING",
+   "block_suggest": "B10",
+   "note": "与§七7-14(MASTERPLAN.md:271)同源判决"
+  },
+  {
+   "item": "P0-5 parity扫描器盲区修补(check-parity.mjs认export const形状+data.ts 8个读面补登记)",
+   "citation": "docs/MASTERPLAN.md:110",
+   "verdict": "MISSING",
+   "block_suggest": "B10",
+   "note": "矩阵E2-15/16覆盖对等债台账机制,但此specific scanner bug修复未见专项行;ROUTE-B B10已明文列'P0-5 parity盲区'"
+  },
+  {
+   "item": "P0-6 prod R2 bucket artlio→fikirtive对象迁移(founder排期)",
+   "citation": "docs/MASTERPLAN.md:111",
+   "verdict": "MISSING",
+   "block_suggest": "B10"
+  },
+  {
+   "item": "P0.5-1 Otto引擎Phase1:Anthropic prompt caching",
+   "citation": "docs/MASTERPLAN.md:129",
+   "verdict": "HIT",
+   "row_id": "E2-18"
+  },
+  {
+   "item": "P0.5-2 Otto引擎Phase2:技能分域装载",
+   "citation": "docs/MASTERPLAN.md:130",
+   "verdict": "HIT",
+   "row_id": "E2-19"
+  },
+  {
+   "item": "D1批 排期读+写(读优先)~5条todoSkill",
+   "citation": "docs/MASTERPLAN.md:146",
+   "verdict": "HIT",
+   "row_id": "E2-16",
+   "note": "对parity-debt-84.json核验:schedule-actions.listScheduledPosts/listOwnerTargets/cancelScheduledPost/updateScheduledPost/approveScheduledPost五条与D1域名描述一致"
+  },
+  {
+   "item": "D2批 Library/资产/账户读~9条todoSkill",
+   "citation": "docs/MASTERPLAN.md:147",
+   "verdict": "HIT",
+   "row_id": "E2-16",
+   "note": "对84条清单核验:data.getProjects/getEntities等+library-actions.getGenerationHistory+account-actions.getMyAccount等与D2域名描述一致"
+  },
+  {
+   "item": "D3批 Analytics/Ads读~3条todoSkill",
+   "citation": "docs/MASTERPLAN.md:148",
+   "verdict": "HIT",
+   "row_id": "E2-16",
+   "note": "对84条清单核验:analytics-actions.getAnalytics/data.getMyAds/getMyAdJobs与D3描述一致"
+  },
+  {
+   "item": "D4批 项目/thread管理~12条todoSkill",
+   "citation": "docs/MASTERPLAN.md:149",
+   "verdict": "HIT",
+   "row_id": "E2-16",
+   "note": "对84条清单核验:actions.createProject/deleteProject/setProjectPinned+otto-actions线程增删钉等与D4描述一致"
+  },
+  {
+   "item": "D5批 画布~6条todoSkill",
+   "citation": "docs/MASTERPLAN.md:150",
+   "verdict": "HIT",
+   "row_id": "E2-16",
+   "note": "对84条清单核验:canvas-actions五件+otto-canvas-bridge.syncOttoCanvasNodes与D5描述一致"
+  },
+  {
+   "item": "D6批 上传/媒体~7条todoSkill",
+   "citation": "docs/MASTERPLAN.md:151",
+   "verdict": "HIT",
+   "row_id": "E2-16",
+   "note": "对84条清单核验:upload-actions五件与D6描述一致"
+  },
+  {
+   "item": "D7批 分镜/编辑器~10条todoSkill",
+   "citation": "docs/MASTERPLAN.md:152",
+   "verdict": "HIT",
+   "row_id": "E2-16",
+   "note": "对84条清单核验:storyboard-actions/actions.saveShotPrompt等与D7描述一致"
+  },
+  {
+   "item": "D8批 生成生命周期+杂项写~12条todoSkill",
+   "citation": "docs/MASTERPLAN.md:153",
+   "verdict": "HIT",
+   "row_id": "E2-16",
+   "note": "对84条清单核验:attach/detach/softDelete系、refgen-actions.deleteVariant、brand-record-actions等与D8描述一致"
+  },
+  {
+   "item": "D9批 Otto自身机件甄别~8条todoSkill(特殊:或需新豁免类别,修宪须停手报founder)",
+   "citation": "docs/MASTERPLAN.md:154",
+   "verdict": "HIT",
+   "row_id": "E2-16",
+   "note": "对84条清单核验:otto-actions.ottoTurn/ottoApprove/buildOttoContext/finalizeOttoRun等与D9描述一致;'债随块清'机制=ROUTE-B B9明文一致"
+  },
+  {
+   "item": "P1-0 BytePlus资源包余量告警(毛利45%→13%护栏)",
+   "citation": "docs/MASTERPLAN.md:173",
+   "verdict": "HIT",
+   "row_id": "E3-08"
+  },
+  {
+   "item": "P1-1 Wave1创作变现:Product建档+3模式无口播成片+风格卡片+全流程Otto可驱动",
+   "citation": "docs/MASTERPLAN.md:174",
+   "verdict": "HIT",
+   "row_id": "E1-01,E1-02,E1-08,E1-09,E1-13,E1-17",
+   "note": "与L-C(MASTERPLAN.md:78)同一harmony-03 Wave1项目,不重复计数"
+  },
+  {
+   "item": "P1-2 Wave2:口播(lipsync/TTS三硬标准)+UGC口播模式×2+改台词不重拍+升级票U-1",
+   "citation": "docs/MASTERPLAN.md:175",
+   "verdict": "MISSING",
+   "block_suggest": "B3",
+   "note": "ROUTE-B §三B3仅写'创作L-C(spec已有)',未明确覆盖Wave2;矩阵无对应行"
+  },
+  {
+   "item": "P1-3 Wave3:Ad Reference逆向拆解+一稿多尺寸+三语套装+Avatar选角库+效果反哺O-10",
+   "citation": "docs/MASTERPLAN.md:176",
+   "verdict": "MISSING",
+   "block_suggest": "B3",
+   "note": "同P1-2,ROUTE-B宪章未明确纳入Wave3;矩阵无对应行"
+  },
+  {
+   "item": "A1 Hook生成器(前3秒钩子文案/画面变体,独立于Wave2 Hook模板)",
+   "citation": "docs/MASTERPLAN.md:182",
+   "verdict": "MISSING",
+   "block_suggest": "B3",
+   "note": "与§七7-2(MASTERPLAN.md:259)同源判决,不重复计数"
+  },
+  {
+   "item": "A2 批量变体矩阵(一次brief×N平台×N尺寸×N钩子出片,硬性附带总价确认页)",
+   "citation": "docs/MASTERPLAN.md:183",
+   "verdict": "MISSING",
+   "block_suggest": "B3",
+   "note": "与§七7-3(MASTERPLAN.md:260)同源判决;与矩阵E1-19(A/B分叉)、E1-02(4变体)是不同颗粒的新增量"
+  },
+  {
+   "item": "A3 改台词不重拍折价SKU(costing先行)",
+   "citation": "docs/MASTERPLAN.md:184",
+   "verdict": "MISSING",
+   "block_suggest": "B12",
+   "note": "与§七7-4(MASTERPLAN.md:261)同源判决"
+  },
+  {
+   "item": "A4 成品广告打包SKU('N条可投广告'一价打包,costing先行)",
+   "citation": "docs/MASTERPLAN.md:185",
+   "verdict": "MISSING",
+   "block_suggest": "B12",
+   "note": "与§七7-5(MASTERPLAN.md:262)同源判决"
+  },
+  {
+   "item": "A5 SEA本地化选角库(判决:按Wave3原节奏不提前,Wave2期间$0预备:选角标准+肖像授权法务框架调研)",
+   "citation": "docs/MASTERPLAN.md:186",
+   "verdict": "MISSING",
+   "block_suggest": "B3",
+   "note": "与§七7-6(MASTERPLAN.md:263)同源判决;$0预备工作本身仍是一条待清点的交付物"
+  },
+  {
+   "item": "P1½-1 ScheduledPost(+PostVariant)全量+实发布worker通电(FB/IG先行,平台可插拔)",
+   "citation": "docs/MASTERPLAN.md:198",
+   "verdict": "HIT",
+   "row_id": "E4-01,E4-02,E4-05"
+  },
+  {
+   "item": "P1½-2 ChannelConnection通用渠道连接(kind开放串+加密token,Meta日后择机迁入)",
+   "citation": "docs/MASTERPLAN.md:199",
+   "verdict": "MISSING",
+   "block_suggest": "B4",
+   "note": "矩阵E4-16覆盖'平台可插拔adapter缝'这一临近的架构原则,但ChannelConnection这一具体schema/实体未见专项行"
+  },
+  {
+   "item": "P1½-3 Routine/RoutineRun(范围声明/预算上限/kill switch全为字段+DB约束)",
+   "citation": "docs/MASTERPLAN.md:200",
+   "verdict": "MISSING",
+   "block_suggest": "B7",
+   "note": "ROUTE-B §二宪章'生命周期自动化(routine/旅程/频控)→最小版真点亮(L4唤回所需部分)+其余壳'"
+  },
+  {
+   "item": "P1½-4 ApprovalRequest最小版(kind=PUBLISH,随排期提前,payload hash绑定)",
+   "citation": "docs/MASTERPLAN.md:201",
+   "verdict": "MISSING",
+   "block_suggest": "B4"
+  },
+  {
+   "item": "P2-1 WhatsApp BSP接入(M区第一波入场券,BSP供应商选型)",
+   "citation": "docs/MASTERPLAN.md:207",
+   "verdict": "MISSING",
+   "block_suggest": "B5",
+   "note": "与L2(MASTERPLAN.md:80)同一能力,不重复计数"
+  },
+  {
+   "item": "P2-2 Contact/ContactIdentity+Conversation/CustomerMessage(与ChatMessage零交叉)+KnowledgeDoc",
+   "citation": "docs/MASTERPLAN.md:208",
+   "verdict": "MISSING",
+   "block_suggest": "B8",
+   "note": "ROUTE-B §二'CRM起步形态(联系人自动进来+分群+同意/退订/抑制名单)→真点亮最小版'对应此项"
+  },
+  {
+   "item": "P2-3 第二账道ChannelFeeWallet/ChannelFeeLedger(MYR实价,与CreditLedger零共享)",
+   "citation": "docs/MASTERPLAN.md:209",
+   "verdict": "MISSING",
+   "block_suggest": "B12",
+   "note": "ROUTE-B §二/§三范围宪章未见'第二账道/通道费独立记账'的明文覆盖语句,建议founder确认是否为范围缺口而非仅施工遗漏"
+  },
+  {
+   "item": "P2-4 O-06护栏+试驾场(对客AI硬前置)+公开评论收件箱",
+   "citation": "docs/MASTERPLAN.md:210",
+   "verdict": "MISSING",
+   "block_suggest": "B5"
+  },
+  {
+   "item": "origami:人回复自动暂停自动化(M区设计原则)",
+   "citation": "docs/MASTERPLAN.md:212",
+   "verdict": "MISSING",
+   "block_suggest": "B7",
+   "note": "与§七7-8(MASTERPLAN.md:265)同源判决"
+  },
+  {
+   "item": "origami:勿扰名单硬编码进agent运行(consent字段升级为运行时硬约束)",
+   "citation": "docs/MASTERPLAN.md:212",
+   "verdict": "MISSING",
+   "block_suggest": "B10",
+   "note": "与§七7-9(MASTERPLAN.md:266)同源判决;性质近数据信任横切,归ROUTE-B'横切两块-数据信任合规'"
+  },
+  {
+   "item": "P3-1 Campaign独立对象(目标/预算/周期/状态机/UTM基串,归组=可空外键)",
+   "citation": "docs/MASTERPLAN.md:218",
+   "verdict": "MISSING",
+   "block_suggest": "B8",
+   "note": "ROUTE-B §二已宪章批准真点亮'并入B8后段',但draft矩阵本身无对应行"
+  },
+  {
+   "item": "P3-2 Deal/PipelineConfig+Segment(NL→确定性规则编译)",
+   "citation": "docs/MASTERPLAN.md:219",
+   "verdict": "MISSING",
+   "block_suggest": "B8",
+   "note": "Segment(分群)与ROUTE-B'CRM起步'的'分群'相关;Deal/PipelineConfig(销售管道)是否入本程范围,宪章未见明文,建议待裁"
+  },
+  {
+   "item": "P3-3 ApprovalRequest全量+团队协作/审批流(创作席/审批席RBAC)",
+   "citation": "docs/MASTERPLAN.md:220",
+   "verdict": "OUT_SUGGEST",
+   "note": "依据:docs/ops/ROUTE-B-MASTER-PLAN-2026-07-12.md §二范围宪章明文'团队协作+审批流(租户RBAC)→壳+Coming soon(单商家上市不阻断;宪法7债记入宪章)'——全量真建已被降格"
+  },
+  {
+   "item": "P4-1 报表引擎数据面+G-12品牌化报告",
+   "citation": "docs/MASTERPLAN.md:231",
+   "verdict": "MISSING",
+   "block_suggest": "不在本程",
+   "note": "MASTERPLAN原文标注'方向已定(远期)';ROUTE-B §二/§三范围宪章未提及此项,既非明示纳入也非明示排除,建议founder确认时间horizon而非视为施工遗漏"
+  },
+  {
+   "item": "P4-2 Company(B2B档案)",
+   "citation": "docs/MASTERPLAN.md:232",
+   "verdict": "MISSING",
+   "block_suggest": "不在本程",
+   "note": "同P4-1,远期项未见宪章明文处置,建议founder确认"
+  },
+  {
+   "item": "P4-3 Agency伞层(G-09→团队协作+G-11→G-10多客户伞)",
+   "citation": "docs/MASTERPLAN.md:233",
+   "verdict": "OUT_SUGGEST",
+   "note": "依据:docs/ops/ROUTE-B-MASTER-PLAN-2026-07-12.md §二范围宪章明文'Agency楼层...明示不在本程(扩展位留缝)'"
+  },
+  {
+   "item": "P4-4 市政厅v2(团队阶级制度:SECTION_MATRIX扩展+钱的阶级+staff成员制)",
+   "citation": "docs/MASTERPLAN.md:234",
+   "verdict": "OUT_SUGGEST",
+   "note": "依据:docs/ops/ROUTE-B-MASTER-PLAN-2026-07-12.md §二范围宪章明文'市政厅v2...明示不在本程';draft矩阵E3-14行备注已一致标注'市政厅v2不在本程'"
+  },
+  {
+   "item": "7-7 origami:贵活前brief预检+报价确认页(大额生成前Otto先复述理解+报价,首落点=批量变体)",
+   "citation": "docs/MASTERPLAN.md:264",
+   "verdict": "MISSING",
+   "block_suggest": "B3",
+   "note": "未见于MASTERPLAN其他节,矩阵E1-03仅覆盖单次生成的成本确认弹窗,此为批量级brief复述+报价预检,颗粒不同"
+  }
+ ]
+}

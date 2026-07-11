@@ -209,3 +209,17 @@ A′ 切片 1（壳契约 ~44 文件）→ 切片 2-8 → 65 页齐 → founder 
 - **在业受保护资产**（动前找 founder）：桌面主仓@northstar-immersive 旧检出、wt-lcf 的 StudioIdea WIP（durable 副本在 ~/Desktop/FIKIRTIVE-RESCUE-2026-07-10）、codex 工位群——处置清单归 FIK-2 电脑审计车道。
 - **epoch `claude-20260711-02` 移交机制（乙⑤）**：本批次合入后，epoch 状态 = **移交待新 session 首轮认领**——新总指挥按 overlay 启动顺序核验本账后认领新 epoch，即时生效；FIK-1/FIK-2 退役留痕。交接包主体由 FIK-2 起草，本节即 FIK-1 的 L1/发布链/A′ 车道节。
 - **FIK-1 车道的 Founder 前置供给项（并入 FIK-2 总清单，避免重复索要）**：① Meta 商业验证 + OAuth 白名单加 app.fikirtive.com（发布链通电钥匙）；② D5 凭据轮换逐供应商批复（清单=CREDENTIAL-INVENTORY，Cloudflare Global Key 最优先）；③ 若要在生产前亲验原型城：staging 环境设 NORTHSTAR_PREVIEW=1（一个环境变量，手动）；④ 直建 loop 的评审吞吐依赖 codex 配额（今日触顶两次）——如 loop 期间再触顶，等待或加购由 founder 定；⑤ 本机 runtime 安全闸=任何 merge 需 founder 当轮明示，新 session 应把"放行批次"设计进 goal loop 的 founder 时刻。
+
+## 七、2026-07-12 路线乙控制面就任（epoch claude-20260712-03）
+
+### Epoch 认领【已验】
+
+- **Epoch `claude-20260712-03`**（fencing token，接替 `claude-20260711-02`），由 Claude Code session `d36fc4e5-f53b-47dc-b3a5-3390457d9a32`（claude-fable-5，worktree `route-b-orchestration-handoff-1894c0`）于 2026-07-12 认领。依据：founder 启动令（HANDOFF-README 启动令原文逐字执行）+ 状态账 §六 移交条款（「新总指挥按 overlay 启动顺序核验本账后认领新 epoch，即时生效」）。
+- 认领前核验（overlay 启动顺序 1-5 全过）：AGENTS.md/蓝图/交接包读序全读；全局 skill pin 核验一致（v2.0.0，SKILL.md SHA-256 `ef4ad6ff…` 匹配，repo 无同名遮蔽 skill）；机器事实重验（main=`2fb2b935`，#238/#239 已合，无 open PR，working tree 干净）；无冲突 claim（FIK-1 移交待认领态、FIK-2 无 claim，两者随 #238/#239 收官退役留痕）。
+- **顾问拓扑**：selected = **SOL Ultra**（founder 本轮会话内选定），fallback = **Fable Max**。preflight 双 lane 可用。
+- 五本账落位：`docs/ops/route-b/`（范围矩阵 matrix/ · 依赖状态 · 决策日志 · 风险待裁 · 证据清单）；本状态账保持为最后核验检查点，不替代机器事实。
+
+### B0 批次（本 epoch 第一块）
+
+- B0 = 发布契约与覆盖矩阵（执行合同 §一，开 loop 先决）。分解方案经顾问：SOL 首轮 `incomplete: empty output`（session `019f5214`，如实留痕）→ 按协议 fallback Fable max（complete，方案 D：V0 121 行骨架 + 控制面亲判 + 逐源覆盖审计舰队 + 双向机器校验 + 单一原子 PR）。provenance 在 `docs/ops/route-b/coverage-audit/advisor-b0-plan/`。
+- 产品代码零行（硬约束 1 遵守）；B0 交付 = 纯文档+校验脚本，走 PR 等 founder 合并。
