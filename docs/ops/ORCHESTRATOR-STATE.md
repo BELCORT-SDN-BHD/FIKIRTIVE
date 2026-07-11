@@ -183,3 +183,29 @@ Global council 两路收到同一份 evidence pack，SHA-256 `4b81eafde5d230fd10
 
 ### 下一步关键路径
 A′ 切片 1（壳契约 ~44 文件）→ 切片 2-8 → 65 页齐 → founder 手动发版。并行:#230/#233 落地、L2 connector 设计、D5 轮换排期、FIK-2 的 P0（Otto 报错三处,已确认与本车道零文件重叠）。
+
+## 六、2026-07-12 凌晨终局（epoch claude-20260711-02 收官批次）
+
+### 防呆闸解除（追溯 §五 的镜像条目）
+> **Founder 2026-07-11 深夜解除（informed）**：FIK-2 的双脑三次如实警告后，founder 仍裁决路线乙；
+> 2026-07-12 凌晨在 FIK-1 session 亲自回声确认（"是的。大体上来说是这样"）。闸文历史保留，不再生效。
+
+### 路线乙 · 全产品直建（founder 终局裁决）
+- 全部 function 建到最佳 + 全测；卡外部审批的（Meta App Review 等）先建满基础、用户面 Coming soon、审批到即无缝接；全城一起验证 + Otto 全城连贯。
+- **A′ 关系裁定（FIK-1 判断，双方对齐）**：A′ = 乙的 UI 车道；"65 页齐才发版"在乙下升级为"全城建成验证过才发版"。切片 2-8 曾短暂挂起，**总计划 v0.2 将其列为道 1（UI 壳车道）后解冻**——舱单分组即施工单，工单模板复用工单 S1（scratchpad 与本账 §六交接节有配方），由新总指挥按总计划节奏派工。
+- **乙六细节（founder 裁决于其指定的设计渠道=FIK-2 session，2026-07-12 凌晨，出处留痕）**：①收费=建完再收；②验收=最终一次、每块详细报告攒合集；③花费=一次性总批，goal loop 开跑前把所有需要 founder 的东西一次收齐（《Founder 前置供给清单》由 FIK-2 汇总）；④外部申请=施工期备材料、建成后一批递交（founder informed，等待尾巴已注明）；⑤新 session 接任唯一控制面，FIK-1/FIK-2 完成交接后收官退役；⑥水准=默认死磕对标锚，单项 ≥3 次失败进待裁清单攒批报 founder。
+- **交接程序**：两控制面收尾 → repo sanitise（FIK-1，已完成）+ founder 电脑审计（FIK-2，只读清单→founder 批→动）→ in-depth planning（FIK-2 初稿，过双顾问）→ founder 开全新总指挥 session 跑直建 loop → 建成后逐 feature 对标龙头汇报。
+
+### 今日终局机器事实（2026-07-12 00:xx +08）
+- **main = `27de3295`**，今日共 **9 个 PR 合入**（#228 治理 / #229 视频守卫 / #230 双发防线 / #231 排期拦截 / #232 A′地基 / #233 字节验真 / #234 Otto报错诚实 / #235 状态账 / #236 切片1+围栏 / #237 研究报错脱敏——#228 为 founder 亲合，其余经异族评审机制）。合并后组合体健康核查全绿（worker 140/140、web tc 0、围栏 clean）。
+- **远端分支终态 3 条**：main + northstar-immersive（设计基准 `54c1de0b`）+ northstar-city-v1（founder 授权保留至乙建成）。31 条已合并分支按"关联 PR=MERGED"核对后删除；PR #202/#203 已关（带出处注）。
+- **A′ 落地舱单入库**：`docs/ops/APRIME-MANIFEST-2026-07-11.md`（272 文件分类、旅程切片分组、18 个 mock-变真风险点含 6 个💰）——新总指挥做乙的 planning 时直接消费。
+- **Meta 通电前置**（不变）：#233 已合 ✅；founder 亲做商业验证 + OAuth 白名单 app 子域。
+- **递延工单池**：#230 的"确认已发/未发"人工处置动作；updatedAt 同毫秒竞态的 revision 列（schema 变更）；FB 通道 mime 校验缺失评估；1d 真视频发布（Reels）产品提案；D5 逐供应商轮换（清单在 CREDENTIAL-INVENTORY）。
+
+### FIK-1 交接节（给下一任总指挥）
+- **协议**：全局 orchestration skill v2.0.0（`~/.claude/skills/orchestration`，advisor.sh 单顾问 lane + fallback）+ 本 repo overlay + 本状态账。启动先跑 preflight，选顾问 lane（founder 惯用 sol ultra），核对 overlay pin。
+- **法律要点**：AGENTS.md 分权合并（本机 runtime 另有安全闸：任何 merge 需 founder 当轮明示）；founder 沟通=例子+短汇报；异族评审 BLOCK→核实→修→复审 循环是质量主闸（今日 20 轮评审、每轮 BLOCK 均为真问题）。
+- **在业受保护资产**（动前找 founder）：桌面主仓@northstar-immersive 旧检出、wt-lcf 的 StudioIdea WIP（durable 副本在 ~/Desktop/FIKIRTIVE-RESCUE-2026-07-10）、codex 工位群——处置清单归 FIK-2 电脑审计车道。
+- **epoch `claude-20260711-02` 移交机制（乙⑤）**：本批次合入后，epoch 状态 = **移交待新 session 首轮认领**——新总指挥按 overlay 启动顺序核验本账后认领新 epoch，即时生效；FIK-1/FIK-2 退役留痕。交接包主体由 FIK-2 起草，本节即 FIK-1 的 L1/发布链/A′ 车道节。
+- **FIK-1 车道的 Founder 前置供给项（并入 FIK-2 总清单，避免重复索要）**：① Meta 商业验证 + OAuth 白名单加 app.fikirtive.com（发布链通电钥匙）；② D5 凭据轮换逐供应商批复（清单=CREDENTIAL-INVENTORY，Cloudflare Global Key 最优先）；③ 若要在生产前亲验原型城：staging 环境设 NORTHSTAR_PREVIEW=1（一个环境变量，手动）；④ 直建 loop 的评审吞吐依赖 codex 配额（今日触顶两次）——如 loop 期间再触顶，等待或加购由 founder 定；⑤ 本机 runtime 安全闸=任何 merge 需 founder 当轮明示，新 session 应把"放行批次"设计进 goal loop 的 founder 时刻。
