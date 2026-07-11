@@ -156,6 +156,30 @@ describe("buildMediaUrls — IG media BYTE contract (工单 F)", () => {
     expect(execaMock).toHaveBeenCalledTimes(1); // non-jpeg image → transcode
   });
 
+  it("F3#1: real PNG bytes with ext LYING 'jpg' (mime already byte-corrected to image/png at ingest) are still transcoded — the pass-2 decision trusts the pass-1b sniff, never asset.ext", async () => {
+    // ext is client-filename-derived and never byte-verified (upload-actions.ts persists file.ext
+    // as-is); mime IS byte-corrected at ingest, so a real PNG uploaded as "photo.jpg" persists
+    // ext="jpg" + mime="image/png". Pre-fix pass 2 trusted ext → IMG_JPEG.has("jpg") → skipped
+    // transcode, shipping raw PNG bytes to IG's JPEG-only path.
+    mockSingleAsset("jpg", "image/png", PNG);
+
+    const result = await buildMediaUrls(OWNER, "sp1", "instagram");
+
+    expect("urls" in result && result.urls.length).toBe(1);
+    expect(execaMock).toHaveBeenCalledTimes(1); // sniff says image/png → must transcode despite ext=jpg
+  });
+
+  it("F3#3: an uppercase legacy mime 'IMAGE/JPEG' passes the pass-1a prefix pre-check (normalizeImageMime runs first) instead of being wrongly refused for casing", async () => {
+    // Pre-fix pass 1a did `asset.mime.startsWith("image/")` case-sensitively, so a legacy-cased
+    // "IMAGE/JPEG" would be refused before ever reading storage. normalizeImageMime lowercases first.
+    mockSingleAsset("jpg", "IMAGE/JPEG", JPEG);
+
+    const result = await buildMediaUrls(OWNER, "sp1", "instagram");
+
+    expect("urls" in result && result.urls.length).toBe(1);
+    expect(execaMock).not.toHaveBeenCalled(); // already JPEG bytes — no transcode needed
+  });
+
   it("legit webp (mime image/webp) passes", async () => {
     mockSingleAsset("webp", "image/webp", WEBP);
 

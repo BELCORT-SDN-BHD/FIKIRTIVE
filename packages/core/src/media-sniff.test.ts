@@ -36,6 +36,9 @@ const WEBP_STATIC_X = webp("VP8X", 0x10); // alpha flag only, no animation
 const WEBP_ANIMATED = webp("VP8X", 0x02); // animation flag set
 const WEBP_VP8X_TRUNC = webp("VP8X"); // VP8X FourCC but no feature-flags byte (20 bytes < 21)
 const WEBP_JUNK = webp("JUNK"); // RIFF/WEBP container with an unrecognized first chunk
+// VP8 /VP8L FourCC visible but the chunk-size field (offset 16-19) is truncated — not a proven header.
+const WEBP_VP8_NO_SIZE = new Uint8Array([...webp("VP8 ")].slice(0, 16)); // FourCC only, 0 size bytes
+const WEBP_VP8L_PARTIAL_SIZE = new Uint8Array([...webp("VP8L")].slice(0, 18)); // FourCC + 2 of 4 size bytes
 
 const MP4 = new Uint8Array([0, 0, 0, 0x20, 0x66, 0x74, 0x79, 0x70, 0x69, 0x73, 0x6f, 0x6d, 0, 0, 0, 0]);
 const AVIF = new Uint8Array([0, 0, 0, 0x1c, 0x66, 0x74, 0x79, 0x70, 0x61, 0x76, 0x69, 0x66, 0, 0, 0, 0]);
@@ -59,6 +62,11 @@ describe("classifyImageBytes — whitelist static images", () => {
   it("rejects a truncated VP8X and an unrecognized WebP first chunk → unknown (never guess static)", () => {
     expect(classifyImageBytes(WEBP_VP8X_TRUNC)).toBe("unknown"); // no feature-flags byte to prove static
     expect(classifyImageBytes(WEBP_JUNK)).toBe("unknown"); // RIFF/WEBP but first chunk isn't VP8 /VP8L/VP8X
+  });
+
+  it("rejects VP8 /VP8L whose chunk-size field is truncated → unknown (FourCC alone isn't a proven header)", () => {
+    expect(classifyImageBytes(WEBP_VP8_NO_SIZE)).toBe("unknown"); // FourCC visible, 0 of 4 size bytes
+    expect(classifyImageBytes(WEBP_VP8L_PARTIAL_SIZE)).toBe("unknown"); // FourCC visible, 2 of 4 size bytes
   });
 
   it("rejects video/other containers and empty/truncated → unknown (never guesses)", () => {

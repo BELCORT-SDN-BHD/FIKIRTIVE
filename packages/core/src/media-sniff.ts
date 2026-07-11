@@ -107,11 +107,14 @@ function pngIsStatic(prefix: Uint8Array): boolean {
 }
 
 /** Classify the first chunk of a "RIFF"…"WEBP" container. Simple `VP8 ` (lossy) and lossless `VP8L`
- *  are always a single static frame → image/webp. Extended `VP8X` carries a feature-flags byte at
- *  offset 20 (12 + 4 FourCC + 4 chunk-size); the animation flag is bit 1 (0x02). A VP8X truncated
- *  before that byte can't be proven static → unknown. Any other (or absent — container truncated
- *  before the FourCC) first chunk is unrecognized → unknown. */
+ *  are always a single static frame → image/webp — but only once the FULL chunk header (4-byte FourCC
+ *  at offset 12 + 4-byte chunk-size at offset 16, i.e. 20 bytes total) is present; a FourCC visible
+ *  with its size field truncated is not a proven chunk and fails closed. Extended `VP8X` carries a
+ *  feature-flags byte at offset 20 (12 + 4 FourCC + 4 chunk-size); the animation flag is bit 1 (0x02).
+ *  A VP8X truncated before that byte can't be proven static → unknown. Any other (or absent —
+ *  container truncated before the FourCC) first chunk is unrecognized → unknown. */
 function classifyWebp(prefix: Uint8Array): SniffResult {
+  if (prefix.length < 20) return "unknown"; // truncated before the full chunk header (FourCC + size)
   if (fourCC(prefix, 12, "VP8 ") || fourCC(prefix, 12, "VP8L")) return "image/webp";
   if (fourCC(prefix, 12, "VP8X")) {
     if (prefix.length < 21) return "unknown"; // truncated before the feature-flags byte

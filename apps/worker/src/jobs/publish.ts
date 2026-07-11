@@ -38,6 +38,7 @@ import {
   classifyImageBytes,
   normalizeImageMime,
   MEDIA_SNIFF_BYTES,
+  type CanonicalImageMime,
   type PublishJobData,
 } from "@fikirtive/core";
 import { readBoundedPrefix } from "@fikirtive/storage";
@@ -174,8 +175,6 @@ async function resolvePage(
 
 /* ── media: resolve owned Generation → storage key → (IG: JPEG transcode) → signed proxy URL ── */
 
-const IMG_JPEG = new Set(["jpg", "jpeg"]);
-
 /** Transcode a stored image to JPEG (IG only eats JPEG). Uses the worker's ffmpeg (Debian trixie),
  *  reads the object via a presigned/local input, writes JPEG bytes back content-addressed. */
 async function transcodeToJpeg(ownerId: string, key: string): Promise<string> {
@@ -231,7 +230,7 @@ export async function buildMediaUrls(
   for (const r of rows) {
     const asset = byId.get(r.generationId);
     if (!asset) return { error: "Some of this post's media is missing." };
-    if (channel === "instagram" && !asset.mime.startsWith("image/")) {
+    if (channel === "instagram" && !normalizeImageMime(asset.mime).startsWith("image/")) {
       return {
         mediaContractRefused: true,
         error: "This post's media isn't a publishable image for Instagram — replace it and try again.",
@@ -248,6 +247,11 @@ export async function buildMediaUrls(
   // deterministic media-contract refusal (NEEDS_ATTENTION; zero ffmpeg, zero Graph). A storage READ
   // failure is NOT a media verdict — it is a retryable operational error; we never fall back to
   // trusting the stored mime.
+  // Sniffed mime per asset (index-aligned with `assets`), carried from pass 1b into pass 2 so the
+  // transcode decision trusts the BYTES we already verified — never asset.ext, which is client-
+  // reported and can lie (e.g. real PNG bytes uploaded/renamed with a ".jpg" ext would otherwise skip
+  // transcoding and reach IG mislabelled as JPEG).
+  const sniffedMimes: CanonicalImageMime[] = [];
   if (channel === "instagram") {
     for (const asset of assets) {
       const key = storageKey(asset.ownerId, asset.contentHash, asset.ext);
@@ -265,14 +269,16 @@ export async function buildMediaUrls(
           error: "This post's media isn't a publishable image for Instagram — replace it and try again.",
         };
       }
+      sniffedMimes.push(sniffed);
     }
   }
 
   // Pass 2 — every asset in the post passed the contract; only now transcode/build URLs.
   const urls: string[] = [];
-  for (const asset of assets) {
+  for (let i = 0; i < assets.length; i++) {
+    const asset = assets[i]!;
     let key = storageKey(asset.ownerId, asset.contentHash, asset.ext);
-    if (channel === "instagram" && !IMG_JPEG.has(asset.ext.toLowerCase())) {
+    if (channel === "instagram" && sniffedMimes[i] !== "image/jpeg") {
       key = await transcodeToJpeg(ownerId, key);
     }
     const token = signMediaToken(ownerId, key, Date.now() + MEDIA_TTL_MS, secret);
