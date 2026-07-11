@@ -5,16 +5,31 @@
  * 单向校验（矩阵内部）：ID 唯一；列非空（TBD-B<n> 合法、空白违规）；六级状态/存量现状 ∈ 闭集。
  * 双向校验（防「源里有、矩阵没有」）：
  *   - parity：packages/otto/src/parity-manifest.ts 的每条 todoSkill 债在 parity-debt.md 恰好出现一次；
- *   - coverage：coverage-audit/adjudication.json 里每条 MISSING 裁决必须闭合到一个存在的矩阵行或 OUT 条目。
- * 用法：node scripts/route-b-matrix-check.mjs   （exit 0 = 全绿）
+ *     并做真 bijection——矩阵 Otto 列 missing(debt-…) 引用的每个编号必须在 parity-debt.md 存在，
+ *     parity-debt.md 每条 debt-NN 的「归属行」必须真实存在于矩阵、且该行 Otto 列确有反向引用。
+ *   - coverage：coverage-audit/adjudication.json 里每条 MISSING 裁决必须闭合到一个存在的矩阵行或 OUT 条目；
+ *     每源 items 总数须等于 counts.total；HIT 裁决的 row_id（可逗号/`..`区间/`draft-matrix `前缀多值）
+ *     必须全部指向矩阵现存行或留痕文件（含 OUT/EVIDENCE「（原行 X）」标注的已退役 ID）。
+ *   - 冻结锁（签署对象②，语义级）：coverage-audit/frozen-ids.json 记录每个冻结行的「块归属」与
+ *     「能力单元格哈希（去尾注〔〕）」、每个冻结留痕的「处置 kind」。校验器断言：冻结 ID 仍存在
+ *     + 仍在同块 + 能力 hash 未变 + 留痕 kind 未变；任一漂移=红，提示「语义修改须决策日志授权后重跑 --freeze」。
+ *
+ * 用法：
+ *   node scripts/route-b-matrix-check.mjs           校验（exit 0 = 全绿）
+ *   node scripts/route-b-matrix-check.mjs --freeze   以当前矩阵为基线重生成 frozen-ids.json 快照
+ *                                                     （仅在 founder/决策日志授权语义修改后使用；
+ *                                                      若矩阵存在结构性违规则拒绝生成）
  */
-import { readFileSync, readdirSync, existsSync } from "node:fs";
+import { readFileSync, readdirSync, existsSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
+import { createHash } from "node:crypto";
+import { execSync } from "node:child_process";
 
 const ROOT = new URL("..", import.meta.url).pathname;
 const RB = join(ROOT, "docs/ops/route-b");
 const errors = [];
 const warn = [];
+const FREEZE = process.argv.includes("--freeze");
 
 const SIX = new Set([
   "listed", "spec-ready", "code-complete", "sandbox-verified",
@@ -49,18 +64,29 @@ function parseTable(file, expectCells) {
   return rows;
 }
 
+// 能力单元格去尾注〔…〕后取 sha256 前 8 位——尾注是补充说明，允许改；能力本身改了才算漂移。
+function stripCapAnnotation(cap) {
+  return cap.replace(/〔[^〕]*〕$/u, "").trim();
+}
+function capSha8(cap) {
+  return createHash("sha256").update(stripCapAnnotation(cap), "utf8").digest("hex").slice(0, 8);
+}
+
 // ── 1. 块矩阵文件 ──
 const matrixDir = join(RB, "matrix");
 const blockFiles = readdirSync(matrixDir).filter((f) => /^\d{2}-B\d+\.md$/.test(f));
 const allIds = new Map(); // id -> file
 const blockRows = [];
+const blockRowsById = new Map(); // id -> { f, block, cap, otto, gate }
 for (const f of blockFiles) {
+  const blkNum = f.match(/-B(\d+)\.md$/)[1];
+  const block = `B${blkNum}`;
   for (const r of parseTable(join(matrixDir, f), 10)) {
     const [id, cap, src, entry, otto, gate, test, report, six, legacy] = r.cells;
     if (allIds.has(id)) errors.push(`${f}: ID 重复 ${id}（已见于 ${allIds.get(id)}）`);
     allIds.set(id, f);
-    blockRows.push({ id, f, otto, gate });
-    const blkNum = f.match(/-B(\d+)\.md$/)[1];
+    blockRows.push({ id, f, block, cap, otto, gate });
+    blockRowsById.set(id, { f, block, cap, otto, gate });
     for (const [name, v] of [["能力", cap], ["批准来源", src], ["人工入口", entry], ["Otto", otto], ["闸", gate], ["测试", test], ["报告", report]]) {
       if (!v) errors.push(`${f}:${id} 「${name}」列空白（占位必须是显式 TBD-B<n>）`);
       // TBD 格式强制：以 TBD 开头就必须是 TBD-B<n> 且 n=本块号（"-"/"待定"混不过去）
@@ -81,6 +107,8 @@ for (const f of blockFiles) {
 if (blockRows.length === 0) errors.push("matrix/ 下没有解析到任何块矩阵行");
 
 // ── 2. OUT / EVIDENCE 留痕文件 ──
+const ledgerRows = new Map(); // id -> kind（处置）
+const retiredOriginalIds = new Set(); // 「（原行 X）」标注出的已退役旧 ID
 for (const f of ["OUT.md", "EVIDENCE.md"]) {
   const p = join(matrixDir, f);
   if (!existsSync(p)) { errors.push(`缺 ${f}`); continue; }
@@ -88,36 +116,144 @@ for (const f of ["OUT.md", "EVIDENCE.md"]) {
     const [id, , kind, , reason] = r.cells;
     if (allIds.has(id)) errors.push(`${f}: ${id} 同时出现在块矩阵与留痕文件`);
     allIds.set(id, f);
+    ledgerRows.set(id, kind);
     if (!OUT_KINDS.has(kind)) errors.push(`${f}:${id} 处置「${kind}」不在闭集`);
     if (!reason) errors.push(`${f}:${id} 理由/出处空白（不在本程不是回收站）`);
   }
+  const text = readFileSync(p, "utf8");
+  for (const m of text.matchAll(/原行\s*([A-Za-z0-9]+-[A-Za-z0-9]+)/g)) retiredOriginalIds.add(m[1]);
 }
 
 // ── 3. parity 债闭合（真源 = parity-manifest.ts）──
 const manifest = readFileSync(join(ROOT, "packages/otto/src/parity-manifest.ts"), "utf8");
 const debtKeys = [...manifest.matchAll(/"([^"]+)":\s*\{\s*todoSkill:\s*true/g)].map((m) => m[1]);
-const debtDoc = existsSync(join(RB, "parity-debt.md")) ? readFileSync(join(RB, "parity-debt.md"), "utf8") : "";
+const debtDocPath = join(RB, "parity-debt.md");
+const debtDoc = existsSync(debtDocPath) ? readFileSync(debtDocPath, "utf8") : "";
 if (!debtDoc) errors.push("缺 parity-debt.md");
 for (const k of debtKeys) {
   const n = debtDoc.split("`" + k + "`").length - 1;
   if (n === 0) errors.push(`parity-debt.md 缺债条目 ${k}`);
   if (n > 1) errors.push(`parity-debt.md 债条目 ${k} 出现 ${n} 次（须恰好一次）`);
 }
-// Otto 列的 missing(debt-nn) 标注必须能在 parity-debt.md 找到对应行号
-for (const { id, f, otto } of blockRows) {
-  const m = otto.match(/missing\(debt-(\d+)[-–~\d]*\)/);
-  if (m && !debtDoc.includes(`debt-${m[1]}`)) errors.push(`${f}:${id} 引用 debt-${m[1]} 但 parity-debt.md 无此编号`);
+
+// parity-debt.md 结构化解析：债号 → { key, rowId, block }
+const debtByNo = new Map(); // number -> { key, rowId, block, line }
+for (const line of debtDoc.split("\n")) {
+  const m = line.match(/^\|\s*debt-(\d+)\s*\|\s*`([^`]*)`\s*\|\s*([A-Za-z0-9-]+)\s*\|\s*([A-Za-z0-9]+)\s*\|/);
+  if (m) debtByNo.set(Number(m[1]), { key: m[2], rowId: m[3], block: m[4] });
 }
 
-// ── 3.5 冻结 ID 锁（签署对象②：只增不减，删行必红）──
+// 矩阵 Otto 列 missing(debt-…) 提取全部编号（原正则只认得第一个，逗号后的编号被漏检）
+function debtNumbersFromOtto(otto) {
+  const nos = [];
+  for (const m of otto.matchAll(/missing\(([^)]*)\)/g)) {
+    for (const tok of m[1].split(",")) {
+      const mm = tok.trim().match(/^(?:debt-)?(\d+)$/);
+      if (mm) nos.push(Number(mm[1]));
+    }
+  }
+  return nos;
+}
+
+// 3a. 矩阵 → parity-debt.md：Otto 列引用的每个编号必须在债表存在
+for (const { id, f, otto } of blockRows) {
+  for (const no of debtNumbersFromOtto(otto)) {
+    if (!debtByNo.has(no)) errors.push(`${f}:${id} 引用 debt-${String(no).padStart(2, "0")} 但 parity-debt.md 无此编号`);
+  }
+}
+// 3b. parity-debt.md → 矩阵：每条 debt-NN 的归属行必须存在，且该行 Otto 列必须反向引用 NN（真 bijection）
+for (const [no, { rowId }] of debtByNo) {
+  const tag = `debt-${String(no).padStart(2, "0")}`;
+  if (!allIds.has(rowId)) { errors.push(`parity-debt.md ${tag} 归属行 ${rowId} 不存在于矩阵`); continue; }
+  const row = blockRowsById.get(rowId);
+  if (!row) { errors.push(`parity-debt.md ${tag} 归属行 ${rowId} 不是块矩阵行（落在留痕文件，非法归属）`); continue; }
+  if (!debtNumbersFromOtto(row.otto).includes(no)) {
+    errors.push(`parity-debt.md ${tag} 归属行 ${rowId}，但该行 Otto 列未反向引用 ${tag}（非双向闭合）`);
+  }
+}
+
+// ── 3.5 冻结 ID 锁 v2（签署对象②：语义级——存在 + 同块 + 能力哈希 + 留痕 kind 未变）──
 const frozenPath = join(RB, "coverage-audit/frozen-ids.json");
-if (!existsSync(frozenPath)) {
-  errors.push("缺 coverage-audit/frozen-ids.json（冻结 ID 快照）");
+if (FREEZE) {
+  if (errors.length) {
+    console.error(`❌ 结构性违规 ${errors.length} 处，拒绝生成冻结快照（先修好再 --freeze）:\n` + errors.map((e) => "  - " + e).join("\n"));
+    process.exit(1);
+  }
+  const rows = {};
+  for (const id of [...blockRowsById.keys()].sort((a, b) => a.localeCompare(b))) {
+    const r = blockRowsById.get(id);
+    rows[id] = { block: r.block, cap_sha8: capSha8(r.cap) };
+  }
+  const ledger = {};
+  for (const id of [...ledgerRows.keys()].sort((a, b) => a.localeCompare(b))) {
+    ledger[id] = { kind: ledgerRows.get(id) };
+  }
+  let sha = "unknown";
+  try { sha = execSync("git rev-parse --short=8 HEAD", { cwd: ROOT }).toString().trim(); } catch { /* 非 git 环境，保留 unknown */ }
+  const now = new Date();
+  const frozenAt = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, "0")}-${String(now.getDate()).padStart(2, "0")}`;
+  const snapshot = {
+    frozen_at: frozenAt,
+    baseline: `main@${sha}`,
+    rows,
+    ledger,
+  };
+  writeFileSync(frozenPath, JSON.stringify(snapshot, null, 1) + "\n");
+  console.log(`✅ 冻结快照已重生成: ${Object.keys(rows).length} 行 + ${Object.keys(ledger).length} 留痕 → ${frozenPath}`);
+  process.exit(0);
+} else if (!existsSync(frozenPath)) {
+  errors.push("缺 coverage-audit/frozen-ids.json（冻结快照；用 --freeze 生成）");
 } else {
   const frozen = JSON.parse(readFileSync(frozenPath, "utf8"));
-  for (const id of [...(frozen.block_row_ids ?? []), ...(frozen.ledger_ids ?? [])]) {
-    if (!allIds.has(id)) errors.push(`冻结 ID ${id} 已从矩阵消失（行集只增不减；改判须走留痕+决策日志）`);
+  for (const [id, meta] of Object.entries(frozen.rows ?? {})) {
+    const cur = blockRowsById.get(id);
+    if (!cur) { errors.push(`冻结行 ${id} 已从矩阵消失（行集只增不减；语义修改须决策日志授权后重跑 --freeze）`); continue; }
+    if (cur.block !== meta.block) {
+      errors.push(`冻结行 ${id} 块归属漂移 ${meta.block}→${cur.block}（语义修改须决策日志授权后重跑 --freeze）`);
+    }
+    const sha = capSha8(cur.cap);
+    if (sha !== meta.cap_sha8) {
+      errors.push(`冻结行 ${id} 能力单元格哈希漂移（内容被改；语义修改须决策日志授权后重跑 --freeze）`);
+    }
   }
+  for (const [id, meta] of Object.entries(frozen.ledger ?? {})) {
+    const kind = ledgerRows.get(id);
+    if (!kind) { errors.push(`冻结留痕 ${id} 已从留痕文件消失（语义修改须决策日志授权后重跑 --freeze）`); continue; }
+    if (kind !== meta.kind) {
+      errors.push(`冻结留痕 ${id} 处置(kind) 漂移 ${meta.kind}→${kind}（语义修改须决策日志授权后重跑 --freeze）`);
+    }
+  }
+}
+
+// HIT/MISSING row_id 存在性判定：矩阵现存行、留痕现存行、或留痕「（原行 X）」标注的已退役 ID 均算存在
+function existsInMatrixOrLedger(id) {
+  return allIds.has(id) || retiredOriginalIds.has(id);
+}
+// 拆分 row_id 字段里的逗号多值 / `A-01..A-20` 区间 / `draft-matrix X` 前缀，展开为待校验 ID 列表
+function resolveRowIdTokens(field) {
+  const ids = [];
+  for (let tok of field.split(",")) {
+    tok = tok.trim();
+    if (!tok) continue;
+    const draftM = tok.match(/^draft-matrix\s+(.+)$/);
+    if (draftM) { ids.push(draftM[1].trim()); continue; }
+    if (tok.includes("..")) {
+      const [a, b] = tok.split("..").map((s) => s.trim());
+      const pa = a.match(/^(.*-)(\d+)$/);
+      const pb = b.match(/^(.*-)(\d+)$/);
+      if (pa && pb && pa[1] === pb[1]) {
+        const width = pa[2].length;
+        for (let n = parseInt(pa[2], 10); n <= parseInt(pb[2], 10); n++) {
+          ids.push(`${pa[1]}${String(n).padStart(width, "0")}`);
+        }
+      } else {
+        ids.push(a, b); // 前后缀不一致的畸形区间——退化为只查端点
+      }
+      continue;
+    }
+    ids.push(tok);
+  }
+  return ids;
 }
 
 // ── 4. coverage 裁决闭合 ──
@@ -127,7 +263,20 @@ if (!existsSync(adjPath)) {
 } else {
   const adj = JSON.parse(readFileSync(adjPath, "utf8"));
   for (const src of adj.sources ?? []) {
-    for (const it of src.items ?? []) {
+    const items = src.items ?? [];
+    if (src.counts && items.length !== src.counts.total) {
+      errors.push(`adjudication[${src.source}] items 总数 ${items.length} ≠ counts.total ${src.counts.total}`);
+    }
+    for (const it of items) {
+      if (it.verdict === "HIT") {
+        if (!it.row_id) { errors.push(`adjudication[${src.source}] HIT「${it.item}」缺 row_id`); continue; }
+        for (const id of resolveRowIdTokens(it.row_id)) {
+          if (!existsInMatrixOrLedger(id)) {
+            errors.push(`adjudication[${src.source}] HIT「${it.item}」row_id 引用 ${id}，矩阵与留痕均无此行`);
+          }
+        }
+        continue;
+      }
       if (it.verdict !== "MISSING") continue;
       const res = it.resolution;
       if (!res) { errors.push(`adjudication[${src.source}] MISSING「${it.item}」无裁决`); continue; }
@@ -142,7 +291,7 @@ if (!existsSync(adjPath)) {
 const counts = {};
 for (const f of allIds.values()) counts[f] = (counts[f] || 0) + 1;
 console.log(`行分布: ${JSON.stringify(counts)}`);
-console.log(`债条目: ${debtKeys.length}`);
+console.log(`债条目: ${debtKeys.length}（结构化归属行 ${debtByNo.size}）`);
 if (warn.length) console.log("WARN:\n" + warn.map((w) => "  - " + w).join("\n"));
 if (errors.length) {
   console.error(`❌ ${errors.length} 处违规:\n` + errors.map((e) => "  - " + e).join("\n"));
