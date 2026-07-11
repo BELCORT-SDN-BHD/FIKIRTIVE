@@ -60,7 +60,9 @@ jobs:
       - run: bash scripts/check-destructive-migrations.sh
       # Auth-guard fence (P0-2): every exported server action in a "use server" apps/web/lib
       # file must call requireSession/requireRole/requireAdmin/requireOwner before any
-      # prisma/storage/getBoss access.
+      # prisma/storage/getBoss access. The red-case tests (fixture strings, no real
+      # violations) prove the scanner itself still turns red before it gates anything.
+      - run: node scripts/__tests__/verify-auth-guards.test.mjs
       - run: node scripts/verify-auth-guards.mjs
       # Route-B release contract (B0): coverage matrix invariants — unique IDs, no blank cells,
       # closed-set statuses, all 84 parity debts mapped exactly once, MISSING adjudications closed.
