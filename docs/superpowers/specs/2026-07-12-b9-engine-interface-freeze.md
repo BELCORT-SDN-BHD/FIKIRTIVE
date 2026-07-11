@@ -1,4 +1,4 @@
-# B9 引擎横切 · 引擎接口冻结 spec（v0.1 骨架——控制面规范性判断稿）
+# B9 引擎横切 · 引擎接口冻结 spec（v0.2——已吸收 Campaign 试产需求单）
 
 > 2026-07-12。epoch `claude-20260712-03`。性质：**冻契约不冻实现**——本 spec 冻结的是接口形状与语义，扫描器/实现行号可继续演进（B10 车道并行改扫描器不构成移动靶）。
 > 状态：骨架（规范性判断=控制面亲笔）→ Heavy worker 填证据层（现状 file:line/TS 签名/测试枚举）→ 控制面终审 → 顾问 → **SOL 跨族复审后才 spec-ready**（D-015③）。
@@ -50,7 +50,8 @@ B9 块（`docs/ops/route-b/matrix/09-B9.md`）21 行；本 spec 冻结其中的*
 |---|---|---|
 | 域闭集 8 项够用 | 宪章 12 区归并 | B8 设计需求单吸收后复核 |
 | selection.kind 闭集可枚举 | A′ 65 页对象类型 | B3/B8 spec 对表 |
-| campaignId 接线点属契约 5 端口 | 试产需求单（待吸收） | Campaign 设计 PR 返回后 v0.2 |
+| ~~campaignId 接线点属契约 5 端口~~ **已吸收（v0.2）**：接线点=ScheduledPost/Generation additive 迁移+Project 已预留；TrendSnapshot 读技能 `listTrendSnapshots` 归 domain `campaign` | PR #245 §6 需求单 | 已入契约 5 端口清单 |
+| 域闭集 8 项对缺失大陆新表面（口碑/Marketplace/landing）可能不够——域枚举冻结推迟到二三波 IA 落定（归入既有域还是扩域，届时裁） | 二波设计在途 | v0.3 对表后定 |
 
 ## 五、冻结条件与状态
 
