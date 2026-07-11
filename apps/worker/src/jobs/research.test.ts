@@ -238,6 +238,37 @@ describe("handleResearch — withLlmBudget throws (insufficient balance / provid
   });
 });
 
+describe("handleResearch — persisted error sanitization", () => {
+  const signedUrl = "https://r2.example/u/o1/asset.png?X-Amz-Credential=abc&X-Amz-Signature=secret";
+
+  it("scrubs a URL-bearing withLlmBudget error before persisting to the card + job", async () => {
+    mocks.withLlmBudget.mockRejectedValue(new Error(`fetch failed: ${signedUrl}`));
+    await handleResearch({ jobId: "job-1" }, 0);
+
+    const cardFailed = mocks.chatMessageUpdateMany.mock.calls.find(
+      (c) => (c[0].data.payload as { status?: string })?.status === "failed",
+    );
+    expect(cardFailed).toBeTruthy();
+    const cardError = (cardFailed![0].data.payload as { error?: string }).error;
+    expect(cardError).toContain("<redacted-url>");
+    expect(cardError).not.toContain("X-Amz-Signature");
+
+    const jobFailed = mocks.researchJobUpdateMany.mock.calls.find((c) => c[0].data.status === "FAILED");
+    expect(jobFailed).toBeTruthy();
+    expect(jobFailed![0].data.error).toContain("<redacted-url>");
+    expect(jobFailed![0].data.error).not.toContain("X-Amz-Signature");
+  });
+
+  it("keeps the friendly MaxTurnsExceededError text as-is (fixed string, not a leak source)", async () => {
+    mocks.withLlmBudget.mockRejectedValue(new mocks.MaxTurnsExceededError(`step budget hit: ${signedUrl}`));
+    await handleResearch({ jobId: "job-1" }, 0);
+
+    const jobFailed = mocks.researchJobUpdateMany.mock.calls.find((c) => c[0].data.status === "FAILED");
+    expect(jobFailed).toBeTruthy();
+    expect(jobFailed![0].data.error).toBe("The research hit its step budget before finishing.");
+  });
+});
+
 describe("handleResearch — MaxTurnsExceeded (graceful truncation) is handled by usageOnError", () => {
   it("passes a usageOnError that yields actual usage for a MaxTurnsExceededError carrying state.usage", async () => {
     await handleResearch({ jobId: "job-1" }, 0);

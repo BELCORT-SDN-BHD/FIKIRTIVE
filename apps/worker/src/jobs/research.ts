@@ -41,6 +41,7 @@ import {
   RESEARCH_QUEUE,
 } from "@fikirtive/core";
 import { fetchAndExtract } from "@fikirtive/core/server";
+import { sanitizeError } from "../redact.js";
 
 /** Chars per page when slicing a page's clean text (mirrors web-page-cache PAGE_CHARS). */
 const PAGE_CHARS = 4000;
@@ -215,12 +216,13 @@ export async function handleResearch(data: { jobId: string }, _retryCount: numbe
   } catch (e) {
     // withLlmBudget threw (insufficient balance / provider / max-turns w/o usable state / etc.).
     // Credits already refunded/settled INSIDE withLlmBudget — we do NOT touch credits here.
+    // PERSISTED error surfaces in the RESEARCH_CARD/ResearchJob and is rendered to the user/admin —
+    // strip any URL a fetch/network error from researchWeb may carry (mirrors gen.ts/refgen.ts/
+    // render.ts/caption.ts/publish.ts, the other 5 jobs that sanitize before persisting).
     const errorText =
       e instanceof MaxTurnsExceededError
         ? "The research hit its step budget before finishing."
-        : e instanceof Error
-          ? e.message
-          : "Research failed.";
+        : sanitizeError(e);
     console.warn(`[research] job ${job.id}: withLlmBudget threw — marking failed:`, errorText);
     await failResearch(job, errorText);
     return;
