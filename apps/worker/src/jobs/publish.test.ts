@@ -4,7 +4,7 @@
  * covered by packages/db/src/publish-attempt-uniqueness.test.ts against a real DB); here we assert
  * how the HANDLER reacts. The Meta/media executor is injected, so no network runs.
  */
-import { describe, it, expect, vi, beforeEach } from "vitest";
+import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 
 const m = vi.hoisted(() => {
   const scheduledPostFindUnique = vi.fn();
@@ -17,11 +17,15 @@ const m = vi.hoisted(() => {
   const publishAttemptFindUnique = vi.fn();
   const metaConnectionFindMany = vi.fn();
   const metaConnectionFindUnique = vi.fn();
+  const scheduledPostMediaFindMany = vi.fn();
+  const generationFindMany = vi.fn();
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const prisma: any = {
     scheduledPost: { findUnique: scheduledPostFindUnique, updateMany: scheduledPostUpdateMany, findMany: scheduledPostFindMany },
     publishAttempt: { create: publishAttemptCreate, update: publishAttemptUpdate, updateMany: publishAttemptUpdateMany, findMany: publishAttemptFindMany, findUnique: publishAttemptFindUnique },
     metaConnection: { findMany: metaConnectionFindMany, findUnique: metaConnectionFindUnique },
+    scheduledPostMedia: { findMany: scheduledPostMediaFindMany },
+    generation: { findMany: generationFindMany },
     $transaction: vi.fn(async (arg: unknown) =>
       Array.isArray(arg) ? Promise.all(arg) : typeof arg === "function" ? (arg as (tx: unknown) => unknown)(prisma) : arg,
     ),
@@ -29,7 +33,7 @@ const m = vi.hoisted(() => {
   return {
     prisma, scheduledPostFindUnique, scheduledPostUpdateMany, scheduledPostFindMany,
     publishAttemptCreate, publishAttemptUpdate, publishAttemptUpdateMany, publishAttemptFindMany, publishAttemptFindUnique,
-    metaConnectionFindMany, metaConnectionFindUnique,
+    metaConnectionFindMany, metaConnectionFindUnique, scheduledPostMediaFindMany, generationFindMany,
   };
 });
 
@@ -164,6 +168,47 @@ describe("handlePublish — M1: deterministic authorization refusals are NEEDS_A
     const na = m.scheduledPostUpdateMany.mock.calls.find((c) => c[0].data?.status === "NEEDS_ATTENTION");
     expect(na).toBeTruthy();
     vi.unstubAllGlobals();
+  });
+});
+
+describe("handlePublish — P1a/P1b: IG media-contract refusal short-circuits BEFORE any Meta call", () => {
+  const MEDIA_ENV = { ...process.env };
+  beforeEach(() => {
+    m.scheduledPostFindUnique.mockResolvedValue(SCHEDULED);
+    // authorize() would succeed if reached — proves the refusal, not the auth gate, is what stops us.
+    m.metaConnectionFindUnique.mockResolvedValue({
+      accessTokenEnc: "enc", canPublish: true, organicPublishPaused: false, status: "active", tokenExpiresAt: null,
+    });
+    m.scheduledPostMediaFindMany.mockResolvedValue([{ generationId: "gen1" }]);
+    m.generationFindMany.mockResolvedValue([
+      { id: "gen1", asset: { ownerId: "o1", contentHash: "a".repeat(64), ext: "mp4", mime: "video/mp4" } },
+    ]);
+    process.env.PUBLIC_BASE_URL = "https://app.example.com";
+    process.env.MEDIA_PROXY_SECRET = "test-secret";
+  });
+  afterEach(() => {
+    process.env = { ...MEDIA_ENV };
+  });
+
+  it("executor order (P1a): resolvePage/me-accounts is never reached — buildMediaUrls runs first and refuses", async () => {
+    const fetchSpy = vi.fn();
+    vi.stubGlobal("fetch", fetchSpy);
+    // DEFAULT executor (realExecute) — exercises the real ordering, not an injected stub.
+    await handlePublish({ scheduledPostId: "sp1" }, 0);
+    expect(fetchSpy).not.toHaveBeenCalled(); // resolvePage's only path to Meta is graphGet→fetch
+    vi.unstubAllGlobals();
+  });
+
+  it("NEEDS_ATTENTION routing (P1b consumer): lands NEEDS_ATTENTION with the guard text, never FAILED", async () => {
+    await handlePublish({ scheduledPostId: "sp1" }, 0);
+    const na = m.scheduledPostUpdateMany.mock.calls.find((c) => c[0].data?.status === "NEEDS_ATTENTION");
+    expect(na).toBeTruthy();
+    expect(na?.[0].data.lastError).toMatch(/isn't a publishable image for Instagram/);
+    const failed = m.scheduledPostUpdateMany.mock.calls.find((c) => c[0].data?.status === "FAILED");
+    expect(failed).toBeFalsy(); // six-state ② NEEDS_ATTENTION, never ③ FAILED
+    expect(m.publishAttemptUpdateMany).toHaveBeenCalledWith(
+      expect.objectContaining({ data: expect.objectContaining({ state: "FAILED" }) }),
+    );
   });
 });
 
