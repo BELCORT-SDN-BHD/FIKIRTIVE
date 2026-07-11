@@ -25,6 +25,7 @@ function row(over: Partial<ScheduledPostRow> & { scheduledAt: Date; scheduledTz:
     source: over.source ?? "owner",
     metaTargetId: over.metaTargetId ?? null,
     approvedAt: over.approvedAt ?? null,
+    lastError: over.lastError ?? null,
     media: over.media ?? [],
     updatedAt: over.updatedAt ?? new Date("2026-07-01T00:00:00Z"),
   };

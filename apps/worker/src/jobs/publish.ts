@@ -20,6 +20,9 @@
  *   2. PublishAttempt(state='APPLYING') partial-unique index ⇒ at most one worker in flight per post.
  *   3. IG creationId stored on the attempt BEFORE media_publish ⇒ reconcile re-checks THAT container
  *      (Meta-idempotent) rather than rebuilding + re-posting.
+ *   4. (D2) An ambiguity sink that MAY have gone live records the attempt as UNCONFIRMED (not
+ *      FAILED). handlePublish refuses BEFORE any claim/Meta call when ANY UNCONFIRMED attempt exists
+ *      ⇒ a retry after the ambiguous NEEDS_ATTENTION can't re-select the post and double-post.
  */
 import { prisma } from "@fikirtive/db";
 import { decryptToken, signMediaToken } from "@fikirtive/token-crypto";
@@ -362,6 +365,28 @@ export async function handlePublish(
     return;
   }
 
+  // Lock 4 (D2) — the recovery double-post guard, fail-closed BEFORE any claim or Meta call. A prior
+  // ambiguous publish that crossed Meta's side-effect point but lost its receipt records an
+  // UNCONFIRMED attempt (the two ambiguity sinks below): the post MAY already be live. Its metaPostId
+  // was never stamped (M2), so lock 1 can't catch it, and the prior attempt is no longer APPLYING so
+  // lock 2 frees — a retry (NEEDS_ATTENTION→SCHEDULED) would let scanDue re-select this post and the
+  // worker build a SECOND live container. So if ANY (not just the latest) UNCONFIRMED attempt exists
+  // for this post, refuse deterministically → NEEDS_ATTENTION, ZERO Meta calls. This is a VISIBLE
+  // refusal (M1-shaped), never a silent scanDue WHERE exclusion (a silent skip is a new debugging
+  // trap); a human then confirms/links the live post or cancels (NEEDS_ATTENTION→CANCELLED).
+  const unconfirmed = await prisma.publishAttempt.findFirst({
+    where: { scheduledPostId: post.id, state: "UNCONFIRMED" },
+    select: { id: true },
+  });
+  if (unconfirmed) {
+    await prisma.scheduledPost.updateMany({
+      where: { id: post.id, status: { in: ["SCHEDULED", "PUBLISHING"] }, metaPostId: null },
+      data: { status: "NEEDS_ATTENTION", lastError: "This post may already be live — please confirm before publishing again." },
+    });
+    console.warn(`[publish] ${post.id}: an UNCONFIRMED attempt exists — may already be live; refusing to re-publish (NEEDS_ATTENTION, no Meta call)`);
+    return;
+  }
+
   // Lock 2: atomic claim = insert PublishAttempt(APPLYING). The partial-unique index
   // (one APPLYING per post) makes a second racing worker's insert P2002 → it skips.
   const attemptId = newId();
@@ -470,7 +495,9 @@ export async function handlePublish(
       }),
       prisma.publishAttempt.updateMany({
         where: { id: attemptId, state: "APPLYING" },
-        data: { state: "FAILED", error: reason, finishedAt: new Date() },
+        // Ambiguity sink (D2): the publish MAY have gone live — mark UNCONFIRMED (not FAILED, which
+        // frees the retry) so lock 4 blocks any re-publish until a human confirms.
+        data: { state: "UNCONFIRMED", error: reason, finishedAt: new Date() },
       }),
     ]);
     console.warn(`[publish] ${post.id}: NEEDS_ATTENTION — publish outcome unconfirmed, NOT retried: ${reason}`);
@@ -565,6 +592,19 @@ export async function reapStalePublishAttempts(): Promise<number> {
     if (!post) continue;
     const verdict = await reconcileAttempt(attempt, post);
     if (verdict === "needs_attention") {
+      // P1-1 — distinguish a PROVABLY-safe interrupt from a genuine ambiguity. The IG creationId is
+      // CAS-persisted onto the attempt BEFORE media_publish (realExecute.onCreationId → publishInstagram
+      // line "Persist the container id BEFORE publishing"), so for IG a null creationId proves the
+      // container was never created and media_publish was never reached — NOTHING went live. That
+      // attempt is FAILED (retryable, NOT frozen by lock 4), restoring the pre-D2 behavior for a
+      // provably-safe interrupt. Any OTHER interrupted attempt — IG WITH a creationId (the crash may
+      // have straddled media_publish) or FB (a single call with NO pre-side-effect anchor) — MAY have
+      // gone live → UNCONFIRMED, so lock 4 blocks a re-publish until a human confirms.
+      const provablyNotPublished = post.channel === "instagram" && attempt.creationId == null;
+      const attemptState = provablyNotPublished ? "FAILED" : "UNCONFIRMED";
+      const attemptError = provablyNotPublished
+        ? "publish interrupted before the media container was created — nothing went live"
+        : "publish interrupted — reconcile couldn't confirm it went out";
       // Release the lock + surface it, ATOMICALLY (M3): a mid-way DB failure between the two writes
       // would otherwise strand the post PUBLISHING forever or the attempt APPLYING forever. Both
       // writes are CAS-scoped so a PUBLISHED the reconcile just set is never clobbered; a zero row
@@ -572,7 +612,7 @@ export async function reapStalePublishAttempts(): Promise<number> {
       const [attemptWrite, postWrite] = await prisma.$transaction([
         prisma.publishAttempt.updateMany({
           where: { id: attempt.id, state: "APPLYING" },
-          data: { state: "FAILED", error: "publish interrupted — reconcile couldn't confirm it went out", finishedAt: new Date() },
+          data: { state: attemptState, error: attemptError, finishedAt: new Date() },
         }),
         prisma.scheduledPost.updateMany({
           where: { id: attempt.scheduledPostId, status: "PUBLISHING", metaPostId: null },

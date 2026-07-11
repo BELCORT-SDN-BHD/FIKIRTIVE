@@ -60,6 +60,9 @@ export type ScheduledPostRow = {
   source: string;
   metaTargetId: string | null;
   approvedAt: Date | null;
+  // Why a post NEEDS_ATTENTION / last FAILED (set by the publish worker's six-state). Read-only
+  // disclosure so a stuck post isn't a silent dead-end in the composer.
+  lastError: string | null;
   media: { generationId: string; position: number }[];
   updatedAt: Date;
 };
@@ -67,7 +70,7 @@ export type ScheduledPostRow = {
 const LIST_SELECT = {
   id: true, channel: true, caption: true, firstComment: true,
   scheduledAt: true, scheduledTz: true, status: true, publishMode: true,
-  source: true, metaTargetId: true, approvedAt: true, updatedAt: true,
+  source: true, metaTargetId: true, approvedAt: true, lastError: true, updatedAt: true,
   media: { select: { generationId: true, position: true }, orderBy: { position: "asc" } },
 } as const;
 
@@ -290,6 +293,17 @@ export async function approveScheduledPost(id: string): Promise<{ ok: true } | {
   // State-machine gate: only a legal transition into SCHEDULED may proceed.
   if (!canTransition(post.status as ScheduledPostStatus, "SCHEDULED")) {
     return { error: "This post can't be approved from its current state." };
+  }
+  // D2 — a post with an UNCONFIRMED publish attempt may already be LIVE (a prior ambiguous publish
+  // crossed Meta's side-effect point but its receipt was lost, so metaPostId was never stamped).
+  // Re-approving it would re-arm scanDue and risk a SECOND live post. Refuse until a person confirms;
+  // cancelling (NEEDS_ATTENTION→CANCELLED) stays available, so this is not a dead end.
+  const unconfirmed = await prisma.publishAttempt.findFirst({
+    where: { scheduledPostId: id, state: "UNCONFIRMED" },
+    select: { id: true },
+  });
+  if (unconfirmed) {
+    return { error: "This post may already be live — please review it before publishing again." };
   }
   // Consent needs a resolved target that the owner actually owns.
   if (!post.metaTargetId) return { error: "Pick which account to post to before approving." };

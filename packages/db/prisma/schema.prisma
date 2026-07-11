@@ -1177,7 +1177,11 @@ model PublishAttempt {
   id              String        @id
   scheduledPostId String
   post            ScheduledPost @relation(fields: [scheduledPostId], references: [id], onDelete: Cascade)
-  state           String        // 'APPLYING' | 'APPLIED' | 'FAILED' (code-validated String — house style)
+  state           String        // 'APPLYING' | 'APPLIED' | 'FAILED' | 'UNCONFIRMED' (code-validated String — house style)
+  // UNCONFIRMED (D2): an ambiguous publish that MAY have gone live but whose receipt was lost. It is
+  // NOT APPLYING (frees the partial-unique) yet NOT a clean FAILED — handlePublish refuses to
+  // re-publish a post with ANY UNCONFIRMED attempt, so a retry can't double-post. Additive-only,
+  // no migration: the partial-unique predicate is state='APPLYING', unaffected by the new value.
   startedAt       DateTime      @default(now())
   finishedAt      DateTime?
   metaPostId      String?       // set when state = 'APPLIED'
