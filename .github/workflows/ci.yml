@@ -40,6 +40,10 @@ jobs:
       - run: pnpm -r typecheck
       # Hard spend-fence: skills must not import the fal provider / reserveCredits directly.
       - run: bash scripts/check-skill-imports.sh
+      # Northstar prototype fence: app/northstar + app/northstar-immersive + components/northstar
+      # are DESIGN files (pure client prototypes) — must never import server actions, @fikirtive/db,
+      # @fikirtive/generation, or auth/server-only modules.
+      - run: bash scripts/check-northstar-imports.sh
       # Tenancy tripwire (informational baseline today; never fails the build yet).
       - run: bash scripts/check-no-raw-prisma.sh
       # Skill catalog must match the registry (Seam 1 step 5) — a stale CATALOG.md fails here.
