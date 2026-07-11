@@ -82,6 +82,7 @@ import {
   listScheduledPosts,
   listOwnerTargets,
 } from "../schedule-actions";
+import { IG_IMAGE_ONLY_ERROR } from "../schedule-service";
 
 const OWNER = "o1";
 const AT = "2026-07-10T09:00:00.000Z";
@@ -98,10 +99,11 @@ beforeEach(() => {
       scheduledPostMedia: { deleteMany: mockMediaDeleteMany, createMany: mockMediaCreateMany },
     }),
   );
-  // Default: every requested media id is owned (echo the queried ids back). Cross-tenant
-  // tests override this to return only the owned subset.
+  // Default: every requested media id is owned and is an image (echo the queried ids back).
+  // Cross-tenant tests override this to return only the owned subset; IG media-contract tests
+  // override the asset mime to a non-image type.
   mockGenFindMany.mockImplementation(async (args: { where: { id: { in: string[] } } }) =>
-    args.where.id.in.map((id) => ({ id })),
+    args.where.id.in.map((id) => ({ id, asset: { mime: "image/png" } })),
   );
   mockIgListTargets.mockResolvedValue([{ id: "page-1", name: "My Page" }]);
   mockFbListTargets.mockResolvedValue([{ id: "page-1", name: "My Page" }]);
@@ -207,7 +209,7 @@ describe("createScheduledPost", () => {
     });
     expect(mockGenFindMany).toHaveBeenCalledWith({
       where: { id: { in: ["gen-a", "gen-b"] }, ownerId: OWNER, deletedAt: null },
-      select: { id: true },
+      select: { id: true, asset: { select: { mime: true } } },
     });
   });
 
@@ -227,6 +229,36 @@ describe("createScheduledPost", () => {
     await createScheduledPost({ channel: "facebook", caption: "x", scheduledAt: AT, scheduledTz: "UTC" });
     expect(mockGenFindMany).not.toHaveBeenCalled();
     expect(mockCreate).toHaveBeenCalledTimes(1);
+  });
+
+  it("rejects an Instagram draft whose media isn't an image (mime contract), writes nothing", async () => {
+    mockGenFindMany.mockResolvedValue([{ id: "gen-a", asset: { mime: "video/mp4" } }]);
+    const res = await createScheduledPost({
+      channel: "instagram", caption: "x", scheduledAt: AT, scheduledTz: "UTC",
+      media: ["gen-a"],
+    });
+    expect(res).toEqual({ error: IG_IMAGE_ONLY_ERROR });
+    expect(mockCreate).not.toHaveBeenCalled();
+  });
+
+  it("allows an Instagram draft whose media is an image", async () => {
+    mockCreate.mockResolvedValue({});
+    mockGenFindMany.mockResolvedValue([{ id: "gen-a", asset: { mime: "image/png" } }]);
+    const res = await createScheduledPost({
+      channel: "instagram", caption: "x", scheduledAt: AT, scheduledTz: "UTC",
+      media: ["gen-a"],
+    });
+    expect(res).toEqual({ ok: true, id: "new-1" });
+  });
+
+  it("does not apply the Instagram image-only contract to Facebook drafts", async () => {
+    mockCreate.mockResolvedValue({});
+    mockGenFindMany.mockResolvedValue([{ id: "gen-a", asset: { mime: "video/mp4" } }]);
+    const res = await createScheduledPost({
+      channel: "facebook", caption: "x", scheduledAt: AT, scheduledTz: "UTC",
+      media: ["gen-a"],
+    });
+    expect(res).toEqual({ ok: true, id: "new-1" });
   });
 });
 
@@ -481,10 +513,17 @@ describe("approveScheduledPost", () => {
     expect(mockIgListTargets).not.toHaveBeenCalled();
   });
 
-  it("rejects when the post has no media rows, no write", async () => {
+  it("rejects when an Instagram post has no media rows, with the image-only message, no write", async () => {
     mockFindFirst.mockResolvedValue(draftReady({ media: [] }));
     const res = await approveScheduledPost("p1");
-    expect(res).toHaveProperty("error");
+    expect(res).toEqual({ error: "Add at least one image before approving." });
+    expect(mockUpdateMany).not.toHaveBeenCalled();
+  });
+
+  it("rejects when a Facebook post has no media rows, with the image-or-video message, no write", async () => {
+    mockFindFirst.mockResolvedValue(draftReady({ channel: "facebook", media: [] }));
+    const res = await approveScheduledPost("p1");
+    expect(res).toEqual({ error: "Add at least one image or video before approving." });
     expect(mockUpdateMany).not.toHaveBeenCalled();
   });
 
@@ -495,9 +534,33 @@ describe("approveScheduledPost", () => {
     expect(res).toHaveProperty("error");
     expect(mockGenFindMany).toHaveBeenCalledWith({
       where: { id: { in: ["gen-a"] }, ownerId: OWNER, deletedAt: null },
-      select: { id: true },
+      select: { id: true, asset: { select: { mime: true } } },
     });
     expect(mockUpdateMany).not.toHaveBeenCalled();
+  });
+
+  it("rejects approving an Instagram post whose media isn't an image (mime contract), no write", async () => {
+    mockFindFirst.mockResolvedValue(draftReady());
+    mockGenFindMany.mockResolvedValue([{ id: "gen-a", asset: { mime: "video/mp4" } }]);
+    const res = await approveScheduledPost("p1");
+    expect(res).toEqual({ error: IG_IMAGE_ONLY_ERROR });
+    expect(mockUpdateMany).not.toHaveBeenCalled();
+  });
+
+  it("approves an Instagram post whose media is an image", async () => {
+    mockFindFirst.mockResolvedValue(draftReady());
+    mockGenFindMany.mockResolvedValue([{ id: "gen-a", asset: { mime: "image/jpeg" } }]);
+    mockUpdateMany.mockResolvedValue({ count: 1 });
+    const res = await approveScheduledPost("p1");
+    expect(res).toEqual({ ok: true });
+  });
+
+  it("does not apply the Instagram image-only contract to Facebook approvals", async () => {
+    mockFindFirst.mockResolvedValue(draftReady({ channel: "facebook" }));
+    mockGenFindMany.mockResolvedValue([{ id: "gen-a", asset: { mime: "video/mp4" } }]);
+    mockUpdateMany.mockResolvedValue({ count: 1 });
+    const res = await approveScheduledPost("p1");
+    expect(res).toEqual({ ok: true });
   });
 
   it("rejects approval when existing media exceeds the channel cap, no write", async () => {

@@ -13,7 +13,7 @@ import {
 } from "@fikirtive/core";
 import { requireOwner } from "./auth-guard";
 import { isImpersonating } from "@/lib/better-auth/compat";
-import { draftScheduledPost } from "./schedule-service";
+import { draftScheduledPost, IG_IMAGE_ONLY_ERROR } from "./schedule-service";
 import { channelRegistry } from "./channels/registry";
 import type { ChannelId } from "./channels/types";
 
@@ -266,7 +266,10 @@ export async function approveScheduledPost(id: string): Promise<{ ok: true } | {
   }
   // Consent needs a resolved target that the owner actually owns.
   if (!post.metaTargetId) return { error: "Pick which account to post to before approving." };
-  if (!post.media.length) return { error: "Add at least one image or video before approving." };
+  if (!post.media.length) {
+    // Instagram is image-only (#229) — "or video" would mislead an IG owner into adding one.
+    return { error: post.channel === "instagram" ? "Add at least one image before approving." : "Add at least one image or video before approving." };
+  }
   if (!isScheduleChannel(post.channel)) return { error: "Pick a supported channel." };
   const caps = SCHEDULE_CHANNEL_CAPS[post.channel];
   if (post.media.length > caps.maxMediaCount) {
@@ -281,11 +284,17 @@ export async function approveScheduledPost(id: string): Promise<{ ok: true } | {
   if (mediaIds.length !== post.media.length) return { error: "Some selected media isn't yours." };
   const ownedMedia = await prisma.generation.findMany({
     where: { id: { in: mediaIds }, ownerId: gate.ownerId, deletedAt: null },
-    select: { id: true },
+    select: { id: true, asset: { select: { mime: true } } },
   });
   const ownedMediaIds = new Set(ownedMedia.map((m) => m.id));
   if (mediaIds.some((mediaId) => !ownedMediaIds.has(mediaId))) {
     return { error: "Some selected media isn't yours." };
+  }
+  // Same judgment as draftScheduledPost / the worker's #229 last-gate guard: Asset.mime
+  // image/* whitelist. Stopping it here (approve = consent to publish) beats only catching it
+  // at publish-time.
+  if (post.channel === "instagram" && ownedMedia.some((m) => !m.asset.mime.startsWith("image/"))) {
+    return { error: IG_IMAGE_ONLY_ERROR };
   }
 
   const adapter = channelRegistry[post.channel];
