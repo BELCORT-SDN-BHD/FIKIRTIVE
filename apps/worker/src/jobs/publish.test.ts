@@ -15,6 +15,7 @@ const m = vi.hoisted(() => {
   const publishAttemptUpdateMany = vi.fn();
   const publishAttemptFindMany = vi.fn();
   const publishAttemptFindUnique = vi.fn();
+  const publishAttemptFindFirst = vi.fn();
   const metaConnectionFindMany = vi.fn();
   const metaConnectionFindUnique = vi.fn();
   const scheduledPostMediaFindMany = vi.fn();
@@ -22,7 +23,7 @@ const m = vi.hoisted(() => {
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const prisma: any = {
     scheduledPost: { findUnique: scheduledPostFindUnique, updateMany: scheduledPostUpdateMany, findMany: scheduledPostFindMany },
-    publishAttempt: { create: publishAttemptCreate, update: publishAttemptUpdate, updateMany: publishAttemptUpdateMany, findMany: publishAttemptFindMany, findUnique: publishAttemptFindUnique },
+    publishAttempt: { create: publishAttemptCreate, update: publishAttemptUpdate, updateMany: publishAttemptUpdateMany, findMany: publishAttemptFindMany, findUnique: publishAttemptFindUnique, findFirst: publishAttemptFindFirst },
     metaConnection: { findMany: metaConnectionFindMany, findUnique: metaConnectionFindUnique },
     scheduledPostMedia: { findMany: scheduledPostMediaFindMany },
     generation: { findMany: generationFindMany },
@@ -32,7 +33,7 @@ const m = vi.hoisted(() => {
   };
   return {
     prisma, scheduledPostFindUnique, scheduledPostUpdateMany, scheduledPostFindMany,
-    publishAttemptCreate, publishAttemptUpdate, publishAttemptUpdateMany, publishAttemptFindMany, publishAttemptFindUnique,
+    publishAttemptCreate, publishAttemptUpdate, publishAttemptUpdateMany, publishAttemptFindMany, publishAttemptFindUnique, publishAttemptFindFirst,
     metaConnectionFindMany, metaConnectionFindUnique, scheduledPostMediaFindMany, generationFindMany,
   };
 });
@@ -57,6 +58,7 @@ beforeEach(() => {
   m.publishAttemptUpdate.mockResolvedValue({});
   m.publishAttemptUpdateMany.mockResolvedValue({ count: 1 });
   m.publishAttemptFindUnique.mockResolvedValue({ id: "pa1", scheduledPostId: "sp1", creationId: null });
+  m.publishAttemptFindFirst.mockResolvedValue(null); // D2: default = no UNCONFIRMED attempt (lock 4 no-op)
 });
 
 describe("handlePublish — triple idempotency", () => {
@@ -275,7 +277,9 @@ describe("reapStalePublishAttempts — reconcile never blind re-posts", () => {
     expect(n).toBe(1);
     // the post is surfaced for a human, NOT republished
     expect(m.scheduledPostUpdateMany).toHaveBeenCalledWith(expect.objectContaining({ data: expect.objectContaining({ status: "NEEDS_ATTENTION" }) }));
-    expect(m.publishAttemptUpdateMany).toHaveBeenCalledWith(expect.objectContaining({ data: expect.objectContaining({ state: "FAILED" }) }));
+    // D2: a crashed publish MAY have gone live → the attempt is UNCONFIRMED (not FAILED), so a retry
+    // is blocked (lock 4) until a human confirms.
+    expect(m.publishAttemptUpdateMany).toHaveBeenCalledWith(expect.objectContaining({ data: expect.objectContaining({ state: "UNCONFIRMED" }) }));
     // no page-token resolution happened (metaConnection never read) → definitely no Graph re-post
     expect(m.metaConnectionFindUnique).not.toHaveBeenCalled();
   });

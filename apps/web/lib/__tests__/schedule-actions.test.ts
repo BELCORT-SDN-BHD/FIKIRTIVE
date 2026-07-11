@@ -21,6 +21,7 @@ const {
   mockFetchOwnerPages,
   mockIgListTargets,
   mockFbListTargets,
+  mockPublishAttemptFindFirst,
 } = vi.hoisted(() => ({
   mockRequireOwner: vi.fn(),
   mockIsImpersonating: vi.fn(),
@@ -35,6 +36,7 @@ const {
   mockFetchOwnerPages: vi.fn(),
   mockIgListTargets: vi.fn(),
   mockFbListTargets: vi.fn(),
+  mockPublishAttemptFindFirst: vi.fn(),
 }));
 
 // createScheduledPost now delegates to schedule-service.ts, which is `import "server-only"`.
@@ -55,6 +57,7 @@ vi.mock("@fikirtive/db", () => ({
       createMany: mockMediaCreateMany,
     },
     generation: { findMany: mockGenFindMany },
+    publishAttempt: { findFirst: mockPublishAttemptFindFirst },
   },
 }));
 vi.mock("../meta-pages", () => ({ fetchOwnerPages: mockFetchOwnerPages }));
@@ -108,6 +111,7 @@ beforeEach(() => {
   );
   mockIgListTargets.mockResolvedValue([{ id: "page-1", name: "My Page" }]);
   mockFbListTargets.mockResolvedValue([{ id: "page-1", name: "My Page" }]);
+  mockPublishAttemptFindFirst.mockResolvedValue(null); // D2: default = no UNCONFIRMED attempt
 });
 
 // --- createScheduledPost ----------------------------------------------------
@@ -738,6 +742,19 @@ describe("approveScheduledPost", () => {
     expect(res).toEqual({ error: "Not authorized." });
     expect(mockFindFirst).not.toHaveBeenCalled();
     expect(mockUpdateMany).not.toHaveBeenCalled();
+  });
+
+  it("D2: refuses to re-approve a post with an UNCONFIRMED attempt (may already be live), no write", async () => {
+    // A prior ambiguous publish left the post NEEDS_ATTENTION with an UNCONFIRMED attempt.
+    // NEEDS_ATTENTION→SCHEDULED is a legal transition, so only this guard stops the re-arm.
+    mockFindFirst.mockResolvedValue(draftReady({ status: "NEEDS_ATTENTION" }));
+    mockPublishAttemptFindFirst.mockResolvedValue({ id: "pa-unconfirmed" });
+    const res = await approveScheduledPost("p1");
+    expect(res).toHaveProperty("error");
+    expect(mockPublishAttemptFindFirst).toHaveBeenCalledWith(
+      expect.objectContaining({ where: { scheduledPostId: "p1", state: "UNCONFIRMED" } }),
+    );
+    expect(mockUpdateMany).not.toHaveBeenCalled(); // never re-armed to SCHEDULED
   });
 });
 

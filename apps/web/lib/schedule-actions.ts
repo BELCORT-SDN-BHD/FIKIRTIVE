@@ -291,6 +291,17 @@ export async function approveScheduledPost(id: string): Promise<{ ok: true } | {
   if (!canTransition(post.status as ScheduledPostStatus, "SCHEDULED")) {
     return { error: "This post can't be approved from its current state." };
   }
+  // D2 — a post with an UNCONFIRMED publish attempt may already be LIVE (a prior ambiguous publish
+  // crossed Meta's side-effect point but its receipt was lost, so metaPostId was never stamped).
+  // Re-approving it would re-arm scanDue and risk a SECOND live post. Refuse until a person confirms;
+  // cancelling (NEEDS_ATTENTION→CANCELLED) stays available, so this is not a dead end.
+  const unconfirmed = await prisma.publishAttempt.findFirst({
+    where: { scheduledPostId: id, state: "UNCONFIRMED" },
+    select: { id: true },
+  });
+  if (unconfirmed) {
+    return { error: "This post may already be live — please review it before publishing again." };
+  }
   // Consent needs a resolved target that the owner actually owns.
   if (!post.metaTargetId) return { error: "Pick which account to post to before approving." };
   if (!post.media.length) {
