@@ -277,11 +277,59 @@ describe("reapStalePublishAttempts — reconcile never blind re-posts", () => {
     expect(n).toBe(1);
     // the post is surfaced for a human, NOT republished
     expect(m.scheduledPostUpdateMany).toHaveBeenCalledWith(expect.objectContaining({ data: expect.objectContaining({ status: "NEEDS_ATTENTION" }) }));
-    // D2: a crashed publish MAY have gone live → the attempt is UNCONFIRMED (not FAILED), so a retry
-    // is blocked (lock 4) until a human confirms.
+    // P1-1: FB has NO pre-side-effect anchor (a single /photos|/feed call), so a crashed FB publish
+    // is GENUINELY ambiguous — it may have gone live. The attempt is UNCONFIRMED (not FAILED), so a
+    // retry is blocked (lock 4) until a human confirms. (Contrast the IG null-creationId case below,
+    // which is PROVABLY not published → FAILED.)
     expect(m.publishAttemptUpdateMany).toHaveBeenCalledWith(expect.objectContaining({ data: expect.objectContaining({ state: "UNCONFIRMED" }) }));
     // no page-token resolution happened (metaConnection never read) → definitely no Graph re-post
     expect(m.metaConnectionFindUnique).not.toHaveBeenCalled();
+  });
+
+  it("P1-1: a dangling IG attempt with NO creationId → attempt FAILED (provably never published), NOT frozen by lock 4", async () => {
+    m.publishAttemptFindMany.mockResolvedValue([{ id: "pa1", scheduledPostId: "sp1", creationId: null }]);
+    m.scheduledPostFindUnique.mockResolvedValue({ ownerId: "o1", channel: "instagram", metaTargetId: "pg1", metaPostId: null, status: "PUBLISHING" });
+    const n = await reapStalePublishAttempts();
+    expect(n).toBe(1);
+    // creationId is CAS-persisted BEFORE media_publish, so a null creationId proves the container was
+    // never created → nothing went live → FAILED (retryable), NOT UNCONFIRMED.
+    expect(m.publishAttemptUpdateMany).toHaveBeenCalledWith(
+      expect.objectContaining({ where: expect.objectContaining({ state: "APPLYING" }), data: expect.objectContaining({ state: "FAILED" }) }),
+    );
+    // the post is still surfaced for a human, but the FAILED attempt won't trip lock 4
+    expect(m.scheduledPostUpdateMany).toHaveBeenCalledWith(expect.objectContaining({ data: expect.objectContaining({ status: "NEEDS_ATTENTION" }) }));
+    // no UNCONFIRMED write on this provably-safe path, and no Graph re-post
+    expect(m.publishAttemptUpdateMany.mock.calls.find((c) => c[0].data?.state === "UNCONFIRMED")).toBeFalsy();
+    expect(m.metaConnectionFindUnique).not.toHaveBeenCalled();
+
+    // …and because the attempt is FAILED (not UNCONFIRMED), lock 4's UNCONFIRMED-scoped query finds
+    // nothing → a follow-on publish (owner moved NEEDS_ATTENTION→SCHEDULED) is NOT frozen.
+    m.scheduledPostFindUnique.mockResolvedValue({ ...SCHEDULED }); // fresh SCHEDULED IG post
+    m.publishAttemptFindUnique.mockResolvedValue({ id: "pa2", scheduledPostId: "sp1", creationId: null });
+    m.publishAttemptCreate.mockResolvedValue({ id: "pa2" });
+    // lock 4 queries state:"UNCONFIRMED"; a FAILED attempt is not matched → null (not blocked).
+    m.publishAttemptFindFirst.mockImplementation(async (args: { where?: { state?: string } }) =>
+      args?.where?.state === "UNCONFIRMED" ? null : { id: "pa2" },
+    );
+    const exec = vi.fn().mockResolvedValue({ externalId: "ext_ok" });
+    await handlePublish({ scheduledPostId: "sp1" }, 0, exec);
+    expect(exec).toHaveBeenCalled(); // lock 4 did NOT block — the publish proceeded
+  });
+
+  it("P1-1: a dangling IG attempt WITH a creationId → attempt UNCONFIRMED (crash may have straddled media_publish)", async () => {
+    m.publishAttemptFindMany.mockResolvedValue([{ id: "pa1", scheduledPostId: "sp1", creationId: "container_1" }]);
+    // metaPostId null (reconcile can't short-circuit); no metaConnection → authorize refuses →
+    // reconcile fails closed to needs_attention WITHOUT any Graph re-post.
+    m.scheduledPostFindUnique.mockResolvedValue({ ownerId: "o1", channel: "instagram", metaTargetId: "pg1", metaPostId: null, status: "PUBLISHING" });
+    m.metaConnectionFindUnique.mockResolvedValue(null);
+    const n = await reapStalePublishAttempts();
+    expect(n).toBe(1);
+    // the container WAS created (creationId present) → the crash may have straddled media_publish →
+    // genuinely ambiguous → UNCONFIRMED (lock 4 blocks a re-publish until a human confirms).
+    expect(m.publishAttemptUpdateMany).toHaveBeenCalledWith(
+      expect.objectContaining({ where: expect.objectContaining({ state: "APPLYING" }), data: expect.objectContaining({ state: "UNCONFIRMED" }) }),
+    );
+    expect(m.publishAttemptUpdateMany.mock.calls.find((c) => c[0].data?.state === "FAILED")).toBeFalsy();
   });
 
   it("leaves an already-resolved (metaPostId set) attempt as published — no re-post", async () => {

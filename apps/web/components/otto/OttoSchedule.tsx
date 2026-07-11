@@ -258,6 +258,7 @@ export function OttoSchedule({
       firstComment: post.firstComment ?? "",
       metaTargetId: post.metaTargetId,
       status: post.status,
+      lastError: post.lastError,
     });
   }
 
@@ -954,6 +955,7 @@ type ComposerSeed = {
   firstComment: string;
   metaTargetId: string | null;
   status?: string;
+  lastError?: string | null;
 };
 
 /** Turn a local (dateKey,time) in tz into a UTC instant. We build the naive local time,
@@ -1231,6 +1233,15 @@ function Composer({
             </Field>
           </div>
         </div>
+
+        {/* Why this post is stuck (publish worker's lastError). Read-only disclosure so a
+            NEEDS_ATTENTION post — whose fields + Approve are disabled below — isn't a silent
+            dead-end. The confirm/link disposition action is a separate, later ticket. */}
+        {seed.status === "NEEDS_ATTENTION" && seed.lastError && (
+          <div role="status" className="text-[12.5px] text-[var(--error-soft-foreground)]">
+            Needs attention — {seed.lastError}
+          </div>
+        )}
 
         {error && <div role="alert" className="text-[12.5px] text-[var(--error-soft-foreground)]">{error}</div>}
 
