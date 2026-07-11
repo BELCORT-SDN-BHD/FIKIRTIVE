@@ -192,7 +192,8 @@ A′ 切片 1（壳契约 ~44 文件）→ 切片 2-8 → 65 页齐 → founder 
 
 ### 路线乙 · 全产品直建（founder 终局裁决）
 - 全部 function 建到最佳 + 全测；卡外部审批的（Meta App Review 等）先建满基础、用户面 Coming soon、审批到即无缝接；全城一起验证 + Otto 全城连贯。
-- **A′ 关系裁定（FIK-1 判断，双方对齐）**：A′ = 乙的 UI 车道；"65 页齐才发版"在乙下升级为"全城建成验证过才发版"。**切片 2-8 主动挂起**，待 in-depth planning 编入乙的总计划。
+- **A′ 关系裁定（FIK-1 判断，双方对齐）**：A′ = 乙的 UI 车道；"65 页齐才发版"在乙下升级为"全城建成验证过才发版"。切片 2-8 曾短暂挂起，**总计划 v0.2 将其列为道 1（UI 壳车道）后解冻**——舱单分组即施工单，工单模板复用工单 S1（scratchpad 与本账 §六交接节有配方），由新总指挥按总计划节奏派工。
+- **乙六细节（founder 裁决于其指定的设计渠道=FIK-2 session，2026-07-12 凌晨，出处留痕）**：①收费=建完再收；②验收=最终一次、每块详细报告攒合集；③花费=一次性总批，goal loop 开跑前把所有需要 founder 的东西一次收齐（《Founder 前置供给清单》由 FIK-2 汇总）；④外部申请=施工期备材料、建成后一批递交（founder informed，等待尾巴已注明）；⑤新 session 接任唯一控制面，FIK-1/FIK-2 完成交接后收官退役；⑥水准=默认死磕对标锚，单项 ≥3 次失败进待裁清单攒批报 founder。
 - **交接程序**：两控制面收尾 → repo sanitise（FIK-1，已完成）+ founder 电脑审计（FIK-2，只读清单→founder 批→动）→ in-depth planning（FIK-2 初稿，过双顾问）→ founder 开全新总指挥 session 跑直建 loop → 建成后逐 feature 对标龙头汇报。
 
 ### 今日终局机器事实（2026-07-12 00:xx +08）
@@ -206,4 +207,5 @@ A′ 切片 1（壳契约 ~44 文件）→ 切片 2-8 → 65 页齐 → founder 
 - **协议**：全局 orchestration skill v2.0.0（`~/.claude/skills/orchestration`，advisor.sh 单顾问 lane + fallback）+ 本 repo overlay + 本状态账。启动先跑 preflight，选顾问 lane（founder 惯用 sol ultra），核对 overlay pin。
 - **法律要点**：AGENTS.md 分权合并（本机 runtime 另有安全闸：任何 merge 需 founder 当轮明示）；founder 沟通=例子+短汇报；异族评审 BLOCK→核实→修→复审 循环是质量主闸（今日 20 轮评审、每轮 BLOCK 均为真问题）。
 - **在业受保护资产**（动前找 founder）：桌面主仓@northstar-immersive 旧检出、wt-lcf 的 StudioIdea WIP（durable 副本在 ~/Desktop/FIKIRTIVE-RESCUE-2026-07-10）、codex 工位群——处置清单归 FIK-2 电脑审计车道。
-- **epoch `claude-20260711-02` 于本批次合入后交还**：下一任按 overlay 启动顺序建立新 epoch，不恢复本 session 的 workflow。
+- **epoch `claude-20260711-02` 移交机制（乙⑤）**：本批次合入后，epoch 状态 = **移交待新 session 首轮认领**——新总指挥按 overlay 启动顺序核验本账后认领新 epoch，即时生效；FIK-1/FIK-2 退役留痕。交接包主体由 FIK-2 起草，本节即 FIK-1 的 L1/发布链/A′ 车道节。
+- **FIK-1 车道的 Founder 前置供给项（并入 FIK-2 总清单，避免重复索要）**：① Meta 商业验证 + OAuth 白名单加 app.fikirtive.com（发布链通电钥匙）；② D5 凭据轮换逐供应商批复（清单=CREDENTIAL-INVENTORY，Cloudflare Global Key 最优先）；③ 若要在生产前亲验原型城：staging 环境设 NORTHSTAR_PREVIEW=1（一个环境变量，手动）；④ 直建 loop 的评审吞吐依赖 codex 配额（今日触顶两次）——如 loop 期间再触顶，等待或加购由 founder 定；⑤ 本机 runtime 安全闸=任何 merge 需 founder 当轮明示，新 session 应把"放行批次"设计进 goal loop 的 founder 时刻。
