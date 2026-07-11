@@ -362,6 +362,21 @@ describe("updateScheduledPost", () => {
     expect(res).toEqual({ ok: true });
   });
 
+  it("rejects switching channel to Instagram when an attached media id is missing from the owner-scoped read (foreign/soft-deleted), fails closed", async () => {
+    mockFindFirst.mockResolvedValue({
+      status: "DRAFT",
+      channel: "facebook",
+      firstComment: null,
+      media: [{ generationId: "gen-a" }, { generationId: "gen-gone" }],
+    });
+    // gen-gone isn't in the owner-scoped result — soft-deleted or foreign. Must fail closed
+    // rather than silently skip the mime check on the id it couldn't find.
+    mockGenFindMany.mockResolvedValue([{ id: "gen-a", asset: { mime: "image/png" } }]);
+    const res = await updateScheduledPost("p1", { channel: "instagram" });
+    expect(res).toEqual({ error: "Some selected media isn't yours." });
+    expect(mockTransaction).not.toHaveBeenCalled();
+  });
+
   it("does not query generations for a channel switch to Instagram when there's no existing media", async () => {
     mockFindFirst.mockResolvedValue({ status: "DRAFT", channel: "facebook", firstComment: null, media: [] });
     mockUpdateMany.mockResolvedValue({ count: 1 });
@@ -445,6 +460,44 @@ describe("updateScheduledPost", () => {
     mockUpdateMany.mockResolvedValue({ count: 0 }); // a concurrent approve/cancel moved the row
     const res = await updateScheduledPost("p1", { caption: "race" });
     expect(res).toHaveProperty("error");
+  });
+
+  it("pins the read updatedAt in the update CAS, so a concurrent media swap that leaves status unchanged can't ride a stale channel-switch validation through", async () => {
+    // A concurrent request swaps this DRAFT's media (bumping updatedAt via Prisma @updatedAt, even
+    // though status stays DRAFT) between our read and our write. Pinning the READ updatedAt in the
+    // CAS where means that race becomes a stale conflict (count 0) instead of silently applying the
+    // channel switch on top of media it never validated.
+    const readAt = new Date("2026-07-05T03:00:00.000Z");
+    mockFindFirst.mockResolvedValue({
+      status: "DRAFT",
+      channel: "facebook",
+      firstComment: null,
+      updatedAt: readAt,
+      media: [{ generationId: "gen-a" }],
+    });
+    mockGenFindMany.mockResolvedValue([{ id: "gen-a", asset: { mime: "image/png" } }]);
+    mockUpdateMany.mockResolvedValue({ count: 1 });
+    const res = await updateScheduledPost("p1", { channel: "instagram" });
+    expect(res).toEqual({ ok: true });
+    expect(mockUpdateMany.mock.calls[0][0].where).toEqual({
+      id: "p1", ownerId: OWNER, deletedAt: null, status: "DRAFT", updatedAt: readAt,
+    });
+  });
+
+  it("a concurrent media swap that bumped updatedAt between validation and the CAS makes the channel switch a stale conflict, not a silent write", async () => {
+    mockFindFirst.mockResolvedValue({
+      status: "DRAFT",
+      channel: "facebook",
+      firstComment: null,
+      updatedAt: new Date("2026-07-05T03:00:00.000Z"),
+      media: [{ generationId: "gen-a" }],
+    });
+    mockGenFindMany.mockResolvedValue([{ id: "gen-a", asset: { mime: "image/png" } }]);
+    // ...but the CAS where now pins updatedAt too, so a concurrent media-only edit that bumped it
+    // (status stays DRAFT) makes this updateMany match zero rows.
+    mockUpdateMany.mockResolvedValue({ count: 0 });
+    const res = await updateScheduledPost("p1", { channel: "instagram" });
+    expect(res).toEqual({ error: "This post just changed — please refresh and try again." });
   });
 
   it("rejects a first comment on a channel that doesn't support it (Facebook), no write", async () => {

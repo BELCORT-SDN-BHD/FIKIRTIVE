@@ -123,7 +123,7 @@ export async function updateScheduledPost(
   // channel gates first-comment capability. A terminal / publishing / failed row is content-frozen.
   const current = await prisma.scheduledPost.findFirst({
     where: { id, ownerId: gate.ownerId, deletedAt: null },
-    select: { status: true, channel: true, firstComment: true, media: { select: { generationId: true } } },
+    select: { status: true, channel: true, firstComment: true, updatedAt: true, media: { select: { generationId: true } } },
   });
   if (!current) return { error: "Post not found." };
   if (!EDITABLE_STATUSES.has(current.status as ScheduledPostStatus)) {
@@ -216,7 +216,13 @@ export async function updateScheduledPost(
       where: { id: { in: existingIds }, ownerId: gate.ownerId, deletedAt: null },
       select: { id: true, asset: { select: { mime: true } } },
     });
-    if (owned.some((g) => !g.asset.mime.startsWith("image/"))) return { error: IG_IMAGE_ONLY_ERROR };
+    const ownedById = new Map(owned.map((g) => [g.id, g]));
+    // Fail closed, same as the media-swap path above: an attached id missing from the owner-scoped
+    // read (foreign, or since soft-deleted) must not silently skip the mime check.
+    if (existingIds.some((mediaId) => !ownedById.has(mediaId))) return { error: "Some selected media isn't yours." };
+    if (existingIds.some((mediaId) => !ownedById.get(mediaId)!.asset.mime.startsWith("image/"))) {
+      return { error: IG_IMAGE_ONLY_ERROR };
+    }
   }
   if (patch?.metaTargetId !== undefined) {
     data.metaTargetId = typeof patch.metaTargetId === "string" && patch.metaTargetId ? patch.metaTargetId : null;
@@ -233,10 +239,12 @@ export async function updateScheduledPost(
 
   try {
     await prisma.$transaction(async (tx) => {
-      // Atomic: the WHERE pins the status we validated against, so a concurrent approve/cancel that
-      // moved the row out from under us matches zero rows → conflict, never a silent clobber.
+      // Atomic: the WHERE pins the status AND updatedAt we validated against (same posture as
+      // approveScheduledPost's CAS) — a concurrent approve/cancel/edit that moved the row out from
+      // under us (incl. a media-only swap, which bumps updatedAt without changing status) matches
+      // zero rows → conflict, never a silent clobber of a channel switch validated against stale media.
       const { count } = await tx.scheduledPost.updateMany({
-        where: { id, ownerId: gate.ownerId, deletedAt: null, status: current.status },
+        where: { id, ownerId: gate.ownerId, deletedAt: null, status: current.status, updatedAt: current.updatedAt },
         data: Object.keys(data).length ? data : { updatedAt: new Date() },
       });
       if (!count) throw new Error("stale");
