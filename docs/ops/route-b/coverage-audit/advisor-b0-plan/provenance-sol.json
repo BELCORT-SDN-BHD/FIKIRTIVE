@@ -1,0 +1,14 @@
+{
+  "role": "sol",
+  "status": "incomplete: empty output",
+  "exit_code": 1,
+  "requested_model": "gpt-5.6-sol",
+  "requested_effort": "ultra",
+  "observed_model": "gpt-5.6-sol",
+  "observed_effort": "ultra",
+  "session_id": "019f5214-0dc0-70a2-a219-9259b9df95af",
+  "started": "2026-07-11T16:47:53Z",
+  "ended": "2026-07-11T16:48:03Z",
+  "prompt_sha256": "f88bcf29e93ebc1fc68de2a9a5167bcc7f6de3e0a951c46f98939bdfba75dd52",
+  "memo_sha256": null
+}

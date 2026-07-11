@@ -1,0 +1,475 @@
+{
+ "counts": {
+  "total": 70,
+  "hit": 18,
+  "missing": 19,
+  "out_suggest": 10,
+  "crosscut": 23
+ },
+ "source": "docs/BLUEPRINT.md",
+ "items": [
+  {
+   "item": "本体负责-研究(research)",
+   "citation": "BLUEPRINT.md:47",
+   "verdict": "HIT",
+   "row_id": "E2-13",
+   "note": "researchWeb+proposeResearch 技能覆盖此域"
+  },
+  {
+   "item": "本体负责-内容创作",
+   "citation": "BLUEPRINT.md:47",
+   "verdict": "HIT",
+   "row_id": "E1-01..E1-20,E2-14",
+   "note": "创作区大量行覆盖(画布/生成/分镜/prompt技能等)"
+  },
+  {
+   "item": "本体负责-排期发布与广告",
+   "citation": "BLUEPRINT.md:47",
+   "verdict": "HIT",
+   "row_id": "E4-01..E4-16",
+   "note": "排期与广告区行族覆盖"
+  },
+  {
+   "item": "本体负责-本地发现(搜索&地图)",
+   "citation": "BLUEPRINT.md:47",
+   "verdict": "MISSING",
+   "block_suggest": "B8",
+   "note": "矩阵无任何 GBP/本地搜索行;master plan §三 B8「GBP 归并行泳道薄试」是唯一线索,尚无独立行"
+  },
+  {
+   "item": "本体负责-请评",
+   "citation": "BLUEPRINT.md:47",
+   "verdict": "MISSING",
+   "block_suggest": "B8",
+   "note": "矩阵无请评行;master plan §三 B8「口碑内置『请评×奖励永久分离』」暗示归属但未开行;注意与宪法8『评价×奖励合体流永久不做』是两件事(请评本身要建,合体流不建)"
+  },
+  {
+   "item": "本体负责-推荐(referral)",
+   "citation": "BLUEPRINT.md:47",
+   "verdict": "MISSING",
+   "block_suggest": "B8",
+   "note": "矩阵与 master plan 均未见推荐(referral)独立线索,归口不确定,暂按口碑/复购邻域挂 B8,待裁"
+  },
+  {
+   "item": "本体负责-增长实验",
+   "citation": "BLUEPRINT.md:47",
+   "verdict": "MISSING",
+   "block_suggest": "B8",
+   "note": "master plan 全文未提及『增长实验』,归口最不确定的一条,暂挂 B8 待裁,不排除『不在本程』"
+  },
+  {
+   "item": "边界表-读取并验证(订单/付款/退款/库存/履约/积分只读,类比pixel tracking)",
+   "citation": "BLUEPRINT.md:48",
+   "verdict": "MISSING",
+   "block_suggest": "B6",
+   "note": "对应 master plan §三 B6『回执L3+EasyStore只读』;矩阵目前无任何 EasyStore/经营事实回读行"
+  },
+  {
+   "item": "边界表-明确交接(售后工单/退换货/物流/开票/催收/税务,read→trigger→handoff→receipt契约)",
+   "citation": "BLUEPRINT.md:49",
+   "verdict": "CROSSCUT",
+   "note": "结构性排除边界,非能力行;应落入合同『明确排除/交接契约』节,约束 B6/B5 不得越界代管这些系统"
+  },
+  {
+   "item": "边界表-永久不做(代持商家资金/税务工资系统/宪法第8条全部)",
+   "citation": "BLUEPRINT.md:50",
+   "verdict": "CROSSCUT",
+   "note": "落入合同『永久排除』节,与宪法8款项同源,不重复开能力行"
+  },
+  {
+   "item": "边界表-释义三句(自动回复归售前面/售前订金付款链接不犯money-in豁免/FIKIRTIVE自身订阅费与本表无关)",
+   "citation": "BLUEPRINT.md:52",
+   "verdict": "CROSSCUT",
+   "note": "落入合同 B5(自动回复边界)+B12(money-in豁免边界)+订阅层(自身收费边界)三节的解释性条款"
+  },
+  {
+   "item": "只有一扇门(/simple+/pro双门已废除,Pro/agency是楼层不是并排门)",
+   "citation": "BLUEPRINT.md:54",
+   "verdict": "CROSSCUT",
+   "note": "结构约束,落入 B1 壳规范,禁止任何切片重开第二扇门"
+  },
+  {
+   "item": "宪法1:安全>效率>founder易管理,顺序不可倒",
+   "citation": "BLUEPRINT.md:60",
+   "verdict": "CROSSCUT",
+   "note": "治理原则,落入合同序言/治理模型节,不单开能力行"
+  },
+  {
+   "item": "宪法2:钱路(money-in唯一入口grantCredits;spend path必过money-safety-review;开发期真实花费逐笔问founder;账本推论新花费点必进同账本)",
+   "citation": "BLUEPRINT.md:61",
+   "verdict": "CROSSCUT",
+   "note": "落入合同§四『碰钱加一关』+founder授权节;具体账本机制已由 E3-01/E3-02/E3-03(B12)承接"
+  },
+  {
+   "item": "宪法3:Otto运营契约五条铁律(计费透明/花钱前必审批/状态诚实/建议按钮引导下一步/One Otto新能力=新skill)",
+   "citation": "BLUEPRINT.md:62",
+   "verdict": "CROSSCUT",
+   "note": "行为规则,落入 B9/B12 验收维度,非独立能力行"
+  },
+  {
+   "item": "宪法4:needsApproval派生公式(cost=spend ∥ effect=write∧reach=external,fail-closed)",
+   "citation": "BLUEPRINT.md:63",
+   "verdict": "HIT",
+   "row_id": "E2-02",
+   "note": "两类例外(turn计量按轮reserve→settle见E3-01/E3-03已HIT;routine预授权见本表『生命周期自动化』行,MISSING)已分别在别处覆盖,不重复开行"
+  },
+  {
+   "item": "宪法5:定价哲学总纲(永不硬编码/毛利地板政策/内容生成定位中下/利润主场Otto+seats/双轨结构/MYR+分市场政策)",
+   "citation": "BLUEPRINT.md:64",
+   "verdict": "CROSSCUT",
+   "note": "落入 B12 验收维度;具体数值已有 E3-04~E3-08/AF1-04~AF1-06 等行HIT,分市场差异定价的具体建设见本表『定价结构-分市场差异定价』MISSING行"
+  },
+  {
+   "item": "宪法5:效率良心条款(margin赚在倍率不赚在浪费,降本工程优先于涨价)",
+   "citation": "BLUEPRINT.md:64",
+   "verdict": "HIT",
+   "row_id": "E2-18",
+   "note": "Otto引擎Prompt Caching(Phase1)是该条款的具体落地件"
+  },
+  {
+   "item": "宪法5:通道费独立账道(透明直传+单独账道,永不混入credits)",
+   "citation": "BLUEPRINT.md:64",
+   "verdict": "MISSING",
+   "block_suggest": "B12",
+   "note": "矩阵无通道费账道行;蓝图金字塔提及`harmony-05 第二账道`文件但矩阵未开对应功能行"
+  },
+  {
+   "item": "宪法6:租户铁幕(ownerId隔离,requireOwner,跨租户读一字节=事故)",
+   "citation": "BLUEPRINT.md:65",
+   "verdict": "HIT",
+   "row_id": "E3-12,E3-13",
+   "note": ""
+  },
+  {
+   "item": "宪法7:上下文桥(当前视图/选中项注入每轮对话)",
+   "citation": "BLUEPRINT.md:70",
+   "verdict": "HIT",
+   "row_id": "E2-20",
+   "note": ""
+  },
+  {
+   "item": "宪法7:Parity Manifest(action↔skill对照表+明示豁免,CI扫描)",
+   "citation": "BLUEPRINT.md:68",
+   "verdict": "HIT",
+   "row_id": "E2-15",
+   "note": "对等债基线见E2-16"
+  },
+  {
+   "item": "宪法7:live reflection(界面实时反映后台/Otto动作)",
+   "citation": "BLUEPRINT.md:78",
+   "verdict": "HIT",
+   "row_id": "E2-21",
+   "note": "注:canvas侧仍轮询,矩阵已标注此缺口"
+  },
+  {
+   "item": "宪法7:其余五项结构保证(单一动作层/读的对等/就地按钮O-12/builder分域O-09/豁免写死四类/审批经济学不变)",
+   "citation": "BLUEPRINT.md:67,69,71,72,73,74",
+   "verdict": "CROSSCUT",
+   "note": "落入 B9 验收维度(缝9 Parity Manifest治理范围内),非独立能力行;O-12/O-09 未见矩阵对应建设行,若后续要落地应转为MISSING独立处理"
+  },
+  {
+   "item": "宪法8:明确不盖-Build终端coding agent",
+   "citation": "BLUEPRINT.md:75",
+   "verdict": "OUT_SUGGEST",
+   "note": "永久排除,依据=宪法第8条明文"
+  },
+  {
+   "item": "宪法8:明确不盖-独立通用Chat",
+   "citation": "BLUEPRINT.md:75",
+   "verdict": "OUT_SUGGEST",
+   "note": "永久排除,依据=宪法第8条明文"
+  },
+  {
+   "item": "宪法8:明确不盖-Spicy/18+ NSFW",
+   "citation": "BLUEPRINT.md:75",
+   "verdict": "OUT_SUGGEST",
+   "note": "永久排除,依据=宪法第8条明文"
+  },
+  {
+   "item": "宪法8:明确不盖-开放第三方skill生态",
+   "citation": "BLUEPRINT.md:75",
+   "verdict": "OUT_SUGGEST",
+   "note": "永久排除,依据=宪法第8条明文(skill永久BELCORT内部编写)"
+  },
+  {
+   "item": "宪法8:明确不盖-对外MCP/API让外部agent操作FIKIRTIVE",
+   "citation": "BLUEPRINT.md:75",
+   "verdict": "OUT_SUGGEST",
+   "note": "永久排除,依据=宪法第8条;释宪附则⑦(BLUEPRINT.md:87)已给出平台官方协议消费方例外的边界,不冲突"
+  },
+  {
+   "item": "宪法8:明确不盖-白标",
+   "citation": "BLUEPRINT.md:75",
+   "verdict": "OUT_SUGGEST",
+   "note": "永久排除,依据=宪法第8条明文"
+  },
+  {
+   "item": "宪法5/8:永久禁止unlimited类报价",
+   "citation": "BLUEPRINT.md:64,75",
+   "verdict": "OUT_SUGGEST",
+   "note": "永久排除,依据=宪法第5条与第8条双重明文,与Otto自动化互斥"
+  },
+  {
+   "item": "宪法8:明确不盖-Slack/Notion类工作工具connectors(O-13拍板)",
+   "citation": "BLUEPRINT.md:75",
+   "verdict": "OUT_SUGGEST",
+   "note": "永久排除,依据=宪法第8条明文"
+  },
+  {
+   "item": "宪法8:明确不盖-『评价×奖励』合体流(v2.11二裁)",
+   "citation": "BLUEPRINT.md:75",
+   "verdict": "OUT_SUGGEST",
+   "note": "永久排除,依据=宪法第8条v2.11修订,Google政策风险;请评与奖励两线仍各自要建(见本表『本体负责-请评』MISSING行)"
+  },
+  {
+   "item": "宪法9:语言约定(spec/skill华语,生成prompt英文,UI文案sentence case)",
+   "citation": "BLUEPRINT.md:76",
+   "verdict": "CROSSCUT",
+   "note": "落入合同文档规范节,非能力行"
+  },
+  {
+   "item": "宪法10:技能为弱模型设计(Otto运行时永远sonnet级,专业判断冻进确定性代码)",
+   "citation": "BLUEPRINT.md:77",
+   "verdict": "CROSSCUT",
+   "note": "落入 B9/B11 验收维度;master plan §三 B11已写死『Otto联验用sonnet级,不得用Fable测』,呼应此条"
+  },
+  {
+   "item": "宪法11:GM-02里程碑",
+   "citation": "BLUEPRINT.md:78",
+   "verdict": "HIT",
+   "row_id": "draft-matrix E5-13",
+   "note": "矩阵verdict标SPLIT,待adjudication时正式拆行,各楼宿主"
+  },
+  {
+   "item": "宪法11:GM-03目标进度",
+   "citation": "BLUEPRINT.md:78",
+   "verdict": "HIT",
+   "row_id": "draft-matrix E5-13",
+   "note": "矩阵verdict标SPLIT,建议归B8 Campaign宿主"
+  },
+  {
+   "item": "宪法11:GM-04周报语气",
+   "citation": "BLUEPRINT.md:78",
+   "verdict": "HIT",
+   "row_id": "draft-matrix E5-13",
+   "note": "矩阵verdict标SPLIT,建议归B2 O-07(绩效周报,E5-05)宿主"
+  },
+  {
+   "item": "宪法11:GM-05开店完成度",
+   "citation": "BLUEPRINT.md:78",
+   "verdict": "HIT",
+   "row_id": "draft-matrix E5-12",
+   "note": "E5-12注记『GM-05由拆分行承载』,待正式拆行"
+  },
+  {
+   "item": "宪法11:GM-01 streak(founder拍板不要)",
+   "citation": "BLUEPRINT.md:78",
+   "verdict": "OUT_SUGGEST",
+   "note": "founder已明确拒绝,不建"
+  },
+  {
+   "item": "宪法11:零学习曲线三查(①每专业功能必有Otto一键入口②人工面自解释③注册到首个成果≤一次会话)",
+   "citation": "BLUEPRINT.md:78",
+   "verdict": "MISSING",
+   "block_suggest": "B9",
+   "note": "矩阵与master plan §七板块报告标准14节均未见把『三查』列为逐块验收维度,建议补入板块报告标准或B9横切验收"
+  },
+  {
+   "item": "宪法11:落地机制(单一设计系统.gb不许分叉/每个用户可感的面须过设计审/设计基准=Analytics屏)",
+   "citation": "BLUEPRINT.md:78",
+   "verdict": "CROSSCUT",
+   "note": "落入 B1 壳规范+缝7(.gb+shadcn)验收维度"
+  },
+  {
+   "item": "宪法11:信任阶梯注(学习曲线归零但信任曲线不抹除,审批闸是安全带)",
+   "citation": "BLUEPRINT.md:78",
+   "verdict": "CROSSCUT",
+   "note": "治理哲学陈述,落入合同治理原则节,不需独立能力行"
+  },
+  {
+   "item": "第二章解读边界附则(七句:豁免只管Otto半边/租户间vs平台侧/实时=秒级/开发花费vs routine预算/webhook非操作面/credits-only限用户面/官方协议消费方例外)",
+   "citation": "BLUEPRINT.md:80-87",
+   "verdict": "CROSSCUT",
+   "note": "落入合同术语定义/interpretation节,逐句对应B9/B10/B12/routine(B7)/宪法8释义等具体验收维度"
+  },
+  {
+   "item": "缝1 defineOttoSkill(Otto新能力=新skill文件,3字段+注册五步)",
+   "citation": "BLUEPRINT.md:130",
+   "verdict": "CROSSCUT",
+   "note": "落入合同B9『新Otto能力』规范节"
+  },
+  {
+   "item": "缝2 GenerationProvider(模型三表联动+provider映射,pre-charge/charged错误边界)",
+   "citation": "BLUEPRINT.md:131",
+   "verdict": "CROSSCUT",
+   "note": "落入合同B3/B9『新生成模型/供应商接入』规范节"
+  },
+  {
+   "item": "缝3 Credit ledger(reserve→settle/refund+幂等键+partial-unique索引)",
+   "citation": "BLUEPRINT.md:132",
+   "verdict": "CROSSCUT",
+   "note": "落入合同B12『新收钱点』规范节;built实现见E3-01/E3-02(已HIT)"
+  },
+  {
+   "item": "缝4 Channel foundation(OAuth+加密token+Organization.settings,Meta为范本)",
+   "citation": "BLUEPRINT.md:133",
+   "verdict": "CROSSCUT",
+   "note": "落入合同B4/B5『新渠道接入(TikTok/Lazada/Shopee/WhatsApp)』规范节"
+  },
+  {
+   "item": "缝5 Tenant model(requireOwner+ownerId全链路+TENANT_MODELS守卫)",
+   "citation": "BLUEPRINT.md:134",
+   "verdict": "CROSSCUT",
+   "note": "落入合同B10『任何新数据模型』规范节"
+  },
+  {
+   "item": "缝6 Queue/worker(core定义策略→两端createQueue→handler+回收器时间链)",
+   "citation": "BLUEPRINT.md:135",
+   "verdict": "CROSSCUT",
+   "note": "落入合同B9/B13『任何异步/长任务』规范节"
+  },
+  {
+   "item": "缝7 .gb+shadcn(单一设计系统,coral只属于Otto)",
+   "citation": "BLUEPRINT.md:136",
+   "verdict": "CROSSCUT",
+   "note": "落入合同B1『任何新界面』规范节"
+  },
+  {
+   "item": "缝8 ChatMessage卡片五道缝(kind联合→占位→双渲染器→注入过滤→流桥名单)",
+   "citation": "BLUEPRINT.md:137",
+   "verdict": "CROSSCUT",
+   "note": "落入合同B9『任何新卡片类型』规范节;E2-06(ACTION_CARD/BUILD_CARD可达性)是该缝的一个已知缺口案例"
+  },
+  {
+   "item": "缝9 Parity Manifest(每个新action出生即配skill或明示豁免,CI拦截)",
+   "citation": "BLUEPRINT.md:138",
+   "verdict": "CROSSCUT",
+   "note": "落入合同B9治理规则节;built artifact已见E2-15(HIT),此处是规则本身而非产出物"
+  },
+  {
+   "item": "对标区-CRM(respond.io级SMB-lite起步→Salesforce级深度;联系人从对话/广告自动进来,WhatsApp-first;起步不碰资金流)",
+   "citation": "BLUEPRINT.md:47,171,179",
+   "verdict": "MISSING",
+   "block_suggest": "B8",
+   "note": "master plan §二/§三已裁『CRM起步形态真点亮最小版』,矩阵无对应行"
+  },
+  {
+   "item": "对标区-Campaign管理(独立Campaign对象,不升格project;预算/编排/归因/UTM/campaign级报表)",
+   "citation": "BLUEPRINT.md:47,172,180",
+   "verdict": "MISSING",
+   "block_suggest": "B8",
+   "note": "master plan §二/§三『Campaign一期真点亮,并入B8后段』,矩阵无对应行"
+  },
+  {
+   "item": "售前对话与成交促进+自动回复/客服区WhatsApp部分(答价/数量价/定制proof/订金付款链接;共享收件箱/Comment-to-DM/AI客服O-06护栏;WhatsApp-first)",
+   "citation": "BLUEPRINT.md:47,52,173,184",
+   "verdict": "MISSING",
+   "block_suggest": "B5",
+   "note": "v2.11释义句①已将『自动回复(客服)』并入售前/营销面,与边界表『售前对话』为同一承诺,合并为一行;对应master plan B5 WhatsApp L2"
+  },
+  {
+   "item": "自动回复/客服区-email渠道(『以后但必须建』)",
+   "citation": "BLUEPRINT.md:184",
+   "verdict": "MISSING",
+   "superseded_by": "ROUTE-B-MASTER-PLAN-2026-07-12.md 冻结记录⑤(email=挂壳Coming soon,原『不在本程』改为『壳』)",
+   "block_suggest": "壳Coming-soon",
+   "note": "蓝图原句『以后但必须建』已被总计划改判为本程内挂壳"
+  },
+  {
+   "item": "复购与唤回(边界表本体负责项+终局链『口碑与复购/唤回』)",
+   "citation": "BLUEPRINT.md:41,47",
+   "verdict": "MISSING",
+   "block_suggest": "B7",
+   "note": "对应master plan B7『唤回L4(前置补:同意/频控/退订/去重)』,矩阵无对应行"
+  },
+  {
+   "item": "生命周期自动化/routine授权模型(用户创建routine一次性预授权;预算上限/范围声明/kill switch/事后摘要四件不可少)",
+   "citation": "BLUEPRINT.md:188",
+   "verdict": "MISSING",
+   "block_suggest": "B7",
+   "note": "master plan §二裁『最小版真点亮(L4唤回所需部分)+其余壳』;矩阵无对应行"
+  },
+  {
+   "item": "团队协作+审批流(租户侧RBAC,O-13/G-11拍板;多席位协作/『小编做→老板批→才发布』/评论交接)",
+   "citation": "BLUEPRINT.md:185",
+   "verdict": "MISSING",
+   "superseded_by": "ROUTE-B-MASTER-PLAN-2026-07-12.md §二(壳+Coming soon,单商家上市不阻断;宪法7债记入宪章)",
+   "block_suggest": "壳Coming-soon",
+   "note": ""
+  },
+  {
+   "item": "账务透明(credit消费明细,用户侧Account→Credits分类,可展开单笔;官方侧/admin/cost同口径聚合)",
+   "citation": "BLUEPRINT.md:186",
+   "verdict": "HIT",
+   "row_id": "E3-10",
+   "note": ""
+  },
+  {
+   "item": "订阅层(Stripe Phase4,利润在Otto定价哲学落地处)",
+   "citation": "BLUEPRINT.md:187",
+   "verdict": "MISSING",
+   "superseded_by": "ROUTE-B-MASTER-PLAN-2026-07-12.md §八Q1裁决(只收credits,席位订阅留壳)+冻结记录②",
+   "block_suggest": "壳Coming-soon",
+   "note": ""
+  },
+  {
+   "item": "手机App(远期,routine管理与审批移动面)",
+   "citation": "BLUEPRINT.md:189",
+   "verdict": "MISSING",
+   "superseded_by": "ROUTE-B-MASTER-PLAN-2026-07-12.md §二(明示不在本程)",
+   "block_suggest": "不在本程",
+   "note": ""
+  },
+  {
+   "item": "Agency/Pro楼层(多品牌管理,盖在现有楼上;开工顺序G-09行业开店模板→团队协作+G-11审批→G-10多客户伞层)",
+   "citation": "BLUEPRINT.md:176,190",
+   "verdict": "MISSING",
+   "superseded_by": "ROUTE-B-MASTER-PLAN-2026-07-12.md §二(明示不在本程)",
+   "block_suggest": "不在本程",
+   "note": ""
+  },
+  {
+   "item": "市政厅v2(团队阶级制度:SECTION_MATRIX+钱的阶级+邀请审计+staff成员制+冒充权限收紧+Otto永久豁免)",
+   "citation": "BLUEPRINT.md:191",
+   "verdict": "HIT",
+   "row_id": "E3-14",
+   "note": "E3-14注记已写『市政厅现状RBAC;市政厅v2不在本程』,与master plan §二排除吻合"
+  },
+  {
+   "item": "资产/品牌区胜负手-品牌记忆自养(从生成反馈自我学习,区别于既有Brand memory v2静态记录)",
+   "citation": "BLUEPRINT.md:175",
+   "verdict": "MISSING",
+   "block_suggest": "B3",
+   "note": "矩阵E1-11只覆盖静态版Brand memory v2,自养/自学习机制未见对应行"
+  },
+  {
+   "item": "定价结构胜负手-分市场差异定价(超MYR外的多市场定价体系)",
+   "citation": "BLUEPRINT.md:177",
+   "verdict": "MISSING",
+   "block_suggest": "B12",
+   "note": "矩阵AF1-04/AF1-06等只覆盖MYR定价,跨市场差异化定价体系未见建设行"
+  },
+  {
+   "item": "多平台广告区扩建(TikTok→Lazada→Shopee)",
+   "citation": "BLUEPRINT.md:181",
+   "verdict": "HIT",
+   "row_id": "E4-15",
+   "superseded_by": "ROUTE-B-MASTER-PLAN-2026-07-12.md §二(明示不在本程)",
+   "note": "矩阵E4-15已收录并标注OUT-charter,与范围宪章排除结论一致"
+  },
+  {
+   "item": "排期发布区平台可插拔(FB/IG先行,加新平台=加adapter不改核心)",
+   "citation": "BLUEPRINT.md:182",
+   "verdict": "HIT",
+   "row_id": "E4-16",
+   "note": ""
+  },
+  {
+   "item": "全量分析区(深化,对标Metricool/HubSpot归因,Otto主动洞察+真实投放反哺O-10)",
+   "citation": "BLUEPRINT.md:170,183",
+   "verdict": "HIT",
+   "row_id": "E5-01,E5-03,E5-04,E5-06",
+   "note": "Phase A+行已覆盖当前建设范围;后续深化仍在同一批行的持续scope内,未见独立新增承诺"
+  }
+ ]
+}

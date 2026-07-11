@@ -1,0 +1,121 @@
+{
+ "prs": [
+  {
+   "pr": "#228",
+   "commit": "b5a48d0f",
+   "summary": "本 PR 就是矩阵基线本身（main@b5a48d0f = #228 的合并提交），docs(orchestration) 治理文档，b5a48d0f..2fb2b935 区间内无属于它的额外 diff，对 121 行矩阵无增量影响。",
+   "matrix_impact": []
+  },
+  {
+   "pr": "#229",
+   "commit": "64d43701",
+   "summary": "IG 发布媒体契约守卫：在 buildMediaUrls（apps/worker/src/jobs/publish.ts）加入 Asset.mime 的 image/* 白名单闸，非 image/* 资产（如视频）不再被 ffmpeg 静默抽成 JPEG 首帧，而是走新增的 PublishMediaContractRefused → NEEDS_ATTENTION 通道，且守卫前移到 resolvePage 之前（零 Graph 调用）。仅动 IG 通道，FB 未碰。",
+   "matrix_impact": [
+    {
+     "row_id": "E4-08",
+     "change": "行原文「排期允许视频但 IG adapter 对非 JPEG 只抽单帧」的疑点已被此 PR 堵死：现在是确定性拒绝（mediaContractRefused→NEEDS_ATTENTION），不再是静默抽帧。draft-matrix.md 第 76 行已标注需刷新，本次核实属实。",
+     "evidence": "apps/worker/src/jobs/publish.ts diff in commit 64d43701（buildMediaUrls 新增 image/* 判据 + PublishMediaContractRefused 类型）"
+    }
+   ]
+  },
+  {
+   "pr": "#230",
+   "commit": "39f1c7db",
+   "summary": "恢复路径双发窗口修复：新增 PublishAttempt 状态 UNCONFIRMED（两个歧义汇点写入：ambiguous 分支 + reaper 双写）+ Lock 4（handlePublish 在任何 claim/Meta 调用前，发现 UNCONFIRMED 即拒绝→NEEDS_ATTENTION，approveScheduledPost 同闸拒绝重批）；另加 OttoSchedule 60s 有界轮询 + focus/visibility 重取，让 NEEDS_ATTENTION 的 lastError 及时可见。",
+   "matrix_impact": [
+    {
+     "row_id": "E4-03",
+     "change": "行原文「发布防双发/exactly-once（三重幂等）」的锁数量存量现状需刷新为四重：新增 Lock 4（UNCONFIRMED 攻击面）堵住了 ambiguous publish→SCHEDULED→scanDue 再选中→二次建容器 的双发窗口，此前三把锁全部旁路的缺口已修。",
+     "evidence": "packages/db/prisma/schema.prisma + apps/worker/src/jobs/publish.ts diff in commit 39f1c7db（UNCONFIRMED 状态 + Lock 4 判据）"
+    },
+    {
+     "row_id": "E4-01",
+     "change": "OttoSchedule 组件新增 NEEDS_ATTENTION 帖子的 lastError 展示行 + 60s 有界轮询/focus 重取，Composer 面板的实时性存量现状轻微增强（非结构性，仅展示与刷新时机）。",
+     "evidence": "apps/web/components/otto/OttoSchedule.tsx diff in commit 39f1c7db（第三个子提交“最小实时性”）"
+    }
+   ]
+  },
+  {
+   "pr": "#231",
+   "commit": "8a1c73e8",
+   "summary": "排期/批准入口前置 IG 媒体校验（founder 亲点：\"为什么不在 schedule 那一步就 check\"）：draftScheduledPost / approveScheduledPost / updateScheduledPost 换媒体或切渠道到 IG 时，都跑与 #229 完全一致的 image/* 白名单闸，用户点击当下即拒绝创建/批准，不必等到发布时刻才被 worker 层拦。另加批准 CAS 竞态锁定、切渠道 ownedById 闭环核对、deleteGeneration 事务内 bump 关联帖 updatedAt 使陈旧批准快照失效。",
+   "matrix_impact": [
+    {
+     "row_id": "E4-01",
+     "change": "Composer（账号选择/媒体复用等）的存量现状需补记：IG 媒体校验现前置到排期/批准/编辑三个入口，不再仅在发布时刻拦截。",
+     "evidence": "apps/web/lib/schedule-actions.ts + schedule-service.ts diff in commit 8a1c73e8（draftScheduledPost/approveScheduledPost/updateScheduledPost 新增 IG_IMAGE_ONLY_ERROR 闸）"
+    },
+    {
+     "row_id": "E4-08",
+     "change": "与 #229 同判据（image/* 白名单）现覆盖到排期/批准 UI 入口层，worker 层仍保留作为 Otto/API 等非 UI 入口的最后防线——媒体契约的『何时被拦』存量现状需一并刷新。",
+     "evidence": "commit 8a1c73e8 提交信息：\"判据与 #229 worker 守卫完全一致（image/* 白名单）；worker 层最后防线原样保留\""
+    }
+   ]
+  },
+  {
+   "pr": "#232",
+   "commit": "16f2abcf",
+   "summary": "A′ 地基 PR-0：把冻结设计基准（54c1de0b）的 northstar 原型城骨架（layout/page/registry/shell/mock + immersive _context/_store/_kit/_selectors 等 11 文件闭包）逐字节移植进 main，仅 apps/web/app/northstar/* 与 apps/web/components/northstar/*，生产环境 NODE_ENV=production 且 NORTHSTAR_PREVIEW!=1 时 404 不可见；proxy.ts 只加一行豁免。",
+   "matrix_impact": []
+  },
+  {
+   "pr": "#233",
+   "commit": "647f490f",
+   "summary": "媒体字节验真：新增 packages/core/media-sniff（有界字节前缀→canonical mime，白名单 jpeg/png/webp，拒 GIF/animated-WebP/APNG）+ packages/storage readBoundedPrefix，worker buildMediaUrls 在转码/发布前对存储对象逐资产做字节级验真（不再只信 Asset.mime 字符串），转码判据也改用 sniff 结果而非扩展名；web 端全部上传/落库入口（upload-actions.ts / asset-actions.ts）改为服务端 sniff 字节后持久化 canonical mime，client 自报的 File.type/扩展名降级为仅提示。堵住了「真 mp4 谎报 image/png」绕过 #229/#231 字符串闸的漏洞。",
+   "matrix_impact": [
+    {
+     "row_id": "E4-08",
+     "change": "媒体契约的存量现状需再刷新一层：#229/#233 双层防线中，#233 把校验从『client 自报 mime 字符串』升级为『发布前对存储字节做 sniff 验真』，堵住伪装 mp4 绕过 mime 白名单的口子。draft-matrix.md 第 76 行备注仅提到 #229/#233 双层，但未点出字节验真这层本身也可能被存储读失败绕过——已按 fail-closed（读失败 retryable、绝不采信旧 mime）处理，值得在矩阵备注中写清楚。",
+     "evidence": "packages/core/src/media-sniff.ts + apps/worker/src/jobs/publish.ts diff in commit 647f490f"
+    },
+    {
+     "row_id": "E1-17",
+     "change": "直传上传链（authorize/finalize/ingest）现新增服务端字节 sniff 验真步骤（finalize 对图片扩展名读前缀验真，写入 canonical mime），是对『哈希复验』同一防线族的补强，存量现状描述可以把这层字节验真也列进去。",
+     "evidence": "apps/web/lib/upload-actions.ts + asset-actions.ts diff in commit 647f490f（resolveUploadMime / readBoundedPrefix 接入 finalizeCandidateUploads）"
+    }
+   ]
+  },
+  {
+   "pr": "#234",
+   "commit": "73ce2d95",
+   "summary": "Otto 失败回合状态诚实修复：渲染器现直接从持久的 message.parts 里的 data-error part 兜底显示错误（gated on !streamError），此前失败只存在临时 React state，用户发下一条消息后 streamError 被清空，失败痕迹从会话记录里消失（违反宪法 11 状态诚实）。改动仅限 OttoChatStream.tsx 与 otto-status-helpers（+新增纯函数 dataErrorOf）。",
+   "matrix_impact": [
+    {
+     "row_id": "E2-04",
+     "change": "streaming 聊天链的存量现状可补一句：失败回合的错误现在会持久可见（不再随下一条消息清空），是对 UI 渲染正确性的补丁，非结构性改动，矩阵未设专门行，暂挂在 E2-04 备注里。",
+     "evidence": "apps/web/components/otto/OttoChatStream.tsx diff in commit 73ce2d95"
+    }
+   ]
+  },
+  {
+   "pr": "#235",
+   "commit": "52949e6c",
+   "summary": "纯文档：新增 docs/ops/CREDENTIAL-INVENTORY-2026-07-11.md + docs/ops/ORCHESTRATOR-STATE.md 状态账条目，登记当日裁决与证据，无代码改动。",
+   "matrix_impact": []
+  },
+  {
+   "pr": "#236",
+   "commit": "9a8569e0",
+   "summary": "A′ 切片 1：继续从冻结基准移植 immersive 壳契约 + 全局横切共 41 文件（后续两次评审修正后共约 55 文件）落 main，同时把 check-northstar-imports.sh 防呆围栏脚本接入 CI（.github/workflows/ci.yml 新增一行），并在两轮异族评审后加固围栏正则（堵 @/lib/actions 显式导入、动态 import()、server-only 副作用导入、tab/空白符变体绕过）。生产仍 404 不可见。",
+   "matrix_impact": [
+    {
+     "row_id": "I1-15",
+     "change": "CI 安全围栏清单需新增一条：check-northstar-imports.sh（拦 app/northstar* 及 components/northstar 误导入服务端/数据库/鉴权模块），本 PR 内两轮评审把它加固到能拦三种导入形式（静态/动态/副作用）+ 空白符变体。",
+     "evidence": ".github/workflows/ci.yml diff in commit 9a8569e0（新增 check-northstar-imports.sh 一行）；scripts/check-northstar-imports.sh 加固见该 commit 后两个子提交"
+    }
+   ]
+  },
+  {
+   "pr": "#237",
+   "commit": "27de3295",
+   "summary": "research job 持久化错误脱敏：research.ts 是 6 个 worker job（gen/refgen/render/caption/publish/research）中唯一一个把原始 e.message 直接写入 ResearchCard.payload.error / ResearchJob.error 的，其余 5 个都先过 sanitizeError()。本 PR 让 researchWeb 抛出的网络/fetch 错误也先经 apps/worker/src/redact.ts 的 sanitizeError()（URL 脱敏 + 长度封顶）再落库。MaxTurnsExceededError 的固定友好提示未受影响（本就不是泄漏源）。",
+   "matrix_impact": [
+    {
+     "row_id": "I1-05",
+     "change": "行原文点名 sanitizeError/scrubUrls 的覆盖面问题，draft-matrix.md 第 116 行已标注「#237 已合：research.ts sanitizeError 已修——刷新」，本次核实属实：research.ts 现已与其余 5 个 job 对齐，6/6 全覆盖，此前 I1 审计指出的泄漏点已堵上。",
+     "evidence": "apps/worker/src/jobs/research.ts:41,219-222 diff in commit 27de3295"
+    }
+   ]
+  }
+ ]
+}
