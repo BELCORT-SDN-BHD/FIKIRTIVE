@@ -1,17 +1,27 @@
 # FIKIRTIVE 编排状态账
 
 > 性质：可恢复控制面的最后核验检查点，不替代 git、PR、CI、部署与进程事实。
-> 状态：`trial`，founder 已批准开始。更新时间：2026-07-11 11:59 +08（Asia/Kuala_Lumpur）。
+> 状态：`trial`，founder 已批准开始。更新时间：2026-07-11 14:30 +08（Asia/Kuala_Lumpur）。
 
 ## 一、当前控制权
 
 - **Founder**：founder-only 类别最终裁决；已授权 #228 生效后的普通 PR 由 control plane 按分权规则处理。
-- **Codex**：当前唯一控制面；分支 `codex/orchestrator-handoff`；本机配置 `gpt-5.6-sol / ultra`。
-- **Control-plane claim**：epoch `trial-20260711-01`，由当前 Codex desktop task 持有；旧 Claude session 已退出。仅本机/本状态账可核，尚无共享 lease，因此 cross-machine exclusivity=`unknown`；发现第二个 claim 时停止派单并交 founder 消歧。
+- **Codex**（已交接，见下方"控制权交接 2026-07-11 14:30"）：原控制面；分支 `codex/orchestrator-handoff`；rollout `019f4ce8-74b2-7011-921d-b1fdd253ccab` 已完成交接留言（最后写入 2026-07-11T04:07:20Z）。
+- **Control-plane claim**：epoch `claude-20260711-02`，由 Claude Code session `3e104495-bdd7-423a-bf20-0390071052f5` 持有（founder 2026-07-11 明确指令接管）；前任 epoch `trial-20260711-01` superseded，历史保留。仅本机/本状态账可核，尚无共享 lease，因此 cross-machine exclusivity=`unknown`；发现第二个 claim 时停止派单并交 founder 消歧。
 - **Fable 5**：Tier 1/2 primary judgment advisor，调用必须请求 `max`；完成证明与本次 incomplete 记录见下表。
 - **Independent SOL Ultra**：Tier 1 adversarial advisor；Tier 2 deep planning/冲突时加入；Fable unavailable 时只能标成 fallback，不能一人占两席。
-- **全局 skill**：唯一真源是 private `BELCORT-SDN-BHD/orchestration-skill@v1.0.0`（commit `8f432670494f`；`SKILL.md` SHA-256 `b3b47fc196a1d2223ff8c3a79a7faa83a2f3fce2985a746db0e155819c4fb333`）；本机 clone detached 在该 tag，`~/.claude/skills/orchestration` 与 `~/.codex/skills/orchestration` 均 symlink 到同一 skill。FIKIRTIVE 只用 `.claude/skills/fikirtive-orchestration-overlay/SKILL.md` 追加项目法律，不再保存会遮蔽全局版本的同名副本。
+- **全局 skill**：唯一真源是 private `BELCORT-SDN-BHD/orchestration-skill@v2.0.0`（commit `4095530a6621cca6ffcbce811e85d817aca5091e`；`SKILL.md` SHA-256 `ef4ad6ff4be9b2286a825291514abf02ef4583a0ac415ae954fbef345153daeb`）；本机 clone 在 `main` 且与该 tag 同 commit、working tree 干净，`~/.claude/skills/orchestration` 与 `~/.codex/skills/orchestration` 均 symlink 到同一 skill。FIKIRTIVE 只用 `.claude/skills/fikirtive-orchestration-overlay/SKILL.md` 追加项目法律，不再保存会遮蔽全局版本的同名副本。
 - **旧 Claude session**：`3d3b73a4-6c32-45a3-a845-4185acfb7d1d` 的主 backend 已退出，遗留子进程保持停止态；不得恢复旧 workflow 或沿用其口头状态。
+
+### 控制权交接（2026-07-11 14:30 +08）
+
+- **Epoch `claude-20260711-02`**（fencing token，接替 `trial-20260711-01`）。Founder 于 2026-07-11 在新 Claude session 明确指令：以全局 `/orchestration` skill（选定顾问 sol ultra）接管、清除同名冲突、继续 Codex session `019f4ce8` 的程序。
+- **旧控制面处置**：Codex rollout `019f4ce8-74b2-7011-921d-b1fdd253ccab` 记为 completed（交接留言完整，最后写入 2026-07-11T04:07:20Z）；其 claim superseded by founder direction，历史不删。
+- **新控制面**：Claude Code session `3e104495-bdd7-423a-bf20-0390071052f5`（claude 2.1.206，model `claude-fable-5`，worktree `orchestration-skill-setup-1312a5`）。
+- **顾问拓扑（依 global skill v2.0.0）**：selected lane = SOL `gpt-5.6-sol / ultra`（founder 指定），fallback = Fable `max`（独立、不得静默替换、fallback 输出必须明确标注）。Tier 1 双盲 council 模式仍可由 founder 点名启用，但操作协议以 v2 单 lane + fallback 为准。
+- **本轮顾问证据**：Sol memo session `019f4fc3-217e-7771-b276-a63fb4dfd308`（2026-07-11T06:00:15Z–06:05:16Z，status `complete`，requested=observed `gpt-5.6-sol / ultra`）；prompt SHA-256 `8b874885c0ef3a8e714f661456561d153c2a577b4520df03ad8defd8277b2b51`；memo SHA-256 `856c316f06391f2c059d6bed6a6d51f7b30ce9dbd453fbbcce671d1c495dd42a`。裁决：v2.0.0 发布修 pin 后由 founder 合并本 PR；#228 落地并通过合并后核查前，控制面仅做治理修复与只读工作。
+- **关联动作**：orchestration-skill PR #2（VERSION → 2.0.0，founder 合并于 2026-07-11T08:19:53Z，merge commit `4095530a6621`；tag `v2.0.0` 已打；本机 clone 已快进）。D5 只读凭据盘点已完成（无值、无外呼），入库走 #228 之后的普通 PR。
+- **约束**：worker 不接受无本 epoch 的工单；#228 合入且五项合并后核查（新 checkout 无同名 skill / 双 CLI 解析到全局 skill / clone 与 pin 一致 / epoch 可见 / Sol 可用）通过前，不派判断级或改码 worker。
 
 ## 二、机器地面真相
 

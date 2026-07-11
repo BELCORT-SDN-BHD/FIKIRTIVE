@@ -11,7 +11,7 @@ description: FIKIRTIVE 的项目专属编排约束层。任何 agent 在本仓�
 - Claude：`$HOME/.claude/skills/orchestration/SKILL.md`
 - Canonical source：`BELCORT-SDN-BHD/orchestration-skill`
 
-本 overlay 的协议兼容基线是 global orchestration `VERSION 1.0.0`、source commit `8f432670494f2a2b086f27c3e32e6cb9eb667f90`、`SKILL.md` SHA-256 `b3b47fc196a1d2223ff8c3a79a7faa83a2f3fce2985a746db0e155819c4fb333`。若全局 skill 缺失、`preflight.sh` 报两条安装路径不一致、版本/hash 不符，或当前 checkout 仍含同名 `.claude/skills/orchestration/`，停止判断级编排并向 founder 报告。不得在启动时自动 fetch/pull，不得悄悄复制本文件来重建通用协议，也不得把旧 transcript 当作替代。安装或更新全局工具属于机器状态变更，须有用户授权并使用现有 GitHub 身份。
+本 overlay 的协议兼容基线是 global orchestration `VERSION 2.0.0`、source commit `4095530a6621cca6ffcbce811e85d817aca5091e`（tag `v2.0.0`）、`SKILL.md` SHA-256 `ef4ad6ff4be9b2286a825291514abf02ef4583a0ac415ae954fbef345153daeb`。若全局 skill 缺失、`preflight.sh` 报两条安装路径不一致、版本/hash 不符，或当前 checkout 仍含同名 `.claude/skills/orchestration/`，停止判断级编排并向 founder 报告。不得在启动时自动 fetch/pull，不得悄悄复制本文件来重建通用协议，也不得把旧 transcript 当作替代。安装或更新全局工具属于机器状态变更，须有用户授权并使用现有 GitHub 身份。
 
 ## 启动顺序
 
