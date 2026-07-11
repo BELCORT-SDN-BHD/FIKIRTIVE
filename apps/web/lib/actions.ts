@@ -12,6 +12,8 @@ import {
   srcToStorageKey,
   storageKey,
   storageKeyToSrc,
+  resolveUploadMime,
+  MEDIA_SNIFF_BYTES,
   INGEST_QUEUE,
   RENDER_QUEUE,
   CAPTION_QUEUE,
@@ -21,7 +23,7 @@ import {
   type RenderJobData,
 } from "@fikirtive/core";
 import type { EntityType, ShotStatus } from "@fikirtive/db";
-import { storage, extFromFilename, mimeOf } from "./storage";
+import { storage, extFromFilename } from "./storage";
 import { getBoss } from "./queue";
 import { buildEntitySnapshot } from "./entity-snapshot";
 import { buildBoardEdit, transitionFor } from "./edit";
@@ -63,7 +65,12 @@ async function ingestFile(ownerId: string, file: File) {
       ownerId,
       contentHash,
       ext,
-      mime: file.type || mimeOf(ext),
+      // 工单 F: persist the mime the BYTES prove, not client File.type. A confirmed static image →
+      // its canonical mime; an image-ext file whose bytes aren't that image → application/octet-
+      // stream (a caught lie, naturally unpublishable); video/audio keep their ext→mime mapping.
+      // File.type is only a hint now and is no longer stored. The worker publish gate re-verifies
+      // bytes at the IG boundary regardless.
+      mime: resolveUploadMime(bytes.subarray(0, MEDIA_SNIFF_BYTES), ext),
       sizeBytes: BigInt(bytes.byteLength),
       originalFilename: file.name,
       source: "UPLOAD" as const,

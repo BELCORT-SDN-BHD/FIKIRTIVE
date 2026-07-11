@@ -23,6 +23,9 @@ import {
   finalizeUploadsInput,
   storageKey,
   mimeOf,
+  resolveUploadMime,
+  isStaticImageExt,
+  MEDIA_SNIFF_BYTES,
   newId,
   uploadExtFromFilename,
   INGEST_QUEUE,
@@ -33,6 +36,7 @@ import {
   type AuthorizeUploadResult,
   type FinalizedUpload,
 } from "@fikirtive/core";
+import { readBoundedPrefix } from "@fikirtive/storage";
 import { storage } from "@/lib/storage";
 import { getBoss } from "@/lib/queue";
 import { buildEntitySnapshot } from "@/lib/entity-snapshot";
@@ -182,10 +186,31 @@ export async function finalizeCandidateUploads(
     return { error: failures[0]?.reason ?? "No files could be finalized." };
   }
 
+  // 工单 F: byte-verify each finalized IMAGE upload against the stored object — the browser declared
+  // the ext, the bytes decide the persisted mime (a video renamed x.png → application/octet-stream,
+  // not image/png). Only image exts are read (the static-image sniffer can't verify video/audio,
+  // which keep their ext→mime). Read OUTSIDE the transaction. Best-effort: a transient read failure
+  // degrades to the ext mime — the worker publish gate re-verifies bytes at the IG boundary anyway.
+  const mimeByKey = new Map<string, string>();
+  for (const { key, file } of verified) {
+    if (!isStaticImageExt(file.ext)) {
+      mimeByKey.set(key, mimeOf(file.ext));
+      continue;
+    }
+    try {
+      const prefix = await readBoundedPrefix(storage, key, MEDIA_SNIFF_BYTES);
+      mimeByKey.set(key, resolveUploadMime(prefix, file.ext));
+    } catch (e) {
+      console.error(`[upload] mime byte-check read failed for ${key}, keeping ext mime:`, e instanceof Error ? e.message : e);
+      mimeByKey.set(key, mimeOf(file.ext));
+    }
+  }
+
   const assetIds: string[] = [];
   const generationIds: string[] = [];
   await prisma.$transaction(async (tx) => {
-    for (const { file } of verified) {
+    for (const { key, file } of verified) {
+      const mime = mimeByKey.get(key) ?? mimeOf(file.ext);
       const asset = await tx.asset.upsert({
         where: { ownerId_contentHash: { ownerId, contentHash: file.sha256 } },
         // resurrect AND realign to the object we just HEAD-verified: a prior
@@ -196,7 +221,7 @@ export async function finalizeCandidateUploads(
         update: {
           deletedAt: null,
           ext: file.ext,
-          mime: mimeOf(file.ext),
+          mime,
           sizeBytes: BigInt(file.sizeBytes),
           originalFilename: file.originalFilename,
         },
@@ -205,7 +230,7 @@ export async function finalizeCandidateUploads(
           ownerId,
           contentHash: file.sha256,
           ext: file.ext,
-          mime: mimeOf(file.ext),
+          mime,
           sizeBytes: BigInt(file.sizeBytes),
           originalFilename: file.originalFilename,
           source: "UPLOAD" as const,
