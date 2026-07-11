@@ -1,6 +1,6 @@
 {
  "frozen_at": "2026-07-12",
- "baseline": "main@1b1414d9",
+ "baseline": "main@c9fa1c64",
  "rows": {
   "AF1-04": {
    "block": "B12",
@@ -57,6 +57,30 @@
   "B0-10": {
    "block": "B3",
    "cap_sha8": "0ee6aa04"
+  },
+  "B0-100": {
+   "block": "B3",
+   "cap_sha8": "dffb4d6e"
+  },
+  "B0-101": {
+   "block": "B3",
+   "cap_sha8": "e037f0f1"
+  },
+  "B0-102": {
+   "block": "B10",
+   "cap_sha8": "5bdfb51a"
+  },
+  "B0-103": {
+   "block": "B4",
+   "cap_sha8": "9a8fdf3a"
+  },
+  "B0-104": {
+   "block": "B10",
+   "cap_sha8": "b3f573d0"
+  },
+  "B0-105": {
+   "block": "B10",
+   "cap_sha8": "1b36db1f"
   },
   "B0-11": {
    "block": "B3",
@@ -389,6 +413,30 @@
   "B0-93": {
    "block": "B13",
    "cap_sha8": "8049525c"
+  },
+  "B0-94": {
+   "block": "B3",
+   "cap_sha8": "1b5216e7"
+  },
+  "B0-95": {
+   "block": "B3",
+   "cap_sha8": "490e4489"
+  },
+  "B0-96": {
+   "block": "B3",
+   "cap_sha8": "5c0ee4f2"
+  },
+  "B0-97": {
+   "block": "B3",
+   "cap_sha8": "0f17ac54"
+  },
+  "B0-98": {
+   "block": "B5",
+   "cap_sha8": "0e06ed22"
+  },
+  "B0-99": {
+   "block": "B7",
+   "cap_sha8": "24c7f7dc"
   },
   "E1-01": {
    "block": "B3",
@@ -830,6 +878,9 @@
    "kind": "CROSSCUT"
   },
   "CC-GM02": {
+   "kind": "CROSSCUT"
+  },
+  "CC-O12": {
    "kind": "CROSSCUT"
   },
   "CC-SEAMS": {
