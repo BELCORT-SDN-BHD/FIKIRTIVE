@@ -11,7 +11,7 @@ DIRS="apps/web/app/northstar apps/web/app/northstar-immersive apps/web/component
 # Three forms are fenced: static `from "..."`, dynamic `import("...")`, and the
 # side-effect form `import "server-only"`. `lib/actions` (THE server-actions module)
 # is fenced explicitly — it doesn't match the `*-actions` suffix pattern.
-bad=$(grep -rnE "(from |import\()[\"'][^\"']*(-actions|auth-guard|server-only)([\"']|/)|(from |import\()[\"']@fikirtive/(db|generation)|(from |import\()[\"'][^\"']*lib/(auth|actions)([\"']|/)|import [\"']server-only[\"']" \
+bad=$(grep -rnE "(from[[:space:]]+|import[[:space:]]*\([[:space:]]*)[\"'][^\"']*(-actions|auth-guard|server-only)([\"']|/)|(from[[:space:]]+|import[[:space:]]*\([[:space:]]*)[\"']@fikirtive/(db|generation)|(from[[:space:]]+|import[[:space:]]*\([[:space:]]*)[\"'][^\"']*lib/(auth|actions)([\"']|/)|import[[:space:]]+[\"']server-only[\"']" \
   $DIRS --include='*.ts' --include='*.tsx' 2>/dev/null | grep -vE ':\s*(\*|//)' || true)
 
 if [ -n "$bad" ]; then
