@@ -28,8 +28,8 @@
 | 席位 | 首选 | effort | 责任与边界 |
 |---|---|---|---|
 | Recoverable control plane | GPT-5.6 Sol | `ultra` | 维护状态、拆任务、路由、验证、汇报；不自审自合，不越过生产/钱/租户/治理闸 |
-| Judgment co-orchestrator | Fable 5 | `max` | 一级/二级产品、架构、设计、审计判断；fresh、read-only，不承载施工主循环 |
-| Fable clean-room fallback | 独立 GPT-5.6 Sol | `ultra` | 仅当 Fable unavailable/incomplete；ephemeral、read-only、无旧结论、不可 resume；标签不得写成 Fable |
+| Primary judgment advisor | Fable 5 | `max` | Tier 1/2 产品、架构、设计、审计判断；fresh、blind、默认 tool-less，不承载施工主循环 |
+| Independent adversarial advisor | 独立 GPT-5.6 Sol | `ultra` | Tier 1 必到；Tier 2 的 deep planning/跨系统冲突时加入；ephemeral、blind、evidence-only、不可 resume；Fable unavailable 时只能标成 fallback，不能一人占两席 |
 | Deep implementation / native review | Opus 4.8 | `high` 默认；高风险 `xhigh/max` | 跨模块实现、复杂 debugging、长上下文审查；钱路/租户/安全件只施工或审查，不独自批准 |
 | Bounded production work | Sonnet 5 | `high` | 既定设计内的代码、测试、批量变体；范围漂移立即升级 |
 | Mechanical worker | Haiku 4.5 或经试工合格的轻量模型 | `medium`；失败升 `high` | URL、清单、格式、简单 fixture；完成必须由工具/测试证明 |
@@ -40,10 +40,10 @@
 
 | 任务 | 首选组合 | effort 规则 | 必要复核 |
 |---|---|---|---|
-| 产品身份、ICP、品牌、商业模式 | Codex control plane + Fable | `ultra` + `max` | founder 最终裁决；Fable 不可用才启 clean-room SOL Ultra |
-| 架构、领域/数据模型、跨模块接口 | Codex + Fable；Opus 施工/审查 | `ultra` + `max`；Opus `xhigh` | 方案与实现分席；schema/migration 永远 founder-only merge |
-| 钱路、tenant、安全、凭据 | Codex + Fable；Opus 安全审查 | 顾问 `max`，审查 `max` | exactly-once/ownerId 机器 gate + founder；任何单模型都不能批准 |
-| UI/UX 方向、旗舰交互 | Fable 判断；Opus/Sonnet 实现 | 方向 `max`，实现 `high/xhigh` | 截图/真实浏览器/任务完成率盲评，不以代码完成代替体验完成 |
+| 产品身份、ICP、品牌、商业模式 | Control plane + Fable + independent SOL | `ultra` + `max` + `ultra` | 两位 advisor 吃同一盲化证据包；founder 最终裁决；缺席时标 degraded，不伪报 council complete |
+| 架构、领域/数据模型、跨模块接口 | Tier 2 为 control plane + Fable；不可逆/跨系统升 Tier 1 加 SOL；Opus 施工/审查 | control plane `ultra`、Fable `max`、SOL `ultra`；Opus `xhigh` | 方案与实现分席；schema/migration 永远 founder-only merge |
+| 钱路、tenant、安全、凭据 | Control plane + Fable + independent SOL；Opus 安全审查 | 两位顾问最高档，审查 `max` | exactly-once/ownerId 机器 gate + founder；任何单模型都不能批准 |
+| UI/UX 方向、旗舰交互 | Fable 主判断；deep planning/跨系统争议加 SOL；Opus/Sonnet 实现 | 方向 `max/ultra`，实现 `high/xhigh` | 截图/真实浏览器/任务完成率盲评，不以代码完成代替体验完成 |
 | 普通 feature / bug fix | Sonnet 5 或 Opus 4.8 | 明确边界用 `high`；跨模块/难 bug 升 `xhigh` | 单测、集成、web build；异族 review 按风险抽/全审 |
 | PR 独立 review | 与作者不同家族 | 普通 `high`；重要 `xhigh/max` | reviewer 无写权限；逐条 disposition；不能让作者本人当唯一 reviewer |
 | 最新资料/竞品/法规研究 | Sol/Opus 只读研究 | 单线 `high/xhigh`；多线综合才 `ultra/max` | 只用一手来源；时点、URL、未知项入证据包 |
@@ -64,6 +64,7 @@
 - capacity/refusal → 立即 `unavailable`，不在同一 session 反复撞；
 - fallback prompt 只含 founder 原话、法律、raw evidence、选项；隐藏 Codex recommendation 与旧 advisor answer；
 - 独立 memo 完成后才能向 fallback 展示 Codex 论纲做第二回合挑战。
+- Tier 1 的 Fable 与 SOL 首轮互盲；Fable unavailable 时，SOL 结果只能标为 fallback，不能再起第二个 SOL 补成两席。
 
 ## 5. Liveness budget
 

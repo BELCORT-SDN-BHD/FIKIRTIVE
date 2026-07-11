@@ -1,14 +1,16 @@
 # FIKIRTIVE 编排状态账
 
 > 性质：可恢复控制面的最后核验检查点，不替代 git、PR、CI、部署与进程事实。
-> 状态：`trial`，founder 已批准开始。更新时间：2026-07-11 03:32 +08（Asia/Kuala_Lumpur）。
+> 状态：`trial`，founder 已批准开始。更新时间：2026-07-11 11:59 +08（Asia/Kuala_Lumpur）。
 
 ## 一、当前控制权
 
 - **Founder**：founder-only 类别最终裁决；已授权 #228 生效后的普通 PR 由 control plane 按分权规则处理。
 - **Codex**：当前唯一控制面；分支 `codex/orchestrator-handoff`；本机配置 `gpt-5.6-sol / ultra`。
-- **Fable 5**：一级/二级判断联署顾问，调用必须请求 `max`；完成证明与本次 incomplete 记录见下表。
-- **全局 skill**：`~/.claude/skills/orchestration` 是通用实体；`~/.codex/skills/orchestration` 以 symlink 共用它。FIKIRTIVE repo 版优先。
+- **Control-plane claim**：epoch `trial-20260711-01`，由当前 Codex desktop task 持有；旧 Claude session 已退出。仅本机/本状态账可核，尚无共享 lease，因此 cross-machine exclusivity=`unknown`；发现第二个 claim 时停止派单并交 founder 消歧。
+- **Fable 5**：Tier 1/2 primary judgment advisor，调用必须请求 `max`；完成证明与本次 incomplete 记录见下表。
+- **Independent SOL Ultra**：Tier 1 adversarial advisor；Tier 2 deep planning/冲突时加入；Fable unavailable 时只能标成 fallback，不能一人占两席。
+- **全局 skill**：唯一真源是 private `BELCORT-SDN-BHD/orchestration-skill@v1.0.0`（commit `8f432670494f`；`SKILL.md` SHA-256 `b3b47fc196a1d2223ff8c3a79a7faa83a2f3fce2985a746db0e155819c4fb333`）；本机 clone detached 在该 tag，`~/.claude/skills/orchestration` 与 `~/.codex/skills/orchestration` 均 symlink 到同一 skill。FIKIRTIVE 只用 `.claude/skills/fikirtive-orchestration-overlay/SKILL.md` 追加项目法律，不再保存会遮蔽全局版本的同名副本。
 - **旧 Claude session**：`3d3b73a4-6c32-45a3-a845-4185acfb7d1d` 的主 backend 已退出，遗留子进程保持停止态；不得恢复旧 workflow 或沿用其口头状态。
 
 ## 二、机器地面真相
@@ -32,6 +34,10 @@
 | 治理 | `3839889c-e68a-477c-bbf3-250db22f388e` / 17:38:00–17:42:01 | `~/.claude/projects/-Users-winnin--codex-worktrees-1850-FIKIRTIVE/3839889c-e68a-477c-bbf3-250db22f388e.jsonl` | `claude-fable-5` / 0 | `4a7862f5590593f0e653f4c17add48f03b7018d7464e442ca4665d64f7ca8a3d` |
 | 产品/时序 | `9c385946-e8d3-4919-812c-b9121a248213` / 17:44:06–17:49:28 | `~/.claude/projects/-Users-winnin--codex-worktrees-1850-FIKIRTIVE/9c385946-e8d3-4919-812c-b9121a248213.jsonl` | `claude-fable-5` / 0 | `16de80074849a82c85ab171f8b3a2f46a7580d5a9ae4cccfc682e69b5cb9360c` |
 | 模型/effort 复核（未完成） | `535aad46-c402-4d63-b161-8e71fbebbb5f` / 19:00:05–19:05:24 | `~/.claude/projects/-Users-winnin--codex-worktrees-1850-FIKIRTIVE/535aad46-c402-4d63-b161-8e71fbebbb5f.jsonl` | observed `claude-fable-5` / fallback 0；requested `max`，applied unknown；14 assistant records、无 `end_turn` | `f6413585b483a6ebe494194fcaa3e1e5458b5d7e347866bcd38c24e1538f10bc` |
+| Global skill 架构盲审 | `44562769-f630-4cde-b21d-d61eb03538df` / 03:39:08–03:46:43 | `~/Desktop/FIKIRTIVE-RESCUE-2026-07-10/ORCHESTRATION-PROOFS-2026-07-11/GLOBAL-SKILL-COUNCIL/` | `Fable 5 verified, complete`；observed `claude-fable-5`；requested `max`，applied unknown；fallback 0 | memo `bccb0aabd89fe7d6cedbc98e710089f669663187f1ee2ca333ae8c99f8bb97a0`；provenance `52853ce20236f4474084805425495aa2ff827fdbf5dde21a18c900b1a891dc88` |
+| Global skill 对抗盲审 | `019f4f41-edfa-7de1-8a58-0802e5dbcf16` / 03:39:08–03:42:12 | 同上 `GLOBAL-SKILL-COUNCIL/` | `independent SOL Ultra, complete`；requested `gpt-5.6-sol / ultra`；observed model/effort unknown；无 substitute | memo `31eee15de62f409c46b2acc05873d67b657eed78b935129a465f15599305a077`；provenance `3761e7137acb3fbdcf0d0912254597e81fe2b0c6997b8fe327cb88a788a85957` |
+
+Global council 两路收到同一份 evidence pack，SHA-256 `4b81eafde5d230fd10ffcae019d06e31a48e392bbde2e3f23b78369051c189d1`；首轮均未看 control-plane recommendation 或对方输出。
 
 ### 2026-07-11 advisor incident
 
@@ -76,9 +82,9 @@
 
 > 2026-07-11 founder 明确回复：D0–D5 全部可执行；model/effort 使用最高且按任务路由；Fable 不可用时用独立 SOL Ultra；普通 PR merge 授权 control plane，重要决定仍回 founder；允许全产品重新审计并推翻既有建议。顾问本次 incomplete 不覆盖 founder 的明确命令。
 
-### D0 · 三方治理 trial
+### D0 · Big Brain Council trial
 
-**Approved as trial**：一级决定由 Founder + Codex + 已验证 Fable 共同裁决；二级判断由 Codex + 已验证 Fable 完成后集中报 founder、保留否决权；三级为既定方案内的有界执行。Fable unavailable 时按 clean-room SOL Ultra 协议，不伪造联署。
+**Founder 已批准 trial；advisor topology 经 2026-07-11 global-skill review 收紧**：Tier 1 由 Founder + control plane + 已验证 Fable + independent SOL 组成 Big Brain Council；两位 advisor 先吃同一份盲化 raw evidence 独立作答，founder 最终裁决。Tier 2 由 control plane + Fable，deep planning/跨系统冲突时加 SOL；Tier 3 为既定方案内的有界执行。Fable unavailable 时 SOL 只能标成 fallback，不一人占两席、不伪造完整 council。
 
 ### D1 · 产品心智
 
@@ -106,7 +112,7 @@
 
 ### D6 · 模型与 effort
 
-**Approved**：control plane 使用最高可用 orchestrator effort；Fable 请求 `max`；Fable unavailable 时使用独立 clean-room SOL Ultra；其他任务按 `MODEL-ROUTING-2026-07-11.md` 路由，不机械地把 ultra 用在变量名/格式活。
+**Approved**：control plane 使用最高可用 orchestrator effort；Fable 请求 `max`；independent SOL 在 Tier 1 与 deep planning/跨系统冲突中请求 `ultra`，同时担任 Fable unavailable 时的明确 fallback；其他任务按 `MODEL-ROUTING-2026-07-11.md` 路由，不机械地把 ultra 用在变量名/格式活。
 
 ### D7 · 全产品重新审计
 

@@ -66,11 +66,14 @@
 
 When a session is asked to orchestrate multi-agent work, resume an interrupted program, or make
 product/architecture/design/audit decisions, it must also read
-`.claude/skills/orchestration/SKILL.md` and `docs/ops/ORCHESTRATOR-STATE.md`. Codex is the recoverable
-control plane at the highest available orchestrator effort, Fable 5 is the max-effort verified
-judgment co-orchestrator, and the founder remains the final authority for founder-only categories.
-This does not relax any rule above; in particular, no authoring agent may merge its own diff,
-auto-merge, deploy, spend, or modify `docs/BLUEPRINT.md`.
+the globally installed `orchestration` skill, `.claude/skills/fikirtive-orchestration-overlay/SKILL.md`,
+and `docs/ops/ORCHESTRATOR-STATE.md`. The canonical global skill source is the private repository
+`BELCORT-SDN-BHD/orchestration-skill`; this repository keeps only the FIKIRTIVE-specific overlay.
+The invoking session is the recoverable control plane at the highest verified orchestrator effort
+(currently Codex per the state ledger); Fable 5 Max and independent GPT-5.6 Sol Ultra are judgment
+advisors under the global protocol, and the founder remains the final authority for founder-only
+categories. Neither the global skill nor the overlay relaxes any rule above; in particular, no
+authoring agent may merge its own diff, auto-merge, deploy, spend, or modify `docs/BLUEPRINT.md`.
 
 ## Stale-doc warning
 
