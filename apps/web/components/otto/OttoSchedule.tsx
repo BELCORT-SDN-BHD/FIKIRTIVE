@@ -181,6 +181,15 @@ export function OttoSchedule({
     const rows = await listScheduledPosts();
     setPosts(rows);
     setLoading(false);
+    // Keep an open composer's status/lastError current (e.g. a NEEDS_ATTENTION landing
+    // mid-edit). Composer itself decides whether it's safe to display — it won't clobber
+    // unsaved field edits.
+    setComposer((prev) => {
+      if (!prev || prev.mode !== "edit" || !prev.id) return prev;
+      const match = rows.find((r) => r.id === prev.id);
+      if (!match || (match.status === prev.status && match.lastError === prev.lastError)) return prev;
+      return { ...prev, status: match.status, lastError: match.lastError };
+    });
   }, []);
 
   useEffect(() => {
@@ -206,6 +215,43 @@ export function OttoSchedule({
         setDefaultTz(s.timezone);
       }
     });
+  }, [reload]);
+
+  // Minimal real-time-ish refresh: nothing else in this screen pushes updates (no
+  // websocket/SSE), so a status flip (e.g. worker lands NEEDS_ATTENTION) is otherwise
+  // invisible until the user manually reloads the page. Refetch on focus/visibility, plus
+  // a bounded 60s poll while the tab is visible — paused (not just idle) while hidden.
+  useEffect(() => {
+    let interval: ReturnType<typeof setInterval> | null = null;
+    function startPolling() {
+      if (interval || document.visibilityState !== "visible") return;
+      interval = setInterval(() => void reload(), 60000);
+    }
+    function stopPolling() {
+      if (interval) {
+        clearInterval(interval);
+        interval = null;
+      }
+    }
+    function onFocus() {
+      void reload();
+    }
+    function onVisibilityChange() {
+      if (document.visibilityState === "visible") {
+        void reload();
+        startPolling();
+      } else {
+        stopPolling();
+      }
+    }
+    window.addEventListener("focus", onFocus);
+    document.addEventListener("visibilitychange", onVisibilityChange);
+    startPolling();
+    return () => {
+      window.removeEventListener("focus", onFocus);
+      document.removeEventListener("visibilitychange", onVisibilityChange);
+      stopPolling();
+    };
   }, [reload]);
 
   async function toggleAutoPublish(next: boolean) {
@@ -1001,11 +1047,38 @@ function Composer({
   const [metaTargetId, setMetaTargetId] = useState<string | null>(seed.metaTargetId);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  // status/lastError are kept in local state (not read straight off `seed`) so a background
+  // refetch can update them without also clobbering whatever the user is mid-typing below —
+  // see the sync effect, which only applies a fresh seed while the form is untouched.
+  const [status, setStatus] = useState<string | undefined>(seed.status);
+  const [lastError, setLastError] = useState<string | null | undefined>(seed.lastError);
 
   const cap = channelMeta(channel)?.capabilities;
   const maxMedia = cap?.maxMediaCount ?? 10;
   const supportsFirstComment = cap?.supportsFirstComment ?? false;
-  const editable = seed.mode === "create" || seed.status === "DRAFT";
+  const editable = seed.mode === "create" || status === "DRAFT";
+
+  // seed's own fields (channel, caption, ...) never change after open — only `openEdit`
+  // creates a seed, and reload() only ever patches status/lastError onto it — so comparing
+  // live form state to `seed` doubles as "has the user touched this form yet".
+  const dirty =
+    channel !== seed.channel ||
+    caption !== seed.caption ||
+    dateKey !== seed.dateKey ||
+    time !== seed.time ||
+    tz !== seed.tz ||
+    firstComment !== seed.firstComment ||
+    metaTargetId !== seed.metaTargetId ||
+    media.length !== seed.media.length ||
+    media.some((m, i) => m !== seed.media[i]);
+
+  useEffect(() => {
+    if (dirty) return;
+    // eslint-disable-next-line react-hooks/set-state-in-effect
+    setStatus(seed.status);
+    // eslint-disable-next-line react-hooks/set-state-in-effect
+    setLastError(seed.lastError);
+  }, [seed.status, seed.lastError, dirty]);
 
   // Account/page picker options for the SELECTED channel. A picked target must belong to
   // the channel being posted to (mirrors the server's owner-scoped approve check).
@@ -1237,16 +1310,16 @@ function Composer({
         {/* Why this post is stuck (publish worker's lastError). Read-only disclosure so a
             NEEDS_ATTENTION post — whose fields + Approve are disabled below — isn't a silent
             dead-end. The confirm/link disposition action is a separate, later ticket. */}
-        {seed.status === "NEEDS_ATTENTION" && seed.lastError && (
+        {status === "NEEDS_ATTENTION" && lastError && (
           <div role="status" className="text-[12.5px] text-[var(--error-soft-foreground)]">
-            Needs attention — {seed.lastError}
+            Needs attention — {lastError}
           </div>
         )}
 
         {error && <div role="alert" className="text-[12.5px] text-[var(--error-soft-foreground)]">{error}</div>}
 
         <DialogFooter className="flex-wrap">
-          {seed.mode === "edit" && seed.status && seed.status !== "CANCELLED" && seed.status !== "PUBLISHED" && (
+          {seed.mode === "edit" && status && status !== "CANCELLED" && status !== "PUBLISHED" && (
             <Button variant="ghost" size="sm" className="mr-auto text-[var(--error-soft-foreground)]" disabled={busy} onClick={cancelPost}>
               <X size={14} /> Cancel post
             </Button>
