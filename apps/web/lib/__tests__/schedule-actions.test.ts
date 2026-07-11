@@ -611,6 +611,17 @@ describe("approveScheduledPost", () => {
     expect(res).toEqual({ error: "This post just changed — please refresh and try again." });
   });
 
+  it("media deleted (deleteGeneration) between the approval read and the CAS write is a stale conflict, not a silent approve", async () => {
+    // deleteGeneration (actions.ts) soft-deletes the generation AND bumps every
+    // ScheduledPost that references it via scheduledPostMedia in the same transaction
+    // (E4). That bump lands between our read and the CAS write below, so it matches
+    // zero rows here — the same mechanism as any other concurrent updatedAt bump.
+    mockFindFirst.mockResolvedValue(draftReady());
+    mockUpdateMany.mockResolvedValue({ count: 0 });
+    const res = await approveScheduledPost("p1");
+    expect(res).toEqual({ error: "This post just changed — please refresh and try again." });
+  });
+
   it("cannot approve another owner's post — not found under owner scope → error, no write", async () => {
     mockFindFirst.mockResolvedValue(null); // owner-scoped load misses the foreign row
     const res = await approveScheduledPost("someone-elses");
