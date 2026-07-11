@@ -82,9 +82,11 @@ import {
   listScheduledPosts,
   listOwnerTargets,
 } from "../schedule-actions";
+import { IG_IMAGE_ONLY_ERROR } from "../schedule-service";
 
 const OWNER = "o1";
 const AT = "2026-07-10T09:00:00.000Z";
+const UPDATED_AT = new Date("2026-07-10T08:00:00.000Z");
 
 beforeEach(() => {
   vi.clearAllMocks();
@@ -98,10 +100,11 @@ beforeEach(() => {
       scheduledPostMedia: { deleteMany: mockMediaDeleteMany, createMany: mockMediaCreateMany },
     }),
   );
-  // Default: every requested media id is owned (echo the queried ids back). Cross-tenant
-  // tests override this to return only the owned subset.
+  // Default: every requested media id is owned and is an image (echo the queried ids back).
+  // Cross-tenant tests override this to return only the owned subset; IG media-contract tests
+  // override the asset mime to a non-image type.
   mockGenFindMany.mockImplementation(async (args: { where: { id: { in: string[] } } }) =>
-    args.where.id.in.map((id) => ({ id })),
+    args.where.id.in.map((id) => ({ id, asset: { mime: "image/png" } })),
   );
   mockIgListTargets.mockResolvedValue([{ id: "page-1", name: "My Page" }]);
   mockFbListTargets.mockResolvedValue([{ id: "page-1", name: "My Page" }]);
@@ -207,7 +210,7 @@ describe("createScheduledPost", () => {
     });
     expect(mockGenFindMany).toHaveBeenCalledWith({
       where: { id: { in: ["gen-a", "gen-b"] }, ownerId: OWNER, deletedAt: null },
-      select: { id: true },
+      select: { id: true, asset: { select: { mime: true } } },
     });
   });
 
@@ -227,6 +230,36 @@ describe("createScheduledPost", () => {
     await createScheduledPost({ channel: "facebook", caption: "x", scheduledAt: AT, scheduledTz: "UTC" });
     expect(mockGenFindMany).not.toHaveBeenCalled();
     expect(mockCreate).toHaveBeenCalledTimes(1);
+  });
+
+  it("rejects an Instagram draft whose media isn't an image (mime contract), writes nothing", async () => {
+    mockGenFindMany.mockResolvedValue([{ id: "gen-a", asset: { mime: "video/mp4" } }]);
+    const res = await createScheduledPost({
+      channel: "instagram", caption: "x", scheduledAt: AT, scheduledTz: "UTC",
+      media: ["gen-a"],
+    });
+    expect(res).toEqual({ error: IG_IMAGE_ONLY_ERROR });
+    expect(mockCreate).not.toHaveBeenCalled();
+  });
+
+  it("allows an Instagram draft whose media is an image", async () => {
+    mockCreate.mockResolvedValue({});
+    mockGenFindMany.mockResolvedValue([{ id: "gen-a", asset: { mime: "image/png" } }]);
+    const res = await createScheduledPost({
+      channel: "instagram", caption: "x", scheduledAt: AT, scheduledTz: "UTC",
+      media: ["gen-a"],
+    });
+    expect(res).toEqual({ ok: true, id: "new-1" });
+  });
+
+  it("does not apply the Instagram image-only contract to Facebook drafts", async () => {
+    mockCreate.mockResolvedValue({});
+    mockGenFindMany.mockResolvedValue([{ id: "gen-a", asset: { mime: "video/mp4" } }]);
+    const res = await createScheduledPost({
+      channel: "facebook", caption: "x", scheduledAt: AT, scheduledTz: "UTC",
+      media: ["gen-a"],
+    });
+    expect(res).toEqual({ ok: true, id: "new-1" });
   });
 });
 
@@ -251,7 +284,7 @@ describe("updateScheduledPost", () => {
     expect(res).toEqual({ ok: true });
     expect(mockGenFindMany).toHaveBeenCalledWith({
       where: { id: { in: ["gen-b", "gen-a"] }, ownerId: OWNER, deletedAt: null },
-      select: { id: true },
+      select: { id: true, asset: { select: { mime: true } } },
     });
     expect(mockUpdateMany).toHaveBeenCalledWith({
       where: { id: "p1", ownerId: OWNER, deletedAt: null, status: "DRAFT" },
@@ -273,6 +306,83 @@ describe("updateScheduledPost", () => {
     expect(res).toHaveProperty("error");
     expect(mockTransaction).not.toHaveBeenCalled();
     expect(mockMediaDeleteMany).not.toHaveBeenCalled();
+  });
+
+  it("rejects a media swap that leaves a non-image attached to an Instagram post, writes nothing", async () => {
+    mockFindFirst.mockResolvedValue({ status: "DRAFT", channel: "instagram", firstComment: null });
+    mockGenFindMany.mockResolvedValue([{ id: "gen-a", asset: { mime: "video/mp4" } }]);
+    const res = await updateScheduledPost("p1", { media: ["gen-a"] });
+    expect(res).toEqual({ error: IG_IMAGE_ONLY_ERROR });
+    expect(mockTransaction).not.toHaveBeenCalled();
+  });
+
+  it("allows a media swap to an image for an Instagram post", async () => {
+    mockFindFirst.mockResolvedValue({ status: "DRAFT", channel: "instagram", firstComment: null });
+    mockGenFindMany.mockResolvedValue([{ id: "gen-a", asset: { mime: "image/png" } }]);
+    mockUpdateMany.mockResolvedValue({ count: 1 });
+    const res = await updateScheduledPost("p1", { media: ["gen-a"] });
+    expect(res).toEqual({ ok: true });
+  });
+
+  it("does not apply the Instagram image-only contract to a Facebook media swap", async () => {
+    mockFindFirst.mockResolvedValue({ status: "DRAFT", channel: "facebook", firstComment: null });
+    mockGenFindMany.mockResolvedValue([{ id: "gen-a", asset: { mime: "video/mp4" } }]);
+    mockUpdateMany.mockResolvedValue({ count: 1 });
+    const res = await updateScheduledPost("p1", { media: ["gen-a"] });
+    expect(res).toEqual({ ok: true });
+  });
+
+  it("rejects switching an existing draft's channel to Instagram when its untouched media isn't an image, writes nothing", async () => {
+    mockFindFirst.mockResolvedValue({
+      status: "DRAFT",
+      channel: "facebook",
+      firstComment: null,
+      media: [{ generationId: "gen-a" }],
+    });
+    mockGenFindMany.mockResolvedValue([{ id: "gen-a", asset: { mime: "video/mp4" } }]);
+    const res = await updateScheduledPost("p1", { channel: "instagram" });
+    expect(res).toEqual({ error: IG_IMAGE_ONLY_ERROR });
+    expect(mockTransaction).not.toHaveBeenCalled();
+    expect(mockGenFindMany).toHaveBeenCalledWith({
+      where: { id: { in: ["gen-a"] }, ownerId: OWNER, deletedAt: null },
+      select: { id: true, asset: { select: { mime: true } } },
+    });
+  });
+
+  it("allows switching an existing draft's channel to Instagram when its untouched media is already an image", async () => {
+    mockFindFirst.mockResolvedValue({
+      status: "DRAFT",
+      channel: "facebook",
+      firstComment: null,
+      media: [{ generationId: "gen-a" }],
+    });
+    mockGenFindMany.mockResolvedValue([{ id: "gen-a", asset: { mime: "image/png" } }]);
+    mockUpdateMany.mockResolvedValue({ count: 1 });
+    const res = await updateScheduledPost("p1", { channel: "instagram" });
+    expect(res).toEqual({ ok: true });
+  });
+
+  it("rejects switching channel to Instagram when an attached media id is missing from the owner-scoped read (foreign/soft-deleted), fails closed", async () => {
+    mockFindFirst.mockResolvedValue({
+      status: "DRAFT",
+      channel: "facebook",
+      firstComment: null,
+      media: [{ generationId: "gen-a" }, { generationId: "gen-gone" }],
+    });
+    // gen-gone isn't in the owner-scoped result — soft-deleted or foreign. Must fail closed
+    // rather than silently skip the mime check on the id it couldn't find.
+    mockGenFindMany.mockResolvedValue([{ id: "gen-a", asset: { mime: "image/png" } }]);
+    const res = await updateScheduledPost("p1", { channel: "instagram" });
+    expect(res).toEqual({ error: "Some selected media isn't yours." });
+    expect(mockTransaction).not.toHaveBeenCalled();
+  });
+
+  it("does not query generations for a channel switch to Instagram when there's no existing media", async () => {
+    mockFindFirst.mockResolvedValue({ status: "DRAFT", channel: "facebook", firstComment: null, media: [] });
+    mockUpdateMany.mockResolvedValue({ count: 1 });
+    const res = await updateScheduledPost("p1", { channel: "instagram" });
+    expect(res).toEqual({ ok: true });
+    expect(mockGenFindMany).not.toHaveBeenCalled();
   });
 
   it("rejects a media replacement over the selected channel cap, writes nothing", async () => {
@@ -352,6 +462,44 @@ describe("updateScheduledPost", () => {
     expect(res).toHaveProperty("error");
   });
 
+  it("pins the read updatedAt in the update CAS, so a concurrent media swap that leaves status unchanged can't ride a stale channel-switch validation through", async () => {
+    // A concurrent request swaps this DRAFT's media (bumping updatedAt via Prisma @updatedAt, even
+    // though status stays DRAFT) between our read and our write. Pinning the READ updatedAt in the
+    // CAS where means that race becomes a stale conflict (count 0) instead of silently applying the
+    // channel switch on top of media it never validated.
+    const readAt = new Date("2026-07-05T03:00:00.000Z");
+    mockFindFirst.mockResolvedValue({
+      status: "DRAFT",
+      channel: "facebook",
+      firstComment: null,
+      updatedAt: readAt,
+      media: [{ generationId: "gen-a" }],
+    });
+    mockGenFindMany.mockResolvedValue([{ id: "gen-a", asset: { mime: "image/png" } }]);
+    mockUpdateMany.mockResolvedValue({ count: 1 });
+    const res = await updateScheduledPost("p1", { channel: "instagram" });
+    expect(res).toEqual({ ok: true });
+    expect(mockUpdateMany.mock.calls[0][0].where).toEqual({
+      id: "p1", ownerId: OWNER, deletedAt: null, status: "DRAFT", updatedAt: readAt,
+    });
+  });
+
+  it("a concurrent media swap that bumped updatedAt between validation and the CAS makes the channel switch a stale conflict, not a silent write", async () => {
+    mockFindFirst.mockResolvedValue({
+      status: "DRAFT",
+      channel: "facebook",
+      firstComment: null,
+      updatedAt: new Date("2026-07-05T03:00:00.000Z"),
+      media: [{ generationId: "gen-a" }],
+    });
+    mockGenFindMany.mockResolvedValue([{ id: "gen-a", asset: { mime: "image/png" } }]);
+    // ...but the CAS where now pins updatedAt too, so a concurrent media-only edit that bumped it
+    // (status stays DRAFT) makes this updateMany match zero rows.
+    mockUpdateMany.mockResolvedValue({ count: 0 });
+    const res = await updateScheduledPost("p1", { channel: "instagram" });
+    expect(res).toEqual({ error: "This post just changed — please refresh and try again." });
+  });
+
   it("rejects a first comment on a channel that doesn't support it (Facebook), no write", async () => {
     mockFindFirst.mockResolvedValue({ status: "DRAFT", channel: "facebook", firstComment: null });
     const res = await updateScheduledPost("p1", { firstComment: "nope on FB" });
@@ -407,6 +555,7 @@ function draftReady(over: Partial<Record<string, unknown>> = {}) {
     channel: "instagram",
     metaTargetId: "page-1",
     media: [{ id: "m1", generationId: "gen-a" }],
+    updatedAt: UPDATED_AT,
     ...over,
   };
 }
@@ -426,7 +575,7 @@ describe("approveScheduledPost", () => {
     // write sets both fields, owner-scoped, and CAS-pins the status we validated
     expect(mockUpdateMany).toHaveBeenCalledTimes(1);
     const call = mockUpdateMany.mock.calls[0][0];
-    expect(call.where).toEqual({ id: "p1", ownerId: OWNER, deletedAt: null, status: "DRAFT" });
+    expect(call.where).toEqual({ id: "p1", ownerId: OWNER, deletedAt: null, status: "DRAFT", updatedAt: UPDATED_AT });
     expect(call.data.status).toBe("SCHEDULED");
     expect(call.data.approvedAt).toBeInstanceOf(Date);
   });
@@ -436,6 +585,41 @@ describe("approveScheduledPost", () => {
     mockUpdateMany.mockResolvedValue({ count: 0 }); // ...but a concurrent cancel already moved it
     const res = await approveScheduledPost("p1");
     expect(res).toHaveProperty("error");
+  });
+
+  it("pins the read updatedAt in the approval CAS, so a concurrent media/channel edit that leaves status unchanged can't ride the stale validation through", async () => {
+    // A concurrent updateScheduledPost bumps updatedAt (Prisma @updatedAt) even when it doesn't
+    // change status — e.g. swapping this DRAFT's media out from under the mime check above. Pinning
+    // the READ updatedAt in the CAS where means that edit turns this approval into a stale conflict
+    // (count 0) instead of silently approving on a media snapshot that's no longer what's attached.
+    const readAt = new Date("2026-07-05T03:00:00.000Z");
+    mockFindFirst.mockResolvedValue(draftReady({ updatedAt: readAt }));
+    mockUpdateMany.mockResolvedValue({ count: 1 });
+    const res = await approveScheduledPost("p1");
+    expect(res).toEqual({ ok: true });
+    expect(mockUpdateMany.mock.calls[0][0].where).toEqual({
+      id: "p1", ownerId: OWNER, deletedAt: null, status: "DRAFT", updatedAt: readAt,
+    });
+  });
+
+  it("a concurrent edit that changed updatedAt between validation and the CAS is a stale conflict, not a silent approve", async () => {
+    mockFindFirst.mockResolvedValue(draftReady()); // validated against this snapshot...
+    // ...but the CAS where now pins updatedAt too, so a concurrent edit that bumped it (even one
+    // that left status=DRAFT unchanged, like a media swap) makes this updateMany match zero rows.
+    mockUpdateMany.mockResolvedValue({ count: 0 });
+    const res = await approveScheduledPost("p1");
+    expect(res).toEqual({ error: "This post just changed — please refresh and try again." });
+  });
+
+  it("media deleted (deleteGeneration) between the approval read and the CAS write is a stale conflict, not a silent approve", async () => {
+    // deleteGeneration (actions.ts) soft-deletes the generation AND bumps every
+    // ScheduledPost that references it via scheduledPostMedia in the same transaction
+    // (E4). That bump lands between our read and the CAS write below, so it matches
+    // zero rows here — the same mechanism as any other concurrent updatedAt bump.
+    mockFindFirst.mockResolvedValue(draftReady());
+    mockUpdateMany.mockResolvedValue({ count: 0 });
+    const res = await approveScheduledPost("p1");
+    expect(res).toEqual({ error: "This post just changed — please refresh and try again." });
   });
 
   it("cannot approve another owner's post — not found under owner scope → error, no write", async () => {
@@ -481,10 +665,17 @@ describe("approveScheduledPost", () => {
     expect(mockIgListTargets).not.toHaveBeenCalled();
   });
 
-  it("rejects when the post has no media rows, no write", async () => {
+  it("rejects when an Instagram post has no media rows, with the image-only message, no write", async () => {
     mockFindFirst.mockResolvedValue(draftReady({ media: [] }));
     const res = await approveScheduledPost("p1");
-    expect(res).toHaveProperty("error");
+    expect(res).toEqual({ error: "Add at least one image before approving." });
+    expect(mockUpdateMany).not.toHaveBeenCalled();
+  });
+
+  it("rejects when a Facebook post has no media rows, with the image-or-video message, no write", async () => {
+    mockFindFirst.mockResolvedValue(draftReady({ channel: "facebook", media: [] }));
+    const res = await approveScheduledPost("p1");
+    expect(res).toEqual({ error: "Add at least one image or video before approving." });
     expect(mockUpdateMany).not.toHaveBeenCalled();
   });
 
@@ -495,9 +686,33 @@ describe("approveScheduledPost", () => {
     expect(res).toHaveProperty("error");
     expect(mockGenFindMany).toHaveBeenCalledWith({
       where: { id: { in: ["gen-a"] }, ownerId: OWNER, deletedAt: null },
-      select: { id: true },
+      select: { id: true, asset: { select: { mime: true } } },
     });
     expect(mockUpdateMany).not.toHaveBeenCalled();
+  });
+
+  it("rejects approving an Instagram post whose media isn't an image (mime contract), no write", async () => {
+    mockFindFirst.mockResolvedValue(draftReady());
+    mockGenFindMany.mockResolvedValue([{ id: "gen-a", asset: { mime: "video/mp4" } }]);
+    const res = await approveScheduledPost("p1");
+    expect(res).toEqual({ error: IG_IMAGE_ONLY_ERROR });
+    expect(mockUpdateMany).not.toHaveBeenCalled();
+  });
+
+  it("approves an Instagram post whose media is an image", async () => {
+    mockFindFirst.mockResolvedValue(draftReady());
+    mockGenFindMany.mockResolvedValue([{ id: "gen-a", asset: { mime: "image/jpeg" } }]);
+    mockUpdateMany.mockResolvedValue({ count: 1 });
+    const res = await approveScheduledPost("p1");
+    expect(res).toEqual({ ok: true });
+  });
+
+  it("does not apply the Instagram image-only contract to Facebook approvals", async () => {
+    mockFindFirst.mockResolvedValue(draftReady({ channel: "facebook" }));
+    mockGenFindMany.mockResolvedValue([{ id: "gen-a", asset: { mime: "video/mp4" } }]);
+    mockUpdateMany.mockResolvedValue({ count: 1 });
+    const res = await approveScheduledPost("p1");
+    expect(res).toEqual({ ok: true });
   });
 
   it("rejects approval when existing media exceeds the channel cap, no write", async () => {

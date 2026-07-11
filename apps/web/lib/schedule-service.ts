@@ -23,6 +23,12 @@ export type DraftScheduledPostArgs = {
   input: ScheduleDraftInput;
 };
 
+// Same judgment as the worker's last-gate guard (apps/worker/src/jobs/publish.ts
+// buildMediaUrls, #229): Asset.mime image/* whitelist, not an extension blacklist. Surfaced
+// here too so the owner is stopped at schedule-time instead of only at publish-time — the
+// worker guard stays as the fail-closed last line of defense.
+export const IG_IMAGE_ONLY_ERROR = "Choose images only to schedule this Instagram post.";
+
 export async function draftScheduledPost(
   args: DraftScheduledPostArgs,
 ): Promise<{ ok: true; id: string } | { error: string }> {
@@ -35,10 +41,13 @@ export async function draftScheduledPost(
   if (d.media.length) {
     const owned = await prisma.generation.findMany({
       where: { id: { in: d.media }, ownerId: args.ownerId, deletedAt: null },
-      select: { id: true },
+      select: { id: true, asset: { select: { mime: true } } },
     });
-    const ownedIds = new Set(owned.map((g) => g.id));
-    if (d.media.some((id) => !ownedIds.has(id))) return { error: "Some selected media isn't yours." };
+    const byId = new Map(owned.map((g) => [g.id, g]));
+    if (d.media.some((id) => !byId.has(id))) return { error: "Some selected media isn't yours." };
+    if (d.channel === "instagram" && d.media.some((id) => !byId.get(id)!.asset.mime.startsWith("image/"))) {
+      return { error: IG_IMAGE_ONLY_ERROR };
+    }
   }
 
   try {

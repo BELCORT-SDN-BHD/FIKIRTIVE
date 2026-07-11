@@ -796,6 +796,14 @@ export async function deleteGeneration(generationId: string): Promise<{ ok: true
     // leave a Shot with a dangling first/last-frame id (③B cleanup)
     prisma.shot.updateMany({ where: { firstFrameGenerationId: generationId, ownerId }, data: { firstFrameGenerationId: null } }),
     prisma.shot.updateMany({ where: { lastFrameGenerationId: generationId, ownerId }, data: { lastFrameGenerationId: null } }),
+    // bump any ScheduledPost carrying this generation as scheduled media (via
+    // scheduledPostMedia) so the approve/edit CAS (schedule-actions.ts, pinned on the
+    // updatedAt it read) goes stale instead of sailing through on now-deleted media —
+    // status is untouched; the approve/publish media check does the actual rejecting.
+    prisma.scheduledPost.updateMany({
+      where: { ownerId, deletedAt: null, media: { some: { generationId } } },
+      data: { updatedAt: new Date() },
+    }),
     ...(shotId && remaining === 0
       ? [prisma.shot.updateMany({ where: { id: shotId, ownerId, status: "ATTACHED" }, data: { status: "DRAFT" } })]
       : []),

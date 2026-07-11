@@ -13,7 +13,7 @@ import {
 } from "@fikirtive/core";
 import { requireOwner } from "./auth-guard";
 import { isImpersonating } from "@/lib/better-auth/compat";
-import { draftScheduledPost } from "./schedule-service";
+import { draftScheduledPost, IG_IMAGE_ONLY_ERROR } from "./schedule-service";
 import { channelRegistry } from "./channels/registry";
 import type { ChannelId } from "./channels/types";
 
@@ -123,7 +123,7 @@ export async function updateScheduledPost(
   // channel gates first-comment capability. A terminal / publishing / failed row is content-frozen.
   const current = await prisma.scheduledPost.findFirst({
     where: { id, ownerId: gate.ownerId, deletedAt: null },
-    select: { status: true, channel: true, firstComment: true, media: { select: { generationId: true } } },
+    select: { status: true, channel: true, firstComment: true, updatedAt: true, media: { select: { generationId: true } } },
   });
   if (!current) return { error: "Post not found." };
   if (!EDITABLE_STATUSES.has(current.status as ScheduledPostStatus)) {
@@ -195,12 +195,34 @@ export async function updateScheduledPost(
     if (nextMedia.length) {
       const owned = await prisma.generation.findMany({
         where: { id: { in: nextMedia }, ownerId: gate.ownerId, deletedAt: null },
-        select: { id: true },
+        select: { id: true, asset: { select: { mime: true } } },
       });
-      const ownedIds = new Set(owned.map((g) => g.id));
-      if (nextMedia.some((mediaId) => !ownedIds.has(mediaId))) return { error: "Some selected media isn't yours." };
+      const ownedById = new Map(owned.map((g) => [g.id, g]));
+      if (nextMedia.some((mediaId) => !ownedById.has(mediaId))) return { error: "Some selected media isn't yours." };
+      // Same judgment as draftScheduledPost / approveScheduledPost (#229): a media swap must not
+      // leave a non-image attached to an Instagram post — this callable boundary is a real gate,
+      // not just the composer's affordance.
+      if (nextChannel === "instagram" && nextMedia.some((mediaId) => !ownedById.get(mediaId)!.asset.mime.startsWith("image/"))) {
+        return { error: IG_IMAGE_ONLY_ERROR };
+      }
     }
     material = true;
+  } else if (nextChannel === "instagram" && patch?.channel !== undefined && current.media?.length) {
+    // Switching an existing draft's channel TO instagram without touching media: media that was
+    // fine for its old channel may not be image-only — check the same contract here too, not just
+    // at approve-time.
+    const existingIds = current.media.map((m) => m.generationId);
+    const owned = await prisma.generation.findMany({
+      where: { id: { in: existingIds }, ownerId: gate.ownerId, deletedAt: null },
+      select: { id: true, asset: { select: { mime: true } } },
+    });
+    const ownedById = new Map(owned.map((g) => [g.id, g]));
+    // Fail closed, same as the media-swap path above: an attached id missing from the owner-scoped
+    // read (foreign, or since soft-deleted) must not silently skip the mime check.
+    if (existingIds.some((mediaId) => !ownedById.has(mediaId))) return { error: "Some selected media isn't yours." };
+    if (existingIds.some((mediaId) => !ownedById.get(mediaId)!.asset.mime.startsWith("image/"))) {
+      return { error: IG_IMAGE_ONLY_ERROR };
+    }
   }
   if (patch?.metaTargetId !== undefined) {
     data.metaTargetId = typeof patch.metaTargetId === "string" && patch.metaTargetId ? patch.metaTargetId : null;
@@ -217,10 +239,12 @@ export async function updateScheduledPost(
 
   try {
     await prisma.$transaction(async (tx) => {
-      // Atomic: the WHERE pins the status we validated against, so a concurrent approve/cancel that
-      // moved the row out from under us matches zero rows → conflict, never a silent clobber.
+      // Atomic: the WHERE pins the status AND updatedAt we validated against (same posture as
+      // approveScheduledPost's CAS) — a concurrent approve/cancel/edit that moved the row out from
+      // under us (incl. a media-only swap, which bumps updatedAt without changing status) matches
+      // zero rows → conflict, never a silent clobber of a channel switch validated against stale media.
       const { count } = await tx.scheduledPost.updateMany({
-        where: { id, ownerId: gate.ownerId, deletedAt: null, status: current.status },
+        where: { id, ownerId: gate.ownerId, deletedAt: null, status: current.status, updatedAt: current.updatedAt },
         data: Object.keys(data).length ? data : { updatedAt: new Date() },
       });
       if (!count) throw new Error("stale");
@@ -256,7 +280,10 @@ export async function approveScheduledPost(id: string): Promise<{ ok: true } | {
 
   const post = await prisma.scheduledPost.findFirst({
     where: { id, ownerId: gate.ownerId, deletedAt: null },
-    select: { id: true, status: true, channel: true, metaTargetId: true, media: { select: { generationId: true } } },
+    select: {
+      id: true, status: true, channel: true, metaTargetId: true, updatedAt: true,
+      media: { select: { generationId: true } },
+    },
   });
   if (!post) return { error: "Post not found." };
 
@@ -266,7 +293,10 @@ export async function approveScheduledPost(id: string): Promise<{ ok: true } | {
   }
   // Consent needs a resolved target that the owner actually owns.
   if (!post.metaTargetId) return { error: "Pick which account to post to before approving." };
-  if (!post.media.length) return { error: "Add at least one image or video before approving." };
+  if (!post.media.length) {
+    // Instagram is image-only (#229) — "or video" would mislead an IG owner into adding one.
+    return { error: post.channel === "instagram" ? "Add at least one image before approving." : "Add at least one image or video before approving." };
+  }
   if (!isScheduleChannel(post.channel)) return { error: "Pick a supported channel." };
   const caps = SCHEDULE_CHANNEL_CAPS[post.channel];
   if (post.media.length > caps.maxMediaCount) {
@@ -281,11 +311,17 @@ export async function approveScheduledPost(id: string): Promise<{ ok: true } | {
   if (mediaIds.length !== post.media.length) return { error: "Some selected media isn't yours." };
   const ownedMedia = await prisma.generation.findMany({
     where: { id: { in: mediaIds }, ownerId: gate.ownerId, deletedAt: null },
-    select: { id: true },
+    select: { id: true, asset: { select: { mime: true } } },
   });
   const ownedMediaIds = new Set(ownedMedia.map((m) => m.id));
   if (mediaIds.some((mediaId) => !ownedMediaIds.has(mediaId))) {
     return { error: "Some selected media isn't yours." };
+  }
+  // Same judgment as draftScheduledPost / the worker's #229 last-gate guard: Asset.mime
+  // image/* whitelist. Stopping it here (approve = consent to publish) beats only catching it
+  // at publish-time.
+  if (post.channel === "instagram" && ownedMedia.some((m) => !m.asset.mime.startsWith("image/"))) {
+    return { error: IG_IMAGE_ONLY_ERROR };
   }
 
   const adapter = channelRegistry[post.channel];
@@ -297,11 +333,15 @@ export async function approveScheduledPost(id: string): Promise<{ ok: true } | {
   }
 
   try {
-    // Atomic transition: pin the status we read + validated (post.status) in the WHERE. If a
-    // concurrent cancel/edit changed it between the read and here, count===0 → stale/conflict,
-    // so we never resurrect a CANCELLED post into SCHEDULED (the read-then-write race).
+    // Atomic transition: pin the status we read + validated (post.status) AND updatedAt in the
+    // WHERE. status alone isn't enough — a concurrent updateScheduledPost can swap this DRAFT's
+    // media (or channel/metaTargetId) without changing status, which would let approval sail through
+    // on the media/mime snapshot we validated above instead of what's actually attached now. Pinning
+    // updatedAt (bumped by any edit, incl. a media-only one — see updateScheduledPost) closes that:
+    // count===0 → stale/conflict, so we never approve content we didn't just validate, and never
+    // resurrect a CANCELLED post into SCHEDULED either (the read-then-write race).
     const { count } = await prisma.scheduledPost.updateMany({
-      where: { id, ownerId: gate.ownerId, deletedAt: null, status: post.status },
+      where: { id, ownerId: gate.ownerId, deletedAt: null, status: post.status, updatedAt: post.updatedAt },
       data: { status: "SCHEDULED", approvedAt: new Date() },
     });
     if (!count) return { error: "This post just changed — please refresh and try again." };
