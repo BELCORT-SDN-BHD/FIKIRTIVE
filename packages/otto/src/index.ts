@@ -10,7 +10,7 @@ export { generate } from "./skills/generate.js";
 export { updateBrief } from "./skills/update-brief.js";
 export { describeRefs, sanitizeRefDescription } from "./skills/describe-refs.js";
 export { setTitle } from "./skills/set-title.js";
-export type { OttoContext } from "./context.js";
+export type { OttoContext, EntityType, LibraryItemView, LibraryHistoryView } from "./context.js";
 export { buildUserTurn, stripHistoryImages, sanitizeHistory, tryRestoreRunState } from "./run-input.js";
 export type { RefImage } from "./run-input.js";
 export { extractText } from "./run-output.js";
