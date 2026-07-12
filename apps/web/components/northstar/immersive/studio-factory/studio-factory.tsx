@@ -1096,17 +1096,35 @@ function SampleLearnDialog({
   placeholder: string;
   doneLabel: string;
 }) {
-  const [text, setText] = React.useState("");
-  const [saved, setSaved] = React.useState(false);
-  React.useEffect(() => {
-    if (open) {
-      setText("");
-      setSaved(false);
-    }
-  }, [open]);
+  // [B0-82 lint 适配 · 照 #255 先例] 弹窗本地态(text/saved)下沉 SampleLearnBody:Radix
+  // 关即卸载、开即新挂,useState 初值即「每次打开清空重来」,替代原 open-effect 同步重置
+  // (set-state-in-effect 正解;关闭动画期实例仍在、画面不变,重开 = 新实例 = 空表单)。
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
       <DialogContent className="max-w-[520px]">
+        <SampleLearnBody onOpenChange={onOpenChange} title={title} desc={desc} placeholder={placeholder} doneLabel={doneLabel} />
+      </DialogContent>
+    </Dialog>
+  );
+}
+
+function SampleLearnBody({
+  onOpenChange,
+  title,
+  desc,
+  placeholder,
+  doneLabel,
+}: {
+  onOpenChange: (v: boolean) => void;
+  title: string;
+  desc: string;
+  placeholder: string;
+  doneLabel: string;
+}) {
+  const [text, setText] = React.useState("");
+  const [saved, setSaved] = React.useState(false);
+  return (
+    <>
         <DialogHeader>
           <DialogTitle>{title}</DialogTitle>
           <DialogDescription>{desc}</DialogDescription>
@@ -1129,7 +1147,6 @@ function SampleLearnDialog({
           <Button variant="secondary" size="sm" onClick={() => onOpenChange(false)}>{saved ? "Close" : "Cancel"}</Button>
           {!saved && <Button size="sm" onClick={() => setSaved(true)} disabled={text.trim().length === 0}>Save</Button>}
         </DialogFooter>
-      </DialogContent>
-    </Dialog>
+    </>
   );
 }

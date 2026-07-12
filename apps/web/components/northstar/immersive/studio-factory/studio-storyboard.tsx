@@ -618,21 +618,28 @@ export function StudioStoryboard() {
 
 /* ── [wave-b] 局部/对话式改片弹窗(LTX Retake + invideo Magic Box) ── */
 function RetakeDialog({ scene, onOpenChange }: { scene: StudioScene | null; onOpenChange: (v: boolean) => void }) {
+  // [B0-82 lint 适配 · 照 #255 先例] 弹窗本地态(instruction/phase)下沉 RetakeBody:Radix
+  // 关即卸载、开即新挂,useState 初值即「每次打开都从 input 重来」,替代原 scene-effect
+  // 同步重置(set-state-in-effect 正解;场景切换必经关→开——modal 遮罩挡住场景行按钮,
+  // S→S′ 直切不可达;关闭动画期实例仍在、画面不变,重开 = 新实例)。
+  return (
+    <Dialog open={scene !== null} onOpenChange={onOpenChange}>
+      <DialogContent className="max-w-[520px]">
+        <RetakeBody onOpenChange={onOpenChange} />
+      </DialogContent>
+    </Dialog>
+  );
+}
+
+function RetakeBody({ onOpenChange }: { onOpenChange: (v: boolean) => void }) {
   const [instruction, setInstruction] = React.useState("");
   const [phase, setPhase] = React.useState<"input" | "working" | "done">("input");
-  React.useEffect(() => {
-    if (scene) {
-      setInstruction("");
-      setPhase("input");
-    }
-  }, [scene]);
   const run = () => {
     setPhase("working");
     window.setTimeout(() => setPhase("done"), 1600);
   };
   return (
-    <Dialog open={scene !== null} onOpenChange={onOpenChange}>
-      <DialogContent className="max-w-[520px]">
+    <>
         <DialogHeader>
           <DialogTitle>Retake a few seconds</DialogTitle>
           <DialogDescription>Say what to change in this scene. Otto re-runs only this bit and keeps the rest.</DialogDescription>
@@ -660,28 +667,33 @@ function RetakeDialog({ scene, onOpenChange }: { scene: StudioScene | null; onOp
             </div>
           </div>
         )}
-      </DialogContent>
-    </Dialog>
+    </>
   );
 }
 
 /* ── [wave-b] 剧本/文案导入 + 场景→镜头两层拆解(LTX) ── */
 function ImportScriptDialog({ open, onOpenChange, onSplit }: { open: boolean; onOpenChange: (v: boolean) => void; onSplit: () => void }) {
+  // [B0-82 lint 适配 · 照 #255 先例] 弹窗本地态(text/phase)下沉 ImportScriptBody:Radix
+  // 关即卸载、开即新挂,useState 初值即「每次打开清空重来」,替代原 open-effect 同步重置
+  // (set-state-in-effect 正解;关闭动画期实例仍在、画面不变,重开 = 新实例 = 空表单)。
+  return (
+    <Dialog open={open} onOpenChange={onOpenChange}>
+      <DialogContent className="max-w-[560px]">
+        <ImportScriptBody onOpenChange={onOpenChange} onSplit={onSplit} />
+      </DialogContent>
+    </Dialog>
+  );
+}
+
+function ImportScriptBody({ onOpenChange, onSplit }: { onOpenChange: (v: boolean) => void; onSplit: () => void }) {
   const [text, setText] = React.useState("");
   const [phase, setPhase] = React.useState<"input" | "working" | "done">("input");
-  React.useEffect(() => {
-    if (open) {
-      setText("");
-      setPhase("input");
-    }
-  }, [open]);
   const split = () => {
     setPhase("working");
     window.setTimeout(() => setPhase("done"), 1600);
   };
   return (
-    <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent className="max-w-[560px]">
+    <>
         <DialogHeader>
           <DialogTitle>Import a script</DialogTitle>
           <DialogDescription>Paste copy you already wrote — Otto splits it into scenes and shots for you to confirm.</DialogDescription>
@@ -710,7 +722,6 @@ function ImportScriptDialog({ open, onOpenChange, onSplit }: { open: boolean; on
             </Button>
           )}
         </DialogFooter>
-      </DialogContent>
-    </Dialog>
+    </>
   );
 }

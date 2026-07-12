@@ -416,17 +416,57 @@ export function SpendConfirmDialog({
   /** 生成什么(prompt / 素材名),供品牌校验行判 logo/色偏离;缺省回落 title。 */
   subject?: string;
 }) {
-  const tiered = typeof baseCredits === "number" && !!onConfirmTier;
-  const [tier, setTier] = React.useState<GenTier>("speed");
-  // 每次开弹窗回到 Speed(便宜档),不跨次残留上一次选择。
-  React.useEffect(() => {
-    if (open) setTier("speed");
-  }, [open]);
-  const finalCredits = tiered ? tierCredits(baseCredits!, tier) : 0;
-
+  // [B0-82 lint 适配 · 照 #255 先例] 弹窗本地态(tier)下沉 SpendConfirmBody:Radix Dialog
+  // 关即卸载、开即新挂,useState 初值 "speed" 即「每次开弹窗回到 Speed(便宜档),不跨次
+  // 残留上一次选择」,替代原 open-effect 同步重置(set-state-in-effect 正解——态绑挂载
+  // 生命周期,immersive-shell §L4 注释所称 React 官方首选 remount 形态;关闭动画期实例
+  // 仍在、画面不变,重开 = 新实例 = 回到 Speed)。
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
       <DialogContent>
+        <SpendConfirmBody
+          onOpenChange={onOpenChange}
+          title={title}
+          ask={ask}
+          impacts={impacts}
+          confirmLabel={confirmLabel}
+          onConfirm={onConfirm}
+          baseCredits={baseCredits}
+          onConfirmTier={onConfirmTier}
+          subject={subject}
+        />
+      </DialogContent>
+    </Dialog>
+  );
+}
+
+function SpendConfirmBody({
+  onOpenChange,
+  title,
+  ask,
+  impacts,
+  confirmLabel,
+  onConfirm,
+  baseCredits,
+  onConfirmTier,
+  subject,
+}: {
+  onOpenChange: (v: boolean) => void;
+  title: string;
+  ask: string;
+  impacts: string[];
+  confirmLabel: string;
+  onConfirm: () => void;
+  baseCredits?: number;
+  onConfirmTier?: (tier: GenTier, credits: number) => void;
+  subject?: string;
+}) {
+  const tiered = typeof baseCredits === "number" && !!onConfirmTier;
+  const [tier, setTier] = React.useState<GenTier>("speed");
+  const finalCredits = tiered ? tierCredits(baseCredits!, tier) : 0;
+
+  return (
+    <>
         <DialogHeader>
           <DialogTitle>{title}</DialogTitle>
           <DialogDescription>{ask}</DialogDescription>
@@ -486,8 +526,7 @@ export function SpendConfirmDialog({
             {tiered ? `Confirm generate · ${finalCredits} credits` : confirmLabel}
           </Button>
         </DialogFooter>
-      </DialogContent>
-    </Dialog>
+    </>
   );
 }
 
