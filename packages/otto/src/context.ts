@@ -296,6 +296,53 @@ export interface OttoContext {
     /** $0 write: delete a node (deleteCanvasNode). Never refunds/cancels the underlying job. */
     remove(id: string): Promise<{ ok: true } | { error: string }>;
   };
+  /** Media library port (W-B3-B, $0) — injected by the web caller. Thin closures over the SAME
+   *  owner-gated $0 server actions the human asset-viewer / library uses (getEditorMedia,
+   *  loadMoreMedia, attach/detach/delete/softDeleteGeneration, cancelGenJob), each pre-bound to
+   *  THIS owner+project. $0: cancelJob only ever REFUNDS a still-QUEUED job (never charges);
+   *  delete/discard are soft tombstones. Skills reach it ONLY via ctx.media — never importing web
+   *  actions or Prisma (CI fence rule). Absent in the minimal worker verdict ctx; degrades gracefully. */
+  media?: {
+    /** $0 read: this project's generated media as timeline-ready clips (getEditorMedia). */
+    list(): Promise<EditorMediaClip[]>;
+    /** $0 read: one page of the Assets library (loadMoreMedia); cursor = previous page's nextCursor. */
+    loadMore(cursor?: string | null): Promise<MediaLibraryPage | { error: string }>;
+    /** $0 write: attach a candidate generation to a shot (attachGeneration). */
+    attach(generationId: string, shotId: string): Promise<{ ok: true } | { error: string }>;
+    /** $0 write: detach a generation back to the candidate zone (detachGeneration). */
+    detach(generationId: string): Promise<{ ok: true } | { error: string }>;
+    /** $0 write: soft-delete a generation from the Assets library (deleteGeneration). */
+    remove(generationId: string): Promise<{ ok: true } | { error: string }>;
+    /** $0 write: hide a generation from the candidate zone (softDeleteGeneration). */
+    discard(generationId: string): Promise<{ ok: true } | { error: string }>;
+    /** $0: cancel a still-QUEUED gen job — refunds it (cancelGenJob). alreadyStarted = too late to cancel. */
+    cancelJob(jobId: string): Promise<{ refunded: true } | { alreadyStarted: true } | { error: string }>;
+  };
+  /** Render/caption port (W-B3-B, $0) — injected by the web caller. export renders the SAVED cut
+   *  (startRender, ffmpeg concat — "re-rendering is free"); caption dispatches whisper.cpp captions
+   *  (startCaption); the rest are reads. No gen job, no spend. Skills reach it ONLY via ctx.render. */
+  render?: {
+    /** $0: export the project's SAVED cut to a video (startRender). No saved cut → honest error. */
+    export(): Promise<{ id: string } | { error: string }>;
+    /** $0 read: recent render jobs for this project (getRenderJobs). */
+    jobs(): Promise<RenderJobView[]>;
+    /** $0: dispatch whisper captions for one clip by its content-addressed src (startCaption). */
+    caption(src: string): Promise<{ id: string } | { error: string }>;
+    /** $0 read: poll a caption job (getCaptionJob); null when not found. */
+    captionJob(jobId: string): Promise<CaptionJobView | null>;
+    /** $0 read: the cached transcript for a clip (getTranscript); [] when none cached yet. */
+    transcript(src: string): Promise<TranscriptCue[]>;
+  };
+  /** Media-import port (W-B3-B, $0) — injected by the web caller. The server-side analogue of the
+   *  browser direct-upload chain: SSRF-guarded fetch → storage.put → the SAME finalizeCandidateUploads
+   *  authority the human upload lands through. $0 (no gen). Skills reach it ONLY via ctx.mediaImport. */
+  mediaImport?: {
+    /** $0: import an image/video from a public URL into this project (Generation source:UPLOAD). */
+    fromUrl(
+      url: string,
+      opts?: { promptText?: string; entityIds?: string[] },
+    ): Promise<{ ok: true; generationId: string } | { error: string }>;
+  };
   /** Projects port (W-B3-D, $0, debt-03~07) — injected by the web caller. Every function is a thin
    *  closure over the SAME owner-gated project server actions the human sidebar uses (actions.ts:
    *  getOrCreateDefaultProject / createProject / renameProject / setProjectPinned / deleteProject) —
@@ -374,6 +421,37 @@ export type CanvasNodeView = {
   sourceNodeId: string | null;
   url?: string | null;
 };
+
+/** A project media clip as skills see it (getEditorMedia) — structural re-declaration; the web
+ *  return type must NOT be imported here (same fence rule as CanvasNodeView). */
+export type EditorMediaClip = { id: string; src: string; kind: "image" | "video" | "audio"; seconds: number };
+
+/** One Assets-library item + its page (loadMoreMedia) — structural re-declaration. */
+export type MediaLibraryItem = {
+  id: string;
+  src: string;
+  kind: "image" | "video";
+  prompt: string;
+  attached: boolean;
+  shotLabel: string | null;
+};
+export type MediaLibraryPage = { items: MediaLibraryItem[]; nextCursor: string | null; hasMore: boolean };
+
+/** One render job's status (getRenderJobs) — structural re-declaration. */
+export type RenderJobView = {
+  id: string;
+  status: string;
+  progress: number;
+  error: string | null;
+  createdAt: string;
+  url: string | null;
+};
+
+/** One caption job's status (getCaptionJob) — structural re-declaration. */
+export type CaptionJobView = { id: string; status: string; progress: number; error: string | null };
+
+/** One transcript cue (getTranscript) — structural re-declaration of the core CaptionCue. */
+export type TranscriptCue = { startMs: number; lengthMs: number; text: string };
 
 /** Entity kinds a skill may create (mirror of actions.ts ENTITY_TYPES / core RefEntityType). */
 export type EntityType = "CHARACTER" | "LOCATION" | "PRODUCT" | "BRANDMARK";

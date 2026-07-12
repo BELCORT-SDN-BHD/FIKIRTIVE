@@ -9,6 +9,7 @@
 | editScheduledPost | free | write | internal | ❌ | Edit a DRAFT or queued scheduled post — change its caption, scheduled time (UTC/ |
 | editStoryboard | free | write | internal | ❌ | Edit an EXISTING storyboard card the user is reviewing: change a shot's prompts  |
 | generate | spend | write | internal | ✅ | Execute a generation proposal (GEN_CARD) that the user has approved. This SPENDS |
+| importMedia | free | write | internal | ❌ | Import an image or video into the project from a public URL ($0 — never generate |
 | ingestProduct | free | read | external | ❌ | Read a product's page from a URL (e.g. a Shopee/Lazada or store link) and get a  |
 | list-meta-pages | free | read | external | ❌ | List the user's connected Facebook Pages so you can pick one when building an ad |
 | listPublishTargets | free | read | internal | ❌ | List the accounts the user can publish to (their connected Instagram business /  |
@@ -18,6 +19,7 @@
 | manageCanvas | free | write | internal | ❌ | See and arrange the project's creative canvas ($0 — never generates media or spe |
 | manageEntities | free | write | internal | ❌ | Manage the user's reusable elements — the @-referenceable characters, locations, |
 | manageLibrary | free | write | internal | ❌ | Browse the user's Library — every image/video they've made — $0, never generates |
+| manageMedia | free | write | internal | ❌ | See and organize the project's generated media ($0 — never generates media or sp |
 | manageProjects | free | write | internal | ❌ | Manage the user's campaigns (projects) — $0, never generates or spends. get_defa |
 | meta-ad-performance | free | read | external | ❌ | Read the user's PER-AD Meta performance (each ad's spend/reach/CTR/CPC/ROAS + it |
 | meta-expert | free | write | internal | ❌ | Diagnose the user's Meta ad performance: which specific ads/creatives are winnin |
@@ -31,6 +33,7 @@
 | proposeResearch | free | write | internal | ❌ | Draft a RESEARCH plan (RESEARCH_CARD) the user can review and approve before any |
 | proposeStoryboard | free | write | internal | ❌ | Lay out an ordered STORYBOARD for a video/ad the user can review and edit before |
 | rememberBrandFact | free | write | internal | ❌ | Save ONE durable brand FACT to Brand Memory. $0, persists across campaigns. Cate |
+| renderVideo | free | write | internal | ❌ | Export the project's saved cut to a video and add $0 captions ($0 — ffmpeg/whisp |
 | researchWeb | free | read | external | ❌ | Fetch a public web page or search the web to ground your response in real inform |
 | saveCustomerSegment | free | write | internal | ❌ | Save or update ONE customer group in the user's Brand memory (upsert by name; om |
 | saveOffer | free | write | internal | ❌ | Save or update ONE offer/promotion in the user's Brand memory (upsert by title;  |

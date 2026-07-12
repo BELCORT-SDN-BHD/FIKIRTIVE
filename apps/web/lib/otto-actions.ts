@@ -66,6 +66,7 @@ import { proposeMetaActionForOwner } from "./meta-propose";
 import { proposeAdBuildForOwner } from "./meta-build-propose";
 import { validateOwnedGenerationExt } from "./otto-generation-validate";
 import { makeOttoCanvasPort } from "./otto-canvas-port";
+import { makeOttoMediaPort, makeOttoRenderPort, makeOttoMediaImportPort } from "./otto-media-port";
 import { makeOttoProjectsPort } from "./otto-projects-port";
 import { makeOttoEntitiesPort } from "./otto-entities-port";
 import { makeOttoLibraryPort } from "./otto-library-port";
@@ -333,6 +334,14 @@ export async function buildOttoContext({
     // (generationId must be real + in-project; edit/remove are project-bound) — see
     // makeOttoCanvasPort. None of these touch startGen / reserveCredits / the provider.
     canvas: makeOttoCanvasPort(ownerId, projectId),
+    // Media ports (W-B3-B, $0) — single action layer: Otto's manageMedia / renderVideo /
+    // importMedia skills drive the SAME owner-gated $0 server actions the human media UI uses
+    // (getEditorMedia/loadMoreMedia/attach/detach/delete/discard/cancelGenJob; startRender/
+    // getRenderJobs/startCaption/getCaptionJob/getTranscript; finalizeCandidateUploads via a
+    // server-side SSRF-guarded fetch), each pre-bound to this owner+project. None touch startGen.
+    media: makeOttoMediaPort(ownerId, projectId),
+    render: makeOttoRenderPort(ownerId, projectId),
+    mediaImport: makeOttoMediaImportPort(ownerId, projectId),
     // Projects / entities / library / brand-memory ports (W-B3-D, $0) — single action layer
     // (宪法 7 / Seam 9): Otto's manage* skills drive the SAME owner-gated server actions the human
     // UI uses (actions.ts / library-actions / asset-actions / brand-record-actions / memory-actions).

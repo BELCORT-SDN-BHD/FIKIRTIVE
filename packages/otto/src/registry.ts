@@ -37,6 +37,9 @@ import { manageEntitiesSkill } from "./skills/manage-entities.js";
 import { manageLibrarySkill } from "./skills/manage-library.js";
 import { manageBrandMemorySkill } from "./skills/manage-brand-memory.js";
 import { proposeIdeasSkill } from "./skills/propose-ideas.js";
+import { manageMediaSkill } from "./skills/manage-media.js";
+import { renderVideoSkill } from "./skills/render-video.js";
+import { importMediaSkill } from "./skills/import-media.js";
 
 /** Add a new skill here (one line). Order is the agent's tool order. */
 export const allSkills: OttoSkill[] = [
@@ -77,6 +80,9 @@ export const allSkills: OttoSkill[] = [
   manageLibrarySkill,
   manageBrandMemorySkill,
   proposeIdeasSkill,
+  manageMediaSkill,
+  renderVideoSkill,
+  importMediaSkill,
 ];
 
 export interface SkillMeta {
