@@ -22,6 +22,13 @@
 - **owner**：各工位（LC-0 / W-B3-A~H / LCg 收口片）。
 - **证据槽位**：46 能力行的逐条能力名（非页面名）+ 现状六级状态 → 目标状态。存量断言 16 条免重核（spec §二.5）；absent 行（E1-09 stitch/E1-19 A/B 分叉/B0-14/16~26 工厂族）为净新建。**待施工逐行填交付状态**。
 - **W-B3-A（canvas $0 面，本批交付）**：E1-01（无限画布·节点为一等公民）的 $0 双执行器面——Otto 执行器侧真接后台：新 `manageCanvas` skill（view/place/edit_text/resolve/remove，free/write/internal 不设闸=与人工 UI 同待遇）经 `ctx.canvas` port 驱动与人工 UI **完全同一**的 `canvas-actions` 五动作 + `otto-canvas-bridge.syncOttoCanvasNodes`（display-only sync）。零 spend 触点：`startGen`/gen 链不在本工位 diff（canvas gen 接线归 W-B3-E）；$0 硬线端到端焊死（v2，codex TR1①）——skill 侧无 generationId 拒放 image/video（新媒体只能走 gated `generate`）+ port 侧（`otto-canvas-port.ts`）place 的 generationId 先行 owner+project 验真（伪造/跨项目=结构化硬拒，绝不静默降级），edit/remove 加 project 绑定；canvas-actions 的 UI 既有契约零触碰。**人工入口现状如实**：immersive canvas 壳（LC-0 已落）本批保持壳级（mock 数据形态不动），UI 真接线归批2/批3（见 §⑫.8）。
+- **W-B3-B（media-editor / asset-viewer $0 面 + 上传渲染债，本批交付）**：媒体域三条 $0 能力线的 Otto 执行器侧真接后台，三新 skill（均 free/write/internal 不设闸=与人工 UI 同待遇）经各自 `ctx` port 驱动与人工 UI **同一**的 server actions：
+  - `manageMedia`（B0-12 生成物生命周期 + B0-14 编辑面读，锚 M1/C1 asset-viewer）——`ctx.media` port 驱动 `getEditorMedia`/`loadMoreMedia`/`attachGeneration`/`detachGeneration`/`deleteGeneration`/`softDeleteGeneration`/`cancelGenJob`；生成物删除=**软删可逆墓碑**（无模型自我确认，#266 教训）；`cancel_job` 仅撤 QUEUED 且**只退不扣**（`alreadyStarted` 诚实返「太晚」）。
+  - `renderVideo`（B0-13 render/caption，锚 M1 media-editor）——`ctx.render` port 驱动 `startRender`（导出**已存**剪辑，ffmpeg concat「re-rendering is free」）/`getRenderJobs`/`startCaption`（whisper $0）/`getCaptionJob`/`getTranscript`。**时间轴编排本身=VISUAL 客户端豁免**，Otto 只导出用户已存的 cut。
+  - `importMedia`（E1-17 上传链，锚 A2 直传）——`ctx.mediaImport.fromUrl`：**服务端 SSRF-硬化取字节**（复用 `assertPublicHttpUrlResolved`，同 research/productIngest 一处安全信封）→ `storage.put` → 与人工上传**同一**的 `finalizeCandidateUploads` 落权（Asset upsert + Generation source:UPLOAD + 尺寸复核 + 图片 mime 逐字节验 + ingest 派发）。Otto 无本地文件盘，其上传对等=从 URL 引入（人工上传的服务端同物）；浏览器直传的 authorize/sign/abort/fallback 与旧表单 uploadCandidates/uploadReference 是同一「把外部媒体带进项目」能力的人工 UI 机制。
+  - 零 spend 触点：`startGen`/gen 链不在本工位 diff（付费面 Continue/Regenerate 归批2 W-B3-G）；三 skill 单元测试各注入抛错的 `startGen` spy 作 $0 tripwire。所有 mutating 动作先经 port 的 owner+project 绑定预检（跨项目=结构化硬拒）。
+  - **Crop/Trim/抽帧 $0 修正（spec §四.G，删 `TRIM_COST=12`）**：`media-editor-page.tsx` 壳（mock 态）原把 trim 标价 12cr + 花费确认——已改判 $0（trim=重渲染=free，render.ts）：删 `TRIM_COST` 常量 + `spendCredits` 调用，按钮/文案/确认卡改「free ($0)」；交互结构保持不动（非重画），仅去除 $0 谎言（宪法 3）。Crop/抽帧 mock 本就 $0（无 spendCredits），无需改。
+  - **人工入口现状如实**：immersive media-editor/asset-viewer 壳本批保持壳级（除上述 trim $0 文案更正），UI 真接线归批2/批3。
 
 ## ④ 双执行矩阵
 
@@ -54,6 +61,33 @@
   port 注入点=`apps/web/lib/otto-actions.ts buildOttoContext` → `makeOttoCanvasPort(ownerId, projectId)`（`apps/web/lib/otto-canvas-port.ts`；身份走 requireOwner，skill 参数零身份字段——工厂硬拦）；`moveCanvasNode` 维持 VISUAL 豁免不动。TOOL_STEP_LABELS 补 `manageCanvas: "Working on your canvas"`（live trace）。instructions.ts 补「When to call `manageCanvas`」条目（REVIEWER-PLAYBOOK:107 注册卫生，v2 codex TR1③）。
   **对等差额如实记（v2，codex TR1②）**：`deleteCanvasNode` 对等=**非在途节点**；**在途付费卡（pending/timeout 无 URL）删除=UI 亲点专属**（防误删护栏，宪法 11 状态诚实）——Otto 一律硬拒并指引用户在画布上亲手确认删除，无模型自我确认参数；预检 fail-closed（list 失败/目标不在本项目清单=拒，绝不「查不到照删」）。
 
+- **W-B3-B 债 19 条清零（四件套，本批交付）**——`pnpm lint:parity` 绿：`[parity] OK: 182 entries cover 162 action exports … TODO_SKILL entries remain: 56`（棘轮 75→56，`scripts/parity-debt-baseline.json` 同 PR 收紧）：
+
+  | 债号 | action key | skill | ctx port | handler（单一动作层） | 测试 |
+  |---|---|---|---|---|---|
+  | debt-16 | `actions.attachGeneration` | `manageMedia`(attach) | `ctx.media.attach`（project 绑定） | `attachGeneration` | `manage-media.test.ts`「attach needs both ids…」 |
+  | debt-17 | `actions.detachGeneration` | `manageMedia`(detach) | `ctx.media.detach`（project 绑定） | `detachGeneration` | 同上「detach routes…」 |
+  | debt-18 | `actions.deleteGeneration` | `manageMedia`(delete) | `ctx.media.remove`（project 绑定） | `deleteGeneration` | 同上「delete (library soft-delete)」 |
+  | debt-24 | `actions.softDeleteGeneration` | `manageMedia`(discard) | `ctx.media.discard`（project 绑定） | `softDeleteGeneration` | 同上「discard (candidate-zone hide)」 |
+  | debt-25 | `actions.getEditorMedia` | `manageMedia`(list) | `ctx.media.list` | `getEditorMedia` | 同上「list returns clips and caps」 |
+  | debt-26 | `actions.loadMoreMedia` | `manageMedia`(load_more) | `ctx.media.loadMore` | `loadMoreMedia` | 同上「load_more passes the cursor」 |
+  | debt-39 | `cowork-actions.cancelGenJob` | `manageMedia`(cancel_job) | `ctx.media.cancelJob`（project 绑定，只退不扣） | `cancelGenJob` | 同上「refund honesty」3 例 |
+  | debt-19 | `actions.startRender` | `renderVideo`(export) | `ctx.render.export`（读已存 editJson） | `startRender` | `render-video.test.ts`「export — renders the SAVED cut」 |
+  | debt-20 | `actions.getRenderJobs` | `renderVideo`(jobs) | `ctx.render.jobs` | `getRenderJobs` | 同上「jobs returns the render strip」 |
+  | debt-21 | `actions.startCaption` | `renderVideo`(caption) | `ctx.render.caption` | `startCaption` | 同上「caption needs a src, then dispatches」 |
+  | debt-22 | `actions.getCaptionJob` | `renderVideo`(caption_job) | `ctx.render.captionJob` | `getCaptionJob` | 同上「caption_job polls; not-found is honest」 |
+  | debt-23 | `actions.getTranscript` | `renderVideo`(transcript) | `ctx.render.transcript` | `getTranscript` | 同上「transcript returns the cached cues」 |
+  | debt-14 | `actions.uploadCandidates` | `importMedia`(fromUrl) | `ctx.mediaImport.fromUrl` | `finalizeCandidateUploads`（服务端引入落权） | `import-media.test.ts`「fromUrl routing」 |
+  | debt-15 | `actions.uploadReference` | `importMedia`(fromUrl) | `ctx.mediaImport.fromUrl` | `finalizeCandidateUploads` | 同上 |
+  | debt-78 | `upload-actions.authorizeUpload` | `importMedia`(fromUrl) | `ctx.mediaImport.fromUrl`（服务端 SSRF 取字节 → storage.put） | `finalizeCandidateUploads` | 同上 + 「SSRF/fetch refusal」 |
+  | debt-79 | `upload-actions.uploadFileFallback` | `importMedia`(fromUrl) | `ctx.mediaImport.fromUrl` | `finalizeCandidateUploads` | 同上 |
+  | debt-80 | `upload-actions.signUploadPart` | `importMedia`(fromUrl) | `ctx.mediaImport.fromUrl`（单发≤64 MiB，更大留浏览器分片） | `finalizeCandidateUploads` | 同上 |
+  | debt-81 | `upload-actions.abortDirectUpload` | `importMedia`(fromUrl) | `ctx.mediaImport.fromUrl` | `finalizeCandidateUploads` | 同上 |
+  | debt-82 | `upload-actions.finalizeCandidateUploads` | `importMedia`(fromUrl) | `ctx.mediaImport.fromUrl`（**同一落权**） | `finalizeCandidateUploads` | 同上 + 「unsupported-type refusal」 |
+
+  port 注入点=`apps/web/lib/otto-actions.ts buildOttoContext` → `makeOttoMediaPort` / `makeOttoRenderPort` / `makeOttoMediaImportPort`（`apps/web/lib/otto-media-port.ts`；身份走 requireOwner，skill 参数零身份字段；`server-only`，非 `"use server"`/非 `-actions`——parity 扫描器不发现）。`saveProjectEdit`/`addSegmentToCut`/`saveCroppedGeneration` 维持 VISUAL 豁免不动。TOOL_STEP_LABELS 补三 live-trace 标签；instructions.ts 补三条「When to call」（REVIEWER-PLAYBOOK:107 注册卫生）；registry 名册测试 31→34。
+  **对等差额如实记**：`importMedia` 只做 URL 引入（Otto 无本地文件盘）——浏览器直传 authorize/sign/abort/fallback + 旧表单 uploadCandidates/uploadReference 是同一「引入媒体」能力的**人工 UI 传输机制**，Otto 侧走服务端取字节 → 同一 `finalizeCandidateUploads` 落权（能力级对等，同 describeRefs/proposeStoryboard 多动作→单 skill 先例）；单发上限 64 MiB，更大文件诚实拒绝并指引用户在 app 内分片上传。`renderVideo.export` 只导出**已存** cut（时间轴编排=VISUAL 豁免）；无已存 cut 诚实返「先在编辑器建 cut」。
+
 ## ⑤ 对标锚
 
 - **owner**：各泳道工位 + founder/审查员（盲评）。
@@ -64,6 +98,7 @@
 - **owner**：各工位 + 浏览器 runtime QA。
 - **⚠️ 三无纪律预注**：本程处**用户数=0 + Stripe 零成交 + 无生产流量**（三无）状态下——**旅程证据 = mock/staging 级，如实标注**（宪法 3 状态诚实）：happy/empty/loading/denied/failure/retry/mobile 七态截图取自 staging + MockProvider（$0）+ 夹具注入失败形态，**不冒充生产真实流量**；真钱旅程（真 provider 小额）= 只交方案不执行，执行点 = **每笔真实花费 = founder 逐笔明示批准**（宪法 2/BLUEPRINT:61；唯一澄清处见 spec §六.3）。凡 staging/mock 级证据一律标注来源级别，不作生产已验证陈述。
 - **证据槽位**：canvas 五态（空布→首图→就地编辑→A/B→Make Video）；工厂（贴链→选人设→批量矩阵确认页→成片网格 partial）；storyboard（draft→make-all→animatic→stitch）；media-editor（trim→抽帧→存版本 $0）。**待施工填七态截图 + 时间码**。
+- **W-B3-B · 锚 M1 $0 子旅程（组件级，如实标注：Otto 执行器路径 + 有状态假 port；server 动作真值由既有 `apps/web/lib/__tests__/*` 承载）**：`packages/otto/src/skills/manage-media.test.ts`「M1 $0 sub-journey: import a frame → new version lands → visible → $0 export (Otto path)」——从 URL 引入一帧作图片参考（存新版本，`importMedia`→UPLOAD generation）→ 在项目媒体中可见（`manageMedia.list`）→ $0 导出（`renderVideo.export`，ffmpeg concat）→ discard 收口。全程走三 port、无 `startGen`/credits/provider 任何符号（$0 by construction，注入抛错 `startGen` spy 作 tripwire）。**trim/crop 本身=VISUAL 客户端操作**：其 mock 花费已改 $0（见 §④ / `media-editor-page.tsx`），编辑器内 trim/抽帧的服务端真值走 render/upload 既有动作。M1 并排盲评（trim→抽帧→存版本 顺手度 vs CapCut）+ asset-viewer C1 版本/帧轨 = staging UI 真接线后补（批2/批3）。
 - **W-B3-A · 锚 C1 $0 子旅程（组件级，如实标注：Otto 执行器路径 + 有状态假 port；server 动作真值由既有 `apps/web/lib/__tests__/canvas-actions.test.ts` 承载）**：`packages/otto/src/skills/manage-canvas.test.ts`「C1 $0 sub-journey: empty board → place → derivation visible (Otto executor path)」——空布（count=0）→ 放文字卡+改写 → 放已生成图 → 放派生图（`sourceNodeId` 指回源）→ view 中派生关系可见（source→result 链）→ 删卡收口。全程 port 面无 `startGen`/credits/provider 任何符号（$0 by construction）。C1 五态并排盲评（空布→首图→就地编辑→A/B→Make Video）依赖 gen 接线=W-B3-E 后补。
 
 ## ⑦ 测试全家桶可重跑链接

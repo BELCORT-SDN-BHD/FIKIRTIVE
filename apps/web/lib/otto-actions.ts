@@ -66,6 +66,7 @@ import { proposeMetaActionForOwner } from "./meta-propose";
 import { proposeAdBuildForOwner } from "./meta-build-propose";
 import { validateOwnedGenerationExt } from "./otto-generation-validate";
 import { makeOttoCanvasPort } from "./otto-canvas-port";
+import { makeOttoMediaPort, makeOttoRenderPort, makeOttoMediaImportPort } from "./otto-media-port";
 
 // mapOttoUsage re-exported from @fikirtive/otto so existing callers that import
 // it from this module continue to work (the canonical source is @fikirtive/otto).
@@ -329,6 +330,14 @@ export async function buildOttoContext({
     // (generationId must be real + in-project; edit/remove are project-bound) — see
     // makeOttoCanvasPort. None of these touch startGen / reserveCredits / the provider.
     canvas: makeOttoCanvasPort(ownerId, projectId),
+    // Media ports (W-B3-B, $0) — single action layer: Otto's manageMedia / renderVideo /
+    // importMedia skills drive the SAME owner-gated $0 server actions the human media UI uses
+    // (getEditorMedia/loadMoreMedia/attach/detach/delete/discard/cancelGenJob; startRender/
+    // getRenderJobs/startCaption/getCaptionJob/getTranscript; finalizeCandidateUploads via a
+    // server-side SSRF-guarded fetch), each pre-bound to this owner+project. None touch startGen.
+    media: makeOttoMediaPort(ownerId, projectId),
+    render: makeOttoRenderPort(ownerId, projectId),
+    mediaImport: makeOttoMediaImportPort(ownerId, projectId),
   };
 }
 

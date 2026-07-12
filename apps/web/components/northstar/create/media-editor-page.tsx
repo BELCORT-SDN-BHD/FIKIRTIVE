@@ -23,7 +23,7 @@ import { cn } from "@/lib/utils";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { useSearchParams } from "next/navigation";
-import { canvasObjectById, ottoWorking as setOttoWorking, spendCredits } from "../immersive/_store";
+import { canvasObjectById, ottoWorking as setOttoWorking } from "../immersive/_store";
 import { MockNote, OttoNarrationBar, PageHeader } from "../_shared";
 import { cvImage, CV_ALL_SEED_OBJECTS, NS_ASSETS, type CvObject } from "./_fixtures";
 import {
@@ -33,7 +33,6 @@ import {
   useCreateKeyframes,
 } from "./_create-ui";
 
-const TRIM_COST = 12;
 const ASPECTS = ["1:1", "4:5", "9:16", "16:9"] as const;
 const EFFECTS = ["Slow zoom in", "Film grain", "Warm grade"] as const;
 
@@ -453,10 +452,10 @@ function VideoEditor({ asset }: { asset: CvObject | null }) {
           </div>
           <div className="mt-3 flex items-center gap-2">
             <Button size="sm" disabled={trimming} onClick={() => setTrimAsk(true)}>
-              {trimming ? "Trimming…" : `Apply trim · ${TRIM_COST} credits`}
+              {trimming ? "Trimming…" : "Apply trim"}
             </Button>
             <p className="text-[11px] leading-4 text-muted-foreground">
-              A trim re-renders the clip, so it costs credits. Nothing is charged until you confirm.
+              A trim re-renders the clip and is free ($0). Nothing changes until you confirm.
             </p>
           </div>
         </div>
@@ -535,21 +534,20 @@ function VideoEditor({ asset }: { asset: CvObject | null }) {
         open={trimAsk}
         onOpenChange={setTrimAsk}
         title="Apply this trim?"
-        ask="Trimming re-renders the clip. This will spend real credits."
+        ask="Trimming re-renders the clip — it is free ($0)."
         impacts={[
-          `Cost: ${TRIM_COST} credits. No charge until you confirm.`,
+          "Free — a trim re-renders the clip and never spends credits.",
           `The clip becomes ${secs}s long, saved as a new version.`,
           "The original stays in version history.",
         ]}
-        confirmLabel={`Confirm trim · ${TRIM_COST} credits`}
+        confirmLabel={"Confirm trim"}
         onConfirm={() => {
           setTrimAsk(false);
           setTrimming(true);
           setOttoWorking(true, "Trimming the clip…"); // dock 徽点脉冲
           timers.current.push(
             window.setTimeout(() => {
-              // 重渲染完成即入账(共享 store;余额即时刷新)
-              spendCredits(TRIM_COST, `Trim · ${secs}s`, "Video");
+              // 重渲染完成——trim = 重渲染 = $0(render.ts「re-rendering is free」),不入账
               setTrimming(false);
               setTrimmed(true);
               setOttoWorking(false);

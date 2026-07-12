@@ -193,6 +193,10 @@ const TOOL_STEP_LABELS: Record<string, string> = {
   listScheduledPosts: "Checking your schedule",
   listPublishTargets: "Finding your connected accounts",
   manageCanvas: "Working on your canvas",
+  // W-B3-B (media-editor / asset-viewer $0):
+  manageMedia: "Organizing your media",
+  renderVideo: "Exporting your video",
+  importMedia: "Importing media",
   // setTitle stays silent (internal housekeeping).
 };
 
