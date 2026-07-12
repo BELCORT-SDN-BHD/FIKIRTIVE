@@ -52,7 +52,8 @@ export function StudioStoryboard() {
   const [scenes, setScenes] = React.useState<StudioScene[]>(() => studioStoryboard(NS_PRODUCTS[5]).scenes);
   const [editing, setEditing] = React.useState<StudioScene | null>(null);
   const [retakeScene, setRetakeScene] = React.useState<StudioScene | null>(null);
-  const [coherence, setCoherence] = React.useState(true);
+  const [coherence, setCoherence] = React.useState(false); // [W-B3-C] Coming soon(Wave2/3)——禁用态,不预设「开」冒充已有
+
   const [makeAllAsk, setMakeAllAsk] = React.useState(false);
   const [renderState, setRenderState] = React.useState<RenderState>("idle");
   const [renderPct, setRenderPct] = React.useState<Record<string, number>>({});
@@ -375,23 +376,32 @@ export function StudioStoryboard() {
       {/* Step 3 — Voice & timing */}
       {step === 3 && (
         <div className="mt-6 max-w-[760px]">
+          {/* [W-B3-C 诚实 Coming soon] coherence/多语配音/音频驱动 = Wave2/3 明示排除项(B3 spec §二/
+              L-C §五.2):本波无后台,控件如实禁用 + 标注,不留假开关(gate4 诚实契约)。 */}
           <div className="flex items-center justify-between rounded-[18px] border border-border bg-card p-4">
             <div>
-              <p className="text-sm font-semibold text-foreground">Coherence mode</p>
-              <p className="text-[13px] leading-[18px] text-muted-foreground">Keeps characters, kitchen and lighting consistent across all scenes.</p>
+              <p className="flex items-center gap-2 text-sm font-semibold text-foreground">
+                Coherence mode
+                <Badge variant="outline">Coming soon</Badge>
+              </p>
+              <p className="text-[13px] leading-[18px] text-muted-foreground">Will keep characters, kitchen and lighting consistent across all scenes.</p>
             </div>
-            <Switch checked={coherence} onCheckedChange={setCoherence} aria-label="Coherence mode" />
+            <Switch checked={coherence} onCheckedChange={setCoherence} disabled aria-label="Coherence mode (coming soon)" />
           </div>
 
           {/* [wave-b] 多语言口播配音(LTX AI Dubbing)· [wave-b] 音频驱动生成 · [wave-b] 硬字幕烧录 */}
           <div className="mt-4 grid gap-3 sm:grid-cols-3">
             <div className="rounded-[14px] border border-border bg-card p-4">
-              <label htmlFor="sb-dub" className="text-[13px] font-semibold text-foreground">Voiceover language</label>
+              <label htmlFor="sb-dub" className="flex items-center gap-2 text-[13px] font-semibold text-foreground">
+                Voiceover language
+                <Badge variant="outline">Coming soon</Badge>
+              </label>
               <select
                 id="sb-dub"
                 value={dubLang}
                 onChange={(e) => setDubLang(e.target.value)}
-                className="mt-2 h-9 w-full rounded-[10px] border border-input bg-card px-2.5 text-[13px] text-foreground outline-none focus-visible:border-ring focus-visible:ring-[3px] focus-visible:ring-ring/40"
+                disabled
+                className="mt-2 h-9 w-full rounded-[10px] border border-input bg-card px-2.5 text-[13px] text-foreground outline-none focus-visible:border-ring focus-visible:ring-[3px] focus-visible:ring-ring/40 disabled:opacity-60"
               >
                 {STUDIO_DUB_LANGS.map((l) => (
                   <option key={l} value={l}>{l}</option>
@@ -403,10 +413,11 @@ export function StudioStoryboard() {
                 <p className="flex items-center gap-1.5 text-[13px] font-semibold text-foreground">
                   <Music className="size-3.5 text-muted-foreground" strokeWidth={2} />
                   Audio-driven
+                  <Badge variant="outline">Coming soon</Badge>
                 </p>
                 <p className="mt-0.5 text-xs leading-4 text-muted-foreground">Cut to an uploaded track</p>
               </div>
-              <Switch checked={audioDriven} onCheckedChange={setAudioDriven} aria-label="Audio-driven timing" />
+              <Switch checked={audioDriven} onCheckedChange={setAudioDriven} disabled aria-label="Audio-driven timing (coming soon)" />
             </div>
             <div className="flex items-start justify-between rounded-[14px] border border-border bg-card p-4">
               <div className="min-w-0">
@@ -521,6 +532,13 @@ export function StudioStoryboard() {
                   </>
                 )}
                 <div className="flex-1" />
+                {/* [E1-09 · stitch 接线预留(W-B3-C 只留接口,不硬接)] 拼成片 = $0 顺序 concat
+                    (B3 spec §四.① 钉 + 裁定9,founder 2026-07-11 判):ffmpeg concat 属 timeline
+                    渲染,走 actions.startRender → apps/worker/src/jobs/render.ts 既有 xfade/concat
+                    管线(「re-rendering is free」),不 reserve、不建 GenJob;AI 生成转场/morph =
+                    paid 走 startGen,留下波 costing。真接线需要各场景的真 GenJob 产物 + render job
+                    排队,超出本工位 $0 范围 —— 随批2 W-B3-H(Make all/gate1 真管线)落地后,在此
+                    renderState==="done" 动作行加「Stitch into one video · $0」入口。 */}
                 <Button variant="secondary" size="sm" onClick={() => router.push(`${IMMERSIVE_BASE}/schedule/composer`)}>
                   Schedule this
                 </Button>
@@ -532,9 +550,10 @@ export function StudioStoryboard() {
           </div>
 
           <SectionLabel className="mt-8">Settings carried into render</SectionLabel>
+          {/* [W-B3-C] coherence/配音/音频驱动是 Coming soon(上方 Step 3 已如实禁用)——此行只报
+              真会带进渲染的设置,不再冒称 coherence/voiceover 状态。 */}
           <p className="mt-1 text-[13px] leading-[18px] text-muted-foreground">
-            {coherence ? "Coherence on" : "Coherence off"} · Voiceover in {dubLang}
-            {burnCaptions ? " · captions burned in" : ""}{audioDriven ? " · cut to your track" : ""}.
+            {burnCaptions ? "Captions burned in" : "No burned-in captions"} · voiceover and coherence options are coming soon.
           </p>
         </div>
       )}

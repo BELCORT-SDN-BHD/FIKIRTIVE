@@ -23,6 +23,7 @@ import { proposeAdBuildSkill } from "./skills/propose-ad-build.js";
 import { seedreamPromptSkill } from "./skills/seedream-prompt.js";
 import { seedancePromptSkill } from "./skills/seedance-prompt.js";
 import { proposeStoryboardSkill } from "./skills/propose-storyboard.js";
+import { editStoryboardSkill } from "./skills/edit-storyboard.js";
 import { proposeResearchSkill } from "./skills/propose-research.js";
 import { schedulePostsSkill } from "./skills/schedule-posts.js";
 import { approveScheduledPostSkill } from "./skills/approve-scheduled-post.js";
@@ -60,6 +61,7 @@ export const allSkills: OttoSkill[] = [
   seedreamPromptSkill,
   seedancePromptSkill,
   proposeStoryboardSkill,
+  editStoryboardSkill,
   proposeResearchSkill,
   schedulePostsSkill,
   approveScheduledPostSkill,

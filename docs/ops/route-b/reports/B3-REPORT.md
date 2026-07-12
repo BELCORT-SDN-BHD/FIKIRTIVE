@@ -30,6 +30,7 @@
   - **Crop/Trim/抽帧 $0 修正（spec §四.G，删 `TRIM_COST=12`）**：`media-editor-page.tsx` 壳（mock 态）原把 trim 标价 12cr + 花费确认——已改判 $0（trim=重渲染=free，render.ts）：删 `TRIM_COST` 常量 + `spendCredits` 调用，按钮/文案/确认卡改「free ($0)」；交互结构保持不动（非重画），仅去除 $0 谎言（宪法 3）。Crop/抽帧 mock 本就 $0（无 spendCredits），无需改。
   - **人工入口现状如实**：immersive media-editor/asset-viewer 壳本批保持壳级（除上述 trim $0 文案更正），UI 真接线归批2/批3。
 
+- **W-B3-C（已交付，$0 面）**：E1-08「分镜工作台」的 **$0 编辑面**双执行器补齐——Otto 侧新增 `editStoryboard` skill（$0/write/internal，`packages/otto/src/skills/edit-storyboard.ts`），与人工 server action（`apps/web/lib/storyboard-actions.ts`，已在 main）共用同一套纯编辑变换（迁至 `packages/otto/src/storyboard-edit.ts` 作双执行器共同权威，含 G 闸② 陈旧级联）。**E1-08 的付费面（Make all/Retry=gate1 真管线）属批2 W-B3-H，本工位未触**；E1-09 stitch 只落 $0 concat 接线预留（注释+TODO 指针，见 `studio-storyboard.tsx` renderState done 动作行）。行级状态迁移提案（E1-08 $0 编辑面 code-complete）入 PR 描述，不动矩阵（D-015⑤ 惯例）。
 ## ④ 双执行矩阵
 
 - **owner**：各工位（出生即配双执行器）。
@@ -60,8 +61,7 @@
 
   port 注入点=`apps/web/lib/otto-actions.ts buildOttoContext` → `makeOttoCanvasPort(ownerId, projectId)`（`apps/web/lib/otto-canvas-port.ts`；身份走 requireOwner，skill 参数零身份字段——工厂硬拦）；`moveCanvasNode` 维持 VISUAL 豁免不动。TOOL_STEP_LABELS 补 `manageCanvas: "Working on your canvas"`（live trace）。instructions.ts 补「When to call `manageCanvas`」条目（REVIEWER-PLAYBOOK:107 注册卫生，v2 codex TR1③）。
   **对等差额如实记（v2，codex TR1②）**：`deleteCanvasNode` 对等=**非在途节点**；**在途付费卡（pending/timeout 无 URL）删除=UI 亲点专属**（防误删护栏，宪法 11 状态诚实）——Otto 一律硬拒并指引用户在画布上亲手确认删除，无模型自我确认参数；预检 fail-closed（list 失败/目标不在本项目清单=拒，绝不「查不到照删」）。
-
-- **W-B3-B 债 19 条清零（四件套，本批交付）**——`pnpm lint:parity` 绿：`[parity] OK: 182 entries cover 162 action exports … TODO_SKILL entries remain: 56`（棘轮 75→56，`scripts/parity-debt-baseline.json` 同 PR 收紧）：
+- **W-B3-B 债 19 条清零（四件套，本批交付）**——`pnpm lint:parity` 绿：`[parity] OK: 182 entries cover 162 action exports … TODO_SKILL entries remain: 50`（本 PR 清 19 条；合流 #267 W-B3-C〔清 6 条〕后基线随 merge 收紧至 **50**，`scripts/parity-debt-baseline.json`）：
 
   | 债号 | action key | skill | ctx port | handler（单一动作层） | 测试 |
   |---|---|---|---|---|---|
@@ -85,9 +85,22 @@
   | debt-81 | `upload-actions.abortDirectUpload` | `importMedia`(fromUrl) | `ctx.mediaImport.fromUrl` | `finalizeCandidateUploads` | 同上 |
   | debt-82 | `upload-actions.finalizeCandidateUploads` | `importMedia`(fromUrl) | `ctx.mediaImport.fromUrl`（**同一落权**） | `finalizeCandidateUploads` | 同上 + 「unsupported-type refusal」 |
 
-  port 注入点=`apps/web/lib/otto-actions.ts buildOttoContext` → `makeOttoMediaPort` / `makeOttoRenderPort` / `makeOttoMediaImportPort`（`apps/web/lib/otto-media-port.ts`；身份走 requireOwner，skill 参数零身份字段；`server-only`，非 `"use server"`/非 `-actions`——parity 扫描器不发现）。`saveProjectEdit`/`addSegmentToCut`/`saveCroppedGeneration` 维持 VISUAL 豁免不动。TOOL_STEP_LABELS 补三 live-trace 标签；instructions.ts 补三条「When to call」（REVIEWER-PLAYBOOK:107 注册卫生）；registry 名册测试 31→34。
+  port 注入点=`apps/web/lib/otto-actions.ts buildOttoContext` → `makeOttoMediaPort` / `makeOttoRenderPort` / `makeOttoMediaImportPort`（`apps/web/lib/otto-media-port.ts`；身份走 requireOwner，skill 参数零身份字段；`server-only`，非 `"use server"`/非 `-actions`——parity 扫描器不发现）。`saveProjectEdit`/`addSegmentToCut`/`saveCroppedGeneration` 维持 VISUAL 豁免不动。TOOL_STEP_LABELS 补三 live-trace 标签；instructions.ts 补三条「When to call」（REVIEWER-PLAYBOOK:107 注册卫生）；registry 名册测试 31→35（合流 #267 editStoryboard 后）。
   **对等差额如实记**：`importMedia` 只做 URL 引入（Otto 无本地文件盘）——浏览器直传 authorize/sign/abort/fallback + 旧表单 uploadCandidates/uploadReference 是同一「引入媒体」能力的**人工 UI 传输机制**，Otto 侧走服务端取字节 → 同一 `finalizeCandidateUploads` 落权（能力级对等，同 describeRefs/proposeStoryboard 多动作→单 skill 先例）；单发上限 64 MiB，更大文件诚实拒绝并指引用户在 app 内分片上传。`renderVideo.export` 只导出**已存** cut（时间轴编排=VISUAL 豁免）；无已存 cut 诚实返「先在编辑器建 cut」。
 
+
+- **W-B3-C 债清零（6/6，已交付）**——四件套逐条：
+
+  | 债号 | action key | 清偿方式 | manifest 状态 |
+  |---|---|---|---|
+  | debt-11 | `actions.saveShotPrompt` | 能力级对等挂 `editStoryboard`（op=editShot；同 createShot→proposeStoryboard 先例——legacy Shot 面待 LCg retire，reason 如实注明） | todoSkill → skill ✅ |
+  | debt-12 | `actions.updateShotStatus` | 能力级对等挂 `editStoryboard`（卡片路径无 status 枚举，就绪态=prompts/pointers；reason 如实注明） | todoSkill → skill ✅ |
+  | debt-13 | `actions.softDeleteShot` | 能力级对等挂 `editStoryboard`（op=deleteShot；reason 如实注明） | todoSkill → skill ✅ |
+  | debt-75 | `storyboard-actions.editShotPrompt` | 真对等：`editStoryboard` op=editShot 与人工动作共用 `applyEditShotPrompt`（同一纯变换） | todoSkill → skill ✅ |
+  | debt-76 | `storyboard-actions.deleteShot` | 真对等：op=deleteShot 共用 `applyDeleteShot`（≥1 镜头下限同动作层） | todoSkill → skill ✅ |
+  | debt-77 | `storyboard-actions.reorderShots` | 真对等：op=reorderShots 共用 `applyReorderShots`（合法排列校验同动作层） | todoSkill → skill ✅ |
+
+  棘轮：本工位单独 84→78；**与 W-B3-A（#266，亦清 6 条）合流后 = 72**，`scripts/parity-debt-baseline.json` maxTodoSkill 随 merge 收紧至 **72**；`pnpm lint:parity` 绿（TODO_SKILL=72）。live trace：`TOOL_STEP_LABELS` 补 `editStoryboard: "Editing the storyboard"`（`otto-stream-bridge.ts`）。
 ## ⑤ 对标锚
 
 - **owner**：各泳道工位 + founder/审查员（盲评）。
@@ -100,11 +113,12 @@
 - **证据槽位**：canvas 五态（空布→首图→就地编辑→A/B→Make Video）；工厂（贴链→选人设→批量矩阵确认页→成片网格 partial）；storyboard（draft→make-all→animatic→stitch）；media-editor（trim→抽帧→存版本 $0）。**待施工填七态截图 + 时间码**。
 - **W-B3-B · 锚 M1 $0 子旅程（组件级，如实标注：Otto 执行器路径 + 有状态假 port；server 动作真值由既有 `apps/web/lib/__tests__/*` 承载）**：`packages/otto/src/skills/manage-media.test.ts`「M1 $0 sub-journey: import a frame → new version lands → visible → $0 export (Otto path)」——从 URL 引入一帧作图片参考（存新版本，`importMedia`→UPLOAD generation）→ 在项目媒体中可见（`manageMedia.list`）→ $0 导出（`renderVideo.export`，ffmpeg concat）→ discard 收口。全程走三 port、无 `startGen`/credits/provider 任何符号（$0 by construction，注入抛错 `startGen` spy 作 tripwire）。**trim/crop 本身=VISUAL 客户端操作**：其 mock 花费已改 $0（见 §④ / `media-editor-page.tsx`），编辑器内 trim/抽帧的服务端真值走 render/upload 既有动作。M1 并排盲评（trim→抽帧→存版本 顺手度 vs CapCut）+ asset-viewer C1 版本/帧轨 = staging UI 真接线后补（批2/批3）。
 - **W-B3-A · 锚 C1 $0 子旅程（组件级，如实标注：Otto 执行器路径 + 有状态假 port；server 动作真值由既有 `apps/web/lib/__tests__/canvas-actions.test.ts` 承载）**：`packages/otto/src/skills/manage-canvas.test.ts`「C1 $0 sub-journey: empty board → place → derivation visible (Otto executor path)」——空布（count=0）→ 放文字卡+改写 → 放已生成图 → 放派生图（`sourceNodeId` 指回源）→ view 中派生关系可见（source→result 链）→ 删卡收口。全程 port 面无 `startGen`/credits/provider 任何符号（$0 by construction）。C1 五态并排盲评（空布→首图→就地编辑→A/B→Make Video）依赖 gen 接线=W-B3-E 后补。
-
+- **W-B3-C · 锚 S1 $0 子旅程（brief→draft scenes→改脚本→保存）证据（已交付，执行器级/测试级——如实标注：非浏览器七态截图）**：`packages/otto/src/skills/edit-storyboard.test.ts` 的「S1 $0 sub-journey」用例全链走查——`proposeStoryboard` 起草 2 镜头卡（draft scenes $0）→ `editStoryboard` op=editShot 改第 2 镜头脚本 → op=reorderShots 重排 → payload 持久化断言（保存），并断言全程 **`genJob.create` 零调用**（$0 契约）；人工侧同链由 `apps/web/lib/__tests__/storyboard-actions.test.ts`（存量，owner-scoped 载入/G 闸②级联/边界拒绝）覆盖。**浏览器级七态截图待批3 引擎集成**（immersive 壳与 Otto/卡片接通后才有真 UI 旅程可截，见 §⑫.8）。
 ## ⑦ 测试全家桶可重跑链接
 
 - **owner**：各工位。
 - **证据槽位**：本地三关（`check`/`test`/`web-build`，配方 `docs/runbooks/local-ci.md`）；契约测试（`runVariantBatch` N 格独立/幂等不双扣/partial 只退失败格/Trim $0 断言/Otto propose 零 GenJob/Library 真落库归组）；`node scripts/route-b-matrix-check.mjs`（矩阵闸）；`pnpm lint:parity`（对等债闸）。**待施工填可重跑命令 + CI job 链接**。
+- **W-B3-C 可重跑（已交付）**：`pnpm --filter @fikirtive/otto test`（skill 全家桶含 `edit-storyboard.test.ts`：schema/owner-scope/四 op 边界/G 闸②级联/S1 $0 子旅程/零 GenJob）；`pnpm --filter @fikirtive/web test -- storyboard`（人工动作层存量回归）；`pnpm lint:parity`（债闸，棘轮 78）；`pnpm --filter @fikirtive/otto run catalog:check`（CATALOG 同步闸）。CI job 链接=PR checks（见 §①）。
 
 ## ⑧ schema / ownerId / 审计 / 同意 / 秘密
 
@@ -141,7 +155,7 @@
 6. **B10 毛利地板数值 gate 时序假设**（批2 前置）：批量定价毛利证明依赖 B10；若 B10 未就绪批2 停等并上报（假设 B3-A5）。
 7. **Design B 首落本区 = 荐否**（L-C §七.D1/A2）：安全 > 效率，L-C 用成熟单一动作层 + parity 清债，Design B 另择小区首落——待 founder/总审查员定。
 8. **W-B3-A 边界如实（2026-07-12 编排官核准）**：immersive canvas **UI 面本批保持壳级**（`canvas-page.tsx` 深度 mock 的 CvObject/session-pool 客户端组件，整体改写=越界「禁重画」）；$0 CRUD 的「真接后台」由 **Otto 执行器侧**交付（`manageCanvas` → `ctx.canvas` → canvas-actions，双执行器纪律的 Otto 半边先行），**UI 真接线归批2/批3**（随 gen 链接线/live-event 推送化一并）。灰度骨架照 L-C LCa 判据：L-C 无具体 env/flag 形态可照抄 → **壳级路由已在（LC-0 落 main）即为骨架**；flag 形态随批2 UI 接线落地（L-C §七.D3 荐灰度不变）。
-
+9. **storyboard 壳 UI 保持壳级（W-B3-C，控制面裁定——与 W-B3-A 同型）**：核证确认 immersive `create/storyboard` 壳（`studio-storyboard.tsx`）零 server-action 接线、零 thread/卡片上下文（STORYBOARD_CARD 只由 Otto `proposeStoryboard` 铸造，壳拿不到 cardId），「$0 真接后台」在 UI 面只有 mock 缝——依裁定 UI 保持壳级，**「真」由 Otto skill（`editStoryboard`）+ 既有 `storyboard-actions`（双执行器共同纯变换）承载**；壳与真卡片的接通随批3 引擎集成（开工门=#253 或其拆分后继）。壳内 Wave2/3 假开关（coherence/多语配音/音频驱动）已如实禁用 + Coming soon 标注（gate4）；E1-09 stitch 只留 $0 concat 接线预留注释（spec §四.①）。
 ## ⑬ 录像时间码 + founder 10 分钟自查脚本
 
 - **owner**：各工位 + 控制面（终验日）。

@@ -3,9 +3,9 @@ import { allSkills, skillCatalog } from "./registry.js";
 import { otto } from "./otto.js";
 
 describe("registry", () => {
-  it("collects all thirty-four skills", () => {
+  it("collects all thirty-five skills", () => {
     const names = allSkills.map((s) => s.name).sort();
-    expect(names).toEqual(["approveScheduledPost", "cancelScheduledPost", "describeRefs", "editScheduledPost", "generate", "importMedia", "ingestProduct", "list-meta-pages", "listPublishTargets", "listScheduledPosts", "lookupProducts", "manageCanvas", "manageMedia", "meta-ad-performance", "meta-expert", "meta-insights", "meta-list-objects", "propose", "propose-ad-build", "propose-meta-action", "proposePack", "proposeResearch", "proposeStoryboard", "rememberBrandFact", "renderVideo", "researchWeb", "saveCustomerSegment", "saveOffer", "saveProduct", "schedulePosts", "seedancePrompt", "seedreamPrompt", "setTitle", "updateBrief"]);
+    expect(names).toEqual(["approveScheduledPost", "cancelScheduledPost", "describeRefs", "editScheduledPost", "editStoryboard", "generate", "importMedia", "ingestProduct", "list-meta-pages", "listPublishTargets", "listScheduledPosts", "lookupProducts", "manageCanvas", "manageMedia", "meta-ad-performance", "meta-expert", "meta-insights", "meta-list-objects", "propose", "propose-ad-build", "propose-meta-action", "proposePack", "proposeResearch", "proposeStoryboard", "rememberBrandFact", "renderVideo", "researchWeb", "saveCustomerSegment", "saveOffer", "saveProduct", "schedulePosts", "seedancePrompt", "seedreamPrompt", "setTitle", "updateBrief"]);
   });
   it("every registered skill carries a built SDK tool", () => {
     expect(allSkills.every((s) => s.tool != null)).toBe(true);
