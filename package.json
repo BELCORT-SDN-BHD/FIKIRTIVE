@@ -23,6 +23,8 @@
     "lint:tenancy": "bash scripts/check-no-raw-prisma.sh",
     "lint:skills": "bash scripts/check-skill-imports.sh",
     "lint:parity": "corepack pnpm --filter @fikirtive/otto build && bash scripts/check-parity.sh",
+    "lint:margin": "corepack pnpm --filter @fikirtive/core build && node scripts/check-margin-floor.mjs",
+    "backup:plan": "corepack pnpm --filter \"./packages/*\" build && corepack pnpm --filter @fikirtive/worker build && node scripts/db-backup-plan.mjs",
     "test": "pnpm -r test",
     "db:generate": "pnpm --filter @fikirtive/db generate",
     "db:migrate": "pnpm --filter @fikirtive/db migrate:dev"

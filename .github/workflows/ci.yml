@@ -53,6 +53,12 @@ jobs:
       # The red-case tests (fixture strings) prove the parity scanner's shape matchers still turn red.
       - run: node scripts/__tests__/check-parity.test.mjs
       - run: pnpm lint:parity
+      # 宪法 5 margin floor: every sellable gen SKU must keep (price−cost)/price ≥ 45%,
+      # measured as the LIVE spend.ts charge vs the founder-certified BytePlus bill COGS
+      # (harmony-04 §二). A charge cut or a costing-input drift below the floor fails here.
+      # The red/green self-test proves the alarm still fires. Packages are already built above.
+      - run: node scripts/__tests__/check-margin-floor.test.mjs
+      - run: node scripts/check-margin-floor.mjs
       # Constitution tamper-evidence: docs/BLUEPRINT.md is immutable — this fails if it changed
       # without an explicit founder amendment (blueprint.sha256 update). Binds any agent, incl.
       # ones that never read .claude/ (GPT goal-mode).
