@@ -21,7 +21,7 @@
 ## ④ 双执行矩阵
 
 - owner：〔块施工工位〕
-- 证据：〔人工路径 + Otto 话术逐条（含设置/异常/取消/花费确认）；20 行的人工入口 + Otto skill 硬化见 spec §二；债 5 条清偿（debt-70 豁免 + 71/72 写 skill + 73/74 读 skill）见 spec §五——待施工后填活体〕
+- 证据：〔人工路径 + Otto 话术逐条（含设置/异常/取消/花费确认）；20 行的人工入口 + Otto skill 硬化（逐行 tool 名+cost/effect/reach+归域）见 spec §二；债 5 条清偿（**5 skill 零豁免**：debt-70 gated skill〔free/write/external→needsApproval 派生 true，人点卡=同意本体〕+ 71/72 写 skill + 73/74 读 skill；5 个新 ctx.schedule port）见 spec §五——待施工后填活体〕
 
 ## ⑤ 对标锚（平齐/超过/未及）
 
@@ -30,8 +30,8 @@
 
 ## ⑥ 全旅程证据（happy/empty/loading/denied/failure/retry/mobile）
 
-- owner：〔块施工工位（staging 沙箱）〕
-- 证据：〔六态各留一条（尤其②无权限/③平台拒绝/⑥恢复）；staging + Meta 测试账号沙箱旅程（三无纪律，非真发）；happy/empty/loading/denied/failure/retry/mobile 七态截图=待填〕
+- owner：〔块施工工位（块内）/ 外部测试阶段（活体）〕
+- 证据：〔**块内验收=mock/夹具级六态契约测试，零真实外部写**（spec §六.1）；**测试账号真发→IG/FB 可见的活体证据（尤其②③⑥）=外部测试阶段**（spec §六.2，前置=founder 授权，归 sandbox-verified 阶段执行）；happy/empty/loading/denied/failure/retry/mobile 七态截图=待填（UI 态可块内 staging 截取，真发态归外部测试阶段）〕
 
 ## ⑦ 测试全家桶可重跑链接
 
@@ -51,7 +51,7 @@
 ## ⑩ 上下游契约 + 外部位状态 + 通电步骤
 
 - owner：〔SPEC-B4 / 控制面〕
-- 证据：〔上游=L1 施工图 + #219/#227/#229/#230/#231/#233；下游=X adapter(E4-14) 走同一 worker；外部位=Meta App Review + Business Verification（`DEPENDENCY-STATUS.md` 外部等待位）；通电步骤=过审→canPublish=true→横幅自动关→存量 SCHEDULED 帖自动开发。二分清单见 spec §六.2〕
+- 证据：〔上游=L1 施工图 + #219/#227/#229/#230/#231/#233；下游=X adapter(E4-14) 走契约6 收敛后扩展点（触点清单如实，spec 契约8）；外部位=Meta App Review + Business Verification（`DEPENDENCY-STATUS.md` 外部等待位）；通电步骤=过审→canPublish=true→横幅自动关→存量 SCHEDULED 帖自动开发。二分清单见 spec §六.3〕
 
 ## ⑪ 异族评审 P0/P1=0
 
@@ -64,14 +64,16 @@
 - 证据：
   1. 〔IG media 补链（container id→帖 media id）在途——现 confirmed-live 也 NEEDS_ATTENTION（契约7 保守闭合，B4-01）〕
   2. 〔FB recent-posts reconcile future work——现悬空一律 NEEDS_ATTENTION（契约7 保守闭合，B4-02）〕
-  3. 〔debt-70 豁免类别边界（ACCOUNT_SECURITY vs 需第五类）=冻结 ack 待 founder/总审查员确认（spec §五 边界待裁）〕
-  4. 〔E4-14 X 发布 1cr/4cr 分档定价 = founder 终确认（spec §三 契约8）〕
-  5. 〔App Review 外部钥匙未到——founder 侧商业验证/递件在等（spec §六.2）〕
+  3. 〔debt-70 已改判（v0.2，控制面裁定采 codex 替代案）：gated skill 清偿、撤 ACCOUNT_SECURITY 豁免提案——施工须建 5 个新 ctx.schedule port + 5 skill（spec §五）〕
+  4. 〔E4-16「零核心改动可插拔」现状不成立（A03 降准）——X 接入触点 4 处收敛为登记式=施工验收项（spec §三 契约6/8）〕
+  5. 〔proxy matcher 无边界前缀（`/api/media/pubfoo` 会被放行出会话墙，`proxy.ts:73`）——补边界断言+回归测试=施工验收项（spec §三 契约5）〕
+  6. 〔E4-14 X 档位已拍板（GRILL-VERDICTS:215 方案 A）；**就高操作化细则**（短链/裸域名判 4cr）= founder ack（spec §四 X 锚）〕
+  7. 〔App Review 外部钥匙未到——founder 侧商业验证/递件在等（spec §六.3）〕
 
 ## ⑬ 录像时间码 + founder 10 分钟自查脚本
 
 - owner：〔块施工工位〕
-- 证据：〔录像时间码 + 截图=待填（过审后 staging 沙箱旅程）；**Founder 自查脚本（10 分钟）**=待填（终验日跑脚本非读散文）——预期步骤：打开排期区看三视图/横幅→跑 `publish.test.ts` 看四锁不双发→看 registry.test.ts 未授权即拒发→看 spec §一 差额核证表逐条有代码证据〕
+- 证据：〔录像时间码 + 截图=待填（真发录像归**外部测试阶段**，spec §六.2；UI 态录屏可块内 staging）；**Founder 自查脚本（10 分钟）**=待填（终验日跑脚本非读散文）——预期步骤：打开排期区看三视图/横幅→跑 `publish.test.ts` 看四锁不双发→看 registry.test.ts 未授权即拒发→看 spec §一 差额核证表逐条有代码证据〕
 
 ## ⑭ 定稿后 delta
 
