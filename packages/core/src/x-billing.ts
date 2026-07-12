@@ -34,15 +34,17 @@ const REDIRECT_PHRASES = [
   "见简介", "简介链接", "主页链接", "链接见", "私信", "点击链接", "戳链接",
 ];
 
-// A domain-shaped token: label(.label)*.tld with a 2+-letter tld — GENERIC, NOT a hand-maintained
-// TLD whitelist (NODE-276 fix 4: a real domain on an unlisted tld must never slip to 1cr). Not
-// preceded by @ (a handle) and no whitespace inside. Over-matches file-ext-like "photo.jpg" → 4cr,
-// which is the acceptable 就高 direction.
-const DOMAIN_RE = /(?:^|[^\w@./])[a-z0-9](?:[a-z0-9-]*[a-z0-9])?(?:\.[a-z0-9-]+)*\.[a-z]{2,}\b/;
+// A domain-shaped token: label(.label)*.tld with a 2+-letter tld — GENERIC (not a hand-maintained TLD
+// whitelist) AND Unicode-aware (\p{L}/\p{N} under the /u flag), so IDN bare domains — 例子.公司,
+// example.中国, .みんな, and punycode xn--… — are caught, not just ASCII (NODE-276-R2 fix 4: an
+// ASCII-only regex leaked IDN domains to 1cr in MY/CJK markets; MUST NOT under-charge a real link).
+// Not preceded by @ (a handle); no whitespace inside. Over-matches file-ext-like "photo.jpg" → 4cr,
+// the acceptable 就高 direction. The dot is ASCII "." (fullwidth 。 in CJK prose won't false-match).
+const DOMAIN_RE = /(?:^|[^\p{L}\p{N}@./])[\p{L}\p{N}](?:[\p{L}\p{N}-]*[\p{L}\p{N}])?(?:\.[\p{L}\p{N}-]+)*\.\p{L}{2,}/u;
 
 /**
  * DETERMINISTIC: does this caption contain (or ambiguously imply) a link? Returns true (→ 4cr) for
- * ANY of: an http/https scheme URL · a `www.` host · any domain-shaped token (any tld) · any
+ * ANY of: an http/https scheme URL · a `www.` host · any domain-shaped token (any tld, incl. IDN) · any
  * redirect-intent phrase (link in bio / 见简介 / DM me / swipe up …) even with no URL. Ordinary prose
  * with a space after a period ("in town. Best…") does NOT match — the dot must sit inside a
  * contiguous domain-like token — so the 1cr tier stays usable for normal captions.

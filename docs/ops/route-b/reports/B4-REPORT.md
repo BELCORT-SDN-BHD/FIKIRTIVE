@@ -157,7 +157,7 @@
 
 #### W-B4-4 起证（E4-14 X adapter）· 块内 mock/夹具级证据（零真实外部/零花费）
 
-> X 发布全链 fail-closed（无 X 凭据=production 全程拒发），六态证据集中在 denied/failure/ambiguous 面——皆 mock/夹具级（端口注入 + prisma mock + `fetch` stub），零真实 X 调用。真发活体（X 可见）=外部测试阶段（§六.2）。
+> X 发布无 OAuth 路由故当前无凭据；但一旦 ChannelConnection 含 active 的 tweet.write scope + 可解密 token 即达真发端口——授权谓词 `status==="active"` 正列表 ∧ `!publishPaused` ∧ token 未过期为**唯一闸**（与 §④「诚实边界」措辞统一，非「全路径 fail-closed」）。块内证据集中在 denied/failure/ambiguous 面——皆 mock/夹具级（端口注入 + prisma mock + `fetch` stub），零真实 X 调用；真发活体（X 可见）=外部测试阶段（§六.2）。
 
 | 面 | 证据（file:测试名） |
 |---|---|

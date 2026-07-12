@@ -26,6 +26,9 @@ const WITH_LINK = [
   "DM me for the link",                  // redirect wording
   "Swipe up to shop",                    // redirect wording, no domain
   "Swipe up on my photo.jpg",            // redirect wording (also a domain-shaped token)
+  "例子.公司 今天开业",                     // IDN bare domain (non-ASCII label + non-ASCII tld .公司)
+  "shop at example.中国",                 // IDN tld .中国 on an ASCII label
+  "visit example.xn--fiqs8s",            // punycode form of .中国
 ];
 
 // Plain captions with NO link and NO redirect intent — must stay at the 1cr tier. Includes tricky
