@@ -8,6 +8,7 @@
 import {
   ottoTurn as _ottoTurn,
   ottoApprove as _ottoApprove,
+  ottoReject as _ottoReject,
   createEmptyCoworkThread as _createEmptyCoworkThread,
   deleteCoworkThread as _deleteCoworkThread,
   setCoworkThreadPinned as _setCoworkThreadPinned,
@@ -22,6 +23,12 @@ export async function ottoTurn(raw: unknown) {
 
 export async function ottoApprove(raw: unknown) {
   return _ottoApprove(raw);
+}
+
+/** Decline a parked non-generate approval card (B4 debt-70). STATIC decline — the card is
+ *  atomically consumed and a deterministic confirmation is inserted; no LLM resume, zero writes. */
+export async function ottoReject(raw: unknown) {
+  return _ottoReject(raw);
 }
 
 export async function createEmptyCoworkThread(raw: unknown) {

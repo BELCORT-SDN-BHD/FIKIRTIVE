@@ -12,7 +12,7 @@
  */
 import { labelForTool } from "./otto-stream-bridge";
 
-export type ApprovalCardStatus = "pending" | "approved" | "rejected";
+export type ApprovalCardStatus = "pending" | "approved" | "rejected" | "expired";
 
 /** What the user is consenting to (enriched server-side at park time, owner-scoped read). */
 export type ApprovalCardSummary = {
@@ -28,6 +28,11 @@ export type ApprovalCardPayload = {
   ref: string;
   status: ApprovalCardStatus;
   summary: ApprovalCardSummary | null;
+  /** SHA-256 of the material consent fields at mint time (AR1 处方2). Server-recomputed at
+   *  approve; drift = hard refuse. Absent/null = fail-closed (unapprovable). */
+  contentHash?: string | null;
+  /** ISO instant after which the ASK is no longer confirmable (APPROVAL_CARD_TTL_MS). */
+  expiresAt?: string | null;
 };
 
 /** Structural parse of an unknown durable payload — null when it isn't an approval card. */
@@ -35,7 +40,8 @@ export function asApprovalCardPayload(v: unknown): ApprovalCardPayload | null {
   if (!v || typeof v !== "object") return null;
   const p = v as Record<string, unknown>;
   if (typeof p.toolName !== "string" || typeof p.ref !== "string") return null;
-  const status = p.status === "approved" || p.status === "rejected" ? p.status : "pending";
+  const status =
+    p.status === "approved" || p.status === "rejected" || p.status === "expired" ? p.status : "pending";
   let summary: ApprovalCardSummary | null = null;
   const s = p.summary as Record<string, unknown> | null | undefined;
   if (s && typeof s === "object" && typeof s.channel === "string" && typeof s.caption === "string") {
@@ -47,7 +53,14 @@ export function asApprovalCardPayload(v: unknown): ApprovalCardPayload | null {
       mediaCount: typeof s.mediaCount === "number" ? s.mediaCount : 0,
     };
   }
-  return { toolName: p.toolName, ref: p.ref, status, summary };
+  return {
+    toolName: p.toolName,
+    ref: p.ref,
+    status,
+    summary,
+    contentHash: typeof p.contentHash === "string" ? p.contentHash : null,
+    expiresAt: typeof p.expiresAt === "string" ? p.expiresAt : null,
+  };
 }
 
 const CHANNEL_LABELS: Record<string, string> = { instagram: "Instagram", facebook: "Facebook" };

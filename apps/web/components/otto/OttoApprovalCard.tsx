@@ -6,13 +6,14 @@
  * R1 (frozen): the card renders WHAT is being consented to — channel / scheduled time /
  * caption summary via approvalCardView (pure, node-tested) — never a bare id.
  * Confirm calls ottoApprove (approve → resume → the SAME owner-scoped server action);
- * Decline calls ottoApprove with decision:"reject" (the parked tool never executes — zero writes).
+ * Decline calls ottoReject (STATIC decline — card consumed, deterministic confirmation, zero
+ * writes, no LLM). An expired ask resolves to "expired".
  * generate keeps its own OttoPlanCard spend path; this card never handles it.
  */
 import React, { useState } from "react";
 import { ShieldCheck, CheckCircle2, Loader2, CalendarCheck } from "lucide-react";
 import { Button } from "@/components/ui/button";
-import { ottoApprove } from "@/lib/otto-client-actions";
+import { ottoApprove, ottoReject } from "@/lib/otto-client-actions";
 import { asApprovalCardPayload, approvalCardView } from "@/lib/approval-card-view";
 
 export interface OttoApprovalCardProps {
@@ -23,7 +24,7 @@ export interface OttoApprovalCardProps {
   onResolved?: () => void | Promise<void>;
 }
 
-type LocalState = "idle" | "approving" | "declining" | "approved" | "rejected";
+type LocalState = "idle" | "approving" | "declining" | "approved" | "rejected" | "expired";
 
 export function OttoApprovalCard({ cardId, threadId, payload, onResolved }: OttoApprovalCardProps) {
   const parsed = asApprovalCardPayload(payload);
@@ -35,7 +36,7 @@ export function OttoApprovalCard({ cardId, threadId, payload, onResolved }: Otto
 
   // Durable payload status wins on reload; local state gives instant feedback in-session.
   const resolved =
-    local === "approved" || local === "rejected"
+    local === "approved" || local === "rejected" || local === "expired"
       ? local
       : parsed.status !== "pending"
         ? parsed.status
@@ -70,7 +71,7 @@ export function OttoApprovalCard({ cardId, threadId, payload, onResolved }: Otto
     setLocal("declining");
     setErrorMsg(null);
     try {
-      const res = await ottoApprove({ threadId, cardId, decision: "reject" });
+      const res = await ottoReject({ threadId, cardId });
       if ("error" in res) {
         setErrorMsg(res.error);
         setLocal("idle");
@@ -125,6 +126,10 @@ export function OttoApprovalCard({ cardId, threadId, payload, onResolved }: Otto
         ) : resolved === "rejected" ? (
           <div className="text-[0.875rem] text-muted-foreground">
             Declined — nothing was published.
+          </div>
+        ) : resolved === "expired" ? (
+          <div className="text-[0.875rem] text-muted-foreground">
+            This request expired — ask Otto to request approval again.
           </div>
         ) : (
           <div className="flex gap-3">

@@ -56,6 +56,7 @@ import {
   listOwnerTargets,
 } from "./schedule-actions";
 import { asApprovalCardPayload, type ApprovalCardPayload, type ApprovalCardSummary } from "./approval-card-view";
+import { computeApprovalContentHash, APPROVAL_CARD_TTL_MS } from "./approval-content-hash";
 import { readPageCached } from "./web-page-cache";
 import { fetchOwnerInsights } from "./meta-insights";
 import { fetchOwnerAdPerformance } from "./meta-performance";
@@ -345,28 +346,42 @@ export type FinalizeOttoRunResult =
 // GEN_CARD/OttoPlanCard spend path untouched; these helpers only serve the other gated skills.
 // ---------------------------------------------------------------------------
 
-/** R1: enrich the card with WHAT is being consented to (owner-scoped read), never a bare id. */
-async function buildApprovalCardSummary(
+/** R1 + AR1 处方2: enrich the card with WHAT is being consented to (owner-scoped read of the
+ *  MATERIAL fields) and hash-bind it. Returns null when the post can't be read — the resulting
+ *  hashless card is unapprovable (fail-closed). */
+async function readApprovalConsent(
   ownerId: string,
   toolName: string,
   ref: string,
-): Promise<ApprovalCardSummary | null> {
+): Promise<{ summary: ApprovalCardSummary; contentHash: string } | null> {
   if (toolName !== "approveScheduledPost") return null;
   try {
     const post = await prisma.scheduledPost.findFirst({
       where: { id: ref, ownerId, deletedAt: null },
       select: {
         channel: true, caption: true, scheduledAt: true, scheduledTz: true,
-        media: { select: { generationId: true } },
+        firstComment: true, metaTargetId: true,
+        media: { select: { generationId: true }, orderBy: { position: "asc" } },
       },
     });
     if (!post) return null;
+    const scheduledAtIso = post.scheduledAt.toISOString();
     return {
-      channel: post.channel,
-      caption: post.caption,
-      scheduledAt: post.scheduledAt.toISOString(),
-      scheduledTz: post.scheduledTz,
-      mediaCount: post.media.length,
+      summary: {
+        channel: post.channel,
+        caption: post.caption,
+        scheduledAt: scheduledAtIso,
+        scheduledTz: post.scheduledTz,
+        mediaCount: post.media.length,
+      },
+      contentHash: computeApprovalContentHash({
+        channel: post.channel,
+        scheduledAt: scheduledAtIso,
+        caption: post.caption,
+        firstComment: post.firstComment ?? null,
+        metaTargetId: post.metaTargetId ?? null,
+        mediaGenerationIds: post.media.map((m) => m.generationId),
+      }),
     };
   } catch {
     return null;
@@ -404,8 +419,16 @@ async function persistPendingApprovalCards(args: {
       cardIds.push(existing.id);
       continue;
     }
-    const summary = await buildApprovalCardSummary(args.ownerId, a.toolName, a.ref);
-    const payload: ApprovalCardPayload = { toolName: a.toolName, ref: a.ref, status: "pending", summary };
+    const consent = await readApprovalConsent(args.ownerId, a.toolName, a.ref);
+    const payload: ApprovalCardPayload = {
+      toolName: a.toolName,
+      ref: a.ref,
+      status: "pending",
+      summary: consent?.summary ?? null,
+      // Fail-closed: a card without a hash can never be approved (post unreadable at mint).
+      contentHash: consent?.contentHash ?? null,
+      expiresAt: new Date(Date.now() + APPROVAL_CARD_TTL_MS).toISOString(),
+    };
     const id = newId();
     await prisma.chatMessage.create({
       data: {
@@ -424,22 +447,30 @@ async function persistPendingApprovalCards(args: {
   return { cardIds, seq };
 }
 
-/** Owner-scoped card-status stamp (pending → approved/rejected). The card records the consent
- *  decision; the underlying action's own result is relayed in Otto's resumed reply. */
-async function setApprovalCardStatus(
+/** ATOMIC card consumption (AR1 处方2): a conditional pending→terminal update — the WHERE pins
+ *  payload.status="pending", so of two concurrent resolvers exactly ONE wins (count 1) and the
+ *  loser sees count 0 (double-click / replay = idempotent refusal). The card is the consumable. */
+async function consumeApprovalCard(
   cardId: string,
   ownerId: string,
   payload: ApprovalCardPayload,
-  status: "approved" | "rejected",
-): Promise<void> {
-  await prisma.chatMessage
-    .updateMany({
-      where: { id: cardId, ownerId, kind: "APPROVAL_CARD" },
+  status: "approved" | "rejected" | "expired",
+): Promise<boolean> {
+  try {
+    const { count } = await prisma.chatMessage.updateMany({
+      where: {
+        id: cardId,
+        ownerId,
+        kind: "APPROVAL_CARD",
+        AND: [{ payload: { path: ["status"], equals: "pending" } }],
+      },
       data: { payload: { ...payload, status } as unknown as Prisma.InputJsonObject },
-    })
-    .catch((err) => {
-      console.warn(`[approval-card] status stamp failed (cardId=${cardId}).`, err);
     });
+    return count > 0;
+  } catch (err) {
+    console.warn(`[approval-card] consume failed (cardId=${cardId}).`, err);
+    return false;
+  }
 }
 
 /**
@@ -776,14 +807,10 @@ export async function ottoApprove(raw: unknown): Promise<
   | { ok: true; status: "degraded" }
   | { ok: true; status: "stale" }
   | { ok: true; genJobId: string; status: string } // double-approve: existing job
-  | { ok: true; alreadyResolved: true; resolution: "approved" | "rejected" } // double-approve/-reject: consumed card
+  | { ok: true; alreadyResolved: true; resolution: "approved" | "rejected" | "expired" } // consumed/expired card: idempotent refusal
   | { error: string }
 > {
-  // Inline validation (no zod dep in apps/web) — mirror brief schema. `decision` is the optional
-  // resolution verdict for a universal APPROVAL_CARD (default "approve"); "reject" declines the
-  // parked ask (B4 debt-70 test ③) — one resolution action, two verdicts, so the decline path
-  // does not mint a second exported action surface.
-  const decisionRaw = typeof raw === "object" && raw !== null ? (raw as Record<string, unknown>).decision : undefined;
+  // Inline validation (no zod dep in apps/web) — mirror brief schema
   if (
     typeof raw !== "object" ||
     raw === null ||
@@ -792,8 +819,7 @@ export async function ottoApprove(raw: unknown): Promise<
     ((raw as Record<string, unknown>).threadId as string).length < 1 ||
     ((raw as Record<string, unknown>).threadId as string).length > 64 ||
     ((raw as Record<string, unknown>).cardId as string).length < 1 ||
-    ((raw as Record<string, unknown>).cardId as string).length > 64 ||
-    (decisionRaw !== undefined && decisionRaw !== "approve" && decisionRaw !== "reject")
+    ((raw as Record<string, unknown>).cardId as string).length > 64
   ) {
     return { error: "Invalid approval request." };
   }
@@ -804,9 +830,6 @@ export async function ottoApprove(raw: unknown): Promise<
   if ("error" in gate) return gate;
   if (await isImpersonating()) return { error: "Paused while impersonating a customer — exit impersonation to do this." };
   const { ownerId } = gate;
-
-  // Decline verdict → the internal universal-card decline path (never generate; zero writes).
-  if (decisionRaw === "reject") return declineApprovalCard(ownerId, threadId, cardId);
 
   try {
     // Load thread owner-scoped (cross-tenant rejected)
@@ -842,10 +865,8 @@ export async function ottoApprove(raw: unknown): Promise<
 
     // Universal branch (B4 debt-70, spec §五 5.1·附②): when the id isn't a parked generate card,
     // it may be an APPROVAL_CARD message id (a non-generate gated skill, e.g. approveScheduledPost).
-    // The card payload carries the (toolName, ref) binding; ref anchors idempotency (the B0-29
-    // ApprovalRequest payload-hash anchor upgrades this binding when that row lands).
-    let approvalCard: { id: string; payload: ApprovalCardPayload } | null = null;
-
+    // The card payload carries the (toolName, ref) binding, the content hash binds the consent
+    // object, and CAS consumption makes the card single-use (AR1 处方2).
     if (!matchingInterruption) {
       const cardMsg = await prisma.chatMessage.findFirst({
         where: { id: cardId, threadId, ownerId, kind: "APPROVAL_CARD", deletedAt: null },
@@ -857,6 +878,18 @@ export async function ottoApprove(raw: unknown): Promise<
         // no second execution.
         if (cardPayload.status !== "pending") {
           return { ok: true, alreadyResolved: true, resolution: cardPayload.status };
+        }
+        // TTL (AR1 处方2): an expired ASK is no longer confirmable — consume to "expired" and say so.
+        if (!cardPayload.expiresAt || Date.now() > new Date(cardPayload.expiresAt).getTime()) {
+          await consumeApprovalCard(cardMsg.id, ownerId, cardPayload, "expired");
+          return { ok: true, alreadyResolved: true, resolution: "expired" };
+        }
+        // Content-hash binding (AR1 处方2, spec 5.1·附②): re-read the post's material fields and
+        // recompute; ANY drift since mint (or an unreadable/hashless card) = hard refuse WITHOUT
+        // consuming — the user reviews and asks Otto for a fresh approval request.
+        const current = await readApprovalConsent(ownerId, cardPayload.toolName, cardPayload.ref);
+        if (!cardPayload.contentHash || !current || current.contentHash !== cardPayload.contentHash) {
+          return { error: "This post changed since Otto asked — review it and ask Otto to request approval again." };
         }
         // (toolName, ref) binding against the rehydrated state's parked interruptions.
         const targetItem = interruptions.find((item) => {
@@ -872,7 +905,7 @@ export async function ottoApprove(raw: unknown): Promise<
           }
         });
         if (!targetItem) {
-          // Parked ask gone (superseded/consumed). Truth first: if the post IS approved, stamp the
+          // Parked ask gone (superseded/consumed). Truth first: if the post IS approved, consume the
           // card and answer benignly instead of failing the user for a stale ask.
           if (cardPayload.toolName === "approveScheduledPost") {
             const post = await prisma.scheduledPost.findFirst({
@@ -880,17 +913,30 @@ export async function ottoApprove(raw: unknown): Promise<
               select: { approvedAt: true },
             });
             if (post?.approvedAt) {
-              await setApprovalCardStatus(cardMsg.id, ownerId, cardPayload, "approved");
+              await consumeApprovalCard(cardMsg.id, ownerId, cardPayload, "approved");
               return { ok: true, alreadyResolved: true, resolution: "approved" };
             }
           }
           return { error: "That card isn't awaiting approval." };
         }
+        // ATOMIC consumption BEFORE the resume (AR1 处方2): exactly one resolver wins; a concurrent
+        // double-click loses the CAS and refuses benignly — the resume (and the tool) runs at most
+        // once per card. A consumed-but-failed resume is fail-closed: consent is spent, nothing
+        // published; the user asks Otto for a fresh request (never auto-retry a consent).
+        const consumed = await consumeApprovalCard(cardMsg.id, ownerId, cardPayload, "approved");
+        if (!consumed) {
+          const fresh = await prisma.chatMessage.findFirst({
+            where: { id: cardId, threadId, ownerId, kind: "APPROVAL_CARD", deletedAt: null },
+            select: { payload: true },
+          });
+          const freshPayload = fresh ? asApprovalCardPayload(fresh.payload) : null;
+          const resolution = freshPayload && freshPayload.status !== "pending" ? freshPayload.status : "approved";
+          return { ok: true, alreadyResolved: true, resolution };
+        }
         // Approve — mutates the rehydrated state; resume executes the tool → the SAME owner-scoped
         // server action the human button uses (via ctx.schedule.approve).
         // eslint-disable-next-line @typescript-eslint/no-explicit-any
         state.approve(targetItem as any);
-        approvalCard = { id: cardMsg.id, payload: cardPayload };
       } else {
         // No matching pending interruption — check if already generated (double-approve path)
         const existingJob = await prisma.genJob.findFirst({
@@ -980,11 +1026,7 @@ export async function ottoApprove(raw: unknown): Promise<
     // Shared extractText (@fikirtive/otto run-output.ts) — this was a local copy until 7-14b.
     const newOttoState = result.state.toString() as string;
 
-    // Universal card: the consent was granted and the resumed run executed the gated tool (its own
-    // result is relayed in Otto's reply) — stamp the card so a second approve refuses benignly.
-    if (approvalCard) {
-      await setApprovalCardStatus(approvalCard.id, ownerId, approvalCard.payload, "approved");
-    }
+    // (Universal card already consumed pending→approved BEFORE the resume — AR1 处方2 CAS.)
 
     // Handle another interruption (chained approval needed)
     if (Array.isArray(result.interruptions) && result.interruptions.length > 0) {
@@ -1088,40 +1130,53 @@ export async function ottoApprove(raw: unknown): Promise<
 }
 
 // ---------------------------------------------------------------------------
-// declineApprovalCard — decline a parked non-generate approval (universal card chain, B4 debt-70)
+// ottoReject — decline a parked non-generate approval (universal card chain, B4 debt-70)
 // ---------------------------------------------------------------------------
 
+/** Deterministic decline confirmation — inserted verbatim, NO LLM involved (AR1 处方1). */
+const DECLINE_CONFIRMATION_TEXT =
+  "Declined — nothing was published. The post stays unapproved in your schedule.";
+
 /**
- * Reject path (spec §五 5.1·附 test ③): the user declines the approval card. The parked tool is
- * REJECTED on the rehydrated state — the SDK sends the rejection text to the model instead of
- * executing the tool, so ZERO schedule writes happen — the run resumes metered so Otto closes out
- * cleanly, and the card is stamped rejected (a later approve/reject of the same card refuses
- * benignly). generate cards are NOT handled here: their decline UX stays the existing plan-card flow.
- *
- * INTERNAL (not an exported action): reached only through ottoApprove's `decision: "reject"`
- * verdict — one exported resolution surface, two verdicts. Caller has already gated identity
- * (requireOwner) + impersonation; `ownerId` comes from that verified session.
+ * Reject path (spec §五 5.1·附 test ③; AR1 处方1 structural zero-write guarantee): declining is a
+ * STATIC confirmation — no LLM resume happens at all, so nothing CAN execute and the decline costs
+ * $0. Mechanics: the card is atomically consumed pending→rejected (CAS — the park is terminated at
+ * the consumable, so ottoApprove can never approve it), the parked interruption is best-effort
+ * rejected on the persisted RunState (deterministic SDK state mutation, no run) so a later turn
+ * rehydrates a rejected tool call instead of a dangling park, a deterministic "declined" message is
+ * inserted into the conversation, and an ActionEvent leaves the audit trail.
+ * generate cards are NOT handled here: their decline UX stays the existing plan-card flow.
  */
-async function declineApprovalCard(
-  ownerId: string,
-  threadId: string,
-  cardId: string,
-): Promise<
+export async function ottoReject(raw: unknown): Promise<
   | { ok: true; status: "done"; reply: string }
-  | { ok: true; status: "needs_approval"; pendingCardIds: string[] }
-  | { ok: true; status: "degraded" }
-  | { ok: true; status: "stale" }
-  | { ok: true; alreadyResolved: true; resolution: "approved" | "rejected" }
+  | { ok: true; alreadyResolved: true; resolution: "approved" | "rejected" | "expired" }
   | { error: string }
 > {
+  if (
+    typeof raw !== "object" ||
+    raw === null ||
+    typeof (raw as Record<string, unknown>).threadId !== "string" ||
+    typeof (raw as Record<string, unknown>).cardId !== "string" ||
+    ((raw as Record<string, unknown>).threadId as string).length < 1 ||
+    ((raw as Record<string, unknown>).threadId as string).length > 64 ||
+    ((raw as Record<string, unknown>).cardId as string).length < 1 ||
+    ((raw as Record<string, unknown>).cardId as string).length > 64
+  ) {
+    return { error: "Invalid request." };
+  }
+  const { threadId, cardId } = raw as { threadId: string; cardId: string };
+
+  const gate = await requireOwner();
+  if ("error" in gate) return gate;
+  if (await isImpersonating()) return { error: "Paused while impersonating a customer — exit impersonation to do this." };
+  const { ownerId } = gate;
+
   try {
     const thread = await prisma.chatThread.findFirst({
       where: { id: threadId, ownerId, deletedAt: null },
       select: { id: true, projectId: true, ottoState: true },
     });
     if (!thread) return { error: "Conversation not found." };
-    if (!thread.ottoState) return { error: "Nothing to decline." };
-    const priorOttoState = thread.ottoState;
 
     const cardMsg = await prisma.chatMessage.findFirst({
       where: { id: cardId, threadId, ownerId, kind: "APPROVAL_CARD", deletedAt: null },
@@ -1133,133 +1188,103 @@ async function declineApprovalCard(
       return { ok: true, alreadyResolved: true, resolution: cardPayload.status };
     }
 
-    const state = await tryRestoreRunState(otto, priorOttoState);
-    if (!state) return { error: "This conversation's approval state couldn't be restored — please ask Otto again." };
+    // TTL: an expired ask resolves to "expired", not "rejected" (honest terminal state).
+    if (!cardPayload.expiresAt || Date.now() > new Date(cardPayload.expiresAt).getTime()) {
+      await consumeApprovalCard(cardMsg.id, ownerId, cardPayload, "expired");
+      return { ok: true, alreadyResolved: true, resolution: "expired" };
+    }
 
-    const targetItem = state.getInterruptions().find((item) => {
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      const it = item as any;
-      const toolName: string | undefined = it.name ?? it.rawItem?.name;
-      if (!toolName || toolName === "generate" || toolName !== cardPayload.toolName) return false;
+    // Truth first: if the post got approved elsewhere, record that instead of a false "rejected".
+    if (cardPayload.toolName === "approveScheduledPost") {
+      const post = await prisma.scheduledPost.findFirst({
+        where: { id: cardPayload.ref, ownerId, deletedAt: null },
+        select: { approvedAt: true },
+      });
+      if (post?.approvedAt) {
+        await consumeApprovalCard(cardMsg.id, ownerId, cardPayload, "approved");
+        return { ok: true, alreadyResolved: true, resolution: "approved" };
+      }
+    }
+
+    // ATOMIC consumption (CAS pending→rejected) — the park terminates HERE: a consumed card can
+    // never be approved (ottoApprove requires pending), regardless of what the run state holds.
+    const consumed = await consumeApprovalCard(cardMsg.id, ownerId, cardPayload, "rejected");
+    if (!consumed) {
+      const fresh = await prisma.chatMessage.findFirst({
+        where: { id: cardId, threadId, ownerId, kind: "APPROVAL_CARD", deletedAt: null },
+        select: { payload: true },
+      });
+      const freshPayload = fresh ? asApprovalCardPayload(fresh.payload) : null;
+      const resolution = freshPayload && freshPayload.status !== "pending" ? freshPayload.status : "rejected";
+      return { ok: true, alreadyResolved: true, resolution };
+    }
+
+    // Best-effort state hygiene (deterministic, NO run/LLM): mark the parked tool call rejected on
+    // the persisted RunState so the next turn rehydrates a rejected call, not a dangling park. A
+    // stale CAS (concurrent turn moved the state) is fine — the consumed card already dead-ends it.
+    if (thread.ottoState) {
       try {
-        const args = JSON.parse(it.arguments ?? it.rawItem?.arguments ?? "{}") as Record<string, unknown>;
-        return approvalRefOf(toolName, args) === cardPayload.ref;
-      } catch {
-        return false;
-      }
-    });
-
-    if (!targetItem) {
-      // The parked ask no longer exists. Truth first: if the post got approved elsewhere, record
-      // that; otherwise the stale ask is safely declinable (nothing can execute — stamp and close).
-      if (cardPayload.toolName === "approveScheduledPost") {
-        const post = await prisma.scheduledPost.findFirst({
-          where: { id: cardPayload.ref, ownerId, deletedAt: null },
-          select: { approvedAt: true },
-        });
-        if (post?.approvedAt) {
-          await setApprovalCardStatus(cardMsg.id, ownerId, cardPayload, "approved");
-          return { ok: true, alreadyResolved: true, resolution: "approved" };
-        }
-      }
-      await setApprovalCardStatus(cardMsg.id, ownerId, cardPayload, "rejected");
-      revalidatePath("/", "layout");
-      return { ok: true, alreadyResolved: true, resolution: "rejected" };
-    }
-
-    // Reject — the SDK records a rejection for this tool call; the tool NEVER executes.
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    state.reject(targetItem as any, { message: "The user declined this request." });
-
-    const ctx = await buildOttoContext({
-      ownerId,
-      projectId: thread.projectId,
-      threadId,
-      sourceGenerationId: null,
-    });
-
-    // Resume the run, metered (LLM cost of the close-out turn — same withLlmBudget as approve).
-    const refId = `otto-reject:${threadId}:${cardId}`;
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    let agentResult: any;
-    try {
-      agentResult = await withLlmBudget(
-        {
-          orgId: ownerId,
-          refId,
-          model: OTTO_DEFAULT_MODEL,
-          paid: true,
-          maxSteps: OTTO_MAX_STEPS,
-          usageOnError: (e) => (e instanceof MaxTurnsExceededError && (e as { state?: { usage?: unknown } }).state?.usage)
-            ? mapOttoUsage((e as { state: { usage: Parameters<typeof mapOttoUsage>[0] } }).state.usage)
-            : null,
-        },
-        async () => {
-          const r = await run(otto, state, { context: ctx, maxTurns: OTTO_MAX_STEPS });
-          return { result: r, usage: mapOttoUsage(r.state.usage) };
-        },
-      );
-    } catch (e) {
-      if (e instanceof MaxTurnsExceededError) {
-        // The decline itself is done (the parked tool can no longer execute) — stamp the card
-        // even on degrade, then persist the degrade message like ottoApprove does.
-        await setApprovalCardStatus(cardMsg.id, ownerId, cardPayload, "rejected");
-        const degradeText = "I got a bit tangled up — try asking again.";
-        const seq = await prisma.chatMessage.findFirst({
-          where: { threadId, ownerId },
-          orderBy: { seq: "desc" },
-          select: { seq: true },
-        });
-        await prisma.chatMessage.create({
-          data: {
-            id: newId(),
-            threadId,
-            ownerId,
-            role: "AGENT",
-            kind: "TEXT",
-            seq: (seq?.seq ?? 0) + 1,
-            text: degradeText,
-          },
-        });
-        const errState = (e as { state?: { toString(): string } }).state;
-        if (errState) {
-          await prisma.chatThread.update({
-            where: { id: threadId },
-            data: { ottoState: errState.toString(), updatedAt: new Date() },
+        const state = await tryRestoreRunState(otto, thread.ottoState);
+        if (state) {
+          const targetItem = state.getInterruptions().find((item) => {
+            // eslint-disable-next-line @typescript-eslint/no-explicit-any
+            const it = item as any;
+            const toolName: string | undefined = it.name ?? it.rawItem?.name;
+            if (!toolName || toolName === "generate" || toolName !== cardPayload.toolName) return false;
+            try {
+              const args = JSON.parse(it.arguments ?? it.rawItem?.arguments ?? "{}") as Record<string, unknown>;
+              return approvalRefOf(toolName, args) === cardPayload.ref;
+            } catch {
+              return false;
+            }
           });
+          if (targetItem) {
+            // eslint-disable-next-line @typescript-eslint/no-explicit-any
+            state.reject(targetItem as any, { message: "The user declined this request." });
+            await prisma.chatThread.updateMany({
+              where: { id: threadId, ownerId, ottoState: thread.ottoState },
+              data: { ottoState: state.toString() as string, updatedAt: new Date() },
+            });
+          }
         }
-        revalidatePath("/", "layout");
-        return { ok: true, status: "degraded" };
+      } catch (err) {
+        console.warn(`[ottoReject] state hygiene skipped (threadId=${threadId}).`, err);
       }
-      throw e;
     }
 
-    // The parked tool was rejected — zero writes happened; stamp the card.
-    await setApprovalCardStatus(cardMsg.id, ownerId, cardPayload, "rejected");
-
-    // Persist the resumed run through the shared finalizer (CAS + seq semantics identical to
-    // ottoTurn; also persists cards for any chained approvals the close-out turn parked).
+    // Deterministic confirmation message (no LLM) + audit trail.
     const seqRow = await prisma.chatMessage.findFirst({
       where: { threadId, ownerId },
       orderBy: { seq: "desc" },
       select: { seq: true },
     });
-    const finalized = await finalizeOttoRun({
-      ownerId,
-      threadId,
-      isNew: false,
-      priorOttoState,
-      result: agentResult,
-      seqAfterUser: seqRow?.seq ?? 0,
+    await prisma.chatMessage.create({
+      data: {
+        id: newId(),
+        threadId,
+        ownerId,
+        role: "AGENT",
+        kind: "TEXT",
+        seq: (seqRow?.seq ?? 0) + 1,
+        text: DECLINE_CONFIRMATION_TEXT,
+      },
     });
+    await prisma.actionEvent
+      .create({
+        data: {
+          id: newId(),
+          ownerId,
+          projectId: thread.projectId,
+          type: "approval.declined",
+          payload: { cardId, toolName: cardPayload.toolName, ref: cardPayload.ref },
+        },
+      })
+      .catch(() => {});
+
     revalidatePath("/", "layout");
-    if (finalized.status === "stale") return { ok: true, status: "stale" };
-    if (finalized.status === "needs_approval") {
-      return { ok: true, status: "needs_approval", pendingCardIds: finalized.pendingCardIds };
-    }
-    return { ok: true, status: "done", reply: finalized.reply };
+    return { ok: true, status: "done", reply: DECLINE_CONFIRMATION_TEXT };
   } catch (e) {
-    console.error("[declineApprovalCard] failed:", errSummary(e));
+    console.error("[ottoReject] failed:", errSummary(e));
     return { error: "Couldn't decline that — please try again." };
   }
 }
