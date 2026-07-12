@@ -455,21 +455,27 @@ export function StudioHome() {
 
 /* ── [wave-b] URL → 品牌档案草稿(Adobe Add from URL);轻原型:贴链接 → 假抽取 → 确认 ── */
 function BrandFromUrlDialog({ open, onOpenChange, onDone }: { open: boolean; onOpenChange: (v: boolean) => void; onDone: () => void }) {
+  // [B0-82 lint 适配 · 照 #255 先例] 弹窗本地态(url/phase)下沉 BrandFromUrlBody:Radix
+  // 关即卸载、开即新挂,useState 初值即「每次打开清空重来」,替代原 open-effect 同步重置
+  // (set-state-in-effect 正解;关闭动画期实例仍在、画面不变,重开 = 新实例 = 空表单)。
+  return (
+    <Dialog open={open} onOpenChange={onOpenChange}>
+      <DialogContent>
+        <BrandFromUrlBody onOpenChange={onOpenChange} onDone={onDone} />
+      </DialogContent>
+    </Dialog>
+  );
+}
+
+function BrandFromUrlBody({ onOpenChange, onDone }: { onOpenChange: (v: boolean) => void; onDone: () => void }) {
   const [url, setUrl] = React.useState("");
   const [phase, setPhase] = React.useState<"input" | "reading" | "preview">("input");
-  React.useEffect(() => {
-    if (open) {
-      setUrl("");
-      setPhase("input");
-    }
-  }, [open]);
   const read = () => {
     setPhase("reading");
     window.setTimeout(() => setPhase("preview"), 1400);
   };
   return (
-    <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent>
+    <>
         <DialogHeader>
           <DialogTitle>Build a brand profile from a link</DialogTitle>
           <DialogDescription>Paste your website or IG page — Otto drafts your colours, voice and look. Free.</DialogDescription>
@@ -510,7 +516,6 @@ function BrandFromUrlDialog({ open, onOpenChange, onDone }: { open: boolean; onO
             </Button>
           </DialogFooter>
         )}
-      </DialogContent>
-    </Dialog>
+    </>
   );
 }
