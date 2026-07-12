@@ -23,6 +23,7 @@ import {
   appendToStream,
   assistContextView,
   assistOwnerToken,
+  subscribe,
   escortTo,
   hasAssistApplyHandler,
   ottoBehavior,
@@ -203,10 +204,21 @@ export const ImmersiveDock = React.forwardRef<
 
   // 跨表面守卫(缺陷#2 二轮):登记的 assist owner 换了(导航去别的动脑面 → 源面卸载 owner→null,
   // 或别面点开 Otto → owner→新 token)就清掉上一面残留的 pendingApply。那颗写着 A 摘要的 Apply
-  // 钮不再飘到 B 上诱点(点了本会错填 B 或空转打假成功)。dock 订阅 store,故 owner 一变即触发。
+  // 钮不再飘到 B 上诱点(点了本会错填 B 或空转打假成功)。三层防线:
+  //  ① 真清除:订阅 store,owner 一变就在订阅回调里 setPendingApply(null)——「subscribe to
+  //    external system, setState in callback」正是 set-state-in-effect 规则背书的形态,不是
+  //    effect 体内同步 setState。真清除(而非仅隐藏)是必要的:React 对 useId 只保证与组件实例
+  //    关联(树位置派生),源表面 unmount→同位 remount 可能拿到同一个 id——藏着的旧 payload
+  //    若只靠 owner 比对隐藏,会在这种 remount 下带着陈旧建议复活。
+  //  ② 渲染门:同一渲染帧内 owner 已变但清除尚未 flush 时,派生过滤兜住不闪现。
+  //  ③ 点击门:applyPending 内 hasAssistApplyHandler + owner 比对(下方),任何路径都不谎报。
   React.useEffect(() => {
-    setPendingApply((prev) => (prev && prev.owner !== currentAssistOwner ? null : prev));
-  }, [currentAssistOwner]);
+    return subscribe(() => {
+      setPendingApply((prev) => (prev && prev.owner !== assistOwnerToken() ? null : prev));
+    });
+  }, []);
+  const activePendingApply =
+    pendingApply && pendingApply.owner === currentAssistOwner ? pendingApply : null;
 
   // §O7 意图 chip:一键跑一个 surface-specific 意图(零打字)。落一轮往来进单流;
   // 带 apply 则浮出 Apply 钮;带 landsOn 则 §8e escort 到现场看它落地。
@@ -388,10 +400,10 @@ export const ImmersiveDock = React.forwardRef<
           )}
 
           {/* §O7 Apply:Otto 产出回填原表面(只填字段;发/花仍要店主点) */}
-          {pendingApply && (
+          {activePendingApply && (
             <div className="flex shrink-0 items-center gap-2 border-t border-border px-3 pt-2.5">
               <span className="min-w-0 flex-1 truncate text-[12px] font-medium text-muted-foreground">
-                {pendingApply.apply.summary}
+                {activePendingApply.apply.summary}
               </span>
               <Button size="sm" className="h-8 shrink-0" onClick={applyPending}>
                 Apply

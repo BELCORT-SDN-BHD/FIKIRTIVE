@@ -154,14 +154,16 @@ function OttoChatContent() {
   useStore(); // 与 dock 共读同一份 store chatThreads(§「Dock and this chat share one state」为真)
   const otto = useOttoWorking(); // 订阅全城 Otto 工作态(status 行 + dock 同源)
   const initialThread = useQueryParam("thread"); // 深链 ?thread → 初始选中(替代硬编码 [0])
-  const [threadId, setThreadId] = React.useState<string>(() => chatThreads()[0].id);
-  // ?thread 在挂载后应用(避免 SSR/client 初值不一致的 hydration 抖动)
-  React.useEffect(() => {
-    if (initialThread && chatThreads().some((t) => t.id === initialThread)) {
-      setThreadId(initialThread);
-    }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
+  // ?thread 直接作初值:useQueryParam=useSearchParams(本页已被 <Suspense> 包着,SSR 渲 fallback、
+  // 客户端才渲本体),故初值化里读 ?thread 无 SSR/client 初值不一致。派生初值取代旧的「挂载后 setState
+  // 切换到深链 thread」,消掉 set-state-in-effect 的级联渲染(也去掉切换那一帧的闪跳)。
+  // 注:挂载后由 URL 驱动切 thread(如浏览器前进后退只改 ?thread=)两版均不支持——旧版 effect 依赖
+  // 数组是 [](也只跑挂载一次),本版初值同样只读一次;现无调用方依赖该行为,勿误读为本版回归。
+  const [threadId, setThreadId] = React.useState<string>(() => {
+    const threads = chatThreads();
+    if (initialThread && threads.some((t) => t.id === initialThread)) return initialThread;
+    return threads[0].id;
+  });
   const [phase, setPhase] = React.useState<Phase>("idle");
   const [stepIdx, setStepIdx] = React.useState(0);
   const [liveText, setLiveText] = React.useState("");
@@ -238,18 +240,15 @@ function OttoChatContent() {
     timers.current.push(stepTimer);
   };
 
-  const stop = () => {
+  const stop = React.useCallback(() => {
     clearTimers();
     const partial = liveText;
+    const text = partial ? `${partial}…` : "Stopped. Nothing was generated. Ask again anytime.";
     setPhase("idle");
     setLiveText("");
     ottoWorking(false); // 中断也让全城神经归位
-    pushExtra(
-      partial
-        ? { id: `x-${Date.now()}-stop`, role: "otto", text: `${partial}…` }
-        : { id: `x-${Date.now()}-stop`, role: "otto", text: "Stopped. Nothing was generated. Ask again anytime." },
-    );
-  };
+    pushExtra({ id: `x-${Date.now()}-stop`, role: "otto", text });
+  }, [clearTimers, liveText, pushExtra]);
 
   const switchThread = (id: string) => {
     if (phase !== "idle") stop();

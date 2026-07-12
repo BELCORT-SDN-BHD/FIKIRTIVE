@@ -75,6 +75,28 @@ function useReducedMotion(): boolean {
 const FADE_KF_ID = "ns-immersive-fade-kf";
 const FADE_KF = `@keyframes ns-immersive-fade { from { opacity: 0; transform: translateY(4px); } to { opacity: 1; transform: none; } }`;
 
+/* §L4 移动抽屉开合态 —— 模块级 mini 外部 store(pattern precedent:_store.ts 的
+ * useSyncExternalStore 订阅)。为什么不是组件内 useState:换路由要自动收抽屉,而
+ * 「pathname 一变就 setState」是 set-state-in-effect 禁的级联渲染;「adjust-during-render」
+ * 被 set-state-in-render 禁;key-reset(React 官方首选)要求抽屉状态 owner 的子树整体
+ * remount,但 mobileOpen 的消费者 ImmersiveNav 是滚动持久的常驻栏(remount = 桌面导航
+ * 每次换页丢滚动位)。外部 store + useSyncExternalStore 是规则背书的第三形态:effect 只
+ * 向外部系统写「关」,组件经订阅读回,无级联 setState。
+ * 语义与旧 `useEffect(() => setDrawerOpen(false), [pathname])` 全等:任何 pathname 变化
+ * (点导航 / 程序化 escort / 浏览器后退前进)都收抽屉。开态不派生自 pathname,故
+ * 「A 开抽屉 → 去 B → 后退回 A」不复活(B→A 这次变化本身已写「关」)。 */
+let mobileDrawerOpen = false;
+const mobileDrawerListeners = new Set<() => void>();
+function writeMobileDrawer(open: boolean): void {
+  if (mobileDrawerOpen === open) return;
+  mobileDrawerOpen = open;
+  for (const l of mobileDrawerListeners) l();
+}
+function subscribeMobileDrawer(cb: () => void): () => void {
+  mobileDrawerListeners.add(cb);
+  return () => mobileDrawerListeners.delete(cb);
+}
+
 export function ImmersiveShell({ children }: { children: React.ReactNode }) {
   const pathname = usePathname();
   const router = useRouter();
@@ -107,13 +129,22 @@ export function ImmersiveShell({ children }: { children: React.ReactNode }) {
 
   // §L4 移动抽屉:≤680 侧栏脱离流成抽屉,由顶栏汉堡开合。换路由自动收起(点导航即跳即关),
   // Esc 也收。桌面(>680)常驻栏不受此 state 影响(纯 CSS 断点决定形态)。
-  const [drawerOpen, setDrawerOpen] = React.useState(false);
-  const closeDrawer = React.useCallback(() => setDrawerOpen(false), []);
-  React.useEffect(() => setDrawerOpen(false), [pathname]);
+  // 开合态在模块级 mini 外部 store(见文件顶部注释:为什么不是 useState / 不是派生 / 不是 key-reset)。
+  const drawerOpen = React.useSyncExternalStore(
+    subscribeMobileDrawer,
+    () => mobileDrawerOpen,
+    () => false,
+  );
+  const closeDrawer = React.useCallback(() => writeMobileDrawer(false), []);
+  // 换路由收抽屉:向外部 store 写「关」(effect 同步 React 状态→外部系统,规则背书方向);
+  // 关着时是纯 no-op(store 写同值不 notify)。
+  React.useEffect(() => {
+    writeMobileDrawer(false);
+  }, [pathname]);
   React.useEffect(() => {
     if (!drawerOpen) return;
     const onKey = (e: KeyboardEvent) => {
-      if (e.key === "Escape") setDrawerOpen(false);
+      if (e.key === "Escape") writeMobileDrawer(false);
     };
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
@@ -166,7 +197,7 @@ export function ImmersiveShell({ children }: { children: React.ReactNode }) {
         <div className="flex h-[52px] shrink-0 items-center gap-1.5 border-b border-border px-2 min-[681px]:hidden">
           <button
             type="button"
-            onClick={() => setDrawerOpen(true)}
+            onClick={() => writeMobileDrawer(true)}
             aria-label="Open menu"
             aria-expanded={drawerOpen}
             className="flex size-9 items-center justify-center rounded-[10px] text-muted-foreground transition-colors duration-[120ms] hover:bg-accent hover:text-foreground"

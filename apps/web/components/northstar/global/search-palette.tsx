@@ -68,18 +68,18 @@ export function SearchPalette({ onClose, autoFocus = false, className }: SearchP
   const router = useRouter();
   const [q, setQ] = React.useState("");
   const [committedQ, setCommittedQ] = React.useState("");
-  const [loading, setLoading] = React.useState(false);
   const [activeIdx, setActiveIdx] = React.useState(0);
   const inputRef = React.useRef<HTMLInputElement>(null);
   const listRef = React.useRef<HTMLDivElement>(null);
 
   // §F4:异步查询防抖(演示 300ms);查询中 = 两条骨架行,永不 spinner。
+  // loading 是纯派生态(typed query 尚未 commit 即「查询中」),不再在 effect 里同步 setState——
+  // 消掉 set-state-in-effect;debounce 只负责把 committedQ 追上并把高亮归零。
+  const loading = q.trim() !== committedQ;
   React.useEffect(() => {
     if (q.trim() === committedQ) return;
-    setLoading(true);
     const t = window.setTimeout(() => {
       setCommittedQ(q.trim());
-      setLoading(false);
       setActiveIdx(0);
     }, 300);
     return () => window.clearTimeout(t);
