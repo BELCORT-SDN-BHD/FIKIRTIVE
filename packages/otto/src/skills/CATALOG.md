@@ -8,6 +8,7 @@
 | ingestProduct | free | read | external | ❌ | Read a product's page from a URL (e.g. a Shopee/Lazada or store link) and get a  |
 | list-meta-pages | free | read | external | ❌ | List the user's connected Facebook Pages so you can pick one when building an ad |
 | lookupProducts | free | read | internal | ❌ | Look up the user's saved products by name, category, tag or description (returns |
+| manageCanvas | free | write | internal | ❌ | See and arrange the project's creative canvas ($0 — never generates media or spe |
 | meta-ad-performance | free | read | external | ❌ | Read the user's PER-AD Meta performance (each ad's spend/reach/CTR/CPC/ROAS + it |
 | meta-expert | free | write | internal | ❌ | Diagnose the user's Meta ad performance: which specific ads/creatives are winnin |
 | meta-insights | free | read | external | ❌ | Read the user's connected Meta (Facebook/Instagram) ad-account performance (spen |
