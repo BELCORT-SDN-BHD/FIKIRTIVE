@@ -5,7 +5,7 @@
 
 ## ① 块 ID / PR / 最终 SHA / 认证日期
 
-B0 · PR =（本 PR，合并后回填号）· 分支 `claude/route-b-b0-release-contract` · 编制日 2026-07-12 · epoch `claude-20260712-03`。
+B0 · **PR #240**（merge SHA `1b1414d9`，founder 合并=签署，2026-07-11T18:01Z）· 分支 `claude/route-b-b0-release-contract` · 编制日 2026-07-12 · epoch `claude-20260712-03`。
 
 ## ② 批准范围 + 明示排除 + 映射
 

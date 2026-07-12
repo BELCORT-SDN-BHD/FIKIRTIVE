@@ -223,3 +223,5 @@ A′ 切片 1（壳契约 ~44 文件）→ 切片 2-8 → 65 页齐 → founder 
 
 - B0 = 发布契约与覆盖矩阵（执行合同 §一，开 loop 先决）。分解方案经顾问：SOL 首轮 `incomplete: empty output`（session `019f5214`，如实留痕）→ 按协议 fallback Fable max（complete，方案 D：V0 121 行骨架 + 控制面亲判 + 逐源覆盖审计舰队 + 双向机器校验 + 单一原子 PR）。provenance 在 `docs/ops/route-b/coverage-audit/advisor-b0-plan/`。
 - 产品代码零行（硬约束 1 遵守）；B0 交付 = 纯文档+校验脚本，走 PR 等 founder 合并。
+- **【已验】B0 签署生效**：#240 founder 合并（merge `1b1414d9`，2026-07-11T18:01Z）；CI 3/3 绿；换届演练通过（8/8 + 三漏洞闭合）；复审四条件闭环（D-013）；R-001~R-008 默认项获准（D-014）。SOL lane 事故=codex 额度触顶（D-012），跨族复审额度恢复后补跑。
+- **第一批施工启动**（founder 授权「直接开始」，执行合同 §四）：B10 关键安全（P0-2→P0-5→P0-3）+ B9 引擎接口冻结 spec + B2 数据契约 spec + B8 设计全图舰队。分解过顾问（fallback Fable，SOL 未恢复期间），账本批次=本分支。
