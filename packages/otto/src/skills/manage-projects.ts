@@ -11,10 +11,12 @@
  * every fail-closed "Project not found." guard live INSIDE those actions (requireOwner).
  *
  * $0 by construction: nothing here creates a GenJob, reserves credits, or calls the provider. It
- * only manages campaign rows. `delete` is a PERMANENT hard delete of a campaign and its
- * project-scoped work — the action refuses while a generation is running and refunds queued jobs, so
- * money is protected; the model must NEVER invent an id and must delete only the campaign the user
- * explicitly names (owner scope + not-found guard fail closed on a fabricated/cross-owner id).
+ * only manages campaign rows. `delete` is a PERMANENT hard delete — and delete parity is
+ * EMPTY-PROJECT ONLY: the ctx.projects port hard-refuses (deterministic live-Generation count gate,
+ * fail-closed) any campaign that still contains generated media, because deleting it would physically
+ * destroy settled PAID outputs with no refund; that deletion is the user's by-hand, type-the-name
+ * confirm in the UI (宪法 11 protective rail — no model self-confirmation, 小节审 #271 处方). The model
+ * must also NEVER invent an id: owner scope + not-found guards fail closed on a fabricated id.
  */
 import { z } from "zod";
 import { defineOttoSkill } from "../skill.js";
@@ -70,9 +72,12 @@ export async function executeManageProjects(
       return "error" in r ? { ok: false, error: r.error } : { ok: true, pinnedAt: r.pinnedAt };
     }
     case "delete": {
-      // PERMANENT: never delete a fabricated/implicit id. The user must have named a real campaign;
-      // the owner-scoped action's "Project not found." fail-closes a wrong/forged id, and it refuses
-      // while a generation runs (refunding queued jobs) — money and in-flight work are protected.
+      // PERMANENT + EMPTY-ONLY: never delete a fabricated/implicit id — the user must have named a
+      // real campaign; the owner-scoped action's "Project not found." fail-closes a wrong/forged id,
+      // and it refuses while a generation runs (refunding queued jobs). The port additionally
+      // hard-refuses (deterministic count gate, fail-closed) any campaign still holding live
+      // generations — settled paid media is UI-only deletion (type-to-confirm door). That refusal
+      // surfaces here verbatim; there is no confirm parameter to override it.
       if (!input.projectId) {
         return { ok: false, error: "delete needs the exact `projectId` of the campaign to remove — I won't guess which one." };
       }
@@ -94,8 +99,9 @@ export const manageProjectsSkill = defineOttoSkill({
     "Manage the user's campaigns (projects) — $0, never generates or spends. " +
     "get_default: the user's default campaign id. create: a new campaign (needs name). " +
     "rename: rename a campaign (needs projectId + name). set_pinned: pin/unpin (needs projectId + pinned). " +
-    "delete: PERMANENTLY remove a campaign AND all its work (needs the exact projectId; irreversible — " +
-    "only do this when the user clearly asks to delete a specific campaign, and tell them it can't be undone).",
+    "delete: PERMANENTLY remove an EMPTY campaign (needs the exact projectId; irreversible — only when the user " +
+    "clearly asks, and tell them it can't be undone). A campaign that still contains generated media is refused " +
+    "here — the user deletes it by hand on the campaigns page, which asks them to type the campaign's name.",
   parameters: params,
   execute: executeManageProjects,
 });

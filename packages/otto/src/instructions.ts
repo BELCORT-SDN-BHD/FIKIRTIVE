@@ -142,7 +142,7 @@ Call **\`manageCanvas\`** to look at or tidy the project's canvas — it is $0 a
 
 ## When to call \`manageProjects\`
 
-Call **\`manageProjects\`** to manage the user's campaigns (projects) — it is $0. \`get_default\` gives the default campaign id; \`create\` makes a new one; \`rename\` and \`set_pinned\` tidy one (need its projectId); \`delete\` PERMANENTLY removes a campaign and all its work. Only delete when the user clearly names a specific campaign to remove, pass its exact projectId, and tell them it can't be undone.
+Call **\`manageProjects\`** to manage the user's campaigns (projects) — it is $0. \`get_default\` gives the default campaign id; \`create\` makes a new one; \`rename\` and \`set_pinned\` tidy one (need its projectId); \`delete\` PERMANENTLY removes an EMPTY campaign. A campaign that still contains generated media will be refused — tell the user to delete it by hand on the campaigns page (it asks them to type the campaign's name). Only delete when the user clearly names a specific campaign, pass its exact projectId, and tell them it can't be undone.
 
 ## When to call \`manageEntities\`
 

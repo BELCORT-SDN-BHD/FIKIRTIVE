@@ -86,6 +86,20 @@ describe("delete — PERMANENT, never guesses (debt-05)", () => {
     expect(res.error).toContain("won't guess");
     expect(remove).not.toHaveBeenCalled();
   });
+  it("the port's contains-media refusal (empty-only parity) surfaces intact — no confirm parameter can override it", async () => {
+    const gated = vi.fn(async () => ({
+      error:
+        "That campaign still contains generated media (paid work would be permanently destroyed with no refund), " +
+        "so I can't delete it from here. Please delete it by hand on the campaigns page — it will ask you to type " +
+        "the campaign's name to confirm. I can only delete an empty campaign.",
+    }));
+    const res = (await executeManageProjects({ action: "delete", projectId: "p-media" }, { context: makeCtx({ remove: gated }) })) as {
+      ok: boolean; error: string;
+    };
+    expect(res.ok).toBe(false);
+    expect(res.error).toContain("by hand on the campaigns page");
+    expect(res.error).toContain("empty campaign");
+  });
   it("routes an explicit id; the guarded action's error (running generation) surfaces intact", async () => {
     const ok = vi.fn(async () => ({ ok: true as const }));
     expect(await executeManageProjects({ action: "delete", projectId: "p1" }, { context: makeCtx({ remove: ok }) })).toEqual({ ok: true });

@@ -338,7 +338,7 @@ export async function buildOttoContext({
     // UI uses (actions.ts / library-actions / asset-actions / brand-record-actions / memory-actions).
     // Each action re-derives the owner from the verified session (requireOwner) and is fail-closed on
     // a missing/cross-owner id; none touch startGen / reserveCredits / the provider.
-    projects: makeOttoProjectsPort(),
+    projects: makeOttoProjectsPort(ownerId),
     entities: makeOttoEntitiesPort(),
     library: makeOttoLibraryPort(),
     brandMemory: makeOttoBrandMemoryPort(),

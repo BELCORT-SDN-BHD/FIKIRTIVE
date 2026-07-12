@@ -312,8 +312,11 @@ export interface OttoContext {
     rename(projectId: string, name: string): Promise<{ ok: true; name: string } | { error: string }>;
     /** debt-07: pin/unpin an owned campaign in the sidebar. */
     setPinned(projectId: string, pinned: boolean): Promise<{ ok: true; pinnedAt: string | null } | { error: string }>;
-    /** debt-05: PERMANENTLY delete an owned campaign and its project-scoped work (guarded: refuses while
-     *  a generation is running, refunds queued jobs). Irreversible — not a soft delete. */
+    /** debt-05: PERMANENTLY delete an owned EMPTY campaign. The port hard-refuses (deterministic
+     *  live-Generation count gate, fail-closed) a campaign that still contains generated media —
+     *  deleting it would physically destroy settled paid outputs with no refund; that deletion is
+     *  UI-only (type-the-name confirm). The action stays guarded (refuses while a generation runs,
+     *  refunds queued jobs). Irreversible — not a soft delete. */
     remove(projectId: string): Promise<{ ok: true } | { error: string }>;
   };
   /** Entities port (W-B3-D, $0, debt-08~10) — injected by the web caller. Thin closures over the SAME
