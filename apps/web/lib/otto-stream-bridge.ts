@@ -187,6 +187,7 @@ const TOOL_STEP_LABELS: Record<string, string> = {
   "meta-ad-performance": "Reading your per-ad performance",
   "meta-expert": "Diagnosing your ad performance",
   proposeResearch: "Planning the research",
+  manageCanvas: "Working on your canvas",
   // setTitle stays silent (internal housekeeping).
 };
 

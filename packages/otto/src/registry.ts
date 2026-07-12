@@ -26,6 +26,7 @@ import { proposeStoryboardSkill } from "./skills/propose-storyboard.js";
 import { editStoryboardSkill } from "./skills/edit-storyboard.js";
 import { proposeResearchSkill } from "./skills/propose-research.js";
 import { schedulePostsSkill } from "./skills/schedule-posts.js";
+import { manageCanvasSkill } from "./skills/manage-canvas.js";
 
 /** Add a new skill here (one line). Order is the agent's tool order. */
 export const allSkills: OttoSkill[] = [
@@ -55,6 +56,7 @@ export const allSkills: OttoSkill[] = [
   editStoryboardSkill,
   proposeResearchSkill,
   schedulePostsSkill,
+  manageCanvasSkill,
 ];
 
 export interface SkillMeta {

@@ -78,6 +78,14 @@ describe("proxy — public signed media route (/api/media/pub)", () => {
     expect(matcherRuns("/api/media/pub/eyJvIjoib3JnQSJ9.deadbeef")).toBe(false);
   });
 
+  it("boundary (契约5): a same-prefix sibling /api/media/pubfoo stays WALLED, not bypassed", () => {
+    // Regression for the v0.2-flagged matcher gap: the exclusion was an UN-bounded prefix
+    // (api/media/pub), so /api/media/pubfoo escaped the wall by merely sharing the prefix. The
+    // exclusion is now anchored to exactly the /api/media/pub/* [token] route.
+    expect(matcherRuns("/api/media/pubfoo")).toBe(true); // walled — NOT the signed-media route
+    expect(matcherRuns("/api/media/pub/abc.def")).toBe(false); // real token route stays excluded
+  });
+
   it("keeps the wall on other protected routes → an unauthenticated request still redirects", async () => {
     // The exception is scoped: siblings of the media route are still walled by the matcher.
     expect(matcherRuns("/dashboard")).toBe(true);

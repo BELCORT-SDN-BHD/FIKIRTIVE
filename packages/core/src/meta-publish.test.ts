@@ -58,6 +58,8 @@ describe("publishInstagram", () => {
     expect(res).toEqual({ externalId: "media_9" });
     expect(posts[0]!.path).toBe("ig1/media");
     expect(posts[0]!.body.image_url).toBe("https://x/pub/a.jpg");
+    // G1 anchor: a single-image container carries the caption (caption lives on the container).
+    expect(posts[0]!.body.caption).toBe("hi");
     expect(posts[1]!.path).toBe("ig1/media_publish");
     expect(posts[1]!.body.creation_id).toBe("container_1");
   });
@@ -78,8 +80,11 @@ describe("publishInstagram", () => {
     });
     expect(res).toEqual({ externalId: "media_9" });
     expect(posts[0]!.body.is_carousel_item).toBe("true");
+    // G1 anchor: carousel CHILD sub-containers carry NO caption; the caption lives on the parent.
+    expect(posts[0]!.body.caption).toBeUndefined();
     expect(posts[2]!.body.media_type).toBe("CAROUSEL");
     expect(posts[2]!.body.children).toBe("child_1,child_2");
+    expect(posts[2]!.body.caption).toBe("carousel");
   });
 
   it("carousel abort (⑤a): a child failure returns BEFORE any media_publish (nothing posted)", async () => {
@@ -180,6 +185,13 @@ describe("publishFacebook", () => {
     expect(posts[0]!.path).toBe("pg1/photos");
     expect(posts[0]!.body.url).toBe("https://x/a.jpg");
     expect(posts[0]!.body.caption).toBe("hi");
+  });
+
+  it("G4 anchor: /photos 2xx but no id → AMBIGUOUS — never a blind /photos re-post", async () => {
+    const { port } = mockPort({ postReplies: [{}] });
+    const res = await publishFacebook(port, { pageId: "pg1", message: "hi", mediaUrls: ["https://x/a.jpg"] });
+    expect(res).toMatchObject({ ambiguous: true });
+    expect("retryable" in res).toBe(false);
   });
 
   it("no media → /feed with message + link", async () => {
