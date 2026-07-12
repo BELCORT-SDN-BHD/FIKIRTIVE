@@ -23,6 +23,7 @@
 - **证据槽位**：46 能力行的逐条能力名（非页面名）+ 现状六级状态 → 目标状态。存量断言 16 条免重核（spec §二.5）；absent 行（E1-09 stitch/E1-19 A/B 分叉/B0-14/16~26 工厂族）为净新建。**待施工逐行填交付状态**。
 - **W-B3-A（canvas $0 面，本批交付）**：E1-01（无限画布·节点为一等公民）的 $0 双执行器面——Otto 执行器侧真接后台：新 `manageCanvas` skill（view/place/edit_text/resolve/remove，free/write/internal 不设闸=与人工 UI 同待遇）经 `ctx.canvas` port 驱动与人工 UI **完全同一**的 `canvas-actions` 五动作 + `otto-canvas-bridge.syncOttoCanvasNodes`（display-only sync）。零 spend 触点：`startGen`/gen 链不在本工位 diff（canvas gen 接线归 W-B3-E）；$0 硬线端到端焊死（v2，codex TR1①）——skill 侧无 generationId 拒放 image/video（新媒体只能走 gated `generate`）+ port 侧（`otto-canvas-port.ts`）place 的 generationId 先行 owner+project 验真（伪造/跨项目=结构化硬拒，绝不静默降级），edit/remove 加 project 绑定；canvas-actions 的 UI 既有契约零触碰。**人工入口现状如实**：immersive canvas 壳（LC-0 已落）本批保持壳级（mock 数据形态不动），UI 真接线归批2/批3（见 §⑫.8）。
 - **W-B3-C（已交付，$0 面）**：E1-08「分镜工作台」的 **$0 编辑面**双执行器补齐——Otto 侧新增 `editStoryboard` skill（$0/write/internal，`packages/otto/src/skills/edit-storyboard.ts`），与人工 server action（`apps/web/lib/storyboard-actions.ts`，已在 main）共用同一套纯编辑变换（迁至 `packages/otto/src/storyboard-edit.ts` 作双执行器共同权威，含 G 闸② 陈旧级联）。**E1-08 的付费面（Make all/Retry=gate1 真管线）属批2 W-B3-H，本工位未触**；E1-09 stitch 只落 $0 concat 接线预留（注释+TODO 指针，见 `studio-storyboard.tsx` renderState done 动作行）。行级状态迁移提案（E1-08 $0 编辑面 code-complete）入 PR 描述，不动矩阵（D-015⑤ 惯例）。
+- **W-B3-D（home/ideas/风格卡/3 模式 + library/brand $0 面，本批交付）**：家/想法/资产库/品牌记忆的 **$0 双执行器面**——Otto 执行器侧真接后台，四把 `manage*` skill 经 ctx port 驱动与人工 UI **完全同一**的 server actions（单一动作层，宪法 7/缝 9）：**`manageProjects`**（get_default/create/rename/set_pinned/delete → `ctx.projects` → `actions.ts` 五动作；delete=PERMANENT 走同一 guarded 动作〔running 拒 + queued 退款〕，硬拒无 id/伪造 id）、**`manageEntities`**（create/delete/delete_reference_image → `ctx.entities`；create 只落名+类型、上传照片仍人工=诚实边界）、**`manageLibrary`**（history/detail/set_favorite → `ctx.library` → `library-actions`/`asset-actions`）、**`manageBrandMemory`**（delete_record/restore_record/delete_fact → `ctx.brandMemory` → `brand-record-actions`/`memory-actions`；软删+撤销）。**ideas $0**：新 `proposeIdeas`（free/read/internal，「Suggest 3 ideas」纯建议、零持久化、零花费——I1 锚）。**composer→canvas / brand-from-link 复用既有**：composer 一句话落 canvas 真下单延到 canvas 确认（H1，本批只做 $0 提案面 = `manageCanvas.place`）；brand-from-link 走既有 `ingestProduct`（`ingestProductFromUrl`，已对等）。四把写 skill 均 free/write/internal → needsApproval=false（承 `cancelScheduledPost` 先例——内部写不设审批卡，安全在 owner-scoped guarded 动作 + fail-closed port）。**零 spend/零外部/零 schema**；immersive 壳保持壳级（LC-0 已落），UI 真接线归批2/批3（§⑫.10）。
 ## ④ 双执行矩阵
 
 - **owner**：各工位（出生即配双执行器）。
@@ -65,6 +66,28 @@
   | debt-77 | `storyboard-actions.reorderShots` | 真对等：op=reorderShots 共用 `applyReorderShots`（合法排列校验同动作层） | todoSkill → skill ✅ |
 
   棘轮：本工位单独 84→78；**与 W-B3-A（#266，亦清 6 条）合流后 = 72**，`scripts/parity-debt-baseline.json` maxTodoSkill 随 merge 收紧至 **72**；`pnpm lint:parity` 绿（TODO_SKILL=72）。live trace：`TOOL_STEP_LABELS` 补 `editStoryboard: "Editing the storyboard"`（`otto-stream-bridge.ts`）。
+
+- **W-B3-D 债清零（14/14，本批交付）**——四件套逐条（skill → ctx port → 人工同源 handler → 测试）：
+
+  | 债号 | action key | skill(动作) → ctx port | handler（人工同源） | 测试 |
+  |---|---|---|---|---|
+  | debt-03 | `actions.getOrCreateDefaultProject` | `manageProjects`(get_default) → `ctx.projects.getDefault` | `getOrCreateDefaultProject` | `manage-projects.test.ts`「get_default」 |
+  | debt-04 | `actions.createProject` | `manageProjects`(create) → `ctx.projects.create` | `createProject` | 同上「create」（缺 name 拒） |
+  | debt-05 | `actions.deleteProject` | `manageProjects`(delete) → `ctx.projects.remove` | `deleteProject`（PERMANENT；running 拒 + queued 退款，guarded） | 同上「delete — PERMANENT, never guesses」（无 id 硬拒 + running 错误透传） |
+  | debt-06 | `actions.renameProject` | `manageProjects`(rename) → `ctx.projects.rename` | `renameProject`（真改 `Project.name`，别于 setTitle 改 `ChatThread.title`） | 同上「rename」 |
+  | debt-07 | `actions.setProjectPinned` | `manageProjects`(set_pinned) → `ctx.projects.setPinned` | `setProjectPinned` | 同上「set_pinned」（`false` 不当缺失处理） |
+  | debt-08 | `actions.createEntity` | `manageEntities`(create) → `ctx.entities.create` | `createEntity`（名+类型 FormData，无照片=诚实边界，上传仍人工） | `manage-entities.test.ts`「create — 无照片」 |
+  | debt-09 | `actions.softDeleteReferenceImage` | `manageEntities`(delete_reference_image) → `ctx.entities.removeReferenceImage` | `softDeleteReferenceImage` | 同上「delete_reference_image」（not-found 透传） |
+  | debt-10 | `actions.softDeleteEntity` | `manageEntities`(delete) → `ctx.entities.remove` | `softDeleteEntity`（软删/历史保留） | 同上「delete」 |
+  | debt-29 | `asset-actions.getGeneration` | `manageLibrary`(detail) → `ctx.library.detail` | `getGeneration` | `manage-library.test.ts`「detail」 |
+  | debt-30 | `asset-actions.setFavorite` | `manageLibrary`(set_favorite) → `ctx.library.setFavorite` | `setFavorite` | 同上「set_favorite」（`false` 不当缺失） |
+  | debt-50 | `library-actions.getGenerationHistory` | `manageLibrary`(history) → `ctx.library.history` | `getGenerationHistory` | 同上「history」（过滤透传 + cap + 错误透传） |
+  | debt-31 | `brand-record-actions.deleteBrandRecord` | `manageBrandMemory`(delete_record) → `ctx.brandMemory.deleteRecord` | `deleteBrandRecord`（软删） | `manage-brand-memory.test.ts`「delete_record」 |
+  | debt-32 | `brand-record-actions.restoreBrandRecord` | `manageBrandMemory`(restore_record) → `ctx.brandMemory.restoreRecord` | `restoreBrandRecord`（软删撤销） | 同上「restore_record」 |
+  | debt-51 | `memory-actions.deleteMemory` | `manageBrandMemory`(delete_fact) → `ctx.brandMemory.deleteFact` | `deleteMemory`（软删，别于 rememberBrandFact 增/改） | 同上「delete_fact」（not-found 透传） |
+
+  port 注入点=`buildOttoContext`（`apps/web/lib/otto-actions.ts`）→ `makeOttoProjectsPort/EntitiesPort/LibraryPort/BrandMemoryPort`（`apps/web/lib/otto-{projects,entities,library,brand-memory}-port.ts`）；身份走各动作 `requireOwner`（skill 参数零身份字段——工厂硬拦）。**对等差额如实记**：createEntity 只落名+类型、参考照片上传=人工 file-picker 专属（skill 硬告知去元素页上传）；deleteProject=PERMANENT（唯一硬删，别于其余软删），安全由 guarded 动作承载〔running 拒 + queued 退款〕、port fail-closed（无/伪造 id → 动作层 "Project not found."）、skill 硬拒隐式默认删除（禁模型自我确认）；deleteMemory 无 restore 对应债（如实：fact 删无撤销，skill 明告）。
+  棘轮：本工位清 **14** 条，`scripts/parity-debt-baseline.json` maxTodoSkill 从合入 origin/main 后的 **69 收紧至 55**（同 PR）；`pnpm lint:parity` 绿（`TODO_SKILL entries remain: 55`）；`node scripts/route-b-matrix-check.mjs` 债条目=55 全绿。注册卫生全套：`registry.ts`（37 skill）+ `registry.test.ts` 名册（thirty-seven，全量枚举）+ `instructions.ts`「When to call」5 条 + `CATALOG.md` 重生（catalog:check fresh）+ `TOOL_STEP_LABELS` 补 5 条（`otto-stream-bridge.ts`）。
 ## ⑤ 对标锚
 
 - **owner**：各泳道工位 + founder/审查员（盲评）。
@@ -77,11 +100,13 @@
 - **证据槽位**：canvas 五态（空布→首图→就地编辑→A/B→Make Video）；工厂（贴链→选人设→批量矩阵确认页→成片网格 partial）；storyboard（draft→make-all→animatic→stitch）；media-editor（trim→抽帧→存版本 $0）。**待施工填七态截图 + 时间码**。
 - **W-B3-A · 锚 C1 $0 子旅程（组件级，如实标注：Otto 执行器路径 + 有状态假 port；server 动作真值由既有 `apps/web/lib/__tests__/canvas-actions.test.ts` 承载）**：`packages/otto/src/skills/manage-canvas.test.ts`「C1 $0 sub-journey: empty board → place → derivation visible (Otto executor path)」——空布（count=0）→ 放文字卡+改写 → 放已生成图 → 放派生图（`sourceNodeId` 指回源）→ view 中派生关系可见（source→result 链）→ 删卡收口。全程 port 面无 `startGen`/credits/provider 任何符号（$0 by construction）。C1 五态并排盲评（空布→首图→就地编辑→A/B→Make Video）依赖 gen 接线=W-B3-E 后补。
 - **W-B3-C · 锚 S1 $0 子旅程（brief→draft scenes→改脚本→保存）证据（已交付，执行器级/测试级——如实标注：非浏览器七态截图）**：`packages/otto/src/skills/edit-storyboard.test.ts` 的「S1 $0 sub-journey」用例全链走查——`proposeStoryboard` 起草 2 镜头卡（draft scenes $0）→ `editStoryboard` op=editShot 改第 2 镜头脚本 → op=reorderShots 重排 → payload 持久化断言（保存），并断言全程 **`genJob.create` 零调用**（$0 契约）；人工侧同链由 `apps/web/lib/__tests__/storyboard-actions.test.ts`（存量，owner-scoped 载入/G 闸②级联/边界拒绝）覆盖。**浏览器级七态截图待批3 引擎集成**（immersive 壳与 Otto/卡片接通后才有真 UI 旅程可截，见 §⑫.8）。
+- **W-B3-D · 锚 A1（品牌记忆护城河）+ I1（想法清单反 Buffer）$0 子旅程证据（已交付，执行器级/测试级——如实标注：非浏览器七态截图）**：`packages/otto/src/skills/w-b3-d-anchors.test.ts`——**A1「ingest → 品牌记忆 → 注入链」的 $0 部分**：`ingestProduct`(假 `ctx.productIngest`) 得 DRAFT（$0 外读，`note` 指向下一步 `saveProduct`）→ 用户确认后 `saveProduct` 落库（web 动作层测试承载）→ 生成时 `ctx.brandBrain.context()` 注入的品牌文本携带该产品（ingest→记忆→注入链闭合），全程 port 面零 `startGen`/credits 符号（$0 by construction）；**冷启动诚实文案（A1 gate4 阈值）**由 `apps/web/lib/__tests__/w-b3-d-a1-coldstart.test.ts` 对 `HOOK_COLDSTART_NOTE` 断言（含「category signals」+「not learned from your account yet」，源 `studio-factory/data.ts`）。**I1「捕获 → suggest → 转画布提案」**：捕获零散想法（极轻、无重管道，反 Buffer）→ `proposeIdeas` 出 3 点子（$0，零持久化）→ 选一条经 `manageCanvas.place` 落为画布 **$0 文字提案**（真下单延到 canvas 确认=H1），`view` 中可见、`canvasCtx.startGen` undefined（全程零花费）。**浏览器级七态截图待批3 引擎集成**（immersive 壳与 Otto/卡片接通后才有真 UI 旅程可截，§⑫.10 同型）。
 ## ⑦ 测试全家桶可重跑链接
 
 - **owner**：各工位。
 - **证据槽位**：本地三关（`check`/`test`/`web-build`，配方 `docs/runbooks/local-ci.md`）；契约测试（`runVariantBatch` N 格独立/幂等不双扣/partial 只退失败格/Trim $0 断言/Otto propose 零 GenJob/Library 真落库归组）；`node scripts/route-b-matrix-check.mjs`（矩阵闸）；`pnpm lint:parity`（对等债闸）。**待施工填可重跑命令 + CI job 链接**。
 - **W-B3-C 可重跑（已交付）**：`pnpm --filter @fikirtive/otto test`（skill 全家桶含 `edit-storyboard.test.ts`：schema/owner-scope/四 op 边界/G 闸②级联/S1 $0 子旅程/零 GenJob）；`pnpm --filter @fikirtive/web test -- storyboard`（人工动作层存量回归）；`pnpm lint:parity`（债闸，棘轮 78）；`pnpm --filter @fikirtive/otto run catalog:check`（CATALOG 同步闸）。CI job 链接=PR checks（见 §①）。
+- **W-B3-D 可重跑（本批交付，三关本地全绿）**：`pnpm --filter @fikirtive/otto test`（含 `manage-projects/entities/library/brand-memory.test.ts` + `propose-ideas.test.ts` + `w-b3-d-anchors.test.ts`，57 文件全过）；`pnpm --filter @fikirtive/web test`（含 `__tests__/w-b3-d-a1-coldstart.test.ts`，137 文件全过）；`pnpm lint:parity`（债闸，棘轮 55）；`pnpm --filter @fikirtive/otto run catalog:check`（CATALOG 同步闸，fresh）；`node scripts/route-b-matrix-check.mjs`（矩阵闸，债 55 全绿）；`pnpm --filter @fikirtive/web build`（web-build 关，✓ Compiled successfully）。CI job 链接=PR checks（见 §①）。
 
 ## ⑧ schema / ownerId / 审计 / 同意 / 秘密
 
@@ -119,6 +144,7 @@
 7. **Design B 首落本区 = 荐否**（L-C §七.D1/A2）：安全 > 效率，L-C 用成熟单一动作层 + parity 清债，Design B 另择小区首落——待 founder/总审查员定。
 8. **W-B3-A 边界如实（2026-07-12 编排官核准）**：immersive canvas **UI 面本批保持壳级**（`canvas-page.tsx` 深度 mock 的 CvObject/session-pool 客户端组件，整体改写=越界「禁重画」）；$0 CRUD 的「真接后台」由 **Otto 执行器侧**交付（`manageCanvas` → `ctx.canvas` → canvas-actions，双执行器纪律的 Otto 半边先行），**UI 真接线归批2/批3**（随 gen 链接线/live-event 推送化一并）。灰度骨架照 L-C LCa 判据：L-C 无具体 env/flag 形态可照抄 → **壳级路由已在（LC-0 落 main）即为骨架**；flag 形态随批2 UI 接线落地（L-C §七.D3 荐灰度不变）。
 9. **storyboard 壳 UI 保持壳级（W-B3-C，控制面裁定——与 W-B3-A 同型）**：核证确认 immersive `create/storyboard` 壳（`studio-storyboard.tsx`）零 server-action 接线、零 thread/卡片上下文（STORYBOARD_CARD 只由 Otto `proposeStoryboard` 铸造，壳拿不到 cardId），「$0 真接后台」在 UI 面只有 mock 缝——依裁定 UI 保持壳级，**「真」由 Otto skill（`editStoryboard`）+ 既有 `storyboard-actions`（双执行器共同纯变换）承载**；壳与真卡片的接通随批3 引擎集成（开工门=#253 或其拆分后继）。壳内 Wave2/3 假开关（coherence/多语配音/音频驱动）已如实禁用 + Coming soon 标注（gate4）；E1-09 stitch 只留 $0 concat 接线预留注释（spec §四.①）。
+10. **home/ideas/library/brand 壳 UI 保持壳级（W-B3-D，与 W-B3-A/C 同型）**：immersive 家/想法/资产库/品牌壳（`immersive-home.tsx`、`studio-factory/studio-ideas.tsx` 等，LC-0 已落）为 client store（`_store`）mock 形态，本批不重画（禁重画）；「$0 真接后台」由 **Otto 执行器侧**交付（四把 `manage*` skill + `proposeIdeas` → ctx port → 既有 server actions），**UI 真接线归批2/批3**。**本批不含**（如实划界）：付费模板套用（E1-15 走真 `startGen`）= 批2 禁碰；composer 一句话真下单 = 延到 canvas 确认（H1），本批只 $0 提案面；Discover 无内容源 = 诚实占位（spec 明文），不留假按钮。**对等边界诚实**：`createEntity` 只落名+类型（参考照片上传=人工 file-picker 专属）；`deleteProject`=PERMANENT 硬删（安全在 guarded 动作 + fail-closed port + skill 硬拒隐式删除，非审批卡——承 `cancelScheduledPost` 内部写先例）；`deleteMemory` 无 restore（fact 删无撤销，skill 明告）。零 spend/零外部/零 schema。
 ## ⑬ 录像时间码 + founder 10 分钟自查脚本
 
 - **owner**：各工位 + 控制面（终验日）。

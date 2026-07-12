@@ -296,6 +296,63 @@ export interface OttoContext {
     /** $0 write: delete a node (deleteCanvasNode). Never refunds/cancels the underlying job. */
     remove(id: string): Promise<{ ok: true } | { error: string }>;
   };
+  /** Projects port (W-B3-D, $0, debt-03~07) — injected by the web caller. Every function is a thin
+   *  closure over the SAME owner-gated project server actions the human sidebar uses (actions.ts:
+   *  getOrCreateDefaultProject / createProject / renameProject / setProjectPinned / deleteProject) —
+   *  single action layer (宪法 7 / Seam 9). Owner scope + fail-closed not-found guards live INSIDE
+   *  those actions (requireOwner). None touch startGen / reserveCredits / the provider. Skills reach
+   *  it ONLY via ctx.projects — never importing web actions or Prisma (CI fence rule). Absent in the
+   *  minimal worker verdict ctx; the skill degrades gracefully when it is not injected. */
+  projects?: {
+    /** debt-03: the owner's default campaign id (idempotent bootstrap read — creates "My Videos" if none). */
+    getDefault(): Promise<{ id: string } | { error: string }>;
+    /** debt-04: create a new named campaign. */
+    create(name: string): Promise<{ id: string } | { error: string }>;
+    /** debt-06: rename an owned campaign (display metadata only). */
+    rename(projectId: string, name: string): Promise<{ ok: true; name: string } | { error: string }>;
+    /** debt-07: pin/unpin an owned campaign in the sidebar. */
+    setPinned(projectId: string, pinned: boolean): Promise<{ ok: true; pinnedAt: string | null } | { error: string }>;
+    /** debt-05: PERMANENTLY delete an owned campaign and its project-scoped work (guarded: refuses while
+     *  a generation is running, refunds queued jobs). Irreversible — not a soft delete. */
+    remove(projectId: string): Promise<{ ok: true } | { error: string }>;
+  };
+  /** Entities port (W-B3-D, $0, debt-08~10) — injected by the web caller. Thin closures over the SAME
+   *  owner-gated element server actions the human elements UI uses (actions.ts: createEntity /
+   *  softDeleteEntity / softDeleteReferenceImage). createEntity here makes a NAMED element WITHOUT
+   *  reference photos — uploading photos stays a human file-picker action. Skills reach it ONLY via
+   *  ctx.entities. Absent in the minimal worker verdict ctx. */
+  entities?: {
+    /** debt-08: create a named reusable element (character/location/product/brandmark), no photo upload. */
+    create(input: { name: string; type: EntityType }): Promise<{ id: string } | { error: string }>;
+    /** debt-10: soft-delete an element (tombstone; history/snapshots stay intact). */
+    remove(entityId: string): Promise<{ ok: true } | { error: string }>;
+    /** debt-09: remove one reference photo from an element (soft — asset row becomes a tombstone). */
+    removeReferenceImage(refImageId: string): Promise<{ ok: true } | { error: string }>;
+  };
+  /** Library port (W-B3-D, $0, debt-29/30/50) — injected by the web caller. Thin closures over the SAME
+   *  owner-gated read/preference actions the human Library uses (library-actions.getGenerationHistory,
+   *  asset-actions.getGeneration / setFavorite). history/detail are reads; setFavorite is a $0 preference
+   *  write. Skills reach it ONLY via ctx.library. Absent in the minimal worker verdict ctx. */
+  library?: {
+    /** debt-50: one keyset page of the owner's full generation history (newest first). */
+    history(input: { search?: string; favoriteOnly?: boolean; cursor?: string | null }): Promise<LibraryHistoryView | { error: string }>;
+    /** debt-29: one owned generation's detail. */
+    detail(generationId: string): Promise<LibraryItemView | { error: string }>;
+    /** debt-30: star/unstar one owned generation (Library preference; $0). */
+    setFavorite(generationId: string, favorite: boolean): Promise<{ favorite: boolean } | { error: string }>;
+  };
+  /** Brand-memory lifecycle port (W-B3-D, $0, debt-31/32/51) — injected by the web caller. Thin closures
+   *  over the SAME owner-gated actions the human Brand memory UI uses (brand-record-actions.deleteBrandRecord
+   *  / restoreBrandRecord, memory-actions.deleteMemory). All are SOFT deletes (deletedAt); records also have
+   *  an undo (restore). Skills reach it ONLY via ctx.brandMemory. Absent in the minimal worker verdict ctx. */
+  brandMemory?: {
+    /** debt-31: soft-delete one product/segment/offer record from the living collections. */
+    deleteRecord(id: string): Promise<{ ok: true } | { error: string }>;
+    /** debt-32: undo an OTTO-removed record (restore the soft-deleted row). */
+    restoreRecord(id: string): Promise<{ ok: true } | { error: string }>;
+    /** debt-51: soft-delete one brand fact/memory. */
+    deleteFact(id: string): Promise<{ ok: true } | { error: string }>;
+  };
 }
 
 /** A canvas node as skills see it — structural re-declaration; the web DTO
@@ -313,4 +370,25 @@ export type CanvasNodeView = {
   status: string;
   sourceNodeId: string | null;
   url?: string | null;
+};
+
+/** Entity kinds a skill may create (mirror of actions.ts ENTITY_TYPES / core RefEntityType). */
+export type EntityType = "CHARACTER" | "LOCATION" | "PRODUCT" | "BRANDMARK";
+
+/** A library generation as skills see it — structural re-declaration; the web DTOs
+ *  (library-actions.LibraryItem / asset-actions.GenerationDTO) must NOT be imported here. */
+export type LibraryItemView = {
+  id: string;
+  projectId: string;
+  kind: string; // "image" | "video"
+  prompt: string;
+  favorite: boolean;
+  createdAt?: string; // ISO instant (history rows carry it; a single detail read may not)
+};
+
+/** One keyset page of generation history as skills see it (mirror of library-actions.LibraryPage). */
+export type LibraryHistoryView = {
+  items: LibraryItemView[];
+  nextCursor: string | null;
+  hasMore: boolean;
 };

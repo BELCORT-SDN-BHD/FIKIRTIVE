@@ -194,6 +194,12 @@ const TOOL_STEP_LABELS: Record<string, string> = {
   listScheduledPosts: "Checking your schedule",
   listPublishTargets: "Finding your connected accounts",
   manageCanvas: "Working on your canvas",
+  // W-B3-D (home/ideas/library/brand debt):
+  manageProjects: "Organizing your campaigns",
+  manageEntities: "Updating your elements",
+  manageLibrary: "Looking through your Library",
+  manageBrandMemory: "Updating your brand memory",
+  proposeIdeas: "Thinking up ideas",
   // setTitle stays silent (internal housekeeping).
 };
 

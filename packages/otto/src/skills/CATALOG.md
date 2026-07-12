@@ -14,7 +14,11 @@
 | listPublishTargets | free | read | internal | ❌ | List the accounts the user can publish to (their connected Instagram business /  |
 | listScheduledPosts | free | read | internal | ❌ | List the user's scheduled posts (drafts, queued, published, needs-attention) so  |
 | lookupProducts | free | read | internal | ❌ | Look up the user's saved products by name, category, tag or description (returns |
+| manageBrandMemory | free | write | internal | ❌ | Remove or restore brand memory — $0, never generates or spends. delete_record: r |
 | manageCanvas | free | write | internal | ❌ | See and arrange the project's creative canvas ($0 — never generates media or spe |
+| manageEntities | free | write | internal | ❌ | Manage the user's reusable elements — the @-referenceable characters, locations, |
+| manageLibrary | free | write | internal | ❌ | Browse the user's Library — every image/video they've made — $0, never generates |
+| manageProjects | free | write | internal | ❌ | Manage the user's campaigns (projects) — $0, never generates or spends. get_defa |
 | meta-ad-performance | free | read | external | ❌ | Read the user's PER-AD Meta performance (each ad's spend/reach/CTR/CPC/ROAS + it |
 | meta-expert | free | write | internal | ❌ | Diagnose the user's Meta ad performance: which specific ads/creatives are winnin |
 | meta-insights | free | read | external | ❌ | Read the user's connected Meta (Facebook/Instagram) ad-account performance (spen |
@@ -22,6 +26,7 @@
 | propose | free | write | internal | ❌ | Build a generation proposal (GEN_CARD) the user can approve and generate later.  |
 | propose-ad-build | free | write | internal | ❌ | Build a Meta ad creation proposal (BUILD_CARD) the user can review and confirm.  |
 | propose-meta-action | free | write | internal | ❌ | Build a Meta ad action plan (ACTION_CARD) the user can review and confirm. Use t |
+| proposeIdeas | free | read | internal | ❌ | Suggest a few concrete content ideas (usually 3) when the user is stuck or asks  |
 | proposePack | free | write | internal | ❌ | Lay out a coherent set of generation proposals (a campaign pack) in one turn. Us |
 | proposeResearch | free | write | internal | ❌ | Draft a RESEARCH plan (RESEARCH_CARD) the user can review and approve before any |
 | proposeStoryboard | free | write | internal | ❌ | Lay out an ordered STORYBOARD for a video/ad the user can review and edit before |
