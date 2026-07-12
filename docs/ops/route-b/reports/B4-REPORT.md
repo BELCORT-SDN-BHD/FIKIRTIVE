@@ -65,12 +65,13 @@
   1. 〔IG media 补链（container id→帖 media id）在途——现 confirmed-live 也 NEEDS_ATTENTION（契约7 保守闭合，B4-01）〕
   2. 〔FB recent-posts reconcile future work——现悬空一律 NEEDS_ATTENTION（契约7 保守闭合，B4-02）〕
   3. 〔debt-70 已改判（v0.2，控制面裁定采 codex 替代案）：gated skill 清偿、撤 ACCOUNT_SECURITY 豁免提案——施工须建 5 个新 ctx.schedule port + 5 skill（spec §五）〕
-  4. 〔E4-16「零核心改动可插拔」现状不成立（A03 降准）——X 接入触点 4 处收敛为登记式=施工验收项（spec §三 契约6/8）〕
+  4. 〔E4-16「零核心改动可插拔」现状不成立（A03 降准）——X 接入触点 5 处（含排期 UI，v0.3）收敛为登记式=施工验收项（spec §三 契约6/8）〕
   5. 〔proxy matcher 无边界前缀（`/api/media/pubfoo` 会被放行出会话墙，`proxy.ts:73`）——补边界断言+回归测试=施工验收项（spec §三 契约5）〕
   6. 〔E4-14 X 档位已拍板（GRILL-VERDICTS:215 方案 A）；**就高操作化细则**（短链/裸域名判 4cr）= founder ack（spec §四 X 锚）〕
   7. 〔App Review 外部钥匙未到——founder 侧商业验证/递件在等（spec §六.3）〕
   8. 〔通用审批卡链现状 generate 专用（`ottoApprove` 硬过滤 `toolName !== "generate"`，`otto-actions.ts:697`；卡渲染仅 OttoPlanCard spend 路径）——debt-70 gated skill 的硬性施工触点（spec §五 5.1·附，v0.3）：不建卡链=闸有名无实，债不得转 skill 态〕
   9. 〔排期 UI 六处渠道硬编码（`OttoSchedule.tsx:86-95,287,405,434-435,1123-1135,1199`）——E4-14 触点⑦（v0.3）；E4-16 收敛验收=UI 由 CHANNEL_META 数据驱动〕
+  10. 〔E4-10 既有挂靠是假对等（`propose-meta-action` 枚举无 autonomy/kill-switch 动作，`propose-meta-action.ts:27-29`）——已改施工合同：扩枚举或新建 gated skill，验收=Otto 真实触达+审批闸+测试（spec §二 E4-10 行，v0.4）〕
 
 ## ⑬ 录像时间码 + founder 10 分钟自查脚本
 
