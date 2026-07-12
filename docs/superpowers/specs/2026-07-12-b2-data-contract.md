@@ -1,7 +1,7 @@
-# B2 数据契约 spec（事件 / 身份 / 同意）（v0.5——冻结候选）
+# B2 数据契约 spec（事件 / 身份 / 同意）（v0.6——冻结候选）
 
 > 2026-07-12。epoch `claude-20260712-03`。Sol 原阻断的解：**先冻数据契约，B8 设计与后续块在其上施工**，避免末期发现新 schema。
-> **状态：冻结候选（freeze candidate）——冻结待 founder 明示 ack（D-018②/D-020⑤）。** SOL 跨族复审 §2 的 B2 六条阻断项已逐条闭合，二三波需求单已吸收（§四点六）；v0.4 闭合 codex 异族评审（第二轮 BLOCK）清单：ConsentEvent 完整 Prisma 形状（契约 3）、AttributionEvent 完整字段抄录表（契约 1）、anonymousKey 应用层澄清（契约 2）、BusinessEvent/Receipt 互斥职责冻结（契约〇·附）、口碑各 kind 账本归属现在冻结（§四点六·1）、六表列举补 VoucherToken（§四点六·3）；**v0.5 闭合 codex 第三轮（终轮）两项**：①ConsentEvent 派生规则顾客优先级修法+两验收案例（契约 3——修 append-only 下旧 revoke 锁死合法 re-opt-in 的自相矛盾）②口碑观测流 `ReviewObservation` 追加式冻结（§四点六·1——ReviewItem 保留为当前状态读模型）。本文本属共享契约/schema=founder-only 类别，异族复审通过不替代 founder 明示过目；未获 ack 前 02-B2 相关行不迁 `spec-ready`。
+> **状态：冻结候选（freeze candidate）——冻结待 founder 明示 ack（D-018②/D-020⑤）。** SOL 跨族复审 §2 的 B2 六条阻断项已逐条闭合，二三波需求单已吸收（§四点六）；v0.4 闭合 codex 异族评审（第二轮 BLOCK）清单：ConsentEvent 完整 Prisma 形状（契约 3）、AttributionEvent 完整字段抄录表（契约 1）、anonymousKey 应用层澄清（契约 2）、BusinessEvent/Receipt 互斥职责冻结（契约〇·附）、口碑各 kind 账本归属现在冻结（§四点六·1）、六表列举补 VoucherToken（§四点六·3）；v0.5 闭合 codex 第三轮两项：consent 派生顾客优先级修法、口碑观测流 `ReviewObservation` 追加式冻结；**v0.6 闭合 codex 第四轮（四反例全真）两项**：①consent 派生全序**换轴 `(receivedAt, id)` 到达序**（occurredAt 降级 advisory；`entryMode` interactive/backfill——迟到旧 grant 不复活；在途窗口不可归零诚实条款+`consent.late_revoke`+B7 发送记录带 `consentStateAt`；四验收案例）②观测流幂等键**嵌 `lifecycleEpoch` 生命周期纪元**（同 hash 删→现→删键碰撞全解；removed 行在对账中视同本地无，重现=epoch+1 补写）。本文本属共享契约/schema=founder-only 类别，异族复审通过不替代 founder 明示过目；未获 ack 前 02-B2 相关行不迁 `spec-ready`。
 > 人话：给全城定三样通用底座——「发生了什么事」怎么记（事件）、「这是不是同一个顾客」怎么判（身份）、「他答应过被联系吗」怎么存（同意）。
 
 ## 一、范围与矩阵行映射
@@ -107,62 +107,76 @@ B2 块（`docs/ops/route-b/matrix/02-B2.md`）11 行中的量测脊柱行（E5-0
 
 | 轴 | 语义 | 载体形态 | 谁写 |
 |---|---|---|---|
-| A · 法律同意 | 按 `channel` × `purpose` 的**追加式证据记录**（何入口、何凭证、何时同意/撤回） | `ConsentEvent`（完整 Prisma 形状见下——v0.4 冻结） | B5 收件箱 / B7 退订流 / CRM 导入 |
+| A · 法律同意 | 按 `channel` × `purpose` 的**追加式证据记录**（何入口、何凭证、何时同意/撤回） | `ConsentEvent`（完整 Prisma 形状见下——v0.4 冻结，v0.6 换派生轴） | B5 收件箱 / B7 退订流 / CRM 导入 |
 | B · 顾客退订 | 顾客主动 opt-out（STOP / 退订链接） | 同 A 的 `action='revoke'`（顾客发起，`actorKind='customer'`） | B5 / B7 退订流 |
 | C · 商家勿扰（DND） | 商家侧对某顾客设「勿扰」 | Contact 上的 `doNotDisturb` 布尔（商家写+展示，CRM） | CRM |
 | D · 频控抑制 | 运行时短期次数上限（避免骚扰） | B7 运行时频控计数器（非字段，非持久同意） | B7 自动化系统层 |
 
-**`ConsentEvent` 完整 Prisma 形状（v0.4 冻结——codex P0 采纳；建表本身仍属 founder-only 单列，§五）**：
+**`ConsentEvent` 完整 Prisma 形状（v0.4 冻结形状，v0.6 换派生轴——codex P0/R4① 采纳；建表本身仍属 founder-only 单列，§五）**：
 
 ```prisma
 // 同意证据流水（契约 3 轴 A/B）：append-only——无 updatedAt、无 deletedAt、永不 UPDATE/DELETE
 // （同 AttributionEvent 纪律）。「同意有出处」：每行必带 evidenceRef。
+// v0.6（codex R4①）：派生全序轴 = receivedAt（服务端赋时，入库即定，永不回排）+ ULID id tie-break；
+// occurredAt 降级 advisory（展示/审计用，不参与派生）——乱序在途与外部时钟偏移从此与派生无关。
 model ConsentEvent {
-  id             String   @id // ULID
+  id             String   @id // ULID（tie-break 轴：receivedAt 同刻按 id 字典序，全序无歧义）
   ownerId        String   // 租户键，无默认（宪法 6；进 TENANT_MODELS + Organization back-relation）
   organization   Organization @relation(fields: [ownerId], references: [id])
   contactId      String   // fk → Contact（CRM 起步表，B0-59）
   channel        String   // 'whatsapp' | 'sms' | 'email'（code-validated String，非 PG enum；house style）
   purpose        String   // 'marketing' | 'transactional' | 'review_request'（封闭集，code-validated）
   action         String   // 'grant' | 'revoke'（封闭集）
-  actorKind      String   // 'customer' | 'merchant' | 'system'（轴 B 判定依据：customer 发起的 revoke 优先级最高）
+  actorKind      String   // 'customer' | 'merchant' | 'system'（顾客优先规则的判定轴）
+  entryMode      String   // 'interactive' | 'backfill'（v0.6 冻结）：interactive=本人当下动作实时捕获；
+                          // backfill=webhook 补录/历史导入。grant 仅 interactive 可覆盖在场 revoke（派生规则③）
   sourceKind     String   // 'inbox_optin' | 'unsubscribe_link' | 'stop_keyword' | 'crm_manual' | 'import'（封闭集：哪个入口）
   evidenceRef    String   // 出处凭证引用：消息 id / 退订 token / 导入批次号——同意有出处，不可为空
   idempotencyKey String   // 稳定幂等键：'stop:<messageId>' | 'link:<unsubTokenId>' | 'import:<batchId>:<rowN>' | 'manual:<uuid>'
-  occurredAt     DateTime // 业务时间（同意/撤回发生时刻）
+  occurredAt     DateTime // 【advisory】外部声称的业务时间——仅展示/审计，不参与派生（外部时钟不可信）
+  receivedAt     DateTime @default(now()) // 服务端赋时=入库时刻，派生全序的唯一轴；入库即定，永不回排
   createdAt      DateTime @default(now())
 
   @@unique([ownerId, idempotencyKey])                          // 精确一次（镜像 AttributionEvent :1390 手法）
-  @@index([ownerId, contactId, channel, purpose, occurredAt]) // 租户前导；派生函数读「最近一条」即此索引
+  @@index([ownerId, contactId, channel, purpose, receivedAt]) // 租户前导；派生函数按到达序回放即此索引
 }
 ```
 
-- 纪律：append-only（无软删——同意证据永不删除）；`@@unique([ownerId, idempotencyKey])` 保证 STOP 双投递/导入重跑精确一次；租户前导索引服务 `contactable` 派生函数的「最近一条 ConsentEvent」查询。
+- 纪律：append-only（无软删——同意证据永不删除）；`@@unique([ownerId, idempotencyKey])` 保证 STOP 双投递/导入重跑精确一次；租户前导索引服务派生函数的**到达序回放**。派生只依赖已到库事件的 `(receivedAt, id)` 到达序——单调、无回排，任意时点重算结果相同（宪法 10）。
 
-- **`contactable` 由确定性派生函数算出**（宪法 10，不靠模型天赋）。**v0.5 修法（codex R3·P0 采纳）**：v0.4 的派生表自相矛盾——轴 B 写成「存在顾客发起的 revoke → 立即不可联系」，而 append-only 下旧 revoke 永存，会**锁死合法 re-opt-in**（顾客退订后又主动订回，永远联系不上）。冻结**确定性优先级规则**取代：
+- **`contactable` 由确定性派生函数算出**（宪法 10，不靠模型天赋）。**v0.6 修法（codex R4① 采纳——R3 版四反例全真：乱序在途、外部时钟偏移、及其对「最新 occurredAt」全序的破坏）**：派生全序**换轴到 `(receivedAt, id)` 到达序**，`occurredAt` 降级 advisory。冻结派生（到达序折叠，可增量维护——事件到库即推进状态，永不回排重算）：
 
   ```
-  consentState(contactId, channel, purpose)：                    // 轴 A+B 合一求值
-    E = 该三元组的全部 ConsentEvent（append-only 流）
-    C = E 中 actorKind='customer' 的子集
-    若 C 非空 → state = C 中最新一条的 action        // ① 最新「顾客发起」事件决定状态：
-                                                     //    顾客后续 grant 覆盖更早 revoke（re-opt-in 合法）
-    否则若 E 非空 → state = E 中最新一条的 action    // ② merchant/system 事件仅在顾客零表态时有效力
-                                                     //    ——永不能覆盖顾客 revoke（①已保证：C 非空就轮不到②）
-    否则 → state = 无记录 = 不可联系                  // ③ PDPA 默认关
-    「最新」= occurredAt 最大；同刻并列 → revoke 优先（保守）；再并列 → createdAt 晚者
-                                                     // ④ 确定性 tie-break，全序无歧义
+  consentState(contactId, channel, purpose)：            // 轴 A+B 合一求值；全序 = (receivedAt, id ULID) 到达序
+    按到达序遍历该三元组的全部 ConsentEvent，维护 (state, stateOwner)：
+      事件 actorKind='customer'：
+        action='revoke'                     → state=revoke, stateOwner=customer   // ① 顾客 revoke 到库即刻生效
+        action='grant' 且 entryMode='interactive'
+                                            → state=grant,  stateOwner=customer   // ② 真实 re-opt-in：本人当下
+                                                                                  //    动作可覆盖更早到达的 revoke
+        action='grant' 且 entryMode='backfill'：
+          若 state≠(revoke by customer)     → state=grant,  stateOwner=customer   // ③ 补录 grant 只能「建立」状态
+          否则 忽略 + 记审计 consent.backfill_ignored                              //    永不「复活」已 revoke（迟到的
+                                                                                  //    旧 grant 到达序反而更晚——正面击破）
+      事件 actorKind∈{merchant,system}：
+        仅当 stateOwner≠customer 时 → state=该事件 action, stateOwner=merchant/system
+                                                                                  // ④ 顾客一旦表过态，非顾客事件
+                                                                                  //    永不改写（零表态时才有效力）
+    无任何事件 → state=无记录 = 不可联系（PDPA 默认关）
 
   contactable(contactId, channel, purpose) = (state == 'grant') AND NOT 轴C·DND
   ```
 
-  - 轴 B（顾客退订）不再是独立的「存在即永久」检查——它由 ① 的顾客优先级承载：顾客 revoke 在场且是其最新表态时 state=revoke；顾客后来 grant 则 state=grant。轴 C（DND）仍是 Contact 字段独立与；轴 D（频控）仍是 **B7 运行时叠加**的发送资格闸（`status='suppressed'`），不改派生的 `contactable`。
-  - **验收案例（冻结，进契约测试）**：
+  - **在途窗口不可归零（诚实条款，冻结）**：分布式撤回**在途期间**（顾客已按退订、事件尚未到库）发出的消息无法绝对防止——这是物理事实，不假装能防。冻结补救语义三件套：(1) revoke **到库即刻生效**抑制（无需等对账/重算——折叠即推进）；(2) revoke 到库时若该三元组存在「发送评估 cursor 早于本 revoke」的已发送记录 → 记 `consent.late_revoke` ActionEvent `{consentEventId, lastSendCursor}` 供报表/申诉追溯；(3) **B7 每条发送记录冻结携带 `consentStateAt`**（=评估资格时消费到的 `(receivedAt, id)` cursor 快照）——事后可精确回答「发这条时系统知道什么」。
+  - 轴 B（顾客退订）由折叠的顾客优先级承载（到达序最新的顾客事件决定状态；merchant/system 仅顾客零表态时有效力）。轴 C（DND）仍是 Contact 字段独立与；轴 D（频控）仍是 **B7 运行时叠加**的发送资格闸（`status='suppressed'`），不改派生的 `contactable`。
+  - **验收案例（v0.6 改写到 receivedAt 轴 + 新增两例，冻结进契约测试）**：
 
-    | 案例 | 事件序列（同一 contact×channel×purpose） | 判定 |
+    | 案例 | 事件序列（同一 contact×channel×purpose，按**到达序**） | 判定 |
     |---|---|---|
-    | 1 · re-opt-in 恢复资格 | `customer revoke @T1` → `customer grant @T2`（T2>T1） | C 最新=grant → state=grant → `contactable=true`（无 DND 时）——旧 revoke 不锁死 |
-    | 2 · 商家不可代授 | `customer revoke @T1` → `merchant grant @T2`（T2>T1） | C 非空且最新=revoke → merchant 事件轮不到求值 → state=revoke → `contactable=false` |
+    | 1 · re-opt-in 恢复资格 | `customer revoke` 到库 @r1 → `customer grant (interactive)` 到库 @r2 | 折叠②：state=grant → `contactable=true`（无 DND 时）——旧 revoke 不锁死 |
+    | 2 · 商家不可代授 | `customer revoke` @r1 → `merchant grant` @r2 | 折叠④：stateOwner=customer，merchant 事件被忽略 → state=revoke → `contactable=false` |
+    | 3 · 迟到旧 grant 不复活（v0.6 新增） | `customer revoke (interactive)` @r1 → webhook 补录历史 `customer grant (backfill)` @r2——**其 receivedAt 反而更晚** | 折叠③：state=(revoke by customer) → backfill grant 忽略 + `consent.backfill_ignored` 审计 → state=revoke——迟到的旧同意永不推翻更晚到达的撤回 |
+    | 4 · 迟到 revoke 即刻压制（v0.6 新增） | `customer grant` @r1 → 发送若干（各带 `consentStateAt=r1`）→ `customer revoke` 到库 @r2（在途期间有发送） | 折叠①：r2 起 state=revoke 即刻抑制后续；记 `consent.late_revoke`{consentEventId, lastSendCursor=r1}；在途已发送不可追回但可精确追溯（诚实条款） |
 - **读写边界**：写=B5 收件箱/B7 退订流/CRM/B8 请评前置；**读=B7 抑制名单运行时硬约束的唯一真源**（判决 7-9：自动化系统层跳过，非字段装饰）；发送资格最终裁决在 B7 运行时（叠加轴 D）。分群 `contactable` 用上式派生，**不在 Contact 上冻结成单一 status 字段**。
 
 ### 契约附 · UTM 结构化（D-021 已批，SOL §2·B2⑥ 采纳）
@@ -232,17 +246,19 @@ model ConsentEvent {
 
   效果数值（NPS/复购率/新客数）由 B2 B0-09 从上述各账+镜像表**自算**，B8 只写不算。**进 AttributionEvent kind 闭集的近期扩展仅 `referral_converted` 一个**（founder-only 单列，§五）。
 
-- **口碑观测流 `ReviewObservation`（v0.5 冻结——codex R3·P1④ 采纳）**：`ReviewItem` 保留为**当前状态读模型**（rating/body/回评态可覆写）；其真源=追加式观测流，**仍不入归因流水**（契约〇）。完整形状（建表属 founder-only 单列，§五；形状本节冻结）：
+- **口碑观测流 `ReviewObservation`（v0.5 冻结，v0.6 键加生命周期纪元——codex R3·P1④/R4② 采纳）**：`ReviewItem` 保留为**当前状态读模型**（rating/body/回评态可覆写），**增 `lifecycleEpoch Int @default(0)`**——每次 `removed`→`present` 转换 +1（同一平台评价的第几世）。观测流为真源，**仍不入归因流水**（契约〇）。完整形状（建表属 founder-only 单列，§五；形状本节冻结）：
 
   ```prisma
   // 口碑观测流（append-only）：每行=对某平台评价的一次「状态观测」（在场快照或消失 tombstone）。
   // ReviewItem 是本流的确定性投影（读模型），可随时全量重建（宪法 10）。
+  // v0.6（codex R4②）：幂等键嵌 lifecycleEpoch——同 hash 删→现→删的键碰撞正面击破。
   model ReviewObservation {
     id               String   @id // ULID
     ownerId          String   // 租户键，无默认（宪法 6；进 TENANT_MODELS + Organization back-relation）
     organization     Organization @relation(fields: [ownerId], references: [id])
     platform         String   // 'google' | 'shopee' | 'lazada' | 'fb'（code-validated，同 ReviewRequest 闭集）
     externalReviewId String   // 平台内评价 ID
+    lifecycleEpoch   Int      // 本观测所属纪元（写入时刻的当前世代；投影重建时按转换计数复核，漂移=fail-loud）
     observationKind  String   // 'present'（在场快照）| 'absent'（tombstone：平台侧已删除/隐藏）——删除语义，永不物删本地行
     externalVersion  String?  // 平台自带版本号/更新时间戳（平台有则录）
     contentHash      String   // sha256(归一化 rating+body+回评状态)——外部无版本号时的版本替身；absent 观测=最后在场 contentHash
@@ -250,16 +266,17 @@ model ConsentEvent {
     body             String?  // present 时快照；absent 为 null
     observedAt       DateTime // 本次观测发生时刻
     createdAt        DateTime @default(now())
-    idempotencyKey   String   // 稳定幂等键（见下）
+    idempotencyKey   String   // 稳定幂等键（嵌 epoch，见下）
     @@unique([ownerId, idempotencyKey])
     @@index([ownerId, platform, externalReviewId, observedAt]) // 租户前导；投影重建按此序回放
   }
   ```
 
-  - **稳定幂等键**：present=`'<platform>:<externalReviewId>:<contentHash>'`——重爬内容未变**不产生新行**（去重），内容变化（改星/改文/平台侧编辑）=新 contentHash=新观测行；absent=`'<platform>:<externalReviewId>:absent:<最后在场 contentHash>'`，且**仅当读模型仍视其在场时写一次**——删除→重现→再删除的循环各键不同，可完整留痕。
-  - **首次/最近观测时间**：`ReviewItem` 增 `firstObservedAt`/`lastObservedAt`（读模型字段，由观测流确定性维护：first=该 externalReviewId 首条 present 的 observedAt，last=最新观测的 observedAt；v0.3 表中 `capturedAt` 语义并入 `lastObservedAt`）。
-  - **tombstone 语义**：absent 观测→投影把 `ReviewItem.status` 置 `'removed'`（枚举 additive），本地行**永不物删**（评价被平台删掉也是经营事实，差评预警/合规审计要看得见）。
-  - **周期全量对账与漂移补救（冻结规则）**：每 **24 小时**（冻结常量，founder ack 可调）对平台真值全量比对——①平台在场而本地无 → 补写 present 观测+投影建行；②本地在场而平台无 → 写 absent tombstone；③读模型字段 ≠ 最新观测 → 由最新观测**重建该行**（投影可全量重建自观测流=漂移补救的通解，宪法 10 确定性）。对账时刻记 ActionEvent `reputation.review.reconciled` `{platform, checked, drifted, tombstoned}`。
+  - **稳定幂等键（v0.6 嵌纪元）**：present=`'<platform>:<externalReviewId>:e<epoch>:<contentHash>'`——同纪元内重爬内容未变**不产生新行**（去重），内容变化=新 contentHash=新观测行；absent=`'<platform>:<externalReviewId>:e<epoch>:absent:<最后在场 contentHash>'`，仅当读模型该纪元仍视其在场时写一次。**反例表全解**：首现 `e0:h1` → 删除 `e0:absent:h1` → **同 hash 原样重现** `e1:h1`（epoch+1=新键 ✓）→ **二次删除** `e1:absent:h1`（新键 ✓）——同 hash 删→现→删循环各键互异，完整留痕。
+  - **epoch 推进规则（冻结）**：写 present 观测时若读模型该评价 `status='removed'`（或对账判定重现）→ `newEpoch = lifecycleEpoch + 1`，观测行与键用 newEpoch，投影同步 `status='present', lifecycleEpoch=newEpoch`；写 absent 用当前 epoch。评价首现=epoch 0。**投影全量重建**时 epoch 由观测流的 absent→present 转换计数确定性重算，与行内嵌 epoch 比对——不一致=fail-loud（观测流损坏，人工介入）。
+  - **首次/最近观测时间**：`ReviewItem` 增 `firstObservedAt`/`lastObservedAt`（读模型字段，由观测流确定性维护：first=**epoch 0** 首条 present 的 observedAt（跨纪元不重置——「第一次见到这条评价」），last=最新观测（任意纪元）的 observedAt；v0.3 表中 `capturedAt` 语义并入 `lastObservedAt`）。
+  - **tombstone 语义（新键下重述）**：absent 观测（键带当前 epoch）→投影把 `ReviewItem.status` 置 `'removed'`（`lifecycleEpoch` 不变——纪元只在重现时推进），本地行**永不物删**（评价被平台删掉也是经营事实，差评预警/合规审计要看得见）。
+  - **周期全量对账与漂移补救（新键下重述，冻结规则）**：每 **24 小时**（冻结常量，founder ack 可调）对平台真值全量比对。**「本地已 removed 行算不算本地无」正面写明：算**——在场性判定上 `status='removed'` 视同本地无。三类漂移：①平台在场而本地无（含**本地 removed**）→ 若是 removed 重现则 **epoch+1 后**补写 present 观测（键=`e<newEpoch>:<contentHash>`），若是全新评价则 epoch 0 建行；②本地在场（status='present'）而平台无 → 写 absent tombstone（当前 epoch）；③读模型字段 ≠ 最新观测 → 由最新观测**重建该行**（投影可全量重建自观测流=漂移补救的通解，宪法 10 确定性；对账补写一律用上述 epoch 规则铸键）。对账时刻记 ActionEvent `reputation.review.reconciled` `{platform, checked, drifted, tombstoned, resurrected}`。
 
 - **宪法 8 结构隔离机器闸**（本域最关键契约）：ReviewRequest 与 Referral 两表**禁互指外键**；`review_*` 与 `referral_*`/`loyalty_*` 两族事件**不共享关联键**，B2 算效果时不得反推「留评→给奖」耦合归因。任何 migration 加互指=违宪 8，进 REVIEWER-PLAYBOOK 硬拦 + CI schema 断言（ReviewObservation 同属评价线，**禁含**任何 referral/loyalty 关联键）。
 
@@ -279,7 +296,7 @@ model ConsentEvent {
 
 ## 五、冻结条件与状态
 
-- **状态：冻结候选（freeze candidate）。** v0.1 骨架 → v0.2 吸收 B8 两试产 → v0.3 闭合 SOL §2·B2 六阻断项 + 吸收二三波 → v0.4 闭合 codex 异族评审 R2 BLOCK 清单（ConsentEvent Prisma 形状 / AttributionEvent 完整抄录 / anonymousKey 澄清 / BusinessEvent·Receipt 互斥职责 / 口碑 kind 逐项归账 / VoucherToken 勘误） → **v0.5 闭合 codex R3 终轮两项（本稿）：consent 派生顾客优先级修法+验收案例 / ReviewObservation 观测流冻结** → **founder 明示 ack（D-018②/D-020⑤）** → spec-ready（02-B2 相关行随冻结 PR 迁级）。异族复审通过不替代 founder 过目（共享契约/schema=founder-only）。
+- **状态：冻结候选（freeze candidate）。** v0.1 骨架 → v0.2 吸收 B8 两试产 → v0.3 闭合 SOL §2·B2 六阻断项 + 吸收二三波 → v0.4 闭合 codex R2 BLOCK 清单（ConsentEvent Prisma 形状 / AttributionEvent 完整抄录 / anonymousKey 澄清 / BusinessEvent·Receipt 互斥职责 / 口碑 kind 逐项归账 / VoucherToken 勘误） → v0.5 闭合 codex R3 两项（consent 顾客优先级 / ReviewObservation 观测流） → **v0.6 闭合 codex R4 两项（本稿）：consent 派生换轴 (receivedAt, id) 到达序+entryMode+在途诚实条款+四验收案例 / 观测键嵌 lifecycleEpoch 纪元** → **founder 明示 ack（D-018②/D-020⑤）** → spec-ready（02-B2 相关行随冻结 PR 迁级）。异族复审通过不替代 founder 过目（共享契约/schema=founder-only）。
 - **开放问题（v0.2 三项处置）**：
   1. ~~事件 payload schema 约束强度~~ → **闭合**：kind 闭集 + 每 kind 软引用非空约束（契约 1，对齐真 schema `schema.prisma:1364-1369`），非自由 JSON；宪法 10 定型。
   2. anonymousKey 隐私保留期（PDPA 姿态）→ **留 B13 对表**（跨块，非本 spec 冻结阻断项；`geoBucket`/`ipHashPrefix` 已按 PDPA 粗粒度冻结）。
