@@ -1,8 +1,8 @@
-# B3 创作块 · 块 spec（v0.2——冻结候选）
+# B3 创作块 · 块 spec（v0.3——冻结候选）
 
 > 2026-07-12。epoch `claude-20260712-03`。性质：**装配件不重画**——本 spec 把控制面已裁定的判断内容 + 两份取证报告（W-DELTA 差额核证 / W-ANCHOR 对标锚提案）装配成 B3 创作块的冻结候选；判断已全部定案，本工位逐字执行不改判。**主体施工图 = `docs/superpowers/specs/2026-07-10-lc-creation-zone-lighting.md`（L-C 创作区点亮施工图）——引用采纳为附件，不复述，本 spec 各节 = 对 L-C 的修正 + 增补。**
-> **v0.2（闭合 codex BR2 六项，控制面全部核认；钉②、×1.5、信封措辞三处 = 控制面改判）**：①批次表补全 L-C 原七片之 LCd（paid storyboard→批2 新工位 W-B3-H）与 LCg（灰度迁移/legacy 收尾→批5 收口前置），均标注 LC-0 依赖（§五）；②F1 的 ≤M 分钟改**显式临时阈值**（mock 级批量 20 格 ≤30 分钟全链；真 provider 接入按 costing 实测受控修订、修订走决策日志留痕）+ **B0-17/B0-18 移出主 tranche 并入 tranche-2 处置**（主 tranche 38 行）+ **E1-17/E2-13 撤销 n/a-internal**（E1-17 挂 A2 补三条行级断言〔`direct-upload.ts:69-104`〕；E2-13 挂 C1 增补 research 轨迹可见性断言〔`research-web.ts:106-116`/`propose-research.ts:24-56`/`otto-stream-bridge.ts:168-188`〕）（§三）；③**钉②改判（控制面撤回原裁定）**：E1-15 正身 = g5b 已批**静态代码目录**（`2026-06-27-g5b-templates-design.md:14-20,29-35`），「TemplateBundle 注册表」表述作废（`schema.prisma:294-316` 的 TemplateBundle = ComfyUI workflow bundle 另一物，禁混用命名）+ **钉③钉死**：E1-19 出处 = `GRILL-VERDICTS-2026-07-03.md:132-138`（已复核原文相符，撤「批1b 工单再核」延后）（§四）；④**Quality ×1.5 改「本期撤销」**（GRILL:244 终判，非「缓上等 B10」）+ 全文删「按 #254 信封或逐笔」二择表述，统一为**每笔真实花费 = founder 逐笔明示批准**（宪法 2/BLUEPRINT:61；$300 信封是总额上限背景，不构成单笔授权载体）（§六）；⑤B3 行族债改正 **47 条**（补 debt-75~77/78~82，`parity-debt.md:81-88` 已复核确数），47 条逐条有工位（§五 + B3-REPORT §④）；⑥全文扫除暗含未逐笔授权真实花费的表述。**全部引用行号已逐一对原文复核，零处不符。**
-> **状态：冻结候选（freeze candidate）v0.2——冻结走四权闭环（双顾问签核+异族复审+机器闸+非作者合并），依 #254 §一.2。** spec-ready 迁移随冻结 PR 执行（03-B3 主 tranche 行随冻结 PR 迁级；tranche-2 处置行待 addendum）——**本 PR 不迁任何行的六级状态**（仅新增/修订文档）。founder 参与移至终验一次过审计索引（#254 §一.3/§二.5）。华语（宪法 9）。
+> **修订纪要**：v0.2 = 闭合 codex BR2 六项（钉②〔模板正身=g5b 静态代码目录〕、×1.5〔本期撤销〕、花钱授权措辞〔逐笔明示批准〕三处 = 控制面改判）；v0.3 = 闭合 codex BR2-R2 三项文字收口（批2 工位计数同步 / 模板目录用语零歧义 / 花钱授权措辞收口——无判断变更）。逐项内容见 §八 版本历史。**全部引用行号已逐一对原文复核，零处不符。**
+> **状态：冻结候选（freeze candidate）v0.3——冻结走四权闭环（双顾问签核+异族复审+机器闸+非作者合并），依 #254 §一.2。** spec-ready 迁移随冻结 PR 执行（03-B3 主 tranche 行随冻结 PR 迁级；tranche-2 处置行待 addendum）——**本 PR 不迁任何行的六级状态**（仅新增/修订文档）。founder 参与移至终验一次过审计索引（#254 §一.3/§二.5）。华语（宪法 9）。
 > **钱路警告（承 L-C 头部）**：本区是全城**最重的 spend path**。凡触及 `startGen`/`genRequest`/批量编排/幂等键的施工 diff **逐个必过 `money-safety-review` skill**。**每笔真实供应商验证花费 = founder 逐笔明示批准，"问"就是上限**（宪法 2/BLUEPRINT:61）。
 > **人话**：这是「创作车间」的施工总纲——把已经画好的图纸（L-C）、差额核对单（W-DELTA）、对标记分卡（W-ANCHOR）三张纸订成一份能开工的合同。开工前先把一件事说清楚：车间的那七个漂亮门面，其实还没盖在 main 上（在另一根未合入的分支上），所以第一道工序不是"接线"，是"先把门面搬过来"。
 
@@ -209,7 +209,7 @@ W-DELTA 判「仍准」的 16 条存量断言，本 spec **直接引用免重核
 | E1-12 | A1 | living collections |
 | E1-13 | A1 | $0 ingest |
 | E1-14 | A2 | 真落库归组（gate4）；措辞已重写（§二.3） |
-| E1-15 | A2 | 正身=g5b 静态代码目录钉（§四.②，v0.2 改判；「TemplateBundle 注册表」表述作废） |
+| E1-15 | A2 | 正身=模板目录（g5b 静态代码目录）钉（§四.②，v0.2 改判；被废表述与同名 schema 对象的区别详该钉） |
 | E1-16 | A2 | 本期诚实占位 |
 | E1-17 | A2 | v0.2 撤销 n/a-internal；三条行级断言（进度/失败可重试/超限诚实拒绝，`direct-upload.ts:69-104`）随 A2 验 |
 | E1-18 | X1 | 失败态卡=gate4；服务端硬闸=B3 验收项 |
@@ -253,9 +253,9 @@ W-DELTA 判「仍准」的 16 条存量断言，本 spec **直接引用免重核
 - 施工 plan 定原型意图后落 PR；本波交付 = **$0 顺序 concat 版**（裁定9，founder 2026-07-11 判），AI 转场留下波 costing。
 
 **② E1-15 Templates 正身（v0.2 改判——控制面撤回原裁定）**
-- 正身 = **g5b 已批设计的静态代码目录**（`docs/superpowers/specs/2026-06-27-g5b-templates-design.md:14-20,29-35`——founder 已批：模板 = **static built-in catalog in code**，NOT a DB/admin-authored system，v1 四模板；out-of-scope 明列「❌ User-authored / DB-backed templates; the ComfyUI `TemplateBundle`」）。
+- 正身 = **模板目录（g5b 静态代码目录）**（`docs/superpowers/specs/2026-06-27-g5b-templates-design.md:14-20,29-35`——founder 已批：模板 = **static built-in catalog in code**，NOT a DB/admin-authored system，v1 四模板；out-of-scope 明列用户自建/DB-backed 模板与 ComfyUI bundle）。
 - **付费套用走真 `startGen`（不变）**：g5b 原判「The "Generate" click is the spend approval（按钮显示成本），reuses `startGen`」——付费路径经 gen 链计费、真落库，A2 锚通过阈值以此为准。
-- **「TemplateBundle 注册表」表述作废**（v0.1 钉②原文撤回）：`schema.prisma:294-316` 的 `TemplateBundle` = **ComfyUI workflow bundle**（注释原文「ComfyUI 模板注册表」，wrong shape/heavy）——与 E1-15 模板体系是**另一物，禁混用命名**。矩阵 E1-15 行注〔静态数组≠TemplateBundle 注册表〕以本钉为解：正身 = 静态代码目录（g5b），既非「假付费静态数组」（付费走真 startGen）亦非 TemplateBundle。
+- **被废表述（唯一说明处）**：「TemplateBundle 注册表」表述作废；`schema.prisma:294-316` 的同名对象 = ComfyUI workflow bundle 另一物，**B3 模板域禁用此词指代模板目录**。矩阵 E1-15 行注〔静态数组≠注册表〕以本钉为解：正身 = 模板目录（g5b 静态代码目录），既非「假付费静态数组」（付费走真 startGen）亦非该 schema 对象。
 
 **③ E1-19 A/B 分叉出处（v0.2 钉死——撤「批1b 工单再核」延后）**
 - 出处 = **`GRILL-VERDICTS-2026-07-03.md:132-138`**（:132 节「North-Star 未捕获 feature 判决(founder 2026-07-03)」→ :138「N (Grok) canvas A/B 分叉 | **要** | 创作区 canvas；差异化单点 + 省 credits」）——**已复核原文相符，直接引用**。**R-002 默认项 A（B3 spec 时钉行号）就此完结。**
@@ -343,12 +343,12 @@ W-DELTA 判「仍准」的 16 条存量断言，本 spec **直接引用免重核
 
 ### 6.3 真钱验收（只交方案不执行）
 
-真钱验收 = **只交方案不执行**（L-C §八清单形态）；执行点 = **每笔真实花费 = founder 逐笔明示批准**（宪法 2/BLUEPRINT:61：「开发/验证阶段的每笔真实供应商花费逐笔问 founder——"问"就是上限，没有代码上限」；**$300 信封是总额上限背景，不构成单笔授权载体**——v0.2 BR2④(b)，宪法 2 优先于 #254）。方案清单（L-C §八①②③④）：staging 小额单张图 / 单段短视频六态②③抽验 / 2×2 矩阵 partial「3 收 1 退」/ 恢复 reaper 不双扣（$0）。
+真钱验收 = **只交方案不执行**（L-C §八清单形态）。执行点（唯一澄清处，v0.2 BR2④(b)，宪法 2 优先于 #254）：**$300 信封是程序总额上限背景，不构成任何单笔授权载体；每笔真实花费 = founder 逐笔明示批准**（宪法 2/BLUEPRINT:61：「开发/验证阶段的每笔真实供应商花费逐笔问 founder——"问"就是上限，没有代码上限」）。方案清单（L-C §八①②③④）：staging 小额单张图 / 单段短视频六态②③抽验 / 2×2 矩阵 partial「3 收 1 退」/ 恢复 reaper 不双扣（$0）。
 
 ### 6.4 money-safety-review 双时点
 
 1. **spec 期**：**扩 Step-1 符号枚举**（`runVariantBatch`/`runBulkGrid`/`refgen` 变体族入列）——**此项为独立后续 PR 义务，本 spec 只记义务不执行**（不在本 docs-only PR 内改 SKILL.md）。
-2. **PR 期**：逐 spend diff 过 `money-safety-review` skill + 对抗二审（`/codex`）；批2 三工位每 PR 逐个过。
+2. **PR 期**：逐 spend diff 过 `money-safety-review` skill + 对抗二审（`/codex`）；批2 四工位（W-B3-E/F/G/H）每 PR 逐个过 money-safety-review + codex 对抗二审。
 
 ### 6.5 定价纪律
 
@@ -376,19 +376,20 @@ W-DELTA 判「仍准」的 16 条存量断言，本 spec **直接引用免重核
 
 ## 八、冻结条件与状态
 
-- **状态：冻结候选（freeze candidate）v0.2。** 版本历史：
+- **状态：冻结候选（freeze candidate）v0.3。** 版本历史：
   - **v0.1** 骨架 = 装配 W-DELTA + W-ANCHOR + 控制面 10 裁定 + 六钉 + LC-0 规模上修 + 批次表。
-  - **v0.2（本稿）= 闭合 codex BR2 六项**（控制面全部核认；**钉②〔E1-15 正身=g5b 静态代码目录〕、×1.5〔本期撤销〕、信封措辞〔逐笔明示批准〕三处 = 控制面改判**）：①LCd/LCg 编入批次表（W-B3-H 入批2 / LCg 入批5 收口前置，均依赖 LC-0）；②F1 阈值硬化（mock 级 20 格 ≤30 分钟）+ B0-17/18 改档 tranche-2（主 tranche 38 行）+ E1-17/E2-13 撤销 n/a-internal（挂 A2/C1 + 行级断言）；③钉②改判 + 钉③钉死（GRILL:132-138）；④Quality ×1.5 本期撤销（GRILL:244）+ 信封二择表述全文删除；⑤债数改正 47 条、逐条有工位；⑥暗含未逐笔授权花费的表述清零。全部引用行号逐一对原文复核，零处不符。
+  - **v0.2 = 闭合 codex BR2 六项**（控制面全部核认；**钉②〔E1-15 正身=g5b 静态代码目录〕、×1.5〔本期撤销〕、信封措辞〔逐笔明示批准〕三处 = 控制面改判**）：①LCd/LCg 编入批次表（W-B3-H 入批2 / LCg 入批5 收口前置，均依赖 LC-0）；②F1 阈值硬化（mock 级 20 格 ≤30 分钟）+ B0-17/18 改档 tranche-2（主 tranche 38 行）+ E1-17/E2-13 撤销 n/a-internal（挂 A2/C1 + 行级断言）；③钉②改判 + 钉③钉死（GRILL:132-138）；④Quality ×1.5 本期撤销（GRILL:244）+ 授权二择表述全文删除；⑤债数改正 47 条、逐条有工位；⑥暗含未逐笔授权花费的表述清零。全部引用行号逐一对原文复核，零处不符。
+  - **v0.3（本稿）= 闭合 codex BR2-R2 三项文字收口**（BR2-R2 判 BLOCK(1,3,4)，2/5/6 已 CLOSED；**无判断变更**）：①批2 工位计数同步（残留旧计数改「四工位 W-B3-E/F/G/H」，§六.4）；②模板目录用语零歧义收口（被废表述仅存钉②一处完整说明，其余各处改写为「模板目录（g5b 静态代码目录）」）；③花钱授权措辞收口（§六.3 保留唯一否定性澄清，其余出现删除或改写为「founder 逐笔明示批准」）。
 - **冻结门 = 四权闭环**（#254 §一.2）：双顾问签核 + 异族复审（`/codex` 对抗）+ 机器闸（`route-b-matrix-check.mjs`）+ 非作者合并。放行后：
   - **03-B3 主 tranche 38 行随冻结 PR 迁 `spec-ready`**（本 PR 不迁）；
   - **tranche-2 处置 8 行（六新行 + 改档 B0-17/18）待 addendum**（保持 listed，D-021）；
   - founder 终验一次过审计索引（#254 §一.3/§二.5）。
 - **账行提案**（随本 PR 描述 + 下次 ledger-sync）：
-  - D-02X · B3 块 spec v0.1→v0.2 交付（冻结候选，走四权闭环；v0.2 = codex BR2 六项闭合，含控制面三处改判）；
+  - D-02X · B3 块 spec v0.1→v0.3 交付（冻结候选，走四权闭环；v0.2 = codex BR2 六项闭合〔含控制面三处改判〕；v0.3 = BR2-R2 三项文字收口）；
   - E1-06 勘误：03-B3.md:12「7cr 固定价」→「16cr（现值 `spend.ts:89`），定价终案挂 B12」；
   - E1-14 措辞勘误：「不在主导航仅深链」→「nav 配置存在（`immersive-nav.tsx:115`）、`assets/*` 路由未建（死链）」；
   - GenerationBatch 行号引用刷新 `schema.prisma:954→:961`；
-  - E1-15 行注解钉（v0.2）：正身 = g5b 静态代码目录（付费走真 startGen），「TemplateBundle 注册表」与 `schema.prisma:294-316` ComfyUI 对象禁混用命名；
+  - E1-15 行注解钉（v0.2）：正身 = 模板目录（g5b 静态代码目录，付费走真 startGen）；被废表述与 `schema.prisma:294-316` 同名 ComfyUI 对象的区别详 §四.②；
   - E1-19 出处钉死（v0.2）：GRILL-VERDICTS:132-138（R-002 默认项 A 完结）。
 - **本 spec 不自称已冻结**；冻结实质决策入 `DECISION-LOG.md`，终验重现。
 

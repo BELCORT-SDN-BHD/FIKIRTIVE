@@ -1,13 +1,13 @@
 # B3 板块报告 · 创作 L-C + 资产
 
-> 按 MASTERPLAN §七 十四节标准编制（= 终验讲解稿同构）。**本文件为骨架**：B3 处冻结候选阶段（spec v0.2，代码未施工），各节为 **owner + 证据槽位**，随批次施工增量投递（只读不需批，终验=确认非发现）。不适用/未施工的节**如实标注**而非省略（宪法 3 状态诚实）。
+> 按 MASTERPLAN §七 十四节标准编制（= 终验讲解稿同构）。**本文件为骨架**：B3 处冻结候选阶段（spec v0.3，代码未施工），各节为 **owner + 证据槽位**，随批次施工增量投递（只读不需批，终验=确认非发现）。不适用/未施工的节**如实标注**而非省略（宪法 3 状态诚实）。
 > 人话对照：「创作 L-C」= 把创作车间七页从"漂亮的假"接上真后台；「资产」= 品牌记忆/资产库/模板。本报告是这块建完后给 founder 的**逐条可查交付单**，现在先立骨架、施工时逐格填证。
-> **报告状态**：骨架（施工前，随 spec v0.2 同步——BR2 六项闭合）。批次映射见 spec §五（LC-0 / W-B3-A~D 批1b；W-B3-E~H 批2〔v0.2 补 W-B3-H=LCd paid storyboard〕；引擎集成批3；tranche-2 批4；收口批5〔LCg 灰度迁移/legacy 收尾为前置〕）。
+> **报告状态**：骨架（施工前，随 spec v0.3 同步——BR2 六项 + BR2-R2 三项文字收口闭合）。批次映射见 spec §五（LC-0 / W-B3-A~D 批1b；W-B3-E~H 批2〔v0.2 补 W-B3-H=LCd paid storyboard〕；引擎集成批3；tranche-2 批4；收口批5〔LCg 灰度迁移/legacy 收尾为前置〕）。
 
 ## ① 块 ID / PR / 最终 SHA / 认证日期
 
 - **owner**：控制面（收口）。
-- **证据槽位**：块 ID = B3 · 创作 L-C + 资产。spec = `docs/superpowers/specs/2026-07-12-b3-block-spec.md`（v0.2 冻结候选，本批交付）+ 主体 L-C `docs/superpowers/specs/2026-07-10-lc-creation-zone-lighting.md`（引用采纳）。施工 PR 列（LC-0 / W-B3-A~H〔v0.2 补 W-B3-H=LCd〕/ LCg 收口片）+ 各 merge SHA + 认证日期 = **待施工填**。epoch `claude-20260712-03`。
+- **证据槽位**：块 ID = B3 · 创作 L-C + 资产。spec = `docs/superpowers/specs/2026-07-12-b3-block-spec.md`（v0.3 冻结候选，本批交付）+ 主体 L-C `docs/superpowers/specs/2026-07-10-lc-creation-zone-lighting.md`（引用采纳）。施工 PR 列（LC-0 / W-B3-A~H〔v0.2 补 W-B3-H=LCd〕/ LCg 收口片）+ 各 merge SHA + 认证日期 = **待施工填**。epoch `claude-20260712-03`。
 
 ## ② 批准范围 + 明示排除 + 映射
 
@@ -47,7 +47,7 @@
 ## ⑥ 全旅程证据
 
 - **owner**：各工位 + 浏览器 runtime QA。
-- **⚠️ 三无纪律预注**：本程处**用户数=0 + Stripe 零成交 + 无生产流量**（三无）状态下——**旅程证据 = mock/staging 级，如实标注**（宪法 3 状态诚实）：happy/empty/loading/denied/failure/retry/mobile 七态截图取自 staging + MockProvider（$0）+ 夹具注入失败形态，**不冒充生产真实流量**；真钱旅程（真 provider 小额）= 只交方案不执行，执行点 = **每笔真实花费 = founder 逐笔明示批准**（宪法 2/BLUEPRINT:61；$300 信封是总额上限背景，不构成单笔授权载体——spec §六.3，v0.2 BR2④(b)）。凡 staging/mock 级证据一律标注来源级别，不作生产已验证陈述。
+- **⚠️ 三无纪律预注**：本程处**用户数=0 + Stripe 零成交 + 无生产流量**（三无）状态下——**旅程证据 = mock/staging 级，如实标注**（宪法 3 状态诚实）：happy/empty/loading/denied/failure/retry/mobile 七态截图取自 staging + MockProvider（$0）+ 夹具注入失败形态，**不冒充生产真实流量**；真钱旅程（真 provider 小额）= 只交方案不执行，执行点 = **每笔真实花费 = founder 逐笔明示批准**（宪法 2/BLUEPRINT:61；唯一澄清处见 spec §六.3）。凡 staging/mock 级证据一律标注来源级别，不作生产已验证陈述。
 - **证据槽位**：canvas 五态（空布→首图→就地编辑→A/B→Make Video）；工厂（贴链→选人设→批量矩阵确认页→成片网格 partial）；storyboard（draft→make-all→animatic→stitch）；media-editor（trim→抽帧→存版本 $0）。**待施工填七态截图 + 时间码**。
 
 ## ⑦ 测试全家桶可重跑链接
@@ -58,7 +58,7 @@
 ## ⑧ schema / ownerId / 审计 / 同意 / 秘密
 
 - **owner**：W-B3-F（工厂编排，schema 触点最重）+ 控制面。
-- **证据槽位**：`GenerationBatch`（schema.prisma:961，已建，nullable 软引用无 FK、不持钱字段）；`GenJob.batchId(:464)` 预埋。新对象（idea 小 owner-scoped 对象）ownerId scoping；**模板 = g5b 静态代码目录，零新 schema 对象**（v0.2 钉②改判——`schema.prisma:294-316` 的 `TemplateBundle` 是 ComfyUI workflow bundle 另一物，禁混用命名）。`CreditLedger_finalizer_once` partial-unique 索引（每 ref 一 finalizer）。**schema 变更走 founder-only 类别**（如新增对象/迁移）——单列上报。**待施工填 schema diff + ownerId 断言 + 审计事件形状 + 脱敏检查**。
+- **证据槽位**：`GenerationBatch`（schema.prisma:961，已建，nullable 软引用无 FK、不持钱字段）；`GenJob.batchId(:464)` 预埋。新对象（idea 小 owner-scoped 对象）ownerId scoping；**模板 = 模板目录（g5b 静态代码目录），零新 schema 对象**（v0.2 钉②改判——被废表述与 `schema.prisma:294-316` 同名 ComfyUI 对象的区别详 spec §四.②）。`CreditLedger_finalizer_once` partial-unique 索引（每 ref 一 finalizer）。**schema 变更走 founder-only 类别**（如新增对象/迁移）——单列上报。**待施工填 schema diff + ownerId 断言 + 审计事件形状 + 脱敏检查**。
 
 ## ⑨ 成本 / 延迟 / margin / 监控 / 回滚
 
@@ -77,7 +77,7 @@
 ## ⑪ 异族评审
 
 - **owner**：非作者 agent + `/codex` 对抗二审。
-- **证据槽位**：spec 冻结走四权闭环（双顾问签核 + 异族复审 + 机器闸 + 非作者合并，#254 §一.2）——**已有一轮：codex BR2（钉 v0.1 head `fb1a8efd`）判 BLOCK 六项，v0.2 全数闭合（其中钉②/×1.5/信封三处 = 控制面改判）**；后续轮次待补 provenance。施工期：**批2 spend 四工位（W-B3-E/F/G/H，v0.2 补 H）每 PR 逐个过 `money-safety-review` + 对抗 `/codex` 二审**（P0/P1=0 才 code-complete）；$0 片走常规 proportional review。**待施工填各 PR 异族评审判定原文 + provenance 路径**。
+- **证据槽位**：spec 冻结走四权闭环（双顾问签核 + 异族复审 + 机器闸 + 非作者合并，#254 §一.2）——**已有两轮：codex BR2（钉 v0.1 head `fb1a8efd`）判 BLOCK 六项 → v0.2 全数闭合（其中钉②/×1.5/花钱授权措辞三处 = 控制面改判）；codex BR2-R2（钉 v0.2 head `3bac1bc0`）判 BLOCK(1,3,4)、2/5/6 CLOSED → v0.3 三项文字收口闭合（无判断变更）**；后续轮次待补 provenance。施工期：**批2 spend 四工位（W-B3-E/F/G/H，v0.2 补 H）每 PR 逐个过 `money-safety-review` + 对抗 `/codex` 二审**（P0/P1=0 才 code-complete）；$0 片走常规 proportional review。**待施工填各 PR 异族评审判定原文 + provenance 路径**。
 
 ## ⑫ 已知限制与待裁（没有写「无」）
 
