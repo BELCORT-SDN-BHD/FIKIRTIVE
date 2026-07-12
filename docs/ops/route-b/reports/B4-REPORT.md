@@ -18,6 +18,7 @@
 - owner：〔SPEC-B4 / 块施工工位〕
 - 证据：〔能力行清单（非页面）：发布链六态/四锁/授权闸/媒体双层/签名代理/单一动作层/reconcile + 5.5 新建能力（X 发布/广告工作台/分享预览/ApprovalRequest/ChannelConnection/时段种子）。详见 spec §三〕
 - **W-B4-3 起证（本 PR，新建后台能力；NODE-275 收口后）**：①`ChannelConnection` 通用渠道连接（B0-30，schema + 单默认 partial unique）②`PostingTimeSeed` 冷启动时段种子 + `suggestPostTimes` 读 skill（B0-103）③`sharePostPreview` 分享预览 skill（mint+revoke）+ 双层令牌：HMAC 传输层 ∧ `SharePreviewToken` 行权威层（B0-28）④ApprovalRequest 语义正名收口 + 人批/Otto 批同卡消费焊死（B0-29）⑤广告工作台后台+skill 立证（B0-27，`propose-ad-build` 已存量）。两新 skill 已入 `instructions.ts`「When to call」路由（收口6）。人工入口页（A′ ads/builder、schedule/share-preview）依 A′ foundation deferred（§⑫.11）。
+- **W-B4-4 起证（本 PR，E4-14 X/Twitter 发布 adapter——从零 schema→adapter→闭集→UI）**：①`ChannelConnection`(kind="x") 为连接载体 + 新增 `publishPaused` per-channel kill-switch 列（rider R5，additive migration `20260713130000`）②共享编排 `packages/core/src/x-publish.ts publishX`（端口注入，web adapter `publishViaX` + worker `executeX` 同驱动=契约6 单一动作层）③fail-closed 授权门 `xScopeCanPublish`（实授 `tweet.write` scope 派生 DEFAULT false）④`packages/core/src/x-billing.ts` 1cr/4cr 判档映射（**判档层，不接扣费执行**——reserve→settle=B12）⑤排期闭集/enum/镜像扩 x + 排期 UI 六处收敛为 `CHANNEL_META` 数据驱动（E4-16）。**零真实 X 调用**（全 mock/夹具，无凭据无真发；真发=外部测试阶段 §六.2 founder 授权）。触点①-⑦ diff 落点表见 §④ W-B4-4、六态证据见 §⑥ W-B4-4。
 
 ## ④ 双执行矩阵
 
@@ -71,6 +72,24 @@
 | **B0-103** | 新 `PostingTimeSeed` 静态种子表（非 owner）+ 种子数据 migration + 新 `suggestPostTimes` skill（free/read/internal）+ port `ctx.schedule.suggestTimes`（读种子经 port，不直连 Prisma） | 人工=composer 时段建议（读种子）/ Otto=`suggestPostTimes`（$0 读） | `posting-time-seed.test.ts`（+3：种子读/排序不变式/无 ownerId 全局表）；`suggest-post-times.test.ts`（3）；`schedule-actions.test.ts` suggestPostTimes（3：未认证空/读种子/空 channel 不打库） | **建成** |
 
 **B0-29 决策（正名收口 = 卡载体等价，不建表；NODE-275 收口4 修正）**：#268 把 B0-29 的冻结语义建在 durable `APPROVAL_CARD` ChatMessage 上——payload.toolName=`approveScheduledPost` 即 PUBLISH 审批 kind，payload.contentHash = `computeApprovalContentHash`（漂移即失效重批）。**审判改正（v1 报告曾夸大）**：v1 时人工按钮只跑 server action、不消费同一卡对象（`OttoSchedule.tsx` 直调 `approveScheduledPost(p.id)`），「同一 ApprovalRequest」当时只在 Otto 单侧成立。**本轮焊死**：`approveScheduledPost` action 批准成功后经 `approval-card-settle.ts` **CAS 消费同一 pending 卡**（pending 钉扎与 ottoApprove 同纪律；Otto 卡路径的卡在 resume 前已消费，settle 自然空转）——现在**无论哪个表面批准，消费的都是同一 APPROVAL_CARD 行**，冻结语义两侧成立。依 spec §八「冻契约不冻实现」+ 人工入口铁律「复用 approveScheduledPost，**不许自建第二套审批**」：本工位**不新建 ApprovalRequest 表**（平行表=第二套记录风险，且要重构 #268 钱路邻接审批码=founder-only）。**待裁留口**：若 founder/spec-owner 意在 northstar「一原语两表面」（通知中心 + 聊天卡）的**可查询** ApprovalRequest 表，那是**独立 additive migration + #268 卡机制重构**，需 founder 裁定——本工位未建（见 §⑫）。
+
+#### W-B4-4 起证（E4-14 X 发布 adapter 工位，本 PR）· 触点①-⑦ 逐项 diff 落点表
+
+> 施工合同=spec §二 2.2 E4-14 ①-⑦ + 契约6/8。**零真实 X 调用**（全 mock/夹具，无凭据无真发；真发→X 可见=外部测试阶段 §六.2 前置 founder 授权）。**E4-16 验收断言=「X 落地 diff 中，核心编排/锁/闸文件零语义改动」——核实**：`packages/core/src/meta-publish.ts`、`handlePublish`+四锁、`scanDuePublishPosts`（闸）、Meta `authorize`/`resolvePage` **均零改动**；X 仅在 `realExecute` 分发点（登记式扩展点）+ 新 `executeX` 接入。
+
+| 触点 | spec 施工合同 | 本 PR 落点（file） | 判定 |
+|---|---|---|---|
+| ① 闭集 + CAPS | `schedule-draft.ts:12` `SCHEDULE_CHANNELS` 扩 x + 测试同步改（现测试明确拒非 IG/FB） | `packages/core/src/schedule-draft.ts`（`["instagram","facebook","x"]` + `SCHEDULE_CHANNEL_CAPS.x {maxMediaCount:4,supportsFirstComment:false}`）；`schedule-draft.test.ts`（`isScheduleChannel("x")`→true、x accept、x caps、非成员 tiktok 仍拒） | 建成 |
+| ② otto z.enum | `schedule-posts.ts:24` `z.enum` 扩 x | `packages/otto/src/skills/schedule-posts.ts`（enum + description 扩 x）；`src/skills/CATALOG.md` 重生（catalog:check fresh） | 建成 |
+| ③ worker 分发 | `publish.ts:356` per-channel 扩分支（登记式扩展点） | `apps/worker/src/jobs/publish.ts`：`realExecute` 首行 `if(post.channel==="x")return executeX(post)` + `executeX`/`authorizeX`/`xPortFor`。**Meta 编排/四锁/`scanDue`/`authorize`/`resolvePage` 零语义改动**（E4-16） | 建成 |
+| ④ 客户端镜像 | `channel-meta.ts` 加 x | `apps/web/lib/channels/channel-meta.ts`（x mirror，capabilities 与 core CAPS 同步） | 建成 |
+| ⑤ adapter 本体 + 连接层 | `channels/x.ts` 照 ig/fb + ChannelConnection 载体 | `apps/web/lib/channels/x.ts`（注册）+ `x-publish-adapter.ts`（`authorizeX` 门 + `publishViaX`）+ `registry.ts` `registerChannel(x)`；共享编排 `packages/core/src/x-publish.ts publishX`（端口注入，web+worker 同驱动=契约6 单一动作层）。**连接载体=`ChannelConnection` kind="x"（#275）+ 新增 `publishPaused` 列**（rider R5 per-channel kill-switch，additive migration `20260713130000`，drift 门「No difference」绿） | 建成 |
+| ⑥ 计费缝3 | 唯一 money 触点，档位映射进 config 层 | **仅建映射常量+判档函数+测试，不接扣费执行**（`packages/core/src/x-billing.ts`：`X_PUBLISH_CREDITS_NO_LINK=1`/`X_PUBLISH_CREDITS_WITH_LINK=4`/`captionHasLink`/`xPublishTierDisplayCredits`）；**reserve→settle 扣费执行=B12/后程**，届时过 money-safety-review。本 PR 计费码不进发布路径（`executeX`/`publishX` 不调 x-billing）=零 spend surface | 建成（判档层；执行界=B12） |
+| ⑦ 排期 UI 6 处硬编码 | `OttoSchedule.tsx` 六处渠道字面量→CHANNEL_META 数据驱动（E4-16「UI 由 CHANNEL_META 数据驱动」） | `apps/web/components/otto/OttoSchedule.tsx`：ChannelIcon 加 x glyph；默认渠道 `?? CHANNEL_META[0]?.id`；composer 回退 `CHANNEL_META.map(c=>c.id)`；筛选 chips `...CHANNEL_META.map`；caps 文案 `capsBlurb(cap)`（capability 派生，消除 `channel==="instagram"?:` 渠道名 ternary）；类型断言扩 x（server-action 边界 cast 内联字面量联合——`@fikirtive/core` 客户端 import 被 `client-core-imports` 闸禁，故不引 ScheduleChannel 类型） | 建成 |
+
+**canPublish 等价物（实授 scope 派生 DEFAULT false）+ per-channel kill-switch（fail-closed，rider R5）**：`xScopeCanPublish(scope)`（`packages/core/src/x-publish.ts`）——scope 含 `tweet.write` 才 true；`ChannelConnection.scope` 默认 `""`→DEFAULT false（尚无 X OAuth 流程=永 false=production 全程 fail-closed）。kill-switch=`ChannelConnection.publishPaused`（新列 DEFAULT false）。gate 四校验（web `authorizeX` / worker `authorizeX` 同律）：canPublish ∧ !publishPaused ∧ status≠expired ∧ token 未过期，任一不满足→拒发**零 X 调用**。
+
+**双执行等价（契约6）**：web `publishViaX` 与 worker `executeX` 都驱动同一 `publishX`；两路 fail-closed 门形态一致（`registry.test` x 四拒 + `publish-x-executor.test` 六例逐项立证）。**X 媒体发布=外部测试阶段**（X media-upload v1.1 未建）：`executeX` 遇媒体→确定性 `mediaContractRefused`→NEEDS_ATTENTION（②，非静默丢弃）。
 
 ## ⑤ 对标锚（平齐/超过/未及）
 
@@ -135,6 +154,21 @@
 | B0-30 ChannelConnection | `channel-connection.test.ts` 加密往返 + kind 开放串 + NULL 默认与绑定行共存 | 跨 owner 查询零泄漏（铁幕）；**二重 NULL 默认 P2002 / 并发恰一胜（partial unique 实测）** | 无明文 token 列（schema 断言） |
 | B0-29 hash 绑定+同对象 | 确定性 hash；**人批后同一 pending 卡 CAS→approved（settle 3 测）** | 任一 material 漂移→hash 变→失效重批；丢 CAS 批准=零 settle | null 归一（缺字段 vs 显式 null 真对比，收口5 修正）/ TTL 冻结 / settle 失败不破坏批准 |
 | B0-27 build（立证既有） | `meta-build-actions.test.ts` 5 对象全 PAUSED | — | `meta-build-propose.test.ts` invalid 零卡 |
+
+#### W-B4-4 起证（E4-14 X adapter）· 块内 mock/夹具级证据（零真实外部/零花费）
+
+> X 发布全链 fail-closed（无 X 凭据=production 全程拒发），六态证据集中在 denied/failure/ambiguous 面——皆 mock/夹具级（端口注入 + prisma mock + `fetch` stub），零真实 X 调用。真发活体（X 可见）=外部测试阶段（§六.2）。
+
+| 面 | 证据（file:测试名） |
+|---|---|
+| happy（授权+纯文本①） | `publish-x-executor.test.ts`「authorized + text-only → drives publishX」（驱动 fetch=Bearer token，返回 tweet id）；`x-publish.test.ts`「posts text and returns the tweet id」 |
+| denied（未授权即拒发，零 X 调用） | `registry.test.ts` x 四拒（无连接 / scope 无 tweet.write=canPublish DEFAULT false / publishPaused kill-switch / token 过期）；`publish-x-executor.test.ts` worker 四拒同形态——全断言 `fetch` 未调用 |
+| failure/③（硬拒不重试） | `x-publish.test.ts`「a definitive 4xx rejection → hard fail（retryable:false）」 |
+| retry/④·⑥（ambiguous 契约7，永不盲重发） | `x-publish.test.ts`「2xx with no id→ambiguous」「5xx→ambiguous」「timeout/abort→ambiguous」——ambiguous 流入既有 handler→UNCONFIRMED(Lock4)，零核心改动 |
+| media（确定性 ② NEEDS_ATTENTION） | `publish-x-executor.test.ts`「media present → mediaContractRefused」（X 媒体上传延后=§六.2，零 X 调用非静默丢弃） |
+| 计费判档方向断言（1cr/4cr，映射不可倒置） | `x-billing.test.ts`「a post WITH a link is NEVER priced at the 1cr tier」（带链接样本集永不产 1cr）+「detects links / 就高」（短链/裸域名/www/scheme 全判 4cr）+ 普通无链接文案守 1cr（@handle、价格、缩写、句号+空格、裸文件名皆非链接） |
+
+**收口**：X adapter 块内证据齐（`x-billing.test` 5 + `x-publish.test` 8 + `registry.test` x 4 + `publish-x-executor.test` 6 = **23 X 专用用例全绿**，零真实外部/零花费）。真发活体归外部测试阶段（§六.2，前置 founder 授权）。
 
 ## ⑦ 测试全家桶可重跑链接
 

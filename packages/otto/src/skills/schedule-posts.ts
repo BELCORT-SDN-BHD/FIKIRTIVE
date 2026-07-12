@@ -21,7 +21,7 @@ import type { OttoContext } from "../context.js";
 const ISO_INSTANT = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}(:\d{2}(\.\d{1,3})?)?(Z|[+-]\d{2}:\d{2})$/;
 
 const post = z.object({
-  channel: z.enum(["instagram", "facebook"]),
+  channel: z.enum(["instagram", "facebook", "x"]),
   caption: z.string().min(1).max(2200),
   scheduledAt: z
     .string()
@@ -78,9 +78,9 @@ export const schedulePostsSkill = defineOttoSkill({
   effect: "write",
   reach: "internal",
   description:
-    "Draft one or more Instagram/Facebook posts onto the user's schedule as DRAFTS for them to review — " +
+    "Draft one or more Instagram/Facebook/X posts onto the user's schedule as DRAFTS for them to review — " +
     "nothing is published until the user approves. $0. Use when the user asks you to plan/schedule content " +
-    "(e.g. 'post 3 times a week', 'draft next week's posts'). For each post give channel ('instagram' or 'facebook'), " +
+    "(e.g. 'post 3 times a week', 'draft next week's posts'). For each post give channel ('instagram', 'facebook', or 'x'), " +
     "a caption, scheduledAt (UTC/offset ISO-8601 instant, e.g. '2026-07-10T09:00:00Z'), and scheduledTz (the user's IANA time " +
     "zone, e.g. 'Asia/Kuala_Lumpur'). Optionally attach mediaGenerationIds — ids of ALREADY-generated media from the " +
     "user's canvas / My Stuff, in carousel order (never generate new media here; Facebook takes a single item). " +

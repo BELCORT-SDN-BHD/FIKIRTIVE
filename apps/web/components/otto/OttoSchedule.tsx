@@ -26,7 +26,7 @@ import {
 import { getMetaConnection } from "@/lib/meta-actions";
 import { getOwnerSettings, setOwnerSetting } from "@/lib/owner-settings-actions";
 import { CHANNEL_META, channelMeta } from "@/lib/channels/channel-meta";
-import type { ChannelId } from "@/lib/channels/types";
+import type { ChannelId, ChannelCapabilities } from "@/lib/channels/types";
 import {
   partsInTz,
   formatTime,
@@ -99,7 +99,25 @@ function ChannelIcon({ channel, size = 15 }: { channel: string; size?: number })
       </svg>
     );
   }
+  if (channel === "x") {
+    return (
+      <svg width={size} height={size} viewBox="0 0 24 24" fill="currentColor" aria-hidden>
+        <path d="M18.244 2.25h3.308l-7.227 8.26 8.502 11.24H16.17l-5.214-6.817L4.99 21.75H1.68l7.73-8.835L1.254 2.25H8.08l4.713 6.231zm-1.161 17.52h1.833L7.084 4.126H5.117z" />
+      </svg>
+    );
+  }
   return null;
+}
+
+/** Data-driven capability blurb (E4-16: UI copy from CHANNEL_META capabilities, no per-channel-name
+ *  ternary). Adding a channel needs no edit here. */
+function capsBlurb(cap: ChannelCapabilities): string {
+  if (cap.maxMediaCount >= 2) {
+    return cap.postTypes.includes("carousel")
+      ? `Feed image or carousel · up to ${cap.maxMediaCount} media`
+      : `Up to ${cap.maxMediaCount} photos or a video`;
+  }
+  return "Single feed image";
 }
 
 /** OTTO coral cloud mark (matches OttoAnalytics). Coral = OTTO only. */
@@ -284,7 +302,7 @@ export function OttoSchedule({
   function openNew() {
     setComposer({
       mode: "create",
-      channel: connectedChannels[0]?.id ?? "instagram",
+      channel: connectedChannels[0]?.id ?? CHANNEL_META[0]?.id ?? "instagram",
       caption: "",
       media: [],
       dateKey: dayKey(partsInTz(new Date(), defaultTz)),
@@ -402,7 +420,7 @@ export function OttoSchedule({
       {composer && (
         <Composer
           seed={composer}
-          channels={connectedChannels.length ? connectedChannels.map((c) => c.id) : ["instagram", "facebook"]}
+          channels={connectedChannels.length ? connectedChannels.map((c) => c.id) : CHANNEL_META.map((c) => c.id)}
           targets={targets}
           mediaChoices={mediaChoices}
           onClose={() => setComposer(null)}
@@ -431,8 +449,7 @@ function ChannelFilterBar({
 }) {
   const opts: { key: ChannelFilter; label: string }[] = [
     { key: "all", label: "All" },
-    { key: "instagram", label: "Instagram" },
-    { key: "facebook", label: "Facebook" },
+    ...CHANNEL_META.map((c) => ({ key: c.id, label: c.label })),
   ];
   return (
     <div className="inline-flex gap-1.5">
@@ -1120,7 +1137,7 @@ function Composer({
       let id = seed.id;
       if (seed.mode === "create") {
         const res = await createScheduledPost({
-          channel: channel as "instagram" | "facebook",
+          channel: channel as "instagram" | "facebook" | "x",
           caption,
           scheduledAt: iso,
           scheduledTz: tz,
@@ -1132,7 +1149,7 @@ function Composer({
         id = res.id;
       } else {
         const res = await updateScheduledPost(seed.id!, {
-          channel: channel as "instagram" | "facebook",
+          channel: channel as "instagram" | "facebook" | "x",
           caption,
           scheduledAt: iso,
           scheduledTz: tz,
@@ -1196,7 +1213,7 @@ function Composer({
             </div>
             {cap && (
               <div className="text-[11.5px] text-muted-foreground mt-1">
-                {channel === "instagram" ? "Feed image or carousel · up to 10 media" : "Single feed image"}
+                {capsBlurb(cap)}
                 {cap.rateLimitPer24h ? ` · ${cap.rateLimitPer24h}/day limit` : ""}
               </div>
             )}

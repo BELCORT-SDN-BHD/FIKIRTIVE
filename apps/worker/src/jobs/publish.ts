@@ -29,8 +29,11 @@ import { decryptToken, signMediaToken } from "@fikirtive/token-crypto";
 import {
   publishInstagram,
   publishFacebook,
+  publishX,
+  xScopeCanPublish,
   type MetaGraphPort,
   type PublishResult,
+  type XApiPort,
 } from "@fikirtive/core/server";
 import {
   storageKey,
@@ -314,8 +317,76 @@ type DuePost = {
   firstComment: string | null;
 };
 
-/** The real executor. Persists the IG creationId onto the attempt BEFORE media_publish (lock 3). */
+/* ── X (E4-14) executor: generic ChannelConnection gate → shared publishX orchestration ── */
+
+const X_API_BASE = "https://api.x.com";
+
+/** An XApiPort bound to a bearer token. No real X call happens in-block (fail-closed); this is the
+ *  shape the external-test phase (§六.2, founder-authorized) exercises against real credentials. */
+function xPortFor(token: string, signal?: AbortSignal): XApiPort {
+  return {
+    post: async (path, body) => {
+      const r = await fetch(`${X_API_BASE}/${path}`, {
+        method: "POST",
+        headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" },
+        body: JSON.stringify(body),
+        signal,
+      });
+      const j = (await r.json().catch(() => ({}))) as Record<string, unknown>;
+      if (!r.ok) {
+        const e = new Error(String((j as { detail?: string }).detail ?? "X API error")) as Error & { status?: number };
+        e.status = r.status;
+        throw e;
+      }
+      return j as { data?: { id?: unknown } };
+    },
+  };
+}
+
+type XConn = { accessTokenEnc: string; scope: string; status: string; publishPaused: boolean; tokenExpiresAt: Date | null };
+
+/** Owner-scoped fail-closed X gate → decrypted token or a human refusal (→ NEEDS_ATTENTION). canPublish
+ *  is DERIVED from granted scope (DEFAULT false); publishPaused is the per-channel kill-switch (契约3). */
+async function authorizeX(ownerId: string): Promise<{ token: string } | { refuse: string }> {
+  const conn = (await prisma.channelConnection.findFirst({
+    where: { ownerId, kind: "x" },
+    select: { accessTokenEnc: true, scope: true, status: true, publishPaused: true, tokenExpiresAt: true },
+  })) as XConn | null;
+  if (!conn) return { refuse: "Connect the X account before publishing." };
+  if (!xScopeCanPublish(conn.scope)) return { refuse: "Publishing isn't enabled for this X connection yet — reconnect and grant posting access." };
+  if (conn.publishPaused) return { refuse: "Publishing is paused for this X connection." };
+  if (conn.status === "expired") return { refuse: "This X connection needs to be reconnected to publish." };
+  if (conn.tokenExpiresAt && conn.tokenExpiresAt.getTime() <= Date.now()) return { refuse: "This X connection expired — reconnect to publish." };
+  try {
+    return { token: decryptToken(conn.accessTokenEnc) };
+  } catch {
+    return { refuse: "This X connection needs to be reconnected to publish." };
+  }
+}
+
+/** X executor: fail-closed gate → shared publishX. Text-only in-block — attaching our media to X
+ *  needs X media-upload (v1.1), which is external-test-phase (§六.2), so a post that carries media is
+ *  refused deterministically (② NEEDS_ATTENTION) rather than silently dropped. Shares the SAME
+ *  six-state / four-lock handler as IG/FB — only THIS executor is X-specific (契约6 单一动作层).
+ *  NOTE: the scheduler's canPublish pre-filter (scanDuePublishPosts) stays Meta-only by design — the
+ *  frozen 闸 file is untouched (E4-16); X only enqueues for owners already Meta-authorized until the
+ *  X connect/OAuth flow lands, and it fail-closes here regardless (no X credentials in-block). */
+export async function executeX(post: DuePost): Promise<PublishResult | PublishAuthRefused | PublishMediaContractRefused> {
+  const auth = await authorizeX(post.ownerId);
+  if ("refuse" in auth) return { authFailed: true, error: auth.refuse };
+  const mediaCount = await prisma.scheduledPostMedia.count({ where: { scheduledPostId: post.id } });
+  if (mediaCount > 0) {
+    return { mediaContractRefused: true, error: "Publishing media to X isn't available yet — post text only for now." };
+  }
+  const deadline = AbortSignal.timeout(PUBLISH_EXECUTION_DEADLINE_MS);
+  return publishX(xPortFor(auth.token, deadline), { text: post.caption });
+}
+
+/** The real executor. Persists the IG creationId onto the attempt BEFORE media_publish (lock 3).
+ *  Channel dispatch (契约6 登记式扩展点): X routes to executeX FIRST; the Meta authorize/resolvePage/
+ *  orchestration below is byte-identical (E4-16 核心零语义改动). */
 async function realExecute(post: DuePost, attemptId: string): Promise<PublishResult | PublishAuthRefused | PublishMediaContractRefused> {
+  if (post.channel === "x") return executeX(post);
   // Config/authorization refusals → NEEDS_ATTENTION (M1), and they short-circuit BEFORE any Meta
   // port exists, so no external call is ever made on this path.
   if (!post.metaTargetId) return { authFailed: true, error: "This post has no target account — pick a connected channel before publishing." };

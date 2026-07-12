@@ -1104,6 +1104,10 @@ model ChannelConnection {
   tokenExpiresAt DateTime?
   scope          String       @default("")
   status         String       @default("active") // "active" | "expired"
+  // Per-channel organic-publish kill-switch (B4 spec 契约3 / freeze rider R5), the ChannelConnection
+  // analogue of MetaConnection.organicPublishPaused: a deliberate operator pause, ORTHOGONAL to
+  // status/expiry. DEFAULT false; the X publish gate fail-closes (refuses, zero external calls) when true.
+  publishPaused  Boolean      @default(false)
   createdAt      DateTime     @default(now())
   updatedAt      DateTime     @updatedAt
 
