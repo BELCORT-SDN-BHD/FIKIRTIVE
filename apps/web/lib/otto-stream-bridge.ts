@@ -79,7 +79,7 @@ export const OTTO_REASONING_ID = "otto-reasoning";
  *  are exempt: they execute on worker resume, outside the live stream, and deliver
  *  via the approve flow. The card's KIND must also be in CARD_KINDS (seam 4,
  *  otto-inject-helpers.ts). Both enforced by otto-card-seams.test.ts. */
-export const CARD_TOOL_NAMES = new Set(["propose", "proposeStoryboard", "proposePack", "propose-meta-action", "propose-ad-build", "meta-expert", "proposeResearch"]);
+export const CARD_TOOL_NAMES = new Set(["propose", "proposeStoryboard", "editStoryboard", "proposePack", "propose-meta-action", "propose-ad-build", "meta-expert", "proposeResearch"]);
 
 /** Read the tool name off a run_item event's item, tolerant of item shape. */
 function toolNameOf(item: unknown): string | undefined {
@@ -175,6 +175,7 @@ const TOOL_STEP_LABELS: Record<string, string> = {
   propose: "Planning the campaign",
   proposePack: "Planning the ad pack",
   proposeStoryboard: "Laying out the storyboard",
+  editStoryboard: "Editing the storyboard",
   seedreamPrompt: "Crafting the image prompt",
   seedancePrompt: "Crafting the video prompt",
   generate: "Making a visual",
