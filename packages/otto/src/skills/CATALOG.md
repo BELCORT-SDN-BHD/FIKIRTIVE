@@ -38,7 +38,7 @@
 | saveCustomerSegment | free | write | internal | ❌ | Save or update ONE customer group in the user's Brand memory (upsert by name; om |
 | saveOffer | free | write | internal | ❌ | Save or update ONE offer/promotion in the user's Brand memory (upsert by title;  |
 | saveProduct | free | write | internal | ❌ | Save or update ONE product in the user's Brand memory (upsert by name — mentioni |
-| schedulePosts | free | write | internal | ❌ | Draft one or more Instagram/Facebook posts onto the user's schedule as DRAFTS fo |
+| schedulePosts | free | write | internal | ❌ | Draft one or more Instagram/Facebook/X posts onto the user's schedule as DRAFTS  |
 | seedancePrompt | free | read | internal | ❌ | Assemble a model-tuned English VIDEO prompt for Seedance — the CREATIVE prompt o |
 | seedreamPrompt | free | read | internal | ❌ | Assemble a model-tuned English IMAGE prompt for Seedream. Call this FIRST whenev |
 | setTitle | free | write | internal | ❌ | Set a concise ≤6-word title for the current conversation. Call once early in a n |

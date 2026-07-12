@@ -54,6 +54,12 @@ export * from "./refgen.js";
 export * from "./ref-config.js";
 export * from "./gen.js";
 export * from "./spend.js";
+export {
+  X_PUBLISH_CREDITS_NO_LINK,
+  X_PUBLISH_CREDITS_WITH_LINK,
+  captionHasLink,
+  xPublishTierDisplayCredits,
+} from "./x-billing.js";
 export * from "./cowork.js";
 export * from "./runtime-config.js";
 export * from "./model-registry.js";

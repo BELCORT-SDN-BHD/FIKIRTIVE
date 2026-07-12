@@ -23,10 +23,12 @@ describe("validateScheduleDraft — channel", () => {
   it("accepts the supported channels; rejects others", () => {
     expect(ok({ ...BASE, channel: "instagram" }).channel).toBe("instagram");
     expect(ok({ ...BASE, channel: "facebook" }).channel).toBe("facebook");
+    expect(ok({ ...BASE, channel: "x" }).channel).toBe("x");
     expect(err({ ...BASE, channel: "tiktok" })).toMatch(/channel/i);
     expect(err({ ...BASE, channel: undefined })).toMatch(/channel/i);
     expect(isScheduleChannel("instagram")).toBe(true);
-    expect(isScheduleChannel("x")).toBe(false);
+    expect(isScheduleChannel("x")).toBe(true);
+    expect(isScheduleChannel("tiktok")).toBe(false);
   });
 });
 
@@ -63,6 +65,11 @@ describe("validateScheduleDraft — channel capabilities", () => {
   it("enforces per-channel maxMediaCount (Facebook = 1, Instagram = 10)", () => {
     expect(SCHEDULE_CHANNEL_CAPS.facebook.maxMediaCount).toBe(1);
     expect(SCHEDULE_CHANNEL_CAPS.instagram.maxMediaCount).toBe(10);
+    expect(SCHEDULE_CHANNEL_CAPS.x.maxMediaCount).toBe(0);
+    expect(SCHEDULE_CHANNEL_CAPS.x.supportsFirstComment).toBe(false);
+    // X is text-only for now (media publishing = external-test phase) → any media is rejected.
+    expect(err({ ...BASE, channel: "x", media: ["a"] })).toMatch(/text-only/i);
+    expect(ok({ ...BASE, channel: "x" }).media).toEqual([]);
     expect(err({ ...BASE, channel: "facebook", media: ["a", "b"] })).toMatch(/single|carousel/i);
     expect(ok({ ...BASE, channel: "facebook", media: ["a"] }).media).toEqual(["a"]);
     expect(err({ ...BASE, channel: "instagram", media: Array.from({ length: 11 }, (_, i) => `m${i}`) })).toMatch(/at most 10/i);

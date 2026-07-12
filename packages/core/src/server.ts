@@ -31,3 +31,12 @@ export {
   type InstagramPublishArgs,
   type FacebookPublishArgs,
 } from "./meta-publish.js";
+// X (Twitter) organic-publish orchestration (E4-14). Pure (injected XApiPort), server barrel — the
+// same publish logic the web X adapter + the publish worker both drive (契约6 单一动作层).
+export {
+  publishX,
+  xScopeCanPublish,
+  X_PUBLISH_SCOPE,
+  type XApiPort,
+  type XPublishArgs,
+} from "./x-publish.js";

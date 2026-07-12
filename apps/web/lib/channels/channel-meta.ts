@@ -34,6 +34,16 @@ export const CHANNEL_META: ChannelMeta[] = [
       supportsNativeSchedule: true,
     },
   },
+  {
+    id: "x",
+    label: "X",
+    capabilities: {
+      postTypes: ["text-link"],
+      maxMediaCount: 0,
+      supportsFirstComment: false,
+      supportsNativeSchedule: false,
+    },
+  },
 ];
 
 export function channelMeta(id: ChannelId): ChannelMeta | undefined {

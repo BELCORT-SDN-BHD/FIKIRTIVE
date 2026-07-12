@@ -8,8 +8,9 @@
  * the DB write live in the server service (apps/web/lib/schedule-service.ts), the layer below this.
  */
 
-/** Channels this slice supports (IG/FB until App Review adds more). */
-export const SCHEDULE_CHANNELS = ["instagram", "facebook"] as const;
+/** Channels this slice supports. IG/FB are the Meta-org organic-publish channels; X (E4-14) is the
+ *  generic ChannelConnection path. Adding a channel = extend this ONE closed set (契约6 登记式扩展点). */
+export const SCHEDULE_CHANNELS = ["instagram", "facebook", "x"] as const;
 export type ScheduleChannel = (typeof SCHEDULE_CHANNELS)[number];
 
 export function isScheduleChannel(x: unknown): x is ScheduleChannel {
@@ -25,6 +26,7 @@ export const SCHEDULE_CHANNEL_CAPS: Record<
 > = {
   instagram: { label: "Instagram", maxMediaCount: 10, supportsFirstComment: true },
   facebook: { label: "Facebook", maxMediaCount: 1, supportsFirstComment: false },
+  x: { label: "X", maxMediaCount: 0, supportsFirstComment: false },
 };
 
 export type ScheduleDraftInput = {
@@ -92,9 +94,11 @@ export function validateScheduleDraft(
   if (media.length > caps.maxMediaCount) {
     return {
       error:
-        caps.maxMediaCount === 1
-          ? `${caps.label} supports a single image or video, not a carousel.`
-          : `A carousel can have at most ${caps.maxMediaCount} items.`,
+        caps.maxMediaCount === 0
+          ? `${caps.label} posts are text-only for now.`
+          : caps.maxMediaCount === 1
+            ? `${caps.label} supports a single image or video, not a carousel.`
+            : `A carousel can have at most ${caps.maxMediaCount} items.`,
     };
   }
 
