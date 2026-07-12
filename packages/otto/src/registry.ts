@@ -32,6 +32,11 @@ import { editScheduledPostSkill } from "./skills/edit-scheduled-post.js";
 import { listScheduledPostsSkill } from "./skills/list-scheduled-posts.js";
 import { listPublishTargetsSkill } from "./skills/list-publish-targets.js";
 import { manageCanvasSkill } from "./skills/manage-canvas.js";
+import { manageProjectsSkill } from "./skills/manage-projects.js";
+import { manageEntitiesSkill } from "./skills/manage-entities.js";
+import { manageLibrarySkill } from "./skills/manage-library.js";
+import { manageBrandMemorySkill } from "./skills/manage-brand-memory.js";
+import { proposeIdeasSkill } from "./skills/propose-ideas.js";
 
 /** Add a new skill here (one line). Order is the agent's tool order. */
 export const allSkills: OttoSkill[] = [
@@ -67,6 +72,11 @@ export const allSkills: OttoSkill[] = [
   listScheduledPostsSkill,
   listPublishTargetsSkill,
   manageCanvasSkill,
+  manageProjectsSkill,
+  manageEntitiesSkill,
+  manageLibrarySkill,
+  manageBrandMemorySkill,
+  proposeIdeasSkill,
 ];
 
 export interface SkillMeta {

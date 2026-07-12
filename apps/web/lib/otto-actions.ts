@@ -66,6 +66,10 @@ import { proposeMetaActionForOwner } from "./meta-propose";
 import { proposeAdBuildForOwner } from "./meta-build-propose";
 import { validateOwnedGenerationExt } from "./otto-generation-validate";
 import { makeOttoCanvasPort } from "./otto-canvas-port";
+import { makeOttoProjectsPort } from "./otto-projects-port";
+import { makeOttoEntitiesPort } from "./otto-entities-port";
+import { makeOttoLibraryPort } from "./otto-library-port";
+import { makeOttoBrandMemoryPort } from "./otto-brand-memory-port";
 
 // mapOttoUsage re-exported from @fikirtive/otto so existing callers that import
 // it from this module continue to work (the canonical source is @fikirtive/otto).
@@ -329,6 +333,15 @@ export async function buildOttoContext({
     // (generationId must be real + in-project; edit/remove are project-bound) — see
     // makeOttoCanvasPort. None of these touch startGen / reserveCredits / the provider.
     canvas: makeOttoCanvasPort(ownerId, projectId),
+    // Projects / entities / library / brand-memory ports (W-B3-D, $0) — single action layer
+    // (宪法 7 / Seam 9): Otto's manage* skills drive the SAME owner-gated server actions the human
+    // UI uses (actions.ts / library-actions / asset-actions / brand-record-actions / memory-actions).
+    // Each action re-derives the owner from the verified session (requireOwner) and is fail-closed on
+    // a missing/cross-owner id; none touch startGen / reserveCredits / the provider.
+    projects: makeOttoProjectsPort(ownerId),
+    entities: makeOttoEntitiesPort(),
+    library: makeOttoLibraryPort(),
+    brandMemory: makeOttoBrandMemoryPort(),
   };
 }
 
