@@ -1,0 +1,78 @@
+# B4 板块报告 · 发布 L1 + Meta 通电族
+
+> 按执行合同 §七 十四节标准编制（`docs/ops/ROUTE-B-MASTER-PLAN-2026-07-12.md` §七）。**骨架件**：本文件在 B4 块 spec（`docs/superpowers/specs/2026-07-12-b4-block-spec.md`）冻结候选阶段先立十四节骨架；每节标 owner 槽位与证据槽位，内容随块施工/验收增量填入。不适用的节如实标注而非省略。
+> 人话对照：「双执行矩阵」= 每件事人工能做、Otto 也能做，逐条对上；「全旅程证据」= 一条真帖从草稿到发出，成功/失败/恢复每种结局都留一张图为证。
+
+## ① 块 ID / PR / 最终 SHA / 认证日期
+
+- owner：〔SPEC-B4 起草 → 块施工工位 → 控制面收口〕
+- 证据：〔块 ID=B4；spec PR=（本 PR 号）；施工 PR 清单=待填；最终 merge SHA=待填；认证日=待填；epoch `claude-20260712-03`〕
+
+## ② 批准范围 + 明示排除 + 映射
+
+- owner：〔SPEC-B4〕
+- 证据：〔范围=矩阵 04-B4 20 行（14 存量起证 + 5.5 新建）；明示排除=Ads 写执行契约归 Ads 域、本块 organic 发布 $0 不走记账缝（除 E4-14 X）；映射=MASTERPLAN→矩阵、宪法 7 双执行、缝4/5/6/9→L1 施工图。详见 spec §二〕
+
+## ③ 功能清单（非页面清单）
+
+- owner：〔SPEC-B4 / 块施工工位〕
+- 证据：〔能力行清单（非页面）：发布链六态/四锁/授权闸/媒体双层/签名代理/单一动作层/reconcile + 5.5 新建能力（X 发布/广告工作台/分享预览/ApprovalRequest/ChannelConnection/时段种子）。详见 spec §三〕
+
+## ④ 双执行矩阵
+
+- owner：〔块施工工位〕
+- 证据：〔人工路径 + Otto 话术逐条（含设置/异常/取消/花费确认）；20 行的人工入口 + Otto skill 硬化见 spec §二；债 5 条清偿（debt-70 豁免 + 71/72 写 skill + 73/74 读 skill）见 spec §五——待施工后填活体〕
+
+## ⑤ 对标锚（平齐/超过/未及）
+
+- owner：〔块施工工位 / B11 联验〕
+- 证据：〔Buffer/Later/Hootsuite + Meta 官方发布语义 + X adapter 单列锚（见 spec §四）；并排截图三档打分=待填；未及项→链待裁〕
+
+## ⑥ 全旅程证据（happy/empty/loading/denied/failure/retry/mobile）
+
+- owner：〔块施工工位（staging 沙箱）〕
+- 证据：〔六态各留一条（尤其②无权限/③平台拒绝/⑥恢复）；staging + Meta 测试账号沙箱旅程（三无纪律，非真发）；happy/empty/loading/denied/failure/retry/mobile 七态截图=待填〕
+
+## ⑦ 测试全家桶可重跑链接
+
+- owner：〔块施工工位〕
+- 证据：〔`publish.test.ts` / `publish-doublepost.test.ts` / `publish-media-contract.test.ts` / `publish-attempt-uniqueness.test.ts` / `core/publish.test.ts` / `registry.test.ts` / `meta-actions.test.ts` / `media/pub/route.test.ts`；本地三关（`docs/runbooks/local-ci.md`）check/test/web-build 全绿链接=待填〕
+
+## ⑧ schema / ownerId / 审计 / 同意 / 秘密
+
+- owner：〔块施工工位〕
+- 证据：〔schema=MetaConnection(canPublish/organicPublishPaused)/PublishAttempt(UNCONFIRMED/creationId)/ScheduledPostMedia + 新建 ChannelConnection(B0-30)；ownerId 隔离=全链；审计=publish 状态转移留痕；同意=Meta 政策 1.7 人工审批闸；秘密=token 加密列 + MEDIA_PROXY_SECRET fail-closed，无明文=待脱敏核〕
+
+## ⑨ 成本 / 延迟 / margin / 监控 / 回滚
+
+- owner：〔块施工工位〕
+- 证据：〔organic IG/FB 发布=$0（不走记账缝）；**E4-14 X 发布=1cr/4cr 走缝3，过 money-safety-review**（唯一 money 触点）；延迟=媒体转码低频（发布时按需）；监控=worker heartbeat + reaper；回滚=kill-switch(organicPublishPaused) + revert=待填〕
+
+## ⑩ 上下游契约 + 外部位状态 + 通电步骤
+
+- owner：〔SPEC-B4 / 控制面〕
+- 证据：〔上游=L1 施工图 + #219/#227/#229/#230/#231/#233；下游=X adapter(E4-14) 走同一 worker；外部位=Meta App Review + Business Verification（`DEPENDENCY-STATUS.md` 外部等待位）；通电步骤=过审→canPublish=true→横幅自动关→存量 SCHEDULED 帖自动开发。二分清单见 spec §六.2〕
+
+## ⑪ 异族评审 P0/P1=0
+
+- owner：〔控制面收口〕
+- 证据：〔冻结走四权闭环（#254 §一.2）双顾问签核 + 异族复审（codex）+ 机器闸 + 非作者合并；异族复审 P0/P1 清零记录=待填；E4-14 X 计费碰 💰=money-safety-review provenance=待填〕
+
+## ⑫ 已知限制与待裁（没有写「无」）
+
+- owner：〔SPEC-B4〕
+- 证据：
+  1. 〔IG media 补链（container id→帖 media id）在途——现 confirmed-live 也 NEEDS_ATTENTION（契约7 保守闭合，B4-01）〕
+  2. 〔FB recent-posts reconcile future work——现悬空一律 NEEDS_ATTENTION（契约7 保守闭合，B4-02）〕
+  3. 〔debt-70 豁免类别边界（ACCOUNT_SECURITY vs 需第五类）=冻结 ack 待 founder/总审查员确认（spec §五 边界待裁）〕
+  4. 〔E4-14 X 发布 1cr/4cr 分档定价 = founder 终确认（spec §三 契约8）〕
+  5. 〔App Review 外部钥匙未到——founder 侧商业验证/递件在等（spec §六.2）〕
+
+## ⑬ 录像时间码 + founder 10 分钟自查脚本
+
+- owner：〔块施工工位〕
+- 证据：〔录像时间码 + 截图=待填（过审后 staging 沙箱旅程）；**Founder 自查脚本（10 分钟）**=待填（终验日跑脚本非读散文）——预期步骤：打开排期区看三视图/横幅→跑 `publish.test.ts` 看四锁不双发→看 registry.test.ts 未授权即拒发→看 spec §一 差额核证表逐条有代码证据〕
+
+## ⑭ 定稿后 delta
+
+（合并后触碰本块任何签署对象=重认证；delta 记录从此处追加。）
