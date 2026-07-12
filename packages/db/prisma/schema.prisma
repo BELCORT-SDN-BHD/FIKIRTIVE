@@ -632,6 +632,8 @@ model Organization {
   attributionEvents       AttributionEvent[]
   // B0-30: generic multi-channel connection layer (seam 4/5); back-relation required by Prisma.
   channelConnections      ChannelConnection[]
+  // B0-28: share-preview token records (row = authority layer); back-relation required by Prisma.
+  sharePreviewTokens      SharePreviewToken[]
 }
 
 // User <-> Organization join, carrying the per-org role. role/status are code-validated
@@ -1106,9 +1108,32 @@ model ChannelConnection {
   updatedAt      DateTime     @updatedAt
 
   // At most one connection per (owner, channel, external account). A NULL externalId = the single
-  // "default" connection for that (owner, kind) before an account id is bound.
+  // "default" connection for that (owner, kind) before an account id is bound. Postgres UNIQUE
+  // treats NULLs as distinct, so this three-column unique alone CANNOT enforce that singleton —
+  // a raw partial UNIQUE INDEX ChannelConnection_one_default_per_owner_kind on (ownerId, kind)
+  // WHERE externalId IS NULL lives in the accompanying migration (repo idiom, same as
+  // PublishAttempt_one_applying_per_post: Prisma can't model a partial index, so not declared here).
   @@unique([ownerId, kind, externalId])
   @@index([ownerId])
+}
+
+// B0-28: share-preview token record (B4 block spec §2.2 "内部写一行 token 记录" — the ROW is the
+// AUTHORITY layer; the HMAC token is only the TRANSPORT layer). One row per mint; revocable
+// (revokedAt); verify = HMAC valid ∧ row live (present, unrevoked, unexpired). tokenDigest stores
+// SHA-256(token) — never the token itself — so a DB leak cannot mint working links. Owner-scoped
+// (宪法 6): registered in TENANT_MODELS.
+model SharePreviewToken {
+  id              String        @id
+  ownerId         String
+  organization    Organization  @relation(fields: [ownerId], references: [id], onDelete: Cascade)
+  scheduledPostId String
+  post            ScheduledPost @relation(fields: [scheduledPostId], references: [id], onDelete: Cascade)
+  tokenDigest     String        @unique // sha256 hex of the signed token (lookup key at verify time)
+  expiresAt       DateTime
+  revokedAt       DateTime?     // set by revokeSharePreview — a revoked row fails verify (fail-closed)
+  createdAt       DateTime      @default(now())
+
+  @@index([ownerId, scheduledPostId])
 }
 
 // B0-103: cold-start posting-time seed (GRILL-VERDICTS:157; A/S 区 composer suggestion).
@@ -1193,6 +1218,7 @@ model ScheduledPost {
 
   media ScheduledPostMedia[]
   attempts PublishAttempt[]
+  sharePreviewTokens SharePreviewToken[] // B0-28: seat-less share links minted for this post
 
   @@index([status, scheduledAt])  // scheduler polling (slice 2)
   @@index([ownerId, scheduledAt]) // list / calendar queries

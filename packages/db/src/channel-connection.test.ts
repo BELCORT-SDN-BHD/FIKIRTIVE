@@ -97,3 +97,52 @@ describe("B0-30 ChannelConnection — DB migration + non-plaintext + owner-scope
     expect(row.kind).toBe("x");
   });
 });
+
+describe("B0-30 ChannelConnection — single NULL default per (owner, kind) (NODE-275 收口1, partial unique)", () => {
+  // Postgres UNIQUE treats NULLs as distinct, so the three-column unique CANNOT enforce the
+  // "single default connection" promise on its own. These tests exercise the REAL partial index
+  // ChannelConnection_one_default_per_owner_kind (WHERE "externalId" IS NULL) from the migration.
+  it("rejects a SECOND NULL-externalId default for the same (owner, kind) with P2002", async () => {
+    await prisma.channelConnection.create({
+      data: { id: "cc-d1", ownerId: ORG_A, kind: "instagram", accessTokenEnc: enc("t") },
+    });
+    await expect(
+      prisma.channelConnection.create({
+        data: { id: "cc-d2", ownerId: ORG_A, kind: "instagram", accessTokenEnc: enc("t") },
+      }),
+    ).rejects.toMatchObject({ code: "P2002" });
+  });
+
+  it("concurrent duplicate NULL defaults: exactly ONE insert wins, the loser fails P2002", async () => {
+    const results = await Promise.allSettled([
+      prisma.channelConnection.create({ data: { id: "cc-r1", ownerId: ORG_A, kind: "facebook", accessTokenEnc: enc("t") } }),
+      prisma.channelConnection.create({ data: { id: "cc-r2", ownerId: ORG_A, kind: "facebook", accessTokenEnc: enc("t") } }),
+    ]);
+    expect(results.filter((r) => r.status === "fulfilled")).toHaveLength(1);
+    const loser = results.find((r) => r.status === "rejected") as PromiseRejectedResult;
+    expect((loser.reason as { code?: string }).code).toBe("P2002");
+  });
+
+  it("a NULL default coexists with BOUND (non-NULL externalId) connections of the same kind", async () => {
+    await prisma.channelConnection.create({
+      data: { id: "cc-n1", ownerId: ORG_A, kind: "instagram", accessTokenEnc: enc("t") },
+    });
+    await expect(
+      prisma.channelConnection.create({
+        data: { id: "cc-n2", ownerId: ORG_A, kind: "instagram", externalId: "acct-1", accessTokenEnc: enc("t") },
+      }),
+    ).resolves.toMatchObject({ id: "cc-n2" });
+  });
+
+  it("another owner or another kind may hold its own NULL default (distinct index key)", async () => {
+    await prisma.channelConnection.create({
+      data: { id: "cc-k1", ownerId: ORG_A, kind: "instagram", accessTokenEnc: enc("t") },
+    });
+    await expect(
+      prisma.channelConnection.create({ data: { id: "cc-k2", ownerId: ORG_B, kind: "instagram", accessTokenEnc: enc("t") } }),
+    ).resolves.toMatchObject({ id: "cc-k2" });
+    await expect(
+      prisma.channelConnection.create({ data: { id: "cc-k3", ownerId: ORG_A, kind: "facebook", accessTokenEnc: enc("t") } }),
+    ).resolves.toMatchObject({ id: "cc-k3" });
+  });
+});

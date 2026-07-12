@@ -50,9 +50,19 @@ describe("B0-29 approval content hash — binding + drift invalidation (kind=PUB
     expect(computeApprovalContentHash({ ...BASE, mediaGenerationIds: ["g2", "g1"] })).not.toBe(base);
   });
 
-  it("normalizes optional nulls: absent firstComment/metaTargetId hash the same as explicit null", () => {
+  it("normalizes optional nulls: fields ABSENT at runtime hash the same as explicit null (?? null)", () => {
+    // NODE-275 收口5: the earlier version compared two identical explicit-null inputs (a self-
+    // comparison proving nothing). This builds an object whose firstComment/metaTargetId keys are
+    // genuinely MISSING at runtime (undefined via property access) and asserts the function's
+    // `?? null` normalization makes it hash-equal to the explicit-null form.
+    const missing = {
+      channel: BASE.channel,
+      scheduledAt: BASE.scheduledAt,
+      caption: BASE.caption,
+      mediaGenerationIds: BASE.mediaGenerationIds,
+    } as unknown as ApprovalContentMaterial; // keys absent — runtime undefined
     const withNulls = computeApprovalContentHash({ ...BASE, firstComment: null, metaTargetId: null });
-    expect(withNulls).toBe(computeApprovalContentHash({ ...BASE, firstComment: null, metaTargetId: null }));
+    expect(computeApprovalContentHash(missing)).toBe(withNulls);
     // and differ from the non-null base (a real change is still a real change)
     expect(withNulls).not.toBe(computeApprovalContentHash(BASE));
   });

@@ -17,6 +17,8 @@ import { draftScheduledPost, IG_IMAGE_ONLY_ERROR } from "./schedule-service";
 import { channelRegistry } from "./channels/registry";
 import type { ChannelId } from "./channels/types";
 import { signSharePreviewToken } from "@fikirtive/token-crypto";
+import { sharePreviewTokenDigest } from "./share-preview";
+import { settlePendingApprovalCards } from "./approval-card-settle";
 
 // F15 / L1: staff impersonating a customer must never MUTATE that customer's schedule — approve in
 // particular consents to a real, IRREVERSIBLE external publish on the tenant's behalf, forging their
@@ -394,6 +396,21 @@ export async function approveScheduledPost(
   } catch {
     return { error: "Couldn't approve that — please try again." };
   }
+  // B0-29 one-approval-object weld (NODE-275 收口4): the human Approve button settles any PENDING
+  // Otto APPROVAL_CARD ask for this post — both surfaces consume the SAME request object. On the
+  // Otto card path the card was already CAS-consumed by ottoApprove BEFORE this action ran (this
+  // finds none — no-op). Best-effort by design: the approval above already happened, and
+  // ottoApprove's "ask gone but post approved" branch answers a stale card benignly regardless.
+  try {
+    await settlePendingApprovalCards({
+      ownerId: gate.ownerId,
+      toolName: "approveScheduledPost",
+      ref: id,
+      status: "approved",
+    });
+  } catch (err) {
+    console.warn(`[schedule] settling pending approval cards failed (post=${id}).`, err);
+  }
   revalidatePath("/", "layout");
   return { ok: true };
 }
@@ -498,16 +515,21 @@ export async function suggestPostTimes(
 
 export type SharePreviewResult = { token: string; url: string; expiresAt: string } | { error: string };
 
-// How long a share-preview link stays valid. Frozen default: 7 days (founder ack 可调 — one place).
+// How long a share-preview link stays valid — SERVER-FIXED (NODE-275 收口3): callers cannot pass a
+// TTL, so no over-long or non-finite expiry can ever be minted. Frozen default: 7 days
+// (founder ack 可调 — one-place constant).
 const SHARE_PREVIEW_TTL_MS = 7 * 24 * 60 * 60 * 1000;
 
-/** B0-28: mint a SEAT-LESS, read-only share link for ONE of the caller's OWN scheduled posts. Verifies
- *  ownership, then signs an HMAC (ownerId+postId+exp) token — nothing is written to any external
- *  platform (internal write). Fail-closed: no SHARE_PREVIEW_SECRET → error; a post the caller doesn't
- *  own → "Post not found." A tampered/expired token later verifies to null → the read route's 404
- *  (越权静默 404). The link's target page (schedule/share-preview) lands with the A′ foundation. $0. */
+/** B0-28: mint a SEAT-LESS, read-only share link for ONE of the caller's OWN scheduled posts.
+ *  Two layers (NODE-275 收口2, spec §2.2 "内部写一行 token 记录"):
+ *   - TRANSPORT: an HMAC (ownerId+postId+exp) token — nothing is written to any external platform
+ *     (internal write). Tampered/expired → verify null → the read route's fail-closed 404.
+ *   - AUTHORITY: one SharePreviewToken ROW per mint (audit), storing SHA-256(token) — revocable via
+ *     revokeSharePreview; verify = HMAC valid ∧ row live (apps/web/lib/share-preview.ts).
+ *  Fail-closed: no SHARE_PREVIEW_SECRET → error before any DB read; a post the caller doesn't own →
+ *  "Post not found." The link's target page (schedule/share-preview) lands with the A′ foundation. $0. */
 export async function sharePostPreview(
-  input: { scheduledPostId: string; ttlMs?: number },
+  input: { scheduledPostId: string },
 ): Promise<SharePreviewResult> {
   const id = typeof input?.scheduledPostId === "string" ? input.scheduledPostId : "";
   if (!id) return { error: "Invalid request." };
@@ -524,13 +546,46 @@ export async function sharePostPreview(
   });
   if (!post) return { error: "Post not found." };
 
-  const ttl = typeof input?.ttlMs === "number" && input.ttlMs > 0 ? input.ttlMs : SHARE_PREVIEW_TTL_MS;
-  const expMs = Date.now() + ttl;
+  const expMs = Date.now() + SHARE_PREVIEW_TTL_MS;
   const token = signSharePreviewToken(gate.ownerId, post.id, expMs, secret);
+  try {
+    // The AUTHORITY row — without it the token verifies to null (row-live check), so a failed
+    // write means NO working link is handed out (fail-closed, not fail-open).
+    await prisma.sharePreviewToken.create({
+      data: {
+        id: newId(),
+        ownerId: gate.ownerId,
+        scheduledPostId: post.id,
+        tokenDigest: sharePreviewTokenDigest(token),
+        expiresAt: new Date(expMs),
+      },
+    });
+  } catch {
+    return { error: "Couldn't create that link — please try again." };
+  }
   const base = process.env.BETTER_AUTH_URL ?? "";
   return {
     token,
     url: `${base}/schedule/share-preview?t=${encodeURIComponent(token)}`,
     expiresAt: new Date(expMs).toISOString(),
   };
+}
+
+/** B0-28: revoke every ACTIVE share link for one of the caller's OWN posts (owner-scoped, $0).
+ *  Sets revokedAt on all live rows; a revoked row fails the verify's row-live check, so already-
+ *  shared links die immediately (the HMAC alone no longer grants access — row is the authority). */
+export async function revokeSharePreview(
+  input: { scheduledPostId: string },
+): Promise<{ ok: true; revoked: number } | { error: string }> {
+  const id = typeof input?.scheduledPostId === "string" ? input.scheduledPostId : "";
+  if (!id) return { error: "Invalid request." };
+  const gate = await requireOwner();
+  if ("error" in gate) return gate;
+  if (await isImpersonating()) return { error: IMPERSONATION_BLOCK };
+
+  const { count } = await prisma.sharePreviewToken.updateMany({
+    where: { ownerId: gate.ownerId, scheduledPostId: id, revokedAt: null },
+    data: { revokedAt: new Date() },
+  });
+  return { ok: true, revoked: count };
 }

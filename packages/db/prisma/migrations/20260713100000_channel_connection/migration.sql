@@ -25,5 +25,14 @@ CREATE INDEX "ChannelConnection_ownerId_idx" ON "ChannelConnection"("ownerId");
 -- CreateIndex
 CREATE UNIQUE INDEX "ChannelConnection_ownerId_kind_externalId_key" ON "ChannelConnection"("ownerId", "kind", "externalId");
 
+-- One DEFAULT connection per (owner, kind) — NODE-275 P1 fix. PostgreSQL UNIQUE treats NULLs as
+-- distinct, so the three-column unique above CANNOT enforce the "a NULL externalId = the single
+-- default connection" semantic the model promises: two (owner, kind, NULL) rows would both insert.
+-- Partial UNIQUE closes it (repo idiom: PublishAttempt_one_applying_per_post,
+-- GenJob_cowork_idempotency_once — raw SQL only; Prisma cannot model partial indexes, so this
+-- index is documented in the schema.prisma model comment, not declared there).
+CREATE UNIQUE INDEX "ChannelConnection_one_default_per_owner_kind"
+  ON "ChannelConnection"("ownerId", "kind") WHERE "externalId" IS NULL;
+
 -- AddForeignKey
 ALTER TABLE "ChannelConnection" ADD CONSTRAINT "ChannelConnection_ownerId_fkey" FOREIGN KEY ("ownerId") REFERENCES "Organization"("id") ON DELETE CASCADE ON UPDATE CASCADE;

@@ -24,6 +24,10 @@ export const TENANT_MODELS = new Set([
   // MetaConnection (EXEMPT: worker resolves ads tokens by connection id + platform-wide admin list),
   // this new table has NO platform-wide read requirement yet, so the conservative default is guarded.
   "ChannelConnection",
+  // B0-28 (2026-07-13, NODE-275 收口2): share-preview token records — owner-scoped authority layer
+  // for seat-less share links (mint/revoke are owner actions; the anonymous verify路径 looks up by
+  // unique tokenDigest AND pins ownerId from the HMAC claims, so it stays owner-filtered).
+  "SharePreviewToken",
 ]);
 
 /** ownerId models deliberately NOT runtime-guarded — every entry carries its reason.

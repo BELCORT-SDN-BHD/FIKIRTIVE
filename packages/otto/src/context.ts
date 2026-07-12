@@ -251,11 +251,18 @@ export interface OttoContext {
       { dayOfWeek: number; hourUtc: number; score: number; rationale: string }[]
     >;
     /** B0-28 (write, internal). Mint a SEAT-LESS, read-only share link for one OWNED post: the
-     *  server verifies ownership, then signs an HMAC (ownerId+postId+exp) token (never touches an
-     *  external platform). Returns the link or an error (post not found / not owned). Reached ONLY
-     *  via this port → the same owner-scoped server action. */
-    sharePreview(input: { scheduledPostId: string; ttlMs?: number }): Promise<
+     *  server verifies ownership, writes ONE SharePreviewToken row (the authority layer — audit +
+     *  revocation), and signs an HMAC (ownerId+postId+exp) token (never touches an external
+     *  platform). TTL is SERVER-FIXED — no caller-supplied expiry (NODE-275 收口3). Returns the
+     *  link or an error (post not found / not owned). Reached ONLY via this port → the same
+     *  owner-scoped server action. */
+    sharePreview(input: { scheduledPostId: string }): Promise<
       { token: string; url: string; expiresAt: string } | { error: string }
+    >;
+    /** B0-28 (write, internal). Revoke every ACTIVE share link for one OWNED post — sets revokedAt
+     *  on the authority rows, killing already-shared links immediately (verify = HMAC ∧ row live). */
+    sharePreviewRevoke(input: { scheduledPostId: string }): Promise<
+      { ok: true; revoked: number } | { error: string }
     >;
   };
   /** Approval-consent snapshot (AR2 处方1, B4 debt-70) — injected ONLY by ottoApprove when
