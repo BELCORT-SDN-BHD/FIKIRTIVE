@@ -1,7 +1,7 @@
-# B9 引擎横切 · 引擎接口冻结 spec（v0.4——冻结候选）
+# B9 引擎横切 · 引擎接口冻结 spec（v0.5——冻结候选）
 
 > 2026-07-12。epoch `claude-20260712-03`。性质：**冻契约不冻实现**——本 spec 冻结的是接口形状与语义，扫描器/实现行号可继续演进（B10 车道并行改扫描器不构成移动靶）。
-> **状态：冻结候选（freeze candidate）——冻结待 founder 明示 ack（D-018②/D-020⑤）。** SOL 跨族复审 §2 的 B9 六条阻断项已逐条闭合；**v0.4 闭合 codex 异族评审（第二轮 BLOCK）清单**：上下文桥上限常量+截断顺序+审计形状（契约 2）、RunState 兼容不悬置（契约 5·附）、LiveResourceType 封闭 union+静态映射（契约 6）、seq/cursor/replay 逐项定义+transactional outbox 方案（契约 6）、按最终 `Domain[]` 成员重测全部装载组合+归域调整（契约 1/§对标锚落数）、敏感字段白名单改写（契约 6）。本文本属共享契约/schema=founder-only 类别，异族复审通过不替代 founder 明示过目；未获 ack 前 09-B9 相关行不迁 `spec-ready`。
+> **状态：冻结候选（freeze candidate）——冻结待 founder 明示 ack（D-018②/D-020⑤）。** SOL 跨族复审 §2 的 B9 六条阻断项已逐条闭合；v0.4 闭合 codex 异族评审（第二轮 BLOCK）清单：上下文桥上限常量+截断顺序+审计形状（契约 2）、RunState 兼容不悬置（契约 5·附）、LiveResourceType 封闭 union+静态映射（契约 6）、seq/cursor/replay 逐项定义+transactional outbox 方案（契约 6）、按最终 `Domain[]` 成员重测全部装载组合+归域调整（契约 1/§对标锚落数）、敏感字段白名单改写（契约 6）；**v0.5（codex R5⑤ 并发主权主动扫）**：LiveEventOutbox 的 seq 分配确认=BIGSERIAL 天然序列化，并补冻**分配序≠提交序**的消费端语义——cursor 只推进连续已提交前缀（契约 6）。本文本属共享契约/schema=founder-only 类别，异族复审通过不替代 founder 明示过目；未获 ack 前 09-B9 相关行不迁 `spec-ready`。
 > 人话：给 Otto 的「发动机舱」定接口标准，后面每个块加新能力都插同一套插座，不许各拉各的线。
 
 ## 一、范围与矩阵行映射
@@ -135,6 +135,7 @@ B9 块（`docs/ops/route-b/matrix/09-B9.md`）21 行；本 spec 冻结其中的*
   ```
 - **seq / cursor / replay 逐项定义（v0.4 冻结——codex P1⑧ 采纳）**：
   - **来源与原子分配**：新表 `LiveEventOutbox`（founder-only 单列建表）——`seq BIGSERIAL`（DB 序列原子分配；全局单调 ⇒ 每 owner 单调 ⇒ 每资源单调）+ ownerId + resourceType + resourceId + actor + correlationId + payload + createdAt。**写入与产生该事件的状态变更同一 DB 事务**（transactional outbox——原子性与「不丢事件」的来源）；投递器从 outbox 读、推 SSE。
+  - **分配序 ≠ 提交序（v0.5 冻结——codex R5⑤ 主动扫）**：BIGSERIAL 分配=DB 原生序列化（**确认：分配无需额外锁**）；但序号分配在事务内、提交在事务尾——**低 seq 行可能晚于高 seq 行提交**。消费端语义冻结：**cursor 只推进「连续已提交前缀」**——投递器/replay 端点按 seq 升序扫描时，**不得越过尚未确认提交的空洞**（晚提交的低 seq 永不被跳过）；实现形态（单投递器 + txid 快照下界，或 `FOR UPDATE SKIP LOCKED` 批读后按连续前缀推进）归实现，**语义（无跳号丢失）是契约**。回滚事务留下的永久空洞以「序号已废弃」判定越过（如超时阈值或 txid 快照证明无在途事务），判定规则随实现细化但不得引入丢失。
   - **cursor 格式**：opaque string=最后送达 `seq` 的十进制编码（服务端铸造与解释，客户端只回传不解析）。
   - **replay**：重连带 `cursor` → 服务端按 `seq` 升序补投本 owner `seq > cursor` 的全部事件。
   - **保留期（冻结常量）**：outbox 行保留 **24 小时**（founder ack 时可调）。
@@ -186,7 +187,7 @@ B9 块（`docs/ops/route-b/matrix/09-B9.md`）21 行；本 spec 冻结其中的*
 
 ## 五、冻结条件与状态
 
-- **状态：冻结候选（freeze candidate）。** v0.1 骨架 → v0.2 吸收 Campaign 试产 → v0.3 闭合 SOL §2·B9 六阻断项 → **v0.4 闭合 codex 异族评审 BLOCK 清单（本稿）：上下文桥上限/截断/审计冻结、RunState 兼容规则冻结、LiveResourceType 封闭 union+静态映射、outbox seq/cursor/replay 冻结、按最终成员重测全组合+归域调整、payload 白名单改写** → **founder 明示 ack（D-018②/D-020⑤）** → spec-ready（09-B9 相关行随冻结 PR 迁级）。异族复审通过不替代 founder 过目（共享契约/schema=founder-only）。
+- **状态：冻结候选（freeze candidate）。** v0.1 骨架 → v0.2 吸收 Campaign 试产 → v0.3 闭合 SOL §2·B9 六阻断项 → v0.4 闭合 codex R2 BLOCK 清单（上下文桥上限/截断/审计冻结、RunState 兼容规则冻结、LiveResourceType 封闭 union+静态映射、outbox seq/cursor/replay 冻结、按最终成员重测全组合+归域调整、payload 白名单改写） → **v0.5（本稿，codex R5⑤ 主动扫）：outbox 分配序≠提交序的消费端语义冻结（cursor 只推进连续已提交前缀）** → **founder 明示 ack（D-018②/D-020⑤）** → spec-ready（09-B9 相关行随冻结 PR 迁级）。异族复审通过不替代 founder 过目（共享契约/schema=founder-only）。
 - **开放问题（v0.2 两项处置）**：
   1. domain 与 A′ 左轨导航 zone 是否 1:1 → **闭合**：非 1:1；多 zone 可映射同域，跨域技能用 `Domain[]` 多成员（§契约 1 迁移表 + 归置表给出 zone→域映射依据）。
   2. contextBridge 隐私边界（selection 注入是否过滤跨租户引用）→ **闭合**：契约 2 租户校验入契约——服务端 resolve + ownerId 断言 + 数量上限 + 丢弃越权/过期，客户端裸 ID 永不持久化（宪法 6）。
