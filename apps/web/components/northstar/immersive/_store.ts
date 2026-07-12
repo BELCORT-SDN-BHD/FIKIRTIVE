@@ -311,7 +311,10 @@ function notify() {
   for (const l of listeners) l();
 }
 
-function subscribe(cb: () => void): () => void {
+/** 订阅 store 变化(exported:除 useStore 外,组件也可在 effect 里订阅、在回调中 setState——
+ * 这是 react-hooks/set-state-in-effect 规则自己背书的「subscribe to external system,
+ * setState in callback」形态;dock 的 pendingApply 跨表面守卫用它)。 */
+export function subscribe(cb: () => void): () => void {
   listeners.add(cb);
   return () => {
     listeners.delete(cb);

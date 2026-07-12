@@ -157,6 +157,8 @@ function OttoChatContent() {
   // ?thread 直接作初值:useQueryParam=useSearchParams(本页已被 <Suspense> 包着,SSR 渲 fallback、
   // 客户端才渲本体),故初值化里读 ?thread 无 SSR/client 初值不一致。派生初值取代旧的「挂载后 setState
   // 切换到深链 thread」,消掉 set-state-in-effect 的级联渲染(也去掉切换那一帧的闪跳)。
+  // 注:挂载后由 URL 驱动切 thread(如浏览器前进后退只改 ?thread=)两版均不支持——旧版 effect 依赖
+  // 数组是 [](也只跑挂载一次),本版初值同样只读一次;现无调用方依赖该行为,勿误读为本版回归。
   const [threadId, setThreadId] = React.useState<string>(() => {
     const threads = chatThreads();
     if (initialThread && threads.some((t) => t.id === initialThread)) return initialThread;
