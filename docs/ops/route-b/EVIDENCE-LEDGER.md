@@ -27,3 +27,14 @@
 | R8 后顾问 round two（SOL Ultra） | 同目录 `r8-sol-round2-memo.md` + `r8-sol-round2-provenance.json` | complete 0.87；四修修正+契约 3 重开手续+R9 终止条件预冻结 |
 | SPEC-4 工位三轮报告 + diff 地图 | PR #253 评论区（issuecomment-4949789283 / -4949842152 / -4949997817 / -4950108762） | 每轮零外溢自检+账行提案 |
 | #255 codex R2 PASS 记录缺口 | D-024②如实留痕 | 无独立 provenance；合并授权=启动令+#254+非作者+CI 4/4 |
+
+## B2/B9 冻结（拆分版）与 B3/B4 批0（D-026/D-027）
+
+| 证据 | 位置 | 说明 |
+|---|---|---|
+| codex SR1（B2 v1.2 拆分复核）判定原文 | PR #253 评论区 + D-026 | PASS 钉 `1a8e0aea`；冻结侧 SHA-256 零变更佐证 |
+| 冻结签核（SOL Ultra，#253+#258 双 PR） | `coverage-audit/advisor-freeze-signoff/` | complete 0.93 放行；#254 §三 高后果签核件 |
+| B3/B4 分解顾问轮（SOL incomplete 留痕 + fallback Fable memo） | `coverage-audit/advisor-b3b4-batch0/` | fallback complete 0.85（B4 先行/LC-0/两 tranche 锚） |
+| codex BR2/BR2-R2/BR2-R3（B3 spec 三轮）判定原文 | PR #258 评论区 | 终判 PASS 钉 `12eeea1f` |
+| codex BR1/BR1-R3/BR1-R4（B4 spec）判定原文 | PR #257 评论区 | BR1-R2 网络停摆两线索经工位核实（D-027⑤） |
+| W-DELTA 差额核证 + W-ANCHOR 锚取证 | scratchpad 存档（b3-spec-inputs/），关键结论已入 B3 spec §二/§三 | L-C 前提失效发现的原始载体 |
