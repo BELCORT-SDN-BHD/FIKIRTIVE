@@ -201,7 +201,6 @@ export function OttoSchedule({
   useEffect(() => {
     // Async initial load — every setState below runs after an await/`.then`, never
     // synchronously in the effect body (the lint rule can't see through the promise).
-    // eslint-disable-next-line react-hooks/set-state-in-effect
     void reload();
     void getMetaConnection().then((res) => {
       if ("error" in res || !res.connected) return setConn({ phase: "disconnected" });
@@ -1082,7 +1081,6 @@ function Composer({
     if (dirty) return;
     // eslint-disable-next-line react-hooks/set-state-in-effect
     setStatus(seed.status);
-    // eslint-disable-next-line react-hooks/set-state-in-effect
     setLastError(seed.lastError);
   }, [seed.status, seed.lastError, dirty]);
 

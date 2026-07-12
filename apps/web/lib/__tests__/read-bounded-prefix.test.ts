@@ -14,7 +14,7 @@ import { readBoundedPrefix } from "@fikirtive/storage";
 function storeOf(chunks: Uint8Array[]) {
   let closed = false;
   const store = {
-    async readStream(_key: string): Promise<AsyncIterable<Uint8Array>> {
+    async readStream(): Promise<AsyncIterable<Uint8Array>> {
       return (async function* () {
         try {
           for (const c of chunks) yield c;
