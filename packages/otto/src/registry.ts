@@ -26,6 +26,11 @@ import { proposeStoryboardSkill } from "./skills/propose-storyboard.js";
 import { editStoryboardSkill } from "./skills/edit-storyboard.js";
 import { proposeResearchSkill } from "./skills/propose-research.js";
 import { schedulePostsSkill } from "./skills/schedule-posts.js";
+import { approveScheduledPostSkill } from "./skills/approve-scheduled-post.js";
+import { cancelScheduledPostSkill } from "./skills/cancel-scheduled-post.js";
+import { editScheduledPostSkill } from "./skills/edit-scheduled-post.js";
+import { listScheduledPostsSkill } from "./skills/list-scheduled-posts.js";
+import { listPublishTargetsSkill } from "./skills/list-publish-targets.js";
 import { manageCanvasSkill } from "./skills/manage-canvas.js";
 
 /** Add a new skill here (one line). Order is the agent's tool order. */
@@ -56,6 +61,11 @@ export const allSkills: OttoSkill[] = [
   editStoryboardSkill,
   proposeResearchSkill,
   schedulePostsSkill,
+  approveScheduledPostSkill,
+  cancelScheduledPostSkill,
+  editScheduledPostSkill,
+  listScheduledPostsSkill,
+  listPublishTargetsSkill,
   manageCanvasSkill,
 ];
 

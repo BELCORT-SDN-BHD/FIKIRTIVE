@@ -1,4 +1,34 @@
-import type { GenRequestInput, ProductDraft, ScheduleDraftInput } from "@fikirtive/core";
+import type { GenRequestInput, ProductDraft, ScheduleChannel, ScheduleDraftInput } from "@fikirtive/core";
+
+/** Patch for the editScheduledPost skill (debt-72). Structural re-declaration mirroring the web
+ *  UpdateScheduledPostPatch — the web type (apps/web/lib/schedule-actions.ts) must NOT be imported
+ *  here (same rule as MetaAdObject). `channel` reuses the CORE ScheduleChannel (already imported). */
+export type ScheduleUpdatePatch = {
+  channel?: ScheduleChannel;
+  caption?: string;
+  scheduledAt?: string;
+  scheduledTz?: string;
+  media?: string[];
+  firstComment?: string | null;
+  metaTargetId?: string | null;
+};
+
+/** Slim, serializable view of a scheduled post Otto reads (debt-73). No Date/web types cross the
+ *  package boundary — the web port maps its rows to this shape (ISO strings, media count). */
+export type ScheduledPostSummary = {
+  id: string;
+  channel: string;
+  caption: string;
+  status: string;
+  scheduledAt: string; // ISO instant
+  scheduledTz: string;
+  approvedAt: string | null; // ISO instant, null until approved
+  mediaCount: number;
+  lastError: string | null;
+};
+
+/** A connectable publish target for the composer's account picker (debt-74). */
+export type ScheduleTarget = { id: string; name: string; channel: string };
 
 /** Minimal structural re-declaration of MetaAdObject for the otto package.
  *  The web type (apps/web/lib/meta-objects.ts) must NOT be imported here. */
@@ -199,7 +229,29 @@ export interface OttoContext {
    *  verdict ctx; the skill degrades gracefully when it is not injected. Never publishes/approves/spends. */
   schedule?: {
     draft(input: ScheduleDraftInput): Promise<{ ok: true; id: string } | { error: string }>;
+    /** debt-70 (gated). Approve one owned DRAFT → SCHEDULED (consent to publish). Reached only on
+     *  approval-card resume; the port is the SAME owner-scoped approveScheduledPost server action.
+     *  `expectedUpdatedAt` (ISO) = the post's updatedAt captured server-side at the moment the
+     *  card's content hash was verified (AR2 处方1 TOCTOU weld) — the action pins its CAS on THIS
+     *  value, so any material edit between hash-check and the resume's re-read fails the CAS. */
+    approve(input: { scheduledPostId: string; expectedUpdatedAt: string }): Promise<{ ok: true } | { error: string }>;
+    /** debt-71. Cancel one owned post through the shared state machine (owner-scoped). */
+    cancel(input: { scheduledPostId: string }): Promise<{ ok: true } | { error: string }>;
+    /** debt-72. Patch one owned DRAFT/queued post; a MATERIAL edit to a SCHEDULED post revokes
+     *  consent (drops to DRAFT, clears approvedAt) — invariant inherited from the shared action. */
+    update(input: { scheduledPostId: string; patch: ScheduleUpdatePatch }): Promise<{ ok: true } | { error: string }>;
+    /** debt-73 (read parity). Owner-scoped list of the schedule, optional [from,to] window. */
+    list(input: { from?: string; to?: string }): Promise<ScheduledPostSummary[]>;
+    /** debt-74 (read parity). Owner-scoped connectable publish targets (empty when unconnected). */
+    listTargets(): Promise<ScheduleTarget[]>;
   };
+  /** Approval-consent snapshot (AR2 处方1, B4 debt-70) — injected ONLY by ottoApprove when
+   *  resuming a universal approval card, NEVER derived from model args. Carries the post's
+   *  updatedAt as read at hash-verification time; the approveScheduledPost skill threads it to
+   *  ctx.schedule.approve so the server action CAS-pins the exact content the human consented to.
+   *  Absent on every other path — the skill fails closed without it. */
+  approvalConsent?: { scheduledPostId: string; expectedUpdatedAt: string };
+
   /** Product-ingest port (P1-01) — injected by the web caller. Fetches a URL (SSRF-hardened)
    *  and runs the deterministic Layer-1 extractor, returning a product DRAFT plus the page text.
    *  Otto fills any gaps itself from `text` (no separate LLM call) — that is this path's Layer 2.

@@ -1,6 +1,7 @@
-# 84 条对等债 → 矩阵行 对照表（缝 9 棘轮台账）
+# 86 条对等债 → 矩阵行 对照表（缝 9 棘轮台账）
 
-> 真源=`packages/otto/src/parity-manifest.ts`（棘轮基线 84）。每块验收=本表该块债清零。
+> 真源=`packages/otto/src/parity-manifest.ts`（棘轮基线见 `scripts/parity-debt-baseline.json`）。每块验收=本表该块债清零。
+> debt-85/86：PR #268（B4 W-B4-2）新增 `ottoReject` 导出的记账行——AR1 处方3 控制面特别授权（D-015⑥ 作者迁自己的行）。
 
 | 债号 | action key | 归属行 | 块 |
 |---|---|---|---|
@@ -88,3 +89,5 @@
 | debt-82 | `upload-actions.finalizeCandidateUploads` | E1-17 | B3 |
 | debt-83 | `api:otto/stream.POST` | B0-79 | B9 |
 | debt-84 | `api:otto/thread-activity.GET` | B0-77 | B9 |
+| debt-85 | `otto-actions.ottoReject` | B0-79 | B9 |
+| debt-86 | `otto-client-actions.ottoReject` | B0-79 | B9 |

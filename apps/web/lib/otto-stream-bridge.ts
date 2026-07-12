@@ -187,6 +187,12 @@ const TOOL_STEP_LABELS: Record<string, string> = {
   "meta-ad-performance": "Reading your per-ad performance",
   "meta-expert": "Diagnosing your ad performance",
   proposeResearch: "Planning the research",
+  // B4 debt-70~74 (schedule five-action parity):
+  approveScheduledPost: "Asking you to approve a post",
+  cancelScheduledPost: "Cancelling a scheduled post",
+  editScheduledPost: "Editing a scheduled post",
+  listScheduledPosts: "Checking your schedule",
+  listPublishTargets: "Finding your connected accounts",
   manageCanvas: "Working on your canvas",
   // setTitle stays silent (internal housekeeping).
 };

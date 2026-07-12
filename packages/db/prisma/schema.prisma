@@ -823,6 +823,7 @@ enum ChatMessageKind {
   RESEARCH_CARD
   RESEARCH_REPORT
   PERFORMANCE_CARD
+  APPROVAL_CARD
 }
 
 // G7: per-org autonomy mode for Otto's ad-write operations

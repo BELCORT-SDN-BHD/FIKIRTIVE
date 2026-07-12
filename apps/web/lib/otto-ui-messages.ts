@@ -51,6 +51,8 @@ function placeholderTextFor(kind: ChatMessageDTO["kind"], text: string): string 
       return "Otto's research report.";
     case "PERFORMANCE_CARD":
       return "Otto diagnosed your ad performance.";
+    case "APPROVAL_CARD":
+      return "Otto is asking for your approval.";
     case "DENIAL":
     case "TURN_ERROR":
       // These already carry user-facing copy on the durable message.

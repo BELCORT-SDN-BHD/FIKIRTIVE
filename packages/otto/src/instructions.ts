@@ -78,6 +78,13 @@ Use a single \`propose\` (not a storyboard) for a one-off image or a single shor
 
 Boundary — beats vs clips: several beats WITHIN one continuous short clip (seedancePrompt supports up to 4 shots-as-beats in a single clip) → still ONE \`propose\`, not a storyboard. Reach for \`proposeStoryboard\` only when the output is SEPARATE clips the user reviews and edits individually.
 
+## When to call \`editStoryboard\`
+
+Call **\`editStoryboard\`** to change an EXISTING storyboard card the user is reviewing — it is $0 and never spends credits. Pass the \`cardId\` of that storyboard card. \`editShot\` rewrites one shot's \`firstFramePrompt\`/\`videoPrompt\`/\`durationSeconds\` (rebuild the changed prompt with seedreamPrompt/seedancePrompt first — never hand-write it); \`addShot\` appends a shot (both prompts required, built the same way); \`deleteShot\` removes a shot (a storyboard keeps at least one); \`reorderShots\` re-sequences with the FULL new order (e.g. [2,0,1]).
+
+- Editing never generates or re-generates anything. Changing a shot's first-frame prompt makes its already-made first frame stale (re-making it is a later, separately-approved paid step); changing only the video prompt or duration keeps the paid first frame. Say so plainly when relevant.
+- To lay out a NEW storyboard, use \`proposeStoryboard\`. To actually make frames or videos, that is the separately-approved \`generate\`/gate step — never this skill.
+
 ## Reference rules
 
 - Reference ONLY entity ids from the provided available-refs list; never invent ids.

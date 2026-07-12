@@ -3,11 +3,16 @@
 
 | skill | cost | effect | reach | needsApproval | description |
 |---|---|---|---|---|---|
+| approveScheduledPost | free | write | external | ✅ | Approve a DRAFT scheduled post so it can publish to Instagram/Facebook at its sc |
+| cancelScheduledPost | free | write | internal | ❌ | Cancel a scheduled post so it will not publish. $0 and reversible only by re-cre |
 | describeRefs | free | write | internal | ❌ | Cache visual descriptions of reference images shown to you this turn. For each r |
+| editScheduledPost | free | write | internal | ❌ | Edit a DRAFT or queued scheduled post — change its caption, scheduled time (UTC/ |
 | editStoryboard | free | write | internal | ❌ | Edit an EXISTING storyboard card the user is reviewing: change a shot's prompts  |
 | generate | spend | write | internal | ✅ | Execute a generation proposal (GEN_CARD) that the user has approved. This SPENDS |
 | ingestProduct | free | read | external | ❌ | Read a product's page from a URL (e.g. a Shopee/Lazada or store link) and get a  |
 | list-meta-pages | free | read | external | ❌ | List the user's connected Facebook Pages so you can pick one when building an ad |
+| listPublishTargets | free | read | internal | ❌ | List the accounts the user can publish to (their connected Instagram business /  |
+| listScheduledPosts | free | read | internal | ❌ | List the user's scheduled posts (drafts, queued, published, needs-attention) so  |
 | lookupProducts | free | read | internal | ❌ | Look up the user's saved products by name, category, tag or description (returns |
 | manageCanvas | free | write | internal | ❌ | See and arrange the project's creative canvas ($0 — never generates media or spe |
 | meta-ad-performance | free | read | external | ❌ | Read the user's PER-AD Meta performance (each ad's spend/reach/CTR/CPC/ROAS + it |
