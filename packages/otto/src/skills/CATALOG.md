@@ -13,6 +13,7 @@
 | listPublishTargets | free | read | internal | ❌ | List the accounts the user can publish to (their connected Instagram business /  |
 | listScheduledPosts | free | read | internal | ❌ | List the user's scheduled posts (drafts, queued, published, needs-attention) so  |
 | lookupProducts | free | read | internal | ❌ | Look up the user's saved products by name, category, tag or description (returns |
+| manageCanvas | free | write | internal | ❌ | See and arrange the project's creative canvas ($0 — never generates media or spe |
 | meta-ad-performance | free | read | external | ❌ | Read the user's PER-AD Meta performance (each ad's spend/reach/CTR/CPC/ROAS + it |
 | meta-expert | free | write | internal | ❌ | Diagnose the user's Meta ad performance: which specific ads/creatives are winnin |
 | meta-insights | free | read | external | ❌ | Read the user's connected Meta (Facebook/Instagram) ad-account performance (spen |

@@ -70,5 +70,5 @@ export const config = {
   // northstar: the design-only prototype city + immersive app (zero backend, zero auth) —
   // same precedent as skin-preview. The `northstar` prefix also covers `northstar-immersive`.
   // Both layouts 404 in production unless NORTHSTAR_PREVIEW=1, so exempting auth is safe.
-  matcher: ["/((?!login|terms|privacy|legal|skin-preview|northstar|api/better-auth|api/stripe|api/health|api/meta/data-deletion|api/media/pub|_next/static|_next/image|favicon.ico).*)"],
+  matcher: ["/((?!login|terms|privacy|legal|skin-preview|northstar|api/better-auth|api/stripe|api/health|api/meta/data-deletion|api/media/pub/|_next/static|_next/image|favicon.ico).*)"],
 };

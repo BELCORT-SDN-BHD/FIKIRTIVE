@@ -21,6 +21,7 @@
 
 - **owner**：各工位（LC-0 / W-B3-A~H / LCg 收口片）。
 - **证据槽位**：46 能力行的逐条能力名（非页面名）+ 现状六级状态 → 目标状态。存量断言 16 条免重核（spec §二.5）；absent 行（E1-09 stitch/E1-19 A/B 分叉/B0-14/16~26 工厂族）为净新建。**待施工逐行填交付状态**。
+- **W-B3-A（canvas $0 面，本批交付）**：E1-01（无限画布·节点为一等公民）的 $0 双执行器面——Otto 执行器侧真接后台：新 `manageCanvas` skill（view/place/edit_text/resolve/remove，free/write/internal 不设闸=与人工 UI 同待遇）经 `ctx.canvas` port 驱动与人工 UI **完全同一**的 `canvas-actions` 五动作 + `otto-canvas-bridge.syncOttoCanvasNodes`（display-only sync）。零 spend 触点：`startGen`/gen 链不在本工位 diff（canvas gen 接线归 W-B3-E）；$0 硬线端到端焊死（v2，codex TR1①）——skill 侧无 generationId 拒放 image/video（新媒体只能走 gated `generate`）+ port 侧（`otto-canvas-port.ts`）place 的 generationId 先行 owner+project 验真（伪造/跨项目=结构化硬拒，绝不静默降级），edit/remove 加 project 绑定；canvas-actions 的 UI 既有契约零触碰。**人工入口现状如实**：immersive canvas 壳（LC-0 已落）本批保持壳级（mock 数据形态不动），UI 真接线归批2/批3（见 §⑫.8）。
 
 ## ④ 双执行矩阵
 
@@ -39,6 +40,20 @@
 
   **待施工填每行双执行器交付物 + 债清零证据**。
 
+- **W-B3-A 债六条清零（四件套，本批交付）**——`lint:parity` 绿：`[parity] OK: 180 entries … TODO_SKILL entries remain: 78`（棘轮 84→78，`scripts/parity-debt-baseline.json` 同 PR 收紧）：
+
+  | 债号 | action key | skill | ctx port | handler（单一动作层） | 测试 |
+  |---|---|---|---|---|---|
+  | debt-33 | `canvas-actions.listCanvasNodes` | `manageCanvas`(view/remove 预检) | `ctx.canvas.list` | `listCanvasNodes`（人工 UI 同源） | `manage-canvas.test.ts`「remove — in-flight … fail-closed」+ C1 子旅程 |
+  | debt-34 | `canvas-actions.createCanvasNode` | `manageCanvas`(place) | `ctx.canvas.place`（port 先行验真 generationId） | `createCanvasNode` | 同上「place — $0 hard line」3 例 + `otto-canvas-port.test.ts` place 4 例 |
+  | debt-35 | `canvas-actions.updateTextNode` | `manageCanvas`(edit_text) | `ctx.canvas.editText`（project 绑定） | `updateTextNode` | 同上「edit_text / resolve」+ port 跨项目拒 |
+  | debt-36 | `canvas-actions.resolveCanvasNode` | `manageCanvas`(resolve) | `ctx.canvas.resolve` | `resolveCanvasNode` | 同上「edit_text / resolve」 |
+  | debt-37 | `canvas-actions.deleteCanvasNode` | `manageCanvas`(remove) | `ctx.canvas.remove`（project 绑定） | `deleteCanvasNode` | 同上「remove」4 例 + port 跨项目拒 |
+  | debt-60 | `otto-canvas-bridge.syncOttoCanvasNodes` | `manageCanvas`(view) | `ctx.canvas.sync` | `syncOttoCanvasNodes`（display-only，零 spend） | 同上「view」3 例 |
+
+  port 注入点=`apps/web/lib/otto-actions.ts buildOttoContext` → `makeOttoCanvasPort(ownerId, projectId)`（`apps/web/lib/otto-canvas-port.ts`；身份走 requireOwner，skill 参数零身份字段——工厂硬拦）；`moveCanvasNode` 维持 VISUAL 豁免不动。TOOL_STEP_LABELS 补 `manageCanvas: "Working on your canvas"`（live trace）。instructions.ts 补「When to call `manageCanvas`」条目（REVIEWER-PLAYBOOK:107 注册卫生，v2 codex TR1③）。
+  **对等差额如实记（v2，codex TR1②）**：`deleteCanvasNode` 对等=**非在途节点**；**在途付费卡（pending/timeout 无 URL）删除=UI 亲点专属**（防误删护栏，宪法 11 状态诚实）——Otto 一律硬拒并指引用户在画布上亲手确认删除，无模型自我确认参数；预检 fail-closed（list 失败/目标不在本项目清单=拒，绝不「查不到照删」）。
+
 ## ⑤ 对标锚
 
 - **owner**：各泳道工位 + founder/审查员（盲评）。
@@ -49,6 +64,7 @@
 - **owner**：各工位 + 浏览器 runtime QA。
 - **⚠️ 三无纪律预注**：本程处**用户数=0 + Stripe 零成交 + 无生产流量**（三无）状态下——**旅程证据 = mock/staging 级，如实标注**（宪法 3 状态诚实）：happy/empty/loading/denied/failure/retry/mobile 七态截图取自 staging + MockProvider（$0）+ 夹具注入失败形态，**不冒充生产真实流量**；真钱旅程（真 provider 小额）= 只交方案不执行，执行点 = **每笔真实花费 = founder 逐笔明示批准**（宪法 2/BLUEPRINT:61；唯一澄清处见 spec §六.3）。凡 staging/mock 级证据一律标注来源级别，不作生产已验证陈述。
 - **证据槽位**：canvas 五态（空布→首图→就地编辑→A/B→Make Video）；工厂（贴链→选人设→批量矩阵确认页→成片网格 partial）；storyboard（draft→make-all→animatic→stitch）；media-editor（trim→抽帧→存版本 $0）。**待施工填七态截图 + 时间码**。
+- **W-B3-A · 锚 C1 $0 子旅程（组件级，如实标注：Otto 执行器路径 + 有状态假 port；server 动作真值由既有 `apps/web/lib/__tests__/canvas-actions.test.ts` 承载）**：`packages/otto/src/skills/manage-canvas.test.ts`「C1 $0 sub-journey: empty board → place → derivation visible (Otto executor path)」——空布（count=0）→ 放文字卡+改写 → 放已生成图 → 放派生图（`sourceNodeId` 指回源）→ view 中派生关系可见（source→result 链）→ 删卡收口。全程 port 面无 `startGen`/credits/provider 任何符号（$0 by construction）。C1 五态并排盲评（空布→首图→就地编辑→A/B→Make Video）依赖 gen 接线=W-B3-E 后补。
 
 ## ⑦ 测试全家桶可重跑链接
 
@@ -89,6 +105,7 @@
 5. **批量全链时长真值未测**：v0.2 已落显式临时阈值（mock 级 20 格 ≤30 分钟）；真 provider 实测值待 costing/压测，受控修订走决策日志（假设 B3-A3）。
 6. **B10 毛利地板数值 gate 时序假设**（批2 前置）：批量定价毛利证明依赖 B10；若 B10 未就绪批2 停等并上报（假设 B3-A5）。
 7. **Design B 首落本区 = 荐否**（L-C §七.D1/A2）：安全 > 效率，L-C 用成熟单一动作层 + parity 清债，Design B 另择小区首落——待 founder/总审查员定。
+8. **W-B3-A 边界如实（2026-07-12 编排官核准）**：immersive canvas **UI 面本批保持壳级**（`canvas-page.tsx` 深度 mock 的 CvObject/session-pool 客户端组件，整体改写=越界「禁重画」）；$0 CRUD 的「真接后台」由 **Otto 执行器侧**交付（`manageCanvas` → `ctx.canvas` → canvas-actions，双执行器纪律的 Otto 半边先行），**UI 真接线归批2/批3**（随 gen 链接线/live-event 推送化一并）。灰度骨架照 L-C LCa 判据：L-C 无具体 env/flag 形态可照抄 → **壳级路由已在（LC-0 落 main）即为骨架**；flag 形态随批2 UI 接线落地（L-C §七.D3 荐灰度不变）。
 
 ## ⑬ 录像时间码 + founder 10 分钟自查脚本
 

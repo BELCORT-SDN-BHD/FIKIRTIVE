@@ -192,6 +192,7 @@ const TOOL_STEP_LABELS: Record<string, string> = {
   editScheduledPost: "Editing a scheduled post",
   listScheduledPosts: "Checking your schedule",
   listPublishTargets: "Finding your connected accounts",
+  manageCanvas: "Working on your canvas",
   // setTitle stays silent (internal housekeeping).
 };
 
