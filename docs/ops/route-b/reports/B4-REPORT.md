@@ -53,21 +53,21 @@
 
 #### W-B4-1 起证（存量证据链工位）· Meta 官方锚 G1-G7 逐关口→可重跑断言
 
-> spec §四 Meta 官方锚判定表转为对 `packages/core/src/meta-publish.ts` 现有实现的锚断言（mock 夹具级，零真实外部写，spec §六.1）。测试文件 `packages/core/src/meta-publish.test.ts`（21 用例，全绿）。本工位新增/精化断言标 **[+]**。
+> spec §四 Meta 官方锚判定表转为对 `packages/core/src/meta-publish.ts` 现有实现的锚断言（mock 夹具级，零真实外部写，spec §六.1）。测试文件 `packages/core/src/meta-publish.test.ts`（21 用例全绿；证据=CI run [29193809299](https://github.com/BELCORT-SDN-BHD/FIKIRTIVE/actions/runs/29193809299) tests 关 pass + §⑦ 本地可重跑命令）。本工位新增/精化断言标 **[+]**；行号=本 PR head 现行号。
 
 | 关口 | 断言（可判定语句） | 测试引用（file:line / 名） |
 |---|---|---|
 | G1 IG 单图容器 | `POST /{ig}/media`（image_url+caption）；**[+] caption 落在容器** | `meta-publish.test.ts:55`「single image…」+ [+] `posts[0].body.caption==="hi"` |
-| G1 轮播子图 | 子图 `is_carousel_item="true"` **且无 caption**；**[+] 子图 caption undefined、父容器 caption 在** | `meta-publish.test.ts:72`「carousel…」+ [+] `posts[0].body.caption` undefined / `posts[2].body.caption==="carousel"` |
-| G1 ⑤a abort | 任一子容器失败→整帖 abort，`media_publish` 从未调用（零发布） | `meta-publish.test.ts:85`「carousel abort (⑤a)…」 |
-| G2 容器轮询 | `FINISHED`→进 G3；`IN_PROGRESS` 超 deadline→六态④ retryable；`ERROR`→六态③ 不 retryable | `:95`「poll timeout (④)…」+ `:104`「container ERROR…③」 |
-| G3 IG 发布 | id→六态①；**2xx 无 id→ambiguous 不盲重试**；5xx/timeout→ambiguous | `:55`（id）+ `:145`「2xx but NO id→AMBIGUOUS」+ `:130/:138`（5xx/timeout ambiguous）+ `:152`（definitive 4xx 非 ambiguous） |
-| G4 FB /photos | 单图→`/photos`（url+caption）；**[+] /photos 2xx 无 id→ambiguous** | `:176`「single image→/photos…caption」+ **[+] 新 `:184`「G4 anchor: /photos 2xx but no id→AMBIGUOUS」** |
-| G4 FB /feed | 无媒体→`/feed`（message+link）；2xx 无 id→ambiguous；definitive 4xx 非 ambiguous | `:185`「no media→/feed…link」+ `:210`「/feed 2xx no id→AMBIGUOUS」+ `:217`（definitive 4xx） |
-| G6 first comment | best-effort：评论失败**不回退**已发成功判定 | `:116`「first comment is best-effort…」 |
+| G1 轮播子图 | 子图 `is_carousel_item="true"` **且无 caption**；**[+] 子图 caption undefined、父容器 caption 在** | `meta-publish.test.ts:74`「carousel…」（关键断言 :82-87）+ [+] `posts[0].body.caption` undefined / `posts[2].body.caption==="carousel"` |
+| G1 ⑤a abort | 任一子容器失败→整帖 abort，`media_publish` 从未调用（零发布） | `meta-publish.test.ts:90`「carousel abort (⑤a)…」 |
+| G2 容器轮询 | `FINISHED`→进 G3；`IN_PROGRESS` 超 deadline→六态④ retryable；`ERROR`→六态③ 不 retryable | `:100`「poll timeout (④)…」+ `:109`「container ERROR…③」 |
+| G3 IG 发布 | id→六态①；**2xx 无 id→ambiguous 不盲重试**；5xx/timeout→ambiguous | `:55`（id）+ `:150`「2xx but NO id→AMBIGUOUS」+ `:135/:143`（5xx/timeout ambiguous）+ `:157`（definitive 4xx 非 ambiguous） |
+| G4 FB /photos | 单图→`/photos`（url+caption）；**[+] /photos 2xx 无 id→ambiguous** | `:181`「single image→/photos…caption」+ **[+] 新 `:190`「G4 anchor: /photos 2xx but no id→AMBIGUOUS」** |
+| G4 FB /feed | 无媒体→`/feed`（message+link）；2xx 无 id→ambiguous；definitive 4xx 非 ambiguous | `:197`「no media→/feed…link」+ `:222`「/feed 2xx no id→AMBIGUOUS」+ `:229`（definitive 4xx） |
+| G6 first comment | best-effort：评论失败**不回退**已发成功判定 | `:121`「first comment is best-effort…」 |
 | G2 EXPIRED / G5 配额 / G7 page 解析 | EXPIRED/配额生效值/Page 权限=**外部测试阶段实测槽**（A1/A5/A6/A7，spec §七） | 归外部测试阶段（§六.2，前置 founder 授权）——非块内 |
 
-**X 锚（E4-14 档位映射方向断言）——本工位不落，注明延后**：spec §四 X 锚冻结「不带链接=1cr / 带链接=4cr、映射不可倒置、含糊就高」。全库核实（`grep publishX|twitter|x adapter|4cr` 零命中；`channel-meta.ts` 仅 instagram/facebook）——**X adapter/档位映射常量尚无代码载体**。依 spec 与工位指令「无载体则此断言留待 E4-14 工位并注明」：**档位映射方向测试（带链接样本永不产 1cr）+ reserve→settle 幂等 + money-safety-review 归 E4-14 X adapter 施工工位**，本工位（W-B4-1）不建、不碰计费缝（边界纪律）。
+**X 锚（E4-14 档位映射方向断言）——本工位不落，注明延后**：spec §四 X 锚冻结「不带链接=1cr / 带链接=4cr、映射不可倒置、含糊就高」。**产品码尚无 X adapter/定价载体**（`apps/` `packages/` 下 grep `publishX|twitter|x-adapter` 零命中；`channel-meta.ts` 仅 instagram/facebook。注：无边界 grep `4cr` 会误中 docs 与 `spend.ts:85` 视频定价注释的 `14cr`——该处是视频 credit 价，非 X 档位，结论以窄范围为准）。依 spec 与工位指令「无载体则此断言留待 E4-14 工位并注明」：**档位映射方向测试（带链接样本永不产 1cr）+ reserve→settle 幂等 + money-safety-review 归 E4-14 X adapter 施工工位**，本工位（W-B4-1）不建、不碰计费缝（边界纪律）。
 
 ## ⑥ 全旅程证据（happy/empty/loading/denied/failure/retry/mobile）
 
@@ -87,7 +87,7 @@
 | E4-04 | meta-actions.test.ts:137 双 scope→canPublish | :172 无行 connected:false | n/a（同步派生） | :149 单 scope→false / :159 legacy ads-only→false | :91 exchange 失败 error | :208 F37 瞬时→transientError 不误判 reconnect |
 | E4-05 | publish.test.ts:220 ①success | :255 无可发连接→scanDue [] | :243 ④有余额→throw+释锁 stays PUBLISHING | :146 M1 canPublish=false→NEEDS_ATTENTION 零 Meta | :228 ③FAILED | :273/:289/:319 reap→reconcile；core/publish.test.ts:18 retryDelay 铁律 |
 | E4-06 | media/pub/route.test.ts:30 有效 token 流字节 | n/a（无空态；对象缺见 failure） | n/a（无状态 GET） | :55 跨租户 404 / :42 伪造 404 / **proxy.test.ts 新增 `/api/media/pubfoo` 进墙** | :70 MEDIA_PROXY_SECRET 未设→全 404 / :79 对象缺→404 | n/a（幂等 GET，无重试语义） |
-| E4-07 | meta-publish.test.ts:55 IG create→publish（新 caption 断言）/ :72 carousel | :124 无媒体→error | :95 ④container IN_PROGRESS→retryable 不发 | :85 ⑤a carousel abort（拒半发） | :104 container ERROR→③ / :193 FB Meta hard reject | :110 rate-limit(4)→retryable / :130/:145 H5 ambiguous（新 G4 /photos 2xx-no-id :184） |
+| E4-07 | meta-publish.test.ts:55 IG create→publish（新 caption 断言）/ :74 carousel | :129 无媒体→error | :100 ④container IN_PROGRESS→retryable 不发 | :90 ⑤a carousel abort（拒半发） | :109 container ERROR→③ / :205 FB Meta hard reject | :115 rate-limit(4)→retryable / :135/:150 H5 ambiguous（新 G4 /photos 2xx-no-id :190） |
 | E4-08 | publish-media-contract.test.ts:103 png 图合法转 JPEG | :92 空/未知 mime 拒（白名单=Asset.mime） | n/a（发布前确定性判定） | :79 video/mp4 拒（mediaContractRefused）/ schedule-actions.test.ts:245/:315/:702 IG_IMAGE_ONLY 三入口前置 | :117 混合轮播整帖拒零 ffmpeg/零存储写 | n/a（确定性拒故 NEEDS_ATTENTION 非 FAILED——重试无用是设计） |
 | E4-09 | meta-actions.test.ts:39 connect 加密 upsert / :265 disconnect 只删己行 | :172 无行 connected:false | n/a（同步） | :96 connect 冒充闸 / :270 disconnect 冒充闸 | :91 exchange 失败 / :103 debug_token 失败→canWrite:false | :208 F37 瞬时非 reconnect |
 | E4-10 | meta-write-actions.test.ts:578 setAdsAutonomy AUTO / :618 setAdsWritesPaused | n/a | n/a | :603 setAdsAutonomy 拒非法档("YOLO") | :110 kill-switch 拒全部写零 graph | n/a（**Otto 侧对等=假对等 v0.4，见 §④——归施工工位**） |
@@ -105,8 +105,8 @@
 #### W-B4-1 起证（存量证据链工位）· 本工位改动 + 可重跑命令
 
 **新增/修改测试（3 文件）**：
-- `packages/core/src/meta-publish.test.ts`（+12 行）：G1 单图容器 caption 断言、G1 轮播子图无 caption + 父容器 caption 断言、**新用例** G4 `/photos` 2xx-no-id→ambiguous。21 用例全绿。
-- `apps/web/lib/__tests__/proxy.test.ts`（+8 行）：**新用例** 契约5 matcher 边界回归（`/api/media/pubfoo` 进墙 + `/api/media/pub/<token>` 放行）。6 用例全绿。
+- `packages/core/src/meta-publish.test.ts`（+12 行）：G1 单图容器 caption 断言、G1 轮播子图无 caption + 父容器 caption 断言、**新用例** G4 `/photos` 2xx-no-id→ambiguous。21 用例全绿（证据=CI run [29193809299](https://github.com/BELCORT-SDN-BHD/FIKIRTIVE/actions/runs/29193809299) tests 关 pass @ e86d4deb）。
+- `apps/web/lib/__tests__/proxy.test.ts`（+8 行）：**新用例** 契约5 matcher 边界回归（`/api/media/pubfoo` 进墙 + `/api/media/pub/<token>` 放行）。6 用例全绿（同 CI run）。
 - `apps/web/proxy.ts`（产品代码，-1/+1）：matcher 排除 `api/media/pub` → `api/media/pub/`（补边界，契约5 验收项）。
 
 **可重跑命令**（本工位已本地跑绿）：
