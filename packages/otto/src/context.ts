@@ -209,4 +209,56 @@ export interface OttoContext {
   productIngest?: {
     fromUrl(url: string): Promise<{ draft: ProductDraft; text: string } | { error: string }>;
   };
+  /** Canvas port (W-B3-A, $0) — injected by the web caller. Every function is a thin closure over
+   *  the SAME owner-gated $0 server actions the human canvas UI uses (canvas-actions +
+   *  otto-canvas-bridge) — single action layer (宪法 7 / Seam 9). None of these touch startGen /
+   *  reserveCredits / the provider: placing a node only references media that was ALREADY
+   *  generated and charged. Skills reach it ONLY via ctx.canvas — never importing web actions or
+   *  Prisma (CI fence rule). Absent in the minimal worker verdict ctx; the skill degrades
+   *  gracefully when it is not injected. */
+  canvas?: {
+    /** $0 read: this project's canvas nodes (listCanvasNodes). */
+    list(): Promise<CanvasNodeView[] | { error: string }>;
+    /** $0 display-only sync: materialize chat GEN_RESULTs as nodes, then return all nodes
+     *  (syncOttoCanvasNodes — idempotent, never spends). */
+    sync(): Promise<CanvasNodeView[] | { error: string }>;
+    /** $0 write: place a text note or an ALREADY-generated image/video (createCanvasNode). */
+    place(input: {
+      type: "image" | "video" | "text";
+      x: number;
+      y: number;
+      w: number;
+      h: number;
+      text?: string;
+      prompt?: string;
+      generationId?: string;
+      sourceNodeId?: string;
+    }): Promise<{ id: string } | { error: string }>;
+    /** $0 write: edit a text node's content (updateTextNode). */
+    editText(id: string, text: string): Promise<{ ok: true } | { error: string }>;
+    /** $0 write: stamp a node's terminal display state (resolveCanvasNode). */
+    resolve(
+      id: string,
+      input: { status: "done" | "failed" | "timeout" | "missing"; generationId?: string },
+    ): Promise<{ ok: true } | { error: string }>;
+    /** $0 write: delete a node (deleteCanvasNode). Never refunds/cancels the underlying job. */
+    remove(id: string): Promise<{ ok: true } | { error: string }>;
+  };
 }
+
+/** A canvas node as skills see it — structural re-declaration; the web DTO
+ *  (apps/web/lib/canvas-actions.ts) must NOT be imported here. */
+export type CanvasNodeView = {
+  id: string;
+  type: string;
+  x: number;
+  y: number;
+  w: number;
+  h: number;
+  text: string | null;
+  prompt: string | null;
+  generationId: string | null;
+  status: string;
+  sourceNodeId: string | null;
+  url?: string | null;
+};
