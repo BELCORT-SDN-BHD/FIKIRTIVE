@@ -16,6 +16,7 @@ import { isImpersonating } from "@/lib/better-auth/compat";
 import { draftScheduledPost, IG_IMAGE_ONLY_ERROR } from "./schedule-service";
 import { channelRegistry } from "./channels/registry";
 import type { ChannelId } from "./channels/types";
+import { signSharePreviewToken } from "@fikirtive/token-crypto";
 
 // F15 / L1: staff impersonating a customer must never MUTATE that customer's schedule — approve in
 // particular consents to a real, IRREVERSIBLE external publish on the tenant's behalf, forging their
@@ -469,4 +470,67 @@ export async function listOwnerTargets(): Promise<OwnerTarget[]> {
     for (const t of targets) out.push({ id: t.id, name: t.name, channel: channel.id });
   }
   return out;
+}
+
+export type PostingTimeSuggestion = { dayOfWeek: number; hourUtc: number; score: number; rationale: string };
+
+/** B0-103: cold-start posting-time suggestions for a channel, read from the STATIC global seed table
+ *  (PostingTimeSeed — NOT owner-scoped; the same craft knowledge for everyone), ordered best-first.
+ *  Requires an authenticated caller (auth ≠ tenant scope — the data itself is global) but returns []
+ *  for anyone unauthed. $0 read-only, no write path. Feeds both the composer's time picker and Otto's
+ *  suggestPostTimes skill (via ctx.schedule.suggestTimes). */
+export async function suggestPostTimes(
+  input: { channel: string; limit?: number },
+): Promise<PostingTimeSuggestion[]> {
+  const channel = typeof input?.channel === "string" ? input.channel : "";
+  if (!channel) return [];
+  const gate = await requireOwner();
+  if ("error" in gate) return [];
+  const take = typeof input?.limit === "number" && input.limit > 0 ? Math.min(Math.floor(input.limit), 20) : 6;
+  const rows = await prisma.postingTimeSeed.findMany({
+    where: { channel },
+    orderBy: [{ score: "desc" }, { dayOfWeek: "asc" }, { hourUtc: "asc" }],
+    take,
+    select: { dayOfWeek: true, hourUtc: true, score: true, rationale: true },
+  });
+  return rows;
+}
+
+export type SharePreviewResult = { token: string; url: string; expiresAt: string } | { error: string };
+
+// How long a share-preview link stays valid. Frozen default: 7 days (founder ack 可调 — one place).
+const SHARE_PREVIEW_TTL_MS = 7 * 24 * 60 * 60 * 1000;
+
+/** B0-28: mint a SEAT-LESS, read-only share link for ONE of the caller's OWN scheduled posts. Verifies
+ *  ownership, then signs an HMAC (ownerId+postId+exp) token — nothing is written to any external
+ *  platform (internal write). Fail-closed: no SHARE_PREVIEW_SECRET → error; a post the caller doesn't
+ *  own → "Post not found." A tampered/expired token later verifies to null → the read route's 404
+ *  (越权静默 404). The link's target page (schedule/share-preview) lands with the A′ foundation. $0. */
+export async function sharePostPreview(
+  input: { scheduledPostId: string; ttlMs?: number },
+): Promise<SharePreviewResult> {
+  const id = typeof input?.scheduledPostId === "string" ? input.scheduledPostId : "";
+  if (!id) return { error: "Invalid request." };
+  const gate = await requireOwner();
+  if ("error" in gate) return gate;
+  if (await isImpersonating()) return { error: IMPERSONATION_BLOCK };
+
+  const secret = process.env.SHARE_PREVIEW_SECRET ?? "";
+  if (!secret) return { error: "Sharing isn't set up on this server yet." };
+
+  const post = await prisma.scheduledPost.findFirst({
+    where: { id, ownerId: gate.ownerId, deletedAt: null },
+    select: { id: true },
+  });
+  if (!post) return { error: "Post not found." };
+
+  const ttl = typeof input?.ttlMs === "number" && input.ttlMs > 0 ? input.ttlMs : SHARE_PREVIEW_TTL_MS;
+  const expMs = Date.now() + ttl;
+  const token = signSharePreviewToken(gate.ownerId, post.id, expMs, secret);
+  const base = process.env.BETTER_AUTH_URL ?? "";
+  return {
+    token,
+    url: `${base}/schedule/share-preview?t=${encodeURIComponent(token)}`,
+    expiresAt: new Date(expMs).toISOString(),
+  };
 }

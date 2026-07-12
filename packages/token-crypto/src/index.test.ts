@@ -1,5 +1,12 @@
 import { describe, it, expect, beforeAll } from "vitest";
-import { encryptToken, decryptToken, signMediaToken, verifyMediaToken } from "./index.js";
+import {
+  encryptToken,
+  decryptToken,
+  signMediaToken,
+  verifyMediaToken,
+  signSharePreviewToken,
+  verifySharePreviewToken,
+} from "./index.js";
 
 beforeAll(() => {
   // 32-byte key as 64 hex chars
@@ -63,5 +70,41 @@ describe("media-proxy token (HMAC, Plan B §四C)", () => {
   });
   it("rejects malformed input", () => {
     expect(verifyMediaToken("garbage", SECRET, now)).toBeNull();
+  });
+});
+
+describe("share-preview token (HMAC, B0-28 §2.2)", () => {
+  const SECRET = "share-secret-xyz";
+  const now = 1_800_000_000_000;
+
+  it("round-trips owner + post + expiry", () => {
+    const t = signSharePreviewToken("org_1", "post_9", now + 3600_000, SECRET);
+    expect(verifySharePreviewToken(t, SECRET, now)).toEqual({ ownerId: "org_1", postId: "post_9", exp: now + 3600_000 });
+  });
+  it("owner isolation: a tampered payload (swap owner/post) fails the HMAC → null", () => {
+    const t = signSharePreviewToken("org_1", "post_9", now + 3600_000, SECRET);
+    const dot = t.lastIndexOf(".");
+    const forged = Buffer.from(JSON.stringify({ o: "org_2", p: "post_9", exp: now + 3600_000 })).toString("base64url");
+    expect(verifySharePreviewToken(`${forged}.${t.slice(dot + 1)}`, SECRET, now)).toBeNull();
+  });
+  it("rejects a tampered signature", () => {
+    const t = signSharePreviewToken("org_1", "post_9", now + 3600_000, SECRET);
+    expect(verifySharePreviewToken(t.slice(0, -2) + "zz", SECRET, now)).toBeNull();
+  });
+  it("rejects a token signed with a different secret", () => {
+    const t = signSharePreviewToken("org_1", "post_9", now + 3600_000, SECRET);
+    expect(verifySharePreviewToken(t, "other-secret", now)).toBeNull();
+  });
+  it("expires (越权/过期 → null → route 404)", () => {
+    const t = signSharePreviewToken("org_1", "post_9", now + 1000, SECRET);
+    expect(verifySharePreviewToken(t, SECRET, now + 2000)).toBeNull();
+    expect(verifySharePreviewToken(t, SECRET, now)).not.toBeNull();
+  });
+  it("fails closed when the secret is unset", () => {
+    expect(() => signSharePreviewToken("org_1", "post_9", now + 1000, "")).toThrow();
+    expect(verifySharePreviewToken("anything.sig", "", now)).toBeNull();
+  });
+  it("rejects malformed input", () => {
+    expect(verifySharePreviewToken("garbage", SECRET, now)).toBeNull();
   });
 });

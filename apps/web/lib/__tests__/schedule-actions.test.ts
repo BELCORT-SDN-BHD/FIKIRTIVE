@@ -22,6 +22,7 @@ const {
   mockIgListTargets,
   mockFbListTargets,
   mockPublishAttemptFindFirst,
+  mockPostingTimeFindMany,
 } = vi.hoisted(() => ({
   mockRequireOwner: vi.fn(),
   mockIsImpersonating: vi.fn(),
@@ -37,6 +38,7 @@ const {
   mockIgListTargets: vi.fn(),
   mockFbListTargets: vi.fn(),
   mockPublishAttemptFindFirst: vi.fn(),
+  mockPostingTimeFindMany: vi.fn(),
 }));
 
 // createScheduledPost now delegates to schedule-service.ts, which is `import "server-only"`.
@@ -58,6 +60,7 @@ vi.mock("@fikirtive/db", () => ({
     },
     generation: { findMany: mockGenFindMany },
     publishAttempt: { findFirst: mockPublishAttemptFindFirst },
+    postingTimeSeed: { findMany: mockPostingTimeFindMany },
   },
 }));
 vi.mock("../meta-pages", () => ({ fetchOwnerPages: mockFetchOwnerPages }));
@@ -84,8 +87,11 @@ import {
   cancelScheduledPost,
   listScheduledPosts,
   listOwnerTargets,
+  suggestPostTimes,
+  sharePostPreview,
 } from "../schedule-actions";
 import { IG_IMAGE_ONLY_ERROR } from "../schedule-service";
+import { verifySharePreviewToken } from "@fikirtive/token-crypto";
 
 const OWNER = "o1";
 const AT = "2026-07-10T09:00:00.000Z";
@@ -917,5 +923,61 @@ describe("listOwnerTargets", () => {
     expect(await listOwnerTargets()).toEqual([]);
     expect(mockIgListTargets).not.toHaveBeenCalled();
     expect(mockFbListTargets).not.toHaveBeenCalled();
+  });
+});
+
+// --- suggestPostTimes (B0-103) + sharePostPreview (B0-28) — W-B4-3 -------------
+
+describe("suggestPostTimes (B0-103, read parity)", () => {
+  it("returns [] when the caller isn't authenticated", async () => {
+    mockRequireOwner.mockResolvedValueOnce({ error: "unauthorized" });
+    expect(await suggestPostTimes({ channel: "instagram" })).toEqual([]);
+  });
+  it("reads the static seed for the channel (best-first) and maps the shape", async () => {
+    mockPostingTimeFindMany.mockResolvedValueOnce([{ dayOfWeek: 3, hourUtc: 19, score: 90, rationale: "peak" }]);
+    const res = await suggestPostTimes({ channel: "instagram", limit: 3 });
+    expect(mockPostingTimeFindMany).toHaveBeenCalledWith(
+      expect.objectContaining({ where: { channel: "instagram" }, take: 3 }),
+    );
+    expect(res).toEqual([{ dayOfWeek: 3, hourUtc: 19, score: 90, rationale: "peak" }]);
+  });
+  it("returns [] for a blank channel without touching the db", async () => {
+    expect(await suggestPostTimes({ channel: "" })).toEqual([]);
+    expect(mockPostingTimeFindMany).not.toHaveBeenCalled();
+  });
+});
+
+describe("sharePostPreview (B0-28, owner-scoped mint)", () => {
+  const SECRET = "share-secret-test";
+  beforeEach(() => {
+    process.env.SHARE_PREVIEW_SECRET = SECRET;
+  });
+
+  it("fails closed when SHARE_PREVIEW_SECRET is unset", async () => {
+    delete process.env.SHARE_PREVIEW_SECRET;
+    const res = await sharePostPreview({ scheduledPostId: "p1" });
+    expect("error" in res).toBe(true);
+    expect(mockFindFirst).not.toHaveBeenCalled(); // fail-closed BEFORE any db read
+  });
+  it("owner isolation: a post the caller does not own → 'Post not found', no token", async () => {
+    mockFindFirst.mockResolvedValueOnce(null); // findFirst is scoped to {id, ownerId, deletedAt:null}
+    const res = await sharePostPreview({ scheduledPostId: "not-mine" });
+    expect(res).toEqual({ error: "Post not found." });
+  });
+  it("mints an HMAC token bound to (ownerId, postId) for an OWNED post", async () => {
+    mockFindFirst.mockResolvedValueOnce({ id: "p1" });
+    const res = await sharePostPreview({ scheduledPostId: "p1" });
+    if ("error" in res) throw new Error("expected a token, got an error");
+    // The action's findFirst must scope to the session owner (铁幕).
+    expect(mockFindFirst).toHaveBeenCalledWith(
+      expect.objectContaining({ where: expect.objectContaining({ id: "p1", ownerId: OWNER }) }),
+    );
+    expect(verifySharePreviewToken(res.token, SECRET)).toMatchObject({ ownerId: OWNER, postId: "p1" });
+    expect(res.url).toContain("/schedule/share-preview?t=");
+  });
+  it("is blocked while impersonating a customer (no forged share on their behalf)", async () => {
+    mockIsImpersonating.mockResolvedValueOnce(true);
+    const res = await sharePostPreview({ scheduledPostId: "p1" });
+    expect("error" in res).toBe(true);
   });
 });

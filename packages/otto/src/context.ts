@@ -244,6 +244,19 @@ export interface OttoContext {
     list(input: { from?: string; to?: string }): Promise<ScheduledPostSummary[]>;
     /** debt-74 (read parity). Owner-scoped connectable publish targets (empty when unconnected). */
     listTargets(): Promise<ScheduleTarget[]>;
+    /** B0-103 (read parity, $0). Cold-start best-time-to-post suggestions for a channel, read from
+     *  the STATIC global seed table (no owner scope — same craft knowledge for everyone), ordered
+     *  best-first. Skills reach it ONLY via this port — never Prisma directly. Never writes. */
+    suggestTimes(input: { channel: string; limit?: number }): Promise<
+      { dayOfWeek: number; hourUtc: number; score: number; rationale: string }[]
+    >;
+    /** B0-28 (write, internal). Mint a SEAT-LESS, read-only share link for one OWNED post: the
+     *  server verifies ownership, then signs an HMAC (ownerId+postId+exp) token (never touches an
+     *  external platform). Returns the link or an error (post not found / not owned). Reached ONLY
+     *  via this port → the same owner-scoped server action. */
+    sharePreview(input: { scheduledPostId: string; ttlMs?: number }): Promise<
+      { token: string; url: string; expiresAt: string } | { error: string }
+    >;
   };
   /** Approval-consent snapshot (AR2 处方1, B4 debt-70) — injected ONLY by ottoApprove when
    *  resuming a universal approval card, NEVER derived from model args. Carries the post's

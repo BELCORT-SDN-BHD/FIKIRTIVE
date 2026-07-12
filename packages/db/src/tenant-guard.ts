@@ -20,6 +20,10 @@ export const TENANT_MODELS = new Set([
   // 重定向/扫码端点是公共匿名的,但写事件一律 server 侧 scope 到 link.ownerId —— 未来切片的
   // list-query 全部 owner-scoped,故进 TENANT_MODELS(非 EXEMPT)。
   "TrackedLink", "QrAsset", "QrPlacement", "VoucherToken", "SourceTag", "AttributionEvent",
+  // B0-30 (2026-07-13): generic channel-connection layer. Owner-scoped by birth (宪法 6); unlike
+  // MetaConnection (EXEMPT: worker resolves ads tokens by connection id + platform-wide admin list),
+  // this new table has NO platform-wide read requirement yet, so the conservative default is guarded.
+  "ChannelConnection",
 ]);
 
 /** ownerId models deliberately NOT runtime-guarded — every entry carries its reason.

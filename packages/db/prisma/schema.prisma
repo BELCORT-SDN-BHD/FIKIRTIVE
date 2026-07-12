@@ -630,6 +630,8 @@ model Organization {
   voucherTokens           VoucherToken[]
   sourceTags              SourceTag[]
   attributionEvents       AttributionEvent[]
+  // B0-30: generic multi-channel connection layer (seam 4/5); back-relation required by Prisma.
+  channelConnections      ChannelConnection[]
 }
 
 // User <-> Organization join, carrying the per-org role. role/status are code-validated
@@ -1081,6 +1083,49 @@ model MetaConnection {
   defaultPageId  String?                         // FB Page the org wants to post to by default
   createdAt      DateTime     @default(now())
   updatedAt      DateTime     @updatedAt
+}
+
+// B0-30: generic channel-connection schema (harmony-01 §三 #5; MASTERPLAN P1½-2). The future home
+// for ANY publish channel — Meta migrates in when convenient; a new channel = a new adapter, no core
+// change. `kind` is an OPEN string (house style, NOT a closed enum) so adding "x"/"tiktok"/"linkedin"
+// needs no migration. Crypto discipline mirrors MetaConnection: accessTokenEnc is AES-256-GCM
+// ciphertext (packages/token-crypto), never plaintext, never sent to the client. Owner-scoped
+// (宪法 6 铁幕): every query filters ownerId — registered in TENANT_MODELS (packages/db/src/tenant-guard.ts).
+model ChannelConnection {
+  id             String       @id
+  ownerId        String
+  organization   Organization @relation(fields: [ownerId], references: [id], onDelete: Cascade)
+  kind           String       // OPEN string: "instagram" | "facebook" | "x" | … (new channel ⇒ no migration)
+  externalId     String?      // channel-side account/page id (e.g. IG business id, X user id)
+  displayName    String?      // human label for the connected account
+  accessTokenEnc String       // AES-256-GCM ciphertext; never plaintext, never sent to the client
+  tokenExpiresAt DateTime?
+  scope          String       @default("")
+  status         String       @default("active") // "active" | "expired"
+  createdAt      DateTime     @default(now())
+  updatedAt      DateTime     @updatedAt
+
+  // At most one connection per (owner, channel, external account). A NULL externalId = the single
+  // "default" connection for that (owner, kind) before an account id is bound.
+  @@unique([ownerId, kind, externalId])
+  @@index([ownerId])
+}
+
+// B0-103: cold-start posting-time seed (GRILL-VERDICTS:157; A/S 区 composer suggestion).
+// STATIC, GLOBAL, READ-ONLY craft knowledge — the best windows to post per channel, seeded once so
+// the composer can suggest good times BEFORE a user has any history of their own. Deliberately NOT
+// owner-scoped (no ownerId): it is the same knowledge for everyone, like a template, so it never
+// enters the tenant iron-curtain. Otto reads it via the suggestPostTimes skill (free/read/internal).
+model PostingTimeSeed {
+  id        String @id
+  channel   String // "instagram" | "facebook" | … (matches ChannelConnection.kind / SCHEDULE_CHANNELS vocabulary)
+  dayOfWeek Int    // 0=Sunday … 6=Saturday (UTC)
+  hourUtc   Int    // 0–23, the slot's start hour in UTC
+  score     Int    // relative slot strength (higher = better) for ranking
+  rationale String @default("") // short human note, e.g. "evening scroll peak"
+
+  @@unique([channel, dayOfWeek, hourUtc])
+  @@index([channel])
 }
 
 // G7: idempotency table for Otto ad-write steps. One row per (owner, card, step).
