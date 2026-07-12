@@ -776,10 +776,14 @@ export async function ottoApprove(raw: unknown): Promise<
   | { ok: true; status: "degraded" }
   | { ok: true; status: "stale" }
   | { ok: true; genJobId: string; status: string } // double-approve: existing job
-  | { ok: true; alreadyResolved: true; resolution: "approved" | "rejected" } // double-approve: consumed card
+  | { ok: true; alreadyResolved: true; resolution: "approved" | "rejected" } // double-approve/-reject: consumed card
   | { error: string }
 > {
-  // Inline validation (no zod dep in apps/web) — mirror brief schema
+  // Inline validation (no zod dep in apps/web) — mirror brief schema. `decision` is the optional
+  // resolution verdict for a universal APPROVAL_CARD (default "approve"); "reject" declines the
+  // parked ask (B4 debt-70 test ③) — one resolution action, two verdicts, so the decline path
+  // does not mint a second exported action surface.
+  const decisionRaw = typeof raw === "object" && raw !== null ? (raw as Record<string, unknown>).decision : undefined;
   if (
     typeof raw !== "object" ||
     raw === null ||
@@ -788,7 +792,8 @@ export async function ottoApprove(raw: unknown): Promise<
     ((raw as Record<string, unknown>).threadId as string).length < 1 ||
     ((raw as Record<string, unknown>).threadId as string).length > 64 ||
     ((raw as Record<string, unknown>).cardId as string).length < 1 ||
-    ((raw as Record<string, unknown>).cardId as string).length > 64
+    ((raw as Record<string, unknown>).cardId as string).length > 64 ||
+    (decisionRaw !== undefined && decisionRaw !== "approve" && decisionRaw !== "reject")
   ) {
     return { error: "Invalid approval request." };
   }
@@ -799,6 +804,9 @@ export async function ottoApprove(raw: unknown): Promise<
   if ("error" in gate) return gate;
   if (await isImpersonating()) return { error: "Paused while impersonating a customer — exit impersonation to do this." };
   const { ownerId } = gate;
+
+  // Decline verdict → the internal universal-card decline path (never generate; zero writes).
+  if (decisionRaw === "reject") return declineApprovalCard(ownerId, threadId, cardId);
 
   try {
     // Load thread owner-scoped (cross-tenant rejected)
@@ -1080,7 +1088,7 @@ export async function ottoApprove(raw: unknown): Promise<
 }
 
 // ---------------------------------------------------------------------------
-// ottoReject — decline a parked non-generate approval (universal card chain, B4 debt-70)
+// declineApprovalCard — decline a parked non-generate approval (universal card chain, B4 debt-70)
 // ---------------------------------------------------------------------------
 
 /**
@@ -1089,31 +1097,23 @@ export async function ottoApprove(raw: unknown): Promise<
  * executing the tool, so ZERO schedule writes happen — the run resumes metered so Otto closes out
  * cleanly, and the card is stamped rejected (a later approve/reject of the same card refuses
  * benignly). generate cards are NOT handled here: their decline UX stays the existing plan-card flow.
+ *
+ * INTERNAL (not an exported action): reached only through ottoApprove's `decision: "reject"`
+ * verdict — one exported resolution surface, two verdicts. Caller has already gated identity
+ * (requireOwner) + impersonation; `ownerId` comes from that verified session.
  */
-export async function ottoReject(raw: unknown): Promise<
-  | { ok: true; status: "done" | "degraded" | "stale" | "needs_approval" }
+async function declineApprovalCard(
+  ownerId: string,
+  threadId: string,
+  cardId: string,
+): Promise<
+  | { ok: true; status: "done"; reply: string }
+  | { ok: true; status: "needs_approval"; pendingCardIds: string[] }
+  | { ok: true; status: "degraded" }
+  | { ok: true; status: "stale" }
   | { ok: true; alreadyResolved: true; resolution: "approved" | "rejected" }
   | { error: string }
 > {
-  if (
-    typeof raw !== "object" ||
-    raw === null ||
-    typeof (raw as Record<string, unknown>).threadId !== "string" ||
-    typeof (raw as Record<string, unknown>).cardId !== "string" ||
-    ((raw as Record<string, unknown>).threadId as string).length < 1 ||
-    ((raw as Record<string, unknown>).threadId as string).length > 64 ||
-    ((raw as Record<string, unknown>).cardId as string).length < 1 ||
-    ((raw as Record<string, unknown>).cardId as string).length > 64
-  ) {
-    return { error: "Invalid request." };
-  }
-  const { threadId, cardId } = raw as { threadId: string; cardId: string };
-
-  const gate = await requireOwner();
-  if ("error" in gate) return gate;
-  if (await isImpersonating()) return { error: "Paused while impersonating a customer — exit impersonation to do this." };
-  const { ownerId } = gate;
-
   try {
     const thread = await prisma.chatThread.findFirst({
       where: { id: threadId, ownerId, deletedAt: null },
@@ -1254,10 +1254,12 @@ export async function ottoReject(raw: unknown): Promise<
     });
     revalidatePath("/", "layout");
     if (finalized.status === "stale") return { ok: true, status: "stale" };
-    if (finalized.status === "needs_approval") return { ok: true, status: "needs_approval" };
-    return { ok: true, status: "done" };
+    if (finalized.status === "needs_approval") {
+      return { ok: true, status: "needs_approval", pendingCardIds: finalized.pendingCardIds };
+    }
+    return { ok: true, status: "done", reply: finalized.reply };
   } catch (e) {
-    console.error("[ottoReject] failed:", errSummary(e));
+    console.error("[declineApprovalCard] failed:", errSummary(e));
     return { error: "Couldn't decline that — please try again." };
   }
 }

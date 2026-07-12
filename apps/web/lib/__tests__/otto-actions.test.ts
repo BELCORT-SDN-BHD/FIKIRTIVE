@@ -216,7 +216,7 @@ vi.mock("@fikirtive/otto", async (importOriginal) => {
 
 // ── Import SUT after mocks ───────────────────────────────────────────────────
 
-const { ottoTurn, mapOttoUsage, buildOttoContext, ottoApprove, ottoReject, createEmptyCoworkThread, deleteCoworkThread, setCoworkThreadPinned, finalizeOttoRun } = await import("@/lib/otto-actions");
+const { ottoTurn, mapOttoUsage, buildOttoContext, ottoApprove, createEmptyCoworkThread, deleteCoworkThread, setCoworkThreadPinned, finalizeOttoRun } = await import("@/lib/otto-actions");
 
 // ── Shared fixtures ──────────────────────────────────────────────────────────
 
@@ -1579,11 +1579,11 @@ describe("ottoApprove — universal branch (test ②: approve → resume → sam
   });
 });
 
-describe("ottoReject — decline path (test ③: rejected tool never executes, zero writes)", () => {
+describe("ottoApprove decision:\"reject\" — decline path (test ③: rejected tool never executes, zero writes)", () => {
   it("rejects the parked item with a message, resumes metered, stamps the card rejected — approve never called", async () => {
     setupUniversalApprove();
 
-    const res = await ottoReject({ threadId: APPROVE_THREAD_ID_2, cardId: APPROVAL_CARD_MSG_ID });
+    const res = await ottoApprove({ threadId: APPROVE_THREAD_ID_2, cardId: APPROVAL_CARD_MSG_ID, decision: "reject" });
 
     expect(res).toMatchObject({ ok: true, status: "done" });
     // The SDK-level rejection — the tool (and thus the schedule server action) never executes.
@@ -1609,18 +1609,24 @@ describe("ottoReject — decline path (test ③: rejected tool never executes, z
   it("test ④ (reject side): a consumed card refuses benignly — no reject, no run", async () => {
     setupUniversalApprove("rejected");
 
-    const res = await ottoReject({ threadId: APPROVE_THREAD_ID_2, cardId: APPROVAL_CARD_MSG_ID });
+    const res = await ottoApprove({ threadId: APPROVE_THREAD_ID_2, cardId: APPROVAL_CARD_MSG_ID, decision: "reject" });
 
     expect(res).toEqual({ ok: true, alreadyResolved: true, resolution: "rejected" });
     expect(mockReject).not.toHaveBeenCalled();
     expect(mockRun).not.toHaveBeenCalled();
   });
 
+  it("an unknown decision value is refused at validation — no gate work, no state restore", async () => {
+    const res = await ottoApprove({ threadId: APPROVE_THREAD_ID_2, cardId: APPROVAL_CARD_MSG_ID, decision: "maybe" });
+    expect(res).toEqual({ error: "Invalid approval request." });
+    expect(mockRunStateFromString).not.toHaveBeenCalled();
+  });
+
   it("declining a stale ask (interruption gone, post not approved) closes the card without a resume", async () => {
     setupUniversalApprove("pending", []);
     mockScheduledPostFindFirst.mockResolvedValue({ approvedAt: null });
 
-    const res = await ottoReject({ threadId: APPROVE_THREAD_ID_2, cardId: APPROVAL_CARD_MSG_ID });
+    const res = await ottoApprove({ threadId: APPROVE_THREAD_ID_2, cardId: APPROVAL_CARD_MSG_ID, decision: "reject" });
 
     expect(res).toEqual({ ok: true, alreadyResolved: true, resolution: "rejected" });
     expect(mockReject).not.toHaveBeenCalled();
