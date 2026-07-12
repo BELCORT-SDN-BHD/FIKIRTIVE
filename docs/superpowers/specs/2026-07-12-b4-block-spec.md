@@ -1,9 +1,10 @@
-# B4 · 发布 L1 + Meta 通电族 · 块 spec（v0.2——冻结候选）
+# B4 · 发布 L1 + Meta 通电族 · 块 spec（v0.3——冻结候选）
 
 > 2026-07-12。epoch `claude-20260712-03`。工位=SPEC-B4（worker 作品，署名工位）。
 > 性质：**冻契约不冻实现**——本 spec 冻结的是发布 L1 闭环的**接口形状与语义**（六态/四锁/授权闸/媒体契约/签名代理/单一动作层/reconcile 铁律/X 计费缝），实现行号可继续演进（媒体 id 补链、FB recent-posts reconcile 等在途工程不构成移动靶）。
 > **状态：冻结候选（freeze candidate）——冻结走四权闭环（双顾问签核+异族复审+机器闸+非作者合并），依 #254 §一.2。本 PR 只起草+开 PR，不自称已冻结、不迁行、不碰矩阵/五本账/产品代码。** spec-ready 迁移随**冻结 PR**（04-B4 相关行随冻结迁级）。
 > **v0.2 闭合 codex BR1（BLOCK，五项全实）**：①三处失实改正——共享编排指向改 `packages/core/src/meta-publish.ts:126`（`publish.ts` 只是队列契约）；「零 per-channel worker 分叉」降准为闭集分发实况（`publish.ts:356` if/else + `schedule-draft.ts:12` 闭集），E4-14/E4-16 施工合同随之改写；proxy matcher「精确排除」改正为**无边界前缀**（`proxy.ts:73`，`/api/media/pubfoo` 会被放行），边界断言列入 B4 施工验收项。②**debt-70 改判（控制面裁定，采 codex 替代方案）**：撤回 ACCOUNT_SECURITY 豁免提案，改 **gated skill 清偿**（`free/write/external` → `deriveNeedsApproval`〔`skill.ts:66`〕自动 true——人仍逐次亲手确认，Otto 不自批、闸不失义、**零豁免、不触修宪**）；debt-71~74 契约冻全（三元组/port/handler/测试命名/debt-72 退 DRAFT 不变式）。③9 行真硬化（逐行点名 tool 名+cost/effect/reach+归域）。④锚表两修（X 档位映射冻结+GRILL-VERDICTS:215 原文+方向断言；Meta 官方锚改逐关口判定表，A1 显式留 TBD-B4 实测槽）。⑤真实发帖边界统一（块内验收=mock/夹具级零真实外部写；测试账号真发=外部测试阶段单列 §六.2，前置 founder 授权）。
+> **v0.3 处置 codex BR1-R2 中段线索（复审任务因 codex 网络停摆取消；两条未确认线索经工位对代码核实——均属实）**：①**E4-14 触点清单补排期 UI 硬编码**——`OttoSchedule.tsx` 六处渠道字面量分支（ChannelIcon :86/:95、默认渠道 :287、composer 回退 :405、筛选 chips :434-435、类型断言 :1123/:1135、caps 文案二元 ternary :1199）入触点⑦；契约6 闭集触点 4→5 处，UI 收敛=CHANNEL_META 数据驱动。②**通用审批卡链缺口**——`ottoApprove` 匹配器硬过滤 `toolName !== "generate"`（`otto-actions.ts:697`），非 generate 的 needsApproval 中断**卡出不来、批不动=闸有名无实**；**不推翻 gated-skill 方案**（派生律 fail-closed 成立：中断只 pause、不误执行），通用审批卡链（渲染+匹配泛化+恢复+测试）补进 debt-70 施工触点（§五 5.1·附）。
 > **基线**：本 spec 逐断言对 `main@45fb27f7`（`45fb27f7c36e71a36a1af1854af852343cb08e58`）核实。L1 施工图 `docs/superpowers/specs/2026-07-10-l1-meta-organic-publish-lighting.md` 的基线是 #213（`08759711`）时代——本 spec 的**第一工序（§一 差额核证）** = 把施工图逐断言对齐今日 main，冻结的是**已建成的真契约**而非图纸承诺。
 > 人话：排期区「草稿→排期→审批→真的发到 IG/FB」这条闭环，#227/#229/#230/#231/#233 已把它从桩点亮为真能力。本 spec = 把这条闭环的**规则**冻死（后面谁改都不许把安全阀拆了），并把 5.5 条还没建的新行（X 发布、广告工作台、分享预览、审批请求、渠道 schema、时段种子）的施工合同定清楚。
 
@@ -83,7 +84,7 @@ B4 块（`docs/ops/route-b/matrix/04-B4.md`）**20 行**：14 存量（`integrat
 | **E4-14** | X/Twitter 发布（判决「要」+ 1cr/4cr，隔离 adapter） | 排期 composer 加 X 渠道 | 起草仍经 `schedulePosts`（channel enum 扩 X——触点②）；**无独立 X 发帖 skill**（发布永远经审批管线，A04 原则） | **X 发布分档计费「不带链接=1cr / 带链接=4cr」走缝3 reserve→settle + 审批公式；变真必过 money-safety-review**（§六.4；档位映射冻结见 §四 X 锚） | X adapter 发布契约测试 + 计费 reserve→settle 幂等测试 + 档位映射方向测试（§四） | §④/§⑨/§⑪ |
 
 **E4-14 施工合同（工作量如实——A03 降准的施工化，接 X 需触碰的核心触点清单）**：
-① `packages/core/src/schedule-draft.ts:12-17` `SCHEDULE_CHANNELS` 闭集 + `SCHEDULE_CHANNEL_CAPS` 扩成员（现测试明确拒非 IG/FB——测试同步改）；② `packages/otto/src/skills/schedule-posts.ts:24` `z.enum(["instagram","facebook"])` 扩 X；③ `apps/worker/src/jobs/publish.ts:356-366` per-channel 分发扩分支（或收敛为分发表，见契约8 验收）；④ `apps/web/lib/channels/channel-meta.ts` 客户端镜像加 X；⑤ X adapter 本体 + 连接层（优先落 B0-30 ChannelConnection）；⑥ 计费缝3 reserve→settle（唯一 money 触点）。**此非「零核心改动」——工作量如实入批次。**
+① `packages/core/src/schedule-draft.ts:12-17` `SCHEDULE_CHANNELS` 闭集 + `SCHEDULE_CHANNEL_CAPS` 扩成员（现测试明确拒非 IG/FB——测试同步改）；② `packages/otto/src/skills/schedule-posts.ts:24` `z.enum(["instagram","facebook"])` 扩 X；③ `apps/worker/src/jobs/publish.ts:356-366` per-channel 分发扩分支（或收敛为分发表，见契约8 验收）；④ `apps/web/lib/channels/channel-meta.ts` 客户端镜像加 X；⑤ X adapter 本体 + 连接层（优先落 B0-30 ChannelConnection）；⑥ 计费缝3 reserve→settle（唯一 money 触点）；⑦ **排期 UI 渠道硬编码（v0.3 补，BR1-R2 线索核实属实）**——`apps/web/components/otto/OttoSchedule.tsx` 六处渠道字面量分支：`ChannelIcon` if/if 内联 glyph（`:86/:95`，新渠道无图标）、`openNew` 默认渠道回退 `?? "instagram"`（`:287`）、composer 渠道回退 `["instagram","facebook"]`（`:405`）、渠道筛选 chips 闭集（`:434-435`）、`as "instagram" | "facebook"` 类型断言（`:1123/:1135`）、caps 文案**二元 ternary**（`:1199`——非 IG 一律显示 "Single feed image"，X 会显示错文案）——X 接入须逐处扩展，或收敛为 `CHANNEL_META` 数据驱动（图标/文案/筛选全从 meta 表来，契约6 收敛验收）。（旁证：northstar 原型层 `_kit.tsx:74` `NsChannel` 已含 `"x"`——设计早已预期，工程层未跟上。）**此非「零核心改动」——工作量如实入批次。**
 
 **TBD-B4 硬化收口**：20 行的 `人工入口/Otto skill/权限花费闸/测试/报告` 五列全部硬化——Otto skill 列**无一行只写「归 X 域」**：或点名已注册 skill（`propose-meta-action`/`propose-ad-build`/`schedulePosts`）、或点名新 skill 全三元组（`sharePostPreview`/`suggestPostTimes`/debt-70~74 五件套见 §五）、或 n/a 附既有豁免出处/数据层理由。**无一行残留裸 TBD-B4。**
 
@@ -118,8 +119,8 @@ B4 块（`docs/ops/route-b/matrix/04-B4.md`）**20 行**：14 存量（`integrat
 
 ### 契约 6 · 单一发布动作层（宪法 7，E4-07）+ 渠道分发现状与收敛验收（E4-16）
 - **冻结（现状即真）**：worker 与人工按钮**不各写一套发布逻辑**——都经 `packages/core/src/meta-publish.ts`（`publishInstagram`:126 / `publishFacebook`）同一编排；六态/四锁/授权闸核心为渠道无关层。
-- **降准记录（v0.2，A03）**：「零 per-channel worker 分叉/加平台只加 adapter」**不是现状**——渠道分发今为闭集触点 4 处（worker if/else `publish.ts:356-366`、`SCHEDULE_CHANNELS` 闭集 `schedule-draft.ts:12`、skill `z.enum` `schedule-posts.ts:24`、客户端镜像 `channel-meta.ts`）。
-- **E4-16 验收（改写）**：B4 施工把上述 4 触点**收敛为登记式扩展点**（闭集常量/分发表一处改、六态/四锁/授权闸核心不分叉）；**X 接入（E4-14）即此收敛的活体验证**——验收断言=「X 落地 diff 中，核心编排/锁/闸文件零语义改动」。
+- **降准记录（v0.2，A03；v0.3 补 UI 层）**：「零 per-channel worker 分叉/加平台只加 adapter」**不是现状**——渠道分发今为闭集触点 **5 处**（worker if/else `publish.ts:356-366`、`SCHEDULE_CHANNELS` 闭集 `schedule-draft.ts:12`、skill `z.enum` `schedule-posts.ts:24`、客户端镜像 `channel-meta.ts`、**排期 UI 硬编码分支** `OttoSchedule.tsx:86-95,287,405,434-435,1123-1135,1199`〔v0.3，明细见 §二 E4-14 触点⑦〕）。
+- **E4-16 验收（改写）**：B4 施工把上述 5 触点**收敛为登记式扩展点**（闭集常量/分发表一处改；**UI 层由 `CHANNEL_META` 数据驱动**——图标/caps 文案/筛选 chips 全从 meta 表来，不留 per-channel ternary；六态/四锁/授权闸核心不分叉）；**X 接入（E4-14）即此收敛的活体验证**——验收断言=「X 落地 diff 中，核心编排/锁/闸文件零语义改动」。
 
 ### 契约 7 · reconcile 保守铁律（六态⑥，§四F）
 - reconcile **只用 GET**（幂等，不能双发）；**永不在结局不明时乐观重发**。
@@ -128,7 +129,7 @@ B4 块（`docs/ops/route-b/matrix/04-B4.md`）**20 行**：14 存量（`integrat
 - reaper 分「可证未发」（IG creationId=null→FAILED 可重试，恢复 pre-D2 行为）vs「歧义」（→UNCONFIRMED，Lock4 冻住）。
 
 ### 契约 8 · X 接入施工合同 + 计费断言（E4-14，形状冻结·实现随排产）
-- **冻结形状**：X 与 IG/FB 共用同一发布 worker/六态/四锁/授权闸（契约6 核心层）；接入=走契约6 收敛后的登记式扩展点。**触点清单（如实）**=§二 2.2 E4-14 施工合同 ①-⑥（闭集/enum/分发/镜像/adapter+连接层/计费缝）——**非「零核心改动」，工作量如实入批次**。
+- **冻结形状**：X 与 IG/FB 共用同一发布 worker/六态/四锁/授权闸（契约6 核心层）；接入=走契约6 收敛后的登记式扩展点。**触点清单（如实）**=§二 2.2 E4-14 施工合同 ①-⑦（闭集/enum/分发/镜像/adapter+连接层/计费缝/**排期 UI 硬编码**〔v0.3〕）——**非「零核心改动」，工作量如实入批次**。
 - **计费断言（碰 💰）**：X 发布分档「**不带链接=1cr / 带链接=4cr**」（GRILL-VERDICTS:215 方案 A 拍板，founder 已裁），走**缝3 reserve→settle + 审批公式**；数字进 config 层（宪法 5）；**变真必过 `money-safety-review`**（义务写进 E4-14 行 + §六.4）。档位映射方向冻结见 §四 X 锚（映射不可倒置）。计费点是本块**唯一** money 触点（organic IG/FB 发布 $0）。
 
 ---
@@ -185,6 +186,20 @@ B4 块（`docs/ops/route-b/matrix/04-B4.md`）**20 行**：14 存量（`integrat
   3. 宪法 7「Otto 可操作人能操作的 100%」由此成立（人能点 Approve，Otto 能**替你把 Approve 卡端到面前**）；宪法 4「external write → needsApproval」同时成立。双宪法同时满足，零豁免。
 - **skill 契约（冻结）**：tool 名 `approveScheduledPost`；域 `schedule`（B9 契约1）；port `ctx.schedule.approve`（**新增**）；handler `packages/otto/src/skills/approve-scheduled-post.ts` + `.test.ts`。**测试三断言**：①未确认不执行（先出卡，卡未批零写）②确认后经同一 server action（owner-scoped CAS + 状态机 + 媒体校验一个不少）③Otto 无任何绕卡路径（needsApproval 派生断言）。
 
+### 5.1·附 · 通用审批卡链（v0.3——BR1-R2 线索②核实属实，debt-70 施工触点补全）
+
+> **现状证据（对 main@45fb27f7 核实）**：今日的 SDK 中断审批链是 **generate 专用**——
+> ① `ottoApprove` 的 interruption 匹配器**硬过滤** `if (toolName !== "generate") return false;`（`apps/web/lib/otto-actions.ts:697`）——任何非 generate 的 needsApproval 中断永远匹配不上，人点了也只会得到 "That card isn't awaiting approval."；
+> ② 双批兜底同为 generate 专用（GenJob `cowork:<cardId>` 幂等键查询，`otto-actions.ts:707-714`）；
+> ③ 卡渲染=OttoPlanCard 的 parked spend 路径（`OttoChatStream.tsx:123-125`——「Card ids the run paused on (needs_approval) — drives OttoPlanCard's parked vs. proposed spend path」；`:250` needs_approval→pendingCardIds），无非 generate 类 write/external 中断的通用卡分支。
+> **判定**：此发现**不推翻 gated-skill 方案**——`deriveNeedsApproval` 派生律本身 fail-closed 成立（非 generate 中断会 pause 运行、**不会误执行**）；但审批卡渲染不出、`ottoApprove` 批不动 ⇒ **skill 造出来闸有名无实**。故「通用审批卡链」列为 debt-70 的**硬性施工触点**（不建即债不清）。
+
+**施工触点（debt-70 施工合同追加，冻结）**：
+1. **通用审批卡渲染**：非 generate 类 needsApproval 中断的通用卡（渲染 skill 人话名〔TOOL_STEP_LABELS，B9 契约4〕+ 参数摘要 + 确认/拒绝按钮），接进 `OttoChatStream`/`OttoConversation` 的 needs_approval 分支——generate 卡（OttoPlanCard spend 路径）保持专有渲染不动。
+2. **`ottoApprove` 匹配泛化**：匹配器从「只认 generate」泛化为「认注册表中 needsApproval=true 的 skill 名闭集」；generate 专有逻辑（cardId 绑定 + GenJob `cowork:` 双批兜底 + spend 语义）保留为 generate 分支；`approveScheduledPost` 分支用 **scheduledPostId 绑定 + B0-29 ApprovalRequest payload hash** 作等价幂等锚（双批=hash 已消费即拒，同 M2 精神）。
+3. **恢复链**：approve→resume 走同一 `withLlmBudget` 计量（resume 轮的 LLM 成本照计）；free skill **无 spend 语义**（不碰钱路、不建 GenJob）；恢复轮**全量装载**兼容（B9 契约5·附·1：approve 轮必须装载原 tool 所在域——恢复轮全量装载天然满足，交叉引用不复述）。
+4. **测试清单追加**：①通用卡渲染测试（非 generate 中断出卡、含人话 label）②非 generate approve→resume→执行链测试（确认后 server action 真执行、owner-scoped）③拒绝路径测试（拒后零写、run 干净收尾）④双批测试（同一 ApprovalRequest hash 第二次 approve=幂等拒）⑤generate 路径回归（泛化不碰 generate 分支语义——money-safety 邻接，评审时按 `money-safety-review` 过一遍 spend 路径未动）。
+
 ### 5.2 debt-71~74 · 契约冻全（三元组 / port / handler / 测试）
 
 > **port 现状**：`OttoContext.schedule` 今**仅有 `draft` 一个 port**（`packages/otto/src/context.ts:200-202`）。**需新增 port 清单（5 个）**：`approve` / `cancel` / `update` / `list` / `listTargets`——全部 web 注入、owner-closed、skills 永不直连 prisma/schedule-service（single-action-layer 规则，同 draft port 注释）。
@@ -197,7 +212,7 @@ B4 块（`docs/ops/route-b/matrix/04-B4.md`）**20 行**：14 存量（`integrat
 | debt-73 | `listScheduledPosts` | free / read / internal → false | `ctx.schedule.list` | `list-scheduled-posts.ts` + `.test.ts` | 读对等走 port 不直连 Prisma（B9 契约5）；owner 隔离 |
 | debt-74 | `listPublishTargets` | free / read / internal → false | `ctx.schedule.listTargets` | `list-publish-targets.ts` + `.test.ts` | ads-only 连接（无 page scope）返回空集；owner 隔离 |
 
-**处置收口**：5 条债全处置——**5 skill（1 gated external-write + 2 写 + 2 读），零豁免**。四类闭集未动，不触修宪停手条件。skill 出生即带 `domains`（B9 契约1 出生纪律）+ TOOL_STEP_LABELS（B9 契约4）+ parity-manifest 行由 `todoSkill` 转 `skill`（**基线文件唯一写权=控制面收口 PR**，B9 契约3——本 spec 只冻契约，不碰 manifest）。
+**处置收口**：5 条债全处置——**5 skill（1 gated external-write + 2 写 + 2 读），零豁免**。四类闭集未动，不触修宪停手条件。skill 出生即带 `domains`（B9 契约1 出生纪律）+ TOOL_STEP_LABELS（B9 契约4）+ parity-manifest 行由 `todoSkill` 转 `skill`（**基线文件唯一写权=控制面收口 PR**，B9 契约3——本 spec 只冻契约，不碰 manifest）。**debt-70 的债清判定（v0.3 硬化）：skill 落地 ∧ 通用审批卡链（5.1·附 四触点）落地 ∧ 测试清单全绿——三者齐才算清**（只建 skill 不接卡链=闸有名无实，不得转 `skill` 态）。
 
 ---
 
@@ -255,9 +270,10 @@ B4 块（`docs/ops/route-b/matrix/04-B4.md`）**20 行**：14 存量（`integrat
 
 ## 八、冻结条件与状态
 
-- **状态：冻结候选 v0.2（freeze candidate）。** 版本历史：
+- **状态：冻结候选 v0.3（freeze candidate）。** 版本历史：
   - **v0.1 骨架**：§一 差额核证（23 断言对 main@45fb27f7 立证）+ §二 20 行 TBD 硬化 + §三 八契约冻结对象 + §四 对标锚 + §五 债 5 条处置 + §六 三无边界 + §七 假设台账。
   - **v0.2 闭合 codex BR1（BLOCK，五项全部核实属实）**：①**三处失实改正**——A02 共享编排指向改 `packages/core/src/meta-publish.ts:126`（`publish.ts`=队列契约）；A03「零 per-channel worker 分叉」降准为闭集分发实况（`publish.ts:356` if/else、`schedule-draft.ts:12` 闭集、`schedule-posts.ts:24` z.enum、`channel-meta.ts` 镜像），E4-14/E4-16 施工合同随之改写（触点清单如实入批次，契约8/契约6）；契约5「matcher 精确排除」改正为**无边界前缀**（`proxy.ts:73`，`/api/media/pubfoo` 会放行），补边界断言+回归测试列入 B4 施工验收项。②**debt-70 改判（控制面裁定，采 codex 替代方案）**——撤回 ACCOUNT_SECURITY 豁免提案（现有成员全是身份/凭据生命周期，内容级外部写同意闸不同类；宪法「外部写照旧过审批」是正道），改 gated skill 清偿：`free/write/external` → `deriveNeedsApproval`（`skill.ts:66`）自动 needsApproval=true，人点卡=同意本体，Otto 不自批、闸不失义、**零豁免、不触修宪**；debt-71~74 契约冻全（三元组/5 新 port/handler/测试命名；debt-72 冻「实质编辑退 DRAFT 清 approvedAt」不变式，`schedule-actions.ts:236-240` 现状入契）。③**9 行真硬化**——E2-07/E4-10/E4-12 点名 `propose-meta-action`（free/write/internal，ads-analytics）、B0-27 点名 `propose-ad-build`、B0-28 新 `sharePostPreview`、B0-103 新 `suggestPostTimes`（均全三元组+归域）；E4-01/B0-29 随 debt-70 新方案重写；E4-14/E4-16 随①改写。④**锚表两修**——X 锚冻档位映射「不带链接=1cr/带链接=4cr」（GRILL-VERDICTS:215 原文引用）+实现方向断言（映射不可倒置、含糊就高、确定性判档）；Meta 官方锚改 G1-G7 逐关口判定表（预期请求/响应字段/允许结果可判定），A1/A5/A6/A7 显式留 TBD-B4 实测槽。⑤**真实发帖边界统一**——块内验收=mock/夹具级（零真实外部写）；测试账号真发→IG/FB 可见=外部测试阶段（§六.2 单列，前置=founder 授权，归 sandbox-verified 阶段执行）；spec 与 B4-REPORT 三处矛盾全消。
+  - **v0.3（codex BR1-R2 中段线索经工位核实处置——复审任务因 codex 网络停摆取消，两条未确认线索逐条对代码核实，均属实）**：①**E4-14 触点⑦补排期 UI 硬编码**——`OttoSchedule.tsx` 六处渠道字面量（ChannelIcon `:86/:95`、默认渠道 `:287`、composer 回退 `:405`、筛选 chips `:434-435`、类型断言 `:1123/:1135`、caps 文案二元 ternary `:1199`），契约6 闭集触点 4→5 处、E4-16 收敛验收加「UI 由 CHANNEL_META 数据驱动」；旁证 northstar 原型 `_kit.tsx:74` 已含 `"x"`。②**通用审批卡链补进 debt-70 施工触点（5.1·附）**——核实 `ottoApprove` 匹配器硬过滤 `toolName !== "generate"`（`otto-actions.ts:697`）、双批兜底 GenJob 专用（`:707-714`）、卡渲染仅 OttoPlanCard spend 路径（`OttoChatStream.tsx:123-125,250`）；不推翻 gated-skill 方案（派生律 fail-closed：中断只 pause 不误执行），但补四硬性施工触点（通用卡渲染/匹配泛化〔approveScheduledPost 用 scheduledPostId+ApprovalRequest hash 幂等锚〕/恢复链 withLlmBudget+全量装载/五项测试清单含 generate 回归）+ **debt-70 债清判定硬化**（skill∧卡链∧测试三者齐才算清）。
 - **冻结走四权闭环**（#254 §一.2）：双顾问签核 + 异族复审 + 机器闸 + 非作者合并。放行后 04-B4 相关行随**冻结 PR** 迁 `spec-ready`（**本 PR 不迁行**，#254 §一.3/§二.5 founder 终验一次过审计索引）。
 - **冻结时随契约上报 founder 的 founder-only 单列项**：①X 档位判定的**就高操作化细则**（短链/裸域名/跳转文案一律判带链接=4cr——多计费方向，founder ack；档位本身已拍板 GRILL:215，无需再裁）；②接口常量（`MEDIA_TTL_MS`/`PUBLISH_STALE_MS`）founder ack（现值已冻，可调需一处改）；③5 个新 `ctx.schedule` port + 5 新 skill 出生（缝1 登记 + B9 出生纪律，冻结 ack 时明示清单）。
 - **开放问题（v0.2 处置）**：

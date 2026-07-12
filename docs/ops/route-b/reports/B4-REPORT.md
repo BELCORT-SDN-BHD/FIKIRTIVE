@@ -21,7 +21,7 @@
 ## ④ 双执行矩阵
 
 - owner：〔块施工工位〕
-- 证据：〔人工路径 + Otto 话术逐条（含设置/异常/取消/花费确认）；20 行的人工入口 + Otto skill 硬化（逐行 tool 名+cost/effect/reach+归域）见 spec §二；债 5 条清偿（**5 skill 零豁免**：debt-70 gated skill〔free/write/external→needsApproval 派生 true，人点卡=同意本体〕+ 71/72 写 skill + 73/74 读 skill；5 个新 ctx.schedule port）见 spec §五——待施工后填活体〕
+- 证据：〔人工路径 + Otto 话术逐条（含设置/异常/取消/花费确认）；20 行的人工入口 + Otto skill 硬化（逐行 tool 名+cost/effect/reach+归域）见 spec §二；债 5 条清偿（**5 skill 零豁免**：debt-70 gated skill〔free/write/external→needsApproval 派生 true，人点卡=同意本体〕+ 71/72 写 skill + 73/74 读 skill；5 个新 ctx.schedule port + **通用审批卡链四触点**〔spec §五 5.1·附，v0.3——现状 ottoApprove 只认 generate，otto-actions.ts:697〕；debt-70 债清判定=skill∧卡链∧测试三者齐）见 spec §五——待施工后填活体〕
 
 ## ⑤ 对标锚（平齐/超过/未及）
 
@@ -69,6 +69,8 @@
   5. 〔proxy matcher 无边界前缀（`/api/media/pubfoo` 会被放行出会话墙，`proxy.ts:73`）——补边界断言+回归测试=施工验收项（spec §三 契约5）〕
   6. 〔E4-14 X 档位已拍板（GRILL-VERDICTS:215 方案 A）；**就高操作化细则**（短链/裸域名判 4cr）= founder ack（spec §四 X 锚）〕
   7. 〔App Review 外部钥匙未到——founder 侧商业验证/递件在等（spec §六.3）〕
+  8. 〔通用审批卡链现状 generate 专用（`ottoApprove` 硬过滤 `toolName !== "generate"`，`otto-actions.ts:697`；卡渲染仅 OttoPlanCard spend 路径）——debt-70 gated skill 的硬性施工触点（spec §五 5.1·附，v0.3）：不建卡链=闸有名无实，债不得转 skill 态〕
+  9. 〔排期 UI 六处渠道硬编码（`OttoSchedule.tsx:86-95,287,405,434-435,1123-1135,1199`）——E4-14 触点⑦（v0.3）；E4-16 收敛验收=UI 由 CHANNEL_META 数据驱动〕
 
 ## ⑬ 录像时间码 + founder 10 分钟自查脚本
 
