@@ -1,7 +1,7 @@
-# B2 数据契约 spec（事件 / 身份 / 同意）（v0.9——冻结候选）
+# B2 数据契约 spec（事件 / 身份 / 同意）（v1.0——冻结候选）
 
 > 2026-07-12。epoch `claude-20260712-03`。Sol 原阻断的解：**先冻数据契约，B8 设计与后续块在其上施工**，避免末期发现新 schema。
-> **状态：冻结候选（freeze candidate）——冻结走四权闭环（双顾问签核+异族复审+机器闸+非作者合并），依 #254 §一.2。** SOL 跨族复审 §2 的 B2 六条阻断项已逐条闭合，二三波需求单已吸收（§四点六）；v0.4 闭合 codex 异族评审（第二轮 BLOCK）清单：ConsentEvent 完整 Prisma 形状（契约 3）、AttributionEvent 完整字段抄录表（契约 1）、anonymousKey 应用层澄清（契约 2）、BusinessEvent/Receipt 互斥职责冻结（契约〇·附）、口碑各 kind 账本归属现在冻结（§四点六·1）、六表列举补 VoucherToken（§四点六·3）；v0.5 闭合 codex 第三轮两项：consent 派生顾客优先级修法、口碑观测流 `ReviewObservation` 追加式冻结；v0.6 闭合 codex 第四轮（四反例全真）两项：①consent 派生全序**换轴 `(receivedAt, id)` 到达序**（occurredAt 降级 advisory；`entryMode` interactive/backfill——迟到旧 grant 不复活；在途窗口不可归零诚实条款+`consent.late_revoke`+B7 发送记录带 `consentStateAt`；四验收案例）②观测流幂等键**嵌 `lifecycleEpoch` 生命周期纪元**（同 hash 删→现→删键碰撞全解；removed 行在对账中视同本地无，重现=epoch+1 补写）；**v0.7 闭合 codex 第五轮（权限位+并发层）四项**：①`entryMode` 改**服务端派生 computed 字段**（写入接口不接受此参数；派生表冻结；import 构造 interactive=结构不可能）②consent 折叠写入**per-三元组 advisory xact lock 序列化**（「到库即推进」改述为锁内维护的缓存列，读者随时重算得同值）③复活主权 **CAS**（epoch 推进条件更新，仅赢家插观测；输家规则冻结）④**键内纪元一致性不变量**（解析 `e<epoch>` 断言==行列，fail-loud 修复流程写明）+ 全文并发主权主动扫。**v0.8 闭合 codex R5 复审（机械层）五项**：①`sourceKind` 服务端绑定（端点→sourceKind 常量表，`entryMode`+`sourceKind` 两字段皆不可由调用方传；I-C1 扩为「interactive ⇔ 端点∈顾客亲为四端点」编译期常量断言，契约 3）②`receivedAt` **锁内 `clock_timestamp()` 赋值**（弃 `@default(now())`；一事务恰写一三元组、禁多锁消死锁面，契约 3）③`ReviewItem` 增 `lastObservationId`(ULID)，在线投影按 `(observedAt,id)` 字典序 tie-break（§四点六·1）④`ReviewItem` 增 `integrityStatus`（quarantined 冻写+界面诚实降级）+ `lifecycleEpoch` 缓存语义澄清（修列=缓存修复非篡史，受控例外+`integrity_repair` 审计，§四点六·1）⑤两缝收口（ContactIdentity merge 沿链解根→双锁→复核根未变，契约 2；LiveEventOutbox 空洞判废双条件，B9 契约 6）。**v0.9 闭合 codex R6 定向复审四项（R6 判②receivedAt 锁内赋值已 CLOSED）**：①sourceKind 常量表补闭集不变量+B8 请评前置改判读方+`evidenceRef` 定型诚实降准为**运行时格式断言**（I-C1 断言分两层：编译期=端点↔sourceKind↔entryMode 常量映射与接口签名类型级断言，运行时=evidenceRef 非空+逐端点格式断言，契约 3）③复活 CAS 补**字典序门**（WHERE 增 `(observedAt,id)` > `(lastObservedAt,lastObservationId)`，附与重建全序的一致性论证，§四点六·1）④quarantined **冻写谓词入机械层**（复活 CAS 与常规投影更新两条 WHERE 均增 `AND integrityStatus='ok'`；隔离期观测流照常 append、真源不冻，§四点六·1）⑤空洞判废改**登记式双条件**（首见登记 `firstSeenAt`+`xmaxAtFirstSeen` 快照——修 v0.6「读回滚 seq 行的 txid」不可执行缺陷，B9 契约 6）。本文本属共享契约/schema=founder-only 类别（高后果，#254 §三 双顾问之一 complete 签核入 provenance）；冻结走四权闭环放行（#254 §一.2）后 02-B2 相关行随冻结 PR 迁 `spec-ready`，founder 终验一次过审计索引（#254 §一.3/§二.5）。
+> **状态：冻结候选（freeze candidate）——冻结走四权闭环（双顾问签核+异族复审+机器闸+非作者合并），依 #254 §一.2。** SOL 跨族复审 §2 的 B2 六条阻断项已逐条闭合，二三波需求单已吸收（§四点六）；v0.4 闭合 codex 异族评审（第二轮 BLOCK）清单：ConsentEvent 完整 Prisma 形状（契约 3）、AttributionEvent 完整字段抄录表（契约 1）、anonymousKey 应用层澄清（契约 2）、BusinessEvent/Receipt 互斥职责冻结（契约〇·附）、口碑各 kind 账本归属现在冻结（§四点六·1）、六表列举补 VoucherToken（§四点六·3）；v0.5 闭合 codex 第三轮两项：consent 派生顾客优先级修法、口碑观测流 `ReviewObservation` 追加式冻结；v0.6 闭合 codex 第四轮（四反例全真）两项：①consent 派生全序**换轴 `(receivedAt, id)` 到达序**（occurredAt 降级 advisory；`entryMode` interactive/backfill——迟到旧 grant 不复活；在途窗口不可归零诚实条款+`consent.late_revoke`+B7 发送记录带 `consentStateAt`；四验收案例）②观测流幂等键**嵌 `lifecycleEpoch` 生命周期纪元**（同 hash 删→现→删键碰撞全解；removed 行在对账中视同本地无，重现=epoch+1 补写）；**v0.7 闭合 codex 第五轮（权限位+并发层）四项**：①`entryMode` 改**服务端派生 computed 字段**（写入接口不接受此参数；派生表冻结；import 构造 interactive=结构不可能）②consent 折叠写入**per-三元组 advisory xact lock 序列化**（「到库即推进」改述为锁内维护的缓存列，读者随时重算得同值）③复活主权 **CAS**（epoch 推进条件更新，仅赢家插观测；输家规则冻结）④**键内纪元一致性不变量**（解析 `e<epoch>` 断言==行列，fail-loud 修复流程写明）+ 全文并发主权主动扫。**v0.8 闭合 codex R5 复审（机械层）五项**：①`sourceKind` 服务端绑定（端点→sourceKind 常量表，`entryMode`+`sourceKind` 两字段皆不可由调用方传；I-C1 扩为「interactive ⇔ 端点∈顾客亲为四端点」编译期常量断言，契约 3）②`receivedAt` **锁内 `clock_timestamp()` 赋值**（弃 `@default(now())`；一事务恰写一三元组、禁多锁消死锁面，契约 3）③`ReviewItem` 增 `lastObservationId`(ULID)，在线投影按 `(observedAt,id)` 字典序 tie-break（§四点六·1）④`ReviewItem` 增 `integrityStatus`（quarantined 冻写+界面诚实降级）+ `lifecycleEpoch` 缓存语义澄清（修列=缓存修复非篡史，受控例外+`integrity_repair` 审计，§四点六·1）⑤两缝收口（ContactIdentity merge 沿链解根→双锁→复核根未变，契约 2；LiveEventOutbox 空洞判废双条件，B9 契约 6）。**v0.9 闭合 codex R6 定向复审四项（R6 判②receivedAt 锁内赋值已 CLOSED）**：①sourceKind 常量表补闭集不变量+B8 请评前置改判读方+`evidenceRef` 定型诚实降准为**运行时格式断言**（I-C1 断言分两层：编译期=端点↔sourceKind↔entryMode 常量映射与接口签名类型级断言，运行时=evidenceRef 非空+逐端点格式断言，契约 3）③复活 CAS 补**字典序门**（WHERE 增 `(observedAt,id)` > `(lastObservedAt,lastObservationId)`，附与重建全序的一致性论证，§四点六·1）④quarantined **冻写谓词入机械层**（复活 CAS 与常规投影更新两条 WHERE 均增 `AND integrityStatus='ok'`；隔离期观测流照常 append、真源不冻，§四点六·1）⑤空洞判废改**登记式双条件**（首见登记 `firstSeenAt`+`xmaxAtFirstSeen` 快照——修 v0.6「读回滚 seq 行的 txid」不可执行缺陷，B9 契约 6）。**v1.0 闭合 codex R7 两项（③STILL-OPEN ④NEW-DEFECT；①judged CLOSED ②未破坏）——修复方向经控制面顾问轮裁定（SOL lane incomplete → fallback Fable complete，按协议标注；memo+provenance 随 ledger-sync PR 入库证据清单）**：§四点六·1 观测流**整节重写为到达序折叠架构**（单一连贯块，取代 v0.6–v0.9 分层补丁）——到达序轴 `arrivalSeq`（per-review 计数器锁内自增）、入流闸新原则「**入流才需确定性；不入流只需留痕**」（陈旧/同态观测不入流，记 `stale_observation_dropped` 留痕——同杀 codex③ 分叉与键槽污染 (i)(ii)(iii) 整族）、CAS 赢家/输家全套**净删**由 per-review 锁取代、epoch 改述**折叠态计数**、quarantine 改「入流不折叠」+解除隔离**单事务原子**（修 v0.9 谓词方案的解除竞态）、投影列**唯二写入点 I-R2**+机器闸、**列所有权分区**（投影列 vs 回评运营列——重建不抹回评）、对账降为普通观测同路径+第四类漂移、验收表收编全部对手弹药（在线=重建双判恒等；v0.6 反例表仅表头「全序」→「到达序」，行判定不变）；并发主权总注加 **READ COMMITTED** 隔离级别假设行（覆盖含契约 3 的全部锁协议，不改契约 3 已 CLOSED 内文）、LiveEventOutbox 行改**引用不复述**。本文本属共享契约/schema=founder-only 类别（高后果，#254 §三 双顾问之一 complete 签核入 provenance）；冻结走四权闭环放行（#254 §一.2）后 02-B2 相关行随冻结 PR 迁 `spec-ready`，founder 终验一次过审计索引（#254 §一.3/§二.5）。
 > 人话：给全城定三样通用底座——「发生了什么事」怎么记（事件）、「这是不是同一个顾客」怎么判（身份）、「他答应过被联系吗」怎么存（同意）。
 
 ## 一、范围与矩阵行映射
@@ -237,16 +237,17 @@ model ConsentEvent {
 | 多写入者面 | 序列化 / 主权机制 | 出处 |
 |---|---|---|
 | ConsentEvent 折叠缓存 | per-三元组 **advisory xact lock**（锁内 insert+重算；缓存≠真源可重算） | 契约 3（R5②） |
-| ReviewItem 复活纪元 | **CAS 条件更新**+输家规则（仅赢家插观测）；v0.9 WHERE 增**字典序门**+`integrityStatus='ok'` 谓词 | §四点六·1（R5③/R6③④） |
-| ReviewItem 常规投影更新 | **条件式更新**（新观测 `(observedAt,id)` 字典序 > 行 `(lastObservedAt,lastObservationId)` **且 `integrityStatus='ok'`** 才覆盖——旧观测晚提交不覆盖新态；v0.8 增 `lastObservationId` tie-break 载体，v0.9 增冻写谓词） | §四点六·1（v0.9） |
+| ReviewItem 投影列（全部状态） | **per-review advisory xact lock 内单一 `fold`**（入流+折叠同事务同锁；到达序轴 `arrivalSeq`；重建/解除隔离同锁单事务；唯二写入点 I-R2+机器闸——CAS/条件式谓词方案已全套净删） | §四点六·1（v1.0，R7③④） |
+| ReviewItem 运营列（`replyStatus`/`replyBody`） | B8 回评流，写时同持该 review 锁；**不受 quarantine 冻结**（列所有权分区） | §四点六·1（v1.0） |
 | AttributionEvent | **append-only + `@@unique([ownerId, idempotencyKey])`**（`schema.prisma:1390`）——无派生缓存承诺；消费者聚合=纯重算（Σ outcomeDelta），无需锁 | 契约 1（既有） |
 | CreditLedger | 同手法（`@@unique([orgId, idempotencyKey])` `schema.prisma:717`，双 delta 可重建不变量）——既有账道，援引不改 | 契约〇（既有） |
 | BusinessEvent / Receipt | append-only + 幂等键两式（无派生缓存承诺，同 AttributionEvent 手法） | 契约〇·附（R2③） |
 | ConsentEvent 本体 | append-only + `@@unique([ownerId, idempotencyKey])`（STOP 双投递/导入重跑去重） | 契约 3（R2·P0） |
 | ContactIdentity merge/unmerge | **沿链解根 → {根A,根B} 按 ULID 升序双 advisory xact lock → 锁内复核根未变**（解根+全序双锁使三方并发链亦无法成环） | 契约 2（v0.8） |
 | Contact upsert（共享 action） | 仲裁=**ContactIdentity 唯一索引**，insert 冲突转 update 重试——结构上不双建档 | 契约 2（v0.7） |
-| LiveEventOutbox seq 分配 | **BIGSERIAL=DB 原生序列化**（确认无需额外锁）；**分配序≠提交序**的消费端语义冻结在 B9 v0.7 契约 6（cursor 只推进连续已提交前缀；回滚永久空洞判废=**登记式双条件**：首见登记 `firstSeenAt`+`xmaxAtFirstSeen`，`age>60s ∧ 当前 xmin ≥ xmaxAtFirstSeen`） | B9 契约 6 |
+| LiveEventOutbox seq 分配 | **BIGSERIAL=DB 原生序列化**（确认无需额外锁）；seq 消费端语义与空洞判废协议**冻结于 B9 契约 6，本行引用不复述**（登记式双条件+单写函数 XID 先取协议+CACHE 1——v1.0 改引用：杜绝两处复制漂移，上一轮 B2 复制到的正是缺陷句） | B9 契约 6（v0.8） |
 
+> **隔离级别假设（v1.0 冻结——覆盖本表全部锁协议，含契约 3 折叠锁）**：一律假设 PostgreSQL 默认 **READ COMMITTED**。REPEATABLE READ 下事务快照在**取锁语句开始时**已定格，锁等待结束后读到的仍是取锁前世界——「锁内读行态/读已提交集合」协议整套静默失效。此假设为总注级冻结，约束表内每一行锁协议。
 > 扫描范围=本文件+B9 全部承诺面；上表之外本两份 spec 无其它「多写入者共享可变状态」承诺（RunState/上下文桥会话态=per-thread 单写者；TrendSnapshot/MicrositePage 等新对象为单写入点或普通行级更新，无派生缓存承诺）。
 
 ## 三、对标锚清单
@@ -265,6 +266,8 @@ model ConsentEvent {
 | `issuerId` 扩索引不伤既有 (ownerId,channel,externalId) 数据 | 唯一约束加列=additive，旧数据 issuerId 回填连接命名空间 | 迁移脚本逐连接回填 + 唯一性冲突预检（founder-only 单列） |
 | 四轴 consent 覆盖 WABA 模板规则 | Meta 政策（PLATFORM-TRUTH） | B5 spec 对表 |
 | 保守判同不伤 CRM 起步体验 | respond.io 起步形态 | CRM 试产设计需求单回填对表 |
+| append-only 观测/同意流与 PDPA/GDPR 擦除权相容（已知未爆点，v1.0 依 R7 顾问轮纪律不开新战线、只入台账） | 擦除载体可为匿名化/去标识而非物删（待裁定） | B13 隐私对表时正面裁定 |
+| 契约 3 `clock_timestamp()` 在 NTP 回摆下 receivedAt 与锁序可局部倒置，但派生正确性由锁内折叠承载、时间戳仅作高水位/展示（已知未爆点，同上只入台账） | 折叠序=锁序而非时间戳序（v0.8 锁内赋值+本节 v1.0 同构） | B5 实装时加时钟回摆回归测试；若需强单调再议锁内计数器（同 `arrivalSeq` 手法） |
 
 ## 四点五、B8 试产需求单吸收（v0.2 增补，2026-07-12——出处：PR #244 CRM / PR #245 Campaign 设计 §6）
 
@@ -307,53 +310,69 @@ model ConsentEvent {
 
   效果数值（NPS/复购率/新客数）由 B2 B0-09 从上述各账+镜像表**自算**，B8 只写不算。**进 AttributionEvent kind 闭集的近期扩展仅 `referral_converted` 一个**（founder-only 单列，§五）。
 
-- **口碑观测流 `ReviewObservation`（v0.5 冻结，v0.6 键加生命周期纪元——codex R3·P1④/R4② 采纳）**：`ReviewItem` 保留为**当前状态读模型**（rating/body/回评态可覆写），**增 `lifecycleEpoch Int @default(0)`**——每次 `removed`→`present` 转换 +1（同一平台评价的第几世）**、`integrityStatus String @default("ok")`（`'ok' | 'quarantined'`，v0.8——见「键内纪元一致性」fail-loud 隔离）**。观测流为真源，**仍不入归因流水**（契约〇）。完整形状（建表属 founder-only 单列，§五；形状本节冻结）：
+- **口碑观测流 `ReviewObservation`（v0.5 冻结观测流真源；v1.0 本节整体重写为**到达序折叠架构**——codex R7 ③④ + 控制面顾问轮裁定采纳；本节=单一连贯块，取代 v0.6–v0.9 分层补丁文本，历史演进见 §五版本链）**：`ReviewItem` 保留为**当前状态读模型**——其**投影列**（列清单见下「列所有权分区」）=观测流按**到达序**折叠的确定性投影，可随时全量重建（宪法 10）。观测流为真源，**仍不入归因流水**（契约〇）。完整形状（建表属 founder-only 单列，§五；形状本节冻结）：
 
   ```prisma
-  // 口碑观测流（append-only）：每行=对某平台评价的一次「状态观测」（在场快照或消失 tombstone）。
-  // ReviewItem 是本流的确定性投影（读模型），可随时全量重建（宪法 10）。
-  // v0.6（codex R4②）：幂等键嵌 lifecycleEpoch——同 hash 删→现→删的键碰撞正面击破。
+  // 口碑观测流（append-only）：每行=一次「生效观测」（在场快照或消失 tombstone）。
+  // ReviewItem 投影列是本流按到达序折叠的确定性投影（读模型），可随时全量重建（宪法 10）。
+  // v1.0（codex R7 ③④）：到达序轴 = arrivalSeq（per-review 计数器，锁内自增）；
+  // 入流闸原则「入流才需确定性；不入流只需留痕」——陈旧/同态观测不入流。
   model ReviewObservation {
-    id               String   @id // ULID
+    id               String   @id // ULID（标识用；不作到达轴——锁外铸造，可倒序）
     ownerId          String   // 租户键，无默认（宪法 6；进 TENANT_MODELS + Organization back-relation）
     organization     Organization @relation(fields: [ownerId], references: [id])
     platform         String   // 'google' | 'shopee' | 'lazada' | 'fb'（code-validated，同 ReviewRequest 闭集）
     externalReviewId String   // 平台内评价 ID
-    lifecycleEpoch   Int      // 本观测所属纪元。【v0.8 语义澄清】观测行真源=idempotencyKey（嵌 e<epoch>）+payload
-                              //（写入后不可变）；本列是**行内派生缓存（非真源，可由 key 反解）**——修它=缓存修复、非篡改
-                              // append-only 史。写入时=当前世代；投影重建时按转换计数复核，漂移=fail-loud
+    arrivalSeq       Int      // 【v1.0 到达序轴】per-review 严格单调计数器：锁内自 ReviewItem.lastArrivalSeq+1
+                              // 取号并回写；重建 ORDER BY arrivalSeq。不用 ULID/时钟当到达轴（ULID 锁外铸造
+                              // 可倒序；时钟可回摆）——整数计数器锁内无洞、严格单调（「第几笔生效到达」）
+    lifecycleEpoch   Int      // 本观测入流时的折叠纪元。观测行真源=idempotencyKey（嵌 e<epoch>）+payload（写入后
+                              // 不可变）；本列是行内派生缓存（非真源，可由 key 反解）——修它=缓存修复非篡史（I-R1 见下）
     observationKind  String   // 'present'（在场快照）| 'absent'（tombstone：平台侧已删除/隐藏）——删除语义，永不物删本地行
     externalVersion  String?  // 平台自带版本号/更新时间戳（平台有则录）
     contentHash      String   // sha256(归一化 rating+body+回评状态)——外部无版本号时的版本替身；absent 观测=最后在场 contentHash
     rating           Int?     // present 时快照；absent 为 null
     body             String?  // present 时快照；absent 为 null
-    observedAt       DateTime // 本次观测发生时刻
+    observedAt       DateTime // 本次观测发生时刻——入流闸高水位轴之一；到达轴是 arrivalSeq 非此列
     createdAt        DateTime @default(now())
-    idempotencyKey   String   // 稳定幂等键（嵌 epoch，见下）
+    idempotencyKey   String   // '<platform>:<extId>:e<epoch>:a<arrivalSeq>:<contentHash>'（present）
+                              // | '<platform>:<extId>:e<epoch>:a<arrivalSeq>:absent:<最后在场 contentHash>'（absent）
+                              // 【v1.0】键含 arrivalSeq=按构造唯一；重试/重爬去重由锁内比对（入流闸）承担，
+                              // unique 键降为防御性护栏——v0.9 键槽污染整族（烧槽卡死/陈旧吞写/回摆吞写）随之消失
     @@unique([ownerId, idempotencyKey])
-    @@index([ownerId, platform, externalReviewId, observedAt, id]) // 租户前导；投影重建按 (observedAt, id) 全序回放（v0.7 索引同步 tie-break）
+    @@index([ownerId, platform, externalReviewId, arrivalSeq]) // 租户前导；重建按 arrivalSeq 到达序回放
   }
   ```
 
-  - **稳定幂等键（v0.6 嵌纪元）**：present=`'<platform>:<externalReviewId>:e<epoch>:<contentHash>'`——同纪元内重爬内容未变**不产生新行**（去重），内容变化=新 contentHash=新观测行；absent=`'<platform>:<externalReviewId>:e<epoch>:absent:<最后在场 contentHash>'`，仅当读模型该纪元仍视其在场时写一次。**反例表全解**：首现 `e0:h1` → 删除 `e0:absent:h1` → **同 hash 原样重现** `e1:h1`（epoch+1=新键 ✓）→ **二次删除** `e1:absent:h1`（新键 ✓）——同 hash 删→现→删循环各键互异，完整留痕。
-  - **epoch 推进规则（冻结；v0.7 复活主权=CAS——codex R5③ 采纳）**：
-    - **复活（removed→present）的唯一合法路径=CAS 条件更新**（v0.9 WHERE 增两谓词——codex R6③④ 采纳）：
-      ```sql
-      UPDATE "ReviewItem" SET "lifecycleEpoch" = e + 1, "status" = 'present'
-        WHERE "id" = ? AND "lifecycleEpoch" = e AND "status" = 'removed'
-          AND ("lastObservedAt", "lastObservationId") < (:obs.observedAt, :obs.id)  -- v0.9 字典序门（R6③）
-          AND "integrityStatus" = 'ok'                                              -- v0.9 冻写谓词（R6④）
-      ```
-      **仅 CAS 赢家**（affected rows = 1）在**同一事务**内插入 present 观测（键=`e<e+1>:<contentHash>`）。并发爬虫/对账同时判定重现时，只有一个写入者能推进纪元。
-    - **复活字典序门（v0.9 冻结——codex R6③ 采纳）**：复活 CAS **同受**常规更新的字典序条件约束——新观测 `(observedAt, id)` 字典序 > 行 `(lastObservedAt, lastObservationId)` 才允许复活；**不满足=不复活不推进 epoch**（观测行本身仍按当前 epoch 铸键**照常入流**——同 hash 则幂等去重，投影不动）。**一致性论证**：该 present 在回放全序 `(observedAt, id)` 中排在 absent **之前** ⇒ 重建时无 removed→present 转换 ⇒ epoch 不进、终态 removed；在线加此门后**同判**——消除 R6 反例「同刻 present A（id 较小）与 absent Z（id 较大）、Z 先提交置 removed、A 后到达触发复活」的在线/离线分叉（无门时在线判复活 epoch+1，离线重建判终态 removed=epoch 漂移）。
-    - **输家规则（冻结）**：CAS 输家（affected rows = 0）**重读赢家态**（新 lifecycleEpoch/status='present'）后，按**常规更新流**在赢家 epoch 下继续——同 contentHash ⇒ 幂等键已存在 ⇒ unique 约束去重=**幂等成功**（无新行、非错误）；异 contentHash ⇒ 正常内容变更观测（键=`e<赢家epoch>:<新hash>`）。输家永不自行再 +1。
-    - 常规（非复活）投影更新=**条件式**：仅当新观测 `(observedAt, id)` **字典序 >** 行 `(lastObservedAt, lastObservationId)` **且 `integrityStatus='ok'`**（v0.9 冻写谓词——codex R6④ 采纳）时才覆盖字段——旧观测晚提交不得覆盖新态（v0.8——codex R5 复审③ 采纳：`ReviewItem` 增 `lastObservationId`(ULID) 作在线 tie-break 载体，同刻双 hash 的在线判定与重建全序 `(observedAt, id)` 一致；v0.7 仅比 `lastObservedAt`、无 id tie-break 载体，同刻并发下判定不定）。写 absent 用当前 epoch；评价首现=epoch 0。
-    - **quarantined 冻写=数据库谓词（v0.9 入机械层——codex R6④ 采纳）**：复活 CAS 与常规条件式更新**两条更新路径的 WHERE 均含 `AND "integrityStatus" = 'ok'`**——quarantined 行被数据库谓词挡住，冻写不再只是 prose 政策。**quarantined 期间观测流照常 append**（真源不冻，只有投影冻写）；解除隔离时的全量重建（I-R1 流程④）**一次性消化积压观测**。
-    - **投影全量重建**时 epoch 由观测流的 absent→present 转换计数确定性重算（回放全序=`(observedAt, id ULID)`，tie-break 已冻结并同步入上方索引），与行内嵌 epoch 比对——不一致=fail-loud（见下「键内纪元一致性」）。
-  - **首次/最近观测时间**：`ReviewItem` 增 `firstObservedAt`/`lastObservedAt`/**`lastObservationId`（ULID，v0.8）**（读模型字段，由观测流确定性维护：first=**epoch 0** 首条 present 的 observedAt（跨纪元不重置——「第一次见到这条评价」），last=最新观测（任意纪元）的 observedAt，`lastObservationId`=该最新观测的 `id`——在线条件式更新的字典序 tie-break 载体，与重建全序 `(observedAt, id)` 同轴；v0.3 表中 `capturedAt` 语义并入 `lastObservedAt`）。
-  - **tombstone 语义（新键下重述）**：absent 观测（键带当前 epoch）→投影把 `ReviewItem.status` 置 `'removed'`（`lifecycleEpoch` 不变——纪元只在重现时推进），本地行**永不物删**（评价被平台删掉也是经营事实，差评预警/合规审计要看得见）。
-  - **周期全量对账与漂移补救（新键下重述，冻结规则）**：每 **24 小时**（冻结常量，founder ack 可调）对平台真值全量比对。**「本地已 removed 行算不算本地无」正面写明：算**——在场性判定上 `status='removed'` 视同本地无。三类漂移：①平台在场而本地无（含**本地 removed**）→ 若是 removed 重现则经 **CAS 路径** epoch+1 后补写 present 观测（键=`e<newEpoch>:<contentHash>`；对账器与实时爬虫并发时同受 CAS 仲裁），若是全新评价则 epoch 0 建行；②本地在场（status='present'）而平台无 → 写 absent tombstone（当前 epoch）；③读模型字段 ≠ 最新观测 → 由最新观测**重建该行**（投影可全量重建自观测流=漂移补救的通解，宪法 10 确定性；对账补写一律用上述 epoch 规则铸键）——**v0.7 扩展（codex R5④）：③同时解析每行 `idempotencyKey` 的 `e<epoch>` 段并断言 == 行 `lifecycleEpoch` 列**。对账时刻记 ActionEvent `reputation.review.reconciled` `{platform, checked, drifted, tombstoned, resurrected}`。
-  - **键内纪元一致性（不变量 I-R1，v0.7 冻结、v0.8 澄清缓存语义——codex R5④ / R5 复审④ 采纳）**：`parse(idempotencyKey).epoch == lifecycleEpoch`（观测行内嵌键与列必须一致）。Prisma 无 CHECK 约束 ⇒ 冻结为**应用层不变量+专项测试**（写入路径断言 + 对账路径全量断言双覆盖）。**不一致=fail-loud 修复流程（冻结）**：①记 ActionEvent `reputation.review.integrity_failed` `{observationId, keyEpoch, columnEpoch}`；②隔离该 `(platform, externalReviewId)`——把 `ReviewItem.integrityStatus` 置 `'quarantined'`（v0.8：落为**真字段**，非仅 prose 标记）：投影**暂停更新（quarantine 冻写）**，差评预警对该条**界面诚实降级**显示「数据核对中」（宪法 11 状态诚实）；③以 **idempotencyKey 嵌值为准**修正 `lifecycleEpoch` 列——**此修列=缓存修复、非篡史**（观测真源=idempotencyKey+payload 不可变；`lifecycleEpoch` 列是行内派生缓存），故为**受控例外**，须记 ActionEvent `reputation.review.integrity_repair` `{observationId, fromEpoch, toEpoch}` 审计冻结（键参与唯一约束、插入后不可变=更强真源，据此校正缓存列）；④观测流全量重建该投影行+转换计数复核通过 → `ReviewItem.integrityStatus` 复位 `'ok'`、解除隔离。**永不静默吞**。
+  - **锁协议（v1.0 冻结——一切路径共此一锁）**：对某评价的全部处理序列化于 **per-`(ownerId, platform, externalReviewId)` advisory xact lock**：`取锁 → 读行态 → 判定（入流闸）→（可能）插观测 →（可能）折叠写投影`——**插入+折叠同事务且同锁**（memo §四.2 明写）。三条投影写路径——在线摄入折叠、对账重建、解除隔离全量重建——**均在同一把锁内**。
+  - **入流闸（v1.0 新原则冻结：「入流才需确定性；不入流只需留痕」）**：锁内按当前行态判定，present 与 absent **对称**：
+    - **陈旧**（新观测 `(observedAt, id)` 字典序 ≤ 行高水位 `(lastObservedAt, lastObservationId)`）→ **不入流**，记 ActionEvent `reputation.review.stale_observation_dropped` `{observedAt, contentHash, kind}` 留痕——契约〇分账纪律：陈旧/重复观测是**运营噪声**，归 ActionEvent，不占观测账；观测账收录的是**生效观测**，其确定性投影承诺因此成立（非放宽 append-only，是两种真相面分开记账）；
+    - **同态 no-op**（present 且 contentHash=当前投影内容 hash、或 absent 且投影已 removed）→ 不入流（重爬未变=常态，不留痕不占账）；
+    - 其余 → **入流**：锁内取 `arrivalSeq`（`ReviewItem.lastArrivalSeq`+1 并回写）、按下方 `fold` 铸 epoch 入键、插观测行、**同事务**折叠写投影。**入流行的折叠效果=该行与前序入流行的纯函数**；入流行沿到达序在 `(observedAt, id)` 上亦严格递增（闸+高水位按构造保证）——到达序与逻辑序对入流行恒一致。
+  - **折叠 `fold`（v1.0 冻结——投影的唯一定义）**：投影全部状态（`status`/`lifecycleEpoch`/`rating`·`body` 显示内容/`firstObservedAt`/`lastObservedAt`/`lastObservationId`/`lastArrivalSeq`）=对**已入流观测行**按 **`arrivalSeq` 到达序**的单一确定性折叠：present 且前态 removed ⇒ `lifecycleEpoch`+1（生效转换）；present ⇒ `status='present'`、显示内容=该行快照；absent ⇒ `status='removed'`（epoch 不变；本地行**永不物删**——评价被平台删掉也是经营事实，差评预警/合规审计要看得见）；每行推进高水位 `(lastObservedAt, lastObservationId)` 与 `lastArrivalSeq`。**在线=插入时同事务锁内折叠一步；离线重建=同一 `fold` 按到达序全量重放——在线与重建恒等按构造成立**（v0.9 的逐场景一致性论证整体删除，不再需要）。`firstObservedAt`=epoch 0 首条 present 的 observedAt（跨纪元不重置——「第一次见到这条评价」；v0.3 表中 `capturedAt` 语义并入 `lastObservedAt`）。
+  - **epoch 语义（v1.0 改述）**：`lifecycleEpoch`=**折叠态计数**——到达序下 absent→present 的**生效转换数**（弃 v0.9「`(observedAt,id)` 全序转换计数」表述）；评价首现=epoch 0。**CAS 赢家/输家规则全套删除（净删）**——由锁取代：锁内先到先折叠，后到者读到新态后按普通规则（入流闸+fold）处理自己那笔。
+  - **键内纪元一致性（不变量 I-R1——原样保留）**：`parse(idempotencyKey).epoch == lifecycleEpoch`（行内嵌键与列必须一致；Prisma 无 CHECK ⇒ 应用层不变量+专项测试，写入路径断言+对账全量断言双覆盖）。**不一致=fail-loud 修复流程（原样保留）**：①记 ActionEvent `reputation.review.integrity_failed` `{observationId, keyEpoch, columnEpoch}`；②`ReviewItem.integrityStatus` 置 `'quarantined'`（真字段）——投影冻写、差评预警对该条**界面诚实降级**「数据核对中」（宪法 11）；③以键嵌值为准修正 `lifecycleEpoch` 列=**缓存修复非篡史**（受控例外+ActionEvent `reputation.review.integrity_repair` `{observationId, fromEpoch, toEpoch}` 审计）；④解除隔离（见下条）。**永不静默吞**。
+  - **quarantine 冻写与解除（v1.0 重述——修 R7 ④ 解除竞态）**：隔离期间摄入=锁内**「入流不折叠」**（观测流照常 append——真源不冻，投影列不写）；**运营列不受 quarantine 冻结**（商家在数据核对期照样起草回评）。**解除隔离=单事务原子**：`{取锁 → 全量重放折叠 → 写投影快照 → integrityStatus 复位 'ok' → 提交}`——积压观测由重放一次性消化；并发摄入在锁上排队，等到时看到的已是 ok+新快照，正常折叠其上。（v0.9「WHERE 冻写谓词」方案的「重建后复位前新观测被谓词挡住且丢更新」竞态按构造消失；该谓词行随 CAS 一并删除，冻写职责改由锁内检查+唯二写入点承载。）
+  - **投影列唯二写入点（不变量 I-R2，v1.0 冻结+机器闸）**：`ReviewItem` 投影列的写入点**唯二**=`fold`（在线折叠）/`rebuild`（全量重放），二者**必持** per-review advisory lock。机器闸：CI grep 断言仓库内无第三处写投影列；可选 DB 触发器查 `pg_locks` 断言持锁。（「第 N 条写路径」用不变量关死，不靠枚举。）
+  - **列所有权分区（v1.0 冻结——ReviewItem 第 4 写者点名，逐列）**：
+
+    | 列族 | 列 | 写者 | quarantine 冻结？ |
+    |---|---|---|---|
+    | 投影列 | `status` / `lifecycleEpoch` / `rating` / `body` / `firstObservedAt` / `lastObservedAt` / `lastObservationId` / `lastArrivalSeq` / `integrityStatus` | 唯二：`fold`/`rebuild`（必持锁，I-R2） | 是（入流不折叠） |
+    | 运营列（回评线） | `replyStatus` / `replyBody`（本节五表表+PR #248 reputation 设计 §6 的回评字段全集；Testimonial 引用在 `Testimonial.reviewItemId` 外键侧，ReviewItem **无**反向列） | B8 回评流（写时同持这把 review 锁） | **否** |
+
+    「可全量重建」的宣称**只对投影列成立**；`rebuild` 只触投影列、永不触运营列——**重建不会抹掉回评草稿**。
+  - **周期全量对账（v1.0 简化——对账不再是特殊路径）**：每 **24 小时**（冻结常量，founder ack 可调）对平台真值全量比对；**对账补写=以拉取时刻为 `observedAt` 的普通观测**，走同一把锁同一入流闸（observedAt=now 必过门）。四类漂移：①平台在场而本地无（含**本地 removed**——在场性判定上 removed 视同本地无）→ 普通 present 观测入流（前态 removed 则 fold 自然 epoch+1——**不再是特殊路径**；全新评价建行 epoch 0）；②本地 present 而平台无 → 普通 absent 观测入流；③读模型字段 ≠ 按流重放结果 → `rebuild`（锁内全量重放），同时全量断言 I-R1（解析每行键 `e<epoch>` 段==列）；④**同为 present 而内容≠平台**（v1.0 新列名——键槽缺陷 (ii)(iii) 修复后由①同路径的普通 present 观测自然承接，无需特案）。对账记 ActionEvent `reputation.review.reconciled` `{platform, checked, drifted, tombstoned, resurrected}`。
+  - **验收案例表（v1.0 冻结进契约测试——原 v0.6 反例表仅表头「全序」改「到达序」、行判定不变〔=R1 行〕；新增五行收编对手弹药；每行「在线/重建」双判定，恒等按构造）**：
+
+    | 案例（按到达序） | 在线判定 | 重建判定（ORDER BY arrivalSeq 重放） |
+    |---|---|---|
+    | R1 · 顺序四步（v0.6 原反例，判定不变）：首现 h1 → 删除 → 同 hash 重现 → 二次删除 | e0 present → e0 removed → e1 present → e1 removed（各键含 arrivalSeq 互异，完整留痕） | 同左（顺序到达 ⇒ 到达序=逻辑序） |
+    | R2 · codex R7③ 五事件：P(t1)→A(t2)→P(t7)〔复活 e1〕→迟到 A(t4)→迟到 P(t3) | 迟到两笔**不入流**（闸拦+`stale_observation_dropped`×2）；终态 e1 present | 流内仅前三笔 ⇒ 同判 e1 present——在线/离线分叉消除 |
+    | R3 · 键槽 (i) 门外 absent：迟到 absent 被拦后，平台真删（t8>t7） | 迟到 absent 不入流（**不烧键槽**）；真删 absent 过门入流 → removed | 同左（旧机制下同键被 unique 吞、本地永久 present——已不可能） |
+    | R4 · 键槽 (ii) 门外 present：迟到旧 present(h_old) 被拦后，平台真改回 h_old | 迟到笔不入流；真实改回笔（过门且内容≠当前投影）正常入流 → 显示 h_old | 同左 |
+    | R5 · 键槽 (iii) 同纪元 A→B→A 内容回摆（顺序到达，与迟到无关） | 三笔全过门全入流（键含 arrivalSeq 各唯一）→ 显示回 A | 同左（旧机制下第三笔同键被吞、显示永停 B——已不可能） |
+    | R6 · 解除隔离并发：`rebuild` 进行中新观测到达 | 新观测在锁上排队；解除事务提交后其见 ok+新快照，正常入流折叠 | 重放含该笔 ⇒ 同判 |
 
 - **宪法 8 结构隔离机器闸**（本域最关键契约）：ReviewRequest 与 Referral 两表**禁互指外键**；`review_*` 与 `referral_*`/`loyalty_*` 两族事件**不共享关联键**，B2 算效果时不得反推「留评→给奖」耦合归因。任何 migration 加互指=违宪 8，进 REVIEWER-PLAYBOOK 硬拦 + CI schema 断言（ReviewObservation 同属评价线，**禁含**任何 referral/loyalty 关联键）。
 
@@ -373,7 +392,7 @@ model ConsentEvent {
 
 ## 五、冻结条件与状态
 
-- **状态：冻结候选（freeze candidate）。** v0.1 骨架 → v0.2 吸收 B8 两试产 → v0.3 闭合 SOL §2·B2 六阻断项 + 吸收二三波 → v0.4 闭合 codex R2 BLOCK 清单 → v0.5 闭合 codex R3 两项（consent 顾客优先级 / ReviewObservation 观测流） → v0.6 闭合 codex R4 两项（consent 换轴到达序+entryMode / 观测键嵌 lifecycleEpoch） → **v0.7 闭合 codex R5 四项+主动扫：entryMode 服务端派生 computed / 折叠写入 advisory lock 序列化 / 复活主权 CAS+输家规则 / 键内纪元一致性 I-R1+fail-loud 修复 / 并发主权总注** → **v0.8 闭合 codex R5 复审（机械层）五项：①sourceKind 服务端绑定（端点常量表，两字段不可传，I-C1 升编译期常量断言，契约 3）②receivedAt 锁内 clock_timestamp 赋值 + 一事务一三元组禁多锁（契约 3）③ReviewItem 增 lastObservationId 在线字典序 tie-break（§四点六·1）④ReviewItem 增 integrityStatus + lifecycleEpoch 缓存语义澄清（修列=缓存修复非篡史，integrity_repair 审计，§四点六·1）⑤两缝收口（ContactIdentity merge 沿链解根双锁·契约 2；LiveEventOutbox 空洞判废双条件·B9 契约 6）** → **v0.9 闭合 codex R6 定向复审四项（本稿；R6 判②locked-clock 已 CLOSED）：①sourceKind 端点表闭集不变量+B8 请评前置改读方+evidenceRef 运行时格式断言（I-C1 断言分层，契约 3）③复活 CAS 字典序门+一致性论证（§四点六·1）④quarantined 冻写谓词入两条更新路径 WHERE+真源不冻只冻投影（§四点六·1）⑤LiveEventOutbox 判废登记式双条件（B9 契约 6）** → **四权闭环放行（#254 §一.2）** → spec-ready（02-B2 相关行随冻结 PR 迁级）。异族复审+双顾问签核+机器闸+非作者合并放行；founder 终验一次过审计索引（#254 §一.3/§二.5）。
+- **状态：冻结候选（freeze candidate）。** v0.1 骨架 → v0.2 吸收 B8 两试产 → v0.3 闭合 SOL §2·B2 六阻断项 + 吸收二三波 → v0.4 闭合 codex R2 BLOCK 清单 → v0.5 闭合 codex R3 两项（consent 顾客优先级 / ReviewObservation 观测流） → v0.6 闭合 codex R4 两项（consent 换轴到达序+entryMode / 观测键嵌 lifecycleEpoch） → **v0.7 闭合 codex R5 四项+主动扫：entryMode 服务端派生 computed / 折叠写入 advisory lock 序列化 / 复活主权 CAS+输家规则 / 键内纪元一致性 I-R1+fail-loud 修复 / 并发主权总注** → **v0.8 闭合 codex R5 复审（机械层）五项：①sourceKind 服务端绑定（端点常量表，两字段不可传，I-C1 升编译期常量断言，契约 3）②receivedAt 锁内 clock_timestamp 赋值 + 一事务一三元组禁多锁（契约 3）③ReviewItem 增 lastObservationId 在线字典序 tie-break（§四点六·1）④ReviewItem 增 integrityStatus + lifecycleEpoch 缓存语义澄清（修列=缓存修复非篡史，integrity_repair 审计，§四点六·1）⑤两缝收口（ContactIdentity merge 沿链解根双锁·契约 2；LiveEventOutbox 空洞判废双条件·B9 契约 6）** → **v0.9 闭合 codex R6 定向复审四项（R6 判②locked-clock 已 CLOSED）：①sourceKind 端点表闭集不变量+B8 请评前置改读方+evidenceRef 运行时格式断言（I-C1 断言分层，契约 3）③复活 CAS 字典序门+一致性论证（§四点六·1）④quarantined 冻写谓词入两条更新路径 WHERE+真源不冻只冻投影（§四点六·1）⑤LiveEventOutbox 判废登记式双条件（B9 契约 6）** → **v1.0 闭合 codex R7 ③④（本稿）——R7 判定：①CLOSED ②未破坏 ③STILL-OPEN ④NEW-DEFECT；修复方向经控制面顾问轮裁定（SOL lane incomplete → fallback Fable complete，按协议标注；memo+provenance 随 ledger-sync PR 入库证据清单）：§四点六·1 观测流整节重写为到达序折叠架构（arrivalSeq 到达轴/入流闸「入流才需确定性；不入流只需留痕」/CAS 全套净删/epoch=折叠态计数/解除隔离单事务原子/唯二写入点 I-R2+机器闸/列所有权分区/对账普通路径化+第四类漂移/验收表收编对手弹药）+并发主权总注 READ COMMITTED 假设行+LiveEventOutbox 行改引用。给 founder 一行点名：v0.6 反例表随本 spec 版本化（非外部已签冻结件），本轮仅表头「全序」→「到达序」+新增验收行，原行判定不变** → **四权闭环放行（#254 §一.2）** → spec-ready（02-B2 相关行随冻结 PR 迁级）。异族复审+双顾问签核+机器闸+非作者合并放行；founder 终验一次过审计索引（#254 §一.3/§二.5）。
 - **开放问题（v0.2 三项处置）**：
   1. ~~事件 payload schema 约束强度~~ → **闭合**：kind 闭集 + 每 kind 软引用非空约束（契约 1，对齐真 schema `schema.prisma:1364-1369`），非自由 JSON；宪法 10 定型。
   2. anonymousKey 隐私保留期（PDPA 姿态）→ **留 B13 对表**（跨块，非本 spec 冻结阻断项；`geoBucket`/`ipHashPrefix` 已按 PDPA 粗粒度冻结）。
