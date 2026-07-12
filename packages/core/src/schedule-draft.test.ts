@@ -65,8 +65,11 @@ describe("validateScheduleDraft — channel capabilities", () => {
   it("enforces per-channel maxMediaCount (Facebook = 1, Instagram = 10)", () => {
     expect(SCHEDULE_CHANNEL_CAPS.facebook.maxMediaCount).toBe(1);
     expect(SCHEDULE_CHANNEL_CAPS.instagram.maxMediaCount).toBe(10);
-    expect(SCHEDULE_CHANNEL_CAPS.x.maxMediaCount).toBe(4);
+    expect(SCHEDULE_CHANNEL_CAPS.x.maxMediaCount).toBe(0);
     expect(SCHEDULE_CHANNEL_CAPS.x.supportsFirstComment).toBe(false);
+    // X is text-only for now (media publishing = external-test phase) → any media is rejected.
+    expect(err({ ...BASE, channel: "x", media: ["a"] })).toMatch(/text-only/i);
+    expect(ok({ ...BASE, channel: "x" }).media).toEqual([]);
     expect(err({ ...BASE, channel: "facebook", media: ["a", "b"] })).toMatch(/single|carousel/i);
     expect(ok({ ...BASE, channel: "facebook", media: ["a"] }).media).toEqual(["a"]);
     expect(err({ ...BASE, channel: "instagram", media: Array.from({ length: 11 }, (_, i) => `m${i}`) })).toMatch(/at most 10/i);

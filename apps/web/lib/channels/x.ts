@@ -8,14 +8,16 @@ import { publishViaX } from "./x-publish-adapter";
  * X (Twitter) channel adapter (E4-14) — same registry shape as instagram.ts / facebook.ts. Its
  * connection carrier is the GENERIC ChannelConnection (kind="x", B0-30), NOT MetaConnection. publish()
  * is fail-closed until a connection actually grants the X publish scope (契约3, see x-publish-adapter);
- * insights stay stubbed (Analytics plan). No X credentials exist in-block, so publish() refuses in
- * production; mock/fixture tests exercise the authorized branch (spec §六.1).
+ * insights stay stubbed (Analytics plan). There is no X OAuth route yet (connectUrl points to an
+ * unbuilt route), so in normal operation no X connection exists; but once a ChannelConnection carries
+ * tweet.write + a token, publish() reaches the real gate (x-publish-adapter authorizeX) — that gate,
+ * not the absence of a route, is the actual guard. mock/fixture tests exercise the branches (§六.1).
  */
 export const x: Channel = {
   id: "x",
   label: "X",
   icon: null, // the UI (OttoSchedule ChannelIcon) supplies the brand glyph
-  capabilities: { postTypes: ["feed-image", "text-link"], maxMediaCount: 4, supportsFirstComment: false, supportsNativeSchedule: false },
+  capabilities: { postTypes: ["text-link"], maxMediaCount: 0, supportsFirstComment: false, supportsNativeSchedule: false },
   connectionStatus: async (ownerId) => {
     const c = await prisma.channelConnection.findFirst({ where: { ownerId, kind: "x" }, select: { status: true } });
     if (!c) return "not_connected";

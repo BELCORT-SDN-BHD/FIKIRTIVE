@@ -15,8 +15,10 @@ import type { ChannelTarget, ChannelPost } from "./types";
  * connection's ACTUALLY-granted scope (xScopeCanPublish → DEFAULT false, since a fresh connection's
  * scope is ""), so a read-only / unconnected X account can never publish. The per-channel
  * kill-switch (publishPaused), an expired token, or a revoked connection all refuse too — WITHOUT
- * touching X. There are NO X credentials in-block, so this path stays fail-closed in production;
- * mock/fixture tests exercise the branches (spec §六.1).
+ * touching X. There is no X OAuth route yet, so in normal operation no X credentials exist; but a
+ * ChannelConnection carrying tweet.write + a decryptable token WOULD reach the real outbound port —
+ * so the allow-list gate (status==="active" ∧ !publishPaused ∧ unexpired token) is the ACTUAL guard,
+ * not the absence of a route. mock/fixture tests exercise the branches (spec §六.1).
  *
  * Token safety: the access token is resolved + used entirely server-side; it is NEVER returned to a
  * caller (the adapter surface only ever sees { externalId } | { error }).
@@ -35,7 +37,7 @@ async function authorizeX(ownerId: string): Promise<{ token: string } | { error:
   if (!conn) return { error: "Connect your X account before publishing." };
   if (!xScopeCanPublish(conn.scope)) return { error: "Publishing isn't enabled for this X connection yet — reconnect and grant posting access." };
   if (conn.publishPaused) return { error: "Publishing is paused for this X connection." };
-  if (conn.status === "expired") return { error: "This X connection needs to be reconnected before it can publish." };
+  if (conn.status !== "active") return { error: "This X connection needs to be reconnected before it can publish." };
   if (conn.tokenExpiresAt && conn.tokenExpiresAt.getTime() <= Date.now()) return { error: "This X connection expired — reconnect to publish." };
   try {
     return { token: decryptToken(conn.accessTokenEnc) };

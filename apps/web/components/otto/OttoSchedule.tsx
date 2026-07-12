@@ -81,43 +81,40 @@ function tonePill(tone: StatusTone): string {
   }
 }
 
-/** Inline IG/FB glyphs (lucide dropped brand icons; no new deps). currentColor-driven. */
+/** Brand glyphs keyed by channel id (E4-16 / contract 6: data-driven dispatch — adding a channel is
+ *  one map entry, no if-chain). currentColor-driven; lucide dropped brand icons so these are inline. */
+const CHANNEL_GLYPHS: Record<string, (size: number) => React.ReactElement> = {
+  instagram: (size) => (
+    <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden>
+      <rect x="2" y="2" width="20" height="20" rx="5" />
+      <circle cx="12" cy="12" r="4" />
+      <circle cx="17.5" cy="6.5" r="0.6" fill="currentColor" />
+    </svg>
+  ),
+  facebook: (size) => (
+    <svg width={size} height={size} viewBox="0 0 24 24" fill="currentColor" aria-hidden>
+      <path d="M14 8.5V7c0-.83.67-1 1-1h1.5V3.5H14C12.07 3.5 11 4.9 11 6.8V8.5H9V11h2v9.5h3V11h2.1l.4-2.5H14Z" />
+    </svg>
+  ),
+  x: (size) => (
+    <svg width={size} height={size} viewBox="0 0 24 24" fill="currentColor" aria-hidden>
+      <path d="M18.244 2.25h3.308l-7.227 8.26 8.502 11.24H16.17l-5.214-6.817L4.99 21.75H1.68l7.73-8.835L1.254 2.25H8.08l4.713 6.231zm-1.161 17.52h1.833L7.084 4.126H5.117z" />
+    </svg>
+  ),
+};
+
 function ChannelIcon({ channel, size = 15 }: { channel: string; size?: number }) {
-  if (channel === "instagram") {
-    return (
-      <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden>
-        <rect x="2" y="2" width="20" height="20" rx="5" />
-        <circle cx="12" cy="12" r="4" />
-        <circle cx="17.5" cy="6.5" r="0.6" fill="currentColor" />
-      </svg>
-    );
-  }
-  if (channel === "facebook") {
-    return (
-      <svg width={size} height={size} viewBox="0 0 24 24" fill="currentColor" aria-hidden>
-        <path d="M14 8.5V7c0-.83.67-1 1-1h1.5V3.5H14C12.07 3.5 11 4.9 11 6.8V8.5H9V11h2v9.5h3V11h2.1l.4-2.5H14Z" />
-      </svg>
-    );
-  }
-  if (channel === "x") {
-    return (
-      <svg width={size} height={size} viewBox="0 0 24 24" fill="currentColor" aria-hidden>
-        <path d="M18.244 2.25h3.308l-7.227 8.26 8.502 11.24H16.17l-5.214-6.817L4.99 21.75H1.68l7.73-8.835L1.254 2.25H8.08l4.713 6.231zm-1.161 17.52h1.833L7.084 4.126H5.117z" />
-      </svg>
-    );
-  }
-  return null;
+  return CHANNEL_GLYPHS[channel]?.(size) ?? null;
 }
 
 /** Data-driven capability blurb (E4-16: UI copy from CHANNEL_META capabilities, no per-channel-name
  *  ternary). Adding a channel needs no edit here. */
 function capsBlurb(cap: ChannelCapabilities): string {
-  if (cap.maxMediaCount >= 2) {
-    return cap.postTypes.includes("carousel")
-      ? `Feed image or carousel · up to ${cap.maxMediaCount} media`
-      : `Up to ${cap.maxMediaCount} photos or a video`;
-  }
-  return "Single feed image";
+  if (cap.maxMediaCount <= 0) return "Text posts · media coming soon";
+  if (cap.maxMediaCount === 1) return "Single feed image";
+  return cap.postTypes.includes("carousel")
+    ? `Feed image or carousel · up to ${cap.maxMediaCount} media`
+    : `Up to ${cap.maxMediaCount} photos or a video`;
 }
 
 /** OTTO coral cloud mark (matches OttoAnalytics). Coral = OTTO only. */
@@ -1110,6 +1107,10 @@ function Composer({
   // id (done in the handler, not an effect — derived-on-event, not synchronized-via-effect).
   function changeChannel(next: ChannelId) {
     setChannel(next);
+    // Trim media the new channel can't hold (e.g. switching to text-only X) so a carried-over
+    // selection never fails validation on save.
+    const nextMax = channelMeta(next)?.capabilities.maxMediaCount ?? 0;
+    setMedia((cur) => (cur.length > nextMax ? cur.slice(0, nextMax) : cur));
     if (metaTargetId && !targets.some((t) => t.channel === next && t.id === metaTargetId)) {
       setMetaTargetId(null);
     }
@@ -1117,7 +1118,7 @@ function Composer({
   // Approve = DRAFT→SCHEDULED, which the server rejects without a resolved owner-owned target AND
   // at least one media item. Gate BOTH in the UI so "Approve & schedule" never fires create-then-
   // fail-approval and leaves an orphan draft behind (#123): require a target AND media before approve.
-  const canApprove = editable && !!metaTargetId && media.length > 0;
+  const canApprove = editable && !!metaTargetId && (maxMedia === 0 || media.length > 0);
 
   function toggleMedia(genId: string) {
     setMedia((cur) => {
@@ -1137,7 +1138,7 @@ function Composer({
       let id = seed.id;
       if (seed.mode === "create") {
         const res = await createScheduledPost({
-          channel: channel as "instagram" | "facebook" | "x",
+          channel,
           caption,
           scheduledAt: iso,
           scheduledTz: tz,
@@ -1149,7 +1150,7 @@ function Composer({
         id = res.id;
       } else {
         const res = await updateScheduledPost(seed.id!, {
-          channel: channel as "instagram" | "facebook" | "x",
+          channel,
           caption,
           scheduledAt: iso,
           scheduledTz: tz,
@@ -1244,7 +1245,8 @@ function Composer({
             )}
           </Field>
 
-          {/* Media picker (already-generated only) */}
+          {/* Media picker (already-generated only) — hidden for text-only channels (maxMedia 0) */}
+          {maxMedia > 0 && (
           <Field label={`Media ${media.length ? `· ${media.length}/${maxMedia}` : ""}`}>
             {mediaChoices.length === 0 ? (
               <div className="text-[12px] text-muted-foreground rounded-[10px] border border-dashed border-border p-3">
@@ -1278,6 +1280,7 @@ function Composer({
               </div>
             )}
           </Field>
+          )}
 
           {/* Caption */}
           <Field label="Caption">

@@ -21,6 +21,7 @@ const {
   mockFetchOwnerPages,
   mockIgListTargets,
   mockFbListTargets,
+  mockXListTargets,
   mockPublishAttemptFindFirst,
   mockPostingTimeFindMany,
   mockShareTokenCreate,
@@ -41,6 +42,7 @@ const {
   mockFetchOwnerPages: vi.fn(),
   mockIgListTargets: vi.fn(),
   mockFbListTargets: vi.fn(),
+  mockXListTargets: vi.fn(),
   mockPublishAttemptFindFirst: vi.fn(),
   mockPostingTimeFindMany: vi.fn(),
   mockShareTokenCreate: vi.fn(),
@@ -79,6 +81,7 @@ vi.mock("../channels/registry", () => ({
   channelRegistry: {
     instagram: { id: "instagram", listTargets: mockIgListTargets },
     facebook: { id: "facebook", listTargets: mockFbListTargets },
+    x: { id: "x", listTargets: mockXListTargets },
   },
 }));
 vi.mock("next/cache", () => ({ revalidatePath: vi.fn() }));
@@ -129,6 +132,7 @@ beforeEach(() => {
   );
   mockIgListTargets.mockResolvedValue([{ id: "page-1", name: "My Page" }]);
   mockFbListTargets.mockResolvedValue([{ id: "page-1", name: "My Page" }]);
+  mockXListTargets.mockResolvedValue([]); // no X connection by default (X approve test overrides)
   mockPublishAttemptFindFirst.mockResolvedValue(null); // D2: default = no UNCONFIRMED attempt
   mockShareTokenCreate.mockResolvedValue({}); // B0-28: authority-row write succeeds by default
   mockShareTokenUpdateMany.mockResolvedValue({ count: 0 });
@@ -696,6 +700,19 @@ describe("approveScheduledPost", () => {
     const res = await approveScheduledPost("p1");
     expect(res).toEqual({ error: "Add at least one image before approving." });
     expect(mockUpdateMany).not.toHaveBeenCalled();
+  });
+
+  it("approves a text-only X post with NO media (X is text-only; the media requirement is Meta-only)", async () => {
+    // NODE-276 fix 3: without this fork a text-only X post could never be approved (media required)
+    // AND a media X post would become NEEDS_ATTENTION (executeX refuses media) — X publishing impossible.
+    mockFindFirst.mockResolvedValue(draftReady({ channel: "x", metaTargetId: "x-acct", media: [] }));
+    mockGenFindMany.mockResolvedValue([]);
+    mockXListTargets.mockResolvedValue([{ id: "x-acct", name: "X account" }]);
+    mockUpdateMany.mockResolvedValue({ count: 1 });
+    const res = await approveScheduledPost("p1");
+    expect(res).toEqual({ ok: true });
+    expect(mockXListTargets).toHaveBeenCalledWith(OWNER);
+    expect(mockUpdateMany.mock.calls[0][0].data.status).toBe("SCHEDULED");
   });
 
   it("rejects when a Facebook post has no media rows, with the image-or-video message, no write", async () => {

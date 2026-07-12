@@ -355,7 +355,7 @@ async function authorizeX(ownerId: string): Promise<{ token: string } | { refuse
   if (!conn) return { refuse: "Connect the X account before publishing." };
   if (!xScopeCanPublish(conn.scope)) return { refuse: "Publishing isn't enabled for this X connection yet — reconnect and grant posting access." };
   if (conn.publishPaused) return { refuse: "Publishing is paused for this X connection." };
-  if (conn.status === "expired") return { refuse: "This X connection needs to be reconnected to publish." };
+  if (conn.status !== "active") return { refuse: "This X connection needs to be reconnected to publish." };
   if (conn.tokenExpiresAt && conn.tokenExpiresAt.getTime() <= Date.now()) return { refuse: "This X connection expired — reconnect to publish." };
   try {
     return { token: decryptToken(conn.accessTokenEnc) };
@@ -370,7 +370,8 @@ async function authorizeX(ownerId: string): Promise<{ token: string } | { refuse
  *  six-state / four-lock handler as IG/FB — only THIS executor is X-specific (契约6 单一动作层).
  *  NOTE: the scheduler's canPublish pre-filter (scanDuePublishPosts) stays Meta-only by design — the
  *  frozen 闸 file is untouched (E4-16); X only enqueues for owners already Meta-authorized until the
- *  X connect/OAuth flow lands, and it fail-closes here regardless (no X credentials in-block). */
+ *  X connect/OAuth flow lands; once a ChannelConnection carries tweet.write + a token, the authorizeX
+ *  allow-list (status==="active" ∧ !publishPaused ∧ unexpired) is the actual guard (not a missing route). */
 export async function executeX(post: DuePost): Promise<PublishResult | PublishAuthRefused | PublishMediaContractRefused> {
   const auth = await authorizeX(post.ownerId);
   if ("refuse" in auth) return { authFailed: true, error: auth.refuse };

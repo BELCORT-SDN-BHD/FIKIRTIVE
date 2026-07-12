@@ -9,7 +9,6 @@ import {
   parseScheduleInstant,
   SCHEDULE_CHANNEL_CAPS,
   type ScheduledPostStatus,
-  type ScheduleChannel,
 } from "@fikirtive/core";
 import { requireOwner } from "./auth-guard";
 import { isImpersonating } from "@/lib/better-auth/compat";
@@ -32,7 +31,7 @@ const IMPERSONATION_BLOCK = "Paused while impersonating a customer — exit impe
 const EDITABLE_STATUSES = new Set<ScheduledPostStatus>(["DRAFT", "SCHEDULED"]);
 
 export type CreateScheduledPostInput = {
-  channel: ScheduleChannel;
+  channel: string; // channel id; validated server-side (isScheduleChannel / validateScheduleDraft)
   caption: string;
   scheduledAt: string;   // UTC ISO-8601 instant
   scheduledTz: string;   // IANA tz (e.g. "Asia/Kuala_Lumpur")
@@ -42,7 +41,7 @@ export type CreateScheduledPostInput = {
 };
 
 export type UpdateScheduledPostPatch = {
-  channel?: ScheduleChannel;
+  channel?: string;
   caption?: string;
   scheduledAt?: string;
   scheduledTz?: string;
@@ -327,7 +326,9 @@ export async function approveScheduledPost(
   }
   // Consent needs a resolved target that the owner actually owns.
   if (!post.metaTargetId) return { error: "Pick which account to post to before approving." };
-  if (!post.media.length) {
+  // X supports text-only posts; Meta (IG/FB) organic publish is media-first in this slice, so the
+  // ≥1-media requirement forks by channel (X exempt) — else a text-only X post could never be approved.
+  if (!post.media.length && post.channel !== "x") {
     // Instagram is image-only (#229) — "or video" would mislead an IG owner into adding one.
     return { error: post.channel === "instagram" ? "Add at least one image before approving." : "Add at least one image or video before approving." };
   }

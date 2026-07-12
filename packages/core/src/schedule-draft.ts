@@ -26,7 +26,7 @@ export const SCHEDULE_CHANNEL_CAPS: Record<
 > = {
   instagram: { label: "Instagram", maxMediaCount: 10, supportsFirstComment: true },
   facebook: { label: "Facebook", maxMediaCount: 1, supportsFirstComment: false },
-  x: { label: "X", maxMediaCount: 4, supportsFirstComment: false },
+  x: { label: "X", maxMediaCount: 0, supportsFirstComment: false },
 };
 
 export type ScheduleDraftInput = {
@@ -94,9 +94,11 @@ export function validateScheduleDraft(
   if (media.length > caps.maxMediaCount) {
     return {
       error:
-        caps.maxMediaCount === 1
-          ? `${caps.label} supports a single image or video, not a carousel.`
-          : `A carousel can have at most ${caps.maxMediaCount} items.`,
+        caps.maxMediaCount === 0
+          ? `${caps.label} posts are text-only for now.`
+          : caps.maxMediaCount === 1
+            ? `${caps.label} supports a single image or video, not a carousel.`
+            : `A carousel can have at most ${caps.maxMediaCount} items.`,
     };
   }
 

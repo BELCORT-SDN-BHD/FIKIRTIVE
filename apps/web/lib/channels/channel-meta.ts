@@ -38,8 +38,8 @@ export const CHANNEL_META: ChannelMeta[] = [
     id: "x",
     label: "X",
     capabilities: {
-      postTypes: ["feed-image", "text-link"],
-      maxMediaCount: 4,
+      postTypes: ["text-link"],
+      maxMediaCount: 0,
       supportsFirstComment: false,
       supportsNativeSchedule: false,
     },
