@@ -22,11 +22,23 @@
 
 - owner：〔块施工工位〕
 - 证据：〔人工路径 + Otto 话术逐条（含设置/异常/取消/花费确认）；20 行的人工入口 + Otto skill 硬化（逐行 tool 名+cost/effect/reach+归域）见 spec §二；债 5 条清偿（**5 skill 零豁免**：debt-70 gated skill〔free/write/external→needsApproval 派生 true，人点卡=同意本体〕+ 71/72 写 skill + 73/74 读 skill；5 个新 ctx.schedule port + **通用审批卡链四触点**〔spec §五 5.1·附，v0.3——现状 ottoApprove 只认 generate，otto-actions.ts:697〕；debt-70 债清判定=skill∧卡链∧测试三者齐）见 spec §五——待施工后填活体〕
+- **debt-70~74 清偿（W-B4-2 施工，PR=本 PR）——四件套逐债**：
+
+  | 债号 | skill tool 名（三元组→needsApproval） | ctx port（web 注入=同一人工 server action） | handler + 测试 | 关键断言 |
+  |---|---|---|---|---|
+  | debt-70 | `approveScheduledPost`（free/write/**external**→**true** 机器派生） | `ctx.schedule.approve` → `approveScheduledPost` server action | `packages/otto/src/skills/approve-scheduled-post.ts` + `.test.ts` | 5.1 三断言：①未确认零写（先出卡）②确认后走同一 owner-scoped action（CAS+状态机+媒体校验）③派生律断言（deriveNeedsApproval=true，绕不开） |
+  | debt-71 | `cancelScheduledPost`（free/write/internal→false） | `ctx.schedule.cancel` → `cancelScheduledPost` action | `cancel-scheduled-post.ts` + `.test.ts` | 状态机拒绝原样中继；owner-scoped 在 action 内 |
+  | debt-72 | `editScheduledPost`（free/write/internal→false） | `ctx.schedule.update` → `updateScheduledPost` action | `edit-scheduled-post.ts` + `.test.ts` | **不变式继承非复写**：实质编辑退 DRAFT 清 approvedAt 只活在共享 action（schedule-actions.ts re-consent gate），skill 纯转发 |
+  | debt-73 | `listScheduledPosts`（free/read/internal→false） | `ctx.schedule.list` → `listScheduledPosts` action（映射为 ISO/mediaCount 摘要） | `list-scheduled-posts.ts` + `.test.ts` | 读对等走 port 不直连 Prisma（B9 契约5）；窗口参数透传 |
+  | debt-74 | `listPublishTargets`（free/read/internal→false） | `ctx.schedule.listTargets` → `listOwnerTargets` action | `list-publish-targets.ts` + `.test.ts` | ads-only（无 page scope）→空集非错误；owner 隔离在 action 内 |
+
+- **通用审批卡链四触点（5.1·附）落点**：①通用卡=`APPROVAL_CARD` ChatMessageKind（additive 迁移）+ `OttoApprovalCard.tsx`（渲染=`approval-card-view.ts` 纯函数，R1 断言 `approval-card-view.test.ts`：渠道/排期时间/文案摘要/媒体数，非裸 id）接进 `OttoConversation`/`OttoChatStream`，generate 卡（OttoPlanCard）专有渲染不动；②匹配泛化=`otto-actions.ts:697` 硬过滤解除→注册表派生闭集（`packages/otto/src/approval-tools.ts` APPROVAL_TOOL_NAMES）+ `approveScheduledPost` 用 scheduledPostId 绑定幂等锚（卡=消耗品，双批幂等拒；ApprovalRequest payload-hash 锚随 B0-29 落地时升级）+ 新 `ottoReject`（拒后零写）；③恢复链=approve/reject resume 均走 `withLlmBudget`（refId `otto-approve:`/`otto-reject:`），free skill 零 spend 语义、不建 GenJob；④五项测试全绿（`otto-actions.test.ts`：通用卡渲染/approve→resume→同 action 执行链/拒绝零写/双批幂等/generate 回归四 pin〔generate-only park 契约逐字保持+混合 park 只铸 1 卡〕）。debt-70 三合一（skill∧卡链∧测试）在本 PR 齐备；parity-manifest 五行 todoSkill→skill（仅此五行）。
 
 ## ⑤ 对标锚（平齐/超过/未及）
 
 - owner：〔块施工工位 / B11 联验〕
 - 证据：〔Buffer/Later/Hootsuite + Meta 官方发布语义 + X adapter 单列锚（见 spec §四）；并排截图三档打分=待填；未及项→链待裁〕
+- **Hootsuite 审批流锚（W-B4-2 增量）**：审批工作流的 Otto 侧对等已建成——Otto 可代提审批请求（gated skill 出卡）、人卡上确认/拒绝、拒后零写、双批幂等拒（`otto-actions.test.ts` 契约级立证）；「不双发」硬承诺不变（四锁未触碰）。并排截图打分仍归 B11 联验=待填。
 
 ## ⑥ 全旅程证据（happy/empty/loading/denied/failure/retry/mobile）
 

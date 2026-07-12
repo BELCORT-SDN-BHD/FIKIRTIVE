@@ -26,6 +26,7 @@ import {
 } from "@/lib/otto-inject-helpers";
 import { OttoPlanCard } from "./OttoPlanCard";
 import { OttoActionPlanCard } from "./OttoActionPlanCard";
+import { OttoApprovalCard } from "./OttoApprovalCard";
 import { OttoAdBuildCard } from "./OttoAdBuildCard";
 import { PackCard } from "./PackCard";
 import { StoryboardCard } from "./StoryboardCard";
@@ -920,6 +921,21 @@ export function OttoChatStream({
               return (
                 <WidgetRow key={m.id} animateIn={isNewMessage(m.id)}>
                   <OttoAdBuildCard cardId={m.metadata!.durableId} payload={m.metadata?.payload} />
+                </WidgetRow>
+              );
+            }
+
+            // Universal approval card (B4 debt-70) — a non-generate gated skill parked for the
+            // user's consent. Confirm/Decline call ottoApprove/ottoReject inside the card.
+            if (kind === "APPROVAL_CARD") {
+              return (
+                <WidgetRow key={m.id} animateIn={isNewMessage(m.id)}>
+                  <OttoApprovalCard
+                    cardId={m.metadata!.durableId}
+                    threadId={thread.id}
+                    payload={m.metadata?.payload}
+                    onResolved={() => void refetchAndAppendCards()}
+                  />
                 </WidgetRow>
               );
             }

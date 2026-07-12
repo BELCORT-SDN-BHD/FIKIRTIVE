@@ -218,6 +218,14 @@ describe("stepEventOf — agent step narration (the live trace)", () => {
     expect(stepEventOf(toolCalledEvent("seedancePrompt"))?.label).toBe("Crafting the video prompt");
   });
 
+  it("labels the five B4 schedule skills (debt-70~74, B9 契约4: new skill ships with a label)", () => {
+    expect(stepEventOf(toolCalledEvent("approveScheduledPost"))?.label).toBe("Asking you to approve a post");
+    expect(stepEventOf(toolCalledEvent("cancelScheduledPost"))?.label).toBe("Cancelling a scheduled post");
+    expect(stepEventOf(toolCalledEvent("editScheduledPost"))?.label).toBe("Editing a scheduled post");
+    expect(stepEventOf(toolCalledEvent("listScheduledPosts"))?.label).toBe("Checking your schedule");
+    expect(stepEventOf(toolCalledEvent("listPublishTargets"))?.label).toBe("Finding your connected accounts");
+  });
+
   it("stays silent (null) for internal/unknown tools", () => {
     expect(stepEventOf(toolCalledEvent("setTitle"))).toBeNull();
     expect(stepEventOf(toolCalledEvent("totally-unknown"))).toBeNull();

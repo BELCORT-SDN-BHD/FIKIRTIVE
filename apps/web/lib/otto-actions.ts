@@ -26,6 +26,7 @@
 import "server-only";
 import { revalidatePath } from "next/cache";
 import { prisma } from "@fikirtive/db";
+import type { Prisma } from "@fikirtive/db";
 import {
   newId,
   coworkTurnRequest,
@@ -37,8 +38,8 @@ import {
   searchWithFallback,
   extractProductDraft,
 } from "@fikirtive/core";
-import { otto, withLlmBudget, OTTO_DEFAULT_MODEL, run, MaxTurnsExceededError, mapOttoUsage, ottoSimpleModeBlock, buildUserTurn, sanitizeHistory, tryRestoreRunState, extractText } from "@fikirtive/otto";
-import type { OttoContext, AgentInputItem } from "@fikirtive/otto";
+import { otto, withLlmBudget, OTTO_DEFAULT_MODEL, run, MaxTurnsExceededError, mapOttoUsage, ottoSimpleModeBlock, buildUserTurn, sanitizeHistory, tryRestoreRunState, extractText, collectApprovalInterruptions, approvalRefOf } from "@fikirtive/otto";
+import type { OttoContext, AgentInputItem, ApprovalInterruption } from "@fikirtive/otto";
 import { requireOwner } from "./auth-guard";
 import { isImpersonating } from "@/lib/better-auth/compat";
 import { resolveDisabledModels } from "./model-registry";
@@ -47,6 +48,14 @@ import { gatherReferenceImages } from "./otto-ref-images";
 import { getBrandContextText } from "./memory-actions";
 import { fetchAndExtract, fetchRawHtml } from "./fetch-extract";
 import { draftScheduledPost } from "./schedule-service";
+import {
+  approveScheduledPost,
+  cancelScheduledPost,
+  updateScheduledPost,
+  listScheduledPosts,
+  listOwnerTargets,
+} from "./schedule-actions";
+import { asApprovalCardPayload, type ApprovalCardPayload, type ApprovalCardSummary } from "./approval-card-view";
 import { readPageCached } from "./web-page-cache";
 import { fetchOwnerInsights } from "./meta-insights";
 import { fetchOwnerAdPerformance } from "./meta-performance";
@@ -267,7 +276,31 @@ export async function buildOttoContext({
     },
     // Single write authority: Otto's schedulePosts skill drafts through the SAME server function
     // the human createScheduledPost action uses (shared validation + owner-scoped media check).
-    schedule: { draft: (input) => draftScheduledPost({ ownerId, projectId, source: "otto", input }) },
+    // debt-70~74 (B4): the remaining ports are the SAME owner-scoped server actions the human
+    // buttons/views use — identity re-derives from the verified session inside each action
+    // (requireOwner), which is the session this run executes under; approve/cancel/update also
+    // re-check impersonation there. Skills never touch Prisma (single-action-layer rule).
+    schedule: {
+      draft: (input) => draftScheduledPost({ ownerId, projectId, source: "otto", input }),
+      approve: ({ scheduledPostId }) => approveScheduledPost(scheduledPostId),
+      cancel: ({ scheduledPostId }) => cancelScheduledPost(scheduledPostId),
+      update: ({ scheduledPostId, patch }) => updateScheduledPost(scheduledPostId, patch),
+      list: async ({ from, to }) => {
+        const rows = await listScheduledPosts({ from, to });
+        return rows.map((r) => ({
+          id: r.id,
+          channel: r.channel,
+          caption: r.caption,
+          status: r.status,
+          scheduledAt: r.scheduledAt.toISOString(),
+          scheduledTz: r.scheduledTz,
+          approvedAt: r.approvedAt ? r.approvedAt.toISOString() : null,
+          mediaCount: r.media.length,
+          lastError: r.lastError,
+        }));
+      },
+      listTargets: () => listOwnerTargets(),
+    },
     productIngest: {
       // Layer 1 only: fetch (SSRF-hardened) + deterministic extract, plus the page text so
       // Otto itself fills any gaps (that is the skill path's Layer 2 — no separate LLM call).
@@ -306,14 +339,107 @@ export type FinalizeOttoRunResult =
   | { status: "done"; reply: string }
   | { status: "stale" };
 
-type OttoInterruption = {
-  name?: string;
-  rawItem?: { name?: string };
-  arguments?: string;
-};
+// ---------------------------------------------------------------------------
+// Universal approval cards (B4 debt-70, spec §五 5.1·附 touchpoints ①/②) — the durable
+// APPROVAL_CARD a non-generate approval-gated skill parks as. generate keeps its own
+// GEN_CARD/OttoPlanCard spend path untouched; these helpers only serve the other gated skills.
+// ---------------------------------------------------------------------------
 
-function asOttoInterruption(value: unknown): OttoInterruption {
-  return typeof value === "object" && value !== null ? value as OttoInterruption : {};
+/** R1: enrich the card with WHAT is being consented to (owner-scoped read), never a bare id. */
+async function buildApprovalCardSummary(
+  ownerId: string,
+  toolName: string,
+  ref: string,
+): Promise<ApprovalCardSummary | null> {
+  if (toolName !== "approveScheduledPost") return null;
+  try {
+    const post = await prisma.scheduledPost.findFirst({
+      where: { id: ref, ownerId, deletedAt: null },
+      select: {
+        channel: true, caption: true, scheduledAt: true, scheduledTz: true,
+        media: { select: { generationId: true } },
+      },
+    });
+    if (!post) return null;
+    return {
+      channel: post.channel,
+      caption: post.caption,
+      scheduledAt: post.scheduledAt.toISOString(),
+      scheduledTz: post.scheduledTz,
+      mediaCount: post.media.length,
+    };
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Persist one APPROVAL_CARD per parked non-generate approval. Deduped per (toolName, ref,
+ * status=pending): a rehydrated run can re-park the SAME pending tool call (the user sent another
+ * message while an approval waited), and that must not mint a second card for one consent.
+ */
+async function persistPendingApprovalCards(args: {
+  ownerId: string;
+  threadId: string;
+  approvals: ApprovalInterruption[];
+  seqStart: number;
+}): Promise<{ cardIds: string[]; seq: number }> {
+  let seq = args.seqStart;
+  const cardIds: string[] = [];
+  for (const a of args.approvals) {
+    const existing = await prisma.chatMessage.findFirst({
+      where: {
+        threadId: args.threadId,
+        ownerId: args.ownerId,
+        kind: "APPROVAL_CARD",
+        AND: [
+          { payload: { path: ["toolName"], equals: a.toolName } },
+          { payload: { path: ["ref"], equals: a.ref } },
+          { payload: { path: ["status"], equals: "pending" } },
+        ],
+      },
+      select: { id: true },
+    });
+    if (existing) {
+      cardIds.push(existing.id);
+      continue;
+    }
+    const summary = await buildApprovalCardSummary(args.ownerId, a.toolName, a.ref);
+    const payload: ApprovalCardPayload = { toolName: a.toolName, ref: a.ref, status: "pending", summary };
+    const id = newId();
+    await prisma.chatMessage.create({
+      data: {
+        id,
+        threadId: args.threadId,
+        ownerId: args.ownerId,
+        role: "AGENT",
+        kind: "APPROVAL_CARD",
+        seq: ++seq,
+        text: "",
+        payload: payload as unknown as Prisma.InputJsonObject,
+      },
+    });
+    cardIds.push(id);
+  }
+  return { cardIds, seq };
+}
+
+/** Owner-scoped card-status stamp (pending → approved/rejected). The card records the consent
+ *  decision; the underlying action's own result is relayed in Otto's resumed reply. */
+async function setApprovalCardStatus(
+  cardId: string,
+  ownerId: string,
+  payload: ApprovalCardPayload,
+  status: "approved" | "rejected",
+): Promise<void> {
+  await prisma.chatMessage
+    .updateMany({
+      where: { id: cardId, ownerId, kind: "APPROVAL_CARD" },
+      data: { payload: { ...payload, status } as unknown as Prisma.InputJsonObject },
+    })
+    .catch((err) => {
+      console.warn(`[approval-card] status stamp failed (cardId=${cardId}).`, err);
+    });
 }
 
 /**
@@ -349,23 +475,14 @@ export async function finalizeOttoRun({
   });
   let seq = Math.max(seqAfterUser, lastMsg?.seq ?? 0);
 
-  // Handle interruption (generate tool parked for approval)
+  // Handle interruption (an approval-gated tool parked for approval)
   if (Array.isArray(result.interruptions) && result.interruptions.length > 0) {
-    const pendingCardIds: string[] = [];
-    for (const value of result.interruptions as unknown[]) {
-      const interruption = asOttoInterruption(value);
-      // Accept either the SDK `.name` getter or the raw item name (robust to item-shape
-      // differences between RunState.getInterruptions() items and RunResult.interruptions).
-      const nm = interruption.name ?? interruption.rawItem?.name;
-      if (nm === "generate") {
-        try {
-          const args = JSON.parse(interruption.arguments ?? "{}") as { cardId?: string };
-          if (args.cardId) pendingCardIds.push(args.cardId);
-        } catch {
-          // malformed args — skip
-        }
-      }
-    }
+    // Closed set from the registry (collectApprovalInterruptions): generate keeps its existing
+    // contract — pendingCardIds carries its pre-persisted GEN_CARD ids. Other gated tools
+    // (approveScheduledPost) get a durable APPROVAL_CARD persisted below (B4 debt-70 5.1·附①).
+    const approvals = collectApprovalInterruptions(result.interruptions as unknown[]);
+    const pendingCardIds: string[] = approvals.filter((a) => a.toolName === "generate").map((a) => a.ref);
+    const nonGenerateApprovals = approvals.filter((a) => a.toolName !== "generate");
 
     // CAS: only write paused ottoState if no concurrent turn moved it (existing thread only)
     if (!isNew) {
@@ -395,6 +512,18 @@ export async function finalizeOttoRun({
           text: assistantText,
         },
       });
+    }
+
+    // Durable approval cards for the non-generate gated tools (after the explanatory text).
+    if (nonGenerateApprovals.length > 0) {
+      const persisted = await persistPendingApprovalCards({
+        ownerId,
+        threadId,
+        approvals: nonGenerateApprovals,
+        seqStart: seq,
+      });
+      seq = persisted.seq;
+      pendingCardIds.push(...persisted.cardIds);
     }
 
     return { status: "needs_approval", pendingCardIds };
@@ -647,6 +776,7 @@ export async function ottoApprove(raw: unknown): Promise<
   | { ok: true; status: "degraded" }
   | { ok: true; status: "stale" }
   | { ok: true; genJobId: string; status: string } // double-approve: existing job
+  | { ok: true; alreadyResolved: true; resolution: "approved" | "rejected" } // double-approve: consumed card
   | { error: string }
 > {
   // Inline validation (no zod dep in apps/web) — mirror brief schema
@@ -702,22 +832,74 @@ export async function ottoApprove(raw: unknown): Promise<
       }
     });
 
-    if (!matchingInterruption) {
-      // No matching pending interruption — check if already generated (double-approve path)
-      const existingJob = await prisma.genJob.findFirst({
-        where: { ownerId, idempotencyKey: `cowork:${cardId}` },
-        select: { id: true, status: true },
-      });
-      if (existingJob) {
-        // Already approved/generating — return benignly, no second spend
-        return { ok: true, genJobId: existingJob.id, status: existingJob.status };
-      }
-      return { error: "That card isn't awaiting approval." };
-    }
+    // Universal branch (B4 debt-70, spec §五 5.1·附②): when the id isn't a parked generate card,
+    // it may be an APPROVAL_CARD message id (a non-generate gated skill, e.g. approveScheduledPost).
+    // The card payload carries the (toolName, ref) binding; ref anchors idempotency (the B0-29
+    // ApprovalRequest payload-hash anchor upgrades this binding when that row lands).
+    let approvalCard: { id: string; payload: ApprovalCardPayload } | null = null;
 
-    // Approve — mutates the rehydrated state in place; resume will execute the tool
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    state.approve(matchingInterruption as any);
+    if (!matchingInterruption) {
+      const cardMsg = await prisma.chatMessage.findFirst({
+        where: { id: cardId, threadId, ownerId, kind: "APPROVAL_CARD", deletedAt: null },
+        select: { id: true, payload: true },
+      });
+      const cardPayload = cardMsg ? asApprovalCardPayload(cardMsg.payload) : null;
+      if (cardMsg && cardPayload) {
+        // Double-approve idempotency (M2 spirit): a consumed card refuses benignly — no re-approve,
+        // no second execution.
+        if (cardPayload.status !== "pending") {
+          return { ok: true, alreadyResolved: true, resolution: cardPayload.status };
+        }
+        // (toolName, ref) binding against the rehydrated state's parked interruptions.
+        const targetItem = interruptions.find((item) => {
+          // eslint-disable-next-line @typescript-eslint/no-explicit-any
+          const it = item as any;
+          const toolName: string | undefined = it.name ?? it.rawItem?.name;
+          if (!toolName || toolName === "generate" || toolName !== cardPayload.toolName) return false;
+          try {
+            const args = JSON.parse(it.arguments ?? it.rawItem?.arguments ?? "{}") as Record<string, unknown>;
+            return approvalRefOf(toolName, args) === cardPayload.ref;
+          } catch {
+            return false;
+          }
+        });
+        if (!targetItem) {
+          // Parked ask gone (superseded/consumed). Truth first: if the post IS approved, stamp the
+          // card and answer benignly instead of failing the user for a stale ask.
+          if (cardPayload.toolName === "approveScheduledPost") {
+            const post = await prisma.scheduledPost.findFirst({
+              where: { id: cardPayload.ref, ownerId, deletedAt: null },
+              select: { approvedAt: true },
+            });
+            if (post?.approvedAt) {
+              await setApprovalCardStatus(cardMsg.id, ownerId, cardPayload, "approved");
+              return { ok: true, alreadyResolved: true, resolution: "approved" };
+            }
+          }
+          return { error: "That card isn't awaiting approval." };
+        }
+        // Approve — mutates the rehydrated state; resume executes the tool → the SAME owner-scoped
+        // server action the human button uses (via ctx.schedule.approve).
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        state.approve(targetItem as any);
+        approvalCard = { id: cardMsg.id, payload: cardPayload };
+      } else {
+        // No matching pending interruption — check if already generated (double-approve path)
+        const existingJob = await prisma.genJob.findFirst({
+          where: { ownerId, idempotencyKey: `cowork:${cardId}` },
+          select: { id: true, status: true },
+        });
+        if (existingJob) {
+          // Already approved/generating — return benignly, no second spend
+          return { ok: true, genJobId: existingJob.id, status: existingJob.status };
+        }
+        return { error: "That card isn't awaiting approval." };
+      }
+    } else {
+      // Approve — mutates the rehydrated state in place; resume will execute the tool
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      state.approve(matchingInterruption as any);
+    }
 
     // Build context — injects the real startGen port (spend path)
     const ctx = await buildOttoContext({
@@ -790,23 +972,19 @@ export async function ottoApprove(raw: unknown): Promise<
     // Shared extractText (@fikirtive/otto run-output.ts) — this was a local copy until 7-14b.
     const newOttoState = result.state.toString() as string;
 
+    // Universal card: the consent was granted and the resumed run executed the gated tool (its own
+    // result is relayed in Otto's reply) — stamp the card so a second approve refuses benignly.
+    if (approvalCard) {
+      await setApprovalCardStatus(approvalCard.id, ownerId, approvalCard.payload, "approved");
+    }
+
     // Handle another interruption (chained approval needed)
     if (Array.isArray(result.interruptions) && result.interruptions.length > 0) {
-      const pendingCardIds: string[] = [];
-      for (const value of result.interruptions as unknown[]) {
-        const interruption = asOttoInterruption(value);
-        // Accept either the SDK `.name` getter or the raw item name (robust to item-shape
-        // differences between RunState.getInterruptions() items and RunResult.interruptions).
-        const nm = interruption.name ?? interruption.rawItem?.name;
-        if (nm === "generate") {
-          try {
-            const args = JSON.parse(interruption.arguments ?? "{}") as { cardId?: string };
-            if (args.cardId) pendingCardIds.push(args.cardId);
-          } catch {
-            // malformed args — skip
-          }
-        }
-      }
+      // Same closed-set collection as finalizeOttoRun: generate ids ride pendingCardIds; other
+      // gated tools get durable APPROVAL_CARDs persisted after the CAS below.
+      const chainedApprovals = collectApprovalInterruptions(result.interruptions as unknown[]);
+      const pendingCardIds: string[] = chainedApprovals.filter((a) => a.toolName === "generate").map((a) => a.ref);
+      const chainedNonGenerate = chainedApprovals.filter((a) => a.toolName !== "generate");
 
       // CAS: only write paused ottoState if no concurrent turn moved it
       const { count: casInterrupt } = await prisma.chatThread.updateMany({
@@ -834,6 +1012,22 @@ export async function ottoApprove(raw: unknown): Promise<
             text: assistantText,
           },
         });
+      }
+
+      // Durable approval cards for chained non-generate gated asks (B4 debt-70 5.1·附①).
+      if (chainedNonGenerate.length > 0) {
+        const seqRow = await prisma.chatMessage.findFirst({
+          where: { threadId, ownerId },
+          orderBy: { seq: "desc" },
+          select: { seq: true },
+        });
+        const persisted = await persistPendingApprovalCards({
+          ownerId,
+          threadId,
+          approvals: chainedNonGenerate,
+          seqStart: seqRow?.seq ?? 0,
+        });
+        pendingCardIds.push(...persisted.cardIds);
       }
 
       revalidatePath("/", "layout");
@@ -882,6 +1076,189 @@ export async function ottoApprove(raw: unknown): Promise<
   } catch (e) {
     console.error("[ottoApprove] failed:", errSummary(e));
     return { error: "Couldn't approve — please try again." };
+  }
+}
+
+// ---------------------------------------------------------------------------
+// ottoReject — decline a parked non-generate approval (universal card chain, B4 debt-70)
+// ---------------------------------------------------------------------------
+
+/**
+ * Reject path (spec §五 5.1·附 test ③): the user declines the approval card. The parked tool is
+ * REJECTED on the rehydrated state — the SDK sends the rejection text to the model instead of
+ * executing the tool, so ZERO schedule writes happen — the run resumes metered so Otto closes out
+ * cleanly, and the card is stamped rejected (a later approve/reject of the same card refuses
+ * benignly). generate cards are NOT handled here: their decline UX stays the existing plan-card flow.
+ */
+export async function ottoReject(raw: unknown): Promise<
+  | { ok: true; status: "done" | "degraded" | "stale" | "needs_approval" }
+  | { ok: true; alreadyResolved: true; resolution: "approved" | "rejected" }
+  | { error: string }
+> {
+  if (
+    typeof raw !== "object" ||
+    raw === null ||
+    typeof (raw as Record<string, unknown>).threadId !== "string" ||
+    typeof (raw as Record<string, unknown>).cardId !== "string" ||
+    ((raw as Record<string, unknown>).threadId as string).length < 1 ||
+    ((raw as Record<string, unknown>).threadId as string).length > 64 ||
+    ((raw as Record<string, unknown>).cardId as string).length < 1 ||
+    ((raw as Record<string, unknown>).cardId as string).length > 64
+  ) {
+    return { error: "Invalid request." };
+  }
+  const { threadId, cardId } = raw as { threadId: string; cardId: string };
+
+  const gate = await requireOwner();
+  if ("error" in gate) return gate;
+  if (await isImpersonating()) return { error: "Paused while impersonating a customer — exit impersonation to do this." };
+  const { ownerId } = gate;
+
+  try {
+    const thread = await prisma.chatThread.findFirst({
+      where: { id: threadId, ownerId, deletedAt: null },
+      select: { id: true, projectId: true, ottoState: true },
+    });
+    if (!thread) return { error: "Conversation not found." };
+    if (!thread.ottoState) return { error: "Nothing to decline." };
+    const priorOttoState = thread.ottoState;
+
+    const cardMsg = await prisma.chatMessage.findFirst({
+      where: { id: cardId, threadId, ownerId, kind: "APPROVAL_CARD", deletedAt: null },
+      select: { id: true, payload: true },
+    });
+    const cardPayload = cardMsg ? asApprovalCardPayload(cardMsg.payload) : null;
+    if (!cardMsg || !cardPayload) return { error: "That card isn't awaiting approval." };
+    if (cardPayload.status !== "pending") {
+      return { ok: true, alreadyResolved: true, resolution: cardPayload.status };
+    }
+
+    const state = await tryRestoreRunState(otto, priorOttoState);
+    if (!state) return { error: "This conversation's approval state couldn't be restored — please ask Otto again." };
+
+    const targetItem = state.getInterruptions().find((item) => {
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      const it = item as any;
+      const toolName: string | undefined = it.name ?? it.rawItem?.name;
+      if (!toolName || toolName === "generate" || toolName !== cardPayload.toolName) return false;
+      try {
+        const args = JSON.parse(it.arguments ?? it.rawItem?.arguments ?? "{}") as Record<string, unknown>;
+        return approvalRefOf(toolName, args) === cardPayload.ref;
+      } catch {
+        return false;
+      }
+    });
+
+    if (!targetItem) {
+      // The parked ask no longer exists. Truth first: if the post got approved elsewhere, record
+      // that; otherwise the stale ask is safely declinable (nothing can execute — stamp and close).
+      if (cardPayload.toolName === "approveScheduledPost") {
+        const post = await prisma.scheduledPost.findFirst({
+          where: { id: cardPayload.ref, ownerId, deletedAt: null },
+          select: { approvedAt: true },
+        });
+        if (post?.approvedAt) {
+          await setApprovalCardStatus(cardMsg.id, ownerId, cardPayload, "approved");
+          return { ok: true, alreadyResolved: true, resolution: "approved" };
+        }
+      }
+      await setApprovalCardStatus(cardMsg.id, ownerId, cardPayload, "rejected");
+      revalidatePath("/", "layout");
+      return { ok: true, alreadyResolved: true, resolution: "rejected" };
+    }
+
+    // Reject — the SDK records a rejection for this tool call; the tool NEVER executes.
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    state.reject(targetItem as any, { message: "The user declined this request." });
+
+    const ctx = await buildOttoContext({
+      ownerId,
+      projectId: thread.projectId,
+      threadId,
+      sourceGenerationId: null,
+    });
+
+    // Resume the run, metered (LLM cost of the close-out turn — same withLlmBudget as approve).
+    const refId = `otto-reject:${threadId}:${cardId}`;
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    let agentResult: any;
+    try {
+      agentResult = await withLlmBudget(
+        {
+          orgId: ownerId,
+          refId,
+          model: OTTO_DEFAULT_MODEL,
+          paid: true,
+          maxSteps: OTTO_MAX_STEPS,
+          usageOnError: (e) => (e instanceof MaxTurnsExceededError && (e as { state?: { usage?: unknown } }).state?.usage)
+            ? mapOttoUsage((e as { state: { usage: Parameters<typeof mapOttoUsage>[0] } }).state.usage)
+            : null,
+        },
+        async () => {
+          const r = await run(otto, state, { context: ctx, maxTurns: OTTO_MAX_STEPS });
+          return { result: r, usage: mapOttoUsage(r.state.usage) };
+        },
+      );
+    } catch (e) {
+      if (e instanceof MaxTurnsExceededError) {
+        // The decline itself is done (the parked tool can no longer execute) — stamp the card
+        // even on degrade, then persist the degrade message like ottoApprove does.
+        await setApprovalCardStatus(cardMsg.id, ownerId, cardPayload, "rejected");
+        const degradeText = "I got a bit tangled up — try asking again.";
+        const seq = await prisma.chatMessage.findFirst({
+          where: { threadId, ownerId },
+          orderBy: { seq: "desc" },
+          select: { seq: true },
+        });
+        await prisma.chatMessage.create({
+          data: {
+            id: newId(),
+            threadId,
+            ownerId,
+            role: "AGENT",
+            kind: "TEXT",
+            seq: (seq?.seq ?? 0) + 1,
+            text: degradeText,
+          },
+        });
+        const errState = (e as { state?: { toString(): string } }).state;
+        if (errState) {
+          await prisma.chatThread.update({
+            where: { id: threadId },
+            data: { ottoState: errState.toString(), updatedAt: new Date() },
+          });
+        }
+        revalidatePath("/", "layout");
+        return { ok: true, status: "degraded" };
+      }
+      throw e;
+    }
+
+    // The parked tool was rejected — zero writes happened; stamp the card.
+    await setApprovalCardStatus(cardMsg.id, ownerId, cardPayload, "rejected");
+
+    // Persist the resumed run through the shared finalizer (CAS + seq semantics identical to
+    // ottoTurn; also persists cards for any chained approvals the close-out turn parked).
+    const seqRow = await prisma.chatMessage.findFirst({
+      where: { threadId, ownerId },
+      orderBy: { seq: "desc" },
+      select: { seq: true },
+    });
+    const finalized = await finalizeOttoRun({
+      ownerId,
+      threadId,
+      isNew: false,
+      priorOttoState,
+      result: agentResult,
+      seqAfterUser: seqRow?.seq ?? 0,
+    });
+    revalidatePath("/", "layout");
+    if (finalized.status === "stale") return { ok: true, status: "stale" };
+    if (finalized.status === "needs_approval") return { ok: true, status: "needs_approval" };
+    return { ok: true, status: "done" };
+  } catch (e) {
+    console.error("[ottoReject] failed:", errSummary(e));
+    return { error: "Couldn't decline that — please try again." };
   }
 }
 

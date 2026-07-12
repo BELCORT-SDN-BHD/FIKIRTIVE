@@ -26,7 +26,7 @@ export async function reapStaleLlmReservations(): Promise<number> {
       AND r."createdAt" < ${cutoff}
       AND (
         r."refId" LIKE 'otto-turn:%' OR r."refId" LIKE 'otto-stream:%' OR
-        r."refId" LIKE 'otto-approve:%' OR r."refId" LIKE 'otto-verdict:%' OR
+        r."refId" LIKE 'otto-approve:%' OR r."refId" LIKE 'otto-reject:%' OR r."refId" LIKE 'otto-verdict:%' OR
         r."refId" LIKE 'brand-research:%' OR r."refId" LIKE 'draft:%' OR
         r."refId" LIKE 'enhance:%' OR r."refId" LIKE 'research:%'
       )

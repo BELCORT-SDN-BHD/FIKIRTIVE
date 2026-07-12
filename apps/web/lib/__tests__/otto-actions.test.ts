@@ -24,6 +24,8 @@ const {
   mockChatMessageFindFirst,
   mockChatMessageCreate,
   mockChatMessageDeleteMany,
+  mockChatMessageUpdateMany,
+  mockScheduledPostFindFirst,
   mockGenJobFindFirst,
   mockGenJobUpdateMany,
   mockResearchJobFindFirst,
@@ -41,6 +43,7 @@ const {
   MockRunState,
   MockMaxTurnsExceededError,
   mockApprove,
+  mockReject,
   mockGetInterruptions,
   mockTavilySearch,
   mockBraveSearch,
@@ -49,6 +52,7 @@ const {
   const mockRunStateToString = vi.fn(() => '{"mocked":"state"}');
   const mockRunStateFromString = vi.fn();
   const mockApprove = vi.fn();
+  const mockReject = vi.fn();
   const mockGetInterruptions = vi.fn(() => [] as unknown[]);
   const mockTavilySearch = vi.fn();
   const mockBraveSearch = vi.fn();
@@ -69,6 +73,7 @@ const {
     static fromString = mockRunStateFromString;
     getInterruptions() { return mockGetInterruptions(); }
     approve(item: unknown, opts?: unknown) { return mockApprove(item, opts); }
+    reject(item: unknown, opts?: unknown) { return mockReject(item, opts); }
   }
 
   class MockMaxTurnsExceededError extends Error {
@@ -97,6 +102,8 @@ const {
     mockChatMessageFindFirst: vi.fn(),
     mockChatMessageCreate: vi.fn(),
     mockChatMessageDeleteMany: vi.fn(),
+    mockChatMessageUpdateMany: vi.fn(),
+    mockScheduledPostFindFirst: vi.fn(),
     mockGenJobFindFirst: vi.fn(),
     mockGenJobUpdateMany: vi.fn(),
     mockResearchJobFindFirst: vi.fn(),
@@ -114,6 +121,7 @@ const {
     MockRunState,
     MockMaxTurnsExceededError,
     mockApprove,
+    mockReject,
     mockGetInterruptions,
     mockTavilySearch,
     mockBraveSearch,
@@ -144,11 +152,13 @@ vi.mock("@fikirtive/db", () => ({
       findFirst: mockChatMessageFindFirst,
       create: mockChatMessageCreate,
       deleteMany: mockChatMessageDeleteMany,
+      updateMany: mockChatMessageUpdateMany,
     },
     genJob: {
       findFirst: mockGenJobFindFirst,
       updateMany: mockGenJobUpdateMany,
     },
+    scheduledPost: { findFirst: mockScheduledPostFindFirst },
     researchJob: { findFirst: mockResearchJobFindFirst, deleteMany: mockResearchJobDeleteMany },
     canvasNode: { updateMany: mockCanvasNodeUpdateMany },
     generation: {
@@ -206,7 +216,7 @@ vi.mock("@fikirtive/otto", async (importOriginal) => {
 
 // ── Import SUT after mocks ───────────────────────────────────────────────────
 
-const { ottoTurn, mapOttoUsage, buildOttoContext, ottoApprove, createEmptyCoworkThread, deleteCoworkThread, setCoworkThreadPinned, finalizeOttoRun } = await import("@/lib/otto-actions");
+const { ottoTurn, mapOttoUsage, buildOttoContext, ottoApprove, ottoReject, createEmptyCoworkThread, deleteCoworkThread, setCoworkThreadPinned, finalizeOttoRun } = await import("@/lib/otto-actions");
 
 // ── Shared fixtures ──────────────────────────────────────────────────────────
 
@@ -312,6 +322,8 @@ beforeEach(() => {
   mockGetBrandContextText.mockResolvedValue("");
   mockEntityFindMany.mockResolvedValue([]);
   mockGenJobFindFirst.mockResolvedValue(null);
+  mockScheduledPostFindFirst.mockResolvedValue(null);
+  mockChatMessageUpdateMany.mockResolvedValue({ count: 1 });
 });
 
 // ── Test 1: new thread ────────────────────────────────────────────────────────
@@ -1435,5 +1447,308 @@ describe("buildContextSystemMessage — reference video signal", () => {
     const result = buildContextSystemMessage({ ...base });
     // no parts at all → null; and certainly no REFERENCE VIDEO mention
     expect(result === null || !(result as { content: string }).content.includes("REFERENCE VIDEO")).toBe(true);
+  });
+});
+
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Universal approval card chain (B4 debt-70, spec §五 5.1·附) — the five-test
+// clause: ① card persistence (rendered content comes from approval-card-view,
+// asserted in approval-card-view.test.ts), ② approve→resume→execute chain,
+// ③ reject path (zero writes), ④ double-approve idempotency, ⑤ generate
+// regression (the 1.8b suite above must stay green + the pins below).
+// ─────────────────────────────────────────────────────────────────────────────
+
+const APPROVAL_CARD_MSG_ID = "apcard_msg_1";
+const SCHEDULED_POST_ID = "post_sched_1";
+const APPROVE_THREAD_ID_2 = "thread_approve_sched";
+
+function makeSchedApprovalItem(scheduledPostId: string) {
+  return {
+    type: "tool_approval_item" as const,
+    name: "approveScheduledPost",
+    arguments: JSON.stringify({ scheduledPostId }),
+    rawItem: { name: "approveScheduledPost", arguments: JSON.stringify({ scheduledPostId }) },
+  };
+}
+
+function pendingCardPayload(status = "pending") {
+  return {
+    toolName: "approveScheduledPost",
+    ref: SCHEDULED_POST_ID,
+    status,
+    summary: {
+      channel: "instagram",
+      caption: "Golden hour drop",
+      scheduledAt: "2026-07-15T01:00:00.000Z",
+      scheduledTz: "Asia/Kuala_Lumpur",
+      mediaCount: 1,
+    },
+  };
+}
+
+/** Harness for the universal branch: a paused thread whose state parks approveScheduledPost,
+ *  and an APPROVAL_CARD message binding (toolName, ref). chatMessage.findFirst dispatches on
+ *  the query: APPROVAL_CARD lookups get the card; seq reads get { seq: 5 }. */
+function setupUniversalApprove(cardStatus = "pending", interruptionItems?: unknown[]) {
+  mockRequireOwner.mockResolvedValue(GATE);
+  mockResolveDisabledModels.mockResolvedValue(new Set());
+  mockChatThreadFindFirst.mockResolvedValue({
+    id: APPROVE_THREAD_ID_2,
+    projectId: PROJECT_ID,
+    ottoState: '{"paused":"state"}',
+  });
+  const mockState = new MockRunState();
+  mockGetInterruptions.mockReturnValue(interruptionItems ?? [makeSchedApprovalItem(SCHEDULED_POST_ID)]);
+  mockRunStateFromString.mockResolvedValue(mockState);
+  mockGenJobFindFirst.mockResolvedValue(null);
+  mockChatMessageFindFirst.mockImplementation((args: { where?: { kind?: string } } | undefined) => {
+    if (args?.where?.kind === "APPROVAL_CARD") {
+      return Promise.resolve({ id: APPROVAL_CARD_MSG_ID, payload: pendingCardPayload(cardStatus) });
+    }
+    return Promise.resolve({ seq: 5 });
+  });
+  mockChatMessageCreate.mockResolvedValue({});
+  mockChatThreadUpdate.mockResolvedValue({});
+  mockRun.mockResolvedValue(makeMockResult({ finalOutput: "Done — approved and queued." }));
+  mockWithLlmBudget.mockImplementation(async (_args: unknown, fn: () => Promise<{ result: unknown; usage?: unknown }>) => {
+    const out = await fn();
+    return (out as { result: unknown }).result;
+  });
+  mockTransaction.mockImplementation(runTransaction);
+}
+
+describe("ottoApprove — universal branch (test ②: approve → resume → same server action)", () => {
+  it("binds (toolName, ref), approves the parked item, resumes metered, stamps the card approved", async () => {
+    setupUniversalApprove();
+
+    const res = await ottoApprove({ threadId: APPROVE_THREAD_ID_2, cardId: APPROVAL_CARD_MSG_ID });
+
+    expect(res).toMatchObject({ ok: true, status: "done" });
+    // The PARKED approveScheduledPost item was approved (not a generate item).
+    expect(mockApprove).toHaveBeenCalledWith(expect.objectContaining({ name: "approveScheduledPost" }), undefined);
+    // Resume ran inside withLlmBudget with the approve refId (恢复链 withLlmBudget 计量).
+    expect(mockWithLlmBudget).toHaveBeenCalledWith(
+      expect.objectContaining({ orgId: OWNER_ID, paid: true, refId: expect.stringContaining("otto-approve") }),
+      expect.any(Function),
+    );
+    expect(mockRun).toHaveBeenCalled();
+    // The card was stamped approved (owner-scoped, kind-pinned).
+    expect(mockChatMessageUpdateMany).toHaveBeenCalledWith(
+      expect.objectContaining({
+        where: expect.objectContaining({ id: APPROVAL_CARD_MSG_ID, ownerId: OWNER_ID, kind: "APPROVAL_CARD" }),
+        data: expect.objectContaining({ payload: expect.objectContaining({ status: "approved" }) }),
+      }),
+    );
+  });
+
+  it("ref mismatch: a card whose ref matches no parked item (post not approved) → error, no approve, no run", async () => {
+    setupUniversalApprove("pending", [makeSchedApprovalItem("post_OTHER")]);
+    mockScheduledPostFindFirst.mockResolvedValue(null);
+
+    const res = await ottoApprove({ threadId: APPROVE_THREAD_ID_2, cardId: APPROVAL_CARD_MSG_ID });
+
+    expect(res).toMatchObject({ error: expect.any(String) });
+    expect(mockApprove).not.toHaveBeenCalled();
+    expect(mockRun).not.toHaveBeenCalled();
+  });
+
+  it("test ④ double-approve: a consumed (approved) card refuses benignly — no re-approve, no run, no write", async () => {
+    setupUniversalApprove("approved");
+
+    const res = await ottoApprove({ threadId: APPROVE_THREAD_ID_2, cardId: APPROVAL_CARD_MSG_ID });
+
+    expect(res).toEqual({ ok: true, alreadyResolved: true, resolution: "approved" });
+    expect(mockApprove).not.toHaveBeenCalled();
+    expect(mockRun).not.toHaveBeenCalled();
+    expect(mockChatMessageUpdateMany).not.toHaveBeenCalled();
+  });
+
+  it("truth-first: pending card whose parked ask is gone but the post IS approved → stamp + benign", async () => {
+    setupUniversalApprove("pending", []); // no parked interruptions
+    mockScheduledPostFindFirst.mockResolvedValue({ approvedAt: new Date() });
+
+    const res = await ottoApprove({ threadId: APPROVE_THREAD_ID_2, cardId: APPROVAL_CARD_MSG_ID });
+
+    expect(res).toEqual({ ok: true, alreadyResolved: true, resolution: "approved" });
+    expect(mockApprove).not.toHaveBeenCalled();
+    expect(mockRun).not.toHaveBeenCalled();
+    expect(mockChatMessageUpdateMany).toHaveBeenCalledWith(
+      expect.objectContaining({ data: expect.objectContaining({ payload: expect.objectContaining({ status: "approved" }) }) }),
+    );
+  });
+});
+
+describe("ottoReject — decline path (test ③: rejected tool never executes, zero writes)", () => {
+  it("rejects the parked item with a message, resumes metered, stamps the card rejected — approve never called", async () => {
+    setupUniversalApprove();
+
+    const res = await ottoReject({ threadId: APPROVE_THREAD_ID_2, cardId: APPROVAL_CARD_MSG_ID });
+
+    expect(res).toMatchObject({ ok: true, status: "done" });
+    // The SDK-level rejection — the tool (and thus the schedule server action) never executes.
+    expect(mockReject).toHaveBeenCalledWith(
+      expect.objectContaining({ name: "approveScheduledPost" }),
+      expect.objectContaining({ message: expect.any(String) }),
+    );
+    expect(mockApprove).not.toHaveBeenCalled();
+    // Run resumed (close-out turn) inside withLlmBudget with the reject refId.
+    expect(mockWithLlmBudget).toHaveBeenCalledWith(
+      expect.objectContaining({ orgId: OWNER_ID, paid: true, refId: expect.stringContaining("otto-reject") }),
+      expect.any(Function),
+    );
+    // Card stamped rejected.
+    expect(mockChatMessageUpdateMany).toHaveBeenCalledWith(
+      expect.objectContaining({
+        where: expect.objectContaining({ id: APPROVAL_CARD_MSG_ID, kind: "APPROVAL_CARD" }),
+        data: expect.objectContaining({ payload: expect.objectContaining({ status: "rejected" }) }),
+      }),
+    );
+  });
+
+  it("test ④ (reject side): a consumed card refuses benignly — no reject, no run", async () => {
+    setupUniversalApprove("rejected");
+
+    const res = await ottoReject({ threadId: APPROVE_THREAD_ID_2, cardId: APPROVAL_CARD_MSG_ID });
+
+    expect(res).toEqual({ ok: true, alreadyResolved: true, resolution: "rejected" });
+    expect(mockReject).not.toHaveBeenCalled();
+    expect(mockRun).not.toHaveBeenCalled();
+  });
+
+  it("declining a stale ask (interruption gone, post not approved) closes the card without a resume", async () => {
+    setupUniversalApprove("pending", []);
+    mockScheduledPostFindFirst.mockResolvedValue({ approvedAt: null });
+
+    const res = await ottoReject({ threadId: APPROVE_THREAD_ID_2, cardId: APPROVAL_CARD_MSG_ID });
+
+    expect(res).toEqual({ ok: true, alreadyResolved: true, resolution: "rejected" });
+    expect(mockReject).not.toHaveBeenCalled();
+    expect(mockRun).not.toHaveBeenCalled();
+    expect(mockChatMessageUpdateMany).toHaveBeenCalledWith(
+      expect.objectContaining({ data: expect.objectContaining({ payload: expect.objectContaining({ status: "rejected" }) }) }),
+    );
+  });
+});
+
+describe("finalizeOttoRun — universal card persistence (test ①) + generate regression (test ⑤)", () => {
+  function schedInterruptionResult(items: unknown[]) {
+    return makeMockResult({ interruptions: items, finalOutput: "Want me to approve it?" });
+  }
+
+  function setupFinalize({ dedupeHit = false } = {}) {
+    mockChatThreadUpdateMany.mockResolvedValue({ count: 1 });
+    mockChatMessageCreate.mockResolvedValue({});
+    mockChatMessageFindFirst.mockImplementation((args: { where?: { kind?: string } } | undefined) => {
+      if (args?.where?.kind === "APPROVAL_CARD") {
+        return Promise.resolve(dedupeHit ? { id: "existing_card_1" } : null);
+      }
+      return Promise.resolve({ seq: 3 });
+    });
+    // R1 enrichment source: the owner-scoped post read.
+    mockScheduledPostFindFirst.mockResolvedValue({
+      channel: "instagram",
+      caption: "Golden hour drop",
+      scheduledAt: new Date("2026-07-15T01:00:00.000Z"),
+      scheduledTz: "Asia/Kuala_Lumpur",
+      media: [{ generationId: "g1" }, { generationId: "g2" }],
+    });
+  }
+
+  it("persists an APPROVAL_CARD with the R1 summary (channel/time/caption/mediaCount) and returns its id", async () => {
+    setupFinalize();
+    const res = await finalizeOttoRun({
+      ownerId: OWNER_ID,
+      threadId: THREAD_ID,
+      isNew: false,
+      priorOttoState: '{"p":1}',
+      result: schedInterruptionResult([makeSchedApprovalItem(SCHEDULED_POST_ID)]),
+      seqAfterUser: 3,
+    });
+    expect(res.status).toBe("needs_approval");
+    expect((res as { pendingCardIds: string[] }).pendingCardIds).toHaveLength(1);
+    expect(mockChatMessageCreate).toHaveBeenCalledWith(
+      expect.objectContaining({
+        data: expect.objectContaining({
+          kind: "APPROVAL_CARD",
+          role: "AGENT",
+          payload: expect.objectContaining({
+            toolName: "approveScheduledPost",
+            ref: SCHEDULED_POST_ID,
+            status: "pending",
+            summary: expect.objectContaining({
+              channel: "instagram",
+              caption: "Golden hour drop",
+              scheduledAt: "2026-07-15T01:00:00.000Z",
+              scheduledTz: "Asia/Kuala_Lumpur",
+              mediaCount: 2,
+            }),
+          }),
+        }),
+      }),
+    );
+  });
+
+  it("dedupes: a still-pending card for the same (toolName, ref) is reused, not re-minted", async () => {
+    setupFinalize({ dedupeHit: true });
+    const res = await finalizeOttoRun({
+      ownerId: OWNER_ID,
+      threadId: THREAD_ID,
+      isNew: false,
+      priorOttoState: '{"p":1}',
+      result: schedInterruptionResult([makeSchedApprovalItem(SCHEDULED_POST_ID)]),
+      seqAfterUser: 3,
+    });
+    expect((res as { pendingCardIds: string[] }).pendingCardIds).toEqual(["existing_card_1"]);
+    expect(mockChatMessageCreate).not.toHaveBeenCalledWith(
+      expect.objectContaining({ data: expect.objectContaining({ kind: "APPROVAL_CARD" }) }),
+    );
+  });
+
+  it("test ⑤ generate regression: a generate-only park keeps the EXACT old contract — cardId in pendingCardIds, zero APPROVAL_CARD writes, zero schedule reads", async () => {
+    setupFinalize();
+    const generateItem = {
+      rawItem: { name: "generate" },
+      arguments: JSON.stringify({ cardId: "gcard_1" }),
+      type: "tool_approval_item",
+    };
+    const res = await finalizeOttoRun({
+      ownerId: OWNER_ID,
+      threadId: THREAD_ID,
+      isNew: false,
+      priorOttoState: '{"p":1}',
+      result: schedInterruptionResult([generateItem]),
+      seqAfterUser: 3,
+    });
+    expect(res).toMatchObject({ status: "needs_approval", pendingCardIds: ["gcard_1"] });
+    expect(mockChatMessageCreate).not.toHaveBeenCalledWith(
+      expect.objectContaining({ data: expect.objectContaining({ kind: "APPROVAL_CARD" }) }),
+    );
+    expect(mockScheduledPostFindFirst).not.toHaveBeenCalled();
+  });
+
+  it("mixed park (generate + schedule): generate id rides pendingCardIds, ONE card minted for the schedule ask only", async () => {
+    setupFinalize();
+    const generateItem = {
+      rawItem: { name: "generate" },
+      arguments: JSON.stringify({ cardId: "gcard_1" }),
+      type: "tool_approval_item",
+    };
+    const res = await finalizeOttoRun({
+      ownerId: OWNER_ID,
+      threadId: THREAD_ID,
+      isNew: false,
+      priorOttoState: '{"p":1}',
+      result: schedInterruptionResult([generateItem, makeSchedApprovalItem(SCHEDULED_POST_ID)]),
+      seqAfterUser: 3,
+    });
+    const ids = (res as { pendingCardIds: string[] }).pendingCardIds;
+    expect(ids[0]).toBe("gcard_1");
+    expect(ids).toHaveLength(2);
+    const approvalCreates = mockChatMessageCreate.mock.calls.filter(
+      (c) => (c[0] as { data?: { kind?: string } })?.data?.kind === "APPROVAL_CARD",
+    );
+    expect(approvalCreates).toHaveLength(1);
+    expect((approvalCreates[0]![0] as { data: { payload: { toolName: string } } }).data.payload.toolName).toBe("approveScheduledPost");
   });
 });
