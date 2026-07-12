@@ -1,7 +1,7 @@
-# B2 数据契约 spec（事件 / 身份 / 同意）（v0.4——冻结候选）
+# B2 数据契约 spec（事件 / 身份 / 同意）（v0.5——冻结候选）
 
 > 2026-07-12。epoch `claude-20260712-03`。Sol 原阻断的解：**先冻数据契约，B8 设计与后续块在其上施工**，避免末期发现新 schema。
-> **状态：冻结候选（freeze candidate）——冻结待 founder 明示 ack（D-018②/D-020⑤）。** SOL 跨族复审 §2 的 B2 六条阻断项已逐条闭合，二三波需求单已吸收（§四点六）；**v0.4 闭合 codex 异族评审（第二轮 BLOCK）清单**：ConsentEvent 完整 Prisma 形状（契约 3）、AttributionEvent 完整字段抄录表（契约 1）、anonymousKey 应用层澄清（契约 2）、BusinessEvent/Receipt 互斥职责冻结（契约〇·附）、口碑各 kind 账本归属现在冻结（§四点六·1）、六表列举补 VoucherToken（§四点六·3）。本文本属共享契约/schema=founder-only 类别，异族复审通过不替代 founder 明示过目；未获 ack 前 02-B2 相关行不迁 `spec-ready`。
+> **状态：冻结候选（freeze candidate）——冻结待 founder 明示 ack（D-018②/D-020⑤）。** SOL 跨族复审 §2 的 B2 六条阻断项已逐条闭合，二三波需求单已吸收（§四点六）；v0.4 闭合 codex 异族评审（第二轮 BLOCK）清单：ConsentEvent 完整 Prisma 形状（契约 3）、AttributionEvent 完整字段抄录表（契约 1）、anonymousKey 应用层澄清（契约 2）、BusinessEvent/Receipt 互斥职责冻结（契约〇·附）、口碑各 kind 账本归属现在冻结（§四点六·1）、六表列举补 VoucherToken（§四点六·3）；**v0.5 闭合 codex 第三轮（终轮）两项**：①ConsentEvent 派生规则顾客优先级修法+两验收案例（契约 3——修 append-only 下旧 revoke 锁死合法 re-opt-in 的自相矛盾）②口碑观测流 `ReviewObservation` 追加式冻结（§四点六·1——ReviewItem 保留为当前状态读模型）。本文本属共享契约/schema=founder-only 类别，异族复审通过不替代 founder 明示过目；未获 ack 前 02-B2 相关行不迁 `spec-ready`。
 > 人话：给全城定三样通用底座——「发生了什么事」怎么记（事件）、「这是不是同一个顾客」怎么判（身份）、「他答应过被联系吗」怎么存（同意）。
 
 ## 一、范围与矩阵行映射
@@ -139,16 +139,30 @@ model ConsentEvent {
 
 - 纪律：append-only（无软删——同意证据永不删除）；`@@unique([ownerId, idempotencyKey])` 保证 STOP 双投递/导入重跑精确一次；租户前导索引服务 `contactable` 派生函数的「最近一条 ConsentEvent」查询。
 
-- **`contactable` 由确定性派生函数算出**（宪法 10，不靠模型天赋；派生规则写成表）：
+- **`contactable` 由确定性派生函数算出**（宪法 10，不靠模型天赋）。**v0.5 修法（codex R3·P0 采纳）**：v0.4 的派生表自相矛盾——轴 B 写成「存在顾客发起的 revoke → 立即不可联系」，而 append-only 下旧 revoke 永存，会**锁死合法 re-opt-in**（顾客退订后又主动订回，永远联系不上）。冻结**确定性优先级规则**取代：
 
-  | 输入 | 判定 |
-  |---|---|
-  | 该 (channel, purpose) 最近一条 ConsentEvent | `action='grant'` 且无更晚的 `revoke` → 轴 A 通过；否则不可联系 |
-  | 轴 B 顾客退订 | 存在顾客发起的 revoke → 立即不可联系（顾客意志优先于商家） |
-  | 轴 C 商家 DND | `doNotDisturb=true` → 不可联系 |
-  | 轴 D 频控 | 运行时超上限 → 本次抑制（`status='suppressed'`），不改持久同意 |
+  ```
+  consentState(contactId, channel, purpose)：                    // 轴 A+B 合一求值
+    E = 该三元组的全部 ConsentEvent（append-only 流）
+    C = E 中 actorKind='customer' 的子集
+    若 C 非空 → state = C 中最新一条的 action        // ① 最新「顾客发起」事件决定状态：
+                                                     //    顾客后续 grant 覆盖更早 revoke（re-opt-in 合法）
+    否则若 E 非空 → state = E 中最新一条的 action    // ② merchant/system 事件仅在顾客零表态时有效力
+                                                     //    ——永不能覆盖顾客 revoke（①已保证：C 非空就轮不到②）
+    否则 → state = 无记录 = 不可联系                  // ③ PDPA 默认关
+    「最新」= occurredAt 最大；同刻并列 → revoke 优先（保守）；再并列 → createdAt 晚者
+                                                     // ④ 确定性 tie-break，全序无歧义
 
-  `contactable(contactId, channel, purpose) = 轴A通过 AND NOT 轴B退订 AND NOT 轴C·DND`；轴 D 是**运行时叠加**的发送资格闸（B7），不改派生的 `contactable`。
+  contactable(contactId, channel, purpose) = (state == 'grant') AND NOT 轴C·DND
+  ```
+
+  - 轴 B（顾客退订）不再是独立的「存在即永久」检查——它由 ① 的顾客优先级承载：顾客 revoke 在场且是其最新表态时 state=revoke；顾客后来 grant 则 state=grant。轴 C（DND）仍是 Contact 字段独立与；轴 D（频控）仍是 **B7 运行时叠加**的发送资格闸（`status='suppressed'`），不改派生的 `contactable`。
+  - **验收案例（冻结，进契约测试）**：
+
+    | 案例 | 事件序列（同一 contact×channel×purpose） | 判定 |
+    |---|---|---|
+    | 1 · re-opt-in 恢复资格 | `customer revoke @T1` → `customer grant @T2`（T2>T1） | C 最新=grant → state=grant → `contactable=true`（无 DND 时）——旧 revoke 不锁死 |
+    | 2 · 商家不可代授 | `customer revoke @T1` → `merchant grant @T2`（T2>T1） | C 非空且最新=revoke → merchant 事件轮不到求值 → state=revoke → `contactable=false` |
 - **读写边界**：写=B5 收件箱/B7 退订流/CRM/B8 请评前置；**读=B7 抑制名单运行时硬约束的唯一真源**（判决 7-9：自动化系统层跳过，非字段装饰）；发送资格最终裁决在 B7 运行时（叠加轴 D）。分群 `contactable` 用上式派生，**不在 Contact 上冻结成单一 status 字段**。
 
 ### 契约附 · UTM 结构化（D-021 已批，SOL §2·B2⑥ 采纳）
@@ -192,9 +206,9 @@ model ConsentEvent {
 > **总纲**：SOL §2·B2① 坐实「文件自身写明二三波未吸收、需 v0.3」是不可冻结的形式硬伤。本节吸收三波需求单，形式上补齐冻结候选资格。
 > **留痕（D-021 圈档）**：D-021 体量过目代批后，**Marketplace B0-70/72、第一米 B0-76 保持 `listed`**；其表设计**仅入册（本节登记）不排产**——不认证、不出程、终验如实显示。下列表设计入契约做前瞻校验，不构成即时建表授权（新增对象=founder-only schema 演进，单列上报）。
 
-### 1 · 口碑五表（PR #248 §6 —— ReviewRequest / ReviewItem / Testimonial / Referral / LoyaltyMember）
+### 1 · 口碑五表（PR #248 §6 —— ReviewRequest / ReviewItem / Testimonial / Referral / LoyaltyMember；**v0.5 增列第六对象 `ReviewObservation` 观测流**，见本节末）
 
-五表均**新对象**（非 harmony-01 既有），全部 additive migration，租户铁幕：每表 `ownerId`（无默认）+ 进 `TENANT_MODELS` 守卫 + 领头 `(ownerId, …, deletedAt)` 索引（缝 5）。
+五表均**新对象**（非 harmony-01 既有；连同 v0.5 观测流=六个新对象——体量数字如实，SOL §3 教训），全部 additive migration，租户铁幕：每表 `ownerId`（无默认）+ 进 `TENANT_MODELS` 守卫 + 领头 `(ownerId, …, deletedAt)` 索引（缝 5）。
 
 | 表 | 关键字段（起步 A 档） | 契约级约束（喂 B2） |
 |---|---|---|
@@ -210,14 +224,44 @@ model ConsentEvent {
   |---|---|---|
   | `review_requested`（请评发出） | **ActionEvent** `reputation.review.requested` | 我方发起的触达**操作**，非量测；且无仪表软引用可挂（违反契约 1「按 kind 至少一个非空」不变量）。请评链接的扫/点由既有 `scan`/`click` kind 凭 linkId 正常落归因流水（TrackedLink `purpose='review_request'` 已在 schema :1228） |
   | `review_replied`（回评发出） | **ActionEvent** `reputation.review.replied` | 外部写操作的审计留痕 |
-  | `review_received`（监控到新评价） | **不写事件——`ReviewItem` 镜像表即真源** | 平台评价不可证归因到任何仪表（Google 不回传评价者来路）；写 AttributionEvent 会违反仪表非空不变量并污染量测流。ReviewItem 唯一索引 `(ownerId, platform, externalReviewId)` 防重，B2 直接读表计数（capturedAt/rating），免双录 |
+  | `review_received`（监控到新评价） | **`ReviewObservation` 追加式观测流（v0.5 冻结，见下）+ `ReviewItem`=当前状态读模型** | 平台评价不可证归因到任何仪表（Google 不回传评价者来路）；写 AttributionEvent 会违反仪表非空不变量并污染量测流——**仍不入归因流水**。v0.4 曾裁「不写事件、ReviewItem 即真源」，codex R3 坐实缺口：ReviewItem 是可覆写读模型，单表会丢观测历史、无法审计平台侧删改——v0.5 补观测流为真源，ReviewItem 降为其确定性投影 |
   | `referral_converted`（介绍成交） | **AttributionEvent 新 kind**（founder-only 闭集扩展） | **可证成果**：成交经 B6 BusinessEvent 验证（evidenceRung 按凭证=merchant_confirmed/source_observed），仪表=介绍链 `linkId` 或 `sourceTagId`（必非空，守契约 1 不变量），`outcomeDelta=+1`。**无仪表的口头介绍不写归因流水**——只更新 `Referral.status` + ActionEvent 留痕（诚实：不可证就不进量测账） |
   | `referral_rewarded`（发奖） | **ActionEvent** `reputation.referral.rewarded` | 发奖是**操作**（商家价值动作，SOL §1·P0-3 要求审计）；奖励载体本身在 `VoucherToken`/EasyStore 积分（只读），不经 FIKIRTIVE 资金 |
   | `loyalty_redeemed`（积分兑换） | **BusinessEvent**（B6 镜像） | 外部经营事实：兑换发生在 EasyStore，经 Receipt→BusinessEvent 归一进城（契约〇·附），B8 永不代写 |
   | `loyalty_expiring`（积分将到期） | **不落账——确定性派生信号** | 从 `LoyaltyMember.pointsExpireAt` 确定性可算（宪法 10），B7 唤回直接读；若 B7 因此发出触达，触达操作由 B7 写 ActionEvent |
 
   效果数值（NPS/复购率/新客数）由 B2 B0-09 从上述各账+镜像表**自算**，B8 只写不算。**进 AttributionEvent kind 闭集的近期扩展仅 `referral_converted` 一个**（founder-only 单列，§五）。
-- **宪法 8 结构隔离机器闸**（本域最关键契约）：ReviewRequest 与 Referral 两表**禁互指外键**；`review_*` 与 `referral_*`/`loyalty_*` 两族事件**不共享关联键**，B2 算效果时不得反推「留评→给奖」耦合归因。任何 migration 加互指=违宪 8，进 REVIEWER-PLAYBOOK 硬拦 + CI schema 断言。
+
+- **口碑观测流 `ReviewObservation`（v0.5 冻结——codex R3·P1④ 采纳）**：`ReviewItem` 保留为**当前状态读模型**（rating/body/回评态可覆写）；其真源=追加式观测流，**仍不入归因流水**（契约〇）。完整形状（建表属 founder-only 单列，§五；形状本节冻结）：
+
+  ```prisma
+  // 口碑观测流（append-only）：每行=对某平台评价的一次「状态观测」（在场快照或消失 tombstone）。
+  // ReviewItem 是本流的确定性投影（读模型），可随时全量重建（宪法 10）。
+  model ReviewObservation {
+    id               String   @id // ULID
+    ownerId          String   // 租户键，无默认（宪法 6；进 TENANT_MODELS + Organization back-relation）
+    organization     Organization @relation(fields: [ownerId], references: [id])
+    platform         String   // 'google' | 'shopee' | 'lazada' | 'fb'（code-validated，同 ReviewRequest 闭集）
+    externalReviewId String   // 平台内评价 ID
+    observationKind  String   // 'present'（在场快照）| 'absent'（tombstone：平台侧已删除/隐藏）——删除语义，永不物删本地行
+    externalVersion  String?  // 平台自带版本号/更新时间戳（平台有则录）
+    contentHash      String   // sha256(归一化 rating+body+回评状态)——外部无版本号时的版本替身；absent 观测=最后在场 contentHash
+    rating           Int?     // present 时快照；absent 为 null
+    body             String?  // present 时快照；absent 为 null
+    observedAt       DateTime // 本次观测发生时刻
+    createdAt        DateTime @default(now())
+    idempotencyKey   String   // 稳定幂等键（见下）
+    @@unique([ownerId, idempotencyKey])
+    @@index([ownerId, platform, externalReviewId, observedAt]) // 租户前导；投影重建按此序回放
+  }
+  ```
+
+  - **稳定幂等键**：present=`'<platform>:<externalReviewId>:<contentHash>'`——重爬内容未变**不产生新行**（去重），内容变化（改星/改文/平台侧编辑）=新 contentHash=新观测行；absent=`'<platform>:<externalReviewId>:absent:<最后在场 contentHash>'`，且**仅当读模型仍视其在场时写一次**——删除→重现→再删除的循环各键不同，可完整留痕。
+  - **首次/最近观测时间**：`ReviewItem` 增 `firstObservedAt`/`lastObservedAt`（读模型字段，由观测流确定性维护：first=该 externalReviewId 首条 present 的 observedAt，last=最新观测的 observedAt；v0.3 表中 `capturedAt` 语义并入 `lastObservedAt`）。
+  - **tombstone 语义**：absent 观测→投影把 `ReviewItem.status` 置 `'removed'`（枚举 additive），本地行**永不物删**（评价被平台删掉也是经营事实，差评预警/合规审计要看得见）。
+  - **周期全量对账与漂移补救（冻结规则）**：每 **24 小时**（冻结常量，founder ack 可调）对平台真值全量比对——①平台在场而本地无 → 补写 present 观测+投影建行；②本地在场而平台无 → 写 absent tombstone；③读模型字段 ≠ 最新观测 → 由最新观测**重建该行**（投影可全量重建自观测流=漂移补救的通解，宪法 10 确定性）。对账时刻记 ActionEvent `reputation.review.reconciled` `{platform, checked, drifted, tombstoned}`。
+
+- **宪法 8 结构隔离机器闸**（本域最关键契约）：ReviewRequest 与 Referral 两表**禁互指外键**；`review_*` 与 `referral_*`/`loyalty_*` 两族事件**不共享关联键**，B2 算效果时不得反推「留评→给奖」耦合归因。任何 migration 加互指=违宪 8，进 REVIEWER-PLAYBOOK 硬拦 + CI schema 断言（ReviewObservation 同属评价线，**禁含**任何 referral/loyalty 关联键）。
 
 ### 2 · Marketplace 复用裁定（PR #247 §6 —— BrandRecord data JSON + ActionEvent 事件族）
 
@@ -235,9 +279,9 @@ model ConsentEvent {
 
 ## 五、冻结条件与状态
 
-- **状态：冻结候选（freeze candidate）。** v0.1 骨架 → v0.2 吸收 B8 两试产 → v0.3 闭合 SOL §2·B2 六阻断项 + 吸收二三波 → **v0.4 闭合 codex 异族评审 BLOCK 清单（本稿）：ConsentEvent Prisma 形状 / AttributionEvent 完整抄录 / anonymousKey 澄清 / BusinessEvent·Receipt 互斥职责 / 口碑 kind 逐项归账 / VoucherToken 勘误** → **founder 明示 ack（D-018②/D-020⑤）** → spec-ready（02-B2 相关行随冻结 PR 迁级）。异族复审通过不替代 founder 过目（共享契约/schema=founder-only）。
+- **状态：冻结候选（freeze candidate）。** v0.1 骨架 → v0.2 吸收 B8 两试产 → v0.3 闭合 SOL §2·B2 六阻断项 + 吸收二三波 → v0.4 闭合 codex 异族评审 R2 BLOCK 清单（ConsentEvent Prisma 形状 / AttributionEvent 完整抄录 / anonymousKey 澄清 / BusinessEvent·Receipt 互斥职责 / 口碑 kind 逐项归账 / VoucherToken 勘误） → **v0.5 闭合 codex R3 终轮两项（本稿）：consent 派生顾客优先级修法+验收案例 / ReviewObservation 观测流冻结** → **founder 明示 ack（D-018②/D-020⑤）** → spec-ready（02-B2 相关行随冻结 PR 迁级）。异族复审通过不替代 founder 过目（共享契约/schema=founder-only）。
 - **开放问题（v0.2 三项处置）**：
   1. ~~事件 payload schema 约束强度~~ → **闭合**：kind 闭集 + 每 kind 软引用非空约束（契约 1，对齐真 schema `schema.prisma:1364-1369`），非自由 JSON；宪法 10 定型。
   2. anonymousKey 隐私保留期（PDPA 姿态）→ **留 B13 对表**（跨块，非本 spec 冻结阻断项；`geoBucket`/`ipHashPrefix` 已按 PDPA 粗粒度冻结）。
   3. 收费点事件是否并入 kind 闭集 → **闭合**：按契约〇=Credits 收支归 `CreditLedger`，**不并入** AttributionEvent kind 闭集；宪法 2 账本推论由 CreditLedger 承载。
-- **冻结时随契约上报 founder 的 founder-only 单列项**：①`issuerId` 扩唯一索引（身份铁幕）；②AttributionEvent kind 闭集扩展（近期仅 `referral_converted`；P3 `campaign.attributed`——归属已按 §四点六·1 冻结）；③二三波新对象建表（口碑五表 / MicrositePage / `ConsentEvent`〔形状已冻结于契约 3〕/ 可选对象）。这些**不在本 spec 自行落地**，是冻结 ack 时的明示清单。
+- **冻结时随契约上报 founder 的 founder-only 单列项**：①`issuerId` 扩唯一索引（身份铁幕）；②AttributionEvent kind 闭集扩展（近期仅 `referral_converted`；P3 `campaign.attributed`——归属已按 §四点六·1 冻结）；③二三波新对象建表（口碑五表 + `ReviewObservation`〔形状已冻结于 §四点六·1〕/ MicrositePage / `ConsentEvent`〔形状已冻结于契约 3〕/ 可选对象）。这些**不在本 spec 自行落地**，是冻结 ack 时的明示清单。
