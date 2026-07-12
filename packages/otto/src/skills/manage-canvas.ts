@@ -14,8 +14,9 @@
  * $0 by construction: no action here creates a GenJob, reserves credits, or calls the
  * provider. Placing an image/video node only REFERENCES a generation that was already
  * produced and charged; making NEW media is the `generate` skill's job (spend, gated).
- * Removing a node never refunds or cancels the underlying job — a still-generating card
- * needs `confirmRemovePending: true` (parity with the human UI's in-flight delete confirm).
+ * Removing a node never refunds or cancels the underlying job — so a still-generating paid
+ * card is UI-only to remove: Otto hard-refuses and directs the user to remove it by hand on
+ * the canvas (v2, codex TR1 item 2 — no model self-confirmation; 宪法 11 protective rail).
  */
 import { z } from "zod";
 import { defineOttoSkill } from "../skill.js";
@@ -59,11 +60,6 @@ const params = z.object({
     .enum(["done", "failed", "timeout", "missing"])
     .optional()
     .describe("resolve: terminal display state. done also requires generationId."),
-  // remove — confirmation for a still-generating paid card:
-  confirmRemovePending: z
-    .boolean()
-    .optional()
-    .describe("remove: set true to confirm removing a node whose generation is still in flight."),
 });
 
 type ManageCanvasInput = z.infer<typeof params>;
@@ -158,21 +154,20 @@ export async function executeManageCanvas(
     }
     case "remove": {
       if (!input.nodeId) return { ok: false, error: "remove needs `nodeId`." };
-      if (!input.confirmRemovePending) {
-        // Paid-output warning parity (manifest debt-37): the human UI confirms before
-        // deleting a card whose paid generation is still in flight. $0 read to check.
-        const nodes = await canvas.list();
-        if (!("error" in nodes)) {
-          const target = nodes.find((n) => n.id === input.nodeId);
-          if (target && isInFlightPaidNode(target)) {
-            return {
-              ok: false,
-              needsConfirmation: true,
-              warning:
-                "That node's generation is still in flight. Removing it does NOT refund or stop the job — the finished output will still appear in the Library. Call again with confirmRemovePending: true to remove it anyway.",
-            };
-          }
-        }
+      // Fail-closed pre-check (v2): the $0 list read must succeed AND name the target,
+      // or we refuse — never "couldn't check, delete anyway".
+      const nodes = await canvas.list();
+      if ("error" in nodes) return { ok: false, error: nodes.error };
+      const target = nodes.find((n) => n.id === input.nodeId);
+      if (!target) return { ok: false, error: "Node not found." };
+      if (isInFlightPaidNode(target)) {
+        // In-flight paid cards are UI-only removals (protective rail, 宪法 11): deleting
+        // one hides a PAID job without refunding or stopping it. No model self-confirm.
+        return {
+          ok: false,
+          error:
+            "That node's generation is still in flight, so I can't remove it — removing it wouldn't refund or stop the job. Please confirm the removal by hand on the canvas; the finished output will still land in your Library.",
+        };
       }
       const r = await canvas.remove(input.nodeId);
       return "error" in r ? { ok: false, error: r.error } : { ok: true };
@@ -193,7 +188,7 @@ export const manageCanvasSkill = defineOttoSkill({
     "view: all nodes with status, prompts, and source→result derivation links. " +
     "place: add a text note, or show an ALREADY-generated image/video (needs generationId; link derivation via sourceNodeId). " +
     "edit_text: change a text note. resolve: stamp a node's terminal display state. " +
-    "remove: delete a node (a still-generating card needs confirmRemovePending). " +
+    "remove: delete a settled node (a card whose generation is still in flight can only be removed by the user, by hand on the canvas). " +
     "To CREATE new images/videos, use generate instead.",
   parameters: params,
   execute: executeManageCanvas,

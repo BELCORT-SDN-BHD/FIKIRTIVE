@@ -21,7 +21,7 @@
 
 - **owner**：各工位（LC-0 / W-B3-A~H / LCg 收口片）。
 - **证据槽位**：46 能力行的逐条能力名（非页面名）+ 现状六级状态 → 目标状态。存量断言 16 条免重核（spec §二.5）；absent 行（E1-09 stitch/E1-19 A/B 分叉/B0-14/16~26 工厂族）为净新建。**待施工逐行填交付状态**。
-- **W-B3-A（canvas $0 面，本批交付）**：E1-01（无限画布·节点为一等公民）的 $0 双执行器面——Otto 执行器侧真接后台：新 `manageCanvas` skill（view/place/edit_text/resolve/remove，free/write/internal 不设闸=与人工 UI 同待遇）经 `ctx.canvas` port 驱动与人工 UI **完全同一**的 `canvas-actions` 五动作 + `otto-canvas-bridge.syncOttoCanvasNodes`（display-only sync）。零 spend 触点：`startGen`/gen 链不在本工位 diff（canvas gen 接线归 W-B3-E）；skill 侧硬线=无 generationId 拒放 image/video（新媒体只能走 gated `generate`）。**人工入口现状如实**：immersive canvas 壳（LC-0 已落）本批保持壳级（mock 数据形态不动），UI 真接线归批2/批3（见 §⑫.8）。
+- **W-B3-A（canvas $0 面，本批交付）**：E1-01（无限画布·节点为一等公民）的 $0 双执行器面——Otto 执行器侧真接后台：新 `manageCanvas` skill（view/place/edit_text/resolve/remove，free/write/internal 不设闸=与人工 UI 同待遇）经 `ctx.canvas` port 驱动与人工 UI **完全同一**的 `canvas-actions` 五动作 + `otto-canvas-bridge.syncOttoCanvasNodes`（display-only sync）。零 spend 触点：`startGen`/gen 链不在本工位 diff（canvas gen 接线归 W-B3-E）；$0 硬线端到端焊死（v2，codex TR1①）——skill 侧无 generationId 拒放 image/video（新媒体只能走 gated `generate`）+ port 侧（`otto-canvas-port.ts`）place 的 generationId 先行 owner+project 验真（伪造/跨项目=结构化硬拒，绝不静默降级），edit/remove 加 project 绑定；canvas-actions 的 UI 既有契约零触碰。**人工入口现状如实**：immersive canvas 壳（LC-0 已落）本批保持壳级（mock 数据形态不动），UI 真接线归批2/批3（见 §⑫.8）。
 
 ## ④ 双执行矩阵
 
@@ -44,14 +44,15 @@
 
   | 债号 | action key | skill | ctx port | handler（单一动作层） | 测试 |
   |---|---|---|---|---|---|
-  | debt-33 | `canvas-actions.listCanvasNodes` | `manageCanvas`(view/remove 预检) | `ctx.canvas.list` | `listCanvasNodes`（人工 UI 同源） | `manage-canvas.test.ts`「remove — paid-output warning parity」+ C1 子旅程 |
-  | debt-34 | `canvas-actions.createCanvasNode` | `manageCanvas`(place) | `ctx.canvas.place` | `createCanvasNode` | 同上「place — $0 hard line」3 例 |
-  | debt-35 | `canvas-actions.updateTextNode` | `manageCanvas`(edit_text) | `ctx.canvas.editText` | `updateTextNode` | 同上「edit_text / resolve」 |
+  | debt-33 | `canvas-actions.listCanvasNodes` | `manageCanvas`(view/remove 预检) | `ctx.canvas.list` | `listCanvasNodes`（人工 UI 同源） | `manage-canvas.test.ts`「remove — in-flight … fail-closed」+ C1 子旅程 |
+  | debt-34 | `canvas-actions.createCanvasNode` | `manageCanvas`(place) | `ctx.canvas.place`（port 先行验真 generationId） | `createCanvasNode` | 同上「place — $0 hard line」3 例 + `otto-canvas-port.test.ts` place 4 例 |
+  | debt-35 | `canvas-actions.updateTextNode` | `manageCanvas`(edit_text) | `ctx.canvas.editText`（project 绑定） | `updateTextNode` | 同上「edit_text / resolve」+ port 跨项目拒 |
   | debt-36 | `canvas-actions.resolveCanvasNode` | `manageCanvas`(resolve) | `ctx.canvas.resolve` | `resolveCanvasNode` | 同上「edit_text / resolve」 |
-  | debt-37 | `canvas-actions.deleteCanvasNode` | `manageCanvas`(remove) | `ctx.canvas.remove` | `deleteCanvasNode` | 同上「remove」4 例（在途付费卡需 `confirmRemovePending`=UI 确认框对等） |
+  | debt-37 | `canvas-actions.deleteCanvasNode` | `manageCanvas`(remove) | `ctx.canvas.remove`（project 绑定） | `deleteCanvasNode` | 同上「remove」4 例 + port 跨项目拒 |
   | debt-60 | `otto-canvas-bridge.syncOttoCanvasNodes` | `manageCanvas`(view) | `ctx.canvas.sync` | `syncOttoCanvasNodes`（display-only，零 spend） | 同上「view」3 例 |
 
-  port 注入点=`apps/web/lib/otto-actions.ts buildOttoContext`（闭包捕获 projectId，身份走 requireOwner，skill 参数零身份字段——工厂硬拦）；`moveCanvasNode` 维持 VISUAL 豁免不动。TOOL_STEP_LABELS 补 `manageCanvas: "Working on your canvas"`（live trace）。
+  port 注入点=`apps/web/lib/otto-actions.ts buildOttoContext` → `makeOttoCanvasPort(ownerId, projectId)`（`apps/web/lib/otto-canvas-port.ts`；身份走 requireOwner，skill 参数零身份字段——工厂硬拦）；`moveCanvasNode` 维持 VISUAL 豁免不动。TOOL_STEP_LABELS 补 `manageCanvas: "Working on your canvas"`（live trace）。instructions.ts 补「When to call `manageCanvas`」条目（REVIEWER-PLAYBOOK:107 注册卫生，v2 codex TR1③）。
+  **对等差额如实记（v2，codex TR1②）**：`deleteCanvasNode` 对等=**非在途节点**；**在途付费卡（pending/timeout 无 URL）删除=UI 亲点专属**（防误删护栏，宪法 11 状态诚实）——Otto 一律硬拒并指引用户在画布上亲手确认删除，无模型自我确认参数；预检 fail-closed（list 失败/目标不在本项目清单=拒，绝不「查不到照删」）。
 
 ## ⑤ 对标锚
 

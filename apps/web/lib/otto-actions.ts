@@ -55,8 +55,7 @@ import { fetchOwnerPages } from "./meta-pages";
 import { proposeMetaActionForOwner } from "./meta-propose";
 import { proposeAdBuildForOwner } from "./meta-build-propose";
 import { validateOwnedGenerationExt } from "./otto-generation-validate";
-import { listCanvasNodes, createCanvasNode, updateTextNode, resolveCanvasNode, deleteCanvasNode } from "./canvas-actions";
-import { syncOttoCanvasNodes } from "./otto-canvas-bridge";
+import { makeOttoCanvasPort } from "./otto-canvas-port";
 
 // mapOttoUsage re-exported from @fikirtive/otto so existing callers that import
 // it from this module continue to work (the canonical source is @fikirtive/otto).
@@ -286,17 +285,10 @@ export async function buildOttoContext({
     },
     // Canvas port (W-B3-A, $0) — single action layer (宪法 7 / Seam 9): Otto's manageCanvas
     // skill drives the SAME owner-gated $0 server actions the human canvas UI uses
-    // (canvas-actions + the display-only chat→canvas bridge). None of these touch startGen /
-    // reserveCredits / the provider — placing a node only references media that was ALREADY
-    // generated and charged.
-    canvas: {
-      list: () => listCanvasNodes(projectId),
-      sync: () => syncOttoCanvasNodes(projectId),
-      place: (input) => createCanvasNode({ projectId, ...input }),
-      editText: (id, text) => updateTextNode(id, text),
-      resolve: (id, input) => resolveCanvasNode(id, input),
-      remove: (id) => deleteCanvasNode(id),
-    },
+    // (canvas-actions + the display-only chat→canvas bridge), with Otto-side pre-validation
+    // (generationId must be real + in-project; edit/remove are project-bound) — see
+    // makeOttoCanvasPort. None of these touch startGen / reserveCredits / the provider.
+    canvas: makeOttoCanvasPort(ownerId, projectId),
   };
 }
 

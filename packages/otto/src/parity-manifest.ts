@@ -139,7 +139,7 @@ export const PARITY_MANIFEST = {
   "canvas-actions.moveCanvasNode": { exempt: "VISUAL", reason: "Pure canvas positioning is a visual micro-operation." },
   "canvas-actions.updateTextNode": { skill: "manageCanvas" },
   "canvas-actions.resolveCanvasNode": { skill: "manageCanvas" },
-  "canvas-actions.deleteCanvasNode": { skill: "manageCanvas", reason: "In-flight paid cards need confirmRemovePending — the skill-side mirror of the UI delete confirm." },
+  "canvas-actions.deleteCanvasNode": { skill: "manageCanvas", reason: "Parity = settled nodes; in-flight paid cards are UI-only removals (the skill hard-refuses, fail-closed pre-check)." },
 
   "cowork-actions.coworkGenerate": { skill: "generate" },
   "cowork-actions.coworkRenameThread": { skill: "setTitle" },

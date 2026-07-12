@@ -30,6 +30,14 @@ function node(over: Partial<CanvasNodeView> = {}): CanvasNodeView {
   };
 }
 
+describe("manageCanvas registration hygiene", () => {
+  it("instructions.ts carries the model-facing 'When to call' entry (REVIEWER-PLAYBOOK:107)", async () => {
+    const { ottoInstructions } = await import("../instructions.js");
+    expect(ottoInstructions).toContain("When to call \`manageCanvas\`");
+    expect(ottoInstructions).toContain("by hand on the canvas");
+  });
+});
+
 describe("manageCanvas gate", () => {
   it("free/write/internal → needsApproval false ($0 canvas surface, same as the human UI)", () => {
     expect(manageCanvasSkill.cost).toBe("free");
@@ -131,30 +139,33 @@ describe("edit_text / resolve — pass-through to the shared actions", () => {
   });
 });
 
-describe("remove — paid-output warning parity (debt-37)", () => {
+describe("remove — in-flight paid cards are UI-only, pre-check is fail-closed (debt-37, v2)", () => {
   const inFlight = node({ id: "n-hot", type: "video", status: "pending", url: null, generationId: null });
-  it("an in-flight paid card needs confirmRemovePending (delete ≠ refund, output still lands in Library)", async () => {
+  it("HARD-refuses an in-flight paid card and directs the user to the canvas (no model self-confirm)", async () => {
     const list = vi.fn(async () => [inFlight]);
     const remove = vi.fn(async () => ({ ok: true as const }));
     const res = (await executeManageCanvas(
       { action: "remove", nodeId: "n-hot" },
       { context: makeCtx({ list, remove }) },
-    )) as { ok: boolean; needsConfirmation?: boolean; warning?: string };
+    )) as { ok: boolean; error?: string };
     expect(res.ok).toBe(false);
-    expect(res.needsConfirmation).toBe(true);
-    expect(res.warning).toContain("refund");
+    expect(res.error).toContain("refund");
+    expect(res.error).toContain("by hand on the canvas");
     expect(remove).not.toHaveBeenCalled();
   });
-  it("with confirmRemovePending: true the same node is removed (no list check needed)", async () => {
+  it("fail-closed: a failing list pre-check REFUSES the removal (never 'couldn't check, delete anyway')", async () => {
+    const list = vi.fn(async () => ({ error: "Project not found." }));
+    const remove = vi.fn(async () => ({ ok: true as const }));
+    const res = await executeManageCanvas({ action: "remove", nodeId: "n-hot" }, { context: makeCtx({ list, remove }) });
+    expect(res).toEqual({ ok: false, error: "Project not found." });
+    expect(remove).not.toHaveBeenCalled();
+  });
+  it("fail-closed: a node absent from the project's list is refused, not deleted blind", async () => {
     const list = vi.fn(async () => [inFlight]);
     const remove = vi.fn(async () => ({ ok: true as const }));
-    const res = await executeManageCanvas(
-      { action: "remove", nodeId: "n-hot", confirmRemovePending: true },
-      { context: makeCtx({ list, remove }) },
-    );
-    expect(res).toEqual({ ok: true });
-    expect(remove).toHaveBeenCalledWith("n-hot");
-    expect(list).not.toHaveBeenCalled();
+    const res = await executeManageCanvas({ action: "remove", nodeId: "n-elsewhere" }, { context: makeCtx({ list, remove }) });
+    expect(res).toEqual({ ok: false, error: "Node not found." });
+    expect(remove).not.toHaveBeenCalled();
   });
   it("a settled node is removed without ceremony", async () => {
     const list = vi.fn(async () => [node({ id: "n-done", type: "image", status: "done", url: "https://cdn/x.png" })]);
