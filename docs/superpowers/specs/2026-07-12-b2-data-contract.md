@@ -1,7 +1,7 @@
-# B2 数据契约 spec（事件 / 身份 / 同意）（v0.7——冻结候选）
+# B2 数据契约 spec（事件 / 身份 / 同意）（v0.8——冻结候选）
 
 > 2026-07-12。epoch `claude-20260712-03`。Sol 原阻断的解：**先冻数据契约，B8 设计与后续块在其上施工**，避免末期发现新 schema。
-> **状态：冻结候选（freeze candidate）——冻结待 founder 明示 ack（D-018②/D-020⑤）。** SOL 跨族复审 §2 的 B2 六条阻断项已逐条闭合，二三波需求单已吸收（§四点六）；v0.4 闭合 codex 异族评审（第二轮 BLOCK）清单：ConsentEvent 完整 Prisma 形状（契约 3）、AttributionEvent 完整字段抄录表（契约 1）、anonymousKey 应用层澄清（契约 2）、BusinessEvent/Receipt 互斥职责冻结（契约〇·附）、口碑各 kind 账本归属现在冻结（§四点六·1）、六表列举补 VoucherToken（§四点六·3）；v0.5 闭合 codex 第三轮两项：consent 派生顾客优先级修法、口碑观测流 `ReviewObservation` 追加式冻结；v0.6 闭合 codex 第四轮（四反例全真）两项：①consent 派生全序**换轴 `(receivedAt, id)` 到达序**（occurredAt 降级 advisory；`entryMode` interactive/backfill——迟到旧 grant 不复活；在途窗口不可归零诚实条款+`consent.late_revoke`+B7 发送记录带 `consentStateAt`；四验收案例）②观测流幂等键**嵌 `lifecycleEpoch` 生命周期纪元**（同 hash 删→现→删键碰撞全解；removed 行在对账中视同本地无，重现=epoch+1 补写）；**v0.7 闭合 codex 第五轮（权限位+并发层）四项**：①`entryMode` 改**服务端派生 computed 字段**（写入接口不接受此参数；派生表冻结；import 构造 interactive=结构不可能）②consent 折叠写入**per-三元组 advisory xact lock 序列化**（「到库即推进」改述为锁内维护的缓存列，读者随时重算得同值）③复活主权 **CAS**（epoch 推进条件更新，仅赢家插观测；输家规则冻结）④**键内纪元一致性不变量**（解析 `e<epoch>` 断言==行列，fail-loud 修复流程写明）+ 全文并发主权主动扫。本文本属共享契约/schema=founder-only 类别，异族复审通过不替代 founder 明示过目；未获 ack 前 02-B2 相关行不迁 `spec-ready`。
+> **状态：冻结候选（freeze candidate）——冻结走四权闭环（双顾问签核+异族复审+机器闸+非作者合并），依 #254 §一.2。** SOL 跨族复审 §2 的 B2 六条阻断项已逐条闭合，二三波需求单已吸收（§四点六）；v0.4 闭合 codex 异族评审（第二轮 BLOCK）清单：ConsentEvent 完整 Prisma 形状（契约 3）、AttributionEvent 完整字段抄录表（契约 1）、anonymousKey 应用层澄清（契约 2）、BusinessEvent/Receipt 互斥职责冻结（契约〇·附）、口碑各 kind 账本归属现在冻结（§四点六·1）、六表列举补 VoucherToken（§四点六·3）；v0.5 闭合 codex 第三轮两项：consent 派生顾客优先级修法、口碑观测流 `ReviewObservation` 追加式冻结；v0.6 闭合 codex 第四轮（四反例全真）两项：①consent 派生全序**换轴 `(receivedAt, id)` 到达序**（occurredAt 降级 advisory；`entryMode` interactive/backfill——迟到旧 grant 不复活；在途窗口不可归零诚实条款+`consent.late_revoke`+B7 发送记录带 `consentStateAt`；四验收案例）②观测流幂等键**嵌 `lifecycleEpoch` 生命周期纪元**（同 hash 删→现→删键碰撞全解；removed 行在对账中视同本地无，重现=epoch+1 补写）；**v0.7 闭合 codex 第五轮（权限位+并发层）四项**：①`entryMode` 改**服务端派生 computed 字段**（写入接口不接受此参数；派生表冻结；import 构造 interactive=结构不可能）②consent 折叠写入**per-三元组 advisory xact lock 序列化**（「到库即推进」改述为锁内维护的缓存列，读者随时重算得同值）③复活主权 **CAS**（epoch 推进条件更新，仅赢家插观测；输家规则冻结）④**键内纪元一致性不变量**（解析 `e<epoch>` 断言==行列，fail-loud 修复流程写明）+ 全文并发主权主动扫。**v0.8 闭合 codex R5 复审（机械层）五项**：①`sourceKind` 服务端绑定（端点→sourceKind 常量表，`entryMode`+`sourceKind` 两字段皆不可由调用方传；I-C1 扩为「interactive ⇔ 端点∈顾客亲为四端点」编译期常量断言，契约 3）②`receivedAt` **锁内 `clock_timestamp()` 赋值**（弃 `@default(now())`；一事务恰写一三元组、禁多锁消死锁面，契约 3）③`ReviewItem` 增 `lastObservationId`(ULID)，在线投影按 `(observedAt,id)` 字典序 tie-break（§四点六·1）④`ReviewItem` 增 `integrityStatus`（quarantined 冻写+界面诚实降级）+ `lifecycleEpoch` 缓存语义澄清（修列=缓存修复非篡史，受控例外+`integrity_repair` 审计，§四点六·1）⑤两缝收口（ContactIdentity merge 沿链解根→双锁→复核根未变，契约 2；LiveEventOutbox 空洞判废双条件，B9 契约 6）。本文本属共享契约/schema=founder-only 类别（高后果，#254 §三 双顾问之一 complete 签核入 provenance）；冻结走四权闭环放行（#254 §一.2）后 02-B2 相关行随冻结 PR 迁 `spec-ready`，founder 终验一次过审计索引（#254 §一.3/§二.5）。
 > 人话：给全城定三样通用底座——「发生了什么事」怎么记（事件）、「这是不是同一个顾客」怎么判（身份）、「他答应过被联系吗」怎么存（同意）。
 
 ## 一、范围与矩阵行映射
@@ -97,7 +97,7 @@ B2 块（`docs/ops/route-b/matrix/02-B2.md`）11 行中的量测脊柱行（E5-0
 - **+规范化版本字段** `normalizationVersion`：判同前对强标识做确定性规范化（E.164 手机国码 / email 小写去点别名 / fbPsid 原样），规范化规则集有版本号；规则升级 → 版本号 +1，旧档按旧版规范化值留存、新写按新版，**避免规则漂移导致历史判同不可复现**。规范化标准（waPhone 国码 / email 大小写）= B2/B5 联定一份，列为本 spec 交付物。
 - **判同规则（冻结保守策略）**：**跨渠道不自动合并**——仅强标识精确相等（规范化后的 E.164 / 小写 email / fbPsid）才产生「疑似同人」建议；同名/同显示名**永不自动合并**（宪法 11 状态诚实：宁可两条档案，不可错并）。
 - **+可逆 merge 契约**：合并=**重指**（把从档指向主档，保留从档 tombstone）+ **审计留痕**（谁/何时/依据哪条强标识，写 ActionEvent）+ **可拆**（unmerge 按 tombstone 反向重指还原），**永不物删**。合并/拆分均 append-only 可回放。
-- **merge/upsert 并发主权（v0.7 主动扫补条）**：①合并/拆分操作按 **(ownerId, 涉事两 contactId 排序对) advisory xact lock** 序列化——并发反向合并（A→B 与 B→A 同时发起）会成环，锁内校验重指目标非 tombstone 后才执行；②**Contact upsert（共享 action）并发仲裁=ContactIdentity 唯一索引** `(ownerId, channel, issuerId, externalId)`：并发同人首建时 insert 冲突者转 update（读-改-写重试），**结构上不会双建档**。
+- **merge/upsert 并发主权（v0.7 主动扫补条；①v0.8 升级——codex R5 复审⑤ 采纳）**：①合并/拆分操作**先沿 redirect/tombstone 链把涉事两 contactId 各自解析到根档**，再对 **{根A, 根B} 按 ULID 升序取双 advisory xact lock**，**锁内复核两根未变**（未被其它并发合并重指）+ 重指目标非 tombstone 后才执行——**解根后按全序双锁**使三方并发链（A→B、B→C、C→A 同时发起）在根解析下亦**无法成环**（v0.7 只锁「涉事两 contactId 排序对」，两方反向合并可防、三方链仍可成环）；②**Contact upsert（共享 action）并发仲裁=ContactIdentity 唯一索引** `(ownerId, channel, issuerId, externalId)`：并发同人首建时 insert 冲突者转 update（读-改-写重试），**结构上不会双建档**。
 - **匿名→实名升级**（v0.4 澄清——codex P1② 采纳）：**真 schema 无 `anonymousKey` 列**；匿名主体的实际字段组合 = `SourceTag.subjectKind='anon'` + `SourceTag.subjectRef=<匿名会话键>`（`schema.prisma:1335-1336`）。「anonymousKey」仅是**应用层变量名**，指代 subjectKind='anon' 时的 subjectRef 值，不新增列。升级规则：首次留联系方式时回填关联（B7 欢迎流消费）——同一 `subjectRef` 列改 scope 到 contactId（`subjectKind='contact'`），CRM 落地零迁移（同 L0 spec A4 手法，`schema.prisma:1326-1328` 注释原文）。
 
 ### 契约 3 · 同意（四轴独立存证——SOL §2·B2④ 采纳）
@@ -132,11 +132,14 @@ model ConsentEvent {
   entryMode      String   // 'interactive' | 'backfill'——【v0.7 computed 字段】服务端派生，写入接口**不接受**
                           // 此参数（不可由调用方断言）；派生表见下。grant 仅 interactive 可覆盖在场 revoke（派生规则③）
   sourceKind     String   // 'inbox_optin' | 'unsubscribe_link' | 'stop_keyword' | 'double_optin' | 'crm_manual' | 'import'
-                          //（封闭集：哪个入口；v0.7 增 'double_optin'——双重确认回执）
+                          //（封闭集：哪个入口；v0.7 增 'double_optin'——双重确认回执）。【v0.8 服务端绑定】每个写入
+                          // 端点硬编码本端点的 sourceKind，写入接口**不接受**此参数（同 entryMode——调用方两字段皆不可传）；
+                          // 端点→sourceKind 常量表见下
   evidenceRef    String   // 出处凭证引用：消息 id / 退订 token / 导入批次号——同意有出处，不可为空
   idempotencyKey String   // 稳定幂等键：'stop:<messageId>' | 'link:<unsubTokenId>' | 'import:<batchId>:<rowN>' | 'manual:<uuid>'
   occurredAt     DateTime // 【advisory】外部声称的业务时间——仅展示/审计，不参与派生（外部时钟不可信）
-  receivedAt     DateTime @default(now()) // 服务端赋时=入库时刻，派生全序的唯一轴；入库即定，永不回排
+  receivedAt     DateTime // 服务端赋时=派生全序唯一轴。【v0.8】锁内 clock_timestamp() 赋值（弃 @default(now())：
+                          // PG now()=事务开始时刻、早于取锁，赋值序≠锁序）；取 advisory lock 后赋，入库即定、永不回排
   createdAt      DateTime @default(now())
 
   @@unique([ownerId, idempotencyKey])                          // 精确一次（镜像 AttributionEvent :1390 手法）
@@ -146,7 +149,20 @@ model ConsentEvent {
 
 - 纪律：append-only（无软删——同意证据永不删除）；`@@unique([ownerId, idempotencyKey])` 保证 STOP 双投递/导入重跑精确一次；租户前导索引服务派生函数的**到达序回放**。派生只依赖已到库事件的 `(receivedAt, id)` 到达序——单调、无回排，任意时点重算结果相同（宪法 10）。
 
-- **`entryMode` 服务端派生表（v0.7 冻结——codex R5① 采纳；computed 字段，不可由调用方断言）**：
+- **端点→`sourceKind` 服务端绑定常量表（v0.8 冻结——codex R5 复审① 采纳）**。R5 复审发现：v0.7 只封了 `entryMode`（computed），但**权限位下移到仍可被调用方断言的 `sourceKind`**——调用方传 `sourceKind='inbox_optin'` 即可反推出 `interactive`。修法：**每个写入端点硬编码自己的 `sourceKind` 常量**，写入接口**不接受** `sourceKind`（与 `entryMode` 同——**调用方两字段皆不可传**）；`evidenceRef` 的形态**按 `sourceKind` 定型**（下表末列）：
+
+  | 写入端点 | 硬编码 `sourceKind` | `evidenceRef` 定型 | 顾客亲为？ |
+  |---|---|---|---|
+  | B5 收件箱 inbound-reply handler | `inbox_optin` | 入信消息 id（非空） | 是 |
+  | B7 退订/再订阅链接端点 | `unsubscribe_link` | 退订 token id（非空） | 是 |
+  | B5/B7 STOP/START 关键词解析器 | `stop_keyword` | 触发消息 id（非空） | 是 |
+  | DOI 双重确认端点 | `double_optin` | 确认回执 id（非空） | 是 |
+  | CRM 手工录入 action | `crm_manual` | 录入者 + 依据（非空） | 否 |
+  | 导入 / 批量 API / webhook 补录端点 | `import` | 导入批次号:行号（非空） | 否 |
+
+  - **顾客亲为四端点** = 上表 `inbox_optin` / `unsubscribe_link` / `stop_keyword` / `double_optin` 对应的四个端点；**唯有**这四端点产 `entryMode='interactive'`，`crm_manual`/`import` 端点恒产 `backfill`。
+
+- **`entryMode` 服务端派生表（v0.7 冻结——codex R5① 采纳；computed 字段，不可由调用方断言。v0.8：其输入 `sourceKind` 亦由端点常量表服务端绑定，同样非调用方所能断言）**：
 
   | sourceKind | 派生 entryMode | 依据 |
   |---|---|---|
@@ -157,11 +173,13 @@ model ConsentEvent {
   | `crm_manual`（商家代录） | **`backfill`（强制）** | 非顾客本人动作 |
   | `import`（批量导入 / webhook 补录 / API 批量） | **`backfill`（强制）** | 补录性质 |
 
-  - **写入接口签名不含 `entryMode`**：值由共享写入 action 内部按上表计算——**经 import 路径构造 interactive grant = 结构上不可能**（`sourceKind='import'` ⇒ backfill，恒真）。
-  - **不变量 I-C1（应用层，Prisma 无 CHECK）**：`entryMode='interactive' ⇒ sourceKind ∈ {inbox_optin, unsubscribe_link, stop_keyword, double_optin} ∧ evidenceRef ≠ ''`——写入 action 断言 + 专项测试（含「接口类型签名无 entryMode 参数」的编译期断言）。
+  - **写入接口签名既不含 `entryMode` 亦不含 `sourceKind`（v0.8）**：两字段均由**端点内部常量**确定——`sourceKind`=端点硬编码常量（上表），`entryMode`=由 `sourceKind` 按本表计算。**经 import 路径构造 interactive grant = 结构上不可能**（`sourceKind='import'` 由 import 端点硬编码 ⇒ backfill，恒真；调用方无从改写 sourceKind 反推 interactive）。
+  - **不变量 I-C1（v0.8 扩为编译期常量断言）**：`entryMode='interactive' ⇔ 写入端点 ∈ 顾客亲为四端点 ∧ evidenceRef ≠ ''`。因 `sourceKind` 现为**每端点编译期常量**，端点↔sourceKind↔entryMode 三段全为常量映射，此断言**升为编译期常量断言**（编译期即可判定，强于 v0.7 的运行时写入-action 断言）+ 专项测试（含「接口签名无 `entryMode`、无 `sourceKind` 参数」的类型级断言）。
   - **revoke 不设 interactive 门（R4 认可保留）**：revoke 不分 entryMode 到库一律生效（折叠规则①）——宁多抑制，fail-closed 一致。
 
-- **折叠写入序列化（v0.7 冻结——codex R5② 采纳）**：一切 ConsentEvent 写入者在**同一事务**内先取 **per-三元组 Postgres advisory xact lock**（锁键=稳定哈希 `(ownerId, contactId, channel, purpose)`，`pg_advisory_xact_lock`，事务结束自动释放），锁内 `INSERT` + 重算折叠态。**语义澄清**：折叠 fold=对**已提交事件集合**的纯函数；v0.6「到库即推进」改述为——**状态列=锁内维护的缓存**（载体=派生缓存列/读模型，位置归 B5/B8 块 spec；缓存≠真源），读者可随时对已提交集合全量重算，**必得同值**。receivedAt 赋值序与提交序分离的竞态（低 receivedAt 行晚提交，读者两次提交之间重算得出会「回摆」的状态）由锁消灭：同三元组的 insert+重算全序化。
+- **折叠写入序列化（v0.7 冻结——codex R5② 采纳）**：一切 ConsentEvent 写入者在**同一事务**内先取 **per-三元组 Postgres advisory xact lock**（锁键=稳定哈希 `(ownerId, contactId, channel, purpose)`，`pg_advisory_xact_lock`，事务结束自动释放），锁内 `INSERT` + 重算折叠态。**语义澄清**：折叠 fold=对**已提交事件集合**的纯函数；v0.6「到库即推进」改述为——**状态列=锁内维护的缓存**（载体=派生缓存列/读模型，位置归 B5/B8 块 spec；缓存≠真源），读者可随时对已提交集合全量重算，**必得同值**。
+  - **receivedAt 锁内赋值（v0.8——codex R5 复审② 采纳）**：v0.7 用 `@default(now())` 赋 receivedAt，但 PG `now()`=事务开始时刻、在**取锁之前**固定，赋值序 ≠ 锁序，「回摆」竞态未真正消灭。v0.8 改为**取得 advisory lock 后由 `clock_timestamp()` 赋值**（锁内实时时钟，赋值序严格随锁序单调）——低 receivedAt 行晚提交的竞态由此从根消灭：同三元组的 insert+赋时+重算全序化。
+  - **批量规则「一事务恰写一个三元组」（v0.8——codex R5 复审② 采纳）**：一次事务只取**一把** advisory lock、只写一个 `(ownerId, contactId, channel, purpose)` 三元组；import/批量补录**逐三元组一事务循环**（每笔独立取锁-赋时-写-提交），**禁在单事务内取多把 advisory lock**（多锁乱序取会互等成环——消死锁面）。
 
 - **`contactable` 由确定性派生函数算出**（宪法 10，不靠模型天赋）。**v0.6 修法（codex R4① 采纳——R3 版四反例全真：乱序在途、外部时钟偏移、及其对「最新 occurredAt」全序的破坏）**：派生全序**换轴到 `(receivedAt, id)` 到达序**，`occurredAt` 降级 advisory。冻结派生（到达序折叠；**v0.7 改述**：折叠=对已提交集合的纯函数，缓存列仅在上述 advisory lock 内维护，读者随时全量重算得同值）：
 
@@ -214,14 +232,14 @@ model ConsentEvent {
 |---|---|---|
 | ConsentEvent 折叠缓存 | per-三元组 **advisory xact lock**（锁内 insert+重算；缓存≠真源可重算） | 契约 3（R5②） |
 | ReviewItem 复活纪元 | **CAS 条件更新**+输家规则（仅赢家插观测） | §四点六·1（R5③） |
-| ReviewItem 常规投影更新 | **条件式更新**（新观测 `(observedAt,id)` ≥ 行 last 才写——旧观测晚提交不覆盖新态） | §四点六·1（v0.7） |
+| ReviewItem 常规投影更新 | **条件式更新**（新观测 `(observedAt,id)` 字典序 > 行 `(lastObservedAt,lastObservationId)` 才覆盖——旧观测晚提交不覆盖新态；v0.8 增 `lastObservationId` tie-break 载体） | §四点六·1（v0.8） |
 | AttributionEvent | **append-only + `@@unique([ownerId, idempotencyKey])`**（`schema.prisma:1390`）——无派生缓存承诺；消费者聚合=纯重算（Σ outcomeDelta），无需锁 | 契约 1（既有） |
 | CreditLedger | 同手法（`@@unique([orgId, idempotencyKey])` `schema.prisma:717`，双 delta 可重建不变量）——既有账道，援引不改 | 契约〇（既有） |
 | BusinessEvent / Receipt | append-only + 幂等键两式（无派生缓存承诺，同 AttributionEvent 手法） | 契约〇·附（R2③） |
 | ConsentEvent 本体 | append-only + `@@unique([ownerId, idempotencyKey])`（STOP 双投递/导入重跑去重） | 契约 3（R2·P0） |
-| ContactIdentity merge/unmerge | **(ownerId, 涉事 contactId 排序对) advisory xact lock**（防并发反向合并成环） | 契约 2（v0.7） |
+| ContactIdentity merge/unmerge | **沿链解根 → {根A,根B} 按 ULID 升序双 advisory xact lock → 锁内复核根未变**（解根+全序双锁使三方并发链亦无法成环） | 契约 2（v0.8） |
 | Contact upsert（共享 action） | 仲裁=**ContactIdentity 唯一索引**，insert 冲突转 update 重试——结构上不双建档 | 契约 2（v0.7） |
-| LiveEventOutbox seq 分配 | **BIGSERIAL=DB 原生序列化**（确认无需额外锁）；**分配序≠提交序**的消费端语义冻结在 B9 v0.5 契约 6（cursor 只推进连续已提交前缀） | B9 契约 6 |
+| LiveEventOutbox seq 分配 | **BIGSERIAL=DB 原生序列化**（确认无需额外锁）；**分配序≠提交序**的消费端语义冻结在 B9 v0.6 契约 6（cursor 只推进连续已提交前缀；回滚永久空洞判废双条件 `age>60s ∧ txid<最老活跃事务 xmin`） | B9 契约 6 |
 
 > 扫描范围=本文件+B9 全部承诺面；上表之外本两份 spec 无其它「多写入者共享可变状态」承诺（RunState/上下文桥会话态=per-thread 单写者；TrendSnapshot/MicrositePage 等新对象为单写入点或普通行级更新，无派生缓存承诺）。
 
@@ -283,7 +301,7 @@ model ConsentEvent {
 
   效果数值（NPS/复购率/新客数）由 B2 B0-09 从上述各账+镜像表**自算**，B8 只写不算。**进 AttributionEvent kind 闭集的近期扩展仅 `referral_converted` 一个**（founder-only 单列，§五）。
 
-- **口碑观测流 `ReviewObservation`（v0.5 冻结，v0.6 键加生命周期纪元——codex R3·P1④/R4② 采纳）**：`ReviewItem` 保留为**当前状态读模型**（rating/body/回评态可覆写），**增 `lifecycleEpoch Int @default(0)`**——每次 `removed`→`present` 转换 +1（同一平台评价的第几世）。观测流为真源，**仍不入归因流水**（契约〇）。完整形状（建表属 founder-only 单列，§五；形状本节冻结）：
+- **口碑观测流 `ReviewObservation`（v0.5 冻结，v0.6 键加生命周期纪元——codex R3·P1④/R4② 采纳）**：`ReviewItem` 保留为**当前状态读模型**（rating/body/回评态可覆写），**增 `lifecycleEpoch Int @default(0)`**——每次 `removed`→`present` 转换 +1（同一平台评价的第几世）**、`integrityStatus String @default("ok")`（`'ok' | 'quarantined'`，v0.8——见「键内纪元一致性」fail-loud 隔离）**。观测流为真源，**仍不入归因流水**（契约〇）。完整形状（建表属 founder-only 单列，§五；形状本节冻结）：
 
   ```prisma
   // 口碑观测流（append-only）：每行=对某平台评价的一次「状态观测」（在场快照或消失 tombstone）。
@@ -295,7 +313,9 @@ model ConsentEvent {
     organization     Organization @relation(fields: [ownerId], references: [id])
     platform         String   // 'google' | 'shopee' | 'lazada' | 'fb'（code-validated，同 ReviewRequest 闭集）
     externalReviewId String   // 平台内评价 ID
-    lifecycleEpoch   Int      // 本观测所属纪元（写入时刻的当前世代；投影重建时按转换计数复核，漂移=fail-loud）
+    lifecycleEpoch   Int      // 本观测所属纪元。【v0.8 语义澄清】观测行真源=idempotencyKey（嵌 e<epoch>）+payload
+                              //（写入后不可变）；本列是**行内派生缓存（非真源，可由 key 反解）**——修它=缓存修复、非篡改
+                              // append-only 史。写入时=当前世代；投影重建时按转换计数复核，漂移=fail-loud
     observationKind  String   // 'present'（在场快照）| 'absent'（tombstone：平台侧已删除/隐藏）——删除语义，永不物删本地行
     externalVersion  String?  // 平台自带版本号/更新时间戳（平台有则录）
     contentHash      String   // sha256(归一化 rating+body+回评状态)——外部无版本号时的版本替身；absent 观测=最后在场 contentHash
@@ -318,12 +338,12 @@ model ConsentEvent {
       ```
       **仅 CAS 赢家**（affected rows = 1）在**同一事务**内插入 present 观测（键=`e<e+1>:<contentHash>`）。并发爬虫/对账同时判定重现时，只有一个写入者能推进纪元。
     - **输家规则（冻结）**：CAS 输家（affected rows = 0）**重读赢家态**（新 lifecycleEpoch/status='present'）后，按**常规更新流**在赢家 epoch 下继续——同 contentHash ⇒ 幂等键已存在 ⇒ unique 约束去重=**幂等成功**（无新行、非错误）；异 contentHash ⇒ 正常内容变更观测（键=`e<赢家epoch>:<新hash>`）。输家永不自行再 +1。
-    - 常规（非复活）投影更新=**条件式**：仅当新观测 `(observedAt, id)` ≥ 行 `lastObservedAt` 记录时更新字段——旧观测晚提交不得覆盖新态（v0.7 主动扫）。写 absent 用当前 epoch；评价首现=epoch 0。
+    - 常规（非复活）投影更新=**条件式**：仅当新观测 `(observedAt, id)` **字典序 >** 行 `(lastObservedAt, lastObservationId)` 时才覆盖字段——旧观测晚提交不得覆盖新态（v0.8——codex R5 复审③ 采纳：`ReviewItem` 增 `lastObservationId`(ULID) 作在线 tie-break 载体，同刻双 hash 的在线判定与重建全序 `(observedAt, id)` 一致；v0.7 仅比 `lastObservedAt`、无 id tie-break 载体，同刻并发下判定不定）。写 absent 用当前 epoch；评价首现=epoch 0。
     - **投影全量重建**时 epoch 由观测流的 absent→present 转换计数确定性重算（回放全序=`(observedAt, id ULID)`，tie-break 已冻结并同步入上方索引），与行内嵌 epoch 比对——不一致=fail-loud（见下「键内纪元一致性」）。
-  - **首次/最近观测时间**：`ReviewItem` 增 `firstObservedAt`/`lastObservedAt`（读模型字段，由观测流确定性维护：first=**epoch 0** 首条 present 的 observedAt（跨纪元不重置——「第一次见到这条评价」），last=最新观测（任意纪元）的 observedAt；v0.3 表中 `capturedAt` 语义并入 `lastObservedAt`）。
+  - **首次/最近观测时间**：`ReviewItem` 增 `firstObservedAt`/`lastObservedAt`/**`lastObservationId`（ULID，v0.8）**（读模型字段，由观测流确定性维护：first=**epoch 0** 首条 present 的 observedAt（跨纪元不重置——「第一次见到这条评价」），last=最新观测（任意纪元）的 observedAt，`lastObservationId`=该最新观测的 `id`——在线条件式更新的字典序 tie-break 载体，与重建全序 `(observedAt, id)` 同轴；v0.3 表中 `capturedAt` 语义并入 `lastObservedAt`）。
   - **tombstone 语义（新键下重述）**：absent 观测（键带当前 epoch）→投影把 `ReviewItem.status` 置 `'removed'`（`lifecycleEpoch` 不变——纪元只在重现时推进），本地行**永不物删**（评价被平台删掉也是经营事实，差评预警/合规审计要看得见）。
   - **周期全量对账与漂移补救（新键下重述，冻结规则）**：每 **24 小时**（冻结常量，founder ack 可调）对平台真值全量比对。**「本地已 removed 行算不算本地无」正面写明：算**——在场性判定上 `status='removed'` 视同本地无。三类漂移：①平台在场而本地无（含**本地 removed**）→ 若是 removed 重现则经 **CAS 路径** epoch+1 后补写 present 观测（键=`e<newEpoch>:<contentHash>`；对账器与实时爬虫并发时同受 CAS 仲裁），若是全新评价则 epoch 0 建行；②本地在场（status='present'）而平台无 → 写 absent tombstone（当前 epoch）；③读模型字段 ≠ 最新观测 → 由最新观测**重建该行**（投影可全量重建自观测流=漂移补救的通解，宪法 10 确定性；对账补写一律用上述 epoch 规则铸键）——**v0.7 扩展（codex R5④）：③同时解析每行 `idempotencyKey` 的 `e<epoch>` 段并断言 == 行 `lifecycleEpoch` 列**。对账时刻记 ActionEvent `reputation.review.reconciled` `{platform, checked, drifted, tombstoned, resurrected}`。
-  - **键内纪元一致性（不变量 I-R1，v0.7 冻结——codex R5④ 采纳）**：`parse(idempotencyKey).epoch == lifecycleEpoch`（行内嵌键与列必须一致）。Prisma 无 CHECK 约束 ⇒ 冻结为**应用层不变量+专项测试**（写入路径断言 + 对账路径全量断言双覆盖）。**不一致=fail-loud 修复流程（冻结）**：①记 ActionEvent `reputation.review.integrity_failed` `{observationId, keyEpoch, columnEpoch}`；②隔离该 `(platform, externalReviewId)`——投影暂停更新（quarantine 标记），差评预警对该条降级显示「数据核对中」（宪法 11 状态诚实）；③以 **idempotencyKey 嵌值为准**修正列（键参与唯一约束、插入后不可变=更强真源）；④观测流全量重建该投影行+转换计数复核通过 → 解除隔离。**永不静默吞**。
+  - **键内纪元一致性（不变量 I-R1，v0.7 冻结、v0.8 澄清缓存语义——codex R5④ / R5 复审④ 采纳）**：`parse(idempotencyKey).epoch == lifecycleEpoch`（观测行内嵌键与列必须一致）。Prisma 无 CHECK 约束 ⇒ 冻结为**应用层不变量+专项测试**（写入路径断言 + 对账路径全量断言双覆盖）。**不一致=fail-loud 修复流程（冻结）**：①记 ActionEvent `reputation.review.integrity_failed` `{observationId, keyEpoch, columnEpoch}`；②隔离该 `(platform, externalReviewId)`——把 `ReviewItem.integrityStatus` 置 `'quarantined'`（v0.8：落为**真字段**，非仅 prose 标记）：投影**暂停更新（quarantine 冻写）**，差评预警对该条**界面诚实降级**显示「数据核对中」（宪法 11 状态诚实）；③以 **idempotencyKey 嵌值为准**修正 `lifecycleEpoch` 列——**此修列=缓存修复、非篡史**（观测真源=idempotencyKey+payload 不可变；`lifecycleEpoch` 列是行内派生缓存），故为**受控例外**，须记 ActionEvent `reputation.review.integrity_repair` `{observationId, fromEpoch, toEpoch}` 审计冻结（键参与唯一约束、插入后不可变=更强真源，据此校正缓存列）；④观测流全量重建该投影行+转换计数复核通过 → `ReviewItem.integrityStatus` 复位 `'ok'`、解除隔离。**永不静默吞**。
 
 - **宪法 8 结构隔离机器闸**（本域最关键契约）：ReviewRequest 与 Referral 两表**禁互指外键**；`review_*` 与 `referral_*`/`loyalty_*` 两族事件**不共享关联键**，B2 算效果时不得反推「留评→给奖」耦合归因。任何 migration 加互指=违宪 8，进 REVIEWER-PLAYBOOK 硬拦 + CI schema 断言（ReviewObservation 同属评价线，**禁含**任何 referral/loyalty 关联键）。
 
@@ -343,7 +363,7 @@ model ConsentEvent {
 
 ## 五、冻结条件与状态
 
-- **状态：冻结候选（freeze candidate）。** v0.1 骨架 → v0.2 吸收 B8 两试产 → v0.3 闭合 SOL §2·B2 六阻断项 + 吸收二三波 → v0.4 闭合 codex R2 BLOCK 清单 → v0.5 闭合 codex R3 两项（consent 顾客优先级 / ReviewObservation 观测流） → v0.6 闭合 codex R4 两项（consent 换轴到达序+entryMode / 观测键嵌 lifecycleEpoch） → **v0.7 闭合 codex R5 四项+主动扫（本稿）：entryMode 服务端派生 computed / 折叠写入 advisory lock 序列化 / 复活主权 CAS+输家规则 / 键内纪元一致性 I-R1+fail-loud 修复 / 并发主权总注** → **founder 明示 ack（D-018②/D-020⑤）** → spec-ready（02-B2 相关行随冻结 PR 迁级）。异族复审通过不替代 founder 过目（共享契约/schema=founder-only）。
+- **状态：冻结候选（freeze candidate）。** v0.1 骨架 → v0.2 吸收 B8 两试产 → v0.3 闭合 SOL §2·B2 六阻断项 + 吸收二三波 → v0.4 闭合 codex R2 BLOCK 清单 → v0.5 闭合 codex R3 两项（consent 顾客优先级 / ReviewObservation 观测流） → v0.6 闭合 codex R4 两项（consent 换轴到达序+entryMode / 观测键嵌 lifecycleEpoch） → **v0.7 闭合 codex R5 四项+主动扫：entryMode 服务端派生 computed / 折叠写入 advisory lock 序列化 / 复活主权 CAS+输家规则 / 键内纪元一致性 I-R1+fail-loud 修复 / 并发主权总注** → **v0.8 闭合 codex R5 复审（机械层）五项（本稿）：①sourceKind 服务端绑定（端点常量表，两字段不可传，I-C1 升编译期常量断言，契约 3）②receivedAt 锁内 clock_timestamp 赋值 + 一事务一三元组禁多锁（契约 3）③ReviewItem 增 lastObservationId 在线字典序 tie-break（§四点六·1）④ReviewItem 增 integrityStatus + lifecycleEpoch 缓存语义澄清（修列=缓存修复非篡史，integrity_repair 审计，§四点六·1）⑤两缝收口（ContactIdentity merge 沿链解根双锁·契约 2；LiveEventOutbox 空洞判废双条件·B9 契约 6）** → **四权闭环放行（#254 §一.2）** → spec-ready（02-B2 相关行随冻结 PR 迁级）。异族复审+双顾问签核+机器闸+非作者合并放行；founder 终验一次过审计索引（#254 §一.3/§二.5）。
 - **开放问题（v0.2 三项处置）**：
   1. ~~事件 payload schema 约束强度~~ → **闭合**：kind 闭集 + 每 kind 软引用非空约束（契约 1，对齐真 schema `schema.prisma:1364-1369`），非自由 JSON；宪法 10 定型。
   2. anonymousKey 隐私保留期（PDPA 姿态）→ **留 B13 对表**（跨块，非本 spec 冻结阻断项；`geoBucket`/`ipHashPrefix` 已按 PDPA 粗粒度冻结）。
