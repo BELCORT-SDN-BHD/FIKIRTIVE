@@ -21,6 +21,7 @@
 
 - **owner**：各工位（LC-0 / W-B3-A~H / LCg 收口片）。
 - **证据槽位**：46 能力行的逐条能力名（非页面名）+ 现状六级状态 → 目标状态。存量断言 16 条免重核（spec §二.5）；absent 行（E1-09 stitch/E1-19 A/B 分叉/B0-14/16~26 工厂族）为净新建。**待施工逐行填交付状态**。
+- **W-B3-C（已交付，$0 面）**：E1-08「分镜工作台」的 **$0 编辑面**双执行器补齐——Otto 侧新增 `editStoryboard` skill（$0/write/internal，`packages/otto/src/skills/edit-storyboard.ts`），与人工 server action（`apps/web/lib/storyboard-actions.ts`，已在 main）共用同一套纯编辑变换（迁至 `packages/otto/src/storyboard-edit.ts` 作双执行器共同权威，含 G 闸② 陈旧级联）。**E1-08 的付费面（Make all/Retry=gate1 真管线）属批2 W-B3-H，本工位未触**；E1-09 stitch 只落 $0 concat 接线预留（注释+TODO 指针，见 `studio-storyboard.tsx` renderState done 动作行）。行级状态迁移提案（E1-08 $0 编辑面 code-complete）入 PR 描述，不动矩阵（D-015⑤ 惯例）。
 
 ## ④ 双执行矩阵
 
@@ -39,6 +40,19 @@
 
   **待施工填每行双执行器交付物 + 债清零证据**。
 
+- **W-B3-C 债清零（6/6，已交付）**——四件套逐条：
+
+  | 债号 | action key | 清偿方式 | manifest 状态 |
+  |---|---|---|---|
+  | debt-11 | `actions.saveShotPrompt` | 能力级对等挂 `editStoryboard`（op=editShot；同 createShot→proposeStoryboard 先例——legacy Shot 面待 LCg retire，reason 如实注明） | todoSkill → skill ✅ |
+  | debt-12 | `actions.updateShotStatus` | 能力级对等挂 `editStoryboard`（卡片路径无 status 枚举，就绪态=prompts/pointers；reason 如实注明） | todoSkill → skill ✅ |
+  | debt-13 | `actions.softDeleteShot` | 能力级对等挂 `editStoryboard`（op=deleteShot；reason 如实注明） | todoSkill → skill ✅ |
+  | debt-75 | `storyboard-actions.editShotPrompt` | 真对等：`editStoryboard` op=editShot 与人工动作共用 `applyEditShotPrompt`（同一纯变换） | todoSkill → skill ✅ |
+  | debt-76 | `storyboard-actions.deleteShot` | 真对等：op=deleteShot 共用 `applyDeleteShot`（≥1 镜头下限同动作层） | todoSkill → skill ✅ |
+  | debt-77 | `storyboard-actions.reorderShots` | 真对等：op=reorderShots 共用 `applyReorderShots`（合法排列校验同动作层） | todoSkill → skill ✅ |
+
+  棘轮：`scripts/parity-debt-baseline.json` maxTodoSkill **84 → 78** 同 PR 锁定；`pnpm lint:parity` 绿（`[parity] OK: 180 entries … TODO_SKILL entries remain: 78`）。live trace：`TOOL_STEP_LABELS` 补 `editStoryboard: "Editing the storyboard"`（`otto-stream-bridge.ts`）。
+
 ## ⑤ 对标锚
 
 - **owner**：各泳道工位 + founder/审查员（盲评）。
@@ -49,11 +63,13 @@
 - **owner**：各工位 + 浏览器 runtime QA。
 - **⚠️ 三无纪律预注**：本程处**用户数=0 + Stripe 零成交 + 无生产流量**（三无）状态下——**旅程证据 = mock/staging 级，如实标注**（宪法 3 状态诚实）：happy/empty/loading/denied/failure/retry/mobile 七态截图取自 staging + MockProvider（$0）+ 夹具注入失败形态，**不冒充生产真实流量**；真钱旅程（真 provider 小额）= 只交方案不执行，执行点 = **每笔真实花费 = founder 逐笔明示批准**（宪法 2/BLUEPRINT:61；唯一澄清处见 spec §六.3）。凡 staging/mock 级证据一律标注来源级别，不作生产已验证陈述。
 - **证据槽位**：canvas 五态（空布→首图→就地编辑→A/B→Make Video）；工厂（贴链→选人设→批量矩阵确认页→成片网格 partial）；storyboard（draft→make-all→animatic→stitch）；media-editor（trim→抽帧→存版本 $0）。**待施工填七态截图 + 时间码**。
+- **W-B3-C · 锚 S1 $0 子旅程（brief→draft scenes→改脚本→保存）证据（已交付，执行器级/测试级——如实标注：非浏览器七态截图）**：`packages/otto/src/skills/edit-storyboard.test.ts` 的「S1 $0 sub-journey」用例全链走查——`proposeStoryboard` 起草 2 镜头卡（draft scenes $0）→ `editStoryboard` op=editShot 改第 2 镜头脚本 → op=reorderShots 重排 → payload 持久化断言（保存），并断言全程 **`genJob.create` 零调用**（$0 契约）；人工侧同链由 `apps/web/lib/__tests__/storyboard-actions.test.ts`（存量，owner-scoped 载入/G 闸②级联/边界拒绝）覆盖。**浏览器级七态截图待批3 引擎集成**（immersive 壳与 Otto/卡片接通后才有真 UI 旅程可截，见 §⑫.8）。
 
 ## ⑦ 测试全家桶可重跑链接
 
 - **owner**：各工位。
 - **证据槽位**：本地三关（`check`/`test`/`web-build`，配方 `docs/runbooks/local-ci.md`）；契约测试（`runVariantBatch` N 格独立/幂等不双扣/partial 只退失败格/Trim $0 断言/Otto propose 零 GenJob/Library 真落库归组）；`node scripts/route-b-matrix-check.mjs`（矩阵闸）；`pnpm lint:parity`（对等债闸）。**待施工填可重跑命令 + CI job 链接**。
+- **W-B3-C 可重跑（已交付）**：`pnpm --filter @fikirtive/otto test`（skill 全家桶含 `edit-storyboard.test.ts`：schema/owner-scope/四 op 边界/G 闸②级联/S1 $0 子旅程/零 GenJob）；`pnpm --filter @fikirtive/web test -- storyboard`（人工动作层存量回归）；`pnpm lint:parity`（债闸，棘轮 78）；`pnpm --filter @fikirtive/otto run catalog:check`（CATALOG 同步闸）。CI job 链接=PR checks（见 §①）。
 
 ## ⑧ schema / ownerId / 审计 / 同意 / 秘密
 
@@ -89,6 +105,7 @@
 5. **批量全链时长真值未测**：v0.2 已落显式临时阈值（mock 级 20 格 ≤30 分钟）；真 provider 实测值待 costing/压测，受控修订走决策日志（假设 B3-A3）。
 6. **B10 毛利地板数值 gate 时序假设**（批2 前置）：批量定价毛利证明依赖 B10；若 B10 未就绪批2 停等并上报（假设 B3-A5）。
 7. **Design B 首落本区 = 荐否**（L-C §七.D1/A2）：安全 > 效率，L-C 用成熟单一动作层 + parity 清债，Design B 另择小区首落——待 founder/总审查员定。
+8. **storyboard 壳 UI 保持壳级（W-B3-C，控制面裁定——与 W-B3-A 同型）**：核证确认 immersive `create/storyboard` 壳（`studio-storyboard.tsx`）零 server-action 接线、零 thread/卡片上下文（STORYBOARD_CARD 只由 Otto `proposeStoryboard` 铸造，壳拿不到 cardId），「$0 真接后台」在 UI 面只有 mock 缝——依裁定 UI 保持壳级，**「真」由 Otto skill（`editStoryboard`）+ 既有 `storyboard-actions`（双执行器共同纯变换）承载**；壳与真卡片的接通随批3 引擎集成（开工门=#253 或其拆分后继）。壳内 Wave2/3 假开关（coherence/多语配音/音频驱动）已如实禁用 + Coming soon 标注（gate4）；E1-09 stitch 只留 $0 concat 接线预留注释（spec §四.①）。
 
 ## ⑬ 录像时间码 + founder 10 分钟自查脚本
 

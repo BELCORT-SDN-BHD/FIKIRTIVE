@@ -4,6 +4,7 @@
 | skill | cost | effect | reach | needsApproval | description |
 |---|---|---|---|---|---|
 | describeRefs | free | write | internal | ❌ | Cache visual descriptions of reference images shown to you this turn. For each r |
+| editStoryboard | free | write | internal | ❌ | Edit an EXISTING storyboard card the user is reviewing: change a shot's prompts  |
 | generate | spend | write | internal | ✅ | Execute a generation proposal (GEN_CARD) that the user has approved. This SPENDS |
 | ingestProduct | free | read | external | ❌ | Read a product's page from a URL (e.g. a Shopee/Lazada or store link) and get a  |
 | list-meta-pages | free | read | external | ❌ | List the user's connected Facebook Pages so you can pick one when building an ad |
