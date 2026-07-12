@@ -139,19 +139,17 @@ jobs:
   # resolved types, but @typescript-eslint parsing still expects the workspace packages'
   # published shapes to exist) — no DB, no `next build`.
   #
-  # STATUS (2026-07-12, PR that added this job): a mechanical-only pass reduced `pnpm lint` from
-  # 128 (2026-07-07 baseline) to 71 problems (7 errors, 64 warnings) with zero behavioral changes
-  # (unused-var / dead-import / stale eslint-disable-comment removals only). The remaining 7
-  # errors (react-hooks/set-state-in-effect ×5, react-hooks/purity ×2) all require an actual
-  # effect/render-timing refactor — real behavior changes, out of scope for a surgical cleanup —
-  # so this job currently FAILS internally but does not block merges (warn stage below; see the
-  # PR description for the full file:line list). Do not silence the 7 with eslint-disable;
-  # that would hide the exact regression this job exists to catch.
+  # STATUS (2026-07-12, P0-3 收尾 · route 乙 B10): a mechanical pass first cut `pnpm lint` from 128
+  # (2026-07-07 baseline) to 71 problems (7 errors, 64 warnings); a follow-up behavior-class pass
+  # then fixed all 7 remaining errors (react-hooks/set-state-in-effect ×5 + react-hooks/purity ×2)
+  # via derived-state / stable-callback refactors — NOT eslint-disable — so `pnpm lint` is now
+  # 0 errors (64 warnings remain, all pre-existing WARN severity: no-restricted-imports prisma
+  # migration + no-img-element + no-unused-vars). This job is now a HARD gate (continue-on-error
+  # removed): any NEW eslint error fails it. Do not silence errors with eslint-disable — that would
+  # hide the exact regression class this gate exists to catch.
   lint:
     name: eslint (apps/web)
     runs-on: ubuntu-latest
-    # warn stage: 7 behavior-class errors pending adjudication (P0-3 follow-up); flip to hard once fixed
-    continue-on-error: true
     steps:
       - uses: actions/checkout@v4
       - uses: pnpm/action-setup@v4 # version from package.json `packageManager` (see check job)

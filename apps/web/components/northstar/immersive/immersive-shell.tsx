@@ -107,13 +107,16 @@ export function ImmersiveShell({ children }: { children: React.ReactNode }) {
 
   // §L4 移动抽屉:≤680 侧栏脱离流成抽屉,由顶栏汉堡开合。换路由自动收起(点导航即跳即关),
   // Esc 也收。桌面(>680)常驻栏不受此 state 影响(纯 CSS 断点决定形态)。
-  const [drawerOpen, setDrawerOpen] = React.useState(false);
-  const closeDrawer = React.useCallback(() => setDrawerOpen(false), []);
-  React.useEffect(() => setDrawerOpen(false), [pathname]);
+  // 开态派生自「在哪个 pathname 打开的」:换路由(openedAt !== 当前 pathname)即自动收起,取代旧的
+  // `useEffect(() => setDrawerOpen(false), [pathname])`——免掉 set-state-in-effect,且照旧覆盖点导航 /
+  // 程序化 escort / 浏览器前进后退所有换路由路径(与旧 effect 同语义)。
+  const [openedAt, setOpenedAt] = React.useState<string | null>(null);
+  const drawerOpen = openedAt === pathname;
+  const closeDrawer = React.useCallback(() => setOpenedAt(null), []);
   React.useEffect(() => {
     if (!drawerOpen) return;
     const onKey = (e: KeyboardEvent) => {
-      if (e.key === "Escape") setDrawerOpen(false);
+      if (e.key === "Escape") setOpenedAt(null);
     };
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
@@ -166,7 +169,7 @@ export function ImmersiveShell({ children }: { children: React.ReactNode }) {
         <div className="flex h-[52px] shrink-0 items-center gap-1.5 border-b border-border px-2 min-[681px]:hidden">
           <button
             type="button"
-            onClick={() => setDrawerOpen(true)}
+            onClick={() => setOpenedAt(pathname)}
             aria-label="Open menu"
             aria-expanded={drawerOpen}
             className="flex size-9 items-center justify-center rounded-[10px] text-muted-foreground transition-colors duration-[120ms] hover:bg-accent hover:text-foreground"

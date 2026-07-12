@@ -202,11 +202,12 @@ export const ImmersiveDock = React.forwardRef<
   }, []);
 
   // 跨表面守卫(缺陷#2 二轮):登记的 assist owner 换了(导航去别的动脑面 → 源面卸载 owner→null,
-  // 或别面点开 Otto → owner→新 token)就清掉上一面残留的 pendingApply。那颗写着 A 摘要的 Apply
-  // 钮不再飘到 B 上诱点(点了本会错填 B 或空转打假成功)。dock 订阅 store,故 owner 一变即触发。
-  React.useEffect(() => {
-    setPendingApply((prev) => (prev && prev.owner !== currentAssistOwner ? null : prev));
-  }, [currentAssistOwner]);
+  // 或别面点开 Otto → owner→新 token)就把上一面残留的 pendingApply 视作失效——那颗写着 A 摘要的
+  // Apply 钮不再飘到 B 上诱点(点了本会错填 B 或空转打假成功)。owner token 是 React.useId(),换走
+  // 不复现,故「派生过滤掉不同源的 pendingApply」与旧「effect 里 setPendingApply(null)」观测等价,
+  // 且免掉 set-state-in-effect 的级联渲染;applyPending 点击时仍各自 owner 复核(下方两道门)兜底。
+  const activePendingApply =
+    pendingApply && pendingApply.owner === currentAssistOwner ? pendingApply : null;
 
   // §O7 意图 chip:一键跑一个 surface-specific 意图(零打字)。落一轮往来进单流;
   // 带 apply 则浮出 Apply 钮;带 landsOn 则 §8e escort 到现场看它落地。
@@ -388,10 +389,10 @@ export const ImmersiveDock = React.forwardRef<
           )}
 
           {/* §O7 Apply:Otto 产出回填原表面(只填字段;发/花仍要店主点) */}
-          {pendingApply && (
+          {activePendingApply && (
             <div className="flex shrink-0 items-center gap-2 border-t border-border px-3 pt-2.5">
               <span className="min-w-0 flex-1 truncate text-[12px] font-medium text-muted-foreground">
-                {pendingApply.apply.summary}
+                {activePendingApply.apply.summary}
               </span>
               <Button size="sm" className="h-8 shrink-0" onClick={applyPending}>
                 Apply
