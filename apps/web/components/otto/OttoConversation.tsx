@@ -6,6 +6,7 @@ import { ottoTurn } from "@/lib/otto-client-actions";
 import { getCoworkThreadClient } from "@/lib/cowork-fetch";
 import { OttoPlanCard } from "./OttoPlanCard";
 import { OttoActionPlanCard } from "./OttoActionPlanCard";
+import { OttoApprovalCard } from "./OttoApprovalCard";
 import { OttoAdBuildCard } from "./OttoAdBuildCard";
 import { StoryboardCard } from "./StoryboardCard";
 import { ResearchCard } from "./ResearchCard";
@@ -548,6 +549,18 @@ function MessageRow({
         <OttoAvatar size={32} state="idle" />
         <div className="flex-1 min-w-0">
           <OttoAdBuildCard cardId={m.id} payload={m.payload} />
+        </div>
+      </div>
+    );
+  }
+
+  // Universal approval card (B4 debt-70): a non-generate gated skill parked for consent.
+  if (m.kind === "APPROVAL_CARD") {
+    return (
+      <div className="flex items-start gap-3">
+        <OttoAvatar size={32} state="idle" />
+        <div className="flex-1 min-w-0">
+          <OttoApprovalCard cardId={m.id} threadId={threadId} payload={m.payload} onResolved={onRefresh} />
         </div>
       </div>
     );

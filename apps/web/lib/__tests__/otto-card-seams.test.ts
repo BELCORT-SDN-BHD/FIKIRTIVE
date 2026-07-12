@@ -43,6 +43,12 @@ const PORT_CARD_TOOLS: Record<string, string> = {
 /** worker 侧持久化、非 skill 提出的卡片 kind(缝 4 之外的送达路径,豁免缝 5)。 */
 const WORKER_PERSISTED_KINDS = new Set(["RESEARCH_REPORT", "GEN_RESULT"]);
 
+/** 中断持久化的卡片 kind(B4 debt-70 通用审批卡):由 finalizeOttoRun/ottoApprove 在
+ *  needsApproval 中断驻留时持久化,无 tool_output 活流(工具被闸住没执行)——送达 =
+ *  needs_approval data-status + onFinish 的 appendMissingCards 回填。豁免缝 5(header
+ *  第三段的「审批型…经 approve 流程送达」类),仍须过缝 4(下面的断言会查)。 */
+const INTERRUPTION_PERSISTED_KINDS = new Set(["APPROVAL_CARD"]);
+
 /** defineOttoSkill 三字段 → needsApproval(与 packages/otto/src/skill.ts 同公式)。
  *  正则锚定行首缩进,防止散文注释里的 cost:"spend" 遮蔽真实字段。 */
 function needsApproval(src: string): boolean {
@@ -125,6 +131,7 @@ describe("card seams — CARD_TOOL_NAMES (seam 5) and CARD_KINDS (seam 4) stay i
     const directKinds = new Set(direct.flatMap((s) => s.kinds));
     for (const [kind, files] of webKinds) {
       if (directKinds.has(kind)) continue; // proposed+persisted by a skills-dir skill, covered above
+      if (INTERRUPTION_PERSISTED_KINDS.has(kind)) continue; // approval-parked, no tool_output stream (seam 4 still asserted below)
       const tool = PORT_CARD_TOOLS[kind];
       expect(
         tool,

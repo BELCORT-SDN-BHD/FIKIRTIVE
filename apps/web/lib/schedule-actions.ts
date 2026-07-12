@@ -272,9 +272,26 @@ export async function updateScheduledPost(
  *  the owner's own connected channels, AND at least one media row. Gates DRAFT→SCHEDULED through
  *  the shared state machine. Sets approvedAt. Owner-scoped end to end — the target is validated
  *  against fetchOwnerPages(ownerId) (which reads the owner's OWN MetaConnection), never a client
- *  id, so one org can never queue a post onto another org's page. */
-export async function approveScheduledPost(id: string): Promise<{ ok: true } | { error: string }> {
+ *  id, so one org can never queue a post onto another org's page.
+ *
+ *  `opts.expectedUpdatedAt` (AR2 处方1, Otto approval-card chain ONLY): the post's updatedAt as
+ *  captured server-side when the card's content hash was verified. When provided, the CAS WHERE
+ *  pins THIS value instead of this call's own fresh read — so a material edit between the hash
+ *  check and this re-read makes the CAS match zero rows: the old card can never approve content B.
+ *  The human UI path passes no opts and keeps the existing fresh-read CAS unchanged. */
+export async function approveScheduledPost(
+  id: string,
+  opts?: { expectedUpdatedAt?: string },
+): Promise<{ ok: true } | { error: string }> {
   if (typeof id !== "string" || !id) return { error: "Invalid request." };
+  let expectedUpdatedAt: Date | null = null;
+  if (opts?.expectedUpdatedAt !== undefined) {
+    const d = new Date(opts.expectedUpdatedAt);
+    if (typeof opts.expectedUpdatedAt !== "string" || Number.isNaN(d.getTime())) {
+      return { error: "Invalid request." };
+    }
+    expectedUpdatedAt = d;
+  }
   const gate = await requireOwner();
   if ("error" in gate) return gate;
   // Approve = consent to a real, irreversible external publish (spec §五). An impersonating admin
@@ -354,11 +371,25 @@ export async function approveScheduledPost(id: string): Promise<{ ok: true } | {
     // updatedAt (bumped by any edit, incl. a media-only one — see updateScheduledPost) closes that:
     // count===0 → stale/conflict, so we never approve content we didn't just validate, and never
     // resurrect a CANCELLED post into SCHEDULED either (the read-then-write race).
+    // Otto card chain (expectedUpdatedAt set): pin the HASH-TIME snapshot instead of this call's
+    // fresh read — welds the hash check and the approve into one version (AR2 处方1).
     const { count } = await prisma.scheduledPost.updateMany({
-      where: { id, ownerId: gate.ownerId, deletedAt: null, status: post.status, updatedAt: post.updatedAt },
+      where: {
+        id,
+        ownerId: gate.ownerId,
+        deletedAt: null,
+        status: post.status,
+        updatedAt: expectedUpdatedAt ?? post.updatedAt,
+      },
       data: { status: "SCHEDULED", approvedAt: new Date() },
     });
-    if (!count) return { error: "This post just changed — please refresh and try again." };
+    if (!count) {
+      return {
+        error: expectedUpdatedAt
+          ? "This post changed since Otto asked — review it and ask Otto to request approval again."
+          : "This post just changed — please refresh and try again.",
+      };
+    }
   } catch {
     return { error: "Couldn't approve that — please try again." };
   }
