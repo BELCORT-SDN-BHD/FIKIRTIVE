@@ -54,6 +54,9 @@ import {
   updateScheduledPost,
   listScheduledPosts,
   listOwnerTargets,
+  suggestPostTimes,
+  sharePostPreview,
+  revokeSharePreview,
 } from "./schedule-actions";
 import { asApprovalCardPayload, type ApprovalCardPayload, type ApprovalCardSummary } from "./approval-card-view";
 import { computeApprovalContentHash, APPROVAL_CARD_TTL_MS } from "./approval-content-hash";
@@ -313,6 +316,12 @@ export async function buildOttoContext({
         }));
       },
       listTargets: () => listOwnerTargets(),
+      // B0-103 read parity: reads the static global seed table (no owner scope), $0, never writes.
+      suggestTimes: ({ channel, limit }) => suggestPostTimes({ channel, limit }),
+      // B0-28: mints a seat-less read-only share link for one OWNED post (owner-verified server-side;
+      // TTL server-fixed; one authority row per mint). Revoke kills every active link for a post.
+      sharePreview: ({ scheduledPostId }) => sharePostPreview({ scheduledPostId }),
+      sharePreviewRevoke: ({ scheduledPostId }) => revokeSharePreview({ scheduledPostId }),
     },
     productIngest: {
       // Layer 1 only: fetch (SSRF-hardened) + deterministic extract, plus the page text so

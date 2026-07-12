@@ -22,6 +22,11 @@ const {
   mockIgListTargets,
   mockFbListTargets,
   mockPublishAttemptFindFirst,
+  mockPostingTimeFindMany,
+  mockShareTokenCreate,
+  mockShareTokenUpdateMany,
+  mockChatFindMany,
+  mockChatUpdateMany,
 } = vi.hoisted(() => ({
   mockRequireOwner: vi.fn(),
   mockIsImpersonating: vi.fn(),
@@ -37,6 +42,11 @@ const {
   mockIgListTargets: vi.fn(),
   mockFbListTargets: vi.fn(),
   mockPublishAttemptFindFirst: vi.fn(),
+  mockPostingTimeFindMany: vi.fn(),
+  mockShareTokenCreate: vi.fn(),
+  mockShareTokenUpdateMany: vi.fn(),
+  mockChatFindMany: vi.fn(),
+  mockChatUpdateMany: vi.fn(),
 }));
 
 // createScheduledPost now delegates to schedule-service.ts, which is `import "server-only"`.
@@ -58,6 +68,9 @@ vi.mock("@fikirtive/db", () => ({
     },
     generation: { findMany: mockGenFindMany },
     publishAttempt: { findFirst: mockPublishAttemptFindFirst },
+    postingTimeSeed: { findMany: mockPostingTimeFindMany },
+    sharePreviewToken: { create: mockShareTokenCreate, updateMany: mockShareTokenUpdateMany },
+    chatMessage: { findMany: mockChatFindMany, updateMany: mockChatUpdateMany },
   },
 }));
 vi.mock("../meta-pages", () => ({ fetchOwnerPages: mockFetchOwnerPages }));
@@ -84,8 +97,13 @@ import {
   cancelScheduledPost,
   listScheduledPosts,
   listOwnerTargets,
+  suggestPostTimes,
+  sharePostPreview,
+  revokeSharePreview,
 } from "../schedule-actions";
+import { sharePreviewTokenDigest } from "../share-preview";
 import { IG_IMAGE_ONLY_ERROR } from "../schedule-service";
+import { verifySharePreviewToken } from "@fikirtive/token-crypto";
 
 const OWNER = "o1";
 const AT = "2026-07-10T09:00:00.000Z";
@@ -112,6 +130,10 @@ beforeEach(() => {
   mockIgListTargets.mockResolvedValue([{ id: "page-1", name: "My Page" }]);
   mockFbListTargets.mockResolvedValue([{ id: "page-1", name: "My Page" }]);
   mockPublishAttemptFindFirst.mockResolvedValue(null); // D2: default = no UNCONFIRMED attempt
+  mockShareTokenCreate.mockResolvedValue({}); // B0-28: authority-row write succeeds by default
+  mockShareTokenUpdateMany.mockResolvedValue({ count: 0 });
+  mockChatFindMany.mockResolvedValue([]); // B0-29 settle: default = no pending approval cards
+  mockChatUpdateMany.mockResolvedValue({ count: 1 });
 });
 
 // --- createScheduledPost ----------------------------------------------------
@@ -917,5 +939,161 @@ describe("listOwnerTargets", () => {
     expect(await listOwnerTargets()).toEqual([]);
     expect(mockIgListTargets).not.toHaveBeenCalled();
     expect(mockFbListTargets).not.toHaveBeenCalled();
+  });
+});
+
+// --- suggestPostTimes (B0-103) + sharePostPreview (B0-28) — W-B4-3 -------------
+
+describe("suggestPostTimes (B0-103, read parity)", () => {
+  it("returns [] when the caller isn't authenticated", async () => {
+    mockRequireOwner.mockResolvedValueOnce({ error: "unauthorized" });
+    expect(await suggestPostTimes({ channel: "instagram" })).toEqual([]);
+  });
+  it("reads the static seed for the channel (best-first) and maps the shape", async () => {
+    mockPostingTimeFindMany.mockResolvedValueOnce([{ dayOfWeek: 3, hourUtc: 19, score: 90, rationale: "peak" }]);
+    const res = await suggestPostTimes({ channel: "instagram", limit: 3 });
+    expect(mockPostingTimeFindMany).toHaveBeenCalledWith(
+      expect.objectContaining({ where: { channel: "instagram" }, take: 3 }),
+    );
+    expect(res).toEqual([{ dayOfWeek: 3, hourUtc: 19, score: 90, rationale: "peak" }]);
+  });
+  it("returns [] for a blank channel without touching the db", async () => {
+    expect(await suggestPostTimes({ channel: "" })).toEqual([]);
+    expect(mockPostingTimeFindMany).not.toHaveBeenCalled();
+  });
+});
+
+describe("sharePostPreview (B0-28, owner-scoped mint — token row = authority layer)", () => {
+  const SECRET = "share-secret-test";
+  beforeEach(() => {
+    process.env.SHARE_PREVIEW_SECRET = SECRET;
+  });
+
+  it("fails closed when SHARE_PREVIEW_SECRET is unset", async () => {
+    delete process.env.SHARE_PREVIEW_SECRET;
+    const res = await sharePostPreview({ scheduledPostId: "p1" });
+    expect("error" in res).toBe(true);
+    expect(mockFindFirst).not.toHaveBeenCalled(); // fail-closed BEFORE any db read
+    expect(mockShareTokenCreate).not.toHaveBeenCalled();
+  });
+  it("owner isolation: a post the caller does not own → 'Post not found', no token, no row", async () => {
+    mockFindFirst.mockResolvedValueOnce(null); // findFirst is scoped to {id, ownerId, deletedAt:null}
+    const res = await sharePostPreview({ scheduledPostId: "not-mine" });
+    expect(res).toEqual({ error: "Post not found." });
+    expect(mockShareTokenCreate).not.toHaveBeenCalled();
+  });
+  it("mints an HMAC token bound to (ownerId, postId) AND writes ONE authority row with the token's digest (NODE-275 收口2)", async () => {
+    mockFindFirst.mockResolvedValueOnce({ id: "p1" });
+    const res = await sharePostPreview({ scheduledPostId: "p1" });
+    if ("error" in res) throw new Error("expected a token, got an error");
+    // The action's findFirst must scope to the session owner (铁幕).
+    expect(mockFindFirst).toHaveBeenCalledWith(
+      expect.objectContaining({ where: expect.objectContaining({ id: "p1", ownerId: OWNER }) }),
+    );
+    expect(verifySharePreviewToken(res.token, SECRET)).toMatchObject({ ownerId: OWNER, postId: "p1" });
+    expect(res.url).toContain("/schedule/share-preview?t=");
+    // ONE row per mint (spec §2.2 "内部写一行 token 记录"): owner-scoped, digest = sha256(token)
+    // (never the token itself), expiry mirrors the token's.
+    expect(mockShareTokenCreate).toHaveBeenCalledTimes(1);
+    const row = mockShareTokenCreate.mock.calls[0][0].data;
+    expect(row.ownerId).toBe(OWNER);
+    expect(row.scheduledPostId).toBe("p1");
+    expect(row.tokenDigest).toBe(sharePreviewTokenDigest(res.token));
+    expect(row.tokenDigest).not.toContain(res.token);
+    expect(row.expiresAt.toISOString()).toBe(res.expiresAt);
+  });
+  it("TTL is SERVER-FIXED (NODE-275 收口3): expiry lands at now + 7d regardless of caller input shape", async () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date("2026-07-13T00:00:00.000Z"));
+    try {
+      mockFindFirst.mockResolvedValueOnce({ id: "p1" });
+      // The input type has no ttlMs; even a hostile extra property must not move the expiry.
+      const res = await sharePostPreview({ scheduledPostId: "p1", ttlMs: Infinity } as never);
+      if ("error" in res) throw new Error("expected a token, got an error");
+      expect(res.expiresAt).toBe("2026-07-20T00:00:00.000Z"); // exactly +7d, finite
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+  it("fail-closed when the authority-row write fails: error, NO working link handed out", async () => {
+    mockFindFirst.mockResolvedValueOnce({ id: "p1" });
+    mockShareTokenCreate.mockRejectedValueOnce(new Error("db down"));
+    const res = await sharePostPreview({ scheduledPostId: "p1" });
+    expect("error" in res).toBe(true);
+  });
+  it("is blocked while impersonating a customer (no forged share on their behalf)", async () => {
+    mockIsImpersonating.mockResolvedValueOnce(true);
+    const res = await sharePostPreview({ scheduledPostId: "p1" });
+    expect("error" in res).toBe(true);
+  });
+});
+
+describe("revokeSharePreview (B0-28, owner-scoped revocation)", () => {
+  it("sets revokedAt on every LIVE row for the owner's post and reports the count", async () => {
+    mockShareTokenUpdateMany.mockResolvedValueOnce({ count: 2 });
+    const res = await revokeSharePreview({ scheduledPostId: "p1" });
+    expect(res).toEqual({ ok: true, revoked: 2 });
+    const call = mockShareTokenUpdateMany.mock.calls[0][0];
+    expect(call.where).toEqual({ ownerId: OWNER, scheduledPostId: "p1", revokedAt: null }); // owner铁幕 + only live rows
+    expect(call.data.revokedAt).toBeInstanceOf(Date);
+  });
+  it("is blocked while impersonating a customer", async () => {
+    mockIsImpersonating.mockResolvedValueOnce(true);
+    const res = await revokeSharePreview({ scheduledPostId: "p1" });
+    expect("error" in res).toBe(true);
+    expect(mockShareTokenUpdateMany).not.toHaveBeenCalled();
+  });
+});
+
+describe("approveScheduledPost settles pending APPROVAL_CARDs (B0-29 one-object weld, NODE-275 收口4)", () => {
+  const PENDING_CARD = {
+    id: "card-1",
+    payload: {
+      toolName: "approveScheduledPost",
+      ref: "p1",
+      status: "pending",
+      summary: null,
+      contentHash: "h",
+      expiresAt: "2027-01-01T00:00:00.000Z",
+    },
+  };
+
+  it("after a successful human-button approve, the pending Otto ask for this post is CAS-settled to approved", async () => {
+    mockFindFirst.mockResolvedValue(draftReady());
+    mockUpdateMany.mockResolvedValue({ count: 1 });
+    mockChatFindMany.mockResolvedValueOnce([PENDING_CARD]);
+    expect(await approveScheduledPost("p1")).toEqual({ ok: true });
+    // Looked up the SAME request object the Otto card path consumes: (toolName, ref, pending).
+    const findArgs = mockChatFindMany.mock.calls[0][0];
+    expect(findArgs.where.ownerId).toBe(OWNER);
+    expect(findArgs.where.kind).toBe("APPROVAL_CARD");
+    expect(findArgs.where.AND).toEqual([
+      { payload: { path: ["toolName"], equals: "approveScheduledPost" } },
+      { payload: { path: ["ref"], equals: "p1" } },
+      { payload: { path: ["status"], equals: "pending" } },
+    ]);
+    // CAS-consumed pending→approved, pinned on status="pending" (same discipline as ottoApprove).
+    expect(mockChatUpdateMany).toHaveBeenCalledTimes(1);
+    const upd = mockChatUpdateMany.mock.calls[0][0];
+    expect(upd.where.id).toBe("card-1");
+    expect(upd.where.AND).toEqual([{ payload: { path: ["status"], equals: "pending" } }]);
+    expect(upd.data.payload.status).toBe("approved");
+    expect(upd.data.payload.contentHash).toBe("h"); // rest of the payload preserved
+  });
+
+  it("a LOST approve CAS (stale conflict) settles NOTHING — the ask stays pending", async () => {
+    mockFindFirst.mockResolvedValue(draftReady());
+    mockUpdateMany.mockResolvedValue({ count: 0 });
+    const res = await approveScheduledPost("p1");
+    expect(res).toHaveProperty("error");
+    expect(mockChatFindMany).not.toHaveBeenCalled();
+    expect(mockChatUpdateMany).not.toHaveBeenCalled();
+  });
+
+  it("a settle failure never breaks the approval itself (best-effort: consent already happened)", async () => {
+    mockFindFirst.mockResolvedValue(draftReady());
+    mockUpdateMany.mockResolvedValue({ count: 1 });
+    mockChatFindMany.mockRejectedValueOnce(new Error("db hiccup"));
+    expect(await approveScheduledPost("p1")).toEqual({ ok: true });
   });
 });

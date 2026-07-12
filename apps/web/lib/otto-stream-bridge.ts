@@ -193,6 +193,9 @@ const TOOL_STEP_LABELS: Record<string, string> = {
   editScheduledPost: "Editing a scheduled post",
   listScheduledPosts: "Checking your schedule",
   listPublishTargets: "Finding your connected accounts",
+  // B0-103 / B0-28 (new schedule reads/shares):
+  suggestPostTimes: "Finding good times to post",
+  sharePostPreview: "Making a share link",
   manageCanvas: "Working on your canvas",
   // W-B3-B (media-editor / asset-viewer $0):
   manageMedia: "Organizing your media",

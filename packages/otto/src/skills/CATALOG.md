@@ -42,4 +42,6 @@
 | seedancePrompt | free | read | internal | ❌ | Assemble a model-tuned English VIDEO prompt for Seedance — the CREATIVE prompt o |
 | seedreamPrompt | free | read | internal | ❌ | Assemble a model-tuned English IMAGE prompt for Seedream. Call this FIRST whenev |
 | setTitle | free | write | internal | ❌ | Set a concise ≤6-word title for the current conversation. Call once early in a n |
+| sharePostPreview | free | write | internal | ❌ | Create a seat-less, read-only share link for one of the user's scheduled posts s |
+| suggestPostTimes | free | read | internal | ❌ | Suggest good times to publish on a channel (Instagram/Facebook) using known best |
 | updateBrief | free | write | internal | ❌ | Refine the project's creative brief with durable creative direction (tone, visua |

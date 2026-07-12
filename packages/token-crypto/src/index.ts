@@ -97,3 +97,48 @@ export function verifyMediaToken(
   if (now > parsed.exp) return null;
   return { ownerId: parsed.o, key: parsed.k, exp: parsed.exp };
 }
+
+/* ── Signed share-preview token (B0-28, spec §2.2) ───────────────────────────
+ *
+ * A single scheduled post can be shared for external review via a SEAT-LESS, read-only link.
+ * The token binds (ownerId + postId + expiry) under HMAC-SHA256 — server-side mint/verify, no DB
+ * row needed: it is tamper-evident, owner-scoped (a token for owner A / post P can never resolve
+ * to another owner or post), and time-boxed. A tampered / expired / foreign token verifies to null
+ * → the read route's fail-closed 404 (越权静默 404). Same HMAC discipline as the media proxy but a
+ * SEPARATE secret (SHARE_PREVIEW_SECRET) so the two capabilities can never be swapped. */
+
+export type SharePreviewClaims = { ownerId: string; postId: string; exp: number };
+
+/** Sign a share-preview token. `expMs` is an absolute epoch-ms expiry. */
+export function signSharePreviewToken(ownerId: string, postId: string, expMs: number, secret: string): string {
+  if (!secret) throw new Error("SHARE_PREVIEW_SECRET is not set");
+  const payload = Buffer.from(JSON.stringify({ o: ownerId, p: postId, exp: expMs })).toString("base64url");
+  return `${payload}.${hmacB64url(payload, secret)}`;
+}
+
+/** Verify a share-preview token: constant-time HMAC compare + TTL. Returns the claims or null
+ *  (never throws) — a null result is the read route's fail-closed 404. */
+export function verifySharePreviewToken(
+  token: string,
+  secret: string,
+  now: number = Date.now(),
+): SharePreviewClaims | null {
+  if (!secret) return null;
+  const dot = token.lastIndexOf(".");
+  if (dot < 0) return null;
+  const payload = token.slice(0, dot);
+  const sig = token.slice(dot + 1);
+  const expected = hmacB64url(payload, secret);
+  const a = Buffer.from(sig);
+  const b = Buffer.from(expected);
+  if (a.length !== b.length || !timingSafeEqual(a, b)) return null;
+  let parsed: { o?: unknown; p?: unknown; exp?: unknown };
+  try {
+    parsed = JSON.parse(Buffer.from(payload, "base64url").toString("utf8"));
+  } catch {
+    return null;
+  }
+  if (typeof parsed.o !== "string" || typeof parsed.p !== "string" || typeof parsed.exp !== "number") return null;
+  if (now > parsed.exp) return null;
+  return { ownerId: parsed.o, postId: parsed.p, exp: parsed.exp };
+}

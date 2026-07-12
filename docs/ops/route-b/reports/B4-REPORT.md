@@ -17,6 +17,7 @@
 
 - owner：〔SPEC-B4 / 块施工工位〕
 - 证据：〔能力行清单（非页面）：发布链六态/四锁/授权闸/媒体双层/签名代理/单一动作层/reconcile + 5.5 新建能力（X 发布/广告工作台/分享预览/ApprovalRequest/ChannelConnection/时段种子）。详见 spec §三〕
+- **W-B4-3 起证（本 PR，新建后台能力；NODE-275 收口后）**：①`ChannelConnection` 通用渠道连接（B0-30，schema + 单默认 partial unique）②`PostingTimeSeed` 冷启动时段种子 + `suggestPostTimes` 读 skill（B0-103）③`sharePostPreview` 分享预览 skill（mint+revoke）+ 双层令牌：HMAC 传输层 ∧ `SharePreviewToken` 行权威层（B0-28）④ApprovalRequest 语义正名收口 + 人批/Otto 批同卡消费焊死（B0-29）⑤广告工作台后台+skill 立证（B0-27，`propose-ad-build` 已存量）。两新 skill 已入 `instructions.ts`「When to call」路由（收口6）。人工入口页（A′ ads/builder、schedule/share-preview）依 A′ foundation deferred（§⑫.11）。
 
 ## ④ 双执行矩阵
 
@@ -56,6 +57,20 @@
 | E4-16 | n/a（adapter 缝） | n/a | n/a（缝；现状降准 A03，触点 5 处收敛=施工验收项，归 E4-14/施工工位） |
 
 **收口**：14 行差额 = 2 `对等`（E2-07/E4-12 propose-meta-action）+ 3 `豁免`（E4-04/E4-09/E4-13 ACCOUNT_SECURITY，正当类义）+ 2 `开口`（E4-01 debt-70~74 管理面 · E4-10 v0.4 假对等）+ 7 `n/a`（数据/worker/语义层无动作）。**两 `开口` 均属施工工位/W-B4-2 债清偿范围，本工位（W-B4-1）职责=立证记差，禁自补债**（边界纪律）。
+
+#### W-B4-3 起证（新建行工位）· 5.5 新建行施工（B0-27/28/29/30/103；PR=本 PR head）
+
+> 边界：本工位建**后台能力+数据+skill+测试**（零真实外部/零花费，additive migration 走 destructive 闸绿）；**A′ 人工入口页（`northstar/ads/builder`、`northstar/schedule/share-preview`）不在本 PR**——两页在 `APRIME-MANIFEST-2026-07-11.md` §6 是待迁切片，依赖 A′ foundation 轨（§2 七件 foundation-needed）尚未落 main；UI 壳级禁重画（架构缝先例），故人工入口页留待 A′ foundation 后接，本工位只交后台+skill+token/schema。
+
+| 行 | 交付（本 PR） | 双执行 | 测试（file） | 判定 |
+|---|---|---|---|---|
+| **B0-27** | 后台+skill **已存量**（`propose-ad-build` 已注册；build 全 PAUSED/$0；propose 只落 BUILD_CARD 不写 Meta）——本工位=立证既有覆盖，A′ `ads/builder` 页留待 foundation | 人工=A′ 页（待 foundation）/ Otto=`propose-ad-build`（free/write/internal，已注册） | 立证既有：`meta-build-actions.test.ts:244/284/289/297`（5 对象全 PAUSED）+ `meta-build-propose.test.ts:146/248`（propose 只落卡/invalid 零卡） | **立证**（后台齐；页 deferred） |
+| **B0-28** | 新 `sharePostPreview` skill（free/write/**internal**→ungated，`revoke:true`=撤销模式）+ **双层令牌（NODE-275 收口2/3）**：HMAC token=传输层（token-crypto）∧ `SharePreviewToken` **行=权威层**（一行/mint、`tokenDigest`=SHA-256(token) 非 token 本体、`revokedAt` 可撤销；verify=HMAC 通过 ∧ 行 live——`share-preview.ts`）+ owner-scoped mint/revoke web actions + ports `ctx.schedule.sharePreview`/`sharePreviewRevoke`；**TTL 服务端定值**（7d 常量，founder ack 可调；调用方零 TTL 输入）；`.env.example` 补 `SHARE_PREVIEW_SECRET` | 人工=A′ 页（待 foundation）/ Otto=`sharePostPreview`（铸行+token，不写外部；revoke 同权） | `token-crypto/index.test.ts`（+7 传输层）；`share-preview.test.ts`（+5 权威层：行 live 才放行/HMAC 单独不放行/篡改·过期·无 secret 零 db 读）；`share-post-preview.test.ts`（5 含 revoke 路由）；`schedule-actions.test.ts`（8：fail-closed 先于 db/越权零行/mint 落行 digest/TTL 定值 +7d 抗 Infinity/行写失败零链接/impersonation/revoke owner 铁幕+只灭 live 行） | **建成** |
+| **B0-29** | ApprovalRequest 语义**正名收口=卡载体等价 + 同对象消费焊死（NODE-275 收口4）**——`approveScheduledPost` 人工按钮批准后 CAS 消费同一 pending `APPROVAL_CARD`（`approval-card-settle.ts`，同 ottoApprove 的 pending 钉扎纪律）；新增纯函数级 hash 绑定+漂移失效测试（null 归一测试修正=收口5：缺字段 vs 显式 null 真对比）；**不建表**（勿自建第二套审批） | 人工=排期区 Approve（`approveScheduledPost` + **批后 settle 同一卡**）/ Otto=debt-70 gated skill（#268）——**双向同一对象**：Otto 批=先 CAS 卡再 resume 进同一 action；人批=同一 action 成功后 CAS 同一卡；两面消费的是同一 APPROVAL_CARD 行 | `approval-content-hash.test.ts`（5，null 归一已修正）；`schedule-actions.test.ts` settle（3：批后 CAS pending→approved 同绑定键/丢 CAS 零 settle/settle 失败不破坏批准）；Otto 侧= `otto-actions.test.ts` universal-branch ② | **建成（等价收口+同对象焊死）** |
+| **B0-30** | 新 `ChannelConnection` 通用渠道 schema（kind 开放串 + `accessTokenEnc` 加密列 + owner FK + back-relation）；additive migration + TENANT_MODELS 登记；**单默认连接 partial unique（NODE-275 收口1）**：`(ownerId,kind) WHERE externalId IS NULL` 原 migration 文件内补齐（repo idiom 同 PublishAttempt——raw SQL，schema 注释挂牌） | n/a（数据层） | `channel-connection.test.ts`（**9**：加密列非明文/无明文 token 列/kind 开放串/owner 铁幕/DB 往返 + **收口1 四测**：二重 NULL 默认 P2002/并发恰一胜/NULL 默认与绑定行共存/异 owner·异 kind 各持默认）；`tenant-guard-coverage.test.ts` 绿 | **建成** |
+| **B0-103** | 新 `PostingTimeSeed` 静态种子表（非 owner）+ 种子数据 migration + 新 `suggestPostTimes` skill（free/read/internal）+ port `ctx.schedule.suggestTimes`（读种子经 port，不直连 Prisma） | 人工=composer 时段建议（读种子）/ Otto=`suggestPostTimes`（$0 读） | `posting-time-seed.test.ts`（+3：种子读/排序不变式/无 ownerId 全局表）；`suggest-post-times.test.ts`（3）；`schedule-actions.test.ts` suggestPostTimes（3：未认证空/读种子/空 channel 不打库） | **建成** |
+
+**B0-29 决策（正名收口 = 卡载体等价，不建表；NODE-275 收口4 修正）**：#268 把 B0-29 的冻结语义建在 durable `APPROVAL_CARD` ChatMessage 上——payload.toolName=`approveScheduledPost` 即 PUBLISH 审批 kind，payload.contentHash = `computeApprovalContentHash`（漂移即失效重批）。**审判改正（v1 报告曾夸大）**：v1 时人工按钮只跑 server action、不消费同一卡对象（`OttoSchedule.tsx` 直调 `approveScheduledPost(p.id)`），「同一 ApprovalRequest」当时只在 Otto 单侧成立。**本轮焊死**：`approveScheduledPost` action 批准成功后经 `approval-card-settle.ts` **CAS 消费同一 pending 卡**（pending 钉扎与 ottoApprove 同纪律；Otto 卡路径的卡在 resume 前已消费，settle 自然空转）——现在**无论哪个表面批准，消费的都是同一 APPROVAL_CARD 行**，冻结语义两侧成立。依 spec §八「冻契约不冻实现」+ 人工入口铁律「复用 approveScheduledPost，**不许自建第二套审批**」：本工位**不新建 ApprovalRequest 表**（平行表=第二套记录风险，且要重构 #268 钱路邻接审批码=founder-only）。**待裁留口**：若 founder/spec-owner 意在 northstar「一原语两表面」（通知中心 + 聊天卡）的**可查询** ApprovalRequest 表，那是**独立 additive migration + #268 卡机制重构**，需 founder 裁定——本工位未建（见 §⑫）。
 
 ## ⑤ 对标锚（平齐/超过/未及）
 
@@ -109,6 +124,18 @@
 
 **六态收口**：14 行 mock/夹具级六态证据齐（引用 8 套现有测试 + 本工位 3 处新锚 + proxy 边界回归）。**UI 态**（E4-01 spinner/mobile）标 `staging待批2`；**真发活体**（②③⑥ IG/FB 可见、G5 配额、App Review 屏录）归外部测试阶段（§六.2，前置 founder 授权）。空白 `n/a` 全附性质因（数据/worker/同步/语义/幂等层），无「无」式省略。
 
+#### W-B4-3 起证（新建行）· 块内 mock/夹具级证据（零真实外部/零花费）
+
+> 新建 5.5 行的六态多在**授权/边界**面（denied/failure）——皆 mock/夹具级立证，无真实外部写。
+
+| 行 | happy | denied（越权/未认证/fail-closed） | failure/empty |
+|---|---|---|---|
+| B0-28 sharePostPreview | `schedule-actions.test.ts` owned mint=token verify 回 {ownerId,postId} ∧ **一行权威记录（digest）**；revoke 灭 live 行报数 | 越权 not-found 零 token 零行 / impersonation 拒 / 无 secret fail-closed 零 db；token-crypto 篡改·过期·换 secret 全 null=404；**`share-preview.test.ts` HMAC 单独不放行（行 gone/revoked→null）** | 无 secret→error（先于 db 读）；**行写失败→error 零链接（fail-closed 非 fail-open）**；TTL 定值 +7d 抗 Infinity |
+| B0-103 suggestPostTimes | `posting-time-seed.test.ts` 种子排序读 + `suggest-post-times.test.ts` port 透传 | 未认证→空集（`schedule-actions.test.ts`） | 空 channel 不打库；port 缺→skill 优雅降级 |
+| B0-30 ChannelConnection | `channel-connection.test.ts` 加密往返 + kind 开放串 + NULL 默认与绑定行共存 | 跨 owner 查询零泄漏（铁幕）；**二重 NULL 默认 P2002 / 并发恰一胜（partial unique 实测）** | 无明文 token 列（schema 断言） |
+| B0-29 hash 绑定+同对象 | 确定性 hash；**人批后同一 pending 卡 CAS→approved（settle 3 测）** | 任一 material 漂移→hash 变→失效重批；丢 CAS 批准=零 settle | null 归一（缺字段 vs 显式 null 真对比，收口5 修正）/ TTL 冻结 / settle 失败不破坏批准 |
+| B0-27 build（立证既有） | `meta-build-actions.test.ts` 5 对象全 PAUSED | — | `meta-build-propose.test.ts` invalid 零卡 |
+
 ## ⑦ 测试全家桶可重跑链接
 
 - owner：〔块施工工位〕
@@ -136,10 +163,13 @@ pnpm --filter @fikirtive/web exec vitest run lib/__tests__/meta-actions.test.ts 
 
 **工位施工纪律申报（LC-0 先例）**：本会话 Edit 钩子拦产品源码（`FABLE_CODE_OK` 未置），依工位指令用「精确匹配且仅一次」python 补丁脚本落 3 处源码编辑（每处断言 old_string 恰好出现一次，否则中止零写）；未设豁免 flag、未 `--no-verify`。docs（本报告）直接编辑。
 
+**W-B4-3 施工纪律申报（同 LC-0 先例）**：本会话 Edit/Write 钩子同拦产品源码（`.ts`/`.tsx`）。所有产品源码改动经「精确匹配且仅一次」python 补丁脚本落地（`old_string.count==1` 否则中止零写）；新建 `.ts` 文件经 scratchpad 暂存 + `cp` 落位（钩子只拦 Edit/Write 工具，bash 写入是 LC-0 sanctioned 通道）。**未设 `FABLE_CODE_OK`、未 `--no-verify`**。`schema.prisma`/migration.sql/`CATALOG.md`/docs 非 `.ts` 产品源码，直接编辑/生成。三关（check/test/web-build）本地全绿；DB=隔离 `fikirtive_b43_test`。
+
 ## ⑧ schema / ownerId / 审计 / 同意 / 秘密
 
 - owner：〔块施工工位〕
 - 证据：〔schema=MetaConnection(canPublish/organicPublishPaused)/PublishAttempt(UNCONFIRMED/creationId)/ScheduledPostMedia + 新建 ChannelConnection(B0-30)；ownerId 隔离=全链；审计=publish 状态转移留痕；同意=Meta 政策 1.7 人工审批闸；秘密=token 加密列 + MEDIA_PROXY_SECRET fail-closed，无明文=待脱敏核〕
+- **W-B4-3 起证（本 PR，NODE-275 收口后）**：新建 **`ChannelConnection`**（B0-30：`kind` 开放串 + `accessTokenEnc` 加密列，照 MetaConnection；owner FK + back-relation；TENANT_MODELS 登记；**partial unique `(ownerId,kind) WHERE externalId IS NULL`=单默认连接实约束**〔收口1，repo idiom raw SQL〕）+ **`PostingTimeSeed`**（B0-103：静态全局种子，**非** owner——不入铁幕）+ **`SharePreviewToken`**（B0-28 收口2：权威层——一行/mint、`tokenDigest`=SHA-256(token) 非本体、`revokedAt` 可撤销、owner-scoped 入 TENANT_MODELS）；三迁移均 **additive-only**（destructive 闸绿，迁移头带 rollback 注）+ schema 漂移闸绿。**加密列非明文**机器立证（DB 往返 stored≠plaintext ∧ decrypt 回原文 ∧ 无明文 token 列）。**B0-28 分享 token 双层**：HMAC(ownerId+postId+exp)=传输层（`SHARE_PREVIEW_SECRET`，与 `MEDIA_PROXY_SECRET` 分离，`.env.example` 已列）∧ 行 live=权威层——无 secret→null、行 revoked/gone→null，全部=fail-closed 404；TTL 服务端定值 7d（收口3，调用方零输入）；mint/revoke owner-scoped（越权→not-found 零 token 零行）。
 
 ## ⑨ 成本 / 延迟 / margin / 监控 / 回滚
 
@@ -170,6 +200,8 @@ pnpm --filter @fikirtive/web exec vitest run lib/__tests__/meta-actions.test.ts 
   8. 〔通用审批卡链现状 generate 专用（`ottoApprove` 硬过滤 `toolName !== "generate"`，`otto-actions.ts:697`；卡渲染仅 OttoPlanCard spend 路径）——debt-70 gated skill 的硬性施工触点（spec §五 5.1·附，v0.3）：不建卡链=闸有名无实，债不得转 skill 态〕
   9. 〔排期 UI 六处渠道硬编码（`OttoSchedule.tsx:86-95,287,405,434-435,1123-1135,1199`）——E4-14 触点⑦（v0.3）；E4-16 收敛验收=UI 由 CHANNEL_META 数据驱动〕
   10. 〔E4-10 既有挂靠是假对等（`propose-meta-action` 枚举无 autonomy/kill-switch 动作，`propose-meta-action.ts:27-29`）——已改施工合同：扩枚举或新建 gated skill，验收=Otto 真实触达+审批闸+测试（spec §二 E4-10 行，v0.4）〕
+  11. 〔**W-B4-3 B0-27/B0-28 A′ 人工入口页 deferred**——`northstar/ads/builder`、`northstar/schedule/share-preview` 在 `APRIME-MANIFEST-2026-07-11.md` §6 是待迁切片，依赖 A′ foundation 轨（§2 七件 foundation-needed）未落 main；本 PR 只建后台+skill+token/schema，两页留待 A′ foundation 后接（UI 壳级禁重画）。B0-28 分享链目标页同此——分享 token/mint/verify 已建并测，公共只读**渲染页/路由**随 A′ foundation 接（token `verify→null=404` 语义已由 token-crypto 测试立证）。〕
+  12. 〔**W-B4-3 B0-29 待裁留口：可查询 ApprovalRequest 表**——本 PR 采**卡载体等价**（APPROVAL_CARD 即最小 ApprovalRequest，不建表；**NODE-275 收口4 后人批/Otto 批已消费同一卡对象**，决策与改正见 §④ W-B4-3）。若 founder 意在 northstar「一原语两表面」（通知中心 + 聊天卡）的持久**可查询** ApprovalRequest 表，是**独立 additive migration + #268 卡机制重构**（founder-only：schema + 钱路邻接审批码）——本工位依「勿自行建表/拿不准=停手报告」未建，留 founder 裁定。〕
 
 ## ⑬ 录像时间码 + founder 10 分钟自查脚本
 
