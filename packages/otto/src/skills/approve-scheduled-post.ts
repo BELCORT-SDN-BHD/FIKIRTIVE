@@ -32,7 +32,18 @@ export async function executeApproveScheduledPost(
 ): Promise<unknown> {
   const ctx = runContext.context as OttoContext;
   if (!ctx?.schedule?.approve) return { error: "Scheduling isn't available right now." };
-  return ctx.schedule.approve({ scheduledPostId: input.scheduledPostId });
+  // AR2 处方1 (TOCTOU weld): the consent snapshot comes from ctx — injected by ottoApprove at
+  // hash-verification time — NEVER from model args (a model-supplied integrity token would be
+  // worthless). Without a matching snapshot this skill fails closed: the only way to execute is
+  // through an approval card whose content hash was just verified.
+  const consent = ctx.approvalConsent;
+  if (!consent || consent.scheduledPostId !== input.scheduledPostId) {
+    return { error: "This approval must be confirmed on its approval card." };
+  }
+  return ctx.schedule.approve({
+    scheduledPostId: input.scheduledPostId,
+    expectedUpdatedAt: consent.expectedUpdatedAt,
+  });
 }
 
 export const approveScheduledPostSkill = defineOttoSkill({

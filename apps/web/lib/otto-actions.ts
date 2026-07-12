@@ -207,6 +207,7 @@ export async function buildOttoContext({
   referenceVideoGenerationId,
   referenceVideoGenerationIds,
   simpleMode,
+  approvalConsent,
 }: {
   ownerId: string;
   projectId: string;
@@ -216,6 +217,8 @@ export async function buildOttoContext({
   referenceVideoGenerationId?: string | null;
   referenceVideoGenerationIds?: string[] | null;
   simpleMode?: boolean;
+  /** AR2 处方1: set ONLY by ottoApprove's universal branch — the hash-time updatedAt snapshot. */
+  approvalConsent?: { scheduledPostId: string; expectedUpdatedAt: string };
 }): Promise<OttoContext> {
   const disabledModels = Array.from(await resolveDisabledModels());
   const imageRefIds = orderedUniqueIds([...(sourceGenerationIds ?? []), sourceGenerationId]);
@@ -281,9 +284,12 @@ export async function buildOttoContext({
     // buttons/views use — identity re-derives from the verified session inside each action
     // (requireOwner), which is the session this run executes under; approve/cancel/update also
     // re-check impersonation there. Skills never touch Prisma (single-action-layer rule).
+    approvalConsent,
     schedule: {
       draft: (input) => draftScheduledPost({ ownerId, projectId, source: "otto", input }),
-      approve: ({ scheduledPostId }) => approveScheduledPost(scheduledPostId),
+      // AR2 处方1: the CAS inside approveScheduledPost pins the THREADED hash-time snapshot,
+      // not its own fresh read — a material edit after hash-check hard-fails the approve.
+      approve: ({ scheduledPostId, expectedUpdatedAt }) => approveScheduledPost(scheduledPostId, { expectedUpdatedAt }),
       cancel: ({ scheduledPostId }) => cancelScheduledPost(scheduledPostId),
       update: ({ scheduledPostId, patch }) => updateScheduledPost(scheduledPostId, patch),
       list: async ({ from, to }) => {
@@ -353,14 +359,14 @@ async function readApprovalConsent(
   ownerId: string,
   toolName: string,
   ref: string,
-): Promise<{ summary: ApprovalCardSummary; contentHash: string } | null> {
+): Promise<{ summary: ApprovalCardSummary; contentHash: string; updatedAt: string } | null> {
   if (toolName !== "approveScheduledPost") return null;
   try {
     const post = await prisma.scheduledPost.findFirst({
       where: { id: ref, ownerId, deletedAt: null },
       select: {
         channel: true, caption: true, scheduledAt: true, scheduledTz: true,
-        firstComment: true, metaTargetId: true,
+        firstComment: true, metaTargetId: true, updatedAt: true,
         media: { select: { generationId: true }, orderBy: { position: "asc" } },
       },
     });
@@ -382,6 +388,8 @@ async function readApprovalConsent(
         metaTargetId: post.metaTargetId ?? null,
         mediaGenerationIds: post.media.map((m) => m.generationId),
       }),
+      // The TOCTOU-weld snapshot (AR2 处方1): captured in the SAME read the hash is computed from.
+      updatedAt: post.updatedAt.toISOString(),
     };
   } catch {
     return null;
@@ -867,6 +875,10 @@ export async function ottoApprove(raw: unknown): Promise<
     // it may be an APPROVAL_CARD message id (a non-generate gated skill, e.g. approveScheduledPost).
     // The card payload carries the (toolName, ref) binding, the content hash binds the consent
     // object, and CAS consumption makes the card single-use (AR1 处方2).
+    // AR2 处方1: the hash-time updatedAt snapshot rides the resume context so the server action
+    // CAS-pins exactly the content the hash verified (TOCTOU weld).
+    let approvalConsent: { scheduledPostId: string; expectedUpdatedAt: string } | undefined;
+
     if (!matchingInterruption) {
       const cardMsg = await prisma.chatMessage.findFirst({
         where: { id: cardId, threadId, ownerId, kind: "APPROVAL_CARD", deletedAt: null },
@@ -891,6 +903,8 @@ export async function ottoApprove(raw: unknown): Promise<
         if (!cardPayload.contentHash || !current || current.contentHash !== cardPayload.contentHash) {
           return { error: "This post changed since Otto asked — review it and ask Otto to request approval again." };
         }
+        // Snapshot from the SAME read the hash was verified against (AR2 处方1).
+        approvalConsent = { scheduledPostId: cardPayload.ref, expectedUpdatedAt: current.updatedAt };
         // (toolName, ref) binding against the rehydrated state's parked interruptions.
         const targetItem = interruptions.find((item) => {
           // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -955,12 +969,14 @@ export async function ottoApprove(raw: unknown): Promise<
       state.approve(matchingInterruption as any);
     }
 
-    // Build context — injects the real startGen port (spend path)
+    // Build context — injects the real startGen port (spend path) and, for a universal card,
+    // the hash-time consent snapshot (AR2 处方1) the approve skill threads to the server action.
     const ctx = await buildOttoContext({
       ownerId,
       projectId: thread.projectId,
       threadId,
       sourceGenerationId: null,
+      approvalConsent,
     });
 
     // Resume the run, metered (LLM cost of this resume turn)
@@ -1138,13 +1154,14 @@ const DECLINE_CONFIRMATION_TEXT =
   "Declined — nothing was published. The post stays unapproved in your schedule.";
 
 /**
- * Reject path (spec §五 5.1·附 test ③; AR1 处方1 structural zero-write guarantee): declining is a
- * STATIC confirmation — no LLM resume happens at all, so nothing CAN execute and the decline costs
- * $0. Mechanics: the card is atomically consumed pending→rejected (CAS — the park is terminated at
- * the consumable, so ottoApprove can never approve it), the parked interruption is best-effort
- * rejected on the persisted RunState (deterministic SDK state mutation, no run) so a later turn
- * rehydrates a rejected tool call instead of a dangling park, a deterministic "declined" message is
- * inserted into the conversation, and an ActionEvent leaves the audit trail.
+ * Reject path (spec §五 5.1·附 test ③; AR1 处方1 structural guarantee): declining is a STATIC
+ * confirmation — no LLM resume happens at all, so the gated tool structurally cannot execute:
+ * ZERO EXTERNAL writes, zero LLM cost. The INTERNAL writes are exactly (honest accounting, AR2
+ * 处方2): ① the card's terminal state (CAS pending→rejected — the park is terminated at the
+ * consumable, so ottoApprove can never approve it), ② best-effort RunState hygiene (deterministic
+ * SDK state mutation, no run) so a later turn rehydrates a rejected tool call instead of a
+ * dangling park, ③ the deterministic "declined" conversation message, ④ the
+ * ActionEvent(approval.declined) audit row.
  * generate cards are NOT handled here: their decline UX stays the existing plan-card flow.
  */
 export async function ottoReject(raw: unknown): Promise<

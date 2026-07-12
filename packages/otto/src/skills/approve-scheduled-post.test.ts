@@ -13,12 +13,35 @@ it("gate: free/write/external → needsApproval MACHINE-derived true (assertion 
   expect(approveScheduledPostSkill.needsApproval).toBe(true);
 });
 
-it("assertion ②: on execute (approval-card resume) it goes through the SAME owner-scoped approve action (the port)", async () => {
+it("assertion ②: on execute (approval-card resume) it goes through the SAME owner-scoped approve action, threading the hash-time snapshot (AR2 处方1)", async () => {
   const approve = vi.fn(async () => ({ ok: true as const }));
-  const res = await executeApproveScheduledPost({ scheduledPostId: "p1" }, { context: { schedule: { approve } } as any });
+  const ctx = {
+    schedule: { approve },
+    approvalConsent: { scheduledPostId: "p1", expectedUpdatedAt: "2026-07-12T10:00:00.000Z" },
+  };
+  const res = await executeApproveScheduledPost({ scheduledPostId: "p1" }, { context: ctx as any });
   expect(approve).toHaveBeenCalledTimes(1);
-  expect(approve).toHaveBeenCalledWith({ scheduledPostId: "p1" });
+  // The snapshot comes from ctx (server-injected at hash-verification), NEVER from model args.
+  expect(approve).toHaveBeenCalledWith({ scheduledPostId: "p1", expectedUpdatedAt: "2026-07-12T10:00:00.000Z" });
   expect(res).toEqual({ ok: true });
+});
+
+it("AR2 处方1 fail-closed: no ctx.approvalConsent (any non-card path) → refuse, port never called", async () => {
+  const approve = vi.fn(async () => ({ ok: true as const }));
+  const res: any = await executeApproveScheduledPost({ scheduledPostId: "p1" }, { context: { schedule: { approve } } as any });
+  expect(approve).not.toHaveBeenCalled();
+  expect(res.error).toMatch(/approval card/i);
+});
+
+it("AR2 处方1 fail-closed: consent snapshot for a DIFFERENT post → refuse, port never called", async () => {
+  const approve = vi.fn(async () => ({ ok: true as const }));
+  const ctx = {
+    schedule: { approve },
+    approvalConsent: { scheduledPostId: "p_OTHER", expectedUpdatedAt: "2026-07-12T10:00:00.000Z" },
+  };
+  const res: any = await executeApproveScheduledPost({ scheduledPostId: "p1" }, { context: ctx as any });
+  expect(approve).not.toHaveBeenCalled();
+  expect(res.error).toMatch(/approval card/i);
 });
 
 it("assertion ①: with no approve port injected it writes nothing and reports gracefully", async () => {
@@ -28,6 +51,10 @@ it("assertion ①: with no approve port injected it writes nothing and reports g
 
 it("relays a port error (e.g. owner-scope / state-machine refusal) verbatim, no throw", async () => {
   const approve = vi.fn(async () => ({ error: "This post can't be approved from its current state." }));
-  const res: any = await executeApproveScheduledPost({ scheduledPostId: "p1" }, { context: { schedule: { approve } } as any });
+  const ctx = {
+    schedule: { approve },
+    approvalConsent: { scheduledPostId: "p1", expectedUpdatedAt: "2026-07-12T10:00:00.000Z" },
+  };
+  const res: any = await executeApproveScheduledPost({ scheduledPostId: "p1" }, { context: ctx as any });
   expect(res.error).toMatch(/current state/);
 });

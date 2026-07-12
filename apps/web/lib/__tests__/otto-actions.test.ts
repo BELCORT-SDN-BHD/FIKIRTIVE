@@ -1460,7 +1460,7 @@ describe("buildContextSystemMessage — reference video signal", () => {
 // Universal approval card chain (B4 debt-70, spec §五 5.1·附 + AR1 处方1/2) — the
 // five-test clause: ① card persistence (rendered content asserted in
 // approval-card-view.test.ts), ② approve→resume→execute chain (hash-verified,
-// CAS-consumed), ③ STATIC decline (zero LLM, zero writes), ④ double-approve /
+// CAS-consumed + TOCTOU-welded), ③ STATIC decline (zero LLM resume, zero EXTERNAL writes), ④ double-approve /
 // double-click idempotency + TTL, ⑤ generate regression (1.8b suite + pins below).
 // ─────────────────────────────────────────────────────────────────────────────
 
@@ -1469,6 +1469,8 @@ const SCHEDULED_POST_ID = "post_sched_1";
 const APPROVE_THREAD_ID_2 = "thread_approve_sched";
 
 /** The owner's post as readApprovalConsent reads it (material fields + media order). */
+const SCHED_POST_UPDATED_AT = new Date("2026-07-12T10:00:00.000Z");
+
 function schedPostFixture(overrides: Record<string, unknown> = {}) {
   return {
     channel: "instagram",
@@ -1479,6 +1481,7 @@ function schedPostFixture(overrides: Record<string, unknown> = {}) {
     metaTargetId: "tgt_1",
     media: [{ generationId: "g1" }],
     approvedAt: null,
+    updatedAt: SCHED_POST_UPDATED_AT,
     ...overrides,
   };
 }
@@ -1581,10 +1584,19 @@ describe("ottoApprove — universal branch (test ②: hash-verified approve → 
       expect.any(Function),
     );
     expect(mockRun).toHaveBeenCalled();
+    // Metering idempotency (AR2 处方2b explicit assertion): exactly ONE reservation per approve.
+    expect(mockWithLlmBudget).toHaveBeenCalledTimes(1);
     // Consumption strictly precedes the resume (consume-then-act).
     const consumeOrder = mockChatMessageUpdateMany.mock.invocationCallOrder[0]!;
     const runOrder = mockRun.mock.invocationCallOrder[0]!;
     expect(consumeOrder).toBeLessThan(runOrder);
+    // AR2 处方1: the hash-time updatedAt snapshot rides the resume context (ctx.approvalConsent),
+    // so the approve skill threads it to the server action's CAS.
+    const resumeCtx = (mockRun.mock.calls[0]![2] as { context: { approvalConsent?: unknown } }).context;
+    expect(resumeCtx.approvalConsent).toEqual({
+      scheduledPostId: SCHEDULED_POST_ID,
+      expectedUpdatedAt: SCHED_POST_UPDATED_AT.toISOString(),
+    });
   });
 
   it("AR1 处方2 hash binding: content drift since mint → HARD refuse, no consume, no approve, no run", async () => {
@@ -1623,7 +1635,7 @@ describe("ottoApprove — universal branch (test ②: hash-verified approve → 
     expect(mockRun).not.toHaveBeenCalled();
   });
 
-  it("AR1 处方2 CAS double-click: the losing resolver (count 0) refuses benignly — at most one resume per card", async () => {
+  it("AR1 处方2 CAS double-click: the losing resolver (count 0) refuses benignly — at most one resume per card, ZERO LLM reservation for the loser (AR2 处方2b)", async () => {
     setupUniversalApprove();
     mockChatMessageUpdateMany.mockResolvedValue({ count: 0 }); // a concurrent resolver won
 
@@ -1632,6 +1644,8 @@ describe("ottoApprove — universal branch (test ②: hash-verified approve → 
     expect(res).toMatchObject({ ok: true, alreadyResolved: true });
     expect(mockApprove).not.toHaveBeenCalled();
     expect(mockRun).not.toHaveBeenCalled();
+    // The loser never reaches withLlmBudget — same-card double-click cannot double-reserve LLM.
+    expect(mockWithLlmBudget).not.toHaveBeenCalled();
   });
 
   it("ref mismatch: hash ok but no parked item for this ref (post not approved) → error, no consume of the pending card", async () => {
@@ -1670,7 +1684,7 @@ describe("ottoApprove — universal branch (test ②: hash-verified approve → 
   });
 });
 
-describe("ottoReject — STATIC decline (AR1 处方1: zero LLM, zero writes, deterministic confirmation)", () => {
+describe("ottoReject — STATIC decline (AR1 处方1: zero LLM resume, zero EXTERNAL writes; internal writes = card state/message/audit)", () => {
   it("consumes the card pending→rejected (CAS), best-effort rejects the parked item, inserts the deterministic message + ActionEvent — NO run, NO withLlmBudget", async () => {
     setupUniversalApprove();
 
@@ -1779,6 +1793,7 @@ describe("finalizeOttoRun — universal card persistence (test ①) + generate r
       firstComment: null,
       metaTargetId: "tgt_1",
       media: [{ generationId: "g1" }, { generationId: "g2" }],
+      updatedAt: new Date("2026-07-12T10:00:00.000Z"),
     });
   }
 

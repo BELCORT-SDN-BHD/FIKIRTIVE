@@ -6,8 +6,8 @@
  * R1 (frozen): the card renders WHAT is being consented to — channel / scheduled time /
  * caption summary via approvalCardView (pure, node-tested) — never a bare id.
  * Confirm calls ottoApprove (approve → resume → the SAME owner-scoped server action);
- * Decline calls ottoReject (STATIC decline — card consumed, deterministic confirmation, zero
- * writes, no LLM). An expired ask resolves to "expired".
+ * Decline calls ottoReject (STATIC decline — zero external writes, zero LLM resume; internal
+ * writes = card terminal-state / confirmation message / audit row). An expired ask → "expired".
  * generate keeps its own OttoPlanCard spend path; this card never handles it.
  */
 import React, { useState } from "react";

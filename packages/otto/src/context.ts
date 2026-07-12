@@ -230,8 +230,11 @@ export interface OttoContext {
   schedule?: {
     draft(input: ScheduleDraftInput): Promise<{ ok: true; id: string } | { error: string }>;
     /** debt-70 (gated). Approve one owned DRAFT → SCHEDULED (consent to publish). Reached only on
-     *  approval-card resume; the port is the SAME owner-scoped approveScheduledPost server action. */
-    approve(input: { scheduledPostId: string }): Promise<{ ok: true } | { error: string }>;
+     *  approval-card resume; the port is the SAME owner-scoped approveScheduledPost server action.
+     *  `expectedUpdatedAt` (ISO) = the post's updatedAt captured server-side at the moment the
+     *  card's content hash was verified (AR2 处方1 TOCTOU weld) — the action pins its CAS on THIS
+     *  value, so any material edit between hash-check and the resume's re-read fails the CAS. */
+    approve(input: { scheduledPostId: string; expectedUpdatedAt: string }): Promise<{ ok: true } | { error: string }>;
     /** debt-71. Cancel one owned post through the shared state machine (owner-scoped). */
     cancel(input: { scheduledPostId: string }): Promise<{ ok: true } | { error: string }>;
     /** debt-72. Patch one owned DRAFT/queued post; a MATERIAL edit to a SCHEDULED post revokes
@@ -242,6 +245,13 @@ export interface OttoContext {
     /** debt-74 (read parity). Owner-scoped connectable publish targets (empty when unconnected). */
     listTargets(): Promise<ScheduleTarget[]>;
   };
+  /** Approval-consent snapshot (AR2 处方1, B4 debt-70) — injected ONLY by ottoApprove when
+   *  resuming a universal approval card, NEVER derived from model args. Carries the post's
+   *  updatedAt as read at hash-verification time; the approveScheduledPost skill threads it to
+   *  ctx.schedule.approve so the server action CAS-pins the exact content the human consented to.
+   *  Absent on every other path — the skill fails closed without it. */
+  approvalConsent?: { scheduledPostId: string; expectedUpdatedAt: string };
+
   /** Product-ingest port (P1-01) — injected by the web caller. Fetches a URL (SSRF-hardened)
    *  and runs the deterministic Layer-1 extractor, returning a product DRAFT plus the page text.
    *  Otto fills any gaps itself from `text` (no separate LLM call) — that is this path's Layer 2.

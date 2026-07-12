@@ -25,8 +25,9 @@ export async function ottoApprove(raw: unknown) {
   return _ottoApprove(raw);
 }
 
-/** Decline a parked non-generate approval card (B4 debt-70). STATIC decline — the card is
- *  atomically consumed and a deterministic confirmation is inserted; no LLM resume, zero writes. */
+/** Decline a parked non-generate approval card (B4 debt-70). STATIC decline — zero EXTERNAL
+ *  writes and zero LLM resume; the internal writes are exactly: card terminal-state (CAS),
+ *  the deterministic confirmation message, and the ActionEvent audit row. */
 export async function ottoReject(raw: unknown) {
   return _ottoReject(raw);
 }
