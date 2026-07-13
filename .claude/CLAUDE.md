@@ -119,6 +119,9 @@ Summary of constitution articles (on conflict, `docs/BLUEPRINT.md` wins):
 Everything an agent needs to build correctly is in the repo; no chat history required.
 
 When asked to orchestrate, resume an interrupted program, coordinate models, or make product/
-architecture/design/audit decisions, also read the globally installed `orchestration` skill,
-`.claude/skills/fikirtive-orchestration-overlay/SKILL.md`, and
-`docs/ops/ORCHESTRATOR-STATE.md` before dispatching work.
+architecture/design/audit decisions, also read the globally installed `orchestration` skill and
+`.claude/skills/fikirtive-orchestration-overlay/SKILL.md`. A global control-plane session must
+also read `docs/ops/ORCHESTRATOR-STATE.md` before dispatching work. A scoped orchestrator may use
+the shorter bootstrap only when the overlay's machine-checked work-order contract is satisfied;
+it must read its hash-locked `BOOTSTRAP.md` and every authority file named there, and it must not
+claim or rewrite the global state ledger.
