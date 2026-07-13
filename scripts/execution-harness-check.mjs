@@ -2,8 +2,8 @@
 
 import { spawnSync } from "node:child_process";
 import { createHash } from "node:crypto";
-import { existsSync, readFileSync, realpathSync } from "node:fs";
-import { isAbsolute, join, relative, resolve, sep } from "node:path";
+import { existsSync, lstatSync, readFileSync, readdirSync, realpathSync, statSync } from "node:fs";
+import { dirname, isAbsolute, join, relative, resolve, sep } from "node:path";
 import { fileURLToPath } from "node:url";
 import { isDeepStrictEqual } from "node:util";
 
@@ -24,6 +24,9 @@ const FORBIDDEN_EXACT = new Map([
   ["docs/ops/route-b/DECISION-LOG.md", "Route-B decision ledger"],
   ["docs/ops/route-b/RISKS-PENDING.md", "Route-B risk ledger"],
   ["docs/ops/route-b/EVIDENCE-LEDGER.md", "Route-B evidence ledger"],
+  ["docs/ops/ORCHESTRATOR-STATE.md", "global orchestrator state"],
+  ["docs/ops/route-b/B0-CONTRACT.md", "Route-B Gate 0 contract"],
+  ["docs/ops/route-b/STANDING-DELEGATION.md", "Route-B standing delegation"],
   ["packages/db/prisma/schema.prisma", "database schema"],
   ["packages/core/src/spend.ts", "pricing authority"],
   ["packages/otto/src/registry.ts", "shared skill registry"],
@@ -45,6 +48,9 @@ const FORBIDDEN_EXACT = new Map([
 ]);
 
 const FORBIDDEN_PREFIXES = new Map([
+  [".git/", "Git metadata"],
+  [".claude/", "agent law/configuration"],
+  ["docs/ops/route-b/execution/", "execution control plane"],
   ["docs/ops/route-b/matrix/", "Route-B scope ledger"],
   ["packages/db/prisma/migrations/", "database migrations"],
   [".github/", "CI configuration"],
@@ -230,6 +236,38 @@ function pathInside(root, candidate) {
   return rel === "" || (!rel.startsWith(`..${sep}`) && rel !== ".." && !isAbsolute(rel));
 }
 
+function pathsDisjoint(left, right) {
+  return !pathInside(left, right) && !pathInside(right, left);
+}
+
+function canonicalExistingPath(path, errors, label, kind) {
+  try {
+    const canonical = realpathSync(path);
+    const stats = statSync(canonical);
+    add(errors, kind !== "file" || stats.isFile(), `${label} must resolve to a regular file`);
+    add(errors, kind !== "directory" || stats.isDirectory(), `${label} must resolve to a directory`);
+    return canonical;
+  } catch (error) {
+    errors.push(`${label} cannot be canonicalized: ${error.message}`);
+    return resolve(path);
+  }
+}
+
+function validateContainedFile(path, root, errors, label, { directRegular = false } = {}) {
+  try {
+    if (directRegular) {
+      add(errors, lstatSync(path).isFile(), `${label} must be a regular file, not a symlink`);
+    }
+    const canonical = realpathSync(path);
+    add(errors, statSync(canonical).isFile(), `${label} must resolve to a regular file`);
+    add(errors, pathInside(root, canonical), `${label} escapes its canonical root`);
+    return canonical;
+  } catch (error) {
+    errors.push(`${label} cannot be canonicalized: ${error.message}`);
+    return resolve(path);
+  }
+}
+
 function asRepoPath(worktree, absolutePath) {
   if (!pathInside(worktree, absolutePath)) return null;
   return relative(worktree, absolutePath).split(sep).join("/");
@@ -287,6 +325,128 @@ function gitZ(worktree, args) {
     .map((path) => path.split(sep).join("/"));
 }
 
+function gitPathIsIgnored(worktree, path, directory = false) {
+  const candidate = path.endsWith("/") ? path.slice(0, -1) : path;
+  const candidates = directory ? [candidate, `${candidate}/__execution_harness_probe__`] : [candidate];
+  for (const probe of candidates) {
+    const result = spawnSync("git", ["check-ignore", "--no-index", "--quiet", "--", probe], {
+      cwd: worktree,
+      encoding: "utf8",
+    });
+    if (result.status === 0) return true;
+    if (result.status !== 1) {
+      throw new CheckFailure([
+        `git check-ignore failed for ${path}: ${(result.stderr || result.stdout).trim()}`,
+      ]);
+    }
+  }
+  return false;
+}
+
+function validateIgnoredWriteSet(pathSet, worktree, errors, label) {
+  for (const entry of pathSetEntries(pathSet)) {
+    if (entry.path === "<invalid>") continue;
+    try {
+      if (gitPathIsIgnored(worktree, entry.path, entry.kind === "directory")) {
+        errors.push(`${label} includes ignored write target: ${entry.path}`);
+      }
+      if (entry.kind === "directory") {
+        const ignoredWithin = sortedUnique([
+          ...gitZ(worktree, [
+            "ls-files",
+            "--others",
+            "--ignored",
+            "--exclude-standard",
+            "-z",
+            "--",
+            entry.path,
+          ]),
+          ...gitZ(worktree, [
+            "ls-files",
+            "--cached",
+            "--ignored",
+            "--exclude-standard",
+            "-z",
+            "--",
+            entry.path,
+          ]),
+        ]);
+        if (ignoredWithin.length > 0) {
+          errors.push(`${label} directory contains ignored write target: ${entry.path} -> ${ignoredWithin[0]}`);
+        }
+      }
+    } catch (error) {
+      if (error instanceof CheckFailure) errors.push(...error.messages);
+      else errors.push(error.message);
+    }
+  }
+}
+
+function lstatIfPresent(path) {
+  try {
+    return lstatSync(path);
+  } catch (error) {
+    if (error.code === "ENOENT") return null;
+    throw error;
+  }
+}
+
+function validatePhysicalWriteSet(pathSet, worktree, errors, label) {
+  for (const entry of pathSetEntries(pathSet)) {
+    if (entry.path === "<invalid>") continue;
+    const repoPath = entry.kind === "directory" ? entry.path.slice(0, -1) : entry.path;
+    const absolutePath = join(worktree, repoPath);
+    let current = worktree;
+    let nearestExisting = worktree;
+    let hasSymlink = false;
+    try {
+      for (const component of repoPath.split("/")) {
+        current = join(current, component);
+        const stats = lstatIfPresent(current);
+        if (!stats) break;
+        nearestExisting = current;
+        if (stats.isSymbolicLink()) {
+          errors.push(`${label} write target contains a symlink component: ${entry.path}`);
+          hasSymlink = true;
+          break;
+        }
+      }
+      const canonicalAncestor = realpathSync(nearestExisting);
+      add(
+        errors,
+        pathInside(worktree, canonicalAncestor),
+        `${label} write target escapes the canonical worktree: ${entry.path}`,
+      );
+      if (hasSymlink) continue;
+
+      const targetStats = lstatIfPresent(absolutePath);
+      if (entry.kind === "file" && targetStats) {
+        add(errors, targetStats.isFile(), `${label} exact write target must be a regular file: ${entry.path}`);
+      }
+      if (entry.kind === "directory" && targetStats) {
+        add(errors, targetStats.isDirectory(), `${label} directory prefix must resolve to a directory: ${entry.path}`);
+        if (!targetStats.isDirectory()) continue;
+        const pending = [absolutePath];
+        while (pending.length > 0) {
+          const directory = pending.pop();
+          for (const child of readdirSync(directory, { withFileTypes: true })) {
+            const childPath = join(directory, child.name);
+            if (child.isSymbolicLink()) {
+              errors.push(
+                `${label} directory prefix has a symlink descendant: ${entry.path} -> ${asRepoPath(worktree, childPath)}`,
+              );
+            } else if (child.isDirectory()) {
+              pending.push(childPath);
+            }
+          }
+        }
+      }
+    } catch (error) {
+      errors.push(`${label} cannot validate physical write target ${entry.path}: ${error.message}`);
+    }
+  }
+}
+
 function changedPaths(worktree, baseSha) {
   return sortedUnique([
     ...gitZ(worktree, ["diff", "--name-only", "-z", baseSha, "HEAD"]),
@@ -295,18 +455,68 @@ function changedPaths(worktree, baseSha) {
   ]);
 }
 
+function actualPathHasSymlinkEntry(worktree, baseSha, path) {
+  try {
+    if (lstatSync(join(worktree, path)).isSymbolicLink()) return true;
+  } catch (error) {
+    if (error.code !== "ENOENT") throw error;
+  }
+  for (const args of [
+    ["ls-tree", baseSha, "--", path],
+    ["ls-tree", "HEAD", "--", path],
+    ["ls-files", "--stage", "--", path],
+  ]) {
+    const output = git(worktree, args);
+    if (output.split("\n").some((line) => line.startsWith("120000 "))) return true;
+  }
+  return false;
+}
+
 function requireMatching(errors, label, values) {
   const [first, ...rest] = values;
   add(errors, rest.every((value) => isDeepStrictEqual(value, first)), `${label} does not match across control files/claim`);
 }
 
-function validateHeadings(source, errors) {
-  const headings = [...source.matchAll(/^##\s+(.+?)\s*$/gm)].map((match) => match[1]);
+function validateWorkOrderSections(source, acceptanceIds, errors) {
+  const matches = [...source.matchAll(/^##\s+(.+?)\s*$/gm)];
+  const headings = matches.map((match) => match[1]);
   add(
     errors,
     isDeepStrictEqual(headings, WORK_ORDER_HEADINGS),
     `WORK-ORDER.md headings must be exactly ${WORK_ORDER_HEADINGS.join(" / ")}`,
   );
+  const sections = new Map();
+  for (const [index, match] of matches.entries()) {
+    const bodyStart = match.index + match[0].length;
+    const bodyEnd = matches[index + 1]?.index ?? source.length;
+    sections.set(match[1], source.slice(bodyStart, bodyEnd).trim());
+  }
+  for (const heading of WORK_ORDER_HEADINGS) {
+    const body = sections.get(heading) ?? "";
+    const normalized = body.replace(/\s+/g, " ").trim();
+    const placeholder =
+      /^<[^>]+>$/.test(normalized) ||
+      /^\[[^\]]+\]$/.test(normalized) ||
+      /^(?:todo|tbd|placeholder|fill(?: me| this)? in|none|n\/a)[.!]?$/i.test(normalized);
+    add(
+      errors,
+      normalized.length >= 12 && !placeholder,
+      `WORK-ORDER.md ${heading} section must contain substantive non-placeholder content`,
+    );
+  }
+  const acceptanceBody = sections.get("ACCEPTANCE") ?? "";
+  if (Array.isArray(acceptanceIds)) {
+    for (const acceptanceId of acceptanceIds) {
+      if (!nonEmptyString(acceptanceId)) continue;
+      const escaped = acceptanceId.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+      const pattern = new RegExp(`(^|[^A-Za-z0-9_-])${escaped}(?=$|[^A-Za-z0-9_-])`, "m");
+      add(
+        errors,
+        pattern.test(acceptanceBody),
+        `acceptance_id ${acceptanceId} is absent from the ACCEPTANCE section`,
+      );
+    }
+  }
 }
 
 function validateInputList(value, worktree, errors, label) {
@@ -325,8 +535,16 @@ function validateInputList(value, worktree, errors, label) {
     const absolutePath = join(worktree, path);
     if (!existsSync(absolutePath)) {
       errors.push(`${label}[${index}] does not exist: ${path}`);
-    } else if (SHA256.test(input.sha256 ?? "")) {
-      add(errors, sha256File(absolutePath) === input.sha256, `${label}[${index}] hash mismatch: ${path}`);
+    } else {
+      const canonical = validateContainedFile(
+        absolutePath,
+        worktree,
+        errors,
+        `${label}[${index}] pinned input in the canonical worktree`,
+      );
+      if (SHA256.test(input.sha256 ?? "")) {
+        add(errors, sha256File(canonical) === input.sha256, `${label}[${index}] hash mismatch: ${path}`);
+      }
     }
     entries.push({ path, sha256: input.sha256 });
   }
@@ -342,11 +560,20 @@ function validateClaimPathSets(claim, errors, label) {
 }
 
 function validateClaimsRegistry(registry, context, errors) {
-  const { bootstrap, ownership, controlHashes, dynamicExact } = context;
+  const { bootstrap, ownership, controlHashes, dynamicExact, worktree } = context;
   add(errors, registry.schema_version === 1, "claims registry schema_version must be 1");
   add(errors, Number.isInteger(registry.generation) && registry.generation >= 1, "claims registry generation must be a positive integer");
   add(errors, Array.isArray(registry.claims), "claims registry claims must be an array");
   const claims = Array.isArray(registry.claims) ? registry.claims : [];
+  const claimIds = claims.map((claim) => claim?.claim_id);
+  for (const [index, claimId] of claimIds.entries()) {
+    add(errors, nonEmptyString(claimId), `claims[${index}].claim_id must be non-empty`);
+  }
+  add(
+    errors,
+    new Set(claimIds).size === claimIds.length,
+    "claim_id values must be globally unique across every registry status",
+  );
   const matches = claims.filter((claim) => claim?.claim_id === bootstrap.claim_id);
   add(errors, matches.length === 1, `claim ${bootstrap.claim_id} must appear exactly once (found ${matches.length})`);
   const current = matches[0] ?? {};
@@ -392,6 +619,11 @@ function validateClaimsRegistry(registry, context, errors) {
     add(errors, claim.role === "scoped-orchestrator", `active scoped claim ${claim.claim_id} promoted its role`);
     add(errors, claim.no_global_claim === true, `active scoped claim ${claim.claim_id} lost NO_GLOBAL_CLAIM`);
     add(errors, claim.generation === registry.generation, `active scoped claim ${claim.claim_id} has stale generation`);
+    for (const field of ["program_id", "work_order_id", "parent_epoch", "scope_epoch", "revision"]) {
+      add(errors, nonEmptyString(claim[field]), `active scoped claim ${claim.claim_id} ${field} is required`);
+    }
+    add(errors, GIT_SHA.test(claim.base_sha ?? ""), `active scoped claim ${claim.claim_id} base_sha must be a full lowercase Git SHA`);
+    add(errors, SHA256.test(claim.token_digest ?? ""), `active scoped claim ${claim.claim_id} token_digest must be lowercase SHA-256`);
     add(errors, plainObject(claim.hashes), `active scoped claim ${claim.claim_id} hashes must be an object`);
     if (plainObject(claim.hashes)) {
       add(
@@ -405,6 +637,8 @@ function validateClaimsRegistry(registry, context, errors) {
     }
     const sets = validateClaimPathSets(claim, errors, `claim ${claim.claim_id}`);
     validateForbiddenWriteSet(sets.writeSet, errors, `claim ${claim.claim_id} write_set`, dynamicExact);
+    validateIgnoredWriteSet(sets.writeSet, worktree, errors, `claim ${claim.claim_id} write_set`);
+    validatePhysicalWriteSet(sets.writeSet, worktree, errors, `claim ${claim.claim_id} write_set`);
     const selfLockOverlap = setsOverlap(sets.writeSet, sets.lockedInputs);
     add(errors, !selfLockOverlap, `claim ${claim.claim_id} writes locked input ${selfLockOverlap?.join(" <> ")}`);
     add(errors, stringArray(claim.exclusive_groups), `claim ${claim.claim_id} exclusive_groups must be a string array`);
@@ -429,6 +663,23 @@ function validateClaimsRegistry(registry, context, errors) {
     for (let rightIndex = leftIndex + 1; rightIndex < activeScoped.length; rightIndex += 1) {
       const left = activeScoped[leftIndex];
       const right = activeScoped[rightIndex];
+      add(
+        errors,
+        left.claim.scope_epoch !== right.claim.scope_epoch,
+        `active scoped claim scope_epoch values must be unique: ${left.claim.claim_id}/${right.claim.claim_id}`,
+      );
+      add(
+        errors,
+        left.claim.token_digest !== right.claim.token_digest,
+        `active scoped claim token_digest values must be unique: ${left.claim.claim_id}/${right.claim.claim_id}`,
+      );
+      const leftIdentity = [left.claim.program_id, left.claim.parent_epoch, left.claim.scope_epoch];
+      const rightIdentity = [right.claim.program_id, right.claim.parent_epoch, right.claim.scope_epoch];
+      add(
+        errors,
+        !isDeepStrictEqual(leftIdentity, rightIdentity),
+        `active scoped claim {program_id,parent_epoch,scope_epoch} identities must be unique: ${left.claim.claim_id}/${right.claim.claim_id}`,
+      );
       const writeOverlap = setsOverlap(left.writeSet, right.writeSet);
       add(errors, !writeOverlap, `active claims ${left.claim.claim_id}/${right.claim.claim_id} have overlapping writers: ${writeOverlap?.join(" <> ")}`);
       const leftWriteLock = setsOverlap(left.writeSet, right.lockedInputs);
@@ -445,8 +696,7 @@ function validateClaimsRegistry(registry, context, errors) {
 }
 
 function validateGit(context, phase, errors) {
-  const { bootstrap, ownership, dynamicExact } = context;
-  const worktree = bootstrap.worktree;
+  const { bootstrap, ownership, dynamicExact, worktree } = context;
   let head = "";
   let branch = "";
   try {
@@ -467,6 +717,17 @@ function validateGit(context, phase, errors) {
     });
     add(errors, ancestor.status === 0, "base_sha is not an ancestor of HEAD");
   }
+  try {
+    const mergeCommits = git(worktree, [
+      "rev-list",
+      "--min-parents=2",
+      `${bootstrap.base_sha}..HEAD`,
+    ]);
+    add(errors, mergeCommits.length === 0, `merge commits are forbidden in base_sha..HEAD: ${mergeCommits}`);
+  } catch (error) {
+    if (error instanceof CheckFailure) errors.push(...error.messages);
+    else errors.push(error.message);
+  }
 
   let paths = [];
   try {
@@ -482,6 +743,20 @@ function validateGit(context, phase, errors) {
     for (const path of paths) {
       const reason = forbiddenReason(path, dynamicExact);
       if (reason) errors.push(`actual diff touches forbidden ${reason}: ${path}`);
+      try {
+        if (actualPathHasSymlinkEntry(worktree, bootstrap.base_sha, path)) {
+          errors.push(`actual diff contains a forbidden symlink entry: ${path}`);
+        }
+      } catch (error) {
+        if (error instanceof CheckFailure) errors.push(...error.messages);
+        else errors.push(`cannot inspect actual diff path ${path}: ${error.message}`);
+      }
+      try {
+        if (gitPathIsIgnored(worktree, path)) errors.push(`actual diff touches ignored write target: ${path}`);
+      } catch (error) {
+        if (error instanceof CheckFailure) errors.push(...error.messages);
+        else errors.push(error.message);
+      }
       if (!pathCovered(path, ownership.writeSet)) errors.push(`actual diff is outside ownership: ${path}`);
     }
   }
@@ -497,11 +772,27 @@ function validateGitObject(actual, expected, errors, label) {
 }
 
 function validateDelivery(context, gitState, registry, workOrder, errors) {
-  const { bootstrap, ownership } = context;
-  const mailbox = bootstrap.runtime_mailbox;
-  const reportPath = join(mailbox, "REPORT.md");
-  const evidenceManifestPath = join(mailbox, "EVIDENCE", "manifest.json");
-  const statePath = join(mailbox, "STATE.json");
+  const { bootstrap, ownership, mailbox } = context;
+  const evidenceRoot = canonicalExistingPath(join(mailbox, "EVIDENCE"), errors, "runtime EVIDENCE directory", "directory");
+  add(errors, pathInside(mailbox, evidenceRoot), "runtime EVIDENCE directory escapes the canonical mailbox");
+  const reportPath = validateContainedFile(
+    join(mailbox, "REPORT.md"),
+    mailbox,
+    errors,
+    "runtime REPORT.md",
+  );
+  const evidenceManifestPath = validateContainedFile(
+    join(mailbox, "EVIDENCE", "manifest.json"),
+    evidenceRoot,
+    errors,
+    "runtime EVIDENCE/manifest.json",
+  );
+  const statePath = validateContainedFile(
+    join(mailbox, "STATE.json"),
+    mailbox,
+    errors,
+    "runtime STATE.json",
+  );
   const report = readMarkedJson(reportPath, errors, "runtime REPORT.md").data;
   const evidence = readJson(evidenceManifestPath, errors, "runtime EVIDENCE/manifest.json");
   const state = readJson(statePath, errors, "runtime STATE.json");
@@ -553,6 +844,7 @@ function validateDelivery(context, gitState, registry, workOrder, errors) {
   const evidenceChangedPaths = [];
   const evidenceCommands = [];
   const acceptanceCoverage = new Set();
+  const evidenceAcceptance = new Map();
   for (const [index, entry] of evidenceEntries.entries()) {
     const label = `evidence.entries[${index}]`;
     if (!plainObject(entry)) {
@@ -578,11 +870,23 @@ function validateDelivery(context, gitState, registry, workOrder, errors) {
     add(errors, SHA256.test(entry.sha256 ?? ""), `${label}.sha256 must be lowercase SHA-256`);
     const absoluteOutput = join(mailbox, outputPath);
     if (!existsSync(absoluteOutput)) errors.push(`${label}.output_path is missing: ${outputPath}`);
-    else add(errors, sha256File(absoluteOutput) === entry.sha256, `${label} evidence hash mismatch: ${outputPath}`);
+    else {
+      const canonicalOutput = validateContainedFile(
+        absoluteOutput,
+        evidenceRoot,
+        errors,
+        `${label} evidence output`,
+        { directRegular: true },
+      );
+      add(errors, sha256File(canonicalOutput) === entry.sha256, `${label} evidence hash mismatch: ${outputPath}`);
+    }
     if (nonEmptyString(entry.id)) evidenceIds.push(entry.id);
     if (nonEmptyString(entry.output_path)) evidenceHashes[entry.output_path] = entry.sha256;
     if (Array.isArray(entry.acceptance_ids)) {
       for (const acceptanceId of entry.acceptance_ids) acceptanceCoverage.add(acceptanceId);
+    }
+    if (nonEmptyString(entry.id) && Array.isArray(entry.acceptance_ids)) {
+      evidenceAcceptance.set(entry.id, new Set(entry.acceptance_ids));
     }
     evidenceCommands.push({ id: entry.id, command: entry.command, exit_code: entry.exit_code });
   }
@@ -612,7 +916,16 @@ function validateDelivery(context, gitState, registry, workOrder, errors) {
     add(errors, mapping.status === "PASS", `${label}.status must be PASS`);
     add(errors, stringArray(mapping.evidence_ids, { nonEmpty: true }), `${label}.evidence_ids must be non-empty`);
     if (Array.isArray(mapping.evidence_ids)) {
-      for (const id of mapping.evidence_ids) add(errors, evidenceIds.includes(id), `${label} references unknown evidence id ${id}`);
+      for (const id of mapping.evidence_ids) {
+        add(errors, evidenceIds.includes(id), `${label} references unknown evidence id ${id}`);
+        if (evidenceAcceptance.has(id)) {
+          add(
+            errors,
+            evidenceAcceptance.get(id).has(mapping.acceptance_id),
+            `evidence edge ${id} does not declare acceptance ${mapping.acceptance_id}`,
+          );
+        }
+      }
     }
     mappedIds.push(mapping.acceptance_id);
   }
@@ -628,14 +941,46 @@ function validateDelivery(context, gitState, registry, workOrder, errors) {
 
 export function checkExecutionHarness({ phase, controlDir, claimsPath }) {
   const errors = [];
-  const controlPaths = Object.fromEntries(CONTROL_FILES.map((name) => [name, join(controlDir, name)]));
+  const canonicalControlDir = canonicalExistingPath(
+    controlDir,
+    errors,
+    "control directory",
+    "directory",
+  );
+  const controlPaths = Object.fromEntries(
+    CONTROL_FILES.map((name) => {
+      const path = canonicalExistingPath(join(controlDir, name), errors, `control file ${name}`, "file");
+      add(
+        errors,
+        pathInside(canonicalControlDir, path),
+        `control file ${name} escapes the canonical control directory`,
+      );
+      return [name, path];
+    }),
+  );
+  const canonicalClaimsDirectory = canonicalExistingPath(
+    dirname(claimsPath),
+    errors,
+    "claims registry directory",
+    "directory",
+  );
+  const canonicalClaimsPath = canonicalExistingPath(
+    claimsPath,
+    errors,
+    "claims registry",
+    "file",
+  );
+  add(
+    errors,
+    pathInside(canonicalClaimsDirectory, canonicalClaimsPath),
+    "claims registry escapes its canonical registry directory",
+  );
   const bootstrapDoc = readMarkedJson(controlPaths["BOOTSTRAP.md"], errors, "BOOTSTRAP.md");
   const workOrderDoc = readMarkedJson(controlPaths["WORK-ORDER.md"], errors, "WORK-ORDER.md");
   const lock = readJson(controlPaths["INPUTS.lock.json"], errors, "INPUTS.lock.json");
   const ownershipRaw = readJson(controlPaths["OWNERSHIP.json"], errors, "OWNERSHIP.json");
   const bootstrap = bootstrapDoc.data;
   const workOrder = workOrderDoc.data;
-  validateHeadings(workOrderDoc.source, errors);
 
   add(errors, bootstrap.schema_version === 1, "BOOTSTRAP schema_version must be 1");
   add(errors, bootstrap.role === "scoped-orchestrator", "BOOTSTRAP role must be scoped-orchestrator");
@@ -661,13 +1006,13 @@ export function checkExecutionHarness({ phase, controlDir, claimsPath }) {
   add(errors, stringArray(bootstrap.stop_conditions, { nonEmpty: true }), "BOOTSTRAP stop_conditions must be non-empty");
   add(errors, stringArray(bootstrap.escalate_conditions, { nonEmpty: true }), "BOOTSTRAP escalate_conditions must be non-empty");
 
-  add(errors, pathInside(bootstrap.worktree ?? "/", bootstrap.runtime_mailbox ?? "/" ) === false, "runtime_mailbox must be outside the scoped worktree");
   add(errors, workOrder.schema_version === 1, "WORK-ORDER schema_version must be 1");
   add(
     errors,
     stringArray(workOrder.acceptance_ids, { nonEmpty: true }) && isSortedUnique(workOrder.acceptance_ids),
     "WORK-ORDER acceptance_ids must be sorted, unique, and non-empty",
   );
+  validateWorkOrderSections(workOrderDoc.source, workOrder.acceptance_ids, errors);
   add(errors, lock.schema_version === 1, "INPUTS.lock schema_version must be 1");
   add(errors, ownershipRaw.schema_version === 1, "OWNERSHIP schema_version must be 1");
   for (const field of ["program_id", "work_order_id", "revision", "parent_epoch", "scope_epoch", "base_sha"]) {
@@ -680,7 +1025,47 @@ export function checkExecutionHarness({ phase, controlDir, claimsPath }) {
   add(errors, lock.hashing?.authority === "global_claim_registry", "INPUTS.lock hashing.authority must be global_claim_registry");
   add(errors, isDeepStrictEqual(lock.hashing?.required_artifacts, REQUIRED_HASHES), "INPUTS.lock must require hashes for all controls plus checker");
 
-  const worktree = resolve(bootstrap.worktree ?? "/invalid");
+  const worktree = canonicalExistingPath(
+    resolve(bootstrap.worktree ?? "/invalid"),
+    errors,
+    "scoped worktree",
+    "directory",
+  );
+  try {
+    const repoTop = realpathSync(git(worktree, ["rev-parse", "--show-toplevel"]));
+    add(errors, repoTop === worktree, "scoped worktree must be the canonical Git repository top level");
+  } catch (error) {
+    if (error instanceof CheckFailure) errors.push(...error.messages);
+    else errors.push(`cannot verify scoped worktree repository top level: ${error.message}`);
+  }
+  const mailbox = canonicalExistingPath(
+    resolve(bootstrap.runtime_mailbox ?? "/invalid"),
+    errors,
+    "runtime_mailbox",
+    "directory",
+  );
+  add(errors, !pathInside(worktree, canonicalControlDir), "control directory must resolve outside the scoped worktree");
+  add(errors, !pathInside(worktree, canonicalClaimsPath), "claims registry must resolve outside the scoped worktree");
+  add(errors, !pathInside(worktree, mailbox), "runtime_mailbox must resolve outside the canonical worktree");
+  add(
+    errors,
+    pathsDisjoint(canonicalControlDir, mailbox),
+    "control directory must be mutually disjoint from the runtime mailbox",
+  );
+  add(
+    errors,
+    pathsDisjoint(canonicalClaimsPath, mailbox),
+    "claims registry must be mutually disjoint from the runtime mailbox",
+  );
+  try {
+    add(
+      errors,
+      realpathSync(bootstrap.claims_registry) === canonicalClaimsPath,
+      "BOOTSTRAP claims_registry does not resolve to the canonical --claims registry",
+    );
+  } catch (error) {
+    errors.push(`BOOTSTRAP claims_registry cannot be canonicalized: ${error.message}`);
+  }
   const authoritativeInputs = validateInputList(lock.authoritative_inputs, worktree, errors, "authoritative_inputs");
   const sharedInputs = validateInputList(lock.shared_contract_inputs, worktree, errors, "shared_contract_inputs");
   const writeSet = validatePathSet(ownershipRaw.write_set, errors, "OWNERSHIP.write_set");
@@ -700,12 +1085,14 @@ export function checkExecutionHarness({ phase, controlDir, claimsPath }) {
 
   const dynamicExact = new Map();
   for (const [name, path] of Object.entries(controlPaths)) {
-    const repoPath = asRepoPath(worktree, resolve(path));
+    const repoPath = asRepoPath(worktree, path);
     if (repoPath) dynamicExact.set(repoPath, `control file ${name}`);
   }
-  const claimsRepoPath = asRepoPath(worktree, claimsPath);
+  const claimsRepoPath = asRepoPath(worktree, canonicalClaimsPath);
   if (claimsRepoPath) dynamicExact.set(claimsRepoPath, "claims registry");
   validateForbiddenWriteSet(writeSet, errors, "OWNERSHIP.write_set", dynamicExact);
+  validateIgnoredWriteSet(writeSet, worktree, errors, "OWNERSHIP.write_set");
+  validatePhysicalWriteSet(writeSet, worktree, errors, "OWNERSHIP.write_set");
   const writeLockOverlap = setsOverlap(writeSet, lockedInputs);
   add(errors, !writeLockOverlap, `OWNERSHIP writes a locked input: ${writeLockOverlap?.join(" <> ")}`);
 
@@ -722,15 +1109,23 @@ export function checkExecutionHarness({ phase, controlDir, claimsPath }) {
   }
   const expectedChecker = join(worktree, CHECKER_PATH);
   add(errors, existsSync(expectedChecker), `checker is missing at ${CHECKER_PATH}`);
-  if (existsSync(expectedChecker)) controlHashes[CHECKER_PATH] = sha256File(expectedChecker);
+  if (existsSync(expectedChecker)) {
+    const canonicalChecker = validateContainedFile(
+      expectedChecker,
+      worktree,
+      errors,
+      "scoped execution checker",
+    );
+    controlHashes[CHECKER_PATH] = sha256File(canonicalChecker);
+  }
   try {
     add(errors, realpathSync(fileURLToPath(import.meta.url)) === realpathSync(expectedChecker), "executed checker is not the checker pinned in the scoped worktree");
   } catch (error) {
     errors.push(`cannot resolve executed checker: ${error.message}`);
   }
 
-  const registry = readJson(claimsPath, errors, "claims registry");
-  const context = { bootstrap, ownership, controlHashes, dynamicExact };
+  const registry = readJson(canonicalClaimsPath, errors, "claims registry");
+  const context = { bootstrap, ownership, controlHashes, dynamicExact, worktree, mailbox };
   validateClaimsRegistry(registry, context, errors);
   const gitState = validateGit(context, phase, errors);
   if (phase === "delivery") validateDelivery(context, gitState, registry, workOrder, errors);

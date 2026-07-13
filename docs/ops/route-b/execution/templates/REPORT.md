@@ -30,6 +30,13 @@
       "evidence_ids": [
         "gate-01"
       ]
+    },
+    {
+      "acceptance_id": "A-02",
+      "status": "PASS",
+      "evidence_ids": [
+        "gate-01"
+      ]
     }
   ],
   "git": {
