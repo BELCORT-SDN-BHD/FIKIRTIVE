@@ -1,8 +1,8 @@
-# B3 创作块 · 块 spec（v0.3——冻结候选）
+# B3 创作块 · 块 spec（v0.4——甲案原子勘误·冻结续有效）
 
 > 2026-07-12。epoch `claude-20260712-03`。性质：**装配件不重画**——本 spec 把控制面已裁定的判断内容 + 两份取证报告（W-DELTA 差额核证 / W-ANCHOR 对标锚提案）装配成 B3 创作块的冻结候选；判断已全部定案，本工位逐字执行不改判。**主体施工图 = `docs/superpowers/specs/2026-07-10-lc-creation-zone-lighting.md`（L-C 创作区点亮施工图）——引用采纳为附件，不复述，本 spec 各节 = 对 L-C 的修正 + 增补。**
-> **修订纪要**：v0.2 = 闭合 codex BR2 六项（钉②〔模板正身=g5b 静态代码目录〕、×1.5〔本期撤销〕、花钱授权措辞〔逐笔明示批准〕三处 = 控制面改判）；v0.3 = 闭合 codex BR2-R2 三项文字收口（批2 工位计数同步 / 模板目录用语零歧义 / 花钱授权措辞收口——无判断变更）。逐项内容见 §八 版本历史。**全部引用行号已逐一对原文复核，零处不符。**
-> **状态：冻结候选（freeze candidate）v0.3——冻结走四权闭环（双顾问签核+异族复审+机器闸+非作者合并），依 #254 §一.2。** spec-ready 迁移随冻结 PR 执行（03-B3 主 tranche 行随冻结 PR 迁级；tranche-2 处置行待 addendum）——**本 PR 不迁任何行的六级状态**（仅新增/修订文档）。founder 参与移至终验一次过审计索引（#254 §一.3/§二.5）。华语（宪法 9）。
+> **修订纪要**：v0.2 = 闭合 codex BR2 六项（钉②〔模板正身=g5b 静态代码目录〕、×1.5〔本期撤销〕、花钱授权措辞〔逐笔明示批准〕三处 = 控制面改判）；v0.3 = 闭合 codex BR2-R2 三项文字收口（批2 工位计数同步 / 模板目录用语零歧义 / 花钱授权措辞收口——无判断变更）；**v0.4 = 甲案原子勘误（founder 2026-07-13 明示批准，D-031）：四工位拆分 -P（批2 证明层/执行器）与 -W（批3 界面接线）；依据 = 批2 全局排序调查（四壳后台解耦，机器核实）+ SOL 顾问裁定备忘录**。逐项内容见 §八 版本历史。**全部引用行号已逐一对原文复核，零处不符。**
+> **状态：冻结候选（freeze candidate）v0.4——冻结走四权闭环（双顾问签核+异族复审+机器闸+非作者合并），依 #254 §一.2。** spec-ready 迁移随冻结 PR 执行（03-B3 主 tranche 行随冻结 PR 迁级；tranche-2 处置行待 addendum）——**本 PR 不迁任何行的六级状态**（仅新增/修订文档）。founder 参与移至终验一次过审计索引（#254 §一.3/§二.5）。**v0.4 冻结注记：本次为 founder 2026-07-13 明示批准的原子勘误（D-031，founder-only 类别），冻结（D-027，#258 合并）继续有效；零代码改动、不迁任何行六级状态。** 华语（宪法 9）。
 > **钱路警告（承 L-C 头部）**：本区是全城**最重的 spend path**。凡触及 `startGen`/`genRequest`/批量编排/幂等键的施工 diff **逐个必过 `money-safety-review` skill**。**每笔真实供应商验证花费 = founder 逐笔明示批准，"问"就是上限**（宪法 2/BLUEPRINT:61）。
 > **人话**：这是「创作车间」的施工总纲——把已经画好的图纸（L-C）、差额核对单（W-DELTA）、对标记分卡（W-ANCHOR）三张纸订成一份能开工的合同。开工前先把一件事说清楚：车间的那七个漂亮门面，其实还没盖在 main 上（在另一根未合入的分支上），所以第一道工序不是"接线"，是"先把门面搬过来"。
 
@@ -288,18 +288,32 @@ W-DELTA 判「仍准」的 16 条存量断言，本 spec **直接引用免重核
 | **W-B3-C** | storyboard $0 + 债：`storyboard-actions` $0 CRUD（debt-11,12,13 + **debt-75,76,77**〔v0.2 补〕）；配音/coherence 诚实 Coming soon | 否 | LC-0 |
 | **W-B3-D** | home/ideas/风格卡/3 模式 + library/brand 债（LCf）：composer→canvas、brand-from-link 接 ingest、ideas 对象 + proposeIdeas skill；风格卡 + 3 无口播模式；library 读债（debt-29,30,50）+ brand 债（debt-31,32,51）+ 项目/实体债（debt-03~07,08~10） | 否（$0） | LC-0 |
 
-### 5.2 批2 · spend 四工位（v0.2 补 LCd；每 PR 逐个过 money-safety-review + codex 对抗二审）
+### 5.2 批2 · spend 四工位（v0.4 甲案拆分 = 四 -P 证明层/执行器；每 PR 逐个过 money-safety-review + codex 对抗二审）
 
-| 工位 | 内容 | 纪律 |
+> **v0.4 甲案原子勘误**（founder 2026-07-13 明示批准，D-031）：原批2 四工位 W-B3-E/F/G/H 各含界面接线（v0.3 本节含「接 immersive 壳」表述）。批2 全局排序调查（机器核实）坐实四 immersive 壳（`canvas-page.tsx`/`studio-factory.tsx`/`asset-viewer-page.tsx`/`studio-storyboard.tsx`）**后台解耦**（无 projectId、无 requireOwner、无 server action、mock 扣费+硬编码假价），壳接真钱路需先建 **§5.3 批3 的「壳↔真 project/thread/Otto 运行时」桥**（开工门 #253 已于 2026-07-12 合并）。SOL 顾问裁定（拆分工位，备忘录已归档）：**四工位各拆为 -P（证明层/执行器，留批2）与 -W（界面接线，移批3 §5.3）；批2 只做钱路证明层与非 UI 执行器件，零界面接线、零新 spend 权威。**
+>
+> **原 W-B3-E 工位状态**：因冻结 spec（本节 v0.3 含界面接线表述）与地面依赖（四壳后台解耦）冲突，**停手上报（2026-07-13）**，**不记为已完成**；由本 v0.4 勘误重排为 W-B3-E-P（批2）/ W-B3-E-W（批3）。
+>
+> **批2 内部推荐序**：**F-P（最重，先）→ G-P → E-P / H-P（薄收尾）。**
+
+| 工位 | 内容（证明层/执行器） | 纪律 |
 |---|---|---|
-| **W-B3-E** | canvas 接 gen 链（LCb）：想图/Make Video/A/B/就地编辑 → `startGen`；报价 `pricedGenCredits`；先问后花确认页；六态①②③④⑥ | 过 money-safety + 对抗二审；依赖 LC-0 |
-| **W-B3-F** | **工厂编排**（LCe，最重钱路）：`runVariantBatch`/`runBulkGrid` + `GenerationBatch` 归组 + 逐格 reserve/settle/refund + text 格 $0 + 总价确认页 | **单资深工位、禁并行拆手**；过 money-safety（核心）+ 对抗二审；依赖 LC-0 |
-| **W-B3-G** | refgen 真 skill + asset-viewer Continue/Regenerate：`startRefGen` 补真 skill（矫正债 68 假 parity，debt-68,69）；续拍/重生成 → `startGen` | 过 money-safety + 对抗二审；依赖 LC-0 |
-| **W-B3-H（v0.2 BR2① 补，= LCd）** | **paid storyboard 施工**：Make all / Retry scene 接 `storyboard-gate1-actions.prepareStoryboardVideos`（帧→i2v 逐场景，gen 链计费，幂等键 `frame:<shotId>:<slot>`/`animate:<shotId>` gate1 现制）；六态⑤逐场景形态 | 过 money-safety + 对抗二审；依赖 LC-0（前端壳）+ W-B3-C（$0 分镜面先行） |
+| **W-B3-E-P**（证明层） | 验证既有唯一 spend 权威（`pricedGenCredits` → 确认 → `startGen` → 六态）的报价=预留=结账三数一致、同幂等键重放不重复扣款、Retry 新键不重复结算、count 1-4 部分失败只退失败格、provider 拒/超时/worker 崩/取消全 fail-closed；对照 §6.1 查漏补回归断言；**MockProvider，零真实 provider 调用、零真实花费** | **不得连接 immersive 壳、不得新增 spend 入口**；若测试暴露既有钱路缺陷 = **停手上报**（证明层不自动授权改 sacred money path）；过 money-safety + 对抗二审 |
+| **W-B3-F-P**（批量编排执行器，最重钱路） | 建批量编排层 `runVariantBatch`/`runBulkGrid` + `GenerationBatch` 归组 + 逐格 reserve/settle/refund + text 格 $0——**复用既有 `startGen` 逐格原语，零新钱路**（B0-16 判据）；全程 headless，账本全真测（vitest）；**不碰壳** | **单资深工位、禁并行拆手**；过 money-safety（核心）+ 对抗二审 |
+| **W-B3-G-P**（refgen 真 skill 执行器） | `startRefGen` 补真 Otto skill（矫正债 68 假 parity，debt-68,69；spend → needsApproval 机器推导，反翻转纪律同 generate skill）；**不碰壳** | 过 money-safety + 对抗二审 |
+| **W-B3-H-P**（storyboard-gate1 证明层） | `prepareStoryboardVideos`（storyboard-gate1）证明层对照 §6.1 查漏补回归断言（**防双扣 / reuse-if-matches / spent-aware**） | 过 money-safety + 对抗二审 |
 
-### 5.3 批3 · 引擎集成
+### 5.3 批3 · 引擎集成（含 v0.4 甲案四件 -W 界面接线）
 
-- **开工门 = #253 或其拆分后继合并**。B9 上下文桥契约（B3 第一旅程「把这个改成 9:16」依赖）已 R9 CLOSED，但 #253 合并待 R-009 founder 裁（B2 半两残余反例）；RISKS-PENDING R-009 选项 B = 拆分冻结（R9 全 CLOSED 契约先冻结合并解锁 B3/B4）。B3 引擎集成批**待此门开**。
+- **开工门 = #253 或其拆分后继合并**。B9 上下文桥契约（B3 第一旅程「把这个改成 9:16」依赖）已 R9 CLOSED，但 #253 合并待 R-009 founder 裁（B2 半两残余反例）；RISKS-PENDING R-009 选项 B = 拆分冻结（R9 全 CLOSED 契约先冻结合并解锁 B3/B4）。B3 引擎集成批待此门开。
+- **v0.4 状态更新（甲案原子勘误，founder 2026-07-13 批，D-031）**：**开工门 #253 已于 2026-07-12 合并**（R-009 founder 裁定 B 执行完毕，B9 上下文桥契约放行——D-026），此门已开。v0.4 甲案把原批2 四工位的**界面接线半件 -W 归入本批**：**同一座「壳↔owner-scoped project/thread/Otto 运行时」桥建成后逐件接线**，四件均不得新增 spend 权威。
+
+| 工位 | 内容（界面接线 -W） | 依赖 |
+|---|---|---|
+| **W-B3-E-W** | 壳↔owner-scoped project/thread/Otto 上下文桥完成后，将 immersive canvas 想图 / Make Video / A-B 分叉 / 就地编辑接入既有 gen 链路；不得新增 spend 权威 | 壳↔项目桥；W-B3-E-P（证明层） |
+| **W-B3-F-W** | studio-factory 壳接线 + 总价确认页 UI | 壳↔项目桥；W-B3-F-P（编排层） |
+| **W-B3-G-W** | asset-viewer Continue / Regenerate 壳接线 | 壳↔项目桥；W-B3-G-P（refgen 真 skill） |
+| **W-B3-H-W** | studio-storyboard 壳接线（Make all / Retry scene） | 壳↔项目桥；W-B3-H-P（证明层）+ W-B3-C（$0 分镜面先行） |
 
 ### 5.4 批4 · tranche-2
 
@@ -321,6 +335,10 @@ W-DELTA 判「仍准」的 16 条存量断言，本 spec **直接引用免重核
 1. **本片迁移的行**（列出行 ID + 现状六级状态 → 目标状态）；
 2. **每行双执行器交付物**（人工入口 + Otto skill；对等债逐条清偿，`lint:parity` 绿）；
 3. **证据随写入 `B3-REPORT.md` 对应节**（§⑥全旅程/§⑦测试/§⑧schema/§⑨成本/§⑪异族评审）。
+
+### 5.8 四壳硬编码假价清除（v0.4 甲案，外科式 $0）
+
+四 immersive 壳的数字假价——**canvas（40 / 12）、studio-factory（`perCellCredits` / `STUDIO_CREDITS_PER_VARIANT`）、asset-viewer（fixtures credits）、studio-storyboard（per-scene credits）**——**本批清除**：删除数字与伪扣减展示（mock `spendCredits` / `refundCredits` 展示态），换非数字占位（如 "Price confirmed before generation"）。约束（SOL 顾问 93% 裁定）：**不得新增客户端价格常量、不得复制配置、不得造第二套报价函数；由一个明确关联的外科式 $0 修复承担，不授权真实接线**。真实报价一律走批2/批3 的 `pricedGenCredits`（§六.5，credits-only，宪法 3）。
 
 ---
 
@@ -376,10 +394,11 @@ W-DELTA 判「仍准」的 16 条存量断言，本 spec **直接引用免重核
 
 ## 八、冻结条件与状态
 
-- **状态：冻结候选（freeze candidate）v0.3。** 版本历史：
+- **状态：冻结候选（freeze candidate）v0.4（甲案原子勘误；冻结 D-027 / #258 续有效）。** 版本历史：
   - **v0.1** 骨架 = 装配 W-DELTA + W-ANCHOR + 控制面 10 裁定 + 六钉 + LC-0 规模上修 + 批次表。
   - **v0.2 = 闭合 codex BR2 六项**（控制面全部核认；**钉②〔E1-15 正身=g5b 静态代码目录〕、×1.5〔本期撤销〕、信封措辞〔逐笔明示批准〕三处 = 控制面改判**）：①LCd/LCg 编入批次表（W-B3-H 入批2 / LCg 入批5 收口前置，均依赖 LC-0）；②F1 阈值硬化（mock 级 20 格 ≤30 分钟）+ B0-17/18 改档 tranche-2（主 tranche 38 行）+ E1-17/E2-13 撤销 n/a-internal（挂 A2/C1 + 行级断言）；③钉②改判 + 钉③钉死（GRILL:132-138）；④Quality ×1.5 本期撤销（GRILL:244）+ 授权二择表述全文删除；⑤债数改正 47 条、逐条有工位；⑥暗含未逐笔授权花费的表述清零。全部引用行号逐一对原文复核，零处不符。
-  - **v0.3（本稿）= 闭合 codex BR2-R2 三项文字收口**（BR2-R2 判 BLOCK(1,3,4)，2/5/6 已 CLOSED；**无判断变更**）：①批2 工位计数同步（残留旧计数改「四工位 W-B3-E/F/G/H」，§六.4）；②模板目录用语零歧义收口（被废表述仅存钉②一处完整说明，其余各处改写为「模板目录（g5b 静态代码目录）」）；③花钱授权措辞收口（§六.3 保留唯一否定性澄清，其余出现删除或改写为「founder 逐笔明示批准」）。
+  - **v0.3 = 闭合 codex BR2-R2 三项文字收口**（BR2-R2 判 BLOCK(1,3,4)，2/5/6 已 CLOSED；**无判断变更**）：①批2 工位计数同步（残留旧计数改「四工位 W-B3-E/F/G/H」，§六.4）；②模板目录用语零歧义收口（被废表述仅存钉②一处完整说明，其余各处改写为「模板目录（g5b 静态代码目录）」）；③花钱授权措辞收口（§六.3 保留唯一否定性澄清，其余出现删除或改写为「founder 逐笔明示批准」）。
+  - **v0.4（本稿）= 甲案原子勘误**（founder 2026-07-13 明示批准，D-031；founder-only 类别）：①四付费工位 W-B3-E/F/G/H 各拆 **-P（批2 证明层/执行器，零界面接线、零新 spend 权威）**与 **-W（批3 界面接线，依赖壳↔真 project/thread/Otto 运行时桥）**（§五.2 / §五.3）；②四 immersive 壳硬编码假价清除（外科式 $0，§五.8）；③原 W-B3-E 记为**停手上报（2026-07-13）**非已完成，由本勘误重排；④批2 内部推荐序 F-P→G-P→E-P/H-P；⑤§5.3 注记开工门 #253 已于 2026-07-12 合并。依据 = 批2 全局排序调查（四壳后台解耦，机器核实：`runVariantBatch`/`runBulkGrid` 全库零匹配、`GenerationBatch` 零 create 写入者、parity-manifest 明载 `startRefGen` Fake parity、studio-factory 零 server-action import）+ SOL 顾问裁定备忘录。**冻结（D-027，#258）继续有效；本勘误零代码改动、零行迁级。**
 - **冻结门 = 四权闭环**（#254 §一.2）：双顾问签核 + 异族复审（`/codex` 对抗）+ 机器闸（`route-b-matrix-check.mjs`）+ 非作者合并。放行后：
   - **03-B3 主 tranche 38 行随冻结 PR 迁 `spec-ready`**（本 PR 不迁）；
   - **tranche-2 处置 8 行（六新行 + 改档 B0-17/18）待 addendum**（保持 listed，D-021）；
