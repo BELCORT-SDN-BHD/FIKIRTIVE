@@ -15,6 +15,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { randomUUID } from "node:crypto";
 import { INTERNAL_PER_DISPLAY } from "@fikirtive/core";
+import type { StartGenPort } from "../factory-batch";
 
 const mockRequireOwner = vi.fn();
 vi.mock("@/lib/auth-guard", () => ({ requireOwner: mockRequireOwner }));
@@ -25,11 +26,15 @@ vi.mock("../cowork-guardian", () => ({ checkCast: vi.fn(async () => null) }));
 vi.mock("../model-registry", () => ({ resolveDisabledModels: vi.fn(async () => new Set()) }));
 
 const { runVariantBatch, runBulkGrid } = await import("../factory-actions");
-const { batchCellStatuses } = await import("../factory-batch");
+const { batchCellStatuses, orchestrateBatch } = await import("../factory-batch");
+const { factoryAttemptKey } = await import("../batch-idempotency");
+const { startGen } = await import("../gen-actions");
 const { prisma, reserveCredits, settleCredits, refundReservation } = await import("@fikirtive/db");
 
 const IMG = INTERNAL_PER_DISPLAY; // one image cell = 1 displayed credit = 10 internal
 const VID = 8 * INTERNAL_PER_DISPLAY; // seedance-2-fast 720p/5s = 8 displayed credits (flat-priced video)
+const ATTEMPT_A = "approval-card-a";
+const ATTEMPT_B = "approval-card-b";
 
 // ── real-DB helpers ──────────────────────────────────────────────────────────
 async function seedOrg(balance: number): Promise<string> {
@@ -80,6 +85,20 @@ function asOwner(ownerId: string) {
   mockRequireOwner.mockResolvedValue({ ownerId, email: `${ownerId}@fikirtive.test` });
 }
 
+/** Hold the first two calls until both orchestrations have completed their read-only factory
+ * precheck. Releasing them together forces the money decision onto startGen's transaction lock. */
+function afterTwoPrechecks(realStartGen: StartGenPort): StartGenPort {
+  let arrived = 0;
+  let release!: () => void;
+  const gate = new Promise<void>((resolve) => { release = resolve; });
+  return async (req) => {
+    arrived += 1;
+    if (arrived === 2) release();
+    await gate;
+    return realStartGen(req);
+  };
+}
+
 describe("W-B3-F-P ledger — quote == reserve == settle (per cell + batch sum)", () => {
   it("reserves each cell's quote, and settling charges exactly that quote", async () => {
     const ownerId = await seedOrg(1000);
@@ -87,7 +106,7 @@ describe("W-B3-F-P ledger — quote == reserve == settle (per cell + batch sum)"
     const projectId = await seedProject(ownerId);
     const batchId = `bat_${randomUUID()}`;
 
-    const res = await runVariantBatch({ batchId, projectId, base: { prompt: "product on white" }, variants: [{}, {}, {}] });
+    const res = await runVariantBatch({ batchId, projectId, attemptId: ATTEMPT_A, base: { prompt: "product on white" }, variants: [{}, {}, {}] });
     if ("error" in res) throw new Error(res.error);
 
     // QUOTE: batch total = Σ per-cell pricedGenCredits
@@ -132,7 +151,7 @@ describe("W-B3-F-P ledger — replay with the same batchId does not double-charg
     const batchId = `bat_${randomUUID()}`;
     const cells = [{ type: "gen" as const, prompt: "a" }, { type: "gen" as const, prompt: "b" }];
 
-    const first = await runBulkGrid({ batchId, projectId, cells });
+    const first = await runBulkGrid({ batchId, projectId, attemptId: ATTEMPT_A, cells });
     if ("error" in first) throw new Error(first.error);
     expect((await account(ownerId)).reserved).toBe(2 * IMG);
     expect((await jobsFor(ownerId, projectId)).length).toBe(2);
@@ -140,7 +159,7 @@ describe("W-B3-F-P ledger — replay with the same batchId does not double-charg
     expect(reserveRows1).toBe(2);
 
     // Replay: identical batchId → identical per-cell keys → startGen dedups.
-    const second = await runBulkGrid({ batchId, projectId, cells });
+    const second = await runBulkGrid({ batchId, projectId, attemptId: ATTEMPT_A, cells });
     if ("error" in second) throw new Error(second.error);
 
     expect((await account(ownerId)).reserved).toBe(2 * IMG); // NOT 4×
@@ -149,6 +168,113 @@ describe("W-B3-F-P ledger — replay with the same batchId does not double-charg
     // both runs point at the same job ids
     expect(new Set(second.cells.map((c) => c.jobId)).size).toBe(2);
     expect(second.cells.map((c) => c.jobId).sort()).toEqual(first.cells.map((c) => c.jobId).sort());
+  });
+});
+
+describe("W-B3-F-P ledger — lock-time factory attempt concurrency", () => {
+  it("two first calls for one attempt create/reserve once and report fresh vs reused accurately", async () => {
+    const ownerId = await seedOrg(1000);
+    asOwner(ownerId);
+    const projectId = await seedProject(ownerId);
+    const batchId = `bat_${randomUUID()}`;
+    const guardedStart = afterTwoPrechecks(startGen);
+    const args = {
+      ownerId,
+      projectId,
+      batchId,
+      attemptId: ATTEMPT_A,
+      cells: [{ type: "gen" as const, prompt: "same material" }],
+    };
+
+    const [left, right] = await Promise.all([
+      orchestrateBatch({ startGen: guardedStart, prisma }, args),
+      orchestrateBatch({ startGen: guardedStart, prisma }, args),
+    ]);
+    if ("error" in left) throw new Error(left.error);
+    if ("error" in right) throw new Error(right.error);
+
+    expect([left.cells[0].status, right.cells[0].status].sort()).toEqual(["queued", "reused"]);
+    expect([left.totalCredits, right.totalCredits].sort((a, b) => a - b)).toEqual([0, IMG]);
+    expect(left.cells[0].jobId).toBe(right.cells[0].jobId);
+    expect(await jobsFor(ownerId, projectId)).toHaveLength(1);
+    expect((await ledger(ownerId)).filter((row) => row.kind === "RESERVE")).toHaveLength(1);
+    expect((await account(ownerId)).reserved).toBe(IMG);
+  });
+
+  it("two explicit retries after FAILED create/reserve one new attempt and reuse it on the other call", async () => {
+    const ownerId = await seedOrg(1000);
+    asOwner(ownerId);
+    const projectId = await seedProject(ownerId);
+    const batchId = `bat_${randomUUID()}`;
+    const cells = [{ type: "gen" as const, prompt: "retry material" }];
+
+    const initial = await runBulkGrid({ batchId, projectId, attemptId: ATTEMPT_A, cells });
+    if ("error" in initial) throw new Error(initial.error);
+    await workerRefund(ownerId, initial.cells[0].jobId!);
+    expect((await account(ownerId)).reserved).toBe(0);
+
+    const guardedStart = afterTwoPrechecks(startGen);
+    const retryArgs = { ownerId, projectId, batchId, attemptId: ATTEMPT_B, cells };
+    const [left, right] = await Promise.all([
+      orchestrateBatch({ startGen: guardedStart, prisma }, retryArgs),
+      orchestrateBatch({ startGen: guardedStart, prisma }, retryArgs),
+    ]);
+    if ("error" in left) throw new Error(left.error);
+    if ("error" in right) throw new Error(right.error);
+
+    expect([left.cells[0].status, right.cells[0].status].sort()).toEqual(["queued", "reused"]);
+    expect([left.totalCredits, right.totalCredits].sort((a, b) => a - b)).toEqual([0, IMG]);
+    expect(left.cells[0].jobId).toBe(right.cells[0].jobId);
+    expect(await jobsFor(ownerId, projectId)).toHaveLength(2); // FAILED A + exactly one B
+    expect((await ledger(ownerId)).filter((row) => row.kind === "RESERVE")).toHaveLength(2);
+    expect((await account(ownerId)).reserved).toBe(IMG);
+  });
+
+  it("concurrent different content for one logical cell fails one call closed with no second reserve", async () => {
+    const ownerId = await seedOrg(1000);
+    asOwner(ownerId);
+    const projectId = await seedProject(ownerId);
+    const batchId = `bat_${randomUUID()}`;
+    const guardedStart = afterTwoPrechecks(startGen);
+    const common = { ownerId, projectId, batchId, attemptId: ATTEMPT_A };
+
+    const [left, right] = await Promise.all([
+      orchestrateBatch({ startGen: guardedStart, prisma }, { ...common, cells: [{ type: "gen", prompt: "material A" }] }),
+      orchestrateBatch({ startGen: guardedStart, prisma }, { ...common, cells: [{ type: "gen", prompt: "material B" }] }),
+    ]);
+    if ("error" in left) throw new Error(left.error);
+    if ("error" in right) throw new Error(right.error);
+
+    expect([left.cells[0].status, right.cells[0].status].sort()).toEqual(["error", "queued"]);
+    expect([left.totalCredits, right.totalCredits].sort((a, b) => a - b)).toEqual([0, IMG]);
+    const refused = [left, right].find((result) => result.cells[0].status === "error")!;
+    expect(refused.cells[0].error).toMatch(/different content/i);
+    expect(await jobsFor(ownerId, projectId)).toHaveLength(1);
+    expect((await ledger(ownerId)).filter((row) => row.kind === "RESERVE")).toHaveLength(1);
+  });
+
+  it("the same structural logical/attempt key is independent across owners", async () => {
+    const ownerA = await seedOrg(1000);
+    const ownerB = await seedOrg(1000);
+    const projectA = await seedProject(ownerA);
+    const projectB = await seedProject(ownerB);
+    const idempotencyKey = factoryAttemptKey("shared-logical", 0, ATTEMPT_A).key;
+    const request = { prompt: "same", kind: "image", model: "seedream", count: 1, idempotencyKey };
+
+    asOwner(ownerA);
+    const first = await startGen({ ...request, projectId: projectA });
+    asOwner(ownerB);
+    const second = await startGen({ ...request, projectId: projectB });
+    if ("error" in first) throw new Error(first.error);
+    if ("error" in second) throw new Error(second.error);
+
+    expect(first.disposition).toBe("fresh");
+    expect(second.disposition).toBe("fresh");
+    expect(first.id).not.toBe(second.id);
+    expect(await jobsFor(ownerA, projectA)).toHaveLength(1);
+    expect(await jobsFor(ownerB, projectB)).toHaveLength(1);
+    expect((await account(ownerA)).reserved).toBe(IMG);
+    expect((await account(ownerB)).reserved).toBe(IMG);
   });
 });
 
@@ -162,6 +288,7 @@ describe("W-B3-F-P ledger — N=4, 2 fail: refund only the failed cells", () => 
     const res = await runBulkGrid({
       batchId,
       projectId,
+      attemptId: ATTEMPT_A,
       cells: [
         { type: "gen", prompt: "a" },
         { type: "gen", prompt: "b" },
@@ -203,6 +330,7 @@ describe("W-B3-F-P ledger — text cells are $0", () => {
     const res = await runBulkGrid({
       batchId,
       projectId,
+      attemptId: ATTEMPT_A,
       cells: [
         { type: "text", text: "Summer Sale" },
         { type: "gen", prompt: "product hero" },
@@ -228,6 +356,7 @@ describe("W-B3-F-P ledger — fail-closed per cell", () => {
     const res = await runBulkGrid({
       batchId,
       projectId,
+      attemptId: ATTEMPT_A,
       cells: [
         { type: "gen", prompt: "a" },
         { type: "gen", prompt: "b" },
@@ -253,7 +382,7 @@ describe("W-B3-F-P ledger — fail-closed per cell", () => {
     const projectId = await seedProject(ownerId);
     const batchId = `bat_${randomUUID()}`;
 
-    const res = await runBulkGrid({ batchId, projectId, cells: [{ type: "gen", prompt: "a" }, { type: "gen", prompt: "b" }] });
+    const res = await runBulkGrid({ batchId, projectId, attemptId: ATTEMPT_A, cells: [{ type: "gen", prompt: "a" }, { type: "gen", prompt: "b" }] });
     if ("error" in res) throw new Error(res.error);
     expect((await account(ownerId)).reserved).toBe(2 * IMG);
 
@@ -278,7 +407,7 @@ describe("W-B3-F-P ledger — F1 structural: 20 cells enqueue without blocking",
     const cells = Array.from({ length: 20 }, (_, i) => ({ type: "gen" as const, prompt: `cell ${i}` }));
 
     const t0 = Date.now();
-    const res = await runBulkGrid({ batchId, projectId, cells });
+    const res = await runBulkGrid({ batchId, projectId, attemptId: ATTEMPT_A, cells });
     const elapsed = Date.now() - t0;
     if ("error" in res) throw new Error(res.error);
 
@@ -300,17 +429,16 @@ describe("W-B3-F-P ledger — replay after DONE does not re-charge (NODE-280 ite
     const batchId = `bat_${randomUUID()}`;
     const cells = [{ type: "gen" as const, prompt: "a" }, { type: "gen" as const, prompt: "b" }];
 
-    const first = await runBulkGrid({ batchId, projectId, cells });
+    const first = await runBulkGrid({ batchId, projectId, attemptId: ATTEMPT_A, cells });
     if ("error" in first) throw new Error(first.error);
     const jobIds = first.cells.map((c) => c.jobId!);
     for (const jid of jobIds) await workerSettle(ownerId, jid); // both DONE
     expect((await account(ownerId)).reserved).toBe(0);
     expect((await account(ownerId)).balance).toBe(1000 - 2 * IMG);
 
-    // Replay the SAME batchId now that both cells are DONE — the DEFECT NODE-280② closed:
-    // startGen's active-only dedup would have re-inserted + re-reserved; the orchestration
-    // any-status precheck reuses the DONE jobs instead.
-    const second = await runBulkGrid({ batchId, projectId, cells });
+    // Replay the SAME attempt now that both cells are DONE: startGen's lock-time history decision
+    // returns reused, so the orchestration reports zero new reservation.
+    const second = await runBulkGrid({ batchId, projectId, attemptId: ATTEMPT_A, cells });
     if ("error" in second) throw new Error(second.error);
     expect(second.cells.every((c) => c.status === "reused")).toBe(true);
     expect(second.totalCredits).toBe(0); // zero NEW charge
@@ -324,15 +452,15 @@ describe("W-B3-F-P ledger — replay after DONE does not re-charge (NODE-280 ite
   });
 });
 
-describe("W-B3-F-P ledger — replay with a FAILED cell re-dispatches ONLY that cell (NODE-280 item 1)", () => {
-  it("reuses the DONE cell and re-dispatches (re-reserves) only the FAILED cell", async () => {
+describe("W-B3-F-P ledger — FAILED retry requires a new explicit attempt", () => {
+  it("delayed attempt A reuses FAILED/0; attempt B reuses DONE and re-reserves only FAILED", async () => {
     const ownerId = await seedOrg(1000);
     asOwner(ownerId);
     const projectId = await seedProject(ownerId);
     const batchId = `bat_${randomUUID()}`;
     const cells = [{ type: "gen" as const, prompt: "a" }, { type: "gen" as const, prompt: "b" }];
 
-    const first = await runBulkGrid({ batchId, projectId, cells });
+    const first = await runBulkGrid({ batchId, projectId, attemptId: ATTEMPT_A, cells });
     if ("error" in first) throw new Error(first.error);
     const [j0, j1] = first.cells.map((c) => c.jobId!);
     await workerSettle(ownerId, j0); // cell 0 DONE
@@ -340,7 +468,13 @@ describe("W-B3-F-P ledger — replay with a FAILED cell re-dispatches ONLY that 
     expect((await account(ownerId)).reserved).toBe(0);
     expect((await account(ownerId)).balance).toBe(1000 - IMG); // only cell 0 charged
 
-    const second = await runBulkGrid({ batchId, projectId, cells });
+    const delayedReplay = await runBulkGrid({ batchId, projectId, attemptId: ATTEMPT_A, cells });
+    if ("error" in delayedReplay) throw new Error(delayedReplay.error);
+    expect(delayedReplay.cells[0]).toMatchObject({ status: "reused", jobId: j0, credits: 0 });
+    expect(delayedReplay.cells[1]).toMatchObject({ status: "reused", jobId: j1, credits: 0 });
+    expect(delayedReplay.totalCredits).toBe(0);
+
+    const second = await runBulkGrid({ batchId, projectId, attemptId: ATTEMPT_B, cells });
     if ("error" in second) throw new Error(second.error);
     expect(second.cells[0]).toMatchObject({ status: "reused", jobId: j0, credits: 0 });
     expect(second.cells[1].status).toBe("queued");
@@ -362,7 +496,7 @@ describe("W-B3-F-P ledger — video cell quote == reserve == settle (NODE-280 it
     const projectId = await seedProject(ownerId);
     const batchId = `bat_${randomUUID()}`;
 
-    const res = await runBulkGrid({ batchId, projectId, cells: [{ type: "gen", prompt: "product spin", kind: "video", model: "seedance-2-fast" }] });
+    const res = await runBulkGrid({ batchId, projectId, attemptId: ATTEMPT_A, cells: [{ type: "gen", prompt: "product spin", kind: "video", model: "seedance-2-fast" }] });
     if ("error" in res) throw new Error(res.error);
     expect(res.totalCredits).toBe(VID); // quote = 8 displayed × 10 internal
     expect(res.cells[0]).toMatchObject({ status: "queued", credits: VID });
@@ -384,6 +518,7 @@ describe("W-B3-F-P ledger — video cell quote == reserve == settle (NODE-280 it
     const res = await runBulkGrid({
       batchId,
       projectId,
+      attemptId: ATTEMPT_A,
       cells: [
         { type: "gen", prompt: "hero image" },                     // image → dispatched + charged
         { type: "gen", prompt: "no model video", kind: "video" },  // invalid video model → per-cell error, no crash
@@ -413,7 +548,7 @@ describe("W-B3-F-P ledger — video replay after DONE reuses (full-field compare
     const VID10 = 14 * INTERNAL_PER_DISPLAY; // seedance-2-fast 720p/10s flat = 14 displayed
     const cells = [{ type: "gen" as const, prompt: "product spin", kind: "video" as const, model: "seedance-2-fast", durationSeconds: 10 }];
 
-    const first = await runBulkGrid({ batchId, projectId, cells });
+    const first = await runBulkGrid({ batchId, projectId, attemptId: ATTEMPT_A, cells });
     if ("error" in first) throw new Error(first.error);
     expect(first.cells[0]).toMatchObject({ status: "queued", credits: VID10 });
     await workerSettle(ownerId, first.cells[0].jobId!); // DONE
@@ -421,7 +556,7 @@ describe("W-B3-F-P ledger — video replay after DONE reuses (full-field compare
     // Replay the SAME cell: the precheck's full-field compare (incl. videoOptions built via the
     // shared cellVideoOptions mapping) must MATCH the row the real startGen persisted — reuse,
     // never a false-positive "different content" refusal, zero new reserve.
-    const second = await runBulkGrid({ batchId, projectId, cells });
+    const second = await runBulkGrid({ batchId, projectId, attemptId: ATTEMPT_A, cells });
     if ("error" in second) throw new Error(second.error);
     expect(second.cells[0]).toMatchObject({ status: "reused", jobId: first.cells[0].jobId, credits: 0 });
     expect(second.totalCredits).toBe(0);

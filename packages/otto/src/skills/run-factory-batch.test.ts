@@ -35,11 +35,17 @@ describe("runFactoryBatch skill — the spend gate", () => {
     expect(runFactoryBatchSkill.name).toBe("runFactoryBatch");
   });
 
-  it("never accepts identity or projectId from the model (scope comes from ctx)", () => {
+  it("never accepts identity, projectId, or the server attempt token from the model", () => {
     const keys = Object.keys(runFactoryBatchInput.shape);
-    for (const forbidden of ["orgId", "ownerId", "userId", "projectId"]) {
+    for (const forbidden of ["orgId", "ownerId", "userId", "projectId", "attemptId"]) {
       expect(keys).not.toContain(forbidden);
     }
+    expect(runFactoryBatchInput.safeParse({
+      mode: "grid",
+      batchId: "B",
+      attemptId: "model-controlled",
+      cells: [{ type: "gen", prompt: "a" }],
+    }).success).toBe(false);
   });
 });
 

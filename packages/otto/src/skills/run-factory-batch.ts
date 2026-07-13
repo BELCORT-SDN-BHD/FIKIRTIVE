@@ -9,12 +9,11 @@
  * Zero new spend path (B0-16): this skill never touches credits, never creates a GenJob, never
  * calls a provider. It reaches the batch ONLY via ctx.runFactoryBatch (injected, owner-closed),
  * which loops the SAME startGen authority per cell — every reserve/settle/refund lives inside
- * startGen / the worker, per cell. text cells are $0. A SEQUENTIAL replay with the same batchId
- * reuses each cell's existing non-failed job (zero new charge) and only re-dispatches FAILED cells
- * (per-cell batch:<batchId>:cell:<n> keys). CONCURRENT replays of the same batch are NOT fully
- * safe — in a narrow window a FAILED cell can be charged twice; the structural fix (an all-status
- * partial-unique index for batch:% keys, cowork precedent) is a migration pending founder
- * adjudication (B3-REPORT §⑫ 待裁).
+ * startGen / the worker, per cell. text cells are $0. The model never supplies an attempt token:
+ * the server injects the hash-verified + CAS-consumed APPROVAL_CARD.id. startGen atomically binds
+ * `(logical cell, attempt)` under its existing owner/project transaction lock, so request replay
+ * reuses at $0 while a later explicit approved Retry gets a new attempt and may create only after
+ * all prior jobs for that logical cell FAILED.
  *
  * Identity/scope come from ctx (orgId, projectId) — never from the model. The model supplies only
  * WHAT to make + a stable batchId; the owner-scoped server action re-validates ownership and every
@@ -44,12 +43,11 @@ export const runFactoryBatchInput = z.object({
     "variant = one base spec + N variant overrides (ad-variant fan-out); grid = an explicit list of cells (brief×platform×size grid, may mix gen and $0 text cells).",
   ),
   batchId: z.string().min(1).max(64).describe(
-    "A STABLE, uniquely-generated id for this batch (e.g. a UUID). To retry, call again with the " +
-      "SAME id AND the SAME cells: on a sequential retry, cells that already succeeded are reused " +
-      "(not re-run, not re-charged) and only failed cells are re-dispatched (and charged again). " +
-      "Never run two retries of the same batch at the same time — concurrent retries can charge a " +
-      "failed cell twice. Reusing a batchId for DIFFERENT content is refused — use a fresh unique " +
-      "id for every genuinely new batch.",
+    "A stable, uniquely-generated id for this logical batch (e.g. a UUID). Keep the SAME id and " +
+      "SAME cells when the user explicitly retries failed cells; the server assigns the retry " +
+      "attempt from the user's approval card. Successful/in-flight cells are reused at zero new " +
+      "charge, while failed cells may start once for the new approval. Reusing a batchId for " +
+      "DIFFERENT content is refused — use a fresh unique id for every genuinely new batch.",
   ),
   name: z.string().min(1).max(120).optional().describe("Human-readable batch name for the library grouping."),
   base: skillGenCell.optional().describe("variant mode: the base spec every variant overrides."),
@@ -63,7 +61,7 @@ export const runFactoryBatchInput = z.object({
     .max(24)
     .optional()
     .describe("grid mode: the explicit cells. A gen cell generates (costs credits); a text cell {type:'text',text} is FREE."),
-});
+}).strict();
 
 type RunFactoryBatchInput = z.infer<typeof runFactoryBatchInput>;
 
@@ -96,18 +94,18 @@ export const runFactoryBatchSkill = defineOttoSkill({
   cost: "spend",
   effect: "write",
   reach: "internal",
-  // The real exactly-once guard is the per-cell startGen dedup (batch:<batchId>:cell:<n>) plus
-  // the GenJob_active_idempotency_key index. This declaration satisfies the factory's
-  // "spend must declare an idempotency key" rule and documents the batch-level key shape.
+  // The real exactly-once guard is startGen's lock-time logical-cell + server-attempt decision.
+  // This declaration satisfies the factory's "spend must declare an idempotency key" rule and
+  // documents the model-visible logical batch identity; it is not invoked as runtime authority.
   idempotencyKey: (i) => `batch:${i.batchId}`,
   description:
     "Generate a BATCH of ads/images/videos in one go — either a variant fan-out (one base spec + " +
     "several variant overrides) or an explicit grid of cells. This SPENDS the user's credits (one " +
     "charge per gen cell; text cells are free) and REQUIRES the user's approval — only call it when " +
-    "the user has clearly asked to run a batch. To retry, reuse the same batchId with the SAME cells — " +
-    "on a sequential retry completed cells are reused (not re-run, not re-charged) and only failed " +
-    "cells are re-dispatched; never retry the same batch concurrently (a concurrent retry can charge " +
-    "a failed cell twice); use a fresh unique id for a new batch. " +
+    "the user has clearly asked to run a batch. For an explicit Retry, reuse the same batchId with " +
+    "the SAME cells; the server derives a fresh attempt from the new approval, completed/in-flight " +
+    "cells stay reused, and failed cells can be dispatched once. Request replays of one approval are " +
+    "always reused at zero new charge. Use a fresh unique id for a genuinely new batch. " +
     "Scope (project) comes from the current context; you supply only what to make.",
   parameters: runFactoryBatchInput,
   execute: executeRunFactoryBatch,

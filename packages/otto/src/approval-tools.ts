@@ -41,10 +41,10 @@ export function approvalRefOf(toolName: string, args: Record<string, unknown>): 
   // uses. The EXACT parked args (prompt/count/mode) are bound separately by the card's content hash
   // (readApprovalConsent → computeRefgenApprovalContentHash), so a same-entity arg-flip is caught there.
   if (toolName === "generateReferences") return pick("entityId");
-  // runFactoryBatch (W-B3-F-P, spend): anchor the ref on the caller-stable batchId — the same
-  // unique-by-convention (UUID guidance) id that keys the batch's per-cell idempotency
-  // (batch:<batchId>:cell:<n>) and the GenerationBatch row, so the card and the spend share one
-  // anchor. A batchId CAN still repeat across two parks with different content (the model may
+  // runFactoryBatch (W-B3-F-P, spend): anchor the ref on the caller-stable logical batchId. The
+  // server hashes it with each cell index for the structural key and separately hashes the
+  // consumed APPROVAL_CARD.id as the attempt segment; the GenerationBatch row keeps the logical
+  // batch anchor. A batchId CAN still repeat across two parks with different content (the model may
   // reuse it; the orchestration layer only fails-closed on changed content at execute time), so
   // the EXACT parked args (mode/batchId/name/base/variants/cells) are additionally bound by the
   // card's content hash (readApprovalConsent → computeFactoryBatchApprovalContentHash) and every

@@ -11,9 +11,10 @@ import {
   type StartGenPort,
   type OrchestrateDeps,
 } from "../factory-batch";
+import { factoryAttemptKey, normalizeFactoryMaterial } from "../batch-idempotency";
 
 type JobRow = {
-  id: string; ownerId: string; batchId: string | null; status: string; idempotencyKey?: string;
+  id: string; ownerId: string; projectId?: string; batchId: string | null; status: string; idempotencyKey?: string;
   prompt?: string; model?: string; kind?: string; count?: number;
   entityIds?: string[]; variantSel?: Record<string, string> | null;
   sourceGenerationId?: string | null; tailGenerationId?: string | null;
@@ -62,9 +63,38 @@ function fakePrisma() {
         if (j && j.ownerId === where.ownerId) j.batchId = data.batchId;
         return { count: j ? 1 : 0 };
       }),
-      findMany: vi.fn(async ({ where }: { where: { ownerId: string; batchId: string } }) =>
-        [...jobs.values()].filter((j) => j.ownerId === where.ownerId && j.batchId === where.batchId).map((j) => ({ status: j.status })),
-      ),
+      findMany: vi.fn(async ({ where }: {
+        where: {
+          ownerId: string;
+          projectId?: string;
+          batchId?: string;
+          idempotencyKey?: { startsWith: string };
+        };
+      }) => {
+        const rows = [...jobs.values()].filter((j) =>
+          j.ownerId === where.ownerId &&
+          (where.projectId == null || j.projectId === where.projectId) &&
+          (where.batchId == null || j.batchId === where.batchId) &&
+          (where.idempotencyKey == null || j.idempotencyKey?.startsWith(where.idempotencyKey.startsWith)),
+        );
+        if (where.batchId != null) return rows.map((j) => ({ status: j.status }));
+        return rows.map((j) => ({
+          id: j.id,
+          status: j.status,
+          idempotencyKey: j.idempotencyKey ?? null,
+          prompt: j.prompt ?? "",
+          model: j.model ?? "seedream",
+          kind: j.kind ?? "IMAGE",
+          count: j.count ?? 1,
+          entityIds: j.entityIds ?? [],
+          variantSel: j.variantSel ?? null,
+          sourceGenerationId: j.sourceGenerationId ?? null,
+          tailGenerationId: j.tailGenerationId ?? null,
+          referenceVideoGenerationId: j.referenceVideoGenerationId ?? null,
+          shotId: j.shotId ?? null,
+          videoOptions: j.videoOptions ?? null,
+        }));
+      }),
     },
   } as unknown as OrchestrateDeps["prisma"];
   return { db, jobs };
@@ -72,23 +102,59 @@ function fakePrisma() {
 
 // A startGen spy that records every request and mints a job row in the fake prisma so
 // the batchId tag has something to write to.
-function spyStartGen(jobs: Map<string, JobRow>, ownerId: string, override?: (i: number) => { error: string } | null) {
+type StartGenOutcome =
+  | { id: string; disposition: "fresh" | "reused" }
+  | { error: string; disposition?: "conflict" };
+
+function spyStartGen(
+  jobs: Map<string, JobRow>,
+  ownerId: string,
+  override?: (i: number, req: Record<string, unknown>) => StartGenOutcome | null,
+) {
   let n = 0;
   const calls: Record<string, unknown>[] = [];
   const fn: StartGenPort = vi.fn(async (req: Record<string, unknown>) => {
     const idx = n++;
     calls.push(req);
-    const over = override?.(idx) ?? null;
+    const over = override?.(idx, req) ?? null;
     if (over) return over;
     const id = `job-${idx}`;
-    jobs.set(id, { id, ownerId, batchId: null, status: "QUEUED" });
-    return { id };
+    const kind = req.kind === "video" ? "video" : "image";
+    const material = normalizeFactoryMaterial({
+      prompt: req.prompt as string,
+      model: req.model as string,
+      kind,
+      count: req.count as number,
+      entityIds: req.entityIds as string[],
+      variantSel: req.variantSel as Record<string, string> | undefined,
+      sourceGenerationId: req.sourceGenerationId as string | null | undefined,
+      tailGenerationId: req.tailGenerationId as string | null | undefined,
+      referenceVideoGenerationId: req.referenceVideoGenerationId as string | null | undefined,
+      shotId: req.shotId as string | null | undefined,
+      durationSeconds: req.durationSeconds as number | null | undefined,
+      resolution: req.resolution as string | null | undefined,
+      aspectRatio: req.aspectRatio as string | null | undefined,
+      fps: req.fps as number | null | undefined,
+      audio: req.audio as boolean | null | undefined,
+    });
+    jobs.set(id, {
+      id,
+      ownerId,
+      projectId: req.projectId as string,
+      batchId: null,
+      status: "QUEUED",
+      idempotencyKey: req.idempotencyKey as string,
+      ...material,
+    });
+    return { id, disposition: "fresh" as const };
   });
   return { fn, calls };
 }
 
 const OWNER = "org_test";
 const PROJECT = "prj_test";
+const ATTEMPT_A = "attempt-a";
+const ATTEMPT_B = "attempt-b";
 
 function genCell(prompt: string, extra: Partial<Omit<GenCell, "type" | "prompt">> = {}): BatchCell {
   return { type: "gen", prompt, ...extra };
@@ -103,18 +169,23 @@ describe("quoteCell — same authority as startGen's reserve (pricedGenCredits)"
 });
 
 describe("orchestrateBatch — dispatch behaviour", () => {
-  it("derives per-cell idempotency keys batch:<batchId>:cell:<n> and sums the quote", async () => {
+  it("derives 79-char logical-cell + attempt keys and sums the quote", async () => {
     const { db, jobs } = fakePrisma();
     const { fn, calls } = spyStartGen(jobs, OWNER);
     const res = await orchestrateBatch(
       { startGen: fn, prisma: db },
-      { ownerId: OWNER, projectId: PROJECT, batchId: "B1", cells: [genCell("a"), genCell("b"), genCell("c")] },
+      { ownerId: OWNER, projectId: PROJECT, batchId: "B1", attemptId: ATTEMPT_A, cells: [genCell("a"), genCell("b"), genCell("c")] },
     );
     if ("error" in res) throw new Error(res.error);
     expect(res.dispatched).toBe(3);
     expect(res.failed).toBe(0);
     expect(res.totalCredits).toBe(3 * INTERNAL_PER_DISPLAY);
-    expect(calls.map((c) => c.idempotencyKey)).toEqual(["batch:B1:cell:0", "batch:B1:cell:1", "batch:B1:cell:2"]);
+    expect(calls.map((c) => c.idempotencyKey)).toEqual([
+      factoryAttemptKey("B1", 0, ATTEMPT_A).key,
+      factoryAttemptKey("B1", 1, ATTEMPT_A).key,
+      factoryAttemptKey("B1", 2, ATTEMPT_A).key,
+    ]);
+    expect(calls.every((c) => (c.idempotencyKey as string).length === 79)).toBe(true);
     expect(calls.every((c) => c.projectId === PROJECT)).toBe(true);
     expect(res.cells.every((c) => c.status === "queued" && c.credits === INTERNAL_PER_DISPLAY)).toBe(true);
   });
@@ -123,7 +194,7 @@ describe("orchestrateBatch — dispatch behaviour", () => {
     const { db, jobs } = fakePrisma();
     const { fn, calls } = spyStartGen(jobs, OWNER);
     const cells: BatchCell[] = [{ type: "text", text: "Big Sale" }, genCell("product on white")];
-    const res = await orchestrateBatch({ startGen: fn, prisma: db }, { ownerId: OWNER, projectId: PROJECT, batchId: "B2", cells });
+    const res = await orchestrateBatch({ startGen: fn, prisma: db }, { ownerId: OWNER, projectId: PROJECT, batchId: "B2", attemptId: ATTEMPT_A, cells });
     if ("error" in res) throw new Error(res.error);
     expect(calls).toHaveLength(1);
     expect(res.cells[0]).toMatchObject({ type: "text", status: "text", credits: 0 });
@@ -134,11 +205,14 @@ describe("orchestrateBatch — dispatch behaviour", () => {
   it("a replay with the SAME batchId reproduces the SAME per-cell keys (dedup anchor)", async () => {
     const { db, jobs } = fakePrisma();
     const a = spyStartGen(jobs, OWNER);
-    await orchestrateBatch({ startGen: a.fn, prisma: db }, { ownerId: OWNER, projectId: PROJECT, batchId: "SAME", cells: [genCell("a"), genCell("b")] });
+    await orchestrateBatch({ startGen: a.fn, prisma: db }, { ownerId: OWNER, projectId: PROJECT, batchId: "SAME", attemptId: ATTEMPT_A, cells: [genCell("a"), genCell("b")] });
     const b = spyStartGen(jobs, OWNER);
-    await orchestrateBatch({ startGen: b.fn, prisma: db }, { ownerId: OWNER, projectId: PROJECT, batchId: "SAME", cells: [genCell("a"), genCell("b")] });
+    await orchestrateBatch({ startGen: b.fn, prisma: db }, { ownerId: OWNER, projectId: PROJECT, batchId: "SAME", attemptId: ATTEMPT_A, cells: [genCell("a"), genCell("b")] });
     expect(a.calls.map((c) => c.idempotencyKey)).toEqual(b.calls.map((c) => c.idempotencyKey));
-    expect(b.calls.map((c) => c.idempotencyKey)).toEqual(["batch:SAME:cell:0", "batch:SAME:cell:1"]);
+    expect(b.calls.map((c) => c.idempotencyKey)).toEqual([
+      factoryAttemptKey("SAME", 0, ATTEMPT_A).key,
+      factoryAttemptKey("SAME", 1, ATTEMPT_A).key,
+    ]);
   });
 
   it("partial dispatch failure marks only the failed cells — no batch-level rollback", async () => {
@@ -146,7 +220,7 @@ describe("orchestrateBatch — dispatch behaviour", () => {
     const { fn } = spyStartGen(jobs, OWNER, (i) => (i === 1 ? { error: "no" } : null));
     const res = await orchestrateBatch(
       { startGen: fn, prisma: db },
-      { ownerId: OWNER, projectId: PROJECT, batchId: "B3", cells: [genCell("a"), genCell("b"), genCell("c")] },
+      { ownerId: OWNER, projectId: PROJECT, batchId: "B3", attemptId: ATTEMPT_A, cells: [genCell("a"), genCell("b"), genCell("c")] },
     );
     if ("error" in res) throw new Error(res.error);
     expect(res.dispatched).toBe(2);
@@ -160,9 +234,22 @@ describe("orchestrateBatch — dispatch behaviour", () => {
     const { db, jobs } = fakePrisma();
     const { fn } = spyStartGen(jobs, OWNER);
     const deps: OrchestrateDeps = { startGen: fn, prisma: db };
-    expect(await orchestrateBatch(deps, { ownerId: OWNER, projectId: PROJECT, batchId: "E", cells: [] })).toHaveProperty("error");
+    expect(await orchestrateBatch(deps, { ownerId: OWNER, projectId: PROJECT, batchId: "E", attemptId: ATTEMPT_A, cells: [] })).toHaveProperty("error");
     const tooMany = Array.from({ length: MAX_BATCH_CELLS + 1 }, (_, i) => genCell(`c${i}`));
-    expect(await orchestrateBatch(deps, { ownerId: OWNER, projectId: PROJECT, batchId: "E2", cells: tooMany })).toHaveProperty("error");
+    expect(await orchestrateBatch(deps, { ownerId: OWNER, projectId: PROJECT, batchId: "E2", attemptId: ATTEMPT_A, cells: tooMany })).toHaveProperty("error");
+  });
+
+  it("rejects a missing or overlong caller attempt id before any dispatch", async () => {
+    const { db, jobs } = fakePrisma();
+    const { fn, calls } = spyStartGen(jobs, OWNER);
+    const deps: OrchestrateDeps = { startGen: fn, prisma: db };
+    expect(await orchestrateBatch(deps, {
+      ownerId: OWNER, projectId: PROJECT, batchId: "A0", attemptId: "", cells: [genCell("a")],
+    })).toHaveProperty("error");
+    expect(await orchestrateBatch(deps, {
+      ownerId: OWNER, projectId: PROJECT, batchId: "A1", attemptId: "x".repeat(65), cells: [genCell("a")],
+    })).toHaveProperty("error");
+    expect(calls).toHaveLength(0);
   });
 
   it("F1 structural: 20 cells all enqueue and it never blocks on generation completion", async () => {
@@ -170,12 +257,12 @@ describe("orchestrateBatch — dispatch behaviour", () => {
     const fn: StartGenPort = vi.fn(async () => {
       await new Promise((r) => setTimeout(r, 1));
       const id = `j${jobs.size}`;
-      jobs.set(id, { id, ownerId: OWNER, batchId: null, status: "QUEUED" });
-      return { id };
+      jobs.set(id, { id, ownerId: OWNER, projectId: PROJECT, batchId: null, status: "QUEUED" });
+      return { id, disposition: "fresh" as const };
     });
     const cells = Array.from({ length: 20 }, (_, i) => genCell(`c${i}`));
     const t0 = Date.now();
-    const res = await orchestrateBatch({ startGen: fn, prisma: db }, { ownerId: OWNER, projectId: PROJECT, batchId: "F1", cells });
+    const res = await orchestrateBatch({ startGen: fn, prisma: db }, { ownerId: OWNER, projectId: PROJECT, batchId: "F1", attemptId: ATTEMPT_A, cells });
     const elapsed = Date.now() - t0;
     if ("error" in res) throw new Error(res.error);
     expect(res.dispatched).toBe(20);
@@ -184,38 +271,52 @@ describe("orchestrateBatch — dispatch behaviour", () => {
   });
 });
 
-describe("orchestrateBatch — any-status replay precheck (NODE-280 item 1)", () => {
-  it("reuses an existing DONE job for the same key (zero new charge) and skips startGen", async () => {
+describe("orchestrateBatch — startGen disposition + read-only material precheck", () => {
+  it("reports a DONE job reused/0 only when startGen returns the atomic reused disposition", async () => {
     const { db, jobs } = fakePrisma();
-    jobs.set("prior-0", { id: "prior-0", ownerId: OWNER, batchId: "R", status: "DONE", idempotencyKey: "batch:R:cell:0", prompt: "a", model: "seedream", kind: "IMAGE", count: 1 });
-    const { fn, calls } = spyStartGen(jobs, OWNER);
-    const res = await orchestrateBatch({ startGen: fn, prisma: db }, { ownerId: OWNER, projectId: PROJECT, batchId: "R", cells: [genCell("a"), genCell("b")] });
+    jobs.set("prior-0", {
+      id: "prior-0", ownerId: OWNER, projectId: PROJECT, batchId: "R", status: "DONE",
+      idempotencyKey: factoryAttemptKey("R", 0, ATTEMPT_A).key,
+      prompt: "a", model: "seedream", kind: "IMAGE", count: 1,
+    });
+    const { fn, calls } = spyStartGen(jobs, OWNER, (i) =>
+      i === 0 ? { id: "prior-0", disposition: "reused" } : null,
+    );
+    const res = await orchestrateBatch({ startGen: fn, prisma: db }, { ownerId: OWNER, projectId: PROJECT, batchId: "R", attemptId: ATTEMPT_A, cells: [genCell("a"), genCell("b")] });
     if ("error" in res) throw new Error(res.error);
     expect(res.cells[0]).toMatchObject({ status: "reused", jobId: "prior-0", credits: 0 });
     expect(res.cells[1].status).toBe("queued");
     expect(res.reused).toBe(1);
     expect(res.dispatched).toBe(1);
     expect(res.totalCredits).toBe(1 * INTERNAL_PER_DISPLAY); // only the newly dispatched cell
-    expect(calls.map((c) => c.idempotencyKey)).toEqual(["batch:R:cell:1"]); // startGen never called for cell 0
+    expect(calls).toHaveLength(2); // factory never infers reuse from its precheck
   });
 
-  it("re-dispatches a terminal-FAILED cell (legitimate retry) instead of reusing it", async () => {
+  it("a terminal-FAILED attempt A can dispatch once under explicit retry attempt B", async () => {
     const { db, jobs } = fakePrisma();
-    jobs.set("failed-0", { id: "failed-0", ownerId: OWNER, batchId: "R2", status: "FAILED", idempotencyKey: "batch:R2:cell:0", prompt: "a", model: "seedream", kind: "IMAGE", count: 1 });
+    jobs.set("failed-0", {
+      id: "failed-0", ownerId: OWNER, projectId: PROJECT, batchId: "R2", status: "FAILED",
+      idempotencyKey: factoryAttemptKey("R2", 0, ATTEMPT_A).key,
+      prompt: "a", model: "seedream", kind: "IMAGE", count: 1,
+    });
     const { fn, calls } = spyStartGen(jobs, OWNER);
-    const res = await orchestrateBatch({ startGen: fn, prisma: db }, { ownerId: OWNER, projectId: PROJECT, batchId: "R2", cells: [genCell("a")] });
+    const res = await orchestrateBatch({ startGen: fn, prisma: db }, { ownerId: OWNER, projectId: PROJECT, batchId: "R2", attemptId: ATTEMPT_B, cells: [genCell("a")] });
     if ("error" in res) throw new Error(res.error);
     expect(res.cells[0].status).toBe("queued"); // re-dispatched, not reused
     expect(res.reused).toBe(0);
     expect(res.dispatched).toBe(1);
-    expect(calls.map((c) => c.idempotencyKey)).toEqual(["batch:R2:cell:0"]);
+    expect(calls.map((c) => c.idempotencyKey)).toEqual([factoryAttemptKey("R2", 0, ATTEMPT_B).key]);
   });
 
-  it("fails closed when a batchId is reused for DIFFERENT content (no reuse, no dispatch)", async () => {
+  it("fails closed when FAILED history has different content (no dispatch)", async () => {
     const { db, jobs } = fakePrisma();
-    jobs.set("prior-x", { id: "prior-x", ownerId: OWNER, batchId: "R3", status: "QUEUED", idempotencyKey: "batch:R3:cell:0", prompt: "original", model: "seedream", kind: "IMAGE", count: 1 });
+    jobs.set("prior-x", {
+      id: "prior-x", ownerId: OWNER, projectId: PROJECT, batchId: "R3", status: "FAILED",
+      idempotencyKey: factoryAttemptKey("R3", 0, ATTEMPT_A).key,
+      prompt: "original", model: "seedream", kind: "IMAGE", count: 1,
+    });
     const { fn, calls } = spyStartGen(jobs, OWNER);
-    const res = await orchestrateBatch({ startGen: fn, prisma: db }, { ownerId: OWNER, projectId: PROJECT, batchId: "R3", cells: [genCell("DIFFERENT")] });
+    const res = await orchestrateBatch({ startGen: fn, prisma: db }, { ownerId: OWNER, projectId: PROJECT, batchId: "R3", attemptId: ATTEMPT_B, cells: [genCell("DIFFERENT")] });
     if ("error" in res) throw new Error(res.error);
     expect(res.cells[0].status).toBe("error");
     expect(res.cells[0].error).toMatch(/different content/i);
@@ -238,7 +339,7 @@ describe("orchestrateBatch — video quote never crashes the batch (NODE-280 ite
     const { fn } = spyStartGen(jobs, OWNER);
     const res = await orchestrateBatch(
       { startGen: fn, prisma: db },
-      { ownerId: OWNER, projectId: PROJECT, batchId: "V", cells: [genCell("before"), genCell("v", { kind: "video" }), genCell("after")] },
+      { ownerId: OWNER, projectId: PROJECT, batchId: "V", attemptId: ATTEMPT_A, cells: [genCell("before"), genCell("v", { kind: "video" }), genCell("after")] },
     );
     if ("error" in res) throw new Error(res.error);
     expect(res.cells[0].status).toBe("queued");
@@ -258,14 +359,15 @@ describe("orchestrateBatch — full-field mismatch fail-closed (NODE-280-R2 ①a
   it("a changed referenceVideoGenerationId fails closed (no reuse, no dispatch)", async () => {
     const { db, jobs } = fakePrisma();
     jobs.set("prior-rv", {
-      id: "prior-rv", ownerId: OWNER, batchId: "M1", status: "QUEUED", idempotencyKey: "batch:M1:cell:0",
+      id: "prior-rv", ownerId: OWNER, projectId: PROJECT, batchId: "M1", status: "FAILED",
+      idempotencyKey: factoryAttemptKey("M1", 0, ATTEMPT_A).key,
       prompt: "clip", model: "seedance-2-fast", kind: "VIDEO", count: 1,
       referenceVideoGenerationId: "gen_A", videoOptions: SEEDANCE_DEFAULT_VO,
     });
     const { fn, calls } = spyStartGen(jobs, OWNER);
     const res = await orchestrateBatch(
       { startGen: fn, prisma: db },
-      { ownerId: OWNER, projectId: PROJECT, batchId: "M1", cells: [genCell("clip", { kind: "video", model: "seedance-2-fast", referenceVideoGenerationId: "gen_B" })] },
+      { ownerId: OWNER, projectId: PROJECT, batchId: "M1", attemptId: ATTEMPT_B, cells: [genCell("clip", { kind: "video", model: "seedance-2-fast", referenceVideoGenerationId: "gen_B" })] },
     );
     if ("error" in res) throw new Error(res.error);
     expect(res.cells[0]).toMatchObject({ status: "error", credits: 0 });
@@ -276,14 +378,15 @@ describe("orchestrateBatch — full-field mismatch fail-closed (NODE-280-R2 ①a
   it("a changed durationSeconds fails closed — videoOptions compared via the SAME startGen mapping (videoDefaults+overrides)", async () => {
     const { db, jobs } = fakePrisma();
     jobs.set("prior-vo", {
-      id: "prior-vo", ownerId: OWNER, batchId: "M2", status: "DONE", idempotencyKey: "batch:M2:cell:0",
+      id: "prior-vo", ownerId: OWNER, projectId: PROJECT, batchId: "M2", status: "FAILED",
+      idempotencyKey: factoryAttemptKey("M2", 0, ATTEMPT_A).key,
       prompt: "spin", model: "seedance-2-fast", kind: "VIDEO", count: 1,
       videoOptions: SEEDANCE_DEFAULT_VO, // stored at the 5s default
     });
     const { fn, calls } = spyStartGen(jobs, OWNER);
     const res = await orchestrateBatch(
       { startGen: fn, prisma: db },
-      { ownerId: OWNER, projectId: PROJECT, batchId: "M2", cells: [genCell("spin", { kind: "video", model: "seedance-2-fast", durationSeconds: 10 })] },
+      { ownerId: OWNER, projectId: PROJECT, batchId: "M2", attemptId: ATTEMPT_B, cells: [genCell("spin", { kind: "video", model: "seedance-2-fast", durationSeconds: 10 })] },
     );
     if ("error" in res) throw new Error(res.error);
     expect(res.cells[0]).toMatchObject({ status: "error", credits: 0 }); // 10s ≠ stored 5s
@@ -291,29 +394,31 @@ describe("orchestrateBatch — full-field mismatch fail-closed (NODE-280-R2 ①a
     expect(calls).toHaveLength(0);
   });
 
-  it("changed entityIds fail closed; REORDERED entityIds still reuse (order-normalized compare)", async () => {
+  it("changed or reordered entityIds fail closed because worker input order is material", async () => {
     const { db, jobs } = fakePrisma();
     jobs.set("prior-e", {
-      id: "prior-e", ownerId: OWNER, batchId: "M3", status: "QUEUED", idempotencyKey: "batch:M3:cell:0",
+      id: "prior-e", ownerId: OWNER, projectId: PROJECT, batchId: "M3", status: "FAILED",
+      idempotencyKey: factoryAttemptKey("M3", 0, ATTEMPT_A).key,
       prompt: "a", model: "seedream", kind: "IMAGE", count: 1, entityIds: ["e1", "e2"],
     });
     const { fn, calls } = spyStartGen(jobs, OWNER);
-    // Reordered ids = the same content → reuse (zero dispatch, zero new charge).
+    // Reordering changes the worker's persisted input order → conflict before dispatch.
     const reordered = await orchestrateBatch(
       { startGen: fn, prisma: db },
-      { ownerId: OWNER, projectId: PROJECT, batchId: "M3", cells: [genCell("a", { entityIds: ["e2", "e1"] })] },
+      { ownerId: OWNER, projectId: PROJECT, batchId: "M3", attemptId: ATTEMPT_A, cells: [genCell("a", { entityIds: ["e2", "e1"] })] },
     );
     if ("error" in reordered) throw new Error(reordered.error);
-    expect(reordered.cells[0]).toMatchObject({ status: "reused", jobId: "prior-e", credits: 0 });
-    // A different id SET = different content → fail closed.
+    expect(reordered.cells[0]).toMatchObject({ status: "error", credits: 0 });
+    expect(reordered.cells[0].error).toMatch(/different content/i);
+    // A different id sequence is also different content → fail closed.
     const changed = await orchestrateBatch(
       { startGen: fn, prisma: db },
-      { ownerId: OWNER, projectId: PROJECT, batchId: "M3", cells: [genCell("a", { entityIds: ["e1", "e2", "e3"] })] },
+      { ownerId: OWNER, projectId: PROJECT, batchId: "M3", attemptId: ATTEMPT_B, cells: [genCell("a", { entityIds: ["e1", "e2", "e3"] })] },
     );
     if ("error" in changed) throw new Error(changed.error);
     expect(changed.cells[0]).toMatchObject({ status: "error", credits: 0 });
     expect(changed.cells[0].error).toMatch(/different content/i);
-    expect(calls).toHaveLength(0); // neither run dispatched
+    expect(calls).toHaveLength(0);
   });
 });
 

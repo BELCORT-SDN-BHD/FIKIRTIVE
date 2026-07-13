@@ -99,13 +99,17 @@ export interface OttoContext {
   /** App-level spend entrypoint, injected by the web caller (Task 1.8). The generate tool calls this;
    *  $0 tools never touch it. It is `startGen` from apps/web (unchanged) — which does its own
    *  requireOwner() + genRequest validation + reserve + GenJob insert + enqueue. */
-  startGen?: (req: GenRequestInput) => Promise<{ id: string } | { error: string }>;
+  startGen?: (req: GenRequestInput) => Promise<
+    | { id: string; disposition: "fresh" | "reused" }
+    | { error: string; disposition?: "conflict" }
+  >;
   /** Factory batch port (W-B3-F-P, spec §5.2) — injected by the web caller. Runs a HEADLESS
    *  batch of generations through the SAME startGen authority, one startGen call per cell, so
-   *  there is zero new spend path: each cell reserves/settles/refunds inside startGen, text cells
-   *  are $0, and a replay with the same batchId dedups per cell. The two methods mirror the two
-   *  owner-scoped server actions (runVariantBatch / runBulkGrid). Reached ONLY via this port —
-   *  never importing factory-actions / prisma (single-action-layer rule, same as ctx.startGen). */
+   *  there is zero new spend path: each cell reserves/settles/refunds inside startGen and text
+   *  cells are $0. The server closure injects a caller-stable attemptId (APPROVAL_CARD.id for
+   *  Otto) that is deliberately absent from model args; startGen atomically returns fresh/reused.
+   *  The two methods mirror runVariantBatch / runBulkGrid. Reached ONLY via this port — never
+   *  importing factory-actions / prisma (single-action-layer rule, same as ctx.startGen). */
   runFactoryBatch?: {
     variant(input: Record<string, unknown>): Promise<FactoryBatchResult | { error: string }>;
     bulk(input: Record<string, unknown>): Promise<FactoryBatchResult | { error: string }>;

@@ -219,6 +219,7 @@ export async function buildOttoContext({
   referenceVideoGenerationIds,
   simpleMode,
   approvalConsent,
+  factoryAttemptId,
 }: {
   ownerId: string;
   projectId: string;
@@ -230,6 +231,8 @@ export async function buildOttoContext({
   simpleMode?: boolean;
   /** AR2 处方1: set ONLY by ottoApprove's universal branch — the hash-time updatedAt snapshot. */
   approvalConsent?: { scheduledPostId: string; expectedUpdatedAt: string };
+  /** Server-only factory attempt token: the hash-verified, CAS-consumed APPROVAL_CARD.id. */
+  factoryAttemptId?: string;
 }): Promise<OttoContext> {
   const disabledModels = Array.from(await resolveDisabledModels());
   const imageRefIds = orderedUniqueIds([...(sourceGenerationIds ?? []), sourceGenerationId]);
@@ -273,11 +276,15 @@ export async function buildOttoContext({
     referenceVideoGenerationIds: videoRefIds,
     images,
     startGen,
-    // W-B3-F-P: factory batch port — routes to the SAME owner-scoped server actions
-    // (which loop startGen per cell). Zero new spend path; each cell reserves via startGen.
+    // W-B3-F-P: factory batch port — routes to the SAME owner-scoped server actions. The model
+    // never receives an attemptId; only ottoApprove can inject the verified + consumed card id.
     runFactoryBatch: {
-      variant: (input) => runVariantBatch(input),
-      bulk: (input) => runBulkGrid(input),
+      variant: (input) => factoryAttemptId
+        ? runVariantBatch({ ...input, attemptId: factoryAttemptId })
+        : Promise.resolve({ error: "That batch approval attempt is missing — ask Otto to propose it again." }),
+      bulk: (input) => factoryAttemptId
+        ? runBulkGrid({ ...input, attemptId: factoryAttemptId })
+        : Promise.resolve({ error: "That batch approval attempt is missing — ask Otto to propose it again." }),
     },
     brandContext,
     availableRefs,
@@ -971,6 +978,7 @@ export async function ottoApprove(raw: unknown): Promise<
     // AR2 处方1: the hash-time updatedAt snapshot rides the resume context so the server action
     // CAS-pins exactly the content the hash verified (TOCTOU weld).
     let approvalConsent: { scheduledPostId: string; expectedUpdatedAt: string } | undefined;
+    let factoryAttemptId: string | undefined;
 
     if (!matchingInterruption) {
       const cardMsg = await prisma.chatMessage.findFirst({
@@ -1087,6 +1095,7 @@ export async function ottoApprove(raw: unknown): Promise<
           const resolution = freshPayload && freshPayload.status !== "pending" ? freshPayload.status : "approved";
           return { ok: true, alreadyResolved: true, resolution };
         }
+        if (cardPayload.toolName === "runFactoryBatch") factoryAttemptId = cardMsg.id;
         // Approve — mutates the rehydrated state; resume executes the tool → the SAME owner-scoped
         // server action the human button uses (via ctx.schedule.approve).
         // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -1117,6 +1126,7 @@ export async function ottoApprove(raw: unknown): Promise<
       threadId,
       sourceGenerationId: null,
       approvalConsent,
+      factoryAttemptId,
     });
 
     // Resume the run, metered (LLM cost of this resume turn)

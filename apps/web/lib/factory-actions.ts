@@ -52,6 +52,7 @@ const cellInput = z.discriminatedUnion("type", [genCellInput, textCellInput]);
 const variantBatchInput = z
   .object({
     batchId: idField,
+    attemptId: idField,
     projectId: idField,
     name: z.string().min(1).max(120).optional(),
     base: genCellCore,
@@ -62,6 +63,7 @@ const variantBatchInput = z
 const bulkGridInput = z
   .object({
     batchId: idField,
+    attemptId: idField,
     projectId: idField,
     name: z.string().min(1).max(120).optional(),
     cells: z.array(cellInput).min(1).max(MAX_BATCH_CELLS),
@@ -74,6 +76,7 @@ type Err = { error: string };
  *  treats only the two actions below as action surfaces. */
 async function runBatch(
   batchId: string,
+  attemptId: string,
   projectId: string,
   name: string | undefined,
   cells: BatchCell[],
@@ -88,7 +91,7 @@ async function runBatch(
   const project = await prisma.project.findFirst({ where: { id: projectId, ownerId, deletedAt: null }, select: { id: true } });
   if (!project) return { error: "Project not found." };
 
-  const result = await orchestrateBatch({ startGen, prisma }, { ownerId, projectId, batchId, name, cells });
+  const result = await orchestrateBatch({ startGen, prisma }, { ownerId, projectId, batchId, attemptId, name, cells });
   if (!("error" in result)) revalidatePath("/", "layout");
   return result;
 }
@@ -96,15 +99,15 @@ async function runBatch(
 export async function runVariantBatch(raw: unknown): Promise<BatchResult | Err> {
   const parsed = variantBatchInput.safeParse(raw);
   if (!parsed.success) return { error: "That batch request is out of bounds." };
-  const { batchId, projectId, name, base, variants } = parsed.data;
+  const { batchId, attemptId, projectId, name, base, variants } = parsed.data;
   // Each variant overrides the base → one gen cell.
   const cells: BatchCell[] = variants.map((v) => ({ type: "gen" as const, ...base, ...v }));
-  return runBatch(batchId, projectId, name, cells);
+  return runBatch(batchId, attemptId, projectId, name, cells);
 }
 
 export async function runBulkGrid(raw: unknown): Promise<BatchResult | Err> {
   const parsed = bulkGridInput.safeParse(raw);
   if (!parsed.success) return { error: "That batch request is out of bounds." };
-  const { batchId, projectId, name, cells } = parsed.data;
-  return runBatch(batchId, projectId, name, cells as BatchCell[]);
+  const { batchId, attemptId, projectId, name, cells } = parsed.data;
+  return runBatch(batchId, attemptId, projectId, name, cells as BatchCell[]);
 }

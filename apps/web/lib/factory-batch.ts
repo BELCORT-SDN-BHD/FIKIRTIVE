@@ -13,25 +13,12 @@
  *     reserveCredits / settleCredits / refundReservation, never creates a GenJob,
  *     never calls a provider. Each cell's reserve (same-tx with the GenJob insert)
  *     and each cell's failure-refund happen INSIDE startGen / the worker — per cell.
- *   - Per-cell idempotency key = `batch:<batchId>:cell:<n>` (gate1 style: a stable
- *     parent id + a per-item index). A batch replay with the SAME caller-supplied
- *     batchId reproduces the SAME per-cell keys. startGen's own dedup is ACTIVE-only
- *     (it reuses a QUEUED/GENERATING job for a `batch:` key), so a replay AFTER a cell
- *     is DONE or FAILED would free that key and let startGen re-insert + re-reserve
- *     (double charge). To close that, this layer does an owner-scoped, read-only
- *     any-status precheck per cell BEFORE dispatch: an existing non-failed job (QUEUED/
- *     GENERATING/DONE) is REUSED at zero new charge; a terminal-FAILED job is legitimately
- *     re-dispatched (its refund already happened on the original refId); a reused-batchId
- *     whose stored request no longer matches this cell FAILS CLOSED (no reuse, no spend).
- *     PRECISE replay semantics: SEQUENTIAL replays are dedup-safe end to end. CONCURRENT
- *     replays of the SAME batch are NOT fully safe — in a narrow window a FAILED cell can be
- *     charged twice (replay A re-dispatches it and that fresh job reaches DONE before replay
- *     B's precheck+insert; the ACTIVE-only unique index does not block the second insert).
- *     The structural fix is an all-status partial-unique index for `batch:%` keys (cowork
- *     20260617 precedent) — a migration, pending founder adjudication; until then the
- *     pre-dispatch re-read below only NARROWS that window (登记于 B3-REPORT §⑫ 待裁).
- *     batchId MUST be caller-stable AND unique per batch — the caller owns that contract,
- *     exactly like `cowork:<cardId>` for the generate skill.
+ *   - Per-cell identity has TWO stable parts: logical cell (batchId + index) and caller attempt.
+ *     The 79-char key is `batch:<logical hash>:attempt:<attempt hash>`. startGen parses that key
+ *     and, under its existing owner/project advisory transaction lock, binds the logical cell's
+ *     full material request and decides fresh/reused/conflict from any-status history. The same
+ *     attempt is reusable forever (FAILED included); a new attempt creates only after every prior
+ *     job FAILED. That atomic decision — not this layer's read-only early reject — controls reserve.
  *   - Quote = sum of per-cell `pricedGenCredits(...)` computed from the SAME inputs
  *     the cell hands startGen, so quote == reserve == settle per cell (no batch-level
  *     price constant; §6.5 credits-only via pricedGenCredits).
@@ -42,8 +29,14 @@
  *   - GenerationBatch grouping is a pure metadata write (GenJob.batchId soft-ref,
  *     schema.prisma:465) done AFTER startGen returns — it moves no money.
  */
-import { pricedGenCredits, videoDefaults, GEN_MODELS, GEN_VIDEO_MODELS, type GenSpendInput, type GenVideoModel } from "@fikirtive/core";
+import { pricedGenCredits, GEN_MODELS, GEN_VIDEO_MODELS, type GenSpendInput } from "@fikirtive/core";
 import type { PrismaClient } from "@fikirtive/db";
+import {
+  factoryAttemptKey,
+  factoryMaterialMatches,
+  normalizeFactoryMaterial,
+  type FactoryMaterial,
+} from "./batch-idempotency";
 
 /** Batch size ceiling. A money-safety guard: an unbounded batch would let one
  *  approved call fan out into unbounded per-cell reserves. 24 covers the widest
@@ -93,7 +86,10 @@ export type BatchCell = GenCell | TextCell;
  *  imports the server-action module directly (keeps the spend authority single). */
 export type StartGenPort = (
   req: Record<string, unknown>,
-) => Promise<{ id: string } | { error: string }>;
+) => Promise<
+  | { id: string; disposition: "fresh" | "reused" }
+  | { error: string; disposition?: "conflict" }
+>;
 
 export interface OrchestrateDeps {
   startGen: StartGenPort;
@@ -103,8 +99,10 @@ export interface OrchestrateDeps {
 export interface OrchestrateArgs {
   ownerId: string;
   projectId: string;
-  /** Caller-stable batch id = GenerationBatch.id AND the per-cell key stem. */
+  /** Caller-stable logical batch id = GenerationBatch.id and an input to the per-cell hash. */
   batchId: string;
+  /** Caller-stable for one confirmation/network replay; a later explicit Retry uses a new id. */
+  attemptId: string;
   name?: string;
   threadId?: string | null;
   cells: BatchCell[];
@@ -115,8 +113,8 @@ export interface OrchestrateArgs {
 export interface CellResult {
   index: number;
   type: "gen" | "text";
-  /** queued = a fresh GenJob this run (charged); reused = an existing non-failed job from a prior
-   *  run with the same batchId (zero new charge); text = $0 no-op; error = precheck/startGen refused
+  /** queued = a fresh GenJob this run (charged); reused = an existing job selected atomically by
+   *  startGen (zero new charge); text = $0 no-op; error = precheck/startGen refused
    *  this cell (zero charge). */
   status: "queued" | "reused" | "text" | "error";
   jobId?: string;
@@ -133,55 +131,44 @@ export interface BatchResult {
    *  contribute 0, so this equals the credits actually reserved this run (宪法 3 transparency). */
   totalCredits: number;
   /** dispatched = cells that enqueued a NEW job this run; reused = cells that hit an existing
-   *  non-failed job (no new charge); failed = cells precheck/startGen refused. */
+   *  attempt/logical job (no new charge); failed = cells precheck/startGen refused. */
   dispatched: number;
   reused: number;
   failed: number;
 }
 
-/** The five concrete video controls startGen resolves (videoDefaults + the cell's overrides) and
- *  persists on GenJob.videoOptions — the SINGLE cell-side copy of that mapping (gen-actions.ts
- *  startGen), shared by the price quote (subset) and the replay precheck's full-field compare so
- *  there is never a second, drifting mapping. null for an image cell (startGen persists no
- *  videoOptions). Callers must have passed genCellError first — the model is guaranteed to be a
- *  real video model here, so videoDefaults never reads undefined. PURE. */
-function cellVideoOptions(
-  cell: GenCell,
-): { seconds: number; resolution: string; aspectRatio: string; fps: number; audio: boolean } | null {
-  if (cell.kind !== "video") return null;
-  const d = videoDefaults((cell.model ?? "seedream") as GenVideoModel);
-  return {
-    seconds: cell.durationSeconds ?? d.seconds,
-    resolution: cell.resolution ?? d.resolution,
-    aspectRatio: cell.aspectRatio ?? d.aspectRatio,
-    fps: cell.fps ?? d.fps,
-    audio: cell.audio ?? d.audio,
-  };
+/** Exact persisted request shape, shared with startGen's lock-time binding. Callers pass
+ *  genCellError first so a video model is valid before video defaults are resolved. */
+function cellMaterial(cell: GenCell): FactoryMaterial {
+  return normalizeFactoryMaterial({
+    prompt: cell.prompt,
+    model: cell.model ?? "seedream",
+    kind: cell.kind ?? "image",
+    count: cell.count ?? 1,
+    entityIds: cell.entityIds,
+    variantSel: cell.variantSel,
+    sourceGenerationId: cell.sourceGenerationId,
+    tailGenerationId: cell.tailGenerationId,
+    referenceVideoGenerationId: cell.referenceVideoGenerationId,
+    shotId: cell.shotId,
+    durationSeconds: cell.durationSeconds,
+    resolution: cell.resolution,
+    aspectRatio: cell.aspectRatio,
+    fps: cell.fps,
+    audio: cell.audio,
+  });
 }
 
 /** Build the GenSpendInput a gen cell will hand startGen — the SAME shape
  *  pricedGenCredits + startGen reserve on, so quote == reserve. PURE. */
 function cellSpendInput(cell: GenCell): GenSpendInput {
-  if (cell.kind !== "video") {
-    // image price is flat per image (model-independent); model only shapes validation.
-    return {
-      kind: "IMAGE",
-      model: cell.model ?? "seedream",
-      count: cell.count ?? 1,
-      referenceVideoGenerationId: null,
-      videoOptions: null,
-    };
-  }
-  // VIDEO: resolve the price-relevant controls via the shared cellVideoOptions mapping (the same
-  // videoDefaults resolution startGen applies) BEFORE pricing, so the GenSpendInput handed to
-  // pricedGenCredits is identical -> quote == reserve (NODE-280 item 4). aspectRatio/fps don't
-  // price but ride along harmlessly (pricedGenCredits reads only seconds/resolution/audio).
+  const material = cellMaterial(cell);
   return {
-    kind: "VIDEO",
-    model: cell.model ?? "seedream",
-    count: 1, // video is always 1 clip per job (mirrors startGen)
-    referenceVideoGenerationId: cell.referenceVideoGenerationId ?? null,
-    videoOptions: cellVideoOptions(cell),
+    kind: material.kind,
+    model: material.model,
+    count: material.count,
+    referenceVideoGenerationId: material.referenceVideoGenerationId,
+    videoOptions: material.videoOptions,
   };
 }
 
@@ -212,8 +199,8 @@ export function quoteCell(cell: BatchCell): number {
   return pricedGenCredits(cellSpendInput(cell));
 }
 
-/** Assemble the genRequest a cell hands startGen. idempotencyKey is derived from the
- *  stable batchId + cell index so a replay dedups. genRequest (in startGen) validates. */
+/** Assemble the genRequest a cell hands startGen. The key binds stable logical-cell + attempt
+ *  identities while remaining under genRequest's 80-char cap. */
 function cellGenRequest(
   cell: GenCell,
   args: OrchestrateArgs,
@@ -226,7 +213,7 @@ function cellGenRequest(
     count: cell.kind === "video" ? 1 : cell.count ?? 1,
     kind: cell.kind ?? "image",
     model: cell.model ?? "seedream",
-    idempotencyKey: `batch:${args.batchId}:cell:${index}`,
+    idempotencyKey: factoryAttemptKey(args.batchId, index, args.attemptId).key,
   };
   if (args.threadId) req.threadId = args.threadId;
   if (cell.shotId) req.shotId = cell.shotId;
@@ -267,6 +254,7 @@ export async function orchestrateBatch(
     }
   }
   if (args.batchId.length < 1 || args.batchId.length > MAX_ID) return { error: "Invalid batch id." };
+  if (args.attemptId.length < 1 || args.attemptId.length > MAX_ID) return { error: "Invalid attempt id." };
 
   // Resolve-or-create the grouping row, owner-scoped. The batchId IS the id, so a
   // replay reuses the same row (idempotent grouping). A cross-tenant id collision
@@ -295,54 +283,35 @@ export async function orchestrateBatch(
       continue;
     }
 
-    // Any-status replay precheck (owner-scoped READ; the orchestration layer may read, never
-    // mutate credits). startGen's own dedup is active-only, so without this a DONE/FAILED cell's
-    // freed key would let a same-batchId replay re-insert + re-charge. Decide reuse vs re-dispatch.
-    // The select covers EVERY content field startGen persists so the reuse compare is full-field.
-    const findPriorCellJob = () =>
-      deps.prisma.genJob.findFirst({
-        where: { ownerId: args.ownerId, projectId: args.projectId, idempotencyKey: `batch:${args.batchId}:cell:${i}` },
-        orderBy: { createdAt: "desc" },
-        select: {
-          id: true, status: true, prompt: true, model: true, kind: true, count: true,
-          entityIds: true, variantSel: true, sourceGenerationId: true, tailGenerationId: true,
-          referenceVideoGenerationId: true, shotId: true, videoOptions: true,
-        },
+    // Read-only early reject: content drift can fail before entering startGen, but this read is
+    // NEVER the reserve/reuse authority. startGen repeats the same full binding and disposition
+    // decision under the owner/project advisory transaction lock, closing every concurrency gap.
+    const identity = factoryAttemptKey(args.batchId, i, args.attemptId);
+    const expectedMaterial = cellMaterial(cell);
+    const history = await deps.prisma.genJob.findMany({
+      where: {
+        ownerId: args.ownerId,
+        projectId: args.projectId,
+        idempotencyKey: { startsWith: identity.logicalPrefix },
+      },
+      orderBy: { createdAt: "desc" },
+      select: {
+        id: true, status: true, idempotencyKey: true, prompt: true, model: true, kind: true, count: true,
+        entityIds: true, variantSel: true, sourceGenerationId: true, tailGenerationId: true,
+        referenceVideoGenerationId: true, shotId: true, videoOptions: true,
+      },
+    });
+    if (history.some((prior) => !factoryMaterialMatches(prior, expectedMaterial))) {
+      cells.push({
+        index: i,
+        type: "gen",
+        status: "error",
+        credits: 0,
+        error: "That batchId is already in use for different content — start a new batch with a fresh id.",
       });
-    let prior = await findPriorCellJob();
-    if (!prior || isFailedStatus(prior.status)) {
-      // Defensive NARROWING of the concurrent-replay window — NOT a structural fix (that is the
-      // all-status partial-unique index for `batch:%` keys, cowork 20260617 precedent, which needs
-      // a migration and is pending founder adjudication; B3-REPORT §⑫ 待裁): between the precheck
-      // above and startGen's insert, a CONCURRENT replay of this batch may have re-dispatched this
-      // cell and its fresh job may even reach DONE — startGen's ACTIVE-only dedup would then not
-      // block a second insert (double charge). Re-reading immediately before dispatch shrinks that
-      // window to this read→insert gap; it CANNOT close it.
-      prior = await findPriorCellJob();
-    }
-    if (prior && !isFailedStatus(prior.status)) {
-      // Fail closed if the batchId was reused for DIFFERENT content: reusing the old job would
-      // silently deliver stale content (and misreport this cell's price). No reuse, no spend.
-      if (!priorMatchesCell(prior, cell)) {
-        cells.push({
-          index: i,
-          type: "gen",
-          status: "error",
-          credits: 0,
-          error: "That batchId is already in use for different content — start a new batch with a fresh id.",
-        });
-        continue;
-      }
-      // Reuse the existing (in-flight or done) job — zero NEW charge this run. Re-tag is a cheap,
-      // idempotent, owner-scoped metadata self-heal (grouping is best-effort).
-      await tagJobToBatch(deps.prisma, args.ownerId, prior.id, args.batchId);
-      cells.push({ index: i, type: "gen", status: "reused", jobId: prior.id, credits: 0 });
       continue;
     }
-    // prior is terminal-FAILED (a legitimate retry — its refund already happened on that refId)
-    // or absent → dispatch a fresh paid job.
 
-    const credits = quoteCell(cell);
     const res = await deps.startGen(cellGenRequest(cell, args, i));
     if ("error" in res) {
       // startGen refused this cell (out of credits / disabled model / …). No job, no reserve →
@@ -354,7 +323,11 @@ export async function orchestrateBatch(
     // updateMany so a cross-owner id can never be written; best-effort so a grouping
     // hiccup never fails a cell whose spend already committed inside startGen.
     await tagJobToBatch(deps.prisma, args.ownerId, res.id, args.batchId);
-    cells.push({ index: i, type: "gen", status: "queued", jobId: res.id, credits });
+    if (res.disposition === "fresh") {
+      cells.push({ index: i, type: "gen", status: "queued", jobId: res.id, credits: quoteCell(cell) });
+    } else {
+      cells.push({ index: i, type: "gen", status: "reused", jobId: res.id, credits: 0 });
+    }
   }
 
   const totalCredits = cells.reduce((sum, c) => sum + c.credits, 0);
@@ -362,89 +335,6 @@ export async function orchestrateBatch(
   const reused = cells.filter((c) => c.status === "reused").length;
   const failed = cells.filter((c) => c.status === "error").length;
   return { batchId: args.batchId, cells, totalCredits, dispatched, reused, failed };
-}
-
-/** GenJob terminal-failure state. GenStatus has no CANCELLED — FAILED is the only terminal
- *  failure — so a job in any other state (QUEUED/GENERATING/DONE) is a live/succeeded reuse
- *  candidate. A FAILED job's `batch:` idempotency key is freed (active-only unique index), so a
- *  replay legitimately re-dispatches it; the original attempt's refund already happened. */
-function isFailedStatus(status: string): boolean {
-  return status === "FAILED";
-}
-
-/** Order-normalized id-array compare (entityIds are persisted verbatim; order isn't material). */
-function sameIdSet(a: string[], b: string[]): boolean {
-  if (a.length !== b.length) return false;
-  const sa = [...a].sort();
-  const sb = [...b].sort();
-  return sa.every((v, i) => v === sb[i]);
-}
-
-/** Canonical compare of a stored variantSel Json against the cell's expected record (key-sorted;
- *  null when absent). startGen drops variantSel for video and persists it verbatim for image. */
-function sameVariantSel(prior: unknown, expected: Record<string, string> | null): boolean {
-  const p = prior !== null && typeof prior === "object" && !Array.isArray(prior) ? (prior as Record<string, unknown>) : null;
-  if (p === null || expected === null) return p === null && expected === null;
-  const pk = Object.keys(p).sort();
-  const ek = Object.keys(expected).sort();
-  if (pk.length !== ek.length || !pk.every((k, i) => k === ek[i])) return false;
-  return pk.every((k) => p[k] === expected[k]);
-}
-
-/** Compare a stored videoOptions Json against the cell's expected resolved form (the SAME
- *  videoDefaults+overrides mapping startGen persisted — cellVideoOptions; null for image). */
-function sameVideoOptions(
-  prior: unknown,
-  expected: { seconds: number; resolution: string; aspectRatio: string; fps: number; audio: boolean } | null,
-): boolean {
-  const p = prior !== null && typeof prior === "object" && !Array.isArray(prior) ? (prior as Record<string, unknown>) : null;
-  if (p === null || expected === null) return p === null && expected === null;
-  return (
-    p.seconds === expected.seconds &&
-    p.resolution === expected.resolution &&
-    p.aspectRatio === expected.aspectRatio &&
-    p.fps === expected.fps &&
-    p.audio === expected.audio
-  );
-}
-
-/** Does an existing reuse-candidate job's stored request still match this cell? FULL-FIELD
- *  (NODE-280-R2 ①a): compares EVERY content field startGen persists — prompt/model/kind/count,
- *  the three generation refs + shotId (persisted `?? null`), entityIds (order-normalized),
- *  variantSel (canonical; startGen drops it for video), and videoOptions (compared against the
- *  cell's expected form built by the SAME cellVideoOptions mapping startGen resolves — never a
- *  second mapping). ANY mismatch means the caller reused a batchId for different content — fail
- *  closed rather than silently reuse the old job. Callers must have passed genCellError first. */
-function priorMatchesCell(
-  prior: {
-    prompt: string;
-    model: string;
-    kind: string;
-    count: number;
-    entityIds: string[];
-    variantSel: unknown;
-    sourceGenerationId: string | null;
-    tailGenerationId: string | null;
-    referenceVideoGenerationId: string | null;
-    shotId: string | null;
-    videoOptions: unknown;
-  },
-  cell: GenCell,
-): boolean {
-  const kind = cell.kind === "video" ? "VIDEO" : "IMAGE";
-  const model = cell.model ?? "seedream";
-  const count = cell.kind === "video" ? 1 : cell.count ?? 1;
-  if (prior.prompt !== cell.prompt || prior.model !== model || prior.kind !== kind || prior.count !== count) return false;
-  if ((prior.sourceGenerationId ?? null) !== (cell.sourceGenerationId ?? null)) return false;
-  if ((prior.tailGenerationId ?? null) !== (cell.tailGenerationId ?? null)) return false;
-  if ((prior.referenceVideoGenerationId ?? null) !== (cell.referenceVideoGenerationId ?? null)) return false;
-  if ((prior.shotId ?? null) !== (cell.shotId ?? null)) return false;
-  if (!sameIdSet(prior.entityIds ?? [], cell.entityIds ?? [])) return false;
-  // startGen: effectiveVariantSel = kind === "video" ? undefined : variantSel (persisted or null).
-  const expectedSel = cell.kind === "video" ? null : cell.variantSel ?? null;
-  if (!sameVariantSel(prior.variantSel ?? null, expectedSel)) return false;
-  if (!sameVideoOptions(prior.videoOptions ?? null, cellVideoOptions(cell))) return false;
-  return true;
 }
 
 async function resolveOrCreateBatch(

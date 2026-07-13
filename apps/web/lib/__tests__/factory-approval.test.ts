@@ -34,6 +34,7 @@ const {
   mockChatMessageCreate,
   mockChatMessageUpdateMany,
   mockGenJobFindFirst,
+  mockGenJobFindMany,
   mockGenJobUpdateMany,
   mockProjectFindFirst,
   mockGenerationBatchFindFirst,
@@ -82,6 +83,7 @@ const {
     mockChatMessageCreate: vi.fn(),
     mockChatMessageUpdateMany: vi.fn(),
     mockGenJobFindFirst: vi.fn(),
+    mockGenJobFindMany: vi.fn(),
     mockGenJobUpdateMany: vi.fn(),
     mockProjectFindFirst: vi.fn(),
     mockGenerationBatchFindFirst: vi.fn(),
@@ -122,7 +124,7 @@ vi.mock("@fikirtive/db", () => ({
       create: mockChatMessageCreate,
       updateMany: mockChatMessageUpdateMany,
     },
-    genJob: { findFirst: mockGenJobFindFirst, updateMany: mockGenJobUpdateMany },
+    genJob: { findFirst: mockGenJobFindFirst, findMany: mockGenJobFindMany, updateMany: mockGenJobUpdateMany },
     project: { findFirst: mockProjectFindFirst },
     generationBatch: { findFirst: mockGenerationBatchFindFirst, create: mockGenerationBatchCreate },
     entity: { findMany: mockEntityFindMany },
@@ -153,9 +155,11 @@ vi.mock("@fikirtive/otto", async (importOriginal) => {
 });
 
 const { ottoApprove, finalizeOttoRun } = await import("@/lib/otto-actions");
+const { runBulkGrid } = await import("@/lib/factory-actions");
 const { computeFactoryBatchApprovalContentHash, factoryBatchApprovalHashFromArgs } = await import("@/lib/approval-content-hash");
 const { approvalRefOf, APPROVAL_TOOL_NAMES, allSkills } = await import("@fikirtive/otto");
 const { INTERNAL_PER_DISPLAY } = await import("@fikirtive/core");
+const { factoryAttemptKey } = await import("@/lib/batch-idempotency");
 
 // The REAL registered skill — its `.tool` is the @openai/agents FunctionTool whose invoke(runContext,
 // argsJsonString) does the SDK's own zod parse then runs the skill's execute. Invoking it from the
@@ -226,6 +230,7 @@ beforeEach(() => {
   mockGenerationFindFirst.mockResolvedValue(null);
   mockGenerationFindMany.mockResolvedValue([]);
   mockGenJobFindFirst.mockResolvedValue(null);
+  mockGenJobFindMany.mockResolvedValue([]);
   mockGenJobUpdateMany.mockResolvedValue({ count: 1 });
   mockProjectFindFirst.mockResolvedValue({ id: PROJECT_ID });
   mockGenerationBatchFindFirst.mockResolvedValue(null);
@@ -268,6 +273,26 @@ describe("runFactoryBatch approval seam — ref + hash primitives", () => {
     expect(factoryBatchApprovalHashFromArgs({ ...FACTORY_ARGS, mode: "bogus" })).toBeNull();
     expect(factoryBatchApprovalHashFromArgs({ mode: "variant", batchId: BATCH_ID })).toBeNull();
     expect(factoryBatchApprovalHashFromArgs({ mode: "grid", batchId: BATCH_ID })).toBeNull();
+  });
+
+  it("the direct owner-scoped action requires attemptId in a strict envelope", async () => {
+    const authCalls = mockRequireOwner.mock.calls.length;
+    const missing = await runBulkGrid({
+      batchId: BATCH_ID,
+      projectId: PROJECT_ID,
+      cells: [{ type: "gen", prompt: "a" }],
+    });
+    const unknownAlias = await runBulkGrid({
+      batchId: BATCH_ID,
+      projectId: PROJECT_ID,
+      attemptId: FACTORY_CARD_ID,
+      retryToken: "model-alias",
+      cells: [{ type: "gen", prompt: "a" }],
+    });
+
+    expect(missing).toHaveProperty("error");
+    expect(unknownAlias).toHaveProperty("error");
+    expect(mockRequireOwner).toHaveBeenCalledTimes(authCalls); // schema refusal happens before auth/spend
   });
 });
 
@@ -316,21 +341,29 @@ describe("runFactoryBatch approval — ottoApprove verifies the hash, consumes, 
   let resumedBatchResults: unknown[] = [];
   let capturedResumeCtx: { projectId: string; approvalConsent?: unknown } | null = null;
 
-  function setupFactoryApprove(interruptionItems?: unknown[], payloadOverrides: Record<string, unknown> = {}) {
+  function setupFactoryApprove(
+    interruptionItems?: unknown[],
+    payloadOverrides: Record<string, unknown> = {},
+    cardId = FACTORY_CARD_ID,
+  ) {
     resumedBatchResults = [];
     capturedResumeCtx = null;
+    mockApprove.mockClear();
+    mockRun.mockClear();
+    mockStartGen.mockClear();
     mockChatThreadFindFirst.mockResolvedValue({ id: APPROVE_THREAD_ID, projectId: PROJECT_ID, ottoState: '{"paused":"state"}' });
     mockRunStateFromString.mockResolvedValue(new MockRunState());
     mockGetInterruptions.mockReturnValue(interruptionItems ?? [makeFactoryApprovalItem(FACTORY_ARGS)]);
     mockChatMessageFindFirst.mockImplementation((a: { where?: { kind?: string } } | undefined) =>
       Promise.resolve(
         a?.where?.kind === "APPROVAL_CARD"
-          ? { id: FACTORY_CARD_ID, payload: factoryCardPayload(payloadOverrides) }
+          ? { id: cardId, payload: factoryCardPayload(payloadOverrides) }
           : { seq: 5 },
       ),
     );
     mockStartGen.mockImplementation(async (req: unknown) => ({
       id: `job-${(req as { idempotencyKey: string }).idempotencyKey}`,
+      disposition: "fresh",
     }));
     // SDK-resume semantics (NODE-280-R2 ⑥ continuous chain): after ottoApprove calls
     // state.approve(item), the real runner would execute the approved parked tool call — its
@@ -370,6 +403,8 @@ describe("runFactoryBatch approval — ottoApprove verifies the hash, consumes, 
     );
     // The PARKED runFactoryBatch item was approved (not a generate item).
     expect(mockApprove).toHaveBeenCalledWith(expect.objectContaining({ name: "runFactoryBatch" }), undefined);
+    const approvedArgs = JSON.parse((mockApprove.mock.calls[0]![0] as { arguments: string }).arguments) as Record<string, unknown>;
+    expect(approvedArgs).not.toHaveProperty("attemptId"); // the model-visible parked call never carries it
     // Resume ran inside withLlmBudget (metered) exactly once.
     expect(mockWithLlmBudget).toHaveBeenCalledTimes(1);
     expect(mockRun).toHaveBeenCalledTimes(1);
@@ -391,16 +426,61 @@ describe("runFactoryBatch approval — ottoApprove verifies the hash, consumes, 
     // Per-cell spend went through the ONLY spend authority with the derived batch keys.
     expect(mockStartGen).toHaveBeenCalledTimes(2);
     expect(mockStartGen).toHaveBeenCalledWith(
-      expect.objectContaining({ projectId: PROJECT_ID, idempotencyKey: `batch:${BATCH_ID}:cell:0` }),
+      expect.objectContaining({ projectId: PROJECT_ID, idempotencyKey: factoryAttemptKey(BATCH_ID, 0, FACTORY_CARD_ID).key }),
     );
     expect(mockStartGen).toHaveBeenCalledWith(
-      expect.objectContaining({ projectId: PROJECT_ID, idempotencyKey: `batch:${BATCH_ID}:cell:1` }),
+      expect.objectContaining({ projectId: PROJECT_ID, idempotencyKey: factoryAttemptKey(BATCH_ID, 1, FACTORY_CARD_ID).key }),
     );
     // Strict order along the chain: CAS consume → resume(run) → startGen (consume-then-act).
     expect(mockChatMessageUpdateMany.mock.invocationCallOrder[0]!).toBeLessThan(mockRun.mock.invocationCallOrder[0]!);
     expect(mockRun.mock.invocationCallOrder[0]!).toBeLessThan(mockStartGen.mock.invocationCallOrder[0]!);
     // No scheduled-post TOCTOU snapshot for a factory-batch approval (consent = immutable parked args).
     expect(capturedResumeCtx!.approvalConsent).toBeUndefined();
+  });
+
+  it("a second click on the consumed card returns already-resolved and never executes the batch again", async () => {
+    setupFactoryApprove();
+    const first = await ottoApprove({ threadId: APPROVE_THREAD_ID, cardId: FACTORY_CARD_ID });
+    expect(first).toMatchObject({ ok: true, status: "done" });
+    expect(mockStartGen).toHaveBeenCalledTimes(2);
+
+    mockChatMessageFindFirst.mockImplementation((a: { where?: { kind?: string } } | undefined) =>
+      Promise.resolve(
+        a?.where?.kind === "APPROVAL_CARD"
+          ? { id: FACTORY_CARD_ID, payload: factoryCardPayload({ status: "approved" }) }
+          : { seq: 5 },
+      ),
+    );
+    const second = await ottoApprove({ threadId: APPROVE_THREAD_ID, cardId: FACTORY_CARD_ID });
+
+    expect(second).toMatchObject({ ok: true, alreadyResolved: true, resolution: "approved" });
+    expect(mockRun).toHaveBeenCalledTimes(1);
+    expect(mockStartGen).toHaveBeenCalledTimes(2); // no second batch execution / reserve path
+  });
+
+  it("a new approved card injects a distinct server attempt while parked model args stay unchanged", async () => {
+    setupFactoryApprove(undefined, {}, FACTORY_CARD_ID);
+    const first = await ottoApprove({ threadId: APPROVE_THREAD_ID, cardId: FACTORY_CARD_ID });
+    expect(first).toMatchObject({ ok: true, status: "done" });
+    const firstKeys = mockStartGen.mock.calls.map((call) => (call[0] as { idempotencyKey: string }).idempotencyKey);
+
+    const nextCardId = "card_factory_2";
+    setupFactoryApprove(undefined, {}, nextCardId);
+    const second = await ottoApprove({ threadId: APPROVE_THREAD_ID, cardId: nextCardId });
+    expect(second).toMatchObject({ ok: true, status: "done" });
+    const secondKeys = mockStartGen.mock.calls.map((call) => (call[0] as { idempotencyKey: string }).idempotencyKey);
+
+    expect(firstKeys).toEqual([
+      factoryAttemptKey(BATCH_ID, 0, FACTORY_CARD_ID).key,
+      factoryAttemptKey(BATCH_ID, 1, FACTORY_CARD_ID).key,
+    ]);
+    expect(secondKeys).toEqual([
+      factoryAttemptKey(BATCH_ID, 0, nextCardId).key,
+      factoryAttemptKey(BATCH_ID, 1, nextCardId).key,
+    ]);
+    expect(secondKeys).not.toEqual(firstKeys);
+    const parkedArgs = JSON.parse((mockApprove.mock.calls[0]![0] as { arguments: string }).arguments) as Record<string, unknown>;
+    expect(parkedArgs).not.toHaveProperty("attemptId");
   });
 
   it("anti-flip: the variants were swapped (same batchId) after mint → the card no longer matches any parked call → hard refuse, no consume, no approve, no run", async () => {
