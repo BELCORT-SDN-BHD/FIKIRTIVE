@@ -1839,6 +1839,43 @@ describe("prepareStoryboardVideos — $0 铸视频子卡(闸②)", () => {
     expect(mockGenJobCreate).not.toHaveBeenCalled();
   });
 
+  // 微修轮 v6(NODE-282-R5①):thread 活性并入锁内 fresh 守卫。锁前 loadCard 校验过
+  // thread.deletedAt/ownerId,但等锁期间 thread 可被软删——锁内 fresh 查询带 live-thread
+  // 关系过滤,失活→与卡消失同形 fail-closed("Card not found.",零写)。v5 的锁内查询不带
+  // thread 过滤,会在死 thread 上照常铸卡(红对照)。
+  it("R5① thread 失活:等锁期间 thread 软删 → 锁后 fail-closed 零写(Card not found.)", async () => {
+    mockVideoProposeCard();
+    const p = videoPayload3(); // s0 eligible —— 若不守卫会照常铸卡
+    let threadDeletedAt: string | null = null; // simulated thread row state
+    mockChatFindFirst.mockImplementation(async (args: { where?: Record<string, unknown>; orderBy?: unknown }) => {
+      const where = args?.where ?? {};
+      if (where.kind === "STORYBOARD_CARD") {
+        // Emulate the DB: a query CARRYING the live-thread relation filter finds nothing once
+        // the thread is soft-deleted; a query WITHOUT the filter still returns the card row.
+        if (where.thread && threadDeletedAt !== null) return null;
+        return where.id === "card-1" ? card(p) : null;
+      }
+      if (args?.orderBy) return { seq: 10 };
+      return null;
+    });
+
+    // An in-flight card writer holds the lock; the THREAD dies while we wait.
+    let releaseLock!: () => void;
+    cardLocks.set("card:card-1", new Promise<void>((r) => (releaseLock = r)));
+    const prepP = prepareStoryboardVideos({ cardId: "card-1" });
+    await new Promise((r) => setTimeout(r, 0)); // park on the lock (outer loadCard saw a LIVE thread)
+    threadDeletedAt = "2026-07-13T00:00:00Z"; // thread soft-deleted DURING the lock wait
+    releaseLock();
+
+    const res = await prepP;
+    expect(res).toEqual({ error: "Card not found." }); // same shape as card-vanished fail-closed
+    expect(mockTxChatCreate).not.toHaveBeenCalled(); // zero staged writes
+    expect(mockTxChatUpdate).not.toHaveBeenCalled();
+    expect(mockChatCreate).not.toHaveBeenCalled(); // zero committed writes
+    expect(mockChatUpdate).not.toHaveBeenCalled();
+    expect(mockGenJobCreate).not.toHaveBeenCalled(); // $0 throughout
+  });
+
   it("$0 铁证:genJob.create 从未被调", async () => {
     mockVideoProposeCard();
     wireLoads(card(videoPayload3()));

@@ -22,8 +22,13 @@
  * 数据流规则(微修轮 v5, NODE-282-R4①):锁前计算的任何值不得流入写路径 —— 模型配置
  * (resolveDisabledModels)、owned-entity 集、threadId、OttoContext 一律在取锁之后按锁内
  * 重读的 fresh payload 重新派生(完备对照表见 PR #282 v5 说明)。锁前读仅剩三类:身份
- * (session ownerId / 不可变主键 card.id=锁主体,行活性由锁内 fresh guard 复核)、zod 入参、
- * 只读预检(其拒绝路径零写)。
+ * (session ownerId / 不可变主键 card.id=锁主体;行活性**含 thread 活性**由锁内 fresh
+ * guard 复核 —— fresh 查询带 live-thread 关系过滤,thread 在等锁期间失活=与卡消失同形
+ * fail-closed,v6/R5①)、zod 入参、只读预检(其拒绝路径零写)。
+ *
+ * 锁后读经 tx(v6, R5③):spentOf / ownedEntityIdsFor / doneJobFor / firstGenerationIdOf
+ * 均接收调用方的 tx,锁内读真正跑在被锁事务里。resolveDisabledModels 是跨文件的全局
+ * 配置读(非卡状态,不受卡锁覆盖)——按锁后时点调用,连接归属与其一致性无关,如实陈述。
  */
 import { z } from "zod";
 import { prisma, Prisma } from "@fikirtive/db";
@@ -62,10 +67,11 @@ async function loadCard(cardId: string, ownerId: string) {
   return card;
 }
 
-/** 该 owner 拥有的 entity id(对齐 buildOttoContext / propose-pack 的取法)。空输入不查库。 */
-async function ownedEntityIdsFor(ownerId: string, entityIds: string[]): Promise<string[]> {
+/** 该 owner 拥有的 entity id(对齐 buildOttoContext / propose-pack 的取法)。空输入不查库。
+ *  v6(R5③):经调用方 tx 读,锁内调用真正跑在被锁事务里。 */
+async function ownedEntityIdsFor(tx: PrismaTx, ownerId: string, entityIds: string[]): Promise<string[]> {
   if (entityIds.length === 0) return [];
-  const owned = await prisma.entity.findMany({
+  const owned = await tx.entity.findMany({
     where: { id: { in: entityIds }, ownerId, deletedAt: null },
     select: { id: true },
   });
@@ -86,9 +92,10 @@ function minimalCtx(ownerId: string, threadId: string, disabledModels: string[])
   };
 }
 
-/** 只读:子卡是否已存在其 cowork:<childCardId> 幂等 job(镜像 coworkGenerate 的 guard 读,绝不写)。 */
-async function spentOf(childCardId: string, ownerId: string): Promise<boolean> {
-  const job = await prisma.genJob.findFirst({
+/** 只读:子卡是否已存在其 cowork:<childCardId> 幂等 job(镜像 coworkGenerate 的 guard 读,
+ *  绝不写)。v6(R5③):经调用方 tx 读,锁内调用真正跑在被锁事务里。 */
+async function spentOf(tx: PrismaTx, childCardId: string, ownerId: string): Promise<boolean> {
+  const job = await tx.genJob.findFirst({
     where: { ownerId, idempotencyKey: `cowork:${childCardId}` },
     select: { id: true },
   });
@@ -301,12 +308,14 @@ export async function prepareStoryboardFirstFrames(
     await lockCardTx(tx, card.id); // NODE-282①: serialize concurrent prepares/regens on this card
     // Re-read the parent payload INSIDE the tx (RMW) so a concurrent edit can't be clobbered.
     const fresh = await tx.chatMessage.findFirst({
-      where: { id: card.id, ownerId, kind: "STORYBOARD_CARD", deletedAt: null },
+      where: { id: card.id, ownerId, kind: "STORYBOARD_CARD", deletedAt: null, thread: { deletedAt: null, ownerId } },
       select: { payload: true, threadId: true },
     });
-    // R3① fail-closed: the card vanished (deleted / kind changed / payload gone) between
-    // the outer load and the lock → ZERO writes, and NO fallback to the pre-lock `cur`
-    // snapshot — a stale snapshot must never drive writes. Caller surfaces "Card not found.".
+    // R3①+R5① fail-closed: the card vanished (deleted / kind changed / payload gone) OR its
+    // THREAD died (soft-deleted / re-owned — the where above carries the live-thread relation
+    // filter) between the outer load and the lock → ZERO writes, and NO fallback to the
+    // pre-lock `cur` snapshot — a stale snapshot must never drive writes. Caller surfaces
+    // "Card not found.".
     if (!fresh?.payload) {
       cardVanished = true;
       return;
@@ -320,7 +329,7 @@ export async function prepareStoryboardFirstFrames(
     // pre-lock snapshot. (Same sourcing as buildOttoContext; entity read runs in-lock.)
     const disabledModels = Array.from(await resolveDisabledModels());
     const allEntityIds = [...new Set(payload.shots.flatMap((s) => s.entityIds ?? []))];
-    const ownedIds = await ownedEntityIdsFor(ownerId, allEntityIds);
+    const ownedIds = await ownedEntityIdsFor(tx, ownerId, allEntityIds);
     const ctx = minimalCtx(ownerId, fresh.threadId, disabledModels);
     const parent = { id: card.id, threadId: fresh.threadId };
 
@@ -345,7 +354,7 @@ export async function prepareStoryboardFirstFrames(
           existing && ((existing.payload ?? {}) as { structuredPrompt?: unknown }).structuredPrompt;
         if (existing && existingPrompt === shot.firstFramePrompt) {
           // Fresh → REUSE, do not mint. Compute spent (genJobId OR idempotency job).
-          const spent = existing.genJobId != null || (await spentOf(existing.id, ownerId));
+          const spent = existing.genJobId != null || (await spentOf(tx, existing.id, ownerId));
           const p = (existing.payload ?? {}) as { structuredPrompt?: string; entityIds?: string[]; estimatedCredits?: number };
           children.push({
             shotId: shot.shotId,
@@ -419,12 +428,14 @@ export async function regenShotFirstFrameCard(
   await prisma.$transaction(async (tx) => {
     await lockCardTx(tx, card.id); // NODE-282①: serialize concurrent prepares/regens on this card
     const fresh = await tx.chatMessage.findFirst({
-      where: { id: card.id, ownerId, kind: "STORYBOARD_CARD", deletedAt: null },
+      where: { id: card.id, ownerId, kind: "STORYBOARD_CARD", deletedAt: null, thread: { deletedAt: null, ownerId } },
       select: { payload: true, threadId: true },
     });
-    // R3① fail-closed: the card vanished (deleted / kind changed / payload gone) between
-    // the outer load and the lock → ZERO writes, and NO fallback to the pre-lock `cur`
-    // snapshot — a stale snapshot must never drive writes. Caller surfaces "Card not found.".
+    // R3①+R5① fail-closed: the card vanished (deleted / kind changed / payload gone) OR its
+    // THREAD died (soft-deleted / re-owned — the where above carries the live-thread relation
+    // filter) between the outer load and the lock → ZERO writes, and NO fallback to the
+    // pre-lock `cur` snapshot — a stale snapshot must never drive writes. Caller surfaces
+    // "Card not found.".
     if (!fresh?.payload) {
       cardVanished = true;
       return;
@@ -452,7 +463,7 @@ export async function regenShotFirstFrameCard(
       const existingPrompt =
         existing && ((existing.payload ?? {}) as { structuredPrompt?: unknown }).structuredPrompt;
       if (existing && existingPrompt === target.firstFramePrompt) {
-        const spent = existing.genJobId != null || (await spentOf(existing.id, ownerId));
+        const spent = existing.genJobId != null || (await spentOf(tx, existing.id, ownerId));
         if (!spent) {
           const p = (existing.payload ?? {}) as {
             structuredPrompt?: string;
@@ -476,7 +487,7 @@ export async function regenShotFirstFrameCard(
       // missing / stale prompt → fall through to mint.
     }
 
-    const ownedAll = await ownedEntityIdsFor(ownerId, target.entityIds ?? []);
+    const ownedAll = await ownedEntityIdsFor(tx, ownerId, target.entityIds ?? []);
     child = await mintChild(tx, parent, target, ownerId, ctx, ownedAll);
     const newChildId = child.childCardId;
 
@@ -505,15 +516,17 @@ export async function regenShotFirstFrameCard(
 
 /** Read-only: the child card's finished GenJob, if any. Prefer the best-effort
  *  `genJobId` link coworkGenerate stamped (cowork-actions.ts:614); fall back to the
- *  durable `cowork:<childId>` idempotency key (mirrors spentOf's read). Never writes. */
-async function doneJobFor(childCardId: string, ownerId: string): Promise<{ id: string } | null> {
-  const child = await prisma.chatMessage.findFirst({
+ *  durable `cowork:<childId>` idempotency key (mirrors spentOf's read). Never writes.
+ *  v6(R5③): reads via the caller's tx — the in-lock sampling truly runs inside the
+ *  locked transaction. */
+async function doneJobFor(tx: PrismaTx, childCardId: string, ownerId: string): Promise<{ id: string } | null> {
+  const child = await tx.chatMessage.findFirst({
     where: { id: childCardId, ownerId, kind: "GEN_CARD", deletedAt: null },
     select: { genJobId: true },
   });
   const job = child?.genJobId
-    ? await prisma.genJob.findFirst({ where: { id: child.genJobId, ownerId }, select: { id: true, status: true } })
-    : await prisma.genJob.findFirst({
+    ? await tx.genJob.findFirst({ where: { id: child.genJobId, ownerId }, select: { id: true, status: true } })
+    : await tx.genJob.findFirst({
         where: { ownerId, idempotencyKey: `cowork:${childCardId}` },
         select: { id: true, status: true },
       });
@@ -523,8 +536,8 @@ async function doneJobFor(childCardId: string, ownerId: string): Promise<{ id: s
 
 /** Read-only: the first Generation id this DONE job produced, via its durable GEN_RESULT
  *  message (owner-scoped). Returns null if the result isn't written yet or is malformed. */
-async function firstGenerationIdOf(genJobId: string, ownerId: string): Promise<string | null> {
-  const result = await prisma.chatMessage.findFirst({
+async function firstGenerationIdOf(tx: PrismaTx, genJobId: string, ownerId: string): Promise<string | null> {
+  const result = await tx.chatMessage.findFirst({
     where: { genJobId, ownerId, kind: "GEN_RESULT", deletedAt: null },
     select: { payload: true },
   });
@@ -583,12 +596,13 @@ export async function syncStoryboardMedia(
     // mint (and charge) AGAIN for the same shot. Locking makes race == serial semantics.
     await lockCardTx(tx, card.id);
     const fresh = await tx.chatMessage.findFirst({
-      where: { id: card.id, ownerId, kind: "STORYBOARD_CARD", deletedAt: null },
+      where: { id: card.id, ownerId, kind: "STORYBOARD_CARD", deletedAt: null, thread: { deletedAt: null, ownerId } },
       select: { payload: true },
     });
-    // R3① fail-closed: the card vanished (deleted / kind changed / payload gone) between
-    // the outer load and the lock → return the null sentinel (ZERO writes); NO fallback to
-    // the pre-lock `cur` snapshot. The caller surfaces "Card not found.".
+    // R3①+R5① fail-closed: the card vanished (deleted / kind changed / payload gone) OR its
+    // THREAD died (live-thread relation filter above) between the outer load and the lock →
+    // return the null sentinel (ZERO writes); NO fallback to the pre-lock `cur` snapshot.
+    // The caller surfaces "Card not found.".
     if (!fresh?.payload) return null;
     const p = fresh.payload as unknown as StoryboardCardPayload;
 
@@ -614,9 +628,9 @@ export async function syncStoryboardMedia(
     const cascadeShots = new Set<string>();
     for (const shot of p.shots) {
       if (shot.firstFrameCardId) {
-        const job = await doneJobFor(shot.firstFrameCardId, ownerId);
+        const job = await doneJobFor(tx, shot.firstFrameCardId, ownerId);
         if (job) {
-          const genId = await firstGenerationIdOf(job.id, ownerId);
+          const genId = await firstGenerationIdOf(tx, job.id, ownerId);
           if (genId && genId !== shot.firstFrameGenerationId) {
             frameWrites[shot.shotId] = genId;
             // Cascade only when REPLACING a prior genId — never on the first-ever frame write.
@@ -625,9 +639,9 @@ export async function syncStoryboardMedia(
         }
       }
       if (shot.videoCardId) {
-        const job = await doneJobFor(shot.videoCardId, ownerId);
+        const job = await doneJobFor(tx, shot.videoCardId, ownerId);
         if (job) {
-          const genId = await firstGenerationIdOf(job.id, ownerId);
+          const genId = await firstGenerationIdOf(tx, job.id, ownerId);
           if (genId && genId !== shot.videoGenerationId) videoWrites[shot.shotId] = genId;
         }
       }
@@ -740,12 +754,14 @@ export async function prepareStoryboardVideos(
     await lockCardTx(tx, card.id); // NODE-282①: serialize concurrent prepares/regens on this card
     // Re-read the parent payload INSIDE the tx (RMW) so a concurrent edit can't be clobbered.
     const fresh = await tx.chatMessage.findFirst({
-      where: { id: card.id, ownerId, kind: "STORYBOARD_CARD", deletedAt: null },
+      where: { id: card.id, ownerId, kind: "STORYBOARD_CARD", deletedAt: null, thread: { deletedAt: null, ownerId } },
       select: { payload: true, threadId: true },
     });
-    // R3① fail-closed: the card vanished (deleted / kind changed / payload gone) between
-    // the outer load and the lock → ZERO writes, and NO fallback to the pre-lock `cur`
-    // snapshot — a stale snapshot must never drive writes. Caller surfaces "Card not found.".
+    // R3①+R5① fail-closed: the card vanished (deleted / kind changed / payload gone) OR its
+    // THREAD died (soft-deleted / re-owned — the where above carries the live-thread relation
+    // filter) between the outer load and the lock → ZERO writes, and NO fallback to the
+    // pre-lock `cur` snapshot — a stale snapshot must never drive writes. Caller surfaces
+    // "Card not found.".
     if (!fresh?.payload) {
       cardVanished = true;
       return;
@@ -813,7 +829,7 @@ export async function prepareStoryboardVideos(
         // makes aggregate-prepare idempotent under double-click / mid-flight re-entry. We mint a
         // fresh replacement ONLY when there is no child or the match fails (genuinely stale inputs).
         if (existing && videoChildMatches(ep, wouldBe)) {
-          const spent = existing.genJobId != null || (await spentOf(existing.id, ownerId));
+          const spent = existing.genJobId != null || (await spentOf(tx, existing.id, ownerId));
           children.push({
             shotId: shot.shotId,
             childCardId: existing.id,
@@ -896,12 +912,14 @@ export async function regenShotVideoCard(
   await prisma.$transaction(async (tx) => {
     await lockCardTx(tx, card.id); // NODE-282①: serialize concurrent prepares/regens on this card
     const fresh = await tx.chatMessage.findFirst({
-      where: { id: card.id, ownerId, kind: "STORYBOARD_CARD", deletedAt: null },
+      where: { id: card.id, ownerId, kind: "STORYBOARD_CARD", deletedAt: null, thread: { deletedAt: null, ownerId } },
       select: { payload: true, threadId: true },
     });
-    // R3① fail-closed: the card vanished (deleted / kind changed / payload gone) between
-    // the outer load and the lock → ZERO writes, and NO fallback to the pre-lock `cur`
-    // snapshot — a stale snapshot must never drive writes. Caller surfaces "Card not found.".
+    // R3①+R5① fail-closed: the card vanished (deleted / kind changed / payload gone) OR its
+    // THREAD died (soft-deleted / re-owned — the where above carries the live-thread relation
+    // filter) between the outer load and the lock → ZERO writes, and NO fallback to the
+    // pre-lock `cur` snapshot — a stale snapshot must never drive writes. Caller surfaces
+    // "Card not found.".
     if (!fresh?.payload) {
       cardVanished = true;
       return;
@@ -947,7 +965,7 @@ export async function regenShotVideoCard(
       });
       const ep = (existing?.payload ?? {}) as ExistingVideoChild;
       if (existing && videoChildMatches(ep, wouldBe)) {
-        const spent = existing.genJobId != null || (await spentOf(existing.id, ownerId));
+        const spent = existing.genJobId != null || (await spentOf(tx, existing.id, ownerId));
         if (!spent) {
           child = {
             shotId: target.shotId,
