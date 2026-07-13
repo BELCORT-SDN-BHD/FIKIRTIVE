@@ -59,7 +59,7 @@ import {
   revokeSharePreview,
 } from "./schedule-actions";
 import { asApprovalCardPayload, type ApprovalCardPayload, type ApprovalCardSummary } from "./approval-card-view";
-import { computeApprovalContentHash, computeRefgenApprovalContentHash, APPROVAL_CARD_TTL_MS } from "./approval-content-hash";
+import { computeApprovalContentHash, refgenApprovalHashFromArgs, APPROVAL_CARD_TTL_MS } from "./approval-content-hash";
 import { readPageCached } from "./web-page-cache";
 import { fetchOwnerInsights } from "./meta-insights";
 import { fetchOwnerAdPerformance } from "./meta-performance";
@@ -411,21 +411,11 @@ async function readApprovalConsent(
   // approve). No entity read is needed to be approvable — startRefGen owner-gates the entity at execute
   // time; the generic approval-card view renders this card (named action, no rich summary).
   if (toolName === "generateReferences") {
-    if (
-      !args ||
-      typeof args.entityId !== "string" || args.entityId.length === 0 ||
-      typeof args.prompt !== "string" || args.prompt.length === 0
-    ) {
-      return null; // no bindable consent ⇒ fail-closed (hashless, unapprovable card)
-    }
+    const contentHash = refgenApprovalHashFromArgs(args);
+    if (!contentHash) return null; // no bindable consent ⇒ fail-closed (hashless, unapprovable card)
     return {
       summary: null,
-      contentHash: computeRefgenApprovalContentHash({
-        entityId: args.entityId,
-        prompt: args.prompt,
-        count: typeof args.count === "number" ? args.count : null,
-        mode: typeof args.mode === "string" ? args.mode : null,
-      }),
+      contentHash,
       updatedAt: "", // no mutable row ⇒ no TOCTOU snapshot (only approveScheduledPost threads one)
     };
   }
@@ -469,6 +459,10 @@ async function readApprovalConsent(
  * Persist one APPROVAL_CARD per parked non-generate approval. Deduped per (toolName, ref,
  * status=pending): a rehydrated run can re-park the SAME pending tool call (the user sent another
  * message while an approval waited), and that must not mint a second card for one consent.
+ * generateReferences additionally pins contentHash in the dedup (P2 ref collision): its ref
+ * (entityId) is NOT unique across two same-entity parks with different prompts — without the hash,
+ * the second distinct ask would silently reuse the first ask's card and become unapprovable. The
+ * re-park-same-call dedup still holds (same args ⇒ same hash ⇒ same card).
  */
 async function persistPendingApprovalCards(args: {
   ownerId: string;
@@ -479,6 +473,10 @@ async function persistPendingApprovalCards(args: {
   let seq = args.seqStart;
   const cardIds: string[] = [];
   for (const a of args.approvals) {
+    // P2 ref collision: refgen's consent object is the parked args themselves, so the pending-card
+    // identity must include their hash (null for unbindable args — those dedupe by ref alone and
+    // mint a hashless, unapprovable card).
+    const refgenHash = a.toolName === "generateReferences" ? refgenApprovalHashFromArgs(a.args) : null;
     const existing = await prisma.chatMessage.findFirst({
       where: {
         threadId: args.threadId,
@@ -488,6 +486,7 @@ async function persistPendingApprovalCards(args: {
           { payload: { path: ["toolName"], equals: a.toolName } },
           { payload: { path: ["ref"], equals: a.ref } },
           { payload: { path: ["status"], equals: "pending" } },
+          ...(refgenHash !== null ? [{ payload: { path: ["contentHash"], equals: refgenHash } }] : []),
         ],
       },
       select: { id: true },
@@ -968,6 +967,9 @@ export async function ottoApprove(raw: unknown): Promise<
         // (toolName, ref) binding FIRST — locate the parked interruption this card refers to. We need
         // its exact args to bind the consent for tools whose consent object IS the parked call
         // (generateReferences), and it lets a stale/already-approved card short-circuit before any read.
+        // P2 ref collision: for generateReferences the ref (entityId) is NOT unique — two same-entity
+        // parks with different prompts share it — so the match is additionally pinned to the card's
+        // content hash: each card matches exactly ITS OWN parked call, never a sibling's.
         const targetItem = interruptions.find((item) => {
           // eslint-disable-next-line @typescript-eslint/no-explicit-any
           const it = item as any;
@@ -975,7 +977,11 @@ export async function ottoApprove(raw: unknown): Promise<
           if (!toolName || toolName === "generate" || toolName !== cardPayload.toolName) return false;
           try {
             const args = JSON.parse(it.arguments ?? it.rawItem?.arguments ?? "{}") as Record<string, unknown>;
-            return approvalRefOf(toolName, args) === cardPayload.ref;
+            if (approvalRefOf(toolName, args) !== cardPayload.ref) return false;
+            if (toolName === "generateReferences") {
+              return refgenApprovalHashFromArgs(args) === cardPayload.contentHash;
+            }
+            return true;
           } catch {
             return false;
           }
@@ -989,6 +995,15 @@ export async function ottoApprove(raw: unknown): Promise<
               select: { approvedAt: true },
             });
             if (post?.approvedAt) {
+              // NODE-279① regression fix: hash BEFORE consume on this short-circuit too — the
+              // pre-reorder code verified the content hash before ANY resolution path could run.
+              // approvedAt=true must not launder a drifted card: if the post's material fields
+              // changed since mint (or the card is hashless), hard-refuse WITHOUT consuming,
+              // exactly like the main path below.
+              const current = await readApprovalConsent(ownerId, cardPayload.toolName, cardPayload.ref);
+              if (!cardPayload.contentHash || !current || current.contentHash !== cardPayload.contentHash) {
+                return { error: "This post changed since Otto asked — review it and ask Otto to request approval again." };
+              }
               await consumeApprovalCard(cardMsg.id, ownerId, cardPayload, "approved");
               return { ok: true, alreadyResolved: true, resolution: "approved" };
             }
@@ -1343,7 +1358,13 @@ export async function ottoReject(raw: unknown): Promise<
             if (!toolName || toolName === "generate" || toolName !== cardPayload.toolName) return false;
             try {
               const args = JSON.parse(it.arguments ?? it.rawItem?.arguments ?? "{}") as Record<string, unknown>;
-              return approvalRefOf(toolName, args) === cardPayload.ref;
+              if (approvalRefOf(toolName, args) !== cardPayload.ref) return false;
+              // P2 ref collision (same as ottoApprove's matcher): a refgen card must reject exactly
+              // ITS OWN parked call, never a same-entity sibling's still-pending ask.
+              if (toolName === "generateReferences") {
+                return refgenApprovalHashFromArgs(args) === cardPayload.contentHash;
+              }
+              return true;
             } catch {
               return false;
             }

@@ -289,13 +289,15 @@ describe("generateReferences approval — ottoApprove verifies the hash, consume
     expect(resumeCtx.approvalConsent).toBeUndefined();
   });
 
-  it("anti-flip: the prompt was swapped (same entity) after mint → content-hash mismatch → hard refuse, no consume, no approve, no run", async () => {
-    // ref still matches (entityId unchanged), so ONLY the content hash can catch the swap.
+  it("anti-flip: the prompt was swapped (same entity) after mint → the card no longer matches any parked call → hard refuse, no consume, no approve, no run", async () => {
+    // ref still matches (entityId unchanged), so ONLY the content hash can catch the swap. With the
+    // hash-pinned matcher (P2 ref collision fix) the swapped interruption is simply NOT this card's
+    // parked ask — refusal, zero consume, zero approve, zero run.
     setupRefgenApprove([makeRefgenApprovalItem({ ...REFGEN_ARGS, prompt: "a BLUE cap — swapped after consent" })]);
 
     const res = await ottoApprove({ threadId: REFGEN_THREAD_ID, cardId: REFGEN_CARD_ID });
 
-    expect(res).toMatchObject({ error: expect.stringMatching(/reference request changed/i) });
+    expect(res).toMatchObject({ error: expect.stringMatching(/isn't awaiting approval/i) });
     expect(mockChatMessageUpdateMany).not.toHaveBeenCalled(); // NOT consumed — the ask stays re-requestable
     expect(mockApprove).not.toHaveBeenCalled();
     expect(mockRun).not.toHaveBeenCalled();
@@ -309,5 +311,78 @@ describe("generateReferences approval — ottoApprove verifies the hash, consume
     expect(res).toMatchObject({ error: expect.any(String) });
     expect(mockApprove).not.toHaveBeenCalled();
     expect(mockRun).not.toHaveBeenCalled();
+  });
+});
+
+// ── P2 ref collision (控制面独立发现): ref=entityId is NOT unique across two same-entity parks ──────
+describe("generateReferences approval — same-entity multi-park (P2 ref collision): each card binds ITS OWN parked call", () => {
+  const ARGS_A = { entityId: ENTITY_ID, prompt: "prompt A — a red cap", count: 2, mode: "REFSHEET" };
+  const ARGS_B = { entityId: ENTITY_ID, prompt: "prompt B — a blue scarf", count: 1, mode: "BASE" };
+  const HASH_A = computeRefgenApprovalContentHash({ entityId: ENTITY_ID, prompt: ARGS_A.prompt, count: 2, mode: "REFSHEET" });
+  const HASH_B = computeRefgenApprovalContentHash({ entityId: ENTITY_ID, prompt: ARGS_B.prompt, count: 1, mode: "BASE" });
+
+  it("mint: two same-entity parks with different prompts mint TWO cards (dedup discriminates by contentHash, not just ref)", async () => {
+    mockChatMessageFindFirst.mockImplementation((a: { where?: { kind?: string } } | undefined) =>
+      Promise.resolve(a?.where?.kind === "APPROVAL_CARD" ? null : { seq: 3 }),
+    );
+
+    const res = await finalizeOttoRun({
+      ownerId: OWNER_ID,
+      threadId: THREAD_ID,
+      isNew: false,
+      priorOttoState: '{"p":1}',
+      result: makeMockResult({ interruptions: [makeRefgenApprovalItem(ARGS_A), makeRefgenApprovalItem(ARGS_B)] }),
+      seqAfterUser: 3,
+    });
+
+    expect((res as { pendingCardIds: string[] }).pendingCardIds).toHaveLength(2);
+    const cardCreates = mockChatMessageCreate.mock.calls
+      .map((c) => (c[0] as { data: { kind: string; payload?: { contentHash?: string } } }).data)
+      .filter((d) => d.kind === "APPROVAL_CARD");
+    expect(cardCreates.map((d) => d.payload?.contentHash)).toEqual([HASH_A, HASH_B]);
+    // The dedup lookup itself pins the hash (a same-args re-park still reuses its card; a different
+    // ask for the same entity does NOT steal it).
+    const dedupWhere = (mockChatMessageFindFirst.mock.calls.find(
+      (c) => (c[0] as { where?: { kind?: string } })?.where?.kind === "APPROVAL_CARD",
+    )![0] as { where: { AND: unknown[] } }).where;
+    expect(dedupWhere.AND).toContainEqual({ payload: { path: ["contentHash"], equals: HASH_A } });
+  });
+
+  function setupTwoParks(cardHash: string) {
+    mockChatThreadFindFirst.mockResolvedValue({ id: REFGEN_THREAD_ID, projectId: PROJECT_ID, ottoState: '{"paused":"state"}' });
+    mockRunStateFromString.mockResolvedValue(new MockRunState());
+    mockGetInterruptions.mockReturnValue([makeRefgenApprovalItem(ARGS_A), makeRefgenApprovalItem(ARGS_B)]);
+    mockChatMessageFindFirst.mockImplementation((a: { where?: { kind?: string } } | undefined) =>
+      Promise.resolve(
+        a?.where?.kind === "APPROVAL_CARD"
+          ? { id: REFGEN_CARD_ID, payload: refgenCardPayload({ contentHash: cardHash }) }
+          : { seq: 5 },
+      ),
+    );
+    mockRun.mockResolvedValue(makeMockResult({ finalOutput: "Queued." }));
+  }
+
+  it("approving card A (hash A) approves the parked call with prompt A — never the same-entity sibling", async () => {
+    setupTwoParks(HASH_A);
+
+    const res = await ottoApprove({ threadId: REFGEN_THREAD_ID, cardId: REFGEN_CARD_ID });
+
+    expect(res).toMatchObject({ ok: true, status: "done" });
+    expect(mockApprove).toHaveBeenCalledTimes(1);
+    const approvedItem = mockApprove.mock.calls[0]![0] as { arguments: string };
+    expect(approvedItem.arguments).toContain("prompt A");
+    expect(approvedItem.arguments).not.toContain("prompt B");
+  });
+
+  it("approving card B (hash B) approves the parked call with prompt B — order in the parked list doesn't matter", async () => {
+    setupTwoParks(HASH_B);
+
+    const res = await ottoApprove({ threadId: REFGEN_THREAD_ID, cardId: REFGEN_CARD_ID });
+
+    expect(res).toMatchObject({ ok: true, status: "done" });
+    expect(mockApprove).toHaveBeenCalledTimes(1);
+    const approvedItem = mockApprove.mock.calls[0]![0] as { arguments: string };
+    expect(approvedItem.arguments).toContain("prompt B");
+    expect(approvedItem.arguments).not.toContain("prompt A");
   });
 });

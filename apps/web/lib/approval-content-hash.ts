@@ -60,6 +60,27 @@ export function computeRefgenApprovalContentHash(m: RefgenApprovalMaterial): str
   return createHash("sha256").update(canonical, "utf8").digest("hex");
 }
 
+/** Normalize RAW parked generateReferences tool-call args into the refgen consent hash, or null when
+ *  the args carry no bindable consent (missing/blank entityId or prompt ⇒ fail-closed, hashless).
+ *  The SINGLE normalization used by every site that hashes parked refgen args — card mint
+ *  (readApprovalConsent), mint-side dedup, and the approve/reject interruption matchers — so the
+ *  same parked call always produces the same hash (P2 ref-collision fix relies on this). */
+export function refgenApprovalHashFromArgs(args: Record<string, unknown> | undefined | null): string | null {
+  if (
+    !args ||
+    typeof args.entityId !== "string" || args.entityId.length === 0 ||
+    typeof args.prompt !== "string" || args.prompt.length === 0
+  ) {
+    return null;
+  }
+  return computeRefgenApprovalContentHash({
+    entityId: args.entityId,
+    prompt: args.prompt,
+    count: typeof args.count === "number" ? args.count : null,
+    mode: typeof args.mode === "string" ? args.mode : null,
+  });
+}
+
 /** How long a minted approval ask stays confirmable. Frozen default: 24h — an ask older than
  *  a day must be re-requested (the POST may be scheduled further out; the ASK must be fresh).
  *  Founder ack 可调 (one-place constant). */
