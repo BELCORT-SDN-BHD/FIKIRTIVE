@@ -27,7 +27,7 @@ import { NS_PRODUCTS } from "@/components/northstar/_mock";
 import { SectionLabel, SpendConfirmDialog, SWEEP_STYLE, useCreateKeyframes } from "@/components/northstar/create/_create-ui";
 import { IMMERSIVE_BASE } from "../_kit";
 import { OttoAssist } from "../otto-assist";
-import { ottoWorking as setOttoWorking, refundCredits, spendCredits, studioLogGen, useStore } from "../_store";
+import { ottoWorking as setOttoWorking, studioLogGen, useStore } from "../_store";
 import { defaultStoryboardGoal, STUDIO_CAMERA_PRESETS, STUDIO_DUB_LANGS, studioStoryboard, type StudioScene } from "./data";
 
 const STEPS = [
@@ -57,7 +57,7 @@ export function StudioStoryboard() {
   const [makeAllAsk, setMakeAllAsk] = React.useState(false);
   const [renderState, setRenderState] = React.useState<RenderState>("idle");
   const [renderPct, setRenderPct] = React.useState<Record<string, number>>({});
-  const [failedIds, setFailedIds] = React.useState<string[]>([]); // #57 单场失败,已退款
+  const [failedIds, setFailedIds] = React.useState<string[]>([]); // #57 单场失败态
   const failedOnceRef = React.useRef(false); // 只在首次渲染演示一次失败态,之后全成功(别让 demo 显得常坏)
   const [sweepId, setSweepId] = React.useState<string | null>(null);
   const [importOpen, setImportOpen] = React.useState(false);
@@ -70,18 +70,16 @@ export function StudioStoryboard() {
   const timers = React.useRef<number[]>([]);
   React.useEffect(() => () => timers.current.forEach((t) => window.clearInterval(t)), []);
 
-  const totalCredits = scenes.reduce((s, sc) => s + sc.credits, 0);
   const totalSeconds = scenes.reduce((s, sc) => s + sc.duration, 0);
 
-  const startRender = (credits: number) => {
-    spendCredits(credits, `Storyboard · ${scenes.length} scenes`, "Video");
+  const startRender = () => {
     setOttoWorking(true, "Rendering scenes…");
     studioLogGen(`Rendering your ${scenes.length}-scene video (${totalSeconds}s). I'll ping you when it's cut.`, "Storyboard");
     setRenderState("rendering");
     setFailedIds([]);
     setStep(4);
-    // #57 兑现「失败不收费」:首次渲染让第 3 场(或最后一场)当面失败一次,退回它的 credits +
-    // 落一行看得见的失败态 + 重试。之后的渲染/重试全成功,不把 demo 弄成常坏。
+    // #57 兑现「失败不收费」:首次渲染让第 3 场(或最后一场)当面失败一次,落一行看得见的失败态 + 可重试
+    // (W-B3-5.8:价与伪扣减已外科摘除,不再走 spendCredits/refundCredits)。之后的渲染/重试全成功,不把 demo 弄成常坏。
     const failId = !failedOnceRef.current ? (scenes[2]?.id ?? scenes[scenes.length - 1]?.id ?? null) : null;
     scenes.forEach((sc, i) => {
       const willFail = sc.id === failId;
@@ -93,12 +91,10 @@ export function StudioStoryboard() {
               window.clearInterval(iv);
               return prev;
             }
-            // 失败场:卡到 ~60% 后落失败,退款,不再前进。
+            // 失败场:卡到 ~60% 后落失败态,不再前进(W-B3-5.8:不再退款,价路留给批3 -W)。
             if (willFail && cur >= 54) {
               window.clearInterval(iv);
               failedOnceRef.current = true;
-              const failed = scenes.find((s) => s.id === sc.id);
-              if (failed) refundCredits(failed.credits, `Scene ${i + 1} didn't render`);
               setFailedIds((f) => (f.includes(sc.id) ? f : [...f, sc.id]));
               if (i === scenes.length - 1) {
                 window.setTimeout(() => {
@@ -128,9 +124,8 @@ export function StudioStoryboard() {
     });
   };
 
-  // #57 重试单场:重新扣这一场的 credits(之前失败已退,重试即重新付),渲到成功。
+  // #57 重试单场:重渲这一场(W-B3-5.8:不再走 spendCredits 重扣),渲到成功。
   const retryScene = (sc: StudioScene) => {
-    spendCredits(sc.credits, `Retry · ${sc.title}`, "Video");
     setFailedIds((f) => f.filter((id) => id !== sc.id));
     setRenderPct((prev) => ({ ...prev, [sc.id]: 0 }));
     setOttoWorking(true, "Re-rendering one scene…");
@@ -481,16 +476,13 @@ export function StudioStoryboard() {
                     <p className="truncate text-sm font-semibold text-foreground">Scene {i + 1} · {sc.title}</p>
                     {/* #57 失败态:一行人话把「失败不收费」承诺兑现成看得见的事 */}
                     {failed ? (
-                      <p className="text-xs font-medium text-error-soft-foreground">This scene didn&apos;t render. You weren&apos;t charged for it — {sc.credits} credits went back.</p>
+                      <p className="text-xs font-medium text-error-soft-foreground">This scene didn&apos;t render. You weren&apos;t charged for it.</p>
                     ) : (
                       <p className="text-xs text-muted-foreground">{sc.duration}s · {sc.camera}</p>
                     )}
                   </div>
-                  {renderState === "idle" && (
-                    <span className="font-mono text-[11px] leading-[14px] text-muted-foreground tabular-nums">{sc.credits} credits</span>
-                  )}
                   {failed ? (
-                    <Button variant="secondary" size="sm" onClick={() => retryScene(sc)}>Retry · {sc.credits} credits</Button>
+                    <Button variant="secondary" size="sm" onClick={() => retryScene(sc)}>Retry</Button>
                   ) : (
                     <>
                       {renderState !== "idle" && pct < 100 && (
@@ -513,7 +505,7 @@ export function StudioStoryboard() {
             {renderState === "idle" && (
               <>
                 <Button variant="brand" onClick={() => setMakeAllAsk(true)}>
-                  Make all {scenes.length} scenes · {totalCredits} credits
+                  Make all {scenes.length} scenes
                 </Button>
                 <p className="text-[13px] text-muted-foreground">Steps 1 to 3 were free. This is the only paid step.</p>
               </>
@@ -523,12 +515,12 @@ export function StudioStoryboard() {
                 {failedIds.length > 0 ? (
                   <>
                     <Badge variant="warning">{scenes.length - failedIds.length} of {scenes.length} rendered</Badge>
-                    <p className="text-[13px] text-muted-foreground">You were charged {totalCredits - scenes.filter((s) => failedIds.includes(s.id)).reduce((a, s) => a + s.credits, 0)} credits — the failed scene was refunded. Retry it above.</p>
+                    <p className="text-[13px] text-muted-foreground">Price was confirmed before it rendered — the failed scene was not charged. Retry it above.</p>
                   </>
                 ) : (
                   <>
                     <Badge variant="success">All scenes rendered</Badge>
-                    <p className="text-[13px] text-muted-foreground">You approved this. It used {totalCredits} credits.</p>
+                    <p className="text-[13px] text-muted-foreground">You approved this before it rendered.</p>
                   </>
                 )}
                 <div className="flex-1" />
@@ -616,19 +608,14 @@ export function StudioStoryboard() {
         title={`Render all ${scenes.length} scenes?`}
         ask="This will spend real credits."
         impacts={[
-          `Cost: ${totalCredits} credits (${scenes.length} scenes × 16). No charge until you confirm.`,
+          "Price confirmed before generation. No charge until you confirm.",
           `Renders a ${totalSeconds}s video, scene by scene, progress shown per scene.`,
           "Scenes that fail are not charged.",
         ]}
-        confirmLabel={`Confirm render · ${totalCredits} credits`}
+        confirmLabel="Confirm render"
         onConfirm={() => {
           setMakeAllAsk(false);
-          startRender(totalCredits);
-        }}
-        baseCredits={totalCredits}
-        onConfirmTier={(_tier, credits) => {
-          setMakeAllAsk(false);
-          startRender(credits);
+          startRender();
         }}
       />
     </div>

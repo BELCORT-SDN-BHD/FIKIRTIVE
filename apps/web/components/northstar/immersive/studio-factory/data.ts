@@ -98,7 +98,6 @@ export interface StudioScene {
   voiceover: string;
   duration: number;
   thumb: string;
-  credits: number;
   /** [wave-b] 结构化镜头控制:机位/景别/运镜预设 */
   camera: string;
 }
@@ -110,8 +109,6 @@ export interface StudioScene {
  * 文案 interpolate 真名/真价、缩图取产品原型对应目录。Otto「来历」话术随原型走,不再嘴硬 Merdeka。
  * 定义在下方 studioStoryboard(),与 studioHooks 并排(共用 archetypeOf / ARCHETYPE_LABEL)。
  */
-export const STUDIO_STORYBOARD_CREDITS_PER_SCENE = 16;
-
 /* ── [wave-b] 结构化镜头控制:运镜/景别预设库(扩到几十个的形态,列头几十项之样例) ── */
 export const STUDIO_CAMERA_PRESETS: string[] = [
   "Close-up · static", "Close-up · slow push", "Macro · rack focus", "Top-down · static",
@@ -338,40 +335,39 @@ export function studioStoryboard(p: NsProduct): StudioStoryboardSet {
   const arch = archetypeOf(p);
   const price = Number.isInteger(p.priceMyr) ? `${p.priceMyr}` : p.priceMyr.toFixed(2);
   const lower = p.name.toLowerCase();
-  const C = STUDIO_STORYBOARD_CREDITS_PER_SCENE;
   const closer: StudioScene = {
     id: "sc-6", order: 6, title: "Close",
     shot: `Logo lockup over the ${NS_BRAND.city} counter`,
     voiceover: `${NS_BRAND.name}. ${NS_BRAND.tagline}.`,
-    duration: 2, thumb: nsImage("storefront", 1), credits: C, camera: "Wide · slow drift",
+    duration: 2, thumb: nsImage("storefront", 1), camera: "Wide · slow drift",
   };
 
   let scenes: StudioScene[];
   if (arch === "box") {
     scenes = [
-      { id: "sc-1", order: 1, title: "Opening hook", shot: `Ribbon pulled off the ${lower}`, voiceover: "The box that sells out every festive run.", duration: 3, thumb: nsImage("campaign", 0), credits: C, camera: "Close-up · static" },
-      { id: "sc-2", order: 2, title: "Product reveal", shot: "Lid lifts on the full assortment inside", voiceover: "Every piece, in one box.", duration: 4, thumb: p.image, credits: C, camera: "Top-down · slow push" },
-      { id: "sc-3", order: 3, title: "Texture moment", shot: "Macro along the pieces nestled in the tray", voiceover: "Made fresh in KL, every morning.", duration: 4, thumb: nsImage("bakery", 5), credits: C, camera: "Macro · rack focus" },
-      { id: "sc-4", order: 4, title: "People beat", shot: "Office team passing the box around at 3pm", voiceover: `RM${price} that feeds the whole table.`, duration: 4, thumb: nsImage("storefront", 3), credits: C, camera: "Handheld · medium" },
-      { id: "sc-5", order: 5, title: "Urgency", shot: "Text-over: pre-orders close Friday 6pm", voiceover: "Pre-orders close Friday.", duration: 3, thumb: nsImage("campaign", 4), credits: C, camera: "Static · text card" },
+      { id: "sc-1", order: 1, title: "Opening hook", shot: `Ribbon pulled off the ${lower}`, voiceover: "The box that sells out every festive run.", duration: 3, thumb: nsImage("campaign", 0), camera: "Close-up · static" },
+      { id: "sc-2", order: 2, title: "Product reveal", shot: "Lid lifts on the full assortment inside", voiceover: "Every piece, in one box.", duration: 4, thumb: p.image, camera: "Top-down · slow push" },
+      { id: "sc-3", order: 3, title: "Texture moment", shot: "Macro along the pieces nestled in the tray", voiceover: "Made fresh in KL, every morning.", duration: 4, thumb: nsImage("bakery", 5), camera: "Macro · rack focus" },
+      { id: "sc-4", order: 4, title: "People beat", shot: "Office team passing the box around at 3pm", voiceover: `RM${price} that feeds the whole table.`, duration: 4, thumb: nsImage("storefront", 3), camera: "Handheld · medium" },
+      { id: "sc-5", order: 5, title: "Urgency", shot: "Text-over: pre-orders close Friday 6pm", voiceover: "Pre-orders close Friday.", duration: 3, thumb: nsImage("campaign", 4), camera: "Static · text card" },
       closer,
     ];
   } else if (arch === "centrepiece") {
     scenes = [
-      { id: "sc-1", order: 1, title: "Opening hook", shot: `The ${lower} carried in, candles lit`, voiceover: `The ${lower} people photograph before they cut it.`, duration: 3, thumb: p.image, credits: C, camera: "Wide · slow drift" },
-      { id: "sc-2", order: 2, title: "Product reveal", shot: "First slice lifted, the layers showing", voiceover: "Layered by hand, every morning.", duration: 4, thumb: nsImage("bakery", 5), credits: C, camera: "Macro · rack focus" },
-      { id: "sc-3", order: 3, title: "Texture moment", shot: "Warm drizzle breaking over the sponge", voiceover: "The drizzle, still warm, over the sponge.", duration: 4, thumb: nsImage("bakery", 11), credits: C, camera: "Macro · rack focus" },
-      { id: "sc-4", order: 4, title: "People beat", shot: "The table moment — the room reacts", voiceover: "The centrepiece the table remembers.", duration: 4, thumb: nsImage("storefront", 3), credits: C, camera: "Handheld · medium" },
-      { id: "sc-5", order: 5, title: "Urgency", shot: `Text-over: reserve your date · RM${price}`, voiceover: "Baked to order — reserve your date.", duration: 3, thumb: nsImage("campaign", 4), credits: C, camera: "Static · text card" },
+      { id: "sc-1", order: 1, title: "Opening hook", shot: `The ${lower} carried in, candles lit`, voiceover: `The ${lower} people photograph before they cut it.`, duration: 3, thumb: p.image, camera: "Wide · slow drift" },
+      { id: "sc-2", order: 2, title: "Product reveal", shot: "First slice lifted, the layers showing", voiceover: "Layered by hand, every morning.", duration: 4, thumb: nsImage("bakery", 5), camera: "Macro · rack focus" },
+      { id: "sc-3", order: 3, title: "Texture moment", shot: "Warm drizzle breaking over the sponge", voiceover: "The drizzle, still warm, over the sponge.", duration: 4, thumb: nsImage("bakery", 11), camera: "Macro · rack focus" },
+      { id: "sc-4", order: 4, title: "People beat", shot: "The table moment — the room reacts", voiceover: "The centrepiece the table remembers.", duration: 4, thumb: nsImage("storefront", 3), camera: "Handheld · medium" },
+      { id: "sc-5", order: 5, title: "Urgency", shot: `Text-over: reserve your date · RM${price}`, voiceover: "Baked to order — reserve your date.", duration: 3, thumb: nsImage("campaign", 4), camera: "Static · text card" },
       closer,
     ];
   } else {
     scenes = [
-      { id: "sc-1", order: 1, title: "Opening hook", shot: `First bite of a warm ${lower}, straight off the morning batch`, voiceover: `That first bite of a fresh ${lower}.`, duration: 3, thumb: p.image, credits: C, camera: "Close-up · static" },
-      { id: "sc-2", order: 2, title: "Product reveal", shot: `The ${lower} pulled apart, steam rising`, voiceover: "Still warm from the morning bake.", duration: 3, thumb: nsImage("bakery", 1), credits: C, camera: "Macro · rack focus" },
-      { id: "sc-3", order: 3, title: "Scene beat", shot: "On a desk beside a kopi at 3pm", voiceover: "Your 3pm pick-me-up, sorted.", duration: 4, thumb: nsImage("storefront", 5), credits: C, camera: "Handheld · medium" },
-      { id: "sc-4", order: 4, title: "Value", shot: `Price card over the hero: RM${price}`, voiceover: `RM${price}, and it eats like a café treat twice the price.`, duration: 3, thumb: nsImage("bakery", 24), credits: C, camera: "Static · text card" },
-      { id: "sc-5", order: 5, title: "Urgency", shot: "Empty tray by noon, text-over: baked fresh daily", voiceover: "We bake a small batch each morning. Gone by noon.", duration: 3, thumb: nsImage("campaign", 4), credits: C, camera: "Static · text card" },
+      { id: "sc-1", order: 1, title: "Opening hook", shot: `First bite of a warm ${lower}, straight off the morning batch`, voiceover: `That first bite of a fresh ${lower}.`, duration: 3, thumb: p.image, camera: "Close-up · static" },
+      { id: "sc-2", order: 2, title: "Product reveal", shot: `The ${lower} pulled apart, steam rising`, voiceover: "Still warm from the morning bake.", duration: 3, thumb: nsImage("bakery", 1), camera: "Macro · rack focus" },
+      { id: "sc-3", order: 3, title: "Scene beat", shot: "On a desk beside a kopi at 3pm", voiceover: "Your 3pm pick-me-up, sorted.", duration: 4, thumb: nsImage("storefront", 5), camera: "Handheld · medium" },
+      { id: "sc-4", order: 4, title: "Value", shot: `Price card over the hero: RM${price}`, voiceover: `RM${price}, and it eats like a café treat twice the price.`, duration: 3, thumb: nsImage("bakery", 24), camera: "Static · text card" },
+      { id: "sc-5", order: 5, title: "Urgency", shot: "Empty tray by noon, text-over: baked fresh daily", voiceover: "We bake a small batch each morning. Gone by noon.", duration: 3, thumb: nsImage("campaign", 4), camera: "Static · text card" },
       closer,
     ];
   }
@@ -390,7 +386,6 @@ export function studioStoryboard(p: NsProduct): StudioStoryboardSet {
 
 export const STUDIO_PLATFORMS = ["Instagram", "Facebook", "TikTok"] as const;
 export const STUDIO_SIZES = ["1:1", "4:5", "9:16"] as const;
-export const STUDIO_CREDITS_PER_VARIANT = 12;
 
 /* ── [wave-b] 受众画像一键改写(Jasper Audiences):同一素材按客群换措辞 ────────── */
 export const STUDIO_AUDIENCES: { id: string; label: string; note: string }[] = [
