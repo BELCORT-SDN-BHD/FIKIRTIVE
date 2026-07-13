@@ -70,6 +70,8 @@ node scripts/execution-harness-check.mjs \
 
 未知 phase 一律失败。每阶段都重新读取 registry；`REVOKED`、`SUPERSEDED`、`STALE`、
 generation 漂移或 token 漂移均 fail closed。
+Required work-order section 若只由重复 placeholder token 组成也失败，例如
+`TBD TBD TBD TBD` 或 `<objective> <objective>`；实质性华语或英文正文不受影响。
 
 ## Ownership 规则
 
@@ -85,6 +87,12 @@ schema/migrations、pricing authority、CI/root config、shared registry/parity/
 `.git/`、`.claude/`、global orchestrator state、Gate 0 contract、standing delegation 与本 execution
 control directory。
 
+Registry 内每个 active scoped claim 都接受 identity、generation/hash、lexical forbidden path
+与 claim-to-claim overlap 检查；但 foreign claim 没有可供本 schema 验证的 authoritative
+worktree。Ignored-path 与 physical/symlink 检查只对本次 bootstrap 已验证的当前
+`OWNERSHIP.write_set` 执行。每个 parallel claim 必须在它自己的 invocation/worktree 重跑同一套
+physical checks，不能借用当前 claim 的 filesystem view。
+
 Git 判定为 ignored 的 exact target 不能授权。Directory prefix 本身被 ignore，或当下包含
 ignored path，也不能授权；checker 在每个 phase 重验，因此 prefix 下后来出现的 ignored
 output 会在下一次 boundary 前 fail closed。
@@ -94,9 +102,10 @@ Write set 也不是纯 lexical allowlist：checker 对每个 target 解析 canon
 path component 都失败；既有 directory prefix 会递归拒绝任一 symlink descendant。Boundary
 所枚举的 actual diff 若自身是 symlink entry（包括 base/HEAD/index 中的 symlink mode）同样失败。
 
-`delivery` 以 `base_sha..HEAD`、`git diff HEAD` 和 untracked files 的并集为事实；报告里的
-`changed_files` 不能替代 Git，也必须与 Git 事实完全相等。`base_sha..HEAD` 中任何 merge
-commit 都失败。
+`delivery` 以 `base_sha..HEAD`、`git diff HEAD` 和 untracked files 的并集为事实；两次 diff
+都显式使用 `--no-renames`，所以 committed、staged 或 unstaged rename 的 source 与 destination
+必须分别出现。报告里的 `changed_files` 不能替代 Git，也必须与这份未折叠事实完全相等。
+`base_sha..HEAD` 中任何 merge commit 都失败。
 
 ## Scoped 身份单调性
 

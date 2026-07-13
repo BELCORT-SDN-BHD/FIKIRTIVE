@@ -549,6 +549,38 @@ test("red: scoped identity cannot self-promote or mint a nested claim", async (t
   }
 });
 
+test("r003 red: committed and staged renames cannot hide an unowned source", async (t) => {
+  for (const mode of ["committed", "staged"]) {
+    await t.test(mode, (child) => {
+      const source = `unowned/${mode}-source.txt`;
+      const destination = `work/${mode}-destination.txt`;
+      const fixture = makeFixture(child, {
+        setupRepo: ({ repo }) => write(join(repo, source), `${mode} rename\n`),
+      });
+      git(fixture.repo, ["config", "diff.renames", "true"]);
+      fixture.state.ownership.write_set = {
+        exact_files: [destination],
+        directory_prefixes: [],
+      };
+      fixture.writeControls();
+      mkdirSync(join(fixture.repo, "work"), { recursive: true });
+      git(fixture.repo, ["mv", source, destination]);
+      if (mode === "committed") {
+        git(fixture.repo, ["commit", "-m", "committed rename fixture"]);
+        fixture.state.runtimeState.head_sha = git(fixture.repo, ["rev-parse", "HEAD"]);
+      }
+      fixture.state.evidence.entries[0].changed_paths = [destination];
+      fixture.state.report.changed_files = [destination];
+      fixture.writeRuntime();
+      expectFail(
+        fixture.run("delivery"),
+        new RegExp(`actual diff is outside ownership: ${source.replaceAll("/", "\\/")}`),
+        `${mode} rename source`,
+      );
+    });
+  }
+});
+
 test("red: author and merger identities cannot conflict", (t) => {
   const fixture = makeFixture(t);
   fixture.state.ownership.merger_identity = fixture.state.ownership.author_identity;
@@ -758,6 +790,31 @@ test("r002 red: every active scoped claim has substantive fencing fields", (t) =
   expectFail(fixture.run("startup"), /active scoped claim.*parent_epoch.*required/i, "empty fencing field");
 });
 
+test("r003 red: foreign claims defer ignored and physical checks to their own worktree", async (t) => {
+  for (const mode of ["ignored", "symlink"]) {
+    await t.test(mode, (child) => {
+      const fixture = makeFixture(child, {
+        setupRepo: ({ root, repo }) => {
+          if (mode === "ignored") {
+            write(join(repo, "foreign", "output.txt"), "foreign tracked output\n");
+          } else {
+            const outside = join(root, "foreign-outside.txt");
+            write(outside, "foreign outside\n");
+            mkdirSync(join(repo, "foreign"), { recursive: true });
+            symlinkSync(outside, join(repo, "foreign", "output.txt"));
+          }
+        },
+      });
+      if (mode === "ignored") ignorePath(fixture.repo, "foreign/output.txt");
+      addSecondClaim(fixture, {
+        write_set: { exact_files: ["foreign/output.txt"], directory_prefixes: [] },
+        locked_inputs: { exact_files: ["foreign/input.txt"], directory_prefixes: [] },
+      });
+      expectPass(fixture.run("startup"), `foreign ${mode} target`);
+    });
+  }
+});
+
 test("r002 red: newly sacred governance and control paths cannot enter ownership", async (t) => {
   for (const path of [
     ".git/config",
@@ -820,6 +877,38 @@ test("r002 red: placeholder-only work-order sections fail", (t) => {
   fixture.state.sections.OBJECTIVE = "<objective>";
   fixture.writeControls();
   expectFail(fixture.run("startup"), /OBJECTIVE.*non-placeholder|OBJECTIVE.*substantive/i, "placeholder objective");
+});
+
+test("r003 red: repeated placeholder-only work-order sections fail", async (t) => {
+  for (const [name, value] of [
+    ["plain", "TBD TBD TBD TBD"],
+    ["angle-bracketed", "<objective> <objective>"],
+  ]) {
+    await t.test(name, (child) => {
+      const fixture = makeFixture(child);
+      fixture.state.sections.OBJECTIVE = value;
+      fixture.writeControls();
+      expectFail(
+        fixture.run("startup"),
+        /OBJECTIVE.*non-placeholder|OBJECTIVE.*substantive/i,
+        `${name} repeated placeholders`,
+      );
+    });
+  }
+});
+
+test("r003 green: substantive English and Chinese work-order sections pass", async (t) => {
+  for (const [name, value] of [
+    ["English", "Verify every frozen boundary and preserve exact evidence."],
+    ["Chinese", "验证所有冻结边界，并确保交付证据完整且可复跑。"],
+  ]) {
+    await t.test(name, (child) => {
+      const fixture = makeFixture(child);
+      fixture.state.sections.OBJECTIVE = value;
+      fixture.writeControls();
+      expectPass(fixture.run("startup"), `${name} substantive section`);
+    });
+  }
 });
 
 test("r002 red: every acceptance ID appears in the ACCEPTANCE body", (t) => {

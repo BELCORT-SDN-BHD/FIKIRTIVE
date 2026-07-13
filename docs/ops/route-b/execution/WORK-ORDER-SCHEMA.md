@@ -54,7 +54,9 @@ BUDGET
 ```
 
 增加别的二级标题、缺失、重复或换序均失败。细分内容如确有需要只能用三级标题。
-每节正文都必须有实质性、非 placeholder 内容；空白、`TBD`、`<...>` 等占位正文失败。
+每节正文都必须有实质性、非 placeholder 内容；空白、`TBD`、`<...>` 等占位正文失败，重复
+placeholder 不能靠长度绕过，例如 `TBD TBD TBD TBD`、`<objective> <objective>` 仍失败。
+实质性华语与英文正文均有效。
 机器 block 中每个 `acceptance_id` 都必须以完整 ID 明文出现在 `ACCEPTANCE` 正文。
 
 ## `INPUTS.lock.json`
@@ -179,6 +181,12 @@ status=ACTIVE}`、generation 与五个 hash。缺失、重复、`REVOKED`、`SUP
 overlap、writer 对任一 locked input 的 overlap、共同 exclusive group。Global claim 可同
 registry 存在，但不能冒充 scoped claim 的 issuer。
 
+Foreign active claim 没有 authoritative worktree 字段，所以 checker 只对它执行上述 registry
+结构、identity、generation/hash、lexical forbidden-path 与 overlap 检查；不得用当前 bootstrap
+的 worktree 判断 foreign claim 的 ignored 或 physical path。当前 claim 的 ignored/physical
+检查由已经 exact-match 的 `OWNERSHIP.write_set` 执行。每个 parallel claim 必须在自己的
+invocation/worktree 接受同一检查。
+
 ## 明确禁止进入 scoped write set
 
 Checker 对 ownership 与实际 Git diff 双重检查以下范围：
@@ -200,10 +208,15 @@ Checker 对 ownership 与实际 Git diff 双重检查以下范围：
 prefix 下当下存在的 ignored path 也失败。Checker 每 phase 重验，之后新出现的 ignored output
 会在下一次校验被发现。Actual tracked diff 若被 ignore 规则命中同样失败。
 
-每个 write target 的 canonical target（未创建时为 nearest existing ancestor）必须位于 canonical
-worktree 内。Exact target 的任何 existing path component 不得是 symlink；existing directory
-prefix 会递归拒绝所有 symlink descendants。Actual diff 路径若在 filesystem、base tree、HEAD
-tree 或 index 体现为 Git symlink mode，也会失败，防止写穿 alias 而不产生目标文件 diff。
+当前 `OWNERSHIP.write_set` 每个 target 的 canonical target（未创建时为 nearest existing
+ancestor）必须位于 canonical worktree 内。Exact target 的任何 existing path component 不得是
+symlink；existing directory prefix 会递归拒绝所有 symlink descendants。Actual diff 路径若在
+filesystem、base tree、HEAD tree 或 index 体现为 Git symlink mode，也会失败，防止写穿 alias
+而不产生目标文件 diff。
+
+`changedPaths()` 对 `base_sha..HEAD` 与 `git diff HEAD` 都使用 `--no-renames`。因此 committed、
+staged、unstaged rename 的 source/destination 都是独立 changed path；两端都要通过 ownership、
+forbidden/ignored/symlink 检查，并同时出现在 report 与 evidence changed-path facts 中。
 
 `base_sha..HEAD` 不得含 merge commit。这个 local history gate 不等于 GitHub 身份证明：本地
 checker 只核对声明的 author/merger 不同与 `merge_executed=false`；真实 GitHub author、review、
