@@ -23,19 +23,19 @@
  * staleness/abandonment window here (fail-closed): a 15-minute window would be SHORTER than the
  * worker's own liveness window (REFGEN_STALE_MS 18min / queue expiry ~20min / reaper 25min), so a
  * 15-18-minute-old job that is still genuinely alive would be misjudged abandoned and let through —
- * the job then settles onto the tombstone (spend charged, product unreachable). No job blocks this
- * gate forever — materialized evidence (NODE-279⑤), worker reapStaleRefGenJobs
- * (apps/worker/src/jobs/refgen.ts:143, swept every 5min + at startup, apps/worker/src/index.ts:264-265;
- * windows REFGEN_REAP_MS = REFGEN_QUEUED_REAP_MS = 25min, refgen.ts:53-54):
- *   - stale GENERATING, no outputs (startedAt < now-25min) → FAILED + refund (refgen.ts:148-160);
- *   - stuck QUEUED, no outputs (createdAt < now-25min) whose pg-boss message is lost/dead-lettered
- *     → FAILED + refund (refgen.ts:165-181); a QUEUED job whose message is still live is skipped
- *     (F07-analog, refgen.ts:171,77-90) because pg-boss WILL deliver it — genuinely alive, so this
- *     gate refusing its delete is exactly the point (it terminates via normal settle, or its message
- *     expires to the DLQ at ~20min and the next sweep reaps it);
- *   - committed-but-stuck (outputs recorded) → resumed to DONE, not FAILED (refgen.ts:198-210).
- * Every QUEUED/GENERATING job therefore reaches a terminal state (settle, FAILED, or DONE), after
- * which this gate lets the delete proceed.
+ * the job then settles onto the tombstone (spend charged, product unreachable). Unlock model
+ * (NODE-279⑤ materialized evidence, honest version): the Otto-side delete is hard-refused for as
+ * long as the variant has ANY active job — fail-closed BY DESIGN, not a liveness guarantee. A
+ * TYPICAL stuck job is released by the worker reaper, reapStaleRefGenJobs
+ * (apps/worker/src/jobs/refgen.ts:143; windows REFGEN_REAP_MS = REFGEN_QUEUED_REAP_MS = 25min,
+ * refgen.ts:53-54; swept every 5min + at startup, apps/worker/src/index.ts:264-265): stale
+ * GENERATING / orphaned QUEUED without outputs → FAILED + refund (refgen.ts:148-160, 165-181);
+ * committed-but-stuck → resumed to DONE (refgen.ts:198-210) — so the usual worst case is
+ * ~25min window + one 5min sweep. EXTREME cases can extend the blockage: a persistently failing
+ * pg-boss liveness read makes hasLiveRefGenMessage assume "live" every sweep and skip the QUEUED
+ * reap (fail-safe, refgen.ts:85-88), and a persistently failing committed-resume just retries
+ * next sweep (refgen.ts:201-209). That prolonged refusal is an ACCEPTED fail-closed posture for
+ * Otto: the human UI delete path is not fronted by this gate and stays available.
  * Fail-closed: if the count read fails, refuse (never "couldn't check, delete anyway").
  * Aligned with the makeOttoProjectsPort #271 precedent (destructive action touching paid work = Otto
  * deterministic hard-refuse, not model self-confirmation). The gate lives HERE, not inside
@@ -72,9 +72,10 @@ export function makeOttoRefgenPort(ownerId: string) {
           where: {
             variantId,
             ownerId,
-            // No updatedAt/staleness window: any live job hard-refuses regardless of age (see header).
-            // A stuck job is released by the worker's reaper — reapStaleRefGenJobs, 25min windows,
-            // apps/worker/src/jobs/refgen.ts:143 (evidence map in the header) — never by us.
+            // No updatedAt/staleness window: any active job hard-refuses regardless of age (see
+            // header). A typical stuck job is released by the worker's reaper (reapStaleRefGenJobs,
+            // apps/worker/src/jobs/refgen.ts:143) — never by us; extreme reaper failure modes can
+            // prolong the refusal (accepted fail-closed posture, human UI delete unaffected).
             status: { in: ["QUEUED", "GENERATING"] },
           },
         });
