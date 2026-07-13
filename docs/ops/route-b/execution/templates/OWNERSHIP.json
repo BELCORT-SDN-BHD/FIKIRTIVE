@@ -1,0 +1,29 @@
+{
+  "schema_version": 1,
+  "role": "scoped-orchestrator",
+  "no_global_claim": true,
+  "program_id": "<program-id>",
+  "work_order_id": "<work-order-id>",
+  "revision": "r001",
+  "parent_epoch": "<global-epoch>",
+  "scope_epoch": "<unique-scope-epoch>",
+  "base_sha": "0000000000000000000000000000000000000000",
+  "write_set": {
+    "exact_files": [
+      "path/to/owned-file"
+    ],
+    "directory_prefixes": [
+      "path/to/owned-directory/"
+    ]
+  },
+  "locked_inputs": {
+    "exact_files": [
+      "AGENTS.md",
+      "path/to/shared-contract.md"
+    ],
+    "directory_prefixes": []
+  },
+  "exclusive_groups": [],
+  "author_identity": "<stable-author-actor-id>",
+  "merger_identity": null
+}
