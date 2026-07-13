@@ -14,7 +14,7 @@ import {
 } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
-import { fileURLToPath } from "node:url";
+import { fileURLToPath, pathToFileURL } from "node:url";
 import { spawnSync } from "node:child_process";
 import test from "node:test";
 
@@ -381,6 +381,23 @@ test("green: isolated writer delivery includes committed and untracked paths", (
 test("red: unknown phase fails", (t) => {
   const fixture = makeFixture(t);
   expectFail(fixture.run("surprise"), /unknown phase/, "unknown phase");
+});
+
+test("r004 red: exported API rejects unknown and missing phases", async (t) => {
+  for (const [name, phase, pattern] of [
+    ["unknown", "surprise", /unknown phase: surprise/],
+    ["missing", undefined, /unknown phase: <missing>/],
+  ]) {
+    await t.test(name, async (child) => {
+      const fixture = makeFixture(child);
+      write(join(fixture.repo, "outside", "untracked.txt"), "outside ownership\n");
+      const fixtureChecker = await import(pathToFileURL(join(fixture.repo, CHECKER_PATH)).href);
+      const args = { controlDir: fixture.controlDir, claimsPath: fixture.claimsPath };
+      if (phase !== undefined) args.phase = phase;
+
+      assert.throws(() => fixtureChecker.checkExecutionHarness(args), pattern);
+    });
+  }
 });
 
 test("red: wrong, missing, duplicate, or reordered work-order headings fail", async (t) => {

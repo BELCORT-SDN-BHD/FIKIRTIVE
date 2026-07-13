@@ -944,6 +944,9 @@ function validateDelivery(context, gitState, registry, workOrder, errors) {
 }
 
 export function checkExecutionHarness({ phase, controlDir, claimsPath }) {
+  if (!PHASES.has(phase)) {
+    throw new CheckFailure([`unknown phase: ${phase ?? "<missing>"}`]);
+  }
   const errors = [];
   const canonicalControlDir = canonicalExistingPath(
     controlDir,
