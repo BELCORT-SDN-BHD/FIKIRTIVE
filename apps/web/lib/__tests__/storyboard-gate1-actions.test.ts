@@ -1359,6 +1359,81 @@ describe("prepareStoryboardVideos — $0 铸视频子卡(闸②)", () => {
     expect(res.totalCredits).toBe(0);
   });
 
+  // W-B3-H-P 证明层补测①(§6.1 通项「部分失败只退失败格」映射到本 $0 铸卡层):批内混三态
+  // (铸新 / matching 已花钱复用 / ineligible 跳过)必须逐镜头独立结算 —— 一镜头的花钱状态
+  // 不得渗漏进另一镜头的铸新判定或计费,镜像批量引擎"只退失败格"的隔离精神(此处零 reserve/
+  // refund,隔离体现为:只有真正待铸的镜头计入 totalCredits,已花钱/不合格镜头零渗漏)。
+  it("批内三态混合(铸新+matching 已花钱复用+ineligible 跳过)→ 逐镜头独立结算,totalCredits 只计未花钱铸新", async () => {
+    mockVideoProposeCard();
+    const p: StoryboardCardPayload = {
+      storyboardTitle: "Ad",
+      shots: [
+        // s0: framed + no existing child → ELIGIBLE, mint fresh.
+        { shotId: "s0", index: 0, firstFramePrompt: "ff0", videoPrompt: "vp0", firstFrameGenerationId: "ffgen0" },
+        // s1: framed + points at a MATCHING but SPENT child → reuse spent:true, excluded.
+        { shotId: "s1", index: 1, firstFramePrompt: "ff1", videoPrompt: "vp1", firstFrameGenerationId: "ffgen1", videoCardId: "vchild-1" },
+        // s2: frameless → INELIGIBLE, silently skipped (no i2v source).
+        { shotId: "s2", index: 2, firstFramePrompt: "ff2", videoPrompt: "vp2" },
+      ],
+    };
+    wireLoads(card(p), {
+      "vchild-1": {
+        payload: { structuredPrompt: "vp1", sourceGenerationId: "ffgen1", model: "kling", params: { durationSeconds: 5 }, estimatedCredits: 5 },
+        genJobId: "gj-spent-1", // best-effort link present → spent
+      },
+    });
+
+    const res = await prepareStoryboardVideos({ cardId: "card-1" });
+    if (!("children" in res)) throw new Error("expected children");
+
+    // Exactly ONE mint (s0); s1 reused (no create), s2 skipped (no create).
+    expect(mockChatCreate).toHaveBeenCalledTimes(1);
+    expect(mockChatCreate.mock.calls[0][0].data.payload.shotId).toBe("s0");
+
+    // Parent write touches ONLY s0's pointer; s1's pointer (spent reuse) and s2 (skip) untouched.
+    expect(mockChatUpdate).toHaveBeenCalledTimes(1);
+    const updShots = (mockChatUpdate.mock.calls[0][0].data.payload as StoryboardCardPayload).shots;
+    expect(updShots[0].videoCardId).toBeTruthy();
+    expect(updShots[0].videoCardId).not.toBe("vchild-1");
+    expect(updShots[1].videoCardId).toBe("vchild-1"); // s1: NOT swapped (reuse leaves pointer as-is)
+    expect(updShots[2].videoCardId).toBeUndefined(); // s2: no child ever
+
+    // children: s0 (fresh, unspent) + s1 (reused, spent); s2 absent (ineligible, never quoted).
+    expect(res.children).toHaveLength(2);
+    const byShot = Object.fromEntries(res.children.map((c) => [c.shotId, c]));
+    expect(byShot.s0.spent).toBe(false);
+    expect(byShot.s1.spent).toBe(true);
+    expect(byShot.s2).toBeUndefined();
+
+    // totalCredits: ONLY s0's unspent 5 credits — s1 excluded (spent), s2 never entered the quote.
+    expect(res.totalCredits).toBe(5);
+  });
+
+  // W-B3-H-P 证明层补测②(§6.1 通项「fail-closed」映射到本 $0 铸卡层):本文件全程无
+  // try/catch(已核实,零吞错),批处理循环内任一镜头的 DB 读抛错必须让整次 prepare 整体
+  // REJECT ——绝不能吞掉异常、悄悄回退成"跳过该镜头"的部分成功结果。一次抛错=整批可见失败
+  // (调用方据此整批重试,而不是被静默的部分结果误导成"已铸完"从而误触发下游确认/扣费)。
+  it("fail-closed:批内某镜头子卡读取抛错 → 整次 prepare 拒绝(reject),不吞错、不返回部分成功", async () => {
+    mockVideoProposeCard();
+    const p = videoPayload3(); // s0 eligible(mint), s1 frameless(skip), s2 has-video(skip)
+    p.shots[0].videoCardId = "vchild-boom"; // s0 now points at a child whose lookup will throw
+    mockChatFindFirst.mockImplementation(async (args: { where?: Record<string, unknown>; orderBy?: unknown }) => {
+      const where = args?.where ?? {};
+      if (where.kind === "STORYBOARD_CARD") return where.id === "card-1" ? card(p) : null;
+      if (where.kind === "GEN_CARD" && where.id === "vchild-boom") {
+        throw new Error("simulated DB failure mid-batch");
+      }
+      if (args?.orderBy) return { seq: 10 };
+      return null;
+    });
+
+    await expect(prepareStoryboardVideos({ cardId: "card-1" })).rejects.toThrow("simulated DB failure mid-batch");
+    // No silent partial commit: the throw happened before any mint/parent-write for this call.
+    expect(mockChatCreate).not.toHaveBeenCalled();
+    expect(mockChatUpdate).not.toHaveBeenCalled();
+    expect(mockGenJobCreate).not.toHaveBeenCalled(); // $0 invariant intact even on the error path
+  });
+
   it("$0 铁证:genJob.create 从未被调", async () => {
     mockVideoProposeCard();
     wireLoads(card(videoPayload3()));

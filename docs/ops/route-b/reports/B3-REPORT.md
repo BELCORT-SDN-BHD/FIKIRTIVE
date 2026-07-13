@@ -155,6 +155,16 @@
 - **证据槽位**：本地三关（`check`/`test`/`web-build`，配方 `docs/runbooks/local-ci.md`）；契约测试（`runVariantBatch` N 格独立/幂等不双扣/partial 只退失败格/Trim $0 断言/Otto propose 零 GenJob/Library 真落库归组）；`node scripts/route-b-matrix-check.mjs`（矩阵闸）；`pnpm lint:parity`（对等债闸）。**待施工填可重跑命令 + CI job 链接**。
 - **W-B3-C 可重跑（已交付）**：`pnpm --filter @fikirtive/otto test`（skill 全家桶含 `edit-storyboard.test.ts`：schema/owner-scope/四 op 边界/G 闸②级联/S1 $0 子旅程/零 GenJob）；`pnpm --filter @fikirtive/web test -- storyboard`（人工动作层存量回归）；`pnpm lint:parity`（债闸，棘轮 78）；`pnpm --filter @fikirtive/otto run catalog:check`（CATALOG 同步闸）。CI job 链接=PR checks（见 §①）。
 - **W-B3-D 可重跑（本批交付，三关本地全绿）**：`pnpm --filter @fikirtive/otto test`（含 `manage-projects/entities/library/brand-memory.test.ts` + `propose-ideas.test.ts` + `w-b3-d-anchors.test.ts`，57 文件全过）；`pnpm --filter @fikirtive/web test`（含 `__tests__/w-b3-d-a1-coldstart.test.ts`，137 文件全过）；`pnpm lint:parity`（债闸，棘轮 55）；`pnpm --filter @fikirtive/otto run catalog:check`（CATALOG 同步闸，fresh）；`node scripts/route-b-matrix-check.mjs`（矩阵闸，债 55 全绿）；`pnpm --filter @fikirtive/web build`（web-build 关，✓ Compiled successfully）。CI job 链接=PR checks（见 §①）。
+- **W-B3-H-P 可重跑（本次交付，storyboard-gate1 证明层查漏）**：`prepareStoryboardVideos`（`apps/web/lib/storyboard-gate1-actions.ts`，一行未改）对照 spec §5.2 W-B3-H-P 行的三项点名 + §6.1 两项通项逐条落判——`pnpm --filter @fikirtive/web exec vitest run lib/__tests__/storyboard-gate1-actions.test.ts`（70 用例全绿，68 既有 + 2 新增）：
+  | 项 | 落判 | 引证 |
+  |---|---|---|
+  | 防双扣 | 已有引证 | `storyboard-gate1-actions.test.ts:1230`（matching 子卡有幂等 job→复用 spent:true 不铸不写）+ `:1337`（P1 kill-shot，genJobId 链接→复用不铸，第二次 prepare 该镜头 0 计费） |
+  | reuse-if-matches | 已有引证 | `:1162`（未花钱且四字段一致→复用）、`:1185`/`:1207`/`:1306`（duration/source/model 任一不一致→铸新替换）、`:1257`/`:1280`（duration 未定义/离菜单→吸附后一致→复用不 churn，P2） |
+  | spent-aware | 已有引证 | `:1230`/`:1337`（spent:true 排除出 totalCredits）、`:1557`（regen 路径：spent 子卡不复用，铸新——spent 判定同样决定 regen 分支） |
+  | 部分失败只退失败格（§6.1 通项，映射到本 $0 铸卡层=逐镜头独立结算） | **新增用例**（此前无三态混批覆盖） | `:1366`「批内三态混合(铸新+matching 已花钱复用+ineligible 跳过)→ 逐镜头独立结算,totalCredits 只计未花钱铸新」——单次 prepare 内铸新/复用已花钱/ineligible 跳过三镜头互不渗漏，totalCredits 只计真正未花钱铸新的一格 |
+  | fail-closed（§6.1 通项，映射到本层=零吞错） | **新增用例**（此前无异常路径覆盖） | `:1416`「fail-closed:批内某镜头子卡读取抛错 → 整次 prepare 拒绝(reject),不吞错、不返回部分成功」——核实全文件零 try/catch 后补断言：批处理循环内一镜头 DB 读抛错，整次 prepare 可见 reject，不返回部分成功、不吞错 |
+  - **停手事项**：无。五项均落判（三项已覆盖引证 + 两项补新增用例），零发现既有钱路缺陷。
+  - **纪律自检**：diff 仅 `apps/web/lib/__tests__/storyboard-gate1-actions.test.ts`（+75 行）；`storyboard-gate1-actions.ts` 零改动（`git diff` 确认）；money-safety-review Step-1（本文件不在 spend-path 符号清单——非 `genRequest`/`startGen`/`coworkGenerate`/`startRefGen`/`dispatchVariantJob` 等，真花钱权威在 `cowork-actions.ts`→`startGen`，本文件是其前置 $0 铸卡层）→ **NO，跳过 (a)-(d) 强检查**，仅 proportional 核对：读只用于 spent 侦测（镜像 `cowork-actions.ts:523-527` 的 guard 读，绝不写）、`mockGenJobCreate` 全程 0 次调用（$0 铁证保持绿）；(e) 建议合并前过一次 `/codex` 对抗二审。三关本地：typecheck（`pnpm --filter @fikirtive/web typecheck` 净输出）+ test（同上 70/70 绿）；未跑 web-build/lint:parity（纯测试新增，判断不改变既有闸门信号，若评审要求可补跑）。CI job 链接=PR checks（见 §①）。
 
 ## ⑧ schema / ownerId / 审计 / 同意 / 秘密
 
