@@ -1682,6 +1682,36 @@ describe("ottoApprove — universal branch (test ②: hash-verified approve → 
       expect.objectContaining({ data: expect.objectContaining({ payload: expect.objectContaining({ status: "approved" }) }) }),
     );
   });
+
+  // NODE-279① regression pair: the targetItem-missing + approvedAt=true short-circuit must verify the
+  // content hash BEFORE consuming (pre-reorder order). approvedAt=true must never launder a card whose
+  // material fields drifted since mint.
+  it("NODE-279① regression: targetItem gone + post approvedAt=true + material DRIFT → hard refuse, ZERO consume, the card stays pending", async () => {
+    setupUniversalApprove("pending", []); // parked ask gone
+    // Post got approved elsewhere AND its caption was edited after the card was minted.
+    mockScheduledPostFindFirst.mockResolvedValue(schedPostFixture({ approvedAt: new Date(), caption: "Edited copy" }));
+
+    const res = await ottoApprove({ threadId: APPROVE_THREAD_ID_2, cardId: APPROVAL_CARD_MSG_ID });
+
+    expect(res).toMatchObject({ error: expect.stringMatching(/changed/i) });
+    expect(mockChatMessageUpdateMany).not.toHaveBeenCalled(); // NOT consumed — the card stays pending
+    expect(mockApprove).not.toHaveBeenCalled();
+    expect(mockRun).not.toHaveBeenCalled();
+  });
+
+  it("NODE-279① control: targetItem gone + approvedAt=true + hash MATCHES → benign alreadyResolved consume (short-circuit intact)", async () => {
+    setupUniversalApprove("pending", []); // parked ask gone, material untouched since mint
+    mockScheduledPostFindFirst.mockResolvedValue(schedPostFixture({ approvedAt: new Date() }));
+
+    const res = await ottoApprove({ threadId: APPROVE_THREAD_ID_2, cardId: APPROVAL_CARD_MSG_ID });
+
+    expect(res).toEqual({ ok: true, alreadyResolved: true, resolution: "approved" });
+    expect(mockChatMessageUpdateMany).toHaveBeenCalledWith(
+      expect.objectContaining({ data: expect.objectContaining({ payload: expect.objectContaining({ status: "approved" }) }) }),
+    );
+    expect(mockApprove).not.toHaveBeenCalled();
+    expect(mockRun).not.toHaveBeenCalled();
+  });
 });
 
 describe("ottoReject — STATIC decline (AR1 处方1: zero LLM resume, zero EXTERNAL writes; internal writes = card state/message/audit)", () => {

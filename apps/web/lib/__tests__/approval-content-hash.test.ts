@@ -19,7 +19,13 @@
  * pure-function level (the piece that had no direct test).
  */
 import { describe, it, expect } from "vitest";
-import { computeApprovalContentHash, APPROVAL_CARD_TTL_MS, type ApprovalContentMaterial } from "../approval-content-hash";
+import {
+  computeApprovalContentHash,
+  computeRefgenApprovalContentHash,
+  APPROVAL_CARD_TTL_MS,
+  type ApprovalContentMaterial,
+  type RefgenApprovalMaterial,
+} from "../approval-content-hash";
 
 const BASE: ApprovalContentMaterial = {
   channel: "instagram",
@@ -69,5 +75,51 @@ describe("B0-29 approval content hash — binding + drift invalidation (kind=PUB
 
   it("the ASK is freshness-bounded (TTL frozen, one-place constant)", () => {
     expect(APPROVAL_CARD_TTL_MS).toBe(24 * 60 * 60 * 1000);
+  });
+});
+
+// debt-68 (PR #279 P1): generateReferences has no mutable DB row — its consent object IS the exact
+// parked tool-call args (entityId/prompt/count/mode). The hash binds them so a same-entity arg swap
+// (e.g. the prompt changed after the human saw the card) hard-refuses at approve time (anti-flip).
+describe("refgen approval content hash — binds the EXACT parked args (debt-68 anti-flip)", () => {
+  const REFGEN_BASE: RefgenApprovalMaterial = {
+    entityId: "ent-1",
+    prompt: "a red cap on a wooden table",
+    count: 3,
+    mode: "REFSHEET",
+  };
+
+  it("is deterministic: identical args → identical hash", () => {
+    expect(computeRefgenApprovalContentHash(REFGEN_BASE)).toBe(computeRefgenApprovalContentHash({ ...REFGEN_BASE }));
+  });
+
+  it("a change to ANY bound field changes the hash (entityId / prompt / count / mode)", () => {
+    const base = computeRefgenApprovalContentHash(REFGEN_BASE);
+    expect(computeRefgenApprovalContentHash({ ...REFGEN_BASE, entityId: "ent-2" })).not.toBe(base);
+    expect(computeRefgenApprovalContentHash({ ...REFGEN_BASE, prompt: "a BLUE cap" })).not.toBe(base);
+    expect(computeRefgenApprovalContentHash({ ...REFGEN_BASE, count: 4 })).not.toBe(base);
+    expect(computeRefgenApprovalContentHash({ ...REFGEN_BASE, mode: "BASE" })).not.toBe(base);
+  });
+
+  it("normalizes optional count/mode: keys ABSENT at runtime hash the same as explicit null (?? null)", () => {
+    const withNulls = computeRefgenApprovalContentHash({ entityId: "ent-1", prompt: "x", count: null, mode: null });
+    const missing = { entityId: "ent-1", prompt: "x" } as unknown as RefgenApprovalMaterial; // count/mode absent
+    expect(computeRefgenApprovalContentHash(missing)).toBe(withNulls);
+    // a set count/mode is still a real difference (a real change stays a real change)
+    expect(computeRefgenApprovalContentHash({ entityId: "ent-1", prompt: "x", count: 3, mode: "REFSHEET" })).not.toBe(withNulls);
+  });
+
+  it("is domain-tagged: a refgen hash can never collide with a scheduled-post hash", () => {
+    // Even with deliberately overlapping field values, the domain tag keeps the two hash spaces disjoint.
+    const refgen = computeRefgenApprovalContentHash({ entityId: "instagram", prompt: "launch day!", count: null, mode: null });
+    const post = computeApprovalContentHash({
+      channel: "instagram",
+      scheduledAt: "launch day!",
+      caption: "",
+      firstComment: null,
+      metaTargetId: null,
+      mediaGenerationIds: [],
+    });
+    expect(refgen).not.toBe(post);
   });
 });

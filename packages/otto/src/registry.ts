@@ -42,6 +42,8 @@ import { proposeIdeasSkill } from "./skills/propose-ideas.js";
 import { manageMediaSkill } from "./skills/manage-media.js";
 import { renderVideoSkill } from "./skills/render-video.js";
 import { importMediaSkill } from "./skills/import-media.js";
+import { generateReferencesSkill } from "./skills/generate-references.js";
+import { deleteReferenceVariantSkill } from "./skills/delete-reference-variant.js";
 
 /** Add a new skill here (one line). Order is the agent's tool order. */
 export const allSkills: OttoSkill[] = [
@@ -87,6 +89,8 @@ export const allSkills: OttoSkill[] = [
   manageMediaSkill,
   renderVideoSkill,
   importMediaSkill,
+  generateReferencesSkill,
+  deleteReferenceVariantSkill,
 ];
 
 export interface SkillMeta {

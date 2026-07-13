@@ -59,7 +59,7 @@ import {
   revokeSharePreview,
 } from "./schedule-actions";
 import { asApprovalCardPayload, type ApprovalCardPayload, type ApprovalCardSummary } from "./approval-card-view";
-import { computeApprovalContentHash, APPROVAL_CARD_TTL_MS } from "./approval-content-hash";
+import { computeApprovalContentHash, refgenApprovalHashFromArgs, APPROVAL_CARD_TTL_MS } from "./approval-content-hash";
 import { readPageCached } from "./web-page-cache";
 import { fetchOwnerInsights } from "./meta-insights";
 import { fetchOwnerAdPerformance } from "./meta-performance";
@@ -71,6 +71,7 @@ import { validateOwnedGenerationExt } from "./otto-generation-validate";
 import { makeOttoCanvasPort } from "./otto-canvas-port";
 import { makeOttoMediaPort, makeOttoRenderPort, makeOttoMediaImportPort } from "./otto-media-port";
 import { makeOttoProjectsPort } from "./otto-projects-port";
+import { makeOttoRefgenPort } from "./otto-refgen-port";
 import { makeOttoEntitiesPort } from "./otto-entities-port";
 import { makeOttoLibraryPort } from "./otto-library-port";
 import { makeOttoBrandMemoryPort } from "./otto-brand-memory-port";
@@ -360,6 +361,11 @@ export async function buildOttoContext({
     entities: makeOttoEntitiesPort(),
     library: makeOttoLibraryPort(),
     brandMemory: makeOttoBrandMemoryPort(),
+    // Reference-generation port (W-B3-G-P, debt-68/69). generate forwards to the SOLE refgen spend
+    // authority (startRefGen — own requireOwner + refGenRequest gate + server-priced reserve); the
+    // generateReferences skill is cost:"spend" ⇒ needsApproval literal true. deleteVariant is $0 with
+    // an Otto-only fail-closed active-job gate (refuses while a paid job runs). None duplicate spend.
+    refgen: makeOttoRefgenPort(ownerId),
   };
 }
 
@@ -397,7 +403,22 @@ async function readApprovalConsent(
   ownerId: string,
   toolName: string,
   ref: string,
-): Promise<{ summary: ApprovalCardSummary; contentHash: string; updatedAt: string } | null> {
+  args?: Record<string, unknown>,
+): Promise<{ summary: ApprovalCardSummary | null; contentHash: string; updatedAt: string } | null> {
+  // generateReferences (debt-68, spend): the consent object is the EXACT parked tool-call args, not a
+  // mutable DB row — nothing to re-read for drift, no TOCTOU snapshot to thread. Bind the args with a
+  // content hash (anti-flip: a same-entity prompt/count/mode swap ⇒ a different hash ⇒ hard refuse at
+  // approve). No entity read is needed to be approvable — startRefGen owner-gates the entity at execute
+  // time; the generic approval-card view renders this card (named action, no rich summary).
+  if (toolName === "generateReferences") {
+    const contentHash = refgenApprovalHashFromArgs(args);
+    if (!contentHash) return null; // no bindable consent ⇒ fail-closed (hashless, unapprovable card)
+    return {
+      summary: null,
+      contentHash,
+      updatedAt: "", // no mutable row ⇒ no TOCTOU snapshot (only approveScheduledPost threads one)
+    };
+  }
   if (toolName !== "approveScheduledPost") return null;
   try {
     const post = await prisma.scheduledPost.findFirst({
@@ -438,6 +459,10 @@ async function readApprovalConsent(
  * Persist one APPROVAL_CARD per parked non-generate approval. Deduped per (toolName, ref,
  * status=pending): a rehydrated run can re-park the SAME pending tool call (the user sent another
  * message while an approval waited), and that must not mint a second card for one consent.
+ * generateReferences additionally pins contentHash in the dedup (P2 ref collision): its ref
+ * (entityId) is NOT unique across two same-entity parks with different prompts — without the hash,
+ * the second distinct ask would silently reuse the first ask's card and become unapprovable. The
+ * re-park-same-call dedup still holds (same args ⇒ same hash ⇒ same card).
  */
 async function persistPendingApprovalCards(args: {
   ownerId: string;
@@ -448,6 +473,10 @@ async function persistPendingApprovalCards(args: {
   let seq = args.seqStart;
   const cardIds: string[] = [];
   for (const a of args.approvals) {
+    // P2 ref collision: refgen's consent object is the parked args themselves, so the pending-card
+    // identity must include their hash (null for unbindable args — those dedupe by ref alone and
+    // mint a hashless, unapprovable card).
+    const refgenHash = a.toolName === "generateReferences" ? refgenApprovalHashFromArgs(a.args) : null;
     const existing = await prisma.chatMessage.findFirst({
       where: {
         threadId: args.threadId,
@@ -457,6 +486,7 @@ async function persistPendingApprovalCards(args: {
           { payload: { path: ["toolName"], equals: a.toolName } },
           { payload: { path: ["ref"], equals: a.ref } },
           { payload: { path: ["status"], equals: "pending" } },
+          ...(refgenHash !== null ? [{ payload: { path: ["contentHash"], equals: refgenHash } }] : []),
         ],
       },
       select: { id: true },
@@ -465,7 +495,7 @@ async function persistPendingApprovalCards(args: {
       cardIds.push(existing.id);
       continue;
     }
-    const consent = await readApprovalConsent(args.ownerId, a.toolName, a.ref);
+    const consent = await readApprovalConsent(args.ownerId, a.toolName, a.ref, a.args);
     const payload: ApprovalCardPayload = {
       toolName: a.toolName,
       ref: a.ref,
@@ -934,16 +964,12 @@ export async function ottoApprove(raw: unknown): Promise<
           await consumeApprovalCard(cardMsg.id, ownerId, cardPayload, "expired");
           return { ok: true, alreadyResolved: true, resolution: "expired" };
         }
-        // Content-hash binding (AR1 处方2, spec 5.1·附②): re-read the post's material fields and
-        // recompute; ANY drift since mint (or an unreadable/hashless card) = hard refuse WITHOUT
-        // consuming — the user reviews and asks Otto for a fresh approval request.
-        const current = await readApprovalConsent(ownerId, cardPayload.toolName, cardPayload.ref);
-        if (!cardPayload.contentHash || !current || current.contentHash !== cardPayload.contentHash) {
-          return { error: "This post changed since Otto asked — review it and ask Otto to request approval again." };
-        }
-        // Snapshot from the SAME read the hash was verified against (AR2 处方1).
-        approvalConsent = { scheduledPostId: cardPayload.ref, expectedUpdatedAt: current.updatedAt };
-        // (toolName, ref) binding against the rehydrated state's parked interruptions.
+        // (toolName, ref) binding FIRST — locate the parked interruption this card refers to. We need
+        // its exact args to bind the consent for tools whose consent object IS the parked call
+        // (generateReferences), and it lets a stale/already-approved card short-circuit before any read.
+        // P2 ref collision: for generateReferences the ref (entityId) is NOT unique — two same-entity
+        // parks with different prompts share it — so the match is additionally pinned to the card's
+        // content hash: each card matches exactly ITS OWN parked call, never a sibling's.
         const targetItem = interruptions.find((item) => {
           // eslint-disable-next-line @typescript-eslint/no-explicit-any
           const it = item as any;
@@ -951,7 +977,11 @@ export async function ottoApprove(raw: unknown): Promise<
           if (!toolName || toolName === "generate" || toolName !== cardPayload.toolName) return false;
           try {
             const args = JSON.parse(it.arguments ?? it.rawItem?.arguments ?? "{}") as Record<string, unknown>;
-            return approvalRefOf(toolName, args) === cardPayload.ref;
+            if (approvalRefOf(toolName, args) !== cardPayload.ref) return false;
+            if (toolName === "generateReferences") {
+              return refgenApprovalHashFromArgs(args) === cardPayload.contentHash;
+            }
+            return true;
           } catch {
             return false;
           }
@@ -965,11 +995,51 @@ export async function ottoApprove(raw: unknown): Promise<
               select: { approvedAt: true },
             });
             if (post?.approvedAt) {
+              // NODE-279① regression fix: hash BEFORE consume on this short-circuit too — the
+              // pre-reorder code verified the content hash before ANY resolution path could run.
+              // approvedAt=true must not launder a drifted card: if the post's material fields
+              // changed since mint (or the card is hashless), hard-refuse WITHOUT consuming,
+              // exactly like the main path below.
+              const current = await readApprovalConsent(ownerId, cardPayload.toolName, cardPayload.ref);
+              if (!cardPayload.contentHash || !current || current.contentHash !== cardPayload.contentHash) {
+                return { error: "This post changed since Otto asked — review it and ask Otto to request approval again." };
+              }
               await consumeApprovalCard(cardMsg.id, ownerId, cardPayload, "approved");
               return { ok: true, alreadyResolved: true, resolution: "approved" };
             }
           }
           return { error: "That card isn't awaiting approval." };
+        }
+        // The matched interruption's exact args — the consent object for tools that bind the parked
+        // call itself (generateReferences hashes these; approveScheduledPost ignores them and re-reads
+        // its DB row instead).
+        const targetArgs: Record<string, unknown> = (() => {
+          try {
+            // eslint-disable-next-line @typescript-eslint/no-explicit-any
+            const it = targetItem as any;
+            return JSON.parse(it.arguments ?? it.rawItem?.arguments ?? "{}") as Record<string, unknown>;
+          } catch {
+            return {};
+          }
+        })();
+        // Content-hash binding (AR1 处方2, spec 5.1·附②): recompute the consent hash — for
+        // approveScheduledPost by re-reading the post's material fields (drift check), for
+        // generateReferences from the matched interruption's args (anti-flip). ANY drift/mismatch (or
+        // an unreadable/hashless card) = hard refuse WITHOUT consuming — the user asks Otto afresh.
+        const current = await readApprovalConsent(ownerId, cardPayload.toolName, cardPayload.ref, targetArgs);
+        if (!cardPayload.contentHash || !current || current.contentHash !== cardPayload.contentHash) {
+          return {
+            error:
+              cardPayload.toolName === "generateReferences"
+                ? "That reference request changed since Otto asked — ask Otto to request it again."
+                : "This post changed since Otto asked — review it and ask Otto to request approval again.",
+          };
+        }
+        // AR2 处方1 (approveScheduledPost only): snapshot updatedAt from the SAME read the hash was
+        // verified against, so the resumed approve threads it to the server action's CAS (TOCTOU weld).
+        // generateReferences has no mutable row ⇒ no snapshot to thread (approvalConsent stays undefined).
+        if (cardPayload.toolName === "approveScheduledPost") {
+          approvalConsent = { scheduledPostId: cardPayload.ref, expectedUpdatedAt: current.updatedAt };
         }
         // ATOMIC consumption BEFORE the resume (AR1 处方2): exactly one resolver wins; a concurrent
         // double-click loses the CAS and refuses benignly — the resume (and the tool) runs at most
@@ -1288,7 +1358,13 @@ export async function ottoReject(raw: unknown): Promise<
             if (!toolName || toolName === "generate" || toolName !== cardPayload.toolName) return false;
             try {
               const args = JSON.parse(it.arguments ?? it.rawItem?.arguments ?? "{}") as Record<string, unknown>;
-              return approvalRefOf(toolName, args) === cardPayload.ref;
+              if (approvalRefOf(toolName, args) !== cardPayload.ref) return false;
+              // P2 ref collision (same as ottoApprove's matcher): a refgen card must reject exactly
+              // ITS OWN parked call, never a same-entity sibling's still-pending ask.
+              if (toolName === "generateReferences") {
+                return refgenApprovalHashFromArgs(args) === cardPayload.contentHash;
+              }
+              return true;
             } catch {
               return false;
             }
