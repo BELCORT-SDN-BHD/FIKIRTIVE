@@ -13,6 +13,11 @@
  * 自己的 re-spend guard 读法,cowork-actions.ts:523-527)——读,绝不写。
  *
  * 全部 owner-scoped:身份来自 requireOwner 的 session,绝不来自客户端输入。
+ *
+ * 并发防线(修复轮 v2, NODE-282①):本文件全部五个 RMW 事务(两个 prepare / 两个 regen /
+ * sync)在事务内第一步先取卡级 pg_advisory_xact_lock(cowork-actions.ts:180 与
+ * gen-actions.ts:118 的同款家法),同一张父卡的写者严格串行 —— 两个并发 prepare 不可能
+ * 都看到空指针而各铸一张可扣费子卡;后到者锁后重读到新指针,走复用分支,零双铸。
  */
 import { z } from "zod";
 import { prisma, Prisma } from "@fikirtive/db";
@@ -82,6 +87,20 @@ async function spentOf(childCardId: string, ownerId: string): Promise<boolean> {
     select: { id: true },
   });
   return job !== null;
+}
+
+/** MONEY-CRITICAL serialization (修复轮 v2, NODE-282①): take the card-scoped pg advisory
+ *  transaction lock BEFORE the RMW re-read — the SAME house pattern the money path already
+ *  uses (cowork-actions.ts:180, gen-actions.ts:118). Under READ COMMITTED, two concurrent
+ *  prepares could BOTH read a shot's empty child pointer and EACH mint a chargeable child
+ *  (double-mint → each can be confirmed downstream → double-charge). With the lock, writers
+ *  on the SAME card serialize: the later transaction blocks until the earlier one commits,
+ *  its in-tx re-read then sees the freshly written pointer, and it takes the REUSE branch —
+ *  zero double-mint. xact-scoped (auto-released at commit/rollback); every tx takes exactly
+ *  ONE lock before any write → no deadlock surface; zero schema change. */
+async function lockCardTx(tx: PrismaTx, cardId: string): Promise<void> {
+  const cardLockKey = `card:${cardId}`;
+  await tx.$executeRaw`SELECT pg_advisory_xact_lock(hashtextextended(${cardLockKey}, 0::bigint))`;
 }
 
 /** The stored fields of an existing video child card, shaped for the reuse comparison. */
@@ -280,6 +299,7 @@ export async function prepareStoryboardFirstFrames(
   const children: ChildFrameCard[] = [];
 
   await prisma.$transaction(async (tx) => {
+    await lockCardTx(tx, card.id); // NODE-282①: serialize concurrent prepares/regens on this card
     // Re-read the parent payload INSIDE the tx (RMW) so a concurrent edit can't be clobbered.
     const fresh = await tx.chatMessage.findFirst({
       where: { id: card.id, ownerId, kind: "STORYBOARD_CARD", deletedAt: null },
@@ -379,6 +399,7 @@ export async function regenShotFirstFrameCard(
   let child: ChildFrameCard | null = null;
 
   await prisma.$transaction(async (tx) => {
+    await lockCardTx(tx, card.id); // NODE-282①: serialize concurrent prepares/regens on this card
     const fresh = await tx.chatMessage.findFirst({
       where: { id: card.id, ownerId, kind: "STORYBOARD_CARD", deletedAt: null },
       select: { payload: true },
@@ -564,6 +585,11 @@ export async function syncStoryboardMedia(
     cascadeShots.size > 0;
   if (hasStaged) {
     payload = await prisma.$transaction(async (tx) => {
+      // Same card-writer serialization: a sync (frame-replace CASCADE drops video keys)
+      // racing a prepare/regen RMW could clobber a just-written — possibly already
+      // CONFIRMED — child pointer, orphaning a charged card; the next prepare would then
+      // mint (and charge) AGAIN for the same shot. Locking makes race == serial semantics.
+      await lockCardTx(tx, card.id);
       const fresh = await tx.chatMessage.findFirst({
         where: { id: card.id, ownerId, kind: "STORYBOARD_CARD", deletedAt: null },
         select: { payload: true },
@@ -670,6 +696,7 @@ export async function prepareStoryboardVideos(
   const children: ChildFrameCard[] = [];
 
   await prisma.$transaction(async (tx) => {
+    await lockCardTx(tx, card.id); // NODE-282①: serialize concurrent prepares/regens on this card
     // Re-read the parent payload INSIDE the tx (RMW) so a concurrent edit can't be clobbered.
     const fresh = await tx.chatMessage.findFirst({
       where: { id: card.id, ownerId, kind: "STORYBOARD_CARD", deletedAt: null },
@@ -811,6 +838,7 @@ export async function regenShotVideoCard(
   let child: ChildFrameCard | null = null;
 
   await prisma.$transaction(async (tx) => {
+    await lockCardTx(tx, card.id); // NODE-282①: serialize concurrent prepares/regens on this card
     const fresh = await tx.chatMessage.findFirst({
       where: { id: card.id, ownerId, kind: "STORYBOARD_CARD", deletedAt: null },
       select: { payload: true },
