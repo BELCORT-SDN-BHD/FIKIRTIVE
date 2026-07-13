@@ -9,8 +9,9 @@
  * Zero new spend path (B0-16): this skill never touches credits, never creates a GenJob, never
  * calls a provider. It reaches the batch ONLY via ctx.runFactoryBatch (injected, owner-closed),
  * which loops the SAME startGen authority per cell — every reserve/settle/refund lives inside
- * startGen / the worker, per cell. text cells are $0. A replay with the same batchId dedups per
- * cell (batch:<batchId>:cell:<n>), so it never double-charges.
+ * startGen / the worker, per cell. text cells are $0. A replay with the same batchId reuses each
+ * cell's existing non-failed job (zero new charge) and only re-dispatches FAILED cells (per-cell
+ * batch:<batchId>:cell:<n> keys), so a completed cell is never re-run or double-charged.
  *
  * Identity/scope come from ctx (orgId, projectId) — never from the model. The model supplies only
  * WHAT to make + a stable batchId; the owner-scoped server action re-validates ownership and every
@@ -40,7 +41,10 @@ export const runFactoryBatchInput = z.object({
     "variant = one base spec + N variant overrides (ad-variant fan-out); grid = an explicit list of cells (brief×platform×size grid, may mix gen and $0 text cells).",
   ),
   batchId: z.string().min(1).max(64).describe(
-    "A STABLE id for this batch. Reuse the SAME id to retry a batch — it dedups per cell and never double-charges. Use a fresh id only for a genuinely new batch.",
+    "A STABLE, uniquely-generated id for this batch (e.g. a UUID). To retry, call again with the " +
+      "SAME id AND the SAME cells: cells that already succeeded are reused (never re-run or " +
+      "re-charged) and only failed cells are re-dispatched (and charged again). Reusing a batchId " +
+      "for DIFFERENT content is refused — use a fresh unique id for every genuinely new batch.",
   ),
   name: z.string().min(1).max(120).optional().describe("Human-readable batch name for the library grouping."),
   base: skillGenCell.optional().describe("variant mode: the base spec every variant overrides."),
@@ -95,7 +99,9 @@ export const runFactoryBatchSkill = defineOttoSkill({
     "Generate a BATCH of ads/images/videos in one go — either a variant fan-out (one base spec + " +
     "several variant overrides) or an explicit grid of cells. This SPENDS the user's credits (one " +
     "charge per gen cell; text cells are free) and REQUIRES the user's approval — only call it when " +
-    "the user has clearly asked to run a batch. Reuse the same batchId to retry without double-charging. " +
+    "the user has clearly asked to run a batch. To retry, reuse the same batchId with the SAME cells — " +
+    "completed cells are reused (never re-run or double-charged) and only failed cells are re-dispatched; " +
+    "use a fresh unique id for a new batch. " +
     "Scope (project) comes from the current context; you supply only what to make.",
   parameters: runFactoryBatchInput,
   execute: executeRunFactoryBatch,

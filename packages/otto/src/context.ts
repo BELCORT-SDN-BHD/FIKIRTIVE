@@ -55,13 +55,14 @@ export interface FactoryBatchResult {
   cells: {
     index: number;
     type: "gen" | "text";
-    status: "queued" | "text" | "error";
+    status: "queued" | "reused" | "text" | "error";
     jobId?: string;
     credits: number;
     error?: string;
   }[];
   totalCredits: number;
   dispatched: number;
+  reused: number;
   failed: number;
 }
 

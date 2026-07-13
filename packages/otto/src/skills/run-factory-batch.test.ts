@@ -8,7 +8,7 @@ import { runFactoryBatchSkill, runFactoryBatchInput, executeRunFactoryBatch } fr
 import type { OttoContext } from "../context.js";
 
 function okResult(batchId: string) {
-  return { batchId, cells: [], totalCredits: 0, dispatched: 0, failed: 0 };
+  return { batchId, cells: [], totalCredits: 0, dispatched: 0, reused: 0, failed: 0 };
 }
 
 function makeCtx(overrides?: Partial<OttoContext>): OttoContext {

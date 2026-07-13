@@ -12,7 +12,7 @@ import {
   type OrchestrateDeps,
 } from "../factory-batch";
 
-type JobRow = { id: string; ownerId: string; batchId: string | null; status: string };
+type JobRow = { id: string; ownerId: string; batchId: string | null; status: string; idempotencyKey?: string; prompt?: string; model?: string; kind?: string; count?: number };
 
 // A tiny in-memory prisma double for the two tables orchestrateBatch touches. It moves
 // NO money — the whole point is that orchestration only writes grouping metadata.
@@ -35,6 +35,14 @@ function fakePrisma() {
       }),
     },
     genJob: {
+      findFirst: vi.fn(async ({ where }: { where: { ownerId: string; projectId?: string; idempotencyKey?: string } }) => {
+        const match = [...jobs.values()].find(
+          (j) => j.ownerId === where.ownerId && where.idempotencyKey != null && j.idempotencyKey === where.idempotencyKey,
+        );
+        return match
+          ? { id: match.id, status: match.status, prompt: match.prompt ?? "", model: match.model ?? "seedream", kind: match.kind ?? "IMAGE", count: match.count ?? 1 }
+          : null;
+      }),
       updateMany: vi.fn(async ({ where, data }: { where: { id: string; ownerId: string }; data: { batchId: string } }) => {
         const j = jobs.get(where.id);
         if (j && j.ownerId === where.ownerId) j.batchId = data.batchId;
@@ -159,6 +167,72 @@ describe("orchestrateBatch — dispatch behaviour", () => {
     expect(res.dispatched).toBe(20);
     expect(res.cells.every((c) => c.status === "queued")).toBe(true);
     expect(elapsed).toBeLessThan(5000);
+  });
+});
+
+describe("orchestrateBatch — any-status replay precheck (NODE-280 item 1)", () => {
+  it("reuses an existing DONE job for the same key (zero new charge) and skips startGen", async () => {
+    const { db, jobs } = fakePrisma();
+    jobs.set("prior-0", { id: "prior-0", ownerId: OWNER, batchId: "R", status: "DONE", idempotencyKey: "batch:R:cell:0", prompt: "a", model: "seedream", kind: "IMAGE", count: 1 });
+    const { fn, calls } = spyStartGen(jobs, OWNER);
+    const res = await orchestrateBatch({ startGen: fn, prisma: db }, { ownerId: OWNER, projectId: PROJECT, batchId: "R", cells: [genCell("a"), genCell("b")] });
+    if ("error" in res) throw new Error(res.error);
+    expect(res.cells[0]).toMatchObject({ status: "reused", jobId: "prior-0", credits: 0 });
+    expect(res.cells[1].status).toBe("queued");
+    expect(res.reused).toBe(1);
+    expect(res.dispatched).toBe(1);
+    expect(res.totalCredits).toBe(1 * INTERNAL_PER_DISPLAY); // only the newly dispatched cell
+    expect(calls.map((c) => c.idempotencyKey)).toEqual(["batch:R:cell:1"]); // startGen never called for cell 0
+  });
+
+  it("re-dispatches a terminal-FAILED cell (legitimate retry) instead of reusing it", async () => {
+    const { db, jobs } = fakePrisma();
+    jobs.set("failed-0", { id: "failed-0", ownerId: OWNER, batchId: "R2", status: "FAILED", idempotencyKey: "batch:R2:cell:0", prompt: "a", model: "seedream", kind: "IMAGE", count: 1 });
+    const { fn, calls } = spyStartGen(jobs, OWNER);
+    const res = await orchestrateBatch({ startGen: fn, prisma: db }, { ownerId: OWNER, projectId: PROJECT, batchId: "R2", cells: [genCell("a")] });
+    if ("error" in res) throw new Error(res.error);
+    expect(res.cells[0].status).toBe("queued"); // re-dispatched, not reused
+    expect(res.reused).toBe(0);
+    expect(res.dispatched).toBe(1);
+    expect(calls.map((c) => c.idempotencyKey)).toEqual(["batch:R2:cell:0"]);
+  });
+
+  it("fails closed when a batchId is reused for DIFFERENT content (no reuse, no dispatch)", async () => {
+    const { db, jobs } = fakePrisma();
+    jobs.set("prior-x", { id: "prior-x", ownerId: OWNER, batchId: "R3", status: "QUEUED", idempotencyKey: "batch:R3:cell:0", prompt: "original", model: "seedream", kind: "IMAGE", count: 1 });
+    const { fn, calls } = spyStartGen(jobs, OWNER);
+    const res = await orchestrateBatch({ startGen: fn, prisma: db }, { ownerId: OWNER, projectId: PROJECT, batchId: "R3", cells: [genCell("DIFFERENT")] });
+    if ("error" in res) throw new Error(res.error);
+    expect(res.cells[0].status).toBe("error");
+    expect(res.cells[0].error).toMatch(/different content/i);
+    expect(res.cells[0].credits).toBe(0);
+    expect(calls).toHaveLength(0); // never dispatched
+  });
+});
+
+describe("orchestrateBatch — video quote never crashes the batch (NODE-280 item 2)", () => {
+  it("quoteCell returns 0 (never throws) for a video cell with an absent/invalid model", () => {
+    expect(() => quoteCell(genCell("v", { kind: "video" }))).not.toThrow();
+    expect(quoteCell(genCell("v", { kind: "video" }))).toBe(0);
+    expect(() => quoteCell(genCell("v", { kind: "video", model: "seedream" }))).not.toThrow();
+    // a real video model prices via videoDefaults (seedance-2-fast: 720p/5s flat = 8 displayed)
+    expect(quoteCell(genCell("v", { kind: "video", model: "seedance-2-fast" }))).toBe(8 * INTERNAL_PER_DISPLAY);
+  });
+
+  it("a mid-batch video cell with a missing model becomes a per-cell error — prior/later cells still dispatch (no throw)", async () => {
+    const { db, jobs } = fakePrisma();
+    const { fn } = spyStartGen(jobs, OWNER);
+    const res = await orchestrateBatch(
+      { startGen: fn, prisma: db },
+      { ownerId: OWNER, projectId: PROJECT, batchId: "V", cells: [genCell("before"), genCell("v", { kind: "video" }), genCell("after")] },
+    );
+    if ("error" in res) throw new Error(res.error);
+    expect(res.cells[0].status).toBe("queued");
+    expect(res.cells[1]).toMatchObject({ status: "error", credits: 0 });
+    expect(res.cells[2].status).toBe("queued");
+    expect(res.dispatched).toBe(2);
+    expect(res.failed).toBe(1);
+    expect(res.totalCredits).toBe(2 * INTERNAL_PER_DISPLAY); // only the 2 image cells
   });
 });
 
